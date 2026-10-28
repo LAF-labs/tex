@@ -1,2 +1,2 @@
-{"sample":"가나상사","ms":1654,"confidence":88,"fields":{"bizNo":"1900871096","name":"가나상사","repName":"이가나","openDate":"20200115","corpNo":null,"address":"서울특별시 마포구 월드컵로 10","bizType":"도소매","bizItem":"사무용품","kind":"individual"},"missing":[]}
-{"sample":"주식회사 다라테크","ms":1404,"confidence":86,"fields":{"bizNo":"1000950287","name":"주식회사 다라테크","repName":"박다라","openDate":"20181102","corpNo":null,"address":"경기도 성남시 분당구 판교로 20","bizType":"서비스","bizItem":"소프트웨어 개발","kind":"corporate"},"missing":[]}
+{"sample":"가나상사","ms":280,"confidence":88,"fields":{"bizNo":"1900871096","name":"가나상사","repName":"이가나","openDate":"20200115","corpNo":null,"address":"서울특별시 마포구 월드컵로 10","bizType":"도소매","bizItem":"사무용품","kind":"individual"},"missing":[]}
+{"sample":"주식회사 다라테크","ms":277,"confidence":86,"fields":{"bizNo":"1000950287","name":"주식회사 다라테크","repName":"박다라","openDate":"20181102","corpNo":null,"address":"경기도 성남시 분당구 판교로 20","bizType":"서비스","bizItem":"소프트웨어 개발","kind":"corporate"},"missing":[]}

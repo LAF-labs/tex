@@ -38,12 +38,17 @@ chromium.connectOverCDP(vault.cdpTransport(), { noDefaults: true, isLocal: true 
 | `Target.getBrowserContexts` | 빈 목록 | 호출 안 됨(예비) |
 | 그 밖 전부 | 거부 + `vault.cdp_denied` | — |
 
-팝업은 금고의 브라우저 수준 자동 부착(`waitForDebuggerOnStart`)으로 멈춘 채 들어온다. 실측하면 Chrome은 이때 팝업의 `targetInfo.url`을 **비워 준다**. 그래서 opener가 노출 타깃이어도 바로 붙이지 않는다. 금고가 숨긴 채 재개하고 **첫 문서 커밋의 origin**이 허용일 때만 엔진에 붙인다(허용 밖이면 `vault.popup_hidden`). 이동이 없는 빈 팝업은 1.5초 뒤 about:blank로 노출하고, 이후 이동은 커밋마다 재집행한다. 그래서 엔진은 팝업을 `waitingForDebugger: false`(실행 중)로 받는다. 사용자가 연 탭은 재개만 하고 엔진에 알리지 않는다(`vault.user_tab_hidden`).
+팝업은 금고의 브라우저 수준 자동 부착(`waitForDebuggerOnStart`)으로 멈춘 채 들어온다. 실측하면 Chrome은 이때 팝업과 OOPIF iframe의 `targetInfo.url`을 **비워 준다**. 그래서 노출 판정은 **fail-closed**로 한다(PR #1 Bugbot 재검토 반영).
 
-자식(OOPIF iframe) 세션도 같은 원칙을 따른다(PR #1 리뷰 반영).
-- 부착 정보의 url이 비면 금고가 자식 루트 프레임 URL을 직접 확인한다. 아직 커밋 전이면 커밋을 본 뒤 엔진에 알린다.
-- 금고가 자식 세션에 `Page.enable`을 켜 두므로(엔진의 `Page.disable`은 거부) 자식 문서가 커밋될 때마다 origin을 재검사한다. 허용 밖이면 **그 자식과 자손만** 분리하고 엔진에 분리 이벤트를 합성한다(`vault.child_origin_left`). 부모 page는 유지된다.
-- about:blank·빈 자식은 부모가 허용 origin일 때만 통과한다.
+- 빈 URL은 "허용"이 아니라 "모름"이다. 금고가 숨긴 채 재개하고, **문서 커밋(`Page.frameNavigated`) 뒤 `Page.getFrameTree`로 같은 URL을 다시 확인**한 경우에만 엔진에 붙인다. 시간이 지났다고 노출하지는 않는다(이전의 1.5초 폴백은 없앴다).
+- about:blank는 opener·부모가 허용 origin이고 커밋·`getFrameTree`로 확인된 경우에만 통과한다. 빈 URL과 `chrome-error://`는 확인된 것으로 치지 않는다. 허용 밖 커밋이면 계속 숨기고 `vault.popup_hidden`을 남긴다.
+- 노출 뒤에는 `Page.frameStartedNavigating`(Chrome 156)으로 **이동이 시작되는 순간** 허용 밖이면 엔진 세션을 분리한다. 그래서 커밋 전 틈이 없다. 커밋 시점 재검사(`frameNavigated`)도 그대로 둔다.
+- 엔진은 팝업을 `waitingForDebugger: false`(실행 중)로 받는다. 사용자가 연 탭은 재개만 하고 엔진에 알리지 않는다(`vault.user_tab_hidden`).
+
+자식(OOPIF iframe) 세션도 같은 원칙을 따른다.
+- 금고가 자식 세션에 `Page.enable`을 켜 둔다(엔진의 `Page.disable`은 거부). 이동 시작과 커밋마다 origin을 재검사하고, 허용 밖이면 **그 자식과 자손만** 분리한 뒤 엔진에 분리 이벤트를 합성한다(`vault.child_origin_left`). 부모 page는 유지된다.
+- 부착 url이 비면 `getFrameTree`의 커밋 URL로 판정한다. 아직 커밋 전이면 보류하고, 커밋 + `getFrameTree` 확인 뒤에만 엔진에 알린다.
+- 회귀 테스트: 3초 늦게 응답하는 허용 밖 host로 가는 팝업·iframe은 5초 동안 끝까지 비노출이다. 빈 팝업이 허용 밖으로 이동을 시작하면 응답 전에 분리된다. 허용 host로 늦게 커밋되는 팝업은 커밋 뒤 노출된다.
 
 ## 3. 최소 메서드 집합(관측)
 

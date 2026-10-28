@@ -27,8 +27,8 @@ export interface TargetState {
   win?: SecretWindow;
   /** 금고가 입력한 노드·human:secret 대상 노드. */
   secretBackendIds: Set<number>;
-  /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고 첫 문서 커밋의 origin으로 노출을 정한다. */
-  pendingPopup?: NodeJS.Timeout;
+  /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고, 문서 커밋 + getFrameTree로 허용이 확인될 때만 노출한다. */
+  pendingPopup?: boolean;
 }
 
 interface EngineSession {
@@ -41,11 +41,8 @@ interface EngineSession {
   /** 자식 세션의 현재 문서 URL. */
   url?: string;
   /** 목적지를 모르는 자식 iframe: 금고가 재개하고 첫 커밋 origin을 본 뒤 엔진에 알린다(그 전까지 엔진은 모른다). */
-  pending?: { attach: CdpMessage; timer: NodeJS.Timeout };
+  pending?: { attach: CdpMessage };
 }
-
-/** 목적지 없는 팝업(window.open(''))을 about:blank로 노출하기까지 기다리는 시간. */
-const POPUP_DECIDE_MS = 1500;
 
 interface PendingEngineRequest {
   engineId: number;
@@ -321,17 +318,9 @@ export class Relay {
   private async decide(t: TargetState): Promise<void> {
     const opener = t.openerId ? this.targets.get(t.openerId) : undefined;
     if (t.type === 'page' && opener?.exposed) {
-      if (t.url && t.url !== 'about:blank') {
-        if (urlAllowed(t.url, this.policy.allowedHosts)) await this.expose(t);
-        else await this.hidePopup(t);
-        return;
-      }
+      // fail-closed: 부착 정보의 url·시간 경과로는 노출하지 않는다. 빈 URL은 "모름"이다.
+      t.pendingPopup = true;
       await this.conn.send('Page.enable', {}, t.vaultSession).catch(() => {});
-      t.pendingPopup = setTimeout(() => {
-        // 이동이 없는 빈 팝업: opener가 허용 origin이므로 about:blank로 노출한다(이후 이동은 커밋마다 재집행).
-        t.pendingPopup = undefined;
-        if (this.targets.has(t.targetId) && urlAllowed(t.url, this.policy.allowedHosts) && opener.exposed) void this.expose(t);
-      }, POPUP_DECIDE_MS);
       await this.resume(t);
       return;
     }
@@ -339,9 +328,29 @@ export class Relay {
     await this.resume(t);
   }
 
-  private async hidePopup(t: TargetState): Promise<void> {
-    this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
-    await this.resume(t);
+  /**
+   * 확인된 문서 URL만 허용한다. 빈 URL·Chrome 오류 페이지는 목적지를 알 수 없으므로 거부하고,
+   * about:blank는 opener·부모가 허용 origin일 때만 통과한다.
+   */
+  private confirmedAllowed(url: string, parentUrl: string): boolean {
+    if (!url || url.startsWith('chrome-error://')) return false;
+    if (url === 'about:blank') return !!parentUrl && parentUrl !== 'about:blank' && urlAllowed(parentUrl, this.policy.allowedHosts);
+    return urlAllowed(url, this.policy.allowedHosts);
+  }
+
+  /** 팝업 문서 커밋: getFrameTree로 현재 문서를 다시 확인한 뒤에만 노출한다. 허용 밖이면 계속 숨긴다. */
+  private async confirmPopup(t: TargetState, committedUrl: string): Promise<void> {
+    const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession).catch(() => null);
+    if (!t.pendingPopup || !this.targets.has(t.targetId)) return;
+    const current = String(tree?.frameTree.frame.url ?? '');
+    if (current !== committedUrl) return; // 그사이 다시 이동했다: 다음 커밋에서 판정
+    const opener = t.openerId ? this.targets.get(t.openerId) : undefined;
+    if (opener?.exposed && this.confirmedAllowed(current, opener.url)) {
+      t.pendingPopup = false;
+      await this.expose(t);
+    } else {
+      this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
+    }
   }
 
   private async resume(t: TargetState): Promise<void> {
@@ -375,14 +384,13 @@ export class Relay {
       const frame = p.frame as Json;
       if (!frame.parentId) {
         t.url = String(frame.url ?? '');
-        if (t.pendingPopup) {
-          clearTimeout(t.pendingPopup);
-          t.pendingPopup = undefined;
-          if (urlAllowed(t.url, this.policy.allowedHosts)) void this.expose(t);
-          else void this.hidePopup(t);
-        } else if (t.exposed && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
+        if (t.pendingPopup) void this.confirmPopup(t, t.url);
+        else if (t.exposed && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
       if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
+    } else if (msg.method === 'Page.frameStartedNavigating') {
+      // 커밋 전에 막는다: 노출 타깃의 메인 프레임이 허용 밖으로 이동을 시작하면 그 시점에 엔진 세션을 분리한다.
+      if (t.exposed && p.frameId === t.mainFrameId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) void this.originLeft(t);
     } else if (msg.method === 'Page.frameDetached') {
       if (t.win && p.frameId === t.win.frameId) this.endWindow(t, 'detached');
     }
@@ -430,6 +438,14 @@ export class Relay {
     if (!es || !t || !t.exposed) return null;
     const p = (msg.params ?? {}) as Json;
     const st = this.stateOf(t);
+    // 자식 세션의 이동 시작: 허용 밖이면 커밋 전에 그 자식만 분리한다.
+    if (es.child && msg.method === 'Page.frameStartedNavigating') {
+      if (p.frameId === es.childTargetId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) {
+        this.revokeChild(msg.sessionId!, es);
+        return null;
+      }
+      return es.pending ? null : msg;
+    }
     // 자식 세션(OOPIF)의 문서 커밋: 그 자식만 재검사·분리한다. 부모 page의 originLeft를 부르지 않는다.
     if (es.child && msg.method === 'Page.frameNavigated') {
       const frame = p.frame as Json;
@@ -439,7 +455,7 @@ export class Relay {
           this.revokeChild(msg.sessionId!, es);
           return null;
         }
-        if (es.pending) return this.releasePendingChild(es);
+        if (es.pending) return this.releasePendingChild(msg.sessionId!, es);
       }
       return es.pending ? null : msg;
     }
@@ -516,11 +532,7 @@ export class Relay {
     for (let i = 0; i < drop.length; i++) {
       for (const [k, v] of this.engineSessions) if (v.parent === drop[i] && !drop.includes(k)) drop.push(k);
     }
-    for (const k of drop) {
-      const d = this.engineSessions.get(k);
-      if (d?.pending) clearTimeout(d.pending.timer);
-      this.engineSessions.delete(k);
-    }
+    for (const k of drop) this.engineSessions.delete(k);
     this.log.event(es.pending ? 'vault.child_hidden' : 'vault.child_origin_left', { count: drop.length });
     // 엔진이 몰랐던(보류 중) 자식이면 분리 이벤트를 만들지 않는다.
     if (!es.pending && es.parent && this.engineSessions.has(es.parent)) {
@@ -529,13 +541,21 @@ export class Relay {
     void this.conn.send('Target.detachFromTarget', { sessionId: sid }, es.parent).catch(() => {});
   }
 
-  private releasePendingChild(es: EngineSession): CdpMessage | null {
+  /** 보류 자식의 커밋: getFrameTree로 다시 확인해 허용이 확정될 때만 엔진에 부착을 알린다(fail-closed). */
+  private async releasePendingChild(sid: string, es: EngineSession): Promise<CdpMessage | null> {
     if (!es.pending) return null;
-    clearTimeout(es.pending.timer);
+    const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, sid).catch(() => null);
+    if (!es.pending || this.engineSessions.get(sid) !== es) return null;
+    const current = String(tree?.frameTree.frame.url ?? '');
+    if (current !== es.url) return null; // 다시 이동 중: 다음 커밋에서 판정
+    if (!this.confirmedAllowed(current, this.sessionUrl(es.parent))) {
+      this.revokeChild(sid, es);
+      return null;
+    }
     const attach = es.pending.attach;
     es.pending = undefined;
     const p = attach.params as Json;
-    return { ...attach, params: { ...p, targetInfo: { ...(p.targetInfo as Json), url: es.url ?? '' } } };
+    return { ...attach, params: { ...p, targetInfo: { ...(p.targetInfo as Json), url: current } } };
   }
 
   /** page 수준 자동 부착의 자식: 워커와 허용 origin iframe만 엔진에 넘긴다. 이후 이동은 금고가 감시한다. */
@@ -561,20 +581,15 @@ export class Relay {
       const committed = String(tree?.frameTree.frame.url ?? '');
       if (committed && committed !== 'about:blank') {
         es.url = committed;
-        if (!this.childUrlAllowed(committed, parent)) {
+        if (!this.confirmedAllowed(committed, this.sessionUrl(parent))) {
           this.engineSessions.delete(child);
           return this.hideChild(msg, child, type);
         }
         return { ...msg, params: { ...p, targetInfo: { ...info, url: committed } } };
       }
-      // Chrome은 OOPIF 부착 때 url을 비워 준다(실측). 목적지를 알 때까지 엔진에 알리지 않고 금고가 재개한다.
-      es.pending = {
-        attach: { ...msg, params: { ...p, waitingForDebugger: false } },
-        timer: setTimeout(() => {
-          // 이동 없는 빈 자식(부모가 허용 origin): about:blank로 알린다. 이후 이동은 커밋마다 재검사.
-          if (this.engineSessions.get(child) === es && es.pending) this.enqueue(async () => this.releasePendingChild(es));
-        }, POPUP_DECIDE_MS),
-      };
+      // 목적지를 모른다(빈 URL, 또는 진행 중 이동 앞의 about:blank). 엔진에 알리지 않고 금고가 재개한 뒤
+      // 문서 커밋 + getFrameTree로 허용이 확인될 때만 알린다. 시간이 지나도 노출하지 않는다(fail-closed).
+      es.pending = { attach: { ...msg, params: { ...p, waitingForDebugger: false } } };
       await this.conn.send('Runtime.runIfWaitingForDebugger', {}, child).catch(() => {});
       return null;
     }

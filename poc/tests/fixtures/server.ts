@@ -47,6 +47,12 @@ export async function startFixture(): Promise<Fixture> {
           return html(page('spa', `
 <input id="pw" type="password">
 <button id="go" onclick="fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pw:document.getElementById('pw').value})}).then(()=>{document.body.insertAdjacentHTML('beforeend','<p id=ok>welcome</p>')})">로그인</button>`));
+        case '/slow': {
+          // 응답을 늦춰 "이동은 시작됐지만 아직 커밋 전" 상태를 만든다(fail-closed 시험).
+          const ms = Math.min(Number(url.searchParams.get('ms') ?? '3000'), 10_000);
+          setTimeout(() => html(page('slow', '<p id="slow">slow</p>')), ms);
+          return;
+        }
         case '/popup':
           return html(page('popup', `<button id="open" onclick="window.open('/login')">open</button>`));
         case '/away':

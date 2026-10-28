@@ -34,6 +34,13 @@ function click(h: ApprovalWindowHandle, down: { x: number; y: number }, up = dow
   h.win.webContents.sendInputEvent({ type: 'mouseUp', x: up.x, y: up.y, button: 'left', clickCount: 1 });
 }
 const settle = <T>(p: Promise<T>, ms: number) => Promise.race([p, sleep(ms).then(() => 'pending' as const)]);
+/**
+ * 무장 기준은 show(그리고 focus)다. macOS에서 백그라운드 앱 창의 focus()는 focus 이벤트를 늦게 내거나 내지 않아
+ * 무장을 임의 시점에 다시 시작시키므로, e2e는 focus를 부르지 않고 show 기준으로만 시험한다.
+ */
+async function arm(): Promise<void> {
+  await sleep(700);
+}
 
 async function approvalTests(): Promise<void> {
   const key = new Uint8Array(randomBytes(32));
@@ -41,8 +48,6 @@ async function approvalTests(): Promise<void> {
   const h = openApprovalWindow(card(), key);
   await waitShown(h);
   check('승인 창은 포커스를 빼앗지 않는다(showInactive)', !h.win.isFocused(), { focused: h.win.isFocused() });
-  h.win.focus(); // 무장 타이머 재시작
-  await sleep(50);
   click(h, center(LAYOUT.approve));
   check('표시·활성화 후 600ms 안의 클릭 무시', (await settle(h.result, 150)) === 'pending');
   await sleep(700);
@@ -63,15 +68,13 @@ async function approvalTests(): Promise<void> {
   // 2) Alt+Y 조합키 승인, Esc 거절
   const h2 = openApprovalWindow(card(), key);
   await waitShown(h2);
-  h2.win.focus();
-  await sleep(700);
+  await arm();
   h2.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Y', modifiers: ['alt'] });
   const r2 = await h2.result;
   check('Alt+Y = approve', r2.decision === 'approve' && r2.via === 'key', r2);
   const h3 = openApprovalWindow(card(), key);
   await waitShown(h3);
-  h3.win.focus();
-  await sleep(700);
+  await arm();
   click(h3, center(LAYOUT.deny));
   const r3 = await h3.result;
   check('거절 버튼 = deny, LocalApproval 없음', r3.decision === 'deny' && r3.approval === null, r3.decision);

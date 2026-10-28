@@ -352,8 +352,36 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     assert.equal(leaked.length, 0, '허용 밖 자식 커밋 이벤트를 엔진에 넘기지 않는다');
   });
 
+  it('지연 이동으로 허용 밖 host에 닿는 팝업·iframe은 끝까지 노출되지 않는다(fail-closed)', async () => {
+    const mark = eng.events.length;
+    const attachesSince = () => eng.events.slice(mark).filter((e) => e.method === 'Target.attachedToTarget');
+    await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/slow?ms=3000') && 1`);
+    await eng.evaluate(sid, `document.body.insertAdjacentHTML('beforeend', '<iframe id=slowbad src="http://evil.localhost:${port}/slow?ms=3000"></iframe>')`);
+    await sleep(5000); // 응답 지연(3초)과 이전 폴백 시간(1.5초)을 모두 넘긴다
+    assert.deepEqual(attachesSince().map((e) => (e.params!.targetInfo as { type: string; url: string }).url), [], '지연된 허용 밖 팝업·iframe 비노출');
+    assert.ok(h.log.lines.some((l) => l.includes('vault.popup_hidden')));
+    // 빈 팝업은 about:blank 커밋 + opener 허용 확인 뒤 노출되지만, 허용 밖으로 이동을 "시작"하면 커밋 전에 분리된다.
+    const m2 = eng.events.length;
+    await eng.evaluate(sid, `window.__w = window.open(''); 1`);
+    const blank = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && !e.sessionId, m2, 5000);
+    assert.equal((blank.params!.targetInfo as { url: string }).url, 'about:blank');
+    const blankSid = String(blank.params!.sessionId);
+    await eng.send('Page.enable', {}, blankSid);
+    await eng.evaluate(sid, `window.__w.location.href = 'http://evil.localhost:${port}/slow?ms=3000'; 1`);
+    const started = Date.now();
+    await eng.waitEvent((e) => e.method === 'Target.detachedFromTarget' && e.params?.sessionId === blankSid, m2, 2500);
+    assert.ok(Date.now() - started < 2500, '응답(커밋) 전에 분리');
+    assert.equal(eng.events.slice(m2).filter((e) => e.method === 'Page.frameNavigated' && e.sessionId === blankSid && String((e.params!.frame as { url: string }).url).includes('evil')).length, 0);
+    // 허용 origin으로 늦게 커밋되는 팝업은 커밋 확인 뒤 노출된다
+    const m3 = eng.events.length;
+    await eng.evaluate(sid, `window.open('http://localhost:${port}/slow?ms=2500') && 1`);
+    const ev = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && !e.sessionId, m3, 8000);
+    assert.equal(new URL(String((ev.params!.targetInfo as { url: string }).url)).pathname, '/slow');
+  });
+
   it('OOPIF의 문서 커밋은 부모 page를 끊지 않는다', async () => {
     const mark = eng.events.length;
+    const leftBefore = h.log.lines.filter((l) => l.includes('vault.origin_left')).length;
     await eng.evaluate(sid, `document.body.insertAdjacentHTML('beforeend', '<iframe id=ok2 src="http://localhost:${port}/child"></iframe>')`);
     const childEv = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && e.sessionId === sid && (e.params!.targetInfo as { type: string }).type === 'iframe', mark);
     const child = String(childEv.params!.sessionId);
@@ -364,7 +392,7 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     assert.equal(await eng.evaluate(child, 'location.pathname'), '/login');
     assert.equal(await eng.evaluate(sid, 'location.pathname'), '/login', '부모 page 세션 유지');
     assert.ok(!eng.events.slice(mark).some((e) => e.method === 'Target.detachedFromTarget' && e.params?.sessionId === sid));
-    assert.ok(!h.log.lines.some((l) => l.includes('vault.origin_left')), '부모에 originLeft 없음');
+    assert.equal(h.log.lines.filter((l) => l.includes('vault.origin_left')).length, leftBefore, '부모에 originLeft 없음');
   });
 });
 
