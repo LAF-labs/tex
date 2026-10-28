@@ -29,8 +29,10 @@ export interface TargetState {
   secretBackendIds: Set<number>;
   /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고, 문서 커밋 + getFrameTree로 허용이 확인될 때만 노출한다. */
   pendingPopup?: boolean;
-  /** 허용 밖 이동·커밋이 한 번이라도 확인된 팝업. 이후 어떤 이동에도 다시 노출하지 않는다(영구). */
+  /** 허용 밖 이동·커밋이 한 번이라도 확인된 타깃. 이후 어떤 이동에도 다시 노출하지 않는다(영구, 단조). */
   revoked?: boolean;
+  /** expose() 진행 중(await 사이). 이 동안의 허용 밖 이동도 거부로 기록한다. */
+  exposing?: boolean;
 }
 
 interface EngineSession {
@@ -44,6 +46,8 @@ interface EngineSession {
   url?: string;
   /** 목적지를 모르는 자식 iframe: 금고가 재개하고 첫 커밋 origin을 본 뒤 엔진에 알린다(그 전까지 엔진은 모른다). */
   pending?: { attach: CdpMessage };
+  /** 영구 분리됨(맵에서도 지운다). 진행 중인 보류 해제가 이 표시를 보고 중단한다. */
+  revoked?: boolean;
 }
 
 interface PendingEngineRequest {
@@ -357,10 +361,26 @@ export class Relay {
 
   /** 보류 팝업 영구 거부(자식의 revokeChild와 같은 규칙): 비신뢰 origin을 거친 팝업은 허용 host로 와도 노출하지 않는다. */
   private revokePopup(t: TargetState): void {
-    if (t.revoked) return;
-    t.pendingPopup = false;
+    void this.revokeTarget(t, 'vault.popup_hidden');
+  }
+
+  /**
+   * 타깃 영구 거부. 상태(revoked)를 먼저 단조롭게 기록하고(되돌리지 않음) 그 뒤에 세션을 분리한다.
+   * 진행 중인 expose()·attachEngine()은 await마다 이 표시를 다시 보고 중단한다.
+   */
+  private async revokeTarget(t: TargetState, code: 'vault.popup_hidden' | 'vault.origin_left'): Promise<void> {
+    const first = !t.revoked;
     t.revoked = true;
-    this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
+    t.pendingPopup = false;
+    t.exposed = false;
+    if (first) this.log.event(code, { target: t.targetId.slice(0, 8) });
+    const sid = t.engineSession;
+    if (sid) await this.conn.send('Target.detachFromTarget', { sessionId: sid }).catch(() => {});
+  }
+
+  /** 노출 후보(노출 중·노출 진행 중·보류 팝업)의 메인 프레임 판정. page 타깃의 메인 프레임 ID는 타깃 ID와 같다. */
+  private isMainFrame(t: TargetState, frameId: unknown): boolean {
+    return frameId === t.targetId;
   }
 
   private async resume(t: TargetState): Promise<void> {
@@ -371,22 +391,37 @@ export class Relay {
 
   private async expose(t: TargetState): Promise<void> {
     if (t.revoked) return;
-    t.exposed = true;
-    await this.conn.send('Page.enable', {}, t.vaultSession);
-    const { frameTree } = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession);
-    t.mainFrameId = String(frameTree.frame.id);
-    if (this.engineAutoAttach) await this.attachEngine(t);
+    t.exposing = true;
+    try {
+      await this.conn.send('Page.enable', {}, t.vaultSession);
+      const { frameTree } = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession);
+      t.mainFrameId = String(frameTree.frame.id);
+      if (t.revoked) return; // await 사이에 거부됨
+      t.exposed = true;
+      if (this.engineAutoAttach) await this.attachEngine(t);
+    } finally {
+      t.exposing = false;
+    }
   }
 
   private async attachEngine(t: TargetState): Promise<void> {
+    if (t.revoked) return;
     const { sessionId } = await this.conn.send<{ sessionId: string }>('Target.attachToTarget', { targetId: t.targetId, flatten: true });
+    const abandon = async () => {
+      this.engineSessions.delete(sessionId);
+      if (t.engineSession === sessionId) t.engineSession = undefined;
+      await this.conn.send('Target.detachFromTarget', { sessionId }).catch(() => {});
+    };
+    if (t.revoked) return abandon();
     t.engineSession = sessionId;
-    this.engineSessions.set(sessionId, { targetId: t.targetId, child: false });
     const { targetInfo } = await this.conn.send<{ targetInfo: Json }>('Target.getTargetInfo', { targetId: t.targetId });
-    this.enqueue(async () => ({
-      method: 'Target.attachedToTarget',
-      params: { sessionId, targetInfo: { ...targetInfo, attached: true }, waitingForDebugger: t.paused },
-    }));
+    // 모든 await 뒤 마지막 확인: 거부된 타깃의 부착을 엔진에 알리지 않는다.
+    if (t.revoked) return abandon();
+    this.engineSessions.set(sessionId, { targetId: t.targetId, child: false });
+    this.enqueue(async () => {
+      if (t.revoked || t.engineSession !== sessionId) return null;
+      return { method: 'Target.attachedToTarget', params: { sessionId, targetInfo: { ...targetInfo, attached: true }, waitingForDebugger: t.paused } };
+    });
   }
 
   private onVaultSessionEvent(t: TargetState, msg: CdpMessage): void {
@@ -396,17 +431,17 @@ export class Relay {
       if (!frame.parentId) {
         t.url = String(frame.url ?? '');
         if (t.pendingPopup) void this.confirmPopup(t, t.url);
-        else if (t.exposed && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
+        else if ((t.exposed || t.exposing) && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
       if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameStartedNavigating') {
       // 커밋 전에 막는다: 메인 프레임이 허용 밖으로 이동을 시작하면 노출 타깃은 엔진 세션을 분리하고,
       // 보류 팝업은 영구 거부한다(서버 리디렉션으로 허용 host에 커밋돼도 노출하지 않는다).
       const offsite = !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts);
-      // page 타깃의 메인 프레임 ID는 타깃 ID와 같다(보류 팝업은 아직 mainFrameId를 모른다).
-      const mainFrame = p.frameId === (t.mainFrameId ?? t.targetId);
-      if (offsite && mainFrame && t.pendingPopup) this.revokePopup(t);
-      else if (offsite && mainFrame && t.exposed) void this.originLeft(t);
+      if (offsite && this.isMainFrame(t, p.frameId)) {
+        if (t.pendingPopup) this.revokePopup(t);
+        else if (t.exposed || t.exposing) void this.originLeft(t);
+      }
     } else if (msg.method === 'Page.frameDetached') {
       if (t.win && p.frameId === t.win.frameId) this.endWindow(t, 'detached');
     }
@@ -414,11 +449,7 @@ export class Relay {
 
   /** origin 재집행(D05 §3.3): 노출 타깃이 허용 밖으로 나가면 엔진 세션을 분리한다. */
   private async originLeft(t: TargetState): Promise<void> {
-    if (!t.exposed) return;
-    t.exposed = false;
-    t.revoked = true;
-    this.log.event('vault.origin_left', { target: t.targetId.slice(0, 8) });
-    if (t.engineSession) await this.conn.send('Target.detachFromTarget', { sessionId: t.engineSession }).catch(() => {});
+    await this.revokeTarget(t, 'vault.origin_left');
   }
 
   private enqueue(produce: () => Promise<CdpMessage | null>): void {
@@ -545,6 +576,7 @@ export class Relay {
 
   /** 자식 세션과 그 자손만 엔진에서 떼어 낸다(부모 page는 유지). 엔진에는 분리 이벤트를 합성해 준다. */
   private revokeChild(sid: string, es: EngineSession): void {
+    es.revoked = true; // 상태를 먼저 기록(단조), 분리는 그 뒤
     const drop = [sid];
     for (let i = 0; i < drop.length; i++) {
       for (const [k, v] of this.engineSessions) if (v.parent === drop[i] && !drop.includes(k)) drop.push(k);
@@ -562,7 +594,7 @@ export class Relay {
   private async releasePendingChild(sid: string, es: EngineSession): Promise<CdpMessage | null> {
     if (!es.pending) return null;
     const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, sid).catch(() => null);
-    if (!es.pending || this.engineSessions.get(sid) !== es) return null;
+    if (!es.pending || es.revoked || this.engineSessions.get(sid) !== es) return null;
     const current = String(tree?.frameTree.frame.url ?? '');
     if (current !== es.url) return null; // 다시 이동 중: 다음 커밋에서 판정
     if (!this.confirmedAllowed(current, this.sessionUrl(es.parent))) {

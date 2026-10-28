@@ -44,9 +44,9 @@
       "approval": {
         "runId": "e2e",
         "gateStepId": "g1",
-        "actionHash": "818cf924f1eec157f9a7a1f0b900d7cc",
-        "exp": 1793176199160,
-        "mac": "Zz2DseqnhhfVrLBBXstK0-eNQ5sa1mlh08LGUPK_Yck"
+        "actionHash": "162b1abf300f6dffa18500d078aa6b46",
+        "exp": 1793176904217,
+        "mac": "TnVifVnFvw5M29hUqKMDlq2JqySK7m7lpYrKjXPVbAQ"
       },
       "via": "key"
     }
@@ -64,7 +64,7 @@
     "name": "docparse 샌드박스 OCR(kor) → 등록번호·대표자·개업일",
     "ok": true,
     "detail": {
-      "ms": 380,
+      "ms": 378,
       "confidence": 90,
       "fields": {
         "bizNo": "2208162517",

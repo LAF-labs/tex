@@ -43,6 +43,7 @@ chromium.connectOverCDP(vault.cdpTransport(), { noDefaults: true, isLocal: true 
 - 빈 URL은 "허용"이 아니라 "모름"이다. 금고가 숨긴 채 재개하고, **문서 커밋(`Page.frameNavigated`) 뒤 `Page.getFrameTree`로 같은 URL을 다시 확인**한 경우에만 엔진에 붙인다. 시간이 지났다고 노출하지는 않는다(이전의 1.5초 폴백은 없앴다).
 - about:blank는 opener·부모가 허용 origin이고 커밋·`getFrameTree`로 확인된 경우에만 통과한다. 빈 URL과 `chrome-error://`는 확인된 것으로 치지 않는다. 허용 밖 이동 시작(`frameStartedNavigating`, 서버 리디렉션 포함)이나 허용 밖 커밋이 한 번이라도 확인된 팝업은 **영구 거부**한다(`vault.popup_hidden`). 나중에 허용 host로 와도 노출하지 않는다. 자식의 `revokeChild`와 같은 규칙이고, 노출 뒤 `originLeft`된 타깃도 다시 노출하지 않는다.
 - 노출 뒤에는 `Page.frameStartedNavigating`(Chrome 156)으로 **이동이 시작되는 순간** 허용 밖이면 엔진 세션을 분리한다. 그래서 커밋 전 틈이 없다. 커밋 시점 재검사(`frameNavigated`)도 그대로 둔다.
+- 거부는 단조롭다. 상태(`revoked`)를 먼저 기록하고 세션은 그 뒤에 분리한다. `expose()`·`attachEngine()`은 await마다 이 표시를 다시 확인하고, 거부되면 새 엔진 세션을 분리할 뿐 `attachedToTarget`을 보내지 않는다. 메인 프레임 판정은 `mainFrameId` 유무와 무관하게 타깃 ID 기준이다(경쟁 회귀 `tests/relay-race.test.ts`).
 - 엔진은 팝업을 `waitingForDebugger: false`(실행 중)로 받는다. 사용자가 연 탭은 재개만 하고 엔진에 알리지 않는다(`vault.user_tab_hidden`).
 
 자식(OOPIF iframe) 세션도 같은 원칙을 따른다.
