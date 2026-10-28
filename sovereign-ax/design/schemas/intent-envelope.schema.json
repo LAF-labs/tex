@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/intent-envelope.schema.json",
+  "title": "Sovereign AX Offline Intent Envelope v1 (relay queue; outer wire object, with the HPKE plaintext in $defs)",
+  "$comment": "v1.3 new (AUDIT-C C-17/C-34, C/X-14). D08 §7. Only the outer object {v, kind, enc, ct} is visible to the relay. pair_id, seq and exp live inside the HPKE plaintext. HPKE Base (RFC 9180) mode, suite selected by 'v' (v=1: DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305; v=2 reserved for X-Wing hybrid). pkR = recipient desktop Q_D from a non-expired, seq-monotonic mailbox bundle (SAX-qbundle-v1); info = 'SAX-env-v1'; aad = 'SAX-env-v1' || mbx_epoch (8-byte big-endian). Binary fields are base64 here, CBOR bytes on the wire.",
+  "type": "object",
+  "required": ["v", "kind", "enc", "ct"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"enum": [1], "$comment": "suite identifier; 2 reserved for X-Wing (ML-KEM-768 + X25519)"},
+    "kind": {"const": "ENV"},
+    "enc": {"type": "string", "contentEncoding": "base64", "minLength": 43, "maxLength": 44, "$comment": "HPKE encapsulated key (32 bytes for v=1)"},
+    "ct": {"type": "string", "contentEncoding": "base64", "maxLength": 8192, "$comment": "HPKE ciphertext of CBOR(#/$defs/plaintext), padded to the D08 §6 bucket sizes before sealing"}
+  },
+  "$defs": {
+    "ulid": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "sha256hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "plaintext": {
+      "$comment": "HPKE plaintext. sig = Sign_Vm('SAX-env-v1' || canonical-CBOR(intent)). The PC verifies sig with the phone's Vm from an AIK-signed device list, then checks exp, seq window, cmd_id not yet processed, playbook whitelist and the playbook input schema.",
+      "type": "object",
+      "required": ["intent", "sig"],
+      "additionalProperties": false,
+      "properties": {
+        "intent": {"$ref": "#/$defs/intent"},
+        "sig": {"type": "string", "contentEncoding": "base64", "maxLength": 88}
+      }
+    },
+    "intent": {
+      "type": "object",
+      "required": ["pair_id", "from", "to", "seq", "iat", "exp", "cmd_id", "playbookId", "playbookMajor", "inputs", "intent_hash", "qbundle_seq"],
+      "additionalProperties": false,
+      "properties": {
+        "pair_id": {"$ref": "#/$defs/ulid"},
+        "from": {"const": "mobile"},
+        "to": {"const": "desktop"},
+        "seq": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "iat": {"type": "integer", "minimum": 0, "$comment": "seconds since epoch; shown on the start-gate card as 'N hours ago'"},
+        "exp": {"type": "integer", "minimum": 0, "$comment": "exp - iat <= queue.ttlHours * 3600 (72 h = 259200 s); validator rejects otherwise (C/X-14)"},
+        "cmd_id": {"$ref": "#/$defs/ulid"},
+        "playbookId": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$", "maxLength": 80},
+        "playbookMajor": {"type": "integer", "minimum": 0},
+        "inputs": {
+          "$comment": "Must validate against the installed playbook's input schema (playbook IR inputs). Any field marked x-secret:true in that schema is forbidden here. Counterparties are referenced by local counterparty ID (counterpartyRef) rather than business number or e-mail where the playbook allows (C-34).",
+          "type": "object",
+          "maxProperties": 24,
+          "propertyNames": {"pattern": "^[A-Za-z][A-Za-z0-9_]{0,39}$"},
+          "additionalProperties": {"$ref": "#/$defs/inputValue"}
+        },
+        "intent_hash": {"$ref": "#/$defs/sha256hex", "$comment": "SHA-256(CBOR{cmd_id, playbookId, playbookMajor, inputs}). Not the gate actionHash (which is readback-based and computed at execution time)."},
+        "qbundle_seq": {"type": "integer", "minimum": 0, "$comment": "seq of the Q_D bundle used to seal; must be >= the highest bundle seq the phone has seen"}
+      }
+    },
+    "inputValue": {
+      "anyOf": [
+        {"type": "string", "maxLength": 200},
+        {"type": "number"},
+        {"type": "boolean"},
+        {"type": "null"},
+        {"type": "object", "required": ["counterpartyRef"], "additionalProperties": false, "properties": {"counterpartyRef": {"type": "string", "maxLength": 40}}},
+        {"type": "array", "maxItems": 20, "items": {"anyOf": [{"type": "string", "maxLength": 200}, {"type": "number"}, {"type": "boolean"}]}},
+        {"$comment": "flat record, e.g. H-01 amounts {supply, tax}", "type": "object", "maxProperties": 8, "propertyNames": {"pattern": "^[a-z][A-Za-z0-9]{0,31}$"}, "additionalProperties": {"type": ["string", "number", "boolean", "null"], "maxLength": 200}},
+        {"$comment": "array of flat records, e.g. H-01 items (line_items)", "type": "array", "maxItems": 20, "items": {"type": "object", "maxProperties": 8, "propertyNames": {"pattern": "^[a-z][A-Za-z0-9]{0,31}$"}, "additionalProperties": {"type": ["string", "number", "boolean", "null"], "maxLength": 200}}}
+      ]
+    }
+  }
+}

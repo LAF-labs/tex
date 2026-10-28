@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/hotfix.schema.json",
+  "title": "Sovereign AX selector hotfix v1",
+  "description": "v1.3 (B-01, B-22, ADR-012). A hotfix may only (a) replace the `candidates` array of entries that are commits:false AND secretSlot!=true AND inputType!=password AND closeAffordance!=true AND have no readbackOf AND no fieldKey, and (b) ADD commitEndpoints. role/namePattern/frame/landmark/expect/readbackOf/fieldKey/commits/commitEffect/secretSlot/closeAffordance/navigationOnly/allowedConstants have no key here, so the schema itself rejects them; the entry-eligibility conditions are checked by the engine against the target package's selectors.json AND its IR: an entry is NOT eligible if its stable_id is used as another entry's `landmark`, or if it is referenced by decide.scope, any condition (`cond`), signFlow.rowLabel, readback.fields, signFlow.confirmTarget, or by any step inside a commit window W(X) (E-03). Lookup packages (manifest.kind=lookup) are never hotfixed. After applying, the engine re-runs the schema and V-01..V-24 on (IR + patched selectors) and rejects the hotfix on any failure. SV-01..SV-06 run only in the registry hotfix CI (the 2-of-3 signatures presuppose a pass); at runtime the client enforces R-A1, R-A2 and DENY_ACTION_NAME on every actuation (design/03-engine.md §3.1-6, the canonical statement). Signatures: 2-of-3 distinct pinned keys over JCS(this object without `signatures`).",
+  "type": "object",
+  "required": ["appliesTo", "version", "monotonic", "keyEpoch", "issuedAt", "expiresAt", "entries", "signatures"],
+  "additionalProperties": false,
+  "properties": {
+    "appliesTo": {
+      "type": "object", "required": ["id", "version", "packageDigest"], "additionalProperties": false,
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"},
+        "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+        "packageDigest": {"description": "SHA-256 of the exact signed package (manifest contentDigests) this hotfix applies to. Any other package => reject.", "type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "version": {"type": "integer", "minimum": 1},
+    "monotonic": {"type": "integer", "minimum": 1},
+    "keyEpoch": {"type": "integer", "minimum": 1},
+    "issuedAt": {"type": "string", "format": "date-time"},
+    "expiresAt": {"description": "Engine checks expiresAt - issuedAt <= 14 days; an expired hotfix is unloaded (package falls back to its own candidates).", "type": "string", "format": "date-time"},
+    "entries": {
+      "type": "object",
+      "maxProperties": 20,
+      "propertyNames": {"pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},
+      "additionalProperties": {
+        "type": "object", "required": ["candidates"], "additionalProperties": false,
+        "properties": {
+          "candidates": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "selectors.schema.json#/$defs/candidate"}}
+        }
+      }
+    },
+    "commitEndpointsAdd": {
+      "description": "Strengthening only: appended to the portal commitEndpoints union. Removal or edit of existing commitEndpoints requires a full package release.",
+      "type": "array", "maxItems": 10,
+      "items": {"$ref": "selectors.schema.json#/$defs/commitEndpoint"}
+    },
+    "reason": {"type": "string", "maxLength": 200},
+    "signatures": {
+      "type": "array", "minItems": 2, "maxItems": 3,
+      "items": {"type": "object", "required": ["keyId", "alg", "sig"], "additionalProperties": false,
+        "properties": {"keyId": {"type": "string", "maxLength": 64}, "alg": {"const": "ed25519"}, "sig": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}}
+    }
+  }
+}

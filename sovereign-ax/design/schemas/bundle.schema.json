@@ -1,15 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/bundle.schema.json",
-  "title": "Decisions bundle definition v1",
+  "title": "Decisions bundle definition v2",
+  "description": "v1.3 (B-14, B-18, B-21, B/C-03, B/C-11, B/C-20). Bundle definitions ship ONLY inside the app binary (and the gateway build); they are never distributed through the registry (BV-06). Thresholds live inside mapping conditions (no separate `thresholds` field). `sideEffectFree` was removed: `decide` is forbidden inside commit windows (V-03c), so the flag had no meaning. Loader/CI rules BV-01..BV-06 (design/03-engine.md §3.2) run after this schema: BV-01 last mapping rule is {outcome: unknown, when: always}; BV-02 refusal monotonicity (substituting onRefusal can never newly reach a kind:progress outcome); BV-03 thresholds: pre_commit/post_commit progress >= 0.95, safety stop outcomes <= 0.80, other progress >= 0.85; BV-04 every choice has unknown or none_of_these; BV-05 reservedOutcomes rows precede all progress rows; BV-06 app-binary only, digest allowlist embedded in the app.",
   "type": "object",
-  "required": ["id", "version", "digest", "sideEffectFree", "questions", "mapping", "reservedOutcomes", "maxInputBytes"],
+  "required": ["id", "version", "digest", "riskClass", "outcomes", "questions", "mapping", "reservedOutcomes", "maxInputBytes"],
   "additionalProperties": false,
   "properties": {
     "id": {"type": "string", "pattern": "^[a-z_]+$"},
     "version": {"type": "integer", "minimum": 1},
     "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-    "sideEffectFree": {"const": true},
+    "riskClass": {"enum": ["pre_commit", "post_commit", "safety", "routing", "general"]},
+    "outcomes": {
+      "description": "Every outcome named in mapping must appear here with its direction. Injection-filter predicates' refusals count as 'instruction present'.",
+      "type": "array", "minItems": 2, "uniqueItems": true,
+      "items": {"type": "object", "required": ["name", "kind"], "additionalProperties": false,
+        "properties": {"name": {"type": "string", "pattern": "^[a-z_]+$"}, "kind": {"enum": ["progress", "conservative", "reserved", "unknown"]}}},
+      "contains": {"type": "object", "properties": {"name": {"const": "unknown"}, "kind": {"const": "unknown"}}, "required": ["name", "kind"]}
+    },
+    "needsAmounts": {"description": "Only bundles with true may receive amounts unmasked (D06 [AMT_n] otherwise).", "type": "boolean", "default": false},
     "maxInputBytes": {"type": "integer", "minimum": 1024, "maximum": 16384},
     "prefix": {"type": "object", "required": ["stringsKey", "minTokens"], "additionalProperties": false, "properties": {"stringsKey": {"type": "string"}, "minTokens": {"type": "integer", "minimum": 1024}}},
     "questions": {
@@ -20,7 +29,9 @@
           "type": {"enum": ["predicate", "choice", "score"]},
           "name": {"type": "string", "pattern": "^[a-z_]+$"},
           "instructions": {"type": "string", "maxLength": 400},
-          "choices": {"type": "array", "minItems": 2, "maxItems": 255, "items": {"type": "object", "required": ["value", "description"], "additionalProperties": false, "properties": {"value": {"type": "string", "pattern": "^[a-z0-9_.]+$"}, "description": {"type": "string", "maxLength": 200}}}},
+          "choices": {"type": "array", "minItems": 2, "maxItems": 26, "$comment": "<= 26 for System One compatibility (D04 §1, ADR-015); bundle CI checks the same bound",
+            "items": {"type": "object", "required": ["value", "description"], "additionalProperties": false, "properties": {"value": {"type": "string", "pattern": "^[a-z0-9_.]+$"}, "description": {"type": "string", "maxLength": 200}}},
+            "contains": {"type": "object", "properties": {"value": {"enum": ["unknown", "none_of_these"]}}, "required": ["value"]}},
           "levels": {"type": "array", "minItems": 2, "maxItems": 10, "items": {"type": "object", "required": ["label", "description"], "additionalProperties": false, "properties": {"label": {"type": "string"}, "description": {"type": "string"}}}},
           "onRefusal": {"enum": ["assume_true", "assume_false", "unknown"]}
         },
@@ -31,7 +42,7 @@
       }
     },
     "mapping": {
-      "description": "Ordered rules; first match wins; last rule MUST be {outcome: unknown, when: always}",
+      "description": "Ordered rules; first match wins; last rule MUST be {outcome: unknown, when: always} (BV-01).",
       "type": "array", "minItems": 1,
       "items": {
         "type": "object", "required": ["outcome", "when"], "additionalProperties": false,
@@ -45,7 +56,8 @@
             ]
           }
         }
-      }
+      },
+      "contains": {"type": "object", "properties": {"outcome": {"const": "unknown"}, "when": {"const": "always"}}, "required": ["outcome", "when"]}
     },
     "reservedOutcomes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z_]+$"}}
   },

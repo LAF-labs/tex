@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/manifest.schema.json",
+  "title": "Sovereign AX playbook package manifest v1",
+  "description": "v1.3 (B-08, B-14/BV-06, B-22). Replaces the single SIGNATURE file: `signatures` are 2-of-3 Ed25519 signatures by distinct app-pinned registry keys over JCS(manifest without `signatures`); manifest binds the other package files through `contentDigests`. bundlesUsed is a reference only: bundle definitions ship inside the app binary and the digest must match the app-embedded allowlist (BV-06), otherwise the package is not loaded. lookupsUsed pins the verify lookup sub-playbooks (V-22) and their digests enter packageDigest (design/03-engine.md §3).",
+  "type": "object",
+  "required": ["id", "version", "kind", "portal", "title", "profileKinds", "engineRange", "domains", "effects", "bundlesUsed", "lookupsUsed", "contentDigests", "createdAt", "signatures"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"},
+    "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "kind": {"description": "`lookup` = read-only verify sub-playbook (V-22).", "enum": ["playbook", "lookup"]},
+    "portal": {"enum": ["hometax", "gov24", "sminfo", "insure4", "iros", "public_api"]},
+    "title": {"type": "string", "pattern": "^[a-z][A-Za-z0-9_.]*$", "description": "strings.ko.json key"},
+    "profileKinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["personal", "business"]}},
+    "engineRange": {"type": "string", "maxLength": 40, "pattern": "^[0-9.<>=^~ |x*-]+$"},
+    "domains": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^(\\*\\.)?[a-z0-9-]+(\\.[a-z0-9-]+)+$"}},
+    "effects": {"type": "array", "uniqueItems": true, "items": {"enum": ["issue_document", "send", "sign", "pay"]}},
+    "bundlesUsed": {
+      "type": "array", "uniqueItems": true,
+      "items": {"type": "object", "required": ["id", "ver", "digest"], "additionalProperties": false,
+        "properties": {"id": {"type": "string", "pattern": "^[a-z_]+$"}, "ver": {"type": "integer", "minimum": 1}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    "lookupsUsed": {
+      "type": "array", "uniqueItems": true,
+      "items": {"type": "object", "required": ["id", "version", "digest"], "additionalProperties": false,
+        "properties": {"id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"}, "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"}, "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}
+    },
+    "contentDigests": {
+      "type": "object", "required": ["playbook", "selectors", "strings"], "additionalProperties": false,
+      "properties": {
+        "playbook": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "selectors": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "strings": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "createdAt": {"type": "string", "format": "date-time"},
+    "signatures": {
+      "type": "array", "minItems": 2, "maxItems": 3,
+      "items": {"type": "object", "required": ["keyId", "alg", "sig"], "additionalProperties": false,
+        "properties": {"keyId": {"type": "string", "maxLength": 64}, "alg": {"const": "ed25519"}, "sig": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}}
+    }
+  },
+  "allOf": [
+    {"if": {"properties": {"kind": {"const": "lookup"}}},
+     "then": {"properties": {"effects": {"maxItems": 0}, "bundlesUsed": {"maxItems": 0}, "lookupsUsed": {"maxItems": 0}}}}
+  ]
+}
