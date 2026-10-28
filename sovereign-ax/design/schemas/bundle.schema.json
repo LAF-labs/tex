@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/bundle.schema.json",
+  "title": "Decisions bundle definition v1",
+  "type": "object",
+  "required": ["id", "version", "digest", "sideEffectFree", "questions", "mapping", "reservedOutcomes", "maxInputBytes"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z_]+$"},
+    "version": {"type": "integer", "minimum": 1},
+    "digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "sideEffectFree": {"const": true},
+    "maxInputBytes": {"type": "integer", "minimum": 1024, "maximum": 16384},
+    "prefix": {"type": "object", "required": ["stringsKey", "minTokens"], "additionalProperties": false, "properties": {"stringsKey": {"type": "string"}, "minTokens": {"type": "integer", "minimum": 1024}}},
+    "questions": {
+      "type": "array", "minItems": 1, "maxItems": 40,
+      "items": {
+        "type": "object", "required": ["type", "name", "instructions", "onRefusal"], "additionalProperties": false,
+        "properties": {
+          "type": {"enum": ["predicate", "choice", "score"]},
+          "name": {"type": "string", "pattern": "^[a-z_]+$"},
+          "instructions": {"type": "string", "maxLength": 400},
+          "choices": {"type": "array", "minItems": 2, "maxItems": 255, "items": {"type": "object", "required": ["value", "description"], "additionalProperties": false, "properties": {"value": {"type": "string", "pattern": "^[a-z0-9_.]+$"}, "description": {"type": "string", "maxLength": 200}}}},
+          "levels": {"type": "array", "minItems": 2, "maxItems": 10, "items": {"type": "object", "required": ["label", "description"], "additionalProperties": false, "properties": {"label": {"type": "string"}, "description": {"type": "string"}}}},
+          "onRefusal": {"enum": ["assume_true", "assume_false", "unknown"]}
+        },
+        "allOf": [
+          {"if": {"properties": {"type": {"const": "choice"}}}, "then": {"required": ["choices"]}},
+          {"if": {"properties": {"type": {"const": "score"}}}, "then": {"required": ["levels"]}}
+        ]
+      }
+    },
+    "mapping": {
+      "description": "Ordered rules; first match wins; last rule MUST be {outcome: unknown, when: always}",
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "required": ["outcome", "when"], "additionalProperties": false,
+        "properties": {
+          "outcome": {"type": "string", "pattern": "^[a-z_]+$"},
+          "when": {
+            "oneOf": [
+              {"const": "always"},
+              {"type": "object", "required": ["all"], "additionalProperties": false, "properties": {"all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/pred"}}}},
+              {"type": "object", "required": ["any"], "additionalProperties": false, "properties": {"any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/pred"}}}}
+            ]
+          }
+        }
+      }
+    },
+    "reservedOutcomes": {"type": "array", "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z_]+$"}}
+  },
+  "$defs": {
+    "pred": {
+      "oneOf": [
+        {"type": "object", "required": ["predicate", "gte"], "additionalProperties": false, "properties": {"predicate": {"type": "string"}, "gte": {"type": "number", "minimum": 0, "maximum": 1}}},
+        {"type": "object", "required": ["predicate", "lte"], "additionalProperties": false, "properties": {"predicate": {"type": "string"}, "lte": {"type": "number", "minimum": 0, "maximum": 1}}},
+        {"type": "object", "required": ["choice", "value", "confidenceGte"], "additionalProperties": false, "properties": {"choice": {"type": "string"}, "value": {"type": "string"}, "confidenceGte": {"type": "number", "minimum": 0, "maximum": 1}}},
+        {"type": "object", "required": ["choice", "valueIn", "confidenceGte"], "additionalProperties": false, "properties": {"choice": {"type": "string"}, "valueIn": {"type": "array", "items": {"type": "string"}}, "confidenceGte": {"type": "number", "minimum": 0, "maximum": 1}}},
+        {"type": "object", "required": ["choiceProbability", "value", "gte"], "additionalProperties": false, "properties": {"choiceProbability": {"type": "string"}, "value": {"type": "string"}, "gte": {"type": "number", "minimum": 0, "maximum": 1}}}
+      ]
+    }
+  }
+}

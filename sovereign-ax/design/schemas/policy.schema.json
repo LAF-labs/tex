@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/policy.schema.json",
+  "title": "Signed operating policy v1 (no fields exist for UA/fingerprint/webdriver/proxy/captcha automation)",
+  "type": "object",
+  "required": ["version", "monotonic", "expiresAt", "pace", "limits", "retries", "run", "cooldown", "daemon", "portalMode", "captchaRelay", "browser"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"type": "string", "pattern": "^\\d{4}\\.\\d{2}(\\.\\d+)?$"},
+    "monotonic": {"type": "integer", "minimum": 1},
+    "expiresAt": {"type": "string", "format": "date-time", "description": "<= 14 days after issue; expired policy => all portals postprocess"},
+    "pace": {"type": "object", "required": ["interactive", "daemon"], "additionalProperties": false,
+      "properties": {"interactive": {"$ref": "#/$defs/pace"}, "daemon": {"$ref": "#/$defs/pace"}}},
+    "limits": {"type": "object", "additionalProperties": {"$ref": "#/$defs/limits"}},
+    "retries": {"type": "object", "required": ["stepMax", "backoff", "baseMs", "capMs"], "additionalProperties": false,
+      "properties": {"stepMax": {"type": "integer", "minimum": 0, "maximum": 3}, "backoff": {"const": "equal_jitter"}, "baseMs": {"type": "integer", "minimum": 500}, "capMs": {"type": "integer", "maximum": 30000}}},
+    "run": {"type": "object", "required": ["maxActuationsPerRun", "maxWallClockMs", "commitWindowMs", "l2MaxAttempts"], "additionalProperties": false,
+      "properties": {"maxActuationsPerRun": {"type": "integer", "maximum": 300}, "maxWallClockMs": {"type": "integer", "maximum": 3600000}, "commitWindowMs": {"type": "integer", "maximum": 900000}, "l2MaxAttempts": {"type": "integer", "maximum": 2}}},
+    "cooldown": {"type": "object", "required": ["onBlockSignalHours", "onCaptchaBurst", "positiveDetectionsForCooldown"], "additionalProperties": false,
+      "properties": {"onBlockSignalHours": {"type": "integer", "minimum": 1}, "onCaptchaBurst": {"type": "object", "required": ["windowMin", "count", "action"], "additionalProperties": false, "properties": {"windowMin": {"type": "integer"}, "count": {"type": "integer"}, "action": {"enum": ["slow+notify", "pause"]}}}, "positiveDetectionsForCooldown": {"type": "integer", "minimum": 1}}},
+    "daemon": {"type": "object", "required": ["windowJitterMin", "gapBetweenRunsMin", "startupGraceMin", "retryAfterMin", "autoAllowed"], "additionalProperties": false,
+      "properties": {"windowJitterMin": {"type": "integer"}, "gapBetweenRunsMin": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "startupGraceMin": {"type": "integer"}, "retryAfterMin": {"type": "integer"}, "autoAllowed": {"const": false}}},
+    "portalMode": {"type": "object", "additionalProperties": {"enum": ["postprocess", "assisted", "auto"]}},
+    "captchaRelay": {"type": "object", "additionalProperties": {"enum": ["allowed", "disabled_until_permission", "disabled"]}},
+    "browser": {"type": "object", "required": ["remoteDebuggingPort", "webdriverSelfCheck"], "additionalProperties": false,
+      "properties": {"remoteDebuggingPort": {"const": "forbidden"}, "webdriverSelfCheck": {"const": true}}}
+  },
+  "$defs": {
+    "pace": {"type": "object", "required": ["stepDelayMs", "keyEventDelayMs", "afterNavSettleMs", "slowFactor"], "additionalProperties": false,
+      "properties": {"stepDelayMs": {"type": "array", "items": {"type": "integer", "minimum": 300}, "minItems": 2, "maxItems": 2}, "keyEventDelayMs": {"type": "integer", "minimum": 100, "maximum": 500}, "afterNavSettleMs": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "slowFactor": {"type": "number", "minimum": 1}}},
+    "limits": {"type": "object", "required": ["runsPerDayPerProfile", "irreversiblePerDayPerProfile", "runsPerLoginSession", "navigationsPerMin", "loginsPerDay", "concurrent"], "additionalProperties": false,
+      "properties": {"runsPerDayPerProfile": {"type": "integer", "maximum": 100}, "irreversiblePerDayPerProfile": {"type": "integer", "maximum": 50}, "runsPerLoginSession": {"type": "integer", "maximum": 30}, "navigationsPerMin": {"type": "integer", "maximum": 30}, "loginsPerDay": {"type": "integer", "maximum": 12}, "concurrent": {"const": 1}}}
+  }
+}

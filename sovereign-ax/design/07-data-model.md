@@ -5,7 +5,7 @@
 | 저장소 | 위치 | 암호화 | 내용 |
 |---|---|---|---|
 | 로컬 DB | `%LOCALAPPDATA%/SovereignAX/db.sqlite` (Win), `~/Library/Application Support/SovereignAX/` (mac) | `better-sqlite3-multiple-ciphers`, 32바이트 키는 키체인 | 프로필(비밀 없음), 거래처, 문서 메타, 실행·감사, 스케줄, 카운터, 설정 |
-| 서류 보관함 | 사용자 지정 폴더(기본 `문서/소버린AX/`) | 평문 PDF(사용자 소유 파일). 옵션: 보관함 폴더 자체 암호화는 OS 기능(BitLocker/FileVault) 안내. Windows Controlled Folder Access가 켜져 있으면 문서 폴더 쓰기가 차단될 수 있으므로 실패를 감지해 허용 안내 또는 `%LOCALAPPDATA%` 폴백 | `세금계산서/2026/10/…pdf`, `민원/등본/…pdf` |
+| 서류 보관함 | 기본 `%LOCALAPPDATA%\SovereignAX\vault\`(동기화·색인 대상 아님, `FILE_ATTRIBUTE_NOT_CONTENT_INDEXED`). 사용자가 문서 폴더를 고르면 OneDrive·Dropbox·Google Drive·iCloud 동기화 루트인지 감지해 **경고**(등본 PDF가 평문으로 해외 클라우드에 올라가는 것을 막기 위해) | 평문 PDF. 중기 과제: 파일별 DEK로 at-rest 암호화 + '내보내기'로 평문 사본. Controlled Folder Access 쓰기 실패 감지·안내 | `세금계산서/2026/10/…pdf`, `민원/등본/…pdf` |
 | 로컬 임시 | 앱 데이터 아래 `tmp/` | 평문, 24h 자동 삭제 | 마스킹 미리보기, 캡차 크롭(응답 즉시 삭제) |
 | 클라우드 블롭 | S3 호환 | 클라이언트 E2EE(XChaCha20-Poly1305, 파일별 DEK) | PDF 암호문 |
 | 클라우드 메타데이터 | PostgreSQL | 전송·저장 암호화(서버 측) | 종류·날짜·크기·dedup 토큰 |
@@ -113,13 +113,12 @@ CREATE TABLE remote_devices (device_id TEXT PRIMARY KEY, name TEXT, noise_pub BL
 ## 4. 보관함 파일 레이아웃
 
 ```text
-소버린AX/
-  세금계산서/2026/10/㈜거래처_20261027_12345678-12345678-12345678.pdf
-  민원/등본/홍길동_20261027.pdf
-  민원/지방세납세증명/㈜우리회사_20261027.pdf
-  .index/ (앱 전용, 숨김) — 없음. 인덱스는 DB에만
+%LOCALAPPDATA%\SovereignAX\vault\
+  tax_invoice_20261027_7K3P.pdf
+  resident_copy_20261027_Q2MZ.pdf
+  localtax_cert_20261027_9FAB.pdf
 ```
-파일명 템플릿은 플레이북 `nameTemplate`. 충돌 시 `_2` 접미. 사용자가 파일을 옮기면 DB의 `path`는 다음 스캔에서 `sha256`으로 재연결.
+**파일명에 PII를 넣지 않는다**: 기본 템플릿 `{docType}_{yyyyMMdd}_{shortId}.pdf`, 표시 이름(거래처·승인번호 등)은 DB `display_name`에 둔다. 사용자가 '내보내기'할 때만 사람이 읽는 이름으로 사본을 만든다. 사용자가 파일을 옮기면 DB의 `path`는 다음 스캔에서 `sha256`으로 재연결.
 
 ## 5. 클라우드 메타데이터 인덱스 (서버 스키마, 최소)
 
@@ -137,10 +136,12 @@ CREATE INDEX ON doc_index(account_id, profile_slot, doc_type, expires_at);
 ## 6. E2EE 블롭 봉투
 
 ```text
-blob = header || ciphertext
-header = {v:1, alg:"xchacha20poly1305", nonce(24B), wrappedDEK(KEK로 봉인), kekId}
-ciphertext = AEAD(DEK, nonce, plaintextPDF, aad=header)
+키 객체(인덱스 레코드에 저장, 블롭과 분리): wDEK = AEAD(KEK_N, DEK, nonce, ad = "SAX-dek-v1" ‖ blob_id ‖ kek_ver)
+데이터 객체: header = {v:1, alg:"xchacha20poly1305-stream", blob_id, doc_id, chunk_size}   # 불변 필드만, AAD에 포함
+            body   = 청크 STREAM(secretstream 또는 청크별 AEAD, 청크 AD = H(header) ‖ chunk_no ‖ final), Padmé 패딩
+인덱스 레코드 서명 K_meta: {doc_id, blob_id, doc_type, dates, wDEK, HMAC(K_idx, sha256(plaintext))}
 ```
+- 키 객체가 분리되어 있으므로 KEK 회전은 **wDEK 재래핑만**으로 끝나고 블롭 재암호화가 없다. 키 우선 삭제(wDEK 레코드 삭제 → 블롭 삭제)가 가능하다. AAD의 `blob_id`·`doc_id`로 서버가 블롭을 맞바꾸는 공격을 막는다.
 - 키 계층은 D08 §3을 따른다: 복구 문구(BIP39 12단어) → RK → `KEK_N`(파일 DEK 래핑), `K_idx`(dedup HMAC), `K_meta`(레코드 무결성). 기기별 랜덤 키(Noise·서명·inbox)는 복구 문구와 분리한다. 기기 추가 시 복구 문구 또는 기존 기기 승인(페어링 채널로 `KEK_N` 전달)으로 공유. KEK 회전은 DEK 재래핑 후 옛 KEK 폐기.
 - 평문 해시는 서버에 보내지 않는다. 정부 서류는 양식이 고정되고 가변 필드 엔트로피가 낮아 평문 해시가 사전 대입에 취약하다. 서버 측 dedup 태그는 `HMAC(K_idx, sha256)`만.
 - 블롭·메타데이터 저장소는 국내 리전에 둔다(개인정보보호법 제28조의8 국외이전 요건 회피).
@@ -155,3 +156,10 @@ ciphertext = AEAD(DEK, nonce, plaintextPDF, aad=header)
 
 - `pdfjs-dist`로 한글 텍스트 추출. 공백이 U+0001로 나오는 경우가 있어 정규화한다. ToUnicode 맵이 없는 PDF는 추출이 깨지므로 S13에서 부재율을 측정한다.
 - `mupdf` npm은 AGPL이라 제외. OCR 폴백은 `tesseract.js` + 번들 `kor_fast`, 그 다음 OS OCR.
+
+## 9. 평문 잔존 지점과 처리(R-B D-4·D-5)
+
+- 엔진·메인 크래시 덤프: 생성은 허용하되 **업로드 금지**(DB 키·토큰·PII 포함 가능). 금고는 덤프 비활성.
+- 전용 Chrome 프로필: 비밀번호 저장·자동완성·동기화 끔, 종료 시 캐시 정리, `keep_session` 기본 꺼짐.
+- 임시 폴더: 마스킹 미리보기·캡차 크롭은 디스크 대신 DB 암호화 컬럼(24시간 TTL)에 둔다.
+- 클립보드(후처리 복사 버튼): 30초 뒤 값이 그대로면 비운다.

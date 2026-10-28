@@ -10,8 +10,8 @@
 |---|---|---|
 | [sovereign-ax/README.md](sovereign-ax/README.md) | 기획서 입구: 원칙, 사업 범위, 확인된 외부 사실, 결정 사항 | v1.0 확정 |
 | [sovereign-ax/01-business-plan.md](sovereign-ax/01-business-plan.md) ~ [06-feasibility.md](sovereign-ax/06-feasibility.md) | 사업·서비스 기획, 아키텍처 개요, 로드맵, 접근 허용·봇탐지, 가능성 검토 | v1.0 확정 |
-| [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D14, JSON 스키마, ADR 9건 | v1.0 (검수 반영) |
-| [sovereign-ax/research/](sovereign-ax/research/) | 설계 근거 리서치 노트 R1~R5 (공식 문서·SDK·통계 출처) | 참고 |
+| [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D18, JSON 스키마 4종, ADR 11건 | v1.2 (Opus 검수 3건 반영) |
+| [sovereign-ax/research/](sovereign-ax/research/) | 리서치 노트 R1~R5(Sonnet)와 검수 보고서 REVIEW-A/B/C(Opus) | 참고 |
 
 코드는 아직 없다. 개발 착수 게이트(기획 확정 · 법률 1차 의견 · 운영기관 공문 발송)는 [04-roadmap.md](sovereign-ax/04-roadmap.md)에 있다.
 

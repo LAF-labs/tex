@@ -31,10 +31,11 @@
      ─ HKDF("audit")      → K_audit 감사 로그 체크포인트 MAC(폰과 공유)
 기기별 랜덤 키(복구 문구와 무관, 기기 밖으로 안 나감)
   Sx X25519 정적키(Noise) · Vx Ed25519 서명키(승인·체크포인트·봉투) · Qx X25519 inbox 키(HPKE, 7일 로테이션 [제안]) · Lx 로컬 래핑 키 · Px(모바일 선택) SE/StrongBox P-256
+  Kv(데스크톱 금고 전용 X25519, 비밀 봉인 수신용, Vd로 서명해 배포, 연 1회 회전) · Km(모바일 전용 X25519, 비밀 봉인 발신 인증용)
 파일별  DEK_f(랜덤 256비트) ── XChaCha20-Poly1305 ──▶ wDEK_f(KEK_N으로 래핑)
 ```
 
-규칙: 모바일은 RK·AIK 개인키를 갖지 않는다(받는 것은 KEK_N, K_meta, K_audit). 서버·릴레이는 RK 파생 키를 하나도 갖지 않는다. 계정 인증(이메일 OTP·패스키)과 암호 키는 완전히 분리한다. 비밀번호에서 키를 만들지 않는다.
+규칙: 모바일은 RK·AIK 개인키를 갖지 않는다(받는 것은 KEK_N, K_meta, K_audit). 서버·릴레이는 RK 파생 키를 하나도 갖지 않는다. **RK는 키체인에 상주시키지 않고** 파생 키만 저장한다(복구 문구로 재생성). 계정 인증(이메일 OTP·패스키)과 암호 키는 완전히 분리한다. 비밀번호에서 키를 만들지 않는다. 키마다 용도가 하나다(Noise·HPKE·봉인·서명 키를 겸용하지 않는다).
 
 ## 4. 페어링 (Noise_XXpsk0, 광학 채널 + 계정 기기 목록 + 6자리 코드)
 
@@ -46,7 +47,7 @@ QR 페이로드(바이너리, URL 아님): `SAXP|v1 | intent | 릴레이 호스�
 4. [폰→PC] `Noise_XXpsk0_25519_ChaChaPoly_BLAKE2b`, 개시자 폰, `psk=ps`, prologue=`"SAX-pair-v1"‖room_id‖릴레이‖exp`. msg2에서 폰은 `rs == Sd` 확인. msg3 페이로드: 기기 이름·플랫폼·`Vm`·푸시 토큰.
 5. [양쪽] 핸드셰이크 해시 `h`로 `SAS = HKDF(h,"SAX-SAS-v1") mod 10^6`. 폰이 6자리 표시.
 6. [PC] 사용자가 **폰의 6자리를 PC에 입력**("일치" 버튼 금지). 3회 실패·TTL 경과 시 룸 폐기. 동시에 PC는 폰의 `Sm`이 **폰이 계정에 직접 등록한 기기 키 목록**에 있는지 확인(QR 유출 공격자는 계정 로그인 없이는 통과 불가).
-7. [PC] AIK로 `Cert_M = Sign{device_id, Sm, Vm, role, not_after}` 발급 → 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, 기기 목록 버전, KEK_N, K_meta, K_audit}` 전송. 영구 우편함 `mbx_id`, `tok_read`, `tok_write` = HKDF(h, 컨텍스트)로 생성(릴레이는 페어링 룸과 우편함의 연관을 모름).
+7. [PC] AIK로 `Cert_M = Sign{device_id, Sm, Vm, Km, role, not_after}` 발급 → 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, Kv_pub(Vd 서명), 기기 목록 버전, KEK_N, K_meta, K_audit}` 전송. 영구 우편함 `mbx_id`와 **기기 범위** 토큰 `tok_read`, `tok_write` = HKDF(h, 컨텍스트‖device_id)로 생성. 릴레이는 페어링 룸과 우편함의 연관을 모르되, 남용 방지용 기기 인증 토큰과는 별도 저장소에 둔다(완전한 비연관은 아니며 D09 §4에 그렇게 적는다).
 8. [양쪽] `ps`·임시키·룸 폐기. 폰은 키를 생체 바인딩 저장소로 이동.
 
 QR을 스캔할 수 없을 때: 8~9개 BIP39 단어(88~99비트)를 `ps`로 직접 입력(Keybase KEX 방식). 새 프리미티브(PAKE)는 추가하지 않는다.
@@ -78,12 +79,12 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | type | 방향 | body | 비고 |
 |---|---|---|---|
 | `hello` | 양방향 | `{appVersion, protocol, deviceListVersion, asyncSeqMax, capabilities[]}` | 세션 시작 |
-| `cmd.run` / `cmd.abort` / `cmd.resume` | 폰→PC | `{playbookId, inputs, idempotency}` 등 | 엔진 화이트리스트·입력 스키마 검증 |
+| `cmd.run` / `cmd.abort` / `cmd.resume` | 폰→PC | `{cmdId(ULID = intentId), playbookId, inputs}` / `{runId}` | 엔진 화이트리스트·입력 스키마 검증. 큐에서 온 명령은 실행이 아니라 새 승인 요청 |
 | `run.event` | PC→폰 | D03 §9 이벤트 사용자용 서브셋 | 값 없음 |
 | `gate.request` | PC→폰 | `{runId, stepId, cardId, fields, actionHash, challenge(32B), exp(120s)}` | 카드 텍스트는 PC가 신뢰 계획값에서 렌더링 |
-| `gate.response` | 폰→PC | `{runId, stepId, approved, sig = Sign_Vm("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)}` | 생체 인증 후 서명. PC가 챌린지·exp·서명·actionHash 검증 → gateToken 발급 |
-| `human.request` | PC→폰 | `{runId, stepId, kind, prompt, image?, ttl}` | `secret`은 이미지 없음 |
-| `human.response` | 폰→PC | `{runId, stepId, value}` 또는 `{runId, stepId, sealedForVault}` | 비밀은 `sealedForVault`(금고 공개키 `crypto_box_seal`)만. 라이브 세션 전용 |
+| `gate.response` | 폰→PC | `{runId, stepId, reqId, decision, actionHash, sig = Sign_Vm("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)}` | 생체 인증 후 서명. PC가 챌린지·exp·서명·actionHash 검증 → gateToken 발급. 서명 없는 응답은 스키마에서 거부 |
+| `human.request` | PC→폰 | `{runId, stepId, reqId, kind, prompt, imageChunks?, ttl, vaultChallenge?, origin?, secretKind?}` | `secret`은 이미지 없음·`vaultChallenge` 필수. 캡차 이미지는 ≤ 200KB를 16KB 청크로 나눠 보낸다(Noise 프레임 상한 65,535B) |
+| `human.response` | 폰→PC | `{runId, stepId, reqId, value}` 또는 `{runId, stepId, reqId, sealed}` | 비밀은 `sealed`만: 폰 `Km`으로 인증 봉인(HPKE Auth 또는 `crypto_box`)해 `Kv`로 보내고 AAD = `{pair_id, runId, stepId, reqId, vaultChallenge, exp, origin, secretKind}`. `vaultChallenge`는 금고가 `human.request`에 실어 보낸 1회용 값. 라이브 세션 전용 |
 | `file.offer` | PC→폰 | `{docId, docType, bytes, blobId, wDEK}` | 본문은 블롭 경유 |
 | `query.*` | 폰→PC | 보관함 조회 | |
 | `rotate.static` / `close` / `ping` / `pong` | | | |
@@ -96,7 +97,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 - PC 부팅 → IK 세션 → 드레인: 개봉 실패는 조용히 폐기, 서명·`exp`·`seq` 윈도·`cmd_id` 미실행·화이트리스트 검사, 통과해도 **즉시 실행하지 않고 새 `gate.request`(새 챌린지)를 만든다.** `ACK{seq}` 후 서버가 삭제. 수신 상태(`max_seq`, 비트맵, 처리 `cmd_id`)는 디스크 영속.
 - 실패는 모두 무응답·정상 처리와 시간 차 최소화, 오류 코드 없음. 우편함당 실패 상한 후 연결 종료.
 
-## 8. 릴레이(영지식 우편함)
+## 8. 릴레이(내용을 볼 수 없는 우편함)
 
 - WSS. 우편함 = 32B 무작위 ID + 능력 토큰(`tok_read`/`tok_write`, 서버는 해시만 저장). 계정과 우편함의 연관을 서버가 모른다. 기기 인증 토큰은 별도 레이어(남용 방지용, 우편함 ID와 조인 불가하게 분리 저장).
 - 큐: 우편함당 50건·10MB·72시간 [제안]. 길이 패딩 버킷으로 크기 유출 완화.
@@ -106,7 +107,8 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 
 ## 9. 기기 분실·폐기·복구
 
-- 폰 분실: PC에서 기기 해제 → AIK로 서명한 폐기 목록 갱신 → 해당 `Sm` 핸드셰이크 거부, 큐 봉투 개봉 불가(Q_D 로테이션), 폰 쪽 KEK_N은 생체 보호 저장소에 있으나 KEK를 `N+1`로 회전해 재래핑.
+- 폰 분실: PC에서 기기 해제 → AIK 서명 폐기 목록 갱신 → 해당 `Sm` 핸드셰이크 거부 → **우편함 토큰 재발급**(기기 범위 토큰이므로 분실 폰의 토큰은 서버에서 즉시 무효화) → 블롭 저장소의 기기 토큰 폐기 → 큐 드레인 시 폐기 목록 재검사 → KEK를 `N+1`로 회전해 재래핑(D07 §6 키 객체 분리로 블롭 재암호화 없이 가능).
+- PC 분실·복구 문구 유출 의심: 복구 문구로 **RK·AIK를 회전**(새 문구 발급)하고 폰이 새 AIK를 승인해야 완료된다. 옛 RK 파생 키는 재래핑 후 폐기.
 - PC 분실: 폰은 발급·조회만 가능. 새 PC는 복구 문구로 RK 재생성 → AIK로 새 기기 인증서 발급 → 폰과 재페어링(의도 `복구`).
 - 복구 문구 분실: 백업 복구 불가(서버 에스크로 없음). 온보딩에서 강하게 안내하고, 기존 기기 승인으로 KEK 공유 경로를 둔다.
 
@@ -123,8 +125,9 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | QR 사진·어깨너머·원격 피싱 | 계정 기기 목록 대조(양방향), 룸 1회용·120초, 앱 내 스캐너만 |
 | 핸드셰이크·메시지·봉투 재전송 | 연결마다 새 키, `ctr` 윈도, 단조 타임스탬프, `seq`+`exp`+`cmd_id` 영속, 큐는 실행이 아니라 새 승인 |
 | 재전송 오라클 | 실패 무응답, 오류 코드 없음, 시간 차 최소화 |
-| 폰 분실 | 기기 해제·폐기 목록, 생체 바인딩, 비밀 비저장, KEK 회전 |
-| 엔진 침해로 비밀 탈취 | 비밀은 금고 키로 이중 봉인, 라이브 세션 전용 |
+| 폰 분실 | 기기 해제·폐기 목록, 기기 범위 우편함·블롭 토큰 즉시 무효화, 생체 바인딩, 비밀 비저장, KEK 회전 |
+| PC 분실·복구 문구 유출 | RK·AIK 회전 + 폰 승인, 파생 키 재래핑 |
+| 엔진 침해로 비밀 탈취 | 폰 비밀은 `Kv`로 인증 봉인 + 금고 챌린지 결속이라 엔진이 열거나 재생할 수 없다. 단 입력된 뒤 DOM 되읽기는 막지 못한다(D05 §1의 범위) |
 | 메타데이터 추론 | 패딩 버킷, 큐 크기 제한, 푸시 내용 없음 |
 | 로그 변조·절단 | 해시 체인 + 서명 체크포인트 폰 앵커 |
 

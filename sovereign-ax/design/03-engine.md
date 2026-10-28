@@ -137,9 +137,11 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 ```json
 {
   "version": "2026.10",
-  "pace": {"interactive": {"stepDelayMs": [800, 2500], "keyEventDelayMs": [90, 260], "afterNavSettleMs": [600, 1500], "slowFactor": 1.5},
-           "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": [120, 300], "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
-  "limits": {"hometax": {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 10, "runsPerLoginSession": 10, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
+  "pace": {"interactive": {"stepDelayMs": [800, 2500], "keyEventDelayMs": 150, "afterNavSettleMs": [600, 1500], "slowFactor": 1.5},
+           "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": 150, "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
+  "browser": {"remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true},
+  "captchaRelay": {"hometax": "allowed", "gov24": "disabled_until_permission"},
+  "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
              "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1}},
   "retries": {"stepMax": 3, "backoff": "equal_jitter", "baseMs": 800, "capMs": 10000},
   "run": {"maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1},
@@ -155,13 +157,16 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 - "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
 - 차단 신호(`blocked` 예약 결과, HTTP 403/429 급증, 연속 추가 인증) → 즉시 중단 + 쿨다운. **거절(refusal)에서 나온 중단은 쿨다운이 아니라 핸드오프**. 쿨다운은 양성 탐지가 2회 연속일 때.
 - 프로필은 트리거가 정하고 IR은 더 느린 쪽만 고를 수 있다. `slow`는 `slowFactor` 배수.
+- 입력: 기본 `fill()`(즉시). 키 이벤트가 필요한 칸만 **고정 간격 150ms**. 타이핑 모사·지터는 쓰지 않는다. 스텝 간 지연 범위는 요청률 제한이지 행동 모사가 아니며, 문서·UI에서 '사람 수준'이라는 표현을 쓰지 않는다('요청률 상한').
+- 캡차 중계: `policy.captchaRelay[portal]`이 허용일 때만 폰으로 보낸다(정부24는 허락 회신 전 비활성이고 공문에 중계 방식을 명시한다).
 - 텔레메트리 옵트아웃 사용자의 운영 알림은 로컬 알림으로 대체.
 
 우리가 하지 않는 것(정책 파일에 필드 자체가 없음): UA 변경, 지문 조작, `navigator.webdriver` 조작, 헤드리스, 프록시 로테이션, 타이핑 모사, 캡차 자동 입력.
 
 ## 8. 사람 입력 조율 (`human` 스텝)
 
-- 요청: `{runId, stepId, kind, prompt, imageCrop?, ttlMs, inputSpec}`. 라우팅: 데스크톱 활성(최근 입력 60초·포커스) → 로컬, 아니면 라이브 리모트 세션 → 폰, 둘 다 없으면 `Paused` + 알림.
+- 요청: `{runId, stepId, reqId, kind, prompt, imageCrop?(16KB 청크), ttlMs, inputSpec, vaultChallenge?(secret)}`. 라우팅: 데스크톱 활성(최근 입력 60초·포커스) → 로컬, 아니면 라이브 리모트 세션 → 폰(`captchaRelay` 허용 포털만), 둘 다 없으면 `Paused` + 알림.
+- 핸드오프 지연 목표는 세 구간으로 나눠 측정한다: `T_detect`(판정까지) ≤ 2초, `T_notify`(알림 도달) ≤ 3초, `T_open`(사용자가 열어 입력 시작)은 측정만. '10초'는 앞 두 구간의 합 + 사용자 반응의 목표치다.
 - `kind=secret`의 응답은 엔진에 오지 않는다(폰 → 금고 이중 봉인 → 타이피스트). `captcha`·`otp`·`manual`은 엔진이 받아 입력하고 로그에는 길이만.
 - TTL 초과 → 게이트 앞 체크포인트로 되감아 `Paused`. 자동 재요청 없음.
 
@@ -172,7 +177,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 ## 10. 동시성·브라우저
 
 - 포털당 실행 1개. Chrome 창 하나, 탭 분리.
-- Chrome 기동: `launchPersistentContext({channel:'chrome', ignoreDefaultArgs:true, args:['--remote-debugging-pipe', '--user-data-dir=<전용>', '--remote-debugging-port=0', '--remote-allow-origins=http://127.0.0.1', …최소 플래그]})`. 엔진은 파이프로, **금고 타이피스트는 127.0.0.1의 무작위 포트로** 별도 CDP 클라이언트로 붙는다(ADR-005 갱신). 포트는 실행 중에만 열리고, 같은 OS 사용자의 다른 프로세스가 붙을 수 있다는 잔여 위험은 D11 T2에 명시한다. `--no-sandbox`·`--disable-extensions` 없음. `navigator.webdriver=true` 유지(ADR-010).
+- Chrome 기동: **금고가** `channel:'chrome'`, `ignoreDefaultArgs:true`, `--remote-debugging-pipe`, 전용 `--user-data-dir`, 최소 플래그로 띄우고 파이프의 단독 소유자가 된다(ADR-005 v2, D05 §3). 엔진은 금고가 MessagePort로 중계하는 CDP를 쓴다. **`--remote-debugging-port`는 정책 상수로 금지**한다. `--no-sandbox`·`--disable-extensions` 없음. 기동 시 `navigator.webdriver === true` 자기 점검(거짓이면 자동화 거부, ADR-010). 이 플래그들은 자동화 표식을 지우는 것이 아니라 제어 채널을 여는 것이며, 문서에서 '자동화 플래그 미사용'이라 쓰지 않고 '`--enable-automation` 배너 플래그 미사용, 표식은 그대로'라고 쓴다.
 - 이중로그인 감지(`logged_out_by_other_session` 예약 결과) → 일시정지, 자동 재로그인 없음.
 - 메모리: 스냅샷은 스텝 종료 시 폐기, 캡차 이미지는 응답 후 즉시 폐기.
 
@@ -191,7 +196,7 @@ interface RunHandle { id; state(); answerGate(d: GateDecision & {actionHash}); a
 
 ## 12. 운영 수준(portalMode)과 데몬 권한
 
-- `postprocess`: Playwright 미기동, `guide` 변환(D02 §9), 파일 감시·메타데이터·만료 추적만.
+- `postprocess`: Chrome·CDP를 **전혀 띄우지 않고** 포털 URL은 `shell.openExternal`로 **사용자의 기본 브라우저**에서 연다(자동화 프로필로 열면 `webdriver=true` 세션이 되어 사용자가 매크로 이용자로 제재받을 수 있다). `guide` 변환(D02 §9), 파일 감시·메타데이터·만료 추적만. 테스트로 "이 모드에서 CDP 연결 0건"을 고정한다(D17).
 - `assisted`: 변환 IR을 재검증 후 실행. `human_commit`도 토큰·원장·verify 규칙 동일.
 - 수준 변경은 서명 정책 배포로만, 변경 시 사용자 알림.
 - 데몬: "시작 동의"(스케줄러 수준)와 "커밋 게이트"는 별개다. `auto`는 `StandingAuthorization{scheduleId, playbookId@major, docType, profileId, maxPerPeriod, expiresAt, userSignature}`에서 엔진이 **건별 단일 사용 토큰**을 만든다. `effects ⊆ {issue_document}`인 플레이북만 허용(V-14). 현실적으로 홈택스 로그인이 사람 없이 끝나지 않으므로(가상키패드·PUSH) Phase 2의 데몬은 `notify`·`semi_auto`만 출시한다(D10).

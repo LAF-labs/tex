@@ -48,7 +48,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 - 암묵 모드는 공유 `input` **전체** 끝에 브레이크포인트를 걸어 매번 달라지는 화면 텍스트까지 쓰기 요율($0.125)로 과금한다. 따라서 **`prompt_cache_options.mode = "explicit"`**로 두고, 고정 접두(규칙·라벨 정의·플레이북 사전)를 담은 developer 메시지의 `input_text` 블록 끝에만 `prompt_cache_breakpoint`를 건다. 질문 `instructions`에는 브레이크포인트를 걸 수 없다.
 - 고정 접두는 1,024토큰 이상이어야 캐시된다. 번들별 접두 길이를 1,100~2,000토큰으로 설계하고 사용자 정보는 넣지 않는다(전 사용자 공유).
-- `prompt_cache_key`: 게이트웨이가 `pb:<playbookId>:v<major>:shard<n>`(샤드 0~3, 기기 ID 해시)로 부여한다. 계정 접두는 붙이지 않는다(접두에 사용자 정보가 없으므로 전 사용자 공유가 안전하고 적중률이 높다). D09의 게이트웨이 통제 명세도 같은 규칙이다.
+- `prompt_cache_key`: 게이트웨이가 **계정별로 격리**해 부여한다(`acct:<HMAC(계정)>:pb:<playbookId>:v<major>`). 계정 간 공유 캐시는 `usage.cached_tokens`가 클라이언트에 보이는 한 적중 여부 오라클이 될 수 있고, 명시 모드가 회귀로 빠지면 화면 텍스트가 공유 네임스페이스에 캐시된다. 적중률 손해는 호출당 센트 미만이라 감수한다(ADR-009·D09와 일치). 클라이언트는 캐시 관련 필드를 보낼 수 없다.
 - 효과는 호출당 센트 미만이다(접두 2,000·화면 1,500·질문 1,000토큰 가정: 비캐시 $0.00045 → 명시 적중 $0.00027). **캐시는 최적화 항목이지 설계의 핵심 변수가 아니다.** 비용표(§6)는 보수적으로 캐시 효과를 0으로 두고 계산한다.
 - 확인: `usage.input_tokens_details.cached_tokens`·`cache_write_tokens`를 게이트웨이가 계량하고, 적중률 대시보드에 올린다.
 
@@ -61,11 +61,13 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `popup_class_v1` | 모달 분류(닫기 가능 여부) | choice `popup`: {notice_dismissable, error, session_expired, security_warning, captcha, consent_required, unknown} + predicate `asks_to_proceed_or_issue` | `security_warning`(≥.80, 예약 blocked로 승격) > `captcha` > `session_expired` > `consent_required` > `error` > `notice_dismissable`(conf≥.85 ∧ `asks_to_proceed_or_issue`≤.10) > `unknown` | — |
 | `form_ready_v2` | 입력 완료 여부(비가역 직전) | predicate `required_fields_filled`, `validation_error_visible` | `ready` ← 첫째≥.95 ∧ 둘째≤.05 (+ readback 일치는 엔진이 별도 확인) · `validation_error` ← 둘째≥.85 · `unknown` | — |
 | `issue_result_v2` | 제출 직후 화면(보조 신호; 확정은 `verify` 조회) | choice `result`: {issued, pending_auth, duplicate, rejected, unknown} | 각 conf≥.95, `unknown` | — |
-| `intent_route_v1` | 대화 의도 → 플레이북 | choice `playbook`: 카탈로그 ID 15개 + `none_of_these` + predicate `mentions_tax_advice` | `refuse_advice` ← `mentions_tax_advice≥.60` · 플레이북 ID ← conf≥.80 · `unknown` | — |
-| `amount_parse_check_v1` | 파서 결과(공급가·세액·과세유형 가정 포함)가 사용자 문장과 맞는지 | predicate `parse_matches_user_text` | `ok` ≥.90 · `mismatch` ≤.10 · `unknown` | — |
+| `intent_route_v1` | 대화 의도 → 플레이북 | choice `playbook`: 카탈로그 ID 15개 + `none_of_these` + predicate `mentions_tax_advice` | `refuse_advice` ← `mentions_tax_advice≥.75 ∧ playbook∈{none_of_these, unknown}` · 플레이북 ID ← conf≥.80(세무 질문이 섞이면 실행 + '세무 판단은 하지 않습니다' 고지) · `unknown` | — |
+| `amount_parse_check_v1` | 파서 결과(공급가·세액 분리, 사용자가 고른 VAT 포함/별도 해석)가 사용자 문장과 맞는지 | predicate `parse_matches_user_text` | `ok` ≥.90 · `mismatch` ≤.10 · `unknown` | — |
 | `doc_meta_check_v1` | 추출 발급일·유효기간 일치 | predicate 2개 | `ok` 둘 다 ≥.90 · `mismatch` · `unknown` | — |
 
 - 되묻기 필요 여부(`needs_clarification`)는 모델 질문이 아니라 `intent_fill` 결과에 대한 **로컬 결정적 검사**(필수 입력 누락)로 한다(질문 독립성 규약).
+- **과세 유형(과세·영세·면세)은 모델이 추론하지 않는다.** 사용자가 확인 카드에서 고르고 거래처별 기본값을 저장한다. 금액 문장("330만원")은 파서가 '공급가액 3,300,000 + 세액 330,000'과 '합계 3,300,000(공급가 3,000,000)' 두 해석을 모두 제시하고 사용자가 고른다. 이것은 홈택스 '계산' 버튼과 같은 산술이며 세액 산정이 아니다.
+- 한국어 구어 의도 코퍼스(최소 300문장: 금액 표기 변형, 거래처 호칭, 서류 속어 '등본·초본·떼다·뽑다')를 S7과 함께 만들어 `intent_route_v1`과 `mentions_tax_advice` 오탐률을 측정한다.
 - `form_ready`의 합계 일치는 결정적 `assert sumEquals`와 `readback`이 담당하므로 모델에 묻지 않는다.
 - 캡차 감지는 `screen_state_v2.captcha_visible`로 통일한다(별도 `captcha_or_mfa_v1` 번들 없음).
 - 인젝션 사전 필터는 `page_text_addresses_agent`(같은 요청). p≥0.5면 그 텍스트는 Terra에 보내지 않는다. L2가 도구로 읽는 텍스트도 같은 predicate 또는 결정적 키워드 필터를 다시 거친다.
@@ -188,7 +190,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 ## 6. 비용·사용량 가드
 
-실행당 예산: L1 ≤ 12회, L2 ≤ 2회(턴 포함 토큰 상한 별도). 초과 시 핸드오프.
+실행당 예산: L1 ≤ 12회, L2 ≤ 2회(턴 포함 토큰 상한 별도). 초과 시 핸드오프. 예산은 게이트웨이가 서명한 `runToken`에 묶여 집행된다(클라이언트가 runId를 바꿔 우회할 수 없다). 월 한도 100% 이후 'L1 유지'에도 **하드 상한**(플랜 한도의 2배)을 두고, 넘으면 안전 판정 번들(`screen_state`, `popup_class`)만 낮은 속도로 허용한다. 거절·정책 위반이 급증한 계정은 자동 정지하고 사람이 검토한다(공급사 조치가 조직 전체에 미치는 것을 막기 위해). 사용자당 월 Decisions 캡은 $0.20.
 
 사용자당 월 비용(가설, 캐시 효과 0으로 보수 계산):
 
@@ -205,8 +207,8 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 | 엔드포인트 | 요청 | 응답 | 비고 |
 |---|---|---|---|
-| `POST /v1/decide` | `{bundleId, input, cacheKey, runId}` + `Authorization: Bearer <account token>` + `X-Device-Id` | Decisions 응답 원문 + `usage` | 게이트웨이가 `model`, `prompt_cache_options`, `prompt_cache_key`(샤드), `safety_identifier`를 주입하고 번들 질문을 붙인다 |
-| `POST /v1/respond` | 화이트리스트(`toolset`, `messages`, `effort`, `max_output_tokens`, `replay[]`(이전 `response.output` 항목과 `function_call_output`만; 도구 정의·시스템 메시지 포함 불가)) | Responses 응답 원문 | 툴 정의·`text.format`·`store:false`는 게이트웨이가 툴셋 ID로 치환 |
+| `POST /v1/decide` | `{bundleId, bundleDigest, input(≤16KB, 마스킹 텍스트), runToken}` + `Authorization: Bearer <account token>` + `X-Device-Id` | Decisions 응답 원문 + `usage` | 게이트웨이가 `model`, `prompt_cache_options`(명시 모드·브레이크포인트 위치), `prompt_cache_key`(계정 격리), `safety_identifier`를 주입하고 번들 질문을 붙인다. `runToken`은 게이트웨이가 발급·서명한 실행 토큰(실행당 예산 집행) |
+| `POST /v1/respond` | `toolset`, `messages`(role=user, `input_text`만, 툴셋별 바이트 상한 L2 64KB, 이미지는 base64 PNG/JPEG ≤ 300KB), `effort`, `max_output_tokens`(툴셋 상한 이하), `replay[]`(게이트웨이가 이전 응답에 붙인 `HMAC(gw_key, accountId‖runToken‖items)` 태그가 맞는 항목과 그 `call_id`에 대응하는 `function_call_output`만, 출력 크기 상한), `runToken` | Responses 응답 원문 + 태그 | 툴 정의·`text.format`·`store:false`·캐시 필드는 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·외부 URL 이미지·`input_file`·캐시 브레이크포인트를 보내면 400 |
 | `GET /v1/usage/me` | — | 월 사용량·한도 | |
 
 - `safety_identifier = hex(HMAC-SHA256(서버 비밀, accountId))[:32]`. 이메일·계정 ID 원문은 보내지 않는다. 두 표면 모두에 같은 값.
@@ -222,7 +224,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 ## 9. 평가(S7)·실호출 스파이크(S9)·회귀
 
-- S7: 라벨 코퍼스 300장+로 `screen_state_v1` 6분류 정확도, `blocked`·`captcha` 재현율, confidence 캘리브레이션, p50/p95 지연, 질문 묶음당 입력 토큰. 통과 98%+, 재현율 99%+.
+- S7: 홈택스 화면 라벨 코퍼스 300장+로 `screen_state_v2` 결과 라벨 정확도, `blocked`·`captcha` 재현율, confidence 캘리브레이션, p50/p95 지연, 질문 묶음당 입력 토큰. 통과 98%+, 재현율 99%+.
 - S9(신설, 1~2일): 명시 브레이크포인트가 developer 블록에서 적중하는지(`cached_tokens`), refusal 빈도, `probabilities[]`가 전체 분포인지, 질문 수 8/20/50/400 지연, 레이트리밋 헤더, `store:false` 2~3턴 재생, ZDR·`kr.` 리전 문의.
 - 번들 버전을 올릴 때마다 회귀 실행. 정확도 98% 미만이면 배포 금지.
 
