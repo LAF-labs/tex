@@ -1,0 +1,7 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/platform" }, { "path": "packages/net" }, { "path": "packages/db" },
+    { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "apps/desktop" }
+  ]
+}

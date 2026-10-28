@@ -1,0 +1,10 @@
+{
+  "name": "@sax/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@sax/db": "workspace:*", "@sax/engine": "workspace:*", "@sax/net": "workspace:*", "@sax/platform": "workspace:*", "@sax/vault": "workspace:*",
+    "playwright-core": "1.64.1"
+  }
+}

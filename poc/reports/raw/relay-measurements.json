@@ -1,0 +1,85 @@
+{
+  "denied": {
+    "root Target.createBrowserContext": "vault relay denied Target.createBrowserContext (browser_target_not_exposed)",
+    "root Target.attachToBrowserTarget": "vault relay denied Target.attachToBrowserTarget (browser_target_not_exposed)",
+    "root Target.createTarget": "vault relay denied Target.createTarget (browser_target_not_exposed)",
+    "root Target.setDiscoverTargets": "vault relay denied Target.setDiscoverTargets (browser_target_not_exposed)",
+    "root Target.getTargets": "vault relay denied Target.getTargets (browser_target_not_exposed)",
+    "root Target.exposeDevToolsProtocol": "vault relay denied Target.exposeDevToolsProtocol (browser_target_not_exposed)",
+    "root Browser.setDownloadBehavior": "vault relay denied Browser.setDownloadBehavior (browser_target_not_exposed)",
+    "root Browser.getWindowForTarget": "vault relay denied Browser.getWindowForTarget (browser_target_not_exposed)",
+    "root Browser.close": "vault relay denied Browser.close (browser_target_not_exposed)",
+    "root Storage.getCookies": "vault relay denied Storage.getCookies (browser_target_not_exposed)",
+    "root Storage.clearDataForOrigin": "vault relay denied Storage.clearDataForOrigin (browser_target_not_exposed)",
+    "root SystemInfo.getInfo": "vault relay denied SystemInfo.getInfo (browser_target_not_exposed)",
+    "root Tracing.start": "vault relay denied Tracing.start (browser_target_not_exposed)",
+    "root IO.read": "vault relay denied IO.read (browser_target_not_exposed)",
+    "root Target.attachToTarget": "vault relay denied Target.attachToTarget (browser_target_not_exposed)",
+    "session Page.setDownloadBehavior": "vault relay denied Page.setDownloadBehavior (denied_method)",
+    "session Network.getAllCookies": "vault relay denied Network.getAllCookies (denied_method)",
+    "session Network.getCookies": "vault relay denied Network.getCookies (denied_method)",
+    "session Network.setCookie": "vault relay denied Network.setCookie (denied_method)",
+    "session Storage.getCookies": "vault relay denied Storage.getCookies (domain_not_allowed)",
+    "session Browser.getVersion": "vault relay denied Browser.getVersion (domain_not_allowed)",
+    "session Target.createTarget": "vault relay denied Target.createTarget (denied_method)",
+    "session Target.attachToBrowserTarget": "vault relay denied Target.attachToBrowserTarget (denied_method)",
+    "session DOM.setFileInputFiles": "vault relay denied DOM.setFileInputFiles (denied_method)",
+    "session Runtime.addBinding": "vault relay denied Runtime.addBinding (denied_method)",
+    "session Page.printToPDF": "vault relay denied Page.printToPDF (denied_method)",
+    "session Fetch.enable": "vault relay denied Fetch.enable (fetch_pattern_not_allowed)",
+    "session Target.setAutoAttach": "vault relay denied Target.setAutoAttach (flatten_required)",
+    "session Network.setUserAgentOverride": "vault relay denied Network.setUserAgentOverride (method_not_allowed)"
+  },
+  "s6d_raw": {
+    "Accessibility.getFullAXTree": false,
+    "DOMSnapshot.captureSnapshot": true,
+    "DOM.describeNode": false,
+    "AX value of password (masked?)": 22
+  },
+  "taint_bypass_result": "[vault-redacted]",
+  "s6c": {
+    "postRequestsSeenByEngine": 1,
+    "withBody": 0
+  },
+  "s6f": {
+    "activeDenied": {
+      "Runtime.evaluate": true,
+      "Runtime.callFunctionOn": true,
+      "Input.dispatchMouseEvent": true,
+      "DOM.focus": true,
+      "Accessibility.getFullAXTree": true,
+      "DOMSnapshot.captureSnapshot": true,
+      "Page.captureScreenshot": true,
+      "Emulation.setFocusEmulationEnabled": true
+    },
+    "eventsDuringActive": []
+  },
+  "leakScan": {
+    "secrets": 3,
+    "variantsPerSecret": [
+      "utf8",
+      "utf16le",
+      "json",
+      "url",
+      "hex",
+      "HEX",
+      "base64@0",
+      "base64url@0",
+      "base64@1",
+      "base64url@1",
+      "base64@2",
+      "base64url@2"
+    ],
+    "ipcMessages": 352,
+    "ipcBySource": {
+      "ipc.engine.in": 81,
+      "ipc.engine.out": 271
+    },
+    "ipcFindings": [],
+    "logFiles": 1,
+    "logFindings": [],
+    "profileFiles": 418,
+    "profileSkipped": 0,
+    "profileFindings": []
+  }
+}

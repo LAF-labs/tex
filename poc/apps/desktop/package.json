@@ -1,0 +1,10 @@
+{
+  "name": "@sax/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "dependencies": {
+    "@sax/db": "workspace:*", "@sax/engine": "workspace:*", "@sax/platform": "workspace:*", "@sax/vault": "workspace:*"
+  }
+}

@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - apps/*
+  - tests
+minimumReleaseAgeExclude:
+  - electron@45.1.0
+allowBuilds:
+  better-sqlite3-multiple-ciphers: true
+  electron: true
+  tesseract.js: false
