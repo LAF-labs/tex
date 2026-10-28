@@ -196,12 +196,21 @@ importers:
       '@sax/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@sax/net':
+        specifier: workspace:*
+        version: link:../../packages/net
       '@sax/platform':
         specifier: workspace:*
         version: link:../../packages/platform
       '@sax/vault':
         specifier: workspace:*
         version: link:../../packages/vault
+      '@tesseract.js-data/kor':
+        specifier: 1.0.0
+        version: 1.0.0
+      tesseract.js:
+        specifier: 7.0.0
+        version: 7.0.0
 
   packages/db:
     dependencies:
@@ -223,15 +232,9 @@ importers:
       '@sax/platform':
         specifier: workspace:*
         version: link:../platform
-      '@tesseract.js-data/kor':
-        specifier: 1.0.0
-        version: 1.0.0
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
-      tesseract.js:
-        specifier: 7.0.0
-        version: 7.0.0
 
   packages/net: {}
 
@@ -263,9 +266,15 @@ importers:
       '@sax/vault':
         specifier: workspace:*
         version: link:../packages/vault
+      '@tesseract.js-data/kor':
+        specifier: 1.0.0
+        version: 1.0.0
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
+      tesseract.js:
+        specifier: 7.0.0
+        version: 7.0.0
 
 packages:
 
