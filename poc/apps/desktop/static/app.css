@@ -1,0 +1,12 @@
+body{font:14px -apple-system,'Malgun Gothic',sans-serif;margin:0;color:#111;background:#f6f7f9}
+header{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;background:#fff;border-bottom:1px solid #ddd}
+h1{font-size:18px;margin:0}h2{font-size:15px;margin:0 0 10px}h3{font-size:14px;margin:0 0 8px}
+.badge{background:#b42318;color:#fff;border-radius:4px;padding:2px 6px;font-size:11px;vertical-align:middle}
+main{padding:16px 20px;display:grid;gap:16px}section{background:#fff;border:1px solid #e3e3e3;border-radius:8px;padding:14px}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}label{display:block;margin:4px 0;color:#444}
+label input,label select{display:block;width:100%;box-sizing:border-box;padding:6px;margin-top:2px;border:1px solid #ccc;border-radius:4px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}.row input{flex:1;padding:6px}
+button{padding:6px 10px;border:1px solid #bbb;border-radius:4px;background:#fff;cursor:pointer}
+table{width:100%;border-collapse:collapse;margin:8px 0 14px}th,td{border-bottom:1px solid #eee;padding:6px;text-align:left}
+.note{color:#666;font-size:12px}.msg{font-size:12px;color:#06c}.err{color:#b42318}.ok{color:#067647}
+body.secret{padding:16px}body.secret input{width:100%;padding:8px;margin:8px 0;box-sizing:border-box}

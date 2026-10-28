@@ -1,0 +1,22 @@
+{
+  "name": "sax-poc",
+  "private": true,
+  "description": "소버린 AX PoC 스파이크(폐기 전제, ADR-017)",
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "test": "node scripts/run-tests.mjs",
+    "start": "pnpm build && electron apps/desktop"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@types/node": "^24.0.0",
+    "electron": "45.1.0",
+    "eslint": "^10.13.0",
+    "globals": "^16.5.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.72.1"
+  }
+}
