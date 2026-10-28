@@ -33,11 +33,11 @@ account(id, email, status, plan, created_at)
 | 통제 | 구현 |
 |---|---|
 | 본문 무저장 | 요청·응답 바디를 디스크·로그·APM에 쓰지 않는다. 접근 로그는 경로·상태코드·바이트 수·지연·계정 ID 해시만. 스트리밍 프록시로 메모리 체류 최소화 |
-| 파라미터 화이트리스트 | `/v1/decide`: `bundleId, input, cacheKey, runId`. `/v1/respond`: `toolset, messages, effort, max_output_tokens`. 그 외 필드 거부(400) |
+| 파라미터 화이트리스트 | `/v1/decide`: `bundleId, bundleDigest, input, cacheKey, runId`(다이제스트 불일치 409). `/v1/respond`: `toolset, messages, effort, max_output_tokens, replay[]`(replay는 이전 `response.output`·`function_call_output` 항목만, 도구 정의·developer 메시지 불가). 그 외 필드·중첩 필드 거부(400) |
 | 번들·툴셋 서버 정의 | 질문·도구 정의는 게이트웨이가 번들/툴셋 ID로 주입. 클라이언트가 임의 질문·도구를 보낼 수 없음 → 프롬프트 변조·비용 폭주 방지 |
 | 계량 | `usage` 필드만 저장: 토큰 수, 캐시 적중 수, 모델, 번들/툴셋 ID, 플레이북 ID, 지연, 비용 |
 | 한도 | 계정 월 토큰 한도, 분당 요청 한도(L1 60/min, L2 10/min), 실행당 예산은 클라이언트 + 서버 이중 |
-| 공급사 설정 | `safety_identifier`= 계정 ID 해시, `prompt_cache_key` 접두 `acct:<hash>:` 로 캐시 격리, `store:false`, ZDR 계약 적용 시 전 계정 공통 |
+| 공급사 설정 | `safety_identifier` = HMAC(서버 비밀, 계정 ID) 앞 32자, `prompt_cache_key` = `pb:<playbookId>:v<major>:shard<n>`(계정 접두 없음, D04 §2.1), `store:false`, ZDR 승인 시 전 계정 공통 |
 | 장애 | 공급사 5xx·429 → 지수 백오프 2회 → 클라이언트에 `unavailable` → 엔진은 L0만으로 진행 가능하면 진행, 아니면 핸드오프 |
 | 키 관리 | 공급사 API 키는 KMS, 로테이션 90일, 게이트웨이 외 서비스는 접근 불가 |
 

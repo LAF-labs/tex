@@ -1,163 +1,197 @@
 # D03. 플레이북 엔진
 
+> v1.1 — Review A 반영: 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰 재정의, 커밋 구간 런타임 규칙, Actuator 기반 사람 속도 집행, 복구 계층의 비가역 차단, 운영 수준.
+
 ## 1. 책임
 
-IR 로드·검증, 실행, 체크포인트·재개, 게이트 강제, 사람 입력 조율, 복구 계층, 사람 속도 정책 집행, 감사 이벤트 방출, 텔레메트리 요약. 엔진은 `engine` 유틸리티 프로세스에서 돌며 Playwright로 Chrome을 제어한다.
+IR 로드·검증, 실행, 체크포인트·재개, 게이트·토큰·원장 관리, 커밋 가드, 사람 입력 조율, 복구 계층, 사람 속도 정책 집행(Actuator), 감사 저널, 텔레메트리 요약. `engine` 유틸리티 프로세스에서 돌며 Playwright로 Chrome을 제어한다.
 
-## 2. 실행 상태 머신
+토큰·원장은 **엔진 로직 버그**를 막는 장치다. 엔진 프로세스가 침해되면 무력하다. 네트워크 커밋 가드(§5.4)는 별도 계층(요청 인터셉터)에 두어 두 장치가 같은 버그로 함께 뚫리지 않게 한다.
+
+## 2. 실행 상태와 전이표
+
+상태: `Unloaded, Loaded, Preparing, Running, WaitingGate, WaitingHuman, Recovering, HandedOff, Paused, Interrupted, InDoubt, Completed, CompletedWithIssues, Failed, Aborted`.
+
+| 현재 | 이벤트 | 다음 | 부수효과 |
+|---|---|---|---|
+| Loaded | start | Preparing | intentId 생성(로컬) 또는 수신(리모트), 기본값 확정 |
+| Preparing | 전제조건 실패 | Failed | |
+| Preparing | 준비 완료 | Running | 저널 `run.started` |
+| Running | gate 도달 | WaitingGate | 카드 = readback 값, `gate.request` 발행(로컬·폰) |
+| WaitingGate | 승인(먼저 도착한 결정) | Running | 토큰 발급(§3), 거부 우선 창 2초 |
+| WaitingGate | 거부 | Aborted | |
+| WaitingGate | `waitMs` 초과 | Paused | 게이트 **앞** 체크포인트로 되감아 저장 |
+| Running | human 도달 | WaitingHuman | 토큰 폐기(R-G2) |
+| WaitingHuman | 입력 | Running | |
+| WaitingHuman | TTL 초과 | Paused | 체크포인트 되감기 |
+| Running | 스텝 실패(재시도 소진) | Recovering | 토큰 폐기 |
+| Recovering | 복구 성공 | Running | 실패한 그 스텝 재실행 |
+| Recovering | 복구 실패 | HandedOff / Failed | onFail에 따름 |
+| HandedOff | 사용자 재개 | Running | `resumeAt`부터. 토큰은 이미 폐기됨 |
+| HandedOff | 30분 경과 | Paused | 포털 동시 실행 슬롯 해제 |
+| Running | 비가역 스텝 진입(토큰 검증·readback 재계산 일치) | Running(commit section) | 원장 `armed` + 토큰 소비(한 트랜잭션, `synchronous=FULL`) |
+| Running(commit) | 클릭 반환 | Running(commit) | 원장 `dispatched` |
+| Running(commit) | verify `committed` | Running | 원장 `committed` |
+| Running(commit) | verify `not_committed` | Running | 원장 `not_committed`, 게이트 앞 체크포인트로 |
+| Running(commit) | verify `unknown` / 상한 초과 | InDoubt | 원장 `in_doubt` |
+| InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed | 증언은 로컬 `human(manual)` 카드, 저널에 기록 |
+| Running | 모든 스텝 완료 | Completed | |
+| Running | 비가역 커밋 뒤 후속(이메일·PDF) 실패 | CompletedWithIssues | UI 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다" |
+| (아무 상태) | abort() | Aborted (커밋 구간이면 verify 후, 상한 120초 초과 시 InDoubt) | 간편인증 PUSH가 떠 있으면 "홈택스 앱 요청을 거절하세요" 안내 |
+| (비종료 상태) | 프로세스 재시작 | Interrupted | 저널로 복원. 원장 `armed|dispatched` 행은 `in_doubt`로 승격 → InDoubt |
+
+규칙:
+- `WaitingGate → Running`은 승인 이벤트로만. 전이표에 다른 길이 없다.
+- `Paused`는 디스크에 직렬화한다(입력·변수·현재 체크포인트·intentId). 토큰과 `runKey`는 직렬화하지 않으므로 재개 시 반드시 재게이트된다.
+- 저널(`run_events`)이 상태 전이의 단일 진실이다. 재시작 시 저널을 재생해 상태를 복원한다.
+- 커밋 구간(토큰 소비 ~ verify 완료) 동안 앱 종료를 막고 확인 대화상자를 띄운다. OS 종료 신호를 받으면 저널에 `in_doubt`를 먼저 쓴다.
+- 운영 수준 `postprocess`에서는 이 상태 머신을 쓰지 않고 안내 패널·파일 감시만 동작한다(§12).
+
+## 3. 게이트 토큰과 승인
 
 ```text
-            load()            start()
- [Unloaded] ──────▶ [Loaded] ────────▶ [Preparing]  (전제조건·입력 검증·세션 확인)
-                                           │
-                                           ▼
-                      ┌─────────────── [Running:step i] ◀────────────────┐
-                      │                 │      │     │                    │
-            gate 도달 │     human 도달  │      │     │ 실패               │ 재개
-                      ▼                 ▼      │     ▼                    │
-              [WaitingGate]     [WaitingHuman] │  [Recovering] ─ 복귀 ──▶ 체크포인트
-                      │ 승인/거부        │ 입력/TTL│     │ 실패 상한
-                      ▼                 ▼      │     ▼
-                 Running / Aborted   Running / Paused  [HandedOff] ──사용자 재개──▶ Running
-                                               │
-                                               ▼
-                               [Completed] | [Failed] | [Aborted] | [Paused]
+actionHash = SHA-256(CBOR{cardHash, readbackHash, authorizes[], packageDigest, intentId})
+  cardHash      = 카드에 표시된 값(렌더 측과 엔진 측이 각각 계산해 일치해야 함)
+  readbackHash  = readback 스텝이 되읽은 필드값(JCS 정규화)
+  packageDigest = IR + selectors + 적용된 핫픽스 + 정책 버전 + 프로필 버전
+token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp = 승인시각 + policy.commitWindowMs, nonce})
 ```
 
-상태 전이 규칙:
-- `Running → WaitingGate`는 `gate` 스텝에서만. 승인 없이 `Running`으로 돌아가는 전이는 **존재하지 않는다**(코드상 전이표에 없음). 거부 → `Aborted`. TTL 초과 → `Paused`(재개 시 게이트부터).
-- `irreversible` 스텝 진입 전 엔진은 `gateToken`(게이트 승인 시 발급, 실행 ID·스텝 ID·입력 해시에 바인딩, 10분 유효)을 검사한다. 토큰 불일치 → 실행 중단 + 보안 이벤트. 이것이 정적 검증(V-03)의 런타임 이중 안전장치다.
-- `Paused`는 디스크에 직렬화된다(실행 컨텍스트: 입력, 변수, 현재 체크포인트, 게이트 토큰 제외). 비밀은 직렬화하지 않는다.
-- 사용자는 어느 상태에서든 `abort()` 가능. 비가역 스텝이 "제출 중"이면 완료를 기다린 뒤 중단하고 결과를 기록한다.
+- `runKey`는 실행마다 32바이트 무작위, 메모리에만.
+- 토큰은 **단일 사용**이며 `authorizes`의 비가역 스텝 집합에 대해 발급된다. 후속 비가역(`followUpOf`)의 토큰은 선행 커밋이 `committed`가 되는 순간 함께 발급된다.
+- 소비는 원장 `armed` 기록과 한 트랜잭션.
+- 비가역 스텝 진입 직전에 readback을 다시 계산해 `readbackHash`와 비교한다. 불일치면 **재게이트**(보안 이벤트 아님).
+- 토큰 폐기(R-G2): `Recovering`, `WaitingHuman`, `HandedOff`, `Paused`, `Interrupted` 진입, 체크포인트 복귀, L2 셀렉터 적용, 핫픽스 적용 중 하나라도 일어나면 미소비 토큰 전부 폐기.
+- 보안 이벤트는 위조·다른 실행의 토큰·이미 소비된 토큰에만. 만료는 보안 이벤트가 아니다.
+- 폰 승인: `gate.request{reqId, cardFields, actionHash, challenge, exp 120s}` → 폰이 `Sign_Vm("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)` → 엔진 검증 후 토큰 발급(D08 §6). 로컬 승인은 렌더러의 신뢰 사용자 제스처(`isTrusted`)와 카드 렌더 해시를 `main`이 검증한다. 두 채널 중 먼저 도착한 결정이 이기며, 승인 뒤 커밋 직전까지 다른 채널의 거부가 오면 중단한다.
+- 타이밍 이름: `gate.waitMs`(승인 대기, ≤ 1시간), `policy.commitWindowMs`(승인 후 커밋 구간 상한, 기본 10분), `gate.request.exp`(폰 응답 챌린지 120초, 만료 시 재요청).
 
-## 3. 스텝 실행 루프
+## 4. 아이덴포턴시 원장
+
+`irreversible_log(intent_id PK, run_id, step_id, business_key, state, armed_at, dispatched_at, resolved_at, verify_ref, device_id)`
+
+- 상태: `armed → dispatched → committed | not_committed | in_doubt`.
+- 순서: 토큰 소비 + `armed` 기록 커밋 → 클릭 → `dispatched` → verify → 종결 상태.
+- 재시작 시 `armed|dispatched`는 모두 `in_doubt`로 승격.
+- 같은 `intent_id`에 종결되지 않은 행이 있으면 재실행 금지. `committed`면 verify 결과를 재사용해 **사후 스텝**(`capture` 이후)으로 점프한다. "건너뛰기"는 존재하지 않는다.
+- 같은 `business_key`의 `armed|dispatched|in_doubt|committed`는 카드 경고(차단 아님). 선택안: 업무 키 HMAC을 메타데이터 서버에 올려 기기 간 경고.
+- `in_doubt` 해소 수단은 둘뿐: 조회형 verify 재시도, 사용자의 명시 증언. 데몬은 `in_doubt`가 있는 서류를 자동 재시도하지 않는다(D10).
+
+## 5. 스텝 실행과 커밋 구간
+
+### 5.1 루프
 
 ```text
-for step in plan(currentStep):
-  policy.beforeStep(step)            # 사람 속도 지연, 세션·일일 상한 검사, 쿨다운 검사
-  audit.emit(step.started)
-  try:
-    result = handler[step.type](ctx, step)
-  except StepError as e:
-    result = failurePolicy(step, e)   # retry → recover → handoff/abort/checkpoint
-  audit.emit(step.finished, result.code)
-  telemetry.count(step.stableId, result.code)
-  next = resolveNext(step, result)
+for step in plan(current):
+  actuator.policy.beforeStep(step)
+  journal(step.started)
+  result = handler[step.type](ctx, step)      # 페이지에 닿는 모든 동작은 ctx.actuator 경유
+  journal(step.finished, result.code)
+  next = resolveNext(step, result)            # §4.3 간선 정의 그대로
 ```
 
-- `plan()`은 `branch`·`decide.on`·`repeat`를 풀어 다음 스텝을 정한다. 동적 스텝 생성은 없다.
-- 핸들러는 순수 함수에 가깝게: `(ctx, step) → StepResult`. `ctx`는 `page`, `vars`, `inputs`(읽기 전용), `profile`(비밀 없음), `policy`, `audit`, `redaction`, `model`, `vaultClient`(핸들 기반), `human`(요청 큐)로 구성된다.
+`plan()`은 D02 §4.3 의미론을 그대로 구현한다. 동적 스텝 생성은 없다.
 
-## 4. 체크포인트와 재개
+### 5.2 Actuator
 
-- 체크포인트 = `{name, expect(cond), url?, sessionRequired}`. 등록 시점의 URL과 기대 조건을 저장한다.
-- 복귀 절차: (1) 현재 탭에서 `expect` 평가 → 참이면 그 지점부터 재실행, (2) 거짓이면 `url`로 이동 후 재평가, (3) 세션 만료 판정(`screen_state_v1.login_required`)이면 `session` 체크포인트로 상향 복귀, (4) 그래도 실패 → 핸드오프.
-- 재실행은 체크포인트 **이후** 스텝만. 체크포인트 이전에 수행된 비가역 스텝은 `runRecord.irreversibleDone[]`에 기록되어 다시 실행되지 않는다(아이덴포턴시 키로 식별).
+페이지에 영향을 주는 **모든** 동작(클릭, 키 입력, 네비게이션, 대화상자 응답, 셀렉터 수리 적용, `sign` 내부 동작, 금고 타이피스트의 타이밍 허가)은 `Actuator` 인터페이스 하나를 거친다. `policy.beforeAction(kind, portal)`이 여기서 지연·카운터·쿨다운·실행당 동작 상한(`maxActuationsPerRun`, 기본 150)·벽시계 상한을 집행한다. 스텝 핸들러·복구기·금고 모두 우회할 수 없다.
 
-## 5. 복구 계층
+### 5.3 커밋 구간 런타임 규칙
 
-| 계층 | 트리거 | 수단 | 상한 | 출력 범위 |
+- 비가역 스텝 진입: 토큰 검증 → readback 재계산 일치 → 원장 `armed` + 토큰 소비 → 커밋 가드 **무장**(토큰당 커밋 요청 1회) → 클릭.
+- 구간 안에서는 L1 팝업 처리·L2 수리·핸드오프를 하지 않는다. 실패는 곧바로 `verify`.
+- `expectConfirm`이 선언된 경우에만 포털의 `confirm` 대화상자를 수락한다(§6 대화상자 정책).
+- abort는 verify 뒤에만 유효(상한 120초, 초과 시 InDoubt).
+
+### 5.4 네트워크 커밋 가드
+
+- Playwright 라우팅으로 포털 요청을 감시한다. `selectors.json`의 `commitEndpoints[]`(메서드+경로 패턴)에 맞는 요청은 **무장된 토큰이 있을 때만 통과**시키고, 그 외에는 차단 + 저널 `security.commit_guard` + 실행 중단(InDoubt 아님 — 요청이 나가지 않았으므로).
+- 무장 상태는 토큰당 1회 요청으로 소진된다. 포털이 같은 제출에 요청을 여러 번 보내는 패턴이 확인되면 사전에 `commitEndpoints[].maxRequests`로 선언한다(S1에서 측정).
+- 가드는 엔진의 토큰 로직과 다른 모듈(`net/commitguard`)에 두고, 토큰 검증 결과를 `armedUntil`·`intentId`만으로 받는다.
+
+### 5.5 체크포인트와 복귀
+
+- 체크포인트 `expect`는 **도착 조건**(그 스텝을 지난 뒤 참). 복귀 절차: 현재 탭에서 `expect` 평가 → 참이면 다음 스텝부터, 거짓이면 `url`로 이동 후 재평가 → `sessionRequired`인데 로그아웃 상태면 `session` 체크포인트로 상향 → 그래도 실패면 핸드오프.
+- `fill`은 기존 값을 지우고 입력한 뒤 readback으로 일치를 확인하므로 복귀 후 재입력이 안전하다. `keyEvents` 칸은 전체 선택 → 삭제 → 입력.
+- 복귀는 토큰을 폐기한다(R-G2). 커밋 구간을 지난 비가역은 원장이 막는다.
+
+## 6. 복구 계층
+
+| 계층 | 트리거 | 수단 | 상한 | 금지 |
 |---|---|---|---|---|
-| L0 재시도 | 셀렉터 미스, 타임아웃 | 백오프 후 같은 스텝 재시도, 셀렉터 후보 순회 | `onFail.retry` ≤ 3 | — |
-| L1 판정 | L0 소진, 미지 모달, 상태 불명 | Decisions 번들(`screen_state_v1`, `popup_class_v1`) | 스텝당 2회 | 열거된 결과 중 하나 또는 `unknown` |
-| L2 수리 | L1이 "화면은 맞는데 요소를 못 찾음"으로 판정 | Terra에 마스킹된 서브트리 + 실패 셀렉터 + 기대 역할을 주고 **후보 셀렉터**를 받음. 엔진이 후보를 검증(`expect`)한 뒤에만 사용 | 실행당 `handoffAfter`(기본 1) | 셀렉터 문자열 목록만. 네비게이션·제출 도구 없음 |
-| L3 핸드오프 | L2 실패, 캡차 TTL 초과, 보안 경고 | 사람에게 화면 전달, 재개 지점 명시 | — | — |
+| L0 | 셀렉터 미스·타임아웃 | 정책 지연 후 재시도, 후보 순회 | `onFail.retry ≤ 3` | 비가역 스텝은 0 |
+| L1 | L0 소진·미지 모달 | `recovery_v1` 번들(결과: `element_missing_same_screen`, `different_screen`, `modal_blocking`, `session_expired`, `unknown`) → 각각 L2 / 체크포인트 / 팝업 처리 / `session` 복귀 / 핸드오프 | 실행 전체 연속 `unknown` 2회 → L3 | 커밋 구간 안 금지 |
+| L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 정한 열거값, `nameRegex` 대신 부분 문자열) → 엔진이 동일성 검사 8항 통과 후 **그 실행에서만** 적용 | 실행당 `policy.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretSlot`·커밋 구간 금지 |
+| L3 | 그 외 | 핸드오프(`resumeAt`), 토큰 폐기 | — | — |
 
-L2 세부:
-- Terra에 주는 도구: `get_a11y_subtree(scopeId, maxBytes)`, `find_candidates(role, nameRegex)`, `propose_selectors(list)` 세 가지. 모두 읽기 전용이고 `propose_selectors`는 결과를 돌려줄 뿐 적용하지 않는다.
-- 적용은 엔진이 한다: 후보를 순서대로 `expect` 검사 → 통과한 첫 후보로 스텝 재실행 → 성공하면 `selectorRepairs` 텔레메트리(stable_id, 후보 형태만) → 레지스트리 핫픽스 후보로 올라간다.
-- L2가 고친 셀렉터는 **이 실행에서만** 유효하다. 영속 반영은 사람이 검토한 핫픽스 패키지로만(D12 §4).
+L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같은 프레임 (3) 스텝 `scope` 서브트리 안 (4) 사전의 `role` 일치 (5) 실제 접근성 이름이 사전 `namePattern`과 일치(모델 제안 이름 미사용) (6) `landmark` 일치 (7) `fill`이면 readback 일치 (8) `css`는 ID/속성 셀렉터만. 복구 성공 → **실패한 그 스텝**을 재실행.
 
-## 6. 사람 속도 정책 (운영 정책 집행)
+팝업 처리(L1 `modal_blocking`): 셀렉터 사전에 `closeAffordance:true`로 등록된 요소만 클릭한다. 접근성 이름이 `/확인|예|OK|발급|제출|전송|동의/`인 요소는 하드 금지. 등록된 닫기 요소가 없으면 핸드오프.
 
-정책은 서명된 `policy.json`으로 배포되며 플레이북은 완화할 수 없다(강화만 가능).
+대화상자 정책: `alert` → accept, 텍스트를 판정 입력으로. `confirm`/`beforeunload` → **무장된 커밋 구간 + 선언된 `expectConfirm` 패턴 일치**일 때만 accept, 그 외 dismiss + 저널. `prompt` → dismiss. 리스너는 엔진이 항상 등록한다(Playwright 기본 동작에 의존하지 않음).
+
+스냅샷 필터: `type=password` 또는 사전 `secretSlot` 또는 최근 타이피스트 대상 요소의 값은 접근성 스냅샷에서 제거한다. 타이피스트는 키 입력마다 `activeElement`와 `type`을 재확인한다.
+
+## 7. 사람 속도 정책 (서명 배포, 플레이북은 강화만 가능)
 
 ```json
 {
   "version": "2026.10",
-  "pace": {
-    "interactive": {"stepDelayMs": [800, 2500], "keyEventDelayMs": [90, 260], "afterNavSettleMs": [600, 1500]},
-    "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": [120, 300], "afterNavSettleMs": [800, 2000]}
-  },
-  "limits": {
-    "hometax": {"perSession": 10, "perDay": 20, "concurrent": 1},
-    "gov24":   {"perSession": 5,  "perDay": 20, "concurrent": 1},
-    "sminfo":  {"perSession": 2,  "perDay": 5,  "concurrent": 1}
-  },
-  "retries": {"stepMax": 3, "runMax": 1, "backoff": "full_jitter", "baseMs": 800, "capMs": 10000},
-  "portalMode": {"hometax": "auto", "gov24": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"},
-  "cooldown": {"onBlockSignalHours": 24, "onCaptchaBurst": {"window": 10, "count": 3, "action": "slow+notify"}},
-  "daemonWindowJitterMin": 30
+  "pace": {"interactive": {"stepDelayMs": [800, 2500], "keyEventDelayMs": [90, 260], "afterNavSettleMs": [600, 1500], "slowFactor": 1.5},
+           "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": [120, 300], "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
+  "limits": {"hometax": {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 10, "runsPerLoginSession": 10, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
+             "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1}},
+  "retries": {"stepMax": 3, "backoff": "equal_jitter", "baseMs": 800, "capMs": 10000},
+  "run": {"maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1},
+  "cooldown": {"onBlockSignalHours": 24, "onCaptchaBurst": {"windowMin": 10, "count": 3, "action": "slow+notify"}, "positiveDetectionsForCooldown": 2},
+  "daemon": {"windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30},
+  "portalMode": {"hometax": "auto", "gov24": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"}
 }
 ```
 
-집행 지점:
-- `policy.beforeStep`: 균등 분포 지연(지터 포함), 상한 카운터(SQLite `rate_counters`) 증가·검사, 쿨다운 중이면 실행 거부(사용자에게 이유 표시).
-- `fill` 핸들러: 기본은 `fill()`로 즉시 입력한다. 사람 타이핑을 흉내 내는 글자당 지연은 **쓰지 않는다**(평균 타자 속도보다 빠른 모사는 그 자체가 표식이고, 모사는 우리 원칙과 맞지 않는다). 키 이벤트가 필요한 칸(`keyEvents: true`, 보안 모듈·비밀 타이피스트)만 90~260ms 간격. 커널 드라이버 기반 키보드 보안이 걸린 칸은 합성 입력이 닿지 않으므로 `human`으로 넘긴다.
-- 레이트 제한: 포털별 토큰 버킷(세션·일일)과 카운터는 SQLite에 영속해 크래시 후에도 이어진다. 재시도는 Full Jitter 백오프, 스텝당 최대 3회.
-- 차단 신호 감지: `screen_state_v1.blocked`·`security_warning` 결과, HTTP 403/429 급증, 연속 추가 인증 요구 → 즉시 중단, `cooldown` 기록, 사용자 알림, 텔레메트리 `block_signal`.
-- 캡차 버스트: 10분 창에 3회 이상 → 지연 범위 1.5배, 세션 상한 절반, 운영팀 알림.
-- 데몬 프로파일은 더 느리고, 실행 시각 ±30분 지터.
+카운터 정의(모두 SQLite 영속, KST, 증가 커밋 → 행동 순서):
+- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료).
+- 캡차 이벤트도 `rate_counters`에 기록(재시작에 살아남음).
+- "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
+- 차단 신호(`blocked` 예약 결과, HTTP 403/429 급증, 연속 추가 인증) → 즉시 중단 + 쿨다운. **거절(refusal)에서 나온 중단은 쿨다운이 아니라 핸드오프**. 쿨다운은 양성 탐지가 2회 연속일 때.
+- 프로필은 트리거가 정하고 IR은 더 느린 쪽만 고를 수 있다. `slow`는 `slowFactor` 배수.
+- 텔레메트리 옵트아웃 사용자의 운영 알림은 로컬 알림으로 대체.
 
 우리가 하지 않는 것(정책 파일에 필드 자체가 없음): UA 변경, 지문 조작, `navigator.webdriver` 조작, 헤드리스, 프록시 로테이션, 타이핑 모사, 캡차 자동 입력.
 
-## 7. 사람 입력 조율 (`human` 스텝)
+## 8. 사람 입력 조율 (`human` 스텝)
 
-- 요청 객체: `{runId, stepId, kind, prompt, imageCrop?(캡차), ttlMs, inputSpec}`.
-- 라우팅: 데스크톱 활성(최근 입력 60초 이내 또는 창 포커스) → 로컬 UI. 아니면 리모트 세션이 살아 있으면 폰. 둘 다 없으면 즉시 `Paused` + 알림.
-- 응답 처리: `kind=secret`은 응답이 엔진에 오지 않는다. 폰 → 릴레이 → 데스크톱 `vault`로 직접 복호화되어 타이피스트가 입력한다(D05 §5, D08 §6). `captcha`·`otp`·`manual`은 엔진이 값을 받아 `fill`한다. 감사 로그에는 값 대신 길이와 해시 앞 4자만.
-- TTL 초과 → 체크포인트 복귀 후 `Paused`. 자동 재요청 없음.
+- 요청: `{runId, stepId, kind, prompt, imageCrop?, ttlMs, inputSpec}`. 라우팅: 데스크톱 활성(최근 입력 60초·포커스) → 로컬, 아니면 라이브 리모트 세션 → 폰, 둘 다 없으면 `Paused` + 알림.
+- `kind=secret`의 응답은 엔진에 오지 않는다(폰 → 금고 이중 봉인 → 타이피스트). `captcha`·`otp`·`manual`은 엔진이 받아 입력하고 로그에는 길이만.
+- TTL 초과 → 게이트 앞 체크포인트로 되감아 `Paused`. 자동 재요청 없음.
 
-## 8. 게이트 카드
+## 9. 감사 저널 (로컬 전용, D07 `run_events`, 해시 체인 + 폰 앵커)
 
-- 템플릿 ID(`invoice.confirm`, `doc.issue.confirm`, `daemon.renew.confirm`)별 렌더러가 데스크톱·모바일 양쪽에 있다. 카드는 `fields`에 열거된 변수만 보여준다.
-- 승인 결과: `{approved, at, channel: local|mobile, gateToken}`. 토큰은 HMAC(runKey, runId|stepId|inputsHash|exp).
-- 묶음 승인(Phase 3 일괄 발급)은 카드 하나에 N건을 나열하고 토큰을 건별로 발급한다. 토큰 없는 건은 실행되지 않는다.
+`run.started{mode}`, `step.*`, `gate.*{actionHash}`, `human.*`, `secret.used{kind, viaTypist}`, `model.called`, `decide.result`, `ledger.*{intentId, state}`, `commit_guard.*`, `artifact.saved`, `block.signal`, `cooldown.*`, `run.finished{status}`. 값 없음 원칙.
 
-## 9. 감사 이벤트 (로컬 전용, D07 `run_events`)
+## 10. 동시성·브라우저
 
-| 이벤트 | 필드(값 없음 원칙) |
-|---|---|
-| `run.started` | runId, playbookId@version, profileId, trigger(local/remote/daemon), inputsHash |
-| `step.started/finished` | stepId, type, code, durationMs, attempt |
-| `gate.requested/approved/denied/expired` | stepId, channel, cardId |
-| `human.requested/answered/expired` | stepId, kind, channel, answerLen |
-| `secret.used` | secretKind, viaTypist(bool) — 값·길이 없음 |
-| `model.called` | layer(L1/L2), bundleId 또는 toolset, inputBytesRedacted, redactionCount, latencyMs, cost |
-| `decide.result` | bundleId, outcome, confidence(소수 2자리) |
-| `irreversible.executed` | stepId, idempotencyKey(해시), verified(bool) |
-| `artifact.saved` | docType, path(상대), bytes, sha256 |
-| `block.signal` / `cooldown.started` | reason, until |
-| `run.finished` | status, totalMs, l1Calls, l2Calls, handoffs |
+- 포털당 실행 1개. Chrome 창 하나, 탭 분리.
+- Chrome 기동: `launchPersistentContext({channel:'chrome', ignoreDefaultArgs:true, args:['--remote-debugging-pipe', '--user-data-dir=<전용>', '--remote-debugging-port=0', '--remote-allow-origins=http://127.0.0.1', …최소 플래그]})`. 엔진은 파이프로, **금고 타이피스트는 127.0.0.1의 무작위 포트로** 별도 CDP 클라이언트로 붙는다(ADR-005 갱신). 포트는 실행 중에만 열리고, 같은 OS 사용자의 다른 프로세스가 붙을 수 있다는 잔여 위험은 D11 T2에 명시한다. `--no-sandbox`·`--disable-extensions` 없음. `navigator.webdriver=true` 유지(ADR-010).
+- 이중로그인 감지(`logged_out_by_other_session` 예약 결과) → 일시정지, 자동 재로그인 없음.
+- 메모리: 스냅샷은 스텝 종료 시 폐기, 캡차 이미지는 응답 후 즉시 폐기.
 
-이벤트는 해시 체인(`prevHash`)으로 연결해 로컬 변조를 탐지할 수 있게 한다(D11).
-
-## 10. 동시성과 자원
-
-- 포털당 실행 1개. 다른 포털은 병렬 가능하되 Chrome 창은 하나(탭 분리).
-- Chrome은 `launchPersistentContext({channel: 'chrome', ignoreDefaultArgs: true, args: ['--remote-debugging-pipe', '--user-data-dir=<전용>', …최소 플래그]})`로 띄운다. `--no-sandbox`와 `--disable-extensions`는 넣지 않는다(확장 기반 보안 모듈 호환). Chrome 136+는 전용 `user-data-dir`을 요구한다. 파이프 연결이라 `navigator.webdriver=true`가 노출되며 이를 바꾸지 않는다(ADR-010). 앱 종료 시 Chrome도 종료. 비정상 종료 복구: 다음 시작 시 잠금 파일 정리 후 세션 쿠키는 유지(사용자 로그인 유지 가치) — 단 `profile.keepSession=false`면 매번 삭제.
-- 메모리: 접근성 트리 스냅샷은 스텝 종료 시 폐기. 캡차 이미지는 응답 후 즉시 폐기.
-
-## 11. 공개 인터페이스 (TypeScript 시그니처 초안)
+## 11. 공개 인터페이스
 
 ```ts
 interface Engine {
-  load(pkg: SignedPackage): Promise<LoadedPlaybook>;         // 서명·스키마·정적 규칙 검증
-  prepare(pb: LoadedPlaybook, inputs: Inputs, profile: ProfileRef): Promise<RunPlan>; // 전제조건, 카드 데이터
-  start(plan: RunPlan, opts: {trigger: 'local'|'remote'|'daemon'}): RunHandle;
-  resume(runId: string): RunHandle;
-  abort(runId: string): Promise<void>;
-  on(event: EngineEvent, cb): Unsubscribe;
+  load(pkg: SignedPackage): Promise<LoadedPlaybook>;
+  prepare(pb, inputs, profile, opts: {trigger, intentId?}): Promise<RunPlan>;   // 기본값 확정, 카드 데이터, 업무 중복 경고
+  start(plan: RunPlan): RunHandle;  resume(runId): RunHandle;  abort(runId): Promise<AbortResult>;
+  on(event, cb): Unsubscribe;
 }
-interface RunHandle { id: string; state(): RunState; answerGate(token: GateDecision): void; answerHuman(stepId, value: HumanAnswer): void; }
+interface RunHandle { id; state(); answerGate(d: GateDecision & {actionHash}); answerHuman(stepId, v: HumanAnswer); attestNotCommitted(intentId, note): void; }
 ```
+`HumanAnswer`에는 `secret`이 없다. 비밀은 `VaultClient.typist.*`만.
 
-`HumanAnswer`에는 `secret`이 없다. 비밀 응답은 `VaultClient.typist.fillFromRemote(sessionId, stepId)`로만 처리된다.
+## 12. 운영 수준(portalMode)과 데몬 권한
 
-## 12. 운영 수준(portalMode)과 세션 종료 처리
-
-- `policy.portalMode[portal]`이 `postprocess`면 엔진은 Playwright를 띄우지 않고 `guide` 변환(D02 §10)을 렌더러에 넘긴다. 파일 감시기가 저장된 PDF를 보관함으로 옮기고 `docparse`가 메타데이터를 만든다. 감사 로그 `run.started.mode = postprocess`.
-- `assisted`면 로그인 구간과 비가역 스텝이 `human(kind=manual)`로 치환된 플랜을 실행한다.
-- 수준 변경은 정책 서명 배포로만 가능하고, 변경 시 사용자에게 알린다.
-- 홈택스 이중로그인: `screen_state_v1.logged_out_by_other_session ≥ 0.85`면 `session` 체크포인트로 복귀하지 않고 **일시정지**한다. 자동 재로그인으로 상대 세션을 끊지 않는다. 사용자가 "재개"를 누르면 로그인부터 다시.
-- 화면 잠금·절전·RDP 끊김 중 헤드풀 Chrome의 안정성은 S14에서 확인하고, 실패 모드별 재개 규칙을 추가한다.
+- `postprocess`: Playwright 미기동, `guide` 변환(D02 §9), 파일 감시·메타데이터·만료 추적만.
+- `assisted`: 변환 IR을 재검증 후 실행. `human_commit`도 토큰·원장·verify 규칙 동일.
+- 수준 변경은 서명 정책 배포로만, 변경 시 사용자 알림.
+- 데몬: "시작 동의"(스케줄러 수준)와 "커밋 게이트"는 별개다. `auto`는 `StandingAuthorization{scheduleId, playbookId@major, docType, profileId, maxPerPeriod, expiresAt, userSignature}`에서 엔진이 **건별 단일 사용 토큰**을 만든다. `effects ⊆ {issue_document}`인 플레이북만 허용(V-14). 현실적으로 홈택스 로그인이 사람 없이 끝나지 않으므로(가상키패드·PUSH) Phase 2의 데몬은 `notify`·`semi_auto`만 출시한다(D10).

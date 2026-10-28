@@ -91,18 +91,18 @@ TB-6 릴레이: 암호문만.   TB-7 포털: 사용자 세션(우리 코드가 �
 ```text
 사용자 → renderer: "거래처 A에 330만원"
 renderer → main → engine: intent.resolve(text)
-engine → redaction → egress → gateway.decide(intent_route_v1)       # L1
+engine → redaction → egress → gateway.decide(intent_route_v1)       # L1 (되묻기 필요 여부는 로컬 검사)
 engine: H-01 선택, 인자 추출(금액 파서 로컬) → 확인 카드 데이터
 renderer: 확인 카드 표시 → 사용자 '발급 준비'
 engine: run(H-01) 시작, checkpoint A: ensure_session
   engine → chrome: 홈택스 로그인 페이지 → 공동인증서 선택 화면
   engine → vault: typist.fill(step=cert_password)                   # 평문은 vault에만
   vault ⇄ chrome(CDP): 비밀번호 입력 → 완료 신호(값 없음)
-  engine: decide(screen_state_v1) → 로그인 성공 확인
+  engine: decide(screen_state_v2) → 로그인 성공 확인
   ... 건별발급 화면 입력(engine), assert(합계)
-engine → renderer: gate(발급 승인) ─ 사용자 승인 ─▶ engine
-engine: sign 스텝 → (보안카드 필요 시) human(secret: 보안카드 N번째) → vault typist
-engine: capture(승인번호) → save_pdf → send_email(irreversible, 게이트 이미 통과)
+engine: readback(제출 필드 되읽기) → renderer: gate 카드(readback 값, intentId) ─ 사용자 승인 ─▶ 토큰 발급
+engine: submit → 원장 armed + 토큰 소비 → 커밋 가드 무장 → 클릭 → dispatched → verify(발급목록 조회) → committed
+engine: capture(승인번호) → save_pdf → send_email(후속 토큰) → verify(전송 상태)
 engine → main: run.completed + audit events → DB
 main → cloud: metadata.upsert(doc_type, issued_at, hash_token) / blob.put(E2EE)   # 옵션
 ```
@@ -113,7 +113,7 @@ main → cloud: metadata.upsert(doc_type, issued_at, hash_token) / blob.put(E2EE
 mobile → relay → engine: cmd.run(H-01, inputs)  [Noise 세션]
 engine: 준비 → gate.request(card) → relay → mobile 승인 → gate.response
 engine: 실행 … 간편인증 PUSH 발생 → 사용자가 홈택스 앱에서 승인(우리 채널 밖)
-engine: decide(screen_state_v1: 로그인 성공?) 폴링(사람 속도 간격)
+engine: wait(로그인 성공 마커, 결정적) → decide(screen_state_v2) 1회
 … 캡차 등장 → human.request(captcha_image) → mobile 입력 → human.response → vault typist 또는 engine fill(비밀 아님)
 engine: 완료 → run.event(done) + file.offer(pdf, E2EE) → mobile
 ```
@@ -130,12 +130,12 @@ main → mobile(push, 내용 없음) → mobile fetch → gate.request("갱신 �
 ### 5.4 캡차 핸드오프
 
 ```text
-engine: decide(captcha_or_mfa_v1).probability ≥ 0.85
+engine: decide(screen_state_v2) → 예약 결과 아님, outcome=captcha (captcha_visible ≥ 0.85)
   → 데스크톱 활성(최근 입력 60s)이면 renderer.focus + 영역 하이라이트
   → 아니면 human.request(kind=captcha, image=crop, ttl=90s) → relay → mobile
 mobile 입력 → human.response → engine fill(캡차 답은 비밀 아님, 로그에는 길이만)
 90s 무응답 → checkpoint 복귀, run.paused(resumable)
-캡차 카운터 증가 → 운영 정책 §6.4 자동 보수화 판단
+캡차 카운터 증가(rate_counters) → 운영 정책 cooldown.onCaptchaBurst 자동 보수화 판단(D03 §7)
 ```
 
 ## 6. 배포 토폴로지

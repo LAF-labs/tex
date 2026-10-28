@@ -49,7 +49,8 @@ CREATE TABLE runs (
   id TEXT PRIMARY KEY, playbook_id TEXT NOT NULL, playbook_version TEXT NOT NULL, profile_id TEXT NOT NULL,
   trigger TEXT CHECK(trigger IN ('local','remote','daemon')) NOT NULL, status TEXT NOT NULL,
   inputs_hash TEXT NOT NULL, inputs_json_enc BLOB,      -- 재개용. DB 키로 암호화된 컬럼(비밀 미포함)
-  checkpoint TEXT, started_at TEXT NOT NULL, finished_at TEXT, l1_calls INTEGER DEFAULT 0, l2_calls INTEGER DEFAULT 0,
+  checkpoint TEXT, context_json_enc BLOB,   -- Paused 재개용 vars·intent_id (비밀 없음, 토큰 없음)
+  started_at TEXT NOT NULL, finished_at TEXT, l1_calls INTEGER DEFAULT 0, l2_calls INTEGER DEFAULT 0,
   handoffs INTEGER DEFAULT 0, cost_usd REAL DEFAULT 0
 );
 
@@ -59,10 +60,12 @@ CREATE TABLE run_events (
   prev_hash TEXT NOT NULL, hash TEXT NOT NULL                          -- 해시 체인
 );
 
-CREATE TABLE irreversible_log (
-  idempotency_key TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT NOT NULL,
-  executed_at TEXT NOT NULL, verified INTEGER NOT NULL DEFAULT 0, result_ref TEXT
+CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 §4). 선행 기록(write-ahead)
+  intent_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, step_id TEXT NOT NULL, business_key TEXT NOT NULL,
+  state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt')) NOT NULL,
+  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL
 );
+CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);
 
 CREATE TABLE schedules (
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, doc_type TEXT NOT NULL, playbook_id TEXT NOT NULL,
@@ -70,10 +73,11 @@ CREATE TABLE schedules (
   consent_json TEXT NOT NULL, next_due_at TEXT, last_run_id TEXT, enabled INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE rate_counters (
-  portal TEXT NOT NULL, bucket TEXT NOT NULL,     -- 'session:<id>' | 'day:YYYY-MM-DD'
-  count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(portal, bucket)
+CREATE TABLE rate_counters (                 -- D03 §7. KST, 증가 커밋 → 행동
+  portal TEXT NOT NULL, profile_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL,  -- runs_day | irreversible_day | navigations_min | logins_day | captcha_10m | login_session
+  bucket TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(portal, profile_id, kind, bucket)
 );
+CREATE TABLE clock_guard (id INTEGER PRIMARY KEY CHECK(id=1), last_seen_at TEXT NOT NULL);
 CREATE TABLE cooldowns (portal TEXT PRIMARY KEY, until TEXT NOT NULL, reason TEXT NOT NULL);
 
 CREATE TABLE playbook_packages (
@@ -87,7 +91,7 @@ CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
 CREATE TABLE remote_devices (device_id TEXT PRIMARY KEY, name TEXT, noise_pub BLOB NOT NULL, paired_at TEXT NOT NULL, last_seen_at TEXT, revoked INTEGER NOT NULL DEFAULT 0);
 ```
 
-원칙: 비밀 컬럼 없음. `inputs_json_enc`는 재개 편의를 위한 것으로 비밀 참조(`secret_ref`)는 종류 이름만 들어간다.
+원칙: 비밀 컬럼 없음. `inputs_json_enc`·`context_json_enc`는 재개용이며 비밀 참조(`secret_ref`)는 종류 이름만, 게이트 토큰·`runKey`는 절대 저장하지 않는다. 저널(`run_events`)이 상태의 단일 진실이다.
 
 ## 3. 문서 종류와 유효기간 규칙표 (초기값, 사용자 조정 가능)
 
