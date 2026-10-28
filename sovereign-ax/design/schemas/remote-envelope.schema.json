@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/remote-envelope.schema.json",
+  "title": "Sovereign AX Remote Envelope (plaintext inside Noise transport)",
+  "type": "object",
+  "required": ["v", "type", "id", "ts", "body"],
+  "additionalProperties": false,
+  "properties": {
+    "v": {"const": 1},
+    "type": {"enum": ["hello", "cmd.run", "cmd.abort", "cmd.resume", "run.event", "gate.request", "gate.response", "human.request", "human.response", "file.offer", "file.chunk", "query.documents", "query.result", "ping", "pong"]},
+    "id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "ts": {"type": "integer"},
+    "replyTo": {"type": ["string", "null"]},
+    "body": {"type": "object"}
+  },
+  "allOf": [
+    {"if": {"properties": {"type": {"const": "cmd.run"}}}, "then": {"properties": {"body": {"type": "object", "required": ["playbookId", "inputs", "idempotency"], "additionalProperties": false, "properties": {"playbookId": {"type": "string"}, "inputs": {"type": "object"}, "idempotency": {"type": "string"}}}}}},
+    {"if": {"properties": {"type": {"const": "gate.response"}}}, "then": {"properties": {"body": {"type": "object", "required": ["runId", "stepId", "approved", "nonce"], "additionalProperties": false, "properties": {"runId": {"type": "string"}, "stepId": {"type": "string"}, "approved": {"type": "boolean"}, "nonce": {"type": "string"}}}}}},
+    {"if": {"properties": {"type": {"const": "human.response"}}}, "then": {"properties": {"body": {"type": "object", "required": ["runId", "stepId"], "additionalProperties": false, "properties": {"runId": {"type": "string"}, "stepId": {"type": "string"}, "value": {"type": "string", "maxLength": 64}, "sealedForVault": {"type": "string", "contentEncoding": "base64"}}, "oneOf": [{"required": ["value"]}, {"required": ["sealedForVault"]}]}}}},
+    {"if": {"properties": {"type": {"const": "human.request"}}}, "then": {"properties": {"body": {"type": "object", "required": ["runId", "stepId", "kind", "prompt", "ttl"], "additionalProperties": false, "properties": {"runId": {"type": "string"}, "stepId": {"type": "string"}, "kind": {"enum": ["captcha", "otp", "secret", "manual"]}, "prompt": {"type": "string", "maxLength": 200}, "image": {"type": "string", "contentEncoding": "base64", "maxLength": 280000}, "ttl": {"type": "integer", "minimum": 10, "maximum": 600}}}}}}
+  ]
+}

@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/playbook-ir.schema.json",
+  "title": "Sovereign AX Playbook IR",
+  "type": "object",
+  "required": ["ir", "id", "version", "portal", "profileKinds", "inputs", "steps", "postconditions"],
+  "additionalProperties": false,
+  "properties": {
+    "ir": {"const": 1},
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"},
+    "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
+    "portal": {"enum": ["hometax", "gov24", "sminfo", "insure4", "iros", "public_api"]},
+    "profileKinds": {"type": "array", "minItems": 1, "items": {"enum": ["personal", "business"]}},
+    "inputs": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": {"enum": ["counterparty", "amounts", "line_items", "date", "email", "enum", "string", "number", "boolean", "secret_ref"]},
+          "required": {"type": "boolean"},
+          "default": {},
+          "minItems": {"type": "integer", "minimum": 0},
+          "values": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "preconditions": {"type": "array", "items": {"type": "string"}},
+    "checkpoints": {"type": "array", "items": {"type": "string"}},
+    "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}},
+    "postconditions": {"type": "array", "items": {"type": "string"}},
+    "recovery": {
+      "type": "object",
+      "properties": {"default": {"$ref": "#/$defs/onFail"}},
+      "additionalProperties": false
+    },
+    "pacing": {
+      "type": "object",
+      "properties": {"profile": {"enum": ["interactive", "daemon"]}},
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "targetRef": {"type": "string", "pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},
+    "valueRef": {
+      "oneOf": [
+        {"type": "string", "pattern": "^\\$(inputs|vars|profile|human)\\.[A-Za-z0-9_.\\[\\]]+$"},
+        {"type": "string", "pattern": "^(?!\\$)[^\\n]{0,200}$", "description": "constant; must not contain user-data-looking literals (V-13)"}
+      ]
+    },
+    "cond": {
+      "oneOf": [
+        {"type": "object", "required": ["exists"], "additionalProperties": false, "properties": {"exists": {"$ref": "#/$defs/targetRef"}}},
+        {"type": "object", "required": ["textMatches"], "additionalProperties": false, "properties": {"textMatches": {"type": "object", "required": ["target", "pattern"], "additionalProperties": false, "properties": {"target": {"$ref": "#/$defs/targetRef"}, "pattern": {"type": "string"}}}}},
+        {"type": "object", "required": ["varEquals"], "additionalProperties": false, "properties": {"varEquals": {"type": "object", "required": ["name", "value"], "additionalProperties": false, "properties": {"name": {"type": "string"}, "value": {}}}}},
+        {"type": "object", "required": ["sumEquals"], "additionalProperties": false, "properties": {"sumEquals": {"type": "object", "required": ["names", "target"], "additionalProperties": false, "properties": {"names": {"type": "array", "items": {"type": "string"}}, "target": {"$ref": "#/$defs/targetRef"}}}}},
+        {"type": "object", "required": ["all"], "additionalProperties": false, "properties": {"all": {"type": "array", "items": {"$ref": "#/$defs/cond"}}}},
+        {"type": "object", "required": ["any"], "additionalProperties": false, "properties": {"any": {"type": "array", "items": {"$ref": "#/$defs/cond"}}}},
+        {"type": "object", "required": ["not"], "additionalProperties": false, "properties": {"not": {"$ref": "#/$defs/cond"}}}
+      ]
+    },
+    "onFail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "retry": {"type": "integer", "minimum": 0, "maximum": 3},
+        "backoffMs": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 10000}},
+        "then": {"type": "string", "pattern": "^(recover|handoff|abort|checkpoint:[a-z_]+|human:(secret|manual))$"},
+        "handoffAfter": {"type": "integer", "minimum": 0, "maximum": 2}
+      }
+    },
+    "stepBase": {
+      "type": "object",
+      "required": ["id", "type"],
+      "properties": {
+        "id": {"type": "string", "pattern": "^s[0-9]{1,3}$"},
+        "type": {"type": "string"},
+        "label": {"type": "string", "maxLength": 80},
+        "pace": {"enum": ["normal", "slow", "none"]},
+        "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 600000},
+        "onFail": {"$ref": "#/$defs/onFail"},
+        "checkpoint": {"type": "string"},
+        "irreversible": {"type": "boolean"}
+      }
+    },
+    "step": {
+      "allOf": [{"$ref": "#/$defs/stepBase"}],
+      "oneOf": [
+        {"properties": {"type": {"const": "goto"}, "url": {"type": "string", "format": "uri"}}, "required": ["url"]},
+        {"properties": {"type": {"const": "click"}, "target": {"$ref": "#/$defs/targetRef"}}, "required": ["target"]},
+        {"properties": {"type": {"const": "fill"}, "target": {"$ref": "#/$defs/targetRef"}, "value": {"$ref": "#/$defs/valueRef"}}, "required": ["target", "value"]},
+        {"properties": {"type": {"const": "select"}, "target": {"$ref": "#/$defs/targetRef"}, "option": {"$ref": "#/$defs/valueRef"}}, "required": ["target", "option"]},
+        {"properties": {"type": {"const": "press"}, "key": {"type": "string", "maxLength": 20}}, "required": ["key"]},
+        {"properties": {"type": {"const": "wait"}, "for": {"enum": ["selector", "navigation", "text", "idle"]}, "value": {"type": "string"}}, "required": ["for"]},
+        {"properties": {"type": {"const": "assert"}, "cond": {"$ref": "#/$defs/cond"}}, "required": ["cond"]},
+        {"properties": {"type": {"const": "extract"}, "name": {"type": "string"}, "from": {"type": "object"}}, "required": ["name", "from"]},
+        {"properties": {"type": {"const": "decide"}, "bundle": {"type": "string", "pattern": "^[a-z_]+_v\\d+$"}, "scope": {"type": "string"}, "on": {"type": "object", "required": ["unknown"], "additionalProperties": {"type": "string"}}}, "required": ["bundle", "scope", "on"]},
+        {"properties": {"type": {"const": "checkpoint"}, "name": {"type": "string"}, "expect": {"$ref": "#/$defs/cond"}}, "required": ["name"]},
+        {"properties": {"type": {"const": "gate"}, "card": {"type": "string"}, "fields": {"type": "array", "items": {"type": "string"}}, "ttlMs": {"type": "integer", "minimum": 10000, "maximum": 3600000}}, "required": ["card", "fields"]},
+        {"properties": {"type": {"const": "human"}, "kind": {"enum": ["captcha", "otp", "secret", "manual"]}, "prompt": {"type": "string"}, "region": {"$ref": "#/$defs/targetRef"}, "ttlMs": {"type": "integer", "minimum": 10000, "maximum": 600000}}, "required": ["kind", "prompt"]},
+        {"properties": {"type": {"const": "secret_fill"}, "target": {"$ref": "#/$defs/targetRef"}, "secret": {"type": "string", "pattern": "^(cert_password|portal_password|security_card:\\{row\\})$"}}, "required": ["target", "secret"], "not": {"required": ["value"]}},
+        {"properties": {"type": {"const": "sign"}, "method": {"type": "string"}, "then": {"type": "array", "items": {"type": "string"}}}, "required": ["method"]},
+        {"properties": {"type": {"const": "submit"}, "target": {"$ref": "#/$defs/targetRef"}, "irreversible": {"const": true}, "idempotencyKey": {"type": "string"}, "verify": {"type": "string"}}, "required": ["target", "irreversible", "idempotencyKey", "verify"]},
+        {"properties": {"type": {"const": "capture"}, "name": {"type": "string"}, "from": {"type": "object"}}, "required": ["name", "from"]},
+        {"properties": {"type": {"const": "save_pdf"}, "strategy": {"enum": ["print", "download", "wallet"]}, "docType": {"type": "string"}, "nameTemplate": {"type": "string"}}, "required": ["strategy", "docType", "nameTemplate"]},
+        {"properties": {"type": {"const": "send_email"}, "via": {"enum": ["portal", "local"]}, "to": {"$ref": "#/$defs/valueRef"}, "attach": {"type": "string"}, "irreversible": {"const": true}}, "required": ["via", "to", "irreversible"]},
+        {"properties": {"type": {"const": "branch"}, "on": {"type": "string"}, "cases": {"type": "object", "additionalProperties": {"type": "string"}}, "default": {"type": "string"}}, "required": ["on", "cases", "default"]},
+        {"properties": {"type": {"const": "repeat"}, "max": {"type": "integer", "minimum": 1, "maximum": 20}, "until": {"$ref": "#/$defs/cond"}, "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}}}, "required": ["max", "until", "steps"]},
+        {"properties": {"type": {"const": "handoff"}, "reason": {"type": "string"}, "resumeAt": {"type": "string"}}, "required": ["reason"]},
+        {"properties": {"type": {"const": "end"}, "status": {"enum": ["success", "failed"]}}, "required": ["status"]}
+      ]
+    }
+  }
+}
