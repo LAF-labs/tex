@@ -13,7 +13,7 @@
 | [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D19, JSON 스키마 9종, ADR 16건 | v1.3 (공격표면 감사 3건 반영, [D19](sovereign-ax/design/19-attack-surface.md)) |
 | [sovereign-ax/research/](sovereign-ax/research/) | 리서치 노트 R1~R8(Sonnet), 검수 REVIEW-A/B/C와 공격표면 감사 AUDIT-A/B/C(Opus) | 참고 |
 
-기획 최종본은 Claude Docs 아티팩트([최종본 요약 + 탭 7개](https://claude.ai/artifact/CPYTrcP1Rb1rn35ig7bEPv))로도 볼 수 있으며 이 저장소의 문서와 같은 내용이다.
+기획 최종본은 Claude Docs 아티팩트([최종본 요약 + 탭 9개(개발 설계 요약 v1.3, 공격표면 감사·소버린 결정 포함)](https://claude.ai/artifact/CPYTrcP1Rb1rn35ig7bEPv))로도 볼 수 있으며 이 저장소의 문서와 같은 내용이다.
 
 코드는 아직 없다. 개발 착수 게이트(기획 확정 · 법률 1차 의견 · 운영기관 공문 발송)는 [04-roadmap.md](sovereign-ax/04-roadmap.md)에 있다. 작업판은 https://project.laf-co.com/p/tex (P0-14 공격표면 감사, P0-15 소버린 대안 평가).
 
