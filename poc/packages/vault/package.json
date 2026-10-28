@@ -4,7 +4,20 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" }
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    },
+    "./entry": {
+      "default": "./dist/entry.js"
+    }
   },
-  "dependencies": {"@sax/platform": "workspace:*", "@napi-rs/keyring": "2.1.2"}
+  "dependencies": {
+    "@napi-rs/keyring": "2.1.2",
+    "@sax/platform": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "45.1.0"
+  }
 }

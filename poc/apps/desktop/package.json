@@ -12,5 +12,8 @@
     "tesseract.js": "7.0.0",
     "@tesseract.js-data/kor": "1.0.0",
     "@sax/net": "workspace:*"
+  },
+  "devDependencies": {
+    "electron": "45.1.0"
   }
 }
