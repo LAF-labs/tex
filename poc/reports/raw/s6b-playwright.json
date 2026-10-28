@@ -41,7 +41,7 @@
   },
   "afterClose": "click ok, no deadlock",
   "leak": {
-    "ipcMessages": 983,
+    "ipcMessages": 974,
     "ipcFindings": [],
     "logFindings": []
   },
@@ -195,7 +195,7 @@
     },
     {
       "key": "session Page.createIsolatedWorld",
-      "forwarded": 2,
+      "forwarded": 3,
       "denied": 0,
       "synthetic": 0,
       "scope": "session"
@@ -251,7 +251,7 @@
     },
     {
       "key": "session Runtime.callFunctionOn",
-      "forwarded": 94,
+      "forwarded": 93,
       "denied": 25,
       "synthetic": 0,
       "scope": "session"

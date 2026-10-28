@@ -27,12 +27,25 @@ export interface TargetState {
   win?: SecretWindow;
   /** 금고가 입력한 노드·human:secret 대상 노드. */
   secretBackendIds: Set<number>;
+  /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고 첫 문서 커밋의 origin으로 노출을 정한다. */
+  pendingPopup?: NodeJS.Timeout;
 }
 
 interface EngineSession {
   targetId: string;
   child: boolean;
+  /** 자식 세션: 부착된 부모 세션(page 또는 다른 자식). */
+  parent?: string;
+  /** 자식 세션의 자기 타깃 ID(OOPIF 루트 프레임 ID와 같다). */
+  childTargetId?: string;
+  /** 자식 세션의 현재 문서 URL. */
+  url?: string;
+  /** 목적지를 모르는 자식 iframe: 금고가 재개하고 첫 커밋 origin을 본 뒤 엔진에 알린다(그 전까지 엔진은 모른다). */
+  pending?: { attach: CdpMessage; timer: NodeJS.Timeout };
 }
+
+/** 목적지 없는 팝업(window.open(''))을 about:blank로 노출하기까지 기다리는 시간. */
+const POPUP_DECIDE_MS = 1500;
 
 interface PendingEngineRequest {
   engineId: number;
@@ -129,8 +142,13 @@ export class Relay {
     }
     const es = this.engineSessions.get(msg.sessionId);
     const t = es ? this.targets.get(es.targetId) : undefined;
-    if (!es || !t || !t.exposed) {
+    if (!es || !t || !t.exposed || es.pending) {
       this.reject(msg, { ok: false, reason: 'unknown_session' }, 'session');
+      return;
+    }
+    // 자식 프레임 감시는 금고가 켠 Page 도메인에 기댄다. 엔진이 끄지 못하게 한다.
+    if (es.child && msg.method === 'Page.disable') {
+      this.reject(msg, { ok: false, reason: 'child_page_monitor' }, 'session');
       return;
     }
     const verdict = checkSessionCommand(msg.method, msg.params, this.stateOf(t), this.policy, this.taintedRequests);
@@ -295,14 +313,34 @@ export class Relay {
     }
   }
 
-  /** 새 타깃 노출 여부: 노출 타깃이 연 팝업만 노출. 사용자 탭·워커 타깃은 재개 후 숨긴다. */
+  /**
+   * 새 타깃 노출 여부(D05 §3.3 "허용 origin 팝업만"): 노출 타깃이 연 팝업 중 허용 origin인 것만 노출한다.
+   * Chrome은 팝업 부착 때 targetInfo.url을 비워 주므로(실측) 목적지를 모르면 금고가 숨긴 채 재개하고,
+   * 첫 문서 커밋의 origin을 본 뒤에야 엔진에 붙인다. 사용자 탭·워커 타깃은 재개 후 숨긴다.
+   */
   private async decide(t: TargetState): Promise<void> {
     const opener = t.openerId ? this.targets.get(t.openerId) : undefined;
     if (t.type === 'page' && opener?.exposed) {
-      await this.expose(t);
+      if (t.url && t.url !== 'about:blank') {
+        if (urlAllowed(t.url, this.policy.allowedHosts)) await this.expose(t);
+        else await this.hidePopup(t);
+        return;
+      }
+      await this.conn.send('Page.enable', {}, t.vaultSession).catch(() => {});
+      t.pendingPopup = setTimeout(() => {
+        // 이동이 없는 빈 팝업: opener가 허용 origin이므로 about:blank로 노출한다(이후 이동은 커밋마다 재집행).
+        t.pendingPopup = undefined;
+        if (this.targets.has(t.targetId) && urlAllowed(t.url, this.policy.allowedHosts) && opener.exposed) void this.expose(t);
+      }, POPUP_DECIDE_MS);
+      await this.resume(t);
       return;
     }
     if (t.type === 'page') this.log.event('vault.user_tab_hidden', { target: t.targetId.slice(0, 8) });
+    await this.resume(t);
+  }
+
+  private async hidePopup(t: TargetState): Promise<void> {
+    this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
     await this.resume(t);
   }
 
@@ -337,7 +375,12 @@ export class Relay {
       const frame = p.frame as Json;
       if (!frame.parentId) {
         t.url = String(frame.url ?? '');
-        if (t.exposed && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
+        if (t.pendingPopup) {
+          clearTimeout(t.pendingPopup);
+          t.pendingPopup = undefined;
+          if (urlAllowed(t.url, this.policy.allowedHosts)) void this.expose(t);
+          else void this.hidePopup(t);
+        } else if (t.exposed && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
       if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameDetached') {
@@ -382,13 +425,28 @@ export class Relay {
   }
 
   private async sanitizeEvent(msg: CdpMessage): Promise<CdpMessage | null> {
-    const t = this.targetOfSession(msg.sessionId!);
-    if (!t || !t.exposed) return null;
+    const es = this.engineSessions.get(msg.sessionId!);
+    const t = es ? this.targets.get(es.targetId) : undefined;
+    if (!es || !t || !t.exposed) return null;
     const p = (msg.params ?? {}) as Json;
     const st = this.stateOf(t);
+    // 자식 세션(OOPIF)의 문서 커밋: 그 자식만 재검사·분리한다. 부모 page의 originLeft를 부르지 않는다.
+    if (es.child && msg.method === 'Page.frameNavigated') {
+      const frame = p.frame as Json;
+      if (frame.id === es.childTargetId || !frame.parentId) {
+        es.url = String(frame.url ?? '');
+        if (!this.childUrlAllowed(es.url, es.parent)) {
+          this.revokeChild(msg.sessionId!, es);
+          return null;
+        }
+        if (es.pending) return this.releasePendingChild(es);
+      }
+      return es.pending ? null : msg;
+    }
+    if (es.pending) return null;
     switch (msg.method) {
       case 'Target.attachedToTarget':
-        return this.filterChildAttach(msg, t);
+        return this.filterChildAttach(msg);
       case 'Target.detachedFromTarget': {
         const sid = String(p.sessionId);
         if (!this.engineSessions.has(sid)) return null;
@@ -436,17 +494,94 @@ export class Relay {
     return msg;
   }
 
-  /** page 수준 자동 부착의 자식: 워커와 허용 origin(또는 빈) iframe만 엔진에 넘긴다. */
-  private async filterChildAttach(msg: CdpMessage, t: TargetState): Promise<CdpMessage | null> {
+  /** 부모 세션의 현재 URL(page는 타깃 URL, 자식은 자기 문서 URL). */
+  private sessionUrl(sessionId: string | undefined): string {
+    if (!sessionId) return '';
+    const es = this.engineSessions.get(sessionId);
+    if (!es) return '';
+    return es.child ? (es.url ?? '') : (this.targets.get(es.targetId)?.url ?? '');
+  }
+
+  /** 자식 문서 URL 허용 여부. about:blank·빈 URL은 부모가 허용 origin일 때만. */
+  private childUrlAllowed(url: string, parent: string | undefined): boolean {
+    const parentOk = !!parent && this.engineSessions.has(parent) && urlAllowed(this.sessionUrl(parent), this.policy.allowedHosts);
+    if (!parentOk) return false;
+    if (url === '' || url === 'about:blank') return true;
+    return urlAllowed(url, this.policy.allowedHosts);
+  }
+
+  /** 자식 세션과 그 자손만 엔진에서 떼어 낸다(부모 page는 유지). 엔진에는 분리 이벤트를 합성해 준다. */
+  private revokeChild(sid: string, es: EngineSession): void {
+    const drop = [sid];
+    for (let i = 0; i < drop.length; i++) {
+      for (const [k, v] of this.engineSessions) if (v.parent === drop[i] && !drop.includes(k)) drop.push(k);
+    }
+    for (const k of drop) {
+      const d = this.engineSessions.get(k);
+      if (d?.pending) clearTimeout(d.pending.timer);
+      this.engineSessions.delete(k);
+    }
+    this.log.event(es.pending ? 'vault.child_hidden' : 'vault.child_origin_left', { count: drop.length });
+    // 엔진이 몰랐던(보류 중) 자식이면 분리 이벤트를 만들지 않는다.
+    if (!es.pending && es.parent && this.engineSessions.has(es.parent)) {
+      this.enqueue(async () => ({ method: 'Target.detachedFromTarget', sessionId: es.parent, params: { sessionId: sid, targetId: es.childTargetId } }));
+    }
+    void this.conn.send('Target.detachFromTarget', { sessionId: sid }, es.parent).catch(() => {});
+  }
+
+  private releasePendingChild(es: EngineSession): CdpMessage | null {
+    if (!es.pending) return null;
+    clearTimeout(es.pending.timer);
+    const attach = es.pending.attach;
+    es.pending = undefined;
+    const p = attach.params as Json;
+    return { ...attach, params: { ...p, targetInfo: { ...(p.targetInfo as Json), url: es.url ?? '' } } };
+  }
+
+  /** page 수준 자동 부착의 자식: 워커와 허용 origin iframe만 엔진에 넘긴다. 이후 이동은 금고가 감시한다. */
+  private async filterChildAttach(msg: CdpMessage): Promise<CdpMessage | null> {
     const p = msg.params as Json;
     const info = p.targetInfo as Json;
     const child = String(p.sessionId);
     const type = String(info.type);
-    const ok = type === 'worker' || (type === 'iframe' && urlAllowed(String(info.url ?? ''), this.policy.allowedHosts));
+    const url = String(info.url ?? '');
+    const parent = msg.sessionId!;
+    const parentEs = this.engineSessions.get(parent)!;
+    const workerUrlOk = url.startsWith('blob:') || url.startsWith('data:') || this.childUrlAllowed(url, parent);
+    const ok = (type === 'worker' && workerUrlOk && this.childUrlAllowed('', parent)) || (type === 'iframe' && this.childUrlAllowed(url, parent));
     if (ok) {
-      this.engineSessions.set(child, { targetId: t.targetId, child: true });
-      return msg;
+      const es: EngineSession = { targetId: parentEs.targetId, child: true, parent, childTargetId: String(info.targetId), url };
+      this.engineSessions.set(child, es);
+      if (type !== 'iframe') return msg;
+      // 엔진이 Page를 켜지 않아도 금고가 자식 문서 커밋을 볼 수 있게 한다(이벤트는 같은 세션으로 엔진에도 간다).
+      await this.conn.send('Page.enable', {}, child).catch(() => {});
+      if (url !== '' && url !== 'about:blank') return msg;
+      // 부착 정보의 url이 비어도 이미 커밋된 문서가 있을 수 있다(실측: OOPIF는 커밋 뒤 부착). 자식 루트 프레임 URL을 직접 본다.
+      const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, child).catch(() => null);
+      const committed = String(tree?.frameTree.frame.url ?? '');
+      if (committed && committed !== 'about:blank') {
+        es.url = committed;
+        if (!this.childUrlAllowed(committed, parent)) {
+          this.engineSessions.delete(child);
+          return this.hideChild(msg, child, type);
+        }
+        return { ...msg, params: { ...p, targetInfo: { ...info, url: committed } } };
+      }
+      // Chrome은 OOPIF 부착 때 url을 비워 준다(실측). 목적지를 알 때까지 엔진에 알리지 않고 금고가 재개한다.
+      es.pending = {
+        attach: { ...msg, params: { ...p, waitingForDebugger: false } },
+        timer: setTimeout(() => {
+          // 이동 없는 빈 자식(부모가 허용 origin): about:blank로 알린다. 이후 이동은 커밋마다 재검사.
+          if (this.engineSessions.get(child) === es && es.pending) this.enqueue(async () => this.releasePendingChild(es));
+        }, POPUP_DECIDE_MS),
+      };
+      await this.conn.send('Runtime.runIfWaitingForDebugger', {}, child).catch(() => {});
+      return null;
     }
+    return this.hideChild(msg, child, type);
+  }
+
+  private async hideChild(msg: CdpMessage, child: string, type: string): Promise<null> {
     this.log.event('vault.child_hidden', { type });
     await this.conn.send('Runtime.runIfWaitingForDebugger', {}, child).catch(() => {});
     await this.conn.send('Target.detachFromTarget', { sessionId: child }, msg.sessionId).catch(() => {});

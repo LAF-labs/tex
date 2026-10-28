@@ -5,7 +5,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { scanDir, testSecret, variantsOf } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
-import { startHarness, type Harness } from './harness.ts';
+import { startHarness, testPolicy, type Harness } from './harness.ts';
 import { RawEngine, sleep } from './raw-engine.ts';
 
 const REPORT_DIR = path.resolve(import.meta.dirname, '../reports/raw');
@@ -110,13 +110,12 @@ describe('vault relay (raw engine)', () => {
     assert.ok(h.log.lines.some((l) => l.includes('vault.user_tab_hidden')));
 
     await eng.navigate(sid, `${fx.origin}/popup`);
-    // 팝업은 waitForDebuggerOnStart로 멈춘 채 부착되므로 opener evaluate를 기다리지 않고 재개한다.
-    const clicked = eng.evaluate(sid, `document.getElementById('open').click()`);
+    // 팝업 목적지는 부착 때 비어 있어(실측) 금고가 첫 문서 커밋의 origin을 본 뒤 노출한다.
+    await eng.evaluate(sid, `document.getElementById('open').click()`);
     const ev = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && !e.sessionId && (e.params!.targetInfo as { targetId: string }).targetId !== targetId);
     const popupSid = String(ev.params!.sessionId);
-    assert.equal(ev.params!.waitingForDebugger, true);
+    assert.equal(new URL(String((ev.params!.targetInfo as { url: string }).url)).pathname, '/login');
     await eng.send('Runtime.runIfWaitingForDebugger', {}, popupSid);
-    await clicked;
     assert.ok(popupSid);
   });
 
@@ -292,3 +291,80 @@ describe('vault relay (raw engine)', () => {
     assert.deepEqual(profile.findings, []);
   });
 });
+
+describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)', () => {
+  // 이 묶음은 localhost도 허용한다(127.0.0.1과 다른 site라 OOPIF가 된다). 허용 밖은 *.localhost(http)·data:.
+  let fx: Fixture;
+  let h: Harness;
+  let eng: RawEngine;
+  let sid: string;
+  let port: string;
+  const rootAttaches = () => eng.events.filter((e) => e.method === 'Target.attachedToTarget' && !e.sessionId);
+
+  before(async () => {
+    fx = await startFixture();
+    h = await startHarness({ policy: testPolicy({ allowedHosts: ['127.0.0.1', 'localhost'] }) });
+    eng = new RawEngine(h.client);
+    await h.client.rpc('browser.launch');
+    ({ sessionId: sid } = await eng.attachRunPage());
+    port = new URL(fx.origin).port;
+    await eng.navigate(sid, `${fx.origin}/login`);
+  });
+
+  after(async () => {
+    await h.close();
+    await fx.close();
+  });
+
+  it('허용 밖 host로 열린 팝업은 엔진에 노출하지 않는다', async () => {
+    const before = rootAttaches().length;
+    await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/login') && 1`);
+    await sleep(2000);
+    assert.equal(rootAttaches().length, before, '허용 밖 팝업은 부착 이벤트가 없다');
+    assert.ok(h.log.lines.some((l) => l.includes('vault.popup_hidden')));
+    // 허용 origin 팝업은 그대로 노출된다
+    await eng.evaluate(sid, `window.open('http://localhost:${port}/login') && 1`);
+    const ev = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && !e.sessionId, before);
+    assert.equal(new URL(String((ev.params!.targetInfo as { url: string }).url)).hostname, 'localhost');
+  });
+
+  it('허용 밖 iframe은 부착되지 않고, 허용 iframe이 허용 밖으로 이동하면 그 자식만 분리된다', async () => {
+    const mark = eng.events.length;
+    await eng.evaluate(sid, `document.body.insertAdjacentHTML('beforeend', '<iframe id=bad src="http://evil.localhost:${port}/child"></iframe><iframe id=ok src="http://localhost:${port}/child"></iframe>')`);
+    const isIframeAttach = (e: { method?: string; sessionId?: string; params?: Record<string, unknown> }) =>
+      e.method === 'Target.attachedToTarget' && e.sessionId === sid && (e.params!.targetInfo as { type: string }).type === 'iframe';
+    const childEv = await eng.waitEvent(isIframeAttach, mark);
+    await sleep(1800);
+    const childAttaches = eng.events.slice(mark).filter(isIframeAttach);
+    assert.equal(childAttaches.length, 1, '허용 iframe(localhost)만 엔진에 부착');
+    assert.equal(new URL(String((childEv.params!.targetInfo as { url: string }).url)).hostname, 'localhost');
+    assert.ok(h.log.lines.some((l) => l.includes('vault.child_hidden')));
+    const child = String(childEv.params!.sessionId);
+    assert.equal(await eng.evaluate(child, '1+1'), 2);
+    // 자식 문서가 허용 밖(data:)으로 이동: 같은 자식 프로세스에서 커밋된다
+    const mark2 = eng.events.length;
+    await eng.evaluate(child, `location.href = 'data:text/html,<p>x</p>'; 1`).catch(() => {});
+    const det = await eng.waitEvent((e) => e.method === 'Target.detachedFromTarget' && e.params?.sessionId === child, mark2);
+    assert.equal(det.sessionId, sid, '분리 이벤트는 부모 세션으로 온다');
+    assert.ok(h.log.lines.some((l) => l.includes('vault.child_origin_left')));
+    assert.equal((await eng.tryCall('Runtime.evaluate', { expression: '1' }, child)).ok, false, '분리된 자식 세션 명령 거부');
+    const leaked = eng.events.slice(mark2).filter((e) => e.method === 'Page.frameNavigated' && String((e.params!.frame as { url: string }).url).startsWith('data:'));
+    assert.equal(leaked.length, 0, '허용 밖 자식 커밋 이벤트를 엔진에 넘기지 않는다');
+  });
+
+  it('OOPIF의 문서 커밋은 부모 page를 끊지 않는다', async () => {
+    const mark = eng.events.length;
+    await eng.evaluate(sid, `document.body.insertAdjacentHTML('beforeend', '<iframe id=ok2 src="http://localhost:${port}/child"></iframe>')`);
+    const childEv = await eng.waitEvent((e) => e.method === 'Target.attachedToTarget' && e.sessionId === sid && (e.params!.targetInfo as { type: string }).type === 'iframe', mark);
+    const child = String(childEv.params!.sessionId);
+    // 허용 범위 안의 자식 이동(같은 localhost) — 자식 세션 유지
+    await eng.evaluate(child, `location.href = 'http://localhost:${port}/login'; 1`).catch(() => {});
+    await eng.waitEvent((e) => e.method === 'Page.frameNavigated' && e.sessionId === child, mark);
+    await sleep(300);
+    assert.equal(await eng.evaluate(child, 'location.pathname'), '/login');
+    assert.equal(await eng.evaluate(sid, 'location.pathname'), '/login', '부모 page 세션 유지');
+    assert.ok(!eng.events.slice(mark).some((e) => e.method === 'Target.detachedFromTarget' && e.params?.sessionId === sid));
+    assert.ok(!h.log.lines.some((l) => l.includes('vault.origin_left')), '부모에 originLeft 없음');
+  });
+});
+

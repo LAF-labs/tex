@@ -155,7 +155,9 @@ app.whenReady().then(async () => {
   startProcesses();
   ipcMain.handle('sax', async (e, req: { method?: unknown; params?: unknown }) => {
     // 메인 UI 창에서 온 호출만 받는다.
-    if (!e.senderFrame?.url.startsWith(`${APP_SCHEME}://app/app.html`)) throw new Error('forbidden');
+    // senderFrame은 null일 수 있다(프레임이 사라진 뒤 도착한 호출 등). null이면 거부한다.
+    const url = e.senderFrame?.url;
+    if (typeof url !== 'string' || !url.startsWith(`${APP_SCHEME}://app/app.html`)) throw new Error('forbidden');
     if (typeof req?.method !== 'string') throw new Error('bad_request');
     return handleRenderer(req.method, (req.params ?? {}) as Record<string, unknown>);
   });

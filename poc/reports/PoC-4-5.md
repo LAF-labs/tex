@@ -2,7 +2,7 @@
 
 - 날짜: 2026-10-28 · 브랜치 `claude/poc-vault-localdata-d175a0` · 폐기 전제 코드(ADR-017)
 - 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 검증은 아직 하지 않았다**(PoC-1 VM 준비 후 §5 목록대로 다시 확인).
-- 전체 테스트: `cd poc && pnpm test` → 33건 통과. Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
+- 전체 테스트: `cd poc && pnpm test` → 36건 통과(PR #1 리뷰 회귀 3건 포함). Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
 - S6b 상세: [S6b.md](S6b.md)
 
 ## 1. 합격 기준 대조(D14 §0, 보드 acceptance)
@@ -10,7 +10,7 @@
 | 기준 | 결과 | 근거 |
 |---|---|---|
 | PoC-4: CDP 이벤트·로그·IPC에 비밀 0건 | **0건**: 테스트 비밀 5개 × 인코딩 변형 12종(utf8·utf16le·json·url·hex·HEX·base64/base64url 3정렬). 대상은 엔진 포트 IPC 1,336건(엔진이 받은 CDP 이벤트·응답 전부 포함), 금고 로그, 종료 후 전용 Chrome 프로필 디스크 418개 파일 | `tests/vault-relay.test.ts` 마지막 케이스, `tests/playwright-relay.test.ts`, `reports/raw/relay-measurements.json` `leakScan` |
-| PoC-4: 허용 목록 밖 호출 거부 | 루트 15종·세션 14종 거부 + `vault.cdp_denied`(인자 없이 메서드·사유만). 사용자 탭 비노출, 팝업만 노출, 허용 밖 origin은 엔진 세션 분리 | `vault-relay.test.ts` 2~4번 |
+| PoC-4: 허용 목록 밖 호출 거부 | 루트 15종·세션 14종 거부 + `vault.cdp_denied`(인자 없이 메서드·사유만). 사용자 탭 비노출, 허용 origin 팝업만 노출(첫 커밋 origin 확인 뒤), 허용 밖 origin은 엔진 세션 분리, 자식 iframe은 커밋마다 재검사해 그 자식만 분리 | `vault-relay.test.ts` 2~4번 |
 | PoC-4: Playwright 중계 동작 여부 확정 | **동작**(MessagePort, WS 폴백 불필요) | [S6b.md](S6b.md) |
 | PoC-4: 승인 창이 실제 입력만 인정 | main이 `before-mouse-event`·`before-input-event`로 직접 관찰한다. 600ms 무장 지연, 같은 버튼 안 down/up이나 Alt+Y만 승인, Enter 단독은 무시. 창은 스크립트 없음(`javascript:false`)·CSP·포커스 비탈취이고, 렌더러 신호에는 승인 경로가 없다 | `apps/desktop/src/e2e.ts` 11건, `tests/guards.test.ts` |
 | PoC-5: 프로필·거래처 CRUD | 개인 1 + 사업자 1(종류별 유일, 같은 종류는 갱신), 거래처 생성·검색·수정·삭제·중복 거부, 사업자번호 체크섬 | `tests/localdata.test.ts` |

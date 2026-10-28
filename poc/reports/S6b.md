@@ -38,7 +38,12 @@ chromium.connectOverCDP(vault.cdpTransport(), { noDefaults: true, isLocal: true 
 | `Target.getBrowserContexts` | 빈 목록 | 호출 안 됨(예비) |
 | 그 밖 전부 | 거부 + `vault.cdp_denied` | — |
 
-팝업은 금고의 브라우저 수준 자동 부착(`waitForDebuggerOnStart`)으로 멈춘 채 들어온다. opener가 노출 타깃이면 노출하고, 엔진의 `Runtime.runIfWaitingForDebugger`를 금고 감시 세션에도 전달해 재개한다. 사용자가 연 탭은 재개만 하고 엔진에 알리지 않는다(`vault.user_tab_hidden`).
+팝업은 금고의 브라우저 수준 자동 부착(`waitForDebuggerOnStart`)으로 멈춘 채 들어온다. 실측하면 Chrome은 이때 팝업의 `targetInfo.url`을 **비워 준다**. 그래서 opener가 노출 타깃이어도 바로 붙이지 않는다. 금고가 숨긴 채 재개하고 **첫 문서 커밋의 origin**이 허용일 때만 엔진에 붙인다(허용 밖이면 `vault.popup_hidden`). 이동이 없는 빈 팝업은 1.5초 뒤 about:blank로 노출하고, 이후 이동은 커밋마다 재집행한다. 그래서 엔진은 팝업을 `waitingForDebugger: false`(실행 중)로 받는다. 사용자가 연 탭은 재개만 하고 엔진에 알리지 않는다(`vault.user_tab_hidden`).
+
+자식(OOPIF iframe) 세션도 같은 원칙을 따른다(PR #1 리뷰 반영).
+- 부착 정보의 url이 비면 금고가 자식 루트 프레임 URL을 직접 확인한다. 아직 커밋 전이면 커밋을 본 뒤 엔진에 알린다.
+- 금고가 자식 세션에 `Page.enable`을 켜 두므로(엔진의 `Page.disable`은 거부) 자식 문서가 커밋될 때마다 origin을 재검사한다. 허용 밖이면 **그 자식과 자손만** 분리하고 엔진에 분리 이벤트를 합성한다(`vault.child_origin_left`). 부모 page는 유지된다.
+- about:blank·빈 자식은 부모가 허용 origin일 때만 통과한다.
 
 ## 3. 최소 메서드 집합(관측)
 
