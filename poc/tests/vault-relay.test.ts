@@ -53,6 +53,17 @@ describe('vault relay (raw engine)', () => {
     assert.match(String((st as Error).message), /denied/);
     const devtoolsActivePort = await fs.stat(path.join(h.paths.chromeProfile, 'DevToolsActivePort')).catch(() => null);
     assert.equal(devtoolsActivePort, null, 'remote-debugging-port를 쓰면 생기는 파일이 없어야 한다');
+    // Chrome 브라우저 프로세스가 TCP 수신 소켓을 열지 않았다(다른 OS 사용자·인포스틸러가 붙을 포트 없음).
+    const { execFileSync } = await import('node:child_process');
+    const pid = h.vault.chromePid!;
+    let listening: string;
+    try {
+      listening = execFileSync('lsof', ['-nP', '-a', '-p', String(pid), '-iTCP', '-sTCP:LISTEN'], { encoding: 'utf8' });
+    } catch {
+      listening = ''; // lsof는 결과가 없으면 1로 끝난다
+    }
+    measurements.chromeListeningTcp = listening.trim().split('\n').filter(Boolean).length;
+    assert.equal(listening.trim(), '');
     assert.equal(await eng.evaluate(sid, 'navigator.webdriver'), true);
   });
 

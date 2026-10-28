@@ -1,4 +1,5 @@
 {
+  "chromeListeningTcp": 0,
   "denied": {
     "root Target.createBrowserContext": "vault relay denied Target.createBrowserContext (browser_target_not_exposed)",
     "root Target.attachToBrowserTarget": "vault relay denied Target.attachToBrowserTarget (browser_target_not_exposed)",

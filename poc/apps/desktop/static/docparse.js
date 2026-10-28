@@ -1,4 +1,3 @@
-/* global Tesseract */
 // 샌드박스 안 OCR. 입력 바이트 → {text, confidence}. 네트워크 없음, 저장 없음(cacheMethod none).
 window.addEventListener('message', (ev) => {
   if (ev.data !== 'docparse-port' || !ev.ports[0]) return;

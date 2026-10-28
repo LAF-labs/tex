@@ -41,7 +41,7 @@
   },
   "afterClose": "click ok, no deadlock",
   "leak": {
-    "ipcMessages": 984,
+    "ipcMessages": 983,
     "ipcFindings": [],
     "logFindings": []
   },

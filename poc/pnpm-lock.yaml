@@ -287,6 +287,10 @@ importers:
       tesseract.js:
         specifier: 7.0.0
         version: 7.0.0
+    devDependencies:
+      electron:
+        specifier: 45.1.0
+        version: 45.1.0
 
 packages:
 

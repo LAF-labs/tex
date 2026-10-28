@@ -19,7 +19,13 @@ export default tseslint.config(
     },
   },
   {
-    files: ['eslint.config.mjs', 'packages/vault/src/constants.ts', 'packages/vault/src/chrome/launch.ts'],
+    // 렌더러·샌드박스 정적 스크립트(브라우저 전역), 샌드박스 preload(CommonJS 필수)
+    files: ['apps/desktop/static/**/*.js', 'apps/desktop/static/**/*.cjs'],
+    languageOptions: { globals: { ...globals.browser, Tesseract: 'readonly' } },
+    rules: { '@typescript-eslint/no-require-imports': 'off' },
+  },
+  {
+    files: ['eslint.config.mjs', 'packages/vault/src/constants.ts', 'packages/vault/src/chrome/launch.ts', 'tests/guards.test.ts', 'tests/vault-relay.test.ts'],
     rules: { 'no-restricted-syntax': 'off' },
   },
   {

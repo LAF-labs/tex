@@ -194,6 +194,11 @@ export class Vault {
     return this.profileProblems;
   }
 
+  /** 진단·테스트용(포트 미개방 확인). */
+  get chromePid(): number | undefined {
+    return this.chrome?.proc.pid;
+  }
+
   /** 금고 기동당 1회(D05 §3.8, A-24). 두 번째는 거부 + 보안 이벤트. */
   async getDbKeyOnce(): Promise<Uint8Array> {
     if (this.dbKeyIssued) {
