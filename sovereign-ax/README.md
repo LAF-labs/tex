@@ -27,7 +27,7 @@
 | [04-roadmap.md](04-roadmap.md) | 개발 착수 게이트·기술 스파이크·MVP·마일스톤·팀·리스크 레지스터·KPI |
 | [05-access-and-detection.md](05-access-and-detection.md) | 자동화 접근 허용 공문 계획, 봇탐지 비대상 운영 설계, 캡차 핸드오프, 플레이북 최대화 원칙 |
 | [06-feasibility.md](06-feasibility.md) | 개발·사업 가능성 검토, Go 조건과 중단 기준, 미결 항목 결정 |
-| [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 9종, ADR 16건 |
+| [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 9종, ADR 17건 |
 | [design/19-attack-surface.md](design/19-attack-surface.md) | 공격표면 감사 101건(Critical 1·High 31·Medium 57·Low 12, 채택 97·변형 3·수용 1) 처리 결정 등록부, 보안 재감사 신규 18건, 위협 주체 통합표, 상충 해소, 운영자 가시성, 데이터 주권 지점 |
 | [research/](research/) | 리서치 노트 R1~R8, 검수 REVIEW-A~C, 감사 AUDIT-A~C |
 
