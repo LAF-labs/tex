@@ -29,6 +29,8 @@ export interface TargetState {
   secretBackendIds: Set<number>;
   /** 목적지를 모르는 팝업: 금고가 숨긴 채 재개하고, 문서 커밋 + getFrameTree로 허용이 확인될 때만 노출한다. */
   pendingPopup?: boolean;
+  /** 허용 밖 이동·커밋이 한 번이라도 확인된 팝업. 이후 어떤 이동에도 다시 노출하지 않는다(영구). */
+  revoked?: boolean;
 }
 
 interface EngineSession {
@@ -349,8 +351,16 @@ export class Relay {
       t.pendingPopup = false;
       await this.expose(t);
     } else {
-      this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
+      this.revokePopup(t);
     }
+  }
+
+  /** 보류 팝업 영구 거부(자식의 revokeChild와 같은 규칙): 비신뢰 origin을 거친 팝업은 허용 host로 와도 노출하지 않는다. */
+  private revokePopup(t: TargetState): void {
+    if (t.revoked) return;
+    t.pendingPopup = false;
+    t.revoked = true;
+    this.log.event('vault.popup_hidden', { target: t.targetId.slice(0, 8) });
   }
 
   private async resume(t: TargetState): Promise<void> {
@@ -360,6 +370,7 @@ export class Relay {
   }
 
   private async expose(t: TargetState): Promise<void> {
+    if (t.revoked) return;
     t.exposed = true;
     await this.conn.send('Page.enable', {}, t.vaultSession);
     const { frameTree } = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession);
@@ -389,8 +400,13 @@ export class Relay {
       }
       if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameStartedNavigating') {
-      // 커밋 전에 막는다: 노출 타깃의 메인 프레임이 허용 밖으로 이동을 시작하면 그 시점에 엔진 세션을 분리한다.
-      if (t.exposed && p.frameId === t.mainFrameId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) void this.originLeft(t);
+      // 커밋 전에 막는다: 메인 프레임이 허용 밖으로 이동을 시작하면 노출 타깃은 엔진 세션을 분리하고,
+      // 보류 팝업은 영구 거부한다(서버 리디렉션으로 허용 host에 커밋돼도 노출하지 않는다).
+      const offsite = !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts);
+      // page 타깃의 메인 프레임 ID는 타깃 ID와 같다(보류 팝업은 아직 mainFrameId를 모른다).
+      const mainFrame = p.frameId === (t.mainFrameId ?? t.targetId);
+      if (offsite && mainFrame && t.pendingPopup) this.revokePopup(t);
+      else if (offsite && mainFrame && t.exposed) void this.originLeft(t);
     } else if (msg.method === 'Page.frameDetached') {
       if (t.win && p.frameId === t.win.frameId) this.endWindow(t, 'detached');
     }
@@ -400,6 +416,7 @@ export class Relay {
   private async originLeft(t: TargetState): Promise<void> {
     if (!t.exposed) return;
     t.exposed = false;
+    t.revoked = true;
     this.log.event('vault.origin_left', { target: t.targetId.slice(0, 8) });
     if (t.engineSession) await this.conn.send('Target.detachFromTarget', { sessionId: t.engineSession }).catch(() => {});
   }

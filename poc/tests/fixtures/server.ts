@@ -47,6 +47,13 @@ export async function startFixture(): Promise<Fixture> {
           return html(page('spa', `
 <input id="pw" type="password">
 <button id="go" onclick="fetch('/api/login',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({pw:document.getElementById('pw').value})}).then(()=>{document.body.insertAdjacentHTML('beforeend','<p id=ok>welcome</p>')})">로그인</button>`));
+        case '/redirect':
+          // 서버 리디렉션(302): 허용 밖 host를 거쳐 허용 host로 가는 경로 시험용
+          res.writeHead(302, { location: url.searchParams.get('to') ?? '/login' });
+          return res.end();
+        case '/bounce':
+          // 클라이언트 리디렉션: 허용 밖 문서가 커밋된 뒤 스크립트로 허용 host로 보낸다
+          return html(page('bounce', `<script>setTimeout(() => location.replace(${JSON.stringify(url.searchParams.get('to') ?? '/login')}), 300)</script>`));
         case '/slow': {
           // 응답을 늦춰 "이동은 시작됐지만 아직 커밋 전" 상태를 만든다(fail-closed 시험).
           const ms = Math.min(Number(url.searchParams.get('ms') ?? '3000'), 10_000);

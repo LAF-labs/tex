@@ -379,6 +379,19 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     assert.equal(new URL(String((ev.params!.targetInfo as { url: string }).url)).pathname, '/slow');
   });
 
+  it('허용 밖 host를 거쳐 허용 host로 리디렉션되는 팝업은 끝까지 비노출(영구 거부)', async () => {
+    const mark = eng.events.length;
+    const target = encodeURIComponent(`http://localhost:${port}/login`);
+    await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/redirect?to=${target}') && 1`); // 서버 302
+    await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/bounce?to=${target}') && 1`); // 커밋 후 스크립트 이동
+    await sleep(3500);
+    const attaches = eng.events.slice(mark).filter((e) => e.method === 'Target.attachedToTarget' && !e.sessionId);
+    assert.deepEqual(attaches.map((e) => (e.params!.targetInfo as { url: string }).url), [], '리디렉션 뒤 허용 host에 와도 노출하지 않는다');
+    // 두 팝업 모두 실제로 허용 host까지 갔는지 확인(시험이 헛돌지 않게)
+    const landed = [...h.vault.relay!.targets.values()].filter((t) => t.revoked && t.url === `http://localhost:${port}/login`);
+    assert.equal(landed.length, 2);
+  });
+
   it('OOPIF의 문서 커밋은 부모 page를 끊지 않는다', async () => {
     const mark = eng.events.length;
     const leftBefore = h.log.lines.filter((l) => l.includes('vault.origin_left')).length;

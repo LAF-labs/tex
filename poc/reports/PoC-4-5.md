@@ -2,7 +2,7 @@
 
 - 날짜: 2026-10-28 · 브랜치 `claude/poc-vault-localdata-d175a0` · 폐기 전제 코드(ADR-017)
 - 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 검증은 아직 하지 않았다**(PoC-1 VM 준비 후 §5 목록대로 다시 확인).
-- 전체 테스트: `cd poc && pnpm test` → 37건 통과(PR #1 리뷰 회귀 4건 포함). Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
+- 전체 테스트: `cd poc && pnpm test` → 38건 통과(PR #1 리뷰 회귀 5건 포함). Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
 - S6b 상세: [S6b.md](S6b.md)
 
 ## 1. 합격 기준 대조(D14 §0, 보드 acceptance)
