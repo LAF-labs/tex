@@ -13,7 +13,7 @@ import {
   ThresholdProfiles,
   computeDigest,
   evaluateMapping,
-  newLocalRunToken,
+  localRunToken,
   selectorRepair,
   statesOf,
   validateBundle,
@@ -102,7 +102,7 @@ async function main() {
   const call = async (b: LoadedBundle, input: RedactedText): Promise<ProviderDecision | null> => {
     guard();
     try {
-      const r = await decider.call(b, input, newLocalRunToken());
+      const r = await decider.call(b, input, localRunToken(egress, { runId: `s9-${calls}` }));
       cost += lunaCost(r.usage);
       return r;
     } catch (e) {
@@ -149,7 +149,7 @@ async function main() {
 
   // G. Responses store:false 2턴 재생
   const ts = selectorRepair(['form.counterpart']);
-  const runToken = newLocalRunToken();
+  const runToken = localRunToken(egress, { runId: 's9-replay' });
   const msg = { role: 'user' as const, content: [{ type: 'input_text' as const, text: apply('스텝 s12(fill, 기대 역할 textbox, 이름 패턴 ^공급받는자 등록번호$)의 셀렉터 후보 3개가 모두 실패했다. 서브트리를 읽고 후보를 제안하라.', { runId: 's9' }, { frame: 'none' }).redacted }] };
   guard();
   const t1 = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: [], runToken });

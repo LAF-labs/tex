@@ -15,7 +15,7 @@
 | `packages/net/src/model-guard.ts`, `egress.ts` | BYOK 로컬 검사 4종 + 모델 송신 단일 입구 `toModel()`과 티켓 기반 `providerFetch` |
 | `packages/engine/src/l0/` | 규칙(19문항), S-L0 표, 승격 기준, 결정적 인젝션 사전 필터, 규칙 어댑터, `Judge` 조율기, 측정기 |
 | `scripts/` | `bundles-digest.ts`(다이제스트·허용 목록·프로필 재생성, `--check`), `s-l0-measure.ts`, `s9-decisions.ts` |
-| `tests/` | `model-bundles`·`model-adapter`·`l0`·`redaction`·`s9-mock` 71건 추가(전체 111건 통과) |
+| `tests/` | `model-bundles`·`model-adapter`·`l0`·`redaction`·`s9-mock` 75건 추가(전체 115건 통과) |
 
 ## 2. 계약과 어댑터
 
@@ -51,7 +51,7 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 
 ## 5. BYOK 로컬 검사 4종(`net/egress`)
 
-`egress.toModel()`이 모델 송신의 유일한 입구다. (1) 앱 내장 번들 다이제스트 허용 목록(+ `maxInputBytes`), (2) `gateway-request.schema.json` 검증(설계 원본의 사본, 원본과 같은지 테스트가 확인), (3) 실행당 예산 L1 ≤ 12·L2 ≤ 2, (4) 2차 PII 트립와이어(주민번호·사업자번호·카드·계좌 모양), 그리고 Phase 1 이미지 거부. 하나라도 실패하면 호출하지 않고 코드·카운트만 남긴다. 통과하면 그 본문의 해시에 묶인 일회 티켓을 발급하고, SDK에 넘긴 `providerFetch`는 티켓·목적지·경로·본문 해시가 모두 맞을 때만 나간다. 티켓은 재시도까지 3회 쓸 수 있고 예산은 1회만 소비한다. 린트: `packages/engine`·`packages/model`은 `fetch`·`http` 등을 직접 쓸 수 없다(기존 규칙 확장).
+`egress.toModel()`이 모델 송신의 유일한 입구다. (1) 앱 내장 번들 다이제스트 허용 목록(+ `maxInputBytes`), (2) `gateway-request.schema.json` 검증(설계 원본의 사본, 원본과 같은지 테스트가 확인), (3) 실행당 예산 L1 ≤ 12·L2 ≤ 2(예산은 토큰이 아니라 실행 범위 runId·chatSessionId에 쌓이고, guard가 범위당 로컬 실행 토큰을 하나만 발급해 만료·종료 전 재발급을 거부한다), (4) 2차 PII 트립와이어(주민번호·사업자번호·카드·계좌 모양), 그리고 Phase 1 이미지 거부. 하나라도 실패하면 호출하지 않고 코드·카운트만 남긴다. 통과하면 그 본문의 해시에 묶인 일회 티켓을 발급하고, SDK에 넘긴 `providerFetch`는 티켓·목적지·경로·본문 해시가 모두 맞을 때만 나간다. 티켓은 재시도까지 3회 쓸 수 있고 예산은 1회만 소비한다. 린트: `packages/engine`·`packages/model`은 `fetch`·`http` 등을 직접 쓸 수 없다(기존 규칙 확장).
 
 ## 6. S9
 
@@ -74,6 +74,8 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 
 - Bugbot: 대화상자 규칙이 페이지 제목을 읽던 문제 → `dialogText()`로 대화상자 서브트리만. 회귀 테스트·합성 사례 추가.
 - Bugbot: `situation`이 pathname만 비교하던 문제 → `sameScreen()`(pathname + 식별 쿼리 허용 목록 + heading). 같은 pathname·제목, 다른 `w2xPath` → `different_screen` 회귀 테스트.
+- CodeSolar 3차: 실행 예산이 runToken별이라 BYOK에서 토큰을 새로 만들면 우회된다 → 예산 키를 실행 범위(runId·chatSessionId)로, 로컬 토큰은 guard가 범위당 하나만 발급(`issueRunToken`, 만료 2시간 전 재발급 거부, `endRun` 후 재발급해도 예산 유지), 발급하지 않은 토큰은 `run_token_unknown`. `newLocalRunToken` 삭제, `localRunToken(egress, scope)`로 대체. 회귀: 같은 runId로 다시 받은 토큰의 13번째 L1 호출 거부. 한계: runId 자체를 지어내는 것은 막지 못한다(원천은 원장).
+- CodeSolar 3차: "`security_warning` 규칙 답이 `forcesNonProgress`에서 배제돼 모델 답 0.02로 `logged_in`이 나온다"는 지적은 재현되지 않았다. `security_warning ≥ .80`은 첫 행 `blocked`의 any 조건이라 다른 질문과 무관하게 진행 결과를 막고, 규칙 답은 쓰인다. 회귀 테스트로 고정: 모델이 `security_warning=0.02`·`screen=logged_in_home`을 돌려줘도 규칙 p=1.0이면 `blocked`(승격 없으면 `logged_in`), 그리고 안전·비가역 번들의 모든 보수 쪽 predicate(p=1)가 진행 결과를 막는지 전수 검사.
 - CodeSolar 2차: `requiredForRulesOnly`가 다운스트림 질문을 빠뜨린다는 지적은 사실과 달랐다(`page_text_addresses_agent`는 `screen_state_v2`의 질문이라 이미 필수 집합에 들어 있다). 번들에 없는 다운스트림 질문까지 요구하면 `recovery_v1` 같은 번들의 규칙 전용 결정이 영영 막히므로 의미는 그대로 두고, 집합 구성을 명시적으로 고친 뒤 회귀 테스트(참조 7문항을 모두 규칙이 답해도 `page_text_addresses_agent`가 비면 모델 호출)를 넣었다.
 - CodeSolar 2차: 번들 전체 unknown은 핵심 choice(매핑이 참조하는 choice)의 refusal에만. 보조 choice refusal은 그 질문만 unknown(회귀 테스트).
 - CodeSolar 2차: L2 예산을 새 호출 수(`l2Calls`)와 이어지는 턴 수(`l2Turns`)로 분리(회귀 테스트: 앞 세션이 턴을 다 써도 두 번째 새 L2 허용).

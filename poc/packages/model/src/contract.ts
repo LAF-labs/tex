@@ -1,5 +1,5 @@
 // D04 §1 계약(공급사 무관). 입력은 RedactedText 브랜드만 받는다(D06 §8).
-import { randomBytes } from 'node:crypto';
+import type { Egress, RunScope } from '@sax/net';
 import type { RedactedText } from '@sax/redaction';
 
 export type { RedactedText };
@@ -8,11 +8,12 @@ export type RunToken = string & { readonly __brand: 'RunToken' };
 export type ChatSessionId = string & { readonly __brand: 'ChatSessionId' };
 
 /**
- * BYOK 경로에는 게이트웨이가 없으므로 로컬에서 실행 토큰을 만든다(예산 키, D04 §8 (3)).
- * 게이트웨이 경로에서는 게이트웨이가 서명해 발급한 값을 그대로 쓴다.
+ * BYOK 경로에는 게이트웨이가 없으므로 egress의 ModelGuard가 실행 범위(runId·chatSessionId)당 토큰 하나를 발급한다.
+ * 예산은 범위에 묶여 토큰을 새로 만들어도 우회되지 않는다(D04 §8 (3)). 게이트웨이 경로에서는 게이트웨이가 서명해 발급한 값을 쓴다.
  */
-export function newLocalRunToken(): RunToken {
-  return `local.${randomBytes(24).toString('base64url')}` as RunToken;
+export function localRunToken(egress: Egress, scope: RunScope): RunToken {
+  if (!egress.guard) throw new Error('egress without modelGuard');
+  return egress.guard.issueRunToken(scope) as RunToken;
 }
 
 export type Provider = 'openai' | 'upstage' | 'rules';

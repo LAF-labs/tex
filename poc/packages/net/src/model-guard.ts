@@ -1,6 +1,7 @@
 // D04 §8 BYOK 로컬 검사 4종(B-21). 게이트웨이가 하는 검사를 공급사 직결 전에 egress에서 다시 한다.
 // (1) 앱 내장 번들 다이제스트 허용 목록 (2) gateway-request.schema.json 검증 (3) 실행당 예산 (4) 2차 PII 트립와이어.
 // 하나라도 실패하면 호출하지 않는다. 실패 기록은 코드·카운트만(본문 무저장, D09·D16).
+import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import type { RedactedText } from '@sax/redaction';
@@ -26,7 +27,16 @@ export interface GatewayRespondBody {
   runToken: string;
 }
 
-export type GuardCode = 'bundle_not_allowlisted' | 'schema_rejected' | 'input_too_large' | 'budget_exceeded' | 'pii_tripwire' | 'image_rejected';
+export type GuardCode = 'bundle_not_allowlisted' | 'schema_rejected' | 'input_too_large' | 'budget_exceeded' | 'pii_tripwire' | 'image_rejected' | 'run_token_unknown' | 'run_token_reissue';
+
+/**
+ * 예산 경계. 플레이북 실행은 runId(원장의 실행 ID), 실행 밖 대화 호출은 chatSessionId(D04 §1).
+ * runId 자체를 지어내는 것은 막지 못한다(BYOK 로컬 검사는 엔진 버그·루프에 대한 방어이고, runId 원천은 원장이다).
+ */
+export type RunScope = { runId: string } | { chatSessionId: string };
+
+/** 로컬 실행 토큰 수명. 만료 전에는 같은 범위로 재발급하지 않는다. */
+const RUN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 export class ModelGuardError extends Error {
   readonly code: GuardCode;
@@ -94,13 +104,46 @@ function hasImage(v: unknown): boolean {
 export class ModelGuard {
   private readonly allow: Map<string, BundleAllowEntry>;
   private readonly budget: { l1: number; l2: number };
+  /** 예산은 범위 키(run:/chat:)에 묶는다. 토큰을 새로 받아도 같은 범위면 같은 예산이다. */
   private readonly used = new Map<string, L2Usage>();
+  private readonly tokens = new Map<string, { scope: string; expiresAt: number }>();
+  private readonly active = new Map<string, string>();
+  private readonly now: () => number;
   /** 거부 카운트만(본문·식별자 없음). */
   readonly refusals: Partial<Record<GuardCode, number>> = {};
 
-  constructor(cfg: ModelGuardConfig) {
+  constructor(cfg: ModelGuardConfig, now: () => number = Date.now) {
     this.allow = new Map(cfg.bundles.map((b) => [`${b.id}@${b.digest}`, b]));
     this.budget = cfg.budget ?? { l1: 12, l2: 2 };
+    this.now = now;
+  }
+
+  /**
+   * BYOK 경로의 실행 토큰(게이트웨이 runToken 대신, D04 §8 (3)). 범위당 하나만 발급하고 만료·endRun 전에는 재발급을 거부한다.
+   * 예산은 토큰이 아니라 범위에 쌓이므로 재발급해도 초기화되지 않는다.
+   */
+  issueRunToken(scope: RunScope): string {
+    const key = 'runId' in scope ? `run:${scope.runId}` : `chat:${scope.chatSessionId}`;
+    const cur = this.active.get(key);
+    if (cur && (this.tokens.get(cur)?.expiresAt ?? 0) > this.now()) this.fail('run_token_reissue');
+    if (cur) this.tokens.delete(cur);
+    const token = `local.${randomBytes(24).toString('base64url')}`;
+    this.tokens.set(token, { scope: key, expiresAt: this.now() + RUN_TOKEN_TTL_MS });
+    this.active.set(key, token);
+    return token;
+  }
+
+  /** 실행 종료: 토큰을 폐기한다(예산 기록은 남긴다). */
+  endRun(scope: RunScope): void {
+    const key = 'runId' in scope ? `run:${scope.runId}` : `chat:${scope.chatSessionId}`;
+    const cur = this.active.get(key);
+    if (cur) this.tokens.delete(cur);
+    this.active.delete(key);
+  }
+
+  private scopeOf(runToken: string): string | null {
+    const t = this.tokens.get(runToken);
+    return t && t.expiresAt > this.now() ? t.scope : null;
   }
 
   private fail(code: GuardCode): never {
@@ -128,7 +171,9 @@ export class ModelGuard {
     }
     if (hasImage(providerBody)) this.fail('image_rejected');
     if (texts.some(piiTripwire)) this.fail('pii_tripwire');
-    const u = this.used.get(body.runToken) ?? { l1: 0, l2Calls: 0, l2Turns: 0 };
+    const scope = this.scopeOf(body.runToken);
+    if (!scope) this.fail('run_token_unknown');
+    const u = this.used.get(scope) ?? { l1: 0, l2Calls: 0, l2Turns: 0 };
     if (surface === 'decide') {
       if (u.l1 >= this.budget.l1) this.fail('budget_exceeded');
       u.l1++;
@@ -141,10 +186,11 @@ export class ModelGuard {
       if (u.l2Calls === 0 || u.l2Turns >= this.budget.l2 * (L2_MAX_TURNS - 1)) this.fail('budget_exceeded');
       u.l2Turns++;
     }
-    this.used.set(body.runToken, u);
+    this.used.set(scope, u);
   }
 
   usage(runToken: string): L2Usage {
-    return { ...(this.used.get(runToken) ?? { l1: 0, l2Calls: 0, l2Turns: 0 }) };
+    const scope = this.tokens.get(runToken)?.scope;
+    return { ...((scope && this.used.get(scope)) || { l1: 0, l2Calls: 0, l2Turns: 0 }) };
   }
 }

@@ -1,8 +1,9 @@
 // S-L0: 규칙 표·측정·승격 기준, 규칙 어댑터(가짜 Decisions 응답), judge의 단독 통과 금지·호출 생략·인젝션 강등.
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { after, afterEach, before, describe, it } from 'node:test';
 import { Judge, L0_TABLE, RULES, requiredForRulesOnly, extractAmounts, injectionPrefilter, measureL0, promotedSet, qualifies, ruleDecision, type L0Measurement, type Observation, type ScreenObservation } from '@sax/engine';
-import { BundleCatalog, DefaultModelLayer, OpenAIDecisionsAdapter, ThresholdProfiles, decisionsEntries, joinPartial, newLocalRunToken } from '@sax/model';
+import { BundleCatalog, DefaultModelLayer, forcesNonProgress, OpenAIDecisionsAdapter, ThresholdProfiles, decisionsEntries, joinPartial, localRunToken } from '@sax/model';
 import { Egress } from '@sax/net';
 import { apply } from '@sax/redaction';
 import { fullCorpus, screenCorpus } from './fixtures/l0-corpus.ts';
@@ -106,14 +107,18 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
     for (const [b, q, fn] of saved.splice(0)) RULES[b]![q] = fn;
   });
 
+  const egressOf = new WeakMap<Judge, Egress>();
+  const tokFor = (j: Judge) => localRunToken(egressOf.get(j)!, { runId: randomUUID() });
   function judge(promoted: string[]) {
     const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
     const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider: new OpenAIDecisionsAdapter({ apiKey: 'sk-test', egress }) });
-    return new Judge(layer, new Set(promoted));
+    const jj = new Judge(layer, new Set(promoted));
+    egressOf.set(jj, egress);
+    return jj;
   }
   const run = async (j: Judge, bundle: string, obs: Observation, text = textOf(obs as ScreenObservation)) => {
     const n = mock.calls.length;
-    const r = await j.decide(bundle, obs, text, newLocalRunToken());
+    const r = await j.decide(bundle, obs, text, tokFor(j));
     return { r, called: mock.calls.length - n };
   };
 
@@ -131,16 +136,54 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
     assert.equal(r.raw.security_warning?.source, 'l0');
   });
 
+  it('안전·비가역 번들의 보수 쪽 predicate 값(onRefusal=assume_true → p=1)은 다른 질문과 무관하게 진행 결과를 막는다(규칙 답이 늘 쓰임)', () => {
+    for (const b of catalog.list()) {
+      if (!['safety', 'pre_commit', 'post_commit'].includes(b.def.riskClass)) continue;
+      const used = new Set(b.def.mapping.flatMap((r) => (r.when === 'always' ? [] : 'all' in r.when ? r.when.all : r.when.any).map((p) => ('predicate' in p ? p.predicate : ''))));
+      for (const q of b.def.questions)
+        if (q.type === 'predicate' && q.onRefusal === 'assume_true' && used.has(q.name)) assert.equal(forcesNonProgress(b.def, { [q.name]: { t: 'p', p: 1 } }), true, `${b.wireId}.${q.name}`);
+    }
+  });
+
+  it('리뷰 회귀(보안 규칙 덮어쓰기): 모델이 security_warning=0.02·screen=logged_in_home을 돌려줘도 규칙이 p=1.0이면 blocked', async () => {
+    const lying = await startOpenAIMock({
+      tamper: (ans) =>
+        ans.map((a) =>
+          a.name === 'screen'
+            ? { type: 'choice', name: 'screen', choice: 'logged_in_home', confidence: 0.95, probabilities: [{ value: 'logged_in_home', probability: 0.95 }] }
+            : a.type === 'predicate' || a.type === 'refusal'
+              ? { type: 'predicate', name: a.name, probability: 0.02 }
+              : a,
+        ),
+    });
+    try {
+      const egress = new Egress({ testOrigins: { openai: lying.origin }, modelGuard: { bundles: catalog.allowEntries() } });
+      const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider: new OpenAIDecisionsAdapter({ apiKey: 'sk-test', egress }) });
+      const j = new Judge(layer, new Set(['screen_state_v2.security_warning']));
+      const obs = scr([{ role: 'link', name: '로그아웃' }, { role: 'heading', name: 'My홈택스' }, { role: 'alert', name: '비정상적인 접근이 감지되어 이용이 제한될 수 있습니다' }]);
+      const r = await j.decide('screen_state_v2', obs, textOf(obs), localRunToken(egress, { runId: 'lie' }));
+      assert.equal(lying.calls.length, 1);
+      assert.deepEqual(r.shadow.find((x) => x.question === 'security_warning'), { question: 'security_warning', l0: 'p=1', used: true });
+      assert.equal(r.raw.security_warning?.source, 'l0');
+      assert.equal(r.outcome, 'blocked');
+      // 대조군: 승격하지 않으면 모델 답(0.02)이 쓰여 logged_in
+      const r0 = await new Judge(layer, new Set()).decide('screen_state_v2', obs, textOf(obs), localRunToken(egress, { runId: 'lie0' }));
+      assert.equal(r0.outcome, 'logged_in');
+    } finally {
+      await lying.close();
+    }
+  });
+
   it('리뷰 회귀(규칙 전용 경로): 매핑이 참조하는 질문이 하나라도 미응답이면 규칙만으로 결정하지 않고, 모델 금지 번들이면 rules_incomplete', async () => {
     const obs = scr([{ role: 'heading', name: '비정상적인 접근이 감지되어 이용이 제한되었습니다' }]);
     const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
     const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider: new OpenAIDecisionsAdapter({ apiKey: 'sk-test', egress }) });
     const j = new Judge(layer, new Set(['screen_state_v2.security_warning', 'doc_meta_check_v1.issued_on']), { modelAllowed: () => false });
     const n = mock.calls.length;
-    const a = await j.decide('screen_state_v2', obs, textOf(obs), newLocalRunToken());
+    const a = await j.decide('screen_state_v2', obs, textOf(obs), localRunToken(egress, { runId: 'rr-a' }));
     assert.deepEqual([a.outcome, a.reason, a.l0Only], ['unknown', 'rules_incomplete', true]);
     const doc: Observation = { kind: 'doc_meta', docType: 'cert_taxpayment', candidates: [{ date: '2026-10-29', context: '발급일자 2026년 10월 29일' }, { date: '2026-11-28', context: '유효기간 2026년 11월 28일까지' }] };
-    const b = await j.decide('doc_meta_check_v1', doc, apply('candidate_1', { runId: 'r' }, { frame: 'none' }).redacted, newLocalRunToken());
+    const b = await j.decide('doc_meta_check_v1', doc, apply('candidate_1', { runId: 'r' }, { frame: 'none' }).redacted, localRunToken(egress, { runId: 'rr-b' }));
     assert.deepEqual([b.outcome, b.reason], ['unknown', 'rules_incomplete']); // valid_until 미승격 → 미응답
     assert.equal(mock.calls.length, n);
     assert.deepEqual(requiredForRulesOnly(catalog.get('screen_state_v2')!.def).sort(), ['captcha_visible', 'has_error_modal', 'logged_out_by_other_session', 'mfa_pending', 'page_text_addresses_agent', 'screen', 'security_warning', 'session_expired_notice']);
@@ -233,7 +276,7 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
     const restricted = new Set(['screen_state_v2', 'popup_class_v1', 'form_ready_v2', 'issue_result_v2']);
     for (const s of screenCorpus(2)) {
       if (!restricted.has(s.bundle)) continue;
-      const r = await j.decide(s.bundle, s.obs, textOf(s.obs as ScreenObservation), newLocalRunToken());
+      const r = await j.decide(s.bundle, s.obs, textOf(s.obs as ScreenObservation), tokFor(j));
       if (r.l0Only) assert.ok(!['logged_in', 'notice_dismissable', 'no_visible_error', 'issued'].includes(r.outcome), `${s.id} → ${r.outcome}`);
     }
   });

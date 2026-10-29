@@ -1,7 +1,7 @@
 {
   "mode": "mock",
   "note": "실호출 미실행(OPENAI_API_KEY 없음). 수치는 모의 서버의 합성 응답이며 측정값이 아니다.",
-  "runAt": "2026-10-29T01:28:02.536Z",
+  "runAt": "2026-10-29T02:07:47.286Z",
   "sdk": "openai@7.45.1",
   "models": {
     "decisions": "gpt-6-luna",
@@ -20,7 +20,7 @@
       "cachedTokens": 0,
       "cacheWriteTokens": 2517,
       "outputTokens": 0,
-      "latencyMs": 21.1
+      "latencyMs": 22
     },
     {
       "screen": "login",
@@ -28,7 +28,7 @@
       "cachedTokens": 2517,
       "cacheWriteTokens": 0,
       "outputTokens": 0,
-      "latencyMs": 1.8
+      "latencyMs": 1.9
     },
     {
       "screen": "form",
@@ -36,7 +36,7 @@
       "cachedTokens": 2517,
       "cacheWriteTokens": 0,
       "outputTokens": 0,
-      "latencyMs": 0.9
+      "latencyMs": 1
     }
   ],
   "promptCacheKeyFormat": {
@@ -345,23 +345,23 @@
     {
       "questions": 2,
       "n": 10,
-      "p50": 0.4,
-      "p95": 0.4,
-      "max": 0.4
+      "p50": 0.5,
+      "p95": 0.5,
+      "max": 0.5
     },
     {
       "questions": 5,
       "n": 10,
-      "p50": 0.3,
-      "p95": 0.7,
-      "max": 0.7
+      "p50": 0.5,
+      "p95": 0.8,
+      "max": 0.8
     },
     {
       "questions": 10,
       "n": 10,
-      "p50": 0.3,
-      "p95": 0.4,
-      "max": 0.4
+      "p50": 0.6,
+      "p95": 1.1,
+      "max": 1.1
     }
   ],
   "rateLimit": {
