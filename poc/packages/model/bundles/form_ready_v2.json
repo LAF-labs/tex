@@ -1,0 +1,62 @@
+{
+  "id": "form_ready",
+  "version": 2,
+  "digest": "b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409",
+  "riskClass": "pre_commit",
+  "outcomes": [
+    {
+      "name": "validation_error",
+      "kind": "conservative"
+    },
+    {
+      "name": "no_visible_error",
+      "kind": "progress"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 6144,
+  "prefix": {
+    "stringsKey": "form_ready",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "predicate",
+      "name": "validation_error_visible",
+      "instructions": "입력 칸의 invalid 표시, 빨간 검증 안내 문구, 검증 실패 알림창 중 하나라도 보인다.",
+      "onRefusal": "unknown"
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "validation_error",
+      "when": {
+        "all": [
+          {
+            "predicate": "validation_error_visible",
+            "gte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "no_visible_error",
+      "when": {
+        "all": [
+          {
+            "predicate": "validation_error_visible",
+            "lte": 0.05
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}

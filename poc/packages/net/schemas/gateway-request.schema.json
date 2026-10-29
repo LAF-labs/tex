@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/gateway-request.schema.json",
+  "title": "Sovereign AX model gateway request bodies v1 (normative)",
+  "description": "v1.3 (B-20, B-21, B-18, B/C-01, B/C-02). Single normative source for the client->gateway request bodies of POST /v1/decide and POST /v1/respond. D03, D04 §7, D09 §3 and D12 only cite this file. Headers (not in body): Authorization: Bearer <account token>, X-Device-Id. Any field outside this schema => 400 gateway.param_rejected, and 400/409 response bodies never echo the input (codes only). Gateway-side rules that a schema cannot express: (1) /v1/decide `input` UTF-8 byte length <= that bundle's maxInputBytes; (2) bundleId@digest must be in the gateway's bundle set (409 gateway.digest_mismatch; detects deployment mismatch only, not integrity — the engine recomputes outcomes from its local, app-embedded bundle definition, C-24); (3) model, effort, max_output_tokens, tools, text.format, store:false, safety_identifier and prompt_cache_options are fixed per bundle/toolset by the gateway, never by the client; (4) prompt_cache_key = 'acct:' + HMAC(server_secret, accountId) + ':b:' + bundleId (or ':t:' + toolset), account-isolated; (5) per-run budget is enforced through the gateway-signed runToken (L1 <= 12, L2 <= 2); (6) second PII tripwire in memory (resident registration no., business registration no., card, account patterns) => 400 gateway.pii_tripwire, count only, body never stored; (7) Phase 1: no image input of any kind (GW_ALLOW_IMAGES=false). BYOK adapters run the same schema, budget, tripwire and app-embedded bundle-digest checks locally before calling the provider (B-21).",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/decide"
+    },
+    {
+      "$ref": "#/$defs/respond"
+    }
+  ],
+  "$defs": {
+    "runToken": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 512,
+      "description": "Gateway-issued, gateway-signed run token. Calls outside a playbook run (chat, intent_fill, query_parse) use a runToken issued per chatSessionId with its own budget."
+    },
+    "decide": {
+      "title": "POST /v1/decide",
+      "type": "object",
+      "required": [
+        "bundleId",
+        "bundleDigest",
+        "input",
+        "runToken"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bundleId": {
+          "type": "string",
+          "pattern": "^[a-z_]+_v\\d+$"
+        },
+        "bundleDigest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "input": {
+          "description": "Redacted screen text only (D06). Byte length <= bundle maxInputBytes (<= 16384).",
+          "type": "string",
+          "maxLength": 16384
+        },
+        "runToken": {
+          "$ref": "#/$defs/runToken"
+        }
+      }
+    },
+    "respond": {
+      "title": "POST /v1/respond",
+      "type": "object",
+      "required": [
+        "toolset",
+        "messages",
+        "runToken"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "toolset": {
+          "enum": [
+            "selector_repair",
+            "summarize",
+            "intent_fill",
+            "query_parse"
+          ]
+        },
+        "messages": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {
+            "type": "object",
+            "required": [
+              "role",
+              "content"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "role": {
+                "const": "user"
+              },
+              "content": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 8,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "type",
+                    "text"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "type": {
+                      "const": "input_text"
+                    },
+                    "text": {
+                      "type": "string",
+                      "maxLength": 65536
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "replay": {
+          "description": "Earlier response output items carrying the gateway tag HMAC(gw_key, accountId||runToken||item), and function_call_output items answering a tagged call_id. Untagged or mismatching items => 400.",
+          "type": "array",
+          "maxItems": 12,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "item",
+                  "tag"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "item": {
+                    "type": "object"
+                  },
+                  "tag": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "required": [
+                  "type",
+                  "call_id",
+                  "output"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "type": {
+                    "const": "function_call_output"
+                  },
+                  "call_id": {
+                    "type": "string",
+                    "maxLength": 128
+                  },
+                  "output": {
+                    "description": "Redacted text only (B-18).",
+                    "type": "string",
+                    "maxLength": 16384
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "runToken": {
+          "$ref": "#/$defs/runToken"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,186 @@
+{
+  "id": "doc_meta_check",
+  "version": 1,
+  "digest": "b863c88239fe101d6e757f014c927c39f3e9159a70aedbbd035e6b6cc76109e6",
+  "riskClass": "general",
+  "outcomes": [
+    {
+      "name": "ok",
+      "kind": "progress"
+    },
+    {
+      "name": "needs_user",
+      "kind": "conservative"
+    },
+    {
+      "name": "none_found",
+      "kind": "conservative"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 4096,
+  "prefix": {
+    "stringsKey": "doc_meta_check",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "choice",
+      "name": "issued_on",
+      "instructions": "발급 시점을 뜻하는 문맥의 날짜 후보를 고른다. 없으면 none, 판단 불가면 unknown.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "candidate_1",
+          "description": "후보 1번 날짜"
+        },
+        {
+          "value": "candidate_2",
+          "description": "후보 2번 날짜"
+        },
+        {
+          "value": "candidate_3",
+          "description": "후보 3번 날짜"
+        },
+        {
+          "value": "candidate_4",
+          "description": "후보 4번 날짜"
+        },
+        {
+          "value": "candidate_5",
+          "description": "후보 5번 날짜"
+        },
+        {
+          "value": "candidate_6",
+          "description": "후보 6번 날짜"
+        },
+        {
+          "value": "candidate_7",
+          "description": "후보 7번 날짜"
+        },
+        {
+          "value": "candidate_8",
+          "description": "후보 8번 날짜"
+        },
+        {
+          "value": "none",
+          "description": "발급일 후보 없음"
+        },
+        {
+          "value": "unknown",
+          "description": "판단 불가"
+        }
+      ]
+    },
+    {
+      "type": "choice",
+      "name": "valid_until",
+      "instructions": "유효기간 만료 시점을 뜻하는 문맥의 날짜 후보를 고른다. 없으면 none, 판단 불가면 unknown.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "candidate_1",
+          "description": "후보 1번 날짜"
+        },
+        {
+          "value": "candidate_2",
+          "description": "후보 2번 날짜"
+        },
+        {
+          "value": "candidate_3",
+          "description": "후보 3번 날짜"
+        },
+        {
+          "value": "candidate_4",
+          "description": "후보 4번 날짜"
+        },
+        {
+          "value": "candidate_5",
+          "description": "후보 5번 날짜"
+        },
+        {
+          "value": "candidate_6",
+          "description": "후보 6번 날짜"
+        },
+        {
+          "value": "candidate_7",
+          "description": "후보 7번 날짜"
+        },
+        {
+          "value": "candidate_8",
+          "description": "후보 8번 날짜"
+        },
+        {
+          "value": "none",
+          "description": "유효기간 표시 없음"
+        },
+        {
+          "value": "unknown",
+          "description": "판단 불가"
+        }
+      ]
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "ok",
+      "when": {
+        "all": [
+          {
+            "choice": "issued_on",
+            "valueIn": [
+              "candidate_1",
+              "candidate_2",
+              "candidate_3",
+              "candidate_4",
+              "candidate_5",
+              "candidate_6",
+              "candidate_7",
+              "candidate_8"
+            ],
+            "confidenceGte": 0.9
+          },
+          {
+            "choice": "valid_until",
+            "valueIn": [
+              "candidate_1",
+              "candidate_2",
+              "candidate_3",
+              "candidate_4",
+              "candidate_5",
+              "candidate_6",
+              "candidate_7",
+              "candidate_8"
+            ],
+            "confidenceGte": 0.9
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "none_found",
+      "when": {
+        "any": [
+          {
+            "choice": "issued_on",
+            "value": "none",
+            "confidenceGte": 0.9
+          },
+          {
+            "choice": "valid_until",
+            "value": "none",
+            "confidenceGte": 0.9
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}

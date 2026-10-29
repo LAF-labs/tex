@@ -8,10 +8,16 @@
     "build": "tsc -b",
     "lint": "eslint .",
     "test": "node scripts/run-tests.mjs",
-    "start": "pnpm build && electron apps/desktop"
+    "start": "pnpm build && electron apps/desktop",
+    "bundles": "node --conditions=development scripts/bundles-digest.ts",
+    "s9": "node --conditions=development scripts/s9-decisions.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
+    "@sax/engine": "workspace:*",
+    "@sax/model": "workspace:*",
+    "@sax/net": "workspace:*",
+    "@sax/redaction": "workspace:*",
     "@types/node": "^24.0.0",
     "electron": "45.1.0",
     "eslint": "^10.13.0",

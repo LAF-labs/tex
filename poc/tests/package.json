@@ -6,14 +6,17 @@
   "dependencies": {
     "@sax/db": "workspace:*",
     "@sax/engine": "workspace:*",
+    "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",
     "@sax/platform": "workspace:*",
+    "@sax/redaction": "workspace:*",
     "@sax/vault": "workspace:*",
     "@tesseract.js-data/kor": "1.0.0",
     "playwright-core": "1.64.1",
     "tesseract.js": "7.0.0"
   },
   "devDependencies": {
-    "electron": "45.1.0"
+    "electron": "45.1.0",
+    "js-tiktoken": "1.0.21"
   }
 }

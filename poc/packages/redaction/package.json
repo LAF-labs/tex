@@ -1,0 +1,10 @@
+{
+  "name": "@sax/redaction",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {}
+}

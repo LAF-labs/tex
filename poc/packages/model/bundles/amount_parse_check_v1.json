@@ -1,0 +1,63 @@
+{
+  "id": "amount_parse_check",
+  "version": 1,
+  "digest": "987eaaf68560ed7cb2ab5ca9596425badc5f3b404e08e6f745648981b3484f1d",
+  "riskClass": "general",
+  "outcomes": [
+    {
+      "name": "ok",
+      "kind": "progress"
+    },
+    {
+      "name": "mismatch",
+      "kind": "conservative"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "needsAmounts": true,
+  "maxInputBytes": 2048,
+  "prefix": {
+    "stringsKey": "amount_parse_check",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "predicate",
+      "name": "parse_matches_user_text",
+      "instructions": "사용자 문장의 금액이 vat_mode에 맞는 파서 결과 칸과 같고 공급가액+세액=합계다.",
+      "onRefusal": "unknown"
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "ok",
+      "when": {
+        "all": [
+          {
+            "predicate": "parse_matches_user_text",
+            "gte": 0.9
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "mismatch",
+      "when": {
+        "all": [
+          {
+            "predicate": "parse_matches_user_text",
+            "lte": 0.1
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}
