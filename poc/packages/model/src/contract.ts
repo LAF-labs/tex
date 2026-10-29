@@ -61,6 +61,8 @@ export type UnknownReason =
   | 'answer_type_mismatch'
   | 'answer_value_invalid'
   | 'injection_prefilter'
+  /** 규칙 전용 결정 경로에서 매핑이 참조하는 질문에 규칙 답이 없고 모델 호출도 허용되지 않음 */
+  | 'rules_incomplete'
   | `provider:${string}`
   | `guard:${string}`;
 

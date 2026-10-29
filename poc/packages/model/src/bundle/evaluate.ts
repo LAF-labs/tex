@@ -144,13 +144,9 @@ export function regions(def: BundleDef, q: Question, states: ResolvedState[]): R
   return [...seen.values()];
 }
 
-/**
- * fixed에 없는 질문은 모든 상태(정상 답 + refusal 해석)를 돈다.
- * skipChoiceRefusal: 묻지 않을 질문의 핵심 choice refusal(→ 번들 unknown)은 빼고 센다. 그 경우도 중단이므로
- * "모델을 불렀다면 나올 수 있었던 다른 결과"에서 제외해도 진행 쪽으로 기울지 않는다(judge 호출 생략 판정 전용).
- */
-export function reachableOutcomes(def: BundleDef, fixed: Record<string, ResolvedState> = {}, skipChoiceRefusal = false): Set<string> {
-  const dims = def.questions.map((q) => (q.name in fixed ? [fixed[q.name]!] : regions(def, q, representativeStates(def, q, !(skipChoiceRefusal && q.type === 'choice')))));
+/** fixed에 없는 질문은 모든 상태(정상 답 + refusal 해석)를 돈다. */
+export function reachableOutcomes(def: BundleDef, fixed: Record<string, ResolvedState> = {}): Set<string> {
+  const dims = def.questions.map((q) => (q.name in fixed ? [fixed[q.name]!] : regions(def, q, representativeStates(def, q))));
   const out = new Set<string>();
   const cur: Record<string, ResolvedState> = {};
   const walk = (i: number) => {
@@ -176,10 +172,4 @@ export function forcesNonProgress(def: BundleDef, fixed: Record<string, Resolved
   const prog = progressOutcomes(def);
   for (const o of reachableOutcomes(def, fixed)) if (prog.has(o)) return false;
   return true;
-}
-
-/** 이 답(들)만으로 결과가 하나로 정해지는가(모델 호출 생략 판정). */
-export function determinedOutcome(def: BundleDef, fixed: Record<string, ResolvedState>): string | null {
-  const r = reachableOutcomes(def, fixed, true);
-  return r.size === 1 ? [...r][0]! : null;
 }

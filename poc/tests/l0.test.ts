@@ -1,7 +1,7 @@
 // S-L0: 규칙 표·측정·승격 기준, 규칙 어댑터(가짜 Decisions 응답), judge의 단독 통과 금지·호출 생략·인젝션 강등.
 import assert from 'node:assert/strict';
 import { after, afterEach, before, describe, it } from 'node:test';
-import { Judge, L0_TABLE, RULES, extractAmounts, injectionPrefilter, measureL0, promotedSet, qualifies, ruleDecision, type L0Measurement, type Observation, type ScreenObservation } from '@sax/engine';
+import { Judge, L0_TABLE, RULES, requiredForRulesOnly, extractAmounts, injectionPrefilter, measureL0, promotedSet, qualifies, ruleDecision, type L0Measurement, type Observation, type ScreenObservation } from '@sax/engine';
 import { BundleCatalog, DefaultModelLayer, OpenAIDecisionsAdapter, ThresholdProfiles, decisionsEntries, joinPartial, newLocalRunToken } from '@sax/model';
 import { Egress } from '@sax/net';
 import { apply } from '@sax/redaction';
@@ -57,6 +57,25 @@ describe('규칙 어댑터(가짜 Decisions 응답)', () => {
     assert.equal(j.answers.screen?.source, 'l0');
   });
 
+  it('리뷰 회귀(대화상자 텍스트): 페이지 제목의 "오류"·"보안"은 대화상자 규칙에 들어가지 않는다', () => {
+    const obs = scr([{ role: 'dialog', name: '공지사항' }, { role: 'text', name: '연말정산 간소화 서비스 오픈 안내', inDialog: true }, { role: 'button', name: '닫기', inDialog: true }], '오류 신고·보안 문의 안내');
+    assert.equal(RULES.screen_state_v2!.has_error_modal!(obs), null);
+    assert.equal(RULES.popup_class_v1!.popup!(obs), null);
+    const err = scr([{ role: 'alertdialog', name: '알림' }, { role: 'text', name: '처리 중 오류가 발생했습니다.', inDialog: true }]);
+    assert.equal(RULES.screen_state_v2!.has_error_modal!(err)?.type, 'predicate');
+  });
+
+  it('리뷰 회귀(화면 동일성): 같은 pathname·같은 제목이라도 w2xPath가 다르면 different_screen, 식별 파라미터를 모르는 포털은 기권', () => {
+    const expected = { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급', screenParams: { w2xPath: '/ui/etxsa/a/RETEETBDB01.xml' } };
+    const at = (url: string) => ({ ...scr([{ role: 'heading', name: '전자세금계산서 건별발급' }], '전자세금계산서 건별발급', expected), url });
+    const sit = (o: ScreenObservation) => (RULES.recovery_v1!.situation!(o) as { choice?: string } | null)?.choice ?? null;
+    assert.equal(sit(at(`${URL0}?w2xPath=/ui/etxsa/a/RETEETBDB01.xml`)), 'element_missing_same_screen');
+    assert.equal(sit(at(`${URL0}?w2xPath=/ui/etxsa/a/RETEETBDB02.xml`)), 'different_screen');
+    assert.equal(sit(at(`${URL0}?w2xPath=/ui/etxsa/a/RETEETBDB01.xml&tmIdx=3`)), 'element_missing_same_screen'); // 허용 목록 밖 파라미터는 무시
+    assert.equal(sit(at('https://example.go.kr/app.do?screen=a')), null);
+    assert.equal(sit({ ...at('https://example.go.kr/app.do?screen=a'), screenIdParams: ['screen'], expected: { ...expected, urlPath: '/app.do', screenParams: { screen: 'b' } } }), 'different_screen');
+  });
+
   it('금액 재추출: 숫자·콤마·만 단위·한글 숫자, 날짜는 금액이 아님', () => {
     assert.deepEqual(extractAmounts('330만원'), [3_300_000]);
     assert.deepEqual(extractAmounts('3,300,000원 발행'), [3_300_000]);
@@ -105,10 +124,26 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
     assert.ok(r.shadow.length >= 2 && r.shadow.every((s) => !s.used && s.why === 'not_promoted'));
   });
 
-  it('보안 경고 승격: 중단 쪽(blocked) 확정이면 모델을 부르지 않는다', async () => {
+  it('보안 경고 승격: 매핑이 참조하는 다른 질문이 비어 있으므로 모델을 부르고, 규칙 답(경고 있음)은 덮어쓰기로 blocked', async () => {
     const obs = scr([{ role: 'heading', name: '비정상적인 접근이 감지되어 이용이 제한되었습니다' }]);
     const { r, called } = await run(judge(['screen_state_v2.security_warning']), 'screen_state_v2', obs);
-    assert.deepEqual([r.outcome, r.l0Only, r.provider, called], ['blocked', true, 'rules', 0]);
+    assert.deepEqual([r.outcome, r.l0Only, r.provider, called], ['blocked', false, 'openai', 1]);
+    assert.equal(r.raw.security_warning?.source, 'l0');
+  });
+
+  it('리뷰 회귀(규칙 전용 경로): 매핑이 참조하는 질문이 하나라도 미응답이면 규칙만으로 결정하지 않고, 모델 금지 번들이면 rules_incomplete', async () => {
+    const obs = scr([{ role: 'heading', name: '비정상적인 접근이 감지되어 이용이 제한되었습니다' }]);
+    const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
+    const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider: new OpenAIDecisionsAdapter({ apiKey: 'sk-test', egress }) });
+    const j = new Judge(layer, new Set(['screen_state_v2.security_warning', 'doc_meta_check_v1.issued_on']), { modelAllowed: () => false });
+    const n = mock.calls.length;
+    const a = await j.decide('screen_state_v2', obs, textOf(obs), newLocalRunToken());
+    assert.deepEqual([a.outcome, a.reason, a.l0Only], ['unknown', 'rules_incomplete', true]);
+    const doc: Observation = { kind: 'doc_meta', docType: 'cert_taxpayment', candidates: [{ date: '2026-10-29', context: '발급일자 2026년 10월 29일' }, { date: '2026-11-28', context: '유효기간 2026년 11월 28일까지' }] };
+    const b = await j.decide('doc_meta_check_v1', doc, apply('candidate_1', { runId: 'r' }, { frame: 'none' }).redacted, newLocalRunToken());
+    assert.deepEqual([b.outcome, b.reason], ['unknown', 'rules_incomplete']); // valid_until 미승격 → 미응답
+    assert.equal(mock.calls.length, n);
+    assert.deepEqual(requiredForRulesOnly(catalog.get('screen_state_v2')!.def).sort(), ['captcha_visible', 'has_error_modal', 'logged_out_by_other_session', 'mfa_pending', 'page_text_addresses_agent', 'screen', 'security_warning', 'session_expired_notice']);
   });
 
   it('단독 통과 금지(form_ready_v2): 규칙이 "오류 없음"을 내도 쓰지 않고 모델을 부른다', async () => {
@@ -142,7 +177,7 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
   });
 
   it('일반 번들(recovery_v1) 승격: 단일 질문을 규칙이 덮으면 모델 호출 생략', async () => {
-    const obs = scr([{ role: 'heading', name: '전자세금계산서 건별발급' }, { role: 'dialog', name: '공지' }], '전자세금계산서 건별발급', { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급' });
+    const obs = scr([{ role: 'heading', name: '전자세금계산서 건별발급' }, { role: 'dialog', name: '공지' }], '전자세금계산서 건별발급', { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급', screenParams: { w2xPath: '/ui/a.xml' } });
     const { r, called } = await run(judge(['recovery_v1.situation']), 'recovery_v1', obs);
     assert.deepEqual([r.outcome, r.l0Only, called], ['modal_blocking', true, 0]);
   });

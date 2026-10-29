@@ -5,18 +5,18 @@
 //  1) 승격: 규칙 정확도 ≥ 99.5%(라벨 실코퍼스, n ≥ 300)인 질문만 규칙 답을 쓴다. 나머지는 그림자 모드(기록만).
 //  2) 단독 통과 금지: 비가역 직전·직후(pre_commit·post_commit), 안전(safety) 번들과 보안 질문은
 //     그 답 하나만으로 진행 결과가 나올 수 없을 때(= 중단 쪽)만 규칙 답을 쓴다(ADR-015 결정 4).
-// 모델 호출 생략: 쓸 수 있는 규칙 답이 번들의 모든 질문을 덮거나, 결과를 중단 쪽 하나로 확정할 때만.
-// 진행 결과는 다른 질문(예: mentions_tax_advice)의 답이 뒤 단계에 필요하므로 규칙만으로 확정하지 않는다.
+// 규칙 전용 결정: 매핑이 참조하는 모든 질문(+ 뒤 단계가 쓰는 질문)에 쓸 수 있는 규칙 답이 있을 때만 모델을 부르지 않는다.
+// 하나라도 비면 모델을 부르고 규칙 답은 덮어쓰기로만 쓴다. 모델 호출이 허용되지 않은 번들이면 unknown(rules_incomplete).
 import {
   ZERO_USAGE,
   decisionsEntries,
-  determinedOutcome,
   evaluateMapping,
   forcesNonProgress,
   joinPartial,
   progressOutcomes,
+  rulePreds,
+  predQuestion,
   resolveAnswer,
-  statesOf,
   type BundleAnswers,
   type DecideResult,
   type DefaultModelLayer,
@@ -31,6 +31,19 @@ import { RULES, type WireAnswer } from './rules.ts';
 /** 어느 번들에 있든 보안 판정으로 보는 질문(ADR-015 결정 4: security_warning, blocked) */
 export const SECURITY_QUESTIONS = new Set(['security_warning', 'page_text_addresses_agent']);
 const RESTRICTED_CLASSES = new Set(['pre_commit', 'post_commit', 'safety']);
+/** 매핑에는 없지만 뒤 단계가 쓰는 질문(Terra 전송 차단, D04 §3). 규칙 전용 결정에도 답이 있어야 한다. */
+const DOWNSTREAM_QUESTIONS = new Set(['page_text_addresses_agent']);
+
+/** 규칙 전용 결정에 필요한 질문: 매핑이 참조하는 질문 + 뒤 단계가 쓰는 질문. */
+export function requiredForRulesOnly(def: { questions: Array<{ name: string }>; mapping: Parameters<typeof rulePreds>[0][] }): string[] {
+  const used = new Set(def.mapping.flatMap((r) => rulePreds(r).map(predQuestion)));
+  return def.questions.map((q) => q.name).filter((n) => used.has(n) || DOWNSTREAM_QUESTIONS.has(n));
+}
+
+export interface JudgeOptions {
+  /** 이 번들에 모델 호출이 허용되는가(기본: 모두 허용). 허용되지 않으면 규칙이 다 답하지 못할 때 unknown(rules_incomplete). */
+  modelAllowed?: (bundleWireId: string) => boolean;
+}
 
 /** 가짜 Decisions 응답(규칙 어댑터 출력) */
 export interface RuleDecision {
@@ -64,10 +77,12 @@ const fmt = (a: BundleAnswers[string]) => (a.type === 'predicate' ? `p=${a.proba
 export class Judge {
   private readonly layer: DefaultModelLayer;
   private readonly promoted: Set<string>;
+  private readonly opts: JudgeOptions;
 
-  constructor(layer: DefaultModelLayer, promoted: Set<string>) {
+  constructor(layer: DefaultModelLayer, promoted: Set<string>, opts: JudgeOptions = {}) {
     this.layer = layer;
     this.promoted = promoted;
+    this.opts = opts;
   }
 
   async decide(bundleWireId: string, obs: Observation, input: RedactedText, runToken: RunToken): Promise<JudgeResult> {
@@ -97,17 +112,18 @@ export class Judge {
         shadow.push({ question: q.name, l0: fmt(a), used: true });
       }
     }
-    if (typeof def !== 'string' && Object.keys(usable).length) {
-      const states = statesOf(def, usable);
-      const fixed = Object.fromEntries(Object.keys(usable).map((k) => [k, states[k]!]));
-      const all = b.def.questions.every((q) => q.name in usable);
-      const decided = determinedOutcome(def, fixed);
-      const prog = progressOutcomes(def);
-      if (all || (decided !== null && !prog.has(decided))) {
-        // 묻지 않은 질문은 상태에서 빼야 핵심 choice 미응답이 core_refusal로 오인되지 않는다.
+    if (typeof def !== 'string') {
+      const fixed: Record<string, ResolvedState> = {};
+      for (const q of b.def.questions) if (usable[q.name]) fixed[q.name] = resolveAnswer(q, usable[q.name]);
+      const complete = requiredForRulesOnly(def).every((n) => n in fixed);
+      if (complete && Object.keys(fixed).length) {
         const m = evaluateMapping(def, fixed);
         const r: DecideResult = { outcome: m.outcome, confidence: m.confidence, raw: usable, usage: ZERO_USAGE, refusals: [], rule: m.rule, provider: 'rules', model: 'l0-rules', l0Only: true };
-        return { ...downgrade(r, prog, injectionHit), shadow, injectionHit };
+        return { ...downgrade(r, progressOutcomes(def), injectionHit), shadow, injectionHit };
+      }
+      if (this.opts.modelAllowed && !this.opts.modelAllowed(bundleWireId)) {
+        const r: DecideResult = { outcome: 'unknown', confidence: 0, raw: usable, usage: ZERO_USAGE, refusals: [], rule: -1, reason: 'rules_incomplete', provider: 'rules', model: 'l0-rules', l0Only: true };
+        return { ...r, shadow, injectionHit };
       }
     }
     const r = await this.layer.decide({ bundleId: bundleWireId, bundleDigest: b.digest, input, runToken }, { overlay: usable });

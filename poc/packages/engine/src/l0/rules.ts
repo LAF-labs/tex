@@ -1,6 +1,6 @@
 // L0 결정적 규칙(S-L0, R8 §5.3). 각 규칙은 확실할 때만 답하고(확률 1.0/0.0, confidence 1.0) 나머지는 기권(null)한다.
 // 문구 사전은 초기 추정이다. 홈택스 실화면 코퍼스(PoC-3 이후)로 정확도를 재고, ≥ 99.5%인 질문만 승격한다(promotion.ts).
-import { dialogs, screenText, type AmountObservation, type DocMetaObservation, type IntentObservation, type Observation, type ScreenObservation } from './observation.ts';
+import { dialogText, dialogs, sameScreen, screenText, type AmountObservation, type DocMetaObservation, type IntentObservation, type Observation, type ScreenObservation } from './observation.ts';
 
 /** Decisions 와이어 모양의 답(규칙 어댑터가 가짜 응답 answers[]로 낸다). */
 export type WireAnswer =
@@ -61,7 +61,7 @@ const screenState: Record<string, (o: Observation) => WireAnswer | null> = {
   has_error_modal(o) {
     const s = asScreen(o);
     if (!s) return null;
-    return dialogs(s).length && DICT.errorText.test(screenText(s, true)) ? yes('has_error_modal') : null;
+    return dialogs(s).length && DICT.errorText.test(dialogText(s)) ? yes('has_error_modal') : null;
   },
   issuance_success_text(o) {
     const s = asScreen(o);
@@ -78,7 +78,7 @@ const popupClass: Record<string, (o: Observation) => WireAnswer | null> = {
   popup(o) {
     const s = asScreen(o);
     if (!s || !dialogs(s).length) return null;
-    const t = screenText(s, true);
+    const t = dialogText(s);
     const hits = (
       [
         ['security_warning', DICT.security],
@@ -106,10 +106,9 @@ const recovery: Record<string, (o: Observation) => WireAnswer | null> = {
     const t = screenText(s);
     if (DICT.sessionExpired.test(t) || DICT.otherSession.test(t)) return pick('situation', 'session_expired');
     if (dialogs(s).length) return pick('situation', 'modal_blocking');
-    const path = new URL(s.url).pathname;
-    const heading = s.nodes.find((n) => n.role === 'heading')?.name.trim() ?? '';
-    if (path !== s.expected.urlPath || heading !== s.expected.heading) return pick('situation', 'different_screen');
-    return pick('situation', 'element_missing_same_screen');
+    const same = sameScreen(s, s.expected);
+    if (same === null) return null; // 이 포털의 화면 식별 파라미터를 모르면 기권
+    return pick('situation', same ? 'element_missing_same_screen' : 'different_screen');
   },
 };
 

@@ -103,6 +103,7 @@ const POPUP_TPLS: Array<{ key: string; nodes: ObsNode[]; popup: string; asks: bo
   { key: 'security', nodes: [n('dialog', '보안 경고'), n('text', '비정상적인 접근이 감지되었습니다.', { inDialog: true }), n('button', '확인', { inDialog: true })], popup: 'security_warning', asks: false },
   { key: 'consent', nodes: [n('dialog', '동의'), n('text', '개인정보 수집·이용에 동의하시겠습니까?', { inDialog: true }), n('button', '동의', { inDialog: true })], popup: 'consent_required', asks: false },
   { key: 'captcha', nodes: [n('dialog', '보안문자'), n('img', '보안문자', { inDialog: true }), n('textbox', '자동입력 방지 문자', { inDialog: true })], popup: 'captcha', asks: false },
+  { key: 'notice_under_error_title', nodes: [n('dialog', '공지사항'), n('text', '연말정산 간소화 서비스 오픈 안내', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false }, // 제목에만 '오류'(리뷰 회귀, title은 아래에서 붙임)
   { key: 'notice_error_word', nodes: [n('dialog', '안내'), n('text', '시스템 오류 신고는 126으로 전화하세요', { inDialog: true }), n('button', '닫기', { inDialog: true })], popup: 'notice_dismissable', asks: false }, // 어려운 음성
 ];
 
@@ -121,19 +122,24 @@ export function screenCorpus(perTpl = 20, seed = 7): Sample[] {
   }
   for (const p of POPUP_TPLS) {
     for (let i = 0; i < perTpl * 2; i++) {
-      const obs: ScreenObservation = { kind: 'screen', url: HOME_URL, title: '홈택스', nodes: [...chrome(r, true), ...p.nodes] };
+      const title = p.key === 'notice_under_error_title' ? '오류 신고·보안 문의 안내' : '홈택스';
+      const obs: ScreenObservation = { kind: 'screen', url: HOME_URL, title, nodes: [...chrome(r, true), ...p.nodes] };
       out.push({ id: `pc.${p.key}.${i}`, bundle: 'popup_class_v1', obs, labels: { popup: p.popup, asks_to_proceed_or_issue: p.asks } });
     }
   }
-  // recovery: 기대 화면 = 건별발급 양식
-  const expected = { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급' };
+  // recovery: 기대 화면 = 건별발급 양식. WebSquare는 pathname이 같고 화면 ID가 w2xPath 쿼리에 있다.
+  const ISSUE = `${HOME_URL}?w2xPath=/ui/etxsa/a/RETEETBDB01.xml`;
+  const OTHER = `${HOME_URL}?w2xPath=/ui/etxsa/a/RETEETBDB02.xml`;
+  const expected = { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급', screenParams: { w2xPath: '/ui/etxsa/a/RETEETBDB01.xml' } };
   const rec: Array<[string, () => ScreenObservation]> = [
-    ['element_missing_same_screen', () => ({ kind: 'screen', url: HOME_URL, title: '전자세금계산서 건별발급', nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '공급받는자 사업자번호')], expected })],
+    ['element_missing_same_screen', () => ({ kind: 'screen', url: ISSUE, title: '전자세금계산서 건별발급', nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '공급받는자 사업자번호')], expected })],
     ['different_screen', () => ({ kind: 'screen', url: HOME_URL, title: '홈택스', nodes: [...chrome(r, true), n('heading', 'My홈택스')], expected })],
-    ['modal_blocking', () => ({ kind: 'screen', url: HOME_URL, title: '전자세금계산서 건별발급', nodes: [n('heading', '전자세금계산서 건별발급'), n('dialog', '공지'), n('text', '안내', { inDialog: true })], expected })],
-    ['session_expired', () => ({ kind: 'screen', url: HOME_URL, title: '홈택스', nodes: [n('alert', '로그인 시간이 경과되었습니다. 다시 로그인해 주세요.')], expected })],
+    // 같은 pathname·같은 제목, 다른 w2xPath(리뷰 회귀)
+    ['different_screen', () => ({ kind: 'screen', url: OTHER, title: '전자세금계산서 건별발급', nodes: [n('link', '로그아웃'), n('heading', '전자세금계산서 건별발급'), n('textbox', '품목')], expected })],
+    ['modal_blocking', () => ({ kind: 'screen', url: ISSUE, title: '전자세금계산서 건별발급', nodes: [n('heading', '전자세금계산서 건별발급'), n('dialog', '공지'), n('text', '안내', { inDialog: true })], expected })],
+    ['session_expired', () => ({ kind: 'screen', url: ISSUE, title: '홈택스', nodes: [n('alert', '로그인 시간이 경과되었습니다. 다시 로그인해 주세요.')], expected })],
   ];
-  for (const [label, make] of rec) for (let i = 0; i < perTpl * 4; i++) out.push({ id: `rc.${label}.${i}`, bundle: 'recovery_v1', obs: make(), labels: { situation: label } });
+  for (const [k, [label, make]] of rec.entries()) for (let i = 0; i < perTpl * 4; i++) out.push({ id: `rc.${k}.${label}.${i}`, bundle: 'recovery_v1', obs: make(), labels: { situation: label } });
   return out;
 }
 
