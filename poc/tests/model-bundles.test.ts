@@ -11,6 +11,7 @@ import {
   BundleCatalog,
   ThresholdProfiles,
   computeDigest,
+  coreQuestions,
   evaluateMapping,
   reachableOutcomes,
   validateBundle,
@@ -175,6 +176,17 @@ describe('결과 매핑(첫 일치 승리, 로컬 계산)', () => {
     assert.equal(evaluateMapping(def, { ...base, screen: ch('blocked', 0.81) }).outcome, 'blocked');
     assert.equal(evaluateMapping(def, { ...base, screen: ch('form', 0.6, { blocked: 0.35 }) }).outcome, 'unknown');
     assert.equal(evaluateMapping(def, { ...base, screen: { t: 'unknown' } }).outcome, 'unknown'); // 핵심 choice refusal
+  });
+
+  it('리뷰 회귀(핵심 질문): 매핑이 참조하는 choice의 refusal만 번들 전체 unknown, 참조하지 않는 보조 choice는 그 질문만 unknown', () => {
+    for (const b of catalog.list()) assert.deepEqual([...coreQuestions(b.def)].sort(), b.def.questions.filter((q) => q.type === 'choice').map((q) => q.name).sort(), b.wireId); // 현 8종은 모든 choice가 핵심
+    const def = structuredClone(get('popup_class_v1').def);
+    def.questions.push({ type: 'choice', name: 'aux_tone', instructions: '보조 분류', onRefusal: 'unknown', choices: [{ value: 'formal', description: 'x' }, { value: 'unknown', description: 'x' }] });
+    assert.deepEqual([...coreQuestions(def)], ['popup']);
+    const base = { popup: ch('notice_dismissable', 0.9), asks_to_proceed_or_issue: st(0.01) };
+    assert.equal(evaluateMapping(def, { ...base, aux_tone: { t: 'unknown' } }).outcome, 'notice_dismissable');
+    const core = evaluateMapping(def, { ...base, popup: { t: 'unknown' }, aux_tone: ch('formal', 0.9) });
+    assert.deepEqual([core.outcome, core.coreRefusal], ['unknown', true]);
   });
 
   it('intent_route_v1: 세무 질문 + 해당 없음 → refuse_advice, 저신뢰 플레이북 + 세무 → refuse_advice, 고신뢰 → route', () => {

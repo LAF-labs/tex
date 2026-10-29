@@ -15,7 +15,7 @@
 | `packages/net/src/model-guard.ts`, `egress.ts` | BYOK 로컬 검사 4종 + 모델 송신 단일 입구 `toModel()`과 티켓 기반 `providerFetch` |
 | `packages/engine/src/l0/` | 규칙(19문항), S-L0 표, 승격 기준, 결정적 인젝션 사전 필터, 규칙 어댑터, `Judge` 조율기, 측정기 |
 | `scripts/` | `bundles-digest.ts`(다이제스트·허용 목록·프로필 재생성, `--check`), `s-l0-measure.ts`, `s9-decisions.ts` |
-| `tests/` | `model-bundles`·`model-adapter`·`l0`·`redaction`·`s9-mock` 68건 추가(전체 108건 통과) |
+| `tests/` | `model-bundles`·`model-adapter`·`l0`·`redaction`·`s9-mock` 71건 추가(전체 111건 통과) |
 
 ## 2. 계약과 어댑터
 
@@ -65,14 +65,18 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 4. **안전 번들 전체를 L0 중단 쪽만 허용.** ADR-015 결정 4는 보안 판정(`security_warning`, `blocked`)만 명시했다. 구현은 `screen_state_v2`·`popup_class_v1`의 모든 질문에 같은 제한을 걸었다(더 보수적). 유지할지?
 5. **핵심 choice refusal 우선순위.** D04 §2대로 `screen` refusal이면 `security_warning`이 0.9여도 결과가 `unknown`(핸드오프)이다. `blocked`(예약, 쿨다운)가 먼저여야 하는지?
 6. **`doc_meta_check_v1`의 `needs_user`.** "선택값이 규칙표와 30일 넘게 차이"는 매핑 조건(스키마)으로 표현할 수 없다. 번들 매핑은 `ok`/`none_found`까지만 두고 엔진 결정적 후처리가 `ok`를 `needs_user`로 내리는 구조로 했다(후처리는 PoC-8 몫). 맞는가?
-7. **L2 예산 계수.** "L2 ≤ 2회(턴 포함 토큰 상한 별도)"를 replay 없는 호출 = L2 1회로 세고, 이어지는 턴은 L2 × 3(툴셋 턴 상한)으로 묶었다. 매 HTTP 호출을 세면 `selector_repair` 3턴이 예산을 넘는다.
+7. **L2 예산 계수.** "L2 ≤ 2회(턴 포함 토큰 상한 별도)"를 replay 없는 호출 = L2 1회(`l2Calls ≤ 2`)로 세고, 이어지는 턴(replay 있는 호출)은 따로 `l2Turns ≤ L2 × (턴 상한 3 − 1) = 4`로 센다. 열린 L2 없이 이어지는 턴은 거부한다. 매 HTTP 호출을 세면 `selector_repair` 3턴이 예산을 넘는다.
 8. **BYOK `prompt_cache_key`.** 게이트웨이 정본은 `acct:<HMAC>:b:<bundleId>`다. BYOK는 사용자 자기 조직이라 `sax:b:<bundleWireId>`를 썼다. 형식 제한은 S9 실측 대상.
 9. **화면 식별 쿼리 파라미터의 정의 위치.** 리뷰 반영으로 `recovery_v1`의 화면 동일성을 pathname + 식별 쿼리(홈택스 `w2xPath`) + heading으로 비교한다. 파라미터 목록은 포털 셀렉터 사전·매니페스트에 있어야 하는데 `selectors.schema.json`·`manifest.schema.json`에 자리가 없어 PoC는 엔진 상수(`PORTAL_SCREEN_ID_PARAMS`)에 두었다. 스키마 필드(예: 포털 단위 `screenIdParams`)를 둘지?
+10. **핵심 질문 표시.** D04 §2 "핵심 질문(분류 choice) refusal → 번들 unknown, 보조 predicate는 그 질문만"을 로더가 "매핑이 참조하는 choice = 핵심"으로 정한다(`coreQuestions`). 현 8종은 모든 choice가 핵심이라 동작은 같다. `bundle.schema.json` 질문에 `core: true`를 둘지?
 
 ## 8. 리뷰 반영(PR #2)
 
 - Bugbot: 대화상자 규칙이 페이지 제목을 읽던 문제 → `dialogText()`로 대화상자 서브트리만. 회귀 테스트·합성 사례 추가.
 - Bugbot: `situation`이 pathname만 비교하던 문제 → `sameScreen()`(pathname + 식별 쿼리 허용 목록 + heading). 같은 pathname·제목, 다른 `w2xPath` → `different_screen` 회귀 테스트.
+- CodeSolar 2차: `requiredForRulesOnly`가 다운스트림 질문을 빠뜨린다는 지적은 사실과 달랐다(`page_text_addresses_agent`는 `screen_state_v2`의 질문이라 이미 필수 집합에 들어 있다). 번들에 없는 다운스트림 질문까지 요구하면 `recovery_v1` 같은 번들의 규칙 전용 결정이 영영 막히므로 의미는 그대로 두고, 집합 구성을 명시적으로 고친 뒤 회귀 테스트(참조 7문항을 모두 규칙이 답해도 `page_text_addresses_agent`가 비면 모델 호출)를 넣었다.
+- CodeSolar 2차: 번들 전체 unknown은 핵심 choice(매핑이 참조하는 choice)의 refusal에만. 보조 choice refusal은 그 질문만 unknown(회귀 테스트).
+- CodeSolar 2차: L2 예산을 새 호출 수(`l2Calls`)와 이어지는 턴 수(`l2Turns`)로 분리(회귀 테스트: 앞 세션이 턴을 다 써도 두 번째 새 L2 허용).
 - CodeSolar: 규칙 전용 경로가 미응답 질문을 남긴 채 매핑을 계산하던 문제 → `requiredForRulesOnly()` 충족 시에만 규칙 전용, 아니면 모델 또는 `rules_incomplete`. 이 때문에 `screen_state_v2`의 `security_warning` → `blocked` 호출 생략이 사라졌다(규칙 답은 덮어쓰기로만 쓰임).
 
 ## 9. 남은 일

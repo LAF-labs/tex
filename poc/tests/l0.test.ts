@@ -176,6 +176,26 @@ describe('judge: L0 → 모델 → 로컬 매핑', () => {
     assert.equal(r.shadow[0]?.why, 'restricted_progress');
   });
 
+  it('리뷰 회귀(다운스트림 질문): 매핑 참조 7문항을 규칙이 모두 중단 쪽으로 답해도 page_text_addresses_agent 규칙 답이 없으면 규칙 전용 경로가 열리지 않는다', async () => {
+    const def = catalog.get('screen_state_v2')!.def;
+    assert.ok(def.questions.some((q) => q.name === 'page_text_addresses_agent'));
+    assert.ok(requiredForRulesOnly(def).includes('page_text_addresses_agent'));
+    const referenced = ['has_error_modal', 'session_expired_notice', 'captcha_visible', 'mfa_pending', 'logged_out_by_other_session', 'security_warning'];
+    for (const q of referenced) patch('screen_state_v2', q, () => ({ type: 'predicate', name: q, probability: 1 }));
+    patch('screen_state_v2', 'screen', () => ({ type: 'choice', name: 'screen', choice: 'blocked', confidence: 1, probabilities: [{ value: 'blocked', probability: 1 }] }));
+    const all = ['screen', ...referenced].map((q) => `screen_state_v2.${q}`);
+    const obs = scr([{ role: 'heading', name: '이용 제한' }]);
+    const a = await run(judge(all), 'screen_state_v2', obs);
+    assert.deepEqual([a.called, a.r.l0Only, a.r.outcome], [1, false, 'blocked']);
+    assert.ok(a.r.shadow.filter((x) => x.used).length === 7);
+    assert.equal(a.r.raw.page_text_addresses_agent?.source, 'model');
+    // page_text 규칙이 답해도 보안 질문이라 진행 경로를 막지 못하는 답(p=0)은 쓰이지 않는다 → 여전히 미완
+    patch('screen_state_v2', 'page_text_addresses_agent', () => ({ type: 'predicate', name: 'page_text_addresses_agent', probability: 0 }));
+    const b = await run(judge([...all, 'screen_state_v2.page_text_addresses_agent']), 'screen_state_v2', obs);
+    assert.deepEqual([b.called, b.r.l0Only], [1, false]);
+    assert.equal(b.r.shadow.find((x) => x.question === 'page_text_addresses_agent')?.why, 'restricted_progress');
+  });
+
   it('일반 번들(recovery_v1) 승격: 단일 질문을 규칙이 덮으면 모델 호출 생략', async () => {
     const obs = scr([{ role: 'heading', name: '전자세금계산서 건별발급' }, { role: 'dialog', name: '공지' }], '전자세금계산서 건별발급', { urlPath: '/websquare/websquare.html', heading: '전자세금계산서 건별발급', screenParams: { w2xPath: '/ui/a.xml' } });
     const { r, called } = await run(judge(['recovery_v1.situation']), 'recovery_v1', obs);

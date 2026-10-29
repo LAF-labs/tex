@@ -54,9 +54,25 @@ export interface MappingResult {
   coreRefusal: boolean;
 }
 
+const coreCache = new WeakMap<BundleDef, Set<string>>();
+
+/**
+ * 핵심 질문(D04 §2 "분류 choice") = 매핑이 참조하는 choice 질문. 번들 스키마에 core 표시가 없어 로더가 이렇게 정한다(보드 질문).
+ * 핵심 질문의 refusal(→ unknown)만 번들 전체를 unknown으로 내리고, 그 밖의 질문은 그 질문만 unknown(조건 거짓)이다.
+ */
+export function coreQuestions(def: BundleDef): Set<string> {
+  let c = coreCache.get(def);
+  if (!c) {
+    const used = new Set(def.mapping.flatMap((r) => (r.when === 'always' ? [] : 'all' in r.when ? r.when.all : r.when.any).map(predQuestion)));
+    c = new Set(def.questions.filter((q) => q.type === 'choice' && used.has(q.name)).map((q) => q.name));
+    coreCache.set(def, c);
+  }
+  return c;
+}
+
 export function evaluateMapping(def: BundleDef, states: Record<string, ResolvedState>): MappingResult {
-  for (const q of def.questions) {
-    if (q.type === 'choice' && states[q.name]?.t === 'unknown') return { outcome: 'unknown', rule: -1, confidence: 0, coreRefusal: true };
+  for (const q of coreQuestions(def)) {
+    if (states[q]?.t === 'unknown') return { outcome: 'unknown', rule: -1, confidence: 0, coreRefusal: true };
   }
   for (const [i, r] of def.mapping.entries()) {
     const c = ruleConfidence(r, states);
@@ -138,7 +154,7 @@ export function regions(def: BundleDef, q: Question, states: ResolvedState[]): R
   const atoms = atomsOf(def, q.name);
   const seen = new Map<string, ResolvedState>();
   for (const s of states) {
-    const key = (q.type === 'choice' && s.t === 'unknown' ? 'U' : 'K') + atoms.map((a) => (evalPred(a, s) ? '1' : '0')).join('');
+    const key = (coreQuestions(def).has(q.name) && s.t === 'unknown' ? 'U' : 'K') + atoms.map((a) => (evalPred(a, s) ? '1' : '0')).join('');
     if (!seen.has(key)) seen.set(key, s);
   }
   return [...seen.values()];

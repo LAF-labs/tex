@@ -43,8 +43,15 @@ export interface ModelGuardConfig {
   budget?: { l1: number; l2: number };
 }
 
-/** D04 §4 selector_repair 턴 상한 */
+/** D04 §4 selector_repair 턴 상한(첫 호출 포함) */
 const L2_MAX_TURNS = 3;
+
+/** l2Calls = 새 L2(replay 없는 호출) 수, l2Turns = 이어지는 턴(replay 있는 호출) 수. 둘은 따로 예산과 비교한다. */
+export interface L2Usage {
+  l1: number;
+  l2Calls: number;
+  l2Turns: number;
+}
 
 // gateway-request.schema.json 규칙 (6): 주민번호·사업자번호·카드·계좌. 마스킹을 통과한 텍스트에 다시 돌린다.
 const TRIPWIRE: RegExp[] = [
@@ -87,7 +94,7 @@ function hasImage(v: unknown): boolean {
 export class ModelGuard {
   private readonly allow: Map<string, BundleAllowEntry>;
   private readonly budget: { l1: number; l2: number };
-  private readonly used = new Map<string, { l1: number; l2: number; l2Turns: number }>();
+  private readonly used = new Map<string, L2Usage>();
   /** 거부 카운트만(본문·식별자 없음). */
   readonly refusals: Partial<Record<GuardCode, number>> = {};
 
@@ -121,22 +128,23 @@ export class ModelGuard {
     }
     if (hasImage(providerBody)) this.fail('image_rejected');
     if (texts.some(piiTripwire)) this.fail('pii_tripwire');
-    const u = this.used.get(body.runToken) ?? { l1: 0, l2: 0, l2Turns: 0 };
+    const u = this.used.get(body.runToken) ?? { l1: 0, l2Calls: 0, l2Turns: 0 };
     if (surface === 'decide') {
       if (u.l1 >= this.budget.l1) this.fail('budget_exceeded');
       u.l1++;
+    } else if (!(body as GatewayRespondBody).replay?.length) {
+      // "L2 ≤ 2회(턴 포함 토큰 상한 별도)"(D04 §6): replay 없는 호출이 새 L2 1회다.
+      if (u.l2Calls >= this.budget.l2) this.fail('budget_exceeded');
+      u.l2Calls++;
     } else {
-      // "L2 ≤ 2회(턴 포함 토큰 상한 별도)"(D04 §6): replay 없는 호출이 새 L2 1회, 이어지는 턴은 툴셋 턴 상한(최대 3) 안에서만.
-      const fresh = !(body as GatewayRespondBody).replay?.length;
-      if (fresh && u.l2 >= this.budget.l2) this.fail('budget_exceeded');
-      if (u.l2Turns >= this.budget.l2 * L2_MAX_TURNS) this.fail('budget_exceeded');
-      if (fresh) u.l2++;
+      // 이어지는 턴: 열린 L2가 있어야 하고, 실행 전체에서 L2 × (턴 상한 − 1)까지.
+      if (u.l2Calls === 0 || u.l2Turns >= this.budget.l2 * (L2_MAX_TURNS - 1)) this.fail('budget_exceeded');
       u.l2Turns++;
     }
     this.used.set(body.runToken, u);
   }
 
-  usage(runToken: string): { l1: number; l2: number; l2Turns: number } {
-    return { ...(this.used.get(runToken) ?? { l1: 0, l2: 0, l2Turns: 0 }) };
+  usage(runToken: string): L2Usage {
+    return { ...(this.used.get(runToken) ?? { l1: 0, l2Calls: 0, l2Turns: 0 }) };
   }
 }

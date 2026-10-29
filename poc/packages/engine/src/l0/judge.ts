@@ -31,13 +31,18 @@ import { RULES, type WireAnswer } from './rules.ts';
 /** 어느 번들에 있든 보안 판정으로 보는 질문(ADR-015 결정 4: security_warning, blocked) */
 export const SECURITY_QUESTIONS = new Set(['security_warning', 'page_text_addresses_agent']);
 const RESTRICTED_CLASSES = new Set(['pre_commit', 'post_commit', 'safety']);
-/** 매핑에는 없지만 뒤 단계가 쓰는 질문(Terra 전송 차단, D04 §3). 규칙 전용 결정에도 답이 있어야 한다. */
-const DOWNSTREAM_QUESTIONS = new Set(['page_text_addresses_agent']);
+/** 매핑에는 없지만 뒤 단계가 쓰는 질문(Terra 전송 차단, D04 §3). 번들에 있으면 규칙 전용 결정에도 답이 있어야 한다. */
+export const DOWNSTREAM_QUESTIONS = new Set(['page_text_addresses_agent']);
 
-/** 규칙 전용 결정에 필요한 질문: 매핑이 참조하는 질문 + 뒤 단계가 쓰는 질문. */
+/**
+ * 규칙 전용 결정에 필요한 질문 = 매핑이 참조하는 질문 ∪ 이 번들에 있는 다운스트림 질문.
+ * 다운스트림 질문은 번들 질문 목록에서 고른다: screen_state_v2에는 page_text_addresses_agent가 질문으로 있어 늘 포함되고,
+ * 그 질문이 없는 번들(recovery_v1 등)에 요구하면 그 번들은 규칙 전용 결정이 영영 불가능해진다(그 번들의 인젝션 방어는 결정적 사전 필터 몫).
+ */
 export function requiredForRulesOnly(def: { questions: Array<{ name: string }>; mapping: Parameters<typeof rulePreds>[0][] }): string[] {
   const used = new Set(def.mapping.flatMap((r) => rulePreds(r).map(predQuestion)));
-  return def.questions.map((q) => q.name).filter((n) => used.has(n) || DOWNSTREAM_QUESTIONS.has(n));
+  const names = def.questions.map((q) => q.name);
+  return [...new Set([...names.filter((n) => used.has(n)), ...names.filter((n) => DOWNSTREAM_QUESTIONS.has(n))])];
 }
 
 export interface JudgeOptions {
