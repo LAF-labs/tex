@@ -156,7 +156,15 @@ async function main() {
   let replayItems: Parameters<typeof responder.respond>[1]['replay'] = [];
   for (let turn = 1; turn <= 3; turn++) {
     guard();
-    const t = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: replayItems, runToken });
+    let t: Awaited<ReturnType<typeof responder.respond>>;
+    try {
+      t = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: replayItems, runToken });
+    } catch (e) {
+      // 어댑터는 공급사 오류를 incomplete로 돌려주지만, 그 밖의 예외도 턴 기록에 남기고 멈춘다.
+      turns.push({ turn, status: 'error', reason: (e as Error).message.slice(0, 200) });
+      errors.push(`selector_repair turn ${turn}: ${(e as Error).message}`);
+      break;
+    }
     cost += terraCost(t.usage);
     turns.push({
       turn,

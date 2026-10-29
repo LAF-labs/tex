@@ -1,26 +1,26 @@
 {
   "mode": "live",
   "note": "실호출",
-  "runAt": "2026-10-29T02:23:56.364Z",
+  "runAt": "2026-10-29T02:41:31.705Z",
   "sdk": "openai@7.45.1",
   "models": {
     "decisions": "gpt-6-luna",
     "responses": "gpt-6.1-terra"
   },
   "calls": {
-    "http": 55,
-    "decisionsLogical": 55,
-    "costUsd": 0.01194,
+    "http": 59,
+    "decisionsLogical": 56,
+    "costUsd": 0.00963,
     "costCapUsd": 2
   },
   "cache": [
     {
       "screen": "home",
       "inputTokens": 3525,
-      "cachedTokens": 0,
-      "cacheWriteTokens": 1952,
+      "cachedTokens": 1952,
+      "cacheWriteTokens": 0,
       "outputTokens": 0,
-      "latencyMs": 4786.4
+      "latencyMs": 1899.2
     },
     {
       "screen": "login",
@@ -28,7 +28,7 @@
       "cachedTokens": 1952,
       "cacheWriteTokens": 0,
       "outputTokens": 0,
-      "latencyMs": 1571.5
+      "latencyMs": 1390.2
     },
     {
       "screen": "form",
@@ -36,7 +36,7 @@
       "cachedTokens": 1952,
       "cacheWriteTokens": 0,
       "outputTokens": 0,
-      "latencyMs": 1467.1
+      "latencyMs": 1628.7
     }
   ],
   "promptCacheKeyFormat": {
@@ -339,23 +339,23 @@
     {
       "questions": 2,
       "n": 10,
-      "p50": 391.3,
-      "p95": 410.4,
-      "max": 410.4
+      "p50": 370.7,
+      "p95": 442.1,
+      "max": 442.1
     },
     {
       "questions": 5,
       "n": 10,
-      "p50": 839.9,
-      "p95": 917.5,
-      "max": 917.5
+      "p50": 934.5,
+      "p95": 1844.4,
+      "max": 1844.4
     },
     {
       "questions": 10,
       "n": 10,
-      "p50": 1604.9,
-      "p95": 1807.1,
-      "max": 1807.1
+      "p50": 1564.6,
+      "p95": 2127.7,
+      "max": 2127.7
     }
   ],
   "rateLimit": {
@@ -384,37 +384,114 @@
       "x-ratelimit-reset-tokens": "0s"
     },
     "statuses": {
-      "200": 55
+      "200": 56,
+      "503": 3
     }
   },
   "replay": {
-    "turn1": {
-      "status": "completed",
-      "reason": null,
-      "toolCalls": [
-        "get_a11y_subtree"
-      ],
-      "replayItems": [
-        "function_call"
-      ],
-      "encryptedReasoning": false,
-      "usage": {
-        "inputTokens": 2275,
-        "cachedTokens": 0,
-        "cacheWriteTokens": 2217,
-        "outputTokens": 31
+    "turns": [
+      {
+        "turn": 1,
+        "status": "completed",
+        "reason": null,
+        "toolCalls": [
+          {
+            "name": "get_a11y_subtree",
+            "arguments": {
+              "scopeId": "form.counterpart",
+              "maxBytes": 8000
+            }
+          }
+        ],
+        "replayItems": [
+          "function_call"
+        ],
+        "encryptedReasoning": false,
+        "output": null,
+        "usage": {
+          "inputTokens": 2275,
+          "cachedTokens": 2217,
+          "cacheWriteTokens": 0,
+          "outputTokens": 31
+        }
+      },
+      {
+        "turn": 2,
+        "status": "completed",
+        "reason": null,
+        "toolCalls": [
+          {
+            "name": "propose_selectors",
+            "arguments": {
+              "candidates": [
+                {
+                  "kind": "role",
+                  "value": "textbox",
+                  "name": "공급받는자 사업자등록번호"
+                },
+                {
+                  "kind": "label",
+                  "value": "공급받는자 사업자등록번호",
+                  "name": "공급받는자 사업자등록번호"
+                }
+              ]
+            }
+          }
+        ],
+        "replayItems": [
+          "reasoning",
+          "function_call"
+        ],
+        "encryptedReasoning": true,
+        "output": null,
+        "usage": {
+          "inputTokens": 2364,
+          "cachedTokens": 2217,
+          "cacheWriteTokens": 0,
+          "outputTokens": 105
+        }
+      },
+      {
+        "turn": 3,
+        "status": "completed",
+        "reason": null,
+        "toolCalls": [],
+        "replayItems": [
+          "reasoning",
+          "message"
+        ],
+        "encryptedReasoning": true,
+        "output": {
+          "outcome": "repaired",
+          "risk_flags": [],
+          "candidates": [
+            {
+              "kind": "role",
+              "value": "textbox",
+              "name": "공급받는자 사업자등록번호",
+              "why": "label_text_changed"
+            }
+          ]
+        },
+        "usage": {
+          "inputTokens": 2525,
+          "cachedTokens": 2217,
+          "cacheWriteTokens": 0,
+          "outputTokens": 144
+        }
       }
-    },
-    "turn2": {
-      "status": "completed",
-      "reason": null,
-      "output": null,
-      "usage": {
-        "inputTokens": 2364,
-        "cachedTokens": 2217,
-        "cacheWriteTokens": 0,
-        "outputTokens": 83
-      }
+    ],
+    "finalOutput": {
+      "outcome": "repaired",
+      "risk_flags": [],
+      "candidates": [
+        {
+          "kind": "role",
+          "value": "textbox",
+          "name": "공급받는자 사업자등록번호",
+          "why": "label_text_changed"
+        }
+      ]
     }
   },
   "errors": []

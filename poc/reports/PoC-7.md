@@ -55,7 +55,7 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 
 ## 6. S9
 
-[S9.md](S9.md). **실측 완료(1회차, 2026-10-29).** HTTP 55회, 전부 200, 오류 0, 실비 $0.012. 명시 캐시 접두 1,952토큰 적중, `prompt_cache_key` `sax:b:<wireId>` 수락, refusal 0/180, choice `probabilities[]` 전체 분포 20/20, 지연 2·5·10문항 p50 391·840·1,605ms(질문당 약 160ms), 레이트 헤더 6종 수집. Terra `store:false` 재생은 2턴째도 도구를 다시 불러 구조화 출력이 안 나왔다. 하네스를 3턴으로 고쳤고 2회차 실측 1회가 남아 있다.
+[S9.md](S9.md). **실측 완료(2회, 2026-10-29, 합계 약 $0.022).** HTTP 55+59회, 오류 0(2회차 503 3건은 재시도로 회복). 명시 캐시 접두 1,952토큰 적중(18분 뒤 새 프로세스에서도 적중), `prompt_cache_key` `sax:b:<wireId>` 수락, refusal 0/360, choice `probabilities[]` 전체 분포 40/40, 지연 2·5·10문항 p50 약 0.4·0.9·1.6초(질문당 약 160ms), 레이트 헤더 6종. Terra `store:false` 재생은 1턴 서브트리 요청 → 2턴 `propose_selectors` → 3턴 `repaired`로 3턴이 기본이다(L2 턴 상한 3 유지).
 
 ## 7. 설계 질문(보드 PoC-7 스레드에 올림, 코드로 우회하지 않음)
 
@@ -84,6 +84,6 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 ## 9. 남은 일
 
 - PoC-3 이후: 홈택스 화면 100장 라벨 → `screen_state_v2` 정확도 표, L0 실측·승격(S-L0), S7 축소.
-- S9 2회차 1회(키 재수령 시): Terra 3턴 재생·reasoning 항목 유무·캐시 쓰기 지연 재현. S9.md §G.
+- S9 refusal 유발 조건: 합성 20종으로는 0건. 홈택스 코퍼스 100장 평가 때 다시 센다.
 - 엔진 실행 루프에 `Judge` 연결(`decide` 스텝·복구), `doc_meta` 후처리(PoC-8), D06 전체판(인접 노드 결합 탐지 등, 테스트에 공백 분절 사업자번호가 마스킹·트립와이어를 모두 빠져나가는 사례를 남겼다).
 - `packages/net/schemas`·`packages/model/schemas`는 `sovereign-ax/design/schemas` 사본이다. 원본이 바뀌면 `tests/model-bundles.test.ts`의 사본 일치 검사가 실패하므로 함께 바꾼다.
