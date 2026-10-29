@@ -55,7 +55,7 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 
 ## 6. S9
 
-[S9.md](S9.md). **실호출 미실행, 키 필요.** 스크립트는 키가 있으면 실측, 없으면 모의 서버로 같은 경로를 돈다. 계획 55회 호출, 사전 추정 상한 $0.202, 실행 중 $1.5 초과 시 중단(상한 $2).
+[S9.md](S9.md). **실측 완료(2회, 2026-10-29, 합계 약 $0.022).** HTTP 55+59회, 오류 0(2회차 503 3건은 재시도로 회복). 명시 캐시 접두 1,952토큰 적중(18분 뒤 새 프로세스에서도 적중), `prompt_cache_key` `sax:b:<wireId>` 수락, refusal 0/360, choice `probabilities[]` 전체 분포 40/40, 지연 2·5·10문항 p50 약 0.4·0.9·1.6초(질문당 약 160ms), 레이트 헤더 6종. Terra `store:false` 재생은 1턴 서브트리 요청 → 2턴 `propose_selectors` → 3턴 `repaired`로 3턴이 기본이다(L2 턴 상한 3 유지).
 
 ## 7. 설계 질문(보드 PoC-7 스레드에 올림, 코드로 우회하지 않음)
 
@@ -66,7 +66,7 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 5. **핵심 choice refusal 우선순위.** D04 §2대로 `screen` refusal이면 `security_warning`이 0.9여도 결과가 `unknown`(핸드오프)이다. `blocked`(예약, 쿨다운)가 먼저여야 하는지?
 6. **`doc_meta_check_v1`의 `needs_user`.** "선택값이 규칙표와 30일 넘게 차이"는 매핑 조건(스키마)으로 표현할 수 없다. 번들 매핑은 `ok`/`none_found`까지만 두고 엔진 결정적 후처리가 `ok`를 `needs_user`로 내리는 구조로 했다(후처리는 PoC-8 몫). 맞는가?
 7. **L2 예산 계수.** "L2 ≤ 2회(턴 포함 토큰 상한 별도)"를 replay 없는 호출 = L2 1회(`l2Calls ≤ 2`)로 세고, 이어지는 턴(replay 있는 호출)은 따로 `l2Turns ≤ L2 × (턴 상한 3 − 1) = 4`로 센다. 열린 L2 없이 이어지는 턴은 거부한다. 매 HTTP 호출을 세면 `selector_repair` 3턴이 예산을 넘는다.
-8. **BYOK `prompt_cache_key`.** 게이트웨이 정본은 `acct:<HMAC>:b:<bundleId>`다. BYOK는 사용자 자기 조직이라 `sax:b:<bundleWireId>`를 썼다. 형식 제한은 S9 실측 대상.
+8. **BYOK `prompt_cache_key`.** 게이트웨이 정본은 `acct:<HMAC>:b:<bundleId>`다. BYOK는 사용자 자기 조직이라 `sax:b:<bundleWireId>`를 썼다. S9 실측에서 400 없이 수락됐다(형식 제한 없음).
 9. **화면 식별 쿼리 파라미터의 정의 위치.** 리뷰 반영으로 `recovery_v1`의 화면 동일성을 pathname + 식별 쿼리(홈택스 `w2xPath`) + heading으로 비교한다. 파라미터 목록은 포털 셀렉터 사전·매니페스트에 있어야 하는데 `selectors.schema.json`·`manifest.schema.json`에 자리가 없어 PoC는 엔진 상수(`PORTAL_SCREEN_ID_PARAMS`)에 두었다. 스키마 필드(예: 포털 단위 `screenIdParams`)를 둘지?
 10. **핵심 질문 표시.** D04 §2 "핵심 질문(분류 choice) refusal → 번들 unknown, 보조 predicate는 그 질문만"을 로더가 "매핑이 참조하는 choice = 핵심"으로 정한다(`coreQuestions`). 현 8종은 모든 choice가 핵심이라 동작은 같다. `bundle.schema.json` 질문에 `core: true`를 둘지?
 
@@ -84,6 +84,6 @@ BV 검증기는 엔진 로더(`BundleCatalog.load`)와 번들 CI(`tests/model-bu
 ## 9. 남은 일
 
 - PoC-3 이후: 홈택스 화면 100장 라벨 → `screen_state_v2` 정확도 표, L0 실측·승격(S-L0), S7 축소.
-- 키 수령 후: `pnpm s9` 1회 실측 → S9.md 표 교체.
+- S9 refusal 유발 조건: 합성 20종으로는 0건. 홈택스 코퍼스 100장 평가 때 다시 센다.
 - 엔진 실행 루프에 `Judge` 연결(`decide` 스텝·복구), `doc_meta` 후처리(PoC-8), D06 전체판(인접 노드 결합 탐지 등, 테스트에 공백 분절 사업자번호가 마스킹·트립와이어를 모두 빠져나가는 사례를 남겼다).
 - `packages/net/schemas`·`packages/model/schemas`는 `sovereign-ax/design/schemas` 사본이다. 원본이 바뀌면 `tests/model-bundles.test.ts`의 사본 일치 검사가 실패하므로 함께 바꾼다.

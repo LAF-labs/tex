@@ -2,7 +2,7 @@
 //   node --conditions=development scripts/s9-decisions.ts [--mock] [--reps=10] [--out=/abs/path.json]
 // 측정: 명시 캐시 적중(cached_tokens·cache_write_tokens), refusal 빈도와 유발 텍스트(합성 화면 20종),
 //       질문 수 2·5·10별 지연 p50/p95, 레이트 리밋 헤더, choice probabilities[] 전체 분포 여부, prompt_cache_key 형식,
-//       Responses store:false 2턴 재생. 입력은 합성 텍스트만. 키는 어디에도 기록하지 않는다.
+//       Responses store:false 다턴(최대 3) 재생. 입력은 합성 텍스트만. 키는 어디에도 기록하지 않는다.
 // 비용 상한 $2: 호출 전 추정, 호출마다 누적해 $1.5를 넘으면 중단한다. 결과: reports/raw/s9-<mode>.json
 import fs from 'node:fs';
 import {
@@ -32,7 +32,7 @@ import { S9_SCREENS } from '../tests/fixtures/s9-screens.ts';
 const forceMock = process.argv.includes('--mock');
 const outArg = process.argv.find((a) => a.startsWith('--out='))?.slice(6);
 const reps = Number(process.argv.find((a) => a.startsWith('--reps='))?.slice(7) ?? 10);
-const apiKey = forceMock ? undefined : process.env.OPENAI_API_KEY;
+const apiKey = forceMock ? undefined : process.env.OPENAI_API_KEY || undefined; // 빈 문자열은 키 없음으로 본다
 const mode: 'live' | 'mock' = apiKey ? 'live' : 'mock';
 const COST_CAP = 2;
 const COST_ABORT = 1.5;
@@ -76,9 +76,9 @@ const pct = (xs: number[], p: number) => {
 };
 
 async function main() {
-  const planned = 3 + S9_SCREENS.length + PROBES.length * reps + 2;
-  // 사전 추정: Decisions 호출당 입력 ≤ 4k 토큰(전부 비캐시·쓰기 요율로 보수 계산), Terra 2턴 각 입력 8k·출력 16k(상한)
-  const estimate = (planned - 2) * 4000 * PRICE.luna.write / 1e6 + 2 * (8000 * PRICE.terra.in + 16000 * PRICE.terra.out) / 1e6;
+  const planned = 3 + S9_SCREENS.length + PROBES.length * reps + 3;
+  // 사전 추정: Decisions 호출당 입력 ≤ 4k 토큰(전부 비캐시·쓰기 요율로 보수 계산), Terra 최대 3턴 각 입력 8k·출력 16k(상한)
+  const estimate = (planned - 3) * 4000 * PRICE.luna.write / 1e6 + 3 * (8000 * PRICE.terra.in + 16000 * PRICE.terra.out) / 1e6;
   if (planned > MAX_CALLS || estimate > COST_CAP) throw new Error(`계획 호출 ${planned}회, 추정 $${estimate.toFixed(3)}: 상한 초과`);
   console.log(`S9 mode=${mode} planned=${planned} estimate≤$${estimate.toFixed(3)}`);
 
@@ -88,7 +88,7 @@ async function main() {
     timeoutMs: 30_000,
     modelGuard: { bundles: [...catalog.allowEntries(), ...PROBES.map((p) => ({ id: p.wireId, digest: p.digest, maxInputBytes: p.def.maxInputBytes }))] },
   });
-  const key = apiKey ?? 'sk-mock-not-a-key';
+  const key = apiKey ?? 'sk-mock-not-a-key'; // apiKey는 undefined 또는 비어 있지 않은 키
   const decider = new OpenAIDecisionsAdapter({ apiKey: key, egress });
   const layer = new DefaultModelLayer({ catalog, profiles: ThresholdProfiles.load(), decider });
   const responder = new OpenAIResponsesAdapter({ apiKey: key, egress });
@@ -147,24 +147,39 @@ async function main() {
     latency.push({ questions: p.def.questions.length, n: ms.length, p50: pct(ms, 50), p95: pct(ms, 95), max: ms.length ? +Math.max(...ms).toFixed(1) : null });
   }
 
-  // G. Responses store:false 2턴 재생
+  // G. Responses store:false 다턴 재생(최대 3턴). 각 턴의 도구 호출은 로컬 합성 서브트리로 답하고, 구조화 출력이 나오면 멈춘다.
   const ts = selectorRepair(['form.counterpart']);
   const runToken = localRunToken(egress, { runId: 's9-replay' });
   const msg = { role: 'user' as const, content: [{ type: 'input_text' as const, text: apply('스텝 s12(fill, 기대 역할 textbox, 이름 패턴 ^공급받는자 등록번호$)의 셀렉터 후보 3개가 모두 실패했다. 서브트리를 읽고 후보를 제안하라.', { runId: 's9' }, { frame: 'none' }).redacted }] };
-  guard();
-  const t1 = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: [], runToken });
-  cost += terraCost(t1.usage);
-  let t2 = null;
-  if (t1.status === 'completed' && t1.toolCalls[0]) {
+  const sub = apply('region "공급받는자"\n  textbox "공급받는자 사업자등록번호"(required)\n  textbox "상호"(required)\n  button "조회"', { runId: 's9' }).redacted;
+  const turns: Array<Record<string, unknown>> = [];
+  let replayItems: Parameters<typeof responder.respond>[1]['replay'] = [];
+  for (let turn = 1; turn <= 3; turn++) {
     guard();
-    const sub = apply('region "공급받는자"\n  textbox "공급받는자 사업자등록번호"(required)\n  textbox "상호"(required)\n  button "조회"', { runId: 's9' }).redacted;
-    t2 = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: [...t1.replay, { kind: 'function_call_output', callId: t1.toolCalls[0].callId, output: sub }], runToken });
-    cost += terraCost(t2.usage);
+    let t: Awaited<ReturnType<typeof responder.respond>>;
+    try {
+      t = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: replayItems, runToken });
+    } catch (e) {
+      // 어댑터는 공급사 오류를 incomplete로 돌려주지만, 그 밖의 예외도 턴 기록에 남기고 멈춘다.
+      turns.push({ turn, status: 'error', reason: (e as Error).message.slice(0, 200), toolCalls: [], replayItems: [], encryptedReasoning: false, output: null, usage: null });
+      errors.push(`selector_repair turn ${turn}: ${(e as Error).message}`);
+      break;
+    }
+    cost += terraCost(t.usage);
+    turns.push({
+      turn,
+      status: t.status,
+      reason: t.reason ?? null,
+      toolCalls: t.toolCalls.map((c) => ({ name: c.name, arguments: c.arguments })),
+      replayItems: t.replay.map((r) => (r.kind === 'model_output' ? (r.item.item as { type?: string }).type : r.kind)),
+      encryptedReasoning: t.replay.some((r) => r.kind === 'model_output' && typeof (r.item.item as { encrypted_content?: unknown }).encrypted_content === 'string'),
+      output: t.output ?? null,
+      usage: t.usage,
+    });
+    if (t.status !== 'completed' || t.toolCalls.length === 0) break;
+    replayItems = [...replayItems, ...t.replay, ...t.toolCalls.map((c) => ({ kind: 'function_call_output' as const, callId: c.callId, output: sub }))];
   }
-  const replay = {
-    turn1: { status: t1.status, reason: t1.reason ?? null, toolCalls: t1.toolCalls.map((c) => c.name), replayItems: t1.replay.map((r) => (r.kind === 'model_output' ? (r.item.item as { type?: string }).type : r.kind)), encryptedReasoning: t1.replay.some((r) => r.kind === 'model_output' && typeof (r.item.item as { encrypted_content?: unknown }).encrypted_content === 'string'), usage: t1.usage },
-    turn2: t2 ? { status: t2.status, reason: t2.reason ?? null, output: t2.output ?? null, usage: t2.usage } : null,
-  };
+  const replay = { turns, finalOutput: turns.at(-1)?.output ?? null };
 
   // D. 레이트 리밋 헤더(키 이름과 첫·마지막 값)
   const audit = egress.modelAudit;
@@ -190,7 +205,7 @@ async function main() {
   };
   const file = outArg ? new URL(`file://${outArg}`) : new URL(`../reports/raw/s9-${mode}.json`, import.meta.url);
   fs.writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
-  console.log(JSON.stringify({ mode, http: audit.length, costUsd: out.calls.costUsd, cache: cache.map((c) => ('cachedTokens' in c ? [c.cachedTokens, c.cacheWriteTokens] : 'err')), refusalByQuestion, latency, full: `${out.choiceDistribution.fullCount}/${out.choiceDistribution.observations}`, replay: [replay.turn1.status, replay.turn2?.status], errors: errors.length }, null, 1));
+  console.log(JSON.stringify({ mode, http: audit.length, costUsd: out.calls.costUsd, cache: cache.map((c) => ('cachedTokens' in c ? [c.cachedTokens, c.cacheWriteTokens] : 'err')), refusalByQuestion, latency, full: `${out.choiceDistribution.fullCount}/${out.choiceDistribution.observations}`, replay: turns.map((t) => `${t.status}${(t.toolCalls as unknown[] | undefined)?.length ? '+tool' : ''}`), errors: errors.length }, null, 1));
   await mock?.close();
 }
 
