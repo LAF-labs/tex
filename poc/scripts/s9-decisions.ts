@@ -161,7 +161,7 @@ async function main() {
       t = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: replayItems, runToken });
     } catch (e) {
       // 어댑터는 공급사 오류를 incomplete로 돌려주지만, 그 밖의 예외도 턴 기록에 남기고 멈춘다.
-      turns.push({ turn, status: 'error', reason: (e as Error).message.slice(0, 200) });
+      turns.push({ turn, status: 'error', reason: (e as Error).message.slice(0, 200), toolCalls: [], replayItems: [], encryptedReasoning: false, output: null, usage: null });
       errors.push(`selector_repair turn ${turn}: ${(e as Error).message}`);
       break;
     }
@@ -205,7 +205,7 @@ async function main() {
   };
   const file = outArg ? new URL(`file://${outArg}`) : new URL(`../reports/raw/s9-${mode}.json`, import.meta.url);
   fs.writeFileSync(file, `${JSON.stringify(out, null, 2)}\n`);
-  console.log(JSON.stringify({ mode, http: audit.length, costUsd: out.calls.costUsd, cache: cache.map((c) => ('cachedTokens' in c ? [c.cachedTokens, c.cacheWriteTokens] : 'err')), refusalByQuestion, latency, full: `${out.choiceDistribution.fullCount}/${out.choiceDistribution.observations}`, replay: turns.map((t) => `${t.status}${(t.toolCalls as unknown[]).length ? '+tool' : ''}`), errors: errors.length }, null, 1));
+  console.log(JSON.stringify({ mode, http: audit.length, costUsd: out.calls.costUsd, cache: cache.map((c) => ('cachedTokens' in c ? [c.cachedTokens, c.cacheWriteTokens] : 'err')), refusalByQuestion, latency, full: `${out.choiceDistribution.fullCount}/${out.choiceDistribution.observations}`, replay: turns.map((t) => `${t.status}${(t.toolCalls as unknown[] | undefined)?.length ? '+tool' : ''}`), errors: errors.length }, null, 1));
   await mock?.close();
 }
 
