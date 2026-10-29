@@ -1,0 +1,118 @@
+{
+  "id": "issue_result",
+  "version": 2,
+  "digest": "babc58a5f16caf2ee7c5477e0051ad98f9286d052e032d8a052fceade2e470e0",
+  "riskClass": "post_commit",
+  "outcomes": [
+    {
+      "name": "issued",
+      "kind": "progress"
+    },
+    {
+      "name": "pending_auth",
+      "kind": "conservative"
+    },
+    {
+      "name": "duplicate",
+      "kind": "conservative"
+    },
+    {
+      "name": "rejected",
+      "kind": "conservative"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 6144,
+  "prefix": {
+    "stringsKey": "issue_result",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "choice",
+      "name": "result",
+      "instructions": "발급·신청 버튼을 누른 직후 화면의 결과를 고른다. 확실하지 않으면 unknown.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "issued",
+          "description": "발급·신청 완료가 분명하다"
+        },
+        {
+          "value": "pending_auth",
+          "description": "전자서명·인증 승인을 기다리는 단계다"
+        },
+        {
+          "value": "duplicate",
+          "description": "이미 발급된 건·중복 안내"
+        },
+        {
+          "value": "rejected",
+          "description": "발급 실패·반려·처리 불가 안내"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것도 아니거나 완료·오류 문구가 함께 보인다"
+        }
+      ]
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "issued",
+      "when": {
+        "all": [
+          {
+            "choice": "result",
+            "value": "issued",
+            "confidenceGte": 0.95
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "pending_auth",
+      "when": {
+        "all": [
+          {
+            "choice": "result",
+            "value": "pending_auth",
+            "confidenceGte": 0.95
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "duplicate",
+      "when": {
+        "all": [
+          {
+            "choice": "result",
+            "value": "duplicate",
+            "confidenceGte": 0.95
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "rejected",
+      "when": {
+        "all": [
+          {
+            "choice": "result",
+            "value": "rejected",
+            "confidenceGte": 0.95
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}

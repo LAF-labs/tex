@@ -1,0 +1,118 @@
+{
+  "id": "recovery",
+  "version": 1,
+  "digest": "ebbaea0fa73280765112fd73bbfdab7ce911de044fa37607ae247532f92e9f6e",
+  "riskClass": "general",
+  "outcomes": [
+    {
+      "name": "element_missing_same_screen",
+      "kind": "progress"
+    },
+    {
+      "name": "different_screen",
+      "kind": "progress"
+    },
+    {
+      "name": "modal_blocking",
+      "kind": "progress"
+    },
+    {
+      "name": "session_expired",
+      "kind": "conservative"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 6144,
+  "prefix": {
+    "stringsKey": "recovery",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "choice",
+      "name": "situation",
+      "instructions": "기대한 요소를 찾지 못한 지금 상황을 고른다. 확실하지 않으면 unknown.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "element_missing_same_screen",
+          "description": "같은 화면인데 기대한 요소만 없거나 이름이 바뀌었다"
+        },
+        {
+          "value": "different_screen",
+          "description": "화면 제목·주요 영역이 기대와 다르다"
+        },
+        {
+          "value": "modal_blocking",
+          "description": "모달·알림창이 기대한 요소를 가리고 있다"
+        },
+        {
+          "value": "session_expired",
+          "description": "세션 만료·로그아웃·재로그인 안내가 보인다"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것도 아니거나 판단 불가"
+        }
+      ]
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "element_missing_same_screen",
+      "when": {
+        "all": [
+          {
+            "choice": "situation",
+            "value": "element_missing_same_screen",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "different_screen",
+      "when": {
+        "all": [
+          {
+            "choice": "situation",
+            "value": "different_screen",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "modal_blocking",
+      "when": {
+        "all": [
+          {
+            "choice": "situation",
+            "value": "modal_blocking",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "session_expired",
+      "when": {
+        "all": [
+          {
+            "choice": "situation",
+            "value": "session_expired",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}

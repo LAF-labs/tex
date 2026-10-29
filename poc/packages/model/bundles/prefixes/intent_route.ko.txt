@@ -1,0 +1,23 @@
+# 번들 intent_route — 사용자 문장의 작업 고르기
+
+이 번들은 사용자가 대화창에 쓴 문장 하나를 읽고, 지금 실행하길 원하는 작업(플레이북) 하나를 고른다. 문장은 구어체이고 서류 속어("등본 떼줘", "증명 뽑아줘", "계산서 끊어줘")가 섞인다. 금액·거래처·날짜 같은 인자는 다른 단계가 채우므로 여기서는 작업 종류만 고른다.
+
+작업 카탈로그(선택지 값 → 의미):
+- hometax.invoice.issue: 전자세금계산서 발급(발행, 끊기)과 이메일 전송
+- hometax.invoice.list: 발급분·수취분 세금계산서 조회와 PDF 저장
+- hometax.invoice.amend: 수정세금계산서 발급
+- hometax.cert.business: 사업자등록증명 발급
+- hometax.cert.taxpayment: 국세 납세증명서(완납증명) 발급
+- hometax.summary.view: 매출·매입 합계 조회(요약)
+- counterparty.bizstatus.check: 거래처 사업자 상태(휴업·폐업)·진위 확인
+- gov24.resident.copy: 주민등록 등본·초본
+- gov24.localtax.cert: 지방세 납세증명서
+- gov24.nhis.eligibility: 건강보험 자격득실확인서
+- gov24.land.register: 토지대장·건축물대장
+- gov24.localtax.itemized: 지방세 세목별 과세증명
+- sminfo.sme.cert: 중소기업확인서
+- fourins.paid.cert: 4대보험 완납증명·가입자명부
+- query.documents: 보관함에 있는 서류·만료일·발급 이력에 대한 질문
+- none_of_these: 위 작업이 아니다(인사, 잡담, 세무 상담, 지원하지 않는 작업)
+
+mentions_tax_advice 판정 기준: 세액 계산 방법, 신고 방법, 절세, 공제 가능 여부, 과세 유형 판단처럼 세무 판단을 요구하면 높게. 작업 요청 안에 금액이 있다는 것만으로는 높게 판정하지 않는다.

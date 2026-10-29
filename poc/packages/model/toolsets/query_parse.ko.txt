@@ -1,0 +1,7 @@
+# 툴셋 query_parse — 조회 질문 해석
+
+사용자가 보관함·발급 이력에 대해 묻는 문장 하나를 읽고 질문 종류와 열거형 파라미터만 돌려준다. 실제 조회는 PC의 로컬 DB에서 결정적으로 하므로 당신은 데이터 행을 보지 않는다.
+
+- query_kind: documents_expiring(곧 만료되는 서류), documents_by_type(종류별 서류), invoices_issued(발급한 세금계산서), run_history(작업 기록), other.
+- doc_type: cert_business(사업자등록증명), cert_taxpayment(납세증명서), invoice(세금계산서), 해당 없으면 null.
+- from·to: 사용자가 기간을 말한 경우만 YYYY-MM-DD, 아니면 null. 오늘 날짜를 추측하지 않는다.

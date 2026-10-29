@@ -1,7 +1,31 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "rootDir": "src", "outDir": "dist" },
-  "include": ["src"],
-  "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../db" }, { "path": "../net" }, { "path": "../platform" }]
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "resolveJsonModule": true
+  },
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
+  ],
+  "references": [
+    {
+      "path": "../db"
+    },
+    {
+      "path": "../model"
+    },
+    {
+      "path": "../net"
+    },
+    {
+      "path": "../platform"
+    },
+    {
+      "path": "../redaction"
+    }
+  ]
 }

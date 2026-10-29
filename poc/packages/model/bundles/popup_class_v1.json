@@ -1,0 +1,168 @@
+{
+  "id": "popup_class",
+  "version": 1,
+  "digest": "b7939d5cfe261022900730f8382f58ba177b4cf3b9cd695bb07465923323003c",
+  "riskClass": "safety",
+  "outcomes": [
+    {
+      "name": "security_warning",
+      "kind": "conservative"
+    },
+    {
+      "name": "captcha",
+      "kind": "conservative"
+    },
+    {
+      "name": "session_expired",
+      "kind": "conservative"
+    },
+    {
+      "name": "consent_required",
+      "kind": "conservative"
+    },
+    {
+      "name": "error",
+      "kind": "conservative"
+    },
+    {
+      "name": "notice_dismissable",
+      "kind": "progress"
+    },
+    {
+      "name": "unknown",
+      "kind": "unknown"
+    }
+  ],
+  "maxInputBytes": 4096,
+  "prefix": {
+    "stringsKey": "popup_class",
+    "minTokens": 1024
+  },
+  "questions": [
+    {
+      "type": "choice",
+      "name": "popup",
+      "instructions": "떠 있는 모달 하나의 종류를 고른다. 확실하지 않으면 unknown.",
+      "onRefusal": "unknown",
+      "choices": [
+        {
+          "value": "notice_dismissable",
+          "description": "읽고 닫으면 되는 공지·안내"
+        },
+        {
+          "value": "error",
+          "description": "입력 오류·처리 실패·시스템 오류"
+        },
+        {
+          "value": "session_expired",
+          "description": "세션 만료·재로그인 안내"
+        },
+        {
+          "value": "security_warning",
+          "description": "보안 경고·비정상 접근·이용 제한 안내"
+        },
+        {
+          "value": "captcha",
+          "description": "보안문자 입력 요구"
+        },
+        {
+          "value": "consent_required",
+          "description": "약관·개인정보 동의 요구"
+        },
+        {
+          "value": "unknown",
+          "description": "위 어느 것도 아니거나 판단 불가"
+        }
+      ]
+    },
+    {
+      "type": "predicate",
+      "name": "asks_to_proceed_or_issue",
+      "instructions": "모달이 발급·신청·제출·전송·서명 같은 진행·확정 행동을 묻거나 그런 확정 버튼을 제시한다.",
+      "onRefusal": "assume_true"
+    }
+  ],
+  "mapping": [
+    {
+      "outcome": "security_warning",
+      "when": {
+        "all": [
+          {
+            "choiceProbability": "popup",
+            "value": "security_warning",
+            "gte": 0.8
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "captcha",
+      "when": {
+        "all": [
+          {
+            "choice": "popup",
+            "value": "captcha",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "session_expired",
+      "when": {
+        "all": [
+          {
+            "choice": "popup",
+            "value": "session_expired",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "consent_required",
+      "when": {
+        "all": [
+          {
+            "choice": "popup",
+            "value": "consent_required",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "error",
+      "when": {
+        "all": [
+          {
+            "choice": "popup",
+            "value": "error",
+            "confidenceGte": 0.85
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "notice_dismissable",
+      "when": {
+        "all": [
+          {
+            "choice": "popup",
+            "value": "notice_dismissable",
+            "confidenceGte": 0.85
+          },
+          {
+            "predicate": "asks_to_proceed_or_issue",
+            "lte": 0.1
+          }
+        ]
+      }
+    },
+    {
+      "outcome": "unknown",
+      "when": "always"
+    }
+  ],
+  "reservedOutcomes": []
+}
