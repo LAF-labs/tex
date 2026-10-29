@@ -20,7 +20,8 @@ it('scripts/s9-decisions.ts --mock: 측정 항목이 모두 채워지고 비용 
   assert.equal(d.refusal.screens, 20);
   assert.deepEqual(d.latency.map((l: { questions: number }) => l.questions), [2, 5, 10]);
   assert.ok(d.rateLimit.headerNames.includes('x-ratelimit-remaining-requests'));
-  assert.deepEqual([d.replay.turn1.status, d.replay.turn2.status], ['completed', 'completed']);
+  assert.deepEqual(d.replay.turns.map((t: { status: string }) => t.status), ['completed', 'completed']);
+  assert.ok(d.replay.finalOutput && typeof d.replay.finalOutput === 'object');
   assert.ok(d.calls.costUsd < 2);
   assert.deepEqual(d.errors, []);
 });
