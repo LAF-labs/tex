@@ -9,9 +9,10 @@
 | 경로 | 내용 | 상태 |
 |---|---|---|
 | [sovereign-ax/README.md](sovereign-ax/README.md) | 기획서 입구: 원칙, 사업 범위, 확인된 외부 사실, 결정 사항 | v1.2 + 설계 v1.3 결정 |
-| [sovereign-ax/01-business-plan.md](sovereign-ax/01-business-plan.md) ~ [06-feasibility.md](sovereign-ax/06-feasibility.md) | 사업·서비스 기획, 아키텍처 개요, 로드맵, 접근 허용·봇탐지, 가능성 검토 | v1.2 (기준 시나리오·검수 반영) |
-| [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D19, JSON 스키마 9종, ADR 17건 | v1.3 (공격표면 감사 3건 반영, [D19](sovereign-ax/design/19-attack-surface.md)) |
-| [sovereign-ax/research/](sovereign-ax/research/) | 리서치 노트 R1~R8(Sonnet), 검수 REVIEW-A/B/C와 공격표면 감사 AUDIT-A/B/C(Opus) | 참고 |
+| [sovereign-ax/01-business-plan.md](sovereign-ax/01-business-plan.md) ~ [06-feasibility.md](sovereign-ax/06-feasibility.md) | 사업·서비스 기획, 아키텍처 개요, 로드맵, 접근 허용·봇탐지, 가능성 검토 | v1.2 (기준 시나리오·검수 반영) + 서류 카탈로그 반영(ADR-018) |
+| [sovereign-ax/07-document-catalog.md](sovereign-ax/07-document-catalog.md) | 사업자 서류 카탈로그: 공고문 36건 수요 집계, 상황별 세분화, 플레이북 우선순위 근거 | v0.1 (2026-10-30) |
+| [sovereign-ax/design/](sovereign-ax/design/00-overview.md) | 개발 설계서 D00~D19, JSON 스키마 9종, ADR 18건 | v1.3 (공격표면 감사 3건 반영, [D19](sovereign-ax/design/19-attack-surface.md)) |
+| [sovereign-ax/research/](sovereign-ax/research/) | 리서치 노트 R1~R8(Sonnet), R9 공고문 제출서류 집계·R10 서류 발급 사실표, 검수 REVIEW-A/B/C와 공격표면 감사 AUDIT-A/B/C(Opus) | 참고 |
 
 기획 최종본은 Claude Docs 아티팩트([최종본 요약 + 탭 9개(개발 설계 요약 v1.3, 공격표면 감사·소버린 결정 포함)](https://claude.ai/artifact/CPYTrcP1Rb1rn35ig7bEPv))로도 볼 수 있으며 이 저장소의 문서와 같은 내용이다.
 
@@ -21,7 +22,7 @@
 
 1. 기획 요약 → `sovereign-ax/README.md`
 2. 왜 이 사업인가 → `01-business-plan.md`, `06-feasibility.md`
-3. 무엇을 만드는가 → `02-product-spec.md`
+3. 무엇을 만드는가 → `02-product-spec.md`, 어떤 서류부터인가 → `07-document-catalog.md`
 4. 어떻게 만드는가 → `design/00-overview.md`부터 번호순, 결정 이유는 `design/adr/`
 5. 근거가 궁금하면 → `research/`
 

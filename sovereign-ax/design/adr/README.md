@@ -19,3 +19,4 @@
 | [ADR-015](ADR-015-sovereign-model-infra-strategy.md) | 소버린 모델·인프라 전환 전략: 공급사 중립 설계, 조달 트리거, System One 호환 | 채택 |
 | [ADR-016](ADR-016-account-trust-anchor-hardware-approval.md) | 계정 신뢰 앵커(AIK 고정·서명 기기 목록), 원격 비가역 승인은 하드웨어 키 | 채택(SP-1·2 조건부) |
 | [ADR-017](ADR-017-poc-scope-and-start.md) | PoC 범위와 착수 결정: 공문 회신 없이 홈택스 범위로 4주 PoC, 정부24 제외 | 채택 |
+| [ADR-018](ADR-018-document-demand-priority.md) | 서류 수요 기반 플레이북 우선순위: 홈택스 민원증명 묶음을 MVP 코어로, 법인등기·위택스 베타, 공고문 → 서류 꾸러미 | 채택 |
