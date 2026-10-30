@@ -36,4 +36,4 @@ pnpm start
 pnpm bundles && node --conditions=development scripts/s-l0-measure.ts && pnpm s9
 ```
 
-결과: [reports/PoC-4-5.md](reports/PoC-4-5.md), [reports/S6b.md](reports/S6b.md), [reports/PoC-7.md](reports/PoC-7.md), [reports/S-L0.md](reports/S-L0.md), [reports/S9.md](reports/S9.md).
+결과: [reports/PoC-1.md](reports/PoC-1.md)(환경·[위험 수용](reports/PoC-1-risk-acceptance.md)), [reports/PoC-4-5.md](reports/PoC-4-5.md), [reports/S6b.md](reports/S6b.md), [reports/PoC-7.md](reports/PoC-7.md), [reports/S-L0.md](reports/S-L0.md), [reports/S9.md](reports/S9.md).
