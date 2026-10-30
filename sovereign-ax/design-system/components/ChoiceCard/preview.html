@@ -1,13 +1,16 @@
-<!-- @dsCard group="카드" height=200 -->
+<!-- @dsCard group="카드" height=340 -->
 <!doctype html>
 <html lang="ko">
 <head><meta charset="utf-8"><title>ChoiceCard</title></head>
 <body>
 <div class="sx-stage" style="max-width:600px">
   <div class="sx-card">
-    <div class="sx-card-hd"><span class="sx-card-title">금액을 어떻게 볼까요?</span><span class="sx-meta">A상사 기본값</span></div>
-    <div class="sx-opt is-on"><span class="sx-radio"></span><span>합계 3,300,000원 · 공급가 3,000,000 + 세액 300,000</span></div>
-    <div class="sx-opt"><span class="sx-radio"></span><span>공급가 3,300,000원 · 세액 330,000 별도</span></div>
+    <div class="sx-card-hd"><span class="sx-card-title">세금계산서를 발급할 때 어떤 인증을 쓰세요?</span></div>
+    <div class="sx-opt is-on"><span class="sx-radio"></span><span style="display:grid"><span>보안카드</span><span class="sx-meta">한 번 등록하면 발급 때마다 앱이 알아서 입력해요</span></span></div>
+    <div class="sx-opt"><span class="sx-radio"></span><span style="display:grid"><span>사업자 간편인증</span><span class="sx-meta">카카오뱅크 · IBK · KB 앱에서 발급할 때마다 승인해요</span></span></div>
+    <div class="sx-opt"><span class="sx-radio"></span><span style="display:grid"><span>공동인증서</span><span class="sx-meta">비밀번호는 매번 직접 입력해요</span></span></div>
+    <div class="sx-opt"><span class="sx-radio"></span><span style="display:grid"><span>금융인증서</span><span class="sx-meta">6자리 비밀번호를 매번 직접 입력해요</span></span></div>
+    <div class="sx-meta">한 번 고르면 모든 발급에 같은 방법을 써요. 나중에 설정에서 바꿀 수 있어요.</div>
   </div>
 </div>
 </body>

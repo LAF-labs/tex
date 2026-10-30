@@ -15,9 +15,10 @@
 | [ADR-011](ADR-011-portal-mode-gov24-postprocess.md) | 포털별 운영 수준, 정부24는 사전 허락 전 후처리 모드 | 채택(v1.3 개정) |
 | [ADR-012](ADR-012-hotfix-scope-actuation-identity-policy-ceiling.md) | 셀렉터 핫픽스 범위 제한, 액추에이션 시 동일성 검사, 운영 정책 앱 내장 상한 | 채택(조건 항목 있음) |
 | [ADR-013](ADR-013-registry-threshold-signing-transparency.md) | 레지스트리 2-of-3 임계 서명, 투명성 로그, 키 세대·폐기, 자체 HSM | 채택(SP-4·SP-6·S18 조건부, 투명성 로그 강제는 Phase 2) |
-| [ADR-014](ADR-014-docparse-sandbox-local-approval-window.md) | docparse 렌더러 샌드박스, main 승인 창 기반 로컬 비가역 승인 | 채택(S13b 조건부) |
+| [ADR-014](ADR-014-docparse-sandbox-local-approval-window.md) | docparse 렌더러 샌드박스, main 승인 창 기반 로컬 비가역 승인 | 채택(S13b 조건부), §2는 ADR-020으로 대체 |
 | [ADR-015](ADR-015-sovereign-model-infra-strategy.md) | 소버린 모델·인프라 전환 전략: 공급사 중립 설계, 조달 트리거, System One 호환 | 채택 |
-| [ADR-016](ADR-016-account-trust-anchor-hardware-approval.md) | 계정 신뢰 앵커(AIK 고정·서명 기기 목록), 원격 비가역 승인은 하드웨어 키 | 채택(SP-1·2 조건부) |
+| [ADR-016](ADR-016-account-trust-anchor-hardware-approval.md) | 계정 신뢰 앵커(AIK 고정·서명 기기 목록), 원격 비가역 승인은 하드웨어 키 | 채택(SP-1·2 조건부), 복구 문구 경로는 ADR-020으로 대체 |
 | [ADR-017](ADR-017-poc-scope-and-start.md) | PoC 범위와 착수 결정: 공문 회신 없이 홈택스 범위로 4주 PoC, 정부24 제외 | 채택 |
 | [ADR-018](ADR-018-document-demand-priority.md) | 서류 수요 기반 플레이북 우선순위: 홈택스 민원증명 묶음을 MVP 코어로, 법인등기·위택스 베타, 공고문 → 서류 꾸러미 | 채택 |
 | [ADR-019](ADR-019-single-session-chat-ui.md) | 단일 메인 세션과 대화 중심 화면, PC·폰 공용 타임라인(원본은 PC 로컬 DB, 서버 무저장) | 채택 |
+| [ADR-020](ADR-020-design-review-issuance-auth-approval.md) | 화면 디자인 검토 결정: 발급 인증 고정·설정 변경, 보안카드 완전 위임(로컬 암호화), 카드 승인(별도 승인 창 폐지), 응답 끊김 자동 조회, 부가세 토글, 새 PC는 폰 승인·PASS | 채택(PoC 확인 조건 있음) |

@@ -1,4 +1,4 @@
-<!-- @dsCard group="카드" height=560 subtitle="작성 중 · 내 차례 · 확인 필요" -->
+<!-- @dsCard group="카드" height=760 subtitle="작성 중 · 내 차례 · 승인 대기 · 확인 필요" -->
 <!doctype html>
 <html lang="ko">
 <head><meta charset="utf-8"><title>TaskCard</title></head>
@@ -7,13 +7,19 @@
   <article class="sx-card">
     <div class="sx-card-hd"><span class="sx-card-title">세금계산서 · A상사</span><span class="sx-chip">작성 중</span></div>
     <div class="sx-amount"><div class="sx-amount-total">3,300,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,000,000 + 세액 300,000 · 아직 아무것도 보내지 않았어요</div></div>
-    <div class="sx-actions"><button class="sx-btn sx-btn-primary" type="button">홈택스에서 준비</button><button class="sx-btn" type="button">고치기</button><span class="sx-meta">추정 값 1개</span></div>
+    <div class="sx-actions"><button class="sx-btn sx-btn-primary" type="button">홈택스에서 준비</button><button class="sx-btn" type="button">부가세 포함하기</button><button class="sx-btn" type="button">금액 수정</button><button class="sx-btn sx-btn-quiet" type="button">취소</button></div>
   </article>
   <article class="sx-card is-turn">
     <div class="sx-card-hd"><span class="sx-card-title">세금계산서 · A상사</span><span class="sx-chip is-turn">내 차례</span></div>
     <div class="sx-amount"><div class="sx-amount-total">3,300,000<span class="sx-unit">원</span></div></div>
     <div class="sx-note"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 12h2"/></svg><span>카카오뱅크 앱에서 간편인증을 승인해 주세요. 승인하면 홈택스 입력을 이어서 해요.</span></div>
     <div class="sx-actions"><button class="sx-btn" type="button">다시 요청</button><button class="sx-btn sx-btn-quiet" type="button">중지</button></div>
+  </article>
+  <article class="sx-card is-turn">
+    <div class="sx-card-hd"><span class="sx-card-title">세금계산서 · A상사</span><span class="sx-chip is-waiting">승인 대기</span></div>
+    <div class="sx-amount"><div class="sx-amount-total">3,300,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,000,000 + 세액 300,000 · 부가세 포함</div></div>
+    <p class="body-sm" style="margin:0">홈택스에 입력한 값을 다시 읽어 확인했어요. 발급하면 A상사 메일로 전송되고 되돌릴 수 없어요.</p>
+    <div class="sx-actions"><button class="sx-btn sx-btn-approve" type="button">승인하고 발급</button><button class="sx-btn sx-btn-quiet" type="button">취소</button></div>
   </article>
   <article class="sx-card is-attention">
     <div class="sx-card-hd"><span class="sx-card-title">세금계산서 · A상사</span><span class="sx-chip is-attention">확인 필요</span></div>

@@ -1,6 +1,6 @@
 # 소버린 AX 디자인 시스템
 
-> 작성일: 2026-10-30 · 상태: v1 · 관련: 08 화면 기획, ADR-014·019
+> 작성일: 2026-10-30 · 상태: v1.1(ADR-020 반영) · 관련: 08 화면 기획, ADR-014·019·020
 > 미리보기가 렌더되는 같은 내용: Claude Design System 아티팩트 [소버린 AX 디자인 시스템](https://claude.ai/artifact/EqjRNi8i9CYd4qkSo9qz3N)
 
 이 폴더는 화면 디자인과 앱 UI 구현의 기준이다. 값의 원본은 `tokens.json`이고, 데이터를 어떻게 보여 줄지는 `data-hierarchy.md`가 정한다. 방향은 `direction-review.html`의 A안("서류와 도장") 구조에 파랑 계열 강조색 하나를 쓰고 색 사용을 최소화하는 것으로 정했다(2026-10-30).
@@ -10,7 +10,7 @@
 | `README.md` | 사용 원칙: 색, 서체, 간격과 배치, 상태, 움직임, 아이콘, 테마, 문구 |
 | [`data-hierarchy.md`](data-hierarchy.md) | 데이터 위계 D1~D6, 값의 확실성 5단계, 표기 형식, 배치 순서 |
 | `tokens.json` | 색(라이트·다크), 서체·크기, 간격, 모서리, 그림자, 화면 치수 |
-| `components/<이름>/` | 컴포넌트 13개의 지침(`README.md`)과 미리보기(`preview.html`) |
+| `components/<이름>/` | 컴포넌트 14개의 지침(`README.md`)과 미리보기(`preview.html`) |
 | `components/bundle.css` | 컴포넌트 스타일. 토큰은 CSS 변수(`--<토큰 이름>`)로 읽는다 |
 | `direction-review.html` | 방향 3안 비교와 결정 기록(검토용, 색은 결정 전 제안) |
 
@@ -23,15 +23,15 @@
 - 색은 두 가지 뜻만 가진다. `accent`(파랑)는 사용자의 차례와 승인, `attention`(황토)은 확인이 필요함이다. 그 밖의 모든 것은 `ink`·`surface` 계열 무채색으로 만든다.
 - 값을 강조하려고 색이나 굵기를 바꾸지 않는다. 데이터 위계 D1~D6 중 맞는 단계의 스타일을 고른다.
 - 구분은 선(`line`)으로 한다. 그림자(`shadow-overlay`)는 떠 있는 것에만 쓴다.
-- 되돌릴 수 없는 승인은 ApprovalWindow(PC)와 모바일 승인 시트에서만 받는다. `sx-btn-approve`는 그 두 곳 밖에서 쓰지 않는다.
+- 되돌릴 수 없는 승인은 승인 대기 카드·작업 패널(PC)과 모바일 승인 시트의 `sx-btn-approve`로만 받는다. 별도 승인 창은 없다(ADR-020).
 - 홈은 대화 하나다. 숫자 타일 대시보드, 마스코트, 그라데이션, 이모지를 쓰지 않는다.
 
 ## 색
 
-- 바탕은 `canvas`, 카드·작업 패널·레일·제목줄은 `surface`, 레일의 선택 항목과 승인 창의 라벨 칸은 `surface-sunken`, 명령 팔레트·메뉴·승인 창은 `surface-overlay` + `shadow-overlay`.
+- 바탕은 `canvas`, 카드·작업 패널·레일·제목줄은 `surface`, 레일의 선택 항목과 모달 안 안내 줄은 `surface-sunken`, 명령 팔레트·메뉴·모달은 `surface-overlay` + `shadow-overlay`.
 - 글자는 네 단계다. 값과 본문은 `ink`, 보조 문장·식별 번호·추정 값은 `ink-2`, 라벨·출처는 `ink-3`, 비활성과 빈 값 "—"만 `ink-4`.
 - 카드 테두리와 서식 표의 선은 `line`, 입력·버튼·칩의 테두리는 `line-strong`(3:1 이상).
-- `accent`는 내 차례 칩, 승인 대기 칩, 실행 단계의 현재 점, 승인 버튼, 승인 창 위쪽 띠, 승인 도장, 포커스 링(`focus-ring`)에만 쓴다. 링크, 선택된 항목, 일반 주요 버튼(`sx-btn-primary`, `ink`로 채움)에는 쓰지 않는다. 한 화면에 파랑으로 채운 면은 하나까지다.
+- `accent`는 내 차례 칩, 승인 대기 칩, 실행 단계의 현재 점, 승인 버튼, 승인 도장, 포커스 링(`focus-ring`)에만 쓴다. 링크, 선택된 항목, 일반 주요 버튼(`sx-btn-primary`, `ink`로 채움)에는 쓰지 않는다. 한 화면에 파랑으로 채운 면은 하나까지다.
 - `accent-soft`는 내 차례 칩과 차례 안내 줄의 바탕이다. 그 위 글자는 `ink`, 아이콘은 `accent`.
 - `attention`은 확인 필요, 만료 임박(D-7 이하), 휴·폐업 경고, 입력 형식 오류, 되읽기 불일치에 쓴다. 바탕이 필요하면 `attention-soft`.
 - 완료는 색으로 표시하지 않는다. `ink` 글자와 체크 표시다. 실패와 차단에도 빨강이 없다. `ink` 테두리 칩과 원인 문구로 보여 준다.
@@ -40,7 +40,7 @@
 ## 서체
 
 - 본문과 UI는 `font-sans`(IBM Plex Sans KR), 식별 번호는 `font-mono`(IBM Plex Mono), 서류 이름은 `font-serif`(Noto Serif KR)로 `doc-name`에만 쓴다. 세 서체 모두 Google Fonts에서 불러오고, 앱에는 OFL 파일로 넣는다.
-- 승인 창은 `font-system`(맑은 고딕)과 `approve-title`·`approve-body`만 쓴다. 승인 창은 외부 서체·이미지·스크립트를 불러올 수 없다(ADR-014).
+- 보안카드 등록은 앱 위 모달로 보이고 앱과 같은 서체를 쓴다. 번호 칸만 `font-mono`다(SecretField). 실제로는 금고 프로세스가 앱 창 위에 겹쳐 띄우는 테두리 없는 창이다(08 §9).
 - 수치에는 고정폭 숫자(`font-variant-numeric: tabular-nums`)를 쓴다. `figure-lg`·`figure`·`value`에 이미 들어 있다.
 - 가장 작은 글자는 12px(`label`, `meta`)이다. 한글 본문 행간은 1.6이다(`body` 15/24).
 
@@ -53,11 +53,11 @@
 
 ## 상태
 
-작업 상태는 StatusChip 하나로 보여 준다. 열 가지이며 강조색이 붙는 것은 셋뿐이다.
+작업 상태는 StatusChip 하나로 보여 준다. 열한 가지이며 강조색이 붙는 것은 셋뿐이다.
 
 - 내 차례(`is-turn`)·승인 대기(`is-waiting`): `accent`.
 - 확인 필요(`is-attention`): `attention`.
-- 작성 중·준비 중·발급 중·처리 대기: 기본(무채색).
+- 작성 중·준비 중·발급 중·확인 중·처리 대기: 기본(무채색). 확인 중은 응답이 끊겨 앱이 발급목록을 다시 조회하는 상태다.
 - 완료(`is-done`): `ink` + 체크. 중지됨(`is-stopped`): `ink-3`. 실패(`is-fail`): `ink` 테두리.
 
 ## 움직임
