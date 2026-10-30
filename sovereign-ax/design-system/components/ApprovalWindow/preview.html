@@ -1,0 +1,32 @@
+<!-- @dsCard group="창" height=500 -->
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>ApprovalWindow</title></head>
+<body>
+<div class="sx-stage">
+  <div class="sx-approve" role="dialog" aria-label="승인 창">
+    <div class="sx-approve-bar"><span>소버린 AX · 승인</span><span aria-hidden="true">×</span></div>
+    <div class="sx-approve-band"></div>
+    <div class="sx-approve-in">
+      <div>
+        <h4 class="sx-approve-q">A상사에 세금계산서를 발급할까요?</h4>
+        <div class="sx-approve-src">홈택스 화면에서 다시 읽은 값이에요 · 10:43</div>
+      </div>
+      <table>
+        <tbody>
+          <tr><td>공급받는자</td><td>A상사 (123-45-67890)</td></tr>
+          <tr><td>공급가</td><td>3,000,000원</td></tr>
+          <tr><td>세액</td><td>300,000원</td></tr>
+          <tr class="is-total"><td>합계</td><td>3,300,000원</td></tr>
+          <tr><td>품목</td><td>컨설팅</td></tr>
+          <tr><td>받는 이메일</td><td>tax@asangsa.kr</td></tr>
+        </tbody>
+      </table>
+      <div class="sx-approve-effect">승인하면 세금계산서가 발급되고 A상사 메일로 전송됩니다. <b>되돌릴 수 없습니다.</b></div>
+      <div class="sx-approve-acts"><button class="sx-btn sx-btn-lg" type="button">취소</button><button class="sx-btn sx-btn-approve sx-btn-lg" type="button">승인하고 발급</button></div>
+      <div class="sx-approve-foot">마우스로 눌러야 승인돼요. Enter 키로는 승인되지 않아요.</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
