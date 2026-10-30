@@ -4,6 +4,7 @@
 
 - 구성(데이터 위계 순서): D2 제목 + StatusChip → D1 Amount → 안내 줄(필요할 때) → 버튼.
 - 넘겨줄 것: 작업 이름과 거래처, 상태, D1 값과 분해, 안내 문장, 버튼 1~3개, 추정 값 개수.
-- 상태별: 내 차례는 `sx-card is-turn`과 파랑 안내 줄(`sx-note`), 확인 필요는 `sx-card is-attention`과 `sx-note is-attention`. 그 밖의 상태는 테두리가 기본이다.
+- 상태별: 내 차례는 `sx-card is-turn`과 파랑 안내 줄(`sx-note`), 승인 대기는 `sx-card is-turn` + `is-waiting` 칩 + `sx-btn-approve`([승인하고 발급]), 확인 중(응답이 끊겨 앱이 발급목록을 다시 조회)은 기본 테두리, 확인 필요(앱이 풀 수 없을 때만)는 `sx-card is-attention`과 `sx-note is-attention`.
 - D3 목록은 카드에 넣지 않는다. 카드를 누르면 작업 패널에 KeyValue로 열린다.
-- 하지 말 것: 왼쪽 색 띠, 그림자, 승인 버튼.
+- 초안 상태의 세금계산서 카드에는 [홈택스에서 준비] [부가세 포함하기] [금액 수정] [취소]를 둔다(ADR-020).
+- 하지 말 것: 왼쪽 색 띠, 그림자, 승인 대기가 아닌 상태의 승인 버튼.
