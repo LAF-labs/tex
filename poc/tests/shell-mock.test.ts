@@ -1,7 +1,7 @@
 // PoC-9 셸 목업: 금액 해석, 부가세 분해, 입력 보완(되물은 값에 답하기), 실행은 한 번에 하나, 정부24 후보 시각.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { g24Candidates, interpret, MockRuns, parseAmount, split } from '../apps/desktop/src/shell-mock.ts';
+import { g24Candidates, interpret, MockRuns, MockStore, parseAmount, split } from '../apps/desktop/src/shell-mock.ts';
 
 describe('셸 목업', () => {
   it('금액 해석: 단위 묶음을 더하고, 확신이 없으면 금액으로 보지 않는다', () => {
@@ -30,7 +30,7 @@ describe('셸 목업', () => {
   });
 
   it('입력 보완: 되물은 거래처·금액에 짧게 답해도 초안으로 이어진다', () => {
-    const runs = new MockRuns(0);
+    const runs = new MockRuns(new MockStore(), 0);
     assert.equal(interpret('세금계산서 ', null, 'business', runs).kind, 'say');
     const a = interpret('A상사', null, 'business', runs);
     assert.ok(a.kind === 'say' && a.text.includes('얼마'));
@@ -38,7 +38,7 @@ describe('셸 목업', () => {
     assert.ok(d.kind === 'draft' && d.run.counterparty.name === 'A상사' && d.run.total === 3_300_000);
     assert.equal(interpret('330만원', null, 'business', runs).kind, 'say', '되묻지 않았으면 금액만으로 발급하지 않는다');
     assert.equal(interpret('C테크에 세금계산서', null, 'personal', runs).kind, 'say', '개인 프로필은 세금계산서 안 됨');
-    const other = new MockRuns(0);
+    const other = new MockRuns(new MockStore(), 0);
     interpret('A상사에 세금계산서', null, 'business', runs);
     assert.equal(interpret('330만원', null, 'business', other).kind, 'say', '되묻기 상태는 대화마다 따로');
     const two = interpret('A상사 말고 C테크로 세금계산서 50만원', null, 'business', other);
@@ -53,7 +53,7 @@ describe('셸 목업', () => {
   });
 
   it('실행은 한 번에 하나: 다른 작업이 진행 중이면 준비를 거부한다', () => {
-    const runs = new MockRuns(1000);
+    const runs = new MockRuns(new MockStore(), 1000);
     const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
     const b = interpret('B상사에 20만원 세금계산서', null, 'business', runs);
     assert.ok(a.kind === 'draft' && b.kind === 'draft');
@@ -62,6 +62,14 @@ describe('셸 목업', () => {
     runs.stop(a.run.id);
     assert.doesNotThrow(() => runs.prepare(b.run.id));
     runs.stop(b.run.id);
+  });
+
+  it('목업 저장소는 셸마다 따로: 한 셸의 발급·보관이 다른 셸에 새지 않는다', () => {
+    const a = new MockStore();
+    const b = new MockStore();
+    a.g24Save('f1', '주민등록표 등본');
+    assert.equal(a.docs.length, b.docs.length + 1);
+    assert.throws(() => a.g24Save('no-such-file', '주민등록표 등본'), /bad_candidate/);
   });
 
   it('정부24 후보는 작업 시작 뒤에 생긴 파일만', () => {

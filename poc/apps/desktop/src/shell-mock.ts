@@ -52,23 +52,37 @@ export const PROFILES: Record<Profile['kind'], Profile> = {
   personal: { kind: 'personal', name: '김가나', email: 'gana@ganada.example', auth: '간편인증(카카오톡)' },
 };
 
-export const COUNTERPARTIES: Counterparty[] = [
-  { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: dayOffset(-2), lastIssuedOn: dayOffset(-32) },
-  { id: 'cp-b', name: 'B상사', bizNo: '3051288767', rep: '박비', email: 'account@bsangsa.example', item: '시스템 유지보수', status: '계속사업자', checkedOn: dayOffset(-1), lastIssuedOn: dayOffset(-1) },
-  { id: 'cp-c', name: 'C테크', bizNo: '4182577343', rep: '최다라', email: 'billing@ctech.example', item: '교육 용역', status: '계속사업자', checkedOn: dayOffset(-5), lastIssuedOn: null },
-];
+/**
+ * 셸 하나의 목업 저장소: 거래처, 문서함, 원장(확정된 공급받는자·받는 이메일). 모듈 전역에 두지 않고 셸마다 새로 만든다.
+ * PoC-6·PoC-8에서 DB(`db.query.*`)·보관함·원장으로 바꾼다.
+ */
+export class MockStore {
+  readonly counterparties: Counterparty[] = [
+    { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: dayOffset(-2), lastIssuedOn: dayOffset(-32) },
+    { id: 'cp-b', name: 'B상사', bizNo: '3051288767', rep: '박비', email: 'account@bsangsa.example', item: '시스템 유지보수', status: '계속사업자', checkedOn: dayOffset(-1), lastIssuedOn: dayOffset(-1) },
+    { id: 'cp-c', name: 'C테크', bizNo: '4182577343', rep: '최다라', email: 'billing@ctech.example', item: '교육 용역', status: '계속사업자', checkedOn: dayOffset(-5), lastIssuedOn: null },
+  ];
 
-/** 원장에서 verify로 확정된 공급받는자·받는 이메일(목업). "처음 거래"·"처음 보내는 주소" 판정에만 쓴다. */
-const committed = { bizNos: new Set(['2148651233', '3051288767']), emails: new Set(['tax@asangsa.example', 'account@bsangsa.example']) };
+  readonly docs: Doc[] = [
+    { id: 'd1', name: '납세증명서(국세)', kind: '증명서', docName: '납세증명서', profile: 'business', issuedOn: dayOffset(-25), expiresOn: dayOffset(5), source: '앱이 발급', purpose: '입찰 제출' },
+    { id: 'd2', name: '사업자등록증명', kind: '증명서', docName: '사업자등록증명', profile: 'business', issuedOn: dayOffset(-12), expiresOn: null, source: '앱이 발급', purpose: '거래처 등록' },
+    { id: 'd3', name: '세금계산서 · B상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-1), expiresOn: null, source: '앱이 발급' },
+    { id: 'd4', name: '세금계산서 · A상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-32), expiresOn: null, source: '앱이 발급' },
+    { id: 'd5', name: '중소기업확인서', kind: '직접 추가', docName: '중소기업확인서', profile: 'business', issuedOn: dayOffset(-210), expiresOn: dayOffset(150), source: '직접 추가' },
+    { id: 'd6', name: '주민등록표 등본', kind: '증명서', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(-47), expiresOn: null, source: '직접 발급', purpose: '은행 제출' },
+  ];
 
-export const docs: Doc[] = [
-  { id: 'd1', name: '납세증명서(국세)', kind: '증명서', docName: '납세증명서', profile: 'business', issuedOn: dayOffset(-25), expiresOn: dayOffset(5), source: '앱이 발급', purpose: '입찰 제출' },
-  { id: 'd2', name: '사업자등록증명', kind: '증명서', docName: '사업자등록증명', profile: 'business', issuedOn: dayOffset(-12), expiresOn: null, source: '앱이 발급', purpose: '거래처 등록' },
-  { id: 'd3', name: '세금계산서 · B상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-1), expiresOn: null, source: '앱이 발급' },
-  { id: 'd4', name: '세금계산서 · A상사', kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(-32), expiresOn: null, source: '앱이 발급' },
-  { id: 'd5', name: '중소기업확인서', kind: '직접 추가', docName: '중소기업확인서', profile: 'business', issuedOn: dayOffset(-210), expiresOn: dayOffset(150), source: '직접 추가' },
-  { id: 'd6', name: '주민등록표 등본', kind: '증명서', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(-47), expiresOn: null, source: '직접 발급', purpose: '은행 제출' },
-];
+  /** 원장에서 verify로 확정된 공급받는자·받는 이메일(목업). "처음 거래"·"처음 보내는 주소" 판정에만 쓴다. */
+  readonly committed = { bizNos: new Set(['2148651233', '3051288767']), emails: new Set(['tax@asangsa.example', 'account@bsangsa.example']) };
+
+  /** 정부24 직접 발급 파일을 문서함에 넣는다(사용자가 후보를 고른 뒤). */
+  g24Save(candidateId: string, doc: G24Doc): Doc {
+    if (candidateId !== 'f1' && candidateId !== 'f2') throw new Error('bad_candidate');
+    const d: Doc = { id: `d-g24-${randomUUID().slice(0, 6)}`, name: doc, kind: '증명서', docName: doc, profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 발급', purpose: '제출처 확인 필요' };
+    this.docs.unshift(d);
+    return d;
+  }
+}
 
 /** 대화 타임라인 첫 화면(지난 기록). 단일 세션이라 지난 일은 같은 타임라인 위쪽에 있다(ADR-019). */
 export function seedTimeline(): unknown[] {
@@ -157,7 +171,7 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
   pending.asked = null;
   if (/신고|세액\s*계산/.test(t)) return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
   if (/등본|초본|정부24/.test(t)) return { kind: 'g24', doc: /초본/.test(t) ? '주민등록표 초본' : '주민등록표 등본' };
-  const named = COUNTERPARTIES.filter((c) => t.includes(c.name));
+  const named = runs.store.counterparties.filter((c) => t.includes(c.name));
   // 거래처 이름이 둘 이상이면("A상사 말고 C테크로") 고르지 않고 되묻는다.
   const cpNamed = named.length === 1 ? named[0]! : null;
   const amountNamed = parseAmount(cpNamed ? t.replace(cpNamed.name, ' ') : t);
@@ -168,7 +182,7 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
     const amount = amountNamed ?? (asked === 'counterparty' ? pending.amount : null);
     if (!cp) {
       Object.assign(pending, { cp: null, asked: 'counterparty', amount });
-      return { kind: 'say', text: '어느 거래처에 발급할까요?', chips: (named.length > 1 ? named : COUNTERPARTIES).map((c) => ({ label: c.name, text: c.name })) };
+      return { kind: 'say', text: '어느 거래처에 발급할까요?', chips: (named.length > 1 ? named : runs.store.counterparties).map((c) => ({ label: c.name, text: c.name })) };
     }
     if (!amount) {
       Object.assign(pending, { cp, asked: 'amount', amount: null });
@@ -219,11 +233,13 @@ export class MockRuns extends EventEmitter {
   private readonly runs = new Map<string, RunView>();
   private readonly timers = new Map<string, NodeJS.Timeout[]>();
   private readonly speed: number;
+  readonly store: MockStore;
   /** 앱이 되물은 것(입력 보완). 다음 답이 금액만이거나 거래처 이름만이어도 이어 간다. 대화(세션)마다 하나. */
   readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null } = { cp: null, asked: null, amount: null };
 
-  constructor(speed = 1) {
+  constructor(store: MockStore, speed = 1) {
     super();
+    this.store = store;
     this.speed = speed;
   }
 
@@ -238,8 +254,8 @@ export class MockRuns extends EventEmitter {
       doc: 'H-01',
       status: 'draft',
       createdAt: hm(),
-      counterparty: { id: cp.id, name: cp.name, bizNo: cp.bizNo, first: !committed.bizNos.has(cp.bizNo) },
-      email: { value: cp.email, first: !committed.emails.has(cp.email) },
+      counterparty: { id: cp.id, name: cp.name, bizNo: cp.bizNo, first: !this.store.committed.bizNos.has(cp.bizNo) },
+      email: { value: cp.email, first: !this.store.committed.emails.has(cp.email) },
       amount,
       vat: vat ?? 'separate',
       vatGuessed: vat === null,
@@ -393,10 +409,10 @@ export class MockRuns extends EventEmitter {
     this.at(id, t, () => {
       this.step(r, 7, 'done');
       const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };
-      docs.unshift(doc);
-      committed.bizNos.add(r.counterparty.bizNo);
-      committed.emails.add(r.email.value);
-      const cp = COUNTERPARTIES.find((c) => c.id === r.counterparty.id);
+      this.store.docs.unshift(doc);
+      this.store.committed.bizNos.add(r.counterparty.bizNo);
+      this.store.committed.emails.add(r.email.value);
+      const cp = this.store.counterparties.find((c) => c.id === r.counterparty.id);
       if (cp) cp.lastIssuedOn = dayOffset(0);
       r.status = 'done';
       r.result = { approvalNo: `${dayOffset(0).replaceAll('-', '')}-41000012-${(randomBytes(4).readUInt32BE() % 1e8).toString().padStart(8, '0')}`, mailTo: r.email.value, docId: doc.id, doneAt: hm() };
@@ -438,9 +454,3 @@ export function g24Candidates(doc: G24Doc, startedAt: number): Array<{ id: strin
   ];
 }
 
-export function g24Save(candidateId: string, doc: G24Doc): Doc {
-  if (candidateId !== 'f1' && candidateId !== 'f2') throw new Error('bad_candidate');
-  const d: Doc = { id: `d-g24-${randomUUID().slice(0, 6)}`, name: doc, kind: '증명서', docName: doc, profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 발급', purpose: '제출처 확인 필요' };
-  docs.unshift(d);
-  return d;
-}

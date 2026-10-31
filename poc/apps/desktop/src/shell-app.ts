@@ -7,7 +7,7 @@ import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { COUNTERPARTIES, docs, g24Candidates, g24Save, interpret, MockRuns, PROFILES, QUICK, seedTimeline, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { g24Candidates, interpret, MockRuns, MockStore, PROFILES, QUICK, seedTimeline, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -58,6 +58,7 @@ export interface Shell {
   win: BrowserWindow;
   bar: ApprovalBar;
   runs: MockRuns;
+  store: MockStore;
   ready: Promise<void>;
   /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
   methods: string[];
@@ -73,7 +74,8 @@ export function startShell(opts: ShellOptions = {}): Shell {
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
-  const runs = new MockRuns(opts.speed ?? 1);
+  const store = new MockStore();
+  const runs = new MockRuns(store, opts.speed ?? 1);
   let profile: Profile['kind'] = 'business';
 
   const win = new BrowserWindow({
@@ -133,8 +135,8 @@ export function startShell(opts: ShellOptions = {}): Shell {
       layout: SHELL,
       profiles: PROFILES,
       profile,
-      counterparties: COUNTERPARTIES,
-      docs,
+      counterparties: store.counterparties,
+      docs: store.docs,
       timeline: seedTimeline(),
       quick: QUICK,
       platform: process.platform,
@@ -156,10 +158,10 @@ export function startShell(opts: ShellOptions = {}): Shell {
       }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
-    'docs.list': () => docs,
-    'counterparties.list': () => COUNTERPARTIES,
+    'docs.list': () => store.docs,
+    'counterparties.list': () => store.counterparties,
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
-    'g24.save': (p) => g24Save(String(p.id), g24Doc(p.doc)),
+    'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     'clipboard.copy': (p) => {
       clipboard.writeText(String(p.text ?? '').slice(0, 200));
@@ -177,5 +179,5 @@ export function startShell(opts: ShellOptions = {}): Shell {
   });
 
   const ready = win.loadURL(SHELL_URL);
-  return { win, bar, runs, ready, methods: Object.keys(handlers) };
+  return { win, bar, runs, store, ready, methods: Object.keys(handlers) };
 }
