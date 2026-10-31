@@ -173,7 +173,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 
 - 비가역 효과(`issue_document`·`send`·`sign`, 그리고 `pay`)의 원격 승인은 **SE/StrongBox P-256 키 `Px`(사용자 존재 필요)로만** 한다. `gate.request.effects`는 필수이고, 비가역 효과가 하나라도 있으면 스키마가 `requiredSigAlg = p256`을 강제한다(E-10). PC는 `ed25519` 응답을 거부한다. `requiredSigAlg`는 엔진이 `authorizes`의 `commitEffect`로 계산하는 앱 상수 규칙이며 정책으로 끌 수 없다.
 - **`Px` 하드웨어 생성 검증**(E-10): Android는 폰 등록 시 **Key Attestation 인증서 체인**(`securityLevel` = StrongBox 또는 TEE, `userAuthenticationRequired`)을 서버 경유로 받아 PC가 검증하고, 검증하지 못한 기기는 비가역 원격 승인을 받지 않는다. iOS는 App Attest로 **앱 무결성만** 확인할 수 있고 Secure Enclave 키 생성 자체를 증명하는 수단은 없다. iOS의 "하드웨어 키"는 정직한 앱을 전제로 한 약속이다(잔여 위험, ADR-016).
-- 하드웨어 키가 없는(또는 검증되지 않은) 폰은 **조회·캡차·시작 동의**만 하고, 비가역 승인은 PC 로컬에서만 한다. 이때 PC의 main 승인 바(ADR-021)는 **자동으로 뜨지 않는다**. 실행은 "PC에서 승인 필요" 상태로 대기하고, 폰에는 시작 시점에 "PC 앞에서 승인해야 합니다"를 알리며, 사용자가 PC에서 그 작업 카드를 열면 바가 뜬다(무인 PC의 제3자 승인 방지, E-06, D03 §3). `trigger=local`이 아닌 실행(원격·데몬)의 게이트도 PC 바를 자동으로 띄우지 않는다. 폰이 먼저 결정하면 PC 바는 바로 내려간다.
+- 하드웨어 키가 없는(또는 검증되지 않은) 폰은 **조회·캡차·시작 동의**만 하고, 비가역 승인은 PC 로컬에서만 한다. 이때 PC의 main 승인 바(ADR-021)는 **자동으로 뜨지 않는다**. 실행은 "PC에서 승인 필요" 상태로 대기하고, 폰에는 시작 시점에 "PC 앞에서 승인해야 합니다"를 알리며, 사용자가 PC에서 그 작업 카드를 열면 바가 뜬다(무인 PC의 제3자 승인 방지, E-06, D03 §3). `trigger=local`이 아닌 실행(원격·데몬)의 게이트도 PC 바를 자동으로 띄우지 않는다. 폰이 먼저 결정하면 PC 바는 "폰에서 이미 승인했어요"를 2초 보인 뒤 내려간다.
 - 정책 `remote` 블록(스키마는 policy.schema)의 의미:
   - `remote.irreversiblePerDay`(기본 5): 원격 승인으로 일어난 비가역 행위의 KST 일일 상한. 넘으면 그날은 로컬 승인만.
   - `remote.newCounterpartyRequiresLocal`(기본 true): 처음 쓰는 거래처·이메일 수신자(원장 `irreversible_log`의 `committed` 행에 그 사업자번호·이메일 HMAC이 없는 것, ADR-021. 렌더러가 고칠 수 있는 `counterparties.local_approved_at`은 쓰지 않는다)는 원격 승인 불가.

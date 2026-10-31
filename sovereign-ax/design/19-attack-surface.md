@@ -78,7 +78,7 @@
 | A-12 | Medium | origin 제한을 엔진이 자기 집행 | 채택: 금고가 문서 커밋마다 재집행, 사용자 탭 비노출 | P1 | D05 §3, D01 §2 |
 | A-13 | Medium | 다운로드·인쇄 경로를 엔진이 변경 가능 | 채택: 금고 상수 `staging\`, `setDownloadBehavior` 거부 | 설계 | D05 §3, D07 §1 |
 | A-14 | High | docparse "권한 없음"이 OS 경계 아님, 무클릭 자동 파싱 | 채택: Chromium 렌더러 샌드박스, `isEvalSupported:false`, 자동 파싱은 staging·사용자 선택 파일만 | P1 (S13b) | D17, D01 §2, D11 §4, ADR-014 |
-| A-15 | High | 로컬 승인이 렌더러 보고에 의존 | 채택: main이 만든 화면의 실제 입력 관찰. 2026-10-31부터 승인 창 대신 main 소유 승인 바(위치는 main이 창 크기로 정함, 한 번 뜨면 게이트 끝까지 남음, 창 수준 사건 재무장, 커서 위장 중 무장 거부, 클릭만, 키보드 승인 없음, 600ms 무장·150ms 머무름), `trigger=local` 밖 실행은 자동 표시 안 함, 근거에 `reqId`·`nonce` 결속, 선택 Hello 확인(E-06, ADR-021) | P1 | D03 §3, D08 §6.1, ADR-014, ADR-021 |
+| A-15 | High | 로컬 승인이 렌더러 보고에 의존 | 채택: main이 만든 화면의 실제 입력 관찰. 2026-10-31부터 승인 창 대신 main 소유 승인 바(위치는 main이 창 크기로 정함, 한 번 뜨면 게이트 끝까지 남음, 창 수준 사건 재무장, 커서 위장 중 무장 거부, 클릭만, 키보드 승인 없음, 600ms 무장·150ms 머무름), `trigger=local` 밖 실행은 자동 표시 안 함, 근거에 `reqId`·`approvalNonce` 결속, 선택 Hello 확인(E-06, ADR-021) | P1 | D03 §3, D08 §6.1, ADR-014, ADR-021 |
 | A-16 | Medium | Electron 하드닝 누락 | 채택: CSP 전체·퓨즈·핸들러·발신자 검증·env 화이트리스트 표 | 설계 | D11 §4 |
 | A-17 | Medium | `openExternal` 규칙 없음 | 채택: main만, 키만 전달, https·내장 eTLD+1 | 설계 | D11 §4, D17 |
 | A-18 | Medium | `userData` 로밍 기본값 | 채택: `%LOCALAPPDATA%` 경로 표, DACL, 색인 제외 | 설계 | D07 §1 |
@@ -332,4 +332,4 @@ AUDIT-C §4의 24개 지점을 기준으로, ADR-015가 정한 것:
 | schemas/selectors·manifest·hotfix·gateway-request·intent-envelope | 신설 |
 | schemas/playbook-ir·bundle·policy·remote-envelope | 개정 |
 | D01~D17 | v1.3 (근거 ID 표기) |
-| D14 공수 | M1-3 +3일(중계 허용 목록·비밀 창), M1-8 +2일(샌드박스), M4-2 +2일(승인 창), M4-7 +3일(임계 서명·status) = Phase 1 +10일(v1.2 165일 → 약 175일), Phase 2 리모트에 하드웨어 키·재암호화·투명성 로그 추가 |
+| D14 공수 | M1-3 +3일(중계 허용 목록·비밀 창), M1-8 +2일(샌드박스), M4-2 +2일(승인 창, ADR-021 이후 승인 바가 대신), M4-7 +3일(임계 서명·status) = Phase 1 +10일(v1.2 165일 → 약 175일), Phase 2 리모트에 하드웨어 키·재암호화·투명성 로그 추가 |

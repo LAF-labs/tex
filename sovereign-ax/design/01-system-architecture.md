@@ -29,7 +29,7 @@
 | `vault` (utilityProcess, 별도; Phase 2 Rust 별도 실행 파일) | 비밀 저장·복호화(등급 2종), **Chrome 파이프 소유자**, 엔진에 **허용 목록 중계 CDP** 제공(요청 바디·접근성 값·스크린샷 정리, origin 재집행), **비밀 창**·**비밀 타이피스트**, 장기 키 연산(`noiseDH`·`signVd`·`hpkeOpen`), 전용 프로필 설정·확장 점검 | OS 키체인, `sodium_malloc`·WER 제외 | 없음(코드 수준 아웃바운드 금지, OS 경계 아님) |
 | `chrome` (사용자 설치 Chrome, 전용 프로필, 최소 플래그 모드) | 포털 세션(`auto`·`assisted`만). 금고가 인자 없는 `launch()`로 내장 프로필 경로·플래그 허용 목록(`--remote-debugging-pipe`, `--user-data-dir`, `--no-first-run`)만으로 기동, `--remote-debugging-port` 금지, `--no-sandbox`·`--disable-extensions` 없음. 프로필 `Preferences`로 비밀번호 저장·자동완성 끔(엔터프라이즈 정책 미사용), 설치 확장은 내장 허용 목록과 대조. `navigator.webdriver=true`는 그대로(ADR-010). `postprocess` 포털은 이 Chrome이 아니라 사용자 기본 브라우저 | 사용자 권한 | 엔진이 `manifest.domains ∩ 내장 eTLD+1`로 이동을 감시하고 **금고가 문서 커밋마다 재집행**(벗어나면 엔진 세션 분리) |
 
-프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 모든 메시지는 타입드 스키마(`ipc/*.schema.json`)로 검증한다. `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다.
+프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 모든 메시지는 타입드 스키마(`ipc/*.schema.json`)로 검증한다. `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다. main↔엔진 포트는 둘로 나눈다(ADR-021). **중계 포트**는 렌더러 명령을 엔진에 넘기고, **main 전용 포트**는 승인 바가 발급한 `LocalApproval`·`LocalAttestation`(`answerGate`·`attestNotCommitted`)만 나른다. 엔진은 중계 포트로 온 승인·증언을 거부한다.
 
 ### 2.2 모바일 앱 (React Native/Expo)
 
