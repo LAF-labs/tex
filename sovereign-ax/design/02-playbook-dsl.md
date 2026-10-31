@@ -224,7 +224,7 @@
 | **V-03e** | X는 `repeat` 본문 안에 있을 수 없다 |
 | **V-03f** | X와 `W(X)` 안 스텝의 `onFail` = `{retry:0, then∈{handoff,abort}}`. `verify.not_committed`에서 X로 돌아오는 모든 경로는 `G(X)`를 다시 지난다 |
 | **V-03g** | `click`/`press`/`select` 타깃이 `commits:true`인데 게이트 허가가 없으면 오류. 타깃이 `commits`가 아닌데 `submit` 타입이면 오류 |
-| **V-03h** | `G(X).card`의 필드 집합 ⊇ 앱 내장 카드 필수 필드(공급자 = 내 사업자 포함) ∪ X의 모든 파라미터(`to`, `attach`, 제출 폼의 `readback` 필드) ∪ `intent.id`. `G` 앞에 `readback` 스텝 R이 있고 R→G 사이에는 `assert`만 있다. 카드는 엔진이 `fieldKey → 앱 내장 라벨` 사전으로 렌더링하며, 패키지 문자열은 카드 제목과 보조 설명만 바꿀 수 있다. 라벨·값·순서·고정 경고(중복 경고, InDoubt, 공급자 표시, 직전 시도 경고)는 바꿀 수 없다. 폰도 같은 라벨 사전을 앱에 내장한다(B-24, B-05) |
+| **V-03h** | `G(X).card`의 필드 집합 ⊇ 앱 내장 카드 필수 필드(공급자 = 내 사업자 포함) ∪ X의 모든 파라미터(`to`, `attach`, 제출 폼의 `readback` 필드) ∪ `intent.id`. `G` 앞에 `readback` 스텝 R이 있고 R→G 사이에는 `assert`만 있다. 카드는 엔진이 `fieldKey → 앱 내장 라벨` 사전으로 렌더링하며, 패키지 문자열은 카드 제목과 보조 설명만 바꿀 수 있다. 라벨·값·순서·고정 경고(중복 경고, InDoubt, 공급자 표시, 직전 시도 경고)는 바꿀 수 없다. 폰도 같은 라벨 사전을 앱에 내장한다(B-24, B-05). 사전에는 엔진이 만드는 예약 키 `$first.bizNo`·`$first.email`(처음 거래·처음 보내는 주소)과 `$dup.businessKey`·`$dup.priorNotCommitted`·`$dup.otherDevice`(중복 경고)가 있고, PC에서는 이 값들을 main 승인 바가 보인다(ADR-021) |
 | **V-03i** | `gate.authorizes`는 주 비가역 **정확히 1개**와 `followUpOf`가 그 주 비가역인 스텝 0개 이상(스키마 `maxItems: 3`)으로만 구성된다(B-12) |
 | **V-03j** | 비가역 스텝 X의 타깃 `landmark` 서브트리 안에서 사전에 `fieldKey`(`_ignore` 제외)를 가진 **모든** 입력 항목은 X 앞 `readback.fields`에 포함되어야 한다(B-05) |
 | **V-03k** | `press.key=Enter`는 `target`이 필수다(스키마). 그 타깃의 `landmark` 안에 `commits:true` 항목이 하나라도 있으면 그 `press`는 비가역 스텝으로 간주한다. `select`의 타깃이 `commits:true`이면 비가역 스텝이다(B-02) |
@@ -291,8 +291,8 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 
 - **`intentId`**(ULID)는 `prepare()`가 만들고 카드에 표시한다. 리모트 명령은 폰이 만든 `cmd_id`를 그대로 쓴다.
 - 아이덴포턴시 원장(D07 `irreversible_log`)의 키는 **`(intent_id, step_id)`**이고 행은 `inputs_hash`·`package_digest`·`action_hash`에 결속된다. 같은 `intentId`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 다르면 거부한다(`ledger.intent_reuse`). 사후 스텝 점프는 **같은 `run_id`의 재개**에만 적용한다(D03 §4, B-10).
-- **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 카드에 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
-- **기기 간 업무 키 표시는 필수**다(B-30). `committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태·시각을 메타데이터 서버에 올리고, 게이트 직전에 조회해 다른 기기의 기록이 있으면 카드에 경고한다(차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를 카드에 표시한다(D03 §4, 서버 테이블은 D09).
+- **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). 경고는 예약 `fieldKey` `$dup.*`로 게이트 `fields`에 넣어 `cardHash`에 묶고, PC에서는 main 승인 바의 "같은 건 기록을 확인했고 발급" 클릭이 명시 확인이다(ADR-021). 렌더러 카드에만 두면 침해된 렌더러가 지울 수 있기 때문이다. `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
+- **기기 간 업무 키 표시는 필수**다(B-30). `committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태·시각을 메타데이터 서버에 올리고, 게이트 직전에 조회해 다른 기기의 기록이 있으면 경고한다(차단 아님, `$dup.otherDevice`로 승인 바에도 보인다). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다(D03 §4, 서버 테이블은 D09).
 - 선택안: 사용자 동의 시 비고란에 짧은 의도 코드(`AX-7K3P`)를 적어 조회 정확도를 높인다. 비고 칸은 readback 대상이므로 카드에 보인다.
 
 ## 8. 예시: H-01 전자세금계산서 건별발급 v2.1 (발췌)

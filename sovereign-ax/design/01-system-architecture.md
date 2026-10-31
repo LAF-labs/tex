@@ -22,14 +22,14 @@
 
 | 프로세스 | 역할 | 권한 | 네트워크 |
 |---|---|---|---|
-| `main` | 앱 수명주기, 창 관리, 스케줄러(데몬; DB 키 없음, 엔진의 읽기 전용 질의 IPC 사용), IPC 라우터, 업데이트, **로컬 비가역 승인 창 생성과 실제 입력 관찰**(ADR-014) | 전체 | 업데이트 서버, 클라우드 API(계정·메타데이터·블롭 업로드) |
+| `main` | 앱 수명주기, 창 관리, 스케줄러(데몬; DB 키 없음, 엔진의 읽기 전용 질의 IPC 사용), IPC 라우터, 업데이트, **로컬 비가역 승인 바(메인 창에 붙이는 main 소유 `WebContentsView`) 생성·배치와 실제 입력 관찰**(ADR-021) | 전체 | 업데이트 서버, 클라우드 API(계정·메타데이터·블롭 업로드) |
 | `renderer` (sandbox, contextIsolation) | UI. 작업 카드, 대화창, 확인 카드, 감사 로그 뷰 | 없음(프리로드 API만) | 없음(직접 fetch 금지, CSP `connect-src 'none'`) |
 | `engine` (utilityProcess) | 플레이북 해석·실행, **금고가 중계하는 기본 거부 허용 목록 CDP**(실행 단위 page 세션만, 브라우저 타깃 없음)로 Chrome 제어, 마스킹, 모델 호출 조립. DB의 유일한 소유자(main·렌더러는 읽기 전용 IPC 질의) | 파일: 보관함·staging 쓰기, DB 읽기/쓰기 | **오직 `net/egress` 모듈을 통해** 게이트웨이·릴레이. 장기 키 연산은 금고에 위임 |
 | `docparse` (**Chromium 렌더러 샌드박스**: 숨김 `BrowserWindow`, `sandbox`·`contextIsolation`, 네트워크 차단 세션 파티션, ADR-014) | PDF 텍스트 추출·OCR(비신뢰 파일), NPKI `signCert.der` 파싱 | 입력은 바이트, 출력은 JSON Schema 검증 `{text, pages, hasTextLayer}` | 없음(OS 수준 샌드박스) |
 | `vault` (utilityProcess, 별도; Phase 2 Rust 별도 실행 파일) | 비밀 저장·복호화(등급 2종), **Chrome 파이프 소유자**, 엔진에 **허용 목록 중계 CDP** 제공(요청 바디·접근성 값·스크린샷 정리, origin 재집행), **비밀 창**·**비밀 타이피스트**, 장기 키 연산(`noiseDH`·`signVd`·`hpkeOpen`), 전용 프로필 설정·확장 점검 | OS 키체인, `sodium_malloc`·WER 제외 | 없음(코드 수준 아웃바운드 금지, OS 경계 아님) |
 | `chrome` (사용자 설치 Chrome, 전용 프로필, 최소 플래그 모드) | 포털 세션(`auto`·`assisted`만). 금고가 인자 없는 `launch()`로 내장 프로필 경로·플래그 허용 목록(`--remote-debugging-pipe`, `--user-data-dir`, `--no-first-run`)만으로 기동, `--remote-debugging-port` 금지, `--no-sandbox`·`--disable-extensions` 없음. 프로필 `Preferences`로 비밀번호 저장·자동완성 끔(엔터프라이즈 정책 미사용), 설치 확장은 내장 허용 목록과 대조. `navigator.webdriver=true`는 그대로(ADR-010). `postprocess` 포털은 이 Chrome이 아니라 사용자 기본 브라우저 | 사용자 권한 | 엔진이 `manifest.domains ∩ 내장 eTLD+1`로 이동을 감시하고 **금고가 문서 커밋마다 재집행**(벗어나면 엔진 세션 분리) |
 
-프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 모든 메시지는 타입드 스키마(`ipc/*.schema.json`)로 검증한다. `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다.
+프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 모든 메시지는 타입드 스키마(`ipc/*.schema.json`)로 검증한다. `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다. main↔엔진 포트는 둘로 나눈다(ADR-021). **중계 포트**는 렌더러 명령을 엔진에 넘기고, **main 전용 포트**는 승인 바가 발급한 `LocalApproval`·`LocalAttestation`(`answerGate`·`attestNotCommitted`)만 나른다. 엔진은 중계 포트로 온 승인·증언을 거부한다.
 
 ### 2.2 모바일 앱 (React Native/Expo)
 
@@ -84,10 +84,10 @@ TB-8 docparse: OS 샌드박스 안, 바이트 입력·JSON 출력만.
 ## 4. UI 셸 (렌더러) 구성
 
 - 홈 = 메인 대화(단일 세션 타임라인, ADR-019): 왼쪽 레일(문서함·거래처·내 사업장·활동 기록·설정), 가운데 대화와 오늘 요약(확인 필요·진행 중·만료 임박), 오른쪽 작업 패널. 자주 쓰는 작업(실행 횟수·최근성 가중, 프로필 호환 필터)은 입력창 위 빠른 실행 칩이다. 화면 목록과 ID는 08 문서.
-- 실행 뷰: 스텝 진행(사람이 읽는 라벨), 게이트 카드(승인 대기 카드의 [승인하고 발급], ADR-020), 핸드오프 배너("지금 사람이 필요합니다 / 직접 발급하셨다면 '직접 발급함'을 눌러 주세요"), 승인 대기 중 화면 잠금 표시, 중단 버튼(항상 가능).
+- 실행 뷰: 스텝 진행(사람이 읽는 라벨), 게이트 카드(승인 대기 카드는 되읽은 값을 보여 주고, [승인하고 발급]은 카드 아래 대화 열 하단의 main 승인 바에 있다, ADR-020·021), 핸드오프 배너("지금 사람이 필요합니다 / 직접 발급하셨다면 '직접 발급함'을 눌러 주세요"), 승인 대기 중 화면 잠금 표시, 중단 버튼(항상 가능).
 - 설정: 프로필·인증수단, 보관함 위치, 백업 ON/OFF, 운영 기준 보기, 공문 회신 상태, "서버가 가진 내 데이터".
 - 감사 로그: 실행 단위 타임라인, 모델 전송 미리보기(마스킹본), 내보내기.
-- 대화창은 의도 → 플레이북 인자 채우기 → 확인 카드. 대화 내역의 원본은 로컬 DB이고, 폰은 PC가 켜져 있을 때 E2E 채널로 받아 볼 뿐 서버·릴레이에는 저장하지 않는다(ADR-019). 모델 출력은 구조화 슬롯만 표시하고 마크다운은 허용 태그 sanitizer를 거친다(원시 HTML 금지). 비가역 승인은 승인 대기 카드의 [승인하고 발급]으로 한다. 별도 승인 창은 ADR-020으로 폐지했고, 승인 근거 재설계는 ADR-020 결과 항목을 따른다.
+- 대화창은 의도 → 플레이북 인자 채우기 → 확인 카드. 대화 내역의 원본은 로컬 DB이고, 폰은 PC가 켜져 있을 때 E2E 채널로 받아 볼 뿐 서버·릴레이에는 저장하지 않는다(ADR-019). 모델 출력은 구조화 슬롯만 표시하고 마크다운은 허용 태그 sanitizer를 거친다(원시 HTML 금지). 비가역 승인은 대화 열 하단(입력창 위) main 승인 바의 [승인하고 발급]으로만 한다. 승인 바는 렌더러가 아니라 main이 그리는 스크립트 없는 뷰이고, 위치는 main이 창 크기로 정하며, main이 그 뷰의 클릭을 직접 관찰한다. 대화 카드에는 승인 버튼이 없다. 별도 승인 창은 없다(ADR-020·021).
 
 ## 5. 대표 시퀀스
 
@@ -106,7 +106,7 @@ engine: run(H-01) 시작, checkpoint A: ensure_session
   engine: decide(screen_state_v2) → 로그인 성공 확인
   ... 건별발급 화면 입력(engine), assert(합계)
 engine: verify.baseline(발급목록 승인번호 집합 B₀) → readback(커밋 랜드마크 안 모든 fieldKey: 공급자·거래처·이메일·금액·비고·청구/영수)
-  → assert supplierBizNo == $profile.bizNo → main 승인 창(정적 HTML, 실제 입력 관찰) ─ 사용자 승인 ─▶ 토큰 발급(req_id당 1개)
+  → assert supplierBizNo == $profile.bizNo → main 승인 바(정적 HTML 뷰, 실제 클릭 관찰, ADR-021) ─ 사용자 승인 ─▶ LocalApproval ─▶ 토큰 발급(req_id당 1개)
 engine: submit → 원장 armed(intent_id, step_id) + 토큰 소비(fsync) → readback 재계산 → 커밋 가드 무장(R-C1 본문 대조는 금고) → 클릭(R-A1 이름 동일성·R-A2 커밋 충돌 검사) → signFlow(서명) → dispatched
   → verify(새 탭, B₁ \ B₀ = 1건) → committed(승인번호 bind)
 engine: save_pdf(V-23 템플릿) → verify(메일발송목록: 홈택스 자동 발송 상태)       # s33 별도 전송은 Phase 1 제외

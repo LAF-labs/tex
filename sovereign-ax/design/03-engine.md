@@ -1,12 +1,12 @@
 # D03. 플레이북 엔진
 
-> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
+> v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
 
 ## 1. 책임
 
 IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리 status 소비)**, 실행, 체크포인트·재개, 게이트·토큰·원장 관리, 커밋 가드, 사람 입력 조율, 복구 계층, 요청률 정책 집행(Actuator), 감사 저널, 텔레메트리 요약. `engine` 유틸리티 프로세스에서 돌며 Playwright로 Chrome을 제어한다(CDP는 금고 중계).
 
-토큰·원장은 **엔진 로직 버그**를 막는 장치다. 엔진 프로세스가 침해되면 무력하다. 네트워크 커밋 가드(§5.4)는 별도 모듈(요청 인터셉터)에 두어 두 장치가 같은 버그로 함께 뚫리지 않게 한다. 다만 가드도 같은 프로세스에 있으므로 엔진 RCE에 대해서는 경계가 아니다. 커밋 요청 **본문 대조(R-C1)는 Phase 1부터 금고 중계가 수행**한다(§5.4, E-02). 엔진은 요청 바디를 보지 않는다. 커밋 엔드포인트 인터셉트 자체를 금고로 옮기고 금고가 승인 근거(폰의 `Sign_Vm`, main 승인 창이 발급한 `LocalApproval`)를 직접 검증해 근거 하나당 요청 1회를 집행하는 안(무장 근거 검증)은 **Phase 2**다(A-03, ADR-005 v3). 본문이 암호화(`opaque`)되면 금고도 대조하지 못하므로, 그 경우 이 장치는 "승인 없는 발급의 횟수"만 제한한다.
+토큰·원장은 **엔진 로직 버그**를 막는 장치다. 엔진 프로세스가 침해되면 무력하다. 네트워크 커밋 가드(§5.4)는 별도 모듈(요청 인터셉터)에 두어 두 장치가 같은 버그로 함께 뚫리지 않게 한다. 다만 가드도 같은 프로세스에 있으므로 엔진 RCE에 대해서는 경계가 아니다. 커밋 요청 **본문 대조(R-C1)는 Phase 1부터 금고 중계가 수행**한다(§5.4, E-02). 엔진은 요청 바디를 보지 않는다. 커밋 엔드포인트 인터셉트 자체를 금고로 옮기고 금고가 승인 근거(폰의 `Sign_Vm`, main 승인 바가 발급한 `LocalApproval`, ADR-021)를 직접 검증해 근거 하나당 요청 1회를 집행하는 안(무장 근거 검증)은 **Phase 2**다(A-03, ADR-005 v3). 본문이 암호화(`opaque`)되면 금고도 대조하지 못하므로, 그 경우 이 장치는 "승인 없는 발급의 횟수"만 제한한다.
 
 ## 2. 실행 상태와 전이표
 
@@ -17,7 +17,7 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Loaded | start | Preparing | intentId 생성(로컬) 또는 수신(리모트), 기본값 확정, `inputs_hash` 계산. 원장에 같은 intentId 행이 있는데 `inputs_hash`·`playbook_id`가 다르면 거부 + `ledger.intent_reuse`(B-10) |
 | Preparing | 전제조건 실패 | Failed | |
 | Preparing | 준비 완료 | Running | 저널 `run.started` |
-| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07), 기기 간 업무 키 조회(§4, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 창·폰) |
+| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07), 기기 간 업무 키 조회(§4, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 바·폰) |
 | WaitingGate | 승인(먼저 도착한 결정) | Running | `gate_requests` 원자 전이 후 토큰 발급(§3, R-G8), 거부 우선 창 2초 |
 | WaitingGate | 거부 | Aborted | |
 | WaitingGate | 사용자 "수정하기" | Running(게이트 앞 체크포인트) | 게이트 취소, 입력 잠금 해제, 게이트 앞으로 되감기(R-G6, B-06) |
@@ -38,7 +38,7 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Running(commit) | verify `committed` | Running | 원장 `committed`, 기기 간 업무 키 표시 업로드 |
 | Running(commit) | verify `not_committed` | Running | 원장 `not_committed`, 게이트 앞 체크포인트로(`reload`) |
 | Running(commit) | verify `unknown` / 상한 초과 | InDoubt | 원장 `in_doubt`, 기기 간 업무 키 표시 업로드 |
-| InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed | 증언은 main 승인 창의 `human(manual)` 카드, 저널에 기록. 증언은 `armed_at`부터 `policy.verify.minElapsedMs`가 지나고 조회 재시도를 1회 더 한 뒤에만 받으며, 카드에 "발급목록 반영이 늦을 수 있습니다"를 고정 표시한다(E-13) |
+| InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed | 증언은 main 승인 바로 받아 `LocalAttestation`(승인 근거와 다른 HMAC 문맥)으로 엔진에 넘기고 저널에 기록한다(ADR-021 결정 5). 증언은 `armed_at`부터 `policy.verify.minElapsedMs`가 지나고 조회 재시도를 1회 더 한 뒤에만 받으며, 승인 바에 "발급목록 반영이 늦을 수 있습니다"를 고정 표시한다(E-13) |
 | Running | 모든 스텝 완료 | Completed | |
 | Running | 비가역 커밋 뒤 후속(이메일 확인·PDF) 실패, 또는 `end: completed_with_issues` | CompletedWithIssues | UI 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다" |
 | Paused | 사용자 재개 | Running | 같은 `package_digest`가 설치되어 있을 때만. 아니면 '다시 시작'만. `prepare()`와 KST 날짜가 다르면 카드 고정 경고(B-13) |
@@ -57,7 +57,7 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 
 ```text
 actionHash = SHA-256(CBOR{cardHash, readbackHash, authorizes[], packageDigest, intentId})
-  cardHash      = 카드에 표시된 값(fieldKey·값·순서). main 승인 창과 엔진이 각각 계산해 일치해야 함
+  cardHash      = 게이트 요청 fields 배열 전체(fieldKey·값·순서). 엔진이 계산하고, main(승인 바)과 폰이 받은 fields로 다시 계산해 일치해야 함
   readbackHash  = readback 스텝이 되읽은 필드값(JCS 정규화)
   packageDigest = IR + selectors + 적용된 핫픽스 + lookupsUsed 다이제스트 + 정책 버전 + 프로필 버전   (B-08)
 token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
@@ -72,11 +72,18 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - readback은 토큰 소비 **뒤**, 클릭 **직전**에 다시 계산해 `readbackHash`와 비교한다(R-G7). 재계산과 클릭 사이에는 디스크 I/O를 두지 않는다. 불일치면 클릭하지 않고 원장을 `not_committed`(`pre_dispatch_mismatch`)로 종결한 뒤 게이트 앞으로 돌아간다(보안 이벤트 아님).
 - 토큰 폐기(R-G2): `Recovering`, `WaitingHuman`, `HandedOff`, `Paused`, `Interrupted` 진입, 체크포인트 복귀, 게이트 "수정하기", L2 셀렉터 적용, 핫픽스 적용 중 하나라도 일어나면 미소비 토큰 전부 폐기.
 - 보안 이벤트는 위조·다른 실행의 토큰·이미 소비된 토큰에만. 만료는 보안 이벤트가 아니다.
-- **로컬 승인**(A-15): 비가역 승인은 **main이 만드는 별도 승인 창**에서만 한다. main이 신뢰 계획값(readback 값 + 앱 내장 라벨)으로 정적 HTML을 만들고(텍스트는 `textContent`로만, 스크립트 없음, CSP `default-src 'none'; style-src 'self'`), 승인 입력은 main이 그 창의 입력 이벤트로 **직접 관찰한 마우스 클릭**으로만 인정한다(Electron에서 클릭을 main이 관찰하는 수단은 M4-2 착수 전 확인한다. 불가하면 `before-input-event`로 관찰한 비타이핑 조합키(예: Alt+Y)만 인정). **Enter 단독 승인은 금지**한다. 승인 창은 포커스를 빼앗지 않고(작업 표시줄 표시만, 사용자가 창으로 이동), 창이 표시되고 활성화된 뒤 600ms 동안의 입력은 무시한다. 같은 사용자 권한 프로세스의 합성 입력(`SendInput`)은 실제 입력과 구분되지 않으므로 M·E에 대해서는 경계가 아니다(E-06). 일반 렌더러가 보내는 신호는 "승인 창 열기" 요청일 뿐이다. 상세는 ADR-014.
+- **로컬 승인**(A-15, ADR-021): 비가역 승인은 **main 소유 승인 바**에서만 한다. 대화 카드에는 승인 버튼이 없고, 카드의 렌더러 신호는 승인 근거가 아니다.
+  - 승인 바는 main이 메인 창에 자식으로 붙이는 `WebContentsView`다(`sandbox`, `javascript:false`, preload 없음, 전용 세션 파티션). 내용은 main이 신뢰 계획값(readback 값 + 앱 내장 라벨)으로 만든 정적 HTML(CSP `default-src 'none'; style-src 'self'`)이고, 요약 3줄 이하와 "승인하고 발급"이 한 버튼이다. H-01 요약은 공급받는자(상호·사업자번호), 합계와 세액, 받는 이메일이다.
+  - 위치는 main이 창 크기만으로 정한다(대화 열 하단, 입력창 예약 영역 위). 렌더러가 보고하는 좌표는 쓰지 않는다. 앱 내장 요약 표에 없는 서류 종류의 커밋 게이트는 패키지 로더가 거부한다(§3.1).
+  - 승인 입력은 main이 그 뷰의 `before-mouse-event`로 **직접 관찰한 클릭**(바 안 왼쪽 down → up)만 인정한다. 바가 보이거나 요약·동작이 바뀌거나, 창이 옮겨지거나 다시 보이거나 활성화된 뒤 600ms는 무시하고(무장 전 mouseDown이면 다시 시작, 바를 눌러 창을 활성화한 경우는 예외), 바 안에서 실제로 움직인 뒤 150ms가 지난 mouseDown만 인정한다. 대화 화면 커서가 숨겨지거나 바뀌어 있으면 무장하지 않는다. **키보드 승인은 없다**(Enter·조합키 모두).
+  - 바는 `WaitingGate`(main이 엔진에서 직접 받은 상태)일 때만 뜨고, 한 게이트에서 한 번 뜨면 게이트가 끝날 때까지 남는다(렌더러의 숨김 요청은 무시). `trigger=local`이 아닌 실행에서는 자동으로 띄우지 않는다.
+  - main은 받은 `fields`·`cardHashInputs`로 `actionHash`를 다시 계산해 일치할 때만 무장한다. 승인되면 `LocalApproval{runId, gateStepId, reqId, approvalNonce, actionHash, exp, presence}`를 발급한다. `approvalNonce`는 엔진이 게이트 요청마다 만들고 `gate.waitMs` 동안 유효하며 폰 챌린지와 분리된다(아래 토큰 식의 `nonce`와 다른 값). 엔진은 이것을 main↔엔진 전용 포트로만 받는다(§11). Phase 1에는 HMAC을 검증하는 쪽이 없고 포트 출처만 믿는다.
+  - 설정에서 Windows Hello 확인을 켜면(기본 꺼짐) 바 클릭 뒤 main이 `UserConsentVerifier`를 부른다. `Verified`이면 `presence: click+hello`로 발급하고, `Canceled`·`DeviceBusy`·`RetriesExhausted`이면 승인 대기를 유지한다. Hello를 쓸 수 없으면(`DeviceNotPresent`·`NotConfiguredForUser`·`DisabledByPolicy`, 원격 데스크톱 등) 한 번 다시 시도한 뒤 바가 "이번만 Hello 없이 승인" 상태가 되고, 그 클릭은 `presence: click+waiver`로 발급하며 알림·활동 기록을 남긴다(ADR-021 결정 3).
+  - 같은 사용자 권한 프로세스의 합성 입력(`SendInput`)은 실제 입력과 구분되지 않으므로 M·E에 대해서는 경계가 아니다(E-06). 상세는 ADR-021.
 - **폰 승인**: `gate.request{reqId, fields[{key: fieldKey, value}](readback 값), cardHashInputs{readbackHash, packageDigest, authorizes, intentId}, actionHash, challenge, exp 120s}`. 폰은 앱 내장 라벨 사전으로 `fields`를 렌더링하고, 표시한 값으로 `cardHash`를 직접 계산해 `actionHash`를 다시 계산한 뒤 일치할 때만 승인 버튼을 활성화한다(B-29). 승인은 `Sign_Vm("SAX-approve-v1"‖pair_id‖reqId‖challenge‖actionHash‖decision)` → 엔진 검증 후 토큰 발급(D08 §6). 시작 동의는 별도 메시지(`consent.*`, 서명 문맥 `SAX-consent-v1`)이고 게이트 검증기는 받지 않는다(B-27, D08).
-- **원격 비가역 승인 상한**(C-06): 엔진은 `policy.remote.irreversiblePerDay`(≤ 5)를 넘는 원격 승인, 처음 쓰는 거래처·이메일 수신자에 대한 원격 승인(`newCounterpartyRequiresLocal`)을 받지 않고 로컬 승인 창으로 돌린다. 원격으로 승인된 비가역이 `committed`가 되면 `notifyOnIrreversible` 채널로 알린다. 비가역 원격 승인을 하드웨어 키(P-256, SE/StrongBox) 서명으로만 받는 규칙은 정책 필드가 아니라 엔진이 `authorizes`의 `commitEffect`로 `requiredSigAlg`를 계산하는 **앱 상수 규칙**이며, 원격 기능과 함께 Phase 2다(D08 §6.1, 오류 코드 `remote.hw_key_required`). 원격 승인이 거부되어 로컬로 돌린 경우(하드웨어 키 없는 폰, 처음 쓰는 거래처, 일일 상한) PC 승인 창은 **자동으로 뜨지 않는다**. 실행은 "PC에서 승인 필요" 상태로 대기하고 폰·PC에 그 사실을 알리며, 사용자가 PC 앞에서 직접 승인 창을 연다(E-06).
+- **원격 비가역 승인 상한**(C-06): 엔진은 `policy.remote.irreversiblePerDay`(≤ 5)를 넘는 원격 승인, 처음 쓰는 거래처·이메일 수신자에 대한 원격 승인(`newCounterpartyRequiresLocal`)을 받지 않고 로컬 승인(승인 바)으로 돌린다. 원격으로 승인된 비가역이 `committed`가 되면 `notifyOnIrreversible` 채널로 알린다. 비가역 원격 승인을 하드웨어 키(P-256, SE/StrongBox) 서명으로만 받는 규칙은 정책 필드가 아니라 엔진이 `authorizes`의 `commitEffect`로 `requiredSigAlg`를 계산하는 **앱 상수 규칙**이며, 원격 기능과 함께 Phase 2다(D08 §6.1, 오류 코드 `remote.hw_key_required`). 원격 승인이 거부되어 로컬로 돌린 경우(하드웨어 키 없는 폰, 처음 쓰는 거래처, 일일 상한) PC 승인 바는 **자동으로 뜨지 않는다**(`trigger=local`이 아닌 실행은 모두 같다). 실행은 "PC에서 승인 필요" 상태로 대기하고 폰·PC에 그 사실을 알리며, 사용자가 PC에서 그 작업 카드를 열면 바가 뜬다(E-06, ADR-021 결정 4).
 - 두 채널 중 먼저 도착한 결정이 이기며, 승인 뒤 커밋 직전까지 다른 채널의 거부가 오면 중단한다.
-- 타이밍 이름: `gate.waitMs`(승인 대기, ≤ 1시간), `policy.run.commitWindowMs`(승인 후 커밋 구간 상한, 기본 10분 — 실제 토큰 수명은 위 `exp` 식), `gate.request.exp`(폰 응답 챌린지 120초, 만료 시 재요청). 검증기는 `commitWindowMs ≥ signFlow.maxWaitMs + verify 상한`을 확인한다(B-09).
+- 타이밍 이름: `gate.waitMs`(승인 대기, ≤ 1시간), `policy.run.commitWindowMs`(승인 후 커밋 구간 상한, 기본 10분 — 실제 토큰 수명은 위 `exp` 식), `gate.request.exp`(폰 응답 챌린지 120초, 만료 시 재요청. 재요청해도 `req_id`는 그대로다). 검증기는 `commitWindowMs ≥ signFlow.maxWaitMs + verify 상한`을 확인한다(B-09).
 
 ### 3.1 패키지 로더 (B-01, B-08, B-22, C-26)
 
@@ -89,6 +96,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 5. **조회 하위 플레이북**: `lookupsUsed[]`의 각 패키지가 설치되어 있고, 서명·`kind: lookup`·다이제스트가 일치한다(V-22).
 6. **정적 검증**: 스키마 + V-01~V-24. 셀렉터 CI 규칙 SV-01~06은 **레지스트리 CI에서만** 돌고, 2-of-3 서명이 그 통과를 전제로 한다(클라이언트는 녹화 DOM·HAR이 없어 다시 돌리지 않는다). 대신 클라이언트는 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 **매번** 한다(§5.2). 이 문장이 SV 실행 위치의 정본이다(D02 §2.2·§6.3, D12 §3, ADR-012, E-03).
 7. **핫픽스**([hotfix.schema.json](schemas/hotfix.schema.json)): `appliesTo.packageDigest`가 정확히 이 패키지, 2-of-3 서명, 단조 `monotonic`, `expiresAt − issuedAt ≤ 14일`이고 만료 전, `entries`의 각 항목이 적격 항목(D02 §2.2: 비커밋·비비밀·비readback 조건에 더해, 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, IR의 `decide.scope`·조건식(`cond`)·`signFlow.rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 어떤 커밋 구간 `W(X)` 안 스텝이 참조하는 항목은 **불가** — 엔진이 IR에서 참조 집합을 계산해 확인, E-03)이며, `commitEndpointsAdd`는 추가만. 반영한 사전에 6단계를 **다시 돌리고**, 실패하면 핫픽스를 거부(`registry.hotfix_rejected`)하고 패키지는 원래 후보로 돈다. 조회 패키지에 대한 핫픽스는 항상 거부한다.
+8. **승인 바 요약 표**(ADR-021): 커밋 게이트가 있는 패키지는 그 서류 종류가 앱 내장 승인 바 요약 표에 있어야 하고, 요약 줄에 쓰는 `fieldKey`가 게이트 카드 필드에 모두 있어야 한다. 없으면 `loader.approval_summary_missing`으로 로드하지 않는다(PC에서 무장할 수 없는 게이트를 미리 막는다).
 
 **레지스트리 status 소비**(B-22, E-05): 엔진은 `/registry/status.json`(포털별 `portalModeCeiling`과 `killPlaybooks[]`)을 받아 `portalModeCeiling`은 정책 위의 **하향 전용** 상한으로, `killPlaybooks`는 실행 거부로 적용한다. 서명 규칙: 내용은 정책 키 2-of-3 또는 1인 긴급 키(하향·킬스위치 추가만, §7.1 보수성 판정)로 서명하고, 신선도는 온라인 타임스탬프 키(HSM 안, 자동)가 **48시간마다 재서명**한다(만료 ≤ 48시간). status는 하향·킬스위치만 표현할 수 있으므로 내용 변경에 단일 긴급 키를 허용한다. **1인 긴급 키만으로 서명된 하향 status는 72시간 뒤 자동 만료**되고, 그 안에 2-of-3 재확인이 없으면 엔진은 마지막 2-of-3 서명 status 값으로 되돌린다. `issuedAt`이 현재 시각 + 5분보다 미래인 status는 거부한다. 마지막 유효 status가 48시간을 넘으면 stale(`registry.status_stale`)로 표시하고, **72시간** 동안 갱신을 받지 못하면 데몬 실행을 멈추고, 홈택스 `auto` 실행마다 "최신 운영 정책을 확인하지 못했습니다" 경고를 띄운다. 투명성 로그의 포함 증명이 없는 인덱스를 거부하는 규칙은 **Phase 2**다. **Phase 1 split-view 점검**(E-14): 폰이 없는 Phase 1에서도 엔진은 투명성 로그 트리 헤드를 레지스트리와 **별도 호스트(다른 도메인·다른 운영 계정)의 미러 1곳**에서 함께 받아 비교하고, 같은 트리 크기에서 헤드가 다르거나 미러가 일관성 증명을 줄 수 없으면 `registry.head_mismatch`(보안 이벤트)를 남기고 새 패키지·정책·핫픽스 적용을 보류한다. 키 운영·투명성 로그·status 발행 절차는 D09 §8과 ADR-013에 있다.
 
@@ -321,7 +329,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 
 ## 9. 감사 저널 (로컬 전용, D07 `run_events`, 해시 체인 + 폰 앵커)
 
-`run.started{mode}`, `step.*`, `step.identity_mismatch`, `step.commit_shadow`, `step.pre_dispatch_mismatch`, `gate.*{actionHash}`, `human.*`, `secret.used{kind, viaTypist}`(길이 필드 없음, A-26), `model.called`, `decide.result`, `ledger.*{intentId, stepId, state}`(`ledger.observed_manual`, `ledger.intent_reuse` 포함), `commit_guard.*`(`commit_guard.unclassified{pathPattern}` 포함), `security.commit_payload_mismatch`, `commit.confirm_accepted{textHash}`, `verify.baseline_missing`, `policy.clamped{field}`, `policy.rejected_not_conservative`, `policy.stale`, `policy.issued_in_future`, `registry.*`(`registry.head_mismatch` 포함), `daemon.effects_denied`, `artifact.saved`, `block.signal`, `cooldown.*`, `run.finished{status}`. 값 없음 원칙(해시·필드 이름·코드만).
+`run.started{mode}`, `step.*`, `step.identity_mismatch`, `step.commit_shadow`, `step.pre_dispatch_mismatch`, `gate.*{actionHash}`, `human.*`, `secret.used{kind, viaTypist}`(길이 필드 없음, A-26), `model.called`, `decide.result`, `ledger.*{intentId, stepId, state}`(`ledger.observed_manual`, `ledger.intent_reuse` 포함), `commit_guard.*`(`commit_guard.unclassified{pathPattern}` 포함), `security.commit_payload_mismatch`, `commit.confirm_accepted{textHash}`, `verify.baseline_missing`, `policy.clamped{field}`, `policy.rejected_not_conservative`, `policy.stale`, `policy.issued_in_future`, `registry.*`(`registry.head_mismatch` 포함), `daemon.effects_denied`, `artifact.saved`, `block.signal`, `cooldown.*`, `run.finished{status}`. 값 없음 원칙(해시·필드 이름·코드만). 로컬 승인 바(ADR-021): `gate.bar_shown`, `gate.bar_arm_refused{reason}`, `gate.approved{presence}`, `gate.hello{result}`, `gate.hello_waived`, `gate.attested`, `settings.hello_changed`, 보안 이벤트 `security.gate_answer_from_relay`.
 
 ## 10. 동시성·브라우저
 
@@ -342,10 +350,10 @@ interface Engine {
 }
 interface RunHandle {
   id; state();
-  answerGate(d: GateDecision & {actionHash, approvalEvidence});   // approvalEvidence = main 승인 창 관찰 결과 또는 폰 서명. 렌더러 신호는 받지 않는다
+  answerGate(d: GateDecision & {actionHash, approvalEvidence});   // approvalEvidence = main 승인 바가 발급한 LocalApproval(main↔엔진 전용 포트로만, 렌더러 명령 중계 경로에서 오면 거부 + `security.gate_answer_from_relay`, ADR-021) 또는 폰 서명(원격 채널, D08)
   cancelGateForEdit(): void;                                       // "수정하기"(R-G6)
   answerHuman(stepId, v: HumanAnswer);
-  attestNotCommitted(intentId, stepId, note): void;
+  attestNotCommitted(intentId, stepId, note, evidence: LocalAttestation): void;   // main 승인 바의 증언 근거(ADR-021 결정 5). main↔엔진 전용 포트로만
   attestManualCommit(intentId, stepId): void;                      // "직접 발급함"(R-C2)
 }
 ```

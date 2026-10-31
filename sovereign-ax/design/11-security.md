@@ -8,7 +8,7 @@
 |---|---|---|
 | E | 엔진 RCE(포털 텍스트·모델 응답·리모트 메시지·의존성) | 경계 아님. 중계 허용 목록·응답 정리·비밀 창으로 되읽기 창을 좁힘(Phase 1), 원자적 타이핑(Phase 2), 고수준 브로커 검토(Phase 3) |
 | P | 서명된 악성·오류 플레이북·핫픽스·정책(키 유출·내부자·당직 실수) | 막는다: V-01~24·SV·BV, 핫픽스 범위(ADR-012), 정책 상한, 2-of-3 서명(ADR-013), 내장 허용 목록 |
-| R | 렌더러 침해 | 막는다: main 승인 창(ADR-014), CSP, sanitizer |
+| R | 렌더러 침해 | 막는다: 승인 위조(main 소유 승인 바, ADR-021), CSP, sanitizer. 줄인다: 클릭 유도(바 위치는 main이 정함, 한 번 뜨면 남음, 창 수준 사건 재무장, 무장 지연·머무름, 커서 위장 중 무장 거부). 카드 본문의 표시 위조는 바의 요약 줄까지만 |
 | D | docparse 침해(무클릭 PDF) | 막는다: 렌더러 샌드박스(ADR-014) |
 | M | 같은 OS 사용자 악성코드 | 경계 아님. 완화: Hello 결박 대화형 등급, 데몬의 저장 비밀 미사용, 덤프 제외 |
 | U | 같은 PC 다른 OS 사용자 | 막는다: 파이프 소유, 사용자 전용 DACL, 보관함 ACL 점검 |
@@ -95,7 +95,8 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | `shell.openExternal` | main만 호출, 렌더러·플레이북은 URL이 아니라 **키**(`portalId`·strings 키)만 전달, URL은 `https:`·userinfo·포트 없음·호스트 ∈ 내장 eTLD+1 허용 목록 |
 | 경로 | `app.setPath('userData'\|'logs'\|'crashDumps')`를 `%LOCALAPPDATA%\SovereignAX\…`로 앱 준비 전에 설정(로밍 `%APPDATA%` 금지). 루트 DACL = 소유자 + SYSTEM, 상속 차단, 매 기동 확인. Windows 검색 색인 제외 |
 | 프로세스 | 엔진·금고·docparse 기동 시 `execArgv` 고정, `env` 화이트리스트(`DEBUG`·`NODE_DEBUG`·`NODE_OPTIONS`·`ELECTRON_*`·`PLAYWRIGHT_*` 제거). `utilityProcess`는 샌드박스가 아니다: 금고의 네트워크 금지는 린트 + 런타임 `net` 제거 + 아웃바운드 소켓 감시(OS 경계 아님을 명시). **docparse는 utilityProcess가 아니라 Chromium 렌더러 샌드박스**(숨김 `BrowserWindow`, 네트워크 차단 세션 파티션, 바이트 입력·JSON Schema 출력, `pdfjs isEvalSupported:false`) |
-| 기동 자기 점검 | main은 `remote-debugging-port`·`remote-debugging-pipe`·`enable-logging`·`log-file` 스위치가 자기 프로세스에 있으면 종료한다(best-effort, M 대상). 금고는 `navigator.webdriver === true` 확인(ADR-010) |
+| 승인 바(ADR-021) | 메인 창 `contentView`의 자식 `WebContentsView`: `sandbox`·`javascript:false`·preload 없음·`devTools:false`·`focusOnNavigation:false`, 확대 배율 1 고정, 전용 메모리 파티션(자기 스킴 밖 요청 취소·권한 거부·탐색·새 창 거부), CSP `default-src 'none'; style-src 'self'`, 배경색 지정, 보일 때마다 맨 위로. 메인 창: `webviewTag: false`, `disableDialogs: true`, `content-bounds-updated` 차단(렌더러의 창 이동·크기 변경), `cursor-changed` 감시(승인 대기 중 `none`·`custom`이면 무장 안 함), 앱 CSS 커스텀 커서 lint 금지. main은 렌더러 IPC로 `sendInputEvent`·`webContents.debugger`를 부르지 않고, `sendInputEvent`를 쓰는 e2e 코드는 제품 빌드에서 뺀다. 승인 바에 관한 렌더러 IPC는 표시 요청(원격·데몬 실행이나 확인 필요 카드를 연 때), Hello 설정 바 요청(켜기·끄기), 중지뿐이다. 엔진의 `answerGate`·`attestNotCommitted`는 main↔엔진 전용 포트(렌더러 명령 중계와 분리)로만 받는다 |
+| 기동 자기 점검 | main은 `remote-debugging-port`·`remote-debugging-pipe`·`enable-logging`·`log-file` 스위치가 자기 프로세스에 있으면 종료한다(best-effort, M 대상. CDP로 넣은 마우스 이벤트도 승인 바의 `before-mouse-event`를 일으키므로 ADR-021도 이 점검에 기댄다). 금고는 `navigator.webdriver === true` 확인(ADR-010) |
 | 덤프 | 금고: `sodium_malloc` + `WerRegisterExcludedMemoryBlock`(Phase 1), Electron 밖 Rust 실행 파일 분리(Phase 2). 엔진·main: 로컬 생성도 사용자 요청 시에만, **업로드 금지**, 힙 없는 구조화 오류 보고만 옵트인 |
 | 로그 | 릴리스 빌드에서 CDP 프로토콜 로깅 코드 경로 제거(환경 변수로 켤 수 없음), 결과 코드·ID만, 14일 보존, 진단 내보내기 전 누출 스캐너 실행 |
 | 자동 업데이트 | `electron-updater` ≥ 6.3.0-alpha.6(CVE-2024-39698), `latest.yml`을 별도 Ed25519 키(플레이북·정책 키와 분리)로 서명 + `expires` + 단조 `version`, 다운그레이드 금지, 단계적 롤아웃, 14일 동안 확인 성공이 없으면 알림, 실행 중·커밋 구간·데몬 실행 중 설치 금지. Windows 서명은 Artifact Signing(EV가 SmartScreen을 우회하지 않음), 서명 주체 DN 출시 전 고정. macOS Developer ID + 공증. 사용자 단위 설치는 M에 대한 바이너리 무결성 경계가 없음을 잔여 위험으로 적고 기기 단위 설치 옵션은 Phase 3 |
@@ -112,7 +113,7 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 - 인젝션 레드팀(S17): 상호·품목·비고·PDF 숨김 텍스트 코퍼스 200건으로 오판률·탐지 회피율·결정적 필터 오탐률.
 - 마스킹 코퍼스 회귀.
 - IR 검증기 퍼징(무작위 IR로 V-03 우회 시도).
-- 게이트 우회 테스트: 토큰 위조·만료·다른 실행 토큰, 같은 `intent_id` 다른 입력 재사용, 핸드오프 중 수동 발급 후 재개(중복 0건), 승인 창 밖 렌더러 신호로 승인 시도(거부), `consent.response`를 `gate.response`로 제출(거부).
+- 게이트 우회 테스트: 토큰 위조·만료·다른 실행 토큰, 같은 `intent_id` 다른 입력 재사용, 핸드오프 중 수동 발급 후 재개(중복 0건), 승인 바 밖 렌더러 신호로 승인 시도(거부), 렌더러 명령 중계 경로로 `answerGate` 호출(거부), 렌더러가 보고한 좌표로 승인 바 이동·승인 대기 중 숨김 요청(무시), 앞 게이트의 `LocalApproval`을 같은 실행의 다음 게이트에 제출(거부), `LocalAttestation`을 승인 근거로 제출(거부), Hello를 켠 상태에서 `Verified` 밖의 결과로 승인(거부), 승인 대기 중 Hello 설정 바 요청(거부), 렌더러의 `window.moveTo`·`alert()`(차단), 커서 위장 중 무장(거부), `consent.response`를 `gate.response`로 제출(거부).
 - 리모트 프로토콜 테스트: 재전송, 잘못된 키, 저수준 명령 주입, 서명 없는 기기 목록·낮은 `list_version` 거부, 소프트웨어 키로 서명한 비가역 승인 거부, 24시간 이내 등록 데스크톱 페어링 경고, `rotate.static` 무확인 거부, 백업 복원 기기에서 키 0개(SP-1).
 - 레지스트리 테스트: 서명 1개·폐기 키 서명·`version` +1000 초과·`keyEpoch` 불일치·만료 status·보수적이지 않은 긴급 정책이 모두 거부되는지. 상한 초과 정책 필드가 `policy.clamped`로 고정되는지.
 - 모델 경로 테스트: `replay`·`function_call_output`에 비마스킹 문자열이 컴파일·런타임 모두에서 거부되는지, 게이트웨이 2차 트립와이어, 역치환 fail-closed.
