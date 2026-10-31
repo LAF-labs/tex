@@ -14,6 +14,9 @@ describe('셸 목업', () => {
     assert.equal(parseAmount('11월분 55만원'), 550_000, '날짜 숫자는 건너뛴다');
     assert.equal(parseAmount('2026년 계산서'), null);
     assert.equal(parseAmount('세금계산서'), null);
+    assert.equal(parseAmount('1억 2천'), null, '억 뒤가 만 없이 끝나면 되묻는다');
+    assert.equal(parseAmount('1억5천'), null);
+    assert.equal(parseAmount('1억 2천만원'), 120_000_000);
   });
 
   it('부가세: 세액은 공급가의 10%에서 원 미만 버림, 포함 금액은 공급가 + 세액 = 합계', () => {
@@ -35,6 +38,16 @@ describe('셸 목업', () => {
     assert.ok(d.kind === 'draft' && d.run.counterparty.name === 'A상사' && d.run.total === 3_300_000);
     assert.equal(interpret('330만원', null, 'business', runs).kind, 'say', '되묻지 않았으면 금액만으로 발급하지 않는다');
     assert.equal(interpret('C테크에 세금계산서', null, 'personal', runs).kind, 'say', '개인 프로필은 세금계산서 안 됨');
+    const other = new MockRuns(0);
+    interpret('A상사에 세금계산서', null, 'business', runs);
+    assert.equal(interpret('330만원', null, 'business', other).kind, 'say', '되묻기 상태는 대화마다 따로');
+    const two = interpret('A상사 말고 C테크로 세금계산서 50만원', null, 'business', other);
+    assert.ok(two.kind === 'say' && two.chips?.length === 2, '거래처 이름이 둘이면 되묻는다');
+    const fix = interpret('C테크', null, 'business', other);
+    assert.ok(fix.kind === 'draft' && fix.run.counterparty.name === 'C테크' && fix.run.amount === 500_000);
+    assert.equal(other.updateDraft(fix.run.id, { amountText: '1억 2천만원' }).amount, 120_000_000, '[금액 수정]도 같은 규칙');
+    assert.equal(other.updateDraft(fix.run.id, { amountText: '3300000' }).amount, 3_300_000);
+    assert.throws(() => other.updateDraft(fix.run.id, { amountText: '1억 2천' }), /bad_amount/);
     const g = interpret('주민등록초본 떼 줘', null, 'personal', runs);
     assert.ok(g.kind === 'g24' && g.doc === '주민등록표 초본');
   });

@@ -148,7 +148,12 @@ export function startShell(opts: ShellOptions = {}): Shell {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       return interpret(String(p.text ?? '').slice(0, 2000), vat, profile, runs);
     },
-    'draft.update': (p) => runs.updateDraft(String(p.id), { vat: p.vat === 'separate' || p.vat === 'included' ? p.vat : undefined, amount: typeof p.amount === 'number' ? p.amount : undefined }),
+    'draft.update': (p) =>
+      runs.updateDraft(String(p.id), {
+        vat: p.vat === 'separate' || p.vat === 'included' ? p.vat : undefined,
+        amount: typeof p.amount === 'number' ? p.amount : undefined,
+        amountText: typeof p.amountText === 'string' ? p.amountText.slice(0, 100) : undefined,
+      }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
     'docs.list': () => docs,

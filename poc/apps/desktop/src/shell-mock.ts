@@ -101,6 +101,7 @@ function parseSegment(seg: string): number | null {
   let total = 0;
   let group = 0;
   let num: number | null = null;
+  let eok = false;
   for (const tok of seg.matchAll(/(\d[\d,]*(?:\.\d+)?)|([억천백십만])/g)) {
     if (tok[1]) {
       if (num !== null) return null; // 단위 없이 숫자가 둘 이어지면 확신할 수 없다
@@ -110,9 +111,12 @@ function parseSegment(seg: string): number | null {
     const u = tok[2]!;
     if (u in SMALL) group += (num ?? 1) * SMALL[u]!;
     else total += (group + (num ?? 0) || 1) * BIG[u]!;
+    if (u === '억') eok = true;
     if (!(u in SMALL)) group = 0;
     num = null;
   }
+  // "1억 2천"·"1억5천"처럼 억 뒤가 만 없이 끝나면 1억 2천만원인지 1억 2천원인지 확신할 수 없다. 되묻는다.
+  if (eok && (group || num)) return null;
   total += group + (num ?? 0);
   const unit = /[억천백십만]/.test(seg) || seg.includes('원');
   if (!unit && !(seg.includes(',') || total >= 10_000)) return null;
@@ -146,16 +150,16 @@ export type Reply =
 
 export type G24Doc = '주민등록표 등본' | '주민등록표 초본';
 
-/** 앱이 되물은 것(입력 보완). 다음 답이 금액만이거나 거래처 이름만이어도 이어 간다. */
-const pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null } = { cp: null, asked: null, amount: null };
-
 export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: MockRuns): Reply {
   const t = text.trim();
+  const pending = runs.pending;
   const asked = pending.asked;
   pending.asked = null;
   if (/신고|세액\s*계산/.test(t)) return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
   if (/등본|초본|정부24/.test(t)) return { kind: 'g24', doc: /초본/.test(t) ? '주민등록표 초본' : '주민등록표 등본' };
-  const cpNamed = COUNTERPARTIES.find((c) => t.includes(c.name)) ?? null;
+  const named = COUNTERPARTIES.filter((c) => t.includes(c.name));
+  // 거래처 이름이 둘 이상이면("A상사 말고 C테크로") 고르지 않고 되묻는다.
+  const cpNamed = named.length === 1 ? named[0]! : null;
   const amountNamed = parseAmount(cpNamed ? t.replace(cpNamed.name, ' ') : t);
   const invoice = /계산서/.test(t) || (asked === 'amount' && amountNamed !== null) || (asked === 'counterparty' && cpNamed !== null);
   if (invoice) {
@@ -164,7 +168,7 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
     const amount = amountNamed ?? (asked === 'counterparty' ? pending.amount : null);
     if (!cp) {
       Object.assign(pending, { cp: null, asked: 'counterparty', amount });
-      return { kind: 'say', text: '어느 거래처에 발급할까요?', chips: COUNTERPARTIES.map((c) => ({ label: c.name, text: c.name })) };
+      return { kind: 'say', text: '어느 거래처에 발급할까요?', chips: (named.length > 1 ? named : COUNTERPARTIES).map((c) => ({ label: c.name, text: c.name })) };
     }
     if (!amount) {
       Object.assign(pending, { cp, asked: 'amount', amount: null });
@@ -215,6 +219,8 @@ export class MockRuns extends EventEmitter {
   private readonly runs = new Map<string, RunView>();
   private readonly timers = new Map<string, NodeJS.Timeout[]>();
   private readonly speed: number;
+  /** 앱이 되물은 것(입력 보완). 다음 답이 금액만이거나 거래처 이름만이어도 이어 간다. 대화(세션)마다 하나. */
+  readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null } = { cp: null, asked: null, amount: null };
 
   constructor(speed = 1) {
     super();
@@ -250,7 +256,14 @@ export class MockRuns extends EventEmitter {
     return run;
   }
 
-  updateDraft(id: string, patch: { vat?: VatMode; amount?: number }): RunView {
+  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string }): RunView {
+    if (patch.amountText !== undefined) {
+      // [금액 수정]도 요청 문장과 같은 규칙으로 읽는다. 단위 없는 숫자만 넣어도 금액으로 본다.
+      const t = patch.amountText.trim();
+      const v = parseAmount(/^[\d,]+$/.test(t) ? `${t}원` : t);
+      if (v === null) throw new Error('bad_amount');
+      patch = { ...patch, amount: v };
+    }
     const r = this.mustDraft(id);
     if (patch.vat) {
       r.vat = patch.vat;

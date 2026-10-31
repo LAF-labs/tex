@@ -98,7 +98,7 @@ const barLeave = () => barWc().sendInputEvent({ type: 'mouseLeave', x: -5, y: -5
 const waitArmed = () => until('bar armed', () => S.bar.snapshot().armed && S.bar.snapshot().committed?.mode === 'armed');
 /** OS 커서 위치(바의 "멈춘 커서 아래" 판단용). e2e 기본은 바 밖. */
 const cursor = { x: -9999, y: -9999 };
-const shownChecks: boolean[] = [];
+
 
 async function toWaiting(text: string): Promise<string> {
   await sendText(text);
@@ -334,15 +334,39 @@ async function flow(): Promise<void> {
       { fieldKey: 'taxAmount', value: '100000000' }, { fieldKey: '$first.email', value: 'true' },
     ],
   };
-  const wide: GateRequest = { ...base, actionHash: gateHash(base) };
+  const gate = (reqId: string): GateRequest => ({ ...base, reqId, actionHash: gateHash({ ...base, reqId }) });
+  const wide = gate('wide-1');
   const wideDone = S.bar.open(wide);
   await waitArmed();
   check('값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)', S.bar.snapshot().band && !S.bar.snapshot().refusal && S.bar.snapshot().bounds.x === SHELL.rail, S.bar.snapshot());
-  check('열린 게이트가 있으면 새 게이트로 바꾸지 않는다', (await S.bar.open({ ...wide, reqId: 'wide-2' })).decision === 'closed' && S.bar.snapshot().reqId === 'wide-1');
+  check('열린 게이트가 있으면 새 게이트로 바꾸지 않는다', (await S.bar.open(gate('wide-2'))).decision === 'closed' && S.bar.snapshot().reqId === 'wide-1');
   await shot('20-wide-band');
   S.bar.close('e2e');
   await wideDone;
-  check('바는 새 게이트의 페이지가 화면에 올라온 뒤에만 보인다', shownChecks.length >= 4 && shownChecks.every(Boolean), shownChecks);
+
+  // 멈춘 커서 아래에 바가 뜸: OS 커서가 바 안에 그대로면 움직이지 않고 눌러도 600ms 뒤 승인된다.
+  // 반대로 커서가 (바를 덮은 알림 위 등에서) 자리를 옮겼다면 들어오자마자 누른 클릭은 머무름으로 거부한다.
+  const cb = S.win.getContentBounds();
+  const wb = barBounds(cb.width, cb.height, true);
+  const inside = (dx: number) => ({ x: cb.x + wb.x + Math.floor(wb.width / 2) + dx, y: cb.y + wb.y + Math.floor(wb.height / 2) });
+  Object.assign(cursor, inside(0));
+  const still = S.bar.open(gate('wide-3'));
+  await waitArmed();
+  Object.assign(cursor, inside(40));
+  barWc().sendInputEvent({ type: 'mouseEnter', x: mid().x + 40, y: mid().y });
+  barWc().sendInputEvent({ type: 'mouseMove', x: mid().x + 40, y: mid().y, movementX: 40, movementY: 0 });
+  await sleep(10);
+  barClick();
+  await sleep(60);
+  check('커서가 자리를 옮긴 뒤 바로 누른 클릭은 거부(가린 창이 사라지는 순간)', S.bar.snapshot().visible && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
+  S.bar.close('e2e');
+  await still;
+  Object.assign(cursor, inside(0));
+  const still2 = S.bar.open(gate('wide-4'));
+  await waitArmed();
+  barClick();
+  check('멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다', (await Promise.race([still2, sleep(1000).then(() => null)]))?.decision === 'approve');
+  Object.assign(cursor, { x: -9999, y: -9999 });
 
   // 다크 테마
   nativeTheme.themeSource = 'dark';
@@ -361,10 +385,6 @@ app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
     S = startShell({ speed: 0.15, width: 1280, height: 820, cursorPoint: () => cursor });
-    S.bar.on('shown', () => {
-      const snap = S.bar.snapshot();
-      shownChecks.push(!!snap.committed && snap.committed.reqId === snap.reqId);
-    });
     await flow();
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);

@@ -65,10 +65,11 @@ const act = {
     for (const r of state.runs.values()) renderRun(r);
   },
   saveAmount: async (id, text) => {
-    const n = Number(String(text).replace(/[^\d]/g, ''));
     try {
+      // 금액 해석은 main이 요청 문장과 같은 규칙으로 한다("1억 2천만원"도 그대로 넣을 수 있다).
+      putRun(await call('draft.update', { id, amountText: String(text) }));
       state.editing = null;
-      putRun(await call('draft.update', { id, amount: n }));
+      renderRun(state.runs.get(id));
     } catch (e) {
       toast(errText(e) === 'bad_amount' ? '금액을 다시 확인해 주세요' : errText(e));
     }
@@ -91,7 +92,10 @@ const act = {
   go: (v) => go(v),
   g24Saved: async (id) => {
     const g = state.g24.get(id);
-    g.candidates = await call('g24.candidates', { doc: g.doc, startedAt: g.startedMs });
+    if (g.stage !== 'guide') return;
+    const candidates = await call('g24.candidates', { doc: g.doc, startedAt: g.startedMs });
+    if (g.stage !== 'guide') return; // 기다리는 동안 그만뒀으면 되살리지 않는다
+    g.candidates = candidates;
     g.stage = 'pick';
     renderG24(g);
   },
@@ -111,6 +115,7 @@ const act = {
       g.saving = false;
       return toast(errText(e));
     }
+    if (g.stage !== 'pick') return;
     g.stage = 'saved';
     renderG24(g);
     addDoc(doc);
@@ -315,6 +320,7 @@ function renderG24(g) {
   if (old) old.replaceWith(el);
   else appendThread(el);
   if (state.panel?.kind === 'g24' && state.panel.id === g.id) renderPanel();
+  renderToday();
 }
 
 function renderToday() {

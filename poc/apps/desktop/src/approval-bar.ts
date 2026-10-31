@@ -119,6 +119,10 @@ export class ApprovalBar extends EventEmitter {
   private pageId: string | null = null;
   private committed: { id: string; reqId: string; mode: BarMode } | null = null;
   private lastRender: Promise<void> = Promise.resolve();
+  /** 이 바가 만든 페이지 id. 게이트가 끝나면 지워 값(상호·금액·이메일)이 메모리에 남지 않게 한다. */
+  private readonly myPages = new Set<string>();
+  /** 무장 사건 때의 OS 커서 위치("멈춘 커서" 예외 확인용). */
+  private armCursor: { x: number; y: number } | null = null;
   /** 시계가 바뀌어도 무장 지연이 짧아지지 않게 단조 시계를 쓴다. */
   private readonly now = () => performance.now();
 
@@ -166,9 +170,8 @@ export class ApprovalBar extends EventEmitter {
       this.rearm('display-metrics-changed');
     };
     screen.on('display-metrics-changed', onDisplay);
-    const onTheme = () => {
-      if (this.req) void this.render(this.mode, this.msg);
-    };
+    // 페이지 CSS가 prefers-color-scheme로 스스로 바뀐다. 뷰 배경색만 맞춘다.
+    const onTheme = () => this.paintBackground(this.mode);
     nativeTheme.on('updated', onTheme);
     win.on('closed', () => {
       screen.off('display-metrics-changed', onDisplay);
@@ -183,7 +186,7 @@ export class ApprovalBar extends EventEmitter {
       if (blocked) {
         clearTimeout(this.armTimer);
         if (this.req) void this.render('unarmed', null);
-      } else this.rearm('cursor-restored', true);
+      } else this.rearm('cursor-restored');
     });
     this.relayout();
   }
@@ -230,6 +233,7 @@ export class ApprovalBar extends EventEmitter {
     this.keepOnScreen();
     this.relayout(false);
     this.gate.rearm(this.now(), this.cursorInside());
+    this.armCursor = { ...this.cursorPoint() }; // 값으로 복사(같은 객체를 다시 받으면 비교가 늘 참이 된다)
     void this.render('unarmed', null);
     // 그 사이 다시 그렸으면(창 크기 변경 등) 마지막 페이지가 올라올 때까지 기다린다.
     let p: Promise<void>;
@@ -265,9 +269,11 @@ export class ApprovalBar extends EventEmitter {
     if (!this.win.isDestroyed()) {
       this.view.setVisible(false);
       this.win.flashFrame(false);
-      // 다음 게이트에 앞 게이트의 값이 남아 보이지 않게 빈 페이지로 바꾼다.
+      // 다음 게이트에 앞 게이트의 값이 남아 보이지 않게 빈 페이지로 바꾸고, 이 게이트의 페이지를 지운다.
       this.pageId = null;
       this.committed = null;
+      for (const id of this.myPages) pages.delete(id);
+      this.myPages.clear();
       void this.view.webContents.loadURL(`${APPROVAL_SCHEME}://${HOST}/${BLANK}`).catch(() => {});
     }
     const r = this.resolve;
@@ -284,11 +290,15 @@ export class ApprovalBar extends EventEmitter {
   }
 
   /** 창 크기와 게이트 값만으로 자리를 정한다. 값이 대화 열 폭에 안 들어가면 띠로 넓힌다. */
+  private decide(w: number, h: number): Rect & { band?: boolean } {
+    const b = this.place(w, h, false);
+    return this.lines?.length && overflowLine(this.lines, b.width) ? this.place(w, h, true) : b;
+  }
+
   private relayout(rearm = true): void {
     if (this.win.isDestroyed()) return;
     const [w, h] = this.win.getContentSize() as [number, number];
-    let b = this.place(w, h, false);
-    if (this.lines?.length && overflowLine(this.lines, b.width)) b = this.place(w, h, true);
+    const b = this.decide(w, h);
     const changed = b.x !== this.bounds.x || b.y !== this.bounds.y || b.width !== this.bounds.width || b.height !== this.bounds.height;
     this.bounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     this.view.setBounds(this.bounds);
@@ -299,14 +309,14 @@ export class ApprovalBar extends EventEmitter {
       if (this.shown) this.emit('layout', { band });
     }
     if (this.req) this.updateRefusal();
-    if (changed && rearm) this.rearm('resize', true);
+    if (changed && rearm) this.rearm('resize');
   }
 
   /** 바가 디스플레이 작업 영역 밖이면 창을 작업 영역 안으로 옮긴다. */
   private keepOnScreen(): void {
     const cb = this.win.getContentBounds();
     const area = screen.getDisplayMatching(cb).workArea;
-    const b = this.place(cb.width, cb.height, false);
+    const b = this.decide(cb.width, cb.height);
     const barBottom = cb.y + b.y + b.height;
     const barRight = cb.x + b.x + b.width;
     let dx = 0;
@@ -341,12 +351,13 @@ export class ApprovalBar extends EventEmitter {
   }
 
   /** 무장 사건. 무장 전 페이지를 불러오고 600ms 뒤 무장됨 페이지로 바꾼다. */
-  private rearm(why: string, force = false): void {
+  private rearm(why: string): void {
     if (!this.req) return;
     this.gate.rearm(this.now(), this.cursorInside());
+    this.armCursor = { ...this.cursorPoint() }; // 값으로 복사(같은 객체를 다시 받으면 비교가 늘 참이 된다)
     this.emit('judged', { event: `rearm:${why}` });
-    // 창을 끄는 동안 move가 연달아 오면 페이지를 매번 다시 불러오지 않는다.
-    if (force || this.mode !== 'unarmed' || this.msg) void this.render('unarmed', null);
+    // 같은 페이지면 render가 다시 불러오지 않는다(창을 끄는 동안 연달아 오는 move).
+    void this.render('unarmed', null);
     this.scheduleArm();
   }
 
@@ -367,7 +378,7 @@ export class ApprovalBar extends EventEmitter {
     this.gate.windowActivated(this.now());
     clearTimeout(this.activationTimer);
     this.activationTimer = setTimeout(() => {
-      if (this.gate.activationSettled()) this.rearm('activate', true);
+      if (this.gate.activationSettled()) this.rearm('activate');
     }, ACTIVATION_GRACE_MS);
   }
 
@@ -384,7 +395,9 @@ export class ApprovalBar extends EventEmitter {
       this.scheduleArm();
       return;
     }
-    const r = this.gate.mouse(ev, now);
+    const p = m.type === 'mouseDown' ? this.cursorPoint() : null;
+    const unmoved = !!p && !!this.armCursor && p.x === this.armCursor.x && p.y === this.armCursor.y;
+    const r = this.gate.mouse(ev, now, unmoved);
     if (m.type === 'mouseDown' || m.type === 'mouseUp' || r) this.emit('judged', { event: m.type, x: m.x, y: m.y, result: r });
     if (!r) return;
     if (r.kind === 'approve') return this.approve();
@@ -393,6 +406,12 @@ export class ApprovalBar extends EventEmitter {
       void this.render('unarmed', BAR_MESSAGES[r.reason]);
       this.scheduleArm();
     }
+  }
+
+  private paintBackground(mode: BarMode): void {
+    if (this.win.isDestroyed()) return;
+    const t = loadTokens()[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+    this.view.setBackgroundColor(mode === 'armed' ? t.accent! : mode === 'unarmed' ? t['accent-soft']! : t.surface!);
   }
 
   /**
@@ -404,17 +423,22 @@ export class ApprovalBar extends EventEmitter {
     if (!req || !this.lines || this.win.isDestroyed()) return Promise.resolve();
     const effective: BarMode = this.refusal ? 'refused' : mode;
     const text = this.refusal ?? msg;
+    // 같은 내용의 페이지를 이미 불렀으면 다시 부르지 않는다(요약 줄은 게이트 동안 바뀌지 않는다).
+    if (this.pageId && effective === this.mode && text === this.msg) return this.lastRender;
     this.mode = effective;
     this.msg = text;
-    const t = loadTokens()[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
-    this.view.setBackgroundColor(effective === 'armed' ? t.accent! : effective === 'unarmed' ? t['accent-soft']! : t.surface!);
+    this.paintBackground(effective);
     const id = randomUUID();
     pages.set(id, buildBarHtml(this.lines, effective, text ?? undefined));
+    this.myPages.add(id);
     const prev = this.pageId;
     this.pageId = id;
     const done = (ok: boolean) => {
       if (ok && this.pageId === id) this.committed = { id, reqId: req.reqId, mode: effective };
-      if (prev) pages.delete(prev);
+      if (prev) {
+        pages.delete(prev);
+        this.myPages.delete(prev);
+      }
     };
     this.lastRender = this.view.webContents.loadURL(`${APPROVAL_SCHEME}://${HOST}/${id}`).then(
       () => done(true),

@@ -42,8 +42,8 @@ export interface SummaryLine {
 const won = (v: string) => `${v.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원`;
 const bizNo = (v: string) => `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}`;
 
-/** 값에 제어문자·양방향·폭 없는 문자·한글 채움 문자(Cc·Cf·Default_Ignorable, 줄·문단 구분자)가 있으면 무장하지 않는다. */
-export const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u;
+/** 값에 제어문자·양방향·폭 없는 문자·한글 채움 문자(Cc·Cf·Default_Ignorable, 줄·문단 구분자, 점자 빈칸)가 있으면 무장하지 않는다. */
+export const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029\u2800]/u;
 
 export type ArmRefusal = { reason: 'missing' | 'unsafe' | 'overflow'; label: string } | { reason: 'hash' | 'duplicate' };
 
@@ -205,7 +205,9 @@ export type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof 
  * - 무장 지연: 무장 사건(rearm) 뒤 ARM_DELAY_MS 동안 입력 무시. 그 사이 mouseDown이면 지연을 다시 시작한다.
  * - 머무름: 마지막 mouseLeave·무장 사건 뒤 바 안에서 처음 실제로 움직인 때부터 DWELL_MS가 지났거나,
  *   무장 사건 때부터 커서가 바 안에 멈춰 있었을 때만 mouseDown을 인정한다. "무장 사건 때 바 안"은 main이
- *   OS 커서 위치로 정해 rearm에 넘긴다(앞 게이트에서 남은 추적 상태를 믿지 않는다).
+ *   OS 커서 위치로 정해 rearm에 넘긴다(앞 게이트에서 남은 추적 상태를 믿지 않는다). 그 예외는 mouseDown 때
+ *   OS 커서가 무장 사건 때와 같은 자리일 때만 쓴다(cursorUnmoved). 바를 덮은 알림 위에서 커서가 움직였다면
+ *   바는 나감을 받지 못하므로, 위치 비교로 "멈춰 있었음"을 확인한다.
  * - 승인 = 바 안에서 왼쪽 mouseDown → mouseUp.
  */
 export class BarGate {
@@ -296,7 +298,7 @@ export class BarGate {
     }
   }
 
-  mouse(ev: MouseIn, now: number): GateResult {
+  mouse(ev: MouseIn, now: number, cursorUnmoved = true): GateResult {
     if (ev.type !== 'mouseDown' && ev.type !== 'mouseUp') {
       this.track(ev, now);
       return null;
@@ -318,7 +320,7 @@ export class BarGate {
         this.deferArm(now);
         return { kind: 'refused', reason: 'arming' };
       }
-      const dwelled = (this.movedAt !== null && now - this.movedAt >= DWELL_MS) || this.stillSinceArm;
+      const dwelled = (this.movedAt !== null && now - this.movedAt >= DWELL_MS) || (this.stillSinceArm && cursorUnmoved);
       if (!dwelled) {
         this.pressed = false;
         return { kind: 'refused', reason: 'dwell' };

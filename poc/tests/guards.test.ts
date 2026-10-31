@@ -66,6 +66,11 @@ describe('정적·구성 경계', () => {
     g.rearm(6000, true);
     down(6700);
     assert.deepEqual(up(6710), { kind: 'approve' });
+    // 멈춘 커서 예외는 OS 커서가 무장 사건 때 자리 그대로일 때만: 바를 덮은 알림 위에서 움직였다가(바는 나감을 못 받음)
+    // 알림이 사라지자마자 누른 클릭은 머무름으로 거부한다.
+    g.rearm(6800, true);
+    move(7400);
+    assert.deepEqual(g.mouse({ type: 'mouseDown', ...at, button: 'left' }, 7410, false), { kind: 'refused', reason: 'dwell' });
     // 바 밖으로 나가는 mouseMove는 나감으로 친다.
     g.rearm(7000, true);
     g.mouse({ type: 'mouseMove', x: 300, y: 200, movementX: 0, movementY: 9 }, 7100);
