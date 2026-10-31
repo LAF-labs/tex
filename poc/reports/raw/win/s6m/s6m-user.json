@@ -1,0 +1,108 @@
+{
+  "createdAsUser": true,
+  "inheritedDacl": {
+    "protected": false,
+    "aces": [
+      {
+        "type": "A",
+        "flags": [
+          "ID"
+        ],
+        "sid": "BA"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI",
+          "IO",
+          "ID"
+        ],
+        "sid": "BA"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "ID"
+        ],
+        "sid": "SY"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI",
+          "IO",
+          "ID"
+        ],
+        "sid": "SY"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "ID"
+        ],
+        "sid": "AU"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI",
+          "IO",
+          "ID"
+        ],
+        "sid": "AU"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "ID"
+        ],
+        "sid": "BU"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI",
+          "IO",
+          "ID"
+        ],
+        "sid": "BU"
+      }
+    ]
+  },
+  "checkBefore": {
+    "ok": false,
+    "problems": [
+      "inherited",
+      "extra_principal"
+    ]
+  },
+  "ensure": {
+    "ok": true,
+    "problems": []
+  },
+  "daclAfter": {
+    "protected": true,
+    "aces": [
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI"
+        ],
+        "sid": "SY"
+      },
+      {
+        "type": "A",
+        "flags": [
+          "OI",
+          "CI"
+        ],
+        "sid": "<user-sid>"
+      }
+    ]
+  }
+}

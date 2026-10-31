@@ -147,6 +147,21 @@ export async function readDacl(target: string): Promise<Dacl> {
   }
 }
 
+/** 소유자 SID. `icacls /save`에는 소유자가 없어 .NET으로 읽는다(PowerShell 기동 약 0.3초, PoC-1 실측). 경로는 환경 변수로 넘긴다. */
+export async function readOwner(target: string): Promise<string> {
+  const script = '$o = (Get-Acl -LiteralPath $env:SAX_ACL_TARGET).GetOwner([System.Security.Principal.SecurityIdentifier]); if ($o) { $o.Value }';
+  const { stdout } = await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: target } });
+  return stdout.trim();
+}
+
+/**
+ * 소유자는 DACL과 무관하게 DACL을 다시 쓸 수 있다(암묵적 WRITE_DAC). 다른 계정이 먼저 만든 폴더면 우리가 고쳐도 그 계정이 다시 연다(PoC-1 S6m 보조 볼륨).
+ * Administrators·SYSTEM은 소유권을 가져오는 특권이 이미 있어 소유자여도 더해지는 힘이 없으므로 받아들인다. 승격 상태에서 만든 폴더의 기본 소유자가 Administrators다.
+ */
+export function isTrustedOwner(owner: string, userSid: string): boolean {
+  return owner === userSid || owner === 'S-1-5-18' || owner === 'S-1-5-32-544';
+}
+
 const isSystem = (sid: string): boolean => sid === 'SY' || sid === 'S-1-5-18';
 
 class WindowsDirGuard implements DirGuard {
@@ -161,6 +176,8 @@ class WindowsDirGuard implements DirGuard {
     if (await findReparsePoint(dir)) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true });
     const sid = await this.userSid();
+    // 다른 계정 소유 폴더의 DACL은 고쳐 쓰지 않는다. 고쳐도 소유자가 다시 열 수 있다(실패 닫힘).
+    if (!isTrustedOwner(await readOwner(dir), sid)) return this.checkPrivate(dir);
     const icacls = windowsTool('icacls.exe');
     await run(icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F']);
     // 상속을 끊어도 명시 ACE(누가 직접 추가한 Users 읽기 등)는 남는다. 사용자·SYSTEM 밖은 지운다.
@@ -187,6 +204,7 @@ class WindowsDirGuard implements DirGuard {
     }
     if (!st.isDirectory()) problems.push('not_dir');
     const sid = await this.userSid();
+    if (!isTrustedOwner(await readOwner(dir), sid)) problems.push('not_owner');
     const dacl = await readDacl(dir);
     if (!dacl.protected || dacl.aces.some((a) => a.flags.includes('ID'))) problems.push('inherited');
     if (dacl.aces.some((a) => a.type !== 'A' || (a.sid !== sid && !isSystem(a.sid)))) problems.push('extra_principal');

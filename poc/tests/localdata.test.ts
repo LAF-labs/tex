@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, parseDacl, prepareLayout, readDacl, windowsTool } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, isTrustedOwner, parseDacl, prepareLayout, readDacl, readOwner, windowsTool } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -71,9 +71,26 @@ describe('경로와 접근 통제', () => {
     assert.deepEqual(parseDacl('').aces.map((a) => a.sid), ['?']);
   });
 
+  it('Windows 소유자 판정: 사용자·SYSTEM·Administrators만 받아들인다', () => {
+    const me = 'S-1-5-21-1-2-3-1001';
+    assert.equal(isTrustedOwner(me, me), true);
+    assert.equal(isTrustedOwner('S-1-5-18', me), true);
+    assert.equal(isTrustedOwner('S-1-5-32-544', me), true);
+    assert.equal(isTrustedOwner('S-1-5-21-1-2-3-1002', me), false, '다른 로컬 계정');
+    assert.equal(isTrustedOwner('', me), false, '소유자 없음');
+  });
+
+  it('Windows: 다른 계정 소유 폴더는 not_owner', { skip: !win }, async () => {
+    // 비승격 테스트에서는 다른 계정 소유 폴더를 만들 수 없다. TrustedInstaller 소유 시스템 폴더를 읽기만 한다.
+    const sysDir = process.env.SystemRoot ?? 'C:\\Windows';
+    assert.match(await readOwner(sysDir), /^S-1-5-80-/);
+    assert.ok((await dirGuard().checkPrivate(sysDir)).problems.includes('not_owner'));
+  });
+
   it('Windows: 거부 ACE·조건부 ACE도 잡고 기동 시 지운다', { skip: !win }, async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     assert.equal((await prepareLayout(root)).root.ok, true);
+    assert.match(await readOwner(root), /^S-1-5-21-/, '사용자가 만든 폴더의 소유자는 사용자');
     await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']); // Guests 쓰기 거부
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '거부 ACE 복구');

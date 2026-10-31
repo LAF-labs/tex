@@ -1,0 +1,16 @@
+{
+    "at":  "2026-10-31T19:12:16.3205429+09:00",
+    "manageBde":  "BitLocker 드라이브 암호화: 구성 도구 버전 10.0.26100\nCopyright (C) 2013 Microsoft Corporation. All rights reserved.\n\nC: 볼륨 []\n[OS 볼륨]\n\n    크기:                 930.46GB\n    BitLocker 버전:       없음\n    변환 상태:            완전 암호 해독됨\n    암호화된 비율:        0.0%\n    암호화 방법:          없음\n    보호 상태:            보호 해제\n    잠금 상태:            잠금 해제됨\n    ID 필드:              없음\n    키 보호기:            없음\n",
+    "bitLockerVolume":  {
+                            "MountPoint":  "C:",
+                            "VolumeType":  0,
+                            "VolumeStatus":  0,
+                            "ProtectionStatus":  0,
+                            "LockStatus":  0,
+                            "EncryptionPercentage":  0,
+                            "EncryptionMethod":  0
+                        },
+    "root":  "D:\\",
+    "rootSddl":  "D:(A;;FA;;;BA)(A;OICIIO;GA;;;BA)(A;;FA;;;SY)(A;OICIIO;GA;;;SY)(A;;0x1301bf;;;AU)(A;OICIIO;SDGXGWGR;;;AU)(A;;0x1200a9;;;BU)(A;OICIIO;GXGR;;;BU)",
+    "rootIcacls":  "D:\\ BUILTIN\\Administrators:(F)\n    BUILTIN\\Administrators:(OI)(CI)(IO)(F)\n    NT AUTHORITY\\SYSTEM:(F)\n    NT AUTHORITY\\SYSTEM:(OI)(CI)(IO)(F)\n    NT AUTHORITY\\Authenticated Users:(M)\n    NT AUTHORITY\\Authenticated Users:(OI)(CI)(IO)(M)\n    BUILTIN\\Users:(RX)\n    BUILTIN\\Users:(OI)(CI)(IO)(GR,GE)\n\n1 파일을 처리했으며 0 파일은 처리하지 못했습니다."
+}

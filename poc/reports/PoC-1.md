@@ -65,7 +65,7 @@ UAC가 켜진 관리자 계정은 평소 실행 토큰이 **비관리자**다(`A
 | pnpm | 12.11.2(`npm i -g`, 계정별) |
 | 네이티브 모듈 | `better-sqlite3-multiple-ciphers` 13.0.3은 패키지 안 `prebuilds/win32-x64.node`를 쓴다. 빌드 도구 불필요(VS Build Tools 2022·Python 3.14는 있음) |
 | Electron | 45.1.0. `pnpm install` 뒤 바이너리가 받아지지 않아 `node_modules/.pnpm/electron@45.1.0/node_modules/electron`에서 `node install.js`를 한 번 돌렸다 |
-| 결과 | `pnpm build`·`pnpm lint` 통과, `pnpm test` **117/117**(DACL 파서·복구 테스트 2건 추가 후), e2e **14/14**(OS 배율 150%, 앱 배율 강제 125%·150% 각 14/14), 앱 스모크 통과. 원자료 [raw/win/](raw/win/) |
+| 결과 | `pnpm build`·`pnpm lint` 통과, `pnpm test` **119/119**(DACL 파서·복구, 소유자 판정 테스트 4건 추가 후), e2e **14/14**(OS 배율 150%, 앱 배율 강제 125%·150% 각 14/14), 앱 스모크 통과(소유자 확인 추가 뒤 다시 확인). 원자료 [raw/win/](raw/win/) |
 
 Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 
@@ -76,9 +76,10 @@ Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 | (잠재) 한글 사용자 이름에서 DACL 판정 오류 | `icacls` 출력의 계정 이름은 콘솔 코드 페이지(CP949) | `icacls /save`의 SDDL로 SID 비교(`readDacl`) |
 | (잠재) 누가 직접 더한 ACE가 복구 뒤에도 남음 | `/inheritance:r`은 상속 ACE만 지운다 | 사용자·SYSTEM 밖 SID를 `/remove`로 제거, 테스트에 Users 읽기 ACE 복구 추가 |
 | (잠재) 조건부 ACE(`XA`, Everyone 허용 등)를 못 보고 통과 · 무결성 레이블(`S:`)을 다른 계정으로 오탐 | SDDL을 필드 6개짜리 정규식으로 읽었다 | 괄호 단위 파서(`parseDacl`), 읽지 못한 ACE·null DACL은 실패로. `icacls /remove`가 콜백 ACE를 못 지우므로 남으면 DACL 전체를 바꾼다(.NET `Directory.SetAccessControl`, 비승격 가능. `icacls /restore`는 SeRestorePrivilege가 필요해 못 씀) |
+| (잠재) 다른 계정이 먼저 만든 폴더를 전용으로 판정 | Windows `checkPrivate`가 소유자를 보지 않았다(POSIX는 `not_owner`를 본다). 소유자는 암묵적 `WRITE_DAC`로 DACL을 다시 열 수 있다(§6 (2)) | 소유자 SID를 읽어(`readOwner`, `icacls /save`에는 없어 .NET `Get-Acl`) 사용자·SYSTEM·Administrators가 아니면 `not_owner`. `ensurePrivate`는 그런 폴더의 DACL을 고치지 않고 실패로 돌려준다 |
 | 재분석 지점 테스트 EPERM | Windows 심볼릭 링크는 개발자 모드·권한 필요 | 테스트를 권한 없이 만들 수 있는 정션으로 |
 
-## 6. S6m 측정(P0-1 흡수분) — (1) ✅ 관리자 계정 비승격 / (2) ⏳
+## 6. S6m 측정(P0-1 흡수분) — (1) ✅ 관리자 계정(비승격·승격 대조) / (2) ✅ / 표준 계정 ⏳
 
 승격하지 않은 토큰으로(관리자 계정 비승격, 이어서 표준 사용자 계정) (1) BitLocker·장치 암호화 상태 읽기 가능 여부, (2) 보조 볼륨 새 폴더의 기본 ACL을 기록한다(D19 A-19·A-25).
 
@@ -92,9 +93,23 @@ Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 | `Get-BitLockerVolume`, WMI `Win32_EncryptableVolume` | 거부 |
 | `fsutil fsinfo volumeinfo` | 거부 |
 
-비관리자로 상태를 읽는 경로는 Shell 속성이다(D07 §1 온보딩 안내에 쓸 후보). 값 `0`이 "꺼짐"인지 "해당 없음"(Home에 장치 암호화가 켜지지 않은 상태)인지는 승격 `manage-bde -status C:` 결과와 한 번 대조해야 확정된다(사람이 실행). 표준 사용자 계정에서 같은 표를 다시 채운다.
+비관리자로 상태를 읽는 경로는 Shell 속성이다(D07 §1 온보딩 안내에 쓸 후보).
 
-(2) 이 기기에는 `C:` 하나뿐이라 보조 볼륨이 없다. VHDX 하나를 만들어 붙이거나(관리자 승격, 사람이 실행) USB 드라이브를 NTFS로 포맷해 측정한다.
+승격 대조(2026-10-31, `tests/s6m-elevated.ps1`, 관리자 승인 1회, 원자료 [raw/win/s6m/](raw/win/s6m/)): `manage-bde -status C:`는 "BitLocker 버전 없음, 완전 암호 해독됨, 보호 해제, 키 보호기 없음"이었다. `Get-BitLockerVolume`도 `VolumeStatus 0`·`ProtectionStatus 0`이었다. 따라서 이 기기에서 Shell 속성 `0`은 "BitLocker가 한 번도 켜지지 않은 볼륨"이다. 제품 온보딩은 켜짐(`1`)으로 확인된 값만 보호로 보고, 그 밖의 값은 모두 "보호 안 됨"으로 안내한다. 켜진 볼륨에서 나오는 값은 이 기기로 확인하지 못했다. 표준 사용자 계정에서 같은 표를 다시 채운다.
+
+(2) 보조 볼륨: 이 기기에는 `C:` 하나뿐이다. 같은 스크립트로 64MB VHDX를 만들어 GPT·NTFS로 포맷해 붙이고(`D:`) 측정한 뒤 분리·삭제했다.
+
+| 확인 | 결과 |
+|---|---|
+| 새 NTFS 볼륨 루트 기본 DACL | `Administrators`·`SYSTEM` F, **`Authenticated Users` 수정(M, 하위 상속)**, `Users` 읽기·실행. 보호 플래그 없음 |
+| 사용자가(비승격) 루트 아래 만든 폴더 | 위 ACE를 그대로 상속한다. 다른 로컬 계정도 수정할 수 있다. `checkPrivate` → `inherited`·`extra_principal` |
+| 그 폴더에 `ensurePrivate`(비승격) | 성공. `D:PAI(SY)(사용자)`로 바뀌고 다시 확인해도 통과 |
+
+A-19(사용자 지정 폴더에서 T9 불성립)는 실제로 일어난다. 앱이 ACL을 직접 설정하는 설계(D07 §1.1)가 보조 볼륨에서도 필요하고, 비승격으로 동작한다.
+
+**발견 → 수정**: 보조 볼륨 루트에서는 `Authenticated Users`가 폴더를 만들 수 있다. 그래서 다른 계정이 같은 경로를 먼저 만들어 두면 그 계정이 소유자로 남는다. 우리 사용자가 DACL을 고쳐도 소유자의 암묵적 `WRITE_DAC`로 다시 열 수 있다. Windows `checkPrivate`가 소유자를 보지 않아 이것을 놓쳤다. 이제 소유자가 사용자·SYSTEM·Administrators가 아니면 `not_owner`로 거부한다(§5 수정 표).
+- Administrators를 받아들이는 이유: 승격 상태에서 만든 폴더의 기본 소유자가 Administrators다. 또 관리자는 소유권을 가져오는 특권이 이미 있어 소유자여도 더해지는 힘이 없다.
+- 시험 한계: 비승격 테스트로는 다른 계정 소유 폴더를 만들 수 없다. 그래서 TrustedInstaller 소유 `%SystemRoot%`를 읽기만 해 `not_owner`를 확인했고, 판정 함수는 단위 테스트로 확인했다.
 
 참고: 이 기기 `%TEMP%`의 상속 ACL에는 소유자 말고도 다른 로컬 SID(RID 1002)·Codex 샌드박스 SID·AppContainer 능력 SID가 있다. 앱 루트에서 상속을 끊는 설계(D07 §1.1)가 실제로 필요하다. 앱 루트 `%LOCALAPPDATA%\SovereignAX`는 앱 스모크 뒤 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`, 색인 제외 속성 `I`였다.
 
@@ -135,5 +150,5 @@ PoC-3(11-05) 전에 공동인증서는 반드시 있어야 하고, 간편인증�
 - [ ] 표준 사용자 계정 만들기(사람)와 재확인 실행(§5 테스트, §6, PoC-4-5 §5 다른 계정 접근 거부)
 - [x] Chrome stable(§3)
 - [x] 빌드·테스트 통과(§5, 관리자 계정)
-- [ ] S6m 기록(§6): (1) 관리자 계정 비승격 완료, 승격 대조·표준 계정·(2) 보조 볼륨 남음
+- [ ] S6m 기록(§6): (1) 관리자 계정 비승격·승격 대조, (2) 보조 볼륨(VHDX) 완료. 표준 계정 재확인 남음
 - [ ] 인증수단 수령 일정 표 채움(§8)
