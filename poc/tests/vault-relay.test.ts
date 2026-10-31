@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { dirGuard } from '@sax/platform';
 import { scanDir, testSecret, variantsOf } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
 import { startHarness, testPolicy, type Harness } from './harness.ts';
@@ -409,3 +410,54 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
   });
 });
 
+
+describe('launch 전 전용 프로필 폴더 확인(D05 §3.1)', () => {
+  const profileEvent = (h: Harness) => h.log.lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((e) => e.code === 'vault.profile_dir_problem');
+
+  it('프로필 자리에 파일·링크가 있으면 치우고 새 폴더로 기동한다', async () => {
+    for (const kind of ['file', 'link'] as const) {
+      const h = await startHarness();
+      const outside = await fs.mkdtemp(path.join(path.dirname(h.paths.root), 'sax-outside-'));
+      try {
+        await fs.rm(h.paths.chromeProfile, { recursive: true });
+        if (kind === 'file') await fs.writeFile(h.paths.chromeProfile, 'x');
+        else await fs.symlink(outside, h.paths.chromeProfile, process.platform === 'win32' ? 'junction' : 'dir');
+        await h.client.rpc('browser.launch');
+        assert.ok(h.vault.chromePid, kind);
+        assert.equal((await fs.lstat(h.paths.chromeProfile)).isDirectory(), true);
+        const ev = profileEvent(h);
+        assert.equal(ev?.problems, kind === 'file' ? 'not_dir' : 'reparse_point');
+        assert.equal(ev?.reason, ev?.problems);
+        assert.equal(ev?.ok, true);
+        assert.match(String(ev?.setAside), /^chrome-profile\.untrusted-\d+-[0-9a-f]{6}$/);
+        assert.deepEqual(await fs.readdir(outside), [], `${kind}: 링크 대상에 Chrome 프로필이 쓰이지 않는다`);
+      } finally {
+        await h.close();
+        await fs.rm(outside, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('사용자 전용으로 만들 수 없으면 Chrome을 띄우지 않는다', async () => {
+    const real = dirGuard();
+    const notOwner = { ok: false, problems: ['not_owner' as const] };
+    const isProfile = (d: string) => path.basename(d) === 'chrome-profile';
+    const h = await startHarness({
+      dirGuard: {
+        checkPrivate: async (d) => (isProfile(d) ? notOwner : real.checkPrivate(d)),
+        ensurePrivate: async (d) => (isProfile(d) ? notOwner : real.ensurePrivate(d)),
+        excludeFromIndex: (d) => real.excludeFromIndex(d),
+      },
+    });
+    try {
+      await assert.rejects(h.client.rpc('browser.launch'), /chrome profile not private: not_owner/);
+      assert.equal(h.vault.chromePid, undefined);
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+      const ev = profileEvent(h);
+      assert.deepEqual([ev?.ok, ev?.reason, ev?.setAside], [false, 'not_owner', undefined], '새 폴더도 맞지 않아 되돌리고 기동하지 않는다');
+      assert.deepEqual((await fs.readdir(h.paths.root)).filter((n) => n.includes('.untrusted-')), []);
+    } finally {
+      await h.close();
+    }
+  });
+});

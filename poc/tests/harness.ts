@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { MessageChannel } from 'node:worker_threads';
-import { FileEventLog, prepareLayout, tapPort, wrapPort, type AppPaths } from '@sax/platform';
+import { FileEventLog, prepareLayout, tapPort, wrapPort, type AppPaths, type DirGuard } from '@sax/platform';
 import { LeakCapture, MemoryKeyStore, RELAY_DENIED_METHODS, RELAY_DOMAIN_METHOD_ALLOWLIST, Vault, type RelayPolicy } from '@sax/vault';
 import { VaultClient } from '@sax/engine';
 
@@ -33,13 +33,13 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function startHarness(opts: { policy?: RelayPolicy; headful?: boolean } = {}): Promise<Harness> {
+export async function startHarness(opts: { policy?: RelayPolicy; headful?: boolean; dirGuard?: DirGuard } = {}): Promise<Harness> {
   const base = await fs.realpath(os.tmpdir());
   const root = await fs.mkdtemp(path.join(base, 'sax-poc-'));
   const { paths } = await prepareLayout(root);
   const log = new FileEventLog(paths.logs, 'vault');
   const capture = new LeakCapture();
-  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS });
+  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS, dirGuard: opts.dirGuard });
   const ch = new MessageChannel();
   // 엔진 포트 IPC 캡처: 금고 쪽에서 양방향을 기록한다(엔진이 받은 CDP 이벤트 스트림 포함).
   vault.attachPort('engine', tapPort(wrapPort(ch.port1, 'node'), (dir, m) => capture.add(`ipc.engine.${dir}`, m)));

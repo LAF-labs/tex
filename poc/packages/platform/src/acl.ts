@@ -8,7 +8,8 @@ const run = promisify(execFile);
 
 // D07 §1.1: 루트 DACL = 소유자 + SYSTEM, 상속 차단. 매 기동 시 확인하고 다르면 복구·경고.
 // D05 §3.1: 경로의 어느 구성 요소도 재분석 지점(심볼릭 링크·정션)이 아니어야 한다.
-export type AclProblem = 'missing' | 'not_dir' | 'reparse_point' | 'not_owner' | 'others_access' | 'inherited' | 'extra_principal';
+// unreadable: 확인·복구 도구가 그 폴더에서 실패했다(접근 거부 등). 부모 확인은 통과할 때만 쓴다(preparePrivateDir).
+export type AclProblem = 'missing' | 'not_dir' | 'reparse_point' | 'not_owner' | 'others_access' | 'inherited' | 'extra_principal' | 'unreadable';
 
 export interface AclCheck {
   ok: boolean;
@@ -46,6 +47,8 @@ class PosixDirGuard implements DirGuard {
     const rp = await findReparsePoint(dir);
     if (rp) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+    // macOS ACL 항목(누구나 거부·허용)은 모드 비트와 따로 남는다. 지우지 않으면 extra_principal이 남고, 거부 항목은 이름 바꾸기도 막는다(실측).
+    if (process.platform === 'darwin') await run('/bin/chmod', ['-N', dir]);
     await fs.chmod(dir, 0o700);
     return this.checkPrivate(dir);
   }

@@ -1,4 +1,4 @@
-import { dirGuard, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
+import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
 import { EXTENSION_ALLOWLIST, SECRET_ORIGINS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS } from './constants.ts';
 import { findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
@@ -126,7 +126,10 @@ export class Vault {
     const rootCheck = await guard.checkPrivate(this.opts.paths.root);
     if (!rootCheck.ok) throw new Error(`app root not private: ${rootCheck.problems.join(',')}`);
     const profileDir = this.opts.paths.chromeProfile;
-    await guard.ensurePrivate(profileDir);
+    // 맞으면 그대로 두고, 권한만 틀리면 고치고, 우리 것이 아니면(다른 계정 소유·링크·파일) 치우고 새로 만든다. 그래도 아니면 기동하지 않는다(D05 §3.1).
+    const profile = await preparePrivateDir(profileDir, guard);
+    if (profile.before.length) this.opts.log.event('vault.profile_dir_problem', { problems: profile.before.join(':'), reason: profile.reason?.join(':'), setAside: profile.setAside, ok: profile.check.ok });
+    if (!profile.check.ok) throw new Error(`chrome profile not private: ${profile.check.problems.join(',')}`);
     await writeProfileSettings(profileDir);
     this.chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
     this.chrome.conn.on('close', () => this.opts.log.event('vault.chrome_closed'));

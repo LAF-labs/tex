@@ -57,7 +57,7 @@
 
 | 항목 | 결과 | 남은 것 |
 |---|---|---|
-| 루트 DACL(소유자 + SYSTEM, 상속 차단) | ✅ 실제 루트 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`. 판정을 SID 기준(`icacls /save` SDDL, 괄호 단위 파서)으로 바꾸고, 직접 더한 ACE(Users 읽기)·거부 ACE·조건부 ACE도 잡아 복구하도록 고쳤다. 다른 계정 소유 폴더는 `not_owner`로 거부한다(PoC-1 §5·§6) | ⏳ 다른 사용자 계정에서 접근 거부(표준 계정 만든 뒤) |
+| 루트 DACL(소유자 + SYSTEM, 상속 차단) | ✅ 실제 루트 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`. 판정을 SID 기준(`icacls /save` SDDL, 괄호 단위 파서)으로 바꾸고, 직접 더한 ACE(Users 읽기)·거부 ACE·조건부 ACE도 잡아 복구하도록 고쳤다. 다른 계정 소유 폴더는 `not_owner`로 거부한다(PoC-1 §5·§6). 전용 프로필 폴더는 맞으면 그대로 두고, 권한만 틀리면 고치고, 우리 것이 아니면 치우고 새로 만든다. 그래도 아니면 기동하지 않는다(PoC-1 §5.1, Windows 재실행 필요) | ⏳ 다른 사용자 계정에서 접근 거부(표준 계정 만든 뒤) |
 | 검색 색인 제외 | ✅ `attrib` 속성 `I`(테스트에 확인 추가) | — |
 | 재분석 지점(정션) | ✅ 정션이 `isSymbolicLink()`로 잡혀 `reparse_point` 거부(테스트를 정션으로 바꿈) | — |
 | Chrome 경로 후보 | ✅ `%ProgramFiles%` 설치 탐지·기동(156.0.8078.47) | `(x86)`·`%LOCALAPPDATA%` 설치 기기 없음 |

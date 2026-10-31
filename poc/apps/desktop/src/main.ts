@@ -145,12 +145,21 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
 }
 
 app.whenReady().then(async () => {
-  const layout = await prepareLayout(root);
+  // 준비 중 예외(이름 바꾸기 거부 등)도 창 없이 멈추지 않고 알린 뒤 끝낸다.
+  const layout = await prepareLayout(root).catch((e: Error) => e);
+  if (layout instanceof Error) {
+    dialog.showErrorBox('저장소 권한', `앱 폴더를 준비하지 못했습니다: ${layout.message}`);
+    app.quit();
+    return;
+  }
   if (!layout.root.ok) {
     dialog.showErrorBox('저장소 권한', `앱 폴더 권한을 사용자 전용으로 설정하지 못했습니다: ${layout.root.problems.join(', ')}`);
     app.quit();
     return;
   }
+  // 치운 항목은 원인을 나중에 볼 수 있게 로그 파일에 남긴다(main 기본 로그는 메모리 전용).
+  const layoutLog = new FileEventLog(layout.paths.logs, 'main');
+  for (const name of layout.setAside) layoutLog.event('main.layout_set_aside', { name });
   serveStatic();
   startProcesses();
   ipcMain.handle('sax', async (e, req: { method?: unknown; params?: unknown }) => {

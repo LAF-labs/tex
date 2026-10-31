@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, isTrustedOwner, parseDacl, prepareLayout, readDacl, readOwner, windowsTool } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -114,6 +114,182 @@ describe('경로와 접근 통제', () => {
     assert.equal(await findReparsePoint(path.join(base, 'link', 'SovereignAX')), path.join(base, 'link'));
     const r = await dirGuard().ensurePrivate(path.join(base, 'link', 'SovereignAX'));
     assert.deepEqual(r, { ok: false, problems: ['reparse_point'] });
+  });
+
+  it('prepareLayout: 하위 폴더 자리의 파일·링크는 치우고 새로 만든다, staging 링크 대상은 지우지 않는다', async () => {
+    const base = await tmpRoot();
+    const root = path.join(base, 'SovereignAX');
+    const { paths } = await prepareLayout(root);
+    const outside = path.join(base, 'outside');
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, 'keep.txt'), 'keep');
+    await fs.rm(paths.staging, { recursive: true });
+    await fs.symlink(outside, paths.staging, win ? 'junction' : 'dir');
+    await fs.rm(paths.db, { recursive: true });
+    await fs.writeFile(paths.db, 'x');
+    const r = await prepareLayout(root);
+    assert.equal(r.root.ok, true);
+    assert.equal(r.setAside.length, 2);
+    assert.equal(r.stagingCleared, 0);
+    for (const p of [paths.staging, paths.db]) assert.equal((await fs.lstat(p)).isDirectory(), true);
+    assert.equal(await fs.readFile(path.join(outside, 'keep.txt'), 'utf8'), 'keep', '링크 대상은 그대로');
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('preparePrivateDir: 맞으면 손대지 않고, 권한만 틀리면 제자리에서 고친다', async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    const real = dirGuard();
+    let ensures = 0;
+    const spy: DirGuard = {
+      checkPrivate: (d) => real.checkPrivate(d),
+      ensurePrivate: (d) => (ensures++, real.ensurePrivate(d)),
+      excludeFromIndex: (d) => real.excludeFromIndex(d),
+    };
+    await preparePrivateDir(paths.chromeProfile, spy); // Windows는 여기서 루트에서 받은 상속 ACE를 끊는다
+    ensures = 0;
+    const again = await preparePrivateDir(paths.chromeProfile, spy);
+    assert.deepEqual([again.check.ok, again.before, again.setAside, ensures], [true, [], undefined, 0], '맞으면 DACL을 다시 쓰지 않는다');
+    if (win) await run(windowsTool('icacls.exe'), [paths.chromeProfile, '/grant', '*S-1-5-32-545:(OI)(CI)R']);
+    else await fs.chmod(paths.chromeProfile, 0o755);
+    const fixed = await preparePrivateDir(paths.chromeProfile, spy);
+    assert.equal(fixed.check.ok, true);
+    assert.ok(fixed.before.length > 0, fixed.before.join());
+    assert.deepEqual([fixed.setAside, ensures], [undefined, 1], '제자리 복구');
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('preparePrivateDir: 폴더 자리의 파일·링크(정션)는 따라가지 않고 치운 뒤 새로 만든다', async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    const outside = path.join(base, 'outside');
+    await fs.mkdir(outside);
+    await fs.writeFile(path.join(outside, 'keep.txt'), 'keep');
+    for (const kind of ['file', 'link', 'dangling'] as const) {
+      await fs.rm(paths.chromeProfile, { recursive: true, force: true });
+      if (kind === 'file') await fs.writeFile(paths.chromeProfile, 'x');
+      else await fs.symlink(kind === 'link' ? outside : path.join(base, 'gone'), paths.chromeProfile, win ? 'junction' : 'dir');
+      const r = await preparePrivateDir(paths.chromeProfile);
+      assert.equal(r.check.ok, true, kind);
+      assert.deepEqual(r.before, [kind === 'file' ? 'not_dir' : 'reparse_point'], kind);
+      const moved = await fs.lstat(path.join(paths.root, r.setAside!));
+      assert.equal(kind === 'file' ? moved.isFile() : moved.isSymbolicLink(), true, `${kind}: 원래 항목을 그대로 옮긴다`);
+      assert.equal((await fs.lstat(paths.chromeProfile)).isDirectory(), true);
+    }
+    assert.equal(await fs.readFile(path.join(outside, 'keep.txt'), 'utf8'), 'keep', '링크 대상은 그대로');
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  // 비승격·비루트로는 다른 계정 소유 폴더를 만들 수 없다. 표식 파일이 든 폴더를 다른 계정 소유로 보는 대역으로 흐름을 확인한다.
+  const NOT_OWNER: AclCheck = { ok: false, problems: ['not_owner'] };
+  const planted = (d: string) => fs.access(path.join(d, 'planted')).then(() => true, () => false);
+
+  it('preparePrivateDir: 다른 계정 소유 폴더는 고치려 하지 않고 치운 뒤 새로 만든다', async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    await fs.writeFile(path.join(paths.chromeProfile, 'planted'), 'x');
+    const real = dirGuard();
+    const ensured: string[] = [];
+    const guard: DirGuard = {
+      checkPrivate: async (d) => ((await planted(d)) ? NOT_OWNER : real.checkPrivate(d)),
+      ensurePrivate: async (d) => (ensured.push(d), (await planted(d)) ? NOT_OWNER : real.ensurePrivate(d)),
+      excludeFromIndex: (d) => real.excludeFromIndex(d),
+    };
+    const r = await preparePrivateDir(paths.chromeProfile, guard);
+    assert.deepEqual([r.check.ok, r.before], [true, ['not_owner']]);
+    assert.equal(ensured.length, 1, '다른 계정 소유 폴더에는 제자리 복구를 하지 않고 새 폴더에만 한다');
+    assert.ok(await planted(path.join(paths.root, r.setAside!)), '치운 폴더 내용은 그대로');
+    assert.equal(await planted(paths.chromeProfile), false);
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('preparePrivateDir: 이 폴더에서만 도구가 실패하면(접근 거부) 우리 것이 아닌 것으로 보고 치운다', async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    const real = dirGuard();
+    const denied = () => Promise.reject(new Error('icacls: Access is denied'));
+    // Windows에서 원래 소유자 전용 DACL(복원·계정 재생성)이면 확인이 예외로 끝난다. 우리 소유라도 OW ACE가 막으면 복구가 예외로 끝난다.
+    for (const where of ['check', 'ensure'] as const) {
+      await fs.writeFile(path.join(paths.chromeProfile, 'planted'), 'x');
+      const guard: DirGuard = {
+        checkPrivate: async (d) => ((await planted(d)) ? (where === 'check' ? denied() : { ok: false, problems: ['extra_principal'] }) : real.checkPrivate(d)),
+        ensurePrivate: async (d) => ((await planted(d)) ? denied() : real.ensurePrivate(d)),
+        excludeFromIndex: (d) => real.excludeFromIndex(d),
+      };
+      const r = await preparePrivateDir(paths.chromeProfile, guard);
+      assert.deepEqual([r.check.ok, r.before, r.reason], [true, [where === 'check' ? 'unreadable' : 'extra_principal'], ['unreadable']], where);
+      assert.ok(await planted(path.join(paths.root, r.setAside!)), `${where}: 치운 폴더 내용은 그대로`);
+    }
+    // 한 번만 실패한 도구(PowerShell 기동 실패 등)로는 치우지 않는다.
+    await fs.writeFile(path.join(paths.chromeProfile, 'keep'), 'x');
+    let fails = 1;
+    const flaky: DirGuard = {
+      checkPrivate: async (d) => (d === paths.chromeProfile && fails-- > 0 ? denied() : real.checkPrivate(d)),
+      ensurePrivate: (d) => real.ensurePrivate(d),
+      excludeFromIndex: (d) => real.excludeFromIndex(d),
+    };
+    const r = await preparePrivateDir(paths.chromeProfile, flaky);
+    assert.deepEqual([r.check.ok, r.before, r.setAside], [true, ['unreadable'], undefined]);
+    await fs.access(path.join(paths.chromeProfile, 'keep'));
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('preparePrivateDir: 부모가 사용자 전용이 아니거나 새 폴더도 맞지 않으면 되돌리고 실패, 도구 고장은 예외 그대로', async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    const child = paths.chromeProfile;
+    await fs.writeFile(path.join(child, 'planted'), 'x');
+    const OK: AclCheck = { ok: true, problems: [] };
+    const guard = (check: (d: string) => AclCheck | Promise<AclCheck>, ensure: () => AclCheck | Promise<AclCheck>): DirGuard => ({
+      checkPrivate: async (d) => check(d),
+      ensurePrivate: async () => ensure(),
+      excludeFromIndex: async () => {},
+    });
+    const untrusted = async () => (await fs.readdir(paths.root)).filter((n) => n.startsWith('chrome-profile.untrusted-'));
+    const parentOpen = await preparePrivateDir(child, guard(() => NOT_OWNER, () => NOT_OWNER));
+    assert.deepEqual([parentOpen.check.ok, parentOpen.setAside], [false, undefined], '부모가 사용자 전용이 아니면 치우지 않는다');
+    const stillForeign = await preparePrivateDir(child, guard((d) => (d === child ? NOT_OWNER : OK), () => NOT_OWNER));
+    assert.deepEqual([stillForeign.check.ok, stillForeign.reason, stillForeign.setAside], [false, ['not_owner'], undefined], '새 폴더도 맞지 않으면 되돌린다');
+    // 쓰기 도구만 막힌 환경(EDR 등): 확인은 되는데 복구가 예외. 새 폴더도 같은 예외면 원래 프로필을 되돌려 놓고 예외를 낸다.
+    const aclOff: AclCheck = { ok: false, problems: ['extra_principal'] };
+    const writeBlocked = () => Promise.reject(new Error('icacls blocked'));
+    await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), writeBlocked)), /icacls blocked/);
+    assert.ok(await planted(child), '원래 프로필이 제자리에 있다');
+    assert.deepEqual(await untrusted(), [], '되돌렸으므로 쌓이지 않는다');
+    // 제자리 복구가 예외 없이 실패를 돌려주면 새 폴더도 같은 방법으로 고치게 되므로 치우지 않는다.
+    const stuck = await preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), () => aclOff));
+    assert.deepEqual([stuck.check.ok, stuck.setAside], [false, undefined]);
+    // 도구가 부모에서도 실패하면(PowerShell 차단 등) 폴더 탓이 아니다. 치우지 않고 예외를 그대로 낸다.
+    const broken = () => Promise.reject(new Error('powershell blocked'));
+    await assert.rejects(preparePrivateDir(child, guard(broken, () => OK)), /powershell blocked/);
+    await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? broken() : NOT_OWNER), () => OK)), /powershell blocked/, '부모가 사용자 전용이 아니면 원래 예외');
+    assert.ok(await planted(child));
+    assert.deepEqual(await untrusted(), []);
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('macOS: 프로필의 ACL 항목(누구나 거부)은 제자리에서 지운다', { skip: process.platform !== 'darwin' }, async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    await run('/bin/chmod', ['+a', 'everyone deny delete', paths.chromeProfile]);
+    assert.deepEqual((await dirGuard().checkPrivate(paths.chromeProfile)).problems, ['extra_principal']);
+    const r = await preparePrivateDir(paths.chromeProfile);
+    assert.deepEqual([r.check.ok, r.before, r.setAside], [true, ['extra_principal'], undefined]);
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
+  it('Windows: 우리를 막는 DACL(OWNER RIGHTS로 소유자 권한 제거)인 폴더는 치우고 새로 만든다', { skip: !win }, async () => {
+    const base = await tmpRoot();
+    const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
+    // SYSTEM만 전체, 소유자에게는 SYNCHRONIZE·FILE_WRITE_ATTRIBUTES만. 우리 소유여도 READ_CONTROL·WRITE_DAC가 없어 icacls·Get-Acl이 실패한다.
+    // FILE_WRITE_ATTRIBUTES는 정리용이다(libuv 1.48+ rmdir이 이 권한으로 연다). 우리에게 아무것도 주지 않는 실제 다른 계정 폴더는 PoC-1 §5.1 확인 항목.
+    const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;SY)(A;;0x100100;;;OW)', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
+    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: paths.chromeProfile } });
+    await assert.rejects(dirGuard().checkPrivate(paths.chromeProfile), '확인 도구가 이 폴더에서 실패한다');
+    const r = await preparePrivateDir(paths.chromeProfile);
+    assert.deepEqual([r.check.ok, r.before, r.reason], [true, ['unreadable'], ['unreadable']]);
+    assert.ok(r.setAside);
+    await fs.rm(base, { recursive: true, force: true }); // 치운 빈 폴더: DELETE는 부모의 FILE_DELETE_CHILD, 나머지는 OW ACE로
   });
 });
 
