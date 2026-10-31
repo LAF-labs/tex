@@ -1,7 +1,7 @@
 # PoC-4 금고 최소판 · PoC-5 로컬 데이터 — 결과
 
 - 날짜: 2026-10-28 · 브랜치 `claude/poc-vault-localdata-d175a0` · 폐기 전제 코드(ADR-017)
-- 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 검증은 아직 하지 않았다**(PoC-1 VM 준비 후 §5 목록대로 다시 확인).
+- 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 재확인은 2026-10-31 PoC-1 실기기(관리자 계정 비승격)에서 했다**(§5, [PoC-1.md](PoC-1.md) §5). 표준 사용자 계정 재확인은 남았다.
 - 전체 테스트: `cd poc && pnpm test` → 40건 통과(PR #1 리뷰 회귀 7건 포함). Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
 - S6b 상세: [S6b.md](S6b.md)
 
@@ -51,17 +51,20 @@
 - **Windows 11 재확인(PoC-1 후)**: §5.
 - PoC-6 연결점: R-C1 본문 대조(`commit.arm`), `Fetch.enable` 패턴을 `manifest.commitEndpoints`에 묶기, 게이트 카드를 엔진 신뢰 계획값으로 만들기(`approval.demo` 대체), LocalApproval 키를 금고와 교환.
 
-## 5. Windows 전용 부분(인터페이스만, 미검증)
+## 5. Windows 전용 부분 — Windows 11 Home 25H2 x64 실기기, 2026-10-31
 
-| 항목 | 현재 | 확인할 것 |
+원자료 [raw/win/](raw/win/). ✅ 확인 · ⚠️ 설계와 다름 · ⏳ 남음.
+
+| 항목 | 결과 | 남은 것 |
 |---|---|---|
-| 루트 DACL(소유자 + SYSTEM, 상속 차단) | `icacls /inheritance:r /grant:r` 구현, 미실행 | 설정·재확인, 다른 사용자 계정에서 접근 거부 |
-| 검색 색인 제외 | `attrib +I` 구현, 미실행 | 속성 확인 |
-| 재분석 지점(정션) | `lstat().isSymbolicLink()`(Node는 정션도 링크로 보고) | 정션 실제 거부 |
-| Chrome 경로 후보 | `%ProgramFiles%`·`%ProgramFiles(x86)%`·`%LOCALAPPDATA%` | 설치 위치별 탐지 |
-| Credential Manager(`@napi-rs/keyring` 바이트 API) | macOS Keychain에서 `setSecret/getSecret` 동작 확인 | 지속성 `LOCAL_MACHINE`(S10b) |
-| 파이프 기동·중계 | macOS 확인 | 같은 테스트(`pnpm test`)를 Windows에서 실행 |
-| 승인 창 `before-mouse-event` 좌표·DPI | macOS 확인 | 배율 125%/150%에서 버튼 판정 |
+| 루트 DACL(소유자 + SYSTEM, 상속 차단) | ✅ 실제 루트 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`. 판정을 SID 기준(`icacls /save` SDDL)으로 바꾸고, 직접 더한 ACE(Users 읽기)도 복구하도록 고쳤다(PoC-1 §5) | ⏳ 다른 사용자 계정에서 접근 거부(표준 계정 만든 뒤) |
+| 검색 색인 제외 | ✅ `attrib` 속성 `I`(테스트에 확인 추가) | — |
+| 재분석 지점(정션) | ✅ 정션이 `isSymbolicLink()`로 잡혀 `reparse_point` 거부(테스트를 정션으로 바꿈) | — |
+| Chrome 경로 후보 | ✅ `%ProgramFiles%` 설치 탐지·기동(156.0.8078.47) | `(x86)`·`%LOCALAPPDATA%` 설치 기기 없음 |
+| Credential Manager(`@napi-rs/keyring` 바이트 API) | ✅ 저장·재사용 동작(`db-key.SovereignAX`, 32B). ⚠️ 지속성이 `CRED_PERSIST_ENTERPRISE`(3)다. 설계(S10b)는 `LOCAL_MACHINE`. 도메인 로밍 프로필이면 열쇠가 다른 PC로 따라간다 | Phase 1 키체인 어댑터(M1-3)에서 `CredWriteW` 직접 호출(지속성 2)로 바꿀지 결정. 보드 질문 |
+| 파이프 기동·중계 | ✅ `pnpm test` 115/115(S6b 6/6 포함). 차이 1건: 비밀 창 활성 중 엔진에 `Inspector.workerScriptLoaded`(인자 없음)가 1회 전달됐다(Mac 0회). 값은 없고 누출 스캐너 0건 | 허용 목록에서 이 이벤트를 활성 창 동안 막을지 판단 |
+| 승인 창 `before-mouse-event` 좌표·DPI | ✅ OS 배율 150%(2560×1440)에서 e2e 14/14, 앱 배율 강제 125%·150%에서도 14/14 | ADR-020으로 제품에서는 별도 승인 창이 없어진다. 대체 승인 근거 재설계 때 다시 잰다 |
+| S6e 저장 제안·자동완성 꺼짐 | ⏳ 사람이 화면으로 확인 | 전용 프로필에서 로그인 폼 제출 후 저장 제안이 뜨지 않는지 |
 
 ## 6. 앱 스모크가 만든 것(개발기)
 

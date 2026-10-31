@@ -4,7 +4,7 @@
 - 환경: macOS(arm64), 설치 Chrome **156.0.8078.73**, Playwright(playwright-core) **1.64.1**, Node 26 / Electron 45.1.0(Node 24.22)
 - 근거 테스트: `poc/tests/playwright-relay.test.ts`, `poc/tests/vault-relay.test.ts`
 - 원자료: `poc/reports/raw/s6b-playwright.json`, `poc/reports/raw/relay-measurements.json`
-- Windows 11에서는 아직 재확인하지 않았다(PoC-1 VM 준비 후).
+- Windows 11 재확인(2026-10-31, PoC-1 실기기, Chrome 156.0.8078.47): 같은 테스트 6/6 통과, 원자료 `poc/reports/raw/win/`. 차이는 [PoC-4-5.md](PoC-4-5.md) §5.
 
 ## 결론
 

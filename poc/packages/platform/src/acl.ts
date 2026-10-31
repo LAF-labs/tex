@@ -1,5 +1,6 @@
 import { execFile } from 'node:child_process';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 
@@ -76,10 +77,50 @@ async function hasDarwinAcl(dir: string): Promise<boolean> {
   return stdout.split('\n').some((l) => /^\s*\d+: /.test(l));
 }
 
-// Windows 구현: PoC-1(Windows 11 VM) 전에는 검증하지 않았다. 인터페이스와 명령 구성만 둔다.
+// Windows 도구는 PATH가 아니라 System32 절대 경로로 부른다. PATH 앞에 Git의 whoami 같은 같은 이름 도구가 있으면 그것이 돈다(PoC-1 실측).
+export function windowsTool(exe: string): string {
+  return path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', exe);
+}
+
+// SDDL 별칭 → SID. /remove에 넘길 때만 쓴다. 모르는 별칭은 지우지 못하고 extra_principal로 남는다(실패 닫힘).
+const SDDL_ALIASES: Record<string, string> = {
+  SY: 'S-1-5-18', BA: 'S-1-5-32-544', BU: 'S-1-5-32-545', BG: 'S-1-5-32-546', PU: 'S-1-5-32-547',
+  AU: 'S-1-5-11', WD: 'S-1-1-0', IU: 'S-1-5-4', AN: 'S-1-5-7', LS: 'S-1-5-19', NS: 'S-1-5-20',
+  CO: 'S-1-3-0', CG: 'S-1-3-1', OW: 'S-1-3-4', AC: 'S-1-15-2-1',
+};
+
+export interface DaclEntry {
+  type: string;
+  flags: string[];
+  sid: string;
+}
+
+/**
+ * icacls 출력의 계정 이름은 콘솔 코드 페이지(한글 Windows는 CP949)로 나와 한글 사용자 이름이면 비교가 깨진다.
+ * `/save`는 SDDL(UTF-16LE)로 SID를 그대로 주므로 SID로 판정한다.
+ */
+export async function readDacl(dir: string): Promise<{ protected: boolean; aces: DaclEntry[] }> {
+  const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'sax-acl-'));
+  try {
+    const out = path.join(tmp, 'acl.txt');
+    await run(windowsTool('icacls.exe'), [dir, '/save', out]);
+    const sddl = (await fs.readFile(out, 'utf16le')).split(/\r?\n/).find((l) => l.startsWith('D:')) ?? '';
+    const aces = [...sddl.matchAll(/\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)/g)].map((m) => ({
+      type: m[1] ?? '',
+      flags: (m[2] ?? '').match(/../g) ?? [],
+      sid: m[3] ?? '',
+    }));
+    return { protected: /^D:[A-Z]*P/.test(sddl), aces };
+  } finally {
+    await fs.rm(tmp, { recursive: true, force: true });
+  }
+}
+
+const isSystem = (sid: string): boolean => sid === 'SY' || sid === 'S-1-5-18';
+
 class WindowsDirGuard implements DirGuard {
   private async userSid(): Promise<string> {
-    const { stdout } = await run('whoami', ['/user', '/fo', 'csv', '/nh']);
+    const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
     const sid = stdout.trim().split(',').pop()?.replace(/"/g, '');
     if (!sid?.startsWith('S-1-')) throw new Error('cannot resolve user SID');
     return sid;
@@ -89,31 +130,34 @@ class WindowsDirGuard implements DirGuard {
     if (await findReparsePoint(dir)) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true });
     const sid = await this.userSid();
-    await run('icacls', [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F']);
+    const icacls = windowsTool('icacls.exe');
+    await run(icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F']);
+    // 상속을 끊어도 명시 ACE(누가 직접 추가한 Users 읽기 등)는 남는다. 사용자·SYSTEM 밖은 지운다.
+    const extra = new Set((await readDacl(dir)).aces.map((a) => a.sid).filter((s) => s !== sid && !isSystem(s)));
+    const removable = [...extra].map((s) => (s.startsWith('S-1-') ? s : SDDL_ALIASES[s])).filter((s): s is string => !!s);
+    if (removable.length) await run(icacls, [dir, '/remove', ...removable.map((s) => `*${s}`)]);
     return this.checkPrivate(dir);
   }
 
   async checkPrivate(dir: string): Promise<AclCheck> {
     const problems: AclProblem[] = [];
     if (await findReparsePoint(dir)) problems.push('reparse_point');
+    let st;
     try {
-      await fs.access(dir);
+      st = await fs.lstat(dir);
     } catch {
       return { ok: false, problems: ['missing'] };
     }
+    if (!st.isDirectory()) problems.push('not_dir');
     const sid = await this.userSid();
-    const { stdout } = await run('icacls', [dir, '/q']);
-    const aces = stdout.split(/\r?\n/).slice(0, -1).map((l) => l.replace(dir, '').trim()).filter((l) => l.includes(':('));
-    if (aces.some((a) => a.includes('(I)'))) problems.push('inherited');
-    const sids = await Promise.all(aces.map(async (a) => a.split(':(')[0] ?? ''));
-    const { stdout: me } = await run('whoami');
-    const allowed = new Set([me.trim().toLowerCase(), 'nt authority\\system', `*${sid}`.toLowerCase(), '*s-1-5-18']);
-    if (sids.some((s) => !allowed.has(s.toLowerCase()))) problems.push('extra_principal');
+    const dacl = await readDacl(dir);
+    if (!dacl.protected || dacl.aces.some((a) => a.flags.includes('ID'))) problems.push('inherited');
+    if (dacl.aces.some((a) => a.type !== 'A' || (a.sid !== sid && !isSystem(a.sid)))) problems.push('extra_principal');
     return { ok: problems.length === 0, problems };
   }
 
   async excludeFromIndex(dir: string): Promise<void> {
-    await run('attrib', ['+I', dir]);
+    await run(windowsTool('attrib.exe'), ['+I', dir]);
   }
 }
 

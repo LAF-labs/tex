@@ -1,5 +1,6 @@
 // PoC-5 로컬 데이터: 경로·접근 통제(D07 §1.1), 암호화 SQLite(D07 §1.3), 프로필·거래처 CRUD, 진위확인(H-05).
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -7,11 +8,15 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, prepareLayout } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, prepareLayout, readDacl, windowsTool } from '@sax/platform';
 import { scanDir } from '@sax/vault';
+
+const run = promisify(execFile);
+const win = process.platform === 'win32';
 
 async function tmpRoot(): Promise<string> {
   const base = await fs.realpath(os.tmpdir());
@@ -29,25 +34,32 @@ describe('경로와 접근 통제', () => {
     assert.deepEqual([p.db, p.vault, p.chromeProfile, p.staging, p.logs].map((x) => path.basename(x)), ['db', 'vault', 'chrome-profile', 'staging', 'logs']);
   });
 
-  it('prepareLayout: 루트 소유자 전용(0700), 하위 폴더, staging 잔존 정리, 색인 제외', async () => {
+  it('prepareLayout: 루트 소유자 전용(0700·DACL), 하위 폴더, staging 잔존 정리, 색인 제외', async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     const first = await prepareLayout(root);
     assert.equal(first.root.ok, true);
-    const st = await fs.stat(root);
-    assert.equal(st.mode & 0o777, 0o700);
+    if (!win) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
     await fs.writeFile(path.join(first.paths.staging, 'left.pdf'), 'x');
-    await fs.chmod(root, 0o755); // 다른 사용자 읽기 허용으로 망가뜨린 뒤
+    // 다른 사용자 읽기 허용으로 망가뜨린 뒤. Windows는 명시 ACE(Users 읽기)를 더한다.
+    if (win) await run(windowsTool('icacls.exe'), [root, '/grant', '*S-1-5-32-545:(OI)(CI)R']);
+    else await fs.chmod(root, 0o755);
+    assert.equal((await dirGuard().checkPrivate(root)).ok, false, '망가진 ACL을 잡는다');
     const second = await prepareLayout(root);
     assert.equal(second.root.ok, true, '기동 시 복구');
-    assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
+    if (!win) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
     assert.equal(second.stagingCleared, 1);
     if (process.platform === 'darwin') await fs.access(path.join(root, '.metadata_never_index'));
+    if (win) {
+      const { stdout } = await run(windowsTool('attrib.exe'), [root]);
+      assert.match(stdout.slice(0, stdout.indexOf(root)), /I/, 'FILE_ATTRIBUTE_NOT_CONTENT_INDEXED');
+    }
   });
 
-  it('재분석 지점(심볼릭 링크)이 경로에 있으면 거부', async () => {
+  it('재분석 지점(심볼릭 링크·정션)이 경로에 있으면 거부', async () => {
     const base = await tmpRoot();
     await fs.mkdir(path.join(base, 'real'));
-    await fs.symlink(path.join(base, 'real'), path.join(base, 'link'));
+    // Windows 심볼릭 링크는 권한(개발자 모드)이 필요하다. 권한 없이 만들 수 있는 정션으로 확인한다.
+    await fs.symlink(path.join(base, 'real'), path.join(base, 'link'), win ? 'junction' : undefined);
     assert.equal(await findReparsePoint(path.join(base, 'link', 'SovereignAX')), path.join(base, 'link'));
     const r = await dirGuard().ensurePrivate(path.join(base, 'link', 'SovereignAX'));
     assert.deepEqual(r, { ok: false, problems: ['reparse_point'] });
@@ -75,11 +87,15 @@ describe('암호화 DB와 CRUD', () => {
     await fs.rm(root, { recursive: true, force: true });
   });
 
-  it('sqlcipher·temp_store=MEMORY·파일 권한 0600, 평문 SQLite 서명 없음', () => {
+  it('sqlcipher·temp_store=MEMORY·파일 권한 0600(Windows는 루트 DACL 상속), 평문 SQLite 서명 없음', async () => {
     assert.equal(db.pragma('cipher', { simple: true }), 'sqlcipher');
     assert.equal(db.pragma('temp_store', { simple: true }), 2);
     assert.equal(isEncryptedFile(file), true);
-    return fs.stat(file).then((st) => assert.equal(st.mode & 0o777, 0o600));
+    if (!win) return assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
+    const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
+    const me = stdout.trim().split(',').pop()?.replace(/"/g, '');
+    const sids = (await readDacl(file)).aces.map((a) => a.sid);
+    assert.ok(sids.length > 0 && sids.every((s) => s === me || s === 'SY'), `DB 파일 ACE: ${sids.join(', ')}`);
   });
 
   it('프로필: 개인 1 + 사업자 1, 같은 종류는 갱신, 사업자번호 검증', async () => {

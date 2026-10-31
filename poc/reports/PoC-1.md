@@ -9,7 +9,9 @@
 | 항목 | 값 |
 |---|---|
 | 개발 Mac | Apple M5 Pro(arm64), macOS 26.5.1, VM 소프트웨어 없음 |
-| PoC 실행 호스트 | **x64 Windows 11 실기기 1대**(2026-10-30 결정). 기기 정보는 준비 후 기록 |
+| PoC 실행 호스트 | **x64 Windows 11 실기기 1대**(2026-10-30 결정) |
+| 기기(2026-10-31 준비) | ASRock A620M-HDV/M.2, AMD Ryzen 5 7500F, RAM 32GB, NTFS `C:` 1TB 단일 볼륨 |
+| OS | Windows 11 **Home** 25H2(빌드 26200). 25H2는 24H2 플랫폼 위 활성화 패키지라 §2의 24H2 기준과 같은 계열로 본다. Home에는 BitLocker 관리 도구 대신 장치 암호화만 있다(§6) |
 
 Mac 위 VM(Parallels·UTM)은 **Windows 11 ARM**이다. x64 앱은 에뮬레이션으로 돌지만 커널 드라이버는 돌지 않는다. 홈택스가 요구하는 키보드 보안·인증서 모듈 중 드라이버를 쓰는 것이 있으면 ARM VM에서는 로그인부터 막힐 수 있다. 대상 사용자 PC(x64 Windows)와도 다르다. 그래서 ARM VM은 쓰지 않는다.
 
@@ -20,15 +22,29 @@ x64 클라우드 VM은 쓰지 않는다. 데이터센터 IP는 "본인 IP"가 �
 | 항목 | 값 | 근거 |
 |---|---|---|
 | OS | Windows 11 24H2 x64(1차). 23H2는 G1 뒤 행렬에서 | D18 §2 |
-| 계정 | 표준 사용자(비관리자)로 실행. 보안 모듈 설치만 관리자 승격 | 대상 사용자와 같은 조건, S6m |
+| 계정 | 관리자 계정과 표준 사용자 계정 **둘 다 지원**(2026-10-31 결정, §2.1). 앱·Chrome은 어느 계정에서도 승격하지 않는다. 보안 모듈 설치만 관리자 승격 | 대상 사용자 PC는 대부분 UAC 켜진 관리자 계정, S6m |
 | 백신 | Microsoft Defender 기본값. V3·알약 조합은 Phase 1 행렬 | D18 §2 |
 | 디스크 | NTFS 시스템 볼륨 + 보조 볼륨 1개(S6m ACL 측정용) | D19 A-19 |
 | 네트워크 | 사무실 또는 본인 회선. VPN·프록시·IP 전환 금지 | 05 §비대상화 |
 | 시간대·로캘 | Asia/Seoul, ko-KR | — |
 
-## 3. Chrome·전용 프로필 ✅(설계) / ⏳(설치)
+### 2.1 계정 두 종류
 
-- 사용자 설치 Chrome stable(`%ProgramFiles%\Google\Chrome\Application\chrome.exe`). 자동 업데이트는 끄지 않고, 실행마다 버전을 원장·보고서에 남긴다(ADR-001 결과).
+UAC가 켜진 관리자 계정은 평소 실행 토큰이 **비관리자**다(`Administrators` 거부 전용, 무결성 Medium). 그래서 승격하지 않은 앱은 표준 사용자와 같은 권한으로 돈다. 차이는 승격할 때 암호가 필요한지뿐이다.
+
+| | 관리자 계정(1차) | 표준 사용자 계정(재확인) |
+|---|---|---|
+| 쓰는 곳 | 빌드·테스트, S6m, 홈택스 실행(PoC-3~10) | 같은 테스트·S6m·DACL 재확인. 홈택스 로그인은 하지 않는다 |
+| 보안 모듈 설치 | UAC 동의 | 관리자 암호 입력 |
+| 공동인증서(NPKI) | 이 계정 프로필에만 둔다 | 두지 않는다(인증서 복사본을 늘리지 않음) |
+| `%LOCALAPPDATA%`·Credential Manager | 계정별로 따로 | 계정별로 따로 |
+
+- 앱을 "관리자 권한으로 실행"하지 않는다. 승격 상태에서 만든 파일은 소유자가 `Administrators`가 되어 루트 DACL(소유자 + SYSTEM) 확인과 어긋날 수 있다.
+- 실행 계정: 관리자 계정 `once0`(UAC 켜짐, 동의 프롬프트 기본값). 표준 사용자 계정은 사람이 만든다(에이전트는 OS 계정을 만들지 않는다).
+
+## 3. Chrome·전용 프로필 ✅
+
+- 사용자 설치 Chrome stable(`%ProgramFiles%\Google\Chrome\Application\chrome.exe`). 자동 업데이트는 끄지 않고, 실행마다 버전을 원장·보고서에 남긴다(ADR-001 결과). 2026-10-31 설치 버전 **156.0.8078.47**(Mac 측정은 .73). 금고 후보 경로 첫 번째(`%ProgramFiles%`)에서 찾았다. `(x86)`·`%LOCALAPPDATA%` 설치는 이 기기에 없어 확인하지 않았다.
 - 전용 프로필은 금고가 만든다: `%LOCALAPPDATA%\SovereignAX\chrome-profile`(`packages/platform/src/paths.ts`). 일상 Chrome 프로필에는 붙이지 않는다(ADR-001 v1.3 보완).
 - 기동 인자는 금고 상수 `CHROME_ARG_ALLOWLIST` 3개뿐(`--remote-debugging-pipe`, `--user-data-dir`, `--no-first-run`). `navigator.webdriver=true`는 그대로 둔다(ADR-010).
 - 그 Windows 사용자 계정의 일상 Chrome은 PoC 기간에 홈택스에 로그인하지 않는다(세션 혼선 방지).
@@ -41,18 +57,45 @@ x64 클라우드 VM은 쓰지 않는다. 데이터센터 IP는 "본인 IP"가 �
 |---|---|---|---|
 | (PoC-3에서 기록) | | | |
 
-## 5. 빌드 도구 ⏳
+## 5. 빌드 도구 ✅(관리자 계정, 2026-10-31)
 
 | 항목 | 값 |
 |---|---|
-| Node.js | 26.x(Mac과 같은 주 버전, 현재 26.11.1) |
-| pnpm | 12.11.2(`packageManager`) |
-| 네이티브 모듈 | `better-sqlite3-multiple-ciphers` 13.0.3 → 사전 빌드 바이너리가 없으면 Visual Studio Build Tools(C++)·Python 필요 |
-| 확인 | `pnpm install && pnpm build && pnpm test`, `electron apps/desktop/dist/e2e.js` 통과 |
+| Node.js | 26.13.0(winget `OpenJS.NodeJS.LTS`, 시스템 전체 설치라 표준 계정도 같은 Node) |
+| pnpm | 12.11.2(`npm i -g`, 계정별) |
+| 네이티브 모듈 | `better-sqlite3-multiple-ciphers` 13.0.3은 패키지 안 `prebuilds/win32-x64.node`를 쓴다. 빌드 도구 불필요(VS Build Tools 2022·Python 3.14는 있음) |
+| Electron | 45.1.0. `pnpm install` 뒤 바이너리가 받아지지 않아 `node_modules/.pnpm/electron@45.1.0/node_modules/electron`에서 `node install.js`를 한 번 돌렸다 |
+| 결과 | `pnpm build`·`pnpm lint` 통과, `pnpm test` **115/115**(45초), e2e **14/14**(OS 배율 150%, 앱 배율 강제 125%·150% 각 14/14), 앱 스모크 통과. 원자료 [raw/win/](raw/win/) |
 
-## 6. S6m 측정(P0-1 흡수분) ⏳
+Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 
-표준 사용자로 (1) BitLocker 상태 읽기 가능 여부, (2) 보조 볼륨 새 폴더의 기본 ACL을 기록한다. 결과는 이 문서 §6에 추가한다(D19 A-19·A-25).
+| 증상 | 원인 | 수정 |
+|---|---|---|
+| 번들 8종 BV-06 digest 불일치 | Git for Windows 기본 `core.autocrlf=true`로 접두 텍스트가 CRLF로 체크아웃됨 | 저장소 루트 `.gitattributes`(`* text=auto eol=lf`) |
+| `prepareLayout` 실패 → 이후 테스트 연쇄 실패·10분 넘게 멈춤 | `whoami`를 PATH로 찾아 Git의 `whoami`가 돌았다 | `whoami`·`icacls`·`attrib`를 System32 절대 경로로(`windowsTool`) |
+| (잠재) 한글 사용자 이름에서 DACL 판정 오류 | `icacls` 출력의 계정 이름은 콘솔 코드 페이지(CP949) | `icacls /save`의 SDDL로 SID 비교(`readDacl`) |
+| (잠재) 누가 직접 더한 ACE가 복구 뒤에도 남음 | `/inheritance:r`은 상속 ACE만 지운다 | 사용자·SYSTEM 밖 SID를 `/remove`로 제거, 테스트에 Users 읽기 ACE 복구 추가 |
+| 재분석 지점 테스트 EPERM | Windows 심볼릭 링크는 개발자 모드·권한 필요 | 테스트를 권한 없이 만들 수 있는 정션으로 |
+
+## 6. S6m 측정(P0-1 흡수분) — (1) ✅ 관리자 계정 비승격 / (2) ⏳
+
+승격하지 않은 토큰으로(관리자 계정 비승격, 이어서 표준 사용자 계정) (1) BitLocker·장치 암호화 상태 읽기 가능 여부, (2) 보조 볼륨 새 폴더의 기본 ACL을 기록한다(D19 A-19·A-25).
+
+(1) 시스템 드라이브 `C:`, 토큰 비승격(무결성 Medium):
+
+| 방법 | 결과 |
+|---|---|
+| Shell 속성 `System.Volume.BitLockerProtection`(`Shell.Application`) | **읽힘**, 값 `0` |
+| 레지스트리 `HKLM\SYSTEM\CurrentControlSet\Control\BitLockerStatus\BootStatus` | **읽힘**, 값 `0` |
+| `manage-bde -status` | 거부(관리자 권한 필요) |
+| `Get-BitLockerVolume`, WMI `Win32_EncryptableVolume` | 거부 |
+| `fsutil fsinfo volumeinfo` | 거부 |
+
+비관리자로 상태를 읽는 경로는 Shell 속성이다(D07 §1 온보딩 안내에 쓸 후보). 값 `0`이 "꺼짐"인지 "해당 없음"(Home에 장치 암호화가 켜지지 않은 상태)인지는 승격 `manage-bde -status C:` 결과와 한 번 대조해야 확정된다(사람이 실행). 표준 사용자 계정에서 같은 표를 다시 채운다.
+
+(2) 이 기기에는 `C:` 하나뿐이라 보조 볼륨이 없다. VHDX 하나를 만들어 붙이거나(관리자 승격, 사람이 실행) USB 드라이브를 NTFS로 포맷해 측정한다.
+
+참고: 이 기기 `%TEMP%`의 상속 ACL에는 소유자 말고도 다른 로컬 SID(RID 1002)·Codex 샌드박스 SID·AppContainer 능력 SID가 있다. 앱 루트에서 상속을 끊는 설계(D07 §1.1)가 실제로 필요하다. 앱 루트 `%LOCALAPPDATA%\SovereignAX`는 앱 스모크 뒤 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`, 색인 제외 속성 `I`였다.
 
 ## 7. 운영 규칙(PoC 기간)
 
@@ -73,12 +116,23 @@ x64 클라우드 VM은 쓰지 않는다. 데이터센터 IP는 "본인 IP"가 �
 
 PoC-3(11-05) 전에 공동인증서는 반드시 있어야 하고, 간편인증은 S2(PUSH 대기)에만 필요하다.
 
-## 9. 완료 체크리스트
+## 9. ADR-020이 기대는 Windows 기능(이 기기, 비승격)
+
+| 기능(ADR-020) | 결과 |
+|---|---|
+| 보안카드 사진 OCR `Windows.Media.Ocr` | 인식 언어 `en-US`, `ko`. ko-KR 지원 True |
+| 발급마다 Windows Hello 확인(`UserConsentVerifier`) | `DeviceNotPresent`: 이 계정에 Hello(PIN·생체)가 설정돼 있지 않다. 옵션을 시험하려면 사람이 Hello PIN을 설정해야 한다 |
+| 열쇠 보관(자격 증명 관리자) | 앱 DB 키 `db-key.SovereignAX`(32B)가 **`CRED_PERSIST_ENTERPRISE`**로 저장됐다. 설계(S10b)는 `LOCAL_MACHINE`. `@napi-rs/keyring`에는 지속성 선택이 없다 → PoC-4-5 §5 |
+| TPM 상태 | 비승격으로 읽기 거부 |
+
+## 10. 완료 체크리스트
 
 - [x] 실행 호스트 결정(§1): x64 실기기
-- [ ] 실기기 준비·기기 정보 기록(§1)
+- [x] 실기기 준비·기기 정보 기록(§1)
 - [ ] PoC 계정(관계사 법인) 지정과 위험 수용 서명
-- [ ] Windows 설치·표준 사용자·Chrome stable
-- [ ] 빌드·테스트 통과(§5)
-- [ ] S6m 기록(§6)
+- [x] 계정 정책: 관리자·표준 둘 다 지원(§2.1)
+- [ ] 표준 사용자 계정 만들기(사람)와 재확인 실행(§5 테스트, §6, PoC-4-5 §5 다른 계정 접근 거부)
+- [x] Chrome stable(§3)
+- [x] 빌드·테스트 통과(§5, 관리자 계정)
+- [ ] S6m 기록(§6): (1) 관리자 계정 비승격 완료, 승격 대조·표준 계정·(2) 보조 볼륨 남음
 - [ ] 인증수단 수령 일정 표 채움(§8)
