@@ -74,7 +74,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - 보안 이벤트는 위조·다른 실행의 토큰·이미 소비된 토큰에만. 만료는 보안 이벤트가 아니다.
 - **로컬 승인**(A-15, ADR-021): 비가역 승인은 **main 소유 승인 바**에서만 한다. 대화 카드에는 승인 버튼이 없고, 카드의 렌더러 신호는 승인 근거가 아니다.
   - 승인 바는 main이 메인 창에 자식으로 붙이는 `WebContentsView`다(`sandbox`, `javascript:false`, preload 없음, 전용 세션 파티션). 내용은 main이 신뢰 계획값(readback 값 + 앱 내장 라벨)으로 만든 정적 HTML(CSP `default-src 'none'; style-src 'self'`)이고, 요약 3줄 이하와 "승인하고 발급"이 한 버튼이다. H-01 요약은 공급받는자(상호·사업자번호), 합계와 세액, 받는 이메일이다.
-  - 위치는 main이 창 크기만으로 정한다(작업 패널 하단). 렌더러가 보고하는 좌표는 쓰지 않는다. 앱 내장 요약 표에 없는 서류 종류의 커밋 게이트는 패키지 로더가 거부한다(§3.1).
+  - 위치는 main이 창 크기만으로 정한다(대화 열 하단, 입력창 예약 영역 위). 렌더러가 보고하는 좌표는 쓰지 않는다. 앱 내장 요약 표에 없는 서류 종류의 커밋 게이트는 패키지 로더가 거부한다(§3.1).
   - 승인 입력은 main이 그 뷰의 `before-mouse-event`로 **직접 관찰한 클릭**(바 안 왼쪽 down → up)만 인정한다. 바가 보이거나 요약·동작이 바뀌거나, 창이 옮겨지거나 다시 보이거나 활성화된 뒤 600ms는 무시하고(무장 전 mouseDown이면 다시 시작, 바를 눌러 창을 활성화한 경우는 예외), 바 안에서 실제로 움직인 뒤 150ms가 지난 mouseDown만 인정한다. 대화 화면 커서가 숨겨지거나 바뀌어 있으면 무장하지 않는다. **키보드 승인은 없다**(Enter·조합키 모두).
   - 바는 `WaitingGate`(main이 엔진에서 직접 받은 상태)일 때만 뜨고, 한 게이트에서 한 번 뜨면 게이트가 끝날 때까지 남는다(렌더러의 숨김 요청은 무시). `trigger=local`이 아닌 실행에서는 자동으로 띄우지 않는다.
   - main은 받은 `fields`·`cardHashInputs`로 `actionHash`를 다시 계산해 일치할 때만 무장한다. 승인되면 `LocalApproval{runId, gateStepId, reqId, approvalNonce, actionHash, exp, presence}`를 발급한다. `approvalNonce`는 엔진이 게이트 요청마다 만들고 `gate.waitMs` 동안 유효하며 폰 챌린지와 분리된다(아래 토큰 식의 `nonce`와 다른 값). 엔진은 이것을 main↔엔진 전용 포트로만 받는다(§11). Phase 1에는 HMAC을 검증하는 쪽이 없고 포트 출처만 믿는다.
