@@ -95,7 +95,7 @@ export function kv(rows) {
       h('dt', {}, label),
       h(
         'dd',
-        { class: [o.state ? `is-${o.state}` : '', o.total ? 'is-total' : ''].join(' ').trim() || null },
+        { class: [o.state ? `is-${o.state}` : '', o.total ? 'is-total' : '', o.start ? 'is-start' : ''].join(' ').trim() || null },
         h('span', { class: `sx-val${o.mono ? ' sx-id' : ''}` }, value ?? '—'),
         o.tag ? h('span', { class: 'sx-tag' }, o.tag) : null,
         o.flag ? h('span', { class: 'sx-flag' }, o.flag) : null,
@@ -222,6 +222,8 @@ export function runPanel(run, act) {
     kv(rows),
     h('div', { class: 'auth-line' }, h('span', { class: 'sx-meta' }, '발급 인증'), h('span', {}, run.auth), h('span', { class: 'sx-meta' }, '· 설정에서 변경')),
     st === 'draft' ? null : [h('div', { class: 'sx-panel-sec' }, '진행'), steps(run.steps)],
+    // 작업 패널의 [중지](T-04). 발급 전에만 있다. 승인은 여기에도 없다.
+    st === 'preparing' || st === 'waiting' || (st === 'turn' && run.steps[4].state !== 'done') ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
     h('div', { class: 'sx-source' }, confirmed ? `홈택스에서 되읽음 · ${run.createdAt} 요청` : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`),
   );
 }
@@ -250,13 +252,14 @@ export function docCard(doc, today, act, compact) {
     { class: 'sx-card sx-doc', 'data-doc': doc.id },
     h('div', { class: 'sx-doc-kind' }, `${doc.kind} · ${doc.source}`),
     h('div', { class: 'sx-doc-name' }, doc.docName),
-    h('div', { class: 'sx-seal' }, doc.source === '앱이 발급' ? '발급' : '보관'),
+    // 도장은 사용자가 승인해 앱이 발급한 서류에만(DocumentCard). 직접 발급·직접 추가 서류에는 없다.
+    doc.source === '앱이 발급' ? h('div', { class: 'sx-seal' }, '발급') : null,
     h(
       'div',
       { class: 'sx-cells' },
       h('div', {}, h('span', { class: 'label sx-meta' }, '발급일'), h('span', { class: 'value' }, doc.issuedOn)),
       h('div', {}, h('span', { class: 'label sx-meta' }, '용도'), h('span', { class: 'value' }, doc.purpose || '—')),
-      h('div', {}, h('span', { class: 'label sx-meta' }, '유효'), h('span', { class: `value${d !== null && d <= 7 ? ' is-attention' : ''}` }, d === null ? '—' : `${doc.expiresOn} · D-${d}`)),
+      h('div', {}, h('span', { class: 'label sx-meta' }, '유효'), h('span', { class: `value${d !== null && d <= 7 ? ' is-attention' : ''}` }, d === null ? '—' : `${doc.expiresOn} · ${d < 0 ? '만료됨' : d === 0 ? 'D-day' : `D-${d}`}`)),
     ),
     compact
       ? null

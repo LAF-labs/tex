@@ -7,7 +7,7 @@ import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { COUNTERPARTIES, docs, g24Candidates, g24Save, interpret, MockRuns, PROFILES, QUICK, seedTimeline, type Profile, type VatMode } from './shell-mock.ts';
+import { COUNTERPARTIES, docs, g24Candidates, g24Save, interpret, MockRuns, PROFILES, QUICK, seedTimeline, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -50,6 +50,8 @@ export interface ShellOptions {
   width?: number;
   height?: number;
   show?: boolean;
+  /** e2e: OS 커서 위치를 바꿔 끼운다. */
+  cursorPoint?: () => { x: number; y: number };
 }
 
 export interface Shell {
@@ -57,6 +59,8 @@ export interface Shell {
   bar: ApprovalBar;
   runs: MockRuns;
   ready: Promise<void>;
+  /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
+  methods: string[];
 }
 
 export function startShell(opts: ShellOptions = {}): Shell {
@@ -99,22 +103,31 @@ export function startShell(opts: ShellOptions = {}): Shell {
     void wc.setVisualZoomLevelLimits(1, 1);
   });
 
-  const bar = new ApprovalBar(win, key, barBounds);
+  const bar = new ApprovalBar(win, key, barBounds, { cursorPoint: opts.cursorPoint });
   const send = (ev: Record<string, unknown>) => {
     if (!win.isDestroyed()) wc.send('sax:event', ev);
   };
-  bar.on('shown', () => send({ type: 'bar', active: true }));
+  // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
+  bar.on('shown', (e: { band: boolean }) => send({ type: 'bar', active: true, band: e.band }));
+  bar.on('layout', (e: { band: boolean }) => send({ type: 'bar-layout', band: e.band }));
   bar.on('hidden', (reason: string) => send({ type: 'bar', active: false, reason }));
   runs.on('update', (run) => send({ type: 'run', run }));
   runs.on('doc', (doc) => send({ type: 'doc', doc }));
-  runs.on('gate-closed', () => bar.close('stopped'));
+  runs.on('gate-closed', (runId: string) => {
+    if (bar.runId === runId) bar.close('stopped');
+  });
   runs.on('gate', (runId: string, req) => {
     void bar.open(req).then((o) => {
       // PoC-6: 근거는 main↔엔진 전용 포트로 넘기고 엔진이 게이트 토큰으로 바꾼다. 목업은 main에서 검증만 한다.
       if (o.decision === 'approve' && verifyLocalApproval(key, o.approval)) runs.approved(runId);
+      else if (o.decision === 'closed' && o.reason === 'busy') console.error('gate while another gate is open', runId);
     });
   });
 
+  const g24Doc = (v: unknown): G24Doc => {
+    if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
+    return v;
+  };
   const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
     'shell.bootstrap': () => ({
       layout: SHELL,
@@ -124,7 +137,6 @@ export function startShell(opts: ShellOptions = {}): Shell {
       docs,
       timeline: seedTimeline(),
       quick: QUICK,
-      today: new Date().toISOString(),
       platform: process.platform,
     }),
     'profile.set': (p) => {
@@ -141,8 +153,8 @@ export function startShell(opts: ShellOptions = {}): Shell {
     'run.stop': (p) => runs.stop(String(p.id)),
     'docs.list': () => docs,
     'counterparties.list': () => COUNTERPARTIES,
-    'g24.candidates': () => g24Candidates(),
-    'g24.save': (p) => g24Save(String(p.id)),
+    'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
+    'g24.save': (p) => g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     'clipboard.copy': (p) => {
       clipboard.writeText(String(p.text ?? '').slice(0, 200));
@@ -160,5 +172,5 @@ export function startShell(opts: ShellOptions = {}): Shell {
   });
 
   const ready = win.loadURL(SHELL_URL);
-  return { win, bar, runs, ready };
+  return { win, bar, runs, ready, methods: Object.keys(handlers) };
 }

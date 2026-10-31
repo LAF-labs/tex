@@ -38,24 +38,32 @@ export interface SummaryLine {
   flag?: string;
 }
 
-const won = (v: string) => `${Number(v).toLocaleString('en-US')}원`;
-const bizNo = (v: string) => (/^\d{10}$/.test(v) ? `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}` : v);
+/** 해시한 문자열 그대로 자릿수를 묶는다(Number 변환 없음, 2^53 넘는 값도 같게 보인다). */
+const won = (v: string) => `${v.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}원`;
+const bizNo = (v: string) => `${v.slice(0, 3)}-${v.slice(3, 5)}-${v.slice(5)}`;
 
-/** 값에 제어문자·양방향·폭 없는 문자(유니코드 Cc·Cf, 줄·문단 구분자)가 있으면 무장하지 않는다. */
-export const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\u2028\u2029]/u;
+/** 값에 제어문자·양방향·폭 없는 문자·한글 채움 문자(Cc·Cf·Default_Ignorable, 줄·문단 구분자)가 있으면 무장하지 않는다. */
+export const UNSAFE_CHARS = /[\p{Cc}\p{Cf}\p{Default_Ignorable_Code_Point}\u2028\u2029]/u;
 
-export type ArmRefusal = { reason: 'missing'; label: string } | { reason: 'unsafe'; label: string } | { reason: 'overflow'; label: string } | { reason: 'hash' };
+export type ArmRefusal = { reason: 'missing' | 'unsafe' | 'overflow'; label: string } | { reason: 'hash' | 'duplicate' };
 
 export const REFUSAL_TEXT = {
   missing: (l: string) => `${l} 값이 없어 승인할 수 없어요`,
   unsafe: (l: string) => `${l} 칸에 쓸 수 없는 문자가 있어요. 그 칸을 고쳐 주세요`,
   overflow: (l: string) => `창을 넓혀 주세요 · ${l}`,
   hash: () => '값 대조가 맞지 않아 승인할 수 없어요',
+  duplicate: () => '같은 항목이 두 번 들어 있어 승인할 수 없어요',
 };
+
+export function refusalText(r: ArmRefusal): string {
+  return 'label' in r ? REFUSAL_TEXT[r.reason](r.label) : REFUSAL_TEXT[r.reason]();
+}
 
 /** H-01 요약 줄: 공급받는자(상호 · 사업자번호) / 합계 · 세액 / 받는 이메일. 해시한 fields에서만 고른다. */
 export function summarize(req: GateRequest): SummaryLine[] | ArmRefusal {
   const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
+  // 같은 키가 둘이면 Map은 마지막 값만 보이고 해시는 둘 다 덮는다. 보이는 값과 해시한 값이 갈리지 않게 거부한다.
+  if (f.size !== req.fields.length) return { reason: 'duplicate' };
   const need = [
     ['counterpartName', '공급받는자'],
     ['counterpartBizNo', '공급받는자'],
@@ -65,7 +73,8 @@ export function summarize(req: GateRequest): SummaryLine[] | ArmRefusal {
   ] as const;
   for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
   for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
-  if (!/^\d+$/.test(f.get('totalAmount')!) || !/^\d+$/.test(f.get('taxAmount')!)) return { reason: 'unsafe', label: '합계' };
+  if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
+  if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!) || !/^(0|[1-9]\d{0,14})$/.test(f.get('taxAmount')!)) return { reason: 'unsafe', label: '합계' };
   const email = f.get('counterpartEmail')!;
   const at = email.lastIndexOf('@');
   if (at <= 0) return { reason: 'unsafe', label: '받는 이메일' };
@@ -85,8 +94,8 @@ export function summarize(req: GateRequest): SummaryLine[] | ArmRefusal {
 export const BAR = {
   height: 90,
   padX: 16,
-  label: 88,
-  action: 172,
+  label: 76,
+  action: 132,
   gap: 12,
   flagPad: 16,
   /** 14px 글자 한 칸 폭의 보수적 어림. 한글 등 동아시아 문자는 두 칸. */
@@ -96,7 +105,7 @@ export const BAR = {
 const wide = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
 export const cells = (s: string) => [...s].reduce((n, c) => n + (wide.test(c) ? 2 : 1), 0);
 
-/** 줄이지 않는 조각이 바 폭 안에 들어가는지 어림한다. 넘치면 무장하지 않는다. */
+/** 줄이지 않는 조각이 바 폭 안에 들어가는지 어림한다. 넘친 줄의 라벨, 다 들어가면 null. */
 export function overflowLine(lines: SummaryLine[], barWidth: number): string | null {
   const valueWidth = barWidth - BAR.padX * 2 - BAR.label - BAR.action - BAR.gap * 2;
   for (const l of lines) {
@@ -120,6 +129,7 @@ export type BarMode = 'unarmed' | 'armed' | 'refused';
 export const BAR_MESSAGES = {
   arming: '잠시 뒤 다시 눌러 주세요',
   dwell: '마우스를 조금 움직인 뒤 눌러 주세요',
+  cursor: '마우스 커서가 보이게 한 뒤 눌러 주세요',
 } as const;
 export const ACTION_TEXT = '승인하고 발급';
 
@@ -174,14 +184,29 @@ export interface MouseIn {
   movementY?: number;
 }
 
+export interface KeyIn {
+  type: string;
+  key: string;
+  alt?: boolean;
+  control?: boolean;
+  meta?: boolean;
+}
+
+/**
+ * 키보드 승인은 없다(ADR-021 결정 1, 08 §5). PoC-4의 Alt+Y 경로는 지우지 않고 꺼 둔다.
+ * 접근성 설정으로 켤지는 Phase 1 접근성 검토에서 사용자가 정한다.
+ */
+export const KEYBOARD_APPROVAL = false;
+
 export type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof typeof BAR_MESSAGES } | null;
 
 /**
- * 승인 바 입력 판정. main이 바 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 바 기준 DIP).
+ * 승인 바 입력 판정. main이 바 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 바 기준 DIP, 시각은 단조 시계).
  * - 무장 지연: 무장 사건(rearm) 뒤 ARM_DELAY_MS 동안 입력 무시. 그 사이 mouseDown이면 지연을 다시 시작한다.
  * - 머무름: 마지막 mouseLeave·무장 사건 뒤 바 안에서 처음 실제로 움직인 때부터 DWELL_MS가 지났거나,
- *   무장 사건 때부터 커서가 바 안에 멈춰 있었을 때만 mouseDown을 인정한다.
- * - 승인 = 바 안에서 왼쪽 mouseDown → mouseUp. 키보드 승인은 없다.
+ *   무장 사건 때부터 커서가 바 안에 멈춰 있었을 때만 mouseDown을 인정한다. "무장 사건 때 바 안"은 main이
+ *   OS 커서 위치로 정해 rearm에 넘긴다(앞 게이트에서 남은 추적 상태를 믿지 않는다).
+ * - 승인 = 바 안에서 왼쪽 mouseDown → mouseUp.
  */
 export class BarGate {
   private armAt = Number.POSITIVE_INFINITY;
@@ -190,7 +215,7 @@ export class BarGate {
   private stillSinceArm = false;
   private movedAt: number | null = null;
   private activatedAt: number | null = null;
-  private cursorBlocked = false;
+  private blocked = false;
   private size = { width: 0, height: 0 };
   private readonly armDelayMs: number;
 
@@ -202,35 +227,47 @@ export class BarGate {
     this.size = { width, height };
   }
 
-  /** 무장 사건: 바가 보이기 시작함, 요약·동작 글자·위치가 바뀜, 창 표시·복원·배율 변경, 커서 위장 해제. */
-  rearm(now: number): void {
+  /**
+   * 무장 사건: 바가 보이기 시작함, 요약·동작 글자·위치가 바뀜, 창 표시·복원·배율 변경, 커서 위장 해제.
+   * cursorInside는 main이 OS 커서 위치와 바의 화면 영역으로 계산한 값이다.
+   */
+  rearm(now: number, cursorInside: boolean): void {
     this.armAt = now + this.armDelayMs;
     this.pressed = false;
     this.movedAt = null;
-    this.stillSinceArm = this.inside;
+    this.inside = cursorInside;
+    this.stillSinceArm = cursorInside;
     this.activatedAt = null;
   }
 
-  /** 앱 창 활성화. ACTIVATION_GRACE_MS 뒤 activationSettled를 부른다. */
+  /** 무장 지연만 다시 시작한다(무장 전 mouseDown, 무장 표시가 아직 그려지지 않음). */
+  deferArm(now: number): void {
+    this.armAt = now + this.armDelayMs;
+    this.pressed = false;
+  }
+
+  /** 앱 창 활성화. 이미 바 안에서 눌린 상태면(포커스가 mouseDown 뒤에 옴) 클릭 활성화로 보고 기다리지 않는다. */
   windowActivated(now: number): void {
-    this.activatedAt = now;
+    this.activatedAt = this.pressed ? null : now;
   }
 
-  /** 활성화 뒤 대기 끝. 그 사이 바 안 mouseDown이 없었으면 재무장한다. 재무장했으면 true. */
-  activationSettled(now: number): boolean {
-    if (this.activatedAt === null) return false;
-    this.rearm(now);
-    return true;
+  /** 활성화 뒤 ACTIVATION_GRACE_MS가 지났는데 바 안 mouseDown이 없었으면 재무장해야 한다(true). */
+  activationSettled(): boolean {
+    return this.activatedAt !== null;
   }
 
-  /** 대화 화면 커서가 none·custom이면 무장하지 않는다(커서 위장). 풀리면 재무장. */
-  setCursorBlocked(blocked: boolean, now: number): void {
-    if (this.cursorBlocked && !blocked) this.rearm(now);
-    this.cursorBlocked = blocked;
+  /** 대화 화면 커서가 none·custom이면 무장하지 않는다(커서 위장). 풀리면 main이 재무장한다. */
+  setCursorBlocked(blocked: boolean): void {
+    this.blocked = blocked;
+    if (blocked) this.pressed = false;
+  }
+
+  get cursorBlocked(): boolean {
+    return this.blocked;
   }
 
   armed(now: number): boolean {
-    return !this.cursorBlocked && now >= this.armAt;
+    return !this.blocked && now >= this.armAt;
   }
 
   /** 다음 무장 시각(표시 전환 타이머용). */
@@ -242,48 +279,63 @@ export class BarGate {
     return x >= 0 && y >= 0 && x < this.size.width && y < this.size.height;
   }
 
+  private leave(): void {
+    this.inside = false;
+    this.stillSinceArm = false;
+    this.movedAt = null;
+    this.pressed = false;
+  }
+
+  /** 들어옴·나감·움직임만 기록한다. 바가 숨었거나 무장을 거부한 동안에도 부른다. */
+  track(ev: MouseIn, now: number): void {
+    if (ev.type === 'mouseLeave' || ((ev.type === 'mouseMove' || ev.type === 'mouseEnter') && !this.within(ev.x, ev.y))) return this.leave();
+    if (ev.type === 'mouseEnter') this.inside = true;
+    if (ev.type === 'mouseMove') {
+      this.inside = true;
+      if (this.movedAt === null && (ev.movementX || ev.movementY)) this.movedAt = now;
+    }
+  }
+
   mouse(ev: MouseIn, now: number): GateResult {
-    switch (ev.type) {
-      case 'mouseEnter':
-        this.inside = true;
-        return null;
-      case 'mouseLeave':
-        this.inside = false;
-        this.stillSinceArm = false;
-        this.movedAt = null;
-        this.pressed = false;
-        return null;
-      case 'mouseMove':
-        this.inside = this.within(ev.x, ev.y);
-        if (this.inside && this.movedAt === null && (ev.movementX || ev.movementY)) this.movedAt = now;
-        return null;
-      case 'mouseDown': {
-        if (ev.button !== 'left' || !this.within(ev.x, ev.y)) return null;
-        this.inside = true;
-        const activation = this.activatedAt !== null && now - this.activatedAt <= ACTIVATION_GRACE_MS;
+    if (ev.type !== 'mouseDown' && ev.type !== 'mouseUp') {
+      this.track(ev, now);
+      return null;
+    }
+    if (ev.type === 'mouseDown') {
+      if (ev.button !== 'left' || !this.within(ev.x, ev.y)) return null;
+      this.inside = true;
+      if (this.blocked) return { kind: 'refused', reason: 'cursor' };
+      if (this.activatedAt !== null) {
         // 클릭 활성화(다른 창에서 바를 바로 눌러 앱을 앞으로 가져옴)는 재무장하지 않고 그대로 판정한다.
-        if (activation) this.activatedAt = null;
-        if (!this.armed(now)) {
-          this.pressed = false;
-          if (!this.cursorBlocked) this.armAt = now + this.armDelayMs;
+        // 활성화 뒤 ACTIVATION_GRACE_MS가 지났으면 재무장 타이머가 늦은 것이므로 지금 재무장하고 거부한다.
+        if (now - this.activatedAt <= ACTIVATION_GRACE_MS) this.activatedAt = null;
+        else {
+          this.rearm(now, true);
           return { kind: 'refused', reason: 'arming' };
         }
-        const dwelled = (this.movedAt !== null && now - this.movedAt >= DWELL_MS) || this.stillSinceArm;
-        if (!dwelled) {
-          this.pressed = false;
-          return { kind: 'refused', reason: 'dwell' };
-        }
-        this.pressed = true;
-        return null;
       }
-      case 'mouseUp': {
-        if (ev.button !== 'left') return null;
-        const ok = this.pressed && this.armed(now) && this.within(ev.x, ev.y);
+      if (!this.armed(now)) {
+        this.deferArm(now);
+        return { kind: 'refused', reason: 'arming' };
+      }
+      const dwelled = (this.movedAt !== null && now - this.movedAt >= DWELL_MS) || this.stillSinceArm;
+      if (!dwelled) {
         this.pressed = false;
-        return ok ? { kind: 'approve' } : null;
+        return { kind: 'refused', reason: 'dwell' };
       }
+      this.pressed = true;
+      return null;
     }
-    return null;
+    if (ev.button !== 'left') return null;
+    const ok = this.pressed && this.armed(now) && this.within(ev.x, ev.y);
+    this.pressed = false;
+    return ok ? { kind: 'approve' } : null;
+  }
+
+  /** 키 입력. KEYBOARD_APPROVAL이 꺼져 있으면 어떤 키도 승인이 아니다. */
+  key(ev: KeyIn, now: number): GateResult {
+    if (!KEYBOARD_APPROVAL || !this.armed(now) || ev.type !== 'keyDown') return null;
+    return ev.alt && !ev.control && !ev.meta && (ev.key.toLowerCase() === 'y' || ev.key === 'ㅛ') ? { kind: 'approve' } : null;
   }
 }
 

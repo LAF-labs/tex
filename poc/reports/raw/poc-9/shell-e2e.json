@@ -49,14 +49,21 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "runId": "run-79646d5e",
+        "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
         "mode": "unarmed",
         "msg": null,
+        "committed": {
+          "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
+          "mode": "unarmed"
+        },
         "bounds": {
           "x": 200,
           "y": 608,
           "width": 600,
           "height": 90
         },
+        "band": false,
         "armed": false,
         "refusal": null
       }
@@ -66,14 +73,18 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "runId": "run-79646d5e",
+        "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
         "mode": "unarmed",
         "msg": "잠시 뒤 다시 눌러 주세요",
+        "committed": null,
         "bounds": {
           "x": 200,
           "y": 608,
           "width": 600,
           "height": 90
         },
+        "band": false,
         "armed": false,
         "refusal": null
       }
@@ -139,12 +150,29 @@
       ]
     },
     {
+      "name": "렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로)",
+      "ok": true,
+      "detail": {
+        "shell.bootstrap": "ok",
+        "profile.set": "ok",
+        "request.send": "ok",
+        "draft.update": "not_draft",
+        "run.prepare": "not_draft",
+        "run.stop": "no_run",
+        "docs.list": "ok",
+        "counterparties.list": "ok",
+        "g24.candidates": "ok",
+        "g24.save": "ok",
+        "clipboard.copy": "ok"
+      }
+    },
+    {
       "name": "바 페이지는 스크립트를 실행하지 않는다(javascript:false)",
       "ok": true,
       "detail": "blocked:Script failed to execute, this normally "
     },
     {
-      "name": "습관 클릭: 간격(12 DIP)·입력창 클릭은 승인이 아니다",
+      "name": "렌더러 영역(간격·입력창) 클릭은 바 판정에 들어가지 않는다(OS hit-test는 미시험)",
       "ok": true
     },
     {
@@ -152,14 +180,21 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "runId": "run-79646d5e",
+        "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
+        "committed": {
+          "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
+          "mode": "armed"
+        },
         "bounds": {
           "x": 200,
           "y": 608,
           "width": 600,
           "height": 90
         },
+        "band": false,
         "armed": true,
         "refusal": null
       }
@@ -173,14 +208,18 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "runId": "run-79646d5e",
+        "reqId": "98e7b9f5-83a7-443c-b0d2-3537e0b8687e",
         "mode": "unarmed",
         "msg": null,
+        "committed": null,
         "bounds": {
           "x": 120,
           "y": 548,
           "width": 600,
           "height": 90
         },
+        "band": false,
         "armed": false,
         "refusal": null
       }
@@ -201,10 +240,43 @@
     {
       "name": "결과 카드: 승인번호·메일 전송 확인",
       "ok": true,
-      "detail": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-49062613복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1"
+      "detail": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-57075267복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1"
     },
     {
       "name": "문서함에 발급 결과가 들어온다",
+      "ok": true
+    },
+    {
+      "name": "입력 보완: \"세금계산서\" → [A상사] → \"77만원\"이면 초안이 된다",
+      "ok": true,
+      "detail": 847000
+    },
+    {
+      "name": "두 번째 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-194d664a",
+        "reqId": "0a25f023-6803-4f3c-8e28-95da44b3f094",
+        "mode": "armed",
+        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
+        "committed": {
+          "reqId": "0a25f023-6803-4f3c-8e28-95da44b3f094",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다",
       "ok": true
     },
     {
@@ -220,12 +292,62 @@
       "ok": true
     },
     {
+      "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
+      "ok": true,
+      "detail": {
+        "start": "02:19",
+        "at": [
+          "02:19",
+          "02:19"
+        ]
+      }
+    },
+    {
       "name": "정부24 목업 2: 새 PDF 후보 → 고른 뒤에만 값 표시",
       "ok": true
     },
     {
       "name": "정부24 목업: 문서함에 들어간다(직접 발급)",
       "ok": true
+    },
+    {
+      "name": "값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "e2e-wide",
+        "reqId": "wide-1",
+        "mode": "armed",
+        "msg": null,
+        "committed": {
+          "reqId": "wide-1",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 60,
+          "y": 608,
+          "width": 1220,
+          "height": 90
+        },
+        "band": true,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "열린 게이트가 있으면 새 게이트로 바꾸지 않는다",
+      "ok": true
+    },
+    {
+      "name": "바는 새 게이트의 페이지가 화면에 올라온 뒤에만 보인다",
+      "ok": true,
+      "detail": [
+        true,
+        true,
+        true,
+        true,
+        true
+      ]
     }
   ],
   "observations": {

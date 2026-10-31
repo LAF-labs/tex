@@ -17,7 +17,7 @@ export const SHELL = {
   gap: 12,
   barHeight: BAR.height,
   /** 이보다 좁은 대화 열에서는 레일 오른쪽부터 창 끝까지의 띠로 넓힌다. */
-  barMinWidth: 560,
+  barMinWidth: 520,
 } as const;
 
 export interface Rect {
@@ -30,11 +30,13 @@ export interface Rect {
 /**
  * 대화 열 폭 = min(chat-max, 콘텐츠 폭 − 레일 − 패널 − 좌우 여백). 패널 폭은 패널이 접혀 있어도 늘 뺀다
  * (접힘은 렌더러 상태라, 위치 계산에 쓰면 렌더러가 바를 옮길 수 있다).
+ * 대화 열이 바 최소 폭보다 좁거나, 요약 줄의 줄이지 않는 값이 대화 열 폭에 안 들어가면(wide) 레일 오른쪽부터 창 끝까지 띠로 넓힌다.
+ * wide는 main이 게이트 요청 값으로 정한다. 어느 쪽이든 렌더러가 보고하는 값은 쓰지 않는다.
  */
-export function barBounds(contentWidth: number, contentHeight: number): Rect & { band: boolean } {
+export function barBounds(contentWidth: number, contentHeight: number, wide = false): Rect & { band: boolean } {
   const region = contentWidth - SHELL.rail - SHELL.panel;
   const col = Math.min(SHELL.chatMax, region - SHELL.gutter * 2);
   const y = contentHeight - SHELL.composerReserve - SHELL.gap - SHELL.barHeight;
-  if (col >= SHELL.barMinWidth) return { x: SHELL.rail + Math.floor((region - col) / 2), y, width: col, height: SHELL.barHeight, band: false };
+  if (col >= SHELL.barMinWidth && !wide) return { x: SHELL.rail + Math.floor((region - col) / 2), y, width: col, height: SHELL.barHeight, band: false };
   return { x: SHELL.rail, y, width: Math.max(0, contentWidth - SHELL.rail), height: SHELL.barHeight, band: true };
 }
