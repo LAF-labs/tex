@@ -71,7 +71,7 @@
 - **다운로드·인쇄 경로**: 저장 폴더는 금고가 상수 `%LOCALAPPDATA%\SovereignAX\staging\`로 설정한다. 엔진의 `Browser.setDownloadBehavior`·`Page.setDownloadBehavior`는 거부한다. staging의 파일은 docparse 샌드박스(ADR-014)를 거쳐 보관함으로 옮긴 즉시 삭제하고, 기동 시 잔존 파일을 정리한다(D07 §1).
 - 거부된 호출은 엔진에 오류로 돌려주고 보안 이벤트 `vault.cdp_denied{method}`(인자 없음)를 남긴다.
 - **(Phase 1) 커밋 본문 대조 R-C1** (B-03, E-02): 엔진이 무장할 때 보내는 `commit.arm{intentId, stepId, endpoint, bodyFieldMap, expectedHash}`를 받아, 금고가 그 커밋 요청의 본문을 `bodyFieldMap` 순서로 정규화·해시해 `expectedHash`와 비교하고 엔진에는 `{match: true|false|opaque}`만 돌려준다. `false`면 금고가 요청을 중단한다(`Fetch.failRequest`). 본문은 엔진에 가지 않으므로 §3.4의 바디 제거와 충돌하지 않는다. 본문이 보안 모듈로 암호화되어 있으면 `opaque`이고 대조할 수 없다(D03 §5.4).
-- **(Phase 2) 커밋 가드 이전** (A-03): 커밋 엔드포인트 Fetch 인터셉트와 무장 근거 검증까지 금고 중계로 옮긴다. 금고는 무장 근거를 엔진의 주장이 아니라 (a) 폰의 `Sign_Vm("SAX-approve-v1"‖…‖actionHash‖decision)` 또는 (b) main 승인 창(ADR-014)이 발급한 `LocalApproval{runId, gateStepId, actionHash, exp}`로 직접 검증하고, 근거 하나당 요청 1회와 `commitWindowMs`를 집행한다. 본문 대조는 Phase 1부터 금고가 하지만 본문이 `opaque`면 불가하므로, 그 경우 이 장치는 **승인 없는 발급의 횟수**만 제한한다.
+- **(Phase 2) 커밋 가드 이전** (A-03): 커밋 엔드포인트 Fetch 인터셉트와 무장 근거 검증까지 금고 중계로 옮긴다. 금고는 무장 근거를 엔진의 주장이 아니라 (a) 폰의 `Sign_Vm("SAX-approve-v1"‖…‖actionHash‖decision)` 또는 (b) main 승인 바(ADR-021)가 발급한 `LocalApproval{runId, gateStepId, reqId, nonce, actionHash, exp, presence}`로 직접 검증하고(Phase 1에는 검증하는 쪽이 없고 엔진이 main↔엔진 전용 포트의 출처만 믿는다), 근거 하나당 요청 1회와 `commitWindowMs`를 집행한다. 본문 대조는 Phase 1부터 금고가 하지만 본문이 `opaque`면 불가하므로, 그 경우 이 장치는 **승인 없는 발급의 횟수**만 제한한다.
 
 ### 3.4 응답 정리: 정상 경로에서 평문이 엔진에 들어오지 않게 (A-02, A-04)
 

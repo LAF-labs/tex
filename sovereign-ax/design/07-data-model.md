@@ -69,7 +69,7 @@ CREATE TABLE counterparties (
   id TEXT PRIMARY KEY, biz_no TEXT NOT NULL, name TEXT NOT NULL, rep_name TEXT, address TEXT, email TEXT,
   verified_at TEXT, verified_status TEXT, source TEXT CHECK(source IN ('manual','ocr','hometax')),
   last_used_at TEXT, use_count INTEGER NOT NULL DEFAULT 0,
-  local_approved_at TEXT                             -- 로컬에서 한 번이라도 승인된 거래처 (D08 §6.1 newCounterpartyRequiresLocal)
+  local_approved_at TEXT                             -- 로컬에서 한 번이라도 승인된 거래처(표시용). 처음 거래 판정(D08 §6.1 newCounterpartyRequiresLocal, 승인 바)은 이 열이 아니라 irreversible_log의 committed 행으로 한다(ADR-021)
 );
 CREATE UNIQUE INDEX ux_cp_bizno ON counterparties(biz_no);
 
@@ -121,6 +121,8 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt','observed_manual')) NOT NULL,
   reason TEXT,                               -- not_committed 사유: pre_dispatch_mismatch | identity_mismatch | payload_mismatch | verify
   armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,
+  cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(기기 키). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
+  recipient_email_hmac TEXT,                 -- 받는 이메일(소문자 정규화) HMAC. 처음 보내는 주소 판정(ADR-021)
   PRIMARY KEY(intent_id, step_id)
 );
 CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);

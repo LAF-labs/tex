@@ -66,7 +66,7 @@
 | S3b | (정부24 허락 회신 이후로 연기) 헤드풀 `page.pdf()`와 출력물 동등성 | 동등 |
 | S3c | (정부24 허락 회신 이후로 연기) 전자문서지갑 → PDF 다운로드 자동화 | 원본 PDF 확보 |
 | S9 | OpenAI 실호출: 명시 캐시 적중, refusal 빈도, 질문 수별 지연, 레이트 헤더, `store:false` 재생, 어떤 화면 텍스트가 `page_text_addresses_agent`·`security_warning` refusal을 유발하는지, choice `probabilities[]`가 전체 분포인지(B-14) | D04 §9 |
-| S10 | Rust N-API로 Windows Hello/Touch ID 결박 프로토타입 | 봉인·해제 성공, 프롬프트 전면 |
+| S10 | Rust N-API로 Windows Hello/Touch ID 결박 프로토타입 + 발급 전 Hello 확인(`IUserConsentVerifierInterop` 창 핸들 호출, ADR-021) | 봉인·해제 성공, 프롬프트 전면, PIN만 있을 때 `Available`, 메시지 표시 여부, 원격 데스크톱·잠금 중 동작 |
 | S11 | Controlled Folder Access 환경에서 PDF·DB 쓰기와 안내 | 오류 감지·안내 |
 | S12 | Artifact Signing 온보딩(1~20영업일) + 베타 SmartScreen 경고 빈도 | 측정 |
 | S13 | 실제 발급 PDF의 pdfjs 한글 추출률·ToUnicode 부재율 | 규칙 추출 ≥ 95% |
@@ -102,5 +102,14 @@
 - `assisted` 변환 IR이 검증기를 다시 통과하는지, `human_commit`이 토큰·원장·verify를 거치는지 리플레이로 고정한다.
 - 서명 없는 `gate.response`, 챌린지 불일치 `sealed`, 과거 봉인문 재생, 소프트웨어 키 서명의 비가역 승인, `consent.response`를 게이트 승인으로 제출, 서명 없는 기기 목록은 모두 거부되어야 한다(프로토콜 회귀).
 - 리모트·클라우드 회귀(감사 C): PAIR_OK의 AIK 불일치 중단, 24시간 이내 등록 데스크톱 경고, 비가역 카드에서 `ed25519` 응답 거부, 폰 `actionHash` 재계산 불일치 시 승인 비활성, 큐 6번째 의도 거부, 시작 게이트 전 무조작, 만료 `Q_D` 봉인 거부, `rev` 롤백·위조 레코드 거부, 라이브 `cmd.run` 중복 `cmdId` 거부, 깨우기 속도 제한, 복구 72시간 보류, 즉시 삭제는 AIK 서명만, 레지스트리 `+1001` 버전·폐기 키 서명·헤드 해시 불일치·status 48/72시간.
-- 로컬 승인은 main 승인 창에서 main이 관찰한 마우스 클릭(불가 시 비타이핑 조합키)으로만 성립하고, Enter 단독·표시 후 600ms 안의 입력·포커스 강제 획득은 없으며, 일반 렌더러가 보낸 승인 신호는 "승인 창 열기"로만 처리됨을 고정한다(A-15, E-06).
+- 로컬 승인은 main 소유 승인 바(`WebContentsView`)에서 main이 관찰한 클릭으로만 성립함을 고정한다(A-15, E-06, ADR-021).
+  - 승인이 아닌 것: 키보드 입력(Enter·조합키), 바가 보이거나 옮겨지거나 요약·동작이 바뀐 뒤 600ms 안의 입력, 창이 옮겨지거나 다시 보이거나 활성화된 뒤 600ms 안의 입력(바를 눌러 활성화한 경우는 예외), 바 안에서 실제로 움직인 뒤 150ms 안의 mouseDown, 대화 화면 커서가 숨겨지거나 바뀐 동안의 입력, 대화 렌더러가 보낸 승인 신호, 렌더러 명령 중계 경로로 온 `answerGate`.
+  - 무장 전 mouseDown은 600ms를 다시 시작한다. 상태 문구("잠시 뒤 다시 눌러 주세요")만 바뀌면 재무장하지 않는다.
+  - 렌더러의 `window.moveTo`·`resizeTo`와 `alert()`는 막힌다.
+  - 이 판정 로직은 `sendInputEvent` e2e로 고정하고, 배율·모니터 이동·머무름·알림 창 사라짐·클릭 활성화는 OS 수준 입력(별도 프로세스의 `SendInput` 또는 사람의 클릭)으로 따로 시험한다.
+  - 바 위치는 렌더러 보고와 무관하고, 창 크기 변경 뒤 다시 배치·재무장된다. 승인 대기 중 렌더러의 숨김 요청은 무시된다.
+  - `trigger=local`이 아닌 실행에서는 바가 자동으로 뜨지 않고, 폰이 먼저 결정하면 바가 내려간다.
+  - InDoubt 증언은 `LocalAttestation`으로만 받고 승인 근거로는 거부된다. 앞 게이트의 `LocalApproval`은 같은 실행의 다음 게이트에서 거부된다.
+  - Hello를 켠 경우 `Verified` 밖의 결과로는 `LocalApproval`이 발급되지 않고, 쓸 수 없을 때의 면제는 `presence: click+waiver`와 알림을 남긴다.
+  - main은 `remote-debugging-port` 스위치가 있으면 종료한다.
 - 정책·status 회귀(E-04·E-05): 긴급 키 정책에서 필드 하나를 강화하고 `remote.disabledFeatures`를 줄인 조합 거부, `issuedAt` 미래(+5분 초과) 거부, 정책 만료 뒤 마지막 정책 유지·데몬 중지·핫픽스 거부, 168시간 뒤 전 포털 `postprocess`, 긴급 키 하향 status 72시간 뒤 원복, 미러 헤드 불일치 시 `registry.head_mismatch`(E-14).
