@@ -7,7 +7,7 @@ import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, protocol, sess
 import { COMMANDS, READ_QUERIES } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/platform';
 import { verifyLocalApproval } from './approval-gate.ts';
-import { APPROVAL_SCHEME, openApprovalWindow } from './approval-window.ts';
+import { APPROVAL_SCHEME, ApprovalBar, bottomStrip, demoGateRequest } from './approval-bar.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
 
 const require = createRequire(import.meta.url);
@@ -32,6 +32,8 @@ let engineProc: UtilityProcess;
 let controlPort: MessagePortMain;
 /** main↔금고가 기동 시 공유하는 LocalApproval 서명 키(ADR-014). Phase 2에 금고가 직접 검증한다. */
 const approvalKey = new Uint8Array(randomBytes(32));
+/** 개발 콘솔 창 아래 띠에 붙인 승인 바(ADR-021). 셸의 대화 열 배치는 shell-app.ts. */
+let devBar: ApprovalBar | null = null;
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let nextId = 1;
 let engineReady: Promise<void>;
@@ -134,11 +136,10 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
       return { parse, confidence: ocr.confidence, ms: ocr.ms };
     }
     case 'approval.demo': {
-      // PoC-4 시험용 카드. 실제 게이트 카드는 PoC-6에서 엔진 신뢰 계획값으로 만든다.
-      const card = { runId: 'demo', gateStepId: 'demo-gate', actionHash: randomBytes(16).toString('hex'), titleKey: 'demo' as const, rows: [{ labelKey: 'buyer' as const, value: '시험 거래처(발급 없음)' }, { labelKey: 'amount' as const, value: '0원' }] };
-      const { result } = openApprovalWindow(card, approvalKey);
-      const r = await result;
-      return { decision: r.decision, via: r.via, verified: r.approval ? verifyLocalApproval(approvalKey, r.approval) : false };
+      // 승인 바 시험(PoC-4 승인 창을 대체). 실제 게이트 요청은 PoC-6에서 엔진 신뢰 계획값으로 만든다.
+      if (!devBar) throw new Error('not_ready');
+      const r = await devBar.open(demoGateRequest());
+      return { decision: r.decision, verified: r.decision === 'approve' ? verifyLocalApproval(approvalKey, r.approval) : false };
     }
   }
   throw new Error('unknown_method');
@@ -167,6 +168,7 @@ app.whenReady().then(async () => {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (ev) => ev.preventDefault());
+  devBar = new ApprovalBar(win, approvalKey, bottomStrip);
   await win.loadURL(`${APP_SCHEME}://app/app.html`);
 });
 
