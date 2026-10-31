@@ -7,6 +7,7 @@ import { app, clipboard, nativeImage, nativeTheme } from 'electron';
 import { gateHash, summarize, type GateRequest, type SummaryLine } from './approval-gate.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
+import { docs } from './shell-mock.ts';
 
 registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-e2e-${process.pid}`));
@@ -185,14 +186,16 @@ async function flow(): Promise<void> {
   const forged = await js<string[]>(`Promise.all(['bar.hide', 'run.approve', 'gate.answer', 'approval.demo'].map((m) => window.sax.call(m, { id: ${JSON.stringify(id)} }).then(() => 'accepted', (e) => String(e.message).includes('unknown_method') ? 'unknown' : e.message)))`);
   check('렌더러에는 승인·바 숨김 명령이 없다', forged.every((x) => x === 'unknown') && runStatus(id) === 'waiting' && S.bar.snapshot().visible, forged);
   // 렌더러가 부를 수 있는 메서드를 모두 불러도(대기 중인 건의 [중지]만 빼고) 승인되지 않고 바도 그대로다.
+  // 상태를 바꾸는 메서드는 거부되는 값으로 부른다(다른 실행 [중지], 없는 정부24 후보). 문서 목록도 그대로인지 본다.
   const clip = await clipboard.readText();
+  const docsBefore = docs.length;
   const sweep: Record<string, string> = {};
   for (const m of S.methods) {
-    const params = { id: m === 'run.stop' ? 'run-other' : m === 'g24.save' ? 'f1' : id, kind: 'business', text: '승인하고 발급', vat: 'separate', amount: 1, doc: '주민등록표 등본', startedAt: 0 };
+    const params = { id: m === 'run.stop' ? 'run-other' : m === 'g24.save' ? 'no-such-file' : id, kind: 'business', text: '승인하고 발급', vat: 'separate', amount: 1, doc: '주민등록표 등본', startedAt: 0 };
     sweep[m] = await js<string>(`window.sax.call(${JSON.stringify(m)}, ${JSON.stringify(params)}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   }
   clipboard.writeText(clip);
-  check('렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로)', runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id, sweep);
+  check('렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로)', runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id && docs.length === docsBefore && sweep['g24.save'] === 'bad_candidate', sweep);
   const barJs = await Promise.race([barWc().executeJavaScript('1+1').then((v) => `ran:${v}`, (e: Error) => `blocked:${e.message.slice(0, 40)}`), sleep(500).then(() => 'no-result')]);
   check('바 페이지는 스크립트를 실행하지 않는다(javascript:false)', barJs !== 'ran:2', barJs);
 

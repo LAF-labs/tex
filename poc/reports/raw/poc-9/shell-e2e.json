@@ -49,12 +49,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-e8d35e2b",
-        "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+        "runId": "run-70e053cb",
+        "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
         "mode": "unarmed",
         "msg": null,
         "committed": {
-          "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+          "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
           "mode": "unarmed"
         },
         "bounds": {
@@ -73,8 +73,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-e8d35e2b",
-        "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+        "runId": "run-70e053cb",
+        "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
         "mode": "unarmed",
         "msg": "잠시 뒤 다시 눌러 주세요",
         "committed": null,
@@ -150,7 +150,7 @@
       ]
     },
     {
-      "name": "렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로)",
+      "name": "렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로)",
       "ok": true,
       "detail": {
         "shell.bootstrap": "ok",
@@ -162,7 +162,7 @@
         "docs.list": "ok",
         "counterparties.list": "ok",
         "g24.candidates": "ok",
-        "g24.save": "ok",
+        "g24.save": "bad_candidate",
         "clipboard.copy": "ok"
       }
     },
@@ -180,12 +180,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-e8d35e2b",
-        "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+        "runId": "run-70e053cb",
+        "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+          "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
           "mode": "armed"
         },
         "bounds": {
@@ -208,8 +208,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-e8d35e2b",
-        "reqId": "792890fc-7f01-4271-b662-f9d7bc2a6f82",
+        "runId": "run-70e053cb",
+        "reqId": "70555445-fb8a-4fb6-bb56-a41aae51a1ce",
         "mode": "unarmed",
         "msg": null,
         "committed": null,
@@ -240,7 +240,7 @@
     {
       "name": "결과 카드: 승인번호·메일 전송 확인",
       "ok": true,
-      "detail": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-61421360복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1"
+      "detail": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-77422078복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1"
     },
     {
       "name": "문서함에 발급 결과가 들어온다",
@@ -256,12 +256,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-19f371b0",
-        "reqId": "c90153d9-59d8-4c3c-a632-74e79c2ce9aa",
+        "runId": "run-776ccb04",
+        "reqId": "7568c12d-3f98-4297-88ae-d51052fdfee0",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "c90153d9-59d8-4c3c-a632-74e79c2ce9aa",
+          "reqId": "7568c12d-3f98-4297-88ae-d51052fdfee0",
           "mode": "armed"
         },
         "bounds": {
@@ -295,10 +295,10 @@
       "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
       "ok": true,
       "detail": {
-        "start": "02:54",
+        "start": "03:08",
         "at": [
-          "02:54",
-          "02:54"
+          "03:08",
+          "03:08"
         ]
       }
     },

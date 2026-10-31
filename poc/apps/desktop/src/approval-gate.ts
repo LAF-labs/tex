@@ -107,7 +107,8 @@ export const cells = (s: string) => [...s].reduce((n, c) => n + (wide.test(c) ? 
 
 /** 줄이지 않는 조각이 바 폭 안에 들어가는지 어림한다. 넘친 줄의 라벨, 다 들어가면 null. */
 export function overflowLine(lines: SummaryLine[], barWidth: number): string | null {
-  const valueWidth = barWidth - BAR.padX * 2 - BAR.label - BAR.action - BAR.gap * 2;
+  // barCss 배치와 같은 식: 좌우 여백, [요약 줄 | 간격 | 동작 칸], 요약 줄 안 [라벨 | 간격 | 값 | 간격 | 표시]. 간격은 셋이다.
+  const valueWidth = barWidth - BAR.padX * 2 - BAR.action - BAR.gap - BAR.label - BAR.gap * 2;
   for (const l of lines) {
     const keep = l.pieces.filter((p) => !p.shrink).reduce((n, p) => n + cells(p.text), 0) * BAR.unit;
     const flag = l.flag ? cells(l.flag) * BAR.unit * (12 / 14) + BAR.flagPad : 0;
