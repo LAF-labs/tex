@@ -99,13 +99,18 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
   }
   const reason = judged.check.problems;
   const setAside = await moveAside(dir);
-  await fs.mkdir(dir, { mode: 0o700 });
-  const fresh = await attempt(() => guard.ensurePrivate(dir));
+  const fresh = await attempt(async () => {
+    await retryingOnWindows(() => fs.mkdir(dir, { mode: 0o700 }));
+    return guard.ensurePrivate(dir);
+  });
   if (fresh.check.ok) return { check: fresh.check, before, reason, setAside };
-  // 새 폴더도 안 되면 원래 폴더 탓이 아니다(쓰기 도구가 막힘 등). 되돌려 놓고 실패한다. 원래 프로필을 잃지 않고, 재시도마다 쌓이지 않는다.
+  // 새 폴더를 못 만들었거나 맞지 않으면 원래 폴더 탓이 아니다(쓰기 도구가 막힘 등). 되돌려 놓고 실패한다.
+  // 원래 프로필을 잃지 않고, 재시도마다 쌓이지 않는다.
   try {
-    await fs.rmdir(dir);
-    await renameRetrying(path.join(path.dirname(dir), setAside), dir);
+    await fs.rmdir(dir).catch((e: NodeJS.ErrnoException) => {
+      if (e.code !== 'ENOENT') throw e; // mkdir이 실패했으면 없다
+    });
+    await retryingOnWindows(() => fs.rename(path.join(path.dirname(dir), setAside), dir));
   } catch {
     if (fresh.error) throw fresh.error;
     return { check: fresh.check, before, reason, setAside };
@@ -117,16 +122,16 @@ export async function preparePrivateDir(dir: string, guard: DirGuard = dirGuard(
 /** 링크는 따라가지 않고 링크 자체의 이름을 바꾼다. 같은 부모 안이라 볼륨을 넘지 않는다. */
 async function moveAside(entry: string): Promise<string> {
   const name = `${path.basename(entry)}.untrusted-${Date.now()}-${randomBytes(3).toString('hex')}`;
-  await renameRetrying(entry, path.join(path.dirname(entry), name));
+  await retryingOnWindows(() => fs.rename(entry, path.join(path.dirname(entry), name)));
   return name;
 }
 
-async function renameRetrying(from: string, to: string): Promise<void> {
+async function retryingOnWindows<T>(op: () => Promise<T>): Promise<T> {
   for (let i = 0; ; i++) {
     try {
-      return await fs.rename(from, to);
+      return await op();
     } catch (e) {
-      // Windows: 백신·색인기가 그 아래 항목을 잠깐 열고 있으면 디렉터리 이름 바꾸기가 거부된다. 잠깐 기다렸다 다시 한다(최대 약 1초).
+      // Windows: 백신·색인기가 항목을 잠깐 열고 있으면 이름 바꾸기·만들기가 거부된다. 잠깐 기다렸다 다시 한다(최대 약 1초).
       const code = (e as NodeJS.ErrnoException).code ?? '';
       if (process.platform !== 'win32' || i >= 4 || !['EPERM', 'EACCES', 'EBUSY'].includes(code)) throw e;
       await new Promise((r) => setTimeout(r, 100 * (i + 1)));

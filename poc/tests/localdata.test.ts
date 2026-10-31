@@ -97,8 +97,9 @@ describe('경로와 접근 통제', () => {
     const ps = windowsTool('WindowsPowerShell\\v1.0\\powershell.exe');
     const sddl = (await readDacl(root)).aces.map((a) => `(${a.type};${a.flags.join('')};FA;;;${a.sid})`).join('');
     // Get-Acl 객체는 SACL까지 다시 쓰려 해 SeSecurityPrivilege가 필요하다. DACL만 담은 새 객체로 쓴다.
-    const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl('${root}', $a)`;
-    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script]);
+    // 경로는 생산 코드처럼 환경 변수로 넘긴다(작은따옴표가 든 사용자 이름에서도 깨지지 않게).
+    const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $a)`;
+    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: root } });
     assert.ok((await readDacl(root)).aces.some((a) => a.type === 'XA' && a.sid === 'WD'), 'Everyone 조건부 허용이 보인다');
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '조건부 ACE 복구');
@@ -256,6 +257,19 @@ describe('경로와 접근 통제', () => {
     await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), writeBlocked)), /icacls blocked/);
     assert.ok(await planted(child), '원래 프로필이 제자리에 있다');
     assert.deepEqual(await untrusted(), [], '되돌렸으므로 쌓이지 않는다');
+    // 치운 뒤 새 폴더를 만들지 못해도(PR #9 Bugbot) 되돌린다. 다음 기동이 빈 프로필로 뜨지 않게.
+    const mkdir = fs.mkdir;
+    fs.mkdir = (async (p: Parameters<typeof mkdir>[0], o?: Parameters<typeof mkdir>[1]) => {
+      if (p === child) throw Object.assign(new Error('mkdir denied'), { code: 'EACCES' });
+      return mkdir(p, o);
+    }) as typeof mkdir;
+    try {
+      await assert.rejects(preparePrivateDir(child, guard((d) => (d === child ? NOT_OWNER : OK), () => OK)), /mkdir denied/);
+    } finally {
+      fs.mkdir = mkdir;
+    }
+    assert.ok(await planted(child), '원래 프로필이 제자리에 있다');
+    assert.deepEqual(await untrusted(), []);
     // 제자리 복구가 예외 없이 실패를 돌려주면 새 폴더도 같은 방법으로 고치게 되므로 치우지 않는다.
     const stuck = await preparePrivateDir(child, guard((d) => (d === child ? aclOff : OK), () => aclOff));
     assert.deepEqual([stuck.check.ok, stuck.setAside], [false, undefined]);
