@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, protocol, session, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
 import { COMMANDS, READ_QUERIES } from '@sax/engine/protocol';
-import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/platform';
+import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, openApprovalWindow } from './approval-window.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
@@ -145,10 +145,12 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
 }
 
 app.whenReady().then(async () => {
-  // 준비 중 예외(이름 바꾸기 거부 등)도 창 없이 멈추지 않고 알린 뒤 끝낸다.
-  const layout = await prepareLayout(root).catch((e: Error) => e);
-  if (layout instanceof Error) {
-    dialog.showErrorBox('저장소 권한', `앱 폴더를 준비하지 못했습니다: ${layout.message}`);
+  // 준비 중 예외(이름 바꾸기 거부 등)도 창 없이 멈추지 않고 알린 뒤 끝낸다. Error가 아닌 값이 던져져도 같다.
+  let layout: PreparedLayout;
+  try {
+    layout = await prepareLayout(root);
+  } catch (e) {
+    dialog.showErrorBox('저장소 권한', `앱 폴더를 준비하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`);
     app.quit();
     return;
   }
