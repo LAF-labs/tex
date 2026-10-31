@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, prepareLayout, readDacl, windowsTool } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, parseDacl, prepareLayout, readDacl, windowsTool } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -51,8 +51,42 @@ describe('경로와 접근 통제', () => {
     if (process.platform === 'darwin') await fs.access(path.join(root, '.metadata_never_index'));
     if (win) {
       const { stdout } = await run(windowsTool('attrib.exe'), [root]);
+      assert.ok(stdout.includes(root), stdout);
       assert.match(stdout.slice(0, stdout.indexOf(root)), /I/, 'FILE_ATTRIBUTE_NOT_CONTENT_INDEXED');
     }
+  });
+
+  it('SDDL DACL 파서: 레이블(S:)은 무시, 조건부·거부·읽지 못한 ACE와 null DACL은 남긴다', () => {
+    const me = 'S-1-5-21-1-2-3-1001';
+    const clean = parseDacl(`D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${me})S:AI(ML;OICI;NW;;;LW)`);
+    assert.deepEqual(clean, { protected: true, aces: [{ type: 'A', flags: ['OI', 'CI'], sid: 'SY' }, { type: 'A', flags: ['OI', 'CI'], sid: me }] });
+    const cond = parseDacl(`D:PAI(XA;OICI;FR;;;WD;(Exists Foo))(A;OICI;FA;;;${me})`);
+    assert.deepEqual(cond.aces.map((a) => [a.type, a.sid]), [['XA', 'WD'], ['A', me]]);
+    assert.deepEqual(parseDacl('D:PAI(D;;FR;;;BU)').aces.map((a) => [a.type, a.sid]), [['D', 'BU']]);
+    const inherited = parseDacl('D:AI(A;OICIID;FA;;;BA)');
+    assert.equal(inherited.protected, false);
+    assert.deepEqual(inherited.aces[0]?.flags, ['OI', 'CI', 'ID']);
+    assert.deepEqual(parseDacl('D:NO_ACCESS_CONTROL').aces.map((a) => a.sid), ['WD']);
+    assert.deepEqual(parseDacl('D:PAI(A;OICI;FA;;').aces.map((a) => a.sid), ['?']);
+    assert.deepEqual(parseDacl('').aces.map((a) => a.sid), ['?']);
+  });
+
+  it('Windows: 거부 ACE·조건부 ACE도 잡고 기동 시 지운다', { skip: !win }, async () => {
+    const root = path.join(await tmpRoot(), 'SovereignAX');
+    assert.equal((await prepareLayout(root)).root.ok, true);
+    await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']); // Guests 쓰기 거부
+    assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
+    assert.equal((await prepareLayout(root)).root.ok, true, '거부 ACE 복구');
+    const ps = windowsTool('WindowsPowerShell\\v1.0\\powershell.exe');
+    const sddl = (await readDacl(root)).aces.map((a) => `(${a.type};${a.flags.join('')};FA;;;${a.sid})`).join('');
+    // Get-Acl 객체는 SACL까지 다시 쓰려 해 SeSecurityPrivilege가 필요하다. DACL만 담은 새 객체로 쓴다.
+    const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl('${root}', $a)`;
+    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script]);
+    assert.ok((await readDacl(root)).aces.some((a) => a.type === 'XA' && a.sid === 'WD'), 'Everyone 조건부 허용이 보인다');
+    assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
+    assert.equal((await prepareLayout(root)).root.ok, true, '조건부 ACE 복구');
+    await run(windowsTool('icacls.exe'), [root, '/setintegritylevel', '(OI)(CI)L']); // SACL 레이블은 DACL 판정에 섞이지 않는다
+    assert.equal((await dirGuard().checkPrivate(root)).ok, true, '무결성 레이블 오탐 없음');
   });
 
   it('재분석 지점(심볼릭 링크·정션)이 경로에 있으면 거부', async () => {

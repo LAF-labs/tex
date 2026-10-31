@@ -65,7 +65,7 @@ UAC가 켜진 관리자 계정은 평소 실행 토큰이 **비관리자**다(`A
 | pnpm | 12.11.2(`npm i -g`, 계정별) |
 | 네이티브 모듈 | `better-sqlite3-multiple-ciphers` 13.0.3은 패키지 안 `prebuilds/win32-x64.node`를 쓴다. 빌드 도구 불필요(VS Build Tools 2022·Python 3.14는 있음) |
 | Electron | 45.1.0. `pnpm install` 뒤 바이너리가 받아지지 않아 `node_modules/.pnpm/electron@45.1.0/node_modules/electron`에서 `node install.js`를 한 번 돌렸다 |
-| 결과 | `pnpm build`·`pnpm lint` 통과, `pnpm test` **115/115**(45초), e2e **14/14**(OS 배율 150%, 앱 배율 강제 125%·150% 각 14/14), 앱 스모크 통과. 원자료 [raw/win/](raw/win/) |
+| 결과 | `pnpm build`·`pnpm lint` 통과, `pnpm test` **117/117**(DACL 파서·복구 테스트 2건 추가 후), e2e **14/14**(OS 배율 150%, 앱 배율 강제 125%·150% 각 14/14), 앱 스모크 통과. 원자료 [raw/win/](raw/win/) |
 
 Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 
@@ -75,6 +75,7 @@ Windows에서 처음 돌렸을 때 실패한 원인과 고친 것:
 | `prepareLayout` 실패 → 이후 테스트 연쇄 실패·10분 넘게 멈춤 | `whoami`를 PATH로 찾아 Git의 `whoami`가 돌았다 | `whoami`·`icacls`·`attrib`를 System32 절대 경로로(`windowsTool`) |
 | (잠재) 한글 사용자 이름에서 DACL 판정 오류 | `icacls` 출력의 계정 이름은 콘솔 코드 페이지(CP949) | `icacls /save`의 SDDL로 SID 비교(`readDacl`) |
 | (잠재) 누가 직접 더한 ACE가 복구 뒤에도 남음 | `/inheritance:r`은 상속 ACE만 지운다 | 사용자·SYSTEM 밖 SID를 `/remove`로 제거, 테스트에 Users 읽기 ACE 복구 추가 |
+| (잠재) 조건부 ACE(`XA`, Everyone 허용 등)를 못 보고 통과 · 무결성 레이블(`S:`)을 다른 계정으로 오탐 | SDDL을 필드 6개짜리 정규식으로 읽었다 | 괄호 단위 파서(`parseDacl`), 읽지 못한 ACE·null DACL은 실패로. `icacls /remove`가 콜백 ACE를 못 지우므로 남으면 DACL 전체를 바꾼다(.NET `Directory.SetAccessControl`, 비승격 가능. `icacls /restore`는 SeRestorePrivilege가 필요해 못 씀) |
 | 재분석 지점 테스트 EPERM | Windows 심볼릭 링크는 개발자 모드·권한 필요 | 테스트를 권한 없이 만들 수 있는 정션으로 |
 
 ## 6. S6m 측정(P0-1 흡수분) — (1) ✅ 관리자 계정 비승격 / (2) ⏳

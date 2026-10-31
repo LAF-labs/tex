@@ -95,22 +95,53 @@ export interface DaclEntry {
   sid: string;
 }
 
+export interface Dacl {
+  protected: boolean;
+  aces: DaclEntry[];
+}
+
+/**
+ * `icacls /save`가 쓰는 SDDL 한 줄(`D:PAI(...)(...)S:AI(ML;...)`)에서 DACL만 읽는다.
+ * ACE는 최상위 괄호 단위로 나눈다. 조건부 ACE(`XA;...;WD;(조건)`)도 한 항목으로 남아야 빠뜨리지 않는다.
+ * 읽지 못한 ACE와 null DACL(`NO_ACCESS_CONTROL`, 누구나 접근)은 SID `?`·`WD` 항목으로 남겨 판정에서 걸리게 한다.
+ */
+export function parseDacl(sddl: string): Dacl {
+  const start = sddl.indexOf('D:');
+  if (start < 0) return { protected: false, aces: [{ type: '?', flags: [], sid: '?' }] };
+  const aceTexts: string[] = [];
+  let header = '';
+  let depth = 0;
+  let from = -1;
+  for (let i = start + 2; i < sddl.length; i++) {
+    const ch = sddl[i];
+    if (depth === 0 && ch !== '(') {
+      if (sddl.startsWith('S:', i) || sddl.startsWith('O:', i) || sddl.startsWith('G:', i)) break; // SACL(무결성 레이블 등)은 보지 않는다
+      if (aceTexts.length === 0) header += ch;
+      continue;
+    }
+    if (ch === '(' && depth++ === 0) from = i + 1;
+    else if (ch === ')' && --depth === 0) aceTexts.push(sddl.slice(from, i));
+  }
+  const aces = aceTexts.map((t) => {
+    const f = t.split(';');
+    if (f.length < 6 || !f[5]) return { type: '?', flags: [], sid: '?' };
+    return { type: f[0] ?? '?', flags: (f[1] ?? '').match(/../g) ?? [], sid: f[5] };
+  });
+  if (depth !== 0) aces.push({ type: '?', flags: [], sid: '?' });
+  if (header.includes('NO_ACCESS_CONTROL')) aces.push({ type: 'A', flags: [], sid: 'WD' });
+  return { protected: /^[A-Z]*P/.test(header), aces };
+}
+
 /**
  * icacls 출력의 계정 이름은 콘솔 코드 페이지(한글 Windows는 CP949)로 나와 한글 사용자 이름이면 비교가 깨진다.
  * `/save`는 SDDL(UTF-16LE)로 SID를 그대로 주므로 SID로 판정한다.
  */
-export async function readDacl(dir: string): Promise<{ protected: boolean; aces: DaclEntry[] }> {
+export async function readDacl(target: string): Promise<Dacl> {
   const tmp = await fs.mkdtemp(path.join(os.tmpdir(), 'sax-acl-'));
   try {
     const out = path.join(tmp, 'acl.txt');
-    await run(windowsTool('icacls.exe'), [dir, '/save', out]);
-    const sddl = (await fs.readFile(out, 'utf16le')).split(/\r?\n/).find((l) => l.startsWith('D:')) ?? '';
-    const aces = [...sddl.matchAll(/\(([^;()]*);([^;()]*);[^;()]*;[^;()]*;[^;()]*;([^;()]*)\)/g)].map((m) => ({
-      type: m[1] ?? '',
-      flags: (m[2] ?? '').match(/../g) ?? [],
-      sid: m[3] ?? '',
-    }));
-    return { protected: /^D:[A-Z]*P/.test(sddl), aces };
+    await run(windowsTool('icacls.exe'), [target, '/save', out]);
+    return parseDacl((await fs.readFile(out, 'utf16le')).split(/\r?\n/).find((l) => l.startsWith('D:')) ?? '');
   } finally {
     await fs.rm(tmp, { recursive: true, force: true });
   }
@@ -136,6 +167,12 @@ class WindowsDirGuard implements DirGuard {
     const extra = new Set((await readDacl(dir)).aces.map((a) => a.sid).filter((s) => s !== sid && !isSystem(s)));
     const removable = [...extra].map((s) => (s.startsWith('S-1-') ? s : SDDL_ALIASES[s])).filter((s): s is string => !!s);
     if (removable.length) await run(icacls, [dir, '/remove', ...removable.map((s) => `*${s}`)]);
+    const check = await this.checkPrivate(dir);
+    if (check.ok || check.problems.includes('reparse_point') || check.problems.includes('not_dir')) return check;
+    // icacls는 조건부(콜백) ACE 등을 지우지 못한다(PoC-1 실측). 남으면 DACL 전체를 바꾼다.
+    // Get-Acl 객체는 SACL까지 쓰려 해 SeSecurityPrivilege가 필요하므로 DACL만 담은 새 객체로 쓴다. 경로는 환경 변수로 넘긴다.
+    const script = `$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${sid})', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)`;
+    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: dir } });
     return this.checkPrivate(dir);
   }
 
