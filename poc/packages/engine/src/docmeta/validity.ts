@@ -1,5 +1,5 @@
 // 서류 종류별 유효기간 규칙(D07 §3)과 만료일·남은 기간. 날짜는 모두 한국 시간 달력 날짜(YYYY-MM-DD)다.
-import type { DocMetaExtract, DocType } from './extract.ts';
+import type { DocMetaExtract, DocType, Field } from './extract.ts';
 
 export interface ValidityRule {
   rule: 'fixed_days';
@@ -45,6 +45,15 @@ export function daysLeft(expiresOn: string, today: string): number {
 }
 
 /**
+ * 정하지 못한 유효기간의 문서 후보 중 발급일 이후 가장 이른 날짜(발급일을 모르면 가장 이른 후보).
+ * 발급일을 고치면 쓸 수 있는 후보가 달라지므로, 후보 전부(options)가 있으면 그중에서 고른다.
+ */
+export function validityCandidate(f: Field, issued: string | null): string | undefined {
+  const all = f.options ?? (f.suggested ? [f.suggested] : []);
+  return issued ? all.find((d) => d >= issued) : all[0];
+}
+
+/**
  * 만료일 결정. 납세증명서는 문서에 적힌 유효기간이 발급일~발급일+30일 안에 있을 때만 쓴다.
  * 못 읽었거나 범위 밖이면 규칙표 값(짧은 쪽)을 쓰되 사용자 확인을 요구한다. 지정납부기한으로 짧아졌을 수 있어서다.
  * 정하지 못한 유효기간의 문서 후보가 규칙 값보다 이르면 그 후보를 쓴다(역시 확인 필요).
@@ -66,9 +75,9 @@ export function decideExpiry(meta: DocMetaExtract, today: string, overrideDays?:
     return { expiresOn: stated, source: 'document', needsUser: reasons.length > 0, reasons };
   }
   reasons.push(stated ? 'valid_until_out_of_range' : `valid_until_${meta.validUntil.reason ?? 'not_found'}`);
-  // 유효기간을 정하지 못했어도(후보가 여럿, 오독 흔적) 문서 후보(가장 이른 날짜)가 발급일 뒤이고 규칙 날짜보다 이르면 그 날짜로 둔다.
+  // 유효기간을 정하지 못했어도(후보가 여럿, 오독 흔적) 발급일 이후 문서 후보 중 가장 이른 날짜가 규칙 날짜보다 이르면 그 날짜로 둔다.
   // 짧은 쪽(보수): 확인 전에도 문서보다 늦은 날짜를 보여 주지 않고, 그대로 확인해도 문서보다 늦은 날짜가 확인되지 않는다.
-  const candidate = stated ? undefined : meta.validUntil.suggested;
-  if (candidate && issued && ruleExpiry && candidate >= issued && candidate < ruleExpiry) return { expiresOn: candidate, source: 'document', needsUser: true, reasons };
+  const candidate = stated ? undefined : validityCandidate(meta.validUntil, issued);
+  if (candidate && issued && ruleExpiry && candidate < ruleExpiry) return { expiresOn: candidate, source: 'document', needsUser: true, reasons };
   return { expiresOn: ruleExpiry, source: ruleExpiry ? 'rule' : null, needsUser: true, reasons };
 }

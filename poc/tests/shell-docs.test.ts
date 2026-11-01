@@ -81,22 +81,20 @@ describe('셸 문서함 공급자', () => {
     await assert.rejects(p.importPdf({}), /closed/);
   });
 
-  it('데모 공급자: 시작할 때 만든 프로세스가 끝난 지난 데모 폴더만 지운다', async () => {
+  it('데모 공급자: 시작할 때 만든 프로세스(폴더 이름의 번호)가 끝난 지난 데모 폴더만 지운다', async () => {
     const parent = await fsp.mkdtemp(path.join(root, 'sweep-'));
     const dead = spawnSync(process.execPath, ['-e', '']).pid!;
-    const mk = async (name: string, owner?: number) => {
-      await fsp.mkdir(path.join(parent, name, 'vault'), { recursive: true });
-      if (owner !== undefined) await fsp.writeFile(path.join(parent, name, 'owner.pid'), String(owner));
-    };
-    await mk('sax-shell-docs-dead', dead);
-    await mk('sax-shell-docs-live', process.ppid);
-    await mk('sax-shell-docs-nomark');
-    await mk('other-dead', dead);
+    const mk = (name: string) => fsp.mkdir(path.join(parent, name, 'vault'), { recursive: true });
+    await mk(`sax-shell-docs-${dead}-AbC123`);
+    await mk(`sax-shell-docs-${process.ppid}-AbC123`);
+    await mk('sax-shell-docs-AbC123');
+    await mk(`other-${dead}-AbC123`);
+    await fsp.writeFile(path.join(parent, `sax-shell-docs-${dead}-File01`), 'x');
     const p = demoDocsProvider({ parent, profile: PROFILES.business, importer: fakeImporter(''), now: () => NOW });
     try {
+      assert.match(path.basename(p.dir), new RegExp(`^sax-shell-docs-${process.pid}-[A-Za-z0-9]{6}$`));
       const left = (await fsp.readdir(parent)).filter((n) => n !== path.basename(p.dir)).sort();
-      assert.deepEqual(left, ['other-dead', 'sax-shell-docs-live', 'sax-shell-docs-nomark']);
-      assert.equal(await fsp.readFile(path.join(p.dir, 'owner.pid'), 'utf8'), String(process.pid));
+      assert.deepEqual(left, [`other-${dead}-AbC123`, 'sax-shell-docs-AbC123', `sax-shell-docs-${dead}-File01`, `sax-shell-docs-${process.ppid}-AbC123`].sort(), '끝난 프로세스의 데모 폴더만 지운다(살아 있음·이름 형식 다름·파일은 둔다)');
     } finally {
       p.close?.();
     }

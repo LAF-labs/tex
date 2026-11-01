@@ -154,12 +154,17 @@ describe('보관함(DocumentService)', () => {
 
   it('유효기간 후보가 여럿인 납세증명서: 규칙보다 이른 문서 후보를 잠정 만료일로, 그대로 확인해도 문서보다 늦지 않다', async () => {
     await business();
-    const two = taxText().replace('유효기간 2026년 11월 30일', '유효기간 2026년 11월 30일\n유효기간 2026년 11월 20일');
+    const two = taxText().replace('유효기간 2026년 11월 30일', '유효기간 2026년 11월 30일\n유효기간 2026년 11월 5일');
     assert.notEqual(two, taxText());
     const d = await call<DocumentView>('document.import', { bytes: pdf('two'), extract: extract(two) });
-    assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser, d.reasons, d.suggested.validUntil], ['2026-11-20', 'document', true, ['valid_until_ambiguous'], '2026-11-20']);
+    assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser, d.reasons, d.suggested.validUntil], ['2026-11-05', 'document', true, ['valid_until_ambiguous'], '2026-11-05']);
+    // 발급일을 첫 후보 뒤로 고치면, 쓸 수 있는 다음 후보(11-30)가 잠정 만료일·후보가 된다(규칙 12-05로 돌아가지 않는다)
+    const moved = await upd(d.id, { issuedOn: '2026-11-06' });
+    assert.deepEqual([moved.expiresOn, moved.expirySource, moved.needsUser, moved.suggested.validUntil], ['2026-11-30', 'document', true, '2026-11-30']);
+    const back = await upd(d.id, { issuedOn: '2026-11-01' });
+    assert.deepEqual([back.expiresOn, back.suggested.validUntil], ['2026-11-05', '2026-11-05']);
     const ok = await upd(d.id, {});
-    assert.deepEqual([ok.expiresOn, ok.needsUser], ['2026-11-20', false]);
+    assert.deepEqual([ok.expiresOn, ok.needsUser, ok.expirySource], ['2026-11-05', false, 'user'], '정하지 못한 후보를 확인하면 확인함');
   });
 
   it('OCR로 읽은 서류의 발급일만 고쳐도, OCR 유효기간을 문서 값으로 되살려 확정하지 않는다', async () => {

@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DocumentRepo, ProfileRepo, ValidationError, type Db, type DocumentRow } from '@sax/db';
-import { DOC_TYPES, VALIDITY_RULES, addDays, decideExpiry, daysLeft, extractDocMeta, kstToday, readScore, validateDocMeta, worthOcr, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
+import { DOC_TYPES, VALIDITY_RULES, addDays, decideExpiry, daysLeft, extractDocMeta, kstToday, readScore, validateDocMeta, validityCandidate, worthOcr, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
 
 /** docparse 추출 결과(D17 §3 extract + OCR 폴백 정보). main이 검증한 값이고, 엔진도 모양을 다시 본다. */
 export interface PdfText {
@@ -263,7 +263,9 @@ export class DocumentService {
       expiry = withReasons(d.source, [...d.reasons, ...(fromOcr ? [fromOcr] : []), ...(unseen ? [unseen] : []), ...carried]);
     } else {
       const cur = meta.expiry ?? { source: null, needsUser: false, reasons: [] };
-      expiry = withReasons(cur.source === 'rule' ? 'user' : cur.source, missing());
+      // 추정(규칙)이었거나 문서가 유효기간을 하나로 적지 않았던 값(정하지 못한 후보)을 확인하면 확인함
+      const decided = cur.source === 'rule' || cur.reasons.some((r) => r.startsWith('valid_until_'));
+      expiry = withReasons(decided && cur.source ? 'user' : cur.source, missing());
     }
     if (issuedOn && expiresOn && expiresOn < issuedOn) throw new ValidationError('expires_before_issued');
     if (typed === 'national_tax_cert' && issuedOn && expiresOn && expiresOn > addDays(issuedOn, VALIDITY_RULES.national_tax_cert.days)) throw new ValidationError('expires_after_legal_max');
@@ -291,7 +293,9 @@ export class DocumentService {
     const value = (x: Field | undefined) => x?.value ?? null;
     const suggested: DocumentView['suggested'] = {};
     if (f?.issuedOn?.suggested) suggested.issuedOn = f.issuedOn.suggested;
-    if (f?.validUntil?.suggested) suggested.validUntil = f.validUntil.suggested;
+    // 유효기간 후보는 지금 발급일 이후 것 중 가장 이른 날짜(발급일을 고친 뒤에도 쓸 수 있는 후보를 보여 준다)
+    const valid = f?.validUntil ? validityCandidate(f.validUntil, r.issuedAt) : undefined;
+    if (valid) suggested.validUntil = valid;
     return {
       id: r.id,
       displayName: r.displayName ?? DISPLAY.other,

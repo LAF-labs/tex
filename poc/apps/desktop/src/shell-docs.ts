@@ -3,7 +3,7 @@
 // - 데모 공급자: 엔진·금고가 없는 목업 셸(pnpm demo)에서 엔진 자리를 대신한다. 엔진의 보관함 코드(DocumentService)를
 //   실행마다 새로 만드는 임시 폴더의 DB·보관함으로 그대로 돌려 판단(만료일·확인 필요)이 실제 앱과 같다.
 //   main이 DB를 여는 것은 이 데모뿐이다(D01 §2.1의 예외, 목업). 앱 폴더는 쓰지 않고, 닫을 때 임시 폴더를 지운다.
-//   닫지 못하고 끝난 실행(크래시, 강제 종료, 파일이 열려 있어 못 지움)의 폴더는 다음 데모가 시작할 때 지운다.
+//   닫지 못하고 끝난 실행(크래시, 강제 종료, 파일이 열려 있어 못 지움)의 폴더는 다음 데모가 시작할 때 지운다(폴더 이름의 프로세스 번호로).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -71,8 +71,10 @@ export function engineDocsProvider(engine: EngineCall, importer: Importer): Docs
   };
 }
 
+// 폴더 이름에 만든 프로세스 번호를 넣는다(sax-shell-docs-<pid>-XXXXXX). 표시 파일로 두면 Windows에서 뷰어가 PDF를 잡고 있을 때
+// 지우기가 표시 파일만 지우고 멈춰, 남은 폴더를 다음 시작이 알아보지 못한다.
 const DEMO_PREFIX = 'sax-shell-docs-';
-const OWNER = 'owner.pid';
+const DEMO_DIR = /^sax-shell-docs-(\d+)-[A-Za-z0-9]{6}$/;
 
 const alive = (pid: number) => {
   try {
@@ -83,21 +85,25 @@ const alive = (pid: number) => {
   }
 };
 
-/** 지난 데모 폴더 중 만든 프로세스가 끝난 것만 지운다(표시 파일이 없거나 읽을 수 없으면 그대로 둔다). 실패해도 데모는 시작한다. */
+/**
+ * 지난 데모 폴더 중 만든 프로세스가 끝난 것만 지운다(이름 형식이 다르거나 폴더가 아니면 그대로 둔다). 실패해도 데모는 시작한다.
+ * 프로세스 번호를 다른 프로세스가 다시 쓰고 있으면 그 폴더는 남는다(지우지 않는 쪽으로 안전).
+ */
 function sweepStale(parent: string): void {
   let names: string[];
   try {
-    names = fs.readdirSync(parent).filter((n) => n.startsWith(DEMO_PREFIX));
+    names = fs.readdirSync(parent);
   } catch {
     return;
   }
   for (const n of names) {
+    const pid = Number(DEMO_DIR.exec(n)?.[1]);
+    if (!Number.isInteger(pid) || pid <= 0 || pid === process.pid || alive(pid)) continue;
     const dir = path.join(parent, n);
     try {
-      const pid = Number(fs.readFileSync(path.join(dir, OWNER), 'utf8'));
-      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid && !alive(pid)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
+      if (fs.lstatSync(dir).isDirectory()) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 2 });
     } catch {
-      // 표시 파일 없음(다른 프로그램의 폴더일 수 있다)·지우기 실패: 그대로 둔다
+      // 지우기 실패(파일이 잡혀 있음 등): 다음에 다시
     }
   }
 }
@@ -109,8 +115,7 @@ function sweepStale(parent: string): void {
 export function demoDocsProvider(o: { parent?: string; profile: Profile; importer: Importer; now?: () => Date }): DocsProvider & { dir: string } {
   const parent = o.parent ?? os.tmpdir();
   sweepStale(parent);
-  const dir = fs.mkdtempSync(path.join(parent, DEMO_PREFIX));
-  fs.writeFileSync(path.join(dir, OWNER), String(process.pid));
+  const dir = fs.mkdtempSync(path.join(parent, `${DEMO_PREFIX}${process.pid}-`));
   const db: Db = openDatabase(path.join(dir, 'docs-demo.sqlite'), new Uint8Array(randomBytes(32)));
   new ProfileRepo(db).upsert({ kind: 'business', displayName: o.profile.name, bizNo: o.profile.bizNo ?? null, corpNo: null, repName: o.profile.rep ?? null, bizType: null, bizItem: null, address: null, email: o.profile.email, signMethod: null });
   const svc = new DocumentService(db, () => path.join(dir, 'vault'), o.now);

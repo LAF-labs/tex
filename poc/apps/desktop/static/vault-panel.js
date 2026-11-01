@@ -27,6 +27,7 @@
     invalid_pdf: 'PDF를 열 수 없습니다(손상)', timeout: '읽는 데 너무 오래 걸려 멈췄습니다', memory_limit: '메모리 상한을 넘어 멈췄습니다', pick_expired: '파일을 다시 고르세요', password_too_long: '암호가 너무 깁니다',
     issued_in_future: '발급일이 오늘보다 뒤입니다', expires_before_issued: '만료일이 발급일보다 앞입니다', expires_after_legal_max: '납세증명서 유효기간은 발급일부터 30일을 넘을 수 없습니다',
     invalid_issued_on: '발급일 형식이 아닙니다', invalid_expires_on: '만료일 형식이 아닙니다',
+    stale: '그사이 서류가 바뀌었습니다. 목록을 다시 읽었으니 다시 확인하세요', seen_required: '요청을 처리하지 못했습니다',
   };
   const errText = (e) => {
     const m = String((e && e.message) || e);
@@ -60,7 +61,8 @@
         cell(d.displayName),
         cell(d.issuedOn || '—'),
         cell(d.expiresOn ? `${d.expiresOn} · ${dday(d.daysLeft)}` : '—', d.daysLeft !== null && d.daysLeft <= 7 ? 'err' : ''),
-        cell(d.expiresOn ? SOURCE[d.expirySource] || '' : ''),
+        // 확인 필요인 값은 출처와 상관없이 추정(정하지 못한 유효기간의 문서 후보 등)
+        cell(d.expiresOn ? (d.needsUser ? '추정(확인 필요)' : SOURCE[d.expirySource] || '') : ''),
         cell(d.docNo || '—'),
         cell(status, d.needsUser || d.subjectMismatch ? 'err' : ''),
       );
@@ -149,7 +151,12 @@
       f.hidden = true;
       load();
     } catch (err) {
-      f.querySelector('.msg').textContent = errText(err);
+      // 다른 곳에서 바뀐 서류: 편집 줄을 닫고 목록을 다시 읽는다(옛 값으로 계속 보내지 않게)
+      if (String(err?.message).includes('stale')) {
+        f.hidden = true;
+        say(errText(err), 'err');
+        load();
+      } else f.querySelector('.msg').textContent = errText(err);
     } finally {
       if (submit) submit.disabled = false;
     }

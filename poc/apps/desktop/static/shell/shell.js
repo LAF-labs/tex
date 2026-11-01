@@ -24,9 +24,8 @@ const state = {
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw } 열기 암호를 묻는 중
   docBusy: false,
-  docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, docType, issuedOn, expiresOn, noExpiry }
+  docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
-  docHold: null, // { id, until } 저장 직후 그 서류의 확인 클릭을 받지 않는 시각(ms)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
 };
 
@@ -623,7 +622,10 @@ async function importDoc(params) {
   }
 }
 
-/** 저장 뒤 이 시간 안의 같은 서류 확인 클릭은 받지 않는다(두 번 누른 두 번째 클릭이 새로 그린 확인 버튼에 닿아, 보지 않은 재계산 값이 확인되지 않게). */
+/**
+ * 확인 구역을 (다시) 만든 뒤 이 시간 동안은 확인을 받지 않는다(버튼도 꺼 둔다). 저장·stale 뒤에 새 값으로 다시 그린 확인 버튼에
+ * 두 번 누른 두 번째 클릭이 닿아, 보지 않은 값이 확인되지 않게.
+ */
 const DOC_CONFIRM_HOLD_MS = 700;
 
 async function updateDoc(id, patch, seen) {
@@ -633,21 +635,21 @@ async function updateDoc(id, patch, seen) {
     const d = await call('docs.update', { id, patch, seen });
     state.docsRev++;
     state.docs = state.docs.map((x) => (x.id === d.id ? d : x));
-    // 응답을 기다리는 동안 다른 서류로 옮겼으면 그 서류의 입력은 두고, 이 서류의 입력만 버린다
+    // 응답을 기다리는 동안 다른 서류로 옮겼으면 그 서류의 입력은 두고, 이 서류의 입력만 버린다(새 값으로 다시 만든다)
     if (state.docDraft?.id === id) state.docDraft = null;
-    state.docHold = { id, until: Date.now() + DOC_CONFIRM_HOLD_MS };
     toast(d.vault?.needsUser ? `저장했어요. ${d.vault.reasons.includes('expiry_recomputed') ? '다시 계산한 만료일을' : '남은 칸을'} 확인해 주세요` : '확인했어요');
   } catch (e) {
     toast(docErr(e));
     // 다른 곳에서 바뀐 서류: 지금 값을 다시 읽어 보여 주고 입력은 버린다(본 값이 아닌 값으로 확인하지 않게)
+    // 목록을 받은 뒤에 입력을 버린다(그 전에 다시 그리면 옛 값으로 입력을 다시 만들게 된다). 다시 읽는 동안은 docUpdating이라 확인을 받지 않는다.
     if (errText(e) === 'stale') {
-      if (state.docDraft?.id === id) state.docDraft = null;
       const rev = ++state.docsRev;
       await call('docs.list')
         .then((docs) => {
           if (rev === state.docsRev) state.docs = docs;
         })
         .catch(() => {});
+      if (state.docDraft?.id === id) state.docDraft = null;
     }
   } finally {
     state.docUpdating = false;
@@ -661,7 +663,9 @@ async function updateDoc(id, patch, seen) {
 function docDraft(doc) {
   if (state.docDraft?.id !== doc.id) {
     const seen = { docType: doc.vault.docType, issuedOn: doc.issuedOn, expiresOn: doc.expiresOn };
-    state.docDraft = { id: doc.id, seen, docType: seen.docType, issuedOn: doc.issuedOn ?? '', expiresOn: doc.expiresOn ?? '', noExpiry: false };
+    // 만료일이 없는 사업자등록증명·그 밖의 서류는 '만료일 없음'이 켜진 채로 시작한다(보이는 것과 저장값이 같게)
+    const noExpiry = doc.expiresOn === null && seen.docType !== 'national_tax_cert';
+    state.docDraft = { id: doc.id, seen, createdAt: Date.now(), docType: seen.docType, issuedOn: doc.issuedOn ?? '', expiresOn: doc.expiresOn ?? '', noExpiry };
   }
   return state.docDraft;
 }
@@ -704,8 +708,9 @@ function docReview(doc) {
     v.suggested.issuedOn && v.suggested.issuedOn !== draft.issuedOn ? `발급일 후보 ${v.suggested.issuedOn}` : null,
     v.suggested.validUntil && v.suggested.validUntil !== draft.expiresOn ? `문서 유효기간 후보 ${v.suggested.validUntil}` : null,
   ].filter(Boolean);
+  const held = () => Date.now() - draft.createdAt < DOC_CONFIRM_HOLD_MS;
   const save = () => {
-    if (state.docUpdating || (state.docHold?.id === doc.id && Date.now() < state.docHold.until)) return;
+    if (state.docUpdating || held()) return;
     if (issued.validity.badInput || expires.validity.badInput) return toast('날짜를 끝까지 넣어 주세요');
     if (!draft.issuedOn && doc.issuedOn) return toast('발급일을 넣어 주세요');
     if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return toast(canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요" : '만료일을 넣어 주세요');
@@ -715,8 +720,16 @@ function docReview(doc) {
     if (noExpiryOn) {
       if (draft.seen.expiresOn !== null) patch.expiresOn = null;
     } else if (draft.expiresOn && draft.expiresOn !== draft.seen.expiresOn) patch.expiresOn = draft.expiresOn;
+    confirmBtn.disabled = true; // 응답까지(다시 그리지 않으므로 직접 끈다)
     updateDoc(doc.id, patch, draft.seen);
   };
+  const confirmBtn = btn(v.needsUser || v.expirySource === 'rule' ? '확인' : '저장', save, 'sx-btn-primary', { 'data-act': 'doc-confirm', disabled: state.docUpdating || held() });
+  if (held()) {
+    const wait = DOC_CONFIRM_HOLD_MS - (Date.now() - draft.createdAt);
+    setTimeout(() => {
+      if (confirmBtn.isConnected && !state.docUpdating) confirmBtn.disabled = false;
+    }, wait + 20);
+  }
   return h(
     'div',
     { class: 'doc-review', 'data-doc-review': doc.id },
@@ -758,7 +771,7 @@ function docReview(doc) {
     h(
       'div',
       { class: 'sx-actions' },
-      btn(v.needsUser || v.expirySource === 'rule' ? '확인' : '저장', save, 'sx-btn-primary', { 'data-act': 'doc-confirm', disabled: state.docUpdating }),
+      confirmBtn,
       btn('PDF 열기', () => call('docs.open', { id: doc.id }).catch((e) => toast(docErr(e))), '', { 'data-act': 'doc-open' }),
     ),
   );

@@ -31,7 +31,16 @@ const DOC_CODES = new Set([
   'bad_request', 'busy', 'closed', 'profile_required', 'not_pdf', 'input_size', 'read_failed', 'invalid_pdf', 'timeout', 'memory_limit', 'session_failed', 'renderer_gone',
   'pick_expired', 'password_too_long', 'schema', 'issued_in_future', 'expires_before_issued', 'expires_after_legal_max', 'invalid_issued_on', 'invalid_expires_on',
   'not_found', 'invalid_doc_type', 'file_missing', 'open_failed', 'seen_required', 'stale',
+  'worker_failed', 'parse_failed', 'render_failed', 'ocr_failed', 'bad_extract',
 ]);
+
+/** 문서함 오류를 렌더러에 보낼 오류로: 알려진 코드만, 나머지는 로그(앞 코드만)와 'failed' */
+function docsError(e: unknown): Error {
+  const code = (e as { code?: unknown }).code ?? (e as Error).message;
+  if (typeof code === 'string' && DOC_CODES.has(code)) return new Error(code);
+  console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name); // fs 오류 메시지에는 경로가 있어 앞 코드만
+  return new Error('failed');
+}
 
 const FILES: Record<string, string> = {
   '/shell.html': 'text/html; charset=utf-8',
@@ -94,25 +103,25 @@ export function startShell(opts: ShellOptions = {}): Shell {
   // 정상 종료(will-quit)와 app.exit()(process exit만 온다) 모두에서 닫는다. close는 두 번 불러도 된다.
   app.once('will-quit', () => docs.close?.());
   process.once('exit', () => docs.close?.());
-  /** 문서함 처리기: 알려진 코드만 렌더러로, 나머지는 로그와 'failed' */
+  /** 문서함 처리기: 오류는 docsError로 바꿔 던진다(원래 오류는 cause로 붙이지 않는다. ipcMain이 cause까지 출력하고 fs 오류에는 경로가 있다) */
   const docsCall =
     (fn: (p: Record<string, unknown>) => unknown) =>
     async (p: Record<string, unknown>): Promise<unknown> => {
       try {
         return await fn(p);
       } catch (e) {
-        const code = (e as { code?: unknown }).code ?? (e as Error).message;
-        // 원래 오류를 cause로 붙이지 않는다(ipcMain이 cause까지 출력하고, fs 오류에는 보관함 경로가 들어 있다)
-        // eslint-disable-next-line preserve-caught-error
-        if (typeof code === 'string' && DOC_CODES.has(code)) throw new Error(code);
-        console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name); // fs 오류 메시지에는 경로가 있어 앞 코드만
-        // eslint-disable-next-line preserve-caught-error
-        throw new Error('failed');
+        throw docsError(e);
       }
     };
   let importing = false;
   /** 문서함 = 보관함 서류 + 목업 실행이 만든 서류(세금계산서·정부24 목업) */
-  const listDocs = async () => [...(await docs.list()), ...store.docs];
+  const listDocs = async () => {
+    try {
+      return [...(await docs.list()), ...store.docs];
+    } catch (e) {
+      throw docsError(e);
+    }
+  };
   let profile: Profile['kind'] = 'business';
 
   const win = new BrowserWindow({
@@ -195,7 +204,7 @@ export function startShell(opts: ShellOptions = {}): Shell {
       }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
-    'docs.list': docsCall(() => listDocs()),
+    'docs.list': () => listDocs(),
     // 파일 고르기 대화상자는 렌더러가 pick을 보낼 때만 연다(가져오기 버튼. 사용자 클릭인지 main이 확인하는 것은 Phase 1).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
     'docs.import': docsCall(async (p) => {
