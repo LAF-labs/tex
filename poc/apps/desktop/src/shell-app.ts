@@ -6,18 +6,23 @@ import path from 'node:path';
 import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 'electron';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
+import { DOCPARSE_SCHEME } from './docparse.ts';
+import { demoDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { g24Candidates, interpret, MockRuns, MockStore, PROFILES, QUICK, seedTimeline, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
+import { cancelPick, importPdf } from './vault-import.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 
 export function registerShellSchemes(): void {
+  // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
   protocol.registerSchemesAsPrivileged([
     { scheme: SHELL_SCHEME, privileges: { standard: true, secure: true } },
     { scheme: APPROVAL_SCHEME, privileges: { standard: true, secure: true } },
+    { scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
   ]);
 }
 
@@ -52,6 +57,8 @@ export interface ShellOptions {
   show?: boolean;
   /** e2e: OS 커서 위치를 바꿔 끼운다. */
   cursorPoint?: () => { x: number; y: number };
+  /** 문서함 보관함 공급자(shell-docs.ts). 없으면 데모 공급자(임시 폴더 DB, 엔진 보관함 코드 그대로). PoC-6은 엔진 공급자를 넘긴다. */
+  docs?: DocsProvider;
 }
 
 export interface Shell {
@@ -76,6 +83,10 @@ export function startShell(opts: ShellOptions = {}): Shell {
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
   const runs = new MockRuns(store, opts.speed ?? 1);
+  const docs = opts.docs ?? demoDocsProvider({ dir: path.join(app.getPath('userData'), 'docs-demo'), profile: PROFILES.business, importer: importPdf });
+  app.once('will-quit', () => docs.close?.());
+  /** 문서함 = 보관함 서류 + 목업 실행이 만든 서류(세금계산서·정부24 목업) */
+  const listDocs = async () => [...(await docs.list()), ...store.docs];
   let profile: Profile['kind'] = 'business';
 
   const win = new BrowserWindow({
@@ -131,12 +142,12 @@ export function startShell(opts: ShellOptions = {}): Shell {
     return v;
   };
   const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
-    'shell.bootstrap': () => ({
+    'shell.bootstrap': async () => ({
       layout: SHELL,
       profiles: PROFILES,
       profile,
       counterparties: store.counterparties,
-      docs: store.docs,
+      docs: await listDocs(),
       timeline: seedTimeline(),
       quick: QUICK,
       platform: process.platform,
@@ -158,7 +169,20 @@ export function startShell(opts: ShellOptions = {}): Shell {
       }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
-    'docs.list': () => store.docs,
+    'docs.list': () => listDocs(),
+    // 파일 고르기 대화상자는 사용자가 누른 가져오기 버튼에서만 연다(pick). 열기 암호를 다시 물을 때는 pickId로 부른다.
+    'docs.import': (p) => {
+      if (p.pick !== true && typeof p.pickId !== 'string') throw new Error('bad_request');
+      return docs.importPdf({ pickId: p.pickId, password: p.password });
+    },
+    'docs.importCancel': (p) => {
+      cancelPick(p.pickId);
+      return {};
+    },
+    'docs.update': (p) => {
+      const patch = (p.patch ?? {}) as Record<string, unknown>;
+      return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn });
+    },
     'counterparties.list': () => store.counterparties,
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),

@@ -255,7 +255,10 @@ async function flow(): Promise<void> {
   await shot('12-signing-turn');
   await until('done', () => runStatus(id) === 'done');
   const r = S.runs.get(id)!;
-  const doneText = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
+  // main 상태가 done이 된 뒤 렌더러가 갱신 이벤트를 받을 때까지 기다린다(바로 읽으면 '발급 중'을 읽는 경쟁이 있었다)
+  const cardText = () => js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
+  await until('result card', async () => (await cardText()).includes(r.result!.approvalNo), 3000);
+  const doneText = await cardText();
   check('결과 카드: 승인번호·메일 전송 확인', doneText.includes(r.result!.approvalNo) && doneText.includes('메일로 보낸 것도 확인했어요'), doneText.slice(0, 160));
   await shot('13-result');
   await click('[data-view=docs]');

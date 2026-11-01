@@ -26,6 +26,11 @@
       "types": "./src/docmeta/index.ts",
       "development": "./src/docmeta/index.ts",
       "default": "./dist/docmeta/index.js"
+    },
+    "./documents": {
+      "types": "./src/documents.ts",
+      "development": "./src/documents.ts",
+      "default": "./dist/documents.js"
     }
   },
   "dependencies": {
