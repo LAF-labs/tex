@@ -76,6 +76,9 @@ const ISO = /^\d{4}-\d{2}-\d{2}$/;
 const SHORT_ID = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 const shortId = () => [...randomBytes(4)].map((b) => SHORT_ID[b & 31]).join('');
+/** 서류의 대상이 내 사업장인지 확인하지 못한 이유. 사용자가 확인하기 전까지 남는다(수정해도 남고, 확인하면 지운다). */
+const SUBJECT_REASONS = ['subject_mismatch', 'subject_unverified'];
+const ocrReason = (source: TextSource | undefined) => (source === 'scan' ? 'scanned_text_layer' : source === 'ocr' ? 'read_by_ocr' : null);
 const isRealDate = (v: string) => ISO.test(v) && new Date(`${v}T00:00:00Z`).toISOString().startsWith(v);
 
 function checkPdfText(v: unknown): PdfText {
@@ -138,7 +141,7 @@ export class DocumentService {
 
     let meta = extractChecked(pdf.text);
     let used: TextSource = pdf.ocrConfidence !== null ? 'ocr' : pdf.scanned ? 'scan' : 'text';
-    if (!opts.final && used !== 'ocr' && worthOcr(meta)) return { needsOcr: true };
+    if (!opts.final && used !== 'ocr' && worthOcr(meta, pdf.text)) return { needsOcr: true };
     if (typeof opts.altText === 'string') {
       const layer = extractChecked(opts.altText);
       if (readScore(layer) >= readScore(meta)) {
@@ -151,14 +154,17 @@ export class DocumentService {
     const docType: StoredDocType = meta.docType ?? 'other';
     const expiry = decideExpiry(meta, today, meta.docType ? this.repo.overrideDays(meta.docType) : null);
     const subject = meta.subjectBizNo.value;
+    const subjectMismatch = !!subject && !!business.bizNo && subject !== business.bizNo;
+    // 확인 필요 이유: 만료 규칙 + OCR급 글자 + 대상 사업자(다르거나 읽지 못함, D17 §1 4단계 "이 파일이 맞나요?")
+    const reasons = [...expiry.reasons, ...(ocrGrade ? [ocrReason(used)!] : []), ...(subjectMismatch ? ['subject_mismatch'] : meta.docType && !subject ? ['subject_unverified'] : [])];
     const stored: StoredMeta = {
       v: 1,
       extractor: meta.extractor,
       kind: meta.kind,
       fields: { issuedOn: meta.issuedOn, validUntil: meta.validUntil, issuer: meta.issuer, docNo: meta.docNo, subjectBizNo: meta.subjectBizNo },
-      expiry: ocrGrade ? { source: expiry.source, needsUser: true, reasons: [...expiry.reasons, used === 'scan' ? 'scanned_text_layer' : 'read_by_ocr'] } : { source: expiry.source, needsUser: expiry.needsUser, reasons: expiry.reasons },
+      expiry: { source: expiry.source, needsUser: expiry.needsUser || reasons.length > 0, reasons },
       text: { pages: pdf.pages, totalPages: pdf.totalPages, hasTextLayer: pdf.hasTextLayer, scanned: pdf.scanned, ocrConfidence: used === 'ocr' ? pdf.ocrConfidence : null, source: used },
-      subjectMismatch: !!subject && !!business.bizNo && subject !== business.bizNo,
+      subjectMismatch,
       confirmedAt: null,
     };
     const file = await this.writeFile(bytes, docType, meta.issuedOn.value ?? today);
@@ -187,8 +193,10 @@ export class DocumentService {
   /**
    * 사용자 확인·수정. 화면은 바뀐 칸만 보낸다(저장값과 같은 값은 바뀌지 않은 것으로 본다).
    * - 만료일을 바꾸면 그 값(확인함). 납세증명서는 발급일 + 30일을 넘을 수 없다.
-   * - 종류·발급일만 바꾸면 만료일을 규칙으로 다시 정하고, 다시 정한 값의 확인 필요 여부를 그대로 둔다.
-   * - 아무것도 바꾸지 않으면 지금 값을 확인한 것(추정 → 확인함).
+   * - 종류·발급일만 바꾸면 만료일을 규칙으로 다시 정한다. 다시 정한 값이 화면에 보였던 값과 다르면(사용자가 본 적 없는 값)
+   *   확인 필요로 남기고, OCR급 글자에서 읽은 유효기간을 되살렸으면 그 이유도 남긴다.
+   * - 아무것도 바꾸지 않으면 지금 값을 확인한 것(추정 → 확인함, 대상 사업자 확인 포함).
+   * 대상 사업자 이유(SUBJECT_REASONS)는 '아무것도 바꾸지 않은 확인'에서만 지운다.
    */
   update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }): DocumentView {
     const row = this.repo.get(id);
@@ -211,13 +219,21 @@ export class DocumentService {
     const typed = docType === 'other' ? null : (docType as DocType);
     let expiresOn = row.expiresAt;
     let expiry: StoredMeta['expiry'];
+    // 종류를 정한 서류에 발급일이 없거나(만료 경고가 영영 안 뜬다), 납세증명서에 만료일이 없으면 확인을 끝내지 않는다.
+    // 사업자등록증명의 만료일은 사용자가 지울 수 있다(법정 유효기간 없음, 2026-11-01 결정).
+    const missing = () => [...(typed && !issuedOn ? ['issued_on_missing'] : []), ...(typed === 'national_tax_cert' && !expiresOn ? ['expires_on_missing'] : [])];
+    const carried = (meta.expiry?.reasons ?? []).filter((r) => SUBJECT_REASONS.includes(r));
+    const withReasons = (source: ExpirySource | null, reasons: string[]): StoredMeta['expiry'] => ({ source, needsUser: reasons.length > 0, reasons });
     if (expiresChanged) {
       expiresOn = expiresIn;
-      expiry = { source: expiresOn ? 'user' : null, needsUser: typed === 'national_tax_cert' && !expiresOn, reasons: typed === 'national_tax_cert' && !expiresOn ? ['expires_on_missing'] : [] };
+      expiry = withReasons(expiresOn ? 'user' : null, [...missing(), ...carried]);
+    } else if (!typed && typeChanged) {
+      // 사용자가 '그 밖의 서류'로 고르면 규칙이 없으니 만료일은 그대로 두고 확인한 것으로 본다
+      expiry = withReasons(row.expiresAt ? (meta.expiry?.source ?? 'user') : null, carried);
     } else if (typeChanged || issuedChanged) {
       const unknown: Field = { value: null, reason: 'not_found' };
       // 처음에 종류를 몰라 비워 둔 칸(unsupported_doc)은 '못 찾음'으로 다시 본다
-      const kept = (f: Field | undefined) => (f && f.reason !== 'unsupported_doc' ? f : unknown);
+      const kept = (f: Field | undefined) => (f && f.reason !== 'unsupported_doc' && f.reason !== 'not_applicable' ? f : unknown);
       const d = decideExpiry(
         {
           extractor: 'docmeta-v1',
@@ -234,11 +250,14 @@ export class DocumentService {
         today,
         typed ? this.repo.overrideDays(typed) : null,
       );
+      // OCR급 글자에서 읽은 값이 남아 있으면(되살린 유효기간, 또는 사용자가 고치지 않은 발급일) 그 이유도 남긴다
+      const fromOcr = d.source === 'document' || !issuedChanged ? ocrReason(meta.text?.source) : null;
+      const unseen = d.expiresOn !== row.expiresAt ? 'expiry_recomputed' : null;
       expiresOn = d.expiresOn;
-      expiry = { source: d.source, needsUser: d.needsUser, reasons: d.reasons };
+      expiry = withReasons(d.source, [...d.reasons, ...(fromOcr ? [fromOcr] : []), ...(unseen ? [unseen] : []), ...carried]);
     } else {
       const cur = meta.expiry ?? { source: null, needsUser: false, reasons: [] };
-      expiry = { source: cur.source === 'rule' ? 'user' : cur.source, needsUser: typed === 'national_tax_cert' && !expiresOn, reasons: typed === 'national_tax_cert' && !expiresOn ? ['expires_on_missing'] : [] };
+      expiry = withReasons(cur.source === 'rule' ? 'user' : cur.source, missing());
     }
     if (issuedOn && expiresOn && expiresOn < issuedOn) throw new ValidationError('expires_before_issued');
     if (typed === 'national_tax_cert' && issuedOn && expiresOn && expiresOn > addDays(issuedOn, VALIDITY_RULES.national_tax_cert.days)) throw new ValidationError('expires_after_legal_max');
@@ -304,6 +323,8 @@ export class DocumentService {
       this.tmpCleared = true;
     }
     const tmp = path.join(dir, `.tmp-${randomUUID()}`);
+    // 이름을 붙인 뒤 폴더 항목까지 디스크에 남긴다(POSIX만. Windows는 폴더를 열 수 없어 건너뛴다).
+    const syncDir = () => fs.open(dir, 'r').then((h) => h.sync().finally(() => h.close())).catch(() => {});
     try {
       const fh = await fs.open(tmp, 'wx', 0o600);
       try {
@@ -314,7 +335,10 @@ export class DocumentService {
       }
       for (let i = 0; i < 8; i++) {
         const dest = path.join(dir, `${docType}_${day.replace(/-/g, '')}_${shortId()}.pdf`);
-        if (await this.place(tmp, dest)) return dest;
+        if (await this.place(tmp, dest)) {
+          await syncDir();
+          return dest;
+        }
       }
       throw new Error('vault_name_exhausted');
     } finally {

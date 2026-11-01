@@ -77,17 +77,24 @@ async function renderForOcr(page) {
   return blob;
 }
 
-/** 보이지 않게 그리는 글자(렌더 모드 3·7)가 있으면 남이 OCR로 덧입힌 층이다. 원본 텍스트로 믿지 않는다. */
+/**
+ * 보이지 않게 그리는 글자(렌더 모드 3·7)가 있으면 남이 OCR로 덧입힌 층이다. 원본 텍스트로 믿지 않는다.
+ * 그리기 목록을 못 만들면 확인할 수 없으니 덧입힌 층으로 본다(사용자 확인으로 넘긴다).
+ */
 async function hasInvisibleText(doc, pages) {
-  for (let i = 1; i <= pages; i++) {
-    const page = await doc.getPage(i);
-    const ops = await page.getOperatorList();
-    page.cleanup();
-    for (let k = 0; k < ops.fnArray.length; k++) {
-      if (ops.fnArray[k] === pdfjs.OPS.setTextRenderingMode && (ops.argsArray[k][0] & 3) === 3) return true;
+  try {
+    for (let i = 1; i <= pages; i++) {
+      const page = await doc.getPage(i);
+      const ops = await page.getOperatorList();
+      page.cleanup();
+      for (let k = 0; k < ops.fnArray.length; k++) {
+        if (ops.fnArray[k] === pdfjs.OPS.setTextRenderingMode && (ops.argsArray[k][0] & 3) === 3) return true;
+      }
     }
+    return false;
+  } catch {
+    return true;
   }
-  return false;
 }
 
 async function parsePdf({ bytes, maxPages, ocrPages, forceOcr, password }) {

@@ -74,6 +74,8 @@ function docparseSession(): Promise<Session> {
     s.setPermissionCheckHandler(() => false);
     return s;
   })();
+  // 준비가 한 번 실패해도 다음 작업이 다시 시도하게 한다(재시작 전까지 막히지 않게)
+  ses.catch(() => (ses = null));
   return ses;
 }
 

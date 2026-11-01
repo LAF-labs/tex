@@ -2,14 +2,14 @@
   "dbReady": true,
   "formsHiddenAtStart": true,
   "beforeProfile": "내 사업장(사업자 프로필)을 먼저 저장하세요",
-  "tax": "보관함에 넣었습니다 · 납세증명서(국세) · 텍스트 · 127ms",
-  "taxAgain": "이미 있는 파일입니다 · 납세증명서(국세) · 텍스트 · 134ms",
-  "biz": "보관함에 넣었습니다 · 사업자등록증명 · 텍스트 · 128ms",
-  "image": "보관함에 넣었습니다 · 납세증명서(국세) · OCR(신뢰도 90) · 1432ms",
+  "tax": "보관함에 넣었습니다 · 납세증명서(국세) · 텍스트 · 113ms",
+  "taxAgain": "이미 있는 파일입니다 · 납세증명서(국세) · 텍스트 · 115ms",
+  "biz": "보관함에 넣었습니다 · 사업자등록증명 · 텍스트 · 112ms",
+  "image": "보관함에 넣었습니다 · 납세증명서(국세) · OCR(신뢰도 90) · 1357ms",
   "locked": "열기 암호가 걸린 PDF입니다. 암호를 넣으세요.",
   "passwordFormShown": true,
   "lockedWrong": "암호가 맞지 않습니다.",
-  "lockedOk": "보관함에 넣었습니다 · 서류 · 텍스트 · 858ms",
+  "lockedOk": "보관함에 넣었습니다 · 서류 · 텍스트 · 830ms",
   "passwordFormHiddenAfter": true,
   "rendererImportRefused": "page.evaluate: Error: Error invoking remote method 'sax': Error: unknown_method",
   "list": [
@@ -30,8 +30,10 @@
       "issuedOn": "2026-10-02",
       "expiresOn": "2026-12-30",
       "expirySource": "rule",
-      "needsUser": false,
-      "reasons": [],
+      "needsUser": true,
+      "reasons": [
+        "subject_mismatch"
+      ],
       "textSource": "text",
       "subjectMismatch": true
     },
@@ -73,7 +75,7 @@
       "2026-12-30 · D-59",
       "추정(규칙표)",
       "0123-471-5265-863",
-      "다른 사업자 서류"
+      "확인 필요: 대상 사업자번호가 내 사업장과 다름"
     ],
     [
       "납세증명서(국세)",
@@ -92,10 +94,16 @@
       ""
     ]
   ],
+  "bizConfirmed": {
+    "needsUser": false,
+    "expirySource": "user",
+    "subjectMismatch": true
+  },
   "vaultFiles": [
     "biz_registration_cert_20261002_XXXX.pdf",
     "national_tax_cert_20261001_XXXX.pdf",
     "national_tax_cert_20261001_XXXX.pdf",
     "other_20261101_XXXX.pdf"
-  ]
+  ],
+  "failures": []
 }

@@ -213,6 +213,10 @@ async function main(): Promise<void> {
   check('잘린 PDF는 코드로 끝난다(창 파기)', ['ok', 'invalid_pdf', 'parse_failed'].includes(cut), cut);
   check('시간 상한 초과 → timeout(창 파기)', (await errCode(parsePdfInSandbox(textPdf, { timeoutMs: 1 }))) === 'timeout');
   check('메모리 상한 초과 → memory_limit(창 파기)', (await errCode(parsePdfInSandbox(textPdf, { memoryLimitKb: 1 }))) === 'memory_limit');
+  // 작업 도중(OCR 중)에 상한을 넘겨도 끊고 창을 파기한다: 창은 0.1초 안에 뜨고 OCR은 1초 넘게 걸린다(약 600MB)
+  const imagePdf = await htmlToImagePdf(syntheticCerts()[0]!.html);
+  check('OCR 도중 시간 상한 → timeout', (await errCode(parsePdfInSandbox(imagePdf, { timeoutMs: 700 }))) === 'timeout');
+  check('OCR 도중 메모리 상한(300MB) → memory_limit', (await errCode(parsePdfInSandbox(imagePdf, { memoryLimitKb: 300_000 }))) === 'memory_limit');
   const pair = await Promise.all([parsePdfInSandbox(textPdf), parsePdfInSandbox(textPdf)]);
   check('동시 작업 두 개는 서로 다른 창에서 끝난다', pair.every((r) => r.hasTextLayer && r.text === pair[0]!.text));
   check('작업 뒤 docparse 창이 남지 않는다', BrowserWindow.getAllWindows().length === 0, BrowserWindow.getAllWindows().length);

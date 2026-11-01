@@ -55,6 +55,7 @@
   <form id="v-edit" class="row" hidden><span id="v-edit-name"></span>
     <label>종류 <select name="docType"><option value="national_tax_cert">납세증명서(국세)</option><option value="biz_registration_cert">사업자등록증명</option><option value="other">그 밖의 서류</option></select></label>
     <label>발급일 <input name="issuedOn" type="date"></label><label>만료일 <input name="expiresOn" type="date"></label>
-    <button>확인·저장</button> <button type="button" id="v-edit-cancel">취소</button> <span class="msg"></span></form>
+    <button>확인·저장</button> <button type="button" id="v-edit-cancel">취소</button> <span class="msg"></span>
+    <span id="v-edit-hint" class="note"></span> <button type="button" id="v-edit-use" hidden>후보 넣기</button></form>
 </section>
 </main><script src="app.js"></script><script src="vault-panel.js"></script></body></html>

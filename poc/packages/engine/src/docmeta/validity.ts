@@ -56,7 +56,9 @@ export function decideExpiry(meta: DocMetaExtract, today: string, overrideDays?:
   if (!issued) reasons.push(`issued_on_${meta.issuedOn.reason ?? 'not_found'}`);
   else if (issued > today || issued < '2000-01-01') reasons.push('issued_on_out_of_range');
   else if (meta.uncertain.includes('issuedOn')) reasons.push('issued_on_uncertain');
-  const ruleExpiry = issued ? addDays(issued, (overrideDays ?? rule.days) - 1) : null;
+  // 사용자 조정 일수도 문서가 법정 유효기간을 갖는 종류(납세증명서)는 그 상한을 넘지 못한다
+  const days = rule.documentStates ? Math.min(overrideDays ?? rule.days, rule.days) : (overrideDays ?? rule.days);
+  const ruleExpiry = issued ? addDays(issued, days - 1) : null;
   if (!rule.documentStates) return { expiresOn: ruleExpiry, source: ruleExpiry ? 'rule' : null, needsUser: reasons.length > 0, reasons };
   const stated = meta.validUntil.value;
   if (stated && (!issued || (stated >= issued && stated <= addDays(issued, rule.days)))) {

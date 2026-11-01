@@ -1,10 +1,11 @@
 // PoC-8 실물 측정: 사람이 git 작업 폴더 밖에 둔 홈택스 민원증명 PDF(납세증명서·사업자등록증명)를 앱과 같은 경로
 // (docparse 샌드박스 → 필요하면 OCR로 다시 읽기 → 메타 규칙 → 만료 규칙)로 읽고, 사람이 쓴 정답(labels.json)과 비교한다.
-// 합격: 두 종류 표본 중 95% 이상(20건이면 19건)이 종류·발급일·유효기간 모두 맞고, "확인 없이 확정했는데 틀린 건"이 0건.
+// 합격: 두 종류가 모두 있고, 두 종류 표본 중 95% 이상(20건이면 19건)이 종류·발급일·유효기간(납세증명서는 문서에서 읽은 값) 모두 맞고,
+// "확인 없이 확정했는데 틀린 건"이 0건.
 //
 // 실행(빌드 뒤):
-//   electron apps/desktop/dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(종류만 채운 정답 틀). 사람이 PDF를 보고
-//                                                                  날짜·번호를 채워 labels.json으로 저장한다(추출값을 미리 채우지 않는다: 정답이 추출기 쪽으로 쏠리지 않게)
+//   electron apps/desktop/dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(파일 목록만 든 빈 정답 틀). 사람이 PDF를 보고
+//                                                                  종류·날짜·번호를 채워 labels.json으로 저장한다(추출값을 미리 채우지 않는다: 정답이 추출기 쪽으로 쏠리지 않게)
 //   electron apps/desktop/dist/poc8-measure.js <폴더>           → 순번별 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
 // 열기 암호가 걸린 PDF는 --password-stdin으로 한 줄 넣는다(셸 기록·파일에 남기지 않는다). 오래된 표본은 SAX_POC8_TODAY=YYYY-MM-DD.
 //
@@ -57,10 +58,12 @@ async function readLikeApp(bytes: Uint8Array, password: string | undefined): Pro
   const x = await parsePdfInSandbox(bytes, { password });
   const first = validateDocMeta(extractDocMeta(x.text));
   if (!first) throw new Error('schema');
-  if (x.ocrConfidence !== null || !worthOcr(first)) return { run: x, meta: first, ocrGrade: x.ocrConfidence !== null || x.scanned };
+  if (x.ocrConfidence !== null || !worthOcr(first, x.text)) return { run: x, meta: first, ocrGrade: x.ocrConfidence !== null || x.scanned };
   const y = await parsePdfInSandbox(bytes, { password, forceOcr: true }).catch(() => null);
-  const second = y && validateDocMeta(extractDocMeta(y.text));
-  if (!y || !second || readScore(first) >= readScore(second)) return { run: x, meta: first, ocrGrade: x.scanned };
+  if (!y) return { run: x, meta: first, ocrGrade: x.scanned };
+  const second = validateDocMeta(extractDocMeta(y.text));
+  if (!second) throw new Error('schema'); // 엔진도 스키마를 어긴 읽기는 저장하지 않는다
+  if (readScore(first) >= readScore(second)) return { run: x, meta: first, ocrGrade: x.scanned };
   return { run: { ...y, ms: x.ms + y.ms }, meta: second, ocrGrade: true };
 }
 
@@ -83,23 +86,27 @@ async function main(): Promise<number> {
   if (process.argv.includes('--draft')) {
     const files = (await fs.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.pdf')).sort();
     const out: Label[] = [];
-    for (const [i, file] of files.entries()) {
-      // 종류만 채운다. 날짜·번호는 사람이 PDF를 보고 넣는다. 콘솔에는 파일명 대신 순번만 쓴다.
-      const r = await readLikeApp(new Uint8Array(await fs.readFile(path.join(dir, file))), password).catch((e: unknown) => failCode(e));
-      if (typeof r === 'string') console.log(`#${i + 1} 읽기 실패 ${r}`);
-      out.push({ file, docType: typeof r === 'string' ? null : (r.meta.docType ?? 'other'), issuedOn: null, validUntil: null, docNo: null, bizNo: null });
-    }
+    for (const file of files) out.push({ file, docType: null, issuedOn: null, validUntil: null, docNo: null, bizNo: null });
     await fs.writeFile(path.join(dir, 'labels.draft.json'), JSON.stringify(out, null, 2));
-    console.log(`정답 틀 ${out.length}건을 폴더의 labels.draft.json에 썼습니다. PDF를 보고 채워 labels.json으로 저장하세요.`);
+    console.log(`정답 틀 ${out.length}건을 폴더의 labels.draft.json에 썼습니다. PDF를 보고 종류·날짜·번호를 채워 labels.json으로 저장하세요.`);
     return 0;
   }
 
   const labels = JSON.parse(await fs.readFile(path.join(dir, 'labels.json'), 'utf8')) as Label[];
+  const unlabeled = labels.findIndex((l) => !['national_tax_cert', 'biz_registration_cert', 'other'].includes(l.docType as string));
+  if (unlabeled >= 0) {
+    console.error(`#${unlabeled + 1}의 종류(docType)를 채우세요.`);
+    return 2;
+  }
   const rows: Array<Record<string, unknown>> = [];
   for (const [i, l] of labels.entries()) {
     const row: Record<string, unknown> = { n: i + 1, docType: l.docType };
     rows.push(row);
-    const r = await readLikeApp(new Uint8Array(await fs.readFile(path.join(dir, l.file))), password).catch((e: unknown) => failCode(e));
+    // 읽기 실패도 그 표본의 실패로 센다(측정 전체를 멈추지 않는다)
+    const r = await fs
+      .readFile(path.join(dir, l.file))
+      .then((b) => readLikeApp(new Uint8Array(b), password))
+      .catch((e: unknown) => failCode(e));
     if (typeof r === 'string') {
       Object.assign(row, { error: r, coreOk: false, silentWrong: false });
       continue;
@@ -108,7 +115,8 @@ async function main(): Promise<number> {
     const expiry = decideExpiry(meta, today);
     const typeOk = (meta.docType ?? 'other') === l.docType;
     const issuedOk = l.docType === 'other' || meta.issuedOn.value === l.issuedOn;
-    const validOk = l.docType === 'national_tax_cert' ? expiry.expiresOn === l.validUntil : true;
+    // 납세증명서 유효기간은 문서에서 읽어 맞아야 맞음이다(규칙 추정이 우연히 같아도 맞음으로 세지 않는다)
+    const validOk = l.docType === 'national_tax_cert' ? meta.validUntil.value === l.validUntil && expiry.source === 'document' && expiry.expiresOn === l.validUntil : true;
     const coreOk = typeOk && issuedOk && validOk;
     const needsUser = expiry.needsUser || ocrGrade;
     const l0Issued = l0ShadowPick(meta, 'issued_on');
@@ -140,7 +148,7 @@ async function main(): Promise<number> {
   const core = target.filter((r) => r.coreOk).length;
   const silent = rows.filter((r) => r.silentWrong).length;
   const ms = rows.map((r) => r.ms).filter((x): x is number => typeof x === 'number').sort((a, b) => a - b);
-  const enough = target.length >= 20;
+  const enough = target.length >= 20 && target.some((r) => r.docType === 'national_tax_cert') && target.some((r) => r.docType === 'biz_registration_cert');
   const summary = {
     measuredAt: new Date().toISOString(),
     platform: process.platform,
@@ -150,7 +158,7 @@ async function main(): Promise<number> {
     coreOk: core,
     otherClassifiedOk: `${other.filter((r) => r.typeOk).length}/${other.length}`,
     silentWrong: silent,
-    acceptance: !enough ? `표본 부족(${target.length}/20)` : core >= Math.ceil(target.length * 0.95) && silent === 0 ? 'pass' : 'fail',
+    acceptance: !enough ? `표본 부족(두 종류 합 ${target.length}/20, 두 종류 모두 필요)` : core >= Math.ceil(target.length * 0.95) && silent === 0 ? 'pass' : 'fail',
     needsUser: rows.filter((r) => r.needsUser).length,
     textLayer: rows.filter((r) => r.textLayer === true && !r.scanned && r.ocrConfidence == null).length,
     ocr: rows.filter((r) => r.ocrConfidence != null).length,

@@ -8,9 +8,9 @@
     "text": {
       "ms": {
         "n": 19,
-        "median": 98,
-        "p90": 110,
-        "max": 113
+        "median": 92,
+        "p90": 103,
+        "max": 103
       },
       "peakMemoryMb": {
         "n": 19,
@@ -24,15 +24,15 @@
     "broken_tounicode": {
       "ms": {
         "n": 19,
-        "median": 1147,
-        "p90": 1465,
-        "max": 1466
+        "median": 1080,
+        "p90": 1334,
+        "max": 1416
       },
       "peakMemoryMb": {
         "n": 19,
-        "median": 530,
+        "median": 529,
         "p90": 536,
-        "max": 536
+        "max": 537
       },
       "ocrConfidence": {
         "n": 19,
@@ -45,15 +45,15 @@
     "image": {
       "ms": {
         "n": 19,
-        "median": 1204,
-        "p90": 1523,
-        "max": 1527
+        "median": 1144,
+        "p90": 1411,
+        "max": 1438
       },
       "peakMemoryMb": {
         "n": 19,
-        "median": 592,
-        "p90": 603,
-        "max": 620
+        "median": 591,
+        "p90": 604,
+        "max": 614
       },
       "ocrConfidence": {
         "n": 19,
@@ -65,13 +65,13 @@
     }
   },
   "fivePages": {
-    "ms": 114,
+    "ms": 111,
     "timing": {
-      "loadMs": 18,
-      "textMs": 36,
+      "loadMs": 17,
+      "textMs": 37,
       "ocrMs": 0
     },
-    "peakMemoryKb": 130480
+    "peakMemoryKb": 130176
   },
   "checks": [
     {
@@ -122,13 +122,13 @@
       "name": "S13b 5쪽 텍스트 추출 ≤ 3초(작업당)",
       "ok": true,
       "detail": {
-        "ms": 114,
+        "ms": 111,
         "timing": {
-          "loadMs": 18,
-          "textMs": 36,
+          "loadMs": 17,
+          "textMs": 37,
           "ocrMs": 0
         },
-        "peakMemoryKb": 130480
+        "peakMemoryKb": 130176
       }
     },
     {
@@ -208,6 +208,14 @@
       "ok": true
     },
     {
+      "name": "OCR 도중 시간 상한 → timeout",
+      "ok": true
+    },
+    {
+      "name": "OCR 도중 메모리 상한(300MB) → memory_limit",
+      "ok": true
+    },
+    {
       "name": "동시 작업 두 개는 서로 다른 창에서 끝난다",
       "ok": true
     },
@@ -246,13 +254,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 107,
+      "ms": 103,
       "timing": {
-        "loadMs": 18,
-        "textMs": 22,
+        "loadMs": 17,
+        "textMs": 23,
         "ocrMs": 0
       },
-      "peakMemoryKb": 124432,
+      "peakMemoryKb": 124176,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -271,13 +279,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 88,
-      "ms": 1427,
+      "ms": 1231,
       "timing": {
         "loadMs": 17,
         "textMs": 18,
-        "ocrMs": 1336
+        "ocrMs": 1135
       },
-      "peakMemoryKb": 527744,
+      "peakMemoryKb": 546960,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -296,13 +304,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 79,
-      "ms": 1389,
+      "ms": 1374,
       "timing": {
-        "loadMs": 17,
+        "loadMs": 16,
         "textMs": 2,
-        "ocrMs": 1315
+        "ocrMs": 1295
       },
-      "peakMemoryKb": 599248,
+      "peakMemoryKb": 598976,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -327,13 +335,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 113,
+      "ms": 95,
       "timing": {
-        "loadMs": 20,
-        "textMs": 28,
+        "loadMs": 17,
+        "textMs": 23,
         "ocrMs": 0
       },
-      "peakMemoryKb": 123920,
+      "peakMemoryKb": 123536,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -352,13 +360,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1418,
+      "ms": 1319,
       "timing": {
-        "loadMs": 19,
-        "textMs": 20,
-        "ocrMs": 1315
+        "loadMs": 17,
+        "textMs": 19,
+        "ocrMs": 1229
       },
-      "peakMemoryKb": 536208,
+      "peakMemoryKb": 540704,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -383,13 +391,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 80,
-      "ms": 1471,
+      "ms": 1411,
       "timing": {
-        "loadMs": 19,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1386
+        "ocrMs": 1336
       },
-      "peakMemoryKb": 599808,
+      "peakMemoryKb": 612272,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -414,13 +422,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 100,
+      "ms": 92,
       "timing": {
-        "loadMs": 20,
-        "textMs": 24,
+        "loadMs": 16,
+        "textMs": 23,
         "ocrMs": 0
       },
-      "peakMemoryKb": 124592,
+      "peakMemoryKb": 124704,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -439,11 +447,11 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1334,
+      "ms": 1303,
       "timing": {
         "loadMs": 17,
-        "textMs": 18,
-        "ocrMs": 1239
+        "textMs": 17,
+        "ocrMs": 1215
       },
       "peakMemoryKb": 548560,
       "coreOk": true,
@@ -470,13 +478,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 82,
-      "ms": 1386,
+      "ms": 1361,
       "timing": {
         "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1311
+        "ocrMs": 1283
       },
-      "peakMemoryKb": 634816,
+      "peakMemoryKb": 609824,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -501,13 +509,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 93,
+      "ms": 92,
       "timing": {
         "loadMs": 17,
         "textMs": 22,
         "ocrMs": 0
       },
-      "peakMemoryKb": 123504,
+      "peakMemoryKb": 123296,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -526,13 +534,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1306,
+      "ms": 1259,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 18,
-        "ocrMs": 1208
+        "ocrMs": 1170
       },
-      "peakMemoryKb": 541696,
+      "peakMemoryKb": 541888,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -557,13 +565,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 81,
-      "ms": 1464,
+      "ms": 1366,
       "timing": {
-        "loadMs": 20,
+        "loadMs": 16,
         "textMs": 2,
-        "ocrMs": 1377
+        "ocrMs": 1289
       },
-      "peakMemoryKb": 605712,
+      "peakMemoryKb": 595744,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -588,13 +596,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 105,
+      "ms": 103,
       "timing": {
-        "loadMs": 21,
-        "textMs": 26,
+        "loadMs": 17,
+        "textMs": 25,
         "ocrMs": 0
       },
-      "peakMemoryKb": 124368,
+      "peakMemoryKb": 124672,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -613,13 +621,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 87,
-      "ms": 1465,
+      "ms": 1416,
       "timing": {
-        "loadMs": 19,
-        "textMs": 20,
-        "ocrMs": 1367
+        "loadMs": 18,
+        "textMs": 19,
+        "ocrMs": 1319
       },
-      "peakMemoryKb": 535808,
+      "peakMemoryKb": 535312,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -638,13 +646,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 80,
-      "ms": 1527,
+      "ms": 1438,
       "timing": {
-        "loadMs": 20,
+        "loadMs": 16,
         "textMs": 2,
-        "ocrMs": 1445
+        "ocrMs": 1364
       },
-      "peakMemoryKb": 614944,
+      "peakMemoryKb": 601952,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -669,13 +677,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 102,
+      "ms": 100,
       "timing": {
-        "loadMs": 19,
+        "loadMs": 17,
         "textMs": 24,
         "ocrMs": 0
       },
-      "peakMemoryKb": 123520,
+      "peakMemoryKb": 123456,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -694,13 +702,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 88,
-      "ms": 1377,
+      "ms": 1308,
       "timing": {
-        "loadMs": 19,
-        "textMs": 19,
-        "ocrMs": 1280
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1212
       },
-      "peakMemoryKb": 536976,
+      "peakMemoryKb": 548320,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -730,13 +738,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 85,
-      "ms": 1367,
+      "ms": 1352,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1290
+        "ocrMs": 1277
       },
-      "peakMemoryKb": 594208,
+      "peakMemoryKb": 595040,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -761,13 +769,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 97,
+      "ms": 95,
       "timing": {
         "loadMs": 17,
-        "textMs": 24,
+        "textMs": 23,
         "ocrMs": 0
       },
-      "peakMemoryKb": 124672,
+      "peakMemoryKb": 124464,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -786,13 +794,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1294,
+      "ms": 1272,
       "timing": {
         "loadMs": 18,
-        "textMs": 18,
-        "ocrMs": 1203
+        "textMs": 19,
+        "ocrMs": 1180
       },
-      "peakMemoryKb": 535280,
+      "peakMemoryKb": 540160,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -811,13 +819,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 78,
-      "ms": 1523,
+      "ms": 1401,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1436
+        "ocrMs": 1326
       },
-      "peakMemoryKb": 617488,
+      "peakMemoryKb": 628464,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -836,13 +844,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 110,
+      "ms": 94,
       "timing": {
-        "loadMs": 21,
-        "textMs": 28,
+        "loadMs": 17,
+        "textMs": 23,
         "ocrMs": 0
       },
-      "peakMemoryKb": 123472,
+      "peakMemoryKb": 123680,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -861,13 +869,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 88,
-      "ms": 1466,
+      "ms": 1334,
       "timing": {
-        "loadMs": 20,
-        "textMs": 21,
-        "ocrMs": 1362
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1244
       },
-      "peakMemoryKb": 549328,
+      "peakMemoryKb": 548128,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -892,13 +900,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 84,
-      "ms": 1455,
+      "ms": 1384,
       "timing": {
         "loadMs": 18,
-        "textMs": 3,
-        "ocrMs": 1378
+        "textMs": 2,
+        "ocrMs": 1309
       },
-      "peakMemoryKb": 606624,
+      "peakMemoryKb": 606608,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -928,13 +936,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 92,
+      "ms": 90,
       "timing": {
-        "loadMs": 17,
-        "textMs": 21,
+        "loadMs": 16,
+        "textMs": 20,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122144,
+      "peakMemoryKb": 122112,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -953,13 +961,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 91,
-      "ms": 1074,
+      "ms": 1055,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 16,
-        "ocrMs": 980
+        "ocrMs": 968
       },
-      "peakMemoryKb": 543200,
+      "peakMemoryKb": 536816,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -984,13 +992,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 82,
-      "ms": 1209,
+      "ms": 1161,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 16,
         "textMs": 2,
-        "ocrMs": 1126
+        "ocrMs": 1082
       },
-      "peakMemoryKb": 602608,
+      "peakMemoryKb": 595440,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1015,13 +1023,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 95,
+      "ms": 90,
       "timing": {
-        "loadMs": 18,
-        "textMs": 22,
+        "loadMs": 17,
+        "textMs": 20,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122912,
+      "peakMemoryKb": 122832,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1040,13 +1048,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 90,
-      "ms": 1087,
+      "ms": 1053,
       "timing": {
-        "loadMs": 18,
-        "textMs": 16,
-        "ocrMs": 994
+        "loadMs": 17,
+        "textMs": 17,
+        "ocrMs": 965
       },
-      "peakMemoryKb": 543936,
+      "peakMemoryKb": 536592,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1071,13 +1079,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 80,
-      "ms": 1174,
+      "ms": 1107,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1089
+        "ocrMs": 1033
       },
-      "peakMemoryKb": 606336,
+      "peakMemoryKb": 605280,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1102,13 +1110,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 98,
+      "ms": 91,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 21,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122768,
+      "peakMemoryKb": 122848,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1127,13 +1135,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 91,
-      "ms": 1068,
+      "ms": 1034,
       "timing": {
-        "loadMs": 18,
-        "textMs": 17,
-        "ocrMs": 977
+        "loadMs": 17,
+        "textMs": 16,
+        "ocrMs": 945
       },
-      "peakMemoryKb": 543264,
+      "peakMemoryKb": 543376,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1158,13 +1166,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 82,
-      "ms": 1184,
+      "ms": 1144,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 16,
         "textMs": 2,
-        "ocrMs": 1106
+        "ocrMs": 1071
       },
-      "peakMemoryKb": 598896,
+      "peakMemoryKb": 592656,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1189,13 +1197,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 109,
+      "ms": 90,
       "timing": {
-        "loadMs": 19,
-        "textMs": 24,
+        "loadMs": 17,
+        "textMs": 21,
         "ocrMs": 0
       },
-      "peakMemoryKb": 125424,
+      "peakMemoryKb": 123232,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1214,13 +1222,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 88,
-      "ms": 1159,
+      "ms": 1072,
       "timing": {
-        "loadMs": 22,
-        "textMs": 19,
-        "ocrMs": 1056
+        "loadMs": 17,
+        "textMs": 17,
+        "ocrMs": 982
       },
-      "peakMemoryKb": 544880,
+      "peakMemoryKb": 545296,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1245,13 +1253,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 85,
-      "ms": 1204,
+      "ms": 1139,
       "timing": {
-        "loadMs": 19,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1124
+        "ocrMs": 1059
       },
-      "peakMemoryKb": 609984,
+      "peakMemoryKb": 596176,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1276,13 +1284,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 95,
+      "ms": 94,
       "timing": {
         "loadMs": 17,
-        "textMs": 21,
+        "textMs": 20,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122416,
+      "peakMemoryKb": 122704,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1301,13 +1309,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1084,
+      "ms": 1037,
       "timing": {
-        "loadMs": 20,
-        "textMs": 17,
-        "ocrMs": 982
+        "loadMs": 17,
+        "textMs": 16,
+        "ocrMs": 950
       },
-      "peakMemoryKb": 544464,
+      "peakMemoryKb": 537312,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1332,13 +1340,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 85,
-      "ms": 1170,
+      "ms": 1123,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1095
+        "ocrMs": 1044
       },
-      "peakMemoryKb": 601760,
+      "peakMemoryKb": 599712,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1371,10 +1379,10 @@
       "ms": 92,
       "timing": {
         "loadMs": 17,
-        "textMs": 20,
+        "textMs": 21,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122896,
+      "peakMemoryKb": 122960,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1393,13 +1401,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 90,
-      "ms": 1147,
+      "ms": 1096,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 17,
-        "ocrMs": 1059
+        "ocrMs": 1007
       },
-      "peakMemoryKb": 538656,
+      "peakMemoryKb": 539232,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1424,13 +1432,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 81,
-      "ms": 1203,
+      "ms": 1141,
       "timing": {
         "loadMs": 18,
         "textMs": 2,
-        "ocrMs": 1124
+        "ocrMs": 1066
       },
-      "peakMemoryKb": 599568,
+      "peakMemoryKb": 599680,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1455,13 +1463,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 105,
+      "ms": 92,
       "timing": {
-        "loadMs": 20,
-        "textMs": 25,
+        "loadMs": 17,
+        "textMs": 21,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122608,
+      "peakMemoryKb": 122592,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1480,13 +1488,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 90,
-      "ms": 1103,
+      "ms": 1036,
       "timing": {
-        "loadMs": 19,
-        "textMs": 20,
-        "ocrMs": 1003
+        "loadMs": 18,
+        "textMs": 16,
+        "ocrMs": 947
       },
-      "peakMemoryKb": 543152,
+      "peakMemoryKb": 542848,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1511,13 +1519,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 83,
-      "ms": 1203,
+      "ms": 1124,
       "timing": {
-        "loadMs": 19,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 1126
+        "ocrMs": 1050
       },
-      "peakMemoryKb": 606720,
+      "peakMemoryKb": 618192,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1542,13 +1550,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 102,
+      "ms": 92,
       "timing": {
-        "loadMs": 19,
-        "textMs": 22,
+        "loadMs": 17,
+        "textMs": 21,
         "ocrMs": 0
       },
-      "peakMemoryKb": 122864,
+      "peakMemoryKb": 123104,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1567,13 +1575,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 1127,
+      "ms": 1080,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 17,
-        "ocrMs": 1033
+        "ocrMs": 992
       },
-      "peakMemoryKb": 543824,
+      "peakMemoryKb": 544416,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1598,13 +1606,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 82,
-      "ms": 1135,
+      "ms": 1110,
       "timing": {
-        "loadMs": 20,
+        "loadMs": 18,
         "textMs": 2,
-        "ocrMs": 1050
+        "ocrMs": 1030
       },
-      "peakMemoryKb": 606032,
+      "peakMemoryKb": 605312,
       "coreOk": true,
       "fields": {
         "docType": true,
@@ -1634,13 +1642,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 88,
+      "ms": 84,
       "timing": {
         "loadMs": 17,
-        "textMs": 16,
+        "textMs": 15,
         "ocrMs": 0
       },
-      "peakMemoryKb": 119216,
+      "peakMemoryKb": 119104,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1653,13 +1661,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 90,
-      "ms": 918,
+      "ms": 863,
       "timing": {
-        "loadMs": 17,
-        "textMs": 13,
-        "ocrMs": 825
+        "loadMs": 16,
+        "textMs": 12,
+        "ocrMs": 780
       },
-      "peakMemoryKb": 549264,
+      "peakMemoryKb": 549968,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1672,13 +1680,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 89,
-      "ms": 950,
+      "ms": 886,
       "timing": {
-        "loadMs": 19,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 867
+        "ocrMs": 810
       },
-      "peakMemoryKb": 610080,
+      "peakMemoryKb": 609760,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1691,13 +1699,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 92,
+      "ms": 86,
       "timing": {
-        "loadMs": 18,
-        "textMs": 15,
+        "loadMs": 17,
+        "textMs": 14,
         "ocrMs": 0
       },
-      "peakMemoryKb": 118048,
+      "peakMemoryKb": 118000,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1710,13 +1718,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 91,
-      "ms": 802,
+      "ms": 780,
       "timing": {
-        "loadMs": 19,
-        "textMs": 12,
-        "ocrMs": 713
+        "loadMs": 17,
+        "textMs": 11,
+        "ocrMs": 696
       },
-      "peakMemoryKb": 522928,
+      "peakMemoryKb": 528528,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1729,13 +1737,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 88,
-      "ms": 821,
+      "ms": 796,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 740
+        "ocrMs": 716
       },
-      "peakMemoryKb": 616528,
+      "peakMemoryKb": 615984,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1748,13 +1756,13 @@
       "flavor": "text",
       "hasTextLayer": true,
       "ocrConfidence": null,
-      "ms": 87,
+      "ms": 89,
       "timing": {
         "loadMs": 17,
         "textMs": 15,
         "ocrMs": 0
       },
-      "peakMemoryKb": 119040,
+      "peakMemoryKb": 118656,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1767,13 +1775,13 @@
       "flavor": "broken_tounicode",
       "hasTextLayer": false,
       "ocrConfidence": 84,
-      "ms": 907,
+      "ms": 869,
       "timing": {
-        "loadMs": 18,
+        "loadMs": 17,
         "textMs": 12,
-        "ocrMs": 818
+        "ocrMs": 779
       },
-      "peakMemoryKb": 540032,
+      "peakMemoryKb": 537456,
       "coreOk": true,
       "fields": {
         "docType": true
@@ -1786,13 +1794,13 @@
       "flavor": "image",
       "hasTextLayer": false,
       "ocrConfidence": 78,
-      "ms": 838,
+      "ms": 813,
       "timing": {
         "loadMs": 17,
         "textMs": 2,
-        "ocrMs": 759
+        "ocrMs": 740
       },
-      "peakMemoryKb": 617088,
+      "peakMemoryKb": 609296,
       "coreOk": true,
       "fields": {
         "docType": true

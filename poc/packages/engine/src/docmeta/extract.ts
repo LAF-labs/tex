@@ -72,12 +72,15 @@ function findLabel(c: Compact, label: string): Array<{ start: number; end: numbe
 /** 위치 뒤 짧은 창. 값은 라벨 바로 뒤에 있으므로 남은 텍스트 전체를 자르지 않는다(입력 길이의 제곱 비용 방지). */
 const ahead = (t: string, pos: number, n: number) => t.slice(pos, pos + n);
 
-// 앞뒤에 숫자·영문이 붙으면 날짜로 보지 않는다(OCR이 '30일'을 '3O일'로 읽으면 3일로 잘리지 않고 못 찾음이 된다).
-const DATE_SRC = String.raw`(?<![\dA-Za-z])((?:19|20)\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월|[.\-/])\s*(\d{1,2})(?![\dA-Za-z])(?:\s*일|\s*\.)?`;
+// 앞뒤에 숫자·영문·자모가 붙으면 날짜로 보지 않는다. OCR이 '30일'을 '3O일'·'3ㅇ일'·'3 0일'로 읽으면 3일로 자르지 않고 못 찾음이 된다.
+const DATE_SRC = String.raw`(?<![\dA-Za-z])((?:19|20)\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월|[.\-/])\s*(\d{1,2})(?![\dA-Za-z\u1100-\u11FF\u3131-\u318E])(?!\s?\d\s*일)(?:\s*일|\s*\.)?`;
 /** 기간 표기 구분자: ~ ∼ 〜(NFKC가 바꾸지 않는다) - – — 부터 */
 const RANGE_SEP = String.raw`(?:[~∼〜\-–—]|부터)`;
-const RANGE_AFTER = new RegExp(String.raw`^\s*${RANGE_SEP}\s*`);
-const RANGE_BEFORE = new RegExp(String.raw`${RANGE_SEP}\s*$`);
+const RANGE_AFTER = new RegExp(String.raw`^[ \t]*${RANGE_SEP}[ \t]*`);
+/** 같은 줄에서 두 날짜를 잇는 기간 표기(사이에 구분자와 공백만) */
+const RANGE_JOIN = new RegExp(String.raw`^[ \t]*${RANGE_SEP}[ \t]*$`);
+/** 같은 줄에서 날짜 뒤 '부터'·'~'(끝이 없는 기간의 시작) */
+const OPEN_RANGE_AFTER = /^[ \t]*(?:부터|[~∼〜])/;
 const DATE_AT = new RegExp(`^${DATE_SRC}`);
 
 interface DateHit {
@@ -122,23 +125,37 @@ function classify(c: Compact): DetectedKind {
   return 'unknown';
 }
 
-/** 날짜 앞(최대 12자)에 이 라벨이 붙어 있으면 발급일이 아니다. 시각이 붙은 날짜(출력 시각)·기간 표기의 양 끝도 아니다. */
+/** 날짜 앞(최대 12자)에 이 라벨이 붙어 있으면 발급일이 아니다. */
 const NOT_ISSUE_LABELS = ['출력일시', '출력일', '인쇄일시', '인쇄일', '일시', '납부기한', '개업일', '연월일', '등록일', '접수일', '유효기간', '기간', '폐업일', '휴업', '개정', '시행'];
 
-function isIssueLike(t: string, h: DateHit): boolean {
-  const before = t.slice(Math.max(0, h.start - 12), h.start).replace(/\s/g, '').replace(/[:<([]+$/, '');
-  if (NOT_ISSUE_LABELS.some((l) => before.endsWith(l))) return false;
-  if (/^\s*\d{1,2}:\d{2}/.test(ahead(t, h.end, 16))) return false;
-  if (RANGE_AFTER.test(ahead(t, h.end, 16)) || RANGE_BEFORE.test(t.slice(Math.max(0, h.start - 4), h.start))) return false;
-  return true;
+/**
+ * 발급일 후보만 남긴다: 라벨이 붙은 날짜, 시각이 붙은 날짜(출력 시각), 같은 줄에서 기간 표기로 이어진 두 날짜,
+ * '부터'·'~'로 끝이 열린 기간의 시작은 뺀다. 다음 줄이 '-'로 시작하는 것(쪽 번호 등)은 기간이 아니다.
+ */
+function issueLike(t: string, hits: DateHit[]): DateHit[] {
+  const ranged = new Set<number>();
+  for (let i = 1; i < hits.length; i++) {
+    if (RANGE_JOIN.test(t.slice(hits[i - 1]!.end, hits[i]!.start))) ranged.add(i - 1).add(i);
+  }
+  return hits.filter((h, i) => {
+    if (ranged.has(i)) return false;
+    const before = t.slice(Math.max(0, h.start - 12), h.start).replace(/\s/g, '').replace(/[:<([]+$/, '');
+    if (NOT_ISSUE_LABELS.some((l) => before.endsWith(l))) return false;
+    const after = ahead(t, h.end, 16);
+    return !/^\s*\d{1,2}:\d{2}/.test(after) && !OPEN_RANGE_AFTER.test(after);
+  });
 }
 
+/**
+ * 후보가 하나로 모이면 그 값. 서로 다른 날짜가 있거나, 읽히는 날짜 옆에 날짜 모양인데 없는 날짜(OCR 오독 흔적)가 있으면 정하지 않는다.
+ * 그때 보여 줄 후보는 가장 이른 날짜다(발급일·만료일 모두 이르게 잡는 쪽이 만료된 서류를 내는 사고를 막는다).
+ */
 function pickDate(hits: DateHit[]): Field {
   if (!hits.length) return miss('not_found');
-  const valid = [...new Set(hits.map((h) => h.iso).filter((v): v is string => v !== null))];
+  const valid = [...new Set(hits.map((h) => h.iso).filter((v): v is string => v !== null))].sort();
   if (!valid.length) return miss('unparseable');
-  if (valid.length === 1) return ok(valid[0]!);
-  return miss('ambiguous', valid[valid.length - 1]);
+  if (valid.length === 1 && hits.every((h) => h.iso !== null)) return ok(valid[0]!);
+  return miss('ambiguous', valid[0]);
 }
 
 /**
@@ -148,16 +165,19 @@ function pickDate(hits: DateHit[]): Field {
 function issuedOn(t: string, c: Compact, issuerAt: number | null): { field: Field; uncertain: boolean } {
   const closes = findLabel(c, '증명합니다');
   if (closes.length) {
-    const f = pickDate(allDates(t).filter((h) => h.start >= closes[closes.length - 1]!.end && isIssueLike(t, h)));
+    const f = pickDate(issueLike(t, allDates(t)).filter((h) => h.start >= closes[closes.length - 1]!.end));
     if (f.reason !== 'not_found') return { field: f, uncertain: false };
   }
   const labelled = pickDate(['발급일자', '발급일', '발행일'].flatMap((l) => findLabel(c, l)).map((p) => dateRightAfter(t, p.end)).filter((h): h is DateHit => h !== null));
   if (labelled.reason !== 'not_found' || issuerAt === null) return { field: labelled, uncertain: false };
-  const near = pickDate(allDates(t).filter((h) => h.start >= issuerAt - 200 && h.start < issuerAt + 40 && isIssueLike(t, h)));
+  const near = pickDate(issueLike(t, allDates(t)).filter((h) => h.start >= issuerAt - 200 && h.start < issuerAt + 40));
   return { field: near, uncertain: near.value !== null };
 }
 
-/** 유효기간: 라벨 바로 뒤 날짜. 'A ~ B'면 끝 날짜. 'A부터 30일간'처럼 끝을 못 읽으면 정하지 않는다. */
+/**
+ * 유효기간: 라벨 바로 뒤 날짜. 'A ~ B'면 끝 날짜. 'A부터 30일간'처럼 끝을 못 읽거나, 모르는 구분자('A ∽ B', 'A 에서 B')로
+ * 날짜가 하나 더 붙어 있으면 정하지 않는다(시작일을 만료일로 잡지 않게). 끝을 못 읽은 경우는 후보도 내지 않는다.
+ */
 function validUntil(t: string, c: Compact): Field {
   const hits: DateHit[] = [];
   for (const p of findLabel(c, '유효기간')) {
@@ -165,13 +185,17 @@ function validUntil(t: string, c: Compact): Field {
     if (!first) continue;
     const range = RANGE_AFTER.exec(ahead(t, first.end, 16));
     const second = range ? dateRightAfter(t, first.end + range[0].length) : null;
-    if (range && !second) return miss('ambiguous', first.iso ?? undefined);
+    if (range && !second) return miss('ambiguous');
+    // 날짜 사이가 두 글자 이하(모르는 구분자)면 기간 표기로 본다. '발급일' 같은 라벨이 끼면 다른 칸이다.
+    const next = second ? null : allDates(ahead(t, first.end, 24))[0];
+    if (next && ahead(t, first.end, next.start).replace(/\s/g, '').length <= 2) return miss('ambiguous');
     hits.push(second ?? first);
   }
   return pickDate(hits);
 }
 
-/** 발급기관: '세무서장' 바로 앞 이름(붙어 있거나, 한 글자씩 띄운 글자). 세무서 이름은 2~4자이고 부서·날짜 글자(실·과·팀·일)로 끝나지 않는다. */
+/** 발급기관: '세무서장' 바로 앞 이름(붙어 있거나, 한 글자씩 띄운 글자). 세무서 이름은 2~4자이고 부서명·날짜 글자로 끝나지 않는다('잠실'은 세무서 이름이다). */
+const NOT_OFFICE = /(봉사실|민원실|상담실|담당|[과팀일])$/;
 function issuer(t: string, c: Compact): { field: Field; at: number | null } {
   const names = new Set<string>();
   let at: number | null = null;
@@ -190,7 +214,7 @@ function issuer(t: string, c: Compact): { field: Field; at: number | null } {
   const list = [...names];
   if (list.length > 1) return { field: miss('ambiguous'), at };
   const name = list[0]!;
-  if (!/^[가-힣]{2,4}$/.test(name) || /[실과팀일]$/.test(name)) return { field: miss(name ? 'ambiguous' : 'unparseable'), at };
+  if (!/^[가-힣]{2,4}$/.test(name) || NOT_OFFICE.test(name)) return { field: miss(name ? 'ambiguous' : 'unparseable'), at };
   return { field: ok(`${name}세무서장`), at };
 }
 

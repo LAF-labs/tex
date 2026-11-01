@@ -117,14 +117,52 @@ describe('보관함(DocumentService)', () => {
     const set = await call<DocumentView>('document.update', { id: b.id, patch: { expiresOn: '2026-11-05' } });
     assert.deepEqual([set.expiresOn, set.expirySource, set.daysLeft], ['2026-11-05', 'user', -5]);
     const re = await call<DocumentView>('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' } });
-    assert.deepEqual([re.issuedOn, re.expiresOn, re.expirySource], ['2026-11-02', '2027-01-30', 'rule']);
+    assert.deepEqual([re.issuedOn, re.expiresOn, re.expirySource, re.needsUser, re.reasons], ['2026-11-02', '2027-01-30', 'rule', true, ['expiry_recomputed']], '다시 계산한 만료일은 보여 준 뒤 한 번 더 확인받는다');
+    const reConfirmed = await call<DocumentView>('document.update', { id: b.id, patch: {} });
+    assert.deepEqual([reConfirmed.expiresOn, reConfirmed.expirySource, reConfirmed.needsUser], ['2027-01-30', 'user', false]);
     // 세 칸을 다 보내도(만료일은 저장값 그대로) 발급일만 바뀌었으면 규칙으로 다시 정한다
     const all = await call<DocumentView>('document.update', { id: b.id, patch: { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-30' } });
     assert.deepEqual([all.issuedOn, all.expiresOn, all.expirySource], ['2026-10-06', '2027-01-03', 'rule']);
     const x = await call<DocumentView>('document.import', { bytes: pdf('x'), extract: extract('영수증'), final: true });
     const typed = await call<DocumentView>('document.update', { id: x.id, patch: { docType: 'national_tax_cert', issuedOn: '2026-11-03' } });
     assert.deepEqual([typed.docType, typed.displayName, typed.expiresOn, typed.expirySource], ['national_tax_cert', '납세증명서(국세)', '2026-12-02', 'rule']);
-    assert.deepEqual([typed.needsUser, typed.reasons], [true, ['valid_until_not_found']], '다시 정한 추정값은 확인 필요를 그대로 둔다(지정납부기한으로 더 짧을 수 있다)');
+    assert.deepEqual([typed.needsUser, typed.reasons], [true, ['valid_until_not_found', 'expiry_recomputed']], '다시 정한 추정값은 확인 필요를 그대로 둔다(지정납부기한으로 더 짧을 수 있다)');
+    const toOther = await call<DocumentView>('document.update', { id: typed.id, patch: { docType: 'other' } });
+    assert.deepEqual([toOther.docType, toOther.expiresOn, toOther.needsUser], ['other', '2026-12-02', false], "'그 밖의 서류'로 고르면 만료일은 두고 확인한 것으로");
+  });
+
+  it('OCR로 읽은 서류의 발급일만 고쳐도, OCR 유효기간을 문서 값으로 되살려 확정하지 않는다', async () => {
+    await business();
+    const ocrText = taxText(BIZ, '2026년 11월 30일').replace('2026년 11월 1일', '2026년 10월 20일');
+    const d = await call<DocumentView>('document.import', { bytes: pdf('ocr-edit'), extract: extract(ocrText, { ocrConfidence: 80 }) });
+    assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser], ['2026-11-18', 'rule', true]);
+    assert.ok(d.reasons.includes('valid_until_out_of_range') && d.reasons.includes('read_by_ocr'));
+    const edited = await call<DocumentView>('document.update', { id: d.id, patch: { issuedOn: '2026-11-01' } });
+    assert.deepEqual([edited.expiresOn, edited.expirySource, edited.needsUser], ['2026-11-30', 'document', true]);
+    assert.deepEqual(edited.reasons, ['read_by_ocr', 'expiry_recomputed']);
+  });
+
+  it('다른 사업자 서류·사업자번호를 못 읽은 서류는 확인을 받는다(수정해도 남고, 그대로 확인하면 지운다)', async () => {
+    await business();
+    const other = await call<DocumentView>('document.import', { bytes: pdf('other-biz'), extract: extract(taxText(OTHER)) });
+    assert.deepEqual([other.subjectMismatch, other.needsUser, other.reasons], [true, true, ['subject_mismatch']]);
+    const edited = await call<DocumentView>('document.update', { id: other.id, patch: { expiresOn: '2026-11-20' } });
+    assert.deepEqual([edited.needsUser, edited.reasons], [true, ['subject_mismatch']]);
+    const ok = await call<DocumentView>('document.update', { id: other.id, patch: {} });
+    assert.deepEqual([ok.needsUser, ok.reasons, ok.subjectMismatch], [false, [], true]);
+    const unread = await call<DocumentView>('document.import', { bytes: pdf('no-biz'), extract: extract(taxText().replace(formatBizNo(BIZ), '800101-*******')) });
+    assert.deepEqual([unread.needsUser, unread.reasons], [true, ['subject_unverified']]);
+  });
+
+  it('발급일 없는 서류를 그대로 확인해도 만료 경고가 사라지게 두지 않는다', async () => {
+    await business();
+    const d = await call<DocumentView>('document.import', { bytes: pdf('no-issued'), extract: extract(bizText.replace('2026년 10월 06일', '')), final: true });
+    assert.equal(d.issuedOn, null);
+    const confirmed = await call<DocumentView>('document.update', { id: d.id, patch: {} });
+    assert.deepEqual([confirmed.needsUser, confirmed.reasons], [true, ['issued_on_missing']]);
+    const cleared = await call<DocumentView>('document.update', { id: d.id, patch: { issuedOn: '2026-10-06' } });
+    const noExpiry = await call<DocumentView>('document.update', { id: cleared.id, patch: { expiresOn: null } });
+    assert.deepEqual([noExpiry.expiresOn, noExpiry.needsUser], [null, false], '사업자등록증명 만료일은 사용자가 지울 수 있다(법정 유효기간 없음)');
   });
 
   it('납세증명서 만료일을 비우면 확인 필요로 남고, 법정 상한(발급일+30일)을 넘으면 거부한다', async () => {

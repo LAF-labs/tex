@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
-import { addDays, daysLeft, decideExpiry, extractDocMeta, kstToday, l0ShadowPick, validateDocMeta, type DocMetaExtract } from '@sax/engine';
+import { addDays, daysLeft, decideExpiry, extractDocMeta, kstToday, l0ShadowPick, validateDocMeta, worthOcr, type DocMetaExtract } from '@sax/engine';
 // @ts-expect-error 샌드박스 정적 모듈(JS)
 import { cleanForOcr } from '../apps/desktop/static/docparse-image.mjs';
 // @ts-expect-error 샌드박스 정적 모듈(JS)
@@ -33,6 +33,9 @@ function taxText(o: { issued?: string; valid?: string; spaced?: boolean; extra?:
     o.extra ?? '',
   ].join('\n');
 }
+
+/** 연장ㆍ유예 내역의 날짜 줄을 뺀 납세증명서(대체 창에 다른 날짜가 없도록) */
+const noDeferral = (t: string) => t.split('\n').filter((l) => !l.startsWith('징수유예')).join('\n');
 
 function bizText(o: { issued?: string; spaced?: boolean; title?: boolean } = {}): string {
   const s = (x: string) => (o.spaced ? x.split('').join(' ') : x);
@@ -80,29 +83,44 @@ describe('메타 추출: 납세증명서(국세)', () => {
     assert.equal(timed.issuedOn.value, '2026-11-01', '시각이 붙은 날짜(인쇄 시각)는 뺀다');
   });
 
-  it('맺음 부분에 서로 다른 날짜가 둘이면 정하지 않고 후보만 준다', () => {
+  it('맺음 부분에 서로 다른 날짜가 둘이면 정하지 않고, 가장 이른 날짜를 후보로 준다', () => {
     const m = extractDocMeta(taxText({ extra: '2026년 11월 3일' }));
     assert.equal(m.issuedOn.value, null);
     assert.equal(m.issuedOn.reason, 'ambiguous');
-    assert.equal(m.issuedOn.suggested, '2026-11-03');
+    assert.equal(m.issuedOn.suggested, '2026-11-01', '이르게 잡는 쪽이 만료된 서류를 내는 사고를 막는다');
+    const broken = extractDocMeta(taxText({ extra: '2026년 2월 30일' }));
+    assert.deepEqual([broken.issuedOn.value, broken.issuedOn.reason], [null, 'ambiguous'], '없는 날짜(OCR 오독 흔적)가 섞이면 정하지 않는다');
+  });
+
+  it('다음 줄이 "-"·"부터"로 시작해도 발급일을 기간으로 보지 않는다. 같은 줄의 기간 표기만 뺀다', () => {
+    for (const next of ['- 1 -', '—', '-----', '부터 적용']) {
+      assert.equal(extractDocMeta(taxText({ extra: next })).issuedOn.value, '2026-11-01', next);
+    }
+    assert.equal(extractDocMeta(noDeferral(taxText({ issued: '2026년 11월 1일부터' }))).issuedOn.reason, 'not_found', '같은 줄의 "부터"는 기간의 시작');
   });
 
   it('유효기간 기간 표기: 〜(U+301C)도 끝 날짜, "부터 30일간"처럼 끝이 없으면 정하지 않는다', () => {
     assert.equal(extractDocMeta(taxText({ valid: '2026. 11. 1. \u301c 2026. 11. 20.' })).validUntil.value, '2026-11-20');
     const open = extractDocMeta(taxText({ valid: '2026. 11. 1.부터 30일간' })).validUntil;
-    assert.deepEqual([open.value, open.reason, open.suggested], [null, 'ambiguous', '2026-11-01']);
+    assert.deepEqual([open.value, open.reason, open.suggested], [null, 'ambiguous', undefined], '끝을 못 읽으면 시작일을 후보로도 내지 않는다');
+    for (const sep of ['∽', '에서']) {
+      assert.equal(extractDocMeta(taxText({ valid: `2026. 11. 1. ${sep} 2026. 11. 20.` })).validUntil.reason, 'ambiguous', `모르는 구분자 ${sep}`);
+    }
+    assert.equal(extractDocMeta(taxText({ valid: '2026. 11. 30. 발급일 2026. 11. 1.' })).validUntil.value, '2026-11-30', '라벨이 끼면 다른 칸이다');
   });
 
-  it('OCR이 숫자 뒤에 영문을 붙이면(3O일) 날짜를 자르지 않고 못 찾음으로', () => {
-    const m = extractDocMeta(taxText({ valid: '2026년 11월 3O일' }));
-    assert.deepEqual([m.validUntil.value, m.validUntil.reason], [null, 'not_found']);
+  it('OCR이 숫자 뒤에 영문·자모·공백 숫자를 붙이면(3O일, 3ㅇ일, 3 0일) 날짜를 자르지 않고 못 찾음으로', () => {
+    for (const day of ['3O일', '3ㅇ일', '3 0일']) {
+      const m = extractDocMeta(taxText({ valid: `2026년 11월 ${day}` }));
+      assert.deepEqual([m.validUntil.value, m.validUntil.reason], [null, 'not_found'], day);
+    }
   });
 
   it("'증명합니다'를 못 읽으면 세무서장 근처 날짜를 쓰되 불확실로 둔다(사용자 확인)", () => {
     // 납부기한 날짜가 근처에 있으면 둘 중 정하지 않는다(후보만)
     const near = extractDocMeta(taxText().replace('증명합니다', '증멍합니다'));
     assert.deepEqual([near.issuedOn.value, near.issuedOn.reason, near.issuedOn.suggested], [null, 'ambiguous', '2026-11-01']);
-    const noRow = taxText().split('\n').filter((l) => !l.startsWith('징수유예')).join('\n');
+    const noRow = noDeferral(taxText());
     const m = extractDocMeta(noRow.replace('증명합니다', '증멍합니다'));
     assert.equal(m.issuedOn.value, '2026-11-01');
     assert.deepEqual(m.uncertain, ['issuedOn']);
@@ -130,6 +148,7 @@ describe('메타 추출: 납세증명서(국세)', () => {
     assert.equal(extractDocMeta(taxText({ issuer: '담당자김담당가나다라세무서장' })).issuer.reason, 'ambiguous', '이름이 4자를 넘으면 정하지 않는다');
     assert.equal(extractDocMeta(taxText({ issuer: '민원봉사실세무서장 직인' })).issuer.reason, 'ambiguous', '직인에 가려 부서명이 붙은 경우');
     assert.equal(extractDocMeta(taxText({ issuer: '자세무서장 직인' })).issuer.reason, 'ambiguous', '한 글자는 이름으로 보지 않는다');
+    assert.equal(extractDocMeta(taxText({ issuer: '잠실세무서장 직인' })).issuer.value, '잠실세무서장', "'잠실'은 세무서 이름이다");
   });
 
   it('사업자번호: 체크섬이 틀리면 값을 두지 않고 후보로', () => {
@@ -219,10 +238,19 @@ describe('만료 규칙(D07 §3)', () => {
     }
   });
 
-  it('사업자등록증명: 발급일 포함 90일 추정, 사용자 조정 일수 우선', () => {
+  it('사업자등록증명: 발급일 포함 90일 추정, 사용자 조정 일수 우선. 납세증명서 추정은 조정해도 법정 30일을 넘지 않는다', () => {
     const m = extractDocMeta(bizText());
     assert.deepEqual(decideExpiry(m, TODAY), { expiresOn: addDays('2026-10-06', 89), source: 'rule', needsUser: false, reasons: [] });
     assert.equal(decideExpiry(m, TODAY, 30).expiresOn, '2026-11-04');
+    assert.equal(decideExpiry(meta({ valid: null }), TODAY, 60).expiresOn, '2026-11-30');
+  });
+
+  it('OCR 다시 읽기 대상: 종류를 정했는데 발급일을 못 찾음, 또는 종류를 못 알아본 짧은 글·증명서 단서가 있는 글', () => {
+    assert.equal(worthOcr(extractDocMeta(noDeferral(taxText()).replace(/\n2026년 11월 1일/, '')), ''), true);
+    assert.equal(worthOcr(extractDocMeta('홈택스 머리말 1/1'), '홈택스 머리말 1/1'), true);
+    const longPlain = '일반 문서 본문입니다. '.repeat(40);
+    assert.equal(worthOcr(extractDocMeta(longPlain), longPlain), false, '글자가 넉넉한 보통 문서는 다시 읽지 않는다');
+    assert.equal(worthOcr(extractDocMeta('지방세 납세증명서\n가나구청장'), '지방세 납세증명서'), false, '알아본 지원 밖 서류');
   });
 
   it('발급일이 없거나 오늘보다 뒤면 확인 필요. 종류를 모르면 만료일 없음', () => {

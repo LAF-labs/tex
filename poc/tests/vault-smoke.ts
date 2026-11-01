@@ -17,6 +17,10 @@ if (process.platform === 'darwin') {
 const env: Record<string, string> = { ...(process.env as Record<string, string>), ...(process.platform === 'win32' ? { LOCALAPPDATA: tmp } : { HOME: tmp }) };
 const root = process.platform === 'win32' ? path.join(tmp, 'SovereignAX') : path.join(tmp, 'Library', 'Application Support', 'SovereignAX');
 const out: Record<string, unknown> = {};
+const failures: string[] = [];
+const expect = (name: string, ok: boolean) => {
+  if (!ok) failures.push(name);
+};
 const certs = syntheticCerts();
 const tax = certs.find((c) => c.kind === 'national_tax_cert')!;
 const biz = certs.find((c) => c.kind === 'biz_registration_cert')!;
@@ -87,6 +91,13 @@ try {
   out.list = list.map((d) => ({ docType: d.docType, issuedOn: d.issuedOn, expiresOn: d.expiresOn, expirySource: d.expirySource, needsUser: d.needsUser, reasons: d.reasons, textSource: d.textSource, subjectMismatch: d.subjectMismatch }));
   await win.waitForFunction((n) => document.querySelectorAll('#v-list tr').length === n, list.length);
   out.rows = await win.$$eval('#v-list tr', (trs) => trs.map((tr) => [...tr.querySelectorAll('td')].slice(0, 6).map((td) => td.textContent)));
+  // 화면 확인 경로: 다른 사업자로 확인 필요인 사업자등록증명을 '확인' → 아무것도 바꾸지 않고 저장 → 확인함
+  const bizRow = (out.list as Array<Record<string, unknown>>).findIndex((d) => d.docType === 'biz_registration_cert');
+  await win.click(`#v-list tr:nth-child(${bizRow + 1}) button`);
+  await win.click('#v-edit button:not([type])');
+  await win.waitForFunction((i) => !/확인 필요/.test(document.querySelectorAll('#v-list tr')[i]?.textContent ?? '확인 필요'), bizRow, { timeout: 10_000 });
+  const after = ((await call('db.query.documents.list')) as Array<Record<string, unknown>>).find((d) => d.docType === 'biz_registration_cert')!;
+  out.bizConfirmed = { needsUser: after.needsUser, expirySource: after.expirySource, subjectMismatch: after.subjectMismatch };
   const section = await win.$('section:has(#v-list)');
   await fs.mkdir(path.resolve(import.meta.dirname, '../reports/raw/poc-8'), { recursive: true });
   await section?.screenshot({ path: path.resolve(import.meta.dirname, '../reports/raw/poc-8/vault-panel.png') });
@@ -95,6 +106,26 @@ try {
   if (proc.exitCode === null) proc.kill(); // 닫기가 멈추면 스모크가 띄운 앱만 끈다
 }
 out.vaultFiles = (await fs.readdir(path.join(root, 'vault'))).map((f) => f.replace(/_[0-9A-Z]{4}\.pdf$/, '_XXXX.pdf')).sort();
+const list = (out.list ?? []) as Array<Record<string, unknown>>;
+const textTax = list.find((d) => d.docType === 'national_tax_cert' && d.textSource === 'text');
+const ocrTax = list.find((d) => d.docType === 'national_tax_cert' && d.textSource === 'ocr');
+expect('엔진 DB 열림', out.dbReady === true);
+expect('처음에 암호·수정 줄은 숨김', out.formsHiddenAtStart === true);
+expect('사업자 프로필 없음 안내', String(out.beforeProfile).includes('내 사업장'));
+expect('텍스트 PDF 보관', String(out.tax).includes('보관함에 넣었습니다') && String(out.tax).includes('텍스트'));
+expect('같은 파일 다시 → 중복 안내', String(out.taxAgain).includes('이미 있는 파일'));
+expect('그림 PDF → OCR', String(out.image).includes('OCR'));
+expect('열기 암호 요청·틀린 암호 안내·맞는 암호로 보관', out.passwordFormShown === true && String(out.lockedWrong).includes('맞지 않습니다') && String(out.lockedOk).includes('보관함에 넣었습니다') && out.passwordFormHiddenAfter === true);
+expect('렌더러의 document.import 거부', String(out.rendererImportRefused).includes('unknown_method'));
+expect('텍스트 납세증명: 문서에서 읽은 만료일, 확인 필요 없음', !!textTax && textTax.expirySource === 'document' && textTax.needsUser === false);
+expect('OCR 납세증명: 확인 필요(read_by_ocr)', !!ocrTax && ocrTax.needsUser === true && (ocrTax.reasons as string[]).includes('read_by_ocr'));
+expect('다른 사업자 서류를 화면에서 확인하면 확인함(대상 표시는 남음)', JSON.stringify(out.bizConfirmed) === JSON.stringify({ needsUser: false, expirySource: 'user', subjectMismatch: true }));
+expect('파일 4개, 이름에 PII 없음', (out.vaultFiles as string[]).length === 4 && (out.vaultFiles as string[]).every((f) => /^(national_tax_cert|biz_registration_cert|other)_\d{8}_XXXX\.pdf$/.test(f)));
+out.failures = failures;
 console.log(JSON.stringify(out, null, 2));
 await fs.writeFile(path.resolve(import.meta.dirname, '../reports/raw/poc-8-vault-smoke.json'), JSON.stringify(out, null, 2));
 await fs.rm(tmp, { recursive: true, force: true });
+if (failures.length) {
+  console.error(`실패 ${failures.length}건: ${failures.join(' / ')}`);
+  process.exit(1);
+}

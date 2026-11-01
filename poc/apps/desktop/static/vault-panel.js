@@ -17,6 +17,10 @@
     read_by_ocr: '글자 층이 없어 OCR로 읽음',
     scanned_text_layer: '스캔 PDF에 덧입힌 글자로 읽음',
     expires_on_missing: '납세증명서 만료일이 비어 있음',
+    issued_on_missing: '발급일이 비어 있음',
+    expiry_recomputed: '만료일을 다시 계산함(확인해 주세요)',
+    subject_mismatch: '대상 사업자번호가 내 사업장과 다름',
+    subject_unverified: '대상 사업자번호를 읽지 못함',
   };
   const ERR = {
     profile_required: '내 사업장(사업자 프로필)을 먼저 저장하세요', not_pdf: 'PDF 파일이 아닙니다', input_size: '파일이 비었거나 15MB를 넘습니다', read_failed: '파일을 읽지 못했습니다',
@@ -51,7 +55,7 @@
     body.replaceChildren();
     for (const d of list) {
       const tr = document.createElement('tr');
-      const status = d.needsUser ? `확인 필요: ${d.reasons.map((r) => REASON[r] || r).join(', ') || '값 확인'}` : d.subjectMismatch ? '다른 사업자 서류' : '';
+      const status = d.needsUser ? `확인 필요: ${d.reasons.map((r) => REASON[r] || r).join(', ') || '값 확인'}` : d.subjectMismatch ? '다른 사업자 서류(확인함)' : '';
       tr.append(
         cell(d.displayName),
         cell(d.issuedOn || '—'),
@@ -76,9 +80,14 @@
     const f = $('#v-edit');
     $('#v-edit-name').textContent = d.displayName;
     f.docType.value = d.docType;
-    // 정하지 못한 칸은 후보를 먼저 채운다(사용자가 PDF를 보고 고친다)
-    f.issuedOn.value = d.issuedOn || d.suggested.issuedOn || '';
-    f.expiresOn.value = d.expiresOn || d.suggested.validUntil || '';
+    f.issuedOn.value = d.issuedOn || '';
+    f.expiresOn.value = d.expiresOn || '';
+    // 정하지 못한 칸의 후보는 값 칸에 넣지 않고 보여만 준다. 사용자가 PDF를 보고 '후보 넣기'를 누르거나 직접 입력한다.
+    const hints = [];
+    if (!d.issuedOn && d.suggested.issuedOn) hints.push(`발급일 후보 ${d.suggested.issuedOn}`);
+    if (!d.expiresOn && d.suggested.validUntil) hints.push(`유효기간 후보 ${d.suggested.validUntil}`);
+    $('#v-edit-hint').textContent = hints.length ? `${hints.join(' · ')} (PDF에서 확인하세요)` : '';
+    $('#v-edit-use').hidden = !hints.length;
     f.querySelector('.msg').textContent = '';
     f.hidden = false;
   }
@@ -136,5 +145,10 @@
     }
   });
   $('#v-edit-cancel').onclick = () => ($('#v-edit').hidden = true);
+  $('#v-edit-use').onclick = () => {
+    const f = $('#v-edit');
+    if (!f.issuedOn.value && editing.suggested.issuedOn) f.issuedOn.value = editing.suggested.issuedOn;
+    if (!f.expiresOn.value && editing.suggested.validUntil) f.expiresOn.value = editing.suggested.validUntil;
+  };
   load();
 })();
