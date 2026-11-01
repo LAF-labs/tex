@@ -1,10 +1,11 @@
 // PoC-4 금고 최소판: 허용 목록 중계·응답 정리·비밀 창·누출 스캐너 (D05 §3~§4, D13 S6·S6c·S6d·S6f).
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { dirGuard } from '@sax/platform';
-import { scanDir, testSecret, variantsOf } from '@sax/vault';
+import { launchChrome, Relay, scanDir, testSecret, variantsOf, Vault } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
 import { startHarness, testPolicy, type Harness } from './harness.ts';
 import { RawEngine, sleep } from './raw-engine.ts';
@@ -457,6 +458,158 @@ describe('launch 전 전용 프로필 폴더 확인(D05 §3.1)', () => {
       assert.deepEqual([ev?.ok, ev?.reason, ev?.setAside], [false, 'not_owner', undefined], '새 폴더도 맞지 않아 되돌리고 기동하지 않는다');
       assert.deepEqual((await fs.readdir(h.paths.root)).filter((n) => n.includes('.untrusted-')), []);
     } finally {
+      await h.close();
+    }
+  });
+});
+
+describe('launch 동시 호출·중간 실패(PoC-1 §5.1 후속)', () => {
+  it('기동 중에 또 오면 두 번째는 거부하고 Chrome은 하나만 띄운다', async () => {
+    const h = await startHarness();
+    try {
+      const results = await Promise.allSettled([h.client.rpc('browser.launch'), h.client.rpc('browser.launch')]);
+      assert.deepEqual(results.map((r) => r.status).sort(), ['fulfilled', 'rejected']);
+      const rejected = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+      assert.match(String((rejected.reason as Error).message), /already launched/);
+      assert.ok(h.vault.chromePid);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('Chrome을 띄운 뒤 중계 준비가 실패하면 Chrome을 닫고, 다시 launch할 수 있다', async () => {
+    const h = await startHarness();
+    const original = Relay.prototype.createRunPage;
+    try {
+      Relay.prototype.createRunPage = async () => {
+        throw new Error('injected createRunPage failure');
+      };
+      await assert.rejects(h.client.rpc('browser.launch'), /injected createRunPage failure/);
+      assert.equal(h.vault.chromePid, undefined, '띄운 Chrome이 남지 않는다');
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+      Relay.prototype.createRunPage = original;
+      await h.client.rpc('browser.launch');
+      assert.ok(h.vault.chromePid, '다시 launch는 already launched로 막히지 않는다');
+    } finally {
+      Relay.prototype.createRunPage = original;
+      await h.close();
+    }
+  });
+
+  it('응답 없는 Chrome에 붙는 중이면 상한에서 내리고 실패한다, 다시 launch할 수 있다', { timeout: 90_000 }, async () => {
+    // 상한은 Chrome을 띄운 뒤부터 잰다. 정상 기동(다시 launch 포함)보다 넉넉하게 둔다(Windows 냉기동 고려).
+    const limitMs = 15_000;
+    const h = await startHarness({ launchTimeoutMs: limitMs });
+    let stubEntered = false;
+    type SelfCheck = (relay: Relay, targetId: string) => Promise<boolean>;
+    const proto = Vault.prototype as unknown as { selfCheck: SelfCheck };
+    const original = proto.selfCheck;
+    try {
+      // 파이프 응답을 기다리며 멈춘 Chrome 대역: 끝나지 않는 Promise를 평가한다. Chrome을 닫으면 대기 요청이 거부된다.
+      proto.selfCheck = async (relay, targetId) => {
+        stubEntered = true;
+        const t = relay.targets.get(targetId)!;
+        if (t.paused) await relay.send('Runtime.runIfWaitingForDebugger', {}, t.vaultSession);
+        await relay.send('Runtime.evaluate', { expression: 'new Promise(() => {})', awaitPromise: true }, t.vaultSession);
+        return true;
+      };
+      const started = Date.now();
+      await assert.rejects(h.client.rpc('browser.launch'), /chrome launch timed out/);
+      assert.ok(stubEntered, '멈춘 파이프 경로를 지났다(상한이 그 전에 터지지 않았다)');
+      assert.ok(Date.now() - started < limitMs + 15_000, '상한 뒤 오래지 않아 끝난다');
+      assert.equal(h.vault.chromePid, undefined, '멈춘 Chrome이 남지 않는다');
+      proto.selfCheck = original;
+      await h.client.rpc('browser.launch');
+      assert.ok(h.vault.chromePid);
+    } finally {
+      proto.selfCheck = original;
+      await h.close();
+    }
+  });
+
+  it('금고가 Chrome을 내리면 엔진 CDP transport에 닫힘을 알린다', async () => {
+    const h = await startHarness();
+    try {
+      await h.client.rpc('browser.launch');
+      const t = h.client.cdpTransport();
+      const closed = new Promise<string | undefined>((r) => (t.onclose = r));
+      await h.client.rpc('browser.shutdown');
+      const got = await Promise.race([closed, sleep(5000).then(() => 'no close within 5s')]);
+      assert.equal(got, 'chrome closed', 'Playwright가 끊긴 줄 알아 다음 열기에서 새로 띄운다');
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('실행 트리거(run.begin)는 Chrome을 다시 띄워도 남고, 프로필 점검 결과는 새 기동마다 다시 한다', async () => {
+    const h = await startHarness();
+    try {
+      await h.control.rpc('run.begin', { runId: 'r1', trigger: 'local' });
+      await h.client.rpc('browser.launch');
+      await h.vault.profileChecked();
+      await h.client.rpc('browser.shutdown');
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null }, '내린 뒤 앞 점검 결과가 남지 않는다');
+      await h.client.rpc('browser.launch');
+      assert.equal(h.vault.ops?.runTriggers.get('r1'), 'local');
+      await h.control.rpc('run.end', { runId: 'r1' });
+      assert.equal(h.vault.ops?.runTriggers.has('r1'), false);
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('내리는 중에 온 실행 트리거도 다시 띄운 Chrome에 남는다', async () => {
+    const h = await startHarness();
+    try {
+      await h.client.rpc('browser.launch');
+      const closing = h.vault.shutdown(); // Chrome이 닫히기를 기다리는 동안
+      await h.control.rpc('run.begin', { runId: 'r2', trigger: 'local' });
+      await closing;
+      await h.client.rpc('browser.launch');
+      assert.equal(h.vault.ops?.runTriggers.get('r2'), 'local', '버려질 ops에 들어가지 않는다');
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('Chrome 실행 파일을 띄우지 못하면 금고가 죽지 않고 거부한다', async () => {
+    const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-spawn-'));
+    try {
+      await assert.rejects(launchChrome({ executable: path.join(dir, 'no-such-chrome'), profileDir: dir }), /ENOENT/);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('기동 준비 중에 내리기가 오면 Chrome을 띄우지 않는다', { timeout: 60_000 }, async () => {
+    const real = dirGuard();
+    let reachedProfile!: () => void;
+    const atProfile = new Promise<void>((r) => (reachedProfile = r));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const h = await startHarness({
+      dirGuard: {
+        checkPrivate: async (d) => {
+          if (path.basename(d) === 'chrome-profile') {
+            reachedProfile();
+            await held;
+          }
+          return real.checkPrivate(d);
+        },
+        ensurePrivate: (d) => real.ensurePrivate(d),
+        excludeFromIndex: (d) => real.excludeFromIndex(d),
+      },
+    });
+    try {
+      const launching = h.client.rpc('browser.launch');
+      await atProfile;
+      await h.client.rpc('browser.shutdown');
+      release();
+      await assert.rejects(launching, /launch cancelled/);
+      assert.equal(h.vault.chromePid, undefined);
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+    } finally {
+      release();
       await h.close();
     }
   });

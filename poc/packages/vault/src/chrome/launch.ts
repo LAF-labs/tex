@@ -43,6 +43,11 @@ export async function launchChrome(spec: LaunchSpec): Promise<LaunchedChrome> {
     env: chromeEnv(),
     detached: false,
   });
+  // 실행 실패(EACCES 등)는 'error'로만 온다. 듣지 않으면 금고 프로세스가 잡히지 않은 예외로 죽는다. 띄운 뒤의 오류(kill 실패 등)도 계속 받는다.
+  await new Promise<void>((resolve, reject) => {
+    proc.once('spawn', resolve);
+    proc.on('error', reject);
+  });
   const toChrome = proc.stdio[3] as Writable;
   const fromChrome = proc.stdio[4] as Readable;
   const conn = new PipeConnection(toChrome, fromChrome);

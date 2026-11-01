@@ -1,5 +1,6 @@
 {
   "exe": "electron",
+  "electronPathsMatch": true,
   "status": {
     "engine": {
       "db": true,
@@ -21,7 +22,7 @@
     "signMethod": null,
     "keepSession": false,
     "createdAt": "2026-10-28T07:01:09.637Z",
-    "updatedAt": "2026-10-28T07:01:09.637Z"
+    "updatedAt": "2026-11-01T08:27:25.327Z"
   },
   "counterparty": {
     "id": "697c6b96-cae8-4b45-aa00-8843c16a3734",
@@ -39,7 +40,7 @@
   },
   "list": 1,
   "browserOpen": {
-    "targetId": "372AAFF61446ADDD617549FEAB06CAB3"
+    "targetId": "2A4CB5FF856C68D86F94EA47E27E842E"
   },
   "statusAfterOpen": {
     "engine": {
@@ -64,8 +65,23 @@
   ],
   "chromeProfileHasDevToolsActivePort": false,
   "vaultLog": [
+    "vault.user_tab_hidden",
+    "vault.chrome_closed",
+    "vault.started",
+    "vault.user_tab_hidden",
+    "vault.chrome_closed",
     "vault.started",
     "vault.user_tab_hidden",
     "vault.chrome_closed"
-  ]
+  ],
+  "plantedLinks": {
+    "ok": true,
+    "outsideFiles": [],
+    "realDirs": [
+      true,
+      true,
+      true
+    ],
+    "setAside": 3
+  }
 }

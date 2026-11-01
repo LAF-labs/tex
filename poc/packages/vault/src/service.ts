@@ -20,7 +20,12 @@ export interface VaultOptions {
   testChromeArgs?: string[];
   /** 테스트에서 비공개 루트 확인을 건너뛰지 않도록 기본은 OS 구현. */
   dirGuard?: DirGuard;
+  /** 테스트 전용. 기본은 LAUNCH_TIMEOUT_MS. */
+  launchTimeoutMs?: number;
 }
+
+/** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
+export const LAUNCH_TIMEOUT_MS = 30_000;
 
 export interface LaunchResult {
   targetId: string;
@@ -32,6 +37,9 @@ export class Vault {
   private readonly opts: VaultOptions;
   private readonly policy: RelayPolicy;
   private chrome: LaunchedChrome | null = null;
+  private launching = false;
+  /** shutdown마다 늘린다. 기동 중에 내리기가 오면 기동이 자기 세대가 지난 것을 보고 그만둔다. */
+  private generation = 0;
   relay: Relay | null = null;
   ops: SecretOps | null = null;
   private enginePort: PortLike | null = null;
@@ -91,6 +99,7 @@ export class Vault {
         return {};
       case 'run.end':
         this.ops?.runTriggers.delete(String(p.runId));
+        this.pendingTriggers.delete(String(p.runId));
         return {};
       case 'secretWindow.userDone':
         await this.requireOps().userDone(String(p.targetId));
@@ -119,7 +128,20 @@ export class Vault {
 
   /** 인자 없는 launch(D05 §3.1). 프로필 경로·플래그·엔드포인트는 금고 상수다. */
   async launch(): Promise<LaunchResult> {
-    if (this.chrome) throw new Error('already launched');
+    // 기동 중에 또 오면 거부한다. 같은 프로필 폴더를 두 번 준비하면 한쪽이 다른 쪽이 쓰는 폴더를 치울 수 있다.
+    if (this.chrome || this.launching) throw new Error('already launched');
+    this.launching = true;
+    this.profileProblems = null; // 이 기동의 프로필 점검 전까지 비밀 창을 열지 않는다(D05 §3.6)
+    try {
+      return await this.startChrome(this.generation);
+    } finally {
+      this.launching = false;
+    }
+  }
+
+  /** 앞 단계(폴더 확인 도구)는 도구마다 상한이 있다(acl.ts). Chrome을 띄운 뒤는 LAUNCH_TIMEOUT_MS로 끊는다. */
+  private async startChrome(generation: number): Promise<LaunchResult> {
+    const current = (): boolean => generation === this.generation;
     const exe = findInstalledChrome();
     if (!exe) throw new Error('chrome not installed');
     const guard = this.opts.dirGuard ?? dirGuard();
@@ -131,14 +153,47 @@ export class Vault {
     if (profile.before.length) this.opts.log.event('vault.profile_dir_problem', { problems: profile.before.join(':'), reason: profile.reason?.join(':'), setAside: profile.setAside, ok: profile.check.ok });
     if (!profile.check.ok) throw new Error(`chrome profile not private: ${profile.check.problems.join(',')}`);
     await writeProfileSettings(profileDir);
-    this.chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
-    this.chrome.conn.on('close', () => this.opts.log.event('vault.chrome_closed'));
+    if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
+    const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
+    this.chrome = chrome;
+    chrome.conn.on('close', () => {
+      this.opts.log.event('vault.chrome_closed');
+      // 엔진 transport도 닫는다. 알리지 않으면 Playwright는 끊긴 줄 모르고 닫힌 Chrome의 페이지를 쓴다. 다음 Chrome이 이미 떴으면 보내지 않는다.
+      if (this.enginePort && (this.chrome === chrome || this.chrome === null)) this.post(this.enginePort, { t: 'cdp_closed' });
+    });
+    // 넘으면 내린다. Chrome을 닫으면 파이프가 닫히며 대기 중 요청이 거부되어 기동이 끝난다.
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      void this.shutdown().catch(() => {});
+    }, this.opts.launchTimeoutMs ?? LAUNCH_TIMEOUT_MS);
+    try {
+      if (!current()) throw new Error('launch cancelled'); // 띄우는 동안 온 내리기는 아직 이 Chrome을 몰랐다
+      const result = await this.attachRelay(chrome.conn);
+      if (!current()) throw new Error('launch cancelled');
+      void this.checkProfile(profileDir, generation);
+      return result;
+    } catch (e) {
+      clearTimeout(timer);
+      // 원인은 실패한 그 순간에 정한다. 이어지는 정리 동안 상한이 지나도 바뀌지 않게. 내리기로 파이프가 닫힌 것은 취소로 알린다.
+      const cause = timedOut ? new Error('chrome launch timed out') : current() ? e : new Error('launch cancelled');
+      // 띄운 Chrome을 남기면 다음 launch가 already launched로 막힌다. 닫고 처음 상태로 돌린다.
+      await this.shutdown().catch(() => {});
+      throw cause;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
+  private async attachRelay(conn: LaunchedChrome['conn']): Promise<LaunchResult> {
     const relay = new Relay({
-      conn: this.chrome.conn,
+      conn,
       policy: this.policy,
       log: this.opts.log,
-      toEngine: (raw) => this.enginePort?.postMessage({ t: 'cdp', m: raw } satisfies OutboundMessage),
+      // 내린 뒤의 옛 중계 출력(늦은 응답·오류)은 다음 Chrome에 붙은 엔진 연결로 보내지 않는다.
+      toEngine: (raw) => {
+        if (this.relay === relay) this.enginePort?.postMessage({ t: 'cdp', m: raw } satisfies OutboundMessage);
+      },
     });
     this.relay = relay;
     this.ops = new SecretOps(relay, this.policy, this.opts.log);
@@ -150,19 +205,19 @@ export class Vault {
     });
     await relay.init();
     const targetId = await relay.createRunPage();
-    const webdriver = await this.selfCheck(targetId);
-    void this.checkProfile(profileDir);
+    const webdriver = await this.selfCheck(relay, targetId);
     return { targetId, webdriver };
   }
 
-  /** ADR-010 자기 점검: about:blank에서 navigator.webdriver === true여야 자동화를 진행한다. */
-  private async selfCheck(targetId: string): Promise<boolean> {
-    const t = this.relay!.targets.get(targetId)!;
+  /** ADR-010 자기 점검: about:blank에서 navigator.webdriver === true여야 자동화를 진행한다. 기동 중 내리기로 this.relay가 비어도 이 기동의 중계를 쓴다. */
+  private async selfCheck(relay: Relay, targetId: string): Promise<boolean> {
+    const t = relay.targets.get(targetId);
+    if (!t) throw new Error('run page not found');
     if (t.paused) {
       t.paused = false;
-      await this.relay!.send('Runtime.runIfWaitingForDebugger', {}, t.vaultSession);
+      await relay.send('Runtime.runIfWaitingForDebugger', {}, t.vaultSession);
     }
-    const r = await this.relay!.send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression: 'navigator.webdriver === true', returnByValue: true }, t.vaultSession);
+    const r = await relay.send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression: 'navigator.webdriver === true', returnByValue: true }, t.vaultSession);
     const ok = r.result.value === true;
     if (!ok) {
       this.opts.log.event('vault.webdriver_selfcheck_failed');
@@ -172,7 +227,7 @@ export class Vault {
   }
 
   /** 비밀 창 개시 조건(D05 §3.6): Preferences 재확인, 확장 허용 목록, Google 로그인 없음. */
-  private async checkProfile(profileDir: string): Promise<void> {
+  private async checkProfile(profileDir: string, generation: number): Promise<void> {
     await new Promise((r) => setTimeout(r, 1500));
     const problems: string[] = [];
     if ((await verifyProfileSettings(profileDir)).length) {
@@ -188,7 +243,7 @@ export class Vault {
       problems.push('google_signin_detected');
       this.opts.log.event('vault.google_signin_detected');
     }
-    this.profileProblems = problems;
+    if (generation === this.generation) this.profileProblems = problems; // 그사이 내리고 다시 띄웠으면 앞 기동의 결과로 덮지 않는다
   }
 
   /** 프로필 점검이 끝날 때까지 기다린다(테스트·UI). */
@@ -213,11 +268,18 @@ export class Vault {
   }
 
   async shutdown(): Promise<void> {
-    this.ops?.shutdown();
-    this.relay?.clearKnownSecrets();
-    await this.chrome?.close();
-    this.chrome = null;
-    this.relay = null;
+    this.generation++;
+    this.profileProblems = null;
+    // 닫기를 기다리기 전에 떼어 낸다. 닫는 동안 온 run.begin·secret.provide가 버려질 ops에 들어가지 않게.
+    // chrome은 닫힐 때까지 남겨 그사이의 launch를 already launched로 막는다.
+    const { ops, relay, chrome } = this;
     this.ops = null;
+    this.relay = null;
+    // 실행 트리거(run.begin)는 Chrome보다 오래 산다. 다시 띄우면 새 ops로 옮긴다.
+    for (const [k, v] of ops?.runTriggers ?? []) this.pendingTriggers.set(k, v);
+    ops?.shutdown();
+    relay?.clearKnownSecrets();
+    await chrome?.close();
+    if (this.chrome === chrome) this.chrome = null;
   }
 }

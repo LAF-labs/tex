@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -59,7 +59,7 @@ describe('경로와 접근 통제', () => {
   it('SDDL DACL 파서: 레이블(S:)은 무시, 조건부·거부·읽지 못한 ACE와 null DACL은 남긴다', () => {
     const me = 'S-1-5-21-1-2-3-1001';
     const clean = parseDacl(`D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${me})S:AI(ML;OICI;NW;;;LW)`);
-    assert.deepEqual(clean, { protected: true, aces: [{ type: 'A', flags: ['OI', 'CI'], sid: 'SY' }, { type: 'A', flags: ['OI', 'CI'], sid: me }] });
+    assert.deepEqual(clean, { protected: true, aces: [{ type: 'A', flags: ['OI', 'CI'], rights: 'FA', sid: 'SY' }, { type: 'A', flags: ['OI', 'CI'], rights: 'FA', sid: me }] });
     const cond = parseDacl(`D:PAI(XA;OICI;FR;;;WD;(Exists Foo))(A;OICI;FA;;;${me})`);
     assert.deepEqual(cond.aces.map((a) => [a.type, a.sid]), [['XA', 'WD'], ['A', me]]);
     assert.deepEqual(parseDacl('D:PAI(D;;FR;;;BU)').aces.map((a) => [a.type, a.sid]), [['D', 'BU']]);
@@ -69,6 +69,43 @@ describe('경로와 접근 통제', () => {
     assert.deepEqual(parseDacl('D:NO_ACCESS_CONTROL').aces.map((a) => a.sid), ['WD']);
     assert.deepEqual(parseDacl('D:PAI(A;OICI;FA;;').aces.map((a) => a.sid), ['?']);
     assert.deepEqual(parseDacl('').aces.map((a) => a.sid), ['?']);
+  });
+
+  it('Windows 사용자 권한 판정: 사용자에게 폴더·하위 전체의 모든 권한이 있어야 한다', () => {
+    const me = 'S-1-5-21-1-2-3-1001';
+    const grants = (sddl: string) => grantsUserFullControl(parseDacl(sddl), me);
+    assert.equal(grants(`D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${me})`), true, 'ensurePrivate가 쓰는 모양');
+    assert.equal(grants(`D:P(A;OICI;0x1F01FF;;;${me})`), true, '숫자 마스크');
+    assert.equal(grants('D:P'), false, 'ACE가 하나도 없는 보호 DACL');
+    assert.equal(grants('D:PAI(A;OICI;FA;;;SY)'), false, 'SYSTEM만');
+    assert.equal(grants(`D:PAI(A;OICI;FR;;;${me})`), false, '읽기만');
+    assert.equal(grants(`D:PAI(A;OICIIO;FA;;;${me})`), false, '상속 전용은 폴더 자체에 효력 없음');
+    assert.equal(grants(`D:PAI(A;;FA;;;${me})`), false, '하위에 상속되지 않음');
+    assert.equal(grants(`D:PAI(A;OI;FA;;;${me})`), false, '하위 폴더에 상속되지 않음');
+    assert.equal(grants(`D:PAI(A;CI;FA;;;${me})`), false, '하위 파일에 상속되지 않음');
+    assert.equal(grants(`D:PAI(A;OICI;FA;;;S-1-5-21-1-2-3-1002)`), false, '다른 계정');
+  });
+
+  it('사용자 자신에게 권한이 없는 폴더는 no_user_access, 기동 시 제자리에서 고친다', async () => {
+    const root = path.join(await tmpRoot(), 'SovereignAX');
+    // 하위 폴더 없는 루트로 시작한다. Windows는 DACL을 쓰면 하위로 전파하는데, 막 나열할 수 없게 된 루트 아래 전파는 시험 대상이 아니다.
+    assert.equal((await dirGuard().ensurePrivate(root)).ok, true);
+    // POSIX는 모드 0000. Windows는 ACE가 하나도 없는 보호 DACL(소유자라 READ_CONTROL·WRITE_DAC는 남는다).
+    const lockOut = async (dir: string) => {
+      if (!win) return fs.chmod(dir, 0o000);
+      const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
+      await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: dir } });
+    };
+    await lockOut(root);
+    assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['no_user_access']);
+    const again = await prepareLayout(root);
+    assert.equal(again.root.ok, true, '기동 시 복구');
+    if (!win) assert.equal((await fs.stat(root)).mode & 0o777, 0o700);
+    // 전용 프로필도 권한 문제라 치우지 않고 제자리에서 고친다.
+    await lockOut(again.paths.chromeProfile);
+    const profile = await preparePrivateDir(again.paths.chromeProfile);
+    assert.deepEqual([profile.check.ok, profile.before, profile.setAside], [true, ['no_user_access'], undefined]);
+    await fs.rm(path.dirname(root), { recursive: true, force: true });
   });
 
   it('Windows 소유자 판정: 사용자·SYSTEM·Administrators만 받아들인다', () => {

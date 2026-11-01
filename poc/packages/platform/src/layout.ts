@@ -24,7 +24,7 @@ export async function prepareLayout(root?: string, guard: DirGuard = dirGuard())
   for (const dir of [paths.userData, paths.db, paths.vault, paths.chromeProfile, paths.staging, paths.logs, paths.crashDumps]) {
     // 폴더 자리의 파일·링크(정션 포함)는 치우고 새로 만든다. 파일이면 mkdir이 실패해 앱이 뜨지 않고,
     // 링크면 이후 앱 데이터가 루트 밖에 쓰이며 아래 staging 정리가 링크 대상의 파일을 지운다.
-    // userData·logs·crashDumps는 Electron이 ready 전에 이미 열었을 수 있어 여기서 치워도 늦다(PoC-1 §5 후속).
+    // userData·logs·crashDumps는 Electron에 넘기는 폴더라, main은 이 함수를 setPath 앞에서 부른다.
     const st = await fs.lstat(dir).catch(() => null);
     if (st && !st.isDirectory()) setAside.push(await moveAside(dir));
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });

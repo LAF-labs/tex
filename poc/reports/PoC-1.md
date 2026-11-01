@@ -107,11 +107,43 @@ Cursor Bugbot(High): `Vault.launch`가 프로필 폴더 `ensurePrivate`의 결�
   - 수동 확인 1건: 우리에게 아무 권한도 주지 않는 DACL(예: `D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;<다른 SID>)`)인 폴더도 부모 권한만으로 이름을 바꿀 수 있는지. `MoveFileExW`가 원본을 SYNCHRONIZE로 연다면 실패한다. 그 경우 그런 폴더는 치우지 못하고 기동하지 않는다(안전한 실패). 자동 테스트로 만들지 않은 이유는 비승격으로는 지울 수 없는 폴더가 남기 때문이다.
 
 후속(이 PR 밖):
-- `userData`·`logs`·`crashDumps`는 Electron이 ready 전에 열 수 있다. 루트·하위 폴더 확인을 `setPath` 앞으로 옮겨야 D07 §1.1 "ready 이전에 설정"의 취지가 지켜진다.
 - 루트 자체가 다른 계정 소유면 여전히 앱을 시작하지 않는다(사용자 데이터라 치우지 않는다). 복구 방식은 결정이 필요하다.
-- 엔진 `browser.open`이 동시에 두 번 오면 `launch`가 두 번 돈다(기존 경쟁, `packages/engine/src/entry.ts`).
-- Windows `checkPrivate`는 사용자에게 접근 권한이 있는지는 보지 않는다. 그래서 ACE가 하나도 없는 보호 DACL도 통과한다(기존 빈틈). 복구가 중간에 끊겨 그런 폴더가 남으면, Chrome이 쓰지 못하는 폴더로 기동할 수 있다.
 - (검수 지적, 미확인) 드라이브 문자가 아닌 대상(볼륨 GUID 등)을 가리키는 정션은 Node가 링크로 보고하지 않아 재분석 지점 확인을 지나칠 수 있다. 사용자 전용 루트 안에 심으려면 같은 사용자나 관리자여야 해서 위험은 낮다.
+
+### 5.2 PR #9 후속 반영(2026-11-01, Mac에서 확인, Windows 재실행 필요)
+
+§5.1 후속 셋을 Windows 재실행 전에 고쳐, 재실행 한 번으로 같이 확인한다. Opus 검수 3회의 지적도 함께 반영했다.
+- 1차: 멈춘 기동은 닫기로도 풀 수 없음, 두 번 누르면 이동끼리 끊김 등
+- 2차: Chrome을 띄우기 전 도구가 멈추면 상한이 듣지 않음, 금고가 Chrome을 내려도 엔진이 모름 등
+- 3차: 고치는 도구에 상한을 두면 하위 전파가 끊긴 채 통과함, 내리는 중 들어온 트리거가 버려짐 등
+
+| 후속 | 처리 |
+|---|---|
+| `userData`·`logs`·`crashDumps`를 확인 전에 Electron에 넘김 | `prepareLayout`을 `app.whenReady()` 안에서 진입점 최상위 `await`로 옮겨 `setPath`보다 먼저 끝낸다. ESM 진입점의 최상위 await가 끝날 때까지 ready가 오지 않고, ready 전 `app.exit`는 바로 끝낸다(Electron 45 실측). 실패하면 대화상자로 알리고 `app.exit(1)`이며, 확인 안 된 경로는 `setPath`에 넘기지 않는다. 앱 스모크 2단계에서 임시 앱 루트의 세 자리에 바깥 폴더로 가는 링크를 심고 띄운다. 새 순서는 바깥 폴더가 비어 있고 세 자리가 실제 폴더이며 `main.layout_set_aside` 3건이 남는다. 옛 순서로 같은 시험을 하면 Electron이 링크 너머에 `DevToolsActivePort`·`GPUPersistentCache`를 먼저 쓴다(실측) |
+| 엔진 `browser.open` 동시 호출이면 금고 `launch`가 두 번 돎 | 엔진은 열기·닫기·첫 이동을 한 줄로 세운다(`RunBrowserSlot`). 두 번째 열기는 첫 번째 결과를 받고, 두 번 눌러도 이동끼리 끊지 않는다. 띄우는 중의 닫기는 금고에 내리기를 먼저 보내 기동을 끊고, 다 끝난 뒤 정리한다. 닫기 전에 줄만 서 있던 열기는 Chrome을 새로 띄우지 않고 `browser closed`로 끝난다. 붙이기가 실패하면 금고 쪽 Chrome을 내려 다음 열기가 막히지 않게 한다. 실행 페이지가 닫혔거나 연결이 끊겼으면 금고 쪽까지 내리고 새로 띄운다 |
+| 〃 (금고 쪽) | 기동 중의 두 번째 `launch`를 거부한다(같은 프로필 폴더를 두 번 준비하면 한쪽이 다른 쪽 폴더를 치울 수 있다). Chrome을 띄운 뒤 30초 안에 붙지 못하면 Chrome을 내리고 `chrome launch timed out`으로 실패한다(멈춘 파이프의 대기 요청이 거부된다). 그 앞 단계의 폴더 읽기 도구(whoami·`icacls /save`·Get-Acl·ls)는 하나에 30초 상한을 둔다. 고치는 도구(`icacls /grant`·`/remove`, SetAccessControl)에는 두지 않는다. 폴더 DACL을 먼저 쓰고 하위로 전파하므로, 도중에 죽이면 최상위만 고쳐진 채 확인을 통과하고 하위에는 옛 상속 ACE가 남는다. 내리기마다 세대 번호를 올린다. 기동 중에 내리기가 오면 기동이 Chrome을 띄우지 않거나, 띄운 것을 닫고 `launch cancelled`로 끝난다. Chrome을 띄운 뒤 중계 준비가 실패해도 닫고 처음 상태로 돌린다. Chrome 실행 파일을 띄우지 못하면(EACCES 등) 금고가 죽지 않고 거부한다. 전에는 `already launched`로 앱을 다시 켜야 했다 |
+| 금고가 Chrome을 내려도 엔진이 모름 | Chrome 파이프가 닫히면 금고가 엔진 포트에 `cdp_closed`를 보내고, 엔진은 CDP transport를 닫는다. Playwright가 `disconnected`를 받아 다음 열기에서 새로 띄운다(실제 금고로 시험). Playwright가 닫힘 콜백을 달기 전에 닫혔으면 다음 요청에서 다시 알린다. 옛 transport를 늦게 닫아도 새 transport는 그대로다. 내린 뒤의 옛 중계 출력은 엔진에 보내지 않는다. 루트 명령·브라우저 이벤트 처리의 거부는 잡아서 오류로 답하거나 기록한다. Chrome이 닫히는 중에 Playwright가 붙으면 처리 안 된 거부로 금고 프로세스가 죽을 수 있었다 |
+| 다시 띄울 때 앞 기동 상태가 남거나 사라짐 | 프로필 점검 결과(`profileProblems`)는 기동·내리기마다 비우고, 앞 기동의 늦은 점검이 새 결과를 덮지 않게 했다(새 점검 전에는 비밀 창을 열지 않는다, D05 §3.6). 실행 트리거(`run.begin`)는 Chrome을 다시 띄워도 남긴다. 내리기는 닫기를 기다리기 전에 ops·중계를 떼어 내므로, 닫는 동안 온 트리거·비밀이 버려질 ops에 들어가지 않는다 |
+| 사용자에게 권한이 없는 폴더도 통과 | 새 문제 `no_user_access`. Windows는 사용자 SID에 `FA`(또는 `0x1f01ff`)·OI·CI(IO 아님) 허용 ACE가 있어야 한다. 실제 루트 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`는 그대로 통과한다. POSIX는 소유자 rwx. 권한 문제라 제자리에서 고친다(소유자는 DACL을 다시 쓸 수 있다). 소유자가 Administrators이고 사용자 ACE가 없는 폴더를 비승격으로 만나면, 전에는 통과한 뒤 Chrome이 실패했고 이제는 프로필은 치우고 새로 만들며 루트는 기동하지 않는다 |
+
+- 확인(Mac): `pnpm build`·`pnpm lint`·`pnpm test` 통과(Windows 전용 3건 건너뜀), 앱 스모크 통과(`electronPathsMatch`·`plantedLinks.ok`). 다음 경우에 해당 테스트가 실패하거나 멈추는 것을 확인했다(변형 시험).
+  - 금고 기동 중 거부를 빼면 Chrome 두 개가 같은 프로필을 잡고 테스트가 멈춘다.
+  - 상한 초과 시 내리기를 빼면 상한 테스트가 멈춘다.
+  - 금고: 중간 실패 정리, 세대 확인, spawn 오류 처리, `cdp_closed` 송수신, 트리거 보존(내리는 중 포함), 점검 결과 비우기를 빼면 해당 테스트가 실패한다.
+  - 엔진: 순서 세우기, 실패 정리, 띄우는 중 내리기, 첫 이동 줄 세우기, 닫힌 페이지·끊긴 연결 재기동, 닫기 전 줄 선 열기 거부, transport 닫힘 재통지·현재 transport 확인을 빼면 해당 테스트가 실패한다.
+  - POSIX 소유자 권한 검사나 Windows OI·CI·IO 검사를 빼면 해당 테스트가 실패한다.
+- 검수: Opus 3회(지적 반영). Bugbot·CodeSolar는 PR에서.
+- **Windows에서 다시 돌릴 것**(§5.1 목록에 더해):
+  - 새 Windows 전용 테스트 "사용자 자신에게 권한이 없는 폴더"(하위 폴더 없는 루트와 빈 프로필에 ACE 없는 보호 DACL `D:P` → 제자리 복구)와 "Windows 사용자 권한 판정"(순수 함수).
+  - 앱 스모크의 `electronPathsMatch`와 `plantedLinks`(정션, `LOCALAPPDATA` 임시 경로).
+  - 앱 폴더 준비가 실패할 때 ready 전 오류 대화상자가 앞에 보이는지(수동, 예: 루트 자리에 파일을 둔다).
+  - 실행 중인 Chrome의 마지막 창을 사람이 닫은 뒤 `browser.open`이 새로 띄우는지(수동, 금고 `cdp_closed` 경로).
+
+후속(이 PR 밖, 기존 문제):
+- 단일 인스턴스 잠금이 없어 두 인스턴스가 동시에 `prepareLayout`을 돌 수 있다(staging 정리가 다른 인스턴스 파일을 지움). `requestSingleInstanceLock`은 userData를 쓰므로 새 순서에서는 그 앞에 둘 수 없다. 루트 안 잠금 파일이 필요하다.
+- POSIX에서 `db`·`staging` 등 하위 폴더 권한(소유자 rwx 없음)은 보지 않는다. `staging`이 000이면 정리에서 실패해 기동하지 않는다.
+- 내장 Administrator(RID 500)는 SDDL에 `LA` 별칭으로 나와 사용자 SID 비교가 맞지 않는다.
+- Windows `checkPrivate`는 폴더 자신의 DACL만 본다. 상속 전파가 중간에 끊긴 흔적(앱이 고치는 도중 강제 종료 등)이 하위에 남으면 알아채지 못한다.
 
 ## 6. S6m 측정(P0-1 흡수분) — (1) ✅ 관리자 계정(비승격·승격 대조) / (2) ✅ / 표준 계정 ⏳
 

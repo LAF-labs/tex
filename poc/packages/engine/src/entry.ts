@@ -4,9 +4,8 @@ import path from 'node:path';
 import { openDatabase } from '@sax/db';
 import { Egress } from '@sax/net';
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort } from '@sax/platform';
-import type { Browser, Page } from 'playwright-core';
 import { BizVerifier } from './bizverify.ts';
-import { connectRunBrowser } from './browser.ts';
+import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
 import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -18,14 +17,14 @@ interface ParentPort {
 const parentPort = (process as unknown as { parentPort: ParentPort }).parentPort;
 const paths = appPaths(defaultAppRoot());
 const log = new FileEventLog(paths.logs, 'engine');
-let vault: VaultClient | null = null;
 let data: DataService | null = null;
-let run: { browser: Browser; page: Page; targetId: string } | null = null;
+let browser: RunBrowserSlot | null = null;
 
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 
 async function init(port: MessagePortMain): Promise<void> {
-  vault = new VaultClient(wrapPort(port, 'electron'));
+  const vault = new VaultClient(wrapPort(port, 'electron'));
+  browser = new RunBrowserSlot(() => connectRunBrowser(vault), () => vault.rpc('browser.shutdown'));
   const key = await vault.rpc<Uint8Array>('getDbKeyOnce');
   data = new DataService(openDatabase(path.join(paths.db, 'db.sqlite'), key), new BizVerifier(new Egress()));
   key.fill(0);
@@ -34,18 +33,17 @@ async function init(port: MessagePortMain): Promise<void> {
 
 async function handle(method: string, params: Record<string, unknown>): Promise<unknown> {
   if (!ALLOWED.has(method)) throw new Error('unknown_method');
-  if (method === 'engine.status') return { db: !!data, browser: !!run };
+  if (method === 'engine.status') return { db: !!data, browser: !!browser?.current };
   if (method === 'browser.open') {
-    if (!vault) throw new Error('vault_not_connected');
-    if (!run) run = await connectRunBrowser(vault);
+    if (!browser) throw new Error('vault_not_connected');
     // PoC-4/5 범위: 실행 페이지만 띄운다. 로그인·발급 자동화는 PoC-6 플레이북에서.
-    if (params.portal === 'hometax') await run.page.goto('https://www.hometax.go.kr/');
+    const run = await browser.open(async (r) => {
+      if (params.portal === 'hometax') await r.page.goto('https://www.hometax.go.kr/');
+    });
     return { targetId: run.targetId };
   }
   if (method === 'browser.close') {
-    await run?.browser.close().catch(() => {});
-    run = null;
-    await vault?.rpc('browser.shutdown').catch(() => {});
+    await browser?.close();
     return {};
   }
   if (!data) throw new Error('db_not_ready');
