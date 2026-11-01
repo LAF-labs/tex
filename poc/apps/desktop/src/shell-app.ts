@@ -3,7 +3,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
@@ -57,7 +57,7 @@ export interface ShellOptions {
   show?: boolean;
   /** e2e: OS 커서 위치를 바꿔 끼운다. */
   cursorPoint?: () => { x: number; y: number };
-  /** 문서함 보관함 공급자(shell-docs.ts). 없으면 데모 공급자(임시 폴더 DB, 엔진 보관함 코드 그대로). PoC-6은 엔진 공급자를 넘긴다. */
+  /** 문서함 보관함 공급자(shell-docs.ts). 없으면 데모 공급자(실행마다 새 OS 임시 폴더, 앱 폴더를 쓰지 않음). PoC-6은 엔진 공급자를 넘긴다. */
   docs?: DocsProvider;
 }
 
@@ -83,7 +83,7 @@ export function startShell(opts: ShellOptions = {}): Shell {
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
   const runs = new MockRuns(store, opts.speed ?? 1);
-  const docs = opts.docs ?? demoDocsProvider({ dir: path.join(app.getPath('userData'), 'docs-demo'), profile: PROFILES.business, importer: importPdf });
+  const docs = opts.docs ?? demoDocsProvider({ profile: PROFILES.business, importer: importPdf });
   app.once('will-quit', () => docs.close?.());
   /** 문서함 = 보관함 서류 + 목업 실행이 만든 서류(세금계산서·정부24 목업) */
   const listDocs = async () => [...(await docs.list()), ...store.docs];
@@ -182,6 +182,12 @@ export function startShell(opts: ShellOptions = {}): Shell {
     'docs.update': (p) => {
       const patch = (p.patch ?? {}) as Record<string, unknown>;
       return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn });
+    },
+    // 보관함 PDF를 사용자 기본 뷰어로 연다(값을 PDF와 맞춰 보게). 경로는 main 안에서만 쓴다.
+    'docs.open': async (p) => {
+      const err = await desktop.openPath(await docs.filePath(String(p.id)));
+      if (err) throw new Error('open_failed');
+      return {};
     },
     'counterparties.list': () => store.counterparties,
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),

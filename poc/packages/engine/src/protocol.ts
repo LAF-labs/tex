@@ -6,5 +6,5 @@ export const COMMANDS = [
   'profile.upsert', 'profile.delete',
   'counterparty.create', 'counterparty.update', 'counterparty.delete', 'counterparty.verify', 'counterparty.status',
   'bizcert.parse', 'bizverify.setKey', 'bizverify.hasKey',
-  'document.import', 'document.update',
+  'document.import', 'document.update', 'document.file',
 ] as const;

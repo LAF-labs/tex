@@ -3,7 +3,7 @@
 // (Phase 1: 열기 암호도 비밀 입력 창으로 받을지 정한다. 지금은 메인 UI 렌더러 → main → docparse 문자열이다.)
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
-import { dialog } from 'electron';
+import { BrowserWindow, dialog } from 'electron';
 import { DocparseError, parsePdfInSandbox, type PdfExtractRun } from './docparse.ts';
 
 const MAX_INPUT = 15 * 1024 * 1024;
@@ -76,7 +76,10 @@ export async function importPdf(params: Record<string, unknown>, engine: EngineC
   let bytes: Uint8Array;
   if (typeof params.pickId === 'string') bytes = take(params.pickId);
   else {
-    const pick = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] });
+    // 앞에 있는 창에 붙여 모달로 연다(고르는 동안 다른 화면으로 옮겨 가지 않게)
+    const parent = BrowserWindow.getFocusedWindow();
+    const opts: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] };
+    const pick = await (parent ? dialog.showOpenDialog(parent, opts) : dialog.showOpenDialog(opts));
     if (pick.canceled || !pick.filePaths[0]) return null;
     bytes = await readPicked(pick.filePaths[0]);
   }

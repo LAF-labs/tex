@@ -83,9 +83,10 @@
     f.issuedOn.value = d.issuedOn || '';
     f.expiresOn.value = d.expiresOn || '';
     // 정하지 못한 칸의 후보는 값 칸에 넣지 않고 보여만 준다. 사용자가 PDF를 보고 '후보 넣기'를 누르거나 직접 입력한다.
+    // 후보는 칸이 규칙 날짜로 차 있어도 보여 준다(유효기간 후보가 여럿이면 엔진은 규칙 날짜를 두고 문서의 가장 이른 후보를 따로 준다)
     const hints = [];
-    if (!d.issuedOn && d.suggested.issuedOn) hints.push(`발급일 후보 ${d.suggested.issuedOn}`);
-    if (!d.expiresOn && d.suggested.validUntil) hints.push(`유효기간 후보 ${d.suggested.validUntil}`);
+    if (d.suggested.issuedOn && d.suggested.issuedOn !== d.issuedOn) hints.push(`발급일 후보 ${d.suggested.issuedOn}`);
+    if (d.suggested.validUntil && d.suggested.validUntil !== d.expiresOn) hints.push(`문서 유효기간 후보 ${d.suggested.validUntil}`);
     $('#v-edit-hint').textContent = hints.length ? `${hints.join(' · ')} (PDF에서 확인하세요)` : '';
     $('#v-edit-use').hidden = !hints.length;
     f.querySelector('.msg').textContent = '';
@@ -147,8 +148,8 @@
   $('#v-edit-cancel').onclick = () => ($('#v-edit').hidden = true);
   $('#v-edit-use').onclick = () => {
     const f = $('#v-edit');
-    if (!f.issuedOn.value && editing.suggested.issuedOn) f.issuedOn.value = editing.suggested.issuedOn;
-    if (!f.expiresOn.value && editing.suggested.validUntil) f.expiresOn.value = editing.suggested.validUntil;
+    if (editing.suggested.issuedOn) f.issuedOn.value = editing.suggested.issuedOn;
+    if (editing.suggested.validUntil) f.expiresOn.value = editing.suggested.validUntil;
   };
   load();
 })();

@@ -271,6 +271,14 @@ export class DocumentService {
     return this.view(next, today);
   }
 
+  /** 보관함 파일 경로(main이 사용자 기본 뷰어로 열 때만). 렌더러 보기에는 경로를 넣지 않는다. 파일이 없으면 file_missing. */
+  async filePath(id: string): Promise<string> {
+    const row = this.repo.get(id);
+    if (!row) throw new ValidationError('not_found');
+    if (!(await fs.access(row.path).then(() => true, () => false))) throw new ValidationError('file_missing');
+    return row.path;
+  }
+
   private view(r: DocumentRow, today: string): DocumentView {
     const m = (r.meta ?? {}) as Partial<StoredMeta>;
     const f = m.fields;

@@ -1,9 +1,11 @@
 // 셸 문서함 공급자(PoC-8 후속). 셸은 보관함을 이 인터페이스로만 다룬다.
 // - 엔진 공급자: 엔진 RPC(db.query.documents.list, document.import, document.update). PoC-6이 셸에 엔진 호스트를 붙이면 이것을 넘긴다.
 // - 데모 공급자: 엔진·금고가 없는 목업 셸(pnpm demo)에서 엔진 자리를 대신한다. 엔진의 보관함 코드(DocumentService)를
-//   데모 임시 폴더의 DB·보관함으로 그대로 돌려 판단(만료일·확인 필요)이 실제 앱과 같다. main이 DB를 여는 것은 데모뿐이다(D01 §2.1의 예외, 목업).
+//   실행마다 새로 만드는 임시 폴더의 DB·보관함으로 그대로 돌려 판단(만료일·확인 필요)이 실제 앱과 같다.
+//   main이 DB를 여는 것은 이 데모뿐이다(D01 §2.1의 예외, 목업). 앱 폴더는 쓰지 않고, 닫을 때 임시 폴더를 지운다.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { openDatabase, ProfileRepo, type Db } from '@sax/db';
 import { DocumentService, type DocumentView } from '@sax/engine/documents';
@@ -19,6 +21,8 @@ export interface DocsProvider {
   importPdf(params: Record<string, unknown>): Promise<DocsImportResult>;
   /** 사용자 확인·수정. 바뀐 칸만 보낸다(DocumentService.update 의미). */
   update(id: string, patch: Record<string, unknown>): Promise<Doc>;
+  /** 보관함 파일 경로. main이 사용자 기본 뷰어로 열 때만 쓰고 렌더러에는 주지 않는다. */
+  filePath(id: string): Promise<string>;
   close?(): void;
 }
 
@@ -62,28 +66,36 @@ export function engineDocsProvider(engine: EngineCall, importer: Importer): Docs
     list: async () => ((await engine('db.query.documents.list', {})) as DocumentView[]).map(toShellDoc),
     importPdf: async (params) => withDoc(await importer(params, engine)),
     update: async (id, patch) => toShellDoc((await engine('document.update', { id, patch })) as DocumentView),
+    filePath: async (id) => ((await engine('document.file', { id })) as { path: string }).path,
   };
 }
 
 /**
- * 데모 공급자: dir 아래에 DB(실행마다 새 키·새 파일)와 보관함을 두고 DocumentService를 그대로 쓴다.
- * 사업자 프로필은 셸 목업 프로필로 등록한다(사업자번호가 다른 서류는 '다른 사업자'로 확인을 받는다).
+ * 데모 공급자: parent(기본 OS 임시 폴더) 아래에 실행마다 새 폴더를 만들어 DB(새 키)와 보관함을 두고 DocumentService를 그대로 쓴다.
+ * 닫으면(close) 그 폴더를 지운다. 사업자 프로필은 셸 목업 프로필로 등록한다(사업자번호가 다른 서류는 '다른 사업자'로 확인을 받는다).
  */
-export function demoDocsProvider(o: { dir: string; profile: Profile; importer: Importer; now?: () => Date }): DocsProvider {
-  fs.rmSync(o.dir, { recursive: true, force: true }); // 지난 데모의 DB는 키가 달라 열 수 없다. 데모 자료는 남기지 않는다.
-  fs.mkdirSync(o.dir, { recursive: true, mode: 0o700 });
-  const db: Db = openDatabase(path.join(o.dir, 'docs-demo.sqlite'), new Uint8Array(randomBytes(32)));
+export function demoDocsProvider(o: { parent?: string; profile: Profile; importer: Importer; now?: () => Date }): DocsProvider & { dir: string } {
+  const dir = fs.mkdtempSync(path.join(o.parent ?? os.tmpdir(), 'sax-shell-docs-'));
+  const db: Db = openDatabase(path.join(dir, 'docs-demo.sqlite'), new Uint8Array(randomBytes(32)));
   new ProfileRepo(db).upsert({ kind: 'business', displayName: o.profile.name, bizNo: o.profile.bizNo ?? null, corpNo: null, repName: o.profile.rep ?? null, bizType: null, bizItem: null, address: null, email: o.profile.email, signMethod: null });
-  const svc = new DocumentService(db, () => path.join(o.dir, 'vault'), o.now);
+  const svc = new DocumentService(db, () => path.join(dir, 'vault'), o.now);
   // 엔진 RPC 흉내: 데모 공급자가 받는 것은 가져오기 하나다(엔진 data-service의 document.import와 같은 인자).
   const engine: EngineCall = async (method, p) => {
     if (method !== 'document.import') throw new Error('unknown_method');
     return svc.import(p.bytes, p.extract, { altText: p.altText, final: p.final === true });
   };
+  let closed = false;
   return {
+    dir,
     list: async () => svc.list().map(toShellDoc),
     importPdf: async (params) => withDoc(await o.importer(params, engine)),
     update: async (id, patch) => toShellDoc(svc.update(id, patch)),
-    close: () => db.close(),
+    filePath: (id) => svc.filePath(id),
+    close: () => {
+      if (closed) return;
+      closed = true;
+      db.close();
+      fs.rmSync(dir, { recursive: true, force: true }); // 데모 DB·사용자가 고른 PDF 사본을 남기지 않는다(mkdtemp로 만든 이 폴더만)
+    },
   };
 }

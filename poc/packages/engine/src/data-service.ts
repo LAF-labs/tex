@@ -88,6 +88,8 @@ export class DataService {
         return this.documents.import(p.bytes, p.extract, { altText: p.altText, final: p.final === true });
       case 'document.update':
         return this.documents.update(String(p.id), (p.patch ?? {}) as never);
+      case 'document.file':
+        return { path: await this.documents.filePath(String(p.id)) };
     }
     throw new DataError('unknown_method');
   }

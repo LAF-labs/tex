@@ -33,28 +33,37 @@ describe('셸 문서함 공급자', () => {
   });
 
   it('데모 공급자: 목업 사업장 서류를 보관함에 넣고(문서에서 읽은 만료일) 셸 서류로 준다', async () => {
-    const dir = path.join(root, 'a');
-    const p = demoDocsProvider({ dir, profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!)), now: () => NOW });
+    const p = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!)), now: () => NOW });
+    const dir = p.dir;
     try {
+      assert.equal(path.dirname(dir), root, '데모 폴더는 parent 아래 새 폴더');
       const r = await p.importPdf({});
       assert.equal(r?.status, 'imported');
       const d = r!.status === 'imported' ? r!.doc! : null;
       assert.deepEqual([d?.name, d?.kind, d?.source, d?.issuedOn, d?.expiresOn], ['납세증명서(국세)', '증명서', '직접 추가', '2026-11-01', '2026-11-30']);
       assert.deepEqual([d?.vault?.expirySource, d?.vault?.needsUser, d?.vault?.docNo, d?.vault?.subjectMismatch], ['document', false, '0123-457-5258-910', false]);
       assert.equal((await p.list()).length, 1);
-      assert.equal((await fsp.readdir(path.join(dir, 'vault'))).length, 1, '데모 보관함 폴더에 파일');
+      const files = await fsp.readdir(path.join(dir, 'vault'));
+      assert.equal(files.length, 1, '데모 보관함 폴더에 파일');
+      assert.equal(await p.filePath(d!.id), path.join(dir, 'vault', files[0]!), 'filePath는 보관함 파일');
+      await assert.rejects(p.filePath('nope'), /not_found/);
+      await fsp.rm(path.join(dir, 'vault', files[0]!));
+      await assert.rejects(p.filePath(d!.id), /file_missing/);
     } finally {
       p.close?.();
     }
+    assert.equal(await fsp.access(dir).then(() => 'kept', () => 'gone'), 'gone', '닫으면 데모 폴더(DB·PDF 사본)를 지운다');
+    p.close?.(); // 두 번 닫아도 된다
   });
 
-  it('데모 공급자: 다른 사업자 서류는 확인 필요, 셸에서 그대로 확인하면 확인함. 시작할 때 지난 데모 자료를 지운다', async () => {
-    const dir = path.join(root, 'b');
-    await fsp.mkdir(path.join(dir, 'vault'), { recursive: true });
-    await fsp.writeFile(path.join(dir, 'vault', 'old.pdf'), 'x');
-    const p = demoDocsProvider({ dir, profile: PROFILES.business, importer: fakeImporter(tax(syntheticBizNo(5))), now: () => NOW });
+  it('데모 공급자: 다른 사업자 서류는 확인 필요, 셸에서 그대로 확인하면 확인함. 실행마다 빈 보관함으로 시작한다', async () => {
+    const first = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!)), now: () => NOW });
+    await first.importPdf({});
+    const p = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(syntheticBizNo(5))), now: () => NOW });
     try {
-      assert.equal(await fsp.access(path.join(dir, 'vault', 'old.pdf')).then(() => 'kept', () => 'gone'), 'gone');
+      assert.notEqual(p.dir, first.dir);
+      assert.equal((await p.list()).length, 0, '다른 실행의 데모 서류가 보이지 않는다');
+      first.close?.();
       const r = await p.importPdf({});
       const d = r?.status === 'imported' ? r.doc! : null;
       assert.deepEqual([d?.vault?.needsUser, d?.vault?.reasons], [true, ['subject_mismatch']]);
@@ -62,12 +71,13 @@ describe('셸 문서함 공급자', () => {
       assert.deepEqual([ok.vault?.needsUser, ok.vault?.subjectMismatch, ok.vault?.expirySource], [false, true, 'document']);
       await assert.rejects(p.update(d!.id, { expiresOn: '2026-12-31' }), /expires_after_legal_max/);
     } finally {
+      first.close?.();
       p.close?.();
     }
   });
 
   it('열기 암호 응답은 그대로 넘긴다(pickId로 다시 부른다)', async () => {
-    const p = demoDocsProvider({ dir: path.join(root, 'c'), profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!), { password: true }), now: () => NOW });
+    const p = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!), { password: true }), now: () => NOW });
     try {
       assert.deepEqual(await p.importPdf({}), { status: 'needs_password', pickId: 'pick-1' });
       assert.deepEqual(await p.importPdf({ pickId: 'pick-1', password: 'x' }), { status: 'wrong_password', pickId: 'pick-1' });
@@ -94,6 +104,9 @@ describe('셸 문서함 공급자', () => {
     assert.equal(u.vault?.expirySource, 'user');
     assert.deepEqual(calls[1], ['document.update', { id: 'v1', patch: { expiresOn: '2027-01-03' } }]);
     assert.equal(await p.importPdf({}), null, '고르기를 취소하면 null');
+    const engine2 = async (m: string, q: Record<string, unknown>) => (calls.push([m, q]), { path: '/vault/x.pdf' });
+    assert.equal(await engineDocsProvider(engine2, async () => null).filePath('v1'), '/vault/x.pdf');
+    assert.deepEqual(calls.at(-1), ['document.file', { id: 'v1' }]);
     assert.equal(toShellDoc({ ...view, docType: 'other', source: 'import' }).kind, '직접 추가');
   });
 });

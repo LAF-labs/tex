@@ -10,10 +10,19 @@
       "ok": true
     },
     {
+      "name": "가져오는 동안 가져오기 버튼을 막는다",
+      "ok": true
+    },
+    {
+      "name": "대화상자가 실패하면 알리고 버튼이 다시 열린다",
+      "ok": true,
+      "detail": "dialog_failed"
+    },
+    {
       "name": "납세증명서: 보관함에 들어가고 문서에서 읽은 만료일, 확인 필요 없음",
       "ok": true,
       "detail": {
-        "id": "fdd9e5b0-c462-42bb-858b-cda8748112df",
+        "id": "466028c8-64a3-4c24-b6f4-153085d199e1",
         "name": "납세증명서(국세)",
         "kind": "증명서",
         "docName": "납세증명서(국세)",
@@ -44,10 +53,15 @@
       "ok": true
     },
     {
+      "name": "같은 파일을 다시 가져오면 중복을 알리고 늘지 않는다",
+      "ok": true,
+      "detail": "이미 보관함에 있는 파일이에요"
+    },
+    {
       "name": "사업자등록증명(다른 사업자): 90일 추정, 확인 필요(subject_mismatch)",
       "ok": true,
       "detail": {
-        "id": "95238347-2299-43fe-8d86-30cc30f772e9",
+        "id": "10f3fc76-46ce-45bc-b896-cc205a4dc9cd",
         "name": "사업자등록증명",
         "kind": "증명서",
         "docName": "사업자등록증명",
@@ -83,7 +97,7 @@
       "name": "문서 패널에서 바꾸지 않고 확인하면 확인함(대상 표시는 남음)",
       "ok": true,
       "detail": {
-        "id": "95238347-2299-43fe-8d86-30cc30f772e9",
+        "id": "10f3fc76-46ce-45bc-b896-cc205a4dc9cd",
         "name": "사업자등록증명",
         "kind": "증명서",
         "docName": "사업자등록증명",
@@ -105,35 +119,162 @@
       }
     },
     {
+      "name": "바꾸지 않은 확인은 빈 수정으로 보낸다",
+      "ok": true,
+      "detail": {}
+    },
+    {
       "name": "목록 행에서 확인 필요가 사라지고 확인함 표시",
       "ok": true,
       "detail": "사업자등록증명증명서사업자2026-10-02D-59확인함직접 추가"
+    },
+    {
+      "name": "유효기간 줄이 둘인 납세증명서: 30일 규칙 추정, 확인 필요, 문서 후보는 가장 이른 날짜",
+      "ok": true,
+      "detail": {
+        "id": "fbe4e87c-79ae-4b1f-ae39-5e0f92bef171",
+        "name": "납세증명서(국세)",
+        "kind": "증명서",
+        "docName": "납세증명서(국세)",
+        "profile": "business",
+        "issuedOn": "2026-10-01",
+        "expiresOn": "2026-10-30",
+        "source": "직접 추가",
+        "vault": {
+          "expirySource": "rule",
+          "needsUser": true,
+          "reasons": [
+            "valid_until_ambiguous"
+          ],
+          "suggested": {
+            "validUntil": "2026-10-20"
+          },
+          "docType": "national_tax_cert",
+          "textSource": "text",
+          "docNo": "0123-457-5258-910",
+          "issuer": "가나세무서장",
+          "subjectMismatch": false
+        }
+      }
+    },
+    {
+      "name": "목록 행: 확인 필요 서류의 만료일은 추정",
+      "ok": true,
+      "detail": "납세증명서(국세)확인 필요증명서사업자2026-10-01만료됨추정직접 추가"
+    },
+    {
+      "name": "만료일 칸이 규칙 날짜로 차 있어도 문서 후보를 보여 준다",
+      "ok": true,
+      "detail": {
+        "filled": "2026-10-30",
+        "hint": "문서 유효기간 후보 2026-10-20 (PDF에서 확인하세요) 후보 넣기"
+      }
+    },
+    {
+      "name": "다시 그려도 입력 중인 발급일이 남는다",
+      "ok": true
+    },
+    {
+      "name": "후보 넣기 → 만료일 칸이 문서 후보로 바뀌고 힌트가 사라진다",
+      "ok": true
+    },
+    {
+      "name": "확인하면 문서 후보 날짜가 확인함으로 저장된다",
+      "ok": true,
+      "detail": {
+        "id": "fbe4e87c-79ae-4b1f-ae39-5e0f92bef171",
+        "name": "납세증명서(국세)",
+        "kind": "증명서",
+        "docName": "납세증명서(국세)",
+        "profile": "business",
+        "issuedOn": "2026-10-01",
+        "expiresOn": "2026-10-20",
+        "source": "직접 추가",
+        "vault": {
+          "expirySource": "user",
+          "needsUser": false,
+          "reasons": [],
+          "suggested": {
+            "validUntil": "2026-10-20"
+          },
+          "docType": "national_tax_cert",
+          "textSource": "text",
+          "docNo": "0123-457-5258-910",
+          "issuer": "가나세무서장",
+          "subjectMismatch": false
+        }
+      }
+    },
+    {
+      "name": "바뀐 칸(만료일)만 보낸다",
+      "ok": true,
+      "detail": {
+        "expiresOn": "2026-10-20"
+      }
+    },
+    {
+      "name": "PDF 열기: main이 보관함 파일을 연다",
+      "ok": true,
+      "detail": [
+        "/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-docs-KQl7lt/vault/national_tax_cert_20261001_YSAF.pdf"
+      ]
+    },
+    {
+      "name": "없는 서류 열기는 거부(not_found)",
+      "ok": true,
+      "detail": "not_found"
+    },
+    {
+      "name": "다른 화면에 있을 때 끝나면 알리기만 한다",
+      "ok": true,
+      "detail": {
+        "away": {
+          "on": "chat",
+          "review": false
+        },
+        "toast": "보관함에 넣었어요 · 문서함에서 볼 수 있어요"
+      }
     },
     {
       "name": "열기 암호 PDF: 암호 줄이 뜬다",
       "ok": true
     },
     {
-      "name": "틀린 암호 → 다시 묻는다",
+      "name": "틀린 암호 → 다시 묻고 넣었던 암호는 비운다",
       "ok": true
+    },
+    {
+      "name": "암호로 읽는 동안 열기·그만두기를 막는다",
+      "ok": true,
+      "detail": {
+        "open": true,
+        "cancel": true
+      }
     },
     {
       "name": "맞는 암호 → 보관하고 암호 줄이 사라진다",
       "ok": true
     },
     {
-      "name": "데모 보관함 파일 3개, 이름에 PII 없음",
+      "name": "데모 보관함 파일 5개, 이름에 PII 없음",
       "ok": true,
       "detail": [
-        "biz_registration_cert_20261002_EMTP.pdf",
-        "national_tax_cert_20261001_VTYC.pdf",
-        "other_20261101_PDCJ.pdf"
+        "biz_registration_cert_20261002_M7MW.pdf",
+        "biz_registration_cert_20261006_3CAJ.pdf",
+        "national_tax_cert_20261001_YSAF.pdf",
+        "national_tax_cert_20261001_Z6A4.pdf",
+        "other_20261101_GHF4.pdf"
       ]
     },
     {
       "name": "없는 서류 수정은 거부(not_found)",
       "ok": true,
       "detail": "not_found"
+    },
+    {
+      "name": "공급자를 닫으면 데모 폴더(DB·PDF 사본)를 지운다",
+      "ok": true,
+      "detail": "/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-docs-KQl7lt"
     }
   ],
   "docs": [
@@ -151,8 +292,28 @@
     },
     {
       "name": "사업자등록증명",
+      "issuedOn": "2026-10-06",
+      "expiresOn": "2027-01-03",
+      "vault": {
+        "expirySource": "rule",
+        "needsUser": false,
+        "reasons": []
+      }
+    },
+    {
+      "name": "사업자등록증명",
       "issuedOn": "2026-10-02",
       "expiresOn": "2026-12-30",
+      "vault": {
+        "expirySource": "user",
+        "needsUser": false,
+        "reasons": []
+      }
+    },
+    {
+      "name": "납세증명서(국세)",
+      "issuedOn": "2026-10-01",
+      "expiresOn": "2026-10-20",
       "vault": {
         "expirySource": "user",
         "needsUser": false,
@@ -168,42 +329,6 @@
         "needsUser": false,
         "reasons": []
       }
-    },
-    {
-      "name": "납세증명서(국세)",
-      "issuedOn": "2026-10-07",
-      "expiresOn": "2026-11-06",
-      "vault": null
-    },
-    {
-      "name": "사업자등록증명",
-      "issuedOn": "2026-10-20",
-      "expiresOn": null,
-      "vault": null
-    },
-    {
-      "name": "세금계산서 · B상사",
-      "issuedOn": "2026-10-31",
-      "expiresOn": null,
-      "vault": null
-    },
-    {
-      "name": "세금계산서 · A상사",
-      "issuedOn": "2026-09-30",
-      "expiresOn": null,
-      "vault": null
-    },
-    {
-      "name": "중소기업확인서",
-      "issuedOn": "2026-04-05",
-      "expiresOn": "2027-03-31",
-      "vault": null
-    },
-    {
-      "name": "주민등록표 등본",
-      "issuedOn": "2026-09-15",
-      "expiresOn": null,
-      "vault": null
     }
   ]
 }

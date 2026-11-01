@@ -108,7 +108,8 @@ function openSecretInput(kind: string, scope: string): void {
 }
 
 // bizcert.parse·document.import는 main이 docparse 결과를 붙여 부른다. 렌더러가 텍스트·바이트를 지어 보낼 수 없다.
-const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse' && c !== 'document.import')]);
+// document.file은 보관함 파일 경로를 돌려주므로 main만 쓴다(렌더러에는 경로를 주지 않는다).
+const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse' && c !== 'document.import' && c !== 'document.file')]);
 
 async function handleRenderer(method: string, params: Record<string, unknown>): Promise<unknown> {
   await engineReady;
