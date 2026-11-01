@@ -152,6 +152,23 @@ function stats(xs: number[]): { n: number; median: number; p90: number; max: num
 }
 
 async function main(): Promise<void> {
+  // 세션 준비(죽은 프록시)가 한 번 실패해도 다음 작업은 다시 준비해 성공한다(스킴 처리기를 두 번 걸지 않는다). 첫 docparse 작업보다 먼저 한다.
+  const proto = Object.getPrototypeOf(session.fromPartition('sax-docparse')) as { setProxy: (c: unknown) => Promise<void> };
+  const realSetProxy = proto.setProxy;
+  let failOnce = true;
+  proto.setProxy = function (this: unknown, c: unknown) {
+    if (failOnce) {
+      failOnce = false;
+      return Promise.reject(new Error('proxy down'));
+    }
+    return realSetProxy.call(this, c);
+  };
+  const firstPdf = await htmlToPdf(syntheticCerts()[0]!.html);
+  const firstTry = await errCode(parsePdfInSandbox(firstPdf));
+  const secondTry = await errCode(parsePdfInSandbox(firstPdf));
+  proto.setProxy = realSetProxy;
+  check('세션 준비가 한 번 실패하면 창을 띄우지 않고(session_failed), 다음 작업은 다시 준비해 성공한다', firstTry === 'session_failed' && secondTry === 'ok', { firstTry, secondTry });
+
   const samples: SampleResult[] = [];
   let brokenReplaced = 0;
   for (const c of syntheticCerts()) {

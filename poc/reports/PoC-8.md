@@ -14,7 +14,7 @@
 | `packages/engine/src/protocol.ts`, `data-service.ts` | `db.query.documents.list`, `document.import`(main 전용), `document.update` |
 | `apps/desktop/src/vault-import.ts`, `main.ts`, `static/vault-panel.js`, `app.html`, `app.css` | 개발 콘솔 보관함 구역: PDF 가져오기(열기 암호 재시도·취소, OCR 다시 읽기), 목록·만료(D-n)·만료일 출처·확인 필요 표시, 확인·수정(바뀐 칸만, 후보 미리 채움) |
 | `apps/desktop/src/synthetic-certs.ts` | 합성 서류(가짜 이름·번호, 붉은 직인): 납세증명 8, 사업자등록증명 8, 지원 밖 3, RC4 암호 PDF, 보이지 않는 글자 층 PDF, ToUnicode 끊기 |
-| `apps/desktop/src/docparse-e2e.ts` | Electron e2e 28항목 + S13b 측정 → `reports/raw/poc-8-docparse.json` |
+| `apps/desktop/src/docparse-e2e.ts` | Electron e2e 29항목 + S13b 측정 → `reports/raw/poc-8-docparse.json` |
 | `apps/desktop/src/poc8-measure.ts` | 실물 20건 측정 스크립트(§6) |
 | `tests/docmeta.test.ts`, `tests/documents.test.ts`, `tests/vault-smoke.ts` | 규칙·만료·텍스트 정리 35건, 보관함 22건(main 경계 1 포함), 앱 스모크(수동, 임시 앱 폴더, 판정 12개) |
 
@@ -30,7 +30,8 @@
 - **스캐너가 덧입힌 글자 층**: 쪽 그림 위에 보이지 않는 글자(렌더 모드 3·7)가 있으면 남의 OCR 결과로 보고 `scanned`로 알린다(그리기 목록을 못 만들어도 `scanned`로 본다). 엔진은 이 층을 원본 텍스트로 믿지 않는다(§4). 흰 글자·쪽 밖 글자·그림에 덮인 보통 글자는 감지하지 않는다(실물 측정의 `scanned` 수로 다시 본다).
 - **OCR 전처리**: 서식의 음영 칸·표 선이 tesseract를 크게 흔들었다(첫 측정에서 핵심 칸 11/19, 신뢰도 중앙값 75). 흑백 변환(임계 170, 붉은 직인은 지움) + 글자일 수 없는 긴 가로·세로 선 제거 뒤 19/19가 됐다. 합성 자료에 붉은 직인과 0.6° 기울기를 넣은 뒤에도 19/19(신뢰도 중앙값 82)다.
 - **암호 PDF**: 권한 암호만 걸린 PDF는 그냥 열린다. 열기 암호는 `password_required`·`password_incorrect` 코드로 묻고, 사용자가 넣은 값으로 다시 연다(저장하지 않는다, 256자 상한). 그사이 main은 고른 파일의 **바이트**를 최대 2건, 5분 들고 있고(경로가 아님), 취소하면 버린다. 보관함에는 받은 파일을 그대로 둔다. D17 §1의 "복호화 사본 보관"과 열기 암호를 비밀 입력 창으로 받을지는 Phase 1에서 정한다.
-- 실패는 코드로만: `input_size`·`not_pdf`·`read_failed`·`invalid_pdf`·`parse_failed`·`timeout`·`memory_limit`·`renderer_gone`·`schema`. 파일 내용·경로를 로그·오류에 남기지 않는다(파일은 연 핸들 하나로 확인하고 읽는다).
+- **세션 준비**: 스킴 처리기·요청 차단·권한 거부는 세션에 한 번만 걸고, 죽은 프록시 설정만 비동기로 기다린다. 프록시 설정이 실패하면 창을 띄우지 않고(`session_failed`, 송신 차단 없이 PDF를 열지 않는다) 다음 작업이 프록시만 다시 시도한다(e2e로 확인).
+- 실패는 코드로만: `input_size`·`not_pdf`·`read_failed`·`session_failed`·`invalid_pdf`·`parse_failed`·`timeout`·`memory_limit`·`renderer_gone`·`schema`. 파일 내용·경로를 로그·오류에 남기지 않는다(파일은 연 핸들 하나로 확인하고 읽는다).
 
 ## 3. S13b 측정(맥, M5 Pro, Electron 45.1.0 / Chromium 156)
 
@@ -115,11 +116,16 @@
   - 그 밖: 같은 줄 기간 표기만 보기(다음 줄 '-'로 발급일을 놓치던 회귀), '잠실세무서장', 날짜 경계(`3ㅇ일`·`3 0일`), 모르는 기간 구분자, 오독 흔적이 섞인 날짜, 지원 밖 종류를 알아본 OCR 우선, 보통 문서의 불필요한 OCR, 납세증명서 조정 일수 상한, `scanned` 판정 실패 처리, 세션 준비 실패 뒤 재시도, 폴더 fsync, OCR 도중 상한 시험, 앱 스모크 판정화.
   - 반영하지 않고 남긴 것(§9): 엔진이 이름 붙이기와 DB 등록 사이에 죽으면 남는 고아 파일(sha256 재연결 스캔 없음), 수정 뒤 파일명 갱신, 렌더러 사망 시험, main `rpc()` 시간 상한·단일 인스턴스 잠금(기존 코드, PR #9 범위).
 
+- **Bugbot·CodeSolar(PR #12 1차)**: Bugbot Medium 1·Low 1, CodeSolar Medium 1.
+  - 세션 준비 재시도가 같은 파티션에 스킴 처리기를 다시 걸어 영구 실패하던 것(Electron에서 재현 확인) → 동기 설정은 한 번만, 프록시만 재시도.
+  - 너무 긴 암호가 들고 있던 바이트를 버리던 것 → 입력 검사를 먼저.
+  - 창을 띄운 뒤 메시지 채널 생성이 실패하면 창이 남던 틈 → 채널을 정리 구간 안에서 만든다. CodeSolar가 말한 "창 생성 실패 시 finally가 정의되지 않은 값으로 돈다"는 창 생성이 `try` 밖이라 일어나지 않는다.
+
 ## 8. 실행
 
 ```bash
 pnpm build && pnpm lint && pnpm test
-./node_modules/.bin/electron apps/desktop/dist/docparse-e2e.js   # 합성 PDF e2e 28항목 + S13b → reports/raw/poc-8-docparse.json
+./node_modules/.bin/electron apps/desktop/dist/docparse-e2e.js   # 합성 PDF e2e 29항목 + S13b → reports/raw/poc-8-docparse.json
 node --conditions=development tests/vault-smoke.ts                # 앱 스모크(임시 앱 폴더, 판정 12개) → reports/raw/poc-8-vault-smoke.json
 ```
 

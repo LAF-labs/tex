@@ -71,6 +71,8 @@ async function readPicked(file: string): Promise<Uint8Array> {
 
 /** pickId 없이 부르면 파일 고르기부터. 암호가 필요하면 pickId를 돌려주고, 같은 pickId와 password로 다시 부른다. 고르기를 취소하면 null. */
 export async function importPdf(params: Record<string, unknown>, engine: EngineCall): Promise<ImportResult> {
+  // 입력 검사를 먼저 한다. 들고 있던 바이트를 꺼낸 뒤 검사에 걸리면 사용자가 파일을 다시 골라야 한다.
+  if (typeof params.password === 'string' && params.password.length > MAX_PASSWORD) throw new Error('password_too_long');
   let bytes: Uint8Array;
   if (typeof params.pickId === 'string') bytes = take(params.pickId);
   else {
@@ -78,7 +80,6 @@ export async function importPdf(params: Record<string, unknown>, engine: EngineC
     if (pick.canceled || !pick.filePaths[0]) return null;
     bytes = await readPicked(pick.filePaths[0]);
   }
-  if (typeof params.password === 'string' && params.password.length > MAX_PASSWORD) throw new Error('password_too_long');
   const password = typeof params.password === 'string' && params.password ? params.password : undefined;
   try {
     let x = await parsePdfInSandbox(bytes, { password });

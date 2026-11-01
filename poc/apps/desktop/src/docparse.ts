@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
-import { app, BrowserWindow, MessageChannelMain, session, type Session } from 'electron';
+import { app, BrowserWindow, MessageChannelMain, session, type MessagePortMain, type Session } from 'electron';
 
 // ADR-014 결정 1: docparse는 Chromium 렌더러 샌드박스에서 돈다. 숨김 창, 네트워크 차단 파티션,
 // preload는 MessagePort 수신 하나만. 입력은 main이 읽은 바이트, 출력은 main이 스키마로 검증한 값뿐.
@@ -52,12 +52,16 @@ function assetMap(): Record<string, string> {
 }
 
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.gz': 'application/octet-stream', '.wasm': 'application/wasm' };
-let ses: Promise<Session> | null = null;
+/** 동기 설정(스킴 처리기·요청 차단·다운로드·권한)은 세션에 한 번만 건다. 같은 파티션에 다시 걸면 스킴이 이미 등록됐다며 실패한다. */
+let configured: Session | null = null;
+/** 죽은 프록시 설정(비동기). 실패하면 다음 작업이 이것만 다시 시도한다(재시작 전까지 막히지 않게). */
+let proxied: Promise<void> | null = null;
 
-function docparseSession(): Promise<Session> {
-  ses ??= (async () => {
-    const assets = assetMap();
-    const s = session.fromPartition('sax-docparse');
+function configureSession(): Session {
+  if (configured) return configured;
+  const assets = assetMap(); // 자산 목록을 못 만들면 아무것도 등록하지 않고 실패한다(다음에 처음부터 다시)
+  const s = session.fromPartition('sax-docparse');
+  if (!s.protocol.isProtocolHandled(DOCPARSE_SCHEME)) {
     s.protocol.handle(DOCPARSE_SCHEME, async (req) => {
       const p = new URL(req.url).pathname;
       const file = assets[p];
@@ -66,25 +70,38 @@ function docparseSession(): Promise<Session> {
       if (WORKER_CSP[p]) headers['content-security-policy'] = WORKER_CSP[p];
       return new Response(await fsp.readFile(file), { headers });
     });
-    // 모든 네트워크 요청 취소(자기 스킴의 정적 자산만 허용). webRequest를 지나지 않는 WebRTC는 창 정책과 죽은 프록시로 막는다.
-    s.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${DOCPARSE_SCHEME}://`) && !d.url.startsWith('blob:') && !d.url.startsWith('data:') }));
-    await s.setProxy(DEAD_PROXY);
-    s.on('will-download', (e) => e.preventDefault());
-    s.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-    s.setPermissionCheckHandler(() => false);
-    return s;
-  })();
-  // 준비가 한 번 실패해도 다음 작업이 다시 시도하게 한다(재시작 전까지 막히지 않게)
-  ses.catch(() => (ses = null));
-  return ses;
+  }
+  // 모든 네트워크 요청 취소(자기 스킴의 정적 자산만 허용). webRequest를 지나지 않는 WebRTC는 창 정책과 죽은 프록시로 막는다.
+  s.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${DOCPARSE_SCHEME}://`) && !d.url.startsWith('blob:') && !d.url.startsWith('data:') }));
+  s.on('will-download', (e) => e.preventDefault());
+  s.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
+  s.setPermissionCheckHandler(() => false);
+  configured = s;
+  return s;
+}
+
+async function docparseSession(): Promise<Session> {
+  const s = configureSession();
+  const ready = (proxied ??= s.setProxy(DEAD_PROXY));
+  try {
+    await ready;
+  } catch (e) {
+    if (proxied === ready) proxied = null;
+    throw e;
+  }
+  return s;
 }
 
 /** docparse 창 하나(숨김, 샌드박스, 차단 세션, WebRTC 직접 UDP 금지). 작업마다 새로 만들고 끝나면 파기한다. e2e의 송신 시험도 이 창을 쓴다. */
 export async function createDocparseWindow(): Promise<BrowserWindow> {
+  // 세션을 준비하지 못하면(프록시 설정 실패 등) 창을 띄우지 않는다. 송신 차단 없이 PDF를 열지 않는다.
+  const ses = await docparseSession().catch(() => {
+    throw new DocparseError('session_failed');
+  });
   const win = new BrowserWindow({
     show: false,
     webPreferences: {
-      session: await docparseSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, spellcheck: false,
+      session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, spellcheck: false,
       backgroundThrottling: false, // 숨김 창에서 타이머·렌더가 늦춰지지 않게
       preload: path.join(STATIC, 'preload-docparse.cjs'),
     },
@@ -143,12 +160,17 @@ function runJob(payload: Record<string, unknown>, timeoutMs: number, memoryLimit
 
 async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, memoryLimitKb: number): Promise<JobRun> {
   const started = Date.now();
+  // 창을 띄운 뒤에는 무엇이 실패해도 finally에서 파기한다(창을 띄우기 전 실패는 남길 것이 없다)
   const win = await createDocparseWindow();
   let peakMemoryKb = 0;
   let poll: NodeJS.Timeout | undefined;
   let timer: NodeJS.Timeout | undefined;
-  const { port1, port2 } = new MessageChannelMain();
+  let port1: MessagePortMain | null = null;
   try {
+    const channel = new MessageChannelMain();
+    port1 = channel.port1;
+    const port2 = channel.port2;
+    const port = port1;
     const timedOut = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new DocparseError('timeout')), timeoutMs)));
     timedOut.catch(() => {});
     await Promise.race([win.loadURL(`${DOCPARSE_SCHEME}://app/index.html`), timedOut]);
@@ -162,10 +184,10 @@ async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, me
       guard();
       poll = setInterval(guard, 50);
       win.webContents.once('render-process-gone', () => reject(new DocparseError('renderer_gone')));
-      port1.on('message', (e) => resolve(e.data));
-      port1.start();
+      port.on('message', (e) => resolve(e.data));
+      port.start();
       win.webContents.postMessage('docparse-port', null, [port2]);
-      port1.postMessage(payload);
+      port.postMessage(payload);
     });
     sample(); // 짧은 작업은 폴링 전에 끝난다
     if (!out || typeof out !== 'object') throw new DocparseError('schema');
@@ -175,7 +197,7 @@ async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, me
   } finally {
     clearTimeout(timer);
     clearInterval(poll);
-    port1.close();
+    port1?.close();
     if (!win.isDestroyed()) win.destroy();
   }
 }
