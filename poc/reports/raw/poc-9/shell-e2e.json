@@ -1,0 +1,395 @@
+{
+  "results": [
+    {
+      "name": "셸이 뜨고 승인 바는 숨어 있다",
+      "ok": true
+    },
+    {
+      "name": "\"계산서\" 입력 시 부가세 [별도][포함] 토글",
+      "ok": true
+    },
+    {
+      "name": "초안 카드: 고르지 않으면 부가세 별도(3,300,000 + 330,000 = 3,630,000원)",
+      "ok": true,
+      "detail": "세금계산서 · A상사작성 중3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도로 계산했어요홈택스에서 준비부가세 포함하기금액 수정취소추정 값 2개"
+    },
+    {
+      "name": "초안 카드에 승인 버튼이 없다(ADR-021)",
+      "ok": true
+    },
+    {
+      "name": "[부가세 포함하기] → 합계 3,300,000원",
+      "ok": true
+    },
+    {
+      "name": "실행 중 바는 뜨지 않는다",
+      "ok": true
+    },
+    {
+      "name": "승인 대기에 바가 뜬다(main이 창 크기로 정한 자리)",
+      "ok": true,
+      "detail": {
+        "snap": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "exp": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90,
+          "band": false
+        }
+      }
+    },
+    {
+      "name": "바는 처음에 무장 전(흐림)이다",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-7cdcf1ef",
+        "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+        "mode": "unarmed",
+        "msg": null,
+        "committed": {
+          "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+          "mode": "unarmed"
+        },
+        "bounds": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "무장 전 클릭은 거부하고 \"잠시 뒤 다시 눌러 주세요\"",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-7cdcf1ef",
+        "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+        "mode": "unarmed",
+        "msg": "잠시 뒤 다시 눌러 주세요",
+        "committed": null,
+        "bounds": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "렌더러가 바 자리를 비운다(바 = 비운 자리 위쪽, 입력창 예약 영역과 12 DIP 간격)",
+      "ok": true,
+      "detail": {
+        "slot": {
+          "top": 608,
+          "bottom": 710,
+          "colLeft": 200,
+          "colWidth": 600,
+          "composerTop": 710
+        },
+        "bar": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "바 폭·위치 = 대화 열(패널 열림)",
+      "ok": true,
+      "detail": {
+        "slot": {
+          "top": 608,
+          "bottom": 710,
+          "colLeft": 200,
+          "colWidth": 600,
+          "composerTop": 710
+        },
+        "bar": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        }
+      }
+    },
+    {
+      "name": "바가 떠도 입력창은 제자리에 있다",
+      "ok": true,
+      "detail": {
+        "inputBefore": 804,
+        "inputAfter": 804
+      }
+    },
+    {
+      "name": "Enter·Space(바·입력창 모두)로는 승인되지 않는다",
+      "ok": true
+    },
+    {
+      "name": "렌더러에는 승인·바 숨김 명령이 없다",
+      "ok": true,
+      "detail": [
+        "unknown",
+        "unknown",
+        "unknown",
+        "unknown"
+      ]
+    },
+    {
+      "name": "렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로)",
+      "ok": true,
+      "detail": {
+        "shell.bootstrap": "ok",
+        "profile.set": "ok",
+        "request.send": "ok",
+        "draft.update": "not_draft",
+        "run.prepare": "not_draft",
+        "run.stop": "no_run",
+        "docs.list": "ok",
+        "counterparties.list": "ok",
+        "g24.candidates": "ok",
+        "g24.save": "bad_candidate",
+        "clipboard.copy": "ok"
+      }
+    },
+    {
+      "name": "바 페이지는 스크립트를 실행하지 않는다(javascript:false)",
+      "ok": true,
+      "detail": "blocked:Script failed to execute, this normally "
+    },
+    {
+      "name": "렌더러 영역(간격·입력창) 클릭은 바 판정에 들어가지 않는다(OS hit-test는 미시험)",
+      "ok": true
+    },
+    {
+      "name": "습관 클릭: 바에 들어와 150ms 안에 누르면 거부(\"마우스를 조금 움직인 뒤\")",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-7cdcf1ef",
+        "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+        "mode": "armed",
+        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
+        "committed": {
+          "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "문서함으로 가도 바는 같은 자리에 남는다",
+      "ok": true
+    },
+    {
+      "name": "창 크기를 바꾸면 다시 배치하고 다시 무장한다",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-7cdcf1ef",
+        "reqId": "3b6430a2-6858-4df8-9f95-b4c59d47ba7d",
+        "mode": "unarmed",
+        "msg": null,
+        "committed": null,
+        "bounds": {
+          "x": 120,
+          "y": 548,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": false,
+        "refusal": null
+      }
+    },
+    {
+      "name": "대화 열이 좁으면 레일 오른쪽부터 창 끝까지 띠",
+      "ok": true
+    },
+    {
+      "name": "승인 대기 중 패널을 접어도 대화 열과 바가 맞는다",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "바 안에서 머문 뒤 클릭 = 승인 → 바가 내려가고 자리가 돌아온다",
+      "ok": true
+    },
+    {
+      "name": "결과 카드: 승인번호·메일 전송 확인",
+      "ok": true,
+      "detail": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-53712740복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1"
+    },
+    {
+      "name": "문서함에 발급 결과가 들어온다",
+      "ok": true
+    },
+    {
+      "name": "입력 보완: \"세금계산서\" → [A상사] → \"77만원\"이면 초안이 된다",
+      "ok": true,
+      "detail": 847000
+    },
+    {
+      "name": "두 번째 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "run-ba3de515",
+        "reqId": "49951475-10c5-42ee-b2fe-313ac850c471",
+        "mode": "armed",
+        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
+        "committed": {
+          "reqId": "49951475-10c5-42ee-b2fe-313ac850c471",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 200,
+          "y": 608,
+          "width": 600,
+          "height": 90
+        },
+        "band": false,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다",
+      "ok": true
+    },
+    {
+      "name": "승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다",
+      "ok": true
+    },
+    {
+      "name": "처음 거래·처음 보내는 주소 표시는 main 쪽 값에서 나온다",
+      "ok": true
+    },
+    {
+      "name": "정부24 목업 1: 직접 발급 안내(단계·복사 값)",
+      "ok": true
+    },
+    {
+      "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
+      "ok": true,
+      "detail": {
+        "start": "03:18",
+        "at": [
+          "03:18",
+          "03:18"
+        ]
+      }
+    },
+    {
+      "name": "정부24 목업 2: 새 PDF 후보 → 고른 뒤에만 값 표시",
+      "ok": true
+    },
+    {
+      "name": "정부24 목업: 문서함에 들어간다(직접 발급)",
+      "ok": true
+    },
+    {
+      "name": "값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "e2e-wide",
+        "reqId": "wide-1",
+        "mode": "armed",
+        "msg": null,
+        "committed": {
+          "reqId": "wide-1",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 60,
+          "y": 608,
+          "width": 1220,
+          "height": 90
+        },
+        "band": true,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "열린 게이트가 있으면 새 게이트로 바꾸지 않는다",
+      "ok": true
+    },
+    {
+      "name": "커서가 자리를 옮긴 뒤 바로 누른 클릭은 거부(가린 창이 사라지는 순간)",
+      "ok": true,
+      "detail": {
+        "visible": true,
+        "runId": "e2e-wide",
+        "reqId": "wide-3",
+        "mode": "armed",
+        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
+        "committed": {
+          "reqId": "wide-3",
+          "mode": "armed"
+        },
+        "bounds": {
+          "x": 60,
+          "y": 608,
+          "width": 1220,
+          "height": 90
+        },
+        "band": true,
+        "armed": true,
+        "refusal": null
+      }
+    },
+    {
+      "name": "멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다",
+      "ok": true
+    }
+  ],
+  "observations": {
+    "layout": {
+      "content": [
+        1280,
+        820
+      ],
+      "bar": {
+        "x": 200,
+        "y": 608,
+        "width": 600,
+        "height": 90
+      },
+      "slot": {
+        "top": 608,
+        "bottom": 710,
+        "colLeft": 200,
+        "colWidth": 600,
+        "composerTop": 710
+      },
+      "composerGapAt1Line": 54
+    },
+    "panelClosedOffset": 0
+  },
+  "platform": "darwin",
+  "electron": "45.1.0"
+}
