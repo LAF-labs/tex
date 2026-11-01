@@ -73,7 +73,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
   key.fill(0);
-  data = new DataService(db, new BizVerifier(new Egress()));
+  data = new DataService(db, new BizVerifier(new Egress()), { vaultDir: paths.vault });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
