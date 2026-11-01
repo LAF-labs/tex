@@ -180,6 +180,31 @@ describe('셸 목업', () => {
     assert.match(runs2.get(b.run.id)!.stoppedNote!, /승인 전에 끝났어요/);
   });
 
+  it('승인을 보낸 뒤 판정을 못 받고 금고·엔진이 끝나면 "발급 없음"이 아니라 발급됐는지 모름', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('gate', gateFor(a.run.id, {}));
+    runs.approved(a.run.id);
+    // 금고가 끝나 호스트가 기다리던 답을 풀었다(엔진 판정 아님). 엔진은 그 뒤에 끝난다.
+    await runs.onAnswer(a.run.id, { ok: false, code: 'vault_exit', verdict: 'unknown' });
+    assert.equal(runs.get(a.run.id)!.approvedPending, true, '판정을 모르면 승인 표시를 거두지 않는다');
+    host.emit('exit', 'engine', 1);
+    assert.match(runs.get(a.run.id)!.stoppedNote!, /발급됐는지 모릅니다/);
+    // 보내기 전에 막혔으면(엔진이 이미 끝남) 근거는 엔진에 가지 않았다.
+    const { host: h2, runs: r2 } = shellRuns();
+    const c = interpret('C테크에 10만원 세금계산서', null, 'business', r2);
+    assert.ok(c.kind === 'draft');
+    await r2.prepare(c.run.id);
+    h2.emit('gate', gateFor(c.run.id, {}));
+    r2.approved(c.run.id);
+    await r2.onAnswer(c.run.id, { ok: false, code: 'engine_exit', verdict: 'not_sent' });
+    assert.equal(r2.get(c.run.id)!.approvedPending, false);
+    h2.emit('exit', 'engine', 1);
+    assert.match(r2.get(c.run.id)!.stoppedNote!, /아무것도 발급(하지 않았어요|되지 않았어요)/, '보내지 않았으니 발급 없음');
+  });
+
   it('시작하는 동안 [중지]: run.begin 뒤 run.start를 보내지 않는다. run.start 중이면 끝난 뒤 run.stop', async () => {
     const { host, runs } = shellRuns();
     const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
@@ -225,8 +250,9 @@ describe('셸 목업', () => {
     await runs.prepare(z.run.id);
     host.emit('gate', gateFor(z.run.id, {}));
     runs.approved(z.run.id);
-    runs.answerNotTaken(z.run.id);
+    await runs.onAnswer(z.run.id, { ok: false, code: 'stopped', verdict: 'engine' });
     assert.equal(runs.get(z.run.id)!.approvedPending, false);
+    assert.ok(!host.calls.some(([m, p]) => m === 'run.stop' && (p as { runId: string }).runId === z.run.id), '경쟁이면 main이 따로 멈추지 않는다');
     host.emit('run', { runId: z.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
     assert.equal(runs.get(z.run.id)!.stoppedNote, '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.');
     const b = interpret('B상사에 10만원 세금계산서', null, 'business', runs);

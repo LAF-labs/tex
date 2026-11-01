@@ -28,6 +28,14 @@ export interface EngineHostOptions {
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
+/**
+ * 게이트 답의 결과. verdict가 판정의 출처다.
+ * - engine: 엔진이 보낸 판정(gate.answer.result).
+ * - not_sent: 보내기 전에 막았다(엔진·금고가 이미 끝남). 엔진은 근거를 받지 않았다.
+ * - unknown: 보낸 뒤 판정을 받지 못했다(엔진·금고 종료, 같은 게이트 다시 보냄). 엔진이 받았는지 모른다.
+ */
+export type GateAnswerResult = { ok: boolean; code?: string; verdict: 'engine' | 'not_sent' | 'unknown' };
+
 /** 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code). 끝난 뒤의 호출은 바로 실패한다. */
 export class EngineHost extends EventEmitter {
   readonly ready: Promise<void>;
@@ -37,7 +45,7 @@ export class EngineHost extends EventEmitter {
   private readonly controlPort: MessagePortMain;
   private readonly gatePort: MessagePortMain;
   private readonly pending = new Map<number, Pending>();
-  private readonly answers = new Map<string, (r: { ok: boolean; code?: string }) => void>();
+  private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
   private nextId = 1;
   /** 엔진·금고가 끝났으면 그 이유. 이후 호출은 기다리지 않고 바로 실패한다. */
   private dead: string | null = null;
@@ -91,7 +99,7 @@ export class EngineHost extends EventEmitter {
     if (who === 'vault') this.engine.kill();
     for (const p of this.pending.values()) p.reject(new Error(`${who}_exit`));
     this.pending.clear();
-    for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit` });
+    for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit`, verdict: 'unknown' });
     this.answers.clear();
     this.emit('exit', who, code);
   }
@@ -111,7 +119,7 @@ export class EngineHost extends EventEmitter {
     else if (m?.t === 'gate.answer.result') {
       const a = this.answers.get(m.reqId);
       this.answers.delete(m.reqId);
-      a?.({ ok: m.ok, code: m.code });
+      a?.({ ok: m.ok, code: m.code, verdict: 'engine' });
     }
   }
 
@@ -138,11 +146,11 @@ export class EngineHost extends EventEmitter {
   }
 
   /** 승인 바가 발급한 근거를 게이트 포트로 보낸다. 엔진의 판정(gate.answer.result)을 돌려준다. */
-  answerGate(approval: LocalApproval): Promise<{ ok: boolean; code?: string }> {
-    if (this.dead) return Promise.resolve({ ok: false, code: this.dead });
+  answerGate(approval: LocalApproval): Promise<GateAnswerResult> {
+    if (this.dead) return Promise.resolve({ ok: false, code: this.dead, verdict: 'not_sent' });
     return new Promise((resolve) => {
-      // 같은 게이트로 두 번 보내면 앞의 기다림은 풀어 준다(엔진은 두 번째를 거부한다).
-      this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded' });
+      // 같은 게이트로 두 번 보내면 앞의 기다림은 풀어 준다(엔진은 두 번째를 거부한다). 앞 것의 판정은 모른다.
+      this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded', verdict: 'unknown' });
       this.answers.set(approval.reqId, resolve);
       this.gatePort.postMessage({ t: 'gate.answer', approval } satisfies GatePortMessage);
     });

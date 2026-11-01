@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { GateRequest } from '@sax/engine/gate';
 import { dupMayBeIssued } from './approval-gate.ts';
-import type { EngineHost } from './engine-host.ts';
+import type { EngineHost, GateAnswerResult } from './engine-host.ts';
 import { dayOffset, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type RunView, type StepState, type VatMode } from './shell-mock.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
@@ -54,6 +54,10 @@ function dupWarnings(req: GateRequest): string[] {
   return out;
 }
 
+/** 엔진 answer() 거부 중 [중지]·만료가 먼저 게이트를 닫아서 생긴 것(근거 문제 아님). */
+const RACED = new Set(['stopped', 'gate_expired', 'no_open_gate', 'not_open']);
+
+/** 셸이 쓰는 엔진 연결 부분(시험은 가짜로 바꿔 끼운다). 게이트 답을 보내는 메서드는 넣지 않는다(shell-app의 승인 바 결과 처리만 쓴다). */
 export type RunHost = Pick<EngineHost, 'on' | 'control' | 'rpc'>;
 
 export interface ShellRunsSource {
@@ -222,6 +226,17 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.approvedPending = true;
     this.step(r, 'gate', 'now', '승인했어요. 2초 안에 [중지]하면 발급하지 않아요');
     this.emit('update', r);
+  }
+
+  /**
+   * 게이트 답의 결과를 실행에 반영한다. "발급 없음"이라고 말할 수 있는 것은 엔진이 판정했거나 보내지 않았을 때뿐이다.
+   * 보낸 뒤 판정을 못 받았으면(엔진·금고 종료) 승인 표시를 그대로 둔다. 엔진 종료 처리가 발급됐는지 모름으로 끝낸다.
+   */
+  async onAnswer(runId: string, r: GateAnswerResult): Promise<void> {
+    if (r.ok || r.verdict === 'unknown') return;
+    // [중지]·대기 만료가 먼저 게이트를 닫았으면(경쟁) 엔진이 그 이유로 실행을 끝낸다. 이유를 덮지 않는다.
+    if (r.verdict === 'engine' && RACED.has(r.code ?? '')) return this.answerNotTaken(runId);
+    await this.abortGate(runId, 'answer.rejected');
   }
 
   /**
