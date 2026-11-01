@@ -1,6 +1,8 @@
 import { CounterpartyRepo, ProfileRepo, ValidationError, type Db } from '@sax/db';
+import { appPaths, defaultAppRoot } from '@sax/platform';
 import { parseBizCert } from './bizcert.ts';
 import { BizVerifier, BizVerifyError } from './bizverify.ts';
+import { DocumentService } from './documents.ts';
 import { COMMANDS, READ_QUERIES } from './protocol.ts';
 
 export { COMMANDS, READ_QUERIES };
@@ -21,11 +23,14 @@ export class DataError extends Error {
 export class DataService {
   readonly profiles: ProfileRepo;
   readonly counterparties: CounterpartyRepo;
+  readonly documents: DocumentService;
   private readonly verifier: BizVerifier;
 
-  constructor(db: Db, verifier: BizVerifier) {
+  /** vaultDir: 보관함 폴더(기본은 앱 루트의 vault, 처음 쓸 때 정한다). now: 만료 계산 기준 시각(시험용). */
+  constructor(db: Db, verifier: BizVerifier, opts: { vaultDir?: string; now?: () => Date } = {}) {
     this.profiles = new ProfileRepo(db);
     this.counterparties = new CounterpartyRepo(db);
+    this.documents = new DocumentService(db, () => opts.vaultDir ?? appPaths(defaultAppRoot()).vault, opts.now);
     this.verifier = verifier;
   }
 
@@ -46,6 +51,8 @@ export class DataService {
         return this.counterparties.list(typeof p.q === 'string' ? p.q : undefined);
       case 'db.query.counterparties.get':
         return this.counterparties.get(String(p.id));
+      case 'db.query.documents.list':
+        return this.documents.list();
       case 'profile.upsert':
         return this.profiles.upsert(p as never);
       case 'profile.delete':
@@ -77,6 +84,10 @@ export class DataService {
         return { hasKey: this.verifier.hasKey };
       case 'bizverify.hasKey':
         return { hasKey: this.verifier.hasKey };
+      case 'document.import':
+        return this.documents.import(p.bytes, p.extract);
+      case 'document.update':
+        return this.documents.update(String(p.id), (p.patch ?? {}) as never);
     }
     throw new DataError('unknown_method');
   }
