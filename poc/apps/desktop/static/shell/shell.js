@@ -51,6 +51,8 @@ const DOC_ERR = {
   invalid_doc_type: '고를 수 없는 종류예요', bad_request: '요청을 처리하지 못했어요', file_missing: '보관함 파일이 없어요(다시 가져와 주세요)', open_failed: 'PDF를 열지 못했어요',
   stale: '서류가 그사이 바뀌었어요. 지금 값을 다시 보고 확인해 주세요', seen_required: '요청을 처리하지 못했어요', busy: '다른 파일을 읽는 중이에요', renderer_gone: '읽던 창이 멈췄어요. 다시 해 주세요',
   closed: '보관함이 닫혔어요', failed: '처리하지 못했어요. 다시 해 주세요',
+  worker_failed: '읽는 창을 준비하지 못했어요. 다시 해 주세요', parse_failed: 'PDF를 읽지 못했어요', render_failed: 'PDF 쪽을 그리지 못했어요',
+  ocr_failed: '그림 글자를 읽지 못했어요', bad_extract: '읽은 결과를 확인하지 못했어요',
 };
 const docErr = (e) => DOC_ERR[errText(e)] || errText(e);
 const DOC_REASON = {

@@ -45,12 +45,15 @@ export function daysLeft(expiresOn: string, today: string): number {
 }
 
 /**
- * 정하지 못한 유효기간의 문서 후보 중 발급일 이후 가장 이른 날짜(발급일을 모르면 가장 이른 후보).
+ * 정하지 못한 유효기간(납세증명서)의 문서 후보 중 발급일 ~ 발급일 + 30일 안의 가장 이른 날짜(발급일을 모르면 가장 이른 후보).
+ * 범위 밖 날짜는 쓸 수 없는 값이라 후보로 내지 않는다(넣으면 확인이 expires_after_legal_max로 거부된다).
  * 발급일을 고치면 쓸 수 있는 후보가 달라지므로, 후보 전부(options)가 있으면 그중에서 고른다.
  */
 export function validityCandidate(f: Field, issued: string | null): string | undefined {
   const all = f.options ?? (f.suggested ? [f.suggested] : []);
-  return issued ? all.find((d) => d >= issued) : all[0];
+  if (!issued) return all[0];
+  const max = addDays(issued, VALIDITY_RULES.national_tax_cert.days);
+  return all.find((d) => d >= issued && d <= max);
 }
 
 /**
