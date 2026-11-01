@@ -9,6 +9,7 @@ import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/plat
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, openApprovalWindow } from './approval-window.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
+import { cancelPick, importPdf } from './vault-import.ts';
 
 const require = createRequire(import.meta.url);
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -77,7 +78,7 @@ function startProcesses(): void {
 }
 
 function serveStatic(): void {
-  const files: Record<string, string> = { '/app.html': 'text/html; charset=utf-8', '/app.js': 'text/javascript', '/app.css': 'text/css', '/secret.html': 'text/html; charset=utf-8', '/secret.js': 'text/javascript' };
+  const files: Record<string, string> = { '/app.html': 'text/html; charset=utf-8', '/app.js': 'text/javascript', '/app.css': 'text/css', '/secret.html': 'text/html; charset=utf-8', '/secret.js': 'text/javascript', '/vault-panel.js': 'text/javascript' };
   protocol.handle(APP_SCHEME, async (req) => {
     const p = new URL(req.url).pathname;
     const type = files[p];
@@ -104,7 +105,8 @@ function openSecretInput(kind: string, scope: string): void {
   });
 }
 
-const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse')]);
+// bizcert.parse·document.import는 main이 docparse 결과를 붙여 부른다. 렌더러가 텍스트·바이트를 지어 보낼 수 없다.
+const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse' && c !== 'document.import')]);
 
 async function handleRenderer(method: string, params: Record<string, unknown>): Promise<unknown> {
   await engineReady;
@@ -123,6 +125,11 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
       return rpc('engine', 'browser.close');
     case 'secret.openInput':
       openSecretInput(String(params.kind ?? 'cert_password'), String(params.scope ?? 'business'));
+      return {};
+    case 'vault.importPdf':
+      return importPdf(params, (m, p) => rpc('engine', m, p));
+    case 'vault.importCancel':
+      cancelPick(params.pickId);
       return {};
     case 'ocr.bizcert': {
       // 사용자가 고른 파일만 파싱한다(ADR-014 자동 파싱 축소). PDF는 PoC-8(docparse pdf.js)에서.

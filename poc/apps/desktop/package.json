@@ -11,7 +11,8 @@
     "@sax/vault": "workspace:*",
     "tesseract.js": "7.0.0",
     "@tesseract.js-data/kor": "1.0.0",
-    "@sax/net": "workspace:*"
+    "@sax/net": "workspace:*",
+    "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
     "electron": "45.1.0"

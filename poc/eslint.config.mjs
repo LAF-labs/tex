@@ -33,7 +33,7 @@ export default tseslint.config(
   },
   {
     // 렌더러·샌드박스 정적 스크립트(브라우저 전역), 샌드박스 preload(CommonJS 필수)
-    files: ['apps/desktop/static/**/*.js', 'apps/desktop/static/**/*.cjs'],
+    files: ['apps/desktop/static/**/*.js', 'apps/desktop/static/**/*.mjs', 'apps/desktop/static/**/*.cjs'],
     languageOptions: { globals: { ...globals.browser, Tesseract: 'readonly' } },
     rules: { '@typescript-eslint/no-require-imports': 'off' },
   },

@@ -1,0 +1,109 @@
+{
+  "dbReady": true,
+  "formsHiddenAtStart": true,
+  "beforeProfile": "내 사업장(사업자 프로필)을 먼저 저장하세요",
+  "tax": "보관함에 넣었습니다 · 납세증명서(국세) · 텍스트 · 125ms",
+  "taxAgain": "이미 있는 파일입니다 · 납세증명서(국세) · 텍스트 · 124ms",
+  "biz": "보관함에 넣었습니다 · 사업자등록증명 · 텍스트 · 124ms",
+  "image": "보관함에 넣었습니다 · 납세증명서(국세) · OCR(신뢰도 90) · 1441ms",
+  "locked": "열기 암호가 걸린 PDF입니다. 암호를 넣으세요.",
+  "passwordFormShown": true,
+  "lockedWrong": "암호가 맞지 않습니다.",
+  "lockedOk": "보관함에 넣었습니다 · 서류 · 텍스트 · 887ms",
+  "passwordFormHiddenAfter": true,
+  "rendererImportRefused": "page.evaluate: Error: Error invoking remote method 'sax': Error: unknown_method",
+  "list": [
+    {
+      "docType": "other",
+      "issuedOn": null,
+      "expiresOn": null,
+      "expirySource": null,
+      "needsUser": true,
+      "reasons": [
+        "doc_type_unknown"
+      ],
+      "textSource": "text",
+      "subjectMismatch": false
+    },
+    {
+      "docType": "biz_registration_cert",
+      "issuedOn": "2026-10-02",
+      "expiresOn": "2026-12-30",
+      "expirySource": "rule",
+      "needsUser": true,
+      "reasons": [
+        "subject_mismatch"
+      ],
+      "textSource": "text",
+      "subjectMismatch": true
+    },
+    {
+      "docType": "national_tax_cert",
+      "issuedOn": "2026-10-01",
+      "expiresOn": "2026-10-30",
+      "expirySource": "document",
+      "needsUser": true,
+      "reasons": [
+        "read_by_ocr"
+      ],
+      "textSource": "ocr",
+      "subjectMismatch": false
+    },
+    {
+      "docType": "national_tax_cert",
+      "issuedOn": "2026-10-01",
+      "expiresOn": "2026-10-30",
+      "expirySource": "document",
+      "needsUser": false,
+      "reasons": [],
+      "textSource": "text",
+      "subjectMismatch": false
+    }
+  ],
+  "rows": [
+    [
+      "서류",
+      "—",
+      "—",
+      "",
+      "—",
+      "확인 필요: 서류 종류를 알아보지 못함"
+    ],
+    [
+      "사업자등록증명",
+      "2026-10-02",
+      "2026-12-30 · D-59",
+      "추정(규칙표)",
+      "0123-471-5265-863",
+      "확인 필요: 대상 사업자번호가 내 사업장과 다름"
+    ],
+    [
+      "납세증명서(국세)",
+      "2026-10-01",
+      "2026-10-30 · 만료됨",
+      "문서에서 읽음",
+      "0123-457-5258-910",
+      "확인 필요: 글자 층이 없어 OCR로 읽음"
+    ],
+    [
+      "납세증명서(국세)",
+      "2026-10-01",
+      "2026-10-30 · 만료됨",
+      "문서에서 읽음",
+      "0123-457-5258-910",
+      ""
+    ]
+  ],
+  "bizConfirmed": {
+    "needsUser": false,
+    "expirySource": "user",
+    "subjectMismatch": true
+  },
+  "vaultFiles": [
+    "biz_registration_cert_20261002_XXXX.pdf",
+    "national_tax_cert_20261001_XXXX.pdf",
+    "national_tax_cert_20261001_XXXX.pdf",
+    "other_20261101_XXXX.pdf"
+  ],
+  "failures": []
+}
