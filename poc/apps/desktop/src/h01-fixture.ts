@@ -26,6 +26,8 @@ export interface H01Knobs {
   dropIssue: boolean;
   /** 발급을 거절하고 오류 문구를 보인다(명시적 실패 신호). */
   failIssue: boolean;
+  /** 발급목록 조회 응답 지연(ms). 기준선 조회 중 [중지] 시험용. */
+  lookupDelayMs: number;
 }
 
 export interface H01Fixture {
@@ -98,14 +100,14 @@ function table(id: string, caption: string, rows: Array<Record<string, string>>)
   const body = rows
     .map((r) => `<tr data-row="1">${Object.entries(r).map(([k, v]) => `<td data-k="${esc(k)}">${esc(v)}</td>`).join('')}</tr>`)
     .join('');
-  return page(caption, `<table id="${id}" aria-label="${esc(caption)}"><tbody>${body}</tbody></table>`);
+  return page(caption, `<table id="${id}" aria-label="${esc(caption)}" data-count="${rows.length}"><tbody>${body}</tbody></table>`);
 }
 
 export async function startH01Fixture(opts: { registry: Registry; supplier: { bizNo: string; name: string } }): Promise<H01Fixture> {
   const issued: IssuedInvoice[] = [];
   let posts = 0;
   let seq = 123;
-  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false };
+  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false, lookupDelayMs: 0 };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     let body = '';
@@ -144,7 +146,7 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
         const rows = issued
           .filter((i) => i.counterpartBizNo === bizNo && i.issueDate === date)
           .map((i) => ({ approvalNo: i.approvalNo, counterpartBizNo: i.counterpartBizNo, issueDate: i.issueDate, supplyAmount: i.supplyAmount, taxAmount: i.taxAmount }));
-        return html(table('invoice-list', '발급목록', rows));
+        return void setTimeout(() => html(table('invoice-list', '발급목록', rows)), knobs.lookupDelayMs);
       }
       if (url.pathname === '/mail/list') {
         const no = url.searchParams.get('approvalNo') ?? '';

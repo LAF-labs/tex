@@ -32,6 +32,11 @@ export interface LookupDef {
   /** 조회 화면 경로와 질의 이름(fieldKey → 질의 파라미터). */
   path: string;
   query: Partial<Record<ReadbackKey | 'approvalNo', string>>;
+  /**
+   * 결과가 다 그려졌다는 신호(건수 속성 data-count를 가진 요소). 없으면 조회 실패이고 부재 증거가 아니다.
+   * 빈 표와 아직 그리지 않은 표를 가르기 위해서다(기준선이 비어 보이면 예전 건이 새 건으로 잡힌다).
+   */
+  ready: string;
   /** 결과 행. 행 안의 [data-k] 칸을 읽는다(가짜 페이지 모양, PoC-3에서 실제 표로 바꾼다). */
   rows: string;
 }
@@ -80,8 +85,8 @@ export function fixturePortal(origin: string): PortalConfig {
       'form.issueButton': { css: '#btnIssue', role: 'button', name: '^발급하기$', landmark: 'form.root', commits: true, commitEffect: 'issue_document' },
     },
     failureSignal: '#issue-error',
-    invoiceLookup: { path: '/invoice/list', query: { counterpartBizNo: 'bizNo', issueDate: 'date' }, rows: '#invoice-list tr[data-row]' },
-    mailLookup: { path: '/mail/list', query: { approvalNo: 'approvalNo' }, rows: '#mail-list tr[data-row]' },
+    invoiceLookup: { path: '/invoice/list', query: { counterpartBizNo: 'bizNo', issueDate: 'date' }, ready: '#invoice-list[data-count]', rows: '#invoice-list tr[data-row]' },
+    mailLookup: { path: '/mail/list', query: { approvalNo: 'approvalNo' }, ready: '#mail-list[data-count]', rows: '#mail-list tr[data-row]' },
     // 가짜 페이지는 반영이 바로 된다. 시험이 빨리 끝나게 짧게 둔다(홈택스 값과 섞이지 않게 kind로 나눈다).
     verify: { minElapsedMs: 600, lookups: 2, intervalMs: 200 },
   };
@@ -114,8 +119,8 @@ export const HOMETAX_PORTAL: PortalConfig = {
     'form.issueButton': todoEntry('button', undefined, true),
   },
   failureSignal: TODO,
-  invoiceLookup: { path: TODO, query: {}, rows: TODO },
-  mailLookup: { path: TODO, query: {}, rows: TODO },
+  invoiceLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },
+  mailLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },
   verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000 },
 };
 
@@ -130,6 +135,7 @@ export function portalProblems(p: PortalConfig): string[] {
   todo('failureSignal', p.failureSignal);
   for (const [k, l] of [['invoiceLookup', p.invoiceLookup], ['mailLookup', p.mailLookup]] as const) {
     todo(`${k}.path`, l.path);
+    todo(`${k}.ready`, l.ready);
     todo(`${k}.rows`, l.rows);
   }
   for (const k of SELECTOR_KEYS) {

@@ -35,8 +35,8 @@ export interface RunnerHooks {
   checkStop(): void;
   /** 게이트: 요청을 내고 승인(토큰 소비 + 원장 armed)까지 기다린다. 중지·만료면 RunEnd. */
   gate(rb: Readback): Promise<{ readbackHash: string }>;
-  /** 커밋 클릭 직전: 게이트 토큰을 한 번 쓴다(만료·재사용이면 RunEnd). 디스크 I/O 없음. */
-  useToken(): void;
+  /** 비가역 스텝 진입(R-G7): 토큰 검증 → 원장 armed + 토큰 소비(한 트랜잭션). 정지·만료·재사용이면 RunEnd. */
+  arm(): void;
   dispatched(): void;
   resolve(state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'verify' | null, ref: string | null): void;
 }
@@ -79,6 +79,8 @@ export class H01Runner {
   private approvedHash: string | null = null;
   private rb: Readback | null = null;
   private dispatchedAt = 0;
+  /** 클릭 직전 보이던 실패 신호 수. 클릭 뒤 새로 보인 것만 명시적 실패 신호로 센다. */
+  private failSignalsBefore = 0;
 
   constructor(page: Page, portal: PortalConfig, inputs: RunInputs, profile: { bizNo: string }, hooks: RunnerHooks) {
     this.page = page;
@@ -163,6 +165,8 @@ export class H01Runner {
         } catch {
           throw new RunEnd('handoff', 'verify.baseline_missing');
         }
+        // 기준선 조회는 오래 걸릴 수 있다. 그 사이 온 [중지]를 게이트를 열기 전에 받는다.
+        this.hooks.checkStop();
         const g = await this.hooks.gate(this.rb);
         this.approvedHash = g.readbackHash;
         return fallthrough();
@@ -176,38 +180,38 @@ export class H01Runner {
     }
   }
 
-  /** 커밋 구간(R-G7): readback 재계산 → 비교 → 동일성 검사 → 클릭 → dispatched. 재계산과 클릭 사이에 디스크 I/O가 없다. */
+  /**
+   * 커밋 구간(R-G7): 토큰 검증 → armed + 소비 → 동일성 검사 → readback 재계산·비교 → 클릭 → dispatched.
+   * 동일성을 확인한 그 요소를 누른다(셀렉터를 다시 찾지 않는다). 재계산과 클릭 사이에 디스크 I/O가 없다.
+   */
   private async submit(target: SelectorKey, verify: string): Promise<string> {
-    let rb2: Readback;
+    this.hooks.arm();
+    let button: Awaited<ReturnType<Locator['elementHandle']>>;
     try {
-      rb2 = await this.readAll();
-    } catch {
-      this.hooks.resolve('not_committed', 'pre_dispatch_mismatch', null);
-      throw fail('pre_dispatch_mismatch');
-    }
-    if (readbackHash(rb2) !== this.approvedHash) {
-      this.hooks.resolve('not_committed', 'pre_dispatch_mismatch', null);
-      throw fail('pre_dispatch_mismatch');
-    }
-    let loc: Locator;
-    try {
-      loc = await this.identify(target);
+      button = await (await this.identify(target)).elementHandle();
     } catch {
       this.hooks.resolve('not_committed', 'identity_mismatch', null);
       throw fail('step.identity_mismatch');
     }
+    let rb2: Readback | null = null;
     try {
-      this.hooks.useToken();
-    } catch (e) {
+      rb2 = await this.readAll();
+      this.failSignalsBefore = await this.visibleFailSignals();
+    } catch {
+      // 다시 읽지 못했으면 값이 같다고 볼 수 없다
+    }
+    if (!rb2 || readbackHash(rb2) !== this.approvedHash) {
+      await button.dispose();
       this.hooks.resolve('not_committed', 'pre_dispatch_mismatch', null);
-      throw e;
+      throw fail('pre_dispatch_mismatch');
     }
     this.dispatchedAt = Date.now();
     try {
-      await loc.click();
+      await button.click();
     } catch {
       // 요청이 나갔는지 알 수 없다. dispatched로 두고 verify가 정한다.
     }
+    await button.dispose().catch(() => {});
     this.hooks.dispatched();
     await this.page.waitForLoadState('domcontentloaded').catch(() => {});
     return verify;
@@ -234,7 +238,8 @@ export class H01Runner {
         if (fresh.length > 1) break;
         zeroInARow++;
         if (zeroInARow >= lookups && Date.now() - this.dispatchedAt >= minElapsedMs) {
-          if (await this.page.locator(this.portal.failureSignal).count().catch(() => 0)) {
+          // 클릭 뒤 새로 보이게 된 실패 신호만 센다(숨김 오류 상자·클릭 전부터 있던 문구는 증거가 아니다).
+          if ((await this.visibleFailSignals().catch(() => 0)) > this.failSignalsBefore) {
             this.hooks.resolve('not_committed', 'verify', null);
             return on.not_committed;
           }
@@ -262,13 +267,24 @@ export class H01Runner {
     return on.unknown;
   }
 
+  private async visibleFailSignals(): Promise<number> {
+    const all = await this.page.locator(this.portal.failureSignal).all();
+    let n = 0;
+    for (const l of all) if (await l.isVisible()) n++;
+    return n;
+  }
+
   private async invoiceNumbers(rb: Readback): Promise<Set<string>> {
     const rows = await this.lookup(this.portal.invoiceLookup, rb);
     const match = (['counterpartBizNo', 'issueDate', 'supplyAmount', 'taxAmount'] as const).map((k) => [k, rb[k]] as const);
     return new Set(rows.filter((r) => match.every(([k, v]) => normalizeField(k, r[k] ?? '') === v)).map((r) => r.approvalNo ?? '').filter(Boolean));
   }
 
-  /** 조회 하위 흐름: 허용 origin 팝업(금고가 새 탭 만들기를 막는다)에서 읽고 닫는다. 원래 탭은 건드리지 않는다(D03 §5.6). */
+  /**
+   * 조회 하위 흐름: 허용 origin 팝업(금고가 새 탭 만들기를 막는다)에서 읽고 닫는다. 원래 탭은 건드리지 않는다(D03 §5.6).
+   * 결과 준비 신호(data-count)가 없거나 행 수가 맞지 않으면 조회 실패다(부재 증거가 아니다).
+   * 잔여: noopener 팝업은 금고 중계가 노출하지 않아(실측) 조회 탭이 opener로 발급 탭에 닿을 수 있다. 클릭 직전 재계산이 값 변경을 잡는다.
+   */
   private async lookup(def: LookupDef, params: Partial<Record<string, string>>): Promise<Array<Record<string, string>>> {
     const url = new URL(def.path, this.portal.origin);
     for (const [k, q] of Object.entries(def.query)) url.searchParams.set(q!, params[k] ?? '');
@@ -280,7 +296,13 @@ export class H01Runner {
     ]);
     try {
       await popup.waitForLoadState('domcontentloaded');
-      return await popup.locator(def.rows).evaluateAll((trs) => trs.map((tr) => Object.fromEntries([...tr.querySelectorAll('[data-k]')].map((td) => [td.getAttribute('data-k') ?? '', td.textContent ?? '']))));
+      const ready = popup.locator(def.ready);
+      await ready.first().waitFor({ state: 'attached', timeout: 10_000 });
+      if ((await ready.count()) !== 1) throw new Error('lookup_ready_ambiguous');
+      const count = Number(await ready.getAttribute('data-count'));
+      const rows = await popup.locator(def.rows).evaluateAll((trs) => trs.map((tr) => Object.fromEntries([...tr.querySelectorAll('[data-k]')].map((td) => [td.getAttribute('data-k') ?? '', td.textContent ?? '']))));
+      if (!Number.isSafeInteger(count) || count !== rows.length) throw new Error('lookup_incomplete');
+      return rows;
     } finally {
       await popup.close().catch(() => {});
     }
@@ -305,6 +327,12 @@ export class H01Runner {
     if ('fieldsFilled' in c) {
       for (const k of c.fieldsFilled) if (!(await this.readDom(this.keyOf(k))).trim()) return false;
       return true;
+    }
+    if ('sumEquals' in c) {
+      if (!this.rb) return false;
+      const [a, b] = c.sumEquals.parts.map((k) => this.rb![k]);
+      const t = this.rb[c.sumEquals.total];
+      return [a, b, t].every((v) => /^\d+$/.test(v ?? '')) && BigInt(a!) + BigInt(b!) === BigInt(t);
     }
     const want = this.ref(c.readbackEquals.ref);
     return !!this.rb && want !== null && this.rb[c.readbackEquals.fieldKey] === normalizeField(c.readbackEquals.fieldKey, want);
@@ -367,7 +395,12 @@ export class H01Runner {
     return role === 'textbox' || role === 'combobox' ? loc.inputValue() : ((await loc.textContent()) ?? '');
   }
 
-  /** readback(B-06): DOM 값과 접근성 값을 둘 다 읽어 정규화한 뒤 일치해야 한다. 하나라도 다르면 step.readback_mismatch. */
+  /**
+   * readback(B-06): DOM 값과 접근성 값을 둘 다 읽어 정규화한 뒤 일치해야 한다. 하나라도 다르면 step.readback_mismatch.
+   * 한계(PoC): 접근성 값은 Playwright aria 스냅숏이다. 입력 칸은 그 값도 요소의 .value에서 오므로 독립 증거가 아니고,
+   * 표시 요소(status)만 보이는 텍스트와 textContent의 차이를 잡는다. 브라우저 AX 트리(Accessibility.getPartialAXTree)는
+   * 금고 중계가 엔진에 page 세션 CDP를 따로 열어 주지 않아 쓰지 못했다. readbackOf(별도 표시 요소) 세 값 대조는 PoC-3에서.
+   */
   private async readAll(): Promise<Readback> {
     const out = {} as Readback;
     for (const f of READBACK_FIELDS) {

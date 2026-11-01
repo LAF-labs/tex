@@ -10,7 +10,9 @@ export type Phase = 'login' | 'form' | 'input' | 'readback' | 'gate' | 'sign' | 
 export type Cond =
   | { fieldsFilled: ReadbackKey[] }
   /** readback 값과 참조 값을 정규화해 비교한다(B-05). 대표 용도는 supplierBizNo == $profile.bizNo. */
-  | { readbackEquals: { fieldKey: ReadbackKey; ref: string } };
+  | { readbackEquals: { fieldKey: ReadbackKey; ref: string } }
+  /** readback 값으로 합계 = 공급가액 + 세액(D02 §4.1). 바의 합계 줄이 실제 발급 금액과 다르지 않게. */
+  | { sumEquals: { parts: [ReadbackKey, ReadbackKey]; total: ReadbackKey } };
 
 export type Step = { id: string; phase: Phase } & (
   | { type: 'goto'; url: 'issueForm' }
@@ -45,6 +47,7 @@ export const H01 = {
     { id: 's19a', phase: 'readback', type: 'assert', cond: { fieldsFilled: ['counterpartBizNo', 'itemName', 'supplyAmount', 'taxAmount', 'issueDate'] }, code: 'assert.fields_missing' },
     { id: 's19b', phase: 'readback', type: 'readback', fields: READBACK_FIELDS },
     { id: 's19c', phase: 'readback', type: 'assert', cond: { readbackEquals: { fieldKey: 'supplierBizNo', ref: '$profile.bizNo' } }, code: 'assert.supplier_mismatch' },
+    { id: 's19d', phase: 'readback', type: 'assert', cond: { sumEquals: { parts: ['supplyAmount', 'taxAmount'], total: 'totalAmount' } }, code: 'assert.total_mismatch' },
     { id: 's20', phase: 'gate', type: 'gate', authorizes: ['s21'], waitMs: 600_000 },
     // signFlow(간편인증·인증서·보안카드)는 PoC-3에서 실제 순서를 본 뒤 X 안에 넣는다(D02 §4.5).
     { id: 's21', phase: 'sign', type: 'submit', target: 'form.issueButton', verify: 's30' },

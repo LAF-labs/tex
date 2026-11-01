@@ -30,6 +30,7 @@ let vault: VaultClient | null = null;
 let data: DataService | null = null;
 let runs: RunService | null = null;
 let run: { browser: Browser; page: Page; targetId: string } | null = null;
+let initialized = false;
 
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
@@ -78,6 +79,8 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     if (!runs) throw new Error('runs_not_ready');
     return method === 'run.start' ? runs.start(params as unknown as StartParams) : runs.stop(String(params.runId));
   }
+  // 실행 중에는 개발 콘솔의 브라우저 명령을 받지 않는다(실행 탭을 옮기거나 닫지 못하게).
+  if ((method === 'browser.open' || method === 'browser.close') && runs?.activeRunId) throw new Error('busy');
   if (method === 'browser.open') {
     const page = await runPage();
     // PoC-4/5 개발 콘솔: 실행 페이지만 띄운다. 발급은 run.start(H-01 플레이북).
@@ -97,6 +100,9 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
 parentPort.on('message', (e) => {
   const msg = e.data as { t?: string; id?: number; method?: string; params?: Record<string, unknown> };
   if ((msg?.t === 'init' || msg?.t === 'vault-port') && e.ports[0]) {
+    // 초기화는 한 번만. 다시 받으면 재시작 처리(in_doubt 승격·게이트 만료)가 진행 중인 실행을 망가뜨린다.
+    if (initialized) return log.event('engine.init_again');
+    initialized = true;
     // 'vault-port'는 게이트 포트 없는 옛 기동(개발 콘솔). 실행 명령을 받지 않는다.
     const m: EngineInit = msg.t === 'init' ? (msg as unknown as EngineInit) : { t: 'init', portal: { kind: 'hometax' } };
     init(m, e.ports[0], msg.t === 'init' ? e.ports[1] : undefined).then(

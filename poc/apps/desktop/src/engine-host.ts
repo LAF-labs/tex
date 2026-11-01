@@ -1,7 +1,7 @@
 // main이 금고·엔진을 띄우고 잇는다(D01 §2.1). main↔엔진은 두 통로다(ADR-021).
 // - 중계 통로(엔진 parentPort): main 질의·렌더러 명령·실행 명령, 엔진 → main 실행 이벤트.
 // - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘(엔진 → main), LocalApproval(main → 엔진)만. answerGate() 하나로만 쓴다.
-// 렌더러 IPC 처리기는 answerGate를 부르지 않는다(guards.test.ts가 소스로 확인한다).
+// 렌더러 IPC 처리기는 answerGate를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
@@ -129,6 +129,8 @@ export class EngineHost extends EventEmitter {
   /** 승인 바가 발급한 근거를 게이트 포트로 보낸다. 엔진의 판정(gate.answer.result)을 돌려준다. */
   answerGate(approval: LocalApproval): Promise<{ ok: boolean; code?: string }> {
     return new Promise((resolve) => {
+      // 같은 게이트로 두 번 보내면 앞의 기다림은 풀어 준다(엔진은 두 번째를 거부한다).
+      this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded' });
       this.answers.set(approval.reqId, resolve);
       this.gatePort.postMessage({ t: 'gate.answer', approval } satisfies GatePortMessage);
     });

@@ -98,6 +98,11 @@ export class RunRepo {
     this.db.prepare('UPDATE runs SET status = ?, finished_at = ? WHERE id = ?').run(status, now(), id);
   }
 
+  /** 기동 시: 끝나지 않은 실행은 중단으로 닫는다(D03 §2 재시작 → Interrupted). */
+  interruptRunning(): number {
+    return this.db.prepare(`UPDATE runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'`).run(now()).changes;
+  }
+
   status(id: string): string | null {
     const r = this.db.prepare('SELECT status FROM runs WHERE id = ?').get(id) as Row | undefined;
     return r ? String(r.status) : null;
@@ -125,9 +130,14 @@ export class GateRepo {
     return r ? String(r.state) : null;
   }
 
-  /** 기동 시: 앞 실행에서 열린 채 남은 게이트는 만료로 닫는다(토큰은 메모리에만 있었다). */
+  /** 승인 뒤 커밋 전에 거부가 왔다(거부 우선 창, D03 §2). approved → denied. */
+  withdraw(reqId: string, by: string): boolean {
+    return this.db.prepare(`UPDATE gate_requests SET state = 'denied', decided_by = ?, decided_at = ? WHERE req_id = ? AND state = 'approved'`).run(by, now(), reqId).changes === 1;
+  }
+
+  /** 기동 시: 앞 실행에서 열린 채·승인만 된 채 남은 게이트는 만료로 닫는다(토큰은 메모리에만 있었다). */
   expireOpen(): number {
-    return this.db.prepare(`UPDATE gate_requests SET state = 'expired', decided_by = 'restart', decided_at = ? WHERE state = 'open'`).run(now()).changes;
+    return this.db.prepare(`UPDATE gate_requests SET state = 'expired', decided_by = 'restart', decided_at = ? WHERE state IN ('open','approved')`).run(now()).changes;
   }
 }
 

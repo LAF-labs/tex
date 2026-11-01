@@ -47,8 +47,10 @@ interface ActiveRun {
   /** 토큰 소비 + armed 기록이 끝났다(커밋 구간). 이 뒤로는 중지를 받지 않는다. */
   armed: boolean;
   gate: PendingGate | null;
-  /** 게이트 토큰(D03 §3). 커밋 클릭 한 번에만 쓴다. */
-  token: { mac: Buffer; exp: number; used: boolean } | null;
+  /** 게이트 토큰(D03 §3). 비가역 스텝 진입에서 한 번 소비한다. */
+  token: { reqId: string; mac: Buffer; exp: number; used: boolean } | null;
+  /** 승인된 게이트의 원장 행 재료(arm에서 쓴다). */
+  pendingArm: { req: GateRequest; history: PendingGate['history'] } | null;
 }
 
 export interface RunServiceDeps {
@@ -61,6 +63,8 @@ export interface RunServiceDeps {
   log: EventLog;
   /** 게이트 포트로 내보낸다. 이 함수 말고는 게이트 요청이 나가는 길이 없다. */
   postGate: (m: GatePortMessage) => void;
+  /** 시험용: gate.waitMs 대신 쓸 값. */
+  gateWaitMs?: number;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -68,6 +72,8 @@ const COMMIT_WINDOW_MS = 600_000;
 /** Wmax(X) = 60초 + signFlow.maxWaitMs(PoC: signFlow 없음). */
 const W_MAX_MS = 60_000;
 const GATE_STEP = 's20';
+/** 승인 뒤 이 시간 동안은 거부([중지])가 이긴다(D03 §2 전이표 "거부 우선 창 2초"). */
+export const DENY_PRIORITY_MS = 2_000;
 const PRESENCE_OK = new Set(['click']); // Hello는 PoC 범위 밖(ADR-021)
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -103,7 +109,8 @@ export class RunService extends EventEmitter {
     // 재시작: 종결되지 않은 원장 행은 in_doubt, 열린 게이트는 만료(토큰은 메모리에만 있었다, D03 §4.1).
     const promoted = this.ledger.promoteInDoubt();
     const expired = this.gates.expireOpen();
-    if (promoted || expired) d.log.event('engine.recovered', { inDoubt: promoted, gatesExpired: expired });
+    const interrupted = this.runs.interruptRunning();
+    if (promoted || expired || interrupted) d.log.event('engine.recovered', { inDoubt: promoted, gatesExpired: expired, interrupted });
     this.deviceId = this.loadDeviceId();
   }
 
@@ -159,7 +166,7 @@ export class RunService extends EventEmitter {
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
     this.runs.create({ id: p.runId, playbookId: H01.id, playbookVersion: H01.version, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind });
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null };
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -183,6 +190,10 @@ export class RunService extends EventEmitter {
       this.ledger.resolve(a.intentId, 's21', 'in_doubt');
       result = { status: 'in_doubt', code: result.code ?? 'engine.error' };
     } else if (row?.state === 'in_doubt') result = { ...result, status: 'in_doubt' };
+    // 발급이 확정된 뒤의 오류는 실패가 아니다. 다시 실행하면 중복이므로 "완료(확인할 것 있음)"로 알린다.
+    else if (row?.state === 'committed' && result.status !== 'success' && result.status !== 'completed_with_issues') {
+      result = { status: 'completed_with_issues', code: 'post_commit.error', approvalNo: row.verifyRef ?? undefined };
+    }
     this.closeGate(a, 'run_ended');
     this.runs.finish(a.runId, result.status);
     this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '' });
@@ -198,13 +209,7 @@ export class RunService extends EventEmitter {
         if (a.stop) throw new RunEnd('stopped', 'run.stopped');
       },
       gate: (rb: Readback) => this.openGate(a, rb),
-      useToken: () => {
-        const t = a.token;
-        // 커밋 구간 상한(exp)을 넘겼거나 이미 썼으면 누르지 않는다. 원장은 armed라 not_committed로 닫는다.
-        if (!t || t.used || Date.now() > t.exp) throw new RunEnd('failed', 'token.invalid');
-        t.used = true;
-        t.mac.fill(0);
-      },
+      arm: () => this.arm(a),
       dispatched: () => {
         this.ledger.dispatched(a.intentId, 's21');
         this.journal.append(a.runId, 'ledger.dispatched');
@@ -218,6 +223,7 @@ export class RunService extends EventEmitter {
 
   /** 게이트 요청(D03 §3): fields = readback 13칸 + 예약 키. 승인되면 토큰 발급 → 소비 + armed(한 트랜잭션). */
   private async openGate(a: ActiveRun, rb: Readback): Promise<{ readbackHash: string }> {
+    if (a.stop) throw new RunEnd('stopped', 'run.stopped');
     const history = {
       cpBizNoHmac: this.hmac('bizno', rb.counterpartBizNo),
       recipientEmailHmac: rb.counterpartEmail ? this.hmac('email', canonicalEmail(rb.counterpartEmail)) : null,
@@ -230,7 +236,7 @@ export class RunService extends EventEmitter {
     if (h.priorNotCommitted) fields.push({ fieldKey: '$dup.priorNotCommitted', value: 'true' });
     const rbHash = readbackHash(rb);
     const cardHashInputs = { readbackHash: rbHash, packageDigest: a.packageDigest, authorizes: ['s21'], intentId: a.intentId };
-    const waitMs = (H01.steps.find((s) => s.id === GATE_STEP) as { waitMs: number }).waitMs;
+    const waitMs = this.d.gateWaitMs ?? (H01.steps.find((s) => s.id === GATE_STEP) as { waitMs: number }).waitMs;
     const req: GateRequest = {
       v: 2,
       runId: a.runId,
@@ -257,24 +263,47 @@ export class RunService extends EventEmitter {
     this.d.postGate({ t: 'gate.request', req });
     this.ev({ runId: a.runId, type: 'waiting', reqId: req.reqId });
     await decided;
+    // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
+    const until = Date.now() + DENY_PRIORITY_MS;
+    while (Date.now() < until && !a.stop) await new Promise((r) => setTimeout(r, 50));
+    if (a.stop) {
+      if (this.gates.withdraw(req.reqId, 'local')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: req.reqId });
+      this.closeGate(a, 'stopped');
+      throw new RunEnd('stopped', 'gate.stopped');
+    }
     // 토큰(D03 §3): HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce}). 단일 사용, 주 비가역 1개.
-    // 소비 기록은 gate_requests approved→consumed + 원장 armed 한 트랜잭션이다. 네트워크 커밋 가드(§5.4)에 넘기는 것은 PoC 범위 밖.
+    // 소비는 비가역 스텝 진입에서 gate_requests approved→consumed + 원장 armed 한 트랜잭션이다(arm). 네트워크 커밋 가드(§5.4)는 PoC 범위 밖.
     const runKey = randomBytes(32);
     const exp = Date.now() + Math.min(COMMIT_WINDOW_MS, W_MAX_MS);
     const mac = createHmac('sha256', runKey).update(cbor({ runId: a.runId, gateStepId: GATE_STEP, actionHash: Buffer.from(req.actionHash, 'hex'), exp, nonce: randomBytes(16) })).digest();
     runKey.fill(0);
+    a.token = { reqId: req.reqId, mac, exp, used: false };
+    a.pendingArm = { req, history };
+    return { readbackHash: rbHash };
+  }
+
+  /** 비가역 스텝 진입(R-G7): 정지·토큰 확인 → 원장 armed + 토큰 소비(한 트랜잭션, synchronous=FULL). 이 뒤로는 중지를 받지 않는다. */
+  private arm(a: ActiveRun): void {
+    const t = a.token;
+    const p = a.pendingArm;
+    if (a.stop) {
+      if (t && this.gates.withdraw(t.reqId, 'local')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: t.reqId });
+      throw new RunEnd('stopped', 'gate.stopped');
+    }
+    if (!t || !p || t.used || Date.now() > t.exp) throw new RunEnd('failed', 'token.invalid');
+    t.used = true;
+    t.mac.fill(0);
     try {
-      this.ledger.consumeAndArm(req.reqId, {
-        intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
-        packageDigest: a.packageDigest, actionHash: req.actionHash, deviceId: this.deviceId, cpBizNoHmac: history.cpBizNoHmac, recipientEmailHmac: history.recipientEmailHmac,
+      this.ledger.consumeAndArm(p.req.reqId, {
+        intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: p.history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
+        packageDigest: a.packageDigest, actionHash: p.req.actionHash, deviceId: this.deviceId, cpBizNoHmac: p.history.cpBizNoHmac, recipientEmailHmac: p.history.recipientEmailHmac,
       });
     } catch (e) {
       throw new RunEnd('failed', e instanceof LedgerError ? e.code : 'ledger.error');
     }
-    a.token = { mac, exp, used: false };
     a.armed = true;
-    this.journal.append(a.runId, 'ledger.armed', { reqId: req.reqId });
-    return { readbackHash: rbHash };
+    a.pendingArm = null;
+    this.journal.append(a.runId, 'ledger.armed', { reqId: p.req.reqId });
   }
 
   private closeGate(a: ActiveRun, reason: string): void {
@@ -299,6 +328,7 @@ export class RunService extends EventEmitter {
       return { ok: false, code };
     };
     if (!a || !g) return reject('no_open_gate');
+    if (a.stop) return reject('stopped');
     if (!ap || typeof ap !== 'object' || ap.v !== 2) return reject('bad_version');
     if (ap.runId !== a.runId || ap.gateStepId !== g.req.gateStepId || ap.reqId !== g.req.reqId) return reject('wrong_gate');
     if (ap.approvalNonce !== g.req.approvalNonce) return reject('wrong_nonce');
@@ -343,10 +373,8 @@ export class RunService extends EventEmitter {
   }
 
   /** 시험용 읽기(값 없음): 원장 상태와 저널 종류. */
-  inspect(runId: string): { ledger: string | null; journal: string[]; hasPlainBizNo: boolean } {
-    const row = this.d.db.prepare('SELECT * FROM irreversible_log WHERE run_id = ?').get(runId) as Record<string, unknown> | undefined;
-    const cps = this.d.data.counterparties.list().map((c) => c.bizNo);
-    const plain = !!row && Object.values(row).some((v) => typeof v === 'string' && cps.includes(v));
-    return { ledger: row ? String(row.state) : null, journal: this.journal.types(runId), hasPlainBizNo: plain };
+  inspect(runId: string): { ledger: string | null; journal: string[] } {
+    const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ?').get(runId) as { state: string } | undefined;
+    return { ledger: row?.state ?? null, journal: this.journal.types(runId) };
   }
 }

@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { DataService, BizVerifier, connectRunBrowser, cbor, jcs, cardHash, recomputeActionHash, fixturePortal, HOMETAX_PORTAL, portalProblems, RunService, ariaValue, normalizeField, canonicalEmail, type GatePortMessage, type GateRequest, type LocalApproval, type RunEvent } from '@sax/engine';
+import { DataService, BizVerifier, connectRunBrowser, cbor, jcs, cardHash, recomputeActionHash, gateSelfCheck, fixturePortal, HOMETAX_PORTAL, portalProblems, RunService, ariaValue, normalizeField, canonicalEmail, type GatePortMessage, type GateRequest, type LocalApproval, type RunEvent } from '@sax/engine';
 import { GateRepo, Ledger, openDatabase, RunJournal, RunRepo, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
@@ -27,6 +27,7 @@ describe('게이트 해시(D03 §3)', () => {
     assert.equal(cbor(1_000_000).toString('hex'), '1a000f4240');
     assert.equal(cbor([new Uint8Array([1, 2]), 'é', true, null]).toString('hex'), '844201026 2c3a9f5f6'.replace(/\s/g, ''));
     assert.throws(() => cbor(-1), /cbor_bad_length/);
+    assert.throws(() => cbor('a\ud800'), /cbor_bad_string/, '고립 서로게이트는 U+FFFD로 바뀌어 다른 값과 같은 해시가 된다');
     assert.throws(() => cbor(1.5), /cbor_bad_length/);
   });
 
@@ -84,7 +85,25 @@ describe('원장(D03 §4, ADR-021)', () => {
     await fs.rm(dir, { recursive: true, force: true });
   });
 
-  it('마이그레이션 v2: HMAC 열', () => {
+  it('기동 시 정리: armed → in_doubt, 열린·승인만 된 게이트 → 만료, 실행 중 → 중단', () => {
+    const runs = new RunRepo(db);
+    runs.create({ id: 'rr', playbookId: 'p', playbookVersion: '1', packageDigest: 'd', profileId: 'x', trigger: 'local', inputsHash: 'i' });
+    const g = new GateRepo(db);
+    g.open('qa', 'rr');
+    g.decide('qa', 'approved', 'local');
+    g.open('qb', 'rr');
+    g.open('qc', 'rr');
+    g.decide('qc', 'approved', 'local');
+    new Ledger(db).consumeAndArm('qc', { intentId: 'IR', stepId: 's21', runId: 'rr', businessKey: 'bk2', playbookId: 'p', inputsHash: 'i', packageDigest: 'd', actionHash: 'a', deviceId: 'dv', cpBizNoHmac: 'h9', recipientEmailHmac: null });
+    const data = new DataService(db, new BizVerifier(new Egress()));
+    new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log: new FileEventLog(null, 't'), page: () => Promise.reject(new Error('no')), postGate: () => {} });
+    assert.deepEqual([g.state('qa'), g.state('qb'), g.state('qc')], ['expired', 'expired', 'consumed']);
+    assert.equal(new Ledger(db).get('IR', 's21')!.state, 'in_doubt');
+    assert.equal(runs.status('rr'), 'interrupted');
+  });
+
+  it('마이그레이션 v2: HMAC 열, 원장 쓰기는 synchronous=FULL', () => {
+    assert.equal(db.pragma('synchronous', { simple: true }), 2);
     const cols = (db.prepare('PRAGMA table_info(irreversible_log)').all() as Array<{ name: string }>).map((c) => c.name);
     assert.ok(cols.includes('cp_biz_no_hmac') && cols.includes('recipient_email_hmac'));
     assert.equal(db.pragma('user_version', { simple: true }), 2);
@@ -156,6 +175,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     return runId;
   };
   const field = (req: GateRequest, k: string) => req.fields.find((f) => f.fieldKey === k)?.value;
+  const phaseNow = (runId: string, phase: string) => next(() => (events.some((e) => e.runId === runId && e.type === 'phase' && e.phase === phase && e.state === 'now') ? true : undefined));
 
   before(async () => {
     fx = await startH01Fixture({ registry: { [A.bizNo]: A.name, [C.bizNo]: C.name }, supplier: SUPPLIER });
@@ -185,6 +205,10 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     const runId = start(cpA, 3_300_000);
     const req = await gateFor(runId);
     assert.equal(recomputeActionHash(req), req.actionHash, 'main이 받은 fields로 다시 계산한 해시가 같다');
+    assert.equal(gateSelfCheck(req), null);
+    assert.equal(gateSelfCheck({ ...req, fields: req.fields.map((f) => (f.fieldKey === 'taxAmount' ? { ...f, value: '1' } : f)) }), 'readback_hash');
+    assert.equal(gateSelfCheck({ ...req, fields: [...req.fields, { fieldKey: '$first.bizNo', value: 'false' }] }), 'duplicate');
+    assert.equal(gateSelfCheck({ ...req, actionHash: '0'.repeat(64) }), 'action_hash');
     assert.deepEqual(req.fields.slice(0, 13).map((f) => f.fieldKey), ['supplierBizNo', 'supplierName', 'counterpartBizNo', 'counterpartName', 'counterpartEmail', 'itemName', 'itemCount', 'supplyAmount', 'taxAmount', 'totalAmount', 'issueDate', 'remark', 'receiptType']);
     assert.equal(field(req, 'counterpartEmail'), A.email, '포털이 미리 채운 주소를 덮었다');
     assert.equal(field(req, 'totalAmount'), '3630000');
@@ -214,7 +238,10 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.equal(end.mailConfirmed, true);
     const ins = runs.inspect(runId);
     assert.equal(ins.ledger, 'committed');
-    assert.equal(ins.hasPlainBizNo, false, '원장에 사업자번호 평문이 없다');
+    const row = db.prepare('SELECT * FROM irreversible_log WHERE run_id = ?').get(runId) as Record<string, unknown>;
+    const plain = [SUPPLIER.bizNo, A.bizNo, A.email, A.name, '3300000', '330000', '3630000'];
+    assert.deepEqual(Object.entries(row).filter(([, v]) => typeof v === 'string' && plain.some((p) => v.includes(p))), [], '원장에 사업자번호·이메일·상호·금액 평문이 없다');
+    assert.equal(row.verify_ref, end.approvalNo);
     for (const t of ['run.started', 'gate.requested', 'gate.answer_rejected', 'security.gate_answer_from_relay', 'gate.approved', 'ledger.armed', 'ledger.dispatched', 'ledger.committed', 'run.ended']) assert.ok(ins.journal.includes(t), t);
     assert.ok(ins.journal.indexOf('ledger.armed') < ins.journal.indexOf('ledger.dispatched'));
     const phases = events.filter((e) => e.runId === runId && e.type === 'phase' && e.state === 'now').map((e) => (e as { phase: string }).phase);
@@ -254,10 +281,9 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
   it('승인 뒤 화면 값이 바뀌면 클릭하지 않고 not_committed(pre_dispatch_mismatch)', async () => {
     const runId = start(cpC, 700_000);
     const req = await gateFor(runId);
-    fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
     try {
-      await new Promise((r) => setTimeout(r, 600));
       assert.deepEqual(runs.answer(approval(req)), { ok: true });
+      fx.knobs.mutate = { field: 'splAmt', value: '7000001' }; // 거부 우선 창(2초) 안에 페이지가 바꾼다
       const end = await endOf(runId);
       assert.deepEqual([end.status, end.code], ['failed', 'pre_dispatch_mismatch']);
       assert.equal(fx.posts(), 1, '제출하지 않았다');
@@ -300,6 +326,53 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.equal(field(req, '$first.bizNo'), 'true', 'committed가 없으니 아직 처음 거래');
     runs.stop(again);
     await endOf(again);
+  });
+
+  it('기준선 조회 중 [중지]: 게이트를 열지 않는다', async () => {
+    fx.knobs.lookupDelayMs = 1500;
+    try {
+      const runId = start(cpC, 110_000);
+      await phaseNow(runId, 'gate');
+      assert.deepEqual(runs.stop(runId), { stopped: true });
+      const end = await endOf(runId);
+      assert.equal(end.status, 'stopped');
+      assert.ok(!gateMsgs.some((m) => m.t === 'gate.request' && m.req.runId === runId), '게이트 요청이 나가지 않았다');
+    } finally {
+      fx.knobs.lookupDelayMs = 0;
+    }
+  });
+
+  it('승인 직후(거부 우선 창 2초) [중지]가 이긴다, 커밋 구간에 들어간 뒤에는 already_issuing', async () => {
+    const posts = fx.posts();
+    const r1 = start(cpC, 120_000);
+    const q1 = await gateFor(r1);
+    assert.deepEqual(runs.answer(approval(q1)), { ok: true });
+    assert.deepEqual(runs.stop(r1), { stopped: true });
+    assert.equal((await endOf(r1)).status, 'stopped');
+    assert.equal(new GateRepo(db).state(q1.reqId), 'denied');
+    assert.equal(fx.posts(), posts);
+    fx.knobs.reflectDelayMs = 400; // verify 창(600ms·2회) 안에 반영되게
+    try {
+      const r2 = start(cpC, 130_000);
+      assert.deepEqual(runs.answer(approval(await gateFor(r2))), { ok: true });
+      await phaseNow(r2, 'verify');
+      assert.throws(() => runs.stop(r2), /already_issuing/);
+      assert.equal((await endOf(r2)).status, 'success');
+    } finally {
+      fx.knobs.reflectDelayMs = 0;
+    }
+  });
+
+  it('승인 대기가 waitMs를 넘으면 만료(발급 없음), 만료 뒤 근거는 통하지 않는다', async () => {
+    const short = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, gateWaitMs: 400, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
+    short.on('event', (e: RunEvent) => events.push(e));
+    const runId = `run-${++n}`;
+    short.start({ runId, counterpartyId: cpC, supply: 140_000, tax: 14_000, itemName: '경영 컨설팅' });
+    const req = await gateFor(runId);
+    const end = await endOf(runId);
+    assert.deepEqual([end.status, end.code], ['expired', 'gate.expired']);
+    assert.deepEqual(short.answer(approval(req)), { ok: false, code: 'no_open_gate' });
+    assert.equal(new GateRepo(db).state(req.reqId), 'expired');
   });
 
   it('실행은 한 번에 하나, 홈택스 포털은 시작 전에 거부', async () => {

@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 
 // ---- 정규 인코딩 ----
 
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
 type Cbor = string | number | boolean | null | Uint8Array | Cbor[] | { [k: string]: Cbor };
 
 function head(major: number, n: number): Buffer {
@@ -30,6 +32,8 @@ function head(major: number, n: number): Buffer {
  */
 export function cbor(v: Cbor): Buffer {
   if (typeof v === 'string') {
+    // 고립 서로게이트는 UTF-8로 바꿀 때 U+FFFD가 되어 다른 문자열과 같은 해시가 된다. 받지 않는다.
+    if (LONE_SURROGATE.test(v)) throw new Error('cbor_bad_string');
     const s = Buffer.from(v, 'utf8');
     return Buffer.concat([head(3, s.length), s]);
   }
@@ -150,6 +154,28 @@ export function actionHash(card: string, i: CardHashInputs): string {
 /** main이 게이트 요청을 받아 다시 계산한다. 같을 때만 바를 무장한다. */
 export function recomputeActionHash(req: Pick<GateRequest, 'fields' | 'cardHashInputs'>): string {
   return actionHash(cardHash(req.fields), req.cardHashInputs);
+}
+
+/** readback 칸(예약 키가 아닌 것) 수. 엔진은 readback 13칸을 앞에, 예약 키를 뒤에 둔다. */
+export const READBACK_FIELD_COUNT = 13;
+
+/**
+ * main의 자기 일치 확인(ADR-021 "값 대조"): 닫힌 목록 밖 키·중복 키·예약 키 위치, readbackHash가 앞 13칸과 맞는지,
+ * actionHash가 fields·cardHashInputs와 맞는지. 문제가 없으면 null. 엔진 버그를 잡는 장치이지 침해 방어가 아니다.
+ */
+export function gateSelfCheck(req: Pick<GateRequest, 'fields' | 'cardHashInputs' | 'actionHash'>): 'field_key' | 'duplicate' | 'readback_hash' | 'action_hash' | null {
+  const keys = req.fields.map((f) => f.fieldKey);
+  if (!keys.every(isFieldKey) || req.fields.some((f) => typeof f.value !== 'string')) return 'field_key';
+  if (new Set(keys).size !== keys.length) return 'duplicate';
+  const rb = req.fields.slice(0, READBACK_FIELD_COUNT);
+  if (rb.length !== READBACK_FIELD_COUNT || rb.some((f) => f.fieldKey.startsWith('$')) || req.fields.slice(READBACK_FIELD_COUNT).some((f) => !f.fieldKey.startsWith('$'))) return 'field_key';
+  try {
+    if (readbackHash(Object.fromEntries(rb.map((f) => [f.fieldKey, f.value]))) !== req.cardHashInputs.readbackHash) return 'readback_hash';
+    if (recomputeActionHash(req) !== req.actionHash) return 'action_hash';
+  } catch {
+    return 'action_hash';
+  }
+  return null;
 }
 
 export function isFieldKey(k: unknown): k is FieldKey {
