@@ -120,7 +120,8 @@ describe('정적·구성 경계', () => {
     assert.equal(big[1]!.pieces[0]!.text, '123,456,789,012,345원', '해시한 문자열 그대로 자릿수를 묶는다');
     for (const bad of ['A상사‮', 'Aㅤ상사', 'ᅟ', 'A͏']) assert.deepEqual(summarize(base({ counterpartName: bad })), { reason: 'unsafe', label: '공급받는자' }, JSON.stringify(bad));
     assert.deepEqual(summarize(base({ counterpartBizNo: '214865123' })), { reason: 'unsafe', label: '공급받는자' }, '사업자번호는 10자리');
-    assert.deepEqual(summarize(base({ counterpartEmail: '' })), { reason: 'missing', label: '받는 이메일' });
+    assert.equal((summarize(base({ counterpartEmail: '' })) as SummaryLine[])[2]!.pieces.map((p) => p.text).join(''), '없음 · 메일을 보내지 않아요', '받는 이메일이 없으면 메일을 보내지 않는다고 보인다');
+    assert.deepEqual(summarize(base({ counterpartEmail: 'a‮@x.example' })), { reason: 'unsafe', label: '받는 이메일' });
     assert.deepEqual(summarize(base({}, [{ fieldKey: 'counterpartName', value: 'B상사' }])), { reason: 'duplicate' });
     assert.equal(overflowLine(lines, 600), null);
     assert.equal(overflowLine(lines, 420), '공급받는자');
@@ -140,6 +141,10 @@ describe('정적·구성 경계', () => {
     assert.equal(actionText(base()), ACTION_TEXT);
     const prior = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
     assert.equal((summarize(prior) as SummaryLine[])[1]!.flag, '직전 시도 발급 안 됨');
+    // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
+    for (const states of ['committed,not_committed', 'in_doubt,not_committed', 'dispatched,not_committed']) {
+      assert.equal((summarize(base({ '$dup.businessKey': states, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[1]!.flag, '같은 건 기록 있음', states);
+    }
     assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /같은 건 기록을 확인했고 발급/);
   });
 
@@ -148,8 +153,10 @@ describe('정적·구성 경계', () => {
       supplierBizNo: '1234567891', supplierName: '가나다컴퍼니', counterpartBizNo: '2148651233', counterpartName: 'A상사', counterpartEmail: 'tax@asangsa.example',
       itemName: '경영 컨설팅', itemCount: '1', supplyAmount: '3300000', taxAmount: '330000', totalAmount: '3630000', issueDate: '2026-11-01', remark: '', receiptType: '영수',
     };
-    const req = buildGateRequest({ runId: 'r1', gateStepId: 's20', readback, reserved: [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'committed' }], packageDigest: 'a'.repeat(64), authorizes: ['s21'], intentId: 'i1', waitMs: 1000 });
+    const req = buildGateRequest({ runId: 'r1', gateStepId: 's20', readback, reserved: [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'committed' }], packageDigest: 'a'.repeat(64), authorizes: ['s21'], intentId: 'i1', waitMs: 1000 });
     assert.equal(gateSelfCheck(req), null);
+    const noFirst = buildGateRequest({ runId: 'r1', gateStepId: 's20', readback, reserved: [{ fieldKey: '$first.bizNo', value: 'true' }], packageDigest: 'a'.repeat(64), authorizes: ['s21'], intentId: 'i1', waitMs: 1000 });
+    assert.equal(gateSelfCheck(noFirst), 'field_key', '해시가 맞아도 $first.* 둘 중 하나가 없으면 엔진 버그');
     assert.equal(gateSelfCheck({ ...req, fields: req.fields.filter((f) => !f.fieldKey.startsWith('$dup.')) }), 'action_hash', '중복 경고를 빼면 cardHash가 맞지 않는다');
     assert.equal(gateSelfCheck({ ...req, fields: req.fields.map((f) => (f.fieldKey === 'totalAmount' ? { ...f, value: '363000' } : f)) }), 'readback_hash');
     assert.equal(gateSelfCheck({ ...req, fields: [...req.fields, { fieldKey: '$first.bizNo', value: 'false' }] }), 'duplicate');

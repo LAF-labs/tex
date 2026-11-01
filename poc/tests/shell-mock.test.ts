@@ -137,7 +137,7 @@ describe('셸 목업', () => {
     assert.ok(r.email.first && !r.counterparty.first);
     assert.equal(r.readbackDiffers, true, '이메일이 초안과 달라졌다');
     assert.equal(r.warnings.length, 1);
-    assert.match(r.warnings[0]!, /같은 거래처·금액·날짜·품목의 기록/);
+    assert.match(r.warnings[0]!, /발급했거나 발급 여부를 모르는 기록/);
     assert.deepEqual(gates, [[a.run.id, req]]);
     runs.approved(a.run.id);
     assert.equal(r.approvedPending, true);
@@ -158,12 +158,62 @@ describe('셸 목업', () => {
     assert.equal(runs.get(b.run.id)!.steps[7]!.state, 'done');
   });
 
+  it('엔진이 끝나면: 승인 전이면 발급 없음, 승인을 보냈거나 발급 중이면 발급됐는지 모름(중복 위험)', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('gate', gateFor(a.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }]));
+    runs.approved(a.run.id);
+    host.emit('exit', 'engine', 1);
+    const r = runs.get(a.run.id)!;
+    assert.equal(r.status, 'attention');
+    assert.match(r.stoppedNote!, /발급됐는지 모릅니다/);
+    const { host: h2, runs: runs2 } = shellRuns();
+    const b = interpret('B상사에 10만원 세금계산서', null, 'business', runs2);
+    assert.ok(b.kind === 'draft');
+    await runs2.prepare(b.run.id);
+    h2.emit('gate', gateFor(b.run.id, {}));
+    h2.emit('exit', 'vault', 1);
+    assert.equal(runs2.get(b.run.id)!.status, 'waiting', '금고만 끝나면 엔진이 실행을 끝낸다(여기서 끝내지 않음)');
+    h2.emit('exit', 'engine', 1);
+    assert.match(runs2.get(b.run.id)!.stoppedNote!, /승인 전에 끝났어요/);
+  });
+
+  it('시작하는 동안 [중지]: run.begin 뒤 run.start를 보내지 않는다. run.start 중이면 끝난 뒤 run.stop', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    const p = runs.prepare(a.run.id);
+    await runs.stop(a.run.id);
+    await p;
+    assert.equal(runs.get(a.run.id)!.status, 'stopped');
+    assert.ok(!host.calls.some(([m]) => m === 'run.start'));
+    const b = interpret('B상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(b.kind === 'draft');
+    let releaseStart!: () => void;
+    const started = new Promise<void>((r) => (releaseStart = r));
+    const rpc = host.rpc.bind(host);
+    host.rpc = async (m: string, params: Record<string, unknown> = {}) => {
+      if (m === 'run.start') await started;
+      return rpc(m, params);
+    };
+    const q = runs.prepare(b.run.id);
+    await new Promise((r) => setImmediate(r));
+    await runs.stop(b.run.id);
+    releaseStart();
+    await q;
+    const calls = host.calls.map(([m]) => m);
+    assert.deepEqual(calls.slice(calls.lastIndexOf('run.start')), ['run.start', 'run.stop']);
+  });
+
   it('끝 코드: 직전 시도 발급 안 됨 경고, in_doubt는 확인 필요, main이 닫은 게이트는 main 이유로', async () => {
     const { host, runs } = shellRuns();
     const a = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
     assert.ok(a.kind === 'draft');
     await runs.prepare(a.run.id);
     host.emit('gate', gateFor(a.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'not_committed' }, { fieldKey: '$dup.priorNotCommitted', value: 'true' }]));
+    assert.deepEqual(runs.get(a.run.id)!.warnings.length, 1);
     assert.match(runs.get(a.run.id)!.warnings[0]!, /직전 시도는 '발급 안 됨'/);
     await runs.abortGate(a.run.id, 'answer.rejected');
     assert.ok(host.calls.some(([m]) => m === 'run.stop'));
@@ -178,6 +228,23 @@ describe('셸 목업', () => {
     assert.equal(r.status, 'attention');
     assert.match(r.stoppedNote!, /중복 발급될 수 있어요/);
     assert.equal(r.steps[6]!.state, 'attention', '확인하던 단계를 표시한다');
+    // in_doubt는 코드가 무엇이든 중복 위험을 알린다(main이 닫은 이유로 덮지 않음).
+    const c = interpret('C테크에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(c.kind === 'draft');
+    await runs.prepare(c.run.id);
+    host.emit('gate', gateFor(c.run.id, {}));
+    await runs.abortGate(c.run.id, 'answer.rejected');
+    host.emit('run', { runId: c.run.id, type: 'end', status: 'in_doubt', code: 'engine.error' });
+    assert.match(runs.get(c.run.id)!.stoppedNote!, /중복 발급될 수 있어요/);
+    // 같은 건이 발급된 뒤 다시 발급 안 됨이 있었으면 두 경고를 모두 둔다(발급된 건이 먼저).
+    const d = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(d.kind === 'draft');
+    await runs.prepare(d.run.id);
+    host.emit('gate', gateFor(d.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }, { fieldKey: '$dup.businessKey', value: 'committed,not_committed' }, { fieldKey: '$dup.priorNotCommitted', value: 'true' }]));
+    const w = runs.get(d.run.id)!.warnings;
+    assert.equal(w.length, 2);
+    assert.match(w[0]!, /발급했거나 발급 여부를 모르는/);
+    assert.match(w[1]!, /직전 시도는 '발급 안 됨'/);
     await assert.rejects(runs.stop('run-none'), /no_run/);
   });
 

@@ -169,8 +169,10 @@ export class Ledger {
     const committedEmail = q.recipientEmailHmac
       ? this.db.prepare(`SELECT 1 FROM irreversible_log WHERE recipient_email_hmac = ? AND state = 'committed' LIMIT 1`).get(q.recipientEmailHmac)
       : 1;
-    const states = (this.db.prepare('SELECT state FROM irreversible_log WHERE business_key = ? ORDER BY armed_at').all(q.businessKey) as Row[]).map((r) => r.state as LedgerState);
-    return { firstBizNo: !committedBiz, firstEmail: !committedEmail, businessKeyStates: states, priorNotCommitted: states.includes('not_committed') };
+    const states = (this.db.prepare('SELECT state FROM irreversible_log WHERE business_key = ? ORDER BY armed_at, rowid').all(q.businessKey) as Row[]).map((r) => r.state as LedgerState);
+    // "직전 시도 발급 안 됨"은 가장 최근 시도가 not_committed일 때만이다. 그 앞에 발급된(또는 모르는) 건이 있으면
+    // 그 경고가 먼저다(바·카드가 businessKeyStates로 판단한다).
+    return { firstBizNo: !committedBiz, firstEmail: !committedEmail, businessKeyStates: states, priorNotCommitted: states.at(-1) === 'not_committed' };
   }
 
   /**

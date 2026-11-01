@@ -47,8 +47,20 @@ export function refusalText(r: ArmRefusal): string {
   return 'label' in r ? REFUSAL_TEXT[r.reason](r.label) : REFUSAL_TEXT[r.reason]();
 }
 
-/** 중복 경고 표시(D02 §7, 디자인 시스템 ApprovalBar). 직전 시도 발급 안 됨이 같은 건 기록보다 앞선다. */
+/** 같은 업무 키의 원장 상태 중 발급됐거나 발급됐을 수 있는 것. 이것이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다. */
+export const ISSUED_OR_UNKNOWN = ['committed', 'in_doubt', 'armed', 'dispatched', 'observed_manual'];
+
+/** $dup.businessKey 값(원장 상태 목록)에 발급됐거나 모르는 건이 있는가. */
+export function dupMayBeIssued(f: Map<string, string>): boolean {
+  return (f.get('$dup.businessKey') ?? '').split(',').some((s) => ISSUED_OR_UNKNOWN.includes(s));
+}
+
+/**
+ * 중복 경고 표시(D02 §7, 디자인 시스템 ApprovalBar). 칸이 하나라 가장 위험한 것을 고른다:
+ * 같은 건이 발급됐거나 모름 → 직전 시도 발급 안 됨 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
+ */
 function dupFlag(f: Map<string, string>): string | undefined {
+  if (dupMayBeIssued(f)) return '같은 건 기록 있음';
   if (f.get('$dup.priorNotCommitted') === 'true') return '직전 시도 발급 안 됨';
   if (f.get('$dup.businessKey')) return '같은 건 기록 있음';
   if (f.get('$dup.otherDevice')) return '다른 PC 기록 확인 불가';
@@ -70,23 +82,25 @@ export function summarize(req: Pick<GateRequest, 'fields'>): SummaryLine[] | Arm
     ['counterpartBizNo', '공급받는자'],
     ['totalAmount', '합계'],
     ['taxAmount', '합계'],
-    ['counterpartEmail', '받는 이메일'],
   ] as const;
   for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
   for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
   if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
   if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!) || !/^(0|[1-9]\d{0,14})$/.test(f.get('taxAmount')!)) return { reason: 'unsafe', label: '합계' };
-  const email = f.get('counterpartEmail')!;
+  const head: SummaryLine[] = [
+    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
+    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }, { text: ` · 세액 ${won(f.get('taxAmount')!)}` }], flag: dupFlag(f) },
+  ];
+  // 받는 이메일이 비면 홈택스가 메일을 보내지 않는다(H-01 s15 ifAbsent: clear). 빈 값을 감추지 않고 "없음"으로 보인다.
+  const email = f.get('counterpartEmail') ?? '';
+  if (!email) return [...head, { label: '받는 이메일', pieces: [{ text: '없음 · 메일을 보내지 않아요' }] }];
+  if (UNSAFE_CHARS.test(email)) return { reason: 'unsafe', label: '받는 이메일' };
   const at = email.lastIndexOf('@');
   if (at <= 0) return { reason: 'unsafe', label: '받는 이메일' };
   // 국제화 도메인은 punycode로 보인다.
   const domain = domainToASCII(email.slice(at + 1));
   if (!domain) return { reason: 'unsafe', label: '받는 이메일' };
-  return [
-    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
-    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }, { text: ` · 세액 ${won(f.get('taxAmount')!)}` }], flag: dupFlag(f) },
-    { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined },
-  ];
+  return [...head, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
 }
 
 // ---- 배치·폭 어림 ----

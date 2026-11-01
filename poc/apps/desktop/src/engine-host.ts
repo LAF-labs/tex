@@ -28,7 +28,7 @@ export interface EngineHostOptions {
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
 
-/** 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code). */
+/** 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code). 끝난 뒤의 호출은 바로 실패한다. */
 export class EngineHost extends EventEmitter {
   readonly ready: Promise<void>;
   private readonly opts: EngineHostOptions;
@@ -39,6 +39,9 @@ export class EngineHost extends EventEmitter {
   private readonly pending = new Map<number, Pending>();
   private readonly answers = new Map<string, (r: { ok: boolean; code?: string }) => void>();
   private nextId = 1;
+  /** 엔진·금고가 끝났으면 그 이유. 이후 호출은 기다리지 않고 바로 실패한다. */
+  private dead: string | null = null;
+  private failReady: ((e: Error) => void) | null = null;
 
   constructor(opts: EngineHostOptions) {
     super();
@@ -63,6 +66,7 @@ export class EngineHost extends EventEmitter {
       opts.vault.attachPort('control', wrapPort(ctl.port1, 'electron'));
     }
     this.ready = new Promise((resolve, reject) => {
+      this.failReady = reject;
       this.engine.on('message', (m: { t?: string; code?: string; name?: string; data?: unknown }) => {
         if (m?.t === 'ready') resolve();
         else if (m?.t === 'fatal') reject(new Error(m.code));
@@ -79,6 +83,9 @@ export class EngineHost extends EventEmitter {
 
   private exited(who: 'engine' | 'vault', code: number): void {
     this.opts.log.event(`main.${who}_exit`, { code });
+    this.dead ??= `${who}_exit`;
+    // ready 전에 끝났으면 기다리는 쪽이 영영 멈추지 않게 실패로 끝낸다(이미 정해졌으면 아무 일도 없다).
+    this.failReady?.(new Error(`${who}_exit`));
     for (const p of this.pending.values()) p.reject(new Error(`${who}_exit`));
     this.pending.clear();
     for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit` });
@@ -106,6 +113,7 @@ export class EngineHost extends EventEmitter {
   }
 
   private call(target: 'engine' | 'control', method: string, params: Record<string, unknown>): Promise<unknown> {
+    if (this.dead) return Promise.reject(new Error(this.dead));
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
@@ -128,6 +136,7 @@ export class EngineHost extends EventEmitter {
 
   /** 승인 바가 발급한 근거를 게이트 포트로 보낸다. 엔진의 판정(gate.answer.result)을 돌려준다. */
   answerGate(approval: LocalApproval): Promise<{ ok: boolean; code?: string }> {
+    if (this.dead) return Promise.resolve({ ok: false, code: this.dead });
     return new Promise((resolve) => {
       // 같은 게이트로 두 번 보내면 앞의 기다림은 풀어 준다(엔진은 두 번째를 거부한다).
       this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded' });
@@ -144,9 +153,13 @@ export class EngineHost extends EventEmitter {
     return ch.port2;
   }
 
+  /** 엔진(과 금고)을 끝내고 엔진이 실제로 끝날 때까지(최대 3초) 기다린다. 그 뒤에야 앱 폴더를 지워도 DB·WAL이 열려 있지 않다. */
   async shutdown(): Promise<void> {
+    const gone = this.dead ? Promise.resolve() : new Promise<void>((r) => this.engine.once('exit', () => r()));
+    this.dead ??= 'shutdown';
     this.engine.kill();
     this.vaultProc?.kill();
+    await Promise.race([gone, new Promise((r) => setTimeout(r, 3000))]);
     if (this.opts.vault !== 'process') await this.opts.vault.shutdown().catch(() => {});
   }
 }

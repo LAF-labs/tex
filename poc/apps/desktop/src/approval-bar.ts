@@ -63,7 +63,7 @@ export function demoGateRequest(): GateRequest {
       supplierBizNo: '1234567891', supplierName: '시험 사업자', counterpartBizNo: '1234567891', counterpartName: '시험 거래처(발급 없음)', counterpartEmail: 'test@example.com',
       itemName: '시험', itemCount: '1', supplyAmount: '0', taxAmount: '0', totalAmount: '0', issueDate: '2026-01-01', remark: '', receiptType: '영수',
     },
-    reserved: [],
+    reserved: [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }],
     packageDigest: '0'.repeat(64),
     authorizes: [],
     intentId: 'demo',
@@ -151,7 +151,8 @@ export class ApprovalBar extends EventEmitter {
     // 키보드 승인은 없다(Enter·Space·조합키 모두). 바로 간 키보드 포커스는 대화 화면으로 돌려준다.
     wc.on('before-input-event', (e, i) => {
       e.preventDefault();
-      if (this.req && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
+      // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
+      if (this.req && this.shown && !this.refusal && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
     });
     wc.on('focus', () => {
       if (!win.isDestroyed()) win.webContents.focus();

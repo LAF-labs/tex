@@ -203,6 +203,8 @@ export function gateSelfCheck(req: Pick<GateRequest, 'fields' | 'cardHashInputs'
   const keys = req.fields.map((f) => f.fieldKey);
   if (!keys.every(isFieldKey) || req.fields.some((f) => typeof f.value !== 'string')) return 'field_key';
   if (new Set(keys).size !== keys.length) return 'duplicate';
+  // 처음 거래·처음 보내는 주소는 엔진이 늘 넣는다. 빠지면 바가 표시 없이 무장하게 되므로 엔진 버그로 본다.
+  if (!keys.includes('$first.bizNo') || !keys.includes('$first.email')) return 'field_key';
   const rb = req.fields.slice(0, READBACK_FIELD_COUNT);
   if (rb.length !== READBACK_FIELD_COUNT || rb.some((f) => f.fieldKey.startsWith('$')) || req.fields.slice(READBACK_FIELD_COUNT).some((f) => !f.fieldKey.startsWith('$'))) return 'field_key';
   try {

@@ -304,7 +304,10 @@ async function flow(): Promise<void> {
   await until('done', () => runStatus(id) === 'done', 20_000);
   const r = S.runs.get(id)!;
   const issued = fx().fixture.issued.at(-1);
-  const doneText = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
+  // main 상태가 done이 된 직후에는 렌더러가 아직 그리지 않았을 수 있다. 승인번호가 보일 때까지 기다린다.
+  const cardText = () => js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
+  await until('result card', async () => !!r.result && (await cardText()).includes(r.result.approvalNo), 3000);
+  const doneText = await cardText();
   check('결과 카드: 가짜 페이지가 발급한 승인번호·메일 전송 확인', !!r.result && r.result.approvalNo === issued?.approvalNo && doneText.includes(r.result.approvalNo) && doneText.includes('메일로 보낸 것도 확인했어요'), { doneText: doneText.slice(0, 160), issued });
   const ins = await inspect(id);
   check('원장: (intent, s21) committed, 저널에 게이트 요청·승인·armed·dispatched', ins.ledger === 'committed' && ['gate.requested', 'gate.approved', 'ledger.armed', 'ledger.dispatched', 'ledger.committed', 'run.ended'].every((t) => ins.journal.includes(t)) && fx().fixture.posts() === 1, ins);
@@ -480,6 +483,15 @@ async function flow(): Promise<void> {
   await click('[data-view=docs]');
   await shot('27-dark-docs');
   nativeTheme.themeSource = 'system';
+  await click('[data-view=chat]');
+
+  // 엔진 프로세스가 승인 대기 중에 끝남: 바가 내려가고 카드는 "승인 전에 끝났어요"(발급 없음), 이후 호출은 기다리지 않고 실패.
+  const idExit = await toWaiting('B상사에 33만원 세금계산서');
+  (S.host as unknown as { engine: { kill(): boolean } }).engine.kill();
+  await until('engine exit', () => runStatus(idExit) === 'attention', 5000);
+  const after = await Promise.race([S.host.rpc('engine.status').then(() => 'ok', (e: Error) => e.message), sleep(1000).then(() => 'hang')]);
+  check('엔진이 승인 대기 중에 끝나면 바가 내려가고 "발급 없음"으로 끝나며, 이후 호출은 바로 실패한다', !S.bar.snapshot().visible && (S.runs.get(idExit)!.stoppedNote ?? '').includes('승인 전에 끝났어요') && after === 'engine_exit' && fx().fixture.posts() === 1, { note: S.runs.get(idExit)!.stoppedNote, after });
+  await shot('28-engine-exit');
 }
 
 app.whenReady().then(async () => {

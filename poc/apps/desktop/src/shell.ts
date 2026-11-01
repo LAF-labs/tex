@@ -12,6 +12,12 @@ app.on('window-all-closed', () => {
   void (shell?.close() ?? Promise.resolve()).finally(() => app.quit());
 });
 void app.whenReady().then(async () => {
-  shell = await startShell({ headful: process.env.SAX_DEMO_HEADLESS !== '1' });
-  await shell.ready;
+  try {
+    shell = await startShell({ headful: process.env.SAX_DEMO_HEADLESS !== '1' });
+    await shell.ready;
+  } catch (e) {
+    console.error('shell start failed:', (e as Error).message);
+    await shell?.close().catch(() => {});
+    app.exit(1);
+  }
 });

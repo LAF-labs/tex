@@ -110,6 +110,16 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
   const fixture = opts.engine ? null : await startFixtureMode({ headful: opts.headful });
+  try {
+    return wireShell(opts, fixture, key, store);
+  } catch (e) {
+    // 창·엔진을 만들다 실패하면 가짜 페이지 서버·main 안 금고·임시 앱 폴더를 남기지 않는다.
+    await fixture?.close().catch(() => {});
+    throw e;
+  }
+}
+
+function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore): Shell {
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
@@ -167,15 +177,20 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (_runId: string, reqId: string, reason: string) => bar.close(reason, reqId));
+  // 엔진이 끝나면 열린 게이트도 끝이다(근거를 받을 곳이 없다). 실행 카드는 ShellRuns가 끝낸다.
+  host.on('exit', (who: string) => {
+    if (who === 'engine') bar.close('engine_exit');
+  });
   // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
   // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
     void bar.open(req).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
+        // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
+        runs.approved(runId);
         const r = await host.answerGate(o.approval);
-        if (r.ok) runs.approved(runId);
-        else {
+        if (!r.ok) {
           log.event('main.gate_answer_rejected', { code: r.code ?? '' });
           await runs.abortGate(runId, 'answer.rejected');
         }
@@ -246,6 +261,7 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
     await win.loadURL(SHELL_URL);
   })();
   const close = async () => {
+    // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
   };

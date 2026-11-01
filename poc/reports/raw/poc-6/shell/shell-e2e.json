@@ -8,9 +8,9 @@
       "name": "사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다",
       "ok": true,
       "detail": [
-        "c530fa05-f89d-4abb-b6a2-b48f6cb71c8f",
-        "14a23a5e-7381-4784-99d8-67d21e829c20",
-        "c0642dc9-1df9-4870-80e9-b3cb96bd853d"
+        "23dbb3d4-b50a-4858-8274-d02e1769db5b",
+        "df35dd52-81e1-4723-8a28-a6ca3232a011",
+        "10d06a38-64de-4eba-aa07-ff4909d12038"
       ]
     },
     {
@@ -132,12 +132,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-7ac38ced",
-        "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+        "runId": "run-2537b787",
+        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
         "mode": "unarmed",
         "msg": null,
         "committed": {
-          "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+          "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
           "mode": "unarmed"
         },
         "bounds": {
@@ -157,8 +157,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-7ac38ced",
-        "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+        "runId": "run-2537b787",
+        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
         "mode": "unarmed",
         "msg": "잠시 뒤 다시 눌러 주세요",
         "committed": null,
@@ -275,12 +275,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-7ac38ced",
-        "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+        "runId": "run-2537b787",
+        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+          "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
           "mode": "armed"
         },
         "bounds": {
@@ -304,8 +304,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-7ac38ced",
-        "reqId": "331d8f83-7e07-4268-b997-5d62fcc69746",
+        "runId": "run-2537b787",
+        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
         "mode": "unarmed",
         "msg": null,
         "committed": null,
@@ -486,12 +486,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-4065edf2",
-        "reqId": "173721b9-6c9f-441e-9160-9172239a2d8a",
+        "runId": "run-450aac45",
+        "reqId": "01efead5-f619-4271-a3c6-d79470e3fc37",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "173721b9-6c9f-441e-9160-9172239a2d8a",
+          "reqId": "01efead5-f619-4271-a3c6-d79470e3fc37",
           "mode": "armed"
         },
         "bounds": {
@@ -549,10 +549,10 @@
       "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
       "ok": true,
       "detail": {
-        "start": "22:51",
+        "start": "23:09",
         "at": [
-          "22:51",
-          "22:51"
+          "23:09",
+          "23:09"
         ]
       }
     },
@@ -654,11 +654,11 @@
             "runId": "e2e-wide",
             "gateStepId": "s20",
             "reqId": "wide-4",
-            "approvalNonce": "3dKZCEZt-LOtvVbGtf2Ifg",
+            "approvalNonce": "uL7v5wqhZdRM7CFayxXp2A",
             "actionHash": "a30e495a4476588c417dc6092dbc3d886674f95e5f3a2c7988394434839074be",
-            "exp": 1793541214511,
+            "exp": 1793542314470,
             "presence": "click",
-            "mac": "HyN83P_H0LK5sp9lwS85RIrjaNPJ03783eec5UXbgqI"
+            "mac": "Jrl-5kYDobVPGgUNyfNPxa7IvDz8B58v642TXKiFeIc"
           }
         },
         "judged": [
@@ -715,6 +715,14 @@
           "height": 820
         }
       }
+    },
+    {
+      "name": "엔진이 승인 대기 중에 끝나면 바가 내려가고 \"발급 없음\"으로 끝나며, 이후 호출은 바로 실패한다",
+      "ok": true,
+      "detail": {
+        "note": "엔진이 멈춰 승인 전에 끝났어요. 홈택스에는 아무것도 발급되지 않았어요. 앱을 다시 시작해 주세요.",
+        "after": "engine_exit"
+      }
     }
   ],
   "observations": {
@@ -742,7 +750,7 @@
     "panelClosedOffset": 0,
     "panelClosedOffsets": {
       "everyMs": 50,
-      "from": 1793541078536,
+      "from": 1793542178720,
       "offsets": [
         0,
         0,

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { GateRequest } from '@sax/engine/gate';
+import { dupMayBeIssued } from './approval-gate.ts';
 import type { EngineHost } from './engine-host.ts';
 import { dayOffset, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type RunView, type StepState, type VatMode } from './shell-mock.ts';
 
@@ -34,19 +35,24 @@ const NOTE: Record<string, string> = {
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
   'bar.load_failed': '승인 바를 띄우지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
+  'post_commit.error': '발급은 확정됐지만 그 뒤 단계에서 오류가 났어요. 다시 실행하지 말고 홈택스 발급목록에서 확인해 주세요.',
+  'engine.exit_before_approval': '엔진이 멈춰 승인 전에 끝났어요. 홈택스에는 아무것도 발급되지 않았어요. 앱을 다시 시작해 주세요.',
+  'engine.exit': '엔진이 발급 도중에 멈춰 발급됐는지 모릅니다. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
 };
+/** in_doubt(발급됐는지 모름)는 코드와 관계없이 중복 위험을 알린다. 코드별 문구는 이 목록만. */
+const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
 
-/** 승인 대기 카드에 붙는 중복 경고(D02 §7 고정 문구). 승인 바에도 같은 값($dup.*)이 표시된다. */
+/** 승인 대기 카드에 붙는 중복 경고(D02 §7 고정 문구). 해당하는 것을 모두 둔다. 바에는 가장 위험한 하나가 표시된다. */
 function dupWarnings(req: GateRequest): string[] {
-  const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
+  const f = new Map<string, string>(req.fields.map((x) => [x.fieldKey, x.value]));
   const out: string[] = [];
+  if (dupMayBeIssued(f)) out.push('같은 거래처·금액·날짜·품목으로 발급했거나 발급 여부를 모르는 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.');
   if (f.get('$dup.priorNotCommitted') === 'true') out.push("직전 시도는 '발급 안 됨'으로 판정되었습니다. 홈택스 발급목록을 직접 확인한 뒤 승인하세요.");
-  else if (f.has('$dup.businessKey')) out.push('같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.');
+  if (!out.length && f.has('$dup.businessKey')) out.push('같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.');
   return out;
 }
 
-/** 셸이 쓰는 엔진 연결 부분(시험은 가짜로 바꿔 끼운다). 게이트 답을 보내는 메서드는 넣지 않는다(shell-app의 승인 바 결과 처리만 쓴다). */
 export type RunHost = Pick<EngineHost, 'on' | 'control' | 'rpc'>;
 
 export interface ShellRunsSource {
@@ -59,6 +65,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
   private readonly runs = new Map<string, RunView>();
   /** main이 게이트를 닫은 이유(엔진 종료 코드 대신 보일 문구). 렌더러로 보내지 않는다. */
   private readonly endCodes = new Map<string, string>();
+  /** run.start 전후로 [중지]가 온 실행. 시작 중에는 엔진에 실행이 없어 run.stop이 아무것도 멈추지 못한다. */
+  private readonly starting = new Set<string>();
+  private readonly stopEarly = new Set<string>();
   private readonly host: RunHost;
   private readonly src: ShellRunsSource;
   /** 앱이 되물은 것(입력 보완). 대화(세션)마다 하나. */
@@ -71,6 +80,21 @@ export class ShellRuns extends EventEmitter implements Drafts {
     host.on('run', (e: EngineEvent) => this.onEngine(e));
     host.on('gate', (req: GateRequest) => this.onGate(req));
     host.on('gate-closed', (e: { runId: string; reqId: string; reason: string }) => this.emit('gate-closed', e.runId, e.reqId, e.reason));
+    host.on('exit', (who: string) => {
+      if (who === 'engine') this.engineGone();
+    });
+  }
+
+  /**
+   * 엔진이 끝났다. 진행 중인 실행을 끝낸다. 승인을 보냈거나 발급 중이었으면 발급됐는지 모른다(in_doubt, 중복 위험 문구).
+   * 원장 행은 다음 기동 때 엔진이 in_doubt로 올린다(D03 §4).
+   */
+  private engineGone(): void {
+    for (const r of this.runs.values()) {
+      if (!['preparing', 'turn', 'waiting', 'issuing'].includes(r.status)) continue;
+      const unsure = r.status === 'issuing' || r.approvedPending === true;
+      this.end(r, unsure ? { status: 'in_doubt', code: 'engine.exit' } : { status: 'failed', code: 'engine.exit_before_approval' });
+    }
   }
 
   get counterparties(): Counterparty[] {
@@ -146,11 +170,21 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.status = 'preparing';
     this.step(r, 'login', 'now');
     this.emit('update', r);
+    this.starting.add(r.id);
     try {
       await this.host.control('run.begin', { runId: r.id, trigger: 'local' });
+      if (this.stopEarly.has(r.id)) {
+        this.end(r, { status: 'stopped', code: 'run.stopped' });
+        return r;
+      }
       await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null });
+      // 시작하는 동안 온 [중지]를 이제 엔진에 전한다(엔진은 다음 정지 확인에서 멈춘다. 게이트 전이다).
+      if (this.stopEarly.has(r.id)) await this.host.rpc('run.stop', { runId: r.id }).catch(() => {});
     } catch (e) {
       this.end(r, { status: 'failed', code: (e as Error).message });
+    } finally {
+      this.starting.delete(r.id);
+      this.stopEarly.delete(r.id);
     }
     return r;
   }
@@ -169,11 +203,18 @@ export class ShellRuns extends EventEmitter implements Drafts {
       if (r.status === 'issuing') throw new Error('already_issuing');
       return r;
     }
+    if (this.starting.has(id)) {
+      this.stopEarly.add(id);
+      return r;
+    }
     await this.host.rpc('run.stop', { runId: id });
     return r;
   }
 
-  /** 승인 바에서 승인했다. 거부 우선 창(2초) 동안은 [중지]가 이긴다. */
+  /**
+   * 승인 바에서 승인했다(근거를 게이트 포트로 보내기 직전에 부른다). 거부 우선 창(2초) 동안은 [중지]가 이긴다.
+   * 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽으로 다룬다(engineGone).
+   */
   approved(runId: string): void {
     const r = this.runs.get(runId);
     if (!r || r.status !== 'waiting') return;
@@ -184,7 +225,10 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   /** 승인 근거를 엔진이 거부했거나 바를 띄우지 못했다. 열린 게이트를 중지로 닫는다(안전한 실패). */
   async abortGate(runId: string, code: string): Promise<void> {
-    if (!this.runs.has(runId)) return;
+    const r = this.runs.get(runId);
+    if (!r) return;
+    // 엔진이 근거를 거부했으면 토큰이 없다(발급 없음).
+    r.approvedPending = false;
     this.endCodes.set(runId, code);
     await this.host.rpc('run.stop', { runId }).catch(() => {});
   }
@@ -218,7 +262,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
     r.turn = null;
     r.approvedPending = false;
-    const code = this.endCodes.get(r.id) ?? e.code;
+    // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
+    const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : 'verify.unknown') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
       const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };

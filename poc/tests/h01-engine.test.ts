@@ -136,6 +136,28 @@ describe('원장(D03 §4, ADR-021)', () => {
     const rows = db.prepare('SELECT prev_hash, hash FROM run_events WHERE run_id = ? ORDER BY seq').all('r1') as Array<{ prev_hash: string; hash: string }>;
     assert.equal(rows[1]!.prev_hash, rows[0]!.hash, '저널 해시 체인');
   });
+
+  it('"직전 시도 발급 안 됨"은 같은 업무 키의 가장 최근 시도로만 정한다(앞에 발급된 건이 있어도 숨기지 않게)', () => {
+    new RunRepo(db).create({ id: 'r3', playbookId: 'p', playbookVersion: '1', packageDigest: 'd', profileId: 'x', trigger: 'local', inputsHash: 'i' });
+    const g = new GateRepo(db);
+    const l = new Ledger(db);
+    const arm = (n: number) => {
+      g.open(`qd${n}`, 'r3');
+      g.decide(`qd${n}`, 'approved', 'local');
+      l.consumeAndArm(`qd${n}`, { intentId: `ID${n}`, stepId: 's21', runId: 'r3', businessKey: 'bk-mixed', playbookId: 'p', inputsHash: 'i', packageDigest: 'd', actionHash: 'a', deviceId: 'dv', cpBizNoHmac: 'h3', recipientEmailHmac: null });
+    };
+    const q = { cpBizNoHmac: 'h3', recipientEmailHmac: null, businessKey: 'bk-mixed' };
+    arm(1);
+    l.resolve('ID1', 's21', 'not_committed', 'pre_dispatch_mismatch', null);
+    assert.equal(l.history(q).priorNotCommitted, true);
+    arm(2);
+    l.resolve('ID2', 's21', 'committed', null, 'APP-2');
+    assert.deepEqual(l.history(q).businessKeyStates, ['not_committed', 'committed']);
+    assert.equal(l.history(q).priorNotCommitted, false, '발급 안 됨 뒤에 발급된 건이 있으면 직전 시도는 발급됨');
+    arm(3);
+    l.resolve('ID3', 's21', 'not_committed', 'pre_dispatch_mismatch', null);
+    assert.equal(l.history(q).priorNotCommitted, true, '가장 최근이 발급 안 됨');
+  });
 });
 
 describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
