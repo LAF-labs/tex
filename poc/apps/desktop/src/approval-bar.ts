@@ -152,7 +152,7 @@ export class ApprovalBar extends EventEmitter {
     wc.on('before-input-event', (e, i) => {
       e.preventDefault();
       // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
-      if (this.req && this.shown && !this.refusal && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
+      if (this.req && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
     });
     wc.on('focus', () => {
       if (!win.isDestroyed()) win.webContents.focus();

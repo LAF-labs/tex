@@ -52,6 +52,7 @@ export const H01 = {
     // signFlow(간편인증·인증서·보안카드)는 PoC-3에서 실제 순서를 본 뒤 X 안에 넣는다(D02 §4.5).
     { id: 's21', phase: 'sign', type: 'submit', target: 'form.issueButton', verify: 's30' },
     { id: 's30', phase: 'verify', type: 'verify', lookup: 'invoice', baseline: 'pre_gate_snapshot', on: { committed: 's33', not_committed: 's36', unknown: 's37' } },
+    // skipUnless email: 승인한 받는 이메일(readback counterpartEmail)이 있을 때만.
     { id: 's33', phase: 'mail', type: 'verify', lookup: 'mail', baseline: 'none', skipUnless: 'email', on: { committed: 's34', not_committed: 's35', unknown: 's35' } },
     { id: 's34', phase: 'mail', type: 'end', status: 'success' },
     { id: 's35', phase: 'mail', type: 'end', status: 'completed_with_issues', code: 'mail.not_confirmed' },

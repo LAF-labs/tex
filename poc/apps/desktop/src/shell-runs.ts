@@ -224,16 +224,22 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.emit('update', r);
   }
 
+  /**
+   * 엔진이 근거를 받지 않았다(토큰 없음, 발급 없음). "승인했어요" 안내를 바로 거둔다. [중지]·만료가 먼저 게이트를
+   * 닫은 경우(경쟁)도 여기까지만 한다. 끝 이유는 엔진의 것(중지·만료)이 맞다.
+   */
+  answerNotTaken(runId: string, note = '승인이 반영되지 않았어요'): void {
+    const r = this.runs.get(runId);
+    if (!r || r.status !== 'waiting') return;
+    r.approvedPending = false;
+    this.step(r, 'gate', 'now', note);
+    this.emit('update', r);
+  }
+
   /** 승인 근거를 엔진이 거부했거나 바를 띄우지 못했다. 열린 게이트를 중지로 닫는다(안전한 실패). */
   async abortGate(runId: string, code: string): Promise<void> {
-    const r = this.runs.get(runId);
-    if (!r) return;
-    // 엔진이 근거를 거부했으면 토큰이 없다(발급 없음). "승인했어요" 안내를 바로 거둔다.
-    if (r.status === 'waiting') {
-      r.approvedPending = false;
-      this.step(r, 'gate', 'now', '승인을 전하지 못해 멈추고 있어요');
-      this.emit('update', r);
-    }
+    if (!this.runs.has(runId)) return;
+    this.answerNotTaken(runId, '승인을 전하지 못해 멈추고 있어요');
     this.endCodes.set(runId, code);
     await this.host.rpc('run.stop', { runId }).catch(() => {});
   }

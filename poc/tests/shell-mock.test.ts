@@ -219,6 +219,16 @@ describe('셸 목업', () => {
     assert.ok(host.calls.some(([m]) => m === 'run.stop'));
     host.emit('run', { runId: a.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
     assert.match(runs.get(a.run.id)!.stoppedNote!, /승인을 엔진에 전달하지 못해/);
+    // [중지]·만료가 근거보다 먼저 게이트를 닫으면(경쟁) 안내만 거두고 끝 이유는 엔진 것(중지)을 쓴다.
+    const z = interpret('C테크에 20만원 세금계산서', null, 'business', runs);
+    assert.ok(z.kind === 'draft');
+    await runs.prepare(z.run.id);
+    host.emit('gate', gateFor(z.run.id, {}));
+    runs.approved(z.run.id);
+    runs.answerNotTaken(z.run.id);
+    assert.equal(runs.get(z.run.id)!.approvedPending, false);
+    host.emit('run', { runId: z.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
+    assert.equal(runs.get(z.run.id)!.stoppedNote, '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.');
     const b = interpret('B상사에 10만원 세금계산서', null, 'business', runs);
     assert.ok(b.kind === 'draft');
     await runs.prepare(b.run.id);

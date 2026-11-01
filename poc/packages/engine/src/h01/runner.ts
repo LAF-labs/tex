@@ -186,9 +186,12 @@ export class H01Runner {
    */
   private async submit(target: SelectorKey, verify: string): Promise<string> {
     this.hooks.arm();
-    let button: Awaited<ReturnType<Locator['elementHandle']>>;
+    let button: NonNullable<Awaited<ReturnType<Locator['elementHandle']>>>;
     try {
-      button = await (await this.identify(target)).elementHandle();
+      // 핸들을 얻지 못했으면 누르지 않았다(not_committed). armed 뒤라 그냥 빠져나가면 in_doubt가 된다.
+      const h = await (await this.identify(target)).elementHandle();
+      if (!h) throw new Error('no_handle');
+      button = h;
     } catch {
       this.hooks.resolve('not_committed', 'identity_mismatch', null);
       throw fail('step.identity_mismatch');
@@ -252,9 +255,12 @@ export class H01Runner {
     return on.unknown;
   }
 
-  /** 메일발송목록에서 승인번호 행 확인(D02 §8 s33). 이메일 입력이 없으면 건너뛴다(s32b). */
+  /**
+   * 메일발송목록에서 승인번호 행 확인(D02 §8 s33). 승인한 받는 이메일(바에 보인 readback 값)이 없으면 건너뛴다(s32b).
+   * 초안 입력이 아니라 승인한 값으로 정한다(s15 뒤 포털이 칸을 다시 채웠어도 승인한 것과 같은 판단을 하게).
+   */
   private async verifyMail(on: { committed: string; not_committed: string; unknown: string }): Promise<string> {
-    if (!this.inputs.email) return on.committed;
+    if (!this.rb?.counterpartEmail) return on.committed;
     const { lookups, intervalMs } = this.portal.verify;
     for (let i = 0; i < lookups + 3; i++) {
       const rows = await this.lookup(this.portal.mailLookup, { approvalNo: this.vars.approvalNo! }).catch(() => null);

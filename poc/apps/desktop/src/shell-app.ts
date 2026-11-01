@@ -77,6 +77,9 @@ export interface Shell {
   close(): Promise<void>;
 }
 
+/** 엔진 answer() 거부 중 [중지]·만료가 먼저 게이트를 닫아서 생긴 것(근거 문제 아님). */
+const RACED = new Set(['stopped', 'gate_expired', 'no_open_gate', 'not_open']);
+
 const SIGN: Record<string, string> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
 
 function profileView(p: DbProfile): Profile {
@@ -193,7 +196,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
         runs.approved(runId);
         const r = await host.answerGate(o.approval);
-        if (!r.ok) {
+        // [중지]·대기 만료가 먼저 게이트를 닫았으면(경쟁) 엔진이 그 이유로 실행을 끝낸다. 이유를 덮지 않는다.
+        if (!r.ok && RACED.has(r.code ?? '')) runs.answerNotTaken(runId);
+        else if (!r.ok) {
           log.event('main.gate_answer_rejected', { code: r.code ?? '' });
           await runs.abortGate(runId, 'answer.rejected');
         }

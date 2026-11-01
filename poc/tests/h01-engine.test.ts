@@ -406,4 +406,19 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     const ht = new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log, page: () => Promise.reject(new Error('no')), postGate: () => {} });
     assert.throws(() => ht.start({ runId: 'ht-1', counterpartyId: cpA, supply: 1000, tax: 100, itemName: 'x' }), /selector_placeholder/);
   });
+
+  it('메일 verify는 승인한 받는 이메일로 정한다(초안에 이메일이 없어도 포털이 다시 채운 주소를 승인했으면 확인한다)', async () => {
+    fx.knobs.refillEmail = 'late@asangsa.example';
+    try {
+      const runId = start(cpA, 123_000, { email: '' });
+      const req = await gateFor(runId);
+      assert.equal(field(req, 'counterpartEmail'), 'late@asangsa.example', '바에는 포털이 다시 채운 주소가 보인다');
+      assert.deepEqual(runs.answer(approval(req)), { ok: true });
+      const end = await endOf(runId);
+      assert.deepEqual([end.status, end.mailConfirmed], ['success', true]);
+      assert.equal(fx.issued.at(-1)?.counterpartEmail, 'late@asangsa.example');
+    } finally {
+      fx.knobs.refillEmail = null;
+    }
+  });
 });

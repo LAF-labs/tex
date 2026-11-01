@@ -4,7 +4,7 @@
 - 범위: 홈택스와 무관한 부분을 먼저 만들었다. PoC-3이 로그인 순서·셀렉터·`signFlow`를 넘기면 실제 페이지만 붙이면 된다. **실발급(관계사 실거래 소액 2~3건)은 하지 않았다.** 정부24 자동화, 캡차 풀기, 탐지 회피는 하지 않는다.
 - 환경: macOS arm64 개발기, Electron 45.1.0. Windows 11 확인은 아직 하지 않았다(§6).
 - 실행: `cd poc && pnpm demo`(셸 + 가짜 H-01 페이지, 실행 Chrome이 화면에 뜬다. 숨기려면 `SAX_DEMO_HEADLESS=1`), `pnpm demo:e2e`(셸 e2e → `reports/raw/poc-6/shell/`).
-- 결과: 셸 e2e 51/51(`reports/raw/poc-6/shell/shell-e2e.json`), 전체 테스트 210/210(엔진 H-01 20건, 셸 실행·해석 11건, 승인 경계 정적 3건 포함), `pnpm build`·`lint` 통과.
+- 결과: 셸 e2e 51/51(`reports/raw/poc-6/shell/shell-e2e.json`), 전체 테스트 211/211(엔진 H-01 21건, 셸 실행·해석 11건, 승인 경계 정적 3건 포함), `pnpm build`·`lint` 통과.
 - 검수: Opus 2회(1차 엔진 골격 15건, 2차 셸 연결 8건). 모두 반영했다(§8).
 
 ## 1. 합격 기준 대조(D14 §0 PoC-6)
@@ -108,6 +108,15 @@
 | 재시작 정리 없음 | armed/dispatched → in_doubt, 열린 게이트 만료, 실행 중 → interrupted |
 | init 재수신·실행 중 브라우저 명령 | init 한 번, 실행 중 `busy` |
 | CBOR 서로게이트, main 자기 확인 범위 | `cbor_bad_string`, `gateSelfCheck` |
+
+### Bugbot·CodeSolar(PR #13)
+
+| 지적 | 반영 |
+|---|---|
+| (Bugbot 중간) 메일 verify를 초안 이메일로 정함. s15 뒤 포털이 칸을 다시 채우면 바에 보인 주소를 확인하지 않음 | 승인한 readback `counterpartEmail`로 정함. 가짜 페이지 손잡이(비운 칸 다시 채우기)로 시험, 고치기 전 실패 확인 |
+| (Bugbot 중간) armed 뒤 버튼 핸들이 null이면 누르지 않았는데 in_doubt가 됨 | 핸들 없음 = 식별 실패(not_committed) |
+| (Bugbot 낮음) [중지]·만료가 근거보다 먼저 게이트를 닫으면 "승인을 전달하지 못해"가 진짜 이유를 덮음 | 경쟁 거부 코드(stopped·gate_expired·no_open_gate·not_open)는 안내만 거두고 엔진의 끝 이유를 씀 |
+| (CodeSolar 사소) 키보드 승인 가드가 무장을 보지 않음 | `BarGate.key`가 이미 무장을 본다. 마우스 경로와 같게 "무장됨 페이지가 화면에 올라옴"도 요구 |
 
 ### 2차(Opus, 셸 연결)
 

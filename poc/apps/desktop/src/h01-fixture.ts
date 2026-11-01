@@ -28,6 +28,8 @@ export interface H01Knobs {
   failIssue: boolean;
   /** 발급목록 조회 응답 지연(ms). 기준선 조회 중 [중지] 시험용. */
   lookupDelayMs: number;
+  /** 받는 이메일 칸을 비우면 60ms 뒤 이 값으로 다시 채운다(포털이 거래처 등록 메일을 되살리는 경우). 폼을 열 때 정해진다. */
+  refillEmail: string | null;
 }
 
 export interface H01Fixture {
@@ -82,6 +84,10 @@ function form(k: H01Knobs): string {
   const $ = (id) => document.getElementById(id);
   const digits = (s) => s.replace(/\\D/g, '');
   const total = () => { $('totAmt').value = Number(digits($('splAmt').value) || 0) + Number(digits($('taxAmt').value) || 0); };
+  const REFILL = ${JSON.stringify(k.refillEmail).replace(/</g, '\\u003c')};
+  $('dmnrEmail').addEventListener('input', () => {
+    if (REFILL && !$('dmnrEmail').value) setTimeout(() => { $('dmnrEmail').value = REFILL; }, 60);
+  });
   $('splAmt').addEventListener('input', total);
   $('taxAmt').addEventListener('input', total);
   $('btnCpCheck').addEventListener('click', async () => {
@@ -107,7 +113,7 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
   const issued: IssuedInvoice[] = [];
   let posts = 0;
   let seq = 123;
-  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false, lookupDelayMs: 0 };
+  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false, lookupDelayMs: 0, refillEmail: null };
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     let body = '';
