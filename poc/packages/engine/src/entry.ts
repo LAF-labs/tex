@@ -35,10 +35,33 @@ let initialized = false;
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 
-async function runPage(): Promise<Page> {
-  if (!vault) throw new Error('vault_not_connected');
-  if (!run || run.page.isClosed()) run = await connectRunBrowser(vault);
-  return run.page;
+let opening: Promise<Page> | null = null;
+
+/**
+ * 실행 페이지. 붙이기는 한 번에 하나만 한다(동시에 오면 금고 launch가 두 번 간다). 페이지가 닫혔으면
+ * 금고 쪽 Chrome을 내린 뒤 다시 띄운다(금고는 기동 중 두 번째 launch를 거부한다). PR #9의 RunBrowserSlot과 같은 성질.
+ */
+function runPage(): Promise<Page> {
+  if (!vault) return Promise.reject(new Error('vault_not_connected'));
+  if (run && !run.page.isClosed()) return Promise.resolve(run.page);
+  const v = vault;
+  opening ??= (async () => {
+    if (run) {
+      await run.browser.close().catch(() => {});
+      run = null;
+      await v.rpc('browser.shutdown').catch(() => {});
+    }
+    try {
+      run = await connectRunBrowser(v);
+    } catch (e) {
+      await v.rpc('browser.shutdown').catch(() => {});
+      throw e;
+    }
+    return run.page;
+  })().finally(() => {
+    opening = null;
+  });
+  return opening;
 }
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
