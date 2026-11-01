@@ -1,13 +1,20 @@
-// PoC-9 데모 UI 셸의 main. 엔진·금고를 띄우지 않고 목업 실행기(shell-mock)가 엔진 자리를 대신한다.
-// 승인 바는 main 소유 WebContentsView다(ADR-021). 렌더러는 바 자리를 비우기만 하고 바를 그리거나 숨기지 못한다.
+// PoC-9 데모 UI 셸의 main(PoC-6부터 엔진·금고를 띄운다). 승인 바는 main 소유 WebContentsView다(ADR-021).
+// 렌더러는 바 자리를 비우기만 하고 바를 그리거나 숨기지 못한다. 승인 근거는 바 → main → 게이트 포트(엔진)로만 간다.
+// 기본은 fixture 모드(가짜 H-01 페이지, 시험 정책 금고, 임시 앱 폴더). 홈택스 실제 화면은 PoC-3 셀렉터가 들어온 뒤.
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
+import type { EnginePortal } from '@sax/engine/protocol';
+import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 'electron';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
+import { EngineHost } from './engine-host.ts';
+import { startFixtureMode, type FixtureMode } from './fixture-mode.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { g24Candidates, interpret, MockRuns, MockStore, PROFILES, QUICK, seedTimeline, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { g24Candidates, interpret, MockStore, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { ShellRuns } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -45,26 +52,53 @@ function serve(): void {
 }
 
 export interface ShellOptions {
-  /** 목업 실행기 시간 배율(1 = 시연). */
-  speed?: number;
   width?: number;
   height?: number;
   show?: boolean;
   /** e2e: OS 커서 위치를 바꿔 끼운다. */
   cursorPoint?: () => { x: number; y: number };
+  /** 앱 금고(utilityProcess·OS 키체인)와 앱 폴더로 띄운다. 없으면 fixture 모드. */
+  engine?: { root?: string; portal: EnginePortal };
+  /** fixture 모드에서 실행 Chrome을 화면에 띄운다(시연). */
+  headful?: boolean;
 }
 
 export interface Shell {
   win: BrowserWindow;
   bar: ApprovalBar;
-  runs: MockRuns;
+  runs: ShellRuns;
   store: MockStore;
+  host: EngineHost;
+  /** fixture 모드면 가짜 페이지·임시 앱 폴더. */
+  fixture: FixtureMode | null;
   ready: Promise<void>;
   /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
   methods: string[];
+  close(): Promise<void>;
 }
 
-export function startShell(opts: ShellOptions = {}): Shell {
+const SIGN: Record<string, string> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
+
+function profileView(p: DbProfile): Profile {
+  return { kind: p.kind, name: p.displayName, bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? '발급 인증 미설정' };
+}
+
+/** DB 거래처 → 셸 화면 모델. 품목 열이 DB에 없어 fixture 시연 값(itemHints)을 쓴다. */
+function counterpartyView(c: DbCounterparty, items: Record<string, string>): Counterparty {
+  return {
+    id: c.id,
+    name: c.name,
+    bizNo: c.bizNo,
+    rep: c.repName ?? '',
+    email: c.email ?? '',
+    item: items[c.bizNo] ?? '',
+    status: c.verifiedStatus ?? '확인 전',
+    checkedOn: c.verifiedAt?.slice(0, 10) ?? '',
+    lastIssuedOn: c.lastUsedAt?.slice(0, 10) ?? null,
+  };
+}
+
+export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 원격 디버깅 스위치가 있으면 끝낸다(ADR-021, 값싼 차단).
   if (app.commandLine.hasSwitch('remote-debugging-port') || app.commandLine.hasSwitch('remote-debugging-pipe')) {
     app.exit(1);
@@ -75,7 +109,20 @@ export function startShell(opts: ShellOptions = {}): Shell {
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
-  const runs = new MockRuns(store, opts.speed ?? 1);
+  const fixture = opts.engine ? null : await startFixtureMode({ headful: opts.headful });
+  const root = fixture?.root ?? opts.engine?.root;
+  const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
+  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
+  let business: Profile | null = null;
+  let cps: Counterparty[] = [];
+  const refresh = async () => {
+    const ps = (await host.rpc('db.query.profiles.list')) as DbProfile[];
+    const b = ps.find((p) => p.kind === 'business');
+    business = b ? profileView(b) : null;
+    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {}));
+  };
+  const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
+  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
 
   const win = new BrowserWindow({
@@ -84,7 +131,7 @@ export function startShell(opts: ShellOptions = {}): Shell {
     useContentSize: true,
     minHeight: 560,
     show: opts.show ?? true,
-    title: '소버린 AX (PoC 데모)',
+    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX (PoC 데모)',
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -114,15 +161,26 @@ export function startShell(opts: ShellOptions = {}): Shell {
   bar.on('layout', (e: { band: boolean }) => send({ type: 'bar-layout', band: e.band }));
   bar.on('hidden', (reason: string) => send({ type: 'bar', active: false, reason }));
   runs.on('update', (run) => send({ type: 'run', run }));
-  runs.on('doc', (doc) => send({ type: 'doc', doc }));
-  runs.on('gate-closed', (runId: string) => {
-    if (bar.runId === runId) bar.close('stopped');
+  runs.on('doc', (doc) => {
+    store.docs.unshift(doc);
+    send({ type: 'doc', doc });
+    void refresh().catch(() => {});
   });
+  runs.on('gate-closed', (_runId: string, reqId: string, reason: string) => bar.close(reason, reqId));
+  // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
+  // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
-    void bar.open(req).then((o) => {
-      // PoC-6: 근거는 main↔엔진 전용 포트로 넘기고 엔진이 게이트 토큰으로 바꾼다. 목업은 main에서 검증만 한다.
-      if (o.decision === 'approve' && verifyLocalApproval(key, o.approval)) runs.approved(runId);
-      else if (o.decision === 'closed' && o.reason === 'busy') console.error('gate while another gate is open', runId);
+    void bar.open(req).then(async (o) => {
+      if (o.decision === 'approve') {
+        if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
+        const r = await host.answerGate(o.approval);
+        if (r.ok) runs.approved(runId);
+        else {
+          log.event('main.gate_answer_rejected', { code: r.code ?? '' });
+          await runs.abortGate(runId, 'answer.rejected');
+        }
+      } else if (o.reason === 'load_failed') await runs.abortGate(runId, 'bar.load_failed');
+      else if (o.reason === 'busy') log.event('main.gate_while_open');
     });
   });
 
@@ -133,9 +191,9 @@ export function startShell(opts: ShellOptions = {}): Shell {
   const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
     'shell.bootstrap': () => ({
       layout: SHELL,
-      profiles: PROFILES,
+      profiles: profiles(),
       profile,
-      counterparties: store.counterparties,
+      counterparties: cps,
       docs: store.docs,
       timeline: seedTimeline(),
       quick: QUICK,
@@ -159,7 +217,10 @@ export function startShell(opts: ShellOptions = {}): Shell {
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
     'docs.list': () => store.docs,
-    'counterparties.list': () => store.counterparties,
+    'counterparties.list': async () => {
+      await refresh();
+      return cps;
+    },
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
@@ -178,6 +239,15 @@ export function startShell(opts: ShellOptions = {}): Shell {
     return h((req.params ?? {}) as Record<string, unknown>);
   });
 
-  const ready = win.loadURL(SHELL_URL);
-  return { win, bar, runs, store, ready, methods: Object.keys(handlers) };
+  const ready = (async () => {
+    await host.ready;
+    if (fixture) await fixture.seed(host);
+    await refresh();
+    await win.loadURL(SHELL_URL);
+  })();
+  const close = async () => {
+    await host.shutdown().catch(() => {});
+    await fixture?.close().catch(() => {});
+  };
+  return { win, bar, runs, store, host, fixture, ready, methods: Object.keys(handlers), close };
 }

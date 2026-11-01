@@ -1,10 +1,12 @@
-// PoC-9 셸 e2e: 발급 흐름(초안 → 실행 → 승인 대기 + 승인 바 → 결과), 승인 바 판정, 습관 클릭, 정부24 목업, 스크린샷.
-// 입력은 main의 sendInputEvent라 판정 로직만 본다(실제 포인터 좌표·OS 입력은 PoC-6·Windows에서). 앱 폴더·키체인을 쓰지 않는다.
-// 실행: pnpm demo:e2e  (스크린샷·결과: reports/raw/poc-9/)
+// PoC-9·PoC-6 셸 e2e: 발급 흐름(초안 → 엔진 H-01 플레이북 → 게이트 요청 → 승인 바 → 게이트 포트 → 발급 → verify → 결과),
+// 승인 바 판정, 습관 클릭, 중복 경고, 위조 경로, 정부24 목업, 스크린샷. fixture 모드(가짜 H-01 페이지, 임시 앱 폴더, 메모리 키)로 돈다.
+// 바 입력은 main의 sendInputEvent라 판정 로직만 본다(실제 포인터 좌표·OS 입력은 Windows에서). 실행 Chrome은 headless다.
+// 실행: pnpm demo:e2e  (스크린샷·결과: reports/raw/poc-6/shell/)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
-import { gateHash, summarize, type GateRequest, type SummaryLine } from './approval-gate.ts';
+import { buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
+import { summarize, type SummaryLine } from './approval-gate.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
@@ -12,7 +14,7 @@ registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-e2e-${process.pid}`));
 app.on('window-all-closed', () => {});
 
-const OUT = path.resolve(import.meta.dirname, '../../../reports/raw/poc-9');
+const OUT = path.resolve(import.meta.dirname, '../../../reports/raw/poc-6/shell');
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const results: Array<{ name: string; ok: boolean; detail?: unknown }> = [];
 const check = (name: string, ok: boolean, detail?: unknown) => {
@@ -100,21 +102,49 @@ const waitArmed = () => until('bar armed', () => S.bar.snapshot().armed && S.bar
 const cursor = { x: -9999, y: -9999 };
 
 
-async function toWaiting(text: string): Promise<string> {
+/** 엔진이 보낸 게이트 요청(실행별 마지막). 바는 main이 이 fields로 해시를 다시 계산해 무장한다. */
+const gates = new Map<string, GateRequest>();
+let barShown = 0;
+const fx = () => S.fixture!;
+const inspect = (runId: string) => S.host.rpc('run.inspect', { runId }) as Promise<{ ledger: string | null; journal: string[] }>;
+
+async function toDraft(text: string): Promise<string> {
+  const before = await lastRunId();
   await sendText(text);
-  await until('draft', async () => !!(await lastRunId()));
-  const id = (await lastRunId())!;
+  await until('draft', async () => !!(await lastRunId()) && (await lastRunId()) !== before);
+  return (await lastRunId())!;
+}
+
+async function toWaiting(text: string): Promise<string> {
+  const id = await toDraft(text);
   await click(`[data-run="${id}"] [data-act=prepare]`);
-  await until('waiting', () => runStatus(id) === 'waiting');
+  await until('waiting', () => runStatus(id) === 'waiting', 15_000);
   await until('bar visible', () => S.bar.snapshot().visible);
   return id;
+}
+
+/** 바 안에서 움직이고 머문 뒤 클릭(정상 승인). */
+async function approveOnBar(): Promise<void> {
+  await waitArmed();
+  barLeave();
+  barEnterMove();
+  await sleep(200);
+  barClick();
+}
+
+async function stopRun(id: string): Promise<void> {
+  await click(`[data-run="${id}"] [data-act=stop]`);
+  await until('stopped', () => runStatus(id) === 'stopped' && !S.bar.snapshot().visible, 8000);
 }
 
 async function flow(): Promise<void> {
   nativeTheme.themeSource = 'light';
   await S.ready;
+  S.runs.on('gate', (id: string, req: GateRequest) => gates.set(id, req));
+  S.bar.on('shown', () => barShown++);
   await until('renderer ready', async () => (await js('document.body.dataset.ready')) === '1');
   check('셸이 뜨고 승인 바는 숨어 있다', !S.bar.snapshot().visible && !S.bar.view.getVisible());
+  check('사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다', (await js<string>(`document.querySelector('#titlebar').textContent`)).includes('가나다컴퍼니') && S.runs.counterparties.length === 3 && S.runs.counterparties.every((c) => /^[0-9a-f-]{36}$/.test(c.id)), S.runs.counterparties.map((c) => c.id));
   await shot('01-home');
 
   // T-01 부가세 토글
@@ -135,17 +165,20 @@ async function flow(): Promise<void> {
   await click(`[data-run="${id}"] [data-act=vat]`);
   await until('vat separate', () => S.runs.get(id)?.total === 3_630_000);
 
-  // T-04·T-05 실행 → 내 차례
+  // 실행: 엔진이 가짜 H-01 페이지에서 입력·되읽기·기준선 조회를 하는 동안 바는 뜨지 않는다.
   await click(`[data-run="${id}"] [data-act=prepare]`);
-  check('실행 중 바는 뜨지 않는다', (await until('turn', () => runStatus(id) === 'turn')) && !S.bar.snapshot().visible);
-  await shot('04-turn-simple-auth');
-  await until('preparing again', () => runStatus(id) === 'preparing');
-  await sleep(150);
-  await shot('05-running');
+  await until('preparing', () => runStatus(id) === 'preparing');
+  check('실행(준비) 중 바는 뜨지 않는다', runStatus(id) === 'preparing' && !S.bar.snapshot().visible);
+  await shot('04-preparing');
 
   // T-03 승인 대기 + 승인 바
-  await until('waiting', () => runStatus(id) === 'waiting');
+  await until('waiting', () => runStatus(id) === 'waiting', 15_000);
   await until('bar visible', () => S.bar.snapshot().visible);
+  const req = gates.get(id)!;
+  const f = new Map(req?.fields.map((x) => [x.fieldKey, x.value]));
+  check('게이트 요청: 엔진이 되읽은 13칸 + 예약 키, main이 다시 계산한 해시가 맞는다(D03 §3)', !!req && req.v === 2 && gateSelfCheck(req) === null && !S.bar.snapshot().refusal && f.get('supplierBizNo') === '1234567891' && f.get('totalAmount') === '3630000' && f.get('counterpartEmail') === 'tax@asangsa.example', req?.fields);
+  check('원장이 비어 있으면 처음 거래·처음 보내는 주소(원장 HMAC 열, 확정 건만 셈)', f.get('$first.bizNo') === 'true' && f.get('$first.email') === 'true' && !f.has('$dup.businessKey'));
+  check('카드·패널은 엔진이 되읽은 값으로 바뀐다(홈택스 확정)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && (await js<string>(`document.querySelector('[data-run="${id}"]').textContent`)).includes('초안과 같아요'));
   const snap = S.bar.snapshot();
   const [cw, ch] = S.win.getContentSize() as [number, number];
   const exp = barBounds(cw, ch);
@@ -173,7 +206,7 @@ async function flow(): Promise<void> {
   check('바가 떠도 입력창은 제자리에 있다', Math.abs(inputAfter - inputBefore) <= 1, { inputBefore, inputAfter });
   observations.layout = { content: [cw, ch], bar: b, slot, composerGapAt1Line: (await js<number>(`document.querySelector('.sx-input').getBoundingClientRect().top`)) - (b.y + b.height) };
 
-  // 키보드·렌더러 경로로는 승인되지 않는다
+  // 키보드·렌더러·중계 통로로는 승인되지 않는다
   for (const keyCode of ['Enter', 'Space', 'Return']) {
     barWc().sendInputEvent({ type: 'keyDown', keyCode });
     barWc().sendInputEvent({ type: 'keyUp', keyCode });
@@ -182,8 +215,12 @@ async function flow(): Promise<void> {
   S.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
   await sleep(100);
   check('Enter·Space(바·입력창 모두)로는 승인되지 않는다', runStatus(id) === 'waiting' && S.bar.snapshot().visible);
-  const forged = await js<string[]>(`Promise.all(['bar.hide', 'run.approve', 'gate.answer', 'approval.demo'].map((m) => window.sax.call(m, { id: ${JSON.stringify(id)} }).then(() => 'accepted', (e) => String(e.message).includes('unknown_method') ? 'unknown' : e.message)))`);
+  const forged = await js<string[]>(`Promise.all(['bar.hide', 'run.approve', 'gate.answer', 'answerGate', 'approval.demo'].map((m) => window.sax.call(m, { id: ${JSON.stringify(id)} }).then(() => 'accepted', (e) => String(e.message).includes('unknown_method') ? 'unknown' : e.message)))`);
   check('렌더러에는 승인·바 숨김 명령이 없다', forged.every((x) => x === 'unknown') && runStatus(id) === 'waiting' && S.bar.snapshot().visible, forged);
+  // 중계 통로(엔진 parentPort)로 승인 근거를 보내면 엔진이 거부하고 보안 이벤트를 남긴다. 게이트 포트만 받는다.
+  const fake = { v: 2, runId: id, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 60_000, presence: 'click', mac: 'x' };
+  const relay = await Promise.all(['gate.answer', 'answerGate', 'attestNotCommitted'].map((m) => S.host.rpc(m, { approval: fake }).then(() => 'accepted', (e: Error) => e.message)));
+  check('중계 통로로 온 승인·증언은 forbidden_channel(security.gate_answer_from_relay)', relay.every((x) => x === 'forbidden_channel') && runStatus(id) === 'waiting' && (await inspect(id)).journal.includes('security.gate_answer_from_relay'), relay);
   // 렌더러가 부를 수 있는 메서드를 모두 불러도(대기 중인 건의 [중지]만 빼고) 승인되지 않고 바도 그대로다.
   // 상태를 바꾸는 메서드는 거부되는 값으로 부른다(다른 실행 [중지], 없는 정부24 후보). 문서 목록도 그대로인지 본다.
   const clip = await clipboard.readText();
@@ -194,7 +231,7 @@ async function flow(): Promise<void> {
     sweep[m] = await js<string>(`window.sax.call(${JSON.stringify(m)}, ${JSON.stringify(params)}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   }
   clipboard.writeText(clip);
-  check('렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로)', runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id && S.store.docs.length === docsBefore && sweep['g24.save'] === 'bad_candidate', sweep);
+  check('렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로, 발급 POST 없음)', runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id && S.store.docs.length === docsBefore && sweep['g24.save'] === 'bad_candidate' && fx().fixture.posts() === 0, sweep);
   const barJs = await Promise.race([barWc().executeJavaScript('1+1').then((v) => `ran:${v}`, (e: Error) => `blocked:${e.message.slice(0, 40)}`), sleep(500).then(() => 'no-result')]);
   check('바 페이지는 스크립트를 실행하지 않는다(javascript:false)', barJs !== 'ran:2', barJs);
 
@@ -233,38 +270,53 @@ async function flow(): Promise<void> {
   await shot('10-narrow-band');
   S.win.setContentSize(1280, 820);
   await until('restore', () => S.bar.snapshot().bounds.width === SHELL.chatMax);
+  // 렌더러도 창 크기를 따라 대화 열을 다시 잡을 때까지 기다린다(엔진·Chrome이 같이 돌면 늦을 수 있다).
+  const colLeft = () => js<number>(`document.querySelector('.composer-zone .col').getBoundingClientRect().left`);
+  if (!(await until('renderer relayout', async () => Math.abs((await colLeft()) - S.bar.snapshot().bounds.x) <= 1, 3000))) {
+    observations.relayoutDump = await js(`(() => { const r = (s) => { const e = document.querySelector(s); if (!e) return null; const b = e.getBoundingClientRect(); return [Math.round(b.left), Math.round(b.width), e.clientWidth]; };
+      return { visibility: document.visibilityState, body: document.body.className, app: document.querySelector('#app').className, colW: document.documentElement.style.getPropertyValue('--col-w'), grid: getComputedStyle(document.querySelector('#app')).gridTemplateColumns,
+        center: r('#center'), col: r('.composer-zone .col'), thread: r('.sx-thread'), panel: r('#panel'), inner: innerWidth }; })()`);
+  }
   // 패널을 접어도 승인 대기 중에는 패널 폭을 비워 둬 대화 열과 바가 어긋나지 않는다(규칙 없이는 170 DIP 어긋났다).
   await js(`document.querySelector('#panel .panel-x')?.click()`);
-  await sleep(150);
-  const shifted = await js<number>(`document.querySelector('.composer-zone .col').getBoundingClientRect().left`);
+  const closedAt = Date.now();
+  const offsets: number[] = [];
+  for (let i = 0; i < 8; i++) {
+    await sleep(50);
+    offsets.push(Math.round((await colLeft()) - S.bar.snapshot().bounds.x));
+  }
+  const shifted = await colLeft();
   observations.panelClosedOffset = Math.round(shifted - S.bar.snapshot().bounds.x);
-  check('승인 대기 중 패널을 접어도 대화 열과 바가 맞는다', Math.abs(shifted - S.bar.snapshot().bounds.x) <= 1, observations.panelClosedOffset);
+  observations.panelClosedOffsets = { everyMs: 50, from: closedAt, offsets };
+  check('승인 대기 중 패널을 접어도 대화 열과 바가 맞는다(접은 뒤 400ms 동안 매 50ms)', offsets.every((x) => Math.abs(x) <= 1), offsets);
   await waitArmed();
   await shot('11-panel-closed-offset');
   await click(`[data-run="${id}"]`);
   await sleep(100);
 
-  // 정상 승인: 바 안에서 움직이고 150ms 뒤 클릭
-  await waitArmed();
-  barLeave();
-  barEnterMove();
-  await sleep(200);
-  barClick();
-  await until('approved', () => runStatus(id) !== 'waiting', 2000);
-  check('바 안에서 머문 뒤 클릭 = 승인 → 바가 내려가고 자리가 돌아온다', runStatus(id) === 'turn' && !S.bar.snapshot().visible && (await until('slot', async () => (await js<number>(`document.querySelector('.bar-slot').offsetHeight`)) === 0)));
-  await shot('12-signing-turn');
-  await until('done', () => runStatus(id) === 'done');
+  // 정상 승인: 바 안에서 움직이고 150ms 뒤 클릭 → main이 LocalApproval v2를 발급해 게이트 포트로 → 엔진이 토큰으로 바꿈
+  await approveOnBar();
+  await until('approved', () => !!S.runs.get(id)?.approvedPending || runStatus(id) !== 'waiting', 2000);
+  check('바 안에서 머문 뒤 클릭 = 승인 → 바가 내려가고 자리가 돌아온다(거부 우선 창 2초 동안 [중지] 가능)', !S.bar.snapshot().visible && !!S.runs.get(id)?.approvedPending && (await until('slot', async () => (await js<number>(`document.querySelector('.bar-slot').offsetHeight`)) === 0)));
+  await shot('12-approved-deny-window');
+  await until('issuing', () => runStatus(id) === 'issuing', 5000);
+  await shot('13-issuing');
+  await until('done', () => runStatus(id) === 'done', 20_000);
   const r = S.runs.get(id)!;
+  const issued = fx().fixture.issued.at(-1);
   const doneText = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
-  check('결과 카드: 승인번호·메일 전송 확인', doneText.includes(r.result!.approvalNo) && doneText.includes('메일로 보낸 것도 확인했어요'), doneText.slice(0, 160));
-  await shot('13-result');
+  check('결과 카드: 가짜 페이지가 발급한 승인번호·메일 전송 확인', !!r.result && r.result.approvalNo === issued?.approvalNo && doneText.includes(r.result.approvalNo) && doneText.includes('메일로 보낸 것도 확인했어요'), { doneText: doneText.slice(0, 160), issued });
+  const ins = await inspect(id);
+  check('원장: (intent, s21) committed, 저널에 게이트 요청·승인·armed·dispatched', ins.ledger === 'committed' && ['gate.requested', 'gate.approved', 'ledger.armed', 'ledger.dispatched', 'ledger.committed', 'run.ended'].every((t) => ins.journal.includes(t)) && fx().fixture.posts() === 1, ins);
+  check('가짜 페이지에 들어간 값 = 승인 바에 보인 값', issued?.counterpartBizNo === '2148651233' && issued.supplyAmount === '3300000' && issued.taxAmount === '330000' && issued.counterpartEmail === 'tax@asangsa.example', issued);
+  await shot('14-result');
   await click('[data-view=docs]');
   await sleep(100);
   check('문서함에 발급 결과가 들어온다', (await js<string>(`document.querySelector('[data-view=docs] tbody').textContent`)).includes('세금계산서 · A상사'));
   await click(`[data-doc-row="d-${id}"]`);
-  await shot('14-docs');
+  await shot('15-docs');
   await click('[data-view=cps]');
-  await shot('15-counterparties');
+  await shot('16-counterparties');
   await click('[data-view=chat]');
 
   // 입력 보완: 되물은 거래처·금액에 짧게 답해도 이어진다
@@ -280,6 +332,16 @@ async function flow(): Promise<void> {
   check('입력 보완: "세금계산서" → [A상사] → "77만원"이면 초안이 된다', S.runs.get(idQ)?.counterparty.name === 'A상사' && S.runs.get(idQ)?.total === 847_000, S.runs.get(idQ)?.total);
   await click(`[data-run="${idQ}"] [data-act=cancel]`);
 
+  // 같은 건 다시: 업무 중복 키가 원장에 있으면 차단하지 않고 경고. 바 글자가 "같은 건 기록을 확인했고 발급"(D02 §7 명시 확인).
+  const idDup = await toWaiting('A상사에 330만원 세금계산서');
+  const fd = new Map(gates.get(idDup)!.fields.map((x) => [x.fieldKey, x.value]));
+  const dupLines = summarize(gates.get(idDup)!) as SummaryLine[];
+  await waitArmed();
+  check('같은 건 기록: $dup.businessKey가 fields(cardHash)에 들어가고 바 표시·동작 글자가 바뀐다', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '같은 건 기록 있음' && S.bar.snapshot().action === '같은 건 기록을 확인했고 발급', { fields: [...fd], action: S.bar.snapshot().action });
+  check('승인 대기 카드에도 고정 경고가 붙는다', (await js<string>(`document.querySelector('[data-run="${idDup}"]').textContent`)).includes('같은 건을 두 번 발급하는 것이 아닌지'));
+  await shot('17-dup-warning');
+  await stopRun(idDup);
+
   // 중지: 승인 대기에서 [중지] → 바가 내려가고 발급 없음. 그동안 다른 건은 준비할 수 없다(실행은 한 번에 하나).
   const id2 = await toWaiting('B상사에 55만원 세금계산서');
   // 두 번째 게이트: 앞 게이트를 바 안에서 눌러 승인했고 그 뒤 mouseLeave를 보내지 않았다. OS 커서는 바 밖(입력창)이다.
@@ -288,32 +350,48 @@ async function flow(): Promise<void> {
   await sleep(20);
   barClick();
   await sleep(60);
-  check('두 번째 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)', runStatus(id2) === 'waiting' && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
-  await sendText('C테크에 10만원 세금계산서');
-  await until('second draft', async () => (await lastRunId()) !== id2);
-  const idBusy = (await lastRunId())!;
+  check('다음 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)', runStatus(id2) === 'waiting' && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
+  const idBusy = await toDraft('C테크에 10만원 세금계산서');
   await click(`[data-run="${idBusy}"] [data-act=prepare]`);
   await sleep(150);
   check('승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다', runStatus(idBusy) === 'draft' && S.bar.runId === id2 && runStatus(id2) === 'waiting');
   await click(`[data-run="${idBusy}"] [data-act=cancel]`);
-  await click(`[data-run="${id2}"] [data-act=stop]`);
-  await until('stopped', () => runStatus(id2) === 'stopped');
-  check('승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다', !S.bar.snapshot().visible && !S.runs.get(id2)!.result);
+  await stopRun(id2);
+  check('승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
 
   // 처음 거래·처음 보내는 주소(C테크)
   const id3 = await toWaiting('C테크에 120만원 세금계산서 메일로');
-  const lines = summarize(S.runs.gateRequest(S.runs.get(id3)!)) as SummaryLine[];
-  check('처음 거래·처음 보내는 주소 표시는 main 쪽 값에서 나온다', lines[0]?.flag === '처음 거래' && lines[2]?.flag === '처음 보내는 주소');
+  const lines = summarize(gates.get(id3)!) as SummaryLine[];
+  check('처음 거래·처음 보내는 주소 표시는 엔진 원장 판정(fields)에서 나온다', lines[0]?.flag === '처음 거래' && lines[2]?.flag === '처음 보내는 주소');
   await waitArmed();
-  await shot('16-first-trade');
-  await click(`[data-run="${id3}"] [data-act=stop]`);
-  await until('stopped3', () => !S.bar.snapshot().visible);
+  await shot('18-first-trade');
+  await stopRun(id3);
+
+  // 승인한 뒤 화면 값이 바뀌면 발급 버튼을 누르지 않는다(R-G7: 클릭 직전 readback 재계산).
+  const idMut = await toWaiting('B상사에 20만원 세금계산서');
+  fx().fixture.knobs.mutate = { field: 'splAmt', value: '9990000' };
+  await sleep(400);
+  await approveOnBar();
+  await until('mutation attention', () => runStatus(idMut) === 'attention', 15_000);
+  fx().fixture.knobs.mutate = null;
+  check('승인 뒤 화면 값이 바뀌면 누르지 않고 확인 필요(not_committed, 발급 POST 없음)', (S.runs.get(idMut)!.stoppedNote ?? '').includes('승인한 뒤 홈택스 화면 값이 바뀌어') && (await inspect(idMut)).ledger === 'not_committed' && fx().fixture.posts() === 1, { note: S.runs.get(idMut)!.stoppedNote, ins: await inspect(idMut) });
+  await shot('19-mutated-after-gate');
+
+  // 로그인한 사업자가 프로필과 다르면 게이트 전에 멈춘다(s19c supplierBizNo == $profile.bizNo).
+  const shownBefore = barShown;
+  fx().fixture.knobs.supplier = { bizNo: '2208162517', name: '다른사업자' };
+  const idSup = await toDraft('C테크에 30만원 세금계산서');
+  await click(`[data-run="${idSup}"] [data-act=prepare]`);
+  await until('supplier attention', () => runStatus(idSup) === 'attention', 15_000);
+  fx().fixture.knobs.supplier = { bizNo: '1234567891', name: '가나다컴퍼니' };
+  check('공급자 불일치: 바를 띄우지 않고 멈춘다', (S.runs.get(idSup)!.stoppedNote ?? '').includes('로그인한 사업자가 이 프로필과 달라서') && barShown === shownBefore && !gates.has(idSup) && fx().fixture.posts() === 1, S.runs.get(idSup)!.stoppedNote);
+  await shot('20-supplier-mismatch');
 
   // 정부24 목업 2장
   await sendText('주민등록등본 떼 줘');
   await until('g24', async () => (await js<number>(`document.querySelectorAll('[data-g24-panel=guide]').length`)) === 1);
   check('정부24 목업 1: 직접 발급 안내(단계·복사 값)', (await js<string>(`document.querySelector('[data-g24-panel=guide]').textContent`)).includes('출력·저장했어요'));
-  await shot('17-g24-guide');
+  await shot('21-g24-guide');
   await click('[data-act=g24-saved]');
   await until('pick', async () => (await js<number>(`document.querySelectorAll('[data-candidate]').length`)) === 2);
   const g24Times = await js<{ start: string; at: string[] }>(`({ start: document.querySelector('[data-g24-panel=pick] .sx-app-line').textContent.match(/\\d\\d:\\d\\d/)[0], at: [...document.querySelectorAll('[data-candidate] .sx-meta')].map((e) => e.textContent.match(/\\d\\d:\\d\\d/)[0]) })`);
@@ -321,30 +399,45 @@ async function flow(): Promise<void> {
   await click('[data-candidate=f1]');
   await sleep(80);
   check('정부24 목업 2: 새 PDF 후보 → 고른 뒤에만 값 표시', (await js<number>(`document.querySelectorAll('[data-act=g24-save]').length`)) === 1);
-  await shot('18-g24-pick');
+  await shot('22-g24-pick');
   await click('[data-act=g24-save]');
   await sleep(100);
   check('정부24 목업: 문서함에 들어간다(직접 발급)', (await js<string>(`document.querySelector('.sx-thread').textContent`)).includes('주민등록표 등본'));
-  await shot('19-g24-saved');
+  await shot('23-g24-saved');
 
-  // 값이 대화 열 폭에 안 들어가면(긴 국제화 도메인 + 처음 보내는 주소 + 10억대) 띠로 넓혀 무장한다.
-  const base = {
-    runId: 'e2e-wide', gateStepId: 'issue', reqId: 'wide-1', docType: 'H-01' as const,
-    fields: [
-      { fieldKey: 'counterpartName', value: '긴이름주식회사' }, { fieldKey: 'counterpartBizNo', value: '1298134566' },
-      { fieldKey: 'counterpartEmail', value: 'tax@회사이름이긴곳.한국' }, { fieldKey: 'totalAmount', value: '1100000000' },
-      { fieldKey: 'taxAmount', value: '100000000' }, { fieldKey: '$first.email', value: 'true' },
-    ],
-  };
-  const gate = (reqId: string): GateRequest => ({ ...base, reqId, actionHash: gateHash({ ...base, reqId }) });
+  // 값이 대화 열 폭에 안 들어가면(긴 국제화 도메인 + 처음 보내는 주소 + 10억대) 띠로 넓혀 무장한다. 엔진 없이 바만 시험한다.
+  const gate = (reqId: string): GateRequest =>
+    buildGateRequest({
+      runId: 'e2e-wide',
+      gateStepId: 's20',
+      reqId,
+      readback: {
+        supplierBizNo: '1234567891', supplierName: '가나다컴퍼니', counterpartBizNo: '1298134566', counterpartName: '긴이름주식회사', counterpartEmail: 'tax@회사이름이긴곳.한국',
+        itemName: '시험', itemCount: '1', supplyAmount: '1000000000', taxAmount: '100000000', totalAmount: '1100000000', issueDate: '2026-11-01', remark: '', receiptType: '영수',
+      },
+      reserved: [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'true' }],
+      packageDigest: '0'.repeat(64),
+      authorizes: ['s21'],
+      intentId: 'e2e',
+      waitMs: 60_000,
+    });
   const wide = gate('wide-1');
   const wideDone = S.bar.open(wide);
   await waitArmed();
   check('값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)', S.bar.snapshot().band && !S.bar.snapshot().refusal && S.bar.snapshot().bounds.x === SHELL.rail, S.bar.snapshot());
   check('열린 게이트가 있으면 새 게이트로 바꾸지 않는다', (await S.bar.open(gate('wide-2'))).decision === 'closed' && S.bar.snapshot().reqId === 'wide-1');
-  await shot('20-wide-band');
+  await shot('24-wide-band');
   S.bar.close('e2e');
   await wideDone;
+  // 해시가 맞지 않는 게이트 요청(예약 키를 뺀 fields)은 무장하지 않는다.
+  const tampered = gate('wide-5');
+  tampered.fields = tampered.fields.filter((x) => x.fieldKey !== '$first.email');
+  const tamperedDone = S.bar.open(tampered);
+  await until('tampered bar', () => S.bar.snapshot().visible);
+  await sleep(700);
+  check('fields를 바꾼 게이트 요청은 "값 대조가 맞지 않아" 무장 거부', S.bar.snapshot().refusal === '값 대조가 맞지 않아 승인할 수 없어요' && !S.bar.snapshot().armed, S.bar.snapshot());
+  S.bar.close('e2e');
+  await tamperedDone;
 
   // 멈춘 커서 아래에 바가 뜸: OS 커서가 바 안에 그대로면 움직이지 않고 눌러도 600ms 뒤 승인된다.
   // 반대로 커서가 (바를 덮은 알림 위 등에서) 자리를 옮겼다면 들어오자마자 누른 클릭은 머무름으로 거부한다.
@@ -364,33 +457,43 @@ async function flow(): Promise<void> {
   S.bar.close('e2e');
   await still;
   Object.assign(cursor, inside(0));
+  const judged: unknown[] = [];
+  const onJudged = (e: unknown) => judged.push(e);
+  S.bar.on('judged', onJudged);
   const still2 = S.bar.open(gate('wide-4'));
   await waitArmed();
   barClick();
-  check('멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다', (await Promise.race([still2, sleep(1000).then(() => null)]))?.decision === 'approve');
+  const o = await Promise.race([still2, sleep(1000).then(() => null)]);
+  S.bar.off('judged', onJudged);
+  check('멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)', o?.decision === 'approve' && o.approval.v === 2 && o.approval.reqId === 'wide-4' && o.approval.presence === 'click', { o, judged, snap: S.bar.snapshot(), cursor, cb: S.win.getContentBounds(), cbBefore: cb });
+  if (!o) S.bar.close('e2e');
   Object.assign(cursor, { x: -9999, y: -9999 });
 
   // 다크 테마
   nativeTheme.themeSource = 'dark';
   await sleep(300);
-  await shot('21-dark-thread');
+  await shot('25-dark-thread');
   const id4 = await toWaiting('A상사에 88만원 세금계산서');
   await waitArmed();
-  await shot('22-dark-waiting');
-  await click(`[data-run="${id4}"] [data-act=stop]`);
+  await shot('26-dark-waiting');
+  await stopRun(id4);
   await click('[data-view=docs]');
-  await shot('23-dark-docs');
+  await shot('27-dark-docs');
   nativeTheme.themeSource = 'system';
 }
 
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = startShell({ speed: 0.15, width: 1280, height: 820, cursorPoint: () => cursor });
+    S = await startShell({ width: 1280, height: 820, cursorPoint: () => cursor });
+    // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
+    S.win.webContents.setBackgroundThrottling(false);
+    observations.visibilityAtStart = await S.ready.then(() => js('document.visibilityState'));
     await flow();
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);
   }
+  await S?.close().catch(() => {});
   await fs.writeFile(path.join(OUT, 'shell-e2e.json'), JSON.stringify({ results, observations, platform: process.platform, electron: process.versions.electron }, null, 2));
   console.log(`${results.filter((r) => r.ok).length}/${results.length} ok`, JSON.stringify(observations));
   app.exit(results.every((r) => r.ok) ? 0 : 1);

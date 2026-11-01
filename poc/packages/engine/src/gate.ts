@@ -1,6 +1,6 @@
 // 게이트 요청·승인 근거의 모양과 D03 §3 해시. main(승인 바)과 엔진이 같이 쓴다. node:crypto 말고 의존성이 없다
 // (main이 엔진 코드를 끌어오지 않게 protocol.ts처럼 따로 둔다). 엔진과 main이 같은 함수를 쓰므로 자기 일치 확인이다(ADR-021).
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 // ---- 정규 인코딩 ----
 
@@ -156,8 +156,44 @@ export function recomputeActionHash(req: Pick<GateRequest, 'fields' | 'cardHashI
   return actionHash(cardHash(req.fields), req.cardHashInputs);
 }
 
+/** readback 대상 fieldKey(D02 §8 s19b, 커밋 랜드마크 안 전부). 이 순서가 게이트 fields 앞 13칸의 순서다. */
+export const READBACK_KEYS = [
+  'supplierBizNo', 'supplierName', 'counterpartBizNo', 'counterpartName', 'counterpartEmail',
+  'itemName', 'itemCount', 'supplyAmount', 'taxAmount', 'totalAmount', 'issueDate', 'remark', 'receiptType',
+] as const satisfies readonly FieldKey[];
+export type ReadbackKey = (typeof READBACK_KEYS)[number];
+
 /** readback 칸(예약 키가 아닌 것) 수. 엔진은 readback 13칸을 앞에, 예약 키를 뒤에 둔다. */
-export const READBACK_FIELD_COUNT = 13;
+export const READBACK_FIELD_COUNT = READBACK_KEYS.length;
+
+/** 게이트 요청 하나를 만든다. 엔진 openGate·개발 콘솔 시험 값·e2e가 같은 식을 쓴다. */
+export function buildGateRequest(d: {
+  runId: string;
+  gateStepId: string;
+  readback: Readonly<Record<ReadbackKey, string>>;
+  reserved: GateField[];
+  packageDigest: string;
+  authorizes: string[];
+  intentId: string;
+  waitMs: number;
+  reqId?: string;
+}): GateRequest {
+  const fields: GateField[] = [...READBACK_KEYS.map((k) => ({ fieldKey: k, value: d.readback[k] })), ...d.reserved];
+  const cardHashInputs = { readbackHash: readbackHash(Object.fromEntries(READBACK_KEYS.map((k) => [k, d.readback[k]]))), packageDigest: d.packageDigest, authorizes: d.authorizes, intentId: d.intentId };
+  return {
+    v: 2,
+    runId: d.runId,
+    gateStepId: d.gateStepId,
+    reqId: d.reqId ?? randomUUID(),
+    approvalNonce: randomBytes(16).toString('base64url'),
+    docType: 'H-01',
+    trigger: 'local',
+    fields,
+    cardHashInputs,
+    actionHash: actionHash(cardHash(fields), cardHashInputs),
+    waitMs: d.waitMs,
+  };
+}
 
 /**
  * main의 자기 일치 확인(ADR-021 "값 대조"): 닫힌 목록 밖 키·중복 키·예약 키 위치, readbackHash가 앞 13칸과 맞는지,

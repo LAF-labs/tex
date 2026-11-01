@@ -4,9 +4,9 @@ import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type Db, type Profi
 import type { EventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
-import { actionHash, cardHash, cbor, jcs, LOCAL_APPROVAL_TTL_MS, readbackHash, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval } from './gate.ts';
+import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval } from './gate.ts';
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
-import { portalProblems, READBACK_FIELDS, type PortalConfig } from './h01/portal.ts';
+import { portalProblems, type PortalConfig } from './h01/portal.ts';
 import { H01Runner, RunEnd, type Readback, type RunInputs, type RunStatus } from './h01/runner.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
@@ -230,26 +230,12 @@ export class RunService extends EventEmitter {
       businessKey: businessKey(rb),
     };
     const h = this.ledger.history(history);
-    const fields: GateField[] = READBACK_FIELDS.map((k) => ({ fieldKey: k, value: rb[k] }));
-    fields.push({ fieldKey: '$first.bizNo', value: String(h.firstBizNo) }, { fieldKey: '$first.email', value: String(h.firstEmail) });
-    if (h.businessKeyStates.length) fields.push({ fieldKey: '$dup.businessKey', value: [...new Set(h.businessKeyStates)].sort().join(',') });
-    if (h.priorNotCommitted) fields.push({ fieldKey: '$dup.priorNotCommitted', value: 'true' });
-    const rbHash = readbackHash(rb);
-    const cardHashInputs = { readbackHash: rbHash, packageDigest: a.packageDigest, authorizes: ['s21'], intentId: a.intentId };
+    const reserved: GateField[] = [{ fieldKey: '$first.bizNo', value: String(h.firstBizNo) }, { fieldKey: '$first.email', value: String(h.firstEmail) }];
+    if (h.businessKeyStates.length) reserved.push({ fieldKey: '$dup.businessKey', value: [...new Set(h.businessKeyStates)].sort().join(',') });
+    if (h.priorNotCommitted) reserved.push({ fieldKey: '$dup.priorNotCommitted', value: 'true' });
     const waitMs = this.d.gateWaitMs ?? (H01.steps.find((s) => s.id === GATE_STEP) as { waitMs: number }).waitMs;
-    const req: GateRequest = {
-      v: 2,
-      runId: a.runId,
-      gateStepId: GATE_STEP,
-      reqId: randomUUID(),
-      approvalNonce: randomBytes(16).toString('base64url'),
-      docType: 'H-01',
-      trigger: 'local',
-      fields,
-      cardHashInputs,
-      actionHash: actionHash(cardHash(fields), cardHashInputs),
-      waitMs,
-    };
+    const req = buildGateRequest({ runId: a.runId, gateStepId: GATE_STEP, readback: rb, reserved, packageDigest: a.packageDigest, authorizes: ['s21'], intentId: a.intentId, waitMs });
+    const rbHash = req.cardHashInputs.readbackHash;
     this.gates.open(req.reqId, a.runId);
     this.journal.append(a.runId, 'gate.requested', { reqId: req.reqId, first: h.firstBizNo, dup: h.businessKeyStates.length > 0 });
     const decided = new Promise<void>((resolve, reject) => {

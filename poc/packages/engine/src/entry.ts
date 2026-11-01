@@ -98,8 +98,9 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   }
   if (!ALLOWED.has(method)) throw new Error('unknown_method');
   if (method === 'engine.status') return { db: !!data, browser: !!run, runs: !!runs, activeRun: runs?.activeRunId ?? null };
-  if (method === 'run.start' || method === 'run.stop') {
+  if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
+    if (method === 'run.inspect') return runs.inspect(String(params.runId));
     return method === 'run.start' ? runs.start(params as unknown as StartParams) : runs.stop(String(params.runId));
   }
   // 실행 중에는 개발 콘솔의 브라우저 명령을 받지 않는다(실행 탭을 옮기거나 닫지 못하게).

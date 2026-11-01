@@ -1,13 +1,11 @@
 // H-01 포털 설정: URL·셀렉터 사전(D02 §2.1의 PoC 부분집합)·verify 정책. 두 벌이다.
 // - fixture: 가짜 H-01 페이지(apps/desktop/src/h01-fixture.ts)에 맞춘 실제 값.
 // - hometax: PoC-3(로그인·셀렉터) 전까지 자리표시. 자리표시가 하나라도 있으면 실행을 시작하지 않는다.
+import { READBACK_KEYS, type ReadbackKey } from '../gate.ts';
 
-/** readback 대상 fieldKey(D02 §8 s19b, 커밋 랜드마크 안 전부). 순서가 게이트 fields 순서다. */
-export const READBACK_FIELDS = [
-  'supplierBizNo', 'supplierName', 'counterpartBizNo', 'counterpartName', 'counterpartEmail',
-  'itemName', 'itemCount', 'supplyAmount', 'taxAmount', 'totalAmount', 'issueDate', 'remark', 'receiptType',
-] as const;
-export type ReadbackKey = (typeof READBACK_FIELDS)[number];
+/** readback 대상 fieldKey. 순서는 gate.ts READBACK_KEYS(게이트 fields 순서)다. */
+export const READBACK_FIELDS = READBACK_KEYS;
+export type { ReadbackKey };
 
 export interface SelectorEntry {
   /** 후보(PoC는 하나). id·name·data-*·aria-label 셀렉터만(D02 §2.1). 'TODO(PoC-3)'이면 자리표시. */
