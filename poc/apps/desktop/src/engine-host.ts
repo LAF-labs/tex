@@ -1,0 +1,150 @@
+// main이 금고·엔진을 띄우고 잇는다(D01 §2.1). main↔엔진은 두 통로다(ADR-021).
+// - 중계 통로(엔진 parentPort): main 질의·렌더러 명령·실행 명령, 엔진 → main 실행 이벤트.
+// - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘(엔진 → main), LocalApproval(main → 엔진)만. answerGate() 하나로만 쓴다.
+// 렌더러 IPC 처리기는 answerGate를 부르지 않는다(guards.test.ts가 소스로 확인한다).
+import { createRequire } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
+import type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
+import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
+import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
+
+const require = createRequire(import.meta.url);
+
+/** main 프로세스 안에서 도는 금고(시험 정책·메모리 키, fixture 시연·e2e 전용). 앱 금고 entry는 설정을 받지 않는다. */
+export interface InlineVault {
+  attachPort(kind: 'engine' | 'control' | 'secretInput', port: PortLike): void;
+  shutdown(): Promise<void>;
+}
+
+export interface EngineHostOptions {
+  /** 'process'면 utilityProcess 금고(앱 폴더·OS 키체인). */
+  vault: 'process' | InlineVault;
+  /** 엔진 앱 폴더. 없으면 기본 위치. */
+  root?: string;
+  portal: EnginePortal;
+  log: EventLog;
+}
+
+type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
+
+/** 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code). */
+export class EngineHost extends EventEmitter {
+  readonly ready: Promise<void>;
+  private readonly opts: EngineHostOptions;
+  private readonly engine: UtilityProcess;
+  private readonly vaultProc: UtilityProcess | null;
+  private readonly controlPort: MessagePortMain;
+  private readonly gatePort: MessagePortMain;
+  private readonly pending = new Map<number, Pending>();
+  private readonly answers = new Map<string, (r: { ok: boolean; code?: string }) => void>();
+  private nextId = 1;
+
+  constructor(opts: EngineHostOptions) {
+    super();
+    this.opts = opts;
+    this.engine = utilityProcess.fork(require.resolve('@sax/engine/entry'), [], { serviceName: 'sax-engine', stdio: 'ignore' });
+    const relay = new MessageChannelMain();
+    const ctl = new MessageChannelMain();
+    const gate = new MessageChannelMain();
+    this.controlPort = ctl.port2;
+    this.controlPort.on('message', (e) => this.onReply(e.data));
+    this.controlPort.start();
+    this.gatePort = gate.port2;
+    this.gatePort.on('message', (e) => this.onGate(e.data as GatePortMessage));
+    this.gatePort.start();
+    if (opts.vault === 'process') {
+      this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore' });
+      this.vaultProc.postMessage({ ports: ['engine', 'control'] }, [relay.port1, ctl.port1]);
+      this.vaultProc.on('exit', (c) => this.exited('vault', c));
+    } else {
+      this.vaultProc = null;
+      opts.vault.attachPort('engine', wrapPort(relay.port1, 'electron'));
+      opts.vault.attachPort('control', wrapPort(ctl.port1, 'electron'));
+    }
+    this.ready = new Promise((resolve, reject) => {
+      this.engine.on('message', (m: { t?: string; code?: string; name?: string; data?: unknown }) => {
+        if (m?.t === 'ready') resolve();
+        else if (m?.t === 'fatal') reject(new Error(m.code));
+        else if (m?.t === 'ev' && m.name === 'run') this.emit('run', m.data);
+        else this.onReply(m);
+      });
+    });
+    // 기다리는 쪽이 없을 때 엔진 fatal이 처리되지 않은 거부로 남지 않게 한다(부르는 쪽은 ready를 await한다).
+    this.ready.catch((e: Error) => opts.log.event('main.engine_fatal', { code: e.message.slice(0, 60).replace(/[^A-Za-z0-9_.:-]/g, '_') }));
+    const init: EngineInit = { t: 'init', root: opts.root, portal: opts.portal };
+    this.engine.postMessage(init, [relay.port2, gate.port1]);
+    this.engine.on('exit', (c) => this.exited('engine', c));
+  }
+
+  private exited(who: 'engine' | 'vault', code: number): void {
+    this.opts.log.event(`main.${who}_exit`, { code });
+    for (const p of this.pending.values()) p.reject(new Error(`${who}_exit`));
+    this.pending.clear();
+    for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit` });
+    this.answers.clear();
+    this.emit('exit', who, code);
+  }
+
+  private onReply(msg: { t?: string; id?: number; result?: unknown; error?: string }): void {
+    if (msg?.t !== 'rpc' || typeof msg.id !== 'number') return;
+    const p = this.pending.get(msg.id);
+    this.pending.delete(msg.id);
+    if (!p) return;
+    if (msg.error) p.reject(new Error(msg.error));
+    else p.resolve(msg.result);
+  }
+
+  private onGate(m: GatePortMessage): void {
+    if (m?.t === 'gate.request') this.emit('gate', m.req as GateRequest);
+    else if (m?.t === 'gate.closed') this.emit('gate-closed', { runId: m.runId, reqId: m.reqId, reason: m.reason });
+    else if (m?.t === 'gate.answer.result') {
+      const a = this.answers.get(m.reqId);
+      this.answers.delete(m.reqId);
+      a?.({ ok: m.ok, code: m.code });
+    }
+  }
+
+  private call(target: 'engine' | 'control', method: string, params: Record<string, unknown>): Promise<unknown> {
+    const id = this.nextId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      const msg = { t: 'rpc', id, method, params };
+      if (target === 'engine') this.engine.postMessage(msg);
+      else this.controlPort.postMessage(msg);
+    });
+  }
+
+  /** 중계 통로 RPC(질의·명령). 승인·증언을 여기로 보내면 엔진이 거부한다. */
+  async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    await this.ready;
+    return this.call('engine', method, params);
+  }
+
+  /** 금고 제어 포트(run.begin 등). */
+  control(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
+    return this.call('control', method, params);
+  }
+
+  /** 승인 바가 발급한 근거를 게이트 포트로 보낸다. 엔진의 판정(gate.answer.result)을 돌려준다. */
+  answerGate(approval: LocalApproval): Promise<{ ok: boolean; code?: string }> {
+    return new Promise((resolve) => {
+      this.answers.set(approval.reqId, resolve);
+      this.gatePort.postMessage({ t: 'gate.answer', approval } satisfies GatePortMessage);
+    });
+  }
+
+  /** 비밀 입력 창용 금고 직결 포트. main은 포트를 넘기기만 하고 내용을 읽지 않는다. */
+  secretInputPort(): MessagePortMain {
+    const ch = new MessageChannelMain();
+    if (this.vaultProc) this.vaultProc.postMessage({ ports: ['secretInput'] }, [ch.port1]);
+    else (this.opts.vault as InlineVault).attachPort('secretInput', wrapPort(ch.port1, 'electron'));
+    return ch.port2;
+  }
+
+  async shutdown(): Promise<void> {
+    this.engine.kill();
+    this.vaultProc?.kill();
+    if (this.opts.vault !== 'process') await this.opts.vault.shutdown().catch(() => {});
+  }
+}

@@ -8,3 +8,24 @@ export const COMMANDS = [
   'bizcert.parse', 'bizverify.setKey', 'bizverify.hasKey',
   'document.import', 'document.update',
 ] as const;
+/** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). */
+export const RUN_COMMANDS = ['run.start', 'run.stop'] as const;
+/** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
+export const GATE_ONLY_METHODS = ['gate.answer', 'answerGate', 'attestNotCommitted'] as const;
+
+/** 엔진이 붙을 포털. hometax는 셀렉터가 자리표시인 동안 실행을 거부한다(PoC-3). fixture는 127.0.0.1 가짜 H-01 페이지. */
+export type EnginePortal = { kind: 'hometax' } | { kind: 'fixture'; origin: string };
+
+/** main → 엔진 첫 메시지. ports = [금고 포트, 게이트 포트]. root가 없으면 기본 앱 폴더. */
+export interface EngineInit {
+  t: 'init';
+  root?: string;
+  portal: EnginePortal;
+}
+
+/** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */
+export interface EngineEvent {
+  t: 'ev';
+  name: 'run';
+  data: Record<string, unknown>;
+}

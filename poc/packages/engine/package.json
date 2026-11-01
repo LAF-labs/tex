@@ -17,6 +17,11 @@
       "development": "./src/protocol.ts",
       "default": "./dist/protocol.js"
     },
+    "./gate": {
+      "types": "./src/gate.ts",
+      "development": "./src/gate.ts",
+      "default": "./dist/gate.js"
+    },
     "./bizcert": {
       "types": "./src/bizcert.ts",
       "development": "./src/bizcert.ts",
