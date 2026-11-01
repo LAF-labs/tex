@@ -7,6 +7,7 @@ import path from 'node:path';
 import { after, afterEach, before, beforeEach, describe, it, mock } from 'node:test';
 import { DocumentRepo, formatBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, type DocumentView } from '@sax/engine';
+import { MAIN_ONLY } from '@sax/engine/protocol';
 import { Egress } from '@sax/net';
 
 const BIZ = syntheticBizNo(7);
@@ -43,6 +44,11 @@ describe('보관함(DocumentService)', () => {
     db.close();
   });
   const business = (biz = BIZ) => call('profile.upsert', { kind: 'business', displayName: '주식회사 가나다테크', bizNo: biz });
+  /** 화면처럼 지금 저장값을 본 값(seen)으로 붙여 보낸다 */
+  const upd = async (id: string, patch: Record<string, unknown>) => {
+    const cur = (await call<DocumentView[]>('db.query.documents.list')).find((d) => d.id === id);
+    return call<DocumentView>('document.update', { id, patch, seen: cur && { docType: cur.docType, issuedOn: cur.issuedOn, expiresOn: cur.expiresOn } });
+  };
 
   it('사업자 프로필이 없으면 profile_required, 파일도 남지 않는다', async () => {
     await assert.rejects(call('document.import', { bytes: pdf('a'), extract: extract(taxText()) }), /profile_required/);
@@ -112,23 +118,48 @@ describe('보관함(DocumentService)', () => {
   it('사용자 확인: 그대로 확인하면 추정이 확인함으로, 날짜를 넣으면 그 값, 종류·발급일을 바꾸면 규칙으로 다시', async () => {
     await business();
     const b = await call<DocumentView>('document.import', { bytes: pdf('b'), extract: extract(bizText) });
-    const confirmed = await call<DocumentView>('document.update', { id: b.id, patch: {} });
+    const confirmed = await upd(b.id, {});
     assert.deepEqual([confirmed.expirySource, confirmed.needsUser, confirmed.expiresOn], ['user', false, '2027-01-03']);
-    const set = await call<DocumentView>('document.update', { id: b.id, patch: { expiresOn: '2026-11-05' } });
+    const set = await upd(b.id, { expiresOn: '2026-11-05' });
     assert.deepEqual([set.expiresOn, set.expirySource, set.daysLeft], ['2026-11-05', 'user', -5]);
-    const re = await call<DocumentView>('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' } });
+    const re = await upd(b.id, { issuedOn: '2026-11-02' });
     assert.deepEqual([re.issuedOn, re.expiresOn, re.expirySource, re.needsUser, re.reasons], ['2026-11-02', '2027-01-30', 'rule', true, ['expiry_recomputed']], '다시 계산한 만료일은 보여 준 뒤 한 번 더 확인받는다');
-    const reConfirmed = await call<DocumentView>('document.update', { id: b.id, patch: {} });
+    const reConfirmed = await upd(b.id, {});
     assert.deepEqual([reConfirmed.expiresOn, reConfirmed.expirySource, reConfirmed.needsUser], ['2027-01-30', 'user', false]);
     // 세 칸을 다 보내도(만료일은 저장값 그대로) 발급일만 바뀌었으면 규칙으로 다시 정한다
-    const all = await call<DocumentView>('document.update', { id: b.id, patch: { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-30' } });
+    const all = await upd(b.id, { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-30' });
     assert.deepEqual([all.issuedOn, all.expiresOn, all.expirySource], ['2026-10-06', '2027-01-03', 'rule']);
     const x = await call<DocumentView>('document.import', { bytes: pdf('x'), extract: extract('영수증'), final: true });
-    const typed = await call<DocumentView>('document.update', { id: x.id, patch: { docType: 'national_tax_cert', issuedOn: '2026-11-03' } });
+    const typed = await upd(x.id, { docType: 'national_tax_cert', issuedOn: '2026-11-03' });
     assert.deepEqual([typed.docType, typed.displayName, typed.expiresOn, typed.expirySource], ['national_tax_cert', '납세증명서(국세)', '2026-12-02', 'rule']);
     assert.deepEqual([typed.needsUser, typed.reasons], [true, ['valid_until_not_found', 'expiry_recomputed']], '다시 정한 추정값은 확인 필요를 그대로 둔다(지정납부기한으로 더 짧을 수 있다)');
-    const toOther = await call<DocumentView>('document.update', { id: typed.id, patch: { docType: 'other' } });
+    const toOther = await upd(typed.id, { docType: 'other' });
     assert.deepEqual([toOther.docType, toOther.expiresOn, toOther.needsUser], ['other', '2026-12-02', false], "'그 밖의 서류'로 고르면 만료일은 두고 확인한 것으로");
+  });
+
+  it('본 값(seen)이 없거나 저장값과 다르면 거부: 같은 수정을 다시 보내 재계산 값이 확인되지 않는다', async () => {
+    await business();
+    const b = await call<DocumentView>('document.import', { bytes: pdf('b'), extract: extract(bizText) });
+    await assert.rejects(call('document.update', { id: b.id, patch: {} }), /seen_required/);
+    await assert.rejects(call('document.update', { id: b.id, patch: {}, seen: { docType: b.docType, issuedOn: b.issuedOn } }), /seen_required/, '세 칸을 다 보내야 한다');
+    const seen = { docType: b.docType, issuedOn: b.issuedOn, expiresOn: b.expiresOn };
+    const first = await call<DocumentView>('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' }, seen });
+    assert.deepEqual([first.needsUser, first.reasons], [true, ['expiry_recomputed']]);
+    // 확인을 두 번 눌러 같은 요청이 다시 오면: 이제 저장값과 같아 '확인'이 될 요청이지만, 본 값이 옛 값이라 거부한다
+    await assert.rejects(call('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' }, seen }), /stale/);
+    await assert.rejects(call('document.update', { id: b.id, patch: {}, seen }), /stale/);
+    const still = (await call<DocumentView[]>('db.query.documents.list')).find((d) => d.id === b.id)!;
+    assert.deepEqual([still.needsUser, still.expirySource], [true, 'rule'], '재계산 값은 확인 필요로 남는다');
+  });
+
+  it('유효기간 후보가 여럿인 납세증명서: 규칙보다 이른 문서 후보를 잠정 만료일로, 그대로 확인해도 문서보다 늦지 않다', async () => {
+    await business();
+    const two = taxText().replace('유효기간 2026년 11월 30일', '유효기간 2026년 11월 30일\n유효기간 2026년 11월 20일');
+    assert.notEqual(two, taxText());
+    const d = await call<DocumentView>('document.import', { bytes: pdf('two'), extract: extract(two) });
+    assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser, d.reasons, d.suggested.validUntil], ['2026-11-20', 'document', true, ['valid_until_ambiguous'], '2026-11-20']);
+    const ok = await upd(d.id, {});
+    assert.deepEqual([ok.expiresOn, ok.needsUser], ['2026-11-20', false]);
   });
 
   it('OCR로 읽은 서류의 발급일만 고쳐도, OCR 유효기간을 문서 값으로 되살려 확정하지 않는다', async () => {
@@ -137,7 +168,7 @@ describe('보관함(DocumentService)', () => {
     const d = await call<DocumentView>('document.import', { bytes: pdf('ocr-edit'), extract: extract(ocrText, { ocrConfidence: 80 }) });
     assert.deepEqual([d.expiresOn, d.expirySource, d.needsUser], ['2026-11-18', 'rule', true]);
     assert.ok(d.reasons.includes('valid_until_out_of_range') && d.reasons.includes('read_by_ocr'));
-    const edited = await call<DocumentView>('document.update', { id: d.id, patch: { issuedOn: '2026-11-01' } });
+    const edited = await upd(d.id, { issuedOn: '2026-11-01' });
     assert.deepEqual([edited.expiresOn, edited.expirySource, edited.needsUser], ['2026-11-30', 'document', true]);
     assert.deepEqual(edited.reasons, ['read_by_ocr', 'expiry_recomputed']);
   });
@@ -146,9 +177,9 @@ describe('보관함(DocumentService)', () => {
     await business();
     const other = await call<DocumentView>('document.import', { bytes: pdf('other-biz'), extract: extract(taxText(OTHER)) });
     assert.deepEqual([other.subjectMismatch, other.needsUser, other.reasons], [true, true, ['subject_mismatch']]);
-    const edited = await call<DocumentView>('document.update', { id: other.id, patch: { expiresOn: '2026-11-20' } });
+    const edited = await upd(other.id, { expiresOn: '2026-11-20' });
     assert.deepEqual([edited.needsUser, edited.reasons], [true, ['subject_mismatch']]);
-    const ok = await call<DocumentView>('document.update', { id: other.id, patch: {} });
+    const ok = await upd(other.id, {});
     assert.deepEqual([ok.needsUser, ok.reasons, ok.subjectMismatch], [false, [], true]);
     const unread = await call<DocumentView>('document.import', { bytes: pdf('no-biz'), extract: extract(taxText().replace(formatBizNo(BIZ), '800101-*******')) });
     assert.deepEqual([unread.needsUser, unread.reasons], [true, ['subject_unverified']]);
@@ -158,20 +189,20 @@ describe('보관함(DocumentService)', () => {
     await business();
     const d = await call<DocumentView>('document.import', { bytes: pdf('no-issued'), extract: extract(bizText.replace('2026년 10월 06일', '')), final: true });
     assert.equal(d.issuedOn, null);
-    const confirmed = await call<DocumentView>('document.update', { id: d.id, patch: {} });
+    const confirmed = await upd(d.id, {});
     assert.deepEqual([confirmed.needsUser, confirmed.reasons], [true, ['issued_on_missing']]);
-    const cleared = await call<DocumentView>('document.update', { id: d.id, patch: { issuedOn: '2026-10-06' } });
-    const noExpiry = await call<DocumentView>('document.update', { id: cleared.id, patch: { expiresOn: null } });
+    const cleared = await upd(d.id, { issuedOn: '2026-10-06' });
+    const noExpiry = await upd(cleared.id, { expiresOn: null });
     assert.deepEqual([noExpiry.expiresOn, noExpiry.needsUser], [null, false], '사업자등록증명 만료일은 사용자가 지울 수 있다(법정 유효기간 없음)');
   });
 
   it('납세증명서 만료일을 비우면 확인 필요로 남고, 법정 상한(발급일+30일)을 넘으면 거부한다', async () => {
     await business();
     const d = await call<DocumentView>('document.import', { bytes: pdf('t'), extract: extract(taxText()) });
-    const cleared = await call<DocumentView>('document.update', { id: d.id, patch: { expiresOn: null } });
+    const cleared = await upd(d.id, { expiresOn: null });
     assert.deepEqual([cleared.expiresOn, cleared.needsUser, cleared.reasons], [null, true, ['expires_on_missing']]);
-    await assert.rejects(call('document.update', { id: d.id, patch: { expiresOn: '2026-12-02' } }), /expires_after_legal_max/);
-    const ok = await call<DocumentView>('document.update', { id: d.id, patch: { expiresOn: '2026-12-01' } });
+    await assert.rejects(upd(d.id, { expiresOn: '2026-12-02' }), /expires_after_legal_max/);
+    const ok = await upd(d.id, { expiresOn: '2026-12-01' });
     assert.equal(ok.expiresOn, '2026-12-01');
   });
 
@@ -216,12 +247,12 @@ describe('보관함(DocumentService)', () => {
   it('잘못된 수정은 거부한다', async () => {
     await business();
     const d = await call<DocumentView>('document.import', { bytes: pdf('t'), extract: extract(taxText()) });
-    await assert.rejects(call('document.update', { id: d.id, patch: { expiresOn: '2026-02-30' } }), /invalid_expires_on/);
-    await assert.rejects(call('document.update', { id: d.id, patch: { issuedOn: '11/01/2026' } }), /invalid_issued_on/);
-    await assert.rejects(call('document.update', { id: d.id, patch: { docType: 'tax_invoice' } }), /invalid_doc_type/);
-    await assert.rejects(call('document.update', { id: d.id, patch: { expiresOn: '2026-10-01' } }), /expires_before_issued/);
-    await assert.rejects(call('document.update', { id: d.id, patch: { issuedOn: '2026-11-11' } }), /issued_in_future/);
-    await assert.rejects(call('document.update', { id: 'nope', patch: {} }), /not_found/);
+    await assert.rejects(upd(d.id, { expiresOn: '2026-02-30' }), /invalid_expires_on/);
+    await assert.rejects(upd(d.id, { issuedOn: '11/01/2026' }), /invalid_issued_on/);
+    await assert.rejects(upd(d.id, { docType: 'tax_invoice' }), /invalid_doc_type/);
+    await assert.rejects(upd(d.id, { expiresOn: '2026-10-01' }), /expires_before_issued/);
+    await assert.rejects(upd(d.id, { issuedOn: '2026-11-11' }), /issued_in_future/);
+    await assert.rejects(upd('nope', {}), /not_found/);
   });
 
   it('입력 검사: 크기·PDF 머리·추출 모양', async () => {
@@ -290,11 +321,11 @@ describe('보관함(DocumentService)', () => {
   });
 });
 
-describe('main 경계: document.import는 렌더러가 부를 수 없다', () => {
-  it('RENDERER_METHODS에서 뺀다(main이 docparse 결과를 붙여 부른다)', async () => {
+describe('main 경계: document.import·document.file은 렌더러가 부를 수 없다', () => {
+  it('MAIN_ONLY에 두고 RENDERER_METHODS에서 뺀다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
+    assert.deepEqual([...MAIN_ONLY].sort(), ['bizcert.parse', 'document.file', 'document.import']);
     const src = await fsp.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/main.ts'), 'utf8');
     const line = src.split('\n').find((l) => l.includes('const RENDERER_METHODS'))!;
-    assert.match(line, /c !== 'document\.import'/);
-    assert.match(line, /c !== 'bizcert\.parse'/);
+    assert.match(line, /COMMANDS\.filter\(\(c\) => !MAIN_ONLY\.includes\(c\)\)/);
   });
 });

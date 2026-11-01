@@ -32,11 +32,14 @@ try {
   const page = await browser.newPage();
   for (const [c, f] of [[tax, files.tax], [biz, files.biz]] as const) {
     await page.setContent(c.html);
+    await page.evaluate(() => document.fonts.ready);
     await fs.writeFile(f, await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true }));
   }
   // 그림 PDF: 같은 납세증명서를 약 290dpi로 찍어 그림 한 장으로(텍스트 층 없음 → OCR)
   const shotPage = await browser.newPage({ viewport: { width: 794, height: 1123 }, deviceScaleFactor: 3 });
   await shotPage.setContent(tax.html);
+  // 글꼴을 다 불러온 뒤 찍는다(3회 중 1회, 찍은 그림의 OCR이 종류를 못 알아본 적이 있다. 글꼴이 덜 그려진 화면으로 보인다)
+  await shotPage.evaluate(() => document.fonts.ready);
   const png = await shotPage.screenshot();
   await page.setContent(`<!doctype html><style>@page{size:A4;margin:0}body{margin:0}img{width:210mm;height:297mm;display:block}</style><img src="data:image/png;base64,${png.toString('base64')}">`);
   await fs.writeFile(files.image, await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true }));
@@ -49,15 +52,18 @@ const electronPath = (await import('electron')).default as unknown as string;
 const app = await electron.launch({ executablePath: electronPath, args: [path.resolve(import.meta.dirname, '../apps/desktop')], env, timeout: 30_000 });
 const proc = app.process();
 try {
-  const win = await app.firstWindow({ timeout: 30_000 });
+  // 메인 창에는 승인 바(WebContentsView, ADR-021)도 붙어 있어 첫 페이지가 바일 수 있다. 개발 콘솔 페이지를 주소로 고른다.
+  const isApp = (p: { url(): string }) => p.url().startsWith('sax-app://app/app.html');
+  const win = app.windows().find(isApp) ?? (await app.waitForEvent('window', { predicate: isApp, timeout: 30_000 }));
   const call = (m: string, p: Record<string, unknown> = {}) => win.evaluate(([m, p]) => (window as unknown as { sax: { call(m: string, p: unknown): Promise<unknown> } }).sax.call(m, p), [m, p] as const);
   let status: { engine?: { db?: boolean } } = {};
+  let last: unknown = null;
   for (let i = 0; i < 80 && !status.engine?.db; i++) {
-    status = (await call('app.status').catch(() => ({}))) as typeof status;
+    status = (await call('app.status').catch((e: Error) => ((last = e.message), {}))) as typeof status;
     await new Promise((r) => setTimeout(r, 250));
   }
   out.dbReady = !!status.engine?.db;
-  if (!out.dbReady) throw new Error('엔진 DB가 열리지 않음(키체인·앱 폴더 확인)');
+  if (!out.dbReady) throw new Error(`엔진 DB가 열리지 않음(키체인·앱 폴더 확인): ${JSON.stringify(status)} ${String(last ?? '')}`);
   // 파일 고르기 대화상자를 정해진 파일로 바꾼다(main 프로세스 안).
   const pickNext = (file: string) => app.evaluate(({ dialog }, f) => {
     dialog.showOpenDialog = (async () => ({ canceled: false, filePaths: [f] })) as typeof dialog.showOpenDialog;
@@ -94,7 +100,7 @@ try {
   // 화면 확인 경로: 다른 사업자로 확인 필요인 사업자등록증명을 '확인' → 아무것도 바꾸지 않고 저장 → 확인함
   const bizRow = (out.list as Array<Record<string, unknown>>).findIndex((d) => d.docType === 'biz_registration_cert');
   await win.click(`#v-list tr:nth-child(${bizRow + 1}) button`);
-  await win.click('#v-edit button:not([type])');
+  await win.click('#v-edit button[type=submit]');
   await win.waitForFunction((i) => !/확인 필요/.test(document.querySelectorAll('#v-list tr')[i]?.textContent ?? '확인 필요'), bizRow, { timeout: 10_000 });
   const after = ((await call('db.query.documents.list')) as Array<Record<string, unknown>>).find((d) => d.docType === 'biz_registration_cert')!;
   out.bizConfirmed = { needsUser: after.needsUser, expirySource: after.expirySource, subjectMismatch: after.subjectMismatch };

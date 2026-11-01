@@ -26,6 +26,13 @@ export function registerShellSchemes(): void {
   ]);
 }
 
+/** 문서함 오류 중 렌더러에 그대로 보낼 코드. 나머지(fs 오류 등, 경로가 들어 있을 수 있다)는 main 로그에만 남기고 'failed'로 보낸다. */
+const DOC_CODES = new Set([
+  'bad_request', 'busy', 'closed', 'profile_required', 'not_pdf', 'input_size', 'read_failed', 'invalid_pdf', 'timeout', 'memory_limit', 'session_failed', 'renderer_gone',
+  'pick_expired', 'password_too_long', 'schema', 'issued_in_future', 'expires_before_issued', 'expires_after_legal_max', 'invalid_issued_on', 'invalid_expires_on',
+  'not_found', 'invalid_doc_type', 'file_missing', 'open_failed', 'seen_required', 'stale',
+]);
+
 const FILES: Record<string, string> = {
   '/shell.html': 'text/html; charset=utf-8',
   '/shell.css': 'text/css',
@@ -84,7 +91,26 @@ export function startShell(opts: ShellOptions = {}): Shell {
   const store = new MockStore();
   const runs = new MockRuns(store, opts.speed ?? 1);
   const docs = opts.docs ?? demoDocsProvider({ profile: PROFILES.business, importer: importPdf });
+  // 정상 종료(will-quit)와 app.exit()(process exit만 온다) 모두에서 닫는다. close는 두 번 불러도 된다.
   app.once('will-quit', () => docs.close?.());
+  process.once('exit', () => docs.close?.());
+  /** 문서함 처리기: 알려진 코드만 렌더러로, 나머지는 로그와 'failed' */
+  const docsCall =
+    (fn: (p: Record<string, unknown>) => unknown) =>
+    async (p: Record<string, unknown>): Promise<unknown> => {
+      try {
+        return await fn(p);
+      } catch (e) {
+        const code = (e as { code?: unknown }).code ?? (e as Error).message;
+        // 원래 오류를 cause로 붙이지 않는다(ipcMain이 cause까지 출력하고, fs 오류에는 보관함 경로가 들어 있다)
+        // eslint-disable-next-line preserve-caught-error
+        if (typeof code === 'string' && DOC_CODES.has(code)) throw new Error(code);
+        console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name); // fs 오류 메시지에는 경로가 있어 앞 코드만
+        // eslint-disable-next-line preserve-caught-error
+        throw new Error('failed');
+      }
+    };
+  let importing = false;
   /** 문서함 = 보관함 서류 + 목업 실행이 만든 서류(세금계산서·정부24 목업) */
   const listDocs = async () => [...(await docs.list()), ...store.docs];
   let profile: Profile['kind'] = 'business';
@@ -169,26 +195,35 @@ export function startShell(opts: ShellOptions = {}): Shell {
       }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
-    'docs.list': () => listDocs(),
-    // 파일 고르기 대화상자는 사용자가 누른 가져오기 버튼에서만 연다(pick). 열기 암호를 다시 물을 때는 pickId로 부른다.
-    'docs.import': (p) => {
+    'docs.list': docsCall(() => listDocs()),
+    // 파일 고르기 대화상자는 렌더러가 pick을 보낼 때만 연다(가져오기 버튼. 사용자 클릭인지 main이 확인하는 것은 Phase 1).
+    // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
+    'docs.import': docsCall(async (p) => {
       if (p.pick !== true && typeof p.pickId !== 'string') throw new Error('bad_request');
-      return docs.importPdf({ pickId: p.pickId, password: p.password });
-    },
+      if (importing) throw new Error('busy');
+      importing = true;
+      try {
+        return await docs.importPdf({ pickId: p.pickId, password: p.password });
+      } finally {
+        importing = false;
+      }
+    }),
     'docs.importCancel': (p) => {
       cancelPick(p.pickId);
       return {};
     },
-    'docs.update': (p) => {
+    'docs.update': docsCall((p) => {
       const patch = (p.patch ?? {}) as Record<string, unknown>;
-      return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn });
-    },
-    // 보관함 PDF를 사용자 기본 뷰어로 연다(값을 PDF와 맞춰 보게). 경로는 main 안에서만 쓴다.
-    'docs.open': async (p) => {
-      const err = await desktop.openPath(await docs.filePath(String(p.id)));
-      if (err) throw new Error('open_failed');
+      const seen = (p.seen ?? {}) as Record<string, unknown>;
+      return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn }, { docType: seen.docType, issuedOn: seen.issuedOn, expiresOn: seen.expiresOn });
+    }),
+    // 보관함 PDF를 사용자 기본 뷰어로 연다(값을 PDF와 맞춰 보게). 경로는 main 안에서만 쓰고, PDF가 아니면 열지 않는다(실행 파일을 띄우지 않게).
+    'docs.open': docsCall(async (p) => {
+      const file = await docs.filePath(String(p.id));
+      if (path.extname(file).toLowerCase() !== '.pdf') throw new Error('open_failed');
+      if (await desktop.openPath(file)) throw new Error('open_failed');
       return {};
-    },
+    }),
     'counterparties.list': () => store.counterparties,
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),

@@ -2,6 +2,7 @@
 // → 목록·만료 출처·확인 필요 → 문서 패널에서 확인(후보 넣기, 바뀐 칸만 보냄). 열기 암호 흐름, 중복·실패·다른 화면에 있을 때,
 // 렌더러가 대화상자 없이 가져오기를 부르는 경로도 본다. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다.
 // 실행: electron apps/desktop/dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다.
+import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, shell as desktop } from 'electron';
@@ -13,7 +14,10 @@ import { encryptedTestPdf, syntheticCerts } from './synthetic-certs.ts';
 import { importPdf } from './vault-import.ts';
 
 registerShellSchemes();
-app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-docs-e2e-${process.pid}`));
+// 시험용 앱 폴더(데모 공급자 폴더 이름 sax-shell-docs-*와 겹치지 않게). 끝나면 지운다.
+const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-docs-${process.pid}`);
+app.setPath('userData', USER_DATA);
+process.once('exit', () => rmSync(USER_DATA, { recursive: true, force: true, maxRetries: 2 }));
 app.on('window-all-closed', () => {});
 
 const OUT = path.resolve(import.meta.dirname, '../../../reports/raw');
@@ -96,11 +100,13 @@ async function main(): Promise<void> {
   // 데모 공급자를 직접 넘기고, 셸이 보내는 수정 칸을 적는다(바뀐 칸만 보내는지)
   const demo = demoDocsProvider({ profile: PROFILES.business, importer: importPdf });
   const patches: Array<Record<string, unknown>> = [];
+  const seens: unknown[] = [];
   const docs: DocsProvider = {
     ...demo,
-    update: (id, patch) => {
+    update: (id, patch, seen) => {
       patches.push(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
-      return demo.update(id, patch);
+      seens.push(seen);
+      return demo.update(id, patch, seen);
     },
   };
   const opened: string[] = [];
@@ -115,6 +121,9 @@ async function main(): Promise<void> {
 
   const noPick = await js<string>(`window.sax.call('docs.import', {}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('렌더러가 pick 없이 부르면 대화상자를 열지 않고 거부한다', noPick === 'bad_request', noPick);
+  pickNext(null, 400);
+  const twice = await js<string[]>(`Promise.all([1, 2].map(() => window.sax.call('docs.import', { pick: true }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))))`);
+  check('가져오기는 한 번에 하나(겹친 호출은 busy)', twice.includes('ok') && twice.includes('busy'), twice);
 
   pickNext(null);
   await importClick();
@@ -151,23 +160,70 @@ async function main(): Promise<void> {
   check('목록 행에서 확인 필요가 사라지고 확인함 표시', /확인함/.test(await rowText(b!.id)) && !/확인 필요/.test(await rowText(b!.id)), await rowText(b!.id));
 
   const a = await importNew(files.amb);
-  const ruleExpiry = a?.expiresOn;
-  check('유효기간 줄이 둘인 납세증명서: 30일 규칙 추정, 확인 필요, 문서 후보는 가장 이른 날짜', !!a && a.vault!.expirySource === 'rule' && a.vault!.needsUser && a.vault!.reasons.includes('valid_until_ambiguous') && a.vault!.suggested.validUntil === AMB_VALID && !!ruleExpiry && ruleExpiry !== AMB_VALID, a);
+  check('유효기간 줄이 둘인 납세증명서: 규칙보다 이른 문서 후보를 잠정 만료일로(짧은 쪽), 확인 필요', !!a && a.expiresOn === AMB_VALID && a.vault!.expirySource === 'document' && a.vault!.needsUser && a.vault!.reasons.includes('valid_until_ambiguous') && a.vault!.suggested.validUntil === AMB_VALID, a);
   check('목록 행: 확인 필요 서류의 만료일은 추정', !!a && /추정/.test(await rowText(a.id)), a && (await rowText(a.id)));
+  const field = (f: string) => js<string>(`${review(a!.id, `[data-field=${f}]`)}?.value ?? ''`);
+  const setField = (f: string, v: string) => js(`(() => { const i = ${review(a!.id, `[data-field=${f}]`)}; i.value = '${v}'; i.dispatchEvent(new Event('input')); })()`);
+
+  // 두 번 누르기: 발급일을 고쳐 확인을 연달아 누르고, 응답 뒤 새로 그린 확인 버튼도 바로 누른다 → 한 번만 보내고 재계산 값은 확인 필요로 남는다
+  await setField('issuedOn', '2026-10-02');
+  const p0 = patches.length;
+  await js(`(() => { const b = ${review(a!.id, '[data-act=doc-confirm]')}; b.click(); b.click(); })()`);
+  // 첫 클릭이 보낸 것이어야 한다(다른 서류의 직전 저장이 이 서류의 클릭을 막지 않는다)
+  const firstSent = await until('saved once', async () => patches.length > p0 && (await listDocs()).find((d) => d.id === a!.id)?.issuedOn === '2026-10-02', 3000);
+  await js(`${review(a!.id, '[data-act=doc-confirm]')}.click()`);
+  await sleep(300);
+  const a1 = (await listDocs()).find((d) => d.id === a!.id);
+  check('확인을 두 번 눌러도 한 번만 보내고, 바로 다음 클릭은 받지 않는다(재계산 값이 확인되지 않음)', firstSent && patches.length === p0 + 1 && JSON.stringify(patches.at(-1)) === JSON.stringify({ issuedOn: '2026-10-02' }) && !!a1 && a1.issuedOn === '2026-10-02' && a1.vault!.needsUser, { firstSent, sent: patches.slice(p0), a1 });
+  check('보낼 때 화면이 보여 준 값(seen)을 붙인다', JSON.stringify(seens.at(-1)) === JSON.stringify({ docType: 'national_tax_cert', issuedOn: a!.issuedOn, expiresOn: AMB_VALID }), seens.at(-1));
+  const stale = await js<string>(`window.sax.call('docs.update', { id: '${a!.id}', patch: {}, seen: ${JSON.stringify({ docType: 'national_tax_cert', issuedOn: a!.issuedOn, expiresOn: AMB_VALID })} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
+  const noSeen = await js<string>(`window.sax.call('docs.update', { id: '${a!.id}', patch: {} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
+  check('옛 화면 값으로 보낸 확인은 stale, 본 값 없이 보내면 seen_required', stale === 'stale' && noSeen === 'seen_required', { stale, noSeen });
+
+  // 후보: 칸 값이 문서 후보와 다르면(칸이 차 있어도) 보여 주고, 후보 넣기로 칸에 넣는다
+  await setField('expiresOn', '2026-10-25');
+  await js(`(() => { const s = ${review(a!.id, '[data-field=docType]')}; s.dispatchEvent(new Event('change')); })()`);
   const hint = await js<string>(`${review(a!.id, '[data-doc-hint]')}?.textContent ?? ''`);
-  const filled = await js<string>(`${review(a!.id, '[data-field=expiresOn]')}?.value ?? ''`);
-  check('만료일 칸이 규칙 날짜로 차 있어도 문서 후보를 보여 준다', filled === ruleExpiry && hint.includes(AMB_VALID), { filled, hint });
-  // 입력 중인 값은 다시 그려도 남는다(종류를 같은 값으로 바꿔 다시 그리게 한다)
-  await js(`(() => { const i = ${review(a!.id, '[data-field=issuedOn]')}; i.value = '2026-10-02'; i.dispatchEvent(new Event('input')); const s = ${review(a!.id, '[data-field=docType]')}; s.dispatchEvent(new Event('change')); })()`);
-  check('다시 그려도 입력 중인 발급일이 남는다', (await js<string>(`${review(a!.id, '[data-field=issuedOn]')}.value`)) === '2026-10-02');
-  await js(`(() => { const i = ${review(a!.id, '[data-field=issuedOn]')}; i.value = '${a!.issuedOn}'; i.dispatchEvent(new Event('input')); })()`);
+  check('만료일 칸이 차 있어도 문서 후보와 다르면 후보를 보여 준다', (await field('expiresOn')) === '2026-10-25' && hint.includes(AMB_VALID), { hint });
+  // 입력 중인 값은 다시 그려도 남는다(요소가 바뀌었는지 표시로 확인)
+  await js(`${review(a!.id, '[data-field=issuedOn]')}.dataset.old = '1'`);
+  await setField('issuedOn', '2026-10-03');
+  await js(`${review(a!.id, '[data-field=docType]')}.dispatchEvent(new Event('change'))`);
+  check('다시 그려도 입력 중인 발급일이 남는다', (await js<boolean>(`!${review(a!.id, '[data-field=issuedOn]')}.dataset.old`)) && (await field('issuedOn')) === '2026-10-03');
+  // 저장값이 있는 날짜 칸을 비운 채(입력하다 만 날짜가 다시 그려져 빈칸이 된 경우 포함) 누르면 보내지 않는다
+  await setField('issuedOn', '');
+  await js(`${review(a!.id, '[data-field=docType]')}.dispatchEvent(new Event('change'))`);
+  await sleep(800); // 저장 직후 확인을 받지 않는 시간이 지난 뒤
+  const p1 = patches.length;
+  await js(`document.querySelector('#toast').hidden = true; ${review(a!.id, '[data-act=doc-confirm]')}.click()`);
+  await sleep(200);
+  check('빈 발급일 칸으로는 확인하지 않는다(기존 값이 확인되지 않음)', patches.length === p1 && /발급일을 넣어/.test(await toastText()), await toastText());
+  await setField('issuedOn', '2026-10-02');
   await js(`${review(a!.id, '[data-act=doc-use-suggested]')}.click()`);
-  check('후보 넣기 → 만료일 칸이 문서 후보로 바뀌고 힌트가 사라진다', (await js<string>(`${review(a!.id, '[data-field=expiresOn]')}.value`)) === AMB_VALID && !(await js<boolean>(`!!${review(a!.id, '[data-doc-hint]')}`)));
+  check('후보 넣기 → 만료일 칸이 문서 후보로 바뀌고 힌트가 사라진다', (await field('expiresOn')) === AMB_VALID && !(await js<boolean>(`!!${review(a!.id, '[data-doc-hint]')}`)));
   await js(`${review(a!.id, '[data-act=doc-confirm]')}.click()`);
   await until('amb confirmed', async () => !(await listDocs()).find((d) => d.id === a!.id)?.vault?.needsUser, 5000);
   const a2 = (await listDocs()).find((d) => d.id === a!.id);
-  check('확인하면 문서 후보 날짜가 확인함으로 저장된다', !!a2 && a2.expiresOn === AMB_VALID && a2.vault!.expirySource === 'user' && !a2.vault!.needsUser, a2);
-  check('바뀐 칸(만료일)만 보낸다', JSON.stringify(patches.at(-1)) === JSON.stringify({ expiresOn: AMB_VALID }), patches.at(-1));
+  check('바꾼 칸 없이 확인하면 문서 후보 날짜가 확인된다(빈 수정)', !!a2 && a2.expiresOn === AMB_VALID && !a2.vault!.needsUser && JSON.stringify(patches.at(-1)) === '{}', { a2, patch: patches.at(-1) });
+
+  // 사업자등록증명 b: 만료일 없음 → 납세증명서로 바꾸면 만료일 칸이 다시 열리고 지우지 않는다. 다른 서류로 옮기면 입력을 버린다.
+  await js(`document.querySelector('[data-doc-row="${b!.id}"]').click()`);
+  const rb = (sel: string) => review(b!.id, sel);
+  await js(`(() => { const c = ${rb('[data-field=noExpiry]')}; c.checked = true; c.dispatchEvent(new Event('change')); })()`);
+  const disabledOn = await js<boolean>(`${rb('[data-field=expiresOn]')}.disabled`);
+  await js(`(() => { const s = ${rb('[data-field=docType]')}; s.value = 'national_tax_cert'; s.dispatchEvent(new Event('change')); })()`);
+  const asTax = await js<{ check: boolean; disabled: boolean }>(`({ check: !!${rb('[data-field=noExpiry]')}, disabled: ${rb('[data-field=expiresOn]')}.disabled })`);
+  await js(`(() => { const s = ${rb('[data-field=docType]')}; s.value = 'biz_registration_cert'; s.dispatchEvent(new Event('change')); })()`);
+  check('만료일 없음 뒤 납세증명서로 바꾸면 만료일 칸이 열리고, 되돌려도 만료일 없음은 꺼져 있다', disabledOn && !asTax.check && !asTax.disabled && !(await js<boolean>(`${rb('[data-field=noExpiry]')}.checked`)), { disabledOn, asTax });
+  await js(`(() => { const i = ${rb('[data-field=expiresOn]')}; i.value = '2026-12-01'; i.dispatchEvent(new Event('input')); })()`);
+  await js(`document.querySelector('[data-doc-row="${t!.id}"]').click()`);
+  await js(`document.querySelector('[data-doc-row="${b!.id}"]').click()`);
+  check('다른 서류로 옮겼다 오면 버린 입력이 되살아나지 않는다', (await js<string>(`${rb('[data-field=expiresOn]')}.value`)) === b2!.expiresOn, await js<string>(`${rb('[data-field=expiresOn]')}.value`));
+  await js(`(() => { const i = ${rb('[data-field=expiresOn]')}; i.value = '2026-12-01'; i.dispatchEvent(new Event('input')); })()`);
+  await js(`${rb('[data-act=doc-confirm]')}.click()`);
+  await until('b expiry set', async () => (await listDocs()).find((d) => d.id === b!.id)?.expiresOn === '2026-12-01', 5000);
+  check('바뀐 칸(만료일)만 보낸다', JSON.stringify(patches.at(-1)) === JSON.stringify({ expiresOn: '2026-12-01' }), patches.at(-1));
+  await js(`document.querySelector('[data-doc-row="${a!.id}"]').click()`);
 
   await js(`${review(a!.id, '[data-act=doc-open]')}.click()`);
   await until('opened', async () => opened.length > 0, 5000);
@@ -190,6 +246,11 @@ async function main(): Promise<void> {
   pickNext(files.locked);
   await importClick();
   check('열기 암호 PDF: 암호 줄이 뜬다', await js<boolean>(`!!document.querySelector('[data-doc-password]')`));
+  pickNext(null);
+  await importClick();
+  check('암호를 묻는 중에 새로 가져오기를 누르면 묻던 파일은 그만둔다', !(await js<boolean>(`!!document.querySelector('[data-doc-password]')`)));
+  pickNext(files.locked);
+  await importClick();
   await js(`(() => { const i = document.querySelector('.doc-pw'); i.value = 'wrong'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); })()`);
   await until('wrong pw', async () => js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '')`), 30_000);
   check('틀린 암호 → 다시 묻고 넣었던 암호는 비운다', await js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '') && document.querySelector('.doc-pw').value === ''`));

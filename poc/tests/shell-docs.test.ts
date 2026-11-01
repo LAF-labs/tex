@@ -1,6 +1,7 @@
 // 셸 문서함 공급자(PoC-8 후속): 엔진 보관함 항목 → 셸 서류, 데모 공급자(DocumentService 그대로), 엔진 공급자(RPC).
 // 화면 흐름(가져오기 버튼·열기 암호·확인)은 Electron e2e(apps/desktop/src/shell-docs-e2e.ts)가 본다.
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
@@ -56,7 +57,7 @@ describe('셸 문서함 공급자', () => {
     p.close?.(); // 두 번 닫아도 된다
   });
 
-  it('데모 공급자: 다른 사업자 서류는 확인 필요, 셸에서 그대로 확인하면 확인함. 실행마다 빈 보관함으로 시작한다', async () => {
+  it('데모 공급자: 다른 사업자 서류는 확인 필요, 바꾸지 않고 확인하면 확인 필요가 풀린다(출처 문서 그대로). 실행마다 빈 보관함으로 시작한다', async () => {
     const first = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(PROFILES.business.bizNo!)), now: () => NOW });
     await first.importPdf({});
     const p = demoDocsProvider({ parent: root, profile: PROFILES.business, importer: fakeImporter(tax(syntheticBizNo(5))), now: () => NOW });
@@ -67,11 +68,36 @@ describe('셸 문서함 공급자', () => {
       const r = await p.importPdf({});
       const d = r?.status === 'imported' ? r.doc! : null;
       assert.deepEqual([d?.vault?.needsUser, d?.vault?.reasons], [true, ['subject_mismatch']]);
-      const ok = await p.update(d!.id, {});
+      const seen = { docType: d!.vault!.docType, issuedOn: d!.issuedOn, expiresOn: d!.expiresOn };
+      await assert.rejects(p.update(d!.id, {}, undefined), /seen_required/);
+      const ok = await p.update(d!.id, {}, seen);
       assert.deepEqual([ok.vault?.needsUser, ok.vault?.subjectMismatch, ok.vault?.expirySource], [false, true, 'document']);
-      await assert.rejects(p.update(d!.id, { expiresOn: '2026-12-31' }), /expires_after_legal_max/);
+      await assert.rejects(p.update(d!.id, { expiresOn: '2026-12-31' }, seen), /expires_after_legal_max/);
     } finally {
       first.close?.();
+      p.close?.();
+    }
+    await assert.rejects(p.list(), /closed/, '닫은 뒤 호출은 거부');
+    await assert.rejects(p.importPdf({}), /closed/);
+  });
+
+  it('데모 공급자: 시작할 때 만든 프로세스가 끝난 지난 데모 폴더만 지운다', async () => {
+    const parent = await fsp.mkdtemp(path.join(root, 'sweep-'));
+    const dead = spawnSync(process.execPath, ['-e', '']).pid!;
+    const mk = async (name: string, owner?: number) => {
+      await fsp.mkdir(path.join(parent, name, 'vault'), { recursive: true });
+      if (owner !== undefined) await fsp.writeFile(path.join(parent, name, 'owner.pid'), String(owner));
+    };
+    await mk('sax-shell-docs-dead', dead);
+    await mk('sax-shell-docs-live', process.ppid);
+    await mk('sax-shell-docs-nomark');
+    await mk('other-dead', dead);
+    const p = demoDocsProvider({ parent, profile: PROFILES.business, importer: fakeImporter(''), now: () => NOW });
+    try {
+      const left = (await fsp.readdir(parent)).filter((n) => n !== path.basename(p.dir)).sort();
+      assert.deepEqual(left, ['other-dead', 'sax-shell-docs-live', 'sax-shell-docs-nomark']);
+      assert.equal(await fsp.readFile(path.join(p.dir, 'owner.pid'), 'utf8'), String(process.pid));
+    } finally {
       p.close?.();
     }
   });
@@ -100,9 +126,10 @@ describe('셸 문서함 공급자', () => {
     const p = engineDocsProvider(engine, async () => null);
     const [d] = await p.list();
     assert.deepEqual([d?.source, d?.kind, d?.vault?.expirySource], ['앱이 발급', '증명서', 'rule']);
-    const u = await p.update('v1', { expiresOn: '2027-01-03' });
+    const seen = { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-03' };
+    const u = await p.update('v1', { expiresOn: '2027-01-03' }, seen);
     assert.equal(u.vault?.expirySource, 'user');
-    assert.deepEqual(calls[1], ['document.update', { id: 'v1', patch: { expiresOn: '2027-01-03' } }]);
+    assert.deepEqual(calls[1], ['document.update', { id: 'v1', patch: { expiresOn: '2027-01-03' }, seen }]);
     assert.equal(await p.importPdf({}), null, '고르기를 취소하면 null');
     const engine2 = async (m: string, q: Record<string, unknown>) => (calls.push([m, q]), { path: '/vault/x.pdf' });
     assert.equal(await engineDocsProvider(engine2, async () => null).filePath('v1'), '/vault/x.pdf');

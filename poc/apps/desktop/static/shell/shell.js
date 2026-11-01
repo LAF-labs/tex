@@ -24,7 +24,9 @@ const state = {
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw } 열기 암호를 묻는 중
   docBusy: false,
-  docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, docType, issuedOn, expiresOn, noExpiry }
+  docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, docType, issuedOn, expiresOn, noExpiry }
+  docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
+  docHold: null, // { id, until } 저장 직후 그 서류의 확인 클릭을 받지 않는 시각(ms)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
 };
 
@@ -48,6 +50,8 @@ const DOC_ERR = {
   issued_in_future: '발급일이 오늘보다 뒤예요', expires_before_issued: '만료일이 발급일보다 앞이에요', expires_after_legal_max: '납세증명서 유효기간은 발급일부터 30일을 넘을 수 없어요',
   invalid_issued_on: '발급일 형식이 아니에요', invalid_expires_on: '만료일 형식이 아니에요', not_found: '보관함에 없는 서류예요',
   invalid_doc_type: '고를 수 없는 종류예요', bad_request: '요청을 처리하지 못했어요', file_missing: '보관함 파일이 없어요(다시 가져와 주세요)', open_failed: 'PDF를 열지 못했어요',
+  stale: '서류가 그사이 바뀌었어요. 지금 값을 다시 보고 확인해 주세요', seen_required: '요청을 처리하지 못했어요', busy: '다른 파일을 읽는 중이에요', renderer_gone: '읽던 창이 멈췄어요. 다시 해 주세요',
+  closed: '보관함이 닫혔어요', failed: '처리하지 못했어요. 다시 해 주세요',
 };
 const docErr = (e) => DOC_ERR[errText(e)] || errText(e);
 const DOC_REASON = {
@@ -65,8 +69,6 @@ const act = {
   open: (id) => openPanel({ kind: 'run', id }),
   openG24: (id) => openPanel({ kind: 'g24', id }),
   closePanel: () => openPanel(null),
-  importDoc: (extra) => importDoc(extra),
-  updateDoc: (id, patch) => updateDoc(id, patch),
   copy: async (text) => {
     await call('clipboard.copy', { text });
     toast('복사했어요');
@@ -376,6 +378,8 @@ function renderToday() {
 // ---- 작업 패널 ----
 
 function openPanel(p) {
+  // 패널을 닫거나 다른 서류로 옮기면 확인 구역의 입력을 버린다(다시 열었을 때 버린 수정이 되살아나 보내지지 않게)
+  if (!(p?.kind === 'doc' && p.id === state.docDraft?.id)) state.docDraft = null;
   state.panel = p;
   $('#app').classList.toggle('panel-closed', !p);
   renderPanel();
@@ -554,9 +558,10 @@ function render() {
 
 // ---- 보관함 가져오기·확인(문서함) ----
 
-/** 열기 암호 줄. 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다. */
+/** 열기 암호 줄. 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다(DOM 속성에는 넣지 않는다). */
 function passwordRow() {
-  const input = h('input', { type: 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', placeholder: 'PDF 열기 암호(저장하지 않아요)', 'aria-label': 'PDF 열기 암호', value: state.docImport.pw ?? '', disabled: state.docBusy });
+  const input = h('input', { type: 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', placeholder: 'PDF 열기 암호(저장하지 않아요)', 'aria-label': 'PDF 열기 암호', disabled: state.docBusy });
+  input.value = state.docImport.pw ?? '';
   input.addEventListener('input', () => (state.docImport.pw = input.value));
   const submit = () => {
     if (state.docBusy) return;
@@ -572,21 +577,21 @@ function passwordRow() {
     input,
     // 읽는 동안에는 두 버튼을 막는다(그만둔 뒤 진행 중이던 결과가 도착해 보관되는 경쟁이 없게)
     btn('열기', submit, 'sx-btn-primary', { 'data-act': 'doc-password', disabled: state.docBusy }),
-    btn(
-      '그만두기',
-      () => {
-        call('docs.importCancel', { pickId: state.docImport.pickId }).catch(() => {});
-        state.docImport = null;
-        render();
-      },
-      '',
-      { 'data-act': 'doc-password-cancel', disabled: state.docBusy },
-    ),
+    btn('그만두기', cancelPassword, '', { 'data-act': 'doc-password-cancel', disabled: state.docBusy }),
   );
+}
+
+function cancelPassword() {
+  if (!state.docImport) return;
+  call('docs.importCancel', { pickId: state.docImport.pickId }).catch(() => {});
+  state.docImport = null;
+  render();
 }
 
 async function importDoc(params) {
   if (state.docBusy) return;
+  // 암호를 묻던 파일을 두고 새 파일을 고르면, 묻던 파일은 그만둔다(main이 들고 있는 바이트를 버린다)
+  if (params.pick && state.docImport) cancelPassword();
   state.docBusy = true;
   render();
   try {
@@ -618,35 +623,60 @@ async function importDoc(params) {
   }
 }
 
-async function updateDoc(id, patch) {
+/** 저장 뒤 이 시간 안의 같은 서류 확인 클릭은 받지 않는다(두 번 누른 두 번째 클릭이 새로 그린 확인 버튼에 닿아, 보지 않은 재계산 값이 확인되지 않게). */
+const DOC_CONFIRM_HOLD_MS = 700;
+
+async function updateDoc(id, patch, seen) {
+  if (state.docUpdating) return;
+  state.docUpdating = true;
   try {
-    const d = await call('docs.update', { id, patch });
+    const d = await call('docs.update', { id, patch, seen });
     state.docsRev++;
     state.docs = state.docs.map((x) => (x.id === d.id ? d : x));
-    state.docDraft = null;
-    toast(d.vault?.needsUser ? '저장했어요. 다시 계산한 값을 확인해 주세요' : '확인했어요');
+    // 응답을 기다리는 동안 다른 서류로 옮겼으면 그 서류의 입력은 두고, 이 서류의 입력만 버린다
+    if (state.docDraft?.id === id) state.docDraft = null;
+    state.docHold = { id, until: Date.now() + DOC_CONFIRM_HOLD_MS };
+    toast(d.vault?.needsUser ? `저장했어요. ${d.vault.reasons.includes('expiry_recomputed') ? '다시 계산한 만료일을' : '남은 칸을'} 확인해 주세요` : '확인했어요');
+  } catch (e) {
+    toast(docErr(e));
+    // 다른 곳에서 바뀐 서류: 지금 값을 다시 읽어 보여 주고 입력은 버린다(본 값이 아닌 값으로 확인하지 않게)
+    if (errText(e) === 'stale') {
+      if (state.docDraft?.id === id) state.docDraft = null;
+      const rev = ++state.docsRev;
+      await call('docs.list')
+        .then((docs) => {
+          if (rev === state.docsRev) state.docs = docs;
+        })
+        .catch(() => {});
+    }
+  } finally {
+    state.docUpdating = false;
     renderRail();
     renderToday();
     render();
-  } catch (e) {
-    toast(docErr(e));
   }
 }
 
-/** 확인 구역의 입력 중인 값. 같은 서류를 보는 동안 다시 그려도 남는다. */
+/** 확인 구역의 입력 중인 값과 그때 보여 준 값(seen). 같은 서류를 보는 동안 다시 그려도 남고, 패널을 닫거나 다른 서류로 옮기면 버린다. */
 function docDraft(doc) {
-  if (state.docDraft?.id !== doc.id) state.docDraft = { id: doc.id, docType: doc.vault.docType, issuedOn: doc.issuedOn ?? '', expiresOn: doc.expiresOn ?? '', noExpiry: false };
+  if (state.docDraft?.id !== doc.id) {
+    const seen = { docType: doc.vault.docType, issuedOn: doc.issuedOn, expiresOn: doc.expiresOn };
+    state.docDraft = { id: doc.id, seen, docType: seen.docType, issuedOn: doc.issuedOn ?? '', expiresOn: doc.expiresOn ?? '', noExpiry: false };
+  }
   return state.docDraft;
 }
 
 /**
- * 보관함 서류의 읽은 값·확인 필요·확인(수정). 바뀐 칸만 보낸다.
- * 후보(정하지 못한 칸에서 엔진이 고른 가장 이른 날짜)는 칸이 규칙 날짜로 차 있어도 보여 주고, '후보 넣기'로만 칸에 들어간다.
- * 빈 날짜 칸은 '바꾸지 않음'이다. 만료일을 지우려면 '만료일 없음'을 고른다(입력하다 만 칸으로 만료일이 지워지지 않게).
+ * 보관함 서류의 읽은 값·확인 필요·확인(수정). 바뀐 칸만 보내고, 보여 준 값(seen)을 붙인다(엔진이 저장값과 다르면 거부).
+ * 후보(정하지 못한 칸에서 엔진이 고른 가장 이른 날짜)는 칸 값과 다르면 보여 주고, '후보 넣기'로만 칸에 들어간다.
+ * 저장값이 있는 날짜 칸을 비우거나 입력하다 만 채로는 저장하지 않는다(빈 칸이 '바꾸지 않음 = 확인'이 되지 않게).
+ * 만료일을 지우려면 '만료일 없음'을 고른다(납세증명서 제외).
  */
 function docReview(doc) {
   const v = doc.vault;
   const draft = docDraft(doc);
+  const canClear = draft.docType !== 'national_tax_cert';
+  const noExpiryOn = draft.noExpiry && canClear;
   const src = { text: '텍스트에서 읽음', ocr: '그림에서 읽음(OCR)', scan: '스캔 글자 층에서 읽음' }[v.textSource];
   const typeSel = h(
     'select',
@@ -655,14 +685,17 @@ function docReview(doc) {
   );
   typeSel.addEventListener('change', () => {
     draft.docType = typeSel.value;
+    if (draft.docType === 'national_tax_cert') draft.noExpiry = false; // 납세증명서는 만료일을 없앨 수 없다
     render();
   });
-  const issued = h('input', { type: 'date', class: 'doc-in', value: draft.issuedOn, 'aria-label': '발급일', 'data-field': 'issuedOn' });
+  const issued = h('input', { type: 'date', class: 'doc-in', 'aria-label': '발급일', 'data-field': 'issuedOn' });
+  issued.value = draft.issuedOn;
   issued.addEventListener('input', () => (draft.issuedOn = issued.value));
-  const expires = h('input', { type: 'date', class: 'doc-in', value: draft.expiresOn, 'aria-label': '만료일', 'data-field': 'expiresOn', disabled: draft.noExpiry });
+  const expires = h('input', { type: 'date', class: 'doc-in', 'aria-label': '만료일', 'data-field': 'expiresOn', disabled: noExpiryOn });
+  expires.value = draft.expiresOn;
   expires.addEventListener('input', () => (draft.expiresOn = expires.value));
   // 사업자등록증명·그 밖의 서류는 법정 유효기간이 없어 사용자가 만료일을 없앨 수 있다(납세증명서는 엔진이 확인 필요로 남긴다)
-  const noExpiry = draft.docType === 'national_tax_cert' ? null : h('input', { type: 'checkbox', checked: draft.noExpiry, 'data-field': 'noExpiry' });
+  const noExpiry = canClear ? h('input', { type: 'checkbox', checked: noExpiryOn, 'data-field': 'noExpiry' }) : null;
   noExpiry?.addEventListener('change', () => {
     draft.noExpiry = noExpiry.checked;
     render();
@@ -672,14 +705,17 @@ function docReview(doc) {
     v.suggested.validUntil && v.suggested.validUntil !== draft.expiresOn ? `문서 유효기간 후보 ${v.suggested.validUntil}` : null,
   ].filter(Boolean);
   const save = () => {
+    if (state.docUpdating || (state.docHold?.id === doc.id && Date.now() < state.docHold.until)) return;
     if (issued.validity.badInput || expires.validity.badInput) return toast('날짜를 끝까지 넣어 주세요');
+    if (!draft.issuedOn && doc.issuedOn) return toast('발급일을 넣어 주세요');
+    if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return toast(canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요" : '만료일을 넣어 주세요');
     const patch = {};
-    if (draft.docType !== v.docType) patch.docType = draft.docType;
-    if (draft.issuedOn && draft.issuedOn !== doc.issuedOn) patch.issuedOn = draft.issuedOn;
-    if (draft.noExpiry) {
-      if (doc.expiresOn !== null) patch.expiresOn = null;
-    } else if (draft.expiresOn && draft.expiresOn !== doc.expiresOn) patch.expiresOn = draft.expiresOn;
-    updateDoc(doc.id, patch);
+    if (draft.docType !== draft.seen.docType) patch.docType = draft.docType;
+    if (draft.issuedOn && draft.issuedOn !== draft.seen.issuedOn) patch.issuedOn = draft.issuedOn;
+    if (noExpiryOn) {
+      if (draft.seen.expiresOn !== null) patch.expiresOn = null;
+    } else if (draft.expiresOn && draft.expiresOn !== draft.seen.expiresOn) patch.expiresOn = draft.expiresOn;
+    updateDoc(doc.id, patch, draft.seen);
   };
   return h(
     'div',
@@ -722,7 +758,7 @@ function docReview(doc) {
     h(
       'div',
       { class: 'sx-actions' },
-      btn(v.needsUser || v.expirySource === 'rule' ? '확인' : '저장', save, 'sx-btn-primary', { 'data-act': 'doc-confirm' }),
+      btn(v.needsUser || v.expirySource === 'rule' ? '확인' : '저장', save, 'sx-btn-primary', { 'data-act': 'doc-confirm', disabled: state.docUpdating }),
       btn('PDF 열기', () => call('docs.open', { id: doc.id }).catch((e) => toast(docErr(e))), '', { 'data-act': 'doc-open' }),
     ),
   );

@@ -197,10 +197,16 @@ export class DocumentService {
    *   확인 필요로 남기고, OCR급 글자에서 읽은 유효기간을 되살렸으면 그 이유도 남긴다.
    * - 아무것도 바꾸지 않으면 지금 값을 확인한 것(추정 → 확인함, 대상 사업자 확인 포함).
    * 대상 사업자 이유(SUBJECT_REASONS)는 '아무것도 바꾸지 않은 확인'에서만 지운다.
+   * seen: 화면이 보여 준 값(종류·발급일·만료일). 저장값과 다르면 stale로 거부한다. 같은 요청을 다시 보내면
+   * 두 번째는 '바뀐 칸 없음 = 확인'이 되어 사용자가 본 적 없는 재계산 값이 확인되므로, 확인은 본 값에 대해서만 받는다.
    */
-  update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }): DocumentView {
+  update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }, seen?: unknown): DocumentView {
     const row = this.repo.get(id);
     if (!row) throw new ValidationError('not_found');
+    const s = (seen ?? null) as Record<string, unknown> | null;
+    const dateOrNull = (v: unknown) => v === null || typeof v === 'string';
+    if (typeof s !== 'object' || s === null || typeof s.docType !== 'string' || !dateOrNull(s.issuedOn) || !dateOrNull(s.expiresOn)) throw new ValidationError('seen_required');
+    if (s.docType !== row.docType || s.issuedOn !== row.issuedAt || s.expiresOn !== row.expiresAt) throw new ValidationError('stale');
     const today = kstToday(this.now());
     const date = (v: unknown, code: string) => {
       if (v === null) return null;

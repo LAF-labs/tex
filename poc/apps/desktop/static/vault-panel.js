@@ -132,17 +132,26 @@
   $('#v-edit').addEventListener('submit', async (e) => {
     e.preventDefault();
     const f = $('#v-edit');
+    const submit = f.querySelector('[type=submit]');
+    if (submit?.disabled) return; // 응답을 기다리는 중(같은 요청을 두 번 보내지 않게)
+    // 입력하다 만 날짜는 값이 ''라 그대로 보내면 날짜를 지우는 요청이 된다
+    if (f.issuedOn.validity.badInput || f.expiresOn.validity.badInput) return (f.querySelector('.msg').textContent = '날짜를 끝까지 넣어 주세요');
     // 바뀐 칸만 보낸다. 종류·발급일만 바꾸면 엔진이 만료일을 규칙으로 다시 정하고, 아무것도 안 바꾸면 지금 값을 확인한 것이다.
+    // 보여 준 값(seen)을 붙인다. 그사이 저장값이 바뀌었으면 엔진이 stale로 거부한다.
     const patch = {};
     if (f.docType.value !== editing.docType) patch.docType = f.docType.value;
     if ((f.issuedOn.value || null) !== editing.issuedOn) patch.issuedOn = f.issuedOn.value || null;
     if ((f.expiresOn.value || null) !== editing.expiresOn) patch.expiresOn = f.expiresOn.value || null;
+    const seen = { docType: editing.docType, issuedOn: editing.issuedOn, expiresOn: editing.expiresOn };
+    if (submit) submit.disabled = true;
     try {
-      await call('document.update', { id: editing.id, patch });
+      await call('document.update', { id: editing.id, patch, seen });
       f.hidden = true;
       load();
     } catch (err) {
       f.querySelector('.msg').textContent = errText(err);
+    } finally {
+      if (submit) submit.disabled = false;
     }
   });
   $('#v-edit-cancel').onclick = () => ($('#v-edit').hidden = true);

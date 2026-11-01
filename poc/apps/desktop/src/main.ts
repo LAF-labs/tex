@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, protocol, session, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
-import { COMMANDS, READ_QUERIES } from '@sax/engine/protocol';
+import { COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/platform';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar, bottomStrip, demoGateRequest } from './approval-bar.ts';
@@ -107,9 +107,8 @@ function openSecretInput(kind: string, scope: string): void {
   });
 }
 
-// bizcert.parse·document.import는 main이 docparse 결과를 붙여 부른다. 렌더러가 텍스트·바이트를 지어 보낼 수 없다.
-// document.file은 보관함 파일 경로를 돌려주므로 main만 쓴다(렌더러에는 경로를 주지 않는다).
-const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse' && c !== 'document.import' && c !== 'document.file')]);
+// main 전용 명령(MAIN_ONLY: docparse 결과를 붙이는 명령, 보관함 파일 경로)은 렌더러에 열지 않는다.
+const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => !MAIN_ONLY.includes(c))]);
 
 async function handleRenderer(method: string, params: Record<string, unknown>): Promise<unknown> {
   await engineReady;
