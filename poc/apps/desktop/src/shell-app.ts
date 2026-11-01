@@ -110,19 +110,22 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
   const fixture = opts.engine ? null : await startFixtureMode({ headful: opts.headful });
+  const made: { host?: EngineHost } = {};
   try {
-    return wireShell(opts, fixture, key, store);
+    return wireShell(opts, fixture, key, store, made);
   } catch (e) {
-    // 창·엔진을 만들다 실패하면 가짜 페이지 서버·main 안 금고·임시 앱 폴더를 남기지 않는다.
+    // 창·바를 만들다 실패하면 엔진을 먼저 끝내고(DB가 열린 채 지우지 않게) 가짜 페이지 서버·main 안 금고·임시 앱 폴더를 지운다.
+    await made.host?.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
     throw e;
   }
 }
 
-function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore): Shell {
+function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore, made: { host?: EngineHost }): Shell {
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
+  made.host = host;
   let business: Profile | null = null;
   let cps: Counterparty[] = [];
   const refresh = async () => {

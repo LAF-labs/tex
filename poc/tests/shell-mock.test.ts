@@ -234,8 +234,10 @@ describe('셸 목업', () => {
     await runs.prepare(c.run.id);
     host.emit('gate', gateFor(c.run.id, {}));
     await runs.abortGate(c.run.id, 'answer.rejected');
+    assert.equal(runs.get(c.run.id)!.approvedPending, false);
+    assert.match(runs.get(c.run.id)!.steps[4]!.note!, /멈추고 있어요/, '거부된 승인 안내를 바로 거둔다');
     host.emit('run', { runId: c.run.id, type: 'end', status: 'in_doubt', code: 'engine.error' });
-    assert.match(runs.get(c.run.id)!.stoppedNote!, /중복 발급될 수 있어요/);
+    assert.match(runs.get(c.run.id)!.stoppedNote!, /발급됐는지 확인하지 못했어요.*중복 발급될 수 있어요/);
     // 같은 건이 발급된 뒤 다시 발급 안 됨이 있었으면 두 경고를 모두 둔다(발급된 건이 먼저).
     const d = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
     assert.ok(d.kind === 'draft');

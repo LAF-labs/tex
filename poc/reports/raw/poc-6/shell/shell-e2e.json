@@ -8,9 +8,9 @@
       "name": "사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다",
       "ok": true,
       "detail": [
-        "23dbb3d4-b50a-4858-8274-d02e1769db5b",
-        "df35dd52-81e1-4723-8a28-a6ca3232a011",
-        "10d06a38-64de-4eba-aa07-ff4909d12038"
+        "8c94b37b-2f2d-4e7f-8c79-c9d9c5c21320",
+        "8d8859be-089b-4287-80b3-38c18b84577c",
+        "b51dd85b-54cf-4ab5-aca0-16f93d8d905d"
       ]
     },
     {
@@ -132,12 +132,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-2537b787",
-        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+        "runId": "run-456e6f4f",
+        "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
         "mode": "unarmed",
         "msg": null,
         "committed": {
-          "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+          "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
           "mode": "unarmed"
         },
         "bounds": {
@@ -157,8 +157,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-2537b787",
-        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+        "runId": "run-456e6f4f",
+        "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
         "mode": "unarmed",
         "msg": "잠시 뒤 다시 눌러 주세요",
         "committed": null,
@@ -275,12 +275,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-2537b787",
-        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+        "runId": "run-456e6f4f",
+        "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+          "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
           "mode": "armed"
         },
         "bounds": {
@@ -304,8 +304,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-2537b787",
-        "reqId": "725ee199-e205-4ba6-bd4d-11fb7a7e1ce5",
+        "runId": "run-456e6f4f",
+        "reqId": "1e0a29f2-99a5-428c-a320-d122c1f79fb5",
         "mode": "unarmed",
         "msg": null,
         "committed": null,
@@ -486,12 +486,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-450aac45",
-        "reqId": "01efead5-f619-4271-a3c6-d79470e3fc37",
+        "runId": "run-3231d510",
+        "reqId": "a3ae89cf-ce51-43f7-a391-63eafb0113d2",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "01efead5-f619-4271-a3c6-d79470e3fc37",
+          "reqId": "a3ae89cf-ce51-43f7-a391-63eafb0113d2",
           "mode": "armed"
         },
         "bounds": {
@@ -549,10 +549,10 @@
       "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
       "ok": true,
       "detail": {
-        "start": "23:09",
+        "start": "23:15",
         "at": [
-          "23:09",
-          "23:09"
+          "23:15",
+          "23:15"
         ]
       }
     },
@@ -654,11 +654,11 @@
             "runId": "e2e-wide",
             "gateStepId": "s20",
             "reqId": "wide-4",
-            "approvalNonce": "uL7v5wqhZdRM7CFayxXp2A",
+            "approvalNonce": "H-hZ_l1M0y8ZN_MN50oH9Q",
             "actionHash": "a30e495a4476588c417dc6092dbc3d886674f95e5f3a2c7988394434839074be",
-            "exp": 1793542314470,
+            "exp": 1793542660069,
             "presence": "click",
-            "mac": "Jrl-5kYDobVPGgUNyfNPxa7IvDz8B58v642TXKiFeIc"
+            "mac": "mkkA7mFeh1N4EFOHby9ofFhy84g_vf_-hO6lKNhyrcs"
           }
         },
         "judged": [
@@ -750,7 +750,7 @@
     "panelClosedOffset": 0,
     "panelClosedOffsets": {
       "everyMs": 50,
-      "from": 1793542178720,
+      "from": 1793542523811,
       "offsets": [
         0,
         0,

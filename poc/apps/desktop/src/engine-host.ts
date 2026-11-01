@@ -86,6 +86,9 @@ export class EngineHost extends EventEmitter {
     this.dead ??= `${who}_exit`;
     // ready 전에 끝났으면 기다리는 쪽이 영영 멈추지 않게 실패로 끝낸다(이미 정해졌으면 아무 일도 없다).
     this.failReady?.(new Error(`${who}_exit`));
+    // 금고가 끝나면 엔진도 끝낸다. 이 호스트는 이미 호출을 막았으니(dead) 엔진이 남아 있으면 열린 게이트·실행을 아무도 멈추지 못한다.
+    // 엔진이 끝나면 'exit'('engine')이 다시 와서 실행을 끝낸다(ShellRuns).
+    if (who === 'vault') this.engine.kill();
     for (const p of this.pending.values()) p.reject(new Error(`${who}_exit`));
     this.pending.clear();
     for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit` });

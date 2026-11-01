@@ -31,6 +31,7 @@ const NOTE: Record<string, string> = {
   'verify.baseline_missing': '홈택스 발급목록을 미리 확인하지 못해 승인을 열지 않았어요.',
   'verify.not_committed': "직전 시도는 '발급 안 됨'으로 판정되었어요. 홈택스 발급목록을 직접 확인한 뒤 다시 준비해 주세요.",
   'verify.unknown': '발급 요청은 보냈지만 발급목록에서 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  in_doubt: '발급 단계에서 멈춰 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   'mail.not_confirmed': '발급은 완료되었어요. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요.',
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -227,8 +228,12 @@ export class ShellRuns extends EventEmitter implements Drafts {
   async abortGate(runId: string, code: string): Promise<void> {
     const r = this.runs.get(runId);
     if (!r) return;
-    // 엔진이 근거를 거부했으면 토큰이 없다(발급 없음).
-    r.approvedPending = false;
+    // 엔진이 근거를 거부했으면 토큰이 없다(발급 없음). "승인했어요" 안내를 바로 거둔다.
+    if (r.status === 'waiting') {
+      r.approvedPending = false;
+      this.step(r, 'gate', 'now', '승인을 전하지 못해 멈추고 있어요');
+      this.emit('update', r);
+    }
     this.endCodes.set(runId, code);
     await this.host.rpc('run.stop', { runId }).catch(() => {});
   }
@@ -263,7 +268,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.turn = null;
     r.approvedPending = false;
     // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
-    const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : 'verify.unknown') : (this.endCodes.get(r.id) ?? e.code);
+    const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
       const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };
