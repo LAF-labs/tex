@@ -1,17 +1,19 @@
-// 셸 문서함 e2e(PoC-8 후속): 데모 셸의 문서함에서 PDF 가져오기 → docparse 샌드박스 → 보관함(데모 공급자 = 엔진 DocumentService)
+// 셸 문서함 e2e(PoC-8 후속): 데모 셸의 문서함에서 PDF 가져오기 → docparse 샌드박스 → 셸 엔진(fixture 모드, 임시 앱 폴더)의 보관함
 // → 목록·만료 출처·확인 필요 → 문서 패널에서 확인(후보 넣기, 바뀐 칸만 보냄). 열기 암호 흐름, 중복·실패·다른 화면에 있을 때,
 // 렌더러가 대화상자 없이 가져오기를 부르는 경로도 본다. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다.
-// 실행: electron apps/desktop/dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다.
+// 실행: electron apps/desktop/dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다(fixture 모드).
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, shell as desktop } from 'electron';
 import { formatBizNo } from '@sax/db';
+import { appPaths } from '@sax/platform';
+import type { EngineHost } from './engine-host.ts';
+import { DEMO_PROFILE } from './fixture-mode.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
-import { demoDocsProvider, type DocsProvider } from './shell-docs.ts';
-import { PROFILES } from './shell-mock.ts';
+import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { encryptedTestPdf, syntheticCerts } from './synthetic-certs.ts';
-import { importPdf } from './vault-import.ts';
+import { importPdf, type EngineCall } from './vault-import.ts';
 
 registerShellSchemes();
 // 시험용 앱 폴더(데모 공급자 폴더 이름 sax-shell-docs-*와 겹치지 않게). 끝나면 지운다.
@@ -27,8 +29,8 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
   results.push({ name, ok, detail });
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${ok ? '' : ` ${JSON.stringify(detail)}`}`);
 };
-let S: Shell;
-const js = <T = unknown>(code: string): Promise<T> => S.win.webContents.executeJavaScript(code) as Promise<T>;
+let S: Shell | undefined;
+const js = <T = unknown>(code: string): Promise<T> => S!.win.webContents.executeJavaScript(code) as Promise<T>;
 async function until(what: string, fn: () => Promise<boolean>, ms = 60_000): Promise<boolean> {
   const end = Date.now() + ms;
   while (Date.now() < end) {
@@ -83,7 +85,7 @@ async function confirmWhenReady(id: string, clicks = 1): Promise<void> {
 
 async function main(): Promise<void> {
   const tmp = await fs.mkdtemp(path.join(app.getPath('temp'), 'sax-e2e-docs-files-'));
-  const mine = PROFILES.business.bizNo!;
+  const mine = DEMO_PROFILE.bizNo; // fixture 엔진의 내 사업장
   const certs = syntheticCerts();
   const taxes = certs.filter((c) => c.kind === 'national_tax_cert');
   const bizs = certs.filter((c) => c.kind === 'biz_registration_cert');
@@ -103,14 +105,18 @@ async function main(): Promise<void> {
   await fs.writeFile(files.locked, encryptedTestPdf('shell-pw', 'owner', 'PASSWORD PROTECTED SHELL DOCUMENT FOR THE DOCS VIEW TEST'));
 
   // 데모 공급자를 직접 넘기고, 셸이 보내는 수정 칸을 적는다(바뀐 칸만 보내는지)
-  const demo = demoDocsProvider({ profile: PROFILES.business, importer: importPdf });
+  // 셸 엔진(fixture 모드: 임시 앱 폴더의 DB·보관함)을 쓰는 공급자를 감싸 넘긴다. 엔진 호스트는 startShell 안에서 생기므로 나중에 잇는다.
+  let host: EngineHost | null = null;
+  const engine: EngineCall = (m, p) => host!.rpc(m, p);
+  const base = engineDocsProvider(engine, importPdf);
+  let vaultDir = '';
   const patches: Array<Record<string, unknown>> = [];
   const seens: unknown[] = [];
   const pickIds: string[] = [];
   const docs: DocsProvider = {
-    ...demo,
+    ...base,
     importPdf: async (params) => {
-      const r = await demo.importPdf(params);
+      const r = await base.importPdf(params);
       const pickId = (r as { pickId?: string } | null)?.pickId;
       if (pickId) pickIds.push(pickId);
       return r;
@@ -118,15 +124,17 @@ async function main(): Promise<void> {
     update: (id, patch, seen) => {
       patches.push(Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)));
       seens.push(seen);
-      return demo.update(id, patch, seen);
+      return base.update(id, patch, seen);
     },
     // 'evil': 보관함 경로가 PDF가 아닌 경우(main이 열지 않아야 한다)
-    filePath: (id) => (id === 'evil' ? Promise.resolve(path.join(demo.dir, 'vault', 'evil.app')) : demo.filePath(id)),
+    filePath: (id) => (id === 'evil' ? Promise.resolve(path.join(vaultDir, 'evil.app')) : base.filePath(id)),
   };
   const opened: string[] = [];
   desktop.openPath = (async (p: string) => (opened.push(p), '')) as typeof desktop.openPath;
 
-  S = startShell({ speed: 20, width: 1280, height: 820, show: false, docs });
+  S = await startShell({ width: 1280, height: 820, show: false, docs });
+  host = S.host;
+  vaultDir = appPaths(S.fixture!.root).vault;
   await S.ready;
   await until('shell ready', async () => (await js<string>(`document.body.dataset.ready ?? ''`)) === '1', 15_000);
   const mockCount = (await listDocs()).length;
@@ -240,7 +248,7 @@ async function main(): Promise<void> {
   check('바뀐 칸(만료일)만 보낸다', JSON.stringify(patches.at(-1)) === JSON.stringify({ expiresOn: '2026-12-01' }), patches.at(-1));
   // 패널이 열린 채 다른 곳에서 서류가 바뀌면: 확인은 stale로 거부되고, 목록을 다시 읽어 새 값을 보여 주며 확인 버튼은 잠시 꺼진다
   const bNow = (await listDocs()).find((d) => d.id === b!.id)!;
-  await demo.update(b!.id, { expiresOn: '2026-12-02' }, { docType: 'biz_registration_cert', issuedOn: bNow.issuedOn, expiresOn: bNow.expiresOn });
+  await base.update(b!.id, { expiresOn: '2026-12-02' }, { docType: 'biz_registration_cert', issuedOn: bNow.issuedOn, expiresOn: bNow.expiresOn });
   await js(`document.querySelector('#toast').hidden = true`);
   await confirmWhenReady(b!.id);
   await until('stale shown', async () => /바뀌었어요/.test(await toastText()), 5000);
@@ -252,7 +260,7 @@ async function main(): Promise<void> {
 
   await js(`${review(a!.id, '[data-act=doc-open]')}.click()`);
   await until('opened', async () => opened.length > 0, 5000);
-  check('PDF 열기: main이 보관함 파일을 연다', opened.length === 1 && path.dirname(opened[0]!) === path.join(demo.dir, 'vault'), opened);
+  check('PDF 열기: main이 보관함 파일을 연다', opened.length === 1 && path.dirname(opened[0]!) === vaultDir, opened);
   const openErr = await js<string>(`window.sax.call('docs.open', { id: 'nope' }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('없는 서류 열기는 거부(not_found)', openErr === 'not_found', openErr);
   const evil = await js<string>(`window.sax.call('docs.open', { id: 'evil' }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
@@ -291,18 +299,16 @@ async function main(): Promise<void> {
   await until('locked imported', async () => (await listDocs()).length === before + 1, 60_000);
   check('맞는 암호 → 보관하고 암호 줄이 사라진다', (await listDocs()).length === before + 1 && !(await js<boolean>(`!!document.querySelector('[data-doc-password]')`)));
 
-  const vaultFiles = await fs.readdir(path.join(demo.dir, 'vault'));
-  check('데모 보관함 파일 5개, 이름에 PII 없음', vaultFiles.length === 5 && vaultFiles.every((f) => /^(national_tax_cert|biz_registration_cert|other)_\d{8}_[0-9A-Z]{4}\.pdf$/.test(f)), vaultFiles);
+  const vaultFiles = await fs.readdir(vaultDir);
+  check('보관함 파일 5개, 이름에 PII 없음', vaultFiles.length === 5 && vaultFiles.every((f) => /^(national_tax_cert|biz_registration_cert|other)_\d{8}_[0-9A-Z]{4}\.pdf$/.test(f)), vaultFiles);
   const sweepDocs = await js<string>(`window.sax.call('docs.update', { id: 'run-x', patch: {} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('없는 서류 수정은 거부(not_found)', sweepDocs === 'not_found', sweepDocs);
 
   await js(`document.querySelector('[data-doc-row="${a!.id}"]').click()`);
   await sleep(300);
   await fs.mkdir(path.join(OUT, 'poc-8'), { recursive: true });
-  await fs.writeFile(path.join(OUT, 'poc-8', 'shell-docs.png'), (await S.win.webContents.capturePage()).toPNG());
+  await fs.writeFile(path.join(OUT, 'poc-8', 'shell-docs.png'), (await S!.win.webContents.capturePage()).toPNG());
   const final = (await listDocs()).filter((d) => d.vault);
-  demo.close?.();
-  check('공급자를 닫으면 데모 폴더(DB·PDF 사본)를 지운다', !(await fs.access(demo.dir).then(() => true, () => false)), demo.dir);
   await fs.writeFile(
     path.join(OUT, 'poc-8-shell-docs.json'),
     JSON.stringify({ checks: results, docs: final.map((d) => ({ name: d.name, issuedOn: d.issuedOn, expiresOn: d.expiresOn, vault: { expirySource: d.vault!.expirySource, needsUser: d.vault!.needsUser, reasons: d.vault!.reasons } })) }, null, 2),
@@ -316,5 +322,7 @@ app.whenReady().then(async () => {
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);
   }
+  // 엔진이 끝난 뒤 fixture 임시 앱 폴더(DB·보관함 사본)를 지운다
+  await S?.close().catch(() => {});
   app.exit(results.length && results.every((r) => r.ok) ? 0 : 1);
 });

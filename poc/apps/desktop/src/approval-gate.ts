@@ -1,29 +1,17 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { domainToASCII } from 'node:url';
+import { cbor, LOCAL_APPROVAL_TTL_MS, type GateRequest, type LocalApproval, type Presence } from '@sax/engine/gate';
 
 // ADR-021 결정 1: 로컬 비가역 승인은 main 소유 승인 바(메인 창 자식 WebContentsView, 스크립트 없음)에서
 // main이 직접 관찰한 클릭으로만 인정한다. 이 파일은 Electron 없이 시험할 수 있는 판정 로직과 정적 HTML 생성기다.
+// 게이트 요청 모양·D03 해시는 엔진과 같은 @sax/engine/gate를 쓴다.
+
+export type { GateRequest, LocalApproval };
 
 export const ARM_DELAY_MS = 600;
 export const DWELL_MS = 150;
 /** 창 활성화 뒤 이 시간 안에 바 안에서 시작된 mouseDown은 클릭 활성화로 보고 재무장하지 않는다. */
 export const ACTIVATION_GRACE_MS = 100;
-
-/** 엔진 게이트 요청의 대역(PoC-9 목업). PoC-6에서 엔진 `WaitingGate` 요청과 D03 cardHash로 바꾼다. */
-export interface GateRequest {
-  runId: string;
-  gateStepId: string;
-  reqId: string;
-  docType: 'H-01';
-  /** readback 값과 엔진 예약 키($first.*)의 배열 전체. 순서도 해시에 들어간다. */
-  fields: Array<{ fieldKey: string; value: string }>;
-  actionHash: string;
-}
-
-/** 목업 자기 일치 확인용 해시. D03 cardHash·actionHash 식이 아니다(PoC-6에서 교체). */
-export function gateHash(req: Omit<GateRequest, 'actionHash'>): string {
-  return createHash('sha256').update(JSON.stringify([req.runId, req.gateStepId, req.reqId, req.docType, req.fields.map((f) => [f.fieldKey, f.value])])).digest('hex');
-}
 
 // ---- 요약 줄(서류 종류별 앱 내장 표) ----
 
@@ -59,8 +47,33 @@ export function refusalText(r: ArmRefusal): string {
   return 'label' in r ? REFUSAL_TEXT[r.reason](r.label) : REFUSAL_TEXT[r.reason]();
 }
 
+/** 같은 업무 키의 원장 상태 중 발급됐거나 발급됐을 수 있는 것. 이것이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다. */
+export const ISSUED_OR_UNKNOWN = ['committed', 'in_doubt', 'armed', 'dispatched', 'observed_manual'];
+
+/** $dup.businessKey 값(원장 상태 목록)에 발급됐거나 모르는 건이 있는가. */
+export function dupMayBeIssued(f: Map<string, string>): boolean {
+  return (f.get('$dup.businessKey') ?? '').split(',').some((s) => ISSUED_OR_UNKNOWN.includes(s));
+}
+
+/**
+ * 중복 경고 표시(D02 §7, 디자인 시스템 ApprovalBar). 칸이 하나라 가장 위험한 것을 고른다:
+ * 같은 건이 발급됐거나 모름 → 직전 시도 발급 안 됨 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
+ */
+function dupFlag(f: Map<string, string>): string | undefined {
+  if (dupMayBeIssued(f)) return '같은 건 기록 있음';
+  if (f.get('$dup.priorNotCommitted') === 'true') return '직전 시도 발급 안 됨';
+  if (f.get('$dup.businessKey')) return '같은 건 기록 있음';
+  if (f.get('$dup.otherDevice')) return '다른 PC 기록 확인 불가';
+  return undefined;
+}
+
+/** 동작 글자. 중복 경고가 하나라도 있으면 이 클릭이 D02 §7의 명시 확인이다(ADR-021). */
+export function actionText(req: Pick<GateRequest, 'fields'>): string {
+  return req.fields.some((x) => x.fieldKey.startsWith('$dup.')) ? ACTION_TEXT_DUP : ACTION_TEXT;
+}
+
 /** H-01 요약 줄: 공급받는자(상호 · 사업자번호) / 합계 · 세액 / 받는 이메일. 해시한 fields에서만 고른다. */
-export function summarize(req: GateRequest): SummaryLine[] | ArmRefusal {
+export function summarize(req: Pick<GateRequest, 'fields'>): SummaryLine[] | ArmRefusal {
   const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
   // 같은 키가 둘이면 Map은 마지막 값만 보이고 해시는 둘 다 덮는다. 보이는 값과 해시한 값이 갈리지 않게 거부한다.
   if (f.size !== req.fields.length) return { reason: 'duplicate' };
@@ -69,23 +82,25 @@ export function summarize(req: GateRequest): SummaryLine[] | ArmRefusal {
     ['counterpartBizNo', '공급받는자'],
     ['totalAmount', '합계'],
     ['taxAmount', '합계'],
-    ['counterpartEmail', '받는 이메일'],
   ] as const;
   for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
   for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
   if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
   if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!) || !/^(0|[1-9]\d{0,14})$/.test(f.get('taxAmount')!)) return { reason: 'unsafe', label: '합계' };
-  const email = f.get('counterpartEmail')!;
+  const head: SummaryLine[] = [
+    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
+    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }, { text: ` · 세액 ${won(f.get('taxAmount')!)}` }], flag: dupFlag(f) },
+  ];
+  // 받는 이메일이 비면 홈택스가 메일을 보내지 않는다(H-01 s15 ifAbsent: clear). 빈 값을 감추지 않고 "없음"으로 보인다.
+  const email = f.get('counterpartEmail') ?? '';
+  if (!email) return [...head, { label: '받는 이메일', pieces: [{ text: '없음 · 메일을 보내지 않아요' }] }];
+  if (UNSAFE_CHARS.test(email)) return { reason: 'unsafe', label: '받는 이메일' };
   const at = email.lastIndexOf('@');
   if (at <= 0) return { reason: 'unsafe', label: '받는 이메일' };
   // 국제화 도메인은 punycode로 보인다.
   const domain = domainToASCII(email.slice(at + 1));
   if (!domain) return { reason: 'unsafe', label: '받는 이메일' };
-  return [
-    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
-    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }, { text: ` · 세액 ${won(f.get('taxAmount')!)}` }] },
-    { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined },
-  ];
+  return [...head, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
 }
 
 // ---- 배치·폭 어림 ----
@@ -133,16 +148,17 @@ export const BAR_MESSAGES = {
   cursor: '마우스 커서가 보이게 한 뒤 눌러 주세요',
 } as const;
 export const ACTION_TEXT = '승인하고 발급';
+export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
 
 /** 스크립트 없는 정적 페이지. 값은 이스케이프해 텍스트로만 넣는다. 바 전체가 동작 하나라 안에 작은 버튼이 없다. */
-export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string): string {
+export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, action = ACTION_TEXT): string {
   const body = lines
     .map((l) => {
       const v = l.pieces.map((p) => `<span class="${p.shrink ? 'sh' : 'kp'}">${esc(p.text)}</span>`).join('');
       return `<div class="ln"><span class="lb">${esc(l.label)}</span><span class="v">${v}</span>${l.flag ? `<span class="fl">${esc(l.flag)}</span>` : '<span></span>'}</div>`;
     })
     .join('');
-  const act = mode === 'refused' ? '' : `<div class="act">${esc(ACTION_TEXT)}</div>`;
+  const act = mode === 'refused' ? '' : `<div class="act">${esc(action)}</div>`;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${BAR_CSP}">
 <link rel="stylesheet" href="bar.css"></head>
@@ -168,7 +184,7 @@ font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size
 .kp{flex:none;white-space:pre}
 .fl{font-size:12px;line-height:18px;padding:0 6px;border:1px solid currentColor;border-radius:4px}
 .side{text-align:right}
-.act{font-size:18px;line-height:26px;font-weight:700}
+.act{font-size:18px;line-height:26px;font-weight:700;word-break:keep-all}
 .msg{font-size:12px;line-height:16px;margin-top:2px}
 ${theme(t.light)}
 @media (prefers-color-scheme: dark){${theme(t.dark)}}`;
@@ -344,25 +360,26 @@ export class BarGate {
 
 // ---- 근거 ----
 
-export interface LocalApproval {
-  runId: string;
-  gateStepId: string;
-  actionHash: string;
-  exp: number;
-  mac: string;
-}
+const APPROVAL_CONTEXT = 'SAX-local-approval-v2';
+const canon = (a: Omit<LocalApproval, 'mac'>) => cbor([a.v, a.runId, a.gateStepId, a.reqId, a.approvalNonce, a.actionHash, a.exp, a.presence]);
 
-const canon = (a: Omit<LocalApproval, 'mac'>) => JSON.stringify([a.runId, a.gateStepId, a.actionHash, a.exp]);
-
-/** LocalApproval v1(ADR-014 형식). v2(reqId·approvalNonce·presence, `SAX-local-approval-v2`)는 PoC-6에서. */
-export function issueLocalApproval(key: Uint8Array, gate: { runId: string; gateStepId: string; actionHash: string }, ttlMs = 120_000, now = Date.now()): LocalApproval {
-  const body = { runId: gate.runId, gateStepId: gate.gateStepId, actionHash: gate.actionHash, exp: now + ttlMs };
-  return { ...body, mac: createHmac('sha256', key).update('SAX-local-approval-v1').update(canon(body)).digest('base64url') };
+/**
+ * LocalApproval v2(ADR-021). main 승인 바가 바에 띄운 그 게이트 요청으로 발급한다. 엔진은 키가 없어 MAC을 검증하지 않고
+ * 게이트 포트 출처와 runId·gateStepId·reqId·approvalNonce·actionHash 일치만 본다(Phase 1과 같음). MAC은 main 자기 확인용이다.
+ */
+export function issueLocalApproval(key: Uint8Array, req: Pick<GateRequest, 'runId' | 'gateStepId' | 'reqId' | 'approvalNonce' | 'actionHash'>, presence: Presence = 'click', ttlMs = LOCAL_APPROVAL_TTL_MS, now = Date.now()): LocalApproval {
+  const body = { v: 2 as const, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: now + ttlMs, presence };
+  return { ...body, mac: createHmac('sha256', key).update(APPROVAL_CONTEXT).update(canon(body)).digest('base64url') };
 }
 
 export function verifyLocalApproval(key: Uint8Array, a: LocalApproval, now = Date.now()): boolean {
-  if (a.exp < now) return false;
-  const expected = createHmac('sha256', key).update('SAX-local-approval-v1').update(canon(a)).digest();
-  const got = Buffer.from(a.mac, 'base64url');
+  if (a?.v !== 2 || !(a.exp >= now)) return false;
+  let expected: Buffer;
+  try {
+    expected = createHmac('sha256', key).update(APPROVAL_CONTEXT).update(canon(a)).digest();
+  } catch {
+    return false;
+  }
+  const got = Buffer.from(String(a.mac), 'base64url');
   return got.length === expected.length && timingSafeEqual(got, expected);
 }

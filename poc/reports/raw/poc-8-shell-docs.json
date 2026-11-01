@@ -30,7 +30,7 @@
       "name": "납세증명서: 보관함에 들어가고 문서에서 읽은 만료일, 확인 필요 없음",
       "ok": true,
       "detail": {
-        "id": "c4345cee-a858-424b-a8b8-46b500ad9379",
+        "id": "7caf6c82-b420-45ab-9c97-7eb744eaa0c9",
         "name": "납세증명서(국세)",
         "kind": "증명서",
         "docName": "납세증명서(국세)",
@@ -69,7 +69,7 @@
       "name": "사업자등록증명(다른 사업자): 90일 추정, 확인 필요(subject_mismatch)",
       "ok": true,
       "detail": {
-        "id": "178c3919-6794-4cf2-b85b-b5af3e865bc6",
+        "id": "0244ac3d-7363-4018-8937-c87d76380373",
         "name": "사업자등록증명",
         "kind": "증명서",
         "docName": "사업자등록증명",
@@ -109,7 +109,7 @@
       "name": "문서 패널에서 바꾸지 않고 확인하면 확인함(대상 표시는 남음)",
       "ok": true,
       "detail": {
-        "id": "178c3919-6794-4cf2-b85b-b5af3e865bc6",
+        "id": "0244ac3d-7363-4018-8937-c87d76380373",
         "name": "사업자등록증명",
         "kind": "증명서",
         "docName": "사업자등록증명",
@@ -144,7 +144,7 @@
       "name": "유효기간 줄이 둘인 납세증명서: 규칙보다 이른 문서 후보를 잠정 만료일로(짧은 쪽), 확인 필요",
       "ok": true,
       "detail": {
-        "id": "9282b66d-e225-44f4-8815-c7310102e2c8",
+        "id": "fce3041a-2387-475a-8920-6ff83583de37",
         "name": "납세증명서(국세)",
         "kind": "증명서",
         "docName": "납세증명서(국세)",
@@ -185,7 +185,7 @@
           }
         ],
         "a1": {
-          "id": "9282b66d-e225-44f4-8815-c7310102e2c8",
+          "id": "fce3041a-2387-475a-8920-6ff83583de37",
           "name": "납세증명서(국세)",
           "kind": "증명서",
           "docName": "납세증명서(국세)",
@@ -253,7 +253,7 @@
       "ok": true,
       "detail": {
         "a2": {
-          "id": "9282b66d-e225-44f4-8815-c7310102e2c8",
+          "id": "fce3041a-2387-475a-8920-6ff83583de37",
           "name": "납세증명서(국세)",
           "kind": "증명서",
           "docName": "납세증명서(국세)",
@@ -316,7 +316,7 @@
       "name": "PDF 열기: main이 보관함 파일을 연다",
       "ok": true,
       "detail": [
-        "/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-docs-50114-RLRUgf/vault/national_tax_cert_20261001_J78J.pdf"
+        "/private/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-fixture-kumPdR/vault/national_tax_cert_20261001_VTGJ.pdf"
       ]
     },
     {
@@ -330,7 +330,7 @@
       "detail": {
         "evil": "open_failed",
         "opened": [
-          "/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-docs-50114-RLRUgf/vault/national_tax_cert_20261001_J78J.pdf"
+          "/private/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-fixture-kumPdR/vault/national_tax_cert_20261001_VTGJ.pdf"
         ]
       }
     },
@@ -353,7 +353,7 @@
       "name": "암호를 묻는 중에 새로 가져오기를 누르면 묻던 파일은 그만둔다(main도 버림)",
       "ok": true,
       "detail": {
-        "pending": "0a657b31-5afe-4596-a2c5-8ab424737e74",
+        "pending": "5d983606-d0f4-4ac0-a31e-c2a3fbe3eb7e",
         "dropped": "pick_expired"
       }
     },
@@ -374,25 +374,20 @@
       "ok": true
     },
     {
-      "name": "데모 보관함 파일 5개, 이름에 PII 없음",
+      "name": "보관함 파일 5개, 이름에 PII 없음",
       "ok": true,
       "detail": [
-        "biz_registration_cert_20261002_K8HK.pdf",
-        "biz_registration_cert_20261006_6BBD.pdf",
-        "national_tax_cert_20261001_J78J.pdf",
-        "national_tax_cert_20261001_TMA9.pdf",
-        "other_20261102_WWRB.pdf"
+        "biz_registration_cert_20261002_076D.pdf",
+        "biz_registration_cert_20261006_EETJ.pdf",
+        "national_tax_cert_20261001_FQ5W.pdf",
+        "national_tax_cert_20261001_VTGJ.pdf",
+        "other_20261102_8FAW.pdf"
       ]
     },
     {
       "name": "없는 서류 수정은 거부(not_found)",
       "ok": true,
       "detail": "not_found"
-    },
-    {
-      "name": "공급자를 닫으면 데모 폴더(DB·PDF 사본)를 지운다",
-      "ok": true,
-      "detail": "/var/folders/s0/80_xm0s941xb3b_p0p0l8fd80000gn/T/sax-shell-docs-50114-RLRUgf"
     }
   ],
   "docs": [

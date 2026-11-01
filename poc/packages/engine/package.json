@@ -17,6 +17,11 @@
       "development": "./src/protocol.ts",
       "default": "./dist/protocol.js"
     },
+    "./gate": {
+      "types": "./src/gate.ts",
+      "development": "./src/gate.ts",
+      "default": "./dist/gate.js"
+    },
     "./bizcert": {
       "types": "./src/bizcert.ts",
       "development": "./src/bizcert.ts",
@@ -26,11 +31,6 @@
       "types": "./src/docmeta/index.ts",
       "development": "./src/docmeta/index.ts",
       "default": "./dist/docmeta/index.js"
-    },
-    "./documents": {
-      "types": "./src/documents.ts",
-      "development": "./src/documents.ts",
-      "default": "./dist/documents.js"
     }
   },
   "dependencies": {

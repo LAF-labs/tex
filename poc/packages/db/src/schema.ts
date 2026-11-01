@@ -1,4 +1,5 @@
 // D07 §2 요약 DDL(v1.3) 그대로. PoC-5는 profiles·counterparties·settings를 쓰고, 나머지는 PoC-6(원장·게이트)이 쓴다.
+// v2(PoC-6, ADR-021): 원장에 공급받는자 사업자번호·받는 이메일 HMAC 열. 처음 거래 판정은 committed 행만 센다.
 export const MIGRATIONS: Array<{ version: number; sql: string }> = [
   {
     version: 1,
@@ -69,6 +70,15 @@ CREATE TABLE rate_counters (
 CREATE TABLE clock_guard (id INTEGER PRIMARY KEY CHECK(id=1), last_seen_at TEXT NOT NULL);
 CREATE TABLE cooldowns (portal TEXT PRIMARY KEY, until TEXT NOT NULL, reason TEXT NOT NULL);
 CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);
+`,
+  },
+  {
+    version: 2,
+    sql: `
+ALTER TABLE irreversible_log ADD COLUMN cp_biz_no_hmac TEXT;
+ALTER TABLE irreversible_log ADD COLUMN recipient_email_hmac TEXT;
+CREATE INDEX ix_irr_cp_hmac ON irreversible_log(cp_biz_no_hmac, state);
+CREATE INDEX ix_irr_email_hmac ON irreversible_log(recipient_email_hmac, state);
 `,
   },
 ];

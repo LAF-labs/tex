@@ -5,7 +5,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { ESLint } from 'eslint';
 import { buildChromeArgs, chromeEnv } from '@sax/vault';
-import { BarGate, buildBarHtml, gateHash, KEYBOARD_APPROVAL, overflowLine, summarize, type GateRequest, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
+import { buildGateRequest, gateSelfCheck, type GateField } from '@sax/engine/gate';
+import { ACTION_TEXT, ACTION_TEXT_DUP, actionText, BarGate, buildBarHtml, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
 import { barBounds, SHELL } from '../apps/desktop/src/shell-layout.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -107,8 +108,7 @@ describe('정적·구성 경계', () => {
   it('승인 바 내용: 요약 줄은 fields에서만, 값 이스케이프, 위험 문자·빈 값·중복 키 거부, 넘치면 띠로, CSP', () => {
     const base = (over: Record<string, string> = {}, extra: Array<{ fieldKey: string; value: string }> = []) => {
       const v: Record<string, string> = { counterpartName: 'A상사', counterpartBizNo: '2148651233', counterpartEmail: 'tax@bücher.example', totalAmount: '3630000', taxAmount: '330000', '$first.bizNo': 'true', ...over };
-      const r = { runId: 'r', gateStepId: 'g', reqId: 'q', docType: 'H-01' as const, fields: [...Object.entries(v).map(([fieldKey, value]) => ({ fieldKey, value })), ...extra] };
-      return { ...r, actionHash: gateHash(r) } satisfies GateRequest;
+      return { fields: [...Object.entries(v).map(([fieldKey, value]) => ({ fieldKey, value })), ...extra] as GateField[] };
     };
     const lines = summarize(base()) as SummaryLine[];
     assert.ok(Array.isArray(lines));
@@ -120,7 +120,8 @@ describe('정적·구성 경계', () => {
     assert.equal(big[1]!.pieces[0]!.text, '123,456,789,012,345원', '해시한 문자열 그대로 자릿수를 묶는다');
     for (const bad of ['A상사‮', 'Aㅤ상사', 'ᅟ', 'A͏']) assert.deepEqual(summarize(base({ counterpartName: bad })), { reason: 'unsafe', label: '공급받는자' }, JSON.stringify(bad));
     assert.deepEqual(summarize(base({ counterpartBizNo: '214865123' })), { reason: 'unsafe', label: '공급받는자' }, '사업자번호는 10자리');
-    assert.deepEqual(summarize(base({ counterpartEmail: '' })), { reason: 'missing', label: '받는 이메일' });
+    assert.equal((summarize(base({ counterpartEmail: '' })) as SummaryLine[])[2]!.pieces.map((p) => p.text).join(''), '없음 · 메일을 보내지 않아요', '받는 이메일이 없으면 메일을 보내지 않는다고 보인다');
+    assert.deepEqual(summarize(base({ counterpartEmail: 'a‮@x.example' })), { reason: 'unsafe', label: '받는 이메일' });
     assert.deepEqual(summarize(base({}, [{ fieldKey: 'counterpartName', value: 'B상사' }])), { reason: 'duplicate' });
     assert.equal(overflowLine(lines, 600), null);
     assert.equal(overflowLine(lines, 420), '공급받는자');
@@ -133,6 +134,42 @@ describe('정적·구성 경계', () => {
     assert.ok(html.includes('&lt;script&gt;'));
     assert.match(html, /default-src 'none'; style-src 'self'/);
     assert.ok(!/<button|<a |<input|onclick/i.test(html), '바 안에 작은 버튼·링크가 없다');
+    // 중복 경고($dup.*)는 합계 줄 표시와 동작 글자로 바에 보인다(ADR-021). 이 클릭이 D02 §7 명시 확인이다.
+    const dup = base({ '$dup.businessKey': 'committed' });
+    assert.equal((summarize(dup) as SummaryLine[])[1]!.flag, '같은 건 기록 있음');
+    assert.equal(actionText(dup), ACTION_TEXT_DUP);
+    assert.equal(actionText(base()), ACTION_TEXT);
+    const prior = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
+    assert.equal((summarize(prior) as SummaryLine[])[1]!.flag, '직전 시도 발급 안 됨');
+    // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
+    for (const states of ['committed,not_committed', 'in_doubt,not_committed', 'dispatched,not_committed']) {
+      assert.equal((summarize(base({ '$dup.businessKey': states, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[1]!.flag, '같은 건 기록 있음', states);
+    }
+    assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /같은 건 기록을 확인했고 발급/);
+  });
+
+  it('게이트 요청 v2: main이 fields로 해시를 다시 계산한다. 예약 키를 빼거나 값을 바꾸면 맞지 않는다. LocalApproval v2', () => {
+    const readback = {
+      supplierBizNo: '1234567891', supplierName: '가나다컴퍼니', counterpartBizNo: '2148651233', counterpartName: 'A상사', counterpartEmail: 'tax@asangsa.example',
+      itemName: '경영 컨설팅', itemCount: '1', supplyAmount: '3300000', taxAmount: '330000', totalAmount: '3630000', issueDate: '2026-11-01', remark: '', receiptType: '영수',
+    };
+    const req = buildGateRequest({ runId: 'r1', gateStepId: 's20', readback, reserved: [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'committed' }], packageDigest: 'a'.repeat(64), authorizes: ['s21'], intentId: 'i1', waitMs: 1000 });
+    assert.equal(gateSelfCheck(req), null);
+    const noFirst = buildGateRequest({ runId: 'r1', gateStepId: 's20', readback, reserved: [{ fieldKey: '$first.bizNo', value: 'true' }], packageDigest: 'a'.repeat(64), authorizes: ['s21'], intentId: 'i1', waitMs: 1000 });
+    assert.equal(gateSelfCheck(noFirst), 'field_key', '해시가 맞아도 $first.* 둘 중 하나가 없으면 엔진 버그');
+    assert.equal(gateSelfCheck({ ...req, fields: req.fields.filter((f) => !f.fieldKey.startsWith('$dup.')) }), 'action_hash', '중복 경고를 빼면 cardHash가 맞지 않는다');
+    assert.equal(gateSelfCheck({ ...req, fields: req.fields.map((f) => (f.fieldKey === 'totalAmount' ? { ...f, value: '363000' } : f)) }), 'readback_hash');
+    assert.equal(gateSelfCheck({ ...req, fields: [...req.fields, { fieldKey: '$first.bizNo', value: 'false' }] }), 'duplicate');
+    assert.equal(gateSelfCheck({ ...req, fields: [...req.fields, { fieldKey: 'memo' as never, value: 'x' }] }), 'field_key');
+    const key = new Uint8Array(32).fill(7);
+    const now = 1_000_000;
+    const ap = issueLocalApproval(key, req, 'click', 120_000, now);
+    assert.deepEqual([ap.v, ap.runId, ap.gateStepId, ap.reqId, ap.approvalNonce, ap.actionHash, ap.exp, ap.presence], [2, 'r1', 's20', req.reqId, req.approvalNonce, req.actionHash, now + 120_000, 'click']);
+    assert.equal(verifyLocalApproval(key, ap, now + 1), true);
+    assert.equal(verifyLocalApproval(key, ap, now + 120_001), false, '만료');
+    assert.equal(verifyLocalApproval(key, { ...ap, approvalNonce: 'x' }, now), false, 'nonce도 MAC에 들어간다');
+    assert.equal(verifyLocalApproval(key, { ...ap, presence: 'click+waiver' }, now), false, 'presence도 MAC에 들어간다');
+    assert.equal(verifyLocalApproval(new Uint8Array(32), ap, now), false);
   });
 
   it('승인 바 배치: 창 크기만으로 대화 열 하단·입력창 위, 좁으면 레일 오른쪽부터 창 끝까지 띠', () => {
