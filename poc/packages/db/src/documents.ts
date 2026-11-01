@@ -19,7 +19,7 @@ export interface DocumentRow {
   createdAt: string;
 }
 
-export type DocumentPatch = Partial<Pick<DocumentRow, 'docType' | 'displayName' | 'issuedAt' | 'expiresAt' | 'issuer' | 'meta'>>;
+export type DocumentPatch = Partial<Pick<DocumentRow, 'docType' | 'displayName' | 'issuedAt' | 'expiresAt' | 'issuer' | 'path' | 'meta'>>;
 
 type Row = Record<string, unknown>;
 
@@ -73,8 +73,8 @@ export class DocumentRepo {
     if (!cur) throw new ValidationError('not_found');
     const next = { ...cur, ...Object.fromEntries(Object.entries(patch).filter(([, v]) => v !== undefined)) } as DocumentRow;
     this.db
-      .prepare('UPDATE documents SET doc_type=?, display_name=?, issued_at=?, expires_at=?, issuer=?, meta_json=? WHERE id=?')
-      .run(next.docType, next.displayName, next.issuedAt, next.expiresAt, next.issuer, next.meta ? JSON.stringify(next.meta) : null, id);
+      .prepare('UPDATE documents SET doc_type=?, display_name=?, issued_at=?, expires_at=?, issuer=?, path=?, meta_json=? WHERE id=?')
+      .run(next.docType, next.displayName, next.issuedAt, next.expiresAt, next.issuer, next.path, next.meta ? JSON.stringify(next.meta) : null, id);
     return this.get(id)!;
   }
 

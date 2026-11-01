@@ -55,6 +55,7 @@ export function decideExpiry(meta: DocMetaExtract, today: string, overrideDays?:
   const reasons: string[] = [];
   if (!issued) reasons.push(`issued_on_${meta.issuedOn.reason ?? 'not_found'}`);
   else if (issued > today || issued < '2000-01-01') reasons.push('issued_on_out_of_range');
+  else if (meta.uncertain.includes('issuedOn')) reasons.push('issued_on_uncertain');
   const ruleExpiry = issued ? addDays(issued, (overrideDays ?? rule.days) - 1) : null;
   if (!rule.documentStates) return { expiresOn: ruleExpiry, source: ruleExpiry ? 'rule' : null, needsUser: reasons.length > 0, reasons };
   const stated = meta.validUntil.value;

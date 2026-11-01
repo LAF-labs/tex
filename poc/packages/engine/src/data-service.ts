@@ -85,7 +85,7 @@ export class DataService {
       case 'bizverify.hasKey':
         return { hasKey: this.verifier.hasKey };
       case 'document.import':
-        return this.documents.import(p.bytes, p.extract);
+        return this.documents.import(p.bytes, p.extract, { altText: p.altText, final: p.final === true });
       case 'document.update':
         return this.documents.update(String(p.id), (p.patch ?? {}) as never);
     }

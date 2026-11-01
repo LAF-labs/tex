@@ -51,7 +51,10 @@ const PAGE = `<!doctype html><meta charset="utf-8"><style>
 @page{size:A4;margin:14mm}body{font-family:'Apple SD Gothic Neo','Malgun Gothic',sans-serif;font-size:11pt;color:#000}
 h1{text-align:center;font-size:20pt;letter-spacing:8pt;margin:6mm 0}table{border-collapse:collapse;width:100%;margin:2mm 0}
 td,th{border:1px solid #000;padding:2mm;vertical-align:middle;font-weight:normal}th{background:#eee;text-align:center}
-.r{text-align:right}.c{text-align:center}.small{font-size:9pt}.foot{margin-top:10mm}</style><body>`;
+.r{text-align:right}.c{text-align:center}.small{font-size:9pt}.foot{margin-top:10mm}
+.seal{display:inline-block;width:15mm;height:15mm;margin-left:-12mm;vertical-align:middle;border:1.2mm solid #c8322d;border-radius:50%;background:rgba(214,58,50,.35)}</style><body>`;
+/** 붉은 직인(글자 없음). 실제 증명서처럼 기관명 위에 겹친다. OCR 전처리가 붉은색을 지우는지 본다. */
+const SEAL = '<span class="seal"></span>';
 
 function taxCertHtml(o: { no: string; spaced: boolean; corp: (typeof CORPS)[number]; bizNo: string; issued: string; valid: string; shortened: boolean; style: DateStyle; office: string; deferral: boolean; printedAt: boolean }): string {
   const s = o.spaced;
@@ -76,7 +79,7 @@ function taxCertHtml(o: { no: string; spaced: boolean; corp: (typeof CORPS)[numb
 <p>「국세징수법」 제108조 및 같은 법 시행령 제95조에 따라 위의 연장ㆍ유예액 또는 물적납세의무 관련 체납액을 제외하고는 다른 체납액이 없음을 증명합니다.</p>
 <p class="small">※ 발급일 현재 지정납부기한이 도래하지 않은 미납국세는 체납액이 아니므로 증명 대상에서 제외됨.</p>
 <table class="foot"><tr><th>${L('담당부서', s)}</th><td>민원봉사실</td><td class="c" rowspan="2">${fmtDate(o.issued, o.style)}</td><th>${L('담당자', s)}</th><td>김담당</td></tr>
-<tr><th>${L('연락처', s)}</th><td>02-000-0000</td><th colspan="2" class="c">${o.office}${L('세무서장', s)} 직인</th></tr></table>
+<tr><th>${L('연락처', s)}</th><td>02-000-0000</td><th colspan="2" class="c">${o.office}${L('세무서장', s)} 직인${SEAL}</th></tr></table>
 ${o.printedAt ? `<p class="small r">출력일시 ${fmtDate(o.issued, 'dash')} 10:42</p>` : ''}
 </body>`;
 }
@@ -99,7 +102,7 @@ function bizRegHtml(o: { no: string; spaced: boolean; corp: (typeof CORPS)[numbe
 <p class="c foot">${fmtDate(o.issued, o.style)}</p>
 <table><tr><th>${L('접수번호', s)}</th><td>${o.no.replace(/\D/g, '').slice(-7)}</td><th>${L('담당부서', s)}</th><td>민원봉사실</td></tr>
 <tr><th>${L('담당자', s)}</th><td>김담당</td><th>${L('연락처', s)}</th><td>031-000-0000</td></tr></table>
-<p class="c" style="font-size:16pt">${o.office}${L('세무서장', s)} (인)</p>
+<p class="c" style="font-size:16pt">${o.office}${L('세무서장', s)} (인)${SEAL}</p>
 </body>`;
 }
 
@@ -163,6 +166,40 @@ export function multiPageHtml(pages: number): string {
   return `${PAGE}${Array.from({ length: pages }, (_, i) => `<div style="${i ? 'page-break-before:always' : ''}">${one}</div>`).join('')}</body>`;
 }
 
+/** 최소 PDF 작성기(시험 전용): 객체 본문 목록 → xref·trailer를 붙인 바이트. 객체 번호는 1부터 순서대로. */
+function writePdf(objs: Buffer[], trailerExtra = ''): Uint8Array {
+  const parts: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
+  const offsets: number[] = [];
+  let at = parts[0]!.length;
+  objs.forEach((body, i) => {
+    offsets.push(at);
+    const b = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), body, Buffer.from('\nendobj\n')]);
+    parts.push(b);
+    at += b.length;
+  });
+  const xref = [`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`, ...offsets.map((off) => `${String(off).padStart(10, '0')} 00000 n \n`)].join('');
+  parts.push(Buffer.from(`${xref}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R${trailerExtra} >>\nstartxref\n${at}\n%%EOF\n`));
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+const stream = (dict: string, data: Buffer) => Buffer.concat([Buffer.from(`<< ${dict} /Length ${data.length} >>\nstream\n`), data, Buffer.from('\nendstream')]);
+
+/**
+ * 스캐너·복합기가 만드는 '검색 가능 PDF' 흉내: 쪽 전체 그림(JPEG) 위에 보이지 않는 글자(렌더 모드 3 Tr)를 덧입힌다.
+ * 글자는 ASCII(Helvetica)라 한글 서류 흉내는 아니다. docparse가 이 층을 원본 텍스트로 믿지 않는지(scanned) 본다.
+ */
+export function scannedTestPdf(jpeg: Buffer, width: number, height: number, text: string): Uint8Array {
+  const content = Buffer.from(`q 595 0 0 842 0 0 cm /Im1 Do Q BT 3 Tr /F1 12 Tf 60 760 Td (${text.replace(/[()\\]/g, '')}) Tj ET`, 'latin1');
+  return writePdf([
+    Buffer.from('<< /Type /Catalog /Pages 2 0 R >>'),
+    Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+    Buffer.from('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> /XObject << /Im1 5 0 R >> >> /Contents 6 0 R >>'),
+    Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+    stream(`/Type /XObject /Subtype /Image /Width ${width} /Height ${height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode`, jpeg),
+    stream('', content),
+  ]);
+}
+
 // ── 암호 PDF(시험 전용): 표준 보안 처리기 V1·R2(RC4 40비트). 열기 암호·권한 암호 경로를 의존성 없이 만든다. ──
 const PASSWORD_PAD = Buffer.from('28bf4e5e4e758a4164004e56fffa01082e2e00b6d0683e802f0ca9fe6453697a', 'hex');
 const md5 = (...parts: Buffer[]) => createHash('md5').update(Buffer.concat(parts)).digest();
@@ -195,26 +232,17 @@ export function encryptedTestPdf(userPassword: string, ownerPassword: string, te
   const u = rc4(key, PASSWORD_PAD);
   const objKey = (n: number) => md5(key, Buffer.from([n & 255, (n >> 8) & 255, (n >> 16) & 255, 0, 0])).subarray(0, 10);
   const content = rc4(objKey(5), Buffer.from(`BT /F1 16 Tf 60 760 Td (${text.replace(/[()\\]/g, '')}) Tj ET`, 'latin1'));
-  const objs: Buffer[] = [
-    Buffer.from('<< /Type /Catalog /Pages 2 0 R >>'),
-    Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
-    Buffer.from('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>'),
-    Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
-    Buffer.concat([Buffer.from(`<< /Length ${content.length} >>\nstream\n`), content, Buffer.from('\nendstream')]),
-    Buffer.from(`<< /Filter /Standard /V 1 /R 2 /O <${o.toString('hex')}> /U <${u.toString('hex')}> /P -44 >>`),
-  ];
-  const parts: Buffer[] = [Buffer.from('%PDF-1.4\n%\xe2\xe3\xcf\xd3\n', 'latin1')];
-  const offsets: number[] = [];
-  let at = parts[0]!.length;
-  objs.forEach((body, i) => {
-    offsets.push(at);
-    const b = Buffer.concat([Buffer.from(`${i + 1} 0 obj\n`), body, Buffer.from('\nendobj\n')]);
-    parts.push(b);
-    at += b.length;
-  });
-  const xref = [`xref\n0 ${objs.length + 1}\n0000000000 65535 f \n`, ...offsets.map((off) => `${String(off).padStart(10, '0')} 00000 n \n`)].join('');
-  parts.push(Buffer.from(`${xref}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R /Encrypt 6 0 R /ID [<${id.toString('hex')}> <${id.toString('hex')}>] >>\nstartxref\n${at}\n%%EOF\n`));
-  return new Uint8Array(Buffer.concat(parts));
+  return writePdf(
+    [
+      Buffer.from('<< /Type /Catalog /Pages 2 0 R >>'),
+      Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>'),
+      Buffer.from('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>'),
+      Buffer.from('<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'),
+      stream('', content),
+      Buffer.from(`<< /Filter /Standard /V 1 /R 2 /O <${o.toString('hex')}> /U <${u.toString('hex')}> /P -44 >>`),
+    ],
+    ` /Encrypt 6 0 R /ID [<${id.toString('hex')}> <${id.toString('hex')}>]`,
+  );
 }
 
 /** printToPDF 결과의 /ToUnicode 키를 같은 길이의 다른 키로 바꿔 글자 대응표를 끊는다(텍스트 층 판정 시험용). 바꾼 수를 돌려준다. */

@@ -13,7 +13,8 @@ const field = (pattern: string) => ({
   properties: {
     value: { anyOf: [{ type: 'string', pattern }, { type: 'null' }] },
     reason: { anyOf: [{ enum: REASONS }, { type: 'null' }] },
-    suggested: { type: 'string', maxLength: 40 },
+    // 날짜 칸의 후보는 날짜 형식, 그 밖(체크섬이 틀린 사업자번호 등)은 짧은 글자
+    suggested: { type: 'string', maxLength: 40, pattern: pattern === ISO_DATE ? ISO_DATE : '^[0-9A-Z가-힣-]{1,40}$' },
   },
   // 값이 있으면 이유가 없고, 값이 없으면 이유가 있다
   oneOf: [
@@ -26,22 +27,33 @@ export const DOC_META_SCHEMA = {
   $id: 'https://sovereign-ax.local/schemas/docmeta-extract-v1.json',
   type: 'object',
   additionalProperties: false,
-  required: ['extractor', 'kind', 'docType', 'issuedOn', 'validUntil', 'issuer', 'docNo', 'subjectBizNo', 'candidates'],
+  required: ['extractor', 'kind', 'docType', 'issuedOn', 'validUntil', 'issuer', 'docNo', 'subjectBizNo', 'uncertain', 'candidates'],
   properties: {
     extractor: { const: 'docmeta-v1' },
     kind: { enum: ['national_tax_cert', 'biz_registration_cert', 'localtax_cert', 'biz_registration', 'closure_cert', 'english_cert', 'ambiguous', 'unknown'] },
     docType: { enum: ['national_tax_cert', 'biz_registration_cert', null] },
     issuedOn: field(ISO_DATE),
     validUntil: field(ISO_DATE),
-    issuer: field('^[가-힣]{1,5}세무서장$'),
+    issuer: field('^[가-힣]{2,4}세무서장$'),
     docNo: field('^[0-9A-Z]{4}-\\d{3}-\\d{4}-\\d{3}$'),
     subjectBizNo: field('^\\d{10}$'),
+    uncertain: { type: 'array', maxItems: 1, uniqueItems: true, items: { enum: ['issuedOn'] } },
     candidates: {
       type: 'array',
       maxItems: 8,
       items: { type: 'object', additionalProperties: false, required: ['date', 'context'], properties: { date: { type: 'string', pattern: ISO_DATE }, context: { type: 'string', maxLength: 400 } } },
     },
   },
+  allOf: [
+    // 종류를 정했으면 판별 결과와 같다. 못 정했으면 모든 칸이 unsupported_doc
+    { if: { properties: { docType: { type: 'string' } } }, then: { properties: { kind: { const: { $data: '1/docType' } } } } },
+    {
+      if: { properties: { docType: { type: 'null' } } },
+      then: { properties: Object.fromEntries(['issuedOn', 'validUntil', 'issuer', 'docNo', 'subjectBizNo'].map((k) => [k, { properties: { value: { type: 'null' }, reason: { const: 'unsupported_doc' } } }])) },
+    },
+    // 사업자등록증명에는 유효기간 칸이 없다
+    { if: { properties: { docType: { const: 'biz_registration_cert' } } }, then: { properties: { validUntil: { properties: { value: { type: 'null' }, reason: { const: 'not_applicable' } } } } } },
+  ],
 } as const;
 
 let validator: ValidateFunction | null = null;
@@ -50,7 +62,7 @@ let validator: ValidateFunction | null = null;
 export function validateDocMeta(v: unknown): DocMetaExtract | null {
   if (!validator) {
     const Ajv = createRequire(import.meta.url)('ajv') as typeof import('ajv').default;
-    validator = new Ajv({ allErrors: false, strict: false }).compile(DOC_META_SCHEMA);
+    validator = new Ajv({ allErrors: false, strict: false, $data: true }).compile(DOC_META_SCHEMA);
   }
   return validator(v) ? (v as DocMetaExtract) : null;
 }

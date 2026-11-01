@@ -1,11 +1,13 @@
 // PoC-8 e2e: 합성 서류 PDF → docparse 샌드박스(pdf.js, 텍스트 층이 없으면 OCR) → 메타 규칙(S4) → 기대값 비교, S13b 측정.
 // 실행: electron apps/desktop/dist/docparse-e2e.js → reports/raw/poc-8-docparse.json. 앱 폴더·키체인을 쓰지 않는다.
+import dgram from 'node:dgram';
 import fs from 'node:fs/promises';
+import net from 'node:net';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';
 import { decideExpiry, extractDocMeta, validateDocMeta, type DocMetaExtract } from '@sax/engine/docmeta';
-import { DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun, type PdfOptions } from './docparse.ts';
-import { addDays, breakToUnicode, encryptedTestPdf, multiPageHtml, syntheticCerts, type SyntheticCert } from './synthetic-certs.ts';
+import { createDocparseWindow, DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun, type PdfOptions } from './docparse.ts';
+import { addDays, breakToUnicode, encryptedTestPdf, multiPageHtml, scannedTestPdf, syntheticCerts, type SyntheticCert } from './synthetic-certs.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-poc8-e2e-${process.pid}`));
@@ -26,19 +28,70 @@ async function htmlToPdf(html: string): Promise<Uint8Array> {
   }
 }
 
-/** 서류를 약 290dpi 그림으로 찍어 그림 한 장짜리 PDF로 만든다(텍스트 층 없음 = 스캔·이미지 인쇄 흉내). */
-async function htmlToImagePdf(html: string): Promise<Uint8Array> {
+/** 서류를 약 290dpi로 찍는다. 스캔처럼 0.6° 기울인다. */
+async function capture(html: string): Promise<Electron.NativeImage> {
   const zoom = 3;
   const w = new BrowserWindow({ show: false, width: 794 * zoom, height: 1123 * zoom, webPreferences: { offscreen: true, javascript: false, zoomFactor: zoom } });
-  let png: Buffer;
   try {
-    await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html.replace('</style>', 'html{transform:rotate(0.6deg)}</style>')));
     await new Promise((r) => setTimeout(r, 300));
-    png = (await w.webContents.capturePage()).toPNG();
+    return await w.webContents.capturePage();
   } finally {
     w.destroy();
   }
+}
+
+/** 그림 한 장짜리 PDF(텍스트 층 없음 = 스캔·이미지 인쇄 흉내). */
+async function htmlToImagePdf(html: string): Promise<Uint8Array> {
+  const png = (await capture(html)).toPNG();
   return htmlToPdf(`<!doctype html><style>@page{size:A4;margin:0}body{margin:0}img{width:210mm;height:297mm;display:block}</style><img src="data:image/png;base64,${png.toString('base64')}">`);
+}
+
+/**
+ * docparse 창 안에서 하는 송신 시험(D17 §2 "docparse 렌더러의 네트워크 요청 0"). 실제 docparse 페이지(CSP 있음)와
+ * CSP 없는 data: 페이지 두 곳에서 fetch·WebSocket·WebRTC(STUN UDP, TURN TCP)를 시도하고 로컬 리스너에 닿은 수를 센다.
+ */
+async function egressProbe(): Promise<Record<string, unknown>> {
+  const udp = dgram.createSocket('udp4');
+  let udpHits = 0;
+  udp.on('message', () => udpHits++);
+  await new Promise<void>((r) => udp.bind(0, '127.0.0.1', r));
+  let tcpHits = 0;
+  const tcp = net.createServer((sock) => {
+    tcpHits++;
+    sock.destroy();
+  });
+  await new Promise<void>((r) => tcp.listen(0, '127.0.0.1', r));
+  const udpPort = udp.address().port;
+  const tcpPort = (tcp.address() as net.AddressInfo).port;
+  const probe = `(async () => {
+    const r = {};
+    r.fetch = await fetch('http://127.0.0.1:${tcpPort}/').then(() => 'sent', () => 'blocked');
+    r.ws = await new Promise((res) => { try { const w = new WebSocket('ws://127.0.0.1:${tcpPort}/'); w.onopen = () => res('open'); w.onerror = () => res('blocked'); setTimeout(() => res('timeout'), 1500); } catch { res('blocked'); } });
+    try {
+      const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:127.0.0.1:${udpPort}' }, { urls: 'turn:127.0.0.1:${tcpPort}?transport=tcp', username: 'u', credential: 'p' }] });
+      pc.createDataChannel('x');
+      await pc.setLocalDescription(await pc.createOffer());
+      await new Promise((res) => setTimeout(res, 2500));
+      pc.close();
+      r.rtc = 'tried';
+    } catch (e) { r.rtc = 'error ' + String(e).slice(0, 40); }
+    return r;
+  })()`;
+  const out: Record<string, unknown> = {};
+  const win = await createDocparseWindow();
+  try {
+    await win.loadURL(`${DOCPARSE_SCHEME}://app/index.html`);
+    out.page = await win.webContents.executeJavaScript(probe);
+    await win.loadURL('data:text/html,<p>probe</p>');
+    out.dataPage = await win.webContents.executeJavaScript(probe);
+  } finally {
+    win.destroy();
+    await new Promise((r) => setTimeout(r, 300));
+    udp.close();
+    tcp.close();
+  }
+  return { ...out, udpHits, tcpHits };
 }
 
 type FieldName = 'issuedOn' | 'validUntil' | 'issuer' | 'docNo' | 'subjectBizNo';
@@ -117,7 +170,7 @@ async function main(): Promise<void> {
   const text = samples.filter((s) => s.flavor === 'text');
   check('합성 text: 발급기관·발급번호·사업자번호까지 전부 일치', text.every((s) => Object.values(s.fields).every(Boolean)), text.filter((s) => !Object.values(s.fields).every(Boolean)).map((s) => ({ id: s.id, mismatches: s.mismatches })));
   check('text PDF는 텍스트 층으로 읽는다(OCR 안 함)', text.every((s) => s.hasTextLayer && s.ocrConfidence === null));
-  check('그림 PDF는 텍스트 층 없음으로 보고 OCR로 읽는다', samples.filter((s) => s.flavor === 'image').every((s) => !s.hasTextLayer && s.ocrConfidence !== null));
+  check('그림 PDF(붉은 직인·0.6° 기울기)는 텍스트 층 없음으로 보고 OCR로 읽는다', samples.filter((s) => s.flavor === 'image').every((s) => !s.hasTextLayer && s.ocrConfidence !== null));
   check('ToUnicode를 끊은 PDF: 깨진 텍스트 층을 쓰지 않는다(OCR로 넘어가거나 정상 복원)', samples.filter((s) => s.flavor === 'broken_tounicode').every((s) => s.coreOk), { replacedKeys: brokenReplaced, viaOcr: samples.filter((s) => s.flavor === 'broken_tounicode' && !s.hasTextLayer).length });
 
   // S13b: 5쪽 문서(작업당 ≤ 3초, 앞 5쪽만)
@@ -125,6 +178,21 @@ async function main(): Promise<void> {
   const multi = await parsePdfInSandbox(seven);
   check('7쪽 문서는 앞 5쪽만 읽는다', multi.pages === 5 && multi.totalPages === 7, { pages: multi.pages, totalPages: multi.totalPages });
   check('S13b 5쪽 텍스트 추출 ≤ 3초(작업당)', multi.ms <= 3000, { ms: multi.ms, timing: multi.timing, peakMemoryKb: multi.peakMemoryKb });
+  const multiMeta = extractDocMeta(multi.text);
+  const first = syntheticCerts()[0]!.expected;
+  check('여러 쪽 문서도 같은 값으로 추출한다', multiMeta.docType === 'national_tax_cert' && multiMeta.issuedOn.value === first.issuedOn && multiMeta.validUntil.value === first.validUntil, { issuedOn: multiMeta.issuedOn, validUntil: multiMeta.validUntil });
+
+  // 스캐너·복합기의 '검색 가능 PDF': 그림 위 보이지 않는 글자 층은 원본 텍스트로 믿지 않는다(scanned)
+  const shot = await capture(syntheticCerts()[0]!.html);
+  const size = shot.getSize();
+  const scannedPdf = scannedTestPdf(shot.toJPEG(80), size.width, size.height, 'SYNTHETIC SCANNED CERTIFICATE WITH AN INVISIBLE OCR TEXT LAYER 2026');
+  const scanned = await parsePdfInSandbox(scannedPdf, { ocrPages: 0 });
+  check('보이지 않는 글자 층(렌더 모드 3)은 scanned로 알린다', scanned.hasTextLayer && scanned.scanned && scanned.ocrConfidence === null, { hasTextLayer: scanned.hasTextLayer, scanned: scanned.scanned });
+  const plain = await parsePdfInSandbox(await htmlToPdf(syntheticCerts()[0]!.html));
+  check('보통 텍스트 PDF는 scanned가 아니다', !plain.scanned);
+  const forced = await parsePdfInSandbox(await htmlToPdf(syntheticCerts()[8]!.html), { forceOcr: true });
+  const forcedMeta = extractDocMeta(forced.text);
+  check('forceOcr: 텍스트 층이 있어도 OCR로 다시 읽는다(엔진의 다시 읽기 요청)', forced.hasTextLayer && forced.ocrConfidence !== null && forcedMeta.docType === 'biz_registration_cert' && forcedMeta.issuedOn.value === syntheticCerts()[8]!.expected.issuedOn, { ocrConfidence: forced.ocrConfidence, docType: forcedMeta.docType, issuedOn: forcedMeta.issuedOn });
 
   // 암호 PDF: 권한 암호만이면 그냥 열리고, 열기 암호는 코드로 묻는다(암호는 저장하지 않는다)
   const body = 'PASSWORD PROTECTED SYNTHETIC CERTIFICATE 2026 FOR DOCPARSE TEST';
@@ -148,8 +216,11 @@ async function main(): Promise<void> {
   const pair = await Promise.all([parsePdfInSandbox(textPdf), parsePdfInSandbox(textPdf)]);
   check('동시 작업 두 개는 서로 다른 창에서 끝난다', pair.every((r) => r.hasTextLayer && r.text === pair[0]!.text));
   check('작업 뒤 docparse 창이 남지 않는다', BrowserWindow.getAllWindows().length === 0, BrowserWindow.getAllWindows().length);
-  const net = await session.fromPartition('sax-docparse').fetch('https://example.com/').then((r) => `status ${r.status}`, (e: Error) => `blocked: ${e.message.slice(0, 60)}`);
-  check('docparse 파티션 외부 네트워크 차단', net.startsWith('blocked'), net);
+  const blockedFetch = await session.fromPartition('sax-docparse').fetch('https://example.com/').then((r) => `status ${r.status}`, (e: Error) => `blocked: ${e.message.slice(0, 60)}`);
+  check('docparse 파티션 외부 네트워크 차단(main 쪽 세션 fetch)', blockedFetch.startsWith('blocked'), blockedFetch);
+  const egress = await egressProbe();
+  const sent = (o: unknown) => Object.values(o as Record<string, string>).some((v) => v === 'sent' || v === 'open');
+  check('docparse 창 안 송신 0: fetch·WebSocket 막힘, WebRTC STUN(UDP)·TURN(TCP)이 리스너에 닿지 않음', !sent(egress.page) && !sent(egress.dataPage) && egress.udpHits === 0 && egress.tcpHits === 0, egress);
 
   const s13b = Object.fromEntries(
     (['text', 'broken_tounicode', 'image'] as const).map((f) => {

@@ -9,7 +9,7 @@ import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/plat
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, openApprovalWindow } from './approval-window.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
-import { importPdf } from './vault-import.ts';
+import { cancelPick, importPdf } from './vault-import.ts';
 
 const require = createRequire(import.meta.url);
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -128,6 +128,9 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
       return {};
     case 'vault.importPdf':
       return importPdf(params, (m, p) => rpc('engine', m, p));
+    case 'vault.importCancel':
+      cancelPick(params.pickId);
+      return {};
     case 'ocr.bizcert': {
       // 사용자가 고른 파일만 파싱한다(ADR-014 자동 파싱 축소). PDF는 PoC-8(docparse pdf.js)에서.
       const pick = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: '사업자등록증 이미지', extensions: ['png', 'jpg', 'jpeg'] }] });

@@ -1,35 +1,37 @@
-// PoC-8 실물 측정: 사람이 저장소 밖 폴더에 둔 홈택스 민원증명 PDF(납세증명서·사업자등록증명)를 docparse 샌드박스로 읽고
-// 사람이 쓴 정답(labels.json)과 비교한다. 합격 기준은 "20건 중 19건"(종류·발급일·유효기간이 모두 맞은 건).
+// PoC-8 실물 측정: 사람이 git 작업 폴더 밖에 둔 홈택스 민원증명 PDF(납세증명서·사업자등록증명)를 앱과 같은 경로
+// (docparse 샌드박스 → 필요하면 OCR로 다시 읽기 → 메타 규칙 → 만료 규칙)로 읽고, 사람이 쓴 정답(labels.json)과 비교한다.
+// 합격: 두 종류 표본 중 95% 이상(20건이면 19건)이 종류·발급일·유효기간 모두 맞고, "확인 없이 확정했는데 틀린 건"이 0건.
 //
 // 실행(빌드 뒤):
-//   electron apps/desktop/dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(추출값 초안). 사람이 고쳐 labels.json으로 저장
-//   electron apps/desktop/dist/poc8-measure.js <폴더>           → 비교 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
-// 열기 암호가 걸린 PDF는 SAX_POC8_PDF_PASSWORD 환경 변수로 준다(파일에 쓰지 않는다).
+//   electron apps/desktop/dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(종류만 채운 정답 틀). 사람이 PDF를 보고
+//                                                                  날짜·번호를 채워 labels.json으로 저장한다(추출값을 미리 채우지 않는다: 정답이 추출기 쪽으로 쏠리지 않게)
+//   electron apps/desktop/dist/poc8-measure.js <폴더>           → 순번별 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
+// 열기 암호가 걸린 PDF는 --password-stdin으로 한 줄 넣는다(셸 기록·파일에 남기지 않는다). 오래된 표본은 SAX_POC8_TODAY=YYYY-MM-DD.
 //
 // labels.json: [{ "file": "a.pdf", "docType": "national_tax_cert" | "biz_registration_cert" | "other",
-//                 "issuedOn": "YYYY-MM-DD", "validUntil": "YYYY-MM-DD" | null, "docNo"?: "XXXX-XXX-XXXX-XXX", "bizNo"?: "숫자 10자리" }]
+//                 "issuedOn": "YYYY-MM-DD" | null, "validUntil": "YYYY-MM-DD" | null, "docNo"?: "XXXX-XXX-XXXX-XXX", "bizNo"?: "숫자 10자리" }]
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, protocol } from 'electron';
-import { decideExpiry, extractDocMeta, l0ShadowPick, validateDocMeta } from '@sax/engine/docmeta';
-import { DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox } from './docparse.ts';
+import { decideExpiry, extractDocMeta, l0ShadowPick, readScore, validateDocMeta, worthOcr, type DocMetaExtract } from '@sax/engine/docmeta';
+import { DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun } from './docparse.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-poc8-measure-${process.pid}`));
 app.on('window-all-closed', () => {});
 
+type LabelType = 'national_tax_cert' | 'biz_registration_cert' | 'other';
 interface Label {
   file: string;
-  docType: 'national_tax_cert' | 'biz_registration_cert' | 'other';
+  docType: LabelType | null;
   issuedOn: string | null;
   validUntil: string | null;
-  docNo?: string;
-  bizNo?: string;
+  docNo?: string | null;
+  bizNo?: string | null;
 }
 
 const REPO = path.resolve(import.meta.dirname, '../../../..');
-const TODAY_OVERRIDE = process.env.SAX_POC8_TODAY; // 오래된 샘플의 발급일이 '미래'로 걸리지 않게(기본은 오늘)
 
 /** git 작업 폴더 안이면 거부한다(이 저장소든 다른 체크아웃이든 실수로 커밋될 수 있다). */
 function insideGitWorkTree(dir: string): boolean {
@@ -40,100 +42,126 @@ function insideGitWorkTree(dir: string): boolean {
   }
 }
 
+async function readPasswordFromStdin(): Promise<string | undefined> {
+  if (!process.argv.includes('--password-stdin')) return undefined;
+  let buf = '';
+  for await (const chunk of process.stdin) {
+    buf += String(chunk);
+    if (buf.includes('\n')) break;
+  }
+  return buf.split('\n')[0]!.replace(/\r$/, '') || undefined;
+}
+
+/** 앱(vault-import → DocumentService)과 같은 읽기: 텍스트 층에서 핵심 칸을 못 뽑으면 OCR로 다시 읽고 나은 쪽을 쓴다. */
+async function readLikeApp(bytes: Uint8Array, password: string | undefined): Promise<{ run: PdfExtractRun; meta: DocMetaExtract; ocrGrade: boolean }> {
+  const x = await parsePdfInSandbox(bytes, { password });
+  const first = validateDocMeta(extractDocMeta(x.text));
+  if (!first) throw new Error('schema');
+  if (x.ocrConfidence !== null || !worthOcr(first)) return { run: x, meta: first, ocrGrade: x.ocrConfidence !== null || x.scanned };
+  const y = await parsePdfInSandbox(bytes, { password, forceOcr: true }).catch(() => null);
+  const second = y && validateDocMeta(extractDocMeta(y.text));
+  if (!y || !second || readScore(first) >= readScore(second)) return { run: x, meta: first, ocrGrade: x.scanned };
+  return { run: { ...y, ms: x.ms + y.ms }, meta: second, ocrGrade: true };
+}
+
+const failCode = (e: unknown) => (e instanceof DocparseError ? e.code : e instanceof Error ? e.message.slice(0, 40) : 'error');
+
 async function main(): Promise<number> {
   const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
-  const draft = process.argv.includes('--draft');
   const dir = args[0] ? path.resolve(args[0]) : '';
   if (!dir) {
-    console.error('사용법: electron apps/desktop/dist/poc8-measure.js <저장소 밖 폴더> [--draft]');
+    console.error('사용법: electron apps/desktop/dist/poc8-measure.js <git 작업 폴더 밖 폴더> [--draft] [--password-stdin]');
     return 2;
   }
   if (insideGitWorkTree(dir)) {
     console.error('실물 서류는 git 작업 폴더 밖에 두세요(커밋 방지).');
     return 2;
   }
-  const files = (await fs.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.pdf')).sort();
-  const password = process.env.SAX_POC8_PDF_PASSWORD || undefined;
-  const today = TODAY_OVERRIDE ?? new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
+  const password = await readPasswordFromStdin();
+  const today = process.env.SAX_POC8_TODAY ?? new Date(Date.now() + 9 * 3_600_000).toISOString().slice(0, 10);
 
-  if (draft) {
+  if (process.argv.includes('--draft')) {
+    const files = (await fs.readdir(dir)).filter((f) => f.toLowerCase().endsWith('.pdf')).sort();
     const out: Label[] = [];
-    for (const file of files) {
-      const r = await parsePdfInSandbox(new Uint8Array(await fs.readFile(path.join(dir, file))), { password }).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
-      if (r instanceof Error) {
-        out.push({ file, docType: 'other', issuedOn: null, validUntil: null });
-        console.log(`${file}: 읽기 실패 ${r instanceof DocparseError ? r.code : r.message}`);
-        continue;
-      }
-      const m = extractDocMeta(r.text);
-      out.push({ file, docType: m.docType ?? 'other', issuedOn: m.issuedOn.value ?? m.issuedOn.suggested ?? null, validUntil: m.validUntil.value ?? m.validUntil.suggested ?? null, docNo: m.docNo.value ?? undefined, bizNo: m.subjectBizNo.value ?? undefined });
+    for (const [i, file] of files.entries()) {
+      // 종류만 채운다. 날짜·번호는 사람이 PDF를 보고 넣는다. 콘솔에는 파일명 대신 순번만 쓴다.
+      const r = await readLikeApp(new Uint8Array(await fs.readFile(path.join(dir, file))), password).catch((e: unknown) => failCode(e));
+      if (typeof r === 'string') console.log(`#${i + 1} 읽기 실패 ${r}`);
+      out.push({ file, docType: typeof r === 'string' ? null : (r.meta.docType ?? 'other'), issuedOn: null, validUntil: null, docNo: null, bizNo: null });
     }
     await fs.writeFile(path.join(dir, 'labels.draft.json'), JSON.stringify(out, null, 2));
-    console.log(`초안 ${out.length}건: ${path.join(dir, 'labels.draft.json')} — PDF를 직접 보고 값을 고친 뒤 labels.json으로 저장하세요.`);
+    console.log(`정답 틀 ${out.length}건을 폴더의 labels.draft.json에 썼습니다. PDF를 보고 채워 labels.json으로 저장하세요.`);
     return 0;
   }
 
   const labels = JSON.parse(await fs.readFile(path.join(dir, 'labels.json'), 'utf8')) as Label[];
   const rows: Array<Record<string, unknown>> = [];
-  let i = 0;
-  for (const l of labels) {
-    i++;
-    const row: Record<string, unknown> = { n: i, docType: l.docType };
+  for (const [i, l] of labels.entries()) {
+    const row: Record<string, unknown> = { n: i + 1, docType: l.docType };
     rows.push(row);
-    const r = await parsePdfInSandbox(new Uint8Array(await fs.readFile(path.join(dir, l.file))), { password }).catch((e: unknown) => (e instanceof Error ? e : new Error(String(e))));
-    if (r instanceof Error) {
-      Object.assign(row, { error: r instanceof DocparseError ? r.code : 'error', coreOk: false });
+    const r = await readLikeApp(new Uint8Array(await fs.readFile(path.join(dir, l.file))), password).catch((e: unknown) => failCode(e));
+    if (typeof r === 'string') {
+      Object.assign(row, { error: r, coreOk: false, silentWrong: false });
       continue;
     }
-    const meta = validateDocMeta(extractDocMeta(r.text));
-    if (!meta) {
-      Object.assign(row, { error: 'schema', coreOk: false });
-      continue;
-    }
+    const { run, meta, ocrGrade } = r;
     const expiry = decideExpiry(meta, today);
     const typeOk = (meta.docType ?? 'other') === l.docType;
-    const issuedOk = meta.issuedOn.value === l.issuedOn;
-    const validOk = l.docType === 'national_tax_cert' ? meta.validUntil.value === l.validUntil && expiry.expiresOn === l.validUntil : true;
+    const issuedOk = l.docType === 'other' || meta.issuedOn.value === l.issuedOn;
+    const validOk = l.docType === 'national_tax_cert' ? expiry.expiresOn === l.validUntil : true;
+    const coreOk = typeOk && issuedOk && validOk;
+    const needsUser = expiry.needsUser || ocrGrade;
+    const l0Issued = l0ShadowPick(meta, 'issued_on');
+    const l0Valid = l0ShadowPick(meta, 'valid_until');
     Object.assign(row, {
-      textLayer: r.hasTextLayer,
-      ocrConfidence: r.ocrConfidence,
-      pages: r.pages,
-      ms: r.ms,
-      peakMemoryMb: Math.round(r.peakMemoryKb / 1024),
+      textLayer: run.hasTextLayer,
+      scanned: run.scanned,
+      ocrConfidence: run.ocrConfidence,
+      pages: run.pages,
+      ms: run.ms,
+      peakMemoryMb: Math.round(run.peakMemoryKb / 1024),
       typeOk,
       issuedOk,
       validOk,
-      coreOk: typeOk && issuedOk && validOk,
-      needsUser: expiry.needsUser || !r.hasTextLayer,
+      coreOk,
+      needsUser,
+      // 가장 나쁜 실패: 확인 없이 확정했는데 틀림
+      silentWrong: !coreOk && !needsUser,
       reasons: { issuedOn: meta.issuedOn.reason, validUntil: meta.validUntil.reason, expiry: expiry.reasons },
-      docNoOk: l.docNo === undefined ? null : meta.docNo.value === l.docNo,
-      bizNoOk: l.bizNo === undefined ? null : meta.subjectBizNo.value === l.bizNo,
+      docNoOk: l.docNo == null ? null : meta.docNo.value === l.docNo,
+      bizNoOk: l.bizNo == null ? null : meta.subjectBizNo.value === l.bizNo,
       issuerFound: meta.issuer.value !== null,
-      l0: { issued: l0ShadowPick(meta, 'issued_on'), valid: l0ShadowPick(meta, 'valid_until') },
+      // L0 그림자(doc_meta_check_v1): 값 대신 답했는지·맞았는지만
+      l0: { issuedAnswered: l0Issued !== null, issuedOk: l0Issued === null ? null : l0Issued === l.issuedOn, validAnswered: l0Valid !== null, validOk: l0Valid === null ? null : l0Valid === l.validUntil },
     });
-    // L0 그림자: 값 대신 답했는지·맞았는지만 남긴다
-    const l0 = row.l0 as { issued: string | null; valid: string | null };
-    row.l0 = { issuedAnswered: l0.issued !== null, issuedOk: l0.issued === null ? null : l0.issued === l.issuedOn, validAnswered: l0.valid !== null, validOk: l0.valid === null ? null : l0.valid === l.validUntil };
   }
-  const n = rows.length;
-  const core = rows.filter((r) => r.coreOk).length;
-  const ms = rows.map((r) => r.ms as number).filter((x) => typeof x === 'number').sort((a, b) => a - b);
+  const target = rows.filter((r) => r.docType === 'national_tax_cert' || r.docType === 'biz_registration_cert');
+  const other = rows.filter((r) => r.docType === 'other');
+  const core = target.filter((r) => r.coreOk).length;
+  const silent = rows.filter((r) => r.silentWrong).length;
+  const ms = rows.map((r) => r.ms).filter((x): x is number => typeof x === 'number').sort((a, b) => a - b);
+  const enough = target.length >= 20;
   const summary = {
     measuredAt: new Date().toISOString(),
     platform: process.platform,
-    samples: n,
-    byType: Object.fromEntries(['national_tax_cert', 'biz_registration_cert', 'other'].map((t) => [t, rows.filter((r) => r.docType === t).length])),
+    samples: rows.length,
+    target: target.length,
+    byType: { national_tax_cert: rows.filter((r) => r.docType === 'national_tax_cert').length, biz_registration_cert: rows.filter((r) => r.docType === 'biz_registration_cert').length, other: other.length },
     coreOk: core,
-    acceptance: n >= 20 ? (core >= Math.ceil(n * 0.95) ? 'pass' : 'fail') : `표본 부족(${n}/20)`,
-    textLayer: rows.filter((r) => r.textLayer === true).length,
-    ocr: rows.filter((r) => r.textLayer === false).length,
+    otherClassifiedOk: `${other.filter((r) => r.typeOk).length}/${other.length}`,
+    silentWrong: silent,
+    acceptance: !enough ? `표본 부족(${target.length}/20)` : core >= Math.ceil(target.length * 0.95) && silent === 0 ? 'pass' : 'fail',
+    needsUser: rows.filter((r) => r.needsUser).length,
+    textLayer: rows.filter((r) => r.textLayer === true && !r.scanned && r.ocrConfidence == null).length,
+    ocr: rows.filter((r) => r.ocrConfidence != null).length,
+    scanned: rows.filter((r) => r.scanned).length,
     errors: rows.filter((r) => r.error).map((r) => r.error),
     msMedian: ms[Math.floor(ms.length / 2)] ?? null,
     msMax: ms[ms.length - 1] ?? null,
     rows, // 순번·참거짓·코드만. 파일명·추출값은 남기지 않는다
   };
-  for (const r of rows) console.log(`#${r.n} ${r.docType} ${r.coreOk ? 'ok  ' : 'FAIL'} ${r.error ?? `종류 ${r.typeOk} 발급일 ${r.issuedOk} 유효기간 ${r.validOk} ${r.textLayer ? '텍스트' : 'OCR'} ${r.ms}ms`}`);
-  console.log(`종류·발급일·유효기간 모두 맞음 ${core}/${n} → ${summary.acceptance}`);
+  for (const r of rows) console.log(`#${r.n} ${r.docType} ${r.coreOk ? 'ok  ' : r.silentWrong ? 'SILENT-WRONG' : 'FAIL'} ${r.error ?? `종류 ${r.typeOk} 발급일 ${r.issuedOk} 유효기간 ${r.validOk} 확인필요 ${r.needsUser} ${r.ocrConfidence != null ? 'OCR' : r.scanned ? '스캔층' : '텍스트'} ${r.ms}ms`}`);
+  console.log(`두 종류 ${target.length}건 중 종류·발급일·유효기간 모두 맞음 ${core}건, 확인 없이 틀림 ${silent}건 → ${summary.acceptance}`);
   await fs.writeFile(path.join(REPO, 'poc/reports/raw/poc-8-real.json'), JSON.stringify(summary, null, 2));
   return summary.acceptance === 'pass' ? 0 : 1;
 }
@@ -143,7 +171,7 @@ app.whenReady().then(async () => {
   try {
     code = await main();
   } catch (e) {
-    console.error((e as Error).message);
+    console.error(failCode(e));
   }
   app.exit(code);
 });

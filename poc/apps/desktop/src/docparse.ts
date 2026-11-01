@@ -12,8 +12,15 @@ import { app, BrowserWindow, MessageChannelMain, session, type Session } from 'e
 export const DOCPARSE_SCHEME = 'sax-docparse';
 const require = createRequire(import.meta.url);
 const STATIC = path.join(import.meta.dirname, '../static');
-/** pdf.js 워커는 페이지 CSP를 물려받지 않는다. 워커 응답에 직접 붙인다. */
-const WORKER_CSP = "default-src 'none'; script-src sax-docparse: 'wasm-unsafe-eval'";
+/** 워커는 페이지 CSP를 물려받지 않는다. 워커 스크립트 응답에 직접 붙인다(tesseract 워커는 언어 데이터를 자기 스킴에서 받는다). */
+const WORKER_CSP: Record<string, string> = {
+  '/pdfjs/pdf.worker.min.mjs': "default-src 'none'; script-src sax-docparse: 'wasm-unsafe-eval'",
+  '/worker.min.js': "default-src 'none'; script-src sax-docparse: 'wasm-unsafe-eval'; connect-src sax-docparse:",
+};
+/** 죽은 프록시: WebRTC TURN(TCP)·혹시 남은 http 송신이 이리로 가서 끊긴다. 루프백도 우회하지 않는다. */
+const DEAD_PROXY = { proxyRules: 'socks5://127.0.0.1:9', proxyBypassRules: '<-loopback>' };
+/** 동시에 띄우는 docparse 창 수(창 하나가 OCR이면 약 600MB). 넘치면 줄을 선다. */
+const MAX_CONCURRENT = 2;
 
 function dirAssets(urlDir: string, dir: string, keep: (f: string) => boolean): Record<string, string> {
   return Object.fromEntries(fs.readdirSync(dir).filter(keep).map((f) => [`${urlDir}/${f}`, path.join(dir, f)]));
@@ -45,25 +52,59 @@ function assetMap(): Record<string, string> {
 }
 
 const TYPES: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.gz': 'application/octet-stream', '.wasm': 'application/wasm' };
-let ses: Session | null = null;
+let ses: Promise<Session> | null = null;
 
-function docparseSession(): Session {
-  if (ses) return ses;
-  const assets = assetMap();
-  ses = session.fromPartition('sax-docparse');
-  ses.protocol.handle(DOCPARSE_SCHEME, async (req) => {
-    const p = new URL(req.url).pathname;
-    const file = assets[p];
-    if (!file) return new Response('', { status: 404 });
-    const headers: Record<string, string> = { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'x-content-type-options': 'nosniff' };
-    if (p === '/pdfjs/pdf.worker.min.mjs') headers['content-security-policy'] = WORKER_CSP;
-    return new Response(await fsp.readFile(file), { headers });
-  });
-  // 모든 네트워크 요청 취소(자기 스킴의 정적 자산만 허용)
-  ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${DOCPARSE_SCHEME}://`) && !d.url.startsWith('blob:') && !d.url.startsWith('data:') }));
-  ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  ses.setPermissionCheckHandler(() => false);
+function docparseSession(): Promise<Session> {
+  ses ??= (async () => {
+    const assets = assetMap();
+    const s = session.fromPartition('sax-docparse');
+    s.protocol.handle(DOCPARSE_SCHEME, async (req) => {
+      const p = new URL(req.url).pathname;
+      const file = assets[p];
+      if (!file) return new Response('', { status: 404 });
+      const headers: Record<string, string> = { 'content-type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'x-content-type-options': 'nosniff' };
+      if (WORKER_CSP[p]) headers['content-security-policy'] = WORKER_CSP[p];
+      return new Response(await fsp.readFile(file), { headers });
+    });
+    // 모든 네트워크 요청 취소(자기 스킴의 정적 자산만 허용). webRequest를 지나지 않는 WebRTC는 창 정책과 죽은 프록시로 막는다.
+    s.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${DOCPARSE_SCHEME}://`) && !d.url.startsWith('blob:') && !d.url.startsWith('data:') }));
+    await s.setProxy(DEAD_PROXY);
+    s.on('will-download', (e) => e.preventDefault());
+    s.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
+    s.setPermissionCheckHandler(() => false);
+    return s;
+  })();
   return ses;
+}
+
+/** docparse 창 하나(숨김, 샌드박스, 차단 세션, WebRTC 직접 UDP 금지). 작업마다 새로 만들고 끝나면 파기한다. e2e의 송신 시험도 이 창을 쓴다. */
+export async function createDocparseWindow(): Promise<BrowserWindow> {
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      session: await docparseSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, spellcheck: false,
+      backgroundThrottling: false, // 숨김 창에서 타이머·렌더가 늦춰지지 않게
+      preload: path.join(STATIC, 'preload-docparse.cjs'),
+    },
+  });
+  win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  return win;
+}
+
+let active = 0;
+const waiting: Array<() => void> = [];
+
+async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
+  while (active >= MAX_CONCURRENT) await new Promise<void>((r) => waiting.push(r));
+  active++;
+  try {
+    return await fn();
+  } finally {
+    active--;
+    waiting.shift()?.();
+  }
 }
 
 export class DocparseError extends Error {
@@ -90,30 +131,29 @@ function rendererMemoryKb(pid: number): number {
   return app.getAppMetrics().find((m) => m.pid === pid)?.memory.workingSetSize ?? 0;
 }
 
-/** 작업마다 새 창, 끝나면 파기. 시간·메모리 상한을 넘기거나 렌더러가 죽으면 파기하고 코드로 실패한다. */
-async function runJob(payload: Record<string, unknown>, timeoutMs: number, memoryLimitKb = MEMORY_LIMIT_KB): Promise<JobRun> {
+/**
+ * 작업마다 새 창, 끝나면 파기. 시간 상한(창 띄우기부터)·메모리 상한을 넘기거나 렌더러가 죽으면 파기하고 코드로 실패한다.
+ * 동시에는 MAX_CONCURRENT개까지 돌고, 시간 상한은 차례가 온 뒤부터 잰다.
+ */
+function runJob(payload: Record<string, unknown>, timeoutMs: number, memoryLimitKb = MEMORY_LIMIT_KB): Promise<JobRun> {
+  return withSlot(() => runJobNow(payload, timeoutMs, memoryLimitKb));
+}
+
+async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, memoryLimitKb: number): Promise<JobRun> {
   const started = Date.now();
-  const win = new BrowserWindow({
-    show: false,
-    webPreferences: {
-      session: docparseSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, spellcheck: false,
-      backgroundThrottling: false, // 숨김 창에서 타이머·렌더가 늦춰지지 않게
-      preload: path.join(STATIC, 'preload-docparse.cjs'),
-    },
-  });
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  const win = await createDocparseWindow();
   let peakMemoryKb = 0;
   let poll: NodeJS.Timeout | undefined;
   let timer: NodeJS.Timeout | undefined;
+  const { port1, port2 } = new MessageChannelMain();
   try {
-    await win.loadURL(`${DOCPARSE_SCHEME}://app/index.html`);
+    const timedOut = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new DocparseError('timeout')), timeoutMs)));
+    timedOut.catch(() => {});
+    await Promise.race([win.loadURL(`${DOCPARSE_SCHEME}://app/index.html`), timedOut]);
     const pid = win.webContents.getOSProcessId();
     const sample = () => (peakMemoryKb = Math.max(peakMemoryKb, rendererMemoryKb(pid)));
-    sample();
-    const { port1, port2 } = new MessageChannelMain();
     const out = await new Promise<unknown>((resolve, reject) => {
-      timer = setTimeout(() => reject(new DocparseError('timeout')), timeoutMs);
+      timedOut.catch(reject);
       const guard = () => {
         if (sample() > memoryLimitKb) reject(new DocparseError('memory_limit'));
       };
@@ -125,7 +165,6 @@ async function runJob(payload: Record<string, unknown>, timeoutMs: number, memor
       win.webContents.postMessage('docparse-port', null, [port2]);
       port1.postMessage(payload);
     });
-    port1.close();
     sample(); // 짧은 작업은 폴링 전에 끝난다
     if (!out || typeof out !== 'object') throw new DocparseError('schema');
     const o = out as Record<string, unknown>;
@@ -134,6 +173,7 @@ async function runJob(payload: Record<string, unknown>, timeoutMs: number, memor
   } finally {
     clearTimeout(timer);
     clearInterval(poll);
+    port1.close();
     if (!win.isDestroyed()) win.destroy();
   }
 }
@@ -167,7 +207,9 @@ export interface PdfExtract {
   pages: number;
   totalPages: number;
   hasTextLayer: boolean;
-  /** 텍스트 층 대신 OCR로 읽었으면 평균 신뢰도(0~100), 아니면 null */
+  /** 텍스트 층이 보이지 않는 글자다(스캐너·복합기가 OCR로 덧입힌 층). 원본 텍스트로 믿지 않는다. */
+  scanned: boolean;
+  /** text를 텍스트 층 대신 OCR로 읽었으면 평균 신뢰도(0~100), 아니면 null */
   ocrConfidence: number | null;
 }
 
@@ -181,12 +223,12 @@ export const PDF_MAX_PAGES = 5;
 const MAX_TEXT = 1024 * 1024;
 
 function validatePdf(o: Record<string, unknown>): (PdfExtract & { timing: PdfExtractRun['timing'] }) | null {
-  if (!exactKeys(o, 'hasTextLayer,ocrConfidence,pages,text,timing,totalPages')) return null;
+  if (!exactKeys(o, 'hasTextLayer,ocrConfidence,pages,scanned,text,timing,totalPages')) return null;
   const t = o.timing as Record<string, unknown> | null;
-  if (typeof o.text !== 'string' || o.text.length > MAX_TEXT || !isCount(o.pages, PDF_MAX_PAGES) || !isCount(o.totalPages, 100_000) || typeof o.hasTextLayer !== 'boolean') return null;
+  if (typeof o.text !== 'string' || o.text.length > MAX_TEXT || !isCount(o.pages, PDF_MAX_PAGES) || !isCount(o.totalPages, 100_000) || typeof o.hasTextLayer !== 'boolean' || typeof o.scanned !== 'boolean') return null;
   if (o.ocrConfidence !== null && !(typeof o.ocrConfidence === 'number' && o.ocrConfidence >= 0 && o.ocrConfidence <= 100)) return null;
   if (!t || typeof t !== 'object' || !exactKeys(t, 'loadMs,ocrMs,textMs') || ![t.loadMs, t.textMs, t.ocrMs].every((v) => isCount(v, 3_600_000))) return null;
-  return { text: o.text, pages: o.pages as number, totalPages: o.totalPages as number, hasTextLayer: o.hasTextLayer, ocrConfidence: o.ocrConfidence as number | null, timing: { loadMs: t.loadMs as number, textMs: t.textMs as number, ocrMs: t.ocrMs as number } };
+  return { text: o.text, pages: o.pages as number, totalPages: o.totalPages as number, hasTextLayer: o.hasTextLayer, scanned: o.scanned, ocrConfidence: o.ocrConfidence as number | null, timing: { loadMs: t.loadMs as number, textMs: t.textMs as number, ocrMs: t.ocrMs as number } };
 }
 
 export interface PdfOptions {
@@ -194,6 +236,8 @@ export interface PdfOptions {
   password?: string;
   /** 텍스트 층이 없을 때 OCR할 앞쪽 쪽수(0이면 OCR 안 함). 증명서는 한 쪽이다. */
   ocrPages?: number;
+  /** 텍스트 층이 있어도 OCR로 읽는다(층에서 핵심 칸을 못 뽑았을 때 다시 읽기) */
+  forceOcr?: boolean;
   timeoutMs?: number;
   memoryLimitKb?: number;
 }
@@ -204,8 +248,9 @@ export async function parsePdfInSandbox(bytes: Uint8Array, opts: PdfOptions = {}
   if (Buffer.from(bytes.subarray(0, 1024)).indexOf('%PDF-') < 0) throw new DocparseError('not_pdf');
   const ocrPages = Math.max(0, Math.min(opts.ocrPages ?? 2, PDF_MAX_PAGES));
   const timeoutMs = opts.timeoutMs ?? (ocrPages ? 90_000 : 20_000);
+  const forceOcr = opts.forceOcr === true && ocrPages > 0;
   // 넘긴 버퍼는 pdf.js 워커로 옮겨지며 비워진다. 부른 쪽 바이트는 그대로 둔다.
-  const { out, ms, peakMemoryKb } = await runJob({ kind: 'pdf', bytes: bytes.slice(), maxPages: PDF_MAX_PAGES, ocrPages, password: opts.password }, timeoutMs, opts.memoryLimitKb);
+  const { out, ms, peakMemoryKb } = await runJob({ kind: 'pdf', bytes: bytes.slice(), maxPages: PDF_MAX_PAGES, ocrPages, forceOcr, password: opts.password }, timeoutMs, opts.memoryLimitKb);
   const v = validatePdf(out);
   if (!v) throw new DocparseError('schema');
   return { ...v, ms, peakMemoryKb };

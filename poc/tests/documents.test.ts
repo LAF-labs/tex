@@ -18,7 +18,7 @@ const taxText = (biz = BIZ, valid = '2026년 11월 30일') =>
 const bizText = `발급번호 T123-472-2634-650\n사업자등록증명\n사업자등록번호 ${formatBizNo(BIZ)}\n개업일 2019년 04월 11일 사업자등록일 2019년 04월 14일\n위와 같이 증명합니다.\n2026년 10월 06일\n아자세무서장 (인)`;
 /** 내용이 다른 가짜 PDF 바이트(엔진은 머리만 본다. 글자는 docparse가 준 텍스트로 받는다) */
 const pdf = (tag: string) => new Uint8Array(Buffer.from(`%PDF-1.7\n% ${tag} ${randomBytes(8).toString('hex')}\n%%EOF\n`));
-const extract = (text: string, o: { hasTextLayer?: boolean; ocrConfidence?: number | null } = {}) => ({ text, pages: 1, totalPages: 1, hasTextLayer: o.hasTextLayer ?? true, ocrConfidence: o.ocrConfidence ?? null });
+const extract = (text: string, o: { hasTextLayer?: boolean; scanned?: boolean; ocrConfidence?: number | null } = {}) => ({ text, pages: 1, totalPages: 1, hasTextLayer: o.hasTextLayer ?? true, scanned: o.scanned ?? false, ocrConfidence: o.ocrConfidence ?? null });
 
 describe('보관함(DocumentService)', () => {
   let root: string;
@@ -95,6 +95,8 @@ describe('보관함(DocumentService)', () => {
     assert.equal(other.subjectMismatch, true);
     const ocr = await call<DocumentView>('document.import', { bytes: pdf('ocr'), extract: extract(taxText(), { hasTextLayer: false, ocrConfidence: 88 }) });
     assert.deepEqual([ocr.needsUser, ocr.reasons, ocr.textSource, ocr.expiresOn], [true, ['read_by_ocr'], 'ocr', '2026-11-30']);
+    const scan = await call<DocumentView>('document.import', { bytes: pdf('scan'), extract: extract(taxText(), { scanned: true }) });
+    assert.deepEqual([scan.needsUser, scan.reasons, scan.textSource], [true, ['scanned_text_layer'], 'scan'], '스캐너가 덧입힌 글자 층도 원본으로 믿지 않는다');
     const far = await call<DocumentView>('document.import', { bytes: pdf('far'), extract: extract(taxText(BIZ, '2027년 1월 1일')) });
     assert.deepEqual([far.needsUser, far.expiresOn, far.expirySource, far.reasons], [true, '2026-11-30', 'rule', ['valid_until_out_of_range']]);
   });
@@ -106,6 +108,7 @@ describe('보관함(DocumentService)', () => {
     assert.match((await fsp.readdir(vault))[0]!, /^other_20261110_/);
   });
 
+  // 화면(vault-panel.js)은 바뀐 칸만 보낸다. 엔진은 저장값과 같은 값을 '바뀌지 않음'으로도 본다(화면이 세 칸을 다 보내도 같은 결과).
   it('사용자 확인: 그대로 확인하면 추정이 확인함으로, 날짜를 넣으면 그 값, 종류·발급일을 바꾸면 규칙으로 다시', async () => {
     await business();
     const b = await call<DocumentView>('document.import', { bytes: pdf('b'), extract: extract(bizText) });
@@ -115,9 +118,61 @@ describe('보관함(DocumentService)', () => {
     assert.deepEqual([set.expiresOn, set.expirySource, set.daysLeft], ['2026-11-05', 'user', -5]);
     const re = await call<DocumentView>('document.update', { id: b.id, patch: { issuedOn: '2026-11-02' } });
     assert.deepEqual([re.issuedOn, re.expiresOn, re.expirySource], ['2026-11-02', '2027-01-30', 'rule']);
-    const x = await call<DocumentView>('document.import', { bytes: pdf('x'), extract: extract('영수증') });
+    // 세 칸을 다 보내도(만료일은 저장값 그대로) 발급일만 바뀌었으면 규칙으로 다시 정한다
+    const all = await call<DocumentView>('document.update', { id: b.id, patch: { docType: 'biz_registration_cert', issuedOn: '2026-10-06', expiresOn: '2027-01-30' } });
+    assert.deepEqual([all.issuedOn, all.expiresOn, all.expirySource], ['2026-10-06', '2027-01-03', 'rule']);
+    const x = await call<DocumentView>('document.import', { bytes: pdf('x'), extract: extract('영수증'), final: true });
     const typed = await call<DocumentView>('document.update', { id: x.id, patch: { docType: 'national_tax_cert', issuedOn: '2026-11-03' } });
-    assert.deepEqual([typed.docType, typed.displayName, typed.expiresOn, typed.expirySource, typed.needsUser], ['national_tax_cert', '납세증명서(국세)', '2026-12-02', 'rule', false]);
+    assert.deepEqual([typed.docType, typed.displayName, typed.expiresOn, typed.expirySource], ['national_tax_cert', '납세증명서(국세)', '2026-12-02', 'rule']);
+    assert.deepEqual([typed.needsUser, typed.reasons], [true, ['valid_until_not_found']], '다시 정한 추정값은 확인 필요를 그대로 둔다(지정납부기한으로 더 짧을 수 있다)');
+  });
+
+  it('납세증명서 만료일을 비우면 확인 필요로 남고, 법정 상한(발급일+30일)을 넘으면 거부한다', async () => {
+    await business();
+    const d = await call<DocumentView>('document.import', { bytes: pdf('t'), extract: extract(taxText()) });
+    const cleared = await call<DocumentView>('document.update', { id: d.id, patch: { expiresOn: null } });
+    assert.deepEqual([cleared.expiresOn, cleared.needsUser, cleared.reasons], [null, true, ['expires_on_missing']]);
+    await assert.rejects(call('document.update', { id: d.id, patch: { expiresOn: '2026-12-02' } }), /expires_after_legal_max/);
+    const ok = await call<DocumentView>('document.update', { id: d.id, patch: { expiresOn: '2026-12-01' } });
+    assert.equal(ok.expiresOn, '2026-12-01');
+  });
+
+  it('텍스트 층에서 핵심 칸을 못 뽑으면 저장하지 않고 OCR 다시 읽기를 청한다. final이면 나은 쪽으로 저장', async () => {
+    await business();
+    const header = '홈택스 출력 머리말 문구가 여기에 있습니다 페이지 1/1';
+    const bytes = pdf('retry');
+    const first = await call<{ needsOcr?: boolean }>('document.import', { bytes, extract: extract(header) });
+    assert.deepEqual(first, { needsOcr: true });
+    assert.deepEqual(await fsp.readdir(vault), [], '아직 쓰지 않는다');
+    const d = await call<DocumentView>('document.import', { bytes, extract: extract(taxText(), { hasTextLayer: true, ocrConfidence: 85 }), altText: header, final: true });
+    assert.deepEqual([d.docType, d.textSource, d.needsUser, d.reasons], ['national_tax_cert', 'ocr', true, ['read_by_ocr']]);
+    // OCR이 낫지 않으면 처음 텍스트 층 결과
+    const e = await call<DocumentView>('document.import', { bytes: pdf('retry2'), extract: extract('알아볼 수 없는 OCR 결과', { ocrConfidence: 40 }), altText: bizText, final: true });
+    assert.deepEqual([e.docType, e.textSource, e.needsUser], ['biz_registration_cert', 'text', false]);
+    // 알아본 지원 밖 서류는 다시 읽지 않는다
+    const local = await call<DocumentView>('document.import', { bytes: pdf('local'), extract: extract('지방세 납세증명서\n가나구청장') });
+    assert.equal(local.kind, 'localtax_cert');
+  });
+
+  it('같은 파일을 동시에 넣어도 한 건만 저장한다(가져오기는 한 번에 하나)', async () => {
+    await business();
+    const bytes = pdf('same');
+    const [a, b] = await Promise.all([call<DocumentView>('document.import', { bytes, extract: extract(taxText()) }), call<DocumentView>('document.import', { bytes, extract: extract(taxText()) })]);
+    assert.equal(a.id, b.id);
+    assert.equal([a, b].filter((d) => d.duplicate).length, 1);
+    assert.equal((await fsp.readdir(vault)).length, 1);
+  });
+
+  it('보관함 파일이 지워졌으면 같은 파일을 다시 넣을 때 되살린다', async () => {
+    await business();
+    const bytes = pdf('gone');
+    const d = await call<DocumentView>('document.import', { bytes, extract: extract(taxText()) });
+    const row = new DocumentRepo(db).get(d.id)!;
+    await fsp.rm(row.path);
+    const again = await call<DocumentView>('document.import', { bytes, extract: extract(taxText()) });
+    assert.equal(again.duplicate, true);
+    const path2 = new DocumentRepo(db).get(d.id)!.path;
+    assert.deepEqual(new Uint8Array(await fsp.readFile(path2)), bytes);
   });
 
   it('잘못된 수정은 거부한다', async () => {
@@ -127,6 +182,7 @@ describe('보관함(DocumentService)', () => {
     await assert.rejects(call('document.update', { id: d.id, patch: { issuedOn: '11/01/2026' } }), /invalid_issued_on/);
     await assert.rejects(call('document.update', { id: d.id, patch: { docType: 'tax_invoice' } }), /invalid_doc_type/);
     await assert.rejects(call('document.update', { id: d.id, patch: { expiresOn: '2026-10-01' } }), /expires_before_issued/);
+    await assert.rejects(call('document.update', { id: d.id, patch: { issuedOn: '2026-11-11' } }), /issued_in_future/);
     await assert.rejects(call('document.update', { id: 'nope', patch: {} }), /not_found/);
   });
 
@@ -137,6 +193,8 @@ describe('보관함(DocumentService)', () => {
     await assert.rejects(call('document.import', { bytes: 'x', extract: extract(taxText()) }), /input_size/);
     await assert.rejects(call('document.import', { bytes: pdf('e'), extract: { text: 1 } }), /bad_extract/);
     await assert.rejects(call('document.import', { bytes: pdf('e'), extract: { ...extract(taxText()), ocrConfidence: 'x' } }), /bad_extract/);
+    await assert.rejects(call('document.import', { bytes: pdf('e'), extract: { ...extract(taxText()), scanned: undefined } }), /bad_extract/);
+    await assert.rejects(call('document.import', { bytes: pdf('e'), extract: extract(taxText()), altText: 7, final: true }), /bad_extract/);
   });
 
   it('DB 등록이 실패하면 보관함에 쓴 파일을 지운다', async () => {
@@ -148,17 +206,29 @@ describe('보관함(DocumentService)', () => {
     assert.deepEqual(await fsp.readdir(vault), []);
   });
 
-  it('지난 실행이 남긴 임시 파일을 지우고, 하드 링크를 못 거는 폴더는 복사로 넣는다', async () => {
+  it('지난 실행이 남긴 임시 파일을 지우고(같은 이름 폴더는 두고), 하드 링크를 못 거는 폴더는 복사로 넣는다', async () => {
     await business();
     await fsp.writeFile(path.join(vault, '.tmp-left-over'), 'x');
+    await fsp.mkdir(path.join(vault, '.tmp-a-folder'));
     mock.method(fsp, 'link', async () => {
       throw Object.assign(new Error('EPERM'), { code: 'EPERM' });
     });
     const d = await call<DocumentView>('document.import', { bytes: pdf('l'), extract: extract(taxText()) });
-    const files = await fsp.readdir(vault);
+    const files = (await fsp.readdir(vault)).filter((f) => f !== '.tmp-a-folder');
     assert.deepEqual(files.length, 1);
     assert.ok(!files[0]!.startsWith('.tmp-'));
     assert.equal(new DocumentRepo(db).get(d.id)!.path, path.join(vault, files[0]!));
+  });
+
+  it('이름을 붙인 뒤 임시 파일을 못 지워도(백신 잠금 등) 가져오기는 성공한다', async () => {
+    await business();
+    const realRm = fsp.rm.bind(fsp);
+    mock.method(fsp, 'rm', async (p: string, o: unknown) => {
+      if (path.basename(String(p)).startsWith('.tmp-')) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      return realRm(p, o as never);
+    });
+    const d = await call<DocumentView>('document.import', { bytes: pdf('busy'), extract: extract(taxText()) });
+    assert.ok(new DocumentRepo(db).get(d.id));
   });
 
   it('같은 이름이 이미 있으면 덮어쓰지 않고 다른 이름으로', async () => {

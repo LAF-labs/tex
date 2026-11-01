@@ -33,6 +33,8 @@ export interface DocMetaExtract {
   docNo: Field;
   /** 대상 사업자등록번호(숫자 10자리) */
   subjectBizNo: Field;
+  /** 값은 있지만 라벨에 묶이지 않은 추정으로 얻은 칸(사용자 확인 없이 만료일을 확정하지 않는다) */
+  uncertain: Array<'issuedOn'>;
   /** doc_meta_check_v1 후보(날짜 앞뒤 40자 문맥, 마스킹, 최대 8개). 모델은 부르지 않는다. */
   candidates: DocMetaObservation['candidates'];
 }
@@ -57,14 +59,26 @@ function compact(t: string): Compact {
   return { s, at };
 }
 
+/** 라벨이 이보다 많이 나오면 앞의 것만 본다(실제 서식은 한두 번이다. 반복을 채운 텍스트로 엔진을 붙잡지 못하게). */
+const MAX_LABEL_HITS = 50;
+
 /** 공백 무시 라벨 위치: 원문에서 라벨이 시작·끝나는 곳 */
 function findLabel(c: Compact, label: string): Array<{ start: number; end: number }> {
   const out: Array<{ start: number; end: number }> = [];
-  for (let i = c.s.indexOf(label); i >= 0; i = c.s.indexOf(label, i + 1)) out.push({ start: c.at[i]!, end: c.at[i + label.length - 1]! + 1 });
+  for (let i = c.s.indexOf(label); i >= 0 && out.length < MAX_LABEL_HITS; i = c.s.indexOf(label, i + 1)) out.push({ start: c.at[i]!, end: c.at[i + label.length - 1]! + 1 });
   return out;
 }
 
-const DATE_SRC = String.raw`(?<!\d)((?:19|20)\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월|[.\-/])\s*(\d{1,2})(?!\d)(?:\s*일|\s*\.)?`;
+/** 위치 뒤 짧은 창. 값은 라벨 바로 뒤에 있으므로 남은 텍스트 전체를 자르지 않는다(입력 길이의 제곱 비용 방지). */
+const ahead = (t: string, pos: number, n: number) => t.slice(pos, pos + n);
+
+// 앞뒤에 숫자·영문이 붙으면 날짜로 보지 않는다(OCR이 '30일'을 '3O일'로 읽으면 3일로 잘리지 않고 못 찾음이 된다).
+const DATE_SRC = String.raw`(?<![\dA-Za-z])((?:19|20)\d{2})\s*(?:년|[.\-/])\s*(\d{1,2})\s*(?:월|[.\-/])\s*(\d{1,2})(?![\dA-Za-z])(?:\s*일|\s*\.)?`;
+/** 기간 표기 구분자: ~ ∼ 〜(NFKC가 바꾸지 않는다) - – — 부터 */
+const RANGE_SEP = String.raw`(?:[~∼〜\-–—]|부터)`;
+const RANGE_AFTER = new RegExp(String.raw`^\s*${RANGE_SEP}\s*`);
+const RANGE_BEFORE = new RegExp(String.raw`${RANGE_SEP}\s*$`);
+const DATE_AT = new RegExp(`^${DATE_SRC}`);
 
 interface DateHit {
   iso: string | null;
@@ -85,8 +99,8 @@ function allDates(t: string): DateHit[] {
 
 /** pos 바로 뒤(공백·쌍점·닫는 괄호만 사이에 두고) 오는 날짜 */
 function dateRightAfter(t: string, pos: number): DateHit | null {
-  const gap = /^[\s:)]*/.exec(t.slice(pos))![0].length;
-  const m = new RegExp(`^${DATE_SRC}`).exec(t.slice(pos + gap));
+  const gap = /^[\s:)]*/.exec(ahead(t, pos, 24))![0].length;
+  const m = DATE_AT.exec(ahead(t, pos + gap, 40));
   if (!m) return null;
   const start = pos + gap;
   return { iso: toIso(m[1]!, m[2]!, m[3]!), start, end: start + m[0].length };
@@ -108,14 +122,14 @@ function classify(c: Compact): DetectedKind {
   return 'unknown';
 }
 
-/** 날짜 앞(최대 12자)에 이 라벨이 붙어 있으면 발급일이 아니다. 시각이 붙은 날짜(출력 시각)도 아니다. */
-const NOT_ISSUE_LABELS = ['출력일', '인쇄일', '납부기한', '개업일', '등록일', '유효기간', '기간', '폐업일', '휴업'];
+/** 날짜 앞(최대 12자)에 이 라벨이 붙어 있으면 발급일이 아니다. 시각이 붙은 날짜(출력 시각)·기간 표기의 양 끝도 아니다. */
+const NOT_ISSUE_LABELS = ['출력일시', '출력일', '인쇄일시', '인쇄일', '일시', '납부기한', '개업일', '연월일', '등록일', '접수일', '유효기간', '기간', '폐업일', '휴업', '개정', '시행'];
 
 function isIssueLike(t: string, h: DateHit): boolean {
-  const before = t.slice(Math.max(0, h.start - 12), h.start).replace(/\s/g, '');
-  if (NOT_ISSUE_LABELS.some((l) => before.endsWith(l) || before.endsWith(`${l}:`))) return false;
-  if (/^\s*\d{1,2}:\d{2}/.test(t.slice(h.end))) return false;
-  if (/^\s*[~∼]/.test(t.slice(h.end)) || /[~∼]\s*$/.test(t.slice(Math.max(0, h.start - 3), h.start))) return false; // 기간 표기의 양 끝
+  const before = t.slice(Math.max(0, h.start - 12), h.start).replace(/\s/g, '').replace(/[:<([]+$/, '');
+  if (NOT_ISSUE_LABELS.some((l) => before.endsWith(l))) return false;
+  if (/^\s*\d{1,2}:\d{2}/.test(ahead(t, h.end, 16))) return false;
+  if (RANGE_AFTER.test(ahead(t, h.end, 16)) || RANGE_BEFORE.test(t.slice(Math.max(0, h.start - 4), h.start))) return false;
   return true;
 }
 
@@ -127,32 +141,37 @@ function pickDate(hits: DateHit[]): Field {
   return miss('ambiguous', valid[valid.length - 1]);
 }
 
-/** 발급일: '증명합니다' 뒤 맺음 부분(담당부서·세무서장 줄)의 날짜. 없으면 '발급일' 라벨 바로 뒤. */
-function issuedOn(t: string, c: Compact, issuerAt: number | null): Field {
+/**
+ * 발급일: '증명합니다' 뒤 맺음 부분(담당부서·세무서장 줄)의 날짜, 없으면 '발급일' 라벨 바로 뒤.
+ * 둘 다 없을 때만 '세무서장' 앞 200자에서 찾고, 그 값은 라벨에 묶이지 않았으므로 불확실(uncertain)로 둔다.
+ */
+function issuedOn(t: string, c: Compact, issuerAt: number | null): { field: Field; uncertain: boolean } {
   const closes = findLabel(c, '증명합니다');
-  const from = closes.length ? closes[closes.length - 1]!.end : issuerAt !== null ? Math.max(0, issuerAt - 200) : -1;
-  if (from >= 0) {
-    const f = pickDate(allDates(t).filter((h) => h.start >= from && isIssueLike(t, h)));
-    if (f.reason !== 'not_found') return f;
+  if (closes.length) {
+    const f = pickDate(allDates(t).filter((h) => h.start >= closes[closes.length - 1]!.end && isIssueLike(t, h)));
+    if (f.reason !== 'not_found') return { field: f, uncertain: false };
   }
-  const labelled = ['발급일자', '발급일', '발행일'].flatMap((l) => findLabel(c, l)).map((p) => dateRightAfter(t, p.end)).filter((h): h is DateHit => h !== null);
-  return pickDate(labelled);
+  const labelled = pickDate(['발급일자', '발급일', '발행일'].flatMap((l) => findLabel(c, l)).map((p) => dateRightAfter(t, p.end)).filter((h): h is DateHit => h !== null));
+  if (labelled.reason !== 'not_found' || issuerAt === null) return { field: labelled, uncertain: false };
+  const near = pickDate(allDates(t).filter((h) => h.start >= issuerAt - 200 && h.start < issuerAt + 40 && isIssueLike(t, h)));
+  return { field: near, uncertain: near.value !== null };
 }
 
-/** 유효기간: 라벨 바로 뒤 날짜. 'A ~ B'면 끝 날짜. */
+/** 유효기간: 라벨 바로 뒤 날짜. 'A ~ B'면 끝 날짜. 'A부터 30일간'처럼 끝을 못 읽으면 정하지 않는다. */
 function validUntil(t: string, c: Compact): Field {
   const hits: DateHit[] = [];
   for (const p of findLabel(c, '유효기간')) {
     const first = dateRightAfter(t, p.end);
     if (!first) continue;
-    const range = /^\s*(?:~|∼|-|부터)\s*/.exec(t.slice(first.end));
+    const range = RANGE_AFTER.exec(ahead(t, first.end, 16));
     const second = range ? dateRightAfter(t, first.end + range[0].length) : null;
+    if (range && !second) return miss('ambiguous', first.iso ?? undefined);
     hits.push(second ?? first);
   }
   return pickDate(hits);
 }
 
-/** 발급기관: '세무서장' 바로 앞 이름(붙어 있거나, 한 글자씩 띄운 글자). 세무서 이름은 2~4자다. */
+/** 발급기관: '세무서장' 바로 앞 이름(붙어 있거나, 한 글자씩 띄운 글자). 세무서 이름은 2~4자이고 부서·날짜 글자(실·과·팀·일)로 끝나지 않는다. */
 function issuer(t: string, c: Compact): { field: Field; at: number | null } {
   const names = new Set<string>();
   let at: number | null = null;
@@ -171,7 +190,7 @@ function issuer(t: string, c: Compact): { field: Field; at: number | null } {
   const list = [...names];
   if (list.length > 1) return { field: miss('ambiguous'), at };
   const name = list[0]!;
-  if (!/^[가-힣]{1,5}$/.test(name)) return { field: miss(name ? 'ambiguous' : 'unparseable'), at };
+  if (!/^[가-힣]{2,4}$/.test(name) || /[실과팀일]$/.test(name)) return { field: miss(name ? 'ambiguous' : 'unparseable'), at };
   return { field: ok(`${name}세무서장`), at };
 }
 
@@ -182,8 +201,8 @@ const ocrDocNo = (s: string) => s.replace(/^[ㅠㅜᅲᅮ](?=\s*\d{3}\s*-)/, 'T'
 function docNo(t: string, c: Compact): Field {
   const found = new Set<string>();
   for (const p of findLabel(c, '발급번호')) {
-    const gap = /^[\s:_|.ㆍ]*/.exec(t.slice(p.end))![0].length; // OCR이 표 선을 _·|로 읽는다
-    const m = DOCNO.exec(ocrDocNo(t.slice(p.end + gap)).replace(/^T\s+/, 'T'));
+    const gap = /^[\s:_|.ㆍ]*/.exec(ahead(t, p.end, 24))![0].length; // OCR이 표 선을 _·|로 읽는다
+    const m = DOCNO.exec(ocrDocNo(ahead(t, p.end + gap, 40)).replace(/^T\s+/, 'T'));
     if (m) found.add(`${m[1]}-${m[2]}-${m[3]}-${m[4]}`);
   }
   if (!found.size) for (const m of t.matchAll(/(?<![0-9A-Z-])([0-9A-Z]{4})-(\d{3})-(\d{4})-(\d{3})(?![\d-])/g)) found.add(`${m[1]}-${m[2]}-${m[3]}-${m[4]}`);
@@ -198,7 +217,7 @@ function subjectBizNo(t: string, c: Compact): Field {
   const values = new Set<string>();
   // 납세증명서는 '주민등록번호(사업자등록번호)', 사업자등록증명은 '사업자등록번호'. 라벨 뒤 80자 안의 첫 번호.
   for (const p of findLabel(c, '사업자등록번호')) {
-    const m = BIZNO.exec(t.slice(p.end, p.end + 80));
+    const m = BIZNO.exec(ahead(t, p.end, 80));
     if (m) values.add((m[4] ?? `${m[1]}${m[2]}${m[3]}`).replace(/ /g, ''));
   }
   if (!values.size) return miss('not_found');
@@ -232,18 +251,20 @@ export function extractDocMeta(text: string): DocMetaExtract {
   const cands = candidates(t);
   if (!docType) {
     const u = miss('unsupported_doc');
-    return { extractor: 'docmeta-v1', kind, docType: null, issuedOn: u, validUntil: u, issuer: u, docNo: u, subjectBizNo: u, candidates: cands };
+    return { extractor: 'docmeta-v1', kind, docType: null, issuedOn: u, validUntil: u, issuer: u, docNo: u, subjectBizNo: u, uncertain: [], candidates: cands };
   }
   const iss = issuer(t, c);
+  const issued = issuedOn(t, c, iss.at);
   return {
     extractor: 'docmeta-v1',
     kind,
     docType,
-    issuedOn: issuedOn(t, c, iss.at),
+    issuedOn: issued.field,
     validUntil: docType === 'national_tax_cert' ? validUntil(t, c) : miss('not_applicable'),
     issuer: iss.field,
     docNo: docNo(t, c),
     subjectBizNo: subjectBizNo(t, c),
+    uncertain: issued.uncertain ? ['issuedOn'] : [],
     candidates: cands,
   };
 }

@@ -35,14 +35,14 @@ export function itemsToLines(items) {
   });
 }
 
-/** 제어 문자를 공백으로, 공백류를 하나로, 줄 앞뒤 공백 제거, NFC. 빈 줄은 뺀다. */
+/** 제어 문자를 공백으로, 폭 없는 문자는 지우고, 공백류를 하나로, 줄 앞뒤 공백 제거, NFC. 빈 줄은 뺀다. */
 export function tidyText(text) {
   return text
     .normalize('NFC')
     // eslint-disable-next-line no-control-regex -- 텍스트 층의 제어 문자를 지우는 것이 목적이다
     .replace(/[\u0000-\u0008\u000B-\u001F\u007F]/g, ' ')
     .split('\n')
-    .map((l) => l.replace(/[ \t\u00A0\u2000-\u200B\u3000]+/g, ' ').trim())
+    .map((l) => l.replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[ \t\u00A0\u2000-\u200A\u3000]+/g, ' ').trim()) // 폭 없는 문자는 지운다(글자 사이에 끼면 값이 끊긴다)
     .filter(Boolean)
     .join('\n');
 }

@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DocumentRepo, ProfileRepo, ValidationError, type Db, type DocumentRow } from '@sax/db';
-import { DOC_TYPES, decideExpiry, daysLeft, extractDocMeta, kstToday, validateDocMeta, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
+import { DOC_TYPES, VALIDITY_RULES, addDays, decideExpiry, daysLeft, extractDocMeta, kstToday, readScore, validateDocMeta, worthOcr, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
 
 /** docparse 추출 결과(D17 §3 extract + OCR 폴백 정보). main이 검증한 값이고, 엔진도 모양을 다시 본다. */
 export interface PdfText {
@@ -12,6 +12,9 @@ export interface PdfText {
   pages: number;
   totalPages: number;
   hasTextLayer: boolean;
+  /** 텍스트 층이 보이지 않는 글자(스캐너·복합기 OCR)다 */
+  scanned: boolean;
+  /** text를 docparse가 OCR로 읽었으면 신뢰도, 아니면 null */
   ocrConfidence: number | null;
 }
 
@@ -22,13 +25,15 @@ export interface StoredMeta {
   kind: DetectedKind;
   fields: Pick<DocMetaExtract, 'issuedOn' | 'validUntil' | 'issuer' | 'docNo' | 'subjectBizNo'>;
   expiry: { source: ExpirySource | null; needsUser: boolean; reasons: string[] };
-  text: Omit<PdfText, 'text'>;
+  /** source: 저장한 메타를 어느 글자에서 읽었나(원본 텍스트 층·docparse OCR·스캐너가 덧입힌 층) */
+  text: Omit<PdfText, 'text'> & { source: TextSource };
   /** 대상 사업자번호가 내 사업장과 다르다 */
   subjectMismatch: boolean;
   confirmedAt: string | null;
 }
 
 export type StoredDocType = DocType | 'other';
+export type TextSource = 'text' | 'ocr' | 'scan';
 
 /** 렌더러에 주는 보관함 항목. 파일 경로는 주지 않는다. */
 export interface DocumentView {
@@ -43,16 +48,24 @@ export interface DocumentView {
   daysLeft: number | null;
   needsUser: boolean;
   reasons: string[];
+  /** 정하지 못한 칸의 후보(확인 화면에 먼저 채운다) */
+  suggested: { issuedOn?: string; validUntil?: string };
   issuer: string | null;
   docNo: string | null;
   subjectBizNo: string | null;
   subjectMismatch: boolean;
   source: 'app' | 'import';
-  textSource: 'text' | 'ocr';
+  /** text: 원본 텍스트 층, ocr: docparse OCR, scan: 스캐너가 덧입힌 보이지 않는 글자 층 */
+  textSource: TextSource;
   bytes: number;
   createdAt: string;
   /** 같은 파일이 이미 있어 새로 저장하지 않았다 */
   duplicate?: boolean;
+}
+
+/** 텍스트 층에서 핵심 칸을 못 뽑아 OCR로 다시 읽어 달라는 답. main이 다시 읽고 final로 부른다. */
+export interface NeedsOcr {
+  needsOcr: true;
 }
 
 const DISPLAY: Record<StoredDocType, string> = { national_tax_cert: '납세증명서(국세)', biz_registration_cert: '사업자등록증명', other: '서류' };
@@ -67,10 +80,17 @@ const isRealDate = (v: string) => ISO.test(v) && new Date(`${v}T00:00:00Z`).toIS
 
 function checkPdfText(v: unknown): PdfText {
   const o = v as Record<string, unknown> | null;
-  if (!o || typeof o !== 'object' || typeof o.text !== 'string' || o.text.length > MAX_TEXT || !Number.isInteger(o.pages) || !Number.isInteger(o.totalPages) || typeof o.hasTextLayer !== 'boolean') throw new ValidationError('bad_extract');
+  if (!o || typeof o !== 'object' || typeof o.text !== 'string' || o.text.length > MAX_TEXT || !Number.isInteger(o.pages) || !Number.isInteger(o.totalPages) || typeof o.hasTextLayer !== 'boolean' || typeof o.scanned !== 'boolean') throw new ValidationError('bad_extract');
   if (o.ocrConfidence !== null && typeof o.ocrConfidence !== 'number') throw new ValidationError('bad_extract');
-  return { text: o.text, pages: o.pages as number, totalPages: o.totalPages as number, hasTextLayer: o.hasTextLayer, ocrConfidence: o.ocrConfidence as number | null };
+  return { text: o.text, pages: o.pages as number, totalPages: o.totalPages as number, hasTextLayer: o.hasTextLayer, scanned: o.scanned, ocrConfidence: o.ocrConfidence as number | null };
 }
+
+function extractChecked(text: string): DocMetaExtract {
+  const meta = validateDocMeta(extractDocMeta(text));
+  if (!meta) throw new ValidationError('schema');
+  return meta;
+}
+
 
 export class DocumentService {
   readonly repo: DocumentRepo;
@@ -78,6 +98,8 @@ export class DocumentService {
   private readonly vaultDir: () => string;
   private readonly now: () => Date;
   private tmpCleared = false;
+  /** 가져오기는 한 번에 하나(같은 파일 동시 가져오기·임시 파일 정리 경쟁 방지) */
+  private chain: Promise<unknown> = Promise.resolve();
 
   constructor(db: Db, vaultDir: () => string, now: () => Date = () => new Date()) {
     this.repo = new DocumentRepo(db);
@@ -91,20 +113,41 @@ export class DocumentService {
     return this.repo.list().map((r) => this.view(r, today));
   }
 
-  /** 사용자가 고른 PDF를 보관함에 넣는다. 추출이 덜 됐어도 저장하고 needsUser로 확인을 받는다. */
-  async import(bytes: unknown, extract: unknown): Promise<DocumentView> {
+  /**
+   * 사용자가 고른 PDF를 보관함에 넣는다. 추출이 덜 됐어도 저장하고 needsUser로 확인을 받는다.
+   * 텍스트 층에서 핵심 칸을 못 뽑았으면 저장하지 않고 {needsOcr}를 돌려준다. main이 OCR로 다시 읽어
+   * final:true와 처음 텍스트(altText)를 함께 보내면 둘 중 나은 쪽으로 저장한다.
+   */
+  import(bytes: unknown, extract: unknown, opts: { altText?: unknown; final?: boolean } = {}): Promise<DocumentView | NeedsOcr> {
+    const run = this.chain.then(() => this.importNow(bytes, extract, opts));
+    this.chain = run.catch(() => {});
+    return run;
+  }
+
+  private async importNow(bytes: unknown, extract: unknown, opts: { altText?: unknown; final?: boolean }): Promise<DocumentView | NeedsOcr> {
     if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > MAX_PDF) throw new ValidationError('input_size');
     if (Buffer.from(bytes.subarray(0, 1024)).indexOf('%PDF-') < 0) throw new ValidationError('not_pdf');
     const pdf = checkPdfText(extract);
+    if (opts.altText !== undefined && opts.altText !== null && (typeof opts.altText !== 'string' || opts.altText.length > MAX_TEXT)) throw new ValidationError('bad_extract');
     const sha256 = createHash('sha256').update(bytes).digest('hex');
     const today = kstToday(this.now());
     const existing = this.repo.bySha256(sha256);
-    if (existing) return { ...this.view(existing, today), duplicate: true };
+    if (existing) return { ...this.view(await this.restoreFile(existing, bytes), today), duplicate: true };
     const business = this.profiles.byKind('business');
     if (!business) throw new ValidationError('profile_required');
 
-    const meta = validateDocMeta(extractDocMeta(pdf.text));
-    if (!meta) throw new ValidationError('schema');
+    let meta = extractChecked(pdf.text);
+    let used: TextSource = pdf.ocrConfidence !== null ? 'ocr' : pdf.scanned ? 'scan' : 'text';
+    if (!opts.final && used !== 'ocr' && worthOcr(meta)) return { needsOcr: true };
+    if (typeof opts.altText === 'string') {
+      const layer = extractChecked(opts.altText);
+      if (readScore(layer) >= readScore(meta)) {
+        meta = layer; // OCR이 낫지 않으면 처음 텍스트 층 결과를 쓴다
+        used = pdf.scanned ? 'scan' : 'text';
+      }
+    }
+    // OCR급 글자(docparse OCR, 스캐너가 덧입힌 층)는 형식이 맞는 오독이 규칙에 걸리지 않는다. 확인 전에는 만료일을 확정하지 않는다.
+    const ocrGrade = used !== 'text';
     const docType: StoredDocType = meta.docType ?? 'other';
     const expiry = decideExpiry(meta, today, meta.docType ? this.repo.overrideDays(meta.docType) : null);
     const subject = meta.subjectBizNo.value;
@@ -113,9 +156,8 @@ export class DocumentService {
       extractor: meta.extractor,
       kind: meta.kind,
       fields: { issuedOn: meta.issuedOn, validUntil: meta.validUntil, issuer: meta.issuer, docNo: meta.docNo, subjectBizNo: meta.subjectBizNo },
-      // OCR로 읽은 날짜는 틀려도 형식이 맞아 걸러지지 않는다. 확인을 받기 전에는 만료일을 확정하지 않는다.
-      expiry: pdf.hasTextLayer ? { source: expiry.source, needsUser: expiry.needsUser, reasons: expiry.reasons } : { source: expiry.source, needsUser: true, reasons: [...expiry.reasons, 'read_by_ocr'] },
-      text: { pages: pdf.pages, totalPages: pdf.totalPages, hasTextLayer: pdf.hasTextLayer, ocrConfidence: pdf.ocrConfidence },
+      expiry: ocrGrade ? { source: expiry.source, needsUser: true, reasons: [...expiry.reasons, used === 'scan' ? 'scanned_text_layer' : 'read_by_ocr'] } : { source: expiry.source, needsUser: expiry.needsUser, reasons: expiry.reasons },
+      text: { pages: pdf.pages, totalPages: pdf.totalPages, hasTextLayer: pdf.hasTextLayer, scanned: pdf.scanned, ocrConfidence: used === 'ocr' ? pdf.ocrConfidence : null, source: used },
       subjectMismatch: !!subject && !!business.bizNo && subject !== business.bizNo,
       confirmedAt: null,
     };
@@ -142,10 +184,16 @@ export class DocumentService {
     }
   }
 
-  /** 사용자 확인·수정. 날짜를 주면 그 값(확인함), 종류·발급일만 바꾸면 만료일을 규칙으로 다시 정한다. 무엇이든 부르면 확인한 것으로 본다. */
+  /**
+   * 사용자 확인·수정. 화면은 바뀐 칸만 보낸다(저장값과 같은 값은 바뀌지 않은 것으로 본다).
+   * - 만료일을 바꾸면 그 값(확인함). 납세증명서는 발급일 + 30일을 넘을 수 없다.
+   * - 종류·발급일만 바꾸면 만료일을 규칙으로 다시 정하고, 다시 정한 값의 확인 필요 여부를 그대로 둔다.
+   * - 아무것도 바꾸지 않으면 지금 값을 확인한 것(추정 → 확인함).
+   */
   update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }): DocumentView {
     const row = this.repo.get(id);
     if (!row) throw new ValidationError('not_found');
+    const today = kstToday(this.now());
     const date = (v: unknown, code: string) => {
       if (v === null) return null;
       if (typeof v !== 'string' || !isRealDate(v)) throw new ValidationError(code);
@@ -154,40 +202,49 @@ export class DocumentService {
     const docType = patch.docType === undefined ? (row.docType as StoredDocType) : patch.docType;
     if (docType !== 'other' && !(DOC_TYPES as readonly unknown[]).includes(docType)) throw new ValidationError('invalid_doc_type');
     const issuedOn = patch.issuedOn === undefined ? row.issuedAt : date(patch.issuedOn, 'invalid_issued_on');
+    if (issuedOn && issuedOn > today) throw new ValidationError('issued_in_future');
+    const expiresIn = patch.expiresOn === undefined ? undefined : date(patch.expiresOn, 'invalid_expires_on');
+    const typeChanged = docType !== row.docType;
+    const issuedChanged = issuedOn !== row.issuedAt;
+    const expiresChanged = expiresIn !== undefined && expiresIn !== row.expiresAt;
     const meta = (row.meta ?? {}) as unknown as StoredMeta;
-    const today = kstToday(this.now());
+    const typed = docType === 'other' ? null : (docType as DocType);
     let expiresOn = row.expiresAt;
-    let expiry = meta.expiry ?? { source: null, needsUser: false, reasons: [] };
-    if (patch.expiresOn !== undefined) {
-      expiresOn = date(patch.expiresOn, 'invalid_expires_on');
-      expiry = { source: expiresOn ? 'user' : null, needsUser: false, reasons: [] };
-    } else if (patch.docType !== undefined || patch.issuedOn !== undefined) {
-      const typed = docType === 'other' ? null : (docType as DocType);
+    let expiry: StoredMeta['expiry'];
+    if (expiresChanged) {
+      expiresOn = expiresIn;
+      expiry = { source: expiresOn ? 'user' : null, needsUser: typed === 'national_tax_cert' && !expiresOn, reasons: typed === 'national_tax_cert' && !expiresOn ? ['expires_on_missing'] : [] };
+    } else if (typeChanged || issuedChanged) {
       const unknown: Field = { value: null, reason: 'not_found' };
+      // 처음에 종류를 몰라 비워 둔 칸(unsupported_doc)은 '못 찾음'으로 다시 본다
+      const kept = (f: Field | undefined) => (f && f.reason !== 'unsupported_doc' ? f : unknown);
       const d = decideExpiry(
         {
           extractor: 'docmeta-v1',
-          kind: meta.kind ?? 'unknown',
+          kind: typed ?? meta.kind ?? 'unknown',
           docType: typed,
           issuedOn: issuedOn ? { value: issuedOn, reason: null } : unknown,
-          validUntil: meta.fields?.validUntil ?? unknown,
-          issuer: meta.fields?.issuer ?? unknown,
-          docNo: meta.fields?.docNo ?? unknown,
-          subjectBizNo: meta.fields?.subjectBizNo ?? unknown,
+          validUntil: typed === 'national_tax_cert' ? kept(meta.fields?.validUntil) : { value: null, reason: 'not_applicable' },
+          issuer: kept(meta.fields?.issuer),
+          docNo: kept(meta.fields?.docNo),
+          subjectBizNo: kept(meta.fields?.subjectBizNo),
+          uncertain: [],
           candidates: [],
         },
         today,
         typed ? this.repo.overrideDays(typed) : null,
       );
       expiresOn = d.expiresOn;
-      expiry = { source: d.source, needsUser: false, reasons: d.reasons };
+      expiry = { source: d.source, needsUser: d.needsUser, reasons: d.reasons };
     } else {
-      expiry = { source: expiry.source === 'rule' ? 'user' : expiry.source, needsUser: false, reasons: [] };
+      const cur = meta.expiry ?? { source: null, needsUser: false, reasons: [] };
+      expiry = { source: cur.source === 'rule' ? 'user' : cur.source, needsUser: typed === 'national_tax_cert' && !expiresOn, reasons: typed === 'national_tax_cert' && !expiresOn ? ['expires_on_missing'] : [] };
     }
     if (issuedOn && expiresOn && expiresOn < issuedOn) throw new ValidationError('expires_before_issued');
+    if (typed === 'national_tax_cert' && issuedOn && expiresOn && expiresOn > addDays(issuedOn, VALIDITY_RULES.national_tax_cert.days)) throw new ValidationError('expires_after_legal_max');
     const next = this.repo.update(id, {
       docType: docType as string,
-      displayName: docType === row.docType ? row.displayName : DISPLAY[docType as StoredDocType],
+      displayName: typeChanged ? DISPLAY[docType as StoredDocType] : row.displayName,
       issuedAt: issuedOn,
       expiresAt: expiresOn,
       meta: { ...meta, expiry, confirmedAt: this.now().toISOString() } as unknown as Record<string, unknown>,
@@ -199,6 +256,9 @@ export class DocumentService {
     const m = (r.meta ?? {}) as Partial<StoredMeta>;
     const f = m.fields;
     const value = (x: Field | undefined) => x?.value ?? null;
+    const suggested: DocumentView['suggested'] = {};
+    if (f?.issuedOn?.suggested) suggested.issuedOn = f.issuedOn.suggested;
+    if (f?.validUntil?.suggested) suggested.validUntil = f.validUntil.suggested;
     return {
       id: r.id,
       displayName: r.displayName ?? DISPLAY.other,
@@ -210,15 +270,28 @@ export class DocumentService {
       daysLeft: r.expiresAt ? daysLeft(r.expiresAt, today) : null,
       needsUser: m.expiry?.needsUser ?? false,
       reasons: m.expiry?.reasons ?? [],
+      suggested,
       issuer: r.issuer,
       docNo: value(f?.docNo),
       subjectBizNo: value(f?.subjectBizNo),
       subjectMismatch: m.subjectMismatch ?? false,
       source: r.runId ? 'app' : 'import',
-      textSource: m.text?.hasTextLayer === false && m.text.ocrConfidence !== null ? 'ocr' : 'text',
+      textSource: m.text?.source ?? 'text',
       bytes: r.bytes,
       createdAt: r.createdAt,
     };
+  }
+
+  /** 같은 파일을 다시 넣었는데 보관함 파일이 없어졌으면(사용자가 지움) 다시 써서 잇는다. */
+  private async restoreFile(row: DocumentRow, bytes: Uint8Array): Promise<DocumentRow> {
+    if (await fs.access(row.path).then(() => true, () => false)) return row;
+    const file = await this.writeFile(bytes, row.docType as StoredDocType, row.issuedAt ?? kstToday(this.now()));
+    try {
+      return this.repo.update(row.id, { path: file });
+    } catch (e) {
+      await fs.unlink(file).catch(() => {});
+      throw e;
+    }
   }
 
   /** 임시 파일 → fsync → 이름 붙이기. 같은 이름이 있으면 덮어쓰지 않고 다른 shortId로 다시 한다. */
@@ -226,26 +299,27 @@ export class DocumentService {
     const dir = this.vaultDir();
     await fs.mkdir(dir, { recursive: true, mode: 0o700 });
     if (!this.tmpCleared) {
-      // 엔진만 이 폴더에 쓴다. 지난 실행이 남긴 임시 파일은 지운다.
-      for (const n of await fs.readdir(dir)) if (n.startsWith('.tmp-')) await fs.rm(path.join(dir, n), { force: true });
+      // 엔진만 이 폴더에 쓰고 가져오기는 한 번에 하나다. 지난 실행이 남긴 임시 파일은 지운다(못 지워도 가져오기는 막지 않는다).
+      for (const e of await fs.readdir(dir, { withFileTypes: true })) if (e.isFile() && e.name.startsWith('.tmp-')) await fs.rm(path.join(dir, e.name), { force: true }).catch(() => {});
       this.tmpCleared = true;
     }
     const tmp = path.join(dir, `.tmp-${randomUUID()}`);
-    const fh = await fs.open(tmp, 'wx', 0o600);
     try {
-      await fh.writeFile(bytes);
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
-    try {
+      const fh = await fs.open(tmp, 'wx', 0o600);
+      try {
+        await fh.writeFile(bytes);
+        await fh.sync();
+      } finally {
+        await fh.close();
+      }
       for (let i = 0; i < 8; i++) {
         const dest = path.join(dir, `${docType}_${day.replace(/-/g, '')}_${shortId()}.pdf`);
         if (await this.place(tmp, dest)) return dest;
       }
       throw new Error('vault_name_exhausted');
     } finally {
-      await fs.rm(tmp, { force: true });
+      // 이름을 붙인 뒤 임시 파일을 못 지워도(백신 잠금 등) 가져오기는 성공이다. 남은 것은 다음 실행에 지운다.
+      await fs.rm(tmp, { force: true }).catch(() => {});
     }
   }
 

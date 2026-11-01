@@ -1,5 +1,7 @@
 // 샌드박스 안 문서 파싱(ADR-014). 네트워크 없음, 저장 없음(tesseract cacheMethod none).
-// 이미지 {bytes} → {text, confidence}. PDF {kind:'pdf', bytes, maxPages, ocrPages, password?} → {text, pages, totalPages, hasTextLayer, ocrConfidence, timing}.
+// 이미지 {bytes} → {text, confidence}.
+// PDF {kind:'pdf', bytes, maxPages, ocrPages, forceOcr, password?} → {text, pages, totalPages, hasTextLayer, scanned, ocrConfidence, timing}.
+//   hasTextLayer: 쓸 만한 텍스트 층이 있다. scanned: 그 층이 보이지 않는 글자(스캐너·복합기 OCR)다. ocrConfidence: text를 여기서 OCR로 읽었으면 신뢰도.
 // pdf.js 워커는 직접 띄워 workerPort로 넘긴다. workerSrc로 두면 워커를 못 띄울 때 메인 스레드로 조용히 넘어간다.
 import * as pdfjs from 'sax-docparse://app/pdfjs/pdf.min.mjs';
 import { cleanForOcr } from 'sax-docparse://app/docparse-image.mjs';
@@ -75,7 +77,20 @@ async function renderForOcr(page) {
   return blob;
 }
 
-async function parsePdf({ bytes, maxPages, ocrPages, password }) {
+/** 보이지 않게 그리는 글자(렌더 모드 3·7)가 있으면 남이 OCR로 덧입힌 층이다. 원본 텍스트로 믿지 않는다. */
+async function hasInvisibleText(doc, pages) {
+  for (let i = 1; i <= pages; i++) {
+    const page = await doc.getPage(i);
+    const ops = await page.getOperatorList();
+    page.cleanup();
+    for (let k = 0; k < ops.fnArray.length; k++) {
+      if (ops.fnArray[k] === pdfjs.OPS.setTextRenderingMode && (ops.argsArray[k][0] & 3) === 3) return true;
+    }
+  }
+  return false;
+}
+
+async function parsePdf({ bytes, maxPages, ocrPages, forceOcr, password }) {
   const t0 = performance.now();
   const { worker, failed } = pdfWorker();
   pdfjs.GlobalWorkerOptions.workerPort = worker;
@@ -108,9 +123,10 @@ async function parsePdf({ bytes, maxPages, ocrPages, password }) {
     const layerText = tidyText(lines.join('\n'));
     const tText = performance.now();
     const layer = assessTextLayer(layerText, pages);
-    const timing = { loadMs: Math.round(tLoaded - t0), textMs: Math.round(tText - tLoaded), ocrMs: 0 };
-    if (layer.ok || ocrPages === 0) return { text: layerText, pages, totalPages: doc.numPages, hasTextLayer: layer.ok, ocrConfidence: null, timing };
-    // 텍스트 층이 없거나 깨졌다: 같은 창에서 앞쪽만 그려 OCR한다.
+    const scanned = layer.ok && (await hasInvisibleText(doc, pages));
+    const timing = { loadMs: Math.round(tLoaded - t0), textMs: Math.round(performance.now() - tLoaded), ocrMs: 0 };
+    if ((layer.ok && !forceOcr) || ocrPages === 0) return { text: layerText, pages, totalPages: doc.numPages, hasTextLayer: layer.ok, scanned, ocrConfidence: null, timing };
+    // 텍스트 층이 없거나 깨졌다(또는 층에서 핵심 칸을 못 뽑아 엔진이 다시 읽기를 청했다): 같은 창에서 앞쪽만 그려 OCR한다.
     const ocr = await tesseractWorker();
     try {
       const texts = [];
@@ -125,7 +141,7 @@ async function parsePdf({ bytes, maxPages, ocrPages, password }) {
         conf += Number(r.confidence || 0);
       }
       timing.ocrMs = Math.round(performance.now() - tText);
-      return { text: tidyText(texts.join('\n')), pages, totalPages: doc.numPages, hasTextLayer: false, ocrConfidence: Math.round(conf / n), timing };
+      return { text: tidyText(texts.join('\n')), pages, totalPages: doc.numPages, hasTextLayer: layer.ok, scanned, ocrConfidence: Math.round(conf / n), timing };
     } finally {
       await ocr.terminate();
     }
