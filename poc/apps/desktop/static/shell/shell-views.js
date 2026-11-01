@@ -163,21 +163,27 @@ export function taskCard(run, act) {
     const signing = run.steps[4].state === 'done';
     card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('목업: 폰으로 다시 요청한 것으로 칠게요'), ''), signing ? null : btn('중지', () => act.stop(run.id), '', { 'data-act': 'stop' })));
   } else if (st === 'waiting') {
+    // 중복 경고는 승인 바에도 있다(바 글자가 "같은 건 기록을 확인했고 발급"으로 바뀐다). 카드 문구는 보조다.
+    const action = run.warnings.length ? '같은 건 기록을 확인했고 발급' : '승인하고 발급';
     card.append(
-      h('div', { class: 'sx-app-line' }, '홈택스 화면에서 되읽은 값이에요. 초안과 같아요.'),
-      note('아래 [승인하고 발급]에서 값을 한 번 더 확인하고 눌러 주세요'),
+      h('div', { class: 'sx-app-line' }, run.readbackDiffers ? '홈택스 화면에서 되읽은 값이에요. 초안과 다른 값이 있어요. 승인 바의 값을 확인해 주세요.' : '홈택스 화면에서 되읽은 값이에요. 초안과 같아요.'),
+      ...run.warnings.map((w) => note(w, true)),
+      note(run.approvedPending ? '승인했어요. 2초 안에 [중지]하면 발급하지 않아요' : `아래 [${action}]에서 값을 한 번 더 확인하고 눌러 주세요`),
       h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'stop' })),
     );
   } else if (st === 'done') {
     const r = run.result;
+    const mail = r.mailConfirmed ? `${run.counterparty.name} 메일로 보낸 것도 확인했어요.` : r.mailTo ? '메일 발송은 홈택스 메일발송목록에서 확인해 주세요.' : '받는 이메일이 없어 메일은 보내지 않았어요.';
     card.append(
-      h('div', { class: 'sx-app-line' }, `발급했어요. ${run.counterparty.name} 메일로 보낸 것도 확인했어요.`),
+      h('div', { class: 'sx-app-line' }, `발급했어요. ${mail}`),
       h('div', { class: 'sx-idrow' }, h('span', { class: 'sx-meta' }, '승인번호'), h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사')),
       h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.toast('목업: 파일을 열지 않아요')), btn('폴더 열기', () => act.toast('목업: 폴더를 열지 않아요')), btn('지난번과 같게', () => act.again(run))),
       whereItWent(run),
     );
   } else if (st === 'stopped') {
     card.append(h('div', { class: 'sx-app-line' }, run.stoppedNote || '중지했어요.'));
+  } else if (st === 'attention') {
+    card.append(note(run.stoppedNote || '확인이 필요해요.', true));
   }
   return card;
 }
@@ -189,7 +195,7 @@ function whereItWent(run) {
     h('summary', {}, '어디로 무엇이 갔는지'),
     kv([
       ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인', { start: true }],
-      ['메일', `${run.result.mailTo} · 홈택스 자동 발송, 메일발송목록에서 확인`],
+      ['메일', run.result.mailTo ? `${run.result.mailTo} · 홈택스 자동 발송, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
       ['보관', '이 PC 문서함 · 파일명에는 거래처·승인번호를 넣지 않아요'],
       ['모델', '쓰지 않음(데모의 요청 해석은 이 PC 안 규칙)'],
       ['우리 서버', '보낸 것 없음'],

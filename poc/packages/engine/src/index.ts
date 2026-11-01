@@ -6,3 +6,8 @@ export * from './browser.ts';
 export * from './data-service.ts';
 export * from './vault-client.ts';
 export * from './l0/index.ts';
+export * from './gate.ts';
+export * from './h01/playbook.ts';
+export * from './h01/portal.ts';
+export * from './h01/runner.ts';
+export * from './runs.ts';

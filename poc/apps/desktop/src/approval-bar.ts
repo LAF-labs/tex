@@ -2,14 +2,16 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { nativeTheme, screen, session, WebContentsView, type BrowserWindow, type Session } from 'electron';
+import { buildGateRequest, gateSelfCheck } from '@sax/engine/gate';
 import {
+  ACTION_TEXT,
   ACTIVATION_GRACE_MS,
+  actionText,
   BAR,
   BAR_MESSAGES,
   BarGate,
   barCss,
   buildBarHtml,
-  gateHash,
   issueLocalApproval,
   overflowLine,
   REFUSAL_TEXT,
@@ -54,20 +56,19 @@ export type Placer = (contentWidth: number, contentHeight: number, wide: boolean
 /** 개발 콘솔(main.ts)의 승인 바 시험용: 창 아래 띠, 발급 없는 시험 값. */
 export const bottomStrip: Placer = (w, h) => ({ x: 0, y: h - BAR.height, width: w, height: BAR.height, band: true });
 export function demoGateRequest(): GateRequest {
-  const base = {
+  return buildGateRequest({
     runId: 'demo',
     gateStepId: 'demo-gate',
-    reqId: randomUUID(),
-    docType: 'H-01' as const,
-    fields: [
-      { fieldKey: 'counterpartName', value: '시험 거래처(발급 없음)' },
-      { fieldKey: 'counterpartBizNo', value: '1234567891' },
-      { fieldKey: 'counterpartEmail', value: 'test@example.com' },
-      { fieldKey: 'totalAmount', value: '0' },
-      { fieldKey: 'taxAmount', value: '0' },
-    ],
-  };
-  return { ...base, actionHash: gateHash(base) };
+    readback: {
+      supplierBizNo: '1234567891', supplierName: '시험 사업자', counterpartBizNo: '1234567891', counterpartName: '시험 거래처(발급 없음)', counterpartEmail: 'test@example.com',
+      itemName: '시험', itemCount: '1', supplyAmount: '0', taxAmount: '0', totalAmount: '0', issueDate: '2026-01-01', remark: '', receiptType: '영수',
+    },
+    reserved: [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }],
+    packageDigest: '0'.repeat(64),
+    authorizes: [],
+    intentId: 'demo',
+    waitMs: 600_000,
+  });
 }
 
 export type BarOutcome = { decision: 'approve'; approval: LocalApproval } | { decision: 'closed'; reason: string };
@@ -84,6 +85,8 @@ export interface BarSnapshot {
   band: boolean;
   armed: boolean;
   refusal: string | null;
+  /** 동작 글자(중복 경고가 있으면 "같은 건 기록을 확인했고 발급"). */
+  action: string;
 }
 
 export interface BarOptions {
@@ -106,6 +109,7 @@ export class ApprovalBar extends EventEmitter {
   private readonly cursorPoint: () => { x: number; y: number };
   private req: GateRequest | null = null;
   private lines: SummaryLine[] | null = null;
+  private action = ACTION_TEXT;
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
   private resolve: ((o: BarOutcome) => void) | null = null;
@@ -147,7 +151,8 @@ export class ApprovalBar extends EventEmitter {
     // 키보드 승인은 없다(Enter·Space·조합키 모두). 바로 간 키보드 포커스는 대화 화면으로 돌려준다.
     wc.on('before-input-event', (e, i) => {
       e.preventDefault();
-      if (this.req && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
+      // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
+      if (this.req && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
     });
     wc.on('focus', () => {
       if (!win.isDestroyed()) win.webContents.focus();
@@ -202,7 +207,7 @@ export class ApprovalBar extends EventEmitter {
 
   snapshot(): BarSnapshot {
     const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
-    return { visible: this.shown, runId: this.runId, reqId: this.req?.reqId ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal };
+    return { visible: this.shown, runId: this.runId, reqId: this.req?.reqId ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.action };
   }
 
   /** 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'. */
@@ -210,11 +215,17 @@ export class ApprovalBar extends EventEmitter {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' });
     this.req = req;
-    // 엔진이 보낸 fields로 해시를 다시 계산해 같을 때만 무장한다(자기 일치 확인, 렌더러·엔진 침해 방어 아님).
-    const { actionHash, ...rest } = req;
-    const summary = summarize(req);
+    // 엔진이 보낸 fields로 readbackHash·cardHash·actionHash를 다시 계산해 같을 때만 무장한다(D03 §3, 자기 일치 확인이지 엔진 침해 방어가 아님).
+    let bad: ReturnType<typeof gateSelfCheck> = 'field_key';
+    try {
+      if (req.v === 2 && Array.isArray(req.fields)) bad = gateSelfCheck(req);
+    } catch {
+      // 모양이 다르면 field_key로 둔다
+    }
+    const summary = bad ? null : summarize(req);
     this.lines = Array.isArray(summary) ? summary : [];
-    this.baseRefusal = gateHash(rest) !== actionHash ? REFUSAL_TEXT.hash() : Array.isArray(summary) ? null : refusalText(summary);
+    this.action = bad ? ACTION_TEXT : actionText(req);
+    this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     const result = new Promise<BarOutcome>((resolve) => {
       this.resolve = resolve;
     });
@@ -285,7 +296,7 @@ export class ApprovalBar extends EventEmitter {
   private approve(): void {
     const req = this.req;
     if (!req) return;
-    this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req) });
+    this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req, 'click') });
     if (!this.win.isDestroyed()) this.win.webContents.focus();
   }
 
@@ -429,7 +440,7 @@ export class ApprovalBar extends EventEmitter {
     this.msg = text;
     this.paintBackground(effective);
     const id = randomUUID();
-    pages.set(id, buildBarHtml(this.lines, effective, text ?? undefined));
+    pages.set(id, buildBarHtml(this.lines, effective, text ?? undefined, this.action));
     this.myPages.add(id);
     const prev = this.pageId;
     this.pageId = id;
