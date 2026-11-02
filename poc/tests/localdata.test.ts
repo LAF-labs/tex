@@ -329,6 +329,19 @@ describe('경로와 접근 통제', () => {
     await fs.rm(base, { recursive: true, force: true });
   });
 
+  it('macOS: ACL 항목이 없는 새 앱 루트도 준비한다(chmod -N은 지울 항목이 없어도 성공)', { skip: process.platform !== 'darwin' }, async () => {
+    // 첫 기동: 루트가 없고 부모에도 ACL 항목이 없다. chmod -N이 여기서 실패하면 앱이 기동하지 않는다.
+    // ACL은 ls -le의 항목 줄(" 0: …")로 본다. 확장 속성이 있으면 모드 뒤에 '+' 대신 '@'만 찍힌다.
+    const base = await tmpRoot();
+    const hasAcl = async (p: string) => /^\s*\d+: /m.test((await run('/bin/ls', ['-led', p])).stdout);
+    assert.equal(await hasAcl(base), false);
+    await run('/bin/chmod', ['-N', base]);
+    const root = path.join(base, 'SovereignAX');
+    const { root: check } = await prepareLayout(root);
+    assert.deepEqual([check.ok, check.problems, await hasAcl(root)], [true, [], false]);
+    await fs.rm(base, { recursive: true, force: true });
+  });
+
   it('Windows: 우리를 막는 DACL(OWNER RIGHTS로 소유자 권한 제거)인 폴더는 치우고 새로 만든다', { skip: !win }, async () => {
     const base = await tmpRoot();
     const { paths } = await prepareLayout(path.join(base, 'SovereignAX'));
