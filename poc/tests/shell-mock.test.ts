@@ -297,6 +297,10 @@ describe('셸 목업', () => {
   it('정부24 후보는 작업 시작 뒤에 생긴 파일만', () => {
     const start = Date.now() - 5 * 60_000;
     const hm = (ms: number) => new Date(ms).toTimeString().slice(0, 5);
-    for (const c of g24Candidates('주민등록표 등본', start)) assert.ok(c.at >= hm(start) && c.at <= hm(Date.now()), `${c.at} < ${hm(start)}`);
+    // HH:MM 글자 비교는 자정을 넘기면 틀리므로, 시작 시각부터 지난 분으로 비교한다
+    const mins = (t: string) => Number(t.slice(0, 2)) * 60 + Number(t.slice(3, 5));
+    const since = (t: string) => (mins(t) - mins(hm(start)) + 1440) % 1440;
+    const elapsed = since(hm(Date.now()));
+    for (const c of g24Candidates('주민등록표 등본', start)) assert.ok(since(c.at) <= elapsed, `${c.at}: ${hm(start)}~${hm(Date.now())} 밖`);
   });
 });
