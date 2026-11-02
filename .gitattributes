@@ -1,0 +1,2 @@
+# 번들 다이제스트(BV-06)·픽스처는 바이트로 비교한다. Windows 체크아웃(core.autocrlf=true)에서도 LF를 유지한다.
+* text=auto eol=lf

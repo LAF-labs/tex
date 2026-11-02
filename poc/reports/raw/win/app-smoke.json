@@ -1,0 +1,70 @@
+{
+  "exe": "electron",
+  "status": {
+    "engine": {
+      "db": true,
+      "browser": false
+    },
+    "hasKey": false
+  },
+  "profile": {
+    "id": "5737e9e2-708e-4252-850d-58fe77f84836",
+    "kind": "business",
+    "displayName": "PoC 스모크 사업자",
+    "bizNo": "1160438944",
+    "corpNo": null,
+    "repName": "스모크",
+    "bizType": null,
+    "bizItem": null,
+    "address": null,
+    "email": null,
+    "signMethod": null,
+    "keepSession": false,
+    "createdAt": "2026-10-31T07:30:35.416Z",
+    "updatedAt": "2026-10-31T07:30:35.416Z"
+  },
+  "counterparty": {
+    "id": "986ebcea-4a43-4b16-8f19-cfdbd369acf0",
+    "bizNo": "1081407323",
+    "name": "스모크 거래처",
+    "repName": null,
+    "address": null,
+    "email": "cp@example.com",
+    "verifiedAt": null,
+    "verifiedStatus": null,
+    "source": "manual",
+    "lastUsedAt": null,
+    "useCount": 0,
+    "localApprovedAt": null
+  },
+  "list": 1,
+  "browserOpen": {
+    "targetId": "426DAE02BF655E1682E750C829EFC965"
+  },
+  "statusAfterOpen": {
+    "engine": {
+      "db": true,
+      "browser": true
+    },
+    "hasKey": false
+  },
+  "browserClose": {},
+  "forbiddenDirect": "blocked: Failed to fetch",
+  "dbEncrypted": true,
+  "rootMode": "666",
+  "dirs": [
+    "chrome-profile",
+    "crashDumps",
+    "db",
+    "logs",
+    "staging",
+    "userData",
+    "vault"
+  ],
+  "chromeProfileHasDevToolsActivePort": false,
+  "vaultLog": [
+    "vault.started",
+    "vault.user_tab_hidden",
+    "vault.chrome_closed"
+  ]
+}

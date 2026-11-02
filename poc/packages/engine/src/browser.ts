@@ -13,15 +13,87 @@ export async function connectRunBrowser(vault: VaultClient): Promise<RunBrowser>
   // 공개 타입에는 없지만 1.64 클라이언트가 ConnectionTransport 오버로드를 받는다(S6b 보고서 참조).
   const connect = chromium.connectOverCDP as unknown as (t: unknown, o: Record<string, unknown>) => Promise<Browser>;
   const browser = await connect.call(chromium, vault.cdpTransport(), { noDefaults: true, isLocal: true, timeout: 30_000 });
-  const ctx = browser.contexts()[0];
-  if (!ctx) throw new Error('no default context');
-  let page = ctx.pages()[0];
-  for (let i = 0; !page && i < 50; i++) {
-    await new Promise((r) => setTimeout(r, 100));
-    page = ctx.pages()[0];
+  try {
+    const ctx = browser.contexts()[0];
+    if (!ctx) throw new Error('no default context');
+    let page = ctx.pages()[0];
+    for (let i = 0; !page && i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      page = ctx.pages()[0];
+    }
+    if (!page) throw new Error('run page not exposed');
+    return { browser, page, targetId };
+  } catch (e) {
+    await browser.close().catch(() => {});
+    throw e;
   }
-  if (!page) throw new Error('run page not exposed');
-  return { browser, page, targetId };
+}
+
+/**
+ * 실행 브라우저 하나를 열고 닫는다. 열기·닫기를 한 줄로 세운다.
+ * 동시에 두 번 열면 금고에 launch가 두 번 가고(두 번째는 거부), 띄우는 중에 닫으면 닫은 뒤에 브라우저가 남는다.
+ */
+export class RunBrowserSlot {
+  private run: RunBrowser | null = null;
+  private queue: Promise<unknown> = Promise.resolve();
+  private opening = 0;
+  /** 닫기마다 늘린다. 닫기 전에 줄 선 열기는 Chrome을 새로 띄우지 않는다(띄웠다가 바로 닫히는 창이 생긴다). */
+  private closes = 0;
+  private readonly connect: () => Promise<RunBrowser>;
+  private readonly shutdown: () => Promise<unknown>;
+
+  constructor(connect: () => Promise<RunBrowser>, shutdown: () => Promise<unknown>) {
+    this.connect = connect;
+    this.shutdown = shutdown;
+  }
+
+  get current(): RunBrowser | null {
+    return this.run;
+  }
+
+  /**
+   * 열려 있으면 그것을 준다. 실행 페이지가 닫혔거나(사용자가 탭·창을 닫음) 금고가 Chrome을 내렸으면 금고 쪽까지 내리고 새로 띄운다.
+   * 붙이다 실패하면 금고 쪽 Chrome도 내려 다음 열기가 already launched로 막히지 않게 한다.
+   * prepare(첫 이동 등)도 같은 줄에서 돈다. 두 번 눌러도 이동이 서로를 끊지 않는다.
+   */
+  open(prepare?: (run: RunBrowser) => Promise<void>): Promise<RunBrowser> {
+    const closes = this.closes;
+    this.opening++;
+    return this.serial(async () => {
+      if (closes !== this.closes) throw new Error('browser closed');
+      if (this.run && (!this.run.browser.isConnected() || this.run.page.isClosed())) await this.teardown();
+      if (!this.run) {
+        try {
+          this.run = await this.connect();
+        } catch (e) {
+          await this.shutdown().catch(() => {});
+          throw e;
+        }
+      }
+      await prepare?.(this.run);
+      return this.run;
+    }).finally(() => this.opening--);
+  }
+
+  close(): Promise<void> {
+    this.closes++;
+    // 띄우는 중이면 금고에 내리기를 먼저 보낸다. 응답 없는 Chrome에 붙는 중이면 열기가 끝나지 않아 줄 뒤의 닫기도 끝나지 않는다.
+    if (this.opening) void this.shutdown().catch(() => {});
+    return this.serial(() => this.teardown());
+  }
+
+  private async teardown(): Promise<void> {
+    const r = this.run;
+    this.run = null;
+    await r?.browser.close().catch(() => {});
+    await this.shutdown().catch(() => {});
+  }
+
+  private serial<T>(op: () => Promise<T>): Promise<T> {
+    const next = this.queue.then(op);
+    this.queue = next.catch(() => {});
+    return next;
+  }
 }
 
 /**

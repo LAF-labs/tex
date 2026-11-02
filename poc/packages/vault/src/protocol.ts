@@ -11,7 +11,9 @@ export type InboundMessage =
 export type OutboundMessage =
   | { t: 'cdp'; m: string }
   | { t: 'rpc'; id: number; result?: unknown; error?: string }
-  | { t: 'ev'; name: string; data: Record<string, unknown> };
+  | { t: 'ev'; name: string; data: Record<string, unknown> }
+  /** 금고가 Chrome을 내렸거나 Chrome이 끝났다. 엔진은 CDP transport를 닫는다. */
+  | { t: 'cdp_closed' };
 
 export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   engine: ['browser.launch', 'browser.shutdown', 'typist.fill', 'secretWindow.openForHuman', 'secretWindow.requestClose', 'getDbKeyOnce'],

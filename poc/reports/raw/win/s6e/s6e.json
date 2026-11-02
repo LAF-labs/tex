@@ -1,0 +1,296 @@
+{
+  "at": "2026-10-31T10:14:32.190Z",
+  "runs": [
+    {
+      "kind": "vault",
+      "args": [
+        "--remote-debugging-pipe",
+        "--user-data-dir",
+        "--no-first-run"
+      ],
+      "version": "Chrome/156.0.8078.47",
+      "steps": {
+        "login": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-login-submit-0.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e login - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-login-refill-0.png"
+            }
+          ]
+        },
+        "address": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-address-submit-0.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e address - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-address-refill-0.png"
+            }
+          ]
+        },
+        "card": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-card-submit-0.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e card - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "vault-card-refill-0.png"
+            }
+          ]
+        }
+      },
+      "prefsAfterExit": {
+        "credentials_enable_service": false,
+        "profile.password_manager_enabled": false,
+        "autofill.profile_enabled": false,
+        "autofill.credit_card_enabled": false
+      },
+      "localStateAfterExit": {
+        "user_experience_metrics.reporting_enabled": false
+      },
+      "verifyMismatch": [],
+      "webData": {
+        "autofill": 0,
+        "local_addresses": null,
+        "addresses": 0,
+        "credit_cards": 0
+      },
+      "loginData": {
+        "logins": 0
+      }
+    },
+    {
+      "kind": "control",
+      "args": [
+        "--remote-debugging-pipe",
+        "--user-data-dir",
+        "--no-first-run"
+      ],
+      "version": "Chrome/156.0.8078.47",
+      "steps": {
+        "login": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "비밀번호를 저장하시겠습니까?",
+              "left": 534,
+              "top": 234,
+              "width": 693,
+              "height": 585,
+              "file": "control-login-submit-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-login-submit-1.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "",
+              "left": 324,
+              "top": 362,
+              "width": 246,
+              "height": 88,
+              "file": "control-login-refill-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "비밀번호를 저장하시겠습니까?",
+              "left": 534,
+              "top": 234,
+              "width": 693,
+              "height": 585,
+              "file": "control-login-refill-1.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e login - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-login-refill-2.png"
+            }
+          ]
+        },
+        "address": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "주소를 저장하시겠어요?",
+              "left": 726,
+              "top": 234,
+              "width": 501,
+              "height": 623,
+              "file": "control-address-submit-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-address-submit-1.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "",
+              "left": 339,
+              "top": 362,
+              "width": 246,
+              "height": 88,
+              "file": "control-address-refill-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "주소를 저장하시겠어요?",
+              "left": 726,
+              "top": 234,
+              "width": 501,
+              "height": 623,
+              "file": "control-address-refill-1.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e address - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-address-refill-2.png"
+            }
+          ]
+        },
+        "card": {
+          "afterSubmit": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "카드를 저장하시겠습니까?",
+              "left": 726,
+              "top": 234,
+              "width": 501,
+              "height": 531,
+              "file": "control-card-submit-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e done - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-card-submit-1.png"
+            }
+          ],
+          "refill": [
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "",
+              "left": 363,
+              "top": 362,
+              "width": 696,
+              "height": 118,
+              "file": "control-card-refill-0.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "카드를 저장하시겠습니까?",
+              "left": 726,
+              "top": 234,
+              "width": 501,
+              "height": 531,
+              "file": "control-card-refill-1.png"
+            },
+            {
+              "class": "Chrome_WidgetWin_1",
+              "title": "S6e card - Chrome",
+              "left": 120,
+              "top": 120,
+              "width": 1500,
+              "height": 1140,
+              "file": "control-card-refill-2.png"
+            }
+          ]
+        }
+      },
+      "prefsAfterExit": {
+        "credentials_enable_service": null,
+        "profile.password_manager_enabled": null,
+        "autofill.profile_enabled": null,
+        "autofill.credit_card_enabled": null
+      },
+      "localStateAfterExit": {
+        "user_experience_metrics.reporting_enabled": null
+      },
+      "verifyMismatch": [
+        "credentials_enable_service",
+        "profile.password_manager_enabled",
+        "autofill.profile_enabled",
+        "autofill.credit_card_enabled",
+        "user_experience_metrics.reporting_enabled"
+      ],
+      "webData": {
+        "autofill": 12,
+        "local_addresses": null,
+        "addresses": 0,
+        "credit_cards": 0
+      },
+      "loginData": {
+        "logins": 0
+      }
+    }
+  ]
+}

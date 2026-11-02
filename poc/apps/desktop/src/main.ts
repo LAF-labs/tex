@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, protocol, session, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
 import { COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
-import { appPaths, defaultAppRoot, FileEventLog, prepareLayout } from '@sax/platform';
+import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar, bottomStrip, demoGateRequest } from './approval-bar.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
@@ -18,9 +18,16 @@ const root = defaultAppRoot();
 const paths = appPaths(root);
 
 // D07 §1.1: 로밍 %APPDATA% 대신 %LOCALAPPDATA%\SovereignAX 아래로, ready 이전에 설정한다.
-app.setPath('userData', paths.userData);
-app.setPath('logs', paths.logs);
-app.setPath('crashDumps', paths.crashDumps);
+// 폴더 확인·복구를 setPath 앞에서 끝낸다. Electron은 넘겨받은 폴더에 ready 무렵부터 쓰므로, 그 자리의 링크를 치우기 전에 넘기면 루트 밖에 쓴다.
+// ESM 진입점의 최상위 await가 끝날 때까지 ready가 오지 않는다(Electron 45 실측). ready 전 app.exit는 바로 끝낸다.
+const layout = await prepareAppLayout();
+if (layout) {
+  app.setPath('userData', paths.userData);
+  app.setPath('logs', paths.logs);
+  app.setPath('crashDumps', paths.crashDumps);
+} else {
+  app.exit(1); // exit가 바로 끝나지 않는 Electron이어도 확인 안 된 경로는 넘기지 않는다
+}
 protocol.registerSchemesAsPrivileged([
   { scheme: APP_SCHEME, privileges: { standard: true, secure: true } },
   { scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
@@ -152,13 +159,28 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
   throw new Error('unknown_method');
 }
 
-app.whenReady().then(async () => {
-  const layout = await prepareLayout(root);
-  if (!layout.root.ok) {
-    dialog.showErrorBox('저장소 권한', `앱 폴더 권한을 사용자 전용으로 설정하지 못했습니다: ${layout.root.problems.join(', ')}`);
-    app.quit();
-    return;
+/** 루트와 하위 폴더를 준비한다. 못 하면 알리고 null. 대화상자는 ready 전에도 띄울 수 있다. */
+async function prepareAppLayout(): Promise<PreparedLayout | null> {
+  // 준비 중 예외(이름 바꾸기 거부 등)도 창 없이 멈추지 않고 알린 뒤 끝낸다. Error가 아닌 값이 던져져도 같다.
+  let prepared: PreparedLayout;
+  try {
+    prepared = await prepareLayout(root);
+  } catch (e) {
+    dialog.showErrorBox('저장소 권한', `앱 폴더를 준비하지 못했습니다: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
   }
+  if (!prepared.root.ok) {
+    dialog.showErrorBox('저장소 권한', `앱 폴더 권한을 사용자 전용으로 설정하지 못했습니다: ${prepared.root.problems.join(', ')}`);
+    return null;
+  }
+  // 치운 항목은 원인을 나중에 볼 수 있게 로그 파일에 남긴다(main 기본 로그는 메모리 전용).
+  const layoutLog = new FileEventLog(prepared.paths.logs, 'main');
+  for (const name of prepared.setAside) layoutLog.event('main.layout_set_aside', { name });
+  return prepared;
+}
+
+app.whenReady().then(async () => {
+  if (!layout) return; // 위에서 끝냈다
   serveStatic();
   startProcesses();
   ipcMain.handle('sax', async (e, req: { method?: unknown; params?: unknown }) => {

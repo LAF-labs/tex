@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { Browser, Page } from 'playwright-core';
-import { connectRunBrowser, warmForSecretWindow } from '@sax/engine';
+import { connectRunBrowser, RunBrowserSlot, warmForSecretWindow } from '@sax/engine';
 import { scanDir, testSecret } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
 import { startHarness, type Harness } from './harness.ts';
@@ -162,5 +162,29 @@ describe('S6b Playwright over vault relay', () => {
     report.leak = { ipcMessages: h.capture.size, ipcFindings: ipc, logFindings: logs.findings };
     assert.deepEqual(ipc, []);
     assert.deepEqual(logs.findings, []);
+  });
+});
+
+describe('RunBrowserSlot + 실제 금고: 동시 열기, Chrome이 내려간 뒤 다시 열기(PoC-1 §5.2)', () => {
+  it('두 번 동시에 열어도 Chrome 하나, 금고가 내리면 Playwright가 끊김을 알고 다음 열기에서 새로 띄운다', async () => {
+    const h = await startHarness();
+    const slot = new RunBrowserSlot(() => connectRunBrowser(h.client), () => h.client.rpc('browser.shutdown'));
+    try {
+      const [a, b] = await Promise.all([slot.open(), slot.open()]);
+      assert.equal(a.targetId, b.targetId);
+      const pid = h.vault.chromePid;
+      assert.ok(pid);
+      const disconnected = new Promise<void>((r) => a.browser.once('disconnected', () => r()));
+      await h.client.rpc('browser.shutdown'); // 사용자가 Chrome을 닫거나 금고가 내린 경우의 대역
+      await Promise.race([disconnected, new Promise((r) => setTimeout(r, 5000))]);
+      assert.equal(a.browser.isConnected(), false);
+      const c = await slot.open();
+      assert.notEqual(c.targetId, a.targetId);
+      assert.ok(h.vault.chromePid && h.vault.chromePid !== pid, '새 Chrome');
+      assert.equal(await c.page.evaluate(() => 1 + 1), 2);
+    } finally {
+      await slot.close();
+      await h.close();
+    }
   });
 });

@@ -1,7 +1,7 @@
 # PoC-4 금고 최소판 · PoC-5 로컬 데이터 — 결과
 
 - 날짜: 2026-10-28 · 브랜치 `claude/poc-vault-localdata-d175a0` · 폐기 전제 코드(ADR-017)
-- 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 검증은 아직 하지 않았다**(PoC-1 VM 준비 후 §5 목록대로 다시 확인).
+- 환경: macOS arm64 개발기, 설치 Chrome 156.0.8078.73, Electron 45.1.0. **Windows 11 재확인은 2026-10-31 PoC-1 실기기(관리자 계정 비승격)에서 했다**(§5, [PoC-1.md](PoC-1.md) §5). 표준 사용자 계정 재확인은 남았다.
 - 전체 테스트: `cd poc && pnpm test` → 40건 통과(PR #1 리뷰 회귀 7건 포함). Electron e2e: `electron apps/desktop/dist/e2e.js` → 14건 통과. 앱 스모크: `node --conditions=development tests/app-smoke.ts`
 - S6b 상세: [S6b.md](S6b.md)
 
@@ -30,7 +30,7 @@
   - `Accessibility.getFullAXTree`에는 평문이 없지만 **같은 길이의 •**가 실린다. 칸의 `value`와 안쪽 StaticText 자식의 `name`에 나타나 길이가 드러난다.
   - `DOM.describeNode`에는 값이 없다.
   - 중계는 세 경로를 모두 정리한다: DOMSnapshot 항목 제거, AX의 비밀 노드·자손 value/name 제거, 마스킹 문자만 있는 값 제거.
-- **S6e(Preferences)**: 기동 전 기록, 기동 1.5초 뒤 다시 읽기, 확장 열거, Google 로그인 감지를 구현했다. 헤드풀 앱 스모크에서 불일치 이벤트는 없었다. "저장 제안·자동완성이 실제로 꺼지는가"는 사람이 화면으로 확인해야 해서 Windows VM에서 한다.
+- **S6e(Preferences)**: 기동 전 기록, 기동 1.5초 뒤 다시 읽기, 확장 열거, Google 로그인 감지를 구현했다. 헤드풀 앱 스모크에서 불일치 이벤트는 없었다. "저장 제안·자동완성이 실제로 꺼지는가"는 Windows 실기기에서 화면으로 확인했다(§5.1).
 - **S6f(비밀 창)**: 활성 창 동안 엔진의 `Runtime`·`Input`·`DOM.focus`·`Accessibility`·`DOMSnapshot`·`Emulation`·스크린샷·`Target.activateTarget`은 거부되고, `Runtime.consoleAPICalled`·`bindingCalled`는 엔진에 가지 않았다. 활성 창은 blur + 값 있음, 엔진 종료 요청, 문서 커밋으로 끝난다. 엔진 종료 요청은 포커스가 남아 있으면 거부된다. SPA 로그인에서 종료 뒤 엔진 클릭이 되고 교착은 없었다. 오염 상태에서 패턴 우회 표현식(`['val'+'ue']`)과 Playwright `inputValue`는 알려진 값 지우기로 `[vault-redacted]`가 됐다. 이것은 위생 장치이고 경계가 아니다(D05 §3.5 정직 문구).
 - **S6 공통**: Chrome 프로세스의 TCP 수신 소켓은 0개(`lsof`)였고 `DevToolsActivePort` 파일도 없었다. `launch()`에는 인자가 없다. 기동 인자는 허용 목록 3개뿐이고 금지 인자는 거부된다. 환경 변수는 화이트리스트로 정리한다(`HTTPS_PROXY`·`NODE_OPTIONS` 등 제거). `navigator.webdriver === true` 자기 점검도 통과했다.
 
@@ -51,17 +51,37 @@
 - **Windows 11 재확인(PoC-1 후)**: §5.
 - PoC-6 연결점: R-C1 본문 대조(`commit.arm`), `Fetch.enable` 패턴을 `manifest.commitEndpoints`에 묶기, 게이트 카드를 엔진 신뢰 계획값으로 만들기(`approval.demo` 대체), LocalApproval 키를 금고와 교환.
 
-## 5. Windows 전용 부분(인터페이스만, 미검증)
+## 5. Windows 전용 부분 — Windows 11 Home 25H2 x64 실기기, 2026-10-31
 
-| 항목 | 현재 | 확인할 것 |
+원자료 [raw/win/](raw/win/). ✅ 확인 · ⚠️ 설계와 다름 · ⏳ 남음.
+
+| 항목 | 결과 | 남은 것 |
 |---|---|---|
-| 루트 DACL(소유자 + SYSTEM, 상속 차단) | `icacls /inheritance:r /grant:r` 구현, 미실행 | 설정·재확인, 다른 사용자 계정에서 접근 거부 |
-| 검색 색인 제외 | `attrib +I` 구현, 미실행 | 속성 확인 |
-| 재분석 지점(정션) | `lstat().isSymbolicLink()`(Node는 정션도 링크로 보고) | 정션 실제 거부 |
-| Chrome 경로 후보 | `%ProgramFiles%`·`%ProgramFiles(x86)%`·`%LOCALAPPDATA%` | 설치 위치별 탐지 |
-| Credential Manager(`@napi-rs/keyring` 바이트 API) | macOS Keychain에서 `setSecret/getSecret` 동작 확인 | 지속성 `LOCAL_MACHINE`(S10b) |
-| 파이프 기동·중계 | macOS 확인 | 같은 테스트(`pnpm test`)를 Windows에서 실행 |
-| 승인 창 `before-mouse-event` 좌표·DPI | macOS 확인 | 배율 125%/150%에서 버튼 판정 |
+| 루트 DACL(소유자 + SYSTEM, 상속 차단) | ✅ 실제 루트 `D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;<사용자 SID>)`. 판정을 SID 기준(`icacls /save` SDDL, 괄호 단위 파서)으로 바꾸고, 직접 더한 ACE(Users 읽기)·거부 ACE·조건부 ACE도 잡아 복구하도록 고쳤다. 다른 계정 소유 폴더는 `not_owner`로 거부한다(PoC-1 §5·§6). 전용 프로필 폴더는 맞으면 그대로 두고, 권한만 틀리면 고치고, 우리 것이 아니면 치우고 새로 만든다. 그래도 아니면 기동하지 않는다(PoC-1 §5.1, Windows 재실행 필요) | ⏳ 다른 사용자 계정에서 접근 거부(표준 계정 만든 뒤) |
+| 검색 색인 제외 | ✅ `attrib` 속성 `I`(테스트에 확인 추가) | — |
+| 재분석 지점(정션) | ✅ 정션이 `isSymbolicLink()`로 잡혀 `reparse_point` 거부(테스트를 정션으로 바꿈) | — |
+| Chrome 경로 후보 | ✅ `%ProgramFiles%` 설치 탐지·기동(156.0.8078.47) | `(x86)`·`%LOCALAPPDATA%` 설치 기기 없음 |
+| Credential Manager(`@napi-rs/keyring` 바이트 API) | ✅ 저장·재사용 동작(`db-key.SovereignAX`, 32B). ⚠️ 지속성이 `CRED_PERSIST_ENTERPRISE`(3)다. 설계(S10b)는 `LOCAL_MACHINE`. 도메인 로밍 프로필이면 열쇠가 다른 PC로 따라간다 | Phase 1 키체인 어댑터(M1-3)에서 `CredWriteW` 직접 호출(지속성 2)로 바꿀지 결정. 보드 질문 |
+| 파이프 기동·중계 | ✅ `pnpm test` 115/115(S6b 6/6 포함). 차이 1건: 비밀 창 활성 중 엔진에 `Inspector.workerScriptLoaded`(인자 없음)가 1회 전달됐다(Mac 0회). 값은 없고 누출 스캐너 0건 | 허용 목록에서 이 이벤트를 활성 창 동안 막을지 판단 |
+| 승인 창 `before-mouse-event` 좌표·DPI | ✅ OS 배율 150%(2560×1440)에서 e2e 14/14, 앱 배율 강제 125%·150%에서도 14/14 | ADR-020으로 제품에서는 별도 승인 창이 없어진다. 대체 승인 근거 재설계 때 다시 잰다 |
+| S6e 저장 제안·자동완성 꺼짐 | ✅ `Preferences` 기록만으로 비밀번호·주소·카드 저장 제안과 자동완성 목록이 모두 뜨지 않았다. 대조군(기록 없는 새 프로필)에서는 셋 다 떴다(§5.1) | 사용 통계 보고: 이 기기는 설치 단계 동의가 꺼져 있어 `Local State` 값만의 효과는 판별하지 못했다 |
+
+### 5.1 S6e 화면 확인
+
+`node --conditions=development tests/s6e-screen.ts reports/raw/win/s6e`. 금고와 같은 방식(기동 전 `writeProfileSettings`, 허용 인자 3개, 헤드풀)으로 설치 Chrome 156.0.8078.47을 띄운다. 127.0.0.1 픽스처의 로그인·주소·카드 폼을 CDP 마우스·`insertText`로 채워 제출한다. 그다음 같은 폼을 다시 열어 첫 칸을 누른다. 저장 제안 말풍선은 브라우저 UI라 CDP 스크린샷에 잡히지 않는다. 그래서 Chrome 프로세스의 보이는 최상위 창을 열거해 `PrintWindow`로 남겼다(`tests/s6e-capture.ps1`, 다른 앱 화면은 들어가지 않는다). 폼 값은 합성 값이고 카드는 공개 시험 번호다. 저장 버튼은 누르지 않았다.
+
+| 확인 | 금고 프로필 | 대조군(새 프로필) |
+|---|---|---|
+| 로그인 제출 뒤 | 본창만 | "비밀번호를 저장하시겠습니까?" 말풍선 |
+| 주소 제출 뒤 | 본창만 | "주소를 저장하시겠어요?" 말풍선 |
+| 카드 제출 뒤 | 본창만 | "카드를 저장하시겠습니까?" 말풍선 |
+| 폼 다시 열고 첫 칸 클릭 | 팝업 없음 | 이전 입력값 자동완성 팝업. 카드 칸은 "보안 연결이 아니라 자동 결제 수단 채우기 중지" 안내 |
+| 종료 뒤 `Web Data` `autofill` 행 | 0 | 12 |
+| 종료 뒤 필수 값 4개·`Local State` | 기록한 값 유지(불일치 0) | 키 없음(기본값) |
+
+- Chrome은 종료 때 기록한 값을 지우거나 되돌리지 않았다. 새 `user-data-dir`의 `Local State`에는 `user_experience_metrics.reporting_enabled` 키가 없다.
+- 이 기기의 설치 단계 사용 통계 동의는 레지스트리 `ClientStateMedium` `usagestats=0`(꺼짐)이다. 설치 때 동의한 PC에서 `Local State` false만으로 보고가 꺼지는지는 판별하지 못했다. 기계 정책 키는 `LocalNetworkAccessAllowedForUrls` 하나뿐이고, 비밀번호·자동완성과는 관계없다.
+- 금고 프로필 도구 모음에 "Chrome에 로그인하시겠습니까?" 칩이 보인다. 사용자가 전용 프로필에서 Google에 로그인할 수 있다는 뜻이다. 금고는 로그인을 사후 감지(`hasGoogleSignin`)해 비밀 창을 거부한다(설계대로). `--disable-sync`는 허용 목록 밖이라 시험하지 않았다.
 
 ## 6. 앱 스모크가 만든 것(개발기)
 

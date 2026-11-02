@@ -1,0 +1,302 @@
+{
+  "workersVisible": 1,
+  "apiOutcomes": {
+    "context.newPage()": "error: browserContext.newPage: Protocol error (Target.createTarget): vault relay denied Target.createTarget (browser_target_not_exposed)",
+    "browser.newContext()": "error: browser.newContext: Protocol error (Target.createBrowserContext): vault relay denied Target.createBrowserContext (browser_target_not_exposed)",
+    "context.newCDPSession(page)": "error: browserContext.newCDPSession: Protocol error (Target.attachToBrowserTarget): vault relay denied Target.attachToBrowserTarget (browser_target_not_exposed)",
+    "context.cookies()": "error: browserContext.cookies: Protocol error (Storage.getCookies): vault relay denied Storage.getCookies (browser_target_not_exposed)",
+    "context.addCookies()": "error: browserContext.addCookies: Protocol error (Storage.setCookies): vault relay denied Storage.setCookies (browser_target_not_exposed)",
+    "context.clearCookies()": "error: browserContext.clearCookies: Protocol error (Storage.clearCookies): vault relay denied Storage.clearCookies (browser_target_not_exposed)",
+    "context.storageState()": "error: browserContext.storageState: Protocol error (Storage.getCookies): vault relay denied Storage.getCookies (browser_target_not_exposed)",
+    "page.exposeFunction()": "error: page.exposeFunction: Protocol error (Runtime.addBinding): vault relay denied Runtime.addBinding (denied_method)",
+    "page.setInputFiles()": "error: page.setInputFiles: Error: Node is not an HTMLInputElement",
+    "page.goto(disallowed)": "error: page.goto: Protocol error (Page.navigate): vault relay denied Page.navigate (origin_not_allowed)",
+    "context.addInitScript()": "ok",
+    "page.screenshot() (not tainted)": "ok"
+  },
+  "taintedScreenshot": "error: page.screenshot: Protocol error (Page.captureScreenshot): vault relay denied Page.captureScreenshot (secret_window_tainted)",
+  "taintedInputValue": "[vault-redacted]",
+  "postsSeenByEngine": [
+    {
+      "url": "/worker-post",
+      "body": null
+    },
+    {
+      "url": "/worker-post",
+      "body": null
+    },
+    {
+      "url": "/submit",
+      "body": null
+    },
+    {
+      "url": "/api/login",
+      "body": null
+    }
+  ],
+  "duringActive": {
+    "page.click()": "error: page.click: Timeout 2000ms exceeded.",
+    "page.evaluate()": "error: page.evaluate: Execution context was destroyed, most likely because of a navigation.",
+    "page.title()": "ok"
+  },
+  "afterClose": "click ok, no deadlock",
+  "leak": {
+    "ipcMessages": 958,
+    "ipcFindings": [],
+    "logFindings": []
+  },
+  "methods": [
+    {
+      "key": "root Browser.getVersion",
+      "forwarded": 0,
+      "denied": 0,
+      "synthetic": 1,
+      "scope": "root"
+    },
+    {
+      "key": "root Storage.clearCookies",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Storage.getCookies",
+      "forwarded": 0,
+      "denied": 2,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Storage.setCookies",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.attachToBrowserTarget",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.closeTarget",
+      "forwarded": 1,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.createBrowserContext",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.createTarget",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.getTargetInfo",
+      "forwarded": 0,
+      "denied": 0,
+      "synthetic": 1,
+      "scope": "root"
+    },
+    {
+      "key": "root Target.setAutoAttach",
+      "forwarded": 0,
+      "denied": 0,
+      "synthetic": 1,
+      "scope": "root"
+    },
+    {
+      "key": "session DOM.describeNode",
+      "forwarded": 5,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session DOM.getContentQuads",
+      "forwarded": 4,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session DOM.resolveNode",
+      "forwarded": 4,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session DOM.scrollIntoViewIfNeeded",
+      "forwarded": 4,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Input.dispatchMouseEvent",
+      "forwarded": 12,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Input.insertText",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Inspector.enable",
+      "forwarded": 1,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Log.enable",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Network.enable",
+      "forwarded": 7,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.addScriptToEvaluateOnNewDocument",
+      "forwarded": 3,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.captureScreenshot",
+      "forwarded": 1,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.createIsolatedWorld",
+      "forwarded": 3,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.enable",
+      "forwarded": 6,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.getFrameTree",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.getLayoutMetrics",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.navigate",
+      "forwarded": 6,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.setFontFamilies",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Page.setLifecycleEventsEnabled",
+      "forwarded": 2,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.addBinding",
+      "forwarded": 0,
+      "denied": 1,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.callFunctionOn",
+      "forwarded": 94,
+      "denied": 25,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.enable",
+      "forwarded": 7,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.evaluate",
+      "forwarded": 25,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.getProperties",
+      "forwarded": 1,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.releaseObject",
+      "forwarded": 39,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Runtime.runIfWaitingForDebugger",
+      "forwarded": 7,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    },
+    {
+      "key": "session Target.setAutoAttach",
+      "forwarded": 7,
+      "denied": 0,
+      "synthetic": 0,
+      "scope": "session"
+    }
+  ]
+}
