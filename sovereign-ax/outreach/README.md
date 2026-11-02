@@ -1,6 +1,6 @@
 # 대외 문서 초안 (D15 F-04)
 
-> 상태: **초안 v0.2** (2026-11-02, Opus 검수 1차 반영). 아직 아무 곳에도 보내지 않았다. · 검토·발송: yanggang · 발송 전 확인: yulmu(보드 프로젝트 규칙 1) · 보드: EX-1(법률 질의), EX-3(공문 2종), EX-5(개인정보위 질의), 수신처는 EX-2
+> 상태: **초안 v0.3** (2026-11-02, Opus 검수 2차 반영). 아직 아무 곳에도 보내지 않았다. · 검토·발송: yanggang · 발송 전 확인: yulmu(보드 프로젝트 규칙 1) · 보드: EX-1(법률 질의), EX-3(공문 2종), EX-5(개인정보위 질의), 수신처는 EX-2
 > 근거: [05 §4](../05-access-and-detection.md), [04 §1 G0①·L1~L3·§6](../04-roadmap.md), [D14 P0-11·PoC-2](../design/14-work-breakdown.md), 기술 방식 문단은 [D03 §10](../design/03-engine.md)·[ADR-010](../design/adr/ADR-010-webdriver-flag-left-as-is.md) 표현, [ADR-011](../design/adr/ADR-011-portal-mode-gov24-postprocess.md)·[012](../design/adr/ADR-012-hotfix-scope-actuation-identity-policy-ceiling.md)·[017](../design/adr/ADR-017-poc-scope-and-start.md)·[018](../design/adr/ADR-018-document-demand-priority.md)·[020](../design/adr/ADR-020-design-review-issuance-auth-approval.md)·[021](../design/adr/ADR-021-pc-approval-evidence-main-approval-bar.md)
 
 ## 문서
@@ -11,7 +11,7 @@
 | [02-nts-notice-inquiry.md](02-nts-notice-inquiry.md) | 국세청(홈택스 운영 부서, 개인정보처리방침 제5조 ⑩ 사전협의 창구) | 이용 방식·빈도·연락처 **통지**와 허용 범위 **질의**. 허가 신청이 아니다(ADR-017 결정 1) | EX-3 |
 | [03-pipc-inquiry.md](03-pipc-inquiry.md) | 개인정보보호위원회(온마이데이터·국민신문고) | 본인전송요구권 '대리인' 해당성 질의 | EX-5 |
 | [04-legal-questions.md](04-legal-questions.md) | 법률 자문(변호사) | 질의서 6건 | EX-1 |
-| [05-attachments.md](05-attachments.md) | 01·02의 붙임(03은 붙임 3을 인용) | 붙임 1~4: 구조 요약, 비밀 경계표, 개인정보 흐름표, 감사 기록 항목 예시 | EX-3 |
+| [05-attachments.md](05-attachments.md) | 01·02의 붙임(03은 붙임 1·3을 첨부로 씀) | 붙임 1~4: 구조 요약, 비밀 경계표, 개인정보 흐름표, 감사 기록 항목 예시 | EX-3 |
 | [06-design-crosscheck.md](06-design-crosscheck.md) | 내부 | 설계 대조표: 문장별 근거, 하는 일·하지 않는 일 공개 점검, 문서 간 불일치, 조문 확인 상태 | — |
 
 법률 질의는 원래 5건(04 §1 G0①, D14 P0-11)이었다. 보드 EX-1 스레드(10-31)에 따라 **보안카드 저장·자동 입력(ADR-020)** 1건을 더했다. '인증서 비밀번호 저장' 건은 ADR-020 결정 2(공동·금융인증서 비밀번호는 사용자가 직접 입력하고, 앱은 저장하지 않는다)에 맞춰 질문을 바꿨다.
@@ -43,6 +43,8 @@
 - [ ] 발송본에서 【D-n】 표시, '작성 메모' 절, 문서 머리의 인용 블록을 지웠다. 01·02·03·05 본문에 내부 번호(ADR·D00~·PoC-·F-·R-)가 남지 않았는지 확인했다. 04는 자문 변호사가 저장소 자료를 함께 보므로 '근거' 줄을 남긴다
 - [ ] 02 10항의 PoC 내용이 실제 진행과 같은지 PoC 담당에게 확인했다(특히 조회 50회를 상한 안에서 나눠 도는지, [06 §3](06-design-crosscheck.md#3-설계-문서-사이의-불일치-후속) #14)
 - [ ] 03의 시행령 조문(`[조문 확인]`)을 국가법령정보센터 원문과 대조했다
+- [ ] 02 10항 다.(검증 중에도 5항 상한과 6항 가.~바.·아.를 지킴)가 PoC 구현과 맞는지 PoC 담당에게 확인했다(요청률 상한·쿨다운·마스킹이 PoC 코드에 들어 있는지)
+- [ ] 01 10항(위택스는 허락 전 자동화 없음)을 설계로 강제할지 정했다([06 §3](06-design-crosscheck.md#3-설계-문서-사이의-불일치-후속) #10: `PORTAL_MODE_CEILING`에 `wetax: postprocess`를 넣는 ADR). 정하기 전에는 W-01을 켜지 않는 운영 규칙을 보드에 남긴다
 - [ ] D-1~D-10을 정했다
 - [ ] [06](06-design-crosscheck.md) §1의 '확인 필요' 행과 §5의 `[조문 확인]`을 처리했다
 - [ ] 이 초안 이후 ADR이 추가·변경됐는지 확인했다(초안 기준: ADR-021까지). 바뀌었으면 해당 문장을 다시 대조한다
