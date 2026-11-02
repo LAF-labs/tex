@@ -5,7 +5,8 @@ import type { Db } from './open.ts';
 // 값(사업자번호·금액·이메일)은 평문으로 두지 않는다. 처음 거래 판정용 HMAC과 해시만 받는다.
 
 export type LedgerState = 'armed' | 'dispatched' | 'committed' | 'not_committed' | 'in_doubt' | 'observed_manual';
-export type NotCommittedReason = 'pre_dispatch_mismatch' | 'identity_mismatch' | 'payload_mismatch' | 'verify';
+/** signal: 무장 뒤 클릭 직전에 차단 신호가 걸려 누르지 않았다(D03 §7). */
+export type NotCommittedReason = 'pre_dispatch_mismatch' | 'identity_mismatch' | 'payload_mismatch' | 'signal' | 'verify';
 
 export interface ArmRow {
   intentId: string;

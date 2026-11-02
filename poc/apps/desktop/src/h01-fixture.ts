@@ -1,4 +1,5 @@
 // 가짜 H-01 페이지(127.0.0.1). 홈택스 대신 발급 폼·발급·발급목록·메일발송목록을 흉내 낸다. 실제 홈택스 화면·보안 모듈·서명은 흉내 내지 않는다.
+// 요청률 정책 시험(D03 §7)용 차단 안내·추가 인증·자동입력방지 페이지와 HTTP 상태 손잡이도 있다(문구 가상).
 // 셀렉터·URL은 PoC-3 전까지 이 페이지에 맞춘 값이다(engine h01/portal.ts의 fixture 사전). 모든 값은 가상이다.
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -30,13 +31,30 @@ export interface H01Knobs {
   lookupDelayMs: number;
   /** 받는 이메일 칸을 비우면 60ms 뒤 이 값으로 다시 채운다(포털이 거래처 등록 메일을 되살리는 경우). 폼을 열 때 정해진다. */
   refillEmail: string | null;
+  /**
+   * 차단 신호 시험(D03 §7). 'page': 발급 화면을 차단 안내 페이지(/notice/blocked)로 보낸다. 'dialog': 폼이 차단 문구 알림창을 띄운다.
+   * 'lookup': 발급목록 조회를 차단 안내 페이지로 보낸다. 문구·URL은 가상이다(엔진 fixture 사전과 맞춘 값).
+   */
+  block: 'page' | 'dialog' | 'lookup' | null;
+  /** 다음 N번 발급 화면을 추가 인증 페이지(/auth/extra)로 보낸다. */
+  extraAuth: number;
+  /** 다음 N번 발급 화면을 자동입력방지 페이지(/auth/captcha)로 보낸다. */
+  captcha: number;
+  /** 이 경로(pathname)에 이 HTTP 상태로 답한다(403·429 시험). */
+  status: { path: string; code: number } | null;
+  /** 폼이 네비게이션 없이(XHR로) 이 문구의 안내 레이어를 띄운다(WebSquare 레이어 알림 흉내). */
+  notice: string | null;
 }
+
+export const FIXTURE_BLOCK_TEXT = '비정상적인 접근이 감지되어 이용이 제한되었습니다.';
 
 export interface H01Fixture {
   origin: string;
   issued: IssuedInvoice[];
   /** 받은 발급 POST 수(목록 반영과 무관하게 "실제로 제출됐는가"). */
   posts: () => number;
+  /** 받은 요청(favicon 제외). 차단 신호 뒤 요청이 없는지 본다. */
+  requests: Array<{ at: number; method: string; path: string }>;
   knobs: H01Knobs;
   close(): Promise<void>;
 }
@@ -85,6 +103,7 @@ function form(k: H01Knobs): string {
   const digits = (s) => s.replace(/\\D/g, '');
   const total = () => { $('totAmt').value = Number(digits($('splAmt').value) || 0) + Number(digits($('taxAmt').value) || 0); };
   const REFILL = ${JSON.stringify(k.refillEmail).replace(/</g, '\\u003c')};
+  ${k.block === 'dialog' ? `setTimeout(() => alert(${JSON.stringify(FIXTURE_BLOCK_TEXT)}), 0);` : ''}
   $('dmnrEmail').addEventListener('input', () => {
     if (REFILL && !$('dmnrEmail').value) setTimeout(() => { $('dmnrEmail').value = REFILL; }, 60);
   });
@@ -94,10 +113,18 @@ function form(k: H01Knobs): string {
     const r = await fetch('/api/cp?bizNo=' + encodeURIComponent(digits($('dmnrBizNo').value))).then((x) => x.json());
     $('dmnrName').value = r.name || '';
   });
-  // 시험 손잡이: 게이트 뒤 화면 값 바꾸기
+  // 시험 손잡이: 게이트 뒤 화면 값 바꾸기, 안내 레이어 띄우기
   setInterval(async () => {
-    const m = await fetch('/api/knob').then((x) => x.json()).catch(() => null);
+    const k = await fetch('/api/knob').then((x) => x.json()).catch(() => null);
+    const m = k && k.mutate;
     if (m && $(m.field) && $(m.field).value !== m.value) { $(m.field).value = m.value; total(); }
+    if (k && k.notice && !$('layer-notice')) {
+      const d = document.createElement('div');
+      d.id = 'layer-notice';
+      d.setAttribute('role', 'alert');
+      d.textContent = k.notice;
+      document.body.append(d);
+    }
   }, 150);
 </script>`);
 }
@@ -113,9 +140,11 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
   const issued: IssuedInvoice[] = [];
   let posts = 0;
   let seq = 123;
-  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false, lookupDelayMs: 0, refillEmail: null };
+  const knobs: H01Knobs = { supplier: opts.supplier, mutate: null, reflectDelayMs: 0, dropIssue: false, failIssue: false, lookupDelayMs: 0, refillEmail: null, block: null, extraAuth: 0, captcha: 0, status: null, notice: null };
+  const requests: H01Fixture['requests'] = [];
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
+    if (url.pathname !== '/favicon.ico') requests.push({ at: Date.now(), method: req.method ?? '', path: url.pathname });
     let body = '';
     req.on('data', (c: Buffer) => (body += c.toString('utf8')));
     req.on('end', () => {
@@ -125,7 +154,26 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
       };
       const html = (s: string) => send('text/html; charset=utf-8', s);
       const json = (v: unknown) => send('application/json', JSON.stringify(v));
-      if (url.pathname === '/invoice/issue' && req.method === 'GET') return html(form(knobs));
+      const redirect = (to: string) => {
+        res.writeHead(302, { location: to, 'cache-control': 'no-store' });
+        res.end();
+      };
+      if (knobs.status?.path === url.pathname) return send('text/html; charset=utf-8', page('오류', '<p>요청을 처리할 수 없습니다.</p>'), knobs.status.code);
+      if (url.pathname === '/notice/blocked') return html(page('이용 제한 안내', `<h1>이용 제한 안내</h1><p>${esc(FIXTURE_BLOCK_TEXT)}</p>`));
+      if (url.pathname === '/auth/extra') return html(page('추가 인증', '<h1>추가 인증</h1><p>본인 확인을 위해 추가 인증이 필요합니다.</p>'));
+      if (url.pathname === '/auth/captcha') return html(page('자동입력방지', '<h1>자동입력방지</h1><p>화면의 문자를 입력해 주세요.</p>'));
+      if (url.pathname === '/invoice/issue' && req.method === 'GET') {
+        if (knobs.block === 'page') return redirect('/notice/blocked');
+        if (knobs.extraAuth > 0) {
+          knobs.extraAuth--;
+          return redirect('/auth/extra');
+        }
+        if (knobs.captcha > 0) {
+          knobs.captcha--;
+          return redirect('/auth/captcha');
+        }
+        return html(form(knobs));
+      }
       if (url.pathname === '/invoice/issue' && req.method === 'POST') {
         posts++;
         const f = new URLSearchParams(body);
@@ -147,6 +195,7 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
         return html(page('발급 완료', `<p id="issue-done" role="status">발급되었습니다.</p>`));
       }
       if (url.pathname === '/invoice/list') {
+        if (knobs.block === 'lookup') return redirect('/notice/blocked');
         const bizNo = url.searchParams.get('bizNo') ?? '';
         const date = url.searchParams.get('date') ?? '';
         const rows = issued
@@ -160,7 +209,7 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
         return html(table('mail-list', '메일발송목록', rows));
       }
       if (url.pathname === '/api/cp') return json({ name: opts.registry[url.searchParams.get('bizNo') ?? ''] ?? '' });
-      if (url.pathname === '/api/knob') return json(knobs.mutate);
+      if (url.pathname === '/api/knob') return json({ mutate: knobs.mutate, notice: knobs.notice });
       send('text/plain', 'not found', 404);
     });
   });
@@ -170,6 +219,7 @@ export async function startH01Fixture(opts: { registry: Registry; supplier: { bi
     origin: `http://127.0.0.1:${port}`,
     issued,
     posts: () => posts,
+    requests,
     knobs,
     close: () =>
       new Promise<void>((r) => {

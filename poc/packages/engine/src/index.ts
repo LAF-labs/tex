@@ -11,3 +11,5 @@ export * from './h01/playbook.ts';
 export * from './h01/portal.ts';
 export * from './h01/runner.ts';
 export * from './runs.ts';
+export * from './h01/signals.ts';
+export * from './policy.ts';

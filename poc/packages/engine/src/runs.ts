@@ -8,9 +8,11 @@ import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type Gat
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
 import { portalProblems, type PortalConfig } from './h01/portal.ts';
 import { H01Runner, RunEnd, type Readback, type RunInputs, type RunStatus } from './h01/runner.ts';
+import { policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
 // 그 포트로 온 것만 받는다(ADR-021). Phase 1처럼 엔진은 HMAC 키가 없어 MAC을 검증하지 않고 포트 출처만 믿는다.
+// 요청률 정책(D03 §7): 시작 때 쿨다운·하루 상한을 보고, 실행마다 RunPolicy가 지연·상한·차단 신호를 집행한다.
 
 export interface StartParams {
   runId: string;
@@ -51,6 +53,10 @@ interface ActiveRun {
   token: { reqId: string; mac: Buffer; exp: number; used: boolean } | null;
   /** 승인된 게이트의 원장 행 재료(arm에서 쓴다). */
   pendingArm: { req: GateRequest; history: PendingGate['history'] } | null;
+  /** 페이지를 받은 뒤(로그인보다 먼저) 만든다. */
+  policy: RunPolicy | null;
+  /** 기대한 화면(발급 폼 체크포인트 s11)을 지났다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
+  reached: boolean;
 }
 
 export interface RunServiceDeps {
@@ -65,6 +71,10 @@ export interface RunServiceDeps {
   postGate: (m: GatePortMessage) => void;
   /** 시험용: gate.waitMs 대신 쓸 값. */
   gateWaitMs?: number;
+  /** 시험용: 포털 kind의 내장 정책 대신 쓸 값. */
+  policy?: RatePolicy;
+  /** 시험용: 벽시계·단조 시계. */
+  clock?: Clock;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -96,6 +106,7 @@ export class RunService extends EventEmitter {
   private readonly gates: GateRepo;
   private readonly ledger: Ledger;
   private readonly journal: RunJournal;
+  private readonly rate: RateGuard;
   private readonly deviceId: string;
   private active: ActiveRun | null = null;
 
@@ -106,6 +117,7 @@ export class RunService extends EventEmitter {
     this.gates = new GateRepo(d.db);
     this.ledger = new Ledger(d.db);
     this.journal = new RunJournal(d.db);
+    this.rate = new RateGuard(d.db, d.portal.kind, d.policy ?? policyFor(d.portal.kind), d.clock);
     // 재시작: 종결되지 않은 원장 행은 in_doubt, 열린 게이트는 만료(토큰은 메모리에만 있었다, D03 §4.1).
     const promoted = this.ledger.promoteInDoubt();
     const expired = this.gates.expireOpen();
@@ -164,9 +176,16 @@ export class RunService extends EventEmitter {
     const digest = packageDigest(this.d.portal, profile.updatedAt);
     const check = this.ledger.checkIntent(intentId, 's21', H01.id, inputsHash);
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
+    // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
+    try {
+      this.rate.admit(profile.id, { irreversible: true });
+    } catch (e) {
+      if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
+      throw e;
+    }
     this.runs.create({ id: p.runId, playbookId: H01.id, playbookVersion: H01.version, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
-    this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind });
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null };
+    this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null, policy: null, reached: false };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -174,16 +193,30 @@ export class RunService extends EventEmitter {
   private async execute(a: ActiveRun, inputs: RunInputs, profile: Profile): Promise<void> {
     let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean };
     try {
-      // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤.
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
+      // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
+      const page = await this.d.page();
+      a.policy = new RunPolicy(page, this.rate, this.d.portal, {
+        profileId: profile.id,
+        checkStop: () => {
+          if (a.stop) throw new RunEnd('stopped', 'run.stopped');
+        },
+        journal: (type, payload) => this.journal.append(a.runId, type, payload),
+        onLatch: (end) => this.latched(a, end),
+      });
+      // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
       if (this.d.portal.login) throw new RunEnd('failed', 'login.not_implemented');
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
-      const page = await this.d.page();
-      result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a)).run();
+      result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy).run();
     } catch (e) {
-      result = e instanceof RunEnd ? { status: e.status, code: e.code } : { status: 'failed', code: 'engine.error' };
-      if (!(e instanceof RunEnd)) this.d.log.event('run.error', { runId: a.runId, err: (e as Error).name });
+      // 진행 중인 화면 확인을 마친 뒤 정한다. 신호가 걸렸으면 그 뒤에 난 오류(바뀐 화면에서 요소를 못 찾음 등)보다 신호가 사유다.
+      await a.policy?.finish(a.reached).catch(() => {});
+      const end = a.policy?.latched ?? (e instanceof RunEnd ? e : null);
+      result = end ? { status: end.status, code: end.code } : { status: 'failed', code: 'engine.error' };
+      if (!end) this.d.log.event('run.error', { runId: a.runId, err: (e as Error).name });
     }
+    await a.policy?.finish(a.reached).catch(() => {});
+    if (a.policy?.latched) this.d.log.event('run.signal', { runId: a.runId, code: a.policy.latched.code });
     // 커밋 구간에서 종결되지 않고 빠져나왔으면 in_doubt(중복 위험을 숨기지 않는다).
     const row = this.ledger.get(a.intentId, 's21');
     if (row && (row.state === 'armed' || row.state === 'dispatched')) {
@@ -195,6 +228,8 @@ export class RunService extends EventEmitter {
       result = { status: 'completed_with_issues', code: 'post_commit.error', approvalNo: row.verifyRef ?? undefined };
     }
     this.closeGate(a, 'run_ended');
+    // 승인됐지만 armed까지 가지 못한 게이트(스텝 지연 중 신호, armed 트랜잭션 거부 등)는 거부로 되돌린다.
+    if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
     this.runs.finish(a.runId, result.status);
     this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '' });
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
@@ -204,7 +239,10 @@ export class RunService extends EventEmitter {
 
   private hooks(a: ActiveRun) {
     return {
-      phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => this.ev({ runId: a.runId, type: 'phase', phase, state, code }),
+      phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => {
+        if (phase === 'input' && state === 'now') a.reached = true; // s11 체크포인트(발급 폼)를 지났다
+        this.ev({ runId: a.runId, type: 'phase', phase, state, code });
+      },
       checkStop: () => {
         if (a.stop) throw new RunEnd('stopped', 'run.stopped');
       },
@@ -214,7 +252,7 @@ export class RunService extends EventEmitter {
         this.ledger.dispatched(a.intentId, 's21');
         this.journal.append(a.runId, 'ledger.dispatched');
       },
-      resolve: (state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'verify' | null, ref: string | null) => {
+      resolve: (state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'signal' | 'verify' | null, ref: string | null) => {
         this.ledger.resolve(a.intentId, 's21', state, reason, ref);
         this.journal.append(a.runId, `ledger.${state}`, { reason: reason ?? '' });
       },
@@ -224,6 +262,7 @@ export class RunService extends EventEmitter {
   /** 게이트 요청(D03 §3): fields = readback 13칸 + 예약 키. 승인되면 토큰 발급 → 소비 + armed(한 트랜잭션). */
   private async openGate(a: ActiveRun, rb: Readback): Promise<{ readbackHash: string }> {
     if (a.stop) throw new RunEnd('stopped', 'run.stopped');
+    if (a.policy?.latched) throw a.policy.latched;
     const history = {
       cpBizNoHmac: this.hmac('bizno', rb.counterpartBizNo),
       recipientEmailHmac: rb.counterpartEmail ? this.hmac('email', canonicalEmail(rb.counterpartEmail)) : null,
@@ -249,13 +288,14 @@ export class RunService extends EventEmitter {
     this.d.postGate({ t: 'gate.request', req });
     this.ev({ runId: a.runId, type: 'waiting', reqId: req.reqId });
     await decided;
-    // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
+    // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]·차단 신호가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
     const until = Date.now() + DENY_PRIORITY_MS;
-    while (Date.now() < until && !a.stop) await new Promise((r) => setTimeout(r, 50));
-    if (a.stop) {
-      if (this.gates.withdraw(req.reqId, 'local')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: req.reqId });
-      this.closeGate(a, 'stopped');
-      throw new RunEnd('stopped', 'gate.stopped');
+    while (Date.now() < until && !a.stop && !a.policy?.latched) await new Promise((r) => setTimeout(r, 50));
+    const halt = a.policy?.latched ?? (a.stop ? new RunEnd('stopped', 'gate.stopped') : null);
+    if (halt) {
+      if (this.gates.withdraw(req.reqId, a.stop ? 'local' : 'policy')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: req.reqId });
+      this.closeGate(a, a.stop ? 'stopped' : 'signal');
+      throw halt;
     }
     // 토큰(D03 §3): HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce}). 단일 사용, 주 비가역 1개.
     // 소비는 비가역 스텝 진입에서 gate_requests approved→consumed + 원장 armed 한 트랜잭션이다(arm). 네트워크 커밋 가드(§5.4)는 PoC 범위 밖.
@@ -280,16 +320,30 @@ export class RunService extends EventEmitter {
     t.used = true;
     t.mac.fill(0);
     try {
-      this.ledger.consumeAndArm(p.req.reqId, {
-        intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: p.history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
-        packageDigest: a.packageDigest, actionHash: p.req.actionHash, deviceId: this.deviceId, cpBizNoHmac: p.history.cpBizNoHmac, recipientEmailHmac: p.history.recipientEmailHmac,
-      });
+      // 하루 비가역 수·네비게이션 수 증가도 armed와 같은 트랜잭션이다(증가 커밋 → 클릭, D03 §7).
+      this.d.db.transaction(() => {
+        a.policy!.commit();
+        this.ledger.consumeAndArm(p.req.reqId, {
+          intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: p.history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
+          packageDigest: a.packageDigest, actionHash: p.req.actionHash, deviceId: this.deviceId, cpBizNoHmac: p.history.cpBizNoHmac, recipientEmailHmac: p.history.recipientEmailHmac,
+        });
+      })();
     } catch (e) {
+      if (e instanceof RunEnd) throw e;
       throw new RunEnd('failed', e instanceof LedgerError ? e.code : 'ledger.error');
     }
     a.armed = true;
     a.pendingArm = null;
     this.journal.append(a.runId, 'ledger.armed', { reqId: p.req.reqId });
+  }
+
+  /** 차단 신호·추가 인증·캡차·대기열이 걸쇠에 걸렸다. 승인 대기 중이면 게이트를 닫는다(바뀐 화면을 승인하지 못하게). */
+  private latched(a: ActiveRun, end: RunEnd): void {
+    const g = a.gate;
+    if (!g) return;
+    if (this.gates.decide(g.req.reqId, 'denied', 'policy')) this.journal.append(a.runId, 'gate.denied', { reqId: g.req.reqId, by: 'policy' });
+    this.closeGate(a, 'signal');
+    g.reject(end);
   }
 
   private closeGate(a: ActiveRun, reason: string): void {
@@ -358,9 +412,9 @@ export class RunService extends EventEmitter {
     return this.active?.runId ?? null;
   }
 
-  /** 시험용 읽기(값 없음): 원장 상태와 저널 종류. */
-  inspect(runId: string): { ledger: string | null; journal: string[] } {
+  /** 시험용 읽기(값 없음): 원장 상태, 저널 종류, 요청률 정책 상태(횟수·쿨다운). */
+  inspect(runId: string): { ledger: string | null; journal: string[]; policy: PolicyStatus } {
     const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ?').get(runId) as { state: string } | undefined;
-    return { ledger: row?.state ?? null, journal: this.journal.types(runId) };
+    return { ledger: row?.state ?? null, journal: this.journal.types(runId), policy: this.rate.status(this.d.data.profiles.byKind('business')?.id ?? '') };
   }
 }

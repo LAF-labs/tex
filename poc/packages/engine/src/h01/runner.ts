@@ -4,7 +4,7 @@ import { H01, normalizeField, type Cond, type Phase, type Step } from './playboo
 import { READBACK_FIELDS, SELECTOR_KEYS, type LookupDef, type PortalConfig, type ReadbackKey, type SelectorKey } from './portal.ts';
 
 // H-01 발급 구간 실행기(D03 §5). 페이지에 닿는 동작은 모두 여기 있고, 게이트·원장·토큰은 hooks(RunService)가 한다.
-// 클릭·입력 직전마다 동일성 검사(R-A1)와 커밋 그림자 검사(R-A2)를 한다.
+// 클릭·입력 직전마다 동일성 검사(R-A1)와 커밋 그림자 검사(R-A2)를 하고, 동작은 모두 요청률 정책(policy, D03 §7)을 먼저 지난다.
 
 export interface RunInputs {
   counterpart: { id: string; bizNo: string; name: string };
@@ -38,8 +38,33 @@ export interface RunnerHooks {
   /** 비가역 스텝 진입(R-G7): 토큰 검증 → 원장 armed + 토큰 소비(한 트랜잭션). 정지·만료·재사용이면 RunEnd. */
   arm(): void;
   dispatched(): void;
-  resolve(state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'verify' | null, ref: string | null): void;
+  resolve(state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'signal' | 'verify' | null, ref: string | null): void;
 }
+
+/**
+ * 요청률 정책(D03 §5.2 Actuator의 policy, §7). 페이지에 닿는 동작은 모두 act()를 먼저 지난다.
+ * 차단 신호가 걸쇠에 걸렸으면 어느 메서드든 RunEnd를 던진다.
+ */
+export interface RunnerPolicy {
+  /** 스텝 사이 지연(요청률 상한). [중지]를 받는다. */
+  beforeStep(): Promise<void>;
+  /** 동작 직전: 실행당 동작 수·벽시계, 네비게이션이면 분당 상한(증가 커밋 → 행동). */
+  act(kind: 'navigate' | 'click' | 'fill'): Promise<void>;
+  /** 네비게이션 뒤 안정 대기 + 그 화면의 차단 신호 확인. */
+  settled(page: Page): Promise<void>;
+  /** 게이트 진입 직전 판정(W 밖, D03 §5.3 사전 안전 판정): 결정적 차단 신호가 없어야 게이트를 연다. */
+  beforeGate(): Promise<void>;
+  /** 커밋 직전 판정(W 안, 결정적 신호·실행당 상한·분당 네비게이션). 바로 뒤에 hooks.arm()을 부른다. */
+  beforeCommit(): Promise<void>;
+  /** 걸쇠에 걸린 신호(없으면 null). 무장 뒤 클릭 직전에 동기로 본다. */
+  halted(): RunEnd | null;
+}
+
+/** verify 조회가 이만큼 연속 실패하면 더 조회하지 않는다(결과는 unknown). */
+const VERIFY_FAILS_IN_A_ROW = 3;
+
+/** 스텝 지연을 두는 스텝(페이지에 닿는 것). 읽기만 하는 스텝(wait·assert·readback)과 end는 두지 않는다. */
+const PAGE_STEPS = new Set<Step['type']>(['goto', 'checkpoint', 'fill', 'click', 'gate', 'submit', 'verify']);
 
 export interface RunResult {
   status: RunStatus;
@@ -74,6 +99,7 @@ export class H01Runner {
   private readonly inputs: RunInputs;
   private readonly profile: { bizNo: string };
   private readonly hooks: RunnerHooks;
+  private readonly policy: RunnerPolicy;
   private readonly vars: Record<string, string> = {};
   private baseline: Set<string> | null = null;
   private approvedHash: string | null = null;
@@ -82,12 +108,13 @@ export class H01Runner {
   /** 클릭 직전 보이던 실패 신호 수. 클릭 뒤 새로 보인 것만 명시적 실패 신호로 센다. */
   private failSignalsBefore = 0;
 
-  constructor(page: Page, portal: PortalConfig, inputs: RunInputs, profile: { bizNo: string }, hooks: RunnerHooks) {
+  constructor(page: Page, portal: PortalConfig, inputs: RunInputs, profile: { bizNo: string }, hooks: RunnerHooks, policy: RunnerPolicy) {
     this.page = page;
     this.portal = portal;
     this.inputs = inputs;
     this.profile = profile;
     this.hooks = hooks;
+    this.policy = policy;
   }
 
   async run(): Promise<RunResult> {
@@ -102,6 +129,7 @@ export class H01Runner {
       }
       // 게이트 승인 뒤(커밋 구간·verify)에는 정지를 받지 않는다.
       if (!this.approvedHash) this.hooks.checkStop();
+      if (step !== H01.steps[0] && PAGE_STEPS.has(step.type)) await this.policy.beforeStep();
       const next = await this.exec(step);
       if (typeof next !== 'string') return next;
       step = byId.get(next);
@@ -115,12 +143,12 @@ export class H01Runner {
     const fallthrough = () => H01.steps[H01.steps.findIndex((x) => x.id === s.id) + 1]!.id;
     switch (s.type) {
       case 'goto':
-        await this.page.goto(new URL(this.portal.issueForm, this.portal.origin).toString(), { waitUntil: 'domcontentloaded' });
+        await this.openIssueForm();
         return fallthrough();
       case 'checkpoint': {
         // reentry: reload. 도착 조건이 거짓이면 url로 새로 읽고 한 번 더 본다(D03 §5.5).
         if (!(await this.exists(s.expect))) {
-          await this.page.goto(new URL(this.portal.issueForm, this.portal.origin).toString(), { waitUntil: 'domcontentloaded' });
+          await this.openIssueForm();
           if (!(await this.exists(s.expect))) throw fail('checkpoint.expect_failed');
         }
         return fallthrough();
@@ -128,6 +156,8 @@ export class H01Runner {
       case 'fill': {
         const v = this.ref(s.value);
         if (v === null && s.ifAbsent !== 'clear') throw fail('input.missing');
+        // 정책(화면 확인·상한)을 먼저 지나고, 동일성·커밋 그림자 검사는 동작 바로 앞에 둔다(R-A1).
+        await this.policy.act('fill');
         const loc = await this.identify(s.target);
         await this.noCommitShadow(s.target, loc);
         await loc.fill(v ?? '');
@@ -137,6 +167,7 @@ export class H01Runner {
         return fallthrough();
       }
       case 'click': {
+        await this.policy.act('click');
         const loc = await this.identify(s.target);
         await this.noCommitShadow(s.target, loc);
         await loc.click();
@@ -162,10 +193,13 @@ export class H01Runner {
         // verify 기준선 조회(B-07): 게이트 진입 직전, 새 탭. 실패하면 게이트를 열지 않는다(아직 커밋 전).
         try {
           this.baseline = await this.invoiceNumbers(this.rb);
-        } catch {
+        } catch (e) {
+          if (e instanceof RunEnd) throw e; // 차단 신호·[중지]
           throw new RunEnd('handoff', 'verify.baseline_missing');
         }
-        // 기준선 조회는 오래 걸릴 수 있다. 그 사이 온 [중지]를 게이트를 열기 전에 받는다.
+        // 기준선 조회는 오래 걸릴 수 있다. 그 사이 온 [중지]·차단 신호를 게이트를 열기 전에 받는다.
+        // beforeGate 뒤 게이트가 열릴 때까지는 await가 없어 그 사이에 걸쇠가 걸려도 게이트 대기에서 닫힌다(runs.ts latched).
+        await this.policy.beforeGate();
         this.hooks.checkStop();
         const g = await this.hooks.gate(this.rb);
         this.approvedHash = g.readbackHash;
@@ -185,6 +219,7 @@ export class H01Runner {
    * 동일성을 확인한 그 요소를 누른다(셀렉터를 다시 찾지 않는다). 재계산과 클릭 사이에 디스크 I/O가 없다.
    */
   private async submit(target: SelectorKey, verify: string): Promise<string> {
+    await this.policy.beforeCommit();
     this.hooks.arm();
     let button: NonNullable<Awaited<ReturnType<Locator['elementHandle']>>>;
     try {
@@ -208,6 +243,13 @@ export class H01Runner {
       this.hooks.resolve('not_committed', 'pre_dispatch_mismatch', null);
       throw fail('pre_dispatch_mismatch');
     }
+    // 무장 뒤 재계산하는 동안 걸린 신호: 누르지 않는다(요청이 나가지 않았으므로 not_committed). 메모리만 본다.
+    const halt = this.policy.halted();
+    if (halt) {
+      await button.dispose();
+      this.hooks.resolve('not_committed', 'signal', null);
+      throw halt;
+    }
     this.dispatchedAt = Date.now();
     try {
       await button.click();
@@ -217,6 +259,7 @@ export class H01Runner {
     await button.dispose().catch(() => {});
     this.hooks.dispatched();
     await this.page.waitForLoadState('domcontentloaded').catch(() => {});
+    await this.policy.settled(this.page);
     return verify;
   }
 
@@ -224,12 +267,17 @@ export class H01Runner {
   private async verifyInvoice(on: { committed: string; not_committed: string; unknown: string }): Promise<string> {
     const { minElapsedMs, lookups, intervalMs } = this.portal.verify;
     let zeroInARow = 0;
+    let failedInARow = 0;
     for (let attempt = 0; attempt < lookups + 20; attempt++) {
       let b1: Set<string> | null = null;
       try {
         b1 = await this.invoiceNumbers(this.rb!);
-      } catch {
+        failedInARow = 0;
+      } catch (e) {
+        if (e instanceof RunEnd) throw e; // 차단 신호: 더 조회하지 않는다(발급됐는지 모름)
         zeroInARow = 0; // 조회 실패는 부재 증거가 아니다
+        // 조회 화면이 계속 열리지 않으면(사전에 없는 차단 화면일 수 있다) 더 두드리지 않고 '모름'으로 둔다(D03 §7).
+        if (++failedInARow >= VERIFY_FAILS_IN_A_ROW) break;
       }
       if (b1) {
         const fresh = [...b1].filter((n) => !this.baseline!.has(n));
@@ -263,7 +311,10 @@ export class H01Runner {
     if (!this.rb?.counterpartEmail) return on.committed;
     const { lookups, intervalMs } = this.portal.verify;
     for (let i = 0; i < lookups + 3; i++) {
-      const rows = await this.lookup(this.portal.mailLookup, { approvalNo: this.vars.approvalNo! }).catch(() => null);
+      const rows = await this.lookup(this.portal.mailLookup, { approvalNo: this.vars.approvalNo! }).catch((e: unknown) => {
+        if (e instanceof RunEnd) throw e;
+        return null;
+      });
       if (rows?.some((r) => r.approvalNo === this.vars.approvalNo && /전송|완료/.test(r.status ?? ''))) {
         this.vars.mailConfirmed = 'true';
         return on.committed;
@@ -294,6 +345,7 @@ export class H01Runner {
   private async lookup(def: LookupDef, params: Partial<Record<string, string>>): Promise<Array<Record<string, string>>> {
     const url = new URL(def.path, this.portal.origin);
     for (const [k, q] of Object.entries(def.query)) url.searchParams.set(q!, params[k] ?? '');
+    await this.policy.act('navigate');
     const [popup] = await Promise.all([
       this.page.waitForEvent('popup', { timeout: 10_000 }),
       this.page.evaluate((u) => {
@@ -302,6 +354,7 @@ export class H01Runner {
     ]);
     try {
       await popup.waitForLoadState('domcontentloaded');
+      await this.policy.settled(popup);
       const ready = popup.locator(def.ready);
       await ready.first().waitFor({ state: 'attached', timeout: 10_000 });
       if ((await ready.count()) !== 1) throw new Error('lookup_ready_ambiguous');
@@ -312,6 +365,13 @@ export class H01Runner {
     } finally {
       await popup.close().catch(() => {});
     }
+  }
+
+  /** 발급 화면으로 간다(네비게이션: 분당 상한 → goto → 안정 대기·차단 신호 확인). */
+  private async openIssueForm(): Promise<void> {
+    await this.policy.act('navigate');
+    await this.page.goto(new URL(this.portal.issueForm, this.portal.origin).toString(), { waitUntil: 'domcontentloaded' });
+    await this.policy.settled(this.page);
   }
 
   private ref(r: string): string | null {
