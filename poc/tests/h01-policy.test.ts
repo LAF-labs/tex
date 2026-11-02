@@ -169,6 +169,8 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       assert.equal(runs.inspect(r).ledger, null);
     } finally {
       fx.knobs.status = null;
+      // 남은 폼 페이지의 폴링 응답(429)이 다음 시험의 실행에 닿지 않게 비운다(그때 닿으면 그 실행의 신호가 맞다).
+      await sleep(500);
     }
   });
 
