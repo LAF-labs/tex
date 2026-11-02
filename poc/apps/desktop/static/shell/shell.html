@@ -1,0 +1,14 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self' data:">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="shell.css">
+<title>소버린 AX (PoC 데모)</title></head>
+<body>
+<div id="app" class="frame panel-closed">
+  <header id="titlebar" class="sx-titlebar"></header>
+  <nav id="rail" class="sx-rail" aria-label="화면"></nav>
+  <main id="center"></main>
+  <aside id="panel" aria-label="작업 패널"></aside>
+</div>
+<div id="toast" role="status" hidden></div>
+<script type="module" src="shell.js"></script>
+</body></html>

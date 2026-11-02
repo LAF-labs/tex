@@ -4,11 +4,12 @@ import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, ipcMain, MessageChannelMain, protocol, session, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
-import { COMMANDS, READ_QUERIES } from '@sax/engine/protocol';
+import { COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
 import { verifyLocalApproval } from './approval-gate.ts';
-import { APPROVAL_SCHEME, openApprovalWindow } from './approval-window.ts';
+import { APPROVAL_SCHEME, ApprovalBar, bottomStrip, demoGateRequest } from './approval-bar.ts';
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
+import { cancelPick, importPdf } from './vault-import.ts';
 
 const require = createRequire(import.meta.url);
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -39,6 +40,8 @@ let engineProc: UtilityProcess;
 let controlPort: MessagePortMain;
 /** main↔금고가 기동 시 공유하는 LocalApproval 서명 키(ADR-014). Phase 2에 금고가 직접 검증한다. */
 const approvalKey = new Uint8Array(randomBytes(32));
+/** 개발 콘솔 창 아래 띠에 붙인 승인 바(ADR-021). 셸의 대화 열 배치는 shell-app.ts. */
+let devBar: ApprovalBar | null = null;
 const pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
 let nextId = 1;
 let engineReady: Promise<void>;
@@ -84,7 +87,7 @@ function startProcesses(): void {
 }
 
 function serveStatic(): void {
-  const files: Record<string, string> = { '/app.html': 'text/html; charset=utf-8', '/app.js': 'text/javascript', '/app.css': 'text/css', '/secret.html': 'text/html; charset=utf-8', '/secret.js': 'text/javascript' };
+  const files: Record<string, string> = { '/app.html': 'text/html; charset=utf-8', '/app.js': 'text/javascript', '/app.css': 'text/css', '/secret.html': 'text/html; charset=utf-8', '/secret.js': 'text/javascript', '/vault-panel.js': 'text/javascript' };
   protocol.handle(APP_SCHEME, async (req) => {
     const p = new URL(req.url).pathname;
     const type = files[p];
@@ -111,7 +114,8 @@ function openSecretInput(kind: string, scope: string): void {
   });
 }
 
-const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => c !== 'bizcert.parse')]);
+// main 전용 명령(MAIN_ONLY: docparse 결과를 붙이는 명령, 보관함 파일 경로)은 렌더러에 열지 않는다.
+const RENDERER_METHODS = new Set<string>([...READ_QUERIES, ...COMMANDS.filter((c) => !MAIN_ONLY.includes(c))]);
 
 async function handleRenderer(method: string, params: Record<string, unknown>): Promise<unknown> {
   await engineReady;
@@ -131,6 +135,11 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
     case 'secret.openInput':
       openSecretInput(String(params.kind ?? 'cert_password'), String(params.scope ?? 'business'));
       return {};
+    case 'vault.importPdf':
+      return importPdf(params, (m, p) => rpc('engine', m, p));
+    case 'vault.importCancel':
+      cancelPick(params.pickId);
+      return {};
     case 'ocr.bizcert': {
       // 사용자가 고른 파일만 파싱한다(ADR-014 자동 파싱 축소). PDF는 PoC-8(docparse pdf.js)에서.
       const pick = await dialog.showOpenDialog({ properties: ['openFile'], filters: [{ name: '사업자등록증 이미지', extensions: ['png', 'jpg', 'jpeg'] }] });
@@ -141,11 +150,10 @@ async function handleRenderer(method: string, params: Record<string, unknown>): 
       return { parse, confidence: ocr.confidence, ms: ocr.ms };
     }
     case 'approval.demo': {
-      // PoC-4 시험용 카드. 실제 게이트 카드는 PoC-6에서 엔진 신뢰 계획값으로 만든다.
-      const card = { runId: 'demo', gateStepId: 'demo-gate', actionHash: randomBytes(16).toString('hex'), titleKey: 'demo' as const, rows: [{ labelKey: 'buyer' as const, value: '시험 거래처(발급 없음)' }, { labelKey: 'amount' as const, value: '0원' }] };
-      const { result } = openApprovalWindow(card, approvalKey);
-      const r = await result;
-      return { decision: r.decision, via: r.via, verified: r.approval ? verifyLocalApproval(approvalKey, r.approval) : false };
+      // 승인 바 시험(PoC-4 승인 창을 대체). 실제 게이트 요청은 PoC-6에서 엔진 신뢰 계획값으로 만든다.
+      if (!devBar) throw new Error('not_ready');
+      const r = await devBar.open(demoGateRequest());
+      return { decision: r.decision, verified: r.decision === 'approve' ? verifyLocalApproval(approvalKey, r.approval) : false };
     }
   }
   throw new Error('unknown_method');
@@ -189,6 +197,7 @@ app.whenReady().then(async () => {
   });
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (ev) => ev.preventDefault());
+  devBar = new ApprovalBar(win, approvalKey, bottomStrip);
   await win.loadURL(`${APP_SCHEME}://app/app.html`);
 });
 

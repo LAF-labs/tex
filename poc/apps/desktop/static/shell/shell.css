@@ -1,0 +1,137 @@
+/* PoC-9 셸 배치. 컴포넌트 모양은 디자인 시스템 bundle.css, 여기는 앱 틀과 셸 전용만. 커스텀 커서 금지(ADR-021). */
+html, body { height: 100%; margin: 0; overflow: hidden; }
+body { font-size: 14px; }
+button { font: inherit; }
+.title-screen { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+
+/* 앱 틀: 제목줄 아래 레일 · 가운데 · 작업 패널 */
+.frame { height: 100%; display: grid; grid-template-columns: var(--l-rail) minmax(0, 1fr) var(--l-panel); grid-template-rows: var(--l-titlebar) minmax(0, 1fr); background: var(--canvas); }
+.frame.panel-closed { grid-template-columns: var(--l-rail) minmax(0, 1fr) 0; }
+.frame.panel-closed #panel { display: none; }
+/* 승인 대기 중에는 패널을 접어도 그 폭을 비워 둔다. 대화 열이 가운데로 옮겨 가면 main이 정한 바 자리와 어긋나기 때문이다(ADR-021). */
+body.bar-active .frame.panel-closed { grid-template-columns: var(--l-rail) minmax(0, 1fr) var(--l-panel); }
+body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden; }
+#titlebar { grid-column: 1 / -1; }
+#center { min-width: 0; min-height: 0; position: relative; }
+#panel { background: var(--surface); border-left: 1px solid var(--line); overflow-y: auto; min-height: 0; }
+
+.sx-titlebar .co { font-weight: 600; }
+.mock-badge { font-size: 12px; line-height: 18px; padding: 0 8px; border-radius: var(--radius-full); border: 1px dashed var(--line-strong); color: var(--ink-2); white-space: nowrap; }
+.segs { display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
+.seg { border: 0; background: var(--surface); color: var(--ink-2); padding: 0 12px; height: 28px; font-size: 13px; cursor: pointer; }
+.seg + .seg { border-left: 1px solid var(--line); }
+.seg.is-on { background: var(--surface-sunken); color: var(--ink); font-weight: 600; }
+.sx-titlebar .sx-search { margin-left: auto; width: 220px; }
+.tb-icon { display: inline-grid; place-items: center; color: var(--ink-2); }
+.tb-icon svg { width: 18px; height: 18px; }
+.tb-dot { font-size: 12px; color: var(--ink-3); display: inline-flex; align-items: center; gap: 6px; }
+.tb-dot::before { content: ""; width: 8px; height: 8px; border-radius: 50%; border: 1.5px solid var(--ink-3); box-sizing: border-box; }
+
+.sx-rail button { width: 44px; height: 44px; border-radius: 9px; display: grid; place-items: center; color: var(--ink-3); position: relative; border: 0; background: transparent; cursor: pointer; }
+.sx-rail button.is-on { background: var(--surface-sunken); color: var(--ink); }
+.sx-rail button svg { width: 20px; height: 20px; }
+
+/* 대화 열: 대화 폭은 chat-max에서 멈추고 남는 폭은 작업 패널이 쓴다. main의 바 폭 계산과 같은 식이다. */
+.chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+/* 폭은 #center 폭으로 렌더러가 정한 --col-w(스크롤 막대와 무관하게 안팎이 같은 폭). */
+.col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
+.thread-scroll { flex: 1; min-height: 0; overflow-y: auto; scrollbar-gutter: stable both-edges; }
+.thread-scroll .sx-thread { padding: var(--space-4) 0 var(--space-5); max-width: none; }
+.sx-today { margin-top: 14px; flex: none; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); display: flex; align-items: center; gap: var(--space-4); padding: 0 14px; font-size: 13px; color: var(--ink-2); }
+.today-item { border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font-size: 13px; }
+.today-item b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.today-item.is-turn b { color: var(--accent); }
+.today-item.is-attention b { color: var(--attention); }
+
+.quick-zone { flex: none; padding-bottom: var(--space-2); }
+.quick-zone:empty, .sx-quick:empty { display: none; }
+.sx-quick button.is-on { border-color: var(--ink); background: var(--surface-sunken); font-weight: 600; }
+.quick-label { margin-right: 2px; }
+.sx-quick .sx-meta { align-self: center; }
+.sx-quick button.is-soon { color: var(--ink-3); border-color: var(--line); background: transparent; }
+.me-time { display: block; text-align: right; margin-top: 2px; }
+.reply-chips { margin-top: var(--space-2); }
+
+/* 승인 바 자리(ADR-021): 승인 대기 중에만 비운다. 바는 main이 이 위에 따로 그린다. */
+.bar-slot { flex: none; height: 0; }
+body.bar-active .bar-slot { height: calc(var(--l-bar-h) + var(--l-gap)); }
+body.bar-active .quick-zone { display: none; }
+.composer-zone { flex: none; padding-bottom: 16px; }
+/* 입력창은 제자리(아래 여백 16)에 두고 예약 높이 안에서 위로만 늘어난다. */
+body.bar-active .composer-zone { height: var(--l-composer-reserve); box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-end; }
+.sx-input { align-items: flex-end; padding: 10px 8px 10px 14px; min-height: 46px; box-sizing: border-box; }
+.sx-input textarea { flex: 1; border: 0; outline: none; resize: none; background: transparent; color: var(--ink); font: inherit; font-size: 15px; line-height: 24px; padding: 0; height: 24px; max-height: 144px; overflow-y: auto; }
+body.bar-active .sx-input textarea { max-height: 72px; }
+.sx-input textarea::placeholder { color: var(--ink-3); }
+.sx-input:focus-within { border-color: var(--ink-2); }
+.sx-send { cursor: pointer; }
+.sx-send svg { width: 16px; height: 16px; }
+
+/* 카드 보조 */
+.sx-card { cursor: default; }
+.sx-app-line { font-size: 14px; line-height: 22px; color: var(--ink); }
+.sx-idrow { display: flex; align-items: center; gap: var(--space-2); }
+.sx-amount-edit { height: var(--control-height); width: 140px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); padding: 0 10px; font: inherit; font-variant-numeric: tabular-nums; text-align: right; background: var(--surface); color: var(--ink); }
+.sx-kv dd.is-start { justify-content: flex-start; text-align: left; }
+.sx-flag { font-size: 12px; line-height: 18px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); }
+.sx-where summary { font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.sx-where .sx-kv { margin-top: var(--space-2); }
+
+/* 작업 패널 */
+.panel-in { padding: 18px; display: grid; gap: 14px; align-content: start; }
+.panel-in .sx-card-hd { justify-content: flex-start; }
+.panel-in .sx-card-hd .sx-card-title { margin-right: auto; }
+.panel-x { width: 28px; height: 28px; border: 0; background: none; color: var(--ink-3); border-radius: var(--radius-sm); display: grid; place-items: center; cursor: pointer; font-size: 18px; }
+.panel-x svg { width: 16px; height: 16px; }
+.auth-line { display: flex; gap: 6px; align-items: baseline; font-size: 13px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--line); }
+/* 좁은 창: 바가 레일 오른쪽부터 창 끝까지 넓어지므로 작업 패널은 바 위에서 끝난다. */
+body.bar-active.bar-band #panel { align-self: start; height: calc(100% - var(--l-composer-reserve) - var(--l-gap) - var(--l-bar-h)); border-bottom: 1px solid var(--line); box-sizing: border-box; }
+
+.opt-list { display: grid; gap: var(--space-2); }
+.opt-list .sx-opt { cursor: pointer; text-align: left; font: inherit; font-size: 14px; }
+.opt-main { display: grid; }
+.g24-copy { display: inline-flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+
+.paper { margin: 0; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); padding: 18px; display: grid; gap: 10px; }
+.paper-title { font-family: var(--font-serif); font-size: 17px; font-weight: 700; text-align: center; letter-spacing: 0.2em; }
+.paper-line { height: 8px; border-radius: 4px; background: var(--surface-sunken); }
+.w40 { width: 40%; } .w60 { width: 60%; } .w80 { width: 80%; } .w90 { width: 90%; }
+
+/* 레일 화면: 목록 + 오른쪽 상세 */
+.rail-screen { height: 100%; overflow-y: auto; padding: 20px var(--l-gutter); box-sizing: border-box; display: grid; gap: 14px; align-content: start; }
+body.bar-active .rail-screen { padding-bottom: calc(var(--l-composer-reserve) + var(--l-gap) + var(--l-bar-h)); }
+.rs-head { display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap; }
+.rs-waiting { margin-left: auto; display: none; }
+body.bar-active .rs-waiting { display: inline-flex; }
+.list { width: 100%; border-collapse: collapse; background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; font-size: 13px; }
+.list th { text-align: left; font-size: 12px; font-weight: 500; color: var(--ink-3); padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--surface); }
+.list td { padding: 10px 12px; border-bottom: 1px solid var(--line); color: var(--ink); }
+.list tr:last-child td { border-bottom: 0; }
+.list tbody tr { cursor: pointer; }
+.list tbody tr:hover, .list tbody tr.is-on { background: var(--surface-sunken); }
+.list .name { font-weight: 600; }
+.list .num { font-variant-numeric: tabular-nums; text-align: right; }
+.list .is-attention { color: var(--attention); font-weight: 600; }
+.empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-2); display: grid; gap: var(--space-2); }
+
+#toast { position: fixed; top: calc(var(--l-titlebar) + 12px); left: 50%; transform: translateX(-50%); background: var(--surface-overlay); box-shadow: var(--shadow-overlay); border-radius: var(--radius-md); padding: 8px 14px; font-size: 13px; color: var(--ink); z-index: 10; pointer-events: none; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .sx-chip { transition: background-color 160ms ease-out, color 160ms ease-out; }
+}
+/* 문서함 보관함 서류(PoC-8): 확인 필요 표시, 만료일 출처, 열기 암호 줄, 확인 구역 */
+.doc-flag { margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--attention); }
+.doc-tag { margin-left: 6px; }
+.doc-pw-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin: var(--space-3) 0; }
+.doc-pw-row .sx-note { flex: 1 1 100%; }
+.doc-pw, .doc-in { height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.doc-pw { flex: 1; min-width: 200px; }
+.doc-review { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.doc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
+.doc-form label { display: grid; gap: 4px; }
+.doc-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.doc-check { display: flex !important; align-items: center; gap: 8px; grid-column: 1 / -1; }
+/* 서류 카드 칸: 날짜는 중간에서 끊지 않고(날짜 · D-n 사이에서만 줄바꿈), 짧은 용도 칸보다 날짜 칸을 넓게 */
+.sx-doc .sx-cells { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 1.2fr); }
+.doc-date { white-space: nowrap; }
+.sx-cells .is-inferred .value { color: var(--ink-2); text-decoration: underline dotted var(--line-strong); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }

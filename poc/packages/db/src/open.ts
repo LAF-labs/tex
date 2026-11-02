@@ -23,6 +23,8 @@ export function openDatabase(file: string, key: Uint8Array): Db {
     db.pragma('temp_store=MEMORY');
     db.pragma('foreign_keys=ON');
     db.pragma('journal_mode=WAL');
+    // 원장 armed·토큰 소비는 전원이 나가도 남아야 한다(D03 §2 R-G7 synchronous=FULL). WAL 기본값은 NORMAL이다.
+    db.pragma('synchronous=FULL');
     migrate(db);
     if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
     return db;

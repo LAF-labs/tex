@@ -1,0 +1,1820 @@
+{
+  "platform": "darwin",
+  "arch": "arm64",
+  "electron": "45.1.0",
+  "chrome": "156.0.8078.49",
+  "today": "2026-11-01",
+  "s13b": {
+    "text": {
+      "ms": {
+        "n": 19,
+        "median": 98,
+        "p90": 108,
+        "max": 115
+      },
+      "peakMemoryMb": {
+        "n": 19,
+        "median": 120,
+        "p90": 122,
+        "max": 122
+      },
+      "ocrConfidence": null,
+      "coreOk": "19/19"
+    },
+    "broken_tounicode": {
+      "ms": {
+        "n": 19,
+        "median": 1162,
+        "p90": 1394,
+        "max": 1451
+      },
+      "peakMemoryMb": {
+        "n": 19,
+        "median": 531,
+        "p90": 536,
+        "max": 538
+      },
+      "ocrConfidence": {
+        "n": 19,
+        "median": 89,
+        "p90": 91,
+        "max": 91
+      },
+      "coreOk": "19/19"
+    },
+    "image": {
+      "ms": {
+        "n": 19,
+        "median": 1265,
+        "p90": 1447,
+        "max": 1455
+      },
+      "peakMemoryMb": {
+        "n": 19,
+        "median": 593,
+        "p90": 602,
+        "max": 602
+      },
+      "ocrConfidence": {
+        "n": 19,
+        "median": 82,
+        "p90": 88,
+        "max": 89
+      },
+      "coreOk": "19/19"
+    }
+  },
+  "fivePages": {
+    "ms": 115,
+    "timing": {
+      "loadMs": 18,
+      "textMs": 42,
+      "ocrMs": 0
+    },
+    "peakMemoryKb": 130480
+  },
+  "checks": [
+    {
+      "name": "세션 준비가 한 번 실패하면 창을 띄우지 않고(session_failed), 다음 작업은 다시 준비해 성공한다",
+      "ok": true,
+      "detail": {
+        "firstTry": "session_failed",
+        "secondTry": "ok"
+      }
+    },
+    {
+      "name": "합성 text: 종류·발급일·만료일 19/19",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "합성 broken_tounicode: 종류·발급일·만료일 19/19",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "합성 image: 종류·발급일·만료일 19/19",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "합성 text: 발급기관·발급번호·사업자번호까지 전부 일치",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "text PDF는 텍스트 층으로 읽는다(OCR 안 함)",
+      "ok": true
+    },
+    {
+      "name": "그림 PDF(붉은 직인·0.6° 기울기)는 텍스트 층 없음으로 보고 OCR로 읽는다",
+      "ok": true
+    },
+    {
+      "name": "ToUnicode를 끊은 PDF: 깨진 텍스트 층을 쓰지 않는다(OCR로 넘어가거나 정상 복원)",
+      "ok": true,
+      "detail": {
+        "replacedKeys": 514,
+        "viaOcr": 19
+      }
+    },
+    {
+      "name": "7쪽 문서는 앞 5쪽만 읽는다",
+      "ok": true,
+      "detail": {
+        "pages": 5,
+        "totalPages": 7
+      }
+    },
+    {
+      "name": "S13b 5쪽 텍스트 추출 ≤ 3초(작업당)",
+      "ok": true,
+      "detail": {
+        "ms": 115,
+        "timing": {
+          "loadMs": 18,
+          "textMs": 42,
+          "ocrMs": 0
+        },
+        "peakMemoryKb": 130480
+      }
+    },
+    {
+      "name": "여러 쪽 문서도 같은 값으로 추출한다",
+      "ok": true,
+      "detail": {
+        "issuedOn": {
+          "value": "2026-10-01",
+          "reason": null
+        },
+        "validUntil": {
+          "value": "2026-10-30",
+          "reason": null
+        }
+      }
+    },
+    {
+      "name": "보이지 않는 글자 층(렌더 모드 3)은 scanned로 알린다",
+      "ok": true,
+      "detail": {
+        "hasTextLayer": true,
+        "scanned": true
+      }
+    },
+    {
+      "name": "보통 텍스트 PDF는 scanned가 아니다",
+      "ok": true
+    },
+    {
+      "name": "forceOcr: 텍스트 층이 있어도 OCR로 다시 읽는다(엔진의 다시 읽기 요청)",
+      "ok": true,
+      "detail": {
+        "ocrConfidence": 91,
+        "docType": "biz_registration_cert",
+        "issuedOn": {
+          "value": "2026-10-02",
+          "reason": null
+        }
+      }
+    },
+    {
+      "name": "열기 암호 PDF: 암호 없이 → password_required",
+      "ok": true
+    },
+    {
+      "name": "열기 암호 PDF: 틀린 암호 → password_incorrect",
+      "ok": true
+    },
+    {
+      "name": "열기 암호 PDF: 맞는 암호 → 본문",
+      "ok": true,
+      "detail": "PASSWORD PROTECTED SYNTHETIC CERTIFICATE 2026 FOR DOCPA"
+    },
+    {
+      "name": "권한 암호만 걸린 PDF는 암호 없이 열린다",
+      "ok": true
+    },
+    {
+      "name": "빈 입력 거부",
+      "ok": true
+    },
+    {
+      "name": "PDF 머리 없는 입력 거부",
+      "ok": true
+    },
+    {
+      "name": "잘린 PDF는 코드로 끝난다(창 파기)",
+      "ok": true,
+      "detail": "invalid_pdf"
+    },
+    {
+      "name": "시간 상한 초과 → timeout(창 파기)",
+      "ok": true
+    },
+    {
+      "name": "메모리 상한 초과 → memory_limit(창 파기)",
+      "ok": true
+    },
+    {
+      "name": "OCR 도중 시간 상한 → timeout",
+      "ok": true
+    },
+    {
+      "name": "OCR 도중 메모리 상한(300MB) → memory_limit",
+      "ok": true
+    },
+    {
+      "name": "동시 작업 두 개는 서로 다른 창에서 끝난다",
+      "ok": true
+    },
+    {
+      "name": "작업 뒤 docparse 창이 남지 않는다",
+      "ok": true,
+      "detail": 0
+    },
+    {
+      "name": "docparse 파티션 외부 네트워크 차단(main 쪽 세션 fetch)",
+      "ok": true,
+      "detail": "blocked: net::ERR_BLOCKED_BY_CLIENT"
+    },
+    {
+      "name": "docparse 창 안 송신 0: fetch·WebSocket 막힘, WebRTC STUN(UDP)·TURN(TCP)이 리스너에 닿지 않음",
+      "ok": true,
+      "detail": {
+        "page": {
+          "fetch": "blocked",
+          "ws": "blocked",
+          "rtc": "tried"
+        },
+        "dataPage": {
+          "fetch": "blocked",
+          "ws": "blocked",
+          "rtc": "tried"
+        },
+        "udpHits": 0,
+        "tcpHits": 0
+      }
+    }
+  ],
+  "samples": [
+    {
+      "id": "tax-0",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 108,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 27,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 124112,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-0",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 88,
+      "ms": 1394,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1302
+      },
+      "peakMemoryKb": 548320,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-0",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 79,
+      "ms": 1379,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 2,
+        "ocrMs": 1302
+      },
+      "peakMemoryKb": 599328,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "docNo": {
+          "got": null,
+          "want": "0123-457-5258-910",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-1",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 95,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123984,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-1",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1350,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1260
+      },
+      "peakMemoryKb": 535056,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-1",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 80,
+      "ms": 1447,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1367
+      },
+      "peakMemoryKb": 594000,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-2",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 95,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 124384,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-2",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1320,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1227
+      },
+      "peakMemoryKb": 547648,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "docNo": {
+          "got": "1123-458-9996-484",
+          "want": "T123-458-9996-484",
+          "reason": null
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-2",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 82,
+      "ms": 1374,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1296
+      },
+      "peakMemoryKb": 596016,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "docNo": {
+          "got": "1123-458-9996-484",
+          "want": "T123-458-9996-484",
+          "reason": null
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-3",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 96,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123344,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-3",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1282,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1186
+      },
+      "peakMemoryKb": 541888,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-3",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 81,
+      "ms": 1358,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1283
+      },
+      "peakMemoryKb": 601312,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-4",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 97,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 124576,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-4",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 87,
+      "ms": 1394,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 20,
+        "ocrMs": 1295
+      },
+      "peakMemoryKb": 535376,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-4",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 80,
+      "ms": 1447,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1372
+      },
+      "peakMemoryKb": 601360,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "docNo": {
+          "got": null,
+          "want": "0123-460-4734-058",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-5",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 93,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 22,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123552,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-5",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 88,
+      "ms": 1302,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 18,
+        "ocrMs": 1212
+      },
+      "peakMemoryKb": 548448,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        },
+        "docNo": {
+          "got": "7123-461-2102-845",
+          "want": "T123-461-2102-845",
+          "reason": null
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-5",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 85,
+      "ms": 1405,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1326
+      },
+      "peakMemoryKb": 595200,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-6",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 98,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 24,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 124672,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-6",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1320,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1228
+      },
+      "peakMemoryKb": 547008,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-6",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 78,
+      "ms": 1435,
+      "timing": {
+        "loadMs": 21,
+        "textMs": 2,
+        "ocrMs": 1349
+      },
+      "peakMemoryKb": 604640,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-7",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 95,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123760,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-7",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 88,
+      "ms": 1451,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 18,
+        "ocrMs": 1361
+      },
+      "peakMemoryKb": 541712,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "tax-7",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 84,
+      "ms": 1455,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 2,
+        "ocrMs": 1375
+      },
+      "peakMemoryKb": 606736,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        },
+        "docNo": {
+          "got": null,
+          "want": "0123-462-6840-419",
+          "reason": "not_found"
+        }
+      },
+      "kind": "national_tax_cert"
+    },
+    {
+      "id": "biz-0",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 107,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122432,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-0",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 91,
+      "ms": 1162,
+      "timing": {
+        "loadMs": 20,
+        "textMs": 23,
+        "ocrMs": 1060
+      },
+      "peakMemoryKb": 543696,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "마바사세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-0",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 82,
+      "ms": 1276,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 2,
+        "ocrMs": 1190
+      },
+      "peakMemoryKb": 615840,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "마바사세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-1",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 107,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 22,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122928,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-1",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 90,
+      "ms": 1077,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 17,
+        "ocrMs": 986
+      },
+      "peakMemoryKb": 543952,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-1",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 80,
+      "ms": 1210,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 2,
+        "ocrMs": 1128
+      },
+      "peakMemoryKb": 616624,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-2",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 107,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 22,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122736,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-2",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 91,
+      "ms": 1088,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 17,
+        "ocrMs": 993
+      },
+      "peakMemoryKb": 543248,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "가나세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-2",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 82,
+      "ms": 1216,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 2,
+        "ocrMs": 1137
+      },
+      "peakMemoryKb": 598624,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "가나세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-3",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 105,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123040,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-3",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 88,
+      "ms": 1114,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 18,
+        "ocrMs": 1017
+      },
+      "peakMemoryKb": 544576,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-3",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 85,
+      "ms": 1139,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1063
+      },
+      "peakMemoryKb": 608064,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-4",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 115,
+      "timing": {
+        "loadMs": 21,
+        "textMs": 28,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122704,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-4",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1139,
+      "timing": {
+        "loadMs": 20,
+        "textMs": 20,
+        "ocrMs": 1033
+      },
+      "peakMemoryKb": 544464,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "마바사세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-4",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 85,
+      "ms": 1175,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 1100
+      },
+      "peakMemoryKb": 607136,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "마바사세무서장",
+          "reason": "not_found"
+        },
+        "docNo": {
+          "got": null,
+          "want": "T123-474-4741-011",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-5",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 100,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 22,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 123024,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-5",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 90,
+      "ms": 1169,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 17,
+        "ocrMs": 1075
+      },
+      "peakMemoryKb": 545440,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-5",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 81,
+      "ms": 1265,
+      "timing": {
+        "loadMs": 20,
+        "textMs": 2,
+        "ocrMs": 1172
+      },
+      "peakMemoryKb": 606848,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "아자세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-6",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 99,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 21,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122752,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-6",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 90,
+      "ms": 1094,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 17,
+        "ocrMs": 1001
+      },
+      "peakMemoryKb": 542960,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "가나세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-6",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 83,
+      "ms": 1179,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 2,
+        "ocrMs": 1100
+      },
+      "peakMemoryKb": 607984,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "가나세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-7",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 103,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 23,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 122912,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": true,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-7",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 1137,
+      "timing": {
+        "loadMs": 26,
+        "textMs": 19,
+        "ocrMs": 1025
+      },
+      "peakMemoryKb": 544240,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": true,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "biz-7",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 82,
+      "ms": 1171,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 2,
+        "ocrMs": 1084
+      },
+      "peakMemoryKb": 604288,
+      "coreOk": true,
+      "fields": {
+        "docType": true,
+        "issuedOn": true,
+        "validUntil": true,
+        "issuer": false,
+        "docNo": false,
+        "subjectBizNo": true,
+        "expiresOn": true
+      },
+      "mismatches": {
+        "issuer": {
+          "got": null,
+          "want": "다라세무서장",
+          "reason": "not_found"
+        },
+        "docNo": {
+          "got": "1123-476-6847-372",
+          "want": "T123-476-6847-372",
+          "reason": null
+        }
+      },
+      "kind": "biz_registration_cert"
+    },
+    {
+      "id": "neg-localtax_cert",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 97,
+      "timing": {
+        "loadMs": 19,
+        "textMs": 16,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 118992,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "localtax_cert"
+    },
+    {
+      "id": "neg-localtax_cert",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 90,
+      "ms": 949,
+      "timing": {
+        "loadMs": 22,
+        "textMs": 14,
+        "ocrMs": 855
+      },
+      "peakMemoryKb": 550784,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "localtax_cert"
+    },
+    {
+      "id": "neg-localtax_cert",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 89,
+      "ms": 964,
+      "timing": {
+        "loadMs": 20,
+        "textMs": 2,
+        "ocrMs": 877
+      },
+      "peakMemoryKb": 609744,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "localtax_cert"
+    },
+    {
+      "id": "neg-biz_registration",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 91,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 14,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 117872,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration"
+    },
+    {
+      "id": "neg-biz_registration",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 91,
+      "ms": 826,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 11,
+        "ocrMs": 742
+      },
+      "peakMemoryKb": 533504,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "biz_registration"
+    },
+    {
+      "id": "neg-biz_registration",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 88,
+      "ms": 824,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 3,
+        "ocrMs": 745
+      },
+      "peakMemoryKb": 616176,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "unknown"
+    },
+    {
+      "id": "neg-closure_cert",
+      "flavor": "text",
+      "hasTextLayer": true,
+      "ocrConfidence": null,
+      "ms": 91,
+      "timing": {
+        "loadMs": 18,
+        "textMs": 15,
+        "ocrMs": 0
+      },
+      "peakMemoryKb": 118560,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "closure_cert"
+    },
+    {
+      "id": "neg-closure_cert",
+      "flavor": "broken_tounicode",
+      "hasTextLayer": false,
+      "ocrConfidence": 84,
+      "ms": 880,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 12,
+        "ocrMs": 792
+      },
+      "peakMemoryKb": 539968,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "closure_cert"
+    },
+    {
+      "id": "neg-closure_cert",
+      "flavor": "image",
+      "hasTextLayer": false,
+      "ocrConfidence": 78,
+      "ms": 832,
+      "timing": {
+        "loadMs": 17,
+        "textMs": 2,
+        "ocrMs": 754
+      },
+      "peakMemoryKb": 616624,
+      "coreOk": true,
+      "fields": {
+        "docType": true
+      },
+      "mismatches": {},
+      "kind": "closure_cert"
+    }
+  ]
+}

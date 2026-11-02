@@ -17,10 +17,20 @@
       "development": "./src/protocol.ts",
       "default": "./dist/protocol.js"
     },
+    "./gate": {
+      "types": "./src/gate.ts",
+      "development": "./src/gate.ts",
+      "default": "./dist/gate.js"
+    },
     "./bizcert": {
       "types": "./src/bizcert.ts",
       "development": "./src/bizcert.ts",
       "default": "./dist/bizcert.js"
+    },
+    "./docmeta": {
+      "types": "./src/docmeta/index.ts",
+      "development": "./src/docmeta/index.ts",
+      "default": "./dist/docmeta/index.js"
     }
   },
   "dependencies": {
@@ -29,6 +39,7 @@
     "@sax/net": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/redaction": "workspace:*",
+    "ajv": "8.20.0",
     "playwright-core": "1.64.1"
   },
   "devDependencies": {
