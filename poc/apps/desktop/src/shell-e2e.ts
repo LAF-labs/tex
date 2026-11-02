@@ -472,6 +472,21 @@ async function flow(): Promise<void> {
   if (!o) S.bar.close('e2e');
   Object.assign(cursor, { x: -9999, y: -9999 });
 
+  // 차단 신호(D03 §7, PoC-10): 발급 화면 대신 차단 안내가 뜨면 바로 멈추고, 그 뒤로 가짜 홈택스에 요청을 보내지 않으며, 카드에 사유가 보인다.
+  const idBlock = await toDraft('C테크에 44만원 세금계산서');
+  const mark = fx().fixture.requests.length;
+  fx().fixture.knobs.block = 'page';
+  await click(`[data-run="${idBlock}"] [data-act=prepare]`);
+  await until('block attention', () => runStatus(idBlock) === 'attention', 15_000);
+  fx().fixture.knobs.block = null;
+  await sleep(1500);
+  const reqs = fx().fixture.requests.slice(mark);
+  const blockedAt = reqs.findIndex((r) => r.path === '/notice/blocked');
+  const blockCard = await js<string>(`document.querySelector('[data-run="${idBlock}"]').textContent`);
+  const blockIns = await inspect(idBlock);
+  check('차단 안내 → 바로 멈추고 그 뒤 요청 0회, 카드에 사유(바·게이트 없음, 원장 행 없음)', blockedAt >= 0 && reqs.length === blockedAt + 1 && blockCard.includes('차단·경고 신호') && !S.bar.snapshot().visible && !gates.has(idBlock) && blockIns.ledger === null && blockIns.journal.includes('block.signal'), { reqs, note: S.runs.get(idBlock)!.stoppedNote, ins: blockIns });
+  await shot('24c-block-signal');
+
   // 다크 테마
   nativeTheme.themeSource = 'dark';
   await sleep(300);

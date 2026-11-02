@@ -39,7 +39,23 @@ const NOTE: Record<string, string> = {
   'post_commit.error': '발급은 확정됐지만 그 뒤 단계에서 오류가 났어요. 다시 실행하지 말고 홈택스 발급목록에서 확인해 주세요.',
   'engine.exit_before_approval': '엔진이 멈춰 승인 전에 끝났어요. 홈택스에는 아무것도 발급되지 않았어요. 앱을 다시 시작해 주세요.',
   'engine.exit': '엔진이 발급 도중에 멈춰 발급됐는지 모릅니다. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  // 요청률 정책(D03 §7, 코드는 D16 portal.*·policy.*). 숫자·날짜는 보수 모드(시계 역행)에서 바뀌므로 문구에 넣지 않는다.
+  'portal.blocked': '홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답, 반복된 추가 인증)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
+  'portal.blocked_in_doubt': '발급 확인 중에 홈택스에서 차단·경고 신호가 보여 멈췄어요. 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  'portal.blocked_after_commit': '발급은 확정됐지만 그 뒤 홈택스에서 차단·경고 신호가 보여 멈췄어요. 다음 발급을 이어가기 전에 홈택스에 직접 접속해 상태를 확인해 주세요.',
+  'policy.cooldown': '홈택스 차단·경고 신호가 두 번 연속 나와 24시간 동안 홈택스 실행을 쉬고 있어요. 아무것도 발급하지 않았어요.',
+  'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
+  'portal.captcha': '홈택스에 자동입력방지 문자가 떠서 멈췄어요. 아무것도 발급하지 않았어요.',
+  'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
+  'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
+  'policy.irreversible_per_day': '오늘 홈택스 발급 횟수 상한에 닿아 발급하지 않았어요.',
+  'policy.runs_per_session': '이번 홈택스 로그인으로 할 수 있는 실행 횟수를 다 써서 멈췄어요. 아무것도 발급하지 않았어요.',
+  'policy.logins_per_day': '오늘 홈택스 로그인 횟수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요.',
+  'policy.actuations_per_run': '한 번의 실행에서 할 수 있는 동작 수를 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
+  'policy.wall_clock': '실행 시간 상한을 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
 };
+/** 차단 신호로 끝났는데 발급됐는지 모름(verify 중 신호). */
+const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 /** in_doubt(발급됐는지 모름)는 코드와 관계없이 중복 위험을 알린다. 코드별 문구는 이 목록만. */
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
@@ -289,7 +305,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.turn = null;
     r.approvedPending = false;
     // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
-    const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
+    const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
       const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };
@@ -301,6 +317,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
         this.step(r, 'mail', 'attention', r.email.value ? NOTE['mail.not_confirmed'] : '받는 이메일이 없어 보내지 않았어요');
         if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
       }
+      if (e.code === 'portal.blocked_after_commit') r.warnings = [...r.warnings, NOTE['portal.blocked_after_commit']!];
       this.emit('doc', doc);
     } else if (e.status === 'stopped' || e.status === 'expired') {
       r.status = 'stopped';
