@@ -5,7 +5,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, RateGuard, SIGNAL_DICT, type Clock, type RatePolicy } from '@sax/engine';
+import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGuard, SIGNAL_DICT, type Clock, type RatePolicy } from '@sax/engine';
 import { openDatabase, RateRepo, type Db } from '@sax/db';
 
 const T = Date.parse('2026-11-02T14:59:50Z'); // KST 23:59:50
@@ -65,6 +65,8 @@ describe('요청률 정책(D03 §7)', () => {
     });
     assert.ok(Object.isFrozen(HOMETAX_POLICY.limits) && Object.isFrozen(HOMETAX_POLICY.pace.stepDelayMs));
     assert.deepEqual({ ...FIXTURE_POLICY, pace: HOMETAX_POLICY.pace, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 12 } }, HOMETAX_POLICY);
+    assert.equal(policyFor('hometax'), HOMETAX_POLICY);
+    for (const kind of ['gov24', 'wetax', 'Hometax', '']) assert.throws(() => policyFor(kind), /policy\.portal_mode_denied/, `${kind}: 내장 정책이 없는 포털은 자동화하지 않는다`);
   });
 
   it('하루 실행 상한은 KST 날짜 기준: 23:59에 40회 차면 거부, 00:00(KST)이면 다시 된다. 증가는 커밋된 뒤 남는다', () => {

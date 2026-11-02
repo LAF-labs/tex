@@ -35,7 +35,15 @@ export const FIXTURE_POLICY: RatePolicy = freeze({
   limits: { ...HOMETAX_POLICY.limits, navigationsPerMin: 600 },
 });
 
-export const policyFor = (kind: 'fixture' | 'hometax'): RatePolicy => (kind === 'hometax' ? HOMETAX_POLICY : FIXTURE_POLICY);
+/**
+ * 포털 kind의 내장 정책. 정책이 없는 포털(정부24·위택스 등)은 자동화하지 않는다(fail-closed, D03 §7.1
+ * "포털 키가 없으면 그 포털은 postprocess").
+ */
+export function policyFor(kind: string): RatePolicy {
+  if (kind === 'hometax') return HOMETAX_POLICY;
+  if (kind === 'fixture') return FIXTURE_POLICY;
+  throw new RunEnd('failed', 'policy.portal_mode_denied');
+}
 
 /** 추가 인증이 이만큼 연속이면 차단 신호(D03 §7 (c)). */
 export const EXTRA_AUTH_FOR_SIGNAL = 2;
