@@ -58,6 +58,8 @@ export interface RunnerPolicy {
   beforeCommit(): Promise<void>;
   /** 걸쇠에 걸린 신호(없으면 null). 무장 뒤 클릭 직전에 동기로 본다. */
   halted(): RunEnd | null;
+  /** 기대한 화면(체크포인트 도착 조건)을 확인했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
+  reached(): void;
 }
 
 /** verify 조회가 이만큼 연속 실패하면 더 조회하지 않는다(결과는 unknown). */
@@ -151,6 +153,7 @@ export class H01Runner {
           await this.openIssueForm();
           if (!(await this.exists(s.expect))) throw fail('checkpoint.expect_failed');
         }
+        this.policy.reached();
         return fallthrough();
       }
       case 'fill': {

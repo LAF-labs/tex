@@ -253,6 +253,8 @@ export class RunPolicy implements RunnerPolicy {
   private committed = false;
   /** 이 실행이 첫 네비게이션을 했다. 그 전의 화면은 앞 실행이 남긴 것이라 동작 전 확인에서 보지 않는다. */
   private navigated = false;
+  /** 기대한 화면(체크포인트)에 도착했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
+  private arrived = false;
   /** 감시를 뗐다. 그 뒤 늦게 끝난 확인의 신호는 이 실행의 것이 아니다. */
   private closed = false;
   private latch: { end: RunEnd; kind: SignalKind } | null = null;
@@ -355,7 +357,9 @@ export class RunPolicy implements RunnerPolicy {
     await this.sleep(this.g.delay(this.g.policy.pace.stepDelayMs, this.g.clock().conservative));
   }
 
+  /** 분당 네비게이션 자리를 기다린 뒤에 화면을 본다(기다리는 동안 뜬 안내를 놓치지 않게). */
   async act(kind: 'navigate' | 'click' | 'fill'): Promise<void> {
+    if (kind === 'navigate') await this.navigationSlot();
     if (this.navigated) await this.look(this.page);
     else {
       await this.watch.idle();
@@ -363,7 +367,6 @@ export class RunPolicy implements RunnerPolicy {
     }
     if (!this.committed) this.checkRunLimits(1);
     if (kind === 'navigate') {
-      await this.navigationSlot();
       this.g.countNavigation();
       this.navigated = true;
     }
@@ -380,9 +383,13 @@ export class RunPolicy implements RunnerPolicy {
   }
 
   async beforeCommit(): Promise<void> {
+    await this.navigationSlot();
     await this.look(this.page);
     this.checkRunLimits(1);
-    await this.navigationSlot();
+  }
+
+  reached(): void {
+    this.arrived = true;
   }
 
   /** 원장 armed 트랜잭션 안(RunService.arm): 하루 비가역 수·네비게이션 수 증가. beforeCommit 바로 뒤라 그 사이에 걸쇠가 걸릴 수 없다. */
@@ -393,14 +400,14 @@ export class RunPolicy implements RunnerPolicy {
   }
 
   /**
-   * 실행 끝: 진행 중인 화면 확인을 마치고 감시를 뗀다(그 뒤 사유는 latched로 정한다). 신호 없이 기대한 화면(발급 폼)까지 간
+   * 실행 끝: 진행 중인 화면 확인을 마치고 감시를 뗀다(그 뒤 사유는 latched로 정한다). 신호 없이 기대한 화면(체크포인트)까지 간
    * 실행이면 연속 횟수를 0으로. 화면을 못 찾고 끝난 실행은 사전에 없는 차단 화면이었을 수 있어 연속을 끊지 않는다.
    */
-  async finish(reachedExpected: boolean): Promise<void> {
+  async finish(): Promise<void> {
     if (this.closed) return;
     await this.watch.idle();
     this.watch.detach();
     this.closed = true;
-    if (!this.latch && reachedExpected) this.g.clean();
+    if (!this.latch && this.arrived) this.g.clean();
   }
 }

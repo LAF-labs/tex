@@ -43,7 +43,8 @@ export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> 
 /**
  * 포털 호스트 응답 상태(D03 §7 (b)). 홈택스 실측 근거는 없다. 429는 HTTP 의미(RFC 6585)로 1회, 차단 페이지가 흔히 쓰는
  * 문서(네비게이션) 403도 1회, 그 밖의 403은 60초에 3회면 차단 신호다. PoC-3에서 조정한다.
- * 관측 한계: 조회 팝업의 첫 문서 응답은 금고 중계가 붙기 전에 지나가 보이지 않는다(실측). 팝업은 URL·본문 사전만 본다.
+ * 관측 한계: 조회 팝업의 첫 문서 응답 이벤트는 금고 중계가 붙기 전에 지나가 보이지 않는다(실측). 그래서 inspect()가
+ * 문서의 navigation timing responseStatus로 문서 429·403을 본다(팝업 첫 문서 429를 시험으로 확인).
  */
 export const HTTP_RULES = { forbiddenBurst: { count: 3, windowMs: 60_000 } } as const;
 

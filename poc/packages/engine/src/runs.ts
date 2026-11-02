@@ -55,8 +55,6 @@ interface ActiveRun {
   pendingArm: { req: GateRequest; history: PendingGate['history'] } | null;
   /** 페이지를 받은 뒤(로그인보다 먼저) 만든다. */
   policy: RunPolicy | null;
-  /** 기대한 화면(발급 폼 체크포인트 s11)을 지났다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
-  reached: boolean;
 }
 
 export interface RunServiceDeps {
@@ -185,7 +183,7 @@ export class RunService extends EventEmitter {
     }
     this.runs.create({ id: p.runId, playbookId: H01.id, playbookVersion: H01.version, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null, policy: null, reached: false };
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null, policy: null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -210,12 +208,12 @@ export class RunService extends EventEmitter {
       result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy).run();
     } catch (e) {
       // 진행 중인 화면 확인을 마친 뒤 정한다. 신호가 걸렸으면 그 뒤에 난 오류(바뀐 화면에서 요소를 못 찾음 등)보다 신호가 사유다.
-      await a.policy?.finish(a.reached).catch(() => {});
+      await a.policy?.finish().catch(() => {});
       const end = a.policy?.latched ?? (e instanceof RunEnd ? e : null);
       result = end ? { status: end.status, code: end.code } : { status: 'failed', code: 'engine.error' };
       if (!end) this.d.log.event('run.error', { runId: a.runId, err: (e as Error).name });
     }
-    await a.policy?.finish(a.reached).catch(() => {});
+    await a.policy?.finish().catch(() => {});
     if (a.policy?.latched) this.d.log.event('run.signal', { runId: a.runId, code: a.policy.latched.code });
     // 커밋 구간에서 종결되지 않고 빠져나왔으면 in_doubt(중복 위험을 숨기지 않는다).
     const row = this.ledger.get(a.intentId, 's21');
@@ -225,7 +223,9 @@ export class RunService extends EventEmitter {
     } else if (row?.state === 'in_doubt') result = { ...result, status: 'in_doubt' };
     // 발급이 확정된 뒤의 오류는 실패가 아니다. 다시 실행하면 중복이므로 "완료(확인할 것 있음)"로 알린다.
     else if (row?.state === 'committed' && result.status !== 'success' && result.status !== 'completed_with_issues') {
-      result = { status: 'completed_with_issues', code: 'post_commit.error', approvalNo: row.verifyRef ?? undefined };
+      // 확정 뒤 차단 신호는 숨기지 않는다(다음 발급을 이어가기 전에 알아야 한다).
+      const code = a.policy?.latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
+      result = { status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? undefined };
     }
     this.closeGate(a, 'run_ended');
     // 승인됐지만 armed까지 가지 못한 게이트(스텝 지연 중 신호, armed 트랜잭션 거부 등)는 거부로 되돌린다.
@@ -239,10 +239,7 @@ export class RunService extends EventEmitter {
 
   private hooks(a: ActiveRun) {
     return {
-      phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => {
-        if (phase === 'input' && state === 'now') a.reached = true; // s11 체크포인트(발급 폼)를 지났다
-        this.ev({ runId: a.runId, type: 'phase', phase, state, code });
-      },
+      phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => this.ev({ runId: a.runId, type: 'phase', phase, state, code }),
       checkStop: () => {
         if (a.stop) throw new RunEnd('stopped', 'run.stopped');
       },

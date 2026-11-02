@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { BizVerifier, connectRunBrowser, DataService, FIXTURE_POLICY, fixturePortal, RunService, type GatePortMessage, type GateRequest, type LocalApproval, type RatePolicy, type RunEvent } from '@sax/engine';
+import { BizVerifier, connectRunBrowser, DataService, FIXTURE_POLICY, fixturePortal, RunService, type GatePortMessage, type GateRequest, type Clock, type LocalApproval, type RatePolicy, type RunEvent } from '@sax/engine';
 import { openDatabase, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
@@ -48,14 +48,14 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   /** 새 DB(카운터·쿨다운이 비어 있음)에 붙은 실행 서비스. 페이지는 같은 실행 탭을 쓴다. */
-  async function service(policy?: RatePolicy) {
+  async function service(policy?: RatePolicy, clock?: Clock) {
     const db = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
     const runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, policy,
+      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, policy, clock,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
     });
@@ -206,6 +206,28 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       assert.deepEqual([end.status, end.code], ['failed', 'portal.blocked']);
       assert.ok(!opened(r));
       assert.equal(runs.inspect(r).ledger, null);
+    } finally {
+      fx.knobs.notice = null;
+    }
+  });
+
+  it('커밋 직전 분당 네비게이션 자리를 기다리는 동안 뜬 안내도 잡는다(누르지 않고 무장도 하지 않는다)', async () => {
+    let offset = 0;
+    const clock = { wall: () => Date.now() + offset, mono: () => performance.now() };
+    const { runs, start } = await service({ ...FIXTURE_POLICY, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 2 } }, clock);
+    const posts = fx.posts();
+    const r = start();
+    assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true }); // 발급 화면·기준선 조회로 60초 창이 찼다
+    await next(() => (events.some((e) => e.runId === r && e.type === 'phase' && e.phase === 'sign' && e.state === 'now') ? true : undefined));
+    await sleep(2_500); // 거부 우선 창 2초 + 스텝 지연 → 발급 클릭 전 자리 대기
+    fx.knobs.notice = FIXTURE_BLOCK_TEXT;
+    try {
+      await sleep(600); // 폼 폴링(150ms)이 레이어를 그린다
+      offset += 61_000; // 60초 창을 비운다(앞으로 가는 시계는 보수 모드가 아니다)
+      const end = await endOf(r);
+      assert.deepEqual([end.status, end.code], ['failed', 'portal.blocked']);
+      assert.equal(fx.posts(), posts, '발급 POST 없음');
+      assert.equal(runs.inspect(r).ledger, null, 'armed 전에 멈췄다');
     } finally {
       fx.knobs.notice = null;
     }
