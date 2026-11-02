@@ -98,7 +98,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 7. **핫픽스**([hotfix.schema.json](schemas/hotfix.schema.json)): `appliesTo.packageDigest`가 정확히 이 패키지, 2-of-3 서명, 단조 `monotonic`, `expiresAt − issuedAt ≤ 14일`이고 만료 전, `entries`의 각 항목이 적격 항목(D02 §2.2: 비커밋·비비밀·비readback 조건에 더해, 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, IR의 `decide.scope`·조건식(`cond`)·`signFlow.rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 어떤 커밋 구간 `W(X)` 안 스텝이 참조하는 항목은 **불가** — 엔진이 IR에서 참조 집합을 계산해 확인, E-03)이며, `commitEndpointsAdd`는 추가만. 반영한 사전에 6단계를 **다시 돌리고**, 실패하면 핫픽스를 거부(`registry.hotfix_rejected`)하고 패키지는 원래 후보로 돈다. 조회 패키지에 대한 핫픽스는 항상 거부한다.
 8. **승인 바 요약 표**(ADR-021): 커밋 게이트가 있는 패키지는 그 서류 종류가 앱 내장 승인 바 요약 표에 있어야 하고, 요약 줄에 쓰는 `fieldKey`가 게이트 카드 필드에 모두 있어야 한다. 없으면 `loader.approval_summary_missing`으로 로드하지 않는다(PC에서 무장할 수 없는 게이트를 미리 막는다).
 
-**레지스트리 status 소비**(B-22, E-05): 엔진은 `/registry/status.json`(포털별 `portalModeCeiling`과 `killPlaybooks[]`)을 받아 `portalModeCeiling`은 정책 위의 **하향 전용** 상한으로, `killPlaybooks`는 실행 거부로 적용한다. 서명 규칙: 내용은 정책 키 2-of-3 또는 1인 긴급 키(하향·킬스위치 추가만, §7.1 보수성 판정)로 서명하고, 신선도는 온라인 타임스탬프 키(HSM 안, 자동)가 **48시간마다 재서명**한다(만료 ≤ 48시간). status는 하향·킬스위치만 표현할 수 있으므로 내용 변경에 단일 긴급 키를 허용한다. **1인 긴급 키만으로 서명된 하향 status는 72시간 뒤 자동 만료**되고, 그 안에 2-of-3 재확인이 없으면 엔진은 마지막 2-of-3 서명 status 값으로 되돌린다. `issuedAt`이 현재 시각 + 5분보다 미래인 status는 거부한다. 마지막 유효 status가 48시간을 넘으면 stale(`registry.status_stale`)로 표시하고, **72시간** 동안 갱신을 받지 못하면 데몬 실행을 멈추고, 홈택스 `auto` 실행마다 "최신 운영 정책을 확인하지 못했습니다" 경고를 띄운다. 투명성 로그의 포함 증명이 없는 인덱스를 거부하는 규칙은 **Phase 2**다. **Phase 1 split-view 점검**(E-14): 폰이 없는 Phase 1에서도 엔진은 투명성 로그 트리 헤드를 레지스트리와 **별도 호스트(다른 도메인·다른 운영 계정)의 미러 1곳**에서 함께 받아 비교하고, 같은 트리 크기에서 헤드가 다르거나 미러가 일관성 증명을 줄 수 없으면 `registry.head_mismatch`(보안 이벤트)를 남기고 새 패키지·정책·핫픽스 적용을 보류한다. 키 운영·투명성 로그·status 발행 절차는 D09 §8과 ADR-013에 있다.
+**레지스트리 status 소비**(B-22, E-05): 엔진은 `/registry/status.json`(포털별 `portalModeCeiling`과 `killPlaybooks[]`)을 받아 `portalModeCeiling`은 정책 위의 **하향 전용** 상한으로, `killPlaybooks`는 실행 거부로 적용한다. 서명 규칙: 내용은 정책 키 2-of-3 또는 1인 긴급 키(하향·킬스위치 추가만, §7.1 보수성 판정)로 서명하고, 신선도는 온라인 타임스탬프 키(HSM 안, 자동)가 **48시간마다 재서명**한다(만료 ≤ 48시간). status는 하향·킬스위치만 표현할 수 있으므로 내용 변경에 단일 긴급 키를 허용한다. **1인 긴급 키만으로 서명된 하향 status는 72시간 뒤 자동 만료**되고, 그 안에 2-of-3 재확인이 없으면 엔진은 마지막 2-of-3 서명 status 값으로 되돌린다. `issuedAt`이 현재 시각 + 5분보다 미래인 status는 거부한다. 마지막 유효 status가 48시간을 넘으면 stale(`registry.status_stale`)로 표시하고, **72시간** 동안 갱신을 받지 못하면 데몬 실행을 멈추고, 홈택스 `auto` 실행마다 "최신 운영 정책을 확인하지 못했습니다" 경고를 띄운다. 투명성 로그의 포함 증명이 없는 인덱스를 거부하는 규칙은 **Phase 2**다. **Phase 1 split-view 점검**(E-14): 폰이 없는 Phase 1에서도 엔진은 투명성 로그 트리 헤드를 레지스트리와 **별도 호스트(다른 도메인·다른 운영 계정)의 미러 1곳**에서 함께 받아 비교하고, 같은 트리 크기에서 헤드가 다르거나 미러가 일관성 증명을 줄 수 없으면 `registry.head_mismatch`(보안 이벤트)를 남기고 새 패키지·정책·핫픽스 적용을 보류한다. 키 운영·투명성 로그·status 발행 절차는 D09 §8과 ADR-013에 있다. status·정책을 언제 조회하고 진행 중인 실행에 어떻게 적용하는지는 §7.1 '조회와 적용'(ADR-023)이다.
 
 ### 3.2 번들 정의 검증 (BV-01~06, B-14)
 
@@ -129,7 +129,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
   - 다른 실행에서 `committed`를 발견하면 "InDoubt 아님, 이미 완료" 카드만 띄우고 사후 스텝(특히 `send_email`·PDF 저장·백업)은 실행하지 않는다.
   - "건너뛰기"는 존재하지 않는다.
 - 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7).
-- **기기 간 업무 키 표시**(B-30, Phase 1, E-07·E-13): 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(옵트인과 같은 스위치. Phase 1에는 블롭 백업이 없으므로 이 스위치는 업무 키 표시만 켠다). 켜져 있으면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를, 스위치가 꺼져 있으면 "기기 간 중복 경고 꺼짐(백업 꺼짐)"을 카드에 표시한다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
+- **기기 간 업무 키 표시**(B-30, Phase 1, E-07·E-13): 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(서류 백업·서버 색인을 켜는 것과 같은 계정 스위치. Phase 1에는 블롭 백업과 메타데이터 색인이 없으므로 이 스위치는 업무 키 표시만 켠다). 켜져 있으면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를, 스위치가 꺼져 있으면 "기기 간 중복 경고 꺼짐(백업 꺼짐)"을 카드에 표시한다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
 - `in_doubt` 해소 수단은 둘뿐: 조회형 verify 재시도, 사용자의 명시 증언. 데몬은 `in_doubt`가 있는 서류를 자동 재시도하지 않는다(D10).
 - 라이브 `cmd.run`도 디스크에 영속된 처리 완료 `cmdId` 집합과 대조한다(D08 §6).
 
@@ -214,7 +214,7 @@ for step in plan(current):
 
 | 계층 | 트리거 | 수단 | 상한 | 금지 |
 |---|---|---|---|---|
-| L0 | 셀렉터 미스·타임아웃 | 정책 지연 후 재시도, 후보 순회 | `onFail.retry ≤ 3` | 비가역 스텝은 0 |
+| L0 | 셀렉터 미스·타임아웃 | 정책 지연 후 재시도, 후보 순회 | `min(onFail.retry, policy.retries.stepMax)` ≤ 3. 둘 다 **재시도 횟수**(첫 시도 제외, §7) | 비가역 스텝은 0 |
 | L1 | L0 소진·미지 모달 | `recovery_v1` 번들(결과: `element_missing_same_screen`, `different_screen`, `modal_blocking`, `session_expired`, `unknown`) → 각각 L2 / 체크포인트 / 팝업 처리 / `session` 복귀 / 핸드오프 | 실행 전체 연속 `unknown` 2회 → L3 | 커밋 구간 안 금지 |
 | L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 요청마다 채운 열거값, 이름은 정규식이 아닌 부분 문자열 `nameContains`, B/C-07) → 엔진이 동일성 검사 10항 통과 후 **그 실행에서만** 적용. **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만**(되돌릴 수 있고 readback으로 검증됨). `click`·`press` 타깃의 제안은 핸드오프 카드("이 버튼을 누를까요?" + 요소 하이라이트)로 사용자가 확인해야 적용한다(B-16) | 실행당 `policy.run.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretSlot`·`password`·커밋 구간·조회 패키지 금지 |
 | L3 | 그 외 | 핸드오프(`resumeAt`), 토큰 폐기 | — | — |
@@ -238,7 +238,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
   "pace": {"interactive": {"stepDelayMs": [800, 2500], "keyEventDelayMs": 150, "afterNavSettleMs": [600, 1500], "slowFactor": 1.5},
            "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": 150, "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
   "browser": {"remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true},
-  "captchaRelay": {"hometax": "allowed", "gov24": "disabled_until_permission", "sminfo": "disabled", "insure4": "disabled"},
+  "captchaRelay": {"hometax": "allowed", "gov24": "disabled_until_permission", "wetax": "disabled_until_permission", "sminfo": "disabled", "insure4": "disabled"},
   "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
              "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
              "sminfo":  {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "concurrent": 1},
@@ -247,7 +247,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
   "run": {"maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1},
   "cooldown": {"onBlockSignalHours": 24, "onCaptchaBurst": {"windowMin": 10, "count": 3, "action": "slow+notify"}, "positiveDetectionsForCooldown": 2},
   "daemon": {"windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30, "autoAllowed": false},
-  "portalMode": {"hometax": "auto", "gov24": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"},
+  "portalMode": {"hometax": "auto", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"},
   "verify": {"minElapsedMs": 60000, "lookups": 2},
   "remote": {"irreversiblePerDay": 5, "newCounterpartyRequiresLocal": true, "notifyOnIrreversible": ["desktop", "email"], "minProtocolVersion": 1, "disabledFeatures": []},
   "queue": {"maxIntentsPerPair": 5, "ttlHours": 72}
@@ -260,6 +260,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 - "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
 - **차단 신호**: (a) `blocked` 예약 결과, (b) HTTP 403/429 급증, (c) 연속 추가 인증, (d) **결정적 차단 신호 사전** — 차단 안내 페이지 URL 패턴과 안내 문구(앱 내장 사전 ∪ `policy.cooldown.blockSignalsAdd`, 정책은 추가만 가능). 모델 판정은 게이트웨이를 거치므로 (d)는 모델 판정과 독립으로 매 네비게이션·대화상자에서 본다(C-24). 차단 신호 → 즉시 중단 + 쿨다운. **거절(refusal)에서 나온 중단은 쿨다운이 아니라 핸드오프**. 쿨다운은 양성 탐지가 2회 연속일 때.
 - 프로필은 트리거가 정하고 IR은 더 느린 쪽만 고를 수 있다. `slow`는 `slowFactor` 배수.
+- **재시도 횟수의 뜻**: `retries.stepMax`와 IR `onFail.retry`는 모두 첫 시도를 뺀 **재시도 횟수**다. 엔진은 L0에서 스텝마다 `min(onFail.retry, retries.stepMax)`번까지 다시 시도하므로, 첫 시도를 합치면 한 스텝은 최대 4번 실행된다(`stepMax: 3`일 때). 비가역 스텝과 커밋 구간 안 스텝은 IR이 `retry: 0`으로 고정한다(D02 V-03f). 재시도 사이 대기는 `backoff`·`baseMs`·`capMs`를 따른다. L0를 소진한 뒤의 L1·L2·L3는 §6 복구 계층이 정하며, 이 횟수에 들어가지 않는다.
 - 입력: 기본 `fill()`(즉시). 키 이벤트가 필요한 칸만 **고정 간격 150ms**. 비밀 창 안의 간격은 금고가 집행한다(§5.2, A-26). 타이핑 모사·지터는 쓰지 않는다. 스텝 간 지연 범위는 요청률 제한이지 행동 모사가 아니며, 문서·UI에서 '사람 수준'이라는 표현을 쓰지 않는다('요청률 상한').
 - 캡차 중계: `policy.captchaRelay[portal]`이 허용이고 `CAPTCHA_RELAY_CEILING`이 허용할 때만 폰으로 보낸다(정부24는 허락 회신 전 비활성이고 공문에 중계 방식을 명시한다). 캡차는 사람이 푼다(ADR-004).
 - 텔레메트리 옵트아웃 사용자의 운영 알림은 로컬 알림으로 대체.
@@ -270,8 +271,8 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 
 | 상수 | 값 |
 |---|---|
-| `PORTAL_MODE_CEILING` | `{hometax: auto, gov24: postprocess, sminfo: postprocess, insure4: postprocess, iros: postprocess, public_api: postprocess}` |
-| `CAPTCHA_RELAY_CEILING` | `{hometax: allowed, 그 외: disabled_until_permission}` |
+| `PORTAL_MODE_CEILING` | `{hometax: auto, gov24: postprocess, wetax: postprocess, sminfo: postprocess, insure4: postprocess, iros: postprocess, public_api: postprocess}`(포털별 근거는 아래 표, ADR-022) |
+| `CAPTCHA_RELAY_CEILING` | `{hometax: allowed, gov24: disabled_until_permission, wetax: disabled_until_permission, 그 외: disabled_until_permission}` |
 | `POLICY_FLOOR` | `stepDelayMs.min ≥ 800`, `afterNavSettleMs.min ≥ 600`, `onBlockSignalHours ≥ 24`, `positiveDetectionsForCooldown ≤ 2`, `onCaptchaBurst.count ≤ 3`, `onCaptchaBurst.windowMin ≥ 10`, `commitWindowMs ≤ 900000`, `l2MaxAttempts ≤ 2`, `remote.irreversiblePerDay ≤ 5`, `queue.maxIntentsPerPair ≤ 5`, `queue.ttlHours ≤ 72`, `verify.minElapsedMs ≥ 30000`, `verify.lookups ≥ 2` |
 | `DENY_ACTION_NAME` | `/(확인\|예\|네\|발급\|제출\|전송\|동의\|신청\|승인\|저장\|등록\|계속\|다음\|진행\|서명\|결제\|삭제\|ok\|yes\|confirm\|submit\|send\|issue\|apply\|agree\|next\|continue)/i`, NFKC + 제로폭 제거 + 공백 제거 뒤 적용 |
 | `BLOCK_SIGNAL_DICT` | 차단 안내 URL 패턴·문구 사전(정책은 추가만) |
@@ -284,6 +285,23 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 | `VERSION_JUMP_MAX` | 1000 (같은 `keyEpoch` 안) |
 | `STATUS_MAX_AGE_H` / `STATUS_STALE_DAEMON_STOP_H` | 48 / 72 |
 | `W_STATIC_BOUND_MS` | 60000 (`W(X) = {G, X}`의 토큰 수명 상한, `signFlow.maxWaitMs` 별도) |
+| `POLICY_POLL_MIN` | 15 (앱이 켜져 있는 동안 정책·status·폐기 목록 조회 주기, ADR-023) |
+| `POLICY_PRERUN_RECHECK_MIN` / `POLICY_PRERUN_WAIT_MS` | 5 / 3000 (실행 `start` 직전, 마지막 성공 조회가 5분보다 오래됐으면 다시 조회하고 최대 3초 기다림) |
+| `POLICY_APPLY_TARGET_MIN` | 20 (배포 뒤 켜져 있는 앱에 적용되기까지의 운영 목표, 측정값) |
+
+포털별 상한 근거(ADR-022 결정 4·5, 2026-11-02 점검). 포털을 더하거나 상한을 바꿀 때 이 표에 판정과 근거를 적는다.
+
+| 포털 키 | 상한 | 판정(ADR-022 결정 4) | 근거 |
+|---|---|---|---|
+| `hometax` | `auto` | 금지 명문 없음 + 공문 통지 | 홈택스 이용약관 제15조(포괄 조항), ADR-011·017 |
+| `gov24` | `postprocess` | 사전 허락 필요 | 정부24 이용약관(2026. 3. 9.) 제14조 ④ 9호, ADR-011 |
+| `wetax` | `postprocess` | 사전 허락 필요 | 위택스 이용약관(2026. 7. 30.) 제17조 ②, ADR-022 |
+| `iros` | `postprocess` | 약관 미확인 | ADR-018 결정 3, ADR-022 |
+| `insure4` | `postprocess` | 약관 미확인 | ADR-018, ADR-022 |
+| `sminfo` | `postprocess` | 약관 미확인 | ADR-011, ADR-022 |
+| `public_api` | `postprocess` | 브라우저로 로그인하는 포털이 아님 | D09 §4.1 |
+
+창업기업 확인시스템(S-04)·SMPP(S-05)는 아직 포털 키가 없다(키가 없으면 `postprocess`). 플레이북을 설계할 때 키를 더하고 이 표로 판정한다.
 
 적용 규칙:
 - 정책 값이 상한·하한을 넘으면 **그 필드만** 내장 값으로 고정하고 `policy.clamped`(필드 이름만)를 저널과 텔레메트리에 남긴다. 정책 전체를 거부하지 않는다.
@@ -318,7 +336,8 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
   | 그 밖의 필드(`browser`, `daemon.autoAllowed`, `remote.newCounterpartyRequiresLocal` 등) | 같음만 |
 
   판정기는 이 표를 policy.schema의 필드 목록에서 생성하고, 표에 없는 필드는 "같음만"으로 처리한다. 긴급 키 산출물도 투명성 로그에 기록하고 다른 키 보유자에게 자동 알린다(D09 §8.5).
-- 정부24 등 `postprocess` 상한 포털의 상향은 공문 회신 뒤 **앱 업데이트로 상한을 올려야** 가능하다. 정책 배포만으로는 불가능하다(ADR-011, ADR-012).
+- 정부24·위택스 등 `postprocess` 상한 포털의 상향은 공문 회신 뒤 **앱 업데이트로 상한을 올려야** 가능하다. 정책 배포만으로는 불가능하다(ADR-011, ADR-012). 어떤 회신·확인이 있어야 올릴 수 있는지는 ADR-022 결정 4다.
+- **조회와 적용**(ADR-023): 엔진은 `/registry/status.json`·`/policy/current.json`·`/registry/revoked_keys.json`을 앱이 켜져 있는 동안 `POLICY_POLL_MIN`마다, 앱 기동·절전 복귀·네트워크 복구 직후, 그리고 실행 `start` 직전(마지막 성공 조회가 `POLICY_PRERUN_RECHECK_MIN`보다 오래됐을 때, 최대 `POLICY_PRERUN_WAIT_MS`) 조건부 요청으로 조회한다. 실행 직전 조회가 실패하면 마지막 유효 정책으로 진행하고 실행 카드에 "최신 운영 정책을 확인하지 못했습니다"를 띄운다. 완화와 상한 안 조정은 다음 실행부터, 하향(`portalMode`·`portalModeCeiling` 하향, `killPlaybooks` 추가)은 진행 중 실행에도 적용한다. 커밋 구간 밖이면 다음 스텝 경계에서, 커밋 구간 안이면 그 구간과 verify를 마친 뒤 멈추고, 하향이 풀리기 전에는 재개하지 않는다.
 
 ## 8. 사람 입력 조율 (`human` 스텝)
 
