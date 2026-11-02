@@ -190,9 +190,12 @@ export class SignalWatch {
     });
   }
 
-  /** 진행 중인 본문 확인이 모두 끝날 때까지. */
+  /**
+   * 지금 진행 중인 화면 확인이 끝날 때까지. 그 뒤 새로 시작된 확인은 기다리지 않는다(새로고침·리다이렉트가 이어지는
+   * 화면에서도 끝나야 한다). 각 확인은 프레임당 3초로 끝이 있다.
+   */
   async idle(): Promise<void> {
-    while (this.pending.size) await Promise.all([...this.pending]);
+    await Promise.all([...this.pending]);
   }
 
   detach(): void {

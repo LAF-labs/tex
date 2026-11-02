@@ -190,6 +190,7 @@ export class RunService extends EventEmitter {
 
   private async execute(a: ActiveRun, inputs: RunInputs, profile: Profile): Promise<void> {
     let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean };
+    let thrown: unknown;
     try {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
@@ -207,14 +208,22 @@ export class RunService extends EventEmitter {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
       result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy).run();
     } catch (e) {
-      // 진행 중인 화면 확인을 마친 뒤 정한다. 신호가 걸렸으면 그 뒤에 난 오류(바뀐 화면에서 요소를 못 찾음 등)보다 신호가 사유다.
-      await a.policy?.finish().catch(() => {});
-      const end = a.policy?.latched ?? (e instanceof RunEnd ? e : null);
-      result = end ? { status: end.status, code: end.code } : { status: 'failed', code: 'engine.error' };
-      if (!end) this.d.log.event('run.error', { runId: a.runId, err: (e as Error).name });
+      thrown = e;
+      result = { status: 'failed', code: 'engine.error' };
     }
+    // 진행 중인 화면 확인을 마친 뒤 사유를 정한다(그 사이 걸린 신호도 이 실행의 것이다).
     await a.policy?.finish().catch(() => {});
-    if (a.policy?.latched) this.d.log.event('run.signal', { runId: a.runId, code: a.policy.latched.code });
+    const latched = a.policy?.latched ?? null;
+    if (thrown !== undefined) {
+      // 신호가 걸렸으면 그 뒤에 난 오류(바뀐 화면에서 요소를 못 찾음 등)보다 신호가 사유다.
+      const end = latched ?? (thrown instanceof RunEnd ? thrown : null);
+      result = end ? { status: end.status, code: end.code } : { status: 'failed', code: 'engine.error' };
+      if (!end) this.d.log.event('run.error', { runId: a.runId, err: (thrown as Error)?.name ?? 'unknown' });
+    } else if (latched?.status === 'failed') {
+      // 정상으로 끝났어도 그 사이 차단 신호가 걸렸으면 숨기지 않는다(확정 여부는 아래 원장 판정이 정한다).
+      result = { ...result, status: 'failed', code: latched.code };
+    }
+    if (latched) this.d.log.event('run.signal', { runId: a.runId, code: latched.code });
     // 커밋 구간에서 종결되지 않고 빠져나왔으면 in_doubt(중복 위험을 숨기지 않는다).
     const row = this.ledger.get(a.intentId, 's21');
     if (row && (row.state === 'armed' || row.state === 'dispatched')) {
@@ -223,9 +232,9 @@ export class RunService extends EventEmitter {
     } else if (row?.state === 'in_doubt') result = { ...result, status: 'in_doubt' };
     // 발급이 확정된 뒤의 오류는 실패가 아니다. 다시 실행하면 중복이므로 "완료(확인할 것 있음)"로 알린다.
     else if (row?.state === 'committed' && result.status !== 'success' && result.status !== 'completed_with_issues') {
-      // 확정 뒤 차단 신호는 숨기지 않는다(다음 발급을 이어가기 전에 알아야 한다).
-      const code = a.policy?.latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
-      result = { status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? undefined };
+      // 확정 뒤 차단 신호는 숨기지 않는다(다음 발급을 이어가기 전에 알아야 한다). 메일 확인 결과는 그대로 둔다.
+      const code = latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
+      result = { ...result, status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? result.approvalNo };
     }
     this.closeGate(a, 'run_ended');
     // 승인됐지만 armed까지 가지 못한 게이트(스텝 지연 중 신호, armed 트랜잭션 거부 등)는 거부로 되돌린다.

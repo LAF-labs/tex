@@ -5,7 +5,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGuard, SIGNAL_DICT, type Clock, type RatePolicy } from '@sax/engine';
+import { EventEmitter } from 'node:events';
+import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGuard, SIGNAL_DICT, SignalWatch, type Clock, type RatePolicy } from '@sax/engine';
+import type { Page } from 'playwright-core';
 import { openDatabase, RateRepo, type Db } from '@sax/db';
 
 const T = Date.parse('2026-11-02T14:59:50Z'); // KST 23:59:50
@@ -176,6 +178,24 @@ describe('요청률 정책(D03 §7)', () => {
     g.captcha();
     g.captcha();
     assert.equal(g.status('p1').captchaToday, 3);
+  });
+
+  it('새로고침이 이어지는 화면에서도 idle()은 끝난다(그 뒤 시작된 확인은 기다리지 않는다)', async () => {
+    const page = Object.assign(new EventEmitter(), {
+      context: () => new EventEmitter(),
+      isClosed: () => false,
+      frames: () => [{ url: () => 'http://127.0.0.1:9/notice', evaluate: () => new Promise((r) => setTimeout(() => r({ text: '', status: 200 }), 50)) }],
+    });
+    const watch = new SignalWatch(page as unknown as Page, { dict: SIGNAL_DICT.fixture, portalHost: () => true, onHit: () => {}, onDialog: () => {}, mono: () => performance.now() });
+    const reload = setInterval(() => page.emit('domcontentloaded'), 20); // 확인(50ms)보다 잦은 새로고침
+    try {
+      await new Promise((r) => setTimeout(r, 60));
+      const done = await Promise.race([watch.idle().then(() => 'idle'), new Promise((r) => setTimeout(() => r('hang'), 1_000))]);
+      assert.equal(done, 'idle');
+    } finally {
+      clearInterval(reload);
+      watch.detach();
+    }
   });
 
   it('차단 신호 사전: NFKC·제로폭·공백을 무시하고, 한 화면에 여럿이면 차단이 먼저다', () => {

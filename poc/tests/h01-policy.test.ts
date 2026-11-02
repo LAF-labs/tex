@@ -301,6 +301,21 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     assert.deepEqual([e2.status, e2.code], ['stopped', 'run.stopped']);
   });
 
+  it('발급이 확정된 뒤 걸린 차단 신호는 숨기지 않는다(완료·확인 필요, 승인번호 유지)', async () => {
+    const { runs, start } = await service();
+    fx.knobs.status = { path: '/mail/list', code: 429 }; // 확정 뒤 메일발송목록 조회(팝업 첫 문서)
+    try {
+      const r = start();
+      assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true });
+      const end = await endOf(r);
+      assert.deepEqual([end.status, end.code], ['completed_with_issues', 'portal.blocked_after_commit']);
+      assert.equal(end.approvalNo, fx.issued.at(-1)?.approvalNo);
+      assert.equal(runs.inspect(r).ledger, 'committed');
+    } finally {
+      fx.knobs.status = null;
+    }
+  });
+
   it('verify 조회가 3번 연속 실패하면 더 조회하지 않고 발급됐는지 모름으로 둔다', async () => {
     const { runs, start } = await service();
     const r = start();

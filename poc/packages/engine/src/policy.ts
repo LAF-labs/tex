@@ -255,8 +255,9 @@ export class RunPolicy implements RunnerPolicy {
   private navigated = false;
   /** 기대한 화면(체크포인트)에 도착했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
   private arrived = false;
-  /** 감시를 뗐다. 그 뒤 늦게 끝난 확인의 신호는 이 실행의 것이 아니다. */
+  /** 감시를 떼고 남은 확인까지 마쳤다. 그 뒤의 신호는 이 실행의 것이 아니다. */
   private closed = false;
+  private finishing: Promise<void> | null = null;
   private latch: { end: RunEnd; kind: SignalKind } | null = null;
 
   constructor(page: Page, guard: RateGuard, portal: { kind: 'fixture' | 'hometax'; origin: string }, o: RunPolicyOptions) {
@@ -403,11 +404,13 @@ export class RunPolicy implements RunnerPolicy {
    * 실행 끝: 진행 중인 화면 확인을 마치고 감시를 뗀다(그 뒤 사유는 latched로 정한다). 신호 없이 기대한 화면(체크포인트)까지 간
    * 실행이면 연속 횟수를 0으로. 화면을 못 찾고 끝난 실행은 사전에 없는 차단 화면이었을 수 있어 연속을 끊지 않는다.
    */
-  async finish(): Promise<void> {
-    if (this.closed) return;
-    await this.watch.idle();
-    this.watch.detach();
-    this.closed = true;
-    if (!this.latch && this.arrived) this.g.clean();
+  finish(): Promise<void> {
+    this.finishing ??= (async () => {
+      this.watch.detach(); // 새 확인을 더 만들지 않는다(새로고침이 이어지는 화면에서도 끝나게)
+      await this.watch.idle();
+      this.closed = true;
+      if (!this.latch && this.arrived) this.g.clean();
+    })();
+    return this.finishing;
   }
 }
