@@ -4,7 +4,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { DocumentRepo, ProfileRepo, ValidationError, type Db, type DocumentRow } from '@sax/db';
-import { DOC_TYPES, VALIDITY_RULES, addDays, decideExpiry, daysLeft, extractDocMeta, kstToday, readScore, validateDocMeta, worthOcr, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
+import { DOC_TYPES, VALIDITY_RULES, addDays, decideExpiry, daysLeft, extractDocMeta, kstToday, readScore, validateDocMeta, validityCandidate, worthOcr, type DetectedKind, type DocMetaExtract, type DocType, type ExpirySource, type Field } from './docmeta/index.ts';
 
 /** docparse 추출 결과(D17 §3 extract + OCR 폴백 정보). main이 검증한 값이고, 엔진도 모양을 다시 본다. */
 export interface PdfText {
@@ -197,10 +197,16 @@ export class DocumentService {
    *   확인 필요로 남기고, OCR급 글자에서 읽은 유효기간을 되살렸으면 그 이유도 남긴다.
    * - 아무것도 바꾸지 않으면 지금 값을 확인한 것(추정 → 확인함, 대상 사업자 확인 포함).
    * 대상 사업자 이유(SUBJECT_REASONS)는 '아무것도 바꾸지 않은 확인'에서만 지운다.
+   * seen: 화면이 보여 준 값(종류·발급일·만료일). 저장값과 다르면 stale로 거부한다. 같은 요청을 다시 보내면
+   * 두 번째는 '바뀐 칸 없음 = 확인'이 되어 사용자가 본 적 없는 재계산 값이 확인되므로, 확인은 본 값에 대해서만 받는다.
    */
-  update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }): DocumentView {
+  update(id: string, patch: { docType?: unknown; issuedOn?: unknown; expiresOn?: unknown }, seen?: unknown): DocumentView {
     const row = this.repo.get(id);
     if (!row) throw new ValidationError('not_found');
+    const s = (seen ?? null) as Record<string, unknown> | null;
+    const dateOrNull = (v: unknown) => v === null || typeof v === 'string';
+    if (typeof s !== 'object' || s === null || typeof s.docType !== 'string' || !dateOrNull(s.issuedOn) || !dateOrNull(s.expiresOn)) throw new ValidationError('seen_required');
+    if (s.docType !== row.docType || s.issuedOn !== row.issuedAt || s.expiresOn !== row.expiresAt) throw new ValidationError('stale');
     const today = kstToday(this.now());
     const date = (v: unknown, code: string) => {
       if (v === null) return null;
@@ -257,7 +263,9 @@ export class DocumentService {
       expiry = withReasons(d.source, [...d.reasons, ...(fromOcr ? [fromOcr] : []), ...(unseen ? [unseen] : []), ...carried]);
     } else {
       const cur = meta.expiry ?? { source: null, needsUser: false, reasons: [] };
-      expiry = withReasons(cur.source === 'rule' ? 'user' : cur.source, missing());
+      // 추정(규칙)이었거나 문서가 유효기간을 하나로 적지 않았던 값(정하지 못한 후보)을 확인하면 확인함
+      const decided = cur.source === 'rule' || cur.reasons.some((r) => r.startsWith('valid_until_'));
+      expiry = withReasons(decided && cur.source ? 'user' : cur.source, missing());
     }
     if (issuedOn && expiresOn && expiresOn < issuedOn) throw new ValidationError('expires_before_issued');
     if (typed === 'national_tax_cert' && issuedOn && expiresOn && expiresOn > addDays(issuedOn, VALIDITY_RULES.national_tax_cert.days)) throw new ValidationError('expires_after_legal_max');
@@ -271,13 +279,23 @@ export class DocumentService {
     return this.view(next, today);
   }
 
+  /** 보관함 파일 경로(main이 사용자 기본 뷰어로 열 때만). 렌더러 보기에는 경로를 넣지 않는다. 파일이 없으면 file_missing. */
+  async filePath(id: string): Promise<string> {
+    const row = this.repo.get(id);
+    if (!row) throw new ValidationError('not_found');
+    if (!(await fs.access(row.path).then(() => true, () => false))) throw new ValidationError('file_missing');
+    return row.path;
+  }
+
   private view(r: DocumentRow, today: string): DocumentView {
     const m = (r.meta ?? {}) as Partial<StoredMeta>;
     const f = m.fields;
     const value = (x: Field | undefined) => x?.value ?? null;
     const suggested: DocumentView['suggested'] = {};
     if (f?.issuedOn?.suggested) suggested.issuedOn = f.issuedOn.suggested;
-    if (f?.validUntil?.suggested) suggested.validUntil = f.validUntil.suggested;
+    // 유효기간 후보는 지금 발급일 이후 것 중 가장 이른 날짜(발급일을 고친 뒤에도 쓸 수 있는 후보를 보여 준다)
+    const valid = f?.validUntil ? validityCandidate(f.validUntil, r.issuedAt) : undefined;
+    if (valid) suggested.validUntil = valid;
     return {
       id: r.id,
       displayName: r.displayName ?? DISPLAY.other,

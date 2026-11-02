@@ -114,8 +114,24 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .list .is-attention { color: var(--attention); font-weight: 600; }
 .empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-2); display: grid; gap: var(--space-2); }
 
-#toast { position: fixed; top: calc(var(--l-titlebar) + 12px); left: 50%; transform: translateX(-50%); background: var(--surface-overlay); box-shadow: var(--shadow-overlay); border-radius: var(--radius-md); padding: 8px 14px; font-size: 13px; color: var(--ink); z-index: 10; }
+#toast { position: fixed; top: calc(var(--l-titlebar) + 12px); left: 50%; transform: translateX(-50%); background: var(--surface-overlay); box-shadow: var(--shadow-overlay); border-radius: var(--radius-md); padding: 8px 14px; font-size: 13px; color: var(--ink); z-index: 10; pointer-events: none; }
 
 @media (prefers-reduced-motion: no-preference) {
   .sx-chip { transition: background-color 160ms ease-out, color 160ms ease-out; }
 }
+/* 문서함 보관함 서류(PoC-8): 확인 필요 표시, 만료일 출처, 열기 암호 줄, 확인 구역 */
+.doc-flag { margin-left: 8px; font-size: 11px; font-weight: 600; color: var(--attention); }
+.doc-tag { margin-left: 6px; }
+.doc-pw-row { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; margin: var(--space-3) 0; }
+.doc-pw-row .sx-note { flex: 1 1 100%; }
+.doc-pw, .doc-in { height: 34px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font: inherit; font-size: 13px; }
+.doc-pw { flex: 1; min-width: 200px; }
+.doc-review { display: grid; gap: var(--space-3); margin-top: var(--space-3); }
+.doc-form { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
+.doc-form label { display: grid; gap: 4px; }
+.doc-hint { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.doc-check { display: flex !important; align-items: center; gap: 8px; grid-column: 1 / -1; }
+/* 서류 카드 칸: 날짜는 중간에서 끊지 않고(날짜 · D-n 사이에서만 줄바꿈), 짧은 용도 칸보다 날짜 칸을 넓게 */
+.sx-doc .sx-cells { grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.7fr) minmax(0, 1.2fr); }
+.doc-date { white-space: nowrap; }
+.sx-cells .is-inferred .value { color: var(--ink-2); text-decoration: underline dotted var(--line-strong); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }

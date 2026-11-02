@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
-import { addDays, daysLeft, decideExpiry, extractDocMeta, kstToday, l0ShadowPick, validateDocMeta, worthOcr, type DocMetaExtract } from '@sax/engine';
+import { addDays, daysLeft, decideExpiry, extractDocMeta, kstToday, l0ShadowPick, validateDocMeta, validityCandidate, worthOcr, type DocMetaExtract } from '@sax/engine';
 // @ts-expect-error 샌드박스 정적 모듈(JS)
 import { cleanForOcr } from '../apps/desktop/static/docparse-image.mjs';
 // @ts-expect-error 샌드박스 정적 모듈(JS)
@@ -236,6 +236,23 @@ describe('만료 규칙(D07 §3)', () => {
       const d = decideExpiry(meta({ valid }), TODAY);
       assert.deepEqual(d, { expiresOn: '2026-11-30', source: 'rule', needsUser: true, reasons: [reason] }, String(valid));
     }
+  });
+
+  it('납세증명서: 유효기간을 정하지 못했으면 규칙보다 이른 문서 후보를 쓴다(짧은 쪽, 확인 필요). 발급일 앞·규칙보다 늦은 후보는 쓰지 않는다', () => {
+    const amb = (suggested: string) => ({ ...meta(), validUntil: { value: null, reason: 'ambiguous' as const, suggested } });
+    assert.deepEqual(decideExpiry(amb('2026-11-20'), TODAY), { expiresOn: '2026-11-20', source: 'document', needsUser: true, reasons: ['valid_until_ambiguous'] });
+    for (const late of ['2026-11-30', '2026-12-01', '2026-10-31']) assert.deepEqual(decideExpiry(amb(late), TODAY), { expiresOn: '2026-11-30', source: 'rule', needsUser: true, reasons: ['valid_until_ambiguous'] }, late);
+    // 후보 전부(options)가 있으면 발급일 이후 것 중 가장 이른 날짜(가장 이른 후보가 발급일 앞이어도 규칙 날짜로 돌아가지 않는다)
+    const opts = { ...meta(), validUntil: { value: null, reason: 'ambiguous' as const, suggested: '2026-10-20', options: ['2026-10-20', '2026-11-25'] } };
+    assert.equal(decideExpiry(opts, TODAY).expiresOn, '2026-11-25');
+    // 후보는 발급일 ~ 발급일 + 30일 안에서만(법정 상한을 넘는 날짜는 넣어도 확인이 거부되므로 내지 않는다)
+    const far = { value: null, reason: 'ambiguous' as const, suggested: '2026-10-20', options: ['2026-10-20', '2026-12-31'] };
+    assert.deepEqual([validityCandidate(far, '2026-11-01'), validityCandidate(opts.validUntil, '2026-11-01'), validityCandidate(far, null)], [undefined, '2026-11-25', '2026-10-20']);
+    assert.equal(validityCandidate({ value: null, reason: 'ambiguous', suggested: '2026-12-02' }, '2026-11-01'), undefined, '하나뿐인 후보도 상한(12-01)을 넘으면 내지 않는다');
+    const m = extractDocMeta(taxText().replace('유효기간 2026년 11월 30일', '유효기간 2026년 11월 30일\n유효기간 2026년 10월 20일'));
+    assert.deepEqual([m.validUntil.reason, m.validUntil.suggested, m.validUntil.options], ['ambiguous', '2026-10-20', ['2026-10-20', '2026-11-30']]);
+    assert.equal(validateDocMeta(m), m, '후보 전부는 스키마를 통과한다');
+    assert.equal(validateDocMeta({ ...m, validUntil: { value: '2026-11-30', reason: null, options: ['2026-10-20', '2026-11-30'] } }), null, '값이 있으면 후보가 없다');
   });
 
   it('사업자등록증명: 발급일 포함 90일 추정, 사용자 조정 일수 우선. 납세증명서 추정은 조정해도 법정 30일을 넘지 않는다', () => {

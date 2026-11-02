@@ -250,9 +250,15 @@ export function summaryCard(s) {
   return h('section', { class: 'sx-card' }, h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '등록 내용'), h('span', { class: 'sx-meta' }, '온보딩 요약')), kv(s.rows.map(([k, v]) => [k, v, { start: true }])));
 }
 
-/** 서류 카드(DocumentCard): D6 종류 → D2 서류 이름 → 세 칸 → 버튼. */
+/** 만료일 출처 표시(데이터 위계 '값의 확실성'): 문서에서 읽음 / 추정(규칙표) / 확인함. 확인 필요인 값은 출처와 상관없이 추정이다. */
+const EXPIRY_TAG = { document: '문서', rule: '추정', user: '확인함' };
+export const expiryTag = (doc) => (doc.vault.needsUser ? '추정' : (EXPIRY_TAG[doc.vault.expirySource] ?? ''));
+
+/** 서류 카드(DocumentCard): D6 종류 → D2 서류 이름 → 세 칸 → 버튼. 보관함 서류는 유효 칸에 확실성(추정·확인함)을 붙인다. */
 export function docCard(doc, today, act, compact) {
   const d = dday(doc.expiresOn, today);
+  const v = doc.vault;
+  const inferred = v && doc.expiresOn && (v.expirySource === 'rule' || v.needsUser);
   return h(
     'section',
     { class: 'sx-card sx-doc', 'data-doc': doc.id },
@@ -263,12 +269,20 @@ export function docCard(doc, today, act, compact) {
     h(
       'div',
       { class: 'sx-cells' },
-      h('div', {}, h('span', { class: 'label sx-meta' }, '발급일'), h('span', { class: 'value' }, doc.issuedOn)),
+      h('div', {}, h('span', { class: 'label sx-meta' }, '발급일'), h('span', { class: 'value' }, doc.issuedOn ? h('span', { class: 'doc-date' }, doc.issuedOn) : '—')),
       h('div', {}, h('span', { class: 'label sx-meta' }, '용도'), h('span', { class: 'value' }, doc.purpose || '—')),
-      h('div', {}, h('span', { class: 'label sx-meta' }, '유효'), h('span', { class: `value${d !== null && d <= 7 ? ' is-attention' : ''}` }, d === null ? '—' : `${doc.expiresOn} · ${d < 0 ? '만료됨' : d === 0 ? 'D-day' : `D-${d}`}`)),
+      h(
+        'div',
+        { class: inferred ? 'is-inferred' : v?.expirySource === 'user' ? 'is-verified' : null },
+        h('span', { class: 'label sx-meta' }, '유효'),
+        h('span', { class: `value sx-val${d !== null && d <= 7 ? ' is-attention' : ''}` }, d === null ? '—' : [h('span', { class: 'doc-date' }, doc.expiresOn), ` · ${d < 0 ? '만료됨' : d === 0 ? 'D-day' : `D-${d}`}`]),
+        v && doc.expiresOn ? h('span', { class: 'sx-tag' }, expiryTag(doc)) : null,
+      ),
     ),
     compact
       ? null
-      : h('div', { class: 'sx-actions' }, btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), btn('폴더 열기', () => act.toast('목업: 폴더를 열지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      : doc.vault
+        ? null // 보관함 서류의 확인·수정은 아래 확인 구역(docReview)에서
+        : h('div', { class: 'sx-actions' }, btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), btn('폴더 열기', () => act.toast('목업: 폴더를 열지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
   );
 }

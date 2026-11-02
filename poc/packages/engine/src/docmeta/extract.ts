@@ -17,6 +17,8 @@ export interface Field {
   reason: FieldReason | null;
   /** 정하지 못했지만 사용자에게 먼저 보여 줄 후보 */
   suggested?: string;
+  /** 날짜 칸: 정하지 못한 서로 다른 후보 전부(오름차순, 둘 이상일 때만, 최대 8개). 발급일을 고치면 쓸 수 있는 후보가 달라진다. */
+  options?: string[];
 }
 
 export interface DocMetaExtract {
@@ -155,7 +157,8 @@ function pickDate(hits: DateHit[]): Field {
   const valid = [...new Set(hits.map((h) => h.iso).filter((v): v is string => v !== null))].sort();
   if (!valid.length) return miss('unparseable');
   if (valid.length === 1 && hits.every((h) => h.iso !== null)) return ok(valid[0]!);
-  return miss('ambiguous', valid[0]);
+  const f = miss('ambiguous', valid[0]);
+  return valid.length > 1 ? { ...f, options: valid.slice(0, 8) } : f;
 }
 
 /**

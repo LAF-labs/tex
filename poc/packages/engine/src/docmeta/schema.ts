@@ -15,10 +15,12 @@ const field = (pattern: string) => ({
     reason: { anyOf: [{ enum: REASONS }, { type: 'null' }] },
     // 날짜 칸의 후보는 날짜 형식, 그 밖(체크섬이 틀린 사업자번호 등)은 짧은 글자
     suggested: { type: 'string', maxLength: 40, pattern: pattern === ISO_DATE ? ISO_DATE : '^[0-9A-Z가-힣-]{1,40}$' },
+    // 정하지 못한 날짜 후보 전부(날짜 칸만)
+    ...(pattern === ISO_DATE ? { options: { type: 'array', minItems: 2, maxItems: 8, uniqueItems: true, items: { type: 'string', pattern: ISO_DATE } } } : {}),
   },
-  // 값이 있으면 이유가 없고, 값이 없으면 이유가 있다
+  // 값이 있으면 이유가 없고(후보도 없다), 값이 없으면 이유가 있다
   oneOf: [
-    { properties: { value: { type: 'string' }, reason: { type: 'null' } }, not: { required: ['suggested'] } },
+    { properties: { value: { type: 'string' }, reason: { type: 'null' } }, not: { anyOf: [{ required: ['suggested'] }, { required: ['options'] }] } },
     { properties: { value: { type: 'null' }, reason: { enum: REASONS } } },
   ],
 });

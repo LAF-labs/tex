@@ -40,10 +40,23 @@ export interface Doc {
   kind: '세금계산서' | '증명서' | '직접 추가';
   docName: string;
   profile: 'business' | 'personal';
-  issuedOn: string;
+  /** 보관함에서 가져온 서류는 발급일을 못 읽었으면 비어 있다(확인 필요) */
+  issuedOn: string | null;
   expiresOn: string | null;
   source: '앱이 발급' | '직접 발급' | '직접 추가';
   purpose?: string;
+  /** 보관함(엔진 DocumentService) 서류만: 확인·수정할 수 있고, 만료일 출처와 확인 필요 이유가 있다(shell-docs.ts) */
+  vault?: {
+    expirySource: 'document' | 'rule' | 'user' | null;
+    needsUser: boolean;
+    reasons: string[];
+    suggested: { issuedOn?: string; validUntil?: string };
+    docType: 'national_tax_cert' | 'biz_registration_cert' | 'other';
+    textSource: 'text' | 'ocr' | 'scan';
+    docNo: string | null;
+    issuer: string | null;
+    subjectMismatch: boolean;
+  };
 }
 
 export const PROFILES: Record<Profile['kind'], Profile> = {

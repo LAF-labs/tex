@@ -6,8 +6,14 @@ export const COMMANDS = [
   'profile.upsert', 'profile.delete',
   'counterparty.create', 'counterparty.update', 'counterparty.delete', 'counterparty.verify', 'counterparty.status',
   'bizcert.parse', 'bizverify.setKey', 'bizverify.hasKey',
-  'document.import', 'document.update',
+  'document.import', 'document.update', 'document.file',
 ] as const;
+/**
+ * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
+ * - bizcert.parse·document.import: main이 docparse 결과를 붙여 부른다(렌더러가 텍스트·바이트를 지어 보낼 수 없다).
+ * - document.file: 보관함 파일 경로를 돌려준다(main이 기본 뷰어로 열 때만, 렌더러에는 경로를 주지 않는다).
+ */
+export const MAIN_ONLY: readonly (typeof COMMANDS)[number][] = ['bizcert.parse', 'document.import', 'document.file'];
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

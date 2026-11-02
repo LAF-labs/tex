@@ -7,25 +7,46 @@ import path from 'node:path';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session } from 'electron';
+import { app, BrowserWindow, clipboard, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
 import { verifyLocalApproval } from './approval-gate.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
+import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import { startFixtureMode, type FixtureMode } from './fixture-mode.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { g24Candidates, interpret, MockStore, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { ShellRuns } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
+import { cancelPick, importPdf } from './vault-import.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 
 export function registerShellSchemes(): void {
+  // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
   protocol.registerSchemesAsPrivileged([
     { scheme: SHELL_SCHEME, privileges: { standard: true, secure: true } },
     { scheme: APPROVAL_SCHEME, privileges: { standard: true, secure: true } },
+    { scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
   ]);
+}
+
+/** 문서함 오류 중 렌더러에 그대로 보낼 코드. 나머지(fs 오류 등, 경로가 들어 있을 수 있다)는 main 로그에만 남기고 'failed'로 보낸다. */
+const DOC_CODES = new Set([
+  'bad_request', 'busy', 'profile_required', 'not_pdf', 'input_size', 'read_failed', 'invalid_pdf', 'timeout', 'memory_limit', 'session_failed', 'renderer_gone',
+  'pick_expired', 'password_too_long', 'schema', 'issued_in_future', 'expires_before_issued', 'expires_after_legal_max', 'invalid_issued_on', 'invalid_expires_on',
+  'not_found', 'invalid_doc_type', 'file_missing', 'open_failed', 'seen_required', 'stale',
+  'worker_failed', 'parse_failed', 'render_failed', 'ocr_failed', 'bad_extract',
+]);
+
+/** 문서함 오류를 렌더러에 보낼 오류로: 알려진 코드만, 나머지는 로그(앞 코드만)와 'failed' */
+function docsError(e: unknown): Error {
+  const code = (e as { code?: unknown }).code ?? (e as Error).message;
+  if (typeof code === 'string' && DOC_CODES.has(code)) return new Error(code);
+  console.error('docs failed', typeof code === 'string' ? code.split(':')[0] : (e as Error).name); // fs 오류 메시지에는 경로가 있어 앞 코드만
+  return new Error('failed');
 }
 
 const FILES: Record<string, string> = {
@@ -61,6 +82,8 @@ export interface ShellOptions {
   engine?: { root?: string; portal: EnginePortal };
   /** fixture 모드에서 실행 Chrome을 화면에 띄운다(시연). */
   headful?: boolean;
+  /** 문서함 보관함 공급자(shell-docs.ts). 없으면 이 셸의 엔진(host.rpc)을 쓴다. e2e가 감싸서 넘긴다. */
+  docs?: DocsProvider;
 }
 
 export interface Shell {
@@ -137,6 +160,26 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
+  const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), importPdf);
+  /** 문서함 = 보관함 서류 + 실행이 만든 서류(세금계산서·정부24 목업) */
+  const listDocs = async () => {
+    try {
+      return [...(await docs.list()), ...store.docs];
+    } catch (e) {
+      throw docsError(e);
+    }
+  };
+  /** 문서함 처리기: 오류는 docsError로 바꿔 던진다(원래 오류는 cause로 붙이지 않는다. ipcMain이 cause까지 출력하고 fs 오류에는 경로가 있다) */
+  const docsCall =
+    (fn: (p: Record<string, unknown>) => unknown) =>
+    async (p: Record<string, unknown>): Promise<unknown> => {
+      try {
+        return await fn(p);
+      } catch (e) {
+        throw docsError(e);
+      }
+    };
+  let importing = false;
 
   const win = new BrowserWindow({
     width: opts.width ?? 1280,
@@ -205,12 +248,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return v;
   };
   const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
-    'shell.bootstrap': () => ({
+    'shell.bootstrap': async () => ({
       layout: SHELL,
       profiles: profiles(),
       profile,
       counterparties: cps,
-      docs: store.docs,
+      docs: await listDocs(),
       timeline: seedTimeline(),
       quick: QUICK,
       platform: process.platform,
@@ -232,7 +275,35 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }),
     'run.prepare': (p) => runs.prepare(String(p.id)),
     'run.stop': (p) => runs.stop(String(p.id)),
-    'docs.list': () => store.docs,
+    'docs.list': () => listDocs(),
+    // 파일 고르기 대화상자는 렌더러가 pick을 보낼 때만 연다(가져오기 버튼. 사용자 클릭인지 main이 확인하는 것은 Phase 1).
+    // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
+    'docs.import': docsCall(async (p) => {
+      if (p.pick !== true && typeof p.pickId !== 'string') throw new Error('bad_request');
+      if (importing) throw new Error('busy');
+      importing = true;
+      try {
+        return await docs.importPdf({ pickId: p.pickId, password: p.password });
+      } finally {
+        importing = false;
+      }
+    }),
+    'docs.importCancel': (p) => {
+      cancelPick(p.pickId);
+      return {};
+    },
+    'docs.update': docsCall((p) => {
+      const patch = (p.patch ?? {}) as Record<string, unknown>;
+      const seen = (p.seen ?? {}) as Record<string, unknown>;
+      return docs.update(String(p.id), { docType: patch.docType, issuedOn: patch.issuedOn, expiresOn: patch.expiresOn }, { docType: seen.docType, issuedOn: seen.issuedOn, expiresOn: seen.expiresOn });
+    }),
+    // 보관함 PDF를 사용자 기본 뷰어로 연다(값을 PDF와 맞춰 보게). 경로는 main 안에서만 쓰고, PDF가 아니면 열지 않는다(실행 파일을 띄우지 않게).
+    'docs.open': docsCall(async (p) => {
+      const file = await docs.filePath(String(p.id));
+      if (path.extname(file).toLowerCase() !== '.pdf') throw new Error('open_failed');
+      if (await desktop.openPath(file)) throw new Error('open_failed');
+      return {};
+    }),
     'counterparties.list': async () => {
       await refresh();
       return cps;
