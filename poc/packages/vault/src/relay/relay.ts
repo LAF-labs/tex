@@ -140,7 +140,8 @@ export class Relay {
     }
     if (typeof msg.id !== 'number' || typeof msg.method !== 'string') return;
     if (!msg.sessionId) {
-      void this.onRootCommand(msg);
+      // Chrome이 닫히는 중이면 conn.send가 거부된다. 잡지 않으면 금고 프로세스가 처리 안 된 거부로 죽는다. 엔진에는 오류로 답한다.
+      void this.onRootCommand(msg).catch((e: Error) => this.enqueue(async () => ({ id: msg.id, error: { code: -32000, message: e.message } })));
       return;
     }
     const es = this.engineSessions.get(msg.sessionId);
@@ -254,7 +255,7 @@ export class Relay {
       return;
     }
     if (!msg.sessionId) {
-      void this.onBrowserEvent(msg);
+      void this.onBrowserEvent(msg).catch((e: Error) => this.log.event('vault.browser_event_failed', { method: msg.method, error: e.message.slice(0, 120) }));
       return;
     }
     const vt = this.byVaultSession.get(msg.sessionId);

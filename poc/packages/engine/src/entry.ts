@@ -8,9 +8,8 @@ import path from 'node:path';
 import { openDatabase } from '@sax/db';
 import { Egress } from '@sax/net';
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort, type PortLike } from '@sax/platform';
-import type { Browser, Page } from 'playwright-core';
 import { BizVerifier } from './bizverify.ts';
-import { connectRunBrowser } from './browser.ts';
+import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
 import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
 import { fixturePortal, HOMETAX_PORTAL } from './h01/portal.ts';
@@ -26,48 +25,21 @@ interface ParentPort {
 
 const parentPort = (process as unknown as { parentPort: ParentPort }).parentPort;
 let log = new FileEventLog(null, 'engine');
-let vault: VaultClient | null = null;
 let data: DataService | null = null;
+let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
-let run: { browser: Browser; page: Page; targetId: string } | null = null;
 let initialized = false;
 
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 
-let opening: Promise<Page> | null = null;
-
-/**
- * 실행 페이지. 붙이기는 한 번에 하나만 한다(동시에 오면 금고 launch가 두 번 간다). 페이지가 닫혔으면
- * 금고 쪽 Chrome을 내린 뒤 다시 띄운다(금고는 기동 중 두 번째 launch를 거부한다). PR #9의 RunBrowserSlot과 같은 성질.
- */
-function runPage(): Promise<Page> {
-  if (!vault) return Promise.reject(new Error('vault_not_connected'));
-  if (run && !run.page.isClosed()) return Promise.resolve(run.page);
-  const v = vault;
-  opening ??= (async () => {
-    if (run) {
-      await run.browser.close().catch(() => {});
-      run = null;
-      await v.rpc('browser.shutdown').catch(() => {});
-    }
-    try {
-      run = await connectRunBrowser(v);
-    } catch (e) {
-      await v.rpc('browser.shutdown').catch(() => {});
-      throw e;
-    }
-    return run.page;
-  })().finally(() => {
-    opening = null;
-  });
-  return opening;
-}
-
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
   log = new FileEventLog(paths.logs, 'engine');
-  vault = new VaultClient(wrapPort(vaultPort, 'electron'));
+  const vault = new VaultClient(wrapPort(vaultPort, 'electron'));
+  // 실행 페이지는 개발 콘솔(browser.open)과 플레이북(RunService)이 같은 칸을 쓴다. 동시 열기·Chrome 내려감 복구는 칸이 맡는다.
+  const slot = new RunBrowserSlot(() => connectRunBrowser(vault), () => vault.rpc('browser.shutdown'));
+  browser = slot;
   const key = await vault.rpc<Uint8Array>('getDbKeyOnce');
   const db = openDatabase(path.join(paths.db, 'db.sqlite'), key);
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
@@ -77,7 +49,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
-    runs = new RunService({ db, data, ledgerKey, portal, page: runPage, log, postGate: (m) => gate.postMessage(m) });
+    runs = new RunService({ db, data, ledgerKey, portal, page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m) });
     gate.onMessage((m) => {
       const g = m as GatePortMessage;
       if (g?.t !== 'gate.answer') return log.event('engine.gate_port_unknown');
@@ -97,7 +69,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     throw new Error('forbidden_channel');
   }
   if (!ALLOWED.has(method)) throw new Error('unknown_method');
-  if (method === 'engine.status') return { db: !!data, browser: !!run, runs: !!runs, activeRun: runs?.activeRunId ?? null };
+  if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
   if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
@@ -106,15 +78,15 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   // 실행 중에는 개발 콘솔의 브라우저 명령을 받지 않는다(실행 탭을 옮기거나 닫지 못하게).
   if ((method === 'browser.open' || method === 'browser.close') && runs?.activeRunId) throw new Error('busy');
   if (method === 'browser.open') {
-    const page = await runPage();
-    // PoC-4/5 개발 콘솔: 실행 페이지만 띄운다. 발급은 run.start(H-01 플레이북).
-    if (params.portal === 'hometax') await page.goto('https://www.hometax.go.kr/');
-    return { targetId: run!.targetId };
+    if (!browser) throw new Error('vault_not_connected');
+    // PoC-4/5 개발 콘솔: 실행 페이지만 띄운다. 발급은 run.start(H-01 플레이북). 첫 이동도 칸의 줄에서 돈다.
+    const run = await browser.open(async (r) => {
+      if (params.portal === 'hometax') await r.page.goto('https://www.hometax.go.kr/');
+    });
+    return { targetId: run.targetId };
   }
   if (method === 'browser.close') {
-    await run?.browser.close().catch(() => {});
-    run = null;
-    await vault?.rpc('browser.shutdown').catch(() => {});
+    await browser?.close();
     return {};
   }
   if (!data) throw new Error('db_not_ready');

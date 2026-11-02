@@ -80,7 +80,7 @@
 - [ ] 터치 탭에서 `before-mouse-event`가 뜨는지(R11 Q1).
 - [ ] PoC-3 산출물 붙이기: 로그인(s0~s6)·캡차 분기 없음 확인, `HOMETAX_PORTAL` 셀렉터·랜드마크·발급목록/메일발송목록 조회 정의, `signFlow`(간편인증·인증서·보안카드)를 s20과 s21 사이에. 셀렉터 자리표시가 하나라도 남으면 시작하지 않는다.
 - [ ] 실발급 2~3건: verify 일치, 중복 0건, 이메일 수신, 원장·저널 확인.
-- [ ] PR #9(Windows 호스트)와 `entry.ts` 실행 페이지 부분이 겹친다. 나중에 머지되는 쪽이 `RunBrowserSlot.open(prepare?)`으로 맞춘다.
+- [x] PR #9(Windows 호스트)와 `entry.ts` 실행 페이지 부분이 겹친다. 나중에 머지되는 쪽이 `RunBrowserSlot.open(prepare?)`으로 맞춘다. → PR #9에 main을 병합하며 맞췄다(2026-11-02). `runPage()`를 지우고 `RunService` 페이지 공급자도 `RunBrowserSlot.open()`을 쓴다.
 
 ## 7. 하지 않은 것
 

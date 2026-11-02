@@ -1,0 +1,92 @@
+[
+  {
+    "name": "승인 창은 포커스를 빼앗지 않는다(showInactive)",
+    "ok": true,
+    "detail": {
+      "focused": false
+    }
+  },
+  {
+    "name": "표시·활성화 후 600ms 안의 클릭 무시",
+    "ok": true
+  },
+  {
+    "name": "Enter 단독은 승인이 아니다",
+    "ok": true
+  },
+  {
+    "name": "승인에서 눌러 거절에서 뗀 입력은 무시",
+    "ok": true
+  },
+  {
+    "name": "버튼 밖 클릭은 무시",
+    "ok": true
+  },
+  {
+    "name": "승인 창 페이지 스크립트 실행 불가(또는 값이 텍스트로만 들어감)",
+    "ok": true,
+    "detail": "blocked: Script failed to execute, this normally means an error was thrown. Chec"
+  },
+  {
+    "name": "무장 후 승인 버튼 클릭 = approve + LocalApproval 검증",
+    "ok": true,
+    "detail": "approve"
+  },
+  {
+    "name": "다른 키로는 LocalApproval 검증 실패",
+    "ok": true
+  },
+  {
+    "name": "Alt+Y = approve",
+    "ok": true,
+    "detail": {
+      "decision": "approve",
+      "approval": {
+        "runId": "e2e",
+        "gateStepId": "g1",
+        "actionHash": "d3cdc7f8e3580fda502252e1c23d93b0",
+        "exp": 1793431890874,
+        "mac": "ngdbpNzQ7LiGvK6u_4ryT-kxCZOW62olqZICTzlnwh4"
+      },
+      "via": "key"
+    }
+  },
+  {
+    "name": "거절 버튼 = deny, LocalApproval 없음",
+    "ok": true,
+    "detail": "deny"
+  },
+  {
+    "name": "시간 초과 = timeout",
+    "ok": true
+  },
+  {
+    "name": "docparse 샌드박스 OCR(kor) → 등록번호·대표자·개업일",
+    "ok": true,
+    "detail": {
+      "ms": 636,
+      "confidence": 89,
+      "fields": {
+        "bizNo": "2208162517",
+        "name": "마바사상회",
+        "repName": "최마바",
+        "openDate": "20210630",
+        "corpNo": null,
+        "address": "부산광역시 해운대구 센팀로 5",
+        "bizType": null,
+        "bizItem": null,
+        "kind": "individual"
+      }
+    }
+  },
+  {
+    "name": "docparse 파티션 외부 네트워크 차단",
+    "ok": true,
+    "detail": "blocked: net::ERR_BLOCKED_BY_CLIENT"
+  },
+  {
+    "name": "빈 입력 거부",
+    "ok": true,
+    "detail": "input_size"
+  }
+]
