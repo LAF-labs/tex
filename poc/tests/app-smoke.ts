@@ -15,7 +15,9 @@ const out: Record<string, unknown> = { exe: path.basename(realExe) };
 const paths = appPaths(defaultAppRoot());
 const app = await electron.launch({ executablePath: electronPath, args: [appDir] });
 try {
-  const win = await app.firstWindow();
+  // 메인 창에는 승인 바(WebContentsView, ADR-021)도 붙어 있어 첫 페이지가 바일 수 있다. 개발 콘솔 페이지를 주소로 고른다.
+  const isApp = (p: { url(): string }) => p.url().startsWith('sax-app://app/app.html');
+  const win = app.windows().find(isApp) ?? (await app.waitForEvent('window', { predicate: isApp, timeout: 30_000 }));
   // main은 폴더 확인 뒤(ready 전) setPath한다. Electron이 넘긴 경로를 그대로 쓰는지 본다.
   const electronPaths = await app.evaluate(({ app: a }) => ({ userData: a.getPath('userData'), logs: a.getPath('logs'), crashDumps: a.getPath('crashDumps') }));
   out.electronPathsMatch = electronPaths.userData === paths.userData && electronPaths.logs === paths.logs && electronPaths.crashDumps === paths.crashDumps;
@@ -66,6 +68,7 @@ async function plantedLinksRun(): Promise<Record<string, unknown>> {
     }
     const env = { ...process.env, ...(win ? { LOCALAPPDATA: home } : { HOME: home }) } as Record<string, string>;
     const planted = await electron.launch({ executablePath: electronPath, args: [appDir], env });
+    const plantedProc = planted.process(); // close()가 끝난 뒤에는 process()가 예외를 낸다(playwright-core 1.64)
     let launchError: string | undefined;
     try {
       await planted.firstWindow({ timeout: 30_000 }); // 폴더 준비가 실패하면 모달 오류 상자에서 멈춘다
@@ -74,7 +77,7 @@ async function plantedLinksRun(): Promise<Record<string, unknown>> {
       launchError = (e as Error).message.split('\n')[0];
     } finally {
       await Promise.race([planted.close(), new Promise((r) => setTimeout(r, 10_000))]);
-      planted.process().kill();
+      plantedProc.kill();
     }
     const outsideFiles: string[] = [];
     for (const n of names) outsideFiles.push(...(await fs.readdir(path.join(outside, n))).map((f) => `${n}/${f}`));
