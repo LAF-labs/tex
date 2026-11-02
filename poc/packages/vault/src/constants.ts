@@ -4,6 +4,7 @@
 /** 사용자 설치 Chrome 위치(인자로 받지 않는다). */
 export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
   darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+  linux: ['/opt/google/chrome/chrome', '/usr/bin/google-chrome'],
   win32: [
     '%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe',
     '%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe',
