@@ -165,27 +165,32 @@ export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, 
 <body class="${mode}"><div class="lines">${body}</div><div class="side">${act}${msg ? `<div class="msg">${esc(msg)}</div>` : ''}</div></body></html>`;
 }
 
-/** 디자인 시스템 ApprovalBar 명세를 옮긴 앱 내장 CSS. 직각, 그림자 없음, 시스템 서체, 애니메이션 없음. */
+/**
+ * 디자인 시스템 ApprovalBar 명세(v1.2)를 옮긴 앱 내장 CSS. 직각, 그림자 없음, 시스템 서체, 애니메이션 없음.
+ * 치수(BAR)는 overflowLine의 폭 어림과 같은 식이라 바꾸지 않는다. v1.2는 색·굵기·표시 칩 모서리만 다듬었다:
+ * 라벨 12px 500(무장 상태에서는 on-accent 78%로 값보다 한 단 뒤), 표시 칩 모서리 6px(radius-sm), 동작 글자 자간 -0.01em.
+ */
 export function barCss(t: { light: Record<string, string>; dark: Record<string, string> }): string {
   const theme = (c: Record<string, string>) => `
 body.armed{background:${c.accent};color:${c['on-accent']}}
+body.armed .lb{color:${c['on-accent']};opacity:.78}
 body.unarmed{background:${c['accent-soft']};color:${c.accent}}
 body.unarmed .lb{color:${c['ink-3']}}
 body.refused{background:${c.surface};color:${c.ink};box-shadow:inset 0 0 0 1px ${c['line-strong']}}
 body.refused .lb{color:${c['ink-3']}}`;
   return `html,body{margin:0;height:100%;overflow:hidden}
 body{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) ${BAR.action}px;column-gap:${BAR.gap}px;align-items:center;padding:0 ${BAR.padX}px;
-font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size:14px;line-height:22px;font-variant-numeric:tabular-nums;user-select:none;cursor:default}
+font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size:14px;line-height:22px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
 .lines{min-width:0}
 .ln{display:grid;grid-template-columns:${BAR.label}px minmax(0,1fr) auto;column-gap:${BAR.gap}px;align-items:center;white-space:nowrap}
-.lb{font-size:12px;opacity:.86}
+.lb{font-size:12px;line-height:22px;font-weight:500}
 .v{display:flex;min-width:0}
 .sh{overflow:hidden;text-overflow:ellipsis;min-width:2ch}
 .kp{flex:none;white-space:pre}
-.fl{font-size:12px;line-height:18px;padding:0 6px;border:1px solid currentColor;border-radius:4px}
+.fl{font-size:12px;line-height:18px;font-weight:500;padding:0 6px;border:1px solid currentColor;border-radius:6px}
 .side{text-align:right}
-.act{font-size:18px;line-height:26px;font-weight:700;word-break:keep-all}
-.msg{font-size:12px;line-height:16px;margin-top:2px}
+.act{font-size:18px;line-height:26px;font-weight:700;letter-spacing:-0.01em;word-break:keep-all}
+.msg{font-size:12px;line-height:16px;margin-top:2px;opacity:.9}
 ${theme(t.light)}
 @media (prefers-color-scheme: dark){${theme(t.dark)}}`;
 }
