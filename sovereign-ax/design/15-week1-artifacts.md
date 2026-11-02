@@ -7,7 +7,7 @@
 | F-01 | 스키마 9종 + IPC 스키마 | `playbook-ir`·`remote-envelope`·`bundle`·`policy`(v1.3 개정), `manifest`·`selectors`·`hotfix`·`gateway-request`·`intent-envelope`(v1.3 신설), `ipc/*`(main↔engine, main↔vault, main↔renderer, engine↔vault 중계, docparse 입출력) | 1주차 | 엔진 | 9/10 |
 | F-02 | 오류·결과 코드 체계 | [D16](16-error-taxonomy.md) | 1주차 | 엔진 | 초안 |
 | F-03 | 테스트 환경·데이터 계획서 | [D18](18-test-environment-plan.md) | Phase 0 이전 | PM | 초안 |
-| F-04 | 공문 2종·개인정보위 질의서·법률 질의서 5건 본문 | 05 §4.2 골자를 문안으로. 기술 방식 문단은 D03 §10·ADR-010 표현 사용 | Phase 0 1주차 | 대표·PM·자문 | 미작성 |
+| F-04 | 공문 2종·개인정보위 질의서·법률 질의서 6건 본문 | [outreach/](../outreach/README.md). 05 §4.2 골자를 문안으로. 기술 방식 문단은 D03 §10·ADR-010 표현 사용. 법률 질의는 ADR-020으로 보안카드 1건 추가·인증서 비밀번호 건 조정(5→6건). 설계 대조표 [outreach/06](../outreach/06-design-crosscheck.md) | Phase 0 1주차 | 대표·PM·자문 | 초안 |
 | F-05 | 후처리(guide) 모드 명세 | [D17](17-postprocess-mode.md) | Phase 1 1주차 | 엔진·프론트 | 초안 |
 | F-06 | 사용자 고지·동의 문구 초안 | 비밀번호 저장(범위 고지 포함), 모델 국외 이전(미국·EU·UAE, ZDR 전 30일 보존 + 법적 보존 예외), 텔레메트리 옵트인, 운영 수준·축소 사항, 처리방침(수탁자·국외이전 표: 클라우드·모델·메일·APNs/FCM·PG·진위확인), 운영자 가시성 표(D09 §1), 남는 외국 의존 목록(ADR-015), "복구 문구를 묻지 않습니다", doc_type 서버 노출 옵트인 설명, 이용약관(프로필 2개·대리 사용 금지) | Phase 1 4주차(베타 전) | PM·자문 | 미작성 |
 | F-07 | 앱 문자열·i18n 규약·용어집 | 문자열 원천 파일, 세무사법 금지 표현 검사기 연결 | 1~2주차 | 프론트 | 미작성 |
