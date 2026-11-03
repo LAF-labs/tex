@@ -1,6 +1,6 @@
 # ADR-020. 화면 디자인 검토 결정: 발급 인증 고정, 카드 승인, 응답 끊김 자동 조회, 부가세 토글, 새 PC 복구
 
-> 상태: 채택(2026-10-30), 결정 4의 버튼 위치와 승인 근거는 ADR-021(2026-10-31) · **결정 3·7은 ADR-026·029로 개정(2026-11-03)**: 결정 3의 저장 방식(통째 JSON·DPAPI·Hello 기본 꺼짐)은 [ADR-026](ADR-026-human-secret-device-bound-session-vault.md)(칸 단위·TPM 결박 KEK·Windows 세션 추종 금고·엄격 모드 Hello)으로 대체, 결정 2의 완전 위임은 유지. 결정 7의 PASS 범위 미결은 [ADR-029](ADR-029-remote-recovery-data-minimization.md) 결정 1(PASS는 계정만, 백업은 연결된 폰으로만)로 닫음 · 관련: ADR-005, ADR-014(§2 대체), ADR-016(복구 문구 경로 대체), ADR-019, 02 §2·§4·§7, 08 §3·§4·§6·§9·§11
+> 상태: 채택(2026-10-30), 결정 4의 버튼 위치와 승인 근거는 ADR-021(2026-10-31) · **결정 3·7은 ADR-026·029로 개정(2026-11-03)**: 결정 3의 저장 방식(통째 JSON·DPAPI·Hello 기본 꺼짐)은 [ADR-026](ADR-026-human-secret-device-bound-session-vault.md)(칸 단위·TPM 결박 KEK·Windows 세션 추종 금고·엄격 모드 Hello)으로 대체, 결정 2의 완전 위임은 유지. 결정 7의 복구 경로는 [ADR-029](ADR-029-remote-recovery-data-minimization.md) 결정 1(열쇠 사본은 기기에만, 백업은 연결된 폰으로)로 구체화, PASS 범위는 여전히 미결(보류) · 관련: ADR-005, ADR-014(§2 대체), ADR-016(복구 문구 경로 대체), ADR-019, 02 §2·§4·§7, 08 §3·§4·§6·§9·§11
 > 근거: 디자인 캔버스 [소버린 AX 화면 디자인](https://claude.ai/artifact/Fyc1UUSuZs3e9y6tydeSL3) 댓글 검토(2026-10-30), research/R2 §1·§2
 
 ## 맥락

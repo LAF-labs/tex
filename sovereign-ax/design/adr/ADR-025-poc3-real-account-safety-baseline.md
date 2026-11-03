@@ -33,7 +33,7 @@
    - 엔진은 `vault-port`를 받으면 `fatal(engine.vault_port_unsupported)`.
    - docparse 창은 `disableDialogs: true`(N-68).
 9. **자식 프로세스는 깨끗한 환경으로 뜬다(N-23, D-14).** 모든 `utilityProcess.fork`에 `env: childEnv()`(허용 목록)와 `execArgv: []`를 준다. 엔진은 첫 import에서 `DEBUG`·`DEBUG_FILE`·`PWDEBUG`·`NODE_OPTIONS`·`NODE_EXTRA_CA_CERTS`·`SSLKEYLOGFILE`·`NODE_TLS_REJECT_UNAUTHORIZED=0`이 보이면 `fatal(engine.env_tampered)`로 기동을 거부한다. egress도 TLS 변조 변수를 보면 모델·odcloud 호출을 끈다(`egress.env_tampered`). Electron은 utilityProcess에 execArgv를 상속하지 않지만(검증자 정정) 명시값으로 고정한다.
-10. **비밀 창은 금고가 부른다(N-44, D-15).** 타이피스트가 비밀이 없으면 금고가 control 포트로 `secret.needed{runId, targetId, kind, scope, row?}`를 보내고 main만 창을 연다. 렌더러 IPC `secret.openInput`은 없다. main은 `secretInput` 포트를 `{runId, kind, scope, row?}`와 함께 넘기고, 금고는 그 포트에서 그 값으로 1회만 받는다. 1회용 비밀은 5분 또는 `run.end`에서 0으로 덮어 지우고 `secret.expired`를 보낸다. 창은 동시에 하나이고 메인 창의 모달이며 제목줄·OS 프레임이 있다(제목 `금고 · <라벨>`). 라벨은 main 내장 표다(N-11의 PoC 부분).
+10. **비밀 창은 금고가 부른다(N-44, D-15).** 대상은 금고가 입력하는 홈택스 아이디·비밀번호와 보안카드다. 공동·금융인증서 비밀번호는 사용자가 전용 Chrome의 홈택스 칸(가상키패드)에 직접 넣고, 타이피스트·비밀 창은 쓰지 않는다(ADR-020 결정 2, D05 §2: 금고 `SECRET_ORIGINS.cert_password`에 실 포털 origin이 없다). 타이피스트가 비밀이 없으면 금고가 control 포트로 `secret.needed{runId, targetId, kind, scope, row?}`를 보내고 main만 창을 연다. 렌더러 IPC `secret.openInput`은 없다. main은 `secretInput` 포트를 `{runId, kind, scope, row?}`와 함께 넘기고, 금고는 그 포트에서 그 값으로 1회만 받는다. 1회용 비밀은 5분 또는 `run.end`에서 0으로 덮어 지우고 `secret.expired`를 보낸다. 창은 동시에 하나이고 메인 창의 모달이며 제목줄·OS 프레임이 있다(제목 `금고 · <라벨>`). 라벨은 main 내장 표다(N-11의 PoC 부분).
 11. **비밀 창 개시 조건은 열 때마다 본다(N-18·N-47·N-43, D-12·D-53·D-28).** Preferences·확장·Google 로그인을 `fill`·`openForHuman` 첫 줄에서 다시 읽는다(수 ms). 거부하면 `secret_window.refused{reason}`를 엔진·main에 보낸다. 사람 입력 창 종료 조건 (나)는 "blur + 값 있음이 1.5초 동안 값 길이·포커스 변화 없이 유지"다(N-47). 엔진의 `requestClose`는 human 창만 닫을 수 있고 창 개시 검사는 원자적이다(N-43).
 12. **누출은 실사용에서도 본다(N-17, D-11).** PoC-3은 실비밀 전에 같은 화면에서 테스트 비밀로 캡처·`scanDir(paths.root)` 0건을 확인한다. 금고는 알려진 값 치환이 적중하면 `secret_window.leak_suspected{hits}`를 보내고, 엔진은 커밋 전이면 `failed(vault.leak_suspected)`로 멈춘다. 비밀 사용 직후 금고가 그 값으로 `logs\`·`staging\`을 스캔해 건수만 `vault.leak_scan{files, findings}`로 남긴다(PoC 빌드). 진단 내보내기의 형식 기반 검사는 Phase 1이다(D12 §5).
 13. **전용 Chrome 잔존물을 만들지 않는다(N-04·N-05·N-45, D-07·D-08·D-29).**
@@ -87,7 +87,7 @@
 - 확인 불가: "홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요."
 - 누출 의심: "보안 점검에서 이상이 보여 멈췄어요. 아무것도 발급하지 않았어요. 앱을 다시 시작해 주세요."
 - Google 로그인: "전용 Chrome에 Google 계정이 로그인돼 있어 비밀번호 창을 열지 않았어요. 전용 Chrome에서 로그아웃한 뒤 다시 준비해 주세요."
-- 비밀 창: 제목줄 "금고 · 공동인증서 비밀번호", 첫 줄 "세금계산서 발급 · 홈택스 · {프로필 이름}", 아래 고정 문구 "앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요."
+- 비밀 창: 제목줄 "금고 · 홈택스 비밀번호"(종류 라벨은 main 내장 표), 첫 줄 "세금계산서 발급 · 홈택스 · {프로필 이름}", 아래 고정 문구 "앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요."
 - 비밀 만료: "입력한 비밀번호를 5분 안에 쓰지 않아 지웠어요. 필요할 때 다시 물어볼게요."
 - 그 밖(실패 신호 쌍·메일·Crashpad·env·헤더·중계 위생·단일 인스턴스)은 화면 변화가 없다. 두 번째 실행은 기존 창을 앞으로 가져온다. 사용자가 미리 버튼으로 비밀 창을 열어 둘 필요가 없어진다.
 

@@ -19,6 +19,7 @@ import {
   OneShotSecrets,
   Relay,
   removeCrashDumps,
+  SECRET_ORIGINS,
   SecretOps,
   stripAuthHeaders,
   Vault,
@@ -666,6 +667,12 @@ describe('audit-v V12 DB 키 get/create 분리', () => {
 
 // ───────────────────────── V13 · N-46 ─────────────────────────
 describe('audit-v V13 비밀 종류↔칸 결박', () => {
+  it('audit-v: built-in origins never let the typist enter a certificate password (ADR-020 decision 2)', () => {
+    assert.deepEqual(SECRET_ORIGINS.cert_password, [], '공동·금융인증서 비밀번호는 사용자가 직접 입력');
+    assert.deepEqual(SECRET_ORIGINS.portal_password, ['hometax.go.kr']);
+    assert.deepEqual(SECRET_ORIGINS.security_card, ['hometax.go.kr']);
+  });
+
   it('audit-v: fill with a mismatched slot kind returns not_secret_slot', async () => {
     const s = await setup();
     s.ops.secrets.provide(bind(), enc('TEST-CERT-slot0001'));

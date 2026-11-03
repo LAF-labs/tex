@@ -10,7 +10,7 @@
     "ir": {"const": 2},
     "id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"},
     "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$"},
-    "portal": {"enum": ["hometax", "gov24", "sminfo", "insure4", "iros", "public_api"]},
+    "portal": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api"]},
     "profileKinds": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["personal", "business"]}},
     "effects": {"type": "array", "uniqueItems": true, "items": {"enum": ["issue_document", "send", "sign", "pay"]}},
     "inputs": {

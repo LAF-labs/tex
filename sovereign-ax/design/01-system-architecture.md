@@ -54,7 +54,7 @@
 | Gateway | 계량 레코드(계정 연결은 35일, 운영 통계는 비연결), 번들 ID, 플레이북 ID, 지연, 모델 | 프롬프트·응답 본문(처리 중 메모리 체류만) |
 | Relay | 우편함 ID, 의도 봉투 암호문 큐(≤72시간, ≤5건), 크기 버킷·시각, 접속 IP 해시(일 회전) | 평문, 키. 단 운영자는 연결 시점·IP 상관으로 계정↔우편함을 이을 수 있다 |
 | Blob Store | 암호문 블롭(Padmé 패딩), blob_id, 패딩 후 크기 | 복호화 키, 파일명 |
-| Metadata Index | 문서 종류(doc_type별 옵트인), 발급 월, 만료일, 무작위 슬롯 토큰, wDEK(키 객체), `Vd` 서명·`rev` | 상호·사업자번호·주민번호·금액·파일명·정확한 크기·초 단위 시각·dedup 토큰 |
+| Metadata Index | 문서 종류(서버 색인을 켠 종류만, 기본 켬 4종, D07 §3), 발급 월, 만료일, 무작위 슬롯 토큰, wDEK(키 객체), `Vd` 서명·`rev` | 상호·사업자번호·주민번호·금액·파일명·정확한 크기·초 단위 시각·dedup 토큰 |
 | Playbook Registry | 2-of-3 서명된 IR 패키지·핫픽스·운영 정책, 채널(stable/beta/hotfix), `status.json`(48h), 투명성 로그(Phase 2), 폐기 목록 | — |
 | Query Agent | 세션 없는 질의 처리(질문 → `query_kind` 열거 → 서버 결정적 조회 → 템플릿) | 대화 로그 본문, 모델로 가는 메타데이터 행 |
 
@@ -117,7 +117,7 @@ engine: submit → 원장 armed(intent_id, step_id) + 토큰 소비(fsync) → r
   → verify(새 탭, B₁ \ B₀ = 1건) → committed(승인번호 bind)
 engine: save_pdf(V-23 템플릿) → verify(메일발송목록: 홈택스 자동 발송 상태)       # s33 별도 전송은 Phase 1 제외
 engine → main: run.completed + audit events → DB
-main → cloud: metadata.put(doc_id, slot_token, doc_type?, issued_month?, expires_on?, blob_id, wdek, kek_ver, rev, sig) / blob.put(E2EE)   # 옵션, doc_type 옵트인 꺼짐이면 doc_keys만
+main → cloud: metadata.put(doc_id, slot_token, doc_type?, issued_month?, expires_on?, blob_id, wdek, kek_ver, rev, sig) / blob.put(E2EE)   # 옵션, 그 종류의 서버 색인이 꺼져 있으면 doc_keys만
 ```
 
 ### 5.2 리모트 발급 (폰에서 지시)

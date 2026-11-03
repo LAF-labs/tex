@@ -206,6 +206,7 @@
 ```json
 "onFail": {"retry": 2, "then": "recover" | "checkpoint:<name>" | "handoff" | "abort" | "human:secret"}
 ```
+- `retry`는 첫 시도를 뺀 **재시도 횟수**다(`retry: 2`면 최대 3번 실행). 엔진은 `min(retry, policy.retries.stepMax)`번까지만 다시 시도한다(D03 §7).
 - 재시도 지연은 IR에 없다. **정책(`policy.retries`)이 소유**한다(Equal Jitter, 하한 = `stepDelayMs` 하한).
 - 비가역 스텝과 커밋 구간 안 스텝: `retry: 0`, `then ∈ {handoff, abort}`(V-03f). 커밋 셀렉터 실패 시 할 수 있는 일은 `verify` → handoff뿐이다.
 - `recover`는 D03 §6의 복구 계층(L1 `recovery_v1` 판정 → L2 수리 → 핸드오프)을 탄다. L2 상한은 실행당 `policy.run.l2MaxAttempts`(기본 1) 하나뿐이다. L2 제안의 **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만** 하고, `click`·`press` 타깃의 제안은 사용자 확인 없이 적용하지 않는다(B-16, D03 §6).

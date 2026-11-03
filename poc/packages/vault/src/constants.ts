@@ -33,9 +33,12 @@ export const CHROME_ENV_ALLOWLIST = [
  */
 export const PORTAL_ETLD1 = ['hometax.go.kr'];
 
-/** 비밀 종류별 origin 허용 목록(D05 §3.7). */
+/**
+ * 비밀 종류별 origin 허용 목록(D05 §3.7). 공동·금융인증서 비밀번호는 사용자가 브라우저에 직접 넣고 타이피스트는
+ * 넣지 않는다(ADR-020 결정 2, D05 §2): 실 포털 origin이 없으니 타이피스트·비밀 창이 열리지 않는다. 시험 구성은 따로 준다.
+ */
 export const SECRET_ORIGINS: Record<string, string[]> = {
-  cert_password: ['hometax.go.kr'],
+  cert_password: [],
   portal_password: ['hometax.go.kr'],
   security_card: ['hometax.go.kr'],
 };

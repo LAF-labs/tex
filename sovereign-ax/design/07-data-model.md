@@ -11,7 +11,7 @@
 | 로컬 임시 | 디스크에 두지 않는다 | 마스킹 미리보기는 DB 암호화 컬럼(`temp_previews`, 24시간 TTL), 캡차 크롭은 **메모리만**(응답 즉시 폐기) | (상충 A/C-02) |
 | 다운로드 스테이징 | `%LOCALAPPDATA%\SovereignAX\staging\` | 평문(보관함과 같은 DACL). 보관함으로 옮긴 즉시 삭제, 기동 시 잔존 파일 정리 | 발급 직후 PDF |
 | 클라우드 블롭 | S3 호환 API 하위 집합(D09 §9.1) | 클라이언트 E2EE(XChaCha20-Poly1305, 파일별 DEK), Padmé 패딩 | PDF 암호문 + 암호화된 문서 머리(§6) |
-| 클라우드 메타데이터 | PostgreSQL | 전송·저장 암호화(서버 측) | 옵트인한 종류의 `doc_type`·발급 월·만료일, 키 객체(wDEK), 서명(§5). 크기·dedup 토큰·초 단위 시각 없음 (C-09·C-13) |
+| 클라우드 메타데이터 | PostgreSQL | 전송·저장 암호화(서버 측) | 서버 색인을 켠 종류의 `doc_type`·발급 월·만료일, 키 객체(wDEK), 서명(§5). 크기·dedup 토큰·초 단위 시각 없음 (C-09·C-13) |
 
 ### 1.1 로컬 경로와 접근 통제 (A-18)
 
@@ -85,7 +85,7 @@ CREATE TABLE documents (
   backup_state TEXT CHECK(backup_state IN ('none','pending','uploaded','failed')) NOT NULL DEFAULT 'none',
   blob_id TEXT,                       -- 중복 판단은 로컬 sha256 → blob_id 매핑으로만 (C-13)
   kek_ver INTEGER,
-  index_exposed INTEGER NOT NULL DEFAULT 0,   -- 서버 인덱스 행 존재 여부(doc_type 옵트인, §3)
+  index_exposed INTEGER NOT NULL DEFAULT 0,   -- 서버 인덱스 행 존재 여부(종류별 서버 색인, §3)
   index_rev_max INTEGER NOT NULL DEFAULT 0,   -- 서버 레코드의 최고 rev. 더 낮은 rev는 거부 (C-12)
   run_id TEXT, created_at TEXT NOT NULL
 );
@@ -166,7 +166,7 @@ CREATE TABLE temp_previews (                 -- (상충 A/C-02) 마스킹 미리
 );
 
 CREATE TABLE usage_local (month TEXT PRIMARY KEY, l1_input_tokens INTEGER, l2_input_tokens INTEGER, l2_output_tokens INTEGER, cost_usd REAL);
-CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);   -- 'index.docTypeOptIn' 등
+CREATE TABLE settings (key TEXT PRIMARY KEY, value_json TEXT NOT NULL);   -- 'index.docTypeEnabled' 등
 
 CREATE TABLE remote_devices (                -- D08 §4·§5 (C-01·C-06·C-20)
   device_id TEXT PRIMARY KEY, role TEXT CHECK(role IN ('desktop','mobile')) NOT NULL, name TEXT,
@@ -195,7 +195,7 @@ CREATE TABLE remote_cmd_seen (               -- (B-10) 라이브·큐 cmd.run �
 
 ## 3. 문서 종류와 유효기간 규칙표 (초기값, 사용자 조정 가능)
 
-"서버 색인" 열은 doc_type별 서버 메타데이터 노출 옵트인의 기본값이다(C-09). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeOptIn']`).
+"서버 색인" 열은 doc_type별 서버 색인의 기본값(켬·끔)이다(C-09). 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 적용되고(Phase 2, 스위치가 꺼져 있으면 어떤 종류도 올라가지 않는다), 기본으로 켜진 종류가 있으므로 이 설정을 '옵트인'이라 부르지 않는다(2026-11-02 용어 정리). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeEnabled']`).
 
 | doc_type | 한글 | 발급 포털 | 기본 유효(일) | 규칙 | 서버 색인 기본 | 비고 |
 |---|---|---|---|---|---|---|
