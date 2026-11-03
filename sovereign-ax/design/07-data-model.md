@@ -1,6 +1,6 @@
 # D07. 데이터 모델
 
-> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
+> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·DB 배타 잠금·DB 키 유실 처리(§1.3), `remote_devices` 증명 상태·`doc_scope_json`(§2), 서버 시각 컬럼 금지(§5), 키 계층의 복구 문구 삭제(§6, ADR-016 v2), DB 키 래핑 사본(§7)(ADR-022·026, D19 §3.5). 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
 
 ## 1. 저장소 개관
 
@@ -43,6 +43,8 @@
 - **DB 소유 프로세스는 엔진 하나다.** main의 스케줄러와 렌더러의 감사 로그 뷰는 엔진의 읽기 전용 IPC 질의(`db.query.*` 스키마)를 쓰고 DB 파일을 직접 열지 않는다.
 - DB 키는 금고가 `getDbKeyOnce()`로 기동당 1회 엔진에 넘긴다(두 번째 호출은 보안 이벤트, D05 §2).
 - 암호 설정: `cipher=sqlcipher, legacy=4`(또는 `chacha20`)를 명시하고, 키는 Buffer를 함수형 `key()`로 전달한다(`PRAGMA key` 문자열을 만들지 않는다). `PRAGMA temp_store=MEMORY`로 정렬·임시 테이블이 평문 파일로 디스크에 남지 않게 한다.
+- 앱 인스턴스는 하나다. 엔진은 DB를 열자마자 `PRAGMA locking_mode=EXCLUSIVE`와 한 번 쓰기로 잠금을 잡고, 못 잡으면 `db.locked_by_other_instance`로 끝낸다. 복구 루틴(`promoteInDoubt`·`expireOpen`·`interruptRunning`)은 잠금을 잡은 뒤에만 돈다(Phase 1, ADR-022, D-41(N-29)).
+- DB 키 유실: 키 항목이 없는데 DB 파일이 있으면 새 키를 만들지 않는다(`db.key_missing`). 사용자가 '기록을 포기하고 새로 시작'을 고르면 기존 파일을 `db\db.sqlite.unreadable-<ts>`로 보존한 뒤 새로 만들고 `ledger.reset`을 남기며 첫 발급 카드에 경고를 1회 붙인다(복구 화면은 Phase 1, ADR-026, D-22(N-30)).
 
 ### 1.4 보관함 at-rest 암호화 (A-25, 상충 A/C-13)
 
@@ -171,7 +173,10 @@ CREATE TABLE remote_devices (                -- D08 §4·§5 (C-01·C-06·C-20)
   noise_pub BLOB NOT NULL, sign_pub BLOB NOT NULL,
   hw_approval_pub BLOB,                      -- Px(SE/StrongBox P-256). 없으면 원격 비가역 승인 불가
   registered_at TEXT NOT NULL, paired_at TEXT, cert_not_after TEXT, list_version INTEGER NOT NULL,
-  last_seen_at TEXT, revoked INTEGER NOT NULL DEFAULT 0
+  last_seen_at TEXT, revoked INTEGER NOT NULL DEFAULT 0,
+  hw_attest_state TEXT NOT NULL DEFAULT 'unverified' CHECK (hw_attest_state IN ('verified_strongbox','verified_tee','ios_app_attest','unverified')),  -- ADR-026, D-36(N-55)
+  hw_attest_chain_sha256 TEXT, hw_attest_verified_at TEXT,
+  doc_scope_json TEXT NOT NULL DEFAULT '{"slots":["business"],"docTypes":"*"}'   -- 폰 서류 열람 범위, ADR-026, D-35(N-53)
 );
 CREATE TABLE remote_pair_state (             -- (C-33) pair별 영속 상태. 재페어링 시 epoch 증가
   pair_id TEXT PRIMARY KEY, ik_ts_max INTEGER NOT NULL, async_seq_max INTEGER NOT NULL, seq_bitmap BLOB NOT NULL,
@@ -183,7 +188,7 @@ CREATE TABLE remote_cmd_seen (               -- (B-10) 라이브·큐 cmd.run �
 );
 ```
 
-원칙: 비밀 컬럼 없음. `inputs_json_enc`·`context_json_enc`·`temp_previews.body_enc`는 DB 키로 암호화된 컬럼이며, 비밀 참조(`secret_ref`)는 종류 이름만 담고 게이트 토큰·`runKey`는 절대 저장하지 않는다. 저널(`run_events`)이 상태의 단일 진실이다.
+원칙: 비밀 컬럼 없음. `inputs_json_enc`·`context_json_enc`·`temp_previews.body_enc`는 DB 키로 암호화된 컬럼이며, 비밀 참조(`secret_ref`)는 종류 이름만 담고 게이트 토큰·`runKey`는 절대 저장하지 않는다. 저널(`run_events`)은 상태 전이 기록이고, 재시작 복원은 원장·게이트·실행 테이블 상태 승격이다(D-45(N-71)).
 
 - 원장 규칙(B-10): 키는 `(intent_id, step_id)`다. 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`·`playbook_id`가 원장과 다르면 거부한다. '사후 스텝 점프'는 같은 `run_id`의 재개에만 적용한다(D03 §4).
 - `schedules.consent_json`(B-27): `deviceSig`는 동의한 기기의 `Vx` 서명이며 문맥은 `"SAX-consent-v1"`(D08 §2.1)이다. 설치된 패키지의 `major`나 `effects`가 동의 당시와 다르면 `notify`로 강등하고 재동의를 받는다.
@@ -252,6 +257,8 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 - `K_idx`는 dedup에 쓰지 않는다. 남은 용도는 업무 키 표시 HMAC(`biz_key_marks`, B-30)과 프로필 사업자 HMAC(B-28)이며 서버 테이블은 D09 §2·§6에 있다.
 - **발급 활동 표시**(정직한 서술, E-07): 위 "없는 것" 원칙의 예외로, 백업(메타데이터 동기화)을 켠 계정에서는 서버 `biz_key_marks`에 업무 키 HMAC·상태(`armed`·`committed`·`in_doubt`·`observed_manual`)·일 단위 날짜가 90일(`armed`는 10분) 남는다. 초 단위 시각은 없지만 서버는 이것으로 계정별 발급 건수·영업 리듬과 게이트 조회 시각을 안다. 백업을 끄면 이 기록도 없고 기기 간 중복 경고도 없다(D09 §6, D03 §4).
 
+- 서버 메타데이터(`doc_index`)·`biz_key_marks` 테이블에는 생성·갱신 시각 컬럼을 두지 않는다(감사는 `day`만). `track_commit_timestamp=off`. 스키마 린트가 `*_at`·`timestamp`·`timestamptz` 컬럼을 막는다(ADR-026, D-52(N-83)). 백업·WAL 보존은 D09 §10.
+
 ## 6. E2EE 블롭 봉투
 
 ```text
@@ -265,8 +272,8 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 
 - `header.alg`가 알고리즘 식별자다. 새 스위트는 `v`를 올려 공존시킨다(D08 §2).
 - AAD의 `blob_id`·`doc_id`로 서버가 블롭을 맞바꾸는 공격을 막는다.
-- 키 계층은 D08 §3을 따른다: 복구 문구(BIP39 12단어) → RK → `KEK_N = HKDF(RK, "kek/blob/vN" ‖ salt_N)`(파일 DEK 래핑), `K_idx`(업무 키 표시·프로필 사업자 HMAC), `K_chk`(문구 확인 센티넬). 기기별 랜덤 키(Noise·서명·inbox)는 복구 문구와 분리한다. 폰은 문서를 열 때 그 문서의 wDEK만 받아 쓰고 대량 동기화하지 않는다(C-07).
-- **KEK 회전의 한계(C-07)**: 키 객체가 분리되어 있어 KEK 회전은 wDEK 재래핑만으로 끝나지만, 이것은 **아직 wDEK를 받지 않은 문서**에 대해서만 폐기 기기의 접근을 막는다. DEK는 바뀌지 않으므로 폐기 전에 기기가 받은 wDEK의 문서는 블롭을 재암호화하지 않으면 계속 열 수 있다. 문구 유출·PC 도난이면 새 RK·전체 재암호화가 필요하다. 절차는 D08 §9.
+- 키 계층은 D08 §3을 따른다: RK(첫 PC가 무작위로 생성) → `KEK_N = HKDF(RK, "kek/blob/vN" ‖ salt_N)`(파일 DEK 래핑), `K_idx`(업무 키 표시·프로필 사업자 HMAC). 복구 문구와 `K_chk`는 없다. 기기별 랜덤 키(Noise·서명·inbox)는 RK와 분리한다. 계정 신뢰 앵커는 첫 PC가 만든 AIK다. RK·AIK의 래핑 사본은 페어링된 폰과 사용자가 고른 두 번째 PC에만 있고 서버에는 없다(ADR-016 v2·ADR-026, D-16(N-09)). 폰은 문서를 열 때 그 문서의 wDEK만 받아 쓰고 대량 동기화하지 않는다(C-07).
+- **KEK 회전의 한계(C-07)**: 키 객체가 분리되어 있어 KEK 회전은 wDEK 재래핑만으로 끝나지만, 이것은 **아직 wDEK를 받지 않은 문서**에 대해서만 폐기 기기의 접근을 막는다. DEK는 바뀌지 않으므로 폐기 전에 기기가 받은 wDEK의 문서는 블롭을 재암호화하지 않으면 계속 열 수 있다. PC·폰 도난이면 새 RK·전체 재암호화가 필요하다. 절차는 D08 §9.
 - **키-객체 분리는 운영 편의(회전·삭제)이지 기밀성 분리가 아니다(C-08).** 키 객체와 블롭은 같은 운영자 안에 있다. 기밀성은 클라이언트만 가진 KEK에서 온다.
 - 평문 해시·평문 해시의 HMAC은 서버에 보내지 않는다. 정부 서류는 양식이 고정되고 가변 필드 엔트로피가 낮아 평문 해시가 사전 대입에 취약하다.
 - 블롭·메타데이터 저장소는 국내 리전에 둔다(개인정보보호법 제28조의8 국외이전 요건 회피). 공급사 가정은 D09 §9.1.
@@ -274,6 +281,7 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 
 ## 7. 마이그레이션
 
+- Phase 2 폰 복구 묶음에 DB 키 래핑 사본을 넣는다(ADR-026, D-22(N-30)).
 - 스키마 버전 테이블 + 전진 전용 마이그레이션. 앱 업데이트 시 자동 적용, 실패 시 이전 버전 DB 백업 유지(`db\` 아래, 같은 DACL).
 - 플레이북 입력 스키마 변경(major)은 `runs.inputs_json_enc` 재개 불가 → 사용자에게 "다시 시작" 안내. 재개는 같은 `runs.package_digest`가 설치되어 있을 때만 한다(B-13).
 - v1.2 → v1.3: `documents.dedup_token` 제거, `irreversible_log` PK 교체(`intent_id` → `(intent_id, step_id)`, 기존 행은 `step_id`를 저널에서 채움), `profiles.keep_session` 기본값 0(기존 행 값은 유지하되 온보딩에서 다시 묻는다). 서버 `doc_index`의 `bytes`·`client_updated_at`·`dedup_token`·일 단위 날짜는 삭제하고 월 단위로 재기록한다.

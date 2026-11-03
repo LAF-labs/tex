@@ -1,6 +1,6 @@
 # ADR-014 docparse 렌더러 샌드박스 격리와 main 승인 창 기반 로컬 비가역 승인
 
-상태: 채택(S13b 조건부) · 2026-10-28 (docparse 성능은 스파이크 S13b 결과에 조건부, 승인 입력은 재감사 E-06 반영) · **§2(main 승인 창)는 ADR-020으로 대체(2026-10-30), 로컬 승인 근거는 ADR-021(main 소유 승인 바, 2026-10-31)**
+상태: 채택(S13b 조건부) · 2026-10-28 (docparse 성능은 스파이크 S13b 결과에 조건부, 승인 입력은 재감사 E-06 반영) · **§2(main 승인 창)는 ADR-020으로 대체(2026-10-30), 로컬 승인 근거는 ADR-021(main 소유 승인 바, 2026-10-31)** · docparse 창 `disableDialogs: true`와 공용 하드닝은 [ADR-022](ADR-022-poc3-real-account-safety-baseline.md) 결정 8(2026-11-03, AUDIT-D N-68)
 근거: 공격표면 감사 A-14, A-15(research/AUDIT-A-local-desktop.md), A/C-06, design/19-attack-surface.md
 
 ## 맥락

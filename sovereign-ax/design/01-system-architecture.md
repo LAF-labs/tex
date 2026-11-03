@@ -1,6 +1,6 @@
 # D01. 시스템 아키텍처
 
-> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영.
+> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·자식 env 허용 목록·IPC 모양 검증·금고가 부르는 비밀 창(§2.1), 쿠키 헤더 차단(§3), 린트·CI·금고 모듈 훅(§7)(ADR-022·025, D19 §3.5).
 
 ## 1. 컨텍스트 (C4 L1)
 
@@ -29,7 +29,12 @@
 | `vault` (utilityProcess, 별도; Phase 2 Rust 별도 실행 파일) | 비밀 저장·복호화(등급 2종), **Chrome 파이프 소유자**, 엔진에 **허용 목록 중계 CDP** 제공(요청 바디·접근성 값·스크린샷 정리, origin 재집행), **비밀 창**·**비밀 타이피스트**, 장기 키 연산(`noiseDH`·`signVd`·`hpkeOpen`), 전용 프로필 설정·확장 점검 | OS 키체인, `sodium_malloc`·WER 제외 | 없음(코드 수준 아웃바운드 금지, OS 경계 아님) |
 | `chrome` (사용자 설치 Chrome, 전용 프로필, 최소 플래그 모드) | 포털 세션(`auto`·`assisted`만). 금고가 인자 없는 `launch()`로 내장 프로필 경로·플래그 허용 목록(`--remote-debugging-pipe`, `--user-data-dir`, `--no-first-run`)만으로 기동, `--remote-debugging-port` 금지, `--no-sandbox`·`--disable-extensions` 없음. 프로필 `Preferences`로 비밀번호 저장·자동완성 끔(엔터프라이즈 정책 미사용), 설치 확장은 내장 허용 목록과 대조. `navigator.webdriver=true`는 그대로(ADR-010). `postprocess` 포털은 이 Chrome이 아니라 사용자 기본 브라우저 | 사용자 권한 | 엔진이 `manifest.domains ∩ 내장 eTLD+1`로 이동을 감시하고 **금고가 문서 커밋마다 재집행**(벗어나면 엔진 세션 분리) |
 
-프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 모든 메시지는 타입드 스키마(`ipc/*.schema.json`)로 검증한다. `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다. main↔엔진 포트는 둘로 나눈다(ADR-021). **중계 포트**는 렌더러 명령을 엔진에 넘기고, **main 전용 포트**는 승인 바가 발급한 `LocalApproval`·`LocalAttestation`(`answerGate`·`attestNotCommitted`)만 나른다. 엔진은 중계 포트로 온 승인·증언을 거부한다.
+프로세스 간 통신은 Electron `MessagePort` 기반 IPC. 프로세스 간 메시지는 수신부에서 모양을 검증한다. Phase 1 정본은 `design/schemas/ipc/{gate-port,vault-control,renderer-request}.schema.json`이고, 그 전에는 수신부마다 열거형·필수 필드 검사 함수를 둔다(ADR-022, D-48(N-77), RETRO A-04). `renderer`는 `engine`·`vault`와 직접 통신하지 않고 `main`이 중계한다. main↔엔진 포트는 둘로 나눈다(ADR-021). **중계 포트**는 렌더러 명령을 엔진에 넘기고, **main 전용 포트**는 승인 바가 발급한 `LocalApproval`·`LocalAttestation`(`answerGate`·`attestNotCommitted`)만 나른다. 엔진은 중계 포트로 온 승인·증언을 거부한다.
+
+프로세스 수명 규칙(ADR-022):
+- 앱은 단일 인스턴스다. 두 번째 실행은 기존 창을 앞으로 가져오고 끝난다(D-41(N-29)).
+- main이 utilityProcess(금고·엔진)를 띄울 때 `env`는 허용 목록(PATH·SystemRoot·SystemDrive·windir·LOCALAPPDATA·APPDATA·USERPROFILE·USERNAME·TEMP·TMP·HOME·LANG 계열)만 넘기고 `execArgv`는 빈 배열로 고정한다. 디버그·로깅·프록시·TLS·`NODE_*`·`ELECTRON_*`·`OPENAI_*`·`SSLKEYLOGFILE` 변수는 자식에 가지 않는다(D-14(N-23)).
+- 비밀 입력 창은 금고가 control 포트로 `secret.needed`를 보냈을 때만 main이 연다. 렌더러는 비밀 창을 열거나 라벨을 정할 수 없다(D-15(N-44)).
 
 ### 2.2 모바일 앱 (React Native/Expo)
 
@@ -78,6 +83,7 @@ TB-8 docparse: OS 샌드박스 안, 바이트 입력·JSON 출력만.
 경계 규칙:
 - TB-1 → TB-2 평문 비밀 전달 금지. 비밀이 필요한 입력은 vault가 자기 파이프 세션으로 직접 수행하고(ADR-005 v3), 가상키패드·커널 드라이버 보안 모듈 칸은 사용자 직접 입력(`human:secret`)이되 **비밀 창**으로 같은 보호를 받는다. 중계는 비밀 오염 프레임의 요청 바디와 비밀 칸 값을 엔진에 넘기지 않는다. 이 경계는 정상 경로의 평문 유입을 막는 장치이며 엔진 침해·같은 사용자 악성코드에 대한 경계가 아니다(D05 §1, D11 T2).
 - 엔진의 CDP 권한은 금고의 허용 목록이 정한다. 브라우저 타깃·Storage·다운로드 경로 변경·사용자가 연 탭은 엔진에 열리지 않는다.
+- 쿠키·인증 헤더(`Cookie`·`Set-Cookie`·`Authorization`)와 인증된 응답 본문은 어떤 CDP 경로로도 엔진에 가지 않는다(ADR-022, D-33(N-51)).
 - TB-2 → TB-4/5 송신은 `net/egress` 단일 모듈. `engine` 코드베이스에서 `fetch`/`net`/`http` 직접 import는 ESLint 규칙으로 금지(`no-restricted-imports`), CI에서 검사.
 - TB-5로 가는 페이로드는 `redaction.apply()`의 반환 타입(`RedactedPayload` 브랜드 타입)만 받도록 `egress.toModel()` 시그니처로 강제.
 
@@ -167,3 +173,5 @@ mobile 입력 → human.response → engine fill(캡차 답은 비밀 아님, �
 | `apps/desktop` | Electron 셸, IPC, 스케줄러, UI | 위 전부 |
 | `apps/mobile` | Expo 앱 | `protocol` |
 | `apps/cloud-*` | 게이트웨이, 릴레이, API, 레지스트리 | `protocol` |
+
+단일 송신·디버그 스위치·브랜드 규칙은 ESLint와 CI 필수 체크로 집행한다. 금고는 진입점 첫 import의 모듈 훅으로 `net`·`http`·`https`·`tls`·`dgram`·`dns`·`http2`·`electron` 해석을 거부한다(ADR-025, D-23(N-32)).

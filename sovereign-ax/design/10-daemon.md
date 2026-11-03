@@ -1,5 +1,6 @@
 # D10. 서류 데몬
 
+> AUDIT-D 반영 2026-11-03: 데몬의 사람 비밀 미사용을 trigger 허용 목록으로, `semi_auto` 로그인은 폰 시작 게이트 뒤에만 저장 자격 사용(§6)(ADR-022·023·026, D19 §3.5 D-01·D-34).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: 데몬 실행은 키체인 저장 비밀을 쓰지 않음(금고가 `typist.fill` 거부), 효과 제한을 트리거 기준 런타임 검사(R-D1)로, 동의 결속(`consent_json`)과 시작 동의 메시지 분리(`consent.request/response`, `SAX-consent-v1`), `policy.daemon.autoAllowed` 이름 통일, 데몬은 AIK를 쓰지 않음, 스케줄러는 DB 키 없이 엔진 질의 IPC 사용, 추출 만료일 확정 조건.
 
 ## 1. 책임
@@ -48,6 +49,7 @@
 
 - 데몬 실행은 `policy.pace.daemon`(더 느림) 적용.
 - **저장 비밀 미사용** (A-23): 데몬 실행(`trigger:'daemon'`)은 키체인에 저장된 비밀을 쓰지 않는다. 로그인은 간편인증 PUSH 또는 폰 봉인 비밀(`fillFromRemote`, 라이브 세션)만 쓴다. 금고는 `trigger=daemon` 실행의 `typist.fill`을 `denied`로 거부한다(D05 §4). 유휴 시간에는 Hello 프롬프트를 받을 사람이 없으므로, 이 규칙이 없으면 구현 단계에서 사람 비밀을 무인 등급에 저장하게 되어 같은 사용자 악성코드가 조용히 읽을 수 있는 비밀이 늘어난다.
+- 데몬은 사람 비밀을 쓰지 않는다. 금고는 `typist.fill`을 `trigger ∈ {local, remote}`에만 허용하므로 `daemon`은 fail-closed로 거부된다. `semi_auto`의 로그인은 폰 시작 게이트(생체 + 기기 키 서명, D08 §7) 뒤에만 저장 자격을 쓴다(ADR-023·026, D-01(N-07), D-34(N-13)).
 - **AIK 미사용** (감사 C C-22): 데몬은 AIK를 쓰지 않는다. AIK가 필요한 작업(기기 추가·폐기·삭제·KEK 회전)은 데몬 실행에서 일어나지 않으며, 금고는 `trigger=daemon` 문맥의 AIK 서명 요청을 거부한다.
 - 캡차·추가 인증이 뜨면 `semi_auto`와 동일하게 사람에게 넘긴다(폰). 90초 무응답 → 보류.
 - 같은 서류를 30일 내 3회 이상 자동 재발급 시도하면 자동 모드 해제 + 알림(루프 방지).

@@ -1,6 +1,6 @@
 # ADR-013 레지스트리 임계 서명·투명성 로그·자체 서명 장치
 
-상태: 채택 · 2026-10-28 (투명성 로그 형식·서명 장치 선정은 스파이크 SP-4·SP-6·S18 결과에 조건부)
+상태: 채택 · 2026-10-28 (투명성 로그 형식·서명 장치 선정은 스파이크 SP-4·SP-6·S18 결과에 조건부) · **앱 릴리스 매니페스트 키·설치 전 로그 확인·역할 규칙(1인 1키, 쓰기 권한자 비서명, 역할 배정표)은 [ADR-025](ADR-025-supply-chain-update-signing-roles.md)(2026-11-03, AUDIT-D N-10·N-42)**
 근거: 공격표면 감사 B-22(research/AUDIT-B-playbook-engine-model.md), C-26·C-27·C/X-16(research/AUDIT-C-remote-cloud-sovereignty.md), 재감사 E-04·E-05·E-14, R7 §0·§6(research/R7-naver-cloud-sovereign.md), design/19-attack-surface.md
 관련: D09 §8, D08 §5(`hello.registryHeadHash`), ADR-012, ADR-015
 
