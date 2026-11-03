@@ -20,6 +20,8 @@ const state = {
   menu: false, // 제목줄 프로필 메뉴
   editing: null,
   vat: null,
+  fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
+  composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
   barActive: false,
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
@@ -240,7 +242,15 @@ function buildChat() {
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
   chat.input = h('textarea', { rows: '1', placeholder: '세금계산서나 증명서를 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
+    state.composing = true;
     autoGrow();
+    renderQuick();
+  });
+  // 입력창을 누르면 칩을 숨겨 쓰는 데 집중하게 한다. 비운 채 떠나면 다시 보인다.
+  chat.input.addEventListener('pointerdown', () => ((state.composing = true), renderQuick()));
+  chat.input.addEventListener('blur', () => {
+    if (chat.input.value.trim()) return;
+    state.composing = false;
     renderQuick();
   });
   chat.input.addEventListener('keydown', (e) => {
@@ -297,6 +307,38 @@ function autoGrow() {
   el.style.height = `${Math.min(el.scrollHeight, max)}px`;
 }
 
+// 사람이 카드에서 할 일이 있는 동안에는 요청 칩을 숨긴다(카드 버튼에서 시선을 뺏지 않게, 캔버스 M-01).
+const BUSY = ['draft', 'preparing', 'turn', 'waiting', 'issuing', 'attention'];
+const cardWork = () => [...state.runs.values()].some((r) => BUSY.includes(r.status)) || [...state.g24.values()].some((g) => g.stage === 'guide' || g.stage === 'pick');
+
+/** 많이 쓴 요청 2개. 데모는 빠른 실행 목록의 앞 둘이다(실제로는 활동 기록에서 센다). 누르면 바로 보낸다. */
+function prompts() {
+  return state.boot.quick
+    .filter((q) => !q.soon)
+    .slice(0, 2)
+    .map((q) => {
+      const t = q.text.trim();
+      return /줘$/.test(t) ? t : `${t} 발급해 줘`;
+    });
+}
+
+/** 거래처별 최근 발급 금액(이번 대화의 완료 실행 → 지난 기록 순). 없으면 null. */
+function lastAmount(name) {
+  const run = [...state.runs.values()].reverse().find((r) => r.status === 'done' && r.counterparty.name === name);
+  if (run) return run.amount;
+  const past = [...state.boot.timeline].reverse().find((t) => t.type === 'past' && t.who === name);
+  return past ? past.supply : null;
+}
+const won = (n) => (n % 10000 === 0 ? `${n / 10000}만원` : `${num(n)}원`);
+
+/** 되묻기 칩을 채우기 칩으로: 거래처를 물으면 최근 금액을 붙인다("A상사 300만원"). 누르면 입력창에만 채운다. */
+function fillChips(chips) {
+  return chips.map((c) => {
+    const amt = lastAmount(c.label);
+    return amt ? { label: `${c.label} ${won(amt)}`, text: `${c.text} ${won(amt)}`, cp: c.label } : { label: c.label, text: c.text, cp: c.label };
+  });
+}
+
 function renderQuick() {
   const text = chat.input.value;
   if (/계산서/.test(text)) {
@@ -305,16 +347,30 @@ function renderQuick() {
     chat.quick.replaceChildren(h('span', { class: 'sx-meta quick-label' }, '부가세'), t('separate', '별도'), t('included', '포함'), h('span', { class: 'sx-meta' }, state.vat ? '' : '고르지 않으면 별도로 계산해요'));
   } else if (!text.trim()) {
     state.vat = null;
-    // "곧 지원" 칩은 흐리게 두고 누르면 알림만(08 §4 "할 수 있는 일만 약속한다").
-    const chipBtn = (q) => (q.soon ? h('button', { type: 'button', class: 'is-soon', 'aria-disabled': 'true', title: '곧 지원', onclick: () => toast(`${q.label}은 곧 지원돼요. 이 데모에서는 아직 보여 드리지 않아요`) }, q.label, ' · 곧 지원') : h('button', { type: 'button', onclick: () => fillComposer(q.text) }, q.label));
-    chat.quick.replaceChildren(...state.boot.quick.map(chipBtn));
+    if (state.composing) {
+      chat.quick.replaceChildren();
+    } else if (state.fill.length) {
+      // 되묻기: 최근 보낸 곳. 점선·연필로 바로 보내는 칩과 구분한다.
+      chat.quick.replaceChildren(...state.fill.map((c) => h('button', { type: 'button', class: 'is-fill', 'data-fill': c.cp, title: '입력창에 채우기', onclick: () => fillComposer(c.text) }, icon('pencil'), c.label)));
+    } else if (!cardWork()) {
+      chat.quick.replaceChildren(...prompts().map((p) => h('button', { type: 'button', class: 'is-prompt', 'data-prompt': p, onclick: () => sendPrompt(p) }, p, icon('send'))));
+    } else {
+      chat.quick.replaceChildren();
+    }
   } else {
     chat.quick.replaceChildren();
   }
 }
 
+function sendPrompt(text) {
+  if (state.view !== 'chat') go('chat');
+  chat.input.value = text;
+  send();
+}
+
 function fillComposer(text) {
   if (state.view !== 'chat') go('chat');
+  state.composing = true;
   chat.input.value = text;
   autoGrow();
   renderQuick();
@@ -328,6 +384,8 @@ async function send() {
   const vat = state.vat;
   chat.input.value = '';
   state.vat = null;
+  state.fill = [];
+  state.composing = false;
   autoGrow();
   renderQuick();
   appendThread(h('div', { class: 'sx-me' }, text));
@@ -350,13 +408,17 @@ async function send() {
     renderG24(g);
     openPanel({ kind: 'g24', id });
   } else {
-    appendThread(h('div', { class: 'sx-app' }, r.text, r.chips?.length ? h('div', { class: 'sx-quick reply-chips' }, r.chips.map((c) => h('button', { type: 'button', onclick: () => fillComposer(c.text) }, c.label))) : null));
+    appendThread(h('div', { class: 'sx-app' }, r.text));
+    // 되물은 답 후보는 입력창 위 채우기 칩으로 둔다(캔버스 M-01 되묻기).
+    state.fill = r.chips?.length ? fillChips(r.chips) : [];
+    renderQuick();
   }
 }
 
 function putRun(run) {
   state.runs.set(run.id, run);
   renderRun(run);
+  renderQuick();
   if (state.panel?.kind === 'run' && state.panel.id === run.id) renderPanel();
   renderToday();
 }
@@ -376,6 +438,7 @@ function renderG24(g) {
   else appendThread(el);
   if (state.panel?.kind === 'g24' && state.panel.id === g.id) renderPanel();
   renderToday();
+  renderQuick();
 }
 
 /** 오늘 요약(캔버스 M-02): 0이 아닌 건만 "숫자 이름"으로, 오른쪽 끝에 "오늘 요약". 누르면 해당 카드·화면으로 간다. */

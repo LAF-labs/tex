@@ -165,6 +165,7 @@ async function flow(): Promise<void> {
   check('셸이 뜨고 승인 바는 숨어 있다', !S.bar.snapshot().visible && !S.bar.view.getVisible());
   check('사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다', (await js<string>(`document.querySelector('#titlebar').textContent`)).includes('가나다컴퍼니') && S.runs.counterparties.length === 3 && S.runs.counterparties.every((c) => /^[0-9a-f-]{36}$/.test(c.id)), S.runs.counterparties.map((c) => c.id));
   await shot('01-home');
+  check('대기 화면: 많이 쓴 요청 칩 2개(누르면 바로 보냄)', (await js<number>(`document.querySelectorAll('#quick [data-prompt]').length`)) === 2);
 
   // T-01 부가세 토글
   await type('A상사에 330만원 세금계산서 끊고 메일 보내 줘');
@@ -351,8 +352,13 @@ async function flow(): Promise<void> {
   // 입력 보완: 되물은 거래처·금액에 짧게 답해도 이어진다
   await sendText('세금계산서');
   await until('ask cp', async () => (await js<string>(`document.querySelector('.sx-thread').lastElementChild.textContent`)).includes('어느 거래처'));
-  await js(`[...document.querySelectorAll('.reply-chips button')].find((b) => b.textContent === 'A상사').click()`);
-  await click('.sx-send');
+  // 되묻기 칩은 입력창 위 채우기 칩이다: 누르면 보내지 않고 입력창에만 채운다(최근 금액이 붙을 수 있다). 사용자가 고쳐서 보낸다.
+  check('되묻기 칩은 채우기 칩(거래처 후보)', await js<boolean>(`!!document.querySelector('#quick [data-fill="A상사"]')`));
+  await click('#quick [data-fill="A상사"]');
+  const filled = await js<string>(`document.querySelector('#composer').value`);
+  check('채우기 칩은 입력창에만 채우고 보내지 않는다', filled.startsWith('A상사') && (await js<string>(`document.querySelector('.sx-thread').lastElementChild.textContent`)).includes('어느 거래처'), filled);
+  check('입력창에 글이 있으면 칩을 숨긴다', (await js<number>(`document.querySelectorAll('#quick [data-fill], #quick [data-prompt]').length`)) === 0);
+  await sendText('A상사');
   await until('ask amount', async () => (await js<string>(`document.querySelector('.sx-thread').lastElementChild.textContent`)).includes('얼마를'));
   const before = await lastRunId();
   await sendText('77만원');
