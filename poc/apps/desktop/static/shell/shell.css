@@ -58,8 +58,10 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 .quick-label { margin-right: 2px; }
 .sx-quick .sx-meta { align-self: center; }
 .sx-quick button.is-soon { color: var(--ink-3); border-color: var(--line); background: transparent; }
+.sx-quick button.is-prompt, .sx-quick button.is-fill { display: inline-flex; align-items: center; gap: 6px; }
+.sx-quick button.is-fill { border-style: dashed; color: var(--ink-2); }
+.sx-quick button svg { width: 14px; height: 14px; flex: none; }
 .me-time { display: block; text-align: right; margin-top: 2px; }
-.reply-chips { margin-top: var(--space-2); }
 
 /* 승인 바 자리(ADR-021): 승인 대기 중에만 비운다. 바는 main이 이 위에 따로 그린다. */
 .bar-slot { flex: none; height: 0; }

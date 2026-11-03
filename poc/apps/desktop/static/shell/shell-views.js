@@ -31,6 +31,7 @@ const ICONS = {
   info: [16, 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z', 'M8 7.5v3.5M8 5v.5'],
   close: [16, 'M4 4l8 8M12 4l-8 8'],
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
+  pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
 };
 export function icon(name) {
   const [box, ...paths] = ICONS[name];
