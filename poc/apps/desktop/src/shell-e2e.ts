@@ -385,16 +385,16 @@ async function flow(): Promise<void> {
   const refocused = S.bar.snapshot();
   check('창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연', blurred.mode === 'unarmed' && refocused.mode === 'unarmed' && !refocused.armed, { blurred, refocused });
   // 금고가 부르는 비밀 창(ADR-025 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
-  S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'cert_password', scope: 'business' });
+  S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'portal_password', scope: 'business' });
   await sleep(100);
   const noWin = S.secretWindow() === null;
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T1', kind: 'cert_password', scope: 'business' });
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T1', kind: 'portal_password', scope: 'business' });
   await until('secret window', () => !!S.secretWindow() && !S.secretWindow()!.webContents.isLoading(), 5000);
   const sw = S.secretWindow();
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'portal_password', scope: 'business' });
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'security_card', scope: 'business', row: 7 });
   await sleep(100);
   const swText = sw ? await sw.webContents.executeJavaScript('document.body.innerText').catch(() => '') : '';
-  check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 공동인증서 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 공동인증서 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
+  check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 홈택스 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 홈택스 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
   if (sw) await fs.writeFile(path.join(OUT, '18b-secret-window.png'), (await capture(sw.webContents)).toPNG());
   sw?.close();
   await until('secret closed', () => S.secretWindow() === null, 3000);

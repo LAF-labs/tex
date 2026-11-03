@@ -107,7 +107,7 @@ engine: H-01 선택, 인자 추출(금액 파서 로컬) → 확인 카드 데�
 renderer: 확인 카드 표시 → 사용자 '발급 준비'
 engine: run(H-01) 시작, checkpoint A: ensure_session
   engine → chrome: 홈택스 로그인 페이지 → 공동인증서 선택 화면
-  engine → vault: typist.fill(step=cert_password)                   # 평문은 vault에만; 비밀 창 개시 → 엔진 명령 보류
+  engine → vault: typist.fill(step=portal_password)                 # 평문은 vault에만; 비밀 창 개시 → 엔진 명령 보류
   vault ⇄ chrome(CDP): 비밀번호 입력 → 완료 신호(값 없음)              # 홈택스 가상키패드 칸이면 human:secret, 역시 비밀 창
   engine: decide(screen_state_v2) → 로그인 성공 확인
   ... 건별발급 화면 입력(engine), assert(합계)

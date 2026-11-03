@@ -142,7 +142,7 @@ function counterpartyView(c: DbCounterparty, items: Record<string, string>): Cou
 }
 
 export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
-  // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 디버그 스위치가 있으면 끝낸다(ADR-021·022, 값싼 차단).
+  // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 디버그 스위치가 있으면 끝낸다(ADR-021·ADR-025 결정 8, 값싼 차단).
   assertNoDebugSwitches(app);
   serve();
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.

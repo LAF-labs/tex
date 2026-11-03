@@ -128,7 +128,7 @@
 interface VaultAPI {
   unlock(reason: string): Promise<void>;                        // 사람 비밀: Windows 세션 추종(§2). 유휴 잠금 뒤·엄격 모드는 Hello 사본(Rust N-API), TTL vault.unlockTtlSec
   // 저장: 전용 입력 창(금고와 직결된 MessagePort)에서만 호출된다. main·renderer 본체는 평문을 중계하지 않는다
-  store(kind: SecretKind, scope: ProfileId, consent: ConsentRecord): Promise<SecretHandle>;   // 값은 전용 입력 창에서 금고로 직접 온다. 보안카드는 30개 번호를 한 묶음으로 저장(위임 등급, ADR-020 결정 3)
+  store(kind: SecretKind, scope: ProfileId, consent: ConsentRecord): Promise<SecretHandle>;   // 값은 전용 입력 창에서 금고로 직접 온다. 보안카드는 칸별 항목 `securitycard/<profile>/<row>`로 저장(세션 결박 등급, ADR-026)
   forget(handle: SecretHandle): Promise<void>;
   has(kind: SecretKind, scope: ProfileId): Promise<boolean>;
   browser: { launch(): Promise<void>; relayPort(): MessagePort; shutdown(): Promise<void>; };   // launch 인자 없음 (A-08)

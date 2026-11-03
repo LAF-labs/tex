@@ -18,6 +18,12 @@ const isWin = process.platform === 'win32';
 const baseArgs = process.getuid?.() === 0 ? ['--no-sandbox'] : [];
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const exists = (p: string) => fsSync.existsSync(p);
+/** macOS는 HOME을 바꾸면 기본 키체인을 못 찾는다(DB 키를 못 얻어 DB가 안 생긴다). 임시 HOME에 실제 Library/Keychains 링크를 둔다. */
+async function linkKeychains(home: string): Promise<void> {
+  if (process.platform !== 'darwin') return;
+  await fs.mkdir(path.join(home, 'Library'), { recursive: true });
+  await fs.symlink(path.join(os.userInfo().homedir, 'Library', 'Keychains'), path.join(home, 'Library', 'Keychains'));
+}
 
 /** 임시 홈(HOME·LOCALAPPDATA) 아래의 앱 루트(defaultAppRoot와 같은 규칙). */
 const rootUnder = (home: string) => (isWin ? path.join(home, 'SovereignAX') : process.platform === 'darwin' ? path.join(home, 'Library', 'Application Support', 'SovereignAX') : path.join(home, '.local', 'share', 'SovereignAX'));
@@ -44,6 +50,7 @@ async function run(env: Record<string, string>, extra: string[], until: () => bo
 }
 
 const tmp = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-smoke-'));
+await linkKeychains(tmp);
 const plan = smokeRootPlan({ env: process.env, tmp, realRoot: defaultAppRoot(), exists });
 if (!plan.ok) {
   console.error(plan.reason);
@@ -90,6 +97,7 @@ await fs.writeFile(path.resolve(import.meta.dirname, '../reports/raw/app-smoke.j
 async function plantedLinksRun(): Promise<Record<string, unknown>> {
   const home = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-smoke-home-'));
   try {
+    await linkKeychains(home);
     const root = rootUnder(home);
     const outside = path.join(home, 'outside');
     await fs.mkdir(root, { recursive: true, mode: 0o700 });
