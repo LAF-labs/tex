@@ -257,7 +257,7 @@ describe('audit-v V3 고정 화면 확인 식', () => {
     assert.deepEqual(checkSessionCommand('Runtime.evaluate', { expression: INSPECT_EXPR }, { active: true, tainted: true }, policy, new Set()), { ok: false, reason: 'secret_window_active' });
   });
 
-  it('audit-v: SignalWatch.inspect reads body text through relay in tainted state', { timeout: 60_000 }, async (t) => {
+  it('audit-v: SignalWatch.inspect reads body text through relay in tainted state', { timeout: 60_000 }, async () => {
     const fx = await startFixture();
     const h = await startHarness();
     try {
@@ -280,16 +280,11 @@ describe('audit-v V3 고정 화면 확인 식', () => {
       assert.equal(seen.status, 200);
       await assert.rejects(page.evaluate(() => document.body.innerText)); // Playwright는 중계 거부를 문맥 소멸 오류로 바꿔 알린다
       // 엔진 쪽(E 패키지) SignalWatch가 같은 식을 쓰는지
-      const expr = (engine as Record<string, unknown>).SIGNAL_INSPECT_EXPR;
-      if (typeof expr !== 'string') {
-        t.skip('E 패키지 병합 전(SIGNAL_INSPECT_EXPR 없음)');
-      } else {
-        assert.equal(expr, INSPECT_EXPR);
-        const hits: string[] = [];
-        const watch = new engine.SignalWatch(page, { dict: [{ id: 'audit.v3', kind: 'busy', text: '로그인', source: 'audit-v' }], portalHost: () => true, onHit: (x) => hits.push(x.id), onDialog: (d) => void d.dismiss(), mono: () => 0 });
-        await watch.inspect(page);
-        assert.ok(hits.includes('audit.v3'), '오염 상태에서도 본문 문구 신호를 본다');
-      }
+      assert.equal(engine.SIGNAL_INSPECT_EXPR, INSPECT_EXPR);
+      const hits: string[] = [];
+      const watch = new engine.SignalWatch(page, { dict: [{ id: 'audit.v3', kind: 'busy', text: '로그인', source: 'audit-v' }], portalHost: () => true, onHit: (x) => hits.push(x.id), onDialog: (d) => void d.dismiss(), mono: () => 0 });
+      await watch.inspect(page);
+      assert.ok(hits.includes('audit.v3'), '오염 상태에서도 본문 문구 신호를 본다');
       await browser.close().catch(() => {});
     } finally {
       await h.close();

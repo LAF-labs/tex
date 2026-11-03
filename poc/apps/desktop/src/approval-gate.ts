@@ -173,7 +173,7 @@ export const BAR_MESSAGES = {
 } as const;
 export const ACTION_TEXT = '승인하고 발급';
 export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
-export const ACTION_TEXT_DUP_COMMITTED = '발급된 기록을 확인했고 한 번 더 발급';
+export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
 
 /** 스크립트 없는 정적 페이지. 값은 이스케이프해 텍스트로만 넣는다. 바 전체가 동작 하나라 안에 작은 버튼이 없다. */
 export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, action = ACTION_TEXT): string {

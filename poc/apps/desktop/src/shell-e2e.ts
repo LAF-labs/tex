@@ -355,9 +355,9 @@ async function flow(): Promise<void> {
   const fd = new Map(gates.get(idDup)!.fields.map((x) => [x.fieldKey, x.value]));
   const dupLines = summarize(gates.get(idDup)!) as SummaryLine[];
   await waitArmed();
-  check('같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 "이미 발급됨"·"한 번 더 발급"', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '이미 발급됨(승인번호 있음)' && dupLines[1]?.tone === 'attention' && S.bar.snapshot().action === '발급된 기록을 확인했고 한 번 더 발급', { fields: [...fd], action: S.bar.snapshot().action });
+  check('같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 "이미 발급됨"·"한 번 더 발급"', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '이미 발급됨(승인번호 있음)' && dupLines[1]?.tone === 'attention' && S.bar.snapshot().action === '그래도 한 번 더 발급', { fields: [...fd], action: S.bar.snapshot().action });
   const dupCard = await js<string>(`document.querySelector('[data-run="${idDup}"]').textContent`);
-  check('승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다', dupCard.includes('한 번 더 발급하면 같은 계산서가 2건이 돼요') && dupCard.includes('[발급된 기록을 확인했고 한 번 더 발급]'), dupCard.slice(0, 300));
+  check('승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다', dupCard.includes('한 번 더 발급하면 같은 계산서가 2건이 돼요') && dupCard.includes('[그래도 한 번 더 발급]'), dupCard.slice(0, 300));
   await shot('17-dup-warning');
   await stopRun(idDup);
 

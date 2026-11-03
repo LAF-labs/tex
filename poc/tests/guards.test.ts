@@ -183,7 +183,7 @@ describe('정적·구성 경계', () => {
     for (const [states, flag] of [['committed,not_committed', '이미 발급됨(승인번호 있음)'], ['in_doubt,not_committed', '발급 여부 확인 안 됨'], ['dispatched,not_committed', '발급 여부 확인 안 됨']]) {
       assert.equal((summarize(base({ '$dup.businessKey': states!, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[1]!.flag, flag, states);
     }
-    assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /<body class="armed attn">.*발급된 기록을 확인했고 한 번 더 발급/s);
+    assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /<body class="armed attn">.*그래도 한 번 더 발급/s);
   });
 
   it('게이트 요청 v2: main이 fields로 해시를 다시 계산한다. 예약 키를 빼거나 값을 바꾸면 맞지 않는다. LocalApproval v2', () => {
