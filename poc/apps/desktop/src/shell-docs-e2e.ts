@@ -330,7 +330,7 @@ async function main(): Promise<void> {
   check('암호로 읽는 동안 창을 닫고 앱 틀을 풀되, 가져오기는 읽는 중으로 막는다(그만둔 뒤 보관되는 경쟁 없음)', !locked.modal && !locked.inert && locked.importBusy === true, locked);
   await until('locked imported', async () => (await listDocs()).length === before + 1, 60_000);
   await until('import button back', async () => !(await busy()), 10_000);
-  check('맞는 암호 → 보관하고 암호 창은 다시 뜨지 않는다, 포커스는 가져오기 버튼', (await listDocs()).length === before + 1 && (await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert && document.activeElement === document.querySelector('[data-act=doc-import]')`)));
+  check('맞는 암호 → 보관하고 암호 창은 다시 뜨지 않는다', (await listDocs()).length === before + 1 && (await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert`)));
   check('열기 암호로 가져온 서류만 목록 이름 옆에 자물쇠', await js<boolean>(`document.querySelectorAll('[data-doc-lock]').length === 1 && document.querySelector('[data-doc-lock]').getAttribute('aria-label') === '열기 암호 있음'`));
 
   const vaultFiles = await fs.readdir(vaultDir);

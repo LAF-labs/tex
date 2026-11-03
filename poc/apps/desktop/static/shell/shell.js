@@ -914,34 +914,18 @@ function passwordModal() {
   );
 }
 
-/** 창을 닫은 뒤 포커스를 가져오기 버튼에 돌려줄 차례(읽는 동안은 버튼이 막혀 있어 끝난 뒤 돌려준다). */
-let modalReturn = false;
-
 function renderModal() {
   const root = $('#modal');
   const open = state.view === 'docs' && !!state.docImport && !state.docBusy;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
-  const lost = !a || a === document.body || root.contains(a);
-  const focus = !root.firstChild || lost;
-  if (root.firstChild && !open) modalReturn = true;
+  const focus = !root.firstChild || !a || a === document.body || root.contains(a);
   root.replaceChildren(...(open ? [passwordModal()] : []));
   $('#app').inert = open;
-  if (open) {
-    modalReturn = false;
-    if (focus) {
-      const i = root.querySelector('.doc-pw');
-      i.focus();
-      i.setSelectionRange(i.value.length, i.value.length);
-    }
-    return;
-  }
-  // 그사이 다른 곳으로 옮긴 포커스·다른 화면이면 돌려주지 않는다
-  if (state.view !== 'docs' || !lost) modalReturn = false;
-  const back = $('[data-act=doc-import]');
-  if (modalReturn && lost && back && !back.disabled) {
-    modalReturn = false;
-    back.focus();
+  if (open && focus) {
+    const i = root.querySelector('.doc-pw');
+    i.focus();
+    i.setSelectionRange(i.value.length, i.value.length);
   }
 }
 
@@ -950,6 +934,8 @@ function cancelPassword() {
   call('docs.importCancel', { pickId: state.docImport.pickId }).catch(() => {});
   state.docImport = null;
   render();
+  // 사용자가 창을 닫았다(Esc·취소·닫기): 포커스를 창을 연 가져오기 버튼으로 돌려준다(대화 화면에는 없다)
+  $('[data-act=doc-import]')?.focus();
 }
 
 async function importDoc(params) {
