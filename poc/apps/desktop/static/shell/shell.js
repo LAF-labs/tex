@@ -1,7 +1,7 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
 import { g24Card, g24Panel } from './shell-g24.js';
-import { btn, CHIP, chip, dayLabel, dday, ddayText, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -485,14 +485,15 @@ function docsView() {
     h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
     state.docImport ? passwordRow() : null,
     listTable(
-      [['서류'], ['유효', 'num'], ['발급일'], ['용도'], ['출처']],
-      list.map(({ d, n }) =>
+      [['서류'], ['발급일'], ['용도'], ['출처']],
+      list.map(({ d }) =>
         h(
           'tr',
-          { class: state.panel?.id === d.id ? 'is-on' : null, 'data-doc-row': d.id, onclick: () => openPanel({ kind: 'doc', id: d.id }) },
+          // 만료일 확실성(문서·추정·확인함)은 상세 패널 유효 칸에 보인다. 행에는 속성으로만 둔다(시험이 읽는다).
+          { class: state.panel?.id === d.id ? 'is-on' : null, 'data-doc-row': d.id, 'data-expiry-tag': d.vault && d.expiresOn ? expiryTag(d) : null, onclick: () => openPanel({ kind: 'doc', id: d.id }) },
           h('td', { class: 'name' }, d.name, d.profile === 'personal' ? h('span', { class: 'sx-tag doc-tag' }, '개인') : null, d.vault?.needsUser ? h('span', { class: 'doc-flag' }, '확인 필요') : null),
-          h('td', { class: `num${n !== null && n <= 7 ? ' is-attention' : ''}${n === null ? ' is-none' : ''}` }, ddayText(n), d.vault && d.expiresOn ? h('span', { class: 'sx-tag doc-tag' }, expiryTag(d)) : null),
-          h('td', { class: d.issuedOn ? null : 'is-none' }, d.issuedOn ?? '—'),
+          // 유효 열은 두지 않는다(캔버스 D-01). 만료 임박은 거르기·정렬과 상세 패널에 남는다.
+          h('td', { class: d.issuedOn ? null : 'is-none' }, d.issuedOn ?? '—', d.issuedOn && agoText(d.issuedOn, state.today) ? h('span', { class: 'sx-meta doc-ago' }, agoText(d.issuedOn, state.today)) : null),
           h('td', { class: d.purpose ? null : 'is-none' }, d.purpose || '—'),
           h('td', { class: 'sx-meta' }, d.source),
         ),
@@ -701,18 +702,26 @@ function activityPanel(row) {
 }
 
 const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '폰 연결', '내 데이터'];
-const AUTH_OPTS = [
+const AUTH_DESC = [
   ['사업자 간편인증', '발급할 때마다 폰에서 승인해요'],
-  ['보안카드', '한 번 등록하면 앱이 알아서 입력해요 · 홈택스 아이디 로그인 필요'],
+  ['보안카드', '번호 30개 등록됨 · 앱이 알아서 입력해요 · 홈택스 아이디 로그인'],
   ['공동인증서', '비밀번호는 발급할 때마다 직접 입력해요'],
   ['금융인증서', '6자리 비밀번호를 발급할 때마다 직접 입력해요'],
 ];
+const authDesc = (name) => AUTH_DESC.find(([k]) => name.startsWith(k))?.[1] ?? '';
+
+/** 등록한 발급 인증(캔버스 S-02). 기본은 프로필의 인증이고, 나머지 줄은 데모 목업이다(엔진·금고에는 하나만 있다). */
+function authList() {
+  const b = state.boot.profiles.business;
+  const main = b.auth.replace(/\s*\(([^)]+)\)$/, ' · $1');
+  const extra = [['보안카드', true], [`공동인증서 · ${b.name}`, false]].filter(([name]) => !main.startsWith(name.split(' · ')[0]));
+  return [{ name: main, main: true }, ...extra.map(([name, reRegister]) => ({ name, main: false, reRegister }))];
+}
 
 /** 설정(캔버스 S-02 · 발급 인증). 이 데모는 보여 주기만 하고 바꾸지 않는다. */
 function settingsView() {
-  const auth = state.boot.profiles.business.auth;
-  const app = /\(([^)]+)\)/.exec(auth)?.[1] ?? '—';
   const mock = () => toast('목업: 이 데모에서는 설정을 바꾸지 않아요');
+  const small = (label, quiet) => h('button', { type: 'button', class: `auth-act${quiet ? ' is-quiet' : ''}`, onclick: mock }, label);
   return h(
     'section',
     { class: 'rail-screen settings', 'data-view': 'settings' },
@@ -726,29 +735,23 @@ function settingsView() {
       'div',
       { class: 'set-body' },
       waitingChip(),
-      h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서와 증명서를 발급할 때 쓰는 인증이에요. 온보딩에서 한 번 고르면 모든 발급에 같은 방법을 쓰고, 바꿀 때는 여기서만 바꿔요.')),
+      h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서와 증명서를 발급할 때 쓰는 인증이에요. 여러 개를 등록해 둘 수 있고, 발급에는 기본 인증을 써요.')),
       h(
         'div',
-        { class: 'sx-card opt-list' },
-        AUTH_OPTS.map(([label, desc]) => {
-          const on = auth.startsWith(label);
-          return h(
-            'button',
-            { type: 'button', class: `sx-opt${on ? ' is-on' : ''}`, 'aria-pressed': String(on), onclick: on ? null : mock },
-            h('span', { class: 'sx-radio' }),
-            h('span', { class: 'opt-main' }, h('span', {}, label), h('span', { class: 'sx-meta' }, on && app !== '—' ? `${app} · ${desc}` : desc)),
-            on ? h('span', { class: 'sx-chip' }, '사용 중') : null,
-          );
-        }),
+        { class: 'sx-card auth-list', 'data-auth-list': '' },
+        authList().map((a) =>
+          h(
+            'div',
+            { class: 'auth-row', 'data-auth-main': a.main ? '' : null },
+            h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, a.name), h('span', { class: 'sx-meta' }, authDesc(a.name))),
+            a.main ? h('span', { class: 'sx-chip is-done' }, '기본') : small('기본으로'),
+            a.reRegister ? small('다시 등록', true) : null,
+            small('삭제', true),
+          ),
+        ),
       ),
-      kv(
-        [
-          ['인증 앱', app],
-          ['보안카드', '—', { state: 'empty', tag: '등록 안 됨', copy: mock, copyLabel: '등록하기' }],
-        ],
-        true,
-      ),
-      h('p', { class: 'sx-meta' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 방법으로 끝내요.'),
+      h('div', { class: 'sx-actions' }, btn([icon('plus'), '인증 추가'], mock), h('span', { class: 'sx-meta' }, '사업자 간편인증(다른 은행 앱)·보안카드·공동인증서·금융인증서를 더할 수 있어요')),
+      h('p', { class: 'sx-meta' }, '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 이 데모의 기본 외 줄은 목업이에요.'),
       h('div', { class: 'rule' }),
       h(
         'label',

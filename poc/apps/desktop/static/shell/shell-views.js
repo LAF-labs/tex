@@ -69,6 +69,11 @@ export function dday(s, today) {
   return Math.round((parse(s) - t) / 86400000);
 }
 export const ddayText = (n) => (n === null ? '—' : n < 0 ? '만료됨' : n === 0 ? 'D-day' : `D-${n}`);
+/** 발급일 뒤에 붙는 "(n일 전)". 오늘이면 "(오늘)", 날짜가 없거나 미래면 붙이지 않는다. */
+export function agoText(s, today) {
+  const n = dday(s, today);
+  return n === null || n > 0 ? '' : n === 0 ? '(오늘)' : `(${-n}일 전)`;
+}
 
 // ---- 컴포넌트 ----
 
