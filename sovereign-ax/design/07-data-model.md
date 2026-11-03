@@ -120,7 +120,7 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   action_hash TEXT NOT NULL,
   state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt','observed_manual')) NOT NULL,
   reason TEXT,                               -- not_committed 사유: pre_dispatch_mismatch | identity_mismatch | payload_mismatch | verify
-  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,  -- verify_ref: committed 판정의 B₁\B₀ 한 건(H-01 승인번호). bind 유무와 무관, 증언으로 확정된 행은 NULL (ADR-024)
+  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,  -- verify_ref: committed 판정의 B₁\B₀ 한 건(H-01 승인번호). bind 유무와 무관, verify로 확정되지 않은 행은 NULL (ADR-024)
   cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(ledgerHmacKey = 엔진이 DB 키에서 HKDF로 파생). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
   recipient_email_hmac TEXT,                 -- 받는 이메일 HMAC(같은 키, 소문자 + 도메인 punycode로 정규화). 처음 보내는 주소 판정(ADR-021)
   PRIMARY KEY(intent_id, step_id)
@@ -250,7 +250,7 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 - 서버가 알 수 있는 것(정직한 서술, 상충 C/X-05): 프로필 슬롯 개수, 그리고 사업자 프로필이 있으면 `profile_slots.biz_hmac`이 있으므로 '사업자 프로필 보유' 여부를 안다. 사업자번호·상호는 모른다. 슬롯 번호는 종류를 뜻하지 않는다.
 - dedup(C-13): 서버 `dedup_token`을 **삭제**했다. 중복 판단은 로컬 `documents.sha256 → blob_id` 매핑으로만 한다. 새 PC 복구 시에는 블롭 안의 암호화된 문서 머리(§6)에서 `sha256`을 되살려 매핑을 다시 만든다.
 - `K_idx`는 dedup에 쓰지 않는다. 남은 용도는 프로필 사업자 HMAC(B-28, Phase 1부터)과 업무 키 표시 HMAC(`biz_key_marks`, B-30, Phase 2·데스크톱 2대 계정, ADR-024)이며 서버 테이블은 D09 §2·§6에 있다.
-- **발급 활동 표시**(정직한 서술, E-07, ADR-024): 위 "없는 것" 원칙의 예외로, Phase 2에서 활성 데스크톱이 2대 이상이고 백업(메타데이터 동기화)을 켠 계정에서는 서버 `biz_key_marks`에 업무 키 HMAC·상태(`armed`·`committed`·`in_doubt`·`observed_manual`)·일 단위 날짜가 90일(`armed`는 10분) 남는다. 초 단위 시각은 없지만 서버는 이것으로 계정별 발급 건수·영업 리듬과 게이트 조회 시각을 안다. 백업을 끄거나 PC가 한 대면 이 기록이 없고, 기기 간 중복 경고는 PC가 포털 발급목록 기준선으로만 한다(D09 §6, D03 §4). Phase 1에는 이 기록이 없다.
+- **발급 활동 표시**(정직한 서술, E-07, ADR-024): 위 "없는 것" 원칙의 예외로, Phase 2에서 폐기되지 않은 데스크톱이 2대 이상이고 백업(메타데이터 동기화)을 켠 계정에서는 서버 `biz_key_marks`에 업무 키 HMAC·상태(`armed`·`committed`·`in_doubt`·`observed_manual`)·일 단위 날짜가 90일(`armed`는 10분) 남는다. 초 단위 시각은 없지만 서버는 이것으로 계정별 발급 건수·영업 리듬과 게이트 조회 시각을 안다. 백업을 끄거나 PC가 한 대면 이 기록이 없고, 기기 간 중복 경고는 PC가 포털 발급목록 기준선으로만 한다(D09 §6, D03 §4). Phase 1에는 이 기록이 없다.
 
 ## 6. E2EE 블롭 봉투
 
