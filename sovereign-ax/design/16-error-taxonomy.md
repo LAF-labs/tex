@@ -24,7 +24,7 @@
 | `vault` | `dbkey_requested_twice` | DB 키 요청이 금고 기동당 2회째(A-24, **보안 이벤트**) | `err.vault.dbkey_requested_twice` | 거부 |
 | `vault` | `extension_not_allowed` | 전용 프로필에 허용 목록 밖 확장(A-11) | `err.vault.extension_not_allowed` | 비밀 창 거부, 제거 안내 |
 | `storage` | `acl_weak` | 사용자 지정 보관함 폴더의 접근 권한이 약함(A-19) | `err.storage.acl_weak` | 경고, 기본 위치 권장 |
-| `ledger` | `in_doubt` / `duplicate_business_key` | 결과 미확정 / 업무 키 중복 경고(기기 간 표시 포함) | `err.ledger.*` | InDoubt / 카드 경고 |
+| `ledger` | `in_doubt` / `duplicate_business_key` | 결과 미확정 / 업무 키 중복 경고(포털 기존 건은 `portal_existing`, Phase 2 기기 간 표시 포함) | `err.ledger.*` | InDoubt / 카드 경고 |
 | `ledger` | `portal_existing` | 게이트 직전 verify 기준선 B₀에 이 PC 원장에 없는 같은 건 승인번호가 있음(다른 PC·포털 직접 발급, `$dup.portalExisting`, ADR-024) | `err.ledger.portal_existing` | 카드 경고(차단 아님) |
 | `ledger` | `concurrent_other_pc` | 게이트 직전 조회에서 다른 PC의 `armed` 표시(10분 이내) 발견(E-13, Phase 2·데스크톱 2대 계정, ADR-024) | `err.ledger.concurrent_other_pc` | 카드 경고(차단 아님) |
 | `ledger` | `observed_manual` | 핸드오프 중 커밋 요청 관측 또는 "직접 발급함"(R-C2, B-04) | `err.ledger.observed_manual` | 재개 전 verify |

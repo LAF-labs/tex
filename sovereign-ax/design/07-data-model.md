@@ -120,7 +120,7 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   action_hash TEXT NOT NULL,
   state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt','observed_manual')) NOT NULL,
   reason TEXT,                               -- not_committed 사유: pre_dispatch_mismatch | identity_mismatch | payload_mismatch | verify
-  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,
+  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,  -- verify_ref: committed 판정의 B₁\B₀ 한 건(H-01 승인번호). bind 유무와 무관, 증언으로 확정된 행은 NULL (ADR-024)
   cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(ledgerHmacKey = 엔진이 DB 키에서 HKDF로 파생). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
   recipient_email_hmac TEXT,                 -- 받는 이메일 HMAC(같은 키, 소문자 + 도메인 punycode로 정규화). 처음 보내는 주소 판정(ADR-021)
   PRIMARY KEY(intent_id, step_id)

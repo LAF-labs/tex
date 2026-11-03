@@ -175,8 +175,8 @@
 
 ### 4.4 `verify`의 의미와 조회 하위 플레이북 (B-07, B-08)
 
-- **기준선**: 게이트 직전에 같은 하위 플레이북으로 `match`에 맞는 행의 승인번호 집합 B₀를 찍어 둔다. 기준선 조회가 실패하면 게이트를 열지 않고 `verify.baseline_missing`으로 핸드오프한다(아직 커밋 전이므로 안전). B₀에 이 PC 원장이 모르는 승인번호가 있으면 다른 PC·포털 직접 발급의 같은 건으로 보고 `$dup.portalExisting`을 띄운다(§7, ADR-024).
-- **판정**: 제출 뒤 매칭 집합 B₁에서 `B₁ \ B₀`가 **정확히 1건**이면 `committed`이고, 그 승인번호를 `bind`로 변수에 묶는다. `B₁ \ B₀`가 0건이면서 `notCommittedPolicy.minElapsedMs`가 지났고 `lookups`회 연속 0건이며 제출 화면에 **명시적 실패 신호**(오류 대화상자 텍스트, 서명 거절 화면 — 신호 목록은 S1에서 확정)가 있을 때만 `not_committed`다. 2건 이상이거나 그 밖의 경우는 모두 `unknown`이다.
+- **기준선**: 게이트 직전에 같은 하위 플레이북으로 `match`에 맞는 행의 승인번호 집합 B₀를 찍어 둔다. 기준선 조회가 실패하면 게이트를 열지 않고 `verify.baseline_missing`으로 핸드오프한다(아직 커밋 전이므로 안전). 업무 중복 키(§7)가 있는 주 비가역 스텝에서는 B₀에 이 PC 원장(`verify_ref`)에 없는 번호가 있으면 `$dup.portalExisting`을 띄운다(§7, ADR-024).
+- **판정**: 제출 뒤 매칭 집합 B₁에서 `B₁ \ B₀`가 **정확히 1건**이면 `committed`이고, 그 승인번호를 `bind`로 변수에 묶는다. 엔진은 `bind`가 있든 없든 그 한 건을 원장 `verify_ref`에 적는다(InDoubt 조회 해소·`observed_manual` 확정 포함, ADR-024). `B₁ \ B₀`가 0건이면서 `notCommittedPolicy.minElapsedMs`가 지났고 `lookups`회 연속 0건이며 제출 화면에 **명시적 실패 신호**(오류 대화상자 텍스트, 서명 거절 화면 — 신호 목록은 S1에서 확정)가 있을 때만 `not_committed`다. 2건 이상이거나 그 밖의 경우는 모두 `unknown`이다.
 - `match`는 참조만 받는다(상수 금지). 비가역 스텝의 확인에는 `$readback.*`(실제 제출 값)을 쓴다(V-04).
 - `baseline: none`은 `match`가 앞선 verify의 `bind`로 묶인 `$vars` 값(게이트 전에 존재하지 않던 고유 값, 예: 새 승인번호)을 키로 쓸 때만 허용한다.
 - 정책 기본값: `policy.verify.minElapsedMs = 60000`, `policy.verify.lookups = 2`. 플레이북 값은 이보다 엄격한 쪽만 쓴다. 실제 반영 지연 분포는 확인 필요(S1).
@@ -293,7 +293,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - **`intentId`**(ULID)는 `prepare()`가 만들고 카드에 표시한다. 리모트 명령은 폰이 만든 `cmd_id`를 그대로 쓴다.
 - 아이덴포턴시 원장(D07 `irreversible_log`)의 키는 **`(intent_id, step_id)`**이고 행은 `inputs_hash`·`package_digest`·`action_hash`에 결속된다. 같은 `intentId`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 다르면 거부한다(`ledger.intent_reuse`). 사후 스텝 점프는 **같은 `run_id`의 재개**에만 적용한다(D03 §4, B-10).
 - **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). 경고는 예약 `fieldKey` `$dup.*`로 게이트 `fields`에 넣어 `cardHash`에 묶고, PC에서는 main 승인 바의 "같은 건 기록을 확인했고 발급" 클릭이 명시 확인이다(ADR-021). 렌더러 카드에만 두면 침해된 렌더러가 지울 수 있기 때문이다. `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
-- **포털 기존 건**(Phase 1부터, ADR-024): 기준선 B₀(§4.4)에서 이 PC 원장의 `verify_ref`를 뺀 건수가 1 이상이면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다. 차단하지 않는다. 승인 바에는 "{포털}에 같은 건 N건 있음"으로 보이고, 카드에는 "{포털} 발급목록에 {`match` 항목}이 같은 건이 N건 있습니다. 다른 PC나 {포털}에서 직접 발급한 것일 수 있습니다"를 앱 고정 문구로 둔다. 같은 건의 범위는 `verify.lookup.match`가 정하므로 업무 중복 키보다 넓을 수 있다(H-01은 품목을 보지 않는다).
+- **포털 기존 건**(Phase 1부터, ADR-024): 업무 중복 키가 있는 주 비가역 스텝(지금은 세금계산서 발급)에서, 기준선 B₀(§4.4)에서 이 PC 원장의 `verify_ref`를 같은 정규화로 뺀 건수가 1 이상이면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다. 차단하지 않는다. 승인 바에는 합계 줄의 중복 표시 자리에 "{포털}에 같은 건 N건 있음"으로 보인다(표시 칸이 하나라 같은 업무 키가 발급됐거나 모름 다음, 직전 시도 발급 안 됨보다 앞에 둔다, ADR-024). 카드에는 앱 고정 문구 "{포털} 발급목록에 이 PC 기록에 없는 같은 건이 N건 있어요. 다른 PC나 {포털}에서 직접 발급했거나, 이 PC의 이전 시도일 수 있어요"를 둔다(`{포털}`은 앱 내장 이름, 패키지 문자열 없음). 같은 건의 범위는 `verify.lookup.match`가 정하므로 업무 중복 키보다 넓을 수 있다(H-01은 품목을 보지 않는다). 민원증명은 같은 날 다시 떼는 것이 정상이라 적용하지 않는다.
 - **기기 간 업무 키 표시**(B-30, Phase 2, ADR-024): 계정에 활성 데스크톱이 2대 이상이고 백업 스위치를 켠 경우에만 `armed`·`committed`·`in_doubt`·`observed_manual` 전이 때 `HMAC(K_idx, businessKey)`와 상태·날짜를 메타데이터 서버에 올리고, 게이트 직전에 조회해 다른 기기의 기록이 있으면 경고한다(차단 아님, `$dup.otherDevice`로 승인 바에도 보인다). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다. Phase 1과 PC 한 대 계정에는 없다(D03 §4, 서버 테이블은 D09 §6).
 - 선택안: 사용자 동의 시 비고란에 짧은 의도 코드(`AX-7K3P`)를 적어 조회 정확도를 높인다. 비고 칸은 readback 대상이므로 카드에 보인다.
 
