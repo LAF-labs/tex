@@ -1,0 +1,59 @@
+{
+  "date": "2026-11-03",
+  "env": { "macos": "26.6.2", "chrome": "156.0.8078.80" },
+  "account": {
+    "pocAccount": true,
+    "certUse": "개인(개인사업자)",
+    "note": "yulmu 11-03 판단으로 법인 대신 개인사업자 계정, 대표자 개인 공동인증서. 계정 주인 관찰 동의 확인(yanggang)."
+  },
+  "screens": [
+    {
+      "screen": "login.method",
+      "path": "",
+      "screenIds": {},
+      "elements": [],
+      "note": "인증서 선택·비밀번호 창이 떠 있어 Claude는 읽지 않음. 경로는 yanggang 보고: 로그인 → 공동·금융인증서 → 인증서 위치 '브라우저'. 1회차는 간편인증, 2회차는 [인증서 등록](개인) 뒤 공동인증서."
+    },
+    {
+      "screen": "home.loggedIn",
+      "path": "/websquare/websquare.html",
+      "screenIds": { "w2xPath": "/ui/pp/index_pp.xml", "menuCd": "index4" },
+      "elements": [
+        { "key": "", "frame": "main", "role": "link", "name": "로그아웃", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "로그인 상태 표시. href=javascript:void(0), id는 read_page로 확인 안 함" },
+        { "key": "", "frame": "main", "role": "link", "name": "나의 홈택스", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "" },
+        { "key": "", "frame": "main", "role": "link", "name": "나의 메뉴", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "" },
+        { "key": "", "frame": "main", "role": "link", "name": "전체메뉴", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "" },
+        { "key": "", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_wfHeader_header_query", "name": "", "ariaLabel": "" }, "required": false, "note": "헤더 검색창. 구조 스크립트: main forms 0, 요소 68, iframe txppIframe 요소 0" }
+      ]
+    },
+    {
+      "screen": "invoice.issue",
+      "path": "/websquare/websquare.html",
+      "screenIds": { "w2xPath": "/ui/pp/index_pp.xml", "menuCd": "UTEETBAA01" },
+      "elements": [
+        { "key": "form.root", "frame": "main", "role": "form", "name": "", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "감싸는 form 없음: 2회차 forms 18개지만 아래 요소는 모두 inForm=false. 접두 mf_txppWframe_ 영역이 사실상 루트" },
+        { "key": "form.supplierBizNo", "frame": "main", "role": "textbox", "name": "등록번호 입력", "attrs": { "id": "mf_txppWframe_edtSplrTxprNoTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급자 구역 맨 위. 미리 채워져 있음(값 미열람)" },
+        { "key": "", "frame": "main", "role": "button", "name": "", "attrs": { "id": "mf_txppWframe_btnSplrBsnoCnfrTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급자 등록번호 확인. 누르지 않음" },
+        { "key": "form.supplierName", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_edtSplrTnmNmTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급자 상호. 미리 채워져 있음" },
+        { "key": "", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_edtSplrEmlIdTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급자 이메일 아이디. 도메인 edtSplrEmlDmanTop, 선택 cmbSplrEmlDmanCtlTop" },
+        { "key": "form.counterpartBizNo", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_edtDmnrBsnoTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급받는자 등록번호. 주민번호용 edtDmnrResno1Top·Resno2Top 따로 있음" },
+        { "key": "form.lookupCounterpart", "frame": "main", "role": "button", "name": "", "attrs": { "id": "mf_txppWframe_btnDmnrBsnoCnfrTop", "name": "", "ariaLabel": "" }, "required": false, "note": "공급받는자 등록번호 '확인' 조회. 누르지 않음" },
+        { "key": "", "frame": "main", "role": "button", "name": "거래처 조회", "attrs": { "id": "", "name": "", "ariaLabel": "" }, "required": false, "note": "id 후보 btnClplcInqrTop·btnDmnrClplcInqrTop(어느 쪽인지 미확정). 누르지 않음" },
+        { "key": "form.counterpartName", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_edtDmnrTnmNmTop", "name": "", "ariaLabel": "" }, "required": true, "note": "필수입력 표시(시각 표시만, required 속성 없음)" },
+        { "key": "form.counterpartEmail", "frame": "main", "role": "textbox", "name": "공급받는자 이메일 주소", "attrs": { "id": "mf_txppWframe_edtDmnrMchrgEmlIdTop", "name": "", "ariaLabel": "" }, "required": true, "note": "아이디·도메인 두 칸: edtDmnrMchrgEmlIdTop + edtDmnrMchrgEmlDmanTop, 도메인 선택 cmbDmnrMchrgEmlDmanCtlTop. 부담당 edtDmnrSchrgEml*Top 따로. 필수입력 표시는 find 추정" },
+        { "key": "form.itemName", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTop", "name": "", "ariaLabel": "" }, "required": false, "note": "품목 행 반복(genEtxivLsatTop_N_). 1회차에만 보였고 2회차 스캔엔 행 없음(행 추가 btnLsatAddTop만)" },
+        { "key": "form.supplyAmount", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatSplCftTop", "name": "", "ariaLabel": "" }, "required": false, "note": "1회차에만 보임" },
+        { "key": "form.taxAmount", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_genEtxivLsatTop_0_edtLsatTxamtTop", "name": "", "ariaLabel": "" }, "required": false, "note": "1회차에만 보임" },
+        { "key": "form.issueDate", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_calWrtDtTop_input", "name": "mf_txppWframe_calWrtDtTop_input", "ariaLabel": "" }, "required": false, "note": "작성일자. 달력 버튼 calWrtDtTop_img" },
+        { "key": "form.remark", "frame": "main", "role": "textbox", "name": "", "attrs": { "id": "mf_txppWframe_edtRmrkCntnTop", "name": "", "ariaLabel": "" }, "required": false, "note": "" },
+        { "key": "form.receiptType", "frame": "main", "role": "radio", "name": "", "attrs": { "id": "mf_txppWframe_rdoRecApeClCdTop_input_0", "name": "mf_txppWframe_rdoRecApeClCdTop_input", "ariaLabel": "" }, "required": false, "note": "영수/청구 라디오 2개(_0, _1). 2회차에만 보임. portal.ts는 combobox로 가정" },
+        { "key": "", "frame": "main", "role": "button", "name": "초기화", "attrs": { "id": "mf_txppWframe_btnInit", "name": "", "ariaLabel": "" }, "required": false, "note": "input type=button. 누르지 않음" },
+        { "key": "", "frame": "main", "role": "button", "name": "발급미리보기", "attrs": { "id": "mf_txppWframe_btnIsnPreview", "name": "", "ariaLabel": "" }, "required": false, "note": "누르지 않음" },
+        { "key": "", "frame": "main", "role": "button", "name": "발급보류", "attrs": { "id": "mf_txppWframe_btnIsnRsrv", "name": "", "ariaLabel": "" }, "required": false, "note": "임시저장 성격. 누르지 않음" },
+        { "key": "form.issueButton", "frame": "main", "role": "button", "name": "발급하기", "attrs": { "id": "mf_txppWframe_btnIsn", "name": "", "ariaLabel": "" }, "required": false, "note": "input type=button, form 밖. 누르지 않음" },
+        { "key": "", "frame": "dscert", "role": "button", "name": "", "attrs": { "id": "btn_deleteCert", "name": "", "ariaLabel": "" }, "required": false, "note": "인증서 모듈 프레임(창 닫힌 상태의 DOM). 같은 프레임에 in_browser·btn_viewCert·btn_confirm_iframe·btn_cancel·btn_alert_confirm(name okBtn)·btn_common_confirm/btn_common_cancle 2쌍(id 중복)" }
+      ]
+    }
+  ],
+  "stops": []
+}
