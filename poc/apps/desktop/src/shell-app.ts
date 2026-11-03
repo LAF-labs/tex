@@ -276,10 +276,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
     const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
     let w: BrowserWindow;
+    let port: ReturnType<typeof host.secretInputPort> | null = null;
     try {
-      w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
+      port = host.secretInputPort(bind);
+      w = openSecretWindow(win, bind, port, `${SHELL_SCHEME}://shell/secret.html`);
     } catch (e) {
       // 열지 못했으면 '열림'을 남기지 않는다(남으면 이후 요청이 줄만 서고 창이 영영 안 열린다). 든 요청도 버린다.
+      // 이미 만든 금고 입력 포트도 닫아 금고 쪽 결속을 끝낸다.
+      port?.close();
       secrets.closed();
       return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
     }

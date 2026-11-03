@@ -32,11 +32,17 @@ export function openSecretWindow(parent: BrowserWindow, bind: SecretInputBind, p
       preload: path.join(STATIC, 'preload-secret.cjs'),
     },
   });
-  win.setMenu(null);
-  win.setContentProtection(true);
-  hardenWindow(win);
-  // 제목줄은 main이 정한 글자 그대로(페이지 <title>로 바꾸지 못한다).
-  win.on('page-title-updated', (e) => e.preventDefault());
+  try {
+    win.setMenu(null);
+    win.setContentProtection(true);
+    hardenWindow(win);
+    // 제목줄은 main이 정한 글자 그대로(페이지 <title>로 바꾸지 못한다).
+    win.on('page-title-updated', (e) => e.preventDefault());
+  } catch (e) {
+    // 하드닝 못 한 창은 남기지 않는다(포트는 부른 쪽이 닫는다).
+    win.destroy();
+    throw e;
+  }
   // 넘기기 전에 창이 닫히면 포트를 닫아 금고 쪽 결속을 끝낸다(넘긴 뒤에는 창과 함께 사라진다).
   let sent = false;
   const drop = () => {
