@@ -47,7 +47,12 @@
      - verify `not_committed`: 게이트 앞 체크포인트로 `Paused`
      - verify `unknown`: `InDoubt`
    - 새 수준이 `postprocess`이거나 kill이면 그 포털의 자동화 Chrome을 닫는다(D03 §12, `postprocess`에서는 CDP를 쓰지 않는다).
-   - **Running 진입 확인**: Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, `HandedOff`·`Paused` 재개, `InDoubt` 해소)에서 그 시점의 실효 수준과 `killPlaybooks`를 확인한다. 실행을 허용하지 않으면 Running으로 가지 않고 `Paused(policy_downgrade)`로 간다. 다른 이유로 멈춰 있던 실행도 이 확인을 지나야 재개된다.
+   - **Running 진입 확인**: Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, `HandedOff`·`Paused` 재개, `InDoubt` 해소)에서 그 시점의 실효 수준과 `killPlaybooks`를 확인한다. 실행을 허용하지 않으면 Running으로 가지 않고, 현재 의도의 원장 상태에 따라 간다. 다른 이유로 멈춰 있던 실행도 이 확인을 지나야 재개된다.
+     - `committed`: 사후 스텝 없이 `CompletedWithIssues`로 끝낸다(종료 상태).
+     - `armed`·`dispatched`·`observed_manual`·`in_doubt`: `InDoubt`로 간다.
+     - 원장 행 없음 또는 `not_committed`: `Paused(policy_downgrade)`로 간다.
+
+     발급이 확정된 실행은 `Paused`로 가지 않는다. 재개나 새 의도로 같은 건이 다시 발급되는 길을 막기 위해서다.
    - `Paused(policy_downgrade)`는 **사용자가 재개를 누를 때만** 다시 시작하고, 시작하면 다시 게이트를 거친다. 데몬은 이 실행을 재시도하지 않는다.
    - **하향 뒤 `InDoubt` 해소**: 새 수준에서 조회 플레이북을 돌릴 수 없으면(`postprocess`·kill) 조회 재시도 없이 사용자 증언(D03 §2 `InDoubt` 행, ADR-021 결정 5)을 받는다. `armed_at`부터 `verify.minElapsedMs` 대기와 "발급목록 반영이 늦을 수 있습니다" 고정 문구(E-13)는 그대로 두고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 새 수준이 `assisted` 이상이면 기존 규칙(조회 재시도 1회 뒤 증언)을 따른다. 정지 하향 뒤의 해소는 Running으로 가지 않는다. `committed`로 확인되거나 증언되면 `CompletedWithIssues`, `not_committed`면 `Paused(policy_downgrade)`로 끝낸다.
 7. **반영 시간 목표**(운영 목표이며 측정한다):
