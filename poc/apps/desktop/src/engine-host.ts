@@ -8,12 +8,15 @@ import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityP
 import type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
 import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
+import { childEnv } from './child-env.ts';
+import type { SecretInputBind } from './secret-labels.ts';
 
 const require = createRequire(import.meta.url);
 
 /** main 프로세스 안에서 도는 금고(시험 정책·메모리 키, fixture 시연·e2e 전용). 앱 금고 entry는 설정을 받지 않는다. */
 export interface InlineVault {
-  attachPort(kind: 'engine' | 'control' | 'secretInput', port: PortLike): void;
+  /** secretInput 포트는 결속값(I-1)과 함께 붙인다. 금고는 그 값으로 한 번만 받는다. */
+  attachPort(kind: 'engine' | 'control' | 'secretInput', port: PortLike, bind?: SecretInputBind): void;
   shutdown(): Promise<void>;
 }
 
@@ -36,7 +39,10 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
  */
 export type GateAnswerResult = { ok: boolean; code?: string; verdict: 'engine' | 'not_sent' | 'unknown' };
 
-/** 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code). 끝난 뒤의 호출은 바로 실패한다. */
+/**
+ * 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code)
+ * · 'vault-event'(name, data: 금고 control 포트의 {t:'ev'}, I-2). 끝난 뒤의 호출은 바로 실패한다.
+ */
 export class EngineHost extends EventEmitter {
   readonly ready: Promise<void>;
   private readonly opts: EngineHostOptions;
@@ -54,18 +60,23 @@ export class EngineHost extends EventEmitter {
   constructor(opts: EngineHostOptions) {
     super();
     this.opts = opts;
-    this.engine = utilityProcess.fork(require.resolve('@sax/engine/entry'), [], { serviceName: 'sax-engine', stdio: 'ignore' });
+    this.engine = utilityProcess.fork(require.resolve('@sax/engine/entry'), [], { serviceName: 'sax-engine', stdio: 'ignore', env: childEnv(), execArgv: [] });
     const relay = new MessageChannelMain();
     const ctl = new MessageChannelMain();
     const gate = new MessageChannelMain();
     this.controlPort = ctl.port2;
-    this.controlPort.on('message', (e) => this.onReply(e.data));
+    this.controlPort.on('message', (e) => {
+      const m = e.data as { t?: string; name?: unknown; data?: unknown };
+      // 금고가 main에 알리는 것(secret.needed 등). 판단은 받는 쪽(shell-app)이 main 내장 표로 한다.
+      if (m?.t === 'ev' && typeof m.name === 'string') this.emit('vault-event', m.name, m.data);
+      else this.onReply(e.data);
+    });
     this.controlPort.start();
     this.gatePort = gate.port2;
     this.gatePort.on('message', (e) => this.onGate(e.data as GatePortMessage));
     this.gatePort.start();
     if (opts.vault === 'process') {
-      this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore' });
+      this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore', env: childEnv(), execArgv: [] });
       this.vaultProc.postMessage({ ports: ['engine', 'control'] }, [relay.port1, ctl.port1]);
       this.vaultProc.on('exit', (c) => this.exited('vault', c));
     } else {
@@ -156,11 +167,13 @@ export class EngineHost extends EventEmitter {
     });
   }
 
-  /** 비밀 입력 창용 금고 직결 포트. main은 포트를 넘기기만 하고 내용을 읽지 않는다. */
-  secretInputPort(): MessagePortMain {
+  // ---- 비밀 입력 포트: secretInputPort() 아래로는 게이트 포트를 쓰지 않는다(tests/h01-guards.test.ts가 이 경계를 본다) ----
+
+  /** 비밀 입력 창용 금고 직결 포트(I-1). 결속값과 함께 넘긴다. main은 포트를 넘기기만 하고 내용을 읽지 않는다. */
+  secretInputPort(bind: SecretInputBind): MessagePortMain {
     const ch = new MessageChannelMain();
-    if (this.vaultProc) this.vaultProc.postMessage({ ports: ['secretInput'] }, [ch.port1]);
-    else (this.opts.vault as InlineVault).attachPort('secretInput', wrapPort(ch.port1, 'electron'));
+    if (this.vaultProc) this.vaultProc.postMessage({ ports: ['secretInput'], bind }, [ch.port1]);
+    else (this.opts.vault as InlineVault).attachPort('secretInput', wrapPort(ch.port1, 'electron'), bind);
     return ch.port2;
   }
 

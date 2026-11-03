@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { GateRequest } from '@sax/engine/gate';
-import { dupMayBeIssued } from './approval-gate.ts';
+import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
 import type { EngineHost, GateAnswerResult } from './engine-host.ts';
 import { dayOffset, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type RunView, type StepState, type VatMode } from './shell-mock.ts';
 
@@ -15,10 +15,13 @@ type Phase = (typeof PHASES)[number];
 type EngineEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
-  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean };
+  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
+
+/** 모르는 화면(ADR-022 결정 3·5): 일반 실패 코드 대신 보이는 문장. */
+const UNKNOWN_SCREEN = '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.';
 
 /** 엔진 결과 코드 → 사용자 문구. 값은 넣지 않는다. */
-const NOTE: Record<string, string> = {
+export const NOTE: Record<string, string> = {
   'login.session_assumed': '가짜 페이지라 로그인을 건너뛰었어요',
   'run.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
   'gate.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
@@ -27,6 +30,12 @@ const NOTE: Record<string, string> = {
   'assert.fields_missing': '홈택스 화면에 비어 있는 칸이 있어 멈췄어요. 아무것도 발급하지 않았어요.',
   pre_dispatch_mismatch: '승인한 뒤 홈택스 화면 값이 바뀌어 발급 버튼을 누르지 않았어요. 아무것도 발급하지 않았어요.',
   'step.identity_mismatch': '홈택스 화면이 예상과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
+  'step.target_not_found': UNKNOWN_SCREEN,
+  'checkpoint.expect_failed': UNKNOWN_SCREEN,
+  'portal.unexpected_page': '홈택스가 예상하지 못한 화면으로 보내 멈췄어요. 전용 Chrome 창의 안내를 확인해 주세요. 아무것도 발급하지 않았어요.',
+  'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  'assert.issue_date_mismatch': '홈택스 작성일자가 오늘(한국 시간)과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
+  'vault.leak_suspected': '보안 점검에서 이상이 보여 멈췄어요. 아무것도 발급하지 않았어요. 앱을 다시 시작해 주세요.',
   'step.readback_mismatch': '홈택스 화면 값을 확실히 읽지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
   'verify.baseline_missing': '홈택스 발급목록을 미리 확인하지 못해 승인을 열지 않았어요.',
   'verify.not_committed': "직전 시도는 '발급 안 됨'으로 판정되었어요. 홈택스 발급목록을 직접 확인한 뒤 다시 준비해 주세요.",
@@ -40,15 +49,18 @@ const NOTE: Record<string, string> = {
   'engine.exit_before_approval': '엔진이 멈춰 승인 전에 끝났어요. 홈택스에는 아무것도 발급되지 않았어요. 앱을 다시 시작해 주세요.',
   'engine.exit': '엔진이 발급 도중에 멈춰 발급됐는지 모릅니다. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   // 요청률 정책(D03 §7, 코드는 D16 portal.*·policy.*). 숫자·날짜는 보수 모드(시계 역행)에서 바뀌므로 문구에 넣지 않는다.
-  'portal.blocked': '홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답, 반복된 추가 인증)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
+  'portal.blocked': '홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
   'portal.blocked_in_doubt': '발급 확인 중에 홈택스에서 차단·경고 신호가 보여 멈췄어요. 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   'portal.blocked_after_commit': '발급은 확정됐지만 그 뒤 홈택스에서 차단·경고 신호가 보여 멈췄어요. 다음 발급을 이어가기 전에 홈택스에 직접 접속해 상태를 확인해 주세요.',
-  'policy.cooldown': '홈택스 차단·경고 신호가 두 번 연속 나와 24시간 동안 홈택스 실행을 쉬고 있어요. 아무것도 발급하지 않았어요.',
+  'policy.cooldown': '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
   'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
+  'portal.extra_auth_repeat': '홈택스 추가 인증이 반복돼 앱이 스스로 멈췄어요(차단 신호는 아니에요). 홈택스에서 직접 인증을 마친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'portal.captcha': '홈택스에 자동입력방지 문자가 떠서 멈췄어요. 아무것도 발급하지 않았어요.',
   'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
   'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
-  'policy.irreversible_per_day': '오늘 홈택스 발급 횟수 상한에 닿아 발급하지 않았어요.',
+  // PoC 상한(ADR-022 결정 1). 앱이 집행하는 PoC 값이라 숫자를 문구에 넣는다.
+  'policy.irreversible_per_day': '오늘은 PoC 기간 하루 발급 상한(1건)에 닿았어요. 내일 다시 할 수 있어요.',
+  'policy.poc_irreversible_total': 'PoC 기간 전체 실발급 상한(3건)에 닿아 더 발급하지 않아요.',
   'policy.runs_per_session': '이번 홈택스 로그인으로 할 수 있는 실행 횟수를 다 써서 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.logins_per_day': '오늘 홈택스 로그인 횟수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.actuations_per_run': '한 번의 실행에서 할 수 있는 동작 수를 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -60,15 +72,52 @@ const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
 
-/** 승인 대기 카드에 붙는 중복 경고(D02 §7 고정 문구). 해당하는 것을 모두 둔다. 바에는 가장 위험한 하나가 표시된다. */
+/** 중복 카드 문장(ADR-024 UX). 발급 확정 / 발급 여부 모름 / 직전 시도 미발급. */
+export const DUP_NOTE = {
+  committed: '이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.',
+  unknown: '같은 건이 발급됐는지 아직 확인하지 못했어요. 홈택스 발급목록을 먼저 확인해 주세요.',
+  notCommitted: '직전 시도는 발급 안 됨으로 판정했어요. 다시 발급하기 전에 홈택스 발급목록을 한 번 확인해 주세요.',
+  other: '같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.',
+} as const;
+
+/** 승인 대기 카드에 붙는 중복 경고(D02 §7). 해당하는 것을 모두 둔다(발급 확정 → 모름 → 직전 미발급). 바에는 가장 위험한 하나가 표시된다. */
 function dupWarnings(req: GateRequest): string[] {
   const f = new Map<string, string>(req.fields.map((x) => [x.fieldKey, x.value]));
+  const states = (f.get('$dup.businessKey') ?? '').split(',');
   const out: string[] = [];
-  if (dupMayBeIssued(f)) out.push('같은 거래처·금액·날짜·품목으로 발급했거나 발급 여부를 모르는 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.');
-  if (f.get('$dup.priorNotCommitted') === 'true') out.push("직전 시도는 '발급 안 됨'으로 판정되었습니다. 홈택스 발급목록을 직접 확인한 뒤 승인하세요.");
-  if (!out.length && f.has('$dup.businessKey')) out.push('같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.');
+  if (states.includes('committed')) out.push(DUP_NOTE.committed);
+  if (states.some((s) => s !== 'committed' && ISSUED_OR_UNKNOWN.includes(s))) out.push(DUP_NOTE.unknown);
+  if (f.get('$dup.priorNotCommitted') === 'true') out.push(DUP_NOTE.notCommitted);
+  if (!out.length && f.has('$dup.businessKey')) out.push(DUP_NOTE.other);
   return out;
 }
+
+/** 금고 이벤트(I-2) → 카드 문장. runId가 없으면 진행 중인 실행에 붙인다. 모르는 이벤트는 null. */
+export function vaultNotice(name: string, data: unknown): { runId?: string; text: string } | null {
+  const d = (data ?? {}) as Record<string, unknown>;
+  if (name === 'secret.expired') return { runId: typeof d.runId === 'string' ? d.runId : undefined, text: '입력한 비밀번호를 5분 안에 쓰지 않아 지웠어요. 필요할 때 다시 물어볼게요.' };
+  if (name === 'secret_window.leak_suspected') return { text: NOTE['vault.leak_suspected']! };
+  if (name === 'secret_window.refused') {
+    return d.reason === 'google_signin_detected'
+      ? { text: '전용 Chrome에 Google 계정이 로그인돼 있어 비밀번호 창을 열지 않았어요. 전용 Chrome에서 로그아웃한 뒤 다시 준비해 주세요.' }
+      : { text: '전용 Chrome 설정이 바뀌어 비밀번호 창을 열지 않았어요. 앱을 다시 시작해 주세요.' };
+  }
+  return null;
+}
+
+/** 엔진·금고 fatal(I-6) → 기동 거부 대화상자 문장. 해당 없으면 null. */
+export function fatalText(code: string): string | null {
+  if (code === 'vault: db.key_missing' || code === 'vault: vault.keystore_mismatch') return '이 PC의 자격 증명 관리자에서 앱 열쇠를 찾지 못했어요. 기록을 지키려고 앱을 열지 않았어요.';
+  if (code.startsWith('engine.env_tampered')) return '개발용 환경 변수가 켜져 있어 앱을 열지 않았어요.';
+  return null;
+}
+
+/** 포털이 한 말(ADR-022 결정 5): 텍스트만, 200자. 제어문자는 뺀다. 렌더러는 텍스트 노드로만 넣는다. */
+const portalNoticeText = (s: string) => `홈택스 안내: “${s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').trim().slice(0, 200)}”`;
+
+/** 게이트 없이 끝난 실행이 연달아 이만큼이면 잠시(PREPARE_PAUSE_MS) 준비를 받지 않는다(ADR-024 결정 8). */
+export const GATELESS_STREAK_MAX = 3;
+export const PREPARE_PAUSE_MS = 60_000;
 
 /** 엔진 answer() 거부 중 [중지]·만료가 먼저 게이트를 닫아서 생긴 것(근거 문제 아님). */
 const RACED = new Set(['stopped', 'gate_expired', 'no_open_gate', 'not_open']);
@@ -91,13 +140,17 @@ export class ShellRuns extends EventEmitter implements Drafts {
   private readonly stopEarly = new Set<string>();
   private readonly host: RunHost;
   private readonly src: ShellRunsSource;
+  private readonly clock: () => number;
+  /** 게이트 없이 연달아 끝난 실행의 끝 시각(게이트가 뜨면 비운다). */
+  private gateless: number[] = [];
   /** 앱이 되물은 것(입력 보완). 대화(세션)마다 하나. */
   readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null } = { cp: null, asked: null, amount: null };
 
-  constructor(host: RunHost, src: ShellRunsSource) {
+  constructor(host: RunHost, src: ShellRunsSource, clock: () => number = Date.now) {
     super();
     this.host = host;
     this.src = src;
+    this.clock = clock;
     host.on('run', (e: EngineEvent) => this.onEngine(e));
     host.on('gate', (req: GateRequest) => this.onGate(req));
     host.on('gate-closed', (e: { runId: string; reqId: string; reason: string }) => this.emit('gate-closed', e.runId, e.reqId, e.reason));
@@ -182,6 +235,29 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   private busy(): boolean {
     return [...this.runs.values()].some((x) => ['preparing', 'turn', 'waiting', 'issuing'].includes(x.status));
+  }
+
+  /** 진행 중인 실행인가(비밀 창은 이 실행의 요청만 연다). */
+  isActive(runId: string): boolean {
+    const r = this.runs.get(runId);
+    return !!r && ['preparing', 'turn', 'waiting', 'issuing'].includes(r.status);
+  }
+
+  /** 게이트 없이 끝난 실행이 연달아 GATELESS_STREAK_MAX번이고 마지막 끝에서 PREPARE_PAUSE_MS가 안 지났는가. */
+  prepareThrottled(): boolean {
+    const last = this.gateless.at(-1);
+    if (this.gateless.length < GATELESS_STREAK_MAX || last === undefined) return false;
+    if (this.clock() - last < PREPARE_PAUSE_MS) return true;
+    this.gateless = [];
+    return false;
+  }
+
+  /** 카드에 문장 하나를 더한다(금고 이벤트 등). runId가 없거나 끝난 실행이면 진행 중인 실행에. 같은 문장은 한 번만. */
+  notice(runId: string | undefined, text: string): void {
+    const r = (runId && this.runs.get(runId)) || [...this.runs.values()].find((x) => this.isActive(x.id));
+    if (!r) return;
+    r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
+    this.emit('update', r);
   }
 
   /** [홈택스에서 준비]: 엔진 run.start. 실행은 한 번에 하나다(08 §5). 엔진이 시작 전에 거부하면 확인 필요로 둔다. */
@@ -299,11 +375,13 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.end(r, e);
   }
 
-  private end(r: RunView, e: { status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean }): void {
+  private end(r: RunView, e: { status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }): void {
     if (['draft', 'done', 'stopped', 'attention'].includes(r.status)) return;
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
     r.turn = null;
     r.approvedPending = false;
+    if (!r.confirmed) this.gateless.push(this.clock());
+    if (typeof e.portalNotice === 'string' && e.portalNotice.trim()) r.notices = [...(r.notices ?? []), portalNoticeText(e.portalNotice)];
     // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
     const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
@@ -351,6 +429,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const after = { name: r.counterparty.name, bizNo: r.counterparty.bizNo, email: r.email.value, supply: r.supply, tax: r.tax, item: r.item };
     r.readbackDiffers = JSON.stringify(before) !== JSON.stringify(after);
     r.warnings = dupWarnings(req);
+    r.action = actionText(req);
+    this.gateless = [];
     r.status = 'waiting';
     for (const p of ['login', 'form', 'input', 'readback'] as const) if (r.steps[PHASES.indexOf(p)]!.state !== 'done') this.step(r, p, 'done');
     this.step(r, 'gate', 'now', '아래 [승인하고 발급]을 기다려요');

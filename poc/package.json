@@ -12,6 +12,7 @@
     "bundles": "node --conditions=development scripts/bundles-digest.ts",
     "s9": "node --conditions=development scripts/s9-decisions.ts",
     "demo": "pnpm build && electron apps/desktop/dist/shell.js",
+    "start:hometax": "pnpm build && electron apps/desktop/dist/shell.js --portal=hometax",
     "demo:e2e": "pnpm build && electron apps/desktop/dist/shell-e2e.js"
   },
   "devDependencies": {

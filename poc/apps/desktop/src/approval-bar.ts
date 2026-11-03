@@ -1,27 +1,33 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
-import { nativeTheme, screen, session, WebContentsView, type BrowserWindow, type Session } from 'electron';
-import { buildGateRequest, gateSelfCheck } from '@sax/engine/gate';
+import { app, nativeTheme, screen, session, WebContentsView, type BrowserWindow, type Session } from 'electron';
+import { gateSelfCheck } from '@sax/engine/gate';
+import type { EventLog } from '@sax/platform';
 import {
   ACTION_TEXT,
   ACTIVATION_GRACE_MS,
   actionText,
-  BAR,
   BAR_MESSAGES,
+  BAR_PALETTE_DEFAULT,
   BarGate,
   barCss,
+  barPalette,
   buildBarHtml,
+  HandoffMark,
   issueLocalApproval,
+  kstToday,
   overflowLine,
   REFUSAL_TEXT,
   refusalText,
   summarize,
   type BarMode,
+  type BarPalette,
   type GateRequest,
   type LocalApproval,
   type SummaryLine,
 } from './approval-gate.ts';
+import { assertNoDebugSwitches } from './harden.ts';
 import type { Rect } from './shell-layout.ts';
 import { loadTokens } from './shell-tokens.ts';
 
@@ -33,6 +39,18 @@ const HOST = 'bar';
 const pages = new Map<string, string>();
 const BLANK = 'blank';
 let ses: Session | null = null;
+let colors: { palette: BarPalette; rejected: string | null } | null = null;
+
+/** 바 색: 디자인 시스템 토큰을 형식·대비로 검사해 통과한 것만, 아니면 내장 팔레트(ADR-025 결정 7). 기동 때 한 번 정한다. */
+function barColors(): { palette: BarPalette; rejected: string | null } {
+  if (colors) return colors;
+  try {
+    colors = barPalette(loadTokens());
+  } catch {
+    colors = { palette: BAR_PALETTE_DEFAULT, rejected: 'unreadable' };
+  }
+  return colors;
+}
 
 function barSession(): Session {
   if (ses) return ses;
@@ -40,7 +58,7 @@ function barSession(): Session {
   ses.protocol.handle(APPROVAL_SCHEME, (req) => {
     const u = new URL(req.url);
     if (u.host !== HOST) return new Response('', { status: 404 });
-    if (u.pathname === '/bar.css') return new Response(barCss(loadTokens()), { headers: { 'content-type': 'text/css' } });
+    if (u.pathname === '/bar.css') return new Response(barCss(barColors().palette), { headers: { 'content-type': 'text/css' } });
     const html = u.pathname === `/${BLANK}` ? '<!doctype html><meta charset="utf-8">' : pages.get(u.pathname.slice(1));
     return html ? new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }) : new Response('', { status: 404 });
   });
@@ -52,24 +70,6 @@ function barSession(): Session {
 
 /** 바 자리 계산. wide면 레일 오른쪽부터 창 끝까지의 띠(값이 대화 열 폭에 안 들어갈 때). */
 export type Placer = (contentWidth: number, contentHeight: number, wide: boolean) => Rect & { band?: boolean };
-
-/** 개발 콘솔(main.ts)의 승인 바 시험용: 창 아래 띠, 발급 없는 시험 값. */
-export const bottomStrip: Placer = (w, h) => ({ x: 0, y: h - BAR.height, width: w, height: BAR.height, band: true });
-export function demoGateRequest(): GateRequest {
-  return buildGateRequest({
-    runId: 'demo',
-    gateStepId: 'demo-gate',
-    readback: {
-      supplierBizNo: '1234567891', supplierName: '시험 사업자', counterpartBizNo: '1234567891', counterpartName: '시험 거래처(발급 없음)', counterpartEmail: 'test@example.com',
-      itemName: '시험', itemCount: '1', supplyAmount: '0', taxAmount: '0', totalAmount: '0', issueDate: '2026-01-01', remark: '', receiptType: '영수',
-    },
-    reserved: [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }],
-    packageDigest: '0'.repeat(64),
-    authorizes: [],
-    intentId: 'demo',
-    waitMs: 600_000,
-  });
-}
 
 export type BarOutcome = { decision: 'approve'; approval: LocalApproval } | { decision: 'closed'; reason: string };
 
@@ -93,6 +93,8 @@ export interface BarOptions {
   armDelayMs?: number;
   /** OS 커서 위치(DIP 화면 좌표). e2e가 바꿔 끼운다. */
   cursorPoint?: () => { x: number; y: number };
+  /** 토큰 거부(bar.tokens_rejected)를 남길 곳. */
+  log?: EventLog;
 }
 
 /**
@@ -127,11 +129,17 @@ export class ApprovalBar extends EventEmitter {
   private readonly myPages = new Set<string>();
   /** 무장 사건 때의 OS 커서 위치("멈춘 커서" 예외 확인용). */
   private armCursor: { x: number; y: number } | null = null;
+  /** main이 다른 창을 앞에 올렸다 돌아온 표시(다음 활성화에 한 번 쓴다). */
+  private readonly handoff = new HandoffMark();
   /** 시계가 바뀌어도 무장 지연이 짧아지지 않게 단조 시계를 쓴다. */
   private readonly now = () => performance.now();
 
   constructor(win: BrowserWindow, key: Uint8Array, place: Placer, opts: BarOptions = {}) {
+    // 디버그 스위치(CDP·검사기)가 있으면 바 입력을 믿을 수 없다. 바를 만들지 않는다(ADR-022 결정 8).
+    assertNoDebugSwitches(app);
     super();
+    const rejected = barColors().rejected;
+    if (rejected) opts.log?.event('bar.tokens_rejected', { reason: rejected });
     this.win = win;
     this.key = key;
     this.place = place;
@@ -170,6 +178,12 @@ export class ApprovalBar extends EventEmitter {
     win.on('show', rearm('show'));
     win.on('restore', rearm('restore'));
     win.on('focus', () => this.onActivate());
+    // 창이 뒤로 가면 무장 전(흐림) 페이지로 바꿔 상태를 보인다. 무장 판정은 그대로 두고 돌아올 때 정한다(onActivate).
+    win.on('blur', () => {
+      if (!this.req || !this.shown) return;
+      clearTimeout(this.armTimer);
+      void this.render('unarmed', null);
+    });
     const onDisplay = () => {
       this.relayout();
       this.rearm('display-metrics-changed');
@@ -222,7 +236,7 @@ export class ApprovalBar extends EventEmitter {
     } catch {
       // 모양이 다르면 field_key로 둔다
     }
-    const summary = bad ? null : summarize(req);
+    const summary = bad ? null : summarize(req, kstToday(Date.now()));
     this.lines = Array.isArray(summary) ? summary : [];
     this.action = bad ? ACTION_TEXT : actionText(req);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
@@ -384,10 +398,24 @@ export class ApprovalBar extends EventEmitter {
     }, Math.max(0, delay) + 5);
   }
 
+  /**
+   * main이 다른 창(비밀 창 등, Phase 1: 전용 Chrome·Hello)을 앞에 올렸다가 돌아왔다. 120초 안의 다음 활성화 한 번만
+   * 클릭 활성화 예외(100ms)를 받는다. 그 밖의 활성화는 첫 클릭을 앞으로 가져오기로만 받는다(ADR-024 결정 5).
+   */
+  noteHandoff(now = this.now()): void {
+    this.handoff.note(now);
+  }
+
   private onActivate(): void {
+    const now = this.now();
+    // 게이트가 없을 때 온 활성화도 표시를 쓴다(표시는 한 번만).
+    const fromHandoff = this.handoff.consume(now);
     if (!this.req) return;
-    this.gate.windowActivated(this.now());
     clearTimeout(this.activationTimer);
+    this.gate.windowActivated(now, fromHandoff);
+    if (!fromHandoff) return this.rearm('activate');
+    // blur로 내린 무장됨 페이지를 되돌린다(무장 판정은 그대로). 100ms 안 바 클릭이 없으면 재무장한다.
+    if (this.gate.armed(now)) void this.render('armed', null);
     this.activationTimer = setTimeout(() => {
       if (this.gate.activationSettled()) this.rearm('activate');
     }, ACTIVATION_GRACE_MS);
@@ -421,8 +449,9 @@ export class ApprovalBar extends EventEmitter {
 
   private paintBackground(mode: BarMode): void {
     if (this.win.isDestroyed()) return;
-    const t = loadTokens()[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
-    this.view.setBackgroundColor(mode === 'armed' ? t.accent! : mode === 'unarmed' ? t['accent-soft']! : t.surface!);
+    const t = barColors().palette[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
+    const attn = !!this.lines?.some((l) => l.tone === 'attention');
+    this.view.setBackgroundColor(mode === 'armed' ? (attn ? t.attention : t.accent) : mode === 'unarmed' ? (attn ? t['attention-soft'] : t['accent-soft']) : t.surface);
   }
 
   /**

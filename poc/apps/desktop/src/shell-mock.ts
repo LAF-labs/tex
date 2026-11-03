@@ -230,6 +230,10 @@ export interface RunView {
   stoppedNote?: string;
   /** 승인 대기 카드의 고정 경고(중복 경고 등). 같은 값이 승인 바에도 있다. */
   warnings: string[];
+  /** 승인 바 동작 글자(main이 게이트 fields로 정한 것). 카드 안내 문구가 같은 글자를 쓴다. */
+  action?: string;
+  /** 카드 꼬리 문장(포털 안내 문구·금고 알림). 텍스트로만 그린다. */
+  notices?: string[];
   /** 홈택스에서 되읽은 값이 초안과 다르다. */
   readbackDiffers?: boolean;
   /** 승인했고 거부 우선 창(2초) 안이다. 이때 [중지]가 이긴다. */
