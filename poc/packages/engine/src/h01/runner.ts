@@ -119,7 +119,9 @@ function clickableNow(el: Element): boolean {
   el.scrollIntoView({ block: 'center', inline: 'center' });
   const r = el.getBoundingClientRect();
   if (r.width <= 0 || r.height <= 0) return false;
-  const top = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  // shadow DOM 안이면 그 루트에서 본다(문서에서 보면 host가 나온다).
+  const root = el.getRootNode() as Document | ShadowRoot;
+  const top = root.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
   return !!top && (top === el || el.contains(top));
 }
 

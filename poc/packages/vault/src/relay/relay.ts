@@ -270,7 +270,12 @@ export class Relay {
       this.onVaultSessionEvent(vt, msg);
       return;
     }
-    if (this.engineSessions.has(msg.sessionId)) this.enqueue(() => this.sanitizeEvent(msg));
+    if (this.engineSessions.has(msg.sessionId)) {
+      // 받은 시점의 창 상태를 찍어 둔다: 커밋(창 종료)은 금고 세션에서 바로 처리되지만 이 이벤트는 줄 뒤에서 정리된다.
+      const t = this.targetOfSession(msg.sessionId);
+      const at = t ? this.stateOf(t) : undefined;
+      this.enqueue(() => this.sanitizeEvent(msg, at));
+    }
   }
 
   private async onBrowserEvent(msg: CdpMessage): Promise<void> {
@@ -497,12 +502,14 @@ export class Relay {
     return { active: t.win?.phase === 'active', tainted: !!t.win };
   }
 
-  private async sanitizeEvent(msg: CdpMessage): Promise<CdpMessage | null> {
+  private async sanitizeEvent(msg: CdpMessage, at?: { active: boolean; tainted: boolean }): Promise<CdpMessage | null> {
     const es = this.engineSessions.get(msg.sessionId!);
     const t = es ? this.targets.get(es.targetId) : undefined;
     if (!es || !t || !t.exposed) return null;
     const p = (msg.params ?? {}) as Json;
-    const st = this.stateOf(t);
+    // 받은 시점과 지금 중 엄격한 쪽(오염 표시·요청 바디 제거가 커밋 처리 순서에 밀리지 않게).
+    const now = this.stateOf(t);
+    const st = { active: now.active || !!at?.active, tainted: now.tainted || !!at?.tainted };
     // 자식 세션의 이동 시작: 허용 밖이면 커밋 전에 그 자식만 분리한다.
     if (es.child && msg.method === 'Page.frameStartedNavigating') {
       if (p.frameId === es.childTargetId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) {

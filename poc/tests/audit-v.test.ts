@@ -607,8 +607,17 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
     const sid = 'E-1'; // setup의 첫 엔진 세션
     // 같은 덩어리: 엔진 세션 이벤트(줄에 선다) 다음에 금고 세션의 커밋(바로 처리된다)
     s.conn.emitEvent('Log.entryAdded', { entry: { source: 'network', level: 'info', text: 'body=TEST-CERT-order0001' } }, sid);
+    // 로그인 POST(커밋 직전): 받은 시점에 오염 상태였으므로 바디를 지우고 requestId를 오염으로 남긴다
+    s.conn.emitEvent('Network.requestWillBeSent', { requestId: 'REQ-1', request: { url: 'http://127.0.0.1:1/login', method: 'POST', headers: {}, postData: 'pw=x', hasPostData: true } }, sid);
     s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/done' } }, 'V-RUN');
     await s.relay.drained();
+    const post = s.toEngine.find((m) => m.method === 'Network.requestWillBeSent');
+    assert.ok(post && !JSON.stringify(post).includes('pw=x'), '커밋보다 먼저 받은 요청의 바디는 지운다');
+    s.relay.onEngineMessage(JSON.stringify({ id: 991, sessionId: sid, method: 'Network.getRequestPostData', params: { requestId: 'REQ-1' } }));
+    await tick();
+    await s.relay.drained();
+    const r = s.toEngine.find((m) => m.id === 991);
+    assert.ok(r && r.error && !JSON.stringify(r).includes('pw=x'), '그 요청의 바디 조회는 거부한다');
     const logs = s.toEngine.filter((m) => m.method === 'Log.entryAdded');
     assert.equal(logs.length, 1);
     assert.ok(!JSON.stringify(logs).includes('TEST-CERT-order0001'), '알려진 값은 지운 뒤 나간다');
