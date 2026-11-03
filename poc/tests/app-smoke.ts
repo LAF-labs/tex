@@ -1,6 +1,6 @@
 // 앱 스모크(수동 실행): 실제 Electron 앱(개발 콘솔 main.ts)을 임시 앱 루트로 띄워 utilityProcess 금고·엔진 배선과 암호화 DB를 확인한다.
 // 실 루트(%LOCALAPPDATA%\SovereignAX)·실 DB·실 프로필을 건드리지 않는다(N-57). 실 루트에 DB가 있으면 시작하지 않는다.
-// 앱은 디버그 스위치(CDP·검사기)가 있으면 열리지 않으므로(ADR-022 결정 8) Playwright로 붙지 않고 프로세스를 띄워 디스크 결과만 본다.
+// 앱은 디버그 스위치(CDP·검사기)가 있으면 열리지 않으므로(ADR-025 결정 8) Playwright로 붙지 않고 프로세스를 띄워 디스크 결과만 본다.
 // 실행: node --conditions=development tests/app-smoke.ts  (OS 키체인 항목 SovereignAX/db-key는 읽거나 만든다. DB는 임시 루트에만)
 import { spawn } from 'node:child_process';
 import fsSync from 'node:fs';

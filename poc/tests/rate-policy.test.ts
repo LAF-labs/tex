@@ -67,7 +67,7 @@ describe('요청률 정책(D03 §7)', () => {
     });
     assert.ok(Object.isFrozen(HOMETAX_POLICY.limits) && Object.isFrozen(HOMETAX_POLICY.pace.stepDelayMs));
     assert.deepEqual({ ...FIXTURE_POLICY, pace: HOMETAX_POLICY.pace, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 12 } }, HOMETAX_POLICY);
-    // PoC 빌드는 위험 수용서 상한으로 좁힌다(ADR-022). D03 §7 값은 HOMETAX_POLICY에 그대로 남는다.
+    // PoC 빌드는 위험 수용서 상한으로 좁힌다(ADR-025). D03 §7 값은 HOMETAX_POLICY에 그대로 남는다.
     assert.deepEqual(policyFor('hometax'), { ...HOMETAX_POLICY, limits: { ...HOMETAX_POLICY.limits, runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3 }, cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 } });
     for (const kind of ['gov24', 'wetax', 'Hometax', '']) assert.throws(() => policyFor(kind), /policy\.portal_mode_denied/, `${kind}: 내장 정책이 없는 포털은 자동화하지 않는다`);
   });

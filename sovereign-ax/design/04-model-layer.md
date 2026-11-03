@@ -1,6 +1,6 @@
 # D04. 모델 계층
 
-> AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-026, D19 §3.5 D-47·D-26).
+> AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-029, D19 §3.5 D-47·D-26).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: `replay` 브랜드 타입, System One 계약 호환, 캐시 키 정본 `acct:<HMAC>:b:<bundleId>`, `required_fields_filled` 삭제(결정적 assert), 결정적 인젝션 사전 필터, 세무 상담 출력 차단, `doc_meta_check_v1` 후보 선택형, Terra 출력 구조화 슬롯·대화창 비밀 DLP, `query_agent` 툴셋 삭제, 게이트웨이 요청 스키마 참조·`safety_identifier` 월 회전·응답 비신뢰 처리, BYOK 로컬 검사 4종, 공급사 보존·처리 국가 정정. §6 비용표는 바꾸지 않았다.
 > 근거: [research/R1-openai-decisions-responses.md](../research/R1-openai-decisions-responses.md) (공식 가이드·SDK 소스 기준, 2026-10-28). 아래 "미확인" 표시는 R1 §D.2와 같고, 스파이크 S7·S9에서 실측한다. System One 계약은 [R6](../research/R6-upstage-solar.md) §0·[R8](../research/R8-local-decision-model.md) §0.
 
@@ -244,7 +244,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `POST /v1/run-tokens` | 기기 범위 토큰 필요 | 게이트웨이 서명 `runToken` | 실행당 예산을 묶는다 |
 | `GET /v1/usage/me` | — | 월 사용량·한도 | |
 
-게이트웨이 인증(ADR-026, D-26(N-41)): 모델 게이트웨이는 계정 세션 토큰을 받지 않는다. 데스크톱 기기 범위 토큰(AIK 기기 인증서 결속, DPoP `SAX-dpop-v1`)만 받고 `X-Device-Id`는 토큰에서 유도한다. 자동 정지는 기기 단위로 먼저 건다(D09 §2.1).
+게이트웨이 인증(ADR-029, D-26(N-41)): 모델 게이트웨이는 계정 세션 토큰을 받지 않는다. 데스크톱 기기 범위 토큰(AIK 기기 인증서 결속, DPoP `SAX-dpop-v1`)만 받고 `X-Device-Id`는 토큰에서 유도한다. 자동 정지는 기기 단위로 먼저 건다(D09 §2.1).
 
 - **신뢰 지점** (감사 C C-24): 게이트웨이는 모델 출력의 무결성에 대해 **신뢰 지점**이다. 악의적이거나 침해된 게이트웨이는 응답 확률을 바꾸거나 도구·지시를 끼워 넣을 수 있다. 그래서 엔진은 응답을 **비신뢰 입력**으로 다룬다. 결과 매핑·임계값은 로컬 번들 정의로 계산하고(§5), Terra 응답의 도구 호출은 로컬 툴셋 정의에 없는 이름·스키마면 버린다(§4). `bundleDigest` 409는 배포 불일치 감지용이지 무결성 장치가 아니다. 게이트웨이는 공급사로 보낸 질문 목록의 해시(`questionsDigest`)를 응답에 실어 클라이언트가 로컬 번들과 대조하게 한다. 악의적 게이트웨이는 이 값도 속일 수 있으며, 이 한계를 D11에 적는다.
 - **`safety_identifier` 월 회전** (감사 C C-23): `safety_identifier = hex(HMAC-SHA256(K_sid, accountId ‖ yyyymm))[:32]`. `K_sid`는 KMS에 두고 게이트웨이 외에는 접근할 수 없다. 이메일·계정 ID 원문은 보내지 않는다. 두 표면 모두에 같은 값. 대가: 공급사의 남용 추적이 월 단위로 끊긴다. 계량 레코드 분리와 접근 로그 식별자 회전은 D09가 정한다.

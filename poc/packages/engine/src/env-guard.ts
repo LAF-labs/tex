@@ -1,4 +1,4 @@
-// 엔진 기동 환경 가드(ADR-022 결정 9, N-23, D11 §4 env 허용 목록). entry.ts의 첫 import다.
+// 엔진 기동 환경 가드(ADR-025 결정 9, N-23, D11 §4 env 허용 목록). entry.ts의 첫 import다.
 // 이 변수들은 CDP 전문 평문 기록(DEBUG·DEBUG_FILE·PWDEBUG), 코드 주입(NODE_OPTIONS), TLS 가로채기(NODE_EXTRA_CA_CERTS·
 // SSLKEYLOGFILE·NODE_TLS_REJECT_UNAUTHORIZED=0)를 켠다. 앱은 환경 변수로 이것들을 켤 수 없어야 한다.
 

@@ -1,4 +1,4 @@
-// 금고·엔진 utilityProcess에 넘길 환경 변수 허용 목록(ADR-022 결정 9, D11 §4).
+// 금고·엔진 utilityProcess에 넘길 환경 변수 허용 목록(ADR-025 결정 9, D11 §4).
 // main의 DEBUG·DEBUG_FILE·NODE_OPTIONS·프록시·TLS·API 키 변수가 자식에 닿지 않게 한다. Electron 없이 시험한다.
 
 export const CHILD_ENV_ALLOWLIST = [

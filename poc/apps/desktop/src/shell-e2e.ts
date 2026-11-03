@@ -98,7 +98,7 @@ function barClick(): void {
 const barLeave = () => barWc().sendInputEvent({ type: 'mouseLeave', x: -5, y: -5 });
 /** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 화면의 아무것도 누르지 않는다. */
 const gesture = () => S.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
-/** [홈택스에서 준비]: main은 2초 안의 실제 입력 뒤에만 받는다(ADR-024 결정 8). */
+/** [홈택스에서 준비]: main은 2초 안의 실제 입력 뒤에만 받는다(ADR-027 결정 8). */
 async function prepare(id: string): Promise<void> {
   gesture();
   await sleep(30);
@@ -173,7 +173,7 @@ async function flow(): Promise<void> {
   await click(`[data-run="${id}"] [data-act=vat]`);
   await until('vat separate', () => S.runs.get(id)?.total === 3_630_000);
 
-  // 실제 입력 없이(렌더러 신호만) 온 실행 시작은 받지 않는다(ADR-024 결정 8). 이 앞에는 실제 입력이 없다.
+  // 실제 입력 없이(렌더러 신호만) 온 실행 시작은 받지 않는다(ADR-027 결정 8). 이 앞에는 실제 입력이 없다.
   await sleep(2100);
   const noGesture = await js<string>(`window.sax.call('run.prepare', { id: ${JSON.stringify(id)} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('실제 입력 없이 온 run.prepare는 gesture_required(초안 그대로)', noGesture === 'gesture_required' && runStatus(id) === 'draft', noGesture);
@@ -375,7 +375,7 @@ async function flow(): Promise<void> {
   await sleep(150);
   check('승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다', runStatus(idBusy) === 'draft' && S.bar.runId === id2 && runStatus(id2) === 'waiting');
   await click(`[data-run="${idBusy}"] [data-act=cancel]`);
-  // 창이 뒤로 가면 무장 전 페이지, 핸드오프가 아닌 활성화는 무장 지연을 다시 센다(첫 클릭은 앞으로 가져오기, ADR-024 결정 5).
+  // 창이 뒤로 가면 무장 전 페이지, 핸드오프가 아닌 활성화는 무장 지연을 다시 센다(첫 클릭은 앞으로 가져오기, ADR-027 결정 5).
   await waitArmed();
   S.win.emit('blur');
   await until('blur unarmed', () => S.bar.snapshot().committed?.mode === 'unarmed', 2000);
@@ -384,7 +384,7 @@ async function flow(): Promise<void> {
   await sleep(30);
   const refocused = S.bar.snapshot();
   check('창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연', blurred.mode === 'unarmed' && refocused.mode === 'unarmed' && !refocused.armed, { blurred, refocused });
-  // 금고가 부르는 비밀 창(ADR-022 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
+  // 금고가 부르는 비밀 창(ADR-025 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
   S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'cert_password', scope: 'business' });
   await sleep(100);
   const noWin = S.secretWindow() === null;

@@ -17,7 +17,7 @@ type EngineEvent =
   | { runId: string; type: 'waiting'; reqId: string }
   | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
 
-/** 모르는 화면(ADR-022 결정 3·5): 일반 실패 코드 대신 보이는 문장. */
+/** 모르는 화면(ADR-025 결정 3·5): 일반 실패 코드 대신 보이는 문장. */
 const UNKNOWN_SCREEN = '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.';
 
 /** 엔진 결과 코드 → 사용자 문구. 값은 넣지 않는다. */
@@ -58,7 +58,7 @@ export const NOTE: Record<string, string> = {
   'portal.captcha': '홈택스에 자동입력방지 문자가 떠서 멈췄어요. 아무것도 발급하지 않았어요.',
   'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
   'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
-  // PoC 상한(ADR-022 결정 1). 앱이 집행하는 PoC 값이라 숫자를 문구에 넣는다.
+  // PoC 상한(ADR-025 결정 1). 앱이 집행하는 PoC 값이라 숫자를 문구에 넣는다.
   'policy.irreversible_per_day': '오늘은 PoC 기간 하루 발급 상한(1건)에 닿았어요. 내일 다시 할 수 있어요.',
   'policy.poc_irreversible_total': 'PoC 기간 전체 실발급 상한(3건)에 닿아 더 발급하지 않아요.',
   'policy.runs_per_session': '이번 홈택스 로그인으로 할 수 있는 실행 횟수를 다 써서 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -72,7 +72,7 @@ const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
 
-/** 중복 카드 문장(ADR-024 UX). 발급 확정 / 발급 여부 모름 / 직전 시도 미발급. */
+/** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 직전 시도 미발급. */
 export const DUP_NOTE = {
   committed: '이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.',
   unknown: '같은 건이 발급됐는지 아직 확인하지 못했어요. 홈택스 발급목록을 먼저 확인해 주세요.',
@@ -112,10 +112,10 @@ export function fatalText(code: string): string | null {
   return null;
 }
 
-/** 포털이 한 말(ADR-022 결정 5): 텍스트만, 200자. 제어문자는 뺀다. 렌더러는 텍스트 노드로만 넣는다. */
+/** 포털이 한 말(ADR-025 결정 5): 텍스트만, 200자. 제어문자는 뺀다. 렌더러는 텍스트 노드로만 넣는다. */
 const portalNoticeText = (s: string) => `홈택스 안내: “${s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').trim().slice(0, 200)}”`;
 
-/** 게이트 없이 끝난 실행이 연달아 이만큼이면 잠시(PREPARE_PAUSE_MS) 준비를 받지 않는다(ADR-024 결정 8). */
+/** 게이트 없이 끝난 실행이 연달아 이만큼이면 잠시(PREPARE_PAUSE_MS) 준비를 받지 않는다(ADR-027 결정 8). */
 export const GATELESS_STREAK_MAX = 3;
 export const PREPARE_PAUSE_MS = 60_000;
 

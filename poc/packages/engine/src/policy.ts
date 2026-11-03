@@ -46,7 +46,7 @@ export function policyFor(kind: string): RatePolicy {
   throw new RunEnd('failed', 'policy.portal_mode_denied');
 }
 
-// PoC 상한(ADR-022 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
+// PoC 상한(ADR-025 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
 // 시간대 제한은 앱이 집행하지 않는 사람 규칙이다(위험 수용서).
 export const POC_BUILD = true;
 export const POC_OVERRIDES = { runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3, positiveDetectionsForCooldown: 1 } as const;
@@ -72,7 +72,7 @@ export function pocTotalRefusal(ledger: Pick<Ledger, 'countIrreversible'>, kind:
 
 /** 추가 인증이 이만큼 연속이면 차단 신호(D03 §7 (c)). 로그인 구간의 추가 인증은 세지 않는다. */
 export const EXTRA_AUTH_FOR_SIGNAL = 2;
-/** 기대 화면(체크포인트)에 닿지 못하고 끝난 실행이 이만큼 연속이면 보수 모드, 그 다음 단계는 양성 탐지 1회(ADR-022 결정 3). */
+/** 기대 화면(체크포인트)에 닿지 못하고 끝난 실행이 이만큼 연속이면 보수 모드, 그 다음 단계는 양성 탐지 1회(ADR-025 결정 3). */
 export const UNKNOWN_SCREEN_CONSERVATIVE = 2;
 export const UNKNOWN_SCREEN_POSITIVE = 3;
 /** 벽시계가 유효 시각보다 이만큼 넘게 뒤면 시계 역행(보수 모드). NTP 미세 조정은 넘긴다. */
@@ -358,7 +358,7 @@ export class RunPolicy implements RunnerPolicy {
     let kind = h.kind;
     let end: RunEnd;
     try {
-      // 로그인 구간의 추가 인증은 예상된 2차 인증이다: 연속에 넣지 않고 핸드오프로만 끝낸다(ADR-022 결정 4).
+      // 로그인 구간의 추가 인증은 예상된 2차 인증이다: 연속에 넣지 않고 핸드오프로만 끝낸다(ADR-025 결정 4).
       if (kind === 'extra_auth' && this.section !== 'login' && this.g.extraAuth() >= EXTRA_AUTH_FOR_SIGNAL) kind = 'block';
       if (kind === 'block') {
         const repeat = h.kind !== 'block';

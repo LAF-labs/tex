@@ -65,7 +65,7 @@ const listDocs = () => js<DocRow[]>(`window.sax.call('docs.list')`);
 const rowText = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.textContent ?? ''`);
 const toastText = () => js<string>(`(() => { const t = document.querySelector('#toast'); return t && !t.hidden ? t.textContent : ''; })()`);
 const busy = () => js<boolean>(`document.querySelector('[data-act=doc-import]')?.disabled ?? false`);
-/** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 아무것도 누르지 않는다. 대화상자·뷰어는 3초 안의 입력 뒤에만 열린다(ADR-024 결정 8). */
+/** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 아무것도 누르지 않는다. 대화상자·뷰어는 3초 안의 입력 뒤에만 열린다(ADR-027 결정 8). */
 const gesture = () => S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 const importClick = async () => {
   gesture();

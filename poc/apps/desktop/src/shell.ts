@@ -1,7 +1,7 @@
 // PoC-9 데모 UI 셸 진입점. 실행: pnpm demo (electron apps/desktop/dist/shell.js).
 // PoC-6부터 엔진·금고를 띄우고 가짜 H-01 페이지(127.0.0.1)에서 발급 흐름을 돈다(fixture 모드: 임시 앱 폴더, 메모리 키, 키체인 안 씀).
 // 실행 Chrome은 화면에 뜬다. 숨기려면 SAX_DEMO_HEADLESS=1.
-// --portal=hometax(pnpm start:hometax)면 실제 앱 폴더·utilityProcess 금고·OS 키체인으로 홈택스에 붙는다. PoC-3 실 홈택스 시험은 이 길 하나다(ADR-022 결정 8).
+// --portal=hometax(pnpm start:hometax)면 실제 앱 폴더·utilityProcess 금고·OS 키체인으로 홈택스에 붙는다. PoC-3 실 홈택스 시험은 이 길 하나다(ADR-025 결정 8).
 import path from 'node:path';
 import { appPaths, defaultAppRoot, prepareLayout } from '@sax/platform';
 import { app, dialog } from 'electron';

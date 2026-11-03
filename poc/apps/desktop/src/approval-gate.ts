@@ -12,7 +12,7 @@ export const ARM_DELAY_MS = 600;
 export const DWELL_MS = 150;
 /** 창 활성화 뒤 이 시간 안에 바 안에서 시작된 mouseDown은 클릭 활성화로 보고 재무장하지 않는다(앱이 연 핸드오프에서 돌아올 때만). */
 export const ACTIVATION_GRACE_MS = 100;
-/** main이 전용 Chrome·비밀 창·Hello를 앞에 올린 뒤 이 시간 안에 돌아온 활성화만 핸드오프 복귀다(ADR-024 결정 5). */
+/** main이 전용 Chrome·비밀 창·Hello를 앞에 올린 뒤 이 시간 안에 돌아온 활성화만 핸드오프 복귀다(ADR-027 결정 5). */
 export const HANDOFF_RETURN_MS = 120_000;
 
 // ---- 요약 줄(서류 종류별 앱 내장 표) ----
@@ -26,7 +26,7 @@ export interface SummaryLine {
   label: string;
   pieces: Piece[];
   flag?: string;
-  /** attention이면 바 전체를 주의 색으로 그린다(중복 가능성, ADR-024 결정 3). */
+  /** attention이면 바 전체를 주의 색으로 그린다(중복 가능성, ADR-027 결정 3). */
   tone?: 'normal' | 'attention';
 }
 
@@ -62,7 +62,7 @@ export function dupMayBeIssued(f: Map<string, string>): boolean {
 export type DupState = { flag: string; tone: 'normal' | 'attention'; action: string };
 
 /**
- * 중복 경고 표시(D02 §7, ADR-024 결정 3). 칸이 하나라 가장 위험한 것을 고른다:
+ * 중복 경고 표시(D02 §7, ADR-027 결정 3). 칸이 하나라 가장 위험한 것을 고른다:
  * 발급 확정 있음 → 발급 여부 모름 → 직전 시도 미발급 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
  * 발급됐거나 모르는 건은 주의 색이다. 첫 클릭이 명시 확인이라는 ADR-021 규칙은 그대로다.
  */
@@ -83,7 +83,7 @@ export function actionText(req: Pick<GateRequest, 'fields'>): string {
   return req.fields.some((x) => x.fieldKey.startsWith('$dup.')) ? ACTION_TEXT_DUP : ACTION_TEXT;
 }
 
-/** 한국 시간(KST, UTC+9) 날짜 YYYY-MM-DD. 작성일자는 PC 시간대가 아니라 이것으로 비교한다(ADR-024 결정 1). */
+/** 한국 시간(KST, UTC+9) 날짜 YYYY-MM-DD. 작성일자는 PC 시간대가 아니라 이것으로 비교한다(ADR-027 결정 1). */
 export function kstToday(nowMs: number): string {
   return new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10);
 }
@@ -191,7 +191,7 @@ export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, 
 <body class="${mode}${attn}"><div class="lines">${body}</div><div class="side">${act}${msg ? `<div class="msg">${esc(msg)}</div>` : ''}</div></body></html>`;
 }
 
-// ---- 색(앱 내장 팔레트, ADR-025 결정 7) ----
+// ---- 색(앱 내장 팔레트, ADR-028 결정 7) ----
 
 export const BAR_COLOR_KEYS = ['accent', 'on-accent', 'accent-soft', 'ink', 'ink-3', 'surface', 'line-strong', 'attention', 'attention-soft'] as const;
 export type BarColors = Record<(typeof BAR_COLOR_KEYS)[number], string>;
@@ -347,7 +347,7 @@ export class BarGate {
 
   /**
    * 앱 창 활성화. 앱이 연 핸드오프(전용 Chrome·비밀 창·Hello)에서 돌아온 경우만 클릭 활성화 예외(100ms)를 둔다.
-   * 그 밖에는 첫 클릭을 "앞으로 가져오기"로만 받는다: 눌린 상태를 취소하고 무장 지연을 다시 센다(ADR-024 결정 5).
+   * 그 밖에는 첫 클릭을 "앞으로 가져오기"로만 받는다: 눌린 상태를 취소하고 무장 지연을 다시 센다(ADR-027 결정 5).
    * 핸드오프 복귀에서 이미 바 안에서 눌린 상태면(포커스가 mouseDown 뒤에 옴) 클릭 활성화로 보고 기다리지 않는다.
    */
   windowActivated(now: number, fromHandoff = false): void {

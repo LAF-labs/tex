@@ -207,7 +207,7 @@ export class Ledger {
     if (n !== 1) throw new LedgerError('ledger_not_open');
   }
 
-  /** 이 상태들인 원장 행 수(PoC 전체 실발급 상한, ADR-022 결정 1). 날짜·재시작과 무관하다. */
+  /** 이 상태들인 원장 행 수(PoC 전체 실발급 상한, ADR-025 결정 1). 날짜·재시작과 무관하다. */
   countIrreversible(states: readonly LedgerState[]): number {
     if (!states.length) return 0;
     const r = this.db.prepare(`SELECT COUNT(*) AS n FROM irreversible_log WHERE state IN (${states.map(() => '?').join(',')})`).get(...states) as Row;

@@ -1,4 +1,4 @@
-# ADR-023. 사람 비밀 등급 정합: 기기 결박 열쇠와 Windows 세션을 따르는 금고, 엄격 모드는 발급마다 Hello
+# ADR-026. 사람 비밀 등급 정합: 기기 결박 열쇠와 Windows 세션을 따르는 금고, 엄격 모드는 발급마다 Hello
 
 > 상태: 채택(2026-11-03, TPM·세션 이벤트는 스파이크 S10c 조건부) · 대체: ADR-020 결정 3의 "열쇠는 DPAPI·자격 증명 관리자, Hello 기본 꺼짐" 문장, D05 §2의 "대화형 전용: 꺼낼 때마다 Hello" 규칙 · 관련: ADR-005, ADR-020(결정 2·조건), ADR-021(Hello 옵션), D03 §3·§7, D05 §2·§3.8·§4·§7, D10 §6, D11 §0, D17 §1·§3, D19 A-22·A-23·§8, 02 §2·§6, 08 §6·§9·§11
 > 근거: [AUDIT-D](../../research/AUDIT-D-v13-poc-security.md) N-07·N-11·N-25·N-31·N-46(5건) = [D19 §3.5](../19-attack-surface.md) D-01·D-03·D-19·D-42·D-30
@@ -23,7 +23,7 @@
 
 ## 결정
 
-1. **정본은 D05 §2 개정판 하나다(N-07, D-01).** ADR-020 결정 2(보안카드 완전 위임)는 유지하고 결정 3의 저장 방식만 이 ADR로 대체한다. D19 A-22는 "변형(ADR-023)", A-23은 "채택 유지(데몬은 사람 비밀 미사용, 금고가 `trigger=daemon` 거부)"로 고친다. ADR-020 조건(보안카드 칸이 가상키패드면 위임 보류)은 그대로다. 보류되면 보안카드는 미저장·사용자 직접 입력이다.
+1. **정본은 D05 §2 개정판 하나다(N-07, D-01).** ADR-020 결정 2(보안카드 완전 위임)는 유지하고 결정 3의 저장 방식만 이 ADR로 대체한다. D19 A-22는 "변형(ADR-026)", A-23은 "채택 유지(데몬은 사람 비밀 미사용, 금고가 `trigger=daemon` 거부)"로 고친다. ADR-020 조건(보안카드 칸이 가상키패드면 위임 보류)은 그대로다. 보류되면 보안카드는 미저장·사용자 직접 입력이다.
 2. **칸 단위 저장과 기기 결박 열쇠.** 보안카드는 칸별 항목 `securitycard/<profile>/<row>`, 포털 자격은 `portal/<profile>/id`·`portal/<profile>/pw`다. 각 항목은 슬롯 KEK(32B 무작위)로 AES-256-GCM 암호화한다(AAD = 항목 이름). 슬롯 KEK는 (a) 이 PC TPM의 **내보낼 수 없는 키**(Microsoft Platform Crypto Provider, UI 정책 없음)로 래핑한다. TPM이 없으면 (b) DPAPI(CurrentUser)로 조용히 대체한다. Hello가 Available인 PC는 Hello 결박 래핑 사본(KeyCredentialManager 서명 → KEK)을 하나 더 둔다. 발급 1회에 요청된 칸만 복호한다.
 3. **금고는 Windows 세션을 따른다.**
    - 금고 열림 = Windows 세션 열림 ∧ 시스템 유휴 < `vault.idleLockSec = 900` ∧ 열린 지 < `vault.unlockMaxSec = 28800`.

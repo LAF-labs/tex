@@ -1,4 +1,4 @@
-// 사용자 동작 결속(ADR-024 결정 8, N-27). main이 메인 창에서 직접 본 실제 입력 시각으로 렌더러 명령을 거른다. Electron 없이 시험한다.
+// 사용자 동작 결속(ADR-027 결정 8, N-27). main이 메인 창에서 직접 본 실제 입력 시각으로 렌더러 명령을 거른다. Electron 없이 시험한다.
 
 /** 마지막 실제 입력(mouseUp, 수식키 없는 Enter·Space) 시각. 시각은 단조 시계(performance.now) 값이다. */
 export class GestureClock {

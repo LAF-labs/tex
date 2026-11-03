@@ -31,7 +31,7 @@ const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 
 export function registerShellSchemes(): void {
   // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
-  // 공용 하드닝(디버그 스위치·샌드박스·새 창·이동·webview 거부)도 ready 전에 여기서 건다(ADR-022 결정 8).
+  // 공용 하드닝(디버그 스위치·샌드박스·새 창·이동·webview 거부)도 ready 전에 여기서 건다(ADR-025 결정 8).
   hardenApp(app, [`${SHELL_SCHEME}:`, `${APPROVAL_SCHEME}:`, `${DOCPARSE_SCHEME}:`]);
   protocol.registerSchemesAsPrivileged([
     { scheme: SHELL_SCHEME, privileges: { standard: true, secure: true } },
@@ -219,7 +219,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const wc = win.webContents;
   // 새 창·이동 거부, 렌더러의 window.moveTo·resizeTo 무시, 배율 1 고정.
   hardenWindow(win);
-  // 사용자 동작 결속(ADR-024 결정 8): main이 메인 창에서 직접 본 실제 입력(mouseUp, 수식키 없는 Enter·Space) 시각.
+  // 사용자 동작 결속(ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력(mouseUp, 수식키 없는 Enter·Space) 시각.
   const gesture = new GestureClock();
   wc.on('before-mouse-event', (_e, m) => {
     if (m.type === 'mouseUp') gesture.note(performance.now());
@@ -250,7 +250,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   runs.on('gate-closed', (_runId: string, reqId: string, reason: string) => bar.close(reason, reqId));
 
-  // 금고가 부르는 비밀 입력 창(ADR-022 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
+  // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
   let secretWin: BrowserWindow | null = null;
   secretPage = () => {
@@ -270,7 +270,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       w.on('closed', () => {
         if (secretWin === w) secretWin = null;
         secrets.closed();
-        // 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-024 결정 5).
+        // 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5).
         bar.noteHandoff();
       });
       return;

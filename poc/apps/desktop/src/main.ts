@@ -1,6 +1,6 @@
 // 개발 콘솔 main(D01 §2.1): 프로필·거래처·보관함·진위확인 키 화면. DB 키 없음(엔진 읽기 IPC), 비밀 평문을 중계하지 않는다.
 // 셸과 같은 하드닝·같은 엔진 호스트(utilityProcess 금고 + 엔진 게이트 포트)로 띄운다. 전용 Chrome 수동 열기·비밀 입력 창·승인 바 시험은 없다.
-// PoC-3 실 홈택스 시험은 pnpm start:hometax(셸)로만 한다(ADR-022 결정 8). 이 파일 전체 삭제는 Phase 1(RETRO B-04).
+// PoC-3 실 홈택스 시험은 pnpm start:hometax(셸)로만 한다(ADR-025 결정 8). 이 파일 전체 삭제는 Phase 1(RETRO B-04).
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -41,7 +41,7 @@ protocol.registerSchemesAsPrivileged([
 const log = new FileEventLog(null, 'main');
 let host: EngineHost | null = null;
 let win: BrowserWindow | null = null;
-/** 메인 창에서 main이 직접 본 마지막 실제 입력(파일 대화상자는 3초 안의 입력에만 연다, ADR-024 결정 8). */
+/** 메인 창에서 main이 직접 본 마지막 실제 입력(파일 대화상자는 3초 안의 입력에만 연다, ADR-027 결정 8). */
 const gesture = new GestureClock();
 
 function serveStatic(): void {

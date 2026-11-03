@@ -1,7 +1,7 @@
 // D01 §3: 제품 코드(engine·model·vault·platform·db·desktop main)는 fetch/net/http 직접 import 금지. 송신은 @sax/net의 egress 하나로만.
 // D05 §3: --remote-debugging-port 사용 금지(정책 상수·린트).
 // D06 §8: RedactedText는 @sax/redaction 밖에서 단언(as)으로 만들 수 없다. model·engine도 egress로만 송신한다.
-// ADR-025 결정 6: electron net·dns·worker_threads 금지, engine·model은 child_process 금지, engine·model·vault는 계산된 동적 import와
+// ADR-028 결정 6: electron net·dns·worker_threads 금지, engine·model은 child_process 금지, engine·model·vault는 계산된 동적 import와
 // 송신 모듈 이름을 리터럴로 받는 require/createRequire 호출 금지(ajv 같은 다른 이름은 통과).
 import js from '@eslint/js';
 import globals from 'globals';
@@ -13,10 +13,10 @@ const SEND_MSG = '제품 코드는 @sax/net egress로만 송신한다(D01 §3).'
 const restrictedNet = withNode(NET_MODULES).map((name) => ({ name, message: SEND_MSG }));
 const restrictedCommon = [
   ...restrictedNet,
-  { name: 'electron', importNames: ['net'], message: 'electron net 금지(ADR-025 결정 6). 송신은 egress로만.' },
-  ...withNode(['dns', 'worker_threads']).map((name) => ({ name, message: 'dns·worker_threads 금지(ADR-025 결정 6).' })),
+  { name: 'electron', importNames: ['net'], message: 'electron net 금지(ADR-028 결정 6). 송신은 egress로만.' },
+  ...withNode(['dns', 'worker_threads']).map((name) => ({ name, message: 'dns·worker_threads 금지(ADR-028 결정 6).' })),
 ];
-const restrictedChild = withNode(['child_process']).map((name) => ({ name, message: 'engine·model은 프로세스를 띄우지 않는다(ADR-025 결정 6).' }));
+const restrictedChild = withNode(['child_process']).map((name) => ({ name, message: 'engine·model은 프로세스를 띄우지 않는다(ADR-028 결정 6).' }));
 const netPatterns = [{ group: ['node:http/*', 'node:https/*', 'undici/*'], message: SEND_MSG }];
 const sendGlobals = {
   'no-restricted-globals': ['error', { name: 'fetch', message: SEND_MSG }, { name: 'XMLHttpRequest', message: 'egress 전용' }, { name: 'WebSocket', message: 'egress 전용' }],
@@ -30,9 +30,9 @@ const REDACTED_RULES = [
 ];
 const LOAD_RE = '/^(node:)?(net|http|https|tls|dgram|dns|http2|child_process|worker_threads|undici|node-fetch|axios|ws)$/';
 const LOAD_RULES = [
-  { selector: "ImportExpression[source.type!='Literal']", message: '계산된 동적 import 금지(ADR-025 결정 6). 모듈 이름은 리터럴로.' },
-  { selector: `ImportExpression[source.value=${LOAD_RE}]`, message: '송신 모듈 동적 import 금지(ADR-025 결정 6).' },
-  { selector: `CallExpression[arguments.0.value=${LOAD_RE}]`, message: '송신 모듈 이름을 require·createRequire로 불러오지 않는다(ADR-025 결정 6).' },
+  { selector: "ImportExpression[source.type!='Literal']", message: '계산된 동적 import 금지(ADR-028 결정 6). 모듈 이름은 리터럴로.' },
+  { selector: `ImportExpression[source.value=${LOAD_RE}]`, message: '송신 모듈 동적 import 금지(ADR-028 결정 6).' },
+  { selector: `CallExpression[arguments.0.value=${LOAD_RE}]`, message: '송신 모듈 이름을 require·createRequire로 불러오지 않는다(ADR-028 결정 6).' },
 ];
 
 /** 송신 규칙 범위(RETRO A-12). e2e·fixture(가짜 홈택스 서버·송신 차단 시험)는 아래에서 명시 면제한다. */

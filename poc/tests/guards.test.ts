@@ -31,7 +31,7 @@ describe('정적·구성 경계', () => {
     assert.ok(r!.messages.some((m) => m.ruleId === 'no-restricted-syntax'));
   });
 
-  it('eslint: 금고에서 fetch·electron net·계산된 동적 import는 오류(ADR-025 결정 6)', async () => {
+  it('eslint: 금고에서 fetch·electron net·계산된 동적 import는 오류(ADR-028 결정 6)', async () => {
     const eslint = new ESLint({ cwd: root });
     const [r] = await eslint.lintText(
       `import { net } from 'electron';\nexport const f = (m: string) => [fetch('https://x'), net, import(m), import('node:http')];\n`,
@@ -171,7 +171,7 @@ describe('정적·구성 경계', () => {
     assert.match(html, /default-src 'none'; style-src 'self'/);
     assert.ok(!/<button|<a |<input|onclick/i.test(html), '바 안에 작은 버튼·링크가 없다');
     // 중복 경고($dup.*)는 합계 줄 표시와 동작 글자로 바에 보인다(ADR-021). 이 클릭이 D02 §7 명시 확인이다.
-    // 원장 상태별로 다르게(ADR-024 결정 3): 발급 확정은 "이미 발급됨"·주의 색·"한 번 더 발급".
+    // 원장 상태별로 다르게(ADR-027 결정 3): 발급 확정은 "이미 발급됨"·주의 색·"한 번 더 발급".
     const dup = base({ '$dup.businessKey': 'committed' });
     assert.equal((summarize(dup) as SummaryLine[])[1]!.flag, '이미 발급됨(승인번호 있음)');
     assert.equal(actionText(dup), ACTION_TEXT_DUP_COMMITTED);

@@ -41,7 +41,7 @@ const BLANK = 'blank';
 let ses: Session | null = null;
 let colors: { palette: BarPalette; rejected: string | null } | null = null;
 
-/** 바 색: 디자인 시스템 토큰을 형식·대비로 검사해 통과한 것만, 아니면 내장 팔레트(ADR-025 결정 7). 기동 때 한 번 정한다. */
+/** 바 색: 디자인 시스템 토큰을 형식·대비로 검사해 통과한 것만, 아니면 내장 팔레트(ADR-028 결정 7). 기동 때 한 번 정한다. */
 function barColors(): { palette: BarPalette; rejected: string | null } {
   if (colors) return colors;
   try {
@@ -135,7 +135,7 @@ export class ApprovalBar extends EventEmitter {
   private readonly now = () => performance.now();
 
   constructor(win: BrowserWindow, key: Uint8Array, place: Placer, opts: BarOptions = {}) {
-    // 디버그 스위치(CDP·검사기)가 있으면 바 입력을 믿을 수 없다. 바를 만들지 않는다(ADR-022 결정 8).
+    // 디버그 스위치(CDP·검사기)가 있으면 바 입력을 믿을 수 없다. 바를 만들지 않는다(ADR-025 결정 8).
     assertNoDebugSwitches(app);
     super();
     const rejected = barColors().rejected;
@@ -400,7 +400,7 @@ export class ApprovalBar extends EventEmitter {
 
   /**
    * main이 다른 창(비밀 창 등, Phase 1: 전용 Chrome·Hello)을 앞에 올렸다가 돌아왔다. 120초 안의 다음 활성화 한 번만
-   * 클릭 활성화 예외(100ms)를 받는다. 그 밖의 활성화는 첫 클릭을 앞으로 가져오기로만 받는다(ADR-024 결정 5).
+   * 클릭 활성화 예외(100ms)를 받는다. 그 밖의 활성화는 첫 클릭을 앞으로 가져오기로만 받는다(ADR-027 결정 5).
    */
   noteHandoff(now = this.now()): void {
     this.handoff.note(now);
