@@ -14,7 +14,15 @@ export const DESTINATIONS = {
   openai: { origin: 'https://api.openai.com', paths: ['/v1/decisions', '/v1/responses'] },
 } as const satisfies Record<string, Destination>;
 
-export type DestinationName = keyof typeof DESTINATIONS;
+/**
+ * 시연 전용 목적지(SAX_DEMO_MODEL=openrouter, fixture 모드만). 클라이언트가 공급사 키를 들고 직접 부르는 D04 예외라
+ * EgressOptions.demoModel이 켜진 Egress에서만 열린다. 근거·범위: reports/demo-meeting.md §예외.
+ */
+export const DEMO_DESTINATIONS = {
+  openrouter: { origin: 'https://openrouter.ai', paths: ['/api/v1/chat/completions'] },
+} as const satisfies Record<string, Destination>;
+
+export type DestinationName = keyof typeof DESTINATIONS | keyof typeof DEMO_DESTINATIONS;
 
 export interface EgressOptions {
   /** 테스트 전용: 목적지 origin을 로컬 모의 서버로 바꾼다. 앱 진입점은 쓰지 않는다. */
@@ -24,6 +32,8 @@ export interface EgressOptions {
   modelGuard?: ModelGuardConfig;
   /** 시험용: process.env 대신 볼 환경. */
   env?: NodeJS.ProcessEnv;
+  /** 시연 전용 목적지(DEMO_DESTINATIONS)를 postJson에 연다. 앱 진입점은 fixture 모드 시연 플래그일 때만 켠다. */
+  demoModel?: boolean;
 }
 
 /** TLS 신뢰를 바꾸는 환경 변수 이름(N-23). 보이면 모델·odcloud 요청을 보내지 않는다. */
@@ -46,7 +56,7 @@ export const TICKET_HEADER = 'x-sax-egress-ticket';
 const TICKET_MAX_USES = 3;
 
 interface Ticket {
-  dest: DestinationName;
+  dest: keyof typeof DESTINATIONS;
   path: string;
   bodyHash: string;
   uses: number;
@@ -138,7 +148,7 @@ export class Egress {
   };
 
   async postJson(dest: DestinationName, path: string, body: unknown, headers: Record<string, string> = {}): Promise<EgressResponse> {
-    const d = DESTINATIONS[dest] as Destination | undefined;
+    const d = (Object.hasOwn(DESTINATIONS, dest) ? DESTINATIONS[dest as keyof typeof DESTINATIONS] : this.opts.demoModel && Object.hasOwn(DEMO_DESTINATIONS, dest) ? DEMO_DESTINATIONS[dest as keyof typeof DEMO_DESTINATIONS] : undefined) as Destination | undefined;
     if (!d) throw new EgressError('destination_not_allowed');
     if (!d.paths.includes(path)) throw new EgressError('path_not_allowed');
     if (this.envTampered.length) throw new EgressError('egress_env_tampered');
