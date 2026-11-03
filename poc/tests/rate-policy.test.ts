@@ -67,16 +67,17 @@ describe('요청률 정책(D03 §7)', () => {
     });
     assert.ok(Object.isFrozen(HOMETAX_POLICY.limits) && Object.isFrozen(HOMETAX_POLICY.pace.stepDelayMs));
     assert.deepEqual({ ...FIXTURE_POLICY, pace: HOMETAX_POLICY.pace, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 12 } }, HOMETAX_POLICY);
-    assert.equal(policyFor('hometax'), HOMETAX_POLICY);
+    // PoC 빌드는 위험 수용서 상한으로 좁힌다(ADR-022). D03 §7 값은 HOMETAX_POLICY에 그대로 남는다.
+    assert.deepEqual(policyFor('hometax'), { ...HOMETAX_POLICY, limits: { ...HOMETAX_POLICY.limits, runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3 }, cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 } });
     for (const kind of ['gov24', 'wetax', 'Hometax', '']) assert.throws(() => policyFor(kind), /policy\.portal_mode_denied/, `${kind}: 내장 정책이 없는 포털은 자동화하지 않는다`);
   });
 
-  it('하루 실행 상한은 KST 날짜 기준: 23:59에 40회 차면 거부, 00:00(KST)이면 다시 된다. 증가는 커밋된 뒤 남는다', () => {
-    const { g, c, repo } = guard();
+  it('하루 실행 상한은 KST 날짜 기준: 23:59에 20회(PoC 상한) 차면 거부, 00:00(KST)이면 다시 된다. 증가는 커밋된 뒤 남는다', () => {
+    const { g, c, repo } = guard(policyFor('hometax'));
     assert.equal(kstDay(T), '2026-11-02');
-    for (let i = 0; i < 40; i++) g.admit('p1', { irreversible: false });
+    for (let i = 0; i < 20; i++) g.admit('p1', { irreversible: false });
     assert.throws(() => g.admit('p1', { irreversible: false }), /policy\.runs_per_day/);
-    assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 40, '거부된 시도는 세지 않는다');
+    assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 20, '거부된 시도는 세지 않는다');
     g.admit('p2', { irreversible: false }); // 프로필별
     c.tick(10_000); // KST 00:00
     assert.equal(kstDay(c.wall), '2026-11-03');
@@ -84,14 +85,14 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-03'), 1);
   });
 
-  it('하루 비가역 상한: 시작 때 여유를 보고, armed 때 증가한다(30회 뒤 거부)', () => {
-    const { g, repo } = guard();
-    for (let i = 0; i < 30; i++) g.countCommit('p1');
+  it('하루 비가역 상한: 시작 때 여유를 보고, armed 때 증가한다(PoC 상한 1회 뒤 거부)', () => {
+    const { g, repo } = guard(policyFor('hometax'));
+    g.countCommit('p1');
     assert.throws(() => g.countCommit('p1'), /policy\.irreversible_per_day/);
     assert.throws(() => g.admit('p1', { irreversible: true }), /policy\.irreversible_per_day/);
     g.admit('p1', { irreversible: false }); // 조회성 실행은 비가역 여유를 보지 않는다
-    assert.equal(repo.count('hometax', 'p1', 'irreversible_day', '2026-11-02'), 30);
-    assert.equal(repo.sum('hometax', '', 'navigations_min', '2026-11-02T00:00:00', '2026-11-02T23:59:59'), 30, '발급 버튼 클릭은 네비게이션으로도 센다');
+    assert.equal(repo.count('hometax', 'p1', 'irreversible_day', '2026-11-02'), 1);
+    assert.equal(repo.sum('hometax', '', 'navigations_min', '2026-11-02T00:00:00', '2026-11-02T23:59:59'), 1, '발급 버튼 클릭은 네비게이션으로도 센다');
   });
 
   it('분당 네비게이션은 최근 60초 합: 12회 차면 기다리고, 가장 오래된 것이 60초를 벗어나면 다시 된다', () => {

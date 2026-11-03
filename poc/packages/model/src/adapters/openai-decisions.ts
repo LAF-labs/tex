@@ -59,7 +59,7 @@ export class OpenAIDecisionsAdapter implements DecideAdapter {
     this.opts = opts;
     this.egress = opts.egress;
     this.model = opts.model ?? LUNA;
-    this.client = new OpenAI({ apiKey: opts.apiKey, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 15_000 });
+    this.client = new OpenAI({ apiKey: opts.apiKey, organization: null, project: null, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 15_000 });
   }
 
   buildRequest(b: LoadedBundle, input: RedactedText): DecisionCreateParams {

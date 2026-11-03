@@ -2,6 +2,8 @@
 // - parentPort(중계 통로): main 질의·렌더러 명령·실행 명령. 여기로 온 승인·증언은 거부한다.
 // - 게이트 포트(main 전용 MessagePort): 게이트 요청·닫힘(엔진 → main), LocalApproval(main → 엔진)만.
 // 금고와는 전용 MessagePort.
+// 환경 변수 가드가 첫 import다(playwright-core의 DEBUG 읽기·TLS 설정보다 먼저 평가되어 기동을 거부한다).
+import { ENV_TAMPERED } from './env-guard.ts';
 import { hkdfSync } from 'node:crypto';
 import type { MessagePortMain } from 'electron';
 import path from 'node:path';
@@ -45,7 +47,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
   key.fill(0);
-  data = new DataService(db, new BizVerifier(new Egress()), { vaultDir: paths.vault });
+  const egress = new Egress();
+  if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
+  data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -57,6 +61,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       gate.postMessage({ t: 'gate.answer.result', reqId: String(g.approval?.reqId ?? ''), ...r } satisfies GatePortMessage);
     });
     runs.on('event', (data: Record<string, unknown>) => parentPort.postMessage({ t: 'ev', name: 'run', data }));
+    // 금고가 비밀 값이 새는 기미를 보면 발급 전에 멈춘다(I-3).
+    vault.on('secret_window.leak_suspected', () => runs?.leakSuspected());
   }
   log.event('engine.db_opened', { portal: portal.kind, gatePort: !!gatePort });
 }
@@ -94,14 +100,15 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
 }
 
 parentPort.on('message', (e) => {
+  if (ENV_TAMPERED) return; // 기동 거부 중(env-guard가 fatal을 보냈다)
   const msg = e.data as { t?: string; id?: number; method?: string; params?: Record<string, unknown> };
-  if ((msg?.t === 'init' || msg?.t === 'vault-port') && e.ports[0]) {
+  // 게이트 포트 없는 옛 기동(개발 콘솔 vault-port 메시지)은 받지 않는다. 게이트 없는 실행 경로를 남기지 않는다(N-24).
+  if (msg?.t === 'vault-port') return parentPort.postMessage({ t: 'fatal', code: 'engine.vault_port_unsupported' });
+  if (msg?.t === 'init' && e.ports[0]) {
     // 초기화는 한 번만. 다시 받으면 재시작 처리(in_doubt 승격·게이트 만료)가 진행 중인 실행을 망가뜨린다.
     if (initialized) return log.event('engine.init_again');
     initialized = true;
-    // 'vault-port'는 게이트 포트 없는 옛 기동(개발 콘솔). 실행 명령을 받지 않는다.
-    const m: EngineInit = msg.t === 'init' ? (msg as unknown as EngineInit) : { t: 'init', portal: { kind: 'hometax' } };
-    init(m, e.ports[0], msg.t === 'init' ? e.ports[1] : undefined).then(
+    init(msg as unknown as EngineInit, e.ports[0], e.ports[1]).then(
       () => parentPort.postMessage({ t: 'ready' }),
       (err: Error) => parentPort.postMessage({ t: 'fatal', code: err.message.slice(0, 80) }),
     );
