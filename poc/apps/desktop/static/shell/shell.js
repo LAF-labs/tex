@@ -678,7 +678,8 @@ function activityPanel(row) {
             ['우리 서버', '보낸 것 없음'],
           ]
         : [
-            ['홈택스', r.status === 'stopped' || r.status === 'attention' ? '발급하지 않음' : '진행 중'],
+            // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
+            ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요 · 위 안내를 봐 주세요' : '진행 중'],
             ['모델', '쓰지 않음'],
             ['우리 서버', '보낸 것 없음'],
           ];
