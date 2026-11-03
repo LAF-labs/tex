@@ -34,8 +34,9 @@ export PATH="${LOGIN_PATH:+$LOGIN_PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bi
   /usr/bin/osascript -e 'display notification "빌드하고 창을 여는 중이에요(몇 초)." with title "소버린 AX 데모"' >/dev/null 2>&1
   # 빌드는 한 번에 하나(첫 빌드 중에 또 누르면 같은 dist에 둘이 쓰지 않게). flock은 커널이 쥐고 프로세스가 끝나면 풀리므로
   # 남은 잠금·경합 처리가 따로 없다. 앞 빌드가 끝날 때까지 기다린다. macOS 기본 perl로 건다(flock 명령이 없다).
+  # 시그널로 끊긴 빌드(종료 코드 없음)도 실패로 넘긴다.
   # 창은 하나다: 이미 떠 있으면 Electron이 기존 창을 앞으로 가져오고 끝난다(shell.ts single-instance).
-  if ! /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">>", shift) or die; flock($f, LOCK_EX) or die; system(@ARGV); exit($? >> 8)' "${TMPDIR:-/tmp}/sax-demo-build.flock" pnpm build; then
+  if ! /usr/bin/perl -MFcntl=:flock -e 'open(my $f, ">>", shift) or die; flock($f, LOCK_EX) or die; system(@ARGV); exit($? == 0 ? 0 : (($? >> 8) || 1))' "${TMPDIR:-/tmp}/sax-demo-build.flock" pnpm build; then
     alert "빌드에 실패했어요."
     exit 1
   fi
