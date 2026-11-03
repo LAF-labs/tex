@@ -40,6 +40,12 @@ pnpm demo
 pnpm demo:e2e
 ```
 
+셸 화면만 상태별로 찍어 디자인 캔버스와 대조(엔진·Chrome 없이 목업 데이터, 결과 `reports/raw/design-sync/`, [PoC-9-design-sync.md](reports/PoC-9-design-sync.md)):
+
+```bash
+pnpm demo:preview
+```
+
 번들 다이제스트·허용 목록 재생성(번들·접두를 고친 뒤), S-L0 합성 측정, S9(키 없으면 모의):
 
 ```bash
