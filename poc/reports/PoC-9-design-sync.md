@@ -52,3 +52,5 @@
 - `pnpm lint` 통과. 셸 문서함 e2e(`shell-docs-e2e`, 리눅스 컨테이너 + xvfb) 41/41 통과(바꾸기 전과 같은 수).
 - 단위 시험: 셸·가드(`shell-mock`·`shell-docs`·`guards`) 27/27 통과. 나머지 파일은 리눅스 컨테이너에서 39개 묶음 통과, 7개 묶음 실패였고 실패는 모두 설치된 Chrome·OCR 언어 데이터가 필요한 금고·엔진 시험(`vault: chrome not installed`, 시간 초과)이다. 이번 변경은 그 패키지를 건드리지 않았다. `playwright-relay`·`run-browser`는 Chrome이 없어 돌리지 않았다.
 - 셸 e2e(`pnpm demo:e2e`)는 실행 Chrome이 필요해 리눅스 컨테이너에서는 돌리지 않았다. 셀렉터·문구(`data-run`·`data-act`·"초안과 같아요"·"메일로 보낸 것도 확인했어요" 등)는 유지했다. **Windows·macOS에서 한 번 돌려 확인이 필요하다.**
+- macOS(2026-11-03, origin/main eda3933 병합 뒤): `pnpm build`·`pnpm lint` 통과, `pnpm test` 279 통과·0 실패(Windows 전용 3건 건너뜀), 셸 e2e(`pnpm demo:e2e`) 52/52, 셸 문서함 e2e(`shell-docs-e2e`) 41/41. 시험이 덮어쓴 `reports/raw/` 파일은 되돌렸다.
+- 리뷰 반영: 확인 필요로 끝난 실행이 단계 사이에서 멈췄으면(진행 중 단계 없음) 끝나지 않은 첫 묶음을 "확인 필요"로 표시한다(`runSteps`). 전에는 그 묶음이 "할 일"로 떨어져 멈춘 곳이 안 보였다.

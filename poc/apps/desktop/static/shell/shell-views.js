@@ -136,7 +136,7 @@ const STEP_GROUPS = [
 ];
 const ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 export function runSteps(run) {
-  return STEP_GROUPS.map(([label, idx]) => {
+  const groups = STEP_GROUPS.map(([label, idx]) => {
     const xs = idx.map((i) => run.steps[i]).filter(Boolean);
     const pick = (st) => xs.find((s) => s.state === st);
     const att = pick('attention');
@@ -147,6 +147,12 @@ export function runSteps(run) {
     if (xs.some((s) => s.state === 'done') && ACTIVE.includes(run.status)) return { label, state: 'now' };
     return { label, state: 'todo' };
   });
+  // 단계 사이에서 멈춘 확인 필요(진행 중 단계가 없던 때)는 끝나지 않은 첫 묶음에 표시한다. 안 하면 멈춘 곳이 안 보인다.
+  if (run.status === 'attention' && !groups.some((g) => g.state === 'attention')) {
+    const at = groups.find((g) => g.state !== 'done');
+    if (at) at.state = 'attention';
+  }
+  return groups;
 }
 
 export function note(text, attention, extra, ic = 'info') {
