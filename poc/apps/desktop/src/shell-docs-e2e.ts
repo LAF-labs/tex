@@ -63,6 +63,8 @@ function pickNext(file: string | null | 'throw', delay = 0): void {
 type DocRow = { id: string; name: string; issuedOn: string | null; expiresOn: string | null; vault?: { expirySource: string | null; needsUser: boolean; reasons: string[]; subjectMismatch: boolean; suggested: { validUntil?: string } } };
 const listDocs = () => js<DocRow[]>(`window.sax.call('docs.list')`);
 const rowText = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.textContent ?? ''`);
+/** 목록에는 유효 열이 없다(캔버스 D-01). 만료일 확실성은 행의 data-expiry-tag로 본다(화면에서는 상세 패널 유효 칸). */
+const rowTag = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.getAttribute('data-expiry-tag') ?? ''`);
 const toastText = () => js<string>(`(() => { const t = document.querySelector('#toast'); return t && !t.hidden ? t.textContent : ''; })()`);
 const busy = () => js<boolean>(`document.querySelector('[data-act=doc-import]')?.disabled ?? false`);
 /** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 아무것도 누르지 않는다. 대화상자·뷰어는 3초 안의 입력 뒤에만 열린다(ADR-027 결정 8). */
@@ -169,7 +171,7 @@ async function main(): Promise<void> {
 
   const t = await importNew(files.tax);
   check('납세증명서: 보관함에 들어가고 문서에서 읽은 만료일, 확인 필요 없음', !!t && t.issuedOn === tax.expected.issuedOn && t.expiresOn === tax.expected.validUntil && t.vault!.expirySource === 'document' && !t.vault!.needsUser, t);
-  check('목록 행: 만료 D-n 옆에 출처(문서)', !!t && (await rowText(t.id)).includes('문서'), t && (await rowText(t.id)));
+  check('목록 행: 발급일 옆 "(n일 전)", 만료일 출처(문서)', !!t && /일 전\)|\(오늘\)/.test(await rowText(t.id)) && (await rowTag(t.id)) === '문서', t && `${await rowText(t.id)} / ${await rowTag(t.id)}`);
   check('가져온 서류의 패널이 열리고 확인 구역이 보인다', !!t && (await js<boolean>(`document.querySelector('[data-doc-review="${t.id}"]')?.offsetParent != null`)));
 
   const n0 = (await listDocs()).length;
@@ -179,7 +181,7 @@ async function main(): Promise<void> {
 
   const b = await importNew(files.biz);
   check('사업자등록증명(다른 사업자): 90일 추정, 확인 필요(subject_mismatch)', !!b && b.vault!.expirySource === 'rule' && b.vault!.needsUser && b.vault!.reasons.includes('subject_mismatch'), b);
-  check('목록 행: 확인 필요 표시와 추정 표시', !!b && /확인 필요/.test(await rowText(b.id)) && /추정/.test(await rowText(b.id)), b && (await rowText(b.id)));
+  check('목록 행: 확인 필요 표시와 추정 표시', !!b && /확인 필요/.test(await rowText(b.id)) && (await rowTag(b.id)) === '추정', b && `${await rowText(b.id)} / ${await rowTag(b.id)}`);
   check('확인 필요 서류가 목록 맨 위', (await js<string>(`document.querySelector('section[data-view=docs] tbody tr')?.getAttribute('data-doc-row') ?? ''`)) === b?.id);
   await js(`document.querySelector('[data-doc-row="${b!.id}"]').click()`);
   await until('review panel', async () => js<boolean>(`!!${review(b!.id, '[data-act=doc-confirm]')}`), 5000);
@@ -190,11 +192,11 @@ async function main(): Promise<void> {
   check('문서 패널에서 바꾸지 않고 확인하면 확인함(대상 표시는 남음)', !!b2 && !b2.vault!.needsUser && b2.vault!.expirySource === 'user' && b2.vault!.subjectMismatch, b2);
   check('바꾸지 않은 확인은 빈 수정으로 보낸다', JSON.stringify(patches.at(-1)) === '{}', patches.at(-1));
   await until('row updated', async () => !/확인 필요/.test(await rowText(b!.id)), 5000);
-  check('목록 행에서 확인 필요가 사라지고 확인함 표시', /확인함/.test(await rowText(b!.id)) && !/확인 필요/.test(await rowText(b!.id)), await rowText(b!.id));
+  check('목록 행에서 확인 필요가 사라지고 확인함 표시', (await rowTag(b!.id)) === '확인함' && !/확인 필요/.test(await rowText(b!.id)), `${await rowText(b!.id)} / ${await rowTag(b!.id)}`);
 
   const a = await importNew(files.amb);
   check('유효기간 줄이 둘인 납세증명서: 규칙보다 이른 문서 후보를 잠정 만료일로(짧은 쪽), 확인 필요', !!a && a.expiresOn === AMB_VALID && a.vault!.expirySource === 'document' && a.vault!.needsUser && a.vault!.reasons.includes('valid_until_ambiguous') && a.vault!.suggested.validUntil === AMB_VALID, a);
-  check('목록 행: 확인 필요 서류의 만료일은 추정', !!a && /추정/.test(await rowText(a.id)), a && (await rowText(a.id)));
+  check('목록 행: 확인 필요 서류의 만료일은 추정', !!a && (await rowTag(a.id)) === '추정', a && `${await rowText(a.id)} / ${await rowTag(a.id)}`);
   const field = (f: string) => js<string>(`${review(a!.id, `[data-field=${f}]`)}?.value ?? ''`);
   const setField = (f: string, v: string) => js(`(() => { const i = ${review(a!.id, `[data-field=${f}]`)}; i.value = '${v}'; i.dispatchEvent(new Event('input')); })()`);
 
