@@ -38,20 +38,24 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Running(commit) | verify `committed` | Running | 원장 `committed`, 기기 간 업무 키 표시 업로드 |
 | Running(commit) | verify `not_committed` | Running | 원장 `not_committed`, 게이트 앞 체크포인트로(`reload`) |
 | Running(commit) | verify `unknown` / 상한 초과 | InDoubt | 원장 `in_doubt`, 기기 간 업무 키 표시 업로드 |
-| InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed. 실효 수준이 실행을 허용하지 않으면 `committed` → CompletedWithIssues, `not_committed` → Paused(`policy_downgrade`)(아래 Running 진입 확인) | 증언은 main 승인 바로 받아 `LocalAttestation`(승인 근거와 다른 HMAC 문맥)으로 엔진에 넘기고 저널에 기록한다(ADR-021 결정 5). 증언은 `armed_at`부터 `policy.verify.minElapsedMs`가 지나고 조회 재시도를 1회 더 한 뒤에만 받으며, 승인 바에 "발급목록 반영이 늦을 수 있습니다"를 고정 표시한다(E-13). 정지 하향으로 새 수준이 `postprocess`이거나 kill이라 조회를 돌릴 수 없으면 조회 재시도 없이 증언을 받는다. 이때도 `minElapsedMs` 대기와 위 고정 문구는 그대로 두고 "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 정지 하향 뒤의 해소는 Running으로 가지 않는다(ADR-023 결정 6, ADR-021 개정 메모) |
+| InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed. 해소 결과(`committed`·`not_committed`)를 원장에 **먼저 기록한 뒤** Running 진입 확인을 한다. 실효 수준이 실행을 허용하지 않으면 정지 분기(아래 규칙)로 간다: `committed` → CompletedWithIssues, `not_committed` → Paused(`policy_downgrade`) | 증언은 main 승인 바로 받아 `LocalAttestation`(승인 근거와 다른 HMAC 문맥)으로 엔진에 넘기고 저널에 기록한다(ADR-021 결정 5). 증언은 `armed_at`부터 `policy.verify.minElapsedMs`가 지나고 조회 재시도를 1회 더 한 뒤에만 받으며, 승인 바에 "발급목록 반영이 늦을 수 있습니다"를 고정 표시한다(E-13). 정지 하향으로 새 수준이 `postprocess`이거나 kill이라 조회를 돌릴 수 없으면 조회 재시도 없이 증언을 받는다. 이때도 `minElapsedMs` 대기와 위 고정 문구는 그대로 두고 "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 정지 하향 뒤의 해소도 같은 순서를 따르므로 Running으로 가지 않고 InDoubt로 되돌아가지도 않는다(ADR-023 결정 6, ADR-021 개정 메모) |
 | Running | 모든 스텝 완료 | Completed | |
 | Running | 비가역 커밋 뒤 후속(이메일 확인·PDF) 실패, 또는 `end: completed_with_issues` | CompletedWithIssues | UI 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다" |
 | Paused | 사용자 재개 | Running | 같은 `package_digest`가 설치되어 있을 때만. 아니면 '다시 시작'만. `prepare()`와 KST 날짜가 다르면 카드 고정 경고(B-13). `policy_downgrade`로 멈춘 실행은 데몬이 재시도하지 않는다(ADR-023 결정 6). 재개 가능 여부는 아래 규칙(Running 진입 확인)을 따른다 |
-| Running·Recovering(커밋 구간 밖) | 정지 하향(그 실행의 실효 수준이 내려가거나 그 플레이북이 kill됨, ADR-023 결정 5) | Paused | 다음 스텝 경계에서. 토큰 폐기, 체크포인트 저장, `run.paused{reason: policy_downgrade}`. 현재 의도의 원장이 `observed_manual`·`in_doubt`면 Paused 대신 InDoubt. 새 수준이 `postprocess`이거나 kill이면 사용자에게 알리고 그 포털의 자동화 Chrome을 닫는다 |
-| WaitingHuman·HandedOff | 정지 하향 | (사람 차례가 끝날 때까지 그대로) | 배너로 알리고, 사람 차례가 끝나면(입력·재개·TTL 초과·30분 경과) 위 행처럼 멈춘다. 원장이 `observed_manual`·`in_doubt`면 InDoubt, 아니면 Paused. 자동화 Chrome은 그 뒤에 닫는다(사용자가 서명 창에 입력 중일 수 있다) |
-| WaitingGate | 정지 하향 | Paused | 게이트 취소(`gate_requests` `open → expired`), 토큰 폐기, 포털 탭 입력 잠금 해제(R-G6), 게이트 **앞** 체크포인트로 되감아 저장, `run.paused{reason: policy_downgrade}` |
-| Running(commit) | 정지 하향 | Running(commit) | 커밋 구간과 verify를 실행 시작 때의 값으로 끝낸다(§5.3, 새 값 적용 없음). 그 뒤 `committed` → 사후 스텝 없이 CompletedWithIssues("재실행하지 마세요. 발급은 완료되었습니다. PDF 저장과 이메일 발송 확인은 {포털}에서 직접 하세요"), `not_committed` → Paused(게이트 앞), `unknown` → InDoubt |
+| Running·Recovering(커밋 구간 밖, 사후 스텝 포함) | 정지 하향(그 실행의 실효 수준이 내려가거나 그 플레이북이 kill됨, ADR-023 결정 5) | 정지 분기 | 다음 스텝 경계에서. 토큰 폐기, 체크포인트 저장 뒤 아래 '정지 분기'로 갈 곳을 정한다(사후 스텝 중이면 `committed`가 있으므로 CompletedWithIssues). 새 수준이 `postprocess`이거나 kill이면 사용자에게 알리고 그 포털의 자동화 Chrome을 닫는다 |
+| WaitingHuman·HandedOff | 정지 하향 | (사람 차례가 끝날 때까지 그대로) | 배너로 알리고, 사람 차례가 끝나면(입력·재개·TTL 초과·30분 경과) 위 행처럼 정지 분기로 간다. 자동화 Chrome은 그 뒤에 닫는다(사용자가 서명 창에 입력 중일 수 있다) |
+| WaitingGate | 정지 하향 | 정지 분기 | 게이트 취소(`gate_requests` `open → expired`), 토큰 폐기, 포털 탭 입력 잠금 해제(R-G6), 게이트 **앞** 체크포인트로 되감아 저장한 뒤 정지 분기(앞선 커밋이 없으면 Paused) |
+| Running(commit) | 정지 하향 | Running(commit) | 커밋 구간과 verify를 실행 시작 때의 값으로 끝낸다(§5.3, 새 값 적용 없음). 그 뒤 verify 결과를 원장에 기록하고 정지 분기로 간다: `committed` → CompletedWithIssues, `unknown` → InDoubt, `not_committed` → 게이트 앞으로 되감은 뒤 Paused(앞선 커밋이 있으면 CompletedWithIssues) |
 | (아무 상태) | abort() | Aborted (커밋 구간이면 verify 후, 상한 120초 초과 시 InDoubt) | 간편인증 PUSH가 떠 있으면 "홈택스 앱 요청을 거절하세요" 안내 |
 | (비종료 상태) | 프로세스 재시작 | Interrupted | 저널로 복원. 원장 `armed\|dispatched\|observed_manual` 행은 `in_doubt`로 승격 → InDoubt |
 
 규칙:
 - `WaitingGate → Running`은 승인 이벤트로만. 전이표에 다른 길이 없다.
-- **Running 진입 확인**(ADR-023 결정 6): Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, HandedOff·Paused 재개, InDoubt 해소)는 그 시점의 실효 수준(§12)과 `killPlaybooks`를 확인한다. 그 플레이북 실행을 허용하지 않으면 Running으로 가지 않고, 현재 의도의 원장 상태에 따라 간다. `committed`면 사후 스텝 없이 **CompletedWithIssues**(종료, 위 고정 문구)로 끝낸다. `armed`·`dispatched`·`observed_manual`·`in_doubt`면 **InDoubt**로 간다(증언으로만 해소). 원장 행이 없거나 `not_committed`면 **Paused(`policy_downgrade`)**로 간다(재개하면 재게이트). 발급이 확정된 실행이 종료되지 않은 상태로 남지 않게 하려는 규칙이다. 이미 커밋 구간 안이면 §5.3대로 구간과 verify를 마친다.
+- **정지 분기**(ADR-023 결정 6): 정지 하향이나 아래 Running 진입 확인으로 실행을 멈출 때 갈 곳은 그 실행의 원장 행(그 실행의 모든 의도·스텝) 상태로 정한다. 위에서부터 처음 맞는 것을 고른다. 발급이 확정된 실행이 재개 가능한 상태로 남지 않게 하려는 규칙이다.
+  1. `armed`·`dispatched`·`observed_manual`·`in_doubt` 행이 하나라도 있으면 **InDoubt**(조회·증언으로 해소)
+  2. `committed` 행이 하나라도 있으면 사후 스텝 없이 **CompletedWithIssues**(종료 상태). 고정 문구는 "재실행하지 마세요. 발급은 완료되었습니다. PDF 저장과 이메일 발송 확인은 {포털}에서 직접 하세요"
+  3. 원장 행이 없거나 모두 `not_committed`면 **Paused(`policy_downgrade`)**(재개하면 재게이트). 저널에 `run.paused{reason: policy_downgrade}`
+- **Running 진입 확인**(ADR-023 결정 6): Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, HandedOff·Paused 재개, InDoubt 해소)는 그 시점의 실효 수준(§12)과 `killPlaybooks`를 확인한다. 그 플레이북 실행을 허용하지 않으면 Running 대신 정지 분기로 간다. InDoubt 해소는 해소 결과를 원장에 먼저 기록한 뒤 이 확인을 하므로 InDoubt로 되돌아가지 않는다. 이미 커밋 구간 안이면 §5.3대로 구간과 verify를 마친다.
 - `Paused`는 디스크에 직렬화한다(입력·변수·현재 체크포인트·intentId·`package_digest`). 토큰과 `runKey`는 직렬화하지 않으므로 재개 시 반드시 재게이트된다.
 - 저널(`run_events`)이 상태 전이의 단일 진실이다. 재시작 시 저널을 재생해 상태를 복원한다.
 - 커밋 구간(토큰 소비 ~ verify 완료) 동안 앱 종료를 막고 확인 대화상자를 띄운다. OS 종료 신호를 받으면 저널에 `in_doubt`를 먼저 쓴다.

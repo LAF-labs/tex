@@ -39,22 +39,20 @@
      - 그 실행의 **실효 수준**이 내려간다. 실효 수준은 정책 `portalMode`, status `portalModeCeiling`, `PORTAL_MODE_CEILING`, 만료 규칙(D03 §7.1: 정책 만료 168시간 뒤 전 포털 `postprocess`, ADR-022의 허락 포털 즉시 하향) 가운데 가장 낮은 것이다(D03 §12). 받은 파일 때문이든 앱이 만료 규칙으로 스스로 계산했든 같다. status 상한이 내려가도 실효 수준이 그대로면 멈추지 않는다.
      - 그 플레이북이 `killPlaybooks`에 들어간다.
    - **커밋 구간(토큰 소비부터 verify 완료까지, D03 §5.3) 안에서는 어떤 새 값도 적용하지 않는다.** 그 구간은 실행이 시작될 때 정한 값으로 끝내고, 새 값은 verify가 끝난 뒤부터 적용한다. 커밋 구간의 런타임 규칙과 W(X)의 토큰 수명은 바꾸지 않는다.
-6. **하향으로 멈춘 실행**(D03 §2 전이표에 행을 더한다):
-   - `Running`·`Recovering`(커밋 구간 밖)이면 다음 스텝 경계에서 멈춘다. `WaitingGate`면 게이트를 취소하고(`gate_requests` 종결, 포털 탭 입력 잠금 해제) 멈춘다. 어느 경우든 토큰을 폐기하고 체크포인트를 저장한 뒤 `Paused`로 간다. 저널에는 `run.paused{reason: policy_downgrade}`를 남긴다. 현재 의도의 원장이 `observed_manual`·`in_doubt`면 `Paused` 대신 `InDoubt`로 간다.
-   - `WaitingHuman`·`HandedOff`면 배너로 알리고 사람 차례가 끝날 때(입력·재개·시간 초과)까지 기다린 뒤 위와 같이 멈춘다. 사용자가 서명 창에 입력하는 중일 수 있으므로 그 전에 Chrome을 닫지 않는다.
-   - 커밋 구간 안이면 그 구간과 verify를 마친 뒤 다음과 같이 처리한다.
-     - verify `committed`: 원장을 `committed`로 남긴다. 사후 스텝(PDF 저장·이메일 발송 확인 등)은 실행하지 않는다. 실행은 `CompletedWithIssues`로 끝내고 "재실행하지 마세요. 발급은 완료되었습니다. PDF 저장과 이메일 발송 확인은 {포털}에서 직접 하세요"를 표시한다.
-     - verify `not_committed`: 게이트 앞 체크포인트로 `Paused`
-     - verify `unknown`: `InDoubt`
-   - 새 수준이 `postprocess`이거나 kill이면 그 포털의 자동화 Chrome을 닫는다(D03 §12, `postprocess`에서는 CDP를 쓰지 않는다).
-   - **Running 진입 확인**: Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, `HandedOff`·`Paused` 재개, `InDoubt` 해소)에서 그 시점의 실효 수준과 `killPlaybooks`를 확인한다. 실행을 허용하지 않으면 Running으로 가지 않고, 현재 의도의 원장 상태에 따라 간다. 다른 이유로 멈춰 있던 실행도 이 확인을 지나야 재개된다.
-     - `committed`: 사후 스텝 없이 `CompletedWithIssues`로 끝낸다(종료 상태).
-     - `armed`·`dispatched`·`observed_manual`·`in_doubt`: `InDoubt`로 간다.
-     - 원장 행 없음 또는 `not_committed`: `Paused(policy_downgrade)`로 간다.
+6. **하향으로 멈춘 실행**(D03 §2 전이표에 행과 규칙을 더한다):
+   - **정지 분기**: 실행을 멈출 때 갈 곳은 그 실행의 원장 행(모든 의도·스텝) 상태로 정한다. 위에서부터 처음 맞는 것을 고른다.
+     1. `armed`·`dispatched`·`observed_manual`·`in_doubt` 행이 있으면 `InDoubt`
+     2. `committed` 행이 있으면 사후 스텝(PDF 저장·이메일 발송 확인 등) 없이 `CompletedWithIssues`로 끝낸다(종료 상태). "재실행하지 마세요. 발급은 완료되었습니다. PDF 저장과 이메일 발송 확인은 {포털}에서 직접 하세요"를 표시한다.
+     3. 원장 행이 없거나 모두 `not_committed`면 `Paused(policy_downgrade)`. 저널에 `run.paused{reason: policy_downgrade}`를 남긴다.
 
      발급이 확정된 실행은 `Paused`로 가지 않는다. 재개나 새 의도로 같은 건이 다시 발급되는 길을 막기 위해서다.
+   - `Running`·`Recovering`(커밋 구간 밖, 사후 스텝 포함)이면 다음 스텝 경계에서 토큰을 폐기하고 체크포인트를 저장한 뒤 정지 분기로 간다. `WaitingGate`면 게이트를 취소하고(`gate_requests` 종결, 포털 탭 입력 잠금 해제) 게이트 앞으로 되감은 뒤 정지 분기로 간다.
+   - `WaitingHuman`·`HandedOff`면 배너로 알리고 사람 차례가 끝날 때(입력·재개·시간 초과)까지 기다린 뒤 정지 분기로 간다. 사용자가 서명 창에 입력하는 중일 수 있으므로 그 전에 Chrome을 닫지 않는다.
+   - 커밋 구간 안이면 그 구간과 verify를 마치고 결과를 원장에 기록한 뒤 정지 분기로 간다(`committed` → `CompletedWithIssues`, `unknown` → `InDoubt`, `not_committed` → 게이트 앞으로 되감은 뒤 `Paused`).
+   - 새 수준이 `postprocess`이거나 kill이면 그 포털의 자동화 Chrome을 닫는다(D03 §12, `postprocess`에서는 CDP를 쓰지 않는다).
+   - **Running 진입 확인**: Running으로 들어가는 모든 전이(Preparing 완료, 게이트 승인, 사람 입력 뒤, 복구 성공, `HandedOff`·`Paused` 재개, `InDoubt` 해소)에서 그 시점의 실효 수준과 `killPlaybooks`를 확인한다. 실행을 허용하지 않으면 Running 대신 정지 분기로 간다. 다른 이유로 멈춰 있던 실행도 이 확인을 지나야 재개된다. `InDoubt` 해소는 해소 결과(`committed`·`not_committed`)를 원장에 먼저 기록한 뒤 이 확인을 하므로, `InDoubt`로 되돌아가지 않고 `CompletedWithIssues`나 `Paused`로 끝난다.
    - `Paused(policy_downgrade)`는 **사용자가 재개를 누를 때만** 다시 시작하고, 시작하면 다시 게이트를 거친다. 데몬은 이 실행을 재시도하지 않는다.
-   - **하향 뒤 `InDoubt` 해소**: 새 수준에서 조회 플레이북을 돌릴 수 없으면(`postprocess`·kill) 조회 재시도 없이 사용자 증언(D03 §2 `InDoubt` 행, ADR-021 결정 5)을 받는다. `armed_at`부터 `verify.minElapsedMs` 대기와 "발급목록 반영이 늦을 수 있습니다" 고정 문구(E-13)는 그대로 두고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 새 수준이 `assisted` 이상이면 기존 규칙(조회 재시도 1회 뒤 증언)을 따른다. 정지 하향 뒤의 해소는 Running으로 가지 않는다. `committed`로 확인되거나 증언되면 `CompletedWithIssues`, `not_committed`면 `Paused(policy_downgrade)`로 끝낸다.
+   - **하향 뒤 `InDoubt` 해소**: 새 수준에서 조회 플레이북을 돌릴 수 없으면(`postprocess`·kill) 조회 재시도 없이 사용자 증언(D03 §2 `InDoubt` 행, ADR-021 결정 5)을 받는다. `armed_at`부터 `verify.minElapsedMs` 대기와 "발급목록 반영이 늦을 수 있습니다" 고정 문구(E-13)는 그대로 두고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 새 수준이 `assisted` 이상이면 기존 규칙(조회 재시도 1회 뒤 증언)을 따른다. 해소 뒤에는 위 Running 진입 확인과 정지 분기를 따른다.
 7. **반영 시간 목표**(운영 목표이며 측정한다):
    - '배포 시각'은 `monotonic`이 오른 정책이나 내용이 바뀐 status가 투명성 로그에 기록된 시각이다. 타임스탬프 키의 48시간 재서명은 배포가 아니다.
    - 켜져 있는 앱에는 배포 뒤 **20분 안**에 적용되는 것을 목표로 한다(`POLICY_APPLY_TARGET_MIN = 20`: 15분 주기 + 캐시 60초 + 여유).
