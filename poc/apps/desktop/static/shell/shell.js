@@ -705,20 +705,23 @@ function activityPanel(row) {
 }
 
 const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터'];
-const AUTH_DESC = [
-  ['사업자 간편인증', '발급할 때마다 폰에서 승인해요'],
-  ['보안카드', '번호 30개 등록됨 · 앱이 알아서 입력해요 · 홈택스 아이디 로그인'],
-  ['공동인증서', '비밀번호는 발급할 때마다 직접 입력해요'],
-  ['금융인증서', '6자리 비밀번호를 발급할 때마다 직접 입력해요'],
+// 프로필 인증 문자열(shell-app SIGN: 사업자 간편인증·공동·금융인증서·보안카드·발급 인증 미설정)을 종류로 묶는다.
+const AUTH_KIND = [
+  ['simple', /^사업자 간편인증/, '발급할 때마다 폰에서 승인해요'],
+  ['card', /^보안카드/, '번호 30개 등록됨 · 앱이 알아서 입력해요 · 홈택스 아이디 로그인'],
+  ['cert', /^(공동|금융|공동·금융)인증서/, '비밀번호는 발급할 때마다 직접 입력해요'],
 ];
-const authDesc = (name) => AUTH_DESC.find(([k]) => name.startsWith(k))?.[1] ?? '';
+const authKind = (name) => AUTH_KIND.find(([, re]) => re.test(name));
 
-/** 등록한 발급 인증(캔버스 S-02). 기본은 프로필의 인증이고, 나머지 줄은 데모 목업이다(엔진·금고에는 하나만 있다). */
+/** 등록한 발급 인증(캔버스 S-02). 기본은 프로필의 인증이고, 나머지 줄은 데모 목업이다(엔진·금고에는 하나만 있다). 미설정이면 기본 줄이 없다. */
 function authList() {
   const b = state.boot.profiles.business;
-  const main = b.auth.replace(/\s*\(([^)]+)\)$/, ' · $1');
-  const extra = [['보안카드', true], [`공동인증서 · ${b.name}`, false]].filter(([name]) => !main.startsWith(name.split(' · ')[0]));
-  return [{ name: main, main: true }, ...extra.map(([name, reRegister]) => ({ name, main: false, reRegister }))];
+  const main = authKind(b.auth) ? { name: b.auth.replace(/\s*\(([^)]+)\)$/, ' · $1'), kind: authKind(b.auth)[0], main: true } : null;
+  const extra = [
+    { name: '보안카드', kind: 'card', reRegister: true },
+    { name: `공동인증서 · ${b.name}`, kind: 'cert' },
+  ].filter((x) => x.kind !== main?.kind);
+  return [main, ...extra].filter(Boolean).map((x) => ({ ...x, desc: AUTH_KIND.find(([k]) => k === x.kind)[2] }));
 }
 
 /** 설정(캔버스 S-02 · 발급 인증). 이 데모는 보여 주기만 하고 바꾸지 않는다. */
@@ -746,7 +749,7 @@ function settingsView() {
           h(
             'div',
             { class: 'auth-row', 'data-auth-main': a.main ? '' : null },
-            h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, a.name), h('span', { class: 'sx-meta' }, authDesc(a.name))),
+            h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, a.name), h('span', { class: 'sx-meta' }, a.desc)),
             a.main ? h('span', { class: 'sx-chip is-done' }, '기본') : small('기본으로'),
             a.reRegister ? small('다시 등록', true) : null,
             small('삭제', true),
