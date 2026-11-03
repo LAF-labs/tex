@@ -255,13 +255,16 @@ export function taskCard(run, act) {
   return card;
 }
 
+/** 활동 기록의 모델 줄. 시연 모델(SAX_DEMO_MODEL=openrouter)로 해석한 요청이면 그 사실을, 아니면 쓰지 않음. */
+export const modelRow = (interp) => ['모델', interp === 'model' ? 'OpenRouter(시연 예외) · 채팅 문장과 가상 거래처 이름만 보냄' : '쓰지 않음(요청 해석은 이 PC 안 규칙)'];
+
 /** "어디로 무엇이 갔나요"(활동 기록 행을 카드 안에서 펼친 것). */
 export function whereRows(run) {
   return [
     ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인'],
     ['메일', run.result.mailTo ? `${run.result.mailTo} · 홈택스가 보냄, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
     ['보관', '이 PC 문서함 · 파일명에는 거래처·승인번호를 넣지 않아요'],
-    ['모델', '쓰지 않음(데모의 요청 해석은 이 PC 안 규칙)'],
+    modelRow(run.interp),
     ['우리 서버', '보낸 것 없음'],
   ];
 }

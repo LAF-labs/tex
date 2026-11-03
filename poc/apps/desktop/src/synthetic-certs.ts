@@ -160,6 +160,17 @@ export function syntheticCerts(): SyntheticCert[] {
   return out;
 }
 
+/** 시연용 서류 3장(오늘 기준 날짜, 데모 사업장 이름·번호): 유효한 납세증명서, 만료된 납세증명서, 사업자등록증명(만료일 추정). 모두 가상이다. */
+export function demoCerts(today: string, me: { name: string; rep: string; bizNo: string }): Array<{ file: string; html: string }> {
+  const corp = { name: me.name, rep: me.rep, corp: false };
+  const tax = (issued: string, no: number) => taxCertHtml({ no: docNo(no), spaced: false, corp, bizNo: me.bizNo, issued, valid: addDays(issued, 29), shortened: false, style: 'ko', office: OFFICES[0]!, deferral: false, printedAt: false });
+  return [
+    { file: '납세증명서_유효.pdf', html: tax(addDays(today, -3), 101) },
+    { file: '납세증명서_만료.pdf', html: tax(addDays(today, -45), 102) },
+    { file: '사업자등록증명.pdf', html: bizRegHtml({ no: docNo(103), spaced: false, corp, bizNo: me.bizNo, issued: addDays(today, -2), style: 'ko', office: OFFICES[0]!, open: '2019-03-02', reg: '2019-03-05' }) },
+  ];
+}
+
 /** 여러 쪽짜리(maxPages 확인용). 쪽마다 같은 납세증명 본문. */
 export function multiPageHtml(pages: number): string {
   const one = syntheticCerts()[0]!.html.replace(/^[\s\S]*?<body>/, '').replace('</body>', '');

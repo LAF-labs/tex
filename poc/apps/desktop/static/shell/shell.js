@@ -1,7 +1,7 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
 import { g24Card, g24Panel } from './shell-g24.js';
-import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -12,6 +12,8 @@ const state = {
   today: new Date(),
   view: 'chat',
   profile: 'business',
+  sending: false,
+  interp: 'offline', // 채팅 해석 경로(main이 정한다): 'model' | 'offline'. 제목줄 구석에 작게 보인다.
   runs: new Map(),
   g24: new Map(),
   docs: [],
@@ -194,7 +196,13 @@ function renderTitlebar() {
     ),
     h('span', { class: 'mock-badge' }, 'PoC 데모 · 목업 데이터'),
     h('button', { type: 'button', class: 'sx-search', onclick: () => toast('목업: 검색은 이 데모에 없어요') }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, 'Ctrl K')),
-    h('div', { class: 'tb-status' }, h('span', {}, icon('lock'), '금고 열림'), h('span', {}, icon('phone'), '폰 연결 안 됨')),
+    h(
+      'div',
+      { class: 'tb-status' },
+      h('span', { class: 'tb-interp', 'data-interp': state.interp }, state.interp === 'model' ? '모델 해석' : '오프라인 해석'),
+      h('span', {}, icon('lock'), '금고 열림'),
+      h('span', {}, icon('phone'), '폰 연결 안 됨'),
+    ),
   );
 }
 
@@ -379,7 +387,8 @@ function fillComposer(text) {
 
 async function send() {
   const text = chat.input.value.trim();
-  if (!text) return;
+  // 앞 요청의 답을 기다리는 동안(시연 모델은 최대 4초) 새 요청은 입력창에 둔다(되묻기 순서가 꼬이지 않게).
+  if (!text || state.sending) return;
   const vat = state.vat;
   chat.input.value = '';
   state.vat = null;
@@ -389,11 +398,22 @@ async function send() {
   renderQuick();
   appendThread(h('div', { class: 'sx-me' }, text));
   let r;
+  state.sending = true;
+  const waitEl = h('div', { class: 'sx-app sx-meta' }, '요청을 읽고 있어요…');
+  const waitTimer = setTimeout(() => appendThread(waitEl), 300);
   try {
     r = await call('request.send', { text, vat });
   } catch (e) {
     toast(errText(e));
     return;
+  } finally {
+    clearTimeout(waitTimer);
+    waitEl.remove();
+    state.sending = false;
+  }
+  if (r.via && r.via !== state.interp) {
+    state.interp = r.via === 'model' ? 'model' : 'offline';
+    renderTitlebar();
   }
   if (r.kind === 'draft') {
     putRun(r.run);
@@ -401,7 +421,7 @@ async function send() {
   } else if (r.kind === 'g24') {
     const id = `g24-${Date.now()}`;
     const now = new Date();
-    const g = { id, doc: r.doc, stage: 'guide', startedMs: now.getTime(), startedAt: now.toTimeString().slice(0, 5), today: localDate(now), candidates: [], picked: null, saving: false };
+    const g = { id, doc: r.doc, stage: 'guide', startedMs: now.getTime(), startedAt: now.toTimeString().slice(0, 5), today: localDate(now), candidates: [], picked: null, saving: false, interp: r.via };
     state.g24.set(id, g);
     appendThread(h('div', { class: 'sx-app' }, `${r.doc}은 정부24 서류라 직접 발급해 주셔야 해요. 단계와 넣을 값을 옆에 정리했어요.`));
     renderG24(g);
@@ -734,7 +754,7 @@ function activityPanel(row) {
       ? [
           ['정부24', '앱은 요청을 보내지 않았어요 · 직접 발급'],
           ['보관', row.g24.stage === 'saved' ? '이 PC 문서함' : '넣지 않음'],
-          ['모델', '쓰지 않음'],
+          modelRow(row.g24.interp),
           ['우리 서버', '보낸 것 없음'],
         ]
       : row.past
@@ -747,7 +767,7 @@ function activityPanel(row) {
         : [
             // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
             ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요 · 위 안내를 봐 주세요' : '진행 중'],
-            ['모델', '쓰지 않음'],
+            modelRow(r.interp),
             ['우리 서버', '보낸 것 없음'],
           ];
   return h(
@@ -1159,6 +1179,7 @@ async function boot() {
   state.boot = await call('shell.bootstrap');
   state.today = new Date();
   state.profile = state.boot.profile;
+  state.interp = state.boot.interp === 'model' ? 'model' : 'offline';
   state.docs = [...state.boot.docs];
   state.cps = state.boot.counterparties;
   const L = state.boot.layout;
