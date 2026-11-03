@@ -32,16 +32,32 @@ export PATH="${LOGIN_PATH:+$LOGIN_PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bi
     fi
   fi
   /usr/bin/osascript -e 'display notification "빌드하고 창을 여는 중이에요(몇 초)." with title "소버린 AX 데모"' >/dev/null 2>&1
-  # 빌드는 한 번에 하나(첫 빌드 중에 또 누르면 같은 dist에 둘이 쓰지 않게). 앞 빌드를 최대 60초 기다린다.
+  # 빌드는 한 번에 하나(첫 빌드 중에 또 누르면 같은 dist에 둘이 쓰지 않게). 잠금을 잡은 실행만 빌드하고 지운다.
+  # 앞 빌드를 최대 60초 기다리고, 끝난 실행이 남긴 잠금(pid가 없는 프로세스)은 치운다.
   # 창은 하나다: 이미 떠 있으면 Electron이 기존 창을 앞으로 가져오고 끝난다(shell.ts single-instance).
   LOCK="${TMPDIR:-/tmp}/sax-demo-build.lock"
-  for _ in $(seq 1 120); do mkdir "$LOCK" 2>/dev/null && break; sleep 0.5; done
-  trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+  got=""
+  for _ in $(seq 1 120); do
+    if mkdir "$LOCK" 2>/dev/null; then
+      got=1
+      echo $$ >"$LOCK/pid"
+      break
+    fi
+    pid="$(cat "$LOCK/pid" 2>/dev/null)"
+    if [ -n "$pid" ] && ! kill -0 "$pid" 2>/dev/null; then rm -rf "$LOCK"; continue; fi
+    sleep 0.5
+  done
+  if [ -z "$got" ]; then
+    alert "앞선 빌드가 끝나지 않았어요. 잠시 뒤 다시 눌러 주세요."
+    exit 1
+  fi
+  trap 'rm -rf "$LOCK"' EXIT
   if ! pnpm build; then
     alert "빌드에 실패했어요."
     exit 1
   fi
-  rmdir "$LOCK" 2>/dev/null
+  rm -rf "$LOCK"
+  trap - EXIT
   SAX_DEMO_MODEL=openrouter pnpm exec electron apps/desktop/dist/shell.js
   code=$?
   echo "== $(date '+%H:%M:%S') 끝 (exit $code)"
