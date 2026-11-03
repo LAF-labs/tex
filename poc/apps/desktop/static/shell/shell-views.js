@@ -164,7 +164,7 @@ export function taskCard(run, act) {
     card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('목업: 폰으로 다시 요청한 것으로 칠게요'), ''), signing ? null : btn('중지', () => act.stop(run.id), '', { 'data-act': 'stop' })));
   } else if (st === 'waiting') {
     // 중복 경고는 승인 바에도 있다(바 글자가 "같은 건 기록을 확인했고 발급"으로 바뀐다). 카드 문구는 보조다.
-    const action = run.warnings.length ? '같은 건 기록을 확인했고 발급' : '승인하고 발급';
+    const action = run.action || (run.warnings.length ? '같은 건 기록을 확인했고 발급' : '승인하고 발급');
     card.append(
       h('div', { class: 'sx-app-line' }, run.readbackDiffers ? '홈택스 화면에서 되읽은 값이에요. 초안과 다른 값이 있어요. 승인 바의 값을 확인해 주세요.' : '홈택스 화면에서 되읽은 값이에요. 초안과 같아요.'),
       ...run.warnings.map((w) => note(w, true)),
@@ -185,6 +185,8 @@ export function taskCard(run, act) {
   } else if (st === 'attention') {
     card.append(note(run.stoppedNote || '확인이 필요해요.', true));
   }
+  // 포털 안내 문구·금고 알림(텍스트 노드로만).
+  for (const t of run.notices || []) card.append(note(t, true));
   return card;
 }
 
