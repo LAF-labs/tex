@@ -105,7 +105,7 @@ export const QUICK: Array<{ label: string; text: string; soon?: boolean }> = [
   { label: '납세증명서', text: '납세증명서 떼 줘', soon: true },
 ];
 
-// ---- 요청 해석(정규식 목업, 모델 호출 없음) ----
+// ---- 요청 해석(정규식. SAX_DEMO_MODEL=openrouter 시연에서는 모델이 먼저 뽑고 실패하면 이쪽, demo-model.ts) ----
 
 const SMALL: Record<string, number> = { 천: 1e3, 백: 1e2, 십: 10 };
 const BIG: Record<string, number> = { 만: 1e4, 억: 1e8 };
@@ -168,21 +168,53 @@ export type G24Doc = '주민등록표 등본' | '주민등록표 초본';
 export interface Drafts {
   readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null };
   readonly counterparties: Counterparty[];
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null): RunView;
+  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView;
 }
 
-export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts): Reply {
+/** 문장에서 뽑은 요청 구조. 정규식(parseRegex)이나 시연 모델(demo-model.ts)이 만들고, interpret가 되묻기·초안으로 바꾼다. */
+export interface Parsed {
+  intent: 'invoice' | 'resident_copy' | 'resident_abstract' | 'cert' | 'filing' | 'other';
+  /** 문장에 나온 거래처 이름(목록에 있는 것만) */
+  counterparties: string[];
+  amount: number | null;
+  vat: VatMode | null;
+  item: string | null;
+}
+
+export function parseRegex(text: string, counterparties: Counterparty[]): Parsed {
   const t = text.trim();
+  const named = counterparties.filter((c) => t.includes(c.name));
+  const intent: Parsed['intent'] = /신고|세액\s*계산/.test(t)
+    ? 'filing'
+    : /등본|초본|정부24/.test(t)
+      ? /초본/.test(t) ? 'resident_abstract' : 'resident_copy'
+      : /계산서/.test(t)
+        ? 'invoice'
+        : /사업자등록증명|납세증명/.test(t)
+          ? 'cert'
+          : 'other';
+  return {
+    intent,
+    counterparties: named.map((c) => c.name),
+    // 거래처 이름 속 숫자는 금액으로 보지 않는다. 이름이 하나일 때만 뺀다(둘 이상이면 어차피 되묻는다).
+    amount: parseAmount(named.length === 1 ? t.replace(named[0]!.name, ' ') : t),
+    vat: /(부가세|VAT)\s*포함/i.test(t) ? 'included' : /(부가세|VAT)\s*별도/i.test(t) ? 'separate' : null,
+    item: null,
+  };
+}
+
+/** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
+export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;
   const asked = pending.asked;
   pending.asked = null;
-  if (/신고|세액\s*계산/.test(t)) return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
-  if (/등본|초본|정부24/.test(t)) return { kind: 'g24', doc: /초본/.test(t) ? '주민등록표 초본' : '주민등록표 등본' };
-  const named = runs.counterparties.filter((c) => t.includes(c.name));
+  if (parsed.intent === 'filing') return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
+  if (parsed.intent === 'resident_copy' || parsed.intent === 'resident_abstract') return { kind: 'g24', doc: parsed.intent === 'resident_abstract' ? '주민등록표 초본' : '주민등록표 등본' };
+  const named = runs.counterparties.filter((c) => parsed.counterparties.includes(c.name));
   // 거래처 이름이 둘 이상이면("A상사 말고 C테크로") 고르지 않고 되묻는다.
   const cpNamed = named.length === 1 ? named[0]! : null;
-  const amountNamed = parseAmount(cpNamed ? t.replace(cpNamed.name, ' ') : t);
-  const invoice = /계산서/.test(t) || (asked === 'amount' && amountNamed !== null) || (asked === 'counterparty' && cpNamed !== null);
+  const amountNamed = parsed.amount;
+  const invoice = parsed.intent === 'invoice' || (asked === 'amount' && amountNamed !== null) || (asked === 'counterparty' && cpNamed !== null);
   if (invoice) {
     if (profile !== 'business') return { kind: 'say', text: '세금계산서는 사업자 프로필로 발급해요. 위에서 사업자로 바꿔 주세요.' };
     const cp = cpNamed ?? (asked === 'amount' ? pending.cp : null);
@@ -196,9 +228,9 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
       return { kind: 'say', text: `${cp.name}에 얼마를 발급할까요? 예: 330만원` };
     }
     Object.assign(pending, { cp: null, asked: null, amount: null });
-    return { kind: 'draft', run: runs.createDraft(cp, amount, vat) };
+    return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? parsed.vat, parsed.item) };
   }
-  if (/사업자등록증명|납세증명/.test(t)) return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 이 데모에서는 세금계산서 발급과 정부24 직접 발급 안내를 보여 드려요.' };
+  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 이 데모에서는 세금계산서 발급과 정부24 직접 발급 안내를 보여 드려요.' };
   return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', chips: QUICK.filter((q) => !q.soon) };
 }
 
@@ -238,6 +270,8 @@ export interface RunView {
   readbackDiffers?: boolean;
   /** 승인했고 거부 우선 창(2초) 안이다. 이때 [중지]가 이긴다. */
   approvedPending?: boolean;
+  /** 이 초안을 만든 요청 해석(활동 기록의 모델 줄). 시연 모델이면 'model'. */
+  interp?: 'model' | 'offline';
 }
 
 // ---- 정부24 후처리 목업(T-08). 정부24에 어떤 요청도 보내지 않고 브라우저도 열지 않는다(ADR-011, D17). ----

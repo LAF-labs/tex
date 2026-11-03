@@ -19,11 +19,12 @@ import { assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow } from '.
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { g24Candidates, interpret, MockStore, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { g24Candidates, interpret, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf } from './vault-import.ts';
+import { mergeParsed, type DemoModel } from './demo-model.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
@@ -102,6 +103,8 @@ export interface ShellOptions {
   docs?: DocsProvider;
   /** e2e: [홈택스에서 준비] 분당 상한(기본 3, 사람 속도). 렌더러가 바꿀 수 없다(진입점이 정한다). */
   preparePerMin?: number;
+  /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
+  demoModel?: DemoModel | null;
 }
 
 export interface Shell {
@@ -162,6 +165,8 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
 }
 
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore, made: { host?: EngineHost }): Shell {
+  // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
+  const demo = fixture ? (opts.demoModel ?? null) : null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
@@ -346,15 +351,24 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       timeline: seedTimeline(),
       quick: QUICK,
       platform: process.platform,
+      interp: demo ? 'model' : 'offline',
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
       profile = p.kind;
       return { profile };
     },
-    'request.send': (p) => {
+    // 시연 모델이 있으면 먼저 묻고(4초 상한), 없거나 실패하면 정규식. via는 화면 구석 표시용(모델 해석/오프라인 해석).
+    'request.send': async (p) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
-      return interpret(String(p.text ?? '').slice(0, 2000), vat, profile, runs);
+      const text = String(p.text ?? '').slice(0, 2000);
+      const t0 = performance.now();
+      const model = demo && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
+      const via = model ? 'model' : 'offline';
+      if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
+      const reply = interpret(text, vat, profile, runs, model ? mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
+      if (reply.kind === 'draft') reply.run.interp = via;
+      return { ...reply, via };
     },
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {

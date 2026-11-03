@@ -179,7 +179,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return this.runs.get(id);
   }
 
-  createDraft(cp: Counterparty, amount: number, vat: VatMode | null): RunView {
+  /** item: 문장에서 뽑은 품목(시연 모델). 없으면 거래처의 지난 품목. */
+  createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView {
     const s = split(amount, vat ?? 'separate');
     const run: RunView = {
       id: `run-${randomUUID().slice(0, 8)}`,
@@ -193,7 +194,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       vat: vat ?? 'separate',
       vatGuessed: vat === null,
       ...s,
-      item: cp.item,
+      item: item || cp.item,
       writeDate: dayOffset(0),
       auth: this.src.auth(),
       steps: STEPS.map((label) => ({ label, state: 'todo' as StepState })),
