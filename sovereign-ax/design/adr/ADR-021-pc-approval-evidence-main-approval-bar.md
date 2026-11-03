@@ -285,4 +285,4 @@ D08 §6.1의 "처음 쓰는 거래처·이메일 수신자"(`remote.newCounterpa
 
 ## 개정 메모 (2026-11-02, ADR-023)
 
-- 결정 5의 "증언은 조회 재시도를 1회 더 한 뒤에만 받는다"에 예외를 둔다. 정지 하향(ADR-023 결정 5)으로 그 포털의 실효 수준이 `postprocess`가 되거나 플레이북이 kill돼 조회 플레이북을 돌릴 수 없으면, 조회 재시도 없이 증언을 받는다. `verify.minElapsedMs` 대기와 승인 바의 고정 문구는 그대로이고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 해소 결과를 원장에 먼저 기록한 뒤 D03 §2의 Running 진입 확인과 정지 분기를 따르므로, 이때 해소는 Running으로 가지 않고 `CompletedWithIssues` 또는 `Paused(policy_downgrade)`로 끝난다.
+- 결정 5의 "증언은 조회 재시도를 1회 더 한 뒤에만 받는다"에 예외를 둔다. 정지 하향(ADR-023 결정 5)으로 그 포털의 실효 수준이 `postprocess`가 되거나 플레이북이 kill돼 조회 플레이북을 돌릴 수 없으면, 조회 재시도 없이 증언을 받는다. `verify.minElapsedMs` 대기와 승인 바의 고정 문구는 그대로이고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 해소 결과를 원장에 먼저 기록한 뒤 D03 §2의 Running 진입 확인과 정지 분기를 따르므로, 이때 해소는 Running으로 가지 않는다. 갈 곳은 실행 전체의 원장 행으로 정하므로, 같은 실행에 앞선 `committed`가 있으면 `not_committed`여도 `CompletedWithIssues`이고, 없으면 `Paused(policy_downgrade)`다.
