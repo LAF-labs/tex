@@ -407,11 +407,28 @@ async function flow(): Promise<void> {
   const swText = sw ? await sw.webContents.executeJavaScript('document.body.innerText').catch(() => '') : '';
   check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 홈택스 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 홈택스 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
   if (sw) await fs.writeFile(path.join(OUT, '18b-secret-window.png'), (await capture(sw.webContents)).toPNG());
+  const pwReveal = sw ? await sw.webContents.executeJavaScript(`!!document.getElementById('reveal')`).catch(() => null) : null;
   sw?.close();
   // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 창이 닫히면 이어서 연다.
   await until('queued secret window', () => !!S.secretWindow() && S.secretWindow() !== sw && !S.secretWindow()!.webContents.isLoading(), 5000);
   const sw2 = S.secretWindow();
   check('비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 "금고 · 보안카드 번호")', !!sw2 && sw2.getTitle() === '금고 · 보안카드 번호' && sw2.isModal(), sw2?.getTitle());
+  // SecretField: 보안카드 번호는 기본으로 가리고 보기 버튼 하나로 보인다(30초 뒤 다시 가림은 secret.js 타이머). 비밀번호 창에는 보기 버튼이 없다.
+  const reveal = sw2
+    ? await sw2.webContents
+        .executeJavaScript(
+          `(() => { const b = document.getElementById('reveal'), v = document.getElementById('v'); if (!b) return null; const before = [v.type, b.getAttribute('aria-pressed')]; b.click(); const on = [v.type, b.getAttribute('aria-pressed'), document.getElementById('reveal-note').textContent, b.textContent]; b.click(); return { before, on, after: [v.type, b.getAttribute('aria-pressed'), b.textContent] }; })()`,
+        )
+        .catch(() => null)
+    : null;
+  check(
+    '비밀 창 보안카드 칸: 기본은 가림, [번호 보기]로 보이고 "30초 뒤 다시 가려요", 다시 누르면 가림. 비밀번호 창에는 보기 버튼 없음',
+    pwReveal === false &&
+      reveal?.before.join() === 'password,false' &&
+      reveal.on[0] === 'text' && reveal.on[1] === 'true' && reveal.on[2] === '30초 뒤 다시 가려요' && reveal.on[3] === '번호 가리기' &&
+      reveal.after.join() === 'password,false,번호 보기',
+    { pwReveal, reveal },
+  );
   sw2?.close();
   await until('secret closed', () => S.secretWindow() === null, 3000);
   // 창을 열다 실패해도 '열림'이 남지 않는다: 다음 요청은 정상으로 열린다.

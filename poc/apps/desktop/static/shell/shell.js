@@ -22,7 +22,8 @@ const state = {
   vat: null,
   barActive: false,
   docFilter: 'all',
-  docImport: null, // { pickId, wrong, pw } 열기 암호를 묻는 중
+  docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
+  docLocked: new Set(), // 이번 실행에서 열기 암호로 가져온 서류 id(목록 자물쇠). 엔진은 암호 여부를 저장하지 않는다.
   docBusy: false,
   docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
@@ -451,7 +452,7 @@ const panelHead = (title, ...extra) => h('div', { class: 'sx-card-hd' }, h('div'
 /** 레일 화면 머리(캔버스 D-01·D-02): 제목 · 건수 · 오른쪽 버튼, 승인 대기 중이면 대화로 가는 줄. */
 const railHead = (title, meta, ...right) => h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, title), meta ? h('span', { class: 'sx-meta' }, meta) : null, h('div', { class: 'rs-right' }, waitingChip(), ...right));
 
-/** 목록 표: 테두리 상자 안 표(좁으면 상자 안에서 가로 스크롤). cols = [이름, 'num'이면 오른쪽 정렬]. */
+/** 목록 표: 테두리 상자 안 표(좌우로 밀지 않고 좁으면 값을 줄바꿈). cols = [이름, 'num'이면 오른쪽 정렬]. */
 const listTable = (cols, rows) =>
   h('div', { class: 'list-box' }, h('table', { class: 'list' }, h('thead', {}, h('tr', {}, cols.map(([t, cls]) => h('th', { class: cls ?? null }, t)))), h('tbody', {}, rows)));
 
@@ -486,7 +487,6 @@ function docsView() {
     { class: 'rail-screen', 'data-view': 'docs' },
     railHead('문서함', meta, btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
     h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
-    state.docImport ? passwordRow() : null,
     listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
       list.map(({ d }) =>
@@ -494,7 +494,7 @@ function docsView() {
           'tr',
           // 만료일 확실성(문서·추정·확인함)은 상세 패널 유효 칸에 보인다. 행에는 속성으로만 둔다(시험이 읽는다).
           { class: state.panel?.id === d.id ? 'is-on' : null, 'data-doc-row': d.id, 'data-expiry-tag': d.vault && d.expiresOn ? expiryTag(d) : null, onclick: () => openPanel({ kind: 'doc', id: d.id }) },
-          h('td', { class: 'name' }, d.name, d.profile === 'personal' ? h('span', { class: 'sx-tag doc-tag' }, '개인') : null, d.vault?.needsUser ? h('span', { class: 'doc-flag' }, '확인 필요') : null),
+          h('td', { class: 'name' }, d.name, state.docLocked.has(d.id) ? lockMark() : null, d.profile === 'personal' ? h('span', { class: 'sx-tag doc-tag' }, '개인') : null, d.vault?.needsUser ? h('span', { class: 'doc-flag' }, '확인 필요') : null),
           // 유효 열은 두지 않는다(캔버스 D-01). 만료 임박은 거르기·정렬과 상세 패널에 남는다.
           h('td', { class: d.issuedOn ? null : 'is-none' }, d.issuedOn ?? '—', d.issuedOn && agoText(d.issuedOn, state.today) ? h('span', { class: 'sx-meta doc-ago' }, agoText(d.issuedOn, state.today)) : null),
           h('td', { class: d.purpose ? null : 'is-none' }, d.purpose || '—'),
@@ -805,35 +805,69 @@ function render() {
     scrollToEnd();
   } else center.replaceChildren(VIEWS[state.view]());
   renderPanel();
+  renderModal();
 }
 
 // ---- 보관함 가져오기·확인(문서함) ----
 
-/** 열기 암호 줄. 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다(DOM 속성에는 넣지 않는다). */
-function passwordRow() {
-  const input = h('input', { type: 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', placeholder: 'PDF 열기 암호(저장하지 않아요)', 'aria-label': 'PDF 열기 암호', disabled: state.docBusy });
-  input.value = state.docImport.pw ?? '';
-  input.addEventListener('input', () => (state.docImport.pw = input.value));
+/** 목록 서류 이름 옆 자물쇠(캔버스 D-01): 열기 암호가 걸린 PDF. */
+const lockMark = () => h('span', { class: 'doc-lock', role: 'img', 'aria-label': '열기 암호 있음', title: '열기 암호 있음', 'data-doc-lock': '' }, icon('lock'));
+
+/**
+ * 열기 암호 창(캔버스 D-01 · 암호 걸린 PDF 열기). 문서함에서만 띄우고, 띄운 동안 앱 틀은 inert다.
+ * 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다(DOM 속성에는 넣지 않는다).
+ */
+function passwordModal() {
+  const imp = state.docImport;
+  const input = h('input', { type: imp.show ? 'text' : 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'PDF 열기 암호', disabled: state.docBusy });
+  input.value = imp.pw ?? '';
+  input.addEventListener('input', () => (imp.pw = input.value));
   const submit = () => {
     if (state.docBusy) return;
-    const password = state.docImport.pw ?? '';
-    state.docImport.pw = '';
-    importDoc({ pickId: state.docImport.pickId, password });
+    const password = imp.pw ?? '';
+    imp.pw = '';
+    importDoc({ pickId: imp.pickId, password });
   };
   input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
+  const eye = h('button', { type: 'button', class: 'pw-eye', 'aria-label': imp.show ? '암호 가리기' : '암호 보기', 'aria-pressed': String(!!imp.show), disabled: state.docBusy, onclick: () => ((imp.show = !imp.show), renderModal()) }, icon(imp.show ? 'eyeOff' : 'eye'));
   return h(
     'div',
-    { class: 'doc-pw-row', 'data-doc-password': '' },
-    note(state.docImport.wrong ? '암호가 맞지 않아요. 다시 넣어 주세요.' : '열기 암호가 걸린 PDF예요.', state.docImport.wrong),
-    input,
-    // 읽는 동안에는 두 버튼을 막는다(그만둔 뒤 진행 중이던 결과가 도착해 보관되는 경쟁이 없게)
-    btn('열기', submit, 'sx-btn-primary', { 'data-act': 'doc-password', disabled: state.docBusy }),
-    btn('그만두기', cancelPassword, '', { 'data-act': 'doc-password-cancel', disabled: state.docBusy }),
+    { class: 'modal-scrim' },
+    h(
+      'section',
+      { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'pw-title', 'data-doc-password': '' },
+      h(
+        'div',
+        { class: 'modal-hd' },
+        h('div', { class: 'modal-title' }, h('h2', { class: 'title-screen', id: 'pw-title' }, '열기 암호 넣기'), h('p', { class: 'sx-body-sm is-muted' }, '이 PDF에 열기 암호가 걸려 있어요. 암호는 이번에 열 때만 쓰고 저장하지 않아요.')),
+        h('button', { type: 'button', class: 'panel-x', 'aria-label': '닫기', disabled: state.docBusy, onclick: cancelPassword }, icon('close')),
+      ),
+      h('label', { class: 'modal-field' }, h('span', { class: 'sx-meta' }, 'PDF 열기 암호'), h('span', { class: 'pw-box' }, input, eye)),
+      imp.wrong ? note('암호가 맞지 않아요. 다시 넣어 주세요.', true) : null,
+      h('div', { class: 'modal-note' }, icon('lock'), h('span', {}, '이 PC 안에서만 열어요. 암호와 파일 내용은 모델과 우리 서버로 보내지 않아요.')),
+      // 읽는 동안에는 버튼을 막는다(그만둔 뒤 진행 중이던 결과가 도착해 보관되는 경쟁이 없게)
+      h('div', { class: 'modal-acts' }, btn('취소', cancelPassword, 'sx-btn-lg', { 'data-act': 'doc-password-cancel', disabled: state.docBusy }), btn('열기', submit, 'sx-btn-primary sx-btn-lg', { 'data-act': 'doc-password', disabled: state.docBusy })),
+    ),
   );
 }
 
+function renderModal() {
+  const root = $('#modal');
+  const open = state.view === 'docs' && !!state.docImport;
+  // 처음 띄울 때와 창 안에 있던(읽는 동안 칸을 막아 잃은) 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
+  const a = document.activeElement;
+  const focus = !root.firstChild || !a || a === document.body || root.contains(a);
+  root.replaceChildren(...(open ? [passwordModal()] : []));
+  $('#app').inert = open;
+  if (open && focus) {
+    const i = root.querySelector('.doc-pw');
+    i.focus();
+    i.setSelectionRange(i.value.length, i.value.length);
+  }
+}
+
 function cancelPassword() {
-  if (!state.docImport) return;
+  if (!state.docImport || state.docBusy) return;
   call('docs.importCancel', { pickId: state.docImport.pickId }).catch(() => {});
   state.docImport = null;
   render();
@@ -855,6 +889,7 @@ async function importDoc(params) {
     }
     state.docImport = null;
     const d = r.doc;
+    if (params.password) state.docLocked.add(d.id);
     state.docsRev++;
     state.docs = [d, ...state.docs.filter((x) => x.id !== d.id)];
     const msg = r.document?.duplicate ? '이미 보관함에 있는 파일이에요' : d.vault?.needsUser ? '보관함에 넣었어요. 확인할 칸이 있어요' : '보관함에 넣었어요';
@@ -1061,6 +1096,10 @@ window.sax.onEvent((ev) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('#modal').firstChild) {
+    cancelPassword();
+    return;
+  }
   if (e.key === 'Escape' && state.menu) {
     toggleMenu(false);
     $('#titlebar .tb-co')?.focus();
@@ -1082,6 +1121,19 @@ new ResizeObserver(() => {
   const L = state.boot?.layout;
   if (L) document.documentElement.style.setProperty('--col-w', `${Math.min(L.chatMax, w - L.gutter * 2)}px`);
 }).observe($('#center'));
+// 스크롤바는 스크롤하는 동안과 멈춘 뒤 0.8초만 보인다(디자인 시스템 "간격과 배치", bundle.css "Scroll").
+const scrollTimers = new WeakMap();
+document.addEventListener(
+  'scroll',
+  (e) => {
+    const el = e.target === document ? document.documentElement : e.target;
+    if (!(el instanceof Element)) return;
+    el.classList.add('is-scrolling');
+    clearTimeout(scrollTimers.get(el));
+    scrollTimers.set(el, setTimeout(() => el.classList.remove('is-scrolling'), 800));
+  },
+  { capture: true, passive: true },
+);
 // 자정을 넘겨도 D-day·오늘 요약이 맞게 1분마다 오늘을 다시 잡는다.
 setInterval(() => {
   state.today = new Date();
