@@ -405,7 +405,14 @@ async function flow(): Promise<void> {
   await until('secret closed', () => S.secretWindow() === null, 3000);
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'google_signin_detected' });
   check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretWindow() === null, S.runs.get(id2)!.notices);
+  // 실행이 끝나 main이 창을 닫으면 들고 있던 요청은 다시 열지 않는다(종료를 막거나 창 없이 '열림'이 남지 않게).
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T3', kind: 'portal_password', scope: 'business' });
+  await until('secret window 3', () => !!S.secretWindow(), 5000);
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'security_card', scope: 'business', row: 9 });
   await stopRun(id2);
+  await until('secret closed by run end', () => S.secretWindow() === null, 3000);
+  await sleep(500);
+  check('실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다', S.secretWindow() === null);
   check('승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
 
   // 처음 거래·처음 보내는 주소(C테크)

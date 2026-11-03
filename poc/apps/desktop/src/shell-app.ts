@@ -259,27 +259,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // main이 닫은 창(실행 끝·종료)은 사용자가 돌아온 것이 아니다: 핸드오프 복귀로 치지 않는다.
   let appClosing: BrowserWindow | null = null;
+  // 메인 창이 닫히는 중이면 비밀 창을 새로 열지 않는다(들고 있던 다음 요청 포함).
+  let mainClosing = false;
+  win.once('close', () => {
+    mainClosing = true;
+  });
   const closeSecret = () => {
     if (!secretWin || secretWin.isDestroyed()) return;
     appClosing = secretWin;
     secretWin.close();
   };
   const openSecret = (data: unknown): void => {
+    // 메인 창부터 본다: 열 수 없는데 조정자에 '열림'을 남기면 이후 비밀 창이 영영 열리지 않는다.
+    if (mainClosing || win.isDestroyed()) return log.event('main.secret_needed_ignored');
     const r = secrets.request(data);
-    if (!r || win.isDestroyed()) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
+    if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
     const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
     const w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
     secretWin = w;
     // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5). 메인 창이 포커스를 받기 전에
     // 표시해야 그 활성화가 표시를 쓴다('closed'는 포커스보다 늦을 수 있다).
+    let byApp = false;
     w.on('close', () => {
-      if (appClosing === w) appClosing = null;
+      byApp = appClosing === w;
+      if (byApp) appClosing = null;
       else bar.noteHandoff();
     });
     w.on('closed', () => {
       if (secretWin === w) secretWin = null;
       const next = secrets.closed();
-      if (next) openSecret(next);
+      // 들고 있던 요청은 사용자가 창을 마쳤을 때만 이어서 연다. main이 닫은 창(실행 끝·종료)이면 버린다.
+      if (next && !byApp) openSecret(next);
     });
   };
   host.on('vault-event', (name: string, data: unknown) => {
