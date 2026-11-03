@@ -18,6 +18,20 @@ const between = (s: string, start: string, end: string) => {
 };
 
 describe('H-01 승인 경계(ADR-021)', () => {
+  it('engine entry accepts only init', () => {
+    const entry = read('packages/engine/src/entry.ts');
+    // 게이트 포트 없는 옛 기동(vault-port)은 초기화하지 않고 fatal로 거부한다(N-24).
+    const lines = entry.split('\n').filter((l) => l.includes("'vault-port'"));
+    assert.equal(lines.length, 1, lines.join('\n'));
+    assert.match(lines[0]!, /return parentPort\.postMessage\(\{ t: 'fatal', code: 'engine\.vault_port_unsupported' \}\)/);
+    assert.ok(entry.includes("msg?.t === 'init' && e.ports[0]"));
+    assert.ok(!entry.includes("portal: { kind: 'hometax' } }"), '옛 기동용 기본 초기화가 없다');
+    // 환경 변수 가드가 첫 import다(playwright-core보다 먼저 평가).
+    assert.match(entry.split('\n').find((l) => l.startsWith('import '))!, /from '\.\/env-guard\.ts'/);
+    // 금고 누출 의심은 실행 서비스로 간다(I-3).
+    assert.ok(entry.includes("vault.on('secret_window.leak_suspected', () => runs?.leakSuspected())"));
+  });
+
   it('shell-app: answerGate는 승인 바 결과 처리에서 한 번만, 렌더러 처리기 표에는 승인·게이트 경로가 없다', () => {
     const src = read('apps/desktop/src/shell-app.ts');
     assert.equal(count(src, 'answerGate('), 1);

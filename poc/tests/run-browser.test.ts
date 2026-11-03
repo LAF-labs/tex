@@ -1,7 +1,10 @@
 // 엔진 실행 브라우저 열기·닫기 순서(PoC-1 §5.1 후속): 동시 호출에도 금고 launch는 한 번, 띄우는 중의 닫기는 띄운 뒤 닫는다.
 import assert from 'node:assert/strict';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
-import { RunBrowserSlot, type RunBrowser } from '@sax/engine';
+import { connectRunBrowser, dispatchClick, RunBrowserSlot, type RunBrowser } from '@sax/engine';
+import { startHarness } from './harness.ts';
 
 function fakeRun(targetId: string): { run: RunBrowser; closed: () => number; closePage: () => void; disconnect: () => void } {
   let closed = 0;
@@ -142,5 +145,34 @@ describe('RunBrowserSlot', () => {
       },
     );
     await assert.rejects(slot.open(), /chrome profile not private/);
+  });
+});
+
+describe('커밋 클릭(N-21, 금고 중계 위 실 Chrome)', () => {
+  it('dispatchClick reports blocked for a covered button', async () => {
+    // 투명 덮개가 덮은 버튼과 덮지 않은 버튼. 누르면 각자 횟수를 올린다.
+    const html = `<!doctype html><meta charset="utf-8"><body style="margin:0">
+<button id="covered" style="position:absolute;left:10px;top:10px;width:120px;height:40px" onclick="window.nCovered=(window.nCovered||0)+1">발급하기</button>
+<div style="position:absolute;left:0;top:0;width:300px;height:100px;background:transparent"></div>
+<button id="open" style="position:absolute;left:10px;top:200px;width:120px;height:40px" onclick="window.nOpen=(window.nOpen||0)+1">발급하기</button></body>`;
+    const server = http.createServer((_q, r) => r.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html));
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const h = await startHarness();
+    try {
+      const { page, browser } = await connectRunBrowser(h.client);
+      await page.goto(`http://127.0.0.1:${(server.address() as AddressInfo).port}/`);
+      const covered = (await page.$('#covered'))!;
+      const started = Date.now();
+      assert.equal(await dispatchClick(covered), 'blocked');
+      assert.ok(Date.now() - started < 10_000, 'Playwright 기본 30초를 기다리지 않는다');
+      const open = (await page.$('#open'))!;
+      assert.equal(await dispatchClick(open), 'sent');
+      assert.deepEqual(await page.evaluate(() => [(window as unknown as { nCovered?: number }).nCovered ?? 0, (window as unknown as { nOpen?: number }).nOpen ?? 0]), [0, 1], '가린 버튼은 눌리지 않았다');
+      await browser.close().catch(() => {});
+    } finally {
+      await h.close();
+      server.closeAllConnections();
+      await new Promise<void>((r) => server.close(() => r()));
+    }
   });
 });

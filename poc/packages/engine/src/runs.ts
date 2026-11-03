@@ -8,7 +8,8 @@ import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type Gat
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
 import { portalProblems, type PortalConfig } from './h01/portal.ts';
 import { H01Runner, RunEnd, type Readback, type RunInputs, type RunStatus } from './h01/runner.ts';
-import { policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
+import { SIGNAL_DICT } from './h01/signals.ts';
+import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
 // 그 포트로 온 것만 받는다(ADR-021). Phase 1처럼 엔진은 HMAC 키가 없어 MAC을 검증하지 않고 포트 출처만 믿는다.
@@ -27,7 +28,8 @@ export interface StartParams {
 export type RunEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
-  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean };
+  /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
+  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
 
 interface PendingGate {
   req: GateRequest;
@@ -46,6 +48,8 @@ interface ActiveRun {
   inputsHash: string;
   packageDigest: string;
   stop: boolean;
+  /** 엔진 밖 사유의 정지(금고 누출 의심). 커밋 전에만 건다. */
+  halt: RunEnd | null;
   /** 토큰 소비 + armed 기록이 끝났다(커밋 구간). 이 뒤로는 중지를 받지 않는다. */
   armed: boolean;
   gate: PendingGate | null;
@@ -160,13 +164,12 @@ export class RunService extends EventEmitter {
     const itemName = String(p.itemName ?? '').trim().slice(0, 100);
     if (!itemName) throw new RunEnd('failed', 'item_missing');
     const email = p.email === undefined ? cp.email : p.email ? String(p.email).trim() : null;
-    const d = new Date();
-    const pad = (n: number) => String(n).padStart(2, '0');
     const inputs: RunInputs = {
       counterpart: { id: cp.id, bizNo: cp.bizNo, name: cp.name },
       amounts: { supply: String(supply), tax: String(tax), total: String(supply + tax) },
       items: [{ name: itemName }],
-      issueDate: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+      // 작성일자는 KST 날짜다(OS 시간대와 무관, 요청률 정책의 유효 시각). s19e가 화면 값과 대조한다.
+      issueDate: kstDay(this.rate.clock().now),
       email,
     };
     const intentId = ulid();
@@ -176,6 +179,8 @@ export class RunService extends EventEmitter {
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
     // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
     try {
+      const total = pocTotalRefusal(this.ledger, this.d.portal.kind);
+      if (total) throw total;
       this.rate.admit(profile.id, { irreversible: true });
     } catch (e) {
       if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
@@ -183,7 +188,13 @@ export class RunService extends EventEmitter {
     }
     this.runs.create({ id: p.runId, playbookId: H01.id, playbookVersion: H01.version, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, armed: false, gate: null, token: null, pendingArm: null, policy: null };
+    // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
+    const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
+    if (gaps.length) {
+      this.journal.append(p.runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
+      this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
+    }
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -197,9 +208,7 @@ export class RunService extends EventEmitter {
       const page = await this.d.page();
       a.policy = new RunPolicy(page, this.rate, this.d.portal, {
         profileId: profile.id,
-        checkStop: () => {
-          if (a.stop) throw new RunEnd('stopped', 'run.stopped');
-        },
+        checkStop: () => this.checkStop(a),
         journal: (type, payload) => this.journal.append(a.runId, type, payload),
         onLatch: (end) => this.latched(a, end),
       });
@@ -212,7 +221,7 @@ export class RunService extends EventEmitter {
       result = { status: 'failed', code: 'engine.error' };
     }
     // 진행 중인 화면 확인을 마친 뒤 사유를 정한다(그 사이 걸린 신호도 이 실행의 것이다).
-    await a.policy?.finish().catch(() => {});
+    await a.policy?.finish({ userStopped: a.stop }).catch(() => {});
     const latched = a.policy?.latched ?? null;
     if (thrown !== undefined) {
       // 신호가 걸렸으면 그 뒤에 난 오류(바뀐 화면에서 요소를 못 찾음 등)보다 신호가 사유다.
@@ -243,15 +252,22 @@ export class RunService extends EventEmitter {
     this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '' });
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
     this.active = null;
-    this.ev({ runId: a.runId, type: 'end', ...result });
+    // 포털이 한 말은 실패·핸드오프·모름에만 보인다. 저널·로그에는 쓰지 않는다(메모리 → 종료 이벤트만).
+    const notice = a.policy?.notice;
+    const showNotice = notice && (result.status === 'failed' || result.status === 'handoff' || result.status === 'in_doubt');
+    this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
+  }
+
+  /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
+  private checkStop(a: ActiveRun): void {
+    if (a.halt) throw a.halt;
+    if (a.stop) throw new RunEnd('stopped', 'run.stopped');
   }
 
   private hooks(a: ActiveRun) {
     return {
       phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => this.ev({ runId: a.runId, type: 'phase', phase, state, code }),
-      checkStop: () => {
-        if (a.stop) throw new RunEnd('stopped', 'run.stopped');
-      },
+      checkStop: () => this.checkStop(a),
       gate: (rb: Readback) => this.openGate(a, rb),
       arm: () => this.arm(a),
       dispatched: () => {
@@ -267,7 +283,7 @@ export class RunService extends EventEmitter {
 
   /** 게이트 요청(D03 §3): fields = readback 13칸 + 예약 키. 승인되면 토큰 발급 → 소비 + armed(한 트랜잭션). */
   private async openGate(a: ActiveRun, rb: Readback): Promise<{ readbackHash: string }> {
-    if (a.stop) throw new RunEnd('stopped', 'run.stopped');
+    this.checkStop(a);
     if (a.policy?.latched) throw a.policy.latched;
     const history = {
       cpBizNoHmac: this.hmac('bizno', rb.counterpartBizNo),
@@ -296,8 +312,8 @@ export class RunService extends EventEmitter {
     await decided;
     // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]·차단 신호가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
     const until = Date.now() + DENY_PRIORITY_MS;
-    while (Date.now() < until && !a.stop && !a.policy?.latched) await new Promise((r) => setTimeout(r, 50));
-    const halt = a.policy?.latched ?? (a.stop ? new RunEnd('stopped', 'gate.stopped') : null);
+    while (Date.now() < until && !a.stop && !a.halt && !a.policy?.latched) await new Promise((r) => setTimeout(r, 50));
+    const halt = a.policy?.latched ?? a.halt ?? (a.stop ? new RunEnd('stopped', 'gate.stopped') : null);
     if (halt) {
       if (this.gates.withdraw(req.reqId, a.stop ? 'local' : 'policy')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: req.reqId });
       this.closeGate(a, a.stop ? 'stopped' : 'signal');
@@ -318,9 +334,9 @@ export class RunService extends EventEmitter {
   private arm(a: ActiveRun): void {
     const t = a.token;
     const p = a.pendingArm;
-    if (a.stop) {
-      if (t && this.gates.withdraw(t.reqId, 'local')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: t.reqId });
-      throw new RunEnd('stopped', 'gate.stopped');
+    if (a.stop || a.halt) {
+      if (t && this.gates.withdraw(t.reqId, a.stop ? 'local' : 'policy')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: t.reqId });
+      throw a.halt ?? new RunEnd('stopped', 'gate.stopped');
     }
     if (!t || !p || t.used || Date.now() > t.exp) throw new RunEnd('failed', 'token.invalid');
     t.used = true;
@@ -412,6 +428,26 @@ export class RunService extends EventEmitter {
       g.reject(new RunEnd('stopped', 'gate.stopped'));
     }
     return { stopped: true };
+  }
+
+  /**
+   * 금고가 알려진 값 치환 적중을 알렸다(secret_window.leak_suspected, I-3). 무장 전이면 발급하지 않고 멈춘다(게이트가 열려 있으면
+   * 닫는다). 무장 뒤면 기록만 하고 verify를 계속한다(끊으면 발급됐는지 모름만 생긴다).
+   */
+  leakSuspected(): void {
+    const a = this.active;
+    this.d.log.event('vault.leak_suspected', { active: !!a, armed: !!a?.armed });
+    if (!a) return;
+    this.journal.append(a.runId, 'vault.leak_suspected', { armed: a.armed });
+    if (a.armed || a.halt) return;
+    const end = new RunEnd('failed', 'vault.leak_suspected');
+    a.halt = end;
+    const g = a.gate;
+    if (g) {
+      if (this.gates.decide(g.req.reqId, 'denied', 'policy')) this.journal.append(a.runId, 'gate.denied', { reqId: g.req.reqId, by: 'policy' });
+      this.closeGate(a, 'signal');
+      g.reject(end);
+    }
   }
 
   get activeRunId(): string | null {

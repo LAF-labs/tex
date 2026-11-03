@@ -22,6 +22,16 @@ export interface EgressOptions {
   timeoutMs?: number;
   /** 모델 송신 검사 설정. 없으면 toModel()은 항상 거부한다. */
   modelGuard?: ModelGuardConfig;
+  /** 시험용: process.env 대신 볼 환경. */
+  env?: NodeJS.ProcessEnv;
+}
+
+/** TLS 신뢰를 바꾸는 환경 변수 이름(N-23). 보이면 모델·odcloud 요청을 보내지 않는다. */
+export function tlsEnvTampered(env: NodeJS.ProcessEnv): string[] {
+  const out: string[] = [];
+  if (env.NODE_EXTRA_CA_CERTS !== undefined) out.push('NODE_EXTRA_CA_CERTS');
+  if (env.NODE_TLS_REJECT_UNAUTHORIZED === '0') out.push('NODE_TLS_REJECT_UNAUTHORIZED');
+  return out;
 }
 
 /** SDK에 넘기는 fetch. toModel()이 발급한 일회 티켓 헤더가 없으면 거부한다. */
@@ -50,7 +60,7 @@ export interface EgressResponse {
 }
 
 export class EgressError extends Error {
-  readonly code: 'destination_not_allowed' | 'path_not_allowed' | 'timeout' | 'network' | 'bad_response';
+  readonly code: 'destination_not_allowed' | 'path_not_allowed' | 'timeout' | 'network' | 'bad_response' | 'egress_env_tampered';
   readonly status?: number;
   constructor(code: EgressError['code'], status?: number) {
     super(code);
@@ -68,10 +78,13 @@ export class Egress {
   readonly modelAudit: Array<{ dest: string; path: string; status: number | 'error'; ms: number; rateLimit: Record<string, string> }> = [];
   readonly guard: ModelGuard | null;
   private readonly tickets = new Map<string, Ticket>();
+  /** egress.env_tampered: 생성 때 본 TLS 변조 변수 이름(값 없음). 비어 있지 않으면 모든 송신을 거부한다. */
+  readonly envTampered: readonly string[];
 
   constructor(opts: EgressOptions = {}) {
     this.opts = opts;
     this.guard = opts.modelGuard ? new ModelGuard(opts.modelGuard) : null;
+    this.envTampered = tlsEnvTampered(opts.env ?? process.env);
   }
 
   /**
@@ -79,6 +92,7 @@ export class Egress {
    * send(티켓 헤더)를 실행한다. send 안의 SDK 호출은 providerFetch로만 나간다.
    */
   async toModel<T>(req: ModelEgressRequest, send: (headers: Record<string, string>) => Promise<T>): Promise<T> {
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
     if (!this.guard) throw new EgressError('destination_not_allowed');
     if (req.surface === 'decide') this.guard.check('decide', req.gateway, req.providerBody);
     else this.guard.check('respond', req.gateway, req.providerBody);
@@ -101,6 +115,7 @@ export class Egress {
     headers.delete(TICKET_HEADER);
     const t = id ? this.tickets.get(id) : undefined;
     if (!t) throw new EgressError('destination_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
     const d = DESTINATIONS[t.dest] as Destination;
     if (url.origin !== d.origin) throw new EgressError('destination_not_allowed');
     if (url.pathname !== t.path || url.search) throw new EgressError('path_not_allowed');
@@ -126,6 +141,7 @@ export class Egress {
     const d = DESTINATIONS[dest] as Destination | undefined;
     if (!d) throw new EgressError('destination_not_allowed');
     if (!d.paths.includes(path)) throw new EgressError('path_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
     const origin = this.opts.testOrigins?.[dest] ?? d.origin;
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 10_000);
