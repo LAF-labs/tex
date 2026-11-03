@@ -736,7 +736,7 @@ function activityView() {
               h('td', {}, r.profile),
               h('td', {}, r.portal),
               h('td', { class: r.status === 'attention' ? 'is-attention' : r.status === 'stopped' ? 'is-muted' : null }, r.result),
-              h('td', { class: 'is-muted' }, '안 함'),
+              (r.run?.interp ?? r.g24?.interp) === 'model' ? h('td', {}, 'OpenRouter(시연)') : h('td', { class: 'is-muted' }, '안 함'),
             ),
           ),
         )
