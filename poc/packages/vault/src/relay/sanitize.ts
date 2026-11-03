@@ -26,6 +26,46 @@ export function stripRequestBody(request: Json | undefined): boolean {
   return had;
 }
 
+const AUTH_HEADERS = new Set(['cookie', 'set-cookie', 'authorization']);
+
+/**
+ * 쿠키·인증 헤더 제거(N-51). 객체({이름: 값}) 또는 배열([{name, value}]) 모양을 제자리에서 고친다. 지운 수를 돌려준다.
+ * 엔진 신호는 상태·URL만 쓰므로 홈택스 세션 쿠키를 엔진에 줄 이유가 없다.
+ */
+export function stripAuthHeaders(h: Json | Json[] | undefined): number {
+  if (!h || typeof h !== 'object') return 0;
+  let n = 0;
+  if (Array.isArray(h)) {
+    for (let i = h.length - 1; i >= 0; i--) {
+      if (AUTH_HEADERS.has(String(h[i]?.name).toLowerCase())) {
+        h.splice(i, 1);
+        n++;
+      }
+    }
+    return n;
+  }
+  for (const k of Object.keys(h)) {
+    if (AUTH_HEADERS.has(k.toLowerCase())) {
+      delete h[k];
+      n++;
+    }
+  }
+  return n;
+}
+
+/** 요청·응답 객체의 헤더 필드 정리(원문 headersText는 통째로 지운다). */
+export function stripMessageHeaders(m: Json | undefined): number {
+  if (!m || typeof m !== 'object') return 0;
+  let n = stripAuthHeaders(m.headers as Json) + stripAuthHeaders(m.requestHeaders as Json);
+  for (const k of ['headersText', 'requestHeadersText', 'associatedCookies', 'blockedCookies', 'exemptedCookies']) {
+    if (k in m) {
+      delete m[k];
+      n++;
+    }
+  }
+  return n;
+}
+
 /** DOM.Node 트리(describeNode·getDocument·setChildNodes 등)의 비밀 노드 value 속성·nodeValue 제거. */
 export function scrubDomNode(node: Json | undefined, secrets: SecretNodes): number {
   if (!node || typeof node !== 'object') return 0;

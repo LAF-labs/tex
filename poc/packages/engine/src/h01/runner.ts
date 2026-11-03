@@ -1,7 +1,8 @@
-import type { Locator, Page } from 'playwright-core';
+import { performance } from 'node:perf_hooks';
+import type { ElementHandle, Locator, Page } from 'playwright-core';
 import { readbackHash } from '../gate.ts';
 import { H01, normalizeField, type Cond, type Phase, type Step } from './playbook.ts';
-import { READBACK_FIELDS, SELECTOR_KEYS, type LookupDef, type PortalConfig, type ReadbackKey, type SelectorKey } from './portal.ts';
+import { failureMatches, READBACK_FIELDS, SELECTOR_KEYS, type LookupDef, type PortalConfig, type ReadbackKey, type SelectorKey } from './portal.ts';
 
 // H-01 발급 구간 실행기(D03 §5). 페이지에 닿는 동작은 모두 여기 있고, 게이트·원장·토큰은 hooks(RunService)가 한다.
 // 클릭·입력 직전마다 동일성 검사(R-A1)와 커밋 그림자 검사(R-A2)를 하고, 동작은 모두 요청률 정책(policy, D03 §7)을 먼저 지난다.
@@ -95,6 +96,51 @@ export function ariaValue(snapshot: string, role: string): string {
   return m?.[1] !== undefined ? unq(m[1]) : '';
 }
 
+const MAIL_NOT_SENT = /실패|미전송|대기|오류|중$/;
+/** 정확 허용 목록(PoC-3 실측으로 확정). 부분 일치로 '전송실패'가 '보냈음'이 되지 않게 부정 우선으로 본다. */
+const MAIL_SENT = new Set(['전송완료', '발송완료']);
+
+/** 메일발송목록 상태 문구 판정(N-58): NFKC·공백 제거 뒤 부정 문구 → not_sent, 허용 목록 → sent, 그 밖 unknown. */
+export function mailStatusVerdict(status: string): 'sent' | 'not_sent' | 'unknown' {
+  const s = status.normalize('NFKC').replace(/\s+/g, '');
+  if (MAIL_NOT_SENT.test(s)) return 'not_sent';
+  return MAIL_SENT.has(s) ? 'sent' : 'unknown';
+}
+
+/** 클릭 가능성 사전 확인 시간. 가려지거나 움직이는 버튼을 Playwright 기본 30초 동안 기다리지 않는다. */
+const CLICK_TIMEOUT_MS = 1_500;
+
+/**
+ * 입력 없이 지금 누를 수 있는지 본다: 연결됨·비활성 아님·크기 있음·가운데 점의 맨 위 요소가 이 버튼(또는 그 안).
+ * Playwright `click({trial})`은 쓰지 않는다: 실제 마우스 입력을 보내고 Playwright 리스너로 막을 뿐이라, 페이지가 먼저 건
+ * 캡처 리스너에는 click이 간다(2026-11-03 재현). 화면 밖이면 가운데로 굴린다(스크롤은 입력이 아니다).
+ */
+function clickableNow(el: Element): boolean {
+  if (!el.isConnected || (el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return false;
+  el.scrollIntoView({ block: 'center', inline: 'center' });
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  // shadow DOM 안이면 그 루트에서 본다(문서에서 보면 host가 나온다).
+  const root = el.getRootNode() as Document | ShadowRoot;
+  const top = root.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return !!top && (top === el || el.contains(top));
+}
+
+/**
+ * 커밋 클릭(N-21): 먼저 입력 없이 누를 수 있는지만 본다. 아니면 입력을 보내지 않았으므로 'blocked'(not_committed).
+ * 이어 실제 클릭의 예외는 요청이 나갔는지 알 수 없어 'sent'로 본다(verify가 정한다).
+ */
+export async function dispatchClick(button: Pick<ElementHandle, 'click' | 'evaluate'>): Promise<'blocked' | 'sent'> {
+  const ready = await button.evaluate(clickableNow).catch(() => false);
+  if (!ready) return 'blocked';
+  try {
+    await button.click({ timeout: CLICK_TIMEOUT_MS });
+  } catch {
+    // 요청이 나갔는지 알 수 없다
+  }
+  return 'sent';
+}
+
 export class H01Runner {
   private readonly page: Page;
   private readonly portal: PortalConfig;
@@ -106,9 +152,10 @@ export class H01Runner {
   private baseline: Set<string> | null = null;
   private approvedHash: string | null = null;
   private rb: Readback | null = null;
+  /** 커밋 클릭 시각(단조 시계). verify 상한·최소 경과를 벽시계 역행과 무관하게 센다. */
   private dispatchedAt = 0;
-  /** 클릭 직전 보이던 실패 신호 수. 클릭 뒤 새로 보인 것만 명시적 실패 신호로 센다. */
-  private failSignalsBefore = 0;
+  /** 클릭 직전 보이던 실패 신호(셀렉터·정규화 문구). 클릭 뒤 새로 보인 것만 명시적 실패 신호로 센다. */
+  private failSignalsBefore = new Set<string>();
 
   constructor(page: Page, portal: PortalConfig, inputs: RunInputs, profile: { bizNo: string }, hooks: RunnerHooks, policy: RunnerPolicy) {
     this.page = page;
@@ -237,7 +284,7 @@ export class H01Runner {
     let rb2: Readback | null = null;
     try {
       rb2 = await this.readAll();
-      this.failSignalsBefore = await this.visibleFailSignals();
+      this.failSignalsBefore = await this.failSignalKeys();
     } catch {
       // 다시 읽지 못했으면 값이 같다고 볼 수 없다
     }
@@ -253,13 +300,14 @@ export class H01Runner {
       this.hooks.resolve('not_committed', 'signal', null);
       throw halt;
     }
-    this.dispatchedAt = Date.now();
-    try {
-      await button.click();
-    } catch {
-      // 요청이 나갔는지 알 수 없다. dispatched로 두고 verify가 정한다.
-    }
+    this.dispatchedAt = performance.now();
+    // 누를 수 없는 버튼(덮개·이동 중)은 1.5초 안에 드러난다: 요청이 나가지 않았으므로 not_committed.
+    const sent = await dispatchClick(button);
     await button.dispose().catch(() => {});
+    if (sent === 'blocked') {
+      this.hooks.resolve('not_committed', 'identity_mismatch', null);
+      throw fail('step.identity_mismatch');
+    }
     this.hooks.dispatched();
     await this.page.waitForLoadState('domcontentloaded').catch(() => {});
     await this.policy.settled(this.page);
@@ -268,10 +316,13 @@ export class H01Runner {
 
   /** B₁ \ B₀가 정확히 1건이면 committed(승인번호 bind). 부재 증거가 모두 있을 때만 not_committed, 나머지는 unknown(D02 §4.4). */
   private async verifyInvoice(on: { committed: string; not_committed: string; unknown: string }): Promise<string> {
-    const { minElapsedMs, lookups, intervalMs } = this.portal.verify;
+    const { minElapsedMs, lookups, intervalMs, maxMs } = this.portal.verify;
+    // 반영 지연만으로 '모름'이 남지 않게 상한(maxMs)까지 조회한다. 간격은 두 배씩(홈택스 40초, 가짜 페이지 1초 상한).
+    const intervalCap = this.portal.kind === 'fixture' ? 1_000 : 40_000;
+    let wait = intervalMs;
     let zeroInARow = 0;
     let failedInARow = 0;
-    for (let attempt = 0; attempt < lookups + 20; attempt++) {
+    while (performance.now() - this.dispatchedAt < maxMs) {
       let b1: Set<string> | null = null;
       try {
         b1 = await this.invoiceNumbers(this.rb!);
@@ -291,16 +342,18 @@ export class H01Runner {
         }
         if (fresh.length > 1) break;
         zeroInARow++;
-        if (zeroInARow >= lookups && Date.now() - this.dispatchedAt >= minElapsedMs) {
-          // 클릭 뒤 새로 보이게 된 실패 신호만 센다(숨김 오류 상자·클릭 전부터 있던 문구는 증거가 아니다).
-          if ((await this.visibleFailSignals().catch(() => 0)) > this.failSignalsBefore) {
+        if (zeroInARow >= lookups && performance.now() - this.dispatchedAt >= minElapsedMs) {
+          // 클릭 뒤 새로 보이고 문구까지 맞는 실패 신호만 센다(숨김 오류 상자·클릭 전부터 있던 문구·성공 안내는 증거가 아니다).
+          // 없으면 상한까지 계속 조회한다(반영이 늦을 수 있다).
+          const now = await this.failSignalKeys().catch(() => new Set<string>());
+          if ([...now].some((k) => !this.failSignalsBefore.has(k))) {
             this.hooks.resolve('not_committed', 'verify', null);
             return on.not_committed;
           }
-          break;
         }
       }
-      await sleep(intervalMs);
+      await sleep(wait);
+      wait = Math.min(wait * 2, intervalCap);
     }
     this.hooks.resolve('in_doubt', null, null);
     return on.unknown;
@@ -318,7 +371,9 @@ export class H01Runner {
         if (e instanceof RunEnd) throw e;
         return null;
       });
-      if (rows?.some((r) => r.approvalNo === this.vars.approvalNo && /전송|완료/.test(r.status ?? ''))) {
+      const verdicts = (rows ?? []).filter((r) => r.approvalNo === this.vars.approvalNo).map((r) => mailStatusVerdict(r.status ?? ''));
+      if (verdicts.includes('not_sent')) return on.not_committed;
+      if (verdicts.includes('sent')) {
         this.vars.mailConfirmed = 'true';
         return on.committed;
       }
@@ -327,11 +382,17 @@ export class H01Runner {
     return on.unknown;
   }
 
-  private async visibleFailSignals(): Promise<number> {
-    const all = await this.page.locator(this.portal.failureSignal).all();
-    let n = 0;
-    for (const l of all) if (await l.isVisible()) n++;
-    return n;
+  /** 지금 보이고 문구 패턴에 맞는 실패 신호 요소의 키(셀렉터 + 정규화 문구). */
+  private async failSignalKeys(): Promise<Set<string>> {
+    const out = new Set<string>();
+    for (const entry of this.portal.failureSignal) {
+      for (const l of await this.page.locator(entry.css).all()) {
+        if (!(await l.isVisible())) continue;
+        const text = await l.innerText();
+        if (failureMatches(entry, text)) out.add(`${entry.css}\u0000${text.normalize('NFKC').replace(/\s+/g, ' ').trim()}`);
+      }
+    }
+    return out;
   }
 
   private async invoiceNumbers(rb: Readback): Promise<Set<string>> {
@@ -385,6 +446,7 @@ export class H01Runner {
       '$inputs.items[0].name': i.items[0]?.name ?? null,
       '$inputs.amounts.supply': i.amounts.supply,
       '$inputs.amounts.tax': i.amounts.tax,
+      '$inputs.issueDate': i.issueDate,
       '$profile.bizNo': this.profile.bizNo,
     };
     if (!(r in table)) throw fail('ir.bad_ref');

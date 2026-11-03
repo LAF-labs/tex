@@ -46,12 +46,51 @@ export interface PortalConfig {
   login: boolean;
   issueForm: string;
   selectors: Record<SelectorKey, SelectorEntry>;
-  /** 발급 화면의 명시적 실패 신호(오류 문구, D02 §4.4). */
-  failureSignal: string;
+  /**
+   * 발급 화면의 명시적 실패 신호(D02 §4.4): (셀렉터, ^…$ 문구 패턴) 쌍. 클릭 뒤 새로 보이고 문구까지 맞는 요소만
+   * not_committed 근거다. 빈 배열이면 not_committed가 성립하지 않는다(in_doubt로만 끝난다).
+   */
+  failureSignal: ReadonlyArray<FailureSignal>;
   invoiceLookup: LookupDef;
   mailLookup: LookupDef;
-  /** policy.verify(D02 §4.4). 홈택스는 앱 하한(60초·2회)보다 느슨할 수 없다. */
-  verify: { minElapsedMs: number; lookups: number; intervalMs: number };
+  /** policy.verify(D02 §4.4). 홈택스는 앱 하한(60초·2회·상한 300초)보다 느슨할 수 없다. maxMs는 클릭 뒤 조회를 이어 가는 상한이다. */
+  verify: { minElapsedMs: number; lookups: number; intervalMs: number; maxMs: number };
+  /** 로그인 화면 경로(PoC-3에서 채운다). 기대 경로 집합에 들어간다. */
+  loginPaths?: readonly string[];
+}
+
+export interface FailureSignal {
+  css: string;
+  /** 보이는 문구(NFKC·공백 접기 뒤)에 거는 정규식. ^…$ 앵커 필수. */
+  text: string;
+}
+
+const foldText = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
+
+/** 실패 신호 항목의 문구가 이 요소의 보이는 문구와 맞는가. 같은 셀렉터라도 성공 안내 문구는 실패가 아니다. */
+export function failureMatches(entry: FailureSignal, visibleText: string): boolean {
+  return new RegExp(entry.text).test(foldText(visibleText));
+}
+
+/** 이 실행이 지나가도 되는 포털 경로(플레이북 화면·조회·로그인). 이 밖의 포털 화면은 모르는 화면이다. */
+export function expectedPaths(p: PortalConfig): string[] {
+  return [p.issueForm, p.invoiceLookup.path, p.mailLookup.path, ...(p.loginPaths ?? [])].filter((x) => x && !x.includes(TODO));
+}
+
+/**
+ * 주 프레임 주소가 기대 경로 안인가. 포털 호스트(와 그 하위 도메인)의 경로만 판정하고, 포털 밖 주소는 여기서 보지 않는다
+ * (허용 origin은 금고 중계가 막는다). 경로는 기대 경로의 접두로 시작해야 한다.
+ */
+export function pathExpected(url: string, portal: PortalConfig): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return true;
+  }
+  const base = new URL(portal.origin).hostname;
+  if (u.hostname !== base && !u.hostname.endsWith(`.${base}`)) return true;
+  return expectedPaths(portal).some((p) => u.pathname.startsWith(p));
 }
 
 const TODO = 'TODO(PoC-3)';
@@ -82,11 +121,11 @@ export function fixturePortal(origin: string): PortalConfig {
       'form.receiptType': field('#rcpt', 'combobox', '^영수/청구$', 'receiptType'),
       'form.issueButton': { css: '#btnIssue', role: 'button', name: '^발급하기$', landmark: 'form.root', commits: true, commitEffect: 'issue_document' },
     },
-    failureSignal: '#issue-error',
+    failureSignal: [{ css: '#issue-error', text: '^발급할 수 없습니다\\. 입력 값을 확인하세요\\.$' }],
     invoiceLookup: { path: '/invoice/list', query: { counterpartBizNo: 'bizNo', issueDate: 'date' }, ready: '#invoice-list[data-count]', rows: '#invoice-list tr[data-row]' },
     mailLookup: { path: '/mail/list', query: { approvalNo: 'approvalNo' }, ready: '#mail-list[data-count]', rows: '#mail-list tr[data-row]' },
     // 가짜 페이지는 반영이 바로 된다. 시험이 빨리 끝나게 짧게 둔다(홈택스 값과 섞이지 않게 kind로 나눈다).
-    verify: { minElapsedMs: 600, lookups: 2, intervalMs: 200 },
+    verify: { minElapsedMs: 600, lookups: 2, intervalMs: 200, maxMs: 3_000 },
   };
 }
 
@@ -116,21 +155,25 @@ export const HOMETAX_PORTAL: PortalConfig = {
     'form.receiptType': todoEntry('combobox', 'receiptType'),
     'form.issueButton': todoEntry('button', undefined, true),
   },
-  failureSignal: TODO,
+  // PoC-3 S1 산출물(실패 문구 쌍)로 채운다. 비어 있는 동안은 not_committed가 성립하지 않는다.
+  failureSignal: [],
   invoiceLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },
   mailLookup: { path: TODO, query: {}, ready: TODO, rows: TODO },
-  verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000 },
+  verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 },
 };
 
-/** 앱 하한(D02 §4.4 policy.verify 기본값). 플레이북·포털 값은 이보다 엄격한 쪽만 쓴다. fixture는 예외다. */
-export const VERIFY_FLOOR = { minElapsedMs: 60_000, lookups: 2 } as const;
+/** 앱 하한(D02 §4.4 policy.verify 기본값). 플레이북·포털 값은 이보다 엄격한 쪽만 쓴다. fixture는 예외다. maxMs는 홈택스만 본다. */
+export const VERIFY_FLOOR = { minElapsedMs: 60_000, lookups: 2, maxMs: 300_000 } as const;
 
 /** 실행 전 점검: 자리표시·앵커 없는 이름 패턴·하한 미달을 모두 찾는다. 하나라도 있으면 실행하지 않는다. */
 export function portalProblems(p: PortalConfig): string[] {
   const out: string[] = [];
   const todo = (where: string, v: string) => v.includes(TODO) && out.push(`placeholder:${where}`);
   todo('issueForm', p.issueForm);
-  todo('failureSignal', p.failureSignal);
+  for (const f of p.failureSignal) {
+    todo('failureSignal', f.css);
+    if (!(f.text.startsWith('^') && f.text.endsWith('$'))) out.push('unanchored:failureSignal');
+  }
   for (const [k, l] of [['invoiceLookup', p.invoiceLookup], ['mailLookup', p.mailLookup]] as const) {
     todo(`${k}.path`, l.path);
     todo(`${k}.ready`, l.ready);
@@ -143,6 +186,6 @@ export function portalProblems(p: PortalConfig): string[] {
     if (!e.name.includes(TODO) && !(e.name.startsWith('^') && e.name.endsWith('$'))) out.push(`unanchored:${k}`);
   }
   if (!READBACK_FIELDS.every((f) => SELECTOR_KEYS.some((k) => p.selectors[k].fieldKey === f))) out.push('readback_field_without_selector');
-  if (p.kind === 'hometax' && (p.verify.minElapsedMs < VERIFY_FLOOR.minElapsedMs || p.verify.lookups < VERIFY_FLOOR.lookups)) out.push('verify_below_floor');
+  if (p.kind === 'hometax' && (p.verify.minElapsedMs < VERIFY_FLOOR.minElapsedMs || p.verify.lookups < VERIFY_FLOOR.lookups || p.verify.maxMs < VERIFY_FLOOR.maxMs)) out.push('verify_below_floor');
   return out;
 }

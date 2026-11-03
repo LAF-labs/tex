@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import {
   ACTIVE_WINDOW_DENY_PREFIXES,
   PORTAL_ETLD1,
   RELAY_DENIED_METHODS,
   RELAY_DOMAIN_METHOD_ALLOWLIST,
   TAINT_RUNTIME_DENY_PATTERNS,
+  TAINT_RUNTIME_EXACT_ALLOW_SHA256,
 } from '../constants.ts';
 
 /** 중계 정책. 앱은 constants.ts 값만 쓰고(defaultRelayPolicy), 테스트는 origin 목록만 바꿔 주입한다. */
@@ -61,6 +63,16 @@ export type Verdict = { ok: true } | { ok: false; reason: string };
 const OK: Verdict = { ok: true };
 const deny = (reason: string): Verdict => ({ ok: false, reason });
 
+const sha256 = (s: string): string => createHash('sha256').update(s, 'utf8').digest('hex');
+
+/** 오염 상태 면제 식인가(I-4): 앞뒤 공백을 뺀 조각, 또는 바깥 괄호 한 쌍을 벗긴 조각의 SHA-256이 목록에 있다. */
+export function isExemptInspect(part: string): boolean {
+  const p = part.trim();
+  if (!p) return false;
+  const inner = p.startsWith('(') && p.endsWith(')') ? p.slice(1, -1).trim() : null;
+  return TAINT_RUNTIME_EXACT_ALLOW_SHA256.includes(sha256(p)) || (inner !== null && TAINT_RUNTIME_EXACT_ALLOW_SHA256.includes(sha256(inner)));
+}
+
 /** 엔진이 page·자식 세션에 보낸 명령 판정(기본 거부). 루트(브라우저) 명령은 relay.ts의 가상 루트가 처리한다. */
 export function checkSessionCommand(
   method: string,
@@ -82,7 +94,8 @@ export function checkSessionCommand(
     if (method === 'Runtime.evaluate' || method === 'Runtime.callFunctionOn') {
       // Playwright의 callFunctionOn은 범용 래퍼이고 실제 코드는 문자열 인자로 간다(S6b). 인자 문자열까지 본다.
       const args = Array.isArray(params?.arguments) ? (params.arguments as Array<{ value?: unknown }>).map((a) => (typeof a.value === 'string' ? a.value : '')) : [];
-      const code = [String(params?.expression ?? params?.functionDeclaration ?? ''), ...args].join('\n');
+      // 고정 화면 확인 식과 정확히 같은 조각만 검사에서 뺀다(N-20). 다른 조각은 그대로 본다.
+      const code = [String(params?.expression ?? ''), String(params?.functionDeclaration ?? ''), ...args].filter((part) => !isExemptInspect(part)).join('\n');
       if (TAINT_RUNTIME_DENY_PATTERNS.some((re) => re.test(code))) return deny('secret_window_tainted');
     }
   }

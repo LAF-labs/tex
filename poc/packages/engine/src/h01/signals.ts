@@ -1,4 +1,5 @@
 import type { Dialog, Frame, Page, Response } from 'playwright-core';
+import { normalizeForDetection } from '@sax/redaction';
 
 // 결정적 차단 신호(D03 §7 (b)(c)(d), C-24). 모델 판정과 독립으로 매 네비게이션·대화상자·응답에서 본다.
 // 사전에는 실물 근거가 있는 항목만 둔다. 홈택스 차단·추가 인증·캡차 화면 문구는 공개 근거가 없어(2026-11 리서치,
@@ -49,7 +50,17 @@ export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> 
 export const HTTP_RULES = { forbiddenBurst: { count: 3, windowMs: 60_000 } } as const;
 
 const ORDER: readonly SignalKind[] = ['block', 'extra_auth', 'captcha', 'busy'];
-const squash = (s: string) => s.normalize('NFKC').replace(/[\u200b-\u200d\u2060\ufeff]/g, '').replace(/\s+/g, '');
+const squash = (s: string) => normalizeForDetection(s).replace(/\s+/g, '');
+
+/**
+ * \ud654\uba74 \ud655\uc778 \uc2dd(I-4). \uae08\uace0\ub294 \ube44\ubc00 \ucc3d \uc624\uc5fc \uc0c1\ud0dc\uc5d0\uc11c\ub3c4 \uc774 \uc2dd(SHA-256 712e7330\u2026598944)\ub9cc \uc815\ud655 \uc77c\uce58\ub85c \uba74\uc81c\ud55c\ub2e4.
+ * \uae00\uc790 \ud558\ub098\ub77c\ub3c4 \ubc14\uafb8\uba74 \uae08\uace0 \uba74\uc81c \ubaa9\ub85d\uacfc \ud568\uaed8 \ubc14\uafd4\uc57c \ud55c\ub2e4. innerText\ub294 \uc785\ub825 \uce78 \uac12\uc744 \ub2f4\uc9c0 \uc54a\ub294\ub2e4.
+ */
+export const SIGNAL_INSPECT_EXPR = "(() => ({ text: document.body ? document.body.innerText : '', status: ((performance.getEntriesByType('navigation')[0] || {}).responseStatus) || 0 }))()";
+
+/** \uae08\uace0 \uc911\uacc4 \uac70\ubd80 \uba54\uc2dc\uc9c0(I-5). \ube44\ubc00 \ucc3d \ub54c\ubb38\uc5d0 \ud654\uba74\uc744 \ubcfc \uc218 \uc5c6\uc5c8\ub2e4\ub294 \ub73b\uc774\ub2e4(\ud0c0\uc784\uc544\uc6c3\u00b7\ube48 \ud654\uba74\uacfc \ub2e4\ub974\ub2e4). */
+const RELAY_DENIED = /vault relay denied \S+ \((secret_window_(?:active|tainted))\)/;
+export type InspectUnavailable = 'secret_window_active' | 'secret_window_tainted';
 
 /** 가장 무거운 신호 하나(block > extra_auth > captcha > busy). */
 export function matchSignal(dict: readonly SignalEntry[], where: { url?: string; text?: string }): SignalHit | null {
@@ -71,6 +82,8 @@ export interface WatchOptions {
   onDialog: (d: Dialog) => void;
   /** 단조 시각(403 창). */
   mono: () => number;
+  /** 금고가 화면 확인 식을 거부했다(비밀 창 활성·오염). 부르는 쪽이 fail-closed로 판단한다. */
+  onUnavailable?: (reason: InspectUnavailable) => void;
 }
 
 /**
@@ -148,6 +161,14 @@ export class SignalWatch {
     if (this.forbidden.length >= count) this.o.onHit({ kind: 'block', id: 'http.403_burst' });
   }
 
+  private unavailable(reason: InspectUnavailable): void {
+    try {
+      this.o.onUnavailable?.(reason);
+    } catch {
+      // 기록 실패는 넘긴다(판단은 부르는 쪽 플래그로 한다)
+    }
+  }
+
   private track(p: Promise<void>): void {
     const q: Promise<void> = p.catch(() => {}).finally(() => this.pending.delete(q));
     this.pending.add(q);
@@ -173,9 +194,11 @@ export class SignalWatch {
     const seen = await Promise.all(
       frames.map((f) =>
         Promise.race([
-          f
-            .evaluate(() => ({ text: document.body?.innerText ?? '', status: (performance.getEntriesByType('navigation')[0] as { responseStatus?: number } | undefined)?.responseStatus ?? 0 }))
-            .catch(() => empty),
+          f.evaluate<typeof empty>(SIGNAL_INSPECT_EXPR).catch((e: unknown) => {
+            const m = RELAY_DENIED.exec(String((e as Error)?.message ?? ''));
+            if (m) this.unavailable(m[1] as InspectUnavailable);
+            return empty;
+          }),
           new Promise<typeof empty>((r) => setTimeout(() => r(empty), 3_000).unref()),
         ]),
       ),

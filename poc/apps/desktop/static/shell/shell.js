@@ -53,6 +53,8 @@ const DOC_ERR = {
   closed: '보관함이 닫혔어요', failed: '처리하지 못했어요. 다시 해 주세요',
   worker_failed: '읽는 창을 준비하지 못했어요. 다시 해 주세요', parse_failed: 'PDF를 읽지 못했어요', render_failed: 'PDF 쪽을 그리지 못했어요',
   ocr_failed: '그림 글자를 읽지 못했어요', bad_extract: '읽은 결과를 확인하지 못했어요',
+  pick_password_tries: '암호가 5번 틀려 이 파일은 닫았어요. 파일을 다시 골라 주세요.',
+  gesture_required: '잠시 뒤 다시 눌러 주세요.', throttled: '잠시 뒤 다시 눌러 주세요.',
 };
 const docErr = (e) => DOC_ERR[errText(e)] || errText(e);
 const DOC_REASON = {
@@ -80,7 +82,8 @@ const act = {
       putRun(await call('run.prepare', { id }));
       openPanel({ kind: 'run', id });
     } catch (e) {
-      toast(errText(e) === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : errText(e));
+      const c = errText(e);
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : c);
     }
   },
   vat: async (id, vat) => {

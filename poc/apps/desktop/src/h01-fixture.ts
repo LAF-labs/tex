@@ -62,10 +62,8 @@ export interface H01Fixture {
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const page = (title: string, body: string) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>${esc(title)}</title></head><body>${body}</body></html>`;
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
-const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
+/** 작성일자는 PC 시간대가 아니라 한국 시간(KST) 날짜다(I-8, ADR-027 결정 1). */
+export const today = (now = Date.now()) => new Date(now + 9 * 3_600_000).toISOString().slice(0, 10);
 
 /** 가짜 사업자 조회 대장(공급받는자 확인 버튼). */
 export type Registry = Record<string, string>;

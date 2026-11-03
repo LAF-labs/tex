@@ -8,7 +8,10 @@ import { it } from 'node:test';
 
 it('scripts/s9-decisions.ts --mock: 측정 항목이 모두 채워지고 비용 상한 안', () => {
   const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'sax-s9-')), 's9.json');
-  const env = { ...process.env, OPENAI_API_KEY: 'sk-should-not-be-used-or-written' };
+  // TLS 신뢰를 바꾸는 변수가 있으면 egress가 송신을 거부한다(N-23). 모의 서버(http)만 쓰므로 물려주지 않는다.
+  const env: NodeJS.ProcessEnv = { ...process.env, OPENAI_API_KEY: 'sk-should-not-be-used-or-written' };
+  delete env.NODE_EXTRA_CA_CERTS;
+  delete env.NODE_TLS_REJECT_UNAUTHORIZED;
   const r = spawnSync(process.execPath, ['--conditions=development', 'scripts/s9-decisions.ts', '--mock', '--reps=2', `--out=${out}`], { cwd: path.resolve(import.meta.dirname, '..'), env, encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr);
   const raw = fs.readFileSync(out, 'utf8');

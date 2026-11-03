@@ -473,7 +473,7 @@ describe('사업자 진위확인(H-05, 자기 키, 모의 서버)', () => {
   after(() => new Promise<void>((r) => server.close(() => r())));
 
   it('키 없으면 no_key, 키는 Authorization 헤더로만 가고 URL에 없다', async () => {
-    const v = new BizVerifier(new Egress({ testOrigins: { odcloud: origin } }));
+    const v = new BizVerifier(new Egress({ env: {}, testOrigins: { odcloud: origin } }));
     await assert.rejects(v.status([syntheticBizNo(1)]), /no_key/);
     v.setServiceKey(KEY);
     const [s] = await v.status([syntheticBizNo(1)]);
@@ -485,7 +485,7 @@ describe('사업자 진위확인(H-05, 자기 키, 모의 서버)', () => {
   it('진위확인 일치·불일치, 잘못된 키는 unauthorized', async () => {
     const root = await tmpRoot();
     const db = openDatabase(path.join(root, 'v.sqlite'), new Uint8Array(randomBytes(32)));
-    const svc = new DataService(db, new BizVerifier(new Egress({ testOrigins: { odcloud: origin } })));
+    const svc = new DataService(db, new BizVerifier(new Egress({ env: {}, testOrigins: { odcloud: origin } })));
     await svc.handle('bizverify.setKey', { key: KEY });
     const cp = (await svc.handle('counterparty.create', { bizNo: syntheticBizNo(5), name: '가나상사', repName: '이가나' })) as { id: string };
     const ok = (await svc.handle('counterparty.verify', { id: cp.id, startDate: '2020-01-01' })) as { counterparty: { verifiedStatus: string; verifiedAt: string }; result: { valid: boolean } };

@@ -16,7 +16,7 @@
 | `apps/desktop/src/synthetic-certs.ts` | 합성 서류(가짜 이름·번호, 붉은 직인): 납세증명 8, 사업자등록증명 8, 지원 밖 3, RC4 암호 PDF, 보이지 않는 글자 층 PDF, ToUnicode 끊기 |
 | `apps/desktop/src/docparse-e2e.ts` | Electron e2e 29항목 + S13b 측정 → `reports/raw/poc-8-docparse.json` |
 | `apps/desktop/src/poc8-measure.ts` | 실물 20건 측정 스크립트(§6) |
-| `tests/docmeta.test.ts`, `tests/documents.test.ts`, `tests/vault-smoke.ts` | 규칙·만료·텍스트 정리 35건, 보관함 22건(main 경계 1 포함), 앱 스모크(수동, 임시 앱 폴더, 판정 12개) |
+| `tests/docmeta.test.ts`, `tests/documents.test.ts`, `tests/vault-smoke.ts`(2026-11-03 퇴역, §5) | 규칙·만료·텍스트 정리 35건, 보관함 22건(main 경계 1 포함), 앱 스모크(수동, 임시 앱 폴더, 판정 12개) |
 
 ## 2. docparse PDF 경로(D17 §3, ADR-014)
 
@@ -89,7 +89,7 @@
   - 확인 화면은 정하지 못한 칸의 후보를 값 칸에 넣지 않고 "후보 …(PDF에서 확인하세요)"로만 보여 준다. 사용자가 '후보 넣기'를 누르거나 직접 입력해야 들어간다.
   - **본 값(`seen`)**: 화면은 보여 준 종류·발급일·만료일을 함께 보내고, 엔진은 저장값과 다르면 `stale`, 없으면 `seen_required`로 거부한다(셸 2차 검수 High). '바꾸지 않음 = 확인'이라, 확인을 두 번 눌러 같은 수정이 다시 오면 두 번째가 사용자가 본 적 없는 재계산 값을 확인함으로 만들 수 있었다. 옛 화면으로 확인하는 것도 같이 막힌다.
 
-**앱 스모크**(`tests/vault-smoke.ts`, 임시 앱 폴더, 판정 12개, 하나라도 어긋나면 실패, `reports/raw/poc-8-vault-smoke.json`·`reports/raw/poc-8/vault-panel.png`): 개발 콘솔에서 사업자 프로필 없음 안내 → 납세증명 텍스트 PDF(문서에서 읽은 만료일) → 같은 파일 다시(중복 안내) → 사업자등록증명(추정 90일, 다른 사업자라 확인 필요) → 그림 PDF(OCR, 확인 필요) → 열기 암호 PDF(암호 요청 → 틀린 암호 안내 → 맞는 암호로 보관) → 렌더러가 직접 부른 `document.import`는 `unknown_method`로 거부 → 다른 사업자 서류를 화면에서 '확인'(바꾸지 않고 저장) → 확인함. 파일명 4개 모두 `{docType}_{yyyyMMdd}_XXXX.pdf`. 스모크 중에 숨김 처리한 암호·수정 줄이 `.row{display:flex}`에 가려 보이던 결함을 찾아 고쳤다(`[hidden]` 규칙). PR #11 뒤로 메인 창에 승인 바(WebContentsView)가 붙어 스모크가 첫 페이지로 바를 잡아 멈췄다. 개발 콘솔 페이지를 주소로 고르게 고쳤다. 그림 PDF를 만들 때 글꼴을 다 불러온 뒤 찍는다(3회 중 1회 OCR이 종류를 못 알아본 적이 있다). macOS에서 임시 HOME을 쓰면 기본 키체인을 못 찾고, 임시 폴더(`/var` 링크 아래)는 앱이 루트 경로 링크로 거부하므로 스모크는 실제 경로를 쓰고 키체인 폴더 링크를 둔다.
+**앱 스모크**(`tests/vault-smoke.ts`, 2026-11-03 퇴역: 개발 콘솔이 디버그 스위치를 거부해(ADR-025 결정 8) Playwright로 붙을 수 없다. 같은 흐름은 `shell-docs-e2e`(셸)와 `tests/app-smoke.ts`(실 키체인·암호화 DB)가 본다. 아래는 퇴역 전 결과다. 임시 앱 폴더, 판정 12개, 하나라도 어긋나면 실패, `reports/raw/poc-8-vault-smoke.json`·`reports/raw/poc-8/vault-panel.png`): 개발 콘솔에서 사업자 프로필 없음 안내 → 납세증명 텍스트 PDF(문서에서 읽은 만료일) → 같은 파일 다시(중복 안내) → 사업자등록증명(추정 90일, 다른 사업자라 확인 필요) → 그림 PDF(OCR, 확인 필요) → 열기 암호 PDF(암호 요청 → 틀린 암호 안내 → 맞는 암호로 보관) → 렌더러가 직접 부른 `document.import`는 `unknown_method`로 거부 → 다른 사업자 서류를 화면에서 '확인'(바꾸지 않고 저장) → 확인함. 파일명 4개 모두 `{docType}_{yyyyMMdd}_XXXX.pdf`. 스모크 중에 숨김 처리한 암호·수정 줄이 `.row{display:flex}`에 가려 보이던 결함을 찾아 고쳤다(`[hidden]` 규칙). PR #11 뒤로 메인 창에 승인 바(WebContentsView)가 붙어 스모크가 첫 페이지로 바를 잡아 멈췄다. 개발 콘솔 페이지를 주소로 고르게 고쳤다. 그림 PDF를 만들 때 글꼴을 다 불러온 뒤 찍는다(3회 중 1회 OCR이 종류를 못 알아본 적이 있다). macOS에서 임시 HOME을 쓰면 기본 키체인을 못 찾고, 임시 폴더(`/var` 링크 아래)는 앱이 루트 경로 링크로 거부하므로 스모크는 실제 경로를 쓰고 키체인 폴더 링크를 둔다.
 
 **셸 문서함 연결**(PR #11·PoC-6 PR #13 머지 뒤, `apps/desktop/src/shell-docs.ts`):
 - 셸은 보관함을 공급자 인터페이스(`list`·`importPdf`·`update`·`filePath`)로만 다룬다.
@@ -162,7 +162,7 @@
 ```bash
 pnpm build && pnpm lint && pnpm test
 ./node_modules/.bin/electron apps/desktop/dist/docparse-e2e.js   # 합성 PDF e2e 29항목 + S13b → reports/raw/poc-8-docparse.json
-node --conditions=development tests/vault-smoke.ts                # 앱 스모크(임시 앱 폴더, 판정 12개) → reports/raw/poc-8-vault-smoke.json
+./node_modules/.bin/electron apps/desktop/dist/shell-docs-e2e.js # 셸 문서함 e2e(vault-smoke 퇴역 뒤 같은 흐름) → reports/raw/poc-8-shell-docs.json
 ```
 
 ## 9. 남은 일

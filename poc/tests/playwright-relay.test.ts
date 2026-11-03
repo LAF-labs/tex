@@ -109,8 +109,8 @@ describe('S6b Playwright over vault relay', () => {
     await page.fill('#user', 'alice');
     await page.focus('#pw');
     await warmForSecretWindow(page);
-    await h.secretInput.rpc('secret.provide', { kind: 'cert_password', scope: 'biz', bytes: new TextEncoder().encode(secret) });
-    const r = await h.client.rpc('typist.fill', { runId: 'pw1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'biz' } });
+    await h.provide({ runId: 'pw1', kind: 'cert_password', scope: 'business' }, secret);
+    const r = await h.client.rpc('typist.fill', { runId: 'pw1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'business' }, slot: { secretKind: 'cert_password', purpose: 'login' } });
     assert.deepEqual(r, { ok: true });
     report.taintedScreenshot = await outcome(() => page.screenshot());
     assert.match(String(report.taintedScreenshot), /^error/);

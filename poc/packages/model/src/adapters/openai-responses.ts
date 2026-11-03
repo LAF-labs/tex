@@ -42,7 +42,8 @@ export class OpenAIResponsesAdapter {
     this.opts = opts;
     this.egress = opts.egress;
     this.model = opts.model ?? TERRA;
-    this.client = new OpenAI({ apiKey: opts.apiKey, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 60_000 });
+    // 조직·프로젝트는 환경 변수(OPENAI_ORG_ID·OPENAI_PROJECT_ID)에서 읽지 않는다(N-23). 주소는 egress가 고정한다.
+    this.client = new OpenAI({ apiKey: opts.apiKey, organization: null, project: null, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 60_000 });
   }
 
   private tag(runToken: string, item: object): string {

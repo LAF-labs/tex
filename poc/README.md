@@ -11,7 +11,7 @@
 | `packages/redaction` | 마스킹 최소판, `RedactedText` 브랜드 | D06 §4·§8 |
 | `packages/model` | L1·L2 계약, 번들 8종 + BV 검증기, 임계값 프로필, OpenAI Decisions·Responses 어댑터, Upstage 스텁 | D04, ADR-003·015 |
 | `packages/platform` | `%LOCALAPPDATA%\SovereignAX` 경로·ACL·로그·포트 추상화 | D07 §1.1 |
-| `apps/desktop` | Electron main(utilityProcess 배선, 승인 바, docparse 샌드박스, 비밀 입력 창, 개발 콘솔 UI), 데모 UI 셸(`shell*.ts`, `static/shell/`, 목업 데이터) | D01 §2.1, ADR-014·021, 08 |
+| `apps/desktop` | Electron main(utilityProcess 배선·환경 변수 허용 목록, 기동 자기 점검 `harden.ts`, 승인 바, docparse 샌드박스, 금고 요청으로만 여는 비밀 입력 창), 셸(`shell*.ts`, `static/shell/`), 개발 콘솔(`main.ts`, 엔진·금고 연결 확인용) | D01 §2.1, ADR-014·021, 08 |
 | `tests` | 통합 테스트·픽스처·앱 스모크 | D13 S6 |
 
 ```bash
@@ -26,11 +26,7 @@ pnpm build && pnpm lint && pnpm test
 ./node_modules/.bin/electron apps/desktop/dist/e2e.js
 ```
 
-```bash
-pnpm start
-```
-
-데모 UI 셸(PoC-9, 목업 데이터. 엔진·금고·홈택스에 연결하지 않음)과 그 e2e·스크린샷:
+데모 셸(가짜 홈택스 페이지, 시험 구성 금고)과 그 e2e·스크린샷(`reports/raw/poc-6/shell/`). Linux에서 root로 돌리면 `xvfb-run -a pnpm exec electron apps/desktop/dist/shell-e2e.js --no-sandbox`:
 
 ```bash
 pnpm demo
@@ -38,6 +34,18 @@ pnpm demo
 
 ```bash
 pnpm demo:e2e
+```
+
+실제 홈택스(PoC-3, ADR-025). 앱이 PoC 상한(하루 실행 20·실발급 1·PoC 전체 실발급 3)·단일 인스턴스·디버그 스위치 거부·자식 환경 변수 허용 목록을 집행하고, 비밀 입력 창은 금고가 요청할 때만 열린다. 차단·추가 인증 사전이 비어 있으면 시작 때 저널에 남기고, 모르는 화면은 "멈춤·확인 필요"로 끝난다:
+
+```bash
+pnpm start:hometax
+```
+
+개발 콘솔(엔진·금고 연결 확인. 비밀 입력·데모 승인 버튼은 ADR-025로 없앴다):
+
+```bash
+pnpm start
 ```
 
 셸 화면만 상태별로 찍어 디자인 캔버스와 대조(엔진·Chrome 없이 목업 데이터, 결과 `reports/raw/design-sync/`, [PoC-9-design-sync.md](reports/PoC-9-design-sync.md)):
@@ -52,4 +60,4 @@ pnpm demo:preview
 pnpm bundles && node --conditions=development scripts/s-l0-measure.ts && pnpm s9
 ```
 
-결과: [reports/PoC-1.md](reports/PoC-1.md)(환경·[위험 수용](reports/PoC-1-risk-acceptance.md)), [reports/PoC-4-5.md](reports/PoC-4-5.md), [reports/S6b.md](reports/S6b.md), [reports/PoC-7.md](reports/PoC-7.md), [reports/S-L0.md](reports/S-L0.md), [reports/S9.md](reports/S9.md), [reports/PoC-9.md](reports/PoC-9.md).
+결과: [reports/PoC-1.md](reports/PoC-1.md)(환경·[위험 수용](reports/PoC-1-risk-acceptance.md)), [reports/PoC-4-5.md](reports/PoC-4-5.md), [reports/S6b.md](reports/S6b.md), [reports/PoC-7.md](reports/PoC-7.md), [reports/S-L0.md](reports/S-L0.md), [reports/S9.md](reports/S9.md), [reports/PoC-9.md](reports/PoC-9.md), [reports/PoC-6.md](reports/PoC-6.md), [reports/PoC-8.md](reports/PoC-8.md), [reports/PoC-10.md](reports/PoC-10.md), 회고 [reports/RETRO-2026-11-02.md](reports/RETRO-2026-11-02.md), 보안 감사 [../sovereign-ax/research/AUDIT-D-v13-poc-security.md](../sovereign-ax/research/AUDIT-D-v13-poc-security.md).

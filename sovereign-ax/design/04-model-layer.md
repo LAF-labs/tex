@@ -1,5 +1,6 @@
 # D04. 모델 계층
 
+> AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-029, D19 §3.5 D-47·D-26).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: `replay` 브랜드 타입, System One 계약 호환, 캐시 키 정본 `acct:<HMAC>:b:<bundleId>`, `required_fields_filled` 삭제(결정적 assert), 결정적 인젝션 사전 필터, 세무 상담 출력 차단, `doc_meta_check_v1` 후보 선택형, Terra 출력 구조화 슬롯·대화창 비밀 DLP, `query_agent` 툴셋 삭제, 게이트웨이 요청 스키마 참조·`safety_identifier` 월 회전·응답 비신뢰 처리, BYOK 로컬 검사 4종, 공급사 보존·처리 국가 정정. §6 비용표는 바꾸지 않았다.
 > 근거: [research/R1-openai-decisions-responses.md](../research/R1-openai-decisions-responses.md) (공식 가이드·SDK 소스 기준, 2026-10-28). 아래 "미확인" 표시는 R1 §D.2와 같고, 스파이크 S7·S9에서 실측한다. System One 계약은 [R6](../research/R6-upstage-solar.md) §0·[R8](../research/R8-local-decision-model.md) §0.
 
@@ -162,7 +163,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `selector_repair` | `get_a11y_subtree(scopeId ∈ 엔진이 요청마다 채운 열거값, maxBytes≤8000)`, `find_candidates(role, nameContains ≤ 40자, maxResults≤10)`(정규식 아님), `propose_selectors(candidates[≤5])`(드라이런: 엔진이 D03 §6 동일성 검사 10항을 돌리되 적용하지 않음) | medium | 16,000 | 3 |
 | `intent_fill` | `get_counterparties(query)`(마스킹 토큰으로 반환), `parse_amount(text)`, `propose_inputs(inputs)` | low | 6,000 | 2 |
 | `summarize` | 없음. 출력은 구조화 슬롯 스키마만 | low | 4,000 | 1 |
-| `query_parse` | 없음. 출력 `{query_kind: enum, doc_type: enum\|null, from: date\|null, to: date\|null}`만 | low | 1,000 | 1 |
+| `query_parse` | 없음. 출력 `{query_kind: enum, doc_type: enum\|null, from: string(pattern `^\d{4}-\d{2}-\d{2}$`)\|null, to: 같음}`만(`format:'date'`는 ajv-formats 없이 무시되므로 쓰지 않는다, D-47(N-74)) | low | 1,000 | 1 |
 
 - **`query_agent` 툴셋 삭제** (감사 C C-10): 조회 질문에서 모델에는 **사용자 질문(마스킹본)만** 보낸다. PC가 꺼져 있을 때 마스킹은 **폰이 로컬에서** 한다(E-09, Phase 2): 폰은 D06 정규식 마스킹(숫자형 식별자·이메일·전화)을 적용하고, 상호·대표자·거래처 이름 사전은 PC가 페어링 채널로 폰에 동기화(Keychain 보호, 옵트인)한 뒤에만 조회 에이전트를 켠다. 사전 동기화 전에는 이름이 포함된 질문을 보내지 않는다(폰이 한글 2~4자 + 호칭 문맥을 보수적으로 치환). PC가 켜져 있으면 D06 전체 계층을 쓴다. 모델은 `query_parse`로 `query_kind`와 열거형 파라미터만 돌려준다. 메타데이터 행·서류 목록·만료 목록은 **어떤 경우에도 모델 입력에 들어가지 않는다**. 조회는 PC에서는 엔진이 로컬 DB로, PC가 꺼져 있으면 서버가 인증 토큰의 계정으로만 결정적으로 하고 결과를 템플릿에 채운다(서버 쪽 규칙은 D09 §7 담당). `list_documents`·`get_expiry` 도구는 없다.
 - `parallel_tool_calls: false`. 응답은 구조화 출력(`text.format = json_schema, strict`)으로 받고, `refusal` 콘텐츠·`incomplete` 상태를 파싱 전에 검사한다. 둘 다 L3 핸드오프.
@@ -214,6 +215,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 - 실행 전체에서 연속 `unknown` 2회(스텝 무관)면 L3(사람). `unknown`의 목적지는 V-07b로 제한된다.
 - 간편인증 PUSH 대기는 `decide` 폴링이 아니라 결정적 `wait`(텍스트·요소 변화)로 하고 상태 확인은 종료 시 1회만.
 - **응답은 비신뢰 입력이다** (감사 C C-24): 결과 매핑·임계값은 게이트웨이가 아니라 **로컬 번들 정의**로 계산한다. 응답의 질문 이름이 로컬 번들과 다르거나 빠지면 `unknown`이다. 차단 신호는 모델 판정 외에 결정적 신호(차단 안내 URL·문구 사전, D03)도 함께 본다.
+- Terra 툴셋 스키마(D-47(N-74), D19 등록만): `from`/`to`는 `pattern '^\d{4}-\d{2}-\d{2}$'`(+null), 후보 `value` maxLength 120(css는 selectors.schema 허용 패턴), `name` maxLength 80. 의존성 추가 없음.
 - 모델 출력으로 할 수 있는 행동의 전체 집합: 열거된 분기 선택, 셀렉터 **후보** 제안, 입력값 **제안**(레코드 ID로 채움, D06 §8), 표시용 구조화 슬롯, 조회 질문의 열거형 해석. 네비게이션·제출·서명·전송·삭제는 어떤 경로로도 모델이 유발할 수 없다(도구 없음 + 엔진 검증 + 게이트).
 
 ## 6. 비용·사용량 가드
@@ -237,9 +239,12 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 | 엔드포인트 | 요청(스키마 `$defs`) | 응답 | 비고 |
 |---|---|---|---|
-| `POST /v1/decide` | `decide`: `{bundleId, bundleDigest, input(마스킹 텍스트, ≤ 해당 번들 maxInputBytes ≤ 16KB), runToken}` + `Authorization: Bearer <account token>` + `X-Device-Id` | Decisions 응답 + `usage`(`cached_tokens` 제외) + `questionsDigest` | 게이트웨이가 `model`, `prompt_cache_options`(명시 모드·브레이크포인트 위치), `prompt_cache_key`(§2.1 정본), `safety_identifier`를 주입하고 번들 질문을 붙인다. `runToken`은 게이트웨이가 발급·서명한 실행 토큰(실행당 예산 집행) |
-| `POST /v1/respond` | `respond`: `{toolset, messages(role=user, input_text만), replay[](게이트웨이 태그 `HMAC(gw_key, accountId‖runToken‖items)`가 맞는 항목과 그 `call_id`의 `function_call_output`만), runToken}` | Responses 응답 + 태그 | `effort`·`max_output_tokens`·툴 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의에 따라 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·캐시 브레이크포인트를 보내면 400. **Phase 1은 이미지 입력을 400으로 거부**(`GW_ALLOW_IMAGES=false`, B-18) |
+| `POST /v1/decide` | `decide`: `{bundleId, bundleDigest, input(마스킹 텍스트, ≤ 해당 번들 maxInputBytes ≤ 16KB), runToken}` + `Authorization: DPoP <기기 범위 토큰>` + `DPoP` 증명(`SAX-dpop-v1`). `X-Device-Id`는 토큰에서 유도한다 | Decisions 응답 + `usage`(`cached_tokens` 제외) + `questionsDigest` | 게이트웨이가 `model`, `prompt_cache_options`(명시 모드·브레이크포인트 위치), `prompt_cache_key`(§2.1 정본), `safety_identifier`를 주입하고 번들 질문을 붙인다. `runToken`은 게이트웨이가 발급·서명한 실행 토큰(실행당 예산 집행) |
+| `POST /v1/respond` | `respond`: `{toolset, messages(role=user, input_text만), replay[](게이트웨이 태그 `HMAC(gw_key, accountId‖deviceId‖runToken‖item)`가 맞는 항목과 그 `call_id`의 `function_call_output`만), runToken}` | Responses 응답 + 태그 | `effort`·`max_output_tokens`·툴 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의에 따라 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·캐시 브레이크포인트를 보내면 400. **Phase 1은 이미지 입력을 400으로 거부**(`GW_ALLOW_IMAGES=false`, B-18) |
+| `POST /v1/run-tokens` | 기기 범위 토큰 필요 | 게이트웨이 서명 `runToken` | 실행당 예산을 묶는다 |
 | `GET /v1/usage/me` | — | 월 사용량·한도 | |
+
+게이트웨이 인증(ADR-029, D-26(N-41)): 모델 게이트웨이는 계정 세션 토큰을 받지 않는다. 데스크톱 기기 범위 토큰(AIK 기기 인증서 결속, DPoP `SAX-dpop-v1`)만 받고 `X-Device-Id`는 토큰에서 유도한다. 자동 정지는 기기 단위로 먼저 건다(D09 §2.1).
 
 - **신뢰 지점** (감사 C C-24): 게이트웨이는 모델 출력의 무결성에 대해 **신뢰 지점**이다. 악의적이거나 침해된 게이트웨이는 응답 확률을 바꾸거나 도구·지시를 끼워 넣을 수 있다. 그래서 엔진은 응답을 **비신뢰 입력**으로 다룬다. 결과 매핑·임계값은 로컬 번들 정의로 계산하고(§5), Terra 응답의 도구 호출은 로컬 툴셋 정의에 없는 이름·스키마면 버린다(§4). `bundleDigest` 409는 배포 불일치 감지용이지 무결성 장치가 아니다. 게이트웨이는 공급사로 보낸 질문 목록의 해시(`questionsDigest`)를 응답에 실어 클라이언트가 로컬 번들과 대조하게 한다. 악의적 게이트웨이는 이 값도 속일 수 있으며, 이 한계를 D11에 적는다.
 - **`safety_identifier` 월 회전** (감사 C C-23): `safety_identifier = hex(HMAC-SHA256(K_sid, accountId ‖ yyyymm))[:32]`. `K_sid`는 KMS에 두고 게이트웨이 외에는 접근할 수 없다. 이메일·계정 ID 원문은 보내지 않는다. 두 표면 모두에 같은 값. 대가: 공급사의 남용 추적이 월 단위로 끊긴다. 계량 레코드 분리와 접근 로그 식별자 회전은 D09가 정한다.

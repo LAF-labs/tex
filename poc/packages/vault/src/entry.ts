@@ -1,4 +1,6 @@
-// 금고 utilityProcess 진입점. main이 첫 메시지로 engine·control 포트를, 이후 비밀 입력 창마다 secretInput 포트를 넘긴다.
+// 금고 utilityProcess 진입점. main이 첫 메시지로 engine·control 포트를, 이후 비밀 입력 창마다 secretInput 포트(+ 결속 bind, I-1)를 넘긴다.
+// 송신 모듈 차단을 가장 먼저 건다(N-32).
+import { netDenyInstalled } from './net-deny.ts';
 import type { MessagePortMain } from 'electron';
 // 정책·경로·Chrome 인자는 전부 상수다(이 파일은 아무 설정도 받지 않는다).
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort } from '@sax/platform';
@@ -17,13 +19,15 @@ const log = new FileEventLog(paths.logs, 'vault');
 const vault = new Vault({ paths, log, keyStore: new OsKeyStore() });
 
 parentPort.on('message', (e) => {
-  const kinds = (e.data as { ports?: PortKind[] })?.ports ?? [];
+  const data = e.data as { ports?: PortKind[]; bind?: unknown };
+  const kinds = data?.ports ?? [];
   kinds.forEach((kind, i) => {
     const p = e.ports[i];
-    if (p && (kind === 'engine' || kind === 'control' || kind === 'secretInput')) vault.attachPort(kind, wrapPort(p, 'electron'));
+    if (p && (kind === 'engine' || kind === 'control' || kind === 'secretInput')) vault.attachPort(kind, wrapPort(p, 'electron'), kind === 'secretInput' ? data.bind : undefined);
   });
 });
 
 process.on('exit', () => void vault.shutdown());
+if (!netDenyInstalled) log.event('vault.net_deny_unavailable');
 log.event('vault.started');
 parentPort.postMessage({ t: 'ready' });

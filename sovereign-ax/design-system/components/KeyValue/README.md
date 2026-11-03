@@ -6,4 +6,5 @@
 - 넘겨줄 것: 라벨과 값의 쌍, 값마다 확실성 상태, 불일치면 초안 값, 목록 아래 출처 한 줄(D6).
 - 마크업: `<dl class="sx-kv">` 안에 `<dt>` 라벨, `<dd>` 값. 값은 `<span class="sx-val">`, 표시는 `<span class="sx-tag">`, 초안 값은 `<span class="sx-was">`. 확실성은 `dd`에 `is-inferred`·`is-verified`·`is-mismatch`·`is-empty`, 확인함은 클래스 없음. 합계 행은 `is-total`.
 - 값은 오른쪽 정렬이다. 글자 값이 긴 목록은 `sx-kv is-start`로 왼쪽 정렬한다.
+- 모양(v1.2): 라벨은 12px 500 `ink-3`(자간 없음), 값은 14px `ink`, 행 사이 6px. 합계 행만 600이다.
 - 하지 말 것: 값을 강조하려고 색·굵기를 바꾸기(합계 행 `is-total`만 예외), 라벨 없는 값, 한 목록에 D1 두 개.

@@ -94,14 +94,4 @@ $('#key-form').addEventListener('submit', async (e) => {
   say(msg, r.hasKey ? '설정됨(메모리만)' : '지움', 'ok'); refreshStatus();
 });
 
-const bmsg = (t) => { $('#b-msg').textContent = t; };
-$('#b-open').onclick = async () => { try { await call('browser.open', { portal: 'hometax' }); bmsg('전용 Chrome을 열었습니다(파이프 전용, 포트 없음).'); } catch (e) { bmsg(errText(e)); } refreshStatus(); };
-$('#b-close').onclick = async () => { await call('browser.close'); bmsg('닫았습니다.'); refreshStatus(); };
-$('#b-secret').onclick = () => call('secret.openInput', { kind: 'cert_password', scope: 'business' });
-$('#b-approval').onclick = async () => {
-  bmsg('창 아래에 승인 바를 띄웠습니다. 바가 뜬 뒤 0.6초 동안과 마우스를 움직인 직후 0.15초 동안의 클릭은 무시합니다. 키보드로는 승인되지 않습니다.');
-  const r = await call('approval.demo');
-  bmsg(`승인 바 결과: ${r.decision}${r.verified ? ' · LocalApproval 검증됨' : ''}`);
-};
-
 loadProfiles(); loadCounterparties(); refreshStatus(); setInterval(refreshStatus, 3000);

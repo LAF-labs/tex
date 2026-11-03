@@ -10,7 +10,7 @@ import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebCon
 const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset } = await import(`${DESK}/dist/shell-mock.js`);
-const { buildBarHtml, barCss, summarize } = await import(`${DESK}/dist/approval-gate.js`);
+const { buildBarHtml, barCss, barPalette, summarize } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
 
 const ARGS = process.argv.slice(process.argv.findIndex((a) => a.endsWith('shell-preview.mjs')) + 1);
@@ -73,7 +73,7 @@ protocol.handle('pv', async (req) => {
   const p = new URL(req.url).pathname;
   if (p === '/tokens.css') return new Response(tokensCss(), { headers: { 'content-type': 'text/css' } });
   if (p === '/bundle.css') return new Response(bundleCss(), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bar.css') return new Response(barCss(loadTokens()), { headers: { 'content-type': 'text/css' } });
+  if (p === '/bar.css') return new Response(barCss(barPalette(loadTokens()).palette), { headers: { 'content-type': 'text/css' } });
   if (p === '/bar.html') return new Response(S.barHtml, { headers: { 'content-type': 'text/html; charset=utf-8' } });
   const type = p.endsWith('.css') ? 'text/css' : p.endsWith('.js') ? 'text/javascript' : 'text/html; charset=utf-8';
   return new Response(await fs.readFile(path.join(DESK, 'static/shell', p.slice(1))), { headers: { 'content-type': type } });

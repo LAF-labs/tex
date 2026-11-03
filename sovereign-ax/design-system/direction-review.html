@@ -1,743 +1,640 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>소버린 AX 디자인 방향</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Sans+KR:wght@500;700;800&family=Noto+Serif+KR:wght@600;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600;700&display=swap">
 <style>
-/* 레이아웃: 문서형 한 단(본문 680px), 시안은 1040px 폭의 가로 스크롤 상자. 페이지 자체가 권장안 A("서류와 도장")의 토큰으로 그려진다. */
+/* v0.3(2026-11-02): 디자인 시스템 v1.2 토큰·컴포넌트를 브라우저에서 바로 보는 검토 페이지. 자급자족한다(토큰은 tokens.json의 사본, 컴포넌트 CSS는 components/bundle.css의 사본).
+   페이지 자체도 같은 토큰으로 그려진다. 오른쪽 위에서 라이트·다크를 바꿔 본다. */
 :root {
-  --paper: #F5F5F2;
-  --surface: #FFFFFF;
-  --sunken: #ECECE7;
-  --ink: #1A1C1E;
-  --ink-2: #565B62;
-  --ink-3: #868B92;
-  --line: #E2E2DC;
-  --line-2: #CDCDC5;
-  --seal: #C9372C;
-  --seal-ink: #FFFFFF;
-  --seal-tint: rgba(201, 55, 44, 0.09);
-  --amber: #9A6210;
-  --amber-tint: rgba(168, 106, 18, 0.12);
-  --pine: #2E6A4E;
-  --pine-tint: rgba(46, 106, 78, 0.11);
-  --shadow: 0 1px 2px rgba(20, 22, 24, 0.06), 0 12px 32px rgba(20, 22, 24, 0.10);
-  --font-sans: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
-  --font-serif: "Noto Serif KR", "AppleMyungjo", "Batang", serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --canvas: #F5F6F7; --surface: #FFFFFF; --surface-sunken: #EEF0F2; --surface-tint: #F0F2F4; --surface-overlay: #FFFFFF;
+  --line: #E4E7EB; --line-soft: #EDEFF2; --line-strong: #878E97;
+  --ink: #16191D; --ink-2: #4F5661; --ink-3: #646B76; --ink-4: #9AA1AA; --on-ink: #FFFFFF;
+  --accent: #2A4F9E; --accent-soft: #E8EEF9; --accent-strong: #1F3F86; --on-accent: #FFFFFF;
+  --attention: #8A5A0B; --attention-soft: #F8EEDC; --scrim: #16191D52; --focus-ring: var(--accent);
+  --shadow-raised: 0 1px 2px #14181d0a, 0 2px 6px #14181d0d; --shadow-overlay: 0 1px 2px #14181d0a, 0 8px 24px #14181d1a;
+  --font-sans: "IBM Plex Sans KR", "Malgun Gothic", "Apple SD Gothic Neo", sans-serif;
+  --font-mono: "IBM Plex Mono", Consolas, ui-monospace, monospace;
+  --font-serif: "Noto Serif KR", Batang, "AppleMyungjo", serif;
   --font-system: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif;
+  --space-0: 2px; --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-5: 24px; --space-6: 32px; --space-7: 48px;
+  --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-xl: 16px; --radius-full: 9999px;
+  --titlebar-height: 44px; --rail-width: 60px; --panel-width: 340px; --chat-max: 600px; --field-label-width: 96px;
+  --control-height-sm: 28px; --control-height: 32px; --control-height-lg: 40px;
+  --motion-fast: 120ms; --motion-base: 160ms; --motion-slow: 220ms; --motion-pulse: 2400ms; --ease-out: cubic-bezier(0.2, 0, 0, 1); --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #121314; --surface: #1A1B1D; --sunken: #0C0D0E; --ink: #ECEBE6; --ink-2: #A7AAAE; --ink-3: #75797E;
-    --line: #2A2C2F; --line-2: #3A3D41; --seal: #E2574A; --seal-ink: #160807; --seal-tint: rgba(226, 87, 74, 0.15);
-    --amber: #D9A445; --amber-tint: rgba(217, 164, 69, 0.14); --pine: #63B48C; --pine-tint: rgba(99, 180, 140, 0.14);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
+    --canvas: #101215; --surface: #171A1E; --surface-sunken: #0B0D10; --surface-tint: #20252B; --surface-overlay: #1F2328;
+    --line: #272B31; --line-soft: #1F2328; --line-strong: #6B737D;
+    --ink: #E9EBEE; --ink-2: #A9B0B9; --ink-3: #8B939D; --ink-4: #5C636C; --on-ink: #101215;
+    --accent: #8EAAF0; --accent-soft: #1B2540; --accent-strong: #A3BBF4; --on-accent: #0B1226;
+    --attention: #E0AE55; --attention-soft: #2E2410; --scrim: #00000080;
+    --shadow-raised: 0 1px 2px #0000004d, 0 2px 6px #00000040; --shadow-overlay: 0 1px 2px #00000066, 0 12px 32px #00000080;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #121314; --surface: #1A1B1D; --sunken: #0C0D0E; --ink: #ECEBE6; --ink-2: #A7AAAE; --ink-3: #75797E;
-  --line: #2A2C2F; --line-2: #3A3D41; --seal: #E2574A; --seal-ink: #160807; --seal-tint: rgba(226, 87, 74, 0.15);
-  --amber: #D9A445; --amber-tint: rgba(217, 164, 69, 0.14); --pine: #63B48C; --pine-tint: rgba(99, 180, 140, 0.14);
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 16px 40px rgba(0, 0, 0, 0.45);
+  --canvas: #101215; --surface: #171A1E; --surface-sunken: #0B0D10; --surface-tint: #20252B; --surface-overlay: #1F2328;
+  --line: #272B31; --line-soft: #1F2328; --line-strong: #6B737D;
+  --ink: #E9EBEE; --ink-2: #A9B0B9; --ink-3: #8B939D; --ink-4: #5C636C; --on-ink: #101215;
+  --accent: #8EAAF0; --accent-soft: #1B2540; --accent-strong: #A3BBF4; --on-accent: #0B1226;
+  --attention: #E0AE55; --attention-soft: #2E2410; --scrim: #00000080;
+  --shadow-raised: 0 1px 2px #0000004d, 0 2px 6px #00000040; --shadow-overlay: 0 1px 2px #00000066, 0 12px 32px #00000080;
   color-scheme: dark;
 }
+@media (prefers-reduced-motion: reduce) { :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; --motion-pulse: 0ms; } }
 
+/* ---- 페이지 ---- */
 * { box-sizing: border-box; }
-body {
-  background: var(--paper); color: var(--ink);
-  font-family: var(--font-sans); font-size: 15px; line-height: 1.65;
-  word-break: keep-all; overflow-wrap: anywhere;
-  -webkit-font-smoothing: antialiased;
-}
-.wrap {
-  max-width: 1040px; margin: 0 auto;
-  padding-left: max(16px, env(safe-area-inset-left, 0px));
-  padding-right: max(16px, env(safe-area-inset-right, 0px));
-}
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 24px; word-break: keep-all; overflow-wrap: anywhere; -webkit-font-smoothing: antialiased; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
 .measure { max-width: 680px; }
 h1, h2, h3 { text-wrap: balance; margin: 0; }
-h1 { font-size: clamp(30px, 5vw, 42px); line-height: 1.2; font-weight: 700; letter-spacing: -0.02em; }
-h2 { font-size: 24px; line-height: 1.35; font-weight: 700; letter-spacing: -0.01em; }
-h3 { font-size: 17px; line-height: 1.45; font-weight: 600; }
+h1 { font-size: clamp(28px, 5vw, 40px); line-height: 1.2; font-weight: 600; letter-spacing: -0.02em; }
+h2 { font-size: 22px; line-height: 30px; font-weight: 600; letter-spacing: -0.01em; }
+h3 { font-size: 15px; line-height: 22px; font-weight: 600; }
 p { margin: 0; }
-a { color: inherit; text-decoration-color: var(--line-2); text-underline-offset: 3px; }
+a { color: inherit; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 a:hover { text-decoration-color: var(--ink); }
-a:focus-visible, button:focus-visible { outline: 2px solid var(--seal); outline-offset: 2px; border-radius: 4px; }
-.eyebrow { font-size: 12px; font-weight: 500; letter-spacing: 0.06em; color: var(--ink-3); }
-.lead { font-size: 17px; line-height: 1.7; color: var(--ink-2); }
+.eyebrow { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); }
+.lead { font-size: 16px; line-height: 26px; color: var(--ink-2); }
 .muted { color: var(--ink-2); }
-.small { font-size: 13px; line-height: 1.6; }
-.mono { font-family: var(--font-mono); font-size: 0.93em; letter-spacing: 0; }
+.small { font-size: 13px; line-height: 20px; }
+.mono { font-family: var(--font-mono); font-size: 0.93em; }
 .num { font-variant-numeric: tabular-nums; }
-
-/* 머리 */
-.masthead { padding-block: 56px 32px; display: grid; gap: 20px; }
-.meta-row { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--ink-2); align-items: center; }
-.toc { display: flex; flex-wrap: wrap; gap: 6px; padding-block: 4px 0; }
-.toc a { font-size: 13px; text-decoration: none; padding: 4px 12px; border: 1px solid var(--line-2); border-radius: 999px; color: var(--ink-2); }
-.toc a:hover { color: var(--ink); border-color: var(--ink-3); }
-
-section { padding-block: 40px; border-top: 1px solid var(--line); display: grid; gap: 20px; }
-section > header { display: grid; gap: 8px; }
-
-/* 칩 */
-.chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: 999px; font-size: 12px; font-weight: 500; white-space: nowrap; border: 1px solid var(--line-2); color: var(--ink-2); background: var(--surface); }
-.chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: 0.7; }
-.chip.plain::before { display: none; }
-.chip.seal { color: var(--seal); border-color: transparent; background: var(--seal-tint); }
-.chip.seal-line { color: var(--seal); border-color: var(--seal); background: transparent; }
-.chip.amber { color: var(--amber); border-color: transparent; background: var(--amber-tint); }
-.chip.pine { color: var(--pine); border-color: transparent; background: var(--pine-tint); }
-.chip.dim { color: var(--ink-3); }
-.chip.fail { color: var(--ink); border-color: var(--ink); }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-
-/* 목표 */
-.goals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.goal { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; display: grid; gap: 6px; align-content: start; }
-.goal b { font-size: 16px; }
-.goal span { font-size: 14px; color: var(--ink-2); line-height: 1.6; }
-
-/* 방향 3안 */
-.dirs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; align-items: start; }
-.dir { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); display: grid; overflow: hidden; }
-.dir.pick { border-color: var(--seal); box-shadow: 0 0 0 1px var(--seal); }
-.dir-head { padding: 16px 18px 12px; display: grid; gap: 6px; }
-.dir-head .tag { font-size: 12px; color: var(--ink-3); display: flex; justify-content: space-between; gap: 8px; }
-.dir-head .tag b { color: var(--seal); font-weight: 600; }
-.dir-head h3 { font-size: 19px; }
-.dir-head p { font-size: 13.5px; color: var(--ink-2); line-height: 1.6; }
-.dir-stage { padding: 18px 16px; display: grid; gap: 12px; }
-.swatches { display: flex; gap: 6px; }
-.swatches i { width: 22px; height: 22px; border-radius: 6px; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.25); }
-.dir-body { padding: 14px 18px 18px; display: grid; gap: 10px; font-size: 13.5px; line-height: 1.6; }
-.dir-body ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
-.dir-body .k { font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.04em; }
-
-/* 방향별 미니 카드: 각 시안은 자기 팔레트를 고정으로 쓴다 */
-.mini { border-radius: 10px; padding: 14px; display: grid; gap: 10px; font-size: 12.5px; line-height: 1.5; }
-.mini .row { display: flex; justify-content: space-between; gap: 8px; }
-.mini .lbl { opacity: 0.68; }
-.mini .ttl { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.mini .btns { display: flex; gap: 6px; }
-.mini .btn { font-size: 12px; padding: 6px 10px; border-radius: 7px; font-weight: 600; }
-.mini .amt { font-variant-numeric: tabular-nums; font-weight: 600; }
-
-.stage-a { background: #F5F5F2; }
-.mini-a { background: #FFFFFF; border: 1px solid #E2E2DC; color: #1A1C1E; font-family: var(--font-sans); }
-.mini-a .ttl b { font-family: var(--font-serif); font-size: 15px; }
-.mini-a .pill { color: #C9372C; background: rgba(201, 55, 44, 0.09); font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 600; }
-.mini-a .btn.p { background: #1A1C1E; color: #FFFFFF; }
-.mini-a .btn.s { border: 1px solid #CDCDC5; color: #1A1C1E; }
-.mini-a .id { font-family: var(--font-mono); font-size: 11.5px; }
-
-.stage-b { background: #0F1113; }
-.mini-b { background: #171A1D; border: 1px solid #2A2E33; color: #E7E9EC; font-family: var(--font-sans); border-radius: 5px; gap: 6px; padding: 12px; }
-.mini-b .lbl { color: #8F97A0; opacity: 1; }
-.mini-b .ttl b { font-size: 13px; letter-spacing: 0.01em; }
-.mini-b .pill { color: #9DB8FF; border: 1px solid #3A57B8; font-size: 10.5px; padding: 1px 6px; border-radius: 3px; font-family: var(--font-mono); }
-.mini-b .amt, .mini-b .id { font-family: var(--font-mono); font-size: 12px; }
-.mini-b .btn { border-radius: 4px; padding: 5px 9px; }
-.mini-b .btn.p { background: #4C78F0; color: #FFFFFF; }
-.mini-b .btn.s { border: 1px solid #343941; color: #C9CED4; }
-.mini-b .kbd { font-family: var(--font-mono); font-size: 10.5px; color: #8F97A0; border: 1px solid #343941; border-radius: 3px; padding: 0 4px; }
-
-.stage-c { background: #F2F4F7; }
-.mini-c { background: #FFFFFF; color: #191F28; font-family: "Noto Sans KR", var(--font-sans); border-radius: 18px; padding: 18px; gap: 12px; box-shadow: 0 2px 10px rgba(25, 31, 40, 0.06); }
-.mini-c .lbl { color: #6B7684; opacity: 1; }
-.mini-c .big { font-size: 24px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
-.mini-c .pill { color: #0E7C70; background: #E2F5F2; font-size: 11px; padding: 3px 9px; border-radius: 999px; font-weight: 700; }
-.mini-c .btn { border-radius: 12px; padding: 10px 12px; flex: 1; text-align: center; font-size: 13px; }
-.mini-c .btn.p { background: #12A594; color: #FFFFFF; }
-.mini-c .btn.s { background: #F2F4F6; color: #4E5968; }
-
-.callout { border: 1px solid var(--seal); background: var(--seal-tint); border-radius: 10px; padding: 16px 18px; display: grid; gap: 6px; }
-.callout b { color: var(--seal); }
-
-/* 토큰 표 */
-.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-table { border-collapse: collapse; width: 100%; font-size: 14px; }
-th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { font-size: 12px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.04em; background: var(--paper); }
+.masthead { padding-block: 48px 24px; display: grid; gap: var(--space-4); }
+.meta-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; line-height: 20px; color: var(--ink-2); align-items: center; }
+.toc { display: flex; flex-wrap: wrap; gap: 6px; }
+.toc a { font-size: 13px; line-height: 20px; text-decoration: none; height: var(--control-height-sm); display: inline-flex; align-items: center; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--radius-full); color: var(--ink-2); background: var(--surface); transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.toc a:hover { color: var(--ink); background: var(--surface-tint); border-color: var(--line-strong); }
+.theme { margin-left: auto; display: inline-flex; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
+.theme button { font: inherit; font-size: 13px; height: var(--control-height-sm); padding: 0 12px; border: 0; background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.theme button + button { border-left: 1px solid var(--line); }
+.theme button[aria-pressed="true"] { background: var(--surface-tint); color: var(--ink); font-weight: 600; }
+section { padding-block: 32px; border-top: 1px solid var(--line); display: grid; gap: var(--space-4); }
+section > header { display: grid; gap: var(--space-1); }
+.callout { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-1); }
+.callout b { color: var(--accent); }
+.goals { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.goal { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-1); align-content: start; }
+.goal b { font-size: 15px; line-height: 22px; }
+.goal span { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.tablebox { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 13px; line-height: 20px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+th { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); background: var(--surface); border-bottom-color: var(--line); }
 tr:last-child td { border-bottom: 0; }
-td .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3); }
-.hex { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
-
-.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-.panel-box { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 12px; align-content: start; }
-.type-row { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 12px; align-items: baseline; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+td .sw { display: inline-block; width: 14px; height: 14px; border-radius: 4px; vertical-align: -2px; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.35); }
+.hex { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.new { font-size: 11px; line-height: 16px; font-weight: 500; color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 5px; margin-left: 6px; vertical-align: 1px; }
+.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); align-items: start; }
+.panel-box { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
+.type-row { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: var(--space-3); align-items: baseline; border-bottom: 1px solid var(--line-soft); padding-bottom: 8px; }
 .type-row:last-child { border-bottom: 0; padding-bottom: 0; }
-.type-row small { font-size: 12px; color: var(--ink-3); line-height: 1.4; }
-
-.rule-list { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
-
-/* 시안 상자 */
-.shot { overflow-x: auto; border-radius: 12px; border: 1px solid var(--line); background: var(--sunken); padding: 20px; }
-.shot-cap { font-size: 13px; color: var(--ink-2); }
-
-/* PC 메인 시안 */
-.app { min-width: 980px; height: 640px; background: var(--paper); border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; display: grid; grid-template-columns: 60px minmax(0, 1fr) 340px; grid-template-rows: 44px minmax(0, 1fr); box-shadow: var(--shadow); font-size: 14px; }
-.titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 13px; }
-.titlebar .co { font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.titlebar .search { margin-left: auto; width: 260px; height: 28px; border: 1px solid var(--line); border-radius: 7px; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: var(--ink-3); background: var(--paper); }
-.kbd { font-family: var(--font-mono); font-size: 11px; border: 1px solid var(--line-2); border-radius: 4px; padding: 0 5px; color: var(--ink-2); background: var(--surface); }
-.titlebar .status { margin-left: auto; display: flex; align-items: center; gap: 14px; color: var(--ink-2); }
-.dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
-.winctl { display: flex; gap: 18px; color: var(--ink-3); padding-left: 8px; }
-
-.rail { border-right: 1px solid var(--line); background: var(--surface); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 4px; }
-.rail .it { width: 44px; height: 44px; border-radius: 9px; display: grid; place-items: center; color: var(--ink-3); position: relative; }
-.rail .it.on { color: var(--ink); background: var(--sunken); }
-.rail .it svg { width: 20px; height: 20px; }
-.rail .it .badge { position: absolute; top: 6px; right: 5px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--amber); color: var(--surface); font-size: 10.5px; font-weight: 700; display: grid; place-items: center; padding: 0 4px; }
-.rail .gap { flex: 1; }
-
-.chat { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
-.today { margin: 14px 24px 0; height: 36px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); display: flex; align-items: center; gap: 16px; padding: 0 14px; font-size: 13px; color: var(--ink-2); }
-.today b { color: var(--ink); font-weight: 600; }
-.today .hot b { color: var(--seal); }
-.stream { padding: 16px 24px; display: flex; flex-direction: column; gap: 14px; overflow: hidden; }
-.stream > * { max-width: 600px; width: 100%; align-self: center; }
-.sep { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-3); }
-.sep::before, .sep::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.me { display: flex; justify-content: flex-end; }
-.me span { background: var(--surface); border: 1px solid var(--line); border-radius: 14px 14px 4px 14px; padding: 8px 14px; }
-.bot { color: var(--ink-2); font-size: 13.5px; }
-.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 10px; }
-.card.hot { border-color: var(--seal); box-shadow: inset 3px 0 0 var(--seal); }
-.card .hd { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.card .hd b { font-size: 14.5px; }
-.opt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--line); font-size: 13.5px; }
-.opt.sel { border-color: var(--ink); }
-.opt .r { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--ink-3); flex: none; }
-.opt.sel .r { border: 4.5px solid var(--ink); }
-.kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 12px; font-size: 13.5px; }
-.kv dt { color: var(--ink-3); }
-.kv dd { margin: 0; font-variant-numeric: tabular-nums; }
-.btnrow { display: flex; gap: 8px; flex-wrap: wrap; }
-.b { height: 32px; padding: 0 14px; border-radius: 8px; font: inherit; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; border: 1px solid var(--line-2); background: var(--surface); color: var(--ink); }
-.b.ink { background: var(--ink); color: var(--paper); border-color: var(--ink); }
-.b.seal { background: var(--seal); color: var(--seal-ink); border-color: var(--seal); }
-.turn { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: var(--seal-tint); color: var(--ink); font-size: 13.5px; }
-.turn svg { flex: none; color: var(--seal); margin-top: 2px; }
-.composer { padding: 10px 24px 16px; display: grid; gap: 8px; }
-.composer > * { max-width: 600px; width: 100%; justify-self: center; }
-.quick { display: flex; gap: 6px; flex-wrap: wrap; }
-.quick span { height: 28px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: 999px; font-size: 12.5px; display: inline-flex; align-items: center; background: var(--surface); }
-.input { min-height: 46px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-3); }
-.input .send { margin-left: auto; width: 30px; height: 30px; border-radius: 7px; background: var(--ink); color: var(--paper); display: grid; place-items: center; }
-
-.side { border-left: 1px solid var(--line); background: var(--surface); padding: 18px 18px; display: grid; gap: 14px; align-content: start; }
-.side .hd { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.side .hd b { font-size: 15px; }
-.side .sec { font-size: 11.5px; font-weight: 600; color: var(--ink-3); letter-spacing: 0.06em; }
-.side .kv { grid-template-columns: 88px minmax(0, 1fr); font-size: 13px; }
-.side .kv dd { text-align: right; }
-.steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; }
-.steps li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: 8px; align-items: start; padding: 6px 0; color: var(--ink-3); }
-.steps li i { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--line-2); margin-top: 4px; justify-self: center; }
-.steps li.done { color: var(--ink-2); }
-.steps li.done i { background: var(--ink-2); border-color: var(--ink-2); }
-.steps li.now { color: var(--ink); font-weight: 600; }
-.steps li.now i { border: 3.5px solid var(--seal); }
-.steps li.now small { display: block; font-weight: 400; color: var(--seal); font-size: 12.5px; }
-.b.wide { width: 100%; justify-content: center; }
-
-/* 승인 창 시안: 시스템 서체만, 그림·스크립트 없음 */
-.approve-row { display: flex; flex-wrap: wrap; gap: 24px; align-items: flex-start; }
-.approve { width: 440px; max-width: 100%; flex: none; background: #FFFFFF; color: #16181A; border-radius: 10px; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18), 0 18px 48px rgba(0, 0, 0, 0.22); font-family: var(--font-system); overflow: hidden; }
-.approve .bar { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: #F0F0EC; border-bottom: 1px solid #DCDCD5; font-size: 12px; color: #4A4E54; }
-.approve .seal-line { height: 4px; background: #C9372C; }
-.approve .in { padding: 20px 22px 18px; display: grid; gap: 14px; }
-.approve h4 { margin: 0; font-size: 18px; font-weight: 700; }
-.approve .src { font-size: 12.5px; color: #5B6067; }
-.approve table { font-size: 13.5px; border: 1px solid #DCDCD5; }
-.approve td { padding: 7px 10px; border-bottom: 1px solid #E6E6E0; }
-.approve td:first-child { color: #5B6067; width: 104px; background: #F7F7F4; }
-.approve td.n { font-variant-numeric: tabular-nums; font-weight: 700; }
-.approve .warn { font-size: 13.5px; line-height: 1.6; }
-.approve .acts { display: flex; justify-content: flex-end; gap: 8px; }
-.approve .acts span { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; border-radius: 6px; font-size: 13.5px; font-weight: 700; border: 1px solid #C8C8C0; }
-.approve .acts .go { background: #C9372C; border-color: #C9372C; color: #FFFFFF; }
-.approve .foot { font-size: 12px; color: #5B6067; border-top: 1px solid #E6E6E0; padding-top: 10px; }
-.approve-notes { flex: 1; min-width: 240px; display: grid; gap: 10px; font-size: 14px; }
-
-/* 서류 카드 + 승인 도장 */
-.doc-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
-.doc { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 12px; overflow: hidden; }
-.doc .dname { font-family: var(--font-serif); font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
-.doc .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; border: 1px solid var(--line); border-radius: 6px; }
-.doc .grid div { padding: 8px 10px; border-right: 1px solid var(--line); display: grid; gap: 2px; font-size: 13px; }
-.doc .grid div:last-child { border-right: 0; }
-.doc .grid small { font-size: 11.5px; color: var(--ink-3); }
-.stamp { position: absolute; right: 18px; top: 16px; width: 66px; height: 66px; border-radius: 50%; border: 2.5px solid var(--seal); color: var(--seal); display: grid; place-items: center; transform: rotate(-9deg); opacity: 0.9; }
-.stamp::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; border: 1px solid var(--seal); }
-.stamp span { font-family: var(--font-serif); font-weight: 700; font-size: 15px; line-height: 1.1; text-align: center; }
-.stamp small { display: block; font-family: var(--font-mono); font-size: 9.5px; font-weight: 500; }
-
-/* 모바일 시안 */
-.phones { display: flex; gap: 28px; min-width: 660px; justify-content: center; }
-.phone { width: 300px; height: 600px; flex: none; border-radius: 36px; border: 8px solid #1C1D1F; background: var(--paper); overflow: hidden; display: grid; grid-template-rows: 52px minmax(0, 1fr) auto; position: relative; box-shadow: var(--shadow); font-size: 13.5px; }
-.phone .top { display: flex; justify-content: space-between; align-items: flex-end; padding: 0 18px 8px; border-bottom: 1px solid var(--line); background: var(--surface); }
-.phone .top b { font-size: 14px; }
-.phone .top span { font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 6px; }
-.phone .body { padding: 14px; display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
-.phone .foot { padding: 8px 12px 18px; display: grid; gap: 8px; background: var(--paper); }
-.phone .quick { flex-wrap: nowrap; overflow: hidden; }
-.phone .quick span { flex: none; }
-.phone .input { min-height: 42px; border-radius: 21px; }
-.sheet { position: absolute; left: 0; right: 0; bottom: 0; background: var(--surface); border-radius: 20px 20px 0 0; border-top: 1px solid var(--line-2); padding: 10px 18px 22px; display: grid; gap: 12px; box-shadow: 0 -12px 32px rgba(0, 0, 0, 0.12); }
-.sheet .grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line-2); justify-self: center; }
-.sheet h5 { margin: 0; font-size: 17px; }
-.scrim { position: absolute; inset: 52px 0 0; background: rgba(10, 10, 10, 0.28); }
-.bio { height: 46px; border-radius: 12px; background: var(--seal); color: var(--seal-ink); display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 700; }
-.ghost { height: 42px; border-radius: 12px; border: 1px solid var(--line-2); display: grid; place-items: center; font-weight: 600; }
-
-/* 문구 */
+.type-row small { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.rule-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.shot { overflow-x: auto; border-radius: var(--radius-lg); border: 1px solid var(--line); background: var(--canvas); padding: var(--space-5); }
+.shot-cap { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.stage { display: grid; gap: var(--space-3); }
+.stage-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.label-sm { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+details.record { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); padding: 0 var(--space-4); }
+details.record summary { cursor: pointer; padding: 12px 0; font-weight: 600; list-style: none; display: flex; align-items: center; gap: 8px; }
+details.record summary::-webkit-details-marker { display: none; }
+details.record summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); margin: 0 4px 2px 2px; transition: transform var(--motion-fast) var(--ease-out); }
+details.record[open] summary::before { transform: rotate(45deg); }
+details.record > div { padding: 0 0 var(--space-4); display: grid; gap: var(--space-3); }
+.dirs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.dir { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); display: grid; gap: var(--space-1); font-size: 13px; line-height: 20px; }
+.dir.pick { border-color: var(--accent); }
+.dir .k { font-size: 12px; color: var(--ink-3); }
+.swatches { display: flex; gap: 6px; }
+.swatches i { width: 18px; height: 18px; border-radius: 5px; box-shadow: inset 0 0 0 1px rgba(127, 127, 127, 0.3); }
 .voice td:nth-child(2) { color: var(--ink); }
-.voice td:nth-child(3) { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-2); }
+.voice td:nth-child(3) { color: var(--ink-3); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.decide { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.decide li { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px var(--space-4); display: grid; gap: 2px; }
+.decide li b { font-size: 14px; line-height: 22px; }
+.decide li span { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+footer { padding-block: 24px 56px; border-top: 1px solid var(--line); font-size: 13px; line-height: 20px; color: var(--ink-3); }
+@media (max-width: 860px) { .goals, .two, .three, .dirs { grid-template-columns: minmax(0, 1fr); } }
 
-/* 프롬프트 */
-.prompt { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 18px; }
-.prompt pre { margin: 0; white-space: pre-wrap; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; color: var(--ink); }
-.copy { position: absolute; top: 12px; right: 12px; height: 30px; padding: 0 12px; border-radius: 7px; border: 1px solid var(--line-2); background: var(--paper); color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
-.copy:hover { border-color: var(--ink-3); }
+/* ---- components/bundle.css 사본(v1.2, 2026-11-02). 바꾸면 원본과 함께 고친다 ---- */
+.figure-lg, .figure, .value { font-variant-numeric: tabular-nums; }
+.sx-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sx-meta, .sx-source { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-btn { font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; height: var(--control-height); padding: 0 12px; border-radius: var(--radius-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-btn:hover { background: var(--surface-tint); }
+.sx-btn:active { background: var(--surface-sunken); }
+.sx-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); font-weight: 600; }
+.sx-btn-primary:hover, .sx-btn-primary:active { background: var(--ink-2); border-color: var(--ink-2); }
+.sx-btn-approve { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.sx-btn-approve:hover, .sx-btn-approve:active { background: var(--accent-strong); border-color: var(--accent-strong); }
+.sx-btn-quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
+.sx-btn-quiet:hover { background: var(--surface-tint); color: var(--ink); }
+.sx-btn-lg { height: var(--control-height-lg); padding: 0 16px; font-size: 14px; }
+.sx-btn:disabled, .sx-btn:disabled:hover { background: var(--surface); border-color: var(--line); color: var(--ink-4); cursor: default; }
+.sx-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid transparent; background: var(--surface-tint); color: var(--ink-2); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; transition: background-color var(--motion-base) var(--ease-in-out), color var(--motion-base) var(--ease-in-out), border-color var(--motion-base) var(--ease-in-out); }
+.sx-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
+.sx-chip.is-turn { background: var(--accent-soft); color: var(--accent); }
+.sx-chip.is-waiting { background: transparent; border-color: var(--accent); color: var(--accent); }
+.sx-chip.is-attention { background: var(--attention-soft); color: var(--attention); }
+.sx-chip.is-done { background: transparent; border-color: var(--line); color: var(--ink); }
+.sx-chip.is-done::before { width: 8px; height: 4px; border-radius: 0; background: none; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(-45deg); }
+.sx-chip.is-stopped { background: transparent; border-color: var(--line); color: var(--ink-3); }
+.sx-chip.is-stopped::before { border-radius: 1px; }
+.sx-chip.is-fail { background: transparent; border-color: var(--ink); color: var(--ink); }
+.sx-chip.is-fail::before { width: 2px; height: 9px; border-radius: 1px; }
+.sx-kv { display: grid; grid-template-columns: var(--field-label-width) minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; }
+.sx-kv dt { font-size: 12px; line-height: 20px; font-weight: 500; color: var(--ink-3); }
+.sx-kv dd { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink); font-variant-numeric: tabular-nums; display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+.sx-kv.is-start dd { justify-content: flex-start; text-align: left; }
+.sx-kv dd.is-total .sx-val { font-weight: 600; }
+.sx-tag { font-size: 12px; line-height: 16px; font-weight: 400; color: var(--ink-3); }
+.is-inferred .sx-val { color: var(--ink-2); text-decoration: underline dotted var(--line-strong); text-decoration-thickness: 1.5px; text-underline-offset: 4px; }
+.is-verified .sx-tag::before { content: "✓ "; }
+.is-mismatch .sx-val { text-decoration: underline solid var(--attention); text-decoration-thickness: 2px; text-underline-offset: 4px; }
+.sx-was { font-size: 12px; line-height: 16px; color: var(--ink-3); text-decoration: line-through; }
+.is-empty .sx-val { color: var(--ink-4); }
+.sx-amount { display: grid; gap: var(--space-0); }
+.sx-amount-total { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sx-unit { font-size: 16px; font-weight: 500; letter-spacing: 0; color: var(--ink-2); margin-left: var(--space-0); }
+.sx-amount-split { font-size: 13px; line-height: 20px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sx-id { font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.sx-copy { font: inherit; font-size: 12px; line-height: 16px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.sx-copy:hover { background: var(--surface-tint); border-color: var(--line-strong); color: var(--ink); }
+.sx-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-3); min-width: 0; }
+.sx-card.is-turn { border-color: var(--accent); }
+.sx-card.is-attention { border-color: var(--attention); }
+.sx-card-hd { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
+.sx-card-title { font-size: 15px; line-height: 22px; font-weight: 600; }
+.sx-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--ink); font-size: 13px; line-height: 20px; }
+.sx-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--accent); }
+.sx-note.is-attention { background: var(--attention-soft); }
+.sx-note.is-attention svg { color: var(--attention); }
+.sx-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sx-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-opt:hover { background: var(--surface-tint); border-color: var(--line-strong); }
+.sx-opt.is-on { border-color: var(--ink); color: var(--ink); }
+.sx-radio { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; box-sizing: border-box; }
+.sx-opt.is-on .sx-radio { border: 4.5px solid var(--ink); }
+.sx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-0); font-size: 13px; line-height: 20px; }
+.sx-steps li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-2); padding: 6px 0; color: var(--ink-3); }
+.sx-steps li::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 4px; justify-self: center; box-sizing: border-box; }
+.sx-steps li.is-done { color: var(--ink-2); }
+.sx-steps li.is-done::before { background: var(--ink-2); border-color: var(--ink-2); }
+.sx-steps li.is-now { color: var(--ink); font-weight: 600; }
+.sx-steps li.is-now::before { border: 3.5px solid var(--accent); animation: sx-pulse var(--motion-pulse) var(--ease-in-out) infinite; }
+.sx-steps li.is-attention { color: var(--ink); font-weight: 600; }
+.sx-steps li.is-attention::before { border: 3.5px solid var(--attention); }
+.sx-steps small { display: block; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--ink-2); }
+@keyframes sx-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .sx-steps li.is-now::before { animation: none; } }
+.sx-doc { position: relative; overflow: hidden; }
+.sx-doc-kind { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-doc-name { font-family: var(--font-serif); font-size: 19px; line-height: 26px; font-weight: 700; letter-spacing: -0.01em; }
+.sx-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.sx-cells > div { padding: 8px 10px; display: grid; gap: var(--space-0); border-right: 1px solid var(--line); min-width: 0; font-size: 14px; line-height: 20px; }
+.sx-cells > div:last-child { border-right: 0; }
+.sx-cells .label { color: var(--ink-3); }
+.sx-cells .is-attention { color: var(--attention); font-weight: 600; }
+.sx-seal { position: absolute; right: var(--space-4); top: var(--space-4); width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; transform: rotate(-8deg); font-family: var(--font-serif); font-size: 14px; line-height: 16px; font-weight: 700; box-sizing: border-box; }
+.sx-seal::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 1px solid var(--accent); }
+.sx-thread { display: grid; gap: var(--space-4); max-width: var(--chat-max); }
+.sx-day { display: flex; align-items: center; gap: 10px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-day::before, .sx-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.sx-me { justify-self: end; max-width: 80%; background: var(--surface-overlay); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); padding: 8px 14px; font-size: 15px; line-height: 24px; }
+.sx-app { font-size: 15px; line-height: 24px; color: var(--ink); }
+.sx-origin { display: block; font-size: 12px; line-height: 16px; color: var(--ink-3); margin-top: var(--space-0); text-align: right; }
+.sx-app .sx-origin { text-align: left; }
+.sx-composer { display: grid; gap: var(--space-2); max-width: var(--chat-max); }
+.sx-quick { display: flex; gap: 6px; flex-wrap: wrap; }
+.sx-quick button { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height-sm); padding: 0 12px; border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.sx-quick button:hover { background: var(--surface-tint); border-color: var(--line-strong); }
+.sx-quick button.is-soon { color: var(--ink-3); border-color: transparent; background: var(--surface-tint); }
+.sx-input { min-height: 46px; border: 1px solid var(--line-strong); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-raised); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-3); font-size: 15px; transition: border-color var(--motion-fast) var(--ease-out); }
+.sx-input:focus-within { border-color: var(--ink-2); }
+.sx-send { margin-left: auto; width: 30px; height: 30px; border-radius: var(--radius-full); background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; flex: none; }
+.sx-frame { width: 1040px; height: 640px; display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); grid-template-rows: var(--titlebar-height) minmax(0, 1fr); background: var(--canvas); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; line-height: 22px; }
+.sx-titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-4); padding: 0 12px 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--line); font-size: 13px; line-height: 20px; }
+.sx-titlebar .co { font-weight: 600; }
+.sx-search { margin-left: auto; width: 260px; height: var(--control-height-sm); border: 0; border-radius: var(--radius-md); background: var(--surface-tint); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: var(--ink-3); }
+.sx-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 16px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--ink-3); background: var(--surface); }
+.sx-tstatus { display: flex; gap: 14px; color: var(--ink-2); }
+.sx-rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: var(--space-2) 0; gap: var(--space-1); }
+.sx-rail span { width: 44px; height: 44px; border-radius: var(--radius-md); display: grid; place-items: center; color: var(--ink-3); position: relative; }
+.sx-rail span.is-on { background: var(--surface-tint); color: var(--ink); }
+.sx-rail svg { width: 20px; height: 20px; }
+.sx-rail b { position: absolute; top: 5px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--attention-soft); color: var(--attention); font-size: 12px; line-height: 16px; font-weight: 600; text-align: center; }
+.sx-rail i { flex: 1; }
+.sx-chatcol { display: grid; grid-template-rows: auto minmax(0, 1fr) auto auto; min-width: 0; }
+.sx-chatcol > * { width: 100%; max-width: var(--chat-max); justify-self: center; }
+.sx-today { margin-top: var(--space-3); height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: var(--space-4); padding: 0 var(--space-1); font-size: 13px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.sx-today b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: var(--space-0); }
+.sx-today .is-turn b { color: var(--accent); }
+.sx-today .is-attention b { color: var(--attention); }
+.sx-chatcol .sx-thread { padding: var(--space-4) 0; overflow: hidden; align-content: end; }
+.sx-chatcol .sx-composer { padding: var(--space-3) 0 var(--space-4); }
+.sx-panel { background: var(--surface); border-left: 1px solid var(--line); padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; overflow: hidden; }
+.sx-panel-sec { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); padding-top: var(--space-1); }
 
-.decide { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
-.decide li { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: grid; gap: 4px; }
-.decide li b { font-size: 15px; }
-.decide li span { font-size: 14px; color: var(--ink-2); }
-
-footer { padding-block: 32px 64px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-3); }
-
-@media (max-width: 860px) {
-  .dirs, .goals, .two, .doc-row { grid-template-columns: minmax(0, 1fr); }
-}
-@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+/* ---- 승인 바 시안: approval-gate.ts barCss(v1.2)의 사본. 치수(90·16·76·132·12 DIP)는 ADR-021·PoC 상수와 같다 ---- */
+.bar { box-sizing: border-box; width: 100%; max-width: 600px; height: 90px; display: grid; grid-template-columns: minmax(0, 1fr) 132px; column-gap: 12px; align-items: center; padding: 0 16px; font-family: var(--font-system); font-size: 14px; line-height: 22px; font-variant-numeric: tabular-nums; user-select: none; border-radius: 0; }
+.bar .lines { min-width: 0; }
+.bar .ln { display: grid; grid-template-columns: 76px minmax(0, 1fr) auto; column-gap: 12px; align-items: center; white-space: nowrap; }
+.bar .lb { font-size: 12px; line-height: 22px; font-weight: 500; }
+.bar .v { display: flex; min-width: 0; }
+.bar .sh { overflow: hidden; text-overflow: ellipsis; min-width: 2ch; }
+.bar .kp { flex: none; white-space: pre; }
+.bar .fl { font-size: 12px; line-height: 18px; font-weight: 500; padding: 0 6px; border: 1px solid currentColor; border-radius: 6px; }
+.bar .side { text-align: right; }
+.bar .act { font-size: 18px; line-height: 26px; font-weight: 700; letter-spacing: -0.01em; word-break: keep-all; }
+.bar .msg { font-size: 12px; line-height: 16px; margin-top: 2px; opacity: 0.9; }
+.bar.armed { background: var(--accent); color: var(--on-accent); }
+.bar.armed .lb { color: var(--on-accent); opacity: 0.78; }
+.bar.unarmed { background: var(--accent-soft); color: var(--accent); }
+.bar.unarmed .lb { color: var(--ink-3); }
+.bar.refused { background: var(--surface); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.bar.refused .lb { color: var(--ink-3); }
+.bar.attest { background: var(--attention-soft); color: var(--attention); box-shadow: inset 0 0 0 1px var(--attention); }
+.bar.attest .lb { color: var(--ink-3); }
+.bar.attest .act { font-size: 15px; line-height: 22px; }
+.bars { display: grid; gap: var(--space-4); }
+.bars > div { display: grid; gap: var(--space-1); }
 </style>
-
+</head>
+<body>
 <div class="wrap">
   <header class="masthead">
-    <div class="eyebrow">디자인 기획 v0.1 · 2026-10-30 · 화면 기획(08)과 ADR-019 기준</div>
-    <h1>소버린 AX 디자인 방향</h1>
-    <p class="lead measure">Claude Design에 넘기기 전에 톤, 분위기, 디자인 토큰, 핵심 화면의 생김새를 정한다. 방향은 세 가지를 비교했고, 공공 서류와 도장이라는 이 분야의 재료에서 출발한 A안 "서류와 도장"을 권한다. 이 페이지도 A안의 색과 서체로 만들었다.</p>
-    <div class="callout measure">
-      <b>결정 (2026-10-30)</b>
-      <span>A안의 구조(서류의 재료, 서식의 선, 승인 도장)를 따르되 강조색은 파랑 계열 하나로 바꾸고 색 사용을 최소화한다. 이 페이지의 인주 빨강은 검토 당시의 제안이다. 확정된 색·서체·데이터 위계는 <a href="https://claude.ai/artifact/EqjRNi8i9CYd4qkSo9qz3N">소버린 AX 디자인 시스템</a>이 기준이다.</span>
-    </div>
     <div class="meta-row">
-      <span class="chip seal">결정됨 · 디자인 시스템으로 이어짐</span>
-      <span>화면 기획: <a href="https://claude.ai/artifact/9rBKqQmQ3Thoaii3r1aMpi">Claude Docs</a> · 저장소 <span class="mono">sovereign-ax/08-screen-plan.md</span></span>
+      <span class="eyebrow">디자인 기획 v0.3 · 2026-11-02 · 디자인 시스템 v1.2 미리보기 · 08 화면 기획, ADR-019·020·021 기준</span>
+      <div class="theme" role="group" aria-label="테마">
+        <button type="button" data-set-theme="" aria-pressed="true">시스템</button>
+        <button type="button" data-set-theme="light" aria-pressed="false">라이트</button>
+        <button type="button" data-set-theme="dark" aria-pressed="false">다크</button>
+      </div>
+    </div>
+    <h1>소버린 AX 디자인 방향</h1>
+    <p class="lead measure">2026-10-30에 A안 "서류와 도장" 구조에 파랑 강조색 하나로 방향을 정했고, 2026-11-02에 같은 방향 위에서 면·선·굵기·간격·움직임을 다듬었다(v1.2 "더 조용하고, 더 적게, 더 분명하게"). 이 페이지는 v1.2 토큰과 컴포넌트로 그려지며, 아래 모든 시안은 실제 CSS로 렌더된다. 값은 모두 예시다.</p>
+    <div class="callout measure">
+      <b>결정</b>
+      <span>2026-10-30: A안의 구조(서류의 재료, 서식의 선, 승인 도장)를 따르되 강조색은 파랑 계열 하나로 하고 색 사용을 최소화한다. 2026-11-02: 2026년 AI 제품 UI의 수렴(research/R12)에 맞춰 시각 규칙을 다듬었다. 보안 규칙(ADR-021), 한국어 문구, 데이터 위계 D1~D6은 바꾸지 않았다. 기준은 <span class="mono">design-system/tokens.json</span>과 <span class="mono">README.md</span>다.</span>
     </div>
     <nav class="toc" aria-label="목차">
-      <a href="#brief">누구를 위한 화면</a>
-      <a href="#directions">방향 3안</a>
-      <a href="#system">권장안 토큰</a>
-      <a href="#screens">핵심 화면 시안</a>
+      <a href="#principles">원칙</a>
+      <a href="#tokens">토큰 v1.2</a>
+      <a href="#components">컴포넌트</a>
+      <a href="#bar">승인 바</a>
+      <a href="#screen">PC 메인 시안</a>
+      <a href="#diff">v1.1 → v1.2</a>
+      <a href="#record">결정 기록</a>
       <a href="#voice">문구 톤</a>
       <a href="#refs">레퍼런스</a>
-      <a href="#handoff">Claude Design 요청문</a>
-      <a href="#decide">정할 것</a>
+      <a href="#next">남은 것</a>
     </nav>
   </header>
 
-  <section id="brief">
+  <section id="principles">
     <header>
-      <div class="eyebrow">1 · 누구를 위한 화면</div>
-      <h2>불안한 일을 맡기는 사람에게 통제감을 주는 화면</h2>
+      <div class="eyebrow">1 · 원칙</div>
+      <h2>더 조용하고, 더 적게, 더 분명하게</h2>
     </header>
-    <p class="measure">첫 타깃은 경리 담당 없이 대표가 직접 서류를 챙기는 소규모 법인이다. 지원사업과 보증 신청 때마다 사업자등록증명, 납세증명서, 표준재무제표증명을 다시 뗀다(07 문서). 이 사람에게 홈택스는 팝업과 보안 프로그램이 많은 피곤한 곳이다. 인증서와 비밀번호를 프로그램에 맡기는 일 자체도 불안하다. 화면은 이 불안을 줄이는 쪽으로 설계한다. 화려함보다 "지금 무엇이 일어나고, 무엇이 내 승인을 기다리는지"가 한눈에 보여야 한다.</p>
     <div class="goals">
-      <div class="goal"><b>차분함</b><span>무채색 화면, 넓은 여백, 움직임 최소. 알림과 강조는 사람이 할 일이 있을 때만 나온다.</span></div>
-      <div class="goal"><b>정확함</b><span>금액·사업자번호·승인번호가 세로로 맞는다. 숫자는 고정폭, 서식은 실제 서류처럼 표로 정리한다.</span></div>
-      <div class="goal"><b>통제감</b><span>승인은 내 도장이다. 승인이 필요한 곳과 승인한 기록만 빨간색이라 "내가 허락한 것"이 눈에 남는다.</span></div>
+      <div class="goal"><b>면은 네 단</b><span>canvas → surface → surface-tint → surface-overlay. 라이트는 바탕과 카드의 차이를 줄이고, 다크는 위로 뜰수록 밝다.</span></div>
+      <div class="goal"><b>테두리는 필요한 곳에만</b><span>카드·표·작은 보조 버튼은 line, 입력 칸과 주요·보조 버튼은 line-strong(3:1). 무채 칩, 오늘 요약, 검색 칸은 테두리가 없다.</span></div>
+      <div class="goal"><b>굵기는 셋</b><span>400·500·600. 700은 서류 이름과 승인 바 동작 글자에만. 한글 라벨에 자간을 넣지 않고 화면 제목은 18px로 낮춘다.</span></div>
+      <div class="goal"><b>4px 격자</b><span>카드 안쪽 16, 요소 사이 12, 메시지 사이 16. 반 칸 값(14·18)은 쓰지 않는다.</span></div>
+      <div class="goal"><b>모서리는 담는 것만 조금 더</b><span>카드 12, 입력창·말풍선 16, 버튼 8, 칸 6. 승인 바는 직각(둥근 모서리도 클릭을 받는다).</span></div>
+      <div class="goal"><b>움직임은 상태가 바뀔 때만</b><span>120/160/220ms와 현재 단계 점의 2.4초 숨 쉬기. 회전·튀는 효과 없음. 동작 줄이기면 모두 끈다. 승인 바는 애니메이션이 없다.</span></div>
     </div>
-    <div class="chips" aria-label="분위기 키워드">
-      <span class="chip plain">회백색 종이</span><span class="chip plain">먹색 글자</span><span class="chip plain">인주 빨강</span><span class="chip plain">서식의 가는 선</span><span class="chip plain">고정폭 숫자</span><span class="chip plain">조용한 비서</span>
-    </div>
+    <p class="small muted measure">색의 두 가지 뜻은 그대로다. 파랑(accent)은 사용자의 차례와 승인, 황토(attention)는 확인이 필요함. 완료·실패에는 색이 없다. 두 테마를 함께 설계하고 모든 글자 색은 네 면 위에서 4.5:1 이상이다(tokens.json 설명에 실제 값).</p>
   </section>
 
-  <section id="directions">
+  <section id="tokens">
     <header>
-      <div class="eyebrow">2 · 방향 3안</div>
-      <h2>같은 카드를 세 가지 톤으로</h2>
-      <p class="muted measure">세 시안 모두 같은 내용(A상사 세금계산서 초안)을 그렸다. 차이는 재료와 강조색이 무엇을 뜻하는지에 있다.</p>
-    </header>
-    <div class="dirs">
-      <article class="dir pick">
-        <div class="dir-head">
-          <div class="tag"><span>A안</span><b>권장</b></div>
-          <h3>서류와 도장</h3>
-          <p>공공 서류의 재료에서 출발한다. 회백 종이 위의 흰 카드, 먹색 글자, 서식의 가는 선. 강조색은 인주 빨강 하나이고 "내 승인"만 뜻한다.</p>
-        </div>
-        <div class="dir-stage stage-a">
-          <div class="swatches" aria-label="A안 팔레트"><i style="background:#F5F5F2"></i><i style="background:#FFFFFF"></i><i style="background:#1A1C1E"></i><i style="background:#E2E2DC"></i><i style="background:#C9372C"></i><i style="background:#2E6A4E"></i></div>
-          <div class="mini mini-a">
-            <div class="ttl"><b>세금계산서</b><span class="pill">내 차례</span></div>
-            <div class="row"><span class="lbl">공급받는자</span><span>A상사 <span class="id">123-45-67890</span></span></div>
-            <div class="row"><span class="lbl">합계</span><span class="amt">3,300,000원</span></div>
-            <div class="row"><span class="lbl">받는 이메일</span><span>tax@asangsa.kr</span></div>
-            <div class="btns"><span class="btn p">홈택스에서 준비</span><span class="btn s">고치기</span></div>
-          </div>
-        </div>
-        <div class="dir-body">
-          <span class="k">맞는 점</span>
-          <ul><li>이 분야만의 인상: 직인, 발급번호, 서식 표.</li><li>빨간색에 뜻이 있다. 승인이 필요하거나 승인한 곳만 빨갛다.</li><li>라이트에서 종이처럼 차분하고 다크에서도 먹과 인주로 유지된다.</li></ul>
-          <span class="k">위험</span>
-          <ul><li>흔한 "크림색 종이 + 세리프" 스타일로 보일 수 있다. 배경은 크림이 아닌 회백으로, 세리프는 서류 이름에만 쓴다.</li><li>빨강을 오류로 읽을 수 있다. 오류에는 빨강을 쓰지 않고 문구로 구분한다.</li></ul>
-        </div>
-      </article>
-
-      <article class="dir">
-        <div class="dir-head">
-          <div class="tag"><span>B안</span><span>비교</span></div>
-          <h3>정밀 계기</h3>
-          <p>업무 도구의 정밀함. 그래파이트 다크 기본, 촘촘한 간격, 고정폭 숫자, 단축키 표시. 강조색은 코발트 하나.</p>
-        </div>
-        <div class="dir-stage stage-b">
-          <div class="swatches" aria-label="B안 팔레트"><i style="background:#0F1113"></i><i style="background:#171A1D"></i><i style="background:#E7E9EC"></i><i style="background:#2A2E33"></i><i style="background:#4C78F0"></i><i style="background:#3FB37F"></i></div>
-          <div class="mini mini-b">
-            <div class="ttl"><b>세금계산서 · A상사</b><span class="pill">AWAIT_USER</span></div>
-            <div class="row"><span class="lbl">사업자번호</span><span class="id">123-45-67890</span></div>
-            <div class="row"><span class="lbl">합계</span><span class="amt">3,300,000</span></div>
-            <div class="row"><span class="lbl">이메일</span><span>tax@asangsa.kr</span></div>
-            <div class="btns"><span class="btn p">준비 <span class="kbd">⌘↵</span></span><span class="btn s">편집 <span class="kbd">E</span></span></div>
-          </div>
-        </div>
-        <div class="dir-body">
-          <span class="k">맞는 점</span>
-          <ul><li>전문 도구다운 신뢰, 숫자 정렬이 가장 정확하다.</li><li>키보드로 일하는 사람에게 빠르다.</li></ul>
-          <span class="k">위험</span>
-          <ul><li>자영업자에게 차갑고 어렵게 보인다. 개발자 도구와 구별되지 않는다.</li><li>상태 코드 같은 표현이 문구 원칙(해요체)과 맞지 않는다.</li></ul>
-        </div>
-      </article>
-
-      <article class="dir">
-        <div class="dir-head">
-          <div class="tag"><span>C안</span><span>비교</span></div>
-          <h3>든든한 비서</h3>
-          <p>모바일 금융 앱의 친숙함. 밝은 회색 바탕, 큰 금액, 둥근 카드, 청록 강조. 한 화면에 한 질문.</p>
-        </div>
-        <div class="dir-stage stage-c">
-          <div class="swatches" aria-label="C안 팔레트"><i style="background:#F2F4F7"></i><i style="background:#FFFFFF"></i><i style="background:#191F28"></i><i style="background:#E5E8EB"></i><i style="background:#12A594"></i><i style="background:#F04452"></i></div>
-          <div class="mini mini-c">
-            <div class="ttl"><span class="lbl">A상사에 보낼 세금계산서</span><span class="pill">확인해 주세요</span></div>
-            <div class="big">3,300,000원</div>
-            <div class="row"><span class="lbl">공급가 3,000,000 · 세액 300,000</span></div>
-            <div class="btns"><span class="btn s">고칠래요</span><span class="btn p">준비할게요</span></div>
-          </div>
-        </div>
-        <div class="dir-body">
-          <span class="k">맞는 점</span>
-          <ul><li>금융 앱에 익숙한 사용자가 바로 쓴다.</li><li>모바일 앱과 톤을 맞추기 쉽다.</li></ul>
-          <span class="k">위험</span>
-          <ul><li>국내 핀테크와 구별되지 않는다. 넓은 PC 화면을 낭비한다.</li><li>"내 데이터는 내 것"이라는 주권 메시지와 승인의 무게가 약해진다.</li></ul>
-        </div>
-      </article>
-    </div>
-    <div class="callout measure">
-      <b>권장: A안 "서류와 도장"에 B안의 정밀함을 더한다</b>
-      <span>재료와 강조색은 A안에서, 고정폭 숫자·키보드 우선·서식 표의 정렬은 B안에서 가져온다. 모바일은 C안처럼 한 화면에 한 질문을 따르되 색과 서체는 A안을 쓴다.</span>
-    </div>
-  </section>
-
-  <section id="system">
-    <header>
-      <div class="eyebrow">3 · 권장안 토큰</div>
-      <h2>색은 여섯 개, 빨강은 하나의 뜻만</h2>
-      <p class="muted measure">Claude Design과 이후 디자인 시스템이 그대로 쓸 수 있게 이름과 값을 정했다. 라이트와 다크를 같은 이름으로 둔다.</p>
+      <div class="eyebrow">2 · 토큰 v1.2</div>
+      <h2>같은 이름, 다듬은 값, 더한 여덟 개</h2>
+      <p class="muted measure small">기존 토큰 이름은 모두 남겼다(코드와 컴포넌트가 이름으로 읽는다). 색은 라이트·다크를 같은 이름으로 둔다.</p>
     </header>
     <div class="tablebox">
       <table>
         <thead><tr><th>토큰</th><th>역할</th><th>라이트</th><th>다크</th></tr></thead>
         <tbody>
-          <tr><td><b>paper</b></td><td>앱 바탕. 크림이 아닌 회백</td><td class="hex"><span class="sw" style="background:#F5F5F2"></span>#F5F5F2</td><td class="hex"><span class="sw" style="background:#121314"></span>#121314</td></tr>
-          <tr><td><b>surface</b></td><td>카드, 패널, 레일</td><td class="hex"><span class="sw" style="background:#FFFFFF"></span>#FFFFFF</td><td class="hex"><span class="sw" style="background:#1A1B1D"></span>#1A1B1D</td></tr>
-          <tr><td><b>ink</b> / ink-2 / ink-3</td><td>글자: 본문 / 보조 / 라벨·비활성</td><td class="hex"><span class="sw" style="background:#1A1C1E"></span>#1A1C1E · #565B62 · #868B92</td><td class="hex"><span class="sw" style="background:#ECEBE6"></span>#ECEBE6 · #A7AAAE · #75797E</td></tr>
-          <tr><td><b>line</b> / line-2</td><td>서식 선, 카드 테두리 / 입력·버튼 테두리</td><td class="hex"><span class="sw" style="background:#E2E2DC"></span>#E2E2DC · #CDCDC5</td><td class="hex"><span class="sw" style="background:#2A2C2F"></span>#2A2C2F · #3A3D41</td></tr>
-          <tr><td><b>seal</b> (인주)</td><td>내 차례, 승인 버튼, 승인 도장. 그 밖에는 쓰지 않는다</td><td class="hex"><span class="sw" style="background:#C9372C"></span>#C9372C</td><td class="hex"><span class="sw" style="background:#E2574A"></span>#E2574A</td></tr>
-          <tr><td><b>amber</b> (황토)</td><td>확인 필요, 만료 임박</td><td class="hex"><span class="sw" style="background:#9A6210"></span>#9A6210</td><td class="hex"><span class="sw" style="background:#D9A445"></span>#D9A445</td></tr>
-          <tr><td><b>pine</b> (솔잎)</td><td>완료, 정상(계속사업자), 폰 연결됨</td><td class="hex"><span class="sw" style="background:#2E6A4E"></span>#2E6A4E</td><td class="hex"><span class="sw" style="background:#63B48C"></span>#63B48C</td></tr>
+          <tr><td><b>canvas</b></td><td>앱 바탕. 카드와의 차이를 작게(1.08:1)</td><td class="hex"><span class="sw" style="background:#F5F6F7"></span>#F5F6F7</td><td class="hex"><span class="sw" style="background:#101215"></span>#101215</td></tr>
+          <tr><td><b>surface</b></td><td>카드, 패널, 레일, 제목줄, 입력창</td><td class="hex"><span class="sw" style="background:#FFFFFF"></span>#FFFFFF</td><td class="hex"><span class="sw" style="background:#171A1E"></span>#171A1E</td></tr>
+          <tr><td><b>surface-tint</b><span class="new">v1.2</span></td><td>선택된 레일 항목, 행 hover, 무채 칩, 검색 칸</td><td class="hex"><span class="sw" style="background:#F0F2F4"></span>#F0F2F4</td><td class="hex"><span class="sw" style="background:#20252B"></span>#20252B</td></tr>
+          <tr><td><b>surface-sunken</b></td><td>누름 상태, 서식 표의 라벨 칸, 빈 줄</td><td class="hex"><span class="sw" style="background:#EEF0F2"></span>#EEF0F2</td><td class="hex"><span class="sw" style="background:#0B0D10"></span>#0B0D10</td></tr>
+          <tr><td><b>surface-overlay</b></td><td>명령 팔레트, 메뉴, 토스트, 사용자 말풍선</td><td class="hex"><span class="sw" style="background:#FFFFFF"></span>#FFFFFF</td><td class="hex"><span class="sw" style="background:#1F2328"></span>#1F2328</td></tr>
+          <tr><td><b>line</b> / line-soft<span class="new">v1.2</span> / line-strong</td><td>카드·표·작은 버튼 / 카드 안 보조 선 / 입력 칸·버튼(3:1)</td><td class="hex"><span class="sw" style="background:#E4E7EB"></span>#E4E7EB · #EDEFF2 · #878E97</td><td class="hex"><span class="sw" style="background:#272B31"></span>#272B31 · #1F2328 · #6B737D</td></tr>
+          <tr><td><b>ink</b> / ink-2 / ink-3 / ink-4</td><td>값·본문 / 보조·번호 / 라벨·출처 / 비활성·빈 값</td><td class="hex"><span class="sw" style="background:#16191D"></span>#16191D · #4F5661 · #646B76 · #9AA1AA</td><td class="hex"><span class="sw" style="background:#E9EBEE"></span>#E9EBEE · #A9B0B9 · #8B939D · #5C636C</td></tr>
+          <tr><td><b>accent</b> / accent-soft / accent-strong<span class="new">v1.2</span></td><td>차례·승인 / 그 바탕과 무장 전 바 / 파랑 버튼 hover</td><td class="hex"><span class="sw" style="background:#2A4F9E"></span>#2A4F9E · #E8EEF9 · #1F3F86</td><td class="hex"><span class="sw" style="background:#8EAAF0"></span>#8EAAF0 · #1B2540 · #A3BBF4</td></tr>
+          <tr><td><b>on-accent</b></td><td>accent 위 글자(7.75 / 8.11)</td><td class="hex"><span class="sw" style="background:#FFFFFF"></span>#FFFFFF</td><td class="hex"><span class="sw" style="background:#0B1226"></span>#0B1226</td></tr>
+          <tr><td><b>attention</b> / attention-soft</td><td>확인 필요, 만료 임박, 불일치, 증언 바</td><td class="hex"><span class="sw" style="background:#8A5A0B"></span>#8A5A0B · #F8EEDC</td><td class="hex"><span class="sw" style="background:#E0AE55"></span>#E0AE55 · #2E2410</td></tr>
+          <tr><td><b>scrim</b><span class="new">v1.2</span></td><td>명령 팔레트·모달 뒤의 막</td><td class="hex"><span class="sw" style="background:#16191D52"></span>#16191D 32%</td><td class="hex"><span class="sw" style="background:#00000080"></span>#000000 50%</td></tr>
+          <tr><td><b>shadow-raised</b><span class="new">v1.2</span> / shadow-overlay</td><td>입력창 / 떠 있는 것. 카드·승인 바에는 없음</td><td class="hex">1px·2px 4% + 2px·6px 5% / 8px·24px 10%</td><td class="hex">30% + 25% / 40% + 50%</td></tr>
         </tbody>
       </table>
     </div>
     <div class="two">
       <div class="panel-box">
-        <h3>빨간색 규칙</h3>
-        <ul class="rule-list small">
-          <li>빨강은 "사용자의 도장"이다. 승인이 필요한 곳(내 차례, 승인 대기)과 승인한 기록(승인 도장)에만 쓴다.</li>
-          <li>실패·오류는 빨강을 쓰지 않는다. 먹색 테두리 칩과 원인 문구로 보여 준다. 그래야 빨강을 보면 "내가 할 일"로만 읽힌다.</li>
-          <li>한 화면에 빨강은 한 곳만 강하게 쓴다. 오늘 요약의 "확인 필요" 숫자와 해당 카드가 함께 빨개지는 정도까지 허용한다.</li>
-          <li>로고, 일러스트, 장식에는 빨강을 쓰지 않는다.</li>
-        </ul>
+        <h3>서체와 크기</h3>
+        <div class="type-row"><small>figure-lg<br>24 / 30 · 600</small><span class="sx-amount-total">3,300,000<span class="sx-unit">원</span></span></div>
+        <div class="type-row"><small>title-screen<br>18 / 26 · 600</small><span style="font-size:18px;line-height:26px;font-weight:600;letter-spacing:-0.01em">문서함</span></div>
+        <div class="type-row"><small>title-card<br>15 / 22 · 600</small><span style="font-size:15px;line-height:22px;font-weight:600">세금계산서 · A상사</span></div>
+        <div class="type-row"><small>body<br>15 / 24 · 400</small><span>A상사에 330만원 세금계산서 끊고 메일 보내 줘</span></div>
+        <div class="type-row"><small>body-sm<br>13 / 20 · 400</small><span class="small">카카오뱅크 앱에서 간편인증을 승인해 주세요.</span></div>
+        <div class="type-row"><small>label · meta<br>12 / 16 · 500 · 400</small><span class="label-sm" style="font-weight:500">공급받는자</span> <span class="label-sm">· 홈택스에서 되읽음 · 10:43</span></div>
+        <div class="type-row"><small>id<br>Plex Mono 13 / 20</small><span class="sx-id">123-45-67890 · 20261030-41000012-00000123</span></div>
+        <div class="type-row"><small>doc-name<br>Noto Serif 19 / 26 · 700</small><span class="sx-doc-name">사업자등록증명</span></div>
+        <div class="type-row"><small>승인 바<br>시스템 서체 18 / 26 · 700</small><span style="font-family:var(--font-system);font-size:18px;line-height:26px;font-weight:700;letter-spacing:-0.01em">승인하고 발급</span></div>
+        <p class="small muted">굵기 400·500·600이 기본이고 700은 서류 이름과 승인 바뿐이다. 가장 작은 글자는 12px, 한글 본문 행간 1.6.</p>
       </div>
       <div class="panel-box">
-        <h3>서체</h3>
-        <div class="type-row"><small>본문·UI<br>IBM Plex Sans KR</small><span style="font-size:15px">A상사에 330만원 세금계산서 끊고 메일 보내 줘</span></div>
-        <div class="type-row"><small>번호<br>IBM Plex Mono</small><span class="mono" style="font-size:14px">123-45-67890 · 20261030-1043-7K3P</span></div>
-        <div class="type-row"><small>서류 이름<br>Noto Serif KR</small><span style="font-family:var(--font-serif);font-size:19px;font-weight:700">사업자등록증명</span></div>
-        <div class="type-row"><small>승인 창<br>맑은 고딕(시스템)</small><span style="font-family:var(--font-system);font-size:15px;font-weight:700">세금계산서를 발급할까요?</span></div>
-        <p class="small muted">세리프는 서류 이름과 서류 카드 제목에만 쓴다. 승인 창은 외부 서체를 불러올 수 없어서(ADR-014의 CSP) 시스템 서체로 설계한다.</p>
+        <h3>간격·모서리·높이·움직임</h3>
+        <div class="tablebox" style="border:0">
+          <table>
+            <tbody>
+              <tr><td style="width:96px"><b>간격</b></td><td>space-0 2 <span class="new">v1.2</span> · 4 · 8 · 12 · 16 · 24 · 32 · 48. 카드 안쪽 16, 요소 사이 12, 메시지 사이 16.</td></tr>
+              <tr><td><b>모서리</b></td><td>sm 6 · md 8 · lg 12(카드, 10→12) · xl 16(입력창·말풍선·팔레트, 12→16) · full. 승인 바 직각.</td></tr>
+              <tr><td><b>높이</b></td><td>control-height-sm 28 <span class="new">v1.2</span>(빠른 실행 칩·필터·프로필 전환) · 32(버튼·입력 칸) · 40(모바일 시트).</td></tr>
+              <tr><td><b>움직임</b></td><td>motion-fast 120 · base 160 · slow 220 · pulse 2400ms <span class="new">v1.2</span>. ease-out (0.2, 0, 0, 1), ease-in-out (0.4, 0, 0.2, 1). 동작 줄이기면 0.</td></tr>
+              <tr><td><b>치수</b></td><td>제목줄 44, 레일 60, 패널 340, 대화 최대 600, 라벨 칸 96. 승인 바 자리(입력창 예약 110, 간격 12, 바 높이 90)는 앱 상수. 모두 v1.1과 같다.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="components">
+    <header>
+      <div class="eyebrow">3 · 컴포넌트</div>
+      <h2>실제 CSS로 그린 미리보기</h2>
+      <p class="muted measure small">components/bundle.css v1.2와 같은 규칙이다. 마우스를 올려 hover·누름을 확인한다. 색이 붙은 상태는 내 차례·승인 대기(파랑)와 확인 필요(황토)뿐이다.</p>
+    </header>
+    <div class="three">
+      <div class="panel-box">
+        <h3>Button</h3>
+        <div class="sx-row">
+          <button class="sx-btn sx-btn-primary" type="button">홈택스에서 준비</button>
+          <button class="sx-btn" type="button">금액 수정</button>
+          <button class="sx-btn sx-btn-quiet" type="button">중지</button>
+          <button class="sx-btn" type="button" disabled>다시 조회</button>
+        </div>
+        <div class="sx-row">
+          <button class="sx-btn sx-btn-approve sx-btn-lg" type="button">승인하고 발급</button>
+          <span class="label-sm">모바일 승인 시트 전용. PC는 승인 바(아래 4)</span>
+        </div>
+        <div class="sx-row">
+          <span class="sx-id">20261030-41000012-00000123</span><button class="sx-copy" type="button">복사</button>
+        </div>
+        <p class="small muted">주요(ink 600) > 보조(line-strong 500) > 조용한(테두리 없음) > 작은 보조(line). hover는 surface-tint, 누름은 surface-sunken.</p>
+      </div>
+      <div class="panel-box">
+        <h3>StatusChip 11종</h3>
+        <div class="sx-row">
+          <span class="sx-chip">작성 중</span><span class="sx-chip">준비 중</span><span class="sx-chip is-turn">내 차례</span><span class="sx-chip is-waiting">승인 대기</span><span class="sx-chip">발급 중</span><span class="sx-chip">확인 중</span><span class="sx-chip">처리 대기</span><span class="sx-chip is-attention">확인 필요</span><span class="sx-chip is-done">완료</span><span class="sx-chip is-stopped">중지됨</span><span class="sx-chip is-fail">실패</span>
+        </div>
+        <p class="small muted">무채 칩은 테두리 없이 surface-tint. 완료는 체크, 실패는 ink 테두리. 색 변화 160ms.</p>
+        <h3>ChoiceCard</h3>
+        <div class="sx-card">
+          <div class="sx-card-hd"><div class="sx-card-title">발급할 때 어떤 인증을 쓰세요?</div><span class="sx-meta">골랐어요</span></div>
+          <div class="sx-opt is-on"><span class="sx-radio"></span><span>사업자 간편인증 · 발급할 때마다 폰에서 승인해요</span></div>
+          <div class="sx-opt"><span class="sx-radio"></span><span>보안카드 · 한 번 등록하면 앱이 입력해요</span></div>
+          <div class="sx-opt"><span class="sx-radio"></span><span>공동인증서 · 비밀번호는 매번 직접 넣어요</span></div>
+        </div>
+      </div>
+      <div class="panel-box">
+        <h3>Message · Composer</h3>
+        <div class="sx-thread" style="max-width:none">
+          <div class="sx-day">11월 2일 월요일</div>
+          <div class="sx-me">A상사에 330만원 세금계산서 끊고 메일 보내 줘<span class="sx-origin">10:41 · 폰에서</span></div>
+          <div class="sx-app">부가세 별도로 계산했어요. 아래 카드에서 확인해 주세요.</div>
+        </div>
+        <div class="sx-composer" style="max-width:none">
+          <div class="sx-quick"><button type="button">세금계산서 발급</button><button type="button">사업자등록증명</button><button type="button" class="is-soon">납세증명서 · 곧 지원</button></div>
+          <div class="sx-input">세금계산서나 증명서를 말해 주세요 <span class="sx-send" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/></svg></span></div>
+        </div>
+        <p class="small muted">말풍선은 surface-overlay에 테두리 없음. 입력창만 shadow-raised로 살짝 뜬다. Enter는 보내기이고 어떤 승인도 하지 않는다.</p>
+      </div>
+    </div>
+    <div class="three">
+      <div class="sx-card" data-status="draft">
+        <div class="sx-card-hd"><div class="sx-card-title">세금계산서 · A상사</div><span class="sx-chip">작성 중</span></div>
+        <div class="sx-amount"><div class="sx-amount-total">3,630,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,300,000 + 세액 330,000 <span class="sx-tag">· 부가세 별도로 계산했어요</span></div></div>
+        <div class="sx-actions"><button class="sx-btn sx-btn-primary" type="button">홈택스에서 준비</button><button class="sx-btn" type="button">부가세 포함하기</button><button class="sx-btn" type="button">금액 수정</button><button class="sx-btn sx-btn-quiet" type="button">취소</button><span class="sx-meta">추정 값 2개</span></div>
+      </div>
+      <div class="sx-card is-turn">
+        <div class="sx-card-hd"><div class="sx-card-title">세금계산서 · A상사</div><span class="sx-chip is-waiting">승인 대기</span></div>
+        <div class="sx-amount"><div class="sx-amount-total">3,630,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,300,000 + 세액 330,000 <span class="sx-tag">· ✓ 홈택스 확정</span></div></div>
+        <div style="font-size:14px;line-height:22px">홈택스 화면에서 되읽은 값이에요. 초안과 같아요.</div>
+        <div class="sx-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 0 1 0-17z"/><path d="M12 11v5M12 8v.5"/></svg><div>아래 [승인하고 발급]에서 값을 한 번 더 확인하고 눌러 주세요</div></div>
+        <div class="sx-actions"><button class="sx-btn" type="button">중지</button></div>
+      </div>
+      <div class="sx-card sx-doc">
+        <div class="sx-seal">발급</div>
+        <div class="sx-doc-kind">증명서 · 앱이 발급</div>
+        <div class="sx-doc-name">사업자등록증명</div>
+        <div class="sx-cells">
+          <div><span class="label sx-meta">발급일</span><span class="value">2026-10-30</span></div>
+          <div><span class="label sx-meta">용도</span><span class="value">지원사업 신청</span></div>
+          <div><span class="label sx-meta">유효</span><span class="value is-attention">D-7</span></div>
+        </div>
+        <div class="sx-actions"><button class="sx-btn" type="button">메일로 보내기</button><button class="sx-btn" type="button">폴더 열기</button><button class="sx-btn sx-btn-quiet" type="button">다시 발급</button></div>
       </div>
     </div>
     <div class="two">
       <div class="panel-box">
-        <h3>크기 체계</h3>
-        <div class="tablebox" style="border:0">
-          <table>
-            <thead><tr><th>이름</th><th>크기/행간</th><th>쓰는 곳</th></tr></thead>
-            <tbody>
-              <tr><td>제목</td><td class="num">20 / 28 · 600</td><td>패널 제목, 화면 제목</td></tr>
-              <tr><td>본문</td><td class="num">15 / 24 · 400</td><td>대화, 카드 본문</td></tr>
-              <tr><td>보조</td><td class="num">13 / 20 · 400</td><td>라벨, 설명, 표</td></tr>
-              <tr><td>캡션</td><td class="num">12 / 16 · 500</td><td>칩, 섹션 라벨(자간 +0.04em)</td></tr>
-              <tr><td>서류 이름</td><td class="num">20 / 28 · 700 세리프</td><td>서류 카드, 문서함 상세</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p class="small muted">제품에서 가장 작은 글자는 12px이다. 한글 본문 행간은 1.6 이상으로 둔다.</p>
+        <div class="sx-card-hd"><div class="sx-card-title">세금계산서 · A상사</div><span class="sx-chip is-waiting">승인 대기</span></div>
+        <div class="sx-amount"><div class="sx-amount-total">3,630,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,300,000 + 세액 330,000</div></div>
+        <div class="sx-panel-sec">홈택스에서 되읽은 값</div>
+        <dl class="sx-kv">
+          <dt>공급받는자</dt><dd class="is-verified"><span class="sx-val">A상사</span><span class="sx-tag">홈택스 확정</span></dd>
+          <dt>사업자번호</dt><dd class="is-verified"><span class="sx-val sx-id">214-86-51233</span><span class="sx-tag">홈택스 확정</span></dd>
+          <dt>받는 이메일</dt><dd class="is-verified"><span class="sx-val">tax@asangsa.example</span><span class="sx-tag">홈택스 확정</span></dd>
+          <dt>품목</dt><dd class="is-inferred"><span class="sx-val">경영 컨설팅</span><span class="sx-tag">추정</span></dd>
+          <dt>세액</dt><dd class="is-mismatch"><span class="sx-val">330,000원</span><span class="sx-was">300,000원</span></dd>
+          <dt>합계</dt><dd class="is-verified is-total"><span class="sx-val">3,630,000원</span><span class="sx-tag">홈택스 확정</span></dd>
+          <dt>비고</dt><dd class="is-empty"><span class="sx-val">—</span></dd>
+        </dl>
+        <div class="sx-source">홈택스에서 되읽음 · 10:43 요청</div>
       </div>
       <div class="panel-box">
-        <h3>숫자와 번호 표기</h3>
-        <dl class="kv" style="font-size:14px">
-          <dt>금액</dt><dd class="num">3,300,000원 · 공급가 3,000,000 + 세액 300,000</dd>
-          <dt>사업자번호</dt><dd class="mono">123-45-67890</dd>
-          <dt>승인번호</dt><dd class="mono">20261030-1043-7K3P <span class="muted small">(예시)</span></dd>
-          <dt>날짜</dt><dd class="num">2026-10-30 · 대화 구분선만 "10월 30일 목요일"</dd>
-          <dt>만료</dt><dd class="num">D-7, D-1 (만료 임박은 황토)</dd>
-        </dl>
-        <p class="small muted">금액은 본문 서체의 고정폭 숫자로, 식별 번호는 고정폭 서체로 쓴다. 카드와 표에서 금액은 오른쪽 정렬이다.</p>
-      </div>
-    </div>
-    <div class="panel-box">
-      <h3>모양과 움직임</h3>
-      <div class="tablebox" style="border:0">
-        <table>
-          <tbody>
-            <tr><td style="width:120px"><b>간격</b></td><td>4px 단위: 4 · 8 · 12 · 16 · 24 · 32 · 48. 카드 안쪽 14~16, 카드 사이 14.</td></tr>
-            <tr><td><b>모서리</b></td><td>카드 10, 버튼·입력 8, 칩은 알약형, 창 10~12. 모든 것을 크게 둥글리지 않는다.</td></tr>
-            <tr><td><b>선과 그림자</b></td><td>구분은 1px 선으로 한다. 그림자는 위에 뜨는 것(명령 팔레트, 승인 창, 바텀 시트)에만 쓴다.</td></tr>
-            <tr><td><b>아이콘</b></td><td>1.5px 선 아이콘, 레일 20px, 본문 16px. 채워진 아이콘과 이모지는 쓰지 않는다.</td></tr>
-            <tr><td><b>움직임</b></td><td>상태 칩 변화 160ms, 패널 열림 220ms ease-out. 튀는 효과 없음. 진행 중은 회전 아이콘 대신 단계 목록의 현재 점으로 보여 준다. 동작 줄이기 설정이면 모두 끈다.</td></tr>
-          </tbody>
-        </table>
+        <div class="sx-panel-sec">진행</div>
+        <ol class="sx-steps">
+          <li class="is-done"><span>홈택스 로그인</span></li>
+          <li class="is-done"><span>건별발급 화면</span></li>
+          <li class="is-done"><span>입력</span></li>
+          <li class="is-done"><span>되읽기</span></li>
+          <li class="is-now"><span>승인<small>아래 [승인하고 발급]을 기다려요</small></span></li>
+          <li><span>전자서명</span></li>
+          <li><span>발급목록 확인</span></li>
+          <li><span>메일 전송 확인</span></li>
+        </ol>
+        <p class="small muted">현재 점은 2.4초 주기로 숨 쉰다(앱의 유일한 반복 움직임). 동작 줄이기면 멈춘다.</p>
       </div>
     </div>
   </section>
 
-  <section id="screens">
+  <section id="bar">
     <header>
-      <div class="eyebrow">4 · 핵심 화면 시안</div>
-      <h2>톤 확인용 시안 네 장</h2>
-      <p class="muted measure">레이아웃은 화면 기획(08)을 따랐고, 여기서는 색·서체·밀도가 실제 화면에서 어떻게 보이는지만 확인한다. 값은 모두 예시다. 좁은 화면에서는 시안 상자를 옆으로 밀어 본다.</p>
+      <div class="eyebrow">4 · 승인 바 (ApprovalBar, ADR-021)</div>
+      <h2>시각만 다듬었고 규칙은 그대로다</h2>
+      <p class="muted measure small">앱(main)이 대화 열 하단·입력창 위에 따로 그리는 스크립트 없는 화면. 바 전체가 버튼 하나이고, 직각·그림자 없음·시스템 서체·애니메이션 없음. 치수 90×(대화 열 폭), 좌우 16, 라벨 칸 76, 동작 칸 132, 간격 12 DIP. 0.6초 무장 지연과 0.15초 머무름, 키보드 승인 없음. 요약 줄은 사용자가 확인해야 할 값(공급받는자 상호·사업자번호, 합계·세액, 받는 이메일) 그대로다.</p>
     </header>
+    <div class="bars">
+      <div><span class="label-sm">무장 전(0.6초) · accent-soft 바탕, accent 글자, 누를 수 없음</span>
+        <div class="bar unarmed" role="img" aria-label="무장 전 승인 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">A상사</span><span class="kp"> · 214-86-51233</span></span><span class="fl">처음 거래</span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">3,630,000원</span><span class="kp"> · 세액 330,000원</span></span><span></span></div><div class="ln"><span class="lb">받는 이메일</span><span class="v"><span class="sh">tax</span><span class="kp">@asangsa.example</span></span><span class="fl">처음 보내는 주소</span></div></div><div class="side"><div class="act">승인하고 발급</div><div class="msg">잠시 뒤 다시 눌러 주세요</div></div></div></div>
+      <div><span class="label-sm">무장됨 · accent 바탕, on-accent 글자(라벨은 78%), 한 화면에 파랑으로 채운 유일한 면</span>
+        <div class="bar armed" role="img" aria-label="무장된 승인 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">A상사</span><span class="kp"> · 214-86-51233</span></span><span class="fl">처음 거래</span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">3,630,000원</span><span class="kp"> · 세액 330,000원</span></span><span></span></div><div class="ln"><span class="lb">받는 이메일</span><span class="v"><span class="sh">tax</span><span class="kp">@asangsa.example</span></span><span class="fl">처음 보내는 주소</span></div></div><div class="side"><div class="act">승인하고 발급</div></div></div></div>
+      <div><span class="label-sm">중복 경고 · 동작 글자가 바뀐다(이 클릭이 명시 확인)</span>
+        <div class="bar armed" role="img" aria-label="중복 경고 승인 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">A상사</span><span class="kp"> · 214-86-51233</span></span><span></span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">3,630,000원</span><span class="kp"> · 세액 330,000원</span></span><span class="fl">같은 건 기록 있음</span></div><div class="ln"><span class="lb">받는 이메일</span><span class="v"><span class="sh">tax</span><span class="kp">@asangsa.example</span></span><span></span></div></div><div class="side"><div class="act">같은 건 기록을 확인했고 발급</div></div></div></div>
+      <div><span class="label-sm">무장 거부 · surface 바탕, line-strong 안쪽 테두리, 누를 수 없음</span>
+        <div class="bar refused" role="img" aria-label="무장 거부 승인 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">긴이름주식회사</span><span class="kp"> · 129-81-34566</span></span><span class="fl">처음 거래</span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">1,100,000,000원</span><span class="kp"> · 세액 100,000,000원</span></span><span></span></div><div class="ln"><span class="lb">받는 이메일</span><span class="v"><span class="sh">tax</span><span class="kp">@xn--299aj3l2ff6a.xn--3e0b707e</span></span><span></span></div></div><div class="side"><div class="msg">창을 넓혀 주세요 · 받는 이메일</div></div></div></div>
+      <div><span class="label-sm">InDoubt 증언 바(시안, PoC 미구현) · attention 색으로 승인 바와 다르게 보인다</span>
+        <div class="bar attest" role="img" aria-label="증언 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">A상사</span><span class="kp"> · 214-86-51233</span></span><span></span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">3,630,000원</span></span><span></span></div><div class="ln"><span class="lb"></span><span class="v"><span class="kp">발급목록 반영이 늦을 수 있습니다</span></span><span></span></div></div><div class="side"><div class="act">홈택스 발급목록에 없음을 확인했어요</div></div></div></div>
+    </div>
+  </section>
 
-    <p class="shot-cap"><b>PC 메인 (M-01)</b> · 간편인증을 기다리는 "내 차례" 상태. 빨강은 오늘 요약의 숫자, 작업 카드, 실행 단계의 현재 점에만 있다.</p>
+  <section id="screen">
+    <header>
+      <div class="eyebrow">5 · PC 메인 시안 (M-01, 승인 대기)</div>
+      <h2>승인 대기 카드 아래, 입력창 위에 바가 붙는다</h2>
+      <p class="muted measure small">레이아웃은 화면 기획 08 §5. 파랑은 승인 대기 칩 둘, 카드 테두리, 안내 줄, 현재 단계 점, 그리고 무장된 승인 바 하나뿐이다. 좁은 화면에서는 시안 상자를 옆으로 민다.</p>
+    </header>
     <div class="shot" role="img" aria-label="PC 메인 화면 시안">
-      <div class="app">
-        <div class="titlebar">
-          <span class="co">㈜우리회사 <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true"><path d="M2 3.5 5 6.5 8 3.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg></span>
-          <span class="search">거래처, 서류, 지난 대화 검색 <span class="kbd">Ctrl K</span></span>
-          <span class="status">
-            <span><svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true" style="vertical-align:-2px"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0" fill="none" stroke="currentColor" stroke-width="1.5"/></svg> 금고 열림</span>
-            <span><i class="dot" style="background:var(--pine)"></i> 폰 연결됨</span>
-          </span>
-          <span class="winctl" aria-hidden="true"><span>–</span><span>□</span><span>×</span></span>
+      <div class="sx-frame">
+        <div class="sx-titlebar">
+          <span class="co">소버린 AX</span>
+          <span class="sx-chip" style="height:22px">㈜우리회사 · 사업자</span>
+          <span class="sx-search">거래처, 서류, 지난 대화 검색 <span class="sx-kbd">Ctrl K</span></span>
+          <span class="sx-tstatus"><span>금고 열림</span><span>폰 연결됨</span></span>
         </div>
-        <nav class="rail" aria-label="레일">
-          <span class="it on" title="대화"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3h0a2 2 0 0 1-2-2z"/></svg></span>
-          <span class="it" title="문서함"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 6.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15V8a1.5 1.5 0 0 0-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 0 0 3 6z"/></svg><span class="badge">2</span></span>
-          <span class="it" title="거래처"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="7.5" cy="7" r="2.75"/><path d="M2.5 16c.6-2.6 2.6-4 5-4s4.4 1.4 5 4"/><path d="M13 4.6a2.6 2.6 0 0 1 0 5"/><path d="M14.5 12.2c1.6.5 2.6 1.8 3 3.8"/></svg></span>
-          <span class="it" title="내 사업장"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3.5 16.5V5.5l6.5-2.5 6.5 2.5v11"/><path d="M2.5 16.5h15"/><path d="M8 16.5v-4h4v4"/><path d="M7 8h1M12 8h1"/></svg></span>
-          <span class="it" title="활동 기록"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M6 5h10M6 10h10M6 15h10"/><circle cx="3.2" cy="5" r=".6"/><circle cx="3.2" cy="10" r=".6"/><circle cx="3.2" cy="15" r=".6"/></svg></span>
-          <span class="gap"></span>
-          <span class="it" title="설정"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="2.5"/><path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4"/></svg></span>
+        <nav class="sx-rail" aria-label="레일">
+          <span class="is-on" title="대화"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v11H9l-5 4z"/></svg></span>
+          <span title="문서함"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6.5h6l2 2h10V19H3z"/></svg><b>1</b></span>
+          <span title="거래처"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V5h10v15"/><path d="M14 9h6v11"/><path d="M7 8.5h3M7 12h3M7 15.5h3M16.5 13h1M16.5 16h1"/><path d="M2.5 20h19"/></svg></span>
+          <span title="내 사업장"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10v10h16V10"/><path d="M3 10l1.6-5h14.8L21 10z"/><path d="M9.5 20v-5.5h5V20"/></svg></span>
+          <span title="활동 기록"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 0 1 0-17z"/><path d="M12 7.5V12l3 2"/></svg></span>
+          <i></i>
+          <span title="설정"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><path d="M15 5v4M9 15v4"/></svg></span>
         </nav>
-        <div class="chat">
-          <div class="today"><span class="hot"><b>1</b> 내 차례</span><span><b>1</b> 진행 중</span><span><b>2</b> 만료 임박</span><span style="margin-left:auto;color:var(--ink-3)">오늘 요약</span></div>
-          <div class="stream">
-            <div class="sep">10월 30일 목요일</div>
-            <div class="me"><span>A상사에 330만원 세금계산서 끊고 메일 보내 줘</span></div>
-            <div class="bot">A상사는 보통 합계로 말씀하셨어요. 이렇게 볼게요.</div>
-            <div class="card">
-              <div class="hd"><b>금액을 어떻게 볼까요?</b><span class="chip plain">골랐어요</span></div>
-              <div class="opt sel"><span class="r"></span><span class="num">합계 3,300,000원 · 공급가 3,000,000 + 세액 300,000</span></div>
-              <div class="opt"><span class="r"></span><span class="num muted">공급가 3,300,000원 · 세액 330,000 별도</span></div>
-            </div>
-            <div class="card hot">
-              <div class="hd"><b>세금계산서 · A상사</b><span class="chip seal">내 차례</span></div>
-              <div class="turn"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="4.5" y="1.5" width="7" height="13" rx="1.5"/><path d="M7 12h2"/></svg><span>카카오뱅크 앱에서 간편인증을 승인해 주세요. 승인하면 홈택스 입력을 이어서 해요.</span></div>
-              <div class="btnrow"><span class="b">다시 요청</span><span class="b">중지</span></div>
+        <div class="sx-chatcol">
+          <div class="sx-today"><span class="is-turn">내 차례<b>1</b></span><span>진행 중<b>1</b></span><span class="is-attention">만료 임박<b>1</b></span></div>
+          <div class="sx-thread">
+            <div class="sx-day">11월 2일 월요일</div>
+            <div class="sx-me">A상사에 330만원 세금계산서 끊고 메일 보내 줘</div>
+            <div class="sx-card is-turn">
+              <div class="sx-card-hd"><div class="sx-card-title">세금계산서 · A상사</div><span class="sx-chip is-waiting">승인 대기</span></div>
+              <div class="sx-amount"><div class="sx-amount-total">3,630,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,300,000 + 세액 330,000 <span class="sx-tag">· ✓ 홈택스 확정</span></div></div>
+              <div>홈택스 화면에서 되읽은 값이에요. 초안과 같아요.</div>
+              <div class="sx-note"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5a8.5 8.5 0 1 1 0 17a8.5 8.5 0 0 1 0-17z"/><path d="M12 11v5M12 8v.5"/></svg><div>아래 [승인하고 발급]에서 값을 한 번 더 확인하고 눌러 주세요</div></div>
+              <div class="sx-actions"><button class="sx-btn" type="button">중지</button></div>
             </div>
           </div>
-          <div class="composer">
-            <div class="quick"><span>세금계산서 발급</span><span>사업자등록증명</span><span>납세증명서</span><span>표준재무제표증명</span></div>
-            <div class="input">세금계산서나 증명서를 말해 주세요 <span class="send" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 11.5v-9M3 6.5l4-4 4 4"/></svg></span></div>
+          <div class="bar armed" role="img" aria-label="승인 바"><div class="lines"><div class="ln"><span class="lb">공급받는자</span><span class="v"><span class="sh">A상사</span><span class="kp"> · 214-86-51233</span></span><span class="fl">처음 거래</span></div><div class="ln"><span class="lb">합계</span><span class="v"><span class="kp">3,630,000원</span><span class="kp"> · 세액 330,000원</span></span><span></span></div><div class="ln"><span class="lb">받는 이메일</span><span class="v"><span class="sh">tax</span><span class="kp">@asangsa.example</span></span><span class="fl">처음 보내는 주소</span></div></div><div class="side"><div class="act">승인하고 발급</div></div></div>
+          <div class="sx-composer">
+            <div class="sx-input">세금계산서나 증명서를 말해 주세요 <span class="sx-send" aria-hidden="true"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V6M6.5 11.5L12 6l5.5 5.5"/></svg></span></div>
           </div>
         </div>
-        <aside class="side" aria-label="작업 패널">
-          <div class="hd"><b>세금계산서 · A상사</b><span class="chip seal">내 차례</span></div>
-          <div class="sec">확인 카드</div>
-          <dl class="kv">
-            <dt>공급자</dt><dd>㈜우리회사</dd>
-            <dt>공급받는자</dt><dd>A상사 <span class="mono">123-45-67890</span></dd>
-            <dt>공급가</dt><dd>3,000,000원</dd>
-            <dt>세액</dt><dd>300,000원</dd>
-            <dt>합계</dt><dd><b>3,300,000원</b></dd>
-            <dt>품목</dt><dd>컨설팅</dd>
-            <dt>작성일자</dt><dd>2026-10-30</dd>
-            <dt>받는 이메일</dt><dd>tax@asangsa.kr</dd>
+        <aside class="sx-panel" aria-label="작업 패널">
+          <div class="sx-card-hd"><div class="sx-card-title">세금계산서 · A상사</div><span class="sx-chip is-waiting">승인 대기</span></div>
+          <div class="sx-amount"><div class="sx-amount-total">3,630,000<span class="sx-unit">원</span></div><div class="sx-amount-split">공급가 3,300,000 + 세액 330,000</div></div>
+          <div class="sx-panel-sec">홈택스에서 되읽은 값</div>
+          <dl class="sx-kv">
+            <dt>공급받는자</dt><dd class="is-verified"><span class="sx-val">A상사</span><span class="sx-tag">홈택스 확정</span></dd>
+            <dt>사업자번호</dt><dd class="is-verified"><span class="sx-val sx-id">214-86-51233</span><span class="sx-tag">홈택스 확정</span></dd>
+            <dt>받는 이메일</dt><dd class="is-verified"><span class="sx-val">tax@asangsa.example</span><span class="sx-tag">홈택스 확정</span></dd>
+            <dt>작성일자</dt><dd class="is-verified"><span class="sx-val">2026-11-02</span><span class="sx-tag">홈택스 확정</span></dd>
+            <dt>합계</dt><dd class="is-verified is-total"><span class="sx-val">3,630,000원</span><span class="sx-tag">홈택스 확정</span></dd>
           </dl>
-          <div class="sec">실행 단계</div>
-          <ol class="steps">
-            <li class="now"><i></i><span>홈택스 로그인<small>카카오뱅크 앱 승인 대기</small></span></li>
-            <li><i></i><span>건별발급 화면 열기</span></li>
-            <li><i></i><span>항목 입력</span></li>
-            <li><i></i><span>되읽기</span></li>
-            <li><i></i><span>승인 창에서 승인</span></li>
-            <li><i></i><span>발급 · 조회로 확정</span></li>
+          <div class="sx-panel-sec">진행</div>
+          <ol class="sx-steps">
+            <li class="is-done"><span>홈택스 로그인</span></li>
+            <li class="is-done"><span>입력 · 되읽기</span></li>
+            <li class="is-now"><span>승인<small>아래 [승인하고 발급]을 기다려요</small></span></li>
+            <li><span>전자서명 · 발급목록 확인</span></li>
           </ol>
-          <span class="b wide">브라우저 창 보기</span>
+          <div class="sx-source">홈택스에서 되읽음 · 10:43 요청</div>
         </aside>
       </div>
     </div>
+    <p class="shot-cap">바의 자리는 창 크기와 앱 상수로만 정하고(렌더러 좌표를 쓰지 않는다), 입력창은 제자리에 둔다. 바와 입력창 사이 12 DIP 간격은 입력하려는 클릭이 바에 떨어지지 않게 하기 위한 것이다(ADR-021).</p>
+  </section>
 
-    <p class="shot-cap"><b>승인 창 (T-03)</b> · 앱 본체와 다른 생김새. 시스템 서체, 그림 없음, 스크립트 없음.</p>
-    <div class="shot">
-      <div class="approve-row">
-        <div class="approve" role="img" aria-label="승인 창 시안">
-          <div class="bar"><span>소버린 AX · 승인</span><span>×</span></div>
-          <div class="seal-line"></div>
-          <div class="in">
-            <div>
-              <h4>세금계산서를 발급할까요?</h4>
-              <div class="src">홈택스 화면에서 다시 읽은 값이에요.</div>
-            </div>
-            <table>
-              <tbody>
-                <tr><td>공급받는자</td><td>A상사 (123-45-67890)</td></tr>
-                <tr><td>공급가</td><td class="n">3,000,000원</td></tr>
-                <tr><td>세액</td><td class="n">300,000원</td></tr>
-                <tr><td>합계</td><td class="n">3,300,000원</td></tr>
-                <tr><td>품목</td><td>컨설팅</td></tr>
-                <tr><td>받는 이메일</td><td>tax@asangsa.kr</td></tr>
-              </tbody>
-            </table>
-            <div class="warn">승인하면 세금계산서가 발급되고 A상사 메일로 전송됩니다. <b>되돌릴 수 없습니다.</b></div>
-            <div class="acts"><span>취소</span><span class="go">승인하고 발급</span></div>
-            <div class="foot">마우스로 눌러야 승인돼요. Enter 키로는 승인되지 않아요.</div>
-          </div>
-        </div>
-        <div class="approve-notes">
-          <p><b>왜 다르게 생겼나</b></p>
-          <p class="muted small">대화 카드가 승인 창을 흉내 내지 못하게, 승인 창만 위쪽 인주 띠와 회색 제목줄을 쓴다. 앱 본체의 어떤 카드도 이 띠를 쓰지 않는다.</p>
-          <p class="muted small">이 창은 앱이 고정 문구와 홈택스에서 되읽은 값만으로 만든다. 외부 서체·이미지를 불러올 수 없으므로 시스템 서체와 CSS만으로 완성되게 디자인한다(ADR-014).</p>
-          <p class="muted small">"승인하고 발급"은 화면에서 유일하게 빨간 면으로 칠한 버튼이다. 작업 표시줄에만 뜨고 포커스를 빼앗지 않는다.</p>
-        </div>
-      </div>
+  <section id="diff">
+    <header>
+      <div class="eyebrow">6 · v1.1 → v1.2</div>
+      <h2>무엇이 바뀌었고 무엇이 그대로인가</h2>
+    </header>
+    <div class="tablebox">
+      <table>
+        <thead><tr><th>항목</th><th>v1.1 (2026-10-30)</th><th>v1.2 (2026-11-02)</th></tr></thead>
+        <tbody>
+          <tr><td>면</td><td>canvas · surface · surface-sunken · surface-overlay. 선택은 sunken(다크에서 더 어두움)</td><td>surface-tint 추가. 선택·hover·무채 칩은 tint(다크에서 더 밝음). 라이트 canvas를 surface에 더 가깝게</td></tr>
+          <tr><td>테두리</td><td>입력·버튼·칩 모두 line-strong</td><td>입력 칸·주요/보조 버튼만 line-strong. 작은 보조 버튼은 line, 무채 칩·오늘 요약·검색 칸은 없음(WCAG 2.2 1.4.11 해설)</td></tr>
+          <tr><td>그림자</td><td>떠 있는 것에만(shadow-overlay)</td><td>같음 + 입력창에 shadow-raised</td></tr>
+          <tr><td>글자</td><td>굵기 400~700, 라벨 자간 0.02em, 화면 제목 20px</td><td>400·500·600 기본, 라벨 자간 0, 화면 제목 18px, D1 행간 30</td></tr>
+          <tr><td>모서리</td><td>카드 10, 떠 있는 창 12, 말풍선 14</td><td>카드 12, 입력창·창·말풍선 16. 버튼 8, 칸 6은 그대로</td></tr>
+          <tr><td>간격</td><td>4px 단위, 카드 안쪽 14·16, 패널 18</td><td>4px 격자로 통일(16·12), space-0 추가</td></tr>
+          <tr><td>움직임</td><td>칩 160ms, 패널 220ms</td><td>motion 토큰 4개 + 곡선 2개. 현재 단계 점 숨 쉬기. 동작 줄이기면 0</td></tr>
+          <tr><td>승인 바</td><td>accent-soft / accent / surface 세 상태</td><td>같은 세 상태. 라벨 500·78%, 표시 칩 모서리 6, 동작 글자 자간 -0.01em. 치수·규칙 동일</td></tr>
+          <tr><td>보안 규칙 · 문구 · D1~D6</td><td colspan="2">바뀌지 않았다. ADR-021의 바 자리·세 상태 페이지·0.6초·0.15초·키보드 승인 없음·커스텀 커서 금지·요약 줄의 값, 해요체 문구 전부, 데이터 위계와 값의 확실성.</td></tr>
+        </tbody>
+      </table>
     </div>
+  </section>
 
-    <p class="shot-cap"><b>상태 칩 10종과 서류 카드</b> · 승인 도장은 사용자가 승인한 기록이라 인주색이다. 완료 자체는 솔잎색이다.</p>
-    <div class="shot" style="display:grid;gap:18px">
-      <div class="chips">
-        <span class="chip">작성 중</span><span class="chip">준비 중</span><span class="chip seal">내 차례</span><span class="chip seal-line">승인 대기</span><span class="chip">발급 중</span><span class="chip">처리 대기</span><span class="chip amber">확인 필요</span><span class="chip pine">완료</span><span class="chip dim">중지됨</span><span class="chip fail">실패</span>
+  <section id="record">
+    <header>
+      <div class="eyebrow">7 · 결정 기록</div>
+      <h2>두 번의 결정</h2>
+    </header>
+    <details class="record">
+      <summary>2026-10-30 · 방향 3안 비교와 A안 선택(당시 제안색 인주 빨강 → 파랑으로 바꿔 확정)</summary>
+      <div>
+        <div class="dirs">
+          <article class="dir pick"><span class="k">A안 · 채택</span><b>서류와 도장</b><div class="swatches"><i style="background:#F5F5F2"></i><i style="background:#FFFFFF"></i><i style="background:#1A1C1E"></i><i style="background:#E2E2DC"></i><i style="background:#C9372C"></i></div><span>공공 서류의 재료: 회백 종이 위 흰 카드, 먹색 글자, 서식의 가는 선, 강조색 하나. 승인 도장과 발급번호의 고정폭. 검토 뒤 강조색을 인주 빨강에서 파랑으로 바꾸고(빨강은 오류로 읽힌다), 솔잎 초록(완료)을 없앴다.</span></article>
+          <article class="dir"><span class="k">B안 · 비교</span><b>정밀 계기</b><div class="swatches"><i style="background:#0F1113"></i><i style="background:#171A1D"></i><i style="background:#E7E9EC"></i><i style="background:#2A2E33"></i><i style="background:#4C78F0"></i></div><span>그래파이트 다크 기본, 촘촘한 간격, 고정폭 숫자, 단축키 표시. 자영업자에게 차갑고 개발자 도구와 구별되지 않는다. 고정폭 숫자·키보드 우선·표의 정렬만 가져왔다.</span></article>
+          <article class="dir"><span class="k">C안 · 비교</span><b>든든한 비서</b><div class="swatches"><i style="background:#F2F4F7"></i><i style="background:#FFFFFF"></i><i style="background:#191F28"></i><i style="background:#E5E8EB"></i><i style="background:#12A594"></i></div><span>모바일 금융 앱의 친숙함: 큰 금액, 둥근 카드, 청록 강조. 국내 핀테크와 구별되지 않고 넓은 PC 화면을 낭비한다. 모바일의 "한 화면에 한 질문"만 가져왔다.</span></article>
+        </div>
+        <p class="small muted">당시 승인 창(T-03) 시안은 ADR-020·021로 폐지되어 대화 열 하단 승인 바로 바뀌었다. 레퍼런스(Instinct, Linear, Granola, Mercury, 토스, Raycast, 1Password, 실제 민원 서류)와 "하지 않을 것"(숫자 타일 홈, 마스코트, 그라데이션, 모든 카드의 그림자, ✨ AI 배지, 빨간 오류 상자)은 아래 9절에 그대로 둔다.</p>
       </div>
-      <div class="doc-row">
-        <div class="doc">
-          <div class="stamp" aria-label="승인 도장"><span>승인<small>10.30</small></span></div>
-          <div class="eyebrow">홈택스 민원증명 · 즉시발급</div>
-          <div class="dname">사업자등록증명</div>
-          <div class="grid">
-            <div><small>발급일</small><span class="num">2026-10-30</span></div>
-            <div><small>용도</small><span>지원사업 신청</span></div>
-            <div><small>유효</small><span class="num" style="color:var(--amber)">D-30</span></div>
-          </div>
-          <div class="btnrow"><span class="b ink">열기</span><span class="b">메일로 보내기</span><span class="b">만료 알림 켜기</span></div>
-        </div>
-        <div class="doc">
-          <div class="eyebrow">세금계산서 · 결과</div>
-          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px"><div class="dname">A상사</div><span class="chip pine">완료</span></div>
-          <dl class="kv">
-            <dt>승인번호</dt><dd class="mono">20261030-1043-7K3P</dd>
-            <dt>합계</dt><dd>3,300,000원</dd>
-            <dt>메일</dt><dd>전송 확인됨 · tax@asangsa.kr</dd>
-          </dl>
-          <div class="btnrow"><span class="b ink">PDF 열기</span><span class="b">지난번과 같게</span><span class="b">어디로 무엇이 갔나요</span></div>
-        </div>
+    </details>
+    <details class="record" open>
+      <summary>2026-11-02 · v1.2 디자인 갱신</summary>
+      <div>
+        <p class="small">근거는 research/R12(2026 AI 제품 UI 수렴 조사). 대화 중심 캔버스와 옆 패널, 승인·단계·기록 같은 통제 장치, 스트리밍 상태와 작은 움직임, 점진 공개, 비텍스트 대비 3:1, 다크 동등, 토큰 중심은 출처가 있는 항목이고, "조용한 무채 면 + 강조색 하나", "시스템·가변 서체", "4/8pt 격자", "최소 테두리와 은은한 높이"는 1차 출처를 찾지 못한 가설이다. 가설은 "서류와 도장" 방향과 모순되지 않는 범위에서만 적용했고 사용자 시연에서 확인한다.</p>
+        <p class="small">반투명 재질(Apple Liquid Glass 2025), 스프링 물리 움직임·표현적 모양(Material 3 Expressive 2025)은 Windows 업무 앱과 "서류" 방향에 맞지 않아 쓰지 않았다.</p>
       </div>
-    </div>
-
-    <p class="shot-cap"><b>모바일 (P-02, P-03)</b> · 채팅 메인과 채팅바 위 빠른 실행, 원격 승인 시트.</p>
-    <div class="shot">
-      <div class="phones">
-        <div class="phone" role="img" aria-label="모바일 채팅 메인 시안">
-          <div class="top"><b>㈜우리회사</b><span><i class="dot" style="background:var(--pine)"></i>사무실 PC 켜짐</span></div>
-          <div class="body">
-            <div class="sep">오늘</div>
-            <div class="me"><span>지난달 납세증명서 줘</span></div>
-            <div class="bot">문서함에서 찾았어요.</div>
-            <div class="card">
-              <div style="font-family:var(--font-serif);font-weight:700;font-size:16px">납세증명서(국세)</div>
-              <div class="small muted num">발급 2026-10-02 · 만료 2026-11-01</div>
-              <div class="btnrow"><span class="b ink">열기</span><span class="b">공유</span></div>
-            </div>
-            <div class="me"><span>B상사 55만원 세금계산서</span></div>
-            <div class="card">
-              <b>금액을 어떻게 볼까요?</b>
-              <div class="opt sel"><span class="r"></span><span class="num">합계 550,000원</span></div>
-              <div class="opt"><span class="r"></span><span class="num muted">공급가 550,000원</span></div>
-            </div>
-          </div>
-          <div class="foot">
-            <div class="quick"><span>세금계산서</span><span>사업자등록증명</span><span>납세증명서</span><span>서류 가져오기</span></div>
-            <div class="input">말해 주세요<span class="send" aria-hidden="true"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M7 11.5v-9M3 6.5l4-4 4 4"/></svg></span></div>
-          </div>
-        </div>
-        <div class="phone" role="img" aria-label="모바일 원격 승인 시트 시안">
-          <div class="top"><b>㈜우리회사</b><span><i class="dot" style="background:var(--pine)"></i>사무실 PC 켜짐</span></div>
-          <div class="body">
-            <div class="me"><span>B상사 55만원 세금계산서</span></div>
-            <div class="bot">홈택스에 입력까지 끝냈어요.</div>
-          </div>
-          <div></div>
-          <div class="scrim"></div>
-          <div class="sheet">
-            <div class="grab"></div>
-            <h5>승인하고 발급할까요?</h5>
-            <div class="small muted">PC가 홈택스에서 다시 읽은 값이에요.</div>
-            <dl class="kv" style="grid-template-columns:84px minmax(0,1fr)">
-              <dt>공급받는자</dt><dd>B상사</dd>
-              <dt>합계</dt><dd><b>550,000원</b></dd>
-              <dt>공급가·세액</dt><dd>500,000 · 50,000</dd>
-              <dt>받는 이메일</dt><dd>bill@bsangsa.kr</dd>
-            </dl>
-            <div class="small">승인하면 발급되고 메일이 가요. 되돌릴 수 없어요.</div>
-            <div class="bio"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M5 3.2A6 6 0 0 1 13.6 7M2.4 7a5.6 5.6 0 0 1 1-2.4M4.5 13.5A6 6 0 0 1 2.2 9.5M8 5a3 3 0 0 1 3 3c0 2 .4 3.4 1 4.5M5 8a3 3 0 0 1 .5-1.7M5.2 10.5c.2 1.4.8 2.6 1.6 3.5M8 8c0 2.4.7 4.4 2 6"/></svg>생체 인증으로 승인</div>
-            <div class="ghost">취소</div>
-          </div>
-        </div>
-      </div>
-    </div>
+    </details>
   </section>
 
   <section id="voice">
     <header>
-      <div class="eyebrow">5 · 문구 톤</div>
+      <div class="eyebrow">8 · 문구 톤</div>
       <h2>짧은 해요체, 일어난 일만 말한다</h2>
-      <p class="muted measure">문구도 디자인 재료다. 사과와 감탄을 빼고, 무엇이 일어났고 사용자가 무엇을 하면 되는지만 쓴다. AI가 했다는 표시(반짝이 아이콘, "AI가 알아서")는 쓰지 않는다.</p>
+      <p class="muted measure small">문구는 v1.2에서 바꾸지 않았다. 사과와 감탄을 빼고, 무엇이 일어났고 사용자가 무엇을 하면 되는지만 쓴다. AI가 했다는 표시(반짝이 아이콘, "AI가 알아서")는 쓰지 않는다.</p>
     </header>
     <div class="tablebox voice">
       <table>
         <thead><tr><th>상황</th><th>이렇게 쓴다</th><th>이렇게 쓰지 않는다</th></tr></thead>
         <tbody>
           <tr><td>사람 차례</td><td>카카오뱅크 앱에서 간편인증을 승인해 주세요.</td><td>인증 대기 중입니다...</td></tr>
+          <tr><td>승인 대기</td><td>아래 [승인하고 발급]에서 값을 한 번 더 확인하고 눌러 주세요</td><td>승인 바에서 승인하세요</td></tr>
           <tr><td>결과 미확인</td><td>발급됐는지 아직 모르겠어요. 중복 발급을 막으려고 다시 발급하지 않아요.</td><td>오류가 발생했습니다. 다시 시도해 주세요.</td></tr>
           <tr><td>완료</td><td>발급했어요. A상사 메일로 보낸 것도 확인했어요.</td><td>작업이 성공적으로 완료되었습니다!</td></tr>
           <tr><td>범위 밖</td><td>신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.</td><td>죄송합니다. 해당 기능은 지원하지 않습니다.</td></tr>
           <tr><td>버튼</td><td>승인하고 발급 · 다시 조회 · 브라우저로 가기</td><td>확인 · 진행 · 다음</td></tr>
-          <tr><td>보안 고지</td><td>저장해도 가상키패드 칸에는 자동으로 입력되지 않아요.</td><td>최고 수준의 보안으로 안전하게 보호됩니다.</td></tr>
         </tbody>
       </table>
     </div>
@@ -745,9 +642,9 @@ footer { padding-block: 32px 64px; border-top: 1px solid var(--line); font-size:
 
   <section id="refs">
     <header>
-      <div class="eyebrow">6 · 레퍼런스</div>
+      <div class="eyebrow">9 · 레퍼런스</div>
       <h2>가져올 것과 피할 것</h2>
-      <p class="muted measure">겉모습을 베끼지 않고, 각 서비스가 잘 푼 문제만 가져온다. 링크는 2026-10-30에 열어 확인했다(Raycast, 1Password는 사용 경험 기준).</p>
+      <p class="muted measure small">겉모습을 베끼지 않고, 각 서비스가 잘 푼 문제만 가져온다. 2026-10-30 목록에 R12의 2026 조사 출처를 더했다.</p>
     </header>
     <div class="tablebox">
       <table>
@@ -758,10 +655,11 @@ footer { padding-block: 32px 64px; border-top: 1px solid var(--line); font-size:
           <tr><td><a href="https://www.granola.ai/">Granola</a></td><td>조용한 AI: 사용자가 쓴 것과 앱이 만든 것을 구분하는 차분한 화면</td><td>크림색 바탕 + 세리프 제목 일색</td></tr>
           <tr><td><a href="https://mercury.com/">Mercury</a></td><td>사업자 금융의 신뢰감: 차분한 표, 금액 표기, 과장 없는 문구</td><td>사진 중심 마케팅 화면</td></tr>
           <tr><td><a href="https://toss.im/">토스</a></td><td>해요체 문구, 한 화면 한 질문, 모바일 바텀 시트 승인 흐름</td><td>토스 블루와 브랜드 문법의 복제</td></tr>
-          <tr><td><a href="https://www.raycast.com/">Raycast</a></td><td>명령 팔레트의 검색·실행 결합, 단축키 표시 방식</td><td>확장 기능 마켓 같은 범용성</td></tr>
-          <tr><td><a href="https://1password.com/">1Password</a></td><td>잠금·비밀 입력 화면의 절제, 보안 상태를 조용히 보여 주는 방식</td><td>보안 공포 마케팅</td></tr>
-          <tr><td>실제 민원 서류</td><td>소재: 서식 표의 가는 선, 발급번호·문서확인번호의 고정폭 표기, 직인의 붉은 원</td><td>관공서 문양, 태극·무궁화 장식</td></tr>
-          <tr><td>홈택스·정부24 (안티)</td><td>사용자가 피곤해하는 것을 확인하는 용도</td><td>파란 관공서 톤, 배너·팝업, 빽빽한 메뉴 트리</td></tr>
+          <tr><td><a href="https://www.raycast.com/">Raycast</a> · <a href="https://1password.com/">1Password</a></td><td>명령 팔레트의 검색·실행 결합 · 잠금과 비밀 입력 화면의 절제</td><td>범용 확장 마켓 · 보안 공포 마케팅</td></tr>
+          <tr><td>실제 민원 서류 · 홈택스·정부24(안티)</td><td>서식 표의 가는 선, 발급번호의 고정폭, 직인의 원</td><td>관공서 문양, 파란 관공서 톤, 배너·팝업</td></tr>
+          <tr><td><a href="https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html">WCAG 2.2 1.4.11</a></td><td>조작 요소 3:1, 글자가 있는 버튼은 경계선 필수 아님, 빈 입력 칸은 필수</td><td>장식선까지 3:1로 올려 화면을 시끄럽게 하기</td></tr>
+          <tr><td><a href="https://www.outcrowd.io/blog/2026-design-trends-for-ai-first-saas-products">Outcrowd 2026</a> · <a href="https://www.uxpin.com/studio/blog/ui-ux-design-trends/">UXPin 2026</a></td><td>승인/거절/수정, 단계·기록, 300ms 이하 기능적 움직임, prefers-reduced-motion, 토큰 중심</td><td>트렌드 그 자체를 목적으로 삼기</td></tr>
+          <tr><td><a href="https://www.apple.com/newsroom/2025/06/apple-introduces-a-delightful-and-elegant-new-software-design/">Apple Liquid Glass 2025</a></td><td>조작은 콘텐츠 위의 얇은 층, 콘텐츠가 먼저</td><td>반투명 재질 자체(Windows 업무 앱에 맞지 않음)</td></tr>
         </tbody>
       </table>
     </div>
@@ -769,70 +667,45 @@ footer { padding-block: 32px 64px; border-top: 1px solid var(--line); font-size:
       <h3>하지 않을 것</h3>
       <ul class="rule-list small">
         <li>숫자 타일 대시보드로 시작하는 홈. 홈은 대화다(ADR-019).</li>
-        <li>마스코트, 3D 일러스트, 그라데이션 히어로, 이모지 섹션 표시.</li>
-        <li>모든 카드에 같은 그림자와 큰 둥근 모서리.</li>
+        <li>마스코트, 3D 일러스트, 그라데이션 히어로, 이모지 섹션 표시, 반투명 유리 재질.</li>
+        <li>모든 카드에 같은 그림자와 큰 둥근 모서리. 그림자는 입력창과 떠 있는 것에만.</li>
         <li>"✨ AI" 배지. 모델이 쓴 문장도 앱의 말로만 보여 준다.</li>
-        <li>오류를 빨간 경고 상자로 띄우기. 빨강은 승인에만 쓴다.</li>
+        <li>오류를 빨간 경고 상자로 띄우기. 색은 차례·승인(파랑)과 확인 필요(황토)에만.</li>
+        <li>승인 바 안의 작은 버튼, 둥근 모서리, 그림자, 애니메이션, 키보드 승인(ADR-021).</li>
       </ul>
     </div>
   </section>
 
-  <section id="handoff">
+  <section id="next">
     <header>
-      <div class="eyebrow">7 · Claude Design 요청문</div>
-      <h2>A안으로 첫 화면을 만들 때 붙여 넣을 문장</h2>
-      <p class="muted measure">방향이 정해지면 이 문장으로 PC 메인부터 시작한다. 화면 구성은 화면 기획 08 §5, 카드 순서는 08 §12를 함께 넘긴다.</p>
-    </header>
-    <div class="prompt">
-      <button class="copy" type="button" data-copy="prompt-a" id="copy-prompt-a">복사</button>
-<pre id="prompt-a">자영업자·소규모 법인이 세금계산서와 홈택스 증명서 발급을 맡기는 Windows 데스크톱 에이전트 앱의 메인 화면을 디자인해 줘. 디자인 방향은 "서류와 도장"이다.
-
-레이아웃: 왼쪽 60px 아이콘 레일(대화·문서함·거래처·내 사업장·활동 기록, 아래 설정), 가운데 단일 대화 타임라인(콘텐츠 최대 600px), 오른쪽 340px 작업 패널. 위에 44px 제목줄(회사 전환, 검색 Ctrl K, 금고 상태, 폰 연결).
-
-색: 바탕 회백 #F5F5F2(크림 아님), 카드 흰색, 글자 먹색 #1A1C1E, 보조 #565B62, 선 1px #E2E2DC. 강조색은 인주 빨강 #C9372C 하나이고 "사용자의 승인이 필요하거나 승인한 곳"(내 차례, 승인 버튼, 승인 도장)에만 쓴다. 확인 필요·만료 임박은 황토 #9A6210, 완료는 솔잎 #2E6A4E. 오류에는 빨강을 쓰지 않는다. 다크 모드도 같은 이름으로 만든다.
-
-서체: 본문 IBM Plex Sans KR, 사업자번호·승인번호는 IBM Plex Mono, 서류 이름에만 Noto Serif KR. 금액은 고정폭 숫자, 천 단위 쉼표, "원".
-
-모양: 카드 모서리 10, 버튼·입력 8, 칩은 알약형. 구분은 1px 선으로 하고 그림자는 떠 있는 것에만. 아이콘은 1.5px 선.
-
-첫 화면 상태: "A상사에 330만원 세금계산서 끊고 메일 보내 줘" 요청 → 금액 해석 선택 카드(합계 3,300,000원 선택됨) → 작업 카드 "내 차례: 카카오뱅크 앱에서 간편인증을 승인해 주세요". 작업 패널에는 확인 카드 값(공급자, 공급받는자, 공급가, 세액, 합계, 품목, 작성일자, 받는 이메일)과 실행 단계 6개(첫 단계가 현재). 입력창 위에 빠른 실행 칩 4개.
-
-문구는 짧은 해요체. 이모지·마스코트·그라데이션·숫자 타일 대시보드는 쓰지 않는다. 앱 이름은 미정이라 로고 자리는 임시 표기로.</pre>
-    </div>
-  </section>
-
-  <section id="decide">
-    <header>
-      <div class="eyebrow">8 · 정할 것</div>
-      <h2>Claude Design 전에 정할 네 가지</h2>
+      <div class="eyebrow">10 · 남은 것</div>
+      <h2>v1.2 뒤에 할 일</h2>
     </header>
     <ul class="decide">
-      <li><b>방향: A안 "서류와 도장" (권장) · B안 · C안</b><span>정해지면 이 토큰으로 디자인 시스템을 만들고 Claude Design에 넘긴다.</span></li>
-      <li><b>서체: IBM Plex Sans KR (권장) · Pretendard</b><span>Plex는 서류다운 개성이 있고 Mono와 짝이 맞는다. Pretendard는 국내 앱에서 익숙하고 UI 가독성이 검증됐지만 흔하다. 둘 다 앱에 넣어 배포할 수 있는 라이선스(OFL)다.</span></li>
-      <li><b>도장 모티프를 어디까지 쓸지</b><span>권장은 승인 기록(승인 도장)과 승인 창의 인주 띠까지. 로고나 빈 화면 장식으로는 쓰지 않는다.</span></li>
-      <li><b>기본 테마: 시스템 설정 따름 (권장) · 라이트 고정</b><span>사무실 PC는 라이트가 대부분이라 라이트를 먼저 다듬고, 다크는 같은 토큰으로 맞춘다.</span></li>
+      <li><b>사용자 시연에서 가설 확인</b><span>무채 칩의 테두리 제거, 오늘 요약의 상자 제거, 말풍선의 테두리 제거가 상태를 덜 보이게 하지 않는지(R12 가설 A~F). 습관 클릭 시험(ADR-021 조건)과 같은 자리에서 본다.</span></li>
+      <li><b>Windows 실기 확인</b><span>Malgun Gothic에서 500 굵기 렌더링(Semilight 대체 여부), 승인 바의 라벨 78% 불투명도 대비, 다크 모드의 surface-tint 구분. PoC-9 §5 목록과 함께.</span></li>
+      <li><b>아티팩트 동기화</b><span>Claude Design System 아티팩트(v1.1)에 v1.2 토큰·컴포넌트를 올린다. 렌더러의 motion 토큰 자동 변환(shell-tokens.ts)은 Phase 1에서.</span></li>
+      <li><b>모바일(P-01~P-07)</b><span>PC 컴포넌트가 정해졌으니 같은 토큰으로 승인 시트(accent 버튼, accent-strong 누름)를 그린다.</span></li>
     </ul>
   </section>
 
   <footer>
-    근거: 화면 기획 08, ADR-014(승인 창 제약), ADR-016(원격 승인), ADR-018(서류 범위), ADR-019(단일 메인 세션). 시안의 회사명·금액·번호는 모두 예시다.
+    근거: 화면 기획 08 v0.3, ADR-019(단일 메인 세션), ADR-020·021(승인 바), design-system v1.2, research/R12. 시안의 회사명·금액·번호·이메일은 모두 예시다(사업자번호는 가상, 이메일은 .example).
   </footer>
 </div>
 
 <script>
-document.querySelectorAll('[data-copy]').forEach(function (btn) {
-  btn.addEventListener('click', function () {
-    var target = document.getElementById(btn.getAttribute('data-copy'));
-    var text = target.innerText;
-    var done = function (label) { btn.textContent = label; setTimeout(function () { btn.textContent = '복사'; }, 2000); };
-    var selectIt = function () {
-      var range = document.createRange(); range.selectNodeContents(target);
-      var sel = window.getSelection(); sel.removeAllRanges(); sel.addRange(range);
-      done('선택했어요 · Ctrl+C');
-    };
-    try {
-      navigator.clipboard.writeText(text).then(function () { done('복사했어요'); }, selectIt);
-    } catch (e) { selectIt(); }
+(function () {
+  var root = document.documentElement;
+  var buttons = document.querySelectorAll('[data-set-theme]');
+  buttons.forEach(function (b) {
+    b.addEventListener('click', function () {
+      var v = b.getAttribute('data-set-theme');
+      if (v) root.setAttribute('data-theme', v); else root.removeAttribute('data-theme');
+      buttons.forEach(function (x) { x.setAttribute('aria-pressed', String(x === b)); });
+    });
   });
-});
+})();
 </script>
+</body>
+</html>

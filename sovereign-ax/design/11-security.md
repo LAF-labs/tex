@@ -1,6 +1,6 @@
 # D11. 보안·위협 모델
 
-> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영. 발견 ID를 괄호로 표기한다.
+> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영. 발견 ID를 괄호로 표기한다. · AUDIT-D 반영 2026-11-03: 위협 주체 W·제3자 단말 추가와 M·P6·T·R 완화 갱신(§0), T2·T13·T15·T17(§2), 저장 계층 시각(§3), 공용 하드닝·env·IPC 사용자 동작·바 색·CI(§4), 복구 경로 사고 대응(§7), 텔레메트리·진위확인·코드서명 문구(§8)(ADR-025~029, D19 §3.5).
 
 ## 0. 위협 주체와 범위 (A-31, D19 §2)
 
@@ -8,17 +8,19 @@
 |---|---|---|
 | E | 엔진 RCE(포털 텍스트·모델 응답·리모트 메시지·의존성) | 경계 아님. 중계 허용 목록·응답 정리·비밀 창으로 되읽기 창을 좁힘(Phase 1), 원자적 타이핑(Phase 2), 고수준 브로커 검토(Phase 3) |
 | P | 서명된 악성·오류 플레이북·핫픽스·정책(키 유출·내부자·당직 실수) | 막는다: V-01~24·SV·BV, 핫픽스 범위(ADR-012), 정책 상한, 2-of-3 서명(ADR-013), 내장 허용 목록 |
-| R | 렌더러 침해 | 막는다: 승인 위조(main 소유 승인 바, ADR-021), CSP, sanitizer. 줄인다: 클릭 유도(바 위치는 main이 정함, 한 번 뜨면 남음, 창 수준 사건 재무장, 무장 지연·머무름, 커서 위장 중 무장 거부). 카드 본문의 표시 위조는 바의 요약 줄까지만 |
+| R | 렌더러 침해 | 막는다: 승인 위조(main 소유 승인 바, ADR-021), CSP, sanitizer. 줄인다: 클릭 유도(바 위치는 main이 정함, 한 번 뜨면 남음, 창 수준 사건 재무장, 무장 지연·머무름, 커서 위장 중 무장 거부). 카드 본문의 표시 위조는 바의 요약 줄까지만. 비밀 등록 창 위장: OS 프레임 별도 창, 렌더러는 비밀 칸을 그리지 못한다(lint)(ADR-026, D-03(N-11)) |
 | D | docparse 침해(무클릭 PDF) | 막는다: 렌더러 샌드박스(ADR-014) |
-| M | 같은 OS 사용자 악성코드 | 경계 아님. 완화: Hello 결박 대화형 등급, 데몬의 저장 비밀 미사용, 덤프 제외 |
+| M | 같은 OS 사용자 악성코드 | 경계 아님. 완화: 기기 결박 KEK(오프라인 복호 차단), 엄격 모드 Hello, 데몬의 사람 비밀 미사용, 덤프 제외. 금고가 열린 동안의 무음 사용은 막지 못한다(ADR-026, D-01(N-07)) |
+| W | PC 앞 제3자(동료·방문자·가족·퇴사자) | 잠기지 않은 PC. 줄인다: 금고 유휴 잠금(15분)·Windows 잠금 연동·승인 바 10분 만료. 엄격 모드(발급마다 Hello)면 막는다(ADR-026, D-01(N-07)) |
 | U | 같은 PC 다른 OS 사용자 | 막는다: 파이프 소유, 사용자 전용 DACL, 보관함 ACL 점검 |
 | A | 관리자·SYSTEM·커널 | **범위 밖** |
 | P1 | 제3자 텍스트(상호·품목·비고·PDF·메일) | 막는다: 결정적 필터·구분자·열거형 출력·후보 선택형 판정 |
 | P4 | 변조 클라이언트(게이트웨이 직접 호출) | 막는다: 요청 스키마·`runToken`·계정별 캐시 격리 |
 | P5 | 페이지·DOM 조작자(강제 설치 확장·포털 스크립트) | 완화: 세 값 readback·본문 대조(R-C1, 금고 수행, 본문 암호화 시 불가)·확장 경고 |
-| P6 | 페어링된 폰의 버그·악성 앱(서명된 `cmd.run`) | 막는다: 의도 재사용 거부, 하드웨어 키(Android 키 증명 검증, iOS는 앱 무결성만), 일일 상한 |
-| T | 계정 탈취자(이메일 장악) | 막는다: AIK 앵커(ADR-016), 코드 로그인, 기기 추가 72시간 |
+| P6 | 페어링된 폰의 버그·악성 앱(서명된 `cmd.run`) | 막는다: 의도 재사용 거부, 하드웨어 키(Android 키 증명 검증, iOS는 앱 무결성만), 일일 상한. 저장 비밀을 쓰는 원격 실행 시작은 시작 게이트(폰 생체 + 기기 키 서명)(ADR-029, D-34(N-13)) |
+| T | 계정 탈취자(이메일 장악) | 막는다: AIK 앵커(ADR-016), 코드 로그인, 기기 추가 72시간. 게이트웨이는 기기 범위 토큰만 받는다(ADR-029, D-26(N-41)) |
 | L | 분실·탈옥 폰 | 막는다: P-256 하드웨어 승인 키, 긴급 정지, 일일 상한 |
+| L′ | 같은 계정에 페어링된 제3자 단말(직원·가족 폰) | 막는다: 기기별 `doc_scope`(ADR-029, D-35(N-53)) |
 | I | 우리 운영자·인프라 침해자 | 완화: 서버 평문 최소화, 투명성 로그, 임계 서명, 가시성 표(D09 §1) |
 | J | 외국 법역 강제 제출 | 완화: 국내 저장, 마스킹본만 국외, 전환 트리거(ADR-015). 평문 메타데이터·계정은 제출 대상임을 인정 |
 
@@ -41,7 +43,7 @@
 | # | 위협 | 범주 | 통제 | 잔여 위험 |
 |---|---|---|---|---|
 | T1 | 악성·오염 플레이북·핫픽스·정책 패키지가 사용자 기기에서 임의 행위 또는 데이터 유출(자기 도메인에 `fill`, 비밀 칸 `extract`, 핫픽스로 비커밋 셀렉터를 발급 버튼으로 교체, 정책으로 정부24 `auto`) | Tampering/Elevation | 선언적 IR, **2-of-3 임계 서명**·핀 고정·단조 버전·`keyEpoch`·만료, 정적 검증 V-01~24와 커밋 구간 규칙, 셀렉터 CI SV-01~06, **핫픽스는 비커밋 항목 `candidates`만**(ADR-012), **액추에이션 시 이름 동일성 검사 R-A1**, 네트워크 커밋 가드(본문 대조 R-C1은 금고 수행), **액추에이션 시 커밋 충돌 검사 R-A2**, **핫픽스 적격 조건(랜드마크·조건식·W 안 참조 항목 불가)**, **앱 내장 정책 상한**(정부24 `postprocess` 고정), 엔진 내장 포털 eTLD+1 허용 목록과 금고 내장 origin 허용 목록, 비밀 칸 읽기 금지 V-20 | 서명 키 유출 → 투명성 로그·폐기 채널·버전 상한(ADR-013). 커밋 요청 본문이 보안 모듈로 암호화되면(`opaque`) "화면≠제출 값"을 탐지 못함(S1 확인). 클라이언트는 SV-01~03을 다시 돌리지 못하므로 서명된 핫픽스의 실수에는 R-A1·R-A2와 네트워크 커밋 가드가 마지막 방어 (B-01·02·03·23·26, A-05, E-03) |
-| T2 | 엔진 프로세스 침해로 비밀 탈취 | Information Disclosure | 비밀은 금고만, 금고가 Chrome 파이프 소유, **엔진은 기본 거부 허용 목록 중계 CDP**(브라우저 타깃 비노출), **중계가 요청 바디·접근성 값·스크린샷을 정리**, **비밀 창**(타이피스트·사용자 직접 입력·폰 봉인 공통): 활성 창 동안 대상 타깃의 입력·포커스·캡처·접근성·DOMSnapshot·대상 프레임 `Runtime` 명령 거부, 오염 상태(다음 문서 커밋까지) 동안 응답 정리 유지, 폰 비밀은 `Kv` 인증 봉인·챌린지 결속, 장기 키 연산은 금고 안 | **이 통제는 위생 장치이지 경계가 아니다.** 오염 상태에서 침해된 엔진은 `Runtime.evaluate`로 비밀 칸 값을 읽을 수 있다(D05 §1 범위 문구의 실체, Phase 2 원자적 타이핑이 이 창을 닫는다, E-01). 또 같은 OS 사용자의 악성코드는 키체인·금고 메모리에 닿는다. 완화 순서: 중계 허용 목록·응답 정리·비밀 창(Phase 1) → 원자적 타이핑·비밀 origin 사전 스크립트 금지(Phase 2) → 고수준 동작 브로커(Phase 3 ADR). M에 대해서는 Hello 결박 대화형 등급(무음 키체인 읽기 완화. 위임 등급인 보안카드·홈택스 아이디·비밀번호에는 적용되지 않음, ADR-020 결정 3)·데몬의 저장 비밀 미사용·docparse 샌드박스가 전부다 (A-01·02·04·06·07·22·23, C-19) |
+| T2 | 엔진 프로세스 침해로 비밀 탈취 | Information Disclosure | 비밀은 금고만, 금고가 Chrome 파이프 소유, **엔진은 기본 거부 허용 목록 중계 CDP**(브라우저 타깃 비노출), **중계가 요청 바디·접근성 값·스크린샷을 정리**, **비밀 창**(타이피스트·사용자 직접 입력·폰 봉인 공통): 활성 창 동안 대상 타깃의 입력·포커스·캡처·접근성·DOMSnapshot·대상 프레임 `Runtime` 명령 거부, 오염 상태(다음 문서 커밋까지) 동안 응답 정리 유지, 폰 비밀은 `Kv` 인증 봉인·챌린지 결속, 장기 키 연산은 금고 안 | **이 통제는 위생 장치이지 경계가 아니다.** 오염 상태에서 침해된 엔진은 `Runtime.evaluate`로 비밀 칸 값을 읽을 수 있다(D05 §1 범위 문구의 실체, Phase 2 원자적 타이핑이 이 창을 닫는다, E-01). 또 같은 OS 사용자의 악성코드는 키체인·금고 메모리에 닿는다. 완화 순서: 중계 허용 목록·응답 정리·비밀 창(Phase 1) → 원자적 타이핑·비밀 origin 사전 스크립트 금지(Phase 2) → 고수준 동작 브로커(Phase 3 ADR). M에 대해서는 기기 결박 KEK(오프라인 복호 차단)·Windows 세션 추종 금고·엄격 모드 Hello(ADR-026)·데몬의 사람 비밀 미사용·docparse 샌드박스가 전부이며, 금고가 열린 동안의 무음 사용은 막지 못한다 (A-01·02·04·06·07·22·23, C-19, D-01(N-07)) |
 | T3 | 모델 공급사로 식별자 유출 | Information Disclosure | 마스킹 브랜드 타입 강제(`replay` 포함), egress 단일 모듈, **Phase 1 이미지 미전송**, 인접 노드 결합 탐지·실행 중 사전 등재·금액 기본 치환, egress 트립와이어 + **게이트웨이 2차 트립와이어**, 코퍼스 회귀, `safety_identifier` 월 회전 | 신종 식별자 패턴 미탐 → 사전 확장, 보수적 치환. BYOK는 로컬 검사 4종으로 대체 (B-18·19·21, C-23) |
 | T4 | 프롬프트 인젝션(포털 화면·거래처 입력·PDF·메일 등 제3자 텍스트)으로 모델이 유해 행위 | Tampering | **Rule of Two** + Action-Selector(열거형 선택만). **결정적 사전 필터**(키워드·구조), 화면 밖·숨김 텍스트 제거와 `<<<SCREEN_DATA>>>` 구분자, 인젝션 predicate의 refusal은 "지시문 있음"으로 간주, **Terra 출력은 구조화 슬롯만 표시**, 대화창 비밀 DLP, `doc_meta_check`는 후보 선택형, click·press 수리 제안은 사용자 확인, 커밋 구간 안 모델 금지 | 판정 오염으로 잘못된 분기 → 임계값·`unknown`·게이트. 커밋 요청 본문이 암호화되면(`opaque`) R-C1이 불가해 페이지 조작으로 바뀐 제출 값을 탐지하지 못함(D03 §5.4). 호출별 A/B/C 표는 §2.1 (B-14·15·16·17) |
 | T5 | 릴레이 운영자·네트워크 도청 | Information Disclosure | Noise E2E, 길이 패딩 버킷(적용 중), 푸시 내용 없음, 접속 IP 회전 솔트 HMAC, 우편함 토큰은 난수(`h` 파생 금지) | **운영자는 연결 시점·IP 상관으로 계정↔우편함을 이을 수 있다**(정직 고지). Privacy Pass 계열은 Phase 3. "지금 저장, 나중에 해독"은 X-Wing 전환 경로 예약 (C-14·15·16·34) |
@@ -52,11 +54,11 @@
 | T10 | 감사 로그 변조로 책임 회피·분쟁 | Repudiation | 해시 체인, 일 1회 `Vd` 서명 체크포인트를 폰에 앵커, 내보내기 서명 | 로컬 전체 삭제 → 포털 발급목록과 대조. Phase 2에서 데스크톱 2대 이상·백업을 켠 계정은 서버 측 `biz_key_marks`(HMAC, 90일)와도 대조 (B-30, ADR-024) |
 | T11 | 비용 폭주(모델 남용) | DoS | 실행당·월 예산을 `runToken`으로 서버 집행, 게이트웨이 요청 스키마(`schemas/gateway-request.schema.json`)·서버 정의 번들·툴셋, 분당 한도, 번들은 앱 바이너리 전용 | BYOK는 로컬 카운터. 게이트웨이는 모델 출력 무결성의 신뢰 지점이며 `questionsDigest` 대조도 악의적 게이트웨이는 속일 수 있다(C-24) (B-20·21) |
 | T12 | 포털 차단·계정 제한 유발 | DoS(사용자 피해) | 요청률 상한, 차단 신호(모델 + 결정적 신호 사전) 즉시 중단, 쿨다운, **정책 하한 `POLICY_FLOOR`**(완화 불가), `status.json` 48시간 긴급 채널, 공문 | 포털 정책 변경 → 공문 채널. 72시간 status 미갱신·정책 만료 시 데몬 중지, 정책 만료 168시간 뒤 전 포털 `postprocess`(E-05) (B-22·23, C-24) |
-| T13 | 업데이트·배포 공급망 공격 | Tampering | 코드서명, 공증, **`latest.yml` 별도 키 서명·만료·14일 미확인 알림**, 레지스트리 2-of-3 서명 + 투명성 로그(Phase 2) + `revoked_keys.json` + 버전 상한, SBOM, 의존성 고정·검증, **모바일 OTA 미사용**(쓰면 자체 키 코드 서명·네이티브 제외), 서명 키는 국내 자체 HSM/스마트카드, 커밋 구간 중 업데이트 설치 금지 | 사용자 단위 설치는 M에 대한 바이너리 무결성 경계가 없다(기기 단위 설치 옵션 Phase 3) (A-29, B-22, C-26·27·28) |
+| T13 | 업데이트·배포 공급망 공격 | Tampering | 앱 업데이트 신뢰 뿌리: `latest.yml` 키는 CI 밖 하드웨어 1인 보관, 설치 전 투명성 로그·미러 확인, 뿌리 변경 릴리스는 2-of-3. 코드서명(Artifact Signing)은 Microsoft가 보관하는 외부 단일 키다(잔여)(ADR-028, D-02(N-10)). 코드서명, 공증, **`latest.yml` 별도 키 서명·만료·14일 미확인 알림**, 레지스트리 2-of-3 서명 + 투명성 로그(Phase 2) + `revoked_keys.json` + 버전 상한, SBOM, 의존성 고정·검증, **모바일 OTA 미사용**(쓰면 자체 키 코드 서명·네이티브 제외), 서명 키는 국내 자체 HSM/스마트카드, 커밋 구간 중 업데이트 설치 금지 | 사용자 단위 설치는 M에 대한 바이너리 무결성 경계가 없다(기기 단위 설치 옵션 Phase 3) (A-29, B-22, C-26·27·28) |
 | T14 | 세무대리로 오인될 기능 추가(규제)·대리 사용 | Compliance | 기능 게이트: 세액 계산·신고서 작성 코드 경로 없음, 대화 `mentions_tax_advice` 거절 + **세무 질문 부분은 고정 문구만(Terra 자유 텍스트 비표시)**, 프로필 2개 상한, **프로필 사업자 HMAC 재바인딩 90일 1회**, `supplierBizNo == $profile.bizNo` assert(대리인 세션 감지 시 중단) | 다계정은 막지 못한다(신원 확인 없음). 기기 등록 이력 상한으로 비용만 올린다 (B-05·28, C-32) |
-| T15 | 계정 탈취 체인(이메일 장악 → 기기 등록 → 삭제·페어링·메타데이터 열람) | Spoofing/Elevation | 디바이스 플로우 삭제(루프백 + PKCE), 매직링크 대신 6자리 코드·세션 결속·패스키 권장, 국내 메일 발송, 새 기기 등록은 AIK 기기 승인 또는 이메일 + 72시간 + 전 기기 알림, **즉시 삭제는 AIK 서명만**, 블롭·메타데이터·조회 에이전트는 AIK 인증 기기 토큰만 | 이메일 + 복구 문구가 동시에 새면 막지 못한다 → 복구 72시간 보류·알림·기존 기기의 거부(복구 폐기·새 문구 발급, E-11) (C-02·03·04·21·30) |
+| T15 | 계정 탈취 체인(이메일 장악 → 기기 등록 → 삭제·페어링·메타데이터 열람) | Spoofing/Elevation | 디바이스 플로우 삭제(루프백 + PKCE), 매직링크 대신 6자리 코드·세션 결속·패스키 권장, 국내 메일 발송, 새 기기 등록은 AIK 기기 승인 또는 이메일 + 72시간 + 전 기기 알림, **즉시 삭제는 AIK 서명만**, 블롭·메타데이터·조회 에이전트는 AIK 인증 기기 토큰만 | 이메일 + PASS 본인확인이 함께 뚫리고 연결된 기기가 0대이며 7일 안에 거부하지 못하면 공격자가 새 AIK를 등록할 수 있다. 백업 서류는 열지 못한다(ADR-016 v2·ADR-029, D-16(N-09), E-11) (C-02·03·04·21·30) |
 | T16 | 분실·탈옥 폰으로 사용자 명의 발급·유출 | Elevation | 비가역 원격 승인은 SE/StrongBox P-256 키만, `remote.irreversiblePerDay=5`, 처음 쓰는 거래처·수신자는 PC 로컬 승인, 데스크톱·이메일 통지, 계정 웹 긴급 정지, 모바일 키 `ThisDeviceOnly`·백업 제외, 앱 잠금 30초 | 하드웨어 키 없는 폰은 조회·캡차·시작 동의만. 커버리지는 SP-2. `Px` 하드웨어 생성은 Android만 키 증명으로 검증, iOS는 앱 무결성만(E-10) (C-05·06) |
-| T17 | 복구 문구 피싱·부분 유출, 키 회전 착시 | Information Disclosure | 문구 입력은 앱 안에서만, "문구를 묻지 않는다" 고지, `K_chk` 센티넬, 복구 시 72시간 보류·전 기기 알림·기존 기기 승인 시 해제, **KEK 회전은 미수신 wDEK에만 효과**임을 명시, 문구 유출·PC 도난은 RK′·AIK′ + 전체 재암호화 | 재암호화 비용(SP-11), SLIP-39 분산은 Phase 2 후보 (C-07·21) |
+| T17 | 새 PC·PASS 복구 피싱, 키 회전 착시 | Information Disclosure | 복구 문구 없음(ADR-016 v2·ADR-029). 새 PC는 등록 폰 `Px`(생체) 서명 + 72시간 보류·전 기기 알림·기존 기기 승인 시 해제, PASS는 계정 회복·AIK 폐기 선언까지만(AIK′ 7일 지연, 백업 열람 불가, ADR-029 결정 1), 서버·HSM 열쇠 사본 없음. **KEK 회전은 미수신 wDEK에만 효과**임을 명시, PC 도난은 RK′·AIK′ + 전체 재암호화 | 재암호화 비용(SP-11). 연결된 기기가 0대인 계정의 백업은 되찾을 수 없다(의도) (C-07·21, D-16(N-09)) |
 
 ### 2.1 모델 호출별 Rule of Two 판정 (B-16)
 
@@ -80,6 +82,7 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | 부인 불가 과잉 | 감사 로그는 로컬 전용. 서버에는 계량이 있고, Phase 2에서 데스크톱 2대 이상을 연결하고 백업(메타데이터 동기화)을 켠 계정에만 **발급 활동 표시**(업무 키 HMAC·상태·일, 90일)가 있다. 서버는 그런 계정의 발급 건수·영업 리듬(일 단위)과 게이트 조회 시각을 안다(E-07, D09 §6). Phase 1과 PC 한 대 계정에는 이 기록이 없고, 기기 간 중복은 PC가 포털 발급목록 기준선으로 경고한다(ADR-024). 데스크톱 2대 이상이면서 백업을 끈 계정은 서버 기록 경고가 꺼져 있음을 카드에 표시 |
 | 탐지 가능성 | 푸시 내용 없음(단 깨우기 시각은 Apple·Google과 운영자가 봄), 릴레이 큐 5건 상한, 길이 패딩 (C-15·17) |
 | 정보 공개 | 처리방침에 보존표(D09 §10) 그대로 게시 |
+| 저장 계층 시각(ORM 기본 타임스탬프·WAL·백업) | 시각 컬럼 금지·보존 상한·블롭 생성 시각 고지(ADR-029, D-52(N-83)) |
 | 비인지 | 모델 전송 미리보기·감사 로그·"서버가 가진 내 데이터" 페이지 |
 | 비준수 | 아래 §6 |
 
@@ -91,12 +94,12 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | 퓨즈 | `RunAsNode` off, `EnableNodeOptionsEnvironmentVariable` off, `EnableNodeCliInspectArguments` off, `EnableEmbeddedAsarIntegrityValidation` on, `OnlyLoadAppFromAsar` on, `EnableCookieEncryption` on, `GrantFileProtocolExtraPrivileges` off. 빌드 순서(퓨즈 → ASAR 무결성 → 서명)를 CI가 검증한다 |
 | CSP(`app://` 응답 헤더) | `default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'; img-src 'self' data:; require-trusted-types-for 'script'` |
 | 전역 핸들러 | `setPermissionRequestHandler`·`setPermissionCheckHandler` 전부 거부, `will-navigate`·`will-redirect` 거부, `setWindowOpenHandler → deny` |
-| IPC | 모든 메시지 JSON Schema(`ipc/*.schema.json`) 검증·미정의 필드 거부, `event.senderFrame.url`이 `app://` 최상위 프레임인지 확인 |
+| IPC | 모든 메시지 JSON Schema(`ipc/*.schema.json`, Phase 1 정본) 검증·미정의 필드 거부(그 전에는 수신부마다 열거형·필수 필드 검사 함수, D-48(N-77)), `event.senderFrame.url`이 `app://` 최상위 프레임인지 확인. 렌더러 발 사용자 동작 명령(`run.prepare`, 파일 대화상자, 외부 실행, 비밀 창)은 main이 메인 창에서 직접 본 실제 입력(mouseUp·비수식 Enter/Space) 뒤 2~3초 안에만 받는다. `run.prepare`는 분당 3회, `docs.open`은 분당 5회(ADR-027, D-21(N-27)) |
 | `shell.openExternal` | main만 호출, 렌더러·플레이북은 URL이 아니라 **키**(`portalId`·strings 키)만 전달, URL은 `https:`·userinfo·포트 없음·호스트 ∈ 내장 eTLD+1 허용 목록 |
 | 경로 | `app.setPath('userData'\|'logs'\|'crashDumps')`를 `%LOCALAPPDATA%\SovereignAX\…`로 앱 준비 전에 설정(로밍 `%APPDATA%` 금지). 루트 DACL = 소유자 + SYSTEM, 상속 차단, 매 기동 확인. Windows 검색 색인 제외 |
-| 프로세스 | 엔진·금고·docparse 기동 시 `execArgv` 고정, `env` 화이트리스트(`DEBUG`·`NODE_DEBUG`·`NODE_OPTIONS`·`ELECTRON_*`·`PLAYWRIGHT_*` 제거). `utilityProcess`는 샌드박스가 아니다: 금고의 네트워크 금지는 린트 + 런타임 `net` 제거 + 아웃바운드 소켓 감시(OS 경계 아님을 명시). **docparse는 utilityProcess가 아니라 Chromium 렌더러 샌드박스**(숨김 `BrowserWindow`, 네트워크 차단 세션 파티션, 바이트 입력·JSON Schema 출력, `pdfjs isEvalSupported:false`) |
-| 승인 바(ADR-021) | 메인 창 `contentView`의 자식 `WebContentsView`: `sandbox`·`javascript:false`·preload 없음·`devTools:false`·`focusOnNavigation:false`, 확대 배율 1 고정, 전용 메모리 파티션(자기 스킴 밖 요청 취소·권한 거부·탐색·새 창 거부), CSP `default-src 'none'; style-src 'self'`, 배경색 지정, 보일 때마다 맨 위로. 메인 창: `webviewTag: false`, `disableDialogs: true`, `content-bounds-updated` 차단(렌더러의 창 이동·크기 변경), `cursor-changed` 감시(승인 대기 중 `none`·`custom`이면 무장 안 함), 앱 CSS 커스텀 커서 lint 금지. main은 렌더러 IPC로 `sendInputEvent`·`webContents.debugger`를 부르지 않고, `sendInputEvent`를 쓰는 e2e 코드는 제품 빌드에서 뺀다. 승인 바에 관한 렌더러 IPC는 표시 요청(원격·데몬 실행이나 확인 필요 카드를 연 때), Hello 설정 바 요청(켜기·끄기), 중지뿐이다. 엔진의 `answerGate`·`attestNotCommitted`는 main↔엔진 전용 포트(렌더러 명령 중계와 분리)로만 받는다 |
-| 기동 자기 점검 | main은 `remote-debugging-port`·`remote-debugging-pipe`·`enable-logging`·`log-file` 스위치가 자기 프로세스에 있으면 종료한다(best-effort, M 대상. CDP로 넣은 마우스 이벤트도 승인 바의 `before-mouse-event`를 일으키므로 ADR-021도 이 점검에 기댄다). 금고는 `navigator.webdriver === true` 확인(ADR-010) |
+| 프로세스 | 엔진·금고·docparse 기동 시 `execArgv` 고정, `env` 화이트리스트(`DEBUG`·`NODE_DEBUG`·`NODE_OPTIONS`·`ELECTRON_*`·`PLAYWRIGHT_*` 제거). utilityProcess는 env 허용 목록과 `execArgv: []`로 띄운다. 엔진은 디버그·TLS 변조 변수가 보이면 기동을 거부한다(ADR-025, D-14(N-23)). docparse 창은 `disableDialogs: true`다(ADR-025, D-44(N-68)). '린트 + CI로 검증'은 CI 필수 체크(build·lint·test·`bundles-digest --check`·`pnpm audit --prod`)와 CODEOWNERS로 실재한다(ADR-028, D-23(N-32)). `utilityProcess`는 샌드박스가 아니다: 금고의 네트워크 금지는 린트 + 런타임 `net` 제거 + 아웃바운드 소켓 감시(OS 경계 아님을 명시). **docparse는 utilityProcess가 아니라 Chromium 렌더러 샌드박스**(숨김 `BrowserWindow`, 네트워크 차단 세션 파티션, 바이트 입력·JSON Schema 출력, `pdfjs isEvalSupported:false`) |
+| 승인 바(ADR-021) | 승인 바 색은 앱 내장 팔레트다. 외부 토큰은 형식(`#RRGGBB`)·대비(≥ 4.5:1)를 통과한 색만 받고 하나라도 실패하면 내장 팔레트로 돌아간다(ADR-028, D-50(N-80)). 메인 창 `contentView`의 자식 `WebContentsView`: `sandbox`·`javascript:false`·preload 없음·`devTools:false`·`focusOnNavigation:false`, 확대 배율 1 고정, 전용 메모리 파티션(자기 스킴 밖 요청 취소·권한 거부·탐색·새 창 거부), CSP `default-src 'none'; style-src 'self'`, 배경색 지정, 보일 때마다 맨 위로. 메인 창: `webviewTag: false`, `disableDialogs: true`, `content-bounds-updated` 차단(렌더러의 창 이동·크기 변경), `cursor-changed` 감시(승인 대기 중 `none`·`custom`이면 무장 안 함), 앱 CSS 커스텀 커서 lint 금지. main은 렌더러 IPC로 `sendInputEvent`·`webContents.debugger`를 부르지 않고, `sendInputEvent`를 쓰는 e2e 코드는 제품 빌드에서 뺀다. 승인 바에 관한 렌더러 IPC는 표시 요청(원격·데몬 실행이나 확인 필요 카드를 연 때), Hello 설정 바 요청(켜기·끄기), 중지뿐이다. 엔진의 `answerGate`·`attestNotCommitted`는 main↔엔진 전용 포트(렌더러 명령 중계와 분리)로만 받는다 |
+| 기동 자기 점검 | 두 main은 같은 `hardenApp()`/`hardenWindow()`를 부른다: ready 전 디버그 스위치 9종 검사 → 종료, 권한 요청 거부, 새 창·이동·리디렉트·webview 거부, `content-bounds-updated` 차단, 배율 고정. `ApprovalBar` 생성자도 스위치를 검사한다(ADR-025, D-37(N-24), D-44(N-68)). 스위치 9종: `remote-debugging-port`·`remote-debugging-pipe`·`remote-allow-origins`·`enable-logging`·`log-file`·`inspect`·`inspect-brk`·`inspect-port`·`js-flags`. main은 이 스위치가 자기 프로세스에 있으면 종료한다(best-effort, M 대상. CDP로 넣은 마우스 이벤트도 승인 바의 `before-mouse-event`를 일으키므로 ADR-021도 이 점검에 기댄다). 금고는 `navigator.webdriver === true` 확인(ADR-010) |
 | 덤프 | 금고: `sodium_malloc` + `WerRegisterExcludedMemoryBlock`(Phase 1), Electron 밖 Rust 실행 파일 분리(Phase 2). 엔진·main: 로컬 생성도 사용자 요청 시에만, **업로드 금지**, 힙 없는 구조화 오류 보고만 옵트인 |
 | 로그 | 릴리스 빌드에서 CDP 프로토콜 로깅 코드 경로 제거(환경 변수로 켤 수 없음), 결과 코드·ID만, 14일 보존, 진단 내보내기 전 누출 스캐너 실행 |
 | 자동 업데이트 | `electron-updater` ≥ 6.3.0-alpha.6(CVE-2024-39698), `latest.yml`을 별도 Ed25519 키(플레이북·정책 키와 분리)로 서명 + `expires` + 단조 `version`, 다운그레이드 금지, 단계적 롤아웃, 14일 동안 확인 성공이 없으면 알림, 실행 중·커밋 구간·데몬 실행 중 설치 금지. Windows 서명은 Artifact Signing(EV가 SmartScreen을 우회하지 않음), 서명 주체 DN 출시 전 고정. macOS Developer ID + 공증. 사용자 단위 설치는 M에 대한 바이너리 무결성 경계가 없음을 잔여 위험으로 적고 기기 단위 설치 옵션은 Phase 3 |
@@ -144,7 +147,7 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | 릴레이 침해 | 큐 보존 위반·토큰 해시 유출 | 우편함 토큰 전면 재발급(라이브 세션에서 난수 재발급), 큐 폐기, 페어링 룸 중지 | 앱 내 공지 | 내용은 Noise·HPKE 암호문이라 비노출. 상관 메타데이터(접속 시각·IP 해시) 노출 범위 고지 |
 | 게이트웨이 침해 | 배포 산출물 해시 불일치, 로그 싱크 식별자 탐지기 | 공급사 API 키 즉시 폐기·재발급, 게이트웨이 격리, 처리 중 마스킹 프롬프트 노출 범위 산정(메모리 체류분) | 마스킹본 노출 사실·항목 고지 | 번들·응답 변조 가능성 점검(엔진은 로컬 번들로 매핑하므로 임계값은 오염되지 않음) |
 | 서명 키 유출 의심 | 투명성 로그에 없는 서명본, 버전 급증, 외부 증인 불일치 | 오프라인 루트가 `revoked_keys.json`을 서명·배포(목록이 바뀔 때 루트가 서명, 24시간 신선도는 타임스탬프 키가 재서명, D09 §8), 인덱스 동결, `status.json`으로 `portalModeCeiling` 하향, 앱 업데이트로 새 공개키·`keyEpoch` | 영향 패키지 해시 목록 게시 | 1인 긴급 키는 보수적 변경만 가능하므로 공격자가 완화 방향으로는 쓸 수 없다 |
-| 복구 문구 유출·PC 도난 | 사용자 신고, 보류 중 복구 알림 | 72시간 보류 유지, 기존 기기의 "거부"로 복구 시도 폐기·새 기기 키 영구 차단, RK′·AIK′ 발급(기존 기기 승인 시 지연 없음), 옛 기기 폐기 | 전 기기 | **전체 재암호화 필수**(KEK 회전만으로는 회수되지 않음, SP-11) |
+| PC 도난·원치 않은 새 PC·PASS 복구 | 사용자 신고, 보류 중 복구 알림 | 72시간 보류(PASS는 AIK′ 7일 지연) 유지, 기존 기기의 "거부"로 복구 시도 폐기·새 기기 키 영구 차단, RK′·AIK′ 발급(기존 기기 승인 시 지연 없음), 옛 기기 폐기(ADR-016 v2·ADR-029) | 전 기기·이메일 | **전체 재암호화 필수**(KEK 회전만으로는 회수되지 않음, SP-11). PASS 경로만으로는 백업을 열 수 없다 |
 | 폰 분실(PC 꺼짐) | 사용자 신고 | 계정 웹 '기기 긴급 정지'(블롭·메타데이터·릴레이·푸시 토큰 서버 측 정지), PC 켜지면 AIK 폐기 목록 갱신·KEK 회전·선택형 재암호화 | 이메일·데스크톱 | 원격 비가역은 하드웨어 키·일일 5건·새 거래처 로컬 승인으로 피해 상한이 정해져 있다 |
 | 프로토콜·암호 라이브러리 취약점 | 공급망 공지 | 서명 정책 `remote.minProtocolVersion` 상향·`disabledFeatures[]`로 해당 기능 즉시 차단, 앱 업데이트 | 앱 내 공지 | 재페어링 |
 | 포털 차단 다발 | `block.signal` 급증 | 운영 정책 긴급 보수화(1인 긴급 키, 보수 방향만), 사용자 공지, 운영기관 연락 | 앱 내 상태 표시 | 공문 채널 |
@@ -161,8 +164,10 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | "대리인 요건과 이미 일치" | "방향이 같으며 해당 여부는 개인정보위 회신으로 확정" |
 | "국내 처리" | "국내 저장, 처리는 공급사 리전(미국·EU·UAE). 국내 처리 옵션은 ADR-015의 5조건(L2 호출 100% 국내 리전 라우팅·처리 위치와 호스팅 법인 서면 확인, 국내 법인 운영 인프라 포함) 충족 시에만 표기" |
 | "무제한 발급" | "일 30건·월 300건(요청률 상한)". 집행 수단을 같이 적는다: 클라이언트 서명 카운터(`irreversible/day/profile/portal`, 정책 `limits`)와 서버 모델 계량 대조. 변조 클라이언트의 우회 가능성은 잔여 위험(E-17) |
-| "복구 문구를 확인해 드립니다"류 | "소버린 AX는 어떤 경우에도 복구 문구를 묻지 않습니다"(앱 밖 입력 칸 없음) |
-| "완전 소버린", "100% 국산" | "국내 저장, 마스킹본만 모델 전송(처리 국가 고지), 조건 충족 시 국내 처리 옵션, 남는 외국 의존 공개"(ADR-015). 남는 외국 의존 목록의 정본은 ADR-015 결정 6이다: APNs/FCM, App Attest·Play Integrity(Apple·Google), Microsoft(SmartScreen·Artifact Signing, Windows Hello는 클라우드 요소 없음을 확인해 기재), 앱 스토어, 코드서명 CA, npm/GitHub, 레지스트리 CDN·DNS, 전용 Chrome의 업데이트·세이프 브라우징 등 Google 서비스, 모델 공급사의 하위 처리자(E-15) |
+| "복구 문구를 확인해 드립니다"류, "PASS로 백업까지 되찾아요" | "소버린 AX는 복구 문구를 쓰지 않습니다. 백업한 서류는 연결된 폰이나 다른 PC가 있을 때만 되찾을 수 있고, 폰 없이 PASS로는 계정만 되찾습니다"(ADR-029, D-16(N-09))  |
+| "익명 사용 통계"(텔레메트리) | "옵트인 텔레메트리는 일 단위 집계(5건 버킷)이며 날마다 바뀌는 무작위 설치 토큰만 쓴다(계정·`X-Device-Id` 없음, 게이트웨이와 다른 호스트·토큰). 보존은 집계 90일"(D09 §1, ADR-029, D-24(N-37)) |
+| "서버는 사업자번호의 HMAC만 안다"(진위확인 포함) | "사업자번호만 국세청 진위확인에 보낸다(기본: 우리 서버 경유, 계정과 묶지 않고 기록하지 않음). 설정에서 자기 키로 바꿀 수 있다"(ADR-029, D-51(N-81)) |
+| "완전 소버린", "100% 국산" | "국내 저장, 마스킹본만 모델 전송(처리 국가 고지), 조건 충족 시 국내 처리 옵션, 남는 외국 의존 공개"(ADR-015). 남는 외국 의존 목록의 정본은 ADR-015 결정 6이다: APNs/FCM, App Attest·Play Integrity(Apple·Google), Microsoft(SmartScreen·Artifact Signing(코드서명 키, Microsoft가 보관하는 외부 단일 키, D-02(N-10)), Windows Hello는 클라우드 요소 없음을 확인해 기재), 앱 스토어, 코드서명 CA, npm/GitHub, 레지스트리 CDN·DNS, 전용 Chrome의 업데이트·세이프 브라우징 등 Google 서비스, 모델 공급사의 하위 처리자(E-15) |
 | "아무도 볼 수 없는 서버" | "운영자가 볼 수 있는 것 표(D09 §1)를 그대로 공개" |
 | "휴대폰만 있으면 발급" | "비가역 승인은 하드웨어 보안 키가 있는 폰(Android는 키 증명 확인, iOS는 앱 무결성만 확인) 또는 PC에서" |
 | "삭제 즉시 복구 불가" | "키 삭제 즉시 라이브 저장소에서 복호 불가, 백업 사본은 wDEK 백업 보존 만료(≤ 7일) 시점에 암호적으로 완료" |

@@ -1,5 +1,10 @@
 @import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600;700&display=swap");
 
+/* v1.2(2026-11-02) "더 조용하고, 더 적게, 더 분명하게". 토큰은 CSS 변수(--<토큰 이름>)로 읽는다.
+   움직임 토큰의 원본은 tokens.json `motion`이다. 렌더러가 그 묶음을 아직 CSS 변수로 옮기지 않아 여기 사본을 둔다(값을 바꾸면 둘 다 고친다). */
+:root { --motion-fast: 120ms; --motion-base: 160ms; --motion-slow: 220ms; --motion-pulse: 2400ms; --ease-out: cubic-bezier(0.2, 0, 0, 1); --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); }
+@media (prefers-reduced-motion: reduce) { :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; --motion-pulse: 0ms; } }
+
 body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 24px; word-break: keep-all; -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .figure-lg, .figure, .value { font-variant-numeric: tabular-nums; }
@@ -7,30 +12,36 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .sx-meta, .sx-source { font-size: 12px; line-height: 16px; color: var(--ink-3); }
 
-/* Button */
-.sx-btn { font: inherit; font-size: 13px; line-height: 20px; font-weight: 600; height: var(--control-height); padding: 0 14px; border-radius: var(--radius-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; }
-.sx-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); }
-.sx-btn-approve { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+/* Button: 주요(ink 채움) > 보조(line-strong 테두리) > 조용한(테두리 없음). 파랑 채움은 비가역 승인에만. */
+.sx-btn { font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; height: var(--control-height); padding: 0 12px; border-radius: var(--radius-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-btn:hover { background: var(--surface-tint); }
+.sx-btn:active { background: var(--surface-sunken); }
+.sx-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); font-weight: 600; }
+.sx-btn-primary:hover, .sx-btn-primary:active { background: var(--ink-2); border-color: var(--ink-2); }
+.sx-btn-approve { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
+.sx-btn-approve:hover, .sx-btn-approve:active { background: var(--accent-strong); border-color: var(--accent-strong); }
 .sx-btn-quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
-.sx-btn-lg { height: var(--control-height-lg); padding: 0 18px; font-size: 14px; }
-.sx-btn:disabled { background: var(--surface); border-color: var(--line); color: var(--ink-4); cursor: default; }
+.sx-btn-quiet:hover { background: var(--surface-tint); color: var(--ink); }
+.sx-btn-lg { height: var(--control-height-lg); padding: 0 16px; font-size: 14px; }
+.sx-btn:disabled, .sx-btn:disabled:hover { background: var(--surface); border-color: var(--line); color: var(--ink-4); cursor: default; }
+.sx-btn-quiet:disabled { border-color: transparent; }
 
-/* StatusChip */
-.sx-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; }
+/* StatusChip: 무채 칩은 테두리 없이 surface-tint, 색은 accent·attention뿐. 완료는 체크, 실패는 ink 테두리. */
+.sx-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid transparent; background: var(--surface-tint); color: var(--ink-2); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; transition: background-color var(--motion-base) var(--ease-in-out), color var(--motion-base) var(--ease-in-out), border-color var(--motion-base) var(--ease-in-out); }
 .sx-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
-.sx-chip.is-turn { background: var(--accent-soft); border-color: var(--accent-soft); color: var(--accent); }
+.sx-chip.is-turn { background: var(--accent-soft); color: var(--accent); }
 .sx-chip.is-waiting { background: transparent; border-color: var(--accent); color: var(--accent); }
-.sx-chip.is-attention { background: var(--attention-soft); border-color: var(--attention-soft); color: var(--attention); }
-.sx-chip.is-done { color: var(--ink); border-color: var(--line); }
+.sx-chip.is-attention { background: var(--attention-soft); color: var(--attention); }
+.sx-chip.is-done { background: transparent; border-color: var(--line); color: var(--ink); }
 .sx-chip.is-done::before { width: 8px; height: 4px; border-radius: 0; background: none; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(-45deg); }
-.sx-chip.is-stopped { color: var(--ink-3); border-color: var(--line); }
+.sx-chip.is-stopped { background: transparent; border-color: var(--line); color: var(--ink-3); }
 .sx-chip.is-stopped::before { border-radius: 1px; }
-.sx-chip.is-fail { color: var(--ink); border-color: var(--ink); }
+.sx-chip.is-fail { background: transparent; border-color: var(--ink); color: var(--ink); }
 .sx-chip.is-fail::before { width: 2px; height: 9px; border-radius: 1px; }
 
 /* KeyValue: D5 라벨 + D3 값, 값의 확실성 */
 .sx-kv { display: grid; grid-template-columns: var(--field-label-width) minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; }
-.sx-kv dt { font-size: 12px; line-height: 20px; font-weight: 500; letter-spacing: 0.02em; color: var(--ink-3); }
+.sx-kv dt { font-size: 12px; line-height: 20px; font-weight: 500; color: var(--ink-3); }
 .sx-kv dd { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink); font-variant-numeric: tabular-nums; display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; text-align: right; min-width: 0; overflow-wrap: anywhere; }
 .sx-kv.is-start dd { justify-content: flex-start; text-align: left; }
 .sx-kv dd.is-total .sx-val { font-weight: 600; }
@@ -42,17 +53,18 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .is-empty .sx-val { color: var(--ink-4); }
 
 /* Amount: D1 */
-.sx-amount { display: grid; gap: 2px; }
-.sx-amount-total { font-size: 24px; line-height: 32px; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; color: var(--ink); }
-.sx-unit { font-size: 16px; font-weight: 500; color: var(--ink-2); margin-left: 2px; }
+.sx-amount { display: grid; gap: var(--space-0); }
+.sx-amount-total { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sx-unit { font-size: 16px; font-weight: 500; letter-spacing: 0; color: var(--ink-2); margin-left: var(--space-0); }
 .sx-amount-split { font-size: 13px; line-height: 20px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
-/* Identifier: D4 */
+/* Identifier: D4. 복사 버튼은 작은 보조 버튼(line 테두리). */
 .sx-id { font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: var(--ink-2); }
-.sx-copy { font: inherit; font-size: 12px; line-height: 16px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; }
+.sx-copy { font: inherit; font-size: 12px; line-height: 16px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.sx-copy:hover { background: var(--surface-tint); border-color: var(--line-strong); color: var(--ink); }
 
-/* Card */
-.sx-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 14px var(--space-4); display: grid; gap: var(--space-3); min-width: 0; }
+/* Card: 선으로 구분, 그림자 없음. 내 차례·승인 대기만 파랑 테두리. */
+.sx-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-3); min-width: 0; }
 .sx-card.is-turn { border-color: var(--accent); }
 .sx-card.is-attention { border-color: var(--attention); }
 .sx-card-hd { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
@@ -64,65 +76,72 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 
 /* ChoiceCard */
-.sx-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; }
+.sx-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-opt:hover { background: var(--surface-tint); border-color: var(--line-strong); }
 .sx-opt.is-on { border-color: var(--ink); color: var(--ink); }
 .sx-radio { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; box-sizing: border-box; }
 .sx-opt.is-on .sx-radio { border: 4.5px solid var(--ink); }
 
-/* StepList */
-.sx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; font-size: 13px; line-height: 20px; }
+/* StepList: 진행 중은 현재 점이 숨 쉬듯 흐려졌다 돌아온다(회전 없음). 동작 줄이기면 멈춘다. */
+.sx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-0); font-size: 13px; line-height: 20px; }
 .sx-steps li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-2); padding: 6px 0; color: var(--ink-3); }
 .sx-steps li::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 4px; justify-self: center; box-sizing: border-box; }
 .sx-steps li.is-done { color: var(--ink-2); }
 .sx-steps li.is-done::before { background: var(--ink-2); border-color: var(--ink-2); }
 .sx-steps li.is-now { color: var(--ink); font-weight: 600; }
-.sx-steps li.is-now::before { border: 3.5px solid var(--accent); }
+.sx-steps li.is-now::before { border: 3.5px solid var(--accent); animation: sx-pulse var(--motion-pulse) var(--ease-in-out) infinite; }
 .sx-steps li.is-attention { color: var(--ink); font-weight: 600; }
 .sx-steps li.is-attention::before { border: 3.5px solid var(--attention); }
 .sx-steps small { display: block; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--ink-2); }
+@keyframes sx-pulse { 50% { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .sx-steps li.is-now::before { animation: none; } }
 
 /* DocumentCard */
 .sx-doc { position: relative; overflow: hidden; }
-.sx-doc-kind { font-size: 12px; line-height: 16px; letter-spacing: 0.02em; color: var(--ink-3); }
+.sx-doc-kind { font-size: 12px; line-height: 16px; color: var(--ink-3); }
 .sx-doc-name { font-family: var(--font-serif); font-size: 19px; line-height: 26px; font-weight: 700; letter-spacing: -0.01em; }
 .sx-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.sx-cells > div { padding: 8px 10px; display: grid; gap: 2px; border-right: 1px solid var(--line); min-width: 0; }
+.sx-cells > div { padding: 8px 10px; display: grid; gap: var(--space-0); border-right: 1px solid var(--line); min-width: 0; }
 .sx-cells > div:last-child { border-right: 0; }
 .sx-cells .label { color: var(--ink-3); }
 .sx-cells .is-attention { color: var(--attention); font-weight: 600; }
-.sx-seal { position: absolute; right: var(--space-4); top: 14px; width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; transform: rotate(-8deg); font-family: var(--font-serif); font-size: 14px; line-height: 16px; font-weight: 700; box-sizing: border-box; }
+.sx-seal { position: absolute; right: var(--space-4); top: var(--space-4); width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; transform: rotate(-8deg); font-family: var(--font-serif); font-size: 14px; line-height: 16px; font-weight: 700; box-sizing: border-box; }
 .sx-seal::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 1px solid var(--accent); }
 
-/* Message */
-.sx-thread { display: grid; gap: 14px; max-width: var(--chat-max); }
+/* Message: 사용자 말은 surface-overlay 말풍선(테두리·그림자 없음), 앱의 말은 말풍선 없는 글. */
+.sx-thread { display: grid; gap: var(--space-4); max-width: var(--chat-max); }
 .sx-day { display: flex; align-items: center; gap: 10px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
 .sx-day::before, .sx-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.sx-me { justify-self: end; max-width: 80%; background: var(--surface); border: 1px solid var(--line); border-radius: 14px 14px 4px 14px; padding: 8px 14px; font-size: 15px; line-height: 24px; }
+.sx-me { justify-self: end; max-width: 80%; background: var(--surface-overlay); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); padding: 8px 14px; font-size: 15px; line-height: 24px; }
 .sx-app { font-size: 15px; line-height: 24px; color: var(--ink); }
-.sx-origin { display: block; font-size: 12px; line-height: 16px; color: var(--ink-3); margin-top: 2px; text-align: right; }
+.sx-origin { display: block; font-size: 12px; line-height: 16px; color: var(--ink-3); margin-top: var(--space-0); text-align: right; }
 .sx-app .sx-origin { text-align: left; }
 
-/* Composer */
+/* Composer: 입력창만 바탕에서 살짝 뜬다(shadow-raised). 빠른 실행 칩은 line 테두리의 작은 칩. */
 .sx-composer { display: grid; gap: var(--space-2); max-width: var(--chat-max); }
 .sx-quick { display: flex; gap: 6px; flex-wrap: wrap; }
-.sx-quick button { font: inherit; font-size: 13px; line-height: 20px; height: 28px; padding: 0 12px; border-radius: var(--radius-full); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; }
-.sx-input { min-height: 46px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); background: var(--surface); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-3); font-size: 15px; }
-.sx-send { margin-left: auto; width: 30px; height: 30px; border-radius: var(--radius-md); background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; flex: none; }
+.sx-quick button { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height-sm); padding: 0 12px; border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
+.sx-quick button:hover { background: var(--surface-tint); border-color: var(--line-strong); }
+.sx-input { min-height: 46px; border: 1px solid var(--line-strong); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-raised); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-3); font-size: 15px; transition: border-color var(--motion-fast) var(--ease-out); }
+.sx-input:focus-within { border-color: var(--ink-2); }
+.sx-send { margin-left: auto; width: 30px; height: 30px; border-radius: var(--radius-full); background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; flex: none; transition: background-color var(--motion-fast) var(--ease-out); }
+.sx-send:hover { background: var(--ink-2); }
 
 /* SecretField: 보안카드 번호처럼 가려 두는 값 */
 .sx-secret { display: grid; gap: var(--space-2); }
 .sx-secret-hd { display: flex; align-items: center; gap: var(--space-2); }
 .sx-secret-hd > :first-child { margin-right: auto; }
 .sx-reveal { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height); padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.sx-reveal:hover { background: var(--surface-tint); color: var(--ink); }
 .sx-reveal svg { width: 16px; height: 16px; flex: none; }
 .sx-secret-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px var(--space-2); }
-.sx-secret-cell { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sx-secret-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .sx-secret-cell span { font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--ink-3); }
 .sx-secret-cell input { height: 36px; width: 100%; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); padding: 0 10px; font-family: var(--font-mono); font-size: 15px; letter-spacing: 0.18em; }
 .sx-secret-cell input:focus, .sx-secret-cell.is-now input { outline: none; border: 2px solid var(--focus-ring); padding: 0 9px; }
 .sx-secret-cell.is-attention input { border: 2px solid var(--attention); padding: 0 9px; }
 
-/* ApprovalWindow: 시스템 서체, 그림·스크립트 없음 */
+/* ApprovalWindow(폐지, ADR-020·021): 이전 설계의 기록. 시스템 서체, 그림·스크립트 없음 */
 .sx-approve { width: 440px; max-width: 100%; background: var(--surface-overlay); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay); font-family: var(--font-system); overflow: hidden; }
 .sx-approve-bar { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: var(--surface-sunken); font-size: 12px; color: var(--ink-2); }
 .sx-approve-band { height: 4px; background: var(--accent); }
@@ -138,26 +157,27 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-approve-acts .sx-btn { font-family: var(--font-system); }
 .sx-approve-foot { font-size: 12px; line-height: 18px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
 
-/* MainScreen: PC 메인 3단 */
+/* MainScreen: PC 메인 3단. 제목줄·레일·패널은 surface, 구분은 line 하나. */
 .sx-frame { width: 1040px; height: 640px; display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); grid-template-rows: var(--titlebar-height) minmax(0, 1fr); background: var(--canvas); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; }
 .sx-titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-4); padding: 0 12px 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--line); font-size: 13px; line-height: 20px; }
 .sx-titlebar .co { font-weight: 600; }
-.sx-search { margin-left: auto; width: 260px; height: 28px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--canvas); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: var(--ink-3); }
-.sx-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 16px; border: 1px solid var(--line-strong); border-radius: 4px; padding: 0 5px; color: var(--ink-2); background: var(--surface); }
+.sx-search { margin-left: auto; width: 260px; height: var(--control-height-sm); border: 0; border-radius: var(--radius-md); background: var(--surface-tint); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: var(--ink-3); }
+.sx-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 16px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--ink-3); background: var(--surface); }
 .sx-tstatus { margin-left: auto; display: flex; gap: 14px; color: var(--ink-2); }
-.sx-rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 4px; }
-.sx-rail span { width: 44px; height: 44px; border-radius: 9px; display: grid; place-items: center; color: var(--ink-3); position: relative; }
-.sx-rail span.is-on { background: var(--surface-sunken); color: var(--ink); }
+.sx-rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: var(--space-2) 0; gap: var(--space-1); }
+.sx-rail span { width: 44px; height: 44px; border-radius: var(--radius-md); display: grid; place-items: center; color: var(--ink-3); position: relative; }
+.sx-rail span.is-on { background: var(--surface-tint); color: var(--ink); }
 .sx-rail svg { width: 20px; height: 20px; }
 .sx-rail b { position: absolute; top: 5px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--attention-soft); color: var(--attention); font-size: 12px; line-height: 16px; font-weight: 600; text-align: center; }
 .sx-rail i { flex: 1; }
 .sx-chatcol { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
 .sx-chatcol > * { width: 100%; max-width: var(--chat-max); justify-self: center; }
-.sx-today { margin-top: 14px; height: 36px; box-sizing: border-box; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); display: flex; align-items: center; gap: var(--space-4); padding: 0 14px; font-size: 13px; color: var(--ink-2); }
-.sx-today b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+/* 오늘 요약: 상자가 아니라 한 줄. 숫자는 ink, 내 차례만 accent, 만료 임박만 attention. */
+.sx-today { margin-top: var(--space-3); height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: var(--space-4); padding: 0 var(--space-1); font-size: 13px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.sx-today b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: var(--space-0); }
 .sx-today .is-turn b { color: var(--accent); }
 .sx-today .is-attention b { color: var(--attention); }
 .sx-chatcol .sx-thread { padding: var(--space-4) 0; overflow: hidden; align-content: start; }
 .sx-chatcol .sx-composer { padding: 0 0 var(--space-4); }
-.sx-panel { background: var(--surface); border-left: 1px solid var(--line); padding: 18px; display: grid; gap: 14px; align-content: start; }
-.sx-panel-sec { font-size: 12px; line-height: 16px; font-weight: 600; letter-spacing: 0.04em; color: var(--ink-3); }
+.sx-panel { background: var(--surface); border-left: 1px solid var(--line); padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
+.sx-panel-sec { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); padding-top: var(--space-1); }

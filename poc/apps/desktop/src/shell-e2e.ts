@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
 import { buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
-import { summarize, type SummaryLine } from './approval-gate.ts';
+import { kstToday, summarize, type SummaryLine } from './approval-gate.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
@@ -96,6 +96,25 @@ function barClick(): void {
   barWc().sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 });
 }
 const barLeave = () => barWc().sendInputEvent({ type: 'mouseLeave', x: -5, y: -5 });
+/** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 화면의 아무것도 누르지 않는다. */
+const gesture = () => S.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
+/**
+ * [홈택스에서 준비]: main은 2초 안의 실제 입력 뒤에만 받는다(ADR-027 결정 8). 부하가 크면(전체 시험 직후 등) 입력과
+ * 클릭 사이가 2초를 넘어 gesture_required로 거부될 수 있다. 그 거부(토스트 "잠시 뒤 다시 눌러 주세요")일 때만 입력을 새로
+ * 주고 다시 누른다(최대 3번). 다른 거부(진행 중 등)는 그대로 둔다: 그 판정을 보는 검사가 있다.
+ */
+async function prepare(id: string): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    await js(`(() => { const t = document.getElementById('toast'); t.hidden = true; t.textContent = ''; })()`);
+    gesture();
+    await sleep(30);
+    await click(`[data-run="${id}"] [data-act=prepare]`);
+    const rejected = async () => runStatus(id) === 'draft' && (await js<string>(`document.getElementById('toast').textContent || ''`)).includes('잠시 뒤 다시 눌러');
+    await until('prepare answered', async () => runStatus(id) !== 'draft' || (await rejected()), 3000);
+    if (!(await rejected())) return;
+    console.log(`  (prepare: gesture_required, retry ${i + 1})`);
+  }
+}
 /** 무장됨 = 판정상 무장 + 무장됨 페이지가 실제로 화면에 올라옴. */
 const waitArmed = () => until('bar armed', () => S.bar.snapshot().armed && S.bar.snapshot().committed?.mode === 'armed');
 /** OS 커서 위치(바의 "멈춘 커서 아래" 판단용). e2e 기본은 바 밖. */
@@ -117,7 +136,7 @@ async function toDraft(text: string): Promise<string> {
 
 async function toWaiting(text: string): Promise<string> {
   const id = await toDraft(text);
-  await click(`[data-run="${id}"] [data-act=prepare]`);
+  await prepare(id);
   await until('waiting', () => runStatus(id) === 'waiting', 15_000);
   await until('bar visible', () => S.bar.snapshot().visible);
   return id;
@@ -165,8 +184,13 @@ async function flow(): Promise<void> {
   await click(`[data-run="${id}"] [data-act=vat]`);
   await until('vat separate', () => S.runs.get(id)?.total === 3_630_000);
 
+  // 실제 입력 없이(렌더러 신호만) 온 실행 시작은 받지 않는다(ADR-027 결정 8). 이 앞에는 실제 입력이 없다.
+  await sleep(2100);
+  const noGesture = await js<string>(`window.sax.call('run.prepare', { id: ${JSON.stringify(id)} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
+  check('실제 입력 없이 온 run.prepare는 gesture_required(초안 그대로)', noGesture === 'gesture_required' && runStatus(id) === 'draft', noGesture);
+
   // 실행: 엔진이 가짜 H-01 페이지에서 입력·되읽기·기준선 조회를 하는 동안 바는 뜨지 않는다.
-  await click(`[data-run="${id}"] [data-act=prepare]`);
+  await prepare(id);
   await until('preparing', () => runStatus(id) === 'preparing');
   check('실행(준비) 중 바는 뜨지 않는다', runStatus(id) === 'preparing' && !S.bar.snapshot().visible);
   await shot('04-preparing');
@@ -178,6 +202,8 @@ async function flow(): Promise<void> {
   const f = new Map(req?.fields.map((x) => [x.fieldKey, x.value]));
   check('게이트 요청: 엔진이 되읽은 13칸 + 예약 키, main이 다시 계산한 해시가 맞는다(D03 §3)', !!req && req.v === 2 && gateSelfCheck(req) === null && !S.bar.snapshot().refusal && f.get('supplierBizNo') === '1234567891' && f.get('totalAmount') === '3630000' && f.get('counterpartEmail') === 'tax@asangsa.example', req?.fields);
   check('원장이 비어 있으면 처음 거래·처음 보내는 주소(원장 HMAC 열, 확정 건만 셈)', f.get('$first.bizNo') === 'true' && f.get('$first.email') === 'true' && !f.has('$dup.businessKey'));
+  const firstTotal = (summarize(req) as SummaryLine[])[1]!.pieces.map((x) => x.text).join('');
+  check('작성일자 = KST 오늘이면 바 합계 줄에 작성일 조각이 없다(가짜 H-01도 KST)', f.get('issueDate') === kstToday(Date.now()) && !firstTotal.includes('작성일'), { issueDate: f.get('issueDate'), firstTotal });
   check('카드·패널은 엔진이 되읽은 값으로 바뀐다(홈택스 확정)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && (await js<string>(`document.querySelector('[data-run="${id}"]').textContent`)).includes('초안과 같아요'));
   const snap = S.bar.snapshot();
   const [cw, ch] = S.win.getContentSize() as [number, number];
@@ -340,8 +366,9 @@ async function flow(): Promise<void> {
   const fd = new Map(gates.get(idDup)!.fields.map((x) => [x.fieldKey, x.value]));
   const dupLines = summarize(gates.get(idDup)!) as SummaryLine[];
   await waitArmed();
-  check('같은 건 기록: $dup.businessKey가 fields(cardHash)에 들어가고 바 표시·동작 글자가 바뀐다', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '같은 건 기록 있음' && S.bar.snapshot().action === '같은 건 기록을 확인했고 발급', { fields: [...fd], action: S.bar.snapshot().action });
-  check('승인 대기 카드에도 고정 경고가 붙는다', (await js<string>(`document.querySelector('[data-run="${idDup}"]').textContent`)).includes('같은 건을 두 번 발급하는 것이 아닌지'));
+  check('같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 "이미 발급됨"·"한 번 더 발급"', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '이미 발급됨(승인번호 있음)' && dupLines[1]?.tone === 'attention' && S.bar.snapshot().action === '그래도 한 번 더 발급', { fields: [...fd], action: S.bar.snapshot().action });
+  const dupCard = await js<string>(`document.querySelector('[data-run="${idDup}"]').textContent`);
+  check('승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다', dupCard.includes('한 번 더 발급하면 같은 계산서가 2건이 돼요') && dupCard.includes('[그래도 한 번 더 발급]'), dupCard.slice(0, 300));
   await shot('17-dup-warning');
   await stopRun(idDup);
 
@@ -355,11 +382,63 @@ async function flow(): Promise<void> {
   await sleep(60);
   check('다음 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)', runStatus(id2) === 'waiting' && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
   const idBusy = await toDraft('C테크에 10만원 세금계산서');
-  await click(`[data-run="${idBusy}"] [data-act=prepare]`);
+  await prepare(idBusy);
   await sleep(150);
   check('승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다', runStatus(idBusy) === 'draft' && S.bar.runId === id2 && runStatus(id2) === 'waiting');
   await click(`[data-run="${idBusy}"] [data-act=cancel]`);
+  // 창이 뒤로 가면 무장 전 페이지, 핸드오프가 아닌 활성화는 무장 지연을 다시 센다(첫 클릭은 앞으로 가져오기, ADR-027 결정 5).
+  await waitArmed();
+  S.win.emit('blur');
+  await until('blur unarmed', () => S.bar.snapshot().committed?.mode === 'unarmed', 2000);
+  const blurred = S.bar.snapshot();
+  S.win.emit('focus');
+  await sleep(30);
+  const refocused = S.bar.snapshot();
+  check('창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연', blurred.mode === 'unarmed' && refocused.mode === 'unarmed' && !refocused.armed, { blurred, refocused });
+  // 금고가 부르는 비밀 창(ADR-025 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
+  S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'portal_password', scope: 'business' });
+  await sleep(100);
+  const noWin = S.secretWindow() === null;
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T1', kind: 'portal_password', scope: 'business' });
+  await until('secret window', () => !!S.secretWindow() && !S.secretWindow()!.webContents.isLoading(), 5000);
+  const sw = S.secretWindow();
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'security_card', scope: 'business', row: 7 });
+  await sleep(100);
+  const swText = sw ? await sw.webContents.executeJavaScript('document.body.innerText').catch(() => '') : '';
+  check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 홈택스 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 홈택스 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
+  if (sw) await fs.writeFile(path.join(OUT, '18b-secret-window.png'), (await capture(sw.webContents)).toPNG());
+  sw?.close();
+  // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 창이 닫히면 이어서 연다.
+  await until('queued secret window', () => !!S.secretWindow() && S.secretWindow() !== sw && !S.secretWindow()!.webContents.isLoading(), 5000);
+  const sw2 = S.secretWindow();
+  check('비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 "금고 · 보안카드 번호")', !!sw2 && sw2.getTitle() === '금고 · 보안카드 번호' && sw2.isModal(), sw2?.getTitle());
+  sw2?.close();
+  await until('secret closed', () => S.secretWindow() === null, 3000);
+  // 창을 열다 실패해도 '열림'이 남지 않는다: 다음 요청은 정상으로 열린다.
+  const realPort = S.host.secretInputPort.bind(S.host);
+  S.host.secretInputPort = () => {
+    throw new Error('e2e: port failed');
+  };
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T5', kind: 'portal_password', scope: 'business' });
+  await sleep(200);
+  const failedNoWin = S.secretWindow() === null;
+  S.host.secretInputPort = realPort;
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T6', kind: 'portal_password', scope: 'business' });
+  await until('secret window after failure', () => !!S.secretWindow(), 5000).catch(() => {});
+  const reopened = !!S.secretWindow();
+  check('비밀 창을 열다 실패해도 다음 요청은 정상으로 연다(조정자에 열림이 남지 않음)', failedNoWin && reopened, { failedNoWin, reopened });
+  S.secretWindow()?.close();
+  await until('secret closed after failure test', () => S.secretWindow() === null, 3000);
+  S.host.emit('vault-event', 'secret_window.refused', { reason: 'google_signin_detected' });
+  check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretWindow() === null, S.runs.get(id2)!.notices);
+  // 실행이 끝나 main이 창을 닫으면 들고 있던 요청은 다시 열지 않는다(종료를 막거나 창 없이 '열림'이 남지 않게).
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T3', kind: 'portal_password', scope: 'business' });
+  await until('secret window 3', () => !!S.secretWindow(), 5000);
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'security_card', scope: 'business', row: 9 });
   await stopRun(id2);
+  await until('secret closed by run end', () => S.secretWindow() === null, 3000);
+  await sleep(500);
+  check('실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다', S.secretWindow() === null);
   check('승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
 
   // 처음 거래·처음 보내는 주소(C테크)
@@ -384,7 +463,7 @@ async function flow(): Promise<void> {
   const shownBefore = barShown;
   fx().fixture.knobs.supplier = { bizNo: '2208162517', name: '다른사업자' };
   const idSup = await toDraft('C테크에 30만원 세금계산서');
-  await click(`[data-run="${idSup}"] [data-act=prepare]`);
+  await prepare(idSup);
   await until('supplier attention', () => runStatus(idSup) === 'attention', 15_000);
   fx().fixture.knobs.supplier = { bizNo: '1234567891', name: '가나다컴퍼니' };
   check('공급자 불일치: 바를 띄우지 않고 멈춘다', (S.runs.get(idSup)!.stoppedNote ?? '').includes('로그인한 사업자가 이 프로필과 달라서') && barShown === shownBefore && !gates.has(idSup) && fx().fixture.posts() === 1, S.runs.get(idSup)!.stoppedNote);
@@ -428,6 +507,7 @@ async function flow(): Promise<void> {
   const wideDone = S.bar.open(wide);
   await waitArmed();
   check('값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)', S.bar.snapshot().band && !S.bar.snapshot().refusal && S.bar.snapshot().bounds.x === SHELL.rail, S.bar.snapshot());
+  check('작성일자가 KST 오늘과 다르면 합계 줄 끝에 줄이지 않는 " · 작성일 2026-11-01"', kstToday(Date.now()) !== '2026-11-01' && (summarize(wide) as SummaryLine[])[1]!.pieces.at(-1)?.text === ' · 작성일 2026-11-01');
   check('열린 게이트가 있으면 새 게이트로 바꾸지 않는다', (await S.bar.open(gate('wide-2'))).decision === 'closed' && S.bar.snapshot().reqId === 'wide-1');
   await shot('24-wide-band');
   S.bar.close('e2e');
@@ -476,7 +556,7 @@ async function flow(): Promise<void> {
   const idBlock = await toDraft('C테크에 44만원 세금계산서');
   const mark = fx().fixture.requests.length;
   fx().fixture.knobs.block = 'page';
-  await click(`[data-run="${idBlock}"] [data-act=prepare]`);
+  await prepare(idBlock);
   await until('block attention', () => runStatus(idBlock) === 'attention', 15_000);
   fx().fixture.knobs.block = null;
   await sleep(1500);
@@ -512,7 +592,8 @@ async function flow(): Promise<void> {
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ width: 1280, height: 820, cursorPoint: () => cursor });
+    // 준비 분당 상한(사람 속도 3회)은 e2e가 짧은 시간에 여러 건을 돌리므로 넉넉히 둔다(audit-d가 상한 자체를 본다).
+    S = await startShell({ width: 1280, height: 820, cursorPoint: () => cursor, preparePerMin: 100 });
     // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
     S.win.webContents.setBackgroundThrottling(false);
     observations.visibilityAtStart = await S.ready.then(() => js('document.visibilityState'));

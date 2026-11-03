@@ -1,8 +1,9 @@
 import { performance } from 'node:perf_hooks';
-import { RateRepo, type Db } from '@sax/db';
+import { RateRepo, type Db, type Ledger } from '@sax/db';
 import type { Dialog, Page } from 'playwright-core';
+import { pathExpected, type PortalConfig } from './h01/portal.ts';
 import { RunEnd, type RunnerPolicy } from './h01/runner.ts';
-import { SIGNAL_DICT, SignalWatch, type SignalHit, type SignalKind } from './h01/signals.ts';
+import { SIGNAL_DICT, SignalWatch, type InspectUnavailable, type SignalHit, type SignalKind } from './h01/signals.ts';
 
 // 요청률 정책(D03 §7)의 PoC 최소판. 앱 내장 정책은 홈택스 하나다. 서명·신선도·긴급 키·데몬·리모트·큐·캡차 중계·
 // POLICY_FLOOR 클램프는 외부 정책 파일이 없어 두지 않는다. 카운터는 SQLite에 영속하고(KST) 증가를 커밋한 뒤 행동한다.
@@ -40,13 +41,40 @@ export const FIXTURE_POLICY: RatePolicy = freeze({
  * "포털 키가 없으면 그 포털은 postprocess").
  */
 export function policyFor(kind: string): RatePolicy {
-  if (kind === 'hometax') return HOMETAX_POLICY;
+  if (kind === 'hometax') return POC_BUILD ? POC_HOMETAX_POLICY : HOMETAX_POLICY;
   if (kind === 'fixture') return FIXTURE_POLICY;
   throw new RunEnd('failed', 'policy.portal_mode_denied');
 }
 
-/** 추가 인증이 이만큼 연속이면 차단 신호(D03 §7 (c)). */
+// PoC 상한(ADR-025 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
+// 시간대 제한은 앱이 집행하지 않는 사람 규칙이다(위험 수용서).
+export const POC_BUILD = true;
+export const POC_OVERRIDES = { runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3, positiveDetectionsForCooldown: 1 } as const;
+/** PoC 기간 전체 실발급 상한(원장 committed·in_doubt·armed·dispatched 누적, 재시작·날짜 무관). */
+export const POC_IRREVERSIBLE_TOTAL = 3;
+
+const POC_HOMETAX_POLICY: RatePolicy = freeze({
+  ...HOMETAX_POLICY,
+  limits: {
+    ...HOMETAX_POLICY.limits,
+    runsPerDayPerProfile: Math.min(HOMETAX_POLICY.limits.runsPerDayPerProfile, POC_OVERRIDES.runsPerDayPerProfile),
+    irreversiblePerDayPerProfile: Math.min(HOMETAX_POLICY.limits.irreversiblePerDayPerProfile, POC_OVERRIDES.irreversiblePerDayPerProfile),
+    loginsPerDay: Math.min(HOMETAX_POLICY.limits.loginsPerDay, POC_OVERRIDES.loginsPerDay),
+  },
+  cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: Math.min(HOMETAX_POLICY.cooldown.positiveDetectionsForCooldown, POC_OVERRIDES.positiveDetectionsForCooldown) },
+});
+
+/** PoC 전체 실발급 상한에 닿았으면 시작 거부 사유(홈택스만). */
+export function pocTotalRefusal(ledger: Pick<Ledger, 'countIrreversible'>, kind: string): RunEnd | null {
+  if (!POC_BUILD || kind !== 'hometax') return null;
+  return ledger.countIrreversible(['committed', 'in_doubt', 'armed', 'dispatched']) >= POC_IRREVERSIBLE_TOTAL ? new RunEnd('failed', 'policy.poc_irreversible_total') : null;
+}
+
+/** 추가 인증이 이만큼 연속이면 차단 신호(D03 §7 (c)). 로그인 구간의 추가 인증은 세지 않는다. */
 export const EXTRA_AUTH_FOR_SIGNAL = 2;
+/** 기대 화면(체크포인트)에 닿지 못하고 끝난 실행이 이만큼 연속이면 보수 모드, 그 다음 단계는 양성 탐지 1회(ADR-025 결정 3). */
+export const UNKNOWN_SCREEN_CONSERVATIVE = 2;
+export const UNKNOWN_SCREEN_POSITIVE = 3;
 /** 벽시계가 유효 시각보다 이만큼 넘게 뒤면 시계 역행(보수 모드). NTP 미세 조정은 넘긴다. */
 export const CLOCK_ROLLBACK_TOLERANCE_MS = 2_000;
 
@@ -68,6 +96,7 @@ export interface PolicyStatus {
   irreversibleToday: number;
   captchaToday: number;
   blockStreak: number;
+  unknownScreenStreak: number;
 }
 
 /**
@@ -103,7 +132,9 @@ export class RateGuard {
     const now = Math.max(wall, this.base.t + (m - this.base.m) / 2);
     this.base = { t: now, m };
     this.repo.seen(now);
-    return { now, conservative: now - wall > CLOCK_ROLLBACK_TOLERANCE_MS };
+    // 모르는 화면이 연달아 끝난 포털도 보수 모드다(사전에 없는 차단 화면일 수 있다).
+    const unknown = this.repo.count(this.portal, '', 'unknown_screen_streak', '-') >= UNKNOWN_SCREEN_CONSERVATIVE;
+    return { now, conservative: now - wall > CLOCK_ROLLBACK_TOLERANCE_MS || unknown };
   }
 
   /** 보수 모드면 절반(내림, 최소 1). */
@@ -146,12 +177,16 @@ export class RateGuard {
     if (this.repo.count(this.portal, '', 'logins_day', kstDay(now)) >= this.cap(this.policy.limits.loginsPerDay, conservative)) throw new RunEnd('failed', 'policy.logins_per_day');
   }
 
-  /** 로그인 성공 판정: 하루 로그인 수를 올리고 새 세션을 연다. 로그인은 실행 안에서만 하므로 이 실행이 세션의 첫 실행이다. */
+  /**
+   * 로그인 성공 판정: 하루 로그인 수를 올리고 새 세션을 연다. 로그인은 실행 안에서만 하므로 이 실행이 세션의 첫 실행이다.
+   * 로그인을 마쳤으면 그 전의 추가 인증 연속은 끝났다(같은 트랜잭션에서 0으로).
+   */
   loginSucceeded(profileId: string): void {
     const { now } = this.clock();
     this.db.transaction(() => {
       this.repo.bump(this.portal, '', 'logins_day', kstDay(now));
       this.repo.set(this.portal, profileId, 'login_session', 'current', 1);
+      this.repo.set(this.portal, '', 'extra_auth_streak', '-', 0);
     })();
   }
 
@@ -202,11 +237,17 @@ export class RateGuard {
     this.repo.bump(this.portal, '', 'captcha_10m', kst10m(this.clock().now));
   }
 
+  /** 기대 화면에 닿지 못하고 끝난 실행. 올린 뒤의 연속 횟수. */
+  unknownScreen(): number {
+    return this.repo.bump(this.portal, '', 'unknown_screen_streak', '-');
+  }
+
   /** 신호 없이 포털 화면을 본 실행이 끝났다: 연속 횟수를 0으로. 쿨다운은 시간이 지나야 풀린다. */
   clean(): void {
     this.db.transaction(() => {
       this.repo.set(this.portal, '', 'block_streak', '-', 0);
       this.repo.set(this.portal, '', 'extra_auth_streak', '-', 0);
+      this.repo.set(this.portal, '', 'unknown_screen_streak', '-', 0);
     })();
   }
 
@@ -221,6 +262,7 @@ export class RateGuard {
       irreversibleToday: this.repo.count(this.portal, profileId, 'irreversible_day', day),
       captchaToday: this.repo.sum(this.portal, '', 'captcha_10m', `${day}T00:0`, `${day}T23:5`),
       blockStreak: this.repo.count(this.portal, '', 'block_streak', '-'),
+      unknownScreenStreak: this.repo.count(this.portal, '', 'unknown_screen_streak', '-'),
     };
   }
 }
@@ -259,19 +301,45 @@ export class RunPolicy implements RunnerPolicy {
   private closed = false;
   private finishing: Promise<void> | null = null;
   private latch: { end: RunEnd; kind: SignalKind } | null = null;
+  private readonly portal: PortalConfig;
+  /** 로그인 구간(enterLogin~leaveLogin). 여기서 뜬 추가 인증은 예상된 2차 인증이라 연속에 넣지 않는다. */
+  private section: 'login' | null = null;
+  /** 실행이 닫은 마지막 대화상자 문구(NFKC, 200자). 실행 메모리에만 둔다(저널·로그·모델에 넣지 않는다). */
+  private lastNotice: string | null = null;
+  /** 이번 화면 확인에서 금고가 확인 식을 거부했다(비밀 창 활성·오염). */
+  private unobservable: InspectUnavailable | null = null;
 
-  constructor(page: Page, guard: RateGuard, portal: { kind: 'fixture' | 'hometax'; origin: string }, o: RunPolicyOptions) {
+  constructor(page: Page, guard: RateGuard, portal: PortalConfig, o: RunPolicyOptions) {
     this.g = guard;
     this.o = o;
     this.page = page;
+    this.portal = portal;
     const base = new URL(portal.origin).hostname;
     this.watch = new SignalWatch(page, {
       dict: SIGNAL_DICT[portal.kind],
       portalHost: (h) => h === base || h.endsWith(`.${base}`),
       onHit: (h) => this.onHit(h),
       onDialog: (d) => this.dialog(d),
+      onUnavailable: (reason) => {
+        if (!this.unobservable) this.o.journal('signal.inspect_unavailable', { reason });
+        this.unobservable = reason;
+      },
       mono: () => performance.now(),
     });
+  }
+
+  /** 로그인 구간 시작·끝(PoC-3 로그인 s0~s6이 부른다). */
+  enterLogin(): void {
+    this.section = 'login';
+  }
+
+  leaveLogin(): void {
+    this.section = null;
+  }
+
+  /** 포털이 마지막으로 한 말(대화상자 문구). 실패·핸드오프 종료 이벤트에만 싣는다. */
+  get notice(): string | null {
+    return this.lastNotice;
   }
 
   /** 걸쇠에 걸린 신호의 종료(없으면 null). */
@@ -290,13 +358,16 @@ export class RunPolicy implements RunnerPolicy {
     let kind = h.kind;
     let end: RunEnd;
     try {
-      if (kind === 'extra_auth' && this.g.extraAuth() >= EXTRA_AUTH_FOR_SIGNAL) kind = 'block';
+      // 로그인 구간의 추가 인증은 예상된 2차 인증이다: 연속에 넣지 않고 핸드오프로만 끝낸다(ADR-025 결정 4).
+      if (kind === 'extra_auth' && this.section !== 'login' && this.g.extraAuth() >= EXTRA_AUTH_FOR_SIGNAL) kind = 'block';
       if (kind === 'block') {
-        const id = h.kind === 'block' ? h.id : 'extra_auth.repeat';
+        const repeat = h.kind !== 'block';
+        const id = repeat ? 'extra_auth.repeat' : h.id;
         const cooled = this.g.positive(id);
         this.o.journal('block.signal', { id });
         if (cooled) this.o.journal('cooldown.started', { hours: this.g.policy.cooldown.onBlockSignalHours });
-        end = new RunEnd('failed', cooled ? 'policy.cooldown' : 'portal.blocked');
+        // 반복 추가 인증은 차단 신호(portal.blocked)와 구분한다(공문 보고 기준에서 뺀다, D18 §3).
+        end = new RunEnd('failed', cooled ? 'policy.cooldown' : repeat ? 'portal.extra_auth_repeat' : 'portal.blocked');
       } else {
         if (kind === 'captcha') this.g.captcha();
         this.o.journal('portal.signal', { kind, id: h.id });
@@ -317,6 +388,12 @@ export class RunPolicy implements RunnerPolicy {
   /** 대화상자 응답(D03 §6 대화상자 정책의 PoC 부분): 무장 구간 expectConfirm이 없으므로 모두 닫는다(alert는 확인과 같다). */
   private dialog(d: Dialog): void {
     this.actuations++;
+    try {
+      const text = d.message().normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 200);
+      if (text) this.lastNotice = text;
+    } catch {
+      // 문구를 못 읽어도 닫는 것이 먼저다
+    }
     void d.dismiss().catch(() => {});
   }
 
@@ -374,18 +451,34 @@ export class RunPolicy implements RunnerPolicy {
     this.actuations++;
   }
 
+  /**
+   * 네비게이션 뒤: 안정 대기 + 화면 확인. 포털 화면인데 기대 경로(플레이북 화면·조회·로그인) 밖이면 모르는 화면이다:
+   * 커밋 전이면 핸드오프로 멈추고, 커밋 뒤면 기록만 한다(끊으면 발급됐는지 모름만 생긴다).
+   */
   async settled(page: Page): Promise<void> {
     await this.sleep(this.g.delay(this.g.policy.pace.afterNavSettleMs, this.g.clock().conservative));
     await this.look(page);
+    if (page.isClosed() || pathExpected(page.url(), this.portal)) return;
+    this.o.journal('portal.unexpected_page');
+    if (this.committed) return;
+    this.arrived = false; // 깨끗한 실행이 아니다(연속을 끊지 않는다)
+    throw new RunEnd('handoff', 'portal.unexpected_page');
+  }
+
+  /** 게이트·커밋 직전 확인. 금고가 화면 확인을 거부했으면(비밀 창) 확인할 수 없으므로 승인·클릭하지 않는다(fail-closed). */
+  private async lookObservable(): Promise<void> {
+    this.unobservable = null;
+    await this.look(this.page);
+    if (this.unobservable) throw new RunEnd('handoff', 'portal.unobservable');
   }
 
   async beforeGate(): Promise<void> {
-    await this.look(this.page);
+    await this.lookObservable();
   }
 
   async beforeCommit(): Promise<void> {
     await this.navigationSlot();
-    await this.look(this.page);
+    await this.lookObservable();
     this.checkRunLimits(1);
   }
 
@@ -402,14 +495,22 @@ export class RunPolicy implements RunnerPolicy {
 
   /**
    * 실행 끝: 진행 중인 화면 확인을 마치고 감시를 뗀다(그 뒤 사유는 latched로 정한다). 신호 없이 기대한 화면(체크포인트)까지 간
-   * 실행이면 연속 횟수를 0으로. 화면을 못 찾고 끝난 실행은 사전에 없는 차단 화면이었을 수 있어 연속을 끊지 않는다.
+   * 실행이면 연속 횟수를 0으로. 화면을 못 찾고 끝난 실행은 사전에 없는 차단 화면이었을 수 있어 연속을 끊지 않고 모르는 화면
+   * 연속을 올린다(2회 보수 모드, 3회부터 양성 탐지). 사용자가 [중지]한 실행은 화면 탓이 아니라 세지 않는다.
    */
-  finish(): Promise<void> {
+  finish(o: { userStopped?: boolean } = {}): Promise<void> {
     this.finishing ??= (async () => {
       this.watch.detach(); // 새 확인을 더 만들지 않는다(새로고침이 이어지는 화면에서도 끝나게)
       await this.watch.idle();
       this.closed = true;
-      if (!this.latch && this.arrived) this.g.clean();
+      if (this.latch) return;
+      if (this.arrived) return this.g.clean();
+      if (o.userStopped) return;
+      const streak = this.g.unknownScreen();
+      this.o.journal('portal.unknown_screen', { streak });
+      if (streak < UNKNOWN_SCREEN_POSITIVE) return;
+      const cooled = this.g.positive('portal.unknown_screen');
+      if (cooled) this.o.journal('cooldown.started', { hours: this.g.policy.cooldown.onBlockSignalHours });
     })();
     return this.finishing;
   }
