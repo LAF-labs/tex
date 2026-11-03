@@ -25,6 +25,7 @@
 | [ADR-021](ADR-021-pc-approval-evidence-main-approval-bar.md) | PC 승인의 근거: main 소유 승인 바(스크립트 없는 `WebContentsView`, main이 위치를 정하고 클릭을 직접 관찰, 대화 카드에는 승인 버튼 없음)와 선택 Windows Hello 확인 | 채택(PoC-6 확인·PoC-9 배치 선택 조건 있음), 클릭 활성화 예외·중복 표시는 ADR-027, Hello 합치기는 ADR-026으로 개정 |
 | [ADR-022](ADR-022-wetax-portal-ceiling.md) | 위택스 운영 수준 상한(`wetax: postprocess`)과 포털 상한 판정 기준: 사전 허락이 필요한 포털은 허락 회신 + 앱 업데이트 뒤에만 자동화 | 채택 |
 | [ADR-023](ADR-023-policy-poll-interval.md) | 운영 정책·status 조회 주기(15분 + 실행 직전 재조회)와 반영 시간 목표(켜진 앱 20분) | 채택 |
+| [ADR-024](ADR-024-cross-pc-duplicate-warning.md) | 기기 간 중복 발급 경고: Phase 1은 포털 발급목록 기준선(`$dup.portalExisting`, 서버 기록 없음), 서버 업무 키 표시는 Phase 2·데스크톱 2대 이상 계정만, `K_idx`는 새 PC 연결(A-03)이 넘김 | 채택; 결정 6의 RK 보관 방식은 ADR-029 결정 1이 정함 |
 | [ADR-025](ADR-025-poc3-real-account-safety-baseline.md) | PoC-3 실계정 진입 안전 기준선: 앱이 집행하는 PoC 상한, 안전 쪽 실패 해석, 실비밀 경로 하나 | 채택(2026-11-03, AUDIT-D 24건) |
 | [ADR-026](ADR-026-human-secret-device-bound-session-vault.md) | 사람 비밀 등급 정합: 기기 결박 열쇠와 Windows 세션을 따르는 금고, 엄격 모드는 발급마다 Hello | 채택(2026-11-03, S10c 조건부, AUDIT-D 5건) |
 | [ADR-027](ADR-027-approval-precision.md) | 승인 정밀도: 바의 줄 수를 늘리지 않고 더 정확하게, 사용자 동작은 main이 본 입력에 묶는다 | 채택(2026-11-03, AUDIT-D 6건) |

@@ -122,7 +122,7 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   action_hash TEXT NOT NULL,
   state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt','observed_manual')) NOT NULL,
   reason TEXT,                               -- not_committed 사유: pre_dispatch_mismatch | identity_mismatch | payload_mismatch | verify
-  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,
+  armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,  -- verify_ref: committed 판정의 B₁\B₀ 한 건(H-01 승인번호). bind 유무와 무관, verify가 committed로 판정하지 않은 행은 NULL (ADR-024)
   cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(ledgerHmacKey = 엔진이 DB 키에서 HKDF로 파생). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
   recipient_email_hmac TEXT,                 -- 받는 이메일 HMAC(같은 키, 소문자 + 도메인 punycode로 정규화). 처음 보내는 주소 판정(ADR-021)
   PRIMARY KEY(intent_id, step_id)
@@ -254,8 +254,8 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 - **없는 것**: 파일명, 상호, 사업자번호, 금액, 승인번호, 경로, **크기(`bytes`)**, **초 단위 갱신 시각(`client_updated_at`)**, **일 단위 발급일**, **dedup 토큰**. 동기화 충돌은 `rev`로 판정한다(D09 §6).
 - 서버가 알 수 있는 것(정직한 서술, 상충 C/X-05): 프로필 슬롯 개수, 그리고 사업자 프로필이 있으면 `profile_slots.biz_hmac`이 있으므로 '사업자 프로필 보유' 여부를 안다. 사업자번호·상호는 모른다. 슬롯 번호는 종류를 뜻하지 않는다.
 - dedup(C-13): 서버 `dedup_token`을 **삭제**했다. 중복 판단은 로컬 `documents.sha256 → blob_id` 매핑으로만 한다. 새 PC 복구 시에는 블롭 안의 암호화된 문서 머리(§6)에서 `sha256`을 되살려 매핑을 다시 만든다.
-- `K_idx`는 dedup에 쓰지 않는다. 남은 용도는 업무 키 표시 HMAC(`biz_key_marks`, B-30)과 프로필 사업자 HMAC(B-28)이며 서버 테이블은 D09 §2·§6에 있다.
-- **발급 활동 표시**(정직한 서술, E-07): 위 "없는 것" 원칙의 예외로, 백업(메타데이터 동기화)을 켠 계정에서는 서버 `biz_key_marks`에 업무 키 HMAC·상태(`armed`·`committed`·`in_doubt`·`observed_manual`)·일 단위 날짜가 90일(`armed`는 10분) 남는다. 초 단위 시각은 없지만 서버는 이것으로 계정별 발급 건수·영업 리듬과 게이트 조회 시각을 안다. 백업을 끄면 이 기록도 없고 기기 간 중복 경고도 없다(D09 §6, D03 §4).
+- `K_idx`는 dedup에 쓰지 않는다. 남은 용도는 프로필 사업자 HMAC(B-28, Phase 1부터)과 업무 키 표시 HMAC(`biz_key_marks`, B-30, Phase 2·데스크톱 2대 계정, ADR-024)이며 서버 테이블은 D09 §2·§6에 있다.
+- **발급 활동 표시**(정직한 서술, E-07, ADR-024): 위 "없는 것" 원칙의 예외로, Phase 2에서 폐기되지 않은 데스크톱이 2대 이상이고 백업(메타데이터 동기화)을 켠 계정에서는 서버 `biz_key_marks`에 업무 키 HMAC·상태(`armed`·`committed`·`in_doubt`·`observed_manual`)·일 단위 날짜가 90일(`armed`는 10분) 남는다. 초 단위 시각은 없지만 서버는 이것으로 계정별 발급 건수·영업 리듬과 게이트 조회 시각을 안다. 백업을 끄거나 PC가 한 대면 이 기록이 없고, 기기 간 중복 경고는 PC가 포털 발급목록 기준선으로만 한다(D09 §6, D03 §4). Phase 1에는 이 기록이 없다.
 
 - 서버 메타데이터(`doc_index`)·`biz_key_marks` 테이블에는 생성·갱신 시각 컬럼을 두지 않는다(감사는 `day`만). `track_commit_timestamp=off`. 스키마 린트가 `*_at`·`timestamp`·`timestamptz` 컬럼을 막는다(ADR-029, D-52(N-83)). 백업·WAL 보존은 D09 §10.
 
@@ -272,7 +272,7 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 
 - `header.alg`가 알고리즘 식별자다. 새 스위트는 `v`를 올려 공존시킨다(D08 §2).
 - AAD의 `blob_id`·`doc_id`로 서버가 블롭을 맞바꾸는 공격을 막는다.
-- 키 계층은 D08 §3을 따른다: RK(첫 PC가 무작위로 생성) → `KEK_N = HKDF(RK, "kek/blob/vN" ‖ salt_N)`(파일 DEK 래핑), `K_idx`(업무 키 표시·프로필 사업자 HMAC). 복구 문구와 `K_chk`는 없다. 기기별 랜덤 키(Noise·서명·inbox)는 RK와 분리한다. 계정 신뢰 앵커는 첫 PC가 만든 AIK다. RK·AIK의 래핑 사본은 페어링된 폰과 사용자가 고른 두 번째 PC에만 있고 서버에는 없다(ADR-016 v2·ADR-029, D-16(N-09)). 폰은 문서를 열 때 그 문서의 wDEK만 받아 쓰고 대량 동기화하지 않는다(C-07).
+- 키 계층은 D08 §3을 따른다: RK(첫 PC가 무작위로 생성) → `KEK_N = HKDF(RK, "kek/blob/vN" ‖ salt_N)`(파일 DEK 래핑), `K_idx`(프로필 사업자 HMAC, Phase 2부터 업무 키 표시, ADR-024). 복구 문구와 `K_chk`는 없다. 기기별 랜덤 키(Noise·서명·inbox)는 RK와 분리한다. 계정 신뢰 앵커는 첫 PC가 만든 AIK다. RK·AIK의 래핑 사본은 페어링된 폰과 사용자가 고른 두 번째 PC에만 있고 서버에는 없다(ADR-016 v2·ADR-029, D-16(N-09)). 폰은 문서를 열 때 그 문서의 wDEK만 받아 쓰고 대량 동기화하지 않는다(C-07).
 - **KEK 회전의 한계(C-07)**: 키 객체가 분리되어 있어 KEK 회전은 wDEK 재래핑만으로 끝나지만, 이것은 **아직 wDEK를 받지 않은 문서**에 대해서만 폐기 기기의 접근을 막는다. DEK는 바뀌지 않으므로 폐기 전에 기기가 받은 wDEK의 문서는 블롭을 재암호화하지 않으면 계속 열 수 있다. PC·폰 도난이면 새 RK·전체 재암호화가 필요하다. 절차는 D08 §9.
 - **키-객체 분리는 운영 편의(회전·삭제)이지 기밀성 분리가 아니다(C-08).** 키 객체와 블롭은 같은 운영자 안에 있다. 기밀성은 클라이언트만 가진 KEK에서 온다.
 - 평문 해시·평문 해시의 HMAC은 서버에 보내지 않는다. 정부 서류는 양식이 고정되고 가변 필드 엔트로피가 낮아 평문 해시가 사전 대입에 취약하다.
