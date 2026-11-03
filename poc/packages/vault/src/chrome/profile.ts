@@ -80,3 +80,33 @@ export async function hasGoogleSignin(profileDir: string): Promise<boolean> {
   const accounts = prefs.account_info;
   return (Array.isArray(accounts) && accounts.length > 0) || typeof getPath(prefs, 'google.services.last_gaia_id') === 'string';
 }
+
+/** 프로필 아래 크래시 덤프 폴더. Windows·macOS는 Crashpad, Linux는 Crash Reports. */
+const CRASH_DUMP_DIRS = ['Crashpad', 'Crash Reports'];
+
+async function countFiles(dir: string): Promise<number> {
+  let n = 0;
+  for (const e of await fs.readdir(dir, { withFileTypes: true }).catch(() => [])) {
+    if (e.isDirectory()) n += await countFiles(path.join(dir, e.name));
+    else n++;
+  }
+  return n;
+}
+
+/**
+ * 전용 Chrome 크래시 덤프 삭제(N-04). 지운 파일 수를 돌려준다.
+ * 덤프 폴더가 심링크·재분석 지점이면 링크 너머를 지우지 않고 -1.
+ */
+export async function removeCrashDumps(profileDir: string): Promise<number> {
+  let count = 0;
+  for (const name of CRASH_DUMP_DIRS) {
+    const dir = path.join(profileDir, name);
+    const st = await fs.lstat(dir).catch(() => null);
+    if (!st) continue;
+    if (st.isSymbolicLink()) return -1;
+    if (st.isDirectory()) count += await countFiles(dir);
+    else count++;
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+  return count;
+}

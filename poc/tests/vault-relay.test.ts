@@ -144,11 +144,11 @@ describe('vault relay (raw engine)', () => {
     const secret = testSecret('TEST-CERT');
     secrets.push(secret);
     await h.control.rpc('run.begin', { runId: 'r1', trigger: 'local' });
-    await h.secretInput.rpc('secret.provide', { kind: 'cert_password', scope: 'p1', bytes: new TextEncoder().encode(secret) });
+    await h.provide({ runId: 'r1', kind: 'cert_password', scope: 'personal' }, secret);
     await eng.navigate(sid, `${fx.origin}/login`);
     await eng.evaluate(sid, `document.getElementById('pw').focus()`);
     const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId);
-    const r = await h.client.rpc<{ ok: boolean; reason?: string }>('typist.fill', { runId: 'r1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'p1' } });
+    const r = await h.client.rpc<{ ok: boolean; reason?: string }>('typist.fill', { runId: 'r1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'personal' }, slot: { secretKind: 'cert_password', purpose: 'login' } });
     assert.deepEqual(r, { ok: true });
     await closed;
 
@@ -248,8 +248,10 @@ describe('vault relay (raw engine)', () => {
     await userType(h, targetId, secret);
     // (라) 엔진 종료 요청: 포커스가 남아 있으면 거부
     assert.deepEqual(await h.client.rpc('secretWindow.requestClose', { runId: 'r1', targetId }), { ok: false });
+    // 종료 조건 (나)는 blur + 값 있음이 1.5초 이어질 때(N-47)
+    const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
     await userEval(h, targetId, `document.activeElement.blur()`);
-    await sleep(400);
+    await closed;
     assert.equal(h.vault.relay!.targets.get(targetId)!.win?.phase, 'tainted');
     const mark = eng.events.length;
     await eng.evaluate(sid, `document.getElementById('go').click()`);
@@ -275,6 +277,8 @@ describe('vault relay (raw engine)', () => {
     const logs = await scanDir(h.paths.logs, secrets);
     await h.vault.shutdown();
     const profile = await scanDir(h.paths.chromeProfile, secrets);
+    // 앱 루트 전체(logs·staging·chrome-profile·db 등, N-17)
+    const all = await scanDir(h.paths.root, secrets);
     const report = {
       secrets: secrets.length,
       variantsPerSecret: variantsOf(secrets[0]!).map((v) => v.name),
@@ -286,11 +290,14 @@ describe('vault relay (raw engine)', () => {
       profileFiles: profile.files,
       profileSkipped: profile.skipped,
       profileFindings: profile.findings,
+      rootFiles: all.files,
+      rootFindings: all.findings,
     };
     measurements.leakScan = report;
     assert.deepEqual(ipc, []);
     assert.deepEqual(logs.findings, []);
     assert.deepEqual(profile.findings, []);
+    assert.deepEqual(all.findings, []);
   });
 });
 
@@ -408,6 +415,69 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     assert.equal(await eng.evaluate(sid, 'location.pathname'), '/login', '부모 page 세션 유지');
     assert.ok(!eng.events.slice(mark).some((e) => e.method === 'Target.detachedFromTarget' && e.params?.sessionId === sid));
     assert.equal(h.log.lines.filter((l) => l.includes('vault.origin_left')).length, leftBefore, '부모에 originLeft 없음');
+  });
+});
+
+describe('비밀 창 개시 조건 재검사·크래시 잔존물(감사 D V1·V2)', () => {
+  let fx: Fixture;
+  before(async () => {
+    fx = await startFixture();
+  });
+  after(async () => {
+    await fx.close();
+  });
+
+  it('google sign-in after launch blocks next openForHuman', async () => {
+    const h = await startHarness();
+    try {
+      const eng = new RawEngine(h.client);
+      await h.client.rpc('browser.launch');
+      const { sessionId, targetId } = await eng.attachRunPage();
+      assert.deepEqual(await h.vault.profileChecked(), [], '기동 점검은 통과');
+      await h.control.rpc('run.begin', { runId: 'g1', trigger: 'local' });
+      await eng.navigate(sessionId, `${fx.origin}/login`);
+      // 기동 뒤 전용 Chrome에서 Google 로그인이 생겼다(hasGoogleSignin이 보는 표식)
+      const prefsFile = path.join(h.paths.chromeProfile, 'Default', 'Preferences');
+      const prefs = JSON.parse(await fs.readFile(prefsFile, 'utf8')) as Record<string, unknown>;
+      await fs.writeFile(prefsFile, JSON.stringify({ ...prefs, account_info: [{ account_id: 'x', email: 'x@example.com' }] }));
+      const refusedCtl = h.control.once('secret_window.refused', () => true, 3000);
+      const refusedEng = h.client.once('secret_window.refused', () => true, 3000);
+      assert.deepEqual(await h.client.rpc('secretWindow.openForHuman', { runId: 'g1', targetId, frame: 'main', element: '#pw' }), { ok: false, reason: 'secret_window_refused' });
+      assert.deepEqual(await refusedCtl, { reason: 'google_signin_detected' });
+      assert.deepEqual(await refusedEng, { reason: 'google_signin_detected' });
+      assert.equal(h.vault.relay!.targets.get(targetId)!.win, undefined, '창을 열지 않았다');
+    } finally {
+      await h.close();
+    }
+  });
+
+  it('crash-induced: Page.crash during secret window leaves no test secret in profile', async () => {
+    const h = await startHarness();
+    try {
+      const secret = testSecret('TEST-CERT');
+      const eng = new RawEngine(h.client);
+      await h.client.rpc('browser.launch');
+      const { sessionId, targetId } = await eng.attachRunPage();
+      await h.vault.profileChecked();
+      await h.control.rpc('run.begin', { runId: 'c1', trigger: 'local' });
+      await eng.navigate(sessionId, `${fx.origin}/login`);
+      assert.deepEqual(await h.client.rpc('secretWindow.openForHuman', { runId: 'c1', targetId, frame: 'main', element: '#pw' }), { ok: true });
+      await userEval(h, targetId, `document.getElementById('pw').focus()`);
+      await userType(h, targetId, secret);
+      // 활성 창 중 렌더러 크래시(금고 세션에서 유도). 응답이 오지 않을 수 있다.
+      const t = h.vault.relay!.targets.get(targetId)!;
+      void h.vault.relay!.send('Page.crash', {}, t.vaultSession).catch(() => {});
+      await eng.waitEvent((e) => e.method === 'Inspector.targetCrashed' && e.sessionId === sessionId, 0, 5000).catch(() => null);
+      await sleep(1000);
+      await h.vault.shutdown();
+      const profile = await scanDir(h.paths.chromeProfile, [secret]);
+      assert.deepEqual(profile.findings, []);
+      for (const d of ['Crashpad', 'Crash Reports']) assert.equal(await fs.stat(path.join(h.paths.chromeProfile, d)).catch(() => null), null, `${d} 없음`);
+      const root = await scanDir(h.paths.root, [secret]);
+      assert.deepEqual(root.findings, []);
+    } finally {
+      await h.close();
+    }
   });
 });
 

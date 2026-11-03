@@ -8,17 +8,24 @@ export interface Fixture {
   origin: string;
   /** 서버가 받은 요청 바디(누출 확인 대상이 아니라 "실제로 제출되었는가" 확인용). */
   bodies: string[];
+  /** 서버가 받은 Cookie 요청 헤더(쿠키 정리 시험이 헛돌지 않는지 확인용). */
+  cookies: string[];
+  /** /session이 내려 주는 세션 쿠키 값(엔진 수신 원문에서 0건이어야 한다, N-51). */
+  cookieValue: string;
   close(): Promise<void>;
 }
 
 export async function startFixture(): Promise<Fixture> {
   const bodies: string[] = [];
+  const cookies: string[] = [];
+  const cookieValue = `SAXTEST-${Math.random().toString(36).slice(2, 12)}`;
   const server = http.createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://x');
     let body = '';
     req.on('data', (c: Buffer) => (body += c.toString('utf8')));
     req.on('end', () => {
       if (body) bodies.push(body);
+      if (req.headers.cookie) cookies.push(req.headers.cookie);
       const html = (s: string) => {
         res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
         res.end(s);
@@ -60,6 +67,10 @@ export async function startFixture(): Promise<Fixture> {
           setTimeout(() => html(page('slow', '<p id="slow">slow</p>')), ms);
           return;
         }
+        case '/session':
+          // 로그인 응답 흉내: 세션 쿠키를 내려 준다
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'set-cookie': `SAXTEST=${cookieValue}; Path=/; HttpOnly`, authorization: 'Bearer SAXTEST-auth' });
+          return res.end(page('session', '<p>ok</p>'));
         case '/popup':
           return html(page('popup', `<button id="open" onclick="window.open('/login')">open</button>`));
         case '/away':
@@ -80,6 +91,8 @@ export async function startFixture(): Promise<Fixture> {
   return {
     origin: `http://127.0.0.1:${port}`,
     bodies,
+    cookies,
+    cookieValue,
     close: () => new Promise((r) => {
       server.closeAllConnections();
       server.close(() => r());

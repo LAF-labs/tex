@@ -1,11 +1,16 @@
 import type { EventLog } from '@sax/platform';
+import { HUMAN_SETTLE_MS, SECRET_TTL_MS, SELF_SCAN_TIMEOUT_MS } from '../constants.ts';
+import { scanDir } from '../leak/scanner.ts';
+import type { SecretInputBind, VaultEventName } from '../protocol.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
-import { knownValueVariants } from '../relay/sanitize.ts';
+import { KNOWN_VALUE_MIN_LEN, knownValueVariants } from '../relay/sanitize.ts';
 
 type Json = Record<string, unknown>;
 
-export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused';
+export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing';
+
+export type SecretKind = SecretInputBind['kind'];
 
 export interface FillRequest {
   runId: string;
@@ -15,34 +20,72 @@ export interface FillRequest {
   /** CSS 셀렉터(PoC). Phase 1은 셀렉터 사전 ElementLocator. */
   element: string;
   secret: { kind: string; scope: string; row?: number };
+  /** 셀렉터 사전 칸의 비밀 종류·용도(I-7, N-46). 요청 kind와 같을 때만 입력한다. */
+  slot: { secretKind: SecretKind; purpose: 'login' | 'sign' };
+}
+
+interface HeldSecret {
+  runId: string;
+  kind: string;
+  bytes: Uint8Array;
+  timer: NodeJS.Timeout;
 }
 
 /**
  * PoC는 비밀을 저장하지 않는다(ADR-017). 사용자가 금고 직결 입력 창에서 넣은 값을 한 번만 쓰고 지운다.
  * main·렌더러 본체는 이 값을 중계하지 않는다(입력 창 포트는 금고에 직결).
+ * 값은 실행(runId)에 묶이고 TTL이 지나거나 run.end면 0으로 덮어 지운다(N-44).
  */
 export class OneShotSecrets {
-  private readonly items = new Map<string, Uint8Array>();
-  private key(kind: string, scope: string, row?: number) {
-    return `${kind}/${scope}/${row ?? ''}`;
+  private readonly items = new Map<string, HeldSecret>();
+  private readonly ttlMs: number;
+  private readonly onExpire: (runId: string, kind: string) => void;
+
+  constructor(ttlMs = SECRET_TTL_MS, onExpire: (runId: string, kind: string) => void = () => {}) {
+    this.ttlMs = ttlMs;
+    this.onExpire = onExpire;
   }
-  provide(kind: string, scope: string, bytes: Uint8Array, row?: number): void {
-    const k = this.key(kind, scope, row);
-    this.items.get(k)?.fill(0);
-    this.items.set(k, bytes);
+
+  private key(runId: string, kind: string, scope: string, row?: number) {
+    return `${runId}|${kind}/${scope}/${row ?? ''}`;
   }
-  take(kind: string, scope: string, row?: number): Uint8Array | null {
-    const k = this.key(kind, scope, row);
-    const v = this.items.get(k) ?? null;
+
+  private drop(k: string): HeldSecret | undefined {
+    const v = this.items.get(k);
+    if (!v) return undefined;
+    clearTimeout(v.timer);
     this.items.delete(k);
     return v;
   }
-  has(kind: string, scope: string): boolean {
-    return [...this.items.keys()].some((k) => k.startsWith(`${kind}/${scope}/`));
+
+  provide(bind: SecretInputBind, bytes: Uint8Array): void {
+    const k = this.key(bind.runId, bind.kind, bind.scope, bind.row);
+    this.drop(k)?.bytes.fill(0);
+    const timer = setTimeout(() => {
+      const v = this.drop(k);
+      if (!v) return;
+      v.bytes.fill(0);
+      this.onExpire(v.runId, v.kind);
+    }, this.ttlMs);
+    timer.unref();
+    this.items.set(k, { runId: bind.runId, kind: bind.kind, bytes, timer });
   }
+
+  /** 같은 실행의 값만 꺼낸다. 꺼낸 값은 더 이상 들고 있지 않는다(부르는 쪽이 0으로 덮는다). */
+  take(runId: string, kind: string, scope: string, row?: number): Uint8Array | null {
+    return this.drop(this.key(runId, kind, scope, row))?.bytes ?? null;
+  }
+
+  get size(): number {
+    return this.items.size;
+  }
+
+  clearRun(runId: string): void {
+    for (const [k, v] of [...this.items]) if (v.runId === runId) this.drop(k)?.bytes.fill(0);
+  }
+
   clear(): void {
-    for (const v of this.items.values()) v.fill(0);
-    this.items.clear();
+    for (const k of [...this.items.keys()]) this.drop(k)?.bytes.fill(0);
   }
 }
 
@@ -62,24 +105,57 @@ const PROBE_FN = `function () {
 interface HumanWatch {
   objectId: string;
   timer: NodeJS.Timeout;
+  /** blur + 값 있음을 처음 본 시각(N-47). 길이·포커스가 바뀌면 다시 센다. */
+  idleSince?: number;
+  lastLen?: number;
 }
+
+export type VaultEmit = (to: ReadonlyArray<'engine' | 'control'>, name: VaultEventName, data: Json) => void;
+
+export interface SecretOpsOptions {
+  /** 시험만 주입한다. 기본 SECRET_TTL_MS. */
+  secretTtlMs?: number;
+  /** 비밀 사용 직후 그 값으로 훑을 폴더(N-17). 없으면 자기 스캔을 하지 않는다. */
+  selfScan?: { roots: string[] };
+  /** 금고 이벤트(I-2·I-3). */
+  emit?: VaultEmit;
+  /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남도록 금고가 들고 있다. */
+  usedSlots?: Set<string>;
+}
+
+/** 실행당 종류별 1회 키(보안카드는 칸별). */
+export const slotKey = (runId: string, kind: string, row?: number): string => `${runId}|${kind}|${row ?? ''}`;
 
 /** 비밀 창(D05 §3.5)과 타이피스트(D05 §4). 모든 동작은 금고 감시 세션에서 한다. */
 export class SecretOps {
   private readonly relay: Relay;
   private readonly policy: RelayPolicy;
   private readonly log: EventLog;
-  readonly secrets = new OneShotSecrets();
+  private readonly opts: SecretOpsOptions;
+  private readonly emit: VaultEmit;
+  readonly secrets: OneShotSecrets;
   /** main이 알려 준 실행 트리거(엔진의 주장으로 받지 않는다). */
   readonly runTriggers = new Map<string, 'local' | 'remote' | 'daemon'>();
   private readonly human = new Map<string, HumanWatch>();
-  /** 비밀 창 개시 조건(Preferences·확장·Google 로그인) 위반 사유. null이면 통과. */
-  openBlocker: () => string | null = () => 'profile_not_checked';
+  /** 창 개시 진행 중인 타깃(await 사이 이중 개시 차단, N-43). */
+  private readonly opening = new Set<string>();
+  readonly usedSlots: Set<string>;
+  /** 가장 최근 자기 스캔(시험이 기다린다). */
+  selfScanDone: Promise<void> = Promise.resolve();
+  /** 비밀 창 개시 조건(Preferences·확장·Google 로그인) 위반 사유. 열 때마다 다시 본다(N-18). null이면 통과. */
+  openBlocker: () => Promise<string | null> = async () => 'profile_not_checked';
 
-  constructor(relay: Relay, policy: RelayPolicy, log: EventLog) {
+  constructor(relay: Relay, policy: RelayPolicy, log: EventLog, opts: SecretOpsOptions = {}) {
     this.relay = relay;
     this.policy = policy;
     this.log = log;
+    this.opts = opts;
+    this.emit = opts.emit ?? (() => {});
+    this.usedSlots = opts.usedSlots ?? new Set();
+    this.secrets = new OneShotSecrets(opts.secretTtlMs ?? SECRET_TTL_MS, (runId, kind) => {
+      this.log.event('vault.secret_expired', { kind });
+      this.emit(['control'], 'secret.expired', { runId, kind });
+    });
   }
 
   private async resolve(t: TargetState, frame: string, selector: string): Promise<{ objectId: string; backendNodeId: number; frameId: string; frameUrl: string } | null> {
@@ -105,16 +181,36 @@ export class SecretOps {
 
   private refuse(reason: string): { ok: false; reason: 'secret_window_refused' } {
     this.log.event('vault.secret_window_refused', { reason });
+    this.emit(['engine', 'control'], 'secret_window.refused', { reason });
     return { ok: false, reason: 'secret_window_refused' };
+  }
+
+  /** 사람 비밀 입력은 local·remote 실행만(A-23·N-77). 없음·daemon·그 밖은 거부. */
+  private triggerAllowed(runId: string): boolean {
+    const trigger = this.runTriggers.get(runId);
+    return trigger === 'local' || trigger === 'remote';
   }
 
   async fill(req: FillRequest): Promise<{ ok: boolean; reason?: FillReason }> {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t) return { ok: false, reason: 'not_found' };
-    const trigger = this.runTriggers.get(req.runId);
-    if (!trigger || trigger === 'daemon') return { ok: false, reason: 'denied' };
-    if (t.win) return { ok: false, reason: 'denied' };
-    const blocker = this.openBlocker();
+    if (!this.triggerAllowed(req.runId)) return { ok: false, reason: 'denied' };
+    // 요청 kind와 사전 칸의 kind가 같아야 한다(「또는」이 아니라 「그리고」, N-46).
+    if (!req.slot || req.slot.secretKind !== req.secret?.kind) return { ok: false, reason: 'not_secret_slot' };
+    const used = slotKey(req.runId, req.secret.kind, req.secret.row);
+    if (this.usedSlots.has(used)) return { ok: false, reason: 'denied' };
+    // 개시 검사와 표시는 await 없이 한 번에(N-43).
+    if (t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'denied' };
+    this.opening.add(t.targetId);
+    try {
+      return await this.fillOpening(t, req, used);
+    } finally {
+      this.opening.delete(t.targetId);
+    }
+  }
+
+  private async fillOpening(t: TargetState, req: FillRequest, used: string): Promise<{ ok: boolean; reason?: FillReason }> {
+    const blocker = await this.openBlocker();
     if (blocker) return this.refuse(blocker);
     const el = await this.resolve(t, req.frame, req.element).catch(() => null);
     if (!el) return { ok: false, reason: 'not_found' };
@@ -123,8 +219,15 @@ export class SecretOps {
     const p0 = await this.probe(t, el.objectId);
     if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
     if (!p0.active) return { ok: false, reason: 'denied' };
-    const secret = this.secrets.take(req.secret.kind, req.secret.scope, req.secret.row);
-    if (!secret) return { ok: false, reason: 'denied' };
+    const secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope, req.secret.row);
+    if (!secret) {
+      // 비밀 창은 금고가 부른다(N-44): main만 창을 열고, 값은 결속된 secretInput 포트로 온다.
+      const data: Json = { runId: req.runId, targetId: t.targetId, kind: req.secret.kind, scope: req.secret.scope };
+      if (req.secret.row !== undefined) data.row = req.secret.row;
+      this.emit(['control'], 'secret.needed', data);
+      return { ok: false, reason: 'secret_missing' };
+    }
+    this.usedSlots.add(used);
 
     // Phase 1 한계(D05 §8): CDP JSON 직렬화 때문에 금고 힙에 문자열 사본이 생긴다(엔진 힙에는 없다).
     const text = new TextDecoder().decode(secret);
@@ -159,32 +262,75 @@ export class SecretOps {
       }
     } finally {
       if (!keyEvents) await this.relay.send('Input.setIgnoreInputEvents', { ignore: false }, t.vaultSession).catch(() => {});
-      this.relay.addKnownSecret(knownValueVariants(text));
+      this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
       this.relay.deactivateWindow(t);
     }
     this.log.event('secret.used', { kind: req.secret.kind, viaTypist: true, ok });
+    this.selfScan(text);
     return ok ? { ok } : { ok, reason };
   }
 
-  async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' }> {
-    const t = this.relay.exposedTarget(req.targetId);
-    if (!t || t.win) return { ok: false, reason: 'not_found' };
-    const blocker = this.openBlocker();
-    if (blocker) return this.refuse(blocker);
-    const el = await this.resolve(t, req.frame, req.element).catch(() => null);
-    if (!el) return { ok: false, reason: 'not_found' };
-    const hosts = Object.values(this.policy.secretHosts).flat();
-    if (!hostAllowed(hostOf(el.frameUrl), hosts)) return { ok: false, reason: 'origin_not_allowed' };
-    this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
-    const watch: HumanWatch = {
-      objectId: el.objectId,
-      timer: setInterval(() => void this.tickHuman(t), 250),
-    };
-    this.human.set(t.targetId, watch);
-    return { ok: true };
+  /**
+   * 비밀 사용 직후 그 값으로 logs·staging을 훑어 건수만 남긴다(N-17, PoC 빌드). 짧은 값(보안카드 칸)은 정상 글자와 겹쳐 건너뛴다.
+   * 기다림은 SELF_SCAN_TIMEOUT_MS까지. 넘으면 결과를 버리고 vault.leak_scan_skipped.
+   */
+  private selfScan(text: string): void {
+    const roots = this.opts.selfScan?.roots;
+    if (!roots?.length || text.length < KNOWN_VALUE_MIN_LEN) return;
+    const scan = (async () => {
+      let files = 0;
+      let findings = 0;
+      for (const root of roots) {
+        const r = await scanDir(root, [text]);
+        files += r.files;
+        findings += r.findings.length;
+      }
+      return { files, findings };
+    })().catch(() => null);
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<'timeout'>((r) => {
+      timer = setTimeout(() => r('timeout'), SELF_SCAN_TIMEOUT_MS);
+      timer.unref();
+    });
+    this.selfScanDone = Promise.race([scan, timeout]).then((r) => {
+      clearTimeout(timer);
+      if (r === 'timeout' || r === null) {
+        this.log.event('vault.leak_scan_skipped');
+        return;
+      }
+      this.log.event('vault.leak_scan', r);
+      if (r.findings > 0) this.emit(['engine', 'control'], 'secret_window.leak_suspected', { hits: r.findings });
+    });
   }
 
-  /** 활성 창 종료 조건 (나)·(다): blur + 값 있음, 노드 분리. 문서 커밋은 Relay가 처리한다. */
+  async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' | 'denied' }> {
+    const t = this.relay.exposedTarget(req.targetId);
+    if (!t || t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'not_found' };
+    if (!this.triggerAllowed(req.runId)) return { ok: false, reason: 'denied' };
+    this.opening.add(t.targetId);
+    try {
+      const blocker = await this.openBlocker();
+      if (blocker) return this.refuse(blocker);
+      const el = await this.resolve(t, req.frame, req.element).catch(() => null);
+      if (!el) return { ok: false, reason: 'not_found' };
+      const hosts = Object.values(this.policy.secretHosts).flat();
+      if (!hostAllowed(hostOf(el.frameUrl), hosts)) return { ok: false, reason: 'origin_not_allowed' };
+      this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
+      const watch: HumanWatch = {
+        objectId: el.objectId,
+        timer: setInterval(() => void this.tickHuman(t), 250),
+      };
+      this.human.set(t.targetId, watch);
+      return { ok: true };
+    } finally {
+      this.opening.delete(t.targetId);
+    }
+  }
+
+  /**
+   * 활성 창 종료 조건 (나)·(다): blur + 값 있음이 HUMAN_SETTLE_MS 동안 길이·포커스 변화 없이 이어짐(N-47), 노드 분리.
+   * 문서 커밋은 Relay가 처리한다.
+   */
   private async tickHuman(t: TargetState): Promise<void> {
     const w = this.human.get(t.targetId);
     if (!w) return;
@@ -193,7 +339,18 @@ export class SecretOps {
       return;
     }
     const p = await this.probe(t, w.objectId);
-    if (!p || !p.connected || (!p.active && p.len > 0)) await this.closeHuman(t);
+    if (!p || !p.connected) return this.closeHuman(t);
+    if (p.active || p.len === 0) {
+      w.idleSince = undefined;
+      return;
+    }
+    const now = Date.now();
+    if (w.idleSince === undefined || w.lastLen !== p.len) {
+      w.idleSince = now;
+      w.lastLen = p.len;
+      return;
+    }
+    if (now - w.idleSince >= HUMAN_SETTLE_MS) await this.closeHuman(t);
   }
 
   private stopHuman(targetId: string): void {
@@ -205,17 +362,21 @@ export class SecretOps {
   private async closeHuman(t: TargetState): Promise<void> {
     const w = this.human.get(t.targetId);
     this.stopHuman(t.targetId);
+    const kind = t.win?.kind ?? 'human';
     if (w) {
       // 오염 상태 동안 엔진행 메시지에서 이 값을 지우기 위해 금고가 읽는다(금고는 TB-1).
       try {
         const r = await this.relay.send<{ result: { value?: string } }>('Runtime.callFunctionOn', { objectId: w.objectId, functionDeclaration: 'function(){return typeof this.value==="string"?this.value:""}', returnByValue: true }, t.vaultSession);
-        if (r.result.value) this.relay.addKnownSecret(knownValueVariants(r.result.value));
+        if (r.result.value) {
+          this.relay.addKnownSecret(t.targetId, knownValueVariants(r.result.value));
+          this.selfScan(r.result.value);
+        }
       } catch {
         // 노드가 이미 분리됨
       }
     }
     this.relay.deactivateWindow(t);
-    this.log.event('secret.used', { kind: 'human', viaTypist: false });
+    this.log.event('secret.used', { kind, viaTypist: false });
   }
 
   /** 사용자가 "입력 완료"를 눌렀다(main 승인 창이나 금고 UI에서 온 신호만, 엔진 신호 아님). */
@@ -224,10 +385,14 @@ export class SecretOps {
     if (t?.win?.phase === 'active' && t.win.kind === 'human') await this.closeHuman(t);
   }
 
-  /** 엔진의 종료 요청(라): 대상 노드 포커스 해제를 확인한 뒤 승인. */
+  /** 엔진의 종료 요청(라): human 창만, 대상 노드 포커스 해제를 확인한 뒤 승인. 타이피스트 입력 중에는 닫지 않는다(N-43). */
   async requestClose(req: { runId: string; targetId: string }): Promise<{ ok: boolean }> {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t?.win || t.win.phase !== 'active') return { ok: true };
+    if (t.win.kind !== 'human') {
+      this.log.event('vault.secret_window_close_denied', { target: t.targetId.slice(0, 8), kind: t.win.kind });
+      return { ok: false };
+    }
     const w = this.human.get(t.targetId);
     const p = w ? await this.probe(t, w.objectId) : null;
     if (w && p && p.active) {
