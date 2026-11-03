@@ -296,24 +296,42 @@ async function main(): Promise<void> {
 
   pickNext(files.locked);
   await importClick();
-  check('열기 암호 PDF: 암호 줄이 뜬다', await js<boolean>(`!!document.querySelector('[data-doc-password]')`));
+  const pwModal = await js<{ dialog: boolean; inert: boolean; focused: boolean }>(
+    `({ dialog: document.querySelector('[data-doc-password]')?.getAttribute('role') === 'dialog' && document.querySelector('[data-doc-password]')?.getAttribute('aria-modal') === 'true', inert: document.querySelector('#app').inert, focused: document.activeElement?.classList.contains('doc-pw') ?? false })`,
+  );
+  check('열기 암호 PDF: 열기 암호 창(모달)이 뜨고 앱 틀은 inert, 암호 칸에 포커스', pwModal.dialog && pwModal.inert && pwModal.focused, pwModal);
   const pending = pickIds.at(-1);
+  // 창이 문서함을 덮으므로 새 가져오기는 대화 입력창의 [+]로 한다(대화에서는 창을 띄우지 않는다)
+  await js(`document.querySelector('#rail [data-view=chat]').click()`);
+  check('대화 화면에서는 열기 암호 창을 띄우지 않는다', await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert`));
   pickNext(null);
-  await importClick();
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('.sx-attach').click()`);
+  await js(`document.querySelector('#rail [data-view=docs]').click()`);
+  await until('docs view after attach', async () => js<boolean>(`!!document.querySelector('[data-act=doc-import]') && !document.querySelector('[data-act=doc-import]').disabled`), 5000);
   const dropped = await js<string>(`window.sax.call('docs.import', { pickId: '${pending}', password: 'shell-pw' }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('암호를 묻는 중에 새로 가져오기를 누르면 묻던 파일은 그만둔다(main도 버림)', !(await js<boolean>(`!!document.querySelector('[data-doc-password]')`)) && !!pending && dropped === 'pick_expired', { pending, dropped });
   pickNext(files.locked);
   await importClick();
+  const esc = await js<{ modal: boolean; inert: boolean; back: boolean }>(
+    `(() => { document.querySelector('.doc-pw').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return { modal: !!document.querySelector('[data-doc-password]'), inert: document.querySelector('#app').inert, back: document.activeElement === document.querySelector('[data-act=doc-import]') }; })()`,
+  );
+  check('Esc → 암호 창을 닫고(그만두기) 포커스는 가져오기 버튼으로', !esc.modal && !esc.inert && esc.back, esc);
+  pickNext(files.locked);
+  await importClick();
   await js(`(() => { const i = document.querySelector('.doc-pw'); i.value = 'wrong'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); })()`);
   await until('wrong pw', async () => js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '')`), 30_000);
-  check('틀린 암호 → 다시 묻고 넣었던 암호는 비운다', await js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '') && document.querySelector('.doc-pw').value === ''`));
+  check('틀린 암호 → 다시 묻고 넣었던 암호는 비우고 칸에 포커스', await js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '') && document.querySelector('.doc-pw').value === '' && document.activeElement === document.querySelector('.doc-pw')`));
   const before = (await listDocs()).length;
-  const locked = await js<{ open: boolean; cancel: boolean }>(
-    `(() => { const i = document.querySelector('.doc-pw'); i.value = 'shell-pw'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); return { open: document.querySelector('[data-act=doc-password]')?.disabled, cancel: document.querySelector('[data-act=doc-password-cancel]')?.disabled }; })()`,
+  const locked = await js<{ modal: boolean; inert: boolean; importBusy: boolean }>(
+    `(() => { const i = document.querySelector('.doc-pw'); i.value = 'shell-pw'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); return { modal: !!document.querySelector('[data-doc-password]'), inert: document.querySelector('#app').inert, importBusy: document.querySelector('[data-act=doc-import]')?.disabled }; })()`,
   );
-  check('암호로 읽는 동안 열기·그만두기를 막는다', locked.open === true && locked.cancel === true, locked);
+  check('암호로 읽는 동안 창을 닫고 앱 틀을 풀되, 가져오기는 읽는 중으로 막는다(그만둔 뒤 보관되는 경쟁 없음)', !locked.modal && !locked.inert && locked.importBusy === true, locked);
   await until('locked imported', async () => (await listDocs()).length === before + 1, 60_000);
-  check('맞는 암호 → 보관하고 암호 줄이 사라진다', (await listDocs()).length === before + 1 && !(await js<boolean>(`!!document.querySelector('[data-doc-password]')`)));
+  await until('import button back', async () => !(await busy()), 10_000);
+  check('맞는 암호 → 보관하고 암호 창은 다시 뜨지 않는다', (await listDocs()).length === before + 1 && (await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert`)));
+  check('열기 암호로 가져온 서류만 목록 이름 옆에 자물쇠', await js<boolean>(`document.querySelectorAll('[data-doc-lock]').length === 1 && document.querySelector('[data-doc-lock]').getAttribute('aria-label') === '열기 암호 있음'`));
 
   const vaultFiles = await fs.readdir(vaultDir);
   check('보관함 파일 5개, 이름에 PII 없음', vaultFiles.length === 5 && vaultFiles.every((f) => /^(national_tax_cert|biz_registration_cert|other)_\d{8}_[0-9A-Z]{4}\.pdf$/.test(f)), vaultFiles);

@@ -86,16 +86,22 @@ export class SecretWindowCoordinator {
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+/** 보기 버튼 아이콘: 눈(가림)·빗금 눈(보임). 어느 쪽을 보일지는 secret.css가 aria-pressed로 고른다. */
+const EYE_PATH = '<path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"></path><circle cx="8" cy="8" r="2"></circle>';
+const EYE = `<svg class="eye" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${EYE_PATH}</svg><svg class="eye-off" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">${EYE_PATH}<path d="M2.5 2.5l11 11"></path></svg>`;
+
 /** 비밀 창 페이지(main이 만든다). 값은 이스케이프한 텍스트로만. kind·scope·row는 금고 결속값과 같은 값만 싣는다. */
 export function secretPageHtml(req: SecretInputBind, profileName: string): string {
   const label = SECRET_LABELS[req.kind];
   const field = req.kind === 'security_card' && req.row ? `${label} ${req.row}번` : label;
+  // 보안카드 번호는 SecretField 규칙대로 기본으로 가리고, 보기 버튼 하나로 보이게 한다(secret.js가 30초 뒤 다시 가린다).
+  const head = req.kind === 'security_card' ? `<div class="sx-secret-hd"><label for="v">${esc(field)}</label><span id="reveal-note" class="sx-meta"></span><button type="button" id="reveal" class="sx-reveal" aria-pressed="false">${EYE}<span>번호 보기</span></button></div>` : `<label for="v">${esc(field)}</label>`;
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
-<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="secret.css"><title>${esc(secretTitle(req.kind))}</title></head>
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(secretTitle(req.kind))}</title></head>
 <body data-kind="${req.kind}" data-scope="${req.scope}"${req.row ? ` data-row="${req.row}"` : ''}>
 <p class="ctx">${esc(`세금계산서 발급 · 홈택스 · ${profileName}`)}</p>
-<form id="f"><label for="v">${esc(field)}</label><input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
+<form id="f">${head}<input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
 <p class="note">이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.</p>
 <p class="note">${esc(SECRET_FIXED_NOTE)}</p>
 <p id="msg" role="status"></p><script src="secret.js"></script></body></html>`;

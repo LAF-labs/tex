@@ -11,8 +11,22 @@ window.addEventListener('message', (ev) => {
     };
   }
 });
+// 보안카드 칸만: 보기 버튼 하나, 켜면 30초 뒤 다시 가린다(디자인 시스템 SecretField). 값은 DOM 속성에 넣지 않는다.
+const reveal = document.getElementById('reveal');
+let revealTimer = 0;
+function setShown(on) {
+  if (!reveal) return;
+  clearTimeout(revealTimer);
+  document.getElementById('v').type = on ? 'text' : 'password';
+  reveal.setAttribute('aria-pressed', String(on));
+  reveal.querySelector('span').textContent = on ? '번호 가리기' : '번호 보기';
+  document.getElementById('reveal-note').textContent = on ? '30초 뒤 다시 가려요' : '';
+  if (on) revealTimer = setTimeout(() => setShown(false), 30_000);
+}
+reveal?.addEventListener('click', () => setShown(reveal.getAttribute('aria-pressed') !== 'true'));
 document.getElementById('f').addEventListener('submit', (e) => {
   e.preventDefault();
+  setShown(false);
   const el = document.getElementById('v');
   if (!port || !el.value) return;
   const bytes = new TextEncoder().encode(el.value);
