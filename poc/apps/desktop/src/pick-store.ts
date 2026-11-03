@@ -35,12 +35,15 @@ export class PickStore {
     return id;
   }
 
-  /** 다시 시도할 바이트. 항목은 남긴다(만료는 첫 선택 기준). 없거나 지났으면 pick_expired. */
+  /**
+   * 다시 시도할 바이트의 사본. 항목은 남긴다(만료는 첫 선택 기준). 없거나 지났으면 pick_expired.
+   * 사본이라야 읽는 도중 취소·만료로 항목을 0으로 덮어도 진행 중인 읽기가 깨지지 않는다.
+   */
   retry(id: string, now: number): Uint8Array {
     this.sweep(now);
     const p = this.picks.get(id);
     if (!p) throw new Error('pick_expired');
-    return p.bytes;
+    return Uint8Array.from(p.bytes);
   }
 
   /** 틀린 암호 한 번. MAX_TRIES번째면 닫고 false. */

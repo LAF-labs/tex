@@ -1,3 +1,4 @@
+import { performance } from 'node:perf_hooks';
 import type { ElementHandle, Locator, Page } from 'playwright-core';
 import { readbackHash } from '../gate.ts';
 import { H01, normalizeField, type Cond, type Phase, type Step } from './playbook.ts';
@@ -151,6 +152,7 @@ export class H01Runner {
   private baseline: Set<string> | null = null;
   private approvedHash: string | null = null;
   private rb: Readback | null = null;
+  /** 커밋 클릭 시각(단조 시계). verify 상한·최소 경과를 벽시계 역행과 무관하게 센다. */
   private dispatchedAt = 0;
   /** 클릭 직전 보이던 실패 신호(셀렉터·정규화 문구). 클릭 뒤 새로 보인 것만 명시적 실패 신호로 센다. */
   private failSignalsBefore = new Set<string>();
@@ -298,7 +300,7 @@ export class H01Runner {
       this.hooks.resolve('not_committed', 'signal', null);
       throw halt;
     }
-    this.dispatchedAt = Date.now();
+    this.dispatchedAt = performance.now();
     // 누를 수 없는 버튼(덮개·이동 중)은 1.5초 안에 드러난다: 요청이 나가지 않았으므로 not_committed.
     const sent = await dispatchClick(button);
     await button.dispose().catch(() => {});
@@ -320,7 +322,7 @@ export class H01Runner {
     let wait = intervalMs;
     let zeroInARow = 0;
     let failedInARow = 0;
-    while (Date.now() - this.dispatchedAt < maxMs) {
+    while (performance.now() - this.dispatchedAt < maxMs) {
       let b1: Set<string> | null = null;
       try {
         b1 = await this.invoiceNumbers(this.rb!);
@@ -340,7 +342,7 @@ export class H01Runner {
         }
         if (fresh.length > 1) break;
         zeroInARow++;
-        if (zeroInARow >= lookups && Date.now() - this.dispatchedAt >= minElapsedMs) {
+        if (zeroInARow >= lookups && performance.now() - this.dispatchedAt >= minElapsedMs) {
           // 클릭 뒤 새로 보이고 문구까지 맞는 실패 신호만 센다(숨김 오류 상자·클릭 전부터 있던 문구·성공 안내는 증거가 아니다).
           // 없으면 상한까지 계속 조회한다(반영이 늦을 수 있다).
           const now = await this.failSignalKeys().catch(() => new Set<string>());

@@ -356,7 +356,7 @@ describe('audit-d: D12 암호 PDF 재시도 상한(N-31)', () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const id = s.keep(bytes, 0);
     for (let i = 1; i < MAX_TRIES; i++) {
-      assert.equal(s.retry(id, i), bytes);
+      assert.deepEqual([...s.retry(id, i)], [1, 2, 3]);
       assert.equal(s.wrong(id), true, `${i}번째`);
     }
     assert.equal(s.wrong(id), false, '5번째');
@@ -379,6 +379,13 @@ describe('audit-d: D12 암호 PDF 재시도 상한(N-31)', () => {
     assert.throws(() => s.retry(xid, 1), /pick_expired/);
     s.cancel('nope');
     assert.equal(s.size, 2);
+  });
+  it('retry hands out a copy: cancelling during a retry does not zero the bytes being parsed', () => {
+    const s = new PickStore();
+    const id = s.keep(new Uint8Array([4, 5]), 0);
+    const reading = s.retry(id, 1);
+    s.cancel(id);
+    assert.deepEqual([...reading], [4, 5], '읽는 중인 사본은 그대로');
   });
 });
 
