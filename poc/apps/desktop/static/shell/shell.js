@@ -308,6 +308,7 @@ function autoGrow() {
 
 // 사람이 카드에서 할 일이 있는 동안에는 요청 칩을 숨긴다(카드 버튼에서 시선을 뺏지 않게, 캔버스 M-01).
 const BUSY = ['draft', 'preparing', 'turn', 'waiting', 'issuing', 'attention'];
+const cardWork = () => [...state.runs.values()].some((r) => BUSY.includes(r.status)) || [...state.g24.values()].some((g) => g.stage === 'guide' || g.stage === 'pick');
 
 /** 많이 쓴 요청 2개. 데모는 빠른 실행 목록의 앞 둘이다(실제로는 활동 기록에서 센다). 누르면 바로 보낸다. */
 function prompts() {
@@ -350,7 +351,7 @@ function renderQuick() {
     } else if (state.fill.length) {
       // 되묻기: 최근 보낸 곳. 점선·연필로 바로 보내는 칩과 구분한다.
       chat.quick.replaceChildren(...state.fill.map((c) => h('button', { type: 'button', class: 'is-fill', 'data-fill': c.cp, title: '입력창에 채우기', onclick: () => fillComposer(c.text) }, icon('pencil'), c.label)));
-    } else if (![...state.runs.values()].some((r) => BUSY.includes(r.status))) {
+    } else if (!cardWork()) {
       chat.quick.replaceChildren(...prompts().map((p) => h('button', { type: 'button', class: 'is-prompt', 'data-prompt': p, onclick: () => sendPrompt(p) }, p, icon('send'))));
     } else {
       chat.quick.replaceChildren();
@@ -436,6 +437,7 @@ function renderG24(g) {
   else appendThread(el);
   if (state.panel?.kind === 'g24' && state.panel.id === g.id) renderPanel();
   renderToday();
+  renderQuick();
 }
 
 /** 오늘 요약(캔버스 M-02): 0이 아닌 건만 "숫자 이름"으로, 오른쪽 끝에 "오늘 요약". 누르면 해당 카드·화면으로 간다. */
