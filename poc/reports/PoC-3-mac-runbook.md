@@ -30,7 +30,7 @@ Windows 실측(PoC-3) 전에, 사람이 맥에서 홈택스를 직접 조작하�
 | 누가 | 하는 일 |
 |---|---|
 | yanggang | 홈택스의 모든 클릭·입력, 인증서 고르기, 비밀번호 입력(가상키패드), 승인 |
-| Claude | 단계 안내, 화면 구조 **읽기만**, 가린 기록, 보고서·PR·보드 글 |
+| Claude | 단계 안내, 터미널·git·GitHub 명령 실행(yanggang은 승인 창만 누른다), 화면 구조 **읽기만**, 가린 기록, 보고서·PR·보드 글 |
 | yulmu | 시작 허락, 보안 프로그램 설치 판단, 멈춘 뒤 재개 판단, PR 머지 |
 
 ## 3. 절대 하지 않는 것
@@ -92,19 +92,19 @@ Claude와 yanggang 모두에게 해당한다. 어기게 될 것 같으면 그 �
    - 개인 인증서면 진행하지 않는다.
    - 기록에는 'PoC 계정 맞음'과 용도(사업자범용/전자세금계산서용)만 남긴다.
 3. **시간.** 같은 계정의 다른 홈택스 사용(대표·직원·세무대리인·Windows PoC-3)과 시간이 겹치지 않는지 yulmu에게 확인한다. 태스크 스레드로 묻는다.
-4. **저장소와 GitHub.**
-   - 저장소가 없으면 `~/Documents/tex`에 `LAF-labs/tex`를 clone한다(비공개 저장소).
-   - `gh auth status`로 로그인을 확인한다.
-     - 없으면 Claude가 설치와 로그인을 안내한다.
-     - yanggang은 브라우저에서 코드를 넣어 승인한다.
+4. **저장소와 GitHub.** 명령은 모두 Claude가 실행한다. yanggang은 승인 창과 브라우저 로그인만 한다.
+   - 저장소가 없으면 Claude가 `~/Documents/tex`에 `LAF-labs/tex`를 clone한다(비공개 저장소).
+   - Claude가 `gh auth status`로 로그인을 확인한다.
+     - 없으면 Claude가 설치하고 `gh auth login`을 실행한다.
+     - yanggang은 열린 브라우저에서 코드를 넣어 승인한다.
      - yanggang 계정에 저장소 권한이 없으면 yulmu에게 요청한다.
-   - `main`에서 브랜치 `poc/poc-3-mac-observe`를 만든다.
+   - Claude가 `main`에서 브랜치 `poc/poc-3-mac-observe`를 만든다.
 5. **Chrome.**
    - yanggang이 테스트 전용 **새 Chrome 프로필**을 만든다. Google 동기화는 켜지 않고, 비밀번호·주소 저장 제안은 거절한다.
    - 그 프로필에 Claude in Chrome 확장을 설치한다.
    - Claude가 `list_connected_browsers`로 새 프로필만 연결됐는지 보고 `select_browser`로 고른다.
    - 사이트 허용 창은 yanggang이 승인한다.
-   - 확장을 쓸 수 없으면, 셀렉터 재료는 빼고 6절 A와 메뉴 경로만 yanggang의 말로 기록한다.
+   - 확장을 쓸 수 없으면, 셀렉터 재료는 빼고 6절 A와 메뉴 경로만 yanggang의 말로 기록한다. 이때는 보고서와 보드 요약에 '셀렉터 재료 없음(확장 연결 불가)'이라고 적는다. 그래도 이 태스크는 완료로 본다.
 6. **시작 승인.** 3~6절을 yanggang에게 짧게 설명하고 승인을 받는다.
 
 ## 6. 절차
@@ -222,7 +222,7 @@ Claude와 yanggang 모두에게 해당한다. 어기게 될 것 같으면 그 �
 
 ## 8. 구조 확인 스크립트(값을 읽지 않음)
 
-`javascript_tool`에는 아래 스크립트만 그대로 넣는다. 입력값·비밀번호 칸·숨은 칸은 읽지 않는다. 같은 출처의 iframe만 본다.
+`javascript_tool`에는 아래 스크립트만 그대로 넣는다. 입력값·비밀번호 칸·숨은 칸은 읽지 않는다. 같은 출처의 iframe만 본다. 결과에 `truncated: true`가 있으면 그 화면은 앞의 150개만 기록하고, `note`에 '요소 많음, 앞 150개만'이라고 적는다. 스크립트는 바꾸지 않는다.
 
 ```js
 (() => {
@@ -237,7 +237,10 @@ Claude와 yanggang 모두에게 해당한다. 어기게 될 것 같으면 그 �
     inForm: !!e.closest('form'),
   });
   const sel = 'input:not([type=hidden]):not([type=password]), select, textarea, button, [role=button], [role=tab], [role=menuitem]';
-  const scan = (doc, frame) => ({ frame, forms: doc.querySelectorAll('form').length, elements: [...doc.querySelectorAll(sel)].slice(0, 150).map(pick) });
+  const scan = (doc, frame) => {
+    const all = [...doc.querySelectorAll(sel)];
+    return { frame, forms: doc.querySelectorAll('form').length, total: all.length, truncated: all.length > 150, elements: all.slice(0, 150).map(pick) };
+  };
   const out = [scan(document, 'main')];
   document.querySelectorAll('iframe').forEach((f, i) => {
     const frame = f.getAttribute('name') || f.id || `iframe${i}`;
