@@ -46,9 +46,13 @@ export function parseSecretNeeded(d: unknown): SecretNeeded | null {
   return { runId: o.runId, targetId: o.targetId, kind: o.kind, scope: o.scope, ...(o.row !== undefined ? { row: o.row as number } : {}) };
 }
 
-/** 비밀 창은 동시에 하나, 활성 실행의 요청만 연다. */
+/**
+ * 비밀 창은 동시에 하나, 활성 실행의 요청만 연다. 창이 열려 있을 때 온 요청(다음 보안카드 칸 등)은 마지막 하나를 들고
+ * 있다가 창이 닫히면 넘긴다(창은 금고가 받은 뒤 잠시 있다 닫힌다).
+ */
 export class SecretWindowCoordinator {
   private current: SecretNeeded | null = null;
+  private next: SecretNeeded | null = null;
   private readonly isActiveRun: (runId: string) => boolean;
 
   constructor(isActiveRun: (runId: string) => boolean) {
@@ -57,9 +61,12 @@ export class SecretWindowCoordinator {
 
   /** 열어도 되면 그 요청(이때부터 열린 것으로 친다), 아니면 null. */
   request(data: unknown): SecretNeeded | null {
-    if (this.current) return null;
     const r = parseSecretNeeded(data);
     if (!r || !this.isActiveRun(r.runId)) return null;
+    if (this.current) {
+      this.next = r;
+      return null;
+    }
     this.current = r;
     return r;
   }
@@ -68,8 +75,12 @@ export class SecretWindowCoordinator {
     return this.current;
   }
 
-  closed(): void {
+  /** 창이 닫혔다. 그동안 들고 있던 요청이 있으면 돌려준다(다시 request로 연다). */
+  closed(): SecretNeeded | null {
     this.current = null;
+    const n = this.next;
+    this.next = null;
+    return n;
   }
 }
 

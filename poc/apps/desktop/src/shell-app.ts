@@ -264,22 +264,26 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     appClosing = secretWin;
     secretWin.close();
   };
+  const openSecret = (data: unknown): void => {
+    const r = secrets.request(data);
+    if (!r || win.isDestroyed()) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
+    const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
+    const w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
+    secretWin = w;
+    // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5). 메인 창이 포커스를 받기 전에
+    // 표시해야 그 활성화가 표시를 쓴다('closed'는 포커스보다 늦을 수 있다).
+    w.on('close', () => {
+      if (appClosing === w) appClosing = null;
+      else bar.noteHandoff();
+    });
+    w.on('closed', () => {
+      if (secretWin === w) secretWin = null;
+      const next = secrets.closed();
+      if (next) openSecret(next);
+    });
+  };
   host.on('vault-event', (name: string, data: unknown) => {
-    if (name === 'secret.needed') {
-      const r = secrets.request(data);
-      if (!r || win.isDestroyed()) return log.event('main.secret_needed_ignored');
-      const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
-      const w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
-      secretWin = w;
-      w.on('closed', () => {
-        if (secretWin === w) secretWin = null;
-        secrets.closed();
-        // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5).
-        if (appClosing === w) appClosing = null;
-        else bar.noteHandoff();
-      });
-      return;
-    }
+    if (name === 'secret.needed') return openSecret(data);
     const n = vaultNotice(name, data);
     if (n) runs.notice(n.runId, n.text);
   });

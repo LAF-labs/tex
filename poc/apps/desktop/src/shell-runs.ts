@@ -254,7 +254,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   /** 카드에 문장 하나를 더한다(금고 이벤트 등). runId가 없거나 끝난 실행이면 진행 중인 실행에. 같은 문장은 한 번만. */
   notice(runId: string | undefined, text: string): void {
-    const r = (runId && this.runs.get(runId)) || [...this.runs.values()].find((x) => this.isActive(x.id));
+    const own = runId ? this.runs.get(runId) : undefined;
+    const active = [...this.runs.values()].find((x) => this.isActive(x.id));
+    const r = own && this.isActive(own.id) ? own : (active ?? own);
     if (!r) return;
     r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
     this.emit('update', r);

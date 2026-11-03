@@ -397,6 +397,11 @@ async function flow(): Promise<void> {
   check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 홈택스 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 홈택스 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
   if (sw) await fs.writeFile(path.join(OUT, '18b-secret-window.png'), (await capture(sw.webContents)).toPNG());
   sw?.close();
+  // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 창이 닫히면 이어서 연다.
+  await until('queued secret window', () => !!S.secretWindow() && S.secretWindow() !== sw && !S.secretWindow()!.webContents.isLoading(), 5000);
+  const sw2 = S.secretWindow();
+  check('비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 "금고 · 보안카드 번호")', !!sw2 && sw2.getTitle() === '금고 · 보안카드 번호' && sw2.isModal(), sw2?.getTitle());
+  sw2?.close();
   await until('secret closed', () => S.secretWindow() === null, 3000);
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'google_signin_detected' });
   check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretWindow() === null, S.runs.get(id2)!.notices);

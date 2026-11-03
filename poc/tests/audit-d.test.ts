@@ -129,9 +129,12 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
     assert.equal(c.request(need({ scope: 'all' })), null);
     assert.equal(c.request(need({ kind: 'security_card', row: 36 })), null, '보안카드 칸은 1~35');
     assert.deepEqual(c.request(need()), { runId: 'run-a', targetId: 'T1', kind: 'cert_password', scope: 'business' });
-    assert.equal(c.request(need({ runId: 'run-b' })), null, '열린 창이 있으면 두 번째는 무시');
-    c.closed();
-    assert.deepEqual(c.request(need({ runId: 'run-b', kind: 'security_card', row: 7 }))?.row, 7);
+    assert.equal(c.request(need({ runId: 'run-b' })), null, '열린 창이 있으면 두 번째는 지금 열지 않는다');
+    assert.equal(c.request(need({ kind: 'security_card', row: 7 })), null, '대신 마지막 요청을 든다');
+    const next = c.closed();
+    assert.equal(next?.row, 7, '창이 닫히면 든 요청을 넘긴다');
+    assert.equal(c.closed(), null, '한 번만');
+    assert.deepEqual(c.request(next)?.row, 7);
     assert.equal(parseSecretNeeded(null), null);
   });
 
@@ -435,5 +438,8 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     runs.notice(undefined, 'x');
     assert.deepEqual(runs.get(d.run.id)!.notices, ['x']);
     assert.equal(runs.isActive(d.run.id), true);
+    // 끝났거나 모르는 실행의 알림도 진행 중인 실행 카드에 붙는다(끝난 카드에 묻히지 않게).
+    runs.notice('run-gone', 'y');
+    assert.deepEqual(runs.get(d.run.id)!.notices, ['x', 'y']);
   });
 });
