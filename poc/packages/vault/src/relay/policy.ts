@@ -95,7 +95,7 @@ export function checkSessionCommand(
       // Playwright의 callFunctionOn은 범용 래퍼이고 실제 코드는 문자열 인자로 간다(S6b). 인자 문자열까지 본다.
       const args = Array.isArray(params?.arguments) ? (params.arguments as Array<{ value?: unknown }>).map((a) => (typeof a.value === 'string' ? a.value : '')) : [];
       // 고정 화면 확인 식과 정확히 같은 조각만 검사에서 뺀다(N-20). 다른 조각은 그대로 본다.
-      const code = [String(params?.expression ?? params?.functionDeclaration ?? ''), ...args].filter((part) => !isExemptInspect(part)).join('\n');
+      const code = [String(params?.expression ?? ''), String(params?.functionDeclaration ?? ''), ...args].filter((part) => !isExemptInspect(part)).join('\n');
       if (TAINT_RUNTIME_DENY_PATTERNS.some((re) => re.test(code))) return deny('secret_window_tainted');
     }
   }

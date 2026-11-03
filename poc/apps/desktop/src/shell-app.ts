@@ -257,8 +257,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const r = secrets.open;
     return r ? secretPageHtml(r, profiles()[r.scope].name) : null;
   };
+  // main이 닫은 창(실행 끝·종료)은 사용자가 돌아온 것이 아니다: 핸드오프 복귀로 치지 않는다.
+  let appClosing: BrowserWindow | null = null;
   const closeSecret = () => {
-    if (secretWin && !secretWin.isDestroyed()) secretWin.close();
+    if (!secretWin || secretWin.isDestroyed()) return;
+    appClosing = secretWin;
+    secretWin.close();
   };
   host.on('vault-event', (name: string, data: unknown) => {
     if (name === 'secret.needed') {
@@ -270,8 +274,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       w.on('closed', () => {
         if (secretWin === w) secretWin = null;
         secrets.closed();
-        // 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5).
-        bar.noteHandoff();
+        // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5).
+        if (appClosing === w) appClosing = null;
+        else bar.noteHandoff();
       });
       return;
     }

@@ -251,7 +251,7 @@ v1.3 문서를 대상으로 한 적대적 재감사가 1차 감사의 Critical·
 | D-37(N-24) | Low | 개발 콘솔이 하드닝 없는 실 자격증명 진입점 | 변형(ADR-025): 공용 `hardenApp`/`hardenWindow`, 옛 기동 제거(RETRO A-02·B-04 일부), `start:hometax`=셸 | PoC | ADR-017, PoC-1 수용서, D11 §4 |
 | D-38(N-57) | Low | 스모크가 실 루트에 합성 데이터 | 변형(ADR-025): 임시 루트, 실 DB 있으면 거부 | PoC | D13 §2 |
 | D-39(N-58) | Low | 메일 상태 부분 일치 | 변형(ADR-025): 부정 우선·정확 허용·그 밖 unknown | PoC | D02 §8 |
-| D-40(N-21) | Low | 클릭 자동 대기 30초·입력 잠금 없음 | 변형(ADR-027): trial 1.5초(PoC), 잠금 두 구간(P1) | PoC/P1 | D03 §5.3 |
+| D-40(N-21) | Low | 클릭 자동 대기 30초·입력 잠금 없음 | 변형(ADR-027): 입력 없는 사전 확인 + 실제 클릭 1.5초(PoC), 잠금 두 구간(P1) | PoC/P1 | D03 §5.3 |
 | D-41(N-29) | Low | 단일 인스턴스·DB 배타 잠금 없음 | 채택(ADR-025): 단일 인스턴스(PoC), EXCLUSIVE·복구 루틴 순서(P1) | PoC/P1 | D07 §1.3 |
 | D-42(N-31) | Low | 암호 PDF 처리 공백 | 변형(ADR-026): "낮음" 등급, 5회 상한(PoC), D17 문구(P1) | PoC/P1 | D05 §2, D17 §1·§3 |
 | D-43(N-35) | Low | Default_Ignorable 한 글자로 3단계 우회 | 변형(등록만): 공통 `normalizeForDetection` | PoC(앞당김) | D06 §2·§7 |

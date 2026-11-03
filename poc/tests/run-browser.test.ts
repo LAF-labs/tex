@@ -154,7 +154,10 @@ describe('커밋 클릭(N-21, 금고 중계 위 실 Chrome)', () => {
     const html = `<!doctype html><meta charset="utf-8"><body style="margin:0">
 <button id="covered" style="position:absolute;left:10px;top:10px;width:120px;height:40px" onclick="window.nCovered=(window.nCovered||0)+1">발급하기</button>
 <div style="position:absolute;left:0;top:0;width:300px;height:100px;background:transparent"></div>
-<button id="open" style="position:absolute;left:10px;top:200px;width:120px;height:40px" onclick="window.nOpen=(window.nOpen||0)+1">발급하기</button></body>`;
+<button id="open" style="position:absolute;left:10px;top:200px;width:120px;height:40px" onclick="window.nOpen=(window.nOpen||0)+1">발급하기</button>
+<button id="below" style="position:absolute;left:10px;top:3000px;width:120px;height:40px" onclick="window.nBelow=(window.nBelow||0)+1">발급하기</button>
+<button id="off" disabled style="position:absolute;left:200px;top:200px;width:120px;height:40px">발급하기</button>
+<script>window.cap=0;window.addEventListener('mousedown',()=>window.cap++,true);window.addEventListener('click',()=>window.cap++,true);</script></body>`;
     const server = http.createServer((_q, r) => r.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(html));
     await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
     const h = await startHarness();
@@ -165,9 +168,14 @@ describe('커밋 클릭(N-21, 금고 중계 위 실 Chrome)', () => {
       const started = Date.now();
       assert.equal(await dispatchClick(covered), 'blocked');
       assert.ok(Date.now() - started < 10_000, 'Playwright 기본 30초를 기다리지 않는다');
+      assert.equal(await dispatchClick((await page.$('#off'))!), 'blocked', '비활성 버튼');
+      // 확인 단계는 입력을 보내지 않는다: 페이지가 먼저 건 캡처 리스너도 아무것도 받지 않는다(trial 클릭은 받았다).
+      assert.equal(await page.evaluate(() => (window as unknown as { cap: number }).cap), 0, '막힌 버튼에는 입력이 가지 않았다');
       const open = (await page.$('#open'))!;
       assert.equal(await dispatchClick(open), 'sent');
-      assert.deepEqual(await page.evaluate(() => [(window as unknown as { nCovered?: number }).nCovered ?? 0, (window as unknown as { nOpen?: number }).nOpen ?? 0]), [0, 1], '가린 버튼은 눌리지 않았다');
+      assert.equal(await page.evaluate(() => (window as unknown as { cap: number }).cap), 2, '누를 수 있는 버튼에는 mousedown·click이 한 번씩');
+      assert.equal(await dispatchClick((await page.$('#below'))!), 'sent', '화면 밖 버튼은 굴려서 누른다');
+      assert.deepEqual(await page.evaluate(() => { const w = window as unknown as { nCovered?: number; nOpen?: number; nBelow?: number }; return [w.nCovered ?? 0, w.nOpen ?? 0, w.nBelow ?? 0]; }), [0, 1, 1], '가린 버튼은 눌리지 않았다');
       await browser.close().catch(() => {});
     } finally {
       await h.close();

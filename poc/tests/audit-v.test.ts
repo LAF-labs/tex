@@ -595,6 +595,23 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
     assert.ok(s.relay.knownVariantCount('RUN') > 0, '오염 상태 동안은 들고 있다');
     s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/done' } }, 'V-RUN');
     assert.equal(s.t.win, undefined);
+    assert.ok(s.relay.knownVariantCount('RUN') > 0, '이미 줄에 선 엔진 메시지가 나갈 때까지는 들고 있다');
+    await s.relay.drained();
+    assert.equal(s.relay.knownVariantCount(), 0);
+  });
+
+  it('audit-v: an engine event queued before the commit is still scrubbed after endWindow', async () => {
+    const s = await setup();
+    s.ops.secrets.provide(bind(), enc('TEST-CERT-order0001'));
+    assert.deepEqual(await s.ops.fill(fillReq()), { ok: true });
+    const sid = 'E-1'; // setup의 첫 엔진 세션
+    // 같은 덩어리: 엔진 세션 이벤트(줄에 선다) 다음에 금고 세션의 커밋(바로 처리된다)
+    s.conn.emitEvent('Log.entryAdded', { entry: { source: 'network', level: 'info', text: 'body=TEST-CERT-order0001' } }, sid);
+    s.conn.emitEvent('Page.frameNavigated', { frame: { id: 'RUN', url: 'http://127.0.0.1:1/done' } }, 'V-RUN');
+    await s.relay.drained();
+    const logs = s.toEngine.filter((m) => m.method === 'Log.entryAdded');
+    assert.equal(logs.length, 1);
+    assert.ok(!JSON.stringify(logs).includes('TEST-CERT-order0001'), '알려진 값은 지운 뒤 나간다');
     assert.equal(s.relay.knownVariantCount(), 0);
   });
 
@@ -609,6 +626,7 @@ describe('audit-v V11 알려진 값 변형 범위', () => {
       await b.control.rpc('run.end', { runId: 'r1' });
       assert.ok(s.relay.knownVariantCount() > 0, '열린 창이 있으면 남긴다');
       s.relay.endWindow(s.t, 'detached');
+      await s.relay.drained();
       assert.equal(s.relay.knownVariantCount(), 0, '마지막 창이 끝나면 전부 비운다');
       s.relay.addKnownSecret('GONE', knownValueVariants('TEST-CERT-runend03'));
       await b.control.rpc('run.end', { runId: 'r1' });

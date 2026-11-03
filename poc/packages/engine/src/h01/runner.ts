@@ -110,15 +110,26 @@ export function mailStatusVerdict(status: string): 'sent' | 'not_sent' | 'unknow
 const CLICK_TIMEOUT_MS = 1_500;
 
 /**
- * 커밋 클릭(N-21): 먼저 동작 가능성만 본다(trial, 입력 없음). 실패면 요청이 나가지 않았다('blocked').
+ * 입력 없이 지금 누를 수 있는지 본다: 연결됨·비활성 아님·크기 있음·가운데 점의 맨 위 요소가 이 버튼(또는 그 안).
+ * Playwright `click({trial})`은 쓰지 않는다: 실제 마우스 입력을 보내고 Playwright 리스너로 막을 뿐이라, 페이지가 먼저 건
+ * 캡처 리스너에는 click이 간다(2026-11-03 재현). 화면 밖이면 가운데로 굴린다(스크롤은 입력이 아니다).
+ */
+function clickableNow(el: Element): boolean {
+  if (!el.isConnected || (el as HTMLButtonElement).disabled || el.getAttribute('aria-disabled') === 'true') return false;
+  el.scrollIntoView({ block: 'center', inline: 'center' });
+  const r = el.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return false;
+  const top = el.ownerDocument.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+  return !!top && (top === el || el.contains(top));
+}
+
+/**
+ * 커밋 클릭(N-21): 먼저 입력 없이 누를 수 있는지만 본다. 아니면 입력을 보내지 않았으므로 'blocked'(not_committed).
  * 이어 실제 클릭의 예외는 요청이 나갔는지 알 수 없어 'sent'로 본다(verify가 정한다).
  */
-export async function dispatchClick(button: Pick<ElementHandle, 'click'>): Promise<'blocked' | 'sent'> {
-  try {
-    await button.click({ trial: true, timeout: CLICK_TIMEOUT_MS });
-  } catch {
-    return 'blocked';
-  }
+export async function dispatchClick(button: Pick<ElementHandle, 'click' | 'evaluate'>): Promise<'blocked' | 'sent'> {
+  const ready = await button.evaluate(clickableNow).catch(() => false);
+  if (!ready) return 'blocked';
   try {
     await button.click({ timeout: CLICK_TIMEOUT_MS });
   } catch {

@@ -762,9 +762,16 @@ export class Relay {
     const wasActive = t.win.phase === 'active';
     t.win = undefined;
     t.secretBackendIds.clear();
-    // 그 창의 알려진 값은 여기서 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78).
-    this.clearKnownSecrets(t.targetId);
-    if (!this.hasOpenWindow()) this.clearKnownSecrets();
+    // 그 창의 알려진 값은 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78). 단 이미 줄에 선 엔진 메시지(커밋 직전의
+    // 요청 바디 등)가 나간 뒤에 버린다: 커밋 이벤트는 금고 세션에서 바로 처리되고 엔진 쪽 정리는 줄 뒤에 돌기 때문이다.
+    // 적중 알림은 창마다 한 번이므로 다음 창을 위해 바로 푼다.
+    this.leakNotified.delete(t.targetId);
+    const stale = this.knownVariants.get(t.targetId);
+    this.enqueue(async () => {
+      if (this.knownVariants.get(t.targetId) === stale) this.clearKnownSecrets(t.targetId);
+      if (!this.hasOpenWindow()) this.clearKnownSecrets();
+      return null;
+    });
     if (wasActive) for (const fn of this.onSecretWindowClosed) fn(t.targetId);
   }
 
@@ -781,6 +788,11 @@ export class Relay {
       this.knownVariants.delete(targetId);
       this.leakNotified.delete(targetId);
     }
+  }
+
+  /** 지금까지 줄에 선 엔진 메시지가 다 나갈 때까지(시험용). */
+  drained(): Promise<void> {
+    return this.outQ;
   }
 
   /** 시험·진단용: 지금 들고 있는 변형 수(값은 내보내지 않는다). */
