@@ -43,11 +43,17 @@ const PATTERNS: Array<[EntityKind, RegExp]> = [
 ];
 const AMOUNT = /(?<![\d,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?\s*(?:[천백십]?만|억|천)?\s*원|(?<![\d,])\d{1,3}(?:,\d{3})+(?![\d,])|[일이삼사오육칠팔구십백천만억]{2,}\s*원/gu;
 
+/**
+ * 검출용 공통 정규화(N-35): NFKC + 보이지 않는 문자(Default_Ignorable·서식 문자 Cf: 소프트 하이픈·방향 표시·결합 문자
+ * 결합 방지·이체 선택자·제로폭 등) 제거. 마스킹·egress 트립와이어·인젝션 사전 필터·차단 신호 사전이 모두 이 함수를 쓴다.
+ * 출력도 정규화된 텍스트다(색인을 되짚지 않는다).
+ */
+export function normalizeForDetection(s: string): string {
+  return s.normalize('NFKC').replace(/[\p{Default_Ignorable_Code_Point}\p{Cf}]/gu, '');
+}
+
 function normalize(text: string): string {
-  return text
-    .normalize('NFKC')
-    .replace(/[\u200B-\u200D\u2060\uFEFF]/g, '')
-    .replace(/[\u2010-\u2015\u2212]/g, '-');
+  return normalizeForDetection(text).replace(/[\u2010-\u2015\u2212]/g, '-');
 }
 
 function escapeFrame(text: string): string {

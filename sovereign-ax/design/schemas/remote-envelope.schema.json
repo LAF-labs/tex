@@ -28,8 +28,8 @@
     "sha256hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "sigAlg": {"enum": ["ed25519", "p256"]},
     "fieldKey": {
-      "$comment": "Closed list (B-24). Card labels come from the app-built-in fieldKey dictionary, never from package strings. Keep in sync with the D02 fieldKey dictionary (H-01 baseline). $first.* and $dup.* are engine-generated reserved keys (first-time counterparty/recipient from the ledger, duplicate warnings), hashed into cardHash (ADR-021).",
-      "enum": ["supplyAmount", "taxAmount", "totalAmount", "counterpartBizNo", "counterpartName", "counterpartEmail", "supplierBizNo", "supplierName", "issueDate", "itemName", "itemCount", "remark", "receiptType", "$first.bizNo", "$first.email", "$dup.businessKey", "$dup.priorNotCommitted", "$dup.otherDevice"]
+      "$comment": "Closed list (B-24). Card labels come from the app-built-in fieldKey dictionary, never from package strings. Keep in sync with the D02 fieldKey dictionary (H-01 baseline). $first.* and $dup.* are engine-generated reserved keys (first-time counterparty/recipient from the ledger, duplicate warnings), hashed into cardHash (ADR-021). $dup.portalExisting = count of pre-gate baseline (B0) approval numbers unknown to this PC's ledger, Phase 1 on; $dup.otherDevice only for accounts with 2+ desktops, Phase 2 (ADR-024).",
+      "enum": ["supplyAmount", "taxAmount", "totalAmount", "counterpartBizNo", "counterpartName", "counterpartEmail", "supplierBizNo", "supplierName", "issueDate", "itemName", "itemCount", "remark", "receiptType", "$first.bizNo", "$first.email", "$dup.businessKey", "$dup.priorNotCommitted", "$dup.otherDevice", "$dup.portalExisting"]
     },
     "effect": {"enum": ["issue_document", "send", "sign", "pay"], "$comment": "same vocabulary as manifest.effects (playbook-ir.schema.json)"},
     "deviceListEntry": {

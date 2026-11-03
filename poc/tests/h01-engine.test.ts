@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { DataService, BizVerifier, connectRunBrowser, cbor, jcs, cardHash, recomputeActionHash, gateSelfCheck, fixturePortal, HOMETAX_PORTAL, portalProblems, RunService, ariaValue, normalizeField, canonicalEmail, type GatePortMessage, type GateRequest, type LocalApproval, type RunEvent } from '@sax/engine';
+import { DataService, BizVerifier, connectRunBrowser, cbor, jcs, cardHash, recomputeActionHash, gateSelfCheck, fixturePortal, HOMETAX_PORTAL, portalProblems, RunService, ariaValue, normalizeField, canonicalEmail, type Clock, type GatePortMessage, type GateRequest, type LocalApproval, type RunEvent } from '@sax/engine';
 import { GateRepo, Ledger, openDatabase, RunJournal, RunRepo, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
@@ -405,6 +405,69 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     await endOf(runId);
     const ht = new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log, page: () => Promise.reject(new Error('no')), postGate: () => {} });
     assert.throws(() => ht.start({ runId: 'ht-1', counterpartyId: cpA, supply: 1000, tax: 100, itemName: 'x' }), /selector_placeholder/);
+  });
+
+  it('audit-e: delayed reflection beyond minElapsed resolves committed instead of in_doubt', async () => {
+    fx.knobs.reflectDelayMs = 1_500; // verify 하한(600ms·2회)을 넘겨 반영된다. 상한(3초)까지 조회를 이어 간다.
+    try {
+      const runId = start(cpC, 150_000);
+      assert.deepEqual(runs.answer(approval(await gateFor(runId))), { ok: true });
+      const end = await endOf(runId);
+      assert.deepEqual([end.status, runs.inspect(runId).ledger], ['success', 'committed'], JSON.stringify(end));
+      assert.equal(end.approvalNo, fx.issued.at(-1)?.approvalNo);
+    } finally {
+      fx.knobs.reflectDelayMs = 0;
+    }
+  });
+
+  it('audit-e: leak_suspected before the gate ends the run with vault.leak_suspected', async () => {
+    const posts = fx.posts();
+    const runId = start(cpC, 160_000);
+    const req = await gateFor(runId);
+    runs.leakSuspected();
+    const end = await endOf(runId);
+    assert.deepEqual([end.status, end.code], ['failed', 'vault.leak_suspected']);
+    assert.ok(gateMsgs.some((m) => m.t === 'gate.closed' && m.reqId === req.reqId && m.reason === 'signal'), '열린 게이트를 닫았다');
+    assert.deepEqual(runs.answer(approval(req)), { ok: false, code: 'no_open_gate' });
+    assert.equal(new GateRepo(db).state(req.reqId), 'denied');
+    assert.equal(fx.posts(), posts);
+    assert.equal(runs.inspect(runId).ledger, null);
+    assert.ok(runs.inspect(runId).journal.includes('vault.leak_suspected'));
+  });
+
+  it('audit-e: leak_suspected after arm is journaled and verify continues', async () => {
+    const runId = start(cpC, 170_000);
+    assert.deepEqual(runs.answer(approval(await gateFor(runId))), { ok: true });
+    await phaseNow(runId, 'verify');
+    runs.leakSuspected();
+    const end = await endOf(runId);
+    assert.equal(end.status, 'success', JSON.stringify(end));
+    const ins = runs.inspect(runId);
+    assert.equal(ins.ledger, 'committed');
+    assert.ok(ins.journal.indexOf('ledger.armed') < ins.journal.indexOf('vault.leak_suspected'));
+  });
+
+  it('audit-e: portal issueDate different from intent ends assert.issue_date_mismatch before the gate', async () => {
+    // 하루 뒤 KST 날짜의 시계: 의도의 작성일자(내일) ≠ 가짜 페이지 작성일자(오늘). 따로 DB를 써 다른 시험의 시계 기록에 닿지 않는다.
+    const t = await tempDb();
+    try {
+      const d = new DataService(t.db, new BizVerifier(new Egress()));
+      d.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
+      const cp = d.counterparties.create({ ...C }).id;
+      const clock: Clock = { wall: () => Date.now() + 86_400_000, mono: () => performance.now() };
+      const svc = new RunService({ db: t.db, data: d, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, clock, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
+      svc.on('event', (e: RunEvent) => events.push(e));
+      const posts = fx.posts();
+      const runId = `run-${++n}`;
+      svc.start({ runId, counterpartyId: cp, supply: 180_000, tax: 18_000, itemName: '경영 컨설팅' });
+      const end = await endOf(runId);
+      assert.deepEqual([end.status, end.code], ['failed', 'assert.issue_date_mismatch']);
+      assert.ok(!gateMsgs.some((m) => m.t === 'gate.request' && m.req.runId === runId), '게이트 요청 0건');
+      assert.equal(fx.posts(), posts);
+    } finally {
+      t.db.close();
+      await fs.rm(t.dir, { recursive: true, force: true });
+    }
   });
 
   it('메일 verify는 승인한 받는 이메일로 정한다(초안에 이메일이 없어도 포털이 다시 채운 주소를 승인했으면 확인한다)', async () => {

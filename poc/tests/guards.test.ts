@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { ESLint } from 'eslint';
 import { buildChromeArgs, chromeEnv } from '@sax/vault';
 import { buildGateRequest, gateSelfCheck, type GateField } from '@sax/engine/gate';
-import { ACTION_TEXT, ACTION_TEXT_DUP, actionText, BarGate, buildBarHtml, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
+import { ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED, actionText, BarGate, buildBarHtml, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
 import { barBounds, SHELL } from '../apps/desktop/src/shell-layout.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
@@ -31,11 +31,48 @@ describe('정적·구성 경계', () => {
     assert.ok(r!.messages.some((m) => m.ruleId === 'no-restricted-syntax'));
   });
 
-  it('Chrome 인자: 허용 목록 3개 + 금지 인자 거부, 환경 변수 화이트리스트', () => {
-    assert.deepEqual(buildChromeArgs('/p'), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run']);
+  it('eslint: 금고에서 fetch·electron net·계산된 동적 import는 오류(ADR-028 결정 6)', async () => {
+    const eslint = new ESLint({ cwd: root });
+    const [r] = await eslint.lintText(
+      `import { net } from 'electron';\nexport const f = (m: string) => [fetch('https://x'), net, import(m), import('node:http')];\n`,
+      { filePath: path.join(root, 'packages/vault/src/_probe.ts') },
+    );
+    const ids = r!.messages.map((m) => m.ruleId);
+    assert.ok(ids.includes('no-restricted-imports'), 'electron net');
+    assert.ok(ids.includes('no-restricted-globals'), 'fetch');
+    assert.equal(ids.filter((i) => i === 'no-restricted-syntax').length, 2, '계산된 import·송신 모듈 import');
+    // 리터럴 이름의 지연 로드(키체인 모듈)는 통과한다.
+    const [ok] = await eslint.lintText(`export const k = () => import('@napi-rs/keyring');\n`, { filePath: path.join(root, 'packages/vault/src/_probe.ts') });
+    assert.deepEqual(ok!.messages, []);
+  });
+
+  it("eslint: 엔진에서 child_process·createRequire('node:net')는 오류, ajv createRequire 로드는 허용", async () => {
+    const eslint = new ESLint({ cwd: root });
+    const [r] = await eslint.lintText(
+      `import { spawn } from 'node:child_process';\nimport { createRequire } from 'node:module';\nexport const n = [spawn, createRequire(import.meta.url)('node:net')];\n`,
+      { filePath: path.join(root, 'packages/engine/src/_probe.ts') },
+    );
+    const ids = r!.messages.map((m) => m.ruleId);
+    assert.ok(ids.includes('no-restricted-imports'), 'child_process');
+    assert.ok(ids.includes('no-restricted-syntax'), "createRequire(...)('node:net')");
+    const [ok] = await eslint.lintText(`import { createRequire } from 'node:module';\nexport const Ajv = createRequire(import.meta.url)('ajv');\n`, { filePath: path.join(root, 'packages/engine/src/_probe.ts') });
+    assert.deepEqual(ok!.messages, []);
+    // 데스크톱 main도 송신 규칙 범위다(e2e·가짜 페이지 서버는 명시 면제).
+    const [d] = await eslint.lintText(`import http from 'node:http';\nexport const h = http;\n`, { filePath: path.join(root, 'apps/desktop/src/_probe.ts') });
+    assert.ok(d!.messages.some((m) => m.ruleId === 'no-restricted-imports'));
+    const [fx] = await eslint.lintText(`import http from 'node:http';\nexport const h = http;\n`, { filePath: path.join(root, 'apps/desktop/src/h01-fixture.ts') });
+    assert.deepEqual(fx!.messages, []);
+  });
+
+  it('Chrome 인자: 허용 목록(고정 인자) + 금지 인자 거부, 환경 변수 화이트리스트', () => {
+    // 고정 인자 3개. 금고 패키지(V1)가 --disable-breakpad를 더하면 그것만 붙는다.
+    const args = buildChromeArgs('/p');
+    assert.deepEqual(args.slice(0, 3), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run']);
+    assert.ok(args.slice(3).every((a) => a === '--disable-breakpad'), JSON.stringify(args));
     for (const bad of ['--remote-debugging-port=0', '--remote-allow-origins=*', '--no-sandbox', '--disable-extensions']) assert.throws(() => buildChromeArgs('/p', [bad]));
     const env = chromeEnv({ HOME: '/h', PATH: '/bin', HTTPS_PROXY: 'http://evil', CHROME_LOG_FILE: '/tmp/x', ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--inspect' });
     assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH']);
+    assert.deepEqual(Object.keys(chromeEnv({ DISPLAY: ':99', XAUTHORITY: '/tmp/x/Xauthority', DEBUG: '1' })).sort(), ['DISPLAY', 'XAUTHORITY'], 'Linux X11·xvfb 화면 인증');
   });
 
   it('승인 바 판정: 무장 지연·재시작, 머무름, 바 안 down→up만, 클릭 활성화 예외, 커서 위장, 키보드 없음', () => {
@@ -76,21 +113,21 @@ describe('정적·구성 경계', () => {
     g.rearm(7000, true);
     g.mouse({ type: 'mouseMove', x: 300, y: 200, movementX: 0, movementY: 9 }, 7100);
     assert.deepEqual(down(7700), { kind: 'refused', reason: 'dwell' });
-    // 창 활성화: 100ms 안 바 클릭은 재무장 없이 판정, 아니면 재무장. 타이머가 늦어도 늦은 클릭은 재무장·거부.
+    // 핸드오프 복귀 활성화: 100ms 안 바 클릭은 재무장 없이 판정, 아니면 재무장. 타이머가 늦어도 늦은 클릭은 재무장·거부.
     g.rearm(8000, true);
-    g.windowActivated(8700);
+    g.windowActivated(8700, true);
     down(8750);
     assert.equal(g.activationSettled(), false);
     assert.deepEqual(up(8760), { kind: 'approve' });
-    g.windowActivated(9000);
+    g.windowActivated(9000, true);
     assert.equal(g.activationSettled(), true);
-    g.windowActivated(10_000);
+    g.windowActivated(10_000, true);
     assert.deepEqual(down(10_300), { kind: 'refused', reason: 'arming' }, '활성화 뒤 100ms가 지난 첫 클릭은 재무장');
     assert.equal(g.armed(10_800), false);
-    // 포커스가 mouseDown 뒤에 오면(OS 순서) 클릭 활성화로 보고 그 클릭을 버리지 않는다.
+    // 포커스가 mouseDown 뒤에 오면(OS 순서) 클릭 활성화로 보고 그 클릭을 버리지 않는다(핸드오프 복귀일 때만).
     g.rearm(11_000, true);
     down(11_700);
-    g.windowActivated(11_710);
+    g.windowActivated(11_710, true);
     assert.equal(g.activationSettled(), false);
     assert.deepEqual(up(11_720), { kind: 'approve' });
     // 커서 위장 중에는 무장하지 않고 이유를 알린다.
@@ -135,17 +172,19 @@ describe('정적·구성 경계', () => {
     assert.match(html, /default-src 'none'; style-src 'self'/);
     assert.ok(!/<button|<a |<input|onclick/i.test(html), '바 안에 작은 버튼·링크가 없다');
     // 중복 경고($dup.*)는 합계 줄 표시와 동작 글자로 바에 보인다(ADR-021). 이 클릭이 D02 §7 명시 확인이다.
+    // 원장 상태별로 다르게(ADR-027 결정 3): 발급 확정은 "이미 발급됨"·주의 색·"한 번 더 발급".
     const dup = base({ '$dup.businessKey': 'committed' });
-    assert.equal((summarize(dup) as SummaryLine[])[1]!.flag, '같은 건 기록 있음');
-    assert.equal(actionText(dup), ACTION_TEXT_DUP);
+    assert.equal((summarize(dup) as SummaryLine[])[1]!.flag, '이미 발급됨(승인번호 있음)');
+    assert.equal(actionText(dup), ACTION_TEXT_DUP_COMMITTED);
+    assert.equal(actionText(base({ '$dup.businessKey': 'in_doubt' })), ACTION_TEXT_DUP);
     assert.equal(actionText(base()), ACTION_TEXT);
     const prior = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
-    assert.equal((summarize(prior) as SummaryLine[])[1]!.flag, '직전 시도 발급 안 됨');
-    // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
-    for (const states of ['committed,not_committed', 'in_doubt,not_committed', 'dispatched,not_committed']) {
-      assert.equal((summarize(base({ '$dup.businessKey': states, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[1]!.flag, '같은 건 기록 있음', states);
+    assert.equal((summarize(prior) as SummaryLine[])[1]!.flag, '직전 시도 미발급 판정');
+    // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 미발급"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
+    for (const [states, flag] of [['committed,not_committed', '이미 발급됨(승인번호 있음)'], ['in_doubt,not_committed', '발급 여부 확인 안 됨'], ['dispatched,not_committed', '발급 여부 확인 안 됨']]) {
+      assert.equal((summarize(base({ '$dup.businessKey': states!, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[1]!.flag, flag, states);
     }
-    assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /같은 건 기록을 확인했고 발급/);
+    assert.match(buildBarHtml(summarize(dup) as SummaryLine[], 'armed', undefined, actionText(dup)), /<body class="armed attn">.*그래도 한 번 더 발급/s);
   });
 
   it('게이트 요청 v2: main이 fields로 해시를 다시 계산한다. 예약 키를 빼거나 값을 바꾸면 맞지 않는다. LocalApproval v2', () => {

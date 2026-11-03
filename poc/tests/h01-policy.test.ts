@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { BizVerifier, connectRunBrowser, DataService, FIXTURE_POLICY, fixturePortal, RunService, type GatePortMessage, type GateRequest, type Clock, type LocalApproval, type RatePolicy, type RunEvent } from '@sax/engine';
+import { BizVerifier, connectRunBrowser, DataService, FIXTURE_POLICY, fixturePortal, RunService, type GatePortMessage, type GateRequest, type Clock, type LocalApproval, type PortalConfig, type RatePolicy, type RunEvent } from '@sax/engine';
 import { openDatabase, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
@@ -48,14 +48,14 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   /** 새 DB(카운터·쿨다운이 비어 있음)에 붙은 실행 서비스. 페이지는 같은 실행 탭을 쓴다. */
-  async function service(policy?: RatePolicy, clock?: Clock) {
+  async function service(policy?: RatePolicy, clock?: Clock, portal: PortalConfig = fixturePortal(fx.origin)) {
     const db = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
     const runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, policy, clock,
+      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log, policy, clock,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
     });
@@ -197,6 +197,22 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     }
   });
 
+  it('audit-e: dismissed alert text rides on the end event and never in run_events', async () => {
+    const { start, db } = await service();
+    fx.knobs.block = 'dialog';
+    try {
+      const r = start();
+      const end = await endOf(r);
+      assert.deepEqual([end.status, end.code, end.portalNotice], ['failed', 'portal.blocked', FIXTURE_BLOCK_TEXT]);
+      const rows = db.prepare('SELECT type, payload_json FROM run_events WHERE run_id = ?').all(r) as Array<{ type: string; payload_json: string }>;
+      assert.ok(rows.length > 0);
+      assert.deepEqual(rows.filter((x) => x.payload_json.includes('비정상') || x.payload_json.includes('제한')), [], '저널에 포털 문구가 없다');
+      assert.ok(!log.lines.some((l) => l.includes('비정상')), '로그에도 없다');
+    } finally {
+      fx.knobs.block = null;
+    }
+  });
+
   it('네비게이션 없이 뜬 안내 레이어도 다음 동작 전에 잡는다', async () => {
     const { runs, start } = await service();
     fx.knobs.notice = FIXTURE_BLOCK_TEXT; // 폼이 읽힌 뒤 150ms 주기 XHR로 그린다
@@ -267,14 +283,14 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     }
   });
 
-  it('추가 인증: 1회는 핸드오프, 연속 2회째는 차단 신호. 캡차는 횟수를 남기고 핸드오프', async () => {
+  it('추가 인증: 1회는 핸드오프, 연속 2회째는 반복 추가 인증(차단 신호와 구분, 연속에는 넣는다). 캡차는 횟수를 남기고 핸드오프', async () => {
     const { runs, start } = await service();
     fx.knobs.extraAuth = 2;
     const r1 = start();
     const e1 = await endOf(r1);
     assert.deepEqual([e1.status, e1.code], ['handoff', 'portal.mfa_pending']);
     const r2 = start();
-    assert.deepEqual([(await endOf(r2)).code, runs.inspect(r2).policy.blockStreak], ['portal.blocked', 1]);
+    assert.deepEqual([(await endOf(r2)).code, runs.inspect(r2).policy.blockStreak], ['portal.extra_auth_repeat', 1]);
     assert.equal(fx.knobs.extraAuth, 0);
     fx.knobs.captcha = 1;
     const r3 = start();
@@ -317,7 +333,9 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   it('verify 조회가 3번 연속 실패하면 더 조회하지 않고 발급됐는지 모름으로 둔다', async () => {
-    const { runs, start } = await service();
+    // 조회 실패 1회가 10초(결과 준비 대기)라 verify 상한(가짜 페이지 3초)을 늘려 연속 실패 규칙만 본다.
+    const p = fixturePortal(fx.origin);
+    const { runs, start } = await service(undefined, undefined, { ...p, verify: { ...p.verify, maxMs: 120_000 } });
     const r = start();
     assert.deepEqual(runs.answer(approval(await gateFor(r))), { ok: true });
     await next(() => (events.some((e) => e.runId === r && e.type === 'phase' && e.phase === 'sign' && e.state === 'now') ? true : undefined));

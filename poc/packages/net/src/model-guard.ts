@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import type { RedactedText } from '@sax/redaction';
+import { normalizeForDetection, type RedactedText } from '@sax/redaction';
 import type { ValidateFunction } from 'ajv';
 
 export interface BundleAllowEntry {
@@ -73,7 +73,7 @@ const TRIPWIRE: RegExp[] = [
 ];
 
 export function piiTripwire(text: string): boolean {
-  const t = text.normalize('NFKC').replace(/[\u200B-\u200D\u2060\uFEFF]/g, '').replace(/[\u2010-\u2015\u2212]/g, '-');
+  const t = normalizeForDetection(text).replace(/[\u2010-\u2015\u2212]/g, '-');
   return TRIPWIRE.some((re) => re.test(t));
 }
 

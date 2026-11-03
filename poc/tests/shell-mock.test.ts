@@ -137,7 +137,7 @@ describe('셸 목업', () => {
     assert.ok(r.email.first && !r.counterparty.first);
     assert.equal(r.readbackDiffers, true, '이메일이 초안과 달라졌다');
     assert.equal(r.warnings.length, 1);
-    assert.match(r.warnings[0]!, /발급했거나 발급 여부를 모르는 기록/);
+    assert.match(r.warnings[0]!, /이미 발급돼 있어요\(승인번호 있음\)/);
     assert.deepEqual(gates, [[a.run.id, req]]);
     runs.approved(a.run.id);
     assert.equal(r.approvedPending, true);
@@ -239,7 +239,7 @@ describe('셸 목업', () => {
     await runs.prepare(a.run.id);
     host.emit('gate', gateFor(a.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'not_committed' }, { fieldKey: '$dup.priorNotCommitted', value: 'true' }]));
     assert.deepEqual(runs.get(a.run.id)!.warnings.length, 1);
-    assert.match(runs.get(a.run.id)!.warnings[0]!, /직전 시도는 '발급 안 됨'/);
+    assert.match(runs.get(a.run.id)!.warnings[0]!, /직전 시도는 발급 안 됨으로 판정했어요/);
     await runs.abortGate(a.run.id, 'answer.rejected');
     assert.ok(host.calls.some(([m]) => m === 'run.stop'));
     host.emit('run', { runId: a.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
@@ -281,8 +281,8 @@ describe('셸 목업', () => {
     host.emit('gate', gateFor(d.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'false' }, { fieldKey: '$first.email', value: 'false' }, { fieldKey: '$dup.businessKey', value: 'committed,not_committed' }, { fieldKey: '$dup.priorNotCommitted', value: 'true' }]));
     const w = runs.get(d.run.id)!.warnings;
     assert.equal(w.length, 2);
-    assert.match(w[0]!, /발급했거나 발급 여부를 모르는/);
-    assert.match(w[1]!, /직전 시도는 '발급 안 됨'/);
+    assert.match(w[0]!, /이미 발급돼 있어요/);
+    assert.match(w[1]!, /직전 시도는 발급 안 됨으로 판정했어요/);
     await assert.rejects(runs.stop('run-none'), /no_run/);
   });
 

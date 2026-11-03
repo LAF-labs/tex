@@ -2,7 +2,7 @@ import type { EventLog } from '@sax/platform';
 import { ACTIVE_WINDOW_DROP_EVENTS } from '../constants.ts';
 import type { CdpMessage, PipeConnection } from '../cdp/connection.ts';
 import { checkSessionCommand, urlAllowed, type RelayPolicy, type Verdict } from './policy.ts';
-import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripRequestBody, type SecretNodes } from './sanitize.ts';
+import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAuthHeaders, stripMessageHeaders, stripRequestBody, type SecretNodes } from './sanitize.ts';
 
 type Json = Record<string, unknown>;
 
@@ -63,6 +63,8 @@ export interface RelayOptions {
   log: EventLog;
   /** 엔진으로 가는 직렬화된 CDP 프레임. */
   toEngine: (raw: string) => void;
+  /** 알려진 값 치환이 적중했다(누출 의심, N-17). 창(타깃의 알려진 값 묶음)마다 1회. */
+  onLeakSuspected?: (hits: number) => void;
 }
 
 /**
@@ -81,7 +83,11 @@ export class Relay {
   private readonly engineSessions = new Map<string, EngineSession>();
   private readonly pending = new Map<number, PendingEngineRequest>();
   private readonly taintedRequests = new Set<string>();
-  private knownVariants: string[] = [];
+  /** 타깃별 알려진 값 변형(N-78). 창이 커밋·분리로 끝나면 그 타깃 것을 지운다. */
+  private readonly knownVariants = new Map<string, string[]>();
+  /** 누출 의심을 이미 알린 타깃(알려진 값 묶음이 지워지면 다시 알린다). */
+  private readonly leakNotified = new Set<string>();
+  private readonly onLeakSuspected?: (hits: number) => void;
   private engineAutoAttach = false;
   private creating = 0;
   private deferred: TargetState[] = [];
@@ -96,6 +102,7 @@ export class Relay {
     this.policy = opts.policy;
     this.log = opts.log;
     this.toEngine = opts.toEngine;
+    this.onLeakSuspected = opts.onLeakSuspected;
     this.conn.on('message', (m: CdpMessage) => this.onChrome(m));
   }
 
@@ -263,7 +270,12 @@ export class Relay {
       this.onVaultSessionEvent(vt, msg);
       return;
     }
-    if (this.engineSessions.has(msg.sessionId)) this.enqueue(() => this.sanitizeEvent(msg));
+    if (this.engineSessions.has(msg.sessionId)) {
+      // 받은 시점의 창 상태를 찍어 둔다: 커밋(창 종료)은 금고 세션에서 바로 처리되지만 이 이벤트는 줄 뒤에서 정리된다.
+      const t = this.targetOfSession(msg.sessionId);
+      const at = t ? this.stateOf(t) : undefined;
+      this.enqueue(() => this.sanitizeEvent(msg, at));
+    }
   }
 
   private async onBrowserEvent(msg: CdpMessage): Promise<void> {
@@ -463,11 +475,20 @@ export class Relay {
       }
       if (!out) return;
       let raw = JSON.stringify(out);
-      if (this.knownVariants.length) {
-        const r = scrubKnownValues(raw, this.knownVariants);
-        if (r.hits) this.log.event('vault.known_value_scrubbed', { hits: r.hits });
+      // 긴 변형부터 지운다(짧은 변형이 긴 변형의 일부를 먼저 깨지 않게). 적중한 타깃마다 한 번 알린다.
+      const all = [...this.knownVariants].flatMap(([targetId, variants]) => variants.map((v) => [targetId, v] as const)).sort((a, b) => b[1].length - a[1].length);
+      let total = 0;
+      for (const [targetId, v] of all) {
+        const r = scrubKnownValues(raw, [v]);
+        if (!r.hits) continue;
         raw = r.text;
+        total += r.hits;
+        if (!this.leakNotified.has(targetId)) {
+          this.leakNotified.add(targetId);
+          this.onLeakSuspected?.(r.hits);
+        }
       }
+      if (total) this.log.event('vault.known_value_scrubbed', { hits: total });
       this.toEngine(raw);
     });
   }
@@ -481,12 +502,14 @@ export class Relay {
     return { active: t.win?.phase === 'active', tainted: !!t.win };
   }
 
-  private async sanitizeEvent(msg: CdpMessage): Promise<CdpMessage | null> {
+  private async sanitizeEvent(msg: CdpMessage, at?: { active: boolean; tainted: boolean }): Promise<CdpMessage | null> {
     const es = this.engineSessions.get(msg.sessionId!);
     const t = es ? this.targets.get(es.targetId) : undefined;
     if (!es || !t || !t.exposed) return null;
     const p = (msg.params ?? {}) as Json;
-    const st = this.stateOf(t);
+    // 받은 시점과 지금 중 엄격한 쪽(오염 표시·요청 바디 제거가 커밋 처리 순서에 밀리지 않게).
+    const now = this.stateOf(t);
+    const st = { active: now.active || !!at?.active, tainted: now.tainted || !!at?.tainted };
     // 자식 세션의 이동 시작: 허용 밖이면 커밋 전에 그 자식만 분리한다.
     if (es.child && msg.method === 'Page.frameStartedNavigating') {
       if (p.frameId === es.childTargetId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) {
@@ -526,8 +549,22 @@ export class Relay {
         }
         return msg;
       }
+      case 'Network.requestWillBeSentExtraInfo':
+      case 'Network.responseReceivedExtraInfo':
+        stripMessageHeaders(p);
+        return msg;
+      case 'Network.responseReceived':
+      case 'Network.webSocketHandshakeResponseReceived':
+        stripMessageHeaders(p.response as Json);
+        return msg;
+      case 'Network.webSocketWillSendHandshakeRequest':
+        stripMessageHeaders(p.request as Json);
+        return msg;
       case 'Network.requestWillBeSent':
       case 'Fetch.requestPaused':
+        stripMessageHeaders(p.request as Json);
+        stripMessageHeaders(p.redirectResponse as Json);
+        stripAuthHeaders(p.responseHeaders as Json[]);
         if (st.tainted) {
           this.taintedRequests.add(String(p.requestId));
           if (p.networkId) this.taintedRequests.add(String(p.networkId));
@@ -732,15 +769,48 @@ export class Relay {
     const wasActive = t.win.phase === 'active';
     t.win = undefined;
     t.secretBackendIds.clear();
+    // 그 창의 알려진 값은 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78). 단 이미 줄에 선 엔진 메시지(커밋 직전의
+    // 요청 바디 등)가 나간 뒤에 버린다: 커밋 이벤트는 금고 세션에서 바로 처리되고 엔진 쪽 정리는 줄 뒤에 돌기 때문이다.
+    // 적중 알림은 창마다 한 번이므로 다음 창을 위해 바로 푼다.
+    this.leakNotified.delete(t.targetId);
+    const stale = this.knownVariants.get(t.targetId);
+    this.enqueue(async () => {
+      if (this.knownVariants.get(t.targetId) === stale) this.clearKnownSecrets(t.targetId);
+      if (!this.hasOpenWindow()) this.clearKnownSecrets();
+      return null;
+    });
     if (wasActive) for (const fn of this.onSecretWindowClosed) fn(t.targetId);
   }
 
-  addKnownSecret(variants: string[]): void {
-    this.knownVariants = [...new Set([...this.knownVariants, ...variants])].sort((a, b) => b.length - a.length);
+  addKnownSecret(targetId: string, variants: string[]): void {
+    this.knownVariants.set(targetId, [...new Set([...(this.knownVariants.get(targetId) ?? []), ...variants])]);
   }
 
-  clearKnownSecrets(): void {
-    this.knownVariants = [];
+  /** targetId가 없으면 전부 지운다. */
+  clearKnownSecrets(targetId?: string): void {
+    if (targetId === undefined) {
+      this.knownVariants.clear();
+      this.leakNotified.clear();
+    } else {
+      this.knownVariants.delete(targetId);
+      this.leakNotified.delete(targetId);
+    }
+  }
+
+  /** 지금까지 줄에 선 엔진 메시지가 다 나갈 때까지(시험용). */
+  drained(): Promise<void> {
+    return this.outQ;
+  }
+
+  /** 시험·진단용: 지금 들고 있는 변형 수(값은 내보내지 않는다). */
+  knownVariantCount(targetId?: string): number {
+    if (targetId !== undefined) return this.knownVariants.get(targetId)?.length ?? 0;
+    return [...this.knownVariants.values()].reduce((n, v) => n + v.length, 0);
+  }
+
+  /** 열린(활성·오염) 창이 있는 타깃이 있는가. */
+  hasOpenWindow(): boolean {
+    return [...this.targets.values()].some((t) => t.win);
   }
 
   exposedTarget(targetId: string): TargetState | undefined {

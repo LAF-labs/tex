@@ -31,7 +31,7 @@ export type Step = { id: string; phase: Phase } & (
 
 export const H01 = {
   id: 'hometax.invoice.issue',
-  version: '2.1.0-poc6',
+  version: '2.1.1-poc6',
   docType: 'H-01' as const,
   steps: [
     { id: 's10', phase: 'form', type: 'goto', url: 'issueForm' },
@@ -48,6 +48,8 @@ export const H01 = {
     { id: 's19b', phase: 'readback', type: 'readback', fields: READBACK_FIELDS },
     { id: 's19c', phase: 'readback', type: 'assert', cond: { readbackEquals: { fieldKey: 'supplierBizNo', ref: '$profile.bizNo' } }, code: 'assert.supplier_mismatch' },
     { id: 's19d', phase: 'readback', type: 'assert', cond: { sumEquals: { parts: ['supplyAmount', 'taxAmount'], total: 'totalAmount' } }, code: 'assert.total_mismatch' },
+    // 작성일자(과세기간)가 의도(KST 오늘)와 다르면 게이트를 열지 않는다(N-26).
+    { id: 's19e', phase: 'readback', type: 'assert', cond: { readbackEquals: { fieldKey: 'issueDate', ref: '$inputs.issueDate' } }, code: 'assert.issue_date_mismatch' },
     { id: 's20', phase: 'gate', type: 'gate', authorizes: ['s21'], waitMs: 600_000 },
     // signFlow(간편인증·인증서·보안카드)는 PoC-3에서 실제 순서를 본 뒤 X 안에 넣는다(D02 §4.5).
     { id: 's21', phase: 'sign', type: 'submit', target: 'form.issueButton', verify: 's30' },

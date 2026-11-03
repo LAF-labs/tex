@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, MessageChannelMain, session, type MessagePortMain, type Session } from 'electron';
+import { hardenWindow } from './harden.ts';
 
 // ADR-014 결정 1: docparse는 Chromium 렌더러 샌드박스에서 돈다. 숨김 창, 네트워크 차단 파티션,
 // preload는 MessagePort 수신 하나만. 입력은 main이 읽은 바이트, 출력은 main이 스키마로 검증한 값뿐.
@@ -102,13 +103,14 @@ export async function createDocparseWindow(): Promise<BrowserWindow> {
     show: false,
     webPreferences: {
       session: ses, sandbox: true, contextIsolation: true, nodeIntegration: false, devTools: false, spellcheck: false,
+      // 악성 PDF가 alert·confirm으로 main을 멈추지 못하게(N-68).
+      disableDialogs: true,
       backgroundThrottling: false, // 숨김 창에서 타이머·렌더가 늦춰지지 않게
       preload: path.join(STATIC, 'preload-docparse.cjs'),
     },
   });
   win.webContents.setWebRTCIPHandlingPolicy('disable_non_proxied_udp');
-  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-  win.webContents.on('will-navigate', (e) => e.preventDefault());
+  hardenWindow(win);
   return win;
 }
 

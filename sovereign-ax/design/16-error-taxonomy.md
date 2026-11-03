@@ -1,6 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
-> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교).
+> v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교). · AUDIT-D 반영 2026-11-03: 아래 `portal`·`policy` 행 뒤의 AUDIT-D 행(ADR-025~029, D19 §3.5).
 
 모든 `StepResult.code`, 텔레메트리 `code`, 데몬 원인 코드, 게이트웨이 응답, 핸드오프 사유, 사용자 메시지는 이 체계에서 나온다. 형식 `<영역>.<코드>`, 소문자 스네이크. 값(화면 텍스트·입력·셀렉터 문자열·비밀 길이)은 코드에 넣지 않는다.
 
@@ -24,8 +24,9 @@
 | `vault` | `dbkey_requested_twice` | DB 키 요청이 금고 기동당 2회째(A-24, **보안 이벤트**) | `err.vault.dbkey_requested_twice` | 거부 |
 | `vault` | `extension_not_allowed` | 전용 프로필에 허용 목록 밖 확장(A-11) | `err.vault.extension_not_allowed` | 비밀 창 거부, 제거 안내 |
 | `storage` | `acl_weak` | 사용자 지정 보관함 폴더의 접근 권한이 약함(A-19) | `err.storage.acl_weak` | 경고, 기본 위치 권장 |
-| `ledger` | `in_doubt` / `duplicate_business_key` | 결과 미확정 / 업무 키 중복 경고(기기 간 표시 포함) | `err.ledger.*` | InDoubt / 카드 경고 |
-| `ledger` | `concurrent_other_pc` | 게이트 직전 조회에서 다른 PC의 `armed` 표시(10분 이내) 발견(E-13) | `err.ledger.concurrent_other_pc` | 카드 경고(차단 아님) |
+| `ledger` | `in_doubt` / `duplicate_business_key` | 결과 미확정 / 업무 키 중복 경고(포털 기존 건은 `portal_existing`, Phase 2 기기 간 표시 포함) | `err.ledger.*` | InDoubt / 카드 경고 |
+| `ledger` | `portal_existing` | 게이트 직전 verify 기준선 B₀에 이 PC 원장에 없는 같은 건 승인번호가 있음(다른 PC·포털 직접 발급, `$dup.portalExisting`, ADR-024) | `err.ledger.portal_existing` | 카드 경고(차단 아님) |
+| `ledger` | `concurrent_other_pc` | 게이트 직전 조회에서 다른 PC의 `armed` 표시(10분 이내) 발견(E-13, Phase 2·데스크톱 2대 계정, ADR-024) | `err.ledger.concurrent_other_pc` | 카드 경고(차단 아님) |
 | `ledger` | `observed_manual` | 핸드오프 중 커밋 요청 관측 또는 "직접 발급함"(R-C2, B-04) | `err.ledger.observed_manual` | 재개 전 verify |
 | `ledger` | `intent_reuse` | 같은 intentId에 다른 입력·플레이북(B-10, **보안 이벤트**) | `err.ledger.intent_reuse` | 거부 |
 | `commit_guard` | `blocked_request` | 무장 없이 커밋 요청 시도(보안 이벤트) | `err.commit_guard.blocked_request` | 중단 |
@@ -46,6 +47,12 @@
 | `registry` | `version_jump_rejected` | 같은 `keyEpoch` 안 버전 점프 > 1000(C-26, **보안 이벤트**) | — | 거부 |
 | `registry` | `key_revoked` | 폐기 목록에 있는 키의 서명(C-26, **보안 이벤트**) | — | 그 서명 무시 |
 | `portal` | `blocked` / `logged_out_by_other_session` / `captcha` / `mfa_pending` / `session_expired` | 포털 상태(`blocked`는 모델 판정 또는 결정적 차단 신호 사전, C-24) | `err.portal.*` | 중단+쿨다운 / 일시정지 / human / wait / checkpoint |
+| `portal` | `unexpected_page` / `extra_auth_repeat` / `unobservable` / `unknown_screen` | 기대 경로 밖 화면, 로그인 밖 반복 추가 인증(차단 신호 보고 제외), 화면 확인 불가로 게이트·커밋 전 정지, 기대 화면 미도착 누적(ADR-025) | `err.portal.*` | handoff / 보수 모드·쿨다운 |
+| `policy` | `poc_irreversible_total` | PoC 누적 실발급 3건 도달(ADR-025) | `err.policy.poc_irreversible_total` | 시작 거부 |
+| `assert` | `issue_date_mismatch` | 포털 작성일자 ≠ 실행 시작 KST 날짜(ADR-027) | `err.assert.issue_date_mismatch` | 게이트 전 정지 |
+| `vault` | `leak_suspected` / `keystore_mismatch` / `credential_suspect` | 알려진 값 치환 적중, DB 키 길이 불일치(기동 거부), 포털 인증 실패 뒤 저장 자격 보류(ADR-025·026·029, **보안 이벤트**: `leak_suspected`·`keystore_mismatch`) | `err.vault.*` | 정지 / 기동 거부 / 금고에서 확인 |
+| `db` | `key_missing` / `locked_by_other_instance` | 키 항목 없음 + DB 파일 있음(새 키 생성 금지), 두 번째 인스턴스(ADR-025·029) | `err.db.*` | 기동 거부·복구 화면(Phase 1) |
+| `engine` | `env_tampered` / `vault_port_unsupported` | 디버그·TLS 변조 환경 변수, 옛 기동 경로(ADR-025) | `err.engine.*` | 기동 거부 |
 | `browser` | `launch_failed` / `webdriver_selfcheck_failed` / `profile_locked` / `crashed` | 금고의 Chrome 기동·점검 | `err.browser.*` | 사용자 안내 |
 | `gateway` | `unauthorized` / `quota_exceeded` / `digest_mismatch`(409) / `param_rejected`(400) / `upstream_error` | 게이트웨이 응답. 요청 규범은 `schemas/gateway-request.schema.json` | `err.gateway.*` | — |
 | `gateway` | `pii_tripwire` | 게이트웨이 2차 식별자 트립와이어 적중, 공급사로 보내지 않음(B-18, **보안 이벤트**, 카운트만) | `err.gateway.pii_tripwire` | 해당 호출 `unknown` |
@@ -59,7 +66,7 @@
 | `queue` | `qd_expired` | 만료된 `Q_D`로는 의도를 봉인하지 않음(C-17, 폰 UI 전용) | `err.queue.qd_expired` | "PC가 오래 꺼져 있음" 안내 |
 | `devlist` | `version_mismatch` | 기기 목록 버전 불일치로 비가역 승인·비밀 요청 보류(C-20) | `err.devlist.version_mismatch` | 목록 갱신 후 재시도 |
 | `registry` | `head_mismatch` / `revocation_stale` | 투명성 로그 헤드 불일치: Phase 1은 레지스트리와 별도 호스트 미러의 헤드 비교(E-14), Phase 2부터는 폰·PC 헤드 교환 포함(split-view 의심, **보안 이벤트**) / 폐기 목록 신선도 24시간 초과(C-26) | `err.registry.*` | 경고·새 로드 보류 |
-| `account` | `recovery_hold` | 복구 문구 사용 후 지연 기간 중(C-21) | `err.account.recovery_hold` | 대기 |
+| `account` | `recovery_hold` | 새 PC·PASS 복구 뒤 지연 기간 중(C-21, ADR-029) | `err.account.recovery_hold` | 대기 |
 | `daemon` | `window_closed` / `pc_busy` / `in_doubt_pending` / `consent_missing` / `demoted_to_notify` | 스케줄러 | `err.daemon.*` | — |
 | `daemon` | `effects_denied` | 데몬 트리거인데 `manifest.effects ⊄ {issue_document}`(R-D1, B-27) | `err.daemon.effects_denied` | 실행 안 함 |
 | `postprocess` | `file_not_detected` / `pdf_unreadable` / `meta_extraction_failed` / `sync_folder_warning` | 후처리 모드 | `err.postprocess.*` | 수동 메타 입력 |

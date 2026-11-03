@@ -67,7 +67,11 @@ const rowText = (id: string) => js<string>(`document.querySelector('[data-doc-ro
 const rowTag = (id: string) => js<string>(`document.querySelector('[data-doc-row="${id}"]')?.getAttribute('data-expiry-tag') ?? ''`);
 const toastText = () => js<string>(`(() => { const t = document.querySelector('#toast'); return t && !t.hidden ? t.textContent : ''; })()`);
 const busy = () => js<boolean>(`document.querySelector('[data-act=doc-import]')?.disabled ?? false`);
+/** 메인 창에 실제 입력 하나(main의 before-mouse-event가 본다). 짝 없는 mouseUp이라 아무것도 누르지 않는다. 대화상자·뷰어는 3초 안의 입력 뒤에만 열린다(ADR-027 결정 8). */
+const gesture = () => S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 const importClick = async () => {
+  gesture();
+  await sleep(30);
   await js(`document.querySelector('#toast').hidden = true; document.querySelector('[data-act=doc-import]').click()`);
   await until('import done', async () => !(await busy()));
 };
@@ -145,7 +149,11 @@ async function main(): Promise<void> {
 
   const noPick = await js<string>(`window.sax.call('docs.import', {}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('렌더러가 pick 없이 부르면 대화상자를 열지 않고 거부한다', noPick === 'bad_request', noPick);
+  const noGesture = await js<string>(`window.sax.call('docs.import', { pick: true }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
+  check('실제 입력 없이 온 pick은 대화상자를 열지 않는다(gesture_required)', noGesture === 'gesture_required', noGesture);
   pickNext(null, 400);
+  gesture();
+  await sleep(30);
   const twice = await js<string[]>(`Promise.all([1, 2].map(() => window.sax.call('docs.import', { pick: true }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))))`);
   check('가져오기는 한 번에 하나(겹친 호출은 busy)', twice.includes('ok') && twice.includes('busy'), twice);
 
@@ -154,6 +162,8 @@ async function main(): Promise<void> {
   check('고르기를 취소하면 아무것도 넣지 않는다', (await listDocs()).length === mockCount);
 
   pickNext('throw', 300);
+  gesture();
+  await sleep(30);
   await js(`document.querySelector('[data-act=doc-import]').click()`);
   check('가져오는 동안 가져오기 버튼을 막는다', await busy());
   await until('dialog failed', async () => !(await busy()));
@@ -260,6 +270,8 @@ async function main(): Promise<void> {
   check('다른 곳에서 바뀐 서류의 확인은 stale: 알리고 새 값을 보여 주며 바로 확인되지 않는다', afterStale.value === '2026-12-02' && afterStale.disabled && bAfter.expiresOn === '2026-12-02', { afterStale, bAfter: bAfter.expiresOn });
   await js(`document.querySelector('[data-doc-row="${a!.id}"]').click()`);
 
+  gesture();
+  await sleep(30);
   await js(`${review(a!.id, '[data-act=doc-open]')}.click()`);
   await until('opened', async () => opened.length > 0, 5000);
   check('PDF 열기: main이 보관함 파일을 연다', opened.length === 1 && path.dirname(opened[0]!) === vaultDir, opened);
@@ -271,6 +283,8 @@ async function main(): Promise<void> {
   // 읽는 동안 다른 화면으로 가면 끝나도 문서함·서류 패널로 끌고 오지 않는다
   const nBefore = (await listDocs()).length;
   pickNext(files.biz2, 400);
+  gesture();
+  await sleep(30);
   await js(`document.querySelector('#toast').hidden = true; document.querySelector('[data-act=doc-import]').click()`);
   await js(`document.querySelector('#rail [data-view=chat]').click()`);
   await until('away import', async () => (await listDocs()).length === nBefore + 1, 30_000);

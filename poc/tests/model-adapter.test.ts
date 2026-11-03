@@ -25,7 +25,7 @@ const KEY = 'sk-test-not-a-real-key';
 const noSleep = async () => {};
 
 function setup(mock: OpenAIMock, budget?: { l1: number; l2: number }) {
-  const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries(), budget } });
+  const egress = new Egress({ env: {}, testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries(), budget } });
   const decider = new OpenAIDecisionsAdapter({ apiKey: KEY, egress, sleep: noSleep, random: () => 0 });
   const layer = new DefaultModelLayer({ catalog, profiles, decider });
   return { egress, decider, layer, tok: () => localRunToken(egress, { runId: randomUUID() }) };
@@ -228,7 +228,7 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
   after(() => mock.close());
 
   it('(1) 허용 목록 밖 번들 다이제스트 → 호출 안 함', async () => {
-    const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries().filter((x) => x.id !== 'recovery_v1') } });
+    const egress = new Egress({ env: {}, testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries().filter((x) => x.id !== 'recovery_v1') } });
     const decider = new OpenAIDecisionsAdapter({ apiKey: KEY, egress });
     const n = mock.calls.length;
     await assert.rejects(decider.call(b('recovery_v1'), screen('x'), localRunToken(egress, { runId: 'r-allow' })), { code: 'guard_bundle_not_allowlisted' });
@@ -309,7 +309,7 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
   });
 
   it('티켓 없이 providerFetch를 직접 부르면 거부, 허용 경로 밖도 거부', async () => {
-    const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
+    const egress = new Egress({ env: {}, testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
     const tok = () => localRunToken(egress, { runId: randomUUID() });
     await assert.rejects(egress.providerFetch('https://api.openai.com/v1/decisions', { method: 'POST', body: '{}' }), EgressError);
     await assert.rejects(egress.providerFetch('https://api.openai.com/v1/files', { method: 'POST', body: '{}', headers: { [TICKET_HEADER]: 'x' } }), EgressError);
@@ -317,7 +317,7 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
   });
 
   it('티켓은 본문 해시에 묶인다: 같은 티켓으로 다른 본문을 보내면 거부', async () => {
-    const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
+    const egress = new Egress({ env: {}, testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
     const tok = () => localRunToken(egress, { runId: randomUUID() });
     const body = { model: 'gpt-6-luna' };
     await assert.rejects(
@@ -333,7 +333,7 @@ describe('Responses(Terra) 어댑터: store:false 2턴 재생', () => {
   it('1턴 도구 호출 → function_call_output과 태그된 출력을 replay → 2턴 구조화 출력, 위조 replay는 거부', async () => {
     const mock = await startOpenAIMock();
     try {
-      const egress = new Egress({ testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
+      const egress = new Egress({ env: {}, testOrigins: { openai: mock.origin }, modelGuard: { bundles: catalog.allowEntries() } });
       const responder = new OpenAIResponsesAdapter({ apiKey: KEY, egress, sleep: noSleep });
       const ts = selectorRepair(['form.counterpart']);
       const runToken = localRunToken(egress, { runId: 'r-repair' });
