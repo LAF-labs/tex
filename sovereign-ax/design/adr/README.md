@@ -17,7 +17,7 @@
 | [ADR-013](ADR-013-registry-threshold-signing-transparency.md) | 레지스트리 2-of-3 임계 서명, 투명성 로그, 키 세대·폐기, 자체 HSM | 채택(SP-4·SP-6·S18 조건부, 투명성 로그 강제는 Phase 2), 앱 매니페스트 키·역할 배정표는 ADR-028 |
 | [ADR-014](ADR-014-docparse-sandbox-local-approval-window.md) | docparse 렌더러 샌드박스, main 승인 창 기반 로컬 비가역 승인 | 채택(S13b 조건부), §2는 ADR-020으로 대체, 로컬 승인 근거는 ADR-021, docparse `disableDialogs`는 ADR-025 |
 | [ADR-015](ADR-015-sovereign-model-infra-strategy.md) | 소버린 모델·인프라 전환 전략: 공급사 중립 설계, 조달 트리거, System One 호환 | 채택 |
-| [ADR-016](ADR-016-account-trust-anchor-hardware-approval.md) | 계정 신뢰 앵커(AIK 고정·서명 기기 목록), 원격 비가역 승인은 하드웨어 키 | 채택(SP-1·2 조건부), 복구 문구 경로는 ADR-020으로 대체, v2(ADR-029): 열쇠 사본은 기기에만(PASS 범위는 보류) |
+| [ADR-016](ADR-016-account-trust-anchor-hardware-approval.md) | 계정 신뢰 앵커(AIK 고정·서명 기기 목록), 원격 비가역 승인은 하드웨어 키 | 채택(SP-1·2 조건부), 복구 문구 경로는 ADR-020으로 대체, v2(ADR-029): 열쇠 사본은 기기에만(PASS는 계정만) |
 | [ADR-017](ADR-017-poc-scope-and-start.md) | PoC 범위와 착수 결정: 공문 회신 없이 홈택스 범위로 4주 PoC, 정부24 제외 | 채택(2026-11-02 개정 메모: 법률 질의 6건) |
 | [ADR-018](ADR-018-document-demand-priority.md) | 서류 수요 기반 플레이북 우선순위: 홈택스 민원증명 묶음을 MVP 코어로, 법인등기·위택스 베타, 공고문 → 서류 꾸러미 | 채택, 결정 3·조건의 W-01·S-03·S-02를 켜는 방법은 ADR-022로 정정 |
 | [ADR-019](ADR-019-single-session-chat-ui.md) | 단일 메인 세션과 대화 중심 화면, PC·폰 공용 타임라인(원본은 PC 로컬 DB, 서버 무저장) | 채택 |
@@ -29,7 +29,7 @@
 | [ADR-026](ADR-026-human-secret-device-bound-session-vault.md) | 사람 비밀 등급 정합: 기기 결박 열쇠와 Windows 세션을 따르는 금고, 엄격 모드는 발급마다 Hello | 채택(2026-11-03, S10c 조건부, AUDIT-D 5건) |
 | [ADR-027](ADR-027-approval-precision.md) | 승인 정밀도: 바의 줄 수를 늘리지 않고 더 정확하게, 사용자 동작은 main이 본 입력에 묶는다 | 채택(2026-11-03, AUDIT-D 6건) |
 | [ADR-028](ADR-028-supply-chain-update-signing-roles.md) | 공급망·업데이트·서명 역할: 앱 채널을 레지스트리와 같은 신뢰 수준으로, 5인 팀에서 성립하는 쿼럼 | 채택(2026-11-03, AUDIT-D 4건) |
-| [ADR-029](ADR-029-remote-recovery-data-minimization.md) | 원격·복구·데이터 최소화: 서버는 열쇠를 갖지 않고, 폰은 범위만큼만, 문구는 사실대로 | 채택(2026-11-03, SP-2 조건부, AUDIT-D 9건), 결정 1의 PASS 범위는 보류 |
+| [ADR-029](ADR-029-remote-recovery-data-minimization.md) | 원격·복구·데이터 최소화: 서버는 열쇠를 갖지 않고, 폰은 범위만큼만, 문구는 사실대로 | 채택(2026-11-03, SP-2 조건부, AUDIT-D 9건), 결정 1의 PASS 범위는 (가)로 확정 |
 | ADR-030 | 구현 결정 대장(`poc/reports/decisions.tsv`를 표로 옮김, RETRO B-17) | 예약 |
 
 AUDIT-D(설계 v1.3 + PoC 코드) 확정 53건의 처리 배정은 [D19 §3.5](../19-attack-surface.md)에 있다. ADR-025~029가 48건, D19 등록만이 5건이다. AUDIT-D는 처음에 ADR-022~026으로 적었고, main의 ADR-022·023과 겹쳐 2026-11-03 병합 때 ADR-025~029로 옮겼다(022→025 … 026→029, 예약 027→030).
