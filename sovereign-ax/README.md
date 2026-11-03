@@ -25,7 +25,7 @@
 | [02-product-spec.md](02-product-spec.md) | 화면·사용자 흐름·플레이북 목록·신원 모델·리모트/클라우드 에이전트 명세 |
 | [03-architecture.md](03-architecture.md) | 로컬 하네스·비밀 경계·모델 게이트웨이·데이터 흐름·비용 설계·위협 모델 |
 | [04-roadmap.md](04-roadmap.md) | 개발 착수 게이트·기술 스파이크·MVP·마일스톤·팀·리스크 레지스터·KPI |
-| [05-access-and-detection.md](05-access-and-detection.md) | 자동화 접근 허용 공문 계획, 봇탐지 비대상 운영 설계, 캡차 핸드오프, 플레이북 최대화 원칙 |
+| [05-access-and-detection.md](05-access-and-detection.md) | 운영기관 공문 계획(국세청 통지·질의, 정부24·위택스 사전 허락 요청), 봇탐지 비대상 운영 설계, 캡차 핸드오프, 플레이북 최대화 원칙 |
 | [06-feasibility.md](06-feasibility.md) | 개발·사업 가능성 검토, Go 조건과 중단 기준, 미결 항목 결정 |
 | [07-document-catalog.md](07-document-catalog.md) | 사업자 서류 카탈로그: 공고문 36건 수요 집계, 서류별 발급 사실, 상황별 세분화, 플레이북 우선순위 근거 |
 | [08-screen-plan.md](08-screen-plan.md) | 화면·기능 기획: 제품 원칙, 정보 구조, 화면 34개(PC 27·모바일 7), 채팅 온보딩, 작업 상태 흐름, 서류 꾸러미 카드, 예외 상태, Claude Design 전달 사항 |
