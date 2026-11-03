@@ -4,6 +4,8 @@
 export const CHILD_ENV_ALLOWLIST = [
   'PATH', 'SystemRoot', 'SystemDrive', 'windir', 'USERPROFILE', 'USERNAME', 'LOCALAPPDATA', 'APPDATA', 'TEMP', 'TMP',
   'HOME', 'USER', 'LOGNAME', 'LANG', 'LC_ALL', 'LC_CTYPE', 'TMPDIR', 'DISPLAY', 'XDG_RUNTIME_DIR',
+  // Linux X11·xvfb: DISPLAY만으로는 X 서버 인증 파일을 못 찾는다(금고가 띄우는 Chrome이 화면을 못 연다).
+  'XAUTHORITY',
   'ProgramFiles', 'ProgramFiles(x86)', 'ProgramData', 'COMPUTERNAME', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
   // Linux 개발 환경의 키체인(Secret Service, D-Bus). Windows·macOS에서는 없다.
   'DBUS_SESSION_BUS_ADDRESS',

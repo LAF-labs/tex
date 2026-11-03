@@ -72,6 +72,7 @@ describe('정적·구성 경계', () => {
     for (const bad of ['--remote-debugging-port=0', '--remote-allow-origins=*', '--no-sandbox', '--disable-extensions']) assert.throws(() => buildChromeArgs('/p', [bad]));
     const env = chromeEnv({ HOME: '/h', PATH: '/bin', HTTPS_PROXY: 'http://evil', CHROME_LOG_FILE: '/tmp/x', ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--inspect' });
     assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH']);
+    assert.deepEqual(Object.keys(chromeEnv({ DISPLAY: ':99', XAUTHORITY: '/tmp/x/Xauthority', DEBUG: '1' })).sort(), ['DISPLAY', 'XAUTHORITY'], 'Linux X11·xvfb 화면 인증');
   });
 
   it('승인 바 판정: 무장 지연·재시작, 머무름, 바 안 down→up만, 클릭 활성화 예외, 커서 위장, 키보드 없음', () => {

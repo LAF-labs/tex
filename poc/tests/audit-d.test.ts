@@ -97,6 +97,8 @@ describe('audit-d: D2 자식 env(N-23)', () => {
       NODE_TLS_REJECT_UNAUTHORIZED: '0', NODE_EXTRA_CA_CERTS: '/ca', PWDEBUG: '1', ELECTRON_RUN_AS_NODE: '1',
     });
     assert.deepEqual(env, { PATH: '/bin', LOCALAPPDATA: 'C:\\L' });
+    // Linux X11·xvfb 화면 인증은 넘긴다(금고가 띄우는 Chrome이 DISPLAY에 붙으려면 필요하다).
+    assert.deepEqual(childEnv({ DISPLAY: ':99', XAUTHORITY: '/tmp/xvfb-run.x/Xauthority', DEBUG: '1' }), { DISPLAY: ':99', XAUTHORITY: '/tmp/xvfb-run.x/Xauthority' });
   });
 
   it('every utilityProcess.fork call passes env and execArgv', () => {
