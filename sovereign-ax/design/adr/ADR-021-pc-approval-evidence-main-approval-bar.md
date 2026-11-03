@@ -286,3 +286,8 @@ D08 §6.1의 "처음 쓰는 거래처·이메일 수신자"(`remote.newCounterpa
 ## 개정 메모 (2026-11-02, ADR-023)
 
 - 결정 5의 "증언은 조회 재시도를 1회 더 한 뒤에만 받는다"에 예외를 둔다. 정지 하향(ADR-023 결정 5)으로 그 포털의 실효 수준이 `postprocess`가 되거나 플레이북이 kill돼 조회 플레이북을 돌릴 수 없으면, 조회 재시도 없이 증언을 받는다. `verify.minElapsedMs` 대기와 승인 바의 고정 문구는 그대로이고, "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 해소 결과를 원장에 먼저 기록한 뒤 D03 §2의 Running 진입 확인과 정지 분기를 따르므로, 이때 해소는 Running으로 가지 않는다. 갈 곳은 실행 전체의 원장 행으로 정하므로, 같은 실행에 앞선 `committed`가 있으면 `not_committed`여도 `CompletedWithIssues`이고, 없으면 `Paused(policy_downgrade)`다.
+
+## 개정 메모 (2026-11-03, ADR-024)
+
+- 결정의 '중복 경고' 예약 `fieldKey`에 `$dup.portalExisting`을 더한다. 게이트 직전 verify 기준선 B₀에 이 PC 원장이 모르는 같은 건 승인번호가 있을 때 엔진이 건수를 값으로 넣는다(Phase 1부터). 바는 해당 줄 끝에 "{포털}에 같은 건 N건 있음"을 붙이고, 동작 글자는 다른 중복 경고와 같이 "같은 건 기록을 확인했고 발급"이다. D02 `fieldKey` 사전과 schemas/remote-envelope의 닫힌 목록에 넣는다.
+- `$dup.otherDevice`("다른 PC 기록 있음·확인 불가")는 Phase 2에서 데스크톱 2대 이상을 연결한 계정에서만 생긴다. Phase 1과 PC 한 대 계정에서는 엔진이 만들지 않는다.

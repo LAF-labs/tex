@@ -175,7 +175,7 @@
 
 ### 4.4 `verify`의 의미와 조회 하위 플레이북 (B-07, B-08)
 
-- **기준선**: 게이트 직전에 같은 하위 플레이북으로 `match`에 맞는 행의 승인번호 집합 B₀를 찍어 둔다. 기준선 조회가 실패하면 게이트를 열지 않고 `verify.baseline_missing`으로 핸드오프한다(아직 커밋 전이므로 안전).
+- **기준선**: 게이트 직전에 같은 하위 플레이북으로 `match`에 맞는 행의 승인번호 집합 B₀를 찍어 둔다. 기준선 조회가 실패하면 게이트를 열지 않고 `verify.baseline_missing`으로 핸드오프한다(아직 커밋 전이므로 안전). B₀에 이 PC 원장이 모르는 승인번호가 있으면 다른 PC·포털 직접 발급의 같은 건으로 보고 `$dup.portalExisting`을 띄운다(§7, ADR-024).
 - **판정**: 제출 뒤 매칭 집합 B₁에서 `B₁ \ B₀`가 **정확히 1건**이면 `committed`이고, 그 승인번호를 `bind`로 변수에 묶는다. `B₁ \ B₀`가 0건이면서 `notCommittedPolicy.minElapsedMs`가 지났고 `lookups`회 연속 0건이며 제출 화면에 **명시적 실패 신호**(오류 대화상자 텍스트, 서명 거절 화면 — 신호 목록은 S1에서 확정)가 있을 때만 `not_committed`다. 2건 이상이거나 그 밖의 경우는 모두 `unknown`이다.
 - `match`는 참조만 받는다(상수 금지). 비가역 스텝의 확인에는 `$readback.*`(실제 제출 값)을 쓴다(V-04).
 - `baseline: none`은 `match`가 앞선 verify의 `bind`로 묶인 `$vars` 값(게이트 전에 존재하지 않던 고유 값, 예: 새 승인번호)을 키로 쓸 때만 허용한다.
@@ -225,7 +225,7 @@
 | **V-03e** | X는 `repeat` 본문 안에 있을 수 없다 |
 | **V-03f** | X와 `W(X)` 안 스텝의 `onFail` = `{retry:0, then∈{handoff,abort}}`. `verify.not_committed`에서 X로 돌아오는 모든 경로는 `G(X)`를 다시 지난다 |
 | **V-03g** | `click`/`press`/`select` 타깃이 `commits:true`인데 게이트 허가가 없으면 오류. 타깃이 `commits`가 아닌데 `submit` 타입이면 오류 |
-| **V-03h** | `G(X).card`의 필드 집합 ⊇ 앱 내장 카드 필수 필드(공급자 = 내 사업자 포함) ∪ X의 모든 파라미터(`to`, `attach`, 제출 폼의 `readback` 필드) ∪ `intent.id`. `G` 앞에 `readback` 스텝 R이 있고 R→G 사이에는 `assert`만 있다. 카드는 엔진이 `fieldKey → 앱 내장 라벨` 사전으로 렌더링하며, 패키지 문자열은 카드 제목과 보조 설명만 바꿀 수 있다. 라벨·값·순서·고정 경고(중복 경고, InDoubt, 공급자 표시, 직전 시도 경고)는 바꿀 수 없다. 폰도 같은 라벨 사전을 앱에 내장한다(B-24, B-05). 사전에는 엔진이 만드는 예약 키 `$first.bizNo`·`$first.email`(처음 거래·처음 보내는 주소)과 `$dup.businessKey`·`$dup.priorNotCommitted`·`$dup.otherDevice`(중복 경고)가 있고, PC에서는 이 값들을 main 승인 바가 보인다(ADR-021) |
+| **V-03h** | `G(X).card`의 필드 집합 ⊇ 앱 내장 카드 필수 필드(공급자 = 내 사업자 포함) ∪ X의 모든 파라미터(`to`, `attach`, 제출 폼의 `readback` 필드) ∪ `intent.id`. `G` 앞에 `readback` 스텝 R이 있고 R→G 사이에는 `assert`만 있다. 카드는 엔진이 `fieldKey → 앱 내장 라벨` 사전으로 렌더링하며, 패키지 문자열은 카드 제목과 보조 설명만 바꿀 수 있다. 라벨·값·순서·고정 경고(중복 경고, InDoubt, 공급자 표시, 직전 시도 경고)는 바꿀 수 없다. 폰도 같은 라벨 사전을 앱에 내장한다(B-24, B-05). 사전에는 엔진이 만드는 예약 키 `$first.bizNo`·`$first.email`(처음 거래·처음 보내는 주소)과 `$dup.businessKey`·`$dup.priorNotCommitted`·`$dup.portalExisting`·`$dup.otherDevice`(중복 경고, `$dup.portalExisting`은 Phase 1부터, `$dup.otherDevice`는 Phase 2 데스크톱 2대 계정만, ADR-024)가 있고, PC에서는 이 값들을 main 승인 바가 보인다(ADR-021) |
 | **V-03i** | `gate.authorizes`는 주 비가역 **정확히 1개**와 `followUpOf`가 그 주 비가역인 스텝 0개 이상(스키마 `maxItems: 3`)으로만 구성된다(B-12) |
 | **V-03j** | 비가역 스텝 X의 타깃 `landmark` 서브트리 안에서 사전에 `fieldKey`(`_ignore` 제외)를 가진 **모든** 입력 항목은 X 앞 `readback.fields`에 포함되어야 한다(B-05) |
 | **V-03k** | `press.key=Enter`는 `target`이 필수다(스키마). 그 타깃의 `landmark` 안에 `commits:true` 항목이 하나라도 있으면 그 `press`는 비가역 스텝으로 간주한다. `select`의 타깃이 `commits:true`이면 비가역 스텝이다(B-02) |
@@ -293,7 +293,8 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - **`intentId`**(ULID)는 `prepare()`가 만들고 카드에 표시한다. 리모트 명령은 폰이 만든 `cmd_id`를 그대로 쓴다.
 - 아이덴포턴시 원장(D07 `irreversible_log`)의 키는 **`(intent_id, step_id)`**이고 행은 `inputs_hash`·`package_digest`·`action_hash`에 결속된다. 같은 `intentId`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 다르면 거부한다(`ledger.intent_reuse`). 사후 스텝 점프는 **같은 `run_id`의 재개**에만 적용한다(D03 §4, B-10).
 - **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). 경고는 예약 `fieldKey` `$dup.*`로 게이트 `fields`에 넣어 `cardHash`에 묶고, PC에서는 main 승인 바의 "같은 건 기록을 확인했고 발급" 클릭이 명시 확인이다(ADR-021). 렌더러 카드에만 두면 침해된 렌더러가 지울 수 있기 때문이다. `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
-- **기기 간 업무 키 표시는 필수**다(B-30). `committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태·시각을 메타데이터 서버에 올리고, 게이트 직전에 조회해 다른 기기의 기록이 있으면 경고한다(차단 아님, `$dup.otherDevice`로 승인 바에도 보인다). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다(D03 §4, 서버 테이블은 D09).
+- **포털 기존 건**(Phase 1부터, ADR-024): 기준선 B₀(§4.4)에서 이 PC 원장의 `verify_ref`를 뺀 건수가 1 이상이면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다. 차단하지 않는다. 승인 바에는 "{포털}에 같은 건 N건 있음"으로 보이고, 카드에는 "{포털} 발급목록에 {`match` 항목}이 같은 건이 N건 있습니다. 다른 PC나 {포털}에서 직접 발급한 것일 수 있습니다"를 앱 고정 문구로 둔다. 같은 건의 범위는 `verify.lookup.match`가 정하므로 업무 중복 키보다 넓을 수 있다(H-01은 품목을 보지 않는다).
+- **기기 간 업무 키 표시**(B-30, Phase 2, ADR-024): 계정에 활성 데스크톱이 2대 이상이고 백업 스위치를 켠 경우에만 `armed`·`committed`·`in_doubt`·`observed_manual` 전이 때 `HMAC(K_idx, businessKey)`와 상태·날짜를 메타데이터 서버에 올리고, 게이트 직전에 조회해 다른 기기의 기록이 있으면 경고한다(차단 아님, `$dup.otherDevice`로 승인 바에도 보인다). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다. Phase 1과 PC 한 대 계정에는 없다(D03 §4, 서버 테이블은 D09 §6).
 - 선택안: 사용자 동의 시 비고란에 짧은 의도 코드(`AX-7K3P`)를 적어 조회 정확도를 높인다. 비고 칸은 readback 대상이므로 카드에 보인다.
 
 ## 8. 예시: H-01 전자세금계산서 건별발급 v2.1 (발췌)

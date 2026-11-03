@@ -17,7 +17,7 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Loaded | start | Preparing | intentId 생성(로컬) 또는 수신(리모트), 기본값 확정, `inputs_hash` 계산. 원장에 같은 intentId 행이 있는데 `inputs_hash`·`playbook_id`가 다르면 거부 + `ledger.intent_reuse`(B-10) |
 | Preparing | 전제조건 실패 | Failed | |
 | Preparing | 준비 완료 | Running | 저널 `run.started` |
-| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07), 기기 간 업무 키 조회(§4, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 바·폰) |
+| Running | gate 도달 | WaitingGate | **진입 전**(W 밖): 사전 안전 판정(§5.3) 통과, verify 기준선 B₀ 조회(실패 시 handoff + `verify.baseline_missing`, B-07)와 B₀에서 고른 포털 기존 건(`$dup.portalExisting`, §4, ADR-024), 기기 간 업무 키 조회(§4, Phase 2·데스크톱 2대 계정, B-30). 진입 시: 카드 = readback 값(앱 내장 라벨), 포털 탭 입력 잠금(R-G6), 승인 요청 발행(main 승인 바·폰) |
 | WaitingGate | 승인(먼저 도착한 결정) | Running | `gate_requests` 원자 전이 후 토큰 발급(§3, R-G8), 거부 우선 창 2초 |
 | WaitingGate | 거부 | Aborted | |
 | WaitingGate | 사용자 "수정하기" | Running(게이트 앞 체크포인트) | 게이트 취소, 입력 잠금 해제, 게이트 앞으로 되감기(R-G6, B-06) |
@@ -35,9 +35,9 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | Running | 비가역 스텝 진입 | Running(commit section) | **R-G7 순서**: 토큰 검증 → 원장 `armed` + 토큰 소비(한 트랜잭션, `synchronous=FULL`) → readback 재계산 → 가드 무장 → 클릭(B-06) |
 | Running(commit) | readback 재계산 불일치 또는 타깃 동일성 불일치(R-A1) | Running(게이트 앞 체크포인트) / HandedOff | 클릭하지 않음. 원장 `not_committed`(사유 `pre_dispatch_mismatch`·`identity_mismatch`). readback 불일치는 게이트 앞으로, 동일성 불일치는 핸드오프 |
 | Running(commit) | 클릭 반환 | Running(commit) | 원장 `dispatched` |
-| Running(commit) | verify `committed` | Running | 원장 `committed`, 기기 간 업무 키 표시 업로드 |
+| Running(commit) | verify `committed` | Running | 원장 `committed`, 기기 간 업무 키 표시 업로드(Phase 2·데스크톱 2대 계정, §4) |
 | Running(commit) | verify `not_committed` | Running | 원장 `not_committed`, 게이트 앞 체크포인트로(`reload`) |
-| Running(commit) | verify `unknown` / 상한 초과 | InDoubt | 원장 `in_doubt`, 기기 간 업무 키 표시 업로드 |
+| Running(commit) | verify `unknown` / 상한 초과 | InDoubt | 원장 `in_doubt`, 기기 간 업무 키 표시 업로드(Phase 2·데스크톱 2대 계정, §4) |
 | InDoubt | 조회 재시도 성공 또는 사용자 증언("발급목록에 없음 확인") | Running / Failed. 해소 결과(`committed`·`not_committed`)를 원장에 **먼저 기록한 뒤** Running 진입 확인을 한다. 실효 수준이 실행을 허용하지 않으면 정지 분기(아래 규칙, 실행 전체의 원장 행 기준)로 간다. 이 건이 `not_committed`여도 같은 실행에 앞선 `committed`가 있으면 CompletedWithIssues다 | 증언은 main 승인 바로 받아 `LocalAttestation`(승인 근거와 다른 HMAC 문맥)으로 엔진에 넘기고 저널에 기록한다(ADR-021 결정 5). 증언은 `armed_at`부터 `policy.verify.minElapsedMs`가 지나고 조회 재시도를 1회 더 한 뒤에만 받으며, 승인 바에 "발급목록 반영이 늦을 수 있습니다"를 고정 표시한다(E-13). 정지 하향으로 새 수준이 `postprocess`이거나 kill이라 조회를 돌릴 수 없으면 조회 재시도 없이 증언을 받는다. 이때도 `minElapsedMs` 대기와 위 고정 문구는 그대로 두고 "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. 정지 하향 뒤의 해소도 같은 순서를 따르므로 Running으로 가지 않고 InDoubt로 되돌아가지도 않는다(ADR-023 결정 6, ADR-021 개정 메모) |
 | Running | 모든 스텝 완료 | Completed | |
 | Running | 비가역 커밋 뒤 후속(이메일 확인·PDF) 실패, 또는 `end: completed_with_issues` | CompletedWithIssues | UI 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다" |
@@ -138,7 +138,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
   - 다른 실행에서 `committed`를 발견하면 "InDoubt 아님, 이미 완료" 카드만 띄우고 사후 스텝(특히 `send_email`·PDF 저장·백업)은 실행하지 않는다.
   - "건너뛰기"는 존재하지 않는다.
 - 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7).
-- **기기 간 업무 키 표시**(B-30, Phase 1, E-07·E-13): 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(서류 백업·서버 색인을 켜는 것과 같은 계정 스위치. Phase 1에는 블롭 백업과 메타데이터 색인이 없으므로 이 스위치는 업무 키 표시만 켠다). 켜져 있으면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를, 스위치가 꺼져 있으면 "기기 간 중복 경고 꺼짐(백업 꺼짐)"을 카드에 표시한다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
+- **포털 기존 건**(Phase 1부터, ADR-024 결정 2): 게이트 직전(W 밖)에 찍은 verify 기준선 B₀(D02 §4.4)에서 이 PC 원장의 `verify_ref`(verify가 `bind`로 묶은 승인번호)를 뺀다. 남은 건이 있으면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다(차단 아님). 다른 PC·포털 직접 발급·세무사 발급이 이것으로 보인다. 새 조회는 없다. 같은 건의 범위는 플레이북 `verify.lookup.match`가 정한다(H-01: 거래처 사업자번호·작성일자·공급가액·세액).
+- **기기 간 업무 키 표시**(B-30, **Phase 2**, E-07·E-13, ADR-024 결정 3): 계정의 AIK 서명 기기 목록에 활성 데스크톱이 **2대 이상**이고 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(서류 백업·서버 색인을 켜는 것과 같은 계정 스위치). Phase 1에는 없다. 두 번째 PC가 같은 `K_idx`와 AIK 인증서를 받는 새 PC 연결(08 A-03)이 Phase 2이기 때문이다. 이 표시가 메우는 것은 B₀가 못 보는 다른 PC의 진행 중 건과 발급목록 반영 지연 구간이다. 조건을 만족하면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를, 스위치가 꺼져 있으면 "기기 간 중복 경고 꺼짐(백업 꺼짐)"을 카드에 표시한다. 이 경고들은 모두 `$dup.otherDevice`로 바에 올린다. PC 한 대 계정에는 이 표시도 `$dup.otherDevice`도 없다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
 - `in_doubt` 해소 수단은 둘뿐: 조회형 verify 재시도, 사용자의 명시 증언. 데몬은 `in_doubt`가 있는 서류를 자동 재시도하지 않는다(D10).
 - 라이브 `cmd.run`도 디스크에 영속된 처리 완료 `cmdId` 집합과 대조한다(D08 §6).
 
@@ -151,11 +152,11 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 | `armed` 후, 재계산·클릭 전 | `armed` → `in_doubt` | InDoubt | `committed` 불가(`B₁ \ B₀` = 0). `not_committed`는 "명시적 실패 신호"가 없어 불가 → `unknown` | 사용자 증언이 틀릴 때 |
 | 클릭 요청 전송 중(반환 전) | `armed` → `in_doubt` | InDoubt | 반영 뒤 `committed`, 그 전 `unknown` | 반영 지연 중 증언 시 |
 | `dispatched` 후 verify 전·중 | `dispatched` → `in_doubt` | InDoubt → 조회 재시도 | `committed`/`unknown` | 같음 |
-| `committed` 기록 후 업무 키 표시 업로드 전 | `committed` | 같은 run 재개면 사후 스텝, 다른 run이면 "이미 완료" | — | 다른 PC 경고 누락 |
+| `committed` 기록 후 업무 키 표시 업로드 전(Phase 2·데스크톱 2대 계정) | `committed` | 같은 run 재개면 사후 스텝, 다른 run이면 "이미 완료" | — | 발급목록 반영 전까지 다른 PC 경고 누락(반영 뒤에는 B₀) |
 | 후속 비가역(`send_email`) `armed` 후 | (intent, 후속 step) `in_doubt`, 주 비가역 `committed` 유지 | InDoubt(후속만) | 재발송 목록 조회 | 재발송 중복(가역성 낮음) |
 | 핸드오프 중, 사용자가 전용 Chrome 밖에서 발급 | 기록 없음 | 재개 시 `resumeAt` | 가드가 볼 수 없음 | **있음**(배너 문구만) |
 
-"중복 0건"은 **한 PC 안의 엔진 로직 버그** 범위에서 성립한다. 반영 지연 중의 사용자 증언, 두 PC의 동시 게이트, 전용 Chrome 밖 수동 발급은 경고만 한다(D13 §3, D19 §8).
+"중복 0건"은 **한 PC 안의 엔진 로직 버그** 범위에서 성립한다. 반영 지연 중의 사용자 증언, 두 PC의 동시 게이트, 전용 Chrome 밖 수동 발급은 경고만 한다(D13 §3, D19 §8). 다른 PC나 전용 Chrome 밖에서 이미 발급된 건은 발급목록에 반영된 뒤 다음 게이트의 B₀로 경고한다(`$dup.portalExisting`, ADR-024).
 
 ## 5. 스텝 실행과 커밋 구간
 
