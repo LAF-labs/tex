@@ -314,16 +314,23 @@ async function main(): Promise<void> {
   check('암호를 묻는 중에 새로 가져오기를 누르면 묻던 파일은 그만둔다(main도 버림)', !(await js<boolean>(`!!document.querySelector('[data-doc-password]')`)) && !!pending && dropped === 'pick_expired', { pending, dropped });
   pickNext(files.locked);
   await importClick();
+  const esc = await js<{ modal: boolean; inert: boolean; back: boolean }>(
+    `(() => { document.querySelector('.doc-pw').dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); return { modal: !!document.querySelector('[data-doc-password]'), inert: document.querySelector('#app').inert, back: document.activeElement === document.querySelector('[data-act=doc-import]') }; })()`,
+  );
+  check('Esc → 암호 창을 닫고(그만두기) 포커스는 가져오기 버튼으로', !esc.modal && !esc.inert && esc.back, esc);
+  pickNext(files.locked);
+  await importClick();
   await js(`(() => { const i = document.querySelector('.doc-pw'); i.value = 'wrong'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); })()`);
   await until('wrong pw', async () => js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '')`), 30_000);
   check('틀린 암호 → 다시 묻고 넣었던 암호는 비우고 칸에 포커스', await js<boolean>(`/맞지 않아요/.test(document.querySelector('[data-doc-password]')?.textContent ?? '') && document.querySelector('.doc-pw').value === '' && document.activeElement === document.querySelector('.doc-pw')`));
   const before = (await listDocs()).length;
-  const locked = await js<{ open: boolean; cancel: boolean }>(
-    `(() => { const i = document.querySelector('.doc-pw'); i.value = 'shell-pw'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); return { open: document.querySelector('[data-act=doc-password]')?.disabled, cancel: document.querySelector('[data-act=doc-password-cancel]')?.disabled }; })()`,
+  const locked = await js<{ modal: boolean; inert: boolean; importBusy: boolean }>(
+    `(() => { const i = document.querySelector('.doc-pw'); i.value = 'shell-pw'; i.dispatchEvent(new Event('input')); document.querySelector('[data-act=doc-password]').click(); return { modal: !!document.querySelector('[data-doc-password]'), inert: document.querySelector('#app').inert, importBusy: document.querySelector('[data-act=doc-import]')?.disabled }; })()`,
   );
-  check('암호로 읽는 동안 열기·그만두기를 막는다', locked.open === true && locked.cancel === true, locked);
+  check('암호로 읽는 동안 창을 닫고 앱 틀을 풀되, 가져오기는 읽는 중으로 막는다(그만둔 뒤 보관되는 경쟁 없음)', !locked.modal && !locked.inert && locked.importBusy === true, locked);
   await until('locked imported', async () => (await listDocs()).length === before + 1, 60_000);
-  check('맞는 암호 → 보관하고 암호 창이 닫힌다', (await listDocs()).length === before + 1 && !(await js<boolean>(`!!document.querySelector('[data-doc-password]') || document.querySelector('#app').inert`)));
+  await until('import button back', async () => !(await busy()), 10_000);
+  check('맞는 암호 → 보관하고 암호 창은 다시 뜨지 않는다, 포커스는 가져오기 버튼', (await listDocs()).length === before + 1 && (await js<boolean>(`!document.querySelector('[data-doc-password]') && !document.querySelector('#app').inert && document.activeElement === document.querySelector('[data-act=doc-import]')`)));
   check('열기 암호로 가져온 서류만 목록 이름 옆에 자물쇠', await js<boolean>(`document.querySelectorAll('[data-doc-lock]').length === 1 && document.querySelector('[data-doc-lock]').getAttribute('aria-label') === '열기 암호 있음'`));
 
   const vaultFiles = await fs.readdir(vaultDir);

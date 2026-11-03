@@ -877,12 +877,13 @@ function render() {
 const lockMark = () => h('span', { class: 'doc-lock', role: 'img', 'aria-label': '열기 암호 있음', title: '열기 암호 있음', 'data-doc-lock': '' }, icon('lock'));
 
 /**
- * 열기 암호 창(캔버스 D-01 · 암호 걸린 PDF 열기). 문서함에서만 띄우고, 띄운 동안 앱 틀은 inert다.
+ * 열기 암호 창(캔버스 D-01 · 암호 걸린 PDF 열기). 문서함에서 암호를 기다릴 때만 띄우고, 띄운 동안 앱 틀은 inert다.
+ * 암호로 읽는 동안에는 창을 닫는다(앱은 그대로 쓰고, 가져오기 버튼이 "읽는 중…"으로 막혀 그만둔 뒤 결과가 보관되는 경쟁이 없다).
  * 암호는 이 가져오기에만 쓰고 저장하지 않는다. 다시 그려도 입력 중인 값은 state에 남는다(DOM 속성에는 넣지 않는다).
  */
 function passwordModal() {
   const imp = state.docImport;
-  const input = h('input', { type: imp.show ? 'text' : 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'PDF 열기 암호', disabled: state.docBusy });
+  const input = h('input', { type: imp.show ? 'text' : 'password', class: 'doc-pw', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'PDF 열기 암호' });
   input.value = imp.pw ?? '';
   input.addEventListener('input', () => (imp.pw = input.value));
   const submit = () => {
@@ -892,7 +893,7 @@ function passwordModal() {
     importDoc({ pickId: imp.pickId, password });
   };
   input.addEventListener('keydown', (e) => e.key === 'Enter' && submit());
-  const eye = h('button', { type: 'button', class: 'pw-eye', 'aria-label': imp.show ? '암호 가리기' : '암호 보기', 'aria-pressed': String(!!imp.show), disabled: state.docBusy, onclick: () => ((imp.show = !imp.show), renderModal()) }, icon(imp.show ? 'eyeOff' : 'eye'));
+  const eye = h('button', { type: 'button', class: 'pw-eye', 'aria-label': imp.show ? '암호 가리기' : '암호 보기', 'aria-pressed': String(!!imp.show), onclick: () => ((imp.show = !imp.show), renderModal()) }, icon(imp.show ? 'eyeOff' : 'eye'));
   return h(
     'div',
     { class: 'modal-scrim' },
@@ -903,29 +904,44 @@ function passwordModal() {
         'div',
         { class: 'modal-hd' },
         h('div', { class: 'modal-title' }, h('h2', { class: 'title-screen', id: 'pw-title' }, '열기 암호 넣기'), h('p', { class: 'sx-body-sm is-muted' }, '이 PDF에 열기 암호가 걸려 있어요. 암호는 이번에 열 때만 쓰고 저장하지 않아요.')),
-        h('button', { type: 'button', class: 'panel-x', 'aria-label': '닫기', disabled: state.docBusy, onclick: cancelPassword }, icon('close')),
+        h('button', { type: 'button', class: 'panel-x', 'aria-label': '닫기', onclick: cancelPassword }, icon('close')),
       ),
       h('label', { class: 'modal-field' }, h('span', { class: 'sx-meta' }, 'PDF 열기 암호'), h('span', { class: 'pw-box' }, input, eye)),
       imp.wrong ? note('암호가 맞지 않아요. 다시 넣어 주세요.', true) : null,
       h('div', { class: 'modal-note' }, icon('lock'), h('span', {}, '이 PC 안에서만 열어요. 암호와 파일 내용은 모델과 우리 서버로 보내지 않아요.')),
-      // 읽는 동안에는 버튼을 막는다(그만둔 뒤 진행 중이던 결과가 도착해 보관되는 경쟁이 없게)
-      h('div', { class: 'modal-acts' }, btn('취소', cancelPassword, 'sx-btn-lg', { 'data-act': 'doc-password-cancel', disabled: state.docBusy }), btn('열기', submit, 'sx-btn-primary sx-btn-lg', { 'data-act': 'doc-password', disabled: state.docBusy })),
+      h('div', { class: 'modal-acts' }, btn('취소', cancelPassword, 'sx-btn-lg', { 'data-act': 'doc-password-cancel' }), btn('열기', submit, 'sx-btn-primary sx-btn-lg', { 'data-act': 'doc-password' })),
     ),
   );
 }
 
+/** 창을 닫은 뒤 포커스를 가져오기 버튼에 돌려줄 차례(읽는 동안은 버튼이 막혀 있어 끝난 뒤 돌려준다). */
+let modalReturn = false;
+
 function renderModal() {
   const root = $('#modal');
-  const open = state.view === 'docs' && !!state.docImport;
-  // 처음 띄울 때와 창 안에 있던(읽는 동안 칸을 막아 잃은) 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
+  const open = state.view === 'docs' && !!state.docImport && !state.docBusy;
+  // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
-  const focus = !root.firstChild || !a || a === document.body || root.contains(a);
+  const lost = !a || a === document.body || root.contains(a);
+  const focus = !root.firstChild || lost;
+  if (root.firstChild && !open) modalReturn = true;
   root.replaceChildren(...(open ? [passwordModal()] : []));
   $('#app').inert = open;
-  if (open && focus) {
-    const i = root.querySelector('.doc-pw');
-    i.focus();
-    i.setSelectionRange(i.value.length, i.value.length);
+  if (open) {
+    modalReturn = false;
+    if (focus) {
+      const i = root.querySelector('.doc-pw');
+      i.focus();
+      i.setSelectionRange(i.value.length, i.value.length);
+    }
+    return;
+  }
+  // 그사이 다른 곳으로 옮긴 포커스·다른 화면이면 돌려주지 않는다
+  if (state.view !== 'docs' || !lost) modalReturn = false;
+  const back = $('[data-act=doc-import]');
+  if (modalReturn && lost && back && !back.disabled) {
+    modalReturn = false;
+    back.focus();
   }
 }
 
