@@ -12,7 +12,8 @@
     "bundles": "node --conditions=development scripts/bundles-digest.ts",
     "s9": "node --conditions=development scripts/s9-decisions.ts",
     "demo": "pnpm build && electron apps/desktop/dist/shell.js",
-    "demo:e2e": "pnpm build && electron apps/desktop/dist/shell-e2e.js"
+    "demo:e2e": "pnpm build && electron apps/desktop/dist/shell-e2e.js",
+    "demo:preview": "pnpm build && electron scripts/shell-preview.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",
