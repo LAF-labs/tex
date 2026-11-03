@@ -9,12 +9,15 @@ import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
 const hometax = process.argv.includes('--portal=hometax');
 registerShellSchemes();
+// app.exit가 바로 끝나지 않는 Electron이어도 확인 안 된 앱 폴더로 엔진·금고를 띄우지 않는다(main.ts와 같은 막음).
+let refused = false;
 if (hometax) {
   // 앱 폴더를 확인·복구한 뒤에만 Electron에 넘긴다(main.ts와 같은 순서). 사용자 전용 권한을 못 걸면 열지 않는다.
   const root = defaultAppRoot();
   const prepared = await prepareLayout(root).catch(() => null);
   if (!prepared?.root.ok) {
     dialog.showErrorBox('저장소 권한', '앱 폴더를 사용자 전용으로 준비하지 못해 열지 않았어요.');
+    refused = true;
     app.exit(1);
   } else {
     const paths = appPaths(root);
@@ -24,7 +27,10 @@ if (hometax) {
   }
 } else app.setPath('userData', path.join(app.getPath('temp'), 'sax-shell-demo'));
 // 두 번째 실행은 첫 실행의 창을 앞으로 가져오고 끝난다(N-29). 잠금은 userData 기준이라 setPath 뒤에 잡는다.
-if (!app.requestSingleInstanceLock()) app.exit(0);
+if (!refused && !app.requestSingleInstanceLock()) {
+  refused = true;
+  app.exit(0);
+}
 let shell: Shell | null = null;
 app.on('second-instance', () => {
   const w = shell?.win;
@@ -36,6 +42,7 @@ app.on('window-all-closed', () => {
   void (shell?.close() ?? Promise.resolve()).finally(() => app.quit());
 });
 void app.whenReady().then(async () => {
+  if (refused) return;
   try {
     shell = await startShell(hometax ? { engine: { portal: { kind: 'hometax' } } } : { headful: process.env.SAX_DEMO_HEADLESS !== '1' });
     await shell.ready;

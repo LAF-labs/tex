@@ -275,7 +275,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const r = secrets.request(data);
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
     const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
-    const w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
+    let w: BrowserWindow;
+    try {
+      w = openSecretWindow(win, bind, host.secretInputPort(bind), `${SHELL_SCHEME}://shell/secret.html`);
+    } catch (e) {
+      // 열지 못했으면 '열림'을 남기지 않는다(남으면 이후 요청이 줄만 서고 창이 영영 안 열린다). 든 요청도 버린다.
+      secrets.closed();
+      return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
+    }
     secretWin = w;
     // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5). 메인 창이 포커스를 받기 전에
     // 표시해야 그 활성화가 표시를 쓴다('closed'는 포커스보다 늦을 수 있다).

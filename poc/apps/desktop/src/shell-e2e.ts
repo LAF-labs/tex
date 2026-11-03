@@ -403,6 +403,21 @@ async function flow(): Promise<void> {
   check('비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 "금고 · 보안카드 번호")', !!sw2 && sw2.getTitle() === '금고 · 보안카드 번호' && sw2.isModal(), sw2?.getTitle());
   sw2?.close();
   await until('secret closed', () => S.secretWindow() === null, 3000);
+  // 창을 열다 실패해도 '열림'이 남지 않는다: 다음 요청은 정상으로 열린다.
+  const realPort = S.host.secretInputPort.bind(S.host);
+  S.host.secretInputPort = () => {
+    throw new Error('e2e: port failed');
+  };
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T5', kind: 'portal_password', scope: 'business' });
+  await sleep(200);
+  const failedNoWin = S.secretWindow() === null;
+  S.host.secretInputPort = realPort;
+  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T6', kind: 'portal_password', scope: 'business' });
+  await until('secret window after failure', () => !!S.secretWindow(), 5000).catch(() => {});
+  const reopened = !!S.secretWindow();
+  check('비밀 창을 열다 실패해도 다음 요청은 정상으로 연다(조정자에 열림이 남지 않음)', failedNoWin && reopened, { failedNoWin, reopened });
+  S.secretWindow()?.close();
+  await until('secret closed after failure test', () => S.secretWindow() === null, 3000);
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'google_signin_detected' });
   check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretWindow() === null, S.runs.get(id2)!.notices);
   // 실행이 끝나 main이 창을 닫으면 들고 있던 요청은 다시 열지 않는다(종료를 막거나 창 없이 '열림'이 남지 않게).
