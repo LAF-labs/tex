@@ -7,7 +7,7 @@
   "required": ["portal", "entries", "commitEndpoints", "knownEndpoints"],
   "additionalProperties": false,
   "properties": {
-    "portal": {"enum": ["hometax", "gov24", "sminfo", "insure4", "iros", "public_api"]},
+    "portal": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api"]},
     "entries": {
       "type": "object",
       "propertyNames": {"pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},

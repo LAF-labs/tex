@@ -62,7 +62,7 @@
   },
   "$defs": {
     "portalMap": {"type": "object",
-      "propertyNames": {"enum": ["hometax", "gov24", "sminfo", "insure4", "iros", "public_api"]},
+      "propertyNames": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api"]},
       "required": ["hometax", "gov24", "sminfo", "insure4"]},
     "pace": {"type": "object", "required": ["stepDelayMs", "keyEventDelayMs", "afterNavSettleMs", "slowFactor"], "additionalProperties": false,
       "properties": {
