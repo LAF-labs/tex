@@ -18,7 +18,7 @@
 
 기획 최종본은 Claude Docs 아티팩트([최종본 요약 + 탭 9개(개발 설계 요약 v1.3, 공격표면 감사·소버린 결정 포함)](https://claude.ai/artifact/CPYTrcP1Rb1rn35ig7bEPv))로도 볼 수 있으며 이 저장소의 문서와 같은 내용이다. 화면·기능 기획은 와이어프레임이 들어간 [별도 Claude Docs](https://claude.ai/artifact/9rBKqQmQ3Thoaii3r1aMpi)로, 디자인 시스템은 미리보기가 렌더되는 [Design System 아티팩트](https://claude.ai/artifact/EqjRNi8i9CYd4qkSo9qz3N)로도 볼 수 있다.
 
-코드는 아직 없다. 개발 착수 게이트(기획 확정 · 법률 1차 의견 · 운영기관 공문 발송)는 [04-roadmap.md](sovereign-ax/04-roadmap.md)에 있다. 작업판은 https://project.laf-co.com/p/tex (P0-14 공격표면 감사, P0-15 소버린 대안 평가).
+제품 코드는 아직 없다. `poc/`에는 폐기 전제 PoC 스파이크(ADR-017)가 있고, AUDIT-D 처리로 PoC-3 실계정 진입 안전 기준선(ADR-022)을 앱이 집행한다. 개발 착수 게이트(기획 확정 · 법률 1차 의견 · 운영기관 공문 발송)는 [04-roadmap.md](sovereign-ax/04-roadmap.md)에 있다. 작업판은 https://project.laf-co.com/p/tex (P0-14 공격표면 감사, P0-15 소버린 대안 평가).
 
 ## 읽는 순서
 
