@@ -1,12 +1,14 @@
 # D02. 플레이북 IR 스펙
 
+> 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05). §2 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52).
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A(research/REVIEW-A-ir-engine.md)를 반영해 제어 흐름 의미론, 커밋 구간 규칙(V-03a~h), 셀렉터 사전 속성, 조회형 `verify`, 의도 키를 정의했다. 반례 CE-1~CE-18은 검증기 퍼징의 고정 회귀 세트다(D13 §7).
+> ADR-036 반영 2026-11-05: §7 H-01c 취소 중복 키는 차단 키라는 예외.
 
 ## 1. 설계 결정 요약
 
 - 플레이북은 **TypeScript 빌더로 작성 → JSON IR로 컴파일 → 서명 패키지(2-of-3 임계 서명)로 배포 → 엔진이 해석**한다(ADR-002, B-22). 사용자 기기에서 임의 코드가 실행되지 않는다.
-- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-24·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35).
+- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-24·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35). **팀장 결정(2026-11-05)**: Phase 1은 RE2 네이티브·wasm 바인딩을 넣지 않는다. 검증기가 RE2 문법 부분집합(중첩 수량자·역참조·lookaround 거부)을 검사한 뒤 JS RegExp로 컴파일한다. 플레이북·셀렉터 사전은 2-of-3 서명이라 ReDoS 위협 주체가 제한된다. 핫픽스 채널에 외부 패턴이 들어오거나 Phase 2에 들어가면 바인딩을 재검토한다(엔진 PR #45, 의존성 공급망 범위 ADR-028).
 - 비가역성의 원천은 셀렉터 사전의 **`commits` 속성**이다. 다만 이 값도 사람이 선언한 것이므로 세 겹으로 확인한다(B-01·B-02). ① 셀렉터 CI가 녹화(HAR·DOM)와 대조한다(SV-01 충돌, SV-02 HAR 상관·이름 린트). ② 런타임이 매 액추에이션 직전에 실제 요소의 역할·접근성 이름을 사전과 대조하고(R-A1), 비커밋 항목이 같은 랜드마크의 커밋 항목과 같은 요소로 해석되면 거부한다(R-A2, D03 §5.2). ③ 네트워크 커밋 가드가 요청을 막는다(D03 §5.4). **핫픽스는 이 근거 중 어느 것도 바꿀 수 없다**(§2.2, ADR-012).
 - `commits: true` 타깃을 누르는 스텝은 비가역 스텝이며 **커밋 구간 규칙**(V-03a~l, V-03c′)을 만족해야 한다.
 - 비가역 스텝의 결과는 화면 판정이 아니라 **포털 조회형 `verify`**로 확정한다. 게이트 직전 기준선과 비교해 "새로 생긴 1건"일 때만 `committed`다(§4.4, B-07). 조회 하위 플레이북은 버전·다이제스트로 고정한다(B-08). 미확정이면 `InDoubt`.
@@ -24,7 +26,7 @@
 └── strings.ko.json    # 카드 제목·보조 설명·프롬프트·변경 로그 (카드 필드 라벨은 여기 없다 — 앱 내장)
 ```
 
-- `signatures[]`(B-22): 앱에 핀 고정된 패키지 서명 키 3개 중 **서로 다른 2개 이상**의 Ed25519 서명이다. 서명 대상은 `JCS(manifest − signatures)`이고, manifest의 `contentDigests`가 나머지 세 파일을 묶는다. v1.1의 단일 `SIGNATURE` 파일은 폐지한다. 로드 규칙은 D03 §3.1, 키 운영은 D09 §8·ADR-013.
+- `signatures[]`(B-22): 앱에 핀 고정된 패키지 서명 키 3개 중 **서로 다른 2개 이상**의 Ed25519 서명이다. 서명 대상은 `JCS(manifest − signatures)`이고, manifest의 `contentDigests`가 나머지 세 파일을 묶는다. 서명 바이트 규약(서명 입력의 맥락 문자열·정규화·인코딩)의 정본은 [schemas/SIGNING.md](schemas/SIGNING.md)(엔진 트랙 작성, 엔진 PR #52)다. v1.1의 단일 `SIGNATURE` 파일은 폐지한다. 로드 규칙은 D03 §3.1, 키 운영은 D09 §8·ADR-013.
 - `kind`: `playbook` 또는 `lookup`(조회 하위 플레이북, `effects: []`, V-22)(B-08).
 - `domains[]`: 이동·요청 허용 호스트(정확 일치, 하위 도메인은 명시 와일드카드만). 엔진이 네비게이션·요청을 감시해 밖으로의 이동을 차단하고, 금고 중계도 매 문서 커밋마다 `내장 eTLD+1 ∩ domains`를 다시 확인한다(D05).
 - `effects[]`: 이 플레이북이 일으킬 수 있는 비가역 효과의 종류 `{issue_document, send, sign, pay}`. 데몬 실행 가능 여부는 이 값을 **런타임에** 본다(R-D1, D03 §12, B-27).
@@ -68,8 +70,8 @@
 | `frame`, `landmark` | 프레임 식별자와 가장 가까운 `form`/`dialog` 랜드마크 stable_id |
 | `commits` | **필수.** 이 요소를 누르면 포털에 비가역 제출이 일어난다. 비가역성의 원천이며 SV-01·SV-02로 녹화와 대조한다(B-02) |
 | `commitEffect` | `commits:true`일 때 필수: `issue_document`\|`send`\|`sign`\|`pay`. V-14·R-D1의 계산 근거 |
-| `inputType` | 기대 입력 형식. `password`는 `secretSlot`과 같이 V-20 대상 |
-| `secretKind`·`secretPurpose` | `secretSlot`은 `secretKind`(cert_password·portal_password·security_card)와 `secretPurpose`(login·sign)다. V-02: `secret_fill.secret == entry.secretKind`이고 `secretPurpose`는 그 흐름(로그인 구간·signFlow) 안에서만(ADR-026, D-30(N-46)). 이 문서와 다른 문서의 `secretSlot`은 'secretKind가 있는 항목'을 뜻한다. 비밀 타이피스트가 입력할 수 있는 칸. `secret_fill`·`human:secret`의 타깃 외에는 어떤 스텝도 이 칸을 읽거나 범위에 넣을 수 없다(V-20). `readbackOf`·`fieldKey`·`allowedConstants`를 가질 수 없다(스키마) |
+| `inputType` | 기대 입력 형식. `password`는 `secretKind` 항목과 같이 V-20 대상 |
+| `secretKind`·`secretPurpose` | 비밀 칸 표시. `secretKind`(cert_password·portal_password·security_card)와 `secretPurpose`(login·sign)는 함께 필수이고, `commits:true` 항목은 가질 수 없다(selectors 스키마 v1.1, 옛 불리언 `secretSlot`을 대체). V-02: `secret_fill.secret == entry.secretKind`이고 `secretPurpose`는 그 흐름(login = 로그인 구간, sign = `submit.signFlow`·`sign` 스텝) 안에서만(ADR-026, D-30(N-46)). 설계 문서의 '비밀 칸'은 `secretKind`가 있는 항목을 뜻한다(research/ 감사 기록의 `secretSlot`도 같은 뜻). 비밀 타이피스트가 입력할 수 있는 칸. `secret_fill`·`human:secret`의 타깃 외에는 어떤 스텝도 이 칸을 읽거나 범위에 넣을 수 없다(V-20). `readbackOf`·`fieldKey`·`allowedConstants`를 가질 수 없다(스키마) |
 | `closeAffordance` | L1 팝업 처리에서 눌러도 되는 닫기 요소(X·닫기·취소). 녹화 이름이 앱 내장 `DENY_ACTION_NAME`(D03 §7.1)에 맞으면 등록 금지(SV-05, B-32) |
 | `navigationOnly` | 누르면 조회·이동만 일어나는 요소. 조회 하위 플레이북의 `click`은 이 항목만 쓸 수 있다(V-22) |
 | `fieldKey` | 입력 필드의 의미 키(`supplyAmount`, `taxAmount`, `counterpartBizNo`, `counterpartEmail`, `supplierBizNo` …). 커밋 랜드마크 안 모든 입력 칸에 필수(SV-03). 장식·검색 전용 칸은 `"_ignore"` + `reviewNote` |
@@ -83,9 +85,9 @@
 
 ### 2.2 셀렉터 핫픽스의 범위 (B-01, ADR-012)
 
-- 핫픽스가 바꿀 수 있는 것은 `commits:false ∧ secretSlot≠true ∧ inputType≠password ∧ closeAffordance≠true ∧ readbackOf 없음 ∧ fieldKey 없음`인 항목의 **`candidates` 배열**(추가·순서 변경·삭제)뿐이다.
+- 핫픽스가 바꿀 수 있는 것은 `commits:false ∧ secretKind 없음 ∧ inputType≠password ∧ closeAffordance≠true ∧ readbackOf 없음 ∧ fieldKey 없음`인 항목의 **`candidates` 배열**(추가·순서 변경·삭제)뿐이다.
 - 위 조건을 만족해도 다음 항목은 **핫픽스 불가**다(E-03): (a) 어떤 항목의 `landmark` 값으로 쓰이는 stable_id(랜드마크 항목), (b) IR의 `decide.scope`·조건식(`cond`, 예: `textMatches.target`)·`signFlow.rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, (c) 어떤 커밋 구간 `W(X)` 안 스텝(`wait`·`assert`·`extract`)이 참조하는 항목. 엔진은 IR에서 이 참조 집합을 계산해 적격 여부를 확인하고, 레지스트리 핫픽스 CI도 같은 계산을 한다.
-- `role`·`namePattern`·`frame`·`landmark`·`expect`·`readbackOf`·`fieldKey`·`commits`·`commitEffect`·`secretSlot`·`closeAffordance`·`navigationOnly`·`allowedConstants`와 IR 본문은 **정식 버전 + 전체 리플레이**로만 바꾼다.
+- `role`·`namePattern`·`frame`·`landmark`·`expect`·`readbackOf`·`fieldKey`·`commits`·`commitEffect`·`secretKind`·`secretPurpose`·`closeAffordance`·`navigationOnly`·`allowedConstants`와 IR 본문은 **정식 버전 + 전체 리플레이**로만 바꾼다.
 - 포털 공통 `commitEndpoints`는 **추가만**(강화) 핫픽스로 허용한다(`commitEndpointsAdd`). 기존 항목의 수정·삭제는 정식 버전으로만.
 - 조회 하위 플레이북(`kind: lookup`)은 핫픽스 대상이 아니다(B-08).
 - 형식은 [schemas/hotfix.schema.json](schemas/hotfix.schema.json)이다. 금지 속성은 키 자체가 없어 스키마에서 막히고, 대상 항목의 적격 조건은 엔진이 검사한다. 핫픽스는 `appliesTo.packageDigest`로 **정확히 한 패키지**에 결속되고, 단조 `monotonic`·`keyEpoch`·`expiresAt`(≤ 14일)을 가지며, 2-of-3 서명이 있어야 로드된다(B-22).
@@ -121,7 +123,7 @@
 
 ## 4. 스텝 어휘
 
-공통 필드: `id`(`^s[0-9]{1,3}[a-z]?$`, 전역 유일 — 스키마와 일치, B/C-08), `type`, `label`(strings 키), `pace`(`normal`|`slow`), `timeoutMs`, `onFail`(§5), `loopGuard`(순환에 참여하는 스텝의 상한).
+공통 필드: `id`(`^s[0-9]{1,3}[a-z]?$`, 전역 유일 — 스키마와 일치, B/C-08), `type`, `label`(strings 키), `pace`(`normal`|`slow`), `timeoutMs`, `onFail`(§5), `loopGuard`(순환에 참여하는 스텝의 상한), `code?`(그 스텝이 실패할 때 보고할 D16 오류 코드, `^[a-z0-9_]+(\.[a-z0-9_]+)+$`, 80자 이하, 값은 넣지 않음, 예: §8 s19e `assert.issue_date_mismatch`).
 
 | 타입 | 필드 | 동작 | 비가역 |
 |---|---|---|---|
@@ -139,7 +141,7 @@
 | `gate` | `card`(제목 strings 키), `authorizes[stepRef]`(≤ 3), `waitMs` | 사용자 승인. 카드는 **readback 값**을 앱 내장 라벨로 표시(V-03h). `authorizes`는 주 비가역 1개 + 그 후속만(V-03i). 승인 시 주 비가역 1회용 토큰 발급(D03 §3) | 아니오 |
 | `human` | `kind`: `captcha`\|`otp`\|`secret`\|`manual`, `prompt`, `region?`, `target?`(secret·otp 입력 대상), `inputSpec?`(RE2), `ttlMs` | 사람 입력. `secret`은 타이피스트 경유 | 아니오 |
 | `human_commit` | `prompt`, `verify`, `followUpOf?` | 사람이 직접 누르는 비가역(운영 수준 `assisted`). 토큰 소비 → `armed` → 사람 → 증언 → `verify`. 증언은 verify를 대신하지 못함 | **예** |
-| `secret_fill` | `target`(`secretSlot` 필수), `secret`: `cert_password`\|`portal_password`\|`security_card`, `rowFrom?` | **금고가 직접 입력**. 보안카드는 `rowFrom`(화면에서 읽은 칸 번호 변수, 비밀 아님). `cert_password`는 사용자가 직접 넣으므로(ADR-020 결정 2) 금고에 실 포털 허용 origin이 없어 입력하지 않는다(D05 §3.7) | 아니오 |
+| `secret_fill` | `target`(`secretKind` 항목 필수, `secret == secretKind`), `secret`: `cert_password`\|`portal_password`\|`security_card`, `rowFrom?` | **금고가 직접 입력**. 보안카드는 `rowFrom`(화면에서 읽은 칸 번호 변수, 비밀 아님). `cert_password`는 사용자가 직접 넣으므로(ADR-020 결정 2) 금고에 실 포털 허용 origin이 없어 입력하지 않는다(D05 §3.7) | 아니오 |
 | `sign` | `method`, `then[]` | 로그인 등 **커밋 구간 밖** 포털 서명 흐름 래퍼(모듈 위임). 내부 동작도 Actuator를 거침. 발급 시 전자서명은 `submit.signFlow`로 쓴다 | 아니오 |
 | `submit` | `target`(`commits:true`), `intent: "$intent.id"`, `verify`(stepRef), `expectConfirm?`(V-24), `signFlow?`(§4.5) | 비가역 제출. `retry: 0` 고정, `onFail.then ∈ {handoff, abort}` | **예** |
 | `verify` | `lookup`: `{playbook, match{fieldKey: $ref}, window, baseline, notCommittedPolicy, bind?}`, `on`{`committed`\|`not_committed`\|`unknown` → stepRef\|handoff\|abort} | **포털 조회 하위 흐름**으로 제출 여부를 결정적으로 비교(§4.4). 새 탭에서 실행. 커밋된 스텝의 포털 측 부수효과(예: 자동 이메일 발송) 확인에도 쓴다 | 아니오 |
@@ -181,7 +183,7 @@
 - `match`는 참조만 받는다(상수 금지). 비가역 스텝의 확인에는 `$readback.*`(실제 제출 값)을 쓴다(V-04).
 - `baseline: none`은 `match`가 앞선 verify의 `bind`로 묶인 `$vars` 값(게이트 전에 존재하지 않던 고유 값, 예: 새 승인번호)을 키로 쓸 때만 허용한다.
 - 정책 기본값: `policy.verify.minElapsedMs = 60000`, `policy.verify.lookups = 2`. 플레이북 값은 이보다 엄격한 쪽만 쓴다. 실제 반영 지연 분포는 확인 필요(S1).
-- `policy.verify`에 `maxMs`(앱 하한 300초)를 더한다. 하한을 넘긴 뒤에도 `maxMs`까지 지수 간격으로 조회하고 상한에서만 `unknown`이다(D03 §5.6). 실패 신호 목록의 자료형은 (css, `^…$` 문구) 쌍이며 문구 없는 항목은 정적 검증에서 거부한다(V-03j″). 클릭 뒤 새로 보이고 문구까지 맞는 요소만 `not_committed` 근거다(ADR-025·027, D-05(N-02), D-18(N-22)).
+- `policy.verify`에 `maxMs`(앱 하한 300초)를 더한다. 하한을 넘긴 뒤에도 `maxMs`까지 지수 간격으로 조회하고 상한에서만 `unknown`이다(D03 §5.6). 실패 신호 목록은 verify 스텝의 `failSignals[]`(최대 10개, 항목 = `{css, text}`, `text`는 `^…$` 앵커 문구)이며 문구 없는 항목은 정적 검증에서 거부한다(V-03j″, playbook-ir 스키마 v1.3.1). 클릭 뒤 새로 보이고 문구까지 맞는 요소만 `not_committed` 근거다(ADR-025·027, D-05(N-02), D-18(N-22)).
 - **조회 하위 플레이북**(`kind: lookup`)은 `manifest.lookupsUsed`로 버전·다이제스트가 고정되고 스텝 집합이 제한된다(V-22). 실행은 **새 탭**에서 하고 끝나면 닫는다. 원래 탭의 결과 화면은 건드리지 않는다(D03 §5.6).
 
 ### 4.5 발급 시 전자서명: `submit.signFlow` (B-09)
@@ -250,7 +252,7 @@
 | V-17 | 체크포인트 이름 전역 유일, `checkpoint:` 참조가 실재 |
 | V-18 | `repeat` 밖 순환의 참여 스텝에 `loopGuard.max ≤ 5` |
 | V-19 | 스텝 `id` 전역 유일(중첩 `repeat` 포함) |
-| **V-20** | **비밀 칸 읽기 금지**(A-05, B-26). `secretSlot:true` 또는 `inputType:"password"` 항목은 `secret_fill`·`human(kind=secret)`의 `target` 외 어떤 스텝의 `target`·`from`·`scope`·`cond`(모든 조건식의 `target`)·`readback.fields`에도 쓸 수 없다. 해당 항목은 `readbackOf`·`fieldKey`를 가질 수 없고(스키마), 다른 항목의 `readbackOf`가 그 칸을 가리킬 수 없다. `decide.scope` 서브트리가 그 항목의 `landmark`를 포함하면 오류다. 그 칸에서 파생된 `$vars`는 정의할 수 없다. **런타임 가드**: 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷 공통)는 `secretSlot` 또는 `type=password` 요소의 `value`를 읽지 않는다(위생 장치, D05 §1). guide 변환은 `secret_fill`·`human:secret`을 복사 버튼으로 만들지 않는다(변환 후 재검증에서 오류). 회귀: CE-7, CE-8 |
+| **V-20** | **비밀 칸 읽기 금지**(A-05, B-26). `secretKind`가 있는 항목 또는 `inputType:"password"` 항목은 `secret_fill`·`human(kind=secret)`의 `target` 외 어떤 스텝의 `target`·`from`·`scope`·`cond`(모든 조건식의 `target`)·`readback.fields`에도 쓸 수 없다. 해당 항목은 `readbackOf`·`fieldKey`를 가질 수 없고(스키마), 다른 항목의 `readbackOf`가 그 칸을 가리킬 수 없다. `decide.scope` 서브트리가 그 항목의 `landmark`를 포함하면 오류다. 그 칸에서 파생된 `$vars`는 정의할 수 없다. **런타임 가드**: 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷 공통)는 `secretKind` 항목 또는 `type=password` 요소의 `value`를 읽지 않는다(위생 장치, D05 §1). guide 변환은 `secret_fill`·`human:secret`을 복사 버튼으로 만들지 않는다(변환 후 재검증에서 오류). 회귀: CE-7, CE-8 |
 | **V-21** | **상수 허용 목록**(B-25). `fill.value`·`select.option`의 상수는 타깃 사전 항목의 `allowedConstants[]`에 있는 값만 허용한다. 그 외는 `$inputs`·`$vars`·`$human`·`$profile`·`$readback` 참조만. `verify.lookup.match`는 참조만(스키마) |
 | **V-22** | **조회 하위 플레이북 신뢰 경계**(B-08). `verify.lookup.playbook`은 `manifest.lookupsUsed`에 있어야 하고, 그 패키지는 `kind: lookup`, `effects: []`이며, 스텝 타입은 `{goto, wait, assert, extract, select, fill(사전 role이 searchbox·combobox인 검색 조건 칸만), click(사전 navigationOnly:true 항목만), end}`만 쓴다. `decide`·`onFail: recover`·`human`·`secret_fill`·`sign`·`submit`·`send_email`·`human_commit`은 금지하고, `commits:true` 타깃을 참조할 수 없다. 조회 패키지 안의 실패는 모두 `unknown`이다 |
 | **V-23** | **`nameTemplate` 토큰 제한**(B-25, A/C-07, B/C-09). `save_pdf.nameTemplate`은 `{docType}`·`{yyyy}`·`{MM}`·`{dd}`·`{yyyyMMdd}`·`{shortId}`와 `[A-Za-z0-9_/-]`만 쓸 수 있다(D07 §4 원칙: 파일명에 PII 없음). 생략하면 엔진 기본 템플릿을 쓴다. 엔진은 최종 경로를 정규화한 뒤 보관함 루트의 하위인지 확인하고, 기존 파일을 덮어쓰지 않는다. 사람이 읽는 이름은 '내보내기' 때 앱이 DB 표시 이름으로 만든다 |
@@ -297,6 +299,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - **`intentId`**(ULID)는 `prepare()`가 만들고 카드에 표시한다. 리모트 명령은 폰이 만든 `cmd_id`를 그대로 쓴다.
 - 아이덴포턴시 원장(D07 `irreversible_log`)의 키는 **`(intent_id, step_id)`**이고 행은 `inputs_hash`·`package_digest`·`action_hash`에 결속된다. 같은 `intentId`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 다르면 거부한다(`ledger.intent_reuse`). 사후 스텝 점프는 **같은 `run_id`의 재개**에만 적용한다(D03 §4, B-10).
 - **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). 경고는 예약 `fieldKey` `$dup.*`로 게이트 `fields`에 넣어 `cardHash`에 묶고, PC에서는 main 승인 바의 "같은 건 기록을 확인했고 발급" 클릭이 명시 확인이다(ADR-021). 렌더러 카드에만 두면 침해된 렌더러가 지울 수 있기 때문이다. `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
+- **예외: H-01c 발급 취소**(ADR-036 결정 3.6): 업무 중복 키 `(원본 승인번호, 'full_cancel')`는 경고가 아니라 **차단 키**다. 엔진이 `prepare`와 게이트 토큰 발급 직전에 원장을 조회해 같은 키의 `armed|dispatched|in_doubt|committed|observed_manual`이 있으면 `dup.already_cancelled`로 멈춘다.
 - 보조 중복 키 `$dup.recentSameAmount`: 작성일자를 뺀 (공급자, 공급받는자, 공급가, 세액, 품목명[])이 최근 10일 안에 committed면 바 꼬리 'N일 전 같은 금액 발급 있음'(차단 아님)(Phase 1, ADR-027, D-32(N-50)). 원장 상태별 바 표시(`committed` → "이미 발급됨(승인번호 있음)", `in_doubt`·`armed`·`dispatched`·`observed_manual` → "발급 여부 확인 안 됨", 둘 다 주의 색)는 ADR-027 결정 3이 정본이다(D-18(N-22)). `$dup.portalExisting`(아래)은 같은 표에서 `in_doubt` 계열과 같이 주의 색으로 보인다.
 - **포털 기존 건**(Phase 1부터, ADR-024 결정 2): 앱 내장 플레이북 목록(지금은 세금계산서 발급 H-01)의 주 비가역 스텝에만 한다. 패키지는 이 목록을 바꿀 수 없다. 민원증명은 같은 날 다시 떼는 것이 정상이라 넣지 않는다.
   - 기준선 B₀(§4.4)에서 이 PC 원장의 `verify_ref`를 뺀 건수가 1 이상이면, 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다. 차단하지 않는다.
@@ -336,7 +339,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
     {"id": "s17", "type": "fill", "target": "hometax.invoice.form.item1.supply", "value": "$inputs.amounts.supply"},
     {"id": "s18", "type": "fill", "target": "hometax.invoice.form.item1.tax", "value": "$inputs.amounts.tax"},
     {"id": "s19", "type": "decide", "bundle": "form_ready_v2", "scope": "hometax.invoice.form.root",
-     "on": {"ready": "s19a", "validation_error": "handoff", "unknown": "handoff"}},
+     "on": {"no_visible_error": "s19a", "validation_error": "handoff", "unknown": "handoff"}},
     {"id": "s19a", "type": "assert", "cond": {"fieldsFilled": {"fields": ["counterpartBizNo", "itemName", "supplyAmount", "taxAmount", "issueDate"]}}},
     {"id": "s19b", "type": "readback", "fields": ["supplierBizNo", "supplierName", "counterpartBizNo", "counterpartName", "counterpartEmail",
                                                   "itemName", "itemCount", "supplyAmount", "taxAmount", "totalAmount", "issueDate", "remark", "receiptType"]},

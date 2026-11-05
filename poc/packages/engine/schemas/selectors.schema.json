@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/selectors.schema.json",
+  "title": "Sovereign AX selector dictionary (selectors.json) v1.1",
+  "description": "v1.1 (M1-4): secretSlot boolean replaced by secretKind + secretPurpose (D02 §2.1, ADR-026). v1.3 (B-01, B-02, B-03, B-05, B-06, B-17, B-25, B-26, A-05). Schema validity is necessary, not sufficient: selector CI rules SV-01..SV-06 (design/02-playbook-dsl.md §6.3) and engine checks run after this. Hotfixes may change only `candidates` of eligible entries and may only ADD commitEndpoints (schemas/hotfix.schema.json).",
+  "type": "object",
+  "required": ["portal", "entries", "commitEndpoints", "knownEndpoints"],
+  "additionalProperties": false,
+  "properties": {
+    "portal": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api"]},
+    "entries": {
+      "type": "object",
+      "propertyNames": {"pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},
+      "additionalProperties": {"$ref": "#/$defs/entry"}
+    },
+    "commitEndpoints": {
+      "description": "Portal-common section. The commit guard uses the UNION of commitEndpoints across all installed packages of the same portal. SV-06: a portal whose union is empty is not run in auto/assisted.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/commitEndpoint"}
+    },
+    "knownEndpoints": {
+      "description": "Requests observed while recording the playbook (R-C3). Portal requests matching neither commitEndpoints nor knownEndpoints are journaled as commit_guard.unclassified.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/endpointMatch"}
+    }
+  },
+  "$defs": {
+    "candidate": {
+      "oneOf": [
+        {"type": "object", "required": ["kind", "role", "name"], "additionalProperties": false,
+         "properties": {"kind": {"const": "role"}, "role": {"type": "string", "maxLength": 40}, "name": {"type": "string", "maxLength": 80}}},
+        {"type": "object", "required": ["kind", "value"], "additionalProperties": false,
+         "properties": {"kind": {"const": "css"}, "value": {"type": "string", "pattern": "^(#[A-Za-z][A-Za-z0-9_-]*|\\[(id|name|data-[a-z-]+|aria-label)=\"[^\"]{1,80}\"\\])$"}}},
+        {"type": "object", "required": ["kind", "value"], "additionalProperties": false,
+         "properties": {"kind": {"const": "label"}, "value": {"type": "string", "maxLength": 80}}}
+      ]
+    },
+    "entry": {
+      "type": "object",
+      "required": ["candidates", "role", "namePattern", "frame", "landmark", "commits", "lastVerified"],
+      "additionalProperties": false,
+      "properties": {
+        "candidates": {"type": "array", "minItems": 1, "maxItems": 5, "items": {"$ref": "#/$defs/candidate"}},
+        "expect": {"type": "object", "additionalProperties": false, "properties": {"visible": {"type": "boolean"}, "enabled": {"type": "boolean"}}},
+        "role": {"type": "string", "maxLength": 40},
+        "namePattern": {"description": "RE2, anchored ^...$ (SV-04). Must match exactly one element inside the landmark in the recorded DOM.", "type": "string", "pattern": "^\\^.*\\$$", "maxLength": 120},
+        "frame": {"type": "string", "maxLength": 80},
+        "landmark": {"type": "string", "pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},
+        "commits": {"description": "Required (B-02). true = activating this element performs an irreversible portal submission.", "type": "boolean"},
+        "commitEffect": {"enum": ["issue_document", "send", "sign", "pay"]},
+        "inputType": {"description": "Expected DOM input type. `password` entries fall under V-20 like secretSlot.", "enum": ["text", "password", "number", "email", "date", "checkbox", "radio", "select", "textarea", "button", "link", "other"]},
+        "secretKind": {"description": "D02 §2.1 (ADR-026): this entry is a secret slot that only the vault typist may fill. secret_fill.secret must equal this value (V-02). 'secretSlot' elsewhere in the design means 'an entry that has secretKind'.", "enum": ["cert_password", "portal_password", "security_card"]},
+        "secretPurpose": {"description": "Flow the slot belongs to (V-02): login = login segment only, sign = submit.signFlow / sign step only.", "enum": ["login", "sign"]},
+        "closeAffordance": {"type": "boolean"},
+        "navigationOnly": {"description": "Clicking only navigates/searches (allowed in lookup packages, V-22).", "type": "boolean"},
+        "fieldKey": {"type": "string", "pattern": "^([a-z][A-Za-z0-9]*|_ignore)$"},
+        "readbackOf": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"},
+        "allowedConstants": {"description": "V-21: the only constants fill.value / select.option may use for this target.", "type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "maxLength": 40}},
+        "reviewNote": {"type": "object", "required": ["by", "reason"], "additionalProperties": false,
+          "properties": {"by": {"type": "string", "maxLength": 80}, "reason": {"type": "string", "maxLength": 200}}},
+        "lastVerified": {"type": "string", "format": "date"}
+      },
+      "allOf": [
+        {"if": {"properties": {"commits": {"const": true}}},
+         "then": {"required": ["commitEffect"], "not": {"required": ["secretKind"]}, "properties": {"closeAffordance": {"const": false}, "navigationOnly": {"const": false}}}},
+        {"if": {"properties": {"commits": {"const": false}}},
+         "then": {"not": {"required": ["commitEffect"]}}},
+        {"if": {"anyOf": [
+            {"required": ["secretKind"]},
+            {"properties": {"inputType": {"const": "password"}}, "required": ["inputType"]}]},
+         "then": {"not": {"anyOf": [{"required": ["readbackOf"]}, {"required": ["fieldKey"]}, {"required": ["allowedConstants"]}]}}},
+        {"if": {"required": ["secretKind"]}, "then": {"required": ["secretPurpose"]}},
+        {"if": {"required": ["secretPurpose"]}, "then": {"required": ["secretKind"]}},
+        {"if": {"properties": {"closeAffordance": {"const": true}}, "required": ["closeAffordance"]},
+         "then": {"properties": {"commits": {"const": false}}}},
+        {"if": {"properties": {"fieldKey": {"const": "_ignore"}}, "required": ["fieldKey"]},
+         "then": {"required": ["reviewNote"]}}
+      ]
+    },
+    "endpointMatch": {
+      "type": "object", "required": ["method", "pathPattern"], "additionalProperties": false,
+      "properties": {
+        "method": {"enum": ["GET", "POST", "PUT", "DELETE"]},
+        "pathPattern": {"description": "RE2, matched against URL path only.", "type": "string", "maxLength": 200},
+        "actionParam": {"type": "object", "required": ["name", "value"], "additionalProperties": false,
+          "properties": {"name": {"type": "string", "maxLength": 80}, "value": {"type": "string", "maxLength": 120}}}
+      }
+    },
+    "commitEndpoint": {
+      "type": "object", "required": ["match", "effect", "maxRequests"], "additionalProperties": false,
+      "properties": {
+        "match": {"$ref": "#/$defs/endpointMatch"},
+        "effect": {"enum": ["issue_document", "send", "sign", "pay"]},
+        "maxRequests": {"type": "integer", "minimum": 1, "maximum": 3},
+        "encoding": {"description": "`opaque` = body encrypted by a portal security module; R-C1 body comparison is impossible (residual risk, S1).", "enum": ["form", "json", "xml", "opaque"]},
+        "bodyFieldMap": {"description": "R-C1: fieldKey -> request parameter path, used to compare the normalized request body with readback values.", "type": "object",
+          "propertyNames": {"pattern": "^[a-z][A-Za-z0-9]*$"}, "additionalProperties": {"type": "string", "maxLength": 120}}
+      },
+      "allOf": [{"if": {"properties": {"encoding": {"const": "opaque"}}, "required": ["encoding"]}, "then": {"not": {"required": ["bodyFieldMap"]}}}]
+    }
+  }
+}

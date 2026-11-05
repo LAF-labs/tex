@@ -9,9 +9,12 @@ import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebCon
 
 const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
-const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset } = await import(`${DESK}/dist/shell-mock.js`);
-const { buildBarHtml, barCss, barPalette, summarize } = await import(`${DESK}/dist/approval-gate.js`);
+const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
+const { buildBoard } = await import(`${DESK}/dist/board.js`);
+const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
+// 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
+const { appHeaders } = await import(`${DESK}/dist/harden.js`);
 
 const ARGS = process.argv.slice(process.argv.findIndex((a) => a.endsWith('shell-preview.mjs')) + 1);
 const W = Number(ARGS[1] ?? 1440);
@@ -49,8 +52,23 @@ const mkRun = (status, o = {}) => {
   };
 };
 
+// 이번 달 판(M-02): 셸과 같은 buildBoard에 목업 문서함·꾸러미를 넣는다(shell-app boardNow와 같은 입력 모양).
+const boardNow = () =>
+  buildBoard({
+    today: dayOffset(0),
+    reminderDay: MOCK_SETTINGS.reminderDay,
+    issued: [
+      ...store.docs.filter((d) => d.kind === '세금계산서').map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn, total: d.name.endsWith('A상사') ? 3630000 : 605000 })),
+      { who: 'C테크', date: dayOffset(-27), total: 1650000 },
+    ],
+    runs: [],
+    docs: (S.withVault ? [vaultDoc, ...store.docs] : store.docs).map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
+    bundle: mockBundle(dayOffset(0)),
+    cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
+  });
+
 const handlers = {
-  'shell.bootstrap': () => ({ layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
+  'shell.bootstrap': () => ({ board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
   'profile.set': (p) => ({ profile: p.kind }),
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
   'counterparties.list': () => cps,
@@ -71,12 +89,12 @@ app.whenReady().then(async () => {
 
 protocol.handle('pv', async (req) => {
   const p = new URL(req.url).pathname;
-  if (p === '/tokens.css') return new Response(tokensCss(), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bundle.css') return new Response(bundleCss(), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bar.css') return new Response(barCss(barPalette(loadTokens()).palette), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bar.html') return new Response(S.barHtml, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
+  if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
+  if (p === '/bar.css') return new Response(barCss(barPalette(loadTokens()).palette), { headers: appHeaders('text/css', BAR_CSP) });
+  if (p === '/bar.html') return new Response(S.barHtml, { headers: appHeaders('text/html; charset=utf-8', BAR_CSP) });
   const type = p.endsWith('.css') ? 'text/css' : p.endsWith('.js') ? 'text/javascript' : 'text/html; charset=utf-8';
-  return new Response(await fs.readFile(path.join(DESK, 'static/shell', p.slice(1))), { headers: { 'content-type': type } });
+  return new Response(await fs.readFile(path.join(DESK, 'static/shell', p.slice(1))), { headers: appHeaders(type) });
 });
 
 async function open(theme = 'light') {
@@ -166,6 +184,12 @@ const scenes = {
     await js(win, `document.querySelector('[data-cp-row=c2]').click()`);
     await shot(win, '13-cps');
   },
+  async board(win) {
+    await js(win, `document.querySelector('[data-board-item^="cp:"]').click()`);
+    await shot(win, '19-board-compose');
+    await js(win, `document.querySelector('[data-act=board-toggle]').click()`);
+    await shot(win, '20-board-closed');
+  },
   async biz(win) { await js(win, `document.querySelector('#rail [data-view=biz]').click()`); await shot(win, '15-biz'); },
   async settings(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await shot(win, '16-settings'); },
   async g24(win) {
@@ -179,7 +203,7 @@ const scenes = {
   },
 };
 
-const order = ['home', 'menu', 'typing', 'flow', 'attention', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24'];
+const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24'];
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;

@@ -1,6 +1,7 @@
 # ADR-028. 공급망·업데이트·서명 역할: 앱 채널을 레지스트리와 같은 신뢰 수준으로, 5인 팀에서 성립하는 쿼럼
 
 > 상태: 채택(2026-11-03) · 개정: ADR-013(결과 절 배정표·로그 대상), D09 §8.2·§8.3, D11 §2 T13·§4, D12 §6 · 관련: ADR-015 결정 6, D01 §7, [RETRO-2026-11-02](../../../poc/reports/RETRO-2026-11-02.md) A-12·A-14·A-18·B-01
+> 2026-11-05 개정: 결정 8(폐기 목록 축소 금지, `registry.revoked_shrunk`)과 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52, 팀장 결정).
 > 근거: [AUDIT-D](../../research/AUDIT-D-v13-poc-security.md) N-10·N-32·N-42·N-80(4건) = [D19 §3.5](../19-attack-surface.md) D-02·D-23·D-27·D-50
 
 ## 맥락
@@ -26,6 +27,7 @@
    - `allowlist.ts`·`profiles/thresholds.json`·`bundles/*.json`에 CODEOWNERS 보안 리뷰를 건다.
    - Renovate로 electron·playwright-core·pdfjs-dist·tesseract.js·better-sqlite3-multiple-ciphers 보안 릴리스를 받는다(`minimumReleaseAge`는 RETRO A-14).
 7. **승인 바 색은 앱 내장이다(N-80, D-50).** `approval-gate.ts`에 내장 팔레트(accent·on-accent·accent-soft·ink·ink-3·surface·line-strong·attention·attention-soft, 라이트·다크)를 둔다. 외부 토큰은 `^#[0-9A-Fa-f]{6}$`와 상태별 글자/배경 대비 ≥ 4.5:1을 통과한 색만 받는다. 하나라도 실패하면 내장 팔레트 전체로 대체하고 `bar.tokens_rejected`를 남긴다. 레이아웃·가시성 규칙은 앱 상수다. 빌드 시 생성기(`tokens.gen.ts`)는 RETRO A-18과 함께 Phase 1 패키징 때 선택한다.
+8. **폐기 목록은 축소할 수 없다.** 채택(2026-11-05 팀장). 한 번 폐기된 키는 새 `revoked_keys.json`에서 빠질 수 없다. 엔진은 저장된 목록보다 짧거나 이전 키가 빠진 목록을 `registry.revoked_shrunk`로 거부한다(롤백 방지, 엔진 PR #52, D09 §8.4). 서명 바이트 규약의 정본은 `design/schemas/SIGNING.md`(엔진 트랙 작성)다.
 
 ## 대안과 기각 이유
 

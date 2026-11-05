@@ -1,5 +1,6 @@
 # D12. 관측·운영
 
+> 스키마 정렬 2026-11-05(PR #45): §3 핫픽스 범위 확인의 `secretSlot`을 `secretKind`·`secretPurpose`로(셀렉터 사전 v1.1).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. · AUDIT-D 반영 2026-11-03: 텔레메트리 일 단위 집계·보존 90일(§1~§3), 진단 내보내기 형식 기반 검사(§5), 릴리스 매니페스트 하드웨어 서명·쿼럼 불가 시 핫픽스 중단(§6)(ADR-025·028·029, D19 §3.5).
 
 ## 1. 텔레메트리 (옵트인, 내용 없음)
@@ -35,7 +36,7 @@
 
 1. `step.fail` 급증 알림. 개편 감지 임계는 '일 20건 이상'이다(버전·스텝 단위, 시간 버킷은 급증 시점 파악용, D-24(N-37)).
 2. 당직이 스파이크 환경(테스트 사업자)에서 재현하고 셀렉터 사전 수정안을 만든다.
-3. **범위 확인**(B-01, ADR-012): 수정안이 D02 §2.2의 핫픽스 범위(적격 항목의 `candidates` 교체, `commitEndpoints` 추가)를 벗어나면 핫픽스가 아니라 정식 버전 + 전체 리플레이로 간다. `commits`·`commitEffect`·`secretSlot`·`closeAffordance`·`readbackOf`·`fieldKey`·`role`·`namePattern`·`landmark`·`frame`·`expect`·`navigationOnly`·`allowedConstants`와 IR 본문, 조회 하위 플레이북은 핫픽스 대상이 아니다. 적격 항목이라도 랜드마크 항목, IR의 `decide.scope`·조건식·`rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 커밋 구간 W(X) 안 스텝이 참조하는 항목은 핫픽스로 바꿀 수 없다(E-03).
+3. **범위 확인**(B-01, ADR-012): 수정안이 D02 §2.2의 핫픽스 범위(적격 항목의 `candidates` 교체, `commitEndpoints` 추가)를 벗어나면 핫픽스가 아니라 정식 버전 + 전체 리플레이로 간다. `commits`·`commitEffect`·`secretKind`·`secretPurpose`·`closeAffordance`·`readbackOf`·`fieldKey`·`role`·`namePattern`·`landmark`·`frame`·`expect`·`navigationOnly`·`allowedConstants`와 IR 본문, 조회 하위 플레이북은 핫픽스 대상이 아니다. 적격 항목이라도 랜드마크 항목, IR의 `decide.scope`·조건식·`rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 커밋 구간 W(X) 안 스텝이 참조하는 항목은 핫픽스로 바꿀 수 없다(E-03).
 4. **적용 전 재검증**(레지스트리 핫픽스 CI): (IR + 핫픽스 반영 사전)에 V-01~V-24와 SV-01~SV-06을 돌린다. SV는 여기서만 돈다(클라이언트는 다시 돌리지 않음, 정본 D03 §3.1-6). SV-01(충돌)·SV-04(랜드마크 유일성)는 이번 개편 화면의 새 녹화 DOM·HAR로 돌린다. 리플레이 하네스(D13 §3) 회귀도 통과해야 한다.
 5. **서명과 결속**: 핫픽스 파일([schemas/hotfix.schema.json](schemas/hotfix.schema.json))의 `appliesTo.packageDigest`를 대상 패키지의 정확한 다이제스트로 채우고, 서로 다른 사람이 각자 승인한 **2-of-3 서명**을 받는다(B-22). 키 운영은 D09 §8·ADR-013. 2-of-3 절차의 소요 시간이 SLA에 주는 영향은 확인 필요(S18).
 6. `hotfix` 채널 1% → 1시간 관찰 → 100%. 클라이언트는 로드 시 스키마·V-01~V-24와 적격 조건을 다시 검사하고 실패하면 거부하며, 실행 중에는 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 매번 한다(D03 §3.1·§5.2). 핫픽스 다이제스트는 게이트 토큰의 `packageDigest`에 들어가므로 적용 시 진행 중 실행의 토큰은 폐기된다.
