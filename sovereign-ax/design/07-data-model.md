@@ -2,7 +2,7 @@
 
 > 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
 > ADR-034 결정 8 채택 2026-11-05: 근무표 범위 축소, `shifts` 삭제 제안(데이터 트랙 확인 전).
-> 2026-11-05 팀장 결정·R13 D-L3: `card_txn_memos.match_key`의 승인번호 키에 사용일을 붙임(데이터 PR #53 Bugbot High), `bundle_exports`에 `part`·`rrn_included`, 꾸러미 내보내기 규칙(엑셀 + 첨부 ZIP 두 파일, 주민번호 가림이 기본)을 §2 끝에 적음.
+> 2026-11-05 팀장 결정·R13 D-L3: `card_txn_memos.match_key`의 승인번호 키에 사용일을 붙임(데이터 PR #53 Bugbot High), `bundle_exports`에 `zip_sha256`·`zip_path`·`rrn_included`(회차당 한 행), 꾸러미 내보내기 규칙(엑셀 + 첨부 ZIP 두 파일, 주민번호 가림이 기본)을 §2 끝에 적음.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·DB 배타 잠금·DB 키 유실 처리(§1.3), `remote_devices` 증명 상태·`doc_scope_json`(§2), 서버 시각 컬럼 금지(§5), 키 계층의 복구 문구 삭제(§6, ADR-016 v2), DB 키 래핑 사본(§7)(ADR-025·029, D19 §3.5). 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
 
 ## 1. 저장소 개관
@@ -260,14 +260,15 @@ CREATE TABLE bundle_entries (                  -- 항목의 달별 상태와 첨
   doc_ids_json TEXT NOT NULL DEFAULT '[]', note TEXT, updated_at TEXT NOT NULL,
   PRIMARY KEY(item_id, period)
 );
-CREATE TABLE bundle_exports (                  -- 내보내기 기록("어디로 무엇이 갔는지")
+CREATE TABLE bundle_exports (                  -- 내보내기 기록("어디로 무엇이 갔는지"). 한 번 내보내면(회차) 한 행
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), period TEXT NOT NULL,
-  sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
-  part TEXT CHECK(part IN ('xlsx','attachments_zip')) NOT NULL DEFAULT 'xlsx',   -- 한 번 내보내면 파일마다 한 행(암호 엑셀, 첨부가 있으면 같은 암호의 AES-256 ZIP). 같은 회차는 period·created_at이 같다
-  rrn_included INTEGER NOT NULL DEFAULT 0,      -- 급여 시트에 주민번호 전체를 넣었는지. 기본 0(가림), 사장님이 설정 bundle.includeRrn을 켰을 때만 1(R13 D-L3 결정)
+  sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,   -- 암호 엑셀 파일
+  zip_sha256 TEXT, zip_path TEXT,               -- 같은 암호의 AES-256 ZIP(사진·PDF). 첨부가 없으면 둘 다 NULL
+  rrn_included INTEGER NOT NULL DEFAULT 0,      -- 급여 시트(엑셀)에 주민번호 전체를 넣었는지. 기본 0(가림), 사장님이 설정 bundle.includeRrn을 켰을 때만 1(R13 D-L3 결정)
   send_via TEXT CHECK(send_via IN ('mail_client','folder')),   -- (채택, ADR-034 결정 10 (가)) 메일 프로그램에 첨부를 붙여 열었는지, 폴더만 열었는지
   sent_to TEXT,                                -- 연 시점의 "내 세무사" 주소(설정 bundle.accountantEmail). 실제 발송 여부는 메일 프로그램이 안다
-  sent_marked_at TEXT, sent_note TEXT          -- 사장님이 "보냈어요"로 표시한 시각과 메모
+  sent_marked_at TEXT, sent_note TEXT,         -- 사장님이 "보냈어요"로 표시한 시각과 메모
+  CHECK((zip_sha256 IS NULL) = (zip_path IS NULL))
 );
 CREATE TABLE card_fetches (                    -- H-12 조회 구간. [최신화]는 구간의 행을 통째로 바꾼다
   run_id TEXT PRIMARY KEY REFERENCES runs(id), profile_id TEXT NOT NULL REFERENCES profiles(id),
@@ -314,7 +315,7 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 - 주민번호(`employees.rrn_enc`)는 마스킹 계층(D06)의 주민번호 규칙 대상이다. 다만 Phase 1 보관함은 평문 PDF라(§1.4) 고지내역·급여대장·임금명세서 파일에는 주민번호가 평문으로 남을 수 있다. 화면과 설정에 이 점을 적는다.
 - 꾸러미 내보내기(팀장 결정 2026-11-05, ADR-032 결정 8):
   - 첨부는 두 파일이다. 암호 엑셀(ECMA-376 암호화)과, 사진·PDF가 있으면 같은 암호의 AES-256 ZIP이다. 사진·PDF를 암호 밖에 두지 않는다. 메일 창(ADR-034 결정 10 (가))에는 두 파일과 받는 쪽 안내 문구(예: "암호는 따로 알려 드려요. ZIP은 반디집·알집·7-Zip으로 여세요". 최종 문구는 화면 트랙)가 함께 들어간다. 운영체제 기본 압축 풀기가 AES ZIP을 못 여는 경우가 있어서다(데이터 PR #58 본문).
-  - 급여 시트의 주민번호는 근거 확인 전 **가림이 기본**이다(R13 D-L3, yulmu 결정 2026-11-05). 사장님이 설정 `bundle.includeRrn`을 켜면 전체 번호를 넣고, 그 회차의 `bundle_exports.rrn_included`를 1로 남긴다. 처리 근거 질의(R13 Q9) 회신에 따라 기본값을 다시 본다.
+  - 급여 시트의 주민번호는 근거 확인 전 **가림이 기본**이다(R13 D-L3, yulmu 결정 2026-11-05). 사장님이 설정 `bundle.includeRrn`을 켜면 전체 번호를 넣고, 그 회차 행의 `bundle_exports.rrn_included`를 1로 남긴다(엑셀과 ZIP은 한 행에 함께 적는다). 처리 근거 질의(R13 Q9) 회신에 따라 기본값을 다시 본다.
   - [급여 기록 내보내기](08 D-06, 3년 보관용)에는 주민번호를 넣지 않는다.
   - "증빙과 대조되지 않은 카드 지출"은 '빠진 것' 시트와 화면에 표시만 한다. 판정하지 않고, 화면에서는 기본으로 접는다. 사장님이 "카드 전표로 충분"에 체크하면 그 건은 목록에서 뺀다. 체크 상태를 담을 컬럼은 데이터 트랙이 정한다(제안: `card_txn_memos`와 같은 match_key로 잇는 표시).
 - 월초 "세무사 꾸러미 준비됨" 알림은 `schedules`(서류 갱신용) 행이 아니라 설정 `bundle.reminderDay`·`payroll.halfYearWithholding`으로 데몬 `notify`가 계산한다.
