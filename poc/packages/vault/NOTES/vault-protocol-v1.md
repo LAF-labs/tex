@@ -29,6 +29,8 @@ commitGuard·crypto는 타입만 정해 두었다(구현은 다음 PR, 지금은
   - 보안카드는 row(1~35)를 쓰고, 포털은 `field:'pw'`를 쓴다.
   - 결과는 `{handle:{kind,scope}, tier, consent, portalLoginId?}`이고 비밀 값·길이는 없다.
 - 결속 모드와 메서드가 맞지 않으면 거부한다(store 포트에 온 provide, oneshot 포트에 온 store).
+- 금고가 닫혀 있으면 잠금 사유와 상관없이 저장을 거부한다(`vault_locked`). 이 경우 main은 T-06을 열기 전에 `vault.unlock`(Hello)을 부르거나 Windows 잠금 해제를 기다린다. 엄격 모드에서는 Hello 확인 뒤 300초 안에만 저장된다.
+- 다시 등록하다 키체인 쓰기가 실패하면 옛 슬롯을 되돌린다. 그 포트는 이미 쓴 것이라, 다시 시도하려면 main이 등록 창을 새로 연다.
 
 ### 포털 아이디 — 결정 Q-1(ADR-035, D05 §2·§4)
 - 포털 아이디는 비밀이 아니다. 금고에 칸이 없고(`PortalField = 'pw'`), `SecretKind`도 늘리지 않는다.
@@ -45,7 +47,8 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
   - 마지막 보고가 `SESSION_IDLE_STALE_MS`(120초)보다 오래되면 금고는 잠근다(fail-closed).
   - 보고 공백이 900초를 넘었으면 다음 보고가 0이어도 프롬프트 없이 열지 않는다.
 - `vault.unlock{reason:'idle'|'strict_issue', task, portal}` → `{ok, presence, reason?}`. 승인 바 Hello와 금고 Hello를 한 프롬프트로 합친다(ADR-026 결정 4). main은 `presence`를 승인 바 Hello 확인으로 쓴다.
-- `vault.setStrict{on}` → `{ok, reason?:'hello_unavailable'|'unlock_required'}`.
+- `vault.setStrict{on}` → `{ok, reason?:'hello_unavailable'|'unlock_required'}`. 설정은 키체인 `settings/strict`에 남아 재시작 뒤에도 이어진다.
+- `vault.unlock`의 `presence:true`는 Hello 프롬프트로 사본을 실제로 연 때만 온다.
 - control 이벤트: `vault.state{open, reason?}`, `secret.suspect{kind, scope}`.
 
 ## 5. 타이피스트 — engine 트랙

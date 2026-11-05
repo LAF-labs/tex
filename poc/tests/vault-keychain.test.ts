@@ -238,6 +238,72 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.ok(items.items.has('kek/securitycard/business/device'));
   });
 
+  it('금고가 닫혀 있으면(잠금 사유 무관) 저장하지 않는다: idle_unknown·유휴·엄격 모드 Hello 전', async () => {
+    const c = clock();
+    const v = new HumanSecretVault({ backend: { items: new MemoryItemStore(), wrapper: new MemoryWrapper(), hello: new MockHello() }, log: new Log(), now: c.now });
+    await assert.rejects(v.store('security_card', 'business', cardEntries(1), { version: 'v1' }), /vault_locked/, '첫 유휴 보고 전');
+    v.lock.reportIdle(0);
+    c.tick(901_000);
+    v.lock.reportIdle(0);
+    await assert.rejects(v.store('security_card', 'business', cardEntries(1), { version: 'v1' }), /vault_locked/, '유휴 잠금 뒤');
+    v.lock.sessionEvent('unlock-screen');
+    assert.deepEqual(await v.setStrict(true), { ok: true });
+    const entries = cardEntries(1);
+    await assert.rejects(v.store('security_card', 'business', entries, { version: 'v1' }), /vault_locked/, '엄격 모드 Hello 전');
+    assert.ok(entries[0]!.bytes.every((b) => b === 0), '거부해도 넘긴 바이트는 지운다');
+    assert.equal(await v.has('security_card', 'business'), false);
+  });
+
+  it('엄격 모드는 재시작 뒤에도 이어진다: 기기 사본이 없으니 Hello로만 연다', async () => {
+    const s1 = setup({ hello: true });
+    await s1.v.store('security_card', 'business', cardEntries(1), { version: 'v1' });
+    assert.deepEqual(await s1.v.setStrict(true), { ok: true });
+    const c = clock();
+    const v2 = new HumanSecretVault({ backend: s1.backend, log: new Log(), now: c.now });
+    v2.lock.reportIdle(0);
+    await v2.ready();
+    assert.equal(v2.lock.strict, true);
+    assert.deepEqual(await v2.readOne('security_card', 'business', { row: 1 }), { ok: false, reason: 'vault_locked' });
+    assert.equal((await v2.unlockWithHello({ task: 't', portal: 'p' })).ok, true);
+    assert.ok((await v2.readOne('security_card', 'business', { row: 1 })).ok);
+    assert.deepEqual(await v2.setStrict(false), { ok: true });
+    const v3 = new HumanSecretVault({ backend: s1.backend, log: new Log(), now: c.now });
+    await v3.ready();
+    assert.equal(v3.lock.strict, false, '끈 것도 이어진다');
+  });
+
+  it('다시 등록 중 키체인 쓰기가 실패하면 옛 슬롯을 그대로 되돌린다', async () => {
+    const s = setup();
+    await s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-old0001') }], { version: 'v1' });
+    const realSet = s.items.set.bind(s.items);
+    let failOnce = true;
+    s.items.set = async (name, value) => {
+      if (name === 'portal/business/pw' && failOnce) {
+        failOnce = false;
+        throw new Error('keychain_write_failed');
+      }
+      return realSet(name, value);
+    };
+    await assert.rejects(s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-new0002') }], { version: 'v2' }), /keychain_write_failed/);
+    s.items.set = realSet;
+    const r = await s.v.readOne('portal_password', 'business', { field: 'pw' });
+    assert.ok(r.ok);
+    assert.equal(dec((r as { bytes: Uint8Array }).bytes), 'TEST-PW-old0001');
+    assert.equal((await s.v.consent('portal_password', 'business'))!.noticeVersion, 'v1');
+  });
+
+  it('색인에만 Hello 사본이 있고 항목이 없으면 프롬프트 없이 presence를 주지 않는다', async () => {
+    const { v, c, hello, items } = setup({ hello: true });
+    await v.store('security_card', 'business', cardEntries(1), { version: 'v1' });
+    c.tick(901_000);
+    v.lock.reportIdle(0);
+    await items.delete('kek/securitycard/business/hello');
+    const before = (hello as MockHello).prompts.length;
+    assert.deepEqual(await v.unlockWithHello({ task: 't', portal: 'p' }), { ok: false, presence: false, reason: 'no_stored_secret' });
+    assert.equal((hello as MockHello).prompts.length, before);
+    assert.deepEqual(await v.readOne('security_card', 'business', { row: 1 }), { ok: false, reason: 'vault_locked' });
+  });
+
   it('인증 실패 1회 뒤 suspect: 다시 등록하기 전에는 꺼내지 않는다', async () => {
     const { v, log } = setup();
     await v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-123456') }], { version: 'v1' });
@@ -288,6 +354,8 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
   let h: Harness;
   before(async () => {
     h = await startHarness();
+    // main은 기동 직후부터 유휴 시간을 보낸다(보고 전에는 금고가 닫혀 저장도 받지 않는다).
+    await h.control.rpc('session.idle', { idleSec: 0 });
   });
   after(async () => {
     await h.close();

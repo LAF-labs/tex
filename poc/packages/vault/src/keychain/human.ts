@@ -16,6 +16,8 @@ import { SessionLock, type SessionLockOptions } from './session.ts';
 export const HUMAN_SECRET_MAX_BYTES = 256;
 
 const INDEX_ITEM = 'index/human';
+/** 엄격 모드 설정(값 없음, 1바이트). 기기 결박 사본을 지운 상태가 재시작 뒤에도 이어지게 키체인에 둔다. */
+const STRICT_ITEM = 'settings/strict';
 
 export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'security_card' ? 'securitycard' : 'portal'}/${scope}`;
 
@@ -54,12 +56,28 @@ export class HumanSecretVault {
   /** 열린 동안만 들고 있는 슬롯 KEK. 잠기면 0으로 덮고 지운다. */
   private readonly keks = new Map<string, Uint8Array>();
   private indexP: Promise<Map<string, SlotIndex>> | null = null;
+  private readonly readyP: Promise<void>;
 
   constructor(opts: HumanVaultOptions) {
     this.b = opts.backend;
     this.log = opts.log;
     this.lock = new SessionLock(opts);
     this.lock.onLock = (reason) => this.wipeKeks(reason);
+    // 기동 직후 엄격 모드 설정을 읽는다. 읽기 전에도 엄격 모드에서 지운 기기 사본은 없으므로 무프롬프트로 열리지 않는다.
+    this.readyP = this.b.items.get(STRICT_ITEM).then(
+      (raw) => {
+        if (raw?.[0] === 1) this.lock.setStrict(true);
+      },
+      () => {
+        // 읽기 실패: 엄격 모드로 본다(fail-closed). 기기 사본이 있어도 Hello로만 연다.
+        this.lock.setStrict(true);
+      },
+    );
+  }
+
+  /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */
+  ready(): Promise<void> {
+    return this.readyP;
   }
 
   get tier(): KeyTier {
@@ -109,11 +127,15 @@ export class HumanSecretVault {
       if (new Set(names).size !== names.length) throw new Error('duplicate_cell');
       for (const e of entries) if (!(e.bytes instanceof Uint8Array) || e.bytes.length === 0 || e.bytes.length > HUMAN_SECRET_MAX_BYTES) throw new Error('bad_value');
       if (kind === 'portal_password' && !names.some((n) => n.endsWith('/pw'))) throw new Error('portal_pw_required');
-      // 저장은 사람이 등록 창 앞에 있는 순간이다. 세션이 잠겼으면 받지 않는다.
+      await this.readyP;
+      // 금고가 열려 있을 때만 저장한다(잠금 사유 무관, readOne과 같은 판정). 유휴·최대 시간 잠금 뒤는 main이 vault.unlock(Hello)
+      // 또는 Windows 잠금·해제로 먼저 연다. 엄격 모드는 Hello 확인 뒤 300초 안에만 저장된다.
       const v = this.lock.check();
-      if (!v.open && v.reason === 'session_locked') throw new Error('session_locked');
+      if (!v.open) throw new Error('vault_locked');
 
       const slot = slotName(kind, scope);
+      // 다시 등록: 옛 슬롯을 지우기 전에 암호문 그대로 떠 둔다. 새 슬롯을 다 쓰기 전에 실패하면 되돌린다(평문은 다루지 않는다).
+      const backup = await this.snapshotSlot(kind, scope);
       await this.forget(kind, scope, 'replace');
       const kek = new Uint8Array(randomBytes(32));
       try {
@@ -138,8 +160,9 @@ export class HumanSecretVault {
         this.log.event('vault.secret_stored', { kind, items: entries.length, tier: this.tier, hello: helloOk });
         return consent;
       } catch (e) {
-        // 반쯤 쓴 슬롯을 남기지 않는다.
+        // 반쯤 쓴 슬롯을 남기지 않고, 옛 슬롯이 있었으면 그대로 되돌린다.
         await this.forget(kind, scope, 'replace').catch(() => {});
+        await this.restoreSlot(kind, scope, backup).catch(() => this.log.event('vault.restore_failed', { kind }));
         throw e;
       } finally {
         kek.fill(0);
@@ -147,6 +170,27 @@ export class HumanSecretVault {
     } finally {
       wipe();
     }
+  }
+
+  /** 슬롯의 키체인 항목(암호문·래핑된 KEK·동의 레코드)과 색인 항목을 그대로 떠 둔다. */
+  private async snapshotSlot(kind: StorableKind, scope: ProfileScope): Promise<{ info: SlotIndex; items: Array<[string, Uint8Array]> } | null> {
+    const slot = slotName(kind, scope);
+    const info = (await this.index()).get(slot);
+    if (!info) return null;
+    const items: Array<[string, Uint8Array]> = [];
+    for (const n of [...info.cells, `kek/${slot}/device`, `kek/${slot}/hello`, `consent/${slot}`]) {
+      const raw = await this.b.items.get(n);
+      if (raw) items.push([n, raw]);
+    }
+    return { info: { ...info, cells: [...info.cells] }, items };
+  }
+
+  private async restoreSlot(kind: StorableKind, scope: ProfileScope, backup: Awaited<ReturnType<HumanSecretVault['snapshotSlot']>>): Promise<void> {
+    if (!backup) return;
+    for (const [n, raw] of backup.items) await this.b.items.set(n, raw);
+    const idx = await this.index();
+    idx.set(slotName(kind, scope), backup.info);
+    await this.saveIndex(idx);
   }
 
   // ───────────── 꺼내기(타이피스트 전용, 칸 하나) ─────────────
@@ -159,6 +203,7 @@ export class HumanSecretVault {
     } catch {
       return { ok: false, reason: 'secret_missing' };
     }
+    await this.readyP;
     const slot = slotName(kind, scope);
     const info = (await this.index()).get(slot);
     if (!info || !info.cells.includes(name)) return { ok: false, reason: 'secret_missing' };
@@ -204,6 +249,7 @@ export class HumanSecretVault {
    * Phase 1 저장 슬롯은 대개 1~2개(보안카드·포털)이므로 첫 사본으로 사람 확인을 받고, 나머지는 같은 확인 안에서 연다.
    */
   async unlockWithHello(prompt: HelloPrompt): Promise<{ ok: boolean; presence: boolean; reason?: 'hello_unavailable' | 'hello_cancelled' | 'no_stored_secret' | 'session_locked' }> {
+    await this.readyP;
     const v = this.lock.check();
     if (!v.open && !v.helloCanOpen) return { ok: false, presence: false, reason: 'session_locked' };
     if (!(await this.b.hello.available().catch(() => false))) return { ok: false, presence: false, reason: 'hello_unavailable' };
@@ -220,6 +266,11 @@ export class HumanSecretVault {
         return { ok: false, presence: false, reason: 'hello_cancelled' };
       }
       opened.push([slot, kek]);
+    }
+    // presence는 실제로 Hello 프롬프트를 거쳐 사본을 연 때만이다. 색인에만 있고 사본이 없으면 사람 확인이 없었다.
+    if (!opened.length) {
+      this.log.event('vault.item_corrupt', { item: 'hello' });
+      return { ok: false, presence: false, reason: 'no_stored_secret' };
     }
     this.lock.helloConfirmed();
     if (!this.lock.check().open) {
@@ -238,19 +289,26 @@ export class HumanSecretVault {
    * 끄면 기기 사본을 다시 만든다: 열린 금고(메모리의 KEK)가 있어야 한다.
    */
   async setStrict(on: boolean): Promise<{ ok: boolean; reason?: 'hello_unavailable' | 'unlock_required' }> {
+    await this.readyP;
     const idx = await this.index();
     if (on) {
       if ([...idx.values()].some((s) => !s.hello)) return { ok: false, reason: 'hello_unavailable' };
-      for (const s of idx.values()) await this.b.items.delete(`kek/${slotName(s.kind, s.scope)}/device`);
+      // 설정을 먼저 남기고 기기 사본을 지운다(중간에 끊겨도 재시작 뒤 엄격 모드: Hello로만 연다).
+      await this.b.items.set(STRICT_ITEM, Uint8Array.of(1));
       this.lock.setStrict(true);
+      for (const s of idx.values()) await this.b.items.delete(`kek/${slotName(s.kind, s.scope)}/device`);
       return { ok: true };
     }
+    for (const s of idx.values()) if (!this.keks.has(slotName(s.kind, s.scope))) return { ok: false, reason: 'unlock_required' };
+    // 기기 사본을 다 만든 뒤에 설정을 끈다(중간에 끊기면 엄격 모드로 남는다).
     for (const s of idx.values()) {
       const slot = slotName(s.kind, s.scope);
       const kek = this.keks.get(slot);
+      // 그사이 잠겨 KEK를 지웠으면 멈춘다(설정은 엄격 모드로 남는다).
       if (!kek) return { ok: false, reason: 'unlock_required' };
       await this.b.items.set(`kek/${slot}/device`, await this.b.wrapper.wrap(kek, slot));
     }
+    await this.b.items.delete(STRICT_ITEM);
     this.lock.setStrict(false);
     return { ok: true };
   }
