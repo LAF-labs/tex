@@ -25,6 +25,8 @@ const state = {
   fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
   composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
   barActive: false,
+  board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
+  boardOpen: true, // 판 펼침(접으면 한 줄 요약)
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
   docLocked: new Set(), // 이번 실행에서 열기 암호로 가져온 서류 id(목록 자물쇠). 엔진은 암호 여부를 저장하지 않는다.
@@ -185,6 +187,9 @@ const RAIL = [
   ['docs', '문서함', 'docs'],
   ['cps', '거래처', 'cps'],
   ['biz', '내 사업장', 'biz'],
+  ['bundle', '세무사 꾸러미', 'bundle'],
+  // 급여대장(D-06)은 켠 사장님만 보인다(ADR-034 결정 8, 설정 payroll.enabled 기본 끔). 켜는 곳은 설정(M4-4).
+  ['payroll', '급여대장', 'payroll', () => !!state.boot?.payrollEnabled],
   ['activity', '활동 기록', 'activity'],
 ];
 
@@ -240,7 +245,7 @@ function renderRail() {
     return n !== null && n <= 7;
   }).length;
   const item = ([v, label, ic]) => h('button', { type: 'button', class: state.view === v ? 'is-on' : null, title: label, 'aria-label': label, 'data-view': v, onclick: () => go(v) }, icon(ic), v === 'docs' && soon ? h('b', {}, String(soon)) : null);
-  $('#rail').replaceChildren(...RAIL.map(item), h('i'), item(['settings', '설정', 'settings']));
+  $('#rail').replaceChildren(...RAIL.filter((r) => !r[3] || r[3]()).map(item), h('i'), item(['settings', '설정', 'settings']));
 }
 
 // ---- 대화 화면 ----
@@ -257,7 +262,7 @@ const chat = {
 function buildChat() {
   chat.thread = h('div', { class: 'sx-thread' });
   chat.scroll = h('div', { class: 'thread-scroll' }, h('div', { class: 'col' }, chat.thread));
-  chat.today = h('div', { class: 'col sx-today', role: 'status' });
+  chat.today = h('section', { class: 'col sx-board', 'aria-label': '이번 달 판', 'data-board': '' });
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
   chat.input = h('textarea', { rows: '1', placeholder: '세금계산서나 증명서를 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
@@ -472,36 +477,89 @@ function renderG24(g) {
   renderQuick();
 }
 
-/** 오늘 요약(캔버스 M-02): 0이 아닌 건만 "숫자 이름"으로, 오른쪽 끝에 "오늘 요약". 누르면 해당 카드·화면으로 간다. */
+/**
+ * 이번 달 판(08 M-02, ADR-033): main이 계산한 카드 4종(기한 순)을 그린다. 대화 열 맨 위에 두고 접을 수 있다.
+ * 판 항목에는 승인 버튼이 없다. 누르면 그 작업 카드·서류·화면으로 옮기거나 입력창에 요청을 채울 뿐이다(보내기는 사람이 한다).
+ */
 function renderToday() {
   if (!chat.today) return;
-  const runs = [...state.runs.values()];
-  const g24Open = [...state.g24.values()].filter((g) => g.stage === 'guide' || g.stage === 'pick');
-  const by = (...st) => runs.filter((r) => st.includes(r.status));
-  const soon = state.docs.filter((d) => {
-    const n = dday(d.expiresOn, state.today);
-    return n !== null && n <= 7;
-  }).length;
-  const docsToCheck = state.docs.filter((d) => d.vault?.needsUser).length;
-  const pastToCheck = (state.boot.history ?? []).filter((x) => x.status === 'attention').length;
-  const openRun = (list) => () => list[0] && openPanel({ kind: 'run', id: list[0].id });
-  const goDocs = (filter) => () => {
-    state.docFilter = filter;
-    go('docs');
-  };
-  const items = [
-    ['내 차례', by('turn').length + g24Open.length, 'is-turn', () => (by('turn')[0] ? openRun(by('turn'))() : g24Open[0] && openPanel({ kind: 'g24', id: g24Open[0].id }))],
-    ['승인 대기', by('waiting').length, 'is-turn', openRun(by('waiting'))],
-    ['진행 중', by('preparing', 'issuing').length, '', openRun(by('preparing', 'issuing'))],
-    ['확인 필요', by('attention').length + docsToCheck + pastToCheck, 'is-attention', by('attention')[0] ? openRun(by('attention')) : docsToCheck ? goDocs('all') : () => go('activity')],
-    ['오늘 완료', by('done').length, '', openRun(by('done').reverse())],
-    ['만료 임박', soon, 'is-attention', goDocs('soon')],
-  ].filter(([, n]) => n > 0);
-  chat.today.replaceChildren(
-    ...items.map(([label, n, cls, onclick]) => h('button', { type: 'button', class: `today-item ${cls}`.trim(), onclick }, h('b', {}, String(n)), ' ', label)),
-    ...(items.length ? [] : [h('span', { class: 'sx-meta' }, '오늘 챙길 일이 없어요')]),
-    h('span', { class: 'sx-meta today-label' }, '오늘 요약'),
+  const b = state.board;
+  const items = b ? b.cards.flatMap((c) => c.items) : [];
+  const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
+  const counts = b
+    ? [
+        ['확인 필요', b.counts.attention, 'is-attention'],
+        ['진행 중', b.counts.progress, ''],
+        ['만료 임박', b.counts.expiringSoon, 'is-attention'],
+      ].filter(([, n]) => n > 0)
+    : [];
+  const toggle = h('button', { type: 'button', class: 'board-toggle', 'aria-expanded': String(state.boardOpen), 'data-act': 'board-toggle', onclick: () => ((state.boardOpen = !state.boardOpen), renderToday()) }, state.boardOpen ? '접기' : '펼치기', h('span', { class: `board-chev${state.boardOpen ? ' is-open' : ''}` }, icon('chevron')));
+  const head = h(
+    'div',
+    { class: 'board-hd' },
+    h('h2', { class: 'board-title' }, `${month} 할 일`),
+    h('span', { class: 'sx-meta' }, items.length ? `${items.length}건 · 기한 순` : '챙길 일이 없어요'),
+    ...counts.map(([label, n, cls]) => h('span', { class: `board-count ${cls}`.trim() }, h('b', {}, String(n)), ' ', label)),
+    items.length ? toggle : null,
   );
+  chat.today.classList.toggle('is-closed', !state.boardOpen || !items.length);
+  if (!state.boardOpen || !items.length) return chat.today.replaceChildren(head);
+  chat.today.replaceChildren(head, h('div', { class: 'board-cards' }, ...b.cards.map(boardCard)));
+}
+
+/** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더"로 그 화면에 간다. */
+function boardCard(c) {
+  const MAX = 3;
+  const rows = c.items.slice(0, MAX).map(boardRow);
+  const more = c.items.length - MAX;
+  const moreView = { invoice: 'activity', receipt: 'bundle', accountant: 'bundle', expiring: 'docs' }[c.kind];
+  return h(
+    'article',
+    { class: 'board-card', 'data-board-card': c.kind },
+    h('div', { class: 'board-card-hd' }, h('span', { class: 'board-card-title' }, c.title), h('span', { class: 'sx-meta' }, String(c.items.length))),
+    h('ul', { class: 'board-rows' }, ...rows),
+    more > 0 ? h('button', { type: 'button', class: 'board-more', onclick: () => go(moreView) }, `${more}건 더 보기`) : null,
+  );
+}
+
+function boardRow(it) {
+  const due = it.showDue && it.due ? dueText(it.due) : null;
+  return h(
+    'li',
+    {},
+    h(
+      'button',
+      { type: 'button', class: `board-row${it.tone ? ` is-${it.tone}` : ''}`, 'data-board-item': it.id, onclick: () => boardGo(it.target) },
+      h('span', { class: 'board-row-main' }, h('span', { class: 'board-row-label' }, it.label), h('span', { class: 'board-row-detail' }, it.detail)),
+      due ? h('span', { class: `board-due${due.soon ? ' is-soon' : ''}` }, due.text) : null,
+    ),
+  );
+}
+
+/** 기한 글자: D-n · 오늘 · n일 지남. 7일 안이거나 지났으면 황토. */
+function dueText(due) {
+  const n = dday(due, state.today);
+  if (n === null) return null;
+  return { text: n === 0 ? '오늘' : n > 0 ? `D-${n}` : `${-n}일 지남`, soon: n <= 7 };
+}
+
+/** 판 항목의 갈 곳. 실행은 작업 패널로, 서류는 문서함 패널로, 요청은 입력창에 채우기만, 화면은 그 화면으로. */
+async function boardGo(t) {
+  if (t.to === 'run') {
+    if (state.view !== 'chat') await go('chat');
+    openPanel({ kind: 'run', id: t.id });
+    document.querySelector(`[data-run="${CSS.escape(t.id)}"]`)?.scrollIntoView({ block: 'center' });
+  } else if (t.to === 'doc') {
+    state.docFilter = 'all';
+    await go('docs');
+    openPanel({ kind: 'doc', id: t.id });
+  } else if (t.to === 'compose') {
+    if (state.view !== 'chat') await go('chat');
+    fillComposer(t.text);
+  } else if (t.to === 'view') {
+    if (t.filter) state.docFilter = t.filter;
+    await go(t.view);
+  }
 }
 
 // ---- 작업 패널 ----
@@ -916,7 +974,17 @@ function settingsView() {
   );
 }
 
-const VIEWS = { docs: docsView, cps: cpsView, biz: bizView, activity: activityView, settings: settingsView };
+/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-05 세무사 꾸러미 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
+const LATER = {
+  bundle: ['세무사 꾸러미', 'D-05', '이번 달 항목과 빠진 것, 미리보기·보내기가 여기에 들어와요.'],
+  card: ['사업용 카드 내역', 'D-04', '홈택스 사업용 카드 사용내역과 [최신화]가 여기에 들어와요.'],
+  payroll: ['급여대장', 'D-06', '직원 목록과 이번 달 급여대장이 여기에 들어와요.'],
+};
+const laterView = (v) => () => {
+  const [title, id, text] = LATER[v];
+  return h('section', { class: 'rail-screen', 'data-view': v, 'data-screen': id }, h('div', { class: 'rs-col' }, railHead(title, '준비 중'), h('article', { class: 'sx-card later-card' }, h('p', { class: 'sx-body-sm is-muted' }, text))));
+};
+const VIEWS = { docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
   if (state.view === v && v !== 'docs') return;
@@ -1241,6 +1309,9 @@ window.sax.onEvent((ev) => {
     document.body.classList.toggle('bar-band', !!ev.band);
   } else if (ev.type === 'doc') {
     addDoc(ev.doc);
+  } else if (ev.type === 'board') {
+    state.board = ev.board;
+    renderToday();
   } else if (ev.type === 'docs-reload') {
     // 시연 씨앗이 보관함에 견본 서류를 다 넣었다. 문서함·거래처(최근 발급)를 다시 읽는다.
     const rev = ++state.docsRev;
@@ -1312,6 +1383,7 @@ async function boot() {
   state.interp = state.boot.interp === 'model' ? 'model' : 'offline';
   state.docs = [...state.boot.docs];
   state.cps = state.boot.counterparties;
+  state.board = state.boot.board ?? null;
   const L = state.boot.layout;
   const root = document.documentElement.style;
   for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);
