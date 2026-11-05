@@ -14,7 +14,7 @@ export interface TableMeta {
   kind: TableKind;
   /** 포함 시작일 'YYYY-MM-DD' */
   effectiveFrom: string;
-  /** 포함 끝날. null이면 다음 표가 나올 때까지 */
+  /** 포함 끝날. null이면 같은 종류의 다음 표가 시작하기 전날까지 */
   effectiveTo: string | null;
   /** 이 표의 최종 금액 끝처리 */
   rounding: Rounding;
@@ -108,7 +108,11 @@ function schemaValidator(): ValidateFunction {
   return validator;
 }
 
-const overlaps = (a: TableMeta, b: TableMeta): boolean => a.effectiveFrom <= (b.effectiveTo ?? '9999-12-31') && b.effectiveFrom <= (a.effectiveTo ?? '9999-12-31');
+const dayBefore = (d: string): string => new Date(Date.parse(`${d}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+/** 열린 표(effectiveTo null)는 other가 더 늦게 시작하면 그 전날 끝난다 */
+const endAgainst = (x: TableMeta, other: TableMeta): string => x.effectiveTo ?? (other.effectiveFrom > x.effectiveFrom ? dayBefore(other.effectiveFrom) : '9999-12-31');
+/** 같은 날을 두 표가 덮는가: 시작일이 같거나, 닫힌 기간이 다른 표의 기간과 겹친다(@sax/db rateSpansConflict와 같은 규칙) */
+const overlaps = (a: TableMeta, b: TableMeta): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
 
 /**
  * 패키지 검증(서명 검증은 레지스트리 채널이 먼저 한다, D14 M6-10). 스키마 + 의미 규칙:
@@ -156,12 +160,19 @@ function checkSimpleTax(t: RateTable<'simple_tax_table'>): string[] {
   return bad;
 }
 
-/** 패키지에서 그날 시행 중인 표를 고른다. 간이세액표는 지급일, 보험·상하한·비과세는 귀속 달의 1일 기준 */
+/**
+ * 패키지에서 그날 시행 중인 표를 고른다. 간이세액표는 지급일, 보험·상하한·비과세는 귀속 달의 1일 기준.
+ * 시작일이 그날 이전인 표 중 가장 늦게 시작한 것이고, 그 표가 그날 전에 닫혔으면 없다(빈 기간). 시작일이 같은 표가 둘이면 ambiguous
+ */
 export function pickTables(tables: readonly RateTable[], at: { taxDate: string; insuranceDate: string }): TableSet {
   const pick = <K extends TableKind>(kind: K, day: string): RateTable<K> => {
-    const hits = tables.filter((t) => t.kind === kind && t.effectiveFrom <= day && (t.effectiveTo === null || t.effectiveTo >= day));
-    if (hits.length !== 1) throw new TableError(hits.length ? `rate_table_ambiguous:${kind}` : `rate_table_missing:${kind}`);
-    return hits[0] as RateTable<K>;
+    const started = tables.filter((t) => t.kind === kind && t.effectiveFrom <= day);
+    const latest = started.reduce<string | null>((m, t) => (m === null || t.effectiveFrom > m ? t.effectiveFrom : m), null);
+    const hits = started.filter((t) => t.effectiveFrom === latest);
+    if (hits.length > 1) throw new TableError(`rate_table_ambiguous:${kind}`);
+    const hit = hits[0];
+    if (!hit || (hit.effectiveTo !== null && hit.effectiveTo < day)) throw new TableError(`rate_table_missing:${kind}`);
+    return hit as RateTable<K>;
   };
   return {
     simpleTax: pick('simple_tax_table', at.taxDate),

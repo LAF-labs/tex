@@ -14,7 +14,7 @@ export interface RelayPolicy {
   allowedHosts: string[];
   /** 비밀 종류별 허용 호스트. */
   secretHosts: Record<string, string[]>;
-  domainMethods: Record<string, string[] | '*'>;
+  domainMethods: Record<string, readonly string[]>;
   deniedMethods: Set<string>;
   keyDelayMs: number;
   typistInput: 'insertText' | 'keyEvents';
@@ -85,7 +85,7 @@ export function checkSessionCommand(
   const [domain, name] = method.split('.', 2) as [string, string | undefined];
   const rule = policy.domainMethods[domain];
   if (!rule || !name) return deny('domain_not_allowed');
-  if (rule !== '*' && !rule.includes(name)) return deny('method_not_allowed');
+  if (!rule.includes(name)) return deny('method_not_allowed');
 
   if (state.active && ACTIVE_WINDOW_DENY_PREFIXES.some((p) => method === p || method.startsWith(p))) return deny('secret_window_active');
 

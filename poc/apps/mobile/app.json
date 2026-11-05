@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "tex",
+    "slug": "tex-mobile",
+    "scheme": "tex",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "updates": {
+      "enabled": false,
+      "checkAutomatically": "NEVER"
+    },
+    "ios": {
+      "bundleIdentifier": "com.lafco.tex",
+      "supportsTablet": false,
+      "buildNumber": "1",
+      "config": {
+        "usesNonExemptEncryption": true
+      },
+      "entitlements": {
+        "com.apple.developer.default-data-protection": "NSFileProtectionComplete"
+      },
+      "infoPlist": {
+        "UIFileSharingEnabled": false,
+        "LSSupportsOpeningDocumentsInPlace": false
+      }
+    },
+    "android": {
+      "package": "com.lafco.tex",
+      "versionCode": 1,
+      "allowBackup": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.USE_BIOMETRIC"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_MEDIA_VIDEO",
+        "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.SYSTEM_ALERT_WINDOW"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#F5F6F7",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "plugins": [
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": false,
+          "faceIDPermission": "앱을 열 때 얼굴로 확인해요. 얼굴 정보는 이 폰 밖으로 나가지 않아요."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "종이 영수증을 찍어 내 PC로 보낼 때 카메라를 써요. 사진은 사진 앱에 저장하지 않아요.",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "16.4"
+          },
+          "android": {
+            "minSdkVersion": 28
+          }
+        }
+      ],
+      "./plugins/with-no-backup.cjs",
+      "expo-asset"
+    ]
+  }
+}
