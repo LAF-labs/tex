@@ -2,12 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { performance } from 'node:perf_hooks';
 import { app, nativeTheme, screen, session, WebContentsView, type BrowserWindow, type Session } from 'electron';
-import { gateSelfCheck } from '@sax/engine/gate';
+import { attestSelfCheck, gateSelfCheck } from '@sax/engine/gate';
 import type { EventLog } from '@sax/platform';
 import {
   ACTION_TEXT,
   ACTIVATION_GRACE_MS,
   actionText,
+  ATTEST_ACTION_TEXT,
+  attestRefusalText,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
   BAR_CSP,
@@ -17,15 +19,19 @@ import {
   buildBarHtml,
   HandoffMark,
   issueLocalApproval,
+  issueLocalAttestation,
   kstToday,
   overflowLine,
   REFUSAL_TEXT,
   refusalText,
   summarize,
+  summarizeAttest,
+  type AttestRequest,
   type BarMode,
   type BarPalette,
   type GateRequest,
   type LocalApproval,
+  type LocalAttestation,
   type SummaryLine,
 } from './approval-gate.ts';
 import { appHeaders, assertNoDebugSwitches, hardenSession, lastWebPrefs, webPrefsProblems } from './harden.ts';
@@ -74,10 +80,22 @@ function barSession(): Session {
 export type Placer = (contentWidth: number, contentHeight: number, wide: boolean) => Rect & { band?: boolean };
 
 export type BarOutcome = { decision: 'approve'; approval: LocalApproval } | { decision: 'closed'; reason: string };
+export type AttestOutcome = { decision: 'attest'; attestation: LocalAttestation } | { decision: 'closed'; reason: string };
+
+/**
+ * 바 자리에 올라온 것(ADR-021 표시 조건). 게이트(비가역 승인)와 InDoubt 증언 두 가지이고, 우선순위는 게이트 > 증언이다.
+ * id는 게이트면 reqId, 증언이면 attestReqId다.
+ */
+type BarItem =
+  | { kind: 'gate'; id: string; runId: string; gate: GateRequest; done: (o: BarOutcome) => void }
+  | { kind: 'attest'; id: string; runId: string; attest: AttestRequest; done: (o: AttestOutcome) => void };
 
 export interface BarSnapshot {
   visible: boolean;
+  /** 바 자리에 올라온 것. 증언 바는 'attest'. */
+  kind: 'gate' | 'attest' | null;
   runId: string | null;
+  /** 게이트면 reqId, 증언이면 attestReqId. */
   reqId: string | null;
   /** main이 그리려는 모드와, 지금 실제로 화면에 올라온(커밋된) 페이지. */
   mode: BarMode;
@@ -111,12 +129,11 @@ export class ApprovalBar extends EventEmitter {
   private readonly key: Uint8Array;
   private readonly place: Placer;
   private readonly cursorPoint: () => { x: number; y: number };
-  private req: GateRequest | null = null;
+  private req: BarItem | null = null;
   private lines: SummaryLine[] | null = null;
   private action = ACTION_TEXT;
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
-  private resolve: ((o: BarOutcome) => void) | null = null;
   private armTimer: NodeJS.Timeout | undefined;
   private activationTimer: NodeJS.Timeout | undefined;
   private bounds: Rect = { x: 0, y: 0, width: 0, height: 0 };
@@ -169,7 +186,7 @@ export class ApprovalBar extends EventEmitter {
     wc.on('before-input-event', (e, i) => {
       e.preventDefault();
       // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
-      if (this.req && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
+      if (this.req?.kind === 'gate' && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
     });
     wc.on('focus', () => {
       if (!win.isDestroyed()) win.webContents.focus();
@@ -223,21 +240,29 @@ export class ApprovalBar extends EventEmitter {
     return this.shown;
   }
 
-  /** 지금 열린 게이트의 실행 ID. */
+  /** 지금 열린 게이트(또는 증언)의 실행 ID. */
   get runId(): string | null {
     return this.req?.runId ?? null;
   }
 
-  snapshot(): BarSnapshot {
-    const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
-    return { visible: this.shown, runId: this.runId, reqId: this.req?.reqId ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.action };
+  /** 지금 바 자리에 올라온 것의 종류. */
+  get kind(): 'gate' | 'attest' | null {
+    return this.req?.kind ?? null;
   }
 
-  /** 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'. */
+  snapshot(): BarSnapshot {
+    const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
+    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.action };
+  }
+
+  /**
+   * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
+   * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
+   */
   open(req: GateRequest): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
-    if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' });
-    this.req = req;
+    if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
+    if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
     // 엔진이 보낸 fields로 readbackHash·cardHash·actionHash를 다시 계산해 같을 때만 무장한다(D03 §3, 자기 일치 확인이지 엔진 침해 방어가 아님).
     let bad: ReturnType<typeof gateSelfCheck> = 'field_key';
     try {
@@ -249,21 +274,53 @@ export class ApprovalBar extends EventEmitter {
     this.lines = Array.isArray(summary) ? summary : [];
     this.action = bad ? ACTION_TEXT : actionText(req);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
-    const result = new Promise<BarOutcome>((resolve) => {
-      this.resolve = resolve;
+    return new Promise<BarOutcome>((done) => {
+      this.req = { kind: 'gate', id: req.reqId, runId: req.runId, gate: req, done };
+      void this.show(this.req);
     });
-    void this.show(req);
-    return result;
   }
 
-  /** 게이트가 끝남(중지·만료·엔진 취소). reqId를 주면 그 게이트일 때만 닫는다. */
+  /**
+   * InDoubt 증언 바(ADR-021 결정 5). 사용자가 그 "확인 필요" 카드를 열었을 때만 shell-app이 부른다(자동으로 띄우지 않는다).
+   * 게이트·다른 증언이 떠 있으면 바꾸지 않고 'busy'. 판정 규칙(무장 지연·머무름·커서·키보드 없음)은 승인과 같고,
+   * 클릭이 인정되면 승인 근거가 아니라 LocalAttestation을 발급한다.
+   */
+  openAttest(req: AttestRequest): Promise<AttestOutcome> {
+    if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
+    if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' });
+    let bad: ReturnType<typeof attestSelfCheck> = 'field_key';
+    try {
+      if (req.v === 1 && Array.isArray(req.fields)) bad = attestSelfCheck(req);
+    } catch {
+      // 모양이 다르면 field_key로 둔다
+    }
+    const summary = bad ? null : summarizeAttest(req);
+    this.lines = Array.isArray(summary) ? summary : [];
+    this.action = ATTEST_ACTION_TEXT;
+    this.baseRefusal = bad ? attestRefusalText(REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : attestRefusalText(refusalText(summary!));
+    return new Promise<AttestOutcome>((done) => {
+      this.req = { kind: 'attest', id: req.attestReqId, runId: req.runId, attest: req, done };
+      void this.show(this.req);
+    });
+  }
+
+  /** 게이트가 끝남(중지·만료·엔진 취소). reqId를 주면 그 게이트일 때만 닫는다. 증언 바는 closeAttest로 닫는다. */
   close(reason: string, reqId?: string): void {
-    if (reqId && this.req?.reqId !== reqId) return;
+    if (this.req?.kind !== 'gate' && reqId) return;
+    if (reqId && this.req?.id !== reqId) return;
+    this.finish({ decision: 'closed', reason });
+  }
+
+  /** 증언 바를 내린다(엔진 철회·카드 닫음·실행 끝). attestReqId나 runId를 주면 그것일 때만. */
+  closeAttest(reason: string, match: { attestReqId?: string; runId?: string } = {}): void {
+    if (this.req?.kind !== 'attest') return;
+    if (match.attestReqId && this.req.id !== match.attestReqId) return;
+    if (match.runId && this.req.runId !== match.runId) return;
     this.finish({ decision: 'closed', reason });
   }
 
   /** 새 게이트의 첫 페이지가 화면에 올라온 뒤에만 보인다. 그 전에는 앞 게이트의 페이지가 보일 수 있기 때문이다. */
-  private async show(req: GateRequest): Promise<void> {
+  private async show(req: BarItem): Promise<void> {
     this.keepOnScreen();
     this.relayout(false);
     this.gate.rearm(this.now(), this.cursorInside());
@@ -281,16 +338,17 @@ export class ApprovalBar extends EventEmitter {
     this.view.setVisible(true);
     this.shown = true;
     if (!this.win.isFocused()) this.win.flashFrame(true); // 포커스는 가져오지 않는다.
-    this.emit('shown', { band: this.band });
+    this.emit('shown', { band: this.band, kind: req.kind });
     this.rearm('shown');
   }
 
-  private committedFor(req: GateRequest): boolean {
-    return !!this.committed && this.committed.id === this.pageId && this.committed.reqId === req.reqId;
+  private committedFor(req: BarItem): boolean {
+    return !!this.committed && this.committed.id === this.pageId && this.committed.reqId === req.id;
   }
 
-  private finish(o: BarOutcome): void {
-    if (!this.req) return;
+  private finish(o: BarOutcome | AttestOutcome): void {
+    const item = this.req;
+    if (!item) return;
     this.req = null;
     this.lines = null;
     this.refusal = null;
@@ -310,16 +368,17 @@ export class ApprovalBar extends EventEmitter {
       this.myPages.clear();
       void this.view.webContents.loadURL(`${APPROVAL_SCHEME}://${HOST}/${BLANK}`).catch(() => {});
     }
-    const r = this.resolve;
-    this.resolve = null;
-    this.emit('hidden', o.decision === 'approve' ? 'approved' : o.reason);
-    r?.(o);
+    this.emit('hidden', o.decision === 'approve' ? 'approved' : o.decision === 'attest' ? 'attested' : o.reason, item.kind);
+    // 근거의 종류는 바 자리에 올라온 것의 종류와 같아야 한다(승인 바에서 증언이, 증언 바에서 승인이 나가지 않게).
+    if (item.kind === 'gate') item.done(o.decision === 'attest' ? { decision: 'closed', reason: 'kind_mismatch' } : o);
+    else item.done(o.decision === 'approve' ? { decision: 'closed', reason: 'kind_mismatch' } : o);
   }
 
   private approve(): void {
     const req = this.req;
     if (!req) return;
-    this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req, 'click') });
+    if (req.kind === 'gate') this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req.gate, 'click') });
+    else this.finish({ decision: 'attest', attestation: issueLocalAttestation(this.key, req.attest) });
     if (!this.win.isDestroyed()) this.win.webContents.focus();
   }
 
@@ -483,7 +542,7 @@ export class ApprovalBar extends EventEmitter {
     const prev = this.pageId;
     this.pageId = id;
     const done = (ok: boolean) => {
-      if (ok && this.pageId === id) this.committed = { id, reqId: req.reqId, mode: effective };
+      if (ok && this.pageId === id) this.committed = { id, reqId: req.id, mode: effective };
       if (prev) {
         pages.delete(prev);
         this.myPages.delete(prev);
