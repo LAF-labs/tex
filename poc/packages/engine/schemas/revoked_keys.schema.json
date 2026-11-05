@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/revoked_keys.schema.json",
+  "title": "Signed revoked signing keys list v1",
+  "description": "v1 (M1-4; design/09-cloud-services.md §8.4, design/03-engine.md §3.1-1). /registry/revoked_keys.json. Signatures from a listed keyId are not counted anywhere (packages, hotfixes, policies, status) and journal registry.key_revoked. SIGNATURES (SIGNING.md §3): `signatures` are 2-of-3 distinct pinned offline ROOT keys over the CONTENT = JCS(list without `signatures`, `issuedAt`, `expiresAt`, `timestamp`); revoked keys are not checked against this list itself. FRESHNESS: `timestamp` (online timestamp key) re-signed every 24 h without content change. Engine-only checks: expiresAt - issuedAt <= 24 h (registry.revoked_validity_too_long); issuedAt > now + 5 min => reject; same keyEpoch, monotonic +1..+1000, equal monotonic only with equal content; the new list must be a superset of the current one (registry.revoked_shrunk, revocation is irreversible). Losing 24 h freshness holds new package/policy/hotfix loads (installed package kept); strictly conservative policy/status still apply.",
+  "type": "object",
+  "required": [
+    "keyIds",
+    "monotonic",
+    "keyEpoch",
+    "issuedAt",
+    "expiresAt",
+    "signatures",
+    "timestamp"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "keyIds": {
+      "type": "array",
+      "uniqueItems": true,
+      "maxItems": 256,
+      "items": {
+        "type": "string",
+        "maxLength": 64
+      }
+    },
+    "monotonic": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "keyEpoch": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "issuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "<= 24 hours after issuedAt (engine check)"
+    },
+    "signatures": {
+      "description": "2-of-3 distinct pinned offline root keys.",
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": [
+          "keyId",
+          "alg",
+          "sig"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "keyId": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "alg": {
+            "const": "ed25519"
+          },
+          "sig": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{86}$"
+          }
+        }
+      }
+    },
+    "timestamp": {
+      "type": "object",
+      "required": [
+        "keyId",
+        "alg",
+        "sig"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "keyId": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "alg": {
+          "const": "ed25519"
+        },
+        "sig": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{86}$"
+        }
+      },
+      "description": "Freshness signature by the online timestamp key over JCS({contentDigest, monotonic, issuedAt, expiresAt}) (SIGNING.md §4)."
+    }
+  }
+}

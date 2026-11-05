@@ -132,6 +132,7 @@ export const REVOKED_MAX_VALIDITY_H = 24;
 
 /** 폐기 목록 수용. 실패하면 그 파일만 버리고 마지막 유효 목록을 유지한다(목록이 줄어드는 롤백 방지: monotonic). */
 export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; current: AcceptedRevoked | null; now: number }): RevokedDecision {
+  if (schemaViolations('revoked_keys', next).length) return { ok: false, code: 'registry.schema_invalid' };
   const ep = epochProblem(next, ctx.roots);
   if (ep) return { ok: false, code: ep };
   const content = contentBytes(next);
@@ -198,6 +199,7 @@ export function statusIsConservative(cur: RegistryStatus | null, next: RegistryS
 
 export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; revoked: ReadonlySet<string>; current: AcceptedStatus | null; hold?: boolean; now: number }): StatusDecision {
   const events: string[] = [];
+  if (schemaViolations('status', next).length) return { ok: false, code: 'registry.schema_invalid', events };
   const ep = epochProblem(next, ctx.roots);
   if (ep) return { ok: false, code: ep, events };
   const content = contentBytes(next);

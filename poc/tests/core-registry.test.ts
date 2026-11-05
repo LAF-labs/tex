@@ -63,6 +63,10 @@ describe('acceptRevoked (D09 §8.4)', () => {
     assert.deepEqual(ok(revoked({}, [K.root[0]!])), { ok: false, code: 'registry.signature_insufficient' });
     assert.deepEqual(ok(revoked({}, [K.pkg[0]!, K.pkg[1]!])), { ok: false, code: 'registry.signature_insufficient' });
   });
+  it('revoked_keys.schema.json에 맞지 않으면(표에 없는 필드·중복 keyId) registry.schema_invalid', () => {
+    assert.deepEqual(ok(revoked({ restore: ['pkg-9'] } as Partial<RevokedKeys>)), { ok: false, code: 'registry.schema_invalid' });
+    assert.deepEqual(ok(revoked({ keyIds: ['pkg-9', 'pkg-9'] })), { ok: false, code: 'registry.schema_invalid' });
+  });
   it('24시간 넘는 유효기간·미래 issuedAt·위조 타임스탬프는 거부', () => {
     assert.equal(ok(revoked({ issuedAt: iso(NOW), expiresAt: iso(NOW + 25 * H) })).ok, false);
     assert.deepEqual(ok(revoked({ issuedAt: iso(NOW + 10 * 60_000), expiresAt: iso(NOW + 20 * H) })), { ok: false, code: 'registry.issued_in_future' });
@@ -155,12 +159,18 @@ describe('acceptStatus (B-22, E-04, E-05)', () => {
     return r.accepted;
   };
   it('정책 키 2-of-3이면 받는다', () => assert.ok(run(status()).ok));
+  it('status.schema.json에 맞지 않으면(표에 없는 필드·잘못된 플레이북 id) 서명 전에 registry.schema_invalid', () => {
+    const r = run(status({ allowCaptchaAuto: true } as Partial<RegistryStatus>));
+    assert.ok(!r.ok && r.code === 'registry.schema_invalid');
+    const k = run(status({ killPlaybooks: ['../x'] }));
+    assert.ok(!k.ok && k.code === 'registry.schema_invalid');
+  });
   it('1인 긴급 키: 하향·kill 추가만', () => {
     const cur = base();
     assert.ok(run(status({ monotonic: 11, portals: { hometax: { portalModeCeiling: 'assisted' } } }, [K.emergency]), cur).ok);
     assert.ok(run(status({ monotonic: 11, killPlaybooks: ['hometax.invoice.issue'] }, [K.emergency]), cur).ok);
     assert.equal(run(status({ monotonic: 11 }, [K.emergency]), cur).ok, false, '바뀐 것이 없으면 엄격하지 않다');
-    const k = run(status({ monotonic: 11, killPlaybooks: ['a'] }), cur);
+    const k = run(status({ monotonic: 11, killPlaybooks: ['hometax.invoice.cancel'] }), cur);
     assert.ok(k.ok);
     assert.equal(run(status({ monotonic: 12, killPlaybooks: [] }, [K.emergency]), k.accepted).ok, false, 'kill 해제는 긴급 키로 불가');
   });
