@@ -32,7 +32,7 @@
 | `/registry/status.json` | `public, max-age=60` | |
 | `/registry/revoked_keys.json` | `public, max-age=60` | |
 | `/policy/current.json` | `public, max-age=60` | 최신 정책. `{ver}.json`과 바이트가 같다 |
-| `/policy/{ver}.json` | `public, max-age=31536000, immutable` | `ver` = `YYYY.MM[.n]` |
+| `/policy/{ver}.json` | `public, max-age=60` | `ver` = `YYYY.MM[.n]`. 신선도 재발행(같은 내용, 새 `issuedAt`·서명)으로 바뀌므로 불변 캐시가 아니다 |
 | `/packages/{id}@{x.y.z}.sxp` | `public, max-age=31536000, immutable` | `application/octet-stream` |
 | `/releases/{channel}/latest.json` | `public, max-age=60` | 서명된 릴리스 매니페스트(클라이언트 main이 검증) |
 | `/releases/{channel}/latest.yml` | `public, max-age=60` | electron-updater용. 검증된 `latest.json`에서만 만든다 |
@@ -42,7 +42,7 @@
 
 ## 게시 PUT(운영자)
 
-모두 `Authorization: Admin <REGISTRY_ADMIN_TOKEN>`(없거나 틀리면 `401 registry.unauthorized`). 토큰은 호스팅 쓰기 권한일 뿐이고, 서명 검증을 통과하지 못한 산출물은 토큰이 있어도 올라가지 않는다(D09 §8.2 역할 분리).
+모두 `Authorization: Admin <REGISTRY_ADMIN_TOKEN>`(없거나 틀리면 `401 registry.unauthorized`). 게시는 인스턴스 안에서 하나씩 처리한다(읽기 → 검증 → 쓰기 사이에 다른 게시가 끼지 않게). 파일 쓰기는 쓰기마다 다른 임시 파일 → 원자적 rename. 토큰은 호스팅 쓰기 권한일 뿐이고, 서명 검증을 통과하지 못한 산출물은 토큰이 있어도 올라가지 않는다(D09 §8.2 역할 분리).
 
 | 경로 | 본문 | 성공 | 검증 |
 |---|---|---|---|
@@ -51,7 +51,7 @@
 | `PUT /admin/v1/policy` | 서명된 정책 | `200 {"monotonic","emergency"}` | `{ver}.json`이 이미 있으면 같은 `monotonic`(신선도 재발행)만 |
 | `PUT /admin/v1/status` | status | `200 {"monotonic","emergency"}` | 긴급 키 서명본은 아래 "엄격하게 보수적"만 |
 | `PUT /admin/v1/revoked-keys` | 폐기 목록 | `200 {"monotonic"}` | 이전 목록의 키가 빠지면 `registry.version_jump_rejected`(폐기는 되돌릴 수 없다) |
-| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함(다운그레이드·같은 버전 `registry.version_jump_rejected`) |
+| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함(다운그레이드·같은 버전 `registry.version_jump_rejected`). `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
 
 ## 형식
 
@@ -97,7 +97,7 @@
   "signatures": [ 루트 2개 ], "timestamp": { … } }
 ```
 
-`revoked` ≤ 64. 루트 서명은 **이전** 폐기 목록으로 걸러 센다(루트 키도 폐기될 수 있다). 클라이언트는 24시간 안의 목록이 없으면 새 패키지·정책 로드를 보류한다(`registry.revocation_stale`).
+`revoked` ≤ 64. 루트 서명과 타임스탬프 서명은 **이전** 폐기 목록으로 걸러 센다(루트·타임스탬프 키도 폐기될 수 있다). 타임스탬프 키를 폐기하는 목록은 그 키로 마지막으로 찍을 수 있고, 그 뒤에는 정책·status·폐기 목록 모두 그 키로 신선해질 수 없다(`registry.key_revoked`). 타임스탬프 키는 하나뿐이라 새 keyEpoch(앱 업데이트)까지 클라이언트는 stale로 보수적으로 멈춘다. 클라이언트는 24시간 안의 목록이 없으면 새 패키지·정책 로드를 보류한다(`registry.revocation_stale`).
 
 ### 릴리스 매니페스트 → latest.yml
 

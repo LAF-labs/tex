@@ -1,10 +1,13 @@
 // M4-7 레지스트리(D09 §8, ADR-013·023·028, D11 "레지스트리 테스트"). 서명 키는 시험 실행 중에만 메모리에서 만든다(저장소·CI에 개인 키 없음).
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, randomBytes, randomUUID, sign, type KeyObject } from 'node:crypto';
+import { mkdtemp, readdir, rm } from 'node:fs/promises';
 import type { Server } from 'node:http';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { Logger, createServer, ed25519RawPublic, jcs, listen, looksSensitive } from '../services/shared/src/index.ts';
-import { MemoryStore, contentDigest, inRollout, parseTrustRoot, registryRouter, rolloutBucket, without, type Role, type Sig, type TrustRoot } from '../services/registry/src/index.ts';
+import { DirStore, MemoryStore, contentDigest, inRollout, parseTrustRoot, registryRouter, rolloutBucket, without, type Role, type Sig, type Store, type TrustRoot } from '../services/registry/src/index.ts';
 import { Clock, D, H, client } from './services-kit.ts';
 
 type Ring = Record<Role, Array<{ id: string; priv: KeyObject }>>;
@@ -41,10 +44,10 @@ interface Env {
   put(path: string, body: unknown): ReturnType<Env['req']>;
 }
 
-async function start(): Promise<Env> {
+async function start(o: { store?: Store } = {}): Promise<Env> {
   const clock = new Clock();
   const { ring, trust } = makeRing();
-  const store = new MemoryStore();
+  const store = (o.store ?? new MemoryStore()) as MemoryStore;
   const logs: string[] = [];
   const server = createServer(registryRouter({ store, trust, adminToken: 'admin-test-token', now: clock.now }), { logger: new Logger('registry', (l) => logs.push(l), clock.now) });
   const req = client(await listen(server));
@@ -178,6 +181,8 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/policy', p1)).status, 200);
     assert.equal((await e.req('GET', '/policy/current.json')).text, (await e.req('GET', '/policy/2026.11.json')).text);
     assert.equal((await e.req('GET', '/policy/current.json')).headers.get('cache-control'), 'public, max-age=60');
+    // {ver}.json도 신선도 재발행으로 바뀌므로 불변 캐시가 아니다
+    assert.equal((await e.req('GET', '/policy/2026.11.json')).headers.get('cache-control'), 'public, max-age=60');
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(42), 'policy', [0, 1], { noTimestamp: true }))).json.error, 'registry.signature_insufficient');
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(42), 'policy', [0, 1], { ttl: 73 * H }))).json.error, 'request.param_rejected');
     assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(41, { portalMode: { hometax: 'auto' } }), 'policy', [0, 1]))).json.error, 'registry.version_jump_rejected');
@@ -210,6 +215,20 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     // 2-of-3은 상향도 할 수 있다
     assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(4, { hometax: 'auto' }), 'policy', [1, 2]))).status, 200);
     assert.equal((await e.put('/admin/v1/status', fresh(e, { ...statusBody(5, { hometax: 'fast' }) }, 'policy', [1, 2]))).json.error, 'request.param_rejected');
+    // 프로토타입 이름은 모드가 아니다
+    for (const m of ['constructor', 'toString', '__proto__', 'hasOwnProperty']) assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(5, { hometax: m }), 'policy', [1, 2]))).json.error, 'request.param_rejected', m);
+  });
+
+  it('타임스탬프 키 폐기: 그 키로 마지막 목록을 찍을 수 있고, 그 뒤 정책·status·폐기 목록은 그 키로 신선해질 수 없다', async () => {
+    assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(1), 'policy', [0, 1]))).status, 200);
+    assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['timestamp-1']))).status, 200);
+    assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(2, {}, '2026.11.1'), 'policy', [0, 1]))).json.error, 'registry.key_revoked');
+    // 같은 내용의 신선도 재발행도 막힌다(옛 내용 서명 + 새 타임스탬프로 영원히 신선하게 만들 수 없다)
+    e.clock.advance(H);
+    assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(1), 'policy', [0, 1]))).json.error, 'registry.key_revoked');
+    assert.equal((await e.put('/admin/v1/status', fresh(e, statusBody(1, { hometax: 'assisted' }), 'policy', [0, 1]))).json.error, 'registry.key_revoked');
+    assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 1, ['timestamp-1']))).json.error, 'registry.key_revoked');
+    assert.equal((await e.put('/admin/v1/revoked-keys', revoked(e, 2, ['timestamp-1', 'package-3']))).json.error, 'registry.key_revoked');
   });
 });
 
@@ -238,6 +257,42 @@ describe('M4-7 레지스트리: 앱 업데이트 경로(latest.json 서명 → l
     assert.equal((await e.put('/admin/v1/releases/stable', release(e, '1.3.0', { files: [{ url: 'x.exe\nevil: 1', sha512: sha512(), size: 1 }] }))).json.error, 'request.param_rejected');
     assert.equal((await e.put('/admin/v1/releases/stable', { ...r1, version: '1.3.0' })).json.error, 'registry.signature_insufficient');
     assert.equal((await e.put('/admin/v1/releases/stable', release(e, '1.3.0'))).status, 200);
+  });
+});
+
+describe('M4-7 레지스트리: 게시 원자성·재시도', () => {
+  it('릴리스: yml 다음 json 순서라 중간 실패 뒤 같은 버전을 다시 올릴 수 있다', async () => {
+    const inner = new MemoryStore();
+    let failJson = 1;
+    const flaky: Store = { get: (k) => inner.get(k), put: async (k, b) => (k.endsWith('latest.json') && failJson-- > 0 ? Promise.reject(new Error('disk')) : inner.put(k, b)) };
+    const e = await start({ store: flaky });
+    const now = e.clock.now();
+    const doc = { channel: 'stable', version: '2.0.0', releaseDate: iso(now), expiresAt: iso(now + D), rolloutPercent: 1, files: [{ url: 'tex-Setup-2.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 9 }] };
+    const r = { ...doc, signature: sigOf(doc, e.ring.release[0]!) };
+    assert.equal((await e.put('/admin/v1/releases/stable', r)).status, 500);
+    assert.equal((await e.req('GET', '/releases/stable/latest.json')).status, 404);
+    assert.equal((await e.put('/admin/v1/releases/stable', r)).status, 200);
+    assert.match((await e.req('GET', '/releases/stable/latest.yml')).text, /^version: 2\.0\.0\n/);
+    e.server.close();
+  });
+
+  it('동시 게시는 하나씩: 같은 monotonic 인덱스 둘 중 하나만, 같은 키 동시 쓰기도 섞이지 않는다', async () => {
+    const e = await start();
+    const rs = await Promise.all([e.put('/admin/v1/index/stable', index(e, { monotonic: 7 })), e.put('/admin/v1/index/stable', index(e, { monotonic: 7 }))]);
+    assert.deepEqual(rs.map((r) => r.status).sort(), [200, 422]);
+    e.server.close();
+    const dir = await mkdtemp(path.join(tmpdir(), 'sax-registry-'));
+    try {
+      const ds = new DirStore(dir);
+      const a = randomBytes(1 << 20);
+      const b = randomBytes(1 << 20);
+      await Promise.all([ds.put('packages/x@1.0.0.sxp', a), ds.put('packages/x@1.0.0.sxp', b)]);
+      const got = (await ds.get('packages/x@1.0.0.sxp'))!;
+      assert.ok(got.equals(a) || got.equals(b), '둘 중 하나가 온전히');
+      assert.deepEqual(await readdir(path.join(dir, 'packages')), ['x@1.0.0.sxp'], '임시 파일이 남지 않는다');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

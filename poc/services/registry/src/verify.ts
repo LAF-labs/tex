@@ -150,7 +150,9 @@ export function verifyRevoked(doc: RevokedKeys, trust: TrustRoot, stored: Revoke
   // 폐기는 되돌릴 수 없다: 이전 목록의 키가 빠지면 거부
   const next = new Set(doc.revoked.map((r) => r.keyId));
   for (const k of prev) if (!next.has(k)) fail('registry.version_jump_rejected');
-  verifyTimestamp(doc, content, trust, next);
+  // 폐기 목록의 타임스탬프도 이전 목록으로 거른 키로 본다: 타임스탬프 키를 폐기하는 목록은 그 키로 마지막으로 찍을 수 있고,
+  // 그 뒤 정책·status·폐기 목록은 폐기된 타임스탬프 키로 신선해질 수 없다(새 keyEpoch 앱 업데이트 전까지 stale = 보수적으로 멈춤).
+  verifyTimestamp(doc, content, trust, prev);
   checkWindow(doc.issuedAt, doc.expiresAt, LIMITS.revokedMaxValidityMs, now, 'registry.revocation_stale');
   return next;
 }
@@ -274,7 +276,8 @@ export interface RegistryStatus {
  */
 export function verifyStatus(doc: RegistryStatus, trust: TrustRoot, revoked: ReadonlySet<string>, stored: RegistryStatus | null, now: number): { emergency: boolean } {
   if (!doc || typeof doc !== 'object' || !doc.portalModeCeiling || typeof doc.portalModeCeiling !== 'object' || !Array.isArray(doc.killPlaybooks)) fail('request.param_rejected');
-  for (const m of Object.values(doc.portalModeCeiling)) if (!(m in PORTAL_MODE_ORDER)) fail('request.param_rejected');
+  // 자기 속성만(constructor·toString 같은 프로토타입 이름은 모드가 아니다)
+  for (const m of Object.values(doc.portalModeCeiling)) if (typeof m !== 'string' || !Object.hasOwn(PORTAL_MODE_ORDER, m)) fail('request.param_rejected');
   if (doc.killPlaybooks.some((k) => typeof k !== 'string' || !/^[a-z0-9_.-]{1,64}$/.test(k))) fail('request.param_rejected');
   const content = without(doc as unknown as Record<string, unknown>, FRESHNESS_FIELDS);
   const refresh = monotonicOrRefresh(doc, content, stored as never, trust);
