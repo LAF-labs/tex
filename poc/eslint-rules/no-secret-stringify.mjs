@@ -21,16 +21,24 @@ export function isSecretName(name) {
   return w.some((x) => SECRET_WORDS.has(x)) && VALUE_WORDS.has(w[w.length - 1]);
 }
 
+const WRAPPERS = new Set(['TSAsExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'ChainExpression']);
+
+/** 감싼 식을 벗긴다: `as`·`!`·`<T>`·`satisfies`·옵셔널 체인(held?.pin). 이름·객체·배열 판정 모두 벗긴 뒤의 노드로 한다. */
+function unwrap(node) {
+  while (node && WRAPPERS.has(node.type)) node = node.expression;
+  return node;
+}
+
 function nameOf(node) {
+  node = unwrap(node);
   if (!node) return null;
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier') return node.property.name;
-  // 감싼 식은 벗긴다: `as`·`!`·`<T>`·`satisfies`·옵셔널 체인(held?.pin)
-  if (['TSAsExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'ChainExpression'].includes(node.type)) return nameOf(node.expression);
   return null;
 }
 
 function secretIn(node) {
+  node = unwrap(node);
   if (!node) return null;
   const n = nameOf(node);
   if (n && isSecretName(n)) return n;
