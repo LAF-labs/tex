@@ -1,12 +1,16 @@
-// PoC-8 e2e: 합성 서류 PDF → docparse 샌드박스(pdf.js, 텍스트 층이 없으면 OCR) → 메타 규칙(S4) → 기대값 비교, S13b 측정.
-// 실행: electron apps/desktop/dist/docparse-e2e.js → reports/raw/poc-8-docparse.json. 앱 폴더·키체인을 쓰지 않는다.
+// docparse e2e(Electron): 합성 서류 PDF → 샌드박스(pdf.js, 텍스트 층이 없으면 OCR) → 메타 규칙(S4) → 기대값 비교, S13b 측정(PoC-8).
+// M1-8 자기 점검(창 안 송신 0·eval 0), M6-4 합성 영수증 사진 → 샌드박스 OCR → 규칙 정확도 표, M6-5 표 파일, M6-12 시드 코퍼스(거부·무시·송신 0).
+// 실행: pnpm build && electron apps/desktop/dist/docparse-e2e.js. 결과 JSON은 SAX_E2E_OUT(없으면 임시 폴더)에 쓴다(측정 산출물은 커밋하지 않는다).
+// SAX_DOCPARSE_E2E=receipts|sheets|seeds|all(기본 all, PoC-8 서류 부분 포함). 앱 폴더·키체인을 쓰지 않는다.
 import dgram from 'node:dgram';
 import fs from 'node:fs/promises';
 import net from 'node:net';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';
 import { decideExpiry, extractDocMeta, validateDocMeta, type DocMetaExtract } from '@sax/engine/docmeta';
-import { createDocparseWindow, DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun, type PdfOptions } from './docparse.ts';
+import { CANARY, receiptHtml, seedCorpus, syntheticReceipts, deliveryXlsx, healthNoticeXlsx, marketCsv, pensionNoticeCsv, type SyntheticReceipt } from '@sax/docparse/fixtures';
+import type { ReceiptResult } from '@sax/docparse';
+import { createDocparseWindow, DOCPARSE_SCHEME, DocparseError, ocrImageInSandbox, parseInSandbox, parsePdfInSandbox, readSheetInSandbox, type OcrModel, type PdfExtractRun, type PdfOptions } from './docparse.ts';
 import { addDays, breakToUnicode, encryptedTestPdf, multiPageHtml, scannedTestPdf, syntheticCerts, type SyntheticCert } from './synthetic-certs.ts';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -151,7 +155,7 @@ function stats(xs: number[]): { n: number; median: number; p90: number; max: num
   return { n: s.length, median: q(0.5), p90: q(0.9), max: s[s.length - 1] ?? 0 };
 }
 
-async function main(): Promise<void> {
+async function certificates(): Promise<Record<string, unknown>> {
   // 세션 준비(죽은 프록시)가 한 번 실패해도 다음 작업은 다시 준비해 성공한다(스킴 처리기를 두 번 걸지 않는다). 첫 docparse 작업보다 먼저 한다.
   const proto = Object.getPrototypeOf(session.fromPartition('sax-docparse')) as { setProxy: (c: unknown) => Promise<void> };
   const realSetProxy = proto.setProxy;
@@ -249,8 +253,176 @@ async function main(): Promise<void> {
       return [f, { ms: stats(xs.map((s) => s.ms)), peakMemoryMb: stats(xs.map((s) => Math.round(s.peakMemoryKb / 1024))), ocrConfidence: f === 'text' ? null : stats(xs.map((s) => s.ocrConfidence ?? 0)), coreOk: `${xs.filter((s) => s.coreOk).length}/${xs.length}` }];
     }),
   );
-  const out = path.resolve(import.meta.dirname, '../../../reports/raw/poc-8-docparse.json');
-  await fs.writeFile(out, JSON.stringify({ platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, today: TODAY, s13b, fivePages: { ms: multi.ms, timing: multi.timing, peakMemoryKb: multi.peakMemoryKb }, checks: results, samples }, null, 2));
+  return { s13b, fivePages: { ms: multi.ms, timing: multi.timing, peakMemoryKb: multi.peakMemoryKb }, samples };
+}
+
+/** M1-8 자기 점검: docparse 창 안에서 eval·Function·문자열 setTimeout이 CSP로 막힌다(eval 0) */
+async function selfCheck(): Promise<Record<string, unknown>> {
+  const win = await createDocparseWindow();
+  try {
+    await win.loadURL(`${DOCPARSE_SCHEME}://app/index.html`);
+    const r = (await win.webContents.executeJavaScript(`(() => {
+      const t = (f) => { try { f(); return 'ran'; } catch (e) { return e && e.name === 'EvalError' ? 'blocked' : 'error ' + (e && e.name); } };
+      return { eval: t(() => (0, eval)('1+1')), fn: t(() => new Function('return 1')()), wasm: typeof WebAssembly === 'object', node: typeof require === 'undefined' && typeof process === 'undefined' };
+    })()`)) as Record<string, unknown>;
+    check('자기 점검: docparse 창에서 eval·new Function이 막힌다(CSP, eval 0), Node 전역 없음', r.eval === 'blocked' && r.fn === 'blocked' && r.node === true && r.wasm === true, r);
+    return r;
+  } finally {
+    win.destroy();
+  }
+}
+
+/** 영수증 그림(JPEG). 기울기·바랜 글씨를 섞는다 */
+async function receiptJpeg(r: SyntheticReceipt, k: number): Promise<Uint8Array> {
+  const html = receiptHtml(r, { tilt: [0, 0.8, -0.6, 1.5][k % 4], faded: k % 3 === 2 });
+  const w = new BrowserWindow({ show: false, width: 640, height: 1100, webPreferences: { offscreen: true, javascript: false, zoomFactor: 1.5 } });
+  try {
+    await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+    await new Promise((res) => setTimeout(res, 200));
+    return new Uint8Array((await w.webContents.capturePage()).toJPEG(82));
+  } finally {
+    w.destroy();
+  }
+}
+
+const RECEIPT_FIELDS = ['amount', 'issuedOn', 'merchant', 'bizNo'] as const;
+
+function receiptScore(r: ReceiptResult, e: SyntheticReceipt['expected']): Record<(typeof RECEIPT_FIELDS)[number], boolean> {
+  return { amount: r.amount.value === e.amount, issuedOn: r.issuedOn.value === e.issuedOn, merchant: r.merchant.value === e.merchant, bizNo: r.merchantBizNo.value === e.bizNo };
+}
+
+/** M6-4 정확도 표: 합성 24장 × OCR 모델 2종. 칸별 일치율, 잘못 읽은 값의 신뢰도(높은데 틀리면 위험) */
+async function receipts(): Promise<Record<string, unknown>> {
+  const R = syntheticReceipts();
+  const images = await Promise.all(R.map((r, k) => receiptJpeg(r, k)));
+  const table: Record<string, unknown> = {};
+  for (const model of ['tessdata', 'best_int'] as OcrModel[]) {
+    const rows: Array<Record<string, unknown>> = [];
+    for (let k = 0; k < R.length; k++) {
+      const r = R[k]!;
+      const t0 = Date.now();
+      try {
+        const out = await parseInSandbox(images[k]!, 'receipt', { today: '2026-11-05', model });
+        const res = out.result as ReceiptResult;
+        const sc = receiptScore(res, r.expected);
+        const wrongConf = RECEIPT_FIELDS.filter((f) => !sc[f]).map((f) => (f === 'bizNo' ? res.merchantBizNo : res[f]).confidence);
+        rows.push({ id: r.id, layout: r.layout, ms: Date.now() - t0, ocr: out.source.ocrConfidence, ...sc, confidence: out.confidence, needsManual: out.needsManual, maxWrongConf: wrongConf.length ? Math.max(...wrongConf) : null, got: { amount: res.amount.value, issuedOn: res.issuedOn.value, merchant: res.merchant.value, bizNo: res.merchantBizNo.value }, ...(process.env.SAX_E2E_TEXT ? { text: out.text } : {}) });
+      } catch (e) {
+        rows.push({ id: r.id, layout: r.layout, error: e instanceof DocparseError ? e.code : String(e) });
+      }
+    }
+    const rate = (f: string) => rows.filter((x) => x[f] === true).length;
+    const all = rows.filter((x) => RECEIPT_FIELDS.every((f) => x[f] === true)).length;
+    const ms = rows.map((x) => (x.ms as number) ?? 0);
+    const wrongHigh = rows.filter((x) => typeof x.maxWrongConf === 'number' && (x.maxWrongConf as number) >= 0.8).length;
+    table[model] = { n: rows.length, amount: rate('amount'), issuedOn: rate('issuedOn'), merchant: rate('merchant'), bizNo: rate('bizNo'), allFour: all, wrongButConfident: wrongHigh, ms: stats(ms), rows };
+    console.log(`receipts[${model}] n=${rows.length} 금액 ${rate('amount')} 날짜 ${rate('issuedOn')} 상호 ${rate('merchant')} 사업자번호 ${rate('bizNo')} 넷 다 ${all} 틀렸는데 신뢰도≥0.8 ${wrongHigh} ms중앙 ${stats(ms).median}`);
+  }
+  // 사진 기본 모델(best_int)로 판정한다. tessdata 표는 비교용
+  const best = table.best_int as { amount: number; issuedOn: number; n: number; wrongButConfident: number };
+  check(`M6-4 합성 영수증 ${R.length}장(사진 OCR): 금액·날짜 각 80% 이상`, best.amount >= 0.8 * best.n && best.issuedOn >= 0.8 * best.n, { amount: best.amount, issuedOn: best.issuedOn });
+  check('M6-4 틀린 칸의 신뢰도가 0.8 이상인 영수증은 2장 이하(높은 신뢰도로 틀리지 않는다)', best.wrongButConfident <= 2, best.wrongButConfident);
+  // 폰 사진 경로(M7-4): 같은 parse(receipt) 입구에 EXIF 없는 JPEG을 넣는다. PNG도 같은 길
+  const png = await (async () => {
+    const w = new BrowserWindow({ show: false, width: 640, height: 1100, webPreferences: { offscreen: true, javascript: false, zoomFactor: 1.5 } });
+    try {
+      await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(receiptHtml(R[0]!)));
+      await new Promise((res) => setTimeout(res, 200));
+      return new Uint8Array((await w.webContents.capturePage()).toPNG());
+    } finally {
+      w.destroy();
+    }
+  })();
+  const p = await parseInSandbox(png, 'receipt', { today: '2026-11-05' });
+  check('PNG 영수증도 같은 길(형식은 머리로 고른다)', p.source.format === 'png' && (p.result as ReceiptResult).amount.value === R[0]!.expected.amount, p.result);
+  const raw = await ocrImageInSandbox(images[0]!, { mode: 'photo' });
+  check('그림 OCR 출력: 줄마다 신뢰도, text는 줄을 이은 것, EXIF 없음(합성 JPEG)', raw.lines.length > 5 && raw.text === raw.lines.map((l) => l.text).join('\n') && raw.exif === false, { lines: raw.lines.length, exif: raw.exif });
+  return table;
+}
+
+/** M6-5 표 파일: 샌드박스에서 읽은 결과가 Node에서 읽은 것과 같고, 규칙까지 통과한다 */
+async function sheets(): Promise<Record<string, unknown>> {
+  const out: Record<string, unknown> = {};
+  for (const fx of [deliveryXlsx(), marketCsv()]) {
+    const r = await parseInSandbox(await fx.bytes, 'settlement', { expectedChannel: fx.expected.channel });
+    const res = r.result as { totals: { gross: number | null; payout: number | null }; rows: unknown[] };
+    out[fx.name] = { warnings: r.warnings, totals: res.totals };
+    check(`M6-5 ${fx.name}(샌드박스): 줄 ${fx.expected.rows}·매출·정산 합계`, res.rows.length === fx.expected.rows && res.totals.gross === fx.expected.gross && res.totals.payout === fx.expected.payout, res.totals);
+  }
+  for (const fx of [healthNoticeXlsx(), pensionNoticeCsv()]) {
+    const r = await parseInSandbox(await fx.bytes, 'insurance_notice');
+    const res = r.result as { rows: Array<{ name: string; employee: number | null }>; month: { value: string | null } };
+    out[fx.name] = { warnings: r.warnings, rows: res.rows.length };
+    check(`M6-5 ${fx.name}(샌드박스): 직원·보험 ${fx.expected.rows.length}줄, 고지 년월`, res.rows.length === fx.expected.rows.length && res.month.value === fx.expected.month && !JSON.stringify(r).includes('123456'), { rows: res.rows.length, month: res.month });
+  }
+  const t = await readSheetInSandbox(await deliveryXlsx().bytes);
+  check('표 작업 시간 ≤ 3초, 메모리 ≤ 900MB(창 생성부터)', t.ms <= 3000 && t.peakMemoryKb <= 900_000, { ms: t.ms, peakMemoryMb: Math.round(t.peakMemoryKb / 1024) });
+  return out;
+}
+
+/** M6-12 시드 코퍼스를 실제 샌드박스에: 거부 코드, 무시 경고, 표지 문자열 없음, 시드가 가리키는 주소로 송신 0 */
+async function seeds(): Promise<Record<string, unknown>> {
+  let hits = 0;
+  const tcp = net.createServer((sock) => {
+    hits++;
+    sock.destroy();
+  });
+  await new Promise<void>((r) => tcp.listen(0, '127.0.0.1', r));
+  const port = (tcp.address() as net.AddressInfo).port;
+  const retarget = (b: Uint8Array) => {
+    const s = Buffer.from(b).toString('latin1');
+    return s.includes('127.0.0.1:9/') ? new Uint8Array(Buffer.from(s.replaceAll('127.0.0.1:9/', `127.0.0.1:${port}/`), 'latin1')) : b;
+  };
+  const rows: Array<Record<string, unknown>> = [];
+  try {
+    for (const seed of seedCorpus()) {
+      const bytes = retarget(await seed.bytes());
+      const kind = seed.target === 'sheet' ? 'settlement' : seed.target === 'pdf' ? 'certificate' : 'receipt';
+      let got: string;
+      let leaked = false;
+      let warnings: string[] = [];
+      try {
+        if (seed.target === 'sheet' && 'ignore' in seed.expect) {
+          const sh = await readSheetInSandbox(bytes);
+          leaked = seed.name !== 'csv-formula-injection.csv' && JSON.stringify(sh.sheets).includes(CANARY);
+          warnings = Object.entries(sh.flags).filter(([, v]) => v).map(([k]) => k);
+          got = 'ok';
+        } else {
+          const r = await parseInSandbox(bytes, kind, { today: '2026-11-05' });
+          leaked = JSON.stringify(r).includes(CANARY);
+          warnings = r.warnings;
+          got = 'ok';
+        }
+      } catch (e) {
+        got = e instanceof DocparseError ? e.code : `throw:${(e as Error).message}`;
+      }
+      const ok = 'reject' in seed.expect ? seed.expect.reject.includes(got) : (got === 'ok' || seed.target === 'pdf') && !leaked;
+      rows.push({ name: seed.name, got, ok, leaked, warnings });
+    }
+    await new Promise((r) => setTimeout(r, 500));
+  } finally {
+    tcp.close();
+  }
+  const bad = rows.filter((r) => !r.ok);
+  check(`M6-12 시드 ${rows.length}개: 거부할 것은 코드로, 무시할 것은 표지 없이`, bad.length === 0, bad);
+  check('M6-12 시드가 가리키는 주소(PDF 자바스크립트·URI·외부 연결·XXE)로 송신 0', hits === 0, hits);
+  check('시드 뒤 docparse 창이 남지 않는다', BrowserWindow.getAllWindows().length === 0, BrowserWindow.getAllWindows().length);
+  return { rows, hits };
+}
+
+async function main(): Promise<void> {
+  const part = process.env.SAX_DOCPARSE_E2E ?? 'all';
+  const report: Record<string, unknown> = { platform: process.platform, arch: process.arch, electron: process.versions.electron, chrome: process.versions.chrome, today: TODAY };
+  // 서류 부분이 맨 앞이다: 첫 docparse 작업 전에 세션 준비 실패를 흉내 낸다
+  if (part === 'all') Object.assign(report, await certificates());
+  report.self = await selfCheck();
+  if (part === 'all' || part === 'receipts') report.receipts = await receipts();
+  if (part === 'all' || part === 'sheets') report.sheets = await sheets();
+  if (part === 'all' || part === 'seeds') report.seeds = await seeds();
+  const dir = process.env.SAX_E2E_OUT ?? app.getPath('temp');
+  const out = path.join(dir, 'docparse-e2e.json');
+  await fs.writeFile(out, JSON.stringify({ ...report, checks: results }, null, 2));
+  console.log(`report: ${out}`);
 }
 
 app.whenReady().then(async () => {

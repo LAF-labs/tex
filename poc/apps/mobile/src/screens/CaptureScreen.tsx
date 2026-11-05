@@ -167,7 +167,7 @@ export function CaptureScreen({ onDone }: { onDone: () => void }) {
     return (
       <Screen>
         <View style={st.pad} testID="capture-saved">
-          <T v="title">{s.pc === 'online' ? 'PC로 보내는 중이에요' : '폰에 두었다가 PC가 켜지면 보내요'}</T>
+          <T v="title">{s.pc === 'online' ? 'PC로 보내는 중이에요' : '폰에 두고 PC로 보내요. PC가 켜지면 받아요'}</T>
           <T c="ink2">사진은 이 폰의 보호된 공간에만 있고, 사진 앱에는 저장하지 않았어요. PC가 받으면 폰에서 지워요.</T>
           <Button label="한 장 더 찍기" onPress={() => setPhase('camera')} />
           <Button kind="secondary" label="처음으로" onPress={close} />

@@ -1,15 +1,12 @@
 // S6b: Playwright가 금고 MessagePort 중계(기본 거부 허용 목록) 위에서 동작하는가, 최소 CDP 메서드 집합.
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import type { Browser, Page } from 'playwright-core';
 import { connectRunBrowser, RunBrowserSlot, warmForSecretWindow } from '@sax/engine';
 import { scanDir, testSecret } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
+import { writeMeasure } from './measure-out.ts';
 import { startHarness, type Harness } from './harness.ts';
-
-const REPORT_DIR = path.resolve(import.meta.dirname, '../reports/raw');
 
 async function outcome(fn: () => Promise<unknown>): Promise<string> {
   try {
@@ -40,8 +37,7 @@ describe('S6b Playwright over vault relay', () => {
   after(async () => {
     const stats = [...h.vault.relay!.methodStats.entries()].map(([k, v]) => ({ key: k, ...v })).sort((a, b) => a.key.localeCompare(b.key));
     report.methods = stats;
-    await fs.mkdir(REPORT_DIR, { recursive: true });
-    await fs.writeFile(path.join(REPORT_DIR, 's6b-playwright.json'), JSON.stringify(report, null, 2));
+    await writeMeasure('s6b-playwright.json', report);
     await browser.close().catch(() => {});
     await h.close();
     await fx.close();
