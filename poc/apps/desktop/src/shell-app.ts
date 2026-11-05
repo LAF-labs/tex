@@ -283,7 +283,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       today,
       reminderDay: MOCK_SETTINGS.reminderDay,
       issued: issuedInvoices(),
-      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name })),
+      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       bundle: mockBundle(today),
       cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
@@ -530,6 +530,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return runs.prepare(String(p.id));
     },
     'run.stop': (p) => runs.stop(String(p.id)),
+    'run.resume': (p) => {
+      needGesture(3_000);
+      return runs.resume(String(p.id));
+    },
+    'run.manualDone': (p) => {
+      needGesture(3_000);
+      return runs.manualDone(String(p.id));
+    },
     'docs.list': () => listDocs(),
     // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).

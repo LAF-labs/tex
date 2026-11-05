@@ -11,6 +11,7 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
+const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
@@ -170,6 +171,21 @@ const scenes = {
     ev(win, { type: 'run', run: mkRun('attention', { done: 2, attentionAt: 3, note: '품목 칸 값을 확실히 읽지 못했어요', stoppedNote: '홈택스 화면 값을 확실히 읽지 못해 멈췄어요. 아무것도 발급하지 않았어요.' }) });
     await shot(win, '10-attention');
   },
+  // M4-2 3부: 핸드오프 띠·카드, 다시 게이트 경고, 확인 중(조회 n회째), InDoubt 카드와 직접 확인 안내(08 §11).
+  async incidents(win) {
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = 'A상사에 330만원 세금계산서'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    ev(win, { type: 'run', run: { ...mkRun('turn', { done: 2, attentionAt: 2, note: '직접 해 주세요' }), handoff: { phase: 'input', afterGate: false }, turn: { text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: 입력`, note: HANDOFF_HINT } } });
+    await shot(win, '30-handoff');
+    ev(win, { type: 'run', run: { ...mkRun('waiting', { done: 4, now: true, confirmed: true, note: '아래 [승인하고 발급]을 기다려요' }), regate: { reason: 'date_changed', note: REGATE_NOTE.date_changed } } });
+    await shot(win, '31-regate');
+    ev(win, { type: 'run', run: { ...mkRun('issuing', { done: 6, now: true, confirmed: true }), verifyAttempt: 3 } });
+    await shot(win, '32-checking');
+    ev(win, { type: 'run', run: { ...mkRun('attention', { done: 6, attentionAt: 6, confirmed: true, stoppedNote: NOTE['verify.unknown'] }), inDoubt: true } });
+    await sleep(100);
+    await js(win, `document.querySelector('[data-act=check-list]').click()`);
+    await shot(win, '33-in-doubt');
+  },
   async docs(win) {
     await js(win, `document.querySelector('#rail [data-view=docs]').click()`);
     await sleep(200);
@@ -239,7 +255,7 @@ const scenes = {
   },
 };
 
-const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'onboarding'];
+const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'onboarding'];
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;
