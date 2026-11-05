@@ -30,7 +30,10 @@ describe('측정 산출물 출력 위치', () => {
 
   it('jsonl은 프로세스에서 처음 쓸 때 비운다(누적 없음), JSON은 덮어쓴다', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sax-measure-'));
+    // SAX_MEASURE_COMMIT가 켜져 있으면 추적 경로가 이기므로(위치 규칙 1) 시험 동안 끈다.
     const prev = process.env.SAX_MEASURE_DIR;
+    const prevCommit = process.env.SAX_MEASURE_COMMIT;
+    delete process.env.SAX_MEASURE_COMMIT;
     process.env.SAX_MEASURE_DIR = dir;
     try {
       await fs.writeFile(path.join(dir, 'a.jsonl'), 'old\n');
@@ -43,6 +46,7 @@ describe('측정 산출물 출력 위치', () => {
     } finally {
       if (prev === undefined) delete process.env.SAX_MEASURE_DIR;
       else process.env.SAX_MEASURE_DIR = prev;
+      if (prevCommit !== undefined) process.env.SAX_MEASURE_COMMIT = prevCommit;
       await fs.rm(dir, { recursive: true, force: true });
     }
   });
