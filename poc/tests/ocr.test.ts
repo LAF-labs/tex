@@ -10,6 +10,7 @@ import { chromium, type Browser } from 'playwright-core';
 import { createWorker, type Worker } from 'tesseract.js';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 import { parseBizCert } from '@sax/engine';
+import { appendMeasure } from './measure-out.ts';
 
 const require = createRequire(import.meta.url);
 const kor = require('@tesseract.js-data/kor') as { langPath: string; gzip: boolean };
@@ -79,8 +80,7 @@ describe('사업자등록증 OCR', () => {
       const { data } = await worker.recognize(png);
       const ms = Date.now() - started;
       const r = parseBizCert(data.text);
-      await fs.mkdir(path.resolve(import.meta.dirname, '../reports/raw'), { recursive: true });
-      await fs.appendFile(path.resolve(import.meta.dirname, '../reports/raw/ocr-samples.jsonl'), JSON.stringify({ sample: sample.name, ms, confidence: data.confidence, fields: r.fields, missing: r.missing }) + '\n');
+      await appendMeasure('ocr-samples.jsonl', JSON.stringify({ sample: sample.name, ms, confidence: data.confidence, fields: r.fields, missing: r.missing }) + '\n');
       // OCR이 숫자를 잘못 읽으면 체크섬으로 감지하고 후보에 정답이 있어야 한다(사용자 확인 후 저장).
       if (r.fields.bizNo !== sample.bizNo) {
         assert.equal(r.bizNoChecksumOk, false, `wrong bizNo passed checksum:\n${data.text}`);
