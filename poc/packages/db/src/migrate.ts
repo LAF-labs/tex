@@ -112,6 +112,15 @@ function backup(db: Db, file: string, fromVersion: number, at: Date): string {
   return dest;
 }
 
+/** 실패 뒤 DB가 적용 전 판 그대로인지: 트랜잭션 밖이고, user_version이 같고, quick_check가 ok(아니면 이번 백업을 남긴다) */
+export function rolledBackCleanly(db: Db, version: number): boolean {
+  try {
+    return !db.inTransaction && db.pragma('user_version', { simple: true }) === version && db.pragma('quick_check', { simple: true }) === 'ok';
+  } catch {
+    return false;
+  }
+}
+
 /** 오래된 백업 정리. 마이그레이션이 성공한 뒤에만 부른다(실패한 시도가 복구 지점을 지우지 않게) */
 function pruneBackups(file: string, keep: number): void {
   const all = listBackups(file);
@@ -183,8 +192,9 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
       db.pragma(`user_version=${latest}`);
     })();
   } catch (e) {
-    // 트랜잭션이 되돌려져 DB가 백업과 같으므로 이번 사본은 지운다(재시도마다 사본이 쌓이지 않게). 프로세스가 도중에 죽으면 여기 오지 않고 사본이 남는다
-    if (backupPath) fs.rmSync(backupPath, { force: true });
+    // 되돌림이 끝나 DB가 이전 판 그대로임을 확인했을 때만 이번 사본을 지운다(재시도마다 사본이 쌓이지 않게).
+    // 확인하지 못하면(되돌림 실패·파일 손상) 사본을 남긴다: 그때가 이 백업이 필요한 경우다. 프로세스가 도중에 죽어도 사본이 남는다
+    if (backupPath && rolledBackCleanly(db, current)) fs.rmSync(backupPath, { force: true });
     throw new MigrationError('db.migration_failed', running, e);
   }
   if (opts.file && backupPath) pruneBackups(opts.file, opts.keepBackups ?? 2);

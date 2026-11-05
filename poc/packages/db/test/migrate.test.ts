@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { appliedMigrations, backupName, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, type Migration } from '@sax/db';
+import { appliedMigrations, backupName, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, rolledBackCleanly, type Migration } from '@sax/db';
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -87,6 +87,18 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     const at = () => new Date(Date.UTC(2026, 10, 5, 12));
     for (let i = 0; i < 2; i++) assert.throws(() => openDatabase(file, k, { migrations: broken, now: at }), (e: unknown) => e instanceof MigrationError && e.code === 'db.migration_failed');
     assert.deepEqual(listBackups(file), before);
+  });
+
+  it('실패 뒤 되돌림을 확인하지 못하면(트랜잭션이 남음·판이 다름) 이번 백업은 지우지 않는 조건', () => {
+    const db = openDatabase(tmp(), key());
+    const v = db.pragma('user_version', { simple: true }) as number;
+    assert.equal(rolledBackCleanly(db, v), true);
+    assert.equal(rolledBackCleanly(db, v - 1), false, '판이 다르면 남긴다');
+    db.prepare('BEGIN').run();
+    assert.equal(rolledBackCleanly(db, v), false, '트랜잭션이 끝나지 않았으면 남긴다');
+    db.prepare('ROLLBACK').run();
+    db.close();
+    assert.equal(rolledBackCleanly(db, v), false, '닫힌·상한 DB는 확인 실패 → 남긴다');
   });
 
   it('같은 이름의 백업이 이미 있으면 -2를 붙이고, 정리는 성공한 뒤에만 한다', () => {
