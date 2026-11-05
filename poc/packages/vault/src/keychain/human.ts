@@ -47,7 +47,11 @@ export interface HumanVaultOptions extends SessionLockOptions {
   log: EventLog;
 }
 
-export type ReadResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' };
+/**
+ * 꺼내기 결과. `vault_locked`는 금고가 닫혀 사람 확인(Hello·Windows 잠금 해제)이 필요할 때만이다.
+ * `kek_unavailable`은 금고는 열렸지만 슬롯 KEK를 못 얻은 것(기기 사본 없음·다른 기기·래핑 해제 실패)이다.
+ */
+export type ReadResult = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
 
 export class HumanSecretVault {
   private readonly b: KeychainBackend;
@@ -212,8 +216,9 @@ export class HumanSecretVault {
     if (info.suspect) return { ok: false, reason: 'credential_suspect' };
     const verdict = this.lock.check();
     if (!verdict.open) return { ok: false, reason: 'vault_locked' };
-    const kek = await this.slotKek(slot, info);
-    if (!kek) return { ok: false, reason: 'vault_locked' };
+    const got = await this.slotKek(slot, info);
+    if (!('kek' in got)) return { ok: false, reason: got.reason };
+    const kek = got.kek;
     const blob = await this.b.items.get(name);
     if (!blob) return { ok: false, reason: 'secret_missing' };
     try {
@@ -225,25 +230,30 @@ export class HumanSecretVault {
   }
 
   /** 열린 금고에서 슬롯 KEK. 엄격 모드면 Hello 확인 때 이미 들어와 있어야 한다(기기 사본이 없다). */
-  private async slotKek(slot: string, info: SlotIndex): Promise<Uint8Array | null> {
+  private async slotKek(slot: string, info: SlotIndex): Promise<{ kek: Uint8Array } | { reason: 'vault_locked' | 'kek_unavailable' }> {
     const cached = this.keks.get(slot);
-    if (cached) return cached;
-    if (this.lock.strict) return null;
+    if (cached) return { kek: cached };
+    // 엄격 모드는 기기 사본이 없다: Hello로 열어야 한다(닫힌 것과 같다).
+    if (this.lock.strict) return { reason: 'vault_locked' };
     const wrapped = await this.b.items.get(`kek/${slot}/device`);
-    if (!wrapped) return null;
-    try {
-      const kek = await this.b.wrapper.unwrap(wrapped, slot);
-      // 그사이 잠겼으면 들고 있지 않는다.
-      if (!this.lock.check().open) {
-        kek.fill(0);
-        return null;
-      }
-      this.keks.set(slot, kek);
-      return kek;
-    } catch {
-      this.log.event('vault.kek_unwrap_failed', { tier: info.tier });
-      return null;
+    if (!wrapped) {
+      this.log.event('vault.kek_unwrap_failed', { tier: info.tier, why: 'missing' });
+      return { reason: 'kek_unavailable' };
     }
+    let kek: Uint8Array;
+    try {
+      kek = await this.b.wrapper.unwrap(wrapped, slot);
+    } catch {
+      this.log.event('vault.kek_unwrap_failed', { tier: info.tier, why: 'unwrap' });
+      return { reason: 'kek_unavailable' };
+    }
+    // 그사이 잠겼으면 들고 있지 않는다.
+    if (!this.lock.check().open) {
+      kek.fill(0);
+      return { reason: 'vault_locked' };
+    }
+    this.keks.set(slot, kek);
+    return { kek };
   }
 
   /**

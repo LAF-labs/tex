@@ -94,6 +94,20 @@ describe('세션 잠금(SessionLock): Windows 세션 추종', () => {
     assert.deepEqual(l.reportIdle(0), { open: false, reason: 'idle', helloCanOpen: true });
   });
 
+  it('유휴 보고가 120초 넘게 끊겼다 다시 오면(900초 미만이어도) 프롬프트 없이 열지 않는다', () => {
+    const c = clock();
+    const l = new SessionLock({ now: c.now });
+    l.reportIdle(0);
+    c.tick(119_000);
+    assert.equal(l.reportIdle(0).open, true, '120초 안 공백은 이어진다');
+    c.tick(121_000);
+    assert.deepEqual(l.reportIdle(0), { open: false, reason: 'idle_unknown', helloCanOpen: true });
+    assert.equal(l.helloConfirmed().open, true, 'Hello로 다시 연다');
+    c.tick(200_000);
+    l.reportIdle(0);
+    assert.equal(l.sessionEvent('unlock-screen').open, true, 'Windows 잠금 해제로도 다시 연다');
+  });
+
   it('열린 지 28800초면 잠긴다(max_open)', () => {
     const c = clock();
     const l = new SessionLock({ now: c.now });
@@ -113,9 +127,14 @@ describe('세션 잠금(SessionLock): Windows 세션 추종', () => {
     l.setStrict(true);
     assert.deepEqual(l.check(), { open: false, reason: 'strict', helloCanOpen: true });
     assert.equal(l.helloConfirmed().open, true);
-    c.tick(299_000);
+    // main은 30초마다 유휴를 보고한다(120초 넘게 끊기면 따로 잠긴다).
+    for (let i = 0; i < 9; i++) {
+      c.tick(30_000);
+      l.reportIdle(0);
+    }
+    c.tick(29_000);
     l.reportIdle(0);
-    assert.equal(l.check().open, true);
+    assert.equal(l.check().open, true, '299초');
     c.tick(2_000);
     l.reportIdle(0);
     assert.equal(l.check().open, false);
@@ -177,7 +196,8 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     const c = clock();
     const other = new HumanSecretVault({ backend: { items: copy, wrapper: MemoryWrapper.otherDevice(), hello: new UnavailableHello() }, log: new Log(), now: c.now });
     other.lock.reportIdle(0);
-    assert.deepEqual(await other.readOne('portal_password', 'business', { field: 'pw' }), { ok: false, reason: 'vault_locked' });
+    // 금고는 열렸지만 이 기기의 래핑 키로 KEK를 못 연다(잠금과 구분).
+    assert.deepEqual(await other.readOne('portal_password', 'business', { field: 'pw' }), { ok: false, reason: 'kek_unavailable' });
   });
 
   it('잠기면 메모리의 슬롯 KEK를 지우고 꺼내지 않는다, Windows 잠금 해제 뒤 다시 꺼낸다', async () => {

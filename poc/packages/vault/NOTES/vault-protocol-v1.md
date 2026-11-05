@@ -45,7 +45,7 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - `session.event{kind}`: kind는 lock-screen·unlock-screen·suspend·resume·session-switch·remote-switch 중 하나다. WTS 세션 전환은 S10c에서 다룬다.
 - `session.idle{idleSec}`: `SESSION_IDLE_REPORT_MS`(30초)마다 `powerMonitor.getSystemIdleTime()` 값을 보낸다.
   - 마지막 보고가 `SESSION_IDLE_STALE_MS`(120초)보다 오래되면 금고는 잠근다(fail-closed).
-  - 보고 공백이 900초를 넘었으면 다음 보고가 0이어도 프롬프트 없이 열지 않는다.
+  - 보고가 120초 넘게 끊겼다가 다시 오면(공백이 900초 미만이어도) 프롬프트 없이 열지 않는다. 다시 열려면 Hello나 Windows 잠금·해제가 필요하다. 기동 직후 첫 보고는 여기에 해당하지 않는다.
 - `vault.unlock{reason:'idle'|'strict_issue', task, portal}` → `{ok, presence, reason?}`. 승인 바 Hello와 금고 Hello를 한 프롬프트로 합친다(ADR-026 결정 4). main은 `presence`를 승인 바 Hello 확인으로 쓴다.
 - `vault.setStrict{on}` → `{ok, reason?:'hello_unavailable'|'unlock_required'}`. 설정은 키체인 `settings/strict`에 남아 재시작 뒤에도 이어진다.
 - `vault.unlock`의 `presence:true`는 Hello 프롬프트로 사본을 실제로 연 때만 온다.
@@ -56,6 +56,8 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - `FillReason`에 `vault_locked`·`credential_suspect`를 더했다.
 - `typist.authFailed{runId, kind, scope}`: 포털이 명시적 인증 실패(auth_failed)를 1회 알리면 엔진이 보낸다. 금고는 그 슬롯을 suspect로 두고, 다시 등록하기 전에는 입력하지 않는다(ADR-026 결정 7). 차단·셀렉터 실패에는 보내지 않는다.
 - 금고가 열려 있고 trigger≠daemon이면, 타이피스트는 1회용 값 대신 저장된 보안카드 칸·포털 비밀번호를 쓴다.
+  - 금고가 닫혔으면 `vault_locked`(사람 확인 필요), suspect면 `credential_suspect`로 멈춘다.
+  - 금고는 열렸지만 저장본을 못 쓸 때(`kek_unavailable`: 기기 사본 없음·다른 기기·래핑 해제 실패, 또는 `corrupt`)는 1회용 값으로 넘어간다(`secret.needed`).
 
 ## 6. R-C1 커밋 본문 대조 — engine 트랙(커밋 가드)
 - `commitGuard.arm{runId, intentId, stepId, targetId, endpoint, method?, bodyFieldMap, expectedHash}` → `{armed, reason?}`.

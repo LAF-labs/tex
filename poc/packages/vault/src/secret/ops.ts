@@ -113,7 +113,7 @@ export interface SecretOpsOptions {
   stored?: (kind: string, scope: string, row?: number) => Promise<StoredRead>;
 }
 
-export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' };
+export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
 
 /** 실행당 종류별 1회 키(보안카드는 칸별). */
 export const slotKey = (runId: string, kind: string, row?: number): string => `${runId}|${kind}|${row ?? ''}`;
@@ -223,6 +223,7 @@ export class SecretOps {
       const r = await this.opts.stored(req.secret.kind, req.secret.scope, req.secret.row);
       if (r.ok) secret = r.bytes;
       else if (r.reason === 'vault_locked' || r.reason === 'credential_suspect') return { ok: false, reason: r.reason };
+      // corrupt·kek_unavailable·secret_missing: 저장본을 못 쓰니 사람에게 1회용으로 받는다(아래 secret.needed).
     }
     if (!secret) {
       // 비밀 창은 금고가 부른다(N-44): main만 창을 열고, 값은 결속된 secretInput 포트로 온다.

@@ -124,6 +124,12 @@ export class SessionLock {
       this.silent = false;
       this.helloUntil = 0;
       this.lastReason = 'idle';
+    } else if (this.idle && this.now() - this.idle.at > this.idleStaleMs) {
+      // 보고가 120초 넘게 끊겼다(main 멈춤 등). 그사이를 모르므로 다시 온 보고만으로는 프롬프트 없이 열지 않는다(fail-closed).
+      // 다시 열기는 Hello 또는 Windows 잠금·해제. 기동 직후 첫 보고(이전 보고 없음)는 여기에 해당하지 않는다.
+      this.silent = false;
+      this.helloUntil = 0;
+      this.lastReason = 'idle_unknown';
     }
     this.idle = { sec: idleSec, at: this.now() };
     return this.settle();
