@@ -4,6 +4,8 @@ import { netDenyInstalled } from './net-deny.ts';
 import type { MessagePortMain } from 'electron';
 // 정책·경로·Chrome 인자는 전부 상수다(이 파일은 아무 설정도 받지 않는다).
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort } from '@sax/platform';
+import { keychainBackend } from './keychain/backend.ts';
+import { HumanSecretVault } from './keychain/human.ts';
 import { OsKeyStore } from './keystore.ts';
 import type { PortKind } from './protocol.ts';
 import { Vault } from './service.ts';
@@ -16,7 +18,9 @@ interface ParentPort {
 const parentPort = (process as unknown as { parentPort: ParentPort }).parentPort;
 const paths = appPaths(defaultAppRoot());
 const log = new FileEventLog(paths.logs, 'vault');
-const vault = new Vault({ paths, log, keyStore: new OsKeyStore() });
+// 사람 비밀 저장소: Windows는 TPM→DPAPI 래핑(네이티브 헬퍼 S10c 전까지 저장 거부), macOS는 개발용 Keychain 래핑.
+const human = new HumanSecretVault({ backend: keychainBackend(), log });
+const vault = new Vault({ paths, log, keyStore: new OsKeyStore(), human });
 
 parentPort.on('message', (e) => {
   const data = e.data as { ports?: PortKind[]; bind?: unknown };
