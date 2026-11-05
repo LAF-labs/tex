@@ -3,24 +3,28 @@
   "bundle": "screen_state_v2",
   "bundleDigest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082",
   "corpus": "l0-corpus screenCorpus(20, 7) — 합성",
-  "generatedAt": "2026-11-05T08:07:02.325Z",
+  "generatedAt": "2026-11-05T09:29:07.434Z",
   "n": 100,
+  "templates": {
+    "sampled": 18,
+    "total": 18
+  },
   "stoppedByCostCap": false,
-  "accuracy": 1,
+  "accuracy": 0.89,
   "recall": {
     "blocked": 1,
     "captcha": 1
   },
-  "pass": true,
+  "pass": false,
   "latencyMs": {
     "p50": 0,
-    "p95": 2
+    "p95": 1
   },
-  "inputTokensAvg": 2731,
-  "costUsd": 0.00494,
+  "inputTokensAvg": 2716,
+  "costUsd": 0.0048,
   "perQuestion": {
-    "screen": 0.44,
-    "has_error_modal": 1,
+    "screen": 0.36,
+    "has_error_modal": 0.94,
     "session_expired_notice": 1,
     "captcha_visible": 1,
     "mfa_pending": 1,
@@ -31,13 +35,17 @@
   },
   "confusion": {
     "logged_in": {
-      "logged_in": 15
+      "logged_in": 11,
+      "error": 2,
+      "unknown": 2
     },
     "login_required": {
       "login_required": 15
     },
     "error": {
-      "error": 14
+      "error": 7,
+      "logged_in": 4,
+      "unknown": 3
     },
     "blocked": {
       "blocked": 14
@@ -52,6 +60,89 @@
       "mfa_pending": 14
     }
   },
-  "misses": [],
+  "misses": [
+    {
+      "id": "ss.result_rejected.0",
+      "expect": "error",
+      "got": "logged_in",
+      "ms": 1.1540410000000065,
+      "inputTokens": 2677
+    },
+    {
+      "id": "ss.error_page.0",
+      "expect": "error",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 0.5885409999999922,
+      "inputTokens": 2675
+    },
+    {
+      "id": "ss.form_help_error_word.0",
+      "expect": "logged_in",
+      "got": "error",
+      "ms": 0.5514169999999865,
+      "inputTokens": 2717
+    },
+    {
+      "id": "ss.result_rejected.1",
+      "expect": "error",
+      "got": "logged_in",
+      "ms": 0.8718749999999886,
+      "inputTokens": 2677
+    },
+    {
+      "id": "ss.result_pending.0",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 0.4274169999999913,
+      "inputTokens": 2666
+    },
+    {
+      "id": "ss.error_page.1",
+      "expect": "error",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 0.40149999999999864,
+      "inputTokens": 2675
+    },
+    {
+      "id": "ss.result_rejected.2",
+      "expect": "error",
+      "got": "logged_in",
+      "ms": 0.4333750000000123,
+      "inputTokens": 2677
+    },
+    {
+      "id": "ss.error_page.2",
+      "expect": "error",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 0.4107919999999581,
+      "inputTokens": 2675
+    },
+    {
+      "id": "ss.form_help_error_word.1",
+      "expect": "logged_in",
+      "got": "error",
+      "ms": 0.4179579999999987,
+      "inputTokens": 2717
+    },
+    {
+      "id": "ss.result_rejected.3",
+      "expect": "error",
+      "got": "logged_in",
+      "ms": 0.36104100000000017,
+      "inputTokens": 2677
+    },
+    {
+      "id": "ss.result_pending.1",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 0.36620899999996936,
+      "inputTokens": 2666
+    }
+  ],
   "intent": null
 }

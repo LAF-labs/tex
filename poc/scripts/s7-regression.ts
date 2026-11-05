@@ -54,6 +54,15 @@ function expectedOutcome(layer: DefaultModelLayer, s: Sample): string {
   return evaluateMapping(b.def, statesOf(b.def, answers)).outcome;
 }
 
+/** 키별 목록을 번갈아 하나씩 꺼낸다(키 첫 등장 순서 유지). */
+function interleaveBy<T>(xs: T[], key: (x: T) => string): T[] {
+  const groups = new Map<string, T[]>();
+  for (const x of xs) (groups.get(key(x)) ?? groups.set(key(x), []).get(key(x))!).push(x);
+  const out: T[] = [];
+  for (let i = 0; out.length < xs.length; i++) for (const g of groups.values()) if (i < g.length) out.push(g[i]!);
+  return out;
+}
+
 const pct = (xs: number[], p: number) => {
   if (!xs.length) return null;
   const s = [...xs].sort((a, b) => a - b);
@@ -69,13 +78,15 @@ async function main() {
   const layer = new DefaultModelLayer({ catalog, profiles, decider });
   const b = layer.bundle(BUNDLE)!;
 
-  // 결과 라벨별로 고르게(기본 100장): blocked·captcha가 빠지지 않게 라운드 로빈
+  // 결과 라벨별로 고르게(기본 100장): blocked·captcha가 빠지지 않게 라운드 로빈. 결과 칸 안에서도 템플릿별로
+  // 번갈아 놓아(ss.<템플릿>.<i>), 같은 결과를 내는 뒤쪽 템플릿이 앞 템플릿에 밀려 빠지지 않게 한다.
   const all = screenCorpus(20, 7).filter((s) => s.bundle === BUNDLE);
   const byOutcome = new Map<string, Sample[]>();
   for (const s of all) {
     const o = expectedOutcome(layer, s);
     (byOutcome.get(o) ?? byOutcome.set(o, []).get(o)!).push(s);
   }
+  for (const [o, xs] of byOutcome) byOutcome.set(o, interleaveBy(xs, (s) => s.id.split('.')[1]!));
   const picked: Array<{ s: Sample; expect: string }> = [];
   for (let i = 0; picked.length < Math.min(n, all.length); i++) {
     for (const [o, xs] of byOutcome) if (xs[i] && picked.length < n) picked.push({ s: xs[i]!, expect: o });
@@ -162,6 +173,8 @@ async function main() {
     corpus: 'l0-corpus screenCorpus(20, 7) — 합성',
     generatedAt: new Date().toISOString(),
     n: rows.length,
+    // 표본이 덮은 템플릿 수 / 이 번들 코퍼스의 템플릿 수(뒤쪽 템플릿이 빠지지 않았는지)
+    templates: { sampled: new Set(picked.slice(0, rows.length).map((p) => p.s.id.split('.')[1])).size, total: new Set(all.map((s) => s.id.split('.')[1])).size },
     stoppedByCostCap: stopped,
     accuracy: +acc.toFixed(4),
     recall: { blocked: recall('blocked'), captcha: recall('captcha') },
