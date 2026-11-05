@@ -173,6 +173,9 @@ export function note(text, attention, extra, ic = 'info') {
   return h('div', { class: `sx-note${attention ? ' is-attention' : ''}` }, icon(ic), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null));
 }
 
+/** 시험·스타일용 data 속성을 붙여 돌려준다. */
+const tagged = (el, key, value) => ((el.dataset[key] = value), el);
+
 export const btn = (label, onclick, kind = '', attrs = {}) => h('button', { type: 'button', class: `sx-btn ${kind}`.trim(), onclick, ...attrs }, label);
 
 const vatText = (run) => (run.vat === 'separate' ? (run.status === 'draft' && run.vatGuessed ? '부가세 별도로 계산했어요' : '부가세 별도') : '부가세 포함');
@@ -230,6 +233,19 @@ export function taskCard(run, act) {
     );
   } else if (st === 'issuing') {
     card.append(line('발급하고 있어요. 홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.', true), now ? h('div', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null);
+  } else if (st === 'turn' && run.handoff) {
+    // 핸드오프(D03 HandedOff): 두 버튼 모두 재개·확인으로만 가고 발급하지 않는다. 게이트 뒤면 중지는 없다(엔진이 거부).
+    card.dataset.handoff = '1';
+    card.append(
+      note(run.turn.text, true, run.turn.note),
+      h(
+        'div',
+        { class: 'sx-actions' },
+        btn('다 했어요', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }),
+        btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }),
+        run.handoff.afterGate ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
+      ),
+    );
   } else if (st === 'turn') {
     card.append(note(run.turn.text, false, run.turn.note, 'phone'));
     const signing = run.steps[4].state === 'done';
@@ -240,6 +256,7 @@ export function taskCard(run, act) {
     const read = run.readbackDiffers ? '홈택스에 입력한 값을 다시 읽었어요. 초안과 다른 값이 있어요.' : '홈택스에 입력한 값을 다시 읽어 확인했어요. 초안과 같아요.';
     card.append(
       line(`${read} 발급하면 ${run.email.value ? `${run.counterparty.name} 메일로 전송되고 ` : ''}되돌릴 수 없어요.`),
+      run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
       ...run.warnings.map((w) => note(w, true)),
       note(run.approvedPending ? '승인했어요. 2초 안에 [중지]하면 발급하지 않아요' : `아래 [${action}]에서 값을 한 번 더 확인하고 눌러 주세요`),
       h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })),

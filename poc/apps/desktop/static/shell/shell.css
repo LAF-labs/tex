@@ -280,3 +280,8 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .cp-field { display: grid; gap: 4px; }
 .cp-field .doc-in { width: 100%; }
 .cp-field .doc-in:disabled { color: var(--ink-3); background: var(--surface-sunken); }
+
+/* 핸드오프 띠(D01 실행 뷰): 사람이 필요한 실행. 황토 한 줄, 승인 버튼 없음. */
+.sx-handoff { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-3); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); background: var(--attention-soft); color: var(--ink); }
+.sx-handoff[hidden] { display: none; }
+.sx-handoff-text { font-weight: 500; }

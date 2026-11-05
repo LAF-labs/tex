@@ -12,8 +12,26 @@ const STEPS = ['홈택스 로그인', '건별발급 화면', '입력', '되읽�
 const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 'mail'] as const;
 type Phase = (typeof PHASES)[number];
 
+/**
+ * 다시 게이트 경고(고정 문구 3종, M4-2 3부 팀장 조건). 엔진이 새 게이트를 열기 전에 이유를 준다(regate 이벤트, 엔진 계약 요청 중).
+ * paused: 멈춘(Paused) 실행을 이어 함(토큰은 직렬화하지 않는다, D03 §2) · date_changed: 준비한 날과 KST 날짜가 다름(B-13) · value_changed: 값이 바뀌어 게이트 앞으로 되감음(R-G6·R-G7).
+ */
+export const REGATE_NOTE = {
+  paused: '멈췄던 작업을 이어서 하려면 새로 승인해야 해요. 앞의 승인은 쓰지 않아요.',
+  date_changed: '준비한 날과 오늘(한국 시간) 날짜가 달라요. 작성일자를 다시 확인하고 새로 승인해 주세요.',
+  value_changed: '홈택스 값을 다시 읽었어요. 바뀐 값으로 새로 승인해야 해요. 앞의 승인은 쓰지 않아요.',
+} as const;
+export type RegateReason = keyof typeof REGATE_NOTE;
+const isRegate = (x: unknown): x is RegateReason => typeof x === 'string' && Object.hasOwn(REGATE_NOTE, x);
+
+/** 핸드오프(HandedOff, D03 §2): 앱이 진행하지 못해 사람에게 넘긴 단계. [다 했어요]·[직접 발급함]은 재개·확인으로만 가고 발급하지 않는다. */
+export const HANDOFF_TEXT = '지금 사람이 필요해요';
+export const HANDOFF_HINT = '전용 Chrome 창에서 직접 마치면 [다 했어요], 홈택스에서 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.';
+
 type EngineEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string; attempt?: number }
+  | { runId: string; type: 'regate'; reason: RegateReason }
+  | { runId: string; type: 'handoff'; phase: Phase; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
   | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
 
@@ -166,7 +184,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
   private engineGone(): void {
     for (const r of this.runs.values()) {
       if (!['preparing', 'turn', 'waiting', 'issuing'].includes(r.status)) continue;
-      const unsure = r.status === 'issuing' || r.approvedPending === true;
+      // 게이트 뒤 단계에서 넘겨받은 핸드오프도 발급됐는지 모른다(사용자가 직접 발급했을 수 있다, R-C2).
+      const unsure = r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true;
       this.end(r, unsure ? { status: 'in_doubt', code: 'engine.exit' } : { status: 'failed', code: 'engine.exit_before_approval' });
     }
   }
@@ -317,6 +336,47 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /**
+   * 핸드오프 [다 했어요]: 엔진에 재개를 알린다. 엔진은 원장이 in_doubt이면 verify부터 한다(D03 §2). 발급하지 않는다.
+   * 게이트 앞이었으면 준비 중으로, 게이트 뒤였으면 확인(발급 중)으로 돌아간다. 엔진이 받은 뒤에만 상태를 바꾼다.
+   */
+  async resume(id: string): Promise<RunView> {
+    const r = this.handedOff(id);
+    await this.host.rpc('run.resume', { runId: id });
+    this.leaveHandoff(r, r.handoff!.afterGate ? 'issuing' : 'preparing');
+    return r;
+  }
+
+  /**
+   * 핸드오프 [직접 발급함]: 사용자가 홈택스에서 직접 발급했다고 알린다. 엔진이 원장에 observed_manual을 쓰고 그 X의 verify만 한다(R-C2).
+   * 앱은 다시 발급하지 않는다. 카드는 '확인 중'(발급목록 조회)으로 간다.
+   */
+  async manualDone(id: string): Promise<RunView> {
+    const r = this.handedOff(id);
+    await this.host.rpc('run.manualDone', { runId: id });
+    r.confirmed = true;
+    for (const p of ['login', 'form', 'input', 'readback', 'gate', 'sign'] as const) if (r.steps[PHASES.indexOf(p)]!.state !== 'done') this.step(r, p, 'done', p === 'sign' ? '직접 발급하셨다고 알려 주셨어요' : undefined);
+    this.step(r, 'verify', 'now');
+    this.leaveHandoff(r, 'issuing');
+    return r;
+  }
+
+  private handedOff(id: string): RunView {
+    const r = this.runs.get(id);
+    if (!r) throw new Error('no_run');
+    if (r.status !== 'turn' || !r.handoff) throw new Error('not_handed_off');
+    return r;
+  }
+
+  private leaveHandoff(r: RunView, status: 'preparing' | 'issuing'): void {
+    const ph = r.handoff!.phase as Phase;
+    if (r.steps[PHASES.indexOf(ph)]!.state === 'attention') this.step(r, ph, 'now');
+    r.handoff = null;
+    r.turn = null;
+    r.status = status;
+    this.emit('update', r);
+  }
+
+  /**
    * 승인 바에서 승인했다(근거를 게이트 포트로 보내기 직전에 부른다). 거부 우선 창(2초) 동안은 [중지]가 이긴다.
    * 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽으로 다룬다(engineGone).
    */
@@ -382,6 +442,22 @@ export class ShellRuns extends EventEmitter implements Drafts {
       return;
     }
     if (e.type === 'waiting') return; // 게이트 요청(게이트 포트)이 따로 온다
+    if (e.type === 'regate') {
+      if (!isRegate(e.reason) || !['preparing', 'turn', 'waiting'].includes(r.status)) return;
+      r.regate = { reason: e.reason, note: REGATE_NOTE[e.reason] };
+      this.emit('update', r);
+      return;
+    }
+    if (e.type === 'handoff') {
+      if (!PHASES.includes(e.phase) || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
+      const i = PHASES.indexOf(e.phase);
+      r.status = 'turn';
+      r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate') };
+      r.turn = { text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${STEPS[i]}`, note: e.code && NOTE[e.code] ? NOTE[e.code]! : HANDOFF_HINT };
+      this.step(r, e.phase, 'attention', '직접 해 주세요');
+      this.emit('update', r);
+      return;
+    }
     this.end(r, e);
   }
 
@@ -389,6 +465,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (['draft', 'done', 'stopped', 'attention'].includes(r.status)) return;
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
     r.turn = null;
+    r.handoff = null;
     r.approvedPending = false;
     if (!r.confirmed) this.gateless.push(this.clock());
     if (typeof e.portalNotice === 'string' && e.portalNotice.trim()) r.notices = [...(r.notices ?? []), portalNoticeText(e.portalNotice)];
