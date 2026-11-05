@@ -1,7 +1,7 @@
 import type { EventLog } from '@sax/platform';
 import { HUMAN_SETTLE_MS, SECRET_TTL_MS, SELF_SCAN_TIMEOUT_MS } from '../constants.ts';
 import { scanDir } from '../leak/scanner.ts';
-import type { FillReason, FillRequest, OneShotBind, VaultEventName } from '../protocol.ts';
+import { isTypistKind, SECURITY_CARD_ROWS, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
 import { KNOWN_VALUE_MIN_LEN, knownValueVariants } from '../relay/sanitize.ts';
@@ -162,6 +162,20 @@ export class SecretOps {
     return { objectId, backendNodeId: Number(node.backendNodeId), frameId, frameUrl: findFrameUrl(frameTree, frameId) ?? '' };
   }
 
+  /**
+   * 보안카드 요청 칸 번호를 금고 격리 월드에서 읽는다. 글자 안의 숫자가 정확히 하나이고 1~35일 때만 그 값, 아니면 null.
+   * "12번 앞 2자리"처럼 숫자가 둘 이상이면 읽지 못한 것으로 본다(셀렉터를 칸 번호 요소로 좁혀야 한다).
+   */
+  private async readRowLabel(t: TargetState, frameId: string, selector: string): Promise<number | null> {
+    const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: '__sax_vault' }, t.vaultSession);
+    const r = await this.relay.send<{ result: { value?: unknown } }>('Runtime.evaluate', {
+      expression: `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? String(e.textContent ?? '') : null; })()`,
+      contextId: executionContextId,
+      returnByValue: true,
+    }, t.vaultSession);
+    return parseCardRow(r.result.value);
+  }
+
   private async probe(t: TargetState, objectId: string): Promise<Probe | null> {
     try {
       const r = await this.relay.send<{ result: { value: Probe } }>('Runtime.callFunctionOn', { objectId, functionDeclaration: PROBE_FN, returnByValue: true }, t.vaultSession);
@@ -193,6 +207,13 @@ export class SecretOps {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t) return { ok: false, reason: 'not_found' };
     if (!this.fillTriggerAllowed(req)) return { ok: false, reason: 'denied' };
+    // 타이피스트는 포털 비밀번호·보안카드만 넣는다. 인증서 비밀번호는 정책·허용 호스트와 상관없이 넣지 않는다(ADR-020 결정 2, ADR-025 결정 10).
+    if (!isTypistKind(req.secret?.kind)) {
+      this.log.event('vault.typist_kind_refused', { kind: String(req.secret?.kind).slice(0, 20) });
+      return { ok: false, reason: 'denied' };
+    }
+    // 보안카드는 칸 하나씩(row 필수), 포털 비밀번호는 칸 번호가 없다(D05 §4).
+    if (req.secret.kind === 'security_card' ? !isRow(req.secret.row) : req.secret.row !== undefined) return { ok: false, reason: 'denied' };
     // 요청 kind와 사전 칸의 kind가 같아야 한다(「또는」이 아니라 「그리고」, N-46).
     if (!req.slot || req.slot.secretKind !== req.secret?.kind) return { ok: false, reason: 'not_secret_slot' };
     const used = slotKey(req.runId, req.secret.kind, req.secret.row);
@@ -217,6 +238,15 @@ export class SecretOps {
     const p0 = await this.probe(t, el.objectId);
     if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
     if (!p0.active) return { ok: false, reason: 'denied' };
+    // 보안카드: 화면에 보인 칸 번호가 요청 칸과 같을 때만(D05 §4 2). 값을 꺼내기 전에 본다.
+    if (req.secret.kind === 'security_card') {
+      const sel = typeof req.rowLabel === 'string' && req.rowLabel.length > 0 && req.rowLabel.length <= ROW_LABEL_MAX ? req.rowLabel : null;
+      const shown = sel ? await this.readRowLabel(t, el.frameId, sel).catch(() => null) : null;
+      if (shown !== req.secret.row) {
+        this.log.event('vault.card_row_mismatch', { readable: shown !== null });
+        return { ok: false, reason: 'row_mismatch' };
+      }
+    }
     let secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope, req.secret.row);
     if (!secret && this.opts.stored) {
       // 저장된 사람 비밀(세션 결박). 요청된 칸 하나만 복호한다.
@@ -412,6 +442,20 @@ export class SecretOps {
     for (const id of [...this.human.keys()]) this.stopHuman(id);
     this.secrets.clear();
   }
+}
+
+const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
+
+/** FillRequest.rowLabel 셀렉터 최대 길이. */
+const ROW_LABEL_MAX = 256;
+
+/** 보안카드 칸 번호 요소의 글자에서 칸 번호를 읽는다. 숫자가 정확히 하나(1~35)일 때만, 전각 숫자는 NFKC로 맞춘다. */
+export function parseCardRow(text: unknown): number | null {
+  if (typeof text !== 'string' || text.length > 64) return null;
+  const nums = text.normalize('NFKC').match(/\d+/g) ?? [];
+  if (nums.length !== 1) return null;
+  const n = Number(nums[0]);
+  return isRow(n) ? n : null;
 }
 
 function hostOf(url: string): string {

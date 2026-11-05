@@ -392,6 +392,7 @@ export class GatewayService {
 
   /** 번호는 메모리로만 통과한다. 이 메서드는 계정을 받지 않는다(한도는 앱 계층의 메모리 카운터). */
   async bizStatus(bNos: string[]): Promise<{ data: BizStatus[] }> {
+    if (bNos.length < 1 || bNos.length > GATEWAY.bizPerRequest || !bNos.every((b) => /^[0-9]{10}$/.test(b))) fail('gateway.param_rejected');
     try {
       return { data: await this.d.nts.status(bNos) };
     } catch (e) {

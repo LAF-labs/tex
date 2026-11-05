@@ -1,6 +1,8 @@
 // L2 툴셋 정의(D04 §4). effort·max_output_tokens·도구·출력 스키마는 툴셋이 정하고 클라이언트 필드가 아니다(B-20).
 // PoC-7 범위: selector_repair(S9 store:false 재생 측정)와 query_parse. summarize·intent_fill은 PoC-9 이후.
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import { canonicalJson } from './bundle/digest.ts';
 import type { Toolset } from './contract.ts';
 
 export interface ToolDef {
@@ -83,4 +85,12 @@ const DIR = new URL('../toolsets/', import.meta.url);
 export function toolsetPrefix(t: ToolsetDef): string {
   const common = fs.readFileSync(new URL('../bundles/prefixes/_common.ko.txt', import.meta.url), 'utf8').trim();
   return `${common}\n\n${fs.readFileSync(new URL(`${t.prefixKey}.ko.txt`, DIR), 'utf8').trim()}`;
+}
+
+/**
+ * 툴셋 해시(게이트웨이 /v1/respond 응답 toolsetDigest와 같은 정의, services/gateway/API.md):
+ * sha256(정규 JSON({prefix, tools, output, effort, maxOutputTokens})). 게이트웨이가 다른 툴셋 정의로 불렀는지 대조한다.
+ */
+export function toolsetDigest(t: ToolsetDef): string {
+  return createHash('sha256').update(canonicalJson({ prefix: toolsetPrefix(t), tools: t.tools, output: t.output, effort: t.effort, maxOutputTokens: t.maxOutputTokens })).digest('hex');
 }

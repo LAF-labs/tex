@@ -116,7 +116,8 @@ export function conservativeDirection(path: string): Dir {
     if (a === 'disabledFeatures' || a === 'notifyOnIrreversible') return 'superset';
   }
   if (head === 'queue') return 'le';
-  if (head === 'verify') return a === 'minElapsedMs' || a === 'lookups' || a === 'maxMs' ? 'ge' : 'eq';
+  // D03 §7.1·policy 스키마 긴급 규칙은 minElapsedMs·lookups만 나열한다. maxMs는 나열되지 않았으므로 같음만 허용.
+  if (head === 'verify') return a === 'minElapsedMs' || a === 'lookups' ? 'ge' : 'eq';
   if (head === 'daemon') return a === 'windowJitterMin' || a?.startsWith('gapBetweenRunsMin') || a === 'startupGraceMin' || a === 'retryAfterMin' ? 'ge' : 'eq';
   return 'eq';
 }

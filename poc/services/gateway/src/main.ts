@@ -10,11 +10,14 @@ import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
 
-/** 계정 서비스의 내부 자동 정지 API */
-export function httpSuspender(base: string, secret: string, fetchFn: typeof fetch = fetch): DeviceSuspender {
+/**
+ * 계정 서비스의 내부 자동 정지 API. 응답이 늦으면 `timeoutMs`에서 끊고 실패로 본다(다음 위반에서 다시 시도).
+ * 200 `{suspended:false}`는 이미 활성이 아닌 기기(정지·폐기됨)라서 더 할 일이 없으므로 성공으로 본다.
+ */
+export function httpSuspender(base: string, secret: string, fetchFn: typeof fetch = fetch, timeoutMs = 5000): DeviceSuspender {
   return {
     async suspend(deviceId) {
-      const res = await fetchFn(`${base}/internal/v1/devices/${encodeURIComponent(deviceId)}/auto-suspend`, { method: 'POST', headers: { authorization: `Internal ${secret}` }, redirect: 'error' });
+      const res = await fetchFn(`${base}/internal/v1/devices/${encodeURIComponent(deviceId)}/auto-suspend`, { method: 'POST', headers: { authorization: `Internal ${secret}` }, redirect: 'error', signal: AbortSignal.timeout(timeoutMs) });
       if (res.status !== 200) throw new Error('suspend_failed');
     },
   };
