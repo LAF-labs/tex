@@ -11,6 +11,8 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
+import { OnboardingFlow, onboardingTodos, type OnbProfile } from './onboarding.ts';
+import { MockOnboardingPorts } from './onboarding-mock.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
@@ -67,6 +69,7 @@ const FILES: Record<string, string> = {
   '/shell.js': 'text/javascript',
   '/shell-views.js': 'text/javascript',
   '/shell-g24.js': 'text/javascript',
+  '/shell-onboarding.js': 'text/javascript',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
 };
@@ -111,6 +114,8 @@ export interface ShellOptions {
   demoModel?: DemoModel | null;
   /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
   demoSeed?: boolean;
+  /** 온보딩(08 §4)부터 시작한다(시연·e2e). 엔진 모드에서는 DB에 사업자 프로필이 없으면 저절로 시작한다. */
+  onboarding?: boolean;
 }
 
 export interface Shell {
@@ -282,6 +287,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       bundle: mockBundle(today),
       cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
+      setup: onboardingTodos(onb?.state ?? null),
     });
   };
   // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
@@ -438,6 +444,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { profiles: profiles() };
     },
   };
+  // 온보딩(08 §4, M4-2). 바깥 일은 목업 어댑터 뒤(onboarding-mock.ts), 프로필 저장만 엔진 profile.upsert(실제 DB)로 간다.
+  let onb: OnboardingFlow | null = null;
+  const onbPorts = new MockOnboardingPorts({
+    saveProfile: async (p: OnbProfile) => {
+      // 포털 아이디(금고 v1이 돌려주는 비밀 아닌 값)는 DB profiles.portal_login_id 열이 생기면 함께 저장한다(#42). 지금은 버린다.
+      const row: Omit<OnbProfile, 'portalLoginId'> & { portalLoginId?: string } = { ...p };
+      delete row.portalLoginId;
+      await host.rpc('profile.upsert', { ...row, corpNo: null });
+      await refresh();
+    },
+  });
+  const onbView = async () => (onb ? await onb.view() : null);
+  /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
+  const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
+  const modelOk = () => !onb || onb.modelAllowed();
+
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
       board: await bootBoard(),
@@ -451,6 +473,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
       history: seed?.history ?? null,
+      onboarding: await onbView(),
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -460,9 +483,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 시연 모델이 있으면 먼저 묻고(4초 상한), 없거나 실패하면 정규식. via는 화면 구석 표시용(모델 해석/오프라인 해석).
     'request.send': async (p) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
+      if (!termsOk()) throw new Error('onboarding_terms');
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
-      const model = demo && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
+      const model = demo && modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
       const via = model ? 'model' : 'offline';
       if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
       const reply = interpret(text, vat, profile, runs, model ? mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
@@ -537,6 +561,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
+    // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).
+    'onboarding.reply': async (p) => {
+      needGesture(3_000);
+      if (!onb) throw new Error('onboarding_done');
+      const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
+      if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
+      return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
+    },
     'clipboard.copy': (p) => {
       clipboard.writeText(String(p.text ?? '').slice(0, 200));
       return {};
@@ -562,6 +594,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (fixture) await fixture.seed(host);
     if (fixture && opts.demoSeed) seed = await startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
+    if (opts.onboarding || (!fixture && !business)) onb = new OnboardingFlow(onbPorts);
     await win.loadURL(SHELL_URL);
     // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed

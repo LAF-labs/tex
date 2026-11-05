@@ -11,6 +11,8 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
+const { OnboardingFlow } = await import(`${DESK}/dist/onboarding.js`);
+const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
 // 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
@@ -28,7 +30,7 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '' };
+const S = { withVault: false, barHtml: '', onb: null };
 const store = new MockStore();
 const vaultDoc = {
   id: 'v1', name: '납세증명서(국세)', kind: '직접 추가', docName: '납세증명서(국세)', profile: 'business', issuedOn: dayOffset(-2), expiresOn: dayOffset(28), source: '직접 추가',
@@ -68,8 +70,12 @@ const boardNow = () =>
   });
 
 const handlers = {
-  'shell.bootstrap': () => ({ board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
+  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
   'profile.set': (p) => ({ profile: p.kind }),
+  'onboarding.reply': async (p) => {
+    const r = await S.onb.answer(p);
+    return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
+  },
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
   'counterparties.list': () => cps,
   'docs.list': () => (S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
@@ -190,6 +196,36 @@ const scenes = {
     await js(win, `document.querySelector('[data-act=board-toggle]').click()`);
     await shot(win, '20-board-closed');
   },
+  // 온보딩(08 §4 O-01~O-06·동의 4종). 장면을 여는 동안 S.onb가 있다(아래 order 루프).
+  async onboarding(win) {
+    const press = async (sel) => {
+      await js(win, `document.querySelector(${JSON.stringify(sel)}).click()`);
+      await sleep(150);
+    };
+    await shot(win, '21-onb-terms');
+    await press('[data-onb=agree]');
+    await press('[data-onb=upload]');
+    await shot(win, '22-onb-biz');
+    await press('[data-onb=confirm]');
+    await press('[data-onb=cert]');
+    await shot(win, '23-onb-auth');
+    await press('[data-onb=card]');
+    await shot(win, '24-onb-delegation');
+    await press('[data-onb=agree]');
+    await shot(win, '25-onb-model');
+    await press('[data-onb=agree]');
+    await shot(win, '26-onb-telemetry');
+    await press('[data-onb=off]');
+    await press('[data-task=H-01]');
+    await press('[data-task=H-03]');
+    await shot(win, '27-onb-tasks');
+    await press('[data-onb=submit]');
+    await press('[data-onb=later]');
+    await shot(win, '28-onb-summary');
+    await press('[data-onb=ok]');
+    await press('[data-onb=try]');
+    await shot(win, '29-onb-done');
+  },
   async biz(win) { await js(win, `document.querySelector('#rail [data-view=biz]').click()`); await shot(win, '15-biz'); },
   async settings(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await shot(win, '16-settings'); },
   async g24(win) {
@@ -203,10 +239,11 @@ const scenes = {
   },
 };
 
-const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24'];
+const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'onboarding'];
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;
+    S.onb = k === 'onboarding' ? new OnboardingFlow(new MockOnboardingPorts({ saveProfile: async () => {} })) : null;
     const win = await open(theme);
     try {
       await scenes[k](win);
