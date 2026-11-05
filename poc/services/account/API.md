@@ -50,7 +50,7 @@
 | `POST /v1/billing/checkout` | 세션 | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected` |
 | `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:9900, period:"month"} \| null}` | |
 | `POST /v1/billing/cancel` | 세션 | — | `204` | |
-| `POST /v1/billing/webhook` | PG 서명 | PG 원본 본문(16KB) | `200 {ok:true}` | `400 account.billing_signature_invalid`. 모의 PG: `x-mock-pg-signature` = HMAC-SHA256 hex |
+| `POST /v1/billing/webhook` | PG 서명 | PG 원본 본문(16KB) | `200 {ok:true}` | `400 account.billing_signature_invalid`. 모의 PG: `x-mock-pg-signature` = HMAC-SHA256 hex. 상태 전이만 반영: 해지는 끝 상태(늦은 활성·갱신 이벤트 무시, 다시 구독은 checkout이 새 PG 참조로 연다), 갱신은 `renewAt`이 앞으로 갈 때만, 결제 실패는 active에서만 |
 
 PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. 결제 수단은 PG에만 있다. 이 저장소에는 모의 어댑터(`MockPaymentGateway`)만 있다.
 
@@ -76,13 +76,13 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `PUT /v1/device-list` | 기기:devlist | `{deviceList:{listVersion, entries:[{entry, aikSig}], revoked:[{device_id, revoked_at, aikSig}]}}` | `200 {listVersion}` | `account.aik_not_pinned`, `account.list_version_stale`(저장된 버전 이하), `account.aik_signature_invalid`, 새 항목 키가 등록 신청과 다르면 400, 활성·정지 기기를 폐기 레코드 없이 빼면 400 |
 | `POST /v1/devices/:id/reactivate` | 기기:acct_op | `{op:{op:"device.reactivate", account_id, target:<id>, ts}, aikSig}` | `204` | `account.aik_signature_invalid`(서명·대상·±5분) |
 
-폐기: 목록을 올린 데스크톱이 등록 7일 미만이면 폐기는 7일 뒤(유예 중 계정 웹에서 정지 가능), 7일 이상이면 즉시. 폐기되면 정지 훅이 나간다.
+폐기: 목록을 올린 데스크톱이 등록 7일 미만이면 폐기는 7일 뒤(유예 중 계정 웹에서 정지 가능), 7일 이상이면 즉시. 유예는 처음 폐기 레코드가 들어온 때부터 세고 목록을 다시 올려도 다시 시작하지 않는다. 폐기되면 정지 훅이 나간다.
 
 ## 기기 범위 토큰
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}}` | `200 {token, expiresAt, scopes}` | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, 기기당 60회/시 |
+| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}}` | `200 {token, expiresAt, scopes}` | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈) |
 
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 
