@@ -51,6 +51,13 @@ export interface Board {
   cards: BoardCard[];
   /** 지금의 확인 필요·진행 중 건수(ADR-033 결정 1: 판에 둔다). */
   counts: { attention: number; progress: number; expiringSoon: number };
+  /** 온보딩에서 건너뛴 항목(08 §4 "할 일"). 카드 4종(ADR-033)에 넣지 않고 판 머리 아래 한 줄로 둔다. 누르면 그 화면. */
+  setup: BoardSetup[];
+}
+export interface BoardSetup {
+  id: string;
+  label: string;
+  view: 'biz' | 'cps';
 }
 
 /** 지난 발급 한 건(원장·발급 이력·문서함 세금계산서에서). */
@@ -90,6 +97,8 @@ export interface BoardInput {
   bundle: { month: string; slots: BundleSlot[]; sentOn: string | null } | null;
   /** 사업용 카드 내역 마지막 최신화 날짜(H-12). 없으면 한 번도 안 함. */
   cardFetchedOn: string | null;
+  /** 온보딩에서 건너뛴 항목(onboardingTodos). */
+  setup?: BoardSetup[];
 }
 
 export const EXPIRING_WITHIN_DAYS = 30;
@@ -203,6 +212,7 @@ export function buildBoard(input: BoardInput): Board {
   return {
     month,
     cards,
+    setup: (input.setup ?? []).map((x) => ({ ...x })),
     // 머리 건수는 카드에 실제로 놓인 줄에서 센다(카드에 없는 건을 세거나, 카드의 확인 필요를 빠뜨리지 않게).
     counts: {
       attention: items.filter((x) => x.tone === 'attention' && !soon(x)).length,

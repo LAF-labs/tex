@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { identifierTripwire, normalizeForRedaction, type RedactedText } from '@sax/redaction';
+import { identifierTripwire, normalizeForRedaction, wasMinted, type RedactedText } from '@sax/redaction';
 import type { ValidateFunction } from 'ajv';
 
 export interface BundleAllowEntry {
@@ -27,7 +27,20 @@ export interface GatewayRespondBody {
   runToken: string;
 }
 
-export type GuardCode = 'bundle_not_allowlisted' | 'schema_rejected' | 'input_too_large' | 'budget_exceeded' | 'pii_tripwire' | 'image_rejected' | 'run_token_unknown' | 'run_token_reissue';
+export type GuardCode =
+  | 'bundle_not_allowlisted'
+  | 'schema_rejected'
+  | 'input_too_large'
+  | 'budget_exceeded'
+  | 'pii_tripwire'
+  | 'image_rejected'
+  /** 마스킹 계층이 발급하지 않은 텍스트(브랜드 단언 우회, D06 §8 런타임 확인) */
+  | 'unminted_text'
+  | 'run_token_unknown'
+  | 'run_token_reissue';
+
+/** 보안 이벤트로 올리는 거부(D06 §4 egress 트립와이어). 나머지 거부는 카운트만. */
+export const SECURITY_GUARD_CODES: ReadonlySet<GuardCode> = new Set(['pii_tripwire', 'image_rejected', 'unminted_text']);
 
 /**
  * 예산 경계. 플레이북 실행은 runId(원장의 실행 ID), 실행 밖 대화 호출은 chatSessionId(D04 §1).
@@ -51,6 +64,8 @@ export interface ModelGuardConfig {
   bundles: readonly BundleAllowEntry[];
   /** D04 §6: L1 ≤ 12, L2 ≤ 2 */
   budget?: { l1: number; l2: number };
+  /** 보안 거부(SECURITY_GUARD_CODES)마다 코드만 알린다. 본문·식별자 없음. */
+  onSecurity?: (code: GuardCode, surface: 'decide' | 'respond') => void;
 }
 
 /** D04 §4 selector_repair 턴 상한(첫 호출 포함) */
@@ -101,6 +116,8 @@ export class ModelGuard {
   private readonly tokens = new Map<string, { scope: string; expiresAt: number }>();
   private readonly active = new Map<string, string>();
   private readonly now: () => number;
+  private readonly onSecurity: ModelGuardConfig['onSecurity'];
+  private surface: 'decide' | 'respond' = 'decide';
   /** 거부 카운트만(본문·식별자 없음). */
   readonly refusals: Partial<Record<GuardCode, number>> = {};
 
@@ -108,6 +125,7 @@ export class ModelGuard {
     this.allow = new Map(cfg.bundles.map((b) => [`${b.id}@${b.digest}`, b]));
     this.budget = cfg.budget ?? { l1: 12, l2: 2 };
     this.now = now;
+    this.onSecurity = cfg.onSecurity;
   }
 
   /**
@@ -140,13 +158,18 @@ export class ModelGuard {
 
   private fail(code: GuardCode): never {
     this.refusals[code] = (this.refusals[code] ?? 0) + 1;
+    if (SECURITY_GUARD_CODES.has(code)) this.onSecurity?.(code, this.surface);
     throw new ModelGuardError(code);
   }
 
-  /** 4종 검사를 모두 통과하면 예산 1회를 소비한다. providerBody는 공급사로 실제 나갈 본문(이미지 금지 검사용). */
-  check(surface: 'decide', body: GatewayDecideBody, providerBody: unknown): void;
-  check(surface: 'respond', body: GatewayRespondBody, providerBody: unknown): void;
-  check(surface: 'decide' | 'respond', body: GatewayDecideBody | GatewayRespondBody, providerBody: unknown): void {
+  /**
+   * 게이트웨이 경로의 로컬 검사(D04 §7 앞단): 스키마·앱 내장 번들 허용 목록·입력 한도·이미지 금지·트립와이어·발급 영수증.
+   * 실행 예산은 게이트웨이가 서명한 runToken으로 서버가 집행하므로 여기서 세지 않는다.
+   */
+  inspect(surface: 'decide', body: GatewayDecideBody, providerBody?: unknown): void;
+  inspect(surface: 'respond', body: GatewayRespondBody, providerBody?: unknown): void;
+  inspect(surface: 'decide' | 'respond', body: GatewayDecideBody | GatewayRespondBody, providerBody: unknown = body): void {
+    this.surface = surface;
     const v = loadValidators();
     if (!v[surface](body)) this.fail('schema_rejected');
     const texts: string[] = [];
@@ -163,6 +186,15 @@ export class ModelGuard {
     }
     if (hasImage(providerBody)) this.fail('image_rejected');
     if (texts.some(piiTripwire)) this.fail('pii_tripwire');
+    if (!texts.every(wasMinted)) this.fail('unminted_text');
+  }
+
+  /** BYOK 검사 4종(+ 이미지·발급 영수증)을 모두 통과하면 예산 1회를 소비한다. providerBody는 공급사로 실제 나갈 본문. */
+  check(surface: 'decide', body: GatewayDecideBody, providerBody: unknown): void;
+  check(surface: 'respond', body: GatewayRespondBody, providerBody: unknown): void;
+  check(surface: 'decide' | 'respond', body: GatewayDecideBody | GatewayRespondBody, providerBody: unknown): void {
+    if (surface === 'decide') this.inspect('decide', body as GatewayDecideBody, providerBody);
+    else this.inspect('respond', body as GatewayRespondBody, providerBody);
     const scope = this.scopeOf(body.runToken);
     if (!scope) this.fail('run_token_unknown');
     const u = this.used.get(scope) ?? { l1: 0, l2Calls: 0, l2Turns: 0 };
