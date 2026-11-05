@@ -1,0 +1,24 @@
+{
+  "monotonic": 11,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-05T00:00:00Z",
+  "expiresAt": "2026-11-07T00:00:00Z",
+  "portalModeCeiling": {
+    "hometax": "assisted"
+  },
+  "killPlaybooks": [
+    "hometax.invoice.cancel"
+  ],
+  "signatures": [
+    {
+      "keyId": "emergency-1",
+      "alg": "ed25519",
+      "sig": "8HPdrs2lfKLUB6NMYwu-JfNNqKsrHBlhpQv_SPHunX3mvgxVMQtgj6ta9GtcsXIqkeY8-CW_HvnZvsNXjeOFCQ"
+    }
+  ],
+  "timestamp": {
+    "keyId": "timestamp-1",
+    "alg": "ed25519",
+    "sig": "1L9aLDmclJ2q2z_3vai_XV0OZA6Tcy3VbXBaccRiG0hRDaGDuqsHJbVqnkDsTgEsiP2pL6j0d7NOXBH2BeekAA"
+  }
+}
