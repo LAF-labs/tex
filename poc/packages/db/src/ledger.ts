@@ -221,22 +221,103 @@ export class Ledger {
 }
 
 /** 감사 저널(D03 §9): 실행별 해시 체인. 코드와 ID만 담는다(값 없음). */
+/** 감사 이벤트 이름: 점으로 나눈 소문자 코드(run.started, gate.approved, ledger.in_doubt …). */
+const EVENT_TYPE = /^[a-z][a-z0-9_]*(\.[a-z0-9_]+)*$/;
+const FIELD = /^[a-zA-Z][a-zA-Z0-9_]{0,39}$/;
+const GENESIS = '0'.repeat(64);
+
+export type JournalPayload = Record<string, string | number | boolean>;
+
+/**
+ * 값 없음 원칙(D03 §9, D12)의 형태 검사. 값의 뜻은 보지 않고 모양만 본다.
+ * 필드 이름은 식별자, 값은 짧은 한 줄 문자열(코드·해시·ID)·유한 수·불리언, 필드는 16개까지.
+ * 위반이면 위반한 필드 이름만 돌려준다(값은 돌려주지 않는다).
+ */
+export function journalShapeProblems(type: string, payload: JournalPayload): string[] {
+  const bad: string[] = [];
+  if (!EVENT_TYPE.test(type)) bad.push('type');
+  const entries = Object.entries(payload);
+  if (entries.length > 16) bad.push('too_many_fields');
+  for (const [k, v] of entries) {
+    if (!FIELD.test(k)) bad.push('field_name');
+    else if (typeof v === 'string' ? v.length > 128 || /[\r\n\t]/.test(v) : typeof v === 'number' ? !Number.isFinite(v) : typeof v !== 'boolean') bad.push(k);
+  }
+  return bad;
+}
+
+export class JournalShapeError extends Error {
+  readonly code = 'journal.payload_shape';
+  readonly fields: string[];
+  constructor(fields: string[]) {
+    super(`journal.payload_shape:${fields.join(',')}`);
+    this.fields = fields;
+  }
+}
+
+export const journalHash = (prevHash: string, at: string, type: string, body: string): string =>
+  createHash('sha256').update(`${prevHash}\n${at}\n${type}\n${body}`).digest('hex');
+
+export type ChainCheck = { ok: true; events: number; head: string } | { ok: false; events: number; brokenAtSeq: number; reason: 'prev_hash' | 'hash' | 'payload' };
+
+/**
+ * 실행 저널(D07 run_events, D03 §9). 실행별 해시 체인: hash = sha256(prev_hash ‖ at ‖ type ‖ payload_json), 첫 이벤트의 prev_hash는 0×64.
+ * Phase 1은 체인 자체 검증만 한다(verify). 끝을 잘라 낸 것은 체인만으로 알 수 없고 Phase 2 폰 앵커가 잡는다(D-45(N-71)).
+ */
 export class RunJournal {
   private readonly db: Db;
   constructor(db: Db) {
     this.db = db;
   }
 
-  append(runId: string, type: string, payload: Record<string, string | number | boolean> = {}): void {
-    const prev = this.db.prepare('SELECT hash FROM run_events WHERE run_id = ? ORDER BY seq DESC LIMIT 1').get(runId) as Row | undefined;
-    const prevHash = prev ? String(prev.hash) : '0'.repeat(64);
-    const at = now();
-    const body = JSON.stringify(payload);
-    const hash = createHash('sha256').update(`${prevHash}\n${at}\n${type}\n${body}`).digest('hex');
-    this.db.prepare('INSERT INTO run_events (run_id, at, type, payload_json, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?)').run(runId, at, type, body, prevHash, hash);
+  /**
+   * 이벤트 이름이 틀리면 던진다(코드의 상수라 프로그래밍 오류). 필드 형태가 틀리면 실행을 멈추지 않고 그 필드를 빼고
+   * `dropped`에 필드 이름만 남긴다(값은 저널에 들어가지 않는다).
+   */
+  append(runId: string, type: string, payload: JournalPayload = {}): void {
+    const bad = journalShapeProblems(type, payload);
+    if (bad.includes('type')) throw new JournalShapeError(['type']);
+    if (bad.length) {
+      const keep = Object.entries(payload).filter(([k]) => !bad.includes(k) && FIELD.test(k)).slice(0, 15);
+      payload = { ...Object.fromEntries(keep), dropped: bad.filter((b) => b !== 'too_many_fields').join(',').slice(0, 128) || 'too_many_fields' };
+    }
+    this.db.transaction(() => {
+      const prev = this.db.prepare('SELECT hash FROM run_events WHERE run_id = ? ORDER BY seq DESC LIMIT 1').get(runId) as Row | undefined;
+      const prevHash = prev ? String(prev.hash) : GENESIS;
+      const at = now();
+      const body = JSON.stringify(payload);
+      const hash = journalHash(prevHash, at, type, body);
+      this.db.prepare('INSERT INTO run_events (run_id, at, type, payload_json, prev_hash, hash) VALUES (?, ?, ?, ?, ?, ?)').run(runId, at, type, body, prevHash, hash);
+    })();
   }
 
   types(runId: string): string[] {
     return (this.db.prepare('SELECT type FROM run_events WHERE run_id = ? ORDER BY seq').all(runId) as Row[]).map((r) => String(r.type));
+  }
+
+  /** 체인을 다시 계산한다. 중간 행을 고치거나 지우거나 끼워 넣으면 그 seq에서 끊긴다 */
+  verify(runId: string): ChainCheck {
+    const rows = this.db.prepare('SELECT seq, at, type, payload_json, prev_hash, hash FROM run_events WHERE run_id = ? ORDER BY seq').all(runId) as Row[];
+    let prev = GENESIS;
+    for (const [i, r] of rows.entries()) {
+      const seq = Number(r.seq);
+      if (String(r.prev_hash) !== prev) return { ok: false, events: i, brokenAtSeq: seq, reason: 'prev_hash' };
+      const body = String(r.payload_json);
+      if (journalHash(prev, String(r.at), String(r.type), body) !== String(r.hash)) return { ok: false, events: i, brokenAtSeq: seq, reason: 'hash' };
+      let payload: unknown;
+      try {
+        payload = JSON.parse(body);
+      } catch {
+        return { ok: false, events: i, brokenAtSeq: seq, reason: 'payload' };
+      }
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return { ok: false, events: i, brokenAtSeq: seq, reason: 'payload' };
+      prev = String(r.hash);
+    }
+    return { ok: true, events: rows.length, head: prev };
+  }
+
+  /** 지원 번들 내보내기 직전·기동 시 점검(D03 §9). 끊긴 실행 ID만 돌려준다 */
+  verifyRuns(runIds?: readonly string[]): string[] {
+    const ids = runIds ?? (this.db.prepare('SELECT DISTINCT run_id FROM run_events ORDER BY run_id').all() as Row[]).map((r) => String(r.run_id));
+    return ids.filter((id) => !this.verify(id).ok);
   }
 }
