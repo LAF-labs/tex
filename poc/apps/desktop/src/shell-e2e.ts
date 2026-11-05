@@ -7,6 +7,8 @@ import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
 import { buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
 import { kstToday, summarize, type SummaryLine } from './approval-gate.ts';
+import { lastWebPrefs, webPrefsProblems } from './harden.ts';
+import { SHELL_METHODS } from './ipc.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
@@ -167,6 +169,17 @@ async function flow(): Promise<void> {
   await shot('01-home');
   check('대기 화면: 많이 쓴 요청 칩 2개(누르면 바로 보냄)', (await js<number>(`document.querySelectorAll('#quick [data-prompt]').length`)) === 2);
 
+  // 이번 달 판(08 M-02, ADR-033): main이 계산한 카드(기한 순)를 대화 열 위에 그린다. 판에는 승인 버튼이 없다.
+  const board = await js<{ title: string; cards: string[]; approve: boolean }>(`(() => { const b = document.querySelector('[data-board]'); return { title: b.querySelector('.board-title')?.textContent ?? '', cards: [...b.querySelectorAll('[data-board-card]')].map((c) => c.dataset.boardCard), approve: [...b.querySelectorAll('button')].some((x) => /승인|발급하기/.test(x.textContent)) }; })()`);
+  check('홈 = 이번 달 판: "N월 할 일", 카드는 4종 안에서만, 승인 버튼 없음', /^\d+월 할 일$/.test(board.title) && board.cards.length > 0 && board.cards.every((k) => ['invoice', 'receipt', 'accountant', 'expiring'].includes(k)) && !board.approve, board);
+  if (await js<boolean>(`!!document.querySelector('[data-board-item^="cp:"]')`)) {
+    const threadLen = await js<number>(`document.querySelector('.sx-thread').childElementCount`);
+    await click('[data-board-item^="cp:"]');
+    const composed = await js<string>(`document.querySelector('#composer').value`);
+    check('판의 "지난달처럼" 줄은 입력창에 채우기만 하고 보내지 않는다', /에 지난달처럼 세금계산서 끊어 줘$/.test(composed) && (await js<number>(`document.querySelector('.sx-thread').childElementCount`)) === threadLen && S.runs.list().length === 0, composed);
+    await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); t.blur(); })()`);
+  } else check('판의 "지난달처럼" 줄(지난달 발급 없음 → 줄 없음)', true, 'no-cp-item');
+
   // T-01 부가세 토글
   await type('A상사에 330만원 세금계산서 끊고 메일 보내 줘');
   check('"계산서" 입력 시 부가세 [별도][포함] 토글', (await js<number>(`document.querySelectorAll('#quick [data-vat]').length`)) === 2);
@@ -178,6 +191,7 @@ async function flow(): Promise<void> {
   check('초안 카드: 고르지 않으면 부가세 별도(3,300,000 + 330,000 = 3,630,000원)', draftText.includes('3,630,000') && draftText.includes('부가세 별도로 계산했어요') && !draftText.includes('승인하고 발급'), draftText.slice(0, 120));
   const inputBefore = await js<number>(`document.querySelector('.sx-input').getBoundingClientRect().bottom`);
   check('초안 카드에 승인 버튼이 없다(ADR-021)', !(await js<boolean>(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('승인'))`)));
+  check('초안이 생기면 판의 "발급할 세금계산서"에 그 실행 줄이 생긴다(main → board 이벤트)', await until('board run row', async () => js<boolean>(`!!document.querySelector('[data-board-item="run:${id}"]')`)));
   await shot('03-draft');
   await click(`[data-run="${id}"] [data-act=vat]`);
   await until('vat included', () => S.runs.get(id)?.total === 3_300_000);
@@ -253,12 +267,21 @@ async function flow(): Promise<void> {
   const clip = await clipboard.readText();
   const docsBefore = S.store.docs.length;
   const sweep: Record<string, string> = {};
+  // 메서드마다 표(ipc.ts SHELL_METHODS)에 있는 필드만 골라 보낸다. 표에 없는 필드를 섞으면 처리기에 닿기 전에 bad_request다(아래).
+  const all = (m: string): Record<string, unknown> => ({ id: m === 'run.stop' ? 'run-other' : m === 'g24.save' ? 'no-such-file' : id, kind: 'business', text: '승인하고 발급', vat: 'separate', amount: 1, doc: '주민등록표 등본', startedAt: 0 });
+  const callCode = (m: string, params: unknown) => `window.sax.call(${JSON.stringify(m)}, ${JSON.stringify(params)}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`;
   for (const m of S.methods) {
-    const params = { id: m === 'run.stop' ? 'run-other' : m === 'g24.save' ? 'no-such-file' : id, kind: 'business', text: '승인하고 발급', vat: 'separate', amount: 1, doc: '주민등록표 등본', startedAt: 0 };
-    sweep[m] = await js<string>(`window.sax.call(${JSON.stringify(m)}, ${JSON.stringify(params)}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
+    const fields = Object.keys(SHELL_METHODS[m as keyof typeof SHELL_METHODS] ?? {});
+    const params = Object.fromEntries(Object.entries(all(m)).filter(([k]) => fields.includes(k)));
+    sweep[m] = await js<string>(callCode(m, params));
   }
+  const extra = await Promise.all([js<string>(callCode('g24.save', all('g24.save'))), js<string>(callCode('run.stop', { id: 'run-other', approve: true })), js<string>(callCode('profile.set', { kind: 'admin' }))]);
+  check('IPC 표: 표에 없는 필드·틀린 열거값은 처리기에 닿기 전에 bad_request(D11 §4 IPC)', extra.every((x) => x === 'bad_request') && runStatus(id) === 'waiting', extra);
   clipboard.writeText(clip);
   check('렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로, 발급 POST 없음)', runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id && S.store.docs.length === docsBefore && sweep['g24.save'] === 'bad_candidate' && fx().fixture.posts() === 0, sweep);
+  // 하드닝 자기 점검(M4-1, D11 §4): 실제로 걸린 webPreferences. CSP 응답 헤더 확인은 바 시험이 끝난 뒤(다크 테마 앞)에 한다.
+  check('메인 창 webPreferences 자기 점검 통과(sandbox·contextIsolation·nodeIntegration 끔·webview 끔)', webPrefsProblems(lastWebPrefs(S.win.webContents)).length === 0, lastWebPrefs(S.win.webContents));
+  check('승인 바 webPreferences: 스크립트 끔·자기 점검 통과', lastWebPrefs(barWc())?.javascript === false && webPrefsProblems(lastWebPrefs(barWc())).length === 0);
   const barJs = await Promise.race([barWc().executeJavaScript('1+1').then((v) => `ran:${v}`, (e: Error) => `blocked:${e.message.slice(0, 40)}`), sleep(500).then(() => 'no-result')]);
   check('바 페이지는 스크립트를 실행하지 않는다(javascript:false)', barJs !== 'ran:2', barJs);
 
@@ -583,12 +606,19 @@ async function flow(): Promise<void> {
   await until('block attention', () => runStatus(idBlock) === 'attention', 15_000);
   fx().fixture.knobs.block = null;
   await sleep(1500);
-  const reqs = fx().fixture.requests.slice(mark);
+  // 가짜 발급 폼이 스스로 150ms마다 부르는 /api/knob은 앱 동작이 아니다(앞 페이지 타이머가 이동과 같은 ms에 걸릴 수 있다, tests/h01-policy와 같은 제외).
+  const reqs = fx().fixture.requests.slice(mark).filter((r) => r.path !== '/api/knob');
   const blockedAt = reqs.findIndex((r) => r.path === '/notice/blocked');
   const blockCard = await js<string>(`document.querySelector('[data-run="${idBlock}"]').textContent`);
   const blockIns = await inspect(idBlock);
   check('차단 안내 → 바로 멈추고 그 뒤 요청 0회, 카드에 사유(바·게이트 없음, 원장 행 없음)', blockedAt >= 0 && reqs.length === blockedAt + 1 && blockCard.includes('차단·경고 신호') && !S.bar.snapshot().visible && !gates.has(idBlock) && blockIns.ledger === null && blockIns.journal.includes('block.signal'), { reqs, note: S.runs.get(idBlock)!.stoppedNote, ins: blockIns });
   await shot('24c-block-signal');
+
+  // CSP 응답 헤더(M4-1, D11 §4): Trusted Types·frame-ancestors는 meta로는 안 걸린다. iframe을 잠깐 붙여 보므로 바 판정 시험 뒤에 한다.
+  const tt = await js<string>(`(() => { try { document.createElement('div').innerHTML = '<b>x</b>'; return 'assigned'; } catch (e) { return e.name; } })()`);
+  check('CSP 헤더: Trusted Types 강제(문자열을 innerHTML에 넣으면 TypeError)', tt === 'TypeError', tt);
+  const framed = await js<string>(`new Promise((r) => { const f = document.createElement('iframe'); const done = (v) => { f.remove(); r(v); }; f.onload = () => { let v = 'blocked'; try { if (f.contentDocument && f.contentDocument.getElementById('app')) v = 'loaded'; } catch {} done(v); }; setTimeout(() => done('timeout'), 1500); f.src = location.href; document.body.append(f); })`);
+  check('셸 페이지를 iframe에 넣을 수 없다(frame-ancestors, 하위 프레임 이동 거부)', framed !== 'loaded', framed);
 
   // 다크 테마
   nativeTheme.themeSource = 'dark';

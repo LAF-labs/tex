@@ -66,18 +66,9 @@ export async function importPdf(params: Record<string, unknown>, engine: EngineC
   }
   const password = typeof params.password === 'string' && params.password ? params.password : undefined;
   try {
-    let x = await parsePdfInSandbox(bytes, { password });
-    let document = await engine('document.import', { bytes, extract: extractOf(x) });
-    if ((document as { needsOcr?: boolean } | null)?.needsOcr) {
-      // 텍스트 층에서 핵심 칸을 못 뽑았다(머리말만 글자인 그림 PDF 등). OCR로 다시 읽어 엔진이 둘 중 나은 쪽을 고른다.
-      // OCR이 실패해도 처음 결과로 저장한다(확인 필요로 남는다).
-      const y = await parsePdfInSandbox(bytes, { password, forceOcr: true }).catch(() => null);
-      document = await engine('document.import', { bytes, extract: extractOf(y ?? x), altText: y ? x.text : null, final: true });
-      // 엔진이 고른 쪽의 읽기 정보를 보여 준다(OCR이 낫지 않으면 처음 텍스트 층)
-      if (y) x = (document as { textSource?: string } | null)?.textSource === 'ocr' ? { ...y, ms: x.ms + y.ms } : { ...x, ms: x.ms + y.ms };
-    }
+    const r = await importBytes(bytes, engine, password);
     if (pickId) picks.cancel(pickId);
-    return { status: 'imported', document, parse: { ms: x.ms, pages: x.pages, totalPages: x.totalPages, hasTextLayer: x.hasTextLayer, scanned: x.scanned, ocrConfidence: x.ocrConfidence } };
+    return r;
   } catch (e) {
     if (e instanceof DocparseError && (e.code === 'password_required' || e.code === 'password_incorrect')) {
       if (!pickId) return { status: e.code === 'password_required' ? 'needs_password' : 'wrong_password', pickId: picks.keep(bytes, Date.now()) };
@@ -90,4 +81,19 @@ export async function importPdf(params: Record<string, unknown>, engine: EngineC
     if (pickId) picks.cancel(pickId);
     throw e;
   }
+}
+
+/** 바이트를 docparse 샌드박스로 읽고 보관함에 넣는다(필요하면 OCR로 한 번 더). 시연 씨앗(demo-seed.ts)도 이 길로 넣는다. */
+export async function importBytes(bytes: Uint8Array, engine: EngineCall, password?: string): Promise<Extract<ImportResult, { status: 'imported' }>> {
+  let x = await parsePdfInSandbox(bytes, { password });
+  let document = await engine('document.import', { bytes, extract: extractOf(x) });
+  if ((document as { needsOcr?: boolean } | null)?.needsOcr) {
+    // 텍스트 층에서 핵심 칸을 못 뽑았다(머리말만 글자인 그림 PDF 등). OCR로 다시 읽어 엔진이 둘 중 나은 쪽을 고른다.
+    // OCR이 실패해도 처음 결과로 저장한다(확인 필요로 남는다).
+    const y = await parsePdfInSandbox(bytes, { password, forceOcr: true }).catch(() => null);
+    document = await engine('document.import', { bytes, extract: extractOf(y ?? x), altText: y ? x.text : null, final: true });
+    // 엔진이 고른 쪽의 읽기 정보를 보여 준다(OCR이 낫지 않으면 처음 텍스트 층)
+    if (y) x = (document as { textSource?: string } | null)?.textSource === 'ocr' ? { ...y, ms: x.ms + y.ms } : { ...x, ms: x.ms + y.ms };
+  }
+  return { status: 'imported', document, parse: { ms: x.ms, pages: x.pages, totalPages: x.totalPages, hasTextLayer: x.hasTextLayer, scanned: x.scanned, ocrConfidence: x.ocrConfidence } };
 }

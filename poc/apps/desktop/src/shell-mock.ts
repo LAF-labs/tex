@@ -66,6 +66,8 @@ export const PROFILES: Record<Profile['kind'], Profile> = {
 
 /** 셸 하나의 목업 문서함. 모듈 전역에 두지 않고 셸마다 새로 만든다. 보관함(PoC-8 documents)과는 아직 잇지 않는다. */
 export class MockStore {
+  /** 목업 서류의 견본 PDF 경로(시연 씨앗, demo-seed.ts). main 안에서만 쓰고 렌더러에 보내지 않는다. */
+  readonly files = new Map<string, string>();
   readonly docs: Doc[] = [
     { id: 'd1', name: '납세증명서(국세)', kind: '증명서', docName: '납세증명서', profile: 'business', issuedOn: dayOffset(-25), expiresOn: dayOffset(5), source: '앱이 발급', purpose: '입찰 제출' },
     { id: 'd2', name: '사업자등록증명', kind: '증명서', docName: '사업자등록증명', profile: 'business', issuedOn: dayOffset(-12), expiresOn: null, source: '앱이 발급', purpose: '거래처 등록' },
@@ -83,6 +85,28 @@ export class MockStore {
     return d;
   }
 }
+
+/**
+ * 이번 달 판 목업 어댑터(ADR-033, M6-16). 세무사 꾸러미(D-05, 2차 배분)·사업용 카드(D-04) 데이터가 들어오기 전 자리다.
+ * 지난달 꾸러미 칸 상태와 카드 내역 마지막 최신화 날짜. 꾸러미 트랙의 공개 인터페이스가 나오면 그쪽 질의로 바꾼다.
+ */
+export function mockBundle(today: string): { month: string; slots: Array<{ name: string; state: 'missing' | 'done' | 'na'; receipt?: boolean }>; sentOn: null } {
+  const [y, m] = today.split('-').map(Number) as [number, number];
+  const t = y * 12 + (m - 1) - 1;
+  const month = `${Math.floor(t / 12)}-${pad((t % 12) + 1)}`;
+  return {
+    month,
+    slots: [
+      { name: '매출(세금계산서)', state: 'done' },
+      { name: '매입(세금계산서)', state: 'done' },
+      { name: '사업용 카드 내역', state: 'missing' },
+      { name: '종이 영수증', state: 'missing', receipt: true },
+      { name: '현금매출', state: 'na' },
+    ],
+    sentOn: null,
+  };
+}
+export const MOCK_SETTINGS = { reminderDay: 5, cardFetchedOn: dayOffset(-38) };
 
 /** 대화 타임라인 첫 화면(지난 기록). 단일 세션이라 지난 일은 같은 타임라인 위쪽에 있다(ADR-019). */
 export function seedTimeline(): unknown[] {

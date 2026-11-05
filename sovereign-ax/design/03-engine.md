@@ -1,6 +1,9 @@
 # D03. 플레이북 엔진
 
+> 스키마 정렬 2026-11-05(PR #45): §6 L2 금지 대상·비밀 칸 가드의 `secretSlot`을 `secretKind` 항목으로, §7 정책 예시에 `limits.*.loginFailuresPerDay`·`verify.maxMs` 추가(policy 스키마 v1.3.1).
+> 팀장 결정 2026-11-05: §7 `loginFailuresPerDay`는 모든 포털 2(채택).
 > v1.3.2 — AUDIT-D 반영 2026-11-03: 재시작 복원은 테이블 상태 승격·`run.reverify`(§2), 게이트 대기 10분·금고 잠금 시 바 내림(§3), 작성일자 KST·s19e 대조(§5), 확인 불가 fail-closed·입력 잠금 두 구간·trial 클릭(§5.3), verify 상한 5분·실패 신호 쌍(§5.6), 포털 문구 표시(§6), 2차 인증·모르는 화면·로그인 실패·시계 전진·PoC 상한(§7·§7.1), 체인 자체 검증(§9)(ADR-025·026·027, D19 §3.5). v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
+> ADR-036 반영 2026-11-05: §4 H-01c 취소 중복 키는 차단 키라는 예외.
 
 ## 1. 책임
 
@@ -139,7 +142,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
   - **같은 `run_id`의 재개**일 때만 verify 결과(`bind` 포함)를 재사용해 사후 스텝으로 점프한다.
   - 다른 실행에서 `committed`를 발견하면 "InDoubt 아님, 이미 완료" 카드만 띄우고 사후 스텝(특히 `send_email`·PDF 저장·백업)은 실행하지 않는다.
   - "건너뛰기"는 존재하지 않는다.
-- 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7).
+- 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7). 예외는 H-01c 발급 취소의 `(원본 승인번호, 'full_cancel')`다: `prepare`와 게이트 토큰 발급 직전에 다시 조회하고, `not_committed`를 뺀 상태가 있으면 차단한다(`dup.already_cancelled`, ADR-036 결정 3.6).
 - **포털 기존 건**(Phase 1부터, ADR-024 결정 2): 앱 내장 플레이북 목록(지금은 세금계산서 발급 H-01)의 주 비가역 스텝에만 한다. 게이트 직전(W 밖)에 찍은 verify 기준선 B₀(D02 §4.4)에서 이 PC 원장의 `verify_ref`를 뺀다. `verify_ref`는 verify가 `committed`로 판정한 `B₁ \ B₀`의 한 건이며 `bind` 유무와 관계없이 적는다. verify가 `committed`로 판정하지 않은 행(`in_doubt`·`not_committed`, verify 없는 `observed_manual`)은 비어 있다. 남은 건이 있으면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다(차단 아님). 다른 PC·포털 직접 발급·세무사 발급, 그리고 원장에 확정되지 않은 이 PC의 이전 시도가 이것으로 보인다. 새 조회는 없다. 같은 건의 범위는 플레이북 `verify.lookup.match`가 정한다(H-01: 거래처 사업자번호·작성일자·공급가액·세액).
 - **기기 간 업무 키 표시**(B-30, **Phase 2**, E-07·E-13, ADR-024 결정 3): 계정의 AIK 서명 기기 목록에 폐기되지 않은 데스크톱이 **2대 이상**이고 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(서류 백업·서버 색인을 켜는 것과 같은 계정 스위치). Phase 1에는 없다. 두 번째 PC가 같은 `K_idx`와 AIK 인증서를 받는 새 PC 연결(08 A-03)이 Phase 2이기 때문이다. 이 표시가 메우는 것은 B₀가 못 보는 다른 PC의 진행 중 건과 발급목록 반영 지연 구간이다. 조건을 만족하면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다. 이 세 경고는 `$dup.otherDevice`로 바에 올린다. 데스크톱이 2대 이상인데 스위치가 꺼져 있으면 `$dup.otherDevice` 없이 카드에만 "다른 PC 진행 중·방금 발급 경고 꺼짐(백업 꺼짐)"을 둔다. 이 문구는 동작 글자를 바꾸지 않고, 포털 기존 건 경고는 그대로 켜져 있다. PC 한 대 계정에는 이 표시도 `$dup.otherDevice`도 없다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
 - `in_doubt` 해소 수단은 둘뿐: 조회형 verify 재시도, 사용자의 명시 증언. 데몬은 `in_doubt`가 있는 서류를 자동 재시도하지 않는다(D10).
@@ -231,7 +234,7 @@ for step in plan(current):
 |---|---|---|---|---|
 | L0 | 셀렉터 미스·타임아웃 | 정책 지연 후 재시도, 후보 순회 | `min(onFail.retry, policy.retries.stepMax)` ≤ 3. 둘 다 **재시도 횟수**(첫 시도 제외, §7) | 비가역 스텝은 0 |
 | L1 | L0 소진·미지 모달 | `recovery_v1` 번들(결과: `element_missing_same_screen`, `different_screen`, `modal_blocking`, `session_expired`, `unknown`) → 각각 L2 / 체크포인트 / 팝업 처리 / `session` 복귀 / 핸드오프 | 실행 전체 연속 `unknown` 2회 → L3 | 커밋 구간 안 금지 |
-| L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 요청마다 채운 열거값, 이름은 정규식이 아닌 부분 문자열 `nameContains`, B/C-07) → 엔진이 동일성 검사 10항 통과 후 **그 실행에서만** 적용. **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만**(되돌릴 수 있고 readback으로 검증됨). `click`·`press` 타깃의 제안은 핸드오프 카드("이 버튼을 누를까요?" + 요소 하이라이트)로 사용자가 확인해야 적용한다(B-16) | 실행당 `policy.run.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretSlot`·`password`·커밋 구간·조회 패키지 금지 |
+| L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 요청마다 채운 열거값, 이름은 정규식이 아닌 부분 문자열 `nameContains`, B/C-07) → 엔진이 동일성 검사 10항 통과 후 **그 실행에서만** 적용. **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만**(되돌릴 수 있고 readback으로 검증됨). `click`·`press` 타깃의 제안은 핸드오프 카드("이 버튼을 누를까요?" + 요소 하이라이트)로 사용자가 확인해야 적용한다(B-16) | 실행당 `policy.run.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretKind` 항목·`password`·커밋 구간·조회 패키지 금지 |
 | L3 | 그 외 | 핸드오프(`resumeAt`), 토큰 폐기 | — | — |
 
 L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같은 프레임 (3) 스텝 `scope` 서브트리 안 (4) 사전의 `role` 일치 (5) 실제 접근성 이름이 사전 `namePattern`(앵커 필수, SV-04)과 일치(모델 제안 이름 미사용) (6) `landmark` 일치 (7) `fill`이면 readback 일치 (8) `css`는 ID/허용 속성 셀렉터만 (9) 실제 이름이 `DENY_ACTION_NAME`에 맞으면 버림(B-16, B-32) (10) 모델 출력의 `risk_flags`가 비어 있지 않거나 `outcome ≠ repaired`면 적용하지 않음(B-17, 출력 스키마는 D04 §4.1). 복구 성공 → **실패한 그 스텝**을 재실행. L2 입력은 텍스트뿐이며 **Phase 1에서는 이미지를 모델로 보내지 않는다**(B-18).
@@ -240,7 +243,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 
 대화상자 정책: `alert` → accept, 텍스트를 판정 입력으로. `confirm`/`beforeunload` → **무장된 커밋 구간 + 선언된 `expectConfirm` 패턴(앵커, V-24) 일치**일 때만 accept + `commit.confirm_accepted{textHash}`, 그 외 dismiss + 저널. `prompt` → dismiss. 리스너는 엔진이 항상 등록한다(Playwright 기본 동작에 의존하지 않음). 실행이 닫은 포털 대화상자의 마지막 문구(NFKC, 200자)는 실행 메모리에만 두고 실패·핸드오프 카드에 '홈택스 안내: …'로 보인다. 저널·텔레메트리·모델에는 넣지 않는다. `step.target_not_found`·`checkpoint.expect_failed`는 "예상한 홈택스 화면이 아니에요" 문구로 보인다(ADR-025, D-10(N-16)).
 
-스냅샷 필터와 비밀 칸 가드: `type=password` 또는 사전 `secretSlot` 또는 최근 타이피스트 대상 요소의 값은 접근성 스냅샷에서 제거한다. 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷·`extract` 공통)는 이 요소들의 `value`를 아예 읽지 않는다(V-20 런타임 가드, A-05, B-26). 타이피스트는 키 입력마다 `activeElement`와 `type`을 재확인한다. 스냅샷은 모델로 가기 전에 D06 절단·구분자 규칙과 D04 결정적 사전 필터를 지난다.
+스냅샷 필터와 비밀 칸 가드: `type=password` 또는 사전의 `secretKind` 항목 또는 최근 타이피스트 대상 요소의 값은 접근성 스냅샷에서 제거한다. 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷·`extract` 공통)는 이 요소들의 `value`를 아예 읽지 않는다(V-20 런타임 가드, A-05, B-26). 타이피스트는 키 입력마다 `activeElement`와 `type`을 재확인한다. 스냅샷은 모델로 가기 전에 D06 절단·구분자 규칙과 D04 결정적 사전 필터를 지난다.
 
 ## 7. 요청률 정책 (서명 배포, 플레이북은 강화만 가능)
 
@@ -254,23 +257,23 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
            "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": 150, "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
   "browser": {"remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true},
   "captchaRelay": {"hometax": "allowed", "gov24": "disabled_until_permission", "wetax": "disabled_until_permission", "sminfo": "disabled", "insure4": "disabled"},
-  "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
-             "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
-             "sminfo":  {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "concurrent": 1},
-             "insure4": {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "concurrent": 1}},
+  "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "loginFailuresPerDay": 2, "concurrent": 1},
+             "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "loginFailuresPerDay": 2, "concurrent": 1},
+             "sminfo":  {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "loginFailuresPerDay": 2, "concurrent": 1},
+             "insure4": {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "loginFailuresPerDay": 2, "concurrent": 1}},
   "retries": {"stepMax": 3, "backoff": "equal_jitter", "baseMs": 800, "capMs": 10000},
   "run": {"maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1},
   "cooldown": {"onBlockSignalHours": 24, "onCaptchaBurst": {"windowMin": 10, "count": 3, "action": "slow+notify"}, "positiveDetectionsForCooldown": 2},
   "daemon": {"windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30, "autoAllowed": false},
   "portalMode": {"hometax": "auto", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"},
-  "verify": {"minElapsedMs": 60000, "lookups": 2},
+  "verify": {"minElapsedMs": 60000, "lookups": 2, "maxMs": 300000},
   "remote": {"irreversiblePerDay": 5, "newCounterpartyRequiresLocal": true, "notifyOnIrreversible": ["desktop", "email"], "minProtocolVersion": 1, "disabledFeatures": []},
   "queue": {"maxIntentsPerPair": 5, "ttlHours": 72}
 }
 ```
 
 카운터 정의(모두 SQLite 영속, KST, 증가 커밋 → 행동 순서):
-- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
+- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`), 상한은 `limits.<portal>.loginFailuresPerDay`(앱 하한 ≤ 2, 모든 포털 2로 채택(2026-11-05 팀장), ADR-026 하한과 같음). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
 - 캡차 이벤트도 `rate_counters`에 기록(재시작에 살아남음).
 - "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
 - 시계 전진은 단조 시간으로 판정하지 않는다. `lastSeen`이 마지막으로 검증한 서명 타임스탬프 + 72시간보다 미래면 불가능한 미래로 보고 재설정한다(`clock.future_reset`). 쿨다운 해제는 벽시계와 그 뒤 새로 검증한 서명 시각이 모두 `until` 이후일 때다(D-46(N-72)).

@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { BrowserWindow, type MessagePortMain } from 'electron';
 import { hardenWindow } from './harden.ts';
+import { IPC } from './ipc.ts';
 import { secretTitle, type SecretInputBind } from './secret-labels.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
@@ -51,7 +52,7 @@ export function openSecretWindow(parent: BrowserWindow, bind: SecretInputBind, p
   void win.loadURL(url).then(
     () => {
       if (win.isDestroyed()) return drop();
-      win.webContents.postMessage('vault-secret-port', null, [port]);
+      win.webContents.postMessage(IPC.secretPort, null, [port]);
       sent = true;
     },
     () => {
