@@ -66,7 +66,8 @@ describe('원장 후속 API', () => {
     l.resolve('m-done', 'issue', 'committed');
     assert.throws(() => l.observedManual(arm(run, 'm-done')), code('ledger_committed'));
     gateArm(arm(run, 'm-not'));
-    l.resolve('m-not', 'issue', 'not_committed', 'verify');
+    l.resolve('m-not', 'issue', 'not_committed', 'attested');
+    assert.equal((db.prepare("SELECT reason FROM irreversible_log WHERE intent_id = 'm-not'").pluck().get() as string), 'attested', '증언 바 사유(ADR-021 결정 5)');
     assert.throws(() => l.observedManual(arm(run, 'm-not')), code('ledger_not_committed'));
     // observed_manual에서 resolve 가능
     l.resolve('m-new', 'issue', 'committed', null, 'verify-ref');
