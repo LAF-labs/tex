@@ -264,11 +264,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
   /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 목업 어댑터(shell-mock mockBundle·MOCK_SETTINGS). */
+  // 문서함을 읽지 못하면 판을 만들지 않는다(보관함 서류가 빠진 판으로 온전한 판을 덮지 않게). 지난 판이 그대로 남고,
+  // boardDay를 비워 두어 날짜 타이머가 1분 뒤 다시 계산한다.
   let boardDay = '';
   const boardNow = async (): Promise<Board> => {
     const today = kstToday(Date.now());
+    const docsNow = await listDocs().catch((e: unknown) => {
+      boardDay = '';
+      throw e;
+    });
     boardDay = today;
-    const docsNow = await listDocs().catch(() => store.docs);
     return buildBoard({
       today,
       reminderDay: MOCK_SETTINGS.reminderDay,

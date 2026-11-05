@@ -192,6 +192,15 @@ describe('정렬과 경계', () => {
     assert.match(src, /clearInterval\(boardDayTimer\)/);
   });
 
+  it('main: 문서함을 읽지 못하면 판을 보내지 않고(지난 판 유지) 날짜 타이머가 다시 계산한다', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
+    const i = src.indexOf('const boardNow = async');
+    const body = src.slice(i, src.indexOf('return buildBoard(', i));
+    assert.ok(!body.includes('store.docs'), '실패를 목업 서류로 덮지 않는다');
+    assert.match(body, /catch\(\(e: unknown\) => \{\s*boardDay = '';\s*throw e;/);
+    assert.ok(body.indexOf("boardDay = today") > body.indexOf('await listDocs()'), '성공한 뒤에만 날짜를 적는다');
+  });
+
   it('렌더러 판 코드에는 승인·실행 시작 호출이 없다', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
     const i = src.indexOf('function renderToday()');
