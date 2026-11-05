@@ -49,6 +49,15 @@ export type SecretKind = (typeof SECRET_KINDS)[number];
  * - security_card: 칸 `securitycard/<scope>/<row>`(row 1~35)
  */
 export const STORABLE_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
+
+/**
+ * 타이피스트가 넣는 종류(D05 §2 표·§4, ADR-020 결정 2, ADR-025 결정 10). 공동·금융인증서 비밀번호는 사용자가 전용 Chrome의
+ * 포털 칸(가상키패드)에 직접 넣는다(`human:secret`, 비밀 창 (b)). 금고는 정책·허용 호스트와 상관없이 타이피스트 입력과
+ * 1회용 입력 창(secretInput oneshot)에서 이 밖의 종류를 받지 않는다.
+ */
+export const TYPIST_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
+export type TypistKind = (typeof TYPIST_KINDS)[number];
+export const isTypistKind = (k: unknown): k is TypistKind => typeof k === 'string' && (TYPIST_KINDS as readonly string[]).includes(k);
 export type StorableKind = (typeof STORABLE_KINDS)[number];
 
 /**
@@ -79,6 +88,9 @@ export const PORTAL_LOGIN_ID_MAX = 64;
  * 1회용 비밀 입력 결속(I-1, N-44). main이 secretInput 포트를 넘길 때 함께 준다.
  * 금고는 이 포트에서 이 값으로 secret.provide를 한 번만 받는다. 결속이 없거나 틀리면 포트를 붙이지 않는다.
  * `mode`가 없으면 oneshot이다(PoC 호환).
+ * - kind는 TYPIST_KINDS만(인증서 비밀번호 없음). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
+ * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope, row?}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
+ *   요청은 SECRET_TTL_MS 동안 살아 있고, 값을 받거나 run.end면 지운다. 요청 없는 결속은 `vault.secret_input_unrequested`.
  */
 export type OneShotBind = {
   mode?: 'oneshot';
@@ -244,7 +256,11 @@ export interface RunBeginParams {
 
 // ───────────────────────── 타이피스트(engine) ─────────────────────────
 
-export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing' | 'vault_locked' | 'credential_suspect';
+/**
+ * typist.fill 실패 사유. `row_mismatch`: 보안카드 요청 칸 번호와 화면에 보인 칸 번호(`rowLabel`)가 다르거나 읽을 수 없다
+ * (셀렉터·화면 문제, 입력하지 않는다, D05 §4 2).
+ */
+export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing' | 'vault_locked' | 'credential_suspect' | 'row_mismatch';
 
 /**
  * typist.fill 인자(D05 §3.8·§4).
@@ -258,9 +274,15 @@ export interface FillRequest {
   frame: string;
   /** CSS 셀렉터(PoC). Phase 1은 셀렉터 사전 ElementLocator. */
   element: string;
+  /** kind는 TYPIST_KINDS만. 보안카드는 row(1~35)가 꼭 있고, 포털 비밀번호는 row가 없다. */
   secret: { kind: string; scope: string; row?: number };
   slot: { secretKind: SecretKind; purpose: 'login' | 'sign' };
   startGate?: boolean;
+  /**
+   * 보안카드 전용(필수): 화면에서 요청 칸 번호를 보여 주는 요소의 셀렉터(element와 같은 프레임). 금고가 자기 세션으로 그 글자를
+   * 읽어 숫자가 하나만 있고 secret.row와 같을 때만 넣는다(D05 §4 2). "앞 2자리" 같은 다른 숫자가 함께 있으면 읽지 못한 것으로 본다.
+   */
+  rowLabel?: string;
 }
 
 /** typist.authFailed 인자: 포털의 명시적 인증 실패(auth_failed) 1회 뒤 그 kind·scope를 suspect로(ADR-026 결정 7). */
