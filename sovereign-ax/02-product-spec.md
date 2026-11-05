@@ -5,7 +5,7 @@
 > 제품 정의 반영 2026-11-05: 급여대장과 원천징수·4대보험 계산 보조(§12·§16, [ADR-031](design/adr/ADR-031-payroll-ledger-withholding-calc.md)), 세무사 꾸러미와 사업용 카드 [최신화] 버튼(§10·§17, [ADR-032](design/adr/ADR-032-tax-accountant-bundle.md)). 세무사 꾸러미와 급여대장 모두 Phase 1 베타다.
 >
 > 같은 날 갱신: 홈은 "이번 달 판"(§3, [ADR-033](design/adr/ADR-033-home-monthly-board.md)). Phase 1 폰 앱(§1·§7), 9,900원 한 플랜(§6), 급여대장 선택 기능·근무표(§16), 세무사 꾸러미 표준 서식과 보내기(§17), 세무사 연결(§18), 하지 않는 것(§12)([ADR-034](design/adr/ADR-034-phase1-scope-single-plan-accountant-link.md)).
-
+>
 > ADR-036 반영 2026-11-05: 발급 인증 수단별 로그인·서명 경로와 화면 판정·복구 폴백 단계(§4), 발급 취소 H-01c(§4.1·§10, 전액 상쇄 수정세금계산서). 구현은 앱 개발 뒤(3차 배분).
 
 ## 1. 제품 구성 요소
