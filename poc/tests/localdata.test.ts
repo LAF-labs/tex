@@ -422,7 +422,8 @@ describe('암호화 DB와 CRUD', () => {
   });
 
   it('다른 키로는 열리지 않고, 같은 키로 다시 열면 데이터가 남아 있다. 디스크에 평문 없음', async () => {
-    const marker = '평문표지-' + randomBytes(4).toString('hex');
+    // 표지에 숫자가 있으면 검색이 사업자번호 LIKE로도 맞아 다른 거래처가 섞인다(간헐 실패). 글자만 쓴다
+    const marker = '평문표지-' + randomBytes(4).toString('hex').replace(/\d/g, (d) => 'ghijklmnop'[Number(d)]!);
     await svc.handle('counterparty.create', { bizNo: syntheticBizNo(99), name: marker });
     db.close();
     assert.throws(() => openDatabase(file, new Uint8Array(randomBytes(32))), /not a database|file is not a database|SQLITE_NOTADB/i);
