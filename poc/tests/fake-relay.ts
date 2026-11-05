@@ -50,6 +50,8 @@ export interface FakePage {
   connected: boolean;
   len: number;
   value: string;
+  /** 보안카드 칸 번호 요소의 글자(FillRequest.rowLabel 셀렉터로 금고가 읽는다). null이면 요소 없음. */
+  rowLabel: string | null;
 }
 
 export interface FakeRelay {
@@ -82,9 +84,9 @@ export async function fakeRelay(opts: { policy?: Partial<RelayPolicy>; ops?: Sec
   conn.handlers.set('Page.getFrameTree', () => ({ frameTree: { frame: { id: 'RUN', url: frameUrl } } }));
   conn.handlers.set('Target.attachToTarget', () => ({ sessionId: `E-${++sessions}` }));
   conn.handlers.set('Target.getTargetInfo', (p) => ({ targetInfo: { targetId: p.targetId, type: 'page', url: '' } }));
-  const page: FakePage = { type: 'password', active: true, connected: true, len: 0, value: '' };
+  const page: FakePage = { type: 'password', active: true, connected: true, len: 0, value: '', rowLabel: null };
   conn.handlers.set('Page.createIsolatedWorld', () => ({ executionContextId: 1 }));
-  conn.handlers.set('Runtime.evaluate', () => ({ result: { objectId: 'OBJ' } }));
+  conn.handlers.set('Runtime.evaluate', (p) => (p.returnByValue && String(p.expression).includes('textContent') ? { result: { value: page.rowLabel } } : { result: { objectId: 'OBJ' } }));
   conn.handlers.set('DOM.describeNode', () => ({ node: { backendNodeId: 7 } }));
   conn.handlers.set('Runtime.callFunctionOn', (p) =>
     String(p.functionDeclaration).includes('return typeof this.value')

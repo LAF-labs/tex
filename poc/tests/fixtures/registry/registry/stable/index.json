@@ -1,0 +1,48 @@
+{
+  "channel": "stable",
+  "monotonic": 7,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-05T00:00:00Z",
+  "expiresAt": "2026-11-19T00:00:00Z",
+  "entries": [
+    {
+      "id": "hometax.invoice.lookup",
+      "version": "1.0.0",
+      "kind": "lookup",
+      "portal": "hometax",
+      "sxpDigest": "09d8a148cc17041e2eb9bed6d1e48158f3cadf0a4e124d128e8128b3e7bcfbf9",
+      "size": 4391,
+      "rolloutPercent": 100
+    },
+    {
+      "id": "hometax.invoice.email_status",
+      "version": "1.0.0",
+      "kind": "lookup",
+      "portal": "hometax",
+      "sxpDigest": "9b5e8cc0d84b4efd85962e6e8d12acd811194300727f1f53e5dc0959747c7890",
+      "size": 4415,
+      "rolloutPercent": 100
+    },
+    {
+      "id": "hometax.invoice.issue",
+      "version": "2.1.0",
+      "kind": "playbook",
+      "portal": "hometax",
+      "sxpDigest": "a672c16fa0733170f011d75ad978638769feed12902f12d050c47b0677dcf662",
+      "size": 19955,
+      "rolloutPercent": 100
+    }
+  ],
+  "signatures": [
+    {
+      "keyId": "package-1",
+      "alg": "ed25519",
+      "sig": "Ie38oiHnuw3ekKP4DgSHYbUgphMy766_XFjCP4SH2j2yEspko6pomfSJ5wRTUIeI5O6fd41xa488_LAE-IaWCg"
+    },
+    {
+      "keyId": "package-2",
+      "alg": "ed25519",
+      "sig": "TkWurg7AwD7S2Ru-AaqRA7jhHRyUahMTGG_oFzBYmL-SvnRZS9uPEc5_U9vzvTTdv5VJdi7CZBqgvJTJgcqEAQ"
+    }
+  ]
+}
