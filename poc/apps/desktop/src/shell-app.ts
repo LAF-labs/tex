@@ -25,6 +25,7 @@ import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf } from './vault-import.ts';
 import { mergeParsed, type DemoModel } from './demo-model.ts';
+import { startDemoSeed, type DemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
@@ -105,6 +106,8 @@ export interface ShellOptions {
   preparePerMin?: number;
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
   demoModel?: DemoModel | null;
+  /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
+  demoSeed?: boolean;
 }
 
 export interface Shell {
@@ -177,8 +180,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const ps = (await host.rpc('db.query.profiles.list')) as DbProfile[];
     const b = ps.find((p) => p.kind === 'business');
     business = b ? profileView(b) : null;
-    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {}));
+    // 최근 발급일: 원장(DB)에 없으면 문서함 세금계산서(지난 발급 견본 포함)에서
+    const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
+    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {})).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
   };
+  let seed: DemoSeed | null = null;
   const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
@@ -203,6 +209,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }
     };
   let importing = false;
+  /** 열 파일: 목업 서류의 견본 PDF(시연 씨앗) 아니면 보관함 서류. */
+  const docFile = async (id: string) => store.files.get(id) ?? (await docs.filePath(id));
 
   const win = new BrowserWindow({
     width: opts.width ?? 1280,
@@ -250,6 +258,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('update', (run) => send({ type: 'run', run }));
   runs.on('doc', (doc) => {
     store.docs.unshift(doc);
+    const run = runs.get(doc.id.slice(2));
+    if (seed && run) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
     send({ type: 'doc', doc });
     void refresh().catch(() => {});
   });
@@ -341,6 +351,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
+  /** 시연 DB 쓰기(렌더러 처리기는 이 두 함수만 부른다. 엔진 명령은 여기서 고정한다). fixture 모드가 아니면 거부한다. */
+  const demoDb = {
+    async saveCounterparty(p: Record<string, unknown>) {
+      if (!fixture) throw new Error('unsupported');
+      const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
+      const v = { name: text(p.name, 60), repName: text(p.rep, 30) || null, email: text(p.email, 100) || null };
+      const id = typeof p.id === 'string' && p.id ? p.id : null;
+      const saved = (id ? await host.rpc('counterparty.update', { id, patch: v }) : await host.rpc('counterparty.create', { ...v, bizNo: text(p.bizNo, 20).replace(/\D/g, '') })) as DbCounterparty;
+      const item = text(p.item, 40);
+      if (item) fixture.itemHints[saved.bizNo] = item;
+      await refresh();
+      return { id: saved.id, counterparties: cps };
+    },
+    async setDefaultAuth(p: Record<string, unknown>) {
+      if (!fixture) throw new Error('unsupported');
+      const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
+      if (!signMethod) throw new Error('bad_request');
+      const cur = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((x) => x.kind === 'business');
+      if (!cur) throw new Error('not_found');
+      await host.rpc('profile.upsert', { ...cur, signMethod });
+      await refresh();
+      return { profiles: profiles() };
+    },
+  };
   const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
     'shell.bootstrap': async () => ({
       layout: SHELL,
@@ -352,6 +386,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       quick: QUICK,
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
+      history: seed?.history ?? null,
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -413,11 +448,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'docs.open': docsCall(async (p) => {
       needGesture(3_000);
       if (!openRate.take(performance.now())) throw new Error('throttled');
-      const file = await docs.filePath(String(p.id));
+      const file = await docFile(String(p.id));
       if (path.extname(file).toLowerCase() !== '.pdf') throw new Error('open_failed');
       if (await desktop.openPath(file)) throw new Error('open_failed');
       return {};
     }),
+    // 같은 파일을 Finder에서 보여 준다(결과 카드 [폴더 열기]).
+    'docs.reveal': docsCall(async (p) => {
+      needGesture(3_000);
+      if (!openRate.take(performance.now())) throw new Error('throttled');
+      desktop.showItemInFolder(await docFile(String(p.id)));
+      return {};
+    }),
+    // 시연 DB에서만: 거래처 추가·수정, 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
+    'counterparty.save': (p) => demoDb.saveCounterparty(p),
+    'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
       return cps;
@@ -450,8 +495,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     }
     if (fixture) await fixture.seed(host);
+    if (fixture && opts.demoSeed) seed = await startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
     await win.loadURL(SHELL_URL);
+    // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
+    void seed
+      ?.fill()
+      .then(async () => {
+        await refresh();
+        send({ type: 'docs-reload' });
+      })
+      .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
   const close = async () => {
     closeSecret();
