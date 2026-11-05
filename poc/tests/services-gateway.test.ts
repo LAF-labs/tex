@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, openAIDecisionsBody, positiveInt } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -405,5 +405,51 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(input[0]!.role, 'developer');
     assert.ok(input[0]!.content[0]!.prompt_cache_breakpoint);
     assert.ok(!input[1]!.content[0]!.prompt_cache_breakpoint);
+  });
+
+  const SPEC: RespondSpec = { model: 'openai/gpt-x', prefix: 'P', effort: 'low', maxOutputTokens: 100, tools: [], output: { name: 'o', schema: { type: 'object' } }, input: [], cacheKey: 'acct:x:b:y', safetyId: 's' };
+  const ROUTING_ENV = { OPENROUTER_ZDR: 'true', OPENROUTER_DATA_COLLECTION: 'deny', OPENROUTER_PROVIDERS: 'openai, azure' };
+
+  it('OpenRouter 라우팅은 ZDR·수집 거부·공급자 고정이 환경에 정확히 있을 때만(없거나 다르면 기동 거부, R14 ①)', () => {
+    assert.deepEqual(parseOpenRouterRouting(ROUTING_ENV), { zdr: true, dataCollection: 'deny', only: ['openai', 'azure'] });
+    for (const bad of [{}, { ...ROUTING_ENV, OPENROUTER_ZDR: '1' }, { ...ROUTING_ENV, OPENROUTER_DATA_COLLECTION: 'allow' }, { ...ROUTING_ENV, OPENROUTER_PROVIDERS: '' }, { ...ROUTING_ENV, OPENROUTER_PROVIDERS: 'openai,openai' }, { ...ROUTING_ENV, OPENROUTER_PROVIDERS: 'Open AI' }])
+      assert.equal(parseOpenRouterRouting(bad), null);
+    assert.throws(() => providerFromEnv({ GW_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'k' }), /config_OPENROUTER_ROUTING/);
+    assert.throws(() => providerFromEnv({ GW_PROVIDER: 'openrouter', ...ROUTING_ENV }), /config_OPENROUTER_API_KEY/);
+    assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: null }), /config_OPENROUTER_ROUTING/);
+    assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: { zdr: true, dataCollection: 'deny', only: [] } }), /config_OPENROUTER_ROUTING/);
+    assert.equal(providerFromEnv({ GW_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV }).name, 'openrouter');
+  });
+
+  it('OpenRouter 요청마다 provider{zdr, data_collection:deny, only, allow_fallbacks:false}를 싣고 적용 사실만 이벤트로, 고정 밖 공급자 응답은 버린다', async () => {
+    const sent: Array<{ url: string; body: Record<string, unknown> }> = [];
+    let reply: Record<string, unknown> = { model: 'openai/gpt-x', status: 'completed', output: [], usage: { input_tokens: 5, output_tokens: 1 } };
+    let status = 200;
+    const fetchFn = (async (url: string, init: { body: string }) => {
+      sent.push({ url, body: JSON.parse(init.body) as Record<string, unknown> });
+      return new Response(JSON.stringify(reply), { status });
+    }) as unknown as typeof fetch;
+    const events: string[] = [];
+    const p = new OpenRouterProvider({ apiKey: 'k', routing: parseOpenRouterRouting(ROUTING_ENV), fetchFn, onEvent: (e) => events.push(e) });
+    const r = await p.respond(SPEC);
+    assert.equal(r.status, 'completed');
+    assert.equal(sent[0]!.url, 'https://openrouter.ai/api/v1/responses');
+    assert.deepEqual(sent[0]!.body.provider, { zdr: true, data_collection: 'deny', only: ['openai', 'azure'], allow_fallbacks: false, require_parameters: true });
+    assert.equal(sent[0]!.body.store, false);
+    assert.deepEqual(events, ['upstream_zdr_pinned']);
+    // 고정 목록 밖 공급자가 답하면 결과를 쓰지 않는다
+    reply = { ...reply, provider: 'SomeOther' };
+    await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);
+    assert.ok(events.includes('upstream_provider_mismatch'));
+    reply = { ...reply, provider: 'OpenAI' };
+    assert.equal((await p.respond(SPEC)).status, 'completed');
+    // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
+    status = 404;
+    await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);
+    // L1(Decisions)은 OpenRouter에 없다: 호출하지 않고 재시도 불가
+    const before = sent.length;
+    await assert.rejects(p.decide(), (e: ProviderError) => !e.retryable);
+    assert.equal(sent.length, before);
+    assert.ok(events.every((e) => /^upstream_[a-z_]+$/.test(e)));
   });
 });

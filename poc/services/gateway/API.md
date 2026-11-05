@@ -2,6 +2,20 @@
 
 근거: D09 §3·§4.1, D04 §6·§7, [gateway-request.schema.json](../../packages/net/schemas/gateway-request.schema.json)(요청 본문 정본, B-20), ADR-015·029, C-23·C-24·C-25, B-18. 공통 형식은 [`../shared/CONTRACT.md`](../shared/CONTRACT.md).
 
+**호스트**: 공개 origin은 `https://tax.laf-co.com` 하나다(클라이언트 설정 `GATEWAY_ORIGIN`). 경로는 서비스마다 겹치지 않게 나누고, 앞단(Vercel 재작성)이 경로 접두로 서비스를 고른다. `GATEWAY_PUBLIC_ORIGIN`도 `https://tax.laf-co.com`이다(DPoP `htu` = origin + 아래 경로).
+
+| 서비스 | 공개 경로 |
+|---|---|
+| 게이트웨이(M4-6) | `/v1/run-tokens`, `/v1/decide`, `/v1/respond`, `/v1/biz/status` |
+| 계정(M4-5) | `/v1/auth/*`, `/v1/oauth/*`, `/v1/passkeys*`, `/v1/me`, `/v1/consents`, `/v1/billing/*`, `/v1/devices*`, `/v1/device-tokens`, `/v1/device-list`, `/v1/aik`, `/v1/slots*` |
+| 릴레이(M7-3) | `/v1/mailboxes/*`, `/v1/rooms*` |
+| 푸시(M7-3) | `/v1/push-token`, `/v1/wake` |
+| 레지스트리(M4-7) | `/registry/*`, `/policy/*`, `/packages/*`, `/releases/*`(게시 `/admin/v1/*`은 공개 origin에 두지 않는다) |
+
+`/internal/v1/*`과 `/healthz`는 공개 origin에 내보내지 않는다(서비스끼리 내부 주소로만).
+
+**배포 전제(yulmu 11-05, 미검증)**: DB는 Supabase Postgres, HTTP는 Vercel. 리전은 **미정**이다(서울이면 Supabase `ap-northeast-2`, Vercel 함수 `icn1`). 처리방침은 어느 쪽이든 "국외 이전 가능"으로 쓴다(R14). 모델 상류는 OpenRouter(ZDR·수집 거부·공급자 고정, [ENV.md](ENV.md)). 게이트웨이는 무저장이라 함수로 올릴 수 있지만, 지금의 메모리 한도(IP·기기 분당, 자동 정지 판정, 상한 뒤 안전 판정 속도)는 인스턴스마다 따로 센다. 함수로 올리면 한도를 Postgres로 옮기는 작업이 먼저다(후속 PR).
+
 **인증**: 모든 `/v1/*`는 데스크톱 기기 범위 토큰(`gateway` 범위) + DPoP(`htu = GATEWAY_PUBLIC_ORIGIN + 경로`). 계정 세션 토큰·폰 토큰은 거부한다. 기기 ID는 토큰에서 유도한다(`X-Device-Id` 헤더 없음, N-41). 긴급 정지·자동 정지된 기기는 `403 gateway.device_suspended`.
 
 **오류 본문**은 `{"error":"<코드>"}`뿐이고 입력을 되풀이하지 않는다. 공통: `401 gateway.unauthorized`, `403 account.scope_denied`, `400 gateway.param_rejected`(스키마 밖 필드·형식), `429 policy.rate_limited`(+`Retry-After`), `413 request.too_large`.
