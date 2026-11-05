@@ -50,17 +50,29 @@ export const SECRET_ORIGINS: Record<string, string[]> = {
  * - Target은 page 세션 수준의 자식 자동 부착·분리만 허용하고(자식 세션은 금고가 origin으로 거른다),
  *   브라우저 수준 Target은 가상 루트(relay.ts)가 합성 응답으로 처리한다.
  */
-export const RELAY_ALLOWED_DOMAINS = ['Page', 'Runtime', 'DOM', 'Accessibility', 'Input', 'Network', 'Fetch', 'Emulation', 'Log', 'Target', 'CSS', 'DOMSnapshot'] as const;
+export const RELAY_ALLOWED_DOMAINS = ['Page', 'Runtime', 'DOM', 'Accessibility', 'Input', 'Network', 'Fetch', 'Emulation', 'Log', 'Target', 'CSS', 'DOMSnapshot', 'Inspector'] as const;
 
-export const RELAY_DOMAIN_METHOD_ALLOWLIST: Record<string, string[] | '*'> = {
-  Page: '*',
-  Runtime: '*',
-  DOM: '*',
+/**
+ * 도메인 안에서도 메서드 단위 허용 목록이다(도메인 전체 허용 '*'는 두지 않는다). 근거: S6b 관측 + playwright-core 1.64 coreBundle이 부르는 명령.
+ * 표 밖 명령(예: Page.startScreenRecording·searchInResource·getAnnotatedPageContent·setDocumentContent, Runtime.compileScript·runScript·queryObjects,
+ * DOM.getOuterHTML)은 기본 거부다. 스크린샷 거부·값 접근 패턴 검사를 우회하는 경로이기 때문이다. 표 대조 시험: tests/vault-relay-table.test.ts.
+ */
+export const RELAY_DOMAIN_METHOD_ALLOWLIST: Record<string, string[]> = {
+  Page: [
+    'enable', 'disable', 'getFrameTree', 'setLifecycleEventsEnabled', 'addScriptToEvaluateOnNewDocument', 'removeScriptToEvaluateOnNewDocument',
+    'createIsolatedWorld', 'navigate', 'reload', 'stopLoading', 'getNavigationHistory', 'navigateToHistoryEntry', 'getLayoutMetrics', 'setFontFamilies',
+    'captureScreenshot', 'startScreencast', 'stopScreencast', 'screencastFrameAck', 'handleJavaScriptDialog', 'bringToFront', 'close', 'getResourceTree',
+  ],
+  Runtime: ['enable', 'disable', 'evaluate', 'callFunctionOn', 'getProperties', 'releaseObject', 'releaseObjectGroup', 'runIfWaitingForDebugger', 'awaitPromise', 'discardConsoleEntries'],
+  DOM: [
+    'enable', 'disable', 'getDocument', 'describeNode', 'resolveNode', 'requestNode', 'requestChildNodes', 'pushNodesByBackendIdsToFrontend', 'querySelector', 'querySelectorAll',
+    'getAttributes', 'getBoxModel', 'getContentQuads', 'scrollIntoViewIfNeeded', 'getFrameOwner', 'focus',
+  ],
   CSS: ['enable', 'disable'],
-  Accessibility: '*',
-  DOMSnapshot: '*',
-  Input: '*',
-  Log: '*',
+  Accessibility: ['enable', 'disable', 'getFullAXTree', 'getPartialAXTree', 'getRootAXNode', 'getChildAXNodes', 'queryAXTree', 'getAXNodeAndAncestors'],
+  DOMSnapshot: ['enable', 'disable', 'captureSnapshot'],
+  Input: ['dispatchKeyEvent', 'dispatchMouseEvent', 'dispatchTouchEvent', 'dispatchDragEvent', 'insertText', 'setInterceptDrags', 'cancelDragging', 'setIgnoreInputEvents'],
+  Log: ['enable', 'disable', 'clear'],
   Inspector: ['enable', 'disable'],
   // 응답 바디는 엔진에 주지 않는다(N-51: 로그인 응답·세션 토큰). 엔진 신호는 상태·URL만 쓴다.
   Network: ['enable', 'disable', 'getRequestPostData', 'setCacheDisabled', 'setExtraHTTPHeaders', 'setBypassServiceWorker'],
@@ -130,7 +142,12 @@ export type VaultEvent =
   | 'vault.google_signin_detected' | 'vault.secret_window_refused' | 'vault.dbkey_requested_twice'
   | 'vault.secret_window_close_denied' | 'vault.webdriver_selfcheck_failed' | 'vault.user_tab_hidden'
   | 'vault.chrome_dump_removed' | 'vault.chrome_dump_dir_link' | 'vault.secret_input_unbound' | 'vault.leak_scan' | 'vault.leak_scan_skipped'
-  | 'vault.keystore_mismatch' | 'vault.dbkey_missing' | 'vault.net_deny_unavailable';
+  | 'vault.keystore_mismatch' | 'vault.dbkey_missing' | 'vault.net_deny_unavailable'
+  // 사람 비밀 세션 결박(ADR-026): 값·칸 번호 없이 종류·등급·건수만
+  | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'
+  | 'vault.item_corrupt' | 'vault.index_corrupt' | 'vault.restore_failed'
+  // run에 고정된 프로필과 다른 scope의 입력 요청(Q-2)
+  | 'vault.profile_mismatch';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
