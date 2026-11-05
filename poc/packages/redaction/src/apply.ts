@@ -17,7 +17,7 @@ import {
   type Span,
 } from './entities.ts';
 import { normalizeForRedaction } from './normalize.ts';
-import { lineText, renderTree, type A11yLine, type A11yNode, type RenderOptions, type RenderStats } from './tree.ts';
+import { RedactionError, lineText, renderTree, type A11yLine, type A11yNode, type RenderOptions, type RenderStats } from './tree.ts';
 
 export { normalizeForDetection } from './normalize.ts';
 export type { EntityKind };
@@ -250,7 +250,7 @@ export class Redactor {
       if (res.stats.bytes <= opts.maxBytes) return res;
       budget -= res.stats.bytes - opts.maxBytes + 64;
     }
-    throw new Error('size_unreachable');
+    throw new RedactionError('size_unreachable');
   }
 
   /** D06 §4 ①: 같은 묶음 형제 이름을 구분자 없이 이어 붙여 숫자열 식별자를 찾고, 두 노드 이상에 걸치면 구성 노드를 모두 치환한다. */

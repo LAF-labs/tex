@@ -1,9 +1,9 @@
 // D06 §8 역치환 규칙(B-19). fail-closed: 맵 밖 토큰이 하나라도 있으면 결과 전체를 버린다(부분 역치환 없음).
 // 식별자형 칸(거래처·이메일·사업자번호)은 토큰이 가리키는 로컬 레코드 ID로만 채운다(값을 끼우지 않는다).
 // 모델 출력의 리터럴 식별자는 사용자의 원문 문장에 그대로 있던 경우를 빼고 거부한다. 한 입력 객체 안 토큰은 같은 레코드여야 한다.
-import { EMAIL_RE, numericSpans, type EntityKind } from './entities.ts';
+import { EMAIL_RE, hasKoreanDigit, koreanDigitCopy, numericSpans, type EntityKind } from './entities.ts';
 import type { TokenMap } from './apply.ts';
-import { normalizeForDetection } from './normalize.ts';
+import { normalizeForDetection, normalizeForRedaction } from './normalize.ts';
 
 export interface DetokenizeSpec {
   /** 레코드 ID로 채울 칸 이름(객체 키). 값은 토큰 하나여야 하고 결과는 { recordId }가 된다. */
@@ -26,9 +26,14 @@ class Stop extends Error {
   }
 }
 
+/** 마스킹 계층과 같은 정규화(NFKC·보이지 않는 문자 제거·유니코드 대시 → '-')와 한글 숫자 사본으로 식별자를 찾는다(D06 §3). */
 function literalIdentifiers(s: string): string[] {
-  const t = normalizeForDetection(s).replace(TOKEN_RE, ' ');
+  const t = normalizeForRedaction(normalizeForDetection(s)).replace(TOKEN_RE, ' ');
   const out = numericSpans(t).map((x) => t.slice(x.start, x.end).replace(/\D/g, ''));
+  if (hasKoreanDigit(t)) {
+    const k = koreanDigitCopy(t);
+    for (const x of numericSpans(k)) out.push(k.slice(x.start, x.end).replace(/\D/g, ''));
+  }
   for (const m of t.matchAll(EMAIL_RE)) out.push(m[0].toLowerCase());
   return out;
 }
