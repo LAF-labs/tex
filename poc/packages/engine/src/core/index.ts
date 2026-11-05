@@ -15,3 +15,4 @@ export * from './sxp.ts';
 export * from './token.ts';
 export * from './machine.ts';
 export * from './runtime.ts';
+export * from './datapkg.ts';

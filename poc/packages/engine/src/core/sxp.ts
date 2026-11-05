@@ -1,6 +1,6 @@
 // .sxp 컨테이너 v1(design/schemas/SIGNING.md §6): 레지스트리 `/packages/{id}@{version}.sxp`의 바이트 형식.
 // .sxp = utf8(JCS(객체)). 패키지는 {format, kind:"package", manifest, playbook, selectors, strings}(각 값 = 원시 파일 바이트의 표준 base64),
-// 핫픽스는 {format, kind:"hotfix", hotfix}. 컨테이너 자체는 서명하지 않는다: 인덱스의 sxpDigest가 바이트를, manifest·hotfix 서명(2-of-3)이 내용을 묶는다.
+// 핫픽스는 {format, kind:"hotfix", hotfix}, 데이터 패키지는 {format, kind:"data", descriptor, body}. 컨테이너 자체는 서명하지 않는다: 인덱스의 sxpDigest가 바이트를, manifest·hotfix·데이터 기술자 서명(2-of-3)이 내용을 묶는다.
 // 파서는 정규형만 받는다(같은 내용의 다른 바이트 = 다른 sxpDigest가 생기지 않게).
 import { canonicalJson, canonicalizable } from './canon.ts';
 import type { RawPackage } from './loader.ts';
@@ -10,11 +10,18 @@ export const SXP_FORMAT = 'sxp/1';
 /** 레지스트리 인덱스 항목 size 상한과 같다(16MB). */
 export const SXP_MAX_BYTES = 16 * 1024 * 1024;
 
-export type Sxp = { kind: 'package'; raw: RawPackage } | { kind: 'hotfix'; hotfix: Hotfix; bytes: Uint8Array };
+/** 데이터 패키지(SIGNING.md §6): descriptor·body는 원시 바이트. 서명·다이제스트·본문 검사는 loadDataPackage가 한다. */
+export interface RawDataPackage {
+  descriptor: Uint8Array;
+  body: Uint8Array;
+}
+
+export type Sxp = { kind: 'package'; raw: RawPackage } | { kind: 'hotfix'; hotfix: Hotfix; bytes: Uint8Array } | { kind: 'data'; raw: RawDataPackage };
 export type SxpResult = { ok: true; sxp: Sxp } | { ok: false; code: 'sxp.too_large' | 'sxp.malformed' | 'sxp.not_canonical' | 'sxp.unknown_format' };
 
 const PACKAGE_KEYS = ['format', 'kind', 'manifest', 'playbook', 'selectors', 'strings'];
 const HOTFIX_KEYS = ['format', 'kind', 'hotfix'];
+const DATA_KEYS = ['format', 'kind', 'descriptor', 'body'];
 const B64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 function b64(v: unknown): Buffer | null {
@@ -25,16 +32,18 @@ function b64(v: unknown): Buffer | null {
 
 const sameKeys = (o: Record<string, unknown>, keys: readonly string[]) => Object.keys(o).length === keys.length && keys.every((k) => Object.hasOwn(o, k));
 
-export function encodeSxp(x: { kind: 'package'; raw: RawPackage } | { kind: 'hotfix'; bytes: Uint8Array }): Buffer {
+export function encodeSxp(x: { kind: 'package'; raw: RawPackage } | { kind: 'hotfix'; bytes: Uint8Array } | { kind: 'data'; raw: RawDataPackage }): Buffer {
   const e = (b: Uint8Array) => Buffer.from(b).toString('base64');
   const o =
     x.kind === 'package'
       ? { format: SXP_FORMAT, kind: 'package', manifest: e(x.raw.manifest), playbook: e(x.raw.playbook), selectors: e(x.raw.selectors), strings: e(x.raw.strings) }
-      : { format: SXP_FORMAT, kind: 'hotfix', hotfix: e(x.bytes) };
+      : x.kind === 'hotfix'
+        ? { format: SXP_FORMAT, kind: 'hotfix', hotfix: e(x.bytes) }
+        : { format: SXP_FORMAT, kind: 'data', descriptor: e(x.raw.descriptor), body: e(x.raw.body) };
   return Buffer.from(canonicalJson(o), 'utf8');
 }
 
-/** 구조만 푼다. 서명·다이제스트·스키마 검사는 loadPackage·checkHotfix가 한다. */
+/** 구조만 푼다. 서명·다이제스트·스키마 검사는 loadPackage·checkHotfix·loadDataPackage가 한다. */
 export function decodeSxp(bytes: Uint8Array): SxpResult {
   if (bytes.length > SXP_MAX_BYTES) return { ok: false, code: 'sxp.too_large' };
   let o: unknown;
@@ -63,6 +72,11 @@ export function decodeSxp(bytes: Uint8Array): SxpResult {
     } catch {
       return { ok: false, code: 'sxp.malformed' };
     }
+  }
+  if (r.kind === 'data' && sameKeys(r, DATA_KEYS)) {
+    const [descriptor, body] = [r.descriptor, r.body].map(b64);
+    if (!descriptor || !body) return { ok: false, code: 'sxp.malformed' };
+    return { ok: true, sxp: { kind: 'data', raw: { descriptor, body } } };
   }
   return { ok: false, code: 'sxp.malformed' };
 }
