@@ -328,7 +328,9 @@ export class RunJournal {
     if (bad.includes(BAD_TYPE)) throw new JournalShapeError(['type']);
     if (bad.length) {
       const keep = Object.entries(payload).filter(([k]) => !bad.includes(k) && FIELD.test(k)).slice(0, 15);
-      const names = bad.filter((b) => b !== '#too_many_fields').map((b) => b.replace(/^#/, ''));
+      // 틀린 이름은 그 자체가 값일 수 있어(예: 사람 이름이 키로 들어옴) 원래 이름을 남기지 않고 'field_name' 한 번과 개수만 남긴다
+      const badNames = bad.filter((b) => b === '#field_name').length;
+      const names = [...bad.filter((b) => !b.startsWith('#')), ...(badNames ? [badNames > 1 ? `field_name*${badNames}` : 'field_name'] : [])];
       payload = { ...Object.fromEntries(keep), dropped: names.join(',').slice(0, 128) || 'too_many_fields' };
     }
     this.db.transaction(() => {

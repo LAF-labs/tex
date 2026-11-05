@@ -356,6 +356,14 @@ describe('감사 저널 해시 체인(M2-6)', () => {
     j.append(run, 'step.extract', { stepId: 's1', text: '가'.repeat(200), multi: 'a\nb' });
     const p = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run) as string) as Record<string, string>;
     assert.deepEqual(p, { stepId: 's1', dropped: 'text,multi' });
+    // 틀린 필드 이름은 원래 이름을 남기지 않고(값일 수 있다) 'field_name'과 개수만, 한 번
+    const run4 = newRun();
+    j.append(run4, 'step.note', { '김직원': 1, 'a b': 2, '9x': 3, ok: true, long: 'y'.repeat(200) });
+    const q = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run4) as string) as Record<string, unknown>;
+    assert.deepEqual(q, { ok: true, dropped: 'long,field_name*3' });
+    j.append(run4, 'step.note', { '이름': 1 });
+    assert.equal((JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=? ORDER BY seq DESC LIMIT 1').pluck().get(run4) as string) as Record<string, unknown>).dropped, 'field_name');
+    assert.ok(!(db.prepare('SELECT group_concat(payload_json) FROM run_events WHERE run_id=?').pluck().get(run4) as string).includes('김직원'), '틀린 키 이름도 저널에 없다');
     assert.ok(j.verify(run).ok);
   });
 });
