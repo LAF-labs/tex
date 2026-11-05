@@ -54,6 +54,13 @@ export function registryRouter(o: RegistryAppOpts): Router {
     return c as Channel;
   };
   const putJson = (key: string, v: unknown) => store.put(key, Buffer.from(JSON.stringify(v)));
+  // 게시는 인스턴스 안에서 하나씩(읽기 → 검증 → 쓰기 사이에 다른 게시가 끼어 단조 값·덮어쓰기 검사를 비켜 가지 않게)
+  let chain: Promise<unknown> = Promise.resolve();
+  const serial = <T>(fn: () => Promise<T>): Promise<T> => {
+    const run = chain.then(fn, fn);
+    chain = run.catch(() => undefined);
+    return run;
+  };
 
   const serve = async (ctx: Ctx, key: string, cache: string, type: string): Promise<Reply> => {
     const b = await store.get(key);
@@ -72,7 +79,8 @@ export function registryRouter(o: RegistryAppOpts): Router {
     const f = ctx.params.file!;
     if (f === 'current.json') return serve(ctx, 'policy/current.json', POLL, 'application/json');
     if (!POLICY_FILE.test(f)) fail('registry.not_found');
-    return serve(ctx, `policy/${f}`, IMMUTABLE, 'application/json');
+    // {ver}.json도 신선도 재발행(같은 내용, 새 issuedAt·서명)으로 바뀌므로 불변 캐시가 아니다
+    return serve(ctx, `policy/${f}`, POLL, 'application/json');
   });
   r.add('GET', '/packages/:file', (ctx) => {
     if (!PACKAGE_FILE.test(ctx.params.file!)) fail('registry.not_found');
@@ -88,16 +96,18 @@ export function registryRouter(o: RegistryAppOpts): Router {
     '/admin/v1/packages/:file',
     async (ctx) => {
       admin(ctx);
-      const f = ctx.params.file!;
-      if (!PACKAGE_FILE.test(f)) fail('request.param_rejected');
-      const data = fromB64((ctx.body as { data?: unknown } | undefined)?.data);
-      if (!data || !data.length) fail('request.param_rejected');
-      // 같은 이름은 다시 쓰지 않는다(불변 경로). 다른 바이트로 덮어쓰기 = 공급망 변조
-      const cur = await store.get(`packages/${f}`);
-      if (cur && !cur.equals(data!)) fail('registry.content_digest_mismatch');
-      await store.put(`packages/${f}`, data!);
-      o.onEvent?.('package_staged');
-      return json(201, { packageDigest: sha256hex(data!), size: data!.length });
+      return serial(async () => {
+        const f = ctx.params.file!;
+        if (!PACKAGE_FILE.test(f)) fail('request.param_rejected');
+        const data = fromB64((ctx.body as { data?: unknown } | undefined)?.data);
+        if (!data || !data.length) fail('request.param_rejected');
+        // 같은 이름은 다시 쓰지 않는다(불변 경로). 다른 바이트로 덮어쓰기 = 공급망 변조
+        const cur = await store.get(`packages/${f}`);
+        if (cur && !cur.equals(data!)) fail('registry.content_digest_mismatch');
+        await store.put(`packages/${f}`, data!);
+        o.onEvent?.('package_staged');
+        return json(201, { packageDigest: sha256hex(data!), size: data!.length });
+      });
     },
     { maxBodyBytes: 24 * 1024 * 1024 },
   );
@@ -107,63 +117,74 @@ export function registryRouter(o: RegistryAppOpts): Router {
     '/admin/v1/index/:channel',
     async (ctx) => {
       admin(ctx);
-      const channel = channelOf(ctx.params.channel!);
-      const doc = ctx.body as RegistryIndex;
-      const key = `registry/${channel}/index.json`;
-      verifyIndex(doc, channel, o.trust, await revokedSet(), await readJson<RegistryIndex>(key), o.now());
-      // 인덱스가 가리키는 패키지는 먼저 올라와 있어야 하고 바이트가 다이제스트와 같아야 한다
-      for (const e of doc.entries) {
-        const b = await store.get(`packages/${e.id}@${e.version}.sxp`);
-        if (!b) fail('registry.not_found');
-        verifyPackageBytes(b!, e);
-      }
-      await putJson(key, doc);
-      o.onEvent?.('index_published');
-      return json(200, { monotonic: doc.monotonic });
+      return serial(async () => {
+        const channel = channelOf(ctx.params.channel!);
+        const doc = ctx.body as RegistryIndex;
+        const key = `registry/${channel}/index.json`;
+        verifyIndex(doc, channel, o.trust, await revokedSet(), await readJson<RegistryIndex>(key), o.now());
+        // 인덱스가 가리키는 패키지는 먼저 올라와 있어야 하고 바이트가 다이제스트와 같아야 한다
+        for (const e of doc.entries) {
+          const b = await store.get(`packages/${e.id}@${e.version}.sxp`);
+          if (!b) fail('registry.not_found');
+          verifyPackageBytes(b!, e);
+        }
+        await putJson(key, doc);
+        o.onEvent?.('index_published');
+        return json(200, { monotonic: doc.monotonic });
+      });
     },
     { maxBodyBytes: 512 * 1024 },
   );
 
   r.add('PUT', '/admin/v1/policy', async (ctx) => {
     admin(ctx);
-    const doc = ctx.body as SignedPolicy;
-    const v = verifyPolicy(doc, o.trust, await revokedSet(), await readJson<SignedPolicy>('policy/current.json'), o.now());
-    // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 내용이 같을 때만(신선도 재발행)
-    const prev = await readJson<SignedPolicy>(`policy/${doc.version}.json`);
-    if (prev && prev.monotonic !== doc.monotonic) fail('registry.version_jump_rejected');
-    await putJson(`policy/${doc.version}.json`, doc);
-    await putJson('policy/current.json', doc);
-    o.onEvent?.(v.emergency ? 'policy_emergency' : 'policy_published');
-    return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
+    return serial(async () => {
+      const doc = ctx.body as SignedPolicy;
+      const v = verifyPolicy(doc, o.trust, await revokedSet(), await readJson<SignedPolicy>('policy/current.json'), o.now());
+      // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 내용이 같을 때만(신선도 재발행)
+      const prev = await readJson<SignedPolicy>(`policy/${doc.version}.json`);
+      if (prev && prev.monotonic !== doc.monotonic) fail('registry.version_jump_rejected');
+      await putJson(`policy/${doc.version}.json`, doc);
+      await putJson('policy/current.json', doc);
+      o.onEvent?.(v.emergency ? 'policy_emergency' : 'policy_published');
+      return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
+    });
   });
 
   r.add('PUT', '/admin/v1/status', async (ctx) => {
     admin(ctx);
-    const doc = ctx.body as RegistryStatus;
-    const v = verifyStatus(doc, o.trust, await revokedSet(), await readJson<RegistryStatus>('registry/status.json'), o.now());
-    await putJson('registry/status.json', doc);
-    o.onEvent?.(v.emergency ? 'status_emergency' : 'status_published');
-    return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
+    return serial(async () => {
+      const doc = ctx.body as RegistryStatus;
+      const v = verifyStatus(doc, o.trust, await revokedSet(), await readJson<RegistryStatus>('registry/status.json'), o.now());
+      await putJson('registry/status.json', doc);
+      o.onEvent?.(v.emergency ? 'status_emergency' : 'status_published');
+      return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
+    });
   });
 
   r.add('PUT', '/admin/v1/revoked-keys', async (ctx) => {
     admin(ctx);
-    const doc = ctx.body as RevokedKeys;
-    verifyRevoked(doc, o.trust, await readJson<RevokedKeys>('registry/revoked_keys.json'), o.now());
-    await putJson('registry/revoked_keys.json', doc);
-    o.onEvent?.('revoked_published');
-    return json(200, { monotonic: doc.monotonic });
+    return serial(async () => {
+      const doc = ctx.body as RevokedKeys;
+      verifyRevoked(doc, o.trust, await readJson<RevokedKeys>('registry/revoked_keys.json'), o.now());
+      await putJson('registry/revoked_keys.json', doc);
+      o.onEvent?.('revoked_published');
+      return json(200, { monotonic: doc.monotonic });
+    });
   });
 
   r.add('PUT', '/admin/v1/releases/:channel', async (ctx) => {
     admin(ctx);
-    const channel = channelOf(ctx.params.channel!);
-    const doc = ctx.body as ReleaseManifest;
-    verifyRelease(doc, channel, o.trust, await revokedSet(), await readJson<ReleaseManifest>(`releases/${channel}/latest.json`), o.now());
-    await putJson(`releases/${channel}/latest.json`, doc);
-    await store.put(`releases/${channel}/latest.yml`, Buffer.from(renderLatestYml(doc)));
-    o.onEvent?.('release_published');
-    return json(200, { version: doc.version });
+    return serial(async () => {
+      const channel = channelOf(ctx.params.channel!);
+      const doc = ctx.body as ReleaseManifest;
+      verifyRelease(doc, channel, o.trust, await revokedSet(), await readJson<ReleaseManifest>(`releases/${channel}/latest.json`), o.now());
+      // yml을 먼저 쓰고 json을 마지막에 쓴다: json이 "게시됨"의 기준이라, 중간에 실패하면 같은 버전으로 다시 올릴 수 있다
+      await store.put(`releases/${channel}/latest.yml`, Buffer.from(renderLatestYml(doc)));
+      await putJson(`releases/${channel}/latest.json`, doc);
+      o.onEvent?.('release_published');
+      return json(200, { version: doc.version });
+    });
   });
 
   return r;

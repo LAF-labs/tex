@@ -36,7 +36,7 @@
 | `400 gateway.pii_tripwire` | 2차 트립와이어(주민번호·사업자번호·카드·계좌·긴 숫자열, `@sax/net piiTripwire`와 같은 규칙). 공급사로 보내지 않고 카운트만 |
 | `401 gateway.run_token_invalid` | 서명·만료·기기/계정 불일치 |
 | `429 gateway.run_budget_exceeded` | 실행 예산 소진 |
-| `429 gateway.quota_exceeded` | 월 토큰 하드 상한(플랜 한도 × 2) 이후 안전 판정이 아닌 번들(`riskClass ≠ safety`) |
+| `429 gateway.quota_exceeded` | 월 토큰 하드 상한(플랜 한도 × 2) 이후 안전 판정이 아닌 번들(`riskClass ≠ safety`), 또는 하드 상한 이후 안전 판정 번들이 계정당 분당 6회를 넘을 때. 월 100%~200% 사이 L1은 의도적으로 계속된다(D04 §6 "100% 이후 L1 유지", L2만 100%에서 중단) |
 | `503 gateway.upstream_error` | 공급사 5xx·429·연결 오류 → 지수 백오프 2회 뒤, 또는 재시도 불가 오류. 엔진은 `unknown` |
 | `429 policy.rate_limited` | 계정당 분당 60회 |
 

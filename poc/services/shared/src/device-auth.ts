@@ -29,12 +29,14 @@ export class HttpDeviceDirectory implements DeviceDirectory {
   private readonly ttlMs: number;
   private readonly now: () => number;
   private readonly fetchFn: typeof fetch;
-  constructor(o: { base: string; secret: string; ttlMs?: number; now?: () => number; fetchFn?: typeof fetch }) {
+  private readonly timeoutMs: number;
+  constructor(o: { base: string; secret: string; ttlMs?: number; now?: () => number; fetchFn?: typeof fetch; timeoutMs?: number }) {
     this.base = o.base;
     this.secret = o.secret;
     this.ttlMs = o.ttlMs ?? 5000;
     this.now = o.now ?? Date.now;
     this.fetchFn = o.fetchFn ?? fetch;
+    this.timeoutMs = o.timeoutMs ?? 3000;
   }
   invalidate(deviceId: string): void {
     this.cache.delete(deviceId);
@@ -42,7 +44,8 @@ export class HttpDeviceDirectory implements DeviceDirectory {
   async get(deviceId: string): Promise<DeviceRecord | null> {
     const c = this.cache.get(deviceId);
     if (c && c.until > this.now()) return c.rec;
-    const res = await this.fetchFn(`${this.base}/internal/v1/devices/${encodeURIComponent(deviceId)}`, { headers: { authorization: `Internal ${this.secret}` }, redirect: 'error' });
+    // 계정 서비스가 느리거나 멈춰도 요청이 매달리지 않게 기본 3초 제한(넘으면 directory_unavailable → 500, 기기를 통과시키지 않는다)
+    const res = await this.fetchFn(`${this.base}/internal/v1/devices/${encodeURIComponent(deviceId)}`, { headers: { authorization: `Internal ${this.secret}` }, redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs) });
     let rec: DeviceRecord | null = null;
     if (res.status === 200) rec = (await res.json()) as DeviceRecord;
     else if (res.status !== 404) throw new Error('directory_unavailable');

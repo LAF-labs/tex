@@ -286,6 +286,9 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     const list = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
     assert.equal(list.find((x) => x.deviceId === same.id)!.state, 'active');
     assert.equal(list.find((x) => x.deviceId === other.id)!.state, 'pending');
+    // 신청 때 센 등록 이력을 고정이 다시 세지 않는다(30일 데스크톱 등록 이력 = 신청 2건)
+    const adds = await e.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE kind = 'add' AND role = 'desktop'");
+    assert.equal(Number(adds!.n), 2);
     // 이제는 고정된 계정
     const again = edKey();
     assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: again.b64, deviceList: { listVersion: 1, entries: [entry(again, other, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.aik_already_pinned');
@@ -314,6 +317,17 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: proof }, body: { cert: c } })).json.error, 'account.dpop_invalid');
     const stale = dpop('POST', htu, jcs(c), d.V, now - 120_000);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: stale }, body: { cert: c } })).json.error, 'account.dpop_invalid');
+  });
+
+  it('pending 신청이 데스크톱 상한을 채웠으면 다른 기기로 첫 고정을 할 수 없다(상한 우회 없음)', async () => {
+    const s = await login(e, 'cap@example.com');
+    for (let i = 0; i < 2; i++) {
+      const d = device('desktop', 0);
+      assert.equal((await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d.id, role: 'desktop', platform: 'windows', name: 'PC', Sx: d.S.b64, Vx: d.V.b64 } })).status, 201);
+    }
+    const aik = edKey();
+    const third = device('desktop', 0);
+    assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: aik.b64, deviceList: { listVersion: 1, entries: [entry(aik, third, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.device_limit');
   });
 
   it('기기별 발급 한도는 검증을 통과한 요청만 센다(device_id만 아는 남이 한도를 태우지 못한다)', async () => {
@@ -545,44 +559,69 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
 
   it('결제 창 → 서명된 웹훅으로 활성, 서명 틀린 웹훅 거부, 해지', async () => {
     const s = await login(e, 'pay@example.com');
+    const t0 = e.clock.now();
     const c = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
     assert.equal(c.status, 200);
     assert.equal(e.pg.checkouts[0]!.amountKrw, 9900);
     const ref = e.pg.checkouts[0]!.pgCustomerRef;
     assert.ok(!ref.includes('pay@example.com'));
-    const event = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D });
+    const event = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 1 });
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: event, headers: { 'x-mock-pg-signature': '0'.repeat(64) } })).json.error, 'account.billing_signature_invalid');
+    const noAt = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D });
+    assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: noAt, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(noAt)) } })).json.error, 'account.billing_signature_invalid');
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: event, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(event)) } })).status, 200);
     const sub = await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) });
-    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: e.clock.now() + 30 * D, amountKrw: 9900, period: 'month' });
+    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: t0 + 30 * D, amountKrw: 9900, period: 'month' });
     assert.equal((await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })).status, 400);
-    const unknown = JSON.stringify({ type: 'payment.failed', pgCustomerRef: 'cus_unknown' });
+    const unknown = JSON.stringify({ type: 'payment.failed', pgCustomerRef: 'cus_unknown', at: t0 });
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: unknown, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(unknown)) } })).status, 200);
     assert.equal((await e.req('POST', '/v1/billing/cancel', { headers: bearer(s) })).status, 204);
     assert.deepEqual(e.pg.canceled, [ref]);
-    // 해지 뒤 늦게 오거나 재전송된 활성·갱신·결제 실패 이벤트는 해지를 되돌리지 않는다
+    assert.equal((await e.req('POST', '/v1/consents', { headers: bearer(s), body: { version: 'privacy-2026.11' } })).status, 204);
+    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['privacy-2026.11']);
+  });
+
+  it('웹훅 순서는 PG 이벤트 시각: 늦은·재전송 이벤트 무시, 결제 실패 뒤 같은 기간 재결제는 active, 해지는 끝 상태', async () => {
+    const s = await login(e, 'order@example.com');
+    const t0 = e.clock.now();
     const hook = (o: object) => {
       const raw = JSON.stringify(o);
       return e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
     };
-    await hook({ type: 'subscription.renewed', pgCustomerRef: ref, renewAt: e.clock.now() + 60 * D });
-    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D });
-    await hook({ type: 'payment.failed', pgCustomerRef: ref });
-    assert.equal(((await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>).status, 'canceled');
-    // 다시 구독: 새 PG 참조. 옛 참조 이벤트는 새 구독에 닿지 않는다
-    assert.equal((await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })).status, 200);
-    const ref2 = e.pg.checkouts[1]!.pgCustomerRef;
+    const status = async () => (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>;
+    // 동시에 두 번 눌러도 같은 참조
+    const [a, b] = await Promise.all([e.req('POST', '/v1/billing/checkout', { headers: bearer(s) }), e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })]);
+    assert.equal(a.json.checkoutUrl, b.json.checkoutUrl);
+    const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 10 });
+    await hook({ type: 'payment.failed', pgCustomerRef: ref, at: t0 + 20 });
+    assert.equal((await status()).status, 'past_due');
+    // 재전송된 옛 활성 이벤트(at이 이전)는 무시
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 10 });
+    assert.equal((await status()).status, 'past_due');
+    // 같은 기간(같은 renewAt)을 확정하는 재결제 성공은 더 늦은 이벤트라 active
+    await hook({ type: 'subscription.renewed', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 30 });
+    assert.deepEqual([(await status()).status, (await status()).renewAt], ['active', t0 + 30 * D]);
+    // 순서가 뒤바뀐 옛 결제 실패는 무시
+    await hook({ type: 'payment.failed', pgCustomerRef: ref, at: t0 + 25 });
+    assert.equal((await status()).status, 'active');
+    assert.equal((await e.req('POST', '/v1/billing/cancel', { headers: bearer(s) })).status, 204);
+    for (const ev of [
+      { type: 'subscription.renewed', pgCustomerRef: ref, renewAt: t0 + 60 * D, at: t0 + 99 },
+      { type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 100 },
+      { type: 'payment.failed', pgCustomerRef: ref, at: t0 + 101 },
+    ])
+      await hook(ev);
+    assert.equal((await status()).status, 'canceled');
+    // 다시 구독: 새 PG 참조(동시 클릭도 같은 참조). 옛 참조 이벤트는 새 구독에 닿지 않는다
+    const [c1, c2] = await Promise.all([e.req('POST', '/v1/billing/checkout', { headers: bearer(s) }), e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })]);
+    assert.equal(c1.json.checkoutUrl, c2.json.checkoutUrl);
+    const ref2 = e.pg.checkouts.at(-1)!.pgCustomerRef;
     assert.notEqual(ref2, ref);
-    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D });
-    assert.equal(((await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>).status, 'pending');
-    await hook({ type: 'subscription.activated', pgCustomerRef: ref2, renewAt: e.clock.now() + 30 * D });
-    // 순서가 뒤바뀐 옛 갱신(renewAt이 뒤로)은 무시
-    await hook({ type: 'subscription.renewed', pgCustomerRef: ref2, renewAt: e.clock.now() + 1 * D });
-    const sub2 = (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>;
-    assert.equal(sub2.status, 'active');
-    assert.equal(sub2.renewAt, e.clock.now() + 30 * D);
-    assert.equal((await e.req('POST', '/v1/consents', { headers: bearer(s), body: { version: 'privacy-2026.11' } })).status, 204);
-    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['privacy-2026.11']);
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 200 });
+    assert.equal((await status()).status, 'pending');
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref2, renewAt: t0 + 30 * D, at: t0 + 201 });
+    assert.equal((await status()).status, 'active');
   });
 });
 
