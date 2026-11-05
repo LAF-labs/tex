@@ -139,11 +139,11 @@ export function CaptureScreen({ onDone }: { onDone: () => void }) {
     const c = candidates();
     if (typeof c === 'string') return setErr(c);
     setPhase('saving');
+    let jpeg: Uint8Array | null = null;
     try {
-      const jpeg = await new File(shot.uri).bytes();
+      jpeg = await new File(shot.uri).bytes();
       const offer = makeReceiptOffer(jpeg, { capturedAt: shot.capturedAt, width: shot.width, height: shot.height, ocrEngine: engine, ownerConfirmed: true, candidates: c });
       await s.outbox.put({ kind: 'receipt', msgId: offer.msgId, offer, createdAt: Date.now(), attempts: 0 }, jpeg);
-      jpeg.fill(0);
       cleanup();
       setShot(null);
       await s.refreshPending();
@@ -152,6 +152,9 @@ export function CaptureScreen({ onDone }: { onDone: () => void }) {
     } catch {
       setErr('사진을 보관하지 못했어요. 이 폰에 보호된 저장 공간이 없으면 보낼 수 없어요.');
       setPhase('confirm');
+    } finally {
+      // 보관에 실패해도 메모리의 평문 JPEG를 지운다
+      jpeg?.fill(0);
     }
   }
 
