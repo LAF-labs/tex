@@ -57,7 +57,7 @@ const SAMPLES: Record<string, { from: 'desktop' | 'mobile'; body: object; bad: o
     body: { msgId: ulid(), capturedAt: 1, mime: 'image/jpeg', bytes: 100_000, sha256: H, chunkSize: RECEIPT_CHUNK, chunkCount: 3, ocrEngine: 'ios_vision', ownerConfirmed: true, candidates: { amount: 12000, issuedOn: '2026-11-05', merchant: '율무커피', merchantBizNo: '123-45-67890' } },
     bad: { msgId: ulid(), capturedAt: 1, mime: 'image/png', bytes: 5_000_000, sha256: H, chunkSize: RECEIPT_CHUNK, chunkCount: 102, ocrEngine: 'cloud', ownerConfirmed: true },
   },
-  'receipt.chunk': { from: 'mobile', body: { msgId: ulid(), index: 0, data: b64(new Uint8Array(RECEIPT_CHUNK)) }, bad: { msgId: ulid(), index: 86, data: b64(new Uint8Array(10)) } },
+  'receipt.chunk': { from: 'mobile', body: { msgId: ulid(), index: 0, data: b64(new Uint8Array(RECEIPT_CHUNK)) }, bad: { msgId: ulid(), index: 128, data: b64(new Uint8Array(10)) } },
   'receipt.ack': { from: 'desktop', body: { msgId: ulid(), state: 'partial', missing: [1, 2] }, bad: { msgId: ulid(), state: 'stored', missing: [1] } },
   'cash.entry': { from: 'mobile', body: { msgId: ulid(), day: '2026-11-05', amount: 320000, enteredAt: 1 }, bad: { msgId: ulid(), day: '2026-13-01', amount: -5, enteredAt: 1 } },
   'cash.ack': { from: 'desktop', body: { msgId: ulid(), state: 'stored' }, bad: { msgId: ulid(), state: 'partial' } },

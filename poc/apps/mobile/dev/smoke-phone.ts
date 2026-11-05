@@ -1,10 +1,12 @@
 // 더미 PC 상대 스모크(시뮬레이터 없이): Node가 폰 역할로 릴레이(services/relay/API.md 경로·헤더) 위에서
 // 페어링 → 기기 토큰(AIK 인증서 + DPoP) → 우편함 라이브 → IK 세션 → 사진·현금매출 전송.
-//   node dev/dummy-pc.ts &  node dev/smoke-phone.ts
+//   node dev/dummy-pc.ts &  node dev/smoke-phone.ts          (라이브)
+//   node dev/dummy-pc.ts &  node dev/smoke-phone.ts --queue  (라이브 없이 HTTPS 큐: 번들 확인 → HPKE 봉인 → POST → PC가 꺼내 감)
 import { WebSocket as WS } from 'ws';
 import {
   CAP, DeviceTokenCache, MobilePairing, RECEIPT_CHUNK, VM_PURPOSES, deviceAuthHeaders, ed25519Keygen, enqueueCash, flushOutbox, fromB64, makeCashEntry,
-  makeReceiptOffer, monotonicClock, openMobileSession, requestDeviceToken, softNoiseStatic, softSigner, uuid4, wsRelayClient, x25519Keygen,
+  makeReceiptOffer, monotonicClock, openMobileSession, queueOutbox, relayQueue, requestDeviceToken, softNoiseStatic, softSigner, uuid4, verifyQBundle,
+  wsRelayClient, x25519Keygen,
   type HttpJson, type OutboxItem, type OutboxStore, type SignedCert, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
 
@@ -60,6 +62,31 @@ await enqueueCash(store, makeCashEntry('2026-11-05', 1234));
 
 const myCert: SignedCert = r.cert;
 tokens = new DeviceTokenCache(() => requestDeviceToken(fetchJson, base, myCert, vmSigner));
+
+if (process.argv.includes('--queue')) {
+  const rq = relayQueue({
+    http: fetchJson, origin: base, mbxId: fromB64(r.mbxId), tok: { read: fromB64(r.tokRead), write: fromB64(r.tokWrite) },
+    deviceAuth: async (htm, htu) => deviceAuthHeaders(await tokens!.token(), vmSigner, htm, htu),
+  });
+  let field: string | null = null;
+  for (let i = 0; i < 20 && !field; i++) {
+    field = await rq.getBundle();
+    if (!field) await new Promise((res) => setTimeout(res, 200));
+  }
+  const bundle = field ? verifyQBundle(field, r.desktopVd) : null;
+  if (!bundle) throw new Error('no valid bundle');
+  let seq = 0;
+  const q = await queueOutbox(store, { queue: rq, pairId: r.pairId, vm: vmSigner, bundle, mbxEpoch: r.mbxEpoch, nextSeq: () => ++seq });
+  console.log('queued', q.queued.length, 'waiting', q.waiting.length);
+  let st: { received: { receipts: number; cash: number; viaQueue: number } } | null = null;
+  for (let i = 0; i < 30; i++) {
+    await new Promise((res) => setTimeout(res, 500));
+    st = (await (await fetch(`${base}/dev/status`)).json()) as typeof st;
+    if (st!.received.viaQueue >= 1 + Math.ceil(jpeg.length / 32768) + 1) break;
+  }
+  console.log('pc status', JSON.stringify(st));
+  process.exit(q.queued.length === 2 && st!.received.receipts === 1 && st!.received.cash === 1 ? 0 : 1);
+}
 const mbx = await client.joinMailbox(fromB64(r.mbxId), { read: fromB64(r.tokRead), write: fromB64(r.tokWrite) }, 'mobile');
 const sess = await openMobileSession(mbx, {
   pairId: r.pairId, noise, desktopStatic: r.desktopStatic, nextTimestamp: monotonicClock(0),

@@ -94,6 +94,11 @@ export const CHIP = {
 };
 export const chip = (status) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, CHIP[status][0]);
 
+/** 발급 뒤 발급목록을 조회하는 중(발급 · 조회로 확정 묶음의 '발급목록 확인' 단계가 지금). 칩은 '확인 중'이다(08 §11). */
+export const verifying = (run) => run.status === 'issuing' && run.steps[6]?.state === 'now';
+/** 화면에 보이는 상태 칩. 실행 상태에 '확인 중'(조회 중)을 더한 것. */
+export const shownStatus = (run) => (verifying(run) ? 'checking' : run.status);
+
 /** D1 합계 + 분해 한 줄. note는 분해 줄 끝에 " · note"로 붙는다. split이 false면 합계만. */
 export function amount(total, supply, tax, note, split = true) {
   return h(
@@ -168,6 +173,9 @@ export function note(text, attention, extra, ic = 'info') {
   return h('div', { class: `sx-note${attention ? ' is-attention' : ''}` }, icon(ic), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null));
 }
 
+/** 시험·스타일용 data 속성을 붙여 돌려준다. */
+const tagged = (el, key, value) => ((el.dataset[key] = value), el);
+
 export const btn = (label, onclick, kind = '', attrs = {}) => h('button', { type: 'button', class: `sx-btn ${kind}`.trim(), onclick, ...attrs }, label);
 
 const vatText = (run) => (run.vat === 'separate' ? (run.status === 'draft' && run.vatGuessed ? '부가세 별도로 계산했어요' : '부가세 별도') : '부가세 포함');
@@ -182,7 +190,7 @@ export function taskCard(run, act) {
   card.addEventListener('click', (e) => {
     if (!e.target.closest('button, input, dl, .sx-where')) act.open(run.id);
   });
-  const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(st));
+  const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(shownStatus(run)));
   // 내 차례·확인 필요는 합계만(사람이 할 일이 먼저 보이게), 나머지는 분해까지.
   card.append(hd, amount(run.total, run.supply, run.tax, vatText(run), !['turn', 'attention'].includes(st)));
   const now = nowStep(run);
@@ -217,8 +225,27 @@ export function taskCard(run, act) {
       line('홈택스에서 준비하고 있어요. 승인하기 전에는 아무것도 발급하지 않아요.', true),
       h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }), now ? h('span', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null),
     );
+  } else if (verifying(run)) {
+    // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다.
+    card.append(
+      line('발급목록을 직접 조회해서 발급됐는지 확인하고 있어요. 확인되기 전에는 다시 발급하지 않아요.', true),
+      run.verifyAttempt ? h('div', { class: 'sx-meta', 'data-verify-attempt': String(run.verifyAttempt) }, `조회 ${run.verifyAttempt}회째`) : null,
+    );
   } else if (st === 'issuing') {
     card.append(line('발급하고 있어요. 홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.', true), now ? h('div', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null);
+  } else if (st === 'turn' && run.handoff) {
+    // 핸드오프(D03 HandedOff): 두 버튼 모두 재개·확인으로만 가고 발급하지 않는다. 게이트 뒤면 중지는 없다(엔진이 거부).
+    card.dataset.handoff = '1';
+    card.append(
+      note(run.turn.text, true, run.turn.note),
+      h(
+        'div',
+        { class: 'sx-actions' },
+        btn('다 했어요', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }),
+        btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }),
+        run.handoff.afterGate ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
+      ),
+    );
   } else if (st === 'turn') {
     card.append(note(run.turn.text, false, run.turn.note, 'phone'));
     const signing = run.steps[4].state === 'done';
@@ -229,6 +256,7 @@ export function taskCard(run, act) {
     const read = run.readbackDiffers ? '홈택스에 입력한 값을 다시 읽었어요. 초안과 다른 값이 있어요.' : '홈택스에 입력한 값을 다시 읽어 확인했어요. 초안과 같아요.';
     card.append(
       line(`${read} 발급하면 ${run.email.value ? `${run.counterparty.name} 메일로 전송되고 ` : ''}되돌릴 수 없어요.`),
+      run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
       ...run.warnings.map((w) => note(w, true)),
       note(run.approvedPending ? '승인했어요. 2초 안에 [중지]하면 발급하지 않아요' : `아래 [${action}]에서 값을 한 번 더 확인하고 눌러 주세요`),
       h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })),
@@ -250,6 +278,14 @@ export function taskCard(run, act) {
     );
   } else if (st === 'stopped') {
     card.append(line(run.stoppedNote || '중지했어요.', true));
+  } else if (st === 'attention' && run.inDoubt) {
+    // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳만 연다.
+    card.dataset.inDoubt = '1';
+    card.append(
+      note(run.stoppedNote || '발급됐는지 확인하지 못했어요.', true),
+      line('확인되기 전에는 이 건을 다시 발급하지 않아요.', true),
+      h('div', { class: 'sx-actions' }, btn('홈택스에서 직접 확인', () => act.open(run.id), 'sx-btn-primary', { 'data-act': 'check-list' })),
+    );
   } else if (st === 'attention') {
     card.append(note(run.stoppedNote || '확인이 필요해요.', true));
   }
@@ -310,14 +346,36 @@ export function runPanel(run, act) {
   return h(
     'div',
     { class: 'panel-in', 'data-panel-run': run.id },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 · ${run.counterparty.name}`), chip(st), panelX(act)),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 · ${run.counterparty.name}`), chip(shownStatus(run)), panelX(act)),
     amount(run.total, run.supply, run.tax, vatText(run)),
+    st === 'attention' && run.inDoubt ? checkListGuide(run, act) : null,
     kv(rows),
     h('div', { class: 'sx-source' }, source),
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
     st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(run.result.docId), 'sx-btn-primary'), btn('폴더 열기', () => act.revealDoc(run.result.docId))) : null,
+  );
+}
+
+/**
+ * InDoubt 패널의 "홈택스에서 직접 확인" 안내. 찾을 건의 값(작성일자·공급받는자·사업자번호·합계)과 복사만 둔다.
+ * "발급목록에 없음" 확인은 여기서 받지 않는다. 승인 바 자리의 황토색 증언 바(main)에서만 받는다(ADR-021 결정 5).
+ */
+function checkListGuide(run, act) {
+  const c = (v) => () => act.copy(v);
+  return h(
+    'div',
+    { class: 'sx-check', 'data-check-list': run.id },
+    h('div', { class: 'sx-panel-sec' }, '홈택스에서 직접 확인'),
+    note('홈택스 발급목록에서 아래 건을 찾아 주세요. 목록에 있으면 발급된 것이니 다시 발급하지 마세요.', true),
+    kv([
+      ['작성일자', run.writeDate, { copy: c(run.writeDate) }],
+      ['공급받는자', run.counterparty.name, { copy: c(run.counterparty.name) }],
+      ['사업자번호', fmtBiz(run.counterparty.bizNo), { mono: true, copy: c(fmtBiz(run.counterparty.bizNo)) }],
+      ['합계', won(run.total), { copy: c(String(run.total)) }],
+    ]),
+    h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 승인 바 자리에 뜨는 황토색 바로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
   );
 }
 

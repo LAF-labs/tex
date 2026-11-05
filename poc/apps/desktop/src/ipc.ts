@@ -88,6 +88,9 @@ export const SHELL_METHODS = {
   'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
   'run.prepare': { id: ID },
   'run.stop': { id: ID },
+  // 핸드오프 [다 했어요]·[직접 발급함](D03 §2 HandedOff). 재개·확인으로만 가고 발급하지 않는다(엔진이 원장에 observed_manual을 쓴다).
+  'run.resume': { id: ID },
+  'run.manualDone': { id: ID },
   'docs.list': {},
   // 열기 암호 길이 판정(password_too_long)은 가져오기 쪽이 한다. 여기 상한은 그보다 넉넉하다.
   'docs.import': { pick: { t: 'boolean' }, pickId: { t: 'string', max: 128 }, password: { t: 'string', max: 4096 } },
@@ -123,7 +126,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
