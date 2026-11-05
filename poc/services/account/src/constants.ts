@@ -28,6 +28,8 @@ export const DEVICE = {
   /** 기기 인증서 수명(D08 §4.1 90일) + 하루 여유 */
   certMaxDays: 91,
   deviceTokensPerHour: 60,
+  /** 검증 전 IP당 시도(같은 사무실 NAT 뒤 여러 기기) */
+  deviceTokenAttemptsPerIpHour: 600,
 } as const;
 
 export const PROFILE = {

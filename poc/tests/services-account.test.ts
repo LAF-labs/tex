@@ -271,6 +271,26 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal(e.mail.outbox.filter((m) => m.kind === 'aik_pinned').length, 1);
   });
 
+  it('AIK 전에 등록 신청만 한 데스크톱(pending)은 첫 고정을 막지 않는다', async () => {
+    const s = await login(e, 'pend@example.com');
+    const other = device('desktop', 0);
+    const same = device('desktop', 0);
+    for (const d of [other, same]) {
+      const r = await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: d.id, role: 'desktop', platform: 'windows', name: 'PC', Sx: d.S.b64, Vx: d.V.b64 } });
+      assert.equal(r.status, 201, r.text);
+    }
+    // 신청했던 같은 기기가 고정: pending 행을 대신한다
+    const aik = edKey();
+    const r = await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: aik.b64, deviceList: { listVersion: 1, entries: [entry(aik, same, 1)], revoked: [] }, platform: 'windows', name: 'PC' } });
+    assert.equal(r.status, 201, r.text);
+    const list = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
+    assert.equal(list.find((x) => x.deviceId === same.id)!.state, 'active');
+    assert.equal(list.find((x) => x.deviceId === other.id)!.state, 'pending');
+    // 이제는 고정된 계정
+    const again = edKey();
+    assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: again.b64, deviceList: { listVersion: 1, entries: [entry(again, other, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.aik_already_pinned');
+  });
+
   it('기기 토큰: AIK 인증서 + Vx DPoP만. 다른 키의 DPoP·만료 인증서·위조 인증서·jti 재사용 거부', async () => {
     const s = await login(e, 'tok@example.com');
     const { aik, d } = await desktop(e, s);
@@ -294,6 +314,23 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: proof }, body: { cert: c } })).json.error, 'account.dpop_invalid');
     const stale = dpop('POST', htu, jcs(c), d.V, now - 120_000);
     assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: stale }, body: { cert: c } })).json.error, 'account.dpop_invalid');
+  });
+
+  it('기기별 발급 한도는 검증을 통과한 요청만 센다(device_id만 아는 남이 한도를 태우지 못한다)', async () => {
+    const s = await login(e, 'burn@example.com');
+    const { aik, d } = await desktop(e, s);
+    const now = e.clock.now();
+    const htu = ORIGIN + '/v1/device-tokens';
+    const attacker = edKey();
+    for (let i = 0; i < 70; i++) {
+      const forged = cert(attacker, d, now + 90 * D);
+      assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(forged), attacker, now) }, body: { cert: forged } })).json.error, 'account.cert_invalid');
+    }
+    const c = cert(aik, d, now + 90 * D);
+    assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 200);
+    // 검증을 통과한 요청은 기기당 60회/시
+    for (let i = 1; i < 60; i++) assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 200);
+    assert.equal((await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, now) }, body: { cert: c } })).status, 429);
   });
 
   it('폰: 등록 신청(대기) → PC가 AIK 서명 목록에 넣으면 즉시 활성 → 폰 토큰은 relay·push 범위만', async () => {
@@ -350,13 +387,19 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.equal(r.status, 200);
     const list1 = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
     assert.equal(list1.find((x) => x.deviceId === p1.id)!.state, 'active');
-    assert.equal(list1.find((x) => x.deviceId === p1.id)!.deleteAfter, e.clock.now() + 7 * D);
+    const deleteAfter = e.clock.now() + 7 * D;
+    assert.equal(list1.find((x) => x.deviceId === p1.id)!.deleteAfter, deleteAfter);
     assert.deepEqual(e.stopped, []);
-    e.clock.advance(7 * D);
+    // 유예 중 목록을 다시 올려도 유예는 다시 시작하지 않는다
+    e.clock.advance(3 * D);
+    assert.equal((await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [entry(pc.aik, pc.d, 1), entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
+    const list1b = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
+    assert.equal(list1b.find((x) => x.deviceId === p1.id)!.deleteAfter, deleteAfter);
+    e.clock.advance(4 * D);
     await e.svc.sweep();
     assert.deepEqual(e.stopped, [p1.id]);
     // 데스크톱이 7일 넘었으니 이번에는 즉시
-    const r2 = await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [entry(pc.aik, pc.d, 1)], revoked: [revokeRec(pc.aik, p1.id, 1), revokeRec(pc.aik, p2.id, e.clock.now())] } });
+    const r2 = await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 5, entries: [entry(pc.aik, pc.d, 1)], revoked: [revokeRec(pc.aik, p1.id, 1), revokeRec(pc.aik, p2.id, e.clock.now())] } });
     assert.equal(r2.status, 200, r2.text);
     assert.deepEqual(e.stopped, [p1.id, p2.id]);
     const list2 = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
@@ -517,6 +560,27 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: unknown, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(unknown)) } })).status, 200);
     assert.equal((await e.req('POST', '/v1/billing/cancel', { headers: bearer(s) })).status, 204);
     assert.deepEqual(e.pg.canceled, [ref]);
+    // 해지 뒤 늦게 오거나 재전송된 활성·갱신·결제 실패 이벤트는 해지를 되돌리지 않는다
+    const hook = (o: object) => {
+      const raw = JSON.stringify(o);
+      return e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
+    };
+    await hook({ type: 'subscription.renewed', pgCustomerRef: ref, renewAt: e.clock.now() + 60 * D });
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D });
+    await hook({ type: 'payment.failed', pgCustomerRef: ref });
+    assert.equal(((await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>).status, 'canceled');
+    // 다시 구독: 새 PG 참조. 옛 참조 이벤트는 새 구독에 닿지 않는다
+    assert.equal((await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })).status, 200);
+    const ref2 = e.pg.checkouts[1]!.pgCustomerRef;
+    assert.notEqual(ref2, ref);
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D });
+    assert.equal(((await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>).status, 'pending');
+    await hook({ type: 'subscription.activated', pgCustomerRef: ref2, renewAt: e.clock.now() + 30 * D });
+    // 순서가 뒤바뀐 옛 갱신(renewAt이 뒤로)은 무시
+    await hook({ type: 'subscription.renewed', pgCustomerRef: ref2, renewAt: e.clock.now() + 1 * D });
+    const sub2 = (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as Record<string, unknown>;
+    assert.equal(sub2.status, 'active');
+    assert.equal(sub2.renewAt, e.clock.now() + 30 * D);
     assert.equal((await e.req('POST', '/v1/consents', { headers: bearer(s), body: { version: 'privacy-2026.11' } })).status, 204);
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['privacy-2026.11']);
   });

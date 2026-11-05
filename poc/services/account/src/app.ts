@@ -206,9 +206,10 @@ export function accountRouter(o: AccountAppOpts): Router {
   // 기기 범위 토큰 발급(인증서 + DPoP)
   r.add('POST', '/v1/device-tokens', async (ctx) => {
     const b = V.deviceToken(ctx.body);
-    limit(`devtok:${b.cert.cert.device_id}`, DEVICE.deviceTokensPerHour, MS.H);
+    // 검증 전에는 IP 단위만(서명 검증 비용), 기기 단위는 검증 통과 뒤에 센다
+    limit(`devtok-ip:${ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
     const dpop = ctx.headers.dpop;
-    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path);
+    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, () => limit(`devtok:${b.cert.cert.device_id}`, DEVICE.deviceTokensPerHour, MS.H));
     return json(200, out);
   });
 
