@@ -1,0 +1,5 @@
+// as: packages/net/src/probe.ts
+// expect: no-restricted-imports=1
+// egress 모듈도 공급사 SDK를 직접 쓰지 않는다(SDK는 어댑터가 쓰고 fetch만 egress.providerFetch로 받는다).
+import OpenAI from 'openai';
+export const o = OpenAI;

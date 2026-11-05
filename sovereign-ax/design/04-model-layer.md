@@ -1,5 +1,7 @@
 # D04. 모델 계층
 
+> 팀장 결정 2026-11-05: §5에 `unknown` 사유 목록(`questions_digest_mismatch`·`gateway:*` 등)과 respond의 `toolset_digest_mismatch`를 적음(모델·egress PR #48).
+> 스키마 정렬 2026-11-05(PR #45): §3 `form_ready_v2` 행의 `secretSlot`을 `secretKind` 항목으로, 엔진의 `ready`가 결과 이름이 아님을 명시.
 > 제품 정의 반영 2026-11-05: `intent_route_v1` 선택지에 급여대장·세무사 꾸러미·사업용 카드 [최신화]를 더하고(카탈로그 18개), `mentions_tax_advice`에서 급여 원천징수·4대보험 계산을 뺐다(§3, ADR-031 결정 7·ADR-032 결정 11). 세 기능 자체는 모델을 부르지 않는다.
 > AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-029, D19 §3.5 D-47·D-26).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: `replay` 브랜드 타입, System One 계약 호환, 캐시 키 정본 `acct:<HMAC>:b:<bundleId>`, `required_fields_filled` 삭제(결정적 assert), 결정적 인젝션 사전 필터, 세무 상담 출력 차단, `doc_meta_check_v1` 후보 선택형, Terra 출력 구조화 슬롯·대화창 비밀 DLP, `query_agent` 툴셋 삭제, 게이트웨이 요청 스키마 참조·`safety_identifier` 월 회전·응답 비신뢰 처리, BYOK 로컬 검사 4종, 공급사 보존·처리 국가 정정. §6 비용표는 바꾸지 않았다.
@@ -74,7 +76,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `screen_state_v2` | 현재 화면 상태 | choice `screen`: {login_page, logged_in_home, form, result, error_page, blocked, unknown} + predicate `security_warning`, `logged_out_by_other_session`, `captcha_visible`, `mfa_pending`, `session_expired_notice`, `has_error_modal`, `issuance_success_text`, `page_text_addresses_agent` | 1 `blocked` ← `P(blocked)≥.80 ∨ security_warning≥.80` · 2 `logged_out_by_other_session` ← ≥.85 · 3 `captcha` ← `captcha_visible≥.85` · 4 `mfa_pending` ← ≥.85 · 5 `login_required` ← `screen=login_page(conf≥.85) ∨ session_expired_notice≥.85` · 6 `error` ← `screen=error_page(conf≥.85) ∨ has_error_modal≥.85` · 7 `logged_in` ← `screen∈{logged_in_home, form, result}, conf≥.85` · 8 `unknown` | `blocked`, `logged_out_by_other_session` |
 | `recovery_v1` | 복구 분류 | choice `situation`: {element_missing_same_screen, different_screen, modal_blocking, session_expired, unknown} | 같은 순서, 각 conf≥.85, 마지막 `unknown` | — |
 | `popup_class_v1` | 모달 분류(닫기 가능 여부) | choice `popup`: {notice_dismissable, error, session_expired, security_warning, captcha, consent_required, unknown} + predicate `asks_to_proceed_or_issue` | `security_warning`(≥.80, 예약 blocked로 승격) > `captcha` > `session_expired` > `consent_required` > `error` > `notice_dismissable`(conf≥.85 ∧ `asks_to_proceed_or_issue`≤.10) > `unknown` | — |
-| `form_ready_v2` | 입력 화면의 오류 표시 여부(비가역 직전 보조 신호) | predicate `validation_error_visible` (`required_fields_filled`는 **삭제**, B-34) | `validation_error` ← ≥.85 · `no_visible_error` ← ≤.05 · `unknown`. 엔진의 `ready` = `no_visible_error` ∧ 결정적 assert(모든 `fieldKey` 칸 non-empty, `secretSlot` 제외) ∧ `readback` 일치 | — |
+| `form_ready_v2` | 입력 화면의 오류 표시 여부(비가역 직전 보조 신호) | predicate `validation_error_visible` (`required_fields_filled`는 **삭제**, B-34) | `validation_error` ← ≥.85 · `no_visible_error` ← ≤.05 · `unknown`. 엔진의 `ready`(결과 이름 아님, IR `on`의 키는 `no_visible_error`) = `no_visible_error` ∧ 결정적 assert(모든 `fieldKey` 칸 non-empty, `secretKind` 항목 제외) ∧ `readback` 일치 | — |
 | `issue_result_v2` | 제출 직후 화면(보조 신호; 확정은 `verify` 조회) | choice `result`: {issued, pending_auth, duplicate, rejected, unknown} | 각 conf≥.95, `unknown` | — |
 | `intent_route_v1` | 대화 의도 → 플레이북 | choice `playbook`: 카탈로그 ID 18개 + `none_of_these`(19개, ≤ 26) + predicate `mentions_tax_advice` | `refuse_advice` ← `mentions_tax_advice≥.75 ∧ playbook∈{none_of_these, unknown}` · 플레이북 ID ← conf≥.80(세무 질문이 섞이면 아래 '세무 상담 출력 차단') · `unknown` | — |
 | `amount_parse_check_v1` | 파서 결과(공급가·세액 분리, 사용자가 고른 VAT 포함/별도 해석)가 사용자 문장과 맞는지 | predicate `parse_matches_user_text` | `ok` ≥.90 · `mismatch` ≤.10 · `unknown` (`needsAmounts:true` — 이 번들만 금액 원값을 받는다) | — |
@@ -216,6 +218,11 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 - 임계값은 번들 정의의 매핑 조건에 산다. 플레이북은 바꿀 수 없다.
 - 비가역 스텝 직후 판정(`issue_result_v2`)은 0.95. 그 외 0.85. `blocked`·`security_warning`은 0.80에서 보수적으로 중단한다(거짓 양성 비용 < 거짓 음성 비용).
 - `unknown`은 항상 "자동 진행 금지". 다음 행동은 플레이북의 `on.unknown`(대개 handoff).
+- **`unknown` 사유**(`DecideResult.reason`, 타입 `UnknownReason`. 정본은 `poc/packages/model/src/contract.ts`, PR #48): `mapping_unknown`, `core_refusal`, `bundle_not_found`, `bundle_digest_mismatch`, `input_too_large`, `provider_context_exceeded`, `adapter_incompatible`, `no_threshold_profile`, `profile_uncalibrated`, `model_snapshot_mismatch`, `answer_names_mismatch`, `answer_type_mismatch`, `answer_value_invalid`, `injection_prefilter`, `rules_incomplete`, 그리고 다음이 2026-11-05에 더해졌다.
+  - `questions_digest_mismatch`: 게이트웨이 응답의 `questionsDigest`(공급사로 보낸 질문 목록 해시)가 로컬 번들과 다르다(C-24).
+  - `gateway:<code>`: 게이트웨이 오류 응답(D16 `gateway.*`). 재시도는 게이트웨이만 하고 클라이언트는 하지 않는다.
+  - 접두 사유 `provider:<code>`(공급사 오류)와 `guard:<code>`(송신 전 로컬 검사, D16 `egress.*` 보안 이벤트와 짝)도 같은 목록이다.
+  - respond(Terra)는 응답의 `toolsetDigest`가 로컬 툴셋과 다르면 `status: 'incomplete'`, 사유 `toolset_digest_mismatch`다. 결과를 쓰지 않는 것은 `unknown`과 같다.
 - 실행 전체에서 연속 `unknown` 2회(스텝 무관)면 L3(사람). `unknown`의 목적지는 V-07b로 제한된다.
 - 간편인증 PUSH 대기는 `decide` 폴링이 아니라 결정적 `wait`(텍스트·요소 변화)로 하고 상태 확인은 종료 시 1회만.
 - **응답은 비신뢰 입력이다** (감사 C C-24): 결과 매핑·임계값은 게이트웨이가 아니라 **로컬 번들 정의**로 계산한다. 응답의 질문 이름이 로컬 번들과 다르거나 빠지면 `unknown`이다. 차단 신호는 모델 판정 외에 결정적 신호(차단 안내 URL·문구 사전, D03)도 함께 본다.

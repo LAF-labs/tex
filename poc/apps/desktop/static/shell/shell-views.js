@@ -21,6 +21,7 @@ const ICONS = {
   docs: [20, 'M3 6.5V15a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 17 15V8a1.5 1.5 0 0 0-1.5-1.5H10L8.5 4.5h-4A1.5 1.5 0 0 0 3 6z'],
   cps: [20, 'M10.25 7a2.75 2.75 0 1 1-5.5 0a2.75 2.75 0 1 1 5.5 0z', 'M2.5 16c.6-2.6 2.6-4 5-4s4.4 1.4 5 4', 'M13 4.6a2.6 2.6 0 0 1 0 5', 'M14.5 12.2c1.6.5 2.6 1.8 3 3.8'],
   biz: [20, 'M3.5 16.5V5.5l6.5-2.5 6.5 2.5v11', 'M2.5 16.5h15', 'M8 16.5v-4h4v4'],
+  bundle: [20, 'M3.5 7h13v8.5a1.5 1.5 0 0 1-1.5 1.5H5a1.5 1.5 0 0 1-1.5-1.5z', 'M2.5 4h15v3h-15z', 'M8 10.5h4'],
   activity: [20, 'M6 5h10M6 10h10M6 15h10M3 5h.5M3 10h.5M3 15h.5'],
   settings: [20, 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4'],
   lock: [16, 'M4.5 7h7A1.5 1.5 0 0 1 13 8.5v4a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 3 12.5v-4A1.5 1.5 0 0 1 4.5 7z', 'M5.5 7V5a2.5 2.5 0 0 1 5 0'],
@@ -244,7 +245,7 @@ export function taskCard(run, act) {
     card.append(
       line(`발급했어요. ${mail}`),
       h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))),
-      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('지난번과 같게', () => act.again(run)), toggle),
+      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(r.docId), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
       where,
     );
   } else if (st === 'stopped') {
@@ -316,7 +317,7 @@ export function runPanel(run, act) {
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
-    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('폴더 열기', () => act.toast('목업: 폴더를 열지 않아요'))) : null,
+    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(run.result.docId), 'sx-btn-primary'), btn('폴더 열기', () => act.revealDoc(run.result.docId))) : null,
   );
 }
 
@@ -391,7 +392,7 @@ export function docPanel(doc, today, act, review) {
         ['프로필', doc.profile === 'business' ? '사업자' : '개인'],
         ['보관', '이 PC 문서함'],
       ]),
-      h('div', { class: 'sx-actions' }, btn('열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
       h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
     ],
   );

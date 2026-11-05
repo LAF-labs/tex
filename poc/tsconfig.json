@@ -1,7 +1,7 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/platform" }, { "path": "packages/redaction" }, { "path": "packages/net" }, { "path": "packages/model" }, { "path": "packages/db" },
+    { "path": "packages/platform" }, { "path": "packages/redaction" }, { "path": "packages/net" }, { "path": "packages/model" }, { "path": "packages/db" }, { "path": "packages/payroll" },
     { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "apps/desktop" },
     { "path": "services/shared" }, { "path": "services/account" }
   ]

@@ -622,6 +622,9 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.equal((await status()).status, 'pending');
     await hook({ type: 'subscription.activated', pgCustomerRef: ref2, renewAt: t0 + 30 * D, at: t0 + 201 });
     assert.equal((await status()).status, 'active');
+    // 옛 참조의 해지 재전송(시각이 더 늦어도)은 새 구독을 해지하지 않는다. 같은 참조 안에서는 해지 뒤 활성이 없으므로 해지에 최신성 필터가 필요 없다
+    await hook({ type: 'subscription.canceled', pgCustomerRef: ref, at: t0 + 300 });
+    assert.equal((await status()).status, 'active');
   });
 });
 
