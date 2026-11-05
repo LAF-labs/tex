@@ -2,6 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AppState } from 'react-native';
 import { RECONNECT_MS } from './config';
+import { inflight } from './inflight';
 import type { DeviceKeys } from './keyring';
 import { syncWithPc, type PcStatus } from './net/pc';
 import { FileOutbox } from './storage/outbox';
@@ -57,7 +58,7 @@ export function SessionProvider({ keys, initial, children }: { keys: DeviceKeys;
     setSyncing(true);
     setPc('connecting');
     try {
-      const r = await syncWithPc({ keys, data: () => dataRef.current, update, outbox });
+      const r = await inflight(() => syncWithPc({ keys, data: () => dataRef.current, update, outbox }));
       setPc(r.status);
     } finally {
       busy.current = false;

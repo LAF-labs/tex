@@ -4,7 +4,8 @@ import { StatusBar } from 'expo-status-bar';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { LOCK_AFTER_MS } from './src/config';
+import { LOCK_AFTER_MS, LOCK_DRAIN_MS } from './src/config';
+import { drained } from './src/inflight';
 import { ensureFreshInstall, forget, type DeviceKeys } from './src/keyring';
 import { sweepCaptureTemps } from './src/storage/files';
 import { CaptureScreen } from './src/screens/CaptureScreen';
@@ -36,7 +37,9 @@ export default function App() {
   }, []);
 
   const lock = useCallback(() => {
-    forget(keysRef.current);
+    // 진행 중 저장·전송이 끝난 뒤 지운다(같은 배열을 쓰는 작업이 0 키로 봉인하지 않게, src/inflight.ts)
+    const k = keysRef.current;
+    void drained(LOCK_DRAIN_MS).then(() => forget(k));
     keysRef.current = null;
     setUnlocked(null);
     setRoute('home');

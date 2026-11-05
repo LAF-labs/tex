@@ -12,6 +12,8 @@ export const relayAllowlist = (): readonly string[] => (DEV_LOCAL ? [...RELAY_AL
 
 /** P-01: 백그라운드 30초 뒤 다시 잠근다. */
 export const LOCK_AFTER_MS = 30_000;
+/** 잠글 때 진행 중 저장·전송을 기다리는 최대 시간. 그 뒤에는 키를 지우고 남은 작업은 봉인하지 못하고 실패한다. */
+export const LOCK_DRAIN_MS = 15_000;
 /** 앱이 앞에 있는 동안 PC 연결을 다시 시도하는 간격. */
 export const RECONNECT_MS = 60_000;
 /** 사진 긴 변 상한(4 MiB 상한 안에 들도록). */

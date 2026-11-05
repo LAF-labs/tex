@@ -14,7 +14,7 @@ import { Button, Card, Notice, Screen, T } from '../ui/kit';
 
 type Phase = 'scan' | 'checking' | 'warn' | 'working' | 'sas' | 'done' | 'failed';
 
-const FAIL: Record<MobilePairFailure | 'account' | 'relay', string> = {
+const FAIL: Record<MobilePairFailure | 'account' | 'relay' | 'save', string> = {
   qr_invalid: 'tex의 연결 QR이 아니에요. PC 화면의 QR을 다시 찍어 주세요.',
   qr_expired: 'QR 시간이 지났어요. PC에서 [새 QR]을 눌러 주세요.',
   relay_not_allowed: '알 수 없는 연결 서버예요. 연결을 멈췄어요.',
@@ -26,6 +26,7 @@ const FAIL: Record<MobilePairFailure | 'account' | 'relay', string> = {
   timeout: '시간이 지났어요. PC에서 다시 시작해 주세요.',
   account: '계정 서버에 연결할 수 없어요.',
   relay: '연결 서버에 닿지 않아요. 인터넷 연결을 확인해 주세요.',
+  save: '연결 정보를 이 폰에 저장하지 못했어요. PC에서 [새 QR]을 눌러 다시 연결해 주세요.',
 };
 
 export function PairScreen({ onDone }: { onDone: () => void }) {
@@ -103,16 +104,23 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
       return failWith(mp.failure ?? 'handshake');
     }
     r.channel.close();
-    await s.update((d) => ({
-      ...d,
-      pair: {
-        pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
-        kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokWrite: r.tokWrite,
-        mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
-      },
-      deviceList: r.deviceList,
-      seenListVersion: Math.max(d.seenListVersion, r.deviceList.listVersion),
-    }));
+    try {
+      await s.update((d) => ({
+        ...d,
+        pair: {
+          pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
+          kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokWrite: r.tokWrite,
+          mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
+        },
+        deviceList: r.deviceList,
+        seenListVersion: Math.max(d.seenListVersion, r.deviceList.listVersion),
+      }));
+    } catch {
+      // PC는 이미 이 폰을 받았지만 폰은 기록이 없다. 다시 연결하면 PC가 같은 키를 갱신한다(upsertDevice).
+      // 화면 상태에는 남지 않도록 pair를 비워 둔다(저장 실패 뒤 메모리만 연결된 것처럼 보이지 않게).
+      await s.update((d) => ({ ...d, pair: null })).catch(() => undefined);
+      return failWith('save');
+    }
     setPhase('done');
     void s.sync();
   }
