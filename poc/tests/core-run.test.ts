@@ -512,3 +512,13 @@ describe('Bugbot #59 회귀 2', () => {
     assert.ok(resume.ok && resume.state.name === 'Running' && !resume.effects.includes('slot.release'), '이어서 실행하면 슬롯 유지');
   });
 });
+
+describe('Bugbot #59 회귀 3', () => {
+  it('Recovering에서 복구 실패로 HandedOff·Failed가 되면 입력 잠금을 푼다(R-G6)', () => {
+    for (const then of ['handoff', 'fail'] as const) {
+      const r = transition(state('Recovering'), { t: 'recovery_failed', then }, OK);
+      assert.ok(r.ok && r.effects.includes('input.unlock'), then);
+      assert.equal(r.ok && r.state.name, then === 'handoff' ? 'HandedOff' : 'Failed');
+    }
+  });
+});

@@ -196,7 +196,8 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
         case 'recovered':
           return enterRunning(ctx, ['step.rerun_failed']);
         case 'recovery_failed':
-          return ev.then === 'handoff' ? to(state('HandedOff'), ['ui.banner:handoff_manual_commit']) : to(state('Failed'));
+          // 승인 뒤 enter_commit 전의 W(X) 대기에서 복구에 실패할 수 있으므로 R-G6 입력 잠금을 푼다(사용자가 직접 마저 하도록).
+          return ev.then === 'handoff' ? to(state('HandedOff'), ['input.unlock', 'ui.banner:handoff_manual_commit']) : to(state('Failed'), ['input.unlock']);
         case 'downgrade':
           return stopTo(ctx, ['tokens.discard', 'input.unlock', 'checkpoint.save']);
         default:
