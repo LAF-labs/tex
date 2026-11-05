@@ -1,5 +1,6 @@
 # D03. 플레이북 엔진
 
+> 스키마 정렬 2026-11-05(PR #45): §6 L2 금지 대상·비밀 칸 가드의 `secretSlot`을 `secretKind` 항목으로, §7 정책 예시에 `limits.*.loginFailuresPerDay`·`verify.maxMs` 추가(policy 스키마 v1.3.1).
 > v1.3.2 — AUDIT-D 반영 2026-11-03: 재시작 복원은 테이블 상태 승격·`run.reverify`(§2), 게이트 대기 10분·금고 잠금 시 바 내림(§3), 작성일자 KST·s19e 대조(§5), 확인 불가 fail-closed·입력 잠금 두 구간·trial 클릭(§5.3), verify 상한 5분·실패 신호 쌍(§5.6), 포털 문구 표시(§6), 2차 인증·모르는 화면·로그인 실패·시계 전진·PoC 상한(§7·§7.1), 체인 자체 검증(§9)(ADR-025·026·027, D19 §3.5). v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
 > ADR-036 반영 2026-11-05: §4 H-01c 취소 중복 키는 차단 키라는 예외.
 
@@ -232,7 +233,7 @@ for step in plan(current):
 |---|---|---|---|---|
 | L0 | 셀렉터 미스·타임아웃 | 정책 지연 후 재시도, 후보 순회 | `min(onFail.retry, policy.retries.stepMax)` ≤ 3. 둘 다 **재시도 횟수**(첫 시도 제외, §7) | 비가역 스텝은 0 |
 | L1 | L0 소진·미지 모달 | `recovery_v1` 번들(결과: `element_missing_same_screen`, `different_screen`, `modal_blocking`, `session_expired`, `unknown`) → 각각 L2 / 체크포인트 / 팝업 처리 / `session` 복귀 / 핸드오프 | 실행 전체 연속 `unknown` 2회 → L3 | 커밋 구간 안 금지 |
-| L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 요청마다 채운 열거값, 이름은 정규식이 아닌 부분 문자열 `nameContains`, B/C-07) → 엔진이 동일성 검사 10항 통과 후 **그 실행에서만** 적용. **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만**(되돌릴 수 있고 readback으로 검증됨). `click`·`press` 타깃의 제안은 핸드오프 카드("이 버튼을 누를까요?" + 요소 하이라이트)로 사용자가 확인해야 적용한다(B-16) | 실행당 `policy.run.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretSlot`·`password`·커밋 구간·조회 패키지 금지 |
+| L2 | `element_missing_same_screen` | Terra `selector_repair`(읽기 도구 3종, `scopeId`는 엔진이 요청마다 채운 열거값, 이름은 정규식이 아닌 부분 문자열 `nameContains`, B/C-07) → 엔진이 동일성 검사 10항 통과 후 **그 실행에서만** 적용. **자동 적용은 `fill`·`select`·`wait`·`extract` 타깃에만**(되돌릴 수 있고 readback으로 검증됨). `click`·`press` 타깃의 제안은 핸드오프 카드("이 버튼을 누를까요?" + 요소 하이라이트)로 사용자가 확인해야 적용한다(B-16) | 실행당 `policy.run.l2MaxAttempts`(기본 1) | 비가역 스텝·`commits:true`·`secretKind` 항목·`password`·커밋 구간·조회 패키지 금지 |
 | L3 | 그 외 | 핸드오프(`resumeAt`), 토큰 폐기 | — | — |
 
 L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같은 프레임 (3) 스텝 `scope` 서브트리 안 (4) 사전의 `role` 일치 (5) 실제 접근성 이름이 사전 `namePattern`(앵커 필수, SV-04)과 일치(모델 제안 이름 미사용) (6) `landmark` 일치 (7) `fill`이면 readback 일치 (8) `css`는 ID/허용 속성 셀렉터만 (9) 실제 이름이 `DENY_ACTION_NAME`에 맞으면 버림(B-16, B-32) (10) 모델 출력의 `risk_flags`가 비어 있지 않거나 `outcome ≠ repaired`면 적용하지 않음(B-17, 출력 스키마는 D04 §4.1). 복구 성공 → **실패한 그 스텝**을 재실행. L2 입력은 텍스트뿐이며 **Phase 1에서는 이미지를 모델로 보내지 않는다**(B-18).
@@ -241,7 +242,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 
 대화상자 정책: `alert` → accept, 텍스트를 판정 입력으로. `confirm`/`beforeunload` → **무장된 커밋 구간 + 선언된 `expectConfirm` 패턴(앵커, V-24) 일치**일 때만 accept + `commit.confirm_accepted{textHash}`, 그 외 dismiss + 저널. `prompt` → dismiss. 리스너는 엔진이 항상 등록한다(Playwright 기본 동작에 의존하지 않음). 실행이 닫은 포털 대화상자의 마지막 문구(NFKC, 200자)는 실행 메모리에만 두고 실패·핸드오프 카드에 '홈택스 안내: …'로 보인다. 저널·텔레메트리·모델에는 넣지 않는다. `step.target_not_found`·`checkpoint.expect_failed`는 "예상한 홈택스 화면이 아니에요" 문구로 보인다(ADR-025, D-10(N-16)).
 
-스냅샷 필터와 비밀 칸 가드: `type=password` 또는 사전 `secretSlot` 또는 최근 타이피스트 대상 요소의 값은 접근성 스냅샷에서 제거한다. 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷·`extract` 공통)는 이 요소들의 `value`를 아예 읽지 않는다(V-20 런타임 가드, A-05, B-26). 타이피스트는 키 입력마다 `activeElement`와 `type`을 재확인한다. 스냅샷은 모델로 가기 전에 D06 절단·구분자 규칙과 D04 결정적 사전 필터를 지난다.
+스냅샷 필터와 비밀 칸 가드: `type=password` 또는 사전의 `secretKind` 항목 또는 최근 타이피스트 대상 요소의 값은 접근성 스냅샷에서 제거한다. 엔진의 DOM 읽기 함수(Actuator·readback·스냅샷·`extract` 공통)는 이 요소들의 `value`를 아예 읽지 않는다(V-20 런타임 가드, A-05, B-26). 타이피스트는 키 입력마다 `activeElement`와 `type`을 재확인한다. 스냅샷은 모델로 가기 전에 D06 절단·구분자 규칙과 D04 결정적 사전 필터를 지난다.
 
 ## 7. 요청률 정책 (서명 배포, 플레이북은 강화만 가능)
 
@@ -255,23 +256,23 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
            "daemon":      {"stepDelayMs": [1200, 3500], "keyEventDelayMs": 150, "afterNavSettleMs": [800, 2000], "slowFactor": 1.5}},
   "browser": {"remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true},
   "captchaRelay": {"hometax": "allowed", "gov24": "disabled_until_permission", "wetax": "disabled_until_permission", "sminfo": "disabled", "insure4": "disabled"},
-  "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
-             "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "concurrent": 1},
-             "sminfo":  {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "concurrent": 1},
-             "insure4": {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "concurrent": 1}},
+  "limits": {"hometax": {"runsPerDayPerProfile": 40, "irreversiblePerDayPerProfile": 30, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 6, "loginFailuresPerDay": 2, "concurrent": 1},
+             "gov24":   {"runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 5,  "runsPerLoginSession": 5,  "navigationsPerMin": 12, "loginsPerDay": 6, "loginFailuresPerDay": 2, "concurrent": 1},
+             "sminfo":  {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "loginFailuresPerDay": 2, "concurrent": 1},
+             "insure4": {"runsPerDayPerProfile": 10, "irreversiblePerDayPerProfile": 3,  "runsPerLoginSession": 5,  "navigationsPerMin": 10, "loginsPerDay": 4, "loginFailuresPerDay": 2, "concurrent": 1}},
   "retries": {"stepMax": 3, "backoff": "equal_jitter", "baseMs": 800, "capMs": 10000},
   "run": {"maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1},
   "cooldown": {"onBlockSignalHours": 24, "onCaptchaBurst": {"windowMin": 10, "count": 3, "action": "slow+notify"}, "positiveDetectionsForCooldown": 2},
   "daemon": {"windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30, "autoAllowed": false},
   "portalMode": {"hometax": "auto", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess"},
-  "verify": {"minElapsedMs": 60000, "lookups": 2},
+  "verify": {"minElapsedMs": 60000, "lookups": 2, "maxMs": 300000},
   "remote": {"irreversiblePerDay": 5, "newCounterpartyRequiresLocal": true, "notifyOnIrreversible": ["desktop", "email"], "minProtocolVersion": 1, "disabledFeatures": []},
   "queue": {"maxIntentsPerPair": 5, "ttlHours": 72}
 }
 ```
 
 카운터 정의(모두 SQLite 영속, KST, 증가 커밋 → 행동 순서):
-- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
+- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`), 상한은 `limits.<portal>.loginFailuresPerDay`(앱 하한 ≤ 2). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
 - 캡차 이벤트도 `rate_counters`에 기록(재시작에 살아남음).
 - "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
 - 시계 전진은 단조 시간으로 판정하지 않는다. `lastSeen`이 마지막으로 검증한 서명 타임스탬프 + 72시간보다 미래면 불가능한 미래로 보고 재설정한다(`clock.future_reset`). 쿨다운 해제는 벽시계와 그 뒤 새로 검증한 서명 시각이 모두 `until` 이후일 때다(D-46(N-72)).
