@@ -1,6 +1,7 @@
 packages:
   - packages/*
   - apps/*
+  - services/*
   - tests
 minimumReleaseAgeExclude:
   - electron@45.1.0

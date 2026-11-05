@@ -1,0 +1,20 @@
+{
+  "name": "@sax/svc-account",
+  "version": "0.0.0",
+  "private": true,
+  "description": "계정·구독 서비스(D09 §2, D14 M4-5)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@sax/svc-shared": "workspace:*"
+  }
+}
