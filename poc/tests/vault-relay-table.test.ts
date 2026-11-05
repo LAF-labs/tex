@@ -208,10 +208,46 @@ describe('D05 §3.4 응답 정리 표', () => {
     f.relay.openWindow(t, 'human', 'RUN', 7);
     f.relay.deactivateWindow(t);
     const r = await f.call('Runtime.getProperties', { objectId: 'X' }, {
-      result: [{ name: 'value', value: { type: 'string', value: 'TEST-PROP-1' } }, { name: 'defaultValue', value: { type: 'string', value: 'TEST-PROP-2' } }, { name: 'id', value: { type: 'string', value: 'pw' } }],
+      result: [
+        // Chrome은 문자열 RemoteObject의 값을 description에도 복사한다.
+        { name: 'value', value: { type: 'string', value: 'TEST-PROP-1', description: 'TEST-PROP-1' } },
+        { name: 'defaultValue', value: { type: 'string', value: 'TEST-PROP-2', description: 'TEST-PROP-2' } },
+        { name: 'id', value: { type: 'string', value: 'pw' } },
+      ],
     });
     assert.doesNotMatch(JSON.stringify(r), /TEST-PROP/);
     assert.match(JSON.stringify(r), /"pw"/, '다른 속성은 남긴다');
+  });
+
+  it('보낼 때 오염이었던 요청은 응답 전에 문서 커밋으로 창이 닫혀도 정화한다(getProperties·바디·DOM)', async () => {
+    const f = await fakeRelay();
+    const t = f.relay.targets.get('RUN')!;
+    f.relay.openWindow(t, 'human', 'RUN', 7);
+    f.relay.deactivateWindow(t);
+    const reqs: Array<[string, Json, Json]> = [
+      ['Runtime.getProperties', { objectId: 'X' }, { result: [{ name: 'value', value: { type: 'string', value: 'TEST-RACE-1', description: 'TEST-RACE-1' } }] }],
+      ['Network.getRequestPostData', { requestId: 'R-ok' }, { postData: 'pw=TEST-RACE-2' }],
+      ['DOM.describeNode', { backendNodeId: 7 }, { node: { nodeId: 1, backendNodeId: 7, nodeName: 'INPUT', attributes: ['value', 'TEST-RACE-3'], value: 'TEST-RACE-3' } }],
+    ];
+    let id = 900;
+    const before = f.conn.raw.length;
+    for (const [m, params] of reqs) f.relay.onEngineMessage(JSON.stringify({ id: id++, method: m, params, sessionId: f.sid }));
+    await tick(1);
+    // 응답보다 먼저 문서 커밋(금고 세션에서 바로 처리) → 창이 닫히고 비밀 노드가 비워진다.
+    f.relay.endWindow(t, 'commit');
+    assert.equal(t.win, undefined);
+    const sent = f.conn.raw.slice(before);
+    for (const [m, , result] of reqs) {
+      const fwd = sent.find((x) => x.method === m);
+      assert.ok(fwd, `${m} 전달됨`);
+      f.conn.reply(Number(fwd.id), structuredClone(result), f.sid);
+    }
+    await tick(5);
+    await f.relay.drained();
+    assert.doesNotMatch(JSON.stringify(f.toEngine), /TEST-RACE/);
+    // 커밋 뒤 새로 보낸 요청은 오염이 아니다.
+    const r = await f.call('Runtime.getProperties', { objectId: 'Y' }, { result: [{ name: 'value', value: { type: 'string', value: 'plain-after' } }] });
+    assert.match(JSON.stringify(r), /plain-after/);
   });
 
   it('스크린샷·스크린캐스트: 오염(활성 포함) 동안 거부, 화면 녹화 프레임은 엔진에 안 감', async () => {
