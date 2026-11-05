@@ -158,7 +158,9 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
       () => v.store('security_card', 'business', [{ row: 1, bytes: enc('1') }, { row: 1, bytes: enc('2') }], { version: 'v1' }),
       () => v.store('security_card', 'business', [{ row: 1, bytes: new Uint8Array(257) }], { version: 'v1' }),
       () => v.store('security_card', 'business', [{ row: 1, field: 'pw', bytes: enc('1') }], { version: 'v1' }),
-      () => v.store('portal_password', 'business', [{ field: 'id', bytes: enc('me') }], { version: 'v1' }),
+      // 포털 아이디는 비밀이 아니라 금고에 칸이 없다(D05 §2·§4, ADR-035).
+      () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }], { version: 'v1' }),
+      () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }, { field: 'pw', bytes: enc('x') }], { version: 'v1' }),
       () => v.store('cert_password' as never, 'business', [{ field: 'pw', bytes: enc('x') }], { version: 'v1' }),
       () => v.store('portal_password', '../x', [{ field: 'pw', bytes: enc('x') }], { version: 'v1' }),
     ];
@@ -169,7 +171,7 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
 
   it('다른 기기(다른 래핑 키)에서는 같은 저장소 사본을 열 수 없다', async () => {
     const a = setup();
-    await a.v.store('portal_password', 'business', [{ field: 'id', bytes: enc('user1') }, { field: 'pw', bytes: enc('TEST-PW-123456') }], { version: 'v1' });
+    await a.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-123456') }], { version: 'v1' });
     const copy = new MemoryItemStore();
     for (const [k, val] of a.items.items) copy.items.set(k, val);
     const c = clock();
@@ -311,6 +313,48 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     assert.equal(await h.control.rpc('secret.has', { kind: 'security_card', scope: 'personal' }), false);
   });
 
+  it('포털 등록 창: 아이디는 저장하지 않고 secret.store 결과로 돌려준다(비밀 아님, ADR-035)', async () => {
+    const itemKeys = () => [...(h.vault.human as unknown as { b: { items: MemoryItemStore } }).b.items.items.keys()];
+    const portalBind = { mode: 'store' as const, kind: 'portal_password' as const, scope: 'business' as const, notice: { version: 't06-v1' } };
+    const r = await h.secretPort(portalBind).rpc<{ portalLoginId?: string; consent: { items: number } }>('secret.store', {
+      entries: [{ field: 'pw', bytes: enc('TEST-PW-login01') }], portalLoginId: ' user-login1 ',
+    });
+    assert.equal(r.portalLoginId, 'user-login1');
+    assert.equal(r.consent.items, 1);
+    assert.deepEqual(itemKeys().filter((k) => k.startsWith('portal/')), ['portal/business/pw']);
+    // 금고 항목·색인·동의 레코드 어디에도 아이디가 없다.
+    const blobs = (h.vault.human as unknown as { b: { items: MemoryItemStore } }).b.items.items;
+    for (const [, val] of blobs) assert.doesNotMatch(Buffer.from(val).toString('latin1'), /user-login1/);
+    // 아이디 칸으로 보내면 거부, 저장도 안 한다.
+    await assert.rejects(h.secretPort({ ...portalBind, scope: 'personal' }).rpc('secret.store', { entries: [{ field: 'id', bytes: enc('user-login1') }] }), /bad_cell/);
+    // 틀린 아이디(공백·제어 문자·길이 초과·문자열 아님)나 보안카드 결속의 아이디는 거부하고 넘긴 바이트를 지운다.
+    for (const [bind, id] of [
+      [portalBind, 'a b'], [portalBind, 'a\u0000'], [portalBind, 'x'.repeat(65)], [portalBind, 123], [portalBind, ''],
+      [storeBind, 'user-login1'],
+    ] as const) {
+      const bytes = bind.kind === 'security_card' ? enc('1234') : enc('TEST-PW-login02');
+      const entries = bind.kind === 'security_card' ? [{ row: 1, bytes }] : [{ field: 'pw', bytes }];
+      await assert.rejects(h.secretPort({ ...bind, scope: 'personal' }).rpc('secret.store', { entries, portalLoginId: id }), /bad_login_id/);
+    }
+    assert.equal(await h.control.rpc('secret.has', { kind: 'portal_password', scope: 'personal' }), false);
+    assert.equal(await h.control.rpc('secret.has', { kind: 'security_card', scope: 'personal' }), false);
+    assert.equal(await h.control.rpc('secret.forget', { kind: 'portal_password', scope: 'business' }), true);
+  });
+
+  it('run.begin의 profile로 run 동안 scope를 고정한다: 다른 scope 입력은 denied, run 중 프로필 바꾸기는 거부(Q-2)', async () => {
+    assert.deepEqual(await h.control.rpc('run.begin', { runId: 'rp1', trigger: 'local', profile: 'business' }), {});
+    const fill = (scope: string) => h.client.rpc('typist.fill', {
+      runId: 'rp1', targetId: 'RUN', frame: 'main', element: '#pw',
+      secret: { kind: 'portal_password', scope }, slot: { secretKind: 'portal_password', purpose: 'login' },
+    });
+    assert.deepEqual(await fill('personal'), { ok: false, reason: 'denied' });
+    await assert.rejects(h.control.rpc('run.begin', { runId: 'rp1', trigger: 'local', profile: 'personal' }), /profile_locked/);
+    await assert.rejects(h.control.rpc('run.begin', { runId: 'rp2', trigger: 'local', profile: '../x' }), /bad_profile/);
+    assert.deepEqual(await h.control.rpc('run.end', { runId: 'rp1' }), {});
+    assert.deepEqual(await h.control.rpc('run.begin', { runId: 'rp1', trigger: 'local', profile: 'personal' }), {}, 'run이 끝나면 다음 run은 다른 프로필');
+    assert.deepEqual(await h.control.rpc('run.end', { runId: 'rp1' }), {});
+  });
+
   it('control 세션 이벤트: 유휴 보고 전 잠김 → 보고 → 열림 → lock-screen이면 vault.state{open:false}', async () => {
     const states: unknown[] = [];
     const off = h.control.on('vault.state', (d) => void states.push(d));
@@ -337,7 +381,7 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
 describe('타이피스트가 저장된 사람 비밀을 칸 하나씩 쓴다', () => {
   async function withStored() {
     const s = setup();
-    await s.v.store('portal_password', 'business', [{ field: 'id', bytes: enc('user1') }, { field: 'pw', bytes: enc('TEST-PW-stored01') }], { version: 'v1' });
+    await s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-stored01') }], { version: 'v1' });
     await s.v.store('security_card', 'business', cardEntries(), { version: 'v1' });
     const reads: string[] = [];
     const f = await fakeRelay({

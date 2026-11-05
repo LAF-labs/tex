@@ -45,25 +45,33 @@ export type SecretKind = (typeof SECRET_KINDS)[number];
 
 /**
  * 저장할 수 있는 종류(ADR-020 결정 2·3, ADR-026 결정 2). 공동·금융인증서 비밀번호는 저장 기능 자체가 없다.
- * - portal_password: 칸 `portal/<scope>/id`·`portal/<scope>/pw`
+ * - portal_password: 칸 `portal/<scope>/pw` 하나(D05 §2, ADR-035). 포털 아이디는 비밀이 아니라 저장하지 않는다(DB `profiles.portal_login_id`, 엔진 fill)
  * - security_card: 칸 `securitycard/<scope>/<row>`(row 1~35)
  */
 export const STORABLE_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
 export type StorableKind = (typeof STORABLE_KINDS)[number];
 
 /**
- * 프로필 범위(칸 이름의 <profile>). PoC·Phase 1 초기는 프로필 2개(사업자·개인)라 이 두 값만 받는다(audit-v V5).
- * 프로필 ID로 넓히는 것은 질문 Q-2(D05 §2 `ProfileId`).
+ * 프로필 범위(칸 이름의 <profile>, D05 §2·§4 `scope`).
+ * Phase 1은 프로필 1개(사업자)로 운영한다. scope는 run.begin 때 활성 프로필로 고정하고 run 중에는 바꾸지 않는다.
+ * 프로필 전환은 설정에서 run이 없고 금고가 잠긴 때만(main). 'personal'은 PoC 시험(audit-v V5) 호환으로 남긴다.
+ * Phase 2(프로필 2개 동시 운영)에 `ProfileId`로 넓힌다.
  */
-export const SECRET_SCOPES = ['business', 'personal'] as const;
-export type SecretScope = (typeof SECRET_SCOPES)[number];
-export const isSecretScope = (s: unknown): s is SecretScope => typeof s === 'string' && (SECRET_SCOPES as readonly string[]).includes(s);
+export const PROFILE_SCOPES = ['business', 'personal'] as const;
+export type ProfileScope = (typeof PROFILE_SCOPES)[number];
+export const isProfileScope = (s: unknown): s is ProfileScope => typeof s === 'string' && (PROFILE_SCOPES as readonly string[]).includes(s);
 
 /** 보안카드 칸 번호 범위. */
 export const SECURITY_CARD_ROWS = { min: 1, max: 35 } as const;
 
-/** 포털 자격 칸. 타이피스트는 type=password 칸에만 넣으므로 Phase 1에서 자동 입력하는 것은 pw다(id는 저장만, 질문 Q-1). */
-export type PortalField = 'id' | 'pw';
+/**
+ * 포털 자격 칸. 금고에 두는 것은 비밀번호뿐이다(D05 §2·§4, ADR-035). 타이피스트는 type=password 칸에만 넣는다.
+ * 아이디는 비밀이 아니다: DB `profiles.portal_login_id`에 두고 엔진 fill 스텝이 넣는다.
+ */
+export type PortalField = 'pw';
+
+/** 등록 창이 함께 받은 포털 아이디의 최대 길이(비밀 아님, 금고는 저장하지 않고 secret.store 결과로 돌려준다). */
+export const PORTAL_LOGIN_ID_MAX = 64;
 
 // ───────────────────────── secretInput 포트 ─────────────────────────
 
@@ -76,7 +84,7 @@ export type OneShotBind = {
   mode?: 'oneshot';
   runId: string;
   kind: SecretKind;
-  scope: SecretScope;
+  scope: ProfileScope;
   row?: number;
 };
 
@@ -87,7 +95,7 @@ export type OneShotBind = {
 export type StoreBind = {
   mode: 'store';
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
   notice: { version: string };
 };
 
@@ -97,26 +105,32 @@ export type SecretInputBind = OneShotBind | StoreBind;
 export interface SecretProvideParams {
   bytes: Uint8Array;
   kind?: SecretKind;
-  scope?: SecretScope;
+  scope?: ProfileScope;
   row?: number;
 }
 
-/** secret.store 인자(store 결속). 보안카드는 row만, 포털은 field만 쓴다. 값은 TextEncoder 바이트. */
+/**
+ * secret.store 인자(store 결속). 보안카드는 row만, 포털은 field만 쓴다. 값은 TextEncoder 바이트.
+ * `portalLoginId`: 포털 등록 창이 아이디를 같은 화면에서 받았을 때만(portal_password 결속). 비밀이 아니다.
+ * 금고는 저장·로그하지 않고 결과에 그대로 돌려준다(main이 DB `profiles.portal_login_id`에 쓴다, ADR-035).
+ */
 export interface SecretStoreParams {
   entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>;
+  portalLoginId?: string;
 }
 
-/** secret.store 결과. 값·길이 없음. */
+/** secret.store 결과. 비밀 값·길이 없음. `portalLoginId`는 인자로 받은 비밀 아닌 아이디를 돌려준 것. */
 export interface SecretStoreResult {
   handle: SecretHandle;
   tier: KeyTier;
   consent: ConsentRecord;
+  portalLoginId?: string;
 }
 
 /** 저장된 비밀의 손잡이(종류·범위만, 값 없음). */
 export interface SecretHandle {
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
 }
 
 // ───────────────────────── 키체인 등급·동의 레코드 ─────────────────────────
@@ -137,7 +151,7 @@ export type KeyTier = 'tpm' | 'dpapi' | 'keychain-dev' | 'memory';
 export interface ConsentRecord {
   v: 1;
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
   /** 저장한 칸 수(보안카드 30, 포털 1~2). 어떤 칸인지는 남기지 않는다. */
   items: number;
   tier: KeyTier;
@@ -154,7 +168,7 @@ export interface ConsentRecord {
 /** secret.list 항목(control). 값·칸 번호 없음. */
 export interface StoredSecretInfo {
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
   items: number;
   tier: KeyTier;
   /** 포털이 명시적 인증 실패를 알린 뒤 사용자가 다시 등록하지 않았다(vault.credential_suspect, ADR-026 결정 7). */
@@ -218,6 +232,16 @@ export interface VaultStateEvent {
 export const RUN_TRIGGERS = ['local', 'remote', 'daemon'] as const;
 export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 
+/**
+ * run.begin 인자. `profile`은 이 run의 활성 프로필(Q-2): 주면 run 동안 다른 scope의 typist.fill을 거부한다(denied).
+ * Phase 1 main은 항상 준다. 생략은 PoC 호환(고정 없음).
+ */
+export interface RunBeginParams {
+  runId: string;
+  trigger: RunTrigger;
+  profile?: ProfileScope;
+}
+
 // ───────────────────────── 타이피스트(engine) ─────────────────────────
 
 export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing' | 'vault_locked' | 'credential_suspect';
@@ -243,7 +267,7 @@ export interface FillRequest {
 export interface AuthFailedParams {
   runId: string;
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
 }
 
 // ───────────────────────── R-C1 커밋 본문 대조(engine) ─────────────────────────

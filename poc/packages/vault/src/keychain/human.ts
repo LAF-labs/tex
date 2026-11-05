@@ -1,13 +1,13 @@
 // 사람 비밀(세션 결박) 저장소(D05 §2, ADR-026 결정 2·3·4·7, ADR-020 결정 2).
-// - 칸 단위 항목: securitycard/<scope>/<row>, portal/<scope>/id·pw. 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
+// - 칸 단위 항목: securitycard/<scope>/<row>, portal/<scope>/pw(포털 아이디는 비밀이 아니라 두지 않는다, D05 §2·ADR-035). 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
 // - 슬롯 KEK(32B 무작위)는 기기 결박 래핑(kek/<slot>/device: TPM → DPAPI)과, Hello가 있으면 Hello 사본(kek/<slot>/hello)으로 둔다.
 // - 발급 1회에 요청된 칸만 복호한다. 금고가 잠기면 메모리의 슬롯 KEK를 지운다.
 // - 인증서 비밀번호는 저장 기능이 없다. 이 모듈은 STORABLE_KINDS 밖을 받지 않는다.
 import { randomBytes } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import {
-  isSecretScope, SECURITY_CARD_ROWS, STORABLE_KINDS,
-  type ConsentRecord, type KeyTier, type PortalField, type SecretScope, type StorableKind, type StoredSecretInfo, type VaultLockReason,
+  isProfileScope, SECURITY_CARD_ROWS, STORABLE_KINDS,
+  type ConsentRecord, type KeyTier, type PortalField, type ProfileScope, type StorableKind, type StoredSecretInfo, type VaultLockReason,
 } from '../protocol.ts';
 import { ITEM_MAX_BYTES, open, seal, type HelloPrompt, type KeychainBackend } from './backend.ts';
 import { SessionLock, type SessionLockOptions } from './session.ts';
@@ -17,14 +17,14 @@ export const HUMAN_SECRET_MAX_BYTES = 256;
 
 const INDEX_ITEM = 'index/human';
 
-export const slotName = (kind: StorableKind, scope: SecretScope): string => `${kind === 'security_card' ? 'securitycard' : 'portal'}/${scope}`;
+export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'security_card' ? 'securitycard' : 'portal'}/${scope}`;
 
-export function itemName(kind: StorableKind, scope: SecretScope, cell: { row?: number; field?: PortalField }): string {
+export function itemName(kind: StorableKind, scope: ProfileScope, cell: { row?: number; field?: PortalField }): string {
   if (kind === 'security_card') {
     if (!isRow(cell.row) || cell.field !== undefined) throw new Error('bad_cell');
     return `${slotName(kind, scope)}/${cell.row}`;
   }
-  if ((cell.field !== 'id' && cell.field !== 'pw') || cell.row !== undefined) throw new Error('bad_cell');
+  if (cell.field !== 'pw' || cell.row !== undefined) throw new Error('bad_cell');
   return `${slotName(kind, scope)}/${cell.field}`;
 }
 
@@ -33,7 +33,7 @@ const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) 
 interface SlotIndex {
   v: 1;
   kind: StorableKind;
-  scope: SecretScope;
+  scope: ProfileScope;
   cells: string[];
   tier: KeyTier;
   hello: boolean;
@@ -81,7 +81,7 @@ export class HumanSecretVault {
       if (!raw) return m;
       try {
         const arr = JSON.parse(Buffer.from(raw).toString('utf8')) as SlotIndex[];
-        for (const s of arr) if (s?.v === 1 && (STORABLE_KINDS as readonly string[]).includes(s.kind) && isSecretScope(s.scope)) m.set(slotName(s.kind, s.scope), s);
+        for (const s of arr) if (s?.v === 1 && (STORABLE_KINDS as readonly string[]).includes(s.kind) && isProfileScope(s.scope)) m.set(slotName(s.kind, s.scope), s);
       } catch {
         this.log.event('vault.index_corrupt');
       }
@@ -100,10 +100,10 @@ export class HumanSecretVault {
    * 한 슬롯을 통째로 다시 등록한다(옛 칸·KEK는 지운다). entries의 바이트는 부르는 쪽이 넘긴 뒤 여기서 0으로 덮는다.
    * 기기 결박 래핑이 안 되면(네이티브 헬퍼 없음) 저장하지 않는다. 약한 등급으로 조용히 내려가지 않는다.
    */
-  async store(kind: StorableKind, scope: SecretScope, entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>, notice: { version: string }): Promise<ConsentRecord> {
+  async store(kind: StorableKind, scope: ProfileScope, entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>, notice: { version: string }): Promise<ConsentRecord> {
     const wipe = () => entries.forEach((e) => e.bytes?.fill?.(0));
     try {
-      if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isSecretScope(scope)) throw new Error('bad_slot');
+      if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(scope)) throw new Error('bad_slot');
       if (!entries.length || entries.length > SECURITY_CARD_ROWS.max) throw new Error('bad_entries');
       const names = entries.map((e) => itemName(kind, scope, e));
       if (new Set(names).size !== names.length) throw new Error('duplicate_cell');
@@ -152,7 +152,7 @@ export class HumanSecretVault {
   // ───────────── 꺼내기(타이피스트 전용, 칸 하나) ─────────────
 
   /** 칸 하나를 복호한다. 금고가 닫혔거나 suspect면 꺼내지 않는다. 받은 쪽이 다 쓴 뒤 0으로 덮는다. */
-  async readOne(kind: StorableKind, scope: SecretScope, cell: { row?: number; field?: PortalField }): Promise<ReadResult> {
+  async readOne(kind: StorableKind, scope: ProfileScope, cell: { row?: number; field?: PortalField }): Promise<ReadResult> {
     let name: string;
     try {
       name = itemName(kind, scope, cell);
@@ -257,7 +257,7 @@ export class HumanSecretVault {
 
   // ───────────── 목록·삭제·suspect ─────────────
 
-  async has(kind: StorableKind, scope: SecretScope): Promise<boolean> {
+  async has(kind: StorableKind, scope: ProfileScope): Promise<boolean> {
     return (await this.index()).has(slotName(kind, scope));
   }
 
@@ -276,20 +276,21 @@ export class HumanSecretVault {
     return out;
   }
 
-  async consent(kind: StorableKind, scope: SecretScope): Promise<ConsentRecord | null> {
+  async consent(kind: StorableKind, scope: ProfileScope): Promise<ConsentRecord | null> {
     const raw = await this.b.items.get(`consent/${slotName(kind, scope)}`);
     if (!raw) return null;
     return JSON.parse(Buffer.from(raw).toString('utf8')) as ConsentRecord;
   }
 
   /** 슬롯 삭제(설정 "저장된 비밀"의 개별 삭제, 또는 다시 등록 직전). 칸·KEK·동의 레코드를 모두 지운다. */
-  async forget(kind: StorableKind, scope: SecretScope, why: 'user' | 'replace' = 'user'): Promise<boolean> {
+  async forget(kind: StorableKind, scope: ProfileScope, why: 'user' | 'replace' = 'user'): Promise<boolean> {
     const slot = slotName(kind, scope);
     const idx = await this.index();
     const info = idx.get(slot);
     // 색인에 없어도 이름이 정해진 항목은 지운다(반쯤 쓴 슬롯 정리).
     const names = new Set(info?.cells ?? []);
     if (kind === 'security_card') for (let r = SECURITY_CARD_ROWS.min; r <= SECURITY_CARD_ROWS.max; r++) names.add(`${slot}/${r}`);
+    // 'id'는 ADR-035 이전 PoC가 남겼을 수 있는 항목을 함께 지운다.
     else for (const f of ['id', 'pw']) names.add(`${slot}/${f}`);
     for (const n of [...names, `kek/${slot}/device`, `kek/${slot}/hello`, `consent/${slot}`]) await this.b.items.delete(n);
     this.keks.get(slot)?.fill(0);
@@ -303,7 +304,7 @@ export class HumanSecretVault {
   }
 
   /** 포털의 명시적 인증 실패 1회 뒤(ADR-026 결정 7). 다시 등록하기 전에는 꺼내지 않는다. */
-  async markSuspect(kind: StorableKind, scope: SecretScope): Promise<boolean> {
+  async markSuspect(kind: StorableKind, scope: ProfileScope): Promise<boolean> {
     const idx = await this.index();
     const info = idx.get(slotName(kind, scope));
     if (!info || info.suspect) return false;

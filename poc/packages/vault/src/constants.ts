@@ -133,7 +133,9 @@ export type VaultEvent =
   | 'vault.keystore_mismatch' | 'vault.dbkey_missing' | 'vault.net_deny_unavailable'
   // 사람 비밀 세션 결박(ADR-026): 값·칸 번호 없이 종류·등급·건수만
   | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'
-  | 'vault.item_corrupt' | 'vault.index_corrupt';
+  | 'vault.item_corrupt' | 'vault.index_corrupt'
+  // run에 고정된 프로필과 다른 scope의 입력 요청(Q-2)
+  | 'vault.profile_mismatch';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
