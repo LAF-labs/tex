@@ -27,8 +27,10 @@ const withFollowUp: Mut = (p, s, steps) => {
   p.manifest.effects = ['issue_document', 'send'];
   (s('s20') as { authorizes: string[] }).authorizes = ['s21', 's36'];
   (s('s32b') as { cases: Record<string, string> }).cases = { true: 's32c' };
+  // W(Y)에 낀 스텝(주 verify·사후 스텝)도 V-03f: {retry:0, then:handoff}
+  for (const id of ['s30', 's32', 's32b']) s(id).onFail = { retry: 0, then: 'handoff' };
   insertAfter(steps, 's32b',
-    { id: 's32c', type: 'readback', fields: ['counterpartEmail'] },
+    { id: 's32c', type: 'readback', fields: ['counterpartEmail'], onFail: { retry: 0, then: 'handoff' } },
     { id: 's36', type: 'send_email', via: 'portal', to: '$inputs.email', followUpOf: 's21', intent: '$intent.id', verify: 's37', onFail: { retry: 0, then: 'handoff' } },
     { id: 's37', type: 'verify', lookup: { playbook: 'hometax.invoice.email_status', match: { approvalNo: '$vars.approvalNo' }, window: 'today', baseline: 'none', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 } }, on: { committed: 's33', not_committed: 's35', unknown: 's35' } },
   );
@@ -56,6 +58,12 @@ describe('V-01 스키마·RE2', () => {
   it('namePattern 전후방 탐색은 RE2 밖', () => expectRule('V-01', (p) => (p.selectors.entries['hometax.nav.home']!.namePattern = '^(?=홈)홈$')));
   it('patternRef 역참조는 RE2 밖', () => expectRule('V-01', (p) => (p.strings['counterpart.nameRegex'] = '^(a)\\1$')));
   it('patternRef가 strings에 없으면 거부', () => expectRule('V-01', (p) => delete p.strings['counterpart.nameRegex']));
+  it('expectConfirm 정규식도 RE2로 본다(전후방 탐색 거부)', () => expectRule('V-01', (p) => (p.strings['confirm.issue'] = '^(?=발급)발급하시겠습니까\\?$')));
+  it('사후조건 textMatches의 patternRef도 RE2로 본다', () =>
+    expectRule('V-01', (p) => {
+      p.playbook.postconditions.push({ textMatches: { target: 'hometax.page.root', patternRef: 'post.done' } });
+      p.strings['post.done'] = '^(a)\\1$';
+    }));
   it('전제조건 전용 조건을 스텝에서 쓰면 거부', () => expectRule('V-01', (_p, s) => (s('s14').cond = { profileHas: 'signMethod' })));
   it('re2Problem: 역참조·전후방·원자 그룹·중첩 반복·빈 패턴', () => {
     assert.equal(re2Problem('^a(b)\\1$'), 'backreference');
@@ -124,6 +132,11 @@ describe('V-03 커밋 구간', () => {
       const i = steps.findIndex((x) => x.id === 's21');
       const [x] = steps.splice(i, 1);
       steps.splice(i, 0, { id: 's21r', type: 'repeat', max: 2, until: { varSet: 'approvalNo' }, steps: [x!] });
+    }));
+  it('V-03f 후속 비가역 구간 W(Y)의 비가역 아닌 스텝도 본다(recover 재시도 거부)', () =>
+    expectRule('V-03f', (p, s, steps) => {
+      withFollowUp(p, s, steps);
+      s('s32').onFail = { retry: 2, then: 'recover' };
     }));
   it('V-03f 구간 안 스텝 onFail 누락', () => expectRule('V-03f', (_p, _s, steps) => insertAfter(steps, 's20', { id: 's20a', type: 'wait', for: 'selector', value: 'hometax.invoice.form.issueButton' })));
   it('CE-4 verify unknown·not_committed → 바로 재제출', () => expectRule('V-03f', (_p, s) => ((s('s30').on as Record<string, string>).not_committed = 's21')));

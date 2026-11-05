@@ -174,7 +174,9 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if ((s.type === 'extract' || s.type === 'capture') && 'regex' in s.from) patternRefs.add(s.from.regex.patternRef);
     if (s.type === 'human') re('V-01', s.inputSpec?.pattern, 'human.inputSpec.pattern', s.id);
     if (s.type === 'verify') for (const f of s.failSignals ?? []) re('V-01', f.text, 'verify.failSignals.text', s.id);
+    if (s.type === 'submit' && s.expectConfirm && strings[s.expectConfirm] !== undefined) re('V-01', strings[s.expectConfirm], `strings ${s.expectConfirm}(expectConfirm)`, s.id);
   }
+  for (const c of [...(ir.preconditions ?? []), ...ir.postconditions]) walkCond(c, (x) => 'textMatches' in x && patternRefs.add(x.textMatches.patternRef));
   for (const k of patternRefs) {
     if (strings[k] === undefined) bad('V-01', `patternRef ${k}가 strings에 없음`);
     else re('V-01', strings[k], `strings ${k}`);
@@ -332,8 +334,9 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     // V-03e
     if (info.get(x)!.repeats.length) bad('V-03e', '비가역 스텝이 repeat 안에 있음', x);
     // V-03f
+    // W(X)와 W(Y) 모두 구간 안 모든 스텝(후속 비가역 Y의 구간에 낀 verify·capture·wait 등 포함, D02 V-03f).
     for (const n of w) {
-      if (n === g || (fu && !irreversible.has(n) && n !== x)) continue;
+      if (n === g) continue;
       const ns = info.get(n)?.step;
       if (!ns || ns.type === 'gate') continue;
       const o = ns.onFail ?? ir.recovery?.default;
