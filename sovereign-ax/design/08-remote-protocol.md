@@ -1,6 +1,7 @@
 # D08. 리모트 컨트롤 프로토콜
 
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
+> 팀장 결정 2026-11-05: §4.1·§4.2 `Cert`·`DeviceListEntry` 서명 입력 정규형은 `utf8(ctx)‖JCS(JSON)`, 필드 키 이름은 `Sx`·`Vx`·`Kx`·`Px_pub`로 통일(`Sm`·`Vm`·`Km`은 폰 쪽 역할 설명으로만). 기기 키 서명 입력 `purpose‖msg`(D05 §5.1)는 그대로. 바이트 정본은 `schemas/SIGNING.md` "기기·AIK 서명 입력" 절(엔진 트랙이 추가).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다(상충 표기 `C/X-nn`은 감사 C §5). · AUDIT-D 반영 2026-11-03: 키 계층에서 복구 문구·`K_chk` 삭제(§3), 하드웨어 키 증명 `px.attest`·서류 열람 범위 토글(§4.2), `doc_scope` 필터(§6), 증명 상태 집행(§6.1), 저장 자격 원격 실행의 시작 게이트(§7), 새 PC·PASS 복구 교체(§9)(ADR-016 v2·ADR-029, D19 §3.5).
 >
 > 2026-11-05 ADR-034: 폰 앱이 Phase 1에 들어왔다. Phase 1 범위는 암호 스위트·키 계층(§2·§3), 페어링(§4), 상시 세션(§5), 메시지 프레이밍(§6), 릴레이 우편함·푸시 깨우기(§8), 기기 분실·해제(§9), 모바일 저장 규칙이고, 여기에 종이 증빙 사진·현금매출을 PC로 보내는 메시지 종류(크기 상한·청크·재전송·중복 제거)를 더한다(D14 M7-4에서 정의, 아직 없음). 폰에 대기 중인 사진은 키 저장소가 아니라 앱 샌드박스의 파일 보호 등급 파일(iOS `NSFileProtectionComplete`, Android 앱 전용 저장소)에 두고, 백업에서 빼고 카메라 롤·갤러리에 저장하지 않는다. 파일 암호화 키만 `ThisDeviceOnly`에 둔다(§3.1 모바일 저장 규칙에 더할 것). 원격 지시(`cmd.run`)·폰 타임라인·블롭 조회는 Phase 2이고, 폰 하드웨어 키 승인(`gate.*`)은 Phase 2다(ADR-034 결정 9 채택, 2026-11-05, D14 M7-7).
@@ -105,10 +106,11 @@
 
 ### 4.1 계정 신원과 기기 목록 (C-01·C-20, ADR-016)
 
-- 계정 기기 목록의 모든 항목은 AIK가 서명한 `DeviceListEntry{device_id, role, Sx, Vx, registered_at, list_version}`이다(`SAX-devlist-v1`). 폰과 PC는 **AIK 서명이 없거나 `list_version`이 이미 본 값보다 낮은 목록을 거부**한다.
+- 계정 기기 목록의 모든 항목은 AIK가 서명한 `DeviceListEntry{device_id, role, Sx, Vx, registered_at, list_version}`이다(`SAX-devlist-v1`). 서명 입력은 `utf8("SAX-devlist-v1")‖JCS(DeviceListEntry)`다(아래 "서명 입력 정규형"). 폰과 PC는 **AIK 서명이 없거나 `list_version`이 이미 본 값보다 낮은 목록을 거부**한다.
 - 계정의 `AIK_pub`는 첫 데스크톱 설치 때 **1회 등록해 고정**한다. 교체는 옛 AIK 서명(`SAX-aik-rotate-v1`) + **7일 공지 지연**(`pairing.aikChangeDelayDays = 7`, 기준 시각은 서명 안의 시각이 아니라 **서버 수신 시각**이며 클라이언트는 자기가 처음 관측한 시각과 비교해 늦은 쪽을 쓴다, E-11) + 모든 기기·이메일 알림으로만 한다. 지연 중 다른 교체 요청이나 기존 기기의 거부가 생기면 교체를 멈추고 계정 복구 지원 절차(D11 §7)로 넘긴다.
 - 폰은 페어링 때 **서버가 준 계정 `AIK_pub`와 `PAIR_OK`의 `AIK_pub`가 같을 때만** 진행한다. 다르면 중단하고 기존 기기·이메일에 알린다. 이 대조는 서버와 PC가 같은 가짜 값을 주는 공모를 막지 못한다. 새 폰의 첫 페어링마다 이 TOFU 창이 있다(§1, E-12).
 - 기기 인증서 `Cert_X.not_after = 발급 + 90일`, PC 온라인 시 자동 갱신한다. 폰은 30일 넘게 기기 목록 갱신이 없으면 경고한다.
+- **서명 입력 정규형**(팀장 결정 2026-11-05): `Cert`와 `DeviceListEntry`의 AIK 서명 입력은 `utf8(ctx)‖JCS(JSON)`이다. `ctx`는 §2.1 서명 맥락 문자열(`SAX-cert-v1`, `SAX-devlist-v1`), JCS는 RFC 8785다. 구분자나 길이 접두는 넣지 않는다. 필드 키 이름은 기기 종류와 관계없이 `Sx`·`Vx`·`Kx`·`Px_pub`이다. 폰을 가리킬 때 쓰는 `Sm`·`Vm`·`Km`(데스크톱은 `Sd`·`Vd`)은 역할 설명이고 JSON 키가 아니다. 기기 키(`Vd`·`Vx`)의 서명 입력은 지금대로 `purpose‖msg`다(D05 §5.1). 바이트 정본은 `schemas/SIGNING.md` "기기·AIK 서명 입력" 절이다(엔진 트랙이 추가한다. 이 문서와 다르면 그 절을 따른다).
 - `pairing.newDesktopWarnHours = 24`, `pairing.aikChangeDelayDays = 7`은 앱 내장 상수다. 서명 정책으로 완화할 수 없다. 큐 상수 `queue.*`와 원격 승인 상수 `remote.*`는 policy.schema에 있으며 앱 내장 상한보다 엄격하게만 바꿀 수 있다.
 
 ### 4.2 절차
@@ -121,7 +123,7 @@ QR 페이로드(바이너리, URL 아님): `SAXP|v1 | intent | 릴레이 호스�
 4. [폰→PC] `Noise_XXpsk0_25519_ChaChaPoly_BLAKE2b`, 개시자 폰, `psk=ps`, prologue=`"SAX-pair-v1"‖room_id‖릴레이‖exp`. msg2에서 폰은 `rs == Sd` 확인. msg3 페이로드: 기기 이름·플랫폼·`Vm`·`Km`·`Px_pub`(있으면). 푸시 토큰은 보내지 않는다(깨우기는 서버 경로, §8.1). msg3 직후·7단계 `Cert_M` 서명 전에 폰은 `px.attest{chain[]}`를 보낸다. 체인의 `attestationChallenge`는 `HKDF(h, 'SAX-attest-v1')`이다. 검증에 실패하거나 제출이 없으면 `Px_pub`를 `Cert_M`에 넣지 않고 `hw_attest_state='unverified'`로 저장한다(ADR-029, D-36(N-55)).
 5. [양쪽] 핸드셰이크 해시 `h`로 `SAS = HKDF(h,"SAX-SAS-v1") mod 10^6`. 폰이 6자리를 표시하고 **바로 옆에** 경고를 둔다: "이 숫자는 지금 내 앞의 PC 화면에만 입력하세요. 웹페이지·전화·문자로 이 숫자를 요구하면 입력하지 마세요"(C-01).
 6. [PC] 사용자가 **폰의 6자리를 PC에 입력**("일치" 버튼 금지). 3회 실패·TTL 경과 시 룸 폐기. 동시에 PC는 폰의 `Sm`이 폰이 계정에 등록한 기기 키 목록에 있는지 확인한다(QR 유출 공격자 차단용. 이 목록은 아직 AIK 서명 전이므로 신뢰 앵커가 아니다).
-7. [PC] AIK(사용자 존재 확인)로 `Cert_M = Sign_AIK("SAX-cert-v1"‖{device_id, Sm, Vm, Km, Px_pub?, role, not_after})`와 폰의 새 `DeviceListEntry`(`list_version + 1`)를 서명해 서버에 올린다. 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, Kv_pub(Vd 서명, `SAX-kv-v1`), 서명된 기기 목록, mbx_id, tok_read, tok_write, mbx_epoch}`를 보낸다. **`mbx_id`·`tok_read`·`tok_write`는 PC가 CSPRNG로 만든 32B 난수**이며 핸드셰이크 해시 `h`에서 파생하지 않는다. `h`는 SAS와 채널 바인딩에만 쓴다(C-16). `PAIR_OK`에는 `KEK_N`을 넣지 않는다.
+7. [PC] AIK(사용자 존재 확인)로 `Cert_M = Sign_AIK(utf8("SAX-cert-v1")‖JCS({device_id, Sx, Vx, Kx, Px_pub?, role, not_after}))`와(폰이면 `Sx`=폰의 `Sm`, `Vx`=`Vm`, `Kx`=`Km`. 키 이름은 §4.1 정규형) 폰의 새 `DeviceListEntry`(`list_version + 1`)를 서명해 서버에 올린다. 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, Kv_pub(Vd 서명, `SAX-kv-v1`), 서명된 기기 목록, mbx_id, tok_read, tok_write, mbx_epoch}`를 보낸다. **`mbx_id`·`tok_read`·`tok_write`는 PC가 CSPRNG로 만든 32B 난수**이며 핸드셰이크 해시 `h`에서 파생하지 않는다. `h`는 SAS와 채널 바인딩에만 쓴다(C-16). `PAIR_OK`에는 `KEK_N`을 넣지 않는다.
 8. [PC·폰] **서류 열람 허용(별도 단계)**: 8단계 '서류 열람 허용'은 [사업자 서류] [개인 서류] 두 토글이다. 기본은 사업자만이고 개인 프로필이 없으면 두 번째 토글을 숨긴다. 결과는 `remote_devices.doc_scope_json`과 기기 범위 토큰 클레임에 들어간다(ADR-029, D-35(N-53)). 페어링 마지막 화면에서 이 토글을 물어, 사용자가 허용하면 PC가 다시 Hello 확인을 받고 라이브 세션 안에서 `kek.grant{KEK_N, kek_ver, KekRecord}`를 보낸다(C-01, REVIEW-B C-7). 허용하지 않은 폰은 조회·승인만 한다.
 9. [양쪽] `ps`·임시키·룸 폐기. 폰은 §3.1 규칙대로 키를 저장하고, 기기 범위 토큰으로 서버에 푸시 토큰을 등록한다(§8.1).
 
