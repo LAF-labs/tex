@@ -22,6 +22,11 @@
       "development": "./src/gate.ts",
       "default": "./dist/gate.js"
     },
+    "./core": {
+      "types": "./src/core/index.ts",
+      "development": "./src/core/index.ts",
+      "default": "./dist/core/index.js"
+    },
     "./bizcert": {
       "types": "./src/bizcert.ts",
       "development": "./src/bizcert.ts",
