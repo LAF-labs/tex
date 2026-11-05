@@ -11,7 +11,7 @@ export const RELAY_VISIBILITY: Record<string, Record<string, string>> = {
     mbx_key: '우편함 ID(해시)',
     seq: '메시지 수(큐 순번)',
     sealed: '암호문 큐(E2E 암호문을 QUEUE_KEY로 한 번 더 봉인, 72시간)',
-    bytes: '크기(큐 1MiB 상한 계산)',
+    bytes: '크기(큐 6 MiB 상한 계산)',
     expires_at: '시각(만료, 72시간)',
   },
   mailbox_bundles: { mbx_key: '우편함 ID(해시)', sealed: 'D09 추가 필요: 우편함 번들 슬롯(PC의 Vx 서명 공개 번들, 봉인)' },

@@ -8,10 +8,18 @@ export const RELAY = {
   frameMax: 65_535,
   msgPerSecPerMailbox: 20,
   mailboxesPerDevice: 3,
-  /** queue.maxIntentsPerPair */
-  queueMaxEnvelopes: 5,
-  queueMaxBytes: 1024 * 1024,
-  /** queue.ttlHours */
+  /**
+   * 우편함당 큐 한도(팀장 결정 2026-11-05, 폰 #84와 합의). 4 MiB 사진 = offer 1 + 32 KiB 청크 128 = 봉투 129개가 들어간다.
+   * 서버는 봉투 종류(xfer 사진·현금매출 등)를 보지 않으므로 크기만 센다.
+   */
+  queueMaxEnvelopes: 160,
+  queueMaxBytes: 6 * 1024 * 1024,
+  /** intent-envelope v1.5 바깥 객체의 `ct`(base64) 상한 */
+  envelopeCtMax: 65_536,
+  /**
+   * queue.ttlHours(일반 72시간). 사진 24시간은 서버가 종류를 모르므로 봉투 안 서명된 `exp`(iat + 24시간 이하)로 끝단(PC)이 집행한다.
+   * ack는 `seq`까지 일괄 삭제.
+   */
   queueTtlMs: 72 * H,
   /** 연결당 실패 상한(형식이 틀린 프레임) */
   failuresPerConnection: 5,

@@ -15,7 +15,7 @@ const id32 = { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' };
 const V = {
   mailbox: validator<{ mbxId: string; tokRead: string; tokWrite: string }>({ type: 'object', additionalProperties: false, required: ['mbxId', 'tokRead', 'tokWrite'], properties: { mbxId: id32, tokRead: id32, tokWrite: id32 } }),
   // intent-envelope.schema.json의 바깥 객체 {v, kind, enc, ct}
-  envelope: validator<OuterEnvelope>({ type: 'object', additionalProperties: false, required: ['v', 'kind', 'enc', 'ct'], properties: { v: { enum: [1] }, kind: { const: 'ENV' }, enc: { ...b64(44), minLength: 43 }, ct: { ...b64(8192), minLength: 4 } } }),
+  envelope: validator<OuterEnvelope>({ type: 'object', additionalProperties: false, required: ['v', 'kind', 'enc', 'ct'], properties: { v: { enum: [1] }, kind: { const: 'ENV' }, enc: { ...b64(44), minLength: 43 }, ct: { ...b64(RELAY.envelopeCtMax), minLength: 4 } } }),
   ack: validator<{ seq: number }>({ type: 'object', additionalProperties: false, required: ['seq'], properties: { seq: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } }),
   bundle: validator<{ bundle: string }>({ type: 'object', additionalProperties: false, required: ['bundle'], properties: { bundle: b64(4096) } }),
   room: validator<{ roomId: string }>({ type: 'object', additionalProperties: false, required: ['roomId'], properties: { roomId: { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } } }),
@@ -145,7 +145,7 @@ export class RelayHub {
         this.mailboxes.get(key)?.d?.ws.send(JSON.stringify({ t: 'env' }));
         return json(202, out);
       },
-      { maxBodyBytes: 16 * 1024 },
+      { maxBodyBytes: RELAY.envelopeCtMax + 4096 },
     );
     r.add('GET', '/v1/mailboxes/:id/envelopes', async (ctx) => {
       const c = await this.device(ctx);

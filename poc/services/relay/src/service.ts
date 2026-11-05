@@ -1,4 +1,4 @@
-// 우편함 저장: 우편함 ID·토큰 해시, 오프라인 의도 봉투 큐(72시간·5건·1MiB), 번들 슬롯, 기기당 개수, 메타 통계(우편함 ID 없음).
+// 우편함 저장: 우편함 ID·토큰 해시, 오프라인 의도 봉투 큐(72시간·160건·6 MiB), 번들 슬롯, 기기당 개수, 메타 통계(우편함 ID 없음).
 // 우편함과 기기·계정은 같은 행에 두지 않는다. 기기 ID는 개수(mailbox_quota)에만 있고 어느 우편함인지는 모른다(D08 §8).
 import { fail, kstDay, openAead, safeEqual, sealAead, sha256hex, type Sql } from '@sax/svc-shared';
 import { RELAY, sizeBucket } from './constants.ts';
