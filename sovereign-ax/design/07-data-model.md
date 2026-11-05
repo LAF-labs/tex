@@ -257,13 +257,19 @@ CREATE TABLE card_fetches (                    -- H-12 조회 구간. [최신화
 );
 -- "마지막 최신화"는 card_fetches의 마지막 completed_at이다(빈 결과도 최신화다)
 CREATE TABLE card_txns (                       -- H-12 사업용 카드 사용내역
+  -- [최신화] 한 번은 트랜잭션 하나다: (1) 이 프로필의 used_on ∈ [range_from, range_to] 행을 어느 조회에서 왔든 모두 지운다
+  -- (2) 새 결과를 seq 순서로 넣는다 (3) 메모를 match_key로 다시 잇는다. 그래서 같은 구간을 몇 번 눌러도 결과가 같다
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), fetch_run_id TEXT NOT NULL REFERENCES card_fetches(run_id),
+  seq INTEGER NOT NULL,                        -- 조회 결과 안의 순번
   used_on TEXT NOT NULL, merchant TEXT, merchant_biz_no TEXT, card_last4 TEXT, approval_no TEXT,
-  amount INTEGER NOT NULL, supply_amount INTEGER, vat_amount INTEGER, canceled INTEGER NOT NULL DEFAULT 0
+  amount INTEGER NOT NULL, supply_amount INTEGER, vat_amount INTEGER, canceled INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(fetch_run_id, seq)
 );                                             -- 용도 분류·경비 판단 컬럼은 두지 않는다
+CREATE INDEX ix_card_txns_day ON card_txns(profile_id, used_on);
 CREATE TABLE card_txn_memos (                  -- 사장님 메모. 구간을 바꿀 때 승인번호(없으면 날짜·가게·금액·카드)로 다시 매칭
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
-  match_key TEXT NOT NULL, txn_id TEXT REFERENCES card_txns(id),         -- 매칭 못 하면 NULL → 화면에 "메모 대상 확인 필요"
+  match_key TEXT NOT NULL,                     -- 승인번호, 없으면 날짜·가게·금액·카드 + 그 값 안의 순번
+  txn_id TEXT REFERENCES card_txns(id) ON DELETE SET NULL,   -- 행을 지우면 NULL이 되고 (3)에서 다시 잇는다. 못 이으면 화면에 "메모 대상 확인 필요"
   memo TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 CREATE TABLE receipts (                        -- 종이 증빙. 원본은 documents(doc_type='paper_receipt')
@@ -291,7 +297,7 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 
 ## 3. 문서 종류와 유효기간 규칙표 (초기값, 사용자 조정 가능)
 
-"서버 색인" 열은 doc_type별 서버 색인의 기본값(켬·끔)이다(C-09). 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 적용되고(Phase 2, 스위치가 꺼져 있으면 어떤 종류도 올라가지 않는다), 기본으로 켜진 종류가 있으므로 이 설정을 '옵트인'이라 부르지 않는다(2026-11-02 용어 정리). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeEnabled']`).
+"서버 색인" 열은 doc_type별 서버 색인의 기본값(켬·끔)이다(C-09). 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 적용되고(Phase 2, 스위치가 꺼져 있으면 어떤 종류도 올라가지 않는다), 기본으로 켜진 종류가 있으므로 이 설정을 '옵트인'이라 부르지 않는다(2026-11-02 용어 정리). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeEnabled']`). 단 표에서 "끔(고정)"인 종류는 바꿀 수 없다.
 
 | doc_type | 한글 | 발급 포털 | 기본 유효(일) | 규칙 | 서버 색인 기본 | 비고 |
 |---|---|---|---|---|---|---|
@@ -305,6 +311,13 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 | `land_register` / `building_register` | 토지·건축물대장 | 정부24 | 90 | fixed_days | 끔 | 부동산 정황 |
 | `sme_cert` | 중소기업확인서 | SMINFO | — | fiscal_year_rule | **켬** | 직전 사업연도 말일 + 3개월부터 1년(기본), 문서 명시 우선 |
 | `insure4_cert` | 4대보험 완납증명 | 4대보험센터 | 30 | fixed_days | 끔 | 직원 존재 정황 |
+| `paper_receipt` | 종이 증빙 사진 | 사용자 첨부 | — | none | **끔(고정)** | 세무사 꾸러미(ADR-032) |
+| `insurance_notice` | 4대보험 고지내역 | 사용자 첨부(S-06 후처리) | — | none | **끔(고정)** | 직원별 금액·주민번호 포함 가능 |
+| `settlement_file` | 배달앱·오픈마켓 정산내역 | 사용자 첨부(J-01·J-02) | — | none | **끔(고정)** | 매출 규모 정황 |
+| `payroll_ledger` / `pay_statement` | 급여대장 / 임금명세서 | 앱이 만듦(ADR-031) | — | none | **끔(고정)** | 급여·주민번호 |
+| `bundle_export` | 세무사 꾸러미 엑셀 | 앱이 만듦(ADR-032) | — | none | **끔(고정)** | 암호 걸린 묶음 |
+
+"끔(고정)" 종류는 `index.docTypeEnabled`에 넣지 않고, 설정 화면에도 켜고 끄는 칸을 두지 않는다. 앱은 업로드 직전에 이 목록을 다시 확인해 행을 만들지 않는다.
 
 규칙 평가: 문서 텍스트에서 유효기간이 추출되면 그것이 우선(`doc_meta_check_v1` 통과 시). 없으면 규칙표. 둘 다 없으면 "만료 미정"으로 표시하고 알림 없음.
 
