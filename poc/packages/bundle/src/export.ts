@@ -1,11 +1,13 @@
 // 세무사 꾸러미 엑셀 내보내기(D14 M6-6, ADR-032 결정 8, ADR-034 결정 7, 08 D-05·D-07).
-// - 우리 표준 서식: 시트 9종(매출, 매입, 사업용 카드, 종이 증빙, 정산·현금매출(켜진 업종만), 급여대장, 원천세 요약, 추가 항목, 빠진 것).
+// - 우리 표준 서식: 첫 시트 '표지'(범위 표지, R15) + 시트 9종(매출, 매입, 사업용 카드, 종이 증빙, 정산·현금매출(켜진 업종만), 급여대장, 원천세 요약, 추가 항목, 빠진 것).
 //   다음 단계의 세무 프로그램 서식 맞춤을 생각해 사업자번호·거래일·공급가액·세액을 따로 둔 열로 둔다(02 §17).
 // - 엑셀 파일 자체에 ECMA-376 Agile 암호(AES-256, SHA-512)를 건다(officecrypto-tool). 시트 보호가 아니라 "열기 암호"다.
 // - 사진·PDF는 엑셀에 넣을 수 없어(순수 JS 라이브러리로 OLE 개체를 못 넣는다) 같은 암호의 AES-256 ZIP(WinZip AE-2) 하나로 따로 낸다
 //   (팀장 결정 2026-11-05: 파일 둘. 엑셀은 엑셀에서 바로 열린다). 암호 밖에 남는 첨부는 없다. ZIP 안 파일 이름은 D07 §4 규칙
 //   ({docType}_{yyyyMMdd}_{shortId})이라 개인정보가 없다. ZIP은 운영체제 기본 압축 해제로 못 열 수 있어 ZIP_OPEN_GUIDE를 함께 보여 준다.
-// - 급여 시트의 주민번호는 기본 가림(뒷자리 마스킹, R13 D-L3). 사장님이 설정에서 켜면 넣는다. 포함 여부는 내보내기 기록에 남긴다.
+// - 급여 시트의 주민번호는 기본 가림(뒷자리 마스킹, R13 D-L3). 사장님이 설정 bundle.includeRrn을 켜면 넣는다. 포함 여부는 내보내기 기록에 남긴다.
+//   급여 기록 내보내기(사장님 보관용)에는 늘 넣지 않는다(D07 §2 끝).
+// - 범위 표지·중복 제거·합계 차이 메모(R15 P1-2, 팀장 승인)는 내보내기 안에서 자동으로 한다. 사장님에게 묻지 않고 막지 않는다(yulmu 2026-11-05).
 // - 내보내기 기록(bundle_exports) 한 행에 엑셀·ZIP의 sha256·경로·시각을 남긴다. 암호는 어디에도 저장하지 않는다.
 // - 모델을 부르지 않는다. 네트워크를 쓰지 않는다(파일만 쓴다). 보내기(메일 프로그램 열기)는 main이 한다(M6-13).
 import { createHash, randomInt } from 'node:crypto';
@@ -16,12 +18,12 @@ import officeCrypto from 'officecrypto-tool';
 import writeXlsxFile from 'write-excel-file/node';
 import type { Row, Sheet } from 'write-excel-file/node';
 import {
-  BundleExportRepo, CardRepo, CashSalesRepo, DocumentRepo, EmployeeRepo, PayrollRepo, ReceiptRepo,
+  BundleExportRepo, BundleRepo, CardRepo, CashSalesRepo, DocumentRepo, EmployeeRepo, PayrollRepo, ProfileRepo, ReceiptRepo,
   type BundleExport, type ColumnCipher, type Db, type DocumentRow, type PayrollLine,
 } from '@sax/db';
 import { withholdingSummary } from '@sax/payroll';
 import { BundleError, monthRange } from './items.ts';
-import { missingReport, monthStatus, type MonthContext, type TaxInvoiceRow } from './month.ts';
+import { missingReport, monthStatus, tidyInvoices, type InvoiceLine, type MonthContext } from './month.ts';
 
 configure({ useWebWorkers: false });
 
@@ -66,7 +68,7 @@ export interface BundleExportInput extends MonthContext {
   /** 결과 파일을 둘 폴더(앱이 정한 내보내기 폴더) */
   outDir: string;
   password: string;
-  /** 급여대장 시트에 주민번호 전체를 넣는다(사장님이 설정에서 켰을 때). 기본 false = 뒷자리 가림 */
+  /** 급여대장 시트에 주민번호 전체를 넣는가. 빼면 설정 bundle.includeRrn(기본 false = 뒷자리 가림)을 따른다 */
   includeRrn?: boolean;
   now?: () => Date;
 }
@@ -76,7 +78,7 @@ export interface BundleExportResult {
   /** 암호 엑셀 */
   file: string;
   /** 사진·PDF를 담은 같은 암호의 AES-256 ZIP. 첨부가 없으면 null */
-  attachmentsFile: string | null;
+  zipFile: string | null;
   /** 사장님·세무사에게 같이 보여 줄 안내(ZIP_OPEN_GUIDE, RRN_HIDDEN_NOTE) */
   guide: string[];
   rrnIncluded: boolean;
@@ -84,7 +86,15 @@ export interface BundleExportResult {
   attachments: number;
   /** 보관함 파일이 DB의 sha256과 달라 넣지 않은 문서 수(빠진 것 시트에도 적는다) */
   skippedChanged: number;
+  /** 매출·매입에서 같은 승인번호라 뺀 행 수 */
+  duplicateInvoicesDropped: number;
 }
+
+const gapMemo = (l: InvoiceLine): string =>
+  [
+    ...(l.sumGap !== 0 ? [`확인 필요: 공급가액+세액이 합계와 ${Math.abs(l.sumGap).toLocaleString('ko-KR')}원 다름`] : []),
+    ...(l.differingDuplicates ? [`같은 승인번호의 금액이 다른 행 ${l.differingDuplicates}건은 뺌`] : []),
+  ].join(' / ');
 
 interface Attach {
   doc: DocumentRow;
@@ -146,25 +156,35 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   const now = input.now ?? (() => new Date());
   const status = monthStatus(input);
   const missing = missingReport(input);
-  const invoices: readonly TaxInvoiceRow[] = input.taxInvoices ?? [];
+  const tidy = tidyInvoices(input.taxInvoices ?? []);
   const docIds: string[] = status.flatMap((s) => s.docIds);
   const sheets: Sheet<Buffer>[] = [];
+  /** 표지에 적을 시트별 행 수·합계(R15 P1-2 ①) */
+  const tally: Array<{ sheet: string; rows: number; supply?: number; vat?: number; total?: number }> = [];
+  const sumOf = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
-  const invoiceSheet = (dir: 'sales' | 'purchase'): Row[] => [
-    header(['작성일자', '승인번호', '거래처 사업자번호', '거래처 상호', '공급가액', '세액', '합계']),
-    ...invoices.filter((i) => i.direction === dir).map((i) => [i.issueDate, i.approvalNo, fmtBizNo(i.counterpartyBizNo), i.counterpartyName, num(i.supplyAmount), num(i.vatAmount), num(i.total)]),
-  ];
-  sheets.push({ sheet: '매출', data: invoiceSheet('sales') });
-  sheets.push({ sheet: '매입', data: invoiceSheet('purchase') });
+  for (const [dir, name] of [['sales', '매출'], ['purchase', '매입']] as const) {
+    const lines = tidy.lines.filter((l) => l.row.direction === dir);
+    sheets.push({
+      sheet: name,
+      data: [
+        header(['작성일자', '승인번호', '거래처 사업자번호', '거래처 상호', '공급가액', '세액', '합계', '메모']),
+        ...lines.map((l) => [l.row.issueDate, l.row.approvalNo, fmtBizNo(l.row.counterpartyBizNo), l.row.counterpartyName, num(l.row.supplyAmount), num(l.row.vatAmount), num(l.row.total), gapMemo(l)]),
+      ],
+    });
+    tally.push({ sheet: name, rows: lines.length, supply: sumOf(lines.map((l) => l.row.supplyAmount)), vat: sumOf(lines.map((l) => l.row.vatAmount)), total: sumOf(lines.map((l) => l.row.total)) });
+  }
 
   const cards = new CardRepo(db);
   const memoByTxn = new Map(cards.memos(profileId).filter((m) => m.txnId).map((m) => [m.txnId!, m.memo]));
   const unmatched = new Set(missing.cardWithoutEvidence.map((c) => c.txnId));
+  const txns = cards.txns(profileId, from, to);
+  tally.push({ sheet: '사업용 카드', rows: txns.length, supply: sumOf(txns.map((t) => t.supplyAmount ?? 0)), vat: sumOf(txns.map((t) => t.vatAmount ?? 0)), total: sumOf(txns.map((t) => t.amount)) });
   sheets.push({
     sheet: '사업용 카드',
     data: [
       header(['사용일', '가맹점', '가맹점 사업자번호', '카드 끝 4자리', '승인번호', '금액', '공급가액', '부가세', '취소', '메모', '증빙 대조']),
-      ...cards.txns(profileId, from, to).map((t) => [
+      ...txns.map((t) => [
         t.usedOn, text(t.merchant), fmtBizNo(t.merchantBizNo), text(t.cardLast4), text(t.approvalNo), num(t.amount), num(t.supplyAmount), num(t.vatAmount),
         t.canceled ? '취소' : '', text(memoByTxn.get(t.id)), t.canceled ? '' : unmatched.has(t.id) ? '대조 없음' : '대조됨',
       ]),
@@ -175,6 +195,7 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   docIds.push(...receipts.map((r) => r.docId));
   const att = collectAttachments(db, docIds);
   const nameOf = new Map(att.list.map((a) => [a.doc.id, a.name]));
+  tally.push({ sheet: '종이 증빙', rows: receipts.length, total: sumOf(receipts.map((r) => r.amount ?? 0)) });
   sheets.push({
     sheet: '종이 증빙',
     data: [
@@ -191,9 +212,10 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
       else rows.push([s.item.name, s.period, null, STATUS_KO[s.status], s.docIds.map((d) => nameOf.get(d) ?? '').filter(Boolean).join(', ')]);
     }
     sheets.push({ sheet: '정산·현금매출', data: rows });
+    tally.push({ sheet: '정산·현금매출', rows: rows.length - 1 });
   }
 
-  const rrnIncluded = input.includeRrn === true;
+  const rrnIncluded = input.includeRrn ?? new BundleRepo(db).includeRrn(profileId);
   const pay = input.payrollEnabled ? payrollRows(db, cipher, profileId, month, rrnIncluded ? 'full' : 'masked') : { rows: [header(['급여대장 파일'])], lines: [], revision: null };
   if (input.payrollEnabled && !rrnIncluded) pay.rows.push([], [`※ 주민번호 뒷자리는 가렸습니다. ${RRN_HIDDEN_NOTE}`]);
   if (!input.payrollEnabled) {
@@ -201,6 +223,7 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
     for (const d of p?.docIds ?? []) pay.rows.push([text(nameOf.get(d))]);
   }
   sheets.push({ sheet: '급여대장', data: pay.rows });
+  tally.push({ sheet: '급여대장', rows: input.payrollEnabled ? pay.lines.length : pay.rows.length - 1, ...(input.payrollEnabled ? { total: sumOf(pay.lines.map((l) => l.gross)) } : {}) });
 
   const sum = withholdingSummary(month, pay.lines);
   sheets.push({
@@ -211,11 +234,13 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
     ],
   });
 
+  const extra = status.filter((s) => s.item.tier === 3);
+  tally.push({ sheet: '추가 항목', rows: extra.length });
   sheets.push({
     sheet: '추가 항목',
     data: [
       header(['항목', '주기', '기간', '상태', '메모', '파일']),
-      ...status.filter((s) => s.item.tier === 3).map((s) => [s.item.name, CADENCE_KO[s.item.cadence], s.period, STATUS_KO[s.status], text(s.note), s.docIds.map((d) => nameOf.get(d) ?? '').filter(Boolean).join(', ')]),
+      ...extra.map((s) => [s.item.name, CADENCE_KO[s.item.cadence], s.period, STATUS_KO[s.status], text(s.note), s.docIds.map((d) => nameOf.get(d) ?? '').filter(Boolean).join(', ')]),
     ],
   });
 
@@ -230,6 +255,24 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   if (missing.memosNeedCheck) miss.push(['카드 메모', `메모 대상 확인 필요 ${missing.memosNeedCheck}건`]);
   for (const d of att.changed) miss.push(['첨부 확인 필요', `${attachmentName(d).slice('attachments/'.length)}: 보관함 파일이 바뀌었거나 없어 넣지 않음`]);
   sheets.push({ sheet: '빠진 것', data: miss });
+  tally.push({ sheet: '빠진 것', rows: miss.length - 1 });
+
+  // 첫 시트: 범위 표지(R15 P1-2 ①). 세무사가 받은 파일만 보고 어느 사업자의 어느 기간인지, 시트마다 몇 행·얼마인지 대조한다
+  const prof = new ProfileRepo(db).get(profileId);
+  sheets.unshift({
+    sheet: '표지',
+    data: [
+      [{ value: '세무사 꾸러미 범위 표지', fontWeight: 'bold' as const }],
+      ['사업자번호', fmtBizNo(prof?.bizNo)],
+      ['상호', text(prof?.displayName)],
+      ['대상 기간', `${from} ~ ${to}`],
+      ['만든 시각(UTC)', now().toISOString().slice(0, 19).replace('T', ' ')],
+      ...(tidy.dropped ? [['같은 승인번호로 뺀 세금계산서', `${tidy.dropped}건`]] : []),
+      [],
+      header(['시트', '행 수', '공급가액 합계', '세액 합계', '합계']),
+      ...tally.map((t) => [t.sheet, num(t.rows), num(t.supply), num(t.vat), num(t.total)]),
+    ],
+  });
 
   const plain = await writeXlsxFile(sheets, { fontFamily: 'Malgun Gothic', fontSize: 10 }).toBuffer();
   const xlsx = officeCrypto.encrypt(plain, { password: input.password });
@@ -237,21 +280,23 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
 
   const stem = freeStem(input.outDir, `세무사꾸러미_${month}`, ['.xlsx', '_첨부.zip']);
   const file = writeNew(`${stem}.xlsx`, xlsx);
-  let attachmentsFile: string | null = null;
-  let attachments: { path: string; sha256: string } | null = null;
+  let zipFile: string | null = null;
+  let zipRec: { path: string; sha256: string } | null = null;
   if (att.list.length) {
     const zip = new ZipWriter(new Uint8ArrayWriter(), { password: input.password, encryptionStrength: 3, zipCrypto: false, lastModDate: now() });
     for (const a of att.list) await zip.add(a.name, new Uint8ArrayReader(new Uint8Array(fs.readFileSync(a.doc.path))));
     const zbuf = Buffer.from(await zip.close());
-    attachmentsFile = writeNew(`${stem}_첨부.zip`, zbuf);
-    attachments = { path: attachmentsFile, sha256: createHash('sha256').update(zbuf).digest('hex') };
+    zipFile = writeNew(`${stem}_첨부.zip`, zbuf);
+    zipRec = { path: zipFile, sha256: createHash('sha256').update(zbuf).digest('hex') };
   }
   const record = new BundleExportRepo(db).record(
-    { profileId, period: month, sha256: createHash('sha256').update(xlsx).digest('hex'), path: file, attachments, rrnIncluded },
+    { profileId, period: month, sha256: createHash('sha256').update(xlsx).digest('hex'), path: file, zip: zipRec, rrnIncluded },
     now().toISOString(),
   );
-  const guide = [...(attachmentsFile ? [ZIP_OPEN_GUIDE] : []), ...(input.payrollEnabled && !rrnIncluded ? [RRN_HIDDEN_NOTE] : [])];
-  return { record, file, attachmentsFile, guide, rrnIncluded, sheets: sheets.map((s) => s.sheet!), attachments: att.list.length, skippedChanged: att.changed.length };
+  const guide = [...(zipFile ? [ZIP_OPEN_GUIDE] : []), ...(input.payrollEnabled && !rrnIncluded ? [RRN_HIDDEN_NOTE] : [])];
+  return {
+    record, file, zipFile, guide, rrnIncluded, sheets: sheets.map((s) => s.sheet!), attachments: att.list.length, skippedChanged: att.changed.length, duplicateInvoicesDropped: tidy.dropped,
+  };
 }
 
 /** 이름 줄기 하나를 고른다: 붙일 끝말(.xlsx, _첨부.zip) 중 어느 것도 없는 첫 줄기(없으면 _2, _3…). 엑셀과 ZIP이 같은 번호를 쓴다 */
@@ -294,12 +339,11 @@ export interface PayrollRecordExportInput {
   /** 포함 범위('YYYY-MM'). 없으면 전부 */
   fromMonth?: string;
   toMonth?: string;
-  includeRrn?: boolean;
   now?: () => Date;
 }
 
 /**
- * 급여 기록 내보내기(08 D-06): 임금대장 3년 보관을 위해 확인한 급여대장 전부를 같은 방식의 암호 엑셀로.
+ * 급여 기록 내보내기(08 D-06). 주민번호는 늘 넣지 않는다(D07 §2 끝, 설정과 무관): 임금대장 3년 보관을 위해 확인한 급여대장 전부를 같은 방식의 암호 엑셀로.
  * 시트: 직원, 급여대장(달별 확인한 마지막 개정), 원천세 요약(달별). 기록은 bundle_exports에 period "payroll:<시작>..<끝>"으로 남긴다.
  */
 export async function exportPayrollRecord(input: PayrollRecordExportInput): Promise<{ record: BundleExport; file: string; months: string[] }> {
@@ -309,15 +353,13 @@ export async function exportPayrollRecord(input: PayrollRecordExportInput): Prom
   const pr = new PayrollRepo(db);
   const months = pr.months(profileId).filter((m) => (!input.fromMonth || m >= input.fromMonth) && (!input.toMonth || m <= input.toMonth) && pr.latestConfirmed(profileId, m));
   if (!months.length) throw new BundleError('no_confirmed_payroll');
-  const includeRrn = input.includeRrn ?? false;
   const emps = new EmployeeRepo(db, cipher);
-  const empRows: Row[] = [header(['성명', '생년월일', ...(includeRrn ? ['주민등록번호'] : []), '입사일', '퇴사일', '업무', '급여 형태'])];
-  for (const e of emps.list(profileId))
-    empRows.push([e.name, e.birthDate, ...(includeRrn ? [text(emps.revealRrn(e.id)?.replace(/^(\d{6})/, '$1-'))] : []), e.hiredOn, text(e.leftOn), text(e.job), e.payType === 'monthly' ? '월급' : '시급']);
+  const empRows: Row[] = [header(['성명', '생년월일', '입사일', '퇴사일', '업무', '급여 형태'])];
+  for (const e of emps.list(profileId)) empRows.push([e.name, e.birthDate, e.hiredOn, text(e.leftOn), text(e.job), e.payType === 'monthly' ? '월급' : '시급']);
   const lineRows: Row[] = [];
   const sumRows: Row[] = [header(['귀속 월', '개정', '인원', '총지급액', '비과세', '소득세', '지방소득세'])];
   for (const m of months) {
-    const p = payrollRows(db, cipher, profileId, m, includeRrn ? 'full' : 'omit');
+    const p = payrollRows(db, cipher, profileId, m, 'omit');
     if (!lineRows.length) lineRows.push([{ value: '귀속 월', fontWeight: 'bold' as const }, ...p.rows[0]!]);
     for (const r of p.rows.slice(1)) lineRows.push([m, ...r]);
     const s = withholdingSummary(m, p.lines);
@@ -335,7 +377,7 @@ export async function exportPayrollRecord(input: PayrollRecordExportInput): Prom
   plain.fill(0);
   const range = `${months[0]}..${months[months.length - 1]}`;
   const file = writeExclusive(path.join(input.outDir, `급여기록_${months[0]}_${months[months.length - 1]}.xlsx`), out);
-  const record = new BundleExportRepo(db).record({ profileId, period: `payroll:${range}`, sha256: createHash('sha256').update(out).digest('hex'), path: file, rrnIncluded: includeRrn }, now().toISOString());
+  const record = new BundleExportRepo(db).record({ profileId, period: `payroll:${range}`, sha256: createHash('sha256').update(out).digest('hex'), path: file, rrnIncluded: false }, now().toISOString());
   return { record, file, months };
 }
 

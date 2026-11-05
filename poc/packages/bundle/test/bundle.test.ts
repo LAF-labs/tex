@@ -13,7 +13,7 @@ import {
 } from '@sax/db';
 import {
   addCustomItem, clearCardSlipEnough, ensureItems, exportBundle, exportPayrollRecord, generatePassword, markCardSlipEnough, missingReport, monthStatus, netOfCancellations,
-  periodFor, RRN_HIDDEN_NOTE, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext,
+  periodFor, RRN_HIDDEN_NOTE, tidyInvoices, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext, type TaxInvoiceRow,
 } from '@sax/bundle';
 
 configure({ useWebWorkers: false });
@@ -150,18 +150,18 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.match(pw, /^[A-HJ-NP-Za-km-z2-9]+$/);
     const outDir = path.join(dir, 'exports');
     const r = await exportBundle({ ...ctx(), outDir, password: pw, now: () => new Date('2026-11-05T01:00:00Z') });
-    assert.deepEqual(r.sheets, ['매출', '매입', '사업용 카드', '종이 증빙', '정산·현금매출', '급여대장', '원천세 요약', '추가 항목', '빠진 것']);
+    assert.deepEqual(r.sheets, ['표지', '매출', '매입', '사업용 카드', '종이 증빙', '정산·현금매출', '급여대장', '원천세 요약', '추가 항목', '빠진 것']);
     assert.equal(r.attachments, 1);
     assert.equal(path.basename(r.file), '세무사꾸러미_2026-10.xlsx');
-    assert.equal(path.basename(r.attachmentsFile!), '세무사꾸러미_2026-10_첨부.zip');
+    assert.equal(path.basename(r.zipFile!), '세무사꾸러미_2026-10_첨부.zip');
     assert.deepEqual(r.guide, [ZIP_OPEN_GUIDE, RRN_HIDDEN_NOTE]);
     assert.equal(r.rrnIncluded, false);
     const xbytes = fs.readFileSync(r.file);
-    const zbytes = fs.readFileSync(r.attachmentsFile!);
+    const zbytes = fs.readFileSync(r.zipFile!);
     const rec = new BundleExportRepo(db).list(profileId, '2026-10')[0]!;
-    assert.deepEqual([rec.path, rec.sha256, rec.attachmentsPath, rec.attachmentsSha256, rec.rrnIncluded], [r.file, sha(xbytes), r.attachmentsFile, sha(zbytes), false]);
+    assert.deepEqual([rec.path, rec.sha256, rec.zipPath, rec.zipSha256, rec.rrnIncluded], [r.file, sha(xbytes), r.zipFile, sha(zbytes), false]);
     for (const bytes of [xbytes, zbytes]) for (const needle of [MARKER, '김직원', '1234567', 'receipt-jpeg-bytes']) assert.ok(!bytes.includes(Buffer.from(needle)), `평문 없음: ${needle}`);
-    if (process.platform !== 'win32') for (const f of [r.file, r.attachmentsFile!]) assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') for (const f of [r.file, r.zipFile!]) assert.equal(fs.statSync(f).mode & 0o777, 0o600);
     assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith('.part')), [], '임시 파일 없음');
 
     await assert.rejects(async () => {
@@ -190,7 +190,7 @@ describe('이번 달 상태와 빠진 것', () => {
     const r = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
     assert.equal(r.skippedChanged, 1);
     assert.equal(path.basename(r.file), '세무사꾸러미_2026-10_2.xlsx');
-    assert.equal(path.basename(r.attachmentsFile!), '세무사꾸러미_2026-10_2_첨부.zip');
+    assert.equal(path.basename(r.zipFile!), '세무사꾸러미_2026-10_2_첨부.zip');
     const { all } = await readBook(fs.readFileSync(r.file), pw);
     assert.ok(all.includes('첨부 확인 필요'));
     await assert.rejects(exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: 'short' }), /password_too_short/);
@@ -228,12 +228,55 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.ok(mb.all.includes('>41630<'), '소득세는 숫자 칸');
     assert.equal(masked.record.rrnIncluded, false);
 
-    const full = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw, includeRrn: true });
+    // 설정 bundle.includeRrn을 켜면(앱은 includeRrn을 넘기지 않는다) 전체
+    new BundleRepo(db).setIncludeRrn(profileId, true);
+    const full = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
+    new BundleRepo(db).setIncludeRrn(profileId, false);
     const fb = await readBook(fs.readFileSync(full.file), pw);
     assert.ok(fb.all.includes('900101-1234567') && !fb.all.includes(RRN_HIDDEN_NOTE), '켜면 전체, 암호 안에만');
     assert.ok(!fs.readFileSync(full.file).includes(Buffer.from('900101')), '파일 바이트에는 평문 없음');
     assert.equal(full.record.rrnIncluded, true);
     assert.deepEqual(full.guide, [ZIP_OPEN_GUIDE]);
     assert.equal(monthStatus(ctx()).find((s) => s.item.kind === 'payroll')!.status, 'ready');
+    // 급여 기록 내보내기는 설정을 켜도 주민번호 없음
+    new BundleRepo(db).setIncludeRrn(profileId, true);
+    const again = await exportPayrollRecord({ db, cipher, profileId, outDir: path.join(dir, 'exports'), password: pw });
+    assert.ok(!(await readBook(fs.readFileSync(again.file), pw)).all.includes('900101-1'));
+    assert.equal(again.record.rrnIncluded, false);
+    new BundleRepo(db).setIncludeRrn(profileId, false);
+  });
+
+  it('R15 범위 표지·중복 제거·합계 차이 메모: 묻지 않고 자동, 막지 않는다', async () => {
+    const cp = syntheticBizNo(7);
+    const inv = (approvalNo: string, supplyAmount: number, vatAmount: number, total: number, direction: 'sales' | 'purchase' = 'sales'): TaxInvoiceRow => ({
+      direction, issueDate: '2026-10-05', approvalNo, counterpartyBizNo: cp, counterpartyName: '거래처갑', supplyAmount, vatAmount, total,
+    });
+    const taxInvoices = [
+      inv('20261005-41000000-00000001', 80_000, 8_000, 88_000),
+      inv('20261005-41000000-00000001', 80_000, 8_000, 88_000), // H-02를 다시 돌려 같은 행
+      inv('202610054100000000000001', 80_000, 8_000, 88_000), // 하이픈만 다른 같은 번호
+      inv('20261005-41000000-00000002', 80_000, 8_000, 88_001), // 합계 1원 차이(R15 예시)
+      inv('20261005-41000000-00000001', 50_000, 5_000, 55_000, 'purchase'), // 방향이 다르면 다른 행
+    ];
+    const t = tidyInvoices(taxInvoices);
+    assert.equal(t.dropped, 2);
+    assert.deepEqual(t.lines.map((l) => [l.row.direction, l.sumGap]), [['sales', 0], ['sales', -1], ['purchase', 0]]);
+    const m = missingReport(ctx({ taxInvoices }));
+    assert.deepEqual(m.invoiceSumGaps, [{ direction: 'sales', issueDate: '2026-10-05', approvalNo: '20261005-41000000-00000002', counterpartyName: '거래처갑', gap: -1 }]);
+
+    const pw = generatePassword();
+    const r = await exportBundle({ ...ctx({ taxInvoices }), outDir: path.join(dir, 'exports-r15'), password: pw, now: () => new Date('2026-11-05T01:00:00Z') });
+    assert.equal(r.sheets[0], '표지');
+    assert.equal(r.duplicateInvoicesDropped, 2);
+    const { all, read } = await readBook(fs.readFileSync(r.file), pw);
+    const cover = await read('xl/worksheets/sheet1.xml');
+    const bizNo = new ProfileRepo(db).get(profileId)!.bizNo!;
+    for (const want of ['세무사 꾸러미 범위 표지', `${bizNo.slice(0, 3)}-${bizNo.slice(3, 5)}-${bizNo.slice(5)}`, '2026-10-01 ~ 2026-10-31', '2026-11-05 01:00:00', '같은 승인번호로 뺀 세금계산서', '2건'])
+      assert.ok(all.includes(want), `표지: ${want}`);
+    // 매출 2행: 공급가액 160,000 / 세액 16,000 / 합계 176,001
+    assert.ok(/<c [^>]*><v>2<\/v><\/c><c [^>]*><v>160000<\/v><\/c><c [^>]*><v>16000<\/v><\/c><c [^>]*><v>176001<\/v>/.test(cover), '표지 매출 행 수·합계');
+    assert.ok(all.includes('확인 필요: 공급가액+세액이 합계와 1원 다름'), '그 행의 메모 칸');
+    const missSheet = await read(`xl/worksheets/sheet${r.sheets.indexOf('빠진 것') + 1}.xml`);
+    assert.ok(!missSheet.includes('확인 필요: 공급가액'), "'빠진 것' 시트에는 올리지 않는다");
   });
 });

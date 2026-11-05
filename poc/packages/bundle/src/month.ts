@@ -15,6 +15,39 @@ export interface TaxInvoiceRow {
   total: number;
 }
 
+/** 매출·매입 한 행과 내보내기 메모(산술 사실만, 판정 아님) */
+export interface InvoiceLine {
+  row: TaxInvoiceRow;
+  /** 공급가액 + 세액 − 합계(0이 아니면 "확인 필요") */
+  sumGap: number;
+  /** 같은 키로 뺀 행 중 금액이 이 행과 다른 것의 수 */
+  differingDuplicates: number;
+}
+
+const digits = (s: string): string => s.replace(/[^0-9A-Za-z]/g, '');
+
+/**
+ * 매출·매입 행 정리(R15 P1-2 ②·③, 팀장 승인 2026-11-05). 사장님에게 묻지 않고 내보내기 안에서 자동으로 한다.
+ * - 중복 제거: (방향, 거래처 사업자번호, 승인번호)가 같으면 처음 한 행만 남긴다. H-02를 다시 돌려도 행이 늘지 않는다.
+ * - 공급가액 + 세액 ≠ 합계면 sumGap에 차이를 둔다. 막지 않는다.
+ */
+export function tidyInvoices(rows: readonly TaxInvoiceRow[]): { lines: InvoiceLine[]; dropped: number } {
+  const byKey = new Map<string, InvoiceLine>();
+  let dropped = 0;
+  for (const row of rows) {
+    const key = `${row.direction}|${digits(row.counterpartyBizNo)}|${digits(row.approvalNo)}`;
+    const seen = byKey.get(key);
+    if (!seen) {
+      byKey.set(key, { row, sumGap: row.supplyAmount + row.vatAmount - row.total, differingDuplicates: 0 });
+      continue;
+    }
+    dropped++;
+    const r = seen.row;
+    if (r.supplyAmount !== row.supplyAmount || r.vatAmount !== row.vatAmount || r.total !== row.total || r.issueDate !== row.issueDate) seen.differingDuplicates++;
+  }
+  return { lines: [...byKey.values()], dropped };
+}
+
 export interface MonthContext {
   db: Db;
   /** 직원 이름을 읽을 때만 쓴다(주민번호는 읽지 않는다) */
@@ -94,6 +127,11 @@ export interface MissingReport {
   memosNeedCheck: number;
   /** 사장님이 "카드 전표로 충분"으로 표시해 이 달은 카드 대조를 빠진 것에서 뺐다(판정 아님, ADR-032) */
   cardSlipEnough: boolean;
+  /**
+   * 공급가액 + 세액 ≠ 합계인 세금계산서(R15, 산술 차이 표시). 화면은 접힌 항목으로만 보이고 확인을 강제하거나 보내기를 막지 않는다(yulmu 2026-11-05).
+   * 엑셀에는 그 행의 메모 칸에만 적는다('빠진 것' 시트에 올리지 않는다)
+   */
+  invoiceSumGaps: Array<{ direction: 'sales' | 'purchase'; issueDate: string; approvalNo: string; counterpartyName: string; gap: number }>;
 }
 
 const nextMonth = (m: string): string => {
@@ -172,7 +210,8 @@ export function missingReport(ctx: MonthContext): MissingReport {
     .list(ctx.profileId, pad(from, -3), pad(to, 3))
     .filter((r) => r.confirmedAt && r.issuedOn && r.amount !== null)
     .map((r) => ({ day: r.issuedOn!, amount: r.amount!, bizNo: r.merchantBizNo }));
-  const invoices = (ctx.taxInvoices ?? []).filter((t) => t.direction === 'purchase').map((t) => ({ day: t.issueDate, amount: t.total, bizNo: t.counterpartyBizNo }));
+  const tidy = tidyInvoices(ctx.taxInvoices ?? []).lines;
+  const invoices = tidy.map((l) => l.row).filter((t) => t.direction === 'purchase').map((t) => ({ day: t.issueDate, amount: t.total, bizNo: t.counterpartyBizNo }));
   const memoTxnIds = new Set(cards.memos(ctx.profileId).map((m) => m.txnId));
   const slipFrom = new BundleRepo(ctx.db).cardSlipEnoughFrom(ctx.profileId);
   const cardSlipEnough = slipFrom !== null && ctx.month >= slipFrom;
@@ -184,5 +223,8 @@ export function missingReport(ctx: MonthContext): MissingReport {
     hasMemo: memoTxnIds.has(t.id),
   }));
   const memosNeedCheck = cards.memos(ctx.profileId).filter((m) => m.txnId === null).length;
-  return { month: ctx.month, emptyItems, payroll, cardWithoutEvidence, memosNeedCheck, cardSlipEnough };
+  const invoiceSumGaps = tidy
+    .filter((l) => l.sumGap !== 0)
+    .map((l) => ({ direction: l.row.direction, issueDate: l.row.issueDate, approvalNo: l.row.approvalNo, counterpartyName: l.row.counterpartyName, gap: l.sumGap }));
+  return { month: ctx.month, emptyItems, payroll, cardWithoutEvidence, memosNeedCheck, cardSlipEnough, invoiceSumGaps };
 }
