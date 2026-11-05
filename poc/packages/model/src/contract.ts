@@ -1,5 +1,5 @@
 // D04 §1 계약(공급사 무관). 입력은 RedactedText 브랜드만 받는다(D06 §8).
-import type { Egress, RunScope } from '@sax/net';
+import { isRunTokenResponse, type Egress, type RunScope } from '@sax/net';
 import type { RedactedText } from '@sax/redaction';
 
 export type { RedactedText };
@@ -14,6 +14,16 @@ export type ChatSessionId = string & { readonly __brand: 'ChatSessionId' };
 export function localRunToken(egress: Egress, scope: RunScope): RunToken {
   if (!egress.guard) throw new Error('egress without modelGuard');
   return egress.guard.issueRunToken(scope) as RunToken;
+}
+
+/**
+ * 게이트웨이 경로의 실행 토큰(POST /v1/run-tokens). 범위(runId·chatSessionId)당 예산은 서버가 쌓으므로 다시 받아도 초기화되지 않는다.
+ * 토큰은 서버가 서명·검증하고 클라이언트는 그대로 싣기만 한다.
+ */
+export async function gatewayRunToken(egress: Egress, scope: RunScope): Promise<RunToken> {
+  const r = await egress.toGateway({ surface: 'runTokens', body: scope });
+  if (!isRunTokenResponse(r)) throw new Error('gateway.bad_response');
+  return r.runToken as RunToken;
 }
 
 export type Provider = 'openai' | 'upstage' | 'rules';
@@ -62,10 +72,13 @@ export type UnknownReason =
   | 'answer_type_mismatch'
   | 'answer_value_invalid'
   | 'injection_prefilter'
+  /** 게이트웨이가 공급사로 보낸 질문 목록 해시가 로컬 번들과 다름(C-24) */
+  | 'questions_digest_mismatch'
   /** 규칙 전용 결정 경로에서 매핑이 참조하는 질문에 규칙 답이 없고 모델 호출도 허용되지 않음 */
   | 'rules_incomplete'
   | `provider:${string}`
-  | `guard:${string}`;
+  | `guard:${string}`
+  | `gateway:${string}`;
 
 export interface DecideResult {
   outcome: string;
@@ -81,6 +94,8 @@ export interface DecideResult {
   model: string;
   /** 모델을 부르지 않고 L0 규칙만으로 결정했는가 */
   l0Only: boolean;
+  /** 같은 실행·같은 입력의 판정 캐시에서 답을 재사용했는가(모델 미호출, usage 0) */
+  cached?: boolean;
 }
 
 export type Toolset = 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse';

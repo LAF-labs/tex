@@ -336,6 +336,32 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.equal((await s.v.consent('security_card', 'business'))!.noticeVersion, 'v1');
   });
 
+  it('색인 읽기가 한 번 실패해도(키체인 일시 오류) 실패를 캐시하지 않고 다음 연산에서 다시 읽는다', async () => {
+    const s = setup();
+    const realGet = s.items.get.bind(s.items);
+    let failOnce = true;
+    s.items.get = async (name) => {
+      if (name === 'index/human' && failOnce) {
+        failOnce = false;
+        throw new Error('keychain_read_failed');
+      }
+      return realGet(name);
+    };
+    await assert.rejects(s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-retry001') }], { version: 'v1' }), /keychain_read_failed/);
+    await s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-retry002') }], { version: 'v1' });
+    const r = await s.v.readOne('portal_password', 'business', { field: 'pw' });
+    assert.ok(r.ok);
+    assert.equal(dec((r as { bytes: Uint8Array }).bytes), 'TEST-PW-retry002');
+  });
+
+  it('첫 실행(설정·색인 항목 없음 → null)은 엄격 모드가 아니고 저장·읽기가 된다', async () => {
+    const s = setup();
+    await s.v.ready();
+    assert.equal(s.v.lock.strict, false);
+    await s.v.store('portal_password', 'business', [{ field: 'pw', bytes: enc('TEST-PW-first001') }], { version: 'v1' });
+    assert.ok((await s.v.readOne('portal_password', 'business', { field: 'pw' })).ok);
+  });
+
   it('색인에만 Hello 사본이 있고 항목이 없으면 프롬프트 없이 presence를 주지 않는다', async () => {
     const { v, c, hello, items } = setup({ hello: true });
     await v.store('security_card', 'business', cardEntries(1), { version: 'v1' });
@@ -556,7 +582,8 @@ describe('타이피스트가 저장된 사람 비밀을 칸 하나씩 쓴다', (
 
   it('보안카드는 칸별로: row 12만 복호한다', async () => {
     const { f, reads } = await withStored();
-    assert.deepEqual(await f.ops.fill(req({ secret: { kind: 'security_card', scope: 'business', row: 12 }, slot: { secretKind: 'security_card', purpose: 'sign' } })), { ok: true });
+    f.page.rowLabel = '12';
+    assert.deepEqual(await f.ops.fill(req({ secret: { kind: 'security_card', scope: 'business', row: 12 }, slot: { secretKind: 'security_card', purpose: 'sign' }, rowLabel: '#row' })), { ok: true });
     assert.equal(f.page.value, '1011');
     assert.deepEqual(reads, ['security_card/business/12']);
   });

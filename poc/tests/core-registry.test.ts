@@ -239,6 +239,13 @@ describe('투명성 로그 헤드 비교 (RFC 9162, E-14)', () => {
   it('모든 m < n ≤ 13에서 일관성 증명이 검증된다', () => {
     for (let n = 2; n <= 13; n++) for (let m = 1; m < n; m++) assert.ok(verifyConsistency(head(m), head(n), consistencyProof(m, leaves.slice(0, n))), `${m}→${n}`);
   });
+  it('빈 트리(m = 0)에서의 증명은 빈 배열이고 검증된다, m > n은 던진다(Bugbot #52 4차)', () => {
+    for (let n = 0; n <= 5; n++) {
+      assert.deepEqual(consistencyProof(0, leaves.slice(0, n)), []);
+      assert.ok(verifyConsistency(head(0), head(n), []), `0→${n}`);
+    }
+    assert.throws(() => consistencyProof(4, leaves.slice(0, 3)), /consistency_bad_size/);
+  });
   it('변조된 증명·다른 트리는 실패', () => {
     const p = consistencyProof(5, leaves.slice(0, 11));
     p[0] = Buffer.alloc(32);

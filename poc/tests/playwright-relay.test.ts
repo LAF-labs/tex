@@ -109,8 +109,10 @@ describe('S6b Playwright over vault relay', () => {
     await page.fill('#user', 'alice');
     await page.focus('#pw');
     await warmForSecretWindow(page);
-    await h.provide({ runId: 'pw1', kind: 'cert_password', scope: 'business' }, secret);
-    const r = await h.client.rpc('typist.fill', { runId: 'pw1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'business' }, slot: { secretKind: 'cert_password', purpose: 'login' } });
+    const fill = { runId: 'pw1', targetId, frame: 'main', element: '#pw', secret: { kind: 'portal_password', scope: 'business' }, slot: { secretKind: 'portal_password', purpose: 'login' } };
+    assert.deepEqual(await h.client.rpc('typist.fill', fill), { ok: false, reason: 'secret_missing' }, '금고가 secret.needed로 부른다');
+    await h.provide({ runId: 'pw1', kind: 'portal_password', scope: 'business' }, secret);
+    const r = await h.client.rpc('typist.fill', fill);
     assert.deepEqual(r, { ok: true });
     report.taintedScreenshot = await outcome(() => page.screenshot());
     assert.match(String(report.taintedScreenshot), /^error/);

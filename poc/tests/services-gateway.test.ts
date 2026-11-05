@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, type RespondSpec } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -374,6 +374,20 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
       assert.ok(!l.includes('1234567'), l);
     }
     assert.equal((await e.db.all('SELECT * FROM call_records')).length, 0);
+    // 서비스 계층도 같은 한도를 지킨다(앱 검증을 거치지 않는 호출 경로 대비)
+    for (const bad of [[], Array.from({ length: 11 }, () => '1234567891'), ['123-45-67891']]) {
+      await assert.rejects(e.svc.bizStatus(bad), (x: Error & { code?: string }) => x.code === 'gateway.param_rejected');
+    }
+  });
+
+  it('자동 정지 호출은 시간 제한이 있다: 계정 서비스가 응답하지 않으면 끊고 실패로 본다', async () => {
+    let signal: AbortSignal | undefined;
+    const hang = ((_u: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise<Response>((_r, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
+    }) as unknown as typeof fetch;
+    await assert.rejects(httpSuspender('http://acct.invalid', 's', hang, 20).suspend('d1'));
+    assert.ok(signal?.aborted);
   });
 
   it('접근 로그는 고정 필드·라우트 패턴뿐, 본문·토큰·식별자 패턴 없음', async () => {

@@ -1,8 +1,10 @@
 // 엔진의 단일 송신 모듈(D01 §3 TB-2 → TB-4/5). 목적지는 내장 허용 목록만, 경로도 고정한다.
-// PoC 범위: 공공데이터포털 국세청 사업자등록정보(H-05, 사용자 자기 키 D09 §4.1 (b)),
-// 모델 공급사 직결(BYOK, D04 §8). 모델 송신은 toModel()의 로컬 검사 4종을 통과한 요청만 나간다.
+// 목적지: 공공데이터포털 국세청 사업자등록정보(H-05, 사용자 자기 키 D09 §4.1 (b)), 모델 게이트웨이(기본 경로, D04 §7),
+// 모델 공급사 직결(BYOK, D04 §8). 모델 송신은 toGateway()·toModel()의 로컬 검사를 통과한 요청만 나간다.
+// 마스킹을 거치지 않은 텍스트(발급 영수증 없음)·식별자 모양·이미지는 보안 이벤트(코드만)를 남기고 차단한다(D06 §4).
 import { createHash, randomUUID } from 'node:crypto';
-import { ModelGuard, type GatewayDecideBody, type GatewayRespondBody, type ModelGuardConfig } from './model-guard.ts';
+import { GATEWAY_ORIGIN, GATEWAY_PATHS, GatewayError, gatewayErrorOf, type EgressSecurityEvent, type GatewayAuth } from './gateway.ts';
+import { ModelGuard, type BundleAllowEntry, type GatewayDecideBody, type GatewayRespondBody, type GuardCode, type ModelGuardConfig } from './model-guard.ts';
 
 export interface Destination {
   origin: string;
@@ -24,12 +26,29 @@ export const DEMO_DESTINATIONS = {
 
 export type DestinationName = keyof typeof DESTINATIONS | keyof typeof DEMO_DESTINATIONS;
 
+/** 게이트웨이 경로 설정. 번들 허용 목록은 앱 내장본(BYOK와 같은 목록), 인증은 금고 DPoP 서명기. */
+export interface GatewayConfig {
+  auth: GatewayAuth;
+  bundles: readonly BundleAllowEntry[];
+  /** 기본 20초(게이트웨이가 공급사 재시도 2회를 포함해 답한다) */
+  timeoutMs?: number;
+}
+
+export type GatewayCall =
+  | { surface: 'decide'; body: GatewayDecideBody }
+  | { surface: 'respond'; body: GatewayRespondBody }
+  | { surface: 'runTokens'; body: { runId: string } | { chatSessionId: string } };
+
 export interface EgressOptions {
   /** 테스트 전용: 목적지 origin을 로컬 모의 서버로 바꾼다. 앱 진입점은 쓰지 않는다. */
-  testOrigins?: Partial<Record<DestinationName, string>>;
+  testOrigins?: Partial<Record<DestinationName | 'gateway', string>>;
   timeoutMs?: number;
-  /** 모델 송신 검사 설정. 없으면 toModel()은 항상 거부한다. */
+  /** 모델 송신 검사 설정(BYOK). 없으면 toModel()은 항상 거부한다. */
   modelGuard?: ModelGuardConfig;
+  /** 게이트웨이 경로 설정. 없으면 toGateway()는 항상 거부한다. */
+  gateway?: GatewayConfig;
+  /** 보안 이벤트 수신(코드·표면·경로만). 감사 로그·security.daily 집계로 이어 붙인다. */
+  onSecurityEvent?: (e: EgressSecurityEvent) => void;
   /** 시험용: process.env 대신 볼 환경. */
   env?: NodeJS.ProcessEnv;
   /** 시연 전용 목적지(DEMO_DESTINATIONS)를 postJson에 연다. 앱 진입점은 fixture 모드 시연 플래그일 때만 켠다. */
@@ -87,14 +106,73 @@ export class Egress {
   /** 모델 송신 진단: 목적지·경로·상태·지연·레이트 리밋 헤더만(본문 없음). */
   readonly modelAudit: Array<{ dest: string; path: string; status: number | 'error'; ms: number; rateLimit: Record<string, string> }> = [];
   readonly guard: ModelGuard | null;
+  /** 게이트웨이 경로 로컬 검사(예산은 서버 집행이라 세지 않는다). */
+  readonly gatewayGuard: ModelGuard | null;
+  /** 보안 이벤트 기록(코드·표면·경로만, 본문 없음). */
+  readonly securityEvents: EgressSecurityEvent[] = [];
   private readonly tickets = new Map<string, Ticket>();
   /** egress.env_tampered: 생성 때 본 TLS 변조 변수 이름(값 없음). 비어 있지 않으면 모든 송신을 거부한다. */
   readonly envTampered: readonly string[];
 
   constructor(opts: EgressOptions = {}) {
     this.opts = opts;
-    this.guard = opts.modelGuard ? new ModelGuard(opts.modelGuard) : null;
+    const security = (path: EgressSecurityEvent['path']) => (code: GuardCode, surface: 'decide' | 'respond') => {
+      const e: EgressSecurityEvent = { code: `egress.${code}` as EgressSecurityEvent['code'], surface, path };
+      this.securityEvents.push(e);
+      opts.onSecurityEvent?.(e);
+    };
+    this.guard = opts.modelGuard ? new ModelGuard({ ...opts.modelGuard, onSecurity: opts.modelGuard.onSecurity ?? security('byok') }) : null;
+    this.gatewayGuard = opts.gateway ? new ModelGuard({ bundles: opts.gateway.bundles, onSecurity: security('gateway') }) : null;
     this.envTampered = tlsEnvTampered(opts.env ?? process.env);
+  }
+
+  /**
+   * 게이트웨이 송신의 유일한 입구(D04 §7). decide·respond는 로컬 검사(스키마·번들 허용 목록·입력 한도·이미지·트립와이어·
+   * 발급 영수증)를 통과해야 나간다. 인증 헤더는 금고 서명기가 만든다. 응답 JSON은 비신뢰 값 그대로 돌려준다.
+   */
+  async toGateway(req: GatewayCall): Promise<unknown> {
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const gw = this.opts.gateway;
+    if (!gw || !this.gatewayGuard) throw new EgressError('destination_not_allowed');
+    if (req.surface === 'decide') this.gatewayGuard.inspect('decide', req.body);
+    else if (req.surface === 'respond') this.gatewayGuard.inspect('respond', req.body);
+    const path = GATEWAY_PATHS[req.surface];
+    if (req.surface === 'runTokens') {
+      const scope = req.body as { runId?: unknown; chatSessionId?: unknown };
+      const id = Object.keys(scope).length === 1 ? (scope.runId ?? scope.chatSessionId) : undefined;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{8,64}$/.test(id)) throw new EgressError('path_not_allowed');
+    }
+    const body = JSON.stringify(req.body);
+    const auth = await gw.auth.headers({ method: 'POST', url: GATEWAY_ORIGIN + path, bodySha256: sha256(body) });
+    const origin = this.opts.testOrigins?.gateway ?? GATEWAY_ORIGIN;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), gw.timeoutMs ?? 20_000);
+    const started = performance.now();
+    try {
+      const res = await fetch(origin + path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', ...auth },
+        body,
+        signal: ctl.signal,
+        redirect: 'error',
+      });
+      this.modelAudit.push({ dest: 'gateway', path, status: res.status, ms: performance.now() - started, rateLimit: {} });
+      const text = await res.text();
+      let json: unknown = null;
+      try {
+        json = text ? JSON.parse(text) : null;
+      } catch {
+        throw new GatewayError(res.ok ? 'gateway.bad_response' : 'gateway.unavailable', res.status);
+      }
+      if (!res.ok) throw gatewayErrorOf(res.status, json);
+      return json;
+    } catch (e) {
+      if (e instanceof GatewayError) throw e;
+      this.modelAudit.push({ dest: 'gateway', path, status: 'error', ms: performance.now() - started, rateLimit: {} });
+      throw new GatewayError((e as Error).name === 'AbortError' ? 'gateway.timeout' : 'gateway.unavailable');
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /**
