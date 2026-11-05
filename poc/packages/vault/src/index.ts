@@ -6,6 +6,7 @@ export * from './chrome/find.ts';
 export * from './chrome/launch.ts';
 export * from './chrome/profile.ts';
 export * from './leak/scanner.ts';
+export * from './relay/commit-guard.ts';
 export * from './relay/policy.ts';
 export * from './relay/relay.ts';
 export * from './relay/sanitize.ts';
