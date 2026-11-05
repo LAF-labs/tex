@@ -1,6 +1,7 @@
 # D16. 오류·결과 코드 체계 (초안)
 
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
+> 같은 날 팀장 결정: 모델·egress PR #48의 `egress.pii_tripwire`·`egress.image_rejected`·`egress.unminted_text`를 표와 보안 이벤트 목록에 추가.
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): `account.device_hold`(423, 기기 추가 72시간 대기) 추가. PR #46의 나머지 `PROPOSED_D16` 코드는 아직 넣지 않았다.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교). · AUDIT-D 반영 2026-11-03: 아래 `portal`·`policy` 행 뒤의 AUDIT-D 행(ADR-025~029, D19 §3.5).
 
@@ -58,6 +59,7 @@
 | `browser` | `launch_failed` / `webdriver_selfcheck_failed` / `profile_locked` / `crashed` | 금고의 Chrome 기동·점검 | `err.browser.*` | 사용자 안내 |
 | `gateway` | `unauthorized` / `quota_exceeded` / `digest_mismatch`(409) / `param_rejected`(400) / `upstream_error` | 게이트웨이 응답. 요청 규범은 `schemas/gateway-request.schema.json` | `err.gateway.*` | — |
 | `gateway` | `pii_tripwire` | 게이트웨이 2차 식별자 트립와이어 적중, 공급사로 보내지 않음(B-18, **보안 이벤트**, 카운트만) | `err.gateway.pii_tripwire` | 해당 호출 `unknown` |
+| `egress` | `pii_tripwire` / `image_rejected` / `unminted_text` | 클라이언트 송신 직전 검사(BYOK·게이트웨이 두 경로): 마스킹 안 된 식별자 패턴 적중으로 송신 차단 / 이미지 송신 거부 / `RedactedText` 브랜드(`mint()` 영수증)가 없는 문자열 송신 시도. 이벤트는 `{code, surface, path: byok\|gateway}`만 담고 본문은 담지 않는다(PR #48, **보안 이벤트**) | `err.egress.*` | 송신하지 않음, 해당 호출 `unknown`(`guard:*`) |
 | `remote` | `pairing_failed` / `sas_mismatch` / `device_revoked` / `envelope_rejected` / `replay_detected` | 리모트 프로토콜. **로컬 UI 전용, 프로토콜로 송신 금지**(실패는 무응답, C/X-12) | `err.remote.*` | — |
 | `remote` | `hw_key_required` | 비가역 원격 승인에 하드웨어 키 서명이 없음(C-06, Phase 2). 로컬 UI 전용 | `err.remote.hw_key_required` | 로컬 승인으로 |
 | `pairing` | `new_desktop_warning` | 최근 24시간 안에 새 데스크톱이 페어링됨(C-01) | `err.pairing.new_desktop_warning` | 사용자 확인 |
@@ -97,6 +99,6 @@
 | `push` | `token_not_found`(404) | 등록된 푸시 토큰 없음 | 폰 앱이 다시 등록 |
 
 규칙:
-- **보안 이벤트**는 다음뿐이다: `gate.token_invalid`, `gate.token_consumed`, `commit_guard.blocked_request`, `remote.replay_detected`, `vault.origin_not_allowed`, `vault.cdp_denied`, `vault.preinjected_script`, `vault.origin_left`, `vault.dbkey_requested_twice`, `step.commit_shadow`, `security.commit_payload_mismatch`, `ledger.intent_reuse`, `policy.rejected_not_conservative`, `registry.version_jump_rejected`, `registry.key_revoked`, `gateway.pii_tripwire`, `vault.crypto_rate_anomaly`, `postprocess.open_denied`, `pairing.aik_mismatch`, `registry.head_mismatch`, `policy.issued_in_future`, `registry.revoked_shrunk`, `registry.issued_in_future`, `account.billing_signature_invalid`(2026-11-05 추가). 만료·거부·불일치(`step.readback_mismatch`, `step.pre_dispatch_mismatch`, `step.identity_mismatch`)는 보안 이벤트가 아니다.
+- **보안 이벤트**는 다음뿐이다: `gate.token_invalid`, `gate.token_consumed`, `commit_guard.blocked_request`, `remote.replay_detected`, `vault.origin_not_allowed`, `vault.cdp_denied`, `vault.preinjected_script`, `vault.origin_left`, `vault.dbkey_requested_twice`, `step.commit_shadow`, `security.commit_payload_mismatch`, `ledger.intent_reuse`, `policy.rejected_not_conservative`, `registry.version_jump_rejected`, `registry.key_revoked`, `gateway.pii_tripwire`, `vault.crypto_rate_anomaly`, `postprocess.open_denied`, `pairing.aik_mismatch`, `registry.head_mismatch`, `policy.issued_in_future`, `registry.revoked_shrunk`, `registry.issued_in_future`, `account.billing_signature_invalid`, `egress.pii_tripwire`, `egress.image_rejected`, `egress.unminted_text`(2026-11-05 추가). 만료·거부·불일치(`step.readback_mismatch`, `step.pre_dispatch_mismatch`, `step.identity_mismatch`)는 보안 이벤트가 아니다.
 - 리모트 영역 코드(`remote.*`)는 로컬 UI 전용이다. 폰↔PC 프로토콜로 오류 코드를 보내지 않으며, 실패는 무응답으로 처리한다(D08, C/X-12).
 - 텔레메트리에는 코드만 보내고 메시지 키는 로컬에서 해석한다. 텔레메트리 집계 단위는 D12 §1(일 단위, 5건 버킷)이다.
