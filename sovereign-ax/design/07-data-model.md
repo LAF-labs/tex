@@ -249,7 +249,7 @@ CREATE TABLE rate_tables (                     -- 시행일 단위 표. 서명 �
 -- 시행일 표 규칙(팀장 결정 2026-11-05, 데이터 PR #53·#67. 레지스트리 데이터 패키지 sax.rate-tables/v1 검증도 같다, D09 §8.4):
 --   열린 표(effective_to NULL)는 같은 kind의 다음 표 시작 전날까지 유효하다.
 --   겹침은 시작일이 같거나 닫힌 기간끼리 교차할 때만이다(열린 표 뒤에 새 표가 오는 것은 겹침이 아니다).
---   고르기: 그날 이전에 시작한 표 중 시작일이 가장 늦은 표. 그 표가 그날 전에 닫혔으면(effective_to < 그날) 표가 없다(rate_table_missing).
+--   고르기: effective_from ≤ 그날(시작일 당일 포함)인 표 중 시작일이 가장 늦은 표. 그래서 새 표는 시작일 당일부터 쓴다. 그 표가 그날 전에 닫혔으면(effective_to < 그날. effective_to 당일까지는 유효) 표가 없다(rate_table_missing).
 
 -- 세무사 꾸러미 (ADR-032, Phase 1 베타)
 CREATE TABLE bundle_items (                    -- 꾸러미 항목 정의. 1층 고정·2층 업종 묶음·3층 사장님 추가
