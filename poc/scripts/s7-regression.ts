@@ -112,7 +112,7 @@ async function main() {
       const a = r.raw[q.name];
       const l = s.labels[q.name];
       if (!a || l === undefined) continue;
-      const ok = a.type === 'predicate' ? a.probability >= 0.5 === (l === true) : a.type === 'choice' ? a.value === l : false;
+      const ok = a.type === 'predicate' ? (a.probability >= 0.5) === (l === true) : a.type === 'choice' ? a.value === l : false;
       const t = perQ.get(q.name) ?? perQ.set(q.name, { n: 0, ok: 0 }).get(q.name)!;
       t.n++;
       if (ok) t.ok++;
