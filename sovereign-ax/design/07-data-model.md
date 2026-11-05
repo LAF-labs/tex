@@ -2,6 +2,7 @@
 
 > 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
 > ADR-034 결정 8 채택 2026-11-05: 근무표 범위 축소, `shifts` 삭제 제안(데이터 트랙 확인 전).
+> 2026-11-05 팀장 결정(데이터 PR #53·#67): `rate_tables` 시행일 표 규칙(열린 표의 끝, 겹침, 고르기, `rate_table_missing`).
 > 2026-11-05 팀장 결정·R13 D-L3: `card_txn_memos.match_key`의 승인번호 키에 사용일을 붙임(데이터 PR #53 Bugbot High), `bundle_exports`에 `zip_sha256`·`zip_path`·`rrn_included`(회차당 한 행), 꾸러미 내보내기 규칙(엑셀 + 첨부 ZIP 두 파일, 주민번호 가림이 기본)을 §2 끝에 적음.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·DB 배타 잠금·DB 키 유실 처리(§1.3), `remote_devices` 증명 상태·`doc_scope_json`(§2), 서버 시각 컬럼 금지(§5), 키 계층의 복구 문구 삭제(§6, ADR-016 v2), DB 키 래핑 사본(§7)(ADR-025·029, D19 §3.5). 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
 
@@ -245,6 +246,10 @@ CREATE TABLE rate_tables (                     -- 시행일 단위 표. 서명 �
   package_version TEXT NOT NULL, signature_ok INTEGER NOT NULL,
   UNIQUE(kind, effective_from)                 -- 기간이 겹치는 표는 패키지 검증에서 거부한다
 );
+-- 시행일 표 규칙(팀장 결정 2026-11-05, 데이터 PR #53·#67. 레지스트리 데이터 패키지 sax.rate-tables/v1 검증도 같다, D09 §8.4):
+--   열린 표(effective_to NULL)는 같은 kind의 다음 표 시작 전날까지 유효하다.
+--   겹침은 시작일이 같거나 닫힌 기간끼리 교차할 때만이다(열린 표 뒤에 새 표가 오는 것은 겹침이 아니다).
+--   고르기: 그날 이전에 시작한 표 중 시작일이 가장 늦은 표. 그 표가 그날 전에 닫혔으면(effective_to < 그날) 표가 없다(rate_table_missing).
 
 -- 세무사 꾸러미 (ADR-032, Phase 1 베타)
 CREATE TABLE bundle_items (                    -- 꾸러미 항목 정의. 1층 고정·2층 업종 묶음·3층 사장님 추가
