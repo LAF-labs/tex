@@ -17,6 +17,8 @@ import {
   AIK_PURPOSES, aikSeedFromRk, CRYPTO_KEY_ITEMS, CRYPTO_RATE_PER_HOUR, ed25519FromSeed, hpkeOpenBase, MemoryKeyStore, RPC_BY_PORT,
   Vault, VaultCrypto, VD_PURPOSES, x25519FromSeed, type KeyStore, type VaultPublicKeys,
 } from '@sax/vault';
+import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp } from '../services/account/src/index.ts';
+import { athOf, jcs, JtiCache, verifyDpop } from '../services/shared/src/index.ts';
 
 const hex = (s: string) => new Uint8Array(Buffer.from(s.replace(/\s+/g, ''), 'hex'));
 const utf8 = (s: string) => new TextEncoder().encode(s);
@@ -278,6 +280,43 @@ describe('받는 쪽 검증(금고 엔진 포트 경유)', () => {
       assert.ok(verifyCert(cert, d.pk.aik, now));
       const kvSig = await signKv(d.vd, d.pk.kv);
       assert.ok(verifyKv(d.pk.vd, d.pk.kv, kvSig));
+    } finally {
+      await d.close();
+    }
+  });
+
+  it('클라우드 실제 검증기(services/shared verifyDpop, services/account entry·revoke·cert·opSigOk)가 금고 서명을 받는다', async () => {
+    const d = await vaultDesktop();
+    try {
+      const now = Date.now();
+      const aikPub = Buffer.from(d.pk.aik);
+      const vdPub = Buffer.from(d.pk.vd);
+      const sign = async (purpose: string, obj: unknown) =>
+        Buffer.from(((await d.client.rpc('crypto.signAik', { purpose, msg: utf8(jcs(obj)) })) as { sig: Uint8Array }).sig).toString('base64');
+      // DPoP: remote deviceAuthHeaders + 금고 Vd → 서버 verifyDpop
+      const token = 'sxd1.TEST-TOKEN';
+      const htu = 'https://account.tex.laf-co.com/v1/devices';
+      const h = await deviceAuthHeaders(token, d.vd, 'POST', htu, now);
+      const jti = new JtiCache();
+      const check = { method: 'POST', htu, token, cnf: vdPub, now, jti, code: 'account.dpop_invalid' as const };
+      const proof = verifyDpop(h.DPoP, check);
+      assert.equal(proof.ath, athOf(token));
+      assert.throws(() => verifyDpop(h.DPoP, check), '같은 jti는 다시 받지 않는다');
+      const h2 = await deviceAuthHeaders(token, d.vd, 'POST', htu, now);
+      assert.throws(() => verifyDpop(h2.DPoP, { ...check, cnf: aikPub, jti: new JtiCache() }), 'AIK 공개키로는 검증되지 않는다');
+      assert.throws(() => verifyDpop(h2.DPoP, { ...check, token: 'sxd1.OTHER', jti: new JtiCache() }), '다른 토큰의 ath');
+      // 기기 목록·인증서: remote가 금고 AIK로 만들고 서버 검증기가 받는다
+      const list = await initialDeviceList(d.aik, { deviceId: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', role: 'desktop', noisePub: d.pk.noiseStatic, signPub: d.pk.vd, registeredAt: now });
+      for (const e of list.entries) assert.ok(entrySigOk(aikPub, e as Parameters<typeof entrySigOk>[1]), 'SAX-devlist-v1');
+      const cert = await issueCert(d.aik, { device_id: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', role: 'desktop', Sx: d.pk.noiseStatic, Vx: d.pk.vd, Kx: d.pk.kv, not_after: now + 86_400_000 });
+      assert.ok(certSigOk(aikPub, cert as Parameters<typeof certSigOk>[1]), 'SAX-cert-v1');
+      assert.ok(!certSigOk(vdPub, cert as Parameters<typeof certSigOk>[1]));
+      // 폐기·계정 작업: 금고 signAik로 JCS(obj) 서명
+      const rev = { device_id: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', revoked_at: now };
+      assert.ok(revokeSigOk(aikPub, { ...rev, aikSig: await sign('SAX-revoke-v1', rev) }), 'SAX-revoke-v1');
+      const op: AcctOp = { op: 'device.reactivate', account_id: 'acct-TEST', target: '0b6a3f7e-2c1d-4e5f-9a8b-7c6d5e4f3a2b', ts: now };
+      assert.ok(opSigOk(aikPub, { op, aikSig: await sign('SAX-acct-op-v1', op) }, op.account_id, op.target, now), 'SAX-acct-op-v1');
+      assert.ok(!opSigOk(aikPub, { op, aikSig: await sign('SAX-revoke-v1', op) }, op.account_id, op.target, now), '다른 맥락 서명은 받지 않는다');
     } finally {
       await d.close();
     }
