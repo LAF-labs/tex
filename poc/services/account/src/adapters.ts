@@ -5,11 +5,12 @@ import { hmacHex, randomToken, safeEqual } from '@sax/svc-shared';
 /** 9,900원 한 플랜(ADR-034 결정 3). 세무사 요금은 다음 단계. */
 export const PLAN = { id: 'standard', amountKrw: 9900, period: 'month' } as const;
 
+/** `at` = PG가 이벤트를 만든 시각(ms, 서명 범위 안). 늦게 오거나 재전송된 이벤트를 거르는 순서 기준이다. */
 export type PaymentEvent =
-  | { type: 'subscription.activated'; pgCustomerRef: string; renewAt: number }
-  | { type: 'subscription.renewed'; pgCustomerRef: string; renewAt: number }
-  | { type: 'payment.failed'; pgCustomerRef: string }
-  | { type: 'subscription.canceled'; pgCustomerRef: string };
+  | { type: 'subscription.activated'; pgCustomerRef: string; renewAt: number; at: number }
+  | { type: 'subscription.renewed'; pgCustomerRef: string; renewAt: number; at: number }
+  | { type: 'payment.failed'; pgCustomerRef: string; at: number }
+  | { type: 'subscription.canceled'; pgCustomerRef: string; at: number };
 
 export interface PaymentGateway {
   /** 결제 창 URL. pgCustomerRef는 우리가 만든 불투명 참조이고 이메일·계정 ID를 PG에 보내지 않는다. */
@@ -40,7 +41,7 @@ export class MockPaymentGateway implements PaymentGateway {
     try {
       const e = JSON.parse(raw.toString('utf8')) as PaymentEvent;
       const types = ['subscription.activated', 'subscription.renewed', 'payment.failed', 'subscription.canceled'];
-      if (!types.includes(e.type) || typeof e.pgCustomerRef !== 'string') return null;
+      if (!types.includes(e.type) || typeof e.pgCustomerRef !== 'string' || !Number.isSafeInteger(e.at)) return null;
       if ((e.type === 'subscription.activated' || e.type === 'subscription.renewed') && !Number.isSafeInteger(e.renewAt)) return null;
       return e;
     } catch {

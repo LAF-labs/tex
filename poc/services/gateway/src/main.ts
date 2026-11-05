@@ -24,6 +24,12 @@ function fail(name: string): never {
   throw new Error(`config_${name}`);
 }
 
+/** 양의 정수만(NaN·0·음수·소수면 기동 거부). 잘못된 한도가 조용히 한도 없음이 되지 않게 */
+export function positiveInt(v: string, name: string): number {
+  if (!/^[1-9][0-9]{0,14}$/.test(v)) fail(name);
+  return Number(v);
+}
+
 /** TOKEN_PUBLIC_KEYS = "kid:base64(32B),kid2:…" (계정 서비스 토큰 키, 회전 중 둘 이상) */
 export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   const out: Record<string, Buffer> = {};
@@ -70,7 +76,7 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
     tagKey: key32(env.REPLAY_TAG_KEY, 'REPLAY_TAG_KEY'),
     scopeKey: key32(env.RUN_SCOPE_KEY, 'RUN_SCOPE_KEY'),
     models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND') },
-    monthlyTokens: env.GW_MONTHLY_TOKENS ? Number(env.GW_MONTHLY_TOKENS) : undefined,
+    monthlyTokens: env.GW_MONTHLY_TOKENS === undefined ? undefined : positiveInt(env.GW_MONTHLY_TOKENS, 'GW_MONTHLY_TOKENS'),
     prices,
     nts,
     suspender: httpSuspender(accountBase, internal),
