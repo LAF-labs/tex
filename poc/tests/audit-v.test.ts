@@ -531,7 +531,9 @@ describe('audit-v V8 트리거 허용 목록', () => {
     assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r3' })), { ok: false, reason: 'denied' }, '트리거 없음');
     assert.deepEqual(await s.ops.openForHuman({ runId: 'r2', targetId: 'RUN', frame: 'main', element: '#pw' }), { ok: false, reason: 'denied' });
     s.ops.runTriggers.set('r2', 'remote');
-    assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r2' })), { ok: true });
+    // remote 실행은 시작 게이트(SAX-start-v1) 통과 플래그가 있을 때만(ADR-029 결정 2).
+    assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r2' })), { ok: false, reason: 'denied' }, 'remote + startGate 없음');
+    assert.deepEqual(await s.ops.fill(fillReq({ runId: 'r2', startGate: true })), { ok: true });
   });
 });
 

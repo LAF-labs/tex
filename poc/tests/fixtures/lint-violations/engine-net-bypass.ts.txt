@@ -1,0 +1,11 @@
+// as: packages/engine/src/_probe.ts
+// expect: no-restricted-imports=6, no-restricted-globals=1, no-restricted-properties=1, no-restricted-syntax=2
+// 엔진에서 송신 모듈 직접 import·전역 fetch·동적 import로 egress를 우회하려는 시도(D01 §3, ADR-028 결정 6).
+import http from 'node:http';
+import https from 'https';
+import { connect } from 'net';
+import { request } from 'undici';
+import WebSocket from 'ws';
+import { net } from 'electron';
+const m = 'node:' + 'http';
+export const f = () => [fetch('https://x'), globalThis.fetch, http, https, connect, request, WebSocket, net, import(m), import('node:tls')];

@@ -6,7 +6,7 @@ export * from './ledger.ts';
 export * from './migrate.ts';
 export * from './open.ts';
 export * from './payroll-repo.ts';
-export * from './portal-login-repo.ts';
+export * from './onboarding-repo.ts';
 export * from './rate.ts';
 export * from './repo.ts';
 export * from './schema.ts';

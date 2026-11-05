@@ -1,0 +1,7 @@
+// as: packages/engine/src/redact-probe.ts
+// expect: no-restricted-syntax=2
+// RedactedText는 @sax/redaction 밖에서 단언으로 만들 수 없다(D06 §8). 마스킹 없이 모델로 보내는 우회.
+import type { RedactedText } from '@sax/redaction';
+declare const screen: string;
+export const a = screen as RedactedText;
+export const b = <RedactedText>screen;

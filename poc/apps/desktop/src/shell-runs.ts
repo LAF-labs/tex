@@ -179,6 +179,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return this.runs.get(id);
   }
 
+  /** 지금 들고 있는 실행 전부(만든 순서). 이번 달 판이 읽는다. */
+  list(): RunView[] {
+    return [...this.runs.values()];
+  }
+
   /** item: 문장에서 뽑은 품목(시연 모델). 없으면 거래처의 지난 품목. */
   createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView {
     const s = split(amount, vat ?? 'separate');

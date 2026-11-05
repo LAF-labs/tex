@@ -7,22 +7,51 @@ import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
 import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
-import { RPC_BY_PORT, RUN_TRIGGERS, type InboundMessage, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type VaultEventName } from './protocol.ts';
+import {
+  PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, SECRET_KINDS, SECURITY_CARD_ROWS, STORABLE_KINDS,
+  SESSION_EVENTS, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
+} from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { Relay } from './relay/relay.ts';
-import { SecretOps } from './secret/ops.ts';
+import { SecretOps, type StoredRead } from './secret/ops.ts';
+import { HumanSecretVault } from './keychain/human.ts';
+import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/backend.ts';
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const NOTICE_VERSION_RE = /^[A-Za-z0-9._-]{1,32}$/;
 
-/** secretInput 결속 검사(I-1). 맞으면 필요한 필드만 복사해 돌려준다. */
+/**
+ * 등록 창이 함께 넘긴 포털 아이디 검사(비밀 아님, ADR-035). 없으면 undefined, 틀리면 null.
+ * 금고는 이 값을 저장·로그하지 않고 secret.store 결과로 돌려줄 뿐이다.
+ */
+function parsePortalLoginId(v: unknown): string | undefined | null {
+  if (v === undefined) return undefined;
+  if (typeof v !== 'string') return null;
+  const s = v.normalize('NFC').trim();
+  if (!s || s.length > PORTAL_LOGIN_ID_MAX || /[\p{Cc}\s]/u.test(s)) return null;
+  return s;
+}
+
+const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
+
+/** secretInput 결속 검사(I-1). 맞으면 필요한 필드만 복사해 돌려준다. mode가 없으면 oneshot(PoC 호환). */
 export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   if (!b || typeof b !== 'object') return null;
   const x = b as Record<string, unknown>;
+  if (!isProfileScope(x.scope)) return null;
+  if (x.mode === 'store') {
+    // 저장은 등록 창(T-06)에서만. 인증서 비밀번호는 저장 기능이 없다(ADR-020 결정 2).
+    if (typeof x.kind !== 'string' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
+    const notice = x.notice as Record<string, unknown> | undefined;
+    if (!notice || typeof notice.version !== 'string' || !NOTICE_VERSION_RE.test(notice.version)) return null;
+    if (x.runId !== undefined || x.row !== undefined) return null;
+    return { mode: 'store', kind: x.kind as StorableKind, scope: x.scope, notice: { version: notice.version } };
+  }
+  if (x.mode !== undefined && x.mode !== 'oneshot') return null;
   if (typeof x.runId !== 'string' || !RUN_ID_RE.test(x.runId)) return null;
-  if (typeof x.kind !== 'string' || !Object.keys(SECRET_ORIGINS).includes(x.kind)) return null;
-  if (x.scope !== 'business' && x.scope !== 'personal') return null;
-  if (x.row !== undefined && !(Number.isInteger(x.row) && (x.row as number) >= 1 && (x.row as number) <= 35)) return null;
-  const out: SecretInputBind = { runId: x.runId, kind: x.kind as SecretInputBind['kind'], scope: x.scope };
+  if (typeof x.kind !== 'string' || !(SECRET_KINDS as readonly string[]).includes(x.kind) || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
+  if (x.row !== undefined && !isRow(x.row)) return null;
+  const out: OneShotBind = { runId: x.runId, kind: x.kind as SecretKind, scope: x.scope };
   if (x.row !== undefined) out.row = x.row as number;
   return out;
 }
@@ -41,6 +70,11 @@ export interface VaultOptions {
   launchTimeoutMs?: number;
   /** 테스트 전용. 기본은 SECRET_TTL_MS. */
   secretTtlMs?: number;
+  /**
+   * 사람 비밀(세션 결박) 저장소(ADR-026). 앱 진입점은 keychainBackend()로 만든다.
+   * 없으면 메모리 백엔드(저장해도 프로세스 밖에 남지 않음, 시험·픽스처 모드).
+   */
+  human?: HumanSecretVault;
 }
 
 /** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
@@ -66,12 +100,29 @@ export class Vault {
   private dbKeyIssued = false;
   private profileProblems: string[] | null = null;
   private readonly pendingTriggers = new Map<string, RunTrigger>();
+  /** run별 활성 프로필(Q-2). run.begin에서 고정하고 run.end까지 바꾸지 않는다. */
+  private readonly runProfiles = new Map<string, ProfileScope>();
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
   private readonly usedSlots = new Set<string>();
+  readonly human: HumanSecretVault;
 
   constructor(opts: VaultOptions) {
     this.opts = opts;
     this.policy = opts.policy ?? defaultRelayPolicy(SECRET_ORIGINS, TYPIST_KEY_DELAY_MS, TYPIST_INPUT_MODE);
+    this.human = opts.human ?? new HumanSecretVault({ backend: { items: new MemoryItemStore(), wrapper: new MemoryWrapper(), hello: new UnavailableHello() }, log: opts.log });
+    // 잠기면 KEK는 HumanSecretVault가 지운다. main에는 상태만 알린다.
+    const wipe = this.human.lock.onLock;
+    this.human.lock.onLock = (reason) => {
+      wipe(reason);
+      this.emit(['control'], 'vault.state', { open: false, reason });
+    };
+  }
+
+  /** 타이피스트가 1회용 값이 없을 때 부른다. 보안카드는 row, 포털은 pw 칸(포털 아이디는 금고에 없다, ADR-035). */
+  private readStored(kind: string, scope: string, row?: number): Promise<StoredRead> {
+    if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(scope)) return Promise.resolve({ ok: false, reason: 'secret_missing' });
+    const cell: { row?: number; field?: PortalField } = kind === 'security_card' ? { row } : { field: 'pw' };
+    return this.human.readOne(kind as StorableKind, scope, cell);
   }
 
   attachPort(kind: PortKind, port: PortLike, bind?: unknown): void {
@@ -87,7 +138,16 @@ export class Vault {
       return;
     }
     if (kind === 'engine') this.enginePort = port;
-    if (kind === 'control') this.controlPort = port;
+    if (kind === 'control') {
+      this.controlPort = port;
+      // 기동 중(설정 읽는 동안)에는 session.* 응답이 startup이다. 붙은 control 포트에 설정을 다 읽은 뒤의 실제 상태를 한 번 알린다
+      // (포트가 설정 읽기보다 먼저 붙든 나중에 붙든).
+      void this.human.ready().then(() => {
+        if (this.controlPort !== port) return;
+        const v = this.human.lock.check();
+        this.post(port, { t: 'ev', name: 'vault.state', data: v.open ? { open: true } : { open: false, reason: v.reason } });
+      });
+    }
     port.onMessage((raw) => void this.onPortMessage(kind, port, raw as InboundMessage));
   }
 
@@ -108,13 +168,44 @@ export class Vault {
     if (msg?.t !== 'rpc') return;
     const p = msg.params ?? {};
     const bytes = p.bytes instanceof Uint8Array ? p.bytes : null;
-    if (msg.method !== 'secret.provide' || state.used) {
+    const entryBytes = Array.isArray(p.entries) ? (p.entries as Array<{ bytes?: unknown }>).map((e) => (e?.bytes instanceof Uint8Array ? e.bytes : null)) : [];
+    const wipe = () => {
       bytes?.fill(0);
+      for (const b of entryBytes) b?.fill(0);
+    };
+    // 결속 모드가 메서드를 정한다: oneshot은 secret.provide, store(T-06)는 secret.store. 한 포트에서 한 번만.
+    const expected = bind.mode === 'store' ? 'secret.store' : 'secret.provide';
+    if (msg.method !== expected || state.used) {
+      wipe();
       this.opts.log.event('vault.rpc_denied', { method: msg.method, port: 'secretInput' });
       this.post(port, { t: 'rpc', id: msg.id, error: 'denied' });
       return;
     }
     state.used = true;
+    if (bind.mode === 'store') {
+      const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
+      const parsed = entries.map((e, i) => ({ row: e?.row as number | undefined, field: e?.field as PortalField | undefined, bytes: entryBytes[i] ?? new Uint8Array() }));
+      // 포털 아이디는 비밀이 아니다. 포털 결속에서만 받고, 저장하지 않고 결과로 돌려준다(D05 §2·§4, ADR-035).
+      const loginId = parsePortalLoginId(p.portalLoginId);
+      if (loginId === null || (loginId !== undefined && bind.kind !== 'portal_password')) {
+        wipe();
+        this.post(port, { t: 'rpc', id: msg.id, error: 'bad_login_id' });
+        return;
+      }
+      // 결속 kind가 칸 모양을 정한다: 보안카드는 row만, 포털은 field: 'pw'만(human.store가 다시 검사한다).
+      void this.human.store(bind.kind, bind.scope, parsed, bind.notice).then(
+        (consent) => {
+          const result: SecretStoreResult = { handle: { kind: bind.kind, scope: bind.scope }, tier: consent.tier, consent };
+          if (loginId !== undefined) result.portalLoginId = loginId;
+          this.post(port, { t: 'rpc', id: msg.id, result });
+        },
+        (e: Error) => {
+          wipe();
+          this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
+        },
+      );
+      return;
+    }
     try {
       if (!bytes) throw new Error('bytes required');
       const same = (k: 'kind' | 'scope' | 'row') => p[k] === undefined || p[k] === bind[k];
@@ -152,8 +243,16 @@ export class Vault {
         return this.launch();
       case 'browser.shutdown':
         return this.shutdown();
-      case 'typist.fill':
+      case 'typist.fill': {
+        // run에 고정된 프로필과 다른 scope는 넣지 않는다(run 중 프로필 전환 없음, Q-2).
+        const pinned = this.runProfiles.get(String(p.runId));
+        const scope = (p.secret as { scope?: unknown } | undefined)?.scope;
+        if (pinned !== undefined && scope !== pinned) {
+          this.opts.log.event('vault.profile_mismatch', { runId: String(p.runId).slice(0, 64) });
+          return { ok: false, reason: 'denied' };
+        }
         return this.requireOps().fill(p as never);
+      }
       case 'secretWindow.openForHuman':
         return this.requireOps().openForHuman(p as never);
       case 'secretWindow.requestClose':
@@ -163,18 +262,61 @@ export class Vault {
       case 'run.begin': {
         // 열거형 밖 트리거는 저장하지 않는다(N-77, fail-closed).
         if (!RUN_TRIGGERS.includes(p.trigger as RunTrigger)) throw new Error('bad_trigger');
-        this.setTrigger(String(p.runId), p.trigger as RunTrigger);
+        const runId = String(p.runId);
+        if (p.profile !== undefined) {
+          if (!isProfileScope(p.profile)) throw new Error('bad_profile');
+          const was = this.runProfiles.get(runId);
+          if (was !== undefined && was !== p.profile) throw new Error('profile_locked');
+          this.runProfiles.set(runId, p.profile);
+        }
+        this.setTrigger(runId, p.trigger as RunTrigger);
         return {};
       }
       case 'run.end': {
         const runId = String(p.runId);
         this.ops?.runTriggers.delete(runId);
         this.pendingTriggers.delete(runId);
+        this.runProfiles.delete(runId);
         this.ops?.secrets.clearRun(runId);
         for (const k of [...this.usedSlots]) if (k.startsWith(runId + '|')) this.usedSlots.delete(k);
         // 열린 창이 없으면 알려진 값 변형을 전부 버린다(N-78).
         if (this.relay && !this.relay.hasOpenWindow()) this.relay.clearKnownSecrets();
+        // 엄격 모드: 실행이 끝나면 Hello로 연 금고를 즉시 잠근다(ADR-026 결정 4).
+        this.human.lock.runEnded();
         return {};
+      }
+      case 'typist.authFailed': {
+        // 포털의 명시적 인증 실패 1회 → suspect(ADR-026 결정 7). 엔진이 거짓으로 보내도 할 수 있는 일은 입력 정지뿐이다.
+        const kind = String(p.kind);
+        if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(p.scope)) throw new Error('bad_params');
+        if (await this.human.markSuspect(kind as StorableKind, p.scope)) this.emit(['control'], 'secret.suspect', { kind, scope: p.scope });
+        return {};
+      }
+      case 'session.event': {
+        if (!(SESSION_EVENTS as readonly string[]).includes(String(p.kind))) throw new Error('bad_params');
+        return this.vaultState(this.human.lock.sessionEvent(p.kind as SessionEventKind));
+      }
+      case 'session.idle': {
+        if (typeof p.idleSec !== 'number') throw new Error('bad_params');
+        return this.vaultState(this.human.lock.reportIdle(p.idleSec));
+      }
+      case 'vault.unlock': {
+        const task = typeof p.task === 'string' ? p.task.slice(0, 40) : '';
+        const portal = typeof p.portal === 'string' ? p.portal.slice(0, 20) : '';
+        const r = await this.human.unlockWithHello({ task, portal });
+        if (r.ok) this.emit(['control'], 'vault.state', { open: true });
+        return r;
+      }
+      case 'vault.setStrict':
+        if (typeof p.on !== 'boolean') throw new Error('bad_params');
+        return this.human.setStrict(p.on);
+      case 'secret.list':
+        return this.human.list();
+      case 'secret.has':
+      case 'secret.forget': {
+        const kind = String(p.kind);
+        if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(p.scope)) throw new Error('bad_params');
+        return method === 'secret.has' ? this.human.has(kind as StorableKind, p.scope) : this.human.forget(kind as StorableKind, p.scope);
       }
       case 'secretWindow.userDone':
         await this.requireOps().userDone(String(p.targetId));
@@ -182,12 +324,17 @@ export class Vault {
       case 'status':
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
     }
-    throw new Error('unknown method');
+    // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
+    throw new Error('not_implemented');
   }
 
   private setTrigger(runId: string, trigger: RunTrigger): void {
     if (this.ops) this.ops.runTriggers.set(runId, trigger);
     else this.pendingTriggers.set(runId, trigger);
+  }
+
+  private vaultState(v: { open: boolean; reason?: string }): { open: boolean; reason?: string } {
+    return v.open ? { open: true } : { open: false, reason: v.reason };
   }
 
   private requireOps(): SecretOps {
@@ -282,6 +429,7 @@ export class Vault {
       selfScan: VAULT_SELF_SCAN ? { roots: [this.opts.paths.logs, this.opts.paths.staging] } : undefined,
       emit,
       usedSlots: this.usedSlots,
+      stored: (kind, scope, row) => this.readStored(kind, scope, row),
     });
     for (const [k, v] of this.pendingTriggers) this.ops.runTriggers.set(k, v);
     this.pendingTriggers.clear();

@@ -219,11 +219,12 @@ CREATE TABLE bundle_entries (
 CREATE TABLE bundle_exports (
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), period TEXT NOT NULL,
   sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
+  zip_sha256 TEXT, zip_path TEXT,
+  rrn_included INTEGER NOT NULL DEFAULT 0,
   send_via TEXT CHECK(send_via IN ('mail_client','folder')),
   sent_to TEXT,
   sent_marked_at TEXT, sent_note TEXT,
-  attachments_path TEXT, attachments_sha256 TEXT,
-  rrn_included INTEGER NOT NULL DEFAULT 0
+  CHECK((zip_sha256 IS NULL) = (zip_path IS NULL))
 );
 CREATE TABLE card_fetches (
   run_id TEXT PRIMARY KEY REFERENCES runs(id), profile_id TEXT NOT NULL REFERENCES profiles(id),
@@ -262,14 +263,24 @@ CREATE TABLE cash_sales (
   },
   {
     version: 6,
-    name: 'portal_logins',
+    name: 'onboarding',
     sql: `
-CREATE TABLE portal_logins (
-  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  portal TEXT NOT NULL,
-  login_id TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  PRIMARY KEY(profile_id, portal)
+ALTER TABLE profiles ADD COLUMN portal_login_id TEXT;
+CREATE TABLE consents (
+  seq INTEGER PRIMARY KEY AUTOINCREMENT,
+  profile_id TEXT REFERENCES profiles(id) ON DELETE CASCADE,
+  kind TEXT CHECK(kind IN ('terms','model','telemetry','delegation')) NOT NULL,
+  notice_key TEXT NOT NULL, notice_version TEXT NOT NULL, processors_version TEXT,
+  choice TEXT CHECK(choice IN ('agreed','declined')) NOT NULL,
+  at TEXT NOT NULL,
+  via TEXT CHECK(via IN ('onboarding','settings','T-06')) NOT NULL,
+  device_sig TEXT
+);
+CREATE INDEX ix_consents_profile_kind ON consents(profile_id, kind, seq);
+CREATE TABLE onboarding_state (
+  profile_kind TEXT PRIMARY KEY CHECK(profile_kind IN ('business','personal')),
+  profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
+  step TEXT NOT NULL, state_json TEXT NOT NULL, updated_at TEXT NOT NULL
 );
 `,
   },
