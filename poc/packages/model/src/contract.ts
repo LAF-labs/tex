@@ -62,10 +62,13 @@ export type UnknownReason =
   | 'answer_type_mismatch'
   | 'answer_value_invalid'
   | 'injection_prefilter'
+  /** 게이트웨이가 공급사로 보낸 질문 목록 해시가 로컬 번들과 다름(C-24) */
+  | 'questions_digest_mismatch'
   /** 규칙 전용 결정 경로에서 매핑이 참조하는 질문에 규칙 답이 없고 모델 호출도 허용되지 않음 */
   | 'rules_incomplete'
   | `provider:${string}`
-  | `guard:${string}`;
+  | `guard:${string}`
+  | `gateway:${string}`;
 
 export interface DecideResult {
   outcome: string;
@@ -81,6 +84,8 @@ export interface DecideResult {
   model: string;
   /** 모델을 부르지 않고 L0 규칙만으로 결정했는가 */
   l0Only: boolean;
+  /** 같은 실행·같은 입력의 판정 캐시에서 답을 재사용했는가(모델 미호출, usage 0) */
+  cached?: boolean;
 }
 
 export type Toolset = 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse';
