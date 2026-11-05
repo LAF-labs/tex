@@ -290,7 +290,8 @@ export function markedFiles() {
 function readBody(args) {
   const i = (k) => args.indexOf(k);
   if (i('--body-file') >= 0) return fs.readFileSync(args[i('--body-file') + 1], 'utf8');
-  if (i('--body-env') >= 0) return process.env[args[i('--body-env') + 1]] ?? '';
+  // 변수가 없으면 본문 원천 없음(건너뜀)으로 본다. 빈 문자열(본문이 빈 PR)은 그대로 점검한다.
+  if (i('--body-env') >= 0) return process.env[args[i('--body-env') + 1]] ?? null;
   if (i('--pr') >= 0) {
     const n = args[i('--pr') + 1];
     if (!/^\d+$/.test(n ?? '')) throw new Error('--pr 다음에는 번호');
