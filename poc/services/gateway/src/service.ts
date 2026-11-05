@@ -10,6 +10,7 @@ import {
   b64u,
   canonical,
   ed25519RawPublic,
+  RateLimiter,
   fail,
   fromB64u,
   hmacHex,
@@ -119,7 +120,10 @@ export class GatewayService {
   private readonly toolsets: Map<string, ToolsetDef>;
   private readonly runPub: Buffer;
   private readonly abuse = new Map<string, number[]>();
-  private readonly suspended = new Set<string>();
+  /** 자동 정지 요청이 진행 중인 기기(같은 폭주에서 중복 요청 방지). 끝나면 지운다: 재활성화 뒤 다시 폭주하면 다시 정지한다. */
+  private readonly suspending = new Set<string>();
+  /** 하드 상한 이후 안전 판정 번들의 낮은 속도(D04 §6) */
+  private readonly afterCap = new RateLimiter(() => this.now());
 
   constructor(d: GatewayDeps) {
     this.d = d;
@@ -191,10 +195,17 @@ export class GatewayService {
     const xs = (this.abuse.get(dev) ?? []).filter((t) => t > now - GATEWAY.abuseWindowMs);
     xs.push(now);
     this.abuse.set(dev, xs);
-    if (xs.length >= GATEWAY.abuseThreshold && !this.suspended.has(dev) && this.d.suspender) {
-      this.suspended.add(dev);
+    if (xs.length >= GATEWAY.abuseThreshold && !this.suspending.has(dev) && this.d.suspender) {
+      this.suspending.add(dev);
       this.event('auto_suspend');
-      await this.d.suspender.suspend(dev).catch(() => this.suspended.delete(dev));
+      try {
+        await this.d.suspender.suspend(dev);
+        this.abuse.delete(dev); // 정지됨: 창을 비운다(재활성화 뒤에는 처음부터 다시 센다)
+      } catch {
+        // 계정 서비스 장애: 창은 그대로 두고 다음 위반에서 다시 시도
+      } finally {
+        this.suspending.delete(dev);
+      }
     }
   }
 
@@ -269,8 +280,11 @@ export class GatewayService {
     const rt = this.verifyRunToken(b.runToken, who);
     const used = await this.tokensThisMonth(who.acc);
     const limit = this.d.monthlyTokens ?? GATEWAY.monthlyTokensDefault;
-    // 100%를 넘어도 L1은 유지, 하드 상한(2배) 이후에는 안전 판정 번들만(D04 §6)
-    if (used >= limit * GATEWAY.hardCapMultiplier && bundle!.def.riskClass !== 'safety') fail('gateway.quota_exceeded');
+    // 100%를 넘어도 L1은 유지(L2만 중단), 하드 상한(2배) 이후에는 안전 판정 번들만 낮은 속도로(D04 §6 "월 한도 100% 이후 'L1 유지'")
+    if (used >= limit * GATEWAY.hardCapMultiplier) {
+      if (bundle!.def.riskClass !== 'safety') fail('gateway.quota_exceeded');
+      if (!this.afterCap.hit(who.acc, GATEWAY.safetyAfterCapPerMinute, 60_000)) fail('gateway.quota_exceeded');
+    }
     await this.consume(rt.sh, rt.k, 'l1', 1);
     const started = this.now();
     let res;

@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, openAIDecisionsBody } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, openAIDecisionsBody, positiveInt } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -212,6 +212,12 @@ describe('M4-6 게이트웨이: runToken·실행당 예산·한도', () => {
     assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).status, 200); // 2,040 ≥ 2,000
     assert.equal((await e.call('/v1/decide', decideBody(rt, FORM, '신고서 작성 화면'))).json.error, 'gateway.quota_exceeded');
     assert.equal((await e.call('/v1/decide', decideBody(rt, SCREEN))).status, 200);
+    // 하드 상한 이후 안전 판정은 낮은 속도로만(계정당 분당 6회)
+    const rt2 = await e.runToken();
+    for (let i = 1; i < GATEWAY.safetyAfterCapPerMinute; i++) assert.equal((await e.call('/v1/decide', decideBody(i < 11 ? rt : rt2, SCREEN))).status, 200);
+    assert.equal((await e.call('/v1/decide', decideBody(rt2, SCREEN))).json.error, 'gateway.quota_exceeded');
+    e.s.clock.advance(60_000);
+    assert.equal((await e.call('/v1/decide', decideBody(rt2, SCREEN))).status, 200);
   });
 
   it('공급사 5xx·429는 지수 백오프 2회 뒤 503, 재시도 불가 오류는 바로 503', async () => {
@@ -315,6 +321,18 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
     assert.ok(e.s.mail.outbox.some((m) => m.kind === 'device_auto_suspended'));
     assert.ok(e.events.includes('auto_suspend'));
     assert.equal((await e.req('POST', '/v1/decide', { headers: e.pc.headers('POST', GW, '/v1/decide', await tokenBefore(e)), body: decideBody(rt) })).json.error, 'gateway.device_suspended');
+    // AIK 재활성화(여기서는 계정 DB로 대신) 뒤 다시 폭주하면 다시 정지한다(한 번 정지로 끝나지 않는다)
+    await e.s.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1", [e.pc.d.id]);
+    const rt2 = await e.runToken();
+    for (let i = 0; i < GATEWAY.abuseThreshold - 1; i++) await e.call('/v1/decide', decideBody(rt2, SCREEN, '900101-1234567'));
+    assert.deepEqual(e.s.stopped, [e.pc.d.id], '창은 정지 때 비워져 처음부터 센다');
+    await e.call('/v1/decide', decideBody(rt2, SCREEN, '900101-1234567'));
+    assert.deepEqual(e.s.stopped, [e.pc.d.id, e.pc.d.id]);
+  });
+
+  it('GW_MONTHLY_TOKENS가 양의 정수가 아니면 기동 거부(조용히 한도 없음이 되지 않게)', () => {
+    for (const v of ['abc', '0', '-5', '1.5', '', '1e6']) assert.throws(() => positiveInt(v, 'GW_MONTHLY_TOKENS'), /config_GW_MONTHLY_TOKENS/);
+    assert.equal(positiveInt('3000000', 'GW_MONTHLY_TOKENS'), 3_000_000);
   });
 
   it('계량: 결제 레코드(계정·월·토큰), 계정 없는 운영 통계, 호출 기록은 35일 뒤 삭제', async () => {

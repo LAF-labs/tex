@@ -17,6 +17,8 @@ export const GATEWAY = {
   /** 월 토큰 한도(입력+출력). 100%에서 L2 중단, 200%(하드 상한)에서 안전 판정 번들만 */
   monthlyTokensDefault: 3_000_000,
   hardCapMultiplier: 2,
+  /** [제안] 하드 상한 이후 안전 판정 번들의 "낮은 속도"(D04 §6): 계정당 분당 6회 */
+  safetyAfterCapPerMinute: 6,
   /** 공급사 5xx·429 → 지수 백오프 2회 */
   providerRetries: 2,
   backoffBaseMs: 250,
