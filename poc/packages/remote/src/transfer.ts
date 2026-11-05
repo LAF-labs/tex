@@ -85,14 +85,20 @@ export async function flushOutbox(ch: Channel, store: OutboxStore, o: SenderOpti
       res.pending.push(it.msgId);
       continue;
     }
-    const ok = it.kind === 'cash' ? await sendCash(ch, it.entry, ackTimeout, maxRounds) : await sendReceipt(ch, store, it.offer, ackTimeout, maxRounds, pace);
-    if (ok) {
-      await store.remove(it.msgId);
-      res.sent.push(it.msgId);
-    } else {
-      await store.put({ ...it, attempts: it.attempts + 1 });
-      res.pending.push(it.msgId);
+    // 항목마다 격리한다: 보관 파일 복호 실패·잘못된 항목·보관함 쓰기 실패가 나머지 항목의 전송을 막지 않는다.
+    let ok: boolean;
+    try {
+      ok = it.kind === 'cash' ? await sendCash(ch, it.entry, ackTimeout, maxRounds) : await sendReceipt(ch, store, it.offer, ackTimeout, maxRounds, pace);
+    } catch {
+      ok = false;
     }
+    try {
+      if (ok) await store.remove(it.msgId);
+      else await store.put({ ...it, attempts: it.attempts + 1 });
+    } catch {
+      // 지우지 못했으면 다음 세션에 다시 보내고 PC가 msgId로 중복을 거른다. 횟수를 못 올린 것은 다음에 센다.
+    }
+    (ok ? res.sent : res.pending).push(it.msgId);
   }
   return res;
 }
