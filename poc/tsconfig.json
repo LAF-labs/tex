@@ -5,6 +5,6 @@
     { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "apps/desktop" },
     { "path": "services/shared" }, { "path": "services/account" },
     { "path": "services/gateway" },
-    { "path": "services/registry" }
+    { "path": "services/registry" }, { "path": "services/relay" }, { "path": "services/push" }
   ]
 }

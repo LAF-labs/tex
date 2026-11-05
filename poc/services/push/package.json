@@ -1,0 +1,20 @@
+{
+  "name": "@sax/svc-push",
+  "version": "0.0.0",
+  "private": true,
+  "description": "푸시 디스패처(내용 없는 깨우기, D08 §8.1, D09 §4.2, D14 M7-3)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@sax/svc-shared": "workspace:*"
+  }
+}

@@ -59,6 +59,12 @@ export const ERROR_STATUS = {
   'relay.mailbox_limit': 409,
   'relay.queue_full': 429,
   'relay.mailbox_not_found': 404,
+  'relay.unauthorized': 401,
+  'relay.device_suspended': 403,
+  'relay.room_unavailable': 404,
+  'push.unauthorized': 401,
+  'push.device_suspended': 403,
+  'push.target_not_found': 404,
   'push.token_not_found': 404,
 } as const;
 
