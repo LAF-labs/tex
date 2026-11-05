@@ -9,4 +9,5 @@ minimumReleaseAgeExclude:
 allowBuilds:
   better-sqlite3-multiple-ciphers: true
   electron: true
+  electron-winstaller: false
   tesseract.js: false
