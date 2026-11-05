@@ -14,7 +14,11 @@
 | `SAFETY_ID_KEY` ⚿ | 예 | hex 64자 | `K_sid`(safety_identifier) |
 | `REPLAY_TAG_KEY` ⚿ | 예 | hex 64자 | replay 태그 키(`gw_key`). 바꾸면 진행 중인 L2 대화의 replay가 무효가 된다 |
 | `RUN_SCOPE_KEY` ⚿ | 예 | hex 64자 | 실행 예산 범위 해시 키 |
-| `GW_PROVIDER` | 예 | `openai-compat` \| `upstage-systemone` \| `mock` | 공급사 어댑터 |
+| `GW_PROVIDER` | 예 | `openrouter` \| `openai-compat` \| `upstage-systemone` \| `mock` | 공급사 어댑터. 운영 기본은 `openrouter`(yulmu 11-05) |
+| `OPENROUTER_API_KEY` ⚿ | openrouter | | OpenRouter API 키(서버 환경 변수만, 저장소·클라이언트 금지) |
+| `OPENROUTER_ZDR` | openrouter | `true`만 | ZDR 엔드포인트만(R14 ①). 다른 값·없음이면 기동 거부 |
+| `OPENROUTER_DATA_COLLECTION` | openrouter | `deny`만 | 데이터 수집 공급자 제외(R14 ①). 다른 값·없음이면 기동 거부 |
+| `OPENROUTER_PROVIDERS` | openrouter | 슬러그 `a,b`(1~8개, 중복 금지) | 공급자 고정(`only` + `allow_fallbacks:false`). 비면 기동 거부 |
 | `PROVIDER_BASE_URL` | openai-compat | `https://…` | 공급사 주소 |
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
@@ -25,3 +29,5 @@
 | `NTS_SERVICE_KEY` ⚿ | odcloud | | 공공데이터포털 서비스 키 |
 | `TRUST_PROXY` | 아니오 | `1` | 앞단 프록시 신뢰 |
 | `PORT` / `HOST` | 아니오(`8081` / `0.0.0.0`) | | |
+
+OpenRouter 라우팅 설정은 코드 상수가 아니다. 위 세 값은 운영 환경 설정에서만 오고, 게이트웨이는 요청마다 `provider:{zdr:true, data_collection:"deny", only:[…], allow_fallbacks:false, require_parameters:true}`를 실은 뒤 이벤트 `upstream_zdr_pinned`(개수만, 값·내용 없음)를 남긴다. 응답이 고정 목록 밖 공급자를 밝히면 결과를 버린다(`upstream_provider_mismatch`). OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없어서, `openrouter`에서 `/v1/decide`는 상류를 부르지 않고 `503 gateway.upstream_error`를 낸다. L1 상류는 팀장 결정을 기다린다.
