@@ -6,6 +6,9 @@ import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAu
 
 type Json = Record<string, unknown>;
 
+/** 오염 상태 Runtime.getProperties에서 지우는 입력 값 속성. */
+const VALUE_PROPS = new Set(['value', 'defaultValue']);
+
 export interface SecretWindow {
   phase: 'active' | 'tainted';
   kind: 'typist' | 'human' | 'remote';
@@ -712,6 +715,13 @@ export class Relay {
       if (result.node) scrubAxNodes([result.node], secrets);
     } else if (p.method === 'DOMSnapshot.captureSnapshot') {
       scrubDomSnapshot(result, this.secretsOf(t));
+    } else if (p.method === 'Runtime.getProperties' && t.win) {
+      // 오염 상태(D05 §3.5, D-17(N-12)): 엔진의 objectId가 비밀 노드에서 왔는지 금고는 모른다(세션마다 다른 객체 ID).
+      // 그래서 이 동안은 모든 응답에서 입력 값 속성(value·defaultValue)의 문자열을 지운다. 창은 다음 문서 커밋까지라 짧다.
+      for (const prop of (result.result as Json[] | undefined) ?? []) {
+        const v = prop?.value as Json | undefined;
+        if (VALUE_PROPS.has(String(prop?.name)) && v && typeof v.value === 'string') v.value = '';
+      }
     } else if (p.method === 'Network.getRequestPostData' && t.win) {
       // 응답 도착 시점에 창이 열렸으면 바디를 넘기지 않는다.
       out.result = { postData: '' };
