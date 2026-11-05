@@ -4,4 +4,5 @@ export * from './money.ts';
 export * from './payroll.ts';
 export * from './shifts.ts';
 export * from './tables.ts';
+export * from './takehome.ts';
 export * from './withholding.ts';
