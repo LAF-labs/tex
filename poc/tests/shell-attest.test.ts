@@ -24,7 +24,7 @@ import {
   type SummaryLine,
 } from '../apps/desktop/src/approval-gate.ts';
 import { interpret, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
-import { ATTEST_NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
+import { ATTEST_NOTE, NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
 import { SHELL_METHODS, USER_ACTION_METHODS } from '../apps/desktop/src/ipc.ts';
 
 const root = path.join(import.meta.dirname, '..');
@@ -205,6 +205,88 @@ describe('ShellRuns 증언(무장만, 상태는 엔진 이벤트만 따른다)',
     host.emit('exit', 'engine');
     assert.equal(runs.attestFor(id), null);
     assert.equal(runs.get(id)!.attest, null);
+  });
+});
+
+/** C테크 실행을 게이트 승인 뒤 엔진 상태 in_doubt로 둔다(M2-3 RunEvent: InDoubt는 end가 아니라 state). */
+async function liveInDoubtRun() {
+  const host = new FakeHost();
+  const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증' });
+  const d = interpret('C테크에 40만원 세금계산서', null, 'business', runs);
+  assert.ok(d.kind === 'draft');
+  await runs.prepare(d.run.id);
+  const gate = (id: string) =>
+    buildGateRequest({
+      runId: id, gateStepId: 's20', packageDigest: '0'.repeat(64), authorizes: ['s21'], intentId: 'i-1', waitMs: 1000, reserved: [],
+      readback: { supplierBizNo: '1234567891', supplierName: '가나다컴퍼니', counterpartBizNo: '4182577343', counterpartName: 'C테크', counterpartEmail: 'billing@ctech.example', itemName: '교육 용역', itemCount: '1', supplyAmount: '400000', taxAmount: '40000', totalAmount: '440000', issueDate: '2026-11-05', remark: '', receiptType: '영수' },
+    });
+  host.emit('gate', gate(d.run.id));
+  runs.approved(d.run.id);
+  host.emit('run', { runId: d.run.id, type: 'phase', phase: 'verify', state: 'now' });
+  host.emit('run', { runId: d.run.id, type: 'state', state: 'in_doubt', code: 'verify.unknown' });
+  return { host, runs, id: d.run.id, gate };
+}
+const runEnds = (host: FakeHost, id: string) => host.calls.filter(([m, p]) => m === 'run.end' && (p as { runId: string }).runId === id).length;
+
+describe('엔진 상태 이벤트(state, InDoubt는 종료가 아님)', () => {
+  it('state in_doubt → 확인 필요 카드, 금고 실행은 끝내지 않는다. 증언 뒤 state running → 게이트 앞부터 다시(새 게이트 요청을 받는다)', async () => {
+    const { host, runs, id, gate } = await liveInDoubtRun();
+    let r = runs.get(id)!;
+    assert.equal(r.status, 'attention');
+    assert.equal(r.inDoubt, true);
+    assert.match(r.stoppedNote ?? '', /중복 발급될 수 있어요/);
+    assert.equal(runEnds(host, id), 0, 'InDoubt는 끝이 아니다');
+    host.emit('attest', attestFor(id));
+    runs.attestUsed(id, runs.attestFor(id)!.attestReqId);
+    runs.onAttestAnswer(id, { ok: true, verdict: 'engine' });
+    host.emit('run', { runId: id, type: 'state', state: 'running' });
+    r = runs.get(id)!;
+    assert.equal(r.status, 'preparing');
+    assert.equal(r.inDoubt, false);
+    assert.equal(r.attest, null);
+    assert.equal(r.stoppedNote, undefined);
+    assert.deepEqual(r.steps.slice(4).map((s) => s.state), ['todo', 'todo', 'todo', 'todo'], '승인부터 다시');
+    host.emit('gate', gate(id));
+    assert.equal(runs.get(id)!.status, 'waiting', '새 게이트 요청(새 승인)을 받는다');
+  });
+
+  it('state paused(policy_downgrade) → 확인 필요와 고정 문구. InDoubt 뒤의 end(completed_with_issues)는 받는다', async () => {
+    const a = await liveInDoubtRun();
+    a.host.emit('run', { runId: a.id, type: 'state', state: 'paused', code: 'policy_downgrade' });
+    const r = a.runs.get(a.id)!;
+    assert.equal(r.status, 'attention');
+    assert.equal(r.inDoubt, false);
+    assert.equal(r.stoppedNote, NOTE.policy_downgrade);
+    assert.ok(!/세액 산정|절세|신고 대리|가산세/.test(NOTE.policy_downgrade!));
+    const b = await liveInDoubtRun();
+    b.host.emit('run', { runId: b.id, type: 'end', status: 'completed_with_issues', code: 'verify.not_committed' });
+    assert.equal(b.runs.get(b.id)!.inDoubt, false);
+    assert.equal(runEnds(b.host, b.id), 1, '종료 상태에서만 금고 실행을 끝낸다');
+    b.host.emit('run', { runId: b.id, type: 'end', status: 'completed_with_issues' });
+    assert.equal(runEnds(b.host, b.id), 1, '끝난 실행의 end는 무시');
+  });
+
+  it('진행 중 실행의 running·모르는 상태·끝난 실행의 state는 무시한다', async () => {
+    const host = new FakeHost();
+    const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증' });
+    const d = interpret('C테크에 40만원 세금계산서', null, 'business', runs);
+    assert.ok(d.kind === 'draft');
+    await runs.prepare(d.run.id);
+    const before = JSON.stringify(runs.get(d.run.id));
+    host.emit('run', { runId: d.run.id, type: 'state', state: 'running' });
+    host.emit('run', { runId: d.run.id, type: 'state', state: 'exploded' });
+    assert.equal(JSON.stringify(runs.get(d.run.id)), before);
+    host.emit('run', { runId: d.run.id, type: 'end', status: 'failed', code: 'assert.fields_missing' });
+    host.emit('run', { runId: d.run.id, type: 'state', state: 'in_doubt' });
+    assert.equal(runs.get(d.run.id)!.inDoubt, false, '끝난 실패 카드는 InDoubt로 바뀌지 않는다');
+  });
+
+  it('엔진이 끝나면 InDoubt 상태 실행은 카드를 그대로 두고 금고 실행만 끝낸다', async () => {
+    const { host, runs, id } = await liveInDoubtRun();
+    host.emit('exit', 'engine');
+    assert.equal(runs.get(id)!.inDoubt, true);
+    assert.equal(runs.get(id)!.status, 'attention');
+    assert.equal(runEnds(host, id), 1);
   });
 });
 
