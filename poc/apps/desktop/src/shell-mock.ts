@@ -296,6 +296,19 @@ export interface RunView {
   approvedPending?: boolean;
   /** 이 초안을 만든 요청 해석(활동 기록의 모델 줄). 시연 모델이면 'model'. */
   interp?: 'model' | 'offline';
+  /** 발급됐는지 모른다(엔진 결과 in_doubt, 원장 in_doubt). 이 카드에는 다시 발급하는 버튼이 없다(08 §11). */
+  inDoubt?: boolean;
+  /** 발급목록 조회 몇 번째인지(엔진 verify 단계 이벤트의 attempt). 엔진이 보내지 않으면 없다. */
+  verifyAttempt?: number;
+  /** 이번 게이트가 다시 게이트인 이유와 그 고정 문구(main의 REGATE_NOTE에서 고른 것). */
+  regate?: { reason: 'paused' | 'date_changed' | 'value_changed'; note: string };
+  /** 핸드오프 중(status turn). afterGate면 게이트 뒤 단계에서 넘겨받은 것(중지는 엔진이 거부한다). */
+  handoff?: { phase: string; afterGate: boolean } | null;
+  /**
+   * InDoubt 증언(ADR-021 결정 5). ready: 엔진이 증언을 받을 수 있다(이 카드를 열면 승인 바 자리에 황토색 바가 뜬다).
+   * sent: 보냈고 엔진이 받았다. refused: 엔진이 받지 않았거나 보내지 못했다. 문구는 main의 ATTEST_NOTE에서 고른 것.
+   */
+  attest?: { state: 'ready' | 'sent' | 'refused'; note: string } | null;
 }
 
 // ---- 정부24 후처리 목업(T-08). 정부24에 어떤 요청도 보내지 않고 브라우저도 열지 않는다(ADR-011, D17). ----

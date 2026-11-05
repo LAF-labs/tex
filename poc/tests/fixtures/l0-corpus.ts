@@ -143,7 +143,9 @@ export function screenCorpus(perTpl = 20, seed = 7): Sample[] {
   return out;
 }
 
-const INTENTS: Array<[string, string]> = [
+// [문장, 플레이북 라벨, mentions_tax_advice 라벨(생략 = false)]. D04 §3: 급여 원천세·4대보험 계산은 세무 상담이 아니고,
+// 경비 인정·공제·절세 판단은 세무 상담이다(구분 오탐률 측정용).
+const INTENTS: Array<[string, string, boolean?]> = [
   ['[NAME_1]에 세금계산서 발행해줘', 'hometax.invoice.issue'],
   ['계산서 끊어줘 [NAME_2] 앞으로', 'hometax.invoice.issue'],
   ['이번 달 세금계산서 발급 내역 조회해줘', 'hometax.invoice.list'],
@@ -162,19 +164,36 @@ const INTENTS: Array<[string, string]> = [
   ['매출 매입 합계 조회해줘', 'hometax.summary.view'],
   ['납세증명서 언제까지 유효해?', 'query.documents'],
   ['안녕', 'none_of_these'],
-  ['부가세 신고 방법 알려줘', 'none_of_these'],
-  ['계산서 발행하면 부가세 얼마 내야 해?', 'hometax.invoice.issue'], // 세무 질문 섞임 → 규칙 기권
+  ['부가세 신고 방법 알려줘', 'none_of_these', true],
+  ['계산서 발행하면 부가세 얼마 내야 해?', 'hometax.invoice.issue', true], // 세무 질문 섞임 → 규칙 기권
   ['등본이랑 납세증명서 둘 다', 'none_of_these'], // 둘 이상 → 기권(라벨은 모델·사람 몫)
   ['어제 뽑은 거 다시 보여줘', 'query.documents'], // 사전 밖 구어 → 기권
+  // M6-11: 화면만 여는 선택지 3개(ADR-031·032). 급여 계산 요청은 세무 상담이 아니다.
+  ['이번 달 급여대장 만들어줘', 'payroll.ledger'],
+  ['직원 월급 명세서 뽑아줘', 'payroll.ledger'],
+  ['임금명세서 작성해야 돼', 'payroll.ledger'],
+  ['이번 달 원천세 얼마야', 'payroll.ledger'],
+  ['알바 급여 4대보험 공제액 계산해줘', 'payroll.ledger'], // L0 taxAdvice(공제)에 걸려 기권 → 모델 몫
+  ['4대보험 빼고 실수령액 정리해줘', 'payroll.ledger'], // L0 fourins 사전에 걸리는 급여 문장(엔진 L0 오답 사례)
+  ['[NAME_1] 이번 달 월급 정리해줘', 'payroll.ledger'],
+  ['세무사한테 보낼 꾸러미 만들어줘', 'bundle.monthly'],
+  ['이번 달 세무사 자료 묶어줘', 'bundle.monthly'],
+  ['세무사 꾸러미 보여줘', 'bundle.monthly'],
+  ['사업용 카드 내역 최신화해줘', 'hometax.card.refresh'],
+  ['카드 사용내역 새로 불러와', 'hometax.card.refresh'],
+  ['이번 달 카드값 홈택스에서 가져와줘', 'hometax.card.refresh'],
+  ['이 카드값 경비로 넣어도 돼?', 'none_of_these', true],
+  ['직원 월급 비용처리하면 세금 얼마나 줄어?', 'none_of_these', true],
+  ['식대 비과세로 하면 공제 더 받을 수 있어?', 'none_of_these', true],
 ];
 const POLITE = ['', ' 좀', ' 부탁해요', ' 해주세요', '요', ' 빨리', ' 지금', ' 가능?'];
 
 export function intentCorpus(): Sample[] {
   const out: Sample[] = [];
-  for (const [i, [text, label]] of INTENTS.entries())
+  for (const [i, [text, label, advice]] of INTENTS.entries())
     for (const [j, p] of POLITE.entries()) {
       const obs: IntentObservation = { kind: 'intent', text: text + p };
-      out.push({ id: `ir.${i}.${j}`, bundle: 'intent_route_v1', obs, labels: { playbook: label } });
+      out.push({ id: `ir.${i}.${j}`, bundle: 'intent_route_v1', obs, labels: { playbook: label, mentions_tax_advice: advice === true } });
     }
   return out;
 }

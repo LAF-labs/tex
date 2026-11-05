@@ -7,10 +7,9 @@ import { after, before, describe, it } from 'node:test';
 import { dirGuard } from '@sax/platform';
 import { launchChrome, Relay, scanDir, testSecret, variantsOf, Vault } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
+import { writeMeasure } from './measure-out.ts';
 import { startHarness, testPolicy, type Harness } from './harness.ts';
 import { RawEngine, sleep } from './raw-engine.ts';
-
-const REPORT_DIR = path.resolve(import.meta.dirname, '../reports/raw');
 
 /** 사용자 키보드 대역: 금고 감시 세션에 직접 입력한다(엔진 경로가 아님). */
 async function userType(h: Harness, targetId: string, text: string): Promise<void> {
@@ -42,8 +41,7 @@ describe('vault relay (raw engine)', () => {
   });
 
   after(async () => {
-    await fs.mkdir(REPORT_DIR, { recursive: true });
-    await fs.writeFile(path.join(REPORT_DIR, 'relay-measurements.json'), JSON.stringify(measurements, null, 2));
+    await writeMeasure('relay-measurements.json', measurements);
     await h.close();
     await fx.close();
   });

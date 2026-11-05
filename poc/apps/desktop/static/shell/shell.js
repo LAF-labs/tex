@@ -128,6 +128,9 @@ const act = {
       toast(errText(e) === 'bad_amount' ? '금액을 다시 확인해 주세요' : errText(e));
     }
   },
+  // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
+  resume: (id) => handoffCall('run.resume', id),
+  manualDone: (id) => handoffCall('run.manualDone', id),
   stop: async (id) => {
     try {
       putRun(await call('run.stop', { id }));
@@ -266,6 +269,7 @@ function buildChat() {
   chat.thread = h('div', { class: 'sx-thread' });
   chat.scroll = h('div', { class: 'thread-scroll' }, h('div', { class: 'col' }, chat.thread));
   chat.today = h('section', { class: 'col sx-board', 'aria-label': '이번 달 판', 'data-board': '' });
+  chat.handoff = h('div', { class: 'col sx-handoff', role: 'status', 'data-handoff-band': '', hidden: '' });
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
   chat.input = h('textarea', { rows: '1', placeholder: '세금계산서나 증명서를 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
@@ -293,6 +297,7 @@ function buildChat() {
   chat.root = h(
     'section',
     { class: 'chat', 'data-view': 'chat' },
+    chat.handoff,
     chat.today,
     chat.scroll,
     h('div', { class: 'quick-zone col' }, chat.quick),
@@ -504,9 +509,34 @@ async function send() {
   }
 }
 
+async function handoffCall(method, id) {
+  try {
+    putRun(await call(method, { id }));
+  } catch (e) {
+    const c = errText(e);
+    toast(c === 'gesture_required' ? '버튼을 직접 눌러 주세요.' : c === 'not_handed_off' ? '이미 이어서 진행하고 있어요' : '엔진에 알리지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+  }
+}
+
+/** 핸드오프 띠(D01 실행 뷰): 사람이 필요한 실행이 있으면 대화 열 위에 한 줄. 누르면 그 카드와 패널로 간다. 승인 버튼은 없다. */
+function renderHandoff() {
+  if (!chat.handoff) return;
+  const r = [...state.runs.values()].find((x) => x.status === 'turn' && x.handoff);
+  chat.handoff.hidden = !r;
+  if (!r) return chat.handoff.replaceChildren();
+  chat.handoff.replaceChildren(
+    h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · 세금계산서 · ${r.counterparty.name}`),
+    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => {
+      openPanel({ kind: 'run', id: r.id });
+      chat.thread.querySelector(`[data-run="${r.id}"]`)?.scrollIntoView({ block: 'center' });
+    } }, '카드로 가기'),
+  );
+}
+
 function putRun(run) {
   state.runs.set(run.id, run);
   renderRun(run);
+  renderHandoff();
   renderQuick();
   if (state.panel?.kind === 'run' && state.panel.id === run.id) renderPanel();
   renderToday();
@@ -629,7 +659,21 @@ async function boardGo(t) {
 
 // ---- 작업 패널 ----
 
+/**
+ * InDoubt 실행 패널(직접 확인 안내)을 열고 닫을 때 main에 알린다. main은 증언 요청이 무장돼 있으면 그동안만 승인 바 자리에
+ * 황토색 확인 바를 띄운다(ADR-021 결정 5). 렌더러는 띄울지 정하지 않고, 확인 결과도 보내지 않는다(바 클릭으로만 받는다).
+ */
+let incidentId = null;
+function syncIncident(p) {
+  const next = p?.kind === 'run' && state.runs.get(p.id)?.inDoubt ? p.id : null;
+  if (next === incidentId) return;
+  if (incidentId) void call('incident.close', { id: incidentId }).catch(() => {});
+  incidentId = next;
+  if (next) void call('incident.open', { id: next }).catch(() => {});
+}
+
 function openPanel(p) {
+  syncIncident(p);
   // 패널을 닫거나 다른 서류로 옮기면 확인 구역의 입력을 버린다(다시 열었을 때 버린 수정이 되살아나 보내지지 않게)
   if (!(p?.kind === 'doc' && p.id === state.docDraft?.id)) state.docDraft = null;
   state.panel = p;

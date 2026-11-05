@@ -208,3 +208,36 @@ describe('정렬과 경계', () => {
     for (const bad of ["call('run.prepare'", 'sx-btn-approve', '승인하고 발급', "call('request.send'"]) assert.ok(!body.includes(bad), bad);
   });
 });
+
+describe('M4-2 3부: InDoubt·핸드오프 화면(08 §11, D03 HandedOff)', () => {
+  const views = () => fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell-views.js'), 'utf8');
+  const branch = (src: string, start: string, end: string) => {
+    const i = src.indexOf(start);
+    assert.ok(i >= 0, start);
+    return src.slice(i, src.indexOf(end, i + start.length));
+  };
+
+  it('판: 발급됐는지 모르는 실행은 "발급 여부 확인 필요" 줄(확인 필요 건수에 들어간다)', () => {
+    const b = buildBoard(base({ runs: [{ id: 'r1', status: 'attention', who: 'B상사', inDoubt: true }, { id: 'r2', status: 'attention', who: 'C테크' }] }));
+    const rows = b.cards.flatMap((c) => c.items);
+    assert.equal(rows.find((x) => x.id.endsWith('r1'))?.detail, '발급 여부 확인 필요');
+    assert.equal(rows.find((x) => x.id.endsWith('r2'))?.detail, '확인 필요');
+    assert.equal(b.counts.attention, 2);
+  });
+
+  it('InDoubt 카드·확인 중 카드에는 다시 발급하는 길이 없다(준비·지난번과 같게·다시 발급·승인 없음)', () => {
+    const src = views();
+    for (const body of [branch(src, "} else if (st === 'attention' && run.inDoubt) {", '} else if'), branch(src, '} else if (verifying(run)) {', '} else if'), branch(src, 'function checkListGuide(run, act) {', '\n}\n')]) {
+      for (const bad of ['act.prepare', 'act.again', 'act.reissue', 'sx-btn-approve', '승인하고 발급', "'request.send'"]) assert.ok(!body.includes(bad), bad);
+    }
+  });
+
+  it('핸드오프 카드의 버튼은 재개·직접 발급함·중지뿐이고, 렌더러 띠에는 승인 버튼이 없다', () => {
+    const body = branch(views(), "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
+    const acts = [...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]).sort();
+    assert.deepEqual(acts, ['manualDone', 'resume', 'stop']);
+    const shell = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
+    const band = branch(shell, 'function renderHandoff() {', '\n}\n');
+    assert.ok(!/call\(|승인|approv/.test(band), '띠는 카드·패널로 가는 것만');
+  });
+});

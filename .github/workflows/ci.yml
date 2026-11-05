@@ -1,0 +1,134 @@
+# CI(D14 M1-1, ADR-035 결정 1 (나)·W-11, RETRO B-01). 비밀·실계정·실 홈택스 접속 없음.
+# macOS 잡은 PR마다 돈다. Windows 잡은 self-hosted 러너가 붙으면 저장소 변수 SAX_WINDOWS_RUNNER=true로 켠다.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: poc
+    shell: bash
+
+env:
+  CI: 'true'
+
+jobs:
+  macos:
+    name: macOS build·lint·test
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: poc/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: poc/.nvmrc
+          cache: pnpm
+          cache-dependency-path: poc/pnpm-lock.yaml
+      - name: 출력 폴더(저장소 밖)
+        # 시험 로그·측정 산출물은 러너 임시 폴더에 둔다(tests/measure-out.ts). 실패 시 아티팩트로 올린다.
+        run: |
+          echo "CI_OUT=$RUNNER_TEMP/ci-out" >> "$GITHUB_ENV"
+          echo "SAX_MEASURE_DIR=$RUNNER_TEMP/ci-out/measure" >> "$GITHUB_ENV"
+      - name: 버전
+        run: node -v && pnpm -v
+      - name: 설치(lockfile 고정)
+        run: pnpm install --frozen-lockfile
+      - name: 빌드
+        run: pnpm build
+      - name: 린트
+        run: pnpm lint
+      - name: 시험
+        run: |
+          set -o pipefail
+          mkdir -p "$CI_OUT"
+          pnpm test 2>&1 | tee "$CI_OUT/test.log"
+      - name: 보안 스위트
+        if: ${{ hashFiles('poc/tests/security/**') != '' }}
+        run: |
+          set -o pipefail
+          pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
+      - name: 작업 트리 깨끗함(측정 산출물 격리)
+        if: ${{ !cancelled() }}
+        # TODO(M1-1-CI): 소유 트랙의 measure-out 한 줄 변경이 머지되면 --warn을 뺀다.
+        run: node scripts/ci-clean-tree.mjs --warn
+      - name: 시험 요약
+        if: ${{ failure() }}
+        run: node scripts/ci-test-summary.mjs "$CI_OUT" >> "$GITHUB_STEP_SUMMARY"
+      - name: 시험 요약 아티팩트
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-summary-macos
+          path: ${{ runner.temp }}/ci-out/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows build·lint·test(self-hosted)
+    # ADR-035 결정 1 (나): 두 OS. 러너는 나중에 붙인다(RETRO B-07). 변수가 없으면 건너뛴다(대기열에 묶이지 않게).
+    if: ${{ vars.SAX_WINDOWS_RUNNER == 'true' }}
+    runs-on: [self-hosted, windows, sax]
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: poc
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: poc/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: poc/.nvmrc
+          cache: pnpm
+          cache-dependency-path: poc/pnpm-lock.yaml
+      - name: 출력 폴더(저장소 밖)
+        run: |
+          "CI_OUT=$env:RUNNER_TEMP/ci-out" >> $env:GITHUB_ENV
+          "SAX_MEASURE_DIR=$env:RUNNER_TEMP/ci-out/measure" >> $env:GITHUB_ENV
+      - run: node -v; pnpm -v
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm lint
+      - name: 시험
+        run: |
+          New-Item -ItemType Directory -Force "$env:CI_OUT" | Out-Null
+          pnpm test 2>&1 | Tee-Object "$env:CI_OUT/test.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 보안 스위트
+        if: ${{ hashFiles('poc/tests/security/**') != '' }}
+        run: |
+          pnpm test:security 2>&1 | Tee-Object "$env:CI_OUT/test-security.log"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 작업 트리 깨끗함
+        if: ${{ !cancelled() }}
+        run: node scripts/ci-clean-tree.mjs --warn
+      - name: 시험 요약
+        if: ${{ failure() }}
+        run: node scripts/ci-test-summary.mjs "$env:CI_OUT" >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: test-summary-windows
+          path: ${{ runner.temp }}/ci-out/
+          retention-days: 14
+          if-no-files-found: ignore

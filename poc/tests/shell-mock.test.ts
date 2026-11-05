@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 import { buildGateRequest, type GateField } from '@sax/engine/gate';
 import { g24Candidates, interpret, MockStore, parseAmount, split, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
-import { ShellRuns } from '../apps/desktop/src/shell-runs.ts';
+import { REGATE_NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
 
 const CPS: Counterparty[] = [
   { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: '', lastIssuedOn: null },
@@ -284,6 +284,97 @@ describe('셸 목업', () => {
     assert.match(w[0]!, /이미 발급돼 있어요/);
     assert.match(w[1]!, /직전 시도는 발급 안 됨으로 판정했어요/);
     await assert.rejects(runs.stop('run-none'), /no_run/);
+  });
+
+  it('InDoubt(M4-2 3부, 08 §11): 조회 n회째를 보이고, in_doubt로 끝나면 inDoubt 표시(다시 발급하는 길은 카드에 없다)', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 11만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('gate', gateFor(a.run.id, {}));
+    host.emit('run', { runId: a.run.id, type: 'phase', phase: 'verify', state: 'now', attempt: 2 });
+    assert.equal(runs.get(a.run.id)!.verifyAttempt, 2);
+    host.emit('run', { runId: a.run.id, type: 'phase', phase: 'verify', state: 'now', attempt: -1 });
+    assert.equal(runs.get(a.run.id)!.verifyAttempt, 2, '이상한 attempt는 무시');
+    host.emit('run', { runId: a.run.id, type: 'end', status: 'in_doubt', code: 'verify.unknown' });
+    const r = runs.get(a.run.id)!;
+    assert.equal(r.status, 'attention');
+    assert.equal(r.inDoubt, true);
+    assert.match(r.stoppedNote ?? '', /중복 발급될 수 있어요/);
+    const b = interpret('B상사에 21만원 세금계산서', null, 'business', runs);
+    assert.ok(b.kind === 'draft');
+    await runs.prepare(b.run.id);
+    host.emit('run', { runId: b.run.id, type: 'end', status: 'failed', code: 'assert.fields_missing' });
+    assert.equal(runs.get(b.run.id)!.inDoubt, false, '실패는 InDoubt가 아니다');
+  });
+
+  it('핸드오프(D03 HandedOff): 게이트 앞이면 [다 했어요] → 준비 중, 엔진이 받은 뒤에만 상태를 바꾼다', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 12만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    await assert.rejects(runs.resume(a.run.id), /not_handed_off/);
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'input' });
+    let r = runs.get(a.run.id)!;
+    assert.equal(r.status, 'turn');
+    assert.deepEqual(r.handoff, { phase: 'input', afterGate: false });
+    assert.match(r.turn!.text, /^지금 사람이 필요해요 · 이 단계는 직접 해 주세요: 입력$/);
+    assert.equal(r.steps[2]!.state, 'attention');
+    host.fail['run.resume'] = 'relay_down';
+    await assert.rejects(runs.resume(a.run.id), /relay_down/);
+    assert.equal(runs.get(a.run.id)!.status, 'turn', '엔진이 받지 않으면 그대로');
+    delete host.fail['run.resume'];
+    await runs.resume(a.run.id);
+    r = runs.get(a.run.id)!;
+    assert.deepEqual([r.status, r.handoff, r.turn, r.steps[2]!.state], ['preparing', null, null, 'now']);
+    assert.ok(host.calls.some(([m, p]) => m === 'run.resume' && (p as { runId: string }).runId === a.run.id));
+    host.emit('run', { runId: 'run-none', type: 'handoff', phase: 'input' });
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'nope' as never });
+    assert.equal(runs.get(a.run.id)!.status, 'preparing', '모르는 실행·단계는 무시');
+  });
+
+  it('핸드오프 게이트 뒤: [직접 발급함] → 원장은 엔진이(observed_manual), 카드는 확인 중. 이때 엔진이 끝나면 발급됐는지 모름', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 13만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('gate', gateFor(a.run.id, {}));
+    runs.approved(a.run.id);
+    host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign' });
+    assert.deepEqual(runs.get(a.run.id)!.handoff, { phase: 'sign', afterGate: true });
+    await runs.manualDone(a.run.id);
+    const r = runs.get(a.run.id)!;
+    assert.equal(r.status, 'issuing');
+    assert.equal(r.steps[6]!.state, 'now', '발급목록 확인(verify)만');
+    assert.ok(host.calls.some(([m]) => m === 'run.manualDone'));
+    assert.ok(!host.calls.some(([m]) => /approv|answer|attest/i.test(m)), '승인·증언 경로를 부르지 않는다');
+
+    const h2 = new FakeHost();
+    const r2 = new ShellRuns(h2, { counterparties: () => CPS, auth: () => '' });
+    const b = interpret('B상사에 14만원 세금계산서', null, 'business', r2);
+    assert.ok(b.kind === 'draft');
+    await r2.prepare(b.run.id);
+    h2.emit('gate', gateFor(b.run.id, {}));
+    h2.emit('run', { runId: b.run.id, type: 'phase', phase: 'sign', state: 'now' });
+    h2.emit('run', { runId: b.run.id, type: 'handoff', phase: 'sign' });
+    h2.emit('exit', 'engine', 1);
+    assert.deepEqual([r2.get(b.run.id)!.status, r2.get(b.run.id)!.inDoubt], ['attention', true]);
+  });
+
+  it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {
+    assert.deepEqual(Object.keys(REGATE_NOTE).sort(), ['date_changed', 'paused', 'value_changed']);
+    for (const t of Object.values(REGATE_NOTE)) assert.ok(/새로 승인/.test(t) && !/세액 산정|절세|신고 대리|가산세/.test(t), t);
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 15만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('run', { runId: a.run.id, type: 'regate', reason: 'made_up' as never });
+    assert.equal(runs.get(a.run.id)!.regate, undefined);
+    host.emit('run', { runId: a.run.id, type: 'regate', reason: 'date_changed' });
+    host.emit('gate', gateFor(a.run.id, {}));
+    assert.deepEqual(runs.get(a.run.id)!.regate, { reason: 'date_changed', note: REGATE_NOTE.date_changed });
+    assert.equal(runs.get(a.run.id)!.status, 'waiting');
   });
 
   it('목업 저장소는 셸마다 따로: 한 셸의 발급·보관이 다른 셸에 새지 않는다', () => {

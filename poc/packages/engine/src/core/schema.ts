@@ -1,11 +1,11 @@
-// 스키마 9종(D02 §2 7종 + 레지스트리 status·폐기 목록, M1-4)의 Ajv 2020 검증기. 레지스트리 CI와 엔진이 같은 함수를 쓴다(D02 §1).
+// 스키마 10종(D02 §2 7종 + 레지스트리 status·폐기 목록 + 데이터 패키지 기술자, M1-4·M6-10)의 Ajv 2020 검증기. 레지스트리 CI와 엔진이 같은 함수를 쓴다(D02 §1).
 // 스키마 파일은 packages/engine/schemas에 있는 설계 정본(sovereign-ax/design/schemas)의 사본이다(동일성은 테스트가 확인).
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import type { Violation } from './types.ts';
 
-export const SCHEMA_NAMES = ['playbook-ir', 'manifest', 'selectors', 'bundle', 'policy', 'hotfix', 'gateway-request', 'status', 'revoked_keys'] as const;
+export const SCHEMA_NAMES = ['playbook-ir', 'manifest', 'selectors', 'bundle', 'policy', 'hotfix', 'gateway-request', 'status', 'revoked_keys', 'data_descriptor'] as const;
 export type SchemaName = (typeof SCHEMA_NAMES)[number];
 
 const BASE = 'https://sovereign-ax.dev/schemas/';

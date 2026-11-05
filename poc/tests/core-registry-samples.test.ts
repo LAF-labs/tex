@@ -6,9 +6,10 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import {
-  acceptPolicy, acceptRevoked, acceptStatus, canonicalWithout, countSignatures, decodeSxp, ed25519PublicKey, hotfixDigest, loadPackage, sha256Hex,
+  acceptPolicy, acceptRevoked, acceptStatus, canonicalWithout, countSignatures, decodeSxp, ed25519PublicKey, hotfixDigest, loadDataPackage, loadPackage, sha256Hex,
   type LoadedPackage, type LoaderContext, type Policy, type RegistryStatus, type RevokedKeys,
 } from '@sax/engine/core';
+import { validatePackage } from '@sax/payroll';
 import { bundleOutcomes } from './core-fixtures.ts';
 import { SAMPLE_NOW, buildSamples, sampleKeys } from './registry-samples.ts';
 
@@ -38,6 +39,7 @@ describe('레지스트리 샘플 묶음(고정 시드)', () => {
     assert.equal(t.keyEpoch, 1);
     for (const [id, b64] of Object.entries(t.keys.package!)) assert.ok(ed25519PublicKey(Buffer.from(b64, 'base64')).equals(K.roots.packageKeys.get(id)!), id);
     assert.ok(ed25519PublicKey(Buffer.from(t.keys.timestamp!['timestamp-1']!, 'base64')).equals(K.roots.timestampKey.key));
+    assert.equal(Object.keys(t.keys.release!).join(), 'release-1', '릴리스 역할 키(시드 0x61, 앱 업데이트 서명)');
   });
 
   it('인덱스: 패키지 키 2-of-3, sxpDigest·size = .sxp 바이트', () => {
@@ -74,6 +76,17 @@ describe('레지스트리 샘플 묶음(고정 시드)', () => {
     assert.ok(r.ok, r.ok ? '' : r.code);
     assert.deepEqual(r.events, ['registry.hotfix_applied']);
     assert.equal(r.pkg.hotfix?.digest, hotfixDigest(hx.sxp.hotfix));
+  });
+
+  it('데이터 패키지(kind:data): 인덱스 항목 → .sxp → loadDataPackage(급여 검증기)', () => {
+    const ix = doc<{ entries: Array<{ id: string; version: string; kind: string }> }>('registry/stable/index.json');
+    const e = ix.entries.find((x) => x.kind === 'data');
+    assert.ok(e);
+    const d = decodeSxp(file(`packages/${e.id}@${e.version}.sxp`));
+    assert.ok(d.ok && d.sxp.kind === 'data');
+    const r = loadDataPackage(d.sxp.raw, { roots: K.roots, revoked: new Set(), schemas: new Map([['sax.rate-tables/v1', validatePackage]]), installed: null, hold: false, now: SAMPLE_NOW });
+    assert.ok(r.ok, r.ok ? '' : r.code);
+    assert.equal(r.data.descriptor.version, e.version);
   });
 
   it('정책·status·긴급 status·폐기 목록을 받는다', () => {

@@ -3,16 +3,23 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, MessageChannelMain, session, type MessagePortMain, type Session } from 'electron';
+import { DocparseError, MAX_INPUT_BYTES, parse, SANDBOX_ERRORS as SANDBOX_ERROR_LIST, validateSandboxOutput, type DocKind, type DocparseHost, type ImageOcr, type ParseOptions, type ParseOutcome, type PdfExtract, type SheetOutput } from '@sax/docparse';
 import { hardenWindow } from './harden.ts';
+
+export { DocparseError };
+export type { PdfExtract };
 
 // ADR-014 결정 1: docparse는 Chromium 렌더러 샌드박스에서 돈다. 숨김 창, 네트워크 차단 파티션,
 // preload는 MessagePort 수신 하나만. 입력은 main이 읽은 바이트, 출력은 main이 스키마로 검증한 값뿐.
 // PDF는 pdf.js(6.4.299 고정, CVE-2026-16633 수정판 이상. 6.x에는 eval 경로가 없어 isEvalSupported가 없다)로 읽고,
 // 텍스트 층이 없거나 깨졌으면 같은 창에서 앞쪽을 그려 tesseract로 읽는다(D17 §3).
+// 이 파일은 @sax/docparse의 샌드박스 어댑터다: 창·파티션·상한을 맡고, 입출력 모양은 패키지 schema/sandbox-output.schema.json으로 검증한다.
+// 그림(종이 증빙·폰 사진)과 표(xlsx·CSV)도 같은 창에서 읽는다(M6-4·M6-5). 폰에서 E2EE로 받은 사진(M7-4)은 sandboxHost.image(photo)로 들어온다.
 
 export const DOCPARSE_SCHEME = 'sax-docparse';
 const require = createRequire(import.meta.url);
 const STATIC = path.join(import.meta.dirname, '../static');
+const PAGE = path.join(STATIC, 'docparse');
 /** 워커는 페이지 CSP를 물려받지 않는다. 워커 스크립트 응답에 직접 붙인다(tesseract 워커는 언어 데이터를 자기 스킴에서 받는다). */
 const WORKER_CSP: Record<string, string> = {
   '/pdfjs/pdf.worker.min.mjs': "default-src 'none'; script-src sax-docparse: 'wasm-unsafe-eval'",
@@ -32,14 +39,16 @@ function assetMap(): Record<string, string> {
   const core = path.dirname(require.resolve('tesseract.js-core/package.json', { paths: [tdir] }));
   const kor = (require('@tesseract.js-data/kor') as { langPath: string }).langPath;
   const pdf = path.dirname(require.resolve('pdfjs-dist/package.json'));
+  // @sax/docparse의 샌드박스 순수 모듈(빌드된 JS). 상대 경로 import만 있어 /lib/ 아래에서 그대로 돈다
+  const lib = path.join(path.dirname(require.resolve('@sax/docparse/package.json')), 'dist/sandbox');
   return {
-    '/index.html': path.join(STATIC, 'docparse.html'),
-    '/docparse.mjs': path.join(STATIC, 'docparse.mjs'),
-    '/docparse-text.mjs': path.join(STATIC, 'docparse-text.mjs'),
-    '/docparse-image.mjs': path.join(STATIC, 'docparse-image.mjs'),
+    '/index.html': path.join(PAGE, 'index.html'),
+    '/docparse.mjs': path.join(PAGE, 'docparse.mjs'),
+    ...dirAssets('/lib', lib, (f) => f.endsWith('.js')),
     '/tesseract.min.js': path.join(tdir, 'dist/tesseract.min.js'),
     '/worker.min.js': path.join(tdir, 'dist/worker.min.js'),
     '/lang/kor.traineddata.gz': path.join(kor, 'kor.traineddata.gz'),
+    '/lang-best-int/kor.traineddata.gz': path.join(kor, '../4.0.0_best_int/kor.traineddata.gz'),
     ...Object.fromEntries(['tesseract-core.wasm.js', 'tesseract-core-simd.wasm.js', 'tesseract-core-lstm.wasm.js', 'tesseract-core-simd-lstm.wasm.js', 'tesseract-core-relaxedsimd.wasm.js', 'tesseract-core-relaxedsimd-lstm.wasm.js'].map((f) => [`/core/${f}`, path.join(core, f)])),
     '/pdfjs/pdf.min.mjs': path.join(pdf, 'build/pdf.min.mjs'),
     '/pdfjs/pdf.worker.min.mjs': path.join(pdf, 'build/pdf.worker.min.mjs'),
@@ -128,17 +137,10 @@ async function withSlot<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
-export class DocparseError extends Error {
-  readonly code: string;
-  constructor(code: string) {
-    super(code);
-    this.code = code;
-  }
-}
 
 /** 샌드박스가 돌려줄 수 있는 실패 코드. 그 밖의 값은 schema로 본다. */
-const SANDBOX_ERRORS = new Set(['password_required', 'password_incorrect', 'invalid_pdf', 'worker_failed', 'parse_failed', 'render_failed', 'ocr_failed']);
-const MAX_INPUT = 15 * 1024 * 1024;
+const SANDBOX_ERRORS = new Set<string>(SANDBOX_ERROR_LIST);
+const MAX_INPUT = MAX_INPUT_BYTES;
 /** 렌더러 프로세스 작업 집합 상한(KB). 넘으면 창을 파기한다. pdf.js 워커·tesseract 워커도 같은 프로세스의 스레드다. */
 const MEMORY_LIMIT_KB = 1_500_000;
 
@@ -194,7 +196,7 @@ async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, me
     sample(); // 짧은 작업은 폴링 전에 끝난다
     if (!out || typeof out !== 'object') throw new DocparseError('schema');
     const o = out as Record<string, unknown>;
-    if ('error' in o) throw new DocparseError(typeof o.error === 'string' && SANDBOX_ERRORS.has(o.error) && Object.keys(o).length === 1 ? o.error : 'schema');
+    if ('error' in o) throw new DocparseError(validateSandboxOutput('error', o) && SANDBOX_ERRORS.has(o.error as string) ? (o.error as string) : 'schema');
     return { out: o, ms: Date.now() - started, peakMemoryKb };
   } finally {
     clearTimeout(timer);
@@ -204,39 +206,19 @@ async function runJobNow(payload: Record<string, unknown>, timeoutMs: number, me
   }
 }
 
-const exactKeys = (o: Record<string, unknown>, keys: string) => Object.keys(o).sort().join(',') === keys;
-const isCount = (v: unknown, max: number) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= max;
-
 export interface OcrResult {
   text: string;
   confidence: number;
   ms: number;
 }
 
-function validateOcr(o: Record<string, unknown>): { text: string; confidence: number } | null {
-  if (!exactKeys(o, 'confidence,text') || typeof o.text !== 'string' || o.text.length > 50_000 || typeof o.confidence !== 'number') return null;
-  return { text: o.text, confidence: o.confidence };
-}
-
 /** 이미지 OCR(사업자등록증 사진 등). */
 export async function ocrInSandbox(bytes: Uint8Array, timeoutMs = 60_000): Promise<OcrResult> {
   if (bytes.length === 0 || bytes.length > MAX_INPUT) throw new Error('input_size');
   const { out, ms } = await runJob({ bytes }, timeoutMs);
-  const v = validateOcr(out);
+  const v = validateSandboxOutput('legacyOcr', out);
   if (!v) throw new Error('schema');
-  return { ...v, ms };
-}
-
-/** D17 §3 extract 출력 + OCR 폴백 정보. text ≤ 1MB, pages ≤ 5. */
-export interface PdfExtract {
-  text: string;
-  pages: number;
-  totalPages: number;
-  hasTextLayer: boolean;
-  /** 텍스트 층이 보이지 않는 글자다(스캐너·복합기가 OCR로 덧입힌 층). 원본 텍스트로 믿지 않는다. */
-  scanned: boolean;
-  /** text를 텍스트 층 대신 OCR로 읽었으면 평균 신뢰도(0~100), 아니면 null */
-  ocrConfidence: number | null;
+  return { text: v.text, confidence: v.confidence, ms };
 }
 
 export interface PdfExtractRun extends PdfExtract {
@@ -246,17 +228,6 @@ export interface PdfExtractRun extends PdfExtract {
 }
 
 export const PDF_MAX_PAGES = 5;
-const MAX_TEXT = 1024 * 1024;
-
-function validatePdf(o: Record<string, unknown>): (PdfExtract & { timing: PdfExtractRun['timing'] }) | null {
-  if (!exactKeys(o, 'hasTextLayer,ocrConfidence,pages,scanned,text,timing,totalPages')) return null;
-  const t = o.timing as Record<string, unknown> | null;
-  if (typeof o.text !== 'string' || o.text.length > MAX_TEXT || !isCount(o.pages, PDF_MAX_PAGES) || !isCount(o.totalPages, 100_000) || typeof o.hasTextLayer !== 'boolean' || typeof o.scanned !== 'boolean') return null;
-  if (o.ocrConfidence !== null && !(typeof o.ocrConfidence === 'number' && o.ocrConfidence >= 0 && o.ocrConfidence <= 100)) return null;
-  if (!t || typeof t !== 'object' || !exactKeys(t, 'loadMs,ocrMs,textMs') || ![t.loadMs, t.textMs, t.ocrMs].every((v) => isCount(v, 3_600_000))) return null;
-  return { text: o.text, pages: o.pages as number, totalPages: o.totalPages as number, hasTextLayer: o.hasTextLayer, scanned: o.scanned, ocrConfidence: o.ocrConfidence as number | null, timing: { loadMs: t.loadMs as number, textMs: t.textMs as number, ocrMs: t.ocrMs as number } };
-}
-
 export interface PdfOptions {
   /** 열기 암호. 사용자가 입력한 값을 이 작업에만 쓰고 저장하지 않는다. */
   password?: string;
@@ -277,7 +248,57 @@ export async function parsePdfInSandbox(bytes: Uint8Array, opts: PdfOptions = {}
   const forceOcr = opts.forceOcr === true && ocrPages > 0;
   // 넘긴 버퍼는 pdf.js 워커로 옮겨지며 비워진다. 부른 쪽 바이트는 그대로 둔다.
   const { out, ms, peakMemoryKb } = await runJob({ kind: 'pdf', bytes: bytes.slice(), maxPages: PDF_MAX_PAGES, ocrPages, forceOcr, password: opts.password }, timeoutMs, opts.memoryLimitKb);
-  const v = validatePdf(out);
+  const v = validateSandboxOutput('pdf', out);
   if (!v) throw new DocparseError('schema');
   return { ...v, ms, peakMemoryKb };
+}
+
+/**
+ * tesseract 언어 데이터(@tesseract.js-data/kor). tessdata = 4.0.0(레거시+LSTM), best_int = 4.0.0_best_int(LSTM 전용 정수).
+ * D14 M6-4의 `kor_fast`는 이 패키지에 없어서, LSTM 전용인 best_int를 사진 기본으로 쓴다(합성 영수증 24장 실측: 상호 24/24 대 23/24, 사업자번호 21 대 18,
+ * 틀렸는데 신뢰도 ≥ 0.8인 칸 0 대 2, 중앙 451ms 대 545ms). 증명서(document)는 PoC-8에서 잰 tessdata를 그대로 둔다.
+ */
+export type OcrModel = 'tessdata' | 'best_int';
+
+export interface ImageOptions {
+  /** document: 고정 임계 흑백 + 표 선 지우기(증명서 사진). photo: 국소 임계(종이 증빙·폰 사진) */
+  mode: 'document' | 'photo';
+  model?: OcrModel;
+  timeoutMs?: number;
+  memoryLimitKb?: number;
+}
+
+/** 그림 OCR(JPEG·PNG). 크기 머리 검사 → 디코드 → 전처리 → tesseract 블록(줄마다 신뢰도). */
+export async function ocrImageInSandbox(bytes: Uint8Array, opts: ImageOptions): Promise<ImageOcr & { ms: number; peakMemoryKb: number }> {
+  if (bytes.length === 0 || bytes.length > MAX_INPUT) throw new DocparseError('input_size');
+  const model = opts.model ?? (opts.mode === 'photo' ? 'best_int' : 'tessdata');
+  const { out, ms, peakMemoryKb } = await runJob({ kind: 'image', bytes: bytes.slice(), mode: opts.mode, model }, opts.timeoutMs ?? 60_000, opts.memoryLimitKb);
+  const v = validateSandboxOutput('image', out);
+  if (!v) throw new DocparseError('schema');
+  return { ...v, ms, peakMemoryKb };
+}
+
+/** 표 읽기(xlsx·CSV). OCR이 없어 메모리 상한을 낮게 둔다 */
+export async function readSheetInSandbox(bytes: Uint8Array, opts: { timeoutMs?: number; memoryLimitKb?: number } = {}): Promise<SheetOutput & { ms: number; peakMemoryKb: number }> {
+  if (bytes.length === 0 || bytes.length > MAX_INPUT) throw new DocparseError('input_size');
+  const { out, ms, peakMemoryKb } = await runJob({ kind: 'sheet', bytes: bytes.slice() }, opts.timeoutMs ?? 20_000, opts.memoryLimitKb ?? 900_000);
+  const v = validateSandboxOutput('sheet', out);
+  if (!v) throw new DocparseError('schema');
+  return { ...v, ms, peakMemoryKb };
+}
+
+/** @sax/docparse parse()가 부르는 샌드박스 host. ms·메모리 같은 측정값은 떼고 스키마 모양만 넘긴다 */
+export function sandboxHost(o: { model?: OcrModel } = {}): DocparseHost {
+  // 측정값(ms·peakMemoryKb)을 떼고 넘긴다. parse()가 스키마로 다시 검증한다(추가 필드가 있으면 schema 오류)
+  const strip = <T extends object>(r: T, keys: string[]) => Object.fromEntries(Object.entries(r).filter(([k]) => !keys.includes(k)));
+  return {
+    pdf: async (bytes, opts) => strip(await parsePdfInSandbox(bytes, { password: opts.password, ocrPages: opts.ocrPages, forceOcr: opts.forceOcr }), ['ms', 'peakMemoryKb']) as unknown as PdfExtract,
+    image: async (bytes, opts) => strip(await ocrImageInSandbox(bytes, { mode: opts.mode, model: o.model }), ['ms', 'peakMemoryKb']) as unknown as ImageOcr,
+    sheet: async (bytes) => strip(await readSheetInSandbox(bytes), ['ms', 'peakMemoryKb']) as unknown as SheetOutput,
+  };
+}
+
+/** 공개 입구(main 전용): 사용자가 고른 파일의 바이트 → 샌드박스 → 규칙 → 스키마 통과 결과. 실패는 DocparseError 코드 */
+export function parseInSandbox(bytes: Uint8Array, kind: DocKind, opts: ParseOptions & { model?: OcrModel } = {}): Promise<ParseOutcome> {
+  return parse(bytes, kind, sandboxHost({ model: opts.model }), opts);
 }

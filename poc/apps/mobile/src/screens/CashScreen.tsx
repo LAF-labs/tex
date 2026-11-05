@@ -105,7 +105,7 @@ export function CashScreen({ onDone }: { onDone: () => void }) {
                     {won(c.amount)}
                   </T>
                   <T v="caption" c={c.state === 'sent' ? 'ink3' : 'attention'}>
-                    {c.state === 'sent' ? 'PC 받음' : '보낼 예정'}
+                    {c.state === 'sent' ? 'PC 받음' : c.state === 'queued' ? 'PC 켜지면 받음' : '보낼 예정'}
                   </T>
                 </Pressable>
               ))}

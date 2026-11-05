@@ -8,6 +8,12 @@ export const RELAY_ALLOWLIST: readonly string[] = ['relay.tex.laf-co.com'];
 export const DEV_LOCAL: boolean = __DEV__ && !Device.isDevice;
 export const DEV_RELAY_HOST = 'localhost:8787';
 
+/**
+ * 계정·릴레이 공개 origin(DPoP htu 앞부분, 팀장 결정 2026-11-05: 둘 다 https://tax.laf-co.com, 경로는 services API.md).
+ * 릴리스 빌드 설정의 자리만 둔다. 값은 배포 때 넣는다. 비어 있으면 릴리스 빌드는 연결하지 않는다.
+ */
+export const PUBLIC_ORIGIN: string = '';
+
 export const relayAllowlist = (): readonly string[] => (DEV_LOCAL ? [...RELAY_ALLOWLIST, DEV_RELAY_HOST] : RELAY_ALLOWLIST);
 
 /** P-01: 백그라운드 30초 뒤 다시 잠근다. */

@@ -24,7 +24,18 @@ export function ConnectionScreen({ onDone, onReset }: { onDone: () => void; onRe
   const s = useSession();
   const pair = s.data.pair;
   const [sp1, setSp1] = useState<Sp1Report | null>(null);
-  const state = s.pc === 'online' ? '켜짐' : s.pc === 'connecting' ? '찾는 중' : s.pc === 'unpaired' ? '연결 전' : '꺼짐 또는 응답 없음';
+  const state =
+    s.pc === 'online'
+      ? '켜짐'
+      : s.pc === 'connecting'
+        ? '찾는 중'
+        : s.pc === 'unpaired'
+          ? '연결 전'
+          : s.pc === 'queued'
+            ? '꺼짐 · 릴레이에 암호화해 맡김(24시간, PC가 켜지면 받음)'
+            : s.pc === 'stale'
+              ? 'PC가 오래 꺼져 있어 맡길 수 없음 · PC를 켜 주세요'
+              : '꺼짐 또는 응답 없음';
   const certDays = pair ? Math.floor((pair.certNotAfter - Date.now()) / 86_400_000) : 0;
   return (
     <Screen>
