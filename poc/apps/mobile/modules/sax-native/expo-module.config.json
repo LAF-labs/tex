@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["SaxNativeModule"]
+  },
+  "android": {
+    "modules": ["expo.modules.saxnative.SaxNativeModule"]
+  }
+}

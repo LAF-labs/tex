@@ -73,7 +73,8 @@ export interface FlushResult {
   pending: string[];
 }
 
-const defaultPace = () => new Promise<void>((r) => setTimeout(r, 1000 / 16));
+// 릴레이는 우편함마다 초당 20프레임(양방향 합)을 넘으면 버린다(services/relay RELAY.msgPerSecPerMailbox). ack 몫을 남겨 12개.
+const defaultPace = () => new Promise<void>((r) => setTimeout(r, 1000 / 12));
 
 /** 보관함을 비운다. 세션이 끊기거나 응답이 없으면 남은 것은 다음 세션에 보낸다. */
 export async function flushOutbox(ch: Channel, store: OutboxStore, o: SenderOptions = {}): Promise<FlushResult> {

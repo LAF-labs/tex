@@ -23,7 +23,12 @@ commitGuard·crypto는 타입만 정해 두었다(구현은 다음 PR, 지금은
 - Phase 2(프로필 둘 동시 운영)에서 `ProfileId`로 넓힌다.
 
 ## 3. secretInput 결속(`SecretInputBind`) — desktop 트랙
-- 기존 1회용 결속 `{runId, kind, scope, row?}`는 그대로 동작한다(mode 생략 = oneshot).
+- 1회용 결속 `{runId, kind, scope, row?}`(mode 생략 = oneshot)는 금고가 `secret.needed`로 부른 것만 붙는다(ADR-025 결정 10, 비밀 창은 금고가 부른다).
+  - kind는 `TYPIST_KINDS`(portal_password·security_card)만이다. cert_password는 1회용으로도 받지 않는다(ADR-020 결정 2).
+  - 보안카드는 row(1~35) 필수, 포털 비밀번호는 row가 없다.
+  - `runId|kind|scope|row`가 살아 있는 `secret.needed`와 같아야 한다. 기록은 `SECRET_TTL_MS` 동안 살고, provide 한 번이나 `run.end`에 지운다.
+  - 맞지 않으면 포트를 붙이지 않고(답 없음) `vault.secret_input_unrequested{kind}`만 남긴다. 창을 연 뒤 기록이 사라지면 provide는 `not_requested`다.
+  - main은 지금처럼 `secret.needed`를 받았을 때만 1회용 창을 연다. 창은 열리지만 포트가 붙지 않으면 값은 금고에 가지 않는다.
 - 등록 결속은 `{mode:'store', kind:'portal_password'|'security_card', scope, notice:{version}}`다. runId·row가 없고, cert_password는 받지 않는다(ADR-020 결정 2).
 - store 포트는 `secret.store{entries:[{row?, field?:'pw', bytes}], portalLoginId?}`를 한 번만 받는다.
   - 보안카드는 row(1~35)를 쓰고, 포털은 `field:'pw'`를 쓴다.
@@ -54,6 +59,8 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 ## 5. 타이피스트 — engine 트랙
 - `FillRequest.startGate?: boolean`: trigger=remote인 실행은 시작 게이트를 통과했다는 플래그가 있을 때만 입력한다(ADR-029 결정 2).
 - `FillReason`에 `vault_locked`·`credential_suspect`를 더했다.
+- 종류 규칙(ADR-020 결정 2, ADR-025 결정 10): 타이피스트는 `TYPIST_KINDS`(portal_password·security_card)만 넣는다. cert_password 요청은 정책이 호스트를 허용해도 `denied`이고 `vault.typist_kind_refused`를 남긴다. 보안카드는 row 필수, 포털은 row 없음(어기면 `denied`).
+- `FillRequest.rowLabel?: string`(보안카드 필수): 같은 프레임에서 칸 번호가 보이는 요소의 CSS 셀렉터(256자 이하). 금고가 격리 세계에서 그 요소의 글자를 읽어 숫자가 정확히 하나(전각은 NFKC)이고 `secret.row`와 같을 때만 넣는다. 없거나 다르면 값을 꺼내지 않고 `row_mismatch`(`FillReason` 추가), 로그는 `vault.card_row_mismatch{readable}`(번호·값 없음).
 - `typist.authFailed{runId, kind, scope}`: 포털이 명시적 인증 실패(auth_failed)를 1회 알리면 엔진이 보낸다. 금고는 그 슬롯을 suspect로 두고, 다시 등록하기 전에는 입력하지 않는다(ADR-026 결정 7). 차단·셀렉터 실패에는 보내지 않는다.
 - 금고가 열려 있고 trigger≠daemon이면, 타이피스트는 1회용 값 대신 저장된 보안카드 칸·포털 비밀번호를 쓴다.
   - 금고가 닫혔으면 `vault_locked`(사람 확인 필요), suspect면 `credential_suspect`로 멈춘다.
