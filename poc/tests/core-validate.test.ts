@@ -138,6 +138,11 @@ describe('V-03 커밋 구간', () => {
       withFollowUp(p, s, steps);
       s('s32').onFail = { retry: 2, then: 'recover' };
     }));
+  it('구간 안 wait의 onFail 핸드오프(자기 재개)는 V-03c·V-03f를 함께 통과한다', () => {
+    const p = h01();
+    insertAfter(p.playbook.steps, 's20', { id: 's20a', type: 'wait', for: 'selector', value: 'hometax.invoice.form.issueButton', timeoutMs: 7000, onFail: { retry: 0, then: 'handoff' } } as Step);
+    assert.deepEqual(run(p), []);
+  });
   it('V-03f 구간 안 스텝 onFail 누락', () => expectRule('V-03f', (_p, _s, steps) => insertAfter(steps, 's20', { id: 's20a', type: 'wait', for: 'selector', value: 'hometax.invoice.form.issueButton' })));
   it('CE-4 verify unknown·not_committed → 바로 재제출', () => expectRule('V-03f', (_p, s) => ((s('s30').on as Record<string, string>).not_committed = 's21')));
   it('V-03g 게이트 없이 commits:true 클릭', () => expectRule('V-03g', (_p, _s, steps) => insertAfter(steps, 's18', { id: 's18a', type: 'click', target: 'hometax.invoice.form.issueButton' })));

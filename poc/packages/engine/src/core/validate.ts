@@ -313,9 +313,11 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       const preds = [...(cfg.pred.get(x)?.keys() ?? [])].filter((p) => p !== hNode(x));
       if (!preds.length || preds.some((p) => info.get(p)?.step.type !== 'readback')) bad('V-03c′', '후속 비가역 직전에 readback이 없음', x);
     } else {
-      // V-03c
+      // V-03c. 구간 안 스텝 자신의 onFail 핸드오프 재개(H:m → m, m ∈ W)는 V-03f가 요구하는 모양이고, HandedOff 진입이 토큰을
+      // 폐기하므로(R-G2) 그 길로는 X를 실행할 수 없다(V-03d와 같은 판단). 그 노드는 구간 스텝으로 세지 않는다.
       for (const n of w) {
         if (n === g || n === x) continue;
+        if (n.startsWith('H:') && w.has(n.slice(2)) && n === hNode(n.slice(2)) && cfg.succ.get(n)?.has(n.slice(2))) continue;
         const ns = info.get(n)?.step;
         if (!ns) bad('V-03c', `커밋 구간에 합성 노드 ${n}(핸드오프·비밀 창·사람 입력)`, x);
         else if (!(ns.type === 'wait' || ns.type === 'assert' || (ns.type === 'extract' && ns.readback === true))) bad('V-03c', `커밋 구간에 ${ns.type}`, x, n);
