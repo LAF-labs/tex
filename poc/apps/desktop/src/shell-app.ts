@@ -9,7 +9,8 @@ import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/
 import type { EnginePortal } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
-import { verifyLocalApproval } from './approval-gate.ts';
+import { kstToday, verifyLocalApproval } from './approval-gate.ts';
+import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
@@ -20,7 +21,7 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { g24Candidates, interpret, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
@@ -205,7 +206,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     (fn: (p: Record<string, unknown>) => unknown) =>
     async (p: Record<string, unknown>): Promise<unknown> => {
       try {
-        return await fn(p);
+        const r = await fn(p);
+        pushBoard(); // 가져오기·확인으로 만료일·확인 필요가 바뀐다
+        return r;
       } catch (e) {
         throw docsError(e);
       }
@@ -255,16 +258,72 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
+  /** 지난 발급(시연 씨앗 이력 + 문서함 세금계산서). 원장 발급 이력 질의가 나오면 그쪽으로 바꾼다. */
+  const issuedInvoices = (): IssuedInvoice[] => {
+    const total = new Map((seed?.history ?? []).filter((x) => x.approvalNo).map((x) => [`d-${x.id}`, x.total]));
+    return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
+  };
+  /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 목업 어댑터(shell-mock mockBundle·MOCK_SETTINGS). */
+  // 문서함을 읽지 못하면 판을 만들지 않는다(보관함 서류가 빠진 판으로 온전한 판을 덮지 않게). 지난 판이 그대로 남고,
+  // boardDay를 비워 두어 날짜 타이머가 1분 뒤 다시 계산한다.
+  let boardDay = '';
+  const boardNow = async (): Promise<Board> => {
+    const today = kstToday(Date.now());
+    const docsNow = await listDocs().catch((e: unknown) => {
+      boardDay = '';
+      throw e;
+    });
+    boardDay = today;
+    return buildBoard({
+      today,
+      reminderDay: MOCK_SETTINGS.reminderDay,
+      issued: issuedInvoices(),
+      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name })),
+      docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
+      bundle: mockBundle(today),
+      cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
+    });
+  };
+  // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
+  // 계산이 겹치면 가장 나중에 시작한 것만 보낸다(먼저 시작한 계산이 늦게 끝나 새 판을 옛 판으로 덮지 않게).
+  let boardQueued = false;
+  let boardGen = 0;
+  const pushBoard = () => {
+    if (boardQueued) return;
+    boardQueued = true;
+    setImmediate(() => {
+      boardQueued = false;
+      const gen = ++boardGen;
+      void boardNow().then(
+        (board) => gen === boardGen && send({ type: 'board', board }),
+        (e: Error) => log.event('main.board_failed', { error: e.message.slice(0, 80) }),
+      );
+    });
+  };
+  /** 첫 화면의 판. 그 전에 시작한 계산이 늦게 끝나도 보내지 않게 세대를 올린다. */
+  const bootBoard = () => {
+    boardGen++;
+    return boardNow();
+  };
+  // 날짜가 바뀌면(KST 자정) 다시 계산한다. 이번 달·지난달·만료 30일 창이 날짜에 달려 있다.
+  const boardDayTimer = setInterval(() => {
+    if (kstToday(Date.now()) !== boardDay) pushBoard();
+  }, 60_000);
+  boardDayTimer.unref();
   // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
   bar.on('shown', (e: { band: boolean }) => send({ type: 'bar', active: true, band: e.band }));
   bar.on('layout', (e: { band: boolean }) => send({ type: 'bar-layout', band: e.band }));
   bar.on('hidden', (reason: string) => send({ type: 'bar', active: false, reason }));
-  runs.on('update', (run) => send({ type: 'run', run }));
+  runs.on('update', (run) => {
+    send({ type: 'run', run });
+    pushBoard();
+  });
   runs.on('doc', (doc) => {
     store.docs.unshift(doc);
     const run = runs.get(doc.id.slice(2));
     if (seed && run) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
     send({ type: 'doc', doc });
+    pushBoard();
     void refresh().catch(() => {});
   });
   runs.on('gate-closed', (_runId: string, reqId: string, reason: string) => bar.close(reason, reqId));
@@ -381,6 +440,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
+      board: await bootBoard(),
       layout: SHELL,
       profiles: profiles(),
       profile,
@@ -406,7 +466,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const via = model ? 'model' : 'offline';
       if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
       const reply = interpret(text, vat, profile, runs, model ? mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
-      if (reply.kind === 'draft') reply.run.interp = via;
+      if (reply.kind === 'draft') {
+        reply.run.interp = via;
+        pushBoard(); // 초안은 update 이벤트 없이 생긴다
+      }
       return { ...reply, via };
     },
     'draft.update': (p) =>
@@ -506,10 +569,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       .then(async () => {
         await refresh();
         send({ type: 'docs-reload' });
+        pushBoard();
       })
       .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
   const close = async () => {
+    clearInterval(boardDayTimer);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});

@@ -1,6 +1,8 @@
 # D07. 데이터 모델
 
 > 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
+> ADR-034 결정 8 채택 2026-11-05: 근무표 범위 축소, `shifts` 삭제 제안(데이터 트랙 확인 전).
+> 2026-11-05 팀장 결정·R13 D-L3: `card_txn_memos.match_key`의 승인번호 키에 사용일을 붙임(데이터 PR #53 Bugbot High), `bundle_exports`에 `zip_sha256`·`zip_path`·`rrn_included`(회차당 한 행), 꾸러미 내보내기 규칙(엑셀 + 첨부 ZIP 두 파일, 주민번호 가림이 기본)을 §2 끝에 적음.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·DB 배타 잠금·DB 키 유실 처리(§1.3), `remote_devices` 증명 상태·`doc_scope_json`(§2), 서버 시각 컬럼 금지(§5), 키 계층의 복구 문구 삭제(§6, ADR-016 v2), DB 키 래핑 사본(§7)(ADR-025·029, D19 §3.5). 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
 
 ## 1. 저장소 개관
@@ -194,7 +196,7 @@ CREATE TABLE employees (
   name TEXT NOT NULL, birth_date TEXT NOT NULL,      -- 임금대장·임금명세서는 성명·생년월일로 쓴다
   rrn_enc BLOB,                                      -- 주민번호(선택). 원천세 자료로 세무사가 필요할 때만 넣는다. DB 키 암호화 컬럼, 화면에는 가려서, 모델·서버로 보내지 않는다
   hired_on TEXT NOT NULL, left_on TEXT, job TEXT,
-  pay_type TEXT CHECK(pay_type IN ('monthly','hourly')) NOT NULL DEFAULT 'monthly',   -- 월급제 상용직 기본, hourly는 근무표를 켰을 때만(제안, ADR-034 결정 8)
+  pay_type TEXT CHECK(pay_type IN ('monthly','hourly')) NOT NULL DEFAULT 'monthly',   -- 월급제 상용직 기본. hourly는 표시용이고 세전 금액은 사장님이 정한다(시급 × 시간 계산 없음, ADR-034 결정 8 채택)
   base_pay INTEGER NOT NULL,                         -- monthly면 월급, hourly면 시급
   nontax_json TEXT NOT NULL DEFAULT '{}',        -- 비과세 항목(식대 등) 이름 → 금액. 한도는 rate_tables(nontax_limits)로 막는다
   dependents INTEGER NOT NULL, children_8_20 INTEGER NOT NULL DEFAULT 0,    -- 공제대상가족 수, 8세 이상 20세 이하 자녀 수
@@ -214,7 +216,7 @@ CREATE TABLE payroll_months (
 );
 CREATE TABLE payroll_lines (
   profile_id TEXT NOT NULL, month TEXT NOT NULL, revision INTEGER NOT NULL, employee_id TEXT NOT NULL,
-  work_days INTEGER, work_minutes INTEGER, overtime_minutes INTEGER, night_minutes INTEGER, holiday_minutes INTEGER,   -- 임금대장 기재사항. 시간은 분 단위 정수로 두고 화면에서 시간으로 보인다(근무표의 휴게 차감으로 157.5시간 같은 값이 나온다)
+  work_days INTEGER, work_minutes INTEGER, overtime_minutes INTEGER, night_minutes INTEGER, holiday_minutes INTEGER,   -- 임금대장 기재사항. 시간은 분 단위 정수로 두고 화면에서 시간으로 보인다. 사장님이 넣는 보조 입력이고, 가산·주휴 금액은 계산하지 않는다(ADR-034 결정 8 채택)
   items_json TEXT NOT NULL,                     -- 지급 항목별 [{name, amount, taxable, calc}]. calc는 임금명세서의 계산방법 문장
   gross INTEGER NOT NULL, nontax INTEGER NOT NULL,
   income_tax INTEGER NOT NULL, local_income_tax INTEGER NOT NULL,
@@ -226,7 +228,9 @@ CREATE TABLE payroll_lines (
   FOREIGN KEY(profile_id, month, revision) REFERENCES payroll_months(profile_id, month, revision),
   FOREIGN KEY(profile_id, employee_id) REFERENCES employees(profile_id, id)
 );
-CREATE TABLE shifts (                          -- 근무표(ADR-034 결정 8, D14 M6-15. 가산·주휴 범위는 제안). 근무표를 켠 사장님만 쓴다
+-- 2026-11-05 ADR-034 결정 8 채택: 근무표는 세전 → 세후 계산기로 좁혔다. 일별 시작·끝 입력이 없으므로 아래 shifts 테이블은 Phase 1 화면이 쓰지 않는다.
+-- (제안, 데이터 트랙 확인 전) shifts를 지우고, 근무 시간 합계는 payroll_lines.work_minutes(보조 입력)만 쓴다. 가산·주휴 컬럼은 더하지 않는다.
+CREATE TABLE shifts (                          -- 근무표(ADR-034 결정 8, D14 M6-15). 위 주석 참고
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL, employee_id TEXT NOT NULL,
   work_day TEXT NOT NULL, starts_at TEXT NOT NULL, ends_at TEXT NOT NULL,   -- 'YYYY-MM-DD', 'HH:MM'(자정을 넘기면 ends_at < starts_at)
   break_minutes INTEGER NOT NULL DEFAULT 0, kind TEXT CHECK(kind IN ('planned','actual')) NOT NULL DEFAULT 'actual',
@@ -256,12 +260,15 @@ CREATE TABLE bundle_entries (                  -- 항목의 달별 상태와 첨
   doc_ids_json TEXT NOT NULL DEFAULT '[]', note TEXT, updated_at TEXT NOT NULL,
   PRIMARY KEY(item_id, period)
 );
-CREATE TABLE bundle_exports (                  -- 내보내기 기록("어디로 무엇이 갔는지")
+CREATE TABLE bundle_exports (                  -- 내보내기 기록("어디로 무엇이 갔는지"). 한 번 내보내면(회차) 한 행
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), period TEXT NOT NULL,
-  sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
-  send_via TEXT CHECK(send_via IN ('mail_client','folder')),   -- (제안, ADR-034 결정 10 (가)) 메일 프로그램에 첨부를 붙여 열었는지, 폴더만 열었는지
+  sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,   -- 암호 엑셀 파일
+  zip_sha256 TEXT, zip_path TEXT,               -- 같은 암호의 AES-256 ZIP(사진·PDF). 첨부가 없으면 둘 다 NULL
+  rrn_included INTEGER NOT NULL DEFAULT 0,      -- 급여 시트(엑셀)에 주민번호 전체를 넣었는지. 기본 0(가림), 사장님이 설정 bundle.includeRrn을 켰을 때만 1(R13 D-L3 결정)
+  send_via TEXT CHECK(send_via IN ('mail_client','folder')),   -- (채택, ADR-034 결정 10 (가)) 메일 프로그램에 첨부를 붙여 열었는지, 폴더만 열었는지
   sent_to TEXT,                                -- 연 시점의 "내 세무사" 주소(설정 bundle.accountantEmail). 실제 발송 여부는 메일 프로그램이 안다
-  sent_marked_at TEXT, sent_note TEXT          -- 사장님이 "보냈어요"로 표시한 시각과 메모
+  sent_marked_at TEXT, sent_note TEXT,         -- 사장님이 "보냈어요"로 표시한 시각과 메모
+  CHECK((zip_sha256 IS NULL) = (zip_path IS NULL))
 );
 CREATE TABLE card_fetches (                    -- H-12 조회 구간. [최신화]는 구간의 행을 통째로 바꾼다
   run_id TEXT PRIMARY KEY REFERENCES runs(id), profile_id TEXT NOT NULL REFERENCES profiles(id),
@@ -280,7 +287,7 @@ CREATE TABLE card_txns (                       -- H-12 사업용 카드 사용�
 CREATE INDEX ix_card_txns_day ON card_txns(profile_id, used_on);
 CREATE TABLE card_txn_memos (                  -- 사장님 메모. 구간을 바꿀 때 승인번호(없으면 날짜·가게·금액·카드)로 다시 매칭
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
-  match_key TEXT NOT NULL,                     -- 승인번호·취소 여부·금액(승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부). 같은 값이 여러 건이면 seq 순서의 순번 '#n'을 붙인다. 승인과 그 취소는 취소 여부로 갈린다
+  match_key TEXT NOT NULL,                     -- 사용일·승인번호·취소 여부·금액(승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부). 승인번호 키에도 사용일을 붙인다(승인번호는 달이 바뀌면 재사용돼 날짜 없이는 다른 달 메모를 덮어쓴다). 같은 값이 여러 건이면 seq 순서의 순번 '#n'을 붙인다. 승인과 그 취소는 취소 여부로 갈린다
   txn_id TEXT REFERENCES card_txns(id) ON DELETE SET NULL,   -- 행을 지우면 NULL이 되고 (3)에서 다시 잇는다. 못 이으면 화면에 "메모 대상 확인 필요"
   memo TEXT NOT NULL, updated_at TEXT NOT NULL,
   UNIQUE(profile_id, match_key)                -- 같은 키에 메모 둘이 붙지 않게
@@ -306,8 +313,13 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 급여·세무사 꾸러미(ADR-031·032):
 - 테이블은 로컬 전용이며 서버 색인(§3·§5)에 올리지 않는다. 원본 파일은 `documents` 행으로 들어가는데, 그 doc_type(`paper_receipt`, `insurance_notice`, `settlement_file`, `payroll_ledger`, `pay_statement`, `bundle_export`)은 서버 색인을 끈 채 고정하고 설정으로도 켤 수 없다.
 - 주민번호(`employees.rrn_enc`)는 마스킹 계층(D06)의 주민번호 규칙 대상이다. 다만 Phase 1 보관함은 평문 PDF라(§1.4) 고지내역·급여대장·임금명세서 파일에는 주민번호가 평문으로 남을 수 있다. 화면과 설정에 이 점을 적는다.
+- 꾸러미 내보내기(팀장 결정 2026-11-05, ADR-032 결정 8):
+  - 첨부는 두 파일이다. 암호 엑셀(ECMA-376 암호화)과, 사진·PDF가 있으면 같은 암호의 AES-256 ZIP이다. 사진·PDF를 암호 밖에 두지 않는다. 메일 창(ADR-034 결정 10 (가))에는 두 파일과 받는 쪽 안내 문구(예: "암호는 따로 알려 드려요. ZIP은 반디집·알집·7-Zip으로 여세요". 최종 문구는 화면 트랙)가 함께 들어간다. 운영체제 기본 압축 풀기가 AES ZIP을 못 여는 경우가 있어서다(데이터 PR #58 본문).
+  - 급여 시트의 주민번호는 근거 확인 전 **가림이 기본**이다(R13 D-L3, yulmu 결정 2026-11-05). 사장님이 설정 `bundle.includeRrn`을 켜면 전체 번호를 넣고, 그 회차 행의 `bundle_exports.rrn_included`를 1로 남긴다(엑셀과 ZIP은 한 행에 함께 적는다). 처리 근거 질의(R13 Q9) 회신에 따라 기본값을 다시 본다.
+  - [급여 기록 내보내기](08 D-06, 3년 보관용)에는 주민번호를 넣지 않는다.
+  - "증빙과 대조되지 않은 카드 지출"은 '빠진 것' 시트와 화면에 표시만 한다. 판정하지 않고, 화면에서는 기본으로 접는다. 사장님이 "카드 전표로 충분"에 체크하면 그 건은 목록에서 뺀다. 체크 상태를 담을 컬럼은 데이터 트랙이 정한다(제안: `card_txn_memos`와 같은 match_key로 잇는 표시).
 - 월초 "세무사 꾸러미 준비됨" 알림은 `schedules`(서류 갱신용) 행이 아니라 설정 `bundle.reminderDay`·`payroll.halfYearWithholding`으로 데몬 `notify`가 계산한다.
-- 설정(ADR-034): `bundle.accountantEmail`("내 세무사" 주소, 제안. 로컬 설정이고 서버로 보내지 않는다), `bundle.industries`(2층 업종), `payroll.enabled`(급여대장 켬, 기본 끔. 끄면 레일에서 숨긴다), `payroll.shiftsEnabled`(근무표 켬, 기본 끔). 이 넷은 프로필마다 다르므로 키에 프로필 ID를 붙여 `profile.<id>.bundle.accountantEmail`처럼 저장한다. `bundle.reminderDay`·`payroll.halfYearWithholding`도 같다.
+- 설정(ADR-034): `bundle.accountantEmail`("내 세무사" 주소, 채택(ADR-034 결정 10). 로컬 설정이고 서버로 보내지 않는다), `bundle.industries`(2층 업종), `payroll.enabled`(급여대장 켬, 기본 끔. 끄면 레일에서 숨긴다), `payroll.shiftsEnabled`(근무표 = 세후 계산기 켬, 기본 끔), `bundle.includeRrn`(꾸러미 급여 시트에 주민번호 전체를 넣음, 기본 끔, R13 D-L3). 이 다섯은 프로필마다 다르므로 키에 프로필 ID를 붙여 `profile.<id>.bundle.accountantEmail`처럼 저장한다. `bundle.reminderDay`·`payroll.halfYearWithholding`도 같다.
 - 이번 달 판(ADR-033)은 따로 테이블을 두지 않는다. `bundle_entries`·`documents`·`schedules`·거래처 발급 이력에서 매번 계산한다.
 - 폰에서 받은 사진·현금매출(ADR-034)은 PC에 저장된 뒤에만 이 테이블에 들어간다. 폰 쪽 임시 보관은 앱 샌드박스의 파일 보호 등급 파일(iOS `NSFileProtectionComplete`, Android 앱 전용 저장소)로, 백업에서 빼고 카메라 롤·갤러리에는 저장하지 않는다. 파일 암호화 키만 `ThisDeviceOnly` 키 저장소에 둔다. PC가 받았다고 확인하면 지운다(D08 §3.1, D14 M7-4).
 - 임금대장은 3년 보존 의무가 있다. 로컬 전용이라 PC를 잃으면 함께 사라지므로, Phase 2 E2EE 백업 범위에 넣을지 Phase 2 설계 때 정한다.
