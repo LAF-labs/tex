@@ -11,7 +11,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
-import { OnboardingFlow, onboardingTodos, type OnbProfile } from './onboarding.ts';
+import { OnboardingFlow, onboardingTodos, parseOnbState, type OnbProfile, type OnbState } from './onboarding.ts';
 import { MockOnboardingPorts } from './onboarding-mock.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
@@ -446,7 +446,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   // 온보딩(08 §4, M4-2). 바깥 일은 목업 어댑터 뒤(onboarding-mock.ts), 프로필 저장만 엔진 profile.upsert(실제 DB)로 간다.
   let onb: OnboardingFlow | null = null;
+  /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
+  let onbShow = true;
+  // 이어 하기 저장(비밀 없음, 포털 아이디는 비밀 아님): 엔진 모드에서만 앱 폴더 JSON. DB 온보딩 상태 칸(데이터 트랙 #53 후속)이 오면 옮긴다.
+  const onbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
+  const persistOnb = async (s: OnbState) => {
+    await fs.mkdir(path.dirname(onbFile), { recursive: true });
+    const tmp = `${onbFile}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(s));
+    await fs.rename(tmp, onbFile);
+  };
+  const loadOnb = async (): Promise<OnbState | null> => {
+    try {
+      return parseOnbState(JSON.parse(await fs.readFile(onbFile, 'utf8')));
+    } catch {
+      return null;
+    }
+  };
   const onbPorts = new MockOnboardingPorts({
+    persist: fixture ? undefined : persistOnb,
     saveProfile: async (p: OnbProfile) => {
       // 포털 아이디(금고 v1이 돌려주는 비밀 아닌 값)는 DB profiles.portal_login_id 열이 생기면 함께 저장한다(#42). 지금은 버린다.
       const row: Omit<OnbProfile, 'portalLoginId'> & { portalLoginId?: string } = { ...p };
@@ -455,7 +473,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await refresh();
     },
   });
-  const onbView = async () => (onb ? await onb.view() : null);
+  const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
   const modelOk = () => !onb || onb.modelAllowed();
@@ -602,7 +620,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (fixture) await fixture.seed(host);
     if (fixture && opts.demoSeed) seed = await startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
-    if (opts.onboarding || (!fixture && !business)) onb = new OnboardingFlow(onbPorts);
+    // 온보딩: 시연·e2e는 opts.onboarding. 엔진 모드는 이어 하기 저장이 있으면 그 자리부터(끝났으면 대화 없이 동의·할 일만),
+    // 저장이 없고 사업자 프로필도 없으면 처음부터. 사업자를 건너뛰고 끝낸 사용자도 다음 기동에 약관부터 다시 묻지 않는다.
+    if (opts.onboarding) onb = new OnboardingFlow(onbPorts);
+    else if (!fixture) {
+      const saved = await loadOnb();
+      if (saved) {
+        onb = new OnboardingFlow(onbPorts, saved);
+        onbShow = saved.step !== 'done';
+      } else if (!business) onb = new OnboardingFlow(onbPorts);
+    }
     await win.loadURL(SHELL_URL);
     // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed

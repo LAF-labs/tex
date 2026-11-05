@@ -29,6 +29,8 @@ export interface MockOnboardingOptions {
   bizStatus?: 'active' | 'suspended' | 'closed';
   /** 금고 등록 창 결과(시험이 바꾼다). */
   register?: 'ok' | 'cancelled';
+  /** 이어 하기 저장을 실제로 남길 곳(엔진 모드: 앱 폴더 JSON). DB 온보딩 상태 칸이 생기면 그쪽으로 옮긴다. */
+  persist?: (s: OnbState) => Promise<void>;
 }
 
 export class MockOnboardingPorts implements OnboardingPorts {
@@ -71,5 +73,6 @@ export class MockOnboardingPorts implements OnboardingPorts {
   }
   async save(s: OnbState) {
     this.saved = s;
+    await this.o.persist?.(s);
   }
 }

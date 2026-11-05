@@ -1,5 +1,6 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-05 팀장 지시(R15 조사 발견): §8 H-01 발췌에 `s19d`(합계 산술 `sumEquals`)와 `s19f`(되읽은 값 ↔ 입력 인자 대조)를 더해 §2.1·§4의 readback 규칙과 맞춤. 엔진 M2-3이 구현한다(PoC 코드에는 `s19d`만 있다).
 > 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05). §2 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52).
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A(research/REVIEW-A-ir-engine.md)를 반영해 제어 흐름 의미론, 커밋 구간 규칙(V-03a~h), 셀렉터 사전 속성, 조회형 `verify`, 의도 키를 정의했다. 반례 CE-1~CE-18은 검증기 퍼징의 고정 회귀 세트다(D13 §7).
@@ -344,6 +345,11 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
     {"id": "s19b", "type": "readback", "fields": ["supplierBizNo", "supplierName", "counterpartBizNo", "counterpartName", "counterpartEmail",
                                                   "itemName", "itemCount", "supplyAmount", "taxAmount", "totalAmount", "issueDate", "remark", "receiptType"]},
     {"id": "s19c", "type": "assert", "cond": {"readbackEquals": {"fieldKey": "supplierBizNo", "ref": "$profile.bizNo"}}, "onFail": {"retry": 0, "then": "abort"}},
+    {"id": "s19d", "type": "assert", "cond": {"sumEquals": {"parts": ["supplyAmount", "taxAmount"], "total": "totalAmount"}}, "code": "assert.total_mismatch", "onFail": {"retry": 0, "then": "abort"}},
+    {"id": "s19f", "type": "assert", "cond": {"all": [{"readbackEquals": {"fieldKey": "counterpartBizNo", "ref": "$inputs.counterpart.bizNo"}},
+                                                     {"readbackEquals": {"fieldKey": "supplyAmount", "ref": "$inputs.amounts.supply"}},
+                                                     {"readbackEquals": {"fieldKey": "taxAmount", "ref": "$inputs.amounts.tax"}}]},
+     "code": "assert.input_mismatch", "onFail": {"retry": 0, "then": "abort"}},
     {"id": "s19e", "type": "assert", "cond": {"readbackEquals": {"fieldKey": "issueDate", "ref": "$inputs.issueDate"}}, "code": "assert.issue_date_mismatch", "onFail": {"retry": 0, "then": "abort"}},
     {"id": "s20", "type": "gate", "card": "invoice.confirm", "authorizes": ["s21"], "waitMs": 600000},
     {"id": "s21", "type": "submit", "target": "hometax.invoice.form.issueButton", "intent": "$intent.id", "verify": "s30", "expectConfirm": "confirm.issue",
@@ -375,6 +381,9 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - 비가역 스텝은 `s21` 하나(`commits:true`, `commitEffect: issue_document`)이고 `G = s20`이 그것만 `authorizes`한다(V-03a, V-03i). `W(s21) = {s20, s21}`로 사이에 아무 스텝이 없다(V-03c). 발급 시 전자서명은 `s21.signFlow`로 X 안에 있다(§4.5, B-09).
 - **이메일**(B-05, B-11, B/C-04, B/C-18): 홈택스는 발급과 동시에 매입자에게 이메일을 자동 발송하므로(R2:86) `send`는 `s21` 커밋에 딸린 효과다. v2.0의 별도 `send_email`(옛 s33)은 Phase 1에서 제거했다. 대신 이메일 칸을 `s15`에서 입력하거나 비우고(포털이 미리 채운 이전 주소 제거), readback·카드에 넣으며, 새 `s33`이 메일발송목록을 조회해 발송을 확인한다. 확인되지 않으면 `CompletedWithIssues`("발급은 완료되었습니다. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요")로 끝나고 재실행을 막는다. 재발송 자동화는 Phase 2에서 "미발송·실패일 때만 재발송 + V-03c′"로 설계한다.
 - readback `s19b`는 발급 버튼 랜드마크 안 `fieldKey` 전부(V-03j)다. 공급자·비고·청구/영수·품목 수가 카드에 보인다. `s19c`(`supplierBizNo == $profile.bizNo`)는 다른 사업자 세션으로 발급하는 것과 대리 사용을 막고, 실패하면 중단한다(B-05, B-28).
+- `s19d`는 `s19b`가 되읽어 고정한 값(`$readback.*`)으로 공급가액 + 세액 = 합계를 엔진이 산술로 본다(모델에 묻지 않는다, D04 §3). `parts`·`total`은 readback `fieldKey`다. 화면을 다시 읽지 않는다. 승인 카드·승인 바가 그 고정 값을 보이므로, 검사도 같은 값이어야 한다. 다르면 게이트 전에 `assert.total_mismatch`로 멈춘다.
+- `s19f`는 되읽은 값을 실행 입력 인자와 대조한다: 공급받는자 사업자번호, 공급가액, 세액. 합계는 `s19d`(되읽은 합계 = 되읽은 공급가액 + 세액)와 이 대조로 입력 합계와 같아진다. 작성일은 `s19e`가 본다. 하나라도 다르면 게이트 전에 `assert.input_mismatch`로 멈춘다. readback의 세 값 일치(§2.1, DOM `value`·접근성 트리·`readbackOf` 표시 요소)는 화면 안의 일치이고, `s19f`는 화면 값과 사용자가 정한 값의 일치다. 둘 다 있어야 승인 카드가 사용자가 넣은 값을 보인다.
+- `s19d`·`s19f`는 엔진 M2-3(스텝 핸들러·readback, D14)이 구현한다. PoC 코드(`poc/packages/engine/src/h01/playbook.ts`)에는 `s19d`만 있고 이 발췌와 같은 모양(`{parts, total}`, readback 키)이다. IR 스키마(`schemas/playbook-ir.schema.json`)의 `sumEquals{names, target}`는 `target`이 셀렉터라 화면을 다시 읽으므로, M2-3에서 스키마를 readback 키 모양(`{parts, total}`)으로 바꾼다(2026-11-05).
 - `s19e`는 포털 작성일자를 실행 시작 시 KST 날짜(`$inputs.issueDate`)와 대조한다. 다르면 게이트 전에 `assert.issue_date_mismatch`로 멈춘다(V-03j′, ADR-027, D-20(N-26)).
 - `s33` 메일 상태 판정은 부정 우선이다. NFKC·공백 제거 뒤 실패·미전송·대기·오류·…중이면 `not_committed`, 정확 허용 목록(`전송완료`·`발송완료`, PoC-3 실측으로 확정)이면 `committed`, 그 밖은 `unknown`이다(ADR-025, D-39(N-58)).
 - `s19a`는 모델 predicate 대신 결정적 칸 채움 검사다(B-34). 차단·보안 경고는 `s19`(W 밖)와 엔진의 결정적 차단 신호(D03 §7)로 W 진입 전에 판정한다(B/C-03, C-24).

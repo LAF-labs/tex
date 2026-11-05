@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { MockOnboardingPorts, MOCK_BIZ_CERT, MOCK_CONSENT_CONFIG } from '../apps/desktop/src/onboarding-mock.ts';
-import { certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
+import { certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
 
 const NOW = () => new Date('2026-11-05T01:00:00Z');
 function make(o: Partial<ConstructorParameters<typeof MockOnboardingPorts>[0]> = {}) {
@@ -81,6 +81,24 @@ describe('온보딩: 한 번에 하나씩', () => {
     const before = flow.state;
     assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { email: 'a@b' } })), 'bad_email', 'DB profile.upsert와 같은 모양 검사');
     assert.deepEqual(flow.state, before);
+  });
+
+  it('등록증에서 읽은 번호가 체크섬에 맞지 않으면 조회하지 않고, [맞아요]는 bad_biz_no. 번호를 고치면 조회한다', async () => {
+    const { flow, ports } = make({ bizCert: { ...MOCK_BIZ_CERT, bizNo: '1234567890' } });
+    let calls = 0;
+    const real = ports.checkBizNo.bind(ports);
+    ports.checkBizNo = async (n: string) => (calls++, real(n));
+    await walk(flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'upload' },
+    ]);
+    assert.deepEqual([flow.state.step, flow.state.check, calls], ['biz-confirm', null, 0]);
+    assert.match(flow.state.notice ?? '', /사업자번호가 맞지 않아요/);
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'bad_biz_no');
+    await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { bizNo: '123-45-67891' } });
+    assert.deepEqual([flow.state.check?.status, calls], ['active', 1]);
+    await flow.answer({ step: 'biz-confirm', choice: 'confirm' });
+    assert.equal(flow.state.step, 'auth');
   });
 
   it('진위확인을 하지 못했으면 [다시 조회]로 같은 번호를 다시 본다. 같은 번호로 고쳐 저장해도 다시 조회한다', async () => {
@@ -180,8 +198,51 @@ describe('동의 화면 4종', () => {
     ]);
     assert.equal(saved[0]?.portalLoginId, 'ganada01', '포털 아이디는 비밀 아닌 값으로 프로필에(DB portal_login_id)');
     assert.equal(saved[0]?.signMethod, 'security_card');
-    const persisted = JSON.stringify(ports.saved);
-    assert.ok(!persisted.includes('ganada01'), '이어 하기 저장·대화 기록에는 포털 아이디를 넣지 않는다');
+    assert.ok(!JSON.stringify(flow.state.log).includes('ganada01'), '대화 기록에는 포털 아이디를 넣지 않는다');
+    assert.ok(!JSON.stringify(await flow.view()).includes('ganada01'), '렌더러로 가는 view에도 없다');
+  });
+
+  it('포털 아이디는 이어 하기 저장에 남아, ① 뒤에 껐다 켜도 요약에서 프로필에 쓴다(비밀 아님, #42 계약)', async () => {
+    const a = make();
+    await walk(a.flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'upload' },
+      { step: 'biz-confirm', choice: 'confirm' },
+      { step: 'auth', choice: 'card' },
+      { step: 'delegation', choice: 'agree' },
+    ]);
+    const resumed = parseOnbState(JSON.parse(JSON.stringify(a.ports.saved)));
+    assert.ok(resumed);
+    const b = make();
+    const flow = new OnboardingFlow(b.ports, resumed, NOW);
+    assert.equal(flow.state.step, 'model');
+    await walk(flow, [
+      { step: 'model', choice: 'decline' },
+      { step: 'telemetry', choice: 'off' },
+      { step: 'tasks', choice: 'submit', tasks: { 'H-03': true } },
+      { step: 'summary', choice: 'ok' },
+    ]);
+    assert.equal(b.saved[0]?.portalLoginId, 'ganada01');
+  });
+
+  it('이어 하기 저장 읽기: 모양이 틀리면 처음부터(null), 모르는 키는 버린다, 예전 저장(포털 아이디 칸 없음)도 받는다', () => {
+    assert.equal(parseOnbState(null), null);
+    assert.equal(parseOnbState({ step: 'nope', tasks: [], skipped: [], log: [], consents: {} }), null);
+    assert.equal(parseOnbState({ step: 'done', tasks: [], skipped: ['admin'], log: [], consents: {} }), null);
+    assert.equal(parseOnbState({ step: 'done', tasks: [], skipped: [], log: [{ text: 1 }], consents: {} }), null);
+    const ok = parseOnbState({ step: 'done', tasks: ['H-03'], skipped: ['biz'], log: [], consents: { terms: { version: 'f06-pre.1', choice: 'agreed', at: 'x' } }, evil: '<img>' });
+    assert.ok(ok && ok.step === 'done' && ok.portalLoginId === null && !Object.hasOwn(ok, 'evil'));
+    assert.deepEqual(onboardingTodos(ok), [{ id: 'biz', label: '사업자 등록 마치기', view: 'biz' }]);
+  });
+
+  it('엔진 모드: 이어 하기 저장이 있으면 그 자리부터, 끝낸 온보딩은 대화 없이 불러온다(사업자를 건너뛰어도 약관부터 다시 묻지 않음)', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
+    const i = src.indexOf("if (opts.onboarding) onb = new OnboardingFlow(onbPorts);");
+    const body = src.slice(i, src.indexOf('await win.loadURL', i));
+    assert.match(body, /const saved = await loadOnb\(\);/);
+    assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = saved\.step !== 'done';/);
+    assert.ok(body.indexOf('loadOnb') < body.indexOf('!business'), '저장을 먼저 본다');
+    assert.match(src, /persist: fixture \? undefined : persistOnb/);
   });
 
   it('금고 창을 닫으면 ①에 머무르고 안내, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
