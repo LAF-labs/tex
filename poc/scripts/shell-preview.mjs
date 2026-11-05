@@ -10,8 +10,10 @@ import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebCon
 const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset } = await import(`${DESK}/dist/shell-mock.js`);
-const { buildBarHtml, barCss, barPalette, summarize } = await import(`${DESK}/dist/approval-gate.js`);
+const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
+// 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
+const { appHeaders } = await import(`${DESK}/dist/harden.js`);
 
 const ARGS = process.argv.slice(process.argv.findIndex((a) => a.endsWith('shell-preview.mjs')) + 1);
 const W = Number(ARGS[1] ?? 1440);
@@ -71,12 +73,12 @@ app.whenReady().then(async () => {
 
 protocol.handle('pv', async (req) => {
   const p = new URL(req.url).pathname;
-  if (p === '/tokens.css') return new Response(tokensCss(), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bundle.css') return new Response(bundleCss(), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bar.css') return new Response(barCss(barPalette(loadTokens()).palette), { headers: { 'content-type': 'text/css' } });
-  if (p === '/bar.html') return new Response(S.barHtml, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
+  if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
+  if (p === '/bar.css') return new Response(barCss(barPalette(loadTokens()).palette), { headers: appHeaders('text/css', BAR_CSP) });
+  if (p === '/bar.html') return new Response(S.barHtml, { headers: appHeaders('text/html; charset=utf-8', BAR_CSP) });
   const type = p.endsWith('.css') ? 'text/css' : p.endsWith('.js') ? 'text/javascript' : 'text/html; charset=utf-8';
-  return new Response(await fs.readFile(path.join(DESK, 'static/shell', p.slice(1))), { headers: { 'content-type': type } });
+  return new Response(await fs.readFile(path.join(DESK, 'static/shell', p.slice(1))), { headers: appHeaders(type) });
 });
 
 async function open(theme = 'light') {

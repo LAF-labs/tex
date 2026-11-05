@@ -7,11 +7,10 @@ export const GATEWAY_PATHS = { decide: '/v1/decide', respond: '/v1/respond', run
 export type GatewaySurface = keyof typeof GATEWAY_PATHS;
 
 /**
- * 게이트웨이 origin(= DPoP htu의 origin, GATEWAY_PUBLIC_ORIGIN). 클라우드 트랙이 호스트를 정하기 전까지 `.invalid`(RFC 2606,
- * 해석 불가)로 둔다 — 실수로도 나가지 않는다. 앱 내장 상수라 설정·환경 변수로 바꿀 수 없다(D01 §3 내장 허용 목록).
- * 시험은 EgressOptions.testOrigins.gateway로 접속 대상만 바꾸고 htu는 이 값 그대로다.
+ * 게이트웨이 origin(= DPoP htu의 origin, GATEWAY_PUBLIC_ORIGIN). 2026-11-05 팀장 결정. 앱 내장 상수라 설정·환경 변수로
+ * 바꿀 수 없다(D01 §3 내장 허용 목록). 시험은 EgressOptions.testOrigins.gateway로 접속 대상만 바꾸고 htu는 이 값 그대로다.
  */
-export const GATEWAY_ORIGIN = 'https://gateway.sax.invalid';
+export const GATEWAY_ORIGIN = 'https://tax.laf-co.com';
 
 /** DPoP 헤더 생성기(금고 crypto.signVd purpose SAX-dpop-v1). htm·htu·본문 해시를 받아 Authorization·DPoP 헤더를 돌려준다. 토큰·증명은 기록하지 않는다. */
 export interface GatewayAuth {

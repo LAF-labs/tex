@@ -1,6 +1,6 @@
 # ADR-017. PoC 범위와 착수 결정 — 공문 회신 없이 홈택스 범위로 4주 PoC
 
-> 상태: 채택(2026-10-28) · PoC-3 실계정 진입의 상한 집행·실 홈택스 시험 진입점(`pnpm start:hometax`)·안전 쪽 실패 해석은 [ADR-025](ADR-025-poc3-real-account-safety-baseline.md)(2026-11-03, AUDIT-D N-01·N-24) · 관련: ADR-011, ADR-015, D14 §0, 04 §1, 06 Q17
+> 상태: 채택(2026-10-28) · **결정 4(PoC 코드 폐기 전제)와 결정 7(G1은 PoC-12에서 11-27 판정)은 [ADR-035](ADR-035-poc-promotion-two-week-phase1.md)(2026-11-05)로 대체**: PoC 코드를 Phase 1 기반으로 승격, G1은 통합 판정 G1-a·출시 판정 G1-b · PoC-3 실계정 진입의 상한 집행·실 홈택스 시험 진입점(`pnpm start:hometax`)·안전 쪽 실패 해석은 [ADR-025](ADR-025-poc3-real-account-safety-baseline.md)(2026-11-03, AUDIT-D N-01·N-24) · 관련: ADR-011, ADR-015, D14 §0, 04 §1, 06 Q17
 
 ## 맥락
 
