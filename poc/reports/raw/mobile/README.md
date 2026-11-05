@@ -6,12 +6,12 @@
 
 | 파일 | 화면(08 화면 ID) | 확인한 것 |
 |---|---|---|
-| 00-keychain-fail-closed-unsigned.png | 잠금 | 서명 없는 빌드에서 키체인이 −34018로 실패하면 약한 저장소로 물러서지 않고 멈춘다 |
-| 01-lock-first-run.png | S-03 첫 실행 | 이 폰에만 있는 열쇠 만들기 |
+| 00-keychain-fail-closed-unsigned.png | P-01 잠금 | 서명 없는 빌드에서 키체인이 −34018로 실패하면 약한 저장소로 물러서지 않고 멈춘다 |
+| 01-lock-first-run.png | P-01 잠금(첫 실행) | 이 폰에만 있는 열쇠 만들기 |
 | 02-home-unpaired.png | 홈 | 연결 전 |
-| 03-pair-scan.png | P-01 QR 스캔 | 앱 안 카메라 |
-| 04-pair-sas.png | P-01 SAS | 6자리 대조. 틀린 SAS는 거부(남은 횟수 2), 맞는 SAS로 paired |
-| 05-pair-done.png | P-01 완료 | |
+| 03-pair-scan.png | S-03 폰 연결: QR 스캔(폰 쪽) | 앱 안 카메라 |
+| 04-pair-sas.png | S-03 폰 연결: SAS | 6자리 대조. 틀린 SAS는 거부(남은 횟수 2), 맞는 SAS로 paired |
+| 05-pair-done.png | S-03 폰 연결 완료 | |
 | 06-home-pc-online.png | 홈 | IK 세션이 WS 릴레이로 열림 → "사무실 PC 켜짐" |
 | 07-capture-camera-sim.png | P-08 촬영 | 앱 안 카메라 + 가이드 틀(시뮬레이터 카메라는 빈 화면) + DEV 빌드 전용 견본 버튼 |
 | 08a/08b-capture-confirm-*.png | P-08 확인 | 폰 iOS Vision OCR + 파서: 12000 / 2026-11-01 / 가나다상회 / 220-81-62517 |
