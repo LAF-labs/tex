@@ -1,0 +1,177 @@
+// IPC 라우터(M4-1, D01 §2.1, D11 §4 IPC 행): 프로세스 사이 채널 이름과 렌더러 요청 모양을 한곳에 둔다.
+// - renderer → main: 호출 채널 하나(IPC.call, invoke). main → renderer: 이벤트 채널 하나(IPC.event, ShellEvent). preload는 이 둘만 연다.
+// - main → 창 preload: 포트 넘김 채널(IPC.secretPort 비밀 입력 창, IPC.docparsePort docparse 샌드박스). main은 포트 내용을 보지 않는다.
+// - main ↔ engine: 중계 통로(엔진 parentPort, @sax/engine/protocol READ_QUERIES·COMMANDS)와 게이트 포트(GatePortMessage, answerGate 하나). engine-host.ts.
+// - main ↔ vault: control 포트(rpc 답 + VaultControlEvent 알림)와 비밀 입력 포트(창 직결, 결속값과 함께). engine-host.ts.
+// 렌더러 요청은 SHELL_METHODS 표로 검사한다: 표에 없는 메서드는 unknown_method, 표에 없는 필드·틀린 형·넘친 길이는 bad_request.
+// JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
+// Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
+import type { WebFrameMain } from 'electron';
+
+export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
+export type { EngineInit, EnginePortal } from '@sax/engine/protocol';
+
+/** 채널 이름. preload(.cjs)는 이 파일을 불러올 수 없어 글자를 그대로 쓴다(tests/shell-ipc.test.ts가 맞춰 본다). */
+export const IPC = {
+  call: 'sax',
+  event: 'sax:event',
+  secretPort: 'vault-secret-port',
+  docparsePort: 'docparse-port',
+} as const;
+
+/** 금고 control 포트로 main에 오는 알림(secret.needed·진행 안내 등). 판단은 받는 쪽이 main 내장 표로 한다. */
+export interface VaultControlEvent {
+  t: 'ev';
+  name: string;
+  data: unknown;
+}
+
+// ---- 렌더러 요청 표 ----
+
+type Opt = { required?: false };
+type Req = { required: true };
+export type FieldSpec =
+  | ({ t: 'string'; max: number; nullable?: boolean } & (Opt | Req))
+  | ({ t: 'number' } & (Opt | Req))
+  | ({ t: 'boolean' } & (Opt | Req))
+  | ({ t: 'enum'; of: readonly string[]; nullable?: boolean } & (Opt | Req))
+  | ({ t: 'object'; fields: Readonly<Record<string, FieldSpec>> } & (Opt | Req));
+export type MethodSpec = Readonly<Record<string, FieldSpec>>;
+
+type Nul<F> = F extends { nullable: true } ? null : never;
+type ValueOf<F> = F extends { t: 'string' }
+  ? string | Nul<F>
+  : F extends { t: 'number' }
+    ? number
+    : F extends { t: 'boolean' }
+      ? boolean
+      : F extends { t: 'enum'; of: readonly (infer E)[] }
+        ? E | Nul<F>
+        : F extends { t: 'object'; fields: infer O }
+          ? ParamsOf<O>
+          : never;
+type RequiredKeys<S> = { [K in keyof S]: S[K] extends { required: true } ? K : never }[keyof S];
+type Simplify<T> = { [K in keyof T]: T[K] };
+/** 표의 필드 정의에서 처리기 인자 형을 만든다(required가 아닌 필드는 없을 수 있다). */
+export type ParamsOf<S> = Simplify<{ [K in RequiredKeys<S>]: ValueOf<S[K]> } & { [K in Exclude<keyof S, RequiredKeys<S>>]?: ValueOf<S[K]> }>;
+
+/** 서류·실행·후보 id. 렌더러가 받은 id를 그대로 돌려보낸다. */
+const ID = { t: 'string', max: 128, required: true } as const;
+const DOC_FIELDS = {
+  docType: { t: 'string', max: 64, nullable: true },
+  issuedOn: { t: 'string', max: 32, nullable: true },
+  expiresOn: { t: 'string', max: 32, nullable: true },
+} as const;
+const G24_DOC = { t: 'enum', of: ['주민등록표 등본', '주민등록표 초본'], required: true } as const;
+
+/**
+ * 셸 렌더러가 부를 수 있는 메서드 전부. 승인·게이트·바 숨김 경로는 여기에 없다(ADR-021, tests/h01-guards).
+ * 길이 상한은 넘치면 거부하는 상한이다(처리기는 화면에 맞는 길이로 다시 자른다).
+ */
+export const SHELL_METHODS = {
+  'shell.bootstrap': {},
+  'profile.set': { kind: { t: 'enum', of: ['business', 'personal'], required: true } },
+  'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
+  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
+  'run.prepare': { id: ID },
+  'run.stop': { id: ID },
+  'docs.list': {},
+  // 열기 암호 길이 판정(password_too_long)은 가져오기 쪽이 한다. 여기 상한은 그보다 넉넉하다.
+  'docs.import': { pick: { t: 'boolean' }, pickId: { t: 'string', max: 128 }, password: { t: 'string', max: 4096 } },
+  // 렌더러는 늘 열기 암호를 묻던 pickId를 보낸다. 빈 호출은 받지 않는다.
+  'docs.importCancel': { pickId: { t: 'string', max: 128, required: true } },
+  'docs.update': { id: ID, patch: { t: 'object', fields: DOC_FIELDS }, seen: { t: 'object', fields: DOC_FIELDS } },
+  'docs.open': { id: ID },
+  // 같은 파일을 파일 관리자에서 보여 준다(결과 카드 [폴더 열기], #32).
+  'docs.reveal': { id: ID },
+  'counterparties.list': {},
+  // 시연 DB에서만(fixture): 거래처 추가·수정, 발급 인증 기본 바꾸기(#32). id가 null이면 새 거래처. 폼 값은 FormData.get이라 null일 수 있다.
+  'counterparty.save': {
+    id: { t: 'string', max: 128, nullable: true },
+    name: { t: 'string', max: 200, nullable: true },
+    bizNo: { t: 'string', max: 40, nullable: true },
+    rep: { t: 'string', max: 100, nullable: true },
+    email: { t: 'string', max: 320, nullable: true },
+    item: { t: 'string', max: 200, nullable: true },
+  },
+  'auth.setDefault': { kind: { t: 'enum', of: ['simple', 'cert', 'card'], required: true } },
+  'g24.candidates': { doc: G24_DOC, startedAt: { t: 'number', required: true } },
+  'g24.save': { id: ID, doc: G24_DOC },
+  'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },
+} as const satisfies Record<string, MethodSpec>;
+
+export type ShellMethod = keyof typeof SHELL_METHODS;
+/** 셸 처리기 표의 형. 표와 처리기의 키가 어긋나면 컴파일되지 않는다. */
+export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_METHODS)[M]>) => unknown };
+
+/**
+ * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
+ * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
+ */
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000 };
+
+const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+
+function checkField(f: FieldSpec, v: unknown): boolean {
+  if (v === null) return (f.t === 'string' || f.t === 'enum') && f.nullable === true;
+  switch (f.t) {
+    case 'string':
+      return typeof v === 'string' && v.length <= f.max;
+    case 'number':
+      return typeof v === 'number' && Number.isFinite(v);
+    case 'boolean':
+      return typeof v === 'boolean';
+    case 'enum':
+      return typeof v === 'string' && f.of.includes(v);
+    case 'object':
+      return isPlain(v) && checkParams(f.fields, v);
+  }
+}
+
+/** 표에 없는 필드가 있거나, 필수 필드가 없거나, 형이 틀리면 false. undefined 값은 없는 필드로 본다. */
+export function checkParams(spec: MethodSpec, params: Record<string, unknown>): boolean {
+  for (const [k, v] of Object.entries(params)) {
+    if (v === undefined) continue;
+    const f = Object.hasOwn(spec, k) ? spec[k] : undefined;
+    if (!f || !checkField(f, v)) return false;
+  }
+  for (const [k, f] of Object.entries(spec)) if (f.required && params[k] === undefined) return false;
+  return true;
+}
+
+/** 렌더러 요청 하나를 검사한다. 메서드가 표에 없으면 unknown_method(모양보다 먼저), 모양이 틀리면 bad_request. */
+export function parseRendererRequest<T extends Record<string, MethodSpec>>(methods: T, req: unknown): { method: keyof T & string; params: Record<string, unknown> } {
+  if (!isPlain(req) || typeof req.method !== 'string') throw new Error('bad_request');
+  const method = req.method;
+  if (!Object.hasOwn(methods, method)) throw new Error('unknown_method');
+  const params = req.params ?? {};
+  if (!isPlain(params) || !checkParams(methods[method]!, params)) throw new Error('bad_request');
+  return { method, params };
+}
+
+/** 보낸 프레임이 그 페이지의 최상위 프레임인지(iframe에 같은 페이지를 넣어 부르는 길을 막는다). */
+export function isTopFrame(frame: Pick<WebFrameMain, 'url' | 'parent'> | null | undefined, url: string): boolean {
+  return !!frame && frame.url === url && frame.parent === null;
+}
+
+/**
+ * 셸 요청 처리: 최상위 프레임 확인 → 표 검사 → 처리기. 보낸 창(e.sender) 확인은 부르는 쪽이 먼저 한다(창마다 다르다).
+ * 처리기 오류는 그대로 던진다(코드만 담는 것은 처리기 몫).
+ */
+export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> | null | undefined, url: string, handlers: ShellHandlers, req: unknown): Promise<unknown> {
+  if (!isTopFrame(frame, url)) throw new Error('forbidden');
+  const { method, params } = parseRendererRequest(SHELL_METHODS, req);
+  return (handlers[method] as (p: Record<string, unknown>) => unknown)(params);
+}
+
+// ---- main → renderer 이벤트 ----
+
+/** 렌더러에 보내는 이벤트 전부. 바 내용·좌표·승인 근거는 보내지 않는다(배치용 신호만, ADR-021). */
+export type ShellEvent =
+  | { type: 'bar'; active: true; band: boolean }
+  | { type: 'bar'; active: false; reason: string }
+  | { type: 'bar-layout'; band: boolean }
+  | { type: 'run'; run: unknown }
+  | { type: 'doc'; doc: unknown }
+  | { type: 'docs-reload' }
+  | { type: 'board'; board: unknown };

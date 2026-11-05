@@ -14,3 +14,5 @@ export * from './runs.ts';
 export * from './h01/signals.ts';
 export * from './policy.ts';
 export { envProblems } from './env-guard.ts';
+// 엔진 코어(M1-4~). PoC H-01 타입과 이름이 겹치므로 네임스페이스로 내보낸다. 새 코드는 '@sax/engine/core'를 쓴다.
+export * as core from './core/index.ts';

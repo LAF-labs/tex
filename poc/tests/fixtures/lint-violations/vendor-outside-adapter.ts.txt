@@ -1,0 +1,8 @@
+// as: packages/engine/src/judge-probe.ts
+// expect: no-restricted-imports=4
+// 공급사 SDK는 model/adapters/* 밖에서 쓸 수 없다(ADR-015). 타입만 가져오는 import도 막는다.
+import OpenAI from 'openai';
+import type { DecisionCreateParams } from 'openai/resources/decisions';
+import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenAI } from '@google/genai';
+export const c = [OpenAI, Anthropic, GoogleGenAI] as unknown as DecisionCreateParams[];
