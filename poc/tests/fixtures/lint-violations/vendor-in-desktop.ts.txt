@@ -1,0 +1,6 @@
+// as: apps/desktop/src/chat-probe.ts
+// expect: no-restricted-imports=2
+// 데스크톱 main에서 공급사 SDK·송신 모듈 직접 사용.
+import OpenAI from 'openai';
+import http from 'node:http';
+export const o = [OpenAI, http];
