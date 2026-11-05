@@ -1,28 +1,13 @@
 import type { EventLog } from '@sax/platform';
 import { HUMAN_SETTLE_MS, SECRET_TTL_MS, SELF_SCAN_TIMEOUT_MS } from '../constants.ts';
 import { scanDir } from '../leak/scanner.ts';
-import type { SecretInputBind, VaultEventName } from '../protocol.ts';
+import type { FillReason, FillRequest, OneShotBind, VaultEventName } from '../protocol.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
 import { KNOWN_VALUE_MIN_LEN, knownValueVariants } from '../relay/sanitize.ts';
 
 type Json = Record<string, unknown>;
 
-export type FillReason = 'denied' | 'not_found' | 'blocked_by_module' | 'origin_not_allowed' | 'not_secret_slot' | 'secret_window_refused' | 'secret_missing';
-
-export type SecretKind = SecretInputBind['kind'];
-
-export interface FillRequest {
-  runId: string;
-  targetId: string;
-  /** 'main' 또는 CDP frameId. */
-  frame: string;
-  /** CSS 셀렉터(PoC). Phase 1은 셀렉터 사전 ElementLocator. */
-  element: string;
-  secret: { kind: string; scope: string; row?: number };
-  /** 셀렉터 사전 칸의 비밀 종류·용도(I-7, N-46). 요청 kind와 같을 때만 입력한다. */
-  slot: { secretKind: SecretKind; purpose: 'login' | 'sign' };
-}
 
 interface HeldSecret {
   runId: string;
@@ -58,7 +43,7 @@ export class OneShotSecrets {
     return v;
   }
 
-  provide(bind: SecretInputBind, bytes: Uint8Array): void {
+  provide(bind: OneShotBind, bytes: Uint8Array): void {
     const k = this.key(bind.runId, bind.kind, bind.scope, bind.row);
     this.drop(k)?.bytes.fill(0);
     const timer = setTimeout(() => {
@@ -121,7 +106,14 @@ export interface SecretOpsOptions {
   emit?: VaultEmit;
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남도록 금고가 들고 있다. */
   usedSlots?: Set<string>;
+  /**
+   * 저장된 사람 비밀 칸 하나(ADR-026). 1회용 값이 없을 때만 부른다. 보안카드는 row, 포털은 pw.
+   * 금고가 닫혔으면 vault_locked, suspect면 credential_suspect.
+   */
+  stored?: (kind: string, scope: string, row?: number) => Promise<StoredRead>;
 }
+
+export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
 
 /** 실행당 종류별 1회 키(보안카드는 칸별). */
 export const slotKey = (runId: string, kind: string, row?: number): string => `${runId}|${kind}|${row ?? ''}`;
@@ -191,10 +183,16 @@ export class SecretOps {
     return trigger === 'local' || trigger === 'remote';
   }
 
+  /** 타이피스트: remote 실행은 시작 게이트 통과 플래그가 있을 때만(ADR-029 결정 2, D-34(N-13)). */
+  private fillTriggerAllowed(req: FillRequest): boolean {
+    const trigger = this.runTriggers.get(req.runId);
+    return trigger === 'local' || (trigger === 'remote' && req.startGate === true);
+  }
+
   async fill(req: FillRequest): Promise<{ ok: boolean; reason?: FillReason }> {
     const t = this.relay.exposedTarget(req.targetId);
     if (!t) return { ok: false, reason: 'not_found' };
-    if (!this.triggerAllowed(req.runId)) return { ok: false, reason: 'denied' };
+    if (!this.fillTriggerAllowed(req)) return { ok: false, reason: 'denied' };
     // 요청 kind와 사전 칸의 kind가 같아야 한다(「또는」이 아니라 「그리고」, N-46).
     if (!req.slot || req.slot.secretKind !== req.secret?.kind) return { ok: false, reason: 'not_secret_slot' };
     const used = slotKey(req.runId, req.secret.kind, req.secret.row);
@@ -219,7 +217,14 @@ export class SecretOps {
     const p0 = await this.probe(t, el.objectId);
     if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
     if (!p0.active) return { ok: false, reason: 'denied' };
-    const secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope, req.secret.row);
+    let secret = this.secrets.take(req.runId, req.secret.kind, req.secret.scope, req.secret.row);
+    if (!secret && this.opts.stored) {
+      // 저장된 사람 비밀(세션 결박). 요청된 칸 하나만 복호한다.
+      const r = await this.opts.stored(req.secret.kind, req.secret.scope, req.secret.row);
+      if (r.ok) secret = r.bytes;
+      else if (r.reason === 'vault_locked' || r.reason === 'credential_suspect') return { ok: false, reason: r.reason };
+      // corrupt·kek_unavailable·secret_missing: 저장본을 못 쓰니 사람에게 1회용으로 받는다(아래 secret.needed).
+    }
     if (!secret) {
       // 비밀 창은 금고가 부른다(N-44): main만 창을 열고, 값은 결속된 secretInput 포트로 온다.
       const data: Json = { runId: req.runId, targetId: t.targetId, kind: req.secret.kind, scope: req.secret.scope };
