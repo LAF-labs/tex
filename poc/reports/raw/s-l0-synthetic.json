@@ -1,6 +1,6 @@
 {
   "corpus": "synthetic-v1",
-  "generatedAt": "2026-10-29T01:46:17.697Z",
+  "generatedAt": "2026-11-05T08:06:21.076Z",
   "rows": [
     {
       "bundle": "screen_state_v2",
@@ -273,14 +273,20 @@
       "mode": "both",
       "signal": "서류·작업 사전 15군(정확히 1군 일치, 세무 키워드 없음)",
       "callSaving": "없음: 같은 번들의 mentions_tax_advice가 모델 필수",
-      "n": 176,
-      "answered": 104,
+      "n": 304,
+      "answered": 112,
       "correct": 104,
-      "abstainRate": 0.409,
-      "accuracy": 1,
+      "abstainRate": 0.632,
+      "accuracy": 0.9286,
       "qualifiesIfReal": false,
       "promoted": false,
-      "errors": []
+      "errors": [
+        "ir.27.0: fourins.paid.cert ≠ payroll.ledger",
+        "ir.27.1: fourins.paid.cert ≠ payroll.ledger",
+        "ir.27.2: fourins.paid.cert ≠ payroll.ledger",
+        "ir.27.3: fourins.paid.cert ≠ payroll.ledger",
+        "ir.27.4: fourins.paid.cert ≠ payroll.ledger"
+      ]
     },
     {
       "bundle": "intent_route_v1",
@@ -289,10 +295,10 @@
       "mode": "none",
       "signal": "키워드 휴리스틱은 위양성(R8)",
       "callSaving": "—",
-      "n": 0,
+      "n": 304,
       "answered": 0,
       "correct": 0,
-      "abstainRate": null,
+      "abstainRate": 1,
       "accuracy": null,
       "qualifiesIfReal": false,
       "promoted": false,

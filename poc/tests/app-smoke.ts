@@ -10,6 +10,7 @@ import path from 'node:path';
 import { isEncryptedFile } from '@sax/db';
 import { appPaths, defaultAppRoot } from '@sax/platform';
 import { smokeRootPlan } from '../apps/desktop/src/smoke-plan.ts';
+import { measurePath } from './measure-out.ts';
 
 const electronPath = (await import('electron')).default as unknown as string;
 const appDir = path.resolve(import.meta.dirname, '../apps/desktop');
@@ -88,7 +89,10 @@ try {
   await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }).catch((e: Error) => console.error(`임시 앱 루트 정리 실패: ${tmp}: ${e.message}`));
 }
 console.log(JSON.stringify(out, null, 2));
-await fs.writeFile(path.resolve(import.meta.dirname, '../reports/raw/app-smoke.json'), JSON.stringify(out, null, 2));
+// 측정 기록은 measure-out(기본 reports/raw/.local, CI는 SAX_MEASURE_DIR)으로 보낸다(#71, RETRO A-09).
+const smokeOut = measurePath('app-smoke.json');
+await fs.mkdir(path.dirname(smokeOut), { recursive: true });
+await fs.writeFile(smokeOut, JSON.stringify(out, null, 2));
 
 /**
  * 2단계: 임시 앱 루트(macOS·Linux HOME, Windows LOCALAPPDATA)의 userData·logs·crashDumps 자리에 바깥 폴더로 가는 링크를 심고 띄운다.

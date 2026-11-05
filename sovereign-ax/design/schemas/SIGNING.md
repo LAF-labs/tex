@@ -1,6 +1,6 @@
 # 서명 바이트 규약 v1
 
-> 정본. 레지스트리 서명 도구·게시 관문(D09 §8, 클라우드 트랙 `services/registry`, M4-7), 엔진(`poc/packages/engine/src/core/registry.ts`·`loader.ts`·`sxp.ts`·`canon.ts`), 금고·폰·클라우드의 기기·AIK 서명(§8)이 같은 바이트를 쓴다. 팀장 확정 2026-11-05(엔진 PR #52, 레지스트리 대조 결정 포함). 이 문서는 "무엇을 어떤 바이트로 서명하는가"만 정한다. 키·역할·쿼럼·발행 절차는 D09 §8, 수용 규칙은 D03 §3.1·§7.1, 기기 키 계층은 D08 §2.1·§3에 있다. 바꾸려면 ADR이 필요하다.
+> 정본. 레지스트리 서명 도구·게시 관문(D09 §8, 클라우드 트랙 `services/registry`, M4-7), 엔진(`poc/packages/engine/src/core/registry.ts`·`loader.ts`·`datapkg.ts`·`sxp.ts`·`canon.ts`), 금고·폰·클라우드의 기기·AIK 서명(§8)이 같은 바이트를 쓴다. 팀장 확정 2026-11-05(엔진 PR #52, 레지스트리 대조 결정 포함). 이 문서는 "무엇을 어떤 바이트로 서명하는가"만 정한다. 키·역할·쿼럼·발행 절차는 D09 §8, 수용 규칙은 D03 §3.1·§7.1, 기기 키 계층은 D08 §2.1·§3에 있다. 바꾸려면 ADR이 필요하다.
 
 ## 1. 공통
 
@@ -17,6 +17,7 @@
 |---|---|---|---|
 | `manifest.json`(패키지, `.sxp` 안) | JCS(manifest − `signatures`) | 패키지 키 2-of-3 | 인덱스(14일) |
 | `hotfix.json`(`.sxp` 안) | JCS(hotfix − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt`(≤ 14일, 서명 대상에 포함) |
+| 데이터 기술자(`.sxp` kind:data 안, §6) | JCS(descriptor − `signatures`). 본문은 `bodyDigest` = SHA-256(본문 원시 바이트)로 묶는다 | 패키지 키 2-of-3 | 인덱스(14일) |
 | `registry/{channel}/index.json` | JCS(index − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt`(≤ 14일, 서명 대상에 포함, 타임스탬프 없음) |
 | `policy/{ver}.json`·`current.json` | JCS(policy − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3, 또는 1인 긴급 키(엄격하게 보수적일 때만) | `timestamp`(≤ 72시간, 48시간마다 재서명) |
 | `registry/status.json` | JCS(status − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3, 또는 1인 긴급 키(하향·킬스위치 추가만) | `timestamp`(≤ 48시간, 48시간마다 재서명) |
@@ -55,12 +56,17 @@
 
 ## 6. `.sxp` 컨테이너 v1
 
-레지스트리 경로 `/packages/{id}@{version}.sxp`의 바이트 형식이다. 컨테이너 자체는 서명하지 않는다. 인덱스의 `sxpDigest`가 바이트를, 안의 manifest·hotfix 서명(2-of-3)이 내용을 묶는다.
+레지스트리 경로 `/packages/{id}@{version}.sxp`의 바이트 형식이다. 컨테이너 자체는 서명하지 않는다. 인덱스의 `sxpDigest`가 바이트를, 안의 manifest·hotfix·데이터 기술자 서명(2-of-3)이 내용을 묶는다.
 
 - 바이트 = utf8(JCS(객체)), 최대 16MB. 파서는 **정규형만** 받는다(재직렬화가 같지 않으면 `sxp.not_canonical`). 같은 내용이 다른 바이트(다른 `sxpDigest`)로 나오지 않게 하려는 것이다.
 - 패키지(`kind`가 `playbook`·`lookup`인 manifest): `{"format": "sxp/1", "kind": "package", "manifest": b64, "playbook": b64, "selectors": b64, "strings": b64}`. 각 값은 원시 파일 바이트의 표준 base64(패딩 있음, RFC 4648 §4)다. 키는 정확히 이 여섯 개다.
 - **핫픽스도 `.sxp`다**: `{"format": "sxp/1", "kind": "hotfix", "hotfix": b64}`, 값은 hotfix 문서 바이트(JCS 권장)의 표준 base64다. 인덱스는 `hotfix` 채널, 항목 `kind: "hotfix"`, `id` = `<appliesTo.id>.hotfix`, `version` = `<keyEpoch>.<monotonic>.0`이다. semver 순서가 (keyEpoch, monotonic) 순서와 같고, 핫픽스마다 불변 경로가 다르다. 패키지 id는 `.hotfix`로 끝날 수 없다.
-- 데이터 패키지(인덱스 `kind: "data"`, M6-10)의 내부 형식은 이 판의 범위 밖이다.
+- **데이터 패키지**(인덱스 `kind: "data"`, D14 M6-10. 급여 시행일 표처럼 플레이북이 아닌 서명 데이터): `{"format": "sxp/1", "kind": "data", "descriptor": b64, "body": b64}`. 키는 정확히 이 네 개다.
+  - `descriptor`는 기술자 문서 바이트(JCS 권장)의 표준 base64다. 모양은 `{id, version, schema, bodyDigest, keyEpoch, issuedAt, signatures}`([data_descriptor.schema.json](data_descriptor.schema.json))이고, 서명은 패키지 키 2-of-3, 대상은 JCS(descriptor − `signatures`)다(§2).
+  - `body`는 본문 원시 바이트의 표준 base64다. `bodyDigest` = SHA-256(원시 바이트)다. 본문은 UTF-8 JSON이고 모양은 `schema`가 가리키는 스키마가 정한다(예: `sax.rate-tables/v1` = `poc/packages/payroll/schema/rate-table-package.schema.json`, 의미 규칙은 D07 `rate_tables`·D09 §8.4). 본문의 `schema`·`packageVersion`은 기술자의 `schema`·`version`과 같아야 한다.
+  - 인덱스 항목은 `{id, version, kind: "data", sxpDigest, size, rolloutPercent}`이고 `portal`이 없다. `id` = 기술자 `id`, `version` = 기술자 `version`이다. 데이터 id도 `.hotfix`로 끝날 수 없다.
+  - 엔진 수용 순서(`loadDataPackage`): 기술자 스키마 → JCS 가능 → `.hotfix` id 금지 → `keyEpoch` = 핀 → `issuedAt`이 미래가 아님(허용 오차 5분, 핫픽스·status와 같다) → 패키지 키 2-of-3(폐기 반영) → 보류(hold) 중이면 설치본과 같은 기술자만 → `bodyDigest` → 앱이 그 `schema` 이름으로 등록한 검증기(**없으면 거부**, fail-closed) → 본문 `schema`·`packageVersion` 대조 → 같은 id의 버전 내림 금지(같은 버전은 기술자 다이제스트가 같을 때만 재로드).
+  - 수용 오류 코드: `loader.manifest_unparsable`(기술자)·`loader.schema_invalid`(기술자·본문, 규칙 DATA-1·DATA-2)·`registry.key_epoch_mismatch`·`registry.issued_in_future`·`registry.signature_insufficient`·`registry.update_held`·`loader.content_digest_mismatch`·`loader.data_schema_unknown`(새 코드)·`loader.content_unparsable`·`registry.version_rollback`. 폐기 키가 섞이면 이벤트 `registry.key_revoked`.
 - 오류 코드: `sxp.too_large`·`sxp.malformed`·`sxp.not_canonical`·`sxp.unknown_format`(`format` ≠ `sxp/1`).
 
 ## 7. 버전

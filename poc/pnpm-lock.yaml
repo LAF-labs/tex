@@ -205,6 +205,9 @@ importers:
       '@sax/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@sax/docparse':
+        specifier: workspace:*
+        version: link:../../packages/docparse
       '@sax/engine':
         specifier: workspace:*
         version: link:../../packages/engine
@@ -242,6 +245,15 @@ importers:
       better-sqlite3-multiple-ciphers:
         specifier: 13.0.3
         version: 13.0.3
+
+  packages/docparse:
+    dependencies:
+      '@sax/engine':
+        specifier: workspace:*
+        version: link:../engine
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
 
   packages/engine:
     dependencies:
@@ -372,6 +384,9 @@ importers:
       '@sax/engine':
         specifier: workspace:*
         version: link:../../packages/engine
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../../packages/payroll
       '@sax/svc-shared':
         specifier: workspace:*
         version: link:../shared
@@ -400,6 +415,9 @@ importers:
       '@sax/db':
         specifier: workspace:*
         version: link:../packages/db
+      '@sax/docparse':
+        specifier: workspace:*
+        version: link:../packages/docparse
       '@sax/engine':
         specifier: workspace:*
         version: link:../packages/engine
@@ -409,6 +427,9 @@ importers:
       '@sax/net':
         specifier: workspace:*
         version: link:../packages/net
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../packages/payroll
       '@sax/platform':
         specifier: workspace:*
         version: link:../packages/platform

@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@sax/engine": "workspace:*",
+    "@sax/payroll": "workspace:*",
     "@sax/svc-shared": "workspace:*"
   }
 }

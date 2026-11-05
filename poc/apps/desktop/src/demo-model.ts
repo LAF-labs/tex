@@ -4,7 +4,7 @@
 // 보내는 것은 채팅 문장과 가상 거래처 이름 목록뿐이다. 키 없음·HTTP 오류·4초 초과·스키마 불일치면 null(정규식 해석으로 간다).
 import fs from 'node:fs';
 import path from 'node:path';
-import { Egress } from '@sax/net';
+import { DemoEgress } from '@sax/net/demo';
 import type { Parsed } from './shell-mock.ts';
 
 export const DEFAULT_MODEL = 'upstage/solar-pro4';
@@ -141,9 +141,9 @@ export function mergeParsed(model: Parsed, regex: Parsed, text: string): Parsed 
 export class DemoModel {
   private offUntil = 0;
   private readonly cfg: DemoModelConfig;
-  private readonly egress: Egress;
+  private readonly egress: DemoEgress;
 
-  constructor(cfg: DemoModelConfig, egress = new Egress({ demoModel: true, timeoutMs: TIMEOUT_MS })) {
+  constructor(cfg: DemoModelConfig, egress = new DemoEgress({ timeoutMs: TIMEOUT_MS })) {
     this.cfg = cfg;
     this.egress = egress;
   }

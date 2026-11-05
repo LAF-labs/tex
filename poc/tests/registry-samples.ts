@@ -20,6 +20,7 @@ export const SAMPLE_SEEDS = {
   policy: { 'policy-1': 0x31, 'policy-2': 0x32, 'policy-3': 0x33 },
   emergency: { 'emergency-1': 0x41 },
   timestamp: { 'timestamp-1': 0x51 },
+  release: { 'release-1': 0x61 },
 } as const;
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -40,6 +41,26 @@ export function sampleKeys() {
   const roots: TrustRoots = { keyEpoch: 1, rootKeys: map(root), packageKeys: map(pkg), policyKeys: map(pol), emergencyKey: { keyId: emergency!.keyId, key: emergency!.pub }, timestampKey: { keyId: ts!.keyId, key: ts!.pub } };
   return { root, pkg, pol, emergency: emergency!, ts: ts!, roots };
 }
+
+/** 데이터 패키지 샘플 본문(packages/payroll rate-table-package.schema.json 모양, data/rate-tables.json의 비과세 표만). 값은 시험용이다. */
+export const SAMPLE_RATE_TABLES = {
+  schema: 'sax.rate-tables/v1',
+  packageVersion: '2026.11.1',
+  tables: [
+    {
+      id: 'nontax-2026', kind: 'nontax_limits', effectiveFrom: '2026-01-01', effectiveTo: null, rounding: 'floor_1', review: 'needs_review',
+      sources: [{ title: '소득세법 제12조제3호(비과세 근로소득)', url: 'https://www.law.go.kr/법령/소득세법/제12조' }],
+      body: {
+        kinds: {
+          meal: { label: '식대', monthlyLimit: 200000, basis: '소득세법 제12조제3호러목' },
+          vehicle: { label: '자가운전보조금', monthlyLimit: 200000, basis: '소득세법 시행령 제12조제3호' },
+          childcare: { label: '출산·보육수당', monthlyLimit: 200000, basis: '소득세법 제12조제3호머목(자녀 1명당)' },
+          research: { label: '연구보조비', monthlyLimit: 200000, basis: '소득세법 시행령 제12조제12호' },
+        },
+      },
+    },
+  ],
+} as const;
 
 const json = (o: unknown) => Buffer.from(`${JSON.stringify(o, null, 2)}\n`, 'utf8');
 const jcsBytes = (o: unknown) => Buffer.from(canonicalJson(o), 'utf8');
@@ -92,6 +113,14 @@ export function buildSamples(): Map<string, Buffer> {
     doc.signatures = two.map((k) => sigOf(k, canonicalWithout(doc, ['signatures'])));
     return json(doc);
   };
+  // 데이터 패키지(SIGNING.md §6 kind:data): 급여 비과세 한도 표 하나(sax.rate-tables/v1). 기술자 = 패키지 키 2-of-3, bodyDigest = 본문 원시 바이트.
+  const body = json(SAMPLE_RATE_TABLES);
+  const desc: Record<string, unknown> = { id: 'payroll.rate-tables', version: SAMPLE_RATE_TABLES.packageVersion, schema: SAMPLE_RATE_TABLES.schema, bodyDigest: sha256Hex(body), keyEpoch: 1, issuedAt: ISSUED };
+  desc.signatures = two.map((k) => sigOf(k, canonicalWithout(desc, ['signatures'])));
+  const dataSxp = encodeSxp({ kind: 'data', raw: { descriptor: jcsBytes(desc), body } });
+  out.set(pkgPath('payroll.rate-tables', SAMPLE_RATE_TABLES.packageVersion), dataSxp);
+  entries.push({ id: 'payroll.rate-tables', version: SAMPLE_RATE_TABLES.packageVersion, kind: 'data', sxpDigest: sha256Hex(dataSxp), size: dataSxp.length, rolloutPercent: 100 });
+
   out.set('registry/stable/index.json', index('stable', entries, 7));
   out.set('registry/hotfix/index.json', index('hotfix', [{ ...hfName, kind: 'hotfix', portal: 'hometax', sxpDigest: sha256Hex(hfSxp), size: hfSxp.length, rolloutPercent: 100 }], 3));
 

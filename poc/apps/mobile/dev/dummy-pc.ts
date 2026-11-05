@@ -5,6 +5,7 @@
 //   POST /dev/sas  {"code":"123456"}  사용자가 PC에 6자리를 입력하는 것을 대신한다
 //   POST /v1/device-tokens        계정 서비스 대역(AIK 인증서 + DPoP → 15분 토큰, dev/dev-auth.ts)
 //   WSS  /v1/rooms/:id, /v1/mailboxes/:id/live   릴레이 대역(dev/relay-server.ts, services/relay/API.md)
+//   POST/GET /v1/mailboxes/:id/envelopes·ack·bundle   릴레이 HTTPS 큐 대역. 더미 PC는 번들(Q_D)을 올리고 2초마다 큐를 비운다.
 //   GET  /dev/status              페어링·수신 상태(금액·사진 내용 없음)
 // 받은 사진·현금매출은 dev/out/에 쓴다(git 제외). 로그에 금액·사진·비밀을 넣지 않는다.
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -13,7 +14,8 @@ import { join } from 'node:path';
 import { WebSocket as WS } from 'ws';
 import {
   AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
-  ed25519Keygen, initialDeviceList, issueCert, requestDeviceToken, sha256Hash, softNoiseStatic, softSigner, toHex, uuid4, wsRelayClient, x25519Keygen,
+  drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, sha256Hash,
+  softNoiseStatic, softSigner, toHex, uuid4, wsRelayClient, x25519Keygen,
   type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
 import { DevAuth } from './dev-auth.ts';
@@ -57,7 +59,7 @@ const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 
 let pairing: DesktopPairing | null = null;
 let qr: { text: string; exp: number } | null = null;
 const pairs: PairRecord[] = [];
-const received = { receipts: 0, cash: 0 };
+const received = { receipts: 0, cash: 0, viaQueue: 0 };
 
 async function startPairing(): Promise<string> {
   if (pairing && qr && pairing.state === 'waiting_phone' && !pairing.expired) return qr.text;
@@ -80,22 +82,26 @@ async function startPairing(): Promise<string> {
   return o.qr;
 }
 
-async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array; write: Uint8Array }) {
+async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array; write: Uint8Array }, phoneVm: Uint8Array, mbxEpoch: number) {
+  const stored = new Set<string>();
   const q = new ReceiveQueue({
-    hasReceipt: async () => false,
+    hasReceipt: async (id) => stored.has(id),
     storeReceipt: async ({ msgId, offer, jpeg }) => {
       writeFileSync(join(OUT, 'received', `${msgId}.jpg`), jpeg);
       writeFileSync(join(OUT, 'received', `${msgId}.json`), JSON.stringify(offer, null, 2));
+      stored.add(msgId);
       received.receipts++;
       log(`receipt stored ${msgId} (${jpeg.length} B)`);
     },
-    hasCash: async () => false,
+    hasCash: async (id) => stored.has(id),
     storeCash: async ({ entry }) => {
       writeFileSync(join(OUT, 'received', `cash-${entry.day}.json`), JSON.stringify(entry));
+      stored.add(entry.msgId);
       received.cash++;
       log(`cash stored ${entry.day}`);
     },
   });
+  void serveQueue(rec, mbxId, tok, phoneVm, mbxEpoch, q);
   for (;;) {
     let link: Link;
     try {
@@ -120,12 +126,36 @@ async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uin
   }
 }
 
+/** 큐 수신: Q_D 번들을 올리고(실제 PC는 7일마다 갈고 금고가 hpkeOpen한다) 2초마다 큐를 비운다. */
+async function serveQueue(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array; write: Uint8Array }, phoneVm: Uint8Array, mbxEpoch: number, receive: ReceiveQueue) {
+  const qd = x25519Keygen();
+  const rq = relayQueue({ http: fetchJson, origin: ORIGIN, mbxId, tok, deviceAuth: async (htm, htu) => deviceAuthHeaders(await tokens.token(), keys.vd, htm, htu) });
+  await rq.putBundle(await makeQBundle(keys.vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow() }));
+  log('queue bundle published');
+  let seqMax = 0;
+  for (;;) {
+    try {
+      const r = await drainQueue({
+        queue: rq, receive, pairId: rec.pairId, phoneVm, mbxEpoch,
+        hpkeOpen: async ({ enc, ct, info, aad }) => hpkeOpen(qd.secretKey, enc, info, aad, ct),
+        seqMax: { get: async () => seqMax, set: async (s) => void (seqMax = s) },
+      });
+      if (r.handled || r.dropped) log(`queue drained: ${r.handled} handled, ${r.dropped} dropped`);
+      received.viaQueue += r.handled;
+    } catch (e) {
+      log('queue error', (e as Error).message);
+    }
+    await new Promise((res) => setTimeout(res, 2000));
+  }
+}
+
 const server = createServer(async (req, res) => {
   const send = (code: number, body: string, type = 'application/json') => {
     res.writeHead(code, { 'content-type': type });
     res.end(body);
   };
   try {
+    if (await relay.handleHttp(req, res)) return;
     if (req.method === 'POST' && req.url === '/v1/device-tokens') {
       let body = '';
       for await (const c of req) body += c;
@@ -148,7 +178,7 @@ const server = createServer(async (req, res) => {
       pairs.push(rec);
       r.result.channel.close();
       log('paired', rec.pairId, r.result.phone.platform);
-      void serveMailbox(rec, r.result.mbxId, { read: r.result.tokRead, write: r.result.tokWrite });
+      void serveMailbox(rec, r.result.mbxId, { read: r.result.tokRead, write: r.result.tokWrite }, r.result.phone.Vm, r.result.mbxEpoch);
       return send(200, JSON.stringify({ ok: true, pairId: rec.pairId }));
     }
     send(404, '{}');
