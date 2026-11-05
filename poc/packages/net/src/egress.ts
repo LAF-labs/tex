@@ -37,8 +37,7 @@ export interface GatewayConfig {
 export type GatewayCall =
   | { surface: 'decide'; body: GatewayDecideBody }
   | { surface: 'respond'; body: GatewayRespondBody }
-  | { surface: 'runTokens' }
-  | { surface: 'usage' };
+  | { surface: 'runTokens'; body: { runId: string } | { chatSessionId: string } };
 
 export interface EgressOptions {
   /** 테스트 전용: 목적지 origin을 로컬 모의 서버로 바꾼다. 앱 진입점은 쓰지 않는다. */
@@ -138,17 +137,21 @@ export class Egress {
     if (req.surface === 'decide') this.gatewayGuard.inspect('decide', req.body);
     else if (req.surface === 'respond') this.gatewayGuard.inspect('respond', req.body);
     const path = GATEWAY_PATHS[req.surface];
-    const method = req.surface === 'usage' ? 'GET' : 'POST';
-    const body = method === 'POST' ? JSON.stringify('body' in req ? req.body : {}) : undefined;
-    const auth = await gw.auth.headers({ method, url: GATEWAY_ORIGIN + path, bodySha256: body === undefined ? null : sha256(body) });
+    if (req.surface === 'runTokens') {
+      const scope = req.body as { runId?: unknown; chatSessionId?: unknown };
+      const id = Object.keys(scope).length === 1 ? (scope.runId ?? scope.chatSessionId) : undefined;
+      if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{8,64}$/.test(id)) throw new EgressError('path_not_allowed');
+    }
+    const body = JSON.stringify(req.body);
+    const auth = await gw.auth.headers({ method: 'POST', url: GATEWAY_ORIGIN + path, bodySha256: sha256(body) });
     const origin = this.opts.testOrigins?.gateway ?? GATEWAY_ORIGIN;
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), gw.timeoutMs ?? 20_000);
     const started = performance.now();
     try {
       const res = await fetch(origin + path, {
-        method,
-        headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), accept: 'application/json', ...auth },
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', ...auth },
         body,
         signal: ctl.signal,
         redirect: 'error',

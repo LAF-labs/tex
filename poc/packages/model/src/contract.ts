@@ -1,5 +1,5 @@
 // D04 §1 계약(공급사 무관). 입력은 RedactedText 브랜드만 받는다(D06 §8).
-import type { Egress, RunScope } from '@sax/net';
+import { isRunTokenResponse, type Egress, type RunScope } from '@sax/net';
 import type { RedactedText } from '@sax/redaction';
 
 export type { RedactedText };
@@ -14,6 +14,16 @@ export type ChatSessionId = string & { readonly __brand: 'ChatSessionId' };
 export function localRunToken(egress: Egress, scope: RunScope): RunToken {
   if (!egress.guard) throw new Error('egress without modelGuard');
   return egress.guard.issueRunToken(scope) as RunToken;
+}
+
+/**
+ * 게이트웨이 경로의 실행 토큰(POST /v1/run-tokens). 범위(runId·chatSessionId)당 예산은 서버가 쌓으므로 다시 받아도 초기화되지 않는다.
+ * 토큰은 서버가 서명·검증하고 클라이언트는 그대로 싣기만 한다.
+ */
+export async function gatewayRunToken(egress: Egress, scope: RunScope): Promise<RunToken> {
+  const r = await egress.toGateway({ surface: 'runTokens', body: scope });
+  if (!isRunTokenResponse(r)) throw new Error('gateway.bad_response');
+  return r.runToken as RunToken;
 }
 
 export type Provider = 'openai' | 'upstage' | 'rules';
