@@ -51,6 +51,11 @@ export const ERROR_STATUS = {
   'registry.expired': 422,
   'registry.issued_in_future': 422,
   'registry.not_found': 404,
+  'registry.revocation_stale': 422,
+  'registry.not_conservative': 422,
+  'registry.portal_blocked': 422,
+  'registry.content_digest_mismatch': 422,
+  'registry.unauthorized': 401,
   'relay.mailbox_limit': 409,
   'relay.queue_full': 429,
   'relay.mailbox_not_found': 404,
@@ -61,7 +66,7 @@ export type ErrorCode = keyof typeof ERROR_STATUS;
 
 /** D16 표에 아직 없는 코드(추가 제안). 테스트가 ERROR_STATUS와 이 목록의 합이 D16 기존 + 제안과 같은지 본다. */
 export const PROPOSED_D16: readonly ErrorCode[] = (Object.keys(ERROR_STATUS) as ErrorCode[]).filter(
-  (c) => !['gateway.unauthorized', 'gateway.quota_exceeded', 'gateway.digest_mismatch', 'gateway.param_rejected', 'gateway.upstream_error', 'gateway.pii_tripwire', 'account.recovery_hold', 'policy.rate_limited', 'registry.signature_insufficient', 'registry.version_jump_rejected', 'registry.key_revoked', 'registry.status_stale'].includes(c),
+  (c) => !['gateway.unauthorized', 'gateway.quota_exceeded', 'gateway.digest_mismatch', 'gateway.param_rejected', 'gateway.upstream_error', 'gateway.pii_tripwire', 'account.recovery_hold', 'policy.rate_limited', 'registry.signature_insufficient', 'registry.version_jump_rejected', 'registry.key_revoked', 'registry.status_stale', 'registry.revocation_stale'].includes(c),
 );
 
 export class ServiceError extends Error {
