@@ -1,5 +1,6 @@
 # D04. 모델 계층
 
+> 팀장 결정 2026-11-05: §5에 `unknown` 사유 목록(`questions_digest_mismatch`·`gateway:*` 등)과 respond의 `toolset_digest_mismatch`를 적음(모델·egress PR #48).
 > 스키마 정렬 2026-11-05(PR #45): §3 `form_ready_v2` 행의 `secretSlot`을 `secretKind` 항목으로, 엔진의 `ready`가 결과 이름이 아님을 명시.
 > 제품 정의 반영 2026-11-05: `intent_route_v1` 선택지에 급여대장·세무사 꾸러미·사업용 카드 [최신화]를 더하고(카탈로그 18개), `mentions_tax_advice`에서 급여 원천징수·4대보험 계산을 뺐다(§3, ADR-031 결정 7·ADR-032 결정 11). 세 기능 자체는 모델을 부르지 않는다.
 > AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-029, D19 §3.5 D-47·D-26).
@@ -217,6 +218,11 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 - 임계값은 번들 정의의 매핑 조건에 산다. 플레이북은 바꿀 수 없다.
 - 비가역 스텝 직후 판정(`issue_result_v2`)은 0.95. 그 외 0.85. `blocked`·`security_warning`은 0.80에서 보수적으로 중단한다(거짓 양성 비용 < 거짓 음성 비용).
 - `unknown`은 항상 "자동 진행 금지". 다음 행동은 플레이북의 `on.unknown`(대개 handoff).
+- **`unknown` 사유**(`DecideResult.reason`, 타입 `UnknownReason`. 정본은 `poc/packages/model/src/contract.ts`, PR #48): `mapping_unknown`, `core_refusal`, `bundle_not_found`, `bundle_digest_mismatch`, `input_too_large`, `provider_context_exceeded`, `adapter_incompatible`, `no_threshold_profile`, `profile_uncalibrated`, `model_snapshot_mismatch`, `answer_names_mismatch`, `answer_type_mismatch`, `answer_value_invalid`, `injection_prefilter`, `rules_incomplete`, 그리고 다음이 2026-11-05에 더해졌다.
+  - `questions_digest_mismatch`: 게이트웨이 응답의 `questionsDigest`(공급사로 보낸 질문 목록 해시)가 로컬 번들과 다르다(C-24).
+  - `gateway:<code>`: 게이트웨이 오류 응답(D16 `gateway.*`). 재시도는 게이트웨이만 하고 클라이언트는 하지 않는다.
+  - 접두 사유 `provider:<code>`(공급사 오류)와 `guard:<code>`(송신 전 로컬 검사, D16 `egress.*` 보안 이벤트와 짝)도 같은 목록이다.
+  - respond(Terra)는 응답의 `toolsetDigest`가 로컬 툴셋과 다르면 `status: 'incomplete'`, 사유 `toolset_digest_mismatch`다. 결과를 쓰지 않는 것은 `unknown`과 같다.
 - 실행 전체에서 연속 `unknown` 2회(스텝 무관)면 L3(사람). `unknown`의 목적지는 V-07b로 제한된다.
 - 간편인증 PUSH 대기는 `decide` 폴링이 아니라 결정적 `wait`(텍스트·요소 변화)로 하고 상태 확인은 종료 시 1회만.
 - **응답은 비신뢰 입력이다** (감사 C C-24): 결과 매핑·임계값은 게이트웨이가 아니라 **로컬 번들 정의**로 계산한다. 응답의 질문 이름이 로컬 번들과 다르거나 빠지면 `unknown`이다. 차단 신호는 모델 판정 외에 결정적 신호(차단 안내 URL·문구 사전, D03)도 함께 본다.

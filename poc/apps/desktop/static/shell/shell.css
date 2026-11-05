@@ -44,13 +44,35 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 .col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
 .thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; }
 .thread-scroll .sx-thread { padding: var(--space-4) 0 var(--space-5); max-width: none; }
-.sx-today { margin-top: 14px; flex: none; height: 36px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); display: flex; align-items: center; gap: var(--space-4); padding: 0 14px; font-size: 13px; color: var(--ink-2); }
-.today-item { border: 0; background: none; color: inherit; padding: 0; cursor: pointer; font-size: 13px; }
-.today-item:hover { color: var(--ink); }
-.today-item b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
-.today-label { margin-left: auto; }
-.today-item.is-turn b { color: var(--accent); }
-.today-item.is-attention b { color: var(--attention); }
+/* 이번 달 판(08 M-02, ADR-033): 대화 열 맨 위. 디자인 v1.2 오늘 요약 바를 키운 것이라 같은 면·선을 쓴다. 판에는 승인 버튼이 없다. */
+.sx-board { margin-top: var(--space-3); flex: none; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); padding: var(--space-3) var(--space-4); max-height: 42vh; overflow-y: auto; overflow-x: hidden; box-sizing: border-box; }
+.sx-board.is-closed { padding-top: var(--space-2); padding-bottom: var(--space-2); }
+.board-hd { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; min-height: 28px; }
+.board-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.board-count { font-size: 13px; color: var(--ink-2); }
+.board-count b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+.board-count.is-attention b { color: var(--attention); }
+.board-toggle { margin-left: auto; border: 0; background: none; color: var(--ink-2); font-size: 13px; display: inline-flex; align-items: center; gap: var(--space-1); cursor: pointer; padding: 0 var(--space-1); border-radius: var(--radius-sm); }
+.board-toggle:hover { color: var(--ink); background: var(--surface-tint); }
+.board-chev svg { width: 10px; height: 10px; transform: rotate(-90deg); transition: transform var(--motion-fast) var(--ease-out); }
+.board-chev.is-open svg { transform: none; }
+.board-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-2); margin-top: var(--space-2); }
+.board-card { border: 1px solid var(--line-soft); border-radius: var(--radius-md); padding: var(--space-1) var(--space-2); min-width: 0; }
+.board-card-hd { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-2); padding: var(--space-1) 0 var(--space-1); }
+.board-card-title { font-size: 13px; font-weight: 500; color: var(--ink-2); }
+.board-rows { list-style: none; margin: 0; padding: 0; display: grid; }
+.board-row { width: 100%; display: flex; align-items: center; gap: var(--space-3); border: 0; background: none; text-align: left; padding: var(--space-1); border-radius: var(--radius-sm); cursor: pointer; color: var(--ink); font: inherit; min-width: 0; }
+.board-row:hover { background: var(--surface-tint); }
+.board-row:active { background: var(--surface-sunken); }
+.board-row-main { display: grid; gap: var(--space-0); min-width: 0; flex: 1; }
+.board-row-label { font-size: 14px; font-weight: 500; overflow-wrap: anywhere; }
+.board-row-detail { font-size: 12px; color: var(--ink-2); overflow-wrap: anywhere; }
+.board-row.is-attention .board-row-detail { color: var(--attention); }
+.board-due { flex: none; font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.board-due.is-soon { color: var(--attention); font-weight: 500; }
+.board-more { border: 0; background: none; color: var(--ink-2); font-size: 12px; padding: var(--space-1); cursor: pointer; }
+.board-more:hover { color: var(--ink); }
+.later-card { padding: var(--space-5) var(--space-4); }
 
 .quick-zone { flex: none; padding-bottom: var(--space-2); }
 .quick-zone:empty, .sx-quick:empty { display: none; }

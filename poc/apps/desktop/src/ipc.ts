@@ -173,4 +173,5 @@ export type ShellEvent =
   | { type: 'bar-layout'; band: boolean }
   | { type: 'run'; run: unknown }
   | { type: 'doc'; doc: unknown }
-  | { type: 'docs-reload' };
+  | { type: 'docs-reload' }
+  | { type: 'board'; board: unknown };
