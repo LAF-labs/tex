@@ -67,6 +67,12 @@ jobs:
         if: ${{ !cancelled() }}
         # TODO(M1-1-CI): 소유 트랙의 measure-out 한 줄 변경이 머지되면 --warn을 뺀다.
         run: node scripts/ci-clean-tree.mjs --warn
+      - name: 승격 조건 점검(ADR-035 결정 1.3 (가)·(라))
+        if: ${{ !cancelled() }}
+        # PR 본문은 식에 넣지 않고 환경 변수로만 넘긴다(스크립트 주입 방지).
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: node scripts/ci-promotion-check.mjs ${{ github.event_name == 'pull_request' && '--body-env PR_BODY' || '' }}
       - name: 시험 요약
         if: ${{ failure() }}
         run: node scripts/ci-test-summary.mjs "$CI_OUT" >> "$GITHUB_STEP_SUMMARY"
