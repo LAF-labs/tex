@@ -73,6 +73,10 @@ describe('게이트웨이 decide: 요청·응답', () => {
     const bb = b('screen_state_v2');
     assert.equal(questionsDigest(bb), sha(canonicalJson(bb.def.questions)));
     assert.notEqual(questionsDigest(bb), questionsDigest(b('popup_class_v1')));
+    // 공급사 와이어(onRefusal 없음)가 아니라 정의를 해시한다(게이트웨이 service.ts와 같은 정의).
+    assert.ok(bb.def.questions.every((q) => q.onRefusal !== undefined));
+    const wire = bb.def.questions.map(({ onRefusal: _r, ...q }) => q);
+    assert.notEqual(questionsDigest(bb), sha(canonicalJson(wire)));
     assert.match(toolsetDigest(QUERY_PARSE), /^[0-9a-f]{64}$/);
   });
 

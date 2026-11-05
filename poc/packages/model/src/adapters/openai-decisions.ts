@@ -24,7 +24,7 @@ export interface OpenAIDecisionsOptions {
   random?: () => number;
 }
 
-/** 번들 질문 → Decisions 와이어 질문. 게이트웨이도 같은 모양을 공급사로 보낸다(questionsDigest 원천, gateway-decide.ts). */
+/** 번들 질문 → Decisions 와이어 질문(onRefusal 등 로컬 전용 필드는 빠진다). questionsDigest는 이 와이어가 아니라 번들 정의 questions를 해시한다(gateway-decide.ts). */
 export function decisionsQuestions(b: LoadedBundle): DecisionCreateParams['questions'] {
   return b.def.questions.map(toQuestion);
 }

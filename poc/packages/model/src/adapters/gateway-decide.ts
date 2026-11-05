@@ -1,6 +1,6 @@
 // 게이트웨이 경로 판정 어댑터(기본 경로, D04 §1·§7). 요청 본문은 gateway-request.schema `decide`
 // {bundleId, bundleDigest, input, runToken}뿐이고, 모델·캐시·safety_identifier·질문은 게이트웨이가 넣는다.
-// 응답은 비신뢰(C-24): 게이트웨이가 공급사로 보낸 질문 목록 해시(questionsDigest)를 로컬 번들과 대조하고, 답은 이름 조인 후
+// 응답은 비신뢰(C-24): 게이트웨이가 질문을 만든 번들 정의의 해시(questionsDigest)를 로컬 번들과 대조하고, 답은 이름 조인 후
 // 로컬 매핑으로만 결과를 낸다. 재시도는 게이트웨이가 공급사에 대해 한다(D09 §3 장애: 백오프 2회). 클라이언트는 재시도하지 않는다
 // (실행 예산이 runToken에 묶여 있어 중복 호출은 예산을 쓴다).
 import { createHash } from 'node:crypto';
@@ -15,6 +15,8 @@ import { AdapterError, type AdapterLimits, type DecideAdapter, type ProviderDeci
 /**
  * 질문 목록 해시(게이트웨이 /v1/decide 응답 questionsDigest와 같은 정의, services/gateway/API.md):
  * sha256(정규 JSON(번들 정의 questions)). 정규 JSON = 키 정렬, undefined 제외(bundle/digest.ts canonicalJson).
+ * 공급사 와이어(decisionsQuestions, onRefusal 없음)가 아니라 정의를 해시한다. 게이트웨이도 같은 packages/model/bundles 원천의
+ * def.questions를 해시하므로(BV-06) 와이어 변환을 바꿔도 양쪽이 어긋나지 않고, 로컬 전용 필드(onRefusal)가 달라도 잡는다.
  */
 export function questionsDigest(b: LoadedBundle): string {
   return createHash('sha256').update(canonicalJson(b.def.questions)).digest('hex');
