@@ -21,5 +21,6 @@ export * from './scope.ts';
 export * from './conds.ts';
 export * from './steps.ts';
 export * from './interp.ts';
+export * from './datapkg.ts';
 export * from './dialog.ts';
 export * from './actuator.ts';
