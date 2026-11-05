@@ -24,6 +24,11 @@ export interface OpenAIDecisionsOptions {
   random?: () => number;
 }
 
+/** 번들 질문 → Decisions 와이어 질문(onRefusal 등 로컬 전용 필드는 빠진다). questionsDigest는 이 와이어가 아니라 번들 정의 questions를 해시한다(gateway-decide.ts). */
+export function decisionsQuestions(b: LoadedBundle): DecisionCreateParams['questions'] {
+  return b.def.questions.map(toQuestion);
+}
+
 function toQuestion(q: Question): DecisionCreateParams['questions'][number] {
   if (q.type === 'predicate') return { type: 'predicate', name: q.name, instructions: q.instructions };
   if (q.type === 'choice') return { type: 'choice', name: q.name, instructions: q.instructions, choices: q.choices.map((c) => ({ value: c.value, description: c.description })) };
@@ -72,7 +77,7 @@ export class OpenAIDecisionsAdapter implements DecideAdapter {
         { role: 'developer', content: [{ type: 'input_text', text: b.prefixText, prompt_cache_breakpoint: { mode: 'explicit' } }] },
         { role: 'user', content: [{ type: 'input_text', text: input }] },
       ],
-      questions: b.def.questions.map(toQuestion),
+      questions: decisionsQuestions(b),
     };
   }
 
