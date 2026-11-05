@@ -268,9 +268,10 @@ CREATE TABLE card_txns (                       -- H-12 사업용 카드 사용�
 CREATE INDEX ix_card_txns_day ON card_txns(profile_id, used_on);
 CREATE TABLE card_txn_memos (                  -- 사장님 메모. 구간을 바꿀 때 승인번호(없으면 날짜·가게·금액·카드)로 다시 매칭
   id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
-  match_key TEXT NOT NULL,                     -- 승인번호, 없으면 날짜·가게·금액·카드 + 그 값 안의 순번
+  match_key TEXT NOT NULL,                     -- 승인번호·취소 여부·금액(승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부). 같은 값이 여러 건이면 seq 순서의 순번 '#n'을 붙인다. 승인과 그 취소는 취소 여부로 갈린다
   txn_id TEXT REFERENCES card_txns(id) ON DELETE SET NULL,   -- 행을 지우면 NULL이 되고 (3)에서 다시 잇는다. 못 이으면 화면에 "메모 대상 확인 필요"
-  memo TEXT NOT NULL, updated_at TEXT NOT NULL
+  memo TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(profile_id, match_key)                -- 같은 키에 메모 둘이 붙지 않게
 );
 CREATE TABLE receipts (                        -- 종이 증빙. 원본은 documents(doc_type='paper_receipt')
   doc_id TEXT PRIMARY KEY REFERENCES documents(id),
