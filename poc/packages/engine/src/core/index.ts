@@ -12,3 +12,6 @@ export * from './policy.ts';
 export * from './registry.ts';
 export * from './loader.ts';
 export * from './sxp.ts';
+export * from './token.ts';
+export * from './machine.ts';
+export * from './runtime.ts';
