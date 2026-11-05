@@ -52,7 +52,7 @@ export class MockPaymentGateway implements PaymentGateway {
   }
 }
 
-export type NoticeKind = 'device_enrolled' | 'device_suspended' | 'device_delete_pending' | 'device_revoked' | 'aik_pinned' | 'passkey_added';
+export type NoticeKind = 'device_enrolled' | 'device_suspended' | 'device_auto_suspended' | 'device_delete_pending' | 'device_revoked' | 'aik_pinned' | 'passkey_added';
 
 export interface MailSender {
   sendLoginCode(to: string, code: string): Promise<void>;

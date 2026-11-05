@@ -231,6 +231,10 @@ export function accountRouter(o: AccountAppOpts): Router {
     const rec = await svc.deviceRecord(ctx.params.id!);
     return rec ? json(200, rec) : json(404, { error: 'account.device_not_found' });
   });
+  r.add('POST', '/internal/v1/devices/:id/auto-suspend', async (ctx) => {
+    requireInternal(ctx, o.internalSecret);
+    return json(200, { suspended: await svc.autoSuspend(ctx.params.id!) });
+  });
   r.add('GET', '/healthz', () => json(200, { ok: true }));
   return r;
 }

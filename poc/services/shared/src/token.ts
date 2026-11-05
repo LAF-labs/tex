@@ -99,7 +99,8 @@ export class JtiCache {
 }
 
 /** 받은 바이트가 JCS 정규형과 같은가(정수 아닌 수 등으로 JCS가 실패하면 false). */
-function canonical(obj: unknown, b64: string): boolean {
+/** 바깥 형식의 가운데 JSON이 JCS 정규형인가(정규형이 아니면 같은 클레임을 여러 바이트열로 쓸 수 있다). */
+export function canonical(obj: unknown, b64: string): boolean {
   try {
     return jcs(obj) === fromB64u(b64).toString('utf8');
   } catch {

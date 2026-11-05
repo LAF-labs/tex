@@ -100,6 +100,7 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | 메서드·경로 | 인증 | 응답 |
 |---|---|---|
 | `GET /internal/v1/devices/:id` | 내부 | `200 {accountId, deviceId, role, state}` / `404 account.device_not_found` |
+| `POST /internal/v1/devices/:id/auto-suspend` | 내부 | `200 {suspended}`. 게이트웨이 자동 정지(D09 §3): 활성 기기만 정지 + 정지 훅 + 알림 메일 `device_auto_suspended`. 해제는 AIK 서명 재활성화뿐 |
 | `GET /healthz` | 없음 | `200 {ok:true}` |
 
 정지 훅(나가는 쪽): `POST <STOP_HOOK_URL>/internal/v1/devices/:id/stopped`, `Authorization: Internal <INTERNAL_TOKEN>`, 본문 없음.
