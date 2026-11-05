@@ -3,16 +3,20 @@
 //   GET  /dev/account             계정 AIK_pub + AIK 서명 기기 목록(계정 서버 대역)
 //   GET  /dev/qr                  새 페어링 QR 텍스트(시뮬레이터에는 카메라가 없어 앱의 개발 버튼이 가져간다)
 //   POST /dev/sas  {"code":"123456"}  사용자가 PC에 6자리를 입력하는 것을 대신한다
+//   POST /v1/device-tokens        계정 서비스 대역(AIK 인증서 + DPoP → 15분 토큰, dev/dev-auth.ts)
+//   WSS  /v1/rooms/:id, /v1/mailboxes/:id/live   릴레이 대역(dev/relay-server.ts, services/relay/API.md)
 //   GET  /dev/status              페어링·수신 상태(금액·사진 내용 없음)
 // 받은 사진·현금매출은 dev/out/에 쓴다(git 제외). 로그에 금액·사진·비밀을 넣지 않는다.
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
+import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, ed25519Keygen, initialDeviceList, sha256Hash,
-  softNoiseStatic, softSigner, toHex, uuid4, wsRelayClient, x25519Keygen,
-  type DesktopKeys, type DeviceListJson, type Link, type PairRecord, type WebSocketLike,
+  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  ed25519Keygen, initialDeviceList, issueCert, requestDeviceToken, sha256Hash, softNoiseStatic, softSigner, toHex, uuid4, wsRelayClient, x25519Keygen,
+  type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
+import { DevAuth } from './dev-auth.ts';
 import { DevRelay } from './relay-server.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -30,8 +34,24 @@ const deviceId = uuid4();
 const registeredAt = Date.now() - (process.env.DUMMY_NEW_PC ? 3_600_000 : 30 * 86_400_000);
 let deviceList: DeviceListJson = await initialDeviceList(keys.aik, { deviceId, role: 'desktop', noisePub: keys.noise.publicKey, signPub: keys.vd.publicKey, registeredAt });
 
-const relay = new DevRelay();
-const client = wsRelayClient({ host: HOST, insecureLocal: true, open: (url) => new WebSocket(url) as unknown as WebSocketLike });
+const ORIGIN = `http://${HOST}`;
+const auth = new DevAuth(keys.aik.publicKey, ORIGIN);
+const relay = new DevRelay(auth, ORIGIN);
+
+/** Node fetch → HttpJson(계정 서비스 호출). */
+export const fetchJson: HttpJson = async (r) => {
+  const res = await fetch(r.url, { method: r.method, headers: r.headers, body: r.body });
+  const t = await res.text();
+  return { status: res.status, body: t ? (JSON.parse(t) as unknown) : null };
+};
+// PC 자신의 AIK 인증서(실제 PC는 금고가 signAik로 발급한다) → 기기 토큰 → 우편함 라이브 연결 헤더
+const deskCert = await issueCert(keys.aik, { device_id: deviceId, role: 'desktop', Sx: keys.noise.publicKey, Vx: keys.vd.publicKey, not_after: certNotAfter() });
+const tokens = new DeviceTokenCache(() => requestDeviceToken(fetchJson, ORIGIN, deskCert, keys.vd));
+const client = wsRelayClient({
+  host: HOST, insecureLocal: true,
+  open: (url, headers) => new WS(url, { headers }) as unknown as WebSocketLike,
+  deviceAuth: async (htm, htu) => deviceAuthHeaders(await tokens.token(), keys.vd, htm, htu),
+});
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
 let pairing: DesktopPairing | null = null;
@@ -54,12 +74,13 @@ async function startPairing(): Promise<string> {
   const o = p.offer();
   qr = { text: o.qr, exp: o.exp };
   p.onState((st) => log('pairing:', st));
+  relay.createRoom(b64url(p.roomId)); // POST /v1/rooms
   const link = await client.joinRoom(p.roomId, 'desktop');
   void p.run(link);
   return o.qr;
 }
 
-async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tokRead: Uint8Array) {
+async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array; write: Uint8Array }) {
   const q = new ReceiveQueue({
     hasReceipt: async () => false,
     storeReceipt: async ({ msgId, offer, jpeg }) => {
@@ -78,7 +99,7 @@ async function serveMailbox(rec: PairRecord, mbxId: Uint8Array, tokRead: Uint8Ar
   for (;;) {
     let link: Link;
     try {
-      link = await client.joinMailbox(mbxId, tokRead, 'desktop');
+      link = await client.joinMailbox(mbxId, tok, 'desktop');
     } catch {
       await new Promise((r) => setTimeout(r, 1000));
       continue;
@@ -105,6 +126,14 @@ const server = createServer(async (req, res) => {
     res.end(body);
   };
   try {
+    if (req.method === 'POST' && req.url === '/v1/device-tokens') {
+      let body = '';
+      for await (const c of req) body += c;
+      const dp = req.headers.dpop;
+      const r = auth.issue(body, Array.isArray(dp) ? undefined : dp);
+      log('device-token', r.status);
+      return send(r.status, JSON.stringify(r.body));
+    }
     if (req.method === 'GET' && req.url === '/dev/account') return send(200, JSON.stringify({ aikPub: b64(keys.aik.publicKey), deviceList }));
     if (req.method === 'GET' && req.url === '/dev/qr') return send(200, await startPairing(), 'text/plain');
     if (req.method === 'GET' && req.url === '/dev/status') return send(200, JSON.stringify({ pairing: pairing?.state ?? 'idle', pairs: pairs.length, received, frames: relay.frames }));
@@ -119,7 +148,7 @@ const server = createServer(async (req, res) => {
       pairs.push(rec);
       r.result.channel.close();
       log('paired', rec.pairId, r.result.phone.platform);
-      void serveMailbox(rec, r.result.mbxId, r.result.tokRead);
+      void serveMailbox(rec, r.result.mbxId, { read: r.result.tokRead, write: r.result.tokWrite });
       return send(200, JSON.stringify({ ok: true, pairId: rec.pairId }));
     }
     send(404, '{}');

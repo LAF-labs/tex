@@ -1,14 +1,26 @@
-// 더미 PC 상대 스모크(시뮬레이터 없이): Node가 폰 역할로 WSS 초안 프로토콜 위에서 페어링 → IK 세션 → 사진·현금매출 전송.
+// 더미 PC 상대 스모크(시뮬레이터 없이): Node가 폰 역할로 릴레이(services/relay/API.md 경로·헤더) 위에서
+// 페어링 → 기기 토큰(AIK 인증서 + DPoP) → 우편함 라이브 → IK 세션 → 사진·현금매출 전송.
 //   node dev/dummy-pc.ts &  node dev/smoke-phone.ts
+import { WebSocket as WS } from 'ws';
 import {
-  CAP, MobilePairing, RECEIPT_CHUNK, VM_PURPOSES, ed25519Keygen, enqueueCash, flushOutbox, fromB64, makeCashEntry, makeReceiptOffer, monotonicClock,
-  openMobileSession, softNoiseStatic, softSigner, uuid4, wsRelayClient, x25519Keygen,
-  type OutboxItem, type OutboxStore, type WebSocketLike,
+  CAP, DeviceTokenCache, MobilePairing, RECEIPT_CHUNK, VM_PURPOSES, deviceAuthHeaders, ed25519Keygen, enqueueCash, flushOutbox, fromB64, makeCashEntry,
+  makeReceiptOffer, monotonicClock, openMobileSession, requestDeviceToken, softNoiseStatic, softSigner, uuid4, wsRelayClient, x25519Keygen,
+  type HttpJson, type OutboxItem, type OutboxStore, type SignedCert, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
 
 const HOST = 'localhost:8787';
 const base = `http://${HOST}`;
-const client = wsRelayClient({ host: HOST, insecureLocal: true, open: (u) => new WebSocket(u) as unknown as WebSocketLike });
+const fetchJson: HttpJson = async (r) => {
+  const res = await fetch(r.url, { method: r.method, headers: r.headers, body: r.body });
+  const t = await res.text();
+  return { status: res.status, body: t ? (JSON.parse(t) as unknown) : null };
+};
+let tokens: DeviceTokenCache | null = null;
+const client = wsRelayClient({
+  host: HOST, insecureLocal: true,
+  open: (u, headers) => new WS(u, { headers }) as unknown as WebSocketLike,
+  deviceAuth: async (htm, htu) => deviceAuthHeaders(await tokens!.token(), vmSigner, htm, htu),
+});
 
 const acct = (await (await fetch(`${base}/dev/account`)).json()) as { aikPub: string; deviceList: never };
 const qr = await (await fetch(`${base}/dev/qr`)).text();
@@ -16,7 +28,7 @@ const s = x25519Keygen();
 const vm = ed25519Keygen();
 const km = x25519Keygen();
 const noise = softNoiseStatic(s.secretKey);
-softSigner(vm.secretKey, VM_PURPOSES);
+const vmSigner = softSigner(vm.secretKey, VM_PURPOSES);
 const mp = new MobilePairing({
   keys: { noise, vmPub: vm.publicKey, kmPub: km.publicKey, deviceId: uuid4(), name: 'smoke', platform: 'ios' },
   accountAikPub: fromB64(acct.aikPub), serverDeviceList: acct.deviceList, relayAllowlist: [HOST], pairOkTimeoutMs: 15_000,
@@ -46,7 +58,9 @@ const offer = makeReceiptOffer(jpeg, { capturedAt: Date.now(), ocrEngine: 'none'
 await store.put({ kind: 'receipt', msgId: offer.msgId, offer, createdAt: Date.now(), attempts: 0 }, jpeg);
 await enqueueCash(store, makeCashEntry('2026-11-05', 1234));
 
-const mbx = await client.joinMailbox(fromB64(r.mbxId), fromB64(r.tokWrite), 'mobile');
+const myCert: SignedCert = r.cert;
+tokens = new DeviceTokenCache(() => requestDeviceToken(fetchJson, base, myCert, vmSigner));
+const mbx = await client.joinMailbox(fromB64(r.mbxId), { read: fromB64(r.tokRead), write: fromB64(r.tokWrite) }, 'mobile');
 const sess = await openMobileSession(mbx, {
   pairId: r.pairId, noise, desktopStatic: r.desktopStatic, nextTimestamp: monotonicClock(0),
   hello: { appVersion: 'smoke', deviceListVersion: r.deviceList.listVersion, capabilities: [CAP.receipt, CAP.cash] },

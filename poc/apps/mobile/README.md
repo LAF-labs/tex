@@ -47,6 +47,6 @@ xcodebuild -workspace tex.xcworkspace -scheme tex -configuration Debug -sdk ipho
 ## 다른 트랙에 기대는 것
 
 - 계정 서버의 AIK_pub·기기 목록 조회와 폰 계정 로그인(`src/net/account.ts`의 `AccountApi`) — 클라우드 트랙. 지금은 개발 구현만 있다.
-- 릴레이 WSS(`packages/remote/src/ws-link.ts` 머리말의 초안 프로토콜) — 클라우드 트랙 services/relay.
+- 릴레이 WSS: 경로·헤더·제어 메시지는 services/relay/API.md(클라우드 PR #63)를 따른다. 개발 대역은 `dev/relay-server.ts`다. 우편함 라이브에는 기기 범위 토큰(계정 서비스 `POST /v1/device-tokens`, 개발 대역은 `dev/dev-auth.ts`)과 DPoP가 필요하다. 릴리스 계정 서비스 origin은 클라우드 배포 주소가 정해지면 `src/net/account.ts`에 넣는다(그 전에는 연결하지 않는다).
 - App Attest·Play Integrity 등록 확인(D08 §3.1) — 클라우드 트랙.
 - 분실 폰 해제: [docs/lost-phone-rehearsal.md](docs/lost-phone-rehearsal.md).

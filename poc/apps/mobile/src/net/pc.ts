@@ -5,6 +5,7 @@ import {
   type FlushResult, type Link, type WebSocketLike,
 } from '@sax/remote';
 import { APP_VERSION, DEV_LOCAL, DEV_RELAY_HOST } from '../config';
+import { deviceAuthFor } from './devauth';
 import type { DeviceKeys } from '../keyring';
 import type { FileOutbox } from '../storage/outbox';
 import type { AppData } from '../storage/state';
@@ -25,11 +26,18 @@ export interface SyncResult {
 
 const PEER_WAIT_MS = 3000;
 
-export function relayFor(host: string) {
+// RN WebSocket 생성자(react-native/Libraries/WebSocket/WebSocket.js): 세 번째 인자 { headers }. DOM 타입에는 없다.
+type RnWebSocket = new (url: string, protocols?: string | string[], options?: { headers: Record<string, string> }) => WebSocketLike;
+const RnWs = WebSocket as unknown as RnWebSocket;
+
+/** 릴레이 클라이언트. deviceAuth는 우편함 라이브에만 필요하다(페어링 룸은 인증 없음). */
+export function relayFor(host: string, deviceAuth?: (htm: 'GET', htu: string) => Promise<Record<string, string>>) {
   return wsRelayClient({
     host,
     insecureLocal: DEV_LOCAL && host === DEV_RELAY_HOST,
-    open: (url) => new WebSocket(url) as unknown as WebSocketLike,
+    // RN WebSocket은 세 번째 인자로 헤더를 받는다(기기 토큰·우편함 토큰. URL에는 넣지 않는다).
+    open: (url, headers) => new RnWs(url, undefined, headers ? { headers } : undefined),
+    deviceAuth,
   });
 }
 
@@ -54,7 +62,8 @@ export async function syncWithPc(d: SyncDeps): Promise<SyncResult> {
   let link: Link | null = null;
   const noise = softNoiseStatic(d.keys.sm);
   try {
-    link = await relayFor(pair.relayHost).joinMailbox(fromB64(pair.mbxId), fromB64(pair.tokWrite), 'mobile');
+    const relay = relayFor(pair.relayHost, deviceAuthFor(pair.pairId, pair.cert, d.keys.vm));
+    link = await relay.joinMailbox(fromB64(pair.mbxId), { read: fromB64(pair.tokRead), write: fromB64(pair.tokWrite) }, 'mobile');
     if (!(await waitPeer(link, PEER_WAIT_MS))) return { status: 'offline' };
     const clock = monotonicClock(d.data().ikTs);
     let used = 0;

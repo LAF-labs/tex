@@ -20,7 +20,7 @@ const FAIL: Record<MobilePairFailure | 'account' | 'relay' | 'save', string> = {
   relay_not_allowed: '알 수 없는 연결 서버예요. 연결을 멈췄어요.',
   devlist_invalid: '계정의 기기 목록 서명이 맞지 않아요. 연결을 멈췄어요.',
   desktop_unknown: '계정에 등록된 PC가 아니에요. 직접 설치한 PC가 아니면 연결하지 마세요.',
-  handshake: 'PC와 연결하지 못했어요. 다시 해 주세요.',
+  handshake: 'PC와 연결하지 못했어요. PC에서 [새 QR]을 눌러 다시 해 주세요.',
   pair_ok_invalid: 'PC가 보낸 연결 정보가 맞지 않아요. 연결을 멈췄어요.',
   aik_mismatch: '계정 정보가 서로 달라요. 연결을 멈췄어요. 계정 메일을 확인해 주세요.',
   timeout: '시간이 지났어요. PC에서 다시 시작해 주세요.',
@@ -99,7 +99,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
       r = null;
     }
     if (!r) {
-      // 릴레이 자리를 비운다. 닫지 않으면 같은 QR로 다시 할 때 role_taken으로 막힌다.
+      // 룸 연결을 닫는다(룸은 1회용이라 릴레이가 폐기한다. 다시 할 때는 PC의 새 QR로 새 룸을 연다).
       link.close();
       return failWith(mp.failure ?? 'handshake');
     }
@@ -109,7 +109,8 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
         ...d,
         pair: {
           pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
-          kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokWrite: r.tokWrite,
+          kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokRead: r.tokRead,
+            tokWrite: r.tokWrite,
           mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
         },
         deviceList: r.deviceList,

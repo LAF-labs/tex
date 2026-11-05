@@ -1,7 +1,7 @@
 # 폰 앱 시뮬레이터 실행 기록 (2026-11-05)
 
 - 기기: iPhone 17 Pro 시뮬레이터, iOS 26.5, Debug 빌드(애드혹 서명 `CODE_SIGN_IDENTITY=-`)
-- PC 역할: `apps/mobile/dev/dummy-pc.ts`(시험 더미 — `DesktopPairing`·`acceptDesktopSession`·`ReceiveQueue`를 그대로 쓰고 키만 소프트 키). 릴레이는 같은 프로세스의 `dev/relay-server.ts`(`ws://localhost:8787/v1/connect`, D08 릴레이 초안).
+- PC 역할: `apps/mobile/dev/dummy-pc.ts`(시험 더미 — `DesktopPairing`·`acceptDesktopSession`·`ReceiveQueue`를 그대로 쓰고 키만 소프트 키). 릴레이는 같은 프로세스의 `dev/relay-server.ts`다. 스크린샷은 초안 `ws://localhost:8787/v1/connect` 때 찍었다. 그 뒤 services/relay/API.md(PR #63)의 경로·헤더(룸 `/v1/rooms/:id`, 우편함 `/v1/mailboxes/:id/live` + 기기 토큰 DPoP·X-Mbx-Read/Write)로 바꾸고, 시뮬레이터에서 페어링 → 기기 토큰 → 우편함 라이브 → IK 세션을 다시 확인했다(2026-11-05). 화면은 바뀌지 않았다.
 - 영수증은 `assets/dev/sample-receipt.jpg`(견본·개발용·실제 거래 아님 표시) — 시뮬레이터에는 카메라가 없어 DEV 빌드에서만 견본을 쓴다.
 
 | 파일 | 화면(08 화면 ID) | 확인한 것 |

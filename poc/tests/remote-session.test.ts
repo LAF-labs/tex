@@ -11,8 +11,8 @@ async function setup() {
   const rec: PairRecord = { pairId: pc.pairId, phoneStatic: pc.phone.Sm, revoked: false, ikTsMax: 0 };
   const persisted: number[] = [];
   const connect = async (o: { ts?: () => number; noise?: typeof w.phone.keys.noise; phoneListVersion?: number } = {}) => {
-    const pcLink = await w.relay.joinMailbox(pc.mbxId, pc.tokRead, 'desktop');
-    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), fromB64(phone.tokWrite), 'mobile');
+    const pcLink = await w.relay.joinMailbox(pc.mbxId, { read: pc.tokRead, write: pc.tokWrite }, 'desktop');
+    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), { read: fromB64(phone.tokRead), write: fromB64(phone.tokWrite) }, 'mobile');
     const pcSide = acceptDesktopSession(pcLink, {
       noise: w.desk.keys.noise, pair: rec, hello: { appVersion: 'pc-1', deviceListVersion: pc.deviceList.listVersion, capabilities: [CAP.receipt, CAP.cash] },
       persistTs: async (_p, t) => {
@@ -34,8 +34,8 @@ async function setup() {
 describe('상시 세션 IK', () => {
   it('연결 → hello 교환 → ping/pong', async () => {
     const s = await setup();
-    const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, s.pc.tokRead, 'desktop');
-    const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile');
+    const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, { read: s.pc.tokRead, write: s.pc.tokWrite }, 'desktop');
+    const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile');
     const [a, b] = await Promise.all([
       acceptDesktopSession(pcLink, { noise: s.w.desk.keys.noise, pair: s.rec, hello: { appVersion: 'pc', deviceListVersion: 2, capabilities: [] }, persistTs: async () => {} }),
       openMobileSession(phLink, { pairId: s.phone.pairId, noise: s.w.phone.keys.noise, desktopStatic: s.phone.desktopStatic, nextTimestamp: monotonicClock(0), hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt] } }),
@@ -81,12 +81,14 @@ describe('상시 세션 IK', () => {
   it('해제된 우편함은 릴레이가 연결을 받지 않는다', async () => {
     const s = await setup();
     s.w.relay.revokeMailbox(s.pc.mbxId);
-    await assert.rejects(() => s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile'));
+    await assert.rejects(() => s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile'));
   });
 
-  it('토큰을 바꿔 쓰면(PC 토큰으로 폰 자리) 거부', async () => {
+  it('읽기·쓰기 토큰 중 하나라도 틀리거나 서로 바꿔 쓰면 거부', async () => {
     const s = await setup();
-    await assert.rejects(() => s.w.relay.joinMailbox(s.pc.mbxId, s.pc.tokRead, 'mobile'));
+    await assert.rejects(() => s.w.relay.joinMailbox(s.pc.mbxId, { read: s.pc.tokWrite, write: s.pc.tokRead }, 'mobile'));
+    await assert.rejects(() => s.w.relay.joinMailbox(s.pc.mbxId, { read: s.pc.tokRead, write: s.pc.tokRead }, 'mobile'));
+    await assert.rejects(() => s.w.relay.joinMailbox(s.pc.mbxId, { read: new Uint8Array(32), write: s.pc.tokWrite }, 'desktop'));
   });
 
   it('IK 뒤 hello가 오지 않으면 채널과 링크를 닫는다(우편함 자리를 놓는다)', async () => {
@@ -94,8 +96,8 @@ describe('상시 세션 IK', () => {
     let n = 0;
     // msg1·msg2만 통과시키고 hello부터 버린다
     s.w.relay.faults = { drop: 0.5, rand: () => (++n <= 2 ? 1 : 0) };
-    const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, s.pc.tokRead, 'desktop');
-    const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile');
+    const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, { read: s.pc.tokRead, write: s.pc.tokWrite }, 'desktop');
+    const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile');
     const [a, b] = await Promise.all([
       acceptDesktopSession(pcLink, { noise: s.w.desk.keys.noise, pair: s.rec, hello: { appVersion: 'pc', deviceListVersion: 2, capabilities: [] }, persistTs: async () => {}, helloTimeoutMs: 200 }),
       openMobileSession(phLink, { pairId: s.phone.pairId, noise: s.w.phone.keys.noise, desktopStatic: s.phone.desktopStatic, nextTimestamp: monotonicClock(0), hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [] }, helloTimeoutMs: 200 }),
@@ -106,7 +108,7 @@ describe('상시 세션 IK', () => {
     assert.equal(pcLink.closed, true);
     s.w.relay.faults = {};
     // 자리가 비었으니 다시 들어갈 수 있다
-    const again = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile');
+    const again = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), { read: fromB64(s.phone.tokRead), write: fromB64(s.phone.tokWrite) }, 'mobile');
     assert.equal(again.closed, false);
     again.close();
   });

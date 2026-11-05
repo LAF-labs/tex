@@ -37,6 +37,15 @@ const pendingApi: AccountApi = {
 
 export const accountApi = (): AccountApi => (DEV_LOCAL ? devApi : pendingApi);
 
+/**
+ * 계정 서비스 origin(DPoP htu의 앞부분). 개발 빌드는 더미 PC(dev/dummy-pc.ts)다. 릴리스 호스트는 클라우드 트랙이
+ * 배포 주소를 정하면 넣는다(services/account ACCOUNT_PUBLIC_ORIGIN). 그 전에는 연결하지 않는다.
+ */
+export function accountOrigin(): string {
+  if (DEV_LOCAL) return `http://${DEV_RELAY_HOST}`;
+  throw new AccountUnavailable();
+}
+
 /** 개발 빌드만: 더미 PC가 띄운 QR 텍스트(시뮬레이터에는 카메라가 없다). */
 export async function devFetchQr(): Promise<string> {
   if (!DEV_LOCAL) throw new Error('dev only');

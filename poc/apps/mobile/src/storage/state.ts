@@ -18,6 +18,8 @@ export interface PairState {
   cert: SignedCert;
   certNotAfter: number;
   mbxId: string;
+  /** 우편함 능력 토큰(릴레이 X-Mbx-Read·X-Mbx-Write). PC가 PAIR_OK로 준다. */
+  tokRead: string;
   tokWrite: string;
   mbxEpoch: number;
   relayHost: string;
