@@ -184,6 +184,9 @@ describe('M1-5 역치환(D06 §8, B-19)', () => {
     assert.deepEqual(detokenize({ counterparty: '가나상사' }, r.map, { recordFields: ['counterparty'] }), { ok: false, reason: 'record_field_invalid' });
     assert.deepEqual(detokenize({ bizNo: '999-88-77777' }, r.map), { ok: false, reason: 'literal_identifier' });
     assert.deepEqual(detokenize({ email: 'evil@x.com' }, r.map), { ok: false, reason: 'literal_identifier' });
+    // 마스킹과 같은 정규화: 유니코드 대시·전각 숫자·한글 숫자도 식별자로 본다(Bugbot #44)
+    for (const lit of ['999\u201088\u201077777', '999\u221288\u221277777', '９９９-８８-７７７７７', '구구구-팔팔-칠칠칠칠칠'])
+      assert.deepEqual(detokenize({ bizNo: lit }, r.map), { ok: false, reason: 'literal_identifier' }, lit);
     assert.deepEqual(detokenize({ bizNo: '999-88-77777' }, r.map, { userText: '사업자 999 88 77777로 끊어줘' }), { ok: true, value: { bizNo: '999-88-77777' } });
     assert.deepEqual(detokenize({ phone: '[PHONE_1]' }, r.map, { recordFields: ['phone'] }), { ok: false, reason: 'record_field_invalid' });
   });
