@@ -34,6 +34,14 @@ npx expo prebuild -p ios && npx expo run:ios   # 시뮬레이터
 
 시뮬레이터 개발 빌드(`__DEV__ && !Device.isDevice`)에서만: QR 대신 [개발: 더미 PC의 QR 받기], 카메라 대신 [개발: 견본 영수증으로 찍기](앱에 묶인 견본, 갤러리 아님), 키 항목은 생체 없이(여전히 ThisDeviceOnly), 릴레이 `localhost:8787`(ws) 허용. 더미 PC에 6자리 입력은 `curl -XPOST localhost:8787/dev/sas -d '{"code":"123456"}'`.
 
+시뮬레이터 빌드: 키체인은 entitlement가 있어야 열리므로 서명 없는 빌드(`CODE_SIGNING_ALLOWED=NO`)는 잠금 화면에서 멈춘다(의도한 동작, `reports/raw/mobile/00`). `ios/`에서 애드혹 서명으로 빌드한다.
+
+```bash
+xcodebuild -workspace tex.xcworkspace -scheme tex -configuration Debug -sdk iphonesimulator -destination 'name=iPhone 17 Pro' -derivedDataPath build/dd CODE_SIGN_IDENTITY=- CODE_SIGNING_ALLOWED=YES CODE_SIGNING_REQUIRED=YES DEVELOPMENT_TEAM= build
+```
+
+실기기·EAS 빌드: Apple 팀 ID는 저장소에 두지 않고 `APPLE_TEAM_ID`(10자) 환경 변수로만 넘긴다(`app.config.js`가 `ios.appleTeamId`로 얹는다).
+
 빌드 설정은 `eas.json`(simulator·preview·production). 스토어 제출은 하지 않는다(M4-9 패키징·서명 뒤).
 
 ## 다른 트랙에 기대는 것
