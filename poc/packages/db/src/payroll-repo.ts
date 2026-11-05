@@ -543,8 +543,12 @@ const toRate = (r: Row): RateTableRow => ({
   signatureOk: r.signature_ok === 1,
 });
 
-const overlaps = (a: { effectiveFrom: string; effectiveTo: string | null }, b: { effectiveFrom: string; effectiveTo: string | null }): boolean =>
-  a.effectiveFrom <= (b.effectiveTo ?? '9999-12-31') && b.effectiveFrom <= (a.effectiveTo ?? '9999-12-31');
+type Span = { effectiveFrom: string; effectiveTo: string | null };
+const dayBefore = (d: string): string => new Date(Date.parse(`${d}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+/** 열린 표(effectiveTo null)는 같은 종류의 다음 표가 시작하기 전날까지다. other가 x보다 늦게 시작하면 x는 그 전날 끝난다 */
+const endAgainst = (x: Span, other: Span): string => x.effectiveTo ?? (other.effectiveFrom > x.effectiveFrom ? dayBefore(other.effectiveFrom) : '9999-12-31');
+/** 두 표가 같은 날을 덮는가(시작일이 같거나, 닫힌 기간이 다른 표의 기간과 겹친다) */
+export const rateSpansConflict = (a: Span, b: Span): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
 
 /** 시행일 표 저장(D07 rate_tables). 패키지 검증(서명·스키마)은 설치 전에 끝나 있어야 한다. 기간이 겹치면 거부한다 */
 export class RateTableRepo {
@@ -565,29 +569,36 @@ export class RateTableRepo {
     return r ? toRate(r as Row) : null;
   }
 
-  /** 같은 id는 같은 내용일 때만 다시 넣을 수 있다(재설치는 무시) */
+  /**
+   * 같은 id는 같은 내용일 때만 다시 넣을 수 있다(재설치는 무시). 열린 끝(null)을 날짜로 닫는 재설치만 고친다.
+   * 열린 표 뒤에 다음 표를 넣을 수 있다(앞 표는 다음 표 전날까지). 시작일이 같거나 닫힌 기간이 겹치면 rate_table_overlap
+   */
   install(t: RateTableRow): void {
     need(validDay(t.effectiveFrom) && (t.effectiveTo === null || (validDay(t.effectiveTo) && t.effectiveTo >= t.effectiveFrom)), 'invalid_effective_range');
     need(t.signatureOk, 'rate_table_unsigned');
     this.db.transaction(() => {
       const same = this.get(t.id);
       if (same) {
-        const sig = (x: RateTableRow) => JSON.stringify([x.kind, x.effectiveFrom, x.effectiveTo, x.body, x.rounding, x.packageVersion]);
+        const sig = (x: RateTableRow) => JSON.stringify([x.kind, x.effectiveFrom, x.body, x.rounding, x.packageVersion]);
         need(sig(same) === sig(t), 'rate_table_id_reused');
+        if (same.effectiveTo === t.effectiveTo) return;
+        need(same.effectiveTo === null && t.effectiveTo !== null, 'rate_table_id_reused');
+        for (const o of this.list(t.kind)) if (o.id !== t.id) need(!rateSpansConflict(o, t), 'rate_table_overlap');
+        this.db.prepare('UPDATE rate_tables SET effective_to = ? WHERE id = ?').run(t.effectiveTo, t.id);
         return;
       }
-      for (const o of this.list(t.kind)) need(!overlaps(o, t), 'rate_table_overlap');
+      for (const o of this.list(t.kind)) need(!rateSpansConflict(o, t), 'rate_table_overlap');
       this.db
         .prepare('INSERT INTO rate_tables (id, kind, effective_from, effective_to, body_json, rounding, package_version, signature_ok) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(t.id, t.kind, t.effectiveFrom, t.effectiveTo, JSON.stringify(t.body), t.rounding, t.packageVersion, 1);
     })();
   }
 
-  /** 그날 시행 중인 표. 없으면 null */
+  /** 그날 시행 중인 표: 시작일이 그날 이전인 표 중 가장 늦게 시작한 것. 그 표가 그날 전에 닫혔으면 null(빈 기간) */
   effectiveOn(kind: RateTableKind, day: string): RateTableRow | null {
-    const r = this.db
-      .prepare(`SELECT * FROM rate_tables WHERE kind = ? AND signature_ok = 1 AND effective_from <= ? AND (effective_to IS NULL OR effective_to >= ?) ORDER BY effective_from DESC LIMIT 1`)
-      .get(kind, day, day);
-    return r ? toRate(r as Row) : null;
+    const r = this.db.prepare(`SELECT * FROM rate_tables WHERE kind = ? AND signature_ok = 1 AND effective_from <= ? ORDER BY effective_from DESC LIMIT 1`).get(kind, day);
+    if (!r) return null;
+    const t = toRate(r as Row);
+    return t.effectiveTo === null || t.effectiveTo >= day ? t : null;
   }
 }

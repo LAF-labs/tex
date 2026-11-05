@@ -275,13 +275,17 @@ export type JournalPayload = Record<string, string | number | boolean>;
  * 필드 이름은 식별자, 값은 짧은 한 줄 문자열(코드·해시·ID)·유한 수·불리언, 필드는 16개까지.
  * 위반이면 위반한 필드 이름만 돌려준다(값은 돌려주지 않는다).
  */
+const BAD_TYPE = '#type';
+
+/** 형태 문제 목록: 값이 틀린 필드 이름, 또는 '#type'(이벤트 이름)·'#too_many_fields'·'#field_name' 표지 */
 export function journalShapeProblems(type: string, payload: JournalPayload): string[] {
   const bad: string[] = [];
-  if (!EVENT_TYPE.test(type)) bad.push('type');
+  // '#'로 시작하는 표지는 필드 이름(FIELD)과 겹치지 않는다(payload에 type이라는 필드가 있어도 이벤트 이름 오류와 섞이지 않게)
+  if (!EVENT_TYPE.test(type)) bad.push(BAD_TYPE);
   const entries = Object.entries(payload);
-  if (entries.length > 16) bad.push('too_many_fields');
+  if (entries.length > 16) bad.push('#too_many_fields');
   for (const [k, v] of entries) {
-    if (!FIELD.test(k)) bad.push('field_name');
+    if (!FIELD.test(k)) bad.push('#field_name');
     else if (typeof v === 'string' ? v.length > 128 || /[\r\n\t]/.test(v) : typeof v === 'number' ? !Number.isFinite(v) : typeof v !== 'boolean') bad.push(k);
   }
   return bad;
@@ -318,10 +322,11 @@ export class RunJournal {
    */
   append(runId: string, type: string, payload: JournalPayload = {}): void {
     const bad = journalShapeProblems(type, payload);
-    if (bad.includes('type')) throw new JournalShapeError(['type']);
+    if (bad.includes(BAD_TYPE)) throw new JournalShapeError(['type']);
     if (bad.length) {
       const keep = Object.entries(payload).filter(([k]) => !bad.includes(k) && FIELD.test(k)).slice(0, 15);
-      payload = { ...Object.fromEntries(keep), dropped: bad.filter((b) => b !== 'too_many_fields').join(',').slice(0, 128) || 'too_many_fields' };
+      const names = bad.filter((b) => b !== '#too_many_fields').map((b) => b.replace(/^#/, ''));
+      payload = { ...Object.fromEntries(keep), dropped: names.join(',').slice(0, 128) || 'too_many_fields' };
     }
     this.db.transaction(() => {
       const prev = this.db.prepare('SELECT hash FROM run_events WHERE run_id = ? ORDER BY seq DESC LIMIT 1').get(runId) as Row | undefined;
