@@ -3,7 +3,7 @@
 // 10,000천원 초과는 별표 2 제6호 끝 식으로 손계산. 4대보험은 2026년 고시 요율로 손계산(끝처리는 "검수 필요").
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { childDeductionFor, computePayroll, insurance, loadBundledPackage, pickTables, tableTaxFor, validatePackage, withholding } from '@sax/payroll';
+import { childDeductionFor, computePayroll, insurance, loadBundledPackage, pickTables, suggestGross, tableTaxFor, takeHome, validatePackage, withholding } from '@sax/payroll';
 
 const pkg = loadBundledPackage();
 const at = (taxDate: string, insuranceDate = taxDate) => pickTables(pkg.tables, { taxDate, insuranceDate });
@@ -137,5 +137,38 @@ describe('급여 한 줄(공식 표)', () => {
     assert.deepEqual([r.pensionEst, r.healthEst, r.ltcEst, r.employmentEst], [118_750, 89_870, 11_800, 22_500]);
     assert.ok(r.notes.includes('table_needs_review:insurance-2026'));
     assert.ok(!r.notes.includes('table_needs_review:simple-tax-2026-03'));
+  });
+});
+
+describe('세전 → 세후(takeHome, 핵심 API)', () => {
+  const st = { nontax: { meal: 200_000 }, dependents: 1, children8to20: 0, withholdingPct: 100 as const, pensionApplies: true, healthApplies: true, employmentApplies: true };
+  it('세전 2,700,000(식대 20만 비과세 포함) 가족 1명 → 세후 2,417,920', () => {
+    const r = takeHome({ month: '2026-11', gross: 2_700_000, settings: st }, T);
+    assert.deepEqual([r.gross, r.nontax, r.taxable], [2_700_000, 200_000, 2_500_000]);
+    assert.deepEqual([r.incomeTax, r.localIncomeTax, r.pension, r.health, r.ltc, r.employment], [35_600, 3_560, 118_750, 89_870, 11_800, 22_500]);
+    assert.equal(r.totalDeduction, 282_080);
+    assert.equal(r.net, 2_417_920);
+  });
+  it('가족·자녀·비율·보험 적용은 설정값으로: 5,000천원 가족 4명 자녀 2명 120%, 고용보험 미적용', () => {
+    const r = takeHome({ month: '2026-11', gross: 5_000_000, settings: { ...st, nontax: {}, dependents: 4, children8to20: 2, withholdingPct: 120, employmentApplies: false } }, T);
+    // (219,100 − 45,830) × 120% = 207,924 → 207,920, 지방 20,792 → 20,790
+    assert.deepEqual([r.incomeTax, r.localIncomeTax, r.employment], [207_920, 20_790, 0]);
+    // 연금 5,000,000 × 4.75% = 237,500, 건강 179,750, 장기요양 179,750 × 9448 ÷ 71900 = 23,620.0 → 23,620
+    assert.deepEqual([r.pension, r.health, r.ltc], [237_500, 179_750, 23_620]);
+    assert.equal(r.net, 5_000_000 - r.totalDeduction);
+  });
+  it('비과세가 세전보다 크면 거부, 한도 넘는 비과세는 과세로', () => {
+    assert.throws(() => takeHome({ month: '2026-11', gross: 100_000, settings: st }, T), /nontax_exceeds_gross/);
+    const r = takeHome({ month: '2026-11', gross: 2_750_000, settings: { ...st, nontax: { meal: 250_000 } } }, T);
+    assert.deepEqual([r.nontax, r.taxable], [200_000, 2_550_000]);
+    assert.ok(r.notes.includes('nontax_over_limit:meal'));
+  });
+  it('근무표 보조: 시급 × 그달 근무 합계 = 세전 제안값(가산·주휴 없음)', () => {
+    const shifts = [
+      { workDay: '2026-11-02', startsAt: '09:00', endsAt: '18:00', breakMinutes: 60 },
+      { workDay: '2026-11-03', startsAt: '22:00', endsAt: '06:00', breakMinutes: 30 },
+    ];
+    // 480 + 450 = 930분 × 10,320원 ÷ 60 = 159,960
+    assert.deepEqual(suggestGross('2026-11', 10_320, shifts), { workDays: 2, workMinutes: 930, suggestedGross: 159_960 });
   });
 });

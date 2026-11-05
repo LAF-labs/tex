@@ -79,10 +79,8 @@
     "ipcFindings": [],
     "logFiles": 1,
     "logFindings": [],
-    "profileFiles": 417,
+    "profileFiles": 418,
     "profileSkipped": 0,
-    "profileFindings": [],
-    "rootFiles": 419,
-    "rootFindings": []
+    "profileFindings": []
   }
 }
