@@ -66,7 +66,9 @@ const toEntry = (r: Row): BundleEntry => ({
   updatedAt: String(r.updated_at),
 });
 
-const cardSlipKey = (profileId: string): string => `bundle.card_slip_enough_from:${profileId}`;
+/** 프로필별 설정 키(D07 §2 끝: `profile.<id>.bundle.…`) */
+const cardSlipKey = (profileId: string): string => `profile.${profileId}.bundle.cardSlipEnoughFrom`;
+const includeRrnKey = (profileId: string): string => `profile.${profileId}.bundle.includeRrn`;
 
 export class BundleRepo {
   private readonly db: Db;
@@ -74,9 +76,21 @@ export class BundleRepo {
     this.db = db;
   }
 
+  /** 설정 bundle.includeRrn: 꾸러미 급여 시트에 주민번호 전체를 넣는가. 기본 false(가림, R13 D-L3) */
+  includeRrn(profileId: string): boolean {
+    const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(includeRrnKey(profileId)) as string | undefined;
+    return v !== undefined && JSON.parse(v) === true;
+  }
+
+  setIncludeRrn(profileId: string, on: boolean): void {
+    this.db
+      .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+      .run(includeRrnKey(profileId), JSON.stringify(on === true));
+  }
+
   /**
    * "카드 전표로 충분"(ADR-032, 판정 아님): 사장님이 체크하면 그 다음 달부터 "증빙과 대조 안 된 카드 지출"을 빠진 것에서 뺀다.
-   * 값은 시작 달 'YYYY-MM'. null이면 끈다. settings 표에 프로필별 키로 둔다
+   * 값은 시작 달 'YYYY-MM'. null이면 끈다. 건별(card_txn_memos)이 아니라 프로필 설정 한 칸이다: 체크 한 번으로 끝나게(사장님 클릭을 늘리지 않음)
    */
   cardSlipEnoughFrom(profileId: string): string | null {
     const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(cardSlipKey(profileId)) as string | undefined;
@@ -188,9 +202,9 @@ export interface BundleExport {
   sentTo: string | null;
   sentMarkedAt: string | null;
   sentNote: string | null;
-  /** 사진·PDF 묶음(같은 암호의 AES-256 ZIP). 첨부가 없으면 null */
-  attachmentsPath: string | null;
-  attachmentsSha256: string | null;
+  /** 사진·PDF 묶음(같은 암호의 AES-256 ZIP). 첨부가 없으면 둘 다 null */
+  zipPath: string | null;
+  zipSha256: string | null;
   /** 급여 시트에 주민번호 전체를 넣었는지(기본 가림) */
   rrnIncluded: boolean;
 }
@@ -206,8 +220,8 @@ const toExport = (r: Row): BundleExport => ({
   sentTo: (r.sent_to as string) ?? null,
   sentMarkedAt: (r.sent_marked_at as string) ?? null,
   sentNote: (r.sent_note as string) ?? null,
-  attachmentsPath: (r.attachments_path as string) ?? null,
-  attachmentsSha256: (r.attachments_sha256 as string) ?? null,
+  zipPath: (r.zip_path as string) ?? null,
+  zipSha256: (r.zip_sha256 as string) ?? null,
   rrnIncluded: r.rrn_included === 1,
 });
 
@@ -218,19 +232,19 @@ export class BundleExportRepo {
     this.db = db;
   }
 
-  /** 내보내기 한 번 = 한 행. 엑셀(path·sha256)과 첨부 ZIP(attachments)은 같은 기록에 둔다(메일 한 통에 둘 다 붙인다) */
+  /** 내보내기 한 번 = 한 행. 엑셀(path·sha256)과 첨부 ZIP(zip)은 같은 기록에 둔다(메일 한 통에 둘 다 붙인다) */
   record(
-    e: { profileId: string; period: string; sha256: string; path: string; attachments?: { path: string; sha256: string } | null; rrnIncluded?: boolean },
+    e: { profileId: string; period: string; sha256: string; path: string; zip?: { path: string; sha256: string } | null; rrnIncluded?: boolean },
     at: string = nowIso(),
   ): BundleExport {
     const hex = /^[0-9a-f]{64}$/;
     need(hex.test(e.sha256), 'invalid_sha256');
     need(!!e.path, 'path_required');
-    if (e.attachments) need(hex.test(e.attachments.sha256) && !!e.attachments.path, 'invalid_attachments');
+    if (e.zip) need(hex.test(e.zip.sha256) && !!e.zip.path, 'invalid_zip');
     const id = randomUUID();
     this.db
-      .prepare('INSERT INTO bundle_exports (id, profile_id, period, sha256, path, created_at, attachments_path, attachments_sha256, rrn_included) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, e.profileId, e.period, e.sha256, e.path, at, e.attachments?.path ?? null, e.attachments?.sha256 ?? null, e.rrnIncluded ? 1 : 0);
+      .prepare('INSERT INTO bundle_exports (id, profile_id, period, sha256, path, created_at, zip_path, zip_sha256, rrn_included) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(id, e.profileId, e.period, e.sha256, e.path, at, e.zip?.path ?? null, e.zip?.sha256 ?? null, e.rrnIncluded ? 1 : 0);
     return this.get(id)!;
   }
 

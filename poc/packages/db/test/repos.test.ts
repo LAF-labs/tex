@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   BundleExportRepo, BundleRepo, bucket5, CardRepo, cardMatchKeys, CashSalesRepo, ColumnCipher, ColumnCipherError, deriveColumnKey, DocumentRepo, EmployeeRepo,
-  JournalShapeError, maskRrn, openDatabase, PayrollRepo, PortalLoginRepo, ProfileRepo, RateTableRepo, ReceiptRepo, RunJournal, RunRepo, shapeTelemetry, ShiftRepo, syntheticBizNo,
+  JournalShapeError, maskRrn, openDatabase, PayrollRepo, ConsentRepo, OnboardingRepo, ProfileRepo, RateTableRepo, ReceiptRepo, RunJournal, RunRepo, shapeTelemetry, ShiftRepo, syntheticBizNo,
   type CardTxnInput, type Db, type PayrollLine,
 } from '@sax/db';
 
@@ -208,12 +208,13 @@ describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () =>
     assert.equal(got.sendVia, 'mail_client');
     assert.equal(got.sentMarkedAt, '2026-11-05T02:00:00Z');
     assert.throws(() => x.record({ profileId, period: '2026-10', sha256: 'zz', path: '/a' }), /invalid_sha256/);
-    assert.equal(got.attachmentsPath, null);
+    assert.deepEqual([got.zipPath, got.zipSha256], [null, null]);
     assert.equal(got.rrnIncluded, false, '주민번호는 기본 가림');
     // 엑셀과 첨부 ZIP은 한 기록(메일 한 통)
-    const two = x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/exports/a.xlsx', attachments: { path: '/exports/a.zip', sha256: 'd'.repeat(64) }, rrnIncluded: true });
-    assert.deepEqual([two.attachmentsPath, two.attachmentsSha256, two.rrnIncluded], ['/exports/a.zip', 'd'.repeat(64), true]);
-    assert.throws(() => x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/a', attachments: { path: '/a.zip', sha256: 'x' } }), /invalid_attachments/);
+    const two = x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/exports/a.xlsx', zip: { path: '/exports/a.zip', sha256: 'd'.repeat(64) }, rrnIncluded: true });
+    assert.deepEqual([two.zipPath, two.zipSha256, two.rrnIncluded], ['/exports/a.zip', 'd'.repeat(64), true]);
+    assert.throws(() => x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/a', zip: { path: '/a.zip', sha256: 'x' } }), /invalid_zip/);
+    assert.throws(() => db.prepare("INSERT INTO bundle_exports (id, profile_id, period, sha256, path, created_at, zip_path) VALUES ('z', ?, '2026-11', 'a', '/a', 'now', '/a.zip')").run(profileId), /CHECK/, 'ZIP 경로와 해시는 같이');
   });
 
   it('"카드 전표로 충분": 시작 달을 프로필별로 두고 끌 수 있다', () => {
@@ -226,6 +227,18 @@ describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () =>
     b.setCardSlipEnough(profileId, null);
     assert.equal(b.cardSlipEnoughFrom(profileId), null);
     assert.throws(() => b.setCardSlipEnough(profileId, '2026-13'), /invalid_month/);
+    b.setCardSlipEnough(profileId, '2026-12');
+    assert.ok(db.prepare('SELECT 1 FROM settings WHERE key = ?').get(`profile.${profileId}.bundle.cardSlipEnoughFrom`), 'D07 프로필별 설정 키');
+  });
+
+  it('설정 bundle.includeRrn: 기본 false(가림), 켜고 끌 수 있다', () => {
+    const b = new BundleRepo(db);
+    assert.equal(b.includeRrn(profileId), false);
+    b.setIncludeRrn(profileId, true);
+    assert.equal(b.includeRrn(profileId), true);
+    assert.ok(db.prepare('SELECT 1 FROM settings WHERE key = ?').get(`profile.${profileId}.bundle.includeRrn`));
+    b.setIncludeRrn(profileId, false);
+    assert.equal(b.includeRrn(profileId), false);
   });
 
   it('현금매출: 하루 한 숫자, 다시 넣으면 나중 값으로 바꾸고 이전 값을 알려 준다', () => {
@@ -364,22 +377,59 @@ describe('텔레메트리 형태 검증(D12 §1)', () => {
   });
 });
 
-describe('포털 로그인 아이디(portal_logins)', () => {
-  it('홈택스 아이디는 프로필별 하나, 바꾸고 지울 수 있다. 비밀번호 칸은 없다', () => {
-    const r = new PortalLoginRepo(db);
-    assert.equal(r.get(profileId, 'hometax'), null);
-    assert.equal(r.set(profileId, 'hometax', '  boss01 ', '2026-11-05T00:00:00Z').loginId, 'boss01');
-    r.set(profileId, 'hometax', 'boss02');
-    assert.equal(r.get(profileId, 'hometax'), 'boss02');
-    assert.deepEqual(r.list(profileId).map((l) => [l.portal, l.loginId]), [['hometax', 'boss02']]);
-    const cols = (db.prepare('PRAGMA table_info(portal_logins)').all() as Array<{ name: string }>).map((c) => c.name);
-    assert.deepEqual(cols, ['profile_id', 'portal', 'login_id', 'updated_at']);
-    assert.throws(() => r.set(profileId, 'gov24', 'x'), /invalid_portal/);
-    assert.throws(() => r.set(profileId, 'hometax', 'a b'), /invalid_login_id/);
-    assert.throws(() => r.set(profileId, 'hometax', ''), /invalid_login_id/);
-    assert.throws(() => r.set(profileId, 'hometax', 'x'.repeat(65)), /invalid_login_id/);
-    assert.throws(() => r.set('nope', 'hometax', 'x'), /profile_not_found/);
-    assert.equal(r.remove(profileId, 'hometax'), true);
-    assert.equal(r.remove(profileId, 'hometax'), false);
+describe('포털 아이디·동의·온보딩 이어 하기(데스크톱 #69)', () => {
+  it('profiles.portal_login_id: 홈택스 아이디는 프로필 정보, 검사는 저장소에서(bad_login_id), upsert가 빼면 그대로 둔다', () => {
+    const p = new ProfileRepo(db);
+    assert.equal(p.get(profileId)!.portalLoginId, null);
+    assert.equal(p.setPortalLoginId(profileId, '  boss01 ').portalLoginId, 'boss01');
+    const cur = p.get(profileId)!;
+    const input = { kind: cur.kind, displayName: cur.displayName, bizNo: cur.bizNo, corpNo: cur.corpNo, repName: cur.repName, bizType: cur.bizType, bizItem: cur.bizItem, address: cur.address, email: cur.email, signMethod: cur.signMethod };
+    assert.equal(p.upsert(input).portalLoginId, 'boss01', '빼면 그대로');
+    assert.equal(p.upsert({ ...input, portalLoginId: 'boss02' }).portalLoginId, 'boss02');
+    for (const bad of ['a b', '', 'x'.repeat(65), 'a\u0007b']) assert.throws(() => p.setPortalLoginId(profileId, bad), /bad_login_id/);
+    assert.throws(() => p.upsert({ ...input, portalLoginId: 'a b' }), /bad_login_id/);
+    assert.throws(() => p.setPortalLoginId('nope', 'x'), /profile_not_found/);
+    assert.equal(p.setPortalLoginId(profileId, null).portalLoginId, null);
+    const cols = (db.prepare('PRAGMA table_info(profiles)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.ok(cols.includes('portal_login_id') && !cols.some((c) => /password|secret|card/i.test(c)), '비밀번호·보안카드 칸 없음');
+  });
+
+  it('동의 레코드: 쌓기만 하고 마지막 행이 현재 결정, 프로필 전 약관은 나중에 잇는다', () => {
+    const c = new ConsentRepo(db);
+    const terms = c.record({ profileId: null, kind: 'terms', noticeVersion: 'terms-2026.11', choice: 'agreed', at: '2026-11-05T00:00:00Z', via: 'onboarding' });
+    assert.equal(terms.noticeKey, 'consent.terms');
+    c.record({ profileId, kind: 'model', noticeKey: 'consent.model', noticeVersion: 'model-1', processorsVersion: 'proc-3', choice: 'agreed', at: '2026-11-05T00:01:00Z', via: 'onboarding' });
+    c.record({ profileId, kind: 'model', noticeVersion: 'model-1', choice: 'declined', at: '2026-11-06T00:00:00Z', via: 'settings' });
+    c.record({ profileId, kind: 'delegation', noticeVersion: 'deleg-1', choice: 'agreed', at: '2026-11-05T00:02:00.123Z', via: 'T-06' });
+    assert.equal(c.latest(profileId, 'model')!.choice, 'declined');
+    assert.equal(c.latest(profileId, 'telemetry'), null);
+    assert.equal(c.latest(null, 'terms')!.seq, terms.seq);
+    assert.equal(c.attachToProfile(profileId), 1);
+    assert.equal(c.latest(profileId, 'terms')!.noticeVersion, 'terms-2026.11');
+    assert.deepEqual(c.history(profileId).map((x) => x.kind), ['terms', 'model', 'model', 'delegation']);
+    assert.equal(c.history(profileId)[1]!.processorsVersion, 'proc-3');
+    const ok = { profileId, kind: 'telemetry' as const, noticeVersion: 't-1', choice: 'agreed' as const, at: '2026-11-05T00:00:00Z', via: 'onboarding' as const };
+    assert.throws(() => c.record({ ...ok, kind: 'marketing' as never }), /bad_consent_kind/);
+    assert.throws(() => c.record({ ...ok, choice: 'maybe' as never }), /bad_choice/);
+    assert.throws(() => c.record({ ...ok, via: 'web' as never }), /bad_via/);
+    assert.throws(() => c.record({ ...ok, noticeVersion: 'a b' }), /bad_notice_version/);
+    assert.throws(() => c.record({ ...ok, at: '2026-11-05' }), /bad_at/);
+    assert.throws(() => c.record({ ...ok, profileId: 'nope' }), /profile_not_found/);
+  });
+
+  it('온보딩 이어 하기: 프로필 종류마다 한 행, 멈춘 단계와 상태를 그대로 돌려준다', () => {
+    const o = new OnboardingRepo(db);
+    assert.equal(o.load(), null);
+    o.save({ step: 'biz-number', state: { step: 'biz-number', consents: { terms: { version: 'terms-2026.11', choice: 'agreed' } } } }, '2026-11-05T00:00:00Z');
+    const got = o.save({ step: 'biz-confirm', profileId, state: { step: 'biz-confirm' } }, '2026-11-05T00:05:00Z');
+    assert.deepEqual([got.step, got.profileId, got.updatedAt], ['biz-confirm', profileId, '2026-11-05T00:05:00Z']);
+    assert.equal(o.save({ step: 'auth', state: { step: 'auth' } }).profileId, profileId, '프로필은 한 번 이으면 유지');
+    assert.deepEqual(o.load()!.state, { step: 'auth' });
+    assert.throws(() => o.save({ step: 'O 01', state: {} }), /bad_step/);
+    assert.throws(() => o.save({ step: 'auth', state: [] }), /bad_state/);
+    assert.throws(() => o.save({ step: 'auth', state: { big: 'x'.repeat(70_000) } }), /state_too_large/);
+    assert.equal(o.load('personal'), null);
+    assert.equal(o.clear(), true);
+    assert.equal(o.load(), null);
   });
 });
