@@ -1,6 +1,8 @@
 packages:
   - packages/*
   - apps/*
+  # 폰 앱은 RN·Expo 의존을 루트 잠금 파일에 넣지 않으려고 따로 둔다(apps/mobile/pnpm-workspace.yaml). @sax/remote는 Metro가 소스로 읽는다.
+  - '!apps/mobile'
   - tests
 minimumReleaseAgeExclude:
   - electron@45.1.0
