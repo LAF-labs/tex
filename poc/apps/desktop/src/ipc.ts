@@ -78,7 +78,8 @@ export const SHELL_METHODS = {
   'docs.list': {},
   // 열기 암호 길이 판정(password_too_long)은 가져오기 쪽이 한다. 여기 상한은 그보다 넉넉하다.
   'docs.import': { pick: { t: 'boolean' }, pickId: { t: 'string', max: 128 }, password: { t: 'string', max: 4096 } },
-  'docs.importCancel': { pickId: { t: 'string', max: 128 } },
+  // 렌더러는 늘 열기 암호를 묻던 pickId를 보낸다. 빈 호출은 받지 않는다.
+  'docs.importCancel': { pickId: { t: 'string', max: 128, required: true } },
   'docs.update': { id: ID, patch: { t: 'object', fields: DOC_FIELDS }, seen: { t: 'object', fields: DOC_FIELDS } },
   'docs.open': { id: ID },
   // 같은 파일을 파일 관리자에서 보여 준다(결과 카드 [폴더 열기], #32).

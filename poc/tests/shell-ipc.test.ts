@@ -75,6 +75,9 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
       ['docs.update', { id: 'd1', patch: [] }],
       ['g24.save', { id: 'c1', doc: '가족관계증명서' }],
       ['g24.candidates', { doc: '주민등록표 등본' }],
+      ['docs.importCancel', {}],
+      ['docs.importCancel', { pickId: 1 }],
+      ['docs.importCancel', { pickId: 'p'.repeat(129) }],
     ];
     for (const [method, params] of bad) assert.equal(code(() => parseRendererRequest(SHELL_METHODS, { method, params })), 'bad_request', `${method} ${JSON.stringify(params)}`);
   });
@@ -86,6 +89,7 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
       ['draft.update', { id: 'r1', amountText: '1억 2천만원' }],
       ['docs.import', { pick: true }],
       ['docs.import', { pickId: 'p1', password: 'pw' }],
+      ['docs.importCancel', { pickId: 'p1' }],
       ['docs.update', { id: 'd1', patch: { expiresOn: null }, seen: { docType: 'other', issuedOn: null, expiresOn: null } }],
       ['docs.update', { id: 'd1', patch: {}, seen: undefined }],
       ['g24.candidates', { doc: '주민등록표 초본', startedAt: 0 }],
