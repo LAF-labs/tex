@@ -379,6 +379,21 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  services/gateway:
+    dependencies:
+      '@sax/model':
+        specifier: workspace:*
+        version: link:../../packages/model
+      '@sax/net':
+        specifier: workspace:*
+        version: link:../../packages/net
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
+
   services/shared:
     dependencies:
       ajv:

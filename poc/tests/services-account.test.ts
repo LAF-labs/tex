@@ -641,6 +641,14 @@ describe('M4-5 계정: 내부 API·로그·저장 컬럼(D09 §1.1)', () => {
     const r = await e.req('GET', `/internal/v1/devices/${pc.d.id}`, { headers: { authorization: `Internal ${INTERNAL}` } });
     assert.equal(r.json.state, 'active');
     assert.equal(r.json.role, 'desktop');
+    // 게이트웨이 자동 정지(D09 §3): 내부 비밀 필요, 정지 훅·알림, 두 번째는 변화 없음
+    assert.equal((await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`)).status, 401);
+    const a = await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`, { headers: { authorization: `Internal ${INTERNAL}` } });
+    assert.deepEqual(a.json, { suspended: true });
+    assert.deepEqual(e.stopped, [pc.d.id]);
+    assert.ok(e.mail.outbox.some((m) => m.kind === 'device_auto_suspended'));
+    assert.deepEqual((await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`, { headers: { authorization: `Internal ${INTERNAL}` } })).json, { suspended: false });
+    assert.equal((await e.req('GET', `/internal/v1/devices/${pc.d.id}`, { headers: { authorization: `Internal ${INTERNAL}` } })).json.state, 'suspended');
   });
 
   it('접근 로그는 고정 필드·라우트 패턴뿐이고 이메일·IP·토큰·기기 ID가 없다', async () => {

@@ -557,6 +557,20 @@ export class AccountService {
     await this.notify(s.accountId, 'device_suspended');
   }
 
+  /**
+   * 게이트웨이 자동 정지(D09 §3 "거절·위반 급증 시 기기 단위로 먼저 자동 정지하고, 계정 정지 전 다른 기기에 알린다").
+   * 내부 API로만 부른다. 해제는 사용자 긴급 정지와 같이 AIK 서명 재활성화만.
+   */
+  async autoSuspend(deviceId: string): Promise<boolean> {
+    const d = await this.db.one<{ account_id: string }>('SELECT account_id FROM devices WHERE device_id = $1', [deviceId]);
+    if (!d) return false;
+    const n = await this.db.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1 AND state = 'active'", [deviceId]);
+    if (!n) return false;
+    await this.stopped(deviceId);
+    await this.notify(d.account_id, 'device_auto_suspended');
+    return true;
+  }
+
   /** AIK 서명 재활성화(데스크톱이 요청). 폐기된 기기는 되살리지 않는다. */
   async reactivate(requester: { accountId: string; deviceId: string }, deviceId: string, op: { op: AcctOp; aikSig: string }): Promise<void> {
     const a = await this.account(requester.accountId);
