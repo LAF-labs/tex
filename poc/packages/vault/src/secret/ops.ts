@@ -111,6 +111,8 @@ export interface SecretOpsOptions {
    * 금고가 닫혔으면 vault_locked, suspect면 credential_suspect.
    */
   stored?: (kind: string, scope: string, row?: number) => Promise<StoredRead>;
+  /** 시험만 주입한다(사람 창 정착 판정 시계). 기본 Date.now. */
+  now?: () => number;
 }
 
 export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
@@ -379,7 +381,7 @@ export class SecretOps {
       w.idleSince = undefined;
       return;
     }
-    const now = Date.now();
+    const now = this.opts.now?.() ?? Date.now();
     if (w.idleSince === undefined || w.lastLen !== p.len) {
       w.idleSince = now;
       w.lastLen = p.len;
