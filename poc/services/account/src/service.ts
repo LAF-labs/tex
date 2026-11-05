@@ -318,6 +318,11 @@ export class AccountService {
   async checkout(s: Session): Promise<{ checkoutUrl: string }> {
     let sub = await this.db.one<{ status: string; pg_customer_ref: string }>('SELECT status, pg_customer_ref FROM subscriptions WHERE account_id = $1', [s.accountId]);
     if (sub?.status === 'active') fail('request.param_rejected');
+    // 해지 뒤 다시 구독: 새 PG 고객 참조로 연다(옛 참조로 늦게 온 이벤트는 어디에도 맞지 않는다)
+    if (sub?.status === 'canceled') {
+      sub = { status: 'pending', pg_customer_ref: `cus_${randomToken(18)}` };
+      await this.db.run("UPDATE subscriptions SET status = 'pending', renew_at = NULL, pg_customer_ref = $1 WHERE account_id = $2", [sub.pg_customer_ref, s.accountId]);
+    }
     if (!sub) {
       sub = { status: 'pending', pg_customer_ref: `cus_${randomToken(18)}` };
       await this.db.run("INSERT INTO subscriptions (account_id, plan, status, period, renew_at, pg_customer_ref) VALUES ($1, 'standard', 'pending', 'month', NULL, $2)", [s.accountId, sub.pg_customer_ref]);
@@ -330,8 +335,11 @@ export class AccountService {
     const e: PaymentEvent | null = this.d.payments.verifyWebhook(raw, headers);
     if (!e) fail('account.billing_signature_invalid');
     const ev = e!;
-    if (ev.type === 'subscription.activated' || ev.type === 'subscription.renewed') await this.db.run("UPDATE subscriptions SET status = 'active', renew_at = $1 WHERE pg_customer_ref = $2", [ev.renewAt, ev.pgCustomerRef]);
-    else if (ev.type === 'payment.failed') await this.db.run("UPDATE subscriptions SET status = 'past_due' WHERE pg_customer_ref = $1", [ev.pgCustomerRef]);
+    // 상태 전이만 받는다(늦게 오거나 재전송된 이벤트가 해지를 되살리거나 갱신을 되돌리지 않게): 해지는 끝 상태이고 다시 구독은 checkout이 pending으로 연다.
+    // 갱신은 renew_at이 앞으로 갈 때만, 결제 실패는 active에서만.
+    if (ev.type === 'subscription.activated' || ev.type === 'subscription.renewed')
+      await this.db.run("UPDATE subscriptions SET status = 'active', renew_at = $1 WHERE pg_customer_ref = $2 AND status <> 'canceled' AND (renew_at IS NULL OR renew_at < $1)", [ev.renewAt, ev.pgCustomerRef]);
+    else if (ev.type === 'payment.failed') await this.db.run("UPDATE subscriptions SET status = 'past_due' WHERE pg_customer_ref = $1 AND status = 'active'", [ev.pgCustomerRef]);
     else await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE pg_customer_ref = $1", [ev.pgCustomerRef]);
   }
 
@@ -383,8 +391,11 @@ export class AccountService {
       if (!a) return fail('account.unauthorized');
       if (a.aik_pub) fail('account.aik_already_pinned');
       await this.requireStrongSessionIfPasskeys(q, s);
-      const desk = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state <> 'revoked'", [s.accountId]);
+      // 신뢰된(활성·정지) 데스크톱이 있으면 이미 고정된 계정이다. AIK 전에 신청만 한 pending 데스크톱은 막지 않는다:
+      // 같은 기기면 이 고정으로 대신하고, 다른 기기는 pending으로 남아 나중에 AIK 서명 목록으로만 활성화된다.
+      const desk = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state IN ('active', 'suspended')", [s.accountId]);
       if (Number(desk?.n ?? 0) > 0) fail('account.aik_already_pinned');
+      await q.run("DELETE FROM devices WHERE device_id = $1 AND account_id = $2 AND role = 'desktop' AND state = 'pending'", [e!.entry.device_id, s.accountId]);
       if (!(await this.churnOk(q, s.accountId, 'desktop'))) fail('account.device_churn_limit');
       const now = this.now();
       await q.run(
@@ -510,7 +521,8 @@ export class AccountService {
       for (const [id, r] of revoked) {
         const d = byId.get(id);
         if (!d || d.state === 'revoked') continue;
-        if (cooling) await q.run('UPDATE devices SET delete_after = $1, revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
+        // 유예는 처음 폐기 레코드가 들어온 때부터 센다(목록을 다시 올려도 다시 시작하지 않는다)
+        if (cooling) await q.run('UPDATE devices SET delete_after = COALESCE(delete_after, $1), revoke_record = $2 WHERE device_id = $3', [now + ACCOUNT.deleteGraceDays * MS.D, jcs(r), id]);
         else {
           await q.run("UPDATE devices SET state = 'revoked', revoke_record = $1, delete_after = NULL WHERE device_id = $2", [jcs(r), id]);
           await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [requester.accountId, d.role, kstDay(now)]);
@@ -582,7 +594,7 @@ export class AccountService {
    * AIK가 서명한 기기 인증서를 내고, 같은 요청에 그 인증서의 Vx로 서명한 DPoP 증명(ath = sha256(JCS(cert)))을 붙인다.
    * Phase 1 폰 토큰은 relay·push 범위만(ADR-034, D09 §2.1).
    */
-  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
+  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
     const d = await this.db.one<DeviceRow & { aik_pub: string | null }>('SELECT d.*, a.aik_pub FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = $1 AND a.status = $2', [c.cert.device_id, 'active']);
     if (!d || !d.aik_pub) fail('account.cert_invalid');
     const now = this.now();
@@ -590,6 +602,8 @@ export class AccountService {
     if (c.cert.not_after <= now || c.cert.not_after > now + DEVICE.certMaxDays * MS.D) fail('account.cert_invalid');
     const vx = fromB64(d!.vx, 32)!;
     verifyDpop(dpop, { method: 'POST', htu, token: jcs(c), cnf: vx, now, jti: this.jti, code: 'account.dpop_invalid' });
+    // 기기별 발급 한도는 인증서·DPoP가 맞은 뒤에만 센다(남이 device_id만 알고 한도를 태우지 못하게)
+    onVerified?.();
     if (d!.state !== 'active') fail('account.device_suspended');
     const scopes = d!.role === 'desktop' ? [...DESKTOP_SCOPES] : [...MOBILE_SCOPES_P1];
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
