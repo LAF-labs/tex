@@ -283,7 +283,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       today,
       reminderDay: MOCK_SETTINGS.reminderDay,
       issued: issuedInvoices(),
-      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name })),
+      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       bundle: mockBundle(today),
       cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,

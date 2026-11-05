@@ -133,6 +133,8 @@ body.bar-active .sx-input textarea { max-height: 72px; }
 .sx-kv dd.is-start { justify-content: flex-start; text-align: left; }
 .sx-flag { font-size: 12px; line-height: 18px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 4px; color: var(--ink-2); }
 .sx-where { border-top: 1px solid var(--line); padding-top: var(--space-3); }
+/* InDoubt 패널: 홈택스에서 직접 확인할 건(08 §11) */
+.sx-check { display: flex; flex-direction: column; gap: var(--space-2); border-top: 1px solid var(--line); padding-top: var(--space-3); }
 
 /* 작업 패널 */
 .panel-in { padding: 18px; display: grid; gap: 14px; align-content: start; }

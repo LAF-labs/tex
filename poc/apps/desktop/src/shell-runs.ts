@@ -13,7 +13,7 @@ const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 
 type Phase = (typeof PHASES)[number];
 
 type EngineEvent =
-  | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
+  | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string; attempt?: number }
   | { runId: string; type: 'waiting'; reqId: string }
   | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
 
@@ -371,6 +371,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       // 가짜 페이지는 서명이 없다(signFlow는 PoC-3에서 실제 순서를 본 뒤).
       const n = e.phase === 'sign' && e.state === 'now' ? '가짜 페이지는 서명 단계가 없어요' : e.code ? NOTE[e.code] : undefined;
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
+      // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
+      if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;
       if (['sign', 'verify', 'mail'].includes(e.phase) && r.status === 'waiting') {
         r.status = 'issuing';
         r.approvedPending = false;
@@ -412,6 +414,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       // 실패·in_doubt는 사용자가 볼 일이 있다(확인 필요). 지금 단계를 표시하고 이유를 보인다.
       r.status = 'attention';
       r.stoppedNote = note(code);
+      r.inDoubt = e.status === 'in_doubt';
       const now = r.steps.findLastIndex((s) => s.state === 'now');
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };
     }

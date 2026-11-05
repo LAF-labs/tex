@@ -296,6 +296,10 @@ export interface RunView {
   approvedPending?: boolean;
   /** 이 초안을 만든 요청 해석(활동 기록의 모델 줄). 시연 모델이면 'model'. */
   interp?: 'model' | 'offline';
+  /** 발급됐는지 모른다(엔진 결과 in_doubt, 원장 in_doubt). 이 카드에는 다시 발급하는 버튼이 없다(08 §11). */
+  inDoubt?: boolean;
+  /** 발급목록 조회 몇 번째인지(엔진 verify 단계 이벤트의 attempt). 엔진이 보내지 않으면 없다. */
+  verifyAttempt?: number;
 }
 
 // ---- 정부24 후처리 목업(T-08). 정부24에 어떤 요청도 보내지 않고 브라우저도 열지 않는다(ADR-011, D17). ----
