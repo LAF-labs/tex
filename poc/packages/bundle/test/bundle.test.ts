@@ -12,11 +12,19 @@ import {
   ReceiptRepo, RunRepo, syntheticBizNo, type CardTxnInput, type Db,
 } from '@sax/db';
 import {
-  addCustomItem, ensureItems, exportBundle, exportPayrollRecord, generatePassword, missingReport, monthStatus, netOfCancellations, periodFor, unmatchedCardTxns,
-  type MonthContext,
+  addCustomItem, clearCardSlipEnough, ensureItems, exportBundle, exportPayrollRecord, generatePassword, markCardSlipEnough, missingReport, monthStatus, netOfCancellations,
+  periodFor, RRN_HIDDEN_NOTE, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext,
 } from '@sax/bundle';
 
 configure({ useWebWorkers: false });
+
+const sha = (b: Buffer): string => createHash('sha256').update(b).digest('hex');
+/** 암호 엑셀을 풀어 시트 XML을 읽는다 */
+async function readBook(xlsx: Buffer, pw: string): Promise<{ all: string; read: (n: string) => Promise<string> }> {
+  const parts = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(xlsx, { password: pw })))).getEntries();
+  const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
+  return { all, read: async (n: string) => parts.find((p) => p.filename === n)!.getData!(new TextWriter()) };
+}
 
 let dir: string;
 let db: Db;
@@ -136,7 +144,7 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.equal(missingReport(ctx({ payrollEnabled: false })).payroll, null);
   });
 
-  it('내보내기: AES-256 ZIP 안에 ECMA-376 암호 엑셀과 첨부, 평문 표지가 파일에 없다, 기록에 해시', async () => {
+  it('내보내기: ECMA-376 암호 엑셀 + 같은 암호의 AES-256 첨부 ZIP 두 파일, 평문 표지 없음, 한 기록에 두 해시, 안내 문구', async () => {
     const pw = generatePassword();
     assert.equal(pw.length, 12);
     assert.match(pw, /^[A-HJ-NP-Za-km-z2-9]+$/);
@@ -144,75 +152,88 @@ describe('이번 달 상태와 빠진 것', () => {
     const r = await exportBundle({ ...ctx(), outDir, password: pw, now: () => new Date('2026-11-05T01:00:00Z') });
     assert.deepEqual(r.sheets, ['매출', '매입', '사업용 카드', '종이 증빙', '정산·현금매출', '급여대장', '원천세 요약', '추가 항목', '빠진 것']);
     assert.equal(r.attachments, 1);
-    assert.match(path.basename(r.file), /^세무사꾸러미_2026-10\.zip$/);
-    const bytes = fs.readFileSync(r.file);
-    assert.equal(createHash('sha256').update(bytes).digest('hex'), r.record.sha256);
-    assert.equal(new BundleExportRepo(db).list(profileId, '2026-10')[0]!.path, r.file);
-    for (const needle of [MARKER, '김직원', '1234567', 'receipt-jpeg-bytes']) assert.ok(!bytes.includes(Buffer.from(needle)), `평문 없음: ${needle}`);
-    if (process.platform !== 'win32') assert.equal(fs.statSync(r.file).mode & 0o777, 0o600);
+    assert.equal(path.basename(r.file), '세무사꾸러미_2026-10.xlsx');
+    assert.equal(path.basename(r.attachmentsFile!), '세무사꾸러미_2026-10_첨부.zip');
+    assert.deepEqual(r.guide, [ZIP_OPEN_GUIDE, RRN_HIDDEN_NOTE]);
+    assert.equal(r.rrnIncluded, false);
+    const xbytes = fs.readFileSync(r.file);
+    const zbytes = fs.readFileSync(r.attachmentsFile!);
+    const rec = new BundleExportRepo(db).list(profileId, '2026-10')[0]!;
+    assert.deepEqual([rec.path, rec.sha256, rec.attachmentsPath, rec.attachmentsSha256, rec.rrnIncluded], [r.file, sha(xbytes), r.attachmentsFile, sha(zbytes), false]);
+    for (const bytes of [xbytes, zbytes]) for (const needle of [MARKER, '김직원', '1234567', 'receipt-jpeg-bytes']) assert.ok(!bytes.includes(Buffer.from(needle)), `평문 없음: ${needle}`);
+    if (process.platform !== 'win32') for (const f of [r.file, r.attachmentsFile!]) assert.equal(fs.statSync(f).mode & 0o777, 0o600);
+    assert.deepEqual(fs.readdirSync(outDir).filter((n) => n.endsWith('.part')), [], '임시 파일 없음');
 
     await assert.rejects(async () => {
-      const z = new ZipReader(new Uint8ArrayReader(new Uint8Array(bytes)));
+      const z = new ZipReader(new Uint8ArrayReader(new Uint8Array(zbytes)));
       const [first] = await z.getEntries();
       await first!.getData!(new Uint8ArrayWriter());
     }, '암호 없이는 열리지 않는다');
-    const z = new ZipReader(new Uint8ArrayReader(new Uint8Array(bytes)), { password: pw });
-    const entries = await z.getEntries();
-    const names = entries.map((e) => e.filename);
-    assert.equal(names[0], '세무사꾸러미_2026-10.xlsx');
-    assert.match(names[1]!, /^attachments\/paper_receipt_\d{8}_[0-9a-f]{8}\.jpg$/);
-    assert.equal(Buffer.from(await entries[1]!.getData!(new Uint8ArrayWriter())).toString(), 'receipt-jpeg-bytes');
-    const xlsx = Buffer.from(await entries[0]!.getData!(new Uint8ArrayWriter()));
-    assert.ok(officeCrypto.isEncrypted(xlsx), '엑셀 자체도 열기 암호');
-    await assert.rejects(officeCrypto.decrypt(xlsx, { password: 'wrong-password' }));
-    const plain = await officeCrypto.decrypt(xlsx, { password: pw });
-    const book = new ZipReader(new Uint8ArrayReader(new Uint8Array(plain)));
-    const parts = await book.getEntries();
-    const read = async (n: string) => parts.find((p) => p.filename === n)!.getData!(new TextWriter());
-    const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
+    const entries = await new ZipReader(new Uint8ArrayReader(new Uint8Array(zbytes)), { password: pw }).getEntries();
+    assert.equal(entries.length, 1, 'ZIP에는 첨부만');
+    assert.match(entries[0]!.filename, /^attachments\/paper_receipt_\d{8}_[0-9a-f]{8}\.jpg$/);
+    assert.equal(Buffer.from(await entries[0]!.getData!(new Uint8ArrayWriter())).toString(), 'receipt-jpeg-bytes');
+    assert.ok(officeCrypto.isEncrypted(xbytes), '엑셀은 열기 암호');
+    await assert.rejects(officeCrypto.decrypt(xbytes, { password: 'wrong-password' }));
+    const { all, read } = await readBook(xbytes, pw);
     assert.match(await read('xl/workbook.xml'), /name="빠진 것"/);
-    for (const want of [MARKER, '대조 없음', '이직원: 이달 급여 줄 없음']) assert.ok(all.includes(want), `엑셀 안: ${want}`);
+    for (const want of [MARKER, '대조 없음', '이직원: 이달 급여 줄 없음', RRN_HIDDEN_NOTE]) assert.ok(all.includes(want), `엑셀 안: ${want}`);
     assert.ok(!/<f>/.test(all), '수식 칸 없음');
   });
 
-  it('보관함 파일이 바뀐 첨부는 넣지 않고 빠진 것에 적는다. 주민번호는 끄면 넣지 않는다. 같은 이름이면 _2', async () => {
+  it('보관함 파일이 바뀐 첨부는 넣지 않고 빠진 것에 적는다. 같은 이름이면 엑셀·ZIP 모두 _2', async () => {
     const d = addDoc('settlement_file', '.xlsx', Buffer.from('settle'));
     const item = new BundleRepo(db).items(profileId).find((i) => i.kind === 'cash_sales')!;
     new BundleRepo(db).setEntry({ itemId: item.id, period: '2026-10', status: 'partial', docIds: [d] });
     fs.writeFileSync(new DocumentRepo(db).get(d)!.path, 'tampered');
     const pw = generatePassword();
-    const r = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw, includeRrn: false });
+    const r = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
     assert.equal(r.skippedChanged, 1);
-    assert.match(path.basename(r.file), /_2\.zip$/);
-    const z = new ZipReader(new Uint8ArrayReader(new Uint8Array(fs.readFileSync(r.file))), { password: pw });
-    const xlsx = Buffer.from(await (await z.getEntries())[0]!.getData!(new Uint8ArrayWriter()));
-    const parts = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(xlsx, { password: pw })))).getEntries();
-    const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
+    assert.equal(path.basename(r.file), '세무사꾸러미_2026-10_2.xlsx');
+    assert.equal(path.basename(r.attachmentsFile!), '세무사꾸러미_2026-10_2_첨부.zip');
+    const { all } = await readBook(fs.readFileSync(r.file), pw);
     assert.ok(all.includes('첨부 확인 필요'));
-    assert.ok(!all.includes('900101-1234567') && !all.includes('주민등록번호'));
     await assert.rejects(exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: 'short' }), /password_too_short/);
   });
 
-  it('급여 기록 내보내기: 확인한 달만, 암호 엑셀, 기록 period payroll:…', async () => {
+  it('"카드 전표로 충분": 체크한 다음 달부터 카드 대조를 빠진 것에서 뺀다(판정 아님), 끄면 돌아온다', () => {
+    assert.equal(markCardSlipEnough(db, profileId, '2026-10'), '2026-11');
+    assert.equal(missingReport(ctx()).cardSlipEnough, false, '체크한 달은 그대로');
+    assert.equal(markCardSlipEnough(db, profileId, '2026-09'), '2026-10');
+    const m = missingReport(ctx());
+    assert.equal(m.cardSlipEnough, true);
+    assert.deepEqual(m.cardWithoutEvidence, []);
+    clearCardSlipEnough(db, profileId);
+    assert.deepEqual(missingReport(ctx()).cardWithoutEvidence.map((c) => c.amount), [15_000]);
+    assert.throws(() => markCardSlipEnough(db, profileId, '2026-13'), /invalid_month/);
+  });
+
+  it('주민번호: 꾸러미는 기본 가림(뒷자리)·켜면 전체, 기록에 포함 여부. 급여 기록 내보내기는 기본 열 없음', async () => {
     const pw = generatePassword();
     await assert.rejects(exportPayrollRecord({ db, cipher, profileId, outDir: path.join(dir, 'exports'), password: pw }), /no_confirmed_payroll/);
     new PayrollRepo(db).confirm(profileId, '2026-10', 1);
     const r = await exportPayrollRecord({ db, cipher, profileId, outDir: path.join(dir, 'exports'), password: pw });
     assert.deepEqual(r.months, ['2026-10']);
     assert.equal(r.record.period, 'payroll:2026-10..2026-10');
+    assert.equal(r.record.rrnIncluded, false);
     const buf = fs.readFileSync(r.file);
     assert.ok(officeCrypto.isEncrypted(buf));
-    const parts = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(buf, { password: pw })))).getEntries();
-    const all = (await Promise.all(parts.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
-    assert.ok(all.includes('김직원') && !all.includes('900101-1234567'), '기본은 주민번호 없이');
-    // 확인한 급여대장은 꾸러미 급여대장 시트에 들어가고, 넣은 주민번호는 암호 안에만 있다
-    const b = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
-    const bz = new ZipReader(new Uint8ArrayReader(new Uint8Array(fs.readFileSync(b.file))), { password: pw });
-    const bx = Buffer.from(await (await bz.getEntries())[0]!.getData!(new Uint8ArrayWriter()));
-    const bp = await new ZipReader(new Uint8ArrayReader(new Uint8Array(await officeCrypto.decrypt(bx, { password: pw })))).getEntries();
-    const ball = (await Promise.all(bp.filter((p) => p.filename.endsWith('.xml')).map((p) => p.getData!(new TextWriter())))).join('\n');
-    assert.ok(ball.includes('900101-1234567'), '주민번호');
-    assert.ok(ball.includes('>41630<'), '소득세는 숫자 칸');
+    const rec = await readBook(buf, pw);
+    assert.ok(rec.all.includes('김직원') && !rec.all.includes('900101-1') && !rec.all.includes('주민등록번호'), '급여 기록은 주민번호 열 없이');
+
+    const masked = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw });
+    const mb = await readBook(fs.readFileSync(masked.file), pw);
+    assert.ok(mb.all.includes('900101-1******') && !mb.all.includes('900101-1234567'), '기본은 뒷자리 가림');
+    assert.ok(mb.all.includes(RRN_HIDDEN_NOTE));
+    assert.ok(mb.all.includes('>41630<'), '소득세는 숫자 칸');
+    assert.equal(masked.record.rrnIncluded, false);
+
+    const full = await exportBundle({ ...ctx(), outDir: path.join(dir, 'exports'), password: pw, includeRrn: true });
+    const fb = await readBook(fs.readFileSync(full.file), pw);
+    assert.ok(fb.all.includes('900101-1234567') && !fb.all.includes(RRN_HIDDEN_NOTE), '켜면 전체, 암호 안에만');
+    assert.ok(!fs.readFileSync(full.file).includes(Buffer.from('900101')), '파일 바이트에는 평문 없음');
+    assert.equal(full.record.rrnIncluded, true);
+    assert.deepEqual(full.guide, [ZIP_OPEN_GUIDE]);
     assert.equal(monthStatus(ctx()).find((s) => s.item.kind === 'payroll')!.status, 'ready');
   });
 });

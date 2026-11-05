@@ -1,7 +1,7 @@
 // 세무사 꾸러미 이번 달 상태(08 D-05)와 "빠진 것"(D14 M6-14). 판정이 아니라 표시다: 앱은 무엇이 비어 있는지 보여 줄 뿐
 // 경비 인정·증빙 적격 여부를 정하지 않는다(ADR-032 결정 3·5).
 import { BundleRepo, CardRepo, CashSalesRepo, EmployeeRepo, PayrollRepo, ReceiptRepo, type BundleEntryStatus, type BundleItem, type CardTxn, type ColumnCipher, type Db } from '@sax/db';
-import { monthRange, periodFor } from './items.ts';
+import { BundleError, monthRange, periodFor } from './items.ts';
 
 /** 홈택스 세금계산서 조회(H-02) 결과 한 건. 이 패키지는 받아서 쓰기만 한다 */
 export interface TaxInvoiceRow {
@@ -88,10 +88,29 @@ export interface MissingReport {
   emptyItems: Array<{ itemId: string; name: string; tier: number; period: string; status: 'missing' | 'partial' }>;
   /** 확인 안 한 급여: 이달 급여대장이 없거나 초안이거나, 재직 직원 중 줄이 없는 사람 */
   payroll: { state: 'none' | 'draft' | 'confirmed'; revision: number | null; employeesWithoutLine: Array<{ id: string; name: string }> } | null;
-  /** 대조되는 종이 증빙·매입 세금계산서가 없는 카드 사용(취소된 승인은 뺀다). 확인용 표시 */
+  /** 대조되는 종이 증빙·매입 세금계산서가 없는 카드 사용(취소된 승인은 뺀다). 확인용 표시(화면은 기본 접힘). cardSlipEnough면 비운다 */
   cardWithoutEvidence: Array<{ txnId: string; usedOn: string; merchant: string | null; amount: number; hasMemo: boolean }>;
   /** 구간을 바꾼 뒤 다시 잇지 못한 카드 메모 수("메모 대상 확인 필요") */
   memosNeedCheck: number;
+  /** 사장님이 "카드 전표로 충분"으로 표시해 이 달은 카드 대조를 빠진 것에서 뺐다(판정 아님, ADR-032) */
+  cardSlipEnough: boolean;
+}
+
+const nextMonth = (m: string): string => {
+  const [y, mm] = m.split('-').map(Number) as [number, number];
+  return mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, '0')}`;
+};
+
+/** 사장님이 그 달 화면에서 "카드 전표로 충분"을 체크했다: 다음 달부터 카드 대조 표시를 뺀다. 끄려면 clearCardSlipEnough */
+export function markCardSlipEnough(db: MonthContext['db'], profileId: string, checkedInMonth: string): string {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(checkedInMonth)) throw new BundleError('invalid_month');
+  const from = nextMonth(checkedInMonth);
+  new BundleRepo(db).setCardSlipEnough(profileId, from);
+  return from;
+}
+
+export function clearCardSlipEnough(db: MonthContext['db'], profileId: string): void {
+  new BundleRepo(db).setCardSlipEnough(profileId, null);
 }
 
 /** 날짜 차이(일) */
@@ -155,7 +174,9 @@ export function missingReport(ctx: MonthContext): MissingReport {
     .map((r) => ({ day: r.issuedOn!, amount: r.amount!, bizNo: r.merchantBizNo }));
   const invoices = (ctx.taxInvoices ?? []).filter((t) => t.direction === 'purchase').map((t) => ({ day: t.issueDate, amount: t.total, bizNo: t.counterpartyBizNo }));
   const memoTxnIds = new Set(cards.memos(ctx.profileId).map((m) => m.txnId));
-  const cardWithoutEvidence = unmatchedCardTxns(cards.txns(ctx.profileId, from, to), [...receipts, ...invoices]).map((t) => ({
+  const slipFrom = new BundleRepo(ctx.db).cardSlipEnoughFrom(ctx.profileId);
+  const cardSlipEnough = slipFrom !== null && ctx.month >= slipFrom;
+  const cardWithoutEvidence = cardSlipEnough ? [] : unmatchedCardTxns(cards.txns(ctx.profileId, from, to), [...receipts, ...invoices]).map((t) => ({
     txnId: t.id,
     usedOn: t.usedOn,
     merchant: t.merchant,
@@ -163,5 +184,5 @@ export function missingReport(ctx: MonthContext): MissingReport {
     hasMemo: memoTxnIds.has(t.id),
   }));
   const memosNeedCheck = cards.memos(ctx.profileId).filter((m) => m.txnId === null).length;
-  return { month: ctx.month, emptyItems, payroll, cardWithoutEvidence, memosNeedCheck };
+  return { month: ctx.month, emptyItems, payroll, cardWithoutEvidence, memosNeedCheck, cardSlipEnough };
 }

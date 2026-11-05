@@ -2,9 +2,11 @@
 // - 우리 표준 서식: 시트 9종(매출, 매입, 사업용 카드, 종이 증빙, 정산·현금매출(켜진 업종만), 급여대장, 원천세 요약, 추가 항목, 빠진 것).
 //   다음 단계의 세무 프로그램 서식 맞춤을 생각해 사업자번호·거래일·공급가액·세액을 따로 둔 열로 둔다(02 §17).
 // - 엑셀 파일 자체에 ECMA-376 Agile 암호(AES-256, SHA-512)를 건다(officecrypto-tool). 시트 보호가 아니라 "열기 암호"다.
-// - 사진·PDF는 엑셀에 넣을 수 없어(순수 JS 라이브러리로 OLE 개체를 못 넣는다) 같은 암호의 AES-256 ZIP(WinZip AE-2)에
-//   암호 걸린 엑셀과 함께 넣는다. 암호 밖에 남는 첨부는 없다. ZIP 안 파일 이름은 D07 §4 규칙({docType}_{yyyyMMdd}_{shortId})이라 개인정보가 없다.
-// - 내보내기 기록(bundle_exports)에 결과 파일의 sha256·경로·시각을 남긴다. 암호는 어디에도 저장하지 않는다.
+// - 사진·PDF는 엑셀에 넣을 수 없어(순수 JS 라이브러리로 OLE 개체를 못 넣는다) 같은 암호의 AES-256 ZIP(WinZip AE-2) 하나로 따로 낸다
+//   (팀장 결정 2026-11-05: 파일 둘. 엑셀은 엑셀에서 바로 열린다). 암호 밖에 남는 첨부는 없다. ZIP 안 파일 이름은 D07 §4 규칙
+//   ({docType}_{yyyyMMdd}_{shortId})이라 개인정보가 없다. ZIP은 운영체제 기본 압축 해제로 못 열 수 있어 ZIP_OPEN_GUIDE를 함께 보여 준다.
+// - 급여 시트의 주민번호는 기본 가림(뒷자리 마스킹, R13 D-L3). 사장님이 설정에서 켜면 넣는다. 포함 여부는 내보내기 기록에 남긴다.
+// - 내보내기 기록(bundle_exports) 한 행에 엑셀·ZIP의 sha256·경로·시각을 남긴다. 암호는 어디에도 저장하지 않는다.
 // - 모델을 부르지 않는다. 네트워크를 쓰지 않는다(파일만 쓴다). 보내기(메일 프로그램 열기)는 main이 한다(M6-13).
 import { createHash, randomInt } from 'node:crypto';
 import fs from 'node:fs';
@@ -22,6 +24,14 @@ import { BundleError, monthRange } from './items.ts';
 import { missingReport, monthStatus, type MonthContext, type TaxInvoiceRow } from './month.ts';
 
 configure({ useWebWorkers: false });
+
+/** 받는 쪽(세무사) 안내: 첨부 ZIP을 여는 방법 */
+export const ZIP_OPEN_GUIDE = 'ZIP은 반디집·7-Zip 등으로 열어 주세요(Windows 탐색기·macOS 기본 압축 해제는 AES ZIP을 못 엽니다)';
+/** 주민번호를 가렸을 때 급여 시트 끝과 안내에 쓰는 문구 */
+export const RRN_HIDDEN_NOTE = '주민번호는 설정에서 켜면 포함됩니다';
+
+/** full = 전체, masked = 뒷자리 가림(꾸러미 기본), omit = 열 없음(급여 기록 기본) */
+type RrnMode = 'full' | 'masked' | 'omit';
 
 const STATUS_KO = { missing: '없음', partial: '일부', ready: '준비됨', not_applicable: '이번 달 해당 없음' } as const;
 const CADENCE_KO = { monthly: '매달', quarterly: '분기', once: '한 번' } as const;
@@ -56,15 +66,20 @@ export interface BundleExportInput extends MonthContext {
   /** 결과 파일을 둘 폴더(앱이 정한 내보내기 폴더) */
   outDir: string;
   password: string;
-  /** 급여대장 시트에 주민번호를 넣는다(원천세 자료로 세무사가 필요할 때). 기본 true, 넣은 직원만 */
+  /** 급여대장 시트에 주민번호 전체를 넣는다(사장님이 설정에서 켰을 때). 기본 false = 뒷자리 가림 */
   includeRrn?: boolean;
   now?: () => Date;
 }
 
 export interface BundleExportResult {
   record: BundleExport;
-  /** 결과 파일(첨부가 있으면 .zip, 없으면 .xlsx) */
+  /** 암호 엑셀 */
   file: string;
+  /** 사진·PDF를 담은 같은 암호의 AES-256 ZIP. 첨부가 없으면 null */
+  attachmentsFile: string | null;
+  /** 사장님·세무사에게 같이 보여 줄 안내(ZIP_OPEN_GUIDE, RRN_HIDDEN_NOTE) */
+  guide: string[];
+  rrnIncluded: boolean;
   sheets: string[];
   attachments: number;
   /** 보관함 파일이 DB의 sha256과 달라 넣지 않은 문서 수(빠진 것 시트에도 적는다) */
@@ -95,12 +110,12 @@ function collectAttachments(db: Db, docIds: Iterable<string>): { list: Attach[];
   return { list, changed };
 }
 
-function payrollRows(db: Db, cipher: ColumnCipher, profileId: string, month: string, includeRrn: boolean): { rows: Row[]; lines: PayrollLine[]; revision: number | null } {
+function payrollRows(db: Db, cipher: ColumnCipher, profileId: string, month: string, rrn: RrnMode): { rows: Row[]; lines: PayrollLine[]; revision: number | null } {
   const pr = new PayrollRepo(db);
   const m = pr.latestConfirmed(profileId, month);
   const emps = new EmployeeRepo(db, cipher);
   const rows: Row[] = [
-    header(['성명', '생년월일', ...(includeRrn ? ['주민등록번호'] : []), '입사일', '근로일수', '근로시간', '지급 항목', '지급총액', '비과세', '소득세', '지방소득세', '국민연금', '건강보험', '장기요양', '고용보험', '보험 기준', '공제계', '실지급액']),
+    header(['성명', '생년월일', ...(rrn === 'omit' ? [] : ['주민등록번호']), '입사일', '근로일수', '근로시간', '지급 항목', '지급총액', '비과세', '소득세', '지방소득세', '국민연금', '건강보험', '장기요양', '고용보험', '보험 기준', '공제계', '실지급액']),
   ];
   if (!m) return { rows, lines: [], revision: null };
   const lines = pr.lines(profileId, month, m.revision);
@@ -110,13 +125,17 @@ function payrollRows(db: Db, cipher: ColumnCipher, profileId: string, month: str
     const ded = [pick(l.pensionNotice, l.pensionEst), pick(l.healthNotice, l.healthEst), pick(l.ltcNotice, l.ltcEst), pick(l.employmentNotice, l.employmentEst)];
     const basis = [l.pensionNotice, l.healthNotice, l.ltcNotice, l.employmentNotice].every((x) => x !== null) ? '고지액' : '예상치 포함';
     rows.push([
-      text(e?.name), text(e?.birthDate), ...(includeRrn ? [e ? text(emps.revealRrn(e.id)?.replace(/^(\d{6})/, '$1-')) : ''] : []), text(e?.hiredOn),
+      text(e?.name), text(e?.birthDate), ...(rrn === 'omit' ? [] : [e ? rrnCell(emps, e.id, rrn) : '']), text(e?.hiredOn),
       num(l.workDays), hours(l.workMinutes), l.items.map((i) => `${i.name} ${i.amount.toLocaleString('ko-KR')}`).join(', '),
       num(l.gross), num(l.nontax), num(l.incomeTax), num(l.localIncomeTax), ...ded.map(num), basis,
       num(l.incomeTax + l.localIncomeTax + ded.reduce((a, b) => a + b, 0)), num(l.netPay),
     ]);
   }
   return { rows, lines, revision: m.revision };
+}
+
+function rrnCell(emps: EmployeeRepo, id: string, mode: 'full' | 'masked'): string {
+  return mode === 'full' ? text(emps.revealRrn(id)?.replace(/^(\d{6})/, '$1-')) : text(emps.maskedRrn(id));
 }
 
 /** 이달 세무사 꾸러미 파일을 만든다 */
@@ -174,7 +193,9 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
     sheets.push({ sheet: '정산·현금매출', data: rows });
   }
 
-  const pay = input.payrollEnabled ? payrollRows(db, cipher, profileId, month, input.includeRrn ?? true) : { rows: [header(['급여대장 파일'])], lines: [], revision: null };
+  const rrnIncluded = input.includeRrn === true;
+  const pay = input.payrollEnabled ? payrollRows(db, cipher, profileId, month, rrnIncluded ? 'full' : 'masked') : { rows: [header(['급여대장 파일'])], lines: [], revision: null };
+  if (input.payrollEnabled && !rrnIncluded) pay.rows.push([], [`※ 주민번호 뒷자리는 가렸습니다. ${RRN_HIDDEN_NOTE}`]);
   if (!input.payrollEnabled) {
     const p = status.find((s) => s.item.kind === 'payroll');
     for (const d of p?.docIds ?? []) pay.rows.push([text(nameOf.get(d))]);
@@ -204,6 +225,7 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
     miss.push(['확인 안 한 급여', missing.payroll.state === 'none' ? '이달 급여대장 없음' : missing.payroll.state === 'draft' ? '급여대장 초안(확인 전)' : '확인함']);
     for (const e of missing.payroll.employeesWithoutLine) miss.push(['확인 안 한 급여', `${e.name}: 이달 급여 줄 없음`]);
   }
+  if (missing.cardSlipEnough) miss.push(['증빙 대조 없는 카드 사용', '사장님이 "카드 전표로 충분"으로 표시해 이 달부터 빼고 보여 줍니다']);
   for (const c of missing.cardWithoutEvidence) miss.push(['증빙 대조 없는 카드 사용', `${c.usedOn} ${text(c.merchant)} ${c.amount.toLocaleString('ko-KR')}원${c.hasMemo ? ' (메모 있음)' : ''}`]);
   if (missing.memosNeedCheck) miss.push(['카드 메모', `메모 대상 확인 필요 ${missing.memosNeedCheck}건`]);
   for (const d of att.changed) miss.push(['첨부 확인 필요', `${attachmentName(d).slice('attachments/'.length)}: 보관함 파일이 바뀌었거나 없어 넣지 않음`]);
@@ -213,22 +235,41 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
   const xlsx = officeCrypto.encrypt(plain, { password: input.password });
   plain.fill(0);
 
-  const base = `세무사꾸러미_${month}`;
-  let out: Buffer;
-  let file: string;
+  const stem = freeStem(input.outDir, `세무사꾸러미_${month}`, ['.xlsx', '_첨부.zip']);
+  const file = writeNew(`${stem}.xlsx`, xlsx);
+  let attachmentsFile: string | null = null;
+  let attachments: { path: string; sha256: string } | null = null;
   if (att.list.length) {
     const zip = new ZipWriter(new Uint8ArrayWriter(), { password: input.password, encryptionStrength: 3, zipCrypto: false, lastModDate: now() });
-    await zip.add(`${base}.xlsx`, new Uint8ArrayReader(new Uint8Array(xlsx)));
     for (const a of att.list) await zip.add(a.name, new Uint8ArrayReader(new Uint8Array(fs.readFileSync(a.doc.path))));
-    out = Buffer.from(await zip.close());
-    file = path.join(input.outDir, `${base}.zip`);
-  } else {
-    out = xlsx;
-    file = path.join(input.outDir, `${base}.xlsx`);
+    const zbuf = Buffer.from(await zip.close());
+    attachmentsFile = writeNew(`${stem}_첨부.zip`, zbuf);
+    attachments = { path: attachmentsFile, sha256: createHash('sha256').update(zbuf).digest('hex') };
   }
-  file = writeExclusive(file, out);
-  const record = new BundleExportRepo(db).record({ profileId, period: month, sha256: createHash('sha256').update(out).digest('hex'), path: file }, now().toISOString());
-  return { record, file, sheets: sheets.map((s) => s.sheet!), attachments: att.list.length, skippedChanged: att.changed.length };
+  const record = new BundleExportRepo(db).record(
+    { profileId, period: month, sha256: createHash('sha256').update(xlsx).digest('hex'), path: file, attachments, rrnIncluded },
+    now().toISOString(),
+  );
+  const guide = [...(attachmentsFile ? [ZIP_OPEN_GUIDE] : []), ...(input.payrollEnabled && !rrnIncluded ? [RRN_HIDDEN_NOTE] : [])];
+  return { record, file, attachmentsFile, guide, rrnIncluded, sheets: sheets.map((s) => s.sheet!), attachments: att.list.length, skippedChanged: att.changed.length };
+}
+
+/** 이름 줄기 하나를 고른다: 붙일 끝말(.xlsx, _첨부.zip) 중 어느 것도 없는 첫 줄기(없으면 _2, _3…). 엑셀과 ZIP이 같은 번호를 쓴다 */
+function freeStem(dir: string, base: string, suffixes: readonly string[]): string {
+  fs.mkdirSync(dir, { recursive: true });
+  for (let i = 1; ; i++) {
+    const stem = path.join(dir, i === 1 ? base : `${base}_${i}`);
+    if (suffixes.every((x) => !fs.existsSync(stem + x) && !fs.existsSync(`${stem}${x}.part`))) return stem;
+  }
+}
+
+/** 새 파일로만 쓴다(덮어쓰지 않음). 임시 파일에 쓴 뒤 옮기고 소유자 전용 권한 */
+function writeNew(file: string, data: Buffer): string {
+  const tmp = `${file}.part`;
+  fs.writeFileSync(tmp, data, { mode: 0o600, flag: 'wx' });
+  fs.linkSync(tmp, file);
+  fs.rmSync(tmp);
+  return file;
 }
 
 /** 같은 이름이 있으면 _2, _3…을 붙인다. 임시 파일에 쓴 뒤 옮기고 소유자 전용 권한 */
@@ -276,7 +317,7 @@ export async function exportPayrollRecord(input: PayrollRecordExportInput): Prom
   const lineRows: Row[] = [];
   const sumRows: Row[] = [header(['귀속 월', '개정', '인원', '총지급액', '비과세', '소득세', '지방소득세'])];
   for (const m of months) {
-    const p = payrollRows(db, cipher, profileId, m, includeRrn);
+    const p = payrollRows(db, cipher, profileId, m, includeRrn ? 'full' : 'omit');
     if (!lineRows.length) lineRows.push([{ value: '귀속 월', fontWeight: 'bold' as const }, ...p.rows[0]!]);
     for (const r of p.rows.slice(1)) lineRows.push([m, ...r]);
     const s = withholdingSummary(m, p.lines);
@@ -294,7 +335,7 @@ export async function exportPayrollRecord(input: PayrollRecordExportInput): Prom
   plain.fill(0);
   const range = `${months[0]}..${months[months.length - 1]}`;
   const file = writeExclusive(path.join(input.outDir, `급여기록_${months[0]}_${months[months.length - 1]}.xlsx`), out);
-  const record = new BundleExportRepo(db).record({ profileId, period: `payroll:${range}`, sha256: createHash('sha256').update(out).digest('hex'), path: file }, now().toISOString());
+  const record = new BundleExportRepo(db).record({ profileId, period: `payroll:${range}`, sha256: createHash('sha256').update(out).digest('hex'), path: file, rrnIncluded: includeRrn }, now().toISOString());
   return { record, file, months };
 }
 
