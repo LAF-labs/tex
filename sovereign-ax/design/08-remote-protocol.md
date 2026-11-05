@@ -1,6 +1,7 @@
 # D08. 리모트 컨트롤 프로토콜
 
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
+> 팀장 결정 2026-11-05(클라우드 답): §2.1 `SAX-acct-op-v1`은 클라이언트 AIK 서명·서버 검증만(앞 "서버 서명" 표기는 오기), 대상 계정 작업 `device.reactivate`·`slot.rebind_rk`. `SAX-revoke-v1` 대상 `{device_id, revoked_at}`. HMAC·해시·AEAD 라벨은 이 표에 넣지 않는다.
 > 팀장 결정 2026-11-05(클라우드 릴레이 PR #63): §6 바깥 봉투 `ver`=1, `kind` HS=1·DATA=2·ENV=3 채택. §8 릴레이 API(의도 봉투 큐는 HTTPS, 라이브는 WSS `/v1/mailboxes/:id/live`, 페어링 룸 `/v1/rooms`), §8.2 저장하지 않는 것.
 > 팀장 결정 2026-11-05: §4.1·§4.2 `Cert`·`DeviceListEntry` 서명 입력 정규형은 `utf8(ctx)‖JCS(JSON)`, 필드 키 이름은 `Sx`·`Vx`·`Kx`·`Px_pub`로 통일(`Sm`·`Vm`·`Km`은 폰 쪽 역할 설명으로만). 기기 키 서명 입력 `purpose‖msg`(D05 §5.1)는 그대로. 바이트 정본은 `schemas/SIGNING.md` "기기·AIK 서명 입력" 절(엔진 트랙이 추가).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다(상충 표기 `C/X-nn`은 감사 C §5). · AUDIT-D 반영 2026-11-03: 키 계층에서 복구 문구·`K_chk` 삭제(§3), 하드웨어 키 증명 `px.attest`·서류 열람 범위 토글(§4.2), `doc_scope` 필터(§6), 증명 상태 집행(§6.1), 저장 자격 원격 실행의 시작 게이트(§7), 새 PC·PASS 복구 교체(§9)(ADR-016 v2·ADR-029, D19 §3.5).
@@ -44,17 +45,20 @@
 | `SAX-rotate-v1` | `Vx` | `rotate.static` (§5, C-18) |
 | `SAX-ckpt-v1` | `Vd` | 감사 로그 체크포인트 (§10) |
 | `SAX-devlist-v1` | AIK | `DeviceListEntry`·기기 목록 버전 (§4.1) |
-| `SAX-revoke-v1` | AIK | 기기 폐기 레코드 (§9) |
+| `SAX-revoke-v1` | AIK | 기기 폐기 레코드 `{device_id, revoked_at}` (§9) |
 | `SAX-cert-v1` | AIK | 기기 인증서 `Cert_X` (§4) |
 | `SAX-aik-rotate-v1` | 옛 AIK | AIK 교체 공지 (§4.1) |
 | `SAX-kek-v1` | AIK | `KekRecord{N, salt_N, created_at}` (§3) |
-| `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2) |
+| `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2). 클라이언트가 AIK로 서명하고 서버는 검증만 한다. Phase 1 계정 작업: `device.reactivate`·`slot.rebind_rk`(팀장 결정 2026-11-05) |
 | `SAX-docrec-v1` | `Vd` | 메타데이터 레코드 (D07 §5) |
 | `SAX-dpop-v1` | `Vx`(클라이언트 기기 키) | 기기 범위 토큰의 발급 요청과 사용 요청마다 붙는 증명 `{htm, htu, iat, jti, ath}`. 사용 요청의 `ath`는 `b64u(sha256(토큰))`(송신자 결속)이고, 발급 요청 `POST /v1/device-tokens`에는 아직 토큰이 없으므로 제시하는 AIK 기기 인증서의 `b64u(sha256(JCS(cert)))`다 (D09 §2, `poc/services/shared/CONTRACT.md` §3) |
 | `SAX-token-v1` | 서버: 계정 서비스 토큰 키(Ed25519) | 기기 범위 토큰(`sxd1`, 15분) 클레임 (D09 §2.1, `poc/services/shared/CONTRACT.md` §2) |
 | `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
 | `SAX-SAS-v1`, `SAX-pair-v1`, `SAX-session-v1` | — | SAS 유도, Noise prologue |
+
+- 클라우드 경계의 서명 맥락(팀장 결정 2026-11-05): 클라이언트 서명은 `Vx`: `SAX-dpop-v1`, AIK: `SAX-acct-op-v1`·`SAX-devlist-v1`·`SAX-revoke-v1`·`SAX-cert-v1`이다. 서버 서명은 `SAX-token-v1`·`SAX-run-token-v1`이다. 서버가 AIK 맥락으로 서명하는 일은 없다.
+- 클라우드 서비스의 HMAC·해시·AEAD 라벨(예: `SAX-login-code-v1`)은 서명 맥락이 아니므로 이 표에 넣지 않는다. 목록이 필요하면 D09 부록 "라벨 목록"에 둔다.
 
 ## 3. 키 계층
 
