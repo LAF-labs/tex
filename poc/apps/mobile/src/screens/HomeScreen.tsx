@@ -10,7 +10,17 @@ export function HomeScreen({ go }: { go: (to: 'pair' | 'capture' | 'cash' | 'con
   const paired = !!s.data.pair;
   const waiting = s.pending.receipts + s.pending.cash;
   const line =
-    s.pc === 'unpaired' ? '○ PC와 연결 전' : s.pc === 'online' ? '● 사무실 PC 켜짐' : s.pc === 'connecting' ? '◌ PC 찾는 중' : `○ PC 꺼짐 · ${ago(s.data.lastSeenPc)}`;
+    s.pc === 'unpaired'
+      ? '○ PC와 연결 전'
+      : s.pc === 'online'
+        ? '● 사무실 PC 켜짐'
+        : s.pc === 'connecting'
+          ? '◌ PC 찾는 중'
+          : s.pc === 'queued'
+            ? '◐ PC 꺼짐 · 맡겨 두었어요(PC가 켜지면 받아요)'
+            : s.pc === 'stale'
+              ? '○ PC가 오래 꺼져 있어 맡길 수 없어요 · PC를 켜 주세요'
+              : `○ PC 꺼짐 · ${ago(s.data.lastSeenPc)}`;
   return (
     <Screen>
       <View style={st.wrap}>

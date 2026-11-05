@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import Database from 'better-sqlite3-multiple-ciphers';
-import { MIGRATIONS } from './schema.ts';
+import { migrate, type MigrateOptions } from './migrate.ts';
 
 export type Db = Database.Database;
 
@@ -8,8 +8,9 @@ export type Db = Database.Database;
  * 암호화 DB 열기(D07 §1.3). 키는 금고 getDbKeyOnce()로 받은 32바이트.
  * - cipher=sqlcipher, legacy=4 명시, 키는 Buffer로 함수형 key()에 전달(PRAGMA key 문자열을 만들지 않는다)
  * - temp_store=MEMORY: 정렬·임시 테이블이 평문 파일로 남지 않게
+ * - 스키마는 migrate()가 순방향으로 올린다(D07 §7). 실패하면 MigrationError로 열지 않고, DB는 이전 판 그대로 남는다
  */
-export function openDatabase(file: string, key: Uint8Array): Db {
+export function openDatabase(file: string, key: Uint8Array, opts: Omit<MigrateOptions, 'file'> = {}): Db {
   if (key.length !== 32) throw new Error('db key must be 32 bytes');
   const db = new Database(file);
   try {
@@ -25,23 +26,12 @@ export function openDatabase(file: string, key: Uint8Array): Db {
     db.pragma('journal_mode=WAL');
     // 원장 armed·토큰 소비는 전원이 나가도 남아야 한다(D03 §2 R-G7 synchronous=FULL). WAL 기본값은 NORMAL이다.
     db.pragma('synchronous=FULL');
-    migrate(db);
+    migrate(db, { ...opts, file });
     if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
     return db;
   } catch (e) {
     db.close();
     throw e;
-  }
-}
-
-function migrate(db: Db): void {
-  const current = Number(db.pragma('user_version', { simple: true }));
-  for (const m of MIGRATIONS) {
-    if (m.version <= current) continue;
-    db.transaction(() => {
-      db.exec(m.sql);
-      db.pragma(`user_version=${m.version}`);
-    })();
   }
 }
 
