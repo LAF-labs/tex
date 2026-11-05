@@ -2,7 +2,7 @@
 // 폰은 목록의 모든 항목을 AIK로 검사하고(MobilePairing.scan), PAIR_OK의 AIK_pub와 같을 때만 진행한다.
 // 실제 엔드포인트·폰 계정 로그인은 클라우드 트랙(services/*, M4-5) 몫이다. 여기서는 인터페이스와 개발용 구현만 둔다.
 import { fromB64, type DeviceListJson } from '@sax/remote';
-import { DEV_LOCAL, DEV_RELAY_HOST } from '../config';
+import { DEV_LOCAL, DEV_RELAY_HOST, PUBLIC_ORIGIN } from '../config';
 
 export interface AccountDirectory {
   aikPub: Uint8Array;
@@ -38,11 +38,12 @@ const pendingApi: AccountApi = {
 export const accountApi = (): AccountApi => (DEV_LOCAL ? devApi : pendingApi);
 
 /**
- * 계정 서비스 origin(DPoP htu의 앞부분). 개발 빌드는 더미 PC(dev/dummy-pc.ts)다. 릴리스 호스트는 클라우드 트랙이
- * 배포 주소를 정하면 넣는다(services/account ACCOUNT_PUBLIC_ORIGIN). 그 전에는 연결하지 않는다.
+ * 계정 서비스 origin(DPoP htu의 앞부분). 개발 빌드는 더미 PC(dev/dummy-pc.ts)다. 릴리스는 config PUBLIC_ORIGIN
+ * (배포 때 넣는다). 비어 있으면 연결하지 않는다.
  */
 export function accountOrigin(): string {
   if (DEV_LOCAL) return `http://${DEV_RELAY_HOST}`;
+  if (PUBLIC_ORIGIN) return PUBLIC_ORIGIN;
   throw new AccountUnavailable();
 }
 
