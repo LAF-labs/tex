@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sovereign-ax.local/schemas/docparse-sandbox-output-v1.json",
+  "title": "docparse 샌드박스 출력(ADR-014 결정 1, D17 §3). main은 이 모양을 통과한 값만 쓰고 나머지는 버린다",
+  "definitions": {
+    "count": { "type": "integer", "minimum": 0 },
+    "ms": { "type": "integer", "minimum": 0, "maximum": 3600000 },
+    "error": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "enum": ["password_required", "password_incorrect", "invalid_pdf", "worker_failed", "parse_failed", "render_failed", "ocr_failed", "input_size", "unsupported_format", "image_too_large", "image_decode_failed", "zip_invalid", "zip_unsupported", "zip_bomb", "xml_invalid", "xml_doctype", "sheet_too_large", "sheet_invalid", "text_decode_failed"]
+        }
+      }
+    },
+    "pdf": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "pages", "totalPages", "hasTextLayer", "scanned", "ocrConfidence", "timing"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 1048576 },
+        "pages": { "type": "integer", "minimum": 0, "maximum": 5 },
+        "totalPages": { "type": "integer", "minimum": 0, "maximum": 100000 },
+        "hasTextLayer": { "type": "boolean" },
+        "scanned": { "type": "boolean" },
+        "ocrConfidence": { "anyOf": [{ "type": "number", "minimum": 0, "maximum": 100 }, { "type": "null" }] },
+        "timing": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["loadMs", "textMs", "ocrMs"],
+          "properties": { "loadMs": { "$ref": "#/definitions/ms" }, "textMs": { "$ref": "#/definitions/ms" }, "ocrMs": { "$ref": "#/definitions/ms" } }
+        }
+      }
+    },
+    "legacyOcr": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "confidence"],
+      "properties": { "text": { "type": "string", "maxLength": 50000 }, "confidence": { "type": "number" } }
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "confidence", "lines", "width", "height", "exif"],
+      "properties": {
+        "text": { "type": "string", "maxLength": 50000 },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 100 },
+        "lines": {
+          "type": "array",
+          "maxItems": 1000,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "confidence"],
+            "properties": { "text": { "type": "string", "maxLength": 2000 }, "confidence": { "type": "number", "minimum": 0, "maximum": 100 } }
+          }
+        },
+        "width": { "type": "integer", "minimum": 1, "maximum": 12000 },
+        "height": { "type": "integer", "minimum": 1, "maximum": 12000 },
+        "exif": { "type": "boolean" }
+      }
+    },
+    "cell": { "anyOf": [{ "type": "string", "maxLength": 4000 }, { "type": "number" }, { "type": "boolean" }, { "type": "null" }] },
+    "sheet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "encoding", "sheets", "flags"],
+      "properties": {
+        "format": { "enum": ["xlsx", "csv"] },
+        "encoding": { "enum": ["utf-8", "euc-kr", null] },
+        "sheets": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name", "hidden", "rows", "hiddenRows"],
+            "properties": {
+              "name": { "type": "string", "maxLength": 64 },
+              "hidden": { "type": "boolean" },
+              "rows": { "type": "array", "maxItems": 20000, "items": { "type": "array", "maxItems": 256, "items": { "$ref": "#/definitions/cell" } } },
+              "hiddenRows": { "$ref": "#/definitions/count" }
+            }
+          }
+        },
+        "flags": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["formulas", "externalLinks", "macros", "connections", "embedded", "hiddenSheets", "truncated", "formulaLikeText"],
+          "properties": {
+            "formulas": { "$ref": "#/definitions/count" },
+            "externalLinks": { "type": "boolean" },
+            "macros": { "type": "boolean" },
+            "connections": { "type": "boolean" },
+            "embedded": { "type": "boolean" },
+            "hiddenSheets": { "$ref": "#/definitions/count" },
+            "truncated": { "type": "boolean" },
+            "formulaLikeText": { "$ref": "#/definitions/count" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -6,6 +6,7 @@
   "dependencies": {
     "@sax/bundle": "workspace:*",
     "@sax/db": "workspace:*",
+    "@sax/docparse": "workspace:*",
     "@sax/engine": "workspace:*",
     "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",

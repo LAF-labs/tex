@@ -1,0 +1,18 @@
+{
+  "name": "@sax/docparse",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "사용자 파일 읽기 계약(ADR-014): 샌드박스 출력·결과 JSON Schema, 규칙 파서(증명서·종이 증빙·정산·4대보험 고지내역). 모델을 부르지 않는다",
+  "exports": {
+    ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" },
+    "./sandbox": { "types": "./src/sandbox/index.ts", "development": "./src/sandbox/index.ts", "default": "./dist/sandbox/index.js" },
+    "./fixtures": { "types": "./src/fixtures/index.ts", "development": "./src/fixtures/index.ts", "default": "./dist/fixtures/index.js" },
+    "./schema/*": "./schema/*",
+    "./package.json": "./package.json"
+  },
+  "dependencies": {
+    "@sax/engine": "workspace:*",
+    "ajv": "8.20.0"
+  }
+}
