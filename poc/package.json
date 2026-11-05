@@ -4,6 +4,9 @@
   "description": "소버린 AX PoC 스파이크(폐기 전제, ADR-017)",
   "type": "module",
   "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=26.11.0 <27"
+  },
   "scripts": {
     "build": "tsc -b",
     "lint": "eslint .",
