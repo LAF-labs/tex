@@ -63,7 +63,8 @@ export class HumanSecretVault {
     this.log = opts.log;
     this.lock = new SessionLock(opts);
     this.lock.onLock = (reason) => this.wipeKeks(reason);
-    // 기동 직후 엄격 모드 설정을 읽는다. 읽기 전에도 엄격 모드에서 지운 기기 사본은 없으므로 무프롬프트로 열리지 않는다.
+    // 기동 직후 엄격 모드 설정을 읽는다. 다 읽을 때까지 잠금은 닫힌 채(startup)라 세션·유휴 보고가 먼저 와도 열리지 않는다.
+    this.lock.hold();
     this.readyP = this.b.items.get(STRICT_ITEM).then(
       (raw) => {
         if (raw?.[0] === 1) this.lock.setStrict(true);
@@ -72,7 +73,7 @@ export class HumanSecretVault {
         // 읽기 실패: 엄격 모드로 본다(fail-closed). 기기 사본이 있어도 Hello로만 연다.
         this.lock.setStrict(true);
       },
-    );
+    ).finally(() => this.lock.release());
   }
 
   /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */
@@ -136,9 +137,10 @@ export class HumanSecretVault {
       const slot = slotName(kind, scope);
       // 다시 등록: 옛 슬롯을 지우기 전에 암호문 그대로 떠 둔다. 새 슬롯을 다 쓰기 전에 실패하면 되돌린다(평문은 다루지 않는다).
       const backup = await this.snapshotSlot(kind, scope);
-      await this.forget(kind, scope, 'replace');
       const kek = new Uint8Array(randomBytes(32));
       try {
+        // forget도 되돌리기 범위 안이다(색인 저장 실패 등으로 던져도 옛 슬롯을 되돌린다).
+        await this.forget(kind, scope, 'replace');
         const helloOk = await this.b.hello.available().catch(() => false);
         // 엄격 모드는 무프롬프트 래핑을 두지 않는다(Hello 사본만). Hello가 없으면 엄격 모드로 저장할 수 없다.
         if (this.lock.strict && !helloOk) throw new Error('vault.hello_unavailable');

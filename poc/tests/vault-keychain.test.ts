@@ -260,8 +260,11 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.deepEqual(await s1.v.setStrict(true), { ok: true });
     const c = clock();
     const v2 = new HumanSecretVault({ backend: s1.backend, log: new Log(), now: c.now });
-    v2.lock.reportIdle(0);
+    // 설정을 읽기 전에 온 유휴·세션 보고는 금고를 열지 않는다(startup).
+    assert.deepEqual(v2.lock.reportIdle(0), { open: false, reason: 'startup', helloCanOpen: false });
+    assert.equal(v2.lock.sessionEvent('unlock-screen').open, false);
     await v2.ready();
+    assert.deepEqual(v2.lock.check(), { open: false, reason: 'strict', helloCanOpen: true });
     assert.equal(v2.lock.strict, true);
     assert.deepEqual(await v2.readOne('security_card', 'business', { row: 1 }), { ok: false, reason: 'vault_locked' });
     assert.equal((await v2.unlockWithHello({ task: 't', portal: 'p' })).ok, true);
@@ -290,6 +293,27 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
     assert.ok(r.ok);
     assert.equal(dec((r as { bytes: Uint8Array }).bytes), 'TEST-PW-old0001');
     assert.equal((await s.v.consent('portal_password', 'business'))!.noticeVersion, 'v1');
+  });
+
+  it('다시 등록 중 옛 슬롯 지우기(색인 저장)가 실패해도 옛 슬롯을 되돌린다', async () => {
+    const s = setup();
+    await s.v.store('security_card', 'business', cardEntries(2), { version: 'v1' });
+    const realSet = s.items.set.bind(s.items);
+    let failOnce = true;
+    s.items.set = async (name, value) => {
+      if (name === 'index/human' && failOnce) {
+        failOnce = false;
+        throw new Error('keychain_write_failed');
+      }
+      return realSet(name, value);
+    };
+    await assert.rejects(s.v.store('security_card', 'business', cardEntries(3), { version: 'v2' }), /keychain_write_failed/);
+    s.items.set = realSet;
+    const r = await s.v.readOne('security_card', 'business', { row: 2 });
+    assert.ok(r.ok);
+    assert.equal(dec((r as { bytes: Uint8Array }).bytes), '1001');
+    assert.deepEqual(await s.v.readOne('security_card', 'business', { row: 3 }), { ok: false, reason: 'secret_missing' });
+    assert.equal((await s.v.consent('security_card', 'business'))!.noticeVersion, 'v1');
   });
 
   it('색인에만 Hello 사본이 있고 항목이 없으면 프롬프트 없이 presence를 주지 않는다', async () => {

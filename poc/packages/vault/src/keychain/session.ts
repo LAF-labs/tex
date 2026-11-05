@@ -36,6 +36,8 @@ export class SessionLock {
   private helloUntil = 0;
   private idle: { sec: number; at: number } | null = null;
   private lastReason: VaultLockReason = 'startup';
+  /** 기동 때 저장된 설정(엄격 모드)을 읽는 동안 닫아 둔다. */
+  private held = false;
   strict = false;
   /** 잠기는 순간(열림 → 닫힘)마다 부른다. 금고는 메모리의 슬롯 KEK를 지운다. */
   onLock: (reason: VaultLockReason) => void = () => {};
@@ -61,6 +63,7 @@ export class SessionLock {
 
   private evaluate(): OpenVerdict {
     const t = this.now();
+    if (this.held) return { open: false, reason: 'startup', helloCanOpen: false };
     if (!this.sessionOpen) return { open: false, reason: 'session_locked', helloCanOpen: false };
     if (!this.idle || t - this.idle.at > this.idleStaleMs) return { open: false, reason: 'idle_unknown', helloCanOpen: false };
     // 보고 이후 흐른 시간도 유휴로 친다(보고 사이에 15분을 넘기면 다음 보고를 기다리지 않는다).
@@ -141,6 +144,17 @@ export class SessionLock {
   /** 엄격 모드: 실행이 끝나면 즉시 잠근다. */
   runEnded(): void {
     if (this.strict) this.helloUntil = 0;
+    this.settle();
+  }
+
+  /** 설정을 다 읽을 때까지 닫아 둔다(HumanSecretVault 기동). */
+  hold(): void {
+    this.held = true;
+    this.settle();
+  }
+
+  release(): void {
+    this.held = false;
     this.settle();
   }
 
