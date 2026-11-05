@@ -244,7 +244,7 @@ export function taskCard(run, act) {
     card.append(
       line(`발급했어요. ${mail}`),
       h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))),
-      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('지난번과 같게', () => act.again(run)), toggle),
+      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(r.docId), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
       where,
     );
   } else if (st === 'stopped') {
@@ -316,7 +316,7 @@ export function runPanel(run, act) {
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
-    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('폴더 열기', () => act.toast('목업: 폴더를 열지 않아요'))) : null,
+    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(run.result.docId), 'sx-btn-primary'), btn('폴더 열기', () => act.revealDoc(run.result.docId))) : null,
   );
 }
 
@@ -391,7 +391,7 @@ export function docPanel(doc, today, act, review) {
         ['프로필', doc.profile === 'business' ? '사업자' : '개인'],
         ['보관', '이 PC 문서함'],
       ]),
-      h('div', { class: 'sx-actions' }, btn('열기', () => act.toast('목업: 파일을 열지 않아요'), 'sx-btn-primary'), btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
       h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
     ],
   );
