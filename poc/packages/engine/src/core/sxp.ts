@@ -58,7 +58,7 @@ export function decodeSxp(bytes: Uint8Array): SxpResult {
     if (!b) return { ok: false, code: 'sxp.malformed' };
     try {
       const hotfix = JSON.parse(b.toString('utf8')) as Hotfix;
-      if (!hotfix || typeof hotfix !== 'object' || Array.isArray(hotfix)) return { ok: false, code: 'sxp.malformed' };
+      if (!hotfix || typeof hotfix !== 'object' || Array.isArray(hotfix) || !canonicalizable(hotfix)) return { ok: false, code: 'sxp.malformed' };
       return { ok: true, sxp: { kind: 'hotfix', hotfix, bytes: b } };
     } catch {
       return { ok: false, code: 'sxp.malformed' };

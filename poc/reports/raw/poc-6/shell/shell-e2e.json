@@ -8,10 +8,33 @@
       "name": "사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다",
       "ok": true,
       "detail": [
-        "42f2b349-025f-48f2-90ac-9719511adcc5",
-        "6f5965fd-8920-47f0-b1ca-f23d188b35d4",
-        "b0ae8799-2c4a-4b4d-bd75-93d1fdbfd412"
+        "d3de1d75-e390-430a-8f40-ee1e47354756",
+        "999a4d36-e8bd-4e75-87da-bed9b582f586",
+        "a6cdb8e6-a779-4fc5-9f1e-85f10ae41065"
       ]
+    },
+    {
+      "name": "대기 화면: 많이 쓴 요청 칩 2개(누르면 바로 보냄)",
+      "ok": true
+    },
+    {
+      "name": "홈 = 이번 달 판: \"N월 할 일\", 카드는 4종 안에서만, 승인 버튼 없음",
+      "ok": true,
+      "detail": {
+        "title": "11월 할 일",
+        "cards": [
+          "receipt",
+          "accountant",
+          "expiring",
+          "invoice"
+        ],
+        "approve": false
+      }
+    },
+    {
+      "name": "판의 \"지난달처럼\" 줄은 입력창에 채우기만 하고 보내지 않는다",
+      "ok": true,
+      "detail": "A상사에 지난달처럼 세금계산서 끊어 줘"
     },
     {
       "name": "\"계산서\" 입력 시 부가세 [별도][포함] 토글",
@@ -20,15 +43,24 @@
     {
       "name": "초안 카드: 고르지 않으면 부가세 별도(3,300,000 + 330,000 = 3,630,000원)",
       "ok": true,
-      "detail": "세금계산서 · A상사작성 중3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도로 계산했어요홈택스에서 준비부가세 포함하기금액 수정취소추정 값 2개"
+      "detail": "세금계산서 · A상사작성 중3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도로 계산했어요홈택스에서 준비부가세 포함하기금액 수정취소추정 값 2개 · 부가세, 품목 · 아직 아무것도 보내"
     },
     {
       "name": "초안 카드에 승인 버튼이 없다(ADR-021)",
       "ok": true
     },
     {
+      "name": "초안이 생기면 판의 \"발급할 세금계산서\"에 그 실행 줄이 생긴다(main → board 이벤트)",
+      "ok": true
+    },
+    {
       "name": "[부가세 포함하기] → 합계 3,300,000원",
       "ok": true
+    },
+    {
+      "name": "실제 입력 없이 온 run.prepare는 gesture_required(초안 그대로)",
+      "ok": true,
+      "detail": "gesture_required"
     },
     {
       "name": "실행(준비) 중 바는 뜨지 않는다",
@@ -80,7 +112,7 @@
         },
         {
           "fieldKey": "issueDate",
-          "value": "2026-11-01"
+          "value": "2026-11-05"
         },
         {
           "fieldKey": "remark",
@@ -103,6 +135,14 @@
     {
       "name": "원장이 비어 있으면 처음 거래·처음 보내는 주소(원장 HMAC 열, 확정 건만 셈)",
       "ok": true
+    },
+    {
+      "name": "작성일자 = KST 오늘이면 바 합계 줄에 작성일 조각이 없다(가짜 H-01도 KST)",
+      "ok": true,
+      "detail": {
+        "issueDate": "2026-11-05",
+        "firstTotal": "3,630,000원 · 세액 330,000원"
+      }
     },
     {
       "name": "카드·패널은 엔진이 되읽은 값으로 바뀐다(홈택스 확정)",
@@ -132,12 +172,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-4a480bf7",
-        "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+        "runId": "run-e5537985",
+        "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
         "mode": "unarmed",
         "msg": null,
         "committed": {
-          "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+          "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
           "mode": "unarmed"
         },
         "bounds": {
@@ -157,8 +197,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-4a480bf7",
-        "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+        "runId": "run-e5537985",
+        "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
         "mode": "unarmed",
         "msg": "잠시 뒤 다시 눌러 주세요",
         "committed": null,
@@ -245,6 +285,15 @@
       ]
     },
     {
+      "name": "IPC 표: 표에 없는 필드·틀린 열거값은 처리기에 닿기 전에 bad_request(D11 §4 IPC)",
+      "ok": true,
+      "detail": [
+        "bad_request",
+        "bad_request",
+        "bad_request"
+      ]
+    },
+    {
       "name": "렌더러 메서드 전부를 불러도 승인되지 않는다(바 그대로, 문서 목록 그대로, 발급 POST 없음)",
       "ok": true,
       "detail": {
@@ -255,11 +304,44 @@
         "run.prepare": "not_draft",
         "run.stop": "no_run",
         "docs.list": "ok",
+        "docs.import": "bad_request",
+        "docs.importCancel": "ok",
+        "docs.update": "not_found",
+        "docs.open": "not_found",
+        "docs.reveal": "not_found",
+        "counterparty.save": "not_found",
+        "auth.setDefault": "bad_request",
         "counterparties.list": "ok",
         "g24.candidates": "ok",
         "g24.save": "bad_candidate",
         "clipboard.copy": "ok"
       }
+    },
+    {
+      "name": "메인 창 webPreferences 자기 점검 통과(sandbox·contextIsolation·nodeIntegration 끔·webview 끔)",
+      "ok": true,
+      "detail": {
+        "allowRunningInsecureContent": false,
+        "contextIsolation": true,
+        "disableDialogs": true,
+        "disablePopups": false,
+        "disableWakeLocks": false,
+        "enableBlinkFeatures": "",
+        "experimentalFeatures": false,
+        "javascript": true,
+        "nodeIntegration": false,
+        "nodeIntegrationInSubFrames": false,
+        "nodeIntegrationInWorker": false,
+        "safeDialogs": false,
+        "safeDialogsMessage": "",
+        "sandbox": true,
+        "webSecurity": true,
+        "webviewTag": false
+      }
+    },
+    {
+      "name": "승인 바 webPreferences: 스크립트 끔·자기 점검 통과",
+      "ok": true
     },
     {
       "name": "바 페이지는 스크립트를 실행하지 않는다(javascript:false)",
@@ -275,12 +357,12 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-4a480bf7",
-        "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+        "runId": "run-e5537985",
+        "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+          "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
           "mode": "armed"
         },
         "bounds": {
@@ -304,8 +386,8 @@
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-4a480bf7",
-        "reqId": "2226942c-d491-447b-bea9-dd33088b31d4",
+        "runId": "run-e5537985",
+        "reqId": "424ddc62-6230-4a75-bc39-5216ed57e219",
         "mode": "unarmed",
         "msg": null,
         "committed": null,
@@ -347,9 +429,9 @@
       "name": "결과 카드: 가짜 페이지가 발급한 승인번호·메일 전송 확인",
       "ok": true,
       "detail": {
-        "doneText": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · ✓ 홈택스 확정발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261101-41000012-00000123복사PDF 열기폴더 열기지난번과 같게어디로 무엇이 갔는지홈택스전자세금계산서 1",
+        "doneText": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261105-41000012-00000123복사PDF 열기지난번과 같게어디로 무엇이 갔나요홈택스전자세금계산서 1건 발급 · ",
         "issued": {
-          "approvalNo": "20261101-41000012-00000123",
+          "approvalNo": "20261105-41000012-00000123",
           "supplierBizNo": "1234567891",
           "counterpartBizNo": "2148651233",
           "counterpartName": "A상사",
@@ -357,7 +439,7 @@
           "itemName": "경영 컨설팅",
           "supplyAmount": "3300000",
           "taxAmount": "330000",
-          "issueDate": "2026-11-01"
+          "issueDate": "2026-11-05"
         }
       }
     },
@@ -377,14 +459,23 @@
           "ledger.dispatched",
           "ledger.committed",
           "run.ended"
-        ]
+        ],
+        "policy": {
+          "conservative": false,
+          "cooldownUntil": null,
+          "runsToday": 1,
+          "irreversibleToday": 1,
+          "captchaToday": 0,
+          "blockStreak": 0,
+          "unknownScreenStreak": 0
+        }
       }
     },
     {
       "name": "가짜 페이지에 들어간 값 = 승인 바에 보인 값",
       "ok": true,
       "detail": {
-        "approvalNo": "20261101-41000012-00000123",
+        "approvalNo": "20261105-41000012-00000123",
         "supplierBizNo": "1234567891",
         "counterpartBizNo": "2148651233",
         "counterpartName": "A상사",
@@ -392,11 +483,24 @@
         "itemName": "경영 컨설팅",
         "supplyAmount": "3300000",
         "taxAmount": "330000",
-        "issueDate": "2026-11-01"
+        "issueDate": "2026-11-05"
       }
     },
     {
       "name": "문서함에 발급 결과가 들어온다",
+      "ok": true
+    },
+    {
+      "name": "되묻기 칩은 채우기 칩(거래처 후보)",
+      "ok": true
+    },
+    {
+      "name": "채우기 칩은 입력창에만 채우고 보내지 않는다",
+      "ok": true,
+      "detail": "A상사 330만원"
+    },
+    {
+      "name": "입력창에 글이 있으면 칩을 숨긴다",
       "ok": true
     },
     {
@@ -405,7 +509,7 @@
       "detail": 847000
     },
     {
-      "name": "같은 건 기록: $dup.businessKey가 fields(cardHash)에 들어가고 바 표시·동작 글자가 바뀐다",
+      "name": "같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 \"이미 발급됨\"·\"한 번 더 발급\"",
       "ok": true,
       "detail": {
         "fields": [
@@ -451,7 +555,7 @@
           ],
           [
             "issueDate",
-            "2026-11-01"
+            "2026-11-05"
           ],
           [
             "remark",
@@ -474,24 +578,25 @@
             "committed"
           ]
         ],
-        "action": "같은 건 기록을 확인했고 발급"
+        "action": "그래도 한 번 더 발급"
       }
     },
     {
-      "name": "승인 대기 카드에도 고정 경고가 붙는다",
-      "ok": true
+      "name": "승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다",
+      "ok": true,
+      "detail": "세금계산서 · A상사승인 대기3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도홈택스에 입력한 값을 다시 읽어 확인했어요. 초안과 같아요. 발급하면 A상사 메일로 전송되고 되돌릴 수 없어요.이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.아래 [그래도 한 번 더 발급]에서 값을 한 번 더 확인하고 눌러 주세요중지"
     },
     {
       "name": "다음 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)",
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-a0100ffb",
-        "reqId": "6e73185b-03a2-4576-ad59-adfc343d6b42",
+        "runId": "run-d2051c6d",
+        "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
         "mode": "armed",
         "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
         "committed": {
-          "reqId": "6e73185b-03a2-4576-ad59-adfc343d6b42",
+          "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
           "mode": "armed"
         },
         "bounds": {
@@ -508,6 +613,111 @@
     },
     {
       "name": "승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다",
+      "ok": true
+    },
+    {
+      "name": "창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연",
+      "ok": true,
+      "detail": {
+        "blurred": {
+          "visible": true,
+          "runId": "run-d2051c6d",
+          "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
+          "mode": "unarmed",
+          "msg": null,
+          "committed": {
+            "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
+            "mode": "unarmed"
+          },
+          "bounds": {
+            "x": 200,
+            "y": 608,
+            "width": 600,
+            "height": 90
+          },
+          "band": false,
+          "armed": true,
+          "refusal": null,
+          "action": "승인하고 발급"
+        },
+        "refocused": {
+          "visible": true,
+          "runId": "run-d2051c6d",
+          "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
+          "mode": "unarmed",
+          "msg": null,
+          "committed": {
+            "reqId": "922e7d97-6a68-41a4-94fe-3d46aeed1b7e",
+            "mode": "unarmed"
+          },
+          "bounds": {
+            "x": 200,
+            "y": 608,
+            "width": 600,
+            "height": 90
+          },
+          "band": false,
+          "armed": false,
+          "refusal": null,
+          "action": "승인하고 발급"
+        }
+      }
+    },
+    {
+      "name": "비밀 창: 활성 실행의 secret.needed만, 제목줄 \"금고 · 홈택스 비밀번호\", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표",
+      "ok": true,
+      "detail": {
+        "noWin": true,
+        "title": "금고 · 홈택스 비밀번호",
+        "swText": "세금계산서 발급 · 홈택스 · 가나다컴퍼니\n\n홈택스 비밀번호\n금고에 넘기기\n\n이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.\n\n앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요."
+      }
+    },
+    {
+      "name": "비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 \"금고 · 보안카드 번호\")",
+      "ok": true,
+      "detail": "금고 · 보안카드 번호"
+    },
+    {
+      "name": "비밀 창 보안카드 칸: 기본은 가림, [번호 보기]로 보이고 \"30초 뒤 다시 가려요\", 다시 누르면 가림. 비밀번호 창에는 보기 버튼 없음",
+      "ok": true,
+      "detail": {
+        "pwReveal": false,
+        "reveal": {
+          "before": [
+            "password",
+            "false"
+          ],
+          "on": [
+            "text",
+            "true",
+            "30초 뒤 다시 가려요",
+            "번호 가리기"
+          ],
+          "after": [
+            "password",
+            "false",
+            "번호 보기"
+          ]
+        }
+      }
+    },
+    {
+      "name": "비밀 창을 열다 실패해도 다음 요청은 정상으로 연다(조정자에 열림이 남지 않음)",
+      "ok": true,
+      "detail": {
+        "failedNoWin": true,
+        "reopened": true
+      }
+    },
+    {
+      "name": "비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로",
+      "ok": true,
+      "detail": [
+        "전용 Chrome에 Google 계정이 로그인돼 있어 비밀번호 창을 열지 않았어요. 전용 Chrome에서 로그아웃한 뒤 다시 준비해 주세요."
+      ]
+    },
+    {
+      "name": "실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다",
       "ok": true
     },
     {
@@ -532,7 +742,16 @@
             "ledger.armed",
             "ledger.not_committed",
             "run.ended"
-          ]
+          ],
+          "policy": {
+            "conservative": false,
+            "cooldownUntil": null,
+            "runsToday": 5,
+            "irreversibleToday": 2,
+            "captchaToday": 0,
+            "blockStreak": 0,
+            "unknownScreenStreak": 0
+          }
         }
       }
     },
@@ -549,10 +768,10 @@
       "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
       "ok": true,
       "detail": {
-        "start": "23:36",
+        "start": "17:02",
         "at": [
-          "23:36",
-          "23:36"
+          "17:02",
+          "17:02"
         ]
       }
     },
@@ -588,6 +807,10 @@
         "refusal": null,
         "action": "승인하고 발급"
       }
+    },
+    {
+      "name": "작성일자가 KST 오늘과 다르면 합계 줄 끝에 줄이지 않는 \" · 작성일 2026-11-01\"",
+      "ok": true
     },
     {
       "name": "열린 게이트가 있으면 새 게이트로 바꾸지 않는다",
@@ -654,11 +877,11 @@
             "runId": "e2e-wide",
             "gateStepId": "s20",
             "reqId": "wide-4",
-            "approvalNonce": "JgtDdWH_6i09xxyTIcic3g",
+            "approvalNonce": "iRxQDhab9SO-aKTvWK-HWw",
             "actionHash": "a30e495a4476588c417dc6092dbc3d886674f95e5f3a2c7988394434839074be",
-            "exp": 1793543928009,
+            "exp": 1793865886019,
             "presence": "click",
-            "mac": "Dca0zkc0VvdnzzxE8FOeMGL-AgOKXj98YFkrcGJKKfE"
+            "mac": "h04x808GeV2d6idCHiBrjGwWtAXI37PfhaZYwl3Jw54"
           }
         },
         "judged": [
@@ -717,6 +940,52 @@
       }
     },
     {
+      "name": "차단 안내 → 바로 멈추고 그 뒤 요청 0회, 카드에 사유(바·게이트 없음, 원장 행 없음)",
+      "ok": true,
+      "detail": {
+        "reqs": [
+          {
+            "at": 1793865766079,
+            "method": "GET",
+            "path": "/invoice/issue"
+          },
+          {
+            "at": 1793865766080,
+            "method": "GET",
+            "path": "/notice/blocked"
+          }
+        ],
+        "note": "홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.",
+        "ins": {
+          "ledger": null,
+          "journal": [
+            "run.started",
+            "block.signal",
+            "run.ended"
+          ],
+          "policy": {
+            "conservative": false,
+            "cooldownUntil": null,
+            "runsToday": 7,
+            "irreversibleToday": 2,
+            "captchaToday": 0,
+            "blockStreak": 1,
+            "unknownScreenStreak": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "CSP 헤더: Trusted Types 강제(문자열을 innerHTML에 넣으면 TypeError)",
+      "ok": true,
+      "detail": "TypeError"
+    },
+    {
+      "name": "셸 페이지를 iframe에 넣을 수 없다(frame-ancestors, 하위 프레임 이동 거부)",
+      "ok": true,
+      "detail": "timeout"
+    },
+    {
       "name": "엔진이 승인 대기 중에 끝나면 바가 내려가고 \"발급 없음\"으로 끝나며, 이후 호출은 바로 실패한다",
       "ok": true,
       "detail": {
@@ -745,12 +1014,12 @@
         "colWidth": 600,
         "composerTop": 710
       },
-      "composerGapAt1Line": 54
+      "composerGapAt1Line": 60
     },
     "panelClosedOffset": 0,
     "panelClosedOffsets": {
       "everyMs": 50,
-      "from": 1793543791713,
+      "from": 1793865742424,
       "offsets": [
         0,
         0,

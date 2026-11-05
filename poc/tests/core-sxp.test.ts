@@ -36,6 +36,7 @@ describe('.sxp v1', () => {
     assert.equal(code(j({ ...o, playbook: 'e30' })), 'sxp.malformed', '패딩 없는 base64');
     assert.equal(code(j({ ...o, playbook: 'e3-=' })), 'sxp.malformed', 'base64url 문자');
     assert.equal(code('not json'), 'sxp.malformed');
+    assert.equal(code(encodeSxp({ kind: 'hotfix', bytes: Buffer.from('{"reason":"\\ud800"}') })), 'sxp.malformed', '안쪽 핫픽스가 JCS 불가');
     assert.equal(code(Buffer.alloc(SXP_MAX_BYTES + 1, 0x20)), 'sxp.too_large');
   });
   it('핫픽스 인덱스 이름: <appliesTo.id>.hotfix @ <keyEpoch>.<monotonic>.0', () =>

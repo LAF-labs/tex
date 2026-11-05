@@ -169,6 +169,17 @@ async function flow(): Promise<void> {
   await shot('01-home');
   check('대기 화면: 많이 쓴 요청 칩 2개(누르면 바로 보냄)', (await js<number>(`document.querySelectorAll('#quick [data-prompt]').length`)) === 2);
 
+  // 이번 달 판(08 M-02, ADR-033): main이 계산한 카드(기한 순)를 대화 열 위에 그린다. 판에는 승인 버튼이 없다.
+  const board = await js<{ title: string; cards: string[]; approve: boolean }>(`(() => { const b = document.querySelector('[data-board]'); return { title: b.querySelector('.board-title')?.textContent ?? '', cards: [...b.querySelectorAll('[data-board-card]')].map((c) => c.dataset.boardCard), approve: [...b.querySelectorAll('button')].some((x) => /승인|발급하기/.test(x.textContent)) }; })()`);
+  check('홈 = 이번 달 판: "N월 할 일", 카드는 4종 안에서만, 승인 버튼 없음', /^\d+월 할 일$/.test(board.title) && board.cards.length > 0 && board.cards.every((k) => ['invoice', 'receipt', 'accountant', 'expiring'].includes(k)) && !board.approve, board);
+  if (await js<boolean>(`!!document.querySelector('[data-board-item^="cp:"]')`)) {
+    const threadLen = await js<number>(`document.querySelector('.sx-thread').childElementCount`);
+    await click('[data-board-item^="cp:"]');
+    const composed = await js<string>(`document.querySelector('#composer').value`);
+    check('판의 "지난달처럼" 줄은 입력창에 채우기만 하고 보내지 않는다', /에 지난달처럼 세금계산서 끊어 줘$/.test(composed) && (await js<number>(`document.querySelector('.sx-thread').childElementCount`)) === threadLen && S.runs.list().length === 0, composed);
+    await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); t.blur(); })()`);
+  } else check('판의 "지난달처럼" 줄(지난달 발급 없음 → 줄 없음)', true, 'no-cp-item');
+
   // T-01 부가세 토글
   await type('A상사에 330만원 세금계산서 끊고 메일 보내 줘');
   check('"계산서" 입력 시 부가세 [별도][포함] 토글', (await js<number>(`document.querySelectorAll('#quick [data-vat]').length`)) === 2);
@@ -180,6 +191,7 @@ async function flow(): Promise<void> {
   check('초안 카드: 고르지 않으면 부가세 별도(3,300,000 + 330,000 = 3,630,000원)', draftText.includes('3,630,000') && draftText.includes('부가세 별도로 계산했어요') && !draftText.includes('승인하고 발급'), draftText.slice(0, 120));
   const inputBefore = await js<number>(`document.querySelector('.sx-input').getBoundingClientRect().bottom`);
   check('초안 카드에 승인 버튼이 없다(ADR-021)', !(await js<boolean>(`[...document.querySelectorAll('button')].some((b) => b.textContent.includes('승인'))`)));
+  check('초안이 생기면 판의 "발급할 세금계산서"에 그 실행 줄이 생긴다(main → board 이벤트)', await until('board run row', async () => js<boolean>(`!!document.querySelector('[data-board-item="run:${id}"]')`)));
   await shot('03-draft');
   await click(`[data-run="${id}"] [data-act=vat]`);
   await until('vat included', () => S.runs.get(id)?.total === 3_300_000);
