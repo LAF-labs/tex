@@ -95,7 +95,8 @@ CREATE TABLE subscriptions (
   status TEXT NOT NULL CHECK (status IN ('pending', 'active', 'past_due', 'canceled')),
   period TEXT NOT NULL CHECK (period IN ('month')),
   renew_at {{BIGINT}},
-  pg_customer_ref TEXT NOT NULL UNIQUE      -- 우리가 만든 불투명 참조(결제 수단 정보는 PG 보관)
+  pg_customer_ref TEXT NOT NULL UNIQUE,     -- 우리가 만든 불투명 참조(결제 수단 정보는 PG 보관)
+  pg_event_at {{BIGINT}}                    -- 마지막으로 반영한 PG 이벤트의 PG 쪽 시각(늦은·재전송 이벤트 거름)
 );
 
 CREATE TABLE consents (
