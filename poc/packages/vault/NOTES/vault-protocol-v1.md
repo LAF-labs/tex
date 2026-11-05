@@ -76,6 +76,15 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
   - false: 금고가 `Fetch.failRequest`로 요청을 막는다.
   - opaque: 평문 형식이 아니라 대조할 수 없다.
   - expired: 무장 뒤 120초(`COMMIT_ARM_TTL_MS`) 안에 맞는 요청이 없었다.
+- 동작(구현: `relay/commit-guard.ts`)
+  - 엔진은 커밋 엔드포인트를 지금처럼 `Fetch.enable{patterns:[{urlPattern, requestStage:'Request'}]}`로 가로챈다. 금고는 엔진행 `Fetch.requestPaused`를 순서 큐에서 잡아 무장(타깃·method·urlPattern)과 맞으면 대조한다.
+  - 일치·opaque: 본문(postData·postDataEntries·hasPostData)을 지운 이벤트를 엔진에 넘긴다. 엔진이 `Fetch.continueRequest`로 이어 보낸다.
+  - 불일치: 금고가 `Fetch.failRequest{errorReason:'BlockedByClient'}`로 막고 이벤트는 넘기지 않는다. 그 requestId로 오는 엔진의 `Fetch.*`는 `commit_blocked`로 거부한다.
+  - 선언된 형식(form·json·xml)인데 필드가 없거나(form 같은 이름 둘 이상 포함) 해석이 안 되면 불일치로 막는다(fail-closed). 평문 형식이 아니거나 본문이 없으면 opaque다.
+  - xml은 잎 요소만 본다(같은 경로가 둘이거나 자식이 있으면 불일치). DOCTYPE은 받지 않는다. 엔티티는 기본 5개와 숫자 참조만 푼다.
+  - 무장은 타깃당 하나, 요청 하나다(대조 시작 때 푼다). `commitGuard.disarm`과 `run.end`는 알림 없이 푼다.
+  - 무장 대상 요청의 `Network.requestWillBeSent` 본문도 지운다. 엔진의 `Network.getRequestPostData`도 그 요청에는 거부된다.
+  - 로그는 `vault.commit_armed{fields}`·`vault.commit_compared{match, why?}`뿐이다. 값·경로·본문은 남기지 않는다.
 
 ## 7. 장기 키 연산 — net/remote 트랙
 - `crypto.publicKeys` → `{noiseStatic, vd, qd, kv}`(각 32B 공개키).
