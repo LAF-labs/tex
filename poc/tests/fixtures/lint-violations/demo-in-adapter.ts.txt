@@ -1,0 +1,5 @@
+// as: packages/model/src/adapters/openai-compat.ts
+// expect: no-restricted-imports=1
+// 측정 어댑터도 DemoEgress를 직접 import하지 않는다(구조 타입 CompatTransport로만 받는다).
+import { DemoEgress } from '@sax/net/demo';
+export const probe = DemoEgress;

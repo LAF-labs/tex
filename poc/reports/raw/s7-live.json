@@ -1,0 +1,177 @@
+{
+  "mode": "live",
+  "model": "gpt-6-luna",
+  "bundle": "screen_state_v2",
+  "bundleDigest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082",
+  "corpus": "l0-corpus screenCorpus(20, 7) — 합성",
+  "generatedAt": "2026-11-05T10:31:13.914Z",
+  "n": 100,
+  "templates": {
+    "sampled": 18,
+    "total": 18
+  },
+  "stoppedByCostCap": false,
+  "accuracy": 0.98,
+  "recall": {
+    "blocked": 1,
+    "captcha": 1
+  },
+  "pass": true,
+  "latencyMs": {
+    "p50": 349,
+    "p95": 529
+  },
+  "inputTokensAvg": 3552,
+  "costUsd": 0.04452,
+  "perQuestion": {
+    "screen": 0.9,
+    "has_error_modal": 0.93,
+    "session_expired_notice": 1,
+    "captcha_visible": 1,
+    "mfa_pending": 1,
+    "logged_out_by_other_session": 1,
+    "security_warning": 1,
+    "issuance_success_text": 1,
+    "page_text_addresses_agent": 1
+  },
+  "confusion": {
+    "logged_in": {
+      "logged_in": 13,
+      "unknown": 2
+    },
+    "login_required": {
+      "login_required": 15
+    },
+    "error": {
+      "error": 14
+    },
+    "blocked": {
+      "blocked": 14
+    },
+    "logged_out_by_other_session": {
+      "logged_out_by_other_session": 14
+    },
+    "captcha": {
+      "captcha": 14
+    },
+    "mfa_pending": {
+      "mfa_pending": 14
+    }
+  },
+  "misses": [
+    {
+      "id": "ss.result_pending.0",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 345.7299589999966,
+      "inputTokens": 3505
+    },
+    {
+      "id": "ss.result_pending.1",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 367.2378329999992,
+      "inputTokens": 3505
+    }
+  ],
+  "intent": {
+    "n": 304,
+    "playbookAccuracy": 0.9408,
+    "taxAdviceFalsePositiveRate": 0,
+    "taxAdviceMissRate": 0,
+    "wrong": [
+      {
+        "id": "ir.16.0",
+        "expect": "query.documents",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.16.4",
+        "expect": "query.documents",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.0",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.1",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.2",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.4",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.5",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.6",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.7",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.20.0",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.1",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.2",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.3",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.4",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.5",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.6",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.7",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.36.3",
+        "expect": "none_of_these",
+        "got": "payroll.ledger"
+      }
+    ]
+  }
+}

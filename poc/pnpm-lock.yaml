@@ -403,6 +403,9 @@ importers:
       '@sax/net':
         specifier: workspace:*
         version: link:../packages/net
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../packages/payroll
       '@sax/platform':
         specifier: workspace:*
         version: link:../packages/platform

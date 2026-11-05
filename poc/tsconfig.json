@@ -2,7 +2,7 @@
   "files": [],
   "references": [
     { "path": "packages/platform" }, { "path": "packages/redaction" }, { "path": "packages/net" }, { "path": "packages/remote" }, { "path": "packages/model" }, { "path": "packages/db" }, { "path": "packages/payroll" }, { "path": "packages/updater" },
-    { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "packages/docparse" }, { "path": "services/shared" }, { "path": "services/account" }, { "path": "apps/desktop" },
+    { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "packages/docparse" }, { "path": "apps/desktop" },
     { "path": "services/shared" }, { "path": "services/account" }, { "path": "services/gateway" }
   ]
 }

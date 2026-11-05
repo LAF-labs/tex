@@ -1,11 +1,12 @@
 // main이 금고·엔진을 띄우고 잇는다(D01 §2.1). main↔엔진은 두 통로다(ADR-021).
 // - 중계 통로(엔진 parentPort): main 질의·렌더러 명령·실행 명령, 엔진 → main 실행 이벤트.
-// - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘(엔진 → main), LocalApproval(main → 엔진)만. answerGate() 하나로만 쓴다.
-// 렌더러 IPC 처리기는 answerGate를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
+// - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘과 InDoubt 증언 요청·철회(엔진 → main), LocalApproval·LocalAttestation(main → 엔진)만.
+//   answerGate()·answerAttest() 둘로만 쓴다.
+// 렌더러 IPC 처리기는 answerGate·answerAttest를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
 import { MessageChannelMain, utilityProcess, type MessagePortMain, type UtilityProcess } from 'electron';
-import type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
+import type { AttestRejectCode, AttestRequest, AttestWithdrawReason, GatePortMessage, GateRequest, LocalApproval, LocalAttestation } from '@sax/engine/gate';
 import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
 import { childEnv } from './child-env.ts';
@@ -38,9 +39,13 @@ type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
  * - unknown: 보낸 뒤 판정을 받지 못했다(엔진·금고 종료, 같은 게이트 다시 보냄). 엔진이 받았는지 모른다.
  */
 export type GateAnswerResult = { ok: boolean; code?: string; verdict: 'engine' | 'not_sent' | 'unknown' };
+/** 증언 판정(attest.answer.result). code는 엔진 거부 코드(AttestRejectCode)이거나 보내지 못한 이유다. */
+export type AttestAnswerResult = { ok: boolean; code?: AttestRejectCode | string; verdict: 'engine' | 'not_sent' | 'unknown' };
+export type AttestWithdrawn = { runId: string; attestReqId: string; reason: AttestWithdrawReason };
 
 /**
- * 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason}) · 'exit'(who, code)
+ * 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason})
+ * · 'attest'(AttestRequest) · 'attest-withdrawn'(AttestWithdrawn) · 'exit'(who, code)
  * · 'vault-event'(name, data: 금고 control 포트의 {t:'ev'}, I-2). 끝난 뒤의 호출은 바로 실패한다.
  */
 export class EngineHost extends EventEmitter {
@@ -52,6 +57,7 @@ export class EngineHost extends EventEmitter {
   private readonly gatePort: MessagePortMain;
   private readonly pending = new Map<number, Pending>();
   private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
+  private readonly attestAnswers = new Map<string, (r: AttestAnswerResult) => void>();
   private nextId = 1;
   /** 엔진·금고가 끝났으면 그 이유. 이후 호출은 기다리지 않고 바로 실패한다. */
   private dead: string | null = null;
@@ -112,6 +118,8 @@ export class EngineHost extends EventEmitter {
     this.pending.clear();
     for (const a of this.answers.values()) a({ ok: false, code: `${who}_exit`, verdict: 'unknown' });
     this.answers.clear();
+    for (const a of this.attestAnswers.values()) a({ ok: false, code: `${who}_exit`, verdict: 'unknown' });
+    this.attestAnswers.clear();
     this.emit('exit', who, code);
   }
 
@@ -131,6 +139,12 @@ export class EngineHost extends EventEmitter {
       const a = this.answers.get(m.reqId);
       this.answers.delete(m.reqId);
       a?.({ ok: m.ok, code: m.code, verdict: 'engine' });
+    } else if (m?.t === 'attest.request') this.emit('attest', m.req satisfies AttestRequest);
+    else if (m?.t === 'attest.withdrawn') this.emit('attest-withdrawn', { runId: m.runId, attestReqId: m.attestReqId, reason: m.reason } satisfies AttestWithdrawn);
+    else if (m?.t === 'attest.answer.result') {
+      const a = this.attestAnswers.get(m.attestReqId);
+      this.attestAnswers.delete(m.attestReqId);
+      a?.({ ok: m.ok === true, code: m.code, verdict: 'engine' });
     }
   }
 
@@ -164,6 +178,19 @@ export class EngineHost extends EventEmitter {
       this.answers.get(approval.reqId)?.({ ok: false, code: 'superseded', verdict: 'unknown' });
       this.answers.set(approval.reqId, resolve);
       this.gatePort.postMessage({ t: 'gate.answer', approval } satisfies GatePortMessage);
+    });
+  }
+
+  /**
+   * 증언 바가 발급한 LocalAttestation을 게이트 포트로 보낸다(ADR-021 결정 5). 엔진의 판정(attest.answer.result)을 돌려준다.
+   * note는 로컬 저널에만 남는다(텔레메트리 금지). 중계 통로로는 보내지 않는다(엔진이 security.gate_answer_from_relay로 거부).
+   */
+  answerAttest(attestation: LocalAttestation, note?: string): Promise<AttestAnswerResult> {
+    if (this.dead) return Promise.resolve({ ok: false, code: this.dead, verdict: 'not_sent' });
+    return new Promise((resolve) => {
+      this.attestAnswers.get(attestation.attestReqId)?.({ ok: false, code: 'superseded', verdict: 'unknown' });
+      this.attestAnswers.set(attestation.attestReqId, resolve);
+      this.gatePort.postMessage({ t: 'attest.answer', attestation, ...(note ? { note } : {}) } satisfies GatePortMessage);
     });
   }
 
