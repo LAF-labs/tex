@@ -285,7 +285,8 @@ export class Relay {
     if (this.engineSessions.has(msg.sessionId)) {
       // 받은 시점의 창 상태를 찍어 둔다: 커밋(창 종료)은 금고 세션에서 바로 처리되지만 이 이벤트는 줄 뒤에서 정리된다.
       const t = this.targetOfSession(msg.sessionId);
-      const at = t ? this.stateOf(t) : undefined;
+      // 비밀 노드도 함께 떠 둔다(커밋이 secretBackendIds를 비워도 옛 문서 이벤트는 정화한다).
+      const at = t ? { ...this.stateOf(t), secretIds: t.secretBackendIds.size ? [...t.secretBackendIds] : undefined } : undefined;
       this.enqueue(() => this.sanitizeEvent(msg, at));
     }
   }
@@ -514,7 +515,7 @@ export class Relay {
     return { active: t.win?.phase === 'active', tainted: !!t.win };
   }
 
-  private async sanitizeEvent(msg: CdpMessage, at?: { active: boolean; tainted: boolean }): Promise<CdpMessage | null> {
+  private async sanitizeEvent(msg: CdpMessage, at?: { active: boolean; tainted: boolean; secretIds?: number[] }): Promise<CdpMessage | null> {
     const es = this.engineSessions.get(msg.sessionId!);
     const t = es ? this.targets.get(es.targetId) : undefined;
     if (!es || !t || !t.exposed) return null;
@@ -587,19 +588,19 @@ export class Relay {
         if (st.tainted && p.response) (p.response as Json).payloadData = '';
         return msg;
       case 'DOM.setChildNodes':
-        for (const n of (p.nodes as Json[]) ?? []) scrubDomNode(n, this.secretsOf(t));
+        for (const n of (p.nodes as Json[]) ?? []) scrubDomNode(n, this.secretsOf(t, at?.secretIds));
         return msg;
       case 'DOM.childNodeInserted':
-        scrubDomNode(p.node as Json, this.secretsOf(t));
+        scrubDomNode(p.node as Json, this.secretsOf(t, at?.secretIds));
         return msg;
       case 'DOM.shadowRootPushed':
-        scrubDomNode(p.root as Json, this.secretsOf(t));
+        scrubDomNode(p.root as Json, this.secretsOf(t, at?.secretIds));
         return msg;
       case 'DOM.attributeModified':
         if (st.tainted && String(p.name).toLowerCase() === 'value') p.value = '';
         return msg;
       case 'Accessibility.nodesUpdated':
-        scrubAxNodes(p.nodes, await this.secretsWithPasswords(t));
+        scrubAxNodes(p.nodes, await this.secretsWithPasswords(t, at?.secretIds));
         return msg;
       case 'Page.screencastFrame':
         return st.tainted ? null : msg;
@@ -715,16 +716,16 @@ export class Relay {
     const tainted = p.sentTainted || !!t.win;
     const [domain] = p.method.split('.');
     if (domain === 'DOM') {
-      const secrets = this.secretsOf(t, p);
+      const secrets = this.secretsOf(t, p.sentSecretIds);
       scrubDomNode(result.root as Json, secrets);
       scrubDomNode(result.node as Json, secrets);
       for (const n of (result.nodes as Json[]) ?? []) scrubDomNode(n, secrets);
     } else if (domain === 'Accessibility') {
-      const secrets = await this.secretsWithPasswords(t, p);
+      const secrets = await this.secretsWithPasswords(t, p.sentSecretIds);
       scrubAxNodes(result.nodes, secrets);
       if (result.node) scrubAxNodes([result.node], secrets);
     } else if (p.method === 'DOMSnapshot.captureSnapshot') {
-      scrubDomSnapshot(result, this.secretsOf(t, p));
+      scrubDomSnapshot(result, this.secretsOf(t, p.sentSecretIds));
     } else if (p.method === 'Runtime.getProperties' && tainted) {
       // 오염 상태(D05 §3.5, D-17(N-12)): 엔진의 objectId가 비밀 노드에서 왔는지 금고는 모른다(세션마다 다른 객체 ID).
       // 그래서 이 동안은 모든 응답에서 입력 값 속성(value·defaultValue)의 문자열을 지운다. 창은 다음 문서 커밋까지라 짧다.
@@ -743,15 +744,15 @@ export class Relay {
     return out;
   }
 
-  /** 응답 정화용 비밀 노드: 지금 아는 것 ∪ 요청을 보낼 때 알던 것(그사이 커밋으로 비워졌어도). */
-  private secretsOf(t: TargetState, p?: PendingEngineRequest): SecretNodes {
-    if (!p?.sentSecretIds?.length) return { backendIds: t.secretBackendIds };
-    return { backendIds: new Set([...t.secretBackendIds, ...p.sentSecretIds]) };
+  /** 정화용 비밀 노드: 지금 아는 것 ∪ 요청을 보낼 때·이벤트를 받을 때 알던 것(그사이 커밋으로 비워졌어도). */
+  private secretsOf(t: TargetState, snap?: readonly number[]): SecretNodes {
+    if (!snap?.length) return { backendIds: t.secretBackendIds };
+    return { backendIds: new Set([...t.secretBackendIds, ...snap]) };
   }
 
   /** 접근성 응답은 속성이 없어 type=password를 알 수 없으므로, 금고 세션으로 password 노드를 다시 센다. */
-  private async secretsWithPasswords(t: TargetState, p?: PendingEngineRequest): Promise<SecretNodes> {
-    const ids = new Set([...t.secretBackendIds, ...(p?.sentSecretIds ?? [])]);
+  private async secretsWithPasswords(t: TargetState, snap?: readonly number[]): Promise<SecretNodes> {
+    const ids = new Set([...t.secretBackendIds, ...(snap ?? [])]);
     try {
       const { root } = await this.conn.send<{ root: Json }>('DOM.getDocument', { depth: -1, pierce: true }, t.vaultSession);
       const walk = (n: Json | undefined) => {

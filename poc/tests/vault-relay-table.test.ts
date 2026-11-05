@@ -219,6 +219,23 @@ describe('D05 §3.4 응답 정리 표', () => {
     assert.match(JSON.stringify(r), /"pw"/, '다른 속성은 남긴다');
   });
 
+  it('받을 때 오염이었던 DOM·AX 이벤트는 줄에서 기다리는 사이 문서 커밋으로 비밀 노드가 비워져도 정화한다', async () => {
+    const f = await fakeRelay();
+    const t = f.relay.targets.get('RUN')!;
+    f.relay.openWindow(t, 'human', 'RUN', 7);
+    f.relay.deactivateWindow(t);
+    // type=text 칸(보안카드 숫자 등): 비밀 노드 ID로만 알 수 있다(짧은 값은 알려진 값 치환에도 안 걸린다).
+    const node = () => ({ nodeId: 1, backendNodeId: 7, nodeName: 'INPUT', attributes: ['type', 'text', 'value', '1234'], value: '1234' });
+    f.conn.emitEvent('DOM.setChildNodes', { parentId: 0, nodes: [node()] }, f.sid);
+    f.conn.emitEvent('DOM.childNodeInserted', { parentNodeId: 0, previousNodeId: 0, node: node() }, f.sid);
+    f.conn.emitEvent('DOM.shadowRootPushed', { hostId: 0, root: { ...node(), children: [node()] } }, f.sid);
+    f.conn.emitEvent('Accessibility.nodesUpdated', { nodes: [{ nodeId: 'a', backendDOMNodeId: 7, role: { value: 'textbox' }, value: { value: '1234' } }] }, f.sid);
+    f.relay.endWindow(t, 'commit');
+    await tick(5);
+    await f.relay.drained();
+    assert.doesNotMatch(JSON.stringify(f.toEngine.filter((m) => /DOM\.|Accessibility\./.test(String(m.method)))), /1234/);
+  });
+
   it('보낼 때 오염이었던 요청은 응답 전에 문서 커밋으로 창이 닫혀도 정화한다(getProperties·Network/Fetch 바디·DOM)', async () => {
     const f = await fakeRelay();
     const t = f.relay.targets.get('RUN')!;
