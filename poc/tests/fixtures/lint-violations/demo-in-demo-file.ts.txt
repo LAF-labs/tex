@@ -1,0 +1,5 @@
+// as: apps/desktop/src/demo-model.ts
+// expect: none
+// 시연 파일은 @sax/net/demo를 쓸 수 있다(SAX_DEMO_MODEL=openrouter, fixture 모드만).
+import { DemoEgress } from '@sax/net/demo';
+export const egress = new DemoEgress({ timeoutMs: 4_000 });

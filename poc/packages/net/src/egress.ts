@@ -16,15 +16,7 @@ export const DESTINATIONS = {
   openai: { origin: 'https://api.openai.com', paths: ['/v1/decisions', '/v1/responses'] },
 } as const satisfies Record<string, Destination>;
 
-/**
- * 시연 전용 목적지(SAX_DEMO_MODEL=openrouter, fixture 모드만). 클라이언트가 공급사 키를 들고 직접 부르는 D04 예외라
- * EgressOptions.demoModel이 켜진 Egress에서만 열린다. 근거·범위: reports/demo-meeting.md §예외.
- */
-export const DEMO_DESTINATIONS = {
-  openrouter: { origin: 'https://openrouter.ai', paths: ['/api/v1/chat/completions'] },
-} as const satisfies Record<string, Destination>;
-
-export type DestinationName = keyof typeof DESTINATIONS | keyof typeof DEMO_DESTINATIONS;
+export type DestinationName = keyof typeof DESTINATIONS;
 
 /** 게이트웨이 경로 설정. 번들 허용 목록은 앱 내장본(BYOK와 같은 목록), 인증은 금고 DPoP 서명기. */
 export interface GatewayConfig {
@@ -41,7 +33,7 @@ export type GatewayCall =
 
 export interface EgressOptions {
   /** 테스트 전용: 목적지 origin을 로컬 모의 서버로 바꾼다. 앱 진입점은 쓰지 않는다. */
-  testOrigins?: Partial<Record<DestinationName | 'gateway', string>>;
+  testOrigins?: Partial<Record<string, string>>;
   timeoutMs?: number;
   /** 모델 송신 검사 설정(BYOK). 없으면 toModel()은 항상 거부한다. */
   modelGuard?: ModelGuardConfig;
@@ -51,8 +43,6 @@ export interface EgressOptions {
   onSecurityEvent?: (e: EgressSecurityEvent) => void;
   /** 시험용: process.env 대신 볼 환경. */
   env?: NodeJS.ProcessEnv;
-  /** 시연 전용 목적지(DEMO_DESTINATIONS)를 postJson에 연다. 앱 진입점은 fixture 모드 시연 플래그일 때만 켠다. */
-  demoModel?: boolean;
 }
 
 /** TLS 신뢰를 바꾸는 환경 변수 이름(N-23). 보이면 모델·odcloud 요청을 보내지 않는다. */
@@ -99,7 +89,7 @@ export class EgressError extends Error {
 }
 
 export class Egress {
-  private readonly opts: EgressOptions;
+  protected readonly opts: EgressOptions;
   /** 진단용: 목적지·경로·상태코드만(본문·헤더 없음). */
   readonly audit: Array<{ dest: string; path: string; status: number | 'error' }> = [];
 
@@ -225,8 +215,13 @@ export class Egress {
     }
   };
 
+  /** postJson 목적지 조회. 제품 Egress는 DESTINATIONS뿐이다(시연 목적지는 @sax/net/demo의 DemoEgress만 연다, ADR-035 W-5). */
+  protected destinationOf(dest: string): Destination | undefined {
+    return Object.hasOwn(DESTINATIONS, dest) ? (DESTINATIONS[dest as DestinationName] as Destination) : undefined;
+  }
+
   async postJson(dest: DestinationName, path: string, body: unknown, headers: Record<string, string> = {}): Promise<EgressResponse> {
-    const d = (Object.hasOwn(DESTINATIONS, dest) ? DESTINATIONS[dest as keyof typeof DESTINATIONS] : this.opts.demoModel && Object.hasOwn(DEMO_DESTINATIONS, dest) ? DEMO_DESTINATIONS[dest as keyof typeof DEMO_DESTINATIONS] : undefined) as Destination | undefined;
+    const d = this.destinationOf(dest);
     if (!d) throw new EgressError('destination_not_allowed');
     if (!d.paths.includes(path)) throw new EgressError('path_not_allowed');
     if (this.envTampered.length) throw new EgressError('egress_env_tampered');

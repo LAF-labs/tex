@@ -1,0 +1,7 @@
+// as: apps/desktop/src/shell-app.ts
+// expect: no-restricted-imports=3
+// 시연·측정 전용 송신(@sax/net/demo)은 제품 파일에서 import할 수 없다(ADR-035 W-5). 상대 경로·dist도 막는다.
+import { DemoEgress } from '@sax/net/demo';
+import { DEMO_DESTINATIONS } from '../../../packages/net/src/demo.ts';
+import type { CompatModelRequest } from '../../../packages/net/dist/demo.js';
+export const probe = [DemoEgress, DEMO_DESTINATIONS] as unknown as CompatModelRequest;
