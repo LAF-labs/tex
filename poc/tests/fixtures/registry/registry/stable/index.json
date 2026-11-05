@@ -31,18 +31,26 @@
       "sxpDigest": "a672c16fa0733170f011d75ad978638769feed12902f12d050c47b0677dcf662",
       "size": 19955,
       "rolloutPercent": 100
+    },
+    {
+      "id": "payroll.rate-tables",
+      "version": "2026.11.1",
+      "kind": "data",
+      "sxpDigest": "84d95670e56038142e112b9b5804d9a10ef782f83f1254ef5829d15a1ffc629e",
+      "size": 2358,
+      "rolloutPercent": 100
     }
   ],
   "signatures": [
     {
       "keyId": "package-1",
       "alg": "ed25519",
-      "sig": "Ie38oiHnuw3ekKP4DgSHYbUgphMy766_XFjCP4SH2j2yEspko6pomfSJ5wRTUIeI5O6fd41xa488_LAE-IaWCg"
+      "sig": "Z-76FYim6YRXme43uJ55-7Mi9P3-rZO6UkkF1OU2JOMPrBd7QGWM5n-Q4RJKBr7G4DQz8P7zTpVqui0dge1HAg"
     },
     {
       "keyId": "package-2",
       "alg": "ed25519",
-      "sig": "TkWurg7AwD7S2Ru-AaqRA7jhHRyUahMTGG_oFzBYmL-SvnRZS9uPEc5_U9vzvTTdv5VJdi7CZBqgvJTJgcqEAQ"
+      "sig": "wL3NQ9_iGknU3kUNj5EswRK656o0ZcuTFRLLo1j4lWONl4NTpLfXj42xBalABnjODDyzTLbgeB5B4y2gO-W9Bw"
     }
   ]
 }

@@ -5,12 +5,13 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
-import { buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
-import { kstToday, summarize, type SummaryLine } from './approval-gate.ts';
+import { buildAttestRequest, buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
+import { ATTEST_ACTION_TEXT, kstToday, summarize, type SummaryLine } from './approval-gate.ts';
 import { lastWebPrefs, webPrefsProblems } from './harden.ts';
 import { SHELL_METHODS } from './ipc.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
+import { ATTEST_NOTE } from './shell-runs.ts';
 
 registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-e2e-${process.pid}`));
@@ -663,6 +664,45 @@ async function flow(): Promise<void> {
     await until('check list', () => js<boolean>(`(() => { const p = document.querySelector('[data-check-list="${idDoubt}"]'); return !!p && p.querySelectorAll('.sx-copy').length === 4 && p.textContent.includes('황토색 바로만'); })()`), 3000),
   );
   await shot('28b-in-doubt');
+
+  // M4-2 3부(3b): InDoubt 증언 바(ADR-021 결정 5). 엔진이 아직 증언 요청을 내지 않아(M2-3) 요청은 게이트 포트로 온 것처럼 넣는다.
+  // 그 뒤 근거는 실제 게이트 포트로 실제 엔진에 가고, 엔진은 미결 요청이 없어 attest.no_request로 답한다(기록 없음).
+  const run = S.runs.get(idDoubt)!;
+  const attestReq = buildAttestRequest({ runId: idDoubt, intentId: 'e2e', stepId: 'verify', portal: 'hometax', summary: { counterpartName: run.counterparty.name, counterpartBizNo: run.counterparty.bizNo, totalAmount: String(run.total) }, manualCheck: false });
+  S.host.emit('attest', attestReq);
+  const attestNote = () => js<string | null>(`document.querySelector('[data-run="${idDoubt}"] [data-attest]')?.dataset.attest ?? null`);
+  await until('attest ready', async () => (await attestNote()) === 'ready', 3000);
+  await sleep(300);
+  check('증언 요청은 무장만 한다: 카드를 실제로 열기 전에는 바가 뜨지 않는다(패널이 열려 있어도 실제 입력 없이 연 것)', !S.bar.snapshot().visible && (await attestNote()) === 'ready');
+  const openCheck = async () => {
+    await click('#panel .panel-x');
+    gesture();
+    await sleep(30);
+    await click(`[data-run="${idDoubt}"] [data-act=check-list]`);
+    await until('attest bar', () => S.bar.snapshot().visible && S.bar.snapshot().kind === 'attest', 5000);
+  };
+  await openCheck();
+  const aSnap = S.bar.snapshot();
+  check(
+    '카드를 열면 승인 바 자리에 황토색 증언 바: 그 요청, 동작 글자 "홈택스 발급목록에 없음을 확인했어요", 무장 거부 없음',
+    aSnap.kind === 'attest' && aSnap.reqId === attestReq.attestReqId && aSnap.runId === idDoubt && aSnap.action === ATTEST_ACTION_TEXT && !aSnap.refusal,
+    { aSnap },
+  );
+  await waitArmed();
+  await shot('28c-attest-bar');
+  await click('#panel .panel-x');
+  check('카드(안내)를 닫으면 증언 바가 내려간다(증언이 안 될 뿐인 안전한 실패)', await until('attest bar hidden', () => !S.bar.snapshot().visible, 3000));
+  await openCheck();
+  const ledgerBefore = (await inspect(idDoubt)).ledger;
+  await approveOnBar();
+  await until('attest answered', async () => (await attestNote()) === 'refused', 5000);
+  const ledgerAfter = (await inspect(idDoubt)).ledger;
+  check(
+    '증언 바 클릭 → main이 LocalAttestation을 게이트 포트로 보내고 엔진 판정(attest.no_request)을 카드에 보인다. 바는 내려가고 원장은 그대로 in_doubt',
+    !S.bar.snapshot().visible && S.runs.get(idDoubt)!.attest?.note === ATTEST_NOTE.stale && ledgerBefore === 'in_doubt' && ledgerAfter === 'in_doubt' && S.runs.attestFor(idDoubt) === null,
+    { attest: S.runs.get(idDoubt)!.attest, ledgerBefore, ledgerAfter },
+  );
+  await click('#panel .panel-x');
 
   // 엔진 프로세스가 승인 대기 중에 끝남: 바가 내려가고 카드는 "승인 전에 끝났어요"(발급 없음), 이후 호출은 기다리지 않고 실패.
   const postsExit = fx().fixture.posts();

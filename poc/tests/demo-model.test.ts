@@ -1,5 +1,5 @@
 // 시연 전용 채팅 해석(demo-model.ts): 플래그·키 읽기, 응답 검증, 실패 시 null(정규식으로 감)과 잠시 끄기,
-// egress 데모 목적지는 demoModel일 때만 열림. 모의 OpenRouter는 127.0.0.1 서버다.
+// 시연 목적지(OpenRouter)는 @sax/net/demo의 DemoEgress만 연다(ADR-035 W-5). 모의 OpenRouter는 127.0.0.1 서버다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Egress, EgressError } from '@sax/net';
+import { DemoEgress } from '@sax/net/demo';
 import { DEFAULT_MODEL, DemoModel, demoModelConfig, mergeParsed, requestBody, toParsed } from '../apps/desktop/src/demo-model.ts';
 import { interpret, parseRegex, type Counterparty, type Drafts, type Parsed, type RunView, type VatMode } from '../apps/desktop/src/shell-mock.ts';
 
@@ -100,7 +101,7 @@ describe('demo-model 송신', () => {
     origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   });
   after(() => server.close());
-  const model = (timeoutMs = 2_000) => new DemoModel({ key: 'sk-test', model: DEFAULT_MODEL }, new Egress({ demoModel: true, timeoutMs, testOrigins: { openrouter: origin }, env: {} }));
+  const model = (timeoutMs = 2_000) => new DemoModel({ key: 'sk-test', model: DEFAULT_MODEL }, new DemoEgress({ timeoutMs, testOrigins: { openrouter: origin }, env: {} }));
 
   it('맞는 응답이면 Parsed, 경로·인증 헤더가 맞다', async () => {
     mode = 'ok';
@@ -133,9 +134,9 @@ describe('demo-model 송신', () => {
     assert.equal(await m2.parse('x', NAMES), null);
   });
 
-  it('demoModel이 꺼진 egress는 openrouter를 거부한다', async () => {
-    await assert.rejects(new Egress({ testOrigins: { openrouter: origin }, env: {} }).postJson('openrouter', '/api/v1/chat/completions', {}), (e: unknown) => e instanceof EgressError && e.code === 'destination_not_allowed');
-    await assert.rejects(new Egress({ demoModel: true, testOrigins: { openrouter: origin }, env: {} }).postJson('openrouter', '/api/v1/models', {}), (e: unknown) => e instanceof EgressError && e.code === 'path_not_allowed');
+  it('제품 Egress는 openrouter를 모른다, DemoEgress도 허용 경로 밖은 거부한다', async () => {
+    await assert.rejects(new Egress({ testOrigins: { openrouter: origin }, env: {} }).postJson('openrouter' as never, '/api/v1/chat/completions', {}), (e: unknown) => e instanceof EgressError && e.code === 'destination_not_allowed');
+    await assert.rejects(new DemoEgress({ testOrigins: { openrouter: origin }, env: {} }).postJson('openrouter', '/api/v1/models', {}), (e: unknown) => e instanceof EgressError && e.code === 'path_not_allowed');
   });
 });
 
