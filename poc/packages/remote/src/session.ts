@@ -47,10 +47,14 @@ function helloBody(h: HelloInfo): HelloBody {
   };
 }
 
-async function exchangeHello(ch: Channel, mine: HelloInfo, minProtocol: number, first: 'send' | 'recv'): Promise<SessionInfo | null> {
+async function exchangeHello(ch: Channel, mine: HelloInfo, minProtocol: number, first: 'send' | 'recv', timeoutMs = 10_000): Promise<SessionInfo | null> {
   if (first === 'send') ch.send('hello', helloBody(mine));
-  const e = await ch.recv(10_000);
-  if (!e || e.type !== 'hello') return null;
+  const e = await ch.recv(timeoutMs);
+  // hello가 없으면 전송 키와 우편함 자리를 놓는다(다시 시도할 때 자리가 비어 있게).
+  if (!e || e.type !== 'hello') {
+    ch.close();
+    return null;
+  }
   const peer = e.body as HelloBody;
   if (first === 'recv') ch.send('hello', helloBody(mine));
   if (peer.protocol < minProtocol) {
@@ -78,6 +82,8 @@ export interface MobileSessionOptions {
   minProtocol?: number;
   /** PC 응답 대기(기본 15초). 없으면 꺼져 있는 것으로 본다. */
   responseTimeoutMs?: number;
+  /** IK 뒤 hello 대기(기본 10초). */
+  helloTimeoutMs?: number;
 }
 
 /** 우편함 링크 위에서 IK 세션을 연다. PC가 응답하지 않으면 null(꺼져 있거나 거부, 구분하지 않는다). */
@@ -91,7 +97,7 @@ export async function openMobileSession(link: Link, o: MobileSessionOptions): Pr
     if (!p || p.kind !== KIND.HS) return null;
     await hs.readMessage(p.body);
     const ch = new Channel(link, new Transport(hs.split()), { pairId: o.pairId, me: 'mobile', now: o.now });
-    return await exchangeHello(ch, o.hello, o.minProtocol ?? PROTOCOL_VERSION, 'send');
+    return await exchangeHello(ch, o.hello, o.minProtocol ?? PROTOCOL_VERSION, 'send', o.helloTimeoutMs);
   } catch {
     return null;
   }
@@ -116,6 +122,8 @@ export interface DesktopSessionOptions {
   persistTs: (pairId: string, ts: number) => Promise<void>;
   now?: () => number;
   minProtocol?: number;
+  /** IK 뒤 hello 대기(기본 10초). */
+  helloTimeoutMs?: number;
 }
 
 /** 폰의 msg1을 받아 검사한다. 거부는 무응답(null). */
@@ -135,7 +143,7 @@ export async function acceptDesktopSession(link: Link, o: DesktopSessionOptions)
     o.pair.ikTsMax = ts;
     link.send(encodeHs(await hs.writeMessage()));
     const ch = new Channel(link, new Transport(hs.split()), { pairId: o.pair.pairId, me: 'desktop', now: o.now });
-    return await exchangeHello(ch, o.hello, o.minProtocol ?? PROTOCOL_VERSION, 'recv');
+    return await exchangeHello(ch, o.hello, o.minProtocol ?? PROTOCOL_VERSION, 'recv', o.helloTimeoutMs);
   } catch {
     return null;
   }

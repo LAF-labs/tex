@@ -322,6 +322,13 @@ export class MobilePairing {
 
   /** 3단계: 앱 안 스캐너가 읽은 텍스트를 검사한다. */
   scan(text: string): boolean {
+    if (this.state !== 'idle' && this.state !== 'scanned' && this.state !== 'failed') throw new Error('pairing: busy');
+    // 다시 스캔하면 지난 시도의 실패·SAS·QR을 지운다.
+    this.failure = null;
+    this.sas = null;
+    this.newDesktopWarning = false;
+    this.#qr = null;
+    this.#desktop = null;
     const q = decodeQr(text);
     if (!q || q.intent !== 'pair') return this.#fail('qr_invalid');
     if (this.#now() / 1000 > q.exp) return this.#fail('qr_expired');

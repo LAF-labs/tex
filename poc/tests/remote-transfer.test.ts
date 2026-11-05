@@ -216,6 +216,20 @@ describe('현금매출 전송', () => {
     assert.equal(t.sink.cash.get('2026-11-04')?.amount, 90_000);
   });
 
+  it('같은 날 새 값 쓰기가 실패하면 옛 값이 보관함에 남는다', async () => {
+    const o = new MemOutbox();
+    await enqueueCash(o, makeCashEntry('2026-11-05', 100_000, 1000));
+    const put = o.put.bind(o);
+    o.put = async () => {
+      throw new Error('disk full');
+    };
+    await assert.rejects(enqueueCash(o, makeCashEntry('2026-11-05', 120_000, 2000)));
+    o.put = put;
+    const left = await o.list();
+    assert.equal(left.length, 1);
+    assert.equal(left[0]!.kind === 'cash' && left[0]!.entry.amount, 100_000);
+  });
+
   it('cash.entry 재전송은 중복 저장 없이 stored', async () => {
     const t = await world();
     const e = makeCashEntry('2026-11-05', 5000);

@@ -53,8 +53,10 @@ export function makeCashEntry(day: string, amount: number, now = Date.now()): Ca
 
 /** 같은 날 현금매출이 이미 대기 중이면 새 값으로 바꾼다(하루 숫자 하나). */
 export async function enqueueCash(store: OutboxStore, entry: CashEntryBody, now = Date.now()): Promise<void> {
-  for (const it of await store.list()) if (it.kind === 'cash' && it.entry.day === entry.day) await store.remove(it.msgId);
+  // 새 값을 먼저 쓰고 옛 값을 지운다(쓰기에 실패하거나 중간에 죽어도 그날 숫자는 보관함에 남는다).
+  const old = (await store.list()).filter((it) => it.kind === 'cash' && it.entry.day === entry.day && it.msgId !== entry.msgId);
   await store.put({ kind: 'cash', msgId: entry.msgId, entry, createdAt: now, attempts: 0 });
+  for (const it of old) await store.remove(it.msgId);
 }
 
 export interface SenderOptions {
