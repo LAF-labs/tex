@@ -9,6 +9,7 @@
     "@sax/engine": "workspace:*",
     "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",
+    "@sax/payroll": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/redaction": "workspace:*",
     "@sax/remote": "workspace:*",

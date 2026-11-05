@@ -82,10 +82,13 @@ test('엔진 샘플 묶음이 있으면 핀 키 모양을 그대로 받는다', 
   const p = path.join(import.meta.dirname, 'fixtures/registry/trust.json');
   if (!fs.existsSync(p)) return t.skip('tests/fixtures/registry는 엔진 PR #52 머지 뒤 생긴다');
   const trust = JSON.parse(fs.readFileSync(p, 'utf8')) as TrustRoot;
-  // 샘플에는 release 역할이 없다: 그대로 쓰면 어떤 릴리스도 서명 부족이다(fail-closed)
+  // 샘플에 release-1(시드 0x61)이 있다(엔진 데이터 패키지 PR, 패키징 #76 요청): 샘플 핀 그대로 릴리스를 받는다
+  assert.deepEqual(trust.keys.release, TRUST.keys.release);
   const doc = signRelease(unsigned());
-  assert.equal(codeOf(() => verifyRelease(base(doc, { trust }))), 'registry.signature_insufficient');
-  assert.ok(verifyRelease(base(doc, { trust: { ...trust, keys: { ...trust.keys, release: TRUST.keys.release } } })));
+  assert.equal(verifyRelease(base(doc, { trust })).releaseKeyId, 'release-1');
+  // release 역할이 빠진 핀이면 어떤 릴리스도 서명 부족이다(fail-closed)
+  const noRelease = { ...trust, keys: Object.fromEntries(Object.entries(trust.keys).filter(([role]) => role !== 'release')) } as TrustRoot;
+  assert.equal(codeOf(() => verifyRelease(base(doc, { trust: noRelease }))), 'registry.signature_insufficient');
 });
 
 test('정상: 서명·만료·채널·버전이 맞으면 통과하고 download', () => {
