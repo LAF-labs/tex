@@ -4,24 +4,28 @@
   "bundle": "screen_state_v2",
   "bundleDigest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082",
   "corpus": "l0-corpus screenCorpus(20, 7) — 합성",
-  "generatedAt": "2026-11-05T08:50:11.841Z",
+  "generatedAt": "2026-11-05T09:52:09.497Z",
   "n": 100,
+  "templates": {
+    "sampled": 18,
+    "total": 18
+  },
   "stoppedByCostCap": false,
-  "accuracy": 1,
+  "accuracy": 0.97,
   "recall": {
     "blocked": 1,
     "captcha": 1
   },
-  "pass": true,
+  "pass": false,
   "latencyMs": {
-    "p50": 2936,
-    "p95": 3919
+    "p50": 3034,
+    "p95": 4202
   },
-  "inputTokensAvg": 2697,
-  "costUsd": 0.12768,
+  "inputTokensAvg": 2682,
+  "costUsd": 0.12813,
   "perQuestion": {
-    "screen": 0.72,
-    "has_error_modal": 0.97,
+    "screen": 0.79,
+    "has_error_modal": 0.92,
     "session_expired_notice": 1,
     "captcha_visible": 1,
     "mfa_pending": 1,
@@ -32,13 +36,15 @@
   },
   "confusion": {
     "logged_in": {
-      "logged_in": 15
+      "logged_in": 13,
+      "unknown": 2
     },
     "login_required": {
       "login_required": 15
     },
     "error": {
-      "error": 14
+      "error": 13,
+      "unknown": 1
     },
     "blocked": {
       "blocked": 14
@@ -53,15 +59,40 @@
       "mfa_pending": 14
     }
   },
-  "misses": [],
+  "misses": [
+    {
+      "id": "ss.result_dup.1",
+      "expect": "error",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 3599.797041999991,
+      "inputTokens": 2640
+    },
+    {
+      "id": "ss.result_pending.0",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 2593.210208000004,
+      "inputTokens": 2635
+    },
+    {
+      "id": "ss.result_pending.1",
+      "expect": "logged_in",
+      "got": "unknown",
+      "reason": "mapping_unknown",
+      "ms": 3129.7229579999694,
+      "inputTokens": 2635
+    }
+  ],
   "intent": {
     "n": 304,
-    "playbookAccuracy": 0.9671,
+    "playbookAccuracy": 0.9638,
     "taxAdviceFalsePositiveRate": 0,
     "taxAdviceMissRate": 0,
     "wrong": [
       {
-        "id": "ir.16.0",
+        "id": "ir.16.1",
         "expect": "query.documents",
         "got": "none_of_these"
       },
@@ -77,11 +108,6 @@
       },
       {
         "id": "ir.19.2",
-        "expect": "hometax.invoice.issue",
-        "got": "none_of_these"
-      },
-      {
-        "id": "ir.19.3",
         "expect": "hometax.invoice.issue",
         "got": "none_of_these"
       },
@@ -106,7 +132,17 @@
         "got": "none_of_these"
       },
       {
-        "id": "ir.20.4",
+        "id": "ir.20.0",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.1",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      },
+      {
+        "id": "ir.20.2",
         "expect": "none_of_these",
         "got": "gov24.resident.copy"
       }
