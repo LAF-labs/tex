@@ -1,5 +1,5 @@
 // 근무표 계산(D14 M6-15, ADR-034 결정 8): 근무 시작·끝·휴게 → 분 단위 근무 시간 → 달 합계 → 시급제 기본급.
-// 연장·야간·휴일 가산과 주휴는 범위가 정해지지 않았다(열린 질문). 구현하지 않고 PremiumRules 자리만 둔다.
+// 연장·야간·휴일 가산과 주휴는 계산하지 않는다(yulmu 확답 2026-11-05: 사장님이 세전 금액에 반영). 근무 합계는 세전 제안값(suggestGross)까지만.
 import { roundRational } from './money.ts';
 
 export interface ShiftLike {
@@ -62,21 +62,3 @@ export function hourlyPay(hourlyWage: number, minutes: number): number {
   if (!Number.isSafeInteger(hourlyWage) || hourlyWage < 0 || !Number.isSafeInteger(minutes) || minutes < 0) throw new ShiftError('invalid_hourly');
   return roundRational(BigInt(hourlyWage) * BigInt(minutes), 60n, 'floor_1');
 }
-
-/**
- * 연장·야간·휴일 가산과 주휴수당 자리(범위 미정, ADR-034 결정 8 열린 질문). 정해지면 이 인터페이스로 넣는다.
- * 가산 요건(5인 이상 사업장 여부, 소정근로시간 등)의 판단은 사장님이 확인한다.
- */
-export interface PremiumRules {
-  readonly id: string;
-  /** 근무표에서 연장·야간·휴일 분과 가산 지급 항목을 만든다 */
-  premiums(input: { month: string; hourlyWage: number; shifts: readonly ShiftLike[] }): {
-    overtimeMinutes: number;
-    nightMinutes: number;
-    holidayMinutes: number;
-    items: Array<{ name: string; amount: number; calc: string }>;
-  };
-}
-
-/** 지금은 가산·주휴를 계산하지 않는다 */
-export const NO_PREMIUMS: PremiumRules | null = null;

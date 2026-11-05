@@ -33,7 +33,7 @@
 | [outreach/](outreach/README.md) | 대외 문서 초안(D15 F-04): 행안부·국세청 공문, 개인정보위 질의, 법률 질의 6건, 붙임, 설계 대조표. 발송 전 yulmu 확인 |
 | [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 9종, ADR-001~029(ADR-024는 별도 PR, ADR-030 예약) |
 | [design/19-attack-surface.md](design/19-attack-surface.md) | 공격표면 감사 101건(Critical 1·High 31·Medium 57·Low 12, 채택 97·변형 3·수용 1) 처리 결정 등록부, 보안 재감사 신규 18건, 위협 주체 통합표, 상충 해소, 운영자 가시성, 데이터 주권 지점, AUDIT-D 확정 53건(High 3·Medium 33·Low 17, §3.5) |
-| [research/](research/) | 리서치 노트 R1~R14(R9 공고문 제출서류 집계, R10 서류 발급 사실표, R11 PC 승인 근거: Electron 입력 이벤트·Windows Hello, R13 법적 리스크 1차 검토: 로폼 AI 질의 10건과 구조를 바꾸지 않는 해법, R14 법적 리스크 2차 검토: 11-05 결정·제안 10건, 1차 자료 기반), 검수 REVIEW-A~E, 감사 AUDIT-A~D |
+| [research/](research/) | 리서치 노트 R1~R15(R9 공고문 제출서류 집계, R10 서류 발급 사실표, R11 PC 승인 근거: Electron 입력 이벤트·Windows Hello, R13 법적 리스크 1차 검토: 로폼 AI 질의 10건과 구조를 바꾸지 않는 해법, R14 법적 리스크 2차 검토: 11-05 결정·제안 10건, 1차 자료 기반, R15 시온랩 회계 자동화 조사와 배울 점·시연 영상 절차서 대조), 검수 REVIEW-A~E, 감사 AUDIT-A~D |
 
 ## 설계를 지배하는 6가지 원칙
 

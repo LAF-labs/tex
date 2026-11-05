@@ -7,9 +7,13 @@
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
 import type { WebFrameMain } from 'electron';
+import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
 
 export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
 export type { EngineInit, EnginePortal } from '@sax/engine/protocol';
+// main ↔ 금고 계약(#42). 값은 금고 프로토콜이 정본이고 main은 타입으로만 받는다.
+export type { ConsentRecord, OneShotBind, ProfileScope, RunBeginParams, SecretInputBind, SecretStoreResult, StoreBind, VaultEventName } from '@sax/vault';
+import type { ProfileScope, VaultEventName } from '@sax/vault';
 
 /** 채널 이름. preload(.cjs)는 이 파일을 불러올 수 없어 글자를 그대로 쓴다(tests/shell-ipc.test.ts가 맞춰 본다). */
 export const IPC = {
@@ -22,7 +26,7 @@ export const IPC = {
 /** 금고 control 포트로 main에 오는 알림(secret.needed·진행 안내 등). 판단은 받는 쪽이 main 내장 표로 한다. */
 export interface VaultControlEvent {
   t: 'ev';
-  name: string;
+  name: VaultEventName;
   data: unknown;
 }
 
@@ -62,6 +66,15 @@ const DOC_FIELDS = {
   issuedOn: { t: 'string', max: 32, nullable: true },
   expiresOn: { t: 'string', max: 32, nullable: true },
 } as const;
+/** 온보딩 답(08 §4). 사업자 칸은 비밀이 아니다. 비밀(홈택스 비밀번호·보안카드)은 이 길로 오지 않는다(금고 창 → 금고). */
+const ONB_BIZ_MAX = BIZ_FIELD_MAX;
+const ONB_ANSWER = {
+  step: { t: 'enum', of: ONB_STEPS.filter((x) => x !== 'done'), required: true },
+  choice: { t: 'enum', of: ONB_ALL_CHOICES, required: true },
+  fields: { t: 'object', fields: Object.fromEntries(BIZ_FIELD_KEYS.map((k) => [k, { t: 'string', max: ONB_BIZ_MAX[k] }])) as Record<(typeof BIZ_FIELD_KEYS)[number], { t: 'string'; max: number }> },
+  certId: { t: 'string', max: 64 },
+  tasks: { t: 'object', fields: Object.fromEntries(ONB_TASKS.map((x) => [x.id, { t: 'boolean' }])) as Record<string, { t: 'boolean' }> },
+} as const;
 const G24_DOC = { t: 'enum', of: ['주민등록표 등본', '주민등록표 초본'], required: true } as const;
 
 /**
@@ -70,7 +83,7 @@ const G24_DOC = { t: 'enum', of: ['주민등록표 등본', '주민등록표 초
  */
 export const SHELL_METHODS = {
   'shell.bootstrap': {},
-  'profile.set': { kind: { t: 'enum', of: ['business', 'personal'], required: true } },
+  'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
   'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
   'run.prepare': { id: ID },
@@ -98,6 +111,8 @@ export const SHELL_METHODS = {
   'g24.candidates': { doc: G24_DOC, startedAt: { t: 'number', required: true } },
   'g24.save': { id: ID, doc: G24_DOC },
   'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },
+  // 온보딩 답 하나(O-01~O-06·동의 4종). 동의는 화면마다 명시 클릭이라 실제 입력 뒤에만 받는다(USER_ACTION_METHODS).
+  'onboarding.reply': ONB_ANSWER,
 } as const satisfies Record<string, MethodSpec>;
 
 export type ShellMethod = keyof typeof SHELL_METHODS;
@@ -108,7 +123,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -174,4 +189,5 @@ export type ShellEvent =
   | { type: 'run'; run: unknown }
   | { type: 'doc'; doc: unknown }
   | { type: 'docs-reload' }
-  | { type: 'board'; board: unknown };
+  | { type: 'board'; board: unknown }
+  | { type: 'onboarding'; onboarding: unknown };
