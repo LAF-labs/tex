@@ -56,6 +56,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     runs = new RunService({ db, data, ledgerKey, portal, page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m) });
     gate.onMessage((m) => {
       const g = m as GatePortMessage;
+      // 증언 처리는 M2-3에서 붙인다. 그 전에는 엔진이 증언 요청을 내지 않으므로 어떤 증언도 미결 요청이 없다.
+      if (g?.t === 'attest.answer') return gate.postMessage({ t: 'attest.answer.result', attestReqId: String(g.attestation?.attestReqId ?? ''), ok: false, code: 'attest.no_request' } satisfies GatePortMessage);
       if (g?.t !== 'gate.answer') return log.event('engine.gate_port_unknown');
       const r = runs!.answer(g.approval);
       gate.postMessage({ t: 'gate.answer.result', reqId: String(g.approval?.reqId ?? ''), ...r } satisfies GatePortMessage);
@@ -115,11 +117,12 @@ parentPort.on('message', (e) => {
     return;
   }
   // 게이트 메시지 모양이 중계 통로로 오면 RPC가 아니어도 거부를 남긴다.
-  if (msg?.t === 'gate.answer') {
-    log.event('security.gate_answer_from_relay', { method: 'gate.answer' });
+  // 증언(attest.answer)도 같다(ADR-021: 중계 통로에서 온 answerGate·attestNotCommitted는 거부하고 보안 이벤트).
+  if (msg?.t === 'gate.answer' || msg?.t === 'attest.answer') {
+    log.event('security.gate_answer_from_relay', { method: msg.t });
     if (runs) {
       try {
-        runs.answerFromRelay('gate.answer');
+        runs.answerFromRelay(msg.t);
       } catch {
         // 기록만 한다
       }

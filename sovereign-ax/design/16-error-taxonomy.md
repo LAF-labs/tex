@@ -1,6 +1,7 @@
 # D16. 오류·결과 코드 체계 (초안)
 
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
+> 같은 날 팀장 지시: `assert.total_mismatch`·`input_mismatch`(D02 §8 `s19d`·`s19f`).
 > 같은 날 팀장 결정: 모델·egress PR #48의 `egress.pii_tripwire`·`egress.image_rejected`·`egress.unminted_text`를 표와 보안 이벤트 목록에 추가.
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): `account.device_hold`(423, 기기 추가 72시간 대기) 추가. PR #46의 나머지 `PROPOSED_D16` 코드는 아직 넣지 않았다.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교). · AUDIT-D 반영 2026-11-03: 아래 `portal`·`policy` 행 뒤의 AUDIT-D 행(ADR-025~029, D19 §3.5).
@@ -53,6 +54,7 @@
 | `portal` | `unexpected_page` / `extra_auth_repeat` / `unobservable` / `unknown_screen` | 기대 경로 밖 화면, 로그인 밖 반복 추가 인증(차단 신호 보고 제외), 화면 확인 불가로 게이트·커밋 전 정지, 기대 화면 미도착 누적(ADR-025) | `err.portal.*` | handoff / 보수 모드·쿨다운 |
 | `policy` | `poc_irreversible_total` | PoC 누적 실발급 3건 도달(ADR-025) | `err.policy.poc_irreversible_total` | 시작 거부 |
 | `assert` | `issue_date_mismatch` | 포털 작성일자 ≠ 실행 시작 KST 날짜(ADR-027) | `err.assert.issue_date_mismatch` | 게이트 전 정지 |
+| `assert` | `total_mismatch` / `input_mismatch` | 되읽은 공급가액 + 세액 ≠ 되읽은 합계(D02 §8 `s19d`) / 되읽은 공급받는자 사업자번호·공급가액·세액 ≠ 실행 입력(`s19f`)(2026-11-05) | `err.assert.*` | 게이트 전 정지 |
 | `vault` | `leak_suspected` / `keystore_mismatch` / `credential_suspect` | 알려진 값 치환 적중, DB 키 길이 불일치(기동 거부), 포털 인증 실패 뒤 저장 자격 보류(ADR-025·026·029, **보안 이벤트**: `leak_suspected`·`keystore_mismatch`) | `err.vault.*` | 정지 / 기동 거부 / 금고에서 확인 |
 | `db` | `key_missing` / `locked_by_other_instance` | 키 항목 없음 + DB 파일 있음(새 키 생성 금지), 두 번째 인스턴스(ADR-025·029) | `err.db.*` | 기동 거부·복구 화면(Phase 1) |
 | `engine` | `env_tampered` / `vault_port_unsupported` | 디버그·TLS 변조 환경 변수, 옛 기동 경로(ADR-025) | `err.engine.*` | 기동 거부 |

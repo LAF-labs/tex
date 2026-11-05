@@ -1,6 +1,7 @@
 // 스키마 마이그레이션(D07 §7): 버전 테이블 + 순방향 전용, 앱 업데이트 시 자동 적용, 실패 시 이전 판 DB 백업 유지.
 // - 대기 중인 판 전부를 트랜잭션 하나로 적용한다. 중간에 실패하면 SQLite가 통째로 되돌리고 DB는 이전 판 그대로다.
-// - 적용 전에 DB 파일(암호문 그대로)을 같은 db 폴더에 백업한다. 되돌림이 실패하는 경우(디스크 손상 등)에 대비한 사본이다.
+// - 적용 전에 DB 파일(암호문 그대로)을 같은 db 폴더에 백업한다. 이것은 **적용 전 상태의 사본**이다: 트랜잭션 되돌림 자체가
+//   실패해 파일이 상했을 때(디스크 손상 등) 이전 판으로 돌아갈 곳이다. 새 판을 적용한 뒤의 복구 지점이 아니다(그건 다음 판 적용 때 다시 만든다).
 // - 이미 적용한 판의 SQL이 바뀌었으면(sha256 불일치) 열지 않는다. 배포한 마이그레이션은 고치지 않고 새 판을 더한다.
 // - DB가 앱보다 새 판이면 열지 않는다(옛 앱이 새 스키마를 망가뜨리지 않게).
 import { createHash } from 'node:crypto';
@@ -111,6 +112,15 @@ function backup(db: Db, file: string, fromVersion: number, at: Date): string {
   return dest;
 }
 
+/** 실패 뒤 DB가 적용 전 판 그대로인지: 트랜잭션 밖이고, user_version이 같고, quick_check가 ok(아니면 이번 백업을 남긴다) */
+export function rolledBackCleanly(db: Db, version: number): boolean {
+  try {
+    return !db.inTransaction && db.pragma('user_version', { simple: true }) === version && db.pragma('quick_check', { simple: true }) === 'ok';
+  } catch {
+    return false;
+  }
+}
+
 /** 오래된 백업 정리. 마이그레이션이 성공한 뒤에만 부른다(실패한 시도가 복구 지점을 지우지 않게) */
 function pruneBackups(file: string, keep: number): void {
   const all = listBackups(file);
@@ -182,8 +192,9 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
       db.pragma(`user_version=${latest}`);
     })();
   } catch (e) {
-    // 트랜잭션이 되돌려져 DB가 백업과 같으므로 이번 사본은 지운다(재시도마다 사본이 쌓이지 않게). 프로세스가 도중에 죽으면 여기 오지 않고 사본이 남는다
-    if (backupPath) fs.rmSync(backupPath, { force: true });
+    // 되돌림이 끝나 DB가 이전 판 그대로임을 확인했을 때만 이번 사본을 지운다(재시도마다 사본이 쌓이지 않게).
+    // 확인하지 못하면(되돌림 실패·파일 손상) 사본을 남긴다: 그때가 이 백업이 필요한 경우다. 프로세스가 도중에 죽어도 사본이 남는다
+    if (backupPath && rolledBackCleanly(db, current)) fs.rmSync(backupPath, { force: true });
     throw new MigrationError('db.migration_failed', running, e);
   }
   if (opts.file && backupPath) pruneBackups(opts.file, opts.keepBackups ?? 2);
