@@ -13,7 +13,6 @@ export const ERROR_STATUS = {
   'registry.signature_insufficient': 422,
   'registry.version_jump_rejected': 422,
   'registry.key_revoked': 422,
-  'registry.status_stale': 422,
   // D16 추가 제안(PROPOSED_D16)
   'request.param_rejected': 400,
   'request.too_large': 413,
@@ -48,11 +47,30 @@ export const ERROR_STATUS = {
   'gateway.run_token_invalid': 401,
   'gateway.run_budget_exceeded': 429,
   'gateway.device_suspended': 403,
-  'registry.expired': 422,
+  // 레지스트리 게시 관문: 엔진 로더(#52)·SIGNING.md와 같은 코드(받지 않을 문서를 올리지 않는다)
   'registry.issued_in_future': 422,
   'registry.not_found': 404,
-  'registry.revocation_stale': 422,
-  'registry.not_conservative': 422,
+  'registry.schema_invalid': 422,
+  'registry.key_epoch_mismatch': 422,
+  'registry.key_epoch_rollback': 422,
+  'registry.version_rollback': 422,
+  'registry.timestamp_invalid': 422,
+  'registry.expired_on_arrival': 422,
+  'registry.status_validity_too_long': 422,
+  'registry.revoked_validity_too_long': 422,
+  'registry.index_validity_too_long': 422,
+  'registry.release_validity_too_long': 422,
+  'registry.revoked_shrunk': 422,
+  'policy.rejected_not_conservative': 422,
+  'policy.validity_too_long': 422,
+  'policy.issued_in_future': 422,
+  'policy.expired_on_arrival': 422,
+  'hotfix.validity_too_long': 422,
+  'hotfix.expired': 422,
+  'sxp.too_large': 422,
+  'sxp.malformed': 422,
+  'sxp.not_canonical': 422,
+  'sxp.unknown_format': 422,
   'registry.portal_blocked': 422,
   'registry.content_digest_mismatch': 422,
   'registry.unauthorized': 401,
@@ -64,10 +82,33 @@ export const ERROR_STATUS = {
 
 export type ErrorCode = keyof typeof ERROR_STATUS;
 
-/** D16 표에 아직 없는 코드(추가 제안). 테스트가 ERROR_STATUS와 이 목록의 합이 D16 기존 + 제안과 같은지 본다. */
-export const PROPOSED_D16: readonly ErrorCode[] = (Object.keys(ERROR_STATUS) as ErrorCode[]).filter(
-  (c) => !['gateway.unauthorized', 'gateway.quota_exceeded', 'gateway.digest_mismatch', 'gateway.param_rejected', 'gateway.upstream_error', 'gateway.pii_tripwire', 'account.recovery_hold', 'policy.rate_limited', 'registry.signature_insufficient', 'registry.version_jump_rejected', 'registry.key_revoked', 'registry.status_stale', 'registry.revocation_stale'].includes(c),
-);
+/**
+ * D16 표에 아직 없는 코드(추가 제안, 팀장 보고). D16 v1.3 + 2026-11-05 반영분에 있는 코드는 빠진다.
+ * 레지스트리 게시 관문 코드는 엔진 로더(#52)가 쓰는 이름과 같다.
+ */
+export const PROPOSED_D16: readonly ErrorCode[] = [
+  'registry.schema_invalid',
+  'registry.key_epoch_mismatch',
+  'registry.key_epoch_rollback',
+  'registry.version_rollback',
+  'registry.timestamp_invalid',
+  'registry.expired_on_arrival',
+  'registry.status_validity_too_long',
+  'registry.revoked_validity_too_long',
+  'registry.index_validity_too_long',
+  'registry.release_validity_too_long',
+  'policy.validity_too_long',
+  'policy.expired_on_arrival',
+  'hotfix.validity_too_long',
+  'hotfix.expired',
+  'sxp.too_large',
+  'sxp.malformed',
+  'sxp.not_canonical',
+  'sxp.unknown_format',
+  'registry.portal_blocked',
+  'registry.content_digest_mismatch',
+  'registry.unauthorized',
+];
 
 export class ServiceError extends Error {
   readonly code: ErrorCode;
