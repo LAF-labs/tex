@@ -16,7 +16,7 @@ export const ONB_CHOICES = {
   terms: ['agree'],
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
-  'biz-confirm': ['confirm', 'edit', 'later'],
+  'biz-confirm': ['confirm', 'edit', 'recheck', 'later'],
   auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
   delegation: ['agree', 'switch'],
   model: ['agree', 'decline'],
@@ -140,6 +140,11 @@ export interface BizFields {
   email: string;
 }
 export const BIZ_FIELD_KEYS = ['name', 'bizNo', 'rep', 'bizType', 'bizItem', 'address', 'email'] as const satisfies ReadonlyArray<keyof BizFields>;
+/** 사업자 칸 길이 상한. IPC 표(ipc.ts)와 입력 폼 maxlength가 같은 값을 쓴다. 상한 안의 값은 자르지 않는다. */
+export const BIZ_FIELD_MAX: Record<(typeof BIZ_FIELD_KEYS)[number], number> = { name: 100, bizNo: 20, rep: 100, bizType: 100, bizItem: 100, address: 200, email: 320 };
+/** DB(packages/db repo.ts checkEmail)와 같은 이메일 모양. 받을 때 보고, 요약 저장에서 처음 걸리지 않게 한다. */
+const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+export const emailOk = (s: string) => s === '' || EMAIL_SHAPE.test(s);
 const EMPTY_BIZ: BizFields = { name: '', bizNo: '', rep: '', bizType: '', bizItem: '', address: '', email: '' };
 
 /** 국세청 진위확인 결과(ADR-029: 사업자번호만 보낸다). label은 화면 배지 글자, source는 배지 옆 출처. */
@@ -365,7 +370,7 @@ export class OnboardingFlow {
           return;
         }
         {
-          const no = onlyDigits(clip(a.fields?.bizNo, 20));
+          const no = onlyDigits(clip(a.fields?.bizNo, BIZ_FIELD_MAX.bizNo));
           if (!isValidBizNo(no)) throw new Error('bad_biz_no');
           this.say(`${no.slice(0, 3)}-${no.slice(3, 5)}-${no.slice(5)}`);
           await this.setBiz({ ...EMPTY_BIZ, bizNo: no });
@@ -381,11 +386,19 @@ export class OnboardingFlow {
         if (a.choice === 'edit') {
           const cur = s.biz ?? { ...EMPTY_BIZ };
           const next = { ...cur };
-          for (const k of BIZ_FIELD_KEYS) if (a.fields && typeof a.fields[k] === 'string') next[k] = clip(a.fields[k], k === 'address' ? 200 : 100);
+          for (const k of BIZ_FIELD_KEYS) if (a.fields && typeof a.fields[k] === 'string') next[k] = clip(a.fields[k], BIZ_FIELD_MAX[k]);
           next.bizNo = onlyDigits(next.bizNo);
           if (!isValidBizNo(next.bizNo)) throw new Error('bad_biz_no');
-          if (next.bizNo !== cur.bizNo) await this.setBiz(next);
+          if (!emailOk(next.email)) throw new Error('bad_email');
+          // 번호가 바뀌었거나 지난 조회가 실패했으면 다시 조회한다.
+          if (next.bizNo !== cur.bizNo || s.check?.status === 'unknown') await this.setBiz(next);
           else s.biz = next;
+          return;
+        }
+        if (a.choice === 'recheck') {
+          // 진위확인을 하지 못했을 때만(08 §4 O-02 "잠시 뒤 다시"). 같은 번호로 다시 조회한다.
+          if (!s.biz || s.check?.status !== 'unknown') throw new Error('bad_choice');
+          await this.setBiz(s.biz);
           return;
         }
         // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호도 확정하지 않는다.
@@ -515,6 +528,8 @@ export class OnboardingFlow {
   private async setBiz(f: BizFields) {
     const s = this.s;
     s.biz = { ...EMPTY_BIZ, ...f, bizNo: onlyDigits(f.bizNo) };
+    // 등록증에서 읽은 이메일이 모양에 맞지 않으면 비워 둔다(사용자가 [고칠게요]에서 넣는다).
+    if (!emailOk(s.biz.email)) s.biz.email = '';
     s.check = await this.ports.checkBizNo(s.biz.bizNo).catch((): BizCheck => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }));
     s.step = 'biz-confirm';
   }

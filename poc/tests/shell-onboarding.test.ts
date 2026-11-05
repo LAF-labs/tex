@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { MockOnboardingPorts, MOCK_CONSENT_CONFIG } from '../apps/desktop/src/onboarding-mock.ts';
+import { MockOnboardingPorts, MOCK_BIZ_CERT, MOCK_CONSENT_CONFIG } from '../apps/desktop/src/onboarding-mock.ts';
 import { certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
 
 const NOW = () => new Date('2026-11-05T01:00:00Z');
@@ -66,6 +66,49 @@ describe('온보딩: 한 번에 하나씩', () => {
     assert.equal(b.flow.state.check?.label, '폐업자');
     assert.equal(await code(b.flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive');
     assert.equal(b.flow.state.step, 'biz-confirm');
+  });
+
+  it('사업자 칸: 상한 안의 값은 자르지 않는다(이메일 320자). 모양이 틀린 이메일은 받을 때 거부, 등록증에서 읽은 틀린 이메일은 비운다', async () => {
+    const { flow } = make({ bizCert: { ...MOCK_BIZ_CERT, email: '모양틀림' } });
+    await walk(flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'upload' },
+    ]);
+    assert.equal(flow.state.biz?.email, '', '등록증의 틀린 이메일은 비워 둔다');
+    const long = `${'a'.repeat(300)}@ganada.example`;
+    await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { email: long } });
+    assert.equal(flow.state.biz?.email, long);
+    const before = flow.state;
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { email: 'a@b' } })), 'bad_email', 'DB profile.upsert와 같은 모양 검사');
+    assert.deepEqual(flow.state, before);
+  });
+
+  it('진위확인을 하지 못했으면 [다시 조회]로 같은 번호를 다시 본다. 같은 번호로 고쳐 저장해도 다시 조회한다', async () => {
+    const { flow, ports } = make();
+    const real = ports.checkBizNo.bind(ports);
+    let fail = true;
+    let calls = 0;
+    ports.checkBizNo = async (n: string) => {
+      calls++;
+      if (fail) throw new Error('net');
+      return real(n);
+    };
+    await walk(flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'upload' },
+    ]);
+    assert.equal(flow.state.check?.status, 'unknown');
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive');
+    await flow.answer({ step: 'biz-confirm', choice: 'recheck' });
+    assert.equal(flow.state.check?.status, 'unknown', '아직 실패');
+    await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { email: 'x@ganada.example' } });
+    assert.equal(calls, 3, '같은 번호로 저장해도 지난 조회가 실패했으면 다시 조회');
+    fail = false;
+    await flow.answer({ step: 'biz-confirm', choice: 'recheck' });
+    assert.equal(flow.state.check?.status, 'active');
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'recheck' })), 'bad_choice', '조회가 된 뒤에는 다시 조회 없음');
+    await flow.answer({ step: 'biz-confirm', choice: 'confirm' });
+    assert.equal(flow.state.step, 'auth');
   });
 
   it('공동인증서는 이 PC에서 찾은 것만 고를 수 있다. 잘 모르겠어요는 설명을 펼치고 그 자리', async () => {
