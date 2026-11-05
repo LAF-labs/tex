@@ -1,0 +1,17 @@
+{
+  "name": "@sax/bundle",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "세무사 꾸러미(ADR-032·034): 1·2·3층 항목, 달별 상태, 빠진 것, 암호 걸린 엑셀 내보내기. 모델을 부르지 않는다",
+  "exports": {
+    ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {
+    "@sax/db": "workspace:*",
+    "@sax/payroll": "workspace:*",
+    "@zip.js/zip.js": "2.24.0",
+    "officecrypto-tool": "0.0.19",
+    "write-excel-file": "4.1.1"
+  }
+}

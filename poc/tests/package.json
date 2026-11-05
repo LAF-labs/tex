@@ -4,10 +4,12 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@sax/bundle": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/engine": "workspace:*",
     "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",
+    "@sax/payroll": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/redaction": "workspace:*",
     "@sax/vault": "workspace:*",
