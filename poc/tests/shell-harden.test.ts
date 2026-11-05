@@ -94,8 +94,9 @@ describe('D11 §4 렌더러: contextIsolation·sandbox·nodeIntegration·좁은 
     for (const f of productFiles) {
       for (const m of read(`${SRC}/${f}`).matchAll(/loadURL\(([^)]*)\)/g)) {
         const arg = m[1]!;
-        // 시연 PDF 만들기(demo-pdfs, javascript:false 창)만 data: HTML을 쓴다.
-        assert.ok(/SCHEME|SHELL_URL|^url$/.test(arg) || (f === 'demo-pdfs.ts' && arg.startsWith("'data:text/html")), `${f}: loadURL(${arg})`);
+        // 시연 PDF 만들기(demo-pdfs·demo-seed, javascript:false 창)만 data: HTML을 쓴다.
+        const pdfMaker = ['demo-pdfs.ts', 'demo-seed.ts'].includes(f) && arg.startsWith("'data:text/html") && /javascript: false/.test(read(`${SRC}/${f}`));
+        assert.ok(/SCHEME|SHELL_URL|^url$/.test(arg) || pdfMaker, `${f}: loadURL(${arg})`);
       }
     }
   });

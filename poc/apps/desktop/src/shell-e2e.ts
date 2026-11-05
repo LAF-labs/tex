@@ -594,7 +594,8 @@ async function flow(): Promise<void> {
   await until('block attention', () => runStatus(idBlock) === 'attention', 15_000);
   fx().fixture.knobs.block = null;
   await sleep(1500);
-  const reqs = fx().fixture.requests.slice(mark);
+  // 가짜 발급 폼이 스스로 150ms마다 부르는 /api/knob은 앱 동작이 아니다(앞 페이지 타이머가 이동과 같은 ms에 걸릴 수 있다, tests/h01-policy와 같은 제외).
+  const reqs = fx().fixture.requests.slice(mark).filter((r) => r.path !== '/api/knob');
   const blockedAt = reqs.findIndex((r) => r.path === '/notice/blocked');
   const blockCard = await js<string>(`document.querySelector('[data-run="${idBlock}"]').textContent`);
   const blockIns = await inspect(idBlock);
