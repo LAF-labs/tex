@@ -8,6 +8,11 @@
       "types": "./src/index.ts",
       "development": "./src/index.ts",
       "default": "./dist/index.js"
+    },
+    "./demo": {
+      "types": "./src/demo.ts",
+      "development": "./src/demo.ts",
+      "default": "./dist/demo.js"
     }
   },
   "dependencies": {

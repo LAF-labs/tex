@@ -20,7 +20,8 @@
     "start:hometax": "pnpm build && electron apps/desktop/dist/shell.js --portal=hometax",
     "demo:e2e": "pnpm build && electron apps/desktop/dist/shell-e2e.js",
     "demo:seed-e2e": "pnpm build && electron apps/desktop/dist/demo-seed-e2e.js",
-    "demo:preview": "pnpm build && electron scripts/shell-preview.mjs"
+    "demo:preview": "pnpm build && electron scripts/shell-preview.mjs",
+    "ci:promotion": "node scripts/ci-promotion-check.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.0",

@@ -70,6 +70,8 @@ export interface BoardRun {
   id: string;
   status: string;
   who: string;
+  /** 발급됐는지 모름(in_doubt). 판 줄 설명이 달라진다. */
+  inDoubt?: boolean;
 }
 export interface BoardDoc {
   id: string;
@@ -149,7 +151,7 @@ export function buildBoard(input: BoardInput): Board {
   const invoiceDue = invoiceSortDue(month);
   for (const r of input.runs.filter((x) => ACTIVE.has(x.status))) {
     const tone = r.status === 'attention' ? 'attention' : PROGRESS.has(r.status) ? 'progress' : null;
-    const detail = { draft: '작성 중', preparing: '준비 중', turn: '내 차례', waiting: '승인 대기', issuing: '발급 중', attention: '확인 필요' }[r.status] ?? '';
+    const detail = r.inDoubt && r.status === 'attention' ? '발급 여부 확인 필요' : ({ draft: '작성 중', preparing: '준비 중', turn: '내 차례', waiting: '승인 대기', issuing: '발급 중', attention: '확인 필요' }[r.status] ?? '');
     items.push({ id: `run:${r.id}`, kind: 'invoice', label: r.who || '세금계산서', detail, due: input.today, showDue: false, tone, target: { to: 'run', id: r.id } });
   }
   const busy = new Set(input.runs.filter((x) => ACTIVE.has(x.status)).map((x) => x.who));

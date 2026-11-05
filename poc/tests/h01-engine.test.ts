@@ -106,7 +106,7 @@ describe('원장(D03 §4, ADR-021)', () => {
     assert.equal(db.pragma('synchronous', { simple: true }), 2);
     const cols = (db.prepare('PRAGMA table_info(irreversible_log)').all() as Array<{ name: string }>).map((c) => c.name);
     assert.ok(cols.includes('cp_biz_no_hmac') && cols.includes('recipient_email_hmac'));
-    assert.equal(db.pragma('user_version', { simple: true }), 2);
+    assert.ok((db.pragma('user_version', { simple: true }) as number) >= 2, 'v2 이후 판(M1-2 순방향 마이그레이션)');
   });
 
   it('approved가 아닌 게이트로는 armed를 쓰지 않는다, 결정은 open에서 한 번만', () => {
