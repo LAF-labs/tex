@@ -54,15 +54,20 @@ describe('M5-1 누출 스캐너: 실브라우저 CDP 이벤트(가짜 포털, �
     await fx?.close();
   });
 
-  it('타이피스트 입력 뒤 포털 스크립트가 값을 흘려도 엔진 이벤트에 비밀 0건', async () => {
+  it('타이피스트 입력 뒤 포털 스크립트가 값을 흘려도 엔진 이벤트에 비밀 0건', { timeout: 60_000 }, async () => {
     const secret = testSecret('TEST-CDPLIVE');
     await h.control.rpc('run.begin', { runId: 'sec1', trigger: 'local' });
-    await h.provide({ runId: 'sec1', kind: 'cert_password', scope: 'personal' }, secret);
     await eng.navigate(sid, `${fx.origin}/login`);
     await eng.evaluate(sid, `document.getElementById('pw').focus()`);
     const mark = eng.events.length;
-    const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId);
-    const r = await h.client.rpc<{ ok: boolean }>('typist.fill', { runId: 'sec1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'personal' }, slot: { secretKind: 'cert_password', purpose: 'login' } });
+    // 금고 흐름(ADR-025 결정 10, #77): 값이 없으면 secret.needed로 1회용 입력 창을 부르고, 그 결속으로 받은 값을 넣는다.
+    const fill = { runId: 'sec1', targetId, frame: 'main', element: '#pw', secret: { kind: 'portal_password', scope: 'personal' }, slot: { secretKind: 'portal_password', purpose: 'login' } };
+    const needed = h.control.once('secret.needed', (d) => d.runId === 'sec1', 5000);
+    assert.deepEqual(await h.client.rpc('typist.fill', fill), { ok: false, reason: 'secret_missing' });
+    await needed;
+    await h.provide({ runId: 'sec1', kind: 'portal_password', scope: 'personal' }, secret);
+    const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
+    const r = await h.client.rpc<{ ok: boolean }>('typist.fill', fill);
     assert.deepEqual(r, { ok: true });
     await closed;
 

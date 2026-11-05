@@ -23,5 +23,5 @@ if (!chosen.length) {
   console.error('보안 스위트 파일 없음');
   process.exit(1);
 }
-const r = spawnSync(process.execPath, ['--conditions=development', '--test', '--test-concurrency=1', ...chosen], { cwd: root, stdio: 'inherit' });
+const r = spawnSync(process.execPath, ['--conditions=development', '--test', '--test-concurrency=1', '--test-timeout=120000', ...chosen], { cwd: root, stdio: 'inherit' });
 process.exit(r.status ?? 1);
