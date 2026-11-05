@@ -189,6 +189,8 @@ export function buildBoard(input: BoardInput): Board {
     items.push({ id: `doc:${d.id}`, kind: 'expiring', label: d.name, detail: left < 0 ? '만료됐어요 · 다시 발급' : `만료 ${d.expiresOn}`, due: d.expiresOn, showDue: true, tone: d.needsUser || left <= 7 ? 'attention' : null, target: { to: 'doc', id: d.id } });
   }
 
+  /** 만료 임박: 7일 안이거나 지난 서류 줄. 머리에서는 확인 필요와 따로 센다. */
+  const soon = (x: BoardItem) => x.kind === 'expiring' && !!x.due && daysBetween(input.today, x.due) <= 7;
   const order = new Map(BOARD_KINDS.map((k, i) => [k.kind, i]));
   const byDue = (a: { due: string | null }, b: { due: string | null }) => (a.due === b.due ? 0 : a.due === null ? 1 : b.due === null ? -1 : a.due.localeCompare(b.due));
   const cards: BoardCard[] = BOARD_KINDS.map(({ kind, title }) => {
@@ -201,10 +203,11 @@ export function buildBoard(input: BoardInput): Board {
   return {
     month,
     cards,
+    // 머리 건수는 카드에 실제로 놓인 줄에서 센다(카드에 없는 건을 세거나, 카드의 확인 필요를 빠뜨리지 않게).
     counts: {
-      attention: input.runs.filter((r) => r.status === 'attention').length + input.docs.filter((d) => d.needsUser).length,
-      progress: input.runs.filter((r) => PROGRESS.has(r.status)).length,
-      expiringSoon: input.docs.filter((d) => d.expiresOn && daysBetween(input.today, d.expiresOn) <= 7).length,
+      attention: items.filter((x) => x.tone === 'attention' && !soon(x)).length,
+      progress: items.filter((x) => x.tone === 'progress').length,
+      expiringSoon: items.filter(soon).length,
     },
   };
 }

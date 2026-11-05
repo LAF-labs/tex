@@ -27,6 +27,7 @@ const state = {
   barActive: false,
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
   boardOpen: true, // 판 펼침(접으면 한 줄 요약)
+  boardExpanded: new Set(), // "n건 더 보기"로 펼친 카드 종류
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
   docLocked: new Set(), // 이번 실행에서 열기 암호로 가져온 서류 id(목록 자물쇠). 엔진은 암호 여부를 저장하지 않는다.
@@ -507,18 +508,23 @@ function renderToday() {
   chat.today.replaceChildren(head, h('div', { class: 'board-cards' }, ...b.cards.map(boardCard)));
 }
 
-/** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더"로 그 화면에 간다. */
+/** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더 보기"로 그 자리에서 펼친다(줄마다 갈 곳이 달라 다른 화면으로 보내지 않는다). */
 function boardCard(c) {
   const MAX = 3;
-  const rows = c.items.slice(0, MAX).map(boardRow);
+  const open = state.boardExpanded.has(c.kind);
+  const rows = (open ? c.items : c.items.slice(0, MAX)).map(boardRow);
   const more = c.items.length - MAX;
-  const moreView = { invoice: 'activity', receipt: 'bundle', accountant: 'bundle', expiring: 'docs' }[c.kind];
+  const toggleMore = () => {
+    if (open) state.boardExpanded.delete(c.kind);
+    else state.boardExpanded.add(c.kind);
+    renderToday();
+  };
   return h(
     'article',
     { class: 'board-card', 'data-board-card': c.kind },
     h('div', { class: 'board-card-hd' }, h('span', { class: 'board-card-title' }, c.title), h('span', { class: 'sx-meta' }, String(c.items.length))),
     h('ul', { class: 'board-rows' }, ...rows),
-    more > 0 ? h('button', { type: 'button', class: 'board-more', onclick: () => go(moreView) }, `${more}건 더 보기`) : null,
+    more > 0 ? h('button', { type: 'button', class: 'board-more', 'aria-expanded': String(open), 'data-board-more': c.kind, onclick: toggleMore }, open ? '줄이기' : `${more}건 더 보기`) : null,
   );
 }
 

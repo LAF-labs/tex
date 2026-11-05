@@ -124,6 +124,27 @@ describe('만료가 다가오는 서류', () => {
   });
 });
 
+describe('머리 건수', () => {
+  it('카드에 놓인 줄에서 센다: 지난 꾸러미는 확인 필요, 만료일 없는 확인 필요 서류는 세지 않는다, 만료 임박은 따로', () => {
+    const b = buildBoard(
+      base({
+        today: '2026-11-09',
+        bundle: { month: '2026-10', slots: [{ name: 'x', state: 'missing' }], sentOn: null },
+        docs: [
+          { id: 'd1', name: '만료일 없음', expiresOn: null, needsUser: true },
+          { id: 'd2', name: '먼 만료', expiresOn: '2027-06-01', needsUser: true },
+          { id: 'd3', name: '곧 만료', expiresOn: '2026-11-12', needsUser: true },
+          { id: 'd4', name: '확인할 서류', expiresOn: '2026-11-30', needsUser: true },
+        ],
+      }),
+    );
+    const rows = b.cards.flatMap((c) => c.items);
+    assert.ok(!rows.some((r) => r.id === 'doc:d1' || r.id === 'doc:d2'));
+    assert.deepEqual(b.counts, { attention: 2, progress: 0, expiringSoon: 1 }, '꾸러미(지남) + d4 / d3');
+    assert.equal(b.counts.attention + b.counts.expiringSoon, rows.filter((r) => r.tone === 'attention').length, '확인 필요·만료 임박 합 = 황토 줄 수');
+  });
+});
+
 describe('정렬과 경계', () => {
   it('카드는 가장 이른 기한 순, 같으면 BOARD_KINDS 순. 빈 카드는 없다', () => {
     const b = buildBoard(
@@ -155,6 +176,20 @@ describe('정렬과 경계', () => {
     // 상태 이름("승인 대기")은 보여도 된다. 승인 동작 문구는 없다.
     const text = JSON.stringify(b);
     for (const bad of ['승인하고', '승인하기', '발급하기', '발급기한', '까지', '세액 산정', '절세', '신고 대리', '가산세', '납부할 세액']) assert.ok(!text.includes(bad), bad);
+  });
+
+  it('"n건 더 보기"는 그 자리에서 펼친다(줄마다 갈 곳이 달라 다른 화면으로 보내지 않는다)', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
+    const i = src.indexOf('function boardCard(c)');
+    const body = src.slice(i, src.indexOf('function boardRow', i));
+    assert.ok(body.includes('boardExpanded') && !body.includes('go('), body.slice(0, 200));
+  });
+
+  it('main: 판 계산은 세대 표로 늦게 끝난 옛 계산을 버리고, KST 날짜가 바뀌면 다시 계산한다', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
+    assert.match(src, /gen === boardGen && send\(\{ type: 'board', board \}\)/);
+    assert.match(src, /kstToday\(Date\.now\(\)\) !== boardDay\) pushBoard\(\)/);
+    assert.match(src, /clearInterval\(boardDayTimer\)/);
   });
 
   it('렌더러 판 코드에는 승인·실행 시작 호출이 없다', () => {

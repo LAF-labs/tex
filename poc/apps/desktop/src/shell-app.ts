@@ -264,8 +264,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
   /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 목업 어댑터(shell-mock mockBundle·MOCK_SETTINGS). */
+  let boardDay = '';
   const boardNow = async (): Promise<Board> => {
     const today = kstToday(Date.now());
+    boardDay = today;
     const docsNow = await listDocs().catch(() => store.docs);
     return buildBoard({
       today,
@@ -278,15 +280,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
   };
   // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
+  // 계산이 겹치면 가장 나중에 시작한 것만 보낸다(먼저 시작한 계산이 늦게 끝나 새 판을 옛 판으로 덮지 않게).
   let boardQueued = false;
+  let boardGen = 0;
   const pushBoard = () => {
     if (boardQueued) return;
     boardQueued = true;
     setImmediate(() => {
       boardQueued = false;
-      void boardNow().then((board) => send({ type: 'board', board }), (e: Error) => log.event('main.board_failed', { error: e.message.slice(0, 80) }));
+      const gen = ++boardGen;
+      void boardNow().then(
+        (board) => gen === boardGen && send({ type: 'board', board }),
+        (e: Error) => log.event('main.board_failed', { error: e.message.slice(0, 80) }),
+      );
     });
   };
+  /** 첫 화면의 판. 그 전에 시작한 계산이 늦게 끝나도 보내지 않게 세대를 올린다. */
+  const bootBoard = () => {
+    boardGen++;
+    return boardNow();
+  };
+  // 날짜가 바뀌면(KST 자정) 다시 계산한다. 이번 달·지난달·만료 30일 창이 날짜에 달려 있다.
+  const boardDayTimer = setInterval(() => {
+    if (kstToday(Date.now()) !== boardDay) pushBoard();
+  }, 60_000);
+  boardDayTimer.unref();
   // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
   bar.on('shown', (e: { band: boolean }) => send({ type: 'bar', active: true, band: e.band }));
   bar.on('layout', (e: { band: boolean }) => send({ type: 'bar-layout', band: e.band }));
@@ -417,7 +435,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
-      board: await boardNow(),
+      board: await bootBoard(),
       layout: SHELL,
       profiles: profiles(),
       profile,
@@ -551,6 +569,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
   const close = async () => {
+    clearInterval(boardDayTimer);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});
