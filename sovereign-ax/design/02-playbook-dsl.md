@@ -1,13 +1,13 @@
 # D02. 플레이북 IR 스펙
 
-> 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07).
+> 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05).
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A(research/REVIEW-A-ir-engine.md)를 반영해 제어 흐름 의미론, 커밋 구간 규칙(V-03a~h), 셀렉터 사전 속성, 조회형 `verify`, 의도 키를 정의했다. 반례 CE-1~CE-18은 검증기 퍼징의 고정 회귀 세트다(D13 §7).
 
 ## 1. 설계 결정 요약
 
 - 플레이북은 **TypeScript 빌더로 작성 → JSON IR로 컴파일 → 서명 패키지(2-of-3 임계 서명)로 배포 → 엔진이 해석**한다(ADR-002, B-22). 사용자 기기에서 임의 코드가 실행되지 않는다.
-- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-24·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35).
+- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-24·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35). **팀장 결정(2026-11-05)**: Phase 1은 RE2 네이티브·wasm 바인딩을 넣지 않는다. 검증기가 RE2 문법 부분집합(중첩 수량자·역참조·lookaround 거부)을 검사한 뒤 JS RegExp로 컴파일한다. 플레이북·셀렉터 사전은 2-of-3 서명이라 ReDoS 위협 주체가 제한된다. 핫픽스 채널에 외부 패턴이 들어오거나 Phase 2에 들어가면 바인딩을 재검토한다(엔진 PR #45, 의존성 공급망 범위 ADR-028).
 - 비가역성의 원천은 셀렉터 사전의 **`commits` 속성**이다. 다만 이 값도 사람이 선언한 것이므로 세 겹으로 확인한다(B-01·B-02). ① 셀렉터 CI가 녹화(HAR·DOM)와 대조한다(SV-01 충돌, SV-02 HAR 상관·이름 린트). ② 런타임이 매 액추에이션 직전에 실제 요소의 역할·접근성 이름을 사전과 대조하고(R-A1), 비커밋 항목이 같은 랜드마크의 커밋 항목과 같은 요소로 해석되면 거부한다(R-A2, D03 §5.2). ③ 네트워크 커밋 가드가 요청을 막는다(D03 §5.4). **핫픽스는 이 근거 중 어느 것도 바꿀 수 없다**(§2.2, ADR-012).
 - `commits: true` 타깃을 누르는 스텝은 비가역 스텝이며 **커밋 구간 규칙**(V-03a~l, V-03c′)을 만족해야 한다.
 - 비가역 스텝의 결과는 화면 판정이 아니라 **포털 조회형 `verify`**로 확정한다. 게이트 직전 기준선과 비교해 "새로 생긴 1건"일 때만 `committed`다(§4.4, B-07). 조회 하위 플레이북은 버전·다이제스트로 고정한다(B-08). 미확정이면 `InDoubt`.

@@ -1,5 +1,6 @@
 # D08. 리모트 컨트롤 프로토콜
 
+> 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다(상충 표기 `C/X-nn`은 감사 C §5). · AUDIT-D 반영 2026-11-03: 키 계층에서 복구 문구·`K_chk` 삭제(§3), 하드웨어 키 증명 `px.attest`·서류 열람 범위 토글(§4.2), `doc_scope` 필터(§6), 증명 상태 집행(§6.1), 저장 자격 원격 실행의 시작 게이트(§7), 새 PC·PASS 복구 교체(§9)(ADR-016 v2·ADR-029, D19 §3.5).
 >
 > 2026-11-05 ADR-034: 폰 앱이 Phase 1에 들어왔다. Phase 1 범위는 암호 스위트·키 계층(§2·§3), 페어링(§4), 상시 세션(§5), 메시지 프레이밍(§6), 릴레이 우편함·푸시 깨우기(§8), 기기 분실·해제(§9), 모바일 저장 규칙이고, 여기에 종이 증빙 사진·현금매출을 PC로 보내는 메시지 종류(크기 상한·청크·재전송·중복 제거)를 더한다(D14 M7-4에서 정의, 아직 없음). 폰에 대기 중인 사진은 키 저장소가 아니라 앱 샌드박스의 파일 보호 등급 파일(iOS `NSFileProtectionComplete`, Android 앱 전용 저장소)에 두고, 백업에서 빼고 카메라 롤·갤러리에 저장하지 않는다. 파일 암호화 키만 `ThisDeviceOnly`에 둔다(§3.1 모바일 저장 규칙에 더할 것). 원격 지시(`cmd.run`)·폰 타임라인·블롭 조회는 Phase 2이고, 폰 하드웨어 키 승인(`gate.*`)은 Phase 1에 넣을지 제안 단계다(D14 M7-7).
@@ -47,7 +48,9 @@
 | `SAX-kek-v1` | AIK | `KekRecord{N, salt_N, created_at}` (§3) |
 | `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2) |
 | `SAX-docrec-v1` | `Vd` | 메타데이터 레코드 (D07 §5) |
-| `SAX-dpop-v1` | `Vx` | 기기 범위 토큰 요청 증명 (D09 §2) |
+| `SAX-dpop-v1` | `Vx`(클라이언트 기기 키) | 기기 범위 토큰 요청 증명 `{htm, htu, iat, jti, ath}` (D09 §2) |
+| `SAX-token-v1` | 서버: 계정 서비스 토큰 키(Ed25519) | 기기 범위 토큰(`sxd1`, 15분) 클레임 (D09 §2.1, `poc/services/shared/CONTRACT.md` §2) |
+| `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
 | `SAX-SAS-v1`, `SAX-pair-v1`, `SAX-session-v1` | — | SAS 유도, Noise prologue |
 
