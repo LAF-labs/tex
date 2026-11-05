@@ -1,0 +1,27 @@
+{
+  "monotonic": 10,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-05T00:00:00Z",
+  "expiresAt": "2026-11-07T00:00:00Z",
+  "portalModeCeiling": {
+    "hometax": "auto"
+  },
+  "killPlaybooks": [],
+  "signatures": [
+    {
+      "keyId": "policy-1",
+      "alg": "ed25519",
+      "sig": "tNexrlm5rZvi6MFF-lqSzNJQnY0hF83oSqzGF4WOZGfXGoURP11Mn20HV7Ff6ZAVtGpd7hsn7P0ajgUaYGccCA"
+    },
+    {
+      "keyId": "policy-2",
+      "alg": "ed25519",
+      "sig": "N6Q4EOAGlJ61GNemli4sVtn46tpkWnf75DN5BFWijU7vt68wTYGX20Xeq8fb_9r_XpfGnEwIlnTMugELhjGFAg"
+    }
+  ],
+  "timestamp": {
+    "keyId": "timestamp-1",
+    "alg": "ed25519",
+    "sig": "u_s-bpB-KsuL_-uvjk6FAs2xD0FgbJUBXlv3mjt_zsZy5thEGRVQYCA_wgCEUCcsrZ0ZNjknWyWzMzQRRH-pBQ"
+  }
+}

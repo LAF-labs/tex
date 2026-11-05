@@ -1,7 +1,7 @@
 // D03 §3.1 패키지 로더: 로드할 때마다 1 서명(2-of-3, 폐기 키 제외) → 2 내용 결속 → 3 버전 → 4 번들(BV-06) → 5 조회 하위
 // 플레이북(V-22) → 6 정적 검증(스키마 + V-01~V-24) → 7 핫픽스 → 8 승인 바 요약 표 순서로 확인하고, 하나라도 실패하면 로드하지
 // 않는다. 핫픽스만은 실패해도 패키지를 원래 후보로 로드한다. 결과에는 코드·규칙 번호만 담는다(화면 문자열·값 없음).
-import { canonicalJson, canonicalWithout, sha256Hex } from './canon.ts';
+import { canonicalJson, canonicalizable, canonicalWithout, sha256Hex } from './canon.ts';
 import { HOTFIX_MAX_VALIDITY_D } from './constants.ts';
 import { applyHotfix, hotfixEligibilityViolations } from './hotfix.ts';
 import { countSignatures, epochProblem, issuedInFuture, versionProblem, type TrustRoots, type VersionMark } from './registry.ts';
@@ -109,6 +109,9 @@ export function loadPackage(raw: RawPackage, ctx: LoaderContext): LoadResult {
   if (!manifest) return fail('loader.manifest_unparsable');
   const ms = schemaViolations('manifest', manifest);
   if (ms.length) return fail('loader.schema_invalid', ms);
+  if (!canonicalizable(manifest)) return fail('loader.schema_invalid', [{ rule: 'LOADER-1', message: 'JCS로 직렬화할 수 없는 값' }]);
+  // 패키지 id는 핫픽스 인덱스 이름(<appliesTo.id>.hotfix, SIGNING.md §6)과 겹칠 수 없다.
+  if (manifest.id.endsWith('.hotfix')) return fail('loader.schema_invalid', [{ rule: 'LOADER-1', message: '패키지 id는 .hotfix로 끝날 수 없음' }]);
   const signed = canonicalWithout(manifest, ['signatures']);
   const q = countSignatures(signed, manifest.signatures, ctx.roots.packageKeys, ctx.revoked);
   if (q.revoked.length) events.push('registry.key_revoked');
@@ -128,7 +131,8 @@ export function loadPackage(raw: RawPackage, ctx: LoaderContext): LoadResult {
   if (ctx.storedVersion !== null) {
     const c = compareSemver(manifest.version, ctx.storedVersion);
     if (c === null || c < 0) return fail('registry.version_rollback');
-    if (c === 0 && ctx.installedDigest !== null && mDigest !== ctx.installedDigest) return fail('registry.version_rollback');
+    // 설치본 다이제스트를 모르면 같은 버전도 받지 않는다(fail-closed).
+    if (c === 0 && mDigest !== ctx.installedDigest) return fail('registry.version_rollback');
   }
 
   // 4. 번들(BV-06): 다이제스트가 앱 내장 허용 목록과 일치.
@@ -198,7 +202,7 @@ export function checkHotfix(input: HotfixInput, files: PackageFiles, mDigest: st
   const reload = !!st && st.keyEpoch === hf.keyEpoch && st.monotonic === hf.monotonic && st.digest === hotfixDigest(hf);
   if (ctx.hold && !reload) return no('hotfix.update_held');
   const hs = schemaViolations('hotfix', hf);
-  if (hs.length) return no('hotfix.schema_invalid', hs);
+  if (hs.length || !canonicalizable(hf)) return no('hotfix.schema_invalid', hs);
   if (hf.appliesTo.id !== files.manifest.id || hf.appliesTo.version !== files.manifest.version || hf.appliesTo.packageDigest !== mDigest) return no('hotfix.applies_to_mismatch');
   if (countSignatures(canonicalWithout(hf, ['signatures']), hf.signatures, ctx.roots.packageKeys, ctx.revoked).valid.length < 2) return no('registry.signature_insufficient');
   const ep = epochProblem(hf, ctx.roots);

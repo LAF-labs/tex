@@ -25,6 +25,16 @@ export function canonicalJson(v: unknown): string {
   throw new Error('jcs_type');
 }
 
+/** JCS로 직렬화할 수 있는가(외톨이 서로게이트·비유한 수가 없음). 받은 문서를 서명 확인 전에 거른다(던지지 않고 거부하려고). */
+export function canonicalizable(v: unknown): boolean {
+  try {
+    canonicalJson(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export const sha256Hex = (b: string | Uint8Array): string => createHash('sha256').update(b).digest('hex');
 
 /** 객체에서 키 몇 개를 뺀 JCS 바이트(서명 대상). */

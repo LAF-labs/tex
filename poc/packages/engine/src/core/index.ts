@@ -11,3 +11,4 @@ export * from './canon.ts';
 export * from './policy.ts';
 export * from './registry.ts';
 export * from './loader.ts';
+export * from './sxp.ts';

@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/status.schema.json",
   "title": "Signed registry status v1 (downgrade and kill switch only)",
-  "description": "v1 (M1-4, B-22, E-04, E-05; design/03-engine.md §3·§7.1, design/09-cloud-services.md §8.5). /registry/status.json. Can only LOWER a portal's mode (portalModeCeiling, applied on top of the policy and PORTAL_MODE_CEILING) and refuse playbooks (killPlaybooks); there is no field that can relax anything. SIGNATURES (SIGNING.md §3): `signatures` cover the CONTENT = JCS(status without `signatures`, `issuedAt`, `expiresAt`, `timestamp`) and are 2-of-3 distinct pinned policy keys, or exactly 1 from the pinned emergency key only if the change is strictly conservative against the current status (every portal ceiling <=, killPlaybooks superset, at least one strict). Any content change bumps `monotonic`. FRESHNESS: `timestamp` (online timestamp key) re-signed every 48 h without content change. Engine-only checks: expiresAt - issuedAt <= 48 h; issuedAt > now + 5 min => reject (registry.issued_in_future); same keyEpoch, monotonic +1..+1000, equal monotonic only with equal content (restamp); an emergency-only status expires 72 h after its content was first issued and the engine falls back to the last 2-of-3 status; stale after 48 h (registry.status_stale), daemon stops after 72 h without refresh. Missing portal key => no extra ceiling for that portal (the policy and app ceilings still apply).",
+  "description": "v1 (M1-4; shape agreed with services/registry PR #56, lead decision 2026-11-05; B-22, E-04, E-05; design/03-engine.md §3·§7.1, design/09-cloud-services.md §8.5). /registry/status.json. Can only LOWER a portal's mode (portalModeCeiling map portal → mode, applied on top of the policy and PORTAL_MODE_CEILING) and refuse playbooks (killPlaybooks); there is no field that can relax anything. SIGNATURES (SIGNING.md §3): `signatures` cover the CONTENT = JCS(status without `signatures`, `issuedAt`, `expiresAt`, `timestamp`) and are 2-of-3 distinct pinned policy keys, or exactly 1 from the pinned emergency key only if the change is strictly conservative against the current status (every portal ceiling <=, killPlaybooks superset, at least one strict). Any content change bumps `monotonic`. FRESHNESS: `timestamp` (online timestamp key) re-signed every 48 h without content change. Engine-only checks: expiresAt - issuedAt <= 48 h; issuedAt > now + 5 min => reject (registry.issued_in_future); same keyEpoch, monotonic +1..+1000, equal monotonic only with equal content (restamp); an emergency-only status expires 72 h after its content was first issued and the engine falls back to the last 2-of-3 status; stale after 48 h (registry.status_stale), daemon stops after 72 h without refresh. Missing portal key => no extra ceiling for that portal (the policy and app ceilings still apply).",
   "type": "object",
   "required": [
     "monotonic",
     "keyEpoch",
     "issuedAt",
     "expiresAt",
-    "portals",
+    "portalModeCeiling",
     "killPlaybooks",
     "signatures",
     "timestamp"
@@ -33,7 +33,8 @@
       "format": "date-time",
       "description": "<= 48 hours after issuedAt (engine check)"
     },
-    "portals": {
+    "portalModeCeiling": {
+      "description": "Per-portal downgrade-only ceiling, applied on top of the policy portalMode and PORTAL_MODE_CEILING. A missing portal has no extra ceiling. An emergency-only status may only lower or add entries; removing an entry is a relaxation.",
       "type": "object",
       "propertyNames": {
         "enum": [
@@ -47,20 +48,11 @@
         ]
       },
       "additionalProperties": {
-        "type": "object",
-        "required": [
-          "portalModeCeiling"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "portalModeCeiling": {
-            "enum": [
-              "postprocess",
-              "assisted",
-              "auto"
-            ]
-          }
-        }
+        "enum": [
+          "postprocess",
+          "assisted",
+          "auto"
+        ]
       }
     },
     "killPlaybooks": {

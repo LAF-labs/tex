@@ -39,6 +39,8 @@ const load = (raw: RawPackage, o: Partial<LoaderContext> = {}) => loadPackage(ra
 const code = (r: ReturnType<typeof loadPackage>) => (r.ok ? 'ok' : r.code);
 
 describe('loadPackage: 골든 H-01', () => {
+  it('패키지 id가 .hotfix로 끝나면 loader.schema_invalid(핫픽스 인덱스 이름과 충돌, SIGNING.md §6)', () =>
+    assert.equal(code(load(signH01((p) => (p.manifest.id = 'hometax.invoice.hotfix')))), 'loader.schema_invalid'));
   it('2-of-3 서명·결속·번들·조회·정적 검증·요약 표를 통과한다', () => {
     const r = load(signH01());
     assert.ok(r.ok, r.ok ? '' : `${r.code} ${JSON.stringify(r.violations)}`);
@@ -92,6 +94,7 @@ describe('3단계 버전', () => {
     assert.equal(code(load(other, { storedVersion: '2.1.0', installedDigest: digestOfRaw(raw) })), 'registry.version_rollback');
   });
   it('높은 버전은 받는다', () => assert.ok(load(signH01(), { storedVersion: '2.0.9' }).ok));
+  it('설치본 다이제스트를 모르면 같은 버전도 받지 않는다(fail-closed)', () => assert.equal(code(load(signH01(), { storedVersion: '2.1.0', installedDigest: null })), 'registry.version_rollback'));
 });
 
 describe('4단계 번들(BV-06)', () => {

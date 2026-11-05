@@ -2,7 +2,7 @@
 // keyEpoch 안 단조 버전(+1000 이하), 타임스탬프 키 신선도 서명, issuedAt 미래 거부, status(하향·킬스위치 전용),
 // 미러 트리 헤드 비교(일관성 증명). 결과는 코드만 담는다(값 없음).
 import { createHash, createPublicKey, verify as edVerify, type KeyObject } from 'node:crypto';
-import { canonicalJson, canonicalWithout, sha256Hex } from './canon.ts';
+import { canonicalJson, canonicalizable, canonicalWithout, sha256Hex } from './canon.ts';
 import { EMERGENCY_STATUS_TTL_H, ISSUED_AT_MAX_SKEW_MIN, MODE_ORDER, STATUS_MAX_AGE_H, STATUS_STALE_DAEMON_STOP_H, VERSION_JUMP_MAX } from './constants.ts';
 import { clampPolicy, freshnessProblem, isStrictlyConservative } from './policy.ts';
 import { schemaViolations } from './schema.ts';
@@ -28,9 +28,12 @@ export interface TrustRoots {
   timestampKey: { keyId: string; key: KeyObject };
 }
 
-/** revoked_keys.json(D09 §8.4): 본문은 루트 2-of-3, 24시간 신선도는 타임스탬프 키 재서명. */
+/** 폐기할 수 있는 키 역할(revoked_keys.schema.json `revoked[].role`). */
+export type KeyRole = 'root' | 'package' | 'policy' | 'timestamp' | 'emergency' | 'release';
+
+/** revoked_keys.json(D09 §8.4): 본문은 루트 2-of-3, 24시간 신선도는 타임스탬프 키 재서명. 모양은 레지스트리 #56과 같다(팀장 결정 2026-11-05). */
 export interface RevokedKeys {
-  keyIds: string[];
+  revoked: Array<{ keyId: string; role: KeyRole; revokedAt: string }>;
   monotonic: number;
   keyEpoch: number;
   issuedAt: string;
@@ -102,8 +105,9 @@ export function timestampBody(contentDigest: string, d: Pick<Timestamped, 'monot
   return Buffer.from(canonicalJson({ contentDigest, monotonic: d.monotonic, issuedAt: d.issuedAt, expiresAt: d.expiresAt }), 'utf8');
 }
 
-export function verifyTimestamp(contentDigest: string, d: Timestamped, roots: TrustRoots): boolean {
-  return d.timestamp.keyId === roots.timestampKey.keyId && verifyEd25519(roots.timestampKey.key, timestampBody(contentDigest, d), d.timestamp.sig);
+/** 타임스탬프 키도 폐기될 수 있다: 폐기 목록에 있으면 그 서명은 받지 않는다. */
+export function verifyTimestamp(contentDigest: string, d: Timestamped, roots: TrustRoots, revoked: ReadonlySet<string>): boolean {
+  return d.timestamp.keyId === roots.timestampKey.keyId && !revoked.has(roots.timestampKey.keyId) && verifyEd25519(roots.timestampKey.key, timestampBody(contentDigest, d), d.timestamp.sig);
 }
 
 export const issuedInFuture = (issuedAt: string, now: number) => Date.parse(issuedAt) > now + ISSUED_AT_MAX_SKEW_MIN * 60_000;
@@ -132,13 +136,16 @@ export const REVOKED_MAX_VALIDITY_H = 24;
 
 /** 폐기 목록 수용. 실패하면 그 파일만 버리고 마지막 유효 목록을 유지한다(목록이 줄어드는 롤백 방지: monotonic). */
 export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; current: AcceptedRevoked | null; now: number }): RevokedDecision {
-  if (schemaViolations('revoked_keys', next).length) return { ok: false, code: 'registry.schema_invalid' };
+  if (schemaViolations('revoked_keys', next).length || !canonicalizable(next) || new Set(next.revoked.map((r) => r.keyId)).size !== next.revoked.length) return { ok: false, code: 'registry.schema_invalid' };
   const ep = epochProblem(next, ctx.roots);
   if (ep) return { ok: false, code: ep };
   const content = contentBytes(next);
   const digest = sha256Hex(content);
-  if (countSignatures(content, next.signatures, ctx.roots.rootKeys, new Set()).valid.length < 2) return { ok: false, code: 'registry.signature_insufficient' };
-  if (!verifyTimestamp(digest, next, ctx.roots)) return { ok: false, code: 'registry.timestamp_invalid' };
+  // 루트 키도 폐기될 수 있다: 루트 서명은 지금 받아 둔(이전) 폐기 목록으로 걸러 센다. 타임스탬프 키는 새 목록으로 거른다.
+  const prev = ctx.current?.keyIds ?? new Set<string>();
+  const nextIds = new Set(next.revoked.map((r) => r.keyId));
+  if (countSignatures(content, next.signatures, ctx.roots.rootKeys, prev).valid.length < 2) return { ok: false, code: 'registry.signature_insufficient' };
+  if (!verifyTimestamp(digest, next, ctx.roots, nextIds)) return { ok: false, code: 'registry.timestamp_invalid' };
   if (issuedInFuture(next.issuedAt, ctx.now)) return { ok: false, code: 'registry.issued_in_future' };
   const iss = Date.parse(next.issuedAt);
   const exp = Date.parse(next.expiresAt);
@@ -147,8 +154,8 @@ export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; curre
   const vp = monotonicProblem(cur ? { ...cur.list, contentDigest: cur.contentDigest } : null, next, digest);
   if (vp) return { ok: false, code: vp };
   // 폐기는 되돌릴 수 없다: 새 목록은 현재 목록의 상위 집합.
-  if (cur && [...cur.keyIds].some((k) => !next.keyIds.includes(k))) return { ok: false, code: 'registry.revoked_shrunk' };
-  return { ok: true, accepted: { list: next, contentDigest: digest, keyIds: new Set(next.keyIds) } };
+  if (cur && [...cur.keyIds].some((k) => !nextIds.has(k))) return { ok: false, code: 'registry.revoked_shrunk' };
+  return { ok: true, accepted: { list: next, contentDigest: digest, keyIds: nextIds } };
 }
 
 /** 24시간 신선도를 잃으면 새 패키지·정책·핫픽스 로드를 보류한다(설치본 유지, 엄격하게 보수적인 정책·status는 통과). */
@@ -161,7 +168,8 @@ export interface RegistryStatus {
   keyEpoch: number;
   issuedAt: string;
   expiresAt: string;
-  portals: Partial<Record<Portal, { portalModeCeiling: PortalMode }>>;
+  /** 포털별 하향 전용 상한. 없는 포털 = 상한 없음(정책·앱 상한은 그대로). 모양은 레지스트리 #56과 같다(팀장 결정 2026-11-05). */
+  portalModeCeiling: Partial<Record<Portal, PortalMode>>;
   killPlaybooks: string[];
   signatures: Signature[];
   timestamp: Signature;
@@ -184,9 +192,9 @@ export type StatusDecision = { ok: true; accepted: AcceptedStatus; events: strin
 
 /** 하향·킬스위치만 하는가(현재 대비 모든 포털 상한 ≤, kill ⊇, 하나 이상 엄격). */
 export function statusIsConservative(cur: RegistryStatus | null, next: RegistryStatus): boolean {
-  const ceil = (s: RegistryStatus | null, p: Portal) => MODE_ORDER[s?.portals[p]?.portalModeCeiling ?? 'auto'];
+  const ceil = (s: RegistryStatus | null, p: Portal) => MODE_ORDER[s?.portalModeCeiling[p] ?? 'auto'];
   let strict = false;
-  for (const p of new Set([...Object.keys(cur?.portals ?? {}), ...Object.keys(next.portals)]) as Set<Portal>) {
+  for (const p of new Set([...Object.keys(cur?.portalModeCeiling ?? {}), ...Object.keys(next.portalModeCeiling)]) as Set<Portal>) {
     if (ceil(next, p) > ceil(cur, p)) return false;
     if (ceil(next, p) < ceil(cur, p)) strict = true;
   }
@@ -199,7 +207,7 @@ export function statusIsConservative(cur: RegistryStatus | null, next: RegistryS
 
 export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; revoked: ReadonlySet<string>; current: AcceptedStatus | null; hold?: boolean; now: number }): StatusDecision {
   const events: string[] = [];
-  if (schemaViolations('status', next).length) return { ok: false, code: 'registry.schema_invalid', events };
+  if (schemaViolations('status', next).length || !canonicalizable(next)) return { ok: false, code: 'registry.schema_invalid', events };
   const ep = epochProblem(next, ctx.roots);
   if (ep) return { ok: false, code: ep, events };
   const content = contentBytes(next);
@@ -215,7 +223,7 @@ export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; rev
   if (q.valid.length < 2 && !emergencyOnly) return { ok: false, code: 'registry.signature_insufficient', events };
   const restamp = ctx.current?.contentDigest === digest; // 내용 그대로의 타임스탬프 재서명
   if (emergencyOnly && !restamp && !statusIsConservative(ctx.current?.status ?? null, next)) return { ok: false, code: 'policy.rejected_not_conservative', events };
-  if (!verifyTimestamp(digest, next, ctx.roots)) return { ok: false, code: 'registry.timestamp_invalid', events };
+  if (!verifyTimestamp(digest, next, ctx.roots, ctx.revoked)) return { ok: false, code: 'registry.timestamp_invalid', events };
   if (issuedInFuture(next.issuedAt, ctx.now)) return { ok: false, code: 'registry.issued_in_future', events };
   const exp = Date.parse(next.expiresAt);
   if (!(exp > Date.parse(next.issuedAt)) || exp - Date.parse(next.issuedAt) > STATUS_MAX_AGE_H * H) return { ok: false, code: 'registry.status_validity_too_long', events };
@@ -265,7 +273,7 @@ export type PolicyDecision = { ok: true; accepted: AcceptedPolicy; events: strin
  */
 export function acceptPolicy(next: Policy, ctx: { roots: TrustRoots; revoked: ReadonlySet<string>; current: AcceptedPolicy | null; hold: boolean; now: number }): PolicyDecision {
   const events: string[] = [];
-  if (schemaViolations('policy', next).length) return { ok: false, code: 'registry.schema_invalid', events };
+  if (schemaViolations('policy', next).length || !canonicalizable(next)) return { ok: false, code: 'registry.schema_invalid', events };
   const ep = epochProblem(next, ctx.roots);
   if (ep) return { ok: false, code: ep, events };
   const content = contentBytes(next);
@@ -279,7 +287,7 @@ export function acceptPolicy(next: Policy, ctx: { roots: TrustRoots; revoked: Re
     !ctx.revoked.has(ctx.roots.emergencyKey.keyId) &&
     verifyEd25519(ctx.roots.emergencyKey.key, content, next.signatures[0]!.sig);
   if (q.valid.length < 2 && !emergencyOnly) return { ok: false, code: 'registry.signature_insufficient', events };
-  if (!verifyTimestamp(digest, next, ctx.roots)) return { ok: false, code: 'registry.timestamp_invalid', events };
+  if (!verifyTimestamp(digest, next, ctx.roots, ctx.revoked)) return { ok: false, code: 'registry.timestamp_invalid', events };
   const fp = freshnessProblem(next, ctx.now);
   if (fp) return { ok: false, code: fp, events };
   const cur = ctx.current;
