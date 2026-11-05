@@ -329,6 +329,9 @@ export function merkleRoot(leaves: readonly Uint8Array[]): Buffer {
 
 /** RFC 9162 §2.1.4.1 일관성 증명 생성(m < n). 시험 도우미. */
 export function consistencyProof(m: number, leaves: readonly Uint8Array[]): Buffer[] {
+  // 빈 트리(m = 0)에서의 증명은 빈 배열이다(RFC 9162 §2.1.4: 0 < m < n일 때만 경로가 있다). m > n은 증명이 없다.
+  if (!Number.isSafeInteger(m) || m < 0 || m > leaves.length) throw new Error('consistency_bad_size');
+  if (m === 0) return [];
   const sub = (mm: number, ls: readonly Uint8Array[], b: boolean): Buffer[] => {
     const n = ls.length;
     if (mm === n) return b ? [] : [merkleRoot(ls)];

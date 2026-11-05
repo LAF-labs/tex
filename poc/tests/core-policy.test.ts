@@ -100,6 +100,12 @@ describe('isStrictlyConservative (D03 §7.1 보수 방향 표, E-04)', () => {
     return isStrictlyConservative(pol(), n);
   };
   it('같은 정책은 엄격하지 않다(거부)', () => assert.equal(isStrictlyConservative(pol(), pol()), false));
+  it('verify는 minElapsedMs·lookups만 늘리는 쪽이 보수, 나열되지 않은 maxMs는 같음만(Bugbot #52 4차)', () => {
+    assert.equal(ch((p) => (p.verify.minElapsedMs += 1000)), true);
+    assert.equal(ch((p) => (p.verify.lookups += 1)), true);
+    assert.equal(ch((p) => (p.verify.maxMs = (p.verify.maxMs ?? 300_000) + 60_000)), false);
+    assert.equal(ch((p) => { p.verify.lookups += 1; p.verify.maxMs = (p.verify.maxMs ?? 300_000) + 60_000; }), false);
+  });
   it('메타 필드(monotonic·issuedAt·signatures)만 바뀌면 엄격하지 않다', () => assert.equal(ch((p) => { p.monotonic += 1; p.issuedAt = '2026-10-29T00:00:00+09:00'; }), false));
   it('portalMode 하향·포털 키 삭제는 보수, 상향·새 포털 키는 완화', () => {
     assert.equal(ch((p) => (p.portalMode.hometax = 'assisted')), true);
