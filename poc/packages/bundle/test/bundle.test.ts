@@ -305,7 +305,7 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.deepEqual(m, [
       { rowId: 'S!2:pension', employeeId: kim, basis: 'name_birth' },
       { rowId: 'S!2:health', employeeId: kim, basis: 'name_birth' },
-      { rowId: 'S!3:pension', employeeId: null, basis: 'ambiguous', candidates: [p1, p2] },
+      { rowId: 'S!3:pension', employeeId: null, basis: 'ambiguous', candidates: [p1, p2].sort() },
       { rowId: 'S!4:pension', employeeId: p1, basis: 'name_birth' },
       { rowId: 'S!5:pension', employeeId: null, basis: 'none', candidates: [kim] },
       { rowId: 'S!6:pension', employeeId: null, basis: 'none' },

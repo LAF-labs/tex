@@ -6,6 +6,8 @@ import type { InsuranceNoticeMatch, InsuranceNoticeMatchInput } from '@sax/docpa
 
 /** 이름 비교: 앞뒤·가운데 공백을 지우고 NFC로 맞춘다(고지내역은 '홍 길동'처럼 띄어 쓴 경우가 있다) */
 const normName = (s: string): string => s.normalize('NFC').replace(/\s+/g, '');
+/** 후보 id는 정렬해 늘 같은 순서로 낸다(입사일이 같으면 목록 순서가 정해지지 않는다) */
+const ids = (es: readonly { id: string }[]): string[] => es.map((e) => e.id).sort();
 
 /**
  * 고지 행마다 그 달 재직 직원 중 후보를 찾는다.
@@ -22,11 +24,11 @@ export function matchInsuranceNotice(db: Db, cipher: ColumnCipher, input: Insura
     if (row.birthDate) {
       const exact = byName.filter((e) => e.birthDate === row.birthDate);
       if (exact.length === 1) return { rowId: row.rowId, employeeId: exact[0]!.id, basis: 'name_birth' };
-      if (exact.length > 1) return { rowId: row.rowId, employeeId: null, basis: 'ambiguous', candidates: exact.map((e) => e.id) };
-      return { rowId: row.rowId, employeeId: null, basis: 'none', ...(byName.length ? { candidates: byName.map((e) => e.id) } : {}) };
+      if (exact.length > 1) return { rowId: row.rowId, employeeId: null, basis: 'ambiguous', candidates: ids(exact) };
+      return { rowId: row.rowId, employeeId: null, basis: 'none', ...(byName.length ? { candidates: ids(byName) } : {}) };
     }
     if (byName.length === 1) return { rowId: row.rowId, employeeId: byName[0]!.id, basis: 'name_only' };
-    if (byName.length > 1) return { rowId: row.rowId, employeeId: null, basis: 'ambiguous', candidates: byName.map((e) => e.id) };
+    if (byName.length > 1) return { rowId: row.rowId, employeeId: null, basis: 'ambiguous', candidates: ids(byName) };
     return { rowId: row.rowId, employeeId: null, basis: 'none' };
   });
 }
