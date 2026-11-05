@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@sax/db": "workspace:*",
+    "@sax/docparse": "workspace:*",
     "@sax/engine": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/vault": "workspace:*",
