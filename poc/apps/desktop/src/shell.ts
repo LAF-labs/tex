@@ -48,7 +48,7 @@ app.on('window-all-closed', () => {
 void app.whenReady().then(async () => {
   if (refused) return;
   try {
-    shell = await startShell(hometax ? { engine: { portal: { kind: 'hometax' } } } : { headful: process.env.SAX_DEMO_HEADLESS !== '1', demoModel: demoCfg ? new DemoModel(demoCfg) : null });
+    shell = await startShell(hometax ? { engine: { portal: { kind: 'hometax' } } } : { headful: process.env.SAX_DEMO_HEADLESS !== '1', demoModel: demoCfg ? new DemoModel(demoCfg) : null, demoSeed: true });
     await shell.ready;
     // 실행기(Dock)에서 뒤에서 띄우면 창이 다른 앱 뒤에 열릴 수 있다. 시연(fixture)에서만 앞으로 가져온다.
     if (!hometax) app.focus({ steal: true });

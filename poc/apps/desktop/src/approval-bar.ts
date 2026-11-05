@@ -10,6 +10,7 @@ import {
   actionText,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
+  BAR_CSP,
   BarGate,
   barCss,
   barPalette,
@@ -27,7 +28,7 @@ import {
   type LocalApproval,
   type SummaryLine,
 } from './approval-gate.ts';
-import { assertNoDebugSwitches } from './harden.ts';
+import { appHeaders, assertNoDebugSwitches, hardenSession, lastWebPrefs, webPrefsProblems } from './harden.ts';
 import type { Rect } from './shell-layout.ts';
 import { loadTokens } from './shell-tokens.ts';
 
@@ -58,13 +59,14 @@ function barSession(): Session {
   ses.protocol.handle(APPROVAL_SCHEME, (req) => {
     const u = new URL(req.url);
     if (u.host !== HOST) return new Response('', { status: 404 });
-    if (u.pathname === '/bar.css') return new Response(barCss(barColors().palette), { headers: { 'content-type': 'text/css' } });
+    if (u.pathname === '/bar.css') return new Response(barCss(barColors().palette), { headers: appHeaders('text/css', BAR_CSP) });
     const html = u.pathname === `/${BLANK}` ? '<!doctype html><meta charset="utf-8">' : pages.get(u.pathname.slice(1));
-    return html ? new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }) : new Response('', { status: 404 });
+    // meta CSP와 같은 정책을 응답 헤더로도 건다(D11 §4 승인 바 행).
+    return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', BAR_CSP) }) : new Response('', { status: 404 });
   });
   ses.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${APPROVAL_SCHEME}://${HOST}/`) }));
-  ses.setPermissionRequestHandler((_wc, _p, cb) => cb(false));
-  ses.setPermissionCheckHandler(() => false);
+  // 권한·장치 거부, 내려받기 금지, 맞춤법 사전 끔(셸 기본 세션과 같은 함수).
+  hardenSession(ses);
   return ses;
 }
 
@@ -148,6 +150,13 @@ export class ApprovalBar extends EventEmitter {
     this.view = new WebContentsView({
       webPreferences: { session: barSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false, devTools: false, spellcheck: false, focusOnNavigation: false, webviewTag: false },
     });
+    // 자기 점검(D11 §4 승인 바 행): 실제로 걸린 값으로 본다. 스크립트가 켜져 있으면 바를 만들지 않는다(devTools는 이 값에 없어 소스 시험으로 본다).
+    const prefs = lastWebPrefs(this.view.webContents);
+    const bad = [...webPrefsProblems(prefs), ...(prefs?.javascript !== false ? ['javascript'] : [])];
+    if (bad.length) {
+      this.view.webContents.close();
+      throw new Error(`harden.bar_webprefs:${bad.join(',')}`);
+    }
     // 뷰는 미리 붙여 두고 setVisible로 보이고 숨긴다(ADR-021).
     this.view.setVisible(false);
     win.contentView.addChildView(this.view);

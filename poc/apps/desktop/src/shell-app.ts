@@ -15,7 +15,8 @@ import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import { startFixtureMode, type FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
-import { assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow } from './harden.ts';
+import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
+import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
@@ -25,6 +26,7 @@ import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf } from './vault-import.ts';
 import { mergeParsed, type DemoModel } from './demo-model.ts';
+import { startDemoSeed, type DemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
@@ -74,15 +76,16 @@ let secretPage: () => string | null = () => null;
 function serve(): void {
   protocol.handle(SHELL_SCHEME, async (req) => {
     const p = new URL(req.url).pathname;
-    if (p === '/tokens.css') return new Response(tokensCss(), { headers: { 'content-type': 'text/css' } });
+    // 모든 응답에 CSP 헤더(D11 §4): 셸은 APP_CSP, main이 만든 비밀 창 페이지는 더 좁은 SECRET_CSP.
+    if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
     if (p === '/secret.html') {
       const html = secretPage();
-      return html ? new Response(html, { headers: { 'content-type': 'text/html; charset=utf-8' } }) : new Response('', { status: 404 });
+      return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
     }
-    if (p === '/bundle.css') return new Response(bundleCss(), { headers: { 'content-type': 'text/css' } });
+    if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
     const type = FILES[p];
     if (!type) return new Response('', { status: 404 });
-    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: { 'content-type': type } });
+    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type) });
   });
   // 렌더러는 네트워크가 없다(D01 §2.1). 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${SHELL_SCHEME}://`) && !d.url.startsWith('devtools://') }));
@@ -105,6 +108,8 @@ export interface ShellOptions {
   preparePerMin?: number;
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
   demoModel?: DemoModel | null;
+  /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
+  demoSeed?: boolean;
 }
 
 export interface Shell {
@@ -177,8 +182,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const ps = (await host.rpc('db.query.profiles.list')) as DbProfile[];
     const b = ps.find((p) => p.kind === 'business');
     business = b ? profileView(b) : null;
-    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {}));
+    // 최근 발급일: 원장(DB)에 없으면 문서함 세금계산서(지난 발급 견본 포함)에서
+    const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
+    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {})).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
   };
+  let seed: DemoSeed | null = null;
   const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
@@ -203,6 +211,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }
     };
   let importing = false;
+  /** 열 파일: 목업 서류의 견본 PDF(시연 씨앗) 아니면 보관함 서류. */
+  const docFile = async (id: string) => store.files.get(id) ?? (await docs.filePath(id));
 
   const win = new BrowserWindow({
     width: opts.width ?? 1280,
@@ -218,6 +228,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       webviewTag: false,
       disableDialogs: true,
       spellcheck: false,
+      // 제품 빌드에서는 개발자 도구를 열 수 없다(D11 §4 렌더러 행). 개발 실행(pnpm demo)에서만 연다.
+      devTools: !app.isPackaged,
       preload: path.join(STATIC, 'preload-shell.cjs'),
     },
   });
@@ -240,8 +252,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   const bar = new ApprovalBar(win, key, barBounds, { cursorPoint: opts.cursorPoint, log });
-  const send = (ev: Record<string, unknown>) => {
-    if (!win.isDestroyed()) wc.send('sax:event', ev);
+  const send = (ev: ShellEvent) => {
+    if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
   // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
   bar.on('shown', (e: { band: boolean }) => send({ type: 'bar', active: true, band: e.band }));
@@ -250,6 +262,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('update', (run) => send({ type: 'run', run }));
   runs.on('doc', (doc) => {
     store.docs.unshift(doc);
+    const run = runs.get(doc.id.slice(2));
+    if (seed && run) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
     send({ type: 'doc', doc });
     void refresh().catch(() => {});
   });
@@ -341,7 +355,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
-  const handlers: Record<string, (p: Record<string, unknown>) => unknown> = {
+  /** 시연 DB 쓰기(렌더러 처리기는 이 두 함수만 부른다. 엔진 명령은 여기서 고정한다). fixture 모드가 아니면 거부한다. */
+  const demoDb = {
+    async saveCounterparty(p: Record<string, unknown>) {
+      if (!fixture) throw new Error('unsupported');
+      const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
+      const v = { name: text(p.name, 60), repName: text(p.rep, 30) || null, email: text(p.email, 100) || null };
+      const id = typeof p.id === 'string' && p.id ? p.id : null;
+      const saved = (id ? await host.rpc('counterparty.update', { id, patch: v }) : await host.rpc('counterparty.create', { ...v, bizNo: text(p.bizNo, 20).replace(/\D/g, '') })) as DbCounterparty;
+      const item = text(p.item, 40);
+      if (item) fixture.itemHints[saved.bizNo] = item;
+      await refresh();
+      return { id: saved.id, counterparties: cps };
+    },
+    async setDefaultAuth(p: Record<string, unknown>) {
+      if (!fixture) throw new Error('unsupported');
+      const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
+      if (!signMethod) throw new Error('bad_request');
+      const cur = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((x) => x.kind === 'business');
+      if (!cur) throw new Error('not_found');
+      await host.rpc('profile.upsert', { ...cur, signMethod });
+      await refresh();
+      return { profiles: profiles() };
+    },
+  };
+  const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
       layout: SHELL,
       profiles: profiles(),
@@ -352,6 +390,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       quick: QUICK,
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
+      history: seed?.history ?? null,
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -413,11 +452,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'docs.open': docsCall(async (p) => {
       needGesture(3_000);
       if (!openRate.take(performance.now())) throw new Error('throttled');
-      const file = await docs.filePath(String(p.id));
+      const file = await docFile(String(p.id));
       if (path.extname(file).toLowerCase() !== '.pdf') throw new Error('open_failed');
       if (await desktop.openPath(file)) throw new Error('open_failed');
       return {};
     }),
+    // 같은 파일을 Finder에서 보여 준다(결과 카드 [폴더 열기]).
+    'docs.reveal': docsCall(async (p) => {
+      needGesture(3_000);
+      if (!openRate.take(performance.now())) throw new Error('throttled');
+      desktop.showItemInFolder(await docFile(String(p.id)));
+      return {};
+    }),
+    // 시연 DB에서만: 거래처 추가·수정, 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
+    'counterparty.save': (p) => demoDb.saveCounterparty(p),
+    'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
       return cps;
@@ -434,10 +483,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   ipcMain.handle('sax', async (e, req: { method?: unknown; params?: unknown }) => {
     // 메인 창의 셸 페이지에서 온 호출만 받는다. 승인 바(javascript:false)는 IPC가 없다.
     if (e.sender !== wc || e.senderFrame?.url !== SHELL_URL) throw new Error('forbidden');
-    if (typeof req?.method !== 'string') throw new Error('bad_request');
-    const h = handlers[req.method];
-    if (!h) throw new Error('unknown_method');
-    return h((req.params ?? {}) as Record<string, unknown>);
+    // 최상위 프레임만, 표(ipc.ts SHELL_METHODS)에 있는 메서드·필드만(D11 §4 IPC 행).
+    return dispatchShell(e.senderFrame, SHELL_URL, handlers, req);
   });
 
   const ready = (async () => {
@@ -450,8 +497,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     }
     if (fixture) await fixture.seed(host);
+    if (fixture && opts.demoSeed) seed = await startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
     await win.loadURL(SHELL_URL);
+    // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
+    void seed
+      ?.fill()
+      .then(async () => {
+        await refresh();
+        send({ type: 'docs-reload' });
+      })
+      .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
   const close = async () => {
     closeSecret();

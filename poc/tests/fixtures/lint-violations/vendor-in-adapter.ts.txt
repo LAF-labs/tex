@@ -1,0 +1,7 @@
+// as: packages/model/src/adapters/new-provider.ts
+// expect: no-restricted-imports=1
+// 어댑터는 SDK를 쓸 수 있다. 그래도 송신 모듈 직접 import는 막힌다(SDK fetch는 egress.providerFetch).
+import OpenAI from 'openai';
+import type { DecisionCreateParams } from 'openai/resources/decisions';
+import https from 'node:https';
+export const o: [typeof OpenAI, DecisionCreateParams | null, typeof https] = [OpenAI, null, https];
