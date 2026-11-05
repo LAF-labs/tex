@@ -45,7 +45,7 @@ const LOAD_RULES = [
 ];
 
 /** 송신 규칙 범위(RETRO A-12). e2e·fixture(가짜 홈택스 서버·송신 차단 시험)는 아래에서 명시 면제한다. */
-const SEND_SCOPE = ['packages/engine/**/*.ts', 'packages/model/**/*.ts', 'packages/vault/**/*.ts', 'packages/platform/**/*.ts', 'packages/db/**/*.ts', 'apps/desktop/src/**/*.ts'];
+const SEND_SCOPE = ['packages/engine/**/*.ts', 'packages/model/**/*.ts', 'packages/vault/**/*.ts', 'packages/platform/**/*.ts', 'packages/db/**/*.ts', 'packages/payroll/**/*.ts', 'packages/bundle/**/*.ts', 'apps/desktop/src/**/*.ts'];
 const SEND_EXEMPT = ['apps/desktop/src/*e2e.ts', 'apps/desktop/src/h01-fixture.ts'];
 /** 공급사 SDK를 import할 수 있는 곳: 어댑터, 그리고 어댑터를 시험·실측하는 테스트·S9 스크립트. */
 const VENDOR_ALLOWED = ['packages/model/src/adapters/**', 'tests/**', 'scripts/**'];

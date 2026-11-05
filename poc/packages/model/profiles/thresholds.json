@@ -49,7 +49,7 @@
   },
   {
     "bundle": "intent_route_v1",
-    "bundleDigest": "b205655dff96d07ff8ad0bc829c1ad9c7335b1f920720358b5693ba7fef2b29e",
+    "bundleDigest": "5e1f916341f62f42bbb09432fe81ad04d4687527f3a6bc43e90f51a075a87eb6",
     "provider": "openai",
     "model": "gpt-6-luna",
     "status": "initial",
@@ -57,7 +57,7 @@
   },
   {
     "bundle": "intent_route_v1",
-    "bundleDigest": "b205655dff96d07ff8ad0bc829c1ad9c7335b1f920720358b5693ba7fef2b29e",
+    "bundleDigest": "5e1f916341f62f42bbb09432fe81ad04d4687527f3a6bc43e90f51a075a87eb6",
     "provider": "upstage",
     "model": "solar-decide",
     "status": "uncalibrated",

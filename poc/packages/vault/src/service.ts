@@ -12,6 +12,7 @@ import {
   SESSION_EVENTS, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
+import { CommitGuard } from './relay/commit-guard.ts';
 import { Relay } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
 import { HumanSecretVault } from './keychain/human.ts';
@@ -80,6 +81,8 @@ export interface VaultOptions {
   launchTimeoutMs?: number;
   /** 테스트 전용. 기본은 SECRET_TTL_MS. */
   secretTtlMs?: number;
+  /** R-C1 무장 유효 시간(시험용, 기본 COMMIT_ARM_TTL_MS). */
+  commitArmTtlMs?: number;
   /**
    * 사람 비밀(세션 결박) 저장소(ADR-026). 앱 진입점은 keychainBackend()로 만든다.
    * 없으면 메모리 백엔드(저장해도 프로세스 밖에 남지 않음, 시험·픽스처 모드).
@@ -298,6 +301,11 @@ export class Vault {
         return this.requireOps().requestClose(p as never);
       case 'getDbKeyOnce':
         return this.getDbKeyOnce();
+      case 'commitGuard.arm':
+        return this.requireGuard().arm(p);
+      case 'commitGuard.disarm':
+        this.requireGuard().disarm(p);
+        return {};
       case 'run.begin': {
         // 열거형 밖 트리거는 저장하지 않는다(N-77, fail-closed).
         if (!RUN_TRIGGERS.includes(p.trigger as RunTrigger)) throw new Error('bad_trigger');
@@ -318,6 +326,7 @@ export class Vault {
         this.runProfiles.delete(runId);
         for (const k of [...this.needs.keys()]) if (k.startsWith(runId + '|')) this.needs.delete(k);
         this.ops?.secrets.clearRun(runId);
+        this.relay?.commitGuard?.clearRun(runId);
         for (const k of [...this.usedSlots]) if (k.startsWith(runId + '|')) this.usedSlots.delete(k);
         // 열린 창이 없으면 알려진 값 변형을 전부 버린다(N-78).
         if (this.relay && !this.relay.hasOpenWindow()) this.relay.clearKnownSecrets();
@@ -375,6 +384,12 @@ export class Vault {
 
   private vaultState(v: { open: boolean; reason?: string }): { open: boolean; reason?: string } {
     return v.open ? { open: true } : { open: false, reason: v.reason };
+  }
+
+  private requireGuard(): CommitGuard {
+    const g = this.relay?.commitGuard;
+    if (!g) throw new Error('browser not launched');
+    return g;
   }
 
   private requireOps(): SecretOps {
@@ -465,7 +480,16 @@ export class Vault {
       },
       onLeakSuspected: (hits) => emit(['engine', 'control'], 'secret_window.leak_suspected', { hits }),
     });
+    this.relay?.commitGuard?.shutdown();
     this.relay = relay;
+    relay.commitGuard = new CommitGuard({
+      log: this.opts.log,
+      allowedHosts: this.policy.allowedHosts,
+      emit: (d) => emit(['engine'], 'commit.body_compared', { ...d }),
+      send: (m, params, sid) => relay.send(m, params, sid),
+      exposed: (id) => !!relay.exposedTarget(id),
+      ttlMs: this.opts.commitArmTtlMs,
+    });
     this.ops = new SecretOps(relay, this.policy, this.opts.log, {
       secretTtlMs: this.opts.secretTtlMs,
       selfScan: VAULT_SELF_SCAN ? { roots: [this.opts.paths.logs, this.opts.paths.staging] } : undefined,
@@ -582,6 +606,7 @@ export class Vault {
     // 실행 트리거(run.begin)는 Chrome보다 오래 산다. 다시 띄우면 새 ops로 옮긴다.
     for (const [k, v] of ops?.runTriggers ?? []) this.pendingTriggers.set(k, v);
     ops?.shutdown();
+    relay?.commitGuard?.shutdown();
     relay?.clearKnownSecrets();
     await chrome?.close();
     if (chrome) await this.removeDumps(this.opts.paths.chromeProfile);
