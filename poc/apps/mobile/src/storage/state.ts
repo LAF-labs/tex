@@ -1,7 +1,7 @@
 // 앱 상태 파일(페어링 기록·기기 목록·IK 타임스탬프·현금매출 기록). fileKey로 XChaCha20-Poly1305 봉인해 sax/state.bin에 둔다.
 import { File } from 'expo-file-system';
 import { fromUtf8, utf8, xOpen, xSeal, type DeviceListJson, type SignedCert } from '@sax/remote';
-import { inflight, liveKey } from '../inflight';
+import { currentEpoch, inflight, liveKey, sameEpoch } from '../inflight';
 import { ROOT, writeProtected } from './files';
 
 const AD = utf8('SAX-mobile-state-v1');
@@ -58,8 +58,16 @@ let writing: Promise<void> = Promise.resolve();
  * 다음 저장은 앞 결과와 관계없이 새 상태 전체를 쓴다(상태 파일은 매번 통째로 쓰므로 마지막 성공이 최신이다).
  */
 export function saveData(fileKey: Uint8Array, d: AppData): Promise<void> {
+  const e = currentEpoch();
   const box = xSeal(liveKey(fileKey), utf8(JSON.stringify(d)), AD);
-  const mine = inflight(() => writing.catch(() => undefined).then(() => writeProtected(FILE, box)));
+  const mine = inflight(() =>
+    writing
+      .catch(() => undefined)
+      .then(() => {
+        sameEpoch(e);
+        return writeProtected(FILE, box);
+      }),
+  );
   writing = mine.catch(() => undefined);
   return mine;
 }

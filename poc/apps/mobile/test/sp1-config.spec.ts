@@ -71,7 +71,8 @@ describe('사진 보호(ADR-034 결정 9·D07)', () => {
     assert.match(files, /if \(!SaxNative\) throw new ProtectionError\(\)/);
     assert.match(files, /if \(!p\.excludedFromBackup\) throw new ProtectionError\(\)/);
     const ob = src('src/storage/outbox.ts');
-    assert.match(ob, /writeProtected\(PHOTO\(id\), sealOutboxFile/);
+    // 사진은 봉인한 바이트만 writeProtected로 쓴다
+    assert.match(ob, /const box = sealOutboxFile\(liveKey\(this\.#key\), `\$\{id\}\.p`, photo\);[\s\S]*?writeProtected\(PHOTO\(id\), box\)/);
     assert.doesNotMatch(ob, /\.write\(/);
   });
   it('네이티브 모듈은 백업 제외와 Complete 보호를 함께 건다', () => {

@@ -1,7 +1,7 @@
 // 잠금 때 키 지우기(src/inflight.ts): 진행 중 작업을 기다리고, 지운 키로는 봉인하지 않는다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { drained, inflight, liveKey } from '../src/inflight.ts';
+import { currentEpoch, drained, endEpoch, inflight, liveKey, sameEpoch } from '../src/inflight.ts';
 
 describe('잠금과 진행 중 작업', () => {
   it('진행 중 작업이 끝난 뒤에 풀린다', async () => {
@@ -39,5 +39,13 @@ describe('잠금과 진행 중 작업', () => {
     const k = new Uint8Array(32);
     k[31] = 1;
     assert.equal(liveKey(k), k);
+  });
+
+  it('잠금 정리가 끝나면 지난 세대의 쓰기는 버린다', () => {
+    const e = currentEpoch();
+    sameEpoch(e);
+    endEpoch();
+    assert.throws(() => sameEpoch(e), /locked/);
+    sameEpoch(currentEpoch());
   });
 });

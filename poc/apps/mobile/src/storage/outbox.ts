@@ -2,7 +2,7 @@
 // 항목 메타와 사진은 각각 fileKey로 봉인한 파일이다(sax/outbox/<msgId>.m, .p). 보호 등급·백업 제외는 files.ts가 맡는다.
 import { Directory, File } from 'expo-file-system';
 import { fromUtf8, openOutboxFile, sealOutboxFile, ULID_RE, utf8, type OutboxItem, type OutboxStore } from '@sax/remote';
-import { inflight, liveKey } from '../inflight';
+import { currentEpoch, inflight, liveKey, sameEpoch } from '../inflight';
 import { ROOT, writeProtected } from './files';
 
 const DIR = new Directory(ROOT, 'outbox');
@@ -38,9 +38,16 @@ export class FileOutbox implements OutboxStore {
 
   async put(item: OutboxItem, photo?: Uint8Array): Promise<void> {
     const id = check(item.msgId);
+    const e = currentEpoch();
     await inflight(async () => {
-      if (photo) await writeProtected(PHOTO(id), sealOutboxFile(liveKey(this.#key), `${id}.p`, photo));
-      await writeProtected(META(id), sealOutboxFile(liveKey(this.#key), `${id}.m`, utf8(JSON.stringify(item))));
+      if (photo) {
+        const box = sealOutboxFile(liveKey(this.#key), `${id}.p`, photo);
+        sameEpoch(e);
+        await writeProtected(PHOTO(id), box);
+      }
+      const meta = sealOutboxFile(liveKey(this.#key), `${id}.m`, utf8(JSON.stringify(item)));
+      sameEpoch(e);
+      await writeProtected(META(id), meta);
     });
   }
 

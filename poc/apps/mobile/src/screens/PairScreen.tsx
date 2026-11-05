@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { MobilePairing, b64, softNoiseStatic, type MobilePairFailure } from '@sax/remote';
 import { DEV_LOCAL, relayAllowlist } from '../config';
+import { inflight } from '../inflight';
 import { accountApi, devFetchQr } from '../net/account';
 import { relayFor } from '../net/pc';
 import { useSession } from '../session';
@@ -39,11 +40,22 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
   const pairing = useRef<MobilePairing | null>(null);
   const noiseRef = useRef<ReturnType<typeof softNoiseStatic> | null>(null);
   const scanned = useRef(false);
+  const linkRef = useRef<{ close(): void } | null>(null);
+  const gone = useRef(false);
 
-  // 화면을 떠나면 메모리의 Sm 사본을 지운다
-  useEffect(() => () => noiseRef.current?.destroy(), []);
+  // 화면을 떠나면(잠금 포함) 페어링을 멈춘다: 룸 연결을 닫아 PC 쪽도 끝나게 하고(1회용 룸), 메모리의 Sm 사본을 지운다.
+  // 잠긴 뒤 PC가 SAS를 받아도 폰은 키 없이 pair.ok를 저장할 수 없으므로, 끝까지 가지 않게 한다.
+  useEffect(
+    () => () => {
+      gone.current = true;
+      linkRef.current?.close();
+      noiseRef.current?.destroy();
+    },
+    [],
+  );
 
   const failWith = (f: keyof typeof FAIL) => {
+    if (gone.current) return;
     setFail(f);
     setPhase('failed');
   };
@@ -92,6 +104,8 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
     } catch {
       return failWith('relay');
     }
+    linkRef.current = link;
+    if (gone.current) return link.close();
     let r: Awaited<ReturnType<MobilePairing['run']>> = null;
     try {
       r = await mp.run(link);
@@ -104,8 +118,9 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
       return failWith(mp.failure ?? 'handshake');
     }
     r.channel.close();
+    if (gone.current) return;
     try {
-      await s.update((d) => ({
+      await inflight(() => s.update((d) => ({
         ...d,
         pair: {
           pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
@@ -115,7 +130,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
         },
         deviceList: r.deviceList,
         seenListVersion: Math.max(d.seenListVersion, r.deviceList.listVersion),
-      }));
+      })));
     } catch {
       // PC는 이미 이 폰을 받았지만 폰은 기록이 없다. 다시 연결하면 PC가 같은 키를 갱신한다(upsertDevice).
       // 화면 상태에는 남지 않도록 pair를 비워 둔다(저장 실패 뒤 메모리만 연결된 것처럼 보이지 않게).
