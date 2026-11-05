@@ -42,7 +42,7 @@
 
 ```text
 account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verified_day?, pass_ci_hmac?)   -- k_chk_sentinel 삭제(ADR-029)
-  ├─ subscription(plan: starter|business, period, renew_at, pg_customer_ref)
+  ├─ subscription(plan: standard, period, renew_at, pg_customer_ref)   -- 사장님 9,900원 한 플랜(ADR-034). 세무사 요금은 다음 단계에 따로 설계
   ├─ profile_slots: 1..2  (slot_token: 계정별 무작위. 번호·종류 의미 없음 (C-09, C/X-05)
   │                         biz_hmac?: HMAC(K_idx, "SAX-bizno-v1" ‖ bizNo)[:16], biz_bound_at (B-28))
   ├─ device_list: AIK 서명 DeviceListEntry[] + list_version (서버는 보관·중계만, 신뢰 앵커 아님 (C-01))
@@ -64,7 +64,7 @@ account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verifi
 - **데스크톱 로그인**: RFC 8252 루프백 리디렉트 + PKCE. **OAuth 디바이스 플로우는 쓰지 않는다**(피싱 표면만 늘린다). 받은 토큰은 금고에 보관한다.
 - **토큰 두 종류**:
   - 계정 세션: 구독·결제, 기기 관리(목록 열람·긴급 정지·해제 요청), 동의 관리**만** 쓸 수 있다.
-  - 기기 범위 토큰: **AIK 인증서가 있는 기기**에만 발급한다. 요청마다 기기 키로 서명한 증명(DPoP 방식, `SAX-dpop-v1`)을 붙인다. 블롭·메타데이터·조회 에이전트·깨우기·업무 키 표시 API는 이 토큰만 받는다(계정 세션 불가, E-07). **Phase 1**에도 첫 데스크톱은 AIK와 AIK가 발급한 자기 기기 인증서를 가지므로, 프로필 사업자 HMAC 등록(B-28)은 데스크톱 기기 범위 토큰으로 한다. 업무 키 표시 API는 Phase 2에 데스크톱용으로 연다(§6, ADR-024). 폰·블롭·조회 에이전트용 토큰도 Phase 2. Phase 1에는 데스크톱끼리 페어링하는 절차가 없어 두 번째 PC는 AIK 인증서와 이 토큰을 받지 못한다(새 PC 연결 08 A-03은 Phase 2).
+  - 기기 범위 토큰: **AIK 인증서가 있는 기기**에만 발급한다. 요청마다 기기 키로 서명한 증명(DPoP 방식, `SAX-dpop-v1`)을 붙인다. 블롭·메타데이터·조회 에이전트·깨우기·업무 키 표시 API는 이 토큰만 받는다(계정 세션 불가, E-07). **Phase 1**에도 첫 데스크톱은 AIK와 AIK가 발급한 자기 기기 인증서를 가지므로, 프로필 사업자 HMAC 등록(B-28)은 데스크톱 기기 범위 토큰으로 한다. 업무 키 표시 API는 Phase 2에 데스크톱용으로 연다(§6, ADR-024). 폰·블롭·조회 에이전트용 토큰도 Phase 2. (2026-11-05 ADR-034: 폰 앱이 Phase 1에 들어와 폰 페어링, 폰 기기 범위 토큰, 릴레이 우편함, 푸시 깨우기는 Phase 1로 당긴다. Phase 1 폰 토큰은 릴레이·푸시 범위만 갖고, 블롭·메타데이터·조회 에이전트용은 Phase 2 그대로다. 작업은 D14 §2.7.) Phase 1에는 데스크톱끼리 페어링하는 절차가 없어 두 번째 PC는 AIK 인증서와 이 토큰을 받지 못한다(새 PC 연결 08 A-03은 Phase 2).
   - 이메일 로그인 직후의 새 폰은 페어링(= PC의 AIK가 인증서 발급) 전에는 조회 에이전트·블롭·메타데이터를 쓸 수 없다.
 - 모델 게이트웨이는 계정 세션 토큰을 받지 않는다. 데스크톱 기기 범위 토큰(AIK 기기 인증서 결속, DPoP `SAX-dpop-v1`)만 받고 `X-Device-Id`는 토큰에서 유도한다. `runToken`은 `POST /v1/run-tokens`(기기 범위 토큰 필요)로 받고 `tag = HMAC(gw_key, accountId‖deviceId‖runToken‖item)`이다. 자동 정지는 기기 단위로 먼저 걸고 계정 정지 전에 다른 기기에 알린다(ADR-029, D-26(N-41)).
 
@@ -128,7 +128,7 @@ account(id, email, status, plan, created_at, aik_pub, aik_pinned_at, pass_verifi
 | `POST /v1/blobs` | 멀티파트 암호문 업로드(Padmé 패딩 후), 응답 `blob_id`(서버 발급 무작위 UUID). 서버는 패딩 크기·계정을 기록하고, 업로드 시각은 접근 로그에만 **7일** 보존한다(E-08). Padmé는 크기 등급만 숨긴다 |
 | `GET /v1/blobs/{id}` | 계정 소유 + 기기 범위 확인 후 반환. 복구 보류 중인 기기는 거부(§2.2) |
 | `DELETE /v1/blobs/{id}` | AIK 서명 요청이면 즉시 삭제. 그 외(등록 7일 미만 기기·1일 10건 초과 대량 삭제)는 7일 소프트 삭제 후 삭제. 메타데이터 참조 제거 |
-| 용량 | 플랜별(2GB/10GB). 초과 시 업로드 거부, 로컬 보관은 계속 |
+| 용량 | 한 플랜의 상한(Phase 2 전에 정함, ADR-034). 초과 시 업로드 거부, 로컬 보관은 계속 |
 
 `GET /v1/docs`와 블롭 조회는 기기 범위 토큰의 슬롯 범위(`doc_scope`) 안만 돌려준다(ADR-029, D-35(N-53)).
 
