@@ -1,14 +1,14 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/remote-envelope.schema.json",
-  "title": "Sovereign AX Remote Envelope v1.3 (live messages; plaintext inside Noise transport; binary fields base64 here, CBOR bytes on the wire)",
-  "$comment": "v1.3 (AUDIT-B B-10/B-24/B-27/B-29, AUDIT-C C-01/C-06/C-16/C-17/C-20/C-26, re-audit E-10). Live session messages only. Offline intents use intent-envelope.schema.json; 'ttl' here never exceeds 86400 s while intents carry their own 'exp' <= 72 h (C/X-14). Error codes are local-UI only and never sent (C/X-12). Signature contexts: D08 §2.1.",
+  "title": "Sovereign AX Remote Envelope v1.4 (live messages; plaintext inside Noise transport; binary fields base64 here, CBOR bytes on the wire)",
+  "$comment": "v1.3 (AUDIT-B B-10/B-24/B-27/B-29, AUDIT-C C-01/C-06/C-16/C-17/C-20/C-26, re-audit E-10). Live session messages only. Offline intents use intent-envelope.schema.json; 'ttl' here never exceeds 86400 s while intents carry their own 'exp' <= 72 h (C/X-14). Error codes are local-UI only and never sent (C/X-12). Signature contexts: D08 §2.1. v1.4 (2026-11-05, ADR-034, D14 M7-4): Phase 1 phone-to-PC kinds receipt.offer/chunk/ack and cash.entry/ack. Photos travel inline in the live session only (Phase 1 has no blob store; never in the relay queue), 48 KiB chunks, at most 4 MiB per photo. msgId is the stable item id for retransmit and dedup (D07 receipts.phone_msg_id).",
   "type": "object",
   "required": ["v", "type", "id", "pairId", "from", "to", "seq", "ts", "ttl", "body"],
   "unevaluatedProperties": false,
   "properties": {
     "v": {"const": 1},
-    "type": {"enum": ["hello", "pair.ok", "kek.grant", "devlist.push", "mbx.reissue", "cmd.run", "cmd.abort", "cmd.resume", "run.event", "gate.request", "gate.response", "consent.request", "consent.response", "human.request", "human.response", "file.offer", "query.documents", "query.result", "rotate.static", "close", "ping", "pong"]},
+    "type": {"enum": ["hello", "pair.ok", "kek.grant", "devlist.push", "mbx.reissue", "cmd.run", "cmd.abort", "cmd.resume", "run.event", "gate.request", "gate.response", "consent.request", "consent.response", "human.request", "human.response", "file.offer", "query.documents", "query.result", "rotate.static", "close", "ping", "pong", "receipt.offer", "receipt.chunk", "receipt.ack", "cash.entry", "cash.ack"]},
     "id": {"$ref": "#/$defs/ulid"},
     "pairId": {"$ref": "#/$defs/ulid"},
     "from": {"enum": ["desktop", "mobile"]},
@@ -27,6 +27,9 @@
     "b64key32": {"type": "string", "contentEncoding": "base64", "minLength": 43, "maxLength": 44},
     "sha256hex": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "sigAlg": {"enum": ["ed25519", "p256"]},
+    "day": {"type": "string", "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"},
+    "won": {"type": "integer", "minimum": 0, "maximum": 100000000000, "$comment": "KRW integer. Never logged."},
+    "bizNo": {"type": "string", "pattern": "^\\d{3}-\\d{2}-\\d{5}$"},
     "fieldKey": {
       "$comment": "Closed list (B-24). Card labels come from the app-built-in fieldKey dictionary, never from package strings. Keep in sync with the D02 fieldKey dictionary (H-01 baseline). $first.* and $dup.* are engine-generated reserved keys (first-time counterparty/recipient from the ledger, duplicate warnings), hashed into cardHash (ADR-021). $dup.portalExisting = count of pre-gate baseline (B0) approval numbers unknown to this PC's ledger, Phase 1 on; $dup.otherDevice only for accounts with 2+ desktops, Phase 2 (ADR-024).",
       "enum": ["supplyAmount", "taxAmount", "totalAmount", "counterpartBizNo", "counterpartName", "counterpartEmail", "supplierBizNo", "supplierName", "issueDate", "itemName", "itemCount", "remark", "receiptType", "$first.bizNo", "$first.email", "$dup.businessKey", "$dup.priorNotCommitted", "$dup.otherDevice", "$dup.portalExisting"]
@@ -117,6 +120,26 @@
     {"if": {"properties": {"type": {"const": "query.documents"}}}, "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "properties": {"docType": {"type": "string", "pattern": "^[a-z_]+$"}, "expiresBefore": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"}, "limit": {"type": "integer", "minimum": 1, "maximum": 100}}}}}},
     {"if": {"properties": {"type": {"const": "query.result"}}}, "then": {"properties": {"body": {"type": "object", "required": ["items"], "additionalProperties": false, "properties": {"items": {"type": "array", "maxItems": 100, "items": {"type": "object", "required": ["docId", "docType"], "additionalProperties": false, "properties": {"docId": {"$ref": "#/$defs/uuid4"}, "docType": {"type": "string"}, "issuedAt": {"type": "string"}, "expiresAt": {"type": "string"}, "displayName": {"type": "string", "maxLength": 80}}}}}}}}},
     {"if": {"properties": {"type": {"const": "rotate.static"}}}, "then": {"properties": {"body": {"type": "object", "required": ["oldStatic", "newStatic", "ts", "sig"], "additionalProperties": false, "$comment": "sig = Sign_Vx(SAX-rotate-v1 || pair_id || from || old_static || new_static || ts). Effective only after the PC re-issues the AIK certificate with user confirmation; all devices notified (C-18).", "properties": {"oldStatic": {"$ref": "#/$defs/b64key32"}, "newStatic": {"$ref": "#/$defs/b64key32"}, "ts": {"type": "integer", "minimum": 0}, "sig": {"$ref": "#/$defs/b64", "maxLength": 128}}}}}},
-    {"if": {"properties": {"type": {"enum": ["close", "ping", "pong"]}}}, "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "properties": {}}}}}
+    {"if": {"properties": {"type": {"enum": ["close", "ping", "pong"]}}}, "then": {"properties": {"body": {"type": "object", "additionalProperties": false, "properties": {}}}}},
+    {"if": {"properties": {"type": {"const": "receipt.offer"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "capturedAt", "mime", "bytes", "sha256", "chunkSize", "chunkCount", "ocrEngine", "ownerConfirmed"], "additionalProperties": false, "$comment": "Paper receipt photo from the in-app camera (P-08). chunkCount must equal ceil(bytes / chunkSize) (checked in code). Phone OCR values are an input aid; the PC docparse sandbox re-read is canonical (ADR-034 decision 9).", "properties": {
+      "msgId": {"$ref": "#/$defs/ulid", "$comment": "stable across retransmits; PC stores it as receipts.phone_msg_id (UNIQUE) and acks a known msgId as stored without storing again"},
+      "capturedAt": {"type": "integer", "minimum": 0},
+      "mime": {"const": "image/jpeg"},
+      "bytes": {"type": "integer", "minimum": 1, "maximum": 4194304},
+      "sha256": {"$ref": "#/$defs/sha256hex", "$comment": "of the whole JPEG. On mismatch the PC drops the reassembly and asks for every chunk again"},
+      "chunkSize": {"const": 49152},
+      "chunkCount": {"type": "integer", "minimum": 1, "maximum": 86},
+      "width": {"type": "integer", "minimum": 1, "maximum": 8192},
+      "height": {"type": "integer", "minimum": 1, "maximum": 8192},
+      "ocrEngine": {"enum": ["ios_vision", "android_mlkit", "none"]},
+      "ownerConfirmed": {"type": "boolean"},
+      "candidates": {"type": "object", "additionalProperties": false, "$comment": "values after the owner check on the phone; PC keeps them in receipts.phone_ocr_json next to its own result", "properties": {"amount": {"$ref": "#/$defs/won"}, "issuedOn": {"$ref": "#/$defs/day"}, "merchant": {"type": "string", "maxLength": 80}, "merchantBizNo": {"$ref": "#/$defs/bizNo"}}}}}}}},
+    {"if": {"properties": {"type": {"const": "receipt.chunk"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "index", "data"], "additionalProperties": false, "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "index": {"type": "integer", "minimum": 0, "maximum": 85}, "data": {"$ref": "#/$defs/b64", "minLength": 4, "maxLength": 65536, "$comment": "at most chunkSize bytes"}}}}}},
+    {"if": {"properties": {"type": {"const": "receipt.ack"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "state"], "additionalProperties": false, "$comment": "stored: saved on the PC (also for an already-known msgId); the phone deletes its copy. partial: send the listed chunks.", "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "state": {"enum": ["stored", "partial"]}, "missing": {"type": "array", "minItems": 1, "maxItems": 86, "uniqueItems": true, "items": {"type": "integer", "minimum": 0, "maximum": 85}}},
+      "allOf": [{"if": {"properties": {"state": {"const": "partial"}}}, "then": {"required": ["missing"]}}, {"if": {"properties": {"state": {"const": "stored"}}}, "then": {"not": {"required": ["missing"]}}}]}}}},
+    {"if": {"properties": {"type": {"const": "cash.entry"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "day", "amount", "enteredAt"], "additionalProperties": false, "$comment": "One number per day (P-09). The PC keeps the later of phone and PC values for the same day (D07 cash_sales) and tells the owner.", "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "day": {"$ref": "#/$defs/day"}, "amount": {"$ref": "#/$defs/won"}, "enteredAt": {"type": "integer", "minimum": 0}}}}}},
+    {"if": {"properties": {"type": {"const": "cash.ack"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "state"], "additionalProperties": false, "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "state": {"const": "stored"}}}}}},
+    {"if": {"properties": {"type": {"enum": ["receipt.offer", "receipt.chunk", "cash.entry"]}}}, "then": {"properties": {"from": {"const": "mobile"}, "to": {"const": "desktop"}}}},
+    {"if": {"properties": {"type": {"enum": ["receipt.ack", "cash.ack"]}}}, "then": {"properties": {"from": {"const": "desktop"}, "to": {"const": "mobile"}}}}
   ]
 }

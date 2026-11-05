@@ -1,0 +1,25 @@
+{
+  "name": "@sax/remote",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "D08 리모트 프로토콜(봉투·페어링·Noise·E2EE 전송·수신 큐). 순수 TS, Electron·Node 전용 API 없음. PC main과 폰 앱이 같이 쓴다.",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "gen:schema": "node scripts/gen-validator.mjs"
+  },
+  "dependencies": {
+    "@noble/ciphers": "2.4.0",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
+  }
+}
