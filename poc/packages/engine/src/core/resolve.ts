@@ -24,14 +24,19 @@ function namePattern(p: string): RegExp {
   return re;
 }
 
+/** 정규화한(NFKC·제로폭 제거·공백 접기) 이름이 namePattern(RE2)에 맞는가. 패턴이 RE2로 안 되면 거짓. */
+export function nameMatches(pattern: string, name: string): boolean {
+  try {
+    return namePattern(pattern).test(normalizeName(name));
+  } catch {
+    return false;
+  }
+}
+
 /** R-A1: 역할은 정확히 같고, 정규화한 이름이 namePattern에 맞아야 한다. 문제가 없으면 null. */
 export function identityProblem(entry: Pick<SelectorEntry, 'role' | 'namePattern'>, info: Pick<ElementInfo, 'role' | 'name'>): 'role' | 'name' | null {
   if (info.role !== entry.role) return 'role';
-  try {
-    return namePattern(entry.namePattern).test(normalizeName(info.name)) ? null : 'name';
-  } catch {
-    return 'name';
-  }
+  return nameMatches(entry.namePattern, info.name) ? null : 'name';
 }
 
 export async function resolveTarget(page: PageReader, dict: SelectorDict, key: string, depth = 0): Promise<ResolveResult> {

@@ -42,6 +42,17 @@ export interface InterpOptions {
 export const MAX_STEP_EXECUTIONS = 2_000;
 
 /** Equal Jitter(D03 §7): d = min(cap, base·2^(n−1)), 지연 = d/2 + U·d/2, 하한 floor. n은 1부터. */
+/**
+ * 재시도·onFail 없이 곧바로 멈추는 실패 코드(D16 처리 열). 보고 코드는 스텝 code로 바꾸지 않고 원래 코드다.
+ * - step.commit_shadow: 클릭 안 함, 핸드오프(보안 이벤트).
+ * - step.irreversible_unguarded·step.secret_field: 플레이북 결함(정적 검증 V-03g·V-04·V-20을 지나친 것). 재시도해도 같으므로 중단(PROPOSED_D16).
+ */
+export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
+  ['step.commit_shadow', 'handoff'],
+  ['step.irreversible_unguarded', 'abort'],
+  ['step.secret_field', 'abort'],
+]);
+
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {
   const d = Math.min(r.capMs, r.baseMs * 2 ** Math.max(0, attempt - 1));
   return Math.max(floorMs, Math.round(d / 2 + u * (d / 2)));
@@ -129,6 +140,10 @@ export class Interpreter {
       }
       this.hooks.event?.('step.finished', { stepId: s.id, type: s.type, ...(out.t === 'fail' ? this.codes(s, out.code) : {}) });
       if (out.t !== 'fail') return this.after(s, out);
+      // 재시도·onFail을 거치지 않는 코드(D16 처리 열): 같은 동작을 다시 해도 같은 거부라 바로 멈춘다.
+      const forced = FORCED_STOPS.get(out.code);
+      if (forced === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.id, code: out.code };
+      if (forced === 'abort') return { t: 'abort', at: s.id, code: out.code };
       if (attempt < retries) {
         const delay = retryDelayMs(attempt + 1, this.opts.retries, this.opts.retryFloorMs, (this.opts.random ?? Math.random)());
         this.hooks.event?.('step.retry', { stepId: s.id, type: s.type, attempt: attempt + 1, ...this.codes(s, out.code) });
