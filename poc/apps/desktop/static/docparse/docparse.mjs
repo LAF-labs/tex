@@ -1,11 +1,12 @@
-// 샌드박스 안 문서 파싱(ADR-014). 네트워크 없음, 저장 없음(tesseract cacheMethod none).
-// 이미지 {bytes} → {text, confidence}.
+// 샌드박스 안 문서 파싱(ADR-014). 네트워크 없음, 저장 없음(tesseract cacheMethod none). 출력 모양은 @sax/docparse schema/sandbox-output.schema.json.
+// 이미지(옛 경로) {bytes} → {text, confidence}.
+// 이미지 {kind:'image', bytes, mode:'document'|'photo', model} → {text, confidence, lines, width, height, exif}. 머리로 크기를 먼저 보고(폭탄 거부) 디코드한다.
+// 표 {kind:'sheet', bytes} → {format, encoding, sheets, flags}. xlsx·CSV를 @sax/docparse/sandbox 순수 모듈로 읽는다(수식·외부 연결·매크로는 열지 않는다).
 // PDF {kind:'pdf', bytes, maxPages, ocrPages, forceOcr, password?} → {text, pages, totalPages, hasTextLayer, scanned, ocrConfidence, timing}.
 //   hasTextLayer: 쓸 만한 텍스트 층이 있다. scanned: 그 층이 보이지 않는 글자(스캐너·복합기 OCR)다. ocrConfidence: text를 여기서 OCR로 읽었으면 신뢰도.
 // pdf.js 워커는 직접 띄워 workerPort로 넘긴다. workerSrc로 두면 워커를 못 띄울 때 메인 스레드로 조용히 넘어간다.
 import * as pdfjs from 'sax-docparse://app/pdfjs/pdf.min.mjs';
-import { cleanForOcr } from 'sax-docparse://app/docparse-image.mjs';
-import { assessTextLayer, itemsToLines, tidyText } from 'sax-docparse://app/docparse-text.mjs';
+import { assessTextLayer, cleanForOcr, cleanPhotoForOcr, IMAGE_LIMITS, imageInfo, itemsToLines, readSheetBytes, SANDBOX_ERRORS, tidyText } from 'sax-docparse://app/lib/index.js';
 
 const BASE = 'sax-docparse://app/';
 const PDFJS = `${BASE}pdfjs/`;
@@ -20,15 +21,59 @@ class JobError extends Error {
   }
 }
 
-function tesseractWorker() {
+/** model: 'tessdata'(@tesseract.js-data/kor 4.0.0, 기본) | 'best_int'(4.0.0_best_int, LSTM 전용 정수). e2e가 둘을 견준다 */
+function tesseractWorker(model = 'tessdata') {
   return Tesseract.createWorker('kor', 1, {
     workerPath: `${BASE}worker.min.js`,
     corePath: `${BASE}core`,
-    langPath: `${BASE}lang`,
+    langPath: model === 'best_int' ? `${BASE}lang-best-int` : `${BASE}lang`,
     workerBlobURL: false,
     cacheMethod: 'none',
     gzip: true,
   });
+}
+
+const KNOWN_ERRORS = new Set(SANDBOX_ERRORS);
+
+/** 그림 → 줄 목록. tesseract 블록 출력의 줄을 그대로 쓰고, text도 그 줄을 이어 만든다(파서가 줄마다 신뢰도를 쓰게) */
+async function ocrImageJob({ bytes, mode, model }) {
+  const info = imageInfo(bytes); // 디코드 전 크기 검사(SandboxError)
+  let bmp;
+  try {
+    bmp = await createImageBitmap(new Blob([bytes]));
+  } catch {
+    throw new JobError('image_decode_failed');
+  }
+  const scale = Math.min(1, IMAGE_LIMITS.ocrMaxSide / Math.max(bmp.width, bmp.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bmp.width * scale));
+  canvas.height = Math.max(1, Math.round(bmp.height * scale));
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  bmp.close();
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  if (mode === 'photo') cleanPhotoForOcr(img.data, img.width, img.height);
+  else cleanForOcr(img.data, img.width, img.height);
+  ctx.putImageData(img, 0, 0);
+  const png = await new Promise((r) => canvas.toBlob(r, 'image/png'));
+  canvas.width = 0;
+  canvas.height = 0;
+  if (!png) throw new JobError('render_failed');
+  const worker = await tesseractWorker(model);
+  try {
+    const { data: r } = await worker.recognize(png, {}, { text: true, blocks: true });
+    const lines = [];
+    for (const b of r.blocks ?? []) for (const p of b.paragraphs ?? []) for (const l of p.lines ?? []) {
+      const t = String(l.text || '').replace(/\s+$/, '');
+      if (t && lines.length < 1000) lines.push({ text: t.slice(0, 2000), confidence: Math.max(0, Math.min(100, Number(l.confidence || 0))) });
+    }
+    const text = lines.length ? lines.map((l) => l.text).join('\n') : String(r.text || '');
+    return { text: text.slice(0, 50000), confidence: Math.max(0, Math.min(100, Number(r.confidence || 0))), lines, width: info.width, height: info.height, exif: info.exif };
+  } finally {
+    await worker.terminate();
+  }
 }
 
 async function ocrImage({ bytes }) {
@@ -116,6 +161,9 @@ async function parsePdf({ bytes, maxPages, ocrPages, forceOcr, password }) {
       enableXfa: false,
       stopAtErrors: false,
       maxImageSize: 25_000_000,
+      // 6.x에는 eval 경로가 없어 이 두 옵션을 무시한다. 판이 내려가도 꺼진 채로 두려고 명시한다(ADR-014 결정 1).
+      isEvalSupported: false,
+      enableScripting: false,
     });
     const doc = await Promise.race([task.promise, failed]);
     const tLoaded = performance.now();
@@ -165,9 +213,12 @@ window.addEventListener('message', (ev) => {
   const port = ev.ports[0];
   port.onmessage = async ({ data }) => {
     try {
-      port.postMessage(data?.kind === 'pdf' ? await parsePdf(data) : await ocrImage(data));
+      const kind = data?.kind;
+      port.postMessage(kind === 'pdf' ? await parsePdf(data) : kind === 'image' ? await ocrImageJob(data) : kind === 'sheet' ? await readSheetBytes(data.bytes) : await ocrImage(data));
     } catch (e) {
-      port.postMessage({ error: e instanceof JobError ? e.code : 'ocr_failed' });
+      // 샌드박스 모듈(SandboxError)과 이 파일(JobError)의 코드만 내보낸다. 그 밖의 예외는 작업 종류별 실패 코드
+      const fallback = data?.kind === 'sheet' ? 'sheet_invalid' : data?.kind === 'pdf' ? 'parse_failed' : 'ocr_failed';
+      port.postMessage({ error: typeof e?.code === 'string' && KNOWN_ERRORS.has(e.code) ? e.code : fallback });
     }
   };
 });
