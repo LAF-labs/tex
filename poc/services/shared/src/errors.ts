@@ -114,6 +114,12 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'registry.portal_blocked',
   'registry.content_digest_mismatch',
   'registry.unauthorized',
+  'relay.unauthorized',
+  'relay.device_suspended',
+  'relay.room_unavailable',
+  'push.unauthorized',
+  'push.device_suspended',
+  'push.target_not_found',
 ];
 
 export class ServiceError extends Error {
