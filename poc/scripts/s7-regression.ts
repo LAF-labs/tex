@@ -1,14 +1,17 @@
 // S7 회귀 세트(D04 §9, D14 M3-7): screen_state_v2 결과 라벨 정확도(통과 98%+), blocked·captcha 재현율(99%+),
 // 질문별 정확도, 지연 p50/p95, 판정당 입력 토큰. 번들 버전을 올릴 때마다 돌리고 정확도 98% 미만이면 배포 금지.
-//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--out=/abs/path.json]
+//   node --conditions=development scripts/s7-regression.ts [--mock] [--n=100] [--gate] [--model=openai/gpt-6-luna] [--intent=N] [--out=/abs/path.json]
 // 코퍼스: tests/fixtures/l0-corpus.ts의 화면 라벨 코퍼스(합성, PoC-3 이후 홈택스 실화면 라벨 100장으로 바꾼다).
 // 입력 경로는 제품과 같다: 관측 노드 → A11yNode 트리 → Redactor.applyTree(절단·마스킹·구분자) → decide().
-// OPENAI_API_KEY가 있으면 실측(BYOK 직결, 비용 상한 $0.5), 없으면 모의 서버. 키는 어디에도 기록하지 않는다.
+// 키 우선순위(2026-11-05 yulmu): OPENROUTER_API_KEY → OpenRouter(OpenAI 호환 Chat Completions, @sax/net/demo DemoEgress,
+// 측정 전용 'initial' 프로필), 없으면 OPENAI_API_KEY → BYOK Decisions, 둘 다 없으면 모의 서버. 비용 상한은 회차당 $2.
+// 키·응답 원문은 어디에도 남기지 않는다(결과 JSON은 표본 ID·라벨·결과·수치만). 실행: set -a; . ./.env.local; set +a; pnpm s7
 // 실측일 때만 intent_route_v1 구어 코퍼스(300문장+)도 돌려 플레이북 정확도와 mentions_tax_advice 오탐·누락률을 잰다(D04 §3, M6-11).
 // 모의 서버는 의도 답을 흉내 내지 않으므로 모의 모드에서는 건너뛴다. 배포 게이트는 screen_state_v2만 본다(D04 §9).
 import fs from 'node:fs';
-import { BundleCatalog, DefaultModelLayer, OpenAIDecisionsAdapter, ThresholdProfiles, evaluateMapping, localRunToken, statesOf, type BundleAnswers, type Usage } from '@sax/model';
+import { BundleCatalog, DefaultModelLayer, OpenAICompatDecideAdapter, OpenAIDecisionsAdapter, ThresholdProfiles, evaluateMapping, localRunToken, statesOf, type BundleAnswers, type DecideAdapter, type Usage } from '@sax/model';
 import { Egress } from '@sax/net';
+import { DemoEgress } from '@sax/net/demo';
 import { Redactor, apply, type A11yNode } from '@sax/redaction';
 import type { ScreenObservation } from '@sax/engine';
 import { intentCorpus, screenCorpus, type Sample } from '../tests/fixtures/l0-corpus.ts';
@@ -19,13 +22,29 @@ const forceMock = process.argv.includes('--mock');
 const gate = process.argv.includes('--gate');
 const n = Number(process.argv.find((a) => a.startsWith('--n='))?.slice(4) ?? 100);
 const outArg = process.argv.find((a) => a.startsWith('--out='))?.slice(6);
-const apiKey = forceMock ? undefined : process.env.OPENAI_API_KEY || undefined;
-const mode: 'live' | 'mock' = apiKey ? 'live' : 'mock';
-const COST_CAP = 0.5;
+/** 의도 코퍼스 표본 수 상한(기본 전부). 시험 실행을 싸게 할 때만 줄인다. */
+const intentN = Number(process.argv.find((a) => a.startsWith('--intent='))?.slice(9) ?? Infinity);
+const orKey = forceMock ? undefined : process.env.OPENROUTER_API_KEY || undefined;
+const apiKey = forceMock || orKey ? undefined : process.env.OPENAI_API_KEY || undefined;
+const mode: 'openrouter' | 'live' | 'mock' = orKey ? 'openrouter' : apiKey ? 'live' : 'mock';
+const compatModel = process.argv.find((a) => a.startsWith('--model='))?.slice(8) ?? 'openai/gpt-6-luna';
+const COST_CAP = 2;
 const PASS = 0.98;
 const RECALL = 0.99;
 
-const lunaCost = (u: Usage) => ((u.inputTokens - u.cachedTokens - u.cacheWriteTokens) * 0.1 + u.cachedTokens * 0.01 + u.cacheWriteTokens * 0.125) / 1e6;
+/** 100만 토큰당 달러(입력, 캐시 입력, 캐시 쓰기, 출력). OpenRouter 가격은 2026-11-05 /api/v1/models 기준. */
+const PRICES: Record<string, [number, number, number, number]> = {
+  'gpt-6-luna': [0.1, 0.01, 0.125, 0.5],
+  'openai/gpt-6-luna': [0.1, 0.1, 0.1, 0.5],
+  'upstage/solar-pro4': [0.15, 0.15, 0.15, 0.6],
+  'upstage/solar-mini4': [0.05, 0.05, 0.05, 0.2],
+};
+/** 모르는 모델은 비싸게 잡아 상한이 먼저 걸리게 한다. */
+const priceOf = (m: string) => PRICES[m] ?? PRICES[m.replace(/-\d{4}-\d{2}-\d{2}$/, '')] ?? [10, 10, 10, 50];
+const costOf = (m: string, u: Usage) => {
+  const [i, c, w, o] = priceOf(m);
+  return ((u.inputTokens - u.cachedTokens - u.cacheWriteTokens) * i + u.cachedTokens * c + u.cacheWriteTokens * w + u.outputTokens * o) / 1e6;
+};
 
 /** 관측 노드(엔진 L0 모양) → 마스킹 계층 입력 트리. dialog 아래 노드는 대화상자 자식으로 묶는다. */
 export function obsToTree(o: ScreenObservation): A11yNode {
@@ -62,10 +81,22 @@ const pct = (xs: number[], p: number) => {
 
 async function main() {
   const catalog = BundleCatalog.load();
-  const profiles = ThresholdProfiles.load();
+  const base = ThresholdProfiles.load();
   const mock = mode === 'mock' ? await startOpenAIMock() : null;
-  const egress = new Egress({ modelGuard: { bundles: catalog.allowEntries() }, ...(mock ? { testOrigins: { openai: mock.origin } } : {}) });
-  const decider = new OpenAIDecisionsAdapter({ apiKey: apiKey ?? 'sk-mock', egress });
+  const guard = { modelGuard: { bundles: catalog.allowEntries() }, timeoutMs: 60_000 };
+  let egress: Egress;
+  let decider: DecideAdapter;
+  let profiles = base;
+  if (mode === 'openrouter') {
+    const demo = new DemoEgress(guard);
+    egress = demo;
+    // 학습·보관하지 않는 공급사로만 라우팅(data_collection: deny). 모델이 스스로 적은 확률이라 번들 기본 임계값('initial')으로 본다.
+    decider = new OpenAICompatDecideAdapter({ transport: demo, apiKey: orKey!, model: compatModel, extraBody: { provider: { data_collection: 'deny' } } });
+    profiles = new ThresholdProfiles([...base.items, ...catalog.list().map((x) => ({ bundle: x.wireId, bundleDigest: x.digest, provider: 'openai_compat' as const, model: compatModel, status: 'initial' as const, overrides: [] }))]);
+  } else {
+    egress = new Egress({ ...guard, ...(mock ? { testOrigins: { openai: mock.origin } } : {}) });
+    decider = new OpenAIDecisionsAdapter({ apiKey: apiKey ?? 'sk-mock', egress });
+  }
   const layer = new DefaultModelLayer({ catalog, profiles, decider });
   const b = layer.bundle(BUNDLE)!;
 
@@ -95,7 +126,7 @@ async function main() {
     const t0 = performance.now();
     const r = await layer.decide({ bundleId: BUNDLE, bundleDigest: b.digest, input, runToken: localRunToken(egress, { runId: `s7-${i}` }) });
     const ms = performance.now() - t0;
-    cost += lunaCost(r.usage);
+    cost += costOf(r.model, r.usage);
     rows.push({ id: s.id, expect, got: r.outcome, ...(r.reason ? { reason: r.reason } : {}), ms, inputTokens: r.usage.inputTokens });
     for (const q of b.def.questions) {
       const a = r.raw[q.name];
@@ -109,9 +140,9 @@ async function main() {
   }
   // 의도 라우팅(실측만)
   let intent: Record<string, unknown> | null = null;
-  if (mode === 'live' && !stopped) {
+  if (mode !== 'mock' && !stopped) {
     const ib = layer.bundle('intent_route_v1')!;
-    const xs = intentCorpus();
+    const xs = intentCorpus().slice(0, intentN);
     let ok = 0;
     let fp = 0;
     let fn = 0;
@@ -125,7 +156,7 @@ async function main() {
       }
       const input = apply((s.obs as { text: string }).text, { chatSessionId: `s7-intent-${i}` }, { frame: 'none' }).redacted;
       const r = await layer.decide({ bundleId: 'intent_route_v1', bundleDigest: ib.digest, input, runToken: localRunToken(egress, { chatSessionId: `s7-intent-${i}` }) });
-      cost += lunaCost(r.usage);
+      cost += costOf(r.model, r.usage);
       n2++;
       const pa = r.raw.playbook;
       const got = pa?.type === 'choice' ? pa.value : 'unknown';
@@ -157,6 +188,7 @@ async function main() {
   for (const r of rows) ((confusion[r.expect] ??= {})[r.got] = (confusion[r.expect]![r.got] ?? 0) + 1);
   const result = {
     mode,
+    model: decider.model,
     bundle: BUNDLE,
     bundleDigest: b.digest,
     corpus: 'l0-corpus screenCorpus(20, 7) — 합성',

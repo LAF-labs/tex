@@ -20,6 +20,11 @@ const VENDOR_MSG = '공급사 SDK는 packages/model/src/adapters/*에서만 impo
 const VENDOR_SDKS = ['openai', '@google/genai', '@google/generative-ai', 'cohere-ai', 'ollama', 'groq-sdk'];
 const restrictedVendor = VENDOR_SDKS.map((name) => ({ name, message: VENDOR_MSG }));
 const vendorPatterns = [{ group: ['openai/*', '@anthropic-ai/*', '@google/genai/*', '@google/generative-ai/*', '@mistralai/*', '@upstage/*', 'groq-sdk/*', 'cohere-ai/*'], message: VENDOR_MSG }];
+/** 시연·측정 전용 송신(ADR-035 W-5). 제품 진입점에서 OpenRouter 목적지가 컴파일되지 않게 한다. */
+const DEMO_MSG = '@sax/net/demo(시연·측정 전용 송신)는 apps/desktop/src/demo-*.ts·scripts·tests에서만 import한다(ADR-035 W-5).';
+const restrictedDemo = [{ name: '@sax/net/demo', message: DEMO_MSG }];
+const demoPatterns = [{ group: ['@sax/net/demo/*', '**/net/src/demo', '**/net/src/demo.ts', '**/net/dist/demo.js'], message: DEMO_MSG }];
+const DEMO_FILES = ['apps/desktop/src/demo-*.ts'];
 const restrictedCommon = [
   ...restrictedNet,
   { name: 'electron', importNames: ['net'], message: 'electron net 금지(ADR-028 결정 6). 송신은 egress로만.' },
@@ -90,21 +95,32 @@ export default tseslint.config(
     // 송신 규칙 범위 밖(net·redaction·desktop static 등)에도 공급사 SDK 금지는 건다.
     files: ['**/*.ts', '**/*.mjs', '**/*.js', '**/*.cjs'],
     ignores: VENDOR_ALLOWED,
-    rules: { 'no-restricted-imports': ['error', { paths: restrictedVendor, patterns: vendorPatterns }] },
+    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedVendor, ...restrictedDemo], patterns: [...vendorPatterns, ...demoPatterns] }] },
   },
   {
     files: SEND_SCOPE,
     ignores: SEND_EXEMPT,
+    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedVendor, ...restrictedDemo], patterns: [...netPatterns, ...vendorPatterns, ...demoPatterns] }], ...sendGlobals },
+  },
+  {
+    // 시연 파일만 @sax/net/demo를 쓴다. 나머지 송신 규칙은 SEND_SCOPE와 같다.
+    files: DEMO_FILES,
     rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedVendor], patterns: [...netPatterns, ...vendorPatterns] }], ...sendGlobals },
   },
   {
     files: ['packages/engine/**/*.ts', 'packages/model/**/*.ts'],
-    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedChild, ...restrictedVendor], patterns: [...netPatterns, ...vendorPatterns] }] },
+    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedChild, ...restrictedVendor, ...restrictedDemo], patterns: [...netPatterns, ...vendorPatterns, ...demoPatterns] }] },
   },
   {
-    // 어댑터만 공급사 SDK를 쓴다. 송신 모듈·child_process 금지는 그대로다(SDK의 fetch는 egress.providerFetch).
+    // 어댑터만 공급사 SDK를 쓴다. 송신 모듈·child_process·시연 송신 금지는 그대로다(SDK의 fetch는 egress.providerFetch).
     files: ['packages/model/src/adapters/**/*.ts'],
-    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedChild], patterns: netPatterns }] },
+    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedCommon, ...restrictedChild, ...restrictedDemo], patterns: [...netPatterns, ...demoPatterns] }] },
+  },
+  {
+    // 제품 진입점(@sax/net)은 시연 모듈을 다시 내보내지 않는다.
+    files: ['packages/net/src/**/*.ts'],
+    ignores: ['packages/net/src/demo.ts'],
+    rules: { 'no-restricted-imports': ['error', { paths: [...restrictedVendor, ...restrictedDemo], patterns: [...vendorPatterns, ...demoPatterns, { group: ['./demo', './demo.ts', './demo.js'], message: DEMO_MSG }] }] },
   },
   {
     files: SECRET_SCOPE,

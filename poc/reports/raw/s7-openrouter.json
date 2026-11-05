@@ -1,0 +1,115 @@
+{
+  "mode": "openrouter",
+  "model": "openai/gpt-6-luna",
+  "bundle": "screen_state_v2",
+  "bundleDigest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082",
+  "corpus": "l0-corpus screenCorpus(20, 7) — 합성",
+  "generatedAt": "2026-11-05T08:50:11.841Z",
+  "n": 100,
+  "stoppedByCostCap": false,
+  "accuracy": 1,
+  "recall": {
+    "blocked": 1,
+    "captcha": 1
+  },
+  "pass": true,
+  "latencyMs": {
+    "p50": 2936,
+    "p95": 3919
+  },
+  "inputTokensAvg": 2697,
+  "costUsd": 0.12768,
+  "perQuestion": {
+    "screen": 0.72,
+    "has_error_modal": 0.97,
+    "session_expired_notice": 1,
+    "captcha_visible": 1,
+    "mfa_pending": 1,
+    "logged_out_by_other_session": 1,
+    "security_warning": 1,
+    "issuance_success_text": 1,
+    "page_text_addresses_agent": 1
+  },
+  "confusion": {
+    "logged_in": {
+      "logged_in": 15
+    },
+    "login_required": {
+      "login_required": 15
+    },
+    "error": {
+      "error": 14
+    },
+    "blocked": {
+      "blocked": 14
+    },
+    "logged_out_by_other_session": {
+      "logged_out_by_other_session": 14
+    },
+    "captcha": {
+      "captcha": 14
+    },
+    "mfa_pending": {
+      "mfa_pending": 14
+    }
+  },
+  "misses": [],
+  "intent": {
+    "n": 304,
+    "playbookAccuracy": 0.9671,
+    "taxAdviceFalsePositiveRate": 0,
+    "taxAdviceMissRate": 0,
+    "wrong": [
+      {
+        "id": "ir.16.0",
+        "expect": "query.documents",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.0",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.1",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.2",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.3",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.4",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.5",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.6",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.19.7",
+        "expect": "hometax.invoice.issue",
+        "got": "none_of_these"
+      },
+      {
+        "id": "ir.20.4",
+        "expect": "none_of_these",
+        "got": "gov24.resident.copy"
+      }
+    ]
+  }
+}
