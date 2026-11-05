@@ -219,7 +219,7 @@ describe('D05 §3.4 응답 정리 표', () => {
     assert.match(JSON.stringify(r), /"pw"/, '다른 속성은 남긴다');
   });
 
-  it('보낼 때 오염이었던 요청은 응답 전에 문서 커밋으로 창이 닫혀도 정화한다(getProperties·바디·DOM)', async () => {
+  it('보낼 때 오염이었던 요청은 응답 전에 문서 커밋으로 창이 닫혀도 정화한다(getProperties·Network/Fetch 바디·DOM)', async () => {
     const f = await fakeRelay();
     const t = f.relay.targets.get('RUN')!;
     f.relay.openWindow(t, 'human', 'RUN', 7);
@@ -227,6 +227,7 @@ describe('D05 §3.4 응답 정리 표', () => {
     const reqs: Array<[string, Json, Json]> = [
       ['Runtime.getProperties', { objectId: 'X' }, { result: [{ name: 'value', value: { type: 'string', value: 'TEST-RACE-1', description: 'TEST-RACE-1' } }] }],
       ['Network.getRequestPostData', { requestId: 'R-ok' }, { postData: 'pw=TEST-RACE-2' }],
+      ['Fetch.getRequestPostData', { requestId: 'F-ok' }, { postData: 'pw=TEST-RACE-4' }],
       ['DOM.describeNode', { backendNodeId: 7 }, { node: { nodeId: 1, backendNodeId: 7, nodeName: 'INPUT', attributes: ['value', 'TEST-RACE-3'], value: 'TEST-RACE-3' } }],
     ];
     let id = 900;

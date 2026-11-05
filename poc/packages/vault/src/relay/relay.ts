@@ -736,8 +736,8 @@ export class Relay {
           if ('description' in v) v.description = '';
         }
       }
-    } else if (p.method === 'Network.getRequestPostData' && tainted) {
-      // 응답 도착 시점에 창이 열렸으면 바디를 넘기지 않는다.
+    } else if ((p.method === 'Network.getRequestPostData' || p.method === 'Fetch.getRequestPostData') && tainted) {
+      // 보낼 때나 응답 도착 때 창이 있었으면 바디를 넘기지 않는다(두 메서드는 D05 거부·정책 검사가 같다).
       out.result = { postData: '' };
     }
     return out;
