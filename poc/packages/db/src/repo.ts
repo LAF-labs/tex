@@ -18,11 +18,14 @@ export interface Profile {
   email: string | null;
   signMethod: SignMethod;
   keepSession: boolean;
+  /** 홈택스 아이디 로그인(보안카드 경로)의 아이디. 비밀이 아니라 프로필 정보다(팀장 결정 2026-11-05). 비밀번호·보안카드는 금고만 */
+  portalLoginId: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession'> & { keepSession?: boolean };
+/** portalLoginId를 빼면(undefined) 저장된 값을 그대로 둔다(금고 등록 결과로 따로 들어온다) */
+export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession' | 'portalLoginId'> & { keepSession?: boolean; portalLoginId?: string | null };
 
 export interface Counterparty {
   id: string;
@@ -65,6 +68,7 @@ const toProfile = (r: Row): Profile => ({
   email: (r.email as string) ?? null,
   signMethod: (r.sign_method as SignMethod) ?? null,
   keepSession: r.keep_session === 1,
+  portalLoginId: (r.portal_login_id as string) ?? null,
   createdAt: String(r.created_at),
   updatedAt: String(r.updated_at),
 });
@@ -85,6 +89,13 @@ const toCounterparty = (r: Row): Counterparty => ({
 });
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** 포털 아이디: 앞뒤 공백을 뗀 1~64자, 공백·제어 문자 없음. 틀리면 bad_login_id */
+export function normalizeLoginId(raw: string): string {
+  const id = raw.trim();
+  if (!id || id.length > 64 || /[\s\p{Cc}]/u.test(id)) throw new ValidationError('bad_login_id');
+  return id;
+}
 
 function checkEmail(email: string | null | undefined): void {
   if (email && !EMAIL.test(email)) throw new ValidationError('invalid_email');
@@ -136,17 +147,26 @@ export class ProfileRepo {
       email: input.email ?? null,
       sign_method: input.signMethod ?? null,
       keep_session: input.keepSession ? 1 : 0,
+      portal_login_id: input.portalLoginId === undefined ? (existing?.portalLoginId ?? null) : input.portalLoginId === null ? null : normalizeLoginId(input.portalLoginId),
       created_at: existing?.createdAt ?? t,
       updated_at: t,
     };
     this.db
-      .prepare(`INSERT INTO profiles (id, kind, display_name, biz_no, corp_no, rep_name, biz_type, biz_item, address, email, sign_method, keep_session, created_at, updated_at)
-        VALUES (@id, @kind, @display_name, @biz_no, @corp_no, @rep_name, @biz_type, @biz_item, @address, @email, @sign_method, @keep_session, @created_at, @updated_at)
+      .prepare(`INSERT INTO profiles (id, kind, display_name, biz_no, corp_no, rep_name, biz_type, biz_item, address, email, sign_method, keep_session, portal_login_id, created_at, updated_at)
+        VALUES (@id, @kind, @display_name, @biz_no, @corp_no, @rep_name, @biz_type, @biz_item, @address, @email, @sign_method, @keep_session, @portal_login_id, @created_at, @updated_at)
         ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name, biz_no=excluded.biz_no, corp_no=excluded.corp_no, rep_name=excluded.rep_name,
           biz_type=excluded.biz_type, biz_item=excluded.biz_item, address=excluded.address, email=excluded.email, sign_method=excluded.sign_method,
-          keep_session=excluded.keep_session, updated_at=excluded.updated_at`)
+          keep_session=excluded.keep_session, portal_login_id=excluded.portal_login_id, updated_at=excluded.updated_at`)
       .run(row);
     return this.get(row.id)!;
+  }
+
+  /** 금고 등록(T-06) 결과의 포털 아이디만 바꾼다. null이면 지운다. 없는 프로필은 profile_not_found */
+  setPortalLoginId(id: string, loginId: string | null): Profile {
+    const v = loginId === null ? null : normalizeLoginId(loginId);
+    const n = this.db.prepare('UPDATE profiles SET portal_login_id = ?, updated_at = ? WHERE id = ?').run(v, now(), id).changes;
+    if (!n) throw new ValidationError('profile_not_found');
+    return this.get(id)!;
   }
 
   delete(id: string): boolean {
