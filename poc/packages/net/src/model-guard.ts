@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { normalizeForDetection, type RedactedText } from '@sax/redaction';
+import { identifierTripwire, normalizeForRedaction, type RedactedText } from '@sax/redaction';
 import type { ValidateFunction } from 'ajv';
 
 export interface BundleAllowEntry {
@@ -63,18 +63,10 @@ export interface L2Usage {
   l2Turns: number;
 }
 
-// gateway-request.schema.json 규칙 (6): 주민번호·사업자번호·카드·계좌. 마스킹을 통과한 텍스트에 다시 돌린다.
-const TRIPWIRE: RegExp[] = [
-  /(?<!\d)\d{6}-?[1-8]\d{6}(?!\d)/,
-  /(?<!\d)\d{3}-?\d{2}-?\d{5}(?!\d)/,
-  /(?<!\d)\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}(?!\d)/,
-  /(?<!\d)\d{10,14}(?!\d)/,
-  /(?<!\d)\d{2,6}-\d{2,6}-\d{2,7}(?:-\d{1,3})?(?!\d)/,
-];
-
+// gateway-request.schema.json 규칙 (6): 주민번호·사업자번호·카드·계좌(+법인번호). 마스킹을 통과한 텍스트에 다시 돌린다.
+// 규칙 원천은 @sax/redaction entities.ts 하나다(트립와이어가 잡는 것은 마스킹이 먼저 잡는다). 한글 숫자 사본도 본다.
 export function piiTripwire(text: string): boolean {
-  const t = normalizeForDetection(text).replace(/[\u2010-\u2015\u2212]/g, '-');
-  return TRIPWIRE.some((re) => re.test(t));
+  return identifierTripwire(normalizeForRedaction(text)) !== null;
 }
 
 let validators: { decide: ValidateFunction; respond: ValidateFunction } | null = null;
