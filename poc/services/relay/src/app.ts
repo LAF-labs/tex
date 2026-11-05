@@ -94,8 +94,11 @@ export class RelayHub {
     try {
       return await this.o.svc.auth(mbxId, token, which);
     } catch (e) {
-      if (!f) this.authFails.set(k, (f = { start: now, n: 0 }));
-      f.n++;
+      // 토큰 추측(우편함 없음·토큰 틀림)만 센다. DB 장애 같은 다른 실패를 세면 정상 토큰이 10분간 막힌다
+      if (e instanceof ServiceError && e.code === 'relay.mailbox_not_found') {
+        if (!f) this.authFails.set(k, (f = { start: now, n: 0 }));
+        f.n++;
+      }
       throw e;
     }
   }

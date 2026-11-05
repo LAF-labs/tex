@@ -70,9 +70,10 @@ export class RelayService {
   /** 우편함 삭제(재발급 mbx.reissue 뒤 옛 우편함, 기기 해제). 큐·번들도 함께. 호출 기기의 개수를 하나 줄인다. */
   async deleteMailbox(deviceId: string, key: string): Promise<void> {
     await this.d.db.tx(async (q) => {
+      // 동시에 같은 우편함을 지우면 둘 다 auth를 통과한다. 실제로 지운 쪽만 개수를 줄인다(한도 우회 방지)
+      if ((await q.run('DELETE FROM mailboxes WHERE mbx_key = $1', [key])) !== 1) return;
       await q.run('DELETE FROM queue WHERE mbx_key = $1', [key]);
       await q.run('DELETE FROM mailbox_bundles WHERE mbx_key = $1', [key]);
-      await q.run('DELETE FROM mailboxes WHERE mbx_key = $1', [key]);
       await q.run('UPDATE mailbox_quota SET n = n - 1 WHERE device_id = $1 AND n > 0', [deviceId]);
     });
   }

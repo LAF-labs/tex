@@ -185,7 +185,15 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     // 삭제하면 개수가 돌아온다(재발급 mbx.reissue)
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokRead } })).json.error, 'relay.mailbox_not_found');
     assert.equal((await e.call(e.pc, 'DELETE', `/v1/mailboxes/${m.mbxId}`, { headers: { 'x-mbx-write': m.tokWrite } })).status, 204);
+    const n = newMailbox();
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: n })).status, 201);
+    // 같은 우편함을 동시에 두 번 지워도 개수는 한 번만 줄어든다(한도 우회 없음)
+    const del = () => e.call(e.pc, 'DELETE', `/v1/mailboxes/${n.mbxId}`, { headers: { 'x-mbx-write': n.tokWrite } });
+    const both = await Promise.all([del(), del(), del()]);
+    assert.ok(both.every((r) => r.status === 204 || r.json.error === 'relay.mailbox_not_found'));
+    assert.equal((await e.db.one<{ n: number }>('SELECT n FROM mailbox_quota'))!.n, 2);
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).status, 201);
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: newMailbox() })).json.error, 'relay.mailbox_limit');
   });
 
   it('토큰이 틀리면 우편함이 없을 때와 같은 응답, IP당 10분 20회 실패 뒤에는 맞는 토큰도 거부', async () => {
@@ -198,6 +206,12 @@ describe('M7-3 릴레이: 우편함 등록·능력 토큰·기기 토큰', () =>
     for (let i = 2; i < RELAY.authFailuresPerIp; i++) await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': id32() } });
     assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).json.error, 'policy.rate_limited');
     e.s.clock.advance(RELAY.authFailureWindowMs);
+    assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).status, 200);
+    // DB 장애는 토큰 추측으로 세지 않는다(장애가 끝나면 맞는 토큰은 바로 통한다)
+    const auth = e.svc.auth.bind(e.svc);
+    e.svc.auth = () => Promise.reject(new Error('db down'));
+    for (let i = 0; i < RELAY.authFailuresPerIp + 2; i++) assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).status, 500);
+    e.svc.auth = auth;
     assert.equal((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).status, 200);
   });
 });
@@ -283,6 +297,7 @@ describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
     ph.ws.send('hello');
     ph.ws.send(Buffer.from([9]));
     await ph.closed;
+    // PC가 받은 바이너리는 폰이 보낸 f1 하나뿐이다(f2는 PC가 보낸 것). 틀린 프레임은 하나도 오지 않았다
     assert.ok(pc.msgs.filter(Buffer.isBuffer).length === 1, '형식이 틀린 프레임은 전달되지 않았다');
     assert.deepEqual(await pc.next(isPeer), { t: 'peer', online: false });
     const stats = await e.db.all<{ kind: string; size_bucket: number; n: number }>('SELECT kind, size_bucket, n FROM relay_stats ORDER BY kind');
