@@ -1,6 +1,6 @@
 # D02. 플레이북 IR 스펙
 
-> 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05).
+> 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05). §2 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52).
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A(research/REVIEW-A-ir-engine.md)를 반영해 제어 흐름 의미론, 커밋 구간 규칙(V-03a~h), 셀렉터 사전 속성, 조회형 `verify`, 의도 키를 정의했다. 반례 CE-1~CE-18은 검증기 퍼징의 고정 회귀 세트다(D13 §7).
 
@@ -25,7 +25,7 @@
 └── strings.ko.json    # 카드 제목·보조 설명·프롬프트·변경 로그 (카드 필드 라벨은 여기 없다 — 앱 내장)
 ```
 
-- `signatures[]`(B-22): 앱에 핀 고정된 패키지 서명 키 3개 중 **서로 다른 2개 이상**의 Ed25519 서명이다. 서명 대상은 `JCS(manifest − signatures)`이고, manifest의 `contentDigests`가 나머지 세 파일을 묶는다. v1.1의 단일 `SIGNATURE` 파일은 폐지한다. 로드 규칙은 D03 §3.1, 키 운영은 D09 §8·ADR-013.
+- `signatures[]`(B-22): 앱에 핀 고정된 패키지 서명 키 3개 중 **서로 다른 2개 이상**의 Ed25519 서명이다. 서명 대상은 `JCS(manifest − signatures)`이고, manifest의 `contentDigests`가 나머지 세 파일을 묶는다. 서명 바이트 규약(서명 입력의 맥락 문자열·정규화·인코딩)의 정본은 [schemas/SIGNING.md](schemas/SIGNING.md)(엔진 트랙 작성, 엔진 PR #52)다. v1.1의 단일 `SIGNATURE` 파일은 폐지한다. 로드 규칙은 D03 §3.1, 키 운영은 D09 §8·ADR-013.
 - `kind`: `playbook` 또는 `lookup`(조회 하위 플레이북, `effects: []`, V-22)(B-08).
 - `domains[]`: 이동·요청 허용 호스트(정확 일치, 하위 도메인은 명시 와일드카드만). 엔진이 네비게이션·요청을 감시해 밖으로의 이동을 차단하고, 금고 중계도 매 문서 커밋마다 `내장 eTLD+1 ∩ domains`를 다시 확인한다(D05).
 - `effects[]`: 이 플레이북이 일으킬 수 있는 비가역 효과의 종류 `{issue_document, send, sign, pay}`. 데몬 실행 가능 여부는 이 값을 **런타임에** 본다(R-D1, D03 §12, B-27).
