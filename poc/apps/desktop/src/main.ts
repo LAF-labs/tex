@@ -10,7 +10,7 @@ import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLay
 import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import { GestureClock, isGestureKey } from './gesture.ts';
-import { hardenApp, hardenSession, hardenWindow } from './harden.ts';
+import { appHeaders, hardenApp, hardenSession, hardenWindow } from './harden.ts';
 import { fatalText } from './shell-runs.ts';
 import { cancelPick, importPdf } from './vault-import.ts';
 
@@ -50,7 +50,7 @@ function serveStatic(): void {
     const p = new URL(req.url).pathname;
     const type = files[p];
     if (!type) return new Response('', { status: 404 });
-    return new Response(await fs.readFile(path.join(STATIC, p.slice(1))), { headers: { 'content-type': type } });
+    return new Response(await fs.readFile(path.join(STATIC, p.slice(1))), { headers: appHeaders(type) });
   });
   // 렌더러는 네트워크가 없다(D01 §2.1). 기본 세션에서 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${APP_SCHEME}://`) && !d.url.startsWith('devtools://') }));
@@ -132,7 +132,7 @@ app.whenReady().then(async () => {
     // 메인 UI 창에서 온 호출만 받는다.
     // senderFrame은 null일 수 있다(프레임이 사라진 뒤 도착한 호출 등). null이면 거부한다.
     const url = e.senderFrame?.url;
-    if (e.sender !== win?.webContents || typeof url !== 'string' || !url.startsWith(`${APP_SCHEME}://app/app.html`)) throw new Error('forbidden');
+    if (e.sender !== win?.webContents || e.senderFrame?.parent !== null || typeof url !== 'string' || !url.startsWith(`${APP_SCHEME}://app/app.html`)) throw new Error('forbidden');
     if (typeof req?.method !== 'string') throw new Error('bad_request');
     return handleRenderer(req.method, (req.params ?? {}) as Record<string, unknown>);
   });
