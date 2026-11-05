@@ -1,6 +1,7 @@
 import type { EventLog } from '@sax/platform';
 import { ACTIVE_WINDOW_DROP_EVENTS } from '../constants.ts';
 import type { CdpMessage, PipeConnection } from '../cdp/connection.ts';
+import type { CommitGuard } from './commit-guard.ts';
 import { checkSessionCommand, urlAllowed, type RelayPolicy, type Verdict } from './policy.ts';
 import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAuthHeaders, stripMessageHeaders, stripRequestBody, type SecretNodes } from './sanitize.ts';
 
@@ -105,6 +106,8 @@ export class Relay {
   /** 측정용(S6b): 엔진이 보낸 메서드별 판정. */
   readonly methodStats = new Map<string, { forwarded: number; denied: number; synthetic: number; scope: 'root' | 'session' }>();
   readonly onSecretWindowClosed = new Set<(targetId: string) => void>();
+  /** R-C1 커밋 본문 대조(금고 서비스가 붙인다). */
+  commitGuard: CommitGuard | null = null;
 
   constructor(opts: RelayOptions) {
     this.conn = opts.conn;
@@ -174,6 +177,11 @@ export class Relay {
     const verdict = checkSessionCommand(msg.method, msg.params, this.stateOf(t), this.policy, this.taintedRequests);
     if (!verdict.ok) {
       this.reject(msg, verdict, 'session');
+      return;
+    }
+    // R-C1: 금고가 막은 커밋 요청은 엔진이 이어 보내거나 대신 답하지 못한다.
+    if (msg.method.startsWith('Fetch.') && this.commitGuard?.blocked.has(String(msg.params?.requestId))) {
+      this.reject(msg, { ok: false, reason: 'commit_blocked' }, 'session');
       return;
     }
     if (msg.method === 'Fetch.enable' && !this.fetchPatternsAllowed(msg.params)) {
@@ -575,6 +583,8 @@ export class Relay {
         return msg;
       case 'Network.requestWillBeSent':
       case 'Fetch.requestPaused':
+        // R-C1: 무장된 커밋 요청은 금고가 본문을 대조한다(헤더 정리 전, Content-Type이 필요). 본문은 엔진에 넘기지 않는다.
+        if (this.commitGuard && (await this.commitBody(msg, t, p)) === 'drop') return null;
         stripMessageHeaders(p.request as Json);
         stripMessageHeaders(p.redirectResponse as Json);
         stripAuthHeaders(p.responseHeaders as Json[]);
@@ -610,6 +620,21 @@ export class Relay {
   }
 
   /** 부모 세션의 현재 URL(page는 타깃 URL, 자식은 자기 문서 URL). */
+  /** R-C1 대조. hide면 본문을 지우고 그 요청의 본문 조회도 막는다. */
+  private async commitBody(msg: CdpMessage, t: TargetState, p: Json): Promise<'pass' | 'hide' | 'drop'> {
+    const guard = this.commitGuard!;
+    const req = (p.request ?? {}) as Json;
+    let d: 'pass' | 'hide' | 'drop';
+    if (msg.method === 'Fetch.requestPaused') d = await guard.onPaused(t.targetId, msg.sessionId!, p);
+    else d = guard.armedFor(t.targetId, String(req.url ?? ''), String(req.method ?? '')) || this.taintedRequests.has(String(p.requestId)) ? 'hide' : 'pass';
+    if (d === 'hide') {
+      stripRequestBody(req);
+      this.taintedRequests.add(String(p.requestId));
+      if (p.networkId) this.taintedRequests.add(String(p.networkId));
+    }
+    return d;
+  }
+
   private sessionUrl(sessionId: string | undefined): string {
     if (!sessionId) return '';
     const es = this.engineSessions.get(sessionId);
