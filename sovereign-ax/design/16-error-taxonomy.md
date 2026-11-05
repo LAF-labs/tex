@@ -1,5 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
+> 클라우드 PR #46 반영 2026-11-05(팀장 결정): `account.device_hold`(423, 기기 추가 72시간 대기) 추가. PR #46의 나머지 `PROPOSED_D16` 코드는 아직 넣지 않았다.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교). · AUDIT-D 반영 2026-11-03: 아래 `portal`·`policy` 행 뒤의 AUDIT-D 행(ADR-025~029, D19 §3.5).
 
 모든 `StepResult.code`, 텔레메트리 `code`, 데몬 원인 코드, 게이트웨이 응답, 핸드오프 사유, 사용자 메시지는 이 체계에서 나온다. 형식 `<영역>.<코드>`, 소문자 스네이크. 값(화면 텍스트·입력·셀렉터 문자열·비밀 길이)은 코드에 넣지 않는다.
@@ -67,6 +68,7 @@
 | `devlist` | `version_mismatch` | 기기 목록 버전 불일치로 비가역 승인·비밀 요청 보류(C-20) | `err.devlist.version_mismatch` | 목록 갱신 후 재시도 |
 | `registry` | `head_mismatch` / `revocation_stale` | 투명성 로그 헤드 불일치: Phase 1은 레지스트리와 별도 호스트 미러의 헤드 비교(E-14), Phase 2부터는 폰·PC 헤드 교환 포함(split-view 의심, **보안 이벤트**) / 폐기 목록 신선도 24시간 초과(C-26) | `err.registry.*` | 경고·새 로드 보류 |
 | `account` | `recovery_hold` | 새 PC·PASS 복구 뒤 지연 기간 중(C-21, ADR-029) | `err.account.recovery_hold` | 대기 |
+| `account` | `device_hold` | 이메일 세션으로 추가한 기기의 72시간 대기 중(HTTP 423, D09 §2.2, `recovery_hold`와 구분, 클라우드 PR #46) | `err.account.device_hold` | 대기 |
 | `daemon` | `window_closed` / `pc_busy` / `in_doubt_pending` / `consent_missing` / `demoted_to_notify` | 스케줄러 | `err.daemon.*` | — |
 | `daemon` | `effects_denied` | 데몬 트리거인데 `manifest.effects ⊄ {issue_document}`(R-D1, B-27) | `err.daemon.effects_denied` | 실행 안 함 |
 | `postprocess` | `file_not_detected` / `pdf_unreadable` / `meta_extraction_failed` / `sync_folder_warning` | 후처리 모드 | `err.postprocess.*` | 수동 메타 입력 |

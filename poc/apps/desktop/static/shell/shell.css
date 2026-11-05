@@ -231,3 +231,8 @@ body.bar-active .rs-waiting { display: inline-flex; }
 /* 시연: 채팅 해석 경로(모델 해석 / 오프라인 해석). 작게, 다른 상태와 같은 줄에. */
 .tb-interp { font-size: 11px; color: var(--ink-3); }
 .tb-interp[data-interp=model]::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+/* 시연: 거래처 추가·수정 폼 */
+.cp-form { display: grid; gap: 10px; margin: 12px 0; }
+.cp-field { display: grid; gap: 4px; }
+.cp-field .doc-in { width: 100%; }
+.cp-field .doc-in:disabled { color: var(--ink-3); background: var(--surface-sunken); }

@@ -1,6 +1,6 @@
 # D19. 공격표면 감사와 통제 보강 — 처리 결정 등록부
 
-> 상태: v1.3 기준 문서 · 작성일 2026-10-28 · 정합성 검수(D)·보안 재감사(E) 반영 2026-10-28 · 로컬 승인 근거 재설계(ADR-021) 반영 2026-10-31 · AUDIT-D 반영 2026-11-03(§3.5, ADR-025~029) · 입력: [AUDIT-A 로컬 데스크톱](../research/AUDIT-A-local-desktop.md)(32건), [AUDIT-B 플레이북·엔진·모델](../research/AUDIT-B-playbook-engine-model.md)(35건), [AUDIT-C 원격·클라우드·주권](../research/AUDIT-C-remote-cloud-sovereignty.md)(34건), [AUDIT-D 설계 v1.3 + PoC 코드](../research/AUDIT-D-v13-poc-security.md)(확정 53건), [R6](../research/R6-upstage-solar.md)·[R7](../research/R7-naver-cloud-sovereign.md)·[R8](../research/R8-local-decision-model.md)
+> 상태: v1.3 기준 문서 · 작성일 2026-10-28 · 정합성 검수(D)·보안 재감사(E) 반영 2026-10-28 · 로컬 승인 근거 재설계(ADR-021) 반영 2026-10-31 · AUDIT-D 반영 2026-11-03(§3.5, ADR-025~029) · 입력: [AUDIT-A 로컬 데스크톱](../research/AUDIT-A-local-desktop.md)(32건), [AUDIT-B 플레이북·엔진·모델](../research/AUDIT-B-playbook-engine-model.md)(35건), [AUDIT-C 원격·클라우드·주권](../research/AUDIT-C-remote-cloud-sovereignty.md)(34건), [AUDIT-D 설계 v1.3 + PoC 코드](../research/AUDIT-D-v13-poc-security.md)(확정 53건), [R6](../research/R6-upstage-solar.md)·[R7](../research/R7-naver-cloud-sovereign.md)·[R8](../research/R8-local-decision-model.md) · 팀장 결정 반영 2026-11-05: B-35 RE2 바인딩 Phase 1 보류(PR #45)
 > 이 문서는 "무엇을 왜 바꿨는가"의 단일 기록이다. 바뀐 규칙의 본문은 각 설계 문서(D01~D17, 스키마, ADR-012~016·ADR-025~029)에 있고, 여기서는 발견 ID로 가리킨다. 감사 보고서의 공격 시나리오·권고 원문은 research/AUDIT-*.md에 그대로 있다.
 
 ## 0. 왜 했는가
@@ -138,7 +138,7 @@
 | B-32 | Low | 금지 정규식 불완전 | 채택: `DENY_ACTION_NAME` 내장 상수, NFKC 정규화 | 설계 | D03 §6 |
 | B-33 | Low | 토큰 수명·게이트 요청 단일 사용 | 채택: R-G8, `gate_requests` 테이블 | 설계 | D03 §3, D07 |
 | B-34 | Low | `required_fields_filled` 답할 수 없음 | 채택: predicate 삭제 → 결정적 assert | 설계 | D04 §3 |
-| B-35 | Low | RE2 강제 없음 | 채택: re2 컴파일 실패 시 로드 거부 | 설계 | D02 §6 |
+| B-35 | Low | RE2 강제 없음 | 채택: re2 컴파일 실패 시 로드 거부. 팀장 결정(2026-11-05): Phase 1은 RE2 바인딩 없이 검증기가 RE2 문법 부분집합(중첩 수량자·역참조·lookaround 거부)을 검사한 뒤 JS RegExp로 컴파일, 핫픽스 채널에 외부 패턴이 들어오거나 Phase 2에 바인딩 재검토(PR #45, ADR-028) | 설계 | D02 §1·§6 |
 
 ### 3.3 감사 C — 원격·클라우드·데이터 주권
 

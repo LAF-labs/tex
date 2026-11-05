@@ -160,14 +160,23 @@ export function syntheticCerts(): SyntheticCert[] {
   return out;
 }
 
-/** 시연용 서류 3장(오늘 기준 날짜, 데모 사업장 이름·번호): 유효한 납세증명서, 만료된 납세증명서, 사업자등록증명(만료일 추정). 모두 가상이다. */
+/** 시연 서류에 얹는 "견본" 표시(사선 글자). 본문 판독에 걸리지 않게 짧은 한 단어만 넣는다. */
+export const SAMPLE_MARK = '<div style="position:fixed;top:38%;left:0;right:0;text-align:center;font-size:110px;font-weight:700;color:rgba(200,30,30,.16);transform:rotate(-28deg)">견본</div>';
+const marked = (html: string) => html.replace('</body>', `${SAMPLE_MARK}</body>`);
+
+/**
+ * 시연용 서류(오늘 기준 날짜, 데모 사업장 이름·번호, "견본" 표시). 모두 가상이다.
+ * 납세증명서 정상·임박·만료, 사업자등록증명(만료일은 규칙 추정), 지방세 납세증명(지원 밖 → 확인 필요).
+ */
 export function demoCerts(today: string, me: { name: string; rep: string; bizNo: string }): Array<{ file: string; html: string }> {
   const corp = { name: me.name, rep: me.rep, corp: false };
-  const tax = (issued: string, no: number) => taxCertHtml({ no: docNo(no), spaced: false, corp, bizNo: me.bizNo, issued, valid: addDays(issued, 29), shortened: false, style: 'ko', office: OFFICES[0]!, deferral: false, printedAt: false });
+  const tax = (issued: string, no: number) => marked(taxCertHtml({ no: docNo(no), spaced: false, corp, bizNo: me.bizNo, issued, valid: addDays(issued, 29), shortened: false, style: 'ko', office: OFFICES[0]!, deferral: false, printedAt: false }));
   return [
     { file: '납세증명서_유효.pdf', html: tax(addDays(today, -3), 101) },
+    { file: '납세증명서_임박.pdf', html: tax(addDays(today, -25), 104) },
     { file: '납세증명서_만료.pdf', html: tax(addDays(today, -45), 102) },
-    { file: '사업자등록증명.pdf', html: bizRegHtml({ no: docNo(103), spaced: false, corp, bizNo: me.bizNo, issued: addDays(today, -2), style: 'ko', office: OFFICES[0]!, open: '2019-03-02', reg: '2019-03-05' }) },
+    { file: '사업자등록증명.pdf', html: marked(bizRegHtml({ no: docNo(103), spaced: false, corp, bizNo: me.bizNo, issued: addDays(today, -2), style: 'ko', office: OFFICES[0]!, open: '2019-03-02', reg: '2019-03-05' })) },
+    { file: '지방세납세증명서.pdf', html: marked(negativeHtml('localtax_cert', me.bizNo, addDays(today, -6))) },
   ];
 }
 

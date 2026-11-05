@@ -66,6 +66,8 @@ export const PROFILES: Record<Profile['kind'], Profile> = {
 
 /** 셸 하나의 목업 문서함. 모듈 전역에 두지 않고 셸마다 새로 만든다. 보관함(PoC-8 documents)과는 아직 잇지 않는다. */
 export class MockStore {
+  /** 목업 서류의 견본 PDF 경로(시연 씨앗, demo-seed.ts). main 안에서만 쓰고 렌더러에 보내지 않는다. */
+  readonly files = new Map<string, string>();
   readonly docs: Doc[] = [
     { id: 'd1', name: '납세증명서(국세)', kind: '증명서', docName: '납세증명서', profile: 'business', issuedOn: dayOffset(-25), expiresOn: dayOffset(5), source: '앱이 발급', purpose: '입찰 제출' },
     { id: 'd2', name: '사업자등록증명', kind: '증명서', docName: '사업자등록증명', profile: 'business', issuedOn: dayOffset(-12), expiresOn: null, source: '앱이 발급', purpose: '거래처 등록' },
