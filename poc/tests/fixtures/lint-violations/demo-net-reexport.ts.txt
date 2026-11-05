@@ -1,0 +1,5 @@
+// as: packages/net/src/index.ts
+// expect: no-restricted-imports=1
+// 제품 진입점(@sax/net)은 시연 모듈을 다시 내보내지 않는다.
+export * from './egress.ts';
+export * from './demo.ts';
