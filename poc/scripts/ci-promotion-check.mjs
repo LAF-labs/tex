@@ -41,8 +41,16 @@ export function parsePromotionTable(body) {
   const cellsOf = (line) => line.replace(/^\||\|$/g, '').split('|').map((c) => c.trim());
   const lines = body.split(/\r?\n/).map((l) => l.trim());
   let inTable = false;
+  let fence = false;
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // 코드 블록 안의 표(형식 예시·명령 출력)는 읽지 않는다
+    if (/^(```|~~~)/.test(line)) {
+      fence = !fence;
+      inTable = false;
+      continue;
+    }
+    if (fence) continue;
     if (!line.startsWith('|')) {
       inTable = false;
       continue;
@@ -66,7 +74,8 @@ export function parsePromotionTable(body) {
 
 /** 본문에 언급됐지만 표에 없는 AUDIT-D ID(경고). 08 화면 ID(D-01 문서함 등)와 섞일 수 있어 N-xx가 붙은 것만 본다. */
 export function mentionedIds(body) {
-  return [...new Set([...body.matchAll(/\b(D-\d{2})\(N-\d{2}\)/g)].map((m) => m[1]))];
+  const prose = body.replace(/^(```|~~~)[\s\S]*?^\1/gm, '');
+  return [...new Set([...prose.matchAll(/\b(D-\d{2})\(N-\d{2}\)/g)].map((m) => m[1]))];
 }
 
 /** D19 §3.5 표: ID → 단계. */
