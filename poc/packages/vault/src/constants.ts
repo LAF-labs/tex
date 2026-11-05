@@ -147,7 +147,9 @@ export type VaultEvent =
   | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'
   | 'vault.item_corrupt' | 'vault.index_corrupt' | 'vault.restore_failed'
   // run에 고정된 프로필과 다른 scope의 입력 요청(Q-2)
-  | 'vault.profile_mismatch';
+  | 'vault.profile_mismatch'
+  // 종류별 입력 규칙(ADR-020 결정 2·ADR-025 결정 10·D05 §4): 값·칸 번호 없이
+  | 'vault.typist_kind_refused' | 'vault.card_row_mismatch' | 'vault.secret_input_unrequested';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
