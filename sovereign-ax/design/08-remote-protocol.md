@@ -48,7 +48,7 @@
 | `SAX-kek-v1` | AIK | `KekRecord{N, salt_N, created_at}` (§3) |
 | `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2) |
 | `SAX-docrec-v1` | `Vd` | 메타데이터 레코드 (D07 §5) |
-| `SAX-dpop-v1` | `Vx`(클라이언트 기기 키) | 기기 범위 토큰 요청 증명 `{htm, htu, iat, jti, ath}` (D09 §2) |
+| `SAX-dpop-v1` | `Vx`(클라이언트 기기 키) | 기기 범위 토큰의 발급 요청과 사용 요청마다 붙는 증명 `{htm, htu, iat, jti, ath}`. 사용 요청의 `ath`는 `b64u(sha256(토큰))`(송신자 결속)이고, 발급 요청 `POST /v1/device-tokens`에는 아직 토큰이 없으므로 제시하는 AIK 기기 인증서의 `b64u(sha256(JCS(cert)))`다 (D09 §2, `poc/services/shared/CONTRACT.md` §3) |
 | `SAX-token-v1` | 서버: 계정 서비스 토큰 키(Ed25519) | 기기 범위 토큰(`sxd1`, 15분) 클레임 (D09 §2.1, `poc/services/shared/CONTRACT.md` §2) |
 | `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
