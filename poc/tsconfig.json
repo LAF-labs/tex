@@ -2,6 +2,6 @@
   "files": [],
   "references": [
     { "path": "packages/platform" }, { "path": "packages/redaction" }, { "path": "packages/net" }, { "path": "packages/model" }, { "path": "packages/db" }, { "path": "packages/payroll" },
-    { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "apps/desktop" }
+    { "path": "packages/vault" }, { "path": "packages/engine" }, { "path": "packages/docparse" }, { "path": "apps/desktop" }
   ]
 }

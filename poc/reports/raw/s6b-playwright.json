@@ -41,7 +41,7 @@
   },
   "afterClose": "click ok, no deadlock",
   "leak": {
-    "ipcMessages": 955,
+    "ipcMessages": 957,
     "ipcFindings": [],
     "logFindings": []
   },
@@ -252,7 +252,7 @@
     {
       "key": "session Runtime.callFunctionOn",
       "forwarded": 94,
-      "denied": 25,
+      "denied": 26,
       "synthetic": 0,
       "scope": "session"
     },
