@@ -1,6 +1,8 @@
 # D08. 리모트 컨트롤 프로토콜
 
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
+> 팀장 결정 2026-11-05(클라우드 답): §2.1 `SAX-acct-op-v1`은 클라이언트 AIK 서명·서버 검증만(앞 "서버 서명" 표기는 오기), 대상 계정 작업 `device.reactivate`·`slot.rebind_rk`. `SAX-revoke-v1` 대상 `{device_id, revoked_at}`. HMAC·해시·AEAD 라벨은 이 표에 넣지 않는다.
+> 팀장 결정 2026-11-05(클라우드 릴레이 PR #63): §6 바깥 봉투 `ver`=1, `kind` HS=1·DATA=2·ENV=3 채택. §8 릴레이 API(의도 봉투 큐는 HTTPS, 라이브는 WSS `/v1/mailboxes/:id/live`, 페어링 룸 `/v1/rooms`), §8.2 저장하지 않는 것.
 > 팀장 결정 2026-11-05: §4.1·§4.2 `Cert`·`DeviceListEntry` 서명 입력 정규형은 `utf8(ctx)‖JCS(JSON)`, 필드 키 이름은 `Sx`·`Vx`·`Kx`·`Px_pub`로 통일(`Sm`·`Vm`·`Km`은 폰 쪽 역할 설명으로만). 기기 키 서명 입력 `purpose‖msg`(D05 §5.1)는 그대로. 바이트 정본은 `schemas/SIGNING.md` "기기·AIK 서명 입력" 절(엔진 트랙이 추가).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다(상충 표기 `C/X-nn`은 감사 C §5). · AUDIT-D 반영 2026-11-03: 키 계층에서 복구 문구·`K_chk` 삭제(§3), 하드웨어 키 증명 `px.attest`·서류 열람 범위 토글(§4.2), `doc_scope` 필터(§6), 증명 상태 집행(§6.1), 저장 자격 원격 실행의 시작 게이트(§7), 새 PC·PASS 복구 교체(§9)(ADR-016 v2·ADR-029, D19 §3.5).
 >
@@ -43,17 +45,20 @@
 | `SAX-rotate-v1` | `Vx` | `rotate.static` (§5, C-18) |
 | `SAX-ckpt-v1` | `Vd` | 감사 로그 체크포인트 (§10) |
 | `SAX-devlist-v1` | AIK | `DeviceListEntry`·기기 목록 버전 (§4.1) |
-| `SAX-revoke-v1` | AIK | 기기 폐기 레코드 (§9) |
+| `SAX-revoke-v1` | AIK | 기기 폐기 레코드 `{device_id, revoked_at}` (§9) |
 | `SAX-cert-v1` | AIK | 기기 인증서 `Cert_X` (§4) |
 | `SAX-aik-rotate-v1` | 옛 AIK | AIK 교체 공지 (§4.1) |
 | `SAX-kek-v1` | AIK | `KekRecord{N, salt_N, created_at}` (§3) |
-| `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2) |
+| `SAX-acct-op-v1` | AIK | 즉시 삭제·기기 추가 승인 등 계정 작업 (D09 §2). 클라이언트가 AIK로 서명하고 서버는 검증만 한다. Phase 1 계정 작업: `device.reactivate`·`slot.rebind_rk`(팀장 결정 2026-11-05) |
 | `SAX-docrec-v1` | `Vd` | 메타데이터 레코드 (D07 §5) |
 | `SAX-dpop-v1` | `Vx`(클라이언트 기기 키) | 기기 범위 토큰의 발급 요청과 사용 요청마다 붙는 증명 `{htm, htu, iat, jti, ath}`. 사용 요청의 `ath`는 `b64u(sha256(토큰))`(송신자 결속)이고, 발급 요청 `POST /v1/device-tokens`에는 아직 토큰이 없으므로 제시하는 AIK 기기 인증서의 `b64u(sha256(JCS(cert)))`다 (D09 §2, `poc/services/shared/CONTRACT.md` §3) |
 | `SAX-token-v1` | 서버: 계정 서비스 토큰 키(Ed25519) | 기기 범위 토큰(`sxd1`, 15분) 클레임 (D09 §2.1, `poc/services/shared/CONTRACT.md` §2) |
 | `SAX-run-token-v1` | 서버: 모델 게이트웨이 키 | 실행당 예산 `runToken` 클레임 (D09 §3, D04 §7, M4-6) |
 | `SAX-kv-v1` | `Vd` | 금고 비밀 봉인 키 `Kv_pub` 배포·연 1회 회전(`PAIR_OK`·`HELLO`, D05 §5) |
 | `SAX-SAS-v1`, `SAX-pair-v1`, `SAX-session-v1` | — | SAS 유도, Noise prologue |
+
+- 클라우드 경계의 서명 맥락(팀장 결정 2026-11-05): 클라이언트 서명은 `Vx`: `SAX-dpop-v1`, AIK: `SAX-acct-op-v1`·`SAX-devlist-v1`·`SAX-revoke-v1`·`SAX-cert-v1`이다. 서버 서명은 `SAX-token-v1`·`SAX-run-token-v1`이다. 서버가 AIK 맥락으로 서명하는 일은 없다.
+- 클라우드 서비스의 HMAC·해시·AEAD 라벨(예: `SAX-login-code-v1`)은 서명 맥락이 아니므로 이 표에 넣지 않는다. 목록이 필요하면 D09 부록 "라벨 목록"에 둔다.
 
 ## 3. 키 계층
 
@@ -147,12 +152,13 @@ QR을 스캔할 수 없을 때: 8~9개 BIP39 단어(88~99비트)를 `ps`로 직�
 ## 6. 메시지 프레이밍
 
 ```text
-outer = ver(1B) ‖ kind(1B: HS/DATA/ENV) ‖ ctr(8B, DATA만) ‖ len(2B)
+outer = ver(1B, = 1) ‖ kind(1B: HS = 1, DATA = 2, ENV = 3) ‖ ctr(8B, DATA만) ‖ len(2B)
 DATA  = outer ‖ ChaCha20-Poly1305(k_tx, nonce=0^32‖LE64(ctr), ad=outer, pt=pad(inner))
 inner = 결정적 CBOR {t, id: ULID, seq, ts, ttl, body}
 pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 ```
 
+- 바이트 값(채택, 팀장 결정 2026-11-05, PR #63): `ver` = 1, `kind` HS = 1·DATA = 2·ENV = 3. 릴레이·폰 앱(M7-2)·데스크톱이 같은 값을 쓴다. 릴레이는 라이브 WSS 프레임에서 `ver`·`kind`(HS·DATA)·`len` 일치만 검사하고, 다른 값이면 전달하지 않고 연결을 끊는다. 의도 봉투(ENV)는 WSS가 아니라 HTTPS 큐로 가며 JSON 바깥 객체 `{v: 1, kind: "ENV", enc, ct}`를 쓴다(§8).
 - 수신 측은 `ctr` 슬라이딩 윈도(1024)로 중복·역전을 거른다. Noise 전송 한도 65,535B. **PDF·이미지는 릴레이로 보내지 않고** 블롭 저장소에 올린 뒤 `blob_id`와 래핑 DEK만 보낸다(캡차 크롭 ≤ 200KB는 예외적으로 인라인 허용, 버킷 패딩).
 - 서명·MAC 입력에는 항상 §2.1의 컨텍스트 문자열, `pair_id`, 방향(`from/to`)을 포함한다(반사 공격 무효).
 - `inner.ttl`(≤ 86,400초)은 **라이브 메시지 전용**이다. 오프라인 의도의 만료는 의도 봉투 안쪽 `exp`(≤ 72시간)가 정하며 별도 스키마를 쓴다(C/X-14 해소, §7).
@@ -211,7 +217,8 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 
 ## 8. 릴레이(내용을 볼 수 없는 우편함)
 
-- WSS. 우편함 = 32B CSPRNG ID + 능력 토큰(`tok_read`/`tok_write`, 32B CSPRNG, 서버는 해시만 저장, §4.2 7단계). 기기 인증 토큰은 별도 레이어(남용 방지용, 우편함 ID와 조인되지 않게 분리 저장).
+- **API**(채택, 팀장 결정 2026-11-05, PR #63 `services/relay/API.md`): 의도 봉투 큐는 HTTPS다. 넣기 `POST /v1/mailboxes/:id/envelopes`(폰, 쓰기 토큰), 꺼내기 `GET /v1/mailboxes/:id/envelopes`(PC, 읽기 토큰), 지우기 `POST /v1/mailboxes/:id/ack{seq}`. 우편함 만들기·지우기는 `POST /v1/mailboxes`·`DELETE /v1/mailboxes/:id`, 우편함 번들 슬롯은 `PUT`·`GET /v1/mailboxes/:id/bundle`(≤ 2KB, 릴레이는 검증하지 않음)이다. 라이브 세션(HS·DATA)만 WSS `GET /v1/mailboxes/:id/live`(Upgrade)이고, PC가 붙어 있으면 큐에 새 봉투가 들어왔음을 `{"t":"env"}`로 알린다. 페어링 룸은 `POST /v1/rooms{roomId}`로 만들고 `GET /v1/rooms/:roomId`(Upgrade)로 붙는다. 모든 우편함 호출에는 기기 범위 토큰과 능력 토큰이 둘 다 필요하다.
+- ~~WSS.~~ 우편함 = 32B CSPRNG ID + 능력 토큰(`tok_read`/`tok_write`, 32B CSPRNG, 서버는 해시만 저장, §4.2 7단계). 기기 인증 토큰은 별도 레이어(남용 방지용, 우편함 ID와 조인되지 않게 분리 저장).
 - **정직한 서술(C-14)**: 릴레이는 내용과 키를 볼 수 없다. 계정과 우편함의 연결은 분리 저장·접근 통제·짧은 보존으로 줄이지만, 운영자는 연결 시점·IP 상관으로 언제든 연결할 수 있다. '영지식'이라고 부르지 않는다.
 - 접속 IP: 평문 저장 대신 **일 단위 회전 솔트 HMAC**으로만 레이트리밋에 쓴다(솔트는 하루 뒤 폐기). 평문 IP는 법정 접속기록 대상인 운영자 접근 로그에만 둔다(보존은 D09 §10).
 - 한도(이 절이 정본, D09 §4는 참조만, C/X-03): 우편함당 초당 메시지 20, 기기당 우편함 3, 연결당 실패 상한, 프레임 ≤ 65,535B, 큐는 우편함당 의도 봉투 `queue.maxIntentsPerPair`(5)건·1MiB·72시간. 길이 패딩 버킷으로 크기 유출 완화.
@@ -229,7 +236,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 
 | 본다 | 결합으로 알 수 있다 | 못 본다 |
 |---|---|---|
-| 우편함 ID, 메시지 수·크기 버킷·시각, 바깥 `kind`(HS/DATA/ENV), 데스크톱 온라인 여부, IP의 일 회전 HMAC, 페어링 룸 발급 시각, `device_id`별 깨우기 시각 | 연결 시점·IP·깨우기 상관으로 계정↔우편함↔대략적 위치, 근무 패턴, 승인·캡차 빈도 | Noise·HPKE 평문(명령·비밀·캡차·서류·의도 내용), 키, 의도 봉투의 `pair_id`·`seq`·`exp` |
+| 우편함 ID, 메시지 수·크기 버킷·시각, 바깥 `kind`(HS/DATA/ENV), 데스크톱 온라인 여부, IP의 일 회전 HMAC, 페어링 룸 발급 시각, `device_id`별 깨우기 시각(처리 중에만. 저장하는 통계에는 우편함 ID가 없고, 깨우기 시각은 저장하지 않는다, PR #63) | 연결 시점·IP·깨우기 상관으로 계정↔우편함↔대략적 위치, 근무 패턴, 승인·캡차 빈도 | Noise·HPKE 평문(명령·비밀·캡차·서류·의도 내용), 키, 의도 봉투의 `pair_id`·`seq`·`exp` |
 
 ## 9. 기기 분실·폐기·복구·사고
 

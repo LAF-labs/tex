@@ -10,6 +10,7 @@
     "@sax/net": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/redaction": "workspace:*",
+    "@sax/remote": "workspace:*",
     "@sax/vault": "workspace:*",
     "@tesseract.js-data/kor": "1.0.0",
     "playwright-core": "1.64.1",
