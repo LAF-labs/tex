@@ -1,0 +1,8 @@
+// as: packages/model/src/layer-probe.ts
+// expect: no-restricted-imports=3, no-restricted-syntax=1
+// 모델 계층(어댑터 밖)에서 송신 모듈·프로세스·require 우회.
+import axios from 'axios';
+import { spawn } from 'node:child_process';
+import { createRequire } from 'node:module';
+import type { Agent } from 'node:https';
+export const r = [axios, spawn, createRequire(import.meta.url)('node:http2')] as unknown as Agent[];
