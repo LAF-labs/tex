@@ -106,6 +106,11 @@ describe('isStrictlyConservative (D03 §7.1 보수 방향 표, E-04)', () => {
     assert.equal(ch((p) => delete (p.portalMode as Record<string, unknown>).hometax), true);
     assert.equal(ch((p) => (p.portalMode.wetax = 'assisted')), false);
   });
+  it('이미 최저값(postprocess·disabled)인 포털 키를 빼는 것은 같음(다른 필드 강화와 함께 수용)', () => {
+    assert.equal(ch((p) => { delete (p.portalMode as Record<string, unknown>).gov24; p.portalMode.hometax = 'assisted'; }), true);
+    assert.equal(ch((p) => { delete (p.captchaRelay as Record<string, unknown>).sminfo; p.captchaRelay.hometax = 'disabled'; }), true);
+    assert.equal(ch((p) => delete (p.portalMode as Record<string, unknown>).gov24), false, '그것만으로는 엄격하지 않다');
+  });
   it('captchaRelay는 disabled 방향만', () => {
     assert.equal(ch((p) => (p.captchaRelay.hometax = 'disabled')), true);
     assert.equal(ch((p) => (p.captchaRelay.sminfo = 'allowed')), false);

@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
-import { canonicalWithout, loadPackage, packageDigest, type Hotfix, type LoadedPackage, type LoaderContext, type PackageFiles, type RawPackage, type VersionMark } from '@sax/engine/core';
+import { canonicalWithout, hotfixDigest, loadPackage, packageDigest, type Hotfix, type LoadedPackage, type LoaderContext, type PackageFiles, type RawPackage, type VersionMark } from '@sax/engine/core';
 import { bundleOutcomes, digestOfRaw, h01, lookups, sigOf, signPackage, testKeys, type TestKey } from './core-fixtures.ts';
 
 const K = testKeys();
@@ -166,7 +166,7 @@ function hotfix(raw: RawPackage, o: Partial<Hotfix> = {}, signers: TestKey[] = t
 
 describe('7단계 핫픽스', () => {
   const raw = signH01();
-  const withHf = (h: Hotfix, o: Partial<LoaderContext> = {}, stored: VersionMark | null = null) => load(raw, { hotfix: { hotfix: h, stored }, ...o });
+  const withHf = (h: Hotfix, o: Partial<LoaderContext> = {}, stored: (VersionMark & { digest: string }) | null = null) => load(raw, { hotfix: { hotfix: h, stored }, ...o });
   const rejected = (r: ReturnType<typeof loadPackage>) => {
     assert.ok(r.ok, '핫픽스가 거부돼도 패키지는 로드');
     assert.equal(r.pkg.hotfix, null);
@@ -196,9 +196,19 @@ describe('7단계 핫픽스', () => {
     rejected(load(rawB, { revoked: new Set(['pkg-1']), hotfix: { hotfix: hotfix(rawB, {}, [K.pkg[0]!, K.pkg[1]!]), stored: null } }));
   });
   it('monotonic 롤백·+1000 초과 점프', () => {
-    rejected(withHf(hotfix(raw), {}, { keyEpoch: 1, monotonic: 3 }));
-    rejected(withHf(hotfix(raw, { monotonic: 1004 }), {}, { keyEpoch: 1, monotonic: 3 }));
-    assert.ok(withHf(hotfix(raw, { monotonic: 4 }), {}, { keyEpoch: 1, monotonic: 3 }).ok);
+    const other = { keyEpoch: 1, monotonic: 3, digest: 'b'.repeat(64) };
+    rejected(withHf(hotfix(raw), {}, other));
+    rejected(withHf(hotfix(raw, { monotonic: 1004 }), {}, other));
+    const r = withHf(hotfix(raw, { monotonic: 4 }), {}, other);
+    assert.ok(r.ok && r.pkg.hotfix);
+  });
+  it('이미 적용한 핫픽스의 재로드(재시작)는 롤백이 아니다, 같은 monotonic에 내용이 다르면 거부', () => {
+    const h = hotfix(raw);
+    const st = { keyEpoch: h.keyEpoch, monotonic: h.monotonic, digest: hotfixDigest(h) };
+    const r = withHf(h, {}, st);
+    assert.ok(r.ok && r.pkg.hotfix);
+    assert.equal(r.pkg.hotfix.digest, st.digest);
+    rejected(withHf(hotfix(raw, { expiresAt: iso(NOW + 2 * DAY) }), {}, st));
   });
   it('14일 넘는 유효기간·만료·미래 issuedAt', () => {
     rejected(withHf(hotfix(raw, { issuedAt: iso(NOW - DAY), expiresAt: iso(NOW + 14 * DAY) })));
@@ -208,6 +218,16 @@ describe('7단계 핫픽스', () => {
   it('정책이 만료(stale)면 핫픽스 로드 거부(D03 §7.1 (c)), 보류 중에도 거부', () => {
     rejected(withHf(hotfix(raw), { policyFresh: false }));
     rejected(withHf(hotfix(raw), { hold: true, installedDigest: digestOfRaw(raw) }));
+  });
+  it('보류(hold) 중: 설치본에 이미 적용한 핫픽스는 그대로 얼려 두고, 새 핫픽스만 보류', () => {
+    const h = hotfix(raw);
+    const st = { keyEpoch: h.keyEpoch, monotonic: h.monotonic, digest: hotfixDigest(h) };
+    const held = { hold: true, installedDigest: digestOfRaw(raw) };
+    const r = withHf(h, held, st);
+    assert.ok(r.ok && r.pkg.hotfix, '설치된 핫픽스 유지');
+    assert.ok(r.events.includes('registry.hotfix_applied'));
+    rejected(withHf(hotfix(raw, { monotonic: h.monotonic + 1 }), held, st));
+    rejected(withHf(h, { ...held, policyFresh: false }, st));
   });
   it('조회 패키지에 대한 핫픽스는 항상 거부', () => {
     const files = lookups().get('hometax.invoice.lookup')!;

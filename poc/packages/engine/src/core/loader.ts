@@ -49,8 +49,8 @@ export interface LoadedPackage {
 
 export interface HotfixInput {
   hotfix: Hotfix;
-  /** 이 패키지에 마지막으로 적용한 핫픽스의 버전(없으면 null). */
-  stored: VersionMark | null;
+  /** 이 패키지에 마지막으로 적용한 핫픽스의 버전과 다이제스트(`LoadedPackage.hotfix`, 없으면 null). */
+  stored: (VersionMark & { digest: string }) | null;
 }
 
 export interface LoaderContext {
@@ -193,14 +193,17 @@ export function checkHotfix(input: HotfixInput, files: PackageFiles, mDigest: st
   const hf = input.hotfix;
   if (files.manifest.kind === 'lookup') return no('hotfix.lookup_package');
   if (!ctx.policyFresh) return no('hotfix.policy_stale');
-  if (ctx.hold) return no('hotfix.update_held');
+  // 이미 적용한 핫픽스를 다시 로드(재시작)하는 것은 버전 내림이 아니고, 보류(hold) 중에도 설치본 그대로 얼려 둔다.
+  const st = input.stored;
+  const reload = !!st && st.keyEpoch === hf.keyEpoch && st.monotonic === hf.monotonic && st.digest === hotfixDigest(hf);
+  if (ctx.hold && !reload) return no('hotfix.update_held');
   const hs = schemaViolations('hotfix', hf);
   if (hs.length) return no('hotfix.schema_invalid', hs);
   if (hf.appliesTo.id !== files.manifest.id || hf.appliesTo.version !== files.manifest.version || hf.appliesTo.packageDigest !== mDigest) return no('hotfix.applies_to_mismatch');
   if (countSignatures(canonicalWithout(hf, ['signatures']), hf.signatures, ctx.roots.packageKeys, ctx.revoked).valid.length < 2) return no('registry.signature_insufficient');
   const ep = epochProblem(hf, ctx.roots);
   if (ep) return no(ep);
-  const vp = versionProblem(input.stored, hf);
+  const vp = reload ? null : versionProblem(st, hf);
   if (vp) return no(vp);
   const iss = Date.parse(hf.issuedAt);
   const exp = Date.parse(hf.expiresAt);

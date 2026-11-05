@@ -149,11 +149,11 @@ function compareField(path: string, cur: unknown, next: unknown): -1 | 0 | 1 {
   // 포털 키가 없으면 postprocess로 본다(fail-closed). 그 밖의 필드가 생기거나 없어지면 표 밖 변경이다.
   if (dir === 'mode') {
     const r = (x: unknown) => (x === undefined ? 0 : MODE_ORDER[x as PortalMode]);
-    return r(next) < r(cur) ? -1 : 1;
+    return r(next) === r(cur) ? 0 : r(next) < r(cur) ? -1 : 1;
   }
   if (dir === 'relay') {
     const r = (x: unknown) => (x === undefined ? 0 : CAPTCHA_ORDER[x as CaptchaRelay]);
-    return r(next) < r(cur) ? -1 : 1;
+    return r(next) === r(cur) ? 0 : r(next) < r(cur) ? -1 : 1;
   }
   if (cur === undefined || next === undefined) return 1;
   if (dir === 'burstAction') return cur === 'slow+notify' && next === 'pause' ? -1 : 1;
