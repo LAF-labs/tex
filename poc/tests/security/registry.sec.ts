@@ -65,21 +65,6 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
     assert.ok(tried >= 50, `실제로 돌린 변조 ${tried}회(너무 적음)`);
   });
 
-  it('.sxp 바이트 하나를 바꾸면 풀기 또는 로드가 거부', () => {
-    const r = rng(FUZZ_SEED + 3);
-    for (const name of fs.readdirSync(path.join(DIR, 'packages'))) {
-      const b = file(`packages/${name}`);
-      for (let i = 0; i < 20; i++) {
-        const x = Buffer.from(b);
-        const k = Math.floor(r() * x.length);
-        x[k] = x[k]! ^ (1 << Math.floor(r() * 8));
-        const res = api.decodeSxp!(x);
-        // 풀리면 내용 다이제스트·서명 검사는 loadPackage가 한다(core-registry-samples). 여기서는 같은 바이트로 풀리지 않는지만 본다.
-        if (res.ok) assert.ok(!x.equals(b));
-      }
-    }
-  });
-
-  it.todo('loadPackage: 변조 .sxp는 registry.* 코드로 거부, 저장 버전보다 낮은 monotonic·keyEpoch 되감기 거부, 폐기 키 서명은 정족수에서 뺀다 — #52 API 확정 뒤');
+  it.todo('loadPackage: .sxp 바이트 변조는 registry.* 코드로 거부(decodeSxp는 저수준 디코더라 거부 증거가 아니다), 저장 버전보다 낮은 monotonic·keyEpoch 되감기 거부, 폐기 키 서명은 정족수에서 뺀다 — #52 API 확정 뒤');
   it.todo('클라우드 services/registry 게시 관문과 같은 샘플로 상호 검증(#56, SIGNING.md §10.3)');
 });
