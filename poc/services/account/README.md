@@ -22,7 +22,7 @@
 | device_events | account_id, role, kind, day | 기기 교체 이력(KST 일 단위, 30일) |
 | profile_slots | slot_token, account_id, biz_hmac | 프로필 슬롯 수, 사업자 프로필 HMAC 존재 |
 | profile_slots | biz_bound_at | **D09 추가 필요**: 바인딩 시각(D09 §2 B-28에는 있음) |
-| subscriptions | account_id, plan, status, period, renew_at, pg_customer_ref | 구독 플랜·상태·갱신일·결제 참조 ID |
+| subscriptions | account_id, plan, status, period, renew_at, pg_customer_ref, pg_event_at | 구독 플랜·상태·갱신일·결제 참조 ID, **추가 필요**: 마지막 반영 PG 이벤트 시각(PG 쪽 시각, 웹훅 순서 판정) |
 | consents | account_id, version, at | 동의 이력 |
 
 저장하지 않는 것: IP(한도 키는 일 회전 HMAC, 메모리만), 로그인 코드 평문, 사업자번호, 결제 수단, 접근 로그의 본문·경로 변수 값.

@@ -316,18 +316,19 @@ export class AccountService {
   // ---------- 구독·결제(9,900원 한 플랜, ADR-034) ----------
 
   async checkout(s: Session): Promise<{ checkoutUrl: string }> {
-    let sub = await this.db.one<{ status: string; pg_customer_ref: string }>('SELECT status, pg_customer_ref FROM subscriptions WHERE account_id = $1', [s.accountId]);
-    if (sub?.status === 'active') fail('request.param_rejected');
-    // 해지 뒤 다시 구독: 새 PG 고객 참조로 연다(옛 참조로 늦게 온 이벤트는 어디에도 맞지 않는다)
-    if (sub?.status === 'canceled') {
-      sub = { status: 'pending', pg_customer_ref: `cus_${randomToken(18)}` };
-      await this.db.run("UPDATE subscriptions SET status = 'pending', renew_at = NULL, pg_customer_ref = $1 WHERE account_id = $2", [sub.pg_customer_ref, s.accountId]);
-    }
-    if (!sub) {
-      sub = { status: 'pending', pg_customer_ref: `cus_${randomToken(18)}` };
-      await this.db.run("INSERT INTO subscriptions (account_id, plan, status, period, renew_at, pg_customer_ref) VALUES ($1, 'standard', 'pending', 'month', NULL, $2)", [s.accountId, sub.pg_customer_ref]);
-    }
-    return this.d.payments.createCheckout({ pgCustomerRef: sub.pg_customer_ref, plan: PLAN, returnUrl: this.d.billingReturnUrl });
+    // 계정 행 잠금 안에서 참조를 정한다: 동시에 두 번 눌러도 같은 참조의 결제 창이 나온다(버려지는 참조로 결제되는 일 없음)
+    const ref = await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [s.accountId]);
+      const sub = await q.one<{ status: string; pg_customer_ref: string }>(`SELECT status, pg_customer_ref FROM subscriptions WHERE account_id = $1${q.forUpdate}`, [s.accountId]);
+      if (sub?.status === 'active') fail('request.param_rejected');
+      if (sub && sub.status !== 'canceled') return sub.pg_customer_ref; // pending·past_due: 같은 참조로 다시 결제
+      const next = `cus_${randomToken(18)}`;
+      // 해지 뒤 다시 구독은 새 참조(옛 참조로 늦게 온 이벤트는 어디에도 맞지 않는다)
+      if (sub) await q.run("UPDATE subscriptions SET status = 'pending', renew_at = NULL, pg_event_at = NULL, pg_customer_ref = $1 WHERE account_id = $2", [next, s.accountId]);
+      else await q.run("INSERT INTO subscriptions (account_id, plan, status, period, renew_at, pg_customer_ref) VALUES ($1, 'standard', 'pending', 'month', NULL, $2)", [s.accountId, next]);
+      return next;
+    });
+    return this.d.payments.createCheckout({ pgCustomerRef: ref, plan: PLAN, returnUrl: this.d.billingReturnUrl });
   }
 
   /** PG 웹훅. 서명이 틀리면 거부, 모르는 참조는 조용히 무시(참조 존재 오라클 없음). */
@@ -335,12 +336,13 @@ export class AccountService {
     const e: PaymentEvent | null = this.d.payments.verifyWebhook(raw, headers);
     if (!e) fail('account.billing_signature_invalid');
     const ev = e!;
-    // 상태 전이만 받는다(늦게 오거나 재전송된 이벤트가 해지를 되살리거나 갱신을 되돌리지 않게): 해지는 끝 상태이고 다시 구독은 checkout이 pending으로 연다.
-    // 갱신은 renew_at이 앞으로 갈 때만, 결제 실패는 active에서만.
+    // 순서는 PG 이벤트 시각(서명 범위 안)으로 정한다: 마지막으로 반영한 이벤트보다 늦게 만들어진 이벤트만 반영(늦게 온·재전송 이벤트는 무시).
+    // 해지는 끝 상태(되살리지 않는다). 다시 구독은 checkout이 새 참조로 연다. 결제 실패 뒤 재결제 성공은 더 늦은 이벤트라 active로 돌아온다.
+    const newer = '(pg_event_at IS NULL OR pg_event_at < $2)';
     if (ev.type === 'subscription.activated' || ev.type === 'subscription.renewed')
-      await this.db.run("UPDATE subscriptions SET status = 'active', renew_at = $1 WHERE pg_customer_ref = $2 AND status <> 'canceled' AND (renew_at IS NULL OR renew_at < $1)", [ev.renewAt, ev.pgCustomerRef]);
-    else if (ev.type === 'payment.failed') await this.db.run("UPDATE subscriptions SET status = 'past_due' WHERE pg_customer_ref = $1 AND status = 'active'", [ev.pgCustomerRef]);
-    else await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE pg_customer_ref = $1", [ev.pgCustomerRef]);
+      await this.db.run(`UPDATE subscriptions SET status = 'active', renew_at = $3, pg_event_at = $2 WHERE pg_customer_ref = $1 AND status <> 'canceled' AND ${newer}`, [ev.pgCustomerRef, ev.at, ev.renewAt]);
+    else if (ev.type === 'payment.failed') await this.db.run(`UPDATE subscriptions SET status = 'past_due', pg_event_at = $2 WHERE pg_customer_ref = $1 AND status = 'active' AND ${newer}`, [ev.pgCustomerRef, ev.at]);
+    else await this.db.run("UPDATE subscriptions SET status = 'canceled', pg_event_at = CASE WHEN pg_event_at IS NULL OR pg_event_at < $2 THEN $2 ELSE pg_event_at END WHERE pg_customer_ref = $1", [ev.pgCustomerRef, ev.at]);
   }
 
   async subscription(s: Session): Promise<Record<string, unknown> | null> {
@@ -395,15 +397,17 @@ export class AccountService {
       // 같은 기기면 이 고정으로 대신하고, 다른 기기는 pending으로 남아 나중에 AIK 서명 목록으로만 활성화된다.
       const desk = await q.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE account_id = $1 AND role = 'desktop' AND state IN ('active', 'suspended')", [s.accountId]);
       if (Number(desk?.n ?? 0) > 0) fail('account.aik_already_pinned');
-      await q.run("DELETE FROM devices WHERE device_id = $1 AND account_id = $2 AND role = 'desktop' AND state = 'pending'", [e!.entry.device_id, s.accountId]);
-      if (!(await this.churnOk(q, s.accountId, 'desktop'))) fail('account.device_churn_limit');
+      // 같은 기기의 pending 신청은 이 고정으로 대신한다(신청 때 이미 센 등록 이력은 다시 세지 않는다)
+      const replaced = (await q.run("DELETE FROM devices WHERE device_id = $1 AND account_id = $2 AND role = 'desktop' AND state = 'pending'", [e!.entry.device_id, s.accountId])) > 0;
+      if (!(await this.countOk(q, s.accountId, 'desktop'))) fail('account.device_limit');
+      if (!replaced && !(await this.churnOk(q, s.accountId, 'desktop'))) fail('account.device_churn_limit');
       const now = this.now();
       await q.run(
         "INSERT INTO devices (device_id, account_id, role, platform, name, sx, vx, registered_at, state) VALUES ($1, $2, 'desktop', $3, $4, $5, $6, $7, 'active')",
         [e!.entry.device_id, s.accountId, o.platform, o.name, e!.entry.Sx, e!.entry.Vx, now],
       ).catch(() => fail('request.param_rejected'));
       await q.run('UPDATE accounts SET aik_pub = $1, aik_pinned_at = $2, device_list_version = 1, device_list_json = $3 WHERE id = $4', [o.aikPub, now, jcs(l), s.accountId]);
-      await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'desktop', 'add', $2)", [s.accountId, kstDay(now)]);
+      if (!replaced) await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'desktop', 'add', $2)", [s.accountId, kstDay(now)]);
       return { deviceId: e!.entry.device_id };
     }).then(async (r) => {
       await this.notify(s.accountId, 'aik_pinned');
@@ -452,6 +456,7 @@ export class AccountService {
       if (!d) fail('account.device_not_found');
       if (d!.state !== 'pending') fail('account.not_pending');
       if ((d!.email_hold_until ?? Infinity) > this.now()) fail('account.device_hold', { retryAfterSec: Math.ceil(((d!.email_hold_until ?? 0) - this.now()) / 1000) });
+      if (!(await this.countOk(q, s.accountId, d!.role, 0))) fail('account.device_limit');
       await q.run("UPDATE devices SET state = 'active', email_hold_until = NULL WHERE device_id = $1", [deviceId]);
     });
   }
@@ -588,9 +593,9 @@ export class AccountService {
     if (c.cert.not_after <= now || c.cert.not_after > now + DEVICE.certMaxDays * MS.D) fail('account.cert_invalid');
     const vx = fromB64(d!.vx, 32)!;
     verifyDpop(dpop, { method: 'POST', htu, token: jcs(c), cnf: vx, now, jti: this.jti, code: 'account.dpop_invalid' });
-    // 기기별 발급 한도는 인증서·DPoP가 맞은 뒤에만 센다(남이 device_id만 알고 한도를 태우지 못하게)
-    onVerified?.();
     if (d!.state !== 'active') fail('account.device_suspended');
+    // 기기별 발급 한도는 인증서·DPoP가 맞고 기기가 활성일 때만 센다(남이 device_id나 정지 기기의 인증서로 한도를 태우지 못하게)
+    onVerified?.();
     const scopes = d!.role === 'desktop' ? [...DESKTOP_SCOPES] : [...MOBILE_SCOPES_P1];
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
     return { token, expiresAt: claims.exp, scopes };
