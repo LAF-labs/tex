@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
-  toHex, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
+  toHex, upsertDevice, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
 } from '@sax/remote';
 import { DAY, RELAY, mockDesktop, mockPhone, pairOnce, pairWorld, until } from './remote-support.ts';
 
@@ -226,5 +226,62 @@ describe('기기 해제·폐기 레코드(§9.2)', () => {
     await assert.rejects(() => d.keys.aik.sign('SAX-approve-v1' as never, new Uint8Array(1)));
     const p = mockPhone();
     await assert.rejects(() => p.vm.sign('SAX-devlist-v1' as never, new Uint8Array(1)));
+  });
+});
+
+describe('재시도와 신뢰할 수 없는 기기 목록', () => {
+  it('목록을 올린 뒤 실패한 페어링은 같은 폰으로 다시 할 수 있다(항목 하나, 처음 등록 시각 유지)', async () => {
+    const w = await pairWorld();
+    const real = w.relay.registerMailbox.bind(w.relay);
+    w.relay.registerMailbox = () => {
+      throw new Error('mailbox down');
+    };
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.published.length, 1, '실패 전에 목록은 이미 올라갔다');
+    const published = w.published[0]!;
+    w.relay.registerMailbox = real;
+    const w2 = await pairWorld({ relay: w.relay, desk: { ...w.desk, deviceList: published }, phone: w.phone, serverList: published });
+    const { phone } = await pairOnce(w2);
+    assert.equal(phone.deviceList.listVersion, 3);
+    const mine = phone.deviceList.entries.filter((e) => e.entry.device_id === w.phone.keys.deviceId);
+    assert.equal(mine.length, 1);
+    assert.equal(mine[0]!.entry.registered_at, published.entries.find((e) => e.entry.device_id === w.phone.keys.deviceId)!.entry.registered_at);
+    assert.ok(verifyDeviceList(phone.deviceList, w.desk.keys.aik.publicKey).ok);
+  });
+
+  it('같은 기기 ID인데 키가 다르거나 폐기된 ID면 다시 넣지 않는다', async () => {
+    const d = await mockDesktop();
+    const ph = mockPhone();
+    const info = { deviceId: ph.keys.deviceId, role: 'mobile' as const, noisePub: ph.keys.noise.publicKey, signPub: ph.keys.vmPub, registeredAt: 1 };
+    const l2 = await addDevice(d.keys.aik, d.deviceList, info);
+    const other = mockPhone();
+    await assert.rejects(() => upsertDevice(d.keys.aik, l2, { ...info, signPub: other.keys.vmPub }), /already used/);
+    const l3 = await revokeDevice(d.keys.aik, l2, ph.keys.deviceId);
+    await assert.rejects(() => upsertDevice(d.keys.aik, l3, info), /revoked/);
+    const again = await upsertDevice(d.keys.aik, l2, info);
+    assert.equal(again.listVersion, 3);
+    assert.equal(again.entries.length, 2);
+  });
+
+  it('모양이 틀린 목록은 던지지 않고 shape, 폰 스캔은 devlist_invalid로 끝난다', async () => {
+    const d = await mockDesktop();
+    const good = d.deviceList;
+    const e0 = good.entries[0]!;
+    const bads: unknown[] = [
+      null, 7, {}, { ...good, listVersion: '1' }, { ...good, entries: [null] }, { ...good, entries: [{ aikSig: e0.aikSig }] },
+      { ...good, entries: [{ entry: { ...e0.entry, Sx: e0.entry.Sx.replace(/=$/, '') }, aikSig: e0.aikSig }] },
+      { ...good, entries: [{ entry: { ...e0.entry, Sx: '***' }, aikSig: e0.aikSig }] },
+      { ...good, entries: [{ entry: { ...e0.entry, registered_at: 1.5 }, aikSig: e0.aikSig }] },
+      { ...good, revoked: [null] }, { ...good, revoked: [{ device_id: 1, revoked_at: 1, aikSig: 'AAAA' }] },
+    ];
+    for (const b of bads) {
+      const r = verifyDeviceList(b as DeviceListJson, d.keys.aik.publicKey);
+      assert.equal(r.ok, false);
+      assert.ok(!r.ok && (r.reason === 'shape' || r.reason === 'signature'), JSON.stringify(b)?.slice(0, 80));
+    }
+    const w = await pairWorld({ desk: d, serverList: { ...good, entries: [null] } as unknown as DeviceListJson });
+    const { qr } = w.pc.offer();
+    assert.equal(w.mob.scan(qr), false);
+    assert.equal(w.mob.failure, 'devlist_invalid');
   });
 });

@@ -185,6 +185,14 @@ describe('사진 전송', () => {
     const box = t.outbox.photos.get(offer.msgId)!;
     box[box.length - 1]! ^= 1;
     await assert.rejects(() => t.outbox.readPhoto(offer.msgId));
+    // 손상 항목이 먼저 와도 뒤 항목은 보낸다(flush 전체가 멈추지 않는다)
+    const { offer: good } = await addReceipt(t.outbox, 2000, 9);
+    await enqueueCash(t.outbox, makeCashEntry('2026-11-05', 50_000, 5000));
+    const r = await t.session();
+    assert.deepEqual(r.pending, [offer.msgId]);
+    assert.equal(r.sent.length, 2);
+    assert.ok(t.sink.receipts.has(good.msgId));
+    assert.equal(t.outbox.items.get(offer.msgId)?.attempts, 1);
   });
 
   it('JPEG가 아니거나 4MiB를 넘으면 봉투를 만들지 않는다', () => {

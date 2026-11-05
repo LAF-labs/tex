@@ -6,7 +6,7 @@ import { decodeCbor, encodeCbor } from './cbor.ts';
 import { Channel } from './channel.ts';
 import { CTX } from './contexts.ts';
 import { hkdfSha256, randomBytes } from './crypto.ts';
-import { addDevice, certNotAfter, issueCert, signKv, verifyCert, verifyDeviceList, verifyKv, type CertBody } from './devlist.ts';
+import { certNotAfter, decodeCertField, encodeCertField, issueCert, signKv, verifyCert, verifyDeviceList, verifyKv, upsertDevice, type CertBody, type SignedCert } from './devlist.ts';
 import type { DeviceListJson, PairOkBody } from './envelope.ts';
 import { encodeHs, KIND, parseFrame, Transport } from './frame.ts';
 import type { DesktopKeys, NoiseStatic } from './keys.ts';
@@ -202,9 +202,10 @@ export class DesktopPairing {
       }
       const now = this.#now();
       const notAfter = certNotAfter(now);
-      const certBody: CertBody = { device_id: phone.deviceId, role: 'mobile', Sm: phone.Sm, Vm: phone.Vm, Km: phone.Km, not_after: notAfter };
-      const cert = await issueCert(this.#o.keys.aik, certBody);
-      const list = await addDevice(this.#o.keys.aik, this.#o.deviceList, { deviceId: phone.deviceId, role: 'mobile', noisePub: phone.Sm, signPub: phone.Vm, registeredAt: now });
+      const certBody: CertBody = { device_id: phone.deviceId, role: 'mobile', Sx: phone.Sm, Vx: phone.Vm, Kx: phone.Km, not_after: notAfter };
+      const cert = encodeCertField(await issueCert(this.#o.keys.aik, certBody));
+      // 앞 시도가 목록을 올린 뒤 실패했으면 같은 폰을 다시 서명한다(재시도 가능, 키가 다르면 거부).
+      const list = await upsertDevice(this.#o.keys.aik, this.#o.deviceList, { deviceId: phone.deviceId, role: 'mobile', noisePub: phone.Sm, signPub: phone.Vm, registeredAt: now });
       await this.#o.publishDeviceList(list);
       // 우편함 ID·토큰은 CSPRNG 32B. 핸드셰이크 해시 h에서 파생하지 않는다(C-16).
       const mbxId = randomBytes(32), tokRead = randomBytes(32), tokWrite = randomBytes(32);
@@ -273,7 +274,8 @@ export interface MobilePairingOptions {
 
 export interface MobilePairResult {
   pairId: string;
-  cert: string;
+  /** AIK 서명 기기 인증서. 계정 서비스 POST /v1/device-tokens의 `cert`로 그대로 보낸다. */
+  cert: SignedCert;
   aikPub: Uint8Array;
   desktopStatic: Uint8Array;
   desktopVd: Uint8Array;
@@ -390,7 +392,7 @@ export class MobilePairing {
     this.#set('paired');
     const cert = verifyCert(b.cert, this.#o.accountAikPub, this.#now())!;
     return {
-      pairId: env.pairId, cert: b.cert, aikPub: this.#o.accountAikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
+      pairId: env.pairId, cert: decodeCertField(b.cert)!, aikPub: this.#o.accountAikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
       desktopDeviceId: this.#desktop!.deviceId, kvPub: fromB64Strict(b.kvPub), deviceList: b.deviceList, mbxId: b.mbxId, tokRead: b.tokRead,
       tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, channel,
     };
@@ -401,7 +403,7 @@ export class MobilePairing {
     // 서버가 준 계정 AIK_pub와 PAIR_OK의 AIK_pub가 같을 때만 진행(C-01).
     if (!equal(fromB64Strict(b.aikPub), this.#o.accountAikPub)) return 'aik_mismatch';
     const cert = verifyCert(b.cert, this.#o.accountAikPub, this.#now());
-    if (!cert || cert.device_id !== k.deviceId || cert.role !== 'mobile' || !equal(cert.Sm, k.noise.publicKey) || !equal(cert.Vm, k.vmPub) || !equal(cert.Km, k.kmPub)) return 'pair_ok_invalid';
+    if (!cert || cert.device_id !== k.deviceId || cert.role !== 'mobile' || !equal(cert.Sx, k.noise.publicKey) || !equal(cert.Vx, k.vmPub) || !cert.Kx || !equal(cert.Kx, k.kmPub) || cert.Px) return 'pair_ok_invalid';
     const chk = verifyDeviceList(b.deviceList, this.#o.accountAikPub, Math.max(this.#o.seenListVersion ?? 0, this.#o.serverDeviceList.listVersion));
     if (!chk.ok) return 'devlist_invalid';
     const me = chk.devices.find((d) => d.deviceId === k.deviceId);
