@@ -26,7 +26,8 @@ export async function gatewayRunToken(egress: Egress, scope: RunScope): Promise<
   return r.runToken as RunToken;
 }
 
-export type Provider = 'openai' | 'upstage' | 'rules';
+/** openai_compat: 측정 전용 OpenAI 호환 Chat Completions(adapters/openai-compat.ts). 제품 경로에는 없다. */
+export type Provider = 'openai' | 'upstage' | 'rules' | 'openai_compat';
 
 /** 이름 기반 조인 후의 답(OpenAI 배열·System One 객체 모두 이 모양으로 정규화). */
 export type Answer =

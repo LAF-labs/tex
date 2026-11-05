@@ -1,4 +1,4 @@
-// D14 M7-4: 폰 → PC 종이 증빙 사진·현금매출 전송. 라이브 세션 안에서만 보낸다(릴레이 큐·블롭 없음, Phase 1).
+// D14 M7-4: 폰 → PC 종이 증빙 사진·현금매출 전송. 라이브 세션이 있으면 라이브로, 없으면 릴레이 HTTPS 큐로 보낸다(queue.ts, 팀장 결정 2026-11-05).
 //  - 폰 보관함(Outbox): PC가 꺼져 있으면 폰에 두고, 세션이 열리면 보낸다. PC가 stored로 답한 뒤에만 지운다.
 //  - PC 수신 큐(ReceiveQueue): 청크 재조립(메모리만, 디스크 임시 파일 없음), sha256 확인, msgId 중복 제거, ack.
 //  - 재전송: 폰은 ack가 없으면 offer를 다시 보내고, PC는 이미 받은 msgId면 stored, 조립 중이면 partial(missing)로 답한다.
@@ -14,9 +14,17 @@ export { RECEIPT_CHUNK, RECEIPT_MAX_BYTES };
 
 // ======================= 폰 =======================
 
+/** 큐로 보낸 기록(queue.ts). 라이브 ack가 오면 지우고, 큐 TTL이 지나면 다시 넣는다. */
+export interface QueuedMark {
+  /** 마지막으로 큐에 넣은 시각 */
+  queuedAt?: number;
+  /** 처음 큐에 넣은 시각(보관 기한 기준) */
+  firstQueuedAt?: number;
+}
+
 export type OutboxItem =
-  | { kind: 'receipt'; msgId: string; offer: ReceiptOfferBody; createdAt: number; attempts: number }
-  | { kind: 'cash'; msgId: string; entry: CashEntryBody; createdAt: number; attempts: number };
+  | ({ kind: 'receipt'; msgId: string; offer: ReceiptOfferBody; createdAt: number; attempts: number } & QueuedMark)
+  | ({ kind: 'cash'; msgId: string; entry: CashEntryBody; createdAt: number; attempts: number } & QueuedMark);
 
 /** 폰 보관함 저장소. 앱이 파일 보호 등급·백업 제외 폴더에 암호화해 둔다(apps/mobile). */
 export interface OutboxStore {
@@ -168,6 +176,9 @@ async function sendReceipt(ch: Channel, store: OutboxStore, offer: ReceiptOfferB
 
 // ======================= PC =======================
 
+/** ReceiveQueue가 답을 보내는 곳. 라이브 Channel이 그대로 맞는다. */
+export type Replier = Pick<Channel, 'pairId' | 'send'>;
+
 /** PC 저장 쪽(데이터·데스크톱 트랙이 구현: documents(doc_type='paper_receipt') + receipts, cash_sales). */
 export interface ReceiveSink {
   /** receipts.phone_msg_id가 이미 있는가 */
@@ -232,8 +243,8 @@ export class ReceiveQueue {
     this.#asm.delete(k);
   }
 
-  /** 세션 루프에서 봉투마다 부른다. 응답할 것이 있으면 채널로 보낸다. */
-  async handle(ch: Channel, e: Envelope): Promise<void> {
+  /** 세션 루프(또는 큐 드레인)에서 봉투마다 부른다. 응답할 것이 있으면 ch로 보낸다(큐에서는 응답할 곳이 없어 버린다). */
+  async handle(ch: Replier, e: Envelope): Promise<void> {
     this.#gc();
     switch (e.type) {
       case 'cash.entry': {
@@ -251,7 +262,7 @@ export class ReceiveQueue {
     }
   }
 
-  async #offer(ch: Channel, e: Envelope, b: ReceiptOfferBody): Promise<void> {
+  async #offer(ch: Replier, e: Envelope, b: ReceiptOfferBody): Promise<void> {
     if (await this.#sink.hasReceipt(b.msgId)) {
       this.#drop(b.msgId);
       ch.send('receipt.ack', { msgId: b.msgId, state: 'stored' }, { replyTo: e.id });
@@ -276,7 +287,7 @@ export class ReceiveQueue {
     this.#asm.set(b.msgId, { offer: b, chunks: new Array(b.chunkCount).fill(undefined), have: 0, buffered: 0, touched: this.#now() });
   }
 
-  async #chunk(ch: Channel, b: ReceiptChunkBody): Promise<void> {
+  async #chunk(ch: Replier, b: ReceiptChunkBody): Promise<void> {
     const a = this.#asm.get(b.msgId);
     if (!a || b.index >= a.offer.chunkCount) {
       this.ignored++;
