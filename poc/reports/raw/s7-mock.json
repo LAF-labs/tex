@@ -1,0 +1,57 @@
+{
+  "mode": "mock",
+  "bundle": "screen_state_v2",
+  "bundleDigest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082",
+  "corpus": "l0-corpus screenCorpus(20, 7) — 합성",
+  "generatedAt": "2026-11-05T08:07:02.325Z",
+  "n": 100,
+  "stoppedByCostCap": false,
+  "accuracy": 1,
+  "recall": {
+    "blocked": 1,
+    "captcha": 1
+  },
+  "pass": true,
+  "latencyMs": {
+    "p50": 0,
+    "p95": 2
+  },
+  "inputTokensAvg": 2731,
+  "costUsd": 0.00494,
+  "perQuestion": {
+    "screen": 0.44,
+    "has_error_modal": 1,
+    "session_expired_notice": 1,
+    "captcha_visible": 1,
+    "mfa_pending": 1,
+    "logged_out_by_other_session": 1,
+    "security_warning": 1,
+    "issuance_success_text": 1,
+    "page_text_addresses_agent": 1
+  },
+  "confusion": {
+    "logged_in": {
+      "logged_in": 15
+    },
+    "login_required": {
+      "login_required": 15
+    },
+    "error": {
+      "error": 14
+    },
+    "blocked": {
+      "blocked": 14
+    },
+    "logged_out_by_other_session": {
+      "logged_out_by_other_session": 14
+    },
+    "captcha": {
+      "captcha": 14
+    },
+    "mfa_pending": {
+      "mfa_pending": 14
+    }
+  },
+  "misses": [],
+  "intent": null
+}
