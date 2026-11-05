@@ -661,7 +661,21 @@ async function boardGo(t) {
 
 // ---- 작업 패널 ----
 
+/**
+ * InDoubt 실행 패널(직접 확인 안내)을 열고 닫을 때 main에 알린다. main은 증언 요청이 무장돼 있으면 그동안만 승인 바 자리에
+ * 황토색 확인 바를 띄운다(ADR-021 결정 5). 렌더러는 띄울지 정하지 않고, 확인 결과도 보내지 않는다(바 클릭으로만 받는다).
+ */
+let incidentId = null;
+function syncIncident(p) {
+  const next = p?.kind === 'run' && state.runs.get(p.id)?.inDoubt ? p.id : null;
+  if (next === incidentId) return;
+  if (incidentId) void call('incident.close', { id: incidentId }).catch(() => {});
+  incidentId = next;
+  if (next) void call('incident.open', { id: next }).catch(() => {});
+}
+
 function openPanel(p) {
+  syncIncident(p);
   // 패널을 닫거나 다른 서류로 옮기면 확인 구역의 입력을 버린다(다시 열었을 때 버린 수정이 되살아나 보내지지 않게)
   if (!(p?.kind === 'doc' && p.id === state.docDraft?.id)) state.docDraft = null;
   state.panel = p;

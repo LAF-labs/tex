@@ -9,7 +9,7 @@ import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/
 import type { EnginePortal } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
-import { kstToday, verifyLocalApproval } from './approval-gate.ts';
+import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { OnboardingFlow, onboardingTodos, parseOnbState, type OnbProfile, type OnbState } from './onboarding.ts';
 import { MockOnboardingPorts } from './onboarding-mock.ts';
@@ -433,6 +433,47 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     });
   });
 
+  // InDoubt 증언(ADR-021 결정 5). 엔진의 증언 요청은 ShellRuns가 무장만 해 둔다(summaryHash 일치). 바는 사용자가 그 카드를
+  // 열었다고 렌더러가 알려 온 동안에만 띄우고, 게이트가 오면 게이트가 자리를 가져간다(approval-bar). 증언 근거는 바가 관찰한
+  // 클릭으로 main이 발급하고, 게이트 포트(answerAttest)로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
+  let incidentOpen: string | null = null;
+  const showAttest = (runId: string) => {
+    const req = runs.attestFor(runId);
+    if (!req || incidentOpen !== runId || bar.visible) return;
+    void bar.openAttest(req).then(async (o) => {
+      if (o.decision !== 'attest') {
+        if (o.reason === 'load_failed') log.event('main.attest_bar_load_failed');
+        return;
+      }
+      if (!verifyLocalAttestation(key, o.attestation) || o.attestation.attestReqId !== req.attestReqId) return log.event('main.attest_self_check_failed');
+      runs.attestUsed(runId, req.attestReqId);
+      const r = await host.answerAttest(o.attestation);
+      if (!r.ok) log.event('main.attest_answer_not_ok', { code: String(r.code ?? ''), verdict: r.verdict });
+      runs.onAttestAnswer(runId, r);
+    });
+  };
+  /** 렌더러의 카드 열림·닫힘(incident.open/close 처리기는 이것만 부른다). */
+  const incidents = {
+    open(id: string): { ready: boolean } {
+      if (!runs.get(id)?.inDoubt) throw new Error('not_in_doubt');
+      if (incidentOpen && incidentOpen !== id) bar.closeAttest('card_switched', { runId: incidentOpen });
+      incidentOpen = id;
+      showAttest(id);
+      return { ready: !!runs.attestFor(id) };
+    },
+    close(id: string): { ok: true } {
+      if (incidentOpen === id) incidentOpen = null;
+      bar.closeAttest('card_closed', { runId: id });
+      return { ok: true };
+    },
+  };
+  runs.on('attest-ready', (runId: string) => showAttest(runId));
+  runs.on('attest-withdrawn', (_runId: string, attestReqId: string, reason: string) => bar.closeAttest(`withdrawn.${reason}`, { attestReqId }));
+  // 게이트가 끝나 바 자리가 비면, 열린 카드의 증언 요청이 남아 있을 때 다시 띄운다(엔진이 새로 요청하면 그것으로).
+  bar.on('hidden', (_reason: string, kind: string) => {
+    if (kind === 'gate' && incidentOpen) setTimeout(() => incidentOpen && showAttest(incidentOpen), 0);
+  });
+
   const g24Doc = (v: unknown): G24Doc => {
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
@@ -557,6 +598,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return runs.manualDone(String(p.id));
     },
+    // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
+    'incident.open': (p) => {
+      needGesture(3_000);
+      return incidents.open(String(p.id));
+    },
+    // 카드를 닫았다. 증언 바를 내린다(증언이 안 될 뿐이라 안전한 실패다).
+    'incident.close': (p) => incidents.close(String(p.id)),
     'docs.list': () => listDocs(),
     // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).

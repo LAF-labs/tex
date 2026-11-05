@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sovereign-ax.dev/schemas/data_descriptor.schema.json",
+  "title": "데이터 패키지 기술자(.sxp kind:data, SIGNING.md §6)",
+  "description": "v1 (2026-11-05, D14 M6-10). 데이터 패키지(급여 시행일 표 등)의 서명 대상. 본문 바이트는 .sxp의 body에 따로 있고 bodyDigest(원시 바이트의 SHA-256 hex)로 묶는다. 서명은 패키지 키 2-of-3, 대상 = JCS(기술자 − signatures)(manifest와 같은 규칙). 본문 모양은 schema가 가리키는 스키마(예: sax.rate-tables/v1 = packages/payroll/schema/rate-table-package.schema.json)가 정하고, 엔진은 앱이 등록한 검증기로만 받는다.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "version", "schema", "bodyDigest", "keyEpoch", "issuedAt", "signatures"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_-]+)+$", "maxLength": 128, "description": "인덱스 항목 id. .hotfix로 끝날 수 없다(SIGNING.md §6)."},
+    "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$", "description": "semver. 같은 id의 내림 금지, 같은 버전은 같은 내용일 때만."},
+    "schema": {"type": "string", "pattern": "^sax\\.[a-z0-9-]+/v[0-9]+$", "description": "본문 스키마 이름. 앱이 검증기를 등록한 이름만 받는다."},
+    "bodyDigest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "keyEpoch": {"type": "integer", "minimum": 1},
+    "issuedAt": {"type": "string", "format": "date-time"},
+    "signatures": {
+      "type": "array", "minItems": 2, "maxItems": 3,
+      "items": {"type": "object", "required": ["keyId", "alg", "sig"], "additionalProperties": false,
+        "properties": {"keyId": {"type": "string", "maxLength": 64}, "alg": {"const": "ed25519"}, "sig": {"type": "string", "pattern": "^[A-Za-z0-9_-]{86}$"}}}
+    }
+  }
+}
