@@ -116,11 +116,6 @@ export class Vault {
       wipe(reason);
       this.emit(['control'], 'vault.state', { open: false, reason });
     };
-    // 기동 중(설정 읽는 동안)에는 session.* 응답이 startup이다. 다 읽으면 실제 상태를 main에 한 번 알린다.
-    void this.human.ready().then(() => {
-      const v = this.human.lock.check();
-      this.emit(['control'], 'vault.state', v.open ? { open: true } : { open: false, reason: v.reason });
-    });
   }
 
   /** 타이피스트가 1회용 값이 없을 때 부른다. 보안카드는 row, 포털은 pw 칸(포털 아이디는 금고에 없다, ADR-035). */
@@ -143,7 +138,16 @@ export class Vault {
       return;
     }
     if (kind === 'engine') this.enginePort = port;
-    if (kind === 'control') this.controlPort = port;
+    if (kind === 'control') {
+      this.controlPort = port;
+      // 기동 중(설정 읽는 동안)에는 session.* 응답이 startup이다. 붙은 control 포트에 설정을 다 읽은 뒤의 실제 상태를 한 번 알린다
+      // (포트가 설정 읽기보다 먼저 붙든 나중에 붙든).
+      void this.human.ready().then(() => {
+        if (this.controlPort !== port) return;
+        const v = this.human.lock.check();
+        this.post(port, { t: 'ev', name: 'vault.state', data: v.open ? { open: true } : { open: false, reason: v.reason } });
+      });
+    }
     port.onMessage((raw) => void this.onPortMessage(kind, port, raw as InboundMessage));
   }
 

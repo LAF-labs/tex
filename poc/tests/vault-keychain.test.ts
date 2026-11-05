@@ -504,6 +504,18 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     }
   });
 
+  it('설정을 다 읽은 뒤에 붙은 control 포트에도 실제 vault.state를 한 번 보낸다', async () => {
+    const human = new HumanSecretVault({ backend: { items: new MemoryItemStore(), wrapper: new MemoryWrapper(), hello: new UnavailableHello() }, log: new Log() });
+    await human.ready();
+    const h2 = await startHarness({ human });
+    try {
+      const st = await h2.control.once('vault.state');
+      assert.deepEqual(st, { open: false, reason: 'idle_unknown' }, '유휴 보고 전');
+    } finally {
+      await h2.close();
+    }
+  });
+
   it('typist.authFailed(엔진) → suspect + control secret.suspect, forget(control)으로 지운다', async () => {
     const got = h.control.once('secret.suspect');
     assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'security_card', scope: 'business' }), {});
