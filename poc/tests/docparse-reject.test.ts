@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { DocparseError, parse, type DocparseHost } from '@sax/docparse';
 import { CANARY, seedCorpus } from '@sax/docparse/fixtures';
-import { imageInfo, readSheetBytes, SandboxError, ZIP_LIMITS } from '@sax/docparse/sandbox';
+import { imageInfo, parseCsvText, readSheetBytes, SandboxError, SHEET_LIMITS, ZIP_LIMITS } from '@sax/docparse/sandbox';
 
 const code = (e: unknown) => (e instanceof SandboxError || e instanceof DocparseError ? e.code : `throw:${(e as Error)?.message}`);
 
@@ -81,5 +81,18 @@ describe('퍼징 시드: 그림 머리·크기', () => {
 describe('ZIP 상한은 정상 xlsx의 수십 배', () => {
   it('항목 2000개·한 항목 64MB·합계 160MB·압축률 250', () => {
     assert.deepEqual([ZIP_LIMITS.maxEntries, ZIP_LIMITS.maxEntryBytes / 2 ** 20, ZIP_LIMITS.maxTotalBytes / 2 ** 20, ZIP_LIMITS.maxRatio], [2000, 64, 160, 250]);
+  });
+});
+
+describe('CSV 칸 길이 상한(CodeSolar #78)', () => {
+  it('닫히지 않는 따옴표는 상한×4 글자에서 바로 거부한다(파일 끝까지 쌓지 않음)', () => {
+    const big = 'a,"' + 'x'.repeat(5_000_000);
+    assert.throws(() => parseCsvText(big), (e: unknown) => e instanceof SandboxError && e.code === 'sheet_too_large');
+  });
+  it('따옴표 없는 긴 칸은 상한에서 잘리고 더 쌓지 않는다', () => {
+    const r = parseCsvText('a,' + 'y'.repeat(2_000_000) + '\nb,c');
+    assert.equal(r.truncated, true);
+    assert.equal(String(r.rows[0]![1]).length, SHEET_LIMITS.maxCellChars);
+    assert.deepEqual(r.rows[1], ['b', 'c']);
   });
 });

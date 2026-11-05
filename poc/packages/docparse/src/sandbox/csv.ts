@@ -62,14 +62,17 @@ export function parseCsvText(text: string): { rows: Cell[][]; truncated: boolean
           i++;
         } else quoted = false;
       } else field += ch;
-      if (field.length > SHEET_LIMITS.maxCellChars * 4) throw new SandboxError('sheet_too_large'); // 닫히지 않는 따옴표
+      if (field.length > SHEET_LIMITS.maxCellChars * 4) throw new SandboxError('sheet_too_large'); // 글자마다 본다: 닫히지 않는 따옴표는 상한×4에서 바로 거부(파일 끝까지 쌓지 않음)
     } else if (ch === '"' && field.trim() === '') {
       quoted = true;
       wasQuoted = true;
       field = '';
     } else if (ch === d) pushField();
     else if (ch === '\n') pushRow();
-    else if (ch !== '\r') field += ch;
+    else if (ch !== '\r') {
+      // 따옴표 없는 칸: 상한을 넘으면 더 쌓지 않는다(pushField가 잘라 truncated로 표시)
+      if (field.length <= SHEET_LIMITS.maxCellChars) field += ch;
+    }
   }
   if (field !== '' || row.length) pushRow();
   return { rows, truncated, formulaLike };
