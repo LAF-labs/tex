@@ -122,6 +122,20 @@ describe('폰 스캔 검사(3단계)', () => {
     assert.equal(m.scan(encodeQr({ ...q, intent: 'recover' })), false);
   });
 
+  it('실패 뒤 다시 스캔하면 지난 실패를 지우고, 진행 중에는 스캔을 받지 않는다', async () => {
+    const w = await pairWorld();
+    const { qr } = w.pc.offer();
+    const m = new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: w.desk.deviceList, relayAllowlist: [RELAY] });
+    assert.equal(m.scan('garbage'), false);
+    assert.equal(m.failure, 'qr_invalid');
+    assert.equal(m.scan(qr), true);
+    assert.equal(m.failure, null);
+    assert.equal(m.sas, null);
+    assert.equal(m.state, 'scanned');
+    m.state = 'show_sas';
+    assert.throws(() => m.scan(qr), /busy/);
+  });
+
   it('기기 목록에 없는 PC(서버·공격자가 낀 Sd)는 중단', async () => {
     const w = await pairWorld();
     const other = await mockDesktop();

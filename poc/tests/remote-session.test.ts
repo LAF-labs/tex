@@ -89,6 +89,28 @@ describe('상시 세션 IK', () => {
     await assert.rejects(() => s.w.relay.joinMailbox(s.pc.mbxId, s.pc.tokRead, 'mobile'));
   });
 
+  it('IK 뒤 hello가 오지 않으면 채널과 링크를 닫는다(우편함 자리를 놓는다)', async () => {
+    const s = await setup();
+    let n = 0;
+    // msg1·msg2만 통과시키고 hello부터 버린다
+    s.w.relay.faults = { drop: 0.5, rand: () => (++n <= 2 ? 1 : 0) };
+    const pcLink = await s.w.relay.joinMailbox(s.pc.mbxId, s.pc.tokRead, 'desktop');
+    const phLink = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile');
+    const [a, b] = await Promise.all([
+      acceptDesktopSession(pcLink, { noise: s.w.desk.keys.noise, pair: s.rec, hello: { appVersion: 'pc', deviceListVersion: 2, capabilities: [] }, persistTs: async () => {}, helloTimeoutMs: 200 }),
+      openMobileSession(phLink, { pairId: s.phone.pairId, noise: s.w.phone.keys.noise, desktopStatic: s.phone.desktopStatic, nextTimestamp: monotonicClock(0), hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [] }, helloTimeoutMs: 200 }),
+    ]);
+    assert.equal(a, null);
+    assert.equal(b, null);
+    assert.equal(phLink.closed, true);
+    assert.equal(pcLink.closed, true);
+    s.w.relay.faults = {};
+    // 자리가 비었으니 다시 들어갈 수 있다
+    const again = await s.w.relay.joinMailbox(fromB64(s.phone.mbxId), fromB64(s.phone.tokWrite), 'mobile');
+    assert.equal(again.closed, false);
+    again.close();
+  });
+
   it('monotonicClock은 시계가 뒤로 가도 증가', () => {
     let t = 100;
     const c = monotonicClock(500, () => t);
