@@ -1,6 +1,7 @@
 # ADR-012 셀렉터 핫픽스 범위 제한, 액추에이션 시 동일성 검사, 운영 정책 앱 내장 상한
 
 상태: 채택(조건 항목 있음) · 2026-10-28 (공격표면 감사 B-01·B-23 반영, 재감사 E-03·E-05 반영, 조건부 항목은 아래 "조건")
+개정: 2026-11-05 — 결정 1의 `secretSlot≠true`를 셀렉터 사전 v1.1 표기 `secretKind 없음`으로 정리(ADR-026 결정 6, PR #45). 핫픽스 범위는 그대로다.
 
 ## 맥락
 - 비가역성의 판정(`commits`)은 "stable_id가 무엇을 가리키는가"(`candidates`)에 의존한다. v1.2에서는 핫픽스가 `commits`·`secretSlot`·`closeAffordance` 세 속성만 못 바꿨고, `candidates`·`commitEndpoints`·`readbackOf`·`fieldKey`·`namePattern`은 바꿀 수 있었다. 그래서 서명된 핫픽스 한 장(키 탈취, 내부자, 또는 1영업일 SLA에 쫓기는 당직의 정직한 실수)으로 비커밋 항목이 발급 버튼을 가리키게 하거나, 커밋 가드의 경로 목록에서 실제 발급 경로를 빼거나, readback을 다른 표시 요소로 돌릴 수 있었다. 정적 검증(V-03)·토큰·원장·커밋 가드가 모두 같은 사전에 기대므로 "세 겹" 방어가 한 번에 무너진다(research/AUDIT-B B-01, Critical).
@@ -8,7 +9,7 @@
 - 운영 정책은 서명만 맞으면 정부24 `auto`, 캡차 중계 허용, 쿨다운 1시간, 탐지 횟수 99 같은 완화를 그대로 받았다. "완화 불가"가 플레이북에만 있고 정책에는 없었다. 정부24 자동화는 약관 제14조 ④ 9호 위반이고 사용자 계정 정지로 이어진다(B-23, ADR-011).
 
 ## 결정
-1. **핫픽스 범위**: 핫픽스가 바꿀 수 있는 것은 `commits:false ∧ secretSlot≠true ∧ inputType≠password ∧ closeAffordance≠true ∧ readbackOf 없음 ∧ fieldKey 없음`인 항목의 `candidates` 배열뿐이다. 포털 공통 `commitEndpoints`는 **추가만** 허용한다. 나머지 속성·IR 본문·조회 하위 플레이북은 정식 버전 + 전체 리플레이로만 바꾼다. 형식은 `schemas/hotfix.schema.json`이며 금지 속성은 키 자체가 없다(D02 §2.2). 위 조건을 만족해도 (a) 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, (b) IR의 `decide.scope`·조건식(`cond`)·`rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, (c) 어떤 커밋 구간 W(X) 안 스텝이 참조하는 항목은 **핫픽스 불가**다. 엔진과 핫픽스 CI가 IR에서 참조 집합을 계산해 확인한다(E-03).
+1. **핫픽스 범위**: 핫픽스가 바꿀 수 있는 것은 `commits:false ∧ secretKind 없음 ∧ inputType≠password ∧ closeAffordance≠true ∧ readbackOf 없음 ∧ fieldKey 없음`인 항목의 `candidates` 배열뿐이다. 포털 공통 `commitEndpoints`는 **추가만** 허용한다. 나머지 속성·IR 본문·조회 하위 플레이북은 정식 버전 + 전체 리플레이로만 바꾼다. 형식은 `schemas/hotfix.schema.json`이며 금지 속성은 키 자체가 없다(D02 §2.2). 위 조건을 만족해도 (a) 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, (b) IR의 `decide.scope`·조건식(`cond`)·`rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, (c) 어떤 커밋 구간 W(X) 안 스텝이 참조하는 항목은 **핫픽스 불가**다. 엔진과 핫픽스 CI가 IR에서 참조 집합을 계산해 확인한다(E-03).
 2. **핫픽스 결속과 재검증**: 핫픽스는 `appliesTo.packageDigest`로 정확히 한 패키지에 결속되고, 2-of-3 임계 서명(ADR-013)·단조 버전·`keyEpoch`·만료(≤ 14일)를 가진다. 엔진은 로드할 때마다 핫픽스를 반영한 사전에 스키마와 V-01~V-24를 다시 돌리고 실패하면 거부한다. **SV 실행 위치의 정본**(D03 §3.1-6): SV-01~06은 레지스트리 패키지·핫픽스 CI에서만 새 녹화로 돌고 2-of-3 서명이 그 통과를 전제로 한다. 클라이언트는 SV를 다시 돌리지 않고 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 매번 한다(D02 §2.2, D12 §3).
 3. **액추에이션 시 동일성 검사(R-A1)**: Actuator는 `click`·`press`·`fill`·`select` 직전마다 실제 요소의 역할·정규화된 접근성 이름·프레임·랜드마크를 사전과 대조한다. 불일치는 `step.identity_mismatch`다. 비커밋 항목으로 해석된 요소가 같은 랜드마크 안 커밋 항목의 이름 패턴이나 앱 내장 `DENY_ACTION_NAME`에 맞으면 클릭하지 않고 보안 이벤트 `step.commit_shadow`를 남긴다(검토 서명된 예외 항목은 커밋 항목 대조만). **R-A2**: `commits:false` 항목을 클릭·입력하기 직전에 같은 랜드마크의 모든 `commits:true` 항목을 해석해 같은 요소이면 거부한다(SV-01의 런타임판, E-03). 셀렉터 CI의 SV-01(충돌)·SV-04(앵커·랜드마크 유일성)가 같은 성질을 배포 전에 확인한다.
 4. **운영 정책 앱 내장 상한**: `PORTAL_MODE_CEILING`(홈택스 `auto`, 정부24·위택스·SMINFO·4대보험·iros·public_api `postprocess`. 위택스는 ADR-022에서 추가), `CAPTCHA_RELAY_CEILING`(홈택스만 허용), `POLICY_FLOOR`(지연·쿨다운·탐지 횟수·캡차 폭주·커밋 창·원격 상한 등)를 앱 상수로 둔다. 정책 값이 넘으면 그 필드만 내장 값으로 고정하고 `policy.clamped`를 남긴다. 포털 키가 없으면 `postprocess`다. 정책 신선도 만료는 발행 후 72시간 이하이고(내용 불변 재발행은 타임스탬프 키가 48시간마다 재서명), 1인 긴급 키로만 서명된 정책은 정책의 **모든 필드**가 보수 방향일 때만 받는다(D03 §7.1 필드별 표, E-04).
