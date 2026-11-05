@@ -16,7 +16,7 @@ const SRC = 'apps/desktop/src';
 const srcFiles = fs.readdirSync(path.join(root, SRC)).filter((f) => f.endsWith('.ts'));
 /** 제품 경로 소스(e2e·시험 도구 제외). */
 const productFiles = srcFiles.filter((f) => !f.includes('e2e') && !['h01-fixture.ts', 'poc8-measure.ts', 'smoke-plan.ts'].includes(f));
-const staticJs = ['shell/shell.js', 'shell/shell-views.js', 'shell/shell-g24.js', 'shell/secret.js', 'app.js', 'vault-panel.js'];
+const staticJs = ['shell/shell.js', 'shell/shell-views.js', 'shell/shell-g24.js', 'shell/shell-onboarding.js', 'shell/secret.js', 'app.js', 'vault-panel.js'];
 const directives = (csp: string) => new Map(csp.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k!, v.join(' ')]));
 /** 생성자 호출 하나의 webPreferences 블록(괄호 짝 맞춰 자른다). */
 function prefsBlocks(src: string, ctor: string): string[] {

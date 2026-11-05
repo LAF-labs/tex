@@ -1,0 +1,26 @@
+{
+  "keyEpoch": 1,
+  "keys": {
+    "root": {
+      "root-1": "0EqyMnQrtKs6E2i9RhXk5tAiSrcaAWuvhSCjMsl3hzc=",
+      "root-2": "IEBA42TBDyvsnB/lAKHNTCR8idZQoB7X6CyrqGeHfCE=",
+      "root-3": "Zs1gi5KLiOUODv6qM/rxxDzv4HKUsLh+n+CrpqPPdjM="
+    },
+    "package": {
+      "package-1": "iEuIV/TqoWE8YVBNs01L6vNGUXoOMd483dTZtCAdnQs=",
+      "package-2": "oJql9HpnWYAv+VX43C0qFKXJnSO+l/hkEn/5ODRVpPA=",
+      "package-3": "dPhc2jTRwnxGIUhHMekVecPZxs/A2UsoGqEekWIFiqk="
+    },
+    "policy": {
+      "policy-1": "SAdaWX5yGhVuLgeZ3lzAxTJNxufq8c3UYlCGjsUyFd0=",
+      "policy-2": "XiEsCYDks5/AlyETSqAhCTdO39JgwNPQPLUByNZUV6k=",
+      "policy-3": "F8t5+ytBIPKx7GXkGY1uCLKOgT/rAeSkAIObheGAgM4="
+    },
+    "emergency": {
+      "emergency-1": "25lf4lFp0UHKubu6krqgH58uHs599MsqwFGQ83/MH50="
+    },
+    "timestamp": {
+      "timestamp-1": "wFDFY3pE+oYp//PMzOIwDLNipj2Z2V/FQUUmb0MyRFo="
+    }
+  }
+}

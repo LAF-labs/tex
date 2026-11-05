@@ -1,0 +1,11 @@
+{
+  "name": "@sax/updater",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "앱 업데이트 앞단 검증(D14 M4-9, ADR-028): 레지스트리 releases/{channel}/latest.json 서명·만료·채널·단조 버전, 다운로드 sha512. 네트워크·Electron 없음",
+  "exports": {
+    ".": { "types": "./src/index.ts", "development": "./src/index.ts", "default": "./dist/index.js" }
+  },
+  "dependencies": {}
+}
