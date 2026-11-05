@@ -87,10 +87,25 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
   - 로그는 `vault.commit_armed{fields}`·`vault.commit_compared{match, why?}`뿐이다. 값·경로·본문은 남기지 않는다.
 
 ## 7. 장기 키 연산 — net/remote 트랙
-- `crypto.publicKeys` → `{noiseStatic, vd, qd, kv}`(각 32B 공개키).
-- `crypto.noiseDH{remotePub, ctx}` → `{shared}`. 개인키는 금고 밖으로 나가지 않는다.
-- `crypto.signVd{purpose ∈ VD_PURPOSES, msg}` → `{sig}`(Ed25519). 서명 대상은 purpose‖0x00‖msg다.
-- `crypto.hpkeOpen{enc, ct, info:'SAX-env-v1', aad}` → `{pt}`. HPKE Base(X25519-HKDF-SHA256, HKDF-SHA256, ChaCha20-Poly1305)다.
+- 구현: `crypto/ops.ts`(`VaultCrypto`). 엔진 포트에서만 부른다.
+- `crypto.publicKeys` → `{noiseStatic, vd, qd, kv, aik}`(각 32B 공개키). `aik`를 더했다(remote `DesktopKeys.aik.publicKey`).
+- `crypto.noiseDH{remotePub(32B), ctx ∈ NOISE_CONTEXTS}` → `{shared}`. 낮은 차수 점은 `bad_point`다. 개인키는 금고 밖으로 나가지 않는다.
+- `crypto.signVd{purpose ∈ VD_PURPOSES, msg}` → `{sig}`(Ed25519 64B).
+  - 서명 대상은 `utf8(purpose) ‖ msg`이고 구분 바이트가 없다(schemas/SIGNING.md §8). 이전 문서의 `0x00`은 오기였다.
+  - 클라우드 대상 Vd 맥락은 `SAX-dpop-v1`뿐이다.
+- `crypto.signAik{purpose ∈ AIK_PURPOSES, msg}` → `{sig}`.
+  - AIK_PURPOSES = SAX-devlist-v1·SAX-revoke-v1·SAX-cert-v1·SAX-aik-rotate-v1·SAX-kek-v1·SAX-acct-op-v1이다.
+  - 서명 대상은 `utf8(ctx) ‖ msg`이고, msg는 호출자가 만든 대상 객체의 JCS 바이트다.
+  - AIK = Ed25519(HKDF-SHA256(RK, salt 없음, info "aik", 32))이고, RK는 첫 실행 때 금고가 만든 32B 난수다(D08 §3).
+  - Phase 2: 매 호출 Hello 확인과 trigger=daemon 거부(C-22)다. Phase 1은 무인 저장을 잔여 위험으로 둔다.
+- `crypto.hpkeOpen{enc(32B), ct, info:'SAX-env-v1', aad}` → `{pt}`.
+  - RFC 9180 Base(DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305), seq 0 단발 개봉이고 키는 Qd다.
+  - aad는 `utf8("SAX-env-v1")‖mbx_epoch`(뒤 64B 이하)여야 한다. 위조는 `open_failed`다.
+- 공통
+  - 입력 msg·ct는 64KiB 이하다.
+  - 허용 목록 밖 purpose는 `purpose_not_allowed`, 형식 오류는 `bad_params`다.
+  - 키는 KeyStore 항목 `device/sd·vd·qd·kv`, `account/rk`에 32B 시드로 둔다. 없으면 만들고(`vault.key_created{name}`), 길이가 틀리면 덮지 않고 `vault.keystore_mismatch`다.
+- 감사: 호출마다 `vault.crypto_op{op, purpose?}`를 남긴다. 한 시간 기대치(noiseDH 240·signVd 3600·signAik 60·hpkeOpen 1200)를 넘으면 `vault.crypto_rate_anomaly{op, count}`를 시간당 1회 남긴다(막지 않음). 입력·출력 바이트는 남기지 않는다.
 
 ## 8. Windows 네이티브 헬퍼 — 결정 Q-3
 - 금고 트랙은 인터페이스·모의 구현·macOS 개발 구현까지 맡는다. 실제 Windows 구현은 2차 배분(Windows 호스트 세션)이 한다.
