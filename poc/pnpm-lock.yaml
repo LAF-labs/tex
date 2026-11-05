@@ -242,6 +242,9 @@ importers:
       '@sax/db':
         specifier: workspace:*
         version: link:../db
+      '@sax/docparse':
+        specifier: workspace:*
+        version: link:../docparse
       '@sax/payroll':
         specifier: workspace:*
         version: link:../payroll

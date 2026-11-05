@@ -13,7 +13,7 @@ import {
 } from '@sax/db';
 import {
   addCustomItem, clearCardSlipEnough, ensureItems, exportBundle, exportPayrollRecord, generatePassword, markCardSlipEnough, missingReport, monthStatus, netOfCancellations,
-  periodFor, RRN_HIDDEN_NOTE, tidyInvoices, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext, type TaxInvoiceRow,
+  escapeFormulaText, matchInsuranceNotice, periodFor, RRN_HIDDEN_NOTE, tidyInvoices, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext, type TaxInvoiceRow,
 } from '@sax/bundle';
 
 configure({ useWebWorkers: false });
@@ -278,5 +278,38 @@ describe('이번 달 상태와 빠진 것', () => {
     assert.ok(all.includes('확인 필요: 공급가액+세액이 합계와 1원 다름'), '그 행의 메모 칸');
     const missSheet = await read(`xl/worksheets/sheet${r.sheets.indexOf('빠진 것') + 1}.xml`);
     assert.ok(!missSheet.includes('확인 필요: 공급가액'), "'빠진 것' 시트에는 올리지 않는다");
+  });
+
+  it('수식처럼 보이는 글자 칸은 작은따옴표로 이스케이프(docparse formula_like_text), 숫자 칸은 그대로', async () => {
+    assert.deepEqual(['=1+1', '+82', '-3', '@SUM(A1)', '\tx', '＝1', '가게', '010-1234'].map(escapeFormulaText), ["'=1+1", "'+82", "'-3", "'@SUM(A1)", "'\tx", "'＝1", '가게', '010-1234']);
+    const bad = '=HYPERLINK("https://example.invalid","눌러")';
+    const taxInvoices: TaxInvoiceRow[] = [{ direction: 'purchase', issueDate: '2026-10-07', approvalNo: '20261007-41000000-00000009', counterpartyBizNo: syntheticBizNo(9), counterpartyName: bad, supplyAmount: 10_000, vatAmount: 1_000, total: 11_000 }];
+    const pw = generatePassword();
+    const r = await exportBundle({ ...ctx({ taxInvoices }), outDir: path.join(dir, 'exports-formula'), password: pw });
+    const { all } = await readBook(fs.readFileSync(r.file), pw);
+    assert.match(all, /(&apos;|')=HYPERLINK/, '앞에 작은따옴표');
+    assert.ok(!/<f>/.test(all), '수식 칸 없음');
+    assert.ok(all.includes('>11000<'), '금액은 숫자 칸 그대로');
+  });
+
+  it('S-06 고지내역 → 직원 매칭: 이름·생년월일, 이름만, 동명이인, 없음(docparse 형식)', () => {
+    const emps = new EmployeeRepo(db, cipher);
+    const p1 = emps.create({ profileId, name: '박직원', birthDate: '1988-03-03', hiredOn: '2026-01-02', basePay: 2_000_000, dependents: 1 }).id;
+    const p2 = emps.create({ profileId, name: '박직원', birthDate: '1999-09-09', hiredOn: '2026-01-02', basePay: 2_000_000, dependents: 1 }).id;
+    const kim = emps.list(profileId).find((e) => e.name === '김직원')!.id;
+    const row = (rowId: string, name: string, birthDate: string | null) => ({ rowId, name, birthDate, insurance: 'pension' as const, base: 2_500_000, total: 237_500, employee: 118_750, employer: 118_750 });
+    const m = matchInsuranceNotice(db, cipher, {
+      profileId, month: '2026-10', noticeDocId: 'doc-1',
+      rows: [row('S!2:pension', '김 직원', '1990-01-01'), row('S!2:health', '김직원', '1990-01-01'), row('S!3:pension', '박직원', null), row('S!4:pension', '박직원', '1988-03-03'), row('S!5:pension', '김직원', '1991-01-01'), row('S!6:pension', '최직원', null), row('S!7:pension', '이직원', null)],
+    });
+    assert.deepEqual(m, [
+      { rowId: 'S!2:pension', employeeId: kim, basis: 'name_birth' },
+      { rowId: 'S!2:health', employeeId: kim, basis: 'name_birth' },
+      { rowId: 'S!3:pension', employeeId: null, basis: 'ambiguous', candidates: [p1, p2] },
+      { rowId: 'S!4:pension', employeeId: p1, basis: 'name_birth' },
+      { rowId: 'S!5:pension', employeeId: null, basis: 'none', candidates: [kim] },
+      { rowId: 'S!6:pension', employeeId: null, basis: 'none' },
+      { rowId: 'S!7:pension', employeeId: emps.list(profileId).find((e) => e.name === '이직원')!.id, basis: 'name_only' },
+    ]);
   });
 });

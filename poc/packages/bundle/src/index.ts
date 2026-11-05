@@ -2,3 +2,4 @@
 export * from './export.ts';
 export * from './items.ts';
 export * from './month.ts';
+export * from './notice-match.ts';

@@ -51,6 +51,24 @@ function checkPassword(pw: string): void {
 }
 
 const header = (labels: string[]): Row => labels.map((l) => ({ value: l, fontWeight: 'bold' as const }));
+
+/**
+ * 수식처럼 보이는 글자 칸 이스케이프(docparse formula_like_text, 팀장 전달 2026-11-05). 가게 이름·메모·거래처 상호처럼 밖에서 들어온 글자가
+ * '=', '+', '-', '@', 탭, 줄바꿈(전각 ＝＋－＠ 포함)으로 시작하면 앞에 작은따옴표를 붙여 글자로만 보이게 한다(OWASP CSV injection 권고).
+ * write-excel-file은 문자열을 수식으로 쓰지 않지만, 세무사가 엑셀에서 칸을 고치거나 CSV로 다시 저장하면 수식이 될 수 있어서다.
+ */
+export const escapeFormulaText = (s: string): string => (/^[=+\-@\t\r\n＝＋－＠]/u.test(s) ? `'${s}` : s);
+
+/** 모든 시트의 글자 칸을 이스케이프한다(숫자 칸·서식은 그대로) */
+function escapeSheets<T>(sheets: Sheet<T>[]): Sheet<T>[] {
+  const cell = (c: unknown): unknown => {
+    if (typeof c === 'string') return escapeFormulaText(c);
+    if (c && typeof c === 'object' && 'value' in c && typeof (c as { value: unknown }).value === 'string' && !('type' in c && (c as { type: unknown }).type !== String))
+      return { ...(c as object), value: escapeFormulaText((c as { value: string }).value) };
+    return c;
+  };
+  return sheets.map((s) => ({ ...s, data: (s.data as unknown[][]).map((r) => r.map(cell)) as Row[] }) as Sheet<T>);
+}
 const text = (v: string | null | undefined): string => v ?? '';
 /** 정수 금액 칸(천 단위 구분) */
 const num = (v: number | null | undefined) => (v === null || v === undefined ? null : { value: v, type: Number, format: '#,##0' });
@@ -274,7 +292,7 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
     ],
   });
 
-  const plain = await writeXlsxFile(sheets, { fontFamily: 'Malgun Gothic', fontSize: 10 }).toBuffer();
+  const plain = await writeXlsxFile(escapeSheets(sheets), { fontFamily: 'Malgun Gothic', fontSize: 10 }).toBuffer();
   const xlsx = officeCrypto.encrypt(plain, { password: input.password });
   plain.fill(0);
 
@@ -366,11 +384,11 @@ export async function exportPayrollRecord(input: PayrollRecordExportInput): Prom
     sumRows.push([m, `${p.revision}`, num(s.headcount), num(s.totalGross), num(s.totalNontax), num(s.totalIncomeTax), num(s.totalLocalIncomeTax)]);
   }
   const plain = await writeXlsxFile(
-    [
+    escapeSheets<Buffer>([
       { sheet: '직원', data: empRows },
       { sheet: '급여대장', data: lineRows },
       { sheet: '원천세 요약', data: sumRows },
-    ],
+    ]),
     { fontFamily: 'Malgun Gothic', fontSize: 10 },
   ).toBuffer();
   const out = officeCrypto.encrypt(plain, { password: input.password });
