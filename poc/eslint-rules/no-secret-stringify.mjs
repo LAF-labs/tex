@@ -90,13 +90,12 @@ export default {
           if (s) return report(e, s);
         }
       },
+      // `+`에 비밀이 한쪽이라도 있으면 막는다: '' + secret뿐 아니라 secret + otherSecret도 문자열이 된다
+      // (Uint8Array + Uint8Array === '[object Uint8Array]…', 숫자 PIN끼리면 값이 섞인다).
       BinaryExpression(node) {
         if (node.operator !== '+') return;
-        const str = (n) => (n.type === 'Literal' && typeof n.value === 'string') || n.type === 'TemplateLiteral';
-        if (str(node.left) || str(node.right)) {
-          const s = secretIn(node.left) ?? secretIn(node.right);
-          if (s) report(node, s);
-        }
+        const s = secretIn(node.left) ?? secretIn(node.right);
+        if (s) report(node, s);
       },
     };
   },
