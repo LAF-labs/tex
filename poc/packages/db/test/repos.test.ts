@@ -156,6 +156,28 @@ describe('근무표·시행일 표', () => {
     assert.equal(r.effectiveOn('pension_bounds', '2026-07-01')!.id, 'pb-2026-07');
     assert.equal(r.effectiveOn('pension_bounds', '2025-06-30'), null);
   });
+
+  it('열린 표 뒤에 다음 해 표를 넣을 수 있고(앞 표는 그 전날까지), 같은 시작일은 거부, 열린 끝을 닫는 재설치는 고친다', () => {
+    const r = new RateTableRepo(db);
+    const t = { kind: 'insurance_rate' as const, rounding: 'floor_10', packageVersion: '2026.1', signatureOk: true };
+    r.install({ ...t, id: 'ins-2026', effectiveFrom: '2026-01-01', effectiveTo: null, body: { y: 2026 } });
+    r.install({ ...t, id: 'ins-2027', effectiveFrom: '2027-01-01', effectiveTo: null, body: { y: 2027 } });
+    assert.equal(r.effectiveOn('insurance_rate', '2026-12-31')!.id, 'ins-2026');
+    assert.equal(r.effectiveOn('insurance_rate', '2027-01-01')!.id, 'ins-2027');
+    assert.throws(() => r.install({ ...t, id: 'ins-2027b', effectiveFrom: '2027-01-01', effectiveTo: null, body: {} }), /rate_table_overlap/);
+    assert.throws(() => r.install({ ...t, id: 'ins-mid', effectiveFrom: '2026-06-01', effectiveTo: '2027-02-01', body: {} }), /rate_table_overlap/, '닫힌 기간이 다음 표를 넘으면 거부');
+    // 열린 끝을 날짜로 닫는 재설치는 받는다. 다시 열거나 다른 날짜로 바꾸는 것은 거부
+    r.install({ ...t, id: 'ins-2026', effectiveFrom: '2026-01-01', effectiveTo: '2026-12-31', body: { y: 2026 } });
+    assert.equal(r.get('ins-2026')!.effectiveTo, '2026-12-31');
+    assert.throws(() => r.install({ ...t, id: 'ins-2026', effectiveFrom: '2026-01-01', effectiveTo: null, body: { y: 2026 } }), /rate_table_id_reused/);
+    // 중간에 닫힌 표가 끼면 그 뒤는 빈 기간(앞의 열린 표가 되살아나지 않는다)
+    const u = { ...t, kind: 'nontax_limits' as const };
+    r.install({ ...u, id: 'nt-a', effectiveFrom: '2026-01-01', effectiveTo: null, body: {} });
+    r.install({ ...u, id: 'nt-b', effectiveFrom: '2026-03-01', effectiveTo: '2026-04-30', body: {} });
+    assert.equal(r.effectiveOn('nontax_limits', '2026-02-28')!.id, 'nt-a');
+    assert.equal(r.effectiveOn('nontax_limits', '2026-04-30')!.id, 'nt-b');
+    assert.equal(r.effectiveOn('nontax_limits', '2026-05-01'), null);
+  });
 });
 
 describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () => {
@@ -313,6 +335,11 @@ describe('감사 저널 해시 체인(M2-6)', () => {
     const j = new RunJournal(db);
     const run = newRun();
     assert.throws(() => j.append(run, 'Bad Type', {}), JournalShapeError);
+    // payload의 type 필드가 형태 검사에 걸려도 이벤트 이름 오류가 아니다: 그 필드만 빼고 기록한다
+    const run3 = newRun();
+    j.append(run3, 'step.note', { type: 'x'.repeat(200), ok: true });
+    const last = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run3) as string) as Record<string, unknown>;
+    assert.deepEqual(last, { ok: true, dropped: 'type' });
     j.append(run, 'step.extract', { stepId: 's1', text: '가'.repeat(200), multi: 'a\nb' });
     const p = JSON.parse(db.prepare('SELECT payload_json FROM run_events WHERE run_id=?').pluck().get(run) as string) as Record<string, string>;
     assert.deepEqual(p, { stepId: 's1', dropped: 'text,multi' });
