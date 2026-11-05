@@ -210,6 +210,7 @@ function bizCard(o, u, reply, act) {
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     head,
     kv(rows, true),
+    o.notice ? note(o.notice, true) : null,
     stop,
     privacy,
     p('계정마다 사업자 1곳만 등록하고, 바꾸면 90일 뒤에 다시 바꿀 수 있어요.', true),

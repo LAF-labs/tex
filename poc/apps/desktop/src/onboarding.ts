@@ -202,9 +202,31 @@ export interface OnbState {
   skipped: SkipItem[];
   /** 지나간 답(대화의 "나" 말풍선). 비밀·사업자번호 외 개인정보는 넣지 않는다. */
   log: Array<{ step: OnbStep; text: string }>;
+  /**
+   * ①에서 금고가 돌려준 포털 아이디(비밀 아님, #42 계약). 이어 하기 저장에 넣어 요약에서 프로필에 쓴다(DB profiles.portal_login_id).
+   * 렌더러로 가는 view와 대화 기록(log)에는 넣지 않는다.
+   */
+  portalLoginId: string | null;
 }
 
-export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [] });
+/**
+ * 이어 하기 저장에서 읽은 값(앱 폴더 JSON, 비밀 없음)을 OnbState로 받는다. 모양이 틀리면 null(처음부터).
+ * 단계·동의·건너뛴 항목·업무·대화 기록만 확인하고, 모르는 키는 버린다.
+ */
+export function parseOnbState(x: unknown): OnbState | null {
+  if (typeof x !== 'object' || x === null || Array.isArray(x)) return null;
+  const o = x as Record<string, unknown>;
+  if (typeof o.step !== 'string' || !(ONB_STEPS as readonly string[]).includes(o.step)) return null;
+  const strs = (v: unknown) => Array.isArray(v) && v.every((t) => typeof t === 'string');
+  if (!strs(o.tasks) || !strs(o.skipped) || !(o.skipped as string[]).every((t) => Object.hasOwn(SKIP_LABEL, t))) return null;
+  if (!Array.isArray(o.log) || !o.log.every((l) => typeof l === 'object' && l !== null && typeof (l as { text?: unknown }).text === 'string')) return null;
+  if (typeof o.consents !== 'object' || o.consents === null || Array.isArray(o.consents)) return null;
+  const base = initialOnbState();
+  const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
+  return { ...base, ...structuredClone(picked) } as OnbState;
+}
+
+export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], portalLoginId: null });
 
 /** 끝난 온보딩이 저장할 프로필(DB profile.upsert에 넘긴다, 비밀 없음). */
 export interface OnbProfile {
@@ -256,7 +278,7 @@ const onlyDigits = (s: string) => s.replace(/[^0-9]/g, '');
 const clip = (s: unknown, n: number) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 
 /** 화면에 같이 보낼 것(지금 단계의 고지·처리자 표). */
-export interface OnbView extends OnbState {
+export interface OnbView extends Omit<OnbState, 'portalLoginId'> {
   consent: ConsentNotice | null;
   config: ConsentConfig | null;
   tasksCatalog: typeof ONB_TASKS;
@@ -271,7 +293,7 @@ export class OnboardingFlow {
   constructor(ports: OnboardingPorts, initial: OnbState | null = null, now: () => Date = () => new Date()) {
     this.ports = ports;
     this.now = now;
-    this.s = initial ? structuredClone(initial) : initialOnbState();
+    this.s = initial ? { ...initialOnbState(), ...structuredClone(initial) } : initialOnbState();
   }
 
   get state(): OnbState {
@@ -287,7 +309,9 @@ export class OnboardingFlow {
 
   async view(): Promise<OnbView> {
     const kind = CONSENT_STEP[this.s.step] ?? null;
-    return { ...this.state, consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
+    const st: Partial<OnbState> = this.state;
+    delete st.portalLoginId; // 포털 아이디는 렌더러로 보내지 않는다
+    return { ...(st as Omit<OnbState, 'portalLoginId'>), consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
   }
 
   /** 답 하나를 처리한다. 지금 단계가 아닌 답은 stale_step(두 번 누름·지난 카드), 표에 없는 답은 bad_choice. 한 번에 하나만. */
@@ -398,10 +422,13 @@ export class OnboardingFlow {
         if (a.choice === 'recheck') {
           // 진위확인을 하지 못했을 때만(08 §4 O-02 "잠시 뒤 다시"). 같은 번호로 다시 조회한다.
           if (!s.biz || s.check?.status !== 'unknown') throw new Error('bad_choice');
+          if (!isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
           await this.setBiz(s.biz);
           return;
         }
         // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호도 확정하지 않는다.
+        // 등록증(OCR)에서 읽은 번호도 DB와 같은 체크섬을 지나야 확정한다(요약 저장에서 처음 걸리지 않게).
+        if (s.biz && !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
         if (!s.biz || s.check?.status !== 'active') throw new Error('biz_inactive');
         this.say('맞아요');
         this.unskip('biz');
@@ -452,7 +479,7 @@ export class OnboardingFlow {
         const at = r.consents[0]?.at ?? this.at();
         s.registered = { at, noticeVersion: version, items: r.consents.reduce((n, c) => n + c.items, 0) };
         s.consents.delegation = { version, choice: 'agreed', at };
-        if (r.portalLoginId) this.portalLoginId = r.portalLoginId;
+        if (r.portalLoginId) s.portalLoginId = r.portalLoginId;
         this.say('동의하고 금고에 등록했어요');
         s.step = 'model';
         return;
@@ -508,7 +535,7 @@ export class OnboardingFlow {
             address: s.biz.address || null,
             email: s.biz.email || null,
             signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : null,
-            ...(this.portalLoginId ? { portalLoginId: this.portalLoginId } : {}),
+            ...(s.portalLoginId ? { portalLoginId: s.portalLoginId } : {}),
           });
         }
         this.say('확인했어요');
@@ -522,14 +549,19 @@ export class OnboardingFlow {
     return;
   }
 
-  /** ①에서 금고가 돌려준 포털 아이디. 비밀이 아니지만 대화 기록(log)·저장 상태에는 넣지 않고 프로필 저장 때만 쓴다. */
-  private portalLoginId: string | null = null;
 
   private async setBiz(f: BizFields) {
     const s = this.s;
     s.biz = { ...EMPTY_BIZ, ...f, bizNo: onlyDigits(f.bizNo) };
     // 등록증에서 읽은 이메일이 모양에 맞지 않으면 비워 둔다(사용자가 [고칠게요]에서 넣는다).
     if (!emailOk(s.biz.email)) s.biz.email = '';
+    // 체크섬이 틀린 번호는 조회하지 않는다. [고칠게요]로 번호를 고쳐야 다음으로 간다.
+    if (!isValidBizNo(s.biz.bizNo)) {
+      s.check = null;
+      s.notice = '읽은 사업자번호가 맞지 않아요. [고칠게요]에서 번호를 확인해 주세요.';
+      s.step = 'biz-confirm';
+      return;
+    }
     s.check = await this.ports.checkBizNo(s.biz.bizNo).catch((): BizCheck => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }));
     s.step = 'biz-confirm';
   }
