@@ -13,11 +13,11 @@ import { decisionsEntries, decisionsQuestions, LUNA } from './openai-decisions.t
 import { AdapterError, type AdapterLimits, type DecideAdapter, type ProviderDecision } from './types.ts';
 
 /**
- * 질문 목록 해시(게이트웨이·클라이언트 공통 정의): sha256(정규 JSON(Decisions 와이어 형식 questions 배열)).
- * 정규 JSON = 키 정렬, undefined 제외(bundle/digest.ts canonicalJson). 클라우드 트랙 게이트웨이가 같은 함수를 써야 한다.
+ * 질문 목록 해시(게이트웨이 /v1/decide 응답 questionsDigest와 같은 정의, services/gateway/API.md):
+ * sha256(정규 JSON(번들 정의 questions)). 정규 JSON = 키 정렬, undefined 제외(bundle/digest.ts canonicalJson).
  */
 export function questionsDigest(b: LoadedBundle): string {
-  return createHash('sha256').update(canonicalJson(decisionsQuestions(b))).digest('hex');
+  return createHash('sha256').update(canonicalJson(b.def.questions)).digest('hex');
 }
 
 export interface GatewayDecideOptions {

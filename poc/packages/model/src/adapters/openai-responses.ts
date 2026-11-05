@@ -9,7 +9,7 @@ import { GatewayError, ModelGuardError, isRespondResponse, type Egress, type Gat
 import type { GatewayTaggedItem, RedactedReplayItem, RespondRequest, RespondResult, ToolCall } from '../contract.ts';
 import { ZERO_USAGE } from '../contract.ts';
 import { canonicalJson } from '../bundle/digest.ts';
-import { toolsetPrefix, type ToolsetDef } from '../toolsets.ts';
+import { toolsetDigest, toolsetPrefix, type ToolsetDef } from '../toolsets.ts';
 import { errorView, rateLimitHeaders } from './openai-decisions.ts';
 import { DEFAULT_RETRY, withRetry, type RetryPolicy } from './retry.ts';
 import { AdapterError } from './types.ts';
@@ -113,8 +113,10 @@ export class OpenAIResponsesAdapter {
         return fail('provider:egress');
       }
       if (!isRespondResponse(r)) return fail('gateway:bad_response');
-      data = r;
-      gatewayTags = r.tags;
+      // 게이트웨이가 다른 툴셋 정의(접두·도구·출력 스키마)로 불렀으면 결과를 쓰지 않는다(C-24, questionsDigest와 같은 이유).
+      if (r.toolsetDigest !== toolsetDigest(t)) return fail('toolset_digest_mismatch');
+      data = { status: r.status, output: r.output.map((o) => o.item), usage: r.usage };
+      gatewayTags = r.output.map((o) => o.tag);
     } else {
       let res;
       try {
