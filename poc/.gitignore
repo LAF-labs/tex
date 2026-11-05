@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .tmp/
+
+# 측정 산출물 기본 출력(tests/measure-out.ts, RETRO A-09). 추적 갱신은 SAX_MEASURE_COMMIT=1일 때만 reports/raw/에 쓴다.
+reports/raw/.local/
