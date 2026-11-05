@@ -4,6 +4,9 @@
   "private": true,
   "type": "module",
   "main": "dist/main.js",
+  "scripts": {
+    "package:win": "node ../../scripts/package-win.mjs"
+  },
   "dependencies": {
     "@sax/db": "workspace:*",
     "@sax/engine": "workspace:*",
@@ -15,6 +18,7 @@
     "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
-    "electron": "45.1.0"
+    "electron": "45.1.0",
+    "electron-builder": "26.18.0"
   }
 }

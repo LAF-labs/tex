@@ -1,0 +1,30 @@
+{
+  "revoked": [
+    {
+      "keyId": "package-0",
+      "role": "package",
+      "revokedAt": "2026-11-05T00:00:00Z"
+    }
+  ],
+  "monotonic": 1,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-05T00:00:00Z",
+  "expiresAt": "2026-11-06T00:00:00Z",
+  "signatures": [
+    {
+      "keyId": "root-1",
+      "alg": "ed25519",
+      "sig": "c9fLC8EuRB88s6SadtPipGg87OYOT9vQ4qhJsm94QnVP1Q5gOU1Lb3nvJxlxp6c-b5ZVu_goYvY29OLtwsyIDg"
+    },
+    {
+      "keyId": "root-2",
+      "alg": "ed25519",
+      "sig": "wNJZzmFrrAke-a3FXrqM2jhXL8pQUFu_p4RO2LYCRr3x4Ksxbn_vRDZKVFYqGa6hgrrK4Qw5sfHMxLlRa-sNDQ"
+    }
+  ],
+  "timestamp": {
+    "keyId": "timestamp-1",
+    "alg": "ed25519",
+    "sig": "8HXb_WPolIllFu0ponXjKHNXIO5__jEYFkLZ5l2VNjyQ8W5gOgoclNLWPqHfu2vGqZG074BawbKMRZ5_O5WwCw"
+  }
+}

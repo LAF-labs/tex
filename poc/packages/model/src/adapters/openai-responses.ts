@@ -5,11 +5,11 @@ import { createHmac, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import OpenAI from 'openai';
 import type { ValidateFunction } from 'ajv';
-import type { Egress, GatewayRespondBody } from '@sax/net';
+import { GatewayError, ModelGuardError, isRespondResponse, type Egress, type GatewayRespondBody } from '@sax/net';
 import type { GatewayTaggedItem, RedactedReplayItem, RespondRequest, RespondResult, ToolCall } from '../contract.ts';
 import { ZERO_USAGE } from '../contract.ts';
 import { canonicalJson } from '../bundle/digest.ts';
-import { toolsetPrefix, type ToolsetDef } from '../toolsets.ts';
+import { toolsetDigest, toolsetPrefix, type ToolsetDef } from '../toolsets.ts';
 import { errorView, rateLimitHeaders } from './openai-decisions.ts';
 import { DEFAULT_RETRY, withRetry, type RetryPolicy } from './retry.ts';
 import { AdapterError } from './types.ts';
@@ -17,7 +17,13 @@ import { AdapterError } from './types.ts';
 export const TERRA = 'gpt-6.1-terra';
 
 export interface OpenAIResponsesOptions {
-  apiKey: string;
+  /** BYOK 키. transport가 'gateway'면 쓰지 않는다(공급사 클라이언트도 만들지 않는다). */
+  apiKey?: string;
+  /**
+   * byok(기본): 공급사 직결, 어댑터가 실행 범위 HMAC 태그를 붙인다. gateway: /v1/respond로 보내고 태그는 게이트웨이가 준다
+   * (게이트웨이가 replay 태그를 검증하므로 로컬 태그 확인은 하지 않는다, D04 §7). 응답 파싱·도구 호출 검증은 같다(C-24).
+   */
+  transport?: 'byok' | 'gateway';
   egress: Egress;
   model?: string;
   retry?: RetryPolicy;
@@ -30,7 +36,7 @@ const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import
 export class OpenAIResponsesAdapter {
   readonly model: string;
   readonly lastRateLimit: Record<string, string> = {};
-  private readonly client: OpenAI;
+  private readonly client: OpenAI | null;
   private readonly egress: Egress;
   private readonly opts: OpenAIResponsesOptions;
   /** 프로세스 수명 키. 태그는 이 프로세스가 받은 출력임을 증명할 뿐 저장하지 않는다. */
@@ -43,7 +49,8 @@ export class OpenAIResponsesAdapter {
     this.egress = opts.egress;
     this.model = opts.model ?? TERRA;
     // 조직·프로젝트는 환경 변수(OPENAI_ORG_ID·OPENAI_PROJECT_ID)에서 읽지 않는다(N-23). 주소는 egress가 고정한다.
-    this.client = new OpenAI({ apiKey: opts.apiKey, organization: null, project: null, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 60_000 });
+    if (opts.transport !== 'gateway' && !opts.apiKey) throw new Error('OpenAIResponsesAdapter: byok transport needs apiKey');
+    this.client = opts.transport === 'gateway' ? null : new OpenAI({ apiKey: opts.apiKey, organization: null, project: null, fetch: opts.egress.providerFetch, maxRetries: 0, timeout: opts.timeoutMs ?? 60_000 });
   }
 
   private tag(runToken: string, item: object): string {
@@ -85,7 +92,8 @@ export class OpenAIResponsesAdapter {
     if (t.id !== req.toolset) return fail('toolset_mismatch');
     const turns = req.replay.filter((r) => r.kind === 'model_output' && (r.item.item as { type?: string }).type !== 'reasoning').length;
     if (turns >= t.maxTurns) return fail('turn_limit');
-    for (const r of req.replay) if (r.kind === 'model_output' && r.item.tag !== this.tag(req.runToken, r.item.item)) return fail('replay_tag_mismatch');
+    const viaGateway = this.opts.transport === 'gateway';
+    if (!viaGateway) for (const r of req.replay) if (r.kind === 'model_output' && r.item.tag !== this.tag(req.runToken, r.item.item)) return fail('replay_tag_mismatch');
     const body = this.buildRequest(t, req);
     const gateway: GatewayRespondBody = {
       toolset: req.toolset,
@@ -93,21 +101,41 @@ export class OpenAIResponsesAdapter {
       replay: req.replay.map((r) => (r.kind === 'model_output' ? { item: r.item.item, tag: r.item.tag } : { type: 'function_call_output' as const, call_id: r.callId, output: r.output })),
       runToken: req.runToken,
     };
-    let res;
-    try {
-      res = await this.egress.toModel({ surface: 'respond', dest: 'openai', path: '/v1/responses', gateway, providerBody: body }, (headers) =>
-        withRetry(() => this.client.responses.create(body as never, { headers }).withResponse(), errorView, { policy: this.opts.retry ?? DEFAULT_RETRY, sleep: this.opts.sleep }),
-      );
-    } catch (e) {
-      const v = e instanceof AdapterError ? e : errorView(e);
-      return fail(`provider:${v instanceof AdapterError ? v.code : 'unavailable'}`);
+    let data: { status?: string; output?: Array<Record<string, unknown>>; usage?: Record<string, unknown> };
+    let gatewayTags: string[] | null = null;
+    if (viaGateway) {
+      let r: unknown;
+      try {
+        r = await this.egress.toGateway({ surface: 'respond', body: gateway });
+      } catch (e) {
+        if (e instanceof GatewayError) return fail(`gateway:${e.code.slice('gateway.'.length)}`);
+        if (e instanceof ModelGuardError) return fail(`guard:${e.code}`);
+        return fail('provider:egress');
+      }
+      if (!isRespondResponse(r)) return fail('gateway:bad_response');
+      // 게이트웨이가 다른 툴셋 정의(접두·도구·출력 스키마)로 불렀으면 결과를 쓰지 않는다(C-24, questionsDigest와 같은 이유).
+      if (r.toolsetDigest !== toolsetDigest(t)) return fail('toolset_digest_mismatch');
+      data = { status: r.status, output: r.output.map((o) => o.item), usage: r.usage };
+      gatewayTags = r.output.map((o) => o.tag);
+    } else {
+      let res;
+      try {
+        res = await this.egress.toModel({ surface: 'respond', dest: 'openai', path: '/v1/responses', gateway, providerBody: body }, (headers) =>
+          withRetry(() => this.client!.responses.create(body as never, { headers }).withResponse(), errorView, { policy: this.opts.retry ?? DEFAULT_RETRY, sleep: this.opts.sleep }),
+        );
+      } catch (e) {
+        const v = e instanceof AdapterError ? e : errorView(e);
+        return fail(`provider:${v instanceof AdapterError ? v.code : 'unavailable'}`);
+      }
+      Object.assign(this.lastRateLimit, rateLimitHeaders(res.value.response.headers));
+      data = res.value.data as unknown as typeof data;
     }
-    Object.assign(this.lastRateLimit, rateLimitHeaders(res.value.response.headers));
-    const data = res.value.data as unknown as { status?: string; output?: Array<Record<string, unknown>>; usage?: Record<string, unknown> };
     const u = (data.usage ?? {}) as { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } };
-    const usage = { inputTokens: u.input_tokens ?? 0, cachedTokens: u.input_tokens_details?.cached_tokens ?? 0, cacheWriteTokens: u.input_tokens_details?.cache_write_tokens ?? 0, outputTokens: u.output_tokens ?? 0 };
+    // 게이트웨이 경로는 캐시 토큰을 0으로 둔다(D04 §7 적중 여부 오라클 차단, GatewayDecideAdapter와 같다). 게이트웨이가 실수로 넘겨도 쓰지 않는다.
+    const d = viaGateway ? undefined : u.input_tokens_details;
+    const usage = { inputTokens: u.input_tokens ?? 0, cachedTokens: d?.cached_tokens ?? 0, cacheWriteTokens: d?.cache_write_tokens ?? 0, outputTokens: u.output_tokens ?? 0 };
     const items = data.output ?? [];
-    const replay: RedactedReplayItem[] = items.map((item) => ({ kind: 'model_output', item: this.tagged(req.runToken, item) }));
+    const replay: RedactedReplayItem[] = items.map((item, i) => ({ kind: 'model_output', item: gatewayTags ? ({ item, tag: gatewayTags[i]! } as GatewayTaggedItem) : this.tagged(req.runToken, item) }));
     const toolCalls: ToolCall[] = [];
     let output: unknown;
     let refused = false;

@@ -81,6 +81,8 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
   });
 
   it('oneshot 결속 포트에서 secret.store는 거부한다', async () => {
+    // 금고가 secret.needed를 보낸 결속만 붙는다(요청 기록을 직접 넣는다).
+    (h.vault as unknown as { needs: Map<string, number> }).needs.set('r1|portal_password|business|', Date.now() + 60_000);
     const port = h.secretPort({ runId: 'r1', kind: 'portal_password', scope: 'business' });
     await assert.rejects(port.rpc('secret.store', { entries: [{ field: 'pw', bytes: new Uint8Array([1, 2, 3]) }] }), /denied/);
   });
