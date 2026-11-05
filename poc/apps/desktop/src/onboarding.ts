@@ -5,6 +5,7 @@
 // - 사업자번호는 DB와 같은 체크섬으로 본다(@sax/db isValidBizNo, profile.upsert가 같은 규칙으로 거부한다).
 // - 바깥 일(등록증 읽기·진위확인·인증서 찾기·금고 등록·동의 기록·프로필 저장·이어 하기 저장)은 OnboardingPorts 뒤에 둔다. 지금은 목업 어댑터(onboarding-mock.ts).
 
+import type { ConsentRecord, SecretStoreResult, StoreBind } from '@sax/vault';
 import { isValidBizNo } from '@sax/db';
 
 export const ONB_STEPS = ['terms', 'welcome', 'biz-number', 'biz-confirm', 'auth', 'delegation', 'model', 'telemetry', 'tasks', 'counterparties', 'summary', 'first', 'done'] as const;
@@ -104,7 +105,7 @@ export interface ConsentConfig {
   processors: ModelProcessor[];
 }
 
-/** 앱이 남기는 동의 레코드(②③④). ①은 금고가 만든다(VaultConsentRecord). */
+/** 앱이 남기는 동의 레코드(②③④). ①은 금고가 만든다(금고 ConsentRecord). */
 export interface AppConsentRecord {
   v: 1;
   kind: Exclude<ConsentKind, 'delegation'>;
@@ -119,29 +120,13 @@ export interface AppConsentRecord {
 }
 
 /**
- * 금고 등록 창(T-06) 결속(금고 프로토콜 v1 StoreBind와 같은 모양, packages/vault/src/protocol.ts #42).
- * #42가 main에 오면 `@sax/vault/protocol`의 StoreBind로 바꾼다. 아이디·비밀번호·보안카드를 한 화면에서 받는다(팀장 결정): 결속 두 개를 한 창에.
+ * 금고 등록 창(T-06) 결속은 금고 프로토콜의 StoreBind(#42) 그대로다. 아이디·비밀번호·보안카드를 한 화면에서 받는다(팀장 결정): 결속 두 개를 한 창에.
+ * 동의 레코드(①)는 금고가 저장 때 만드는 ConsentRecord(D05 §9)다. 값·길이·칸 번호 없음.
  */
-export interface StoreBindRequest {
-  mode: 'store';
-  kind: 'portal_password' | 'security_card';
-  scope: 'business' | 'personal';
-  notice: { version: string };
-}
-/** 금고가 저장 때 만드는 동의 레코드(D05 §9, 금고 프로토콜 v1 ConsentRecord와 같은 모양). 값·길이·칸 번호 없음. */
-export interface VaultConsentRecord {
-  v: 1;
-  kind: 'portal_password' | 'security_card';
-  scope: 'business' | 'personal';
-  items: number;
-  tier: 'tpm' | 'dpapi' | 'keychain-dev' | 'memory';
-  helloCopy: boolean;
-  strict: boolean;
-  noticeVersion: string;
-  at: string;
-  via: 'T-06';
-}
-export type RegisterResult = { ok: true; consents: VaultConsentRecord[]; portalLoginId?: string } | { ok: false; reason: string };
+export type StoreBindRequest = StoreBind;
+export type VaultConsentRecord = ConsentRecord;
+/** portalLoginId: 금고 secret.store 결과의 비밀 아닌 포털 아이디(SecretStoreResult). DB `profiles.portal_login_id`에 쓴다. */
+export type RegisterResult = { ok: true; consents: VaultConsentRecord[]; portalLoginId?: SecretStoreResult['portalLoginId'] } | { ok: false; reason: string };
 
 // ---- 온보딩 데이터 ----
 

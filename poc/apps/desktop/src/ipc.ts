@@ -11,6 +11,9 @@ import { BIZ_FIELD_KEYS, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboard
 
 export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
 export type { EngineInit, EnginePortal } from '@sax/engine/protocol';
+// main ↔ 금고 계약(#42). 값은 금고 프로토콜이 정본이고 main은 타입으로만 받는다.
+export type { ConsentRecord, OneShotBind, ProfileScope, RunBeginParams, SecretInputBind, SecretStoreResult, StoreBind, VaultEventName } from '@sax/vault';
+import type { ProfileScope, VaultEventName } from '@sax/vault';
 
 /** 채널 이름. preload(.cjs)는 이 파일을 불러올 수 없어 글자를 그대로 쓴다(tests/shell-ipc.test.ts가 맞춰 본다). */
 export const IPC = {
@@ -23,7 +26,7 @@ export const IPC = {
 /** 금고 control 포트로 main에 오는 알림(secret.needed·진행 안내 등). 판단은 받는 쪽이 main 내장 표로 한다. */
 export interface VaultControlEvent {
   t: 'ev';
-  name: string;
+  name: VaultEventName;
   data: unknown;
 }
 
@@ -80,7 +83,7 @@ const G24_DOC = { t: 'enum', of: ['주민등록표 등본', '주민등록표 초
  */
 export const SHELL_METHODS = {
   'shell.bootstrap': {},
-  'profile.set': { kind: { t: 'enum', of: ['business', 'personal'], required: true } },
+  'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
   'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
   'run.prepare': { id: ID },
