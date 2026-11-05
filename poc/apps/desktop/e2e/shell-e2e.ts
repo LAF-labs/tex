@@ -6,11 +6,12 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
 import { buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
-import { kstToday, summarize, type SummaryLine } from './approval-gate.ts';
-import { lastWebPrefs, webPrefsProblems } from './harden.ts';
-import { SHELL_METHODS } from './ipc.ts';
-import { barBounds, SHELL } from './shell-layout.ts';
-import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
+import { kstToday, summarize, type SummaryLine } from '../dist/approval-gate.js';
+import { lastWebPrefs, webPrefsProblems } from '../dist/harden.js';
+import { SHELL_METHODS } from '../dist/ipc.js';
+import { barBounds, SHELL } from '../dist/shell-layout.js';
+import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
+import { DEMO_DEV } from '../dist/demo-dev.js';
 
 registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-e2e-${process.pid}`));
@@ -646,7 +647,7 @@ app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
     // 준비 분당 상한(사람 속도 3회)은 e2e가 짧은 시간에 여러 건을 돌리므로 넉넉히 둔다(audit-d가 상한 자체를 본다).
-    S = await startShell({ width: 1280, height: 820, cursorPoint: () => cursor, preparePerMin: 100 });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, cursorPoint: () => cursor, preparePerMin: 100 });
     // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
     S.win.webContents.setBackgroundThrottling(false);
     observations.visibilityAtStart = await S.ready.then(() => js('document.visibilityState'));

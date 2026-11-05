@@ -11,12 +11,12 @@
     "start": "pnpm build && electron apps/desktop",
     "bundles": "node --conditions=development scripts/bundles-digest.ts",
     "s9": "node --conditions=development scripts/s9-decisions.ts",
-    "demo": "pnpm build && electron apps/desktop/dist/shell.js",
+    "demo": "pnpm build && electron apps/desktop/dist/demo-shell.js",
     "demo:model": "SAX_DEMO_MODEL=openrouter pnpm demo",
     "demo:pdfs": "pnpm build && electron apps/desktop/dist/demo-pdfs.js",
     "start:hometax": "pnpm build && electron apps/desktop/dist/shell.js --portal=hometax",
-    "demo:e2e": "pnpm build && electron apps/desktop/dist/shell-e2e.js",
-    "demo:seed-e2e": "pnpm build && electron apps/desktop/dist/demo-seed-e2e.js",
+    "demo:e2e": "pnpm build && electron apps/desktop/e2e-dist/shell-e2e.js",
+    "demo:seed-e2e": "pnpm build && electron apps/desktop/e2e-dist/demo-seed-e2e.js",
     "demo:preview": "pnpm build && electron scripts/shell-preview.mjs"
   },
   "devDependencies": {
