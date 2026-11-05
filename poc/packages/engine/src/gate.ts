@@ -1,6 +1,7 @@
 // 게이트 요청·승인 근거의 모양과 D03 §3 해시. main(승인 바)과 엔진이 같이 쓴다. node:crypto 말고 의존성이 없다
 // (main이 엔진 코드를 끌어오지 않게 protocol.ts처럼 따로 둔다). 엔진과 main이 같은 함수를 쓰므로 자기 일치 확인이다(ADR-021).
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import type { Portal } from './core/types.ts';
 
 // ---- 정규 인코딩 ----
 
@@ -127,12 +128,120 @@ export interface LocalApproval {
 
 export const LOCAL_APPROVAL_TTL_MS = 120_000;
 
+// ---- InDoubt 증언(ADR-021 결정 5, D03 §2 InDoubt 행) ----
+
+/** 증언 바 요약 2줄(공급받는자 상호·사업자번호, 합계금액). 이 순서·이 세 키만. */
+export const ATTEST_SUMMARY_KEYS = ['counterpartName', 'counterpartBizNo', 'totalAmount'] as const satisfies readonly FieldKey[];
+
+/**
+ * 엔진 → main "증언을 받을 수 있다" 신호. 바를 띄우라는 뜻이 아니다: main은 무장만 하고, 렌더러가 그 "확인 필요" 카드를
+ * 열었다고 요청할 때만 바를 띄운다. 보내는 때는 InDoubt이고 armed_at + policy.verify.minElapsedMs가 지나 조회 재시도를 1회 더 한 뒤,
+ * 또는 정지 하향(postprocess·kill)이라 조회를 돌릴 수 없을 때 대기만 한 뒤(manualCheck). 철회될 때까지 유효하다(자기 만료 없음).
+ */
+export interface AttestRequest {
+  v: 1;
+  runId: string;
+  intentId: string;
+  stepId: string;
+  /** 엔진이 증언 요청마다 만든다. 조회를 다시 해도 InDoubt가 그대로면 유지한다. */
+  attestReqId: string;
+  /** 로컬 전용 값. 게이트의 approvalNonce·토큰 nonce와 다르다. */
+  attestNonce: string;
+  portal: Portal;
+  /** ATTEST_SUMMARY_KEYS 순서의 GateField 3개. */
+  fields: GateField[];
+  /** attestSummaryHash(fields). main이 다시 계산해 같을 때만 무장한다. */
+  summaryHash: string;
+  /** 조회 재시도 없이 받는 경우(정지 하향). 바에 "{포털} 발급목록을 직접 확인한 뒤 답해 주세요"를 더한다. */
+  manualCheck: boolean;
+}
+
+/** main 증언 바가 발급하는 근거. 승인 근거와 다른 HMAC 문맥(LOCAL_ATTEST_CONTEXT), exp = 발급 + 120초. */
+export interface LocalAttestation {
+  v: 1;
+  intentId: string;
+  stepId: string;
+  attestReqId: string;
+  attestNonce: string;
+  summaryHash: string;
+  kind: 'not_committed';
+  exp: number;
+  mac: string;
+}
+
+export const LOCAL_ATTEST_TTL_MS = 120_000;
+export const LOCAL_ATTEST_CONTEXT = 'SAX-local-attest-v1';
+
+/** 요청 철회 사유: 조회로 해소, 게이트 바가 자리를 가져감, 실행 중지·kill. 카드 닫기는 main 안의 일이라 여기 없다. */
+export type AttestWithdrawReason = 'resolved' | 'gate' | 'aborted';
+/** 증언 거부 코드. 중계 통로에서 온 증언은 이 코드 대신 security.gate_answer_from_relay. */
+export type AttestRejectCode = 'attest.no_request' | 'attest.mismatch' | 'attest.expired';
+
+/** summaryHash = SHA-256(CBOR([[fieldKey, value], …])). cardHash와 같은 바이트 규칙. */
+export function attestSummaryHash(fields: readonly GateField[]): string {
+  return cardHash(fields);
+}
+
+/** 증언 요청 하나를 만든다. 엔진·개발 콘솔 시험 값·e2e가 같은 식을 쓴다. */
+export function buildAttestRequest(d: {
+  runId: string;
+  intentId: string;
+  stepId: string;
+  portal: Portal;
+  summary: Readonly<Record<(typeof ATTEST_SUMMARY_KEYS)[number], string>>;
+  manualCheck: boolean;
+  attestReqId?: string;
+}): AttestRequest {
+  const fields: GateField[] = ATTEST_SUMMARY_KEYS.map((k) => ({ fieldKey: k, value: d.summary[k] }));
+  return {
+    v: 1,
+    runId: d.runId,
+    intentId: d.intentId,
+    stepId: d.stepId,
+    attestReqId: d.attestReqId ?? randomUUID(),
+    attestNonce: randomBytes(16).toString('base64url'),
+    portal: d.portal,
+    fields,
+    summaryHash: attestSummaryHash(fields),
+    manualCheck: d.manualCheck,
+  };
+}
+
+/** main의 자기 일치 확인: 요약 키가 정확히 ATTEST_SUMMARY_KEYS 순서이고 summaryHash가 맞는지. 문제가 없으면 null. */
+export function attestSelfCheck(req: Pick<AttestRequest, 'fields' | 'summaryHash'>): 'field_key' | 'summary_hash' | null {
+  const f = req.fields;
+  if (!Array.isArray(f) || f.length !== ATTEST_SUMMARY_KEYS.length || f.some((x, i) => x?.fieldKey !== ATTEST_SUMMARY_KEYS[i] || typeof x.value !== 'string')) return 'field_key';
+  try {
+    return attestSummaryHash(f) === req.summaryHash ? null : 'summary_hash';
+  } catch {
+    return 'summary_hash';
+  }
+}
+
+/**
+ * 엔진이 증언 근거를 미결 요청과 대조한다. 출처(게이트 포트만)·1회용은 엔진 상태로 따로 본다. 문제가 없으면 null.
+ * HMAC은 Phase 1에 검증하는 쪽이 없다(ADR-021): 엔진은 키를 갖지 않고 게이트 포트로 왔다는 출처만 믿는다.
+ */
+export function checkAttestation(a: unknown, req: AttestRequest | null, now: number): AttestRejectCode | null {
+  if (!req) return 'attest.no_request';
+  const x = a as Partial<LocalAttestation> | null;
+  if (!x || typeof x !== 'object' || x.attestReqId !== req.attestReqId) return 'attest.no_request';
+  if (x.v !== 1 || x.kind !== 'not_committed' || x.attestNonce !== req.attestNonce || x.intentId !== req.intentId || x.stepId !== req.stepId || x.summaryHash !== req.summaryHash || typeof x.mac !== 'string') return 'attest.mismatch';
+  if (typeof x.exp !== 'number' || !Number.isFinite(x.exp) || x.exp <= now || x.exp > now + LOCAL_ATTEST_TTL_MS) return 'attest.expired';
+  return null;
+}
+
 /** 게이트 포트(main↔엔진 전용) 메시지. 이 포트에는 이것 말고 아무것도 다니지 않는다. */
 export type GatePortMessage =
   | { t: 'gate.request'; req: GateRequest }
   | { t: 'gate.closed'; runId: string; reqId: string; reason: string }
   | { t: 'gate.answer'; approval: LocalApproval }
-  | { t: 'gate.answer.result'; reqId: string; ok: boolean; code?: string };
+  | { t: 'gate.answer.result'; reqId: string; ok: boolean; code?: string }
+  | { t: 'attest.request'; req: AttestRequest }
+  | { t: 'attest.withdrawn'; runId: string; attestReqId: string; reason: AttestWithdrawReason }
+  /** note는 선택이고 로컬 저널에만 남긴다(텔레메트리·로그 금지). */
+  | { t: 'attest.answer'; attestation: LocalAttestation; note?: string }
+  | { t: 'attest.answer.result'; attestReqId: string; ok: boolean; code?: AttestRejectCode };
 
 // ---- D03 §3 해시 ----
 

@@ -1,0 +1,153 @@
+{
+  "version": "2026.10",
+  "monotonic": 41,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-05T00:00:00Z",
+  "expiresAt": "2026-11-07T00:00:00Z",
+  "pace": {
+    "interactive": {
+      "stepDelayMs": [
+        800,
+        2500
+      ],
+      "keyEventDelayMs": 150,
+      "afterNavSettleMs": [
+        600,
+        1500
+      ],
+      "slowFactor": 1.5
+    },
+    "daemon": {
+      "stepDelayMs": [
+        1200,
+        3500
+      ],
+      "keyEventDelayMs": 150,
+      "afterNavSettleMs": [
+        800,
+        2000
+      ],
+      "slowFactor": 1.5
+    }
+  },
+  "browser": {
+    "remoteDebuggingPort": "forbidden",
+    "webdriverSelfCheck": true
+  },
+  "captchaRelay": {
+    "hometax": "allowed",
+    "gov24": "disabled_until_permission",
+    "wetax": "disabled_until_permission",
+    "sminfo": "disabled",
+    "insure4": "disabled"
+  },
+  "limits": {
+    "hometax": {
+      "runsPerDayPerProfile": 40,
+      "irreversiblePerDayPerProfile": 30,
+      "runsPerLoginSession": 15,
+      "navigationsPerMin": 12,
+      "loginsPerDay": 6,
+      "loginFailuresPerDay": 2,
+      "concurrent": 1
+    },
+    "gov24": {
+      "runsPerDayPerProfile": 20,
+      "irreversiblePerDayPerProfile": 5,
+      "runsPerLoginSession": 5,
+      "navigationsPerMin": 12,
+      "loginsPerDay": 6,
+      "concurrent": 1
+    },
+    "sminfo": {
+      "runsPerDayPerProfile": 10,
+      "irreversiblePerDayPerProfile": 3,
+      "runsPerLoginSession": 5,
+      "navigationsPerMin": 10,
+      "loginsPerDay": 4,
+      "concurrent": 1
+    },
+    "insure4": {
+      "runsPerDayPerProfile": 10,
+      "irreversiblePerDayPerProfile": 3,
+      "runsPerLoginSession": 5,
+      "navigationsPerMin": 10,
+      "loginsPerDay": 4,
+      "concurrent": 1
+    }
+  },
+  "retries": {
+    "stepMax": 3,
+    "backoff": "equal_jitter",
+    "baseMs": 800,
+    "capMs": 10000
+  },
+  "run": {
+    "maxActuationsPerRun": 150,
+    "maxWallClockMs": 1800000,
+    "commitWindowMs": 600000,
+    "l2MaxAttempts": 1
+  },
+  "cooldown": {
+    "onBlockSignalHours": 24,
+    "onCaptchaBurst": {
+      "windowMin": 10,
+      "count": 3,
+      "action": "slow+notify"
+    },
+    "positiveDetectionsForCooldown": 2
+  },
+  "daemon": {
+    "windowJitterMin": 30,
+    "gapBetweenRunsMin": [
+      5,
+      15
+    ],
+    "startupGraceMin": 10,
+    "retryAfterMin": 30,
+    "autoAllowed": false
+  },
+  "portalMode": {
+    "hometax": "auto",
+    "gov24": "postprocess",
+    "wetax": "postprocess",
+    "sminfo": "postprocess",
+    "insure4": "postprocess"
+  },
+  "verify": {
+    "minElapsedMs": 60000,
+    "lookups": 2,
+    "maxMs": 300000
+  },
+  "remote": {
+    "irreversiblePerDay": 5,
+    "newCounterpartyRequiresLocal": true,
+    "notifyOnIrreversible": [
+      "desktop",
+      "email"
+    ],
+    "minProtocolVersion": 1,
+    "disabledFeatures": []
+  },
+  "queue": {
+    "maxIntentsPerPair": 5,
+    "ttlHours": 72
+  },
+  "signatures": [
+    {
+      "keyId": "policy-1",
+      "alg": "ed25519",
+      "sig": "evoQLdmG_aJfVUKnHOH6d3apAskA25VELnxE3LIGSzlPMfrbjRYLST1IenG0kAP7K8Kol3atvjeiQGx5rXzBCA"
+    },
+    {
+      "keyId": "policy-2",
+      "alg": "ed25519",
+      "sig": "DwTlIlAX8gVDU72trV-p21zRDjzBOEghXGzpmvpB_rc7VxJjMkf4sJZkhgHb2G0DkVi-pE2XZPZZAlK57oUBDw"
+    }
+  ],
+  "timestamp": {
+    "keyId": "timestamp-1",
+    "alg": "ed25519",
+    "sig": "_DuVCeFT_FApNpiTpVIy47FhFpo-yvjiOijVOPYChaRpeLa2EWPJhj7hJA2SQd9-UVKuVM3V9kZrO9JCJXbJDA"
+  }
+}

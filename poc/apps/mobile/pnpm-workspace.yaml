@@ -1,0 +1,4 @@
+# 폰 앱 전용 pnpm 루트(루트 poc 작업공간에서 빠져 있다). React Native는 끌어올린 node_modules가 안전하다.
+packages:
+  - .
+nodeLinker: hoisted

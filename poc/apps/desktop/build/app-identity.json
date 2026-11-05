@@ -1,0 +1,13 @@
+{
+  "$comment": "앱 이름 미정(설정값). productName·installDirName은 설치 폴더·실행 파일 이름이라 정해지면 바꾸지 않는다(업데이트 경로가 바뀐다). displayName은 바로가기·프로그램 추가/제거에 보이는 이름이다. publisherName은 Artifact Signing 인증서 주체 CN과 정확히 같아야 한다(출시 전 고정, D11 §4).",
+  "appId": "com.laf.sovereignax",
+  "productName": "SovereignAX",
+  "installDirName": "SovereignAX",
+  "displayName": "소버린 AX(가칭)",
+  "description": "사장님 PC에서 홈택스 일을 대신하는 로컬 하네스",
+  "companyName": "LAF",
+  "copyright": "Copyright © 2026 LAF",
+  "publisherName": null,
+  "entry": "dist/shell.js",
+  "channel": "beta"
+}
