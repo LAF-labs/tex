@@ -76,3 +76,26 @@ export function deleteQuietly(uri: string | null | undefined): void {
     /* 이미 없음 */
   }
 }
+
+/**
+ * 촬영 임시 파일(카메라·자르기 결과, 봉인 전 평문 JPEG)이 남는 캐시 폴더를 비운다. 앱 시작 때와 촬영 화면을 떠날 때 부른다.
+ * 정상 흐름은 촬영 화면이 파일마다 지우고, 이것은 앱이 백그라운드에서 종료되는 등 그 자리를 건너뛴 경우를 덮는다.
+ */
+export const CAPTURE_CACHE_DIRS = ['Camera', 'ImageManipulator'] as const;
+export function sweepCaptureTemps(): void {
+  for (const name of CAPTURE_CACHE_DIRS) {
+    try {
+      const d = new Directory(Paths.cache, name);
+      if (!d.exists) continue;
+      for (const c of d.list()) {
+        try {
+          c.delete();
+        } catch {
+          /* 다음 시작 때 다시 */
+        }
+      }
+    } catch {
+      /* 폴더 없음 */
+    }
+  }
+}

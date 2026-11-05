@@ -6,6 +6,7 @@ import { AppState, StyleSheet, View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { LOCK_AFTER_MS } from './src/config';
 import { ensureFreshInstall, forget, type DeviceKeys } from './src/keyring';
+import { sweepCaptureTemps } from './src/storage/files';
 import { CaptureScreen } from './src/screens/CaptureScreen';
 import { CashScreen } from './src/screens/CashScreen';
 import { ConnectionScreen } from './src/screens/ConnectionScreen';
@@ -30,6 +31,7 @@ export default function App() {
   const keysRef = useRef<DeviceKeys | null>(null);
 
   useEffect(() => {
+    sweepCaptureTemps();
     ensureFreshInstall().then(setBoot, () => setBootErr(true));
   }, []);
 
@@ -69,7 +71,7 @@ export default function App() {
   let body;
   if (bootErr) body = <View style={st.center}><T c="attention">보호된 저장 공간을 열 수 없어요. 앱을 다시 설치해 주세요.</T></View>;
   else if (!boot) body = <View style={[st.fill, { backgroundColor: p.canvas }]} />;
-  else if (!unlocked) body = <LockScreen firstRun={!boot.hasDevice} onUnlocked={(k) => void onUnlocked(k)} />;
+  else if (!unlocked) body = <LockScreen firstRun={!boot.hasDevice} onUnlocked={(k) => void onUnlocked(k)} onReset={() => setBoot({ hasDevice: false })} />;
   else {
     const home = () => setRoute('home');
     body = (

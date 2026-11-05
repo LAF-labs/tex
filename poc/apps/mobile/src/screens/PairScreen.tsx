@@ -91,8 +91,17 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
     } catch {
       return failWith('relay');
     }
-    const r = await mp.run(link);
-    if (!r) return failWith(mp.failure ?? 'handshake');
+    let r: Awaited<ReturnType<MobilePairing['run']>> = null;
+    try {
+      r = await mp.run(link);
+    } catch {
+      r = null;
+    }
+    if (!r) {
+      // 릴레이 자리를 비운다. 닫지 않으면 같은 QR로 다시 할 때 role_taken으로 막힌다.
+      link.close();
+      return failWith(mp.failure ?? 'handshake');
+    }
     r.channel.close();
     await s.update((d) => ({
       ...d,

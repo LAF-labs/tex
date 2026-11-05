@@ -13,7 +13,7 @@ const MESSAGES: Record<KeyringErrorCode, string> = {
   unavailable: '열쇠 저장소를 열 수 없어요. 잠시 뒤 다시 해 주세요.',
 };
 
-export function LockScreen({ firstRun, onUnlocked }: { firstRun: boolean; onUnlocked: (k: DeviceKeys, created: boolean) => void }) {
+export function LockScreen({ firstRun, onUnlocked, onReset }: { firstRun: boolean; onUnlocked: (k: DeviceKeys, created: boolean) => void; onReset: () => void }) {
   const [err, setErr] = useState<KeyringErrorCode | null>(null);
   // 개발 빌드만 원인 문구를 함께 보인다(값·키는 들어 있지 않다)
   const [detail, setDetail] = useState<string | null>(null);
@@ -63,8 +63,16 @@ export function LockScreen({ firstRun, onUnlocked }: { firstRun: boolean; onUnlo
               kind="danger"
               label="이 폰 초기화"
               onPress={async () => {
-                await resetDevice();
+                try {
+                  await resetDevice();
+                } catch {
+                  setErr('unavailable');
+                  return;
+                }
                 setErr(null);
+                setDetail(null);
+                // 열쇠가 지워졌으니 첫 실행으로 돌아가 새 열쇠를 만든다(App이 firstRun을 켠다)
+                onReset();
               }}
             />
           )}

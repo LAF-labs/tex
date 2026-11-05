@@ -5,7 +5,7 @@ import { Asset } from 'expo-asset';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { File } from 'expo-file-system';
 import { ImageManipulator, SaveFormat } from 'expo-image-manipulator';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, StyleSheet, TextInput, View, type LayoutRectangle } from 'react-native';
 import { makeReceiptOffer, type ReceiptCandidates } from '@sax/remote';
 import { DEV_LOCAL, PHOTO_MAX_EDGE, PHOTO_QUALITY } from '../config';
@@ -13,7 +13,7 @@ import { fitEdge, guideCrop, guideRect } from '../capture/crop';
 import { ocrEngine } from '../capture/ocr';
 import { parseReceipt, validBizNo } from '../capture/parser';
 import { useSession } from '../session';
-import { deleteQuietly } from '../storage/files';
+import { deleteQuietly, sweepCaptureTemps } from '../storage/files';
 import { radius, space, type, usePalette } from '../theme';
 import { Button, Card, Notice, Screen, T } from '../ui/kit';
 import sampleReceipt from '../../assets/dev/sample-receipt.jpg';
@@ -39,15 +39,31 @@ export function CaptureScreen({ onDone }: { onDone: () => void }) {
   const [f, setF] = useState({ amount: '', issuedOn: '', merchant: '', bizNo: '' });
   const [err, setErr] = useState<string | null>(null);
   const temp = useRef<string[]>([]);
+  const gone = useRef(false);
 
   const cleanup = () => {
     for (const u of temp.current) deleteQuietly(u);
     temp.current = [];
   };
+  /** 임시 파일을 기록한다. 화면이 이미 내려갔으면(30초 잠금 등) 곧바로 지운다. */
+  const track = (uri: string) => {
+    temp.current.push(uri);
+    if (gone.current) cleanup();
+  };
+
+  // 잠금·이동으로 화면이 내려가면 봉인 전 사진을 남기지 않는다(ADR-034 결정 9, 규칙 ②).
+  useEffect(
+    () => () => {
+      gone.current = true;
+      cleanup();
+      sweepCaptureTemps();
+    },
+    [],
+  );
 
   async function process(raw: { uri: string; width: number; height: number }, crop: boolean) {
     setPhase('reading');
-    temp.current.push(raw.uri);
+    track(raw.uri);
     try {
       let ctx = ImageManipulator.manipulate(raw.uri);
       let w = raw.width;
@@ -62,7 +78,7 @@ export function CaptureScreen({ onDone }: { onDone: () => void }) {
       if (fit) ctx = ctx.resize(fit);
       const img = await ctx.renderAsync();
       const out = await img.saveAsync({ format: SaveFormat.JPEG, compress: PHOTO_QUALITY });
-      temp.current.push(out.uri);
+      track(out.uri);
       const ocr = ocrEngine();
       const lines = await ocr.read(out.uri);
       const c = parseReceipt(lines);
