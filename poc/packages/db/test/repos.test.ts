@@ -217,9 +217,9 @@ describe('사업용 카드 [최신화] 구간 교체와 메모 다시 잇기', (
     return id;
   };
 
-  it('match_key: 승인번호 기준, 없으면 날짜·가게·금액·카드, 승인과 취소는 갈리고 같은 값은 #n', () => {
+  it('match_key: 날짜·승인번호 기준, 없으면 날짜·가게·금액·카드, 승인과 취소는 갈리고 같은 값은 #n', () => {
     assert.deepEqual(cardMatchKeys([t('2026-11-01', 5000, 'A1'), t('2026-11-01', 5000, 'A1', true), t('2026-11-02', 3000, null), t('2026-11-02', 3000, null)]), [
-      'a|A1|0|5000#1', 'a|A1|1|5000#1', 'd|2026-11-02|1234567890|3000|1234|0#1', 'd|2026-11-02|1234567890|3000|1234|0#2',
+      'a|2026-11-01|A1|0|5000#1', 'a|2026-11-01|A1|1|5000#1', 'd|2026-11-02|1234567890|3000|1234|0#1', 'd|2026-11-02|1234567890|3000|1234|0#2',
     ]);
   });
 
@@ -240,6 +240,27 @@ describe('사업용 카드 [최신화] 구간 교체와 메모 다시 잇기', (
     assert.deepEqual(gone, { inserted: 0, unmatchedMemos: 1 }, '빈 결과도 최신화, 메모는 확인 필요');
     assert.equal(cr.lastFetch(profileId)!.completedAt, '2026-11-05T03:00:00Z');
     assert.throws(() => cr.replaceRange({ runId: runRow(), profileId, rangeFrom: '2026-11-01', rangeTo: '2026-11-30', completedAt: 'x' }, [t('2026-12-01', 1, 'Z')]), /txn_outside_range/);
+  });
+
+  it('다른 달의 같은 승인번호·금액은 메모를 빼앗지 않고, 확인 필요 수는 이번 교체에서 잃은 메모만 센다', () => {
+    const cr = new CardRepo(db);
+    const day = (m: string) => ({ runId: runRow(), profileId, rangeFrom: `2026-${m}-01`, rangeTo: `2026-${m}-28`, completedAt: `2026-${m}-28T00:00:00Z` });
+    cr.replaceRange(day('09'), [t('2026-09-10', 9900, 'R1')]);
+    const sep = cr.txns(profileId, '2026-09-01', '2026-09-28')[0]!;
+    cr.setMemo(sep.id, '9월 메모');
+    cr.replaceRange(day('08'), [t('2026-08-03', 1000, 'Q1')]);
+    cr.setMemo(cr.txns(profileId, '2026-08-01', '2026-08-28')[0]!.id, '8월 메모');
+    // 8월을 비워서 8월 메모 하나가 뜬다
+    assert.equal(cr.replaceRange(day('08'), []).unmatchedMemos, 1);
+    // 10월에 같은 승인번호·금액: 9월 메모는 9월 행에 그대로, 10월 행에 메모 없음. 8월에 떠 있던 메모는 10월 결과로 세지 않는다
+    assert.deepEqual(cr.replaceRange(day('10'), [t('2026-10-10', 9900, 'R1')]), { inserted: 1, unmatchedMemos: 0 });
+    const oct = cr.txns(profileId, '2026-10-01', '2026-10-28')[0]!;
+    const memos = cr.memos(profileId);
+    assert.equal(memos.find((m) => m.memo === '9월 메모')!.txnId, sep.id);
+    assert.ok(!memos.some((m) => m.txnId === oct.id));
+    // 10월 행에 메모를 달아도 9월 메모를 덮어쓰지 않는다
+    cr.setMemo(oct.id, '10월 메모');
+    assert.equal(cr.memos(profileId).find((m) => m.txnId === sep.id)!.memo, '9월 메모');
   });
 });
 

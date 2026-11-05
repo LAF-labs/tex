@@ -92,15 +92,29 @@ export function listBackups(file: string): string[] {
     .map(({ n }) => path.join(dir, n));
 }
 
-function backup(db: Db, file: string, fromVersion: number, at: Date, keep: number): string {
+/** 같은 초에 다시 시도하면 이름이 겹친다. 겹치면 -2, -3…을 붙인다(COPYFILE_EXCL로 덮어쓰지 않는다) */
+function freeBackupPath(file: string, fromVersion: number, at: Date): string {
+  const base = backupName(file, fromVersion, at);
+  if (!fs.existsSync(base)) return base;
+  for (let n = 2; ; n++) {
+    const p = base.replace(/\.bak$/, `-${n}.bak`);
+    if (!fs.existsSync(p)) return p;
+  }
+}
+
+function backup(db: Db, file: string, fromVersion: number, at: Date): string {
   // WAL 내용을 본 파일에 합친 뒤 복사한다. 파일은 암호문이라 사본도 같은 키로만 열린다.
   db.pragma('wal_checkpoint(TRUNCATE)');
-  const dest = backupName(file, fromVersion, at);
+  const dest = freeBackupPath(file, fromVersion, at);
   fs.copyFileSync(file, dest, fs.constants.COPYFILE_EXCL);
   if (process.platform !== 'win32') fs.chmodSync(dest, 0o600);
+  return dest;
+}
+
+/** 오래된 백업 정리. 마이그레이션이 성공한 뒤에만 부른다(실패한 시도가 복구 지점을 지우지 않게) */
+function pruneBackups(file: string, keep: number): void {
   const all = listBackups(file);
   for (const old of all.slice(0, Math.max(0, all.length - keep))) fs.rmSync(old, { force: true });
-  return dest;
 }
 
 /**
@@ -141,7 +155,15 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
   if (!pending.length && !needsBackfill && hasVersionTable(db)) return { from: current, to: current, applied: [], backup: null };
 
   const at = now();
-  const backupPath = pending.length && current > 0 && opts.file ? backup(db, opts.file, current, at, opts.keepBackups ?? 2) : null;
+  let backupPath: string | null = null;
+  if (pending.length && current > 0 && opts.file) {
+    try {
+      backupPath = backup(db, opts.file, current, at);
+    } catch (e) {
+      // 백업을 못 만들면 적용하지 않는다. DB는 그대로다
+      throw new MigrationError('db.migration_failed', pending[0]!.version, e);
+    }
+  }
   const insert = (m: Migration, appliedAt: string) =>
     db.prepare('INSERT OR IGNORE INTO schema_migrations (version, name, sha256, applied_at) VALUES (?, ?, ?, ?)').run(m.version, m.name, migrationSha256(m), appliedAt);
 
@@ -160,7 +182,10 @@ export function migrate(db: Db, opts: MigrateOptions = {}): MigrateResult {
       db.pragma(`user_version=${latest}`);
     })();
   } catch (e) {
+    // 트랜잭션이 되돌려져 DB가 백업과 같으므로 이번 사본은 지운다(재시도마다 사본이 쌓이지 않게). 프로세스가 도중에 죽으면 여기 오지 않고 사본이 남는다
+    if (backupPath) fs.rmSync(backupPath, { force: true });
     throw new MigrationError('db.migration_failed', running, e);
   }
+  if (opts.file && backupPath) pruneBackups(opts.file, opts.keepBackups ?? 2);
   return { from: current, to: latest, applied: pending.map((m) => m.version), backup: backupPath };
 }

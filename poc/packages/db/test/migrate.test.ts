@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { appliedMigrations, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, type Migration } from '@sax/db';
+import { appliedMigrations, backupName, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, type Migration } from '@sax/db';
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -66,10 +66,13 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     b.close();
   });
 
-  it('실패하면 대기 중인 판 전부를 되돌린다: DB는 이전 판 그대로, 오류는 판 번호만, 백업은 남는다', () => {
+  it('실패하면 대기 중인 판 전부를 되돌린다: DB는 이전 판 그대로, 오류는 판 번호만, 기존 백업은 지우지 않는다', () => {
     const file = tmp();
     const k = key();
-    openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 3) }).close();
+    openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 1) }).close();
+    for (const n of [2, 3]) openDatabase(file, k, { migrations: MIGRATIONS.slice(0, n), now: () => new Date(Date.UTC(2026, 10, 5, 10, n)) }).close();
+    const before = listBackups(file);
+    assert.equal(before.length, 2);
     const broken: Migration[] = [...MIGRATIONS.slice(0, 4), { version: 5, name: 'broken', sql: 'CREATE TABLE ok_part (x INTEGER); CREATE TABLE settings (dup TEXT);' }];
     assert.throws(
       () => openDatabase(file, k, { migrations: broken }),
@@ -79,7 +82,22 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     assert.equal(db.pragma('user_version', { simple: true }), 3, 'v4도 되돌려졌다(한 트랜잭션)');
     assert.ok(!tables(db).includes('employees') && !tables(db).includes('ok_part'));
     db.close();
-    assert.equal(listBackups(file).length, 1);
+    assert.deepEqual(listBackups(file), before, '실패한 시도는 오래된 복구 지점을 지우지 않고, 사본도 남기지 않는다');
+    // 같은 초에 다시 실패해도 EEXIST가 아니라 MigrationError
+    const at = () => new Date(Date.UTC(2026, 10, 5, 12));
+    for (let i = 0; i < 2; i++) assert.throws(() => openDatabase(file, k, { migrations: broken, now: at }), (e: unknown) => e instanceof MigrationError && e.code === 'db.migration_failed');
+    assert.deepEqual(listBackups(file), before);
+  });
+
+  it('같은 이름의 백업이 이미 있으면 -2를 붙이고, 정리는 성공한 뒤에만 한다', () => {
+    const file = tmp();
+    const k = key();
+    openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 2) }).close();
+    const at = new Date(Date.UTC(2026, 10, 5, 13));
+    fs.writeFileSync(backupName(file, 2, at), 'x');
+    const db = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 3), now: () => at });
+    db.close();
+    assert.deepEqual(listBackups(file).map((b) => path.basename(b)), ['db.sqlite.pre-v2-20261105T130000Z-2.bak', 'db.sqlite.pre-v2-20261105T130000Z.bak'].sort());
   });
 
   it('앱보다 새 판 DB는 열지 않는다', () => {

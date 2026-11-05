@@ -284,13 +284,15 @@ const toMemo = (r: Row): CardMemo => ({
 });
 
 /**
- * 메모 매칭 키(D07 card_txn_memos.match_key). 승인번호·취소 여부·금액, 승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부.
+ * 메모 매칭 키(D07 card_txn_memos.match_key). 날짜·승인번호·취소 여부·금액, 승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부.
  * 같은 값이 여러 건이면 seq 순서의 순번 '#n'(1부터)을 붙인다. 승인과 그 취소는 취소 여부로 갈린다.
+ * 승인번호에도 날짜를 붙인다: 승인번호는 달이 바뀌면 다시 나올 수 있어, 날짜가 없으면 다른 달의 같은 승인번호·금액 행이
+ * 같은 키(UNIQUE)를 써서 메모를 빼앗거나 덮어쓴다. 같은 거래의 사용일은 조회마다 같다.
  */
 export function cardMatchKeys(rows: readonly CardTxnInput[]): string[] {
   const base = rows.map((t) =>
     t.approvalNo
-      ? `a|${t.approvalNo}|${t.canceled ? 1 : 0}|${t.amount}`
+      ? `a|${t.usedOn}|${t.approvalNo}|${t.canceled ? 1 : 0}|${t.amount}`
       : `d|${t.usedOn}|${t.merchantBizNo ?? ''}|${t.amount}|${t.cardLast4 ?? ''}|${t.canceled ? 1 : 0}`,
   );
   const seen = new Map<string, number>();
@@ -320,7 +322,8 @@ export class CardRepo {
    * [최신화] 한 번 = 트랜잭션 하나(D07 card_txns 주석):
    * (1) 이 프로필의 used_on ∈ [from, to] 행을 어느 조회에서 왔든 모두 지운다 (2) 새 결과를 seq 순서로 넣는다 (3) 메모를 match_key로 다시 잇는다.
    * 같은 구간을 몇 번 눌러도 결과가 같다. 결과의 날짜가 구간 밖이면 거부한다(구간 밖 행을 지우지 않고 남기는 것을 막기 위해).
-   * 반환: 다시 잇지 못한 메모 수("메모 대상 확인 필요")
+   * 다시 잇는 대상은 지금 이어진 행이 없는 메모뿐이다(다른 구간의 살아 있는 행에 붙은 메모는 옮기지 않는다).
+   * 반환: 이번 교체로 행을 잃고 다시 잇지 못한 메모 수("메모 대상 확인 필요"). 예전부터 떠 있던 메모는 세지 않는다(`memos()`의 txnId null로 본다)
    */
   replaceRange(f: Omit<CardFetch, 'rowCount'>, rows: readonly CardTxnInput[]): { inserted: number; unmatchedMemos: number } {
     need(validDay(f.rangeFrom) && validDay(f.rangeTo) && f.rangeFrom <= f.rangeTo, 'invalid_range');
@@ -333,17 +336,21 @@ export class CardRepo {
       this.db
         .prepare('INSERT INTO card_fetches (run_id, profile_id, range_from, range_to, row_count, completed_at) VALUES (?, ?, ?, ?, ?, ?)')
         .run(f.runId, f.profileId, f.rangeFrom, f.rangeTo, rows.length, f.completedAt);
+      const lost = this.db
+        .prepare('SELECT m.id FROM card_txn_memos m JOIN card_txns t ON t.id = m.txn_id WHERE m.profile_id = ? AND t.used_on >= ? AND t.used_on <= ?')
+        .pluck()
+        .all(f.profileId, f.rangeFrom, f.rangeTo) as string[];
       this.db.prepare('DELETE FROM card_txns WHERE profile_id = ? AND used_on >= ? AND used_on <= ?').run(f.profileId, f.rangeFrom, f.rangeTo);
       const ins = this.db.prepare(`INSERT INTO card_txns (id, profile_id, fetch_run_id, seq, used_on, merchant, merchant_biz_no, card_last4, approval_no, amount, supply_amount, vat_amount, canceled)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-      const link = this.db.prepare('UPDATE card_txn_memos SET txn_id = ? WHERE profile_id = ? AND match_key = ?');
+      const link = this.db.prepare('UPDATE card_txn_memos SET txn_id = ? WHERE profile_id = ? AND match_key = ? AND txn_id IS NULL');
       rows.forEach((t, i) => {
         const id = randomUUID();
         ins.run(id, f.profileId, f.runId, i + 1, t.usedOn, t.merchant, t.merchantBizNo, t.cardLast4, t.approvalNo, t.amount, t.supplyAmount, t.vatAmount, t.canceled ? 1 : 0);
         link.run(id, f.profileId, keys[i]);
       });
-      const unmatched = this.db.prepare('SELECT count(*) AS n FROM card_txn_memos WHERE profile_id = ? AND txn_id IS NULL').get(f.profileId) as { n: number };
-      return { inserted: rows.length, unmatchedMemos: Number(unmatched.n) };
+      const still = this.db.prepare('SELECT txn_id IS NULL FROM card_txn_memos WHERE id = ?').pluck();
+      return { inserted: rows.length, unmatchedMemos: lost.filter((id) => still.get(id) === 1).length };
     })();
   }
 
