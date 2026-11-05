@@ -119,7 +119,8 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
   if (ev.t === 'abort') {
     if (st.commit) return to({ ...st, pendingAbort: true }, ['abort.after_verify', 'ui.notify:reject_portal_push']);
     // WaitingGate에서 중지하면 gate_requests 행도 닫는다(뒤늦은 승인이 토큰을 만들지 못하게, R-G8).
-    return to(state('Aborted'), [...(n === 'WaitingGate' ? ['gate.cancel'] : []), 'tokens.discard', 'input.unlock', 'ui.notify:reject_portal_push']);
+    // HandedOff에서 중지하면 포털 동시 실행 슬롯도 놓는다.
+    return to(state('Aborted'), [...(n === 'WaitingGate' ? ['gate.cancel'] : []), ...(n === 'HandedOff' ? ['slot.release'] : []), 'tokens.discard', 'input.unlock', 'ui.notify:reject_portal_push']);
   }
 
   switch (n) {
@@ -156,7 +157,7 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
         case 'end_with_issues':
           return to(state('CompletedWithIssues'), ['ui.fixed:issued_do_not_rerun']);
         case 'downgrade':
-          return stopTo(ctx, ['tokens.discard', 'checkpoint.save']);
+          return stopTo(ctx, ['tokens.discard', 'input.unlock', 'checkpoint.save']);
         default:
           return illegal;
       }
@@ -197,7 +198,7 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
         case 'recovery_failed':
           return ev.then === 'handoff' ? to(state('HandedOff'), ['ui.banner:handoff_manual_commit']) : to(state('Failed'));
         case 'downgrade':
-          return stopTo(ctx, ['tokens.discard', 'checkpoint.save']);
+          return stopTo(ctx, ['tokens.discard', 'input.unlock', 'checkpoint.save']);
         default:
           return illegal;
       }
@@ -208,12 +209,12 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
           // R-C2: 가드가 커밋 요청을 관측 → 원장 observed_manual(→ in_doubt), ledger.observed_manual
           return to(st, ['ledger.observed_manual', 'journal:ledger.observed_manual']);
         case 'attest_manual_commit':
-          if (st.pendingDowngrade) return stopTo(ctx, ['ledger.observed_manual']);
-          return enterRunning(ctx, ['ledger.observed_manual', 'verify.run'], { reverify: true }, ['ledger.observed_manual']);
+          if (st.pendingDowngrade) return stopTo(ctx, ['ledger.observed_manual', 'slot.release']);
+          return enterRunning(ctx, ['ledger.observed_manual', 'verify.run'], { reverify: true }, ['ledger.observed_manual', 'slot.release']);
         case 'handoff_resume':
-          if (st.pendingDowngrade) return stopTo(ctx, ['checkpoint.save']);
-          // 원장이 in_doubt이면 resumeAt 대신 verify 먼저. 토큰은 이미 폐기됨.
-          return ev.ledgerInDoubt ? enterRunning(ctx, ['verify.run'], { reverify: true }, []) : enterRunning(ctx, ['resume_at']);
+          if (st.pendingDowngrade) return stopTo(ctx, ['slot.release', 'checkpoint.save']);
+          // 원장이 in_doubt이면 resumeAt 대신 verify 먼저. 토큰은 이미 폐기됨. 진입 확인에 걸려 멈추면 포털 슬롯을 놓는다.
+          return ev.ledgerInDoubt ? enterRunning(ctx, ['verify.run'], { reverify: true }, ['slot.release']) : enterRunning(ctx, ['resume_at'], {}, ['slot.release']);
         case 'handoff_timeout':
           return st.pendingDowngrade ? stopTo(ctx, ['slot.release', 'checkpoint.save']) : to(state('Paused'), ['slot.release', 'checkpoint.save']);
         case 'downgrade':
@@ -260,7 +261,7 @@ function commitSection(st: RunState, ev: RunEvent, ctx: MachineCtx): Transition 
     // 중지·정지로 빠지면 사후 스텝이 없으므로 후속 토큰을 만들지 않고 남은 토큰은 폐기한다.
     const stopped = () => [...t.effects.filter((e) => e !== 'token.issue_followup'), 'tokens.discard'];
     if (st.pendingAbort && t.state.name !== 'InDoubt') return to(state('Aborted'), stopped());
-    if (st.pendingDowngrade && t.state.name === 'Running') return stopTo(ctx, stopped());
+    if (st.pendingDowngrade && t.state.name === 'Running') return stopTo(ctx, [...stopped(), 'checkpoint.save']);
     if (st.pendingDowngrade && t.state.name === 'HandedOff') return to({ ...t.state, pendingDowngrade: true }, t.effects);
     return t;
   };

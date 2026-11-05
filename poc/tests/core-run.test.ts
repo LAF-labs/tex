@@ -478,3 +478,37 @@ describe('Bugbot #59 회귀', () => {
     assert.ok(soft.s.name === 'InDoubt' && !soft.effects.includes('chrome.close'), '하향이 없으면 닫지 않는다');
   });
 });
+
+describe('Bugbot #59 회귀 2', () => {
+  it('커밋 구간에서 미룬 하향으로 Paused가 되면 체크포인트를 저장한다', () => {
+    for (const ev of [{ t: 'verify', result: 'not_committed' }, { t: 'pre_dispatch_mismatch' }] as RunEvent[]) {
+      const r = run(commit(), [{ t: 'downgrade' }], [ev, { allowed: false, ledger: ['not_committed'] }]);
+      assert.equal(r.s.name, 'Paused', ev.t);
+      assert.ok(r.effects.includes('checkpoint.save'), ev.t);
+    }
+  });
+  it('Running·Recovering 하향은 입력 잠금을 푼다(R-G6)', () => {
+    for (const s of [state('Running'), state('Recovering')]) {
+      const r = transition(s, { t: 'downgrade' }, { allowed: false, ledger: [] });
+      assert.ok(r.ok && r.effects.includes('input.unlock'), s.name);
+    }
+  });
+  it('HandedOff에서 정지·중지로 나가면 포털 슬롯을 놓는다', () => {
+    const pend = state('HandedOff', { pendingDowngrade: true });
+    const deny: MachineCtx = { allowed: false, ledger: ['not_committed'] };
+    const exits: Array<[RunState, RunEvent, MachineCtx]> = [
+      [pend, { t: 'handoff_resume', ledgerInDoubt: false }, deny],
+      [pend, { t: 'attest_manual_commit' }, { allowed: false, ledger: ['in_doubt'] }],
+      [state('HandedOff'), { t: 'handoff_resume', ledgerInDoubt: false }, deny],
+      [state('HandedOff'), { t: 'handoff_resume', ledgerInDoubt: true }, { allowed: false, ledger: ['in_doubt'] }],
+      [state('HandedOff'), { t: 'attest_manual_commit' }, { allowed: false, ledger: ['in_doubt'] }],
+      [state('HandedOff'), { t: 'abort' }, OK],
+    ];
+    for (const [s, ev, c] of exits) {
+      const r = transition(s, ev, c);
+      assert.ok(r.ok && r.state.name !== 'Running' && r.effects.includes('slot.release'), `${ev.t} ${s.pendingDowngrade}`);
+    }
+    const resume = transition(state('HandedOff'), { t: 'handoff_resume', ledgerInDoubt: false }, OK);
+    assert.ok(resume.ok && resume.state.name === 'Running' && !resume.effects.includes('slot.release'), '이어서 실행하면 슬롯 유지');
+  });
+});
