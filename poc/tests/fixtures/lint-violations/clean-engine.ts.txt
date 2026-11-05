@@ -1,0 +1,8 @@
+// as: packages/engine/src/clean-probe.ts
+// expect: none
+// 정상 경로: egress·redaction·model 계약만 쓴다.
+import { Egress } from '@sax/net';
+import { apply } from '@sax/redaction';
+import type { DecideRequest } from '@sax/model';
+export const e = new Egress();
+export const r = (s: string, req: Omit<DecideRequest, 'input'>): DecideRequest => ({ ...req, input: apply(s, { runId: 'r' }).redacted });
