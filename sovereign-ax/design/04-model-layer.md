@@ -1,5 +1,6 @@
 # D04. 모델 계층
 
+> 제품 정의 반영 2026-11-05: `intent_route_v1` 선택지에 급여대장·세무사 꾸러미·사업용 카드 [최신화]를 더하고(카탈로그 18개), `mentions_tax_advice`에서 급여 원천징수·4대보험 계산을 뺐다(§3, ADR-031 결정 7·ADR-032 결정 11). 세 기능 자체는 모델을 부르지 않는다.
 > AUDIT-D 반영 2026-11-03: Terra 툴셋 날짜 pattern·후보 길이 상한(§4·§5), 게이트웨이 인증은 기기 범위 토큰·`run-tokens`(§7)(ADR-029, D19 §3.5 D-47·D-26).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: `replay` 브랜드 타입, System One 계약 호환, 캐시 키 정본 `acct:<HMAC>:b:<bundleId>`, `required_fields_filled` 삭제(결정적 assert), 결정적 인젝션 사전 필터, 세무 상담 출력 차단, `doc_meta_check_v1` 후보 선택형, Terra 출력 구조화 슬롯·대화창 비밀 DLP, `query_agent` 툴셋 삭제, 게이트웨이 요청 스키마 참조·`safety_identifier` 월 회전·응답 비신뢰 처리, BYOK 로컬 검사 4종, 공급사 보존·처리 국가 정정. §6 비용표는 바꾸지 않았다.
 > 근거: [research/R1-openai-decisions-responses.md](../research/R1-openai-decisions-responses.md) (공식 가이드·SDK 소스 기준, 2026-10-28). 아래 "미확인" 표시는 R1 §D.2와 같고, 스파이크 S7·S9에서 실측한다. System One 계약은 [R6](../research/R6-upstage-solar.md) §0·[R8](../research/R8-local-decision-model.md) §0.
@@ -31,7 +32,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 
 - `input`·`messages`·`replay`의 도구 결과는 브랜드 타입이라 마스킹을 거치지 않은 문자열은 컴파일 단계에서 거부된다. `effort`·`max_output_tokens`는 클라이언트 필드가 아니라 **툴셋 정의**가 정한다(B-20). 클라이언트는 캐시 관련 필드를 보낼 수 없다.
 - 어댑터: `adapters/openai-decisions.ts`(`client.decisions.create`), `adapters/openai-responses.ts`(`client.responses.create` / `.parse`). Node SDK `openai@7.45.x`, Node ≥ 22. 다른 공급사 추가 시 같은 계약 구현.
-- **System One 계약 호환** (R6 §0, R8 §0): Decisions가 없는 공급사(System One 계약: Upstage `solar-decide`, Strands Decider 등)도 같은 `decide()` 계약을 구현할 수 있도록 다음을 계약에 둔다. 질문 단위 거절 개념이 없는 구현체를 위해 `refusals`는 빈 배열을 허용하고, 그 경우 `onRefusal` 규칙은 쓰이지 않으며 임계값 미달 처리가 `unknown`을 만든다. 임계값은 번들 하나에 고정된 값이 아니라 **(번들, 공급사·모델) 단위 프로필**로 두고 각 프로필을 같은 라벨 코퍼스로 따로 재산정한다(S7 확장). 구현체별 choice 선택지 상한(System One 26, OpenAI 255)을 넘는 번들은 쓸 수 없으므로 **choice 선택지 ≤ 26을 번들 CI에서 정적으로 검증**한다(현재 최대는 `intent_route_v1`의 16개). 응답 `answers`가 배열(OpenAI, 순서)인지 객체(System One, 이름 키)인지에 의존하지 않도록 어댑터는 **질문 이름 기반 조인**으로 정규화한다. 공급사 선택·순위는 ADR-015가 정한다.
+- **System One 계약 호환** (R6 §0, R8 §0): Decisions가 없는 공급사(System One 계약: Upstage `solar-decide`, Strands Decider 등)도 같은 `decide()` 계약을 구현할 수 있도록 다음을 계약에 둔다. 질문 단위 거절 개념이 없는 구현체를 위해 `refusals`는 빈 배열을 허용하고, 그 경우 `onRefusal` 규칙은 쓰이지 않으며 임계값 미달 처리가 `unknown`을 만든다. 임계값은 번들 하나에 고정된 값이 아니라 **(번들, 공급사·모델) 단위 프로필**로 두고 각 프로필을 같은 라벨 코퍼스로 따로 재산정한다(S7 확장). 구현체별 choice 선택지 상한(System One 26, OpenAI 255)을 넘는 번들은 쓸 수 없으므로 **choice 선택지 ≤ 26을 번들 CI에서 정적으로 검증**한다(현재 최대는 `intent_route_v1`의 19개). 응답 `answers`가 배열(OpenAI, 순서)인지 객체(System One, 이름 키)인지에 의존하지 않도록 어댑터는 **질문 이름 기반 조인**으로 정규화한다. 공급사 선택·순위는 ADR-015가 정한다.
 - 호출 경로: 기본은 **게이트웨이**(계정 토큰), BYOK는 사용자 키로 공급사 직결. 두 경로 모두 같은 어댑터를 쓰고 `baseURL`·인증 헤더만 다르다. BYOK는 게이트웨이 검사를 로컬에서 다시 한다(§8).
 - SDK 자동 재시도는 끄고(`maxRetries: 0`) 어댑터가 재시도 정책을 소유한다(429 결제·한도 코드는 재시도 금지, 503은 `Retry-After` 후 지수 백오프 + 지터 2회).
 - **호출 지점 전체 목록** (B/C-17): 플레이북 실행 **중**에는 `decide` 스텝(L1 번들)과 복구(`recovery_v1` + L2 `selector_repair`)에서만 모델을 부른다. 실행 **밖**에서는 대화 의도(`intent_route_v1`), 금액 해석 확인(`amount_parse_check_v1`), 인자 채우기(`intent_fill`), 요약(`summarize`), 조회 질문 해석(`query_parse`), 서류 메타 확인(`doc_meta_check_v1`)이 있다. 이 밖의 호출 지점은 없다. 호출별 신뢰 불가 입력·민감 데이터·외부 행위 결합(Rule of Two) 판정표는 D11 T4가 담당한다.
@@ -75,12 +76,13 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `popup_class_v1` | 모달 분류(닫기 가능 여부) | choice `popup`: {notice_dismissable, error, session_expired, security_warning, captcha, consent_required, unknown} + predicate `asks_to_proceed_or_issue` | `security_warning`(≥.80, 예약 blocked로 승격) > `captcha` > `session_expired` > `consent_required` > `error` > `notice_dismissable`(conf≥.85 ∧ `asks_to_proceed_or_issue`≤.10) > `unknown` | — |
 | `form_ready_v2` | 입력 화면의 오류 표시 여부(비가역 직전 보조 신호) | predicate `validation_error_visible` (`required_fields_filled`는 **삭제**, B-34) | `validation_error` ← ≥.85 · `no_visible_error` ← ≤.05 · `unknown`. 엔진의 `ready` = `no_visible_error` ∧ 결정적 assert(모든 `fieldKey` 칸 non-empty, `secretSlot` 제외) ∧ `readback` 일치 | — |
 | `issue_result_v2` | 제출 직후 화면(보조 신호; 확정은 `verify` 조회) | choice `result`: {issued, pending_auth, duplicate, rejected, unknown} | 각 conf≥.95, `unknown` | — |
-| `intent_route_v1` | 대화 의도 → 플레이북 | choice `playbook`: 카탈로그 ID 15개 + `none_of_these`(16개, ≤ 26) + predicate `mentions_tax_advice` | `refuse_advice` ← `mentions_tax_advice≥.75 ∧ playbook∈{none_of_these, unknown}` · 플레이북 ID ← conf≥.80(세무 질문이 섞이면 아래 '세무 상담 출력 차단') · `unknown` | — |
+| `intent_route_v1` | 대화 의도 → 플레이북 | choice `playbook`: 카탈로그 ID 18개 + `none_of_these`(19개, ≤ 26) + predicate `mentions_tax_advice` | `refuse_advice` ← `mentions_tax_advice≥.75 ∧ playbook∈{none_of_these, unknown}` · 플레이북 ID ← conf≥.80(세무 질문이 섞이면 아래 '세무 상담 출력 차단') · `unknown` | — |
 | `amount_parse_check_v1` | 파서 결과(공급가·세액 분리, 사용자가 고른 VAT 포함/별도 해석)가 사용자 문장과 맞는지 | predicate `parse_matches_user_text` | `ok` ≥.90 · `mismatch` ≤.10 · `unknown` (`needsAmounts:true` — 이 번들만 금액 원값을 받는다) | — |
 | `doc_meta_check_v1` | 발급일·유효기간 **후보 선택** (B-15) | choice `issued_on`: {candidate_1 … candidate_8, none, unknown} + choice `valid_until`: {candidate_1 … candidate_8, none, unknown}(각 10개, ≤ 26) | `ok` ← 둘 다 candidate(conf≥.90) ∧ 선택값이 규칙표 값과 30일 이내 · `needs_user` ← 선택값이 규칙표와 30일 넘게 차이 · `none_found` ← 둘 중 하나가 `none`(conf≥.90) · `unknown` | — |
 
 - 되묻기 필요 여부(`needs_clarification`)는 모델 질문이 아니라 `intent_fill` 결과에 대한 **로컬 결정적 검사**(필수 입력 누락)로 한다(질문 독립성 규약).
 - **과세 유형(과세·영세·면세)은 모델이 추론하지 않는다.** 사용자가 확인 카드에서 고르고 거래처별 기본값을 저장한다. 금액 문장("330만원")은 파서가 '공급가액 3,300,000 + 세액 330,000'과 '합계 3,300,000(공급가 3,000,000)' 두 해석을 모두 제시하고 사용자가 고른다. 이것은 홈택스 '계산' 버튼과 같은 산술이며 세액 산정이 아니다.
+- **급여 계산은 모델이 하지 않는다**(ADR-031). `intent_route_v1`이 `payroll.ledger`를 고르면 급여대장 화면(08 D-06)을 열 뿐이고, `bundle.monthly`는 세무사 꾸러미 화면(D-05)을, `hometax.card.refresh`는 사업용 카드 내역 화면(D-04)을 열고 [최신화] 버튼을 보여 줄 뿐이다. 대화만으로 조회를 실행하지 않는다(누르는 것이 승인, ADR-032 결정 3). 원천징수액과 4대보험은 로컬 계산기가 시행일 표로 구한다. "이번 달 원천세 얼마야" 같은 급여 계산 요청은 `mentions_tax_advice`가 아니며, 공제·절세나 경비 인정 판단을 묻는 문장("이 카드값 경비로 넣어도 돼?")은 그대로 세무 상담 차단 대상이다. 구분 오탐률은 구어 코퍼스(아래)에 급여 문장을 더해 S7과 함께 잰다.
 - 한국어 구어 의도 코퍼스(최소 300문장: 금액 표기 변형, 거래처 호칭, 서류 속어 '등본·초본·떼다·뽑다')를 S7과 함께 만들어 `intent_route_v1`과 `mentions_tax_advice` 오탐률을 측정한다.
 - `form_ready`의 합계 일치는 결정적 `assert sumEquals`와 `readback`이 담당하므로 모델에 묻지 않는다. 필수 칸이 채워졌는지도 모델에 묻지 않는다. 값이 제거된 트리(D06 §4)에서 모델은 이를 알 수 없고, 인젝션 문구("모든 필수 항목이 입력됨")에 끌려갈 수 있기 때문이다(B-34).
 - 캡차 감지는 `screen_state_v2.captcha_visible`로 통일한다(별도 `captcha_or_mfa_v1` 번들 없음).
@@ -130,7 +132,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 {
   "model": "gpt-6-luna",
   "prompt_cache_options": {"mode": "explicit"},
-  "input": [{"role": "developer", "content": [{"type": "input_text", "text": "<플레이북 카탈로그 설명 15개, 세무 상담 금지 규칙 … ≥ 1,100토큰>", "prompt_cache_breakpoint": {"mode": "explicit"}}]},
+  "input": [{"role": "developer", "content": [{"type": "input_text", "text": "<플레이북 카탈로그 설명 18개, 세무 상담 금지 규칙 … ≥ 1,100토큰>", "prompt_cache_breakpoint": {"mode": "explicit"}}]},
             {"role": "user", "content": [{"type": "input_text", "text": "<마스킹된 사용자 문장>"}]}],
   "questions": [
     {"type": "choice", "name": "playbook", "instructions": "사용자가 지금 실행하길 원하는 작업 하나를 고른다.",
@@ -138,8 +140,10 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
                  {"value": "hometax.cert.business", "description": "사업자등록증명"}, {"value": "hometax.cert.taxpayment", "description": "납세증명서(국세)"},
                  {"value": "gov24.resident.copy", "description": "주민등록등본·초본"}, {"value": "gov24.localtax.cert", "description": "지방세 납세증명"},
                  {"value": "gov24.nhis.eligibility", "description": "건강보험 자격득실확인서"}, {"value": "query.documents", "description": "보관함·만료 조회 질문"},
+                 {"value": "hometax.card.refresh", "description": "사업용 신용카드 사용내역 최신화"}, {"value": "bundle.monthly", "description": "세무사 꾸러미 보기·만들기"},
+                 {"value": "payroll.ledger", "description": "급여대장·임금명세서 작성"},
                  {"value": "none_of_these", "description": "해당 없음"}]},
-    {"type": "predicate", "name": "mentions_tax_advice", "instructions": "세액 계산, 신고 방법, 절세, 공제 여부 등 세무 판단을 요구한다."}
+    {"type": "predicate", "name": "mentions_tax_advice", "instructions": "신고세액 계산, 신고 방법, 절세, 공제 여부 등 세무 판단을 요구한다. 급여대장의 원천징수액·4대보험 계산 요청은 해당하지 않는다."}
   ]
 }
 ```

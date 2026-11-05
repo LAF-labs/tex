@@ -1,5 +1,6 @@
 # D07. 데이터 모델
 
+> 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 붙였다. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·DB 배타 잠금·DB 키 유실 처리(§1.3), `remote_devices` 증명 상태·`doc_scope_json`(§2), 서버 시각 컬럼 금지(§5), 키 계층의 복구 문구 삭제(§6, ADR-016 v2), DB 키 래핑 사본(§7)(ADR-025·029, D19 §3.5). 상충 표기: `A/C-nn`은 감사 A §3, `B/C-nn`은 감사 B §3, `C/X-nn`은 감사 C §5. 맨 `C-nn`은 감사 C의 발견 ID다.
 
 ## 1. 저장소 개관
@@ -186,16 +187,118 @@ CREATE TABLE remote_pair_state (             -- (C-33) pair별 영속 상태. �
 CREATE TABLE remote_cmd_seen (               -- (B-10) 라이브·큐 cmd.run 모두 처리된 cmdId와 대조. 90일 보존
   pair_id TEXT NOT NULL, cmd_id TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY(pair_id, cmd_id)
 );
+
+-- 급여대장 (ADR-031, Phase 1 베타). 금액은 원 단위 정수
+CREATE TABLE employees (
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
+  name TEXT NOT NULL, birth_date TEXT NOT NULL,      -- 임금대장·임금명세서는 성명·생년월일로 쓴다
+  rrn_enc BLOB,                                      -- 주민번호(선택). 원천세 자료로 세무사가 필요할 때만 넣는다. DB 키 암호화 컬럼, 화면에는 가려서, 모델·서버로 보내지 않는다
+  hired_on TEXT NOT NULL, left_on TEXT, job TEXT,
+  pay_type TEXT CHECK(pay_type IN ('monthly')) NOT NULL DEFAULT 'monthly',   -- 1차는 월급제 상용직만(제안)
+  base_pay INTEGER NOT NULL, nontax_json TEXT NOT NULL DEFAULT '{}',        -- 비과세 항목(식대 등) 이름 → 금액. 한도는 rate_tables(nontax_limits)로 막는다
+  dependents INTEGER NOT NULL, children_8_20 INTEGER NOT NULL DEFAULT 0,    -- 공제대상가족 수, 8세 이상 20세 이하 자녀 수
+  withholding_pct INTEGER CHECK(withholding_pct IN (80,100,120)) NOT NULL DEFAULT 100,
+  pension_applies INTEGER NOT NULL DEFAULT 1, health_applies INTEGER NOT NULL DEFAULT 1, employment_applies INTEGER NOT NULL DEFAULT 1,   -- 보험별 적용 여부(연금 60세 이상 등)
+  pension_base INTEGER, health_base INTEGER,          -- 국민연금 기준소득월액, 건강보험 보수월액. 고지내역에서 채우고 없으면 월급으로 예상
+  created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(profile_id, id)
+);
+CREATE TABLE payroll_months (
+  profile_id TEXT NOT NULL REFERENCES profiles(id), month TEXT NOT NULL,    -- 'YYYY-MM'
+  revision INTEGER NOT NULL DEFAULT 1,                                     -- 확인 뒤 고치면 올린다(이미 준 명세서와 구분)
+  status TEXT CHECK(status IN ('draft','confirmed')) NOT NULL,             -- 사장님이 확인하면 confirmed
+  paid_on TEXT, rate_table_ids_json TEXT NOT NULL,                         -- 계산에 쓴 표의 id 목록(재현용)
+  notice_doc_ids_json TEXT NOT NULL DEFAULT '[]',                          -- 넣은 4대보험 고지내역 파일들(S-06 후처리)
+  confirmed_at TEXT, PRIMARY KEY(profile_id, month, revision)
+);
+CREATE TABLE payroll_lines (
+  profile_id TEXT NOT NULL, month TEXT NOT NULL, revision INTEGER NOT NULL, employee_id TEXT NOT NULL,
+  work_days INTEGER, work_hours INTEGER, overtime_hours INTEGER, night_hours INTEGER, holiday_hours INTEGER,   -- 임금대장 기재사항
+  items_json TEXT NOT NULL,                     -- 지급 항목별 [{name, amount, taxable, calc}]. calc는 임금명세서의 계산방법 문장
+  gross INTEGER NOT NULL, nontax INTEGER NOT NULL,
+  income_tax INTEGER NOT NULL, local_income_tax INTEGER NOT NULL,
+  pension_est INTEGER NOT NULL, health_est INTEGER NOT NULL, ltc_est INTEGER NOT NULL, employment_est INTEGER NOT NULL,   -- 근로자 부담 예상치(요율 계산)
+  pension_notice INTEGER, health_notice INTEGER, ltc_notice INTEGER, employment_notice INTEGER,   -- 근로자 부담 고지액(정본, 제안). 없으면 NULL
+  employer_json TEXT NOT NULL,                  -- 사업주 부담분(연금·건강·장기요양·고용·산재, 예상치와 고지액). 인건비 총액에만 쓴다
+  net_pay INTEGER NOT NULL,
+  PRIMARY KEY(profile_id, month, revision, employee_id),
+  FOREIGN KEY(profile_id, month, revision) REFERENCES payroll_months(profile_id, month, revision),
+  FOREIGN KEY(profile_id, employee_id) REFERENCES employees(profile_id, id)
+);
+CREATE TABLE rate_tables (                     -- 시행일 단위 표. 서명 데이터 패키지로 배포(D14 M6-10), 코드에 박지 않는다
+  id TEXT PRIMARY KEY,
+  kind TEXT CHECK(kind IN ('insurance_rate','pension_bounds','simple_tax_table','nontax_limits')) NOT NULL,
+  effective_from TEXT NOT NULL, effective_to TEXT, body_json TEXT NOT NULL, rounding TEXT NOT NULL,   -- 표별 반올림·절사 규칙
+  package_version TEXT NOT NULL, signature_ok INTEGER NOT NULL,
+  UNIQUE(kind, effective_from)                 -- 기간이 겹치는 표는 패키지 검증에서 거부한다
+);
+
+-- 세무사 꾸러미 (ADR-032, Phase 1 베타)
+CREATE TABLE bundle_items (                    -- 꾸러미 항목 정의. 1층 고정·2층 업종 묶음·3층 사장님 추가
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
+  tier INTEGER CHECK(tier IN (1,2,3)) NOT NULL, kind TEXT NOT NULL,       -- tax_invoice, payroll, card, paper_receipt, settlement_delivery, settlement_market, cash_sales, custom
+  name TEXT NOT NULL, cadence TEXT CHECK(cadence IN ('monthly','quarterly','once')) NOT NULL DEFAULT 'monthly',
+  enabled INTEGER NOT NULL DEFAULT 1, source TEXT CHECK(source IN ('builtin','industry','user','pasted_request')) NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE bundle_entries (                  -- 항목의 달별 상태와 첨부
+  item_id TEXT NOT NULL REFERENCES bundle_items(id), period TEXT NOT NULL,   -- 'YYYY-MM' 또는 'YYYY-Qn'
+  status TEXT CHECK(status IN ('missing','partial','ready','not_applicable')) NOT NULL,   -- not_applicable: 이번 달 해당 없음(사장님 표시)
+  doc_ids_json TEXT NOT NULL DEFAULT '[]', note TEXT, updated_at TEXT NOT NULL,
+  PRIMARY KEY(item_id, period)
+);
+CREATE TABLE bundle_exports (                  -- 내보내기 기록("어디로 무엇이 갔는지"). 보낸 곳은 사장님이 표시한다
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), period TEXT NOT NULL,
+  sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL, sent_marked_at TEXT, sent_note TEXT
+);
+CREATE TABLE card_fetches (                    -- H-12 조회 구간. [최신화]는 구간의 행을 통째로 바꾼다
+  run_id TEXT PRIMARY KEY REFERENCES runs(id), profile_id TEXT NOT NULL REFERENCES profiles(id),
+  range_from TEXT NOT NULL, range_to TEXT NOT NULL, row_count INTEGER NOT NULL, completed_at TEXT NOT NULL
+);
+-- "마지막 최신화"는 card_fetches의 마지막 completed_at이다(빈 결과도 최신화다)
+CREATE TABLE card_txns (                       -- H-12 사업용 카드 사용내역
+  -- [최신화] 한 번은 트랜잭션 하나다: (1) 이 프로필의 used_on ∈ [range_from, range_to] 행을 어느 조회에서 왔든 모두 지운다
+  -- (2) 새 결과를 seq 순서로 넣는다 (3) 메모를 match_key로 다시 잇는다. 그래서 같은 구간을 몇 번 눌러도 결과가 같다
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id), fetch_run_id TEXT NOT NULL REFERENCES card_fetches(run_id),
+  seq INTEGER NOT NULL,                        -- 조회 결과 안의 순번
+  used_on TEXT NOT NULL, merchant TEXT, merchant_biz_no TEXT, card_last4 TEXT, approval_no TEXT,
+  amount INTEGER NOT NULL, supply_amount INTEGER, vat_amount INTEGER, canceled INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(fetch_run_id, seq)
+);                                             -- 용도 분류·경비 판단 컬럼은 두지 않는다
+CREATE INDEX ix_card_txns_day ON card_txns(profile_id, used_on);
+CREATE TABLE card_txn_memos (                  -- 사장님 메모. 구간을 바꿀 때 승인번호(없으면 날짜·가게·금액·카드)로 다시 매칭
+  id TEXT PRIMARY KEY, profile_id TEXT NOT NULL REFERENCES profiles(id),
+  match_key TEXT NOT NULL,                     -- 승인번호·취소 여부·금액(승인번호가 없으면 날짜·가게 사업자번호·금액·카드·취소 여부). 같은 값이 여러 건이면 seq 순서의 순번 '#n'을 붙인다. 승인과 그 취소는 취소 여부로 갈린다
+  txn_id TEXT REFERENCES card_txns(id) ON DELETE SET NULL,   -- 행을 지우면 NULL이 되고 (3)에서 다시 잇는다. 못 이으면 화면에 "메모 대상 확인 필요"
+  memo TEXT NOT NULL, updated_at TEXT NOT NULL,
+  UNIQUE(profile_id, match_key)                -- 같은 키에 메모 둘이 붙지 않게
+);
+CREATE TABLE receipts (                        -- 종이 증빙. 원본은 documents(doc_type='paper_receipt')
+  doc_id TEXT PRIMARY KEY REFERENCES documents(id),
+  issued_on TEXT, merchant TEXT, merchant_biz_no TEXT, amount INTEGER,
+  ocr_json TEXT,                               -- 샌드박스 OCR 원결과(로컬 전용)
+  confirmed_at TEXT                            -- 사장님이 읽어 낸 값을 확인한 시각
+);
+CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않은 현금매출. 하루 한 숫자
+  profile_id TEXT NOT NULL REFERENCES profiles(id), day TEXT NOT NULL, amount INTEGER NOT NULL, entered_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, day)
+);
 ```
 
 원칙: 비밀 컬럼 없음. `inputs_json_enc`·`context_json_enc`·`temp_previews.body_enc`는 DB 키로 암호화된 컬럼이며, 비밀 참조(`secret_ref`)는 종류 이름만 담고 게이트 토큰·`runKey`는 절대 저장하지 않는다. 저널(`run_events`)은 상태 전이 기록이고, 재시작 복원은 원장·게이트·실행 테이블 상태 승격이다(D-45(N-71)).
+
+급여·세무사 꾸러미(ADR-031·032):
+- 테이블은 로컬 전용이며 서버 색인(§3·§5)에 올리지 않는다. 원본 파일은 `documents` 행으로 들어가는데, 그 doc_type(`paper_receipt`, `insurance_notice`, `settlement_file`, `payroll_ledger`, `pay_statement`, `bundle_export`)은 서버 색인을 끈 채 고정하고 설정으로도 켤 수 없다.
+- 주민번호(`employees.rrn_enc`)는 마스킹 계층(D06)의 주민번호 규칙 대상이다. 다만 Phase 1 보관함은 평문 PDF라(§1.4) 고지내역·급여대장·임금명세서 파일에는 주민번호가 평문으로 남을 수 있다. 화면과 설정에 이 점을 적는다.
+- 월초 "세무사 꾸러미 준비됨" 알림은 `schedules`(서류 갱신용) 행이 아니라 설정 `bundle.reminderDay`·`payroll.halfYearWithholding`으로 데몬 `notify`가 계산한다.
+- 임금대장은 3년 보존 의무가 있다. 로컬 전용이라 PC를 잃으면 함께 사라지므로, Phase 2 E2EE 백업 범위에 넣을지 Phase 2 설계 때 정한다.
 
 - 원장 규칙(B-10): 키는 `(intent_id, step_id)`다. 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`·`playbook_id`가 원장과 다르면 거부한다. '사후 스텝 점프'는 같은 `run_id`의 재개에만 적용한다(D03 §4).
 - `schedules.consent_json`(B-27): `deviceSig`는 동의한 기기의 `Vx` 서명이며 문맥은 `"SAX-consent-v1"`(D08 §2.1)이다. 설치된 패키지의 `major`나 `effects`가 동의 당시와 다르면 `notify`로 강등하고 재동의를 받는다.
 
 ## 3. 문서 종류와 유효기간 규칙표 (초기값, 사용자 조정 가능)
 
-"서버 색인" 열은 doc_type별 서버 색인의 기본값(켬·끔)이다(C-09). 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 적용되고(Phase 2, 스위치가 꺼져 있으면 어떤 종류도 올라가지 않는다), 기본으로 켜진 종류가 있으므로 이 설정을 '옵트인'이라 부르지 않는다(2026-11-02 용어 정리). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeEnabled']`).
+"서버 색인" 열은 doc_type별 서버 색인의 기본값(켬·끔)이다(C-09). 계정의 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 적용되고(Phase 2, 스위치가 꺼져 있으면 어떤 종류도 올라가지 않는다), 기본으로 켜진 종류가 있으므로 이 설정을 '옵트인'이라 부르지 않는다(2026-11-02 용어 정리). 꺼진 종류는 서버에 **인덱스 행이 없고**(키 객체만 있다, §5), 조회 에이전트는 그 종류에 답하지 못한다고 UI에 표시한다. 사용자는 설정에서 종류별로 바꿀 수 있다(`settings['index.docTypeEnabled']`). 단 표에서 "끔(고정)"인 종류는 바꿀 수 없다.
 
 | doc_type | 한글 | 발급 포털 | 기본 유효(일) | 규칙 | 서버 색인 기본 | 비고 |
 |---|---|---|---|---|---|---|
@@ -209,6 +312,13 @@ CREATE TABLE remote_cmd_seen (               -- (B-10) 라이브·큐 cmd.run �
 | `land_register` / `building_register` | 토지·건축물대장 | 정부24 | 90 | fixed_days | 끔 | 부동산 정황 |
 | `sme_cert` | 중소기업확인서 | SMINFO | — | fiscal_year_rule | **켬** | 직전 사업연도 말일 + 3개월부터 1년(기본), 문서 명시 우선 |
 | `insure4_cert` | 4대보험 완납증명 | 4대보험센터 | 30 | fixed_days | 끔 | 직원 존재 정황 |
+| `paper_receipt` | 종이 증빙 사진 | 사용자 첨부 | — | none | **끔(고정)** | 세무사 꾸러미(ADR-032) |
+| `insurance_notice` | 4대보험 고지내역 | 사용자 첨부(S-06 후처리) | — | none | **끔(고정)** | 직원별 금액·주민번호 포함 가능 |
+| `settlement_file` | 배달앱·오픈마켓 정산내역 | 사용자 첨부(J-01·J-02) | — | none | **끔(고정)** | 매출 규모 정황 |
+| `payroll_ledger` / `pay_statement` | 급여대장 / 임금명세서 | 앱이 만듦(ADR-031) | — | none | **끔(고정)** | 급여·주민번호 |
+| `bundle_export` | 세무사 꾸러미 엑셀 | 앱이 만듦(ADR-032) | — | none | **끔(고정)** | 암호 걸린 묶음 |
+
+"끔(고정)" 종류는 `index.docTypeEnabled`에 넣지 않고, 설정 화면에도 켜고 끄는 칸을 두지 않는다. 앱은 업로드 직전에 이 목록을 다시 확인해 행을 만들지 않는다.
 
 규칙 평가: 문서 텍스트에서 유효기간이 추출되면 그것이 우선(`doc_meta_check_v1` 통과 시). 없으면 규칙표. 둘 다 없으면 "만료 미정"으로 표시하고 알림 없음.
 
