@@ -1,12 +1,12 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { domainToASCII } from 'node:url';
-import { cbor, LOCAL_APPROVAL_TTL_MS, type GateRequest, type LocalApproval, type Presence } from '@sax/engine/gate';
+import { cbor, LOCAL_APPROVAL_TTL_MS, LOCAL_ATTEST_CONTEXT, LOCAL_ATTEST_TTL_MS, type AttestRequest, type GateRequest, type LocalApproval, type LocalAttestation, type Presence } from '@sax/engine/gate';
 
 // ADR-021 결정 1: 로컬 비가역 승인은 main 소유 승인 바(메인 창 자식 WebContentsView, 스크립트 없음)에서
 // main이 직접 관찰한 클릭으로만 인정한다. 이 파일은 Electron 없이 시험할 수 있는 판정 로직과 정적 HTML 생성기다.
 // 게이트 요청 모양·D03 해시는 엔진과 같은 @sax/engine/gate를 쓴다.
 
-export type { GateRequest, LocalApproval };
+export type { AttestRequest, GateRequest, LocalApproval, LocalAttestation };
 
 export const ARM_DELAY_MS = 600;
 export const DWELL_MS = 150;
@@ -28,6 +28,8 @@ export interface SummaryLine {
   flag?: string;
   /** attention이면 바 전체를 주의 색으로 그린다(중복 가능성, ADR-027 결정 3). */
   tone?: 'normal' | 'attention';
+  /** 고정 안내 줄(증언 바의 E-13 문구). 작은 글자로 그리고 값이 아니다. */
+  note?: boolean;
 }
 
 /** 해시한 문자열 그대로 자릿수를 묶는다(Number 변환 없음, 2^53 넘는 값도 같게 보인다). */
@@ -50,6 +52,9 @@ export const REFUSAL_TEXT = {
 export function refusalText(r: ArmRefusal): string {
   return 'label' in r ? REFUSAL_TEXT[r.reason](r.label) : REFUSAL_TEXT[r.reason]();
 }
+
+/** 증언 바의 무장 거부 문구. 승인이 아니므로 "승인할 수 없어요"를 "확인 결과를 받을 수 없어요"로 바꾼다. */
+export const attestRefusalText = (text: string) => text.replace('승인할 수 없어요', '확인 결과를 받을 수 없어요');
 
 /** 같은 업무 키의 원장 상태 중 발급됐거나 발급됐을 수 있는 것. 이것이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다. */
 export const ISSUED_OR_UNKNOWN = ['committed', 'in_doubt', 'armed', 'dispatched', 'observed_manual'];
@@ -127,6 +132,41 @@ export function summarize(req: Pick<GateRequest, 'fields'>, todayKst: string = k
   return [...head, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
 }
 
+// ---- InDoubt 증언 바(ADR-021 결정 5) ----
+
+/** 증언 바 동작 글자. 승인과 다른 말·다른 색(황토)이라 승인하던 습관대로 누른 클릭이 증언이 되지 않게 한다. */
+export const ATTEST_ACTION_TEXT = '홈택스 발급목록에 없음을 확인했어요';
+/** E-13 고정 문구. 증언 바의 정적 HTML에 늘 넣는다(D03 §2 InDoubt 행). */
+export const ATTEST_FIXED = '발급목록 반영이 늦을 수 있습니다';
+const PORTAL_NAME: Record<string, string> = { hometax: '홈택스', gov24: '정부24', sminfo: '중소기업현황정보시스템', insure4: '4대보험 정보연계센터' };
+/** 정지 하향으로 조회 없이 받는 증언(manualCheck)에 더하는 문구(ADR-021 개정 메모). */
+export const attestManualText = (portal: string) => `${PORTAL_NAME[portal] ?? '홈택스'} 발급목록을 직접 확인한 뒤 답해 주세요`;
+
+/**
+ * 증언 바 요약 2줄: 공급받는자(상호 · 사업자번호) / 합계. 엔진이 보낸 ATTEST_SUMMARY_KEYS 3칸에서만 고른다(그 해시가 summaryHash).
+ * 두 줄 모두 주의 색이고, 그 아래 E-13 고정 줄(정지 하향이면 직접 확인 줄도)을 둔다.
+ */
+export function summarizeAttest(req: Pick<AttestRequest, 'fields' | 'manualCheck' | 'portal'>): SummaryLine[] | ArmRefusal {
+  const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
+  if (f.size !== req.fields.length) return { reason: 'duplicate' };
+  const need = [
+    ['counterpartName', '공급받는자'],
+    ['counterpartBizNo', '공급받는자'],
+    ['totalAmount', '합계'],
+  ] as const;
+  for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
+  for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
+  if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
+  if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!)) return { reason: 'unsafe', label: '합계' };
+  const lines: SummaryLine[] = [
+    { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], tone: 'attention' },
+    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }], tone: 'attention' },
+    { label: '', pieces: [{ text: ATTEST_FIXED }], tone: 'attention', note: true },
+  ];
+  if (req.manualCheck === true) lines.push({ label: '', pieces: [{ text: attestManualText(req.portal) }], tone: 'attention', note: true });
+  return lines;
+}
+
 // ---- 배치·폭 어림 ----
 
 /** 바 안의 고정 치수(DIP). 바 높이는 요약 줄 수로 정한다. */
@@ -153,7 +193,8 @@ export function overflowLine(lines: SummaryLine[], barWidth: number): string | n
     const flag = l.flag ? cells(l.flag) * BAR.unit * (12 / 14) + BAR.flagPad : 0;
     // 줄일 수 있는 조각도 "…" 한 글자 자리는 남긴다.
     const shrinkMin = l.pieces.some((p) => p.shrink) ? 2 * BAR.unit : 0;
-    if (keep + flag + shrinkMin > valueWidth) return l.label;
+    // 고정 안내 줄은 라벨이 비어 있다. 넘쳤다는 표시가 빈 문자열(거짓)이 되지 않게 '안내'로 돌려준다.
+    if (keep + flag + shrinkMin > valueWidth) return l.label || '안내';
   }
   return null;
 }
@@ -180,7 +221,7 @@ export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, 
   const body = lines
     .map((l) => {
       const v = l.pieces.map((p) => `<span class="${p.shrink ? 'sh' : 'kp'}">${esc(p.text)}</span>`).join('');
-      return `<div class="ln"><span class="lb">${esc(l.label)}</span><span class="v">${v}</span>${l.flag ? `<span class="fl">${esc(l.flag)}</span>` : '<span></span>'}</div>`;
+      return `<div class="ln${l.note ? ' nt' : ''}"><span class="lb">${esc(l.label)}</span><span class="v">${v}</span>${l.flag ? `<span class="fl">${esc(l.flag)}</span>` : '<span></span>'}</div>`;
     })
     .join('');
   const act = mode === 'refused' ? '' : `<div class="act">${esc(action)}</div>`;
@@ -266,6 +307,7 @@ font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size
 .side{text-align:right}
 .act{font-size:18px;line-height:26px;font-weight:700;letter-spacing:-0.01em;word-break:keep-all}
 .msg{font-size:12px;line-height:16px;margin-top:2px;opacity:.9}
+.nt{font-size:12px;line-height:18px}
 ${theme(t.light)}
 @media (prefers-color-scheme: dark){${theme(t.dark)}}`;
 }
@@ -482,6 +524,29 @@ export function verifyLocalApproval(key: Uint8Array, a: LocalApproval, now = Dat
   let expected: Buffer;
   try {
     expected = createHmac('sha256', key).update(APPROVAL_CONTEXT).update(canon(a)).digest();
+  } catch {
+    return false;
+  }
+  const got = Buffer.from(String(a.mac), 'base64url');
+  return got.length === expected.length && timingSafeEqual(got, expected);
+}
+
+const canonAttest = (a: Omit<LocalAttestation, 'mac'>) => cbor([a.v, a.intentId, a.stepId, a.attestReqId, a.attestNonce, a.summaryHash, a.kind, a.exp]);
+
+/**
+ * LocalAttestation v1(ADR-021 결정 5). 증언 바가 띄운 그 증언 요청으로만 발급한다. HMAC 문맥이 승인과 달라(SAX-local-attest-v1)
+ * 증언이 승인 근거로 쓰이지 않는다. 엔진은 키가 없어 게이트 포트 출처와 요청 일치·exp만 본다(checkAttestation).
+ */
+export function issueLocalAttestation(key: Uint8Array, req: Pick<AttestRequest, 'intentId' | 'stepId' | 'attestReqId' | 'attestNonce' | 'summaryHash'>, ttlMs = LOCAL_ATTEST_TTL_MS, now = Date.now()): LocalAttestation {
+  const body = { v: 1 as const, intentId: req.intentId, stepId: req.stepId, attestReqId: req.attestReqId, attestNonce: req.attestNonce, summaryHash: req.summaryHash, kind: 'not_committed' as const, exp: now + ttlMs };
+  return { ...body, mac: createHmac('sha256', key).update(LOCAL_ATTEST_CONTEXT).update(canonAttest(body)).digest('base64url') };
+}
+
+export function verifyLocalAttestation(key: Uint8Array, a: LocalAttestation, now = Date.now()): boolean {
+  if (a?.v !== 1 || a.kind !== 'not_committed' || !(a.exp >= now)) return false;
+  let expected: Buffer;
+  try {
+    expected = createHmac('sha256', key).update(LOCAL_ATTEST_CONTEXT).update(canonAttest(a)).digest();
   } catch {
     return false;
   }
