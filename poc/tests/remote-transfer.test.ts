@@ -67,8 +67,8 @@ async function world(relay = new MemoryRelay()) {
   const outbox = new MemOutbox();
   /** PC가 켜져 있을 때 한 세션: PC는 받은 봉투를 큐에 넘기고, 폰은 보관함을 비운다. */
   const session = async (o: { faults?: MemoryRelay['faults']; ackTimeoutMs?: number; maxRounds?: number } = {}) => {
-    const pcLink = await w.relay.joinMailbox(pc.mbxId, pc.tokRead, 'desktop');
-    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), fromB64(phone.tokWrite), 'mobile');
+    const pcLink = await w.relay.joinMailbox(pc.mbxId, { read: pc.tokRead, write: pc.tokWrite }, 'desktop');
+    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), { read: fromB64(phone.tokRead), write: fromB64(phone.tokWrite) }, 'mobile');
     const [a, b] = await Promise.all([
       acceptDesktopSession(pcLink, { noise: w.desk.keys.noise, pair: rec, hello: { appVersion: 'pc', deviceListVersion: 2, capabilities: [CAP.receipt, CAP.cash] }, persistTs: async () => {} }),
       openMobileSession(phLink, { pairId: phone.pairId, noise: w.phone.keys.noise, desktopStatic: phone.desktopStatic, nextTimestamp: clock, hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [CAP.receipt, CAP.cash] } }),
@@ -92,7 +92,7 @@ async function world(relay = new MemoryRelay()) {
   };
   /** PC 꺼짐: 폰만 우편함에 들어가 IK msg1을 보내고 응답이 없다. */
   const pcOffline = async () => {
-    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), fromB64(phone.tokWrite), 'mobile');
+    const phLink = await w.relay.joinMailbox(fromB64(phone.mbxId), { read: fromB64(phone.tokRead), write: fromB64(phone.tokWrite) }, 'mobile');
     const r = await openMobileSession(phLink, { pairId: phone.pairId, noise: w.phone.keys.noise, desktopStatic: phone.desktopStatic, nextTimestamp: clock, responseTimeoutMs: 100, hello: { appVersion: 'm', deviceListVersion: 2, capabilities: [] } });
     phLink.close();
     return r;

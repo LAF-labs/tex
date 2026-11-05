@@ -349,6 +349,12 @@ export class MobilePairing {
     return this.#qr.roomId;
   }
 
+  /** QR이 고른 릴레이(허용 목록 검사를 통과한 값). */
+  get relayHost(): string {
+    if (!this.#qr) throw new Error('pairing: not scanned');
+    return this.#qr.relayHost;
+  }
+
   /** 4~7단계. show_sas 상태에서 SAS를 보여 주고, 사용자가 PC에 입력하면 pair.ok를 받아 끝난다. */
   async run(link: Link): Promise<MobilePairResult | null> {
     if (this.state !== 'scanned' || !this.#qr || !this.#desktop) throw new Error('pairing: not scanned');
