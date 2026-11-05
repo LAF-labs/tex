@@ -25,7 +25,8 @@ function nameOf(node) {
   if (!node) return null;
   if (node.type === 'Identifier') return node.name;
   if (node.type === 'MemberExpression' && !node.computed && node.property.type === 'Identifier') return node.property.name;
-  if (node.type === 'TSAsExpression' || node.type === 'TSNonNullExpression' || node.type === 'TSTypeAssertion') return nameOf(node.expression);
+  // 감싼 식은 벗긴다: `as`·`!`·`<T>`·`satisfies`·옵셔널 체인(held?.pin)
+  if (['TSAsExpression', 'TSNonNullExpression', 'TSTypeAssertion', 'TSSatisfiesExpression', 'ChainExpression'].includes(node.type)) return nameOf(node.expression);
   return null;
 }
 
