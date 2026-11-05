@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import type { GateRequest } from '@sax/engine/gate';
+import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
 import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
-import type { EngineHost, GateAnswerResult } from './engine-host.ts';
+import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
 import { dayOffset, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type RunView, type StepState, type VatMode } from './shell-mock.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
@@ -33,13 +33,24 @@ type EngineEvent =
   | { runId: string; type: 'regate'; reason: RegateReason }
   | { runId: string; type: 'handoff'; phase: Phase; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
-  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
+  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }
+  /**
+   * 실행 상태(엔진 RunEvent, M2-3). end는 종료 상태에서만 오고, InDoubt는 종료가 아니라 state in_doubt로 온다.
+   * 증언·조회 뒤 갈래: state running(새 gate.request) | state paused{code:'policy_downgrade'} | end completed_with_issues.
+   */
+  | { runId: string; type: 'state'; state: RunState; code?: string; portalNotice?: string };
+
+export const RUN_STATES = ['running', 'waiting_gate', 'waiting_human', 'recovering', 'handed_off', 'paused', 'interrupted', 'in_doubt'] as const;
+export type RunState = (typeof RUN_STATES)[number];
 
 /** 모르는 화면(ADR-025 결정 3·5): 일반 실패 코드 대신 보이는 문장. */
 const UNKNOWN_SCREEN = '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.';
 
 /** 엔진 결과 코드 → 사용자 문구. 값은 넣지 않는다. */
 export const NOTE: Record<string, string> = {
+  // 엔진 상태 paused(D03 §2). 정지 하향이면 이 포털 자동 실행이 멈춘 것이다. 이어 하려면 새로 승인해야 한다(REGATE_NOTE.paused).
+  policy_downgrade: '앱이 홈택스 자동 실행을 멈춰서 이 건도 여기서 멈췄어요. 이어서 하려면 새로 승인해야 해요.',
+  'run.paused': '이 건을 멈췄어요. 이어서 하려면 새로 승인해야 해요.',
   'login.session_assumed': '가짜 페이지라 로그인을 건너뛰었어요',
   'run.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
   'gate.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
@@ -133,6 +144,20 @@ export function fatalText(code: string): string | null {
 /** 포털이 한 말(ADR-025 결정 5): 텍스트만, 200자. 제어문자는 뺀다. 렌더러는 텍스트 노드로만 넣는다. */
 const portalNoticeText = (s: string) => `홈택스 안내: “${s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').trim().slice(0, 200)}”`;
 
+/**
+ * InDoubt 증언 카드 문구(ADR-021 결정 5). 고정 상수만 쓴다. 증언은 발급이 아니고, 다시 발급하려면 새로 승인해야 한다.
+ * manual: 정지 하향으로 조회 없이 받는 경우(바에도 "직접 확인한 뒤 답해 주세요"가 붙는다).
+ */
+export const ATTEST_NOTE = {
+  ready: '이 안내를 연 동안 승인 바 자리에 황토색 확인 바가 떠요. 홈택스 발급목록에 이 건이 없을 때만 누르세요.',
+  manual: '지금은 앱이 발급목록을 조회할 수 없어요. 홈택스 발급목록을 직접 확인한 뒤 황토색 확인 바로 답해 주세요.',
+  sent: '발급목록에 없다는 확인을 기록했어요. 다시 발급하려면 새로 승인해야 해요.',
+  stale: '이 건의 확인 요청이 끝났거나 바뀌어서 받지 않았어요. 아무것도 기록하지 않았어요.',
+  expired: '확인 바를 누른 뒤 시간이 지나 받지 않았어요. 아무것도 기록하지 않았어요.',
+  not_sent: '앱 엔진이 멈춰 확인을 보내지 못했어요. 아무것도 기록하지 않았어요.',
+  unknown: '확인이 기록됐는지 알 수 없어요. 앱을 다시 연 뒤 이 건을 다시 확인해 주세요.',
+} as const;
+
 /** 게이트 없이 끝난 실행이 연달아 이만큼이면 잠시(PREPARE_PAUSE_MS) 준비를 받지 않는다(ADR-027 결정 8). */
 export const GATELESS_STREAK_MAX = 3;
 export const PREPARE_PAUSE_MS = 60_000;
@@ -142,13 +167,24 @@ const RACED = new Set(['stopped', 'gate_expired', 'no_open_gate', 'not_open']);
 
 /** 셸이 쓰는 엔진 연결 부분(시험은 가짜로 바꿔 끼운다). 게이트 답을 보내는 메서드는 넣지 않는다(shell-app의 승인 바 결과 처리만 쓴다). */
 export type RunHost = Pick<EngineHost, 'on' | 'control' | 'rpc'>;
+/** 증언 바에 올리기 전 main이 검사한 요청의 모양(attestSelfCheck가 통과한 것만 남긴다). */
+const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
+  try {
+    return !!req && req.v === 1 && typeof req.runId === 'string' && typeof req.attestReqId === 'string' && Array.isArray(req.fields) && attestSelfCheck(req) === null;
+  } catch {
+    return false;
+  }
+};
 
 export interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
 }
 
-/** 이벤트: 'update'(RunView) · 'gate'(runId, GateRequest) · 'gate-closed'(runId, reqId, reason) · 'doc'(Doc). */
+/**
+ * 이벤트: 'update'(RunView) · 'gate'(runId, GateRequest) · 'gate-closed'(runId, reqId, reason) · 'doc'(Doc)
+ * · 'attest-ready'(runId) · 'attest-withdrawn'(runId, attestReqId, reason).
+ */
 export class ShellRuns extends EventEmitter implements Drafts {
   private readonly runs = new Map<string, RunView>();
   /** main이 게이트를 닫은 이유(엔진 종료 코드 대신 보일 문구). 렌더러로 보내지 않는다. */
@@ -156,6 +192,12 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** run.start 전후로 [중지]가 온 실행. 시작 중에는 엔진에 실행이 없어 run.stop이 아무것도 멈추지 못한다. */
   private readonly starting = new Set<string>();
   private readonly stopEarly = new Set<string>();
+  /** 엔진 상태가 InDoubt인 실행(종료가 아님). 카드는 확인 필요로 보이지만 end·state가 더 온다. */
+  private readonly liveInDoubt = new Set<string>();
+  /** 엔진 상태가 Paused인 실행(종료가 아님, running으로 다시 돌 수 있다). */
+  private readonly paused = new Set<string>();
+  /** 엔진이 보낸, 아직 철회·사용되지 않은 증언 요청(실행마다 하나). 렌더러로 보내지 않는다. */
+  private readonly attests = new Map<string, AttestRequest>();
   private readonly host: RunHost;
   private readonly src: ShellRunsSource;
   private readonly clock: () => number;
@@ -172,9 +214,60 @@ export class ShellRuns extends EventEmitter implements Drafts {
     host.on('run', (e: EngineEvent) => this.onEngine(e));
     host.on('gate', (req: GateRequest) => this.onGate(req));
     host.on('gate-closed', (e: { runId: string; reqId: string; reason: string }) => this.emit('gate-closed', e.runId, e.reqId, e.reason));
+    host.on('attest', (req: AttestRequest) => this.onAttest(req));
+    host.on('attest-withdrawn', (w: AttestWithdrawn) => this.onAttestWithdrawn(w));
     host.on('exit', (who: string) => {
       if (who === 'engine') this.engineGone();
     });
+  }
+
+  /**
+   * 증언 요청(엔진 → 게이트 포트 → main). 무장만 한다: 바는 사용자가 그 카드를 열었을 때 shell-app이 띄운다(ADR-021 결정 5).
+   * summaryHash를 다시 계산해 같을 때만, 그리고 InDoubt 카드인 실행에만 받는다. 같은 실행의 새 요청은 앞 요청을 바꾼다.
+   */
+  private onAttest(req: AttestRequest): void {
+    if (!attestShapeOk(req)) return;
+    const r = this.runs.get(req.runId);
+    if (!r || !r.inDoubt) return;
+    this.attests.set(r.id, req);
+    r.attest = { state: 'ready', note: req.manualCheck === true ? ATTEST_NOTE.manual : ATTEST_NOTE.ready };
+    this.emit('update', r);
+    this.emit('attest-ready', r.id);
+  }
+
+  /** 철회(resolved·gate·aborted). 그 요청일 때만 지운다. 바는 shell-app이 내린다. */
+  private onAttestWithdrawn(w: AttestWithdrawn): void {
+    const cur = this.attests.get(w?.runId);
+    if (!cur || cur.attestReqId !== w.attestReqId) return;
+    this.attests.delete(w.runId);
+    const r = this.runs.get(w.runId);
+    if (r?.attest?.state === 'ready') {
+      r.attest = null;
+      this.emit('update', r);
+    }
+    this.emit('attest-withdrawn', w.runId, w.attestReqId, w.reason);
+  }
+
+  /** 그 실행의 무장된 증언 요청(바에 올릴 것). 없으면 null. */
+  attestFor(runId: string): AttestRequest | null {
+    return this.attests.get(runId) ?? null;
+  }
+
+  /** 증언 바가 근거를 발급했다. 같은 요청은 한 번만 쓴다(엔진도 두 번째를 거부한다). 보내기 전에 부른다. */
+  attestUsed(runId: string, attestReqId: string): void {
+    if (this.attests.get(runId)?.attestReqId === attestReqId) this.attests.delete(runId);
+  }
+
+  /**
+   * 엔진의 증언 판정. 받아들이면 엔진이 원장에 not_committed(attested)를 먼저 쓰고 그 뒤 상태(새 게이트·정지)를 이벤트로 보낸다.
+   * 셸은 그 상태를 미리 가정하지 않는다. 카드에는 기록했다는 문구만 둔다.
+   */
+  onAttestAnswer(runId: string, a: AttestAnswerResult): void {
+    const r = this.runs.get(runId);
+    if (!r) return;
+    const note = a.ok ? ATTEST_NOTE.sent : a.verdict === 'not_sent' ? ATTEST_NOTE.not_sent : a.verdict === 'unknown' ? ATTEST_NOTE.unknown : a.code === 'attest.expired' ? ATTEST_NOTE.expired : ATTEST_NOTE.stale;
+    r.attest = { state: a.ok ? 'sent' : 'refused', note };
+    this.emit('update', r);
   }
 
   /**
@@ -182,6 +275,19 @@ export class ShellRuns extends EventEmitter implements Drafts {
    * 원장 행은 다음 기동 때 엔진이 in_doubt로 올린다(D03 §4).
    */
   private engineGone(): void {
+    // 증언 요청을 받을 엔진이 없다. 카드의 "확인 바가 떠요" 문구도 거둔다(바는 shell-app이 engine_exit로 내린다).
+    for (const id of this.attests.keys()) {
+      const r = this.runs.get(id);
+      if (r?.attest?.state === 'ready') {
+        r.attest = null;
+        this.emit('update', r);
+      }
+    }
+    this.attests.clear();
+    // InDoubt·멈춤 상태(종료 아님)인 실행은 카드를 그대로 두고 금고 실행만 끝낸다. 다음 기동에 엔진이 state in_doubt로 복원한다.
+    for (const id of [...this.liveInDoubt, ...this.paused]) void this.host.control('run.end', { runId: id }).catch(() => {});
+    this.liveInDoubt.clear();
+    this.paused.clear();
     for (const r of this.runs.values()) {
       if (!['preparing', 'turn', 'waiting', 'issuing'].includes(r.status)) continue;
       // 게이트 뒤 단계에서 넘겨받은 핸드오프도 발급됐는지 모른다(사용자가 직접 발급했을 수 있다, R-C2).
@@ -442,6 +548,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       return;
     }
     if (e.type === 'waiting') return; // 게이트 요청(게이트 포트)이 따로 온다
+    if (e.type === 'state') return this.onState(r, e);
     if (e.type === 'regate') {
       if (!isRegate(e.reason) || !['preparing', 'turn', 'waiting'].includes(r.status)) return;
       r.regate = { reason: e.reason, note: REGATE_NOTE[e.reason] };
@@ -461,8 +568,59 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.end(r, e);
   }
 
+  /**
+   * 엔진 상태 이벤트. 셸은 상태를 미리 가정하지 않고 이것만 따른다(증언 계약 수정 3).
+   * - in_doubt: 확인 필요 카드(InDoubt). 실행은 끝나지 않았다(금고 실행·증언 요청이 이어진다).
+   * - running: InDoubt·멈춤에서 다시 돌기 시작했다(되감기). 게이트 앞부터 다시 돌고 새 게이트 요청이 온다. 앞의 승인은 쓰지 않는다.
+   * - paused: 멈춤(정지 하향 등). 확인 필요로 보이고 이유 문구를 둔다.
+   * 나머지(waiting_gate·waiting_human·recovering·handed_off·interrupted)는 지금 다른 이벤트(gate·handoff·phase)로 보인다(M2-2).
+   */
+  private onState(r: RunView, e: { state: RunState; code?: string; portalNotice?: string }): void {
+    // attention은 끝난 실패 카드에도 쓴다. InDoubt·멈춤 상태로 들어와 있는 실행만 살아 있는 attention이다.
+    const live = this.liveInDoubt.has(r.id) || this.paused.has(r.id);
+    if (!RUN_STATES.includes(e.state) || ['draft', 'done', 'stopped'].includes(r.status) || (r.status === 'attention' && !live)) return;
+    if (typeof e.portalNotice === 'string' && e.portalNotice.trim()) r.notices = [...new Set([...(r.notices ?? []), portalNoticeText(e.portalNotice)])];
+    if (e.state === 'in_doubt') {
+      this.liveInDoubt.add(r.id);
+      r.turn = null;
+      r.approvedPending = false;
+      r.handoff = null;
+      r.inDoubt = true;
+      r.status = 'attention';
+      r.stoppedNote = note(IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt');
+      const now = r.steps.findLastIndex((s) => s.state === 'now');
+      if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };
+    } else if (e.state === 'running') {
+      // InDoubt·멈춤에서만 되살린다(진행 중인 실행의 running은 단계 이벤트가 이미 보인다).
+      if (!this.liveInDoubt.has(r.id) && !this.paused.has(r.id)) return;
+      this.liveInDoubt.delete(r.id);
+      this.paused.delete(r.id);
+      r.inDoubt = false;
+      r.attest = null;
+      r.stoppedNote = undefined;
+      r.status = 'preparing';
+      r.confirmed = false;
+      // 게이트 앞부터 다시 돈다: 게이트와 그 뒤 단계는 아직 안 한 것으로 되돌린다.
+      for (const p of ['gate', 'sign', 'verify', 'mail'] as const) this.step(r, p, 'todo');
+    } else if (e.state === 'paused') {
+      this.liveInDoubt.delete(r.id);
+      this.paused.add(r.id);
+      r.inDoubt = false;
+      r.turn = null;
+      r.status = 'attention';
+      r.stoppedNote = note(e.code ?? 'run.paused');
+    } else return;
+    this.emit('update', r);
+  }
+
   private end(r: RunView, e: { status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }): void {
-    if (['draft', 'done', 'stopped', 'attention'].includes(r.status)) return;
+    // InDoubt·멈춤(state)은 확인 필요로 보이지만 끝난 것이 아니다. 그 뒤의 end(completed_with_issues 등)는 받는다.
+    const live = this.liveInDoubt.delete(r.id) || this.paused.delete(r.id);
+    if (!live && ['draft', 'done', 'stopped', 'attention'].includes(r.status)) return;
+    if (live) {
+      r.inDoubt = false;
+      r.attest = null;
+    }
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
     r.turn = null;
     r.handoff = null;

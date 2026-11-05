@@ -284,6 +284,8 @@ export function taskCard(run, act) {
     card.append(
       note(run.stoppedNote || '발급됐는지 확인하지 못했어요.', true),
       line('확인되기 전에는 이 건을 다시 발급하지 않아요.', true),
+      // 증언 상태 문구는 main이 고른 고정 문장(ATTEST_NOTE)이다. 확인 결과를 보내는 버튼은 카드에 없다(바 클릭으로만 받는다).
+      run.attest?.note ? h('div', { class: 'sx-meta', 'data-attest': run.attest.state }, run.attest.note) : null,
       h('div', { class: 'sx-actions' }, btn('홈택스에서 직접 확인', () => act.open(run.id), 'sx-btn-primary', { 'data-act': 'check-list' })),
     );
   } else if (st === 'attention') {
@@ -376,6 +378,7 @@ function checkListGuide(run, act) {
       ['합계', won(run.total), { copy: c(String(run.total)) }],
     ]),
     h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 승인 바 자리에 뜨는 황토색 바로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
+    run.attest?.note ? note(run.attest.note, run.attest.state !== 'sent') : null,
   );
 }
 

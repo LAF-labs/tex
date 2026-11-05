@@ -1,4 +1,4 @@
-// M1-4 스키마 9종(D02 7종 + status·revoked_keys): 엔진 사본 = 설계 정본, strict 컴파일, 골든 픽스처 적합, 정책 예시(D03 §7) 적합.
+// M1-4 스키마 10종(D02 7종 + status·revoked_keys + data_descriptor): 엔진 사본 = 설계 정본, strict 컴파일, 골든 픽스처 적합, 정책 예시(D03 §7) 적합.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +10,7 @@ import { POLICY_EXAMPLE, h01, lookups } from './core-fixtures.ts';
 const design = path.resolve(import.meta.dirname, '../../sovereign-ax/design/schemas');
 
 
-describe('스키마 9종(M1-4)', () => {
+describe('스키마 10종(M1-4·M6-10)', () => {
   it('엔진 사본은 설계 정본과 바이트 단위로 같다', () => {
     for (const n of SCHEMA_NAMES) assert.equal(fs.readFileSync(schemaPath(n), 'utf8'), fs.readFileSync(path.join(design, `${n}.schema.json`), 'utf8'), n);
   });

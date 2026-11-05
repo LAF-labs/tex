@@ -1,0 +1,21 @@
+{
+  "name": "@sax/svc-shared",
+  "version": "0.0.0",
+  "private": true,
+  "description": "클라우드 서비스 공용 모듈(D09): HTTP·오류 코드(D16)·내용 없는 접근 로그·기기 범위 토큰과 DPoP(SAX-dpop-v1)·SQL·마이그레이션",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "ajv": "8.20.0",
+    "pg": "8.16.3"
+  },
+  "devDependencies": {
+    "@types/pg": "8.15.5"
+  }
+}
