@@ -116,9 +116,14 @@ export class Vault {
       wipe(reason);
       this.emit(['control'], 'vault.state', { open: false, reason });
     };
+    // 기동 중(설정 읽는 동안)에는 session.* 응답이 startup이다. 다 읽으면 실제 상태를 main에 한 번 알린다.
+    void this.human.ready().then(() => {
+      const v = this.human.lock.check();
+      this.emit(['control'], 'vault.state', v.open ? { open: true } : { open: false, reason: v.reason });
+    });
   }
 
-  /** 타이피스트가 1회용 값이 없을 때 부른다. 보안카드는 row, 포털은 pw 칸(아이디는 질문 Q-1). */
+  /** 타이피스트가 1회용 값이 없을 때 부른다. 보안카드는 row, 포털은 pw 칸(포털 아이디는 금고에 없다, ADR-035). */
   private readStored(kind: string, scope: string, row?: number): Promise<StoredRead> {
     if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(scope)) return Promise.resolve({ ok: false, reason: 'secret_missing' });
     const cell: { row?: number; field?: PortalField } = kind === 'security_card' ? { row } : { field: 'pw' };

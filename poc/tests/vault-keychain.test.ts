@@ -480,6 +480,30 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     off();
   });
 
+  it('기동 중(설정 읽는 동안) session.idle은 startup, 다 읽으면 control에 실제 vault.state를 한 번 보낸다', async () => {
+    const items = new MemoryItemStore();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const realGet = items.get.bind(items);
+    items.get = async (name) => {
+      if (name === 'settings/strict') await gate;
+      return realGet(name);
+    };
+    const human = new HumanSecretVault({ backend: { items, wrapper: new MemoryWrapper(), hello: new UnavailableHello() }, log: new Log() });
+    const h2 = await startHarness({ human });
+    try {
+      const states: unknown[] = [];
+      h2.control.on('vault.state', (d) => void states.push(d));
+      assert.deepEqual(await h2.control.rpc('session.idle', { idleSec: 0 }), { open: false, reason: 'startup' });
+      release();
+      await human.ready();
+      await new Promise((r) => setTimeout(r, 20));
+      assert.deepEqual(states.at(-1), { open: true });
+    } finally {
+      await h2.close();
+    }
+  });
+
   it('typist.authFailed(엔진) → suspect + control secret.suspect, forget(control)으로 지운다', async () => {
     const got = h.control.once('secret.suspect');
     assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'security_card', scope: 'business' }), {});
