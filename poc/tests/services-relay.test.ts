@@ -472,6 +472,37 @@ describe('M7-3 푸시 어댑터: 내용 없는 페이로드(APNs 샌드박스·F
     assert.equal(msg.auth, 'Bearer at-1');
     assert.deepEqual(JSON.parse(msg.body), { message: { token: 'a'.repeat(152), data: { t: 'wake' }, android: { priority: 'HIGH', ttl: '60s', collapse_key: 'sax-wake' } } });
   });
+
+  it('FCM: 무응답은 시간 제한으로 끊고, 429·5xx 뒤에는 Retry-After 동안 공급사를 부르지 않는다, 401이면 접근 토큰을 다시 받는다', async () => {
+    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+    let now = Date.UTC(2026, 10, 10);
+    let mode: 'hang' | '503' | '401' | 'ok' = 'hang';
+    const calls: string[] = [];
+    const fetchFn = ((url: string, init: RequestInit) => {
+      calls.push(url.includes('oauth') ? 'oauth' : 'send');
+      if (url.includes('oauth')) return Promise.resolve(new Response(JSON.stringify({ access_token: `at-${calls.length}`, expires_in: 3600 }), { status: 200 }));
+      if (mode === 'hang') return new Promise<Response>((_r, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
+      if (mode === '503') return Promise.resolve(new Response('', { status: 503, headers: { 'retry-after': '20' } }));
+      if (mode === '401') return Promise.resolve(new Response('', { status: 401 }));
+      return Promise.resolve(new Response('{}', { status: 200 }));
+    }) as unknown as typeof fetch;
+    const sa = JSON.stringify({ client_email: 'push@sax.test.invalid', private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }), token_uri: 'https://oauth.test.invalid/token' });
+    const s = new FcmSender({ projectId: 'sax-dev', serviceAccountJson: sa, endpointBase: 'https://fcm.test.invalid', fetchFn, now: () => now, timeoutMs: 20 });
+    const tok = 'a'.repeat(152);
+    assert.equal(await s.send('fcm', tok), 'retry');
+    mode = '503';
+    assert.equal(await s.send('fcm', tok), 'retry');
+    const n = calls.length;
+    now += 19_000;
+    assert.equal(await s.send('fcm', tok), 'retry');
+    assert.equal(calls.length, n, '물러서는 동안 공급사를 부르지 않는다');
+    now += 2_000;
+    mode = '401';
+    assert.equal(await s.send('fcm', tok), 'retry');
+    mode = 'ok';
+    assert.equal(await s.send('fcm', tok), 'ok');
+    assert.deepEqual(calls, ['oauth', 'send', 'send', 'send', 'oauth', 'send']);
+  });
 });
 
 describe('M7-3 저장 컬럼(D09 §1.1)·로그', () => {

@@ -102,11 +102,16 @@ export class ApnsSender implements PushSender {
   }
 }
 
-/** FCM HTTP v1. 접근 토큰은 서비스 계정 JWT(RS256) → OAuth 교환으로 받는다. fetch는 주입한다. */
+/**
+ * FCM HTTP v1. 접근 토큰은 서비스 계정 JWT(RS256) → OAuth 교환으로 받는다. fetch는 주입한다.
+ * 서버는 깨우기를 쌓아 두고 다시 보내지 않는다('retry'는 이번 깨우기가 안 갔다는 뜻이고, PC가 다음 의도에서 한도 안에서 다시 부른다).
+ * 공급사가 429·5xx를 내면 Retry-After(없으면 30초, 최대 5분) 동안 공급사를 부르지 않는다. 호출마다 시간 제한(기본 10초).
+ */
 export class FcmSender implements PushSender {
-  private readonly o: { endpoint: string; clientEmail: string; key: KeyObject; tokenUri: string; now: () => number; fetchFn: typeof fetch };
+  private readonly o: { endpoint: string; clientEmail: string; key: KeyObject; tokenUri: string; now: () => number; fetchFn: typeof fetch; timeoutMs: number };
   private access = { token: '', until: 0 };
-  constructor(o: { projectId: string; serviceAccountJson: string; endpointBase?: string; now?: () => number; fetchFn?: typeof fetch }) {
+  private backoffUntil = 0;
+  constructor(o: { projectId: string; serviceAccountJson: string; endpointBase?: string; now?: () => number; fetchFn?: typeof fetch; timeoutMs?: number }) {
     const sa = JSON.parse(o.serviceAccountJson) as { client_email?: string; private_key?: string; token_uri?: string };
     if (!sa.client_email || !sa.private_key || !sa.token_uri || !/^https:\/\//.test(sa.token_uri)) throw new Error('config_FCM_SERVICE_ACCOUNT_JSON');
     this.o = {
@@ -116,6 +121,7 @@ export class FcmSender implements PushSender {
       tokenUri: sa.token_uri,
       now: o.now ?? Date.now,
       fetchFn: o.fetchFn ?? fetch,
+      timeoutMs: o.timeoutMs ?? 10_000,
     };
   }
 
@@ -130,6 +136,7 @@ export class FcmSender implements PushSender {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }).toString(),
       redirect: 'error',
+      signal: AbortSignal.timeout(this.o.timeoutMs),
     }).catch(() => null);
     if (!res || res.status !== 200) return null;
     const j = (await res.json()) as { access_token?: string; expires_in?: number };
@@ -140,6 +147,7 @@ export class FcmSender implements PushSender {
 
   async send(platform: Platform, token: string): Promise<SendResult> {
     if (platform !== 'fcm' || !/^[A-Za-z0-9_:-]{32,4096}$/.test(token)) return 'invalid';
+    if (this.o.now() < this.backoffUntil) return 'retry';
     const bearer = await this.bearer();
     if (!bearer) return 'retry';
     const res = await this.o.fetchFn(this.o.endpoint, {
@@ -147,6 +155,7 @@ export class FcmSender implements PushSender {
       headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
       body: JSON.stringify({ message: { token, data: { t: 'wake' }, android: { priority: 'HIGH', ttl: `${WAKE.ttlSec}s`, collapse_key: WAKE.collapse } } }),
       redirect: 'error',
+      signal: AbortSignal.timeout(this.o.timeoutMs),
     }).catch(() => null);
     if (!res) return 'retry';
     if (res.status === 200) return 'ok';
@@ -154,6 +163,11 @@ export class FcmSender implements PushSender {
     if (res.status === 400) {
       const t = await res.text().catch(() => '');
       return /UNREGISTERED|INVALID_ARGUMENT/.test(t) ? 'invalid' : 'retry';
+    }
+    if (res.status === 401) this.access = { token: '', until: 0 }; // 접근 토큰 만료·회수: 다음에 새로 받는다
+    if (res.status === 429 || res.status >= 500) {
+      const ra = Number(res.headers.get('retry-after'));
+      this.backoffUntil = this.o.now() + Math.min(Number.isFinite(ra) && ra > 0 ? ra : 30, 300) * 1000;
     }
     return 'retry';
   }
