@@ -217,7 +217,8 @@ function bizCard(o, u, reply, act) {
       'div',
       { class: 'sx-actions' },
       active ? btn('맞아요', () => reply('confirm'), 'sx-btn-primary', { 'data-onb': 'confirm' }) : null,
-      btn('고칠게요', () => ((u.editing = true), act.rerender()), active ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
+      o.check?.status === 'unknown' ? btn('다시 조회', () => reply('recheck'), 'sx-btn-primary', { 'data-onb': 'recheck' }) : null,
+      btn('고칠게요', () => ((u.editing = true), act.rerender()), active || o.check?.status === 'unknown' ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
       btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
     ),
   );

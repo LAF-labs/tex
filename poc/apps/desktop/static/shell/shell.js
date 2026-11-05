@@ -314,6 +314,7 @@ const ONB_ERR = {
   bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
   biz_inactive: '이 사업자는 지금 등록할 수 없는 상태예요.',
   bad_cert: '인증서를 다시 골라 주세요.',
+  bad_email: '이메일 주소 모양이 맞지 않아요. 다시 확인해 주세요.',
   no_tasks: '지금 되는 일 중 하나 이상 골라 주세요.',
   stale_step: '이미 답한 질문이에요.',
   gesture_required: '버튼을 직접 눌러 주세요.',

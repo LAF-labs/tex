@@ -7,7 +7,7 @@
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
 import type { WebFrameMain } from 'electron';
-import { BIZ_FIELD_KEYS, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
+import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
 
 export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
 export type { EngineInit, EnginePortal } from '@sax/engine/protocol';
@@ -67,7 +67,7 @@ const DOC_FIELDS = {
   expiresOn: { t: 'string', max: 32, nullable: true },
 } as const;
 /** 온보딩 답(08 §4). 사업자 칸은 비밀이 아니다. 비밀(홈택스 비밀번호·보안카드)은 이 길로 오지 않는다(금고 창 → 금고). */
-const ONB_BIZ_MAX: Record<(typeof BIZ_FIELD_KEYS)[number], number> = { name: 100, bizNo: 20, rep: 100, bizType: 100, bizItem: 100, address: 200, email: 320 };
+const ONB_BIZ_MAX = BIZ_FIELD_MAX;
 const ONB_ANSWER = {
   step: { t: 'enum', of: ONB_STEPS.filter((x) => x !== 'done'), required: true },
   choice: { t: 'enum', of: ONB_ALL_CHOICES, required: true },
