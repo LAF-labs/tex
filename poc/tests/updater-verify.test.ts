@@ -150,6 +150,11 @@ test('버전 역행: 본 것보다 낮은 버전, 같은 버전 다른 설치본
   assert.deepEqual([d.action, d.action === 'none' && d.reason], ['none', 'up_to_date']);
   const d2 = decideUpdate({ ...base(v11), installedVersion: '1.0.0', state: { highestSeen, lastSuccessAt: NOW - 1 }, deviceId: 'd', transparency: 'verified' });
   assert.deepEqual([d2.action, d2.action === 'hold' && d2.code, d2.action === 'hold' && d2.security], ['hold', 'registry.version_rollback', true]);
+  // 설치본보다 낮은 매니페스트는 롤백 기준(highestSeen)이 되지 않는다(CodeSolar #76)
+  const low = decideUpdate({ ...base(v11), installedVersion: '1.2.0', state: INITIAL_STATE, deviceId: 'd', transparency: 'verified' });
+  assert.deepEqual([low.action, low.state.highestSeen, low.state.lastSuccessAt], ['none', null, NOW]);
+  const keep = decideUpdate({ ...base(v11), installedVersion: '1.2.0', state: { highestSeen, lastSuccessAt: null }, deviceId: 'd', transparency: 'verified' });
+  assert.equal(keep.action, 'hold', '본 최고 버전보다 낮으면 여전히 롤백');
   assert.equal(codeOf(() => parseManifest(wire(signRelease(unsigned({ version: '1.2.0-beta.1' }))))), 'update.manifest_invalid');
 });
 

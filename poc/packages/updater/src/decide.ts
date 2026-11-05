@@ -69,9 +69,11 @@ export function decideUpdate(input: DecideInput): Decision {
     return { action: 'hold', code: e.code, security: SECURITY_CODES.has(e.code), state: input.state };
   }
   const m = release.manifest;
-  // 검증을 통과한 매니페스트만 "본 것"으로 올린다(롤백 판정 기준). 낮아지지 않는다
+  // 검증을 통과한 매니페스트만 "본 것"으로 올린다(롤백 판정 기준). 낮아지지 않고, 설치본보다 낮은 버전은 기준으로 삼지 않는다
+  // (채널을 바꾼 직후처럼 설치본보다 낮은 매니페스트는 설치되지도, 기준을 정하지도 않는다. 설치 막음은 아래 installedVersion 비교)
   const prev = input.state.highestSeen;
-  const highestSeen = prev && semverCmp(prev.version, m.version) > 0 ? prev : { version: m.version, filesDigest: filesDigest(m) };
+  const below = semverCmp(m.version, input.installedVersion) < 0;
+  const highestSeen = below || (prev && semverCmp(prev.version, m.version) > 0) ? prev : { version: m.version, filesDigest: filesDigest(m) };
   const state: UpdaterState = { highestSeen, lastSuccessAt: input.now };
   // 설치본보다 높지 않으면 할 일 없음(다운그레이드 금지, D11 §4)
   if (semverCmp(m.version, input.installedVersion) <= 0) return { action: 'none', reason: 'up_to_date', release, state };
