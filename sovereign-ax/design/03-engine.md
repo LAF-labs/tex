@@ -1,6 +1,7 @@
 # D03. 플레이북 엔진
 
 > v1.3.2 — AUDIT-D 반영 2026-11-03: 재시작 복원은 테이블 상태 승격·`run.reverify`(§2), 게이트 대기 10분·금고 잠금 시 바 내림(§3), 작성일자 KST·s19e 대조(§5), 확인 불가 fail-closed·입력 잠금 두 구간·trial 클릭(§5.3), verify 상한 5분·실패 신호 쌍(§5.6), 포털 문구 표시(§6), 2차 인증·모르는 화면·로그인 실패·시계 전진·PoC 상한(§7·§7.1), 체인 자체 검증(§9)(ADR-025·026·027, D19 §3.5). v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
+> ADR-036 반영 2026-11-05: §4 H-01c 취소 중복 키는 차단 키라는 예외.
 
 ## 1. 책임
 
@@ -139,7 +140,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
   - **같은 `run_id`의 재개**일 때만 verify 결과(`bind` 포함)를 재사용해 사후 스텝으로 점프한다.
   - 다른 실행에서 `committed`를 발견하면 "InDoubt 아님, 이미 완료" 카드만 띄우고 사후 스텝(특히 `send_email`·PDF 저장·백업)은 실행하지 않는다.
   - "건너뛰기"는 존재하지 않는다.
-- 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7).
+- 같은 `business_key`의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`은 카드 경고(차단 아님). `not_committed`면 직전 시도 고정 문구를 넣는다(D02 §7). 예외는 H-01c 발급 취소의 `(원본 승인번호, 'full_cancel')`다: `prepare`와 게이트 토큰 발급 직전에 다시 조회하고, `not_committed`를 뺀 상태가 있으면 차단한다(`dup.already_cancelled`, ADR-036 결정 3.6).
 - **포털 기존 건**(Phase 1부터, ADR-024 결정 2): 앱 내장 플레이북 목록(지금은 세금계산서 발급 H-01)의 주 비가역 스텝에만 한다. 게이트 직전(W 밖)에 찍은 verify 기준선 B₀(D02 §4.4)에서 이 PC 원장의 `verify_ref`를 뺀다. `verify_ref`는 verify가 `committed`로 판정한 `B₁ \ B₀`의 한 건이며 `bind` 유무와 관계없이 적는다. verify가 `committed`로 판정하지 않은 행(`in_doubt`·`not_committed`, verify 없는 `observed_manual`)은 비어 있다. 남은 건이 있으면 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다(차단 아님). 다른 PC·포털 직접 발급·세무사 발급, 그리고 원장에 확정되지 않은 이 PC의 이전 시도가 이것으로 보인다. 새 조회는 없다. 같은 건의 범위는 플레이북 `verify.lookup.match`가 정한다(H-01: 거래처 사업자번호·작성일자·공급가액·세액).
 - **기기 간 업무 키 표시**(B-30, **Phase 2**, E-07·E-13, ADR-024 결정 3): 계정의 AIK 서명 기기 목록에 폐기되지 않은 데스크톱이 **2대 이상**이고 '백업(메타데이터 동기화)' 스위치를 켠 경우에만 동작한다(서류 백업·서버 색인을 켜는 것과 같은 계정 스위치). Phase 1에는 없다. 두 번째 PC가 같은 `K_idx`와 AIK 인증서를 받는 새 PC 연결(08 A-03)이 Phase 2이기 때문이다. 이 표시가 메우는 것은 B₀가 못 보는 다른 PC의 진행 중 건과 발급목록 반영 지연 구간이다. 조건을 만족하면 `armed`·`committed`·`in_doubt`·`observed_manual`로 전이할 때 `HMAC(K_idx, businessKey)`와 상태를 메타데이터 서버에 올린다(`armed`는 원장 기록 직후 비동기로 올리고 재계산~클릭 사이에 기다리지 않는다, R-G7). 서버 레코드는 `{account_id, hmac, state, day}`(일 단위)이고 `armed` 행은 10분 뒤 서버가 지우므로 "`armed` 행이 있다 = 10분 이내"다. 게이트 직전(W 밖)에 같은 HMAC을 조회해 다른 기기의 `committed`·`in_doubt`·`observed_manual`이 있으면 경고하고, 로컬 원장에 없는 `armed`가 있으면 카드에 "다른 PC에서 같은 건 진행 중"을 표시한다(모두 차단 아님). 오프라인이면 "다른 PC 기록 확인 불가"를 표시한다. 이 세 경고는 `$dup.otherDevice`로 바에 올린다. 데스크톱이 2대 이상인데 스위치가 꺼져 있으면 `$dup.otherDevice` 없이 카드에만 "다른 PC 진행 중·방금 발급 경고 꺼짐(백업 꺼짐)"을 둔다. 이 문구는 동작 글자를 바꾸지 않고, 포털 기존 건 경고는 그대로 켜져 있다. PC 한 대 계정에는 이 표시도 `$dup.otherDevice`도 없다. 두 PC가 수 초 안에 동시에 게이트를 통과하는 창은 막지 못한다(잔여 위험, D19 §8). 인증은 데스크톱 AIK 인증서 기반 기기 범위 토큰이다(D09 §2.1·§6).
 - `in_doubt` 해소 수단은 둘뿐: 조회형 verify 재시도, 사용자의 명시 증언. 데몬은 `in_doubt`가 있는 서류를 자동 재시도하지 않는다(D10).

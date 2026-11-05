@@ -2,6 +2,7 @@
 
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A(research/REVIEW-A-ir-engine.md)를 반영해 제어 흐름 의미론, 커밋 구간 규칙(V-03a~h), 셀렉터 사전 속성, 조회형 `verify`, 의도 키를 정의했다. 반례 CE-1~CE-18은 검증기 퍼징의 고정 회귀 세트다(D13 §7).
+> ADR-036 반영 2026-11-05: §7 H-01c 취소 중복 키는 차단 키라는 예외.
 
 ## 1. 설계 결정 요약
 
@@ -297,6 +298,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - **`intentId`**(ULID)는 `prepare()`가 만들고 카드에 표시한다. 리모트 명령은 폰이 만든 `cmd_id`를 그대로 쓴다.
 - 아이덴포턴시 원장(D07 `irreversible_log`)의 키는 **`(intent_id, step_id)`**이고 행은 `inputs_hash`·`package_digest`·`action_hash`에 결속된다. 같은 `intentId`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 다르면 거부한다(`ledger.intent_reuse`). 사후 스텝 점프는 **같은 `run_id`의 재개**에만 적용한다(D03 §4, B-10).
 - **업무 중복 키** = JCS(RFC 8785)로 정규화한 `(profile.bizNo, counterpart.bizNo, supply, tax, issueDate, items[].name)`의 해시. 원장에 같은 키의 `armed|dispatched|in_doubt|committed|not_committed|observed_manual`이 있으면 **차단하지 않고 경고**를 띄워 명시 확인을 받는다(정당한 동일 거래 2건을 막지 않기 위해). 경고는 예약 `fieldKey` `$dup.*`로 게이트 `fields`에 넣어 `cardHash`에 묶고, PC에서는 main 승인 바의 "같은 건 기록을 확인했고 발급" 클릭이 명시 확인이다(ADR-021). 렌더러 카드에만 두면 침해된 렌더러가 지울 수 있기 때문이다. `not_committed`가 있으면 앱 고정 문구 "직전 시도는 '발급 안 됨'으로 판정되었습니다(조회 N회, M초 경과). 홈택스 발급목록을 직접 확인한 뒤 승인하세요"를 넣는다(B-07, B-04).
+- **예외: H-01c 발급 취소**(ADR-036 결정 3.6): 업무 중복 키 `(원본 승인번호, 'full_cancel')`는 경고가 아니라 **차단 키**다. 엔진이 `prepare`와 게이트 토큰 발급 직전에 원장을 조회해 같은 키의 `armed|dispatched|in_doubt|committed|observed_manual`이 있으면 `dup.already_cancelled`로 멈춘다.
 - 보조 중복 키 `$dup.recentSameAmount`: 작성일자를 뺀 (공급자, 공급받는자, 공급가, 세액, 품목명[])이 최근 10일 안에 committed면 바 꼬리 'N일 전 같은 금액 발급 있음'(차단 아님)(Phase 1, ADR-027, D-32(N-50)). 원장 상태별 바 표시(`committed` → "이미 발급됨(승인번호 있음)", `in_doubt`·`armed`·`dispatched`·`observed_manual` → "발급 여부 확인 안 됨", 둘 다 주의 색)는 ADR-027 결정 3이 정본이다(D-18(N-22)). `$dup.portalExisting`(아래)은 같은 표에서 `in_doubt` 계열과 같이 주의 색으로 보인다.
 - **포털 기존 건**(Phase 1부터, ADR-024 결정 2): 앱 내장 플레이북 목록(지금은 세금계산서 발급 H-01)의 주 비가역 스텝에만 한다. 패키지는 이 목록을 바꿀 수 없다. 민원증명은 같은 날 다시 떼는 것이 정상이라 넣지 않는다.
   - 기준선 B₀(§4.4)에서 이 PC 원장의 `verify_ref`를 뺀 건수가 1 이상이면, 예약 키 `$dup.portalExisting`(값 = 건수)을 게이트 `fields`에 넣는다. 차단하지 않는다.
