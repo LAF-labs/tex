@@ -221,7 +221,9 @@ CREATE TABLE bundle_exports (
   sha256 TEXT NOT NULL, path TEXT NOT NULL, created_at TEXT NOT NULL,
   send_via TEXT CHECK(send_via IN ('mail_client','folder')),
   sent_to TEXT,
-  sent_marked_at TEXT, sent_note TEXT
+  sent_marked_at TEXT, sent_note TEXT,
+  attachments_path TEXT, attachments_sha256 TEXT,
+  rrn_included INTEGER NOT NULL DEFAULT 0
 );
 CREATE TABLE card_fetches (
   run_id TEXT PRIMARY KEY REFERENCES runs(id), profile_id TEXT NOT NULL REFERENCES profiles(id),
@@ -255,6 +257,19 @@ CREATE TABLE cash_sales (
   profile_id TEXT NOT NULL REFERENCES profiles(id), day TEXT NOT NULL, amount INTEGER NOT NULL, entered_at TEXT NOT NULL,
   source TEXT CHECK(source IN ('pc','phone')) NOT NULL DEFAULT 'pc',
   PRIMARY KEY(profile_id, day)
+);
+`,
+  },
+  {
+    version: 6,
+    name: 'portal_logins',
+    sql: `
+CREATE TABLE portal_logins (
+  profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
+  portal TEXT NOT NULL,
+  login_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(profile_id, portal)
 );
 `,
   },

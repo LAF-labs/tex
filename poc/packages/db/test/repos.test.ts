@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   BundleExportRepo, BundleRepo, bucket5, CardRepo, cardMatchKeys, CashSalesRepo, ColumnCipher, ColumnCipherError, deriveColumnKey, DocumentRepo, EmployeeRepo,
-  JournalShapeError, maskRrn, openDatabase, PayrollRepo, ProfileRepo, RateTableRepo, ReceiptRepo, RunJournal, RunRepo, shapeTelemetry, ShiftRepo, syntheticBizNo,
+  JournalShapeError, maskRrn, openDatabase, PayrollRepo, PortalLoginRepo, ProfileRepo, RateTableRepo, ReceiptRepo, RunJournal, RunRepo, shapeTelemetry, ShiftRepo, syntheticBizNo,
   type CardTxnInput, type Db, type PayrollLine,
 } from '@sax/db';
 
@@ -186,6 +186,24 @@ describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () =>
     assert.equal(got.sendVia, 'mail_client');
     assert.equal(got.sentMarkedAt, '2026-11-05T02:00:00Z');
     assert.throws(() => x.record({ profileId, period: '2026-10', sha256: 'zz', path: '/a' }), /invalid_sha256/);
+    assert.equal(got.attachmentsPath, null);
+    assert.equal(got.rrnIncluded, false, '주민번호는 기본 가림');
+    // 엑셀과 첨부 ZIP은 한 기록(메일 한 통)
+    const two = x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/exports/a.xlsx', attachments: { path: '/exports/a.zip', sha256: 'd'.repeat(64) }, rrnIncluded: true });
+    assert.deepEqual([two.attachmentsPath, two.attachmentsSha256, two.rrnIncluded], ['/exports/a.zip', 'd'.repeat(64), true]);
+    assert.throws(() => x.record({ profileId, period: '2026-11', sha256: 'c'.repeat(64), path: '/a', attachments: { path: '/a.zip', sha256: 'x' } }), /invalid_attachments/);
+  });
+
+  it('"카드 전표로 충분": 시작 달을 프로필별로 두고 끌 수 있다', () => {
+    const b = new BundleRepo(db);
+    assert.equal(b.cardSlipEnoughFrom(profileId), null);
+    b.setCardSlipEnough(profileId, '2026-12');
+    assert.equal(b.cardSlipEnoughFrom(profileId), '2026-12');
+    b.setCardSlipEnough(profileId, '2027-01');
+    assert.equal(b.cardSlipEnoughFrom(profileId), '2027-01');
+    b.setCardSlipEnough(profileId, null);
+    assert.equal(b.cardSlipEnoughFrom(profileId), null);
+    assert.throws(() => b.setCardSlipEnough(profileId, '2026-13'), /invalid_month/);
   });
 
   it('현금매출: 하루 한 숫자, 다시 넣으면 나중 값으로 바꾸고 이전 값을 알려 준다', () => {
@@ -278,10 +296,10 @@ describe('감사 저널 해시 체인(M2-6)', () => {
     j.append(run, 'gate.requested', { reqId: 'r1' });
     j.append(run, 'run.ended', { status: 'ok' });
     const ok = j.verify(run);
-    assert.ok(ok.ok && ok.events === 3);
+    assert.ok(ok.ok && ok.count === 3);
     const seqs = db.prepare('SELECT seq FROM run_events WHERE run_id=? ORDER BY seq').pluck().all(run) as number[];
     db.prepare(`UPDATE run_events SET payload_json='{"reqId":"r2"}' WHERE seq=?`).run(seqs[1]);
-    assert.deepEqual(j.verify(run), { ok: false, events: 1, brokenAtSeq: seqs[1], reason: 'hash' });
+    assert.deepEqual(j.verify(run), { ok: false, count: 1, brokenAtSeq: seqs[1], reason: 'hash' });
     assert.deepEqual(j.verifyRuns([run]), [run]);
     const run2 = newRun();
     j.append(run2, 'run.started', {});
@@ -316,5 +334,25 @@ describe('텔레메트리 형태 검증(D12 §1)', () => {
     assert.ok(shapeTelemetry({ event: 'decide.stats.daily', bundle: 'b@1', outcome: 'ok', confidenceBucket: 0.85, counts: 10 }).ok);
     assert.ok(!shapeTelemetry({ event: 'decide.stats.daily', bundle: 'b@1', outcome: 'ok', confidenceBucket: 0.87, counts: 10 }).ok);
     assert.deepEqual([0, 1, 5, 6].map(bucket5), [0, 5, 5, 10]);
+  });
+});
+
+describe('포털 로그인 아이디(portal_logins)', () => {
+  it('홈택스 아이디는 프로필별 하나, 바꾸고 지울 수 있다. 비밀번호 칸은 없다', () => {
+    const r = new PortalLoginRepo(db);
+    assert.equal(r.get(profileId, 'hometax'), null);
+    assert.equal(r.set(profileId, 'hometax', '  boss01 ', '2026-11-05T00:00:00Z').loginId, 'boss01');
+    r.set(profileId, 'hometax', 'boss02');
+    assert.equal(r.get(profileId, 'hometax'), 'boss02');
+    assert.deepEqual(r.list(profileId).map((l) => [l.portal, l.loginId]), [['hometax', 'boss02']]);
+    const cols = (db.prepare('PRAGMA table_info(portal_logins)').all() as Array<{ name: string }>).map((c) => c.name);
+    assert.deepEqual(cols, ['profile_id', 'portal', 'login_id', 'updated_at']);
+    assert.throws(() => r.set(profileId, 'gov24', 'x'), /invalid_portal/);
+    assert.throws(() => r.set(profileId, 'hometax', 'a b'), /invalid_login_id/);
+    assert.throws(() => r.set(profileId, 'hometax', ''), /invalid_login_id/);
+    assert.throws(() => r.set(profileId, 'hometax', 'x'.repeat(65)), /invalid_login_id/);
+    assert.throws(() => r.set('nope', 'hometax', 'x'), /profile_not_found/);
+    assert.equal(r.remove(profileId, 'hometax'), true);
+    assert.equal(r.remove(profileId, 'hometax'), false);
   });
 });

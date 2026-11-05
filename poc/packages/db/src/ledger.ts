@@ -199,12 +199,54 @@ export class Ledger {
     if (n !== 1) throw new LedgerError('ledger_not_armed');
   }
 
-  /** 종결(또는 in_doubt). armed·dispatched·in_doubt에서만 바뀐다. committed·not_committed는 다시 바뀌지 않는다. */
+  /** 종결(또는 in_doubt). armed·dispatched·in_doubt·observed_manual에서만 바뀐다. committed·not_committed는 다시 바뀌지 않는다. */
   resolve(intentId: string, stepId: string, state: 'committed' | 'not_committed' | 'in_doubt', reason: NotCommittedReason | null = null, verifyRef: string | null = null): void {
     const n = this.db
-      .prepare(`UPDATE irreversible_log SET state = ?, reason = ?, verify_ref = ?, resolved_at = ? WHERE intent_id = ? AND step_id = ? AND state IN ('armed','dispatched','in_doubt')`)
+      .prepare(`UPDATE irreversible_log SET state = ?, reason = ?, verify_ref = ?, resolved_at = ? WHERE intent_id = ? AND step_id = ? AND state IN ('armed','dispatched','in_doubt','observed_manual')`)
       .run(state, reason, verifyRef, state === 'in_doubt' ? null : now(), intentId, stepId).changes;
     if (n !== 1) throw new LedgerError('ledger_not_open');
+  }
+
+  /** 이 실행의 원장 행 상태들(armed_at 순) */
+  statesByRun(runId: string): LedgerState[] {
+    return this.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at, rowid').pluck().all(runId) as LedgerState[];
+  }
+
+  /**
+   * 사람이 직접 눌렀다(전용 브라우저 밖·자동화 밖 실행을 관찰). 한 트랜잭션:
+   * 행이 없으면 observed_manual로 넣고(armed_at = 지금), armed·dispatched·in_doubt면 observed_manual로 바꾼다.
+   * 이미 observed_manual이면 그대로 둔다. committed·not_committed면 ledger_<state>로 던진다(종결은 바뀌지 않는다).
+   */
+  observedManual(a: ArmRow): void {
+    this.db.transaction(() => {
+      const prev = this.get(a.intentId, a.stepId);
+      if (!prev) {
+        this.db
+          .prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
+            VALUES (@intentId, @stepId, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'observed_manual', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
+          .run({ ...a, armedAt: now() });
+        return;
+      }
+      if (prev.state === 'committed' || prev.state === 'not_committed') throw new LedgerError(`ledger_${prev.state}`);
+      if (prev.state === 'observed_manual') return;
+      this.db.prepare(`UPDATE irreversible_log SET state = 'observed_manual' WHERE intent_id = ? AND step_id = ?`).run(a.intentId, a.stepId);
+    })();
+  }
+
+  /**
+   * 확정된 주 단계(committed)에 딸린 후속 단계를 armed로 넣는다(게이트를 소비하지 않는다). 한 트랜잭션:
+   * 주 단계가 committed가 아니면(없어도) ledger_primary_not_committed, 후속 행이 이미 있으면 ledger_<state>.
+   */
+  armFollowUp(primary: { intentId: string; stepId: string }, a: ArmRow): void {
+    this.db.transaction(() => {
+      if (this.get(primary.intentId, primary.stepId)?.state !== 'committed') throw new LedgerError('ledger_primary_not_committed');
+      const prev = this.get(a.intentId, a.stepId);
+      if (prev) throw new LedgerError(`ledger_${prev.state}`);
+      this.db
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
+          VALUES (@intentId, @stepId, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
+        .run({ ...a, armedAt: now() });
+    })();
   }
 
   /** 이 상태들인 원장 행 수(PoC 전체 실발급 상한, ADR-025 결정 1). 날짜·재시작과 무관하다. */
@@ -257,7 +299,8 @@ export class JournalShapeError extends Error {
 export const journalHash = (prevHash: string, at: string, type: string, body: string): string =>
   createHash('sha256').update(`${prevHash}\n${at}\n${type}\n${body}`).digest('hex');
 
-export type ChainCheck = { ok: true; events: number; head: string } | { ok: false; events: number; brokenAtSeq: number; reason: 'prev_hash' | 'hash' | 'payload' };
+/** count: 검사한 이벤트 수(끊긴 경우 끊긴 행 앞까지) */
+export type ChainCheck = { ok: true; count: number; head: string } | { ok: false; count: number; brokenAtSeq: number; reason: 'prev_hash' | 'hash' | 'payload' };
 
 /**
  * 실행 저널(D07 run_events, D03 §9). 실행별 해시 체인: hash = sha256(prev_hash ‖ at ‖ type ‖ payload_json), 첫 이벤트의 prev_hash는 0×64.
@@ -300,19 +343,19 @@ export class RunJournal {
     let prev = GENESIS;
     for (const [i, r] of rows.entries()) {
       const seq = Number(r.seq);
-      if (String(r.prev_hash) !== prev) return { ok: false, events: i, brokenAtSeq: seq, reason: 'prev_hash' };
+      if (String(r.prev_hash) !== prev) return { ok: false, count: i, brokenAtSeq: seq, reason: 'prev_hash' };
       const body = String(r.payload_json);
-      if (journalHash(prev, String(r.at), String(r.type), body) !== String(r.hash)) return { ok: false, events: i, brokenAtSeq: seq, reason: 'hash' };
+      if (journalHash(prev, String(r.at), String(r.type), body) !== String(r.hash)) return { ok: false, count: i, brokenAtSeq: seq, reason: 'hash' };
       let payload: unknown;
       try {
         payload = JSON.parse(body);
       } catch {
-        return { ok: false, events: i, brokenAtSeq: seq, reason: 'payload' };
+        return { ok: false, count: i, brokenAtSeq: seq, reason: 'payload' };
       }
-      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return { ok: false, events: i, brokenAtSeq: seq, reason: 'payload' };
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return { ok: false, count: i, brokenAtSeq: seq, reason: 'payload' };
       prev = String(r.hash);
     }
-    return { ok: true, events: rows.length, head: prev };
+    return { ok: true, count: rows.length, head: prev };
   }
 
   /** 지원 번들 내보내기 직전·기동 시 점검(D03 §9). 끊긴 실행 ID만 돌려준다 */
