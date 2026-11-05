@@ -26,7 +26,20 @@ export interface ProviderDecision {
   attempts: number;
 }
 
-export type AdapterErrorCode = 'unavailable' | 'timeout' | 'rate_limited' | 'quota' | 'bad_request' | 'auth' | 'not_available' | 'egress' | `guard_${string}`;
+export type AdapterErrorCode =
+  | 'unavailable'
+  | 'timeout'
+  | 'rate_limited'
+  | 'quota'
+  | 'bad_request'
+  | 'auth'
+  | 'not_available'
+  | 'egress'
+  /** 게이트웨이 응답의 질문 해시가 로컬 번들과 다름(C-24) */
+  | 'questions_digest_mismatch'
+  | `guard_${string}`
+  /** 게이트웨이 경로 오류(gateway.<code> → gateway_<code>) */
+  | `gateway_${string}`;
 
 export class AdapterError extends Error {
   readonly code: AdapterErrorCode;

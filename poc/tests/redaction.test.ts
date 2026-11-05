@@ -1,7 +1,7 @@
 // D06 마스킹 최소판: 식별자 토큰화, 같은 값 같은 번호, 금액 기본 치환(needsAmounts만 원값), SCREEN_DATA 구분자 이스케이프.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ChatTokenMaps, CHAT_MAP_IDLE_MS, Redactor, RedactionError, apply, applyImage, detokenize, maskRgba, normalizeForDetection, renderTree, type A11yNode } from '@sax/redaction';
+import { ChatTokenMaps, CHAT_MAP_IDLE_MS, RECEIPT_CAP, Redactor, RedactionError, apply, applyImage, detokenize, maskRgba, normalizeForDetection, renderTree, wasMinted, type A11yNode } from '@sax/redaction';
 import { piiTripwire } from '@sax/net';
 
 describe('마스킹 최소판', () => {
@@ -224,4 +224,16 @@ describe('M1-5 대화 세션 토큰 맵·이미지 인터페이스', () => {
     assert.deepEqual([...px.slice(8, 12)], [200, 200, 200, 200]);
     assert.throws(() => maskRgba(px, 5, 3, []), (e: unknown) => e instanceof RedactionError);
   });
+
+  it('발급 영수증은 LRU다: 다시 발급한 텍스트는 상한을 넘겨도 남고, 한 번만 쓴 오래된 텍스트는 밀려난다', () => {
+    const hot = apply('자주 쓰는 화면 영수증-hot', { runId: 'lru' }).redacted;
+    const cold = apply('한 번 쓴 화면 영수증-cold', { runId: 'lru' }).redacted;
+    for (let i = 0; i < RECEIPT_CAP; i++) {
+      if (i % 1000 === 0) apply('자주 쓰는 화면 영수증-hot', { runId: 'lru' });
+      apply(`채움 영수증 ${i}`, { runId: 'lru' });
+    }
+    assert.equal(wasMinted(hot), true);
+    assert.equal(wasMinted(cold), false);
+  });
 });
+

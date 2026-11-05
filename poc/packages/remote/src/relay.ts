@@ -15,8 +15,17 @@ export interface Link {
 export interface RelayClient {
   /** 페어링 룸. PC는 응답자로 먼저 들어가 기다리고, 폰이 개시자로 들어온다. */
   joinRoom(roomId: Uint8Array, role: 'desktop' | 'mobile'): Promise<Link>;
-  /** 우편함 라이브 연결. PC는 tokRead, 폰은 tokWrite를 낸다(D08 §8, 서버는 토큰 해시만 저장). */
-  joinMailbox(mbxId: Uint8Array, token: Uint8Array, role: 'desktop' | 'mobile'): Promise<Link>;
+  /**
+   * 우편함 라이브 연결. 양쪽 모두 읽기·쓰기 토큰을 함께 낸다(services/relay/API.md: X-Mbx-Read + X-Mbx-Write,
+   * 서버는 토큰 해시만 저장). 쪽(PC·폰)은 서버가 기기 토큰의 역할로 정한다. role은 메모리 릴레이용이다.
+   */
+  joinMailbox(mbxId: Uint8Array, tok: MailboxTokens, role: 'desktop' | 'mobile'): Promise<Link>;
+}
+
+/** 우편함 능력 토큰(각 32B). PC가 만들어 PAIR_OK로 폰에 준다(D08 §4.2 7단계). */
+export interface MailboxTokens {
+  read: Uint8Array;
+  write: Uint8Array;
 }
 
 /** 한 프레임을 받을 때까지 기다린다(시간 초과는 null). */
@@ -188,10 +197,9 @@ export class MemoryRelay implements RelayClient {
     return this.#join(`room:${hex(roomId)}`, role, true);
   }
 
-  async joinMailbox(mbxId: Uint8Array, token: Uint8Array, role: 'desktop' | 'mobile'): Promise<Link> {
+  async joinMailbox(mbxId: Uint8Array, tok: MailboxTokens, role: 'desktop' | 'mobile'): Promise<Link> {
     const m = this.#mailboxes.get(hex(mbxId));
-    const want = role === 'desktop' ? m?.read : m?.write;
-    if (!m || m.frozen || want !== this.tokenHash(token)) throw new Error('relay: mailbox refused');
+    if (!m || m.frozen || m.read !== this.tokenHash(tok.read) || m.write !== this.tokenHash(tok.write)) throw new Error('relay: mailbox refused');
     return this.#join(`mbx:${hex(mbxId)}`, role, false);
   }
 
