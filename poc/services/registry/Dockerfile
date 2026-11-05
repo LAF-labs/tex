@@ -7,6 +7,8 @@ RUN corepack enable
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY services/shared services/shared
 COPY services/registry services/registry
+# 관문은 엔진 코어(스키마·.sxp·보수성 판정)를 그대로 쓴다. 엔진의 tsc 참조 패키지도 함께(미검증: 이 저장소에서 Docker를 빌드하지 않았다)
+COPY packages packages
 # 설치 스크립트는 돌리지 않는다(ADR-028).
 RUN pnpm install --frozen-lockfile --ignore-scripts --filter sax-poc --filter "@sax/svc-registry..." \
   && pnpm exec tsc -b services/registry

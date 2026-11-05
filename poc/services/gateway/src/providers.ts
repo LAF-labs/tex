@@ -150,6 +150,98 @@ export class OpenAICompatProvider implements ModelProvider {
 }
 
 /**
+ * OpenRouter 라우팅 설정(법적 검토 R14 ①). 코드 상수가 아니라 운영 환경 설정에서만 온다(ENV.md):
+ * ZDR 엔드포인트만, 데이터 수집 거부, 공급자 고정(only + allow_fallbacks:false), 요청 매개변수를 다 지원하는 공급자만.
+ * 하나라도 빠지거나 다른 값이면 생성·호출을 거부한다(fail-closed).
+ */
+export interface OpenRouterRouting {
+  zdr: true;
+  dataCollection: 'deny';
+  /** 고정 공급자 슬러그(1개 이상) */
+  only: string[];
+}
+
+const SLUG = /^[a-z0-9][a-z0-9._/-]{0,63}$/;
+
+/** 환경 값에서 라우팅 설정을 읽는다. 값이 정확히 맞지 않으면 null(호출 거부). */
+export function parseOpenRouterRouting(env: { OPENROUTER_ZDR?: string; OPENROUTER_DATA_COLLECTION?: string; OPENROUTER_PROVIDERS?: string }): OpenRouterRouting | null {
+  if (env.OPENROUTER_ZDR !== 'true' || env.OPENROUTER_DATA_COLLECTION !== 'deny') return null;
+  const only = (env.OPENROUTER_PROVIDERS ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+  if (!only.length || only.length > 8 || !only.every((x) => SLUG.test(x)) || new Set(only).size !== only.length) return null;
+  return { zdr: true, dataCollection: 'deny', only };
+}
+
+const routingOk = (r: OpenRouterRouting | null | undefined): r is OpenRouterRouting =>
+  !!r && r.zdr === true && r.dataCollection === 'deny' && Array.isArray(r.only) && r.only.length > 0 && r.only.every((x) => typeof x === 'string' && SLUG.test(x));
+
+/** OpenRouter 와이어의 provider 객체. 요청마다 새로 만든다(호출 측이 바꾸지 못하게). */
+export function openRouterProviderField(r: OpenRouterRouting): Record<string, unknown> {
+  return { zdr: true, data_collection: 'deny', only: [...r.only], allow_fallbacks: false, require_parameters: true };
+}
+
+/**
+ * OpenRouter(OpenAI 호환 Responses, 무상태). 키는 OPENROUTER_API_KEY(서버 환경 변수, 저장소 금지).
+ * L2(respond)는 /api/v1/responses로 보낸다. OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없어서 decide는 호출하지 않고
+ * 재시도 불가 오류를 낸다(게이트웨이 503 gateway.upstream_error, 엔진 unknown). L1 상류는 팀장 결정 대기.
+ * 요청마다 라우팅 설정을 다시 확인하고, 적용 사실만 이벤트로 남긴다(내용·공급자 이름 없음).
+ */
+export class OpenRouterProvider implements ModelProvider {
+  readonly name = 'openrouter';
+  private readonly routing: OpenRouterRouting;
+  private readonly o: { baseUrl: string; apiKey: string; timeoutMs: number; fetchFn: typeof fetch; onEvent: (e: string) => void };
+  constructor(o: { apiKey: string; routing: OpenRouterRouting | null; baseUrl?: string; timeoutMs?: number; fetchFn?: typeof fetch; onEvent?: (e: string) => void }) {
+    if (!o.apiKey) throw new Error('config_OPENROUTER_API_KEY');
+    if (!routingOk(o.routing)) throw new Error('config_OPENROUTER_ROUTING');
+    const baseUrl = (o.baseUrl ?? 'https://openrouter.ai/api').replace(/\/$/, '');
+    if (!/^https:\/\//.test(baseUrl) && !/^http:\/\/127\.0\.0\.1[:/]/.test(baseUrl)) throw new Error('config_OPENROUTER_BASE_URL');
+    this.routing = { zdr: true, dataCollection: 'deny', only: [...o.routing.only] };
+    this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined) };
+  }
+
+  decide(): Promise<DecideResult> {
+    this.o.onEvent('upstream_decide_unsupported');
+    return Promise.reject(new ProviderError('fatal'));
+  }
+
+  async respond(s: RespondSpec): Promise<RespondResult> {
+    if (!routingOk(this.routing)) {
+      this.o.onEvent('upstream_routing_refused');
+      throw new ProviderError('fatal');
+    }
+    const body = { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
+    let res: Response;
+    try {
+      res = await this.o.fetchFn(`${this.o.baseUrl}/v1/responses`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        redirect: 'error',
+        signal: AbortSignal.timeout(this.o.timeoutMs),
+      });
+    } catch {
+      throw new ProviderError('retryable');
+    }
+    // 적용 사실만 남긴다(설정이 실린 요청을 보냈다). 값·본문·공급자 이름은 로그에 없다
+    this.o.onEvent('upstream_zdr_pinned');
+    // 고정 공급자를 쓸 수 없으면 OpenRouter가 404를 준다. 대체 공급자로 넘어가지 않으므로 재시도하지 않는다
+    if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
+    if (res.status !== 200) throw new ProviderError('fatal');
+    let d: Record<string, unknown>;
+    try {
+      d = (await res.json()) as Record<string, unknown>;
+    } catch {
+      throw new ProviderError('fatal');
+    }
+    // 응답이 공급자를 밝히면 고정 목록 안인지 확인한다(아니면 결과를 쓰지 않는다)
+    if (typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
+      this.o.onEvent('upstream_provider_mismatch');
+      throw new ProviderError('fatal');
+    }
+    return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
+  }
+}
+
+/**
  * Upstage System One 자리(ADR-015 공급사 중립, D04 §8). 와이어 형식·질문 상한(26 선택지)은 S7 실측 뒤 채운다.
  * 지금은 호출하지 않고 재시도 불가 오류를 낸다(게이트웨이는 503 gateway.upstream_error, 엔진은 unknown).
  */

@@ -2,11 +2,21 @@
 import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from 'node:crypto';
 
 /** RFC 8785 JCS(정수·문자열·불리언·null·배열·객체만). 엔진 gate.ts의 jcs와 같은 규칙이다. */
+const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
+
+/**
+ * RFC 8785 JCS(SIGNING.md §1): 키는 UTF-16 코드 단위 순, 공백 없음, 숫자는 ECMAScript 직렬화(소수 허용, -0은 0),
+ * 비유한 수·외톨이 서로게이트는 거부. 엔진 canonicalJson과 같은 바이트다(시험이 대조).
+ */
 export function jcs(v: unknown): string {
-  if (typeof v === 'string' || typeof v === 'boolean' || v === null) return JSON.stringify(v);
-  if (typeof v === 'number') {
-    if (!Number.isSafeInteger(v)) throw new Error('jcs_number');
+  if (typeof v === 'boolean' || v === null) return JSON.stringify(v);
+  if (typeof v === 'string') {
+    if (LONE_SURROGATE.test(v)) throw new Error('jcs_string');
     return JSON.stringify(v);
+  }
+  if (typeof v === 'number') {
+    if (!Number.isFinite(v)) throw new Error('jcs_number');
+    return Object.is(v, -0) ? '0' : JSON.stringify(v);
   }
   if (Array.isArray(v)) return `[${v.map(jcs).join(',')}]`;
   if (typeof v === 'object') {

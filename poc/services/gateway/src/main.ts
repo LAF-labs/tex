@@ -5,7 +5,7 @@ import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, ed25519Privat
 import { gatewayRouter } from './app.ts';
 import { ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
-import { MockProvider, OpenAICompatProvider, UpstageSystemOneStub, type ModelProvider } from './providers.ts';
+import { MockProvider, OpenAICompatProvider, OpenRouterProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -43,8 +43,14 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   return out;
 }
 
-export function providerFromEnv(env: NodeJS.ProcessEnv): ModelProvider {
+export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
   switch (env.GW_PROVIDER) {
+    case 'openrouter': {
+      // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
+      const routing = parseOpenRouterRouting(env);
+      if (!routing) fail('OPENROUTER_ROUTING');
+      return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent });
+    }
     case 'openai-compat':
       return new OpenAICompatProvider({ baseUrl: env.PROVIDER_BASE_URL ?? fail('PROVIDER_BASE_URL'), apiKey: env.PROVIDER_API_KEY ?? fail('PROVIDER_API_KEY') });
     case 'upstage-systemone':
@@ -68,7 +74,7 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
   const svc = new GatewayService({
     db,
     onEvent: (e) => logger.event(e),
-    provider: deps.provider ?? providerFromEnv(env),
+    provider: deps.provider ?? providerFromEnv(env, (e) => logger.event(e)),
     catalog: BundleCatalog.load(),
     runKey: ed25519Private(key32(env.RUN_TOKEN_SEED, 'RUN_TOKEN_SEED')),
     cacheSecret: key32(env.CACHE_KEY_SECRET, 'CACHE_KEY_SECRET'),
