@@ -434,3 +434,47 @@ describe('골든 H-01 경로를 전이표로 끝까지', () => {
     assert.ok(r.effects.indexOf('ledger.dispatched') < r.effects.indexOf('ledger.committed{verify_ref}'));
   });
 });
+
+describe('Bugbot #59 회귀', () => {
+  const DENY: MachineCtx = { allowed: false, ledger: ['not_committed'] };
+  it('진입 확인에 걸리면 성공 효과(run.started·step.rerun_failed·resume_at)를 내지 않는다', () => {
+    const cases: Array<[RunState, RunEvent, string]> = [
+      [state('Preparing'), { t: 'prepared' }, 'journal:run.started'],
+      [state('Recovering'), { t: 'recovered' }, 'step.rerun_failed'],
+      [state('HandedOff'), { t: 'handoff_resume', ledgerInDoubt: false }, 'resume_at'],
+    ];
+    for (const [s, ev, bad] of cases) {
+      const r = transition(s, ev, DENY);
+      assert.ok(r.ok && r.state.name === 'Paused', ev.t);
+      assert.ok(!r.effects.includes(bad), `${ev.t}: ${bad}`);
+    }
+    const e = transition(state('WaitingGate'), { t: 'gate_edit' }, DENY);
+    assert.ok(e.ok && e.effects.includes('gate.cancel') && e.effects.includes('input.unlock'), '수정하기 거부여도 게이트는 닫는다');
+  });
+  it('WaitingGate에서 중지하면 gate_requests도 닫는다(gate.cancel)', () => {
+    const r = transition(state('WaitingGate'), { t: 'abort' }, OK);
+    assert.ok(r.ok && r.state.name === 'Aborted' && r.effects.includes('gate.cancel'));
+    const h = transition(state('WaitingHuman'), { t: 'abort' }, OK);
+    assert.ok(h.ok && !h.effects.includes('gate.cancel'));
+  });
+  it('커밋 구간에서 미룬 중지·하향이 있으면 verify committed 뒤 후속 토큰을 만들지 않는다', () => {
+    const ab = run(commit(), [{ t: 'abort' }], [{ t: 'verify', result: 'committed' }]);
+    assert.equal(ab.s.name, 'Aborted');
+    assert.ok(!ab.effects.includes('token.issue_followup') && ab.effects.includes('ledger.committed{verify_ref}') && ab.effects.includes('tokens.discard'));
+    const dg = run(commit(), [{ t: 'downgrade' }], [{ t: 'verify', result: 'committed' }, { allowed: false, ledger: ['committed'] }]);
+    assert.equal(dg.s.name, 'CompletedWithIssues');
+    assert.ok(!dg.effects.includes('token.issue_followup'));
+  });
+  it('미룬 정지 하향(hardStop) 뒤 verify unknown·시간 초과로 InDoubt가 돼도 Chrome을 닫는다', () => {
+    const hard: MachineCtx = { allowed: false, ledger: ['in_doubt'], hardStop: true };
+    for (const ev of [{ t: 'verify', result: 'unknown' }, { t: 'verify_timeout' }] as RunEvent[]) {
+      const r = run(commit(), [{ t: 'downgrade' }, hard], [ev, hard]);
+      assert.equal(r.s.name, 'InDoubt', ev.t);
+      assert.ok(r.effects.includes('chrome.close') && r.effects.includes('ui.notify:downgrade'), ev.t);
+    }
+    const rv = run(state('Running', { reverify: true }), [{ t: 'downgrade' }, hard], [{ t: 'verify', result: 'unknown' }, hard]);
+    assert.ok(rv.s.name === 'InDoubt' && rv.effects.includes('chrome.close'));
+    const soft = run(commit(), [{ t: 'verify', result: 'unknown' }]);
+    assert.ok(soft.s.name === 'InDoubt' && !soft.effects.includes('chrome.close'), '하향이 없으면 닫지 않는다');
+  });
+});

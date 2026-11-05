@@ -95,8 +95,11 @@ function stopTo(ctx: MachineCtx, effects: string[]): Transition {
   return to(state(b.name), [...effects, ...(ctx.hardStop ? ['ui.notify:downgrade', 'chrome.close'] : []), ...b.effects]);
 }
 
-/** Running 진입 확인(ADR-023 결정 6). 허용하지 않으면 토큰 폐기·체크포인트 저장 뒤 정지 분기. */
-function enterRunning(ctx: MachineCtx, effects: string[], o: Partial<Omit<RunState, 'name'>> = {}, onDeny: string[] = effects): Transition {
+/**
+ * Running 진입 확인(ADR-023 결정 6). 허용하지 않으면 토큰 폐기·체크포인트 저장 뒤 정지 분기.
+ * onDeny는 거부돼도 해야 하는 정리 효과만(성공 효과는 내지 않는다).
+ */
+function enterRunning(ctx: MachineCtx, effects: string[], o: Partial<Omit<RunState, 'name'>> = {}, onDeny: string[] = []): Transition {
   if (!ctx.allowed) return stopTo(ctx, [...onDeny, 'tokens.discard', 'checkpoint.save']);
   return to(state('Running', o), effects);
 }
@@ -115,7 +118,8 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
   }
   if (ev.t === 'abort') {
     if (st.commit) return to({ ...st, pendingAbort: true }, ['abort.after_verify', 'ui.notify:reject_portal_push']);
-    return to(state('Aborted'), ['tokens.discard', 'input.unlock', 'ui.notify:reject_portal_push']);
+    // WaitingGate에서 중지하면 gate_requests 행도 닫는다(뒤늦은 승인이 토큰을 만들지 못하게, R-G8).
+    return to(state('Aborted'), [...(n === 'WaitingGate' ? ['gate.cancel'] : []), 'tokens.discard', 'input.unlock', 'ui.notify:reject_portal_push']);
   }
 
   switch (n) {
@@ -165,7 +169,7 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
         case 'gate_denied':
           return to(state('Aborted'), ['input.unlock']);
         case 'gate_edit':
-          return enterRunning(ctx, ['gate.cancel', 'input.unlock', 'tokens.discard', 'rewind.pre_gate']);
+          return enterRunning(ctx, ['gate.cancel', 'input.unlock', 'tokens.discard', 'rewind.pre_gate'], {}, ['gate.cancel', 'input.unlock', 'rewind.pre_gate']);
         case 'gate_timeout':
           return to(state('Paused'), ['gate.expire', 'input.unlock', 'tokens.discard', 'rewind.pre_gate', 'checkpoint.save']);
         case 'downgrade':
@@ -243,12 +247,20 @@ function idle(st: RunState, ev: RunEvent): Transition {
   return ev.t === 'downgrade' ? to(st) : illegal;
 }
 
+/** verify가 결론을 못 내 InDoubt로 갈 때도 미뤄 둔 정지 하향(postprocess·kill)이면 자동화 Chrome을 닫고 알린다. 토큰은 폐기. */
+function inDoubt(st: RunState, ctx: MachineCtx, effects: string[]): Transition {
+  const hard = st.pendingDowngrade && ctx.hardStop ? ['ui.notify:downgrade', 'chrome.close'] : [];
+  return to(state('InDoubt'), [...effects, 'tokens.discard', ...hard]);
+}
+
 /** 커밋 구간: L1·L2·핸드오프·모델 호출 없음, 새 정책 값 없음, 실패는 곧바로 verify(§5.3). */
 function commitSection(st: RunState, ev: RunEvent, ctx: MachineCtx): Transition {
   // verify가 끝나 구간을 나갈 때 미뤄 둔 abort·하향을 적용한다. 원장은 이미 기록됐다.
   const leave = (t: Transition & { ok: true }): Transition => {
-    if (st.pendingAbort && t.state.name !== 'InDoubt') return to(state('Aborted'), t.effects);
-    if (st.pendingDowngrade && t.state.name === 'Running') return stopTo(ctx, t.effects);
+    // 중지·정지로 빠지면 사후 스텝이 없으므로 후속 토큰을 만들지 않고 남은 토큰은 폐기한다.
+    const stopped = () => [...t.effects.filter((e) => e !== 'token.issue_followup'), 'tokens.discard'];
+    if (st.pendingAbort && t.state.name !== 'InDoubt') return to(state('Aborted'), stopped());
+    if (st.pendingDowngrade && t.state.name === 'Running') return stopTo(ctx, stopped());
     if (st.pendingDowngrade && t.state.name === 'HandedOff') return to({ ...t.state, pendingDowngrade: true }, t.effects);
     return t;
   };
@@ -265,10 +277,10 @@ function commitSection(st: RunState, ev: RunEvent, ctx: MachineCtx): Transition 
     case 'verify':
       if (ev.result === 'committed') return leave({ ok: true, state: state('Running'), effects: ['ledger.committed{verify_ref}', 'token.issue_followup', 'input.unlock'] });
       if (ev.result === 'not_committed') return leave({ ok: true, state: state('Running'), effects: ['ledger.not_committed{verify}', 'input.unlock', 'rewind.pre_gate'] });
-      return to(state('InDoubt'), ['ledger.in_doubt', 'input.unlock']);
+      return inDoubt(st, ctx, ['ledger.in_doubt', 'input.unlock']);
     case 'verify_timeout':
     case 'abort_timeout':
-      return to(state('InDoubt'), ['ledger.in_doubt', 'input.unlock']);
+      return inDoubt(st, ctx, ['ledger.in_doubt', 'input.unlock']);
     case 'downgrade':
       return to({ ...st, pendingDowngrade: true });
     default:
@@ -280,13 +292,13 @@ function commitSection(st: RunState, ev: RunEvent, ctx: MachineCtx): Transition 
 function reverify(st: RunState, ev: RunEvent, ctx: MachineCtx): Transition {
   switch (ev.t) {
     case 'verify': {
-      if (ev.result === 'unknown') return to(state('InDoubt'), ['ledger.in_doubt']);
+      if (ev.result === 'unknown') return inDoubt(st, ctx, ['ledger.in_doubt']);
       const rec = ev.result === 'committed' ? 'ledger.committed{verify_ref}' : 'ledger.not_committed{verify}';
       if (st.pendingDowngrade || !ctx.allowed) return stopTo(ctx, [rec]);
       return to(state('Running'), [rec, ev.result === 'committed' ? 'goto.post_steps' : 'rewind.pre_gate']);
     }
     case 'verify_timeout':
-      return to(state('InDoubt'), ['ledger.in_doubt']);
+      return inDoubt(st, ctx, ['ledger.in_doubt']);
     case 'downgrade':
       // verify는 조회만이라 끝까지 돌리고 결과를 원장에 쓴 뒤 정지 분기(비가역 없음).
       return to({ ...st, pendingDowngrade: true });
