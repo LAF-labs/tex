@@ -1,6 +1,7 @@
 # D01. 시스템 아키텍처
 
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영. · AUDIT-D 반영 2026-11-03: 단일 인스턴스·자식 env 허용 목록·IPC 모양 검증·금고가 부르는 비밀 창(§2.1), 쿠키 헤더 차단(§3), 린트·CI·금고 모듈 훅(§7)(ADR-025·028, D19 §3.5).
+> 2026-11-05 ADR-034 결정 9 채택: 폰 `remote`(승인 카드)는 Phase 2.
 
 ## 1. 컨텍스트 (C4 L1)
 
@@ -47,7 +48,7 @@
 | `notify` | 내용 없는 푸시 수신 → 앱이 릴레이에서 암호문 fetch |
 | `capture` | (Phase 1, ADR-034) 종이 증빙 촬영, 폰 OS의 기기 안 OCR로 금액·날짜·상호·사업자번호 후보(제안, 모델 없음), 사장님 확인, 원본 사진과 함께 E2EE 봉투로 PC에 전송. 현금매출 숫자 입력(제안). 앱 안 카메라로만 찍고 갤러리 가져오기는 없다. PC가 꺼져 있으면 파일 보호 등급 파일(백업 제외, 키만 `ThisDeviceOnly`)로 두었다가 보낸다. PC는 받은 사진을 신뢰하지 않는 입력으로 보고 docparse 샌드박스에서 다시 읽으며, 그 결과가 정본이다 |
 
-Phase 1 폰 앱은 `pairing`·`notify`·`capture`만 쓴다(ADR-034 결정 9). `remote`(승인 카드)는 폰 승인을 Phase 1에 넣을 때만 함께 들어오고(제안), `vaultview`·`query`는 Phase 2다.
+Phase 1 폰 앱은 `pairing`·`notify`·`capture`만 쓴다(ADR-034 결정 9). `remote`(승인 카드)·`vaultview`·`query`는 Phase 2다(폰 승인 Phase 2, ADR-034 결정 9 채택, 2026-11-05).
 
 ### 2.3 클라우드 (D09 상세)
 
