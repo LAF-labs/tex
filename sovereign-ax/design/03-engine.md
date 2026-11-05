@@ -1,6 +1,7 @@
 # D03. 플레이북 엔진
 
 > 스키마 정렬 2026-11-05(PR #45): §6 L2 금지 대상·비밀 칸 가드의 `secretSlot`을 `secretKind` 항목으로, §7 정책 예시에 `limits.*.loginFailuresPerDay`·`verify.maxMs` 추가(policy 스키마 v1.3.1).
+> 팀장 결정 2026-11-05: §7 `loginFailuresPerDay`는 모든 포털 2(채택).
 > v1.3.2 — AUDIT-D 반영 2026-11-03: 재시작 복원은 테이블 상태 승격·`run.reverify`(§2), 게이트 대기 10분·금고 잠금 시 바 내림(§3), 작성일자 KST·s19e 대조(§5), 확인 불가 fail-closed·입력 잠금 두 구간·trial 클릭(§5.3), verify 상한 5분·실패 신호 쌍(§5.6), 포털 문구 표시(§6), 2차 인증·모르는 화면·로그인 실패·시계 전진·PoC 상한(§7·§7.1), 체인 자체 검증(§9)(ADR-025·026·027, D19 §3.5). v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
 > ADR-036 반영 2026-11-05: §4 H-01c 취소 중복 키는 차단 키라는 예외.
 
@@ -272,7 +273,7 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 ```
 
 카운터 정의(모두 SQLite 영속, KST, 증가 커밋 → 행동 순서):
-- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`), 상한은 `limits.<portal>.loginFailuresPerDay`(앱 하한 ≤ 2). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
+- `runs/day/profile/portal`: `start` 시점. `irreversible/day/profile/portal`: `armed` 시점. `navigations/min/portal`: 네비게이션 이벤트. `logins/day/portal`: 로그인 성공 판정. `login_failures/day/profile/portal`: 포털의 명시적 인증 실패(`auth_failed`), 상한은 `limits.<portal>.loginFailuresPerDay`(앱 하한 ≤ 2, 모든 포털 2로 채택(2026-11-05 팀장), ADR-026 하한과 같음). 세션 = 포털 로그인 세션(로그인 성공 판정 ~ 로그아웃·만료). 원격 승인 비가역은 `remote_irreversible/day`로 따로 센다.
 - 캡차 이벤트도 `rate_counters`에 기록(재시작에 살아남음).
 - "마지막으로 본 시각"을 저장해 시계 역행을 감지하고, 역행하면 보수 모드(지연 1.5배, 상한 절반).
 - 시계 전진은 단조 시간으로 판정하지 않는다. `lastSeen`이 마지막으로 검증한 서명 타임스탬프 + 72시간보다 미래면 불가능한 미래로 보고 재설정한다(`clock.future_reset`). 쿨다운 해제는 벽시계와 그 뒤 새로 검증한 서명 시각이 모두 `until` 이후일 때다(D-46(N-72)).
