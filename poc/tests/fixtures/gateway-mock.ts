@@ -68,7 +68,7 @@ export async function startGatewayMock(opts: GatewayMockOptions = {}): Promise<G
           { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc' },
           { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ query_kind: 'documents_expiring', doc_type: null, from: null, to: null }) }] },
         ];
-        return send(200, { status: 'completed', output, usage: { input_tokens: 300, output_tokens: 40 }, tags: output.map((_, i) => `gwtag${i}`) });
+        return send(200, { status: 'completed', output, usage: { input_tokens: 300, output_tokens: 40, input_tokens_details: { cached_tokens: 256, cache_write_tokens: 0 } }, tags: output.map((_, i) => `gwtag${i}`) });
       }
       if (path === '/v1/run-tokens') return send(200, { runToken: `gw.${'a'.repeat(40)}` });
       if (path === '/v1/usage/me') return send(200, { month: '2026-11', tokens: 0, limit: 1 });

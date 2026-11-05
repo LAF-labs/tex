@@ -218,12 +218,13 @@ describe('게이트웨이 respond(Responses, 태그는 게이트웨이가 붙인
   const responder = (egress: Egress) => new OpenAIResponsesAdapter({ egress, transport: 'gateway' });
   const msg = () => ({ role: 'user' as const, content: [{ type: 'input_text' as const, text: apply('다음 달 만료되는 서류 보여줘', { chatSessionId: 'c1' }, { frame: 'none' }).redacted }] });
 
-  it('구조화 출력, 재생 항목의 태그는 게이트웨이 tags', async () => {
+  it('구조화 출력, 재생 항목의 태그는 게이트웨이 tags, 캐시 토큰은 0', async () => {
     const { egress } = setup(mock);
     const r = await responder(egress).respond(QUERY_PARSE, { toolset: 'query_parse', messages: [msg()], replay: [], runToken: RUN });
     assert.equal(r.status, 'completed');
     assert.equal((r.output as { query_kind: string }).query_kind, 'documents_expiring');
     assert.deepEqual(r.replay.map((x) => x.kind === 'model_output' && x.item.tag), ['gwtag0', 'gwtag1']);
+    assert.deepEqual([r.usage.inputTokens, r.usage.cachedTokens, r.usage.cacheWriteTokens], [300, 0, 0], '게이트웨이가 넘긴 cached_tokens는 쓰지 않는다');
     const c = mock.calls.at(-1)!;
     assert.equal(c.path, '/v1/respond');
     assert.deepEqual(Object.keys(c.body!).sort(), ['messages', 'replay', 'runToken', 'toolset']);

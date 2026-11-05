@@ -129,7 +129,9 @@ export class OpenAIResponsesAdapter {
       data = res.value.data as unknown as typeof data;
     }
     const u = (data.usage ?? {}) as { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number } };
-    const usage = { inputTokens: u.input_tokens ?? 0, cachedTokens: u.input_tokens_details?.cached_tokens ?? 0, cacheWriteTokens: u.input_tokens_details?.cache_write_tokens ?? 0, outputTokens: u.output_tokens ?? 0 };
+    // 게이트웨이 경로는 캐시 토큰을 0으로 둔다(D04 §7 적중 여부 오라클 차단, GatewayDecideAdapter와 같다). 게이트웨이가 실수로 넘겨도 쓰지 않는다.
+    const d = viaGateway ? undefined : u.input_tokens_details;
+    const usage = { inputTokens: u.input_tokens ?? 0, cachedTokens: d?.cached_tokens ?? 0, cacheWriteTokens: d?.cache_write_tokens ?? 0, outputTokens: u.output_tokens ?? 0 };
     const items = data.output ?? [];
     const replay: RedactedReplayItem[] = items.map((item, i) => ({ kind: 'model_output', item: gatewayTags ? ({ item, tag: gatewayTags[i]! } as GatewayTaggedItem) : this.tagged(req.runToken, item) }));
     const toolCalls: ToolCall[] = [];
