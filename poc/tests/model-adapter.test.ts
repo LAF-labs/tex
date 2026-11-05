@@ -280,9 +280,13 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
   it('(4) 2차 PII 트립와이어: 마스킹을 빠져나간 사업자번호·주민번호·카드·계좌 모양이면 호출 안 함(카운트만)', async () => {
     assert.equal(piiTripwire('[BIZNO_1] 거래처'), false);
     for (const s of ['123-45-67890', '900101-1234567', '1234 5678 9012 3456', '110123456789', '010-12-345678']) assert.equal(piiTripwire(s), true, s);
-    // 마스킹 없이 들어온 문자열은 브랜드 단언이 린트로 막히므로, 마스킹 규칙이 놓친 모양(노드 분절)을 흉내 낸다.
-    const leaked = apply('등록번호 123 45 67890', { runId: 'r' }).redacted;
-    assert.equal(piiTripwire(leaked), false); // 공백 분절은 마스킹·트립와이어 모두 놓친다(D06 인접 노드 결합 탐지 몫)
+    // M1-5: 공백·점 구분과 한글 숫자도 마스킹하고, 마스킹을 비켜 간 원값은 트립와이어가 잡는다(PoC-7이 남긴 공백 분절 사례).
+    const spaced = apply('등록번호 123 45 67890', { runId: 'r' }).redacted;
+    assert.match(spaced, /\[BIZNO_1\]/);
+    assert.equal(piiTripwire(spaced), false);
+    for (const s of ['123 45 67890', '123.45.67890', '일이삼 사오 육칠팔구공', '900101 1234567']) assert.equal(piiTripwire(s), true, s);
+    // 날짜·시각은 계좌로 보지 않는다(숫자 10자리 미만 또는 날짜로 시작)
+    for (const s of ['2026-11-05', '2026.11.05 14:32:10', '조회기간 2026-10-01 ~ 2026-10-31']) assert.equal(piiTripwire(s), false, s);
     const leaked2 = apply('등록번호 1234567890123', { runId: 'r' }, { needsAmounts: true }).redacted;
     assert.doesNotMatch(leaked2, /\d{10}/); // 13자리는 주민번호 모양으로 먼저 치환된다
     const { decider, egress, tok } = setup(mock);
