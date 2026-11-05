@@ -4,6 +4,7 @@ import { Router, fail, fromB64, json, safeEqual, sha256hex, type Ctx, type Reply
 import type { Store } from './store.ts';
 import {
   CHANNELS,
+  contentDigest,
   renderLatestYml,
   verifyIndex,
   verifyPackageBytes,
@@ -163,9 +164,10 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const doc = ctx.body as SignedPolicy;
       const [revoked, stored] = [await revokedSet(), await readJson<SignedPolicy>('policy/current.json')];
       const v = checked((x) => verifyPolicy(doc, o.trust, revoked, stored, o.now(), x));
-      // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 내용이 같을 때만(신선도 재발행)
+      // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 monotonic·내용 다이제스트가 같을 때만(신선도 재발행).
+      // current.json 쓰기가 실패해도 {ver}.json은 같은 내용으로만 다시 쓸 수 있으므로, 같은 문서로 재시도하면 끝난다.
       const prev = await readJson<SignedPolicy>(`policy/${doc.version}.json`);
-      if (prev && prev.monotonic !== doc.monotonic) fail('registry.version_rollback');
+      if (prev && (prev.monotonic !== doc.monotonic || contentDigest(prev) !== contentDigest(doc))) fail('registry.version_rollback');
       await putJson(`policy/${doc.version}.json`, doc);
       await putJson('policy/current.json', doc);
       o.onEvent?.(v.emergency ? 'policy_emergency' : 'policy_published');

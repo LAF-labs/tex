@@ -313,6 +313,7 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     assert.equal((await e.stage('payroll.rate_tables@2026.1.0.sxp', Buffer.from(canonicalJson({ format: 'sxp/1', kind: 'data', body: 'e30=' })))).json.error, 'sxp.malformed');
     assert.equal((await e.put('/admin/v1/packages/..%2Fx@1.0.0.sxp', { data: 'AAAA' })).status, 404);
     assert.equal((await e.put('/admin/v1/packages/nodot@1.0.0.sxp', { data: 'AAAA' })).json.error, 'request.param_rejected');
+    assert.equal((await e.put('/admin/v1/packages/a..b@1.0.0.sxp', { data: 'AAAA' })).json.error, 'request.param_rejected');
     // 정상본은 받고, 같은 이름의 다른 바이트 덮어쓰기는 거부
     assert.equal((await e.stage(LOOKUP)).status, 201);
     assert.equal((await e.stage(LOOKUP)).status, 201);
@@ -411,6 +412,15 @@ describe('M4-7 레지스트리: 폐기 목록·정책·status', () => {
     assert.equal((await e.put('/admin/v1/policy', fresh(e, { ...policyBody(45), version: 'x' }, 'policy', [0, 1]))).json.error, 'registry.schema_invalid');
     // 소수 값(slowFactor 1.5)은 그대로 서명 대상이다
     assert.equal(((await e.req('GET', '/policy/current.json')).json.pace as { interactive: { slowFactor: number } }).interactive.slowFactor, 1.5);
+    // current.json 쓰기가 실패한 뒤: 같은 버전·monotonic의 다른 내용은 {ver}.json을 덮지 못하고, 같은 문서 재시도는 끝까지 간다
+    const put = e.store.put.bind(e.store);
+    e.store.put = (k: string, b: Buffer) => (k === 'policy/current.json' ? Promise.reject(new Error('disk')) : put(k, b));
+    const half = fresh(e, policyBody(46, { version: '2026.11.3' }), 'policy', [0, 1]);
+    assert.equal((await e.put('/admin/v1/policy', half)).status, 500);
+    e.store.put = put;
+    assert.equal((await e.put('/admin/v1/policy', fresh(e, policyBody(46, { version: '2026.11.3', hometax: 'assisted' }), 'policy', [0, 1]))).json.error, 'registry.version_rollback');
+    assert.equal((await e.put('/admin/v1/policy', half)).status, 200);
+    assert.equal((await e.req('GET', '/policy/current.json')).text, (await e.req('GET', '/policy/2026.11.3.json')).text);
   });
 
   it('status: 48시간, 긴급 키는 엄격하게 보수적인 변경(상한 하향·킬 추가)만', async () => {
