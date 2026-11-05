@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/playbook-ir.schema.json",
-  "title": "Sovereign AX Playbook IR v2 (rev v1.3)",
-  "description": "v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
+  "title": "Sovereign AX Playbook IR v2 (rev v1.3.1)",
+  "description": "v1.3.1 (M1-4: step `code`, verify `failSignals` for V-03j''). v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
   "type": "object",
   "required": ["ir", "id", "version", "portal", "profileKinds", "effects", "inputs", "steps", "postconditions"],
   "additionalProperties": false,
@@ -98,6 +98,12 @@
         "bind": {"type": "object", "additionalProperties": false, "properties": {"approvalNo": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}}}
       }
     },
+    "failSignals": {
+      "description": "V-03j'' (ADR-025, ADR-027): explicit failure signals on the submit screen. Each item is a (css, anchored ^...$ phrase) pair; only an element that newly appears after the click AND whose visible text (NFKC, whitespace folded) matches counts as not_committed evidence. Items without an anchored phrase are rejected by the static validator.",
+      "type": "array", "maxItems": 10,
+      "items": {"type": "object", "required": ["css", "text"], "additionalProperties": false,
+        "properties": {"css": {"type": "string", "minLength": 1, "maxLength": 120}, "text": {"type": "string", "minLength": 3, "maxLength": 120}}}
+    },
     "signFlow": {
       "description": "B-09. Part of the irreversible step X (runs inside the armed commit window). confirmTarget must be commits:true with the same commitEffect as the submit target; no L1/L2; exceeding maxWaitMs or any failure goes straight to verify. Actual order (click -> confirm -> signature -> request) is to be confirmed in S1.",
       "type": "object", "required": ["method", "maxWaitMs"], "additionalProperties": false,
@@ -118,7 +124,8 @@
         "pace": {"enum": ["normal", "slow"]},
         "timeoutMs": {"type": "integer", "minimum": 100, "maximum": 600000},
         "onFail": {"$ref": "#/$defs/onFail"},
-        "loopGuard": {"$ref": "#/$defs/loopGuard"}
+        "loopGuard": {"$ref": "#/$defs/loopGuard"},
+        "code": {"description": "Error code reported when this step fails (D16 taxonomy, e.g. assert.issue_date_mismatch). Codes only, never values.", "type": "string", "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$", "maxLength": 80}
       }
     },
     "step": {
@@ -146,7 +153,7 @@
          "allOf": [{"if": {"properties": {"secret": {"const": "security_card"}}}, "then": {"required": ["rowFrom"]}}]},
         {"properties": {"type": {"const": "sign"}, "method": {"anyOf": [{"enum": ["cert", "simple_auth", "security_card"]}, {"const": "$profile.signMethod"}]}, "then": {"type": "array", "items": {"enum": ["human:secret", "secret_fill:security_card"]}}}, "required": ["method"]},
         {"properties": {"type": {"const": "submit"}, "target": {"$ref": "#/$defs/targetRef"}, "intent": {"const": "$intent.id"}, "verify": {"$ref": "#/$defs/stepRef"}, "expectConfirm": {"$ref": "#/$defs/stringsKey"}, "signFlow": {"$ref": "#/$defs/signFlow"}, "onFail": {"$ref": "#/$defs/irreversibleOnFail"}}, "required": ["target", "intent", "verify"]},
-        {"properties": {"type": {"const": "verify"}, "lookup": {"$ref": "#/$defs/lookup"}, "on": {"type": "object", "required": ["committed", "not_committed", "unknown"], "additionalProperties": false, "properties": {"committed": {"$ref": "#/$defs/outcomeTarget"}, "not_committed": {"$ref": "#/$defs/outcomeTarget"}, "unknown": {"$ref": "#/$defs/outcomeTarget"}}}}, "required": ["lookup", "on"]},
+        {"properties": {"type": {"const": "verify"}, "lookup": {"$ref": "#/$defs/lookup"}, "failSignals": {"$ref": "#/$defs/failSignals"}, "on": {"type": "object", "required": ["committed", "not_committed", "unknown"], "additionalProperties": false, "properties": {"committed": {"$ref": "#/$defs/outcomeTarget"}, "not_committed": {"$ref": "#/$defs/outcomeTarget"}, "unknown": {"$ref": "#/$defs/outcomeTarget"}}}}, "required": ["lookup", "on"]},
         {"properties": {"type": {"const": "capture"}, "name": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}, "from": {"$ref": "#/$defs/from"}}, "required": ["name", "from"]},
         {"properties": {"type": {"const": "save_pdf"}, "strategy": {"enum": ["original", "print", "page_pdf", "wallet"]}, "docType": {"type": "string", "pattern": "^[a-z_]+$"}, "nameTemplate": {"type": "string", "maxLength": 120, "pattern": "^([A-Za-z0-9_/\\-]|\\{(docType|yyyy|MM|dd|yyyyMMdd|shortId)\\})+\\.pdf$"}}, "required": ["strategy", "docType"]},
         {"properties": {"type": {"const": "send_email"}, "via": {"enum": ["portal", "local"]}, "to": {"$ref": "#/$defs/inputRef"}, "attach": {"$ref": "#/$defs/artifactRef"}, "intent": {"const": "$intent.id"}, "followUpOf": {"$ref": "#/$defs/stepRef"}, "verify": {"$ref": "#/$defs/stepRef"}, "onFail": {"$ref": "#/$defs/irreversibleOnFail"}}, "required": ["via", "to", "followUpOf", "verify"]},

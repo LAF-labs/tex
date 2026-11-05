@@ -1,0 +1,113 @@
+{
+ "portal": "hometax",
+ "entries": {
+  "hometax.page.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "main",
+     "name": "홈택스"
+    }
+   ],
+   "role": "main",
+   "namePattern": "^홈택스$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.lookup.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "조회"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^조회$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.lookup.searchKey": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "searchbox",
+     "name": "검색어"
+    }
+   ],
+   "role": "searchbox",
+   "namePattern": "^검색어$",
+   "frame": "main",
+   "landmark": "hometax.lookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text"
+  },
+  "hometax.lookup.period": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "조회기간"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^조회기간$",
+   "frame": "main",
+   "landmark": "hometax.lookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "select",
+   "allowedConstants": [
+    "1일",
+    "1주일"
+   ]
+  },
+  "hometax.lookup.searchButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "조회하기"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^조회하기$",
+   "frame": "main",
+   "landmark": "hometax.lookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "navigationOnly": true,
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "조회 버튼"
+   }
+  },
+  "hometax.lookup.rows": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "table",
+     "name": "조회 결과"
+    }
+   ],
+   "role": "table",
+   "namePattern": "^조회 결과$",
+   "frame": "main",
+   "landmark": "hometax.lookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  }
+ },
+ "commitEndpoints": [],
+ "knownEndpoints": [
+  {
+   "method": "POST",
+   "pathPattern": "^/wqAction\\.do$"
+  }
+ ]
+}
