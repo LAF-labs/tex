@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@sax/bundle": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/docparse": "workspace:*",
     "@sax/engine": "workspace:*",

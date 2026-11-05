@@ -12,6 +12,7 @@ import {
   SESSION_EVENTS, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
+import { VaultCrypto } from './crypto/ops.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
 import { Relay } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
@@ -120,10 +121,13 @@ export class Vault {
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
   private readonly usedSlots = new Set<string>();
   readonly human: HumanSecretVault;
+  /** 장기 키 연산(D05 §5.1). Chrome과 무관하게 산다. */
+  readonly crypto: VaultCrypto;
 
   constructor(opts: VaultOptions) {
     this.opts = opts;
     this.policy = opts.policy ?? defaultRelayPolicy(SECRET_ORIGINS, TYPIST_KEY_DELAY_MS, TYPIST_INPUT_MODE);
+    this.crypto = new VaultCrypto({ keyStore: opts.keyStore, log: opts.log });
     this.human = opts.human ?? new HumanSecretVault({ backend: { items: new MemoryItemStore(), wrapper: new MemoryWrapper(), hello: new UnavailableHello() }, log: opts.log });
     // 잠기면 KEK는 HumanSecretVault가 지운다. main에는 상태만 알린다.
     const wipe = this.human.lock.onLock;
@@ -301,6 +305,16 @@ export class Vault {
         return this.requireOps().requestClose(p as never);
       case 'getDbKeyOnce':
         return this.getDbKeyOnce();
+      case 'crypto.publicKeys':
+        return this.crypto.publicKeys();
+      case 'crypto.noiseDH':
+        return { shared: await this.crypto.noiseDH(p) };
+      case 'crypto.signVd':
+        return { sig: await this.crypto.signVd(p) };
+      case 'crypto.signAik':
+        return { sig: await this.crypto.signAik(p) };
+      case 'crypto.hpkeOpen':
+        return { pt: await this.crypto.hpkeOpen(p) };
       case 'commitGuard.arm':
         return this.requireGuard().arm(p);
       case 'commitGuard.disarm':
