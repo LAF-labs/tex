@@ -150,6 +150,8 @@ export function acceptRevoked(next: RevokedKeys, ctx: { roots: TrustRoots; curre
   const iss = Date.parse(next.issuedAt);
   const exp = Date.parse(next.expiresAt);
   if (!(exp > iss) || exp - iss > REVOKED_MAX_VALIDITY_H * H) return { ok: false, code: 'registry.revoked_validity_too_long' };
+  // 이미 만료된 재서명이 아직 신선한 목록을 덮지 않게(정책의 expired_on_arrival과 같은 규칙).
+  if (exp <= ctx.now) return { ok: false, code: 'registry.expired_on_arrival' };
   const cur = ctx.current;
   const vp = monotonicProblem(cur ? { ...cur.list, contentDigest: cur.contentDigest } : null, next, digest);
   if (vp) return { ok: false, code: vp };
@@ -227,6 +229,7 @@ export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; rev
   if (issuedInFuture(next.issuedAt, ctx.now)) return { ok: false, code: 'registry.issued_in_future', events };
   const exp = Date.parse(next.expiresAt);
   if (!(exp > Date.parse(next.issuedAt)) || exp - Date.parse(next.issuedAt) > STATUS_MAX_AGE_H * H) return { ok: false, code: 'registry.status_validity_too_long', events };
+  if (exp <= ctx.now) return { ok: false, code: 'registry.expired_on_arrival', events };
   const cur = ctx.current;
   const vp = monotonicProblem(cur ? { ...cur.status, contentDigest: cur.contentDigest } : null, next, digest);
   if (vp) return { ok: false, code: vp, events };
@@ -238,11 +241,12 @@ export function acceptStatus(next: RegistryStatus, ctx: { roots: TrustRoots; rev
 export type StatusFreshness = 'fresh' | 'stale' | 'daemon_stop';
 
 /** 마지막 유효 status의 나이(받은 시각 기준이 아니라 issuedAt 기준). 48시간 넘으면 stale, 72시간이면 데몬 정지. */
-export function statusFreshness(s: Pick<RegistryStatus, 'issuedAt'> | null, now: number): StatusFreshness {
+export function statusFreshness(s: Pick<RegistryStatus, 'issuedAt' | 'expiresAt'> | null, now: number): StatusFreshness {
   if (!s) return 'daemon_stop';
   const age = now - Date.parse(s.issuedAt);
   if (age > STATUS_STALE_DAEMON_STOP_H * H) return 'daemon_stop';
-  if (age > STATUS_MAX_AGE_H * H) return 'stale';
+  // 48시간 또는 문서의 expiresAt 중 먼저 오는 쪽부터 stale.
+  if (age > STATUS_MAX_AGE_H * H || now >= Date.parse(s.expiresAt)) return 'stale';
   return 'fresh';
 }
 

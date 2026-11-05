@@ -232,6 +232,11 @@ describe('7단계 핫픽스', () => {
     rejected(withHf(hotfix(raw, { monotonic: h.monotonic + 1 }), held, st));
     rejected(withHf(h, { ...held, policyFresh: false }, st));
   });
+  it('JCS로 직렬화할 수 없는 핫픽스(외톨이 서로게이트)는 재로드 판정 전에 거부하고 패키지는 원래 후보로', () => {
+    const h = hotfix(raw);
+    const bad = { ...h, reason: 'x\ud800' } as Hotfix;
+    rejected(withHf(bad, {}, { keyEpoch: h.keyEpoch, monotonic: h.monotonic, digest: 'c'.repeat(64) }));
+  });
   it('조회 패키지에 대한 핫픽스는 항상 거부', () => {
     const files = lookups().get('hometax.invoice.lookup')!;
     const lraw = signPackage(files, two);

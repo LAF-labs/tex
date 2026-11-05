@@ -197,12 +197,13 @@ export function checkHotfix(input: HotfixInput, files: PackageFiles, mDigest: st
   const hf = input.hotfix;
   if (files.manifest.kind === 'lookup') return no('hotfix.lookup_package');
   if (!ctx.policyFresh) return no('hotfix.policy_stale');
+  // 다이제스트(JCS)를 계산하기 전에 스키마·JCS 가능 여부부터 본다(던지지 않고 거부).
+  const hs = schemaViolations('hotfix', hf);
+  if (hs.length || !canonicalizable(hf)) return no('hotfix.schema_invalid', hs);
   // 이미 적용한 핫픽스를 다시 로드(재시작)하는 것은 버전 내림이 아니고, 보류(hold) 중에도 설치본 그대로 얼려 둔다.
   const st = input.stored;
   const reload = !!st && st.keyEpoch === hf.keyEpoch && st.monotonic === hf.monotonic && st.digest === hotfixDigest(hf);
   if (ctx.hold && !reload) return no('hotfix.update_held');
-  const hs = schemaViolations('hotfix', hf);
-  if (hs.length || !canonicalizable(hf)) return no('hotfix.schema_invalid', hs);
   if (hf.appliesTo.id !== files.manifest.id || hf.appliesTo.version !== files.manifest.version || hf.appliesTo.packageDigest !== mDigest) return no('hotfix.applies_to_mismatch');
   if (countSignatures(canonicalWithout(hf, ['signatures']), hf.signatures, ctx.roots.packageKeys, ctx.revoked).valid.length < 2) return no('registry.signature_insufficient');
   const ep = epochProblem(hf, ctx.roots);

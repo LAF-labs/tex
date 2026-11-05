@@ -73,6 +73,11 @@ describe('acceptRevoked (D09 §8.4)', () => {
     const r = revoked();
     assert.deepEqual(ok({ ...r, timestamp: sigOf(K.ts, Buffer.from('x')) }), { ok: false, code: 'registry.timestamp_invalid' });
   });
+  it('이미 만료된 재서명은 신선한 목록을 덮지 않는다(registry.expired_on_arrival)', () => {
+    const first = ok(revoked());
+    assert.ok(first.ok);
+    assert.deepEqual(ok(revoked({ issuedAt: iso(NOW - 25 * H), expiresAt: iso(NOW - H) }), first.accepted), { ok: false, code: 'registry.expired_on_arrival' });
+  });
   it('목록 축소는 거부(폐기는 되돌릴 수 없다), 같은 monotonic의 재서명은 받는다', () => {
     const first = ok(revoked());
     assert.ok(first.ok);
@@ -175,6 +180,10 @@ describe('acceptStatus (B-22, E-04, E-05)', () => {
     assert.deepEqual(run({ ...s, killPlaybooks: [] , portalModeCeiling: {}, timestamp: { ...s.timestamp, keyId: 'ts-\ud800' } }), { ok: false, code: 'registry.schema_invalid', events: [] });
     assert.deepEqual(acceptRevoked({ ...revoked(), revoked: [{ keyId: 'pkg-9', role: 'package', revokedAt: iso(NOW - H) }], timestamp: { keyId: '\udc00', alg: 'ed25519', sig: 'x' } } as RevokedKeys, { roots: K.roots, current: null, now: NOW }), { ok: false, code: 'registry.schema_invalid' });
   });
+  it('이미 만료된 재서명은 신선한 status를 덮지 않는다(registry.expired_on_arrival)', () => {
+    const cur = base();
+    assert.deepEqual(run(status({ issuedAt: iso(NOW - 30 * H), expiresAt: iso(NOW - H) }), cur), { ok: false, code: 'registry.expired_on_arrival', events: [] });
+  });
   it('폐기된 타임스탬프 키의 신선도 서명은 registry.timestamp_invalid', () =>
     assert.deepEqual(acceptStatus(status(), { roots: K.roots, revoked: new Set(['ts-1']), current: null, now: NOW }), { ok: false, code: 'registry.timestamp_invalid', events: [] }));
   it('직전 status가 없어도 엄격하게 보수적인 긴급 status는 받는다(첫 설치, 팀장 결정 2026-11-05)', () =>
@@ -210,8 +219,9 @@ describe('acceptStatus (B-22, E-04, E-05)', () => {
     assert.equal(effectiveStatus(re.accepted, quorum, NOW + 73 * H)?.portalModeCeiling.hometax, 'auto');
   });
   it('status 나이: 48시간 넘으면 stale, 72시간 넘으면 데몬 정지, 없으면 데몬 정지', () => {
-    const s = { issuedAt: iso(NOW) };
+    const s = { issuedAt: iso(NOW), expiresAt: iso(NOW + 48 * H) };
     assert.equal(statusFreshness(s, NOW + 47 * H), 'fresh');
+    assert.equal(statusFreshness({ issuedAt: iso(NOW), expiresAt: iso(NOW + 24 * H) }, NOW + 25 * H), 'stale', 'expiresAt이 48시간보다 먼저면 그때부터 stale');
     assert.equal(statusFreshness(s, NOW + 49 * H), 'stale');
     assert.equal(statusFreshness(s, NOW + 73 * H), 'daemon_stop');
     assert.equal(statusFreshness(null, NOW), 'daemon_stop');
