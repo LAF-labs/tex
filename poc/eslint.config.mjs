@@ -36,7 +36,7 @@ const LOAD_RULES = [
 ];
 
 /** 송신 규칙 범위(RETRO A-12). e2e·fixture(가짜 홈택스 서버·송신 차단 시험)는 아래에서 명시 면제한다. */
-const SEND_SCOPE = ['packages/engine/**/*.ts', 'packages/model/**/*.ts', 'packages/vault/**/*.ts', 'packages/platform/**/*.ts', 'packages/db/**/*.ts', 'apps/desktop/src/**/*.ts'];
+const SEND_SCOPE = ['packages/engine/**/*.ts', 'packages/model/**/*.ts', 'packages/vault/**/*.ts', 'packages/platform/**/*.ts', 'packages/db/**/*.ts', 'packages/payroll/**/*.ts', 'packages/bundle/**/*.ts', 'apps/desktop/src/**/*.ts'];
 const SEND_EXEMPT = ['apps/desktop/src/*e2e.ts', 'apps/desktop/src/h01-fixture.ts'];
 /** 금지 인자 목록을 문자열로 갖는 금고 파일(포트 셀렉터 한 줄만 면제). */
 const VAULT_PORT_LISTS = ['packages/vault/src/constants.ts', 'packages/vault/src/chrome/launch.ts'];
