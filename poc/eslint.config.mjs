@@ -66,7 +66,7 @@ const SECRET_EXEMPT = ['packages/vault/src/leak/scanner.ts', 'packages/vault/src
 const VAULT_PORT_LISTS = ['packages/vault/src/constants.ts', 'packages/vault/src/chrome/launch.ts'];
 
 export default tseslint.config(
-  { ignores: ['**/dist/**', '**/node_modules/**', 'reports/**'] },
+  { ignores: ['**/dist/**', '**/node_modules/**', 'reports/**', '.tmp/**'] },
   js.configs.recommended,
   { languageOptions: { globals: { ...globals.node } } },
   ...tseslint.configs.recommended,

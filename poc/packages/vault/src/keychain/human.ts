@@ -110,7 +110,13 @@ export class HumanSecretVault {
       }
       return m;
     })();
-    return this.indexP;
+    // 읽기 실패(키체인 잠김·권한 등 일시 오류)를 캐시하지 않는다. 다음 연산에서 다시 읽는다.
+    // (항목이 없을 때는 getSecret이 null로 끝난다: @napi-rs/keyring 2.1.2, macOS 실측. Windows 실측 필요.)
+    const p = this.indexP;
+    p.catch(() => {
+      if (this.indexP === p) this.indexP = null;
+    });
+    return p;
   }
 
   private async saveIndex(m: Map<string, SlotIndex>): Promise<void> {

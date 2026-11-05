@@ -1,6 +1,7 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
 import { g24Card, g24Panel } from './shell-g24.js';
+import { onboardingView } from './shell-onboarding.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -28,6 +29,7 @@ const state = {
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
   boardOpen: true, // 판 펼침(접으면 한 줄 요약)
   boardExpanded: new Set(), // "n건 더 보기"로 펼친 카드 종류
+  onb: null, // 온보딩(main OnbView). null이면 이미 등록을 마친 사용자
   docFilter: 'all',
   docImport: null, // { pickId, wrong, pw, show } 열기 암호를 묻는 중(문서함 위 모달)
   docLocked: new Set(), // 이번 실행에서 열기 암호로 가져온 서류 id(목록 자물쇠). 엔진은 암호 여부를 저장하지 않는다.
@@ -297,10 +299,58 @@ function buildChat() {
     h('div', { class: 'bar-slot', 'aria-hidden': 'true' }),
     h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, h('div', { class: 'sx-input' }, attach, chat.input, sendBtn))),
   );
-  for (const item of state.boot.timeline) appendThread(timelineItem(item), false);
+  // 온보딩 중이면 대화의 첫 부분이 온보딩이다(08 §4). 끝난 사용자는 지난 타임라인을 그린다.
+  if (state.onb) {
+    appendThread(h('div', { 'data-onboarding': '' }), false);
+    renderOnboarding();
+  } else for (const item of state.boot.timeline) appendThread(timelineItem(item), false);
   renderQuick();
   renderToday();
 }
+
+// ---- 온보딩(08 §4, M4-2) ----
+
+const ONB_ERR = {
+  bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
+  biz_inactive: '이 사업자는 지금 등록할 수 없는 상태예요.',
+  bad_cert: '인증서를 다시 골라 주세요.',
+  bad_email: '이메일 주소 모양이 맞지 않아요. 다시 확인해 주세요.',
+  no_tasks: '지금 되는 일 중 하나 이상 골라 주세요.',
+  stale_step: '이미 답한 질문이에요.',
+  gesture_required: '버튼을 직접 눌러 주세요.',
+};
+const onbAct = {
+  reply: async (step, choice, extra = {}) => {
+    try {
+      const r = await call('onboarding.reply', { step, choice, ...extra });
+      state.onb = r.onboarding;
+      if (r.profiles) state.boot.profiles = r.profiles;
+      renderOnboarding();
+      renderTitlebar();
+      renderToday();
+      if (r.fill) fillComposer(r.fill);
+      return true;
+    } catch (e) {
+      toast(ONB_ERR[errText(e)] ?? '다시 해 주세요');
+      return false;
+    }
+  },
+  go: (v) => go(v),
+  toast,
+  rerender: () => renderOnboarding(),
+};
+/** 온보딩 영역을 지금 상태로 다시 그린다. 약관(④) 동의 전에는 입력창을 막는다(main도 onboarding_terms로 거부한다). */
+function renderOnboarding() {
+  const old = chat.thread?.querySelector('[data-onboarding]');
+  if (!old || !state.onb) return;
+  old.replaceWith(onboardingView(state.onb, onbAct));
+  const locked = !state.onb.consents.terms;
+  chat.input.disabled = locked;
+  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서나 증명서를 말해 주세요';
+  renderQuick();
+  scrollToEnd();
+}
+const onbActive = () => !!state.onb && state.onb.step !== 'done';
 
 function timelineItem(it) {
   switch (it.type) {
@@ -365,6 +415,8 @@ function fillChips(chips) {
 }
 
 function renderQuick() {
+  // 온보딩 중에는 빠른 실행 칩을 두지 않는다(맡긴 업무를 고른 뒤에 생긴다, 08 §4 O-06). 카드의 칩만 누른다.
+  if (onbActive()) return chat.quick.replaceChildren();
   const text = chat.input.value;
   if (/계산서/.test(text)) {
     // T-01: 보내기 전 부가세 [별도] [포함]. 고르지 않으면 별도로 계산한다.
@@ -484,8 +536,15 @@ function renderG24(g) {
  */
 function renderToday() {
   if (!chat.today) return;
+  // 온보딩 중에는 판을 두지 않는다(대화가 한 번에 하나씩 묻는다). 끝나면 건너뛴 항목이 판의 할 일로 남는다(08 §4).
+  chat.today.hidden = onbActive();
+  if (onbActive()) return;
   const b = state.board;
   const items = b ? b.cards.flatMap((c) => c.items) : [];
+  const setup = b?.setup ?? [];
+  const setupRow = setup.length
+    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => go(x.view) }, x.label)))
+    : null;
   const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
   const counts = b
     ? [
@@ -504,8 +563,8 @@ function renderToday() {
     items.length ? toggle : null,
   );
   chat.today.classList.toggle('is-closed', !state.boardOpen || !items.length);
-  if (!state.boardOpen || !items.length) return chat.today.replaceChildren(head);
-  chat.today.replaceChildren(head, h('div', { class: 'board-cards' }, ...b.cards.map(boardCard)));
+  if (!state.boardOpen || !items.length) return chat.today.replaceChildren(head, ...(state.boardOpen && setupRow ? [setupRow] : []));
+  chat.today.replaceChildren(head, ...(setupRow ? [setupRow] : []), h('div', { class: 'board-cards' }, ...b.cards.map(boardCard)));
 }
 
 /** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더 보기"로 그 자리에서 펼친다(줄마다 갈 곳이 달라 다른 화면으로 보내지 않는다). */
@@ -1390,6 +1449,7 @@ async function boot() {
   state.docs = [...state.boot.docs];
   state.cps = state.boot.counterparties;
   state.board = state.boot.board ?? null;
+  state.onb = state.boot.onboarding ?? null;
   const L = state.boot.layout;
   const root = document.documentElement.style;
   for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);

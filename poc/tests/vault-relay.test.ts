@@ -144,11 +144,16 @@ describe('vault relay (raw engine)', () => {
     const secret = testSecret('TEST-CERT');
     secrets.push(secret);
     await h.control.rpc('run.begin', { runId: 'r1', trigger: 'local' });
-    await h.provide({ runId: 'r1', kind: 'cert_password', scope: 'personal' }, secret);
     await eng.navigate(sid, `${fx.origin}/login`);
     await eng.evaluate(sid, `document.getElementById('pw').focus()`);
+    // 값이 없으면 금고가 secret.needed로 1회용 입력 창을 부르고, 그 결속으로 받은 값을 넣는다(ADR-025 결정 10).
+    const fill = { runId: 'r1', targetId, frame: 'main', element: '#pw', secret: { kind: 'portal_password', scope: 'personal' }, slot: { secretKind: 'portal_password', purpose: 'login' } };
+    const needed = h.control.once('secret.needed', (d) => d.runId === 'r1');
+    assert.deepEqual(await h.client.rpc('typist.fill', fill), { ok: false, reason: 'secret_missing' });
+    await needed;
+    await h.provide({ runId: 'r1', kind: 'portal_password', scope: 'personal' }, secret);
     const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId);
-    const r = await h.client.rpc<{ ok: boolean; reason?: string }>('typist.fill', { runId: 'r1', targetId, frame: 'main', element: '#pw', secret: { kind: 'cert_password', scope: 'personal' }, slot: { secretKind: 'cert_password', purpose: 'login' } });
+    const r = await h.client.rpc<{ ok: boolean; reason?: string }>('typist.fill', fill);
     assert.deepEqual(r, { ok: true });
     await closed;
 
