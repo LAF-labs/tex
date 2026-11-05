@@ -36,8 +36,8 @@ export interface RegistryAppOpts {
 const POLL = 'public, max-age=60';
 const IMMUTABLE = 'public, max-age=31536000, immutable';
 
-/** {id}@{version}.sxp. id는 manifest 패턴(점 필수, 핫픽스는 <appliesTo.id>.hotfix) */
-const PACKAGE_FILE = /^([a-z0-9]+(?:\.[a-z0-9_]+)+)@(\d+\.\d+\.\d+)\.sxp$/;
+/** {id}@{version}.sxp. id는 점 필수(핫픽스는 <appliesTo.id>.hotfix, 데이터 패키지는 `-` 허용). 종류별 id 규칙은 .sxp 안 스키마가 본다 */
+const PACKAGE_FILE = /^([a-z0-9]+(?:\.[a-z0-9_-]+)+)@(\d+\.\d+\.\d+)\.sxp$/;
 const POLICY_FILE = /^(\d{4}\.\d{2}(?:\.\d+)?)\.json$/;
 
 export function registryRouter(o: RegistryAppOpts): Router {
@@ -146,7 +146,6 @@ export function registryRouter(o: RegistryAppOpts): Router {
           const b = await store.get(`packages/${e.id}@${e.version}.sxp`);
           if (!b) fail('registry.not_found');
           verifyPackageBytes(b!, e);
-          if (e.kind === 'data') continue; // 데이터 패키지 컨테이너는 SIGNING.md 범위 밖(올리는 단계에서 이미 거부된다)
           const info = checked((v) => verifySxp(b!, e, o.trust, revoked, o.now(), v));
           if (info.kind !== e.kind || (e.portal !== undefined && e.portal !== info.portal)) fail('registry.schema_invalid');
         }

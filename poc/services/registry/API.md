@@ -23,6 +23,7 @@
 | status `registry/status.json` | 위와 같은 규칙 | 정책 키 2-of-3 또는 긴급 키 1 | `timestamp` ≤ 48시간 | `registry.status_validity_too_long` |
 | 폐기 목록 `registry/revoked_keys.json` | 위와 같은 규칙 | 루트 키 2-of-3 | `timestamp` ≤ 24시간 | `registry.revoked_validity_too_long` |
 | 릴리스 `releases/{channel}/latest.json` | JCS(manifest − `signature`) | 릴리스 키 1 | 문서 안 ≤ 14일 | `registry.release_validity_too_long` |
+| 릴리스 `rootChange`(선택) | JCS(manifest − `signature`, `rootChange` − `signatures`) | 루트 2-of-3 | 위와 같음 | `registry.signature_insufficient`·`registry.key_epoch_mismatch` |
 
 채널: `stable`·`beta`·`hotfix`. 다른 이름은 `registry.not_found`.
 
@@ -48,12 +49,12 @@
 
 | 경로 | 본문 | 성공 | 검증 |
 |---|---|---|---|
-| `PUT /admin/v1/packages/{id}@{x.y.z}.sxp` | `{"data":"<base64 .sxp>"}`(≤ 24MB 본문) | `201 {"sxpDigest","size","kind"}` | `.sxp` v1 정규형(`sxp.*`), 안의 manifest·hotfix 스키마(`registry.schema_invalid`)·패키지 키 2-of-3·`contentDigests` = 원시 파일 바이트(`registry.content_digest_mismatch`), 파일 이름 = manifest id·version(핫픽스는 `<appliesTo.id>.hotfix@<keyEpoch>.<monotonic>.0`), 위택스 거부. 같은 이름에 다른 바이트면 `registry.content_digest_mismatch`(불변 경로), 같은 바이트는 멱등 |
+| `PUT /admin/v1/packages/{id}@{x.y.z}.sxp` | `{"data":"<base64 .sxp>"}`(≤ 24MB 본문) | `201 {"sxpDigest","size","kind"}` | `.sxp` v1 정규형(`sxp.*`), 안의 manifest·hotfix·데이터 기술자 스키마(`registry.schema_invalid`)·패키지 키 2-of-3·`contentDigests`(데이터는 `bodyDigest`) = 원시 바이트(`registry.content_digest_mismatch`), 파일 이름 = manifest·기술자 id·version(핫픽스는 `<appliesTo.id>.hotfix@<keyEpoch>.<monotonic>.0`), 위택스 거부. 같은 이름에 다른 바이트면 `registry.content_digest_mismatch`(불변 경로), 같은 바이트는 멱등 |
 | `PUT /admin/v1/index/{channel}` | 인덱스(≤ 512KB) | `200 {"monotonic"}` | 위 공통 + 항목 검사 + **가리키는 `.sxp`가 먼저 올라와 있고** 바이트가 `sxpDigest`·`size`와 같고(없으면 `registry.not_found`, 다르면 `registry.content_digest_mismatch`) 안의 종류·포털이 항목과 같아야 함 |
 | `PUT /admin/v1/policy` | 서명된 정책 | `200 {"monotonic","emergency"}` | `{ver}.json`이 이미 있으면 같은 `monotonic`(신선도 재서명)만(`registry.version_rollback`) |
 | `PUT /admin/v1/status` | status | `200 {"monotonic","emergency"}` | 긴급 키 단독본은 아래 "엄격하게 보수적"만 |
 | `PUT /admin/v1/revoked-keys` | 폐기 목록 | `200 {"monotonic"}` | 이전 목록의 키가 빠지면 `registry.revoked_shrunk`(폐기는 되돌릴 수 없다) |
-| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함(`registry.version_rollback`). `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
+| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함. 같은 version은 `files`가 같을 때만(신선도 재발행), 그 밖은 `registry.version_rollback`. `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
 
 ## 형식
 
@@ -71,9 +72,9 @@
 }
 ```
 
-- 최상위·항목 필드는 위에 적은 것만(그 밖은 `registry.schema_invalid`). `entries` ≤ 500, `id@version` 중복 금지, `id`는 manifest 패턴(점 필수), `kind` ∈ `playbook|lookup|hotfix|data`, `size` 1B~16MB, `rolloutPercent` 0~100.
+- 최상위·항목 필드는 위에 적은 것만(그 밖은 `registry.schema_invalid`). `entries` ≤ 500, `id@version` 중복 금지, `id`는 점 필수(`[a-z0-9]+(\.[a-z0-9_-]+)+`, `-`는 데이터 패키지만: 종류별 id 규칙은 .sxp 안 스키마가 본다), `kind` ∈ `playbook|lookup|hotfix|data`, `size` 1B~16MB, `rolloutPercent` 0~100.
 - 핫픽스(SIGNING.md §6): `hotfix` 채널에만, `kind: "hotfix"`, `id` = `<appliesTo.id>.hotfix`, `version` = `<keyEpoch>.<monotonic>.0`. 다른 채널에 핫픽스 항목·`.hotfix`로 끝나는 패키지 id는 거부한다.
-- 데이터 패키지(`kind: "data"`, 급여 시행일 표 M6-10): 서명 안 본문 스키마는 [`packages/payroll/schema/rate-table-package.schema.json`](../../packages/payroll/schema/rate-table-package.schema.json)(`sax.rate-tables/v1`), 서명·타임스탬프는 SIGNING.md 규약을 따른다. `.sxp` 컨테이너의 `data` 종류는 SIGNING.md §6이 아직 정하지 않아(범위 밖), 관문은 데이터 패키지 업로드를 지금은 거부한다(`sxp.malformed`). §6에 들어오면 같은 관문으로 받는다.
+- 데이터 패키지(`kind: "data"`, 급여 시행일 표 M6-10): `.sxp`는 SIGNING.md §6 `{format, kind:"data", descriptor, body}`(엔진 #85). 관문은 엔진 `loadDataPackage`를 그대로 부른다: 기술자 [`data_descriptor.schema.json`](../../packages/engine/schemas/data_descriptor.schema.json)·`.hotfix` 금지·keyEpoch·issuedAt·패키지 키 2-of-3(폐기 반영) → `bodyDigest` = 본문 원시 바이트 → 등록된 schema 이름의 검증기. `sax.rate-tables/v1` 검증기는 `@sax/payroll`의 `validatePackage`([`rate-table-package.schema.json`](../../packages/payroll/schema/rate-table-package.schema.json) + 같은 종류 겹침 규칙)이고 관문은 규칙을 다시 구현하지 않는다. 등록되지 않은 schema는 `registry.schema_invalid`. 인덱스 항목은 `portal` 없이, 안의 종류와 같아야 한다. 버전 내림은 인덱스 단조성이 막는다.
 - `portal: "wetax"`는 `registry.portal_blocked`(허락 회신 전, D09 §8.6·ADR-022 결정 2).
 - **롤아웃**: 서버는 기기를 모른다. 클라이언트가 `bucket = u32be(sha256("SAX-rollout-v1\0" ‖ id ‖ "\0" ‖ deviceId)[0..4]) mod 100`을 계산해 `bucket < rolloutPercent`일 때만 받는다(1 → 10 → 100).
 
@@ -111,6 +112,8 @@
   "signature": { "keyId": "release-1", "alg": "ed25519", "sig": "…" } }
 ```
 
+선택 필드 `rootChange: {keyEpoch, changes, signatures}`(뿌리 변경 릴리스, ADR-028 결정 3, [`@sax/updater`](../../packages/updater/src/manifest.ts)와 같은 모양): `changes`는 `keyEpoch`·`allowlist`·`ceiling` 중 중복 없이 1개 이상, `changes`에 `keyEpoch`가 있으면 `keyEpoch`가 지금 핀보다 커야 하고 없으면 같아야 한다. 루트 키가 먼저 서명하고, 릴리스 키는 루트 서명까지 포함한 매니페스트에 서명한다. 게시본은 시험에서 `@sax/updater` `verifyRelease`가 그대로 받는다.
+
 `files` 1~8개, `url`은 `^[A-Za-z0-9._-]{1,128}$`(경로·개행 없음, YAML 주입 없음). `latest.yml`은 이 매니페스트에서 `version`·`files`·`path`·`sha512`·`releaseDate`만 옮긴다. 클라이언트 main은 `latest.json` 서명·만료·다운그레이드를 직접 검증한 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
 
 ## 오류 코드
@@ -125,4 +128,3 @@
 ## 범위 밖(후속)
 
 - 투명성 로그(RFC 9162 트리 헤드)·별도 호스트 미러: 엔진에 `merkleRoot`·`verifyConsistency`가 있다. 레지스트리 쪽 로그 추가·헤드 서명 바이트는 D09 §8과 함께 정한다.
-- 데이터 패키지 `.sxp` 종류(SIGNING.md §6 추가 대기).

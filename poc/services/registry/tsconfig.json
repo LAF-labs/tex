@@ -5,5 +5,5 @@
     "outDir": "dist"
   },
   "include": ["src"],
-  "references": [{ "path": "../shared" }, { "path": "../../packages/engine" }]
+  "references": [{ "path": "../shared" }, { "path": "../../packages/engine" }, { "path": "../../packages/payroll" }]
 }
