@@ -4,10 +4,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 import { addDays, daysLeft, decideExpiry, extractDocMeta, kstToday, l0ShadowPick, validateDocMeta, validityCandidate, worthOcr, type DocMetaExtract } from '@sax/engine';
-// @ts-expect-error 샌드박스 정적 모듈(JS)
-import { cleanForOcr } from '../apps/desktop/static/docparse-image.mjs';
-// @ts-expect-error 샌드박스 정적 모듈(JS)
-import { assessTextLayer, itemsToLines, tidyText } from '../apps/desktop/static/docparse-text.mjs';
+import { assessTextLayer, cleanForOcr, itemsToLines, tidyText } from '@sax/docparse/sandbox';
 
 const BIZ = syntheticBizNo(7);
 const BIZ_F = formatBizNo(BIZ);
