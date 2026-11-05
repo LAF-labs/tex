@@ -6,7 +6,8 @@ import path from 'node:path';
 const dir = path.resolve(process.argv[2] ?? '.');
 const logs = fs.existsSync(dir) ? fs.readdirSync(dir).filter((f) => f.endsWith('.log')).sort() : [];
 // ANSI 색 코드 제거
-const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
+const ANSI = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
+const strip = (s) => s.replace(ANSI, '');
 const out = ['## 시험 요약', ''];
 if (!logs.length) out.push(`로그 없음(${dir}). 시험 전 단계(설치·빌드·린트)에서 실패했다.`);
 for (const f of logs) {
