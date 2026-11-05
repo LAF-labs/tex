@@ -159,6 +159,19 @@ describe('근무표(M6-15)', () => {
 });
 
 describe('시행일 표 패키지(M6-10)', () => {
+  it('열린 표 뒤에 다음 표: 앞 표는 그 전날까지, 같은 시작일은 겹침, 닫힌 표 뒤 빈 기간은 없음', () => {
+    const next = { ...ins, id: 'ins-2027', effectiveFrom: '2027-01-01' };
+    const pkg2: RateTablePackage = { schema: 'sax.rate-tables/v1', packageVersion: '2026.11.2', tables: [simple, ins, next, bounds, nontax] };
+    assert.deepEqual(validatePackage(pkg2), []);
+    assert.equal(pickTables(pkg2.tables, { taxDate: '2026-12-31', insuranceDate: '2026-12-01' }).insurance.id, 'ins-test');
+    assert.equal(pickTables(pkg2.tables, { taxDate: '2027-01-10', insuranceDate: '2027-01-01' }).insurance.id, 'ins-2027');
+    assert.ok(validatePackage({ ...pkg2, tables: [...pkg2.tables, { ...next, id: 'ins-2027b' }] }).some((b) => b.startsWith('overlap:')));
+    assert.ok(validatePackage({ ...pkg2, tables: [...pkg2.tables, { ...ins, id: 'ins-mid', effectiveFrom: '2026-06-01', effectiveTo: '2027-02-01' }] }).some((b) => b.startsWith('overlap:')));
+    const gap = [simple, ins, { ...ins, id: 'ins-short', effectiveFrom: '2026-03-01', effectiveTo: '2026-04-30' }, bounds, nontax];
+    assert.equal(pickTables(gap, { taxDate: '2026-04-10', insuranceDate: '2026-04-01' }).insurance.id, 'ins-short');
+    assert.throws(() => pickTables(gap, { taxDate: '2026-05-10', insuranceDate: '2026-05-01' }), /rate_table_missing:insurance_rate/);
+  });
+
   const pkg: RateTablePackage = { schema: 'sax.rate-tables/v1', packageVersion: '2026.11.1', tables: [simple, ins, bounds, nontax] };
   it('스키마·의미 규칙 통과, 시행일로 고른다', () => {
     assert.deepEqual(validatePackage(pkg), []);

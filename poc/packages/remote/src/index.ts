@@ -14,6 +14,7 @@ export * from './noise.ts';
 export * from './pairing.ts';
 export * from './qr.ts';
 export * from './relay.ts';
+export * from './ws-link.ts';
 export * from './session.ts';
 export * from './transfer.ts';
 export * from './ulid.ts';

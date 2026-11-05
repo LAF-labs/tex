@@ -1,14 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
-import { EXTENSION_ALLOWLIST, SECRET_ORIGINS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
+import { EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
 import { findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
 import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
 import {
-  PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, SECRET_KINDS, SECURITY_CARD_ROWS, STORABLE_KINDS,
+  PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, isTypistKind, SECURITY_CARD_ROWS, STORABLE_KINDS,
   SESSION_EVENTS, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
@@ -32,6 +32,14 @@ function parsePortalLoginId(v: unknown): string | undefined | null {
   return s;
 }
 
+interface NeedLike {
+  runId: unknown;
+  kind: unknown;
+  scope: unknown;
+  row?: unknown;
+}
+const needKey = (n: NeedLike): string => `${String(n.runId)}|${String(n.kind)}|${String(n.scope)}|${n.row ?? ''}`;
+
 const isRow = (r: unknown): r is number => Number.isInteger(r) && (r as number) >= SECURITY_CARD_ROWS.min && (r as number) <= SECURITY_CARD_ROWS.max;
 
 /** secretInput 결속 검사(I-1). 맞으면 필요한 필드만 복사해 돌려준다. mode가 없으면 oneshot(PoC 호환). */
@@ -49,8 +57,10 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   }
   if (x.mode !== undefined && x.mode !== 'oneshot') return null;
   if (typeof x.runId !== 'string' || !RUN_ID_RE.test(x.runId)) return null;
-  if (typeof x.kind !== 'string' || !(SECRET_KINDS as readonly string[]).includes(x.kind) || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
-  if (x.row !== undefined && !isRow(x.row)) return null;
+  // 1회용 입력 창은 타이피스트가 넣는 종류만(인증서 비밀번호는 사용자가 포털 칸에 직접, ADR-020 결정 2·ADR-025 결정 10).
+  if (!isTypistKind(x.kind) || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
+  // 보안카드는 칸 하나씩(row 필수), 포털 비밀번호는 칸 번호가 없다(D05 §4).
+  if (x.kind === 'security_card' ? !isRow(x.row) : x.row !== undefined) return null;
   const out: OneShotBind = { runId: x.runId, kind: x.kind as SecretKind, scope: x.scope };
   if (x.row !== undefined) out.row = x.row as number;
   return out;
@@ -100,6 +110,8 @@ export class Vault {
   private dbKeyIssued = false;
   private profileProblems: string[] | null = null;
   private readonly pendingTriggers = new Map<string, RunTrigger>();
+  /** 금고가 보낸 secret.needed(runId|kind|scope|row → 만료 시각). 1회용 입력 창은 여기에 있는 결속만 받는다. Chrome을 다시 띄워도 남는다. */
+  private readonly needs = new Map<string, number>();
   /** run별 활성 프로필(Q-2). run.begin에서 고정하고 run.end까지 바꾸지 않는다. */
   private readonly runProfiles = new Map<string, ProfileScope>();
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
@@ -133,6 +145,11 @@ export class Vault {
         this.opts.log.event('vault.secret_input_unbound');
         return;
       }
+      // 1회용 입력 창은 금고가 secret.needed로 부른 것만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
+      if (b.mode !== 'store' && !this.hasNeed(b)) {
+        this.opts.log.event('vault.secret_input_unrequested', { kind: b.kind });
+        return;
+      }
       const state = { used: false };
       port.onMessage((raw) => this.onSecretInput(port, b, state, raw as InboundMessage));
       return;
@@ -156,6 +173,25 @@ export class Vault {
   }
 
   /** 금고 이벤트(I-2·I-3). */
+  /** secret.needed를 기록한다. 만료된 기록은 이때 함께 지운다. */
+  private recordNeed(n: NeedLike): void {
+    const now = Date.now();
+    for (const [k, until] of this.needs) if (now > until) this.needs.delete(k);
+    this.needs.set(needKey(n), now + (this.opts.secretTtlMs ?? SECRET_TTL_MS));
+  }
+
+  /** 금고가 보낸 secret.needed가 아직 살아 있나(만료된 것은 지운다). */
+  private hasNeed(b: OneShotBind): boolean {
+    const k = needKey(b);
+    const until = this.needs.get(k);
+    if (until === undefined) return false;
+    if (Date.now() > until) {
+      this.needs.delete(k);
+      return false;
+    }
+    return true;
+  }
+
   private emit(to: ReadonlyArray<'engine' | 'control'>, name: VaultEventName, data: Record<string, unknown>): void {
     for (const k of to) {
       const port = k === 'engine' ? this.enginePort : this.controlPort;
@@ -210,7 +246,10 @@ export class Vault {
       if (!bytes) throw new Error('bytes required');
       const same = (k: 'kind' | 'scope' | 'row') => p[k] === undefined || p[k] === bind[k];
       if (!same('kind') || !same('scope') || !same('row')) throw new Error('bind_mismatch');
+      // 포트를 붙인 뒤 요청이 만료·소비됐으면(같은 요청에 창이 둘 등) 받지 않는다.
+      if (!this.hasNeed(bind)) throw new Error('not_requested');
       this.requireOps().secrets.provide(bind, bytes);
+      this.needs.delete(needKey(bind));
       this.post(port, { t: 'rpc', id: msg.id, result: {} });
     } catch (e) {
       bytes?.fill(0);
@@ -277,6 +316,7 @@ export class Vault {
         this.ops?.runTriggers.delete(runId);
         this.pendingTriggers.delete(runId);
         this.runProfiles.delete(runId);
+        for (const k of [...this.needs.keys()]) if (k.startsWith(runId + '|')) this.needs.delete(k);
         this.ops?.secrets.clearRun(runId);
         for (const k of [...this.usedSlots]) if (k.startsWith(runId + '|')) this.usedSlots.delete(k);
         // 열린 창이 없으면 알려진 값 변형을 전부 버린다(N-78).
@@ -412,7 +452,9 @@ export class Vault {
   private async attachRelay(conn: LaunchedChrome['conn']): Promise<LaunchResult> {
     // 내린 뒤의 옛 중계·비밀 동작 이벤트는 다음 Chrome의 포트로 보내지 않는다.
     const emit = (to: ReadonlyArray<'engine' | 'control'>, name: VaultEventName, data: Record<string, unknown>) => {
-      if (this.relay === relay) this.emit(to, name, data);
+      if (this.relay !== relay) return;
+      if (name === 'secret.needed') this.recordNeed(data as unknown as NeedLike);
+      this.emit(to, name, data);
     };
     const relay: Relay = new Relay({
       conn,

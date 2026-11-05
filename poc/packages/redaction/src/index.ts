@@ -1,4 +1,5 @@
 export type { RedactedText } from './redacted.ts';
+export { wasMinted, RECEIPT_CAP } from './redacted.ts';
 export * from './apply.ts';
 export * from './entities.ts';
 export * from './tree.ts';
