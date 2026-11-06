@@ -4,7 +4,7 @@ import { scanDir } from '../leak/scanner.ts';
 import { isTypistKind, SECURITY_CARD_ROWS, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
-import { KNOWN_VALUE_MIN_LEN, knownValueVariants } from '../relay/sanitize.ts';
+import { KNOWN_VALUE_MIN_LEN, knownValuePrefixVariants, knownValueVariants } from '../relay/sanitize.ts';
 
 type Json = Record<string, unknown>;
 
@@ -146,6 +146,7 @@ export class SecretOps {
     this.opts = opts;
     this.emit = opts.emit ?? (() => {});
     this.usedSlots = opts.usedSlots ?? new Set();
+    relay.activeValueHook = (targetId) => this.noteHumanValue(targetId);
     this.secrets = new OneShotSecrets(opts.secretTtlMs ?? SECRET_TTL_MS, (runId, kind) => {
       this.log.event('vault.secret_expired', { kind });
       this.emit(['control'], 'secret.expired', { runId, kind });
@@ -270,6 +271,8 @@ export class SecretOps {
     const text = new TextDecoder().decode(secret);
     secret.fill(0);
     this.relay.openWindow(t, 'typist', el.frameId, el.backendNodeId);
+    // 값을 미리 안다: 글자마다 페이지가 흘리는 접두사까지 입력 전에 올린다(S6f 회귀, 창 종료 뒤에만 올리면 입력 도중 것이 먼저 나간다).
+    this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
     let ok = true;
     let reason: FillReason | undefined;
     const keyEvents = this.policy.typistInput === 'keyEvents';
@@ -368,6 +371,19 @@ export class SecretOps {
    * 활성 창 종료 조건 (나)·(다): blur + 값 있음이 HUMAN_SETTLE_MS 동안 길이·포커스 변화 없이 이어짐(N-47), 노드 분리.
    * 문서 커밋은 Relay가 처리한다.
    */
+  /** 사람 입력 활성 창의 지금 값을 금고 세션에서 읽어 알려진 값(접두사 포함)으로 올린다. 창 동안 본 값은 창이 끝날 때까지 남는다. */
+  private async noteHumanValue(targetId: string): Promise<void> {
+    const w = this.human.get(targetId);
+    const t = this.relay.targets.get(targetId);
+    if (!w || !t) return;
+    try {
+      const r = await this.relay.send<{ result: { value?: string } }>('Runtime.callFunctionOn', { objectId: w.objectId, functionDeclaration: 'function(){return typeof this.value==="string"?this.value:""}', returnByValue: true }, t.vaultSession);
+      if (typeof r.result.value === 'string' && r.result.value) this.relay.addKnownSecret(targetId, knownValuePrefixVariants(r.result.value));
+    } catch {
+      // 노드가 사라졌으면 tick이 창을 닫는다
+    }
+  }
+
   private async tickHuman(t: TargetState): Promise<void> {
     const w = this.human.get(t.targetId);
     if (!w) return;
@@ -377,6 +393,7 @@ export class SecretOps {
     }
     const p = await this.probe(t, w.objectId);
     if (!p || !p.connected) return this.closeHuman(t);
+    if (p.len > 0) await this.noteHumanValue(t.targetId);
     if (p.active || p.len === 0) {
       w.idleSince = undefined;
       return;

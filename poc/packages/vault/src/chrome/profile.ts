@@ -94,6 +94,35 @@ async function countFiles(dir: string): Promise<number> {
 }
 
 /**
+ * 주소·탐색 기록이 남는 프로필 파일(S6 누출 스캐너 회귀). 페이지가 비밀을 주소(해시·쿼리)에 넣거나 자식 프레임 폼으로 POST하면
+ * Chrome이 방문 기록·세션 복원(POST 바디 포함)·UKM에 평문으로 적는다. 허용 인자·Preferences로 기록을 끄는 수단을 확인하지 못해 기동 전·종료 뒤에 지운다.
+ * 쿠키·Local Storage는 지우지 않는다(포털 로그인 유지, 페이지 자신의 저장소는 남는 위험).
+ */
+export const PROFILE_RESIDUE_PATHS = [
+  'Default/History', 'Default/History-journal', 'Default/Sessions', 'Default/Current Session', 'Default/Current Tabs',
+  'Default/Last Session', 'Default/Last Tabs', 'Default/Visited Links', 'Default/Top Sites', 'Default/Top Sites-journal',
+  'Default/Shortcuts', 'Default/Shortcuts-journal', 'Default/Network Action Predictor', 'Default/Network Action Predictor-journal',
+  'Default/Favicons', 'Default/Favicons-journal', 'segmentation_platform',
+] as const;
+
+/** 탐색 기록 잔존물 삭제. 지운 파일 수, 경로 중 하나라도 링크면 링크 너머를 지우지 않고 -1. */
+export async function removeProfileResidue(profileDir: string): Promise<number> {
+  let count = 0;
+  for (const rel of PROFILE_RESIDUE_PATHS) {
+    const p = path.join(profileDir, ...rel.split('/'));
+    const parent = await fs.lstat(path.dirname(p)).catch(() => null);
+    if (parent?.isSymbolicLink()) return -1;
+    const st = await fs.lstat(p).catch(() => null);
+    if (!st) continue;
+    if (st.isSymbolicLink()) return -1;
+    if (st.isDirectory()) count += await countFiles(p);
+    else count++;
+    await fs.rm(p, { recursive: true, force: true });
+  }
+  return count;
+}
+
+/**
  * 전용 Chrome 크래시 덤프 삭제(N-04). 지운 파일 수를 돌려준다.
  * 덤프 폴더가 심링크·재분석 지점이면 링크 너머를 지우지 않고 -1.
  */
