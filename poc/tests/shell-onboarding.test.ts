@@ -239,10 +239,13 @@ describe('동의 화면 4종', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
     const i = src.indexOf("if (opts.onboarding) onb = new OnboardingFlow(onbPorts);");
     const body = src.slice(i, src.indexOf('await win.loadURL', i));
-    assert.match(body, /const saved = await loadOnb\(\);/);
+    // 이어 하기는 DB(엔진 onboarding.load)에서, 없으면 옛 목업 파일을 한 번 옮긴다(onboarding-store.ts).
+    assert.match(body, /const saved = \(await onbStore\.load\(\)\) \?\? \(await onbStore\.importLegacyFile\(legacyOnbFile\)\);/);
     assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = saved\.step !== 'done';/);
-    assert.ok(body.indexOf('loadOnb') < body.indexOf('!business'), '저장을 먼저 본다');
-    assert.match(src, /persist: fixture \? undefined : persistOnb/);
+    assert.ok(body.indexOf('onbStore.load') < body.indexOf('!business'), '저장을 먼저 본다');
+    // 저장은 엔진 명령으로만(앱 폴더 JSON에 쓰지 않는다). 목업은 바깥 일에만.
+    assert.match(src, /const onbPorts = onboardingPorts\(new MockOnboardingPorts\(\{ saveProfile: async \(\) => \{\} \}\), onbStore, refresh\);/);
+    assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });
 
   it('금고 창을 닫으면 ①에 머무르고 안내, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
