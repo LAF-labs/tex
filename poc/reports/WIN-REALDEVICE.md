@@ -12,7 +12,7 @@
 | # | 항목 | 결과 |
 |---|---|---|
 | 준비 | `pnpm install`·`pnpm build` | ✅ build 통과. ⚠️ install 뒤 Electron 바이너리 없음(§2.1) |
-| 준비 | `pnpm test` | 1,599개 중 **pass 1,540 · fail 27 · cancelled 18** · skipped 4 · todo 10(§2.2). 🔧 Windows 이식성 7개 파일·확장 기록 항목을 고친 뒤 해당 파일 재실행 180개 fail 0. 나머지는 부하 시간 초과(단독 통과, §2.3) |
+| 준비 | `pnpm test` | 1,599개 중 **pass 1,540 · fail 27 · cancelled 18** · skipped 4 · todo 10(§2.2). Windows 이식성(5개 파일은 main #137과 겹침)·확장 기록 항목을 고친 뒤 해당 파일 재실행 fail 0. 나머지는 부하 시간 초과(단독 통과, §2.3) |
 | 1 | NPKI 열거 | ✅ 금고 `scanNpki`가 LocalLow 인증서 1개를 찾고 개인키는 열지 않음. ⚠️ USB는 훑지 않음(설계상 후속), ⚠️ 데스크톱 온보딩 목록은 모의 데이터(§3) |
 | 2 | 금고 키체인 | ✅ Credential Manager 저장·읽기·삭제, 2,560B 상한, 40개. ⚠️ 지속성 ENTERPRISE(설계 LOCAL_MACHINE). TPM 없음 → DPAPI 등급, 네이티브 헬퍼가 없어 저장 거부(설계대로 실패 닫힘)(§4) |
 | 3 | 전용 Chrome 프로필 | ✅ 13회 기동·CDP(파이프)·종료·잔존물 삭제, EBUSY/EPERM 0회. ⚠️ 강제 종료 뒤 자식 프로세스가 남아 프로필 전체 삭제는 EBUSY 1회(§5). 🔧 새 프로필 기동 뒤 10~20초 비밀 창 거부(확장 기록 항목, §5.1) |
@@ -49,20 +49,20 @@ PoC-1 기기(Ryzen 5 7500F, 32 GB, Windows 11)보다 훨씬 느린 보급형 PC�
 
 ### 2.2 `pnpm test`
 
-1,599개, **pass 1,540 · fail 27 · cancelled 18** · skipped 4 · todo 10. 7,072초(아래 멈춤 80분 포함). 실패 목록: [raw/win-realdevice/pnpm-test.txt](raw/win-realdevice/pnpm-test.txt).
+1,599개, **pass 1,540 · fail 27 · cancelled 18** · skipped 4 · todo 10. 7,072초(아래 멈춤 80분 포함). 실패 목록: [raw/win-realdevice/pnpm-test.txt](raw/win-realdevice/pnpm-test.txt). 클론 시점 main `6253fc1`(#110) 기준이다.
 
 | 원인 | 파일(실패 수) | 처리 |
 |---|---|---|
-| `new URL(…).pathname`을 경로로 씀(Windows `/C:/…`) | `model-s7`(2), `remote-envelope`(1: `C:\C:\…`) | 🔧 `fileURLToPath`(`tests/model-s7.test.ts`, `scripts/s7-regression.ts`, `packages/remote/scripts/gen-validator.mjs`) |
-| 절대 경로를 그대로 `import()`(ESM은 `file://`만) | `shell-tokens`(파일 전체) | 🔧 `pathToFileURL` |
-| `fs.symlink` 유형 없음 → 표준 권한 Windows에서 EPERM | `vault-npki`(2), `vault-s6-regress`(1) | 🔧 디렉터리는 정션(다른 시험과 같은 방식), 파일 링크는 권한 없으면 그 경우만 빼고 본다 |
-| 경로 구분자 `\` | `core-registry-samples`(1) | 🔧 `/`로 맞춤 |
-| 열린 SQLite 파일 삭제 EPERM | `core-run`(1) | 🔧 닫은 뒤 지움 |
+| `new URL(…).pathname`을 경로로 씀(Windows `/C:/…`) | `model-s7`(2), `remote-envelope`(1: `C:\C:\…`) | 같은 날 main #137(`windows-latest` CI)이 같은 방식(`fileURLToPath`)으로 고침 → 병합해 main 쪽을 따름 |
+| 절대 경로를 그대로 `import()`(ESM은 `file://`만) | `shell-tokens`(파일 전체) | main #137(`pathToFileURL`) |
+| 경로 구분자 `\` | `core-registry-samples`(1) | main #137 |
+| 열린 SQLite 파일 삭제 EPERM | `core-run`(1) | main #137 |
+| `fs.symlink` 유형 없음 → **표준 권한** Windows에서 EPERM(관리자 권한인 GitHub `windows-latest`에서는 통과) | `vault-npki`(2), `vault-s6-regress`(1) | 🔧 디렉터리는 정션(다른 시험과 같은 방식), 파일 링크는 권한 없으면 그 경우만 빼고 본다 |
 | 금고 ACL 점검 30초 초과로 before 실패 → 파일 전체 취소, 그 뒤 프로세스가 끝나지 않음(80분, 수동 종료) | `h01-policy`(16 cancelled + 1) | ⚠️ §6.1·§6.2 |
 | 60초·30초 시간 초과, 앞 시험이 끝나지 않아 `busy` 연쇄 | `audit-v`(2), `h01-engine`(15) | ⏳ §2.3 |
 | relay 활성 창 단언 불일치 | `playwright-relay`(2), `vault-relay`(2) | ⏳ §2.3 |
 
-고친 7개 파일 재실행: 112개 중 pass 111 · skipped 1(원래 win32에서 건너뛰는 시험) · fail 0.
+고친 7개 파일 재실행(병합 전 이 브랜치의 같은 수정): 112개 중 pass 111 · skipped 1(원래 win32에서 건너뛰는 시험) · fail 0.
 
 ### 2.3 relay·Chrome 시험 단독 재실행
 
@@ -79,7 +79,11 @@ PoC-1 기기(Ryzen 5 7500F, 32 GB, Windows 11)보다 훨씬 느린 보급형 PC�
 
 남은 5건은 모두 비밀 창이 `secret_window_refused`로 거부된 것이었고 원인은 §5.1이다. 고친 뒤 `audit-v`·`vault-s6-regress`·`vault-relay` 함께 실행: **68/68 pass**(637초).
 
-정리: 전체 실행의 실패·취소 중 Windows 이식성(7개 파일 9건)과 확장 기록 항목(`vault-relay` 2건)은 이 PR에서 고쳤고, 나머지(`audit-v`·`h01-engine`·`h01-policy`·`playwright-relay`)는 이 PC의 부하에 따른 시간 초과다(단독 실행 통과). 시간 초과 중 `h01-policy`는 제품 경로(§6.1)가 원인이다.
+main(#137까지) 병합 뒤 관련 9개 파일 함께 실행(`vault-npki`·`model-s7`·`remote-envelope`·`shell-tokens`·`core-registry-samples`·`core-run`·`audit-v`·`vault-s6-regress`·`vault-relay`): 180개 중 **pass 177 · fail 1 · cancelled 1 · skipped 1**(881초). 둘 다 시간 문제다.
+- `audit-v` "SignalWatch.inspect … tainted state" 60초 초과(앞 단독 실행에서는 통과).
+- `vault-relay` "응답 없는 Chrome에 붙는 중이면 상한에서 내리고 실패한다": 경과 시간 단언(`상한 15초 + 15초`)에 Chrome을 띄우기 전 ACL 점검(§6.1)이 들어가 넘었다.
+
+정리: 전체 실행의 실패·취소 중 Windows 이식성(7개 파일 9건, 그중 5개 파일은 main #137과 겹침)과 확장 기록 항목(`vault-relay` 2건)은 고쳤고, 나머지(`audit-v`·`h01-engine`·`h01-policy`·`playwright-relay`)는 이 PC의 부하에 따른 시간 초과다(단독 실행 통과). 시간 초과 중 `h01-policy`는 제품 경로(§6.1)가 원인이다.
 
 ## 3. NPKI 열거(1번)
 
