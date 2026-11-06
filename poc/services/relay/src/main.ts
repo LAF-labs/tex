@@ -23,10 +23,17 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   return out;
 }
 
-export async function startRelay(env: NodeJS.ProcessEnv = process.env) {
+/**
+ * 조립. 상시 서버(룸 호스트)와 함수 진입점(`vercel.ts`, HTTPS 큐만)이 같은 것을 쓴다.
+ * 페어링 룸(`RELAY_ROOMS=1`, "룸 켬")과 우편함 라이브 WSS(`RELAY_LIVE=1`)는 켤 때만 연다(Phase 1 기본 꺼짐, 팀장 결정 2026-11-05·11-06).
+ */
+export async function buildRelay(env: NodeJS.ProcessEnv = process.env, o: { migrate: boolean; stateful: boolean } = { migrate: true, stateful: true }) {
   const db = openFromEnv(env);
-  await migrate(db, 'relay', MIGRATIONS_DIR);
-  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  if (o.migrate) {
+    await migrate(db, 'relay', MIGRATIONS_DIR);
+    await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  }
+  for (const k of ['RELAY_ROOMS', 'RELAY_LIVE'] as const) if (env[k] !== undefined && env[k] !== '0' && env[k] !== '1') fail(k);
   const logger = new Logger('relay');
   const svc = new RelayService({ db, queueKey: key32(env.QUEUE_KEY, 'QUEUE_KEY'), now: Date.now, onEvent: (e) => logger.event(e) });
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
@@ -39,7 +46,15 @@ export async function startRelay(env: NodeJS.ProcessEnv = process.env) {
     logger,
     trustProxy: env.TRUST_PROXY === '1',
     limits: sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY')),
+    // 함수 인스턴스는 메모리 룸·연결을 이어 갈 수 없어 늘 끈다
+    rooms: o.stateful && env.RELAY_ROOMS === '1',
+    live: o.stateful && env.RELAY_LIVE === '1',
   });
+  return { db, svc, hub, logger, sweep: async () => void (await Promise.all([hub.sweep(), svc.sweep()])) };
+}
+
+export async function startRelay(env: NodeJS.ProcessEnv = process.env) {
+  const { db, svc, hub, logger } = await buildRelay(env, { migrate: env.MIGRATE_ON_START !== '0', stateful: true });
   const server = createServer(hub.router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   hub.attach(server);
   const url = await listen(server, Number(env.PORT ?? 8083), env.HOST ?? '0.0.0.0');

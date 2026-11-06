@@ -1,0 +1,158 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd ../../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../../.. && pnpm build",
+  "outputDirectory": "public",
+  "functions": {
+    "api/*.js": {
+      "maxDuration": 30
+    },
+    "api/gateway.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/v1/me",
+      "destination": "/api/account?__p=/v1/me"
+    },
+    {
+      "source": "/v1/consents",
+      "destination": "/api/account?__p=/v1/consents"
+    },
+    {
+      "source": "/v1/device-tokens",
+      "destination": "/api/account?__p=/v1/device-tokens"
+    },
+    {
+      "source": "/v1/device-list",
+      "destination": "/api/account?__p=/v1/device-list"
+    },
+    {
+      "source": "/v1/aik",
+      "destination": "/api/account?__p=/v1/aik"
+    },
+    {
+      "source": "/v1/passkeys",
+      "destination": "/api/account?__p=/v1/passkeys"
+    },
+    {
+      "source": "/v1/devices",
+      "destination": "/api/account?__p=/v1/devices"
+    },
+    {
+      "source": "/v1/slots",
+      "destination": "/api/account?__p=/v1/slots"
+    },
+    {
+      "source": "/v1/auth/:path*",
+      "destination": "/api/account?__p=/v1/auth/:path*"
+    },
+    {
+      "source": "/v1/oauth/:path*",
+      "destination": "/api/account?__p=/v1/oauth/:path*"
+    },
+    {
+      "source": "/v1/billing/:path*",
+      "destination": "/api/account?__p=/v1/billing/:path*"
+    },
+    {
+      "source": "/v1/passkeys/:path*",
+      "destination": "/api/account?__p=/v1/passkeys/:path*"
+    },
+    {
+      "source": "/v1/devices/:path*",
+      "destination": "/api/account?__p=/v1/devices/:path*"
+    },
+    {
+      "source": "/v1/slots/:path*",
+      "destination": "/api/account?__p=/v1/slots/:path*"
+    },
+    {
+      "source": "/v1/run-tokens",
+      "destination": "/api/gateway?__p=/v1/run-tokens"
+    },
+    {
+      "source": "/v1/decide",
+      "destination": "/api/gateway?__p=/v1/decide"
+    },
+    {
+      "source": "/v1/respond",
+      "destination": "/api/gateway?__p=/v1/respond"
+    },
+    {
+      "source": "/v1/biz/status",
+      "destination": "/api/gateway?__p=/v1/biz/status"
+    },
+    {
+      "source": "/v1/mailboxes",
+      "destination": "/api/relay?__p=/v1/mailboxes"
+    },
+    {
+      "source": "/v1/mailboxes/:path*",
+      "destination": "/api/relay?__p=/v1/mailboxes/:path*"
+    },
+    {
+      "source": "/v1/push-token",
+      "destination": "/api/push?__p=/v1/push-token"
+    },
+    {
+      "source": "/v1/wake",
+      "destination": "/api/push?__p=/v1/wake"
+    },
+    {
+      "source": "/v1/rooms",
+      "destination": "https://rooms.tax.laf-co.com/v1/rooms"
+    },
+    {
+      "source": "/api/account/internal/:path*",
+      "destination": "/api/account?__p=/internal/:path*"
+    },
+    {
+      "source": "/api/gateway/internal/:path*",
+      "destination": "/api/gateway?__p=/internal/:path*"
+    },
+    {
+      "source": "/api/relay/internal/:path*",
+      "destination": "/api/relay?__p=/internal/:path*"
+    },
+    {
+      "source": "/api/push/internal/:path*",
+      "destination": "/api/push?__p=/internal/:path*"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/account/internal/v1/cron",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/gateway/internal/v1/cron",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/relay/internal/v1/cron",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/push/internal/v1/cron",
+      "schedule": "0 * * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ]
+}

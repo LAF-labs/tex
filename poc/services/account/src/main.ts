@@ -32,10 +32,13 @@ export function httpPairingRooms(base: string, secret: string, fetchFn: typeof f
   };
 }
 
-export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: { mail?: MailSender; payments?: PaymentGateway } = {}) {
+/** 조립(라우터·서비스·정리). 상시 서버(`startAccount`)와 함수 진입점(`vercel.ts`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false, 마이그레이션은 배포 절차). */
+export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: { mail?: MailSender; payments?: PaymentGateway } = {}, o: { migrate: boolean } = { migrate: true }) {
   const db = openFromEnv(env);
-  await migrate(db, 'account', MIGRATIONS_DIR);
-  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  if (o.migrate) {
+    await migrate(db, 'account', MIGRATIONS_DIR);
+    await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  }
   const kid = env.TOKEN_KID ?? 'k1';
   const signKey = ed25519Private(key32(env.TOKEN_SIGNING_SEED, 'TOKEN_SIGNING_SEED'));
   const publicOrigin = env.ACCOUNT_PUBLIC_ORIGIN ?? fail('ACCOUNT_PUBLIC_ORIGIN');
@@ -56,9 +59,15 @@ export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: {
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
   const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internalSecret: env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN'), limits });
+  const sweep = async () => void (await Promise.all([svc.sweep(), limits.limiter.sweep()]));
+  return { db, svc, router, sweep };
+}
+
+export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: { mail?: MailSender; payments?: PaymentGateway } = {}) {
+  const { db, svc, router, sweep } = await buildAccount(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
   const server = createServer(router, { logger: new Logger('account'), trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8080), env.HOST ?? '0.0.0.0');
-  const timer = setInterval(() => void Promise.all([svc.sweep(), limits.limiter.sweep()]).catch(() => undefined), 60_000);
+  const timer = setInterval(() => void sweep().catch(() => undefined), 60_000);
   timer.unref();
   return { svc, server, url, close: async () => (clearInterval(timer), server.close(), await db.close()) };
 }

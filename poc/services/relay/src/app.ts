@@ -51,6 +51,10 @@ export interface RelayAppOpts {
   trustProxy?: boolean;
   /** HTTP 경로 한도 카운터·키 솔트. 배포는 DB(`sqlLimits`, 인스턴스 공유), 없으면 메모리 */
   limits?: Limits;
+  /** 1회용 페어링 룸("룸 켬"). 기본 켬(시험), 기동 설정은 `RELAY_ROOMS=1`일 때만 */
+  rooms?: boolean;
+  /** 우편함 라이브 WSS. 기본 켬(시험), 기동 설정은 `RELAY_LIVE=1`일 때만(Phase 1 꺼짐) */
+  live?: boolean;
 }
 
 /** D08 §6 바깥 헤더 검사: 라이브 경로는 HS·DATA만(ENV는 큐 경로). 길이 필드가 실제 길이와 맞아야 한다. */
@@ -181,6 +185,7 @@ export class RelayHub {
     });
     // 1회용 페어링 룸. 레코드(메모리)에 계정 없음. 계정당 시간당 5회는 한도 카운터(당일 솔트 HMAC 키)
     r.add('POST', '/v1/rooms', async (ctx) => {
+      if (this.o.rooms === false) fail('request.not_found');
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
       const { roomId } = V.room(ctx.body);
@@ -235,8 +240,8 @@ export class RelayHub {
       void (async () => {
         try {
           await this.limit(`up:${await this.ipSalt.hash(ip)}`, RELAY.attemptsPerIpMinute, 60_000);
-          if (mbx) await this.joinMailbox(req, socket, ip, mbx[1]!, url.pathname);
-          else if (room) this.joinRoom(req, socket, room[1]!);
+          if (mbx && this.o.live !== false) await this.joinMailbox(req, socket, ip, mbx[1]!, url.pathname);
+          else if (room && this.o.rooms !== false) this.joinRoom(req, socket, room[1]!);
           else throw new ServiceError('request.not_found');
           done(route, 101);
         } catch (e) {

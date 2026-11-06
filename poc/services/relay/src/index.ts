@@ -4,3 +4,4 @@ export * from './main.ts';
 export * from './service.ts';
 export * from './visibility.ts';
 export * from './ws.ts';
+export * from './vercel.ts';

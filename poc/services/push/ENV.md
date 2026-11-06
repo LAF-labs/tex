@@ -5,6 +5,8 @@
 | 이름 | 필수 | 형식 | 설명 |
 |---|---|---|---|
 | `DATABASE_URL` / `SAX_SQLITE_FILE` | 둘 중 하나 | | 푸시 토큰 DB. 릴레이·계정 DB와 분리 |
+| `DATABASE_POOL_MAX` | 아니오(`10`) | 1~99 | 인스턴스당 PostgreSQL 연결 수. 함수는 `1` |
+| `MIGRATE_ON_START` | 아니오(`1`) | `0`·`1` | `0`이면 기동 때 마이그레이션을 하지 않는다(DDL 권한 없는 서비스 역할, [deploy/README](../deploy/README.md) 4절) |
 | `PUSH_TOKEN_KEY` ⚿ | 예 | hex 64자 | 푸시 토큰 봉인 키("별도 키", D09 §4.2) |
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `PUSH_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin |

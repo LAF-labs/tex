@@ -48,7 +48,7 @@ function cached(who: Who, s: Stack): Who {
   };
 }
 
-async function start(): Promise<Env> {
+async function start(flags: { rooms?: boolean; live?: boolean } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'relay', RELAY_MIGRATIONS);
@@ -57,7 +57,7 @@ async function start(): Promise<Env> {
   const logs: string[] = [];
   const logger = new Logger('relay', (l) => logs.push(l), s.clock.now);
   const svc = new RelayService({ db, queueKey: randomBytes(32), now: s.clock.now });
-  const hub = new RelayHub({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: RO, internalSecret: 'internal-test', logger });
+  const hub = new RelayHub({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: RO, internalSecret: 'internal-test', logger, ...flags });
   const relay = createServer(hub.router, { logger });
   hub.attach(relay);
   const rbase = await listen(relay);
@@ -478,6 +478,27 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [e.phone.id]);
     assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).status, 201);
     for (const s of socks) s.ws.close();
+  });
+});
+
+describe('릴레이 기능 스위치: 룸 꺼짐(RELAY_ROOMS)·라이브 꺼짐(RELAY_LIVE, Phase 1 기본)', () => {
+  let e: Env;
+  beforeEach(async () => (e = await start({ rooms: false, live: false })));
+  afterEach(() => stop(e));
+
+  it('룸이 꺼지면 발급·참가·소비가 모두 404, 라이브가 꺼지면 우편함 WSS는 404이고 HTTPS 큐는 그대로', async () => {
+    const roomId = newRoomId();
+    assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId } })).json.error, 'request.not_found');
+    assert.equal(await open(`${e.wsBase}/v1/rooms/${roomId}`), null);
+    const redeem = await e.r('POST', `/internal/v1/rooms/${roomId}/redeem`, { headers: { authorization: 'Internal internal-test' }, body: { deviceId: e.pc.d.id } });
+    assert.equal(redeem.json.error, 'relay.room_unavailable');
+    const m = newMailbox();
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).status, 201);
+    const path = `/v1/mailboxes/${m.mbxId}/live`;
+    assert.equal(await open(e.wsBase + path, await e.wsHeaders(e.pc, path, { 'x-mbx-read': m.tokRead, 'x-mbx-write': m.tokWrite })), null);
+    const env = await e.call(e.phone, 'POST', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() });
+    assert.equal(env.status, 202, env.text);
+    assert.equal(((await e.call(e.pc, 'GET', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-read': m.tokRead } })).json.envelopes as unknown[]).length, 1);
   });
 });
 

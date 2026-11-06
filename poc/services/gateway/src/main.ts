@@ -82,11 +82,14 @@ export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) =>
   }
 }
 
-export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: { provider?: ModelProvider; nts?: BizStatusSource } = {}) {
+/** 조립(라우터·서비스·정리). 상시 서버와 함수 진입점(`vercel.ts`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false). */
+export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: { provider?: ModelProvider; nts?: BizStatusSource } = {}, o: { migrate: boolean } = { migrate: true }) {
   if (env.GW_ALLOW_IMAGES && env.GW_ALLOW_IMAGES !== 'false') fail('GW_ALLOW_IMAGES'); // Phase 1: 이미지 없음(B-18)
   const db = openFromEnv(env);
-  await migrate(db, 'gateway', MIGRATIONS_DIR);
-  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  if (o.migrate) {
+    await migrate(db, 'gateway', MIGRATIONS_DIR);
+    await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  }
   const prices: Prices = env.GW_PRICES_JSON ? { ...ZERO_PRICES, ...(JSON.parse(env.GW_PRICES_JSON) as Partial<Prices>) } : ZERO_PRICES;
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
   const accountBase = env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL');
@@ -111,6 +114,11 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
   });
   const directory = new HttpDeviceDirectory({ base: accountBase, secret: internal });
   const router = gatewayRouter({ svc, verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)), directory, publicOrigin: env.GATEWAY_PUBLIC_ORIGIN ?? fail('GATEWAY_PUBLIC_ORIGIN') });
+  return { db, svc, router, logger, sweep: () => svc.sweep() };
+}
+
+export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: { provider?: ModelProvider; nts?: BizStatusSource } = {}) {
+  const { db, svc, router, logger } = await buildGateway(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
   const server = createServer(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8081), env.HOST ?? '0.0.0.0');
   const timer = setInterval(() => void svc.sweep().catch(() => undefined), 60_000);

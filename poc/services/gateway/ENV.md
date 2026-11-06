@@ -5,6 +5,8 @@
 | 이름 | 필수 | 형식 | 설명 |
 |---|---|---|---|
 | `DATABASE_URL` / `SAX_SQLITE_FILE` | 둘 중 하나 | | 계량 DB |
+| `DATABASE_POOL_MAX` | 아니오(`10`) | 1~99 | 인스턴스당 PostgreSQL 연결 수. 함수는 `1` |
+| `MIGRATE_ON_START` | 아니오(`1`) | `0`·`1` | `0`이면 기동 때 마이그레이션을 하지 않는다(DDL 권한 없는 서비스 역할, [deploy/README](../deploy/README.md) 4절) |
 | `GATEWAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회·자동 정지 |

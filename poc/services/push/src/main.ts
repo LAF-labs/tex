@@ -34,10 +34,13 @@ export function senderFromEnv(env: NodeJS.ProcessEnv): PushSender {
   });
 }
 
-export async function startPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender } = {}) {
+/** 조립. 상시 서버와 함수 진입점(`vercel.ts`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false). */
+export async function buildPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender } = {}, o: { migrate: boolean } = { migrate: true }) {
   const db = openFromEnv(env);
-  await migrate(db, 'push', MIGRATIONS_DIR);
-  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  if (o.migrate) {
+    await migrate(db, 'push', MIGRATIONS_DIR);
+    await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  }
   const logger = new Logger('push');
   const svc = new PushService({ db, tokenKey: key32(env.PUSH_TOKEN_KEY, 'PUSH_TOKEN_KEY'), sender: deps.sender ?? senderFromEnv(env), now: Date.now, onEvent: (e) => logger.event(e) });
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
@@ -50,9 +53,14 @@ export async function startPush(env: NodeJS.ProcessEnv = process.env, deps: { se
     internalSecret: internal,
     limits,
   });
+  return { db, svc, router, logger, sweep: () => limits.limiter.sweep() };
+}
+
+export async function startPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender } = {}) {
+  const { db, svc, router, logger, sweep } = await buildPush(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
   const server = createServer(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8084), env.HOST ?? '0.0.0.0');
-  const timer = setInterval(() => void limits.limiter.sweep().catch(() => undefined), 60_000);
+  const timer = setInterval(() => void sweep().catch(() => undefined), 60_000);
   timer.unref();
   return { svc, server, url, close: async () => (clearInterval(timer), server.close(), await db.close()) };
 }
