@@ -151,7 +151,7 @@ export interface ShellOptions {
    */
   update?: UpdateWiring;
   /**
-   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 클라우드 포트(egress)·금고 키 연결이 갖춰지면 진입점이 넘긴다.
+   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 제품 진입점은 remote-wiring.ts productRemote(cloudPorts + vaultDesktopKeys)를 넘긴다.
    * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
    */
   remote?: RemoteWiring;
