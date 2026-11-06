@@ -7,15 +7,21 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
+import type { Channel } from '@sax/updater';
+import type { DesktopKeys } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
-import { MockOnboardingPorts } from './onboarding-mock.ts';
-import { EngineOnboardingStore, onboardingPorts } from './onboarding-store.ts';
+import { MOCK_CP_CERT, MockOnboardingPorts } from './onboarding-mock.ts';
+import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
+import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
-import { DOCPARSE_SCHEME } from './docparse.ts';
+import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
+import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
+import type { AppUpdaterLike } from './update-electron.ts';
+import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
@@ -28,7 +34,11 @@ import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRe
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
-import { cancelPick, importPdf } from './vault-import.ts';
+import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
+import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
+import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
+import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
+import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
@@ -71,6 +81,7 @@ const FILES: Record<string, string> = {
   '/shell-views.js': 'text/javascript',
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
+  '/shell-account.js': 'text/javascript',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
 };
@@ -98,6 +109,8 @@ function serve(): void {
 }
 
 export interface ShellOptions {
+  /** 서류 데몬(OS 알림). 제품 기본 켬, fixture는 늘 끔. 시험이 false로 끈다. */
+  daemon?: boolean;
   width?: number;
   height?: number;
   show?: boolean;
@@ -124,6 +137,34 @@ export interface ShellOptions {
   buildBadges?: string[];
   /** 온보딩(08 §4)부터 시작한다(시연·e2e). 엔진 모드에서는 DB에 사업자 프로필이 없으면 저절로 시작한다. */
   onboarding?: boolean;
+  /**
+   * 앱 업데이트(update-host.ts, M4-9). 설치본(app.isPackaged)·엔진 모드에서만 돈다. 제품 진입점이 원천을 갖출 때 넘긴다:
+   * 레지스트리 origin(egress 목적지), latest.json·폐기 목록·핀 키·투명성 확인 포트, 실계정 시험 빌드 여부와 설정.
+   */
+  update?: UpdateWiring;
+  /**
+   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 클라우드 포트(egress)·금고 키 연결이 갖춰지면 진입점이 넘긴다.
+   * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
+   */
+  remote?: RemoteWiring;
+}
+
+/** ShellOptions.remote. */
+export interface RemoteWiring {
+  cloud: CloudPorts | null;
+  keys: VaultKeysFactory | null;
+  /** 계정 기기 목록에 보일 이름. 사람 이름이 들어가지 않게 기본은 운영체제 이름. */
+  deviceName?: string;
+}
+
+/** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
+export interface UpdateWiring {
+  channel: Channel;
+  origin: string;
+  sources: UpdateSources;
+  testBuild: boolean;
+  setting?: { requireTransparency?: unknown } | null;
+  updater?: AppUpdaterLike;
 }
 
 /** 개발 전용 연결(ShellOptions.dev). 여기에는 타입만 있고, 구현은 demo-dev.ts가 묶는다. */
@@ -479,19 +520,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
-  /** 시연 DB 쓰기(렌더러 처리기는 이 두 함수만 부른다. 엔진 명령은 여기서 고정한다). fixture 모드가 아니면 거부한다. */
+  /** 시연 DB 쓰기(발급 인증 기본 바꾸기). fixture 모드가 아니면 거부한다. 거래처 추가·수정은 제품에서도 된다(cpBook). */
   const demoDb = {
-    async saveCounterparty(p: Record<string, unknown>) {
-      if (!fixture) throw new Error('unsupported');
-      const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
-      const v = { name: text(p.name, 60), repName: text(p.rep, 30) || null, email: text(p.email, 100) || null };
-      const id = typeof p.id === 'string' && p.id ? p.id : null;
-      const saved = (id ? await host.rpc('counterparty.update', { id, patch: v }) : await host.rpc('counterparty.create', { ...v, bizNo: text(p.bizNo, 20).replace(/\D/g, '') })) as DbCounterparty;
-      const item = text(p.item, 40);
-      if (item) fixture.itemHints[saved.bizNo] = item;
-      await refresh();
-      return { id: saved.id, counterparties: cps };
-    },
     async setDefaultAuth(p: Record<string, unknown>) {
       if (!fixture) throw new Error('unsupported');
       const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
@@ -503,15 +533,91 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { profiles: profiles() };
     },
   };
+  // 서류 데몬(daemon-host.ts). 알림 객체는 눌리거나 닫힐 때까지 잡아 둔다(가비지 수집되면 click이 오지 않는다).
+  let daemon: DaemonHost | null = null;
+  const liveNotices = new Set<Notification>();
+  const showOsNotification: ShowNotification = (t, onClick) => {
+    if (!Notification.isSupported()) throw new Error('notify_unsupported');
+    const n = new Notification({ title: t.title, body: t.body });
+    liveNotices.add(n);
+    n.on('click', () => {
+      liveNotices.delete(n);
+      onClick();
+    });
+    n.on('close', () => liveNotices.delete(n));
+    n.show();
+  };
+  let updater: UpdateHost | null = null;
+  const onResume = () => {
+    daemon?.requestReload();
+    void updater?.check();
+  };
   // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
-  // 바깥 일(등록증 읽기·진위확인·NPKI·금고 등록 창·처리자 표)은 아직 목업 어댑터 뒤(onboarding-mock.ts): M4-3·#65·#93·금고 T-06.
+  // 바깥 일: 등록증 읽기(bizcert-read.ts, M4-3)·NPKI(npki-certs.ts, #93)는 제품 어댑터다. 진위확인·금고 등록 창·처리자 표는 아직 목업(onboarding-mock.ts): #65·금고 T-06.
   let onb: OnboardingFlow | null = null;
   /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
   let onbShow = true;
   const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
   /** M4-2 목업 때의 이어 하기 파일. DB에 행이 없으면 한 번 옮기고 지운다. */
   const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
-  const onbPorts = onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), onbStore, refresh);
+  const onbMock = new MockOnboardingPorts({ saveProfile: async () => {} });
+  // 공동인증서 목록: 제품은 금고 npki.list(이 PC의 NPKI 폴더 열거) → docparse 샌드박스 certInfo → 표시 행(npki-certs.ts).
+  // 시연·e2e(fixture)는 이 PC를 훑지 않고 목업 목록을 쓴다.
+  // 사업자등록증 읽기(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 후보. 온보딩 O-02와 거래처 O-05가 같은 길을 쓴다.
+  const bizCertPorts: BizCertReadPorts = {
+    pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
+    pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
+    imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
+    parse: (text) => host.rpc('bizcert.parse', { text }),
+    log: (n, d) => log.event(n, d),
+  };
+  const onbExternal: OnboardingExternal = fixture
+    ? onbMock
+    : {
+        // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
+        recognizeBizCert: () => readBizCert(bizCertPorts),
+        checkBizNo: (bizNo) => onbMock.checkBizNo(bizNo),
+        registerSecrets: (binds) => onbMock.registerSecrets(binds),
+        consentConfig: () => onbMock.consentConfig(),
+        findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
+      };
+  const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
+  // 거래처 장부(M4-3 O-05). [등록증으로 채우기]는 같은 등록증 읽기(fixture는 시연 거래처 등록증). 골랐지만 못 읽은 것과 고르지 않은 것을 나눈다.
+  const cpBook = new CounterpartyBook(
+    (m, p) => host.rpc(m, p),
+    fixture
+      ? async () => ({ ...MOCK_CP_CERT })
+      : async () => {
+          let picked = false;
+          const pick = async () => {
+            const b = await bizCertPorts.pick();
+            picked = b !== null;
+            return b;
+          };
+          return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
+        },
+  );
+  // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
+  let remoteKeys: Promise<DesktopKeys> | null = null;
+  const keysOf = (): Promise<DesktopKeys> => {
+    const f = opts.remote?.keys;
+    if (!f) return Promise.reject(Object.assign(new Error('keys'), { code: 'account.keys_unavailable' }));
+    remoteKeys ??= f((m, p) => host.control(m, p)).catch((e: unknown) => {
+      remoteKeys = null;
+      throw e;
+    });
+    return remoteKeys;
+  };
+  const account = new DesktopAccount({
+    client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
+    keys: keysOf,
+    identity: new RemoteIdentityFile(appPaths(root ?? defaultAppRoot()).userData),
+    platform: process.platform === 'darwin' ? 'macos' : 'windows',
+    deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    log: (n, d) => log.event(n, d),
+  });
+  let accountReady: Promise<unknown> | null = null;
+  const accountInit = () => (accountReady ??= account.init());
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -533,6 +639,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       build: opts.buildBadges ?? [],
       history: seed?.history ?? null,
       onboarding: await onbView(),
+      // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
+      cpBook: fixture ? 'demo' : 'local',
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -625,8 +733,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       desktop.showItemInFolder(await docFile(String(p.id)));
       return {};
     }),
-    // 시연 DB에서만: 거래처 추가·수정, 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
-    'counterparty.save': (p) => demoDb.saveCounterparty(p),
+    // 거래처 추가·수정(엔진 counterparty.create/update, cpBook). 저장 품목은 DB 열이 없어 시연(fixture)에서만 남긴다.
+    'counterparty.save': async (p) => {
+      const saved = await cpBook.save(p);
+      const item = String(p.item ?? '').trim().slice(0, CP_FIELD_MAX.item);
+      if (fixture && item) fixture.itemHints[saved.bizNo] = item;
+      await refresh();
+      return { id: saved.id, counterparties: cps };
+    },
+    // [등록증으로 채우기]: 파일 고르기를 여니 실제 클릭 뒤에만(ADR-027 결정 8). 후보만 돌려준다(주소는 main이 든다).
+    'counterparty.readCert': () => {
+      needGesture(3_000);
+      return cpBook.readCert();
+    },
+    // 시연 DB에서만: 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
     'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
@@ -636,6 +756,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).
+    // 계정 로그인(A-01). 단계·이메일·코드 만료 시각·오류 코드만 돌려준다(세션·토큰은 main에만).
+    'account.view': async () => {
+      await accountInit();
+      return account.view();
+    },
+    'account.sendCode': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.sendCode(String(p.email));
+    },
+    'account.verify': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.verify(String(p.code));
+    },
+    'account.back': async () => {
+      await accountInit();
+      return account.back();
+    },
     'onboarding.reply': async (p) => {
       needGesture(3_000);
       if (!onb) throw new Error('onboarding_done');
@@ -656,6 +795,41 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return dispatchShell(e.senderFrame, SHELL_URL, handlers, req);
   });
 
+  const startAppUpdater = async (w: UpdateWiring): Promise<UpdateHost | null> => {
+    try {
+      const { electronInstaller } = await import('./update-electron.ts');
+      const u = w.updater ?? ((await import('electron-updater')).default.autoUpdater as unknown as AppUpdaterLike);
+      const h = startUpdateHost({
+        sources: w.sources,
+        installer: electronInstaller(u, { origin: w.origin, channel: w.channel }),
+        channel: w.channel,
+        installedVersion: app.getVersion(),
+        stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'updater-state.json'),
+        policy: updatePolicy({ testBuild: w.testBuild, setting: w.setting, log: (n, d) => log.event(n, d) }),
+        idle: () => {
+          const list = runs.list();
+          return {
+            runActive: list.some((r) => runs.isActive(r.id)),
+            commitZone: bar.visible || list.some((r) => r.status === 'issuing' || r.inDoubt === true),
+            daemonRunning: false,
+          };
+        },
+        onStale: () => {
+          try {
+            showOsNotification({ title: '소버린 AX', body: '14일 동안 업데이트를 확인하지 못했어요. 인터넷 연결을 확인해 주세요.' }, () => {});
+          } catch {
+            // 알림을 못 띄우는 환경이면 로그(main.update_stale_notice)만 남는다
+          }
+        },
+        log: (n, d) => log.event(n, d),
+      });
+      void h.check();
+      return h;
+    } catch (e) {
+      log.event('main.update_start_failed', { error: (e as Error).message.slice(0, 80) });
+      return null;
+    }
+  };
   const ready = (async () => {
     try {
       await host.ready;
@@ -679,6 +853,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       } else if (!business) onb = new OnboardingFlow(onbPorts);
     }
     await win.loadURL(SHELL_URL);
+    // 서류 데몬(D10 notify, M4-8): 제품만. 시연·e2e(fixture)는 이 PC에 OS 알림을 띄우지 않는다.
+    if (!fixture && opts.daemon !== false) {
+      daemon = startDaemonHost({
+        rpc: (m, p) => host.rpc(m, p),
+        show: showOsNotification,
+        onDelivered: () => pushBoard(),
+        onOpen: () => {
+          if (win.isDestroyed()) return;
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+        },
+        stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'daemon-state.json'),
+        log: (n, d) => log.event(n, d),
+      });
+      powerMonitor.on('resume', onResume);
+    }
+    // 앱 업데이트(M4-9): 설치본만. 실행 중·커밋 구간(승인 바·발급 중·제출 여부 모름)에는 설치를 미룬다(D11 §4). 데몬은 notify만이라 실행이 없다.
+    if (!fixture && app.isPackaged && opts.update) updater = await startAppUpdater(opts.update);
     // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed
       ?.fill()
@@ -691,6 +884,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   })();
   const close = async () => {
     clearInterval(boardDayTimer);
+    daemon?.stop();
+    powerMonitor.removeListener('resume', onResume);
+    updater?.stop();
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});

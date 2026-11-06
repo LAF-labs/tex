@@ -202,7 +202,8 @@ async function flow(): Promise<void> {
   await until('vat separate', () => S.runs.get(id)?.total === 3_630_000);
 
   // 실제 입력 없이(렌더러 신호만) 온 실행 시작은 받지 않는다(ADR-027 결정 8). 이 앞에는 실제 입력이 없다.
-  await sleep(2100);
+  // 결속 창은 2초다. 부하가 큰 기계에서는 앞 클릭의 mouseUp이 main에 늦게 닿아 2.1초로는 창 안에 들 수 있어(전체 시험 직후 1회 관찰) 여유를 둔다.
+  await sleep(3500);
   const noGesture = await js<string>(`window.sax.call('run.prepare', { id: ${JSON.stringify(id)} }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
   check('실제 입력 없이 온 run.prepare는 gesture_required(초안 그대로)', noGesture === 'gesture_required' && runStatus(id) === 'draft', noGesture);
 

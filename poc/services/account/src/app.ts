@@ -2,16 +2,17 @@
 import {
   DailySalt,
   DeviceAuth,
-  RateLimiter,
   Router,
   S,
   fail,
   json,
-  requireInternal,
+  memoryLimits,
   validator,
   type Ctx,
+  type InternalCheck,
   type DeviceDirectory,
   type TokenVerifier,
+  type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
 import { ACCOUNT, DEVICE, MS } from './constants.ts';
@@ -41,6 +42,10 @@ const V = {
     obj({ deviceId: S.uuid4, role: { enum: ['desktop', 'mobile'] }, platform: { enum: ['windows', 'macos', 'ios', 'android'] }, name: { type: 'string', minLength: 1, maxLength: 40 }, Sx: S.b64key32, Vx: S.b64key32 }),
   ),
   deviceList: validator<{ deviceList: DeviceList }>(obj({ deviceList: deviceListSchema })),
+  /** PC가 폰을 대신 등록(페어링 7단계). roomId는 그 PC가 만든 1회용 페어링 룸(16B base64url, D08 §4.2) */
+  enrollMobile: validator<{ deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }>(
+    obj({ deviceId: S.uuid4, role: { const: 'mobile' }, platform: { enum: ['ios', 'android'] }, name: { type: 'string', minLength: 1, maxLength: 40 }, Sx: S.b64key32, Vx: S.b64key32, roomId: { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } }),
+  ),
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
   deviceToken: validator<{ cert: SignedCert }>(obj({ cert: signedCertSchema })),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
@@ -53,21 +58,27 @@ export interface AccountAppOpts {
   /** 이 서비스가 발급한 기기 토큰을 검증(기기 범위 엔드포인트용) */
   verifier: TokenVerifier;
   publicOrigin: string;
-  internalSecret: string;
+  /** 내부 경로(/internal/*) 서명 검사(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135) */
+  internal: InternalCheck;
+  /** 한도 카운터·키 솔트. 없으면 메모리(단일 인스턴스). 운영은 sqlLimits(db) */
+  limits?: Limits;
 }
 
 export function accountRouter(o: AccountAppOpts): Router {
   const { svc } = o;
   const r = new Router();
-  const limits = new RateLimiter(svc.now);
-  const ipSalt = new DailySalt('ip', svc.now);
+  // 한도: 카운터와 키 솔트는 다중 인스턴스면 DB(팀장 결정 2026-11-05 (가)), 로그용 aid 솔트는 인스턴스 메모리
+  const limits = o.limits ?? memoryLimits(svc.now);
+  const ipSalt = limits.salt('ip');
+  const emailSalt = limits.salt('email');
+  const devSalt = limits.idSalt('dev');
   const idSalt = new DailySalt('aid', svc.now);
-  const emailSalt = new DailySalt('email', svc.now);
   const directory: DeviceDirectory = { get: (id) => svc.deviceRecord(id) };
   const deviceAuth = new DeviceAuth({ verifier: o.verifier, directory, publicOrigin: o.publicOrigin, now: svc.now });
 
-  const limit = (key: string, n: number, windowMs: number) => {
-    if (!limits.hit(key, n, windowMs)) fail('policy.rate_limited', { retryAfterSec: limits.retryAfter(key, windowMs) });
+  const limit = async (key: string, n: number, windowMs: number) => {
+    const h = await limits.limiter.hit(key, n, windowMs);
+    if (!h.ok) fail('policy.rate_limited', { retryAfterSec: h.retryAfterSec });
   };
   const ipKey = (ctx: Ctx) => ipSalt.hash(ctx.ip);
   const session = async (ctx: Ctx): Promise<Session> => {
@@ -90,24 +101,24 @@ export function accountRouter(o: AccountAppOpts): Router {
   // 로그인
   r.add('POST', '/v1/auth/code', async (ctx) => {
     const b = V.codeStart(ctx.body);
-    limit(`code-ip:${ipKey(ctx)}`, ACCOUNT.loginCodeSendsPerIpHour, MS.H);
-    limit(`code-email:${emailSalt.hash(b.email.trim().toLowerCase())}`, ACCOUNT.loginCodeSendsPerEmailHour, MS.H);
+    await limit(`code-ip:${await ipKey(ctx)}`, ACCOUNT.loginCodeSendsPerIpHour, MS.H);
+    await limit(`code-email:${await emailSalt.hash(b.email.trim().toLowerCase())}`, ACCOUNT.loginCodeSendsPerEmailHour, MS.H);
     return json(200, await svc.startEmailCode(b.email));
   });
   r.add('POST', '/v1/auth/code/verify', async (ctx) => {
     const b = V.codeVerify(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.verifyEmailCode(b.loginId, b.code);
     ctx.logAid = idSalt.hash(out.accountId);
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
   });
   r.add('POST', '/v1/auth/passkey/options', async (ctx) => {
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     return json(200, await svc.passkeyLoginOptions());
   });
   r.add('POST', '/v1/auth/passkey/verify', async (ctx) => {
     const b = V.passkeyLogin(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.passkeyLogin(b.challenge, b);
     ctx.logAid = idSalt.hash(out.accountId);
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
@@ -125,7 +136,7 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('POST', '/v1/oauth/token', async (ctx) => {
     const b = V.token(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.exchangeCode({ code: b.code, verifier: b.code_verifier, redirectUri: b.redirect_uri, clientId: b.client_id });
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
   });
@@ -171,6 +182,15 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('GET', '/v1/devices', async (ctx) => json(200, { devices: await svc.listDevices(await sessionOrDevice(ctx)) }));
   r.add('POST', '/v1/devices/enroll', async (ctx) => {
+    // 데스크톱 기기 토큰(DPoP)이면 폰 대리 등록(페어링 룸 소비 필요), 아니면 계정 세션 등록
+    if (String(ctx.headers.authorization ?? '').startsWith('DPoP ')) {
+      const c = await device(ctx, 'devlist');
+      if (c.role !== 'desktop') fail('account.scope_denied');
+      const b = V.enrollMobile(ctx.body);
+      // 같은 폰(같은 키)의 재등록은 멱등 200(룸 소비·상한 계산 없음), 새 등록은 201
+      const { created, ...out } = await svc.enrollByDesktop({ accountId: c.acc, deviceId: c.dev }, b);
+      return json(created ? 201 : 200, created ? { holdUntil: out.holdUntil } : out);
+    }
     const s = await session(ctx);
     const b = V.enroll(ctx.body);
     if (PLATFORM_ROLE[b.platform] !== b.role) fail('request.param_rejected');
@@ -190,6 +210,13 @@ export function accountRouter(o: AccountAppOpts): Router {
     return json(204, undefined);
   });
   r.add('GET', '/v1/device-list', async (ctx) => json(200, await svc.deviceList(await sessionOrDevice(ctx))));
+  // 서버 서명 계정 클레임(페어링 7단계, PC가 PAIR_OK에 싣는다). 데스크톱 기기 토큰만
+  r.add('GET', '/v1/acct-claim', async (ctx) => {
+    const c = await device(ctx, 'devlist');
+    if (c.role !== 'desktop') fail('account.scope_denied');
+    await limit(`acctclaim:${await devSalt.hash(c.dev)}`, DEVICE.acctClaimsPerHour, MS.H);
+    return json(200, await svc.acctClaim({ accountId: c.acc, deviceId: c.dev }));
+  });
 
   // 기기(데스크톱 기기 범위 토큰 + DPoP + AIK 서명)
   r.add('PUT', '/v1/device-list', async (ctx) => {
@@ -207,9 +234,9 @@ export function accountRouter(o: AccountAppOpts): Router {
   r.add('POST', '/v1/device-tokens', async (ctx) => {
     const b = V.deviceToken(ctx.body);
     // 검증 전에는 IP 단위만(서명 검증 비용), 기기 단위는 검증 통과 뒤에 센다
-    limit(`devtok-ip:${ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
+    await limit(`devtok-ip:${await ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
     const dpop = ctx.headers.dpop;
-    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, () => limit(`devtok:${b.cert.cert.device_id}`, DEVICE.deviceTokensPerHour, MS.H));
+    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H));
     return json(200, out);
   });
 
@@ -228,14 +255,19 @@ export function accountRouter(o: AccountAppOpts): Router {
 
   // 내부(게이트웨이·릴레이가 기기 상태를 묻는다)
   r.add('GET', '/internal/v1/devices/:id', async (ctx) => {
-    requireInternal(ctx, o.internalSecret);
+    await o.internal.check(ctx);
     const rec = await svc.deviceRecord(ctx.params.id!);
     return rec ? json(200, rec) : json(404, { error: 'account.device_not_found' });
   });
-  r.add('POST', '/internal/v1/devices/:id/auto-suspend', async (ctx) => {
-    requireInternal(ctx, o.internalSecret);
-    return json(200, { suspended: await svc.autoSuspend(ctx.params.id!) });
-  });
+  r.add(
+    'POST',
+    '/internal/v1/devices/:id/auto-suspend',
+    async (ctx) => {
+      await o.internal.check(ctx);
+      return json(200, { suspended: await svc.autoSuspend(ctx.params.id!) });
+    },
+    { raw: true },
+  );
   r.add('GET', '/healthz', () => json(200, { ok: true }));
   return r;
 }

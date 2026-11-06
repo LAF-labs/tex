@@ -155,12 +155,18 @@ export interface BizCheck {
   source: '국세청 조회';
 }
 
-/** 이 PC에서 찾은 공동인증서(NPKI) 한 장. 비밀번호·키는 없다. */
+/**
+ * 이 PC에서 찾은 공동인증서(NPKI) 한 장(표시용, npki-certs.ts). 비밀번호·키·경로·주체 전체는 없다.
+ * id는 금고 열거 id(폴더 경로의 해시 앞부분). owner는 CN의 이름 부분, usage는 발급자.
+ */
 export interface NpkiCert {
   id: string;
   owner: string;
   usage: string;
   expiresOn: string;
+  /** 고를 수 있는가. 개인키 파일이 없거나(no_key) 만료됐으면(expired) 보이되 고를 수 없다. 옛 이어 하기 값(칸 없음)은 고를 수 있는 것으로 본다. */
+  usable?: boolean;
+  why?: 'no_key' | 'expired';
 }
 export const CERT_EXPIRY_WARN_DAYS = 30;
 
@@ -448,7 +454,7 @@ export class OnboardingFlow {
         }
         if (a.choice === 'cert') {
           const c = s.certs.find((x) => x.id === a.certId);
-          if (!c) throw new Error('bad_cert');
+          if (!c || c.usable === false) throw new Error('bad_cert');
           s.certId = c.id;
         } else s.certId = null;
         {

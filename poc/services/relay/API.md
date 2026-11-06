@@ -9,7 +9,7 @@
 | 기기 범위 토큰 | `Authorization: DPoP <token>` + `DPoP: <증명>`(`relay` 범위, 계정 서비스 발급, 공통 [CONTRACT.md](../shared/CONTRACT.md)) | 남용 방지·긴급 정지. 정지·폐기된 기기는 `403 relay.device_suspended`, 계정 세션 토큰은 `401 relay.unauthorized` |
 | 우편함 능력 토큰 | `X-Mbx-Read: <tok_read>` / `X-Mbx-Write: <tok_write>`(32B base64url 43자) | 우편함 접근 권한. PC가 CSPRNG로 만들어 `PAIR_OK`로 폰에 준다(D08 §4.2 7단계). 서버는 SHA-256 해시만 저장 |
 
-- 우편함 ID·토큰이 틀리거나 우편함이 없으면 모두 `404 relay.mailbox_not_found`(존재 오라클 없음). 실패는 IP(일 회전 HMAC)당 10분 20회까지, 넘으면 맞는 토큰도 창이 끝날 때까지 `429 policy.rate_limited`.
+- 우편함 ID·토큰이 틀리거나 우편함이 없으면 모두 `404 relay.mailbox_not_found`(존재 오라클 없음). 실패는 IP(당일 솔트 HMAC, DB 카운터라 인스턴스 합산)당 10분 20회까지, 넘으면 맞는 토큰도 창이 끝날 때까지 `429 policy.rate_limited`.
 - 서버는 두 레이어의 연결(어느 기기가 어느 우편함을 쓰는지)을 **저장하지 않는다**. 같은 요청에서 둘을 함께 보므로 운영자는 상관시킬 수 있다(정직한 서술, D08 §8).
 - 쪽(side)은 토큰의 역할에서 정한다(데스크톱 `d`, 모바일 `m`). 클라이언트가 고르지 않는다.
 
@@ -25,8 +25,9 @@
 | `PUT /v1/mailboxes/:id/bundle` | 데스크톱 | 쓰기 | `{bundle: base64}`(≤ 2KB) | `204` | 우편함 번들 슬롯(`Vx` 서명 `{Qx, valid_from, valid_to, seq}`, 릴레이는 검증하지 않음) |
 | `GET /v1/mailboxes/:id/bundle` | 둘 다 | 읽기 | — | `200 {bundle}` | 없으면 `relay.mailbox_not_found` |
 | `POST /v1/rooms` | 데스크톱 | — | `{roomId}`(16B base64url 22자, QR의 `room_id`) | `201 {expiresAt}` | 계정당 시간당 5개 `policy.rate_limited`, 중복 `request.param_rejected` |
-| `POST /internal/v1/devices/:id/stopped` | 내부(`Internal <secret>`) | — | — | `200 {closed}` | 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다 |
+| `POST /internal/v1/devices/:id/stopped` | 내부(서명, [계정 API](../account/API.md) 인증 표기) | — | — | `200 {closed}` | 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다 |
 | `POST /internal/v1/queues/purge` | 내부 | — | — | `200 {deleted}` | 릴레이 침해 대응: 큐 전면 폐기(D09 §11) |
+| `POST /internal/v1/rooms/:id/redeem` | 내부 | — | `{deviceId}`(등록하는 데스크톱) | `200 {ok:true}` | 계정 서비스의 폰 대리 등록(팀장 결정 2026-11-06). 그 데스크톱이 만든 룸이고, 정원 2가 한 번 찼고(폰이 붙음), 만료 전이고, 아직 쓰지 않았으면 한 번만 소비한다(룸은 닫지 않는다). 이미 쓴 룸이면 `409 relay.room_used`(그 PC에만 보인다). 그 밖은 모두 `404 relay.room_unavailable` |
 
 ## WSS
 
@@ -47,6 +48,7 @@
 - 정원 2, 발급 후 120초 안에만 참가, 1회용: 한쪽이 나가면 룸을 폐기하고 다른 쪽도 끊는다. 120초가 지나면 연결도 끊는다.
 - 바이너리 프레임 규칙은 라이브 우편함과 같다(HS·DATA, Noise 핸드셰이크·전송).
 - 룸 레코드는 메모리에만 있고 계정이 없다. 룸과 그 뒤 만들어지는 영구 우편함의 연관은 기록하지 않는다.
+- 폰 대리 등록용으로 룸을 만든 데스크톱 기기 ID의 sha256, 정원이 찼는지, 등록에 썼는지만 같은 메모리 레코드에 둔다(룸이 폐기되면 함께 사라진다). 그래서 PC는 **룸이 열려 있는 동안**, 즉 7단계에서 `PAIR_OK`를 보내기 전에 `POST /v1/devices/enroll`을 부른다.
 
 ## 오류 코드
 

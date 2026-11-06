@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, isUserSid, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsPowerShellEnv, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -86,6 +86,18 @@ describe('경로와 접근 통제', () => {
     assert.equal(grants(`D:PAI(A;OICI;FA;;;S-1-5-21-1-2-3-1002)`), false, '다른 계정');
   });
 
+  it('SDDL 별칭 LA·LG: 이 컴퓨터의 기본 제공 Administrator·Guest 로컬 계정일 때만 사용자로 본다(windows-latest runneradmin)', () => {
+    const admin = 'S-1-5-21-1-2-3-500';
+    const dacl = parseDacl('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;LA)');
+    assert.equal(grantsUserFullControl(dacl, admin, true), true, '로컬 Administrator');
+    assert.equal(grantsUserFullControl(dacl, admin, false), false, '도메인 계정 RID 500은 이 컴퓨터의 LA가 아니다(실패 닫힘)');
+    assert.equal(grantsUserFullControl(dacl, 'S-1-5-21-1-2-3-1001', true), false, '다른 로컬 계정');
+    assert.equal(isUserSid('LG', 'S-1-5-21-1-2-3-501', true), true, '로컬 Guest');
+    assert.equal(isUserSid('LA', 'S-1-5-21-1-2-3-501', true), false, 'Guest에게 LA는 남이다');
+    assert.equal(isUserSid('LA', 'S-1-5-21-1-2-3-1500', true), false, 'RID가 500으로 끝나기만 하는 계정');
+    assert.equal(isUserSid('BA', admin, true), false, 'Administrators 그룹은 사용자가 아니다');
+  });
+
   it('사용자 자신에게 권한이 없는 폴더는 no_user_access, 기동 시 제자리에서 고친다', async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     // 하위 폴더 없는 루트로 시작한다. Windows는 DACL을 쓰면 하위로 전파하는데, 막 나열할 수 없게 된 루트 아래 전파는 시험 대상이 아니다.
@@ -94,7 +106,7 @@ describe('경로와 접근 통제', () => {
     const lockOut = async (dir: string) => {
       if (!win) return fs.chmod(dir, 0o000);
       const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
-      await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: dir } });
+      await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: dir }) });
     };
     await lockOut(root);
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['no_user_access']);
@@ -127,7 +139,8 @@ describe('경로와 접근 통제', () => {
   it('Windows: 거부 ACE·조건부 ACE도 잡고 기동 시 지운다', { skip: !win }, async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     assert.equal((await prepareLayout(root)).root.ok, true);
-    assert.match(await readOwner(root), /^S-1-5-21-/, '사용자가 만든 폴더의 소유자는 사용자');
+    // 승격 관리자(windows-latest runneradmin)가 만든 폴더의 기본 소유자는 Administrators다(isTrustedOwner).
+    assert.match(await readOwner(root), /^(S-1-5-21-.+|S-1-5-32-544)$/, '사용자가 만든 폴더의 소유자는 사용자(승격 관리자면 Administrators)');
     await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']); // Guests 쓰기 거부
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '거부 ACE 복구');
@@ -136,7 +149,7 @@ describe('경로와 접근 통제', () => {
     // Get-Acl 객체는 SACL까지 다시 쓰려 해 SeSecurityPrivilege가 필요하다. DACL만 담은 새 객체로 쓴다.
     // 경로는 생산 코드처럼 환경 변수로 넘긴다(작은따옴표가 든 사용자 이름에서도 깨지지 않게).
     const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $a)`;
-    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: root } });
+    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: root }) });
     assert.ok((await readDacl(root)).aces.some((a) => a.type === 'XA' && a.sid === 'WD'), 'Everyone 조건부 허용이 보인다');
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '조건부 ACE 복구');
@@ -348,7 +361,7 @@ describe('경로와 접근 통제', () => {
     // SYSTEM만 전체, 소유자에게는 SYNCHRONIZE·FILE_WRITE_ATTRIBUTES만. 우리 소유여도 READ_CONTROL·WRITE_DAC가 없어 icacls·Get-Acl이 실패한다.
     // FILE_WRITE_ATTRIBUTES는 정리용이다(libuv 1.48+ rmdir이 이 권한으로 연다). 우리에게 아무것도 주지 않는 실제 다른 계정 폴더는 PoC-1 §5.1 확인 항목.
     const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;SY)(A;;0x100100;;;OW)', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
-    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: paths.chromeProfile } });
+    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: paths.chromeProfile }) });
     await assert.rejects(dirGuard().checkPrivate(paths.chromeProfile), '확인 도구가 이 폴더에서 실패한다');
     const r = await preparePrivateDir(paths.chromeProfile);
     assert.deepEqual([r.check.ok, r.before, r.reason], [true, ['unreadable'], ['unreadable']]);
@@ -384,9 +397,10 @@ describe('암호화 DB와 CRUD', () => {
     assert.equal(isEncryptedFile(file), true);
     if (!win) return assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
     const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
-    const me = stdout.trim().split(',').pop()?.replace(/"/g, '');
+    const [name = '', me = ''] = stdout.trim().split('","').map((f) => f.replace(/"/g, ''));
+    const local = name.split('\\')[0]?.toLowerCase() === process.env.COMPUTERNAME?.toLowerCase();
     const sids = (await readDacl(file)).aces.map((a) => a.sid);
-    assert.ok(sids.length > 0 && sids.every((s) => s === me || s === 'SY'), `DB 파일 ACE: ${sids.join(', ')}`);
+    assert.ok(sids.length > 0 && sids.every((s) => isUserSid(s, me, local) || s === 'SY'), `DB 파일 ACE: ${sids.join(', ')}`);
   });
 
   it('프로필: 개인 1 + 사업자 1, 같은 종류는 갱신, 사업자번호 검증', async () => {
@@ -505,5 +519,12 @@ describe('사업자 진위확인(H-05, 자기 키, 모의 서버)', () => {
     const e = new Egress();
     await assert.rejects(e.postJson('odcloud', '/api/other', {}), (err: unknown) => err instanceof EgressError && err.code === 'path_not_allowed');
     await assert.rejects(e.postJson('evil' as never, '/', {}), (err: unknown) => err instanceof EgressError && err.code === 'destination_not_allowed');
+  });
+});
+
+describe('Windows PowerShell 5.1 자식 환경(PSModulePath)', () => {
+  it('PSModulePath는 대소문자와 상관없이 빼고 나머지·추가 값은 그대로 넘긴다(pwsh 7에서 띄워도 Get-Acl이 돈다)', () => {
+    const env = windowsPowerShellEnv({ SAX_ACL_TARGET: 'C:\\x' }, { Path: 'C:\\Windows', PSModulePath: 'C:\\pwsh7\\Modules', psmodulepath: 'y', SystemRoot: 'C:\\Windows' });
+    assert.deepEqual(env, { Path: 'C:\\Windows', SystemRoot: 'C:\\Windows', SAX_ACL_TARGET: 'C:\\x' });
   });
 });

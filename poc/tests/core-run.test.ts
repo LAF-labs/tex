@@ -92,11 +92,11 @@ describe('Wmax(X) (D03 §3)', () => {
 
 describe('원장·gate_requests 연결 (R-G7·R-G8, B-33)', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-core-run-'));
+  // 연 DB를 닫은 뒤 지운다(Windows는 열린 파일을 지우지 못해 EPERM).
   const opened: Db[] = [];
-  // Windows는 열린 SQLite 파일을 지울 수 없다(EPERM). 닫은 뒤 지운다.
   after(() => {
-    for (const db of opened) db.close();
-    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    for (const d of opened) d.close();
+    fs.rmSync(dir, { recursive: true, force: true });
   });
   let n = 0;
   const fresh = (): { db: Db; gates: GateRepo; ledger: Ledger; runs: RunRepo } => {

@@ -12,6 +12,7 @@ import { encodeHs, KIND, parseFrame, Transport } from './frame.ts';
 import type { DesktopKeys, NoiseStatic } from './keys.ts';
 import { Handshake } from './noise.ts';
 import { decodeQr, encodeQr, QR_TTL_SEC, type PairIntent } from './qr.ts';
+import { hasControl, verifyAcctClaim, type AcctClaim } from './acctclaim.ts';
 import { attachQueue, nextFrame, type Link } from './relay.ts';
 import { ulid } from './ulid.ts';
 
@@ -70,8 +71,20 @@ export interface DesktopPairingOptions {
   relayHost: string;
   intent?: PairIntent;
   now?: () => number;
-  /** §4.2 6단계: 폰의 Sm이 폰이 계정에 등록한 기기 키 목록에 있는지(서버 조회, 신뢰 앵커 아님). */
-  isPhoneKeyRegistered: (Sm: Uint8Array, deviceId: string) => Promise<boolean>;
+  /**
+   * §4.2 7단계(팀장 결정 2026-11-06): 폰에는 계정 로그인이 없으므로 PC가 데스크톱 기기 토큰으로 폰을 계정에 대신 등록한다
+   * (`POST /v1/devices/enroll` + 이 룸 id). 릴레이는 룸이 열려 있는 동안만 받으므로 `pair.ok` 전에 부른다.
+   * 같은 키로 이미 등록된 폰이면 성공으로 끝낸다(목록을 올리기 전에 실패한 시도의 재시도). 던지면 페어링을 멈춘다.
+   * 이 PC의 기기 목록에 이미 같은 키로 있는 폰(다시 연결)은 부르지 않는다.
+   */
+  enrollPhone: (p: { deviceId: string; platform: 'ios' | 'android'; name: string; Sm: Uint8Array; Vm: Uint8Array; roomId: Uint8Array }) => Promise<void>;
+  /**
+   * 계정 서비스가 서명한 계정 확인 주장(acctclaim.ts 운반 형식 그대로). pair.ok에 싣는다(설계 #120, 팀장 결정 2026-11-06).
+   * 폰은 이것 없이는 저장하지 않는다.
+   */
+  accountClaim: () => Promise<string>;
+  /** PC가 폰에 알릴 이름(서명 없음, 폰은 참고 표시만). */
+  desktopName?: string;
   /** 새 기기 목록을 서버에 올린다(7단계). */
   publishDeviceList: (list: DeviceListJson) => Promise<void>;
   /** 우편함 등록(서버는 토큰 해시만 저장). */
@@ -196,10 +209,12 @@ export class DesktopPairing {
     }
     const phone = this.#phone;
     try {
-      if (!(await this.#o.isPhoneKeyRegistered(phone.Sm, phone.deviceId))) {
-        this.#fail();
-        return { ok: false, triesLeft: 0 };
-      }
+      // 순서(D08 §4.2 7단계): SAS 일치 → 대리 등록 → Cert_M·목록 서명·업로드 → 우편함 → pair.ok. 룸은 한쪽이 나가면 폐기되므로
+      // 등록은 pair.ok 전, 룸이 열려 있을 때 한다.
+      const known = this.#o.deviceList.entries.some(
+        (e) => e.entry.device_id === phone.deviceId && e.entry.role === 'mobile' && e.entry.Sx === b64(phone.Sm) && e.entry.Vx === b64(phone.Vm),
+      ) && !this.#o.deviceList.revoked.some((r) => r.device_id === phone.deviceId);
+      if (!known) await this.#o.enrollPhone({ deviceId: phone.deviceId, platform: phone.platform, name: phone.name, Sm: phone.Sm, Vm: phone.Vm, roomId: this.roomId });
       const now = this.#now();
       const notAfter = certNotAfter(now);
       const certBody: CertBody = { device_id: phone.deviceId, role: 'mobile', Sx: phone.Sm, Vx: phone.Vm, Kx: phone.Km, not_after: notAfter };
@@ -212,9 +227,11 @@ export class DesktopPairing {
       await this.#o.registerMailbox(mbxId, tokRead, tokWrite);
       const kvPub = this.#o.keys.kvPublic();
       const mbxEpoch = this.#o.mbxEpoch ?? 0;
+      const acctClaim = await this.#o.accountClaim();
       const body: PairOkBody = {
         cert, aikPub: b64(this.#o.keys.aik.publicKey), kvPub: b64(kvPub), kvSig: await signKv(this.#o.keys.vd, kvPub), deviceList: list,
-        mbxId: b64(mbxId), tokRead: b64(tokRead), tokWrite: b64(tokWrite), mbxEpoch,
+        mbxId: b64(mbxId), tokRead: b64(tokRead), tokWrite: b64(tokWrite), mbxEpoch, acctClaim,
+        ...(this.#o.desktopName ? { desktopName: this.#o.desktopName.slice(0, 40) } : {}),
       };
       const pairId = ulid(now);
       const channel = new Channel(this.#link!, new Transport(this.#hs.split()), { pairId, me: 'desktop', now: this.#now });
@@ -247,7 +264,9 @@ export function docScopeJson(scope: { business: boolean; personal: boolean }, ha
 // ============================ 폰(개시자) ============================
 
 export type MobilePairState = 'idle' | 'scanned' | 'handshaking' | 'show_sas' | 'paired' | 'failed';
-export type MobilePairFailure = 'qr_invalid' | 'qr_expired' | 'relay_not_allowed' | 'devlist_invalid' | 'desktop_unknown' | 'handshake' | 'pair_ok_invalid' | 'aik_mismatch' | 'timeout';
+export type MobilePairFailure =
+  | 'qr_invalid' | 'qr_expired' | 'relay_not_allowed' | 'devlist_invalid' | 'desktop_unknown' | 'handshake' | 'pair_ok_invalid' | 'aik_mismatch'
+  | 'acct_claim_invalid' | 'timeout';
 
 export interface PhoneKeys {
   noise: NoiseStatic;
@@ -260,10 +279,13 @@ export interface PhoneKeys {
 
 export interface MobilePairingOptions {
   keys: PhoneKeys;
-  /** 서버가 준 계정 AIK_pub(첫 등록 시 고정). */
-  accountAikPub: Uint8Array;
-  /** 서버가 준 기기 목록(AIK 서명 확인 전에는 믿지 않는다). */
-  serverDeviceList: DeviceListJson;
+  /**
+   * 이 폰이 앞서 페어링하며 고정한 계정 AIK_pub(다시 연결이면 저장값, 처음이면 없음). 있으면 PAIR_OK의 AIK_pub와 같아야 한다.
+   * 폰에는 계정 로그인이 없어 서버에서 AIK_pub·기기 목록을 받지 않는다(팀장 결정 2026-11-06, D08 §4.2 3단계).
+   */
+  knownAikPub?: Uint8Array;
+  /** 앱에 고정한 계정 서비스 공개키(acct_claim 검증, 회전 대비 여러 개). 비어 있으면 페어링은 늘 실패한다. */
+  accountKeys: readonly Uint8Array[];
   /** 이 폰이 본 가장 높은 listVersion(재페어링이면 저장값). */
   seenListVersion?: number;
   relayAllowlist: readonly string[];
@@ -271,6 +293,20 @@ export interface MobilePairingOptions {
   /** pair.ok 대기(사용자가 PC에 6자리를 입력할 시간 포함). */
   pairOkTimeoutMs?: number;
 }
+
+/**
+ * 저장 전 확인 화면(설계 #120, 팀장 결정 2026-11-06). account는 계정 서비스 서명을 검증한 주장이다(이메일 전체를 보인다).
+ * desktopName은 PC가 스스로 알린 이름이라 "PC가 알려 준 이름"으로 참고 표시만 한다.
+ */
+export interface PairIdentity {
+  account: AcctClaim;
+  desktopName: string | null;
+}
+
+const readDesktopName = (v: unknown): string | null => {
+  const t = typeof v === 'string' ? v.trim() : '';
+  return t.length >= 1 && t.length <= 40 && !hasControl(t) ? t : null;
+};
 
 export interface MobilePairResult {
   pairId: string;
@@ -288,19 +324,22 @@ export interface MobilePairResult {
   mbxEpoch: number;
   relayHost: string;
   certNotAfter: number;
+  /** 저장 전 확인 화면(검증된 계정 주장·PC가 알린 이름). */
+  identity: PairIdentity;
   channel: Channel;
 }
 
 export class MobilePairing {
   state: MobilePairState = 'idle';
   failure: MobilePairFailure | null = null;
-  /** 3단계: 이 PC가 24시간 안에 등록되었으면 전면 경고를 띄운다. */
+  /** 3단계 검사(7단계 PAIR_OK에서): 이 PC가 24시간 안에 등록되었으면 저장 전에 전면 경고를 띄운다. */
   newDesktopWarning = false;
   sas: string | null = null;
   #o: MobilePairingOptions;
   #now: () => number;
   #qr: ReturnType<typeof decodeQr> = null;
   #desktop: { deviceId: string; Vd: Uint8Array } | null = null;
+  #account: AcctClaim | null = null;
   #onState: ((s: MobilePairState) => void)[] = [];
 
   constructor(o: MobilePairingOptions) {
@@ -320,7 +359,10 @@ export class MobilePairing {
     return false;
   }
 
-  /** 3단계: 앱 안 스캐너가 읽은 텍스트를 검사한다. */
+  /**
+   * 3단계: 앱 안 스캐너가 읽은 텍스트를 검사한다(만료·릴레이 허용 목록). 기기 목록 검사(AIK 서명·Sd가 데스크톱 항목에 있음·24시간)는
+   * PAIR_OK의 AIK 서명 목록으로 한다(팀장 결정 2026-11-06, D08 §4.2 3단계).
+   */
   scan(text: string): boolean {
     if (this.state !== 'idle' && this.state !== 'scanned' && this.state !== 'failed') throw new Error('pairing: busy');
     // 다시 스캔하면 지난 시도의 실패·SAS·QR을 지운다.
@@ -329,16 +371,11 @@ export class MobilePairing {
     this.newDesktopWarning = false;
     this.#qr = null;
     this.#desktop = null;
+    this.#account = null;
     const q = decodeQr(text);
     if (!q || q.intent !== 'pair') return this.#fail('qr_invalid');
     if (this.#now() / 1000 > q.exp) return this.#fail('qr_expired');
     if (!this.#o.relayAllowlist.includes(q.relayHost)) return this.#fail('relay_not_allowed');
-    const chk = verifyDeviceList(this.#o.serverDeviceList, this.#o.accountAikPub, this.#o.seenListVersion ?? 0);
-    if (!chk.ok) return this.#fail('devlist_invalid');
-    const d = chk.devices.find((x) => x.role === 'desktop' && equal(x.noisePub, q.desktopStatic));
-    if (!d) return this.#fail('desktop_unknown');
-    this.newDesktopWarning = this.#now() - d.registeredAt < NEW_DESKTOP_WARN_MS;
-    this.#desktop = { deviceId: d.deviceId, Vd: d.signPub };
     this.#qr = q;
     this.#set('scanned');
     return true;
@@ -357,7 +394,7 @@ export class MobilePairing {
 
   /** 4~7단계. show_sas 상태에서 SAS를 보여 주고, 사용자가 PC에 입력하면 pair.ok를 받아 끝난다. */
   async run(link: Link): Promise<MobilePairResult | null> {
-    if (this.state !== 'scanned' || !this.#qr || !this.#desktop) throw new Error('pairing: not scanned');
+    if (this.state !== 'scanned' || !this.#qr) throw new Error('pairing: not scanned');
     const q = this.#qr;
     const k = this.#o.keys;
     attachQueue(link);
@@ -403,27 +440,42 @@ export class MobilePairing {
       return this.#fail(r) || null;
     }
     this.#set('paired');
-    const cert = verifyCert(b.cert, this.#o.accountAikPub, this.#now())!;
+    const aikPub = fromB64Strict(b.aikPub);
+    const cert = verifyCert(b.cert, aikPub, this.#now())!;
     return {
-      pairId: env.pairId, cert: decodeCertField(b.cert)!, aikPub: this.#o.accountAikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
+      pairId: env.pairId, cert: decodeCertField(b.cert)!, aikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
       desktopDeviceId: this.#desktop!.deviceId, kvPub: fromB64Strict(b.kvPub), deviceList: b.deviceList, mbxId: b.mbxId, tokRead: b.tokRead,
-      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, channel,
+      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, identity: { account: this.#account!, desktopName: readDesktopName(b.desktopName) }, channel,
     };
   }
 
   #checkPairOk(b: PairOkBody): true | MobilePairFailure {
     const k = this.#o.keys;
-    // 서버가 준 계정 AIK_pub와 PAIR_OK의 AIK_pub가 같을 때만 진행(C-01).
-    if (!equal(fromB64Strict(b.aikPub), this.#o.accountAikPub)) return 'aik_mismatch';
-    const cert = verifyCert(b.cert, this.#o.accountAikPub, this.#now());
+    let aik: Uint8Array;
+    try {
+      aik = fromB64Strict(b.aikPub);
+    } catch {
+      return 'pair_ok_invalid';
+    }
+    if (aik.length !== 32) return 'pair_ok_invalid';
+    // 다시 연결이면 앞서 고정한 AIK_pub와 같을 때만 진행(C-01). 처음 페어링은 QR·SAS로 고른 이 PC의 AIK를 믿는다(TOFU, §1 E-12).
+    if (this.#o.knownAikPub && !equal(aik, this.#o.knownAikPub)) return 'aik_mismatch';
+    // 계정 서비스 서명 주장: 고정 키로 서명, exp 미경과, aik_pub == PAIR_OK.aikPub. 하나라도 어긋나면 저장하지 않는다(설계 #120).
+    const ac = verifyAcctClaim(b.acctClaim, { accountKeys: this.#o.accountKeys, aikPub: aik, now: this.#now() });
+    if (!ac.ok) return 'acct_claim_invalid';
+    this.#account = ac.claim;
+    const cert = verifyCert(b.cert, aik, this.#now());
     if (!cert || cert.device_id !== k.deviceId || cert.role !== 'mobile' || !equal(cert.Sx, k.noise.publicKey) || !equal(cert.Vx, k.vmPub) || !cert.Kx || !equal(cert.Kx, k.kmPub) || cert.Px) return 'pair_ok_invalid';
-    const chk = verifyDeviceList(b.deviceList, this.#o.accountAikPub, Math.max(this.#o.seenListVersion ?? 0, this.#o.serverDeviceList.listVersion));
+    // 3단계 검사를 여기서: 목록의 모든 항목이 AIK 서명, 이미 본 listVersion 이상, QR의 Sd가 role=desktop 항목에 있음.
+    const chk = verifyDeviceList(b.deviceList, aik, this.#o.seenListVersion ?? 0);
     if (!chk.ok) return 'devlist_invalid';
     const me = chk.devices.find((d) => d.deviceId === k.deviceId);
     if (!me || me.role !== 'mobile' || !equal(me.noisePub, k.noise.publicKey) || !equal(me.signPub, k.vmPub)) return 'pair_ok_invalid';
-    const desk = chk.devices.find((d) => d.deviceId === this.#desktop!.deviceId && d.role === 'desktop' && equal(d.noisePub, this.#qr!.desktopStatic));
+    const desk = chk.devices.find((d) => d.role === 'desktop' && equal(d.noisePub, this.#qr!.desktopStatic));
     if (!desk) return 'desktop_unknown';
     if (!verifyKv(desk.signPub, fromB64Strict(b.kvPub), b.kvSig)) return 'pair_ok_invalid';
+    this.#desktop = { deviceId: desk.deviceId, Vd: desk.signPub };
+    this.newDesktopWarning = this.#now() - desk.registeredAt < NEW_DESKTOP_WARN_MS;
     return true;
   }
 }

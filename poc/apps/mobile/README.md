@@ -42,11 +42,26 @@ xcodebuild -workspace tex.xcworkspace -scheme tex -configuration Debug -sdk ipho
 
 실기기·EAS 빌드: Apple 팀 ID는 저장소에 두지 않고 `APPLE_TEAM_ID`(10자) 환경 변수로만 넘긴다(`app.config.js`가 `ios.appleTeamId`로 얹는다).
 
+### 실기기 개발 빌드(같은 LAN의 맥 개발 스택)
+
+실기기 개발 빌드는 실제 카메라·Face ID·키체인을 쓴다(시뮬레이터 완화 없음). 개발 스택에만 맥의 mDNS 이름으로 붙는다. 평문 http/ws는 `localhost`와 `<이름>.local`만 허용한다(IP·공개 도메인은 거부, `ws-link`·DPoP `htu` 같은 규칙).
+
+```bash
+H=$(scutil --get LocalHostName | tr A-Z a-z).local:8787
+STACK_LIVE=0 STACK_HOST=$H node --conditions=development dev/stack.ts      # 실제 계정·릴레이 + 더미 PC
+EXPO_PUBLIC_TEX_DEV_HOST=$H npx expo start --port 8081                      # 같은 값을 번들에 박는다
+APPLE_TEAM_ID=<팀 ID> npx expo prebuild -p ios --no-install && (cd ios && LANG=en_US.UTF-8 pod install)
+# ios/: xcodebuild -workspace tex.xcworkspace -scheme tex -configuration Debug -destination 'id=<UDID>' -derivedDataPath build/dd-device -allowProvisioningUpdates build
+```
+
+페어링 QR은 맥 브라우저에서 `http://$H/dev/qr.html`을 열어 폰으로 찍는다(120초). 6자리는 `curl -XPOST http://$H/dev/sas -d '{"code":"……"}'`. 처음 연결할 때 iOS가 로컬 네트워크 접근을 물으면 허용한다. `pod install`은 UTF-8 로캘이 필요하다.
+
 빌드 설정은 `eas.json`(simulator·preview·production). 스토어 제출은 하지 않는다(M4-9 패키징·서명 뒤).
 
 ## 다른 트랙에 기대는 것
 
-- 계정 서버의 AIK_pub·기기 목록 조회와 폰 계정 로그인(`src/net/account.ts`의 `AccountApi`) — 클라우드 트랙. 지금은 개발 구현만 있다.
+- 폰에는 계정 로그인이 없다. 폰의 계정 등록은 페어링 7단계에서 PC가 대신 하고(클라우드 #115), 폰은 `PAIR_OK`의 AIK 서명 목록을 검사한다(#118).
+- 저장 전 확인 화면의 PC 이름·계정 이메일(설계 #120): `PAIR_OK` 필드 이름 `desktopName`·`accountEmail`은 가정이다. 설계 확정 뒤 맞춘다.
 - 릴레이 WSS: 경로·헤더·제어 메시지는 services/relay/API.md(클라우드 PR #63)를 따른다. 개발 대역은 `dev/relay-server.ts`다. 우편함 라이브에는 기기 범위 토큰(계정 서비스 `POST /v1/device-tokens`, 개발 대역은 `dev/dev-auth.ts`)과 DPoP가 필요하다. 릴리스 계정 서비스 origin은 클라우드 배포 주소가 정해지면 `src/net/account.ts`에 넣는다(그 전에는 연결하지 않는다).
 - App Attest·Play Integrity 등록 확인(D08 §3.1) — 클라우드 트랙.
 - 분실 폰 해제: [docs/lost-phone-rehearsal.md](docs/lost-phone-rehearsal.md).

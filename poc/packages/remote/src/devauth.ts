@@ -4,6 +4,7 @@
 //   POST /v1/device-tokens에서는 아직 토큰이 없으므로 ath = b64u(sha256(JCS(SignedCert))).
 // 이 패키지는 소켓을 열지 않는다. HTTP는 호출자가 넘긴다(PC는 @sax/net egress, 폰은 앱의 fetch).
 
+import { isDevPlainHost } from './devhosts.ts';
 import { b64url, utf8 } from './bytes.ts';
 import { CTX } from './contexts.ts';
 import { randomBytes, sha256Hash } from './crypto.ts';
@@ -26,7 +27,10 @@ export const athOf = (boundTo: string): string => b64url(sha256Hash(utf8(boundTo
 
 const METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
 
-/** htu는 쿼리·조각 없는 공개 주소(origin + 경로). https만, 로컬 개발만 http://localhost·127.0.0.1. */
+/**
+ * htu는 쿼리·조각 없는 공개 주소(origin + 경로). https만, 로컬 개발만 http://localhost·127.0.0.1. 개발 빌드가 allowDevLanHosts(true)를
+ * 켰으면 같은 LAN의 mDNS `<이름>.local`도(ws-link의 insecureLocal과 같은 규칙, devhosts.ts).
+ */
 export function checkHtu(htu: string): string {
   let u: URL;
   try {
@@ -34,7 +38,7 @@ export function checkHtu(htu: string): string {
   } catch {
     throw new Error('dpop: bad htu');
   }
-  const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+  const local = u.protocol === 'http:' && u.hostname !== '[::1]' && isDevPlainHost(u.hostname);
   if ((u.protocol !== 'https:' && !local) || u.search || u.hash || u.username || u.password || htu.includes('?') || htu.includes('#')) {
     throw new Error('dpop: bad htu');
   }

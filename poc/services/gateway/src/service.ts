@@ -1,7 +1,7 @@
 // 모델 게이트웨이 본체(D09 §3, D04 §7, gateway-request.schema.json 규칙 (1)~(7)).
 // 본문은 메모리에서만 다룬다: DB에는 계량(계정·월·토큰·비용), 35일 호출 기록(본문 없음), 계정 없는 운영 통계, 실행 예산 카운터만 쓴다.
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
 import { QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
@@ -10,26 +10,27 @@ import {
   b64u,
   canonical,
   ed25519RawPublic,
-  RateLimiter,
   fail,
   fromB64u,
   hmacHex,
   jcs,
   kstDay,
   kstMonth,
+  memoryLimits,
   randomToken,
   safeEqual,
   sha256hex,
   signCtx,
   verifyCtx,
   type DeviceClaims,
+  type Limits,
   type Sql,
 } from '@sax/svc-shared';
 import { GATEWAY, ZERO_PRICES, type Prices } from './constants.ts';
 import { ProviderError, type ModelProvider, type ProviderUsage } from './providers.ts';
 import { NtsUnavailable, type BizStatus, type BizStatusSource } from './nts.ts';
 
-const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+const Ajv2020 = ajv2020.default as typeof import('ajv').default;
 const SCHEMA_ID = 'https://sovereign-ax.dev/schemas/gateway-request.schema.json';
 
 /** 정본 스키마는 packages/net/schemas 한 곳(B-20). 게이트웨이는 그 파일을 그대로 읽는다(사본 없음). */
@@ -105,6 +106,8 @@ export interface GatewayDeps {
   prices?: Prices;
   nts: BizStatusSource;
   suspender?: DeviceSuspender;
+  /** 한도 카운터·키 솔트. 배포는 DB(`sqlLimits`, 인스턴스 공유), 없으면 메모리(단일 인스턴스) */
+  limits?: Limits;
   /** 운영 이벤트(카운트만) */
   onEvent?: (event: string) => void;
   now?: () => number;
@@ -119,17 +122,17 @@ export class GatewayService {
   private readonly v = loadRequestValidators();
   private readonly toolsets: Map<string, ToolsetDef>;
   private readonly runPub: Buffer;
-  private readonly abuse = new Map<string, number[]>();
   /** 자동 정지 요청이 진행 중인 기기(같은 폭주에서 중복 요청 방지). 끝나면 지운다: 재활성화 뒤 다시 폭주하면 다시 정지한다. */
   private readonly suspending = new Set<string>();
-  /** 하드 상한 이후 안전 판정 번들의 낮은 속도(D04 §6) */
-  private readonly afterCap = new RateLimiter(() => this.now());
+  /** 한도 카운터(라우터도 같은 것을 쓴다). 키는 당일 솔트 HMAC만 */
+  readonly limits: Limits;
 
   constructor(d: GatewayDeps) {
     this.d = d;
     this.now = d.now ?? Date.now;
     this.toolsets = d.toolsets ?? gatewayToolsets();
     this.runPub = ed25519RawPublic(d.runKey);
+    this.limits = d.limits ?? memoryLimits(this.now);
   }
 
   private event(e: string): void {
@@ -189,18 +192,19 @@ export class GatewayService {
     return hmacHex(this.d.tagKey, who.acc, '\u0000', who.dev, '\u0000', runToken, '\u0000', canonicalJson(item));
   }
 
-  /** 트립와이어·거절은 기기별로 센다. 1시간 안에 임계값을 넘으면 계정 서비스에 기기 자동 정지를 요청한다(계정 정지 전 알림). */
+  /**
+   * 트립와이어·거절은 기기별로 센다(1시간 고정 창, DB 카운터라 인스턴스가 여럿이어도 합산). 임계값에 닿으면 계정 서비스에 기기 자동 정지를 요청한다(계정 정지 전 알림).
+   * 카운터는 임계값 + 1에서 멈추므로 정지 요청이 실패하면 다음 위반에서 다시 시도한다.
+   */
   private async abuseHit(dev: string): Promise<void> {
-    const now = this.now();
-    const xs = (this.abuse.get(dev) ?? []).filter((t) => t > now - GATEWAY.abuseWindowMs);
-    xs.push(now);
-    this.abuse.set(dev, xs);
-    if (xs.length >= GATEWAY.abuseThreshold && !this.suspending.has(dev) && this.d.suspender) {
+    const key = `abuse:${await this.limits.idSalt('gw-abuse').hash(dev)}`;
+    const h = await this.limits.limiter.hit(key, GATEWAY.abuseThreshold, GATEWAY.abuseWindowMs);
+    if (h.n >= GATEWAY.abuseThreshold && !this.suspending.has(dev) && this.d.suspender) {
       this.suspending.add(dev);
       this.event('auto_suspend');
       try {
         await this.d.suspender.suspend(dev);
-        this.abuse.delete(dev); // 정지됨: 창을 비운다(재활성화 뒤에는 처음부터 다시 센다)
+        await this.limits.limiter.reset(key, GATEWAY.abuseWindowMs); // 정지됨: 창을 비운다(재활성화 뒤에는 처음부터 다시 센다)
       } catch {
         // 계정 서비스 장애: 창은 그대로 두고 다음 위반에서 다시 시도
       } finally {
@@ -283,7 +287,8 @@ export class GatewayService {
     // 100%를 넘어도 L1은 유지(L2만 중단), 하드 상한(2배) 이후에는 안전 판정 번들만 낮은 속도로(D04 §6 "월 한도 100% 이후 'L1 유지'")
     if (used >= limit * GATEWAY.hardCapMultiplier) {
       if (bundle!.def.riskClass !== 'safety') fail('gateway.quota_exceeded');
-      if (!this.afterCap.hit(who.acc, GATEWAY.safetyAfterCapPerMinute, 60_000)) fail('gateway.quota_exceeded');
+      const cap = await this.limits.limiter.hit(`cap:${await this.limits.idSalt('gw-limit').hash(who.acc)}`, GATEWAY.safetyAfterCapPerMinute, 60_000);
+      if (!cap.ok) fail('gateway.quota_exceeded');
     }
     await this.consume(rt.sh, rt.k, 'l1', 1);
     const started = this.now();
@@ -405,5 +410,6 @@ export class GatewayService {
     const now = this.now();
     await this.d.db.run('DELETE FROM call_records WHERE at <= $1', [now - GATEWAY.callRecordRetentionDays * 24 * 3600_000]);
     await this.d.db.run('DELETE FROM run_scopes WHERE expires_at <= $1', [now]);
+    await this.limits.limiter.sweep();
   }
 }

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { pathToFileURL } from 'node:url';
 import * as core from '@sax/engine/core';
 import { FUZZ_ITER, FUZZ_SEED, rng } from './lib/fuzz.ts';
 
@@ -26,7 +27,7 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
   const doc = (p: string) => JSON.parse(file(p).toString('utf8')) as Record<string, unknown>;
 
   it('샘플 그대로는 받는다(기준점)', async () => {
-    const { SAMPLE_NOW, sampleKeys } = (await import(samplesPath)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
+    const { SAMPLE_NOW, sampleKeys } = (await import(pathToFileURL(samplesPath).href)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
     const K = sampleKeys();
     const rev = api.acceptRevoked!(doc('registry/revoked_keys.json'), { roots: K.roots, current: null, now: SAMPLE_NOW });
     assert.ok(rev.ok, rev.code);
@@ -35,7 +36,7 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
   });
 
   it(`status·폐기 목록의 서명 대상 칸을 한 글자 바꾸면 거부(${Math.min(FUZZ_ITER, 200)}회, 씨앗 ${FUZZ_SEED})`, async () => {
-    const { SAMPLE_NOW, sampleKeys } = (await import(samplesPath)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
+    const { SAMPLE_NOW, sampleKeys } = (await import(pathToFileURL(samplesPath).href)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
     const K = sampleKeys();
     const r = rng(FUZZ_SEED);
     const targets = [
@@ -67,7 +68,7 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
   });
 
   it(`.sxp 비트 하나를 뒤집으면 풀기·로드가 거부하거나, 받더라도 내용이 원본과 같다(${Math.min(FUZZ_ITER, 200)}회)`, async () => {
-    const { SAMPLE_NOW, sampleKeys } = (await import(samplesPath)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
+    const { SAMPLE_NOW, sampleKeys } = (await import(pathToFileURL(samplesPath).href)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
     const { BUNDLE_ALLOWLIST } = (await import('@sax/model')) as { BUNDLE_ALLOWLIST: unknown };
     const { bundleOutcomes } = await import('../core-fixtures.ts');
     const K = sampleKeys();
@@ -106,7 +107,7 @@ describe('M5-1 레지스트리 회귀: 변조·되감기 거부', { skip }, () =
   });
 
   it('status 되감기: 긴급 status(monotonic 11)를 받은 뒤 이전 status(10)는 거부', async () => {
-    const { SAMPLE_NOW, sampleKeys } = (await import(samplesPath)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
+    const { SAMPLE_NOW, sampleKeys } = (await import(pathToFileURL(samplesPath).href)) as { SAMPLE_NOW: number; sampleKeys: () => { roots: unknown } };
     const K = sampleKeys();
     const ctx = (current: unknown) => ({ roots: K.roots, revoked: new Set(), current, now: SAMPLE_NOW });
     const st = api.acceptStatus!(doc('registry/status.json'), ctx(null));

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
-import { BUILD_WARN_TEXT, isBuildInfo, packagedProblems } from '../apps/desktop/src/harden.ts';
+import { BUILD_WARN_TEXT, isBuildInfo, isTestBuild, packagedProblems } from '../apps/desktop/src/harden.ts';
 
 const SRC = path.join(import.meta.dirname, '../apps/desktop/src');
 const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.]|$)|poc\d+-measure/;
@@ -73,6 +73,28 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
     assert.deepEqual(packagedProblems({ ...ok, buildInfo: { ...info, signing: 'unsigned', devOnlyIncluded: ['dist/shell-mock.js'] } }), ['warn:unsigned_build', 'warn:dev_code_included']);
     for (const w of ['unsigned_build', 'dev_code_included', 'install_unexpected']) assert.ok(BUILD_WARN_TEXT[w], w);
     assert.equal(BUILD_WARN_TEXT.unsigned_build, '미서명 빌드');
+  });
+
+  it('실계정 시험 빌드 칸(testBuild): 없으면 제품 빌드, true면 배지, 불리언이 아니면 build-info 모양 틀림', () => {
+    assert.equal(isTestBuild(info), false, '칸이 생기기 전 build-info는 제품 빌드');
+    assert.equal(isTestBuild({ ...info, testBuild: false }), false);
+    assert.equal(isTestBuild({ ...info, testBuild: true }), true);
+    for (const bad of ['true', 1, null]) {
+      assert.equal(isTestBuild({ ...info, testBuild: bad }), false);
+      assert.deepEqual(packagedProblems({ ...ok, buildInfo: { ...info, testBuild: bad } }), ['fatal:build_info_missing']);
+    }
+    assert.equal(isTestBuild(null), false);
+    assert.equal(isTestBuild({ testBuild: true }), false, '모양이 틀린 build-info는 시험 빌드로 보지 않는다(fail-closed)');
+    assert.deepEqual(packagedProblems({ ...ok, buildInfo: { ...info, testBuild: true } }), ['warn:test_build']);
+    assert.deepEqual(packagedProblems({ ...ok, buildInfo: { ...info, testBuild: false } }), []);
+    assert.equal(BUILD_WARN_TEXT.test_build, '실계정 시험 빌드');
+  });
+
+  it('package-win: --test-build이면 build-info testBuild=true이고 배포 가능 판정을 막는다', () => {
+    const src = fs.readFileSync(path.join(SRC, '../../../scripts/package-win.mjs'), 'utf8');
+    assert.match(src, /'test-build': \{ type: 'boolean' \}/);
+    assert.match(src, /testBuild: args\['test-build'\] === true,/);
+    assert.match(src, /if \(buildInfo\.testBuild\) blockers\.push\(\{ code: 'test_build'/);
   });
 
   it('제품 진입점이 점검을 데이터 루트 준비 전에 하고, fatal이면 열지 않으며 warn은 배지로 넘긴다', () => {

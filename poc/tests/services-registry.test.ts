@@ -26,9 +26,36 @@ import {
   type Policy,
   type RegistryStatus as EngineStatus,
   type RevokedKeys as EngineRevoked,
+  consistencyProof as engineConsistencyProof,
+  headMismatch,
+  merkleRoot,
+  verifyConsistency,
 } from '@sax/engine/core';
-import { Logger, createServer, ed25519RawPublic, jcs, listen, looksSensitive } from '../services/shared/src/index.ts';
-import { DirStore, MemoryStore, contentDigest, inRollout, parseTrustRoot, registryRouter, rolloutBucket, without, type Role, type Sig, type Store, type TrustRoot } from '../services/registry/src/index.ts';
+import { Logger, createServer, ed25519RawPublic, jcs, listen, looksSensitive, openPg, openSqlite, type Sql } from '../services/shared/src/index.ts';
+import {
+  DirStore,
+  MemoryStore,
+  TransparencyLog,
+  consistencyPath,
+  contentDigest,
+  inRollout,
+  inclusionPath,
+  leafHashOf,
+  logSigningKey,
+  parseTrustRoot,
+  registryRouter,
+  rolloutBucket,
+  rootOf,
+  startRegistry,
+  verifyInclusion,
+  verifyTreeHead,
+  without,
+  type Role,
+  type Sig,
+  type SignedTreeHead,
+  type Store,
+  type TrustRoot,
+} from '../services/registry/src/index.ts';
 import { validatePackage } from '@sax/payroll';
 import { verifyRelease as updaterVerify } from '../packages/updater/src/index.ts';
 import { bundleOutcomes } from './core-fixtures.ts';
@@ -74,20 +101,27 @@ interface Env {
   req: ReturnType<typeof client>;
   logs: string[];
   events: string[];
+  log: TransparencyLog;
+  db: Sql;
   put(path: string, body: unknown): ReturnType<Env['req']>;
   stage(file: string, bytes?: Buffer): ReturnType<Env['req']>;
 }
 
-async function start(o: { store?: Store } = {}): Promise<Env> {
+/** 투명성 로그 헤드 서명 키 = 샘플 타임스탬프 역할 키(시드 0x51, registry-samples.ts) */
+const TS_SEED = '51'.repeat(32);
+
+async function start(o: { store?: Store; db?: Sql } = {}): Promise<Env> {
   const clock = new Clock(SAMPLE_NOW);
   const { ring, trust } = sampleTrust();
   const store = (o.store ?? new MemoryStore()) as MemoryStore;
   const logs: string[] = [];
   const events: string[] = [];
-  const server = createServer(registryRouter({ store, trust, adminToken: 'admin-test-token', now: clock.now, onEvent: (x) => events.push(x) }), { logger: new Logger('registry', (l) => logs.push(l), clock.now) });
+  const db = o.db ?? openSqlite();
+  const log = await TransparencyLog.open({ db, signer: logSigningKey(TS_SEED, trust), now: clock.now });
+  const server = createServer(registryRouter({ store, trust, adminToken: 'admin-test-token', now: clock.now, onEvent: (x) => events.push(x), log }), { logger: new Logger('registry', (l) => logs.push(l), clock.now) });
   const req = client(await listen(server));
   const put = (p: string, body: unknown) => req('PUT', p, { headers: { authorization: 'Admin admin-test-token' }, body });
-  return { clock, ring, trust, store, server, req, logs, events, put, stage: (file, bytes) => put(`/admin/v1/packages/${file}`, { data: (bytes ?? sample(`packages/${file}`)).toString('base64') }) };
+  return { clock, ring, trust, store, server, req, logs, events, log, db, put, stage: (file, bytes) => put(`/admin/v1/packages/${file}`, { data: (bytes ?? sample(`packages/${file}`)).toString('base64') }) };
 }
 
 const H01 = 'hometax.invoice.issue@2.1.0.sxp';
@@ -618,5 +652,221 @@ describe('M4-7 레지스트리: 롤아웃·핀 키 설정·로그', () => {
       assert.ok(!l.includes('admin-test-token') && !l.includes('1.2.0') && !l.includes('127.0.0.1'), l);
     }
     assert.ok(e.logs.some((l) => l.includes('"route":"/registry/:channel/index.json"')));
+  });
+});
+
+describe('투명성 로그(RFC 9162, D09 §8.3, 팀장 결정 2026-11-06): 서버 산출물을 엔진 검증기로 그대로 검증', () => {
+  const tsPub = () => sampleTrust().trust.keys.timestamp['timestamp-1']!;
+  const hex = (bs: readonly Uint8Array[]) => bs.map((b) => Buffer.from(b).toString('hex'));
+  const bytesOf = (hs: readonly string[]) => hs.map((h) => Buffer.from(h, 'hex'));
+
+  it('머클 루트·일관성 증명은 엔진(merkleRoot·consistencyProof·verifyConsistency)과 같고, 포함 증명은 모든 잎에서 통과·변조하면 실패', () => {
+    for (let n = 0; n <= 20; n++) {
+      const data = Array.from({ length: n }, (_, i) => Buffer.from(`entry-${i}-${randomUUID()}`));
+      const leaves = data.map(leafHashOf);
+      const root = rootOf(leaves);
+      assert.ok(root.equals(merkleRoot(data)), `root n=${n}`);
+      for (let m = 1; m < n; m++) {
+        const p = consistencyPath(m, leaves);
+        assert.deepEqual(hex(p), hex(engineConsistencyProof(m, data)), `consistency ${m}/${n}`);
+        assert.ok(verifyConsistency({ treeSize: m, rootHash: rootOf(leaves.slice(0, m)).toString('hex') }, { treeSize: n, rootHash: root.toString('hex') }, p), `verify ${m}/${n}`);
+      }
+      for (let i = 0; i < n; i++) {
+        const path = inclusionPath(i, leaves);
+        assert.ok(verifyInclusion(leaves[i]!, i, n, path, root), `inclusion ${i}/${n}`);
+        if (n > 1) {
+          assert.equal(verifyInclusion(leaves[i]!, (i + 1) % n, n, path, root), false, `wrong index ${i}/${n}`);
+          assert.equal(verifyInclusion(leafHashOf(Buffer.from('other')), i, n, path, root), false);
+          const bad = path.map((b, j) => (j === 0 ? leafHashOf(b) : b));
+          assert.equal(verifyInclusion(leaves[i]!, i, n, bad, root), false);
+        }
+      }
+      assert.equal(verifyInclusion(leaves[0] ?? root, n, n, [], root), false, 'index ≥ size');
+    }
+  });
+
+  it('게시마다 공개 전에 항목 1건, 헤드는 타임스탬프 키 서명, 항목 다이제스트 = 공개 바이트, HTTP 포함·일관성 증명이 엔진 검증을 통과', async () => {
+    const e = await start();
+    try {
+      const head0 = (await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead;
+      assert.deepEqual({ treeSize: head0.treeSize, rootHash: head0.rootHash }, { treeSize: 0, rootHash: createHash('sha256').digest('hex') });
+      assert.ok(verifyTreeHead(tsPub(), head0));
+      assert.equal(head0.signature.keyId, 'timestamp-1');
+
+      const published: string[] = [];
+      assert.equal((await e.put('/admin/v1/revoked-keys', sampleDoc('registry/revoked_keys.json'))).status, 200);
+      published.push('registry/revoked_keys.json');
+      for (const f of [LOOKUP, 'hometax.invoice.email_status@1.0.0.sxp', H01]) {
+        assert.equal((await e.stage(f)).status, 201, f);
+        published.push(`packages/${f}`);
+      }
+      const mid = (await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead;
+      assert.equal(mid.treeSize, published.length);
+      // 같은 바이트 재게시(멱등)는 항목을 더하지 않는다
+      assert.equal((await e.stage(LOOKUP)).status, 201);
+      assert.equal(((await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead).treeSize, published.length);
+      for (const f of [HOTFIX, DATA]) {
+        assert.equal((await e.stage(f)).status, 201, f);
+        published.push(`packages/${f}`);
+      }
+      for (const ch of ['stable', 'hotfix']) {
+        assert.equal((await e.put(`/admin/v1/index/${ch}`, sampleDoc(`registry/${ch}/index.json`))).status, 200, ch);
+        published.push(`registry/${ch}/index.json`);
+      }
+      assert.equal((await e.put('/admin/v1/policy', sampleDoc('policy/current.json'))).status, 200);
+      published.push(`policy/${sampleDoc<{ version: string }>('policy/current.json').version}.json`, 'policy/current.json');
+      assert.equal((await e.put('/admin/v1/status', sampleDoc('registry/status.json'))).status, 200);
+      published.push('registry/status.json');
+
+      const head = (await e.req('GET', '/registry/log/head.json')).json as unknown as SignedTreeHead;
+      assert.equal(head.treeSize, published.length);
+      assert.ok(verifyTreeHead(tsPub(), head));
+      assert.equal(verifyTreeHead(tsPub(), { ...head, treeSize: head.treeSize + 1 }), false, '헤드 변조');
+      assert.equal(verifyTreeHead(sampleTrust().trust.keys.package['package-1']!, head), false, '다른 역할 키');
+
+      const entries: Array<{ index: number; entry: { kind: string; path: string; sha256: string }; leafHash: string }> = [];
+      for (let i = 0; i < head.treeSize; i++) {
+        const r = await e.req('GET', `/registry/log/entries/${i}.json`);
+        assert.equal(r.status, 200);
+        entries.push(r.json as unknown as (typeof entries)[number]);
+      }
+      assert.deepEqual(
+        entries.map((x) => x.entry.path),
+        published,
+      );
+      for (const x of entries) {
+        // 항목 다이제스트 = 지금 공개된 바이트(정적 GET), 잎 해시 = SHA-256(0x00 ‖ JCS(항목))
+        const served = await fetch(`http://127.0.0.1:${(e.server.address() as { port: number }).port}/${x.entry.path}`);
+        assert.equal(sha256Hex(Buffer.from(await served.arrayBuffer())), x.entry.sha256, x.entry.path);
+        assert.equal(leafHashOf(Buffer.from(jcs(x.entry))).toString('hex'), x.leafHash);
+      }
+      // 엔진 merkleRoot(항목 바이트) = 서버 헤드 루트
+      assert.equal(merkleRoot(entries.map((x) => Buffer.from(jcs(x.entry)))).toString('hex'), head.rootHash);
+      // HTTP 포함 증명
+      for (const x of entries) {
+        const p = await e.req('GET', `/registry/log/proof/inclusion?leaf=${x.leafHash}&size=${head.treeSize}`);
+        assert.equal(p.status, 200, p.text);
+        const pj = p.json as unknown as { leafIndex: number; treeSize: number; path: string[] };
+        assert.equal(pj.leafIndex, x.index);
+        assert.ok(verifyInclusion(Buffer.from(x.leafHash, 'hex'), pj.leafIndex, pj.treeSize, bytesOf(pj.path), Buffer.from(head.rootHash, 'hex')), x.entry.path);
+      }
+      // HTTP 일관성 증명: 앞서 본 헤드 → 지금 헤드(엔진 verifyConsistency·headMismatch)
+      const c = await e.req('GET', `/registry/log/proof/consistency?from=${mid.treeSize}&to=${head.treeSize}`);
+      assert.equal(c.status, 200, c.text);
+      const proof = bytesOf((c.json as unknown as { proof: string[] }).proof);
+      assert.ok(verifyConsistency(mid, head, proof));
+      assert.equal(headMismatch(mid, head, proof), false);
+      assert.equal(headMismatch(head, { ...head, rootHash: 'ab'.repeat(32) }, null), true, '같은 크기 다른 루트 = split view');
+      assert.equal(verifyConsistency({ ...mid, rootHash: 'ab'.repeat(32) }, head, proof), false);
+    } finally {
+      e.server.close();
+    }
+  });
+
+  it('조회 쿼리는 정해진 키만 정확히: 추가·중복·빠짐·형식 틀림 400, 범위 밖 404', async () => {
+    const e = await start();
+    try {
+      assert.equal((await e.put('/admin/v1/revoked-keys', sampleDoc('registry/revoked_keys.json'))).status, 200);
+      const leaf = ((await e.req('GET', '/registry/log/entries/0.json')).json as unknown as { leafHash: string }).leafHash;
+      for (const q of [`leaf=${leaf}`, `leaf=${leaf}&size=1&x=1`, `leaf=${leaf}&leaf=${leaf}&size=1`, `leaf=${leaf.toUpperCase()}&size=1`, `leaf=${leaf}&size=01`]) {
+        assert.equal((await e.req('GET', `/registry/log/proof/inclusion?${q}`)).status, 400, q);
+      }
+      for (const q of ['from=1', 'from=1&to=1&to=1', 'from=1&size=1', 'from=a&to=1']) assert.equal((await e.req('GET', `/registry/log/proof/consistency?${q}`)).status, 400, q);
+      assert.equal((await e.req('GET', '/registry/log/head.json?x=1')).status, 400);
+      assert.equal((await e.req('GET', `/registry/log/proof/inclusion?leaf=${leaf}&size=2`)).status, 404, 'size > 현재');
+      assert.equal((await e.req('GET', `/registry/log/proof/inclusion?leaf=${'00'.repeat(32)}&size=1`)).status, 404, '없는 잎');
+      assert.equal((await e.req('GET', '/registry/log/proof/consistency?from=0&to=1')).status, 404);
+      assert.equal((await e.req('GET', '/registry/log/proof/consistency?from=1&to=2')).status, 404);
+      assert.equal((await e.req('GET', '/registry/log/proof/consistency?from=1&to=1')).status, 200);
+      for (const f of ['1.json', '01.json', 'x.json', '0']) assert.equal((await e.req('GET', `/registry/log/entries/${f}`)).status, 404, f);
+    } finally {
+      e.server.close();
+    }
+  });
+
+  it('로그 append가 실패하면 공개하지 않는다(먼저 기록)', async () => {
+    const e = await start();
+    try {
+      await e.db.close();
+      assert.equal((await e.stage(LOOKUP)).status, 500);
+      assert.equal((await e.req('GET', `/packages/${LOOKUP}`)).status, 404);
+    } finally {
+      e.server.close();
+    }
+  });
+
+  it('동시 게시 N건 → treeSize N, 순번 0..N-1 빠짐·겹침 없음, 모든 앞 크기에서 일관성 증명 통과', async () => {
+    const e = await start();
+    try {
+      const N = 12;
+      const files = Array.from({ length: N }, (_, k) => ({ f: `payroll.rate-tables@2026.11.${k + 1}.sxp`, b: dataSxp({ ...SAMPLE_RATE_TABLES, packageVersion: `2026.11.${k + 1}` }, { version: `2026.11.${k + 1}` }) }));
+      const rs = await Promise.all(files.map((x) => e.stage(x.f, x.b)));
+      assert.deepEqual(
+        rs.map((r) => r.status),
+        Array(N).fill(201),
+        rs.map((r) => r.text).join('\n'),
+      );
+      const head = await e.log.head();
+      assert.equal(head.treeSize, N);
+      const got = await Promise.all(Array.from({ length: N }, (_, i) => e.log.entry(i)));
+      assert.deepEqual(got.map((x) => x!.index), [...Array(N).keys()]);
+      assert.deepEqual(new Set(got.map((x) => x!.entry.path)), new Set(files.map((x) => `packages/${x.f}`)));
+      const leaves = got.map((x) => Buffer.from(jcs(x!.entry)));
+      assert.equal(merkleRoot(leaves).toString('hex'), head.rootHash);
+      for (let m = 1; m < N; m++) {
+        const c = (await e.log.consistency(m, N))!;
+        assert.ok(verifyConsistency({ treeSize: m, rootHash: merkleRoot(leaves.slice(0, m)).toString('hex') }, head, bytesOf(c.proof)), `m=${m}`);
+      }
+    } finally {
+      e.server.close();
+    }
+  });
+
+  const pgUrl = process.env.SAX_PG_TEST_URL;
+  it('PostgreSQL: 인스턴스 둘이 같은 DB에 동시에 append해도 treeSize가 겹치거나 빠지지 않는다(메타 행 잠금)', { skip: !pgUrl }, async () => {
+    const admin = openPg(pgUrl!, 2);
+    await admin.exec("DROP TABLE IF EXISTS log_entries; DROP TABLE IF EXISTS log_meta; CREATE TABLE IF NOT EXISTS schema_migrations (service TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (service, version)); DELETE FROM schema_migrations WHERE service = 'registry';");
+    await admin.close();
+    const { trust } = sampleTrust();
+    const clock = new Clock(SAMPLE_NOW);
+    const dbs = [openPg(pgUrl!, 4), openPg(pgUrl!, 4)];
+    try {
+      const a = await TransparencyLog.open({ db: dbs[0]!, signer: logSigningKey(TS_SEED, trust), now: clock.now });
+      const b = await TransparencyLog.open({ db: dbs[1]!, signer: logSigningKey(TS_SEED, trust), now: clock.now, migrate: false });
+      const N = 40;
+      const out = await Promise.all(Array.from({ length: N }, (_, i) => (i % 2 ? a : b).append({ kind: 'package', path: `packages/p${i}@1.0.0.sxp`, sha256: sha256Hex(Buffer.from(String(i))) })));
+      assert.deepEqual(out.map((x) => x.index).sort((x, y) => x - y), [...Array(N).keys()]);
+      const head = await b.head();
+      assert.equal(head.treeSize, N);
+      assert.ok(verifyTreeHead(tsPub(), head));
+      const got = await Promise.all(Array.from({ length: N }, (_, i) => a.entry(i)));
+      const leaves = got.map((x) => Buffer.from(jcs(x!.entry)));
+      assert.equal(merkleRoot(leaves).toString('hex'), head.rootHash);
+      for (const m of [1, 7, 20, 39]) {
+        const c = (await a.consistency(m, N))!;
+        assert.ok(verifyConsistency({ treeSize: m, rootHash: merkleRoot(leaves.slice(0, m)).toString('hex') }, head, bytesOf(c.proof)), `m=${m}`);
+      }
+    } finally {
+      for (const d of dbs) await d.close();
+    }
+  });
+
+  it('헤드 서명 키: 핀 고정된 타임스탬프 키여야 하고 다른 역할 키·임의 키·형식 틀림은 거부, 운영 기동은 키 없으면 거부', async () => {
+    const { trust } = sampleTrust();
+    assert.equal(logSigningKey(TS_SEED, trust).keyId, 'timestamp-1');
+    for (const seed of ['21'.repeat(32), '11'.repeat(32), '61'.repeat(32), '41'.repeat(32), randomBytes(32).toString('hex'), 'zz', undefined]) {
+      assert.throws(() => logSigningKey(seed, trust), /config_REGISTRY_LOG_SIGNING_KEY/, String(seed));
+    }
+    const env = { REGISTRY_STORE: 'memory', REGISTRY_ADMIN_TOKEN: 'admin-test-token', TRUST_ROOT_JSON: JSON.stringify(trust), HOST: '127.0.0.1', PORT: '0' };
+    await assert.rejects(startRegistry(env), /config_REGISTRY_LOG_SIGNING_KEY/);
+    await assert.rejects(startRegistry({ ...env, REGISTRY_LOG_SIGNING_KEY: '21'.repeat(32) }), /config_REGISTRY_LOG_SIGNING_KEY/);
+    const ok = await startRegistry({ ...env, REGISTRY_LOG_SIGNING_KEY: TS_SEED });
+    try {
+      const h = await client(ok.url)('GET', '/registry/log/head.json');
+      assert.equal(h.status, 200);
+      assert.ok(verifyTreeHead(tsPub(), h.json));
+    } finally {
+      await ok.close();
+    }
   });
 });

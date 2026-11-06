@@ -1,10 +1,20 @@
 // remote-*.test.ts 공용: 모의 키(금고 역할은 소프트 키로 흉내), 기기, 메모리 릴레이 위 페어링.
 import {
-  AIK_PURPOSES, DesktopPairing, MemoryRelay, MobilePairing, VD_PURPOSES, VM_PURPOSES, b64, ed25519Keygen, initialDeviceList, sha256Hash, softNoiseStatic,
+  AIK_PURPOSES, DesktopPairing, signAcctClaim, MemoryRelay, MobilePairing, VD_PURPOSES, VM_PURPOSES, b64, ed25519Keygen, initialDeviceList, sha256Hash, softNoiseStatic,
   softSigner, toHex, uuid4, x25519Keygen, type DesktopKeys, type DeviceListJson, type PhoneKeys,
 } from '@sax/remote';
 
 export const RELAY = 'relay.sax.test';
+/** 시험용 계정 서비스 키(acct_claim 서명). 실제 키는 클라우드 세션이 만든다. */
+export const ACCOUNT_KEY = ed25519Keygen();
+export const TEST_EMAIL = 'owner@example.test';
+
+/** 계정 서비스가 이 PC의 AIK로 서명해 주는 계정 확인 주장(시험 대역). */
+export function testAcctClaim(aikPub: Uint8Array, o: { sk?: Uint8Array; email?: string; iat?: number; exp?: number } = {}): string {
+  // iat·exp는 UTC 밀리초, exp = iat + 600000(SIGNING.md §8)
+  const now = Date.now();
+  return signAcctClaim(o.sk ?? ACCOUNT_KEY.secretKey, { account_id: 'acc_test', email: o.email ?? TEST_EMAIL, aik_pub: b64(aikPub), iat: o.iat ?? now, exp: o.exp ?? now + 600_000 });
+}
 export const DAY = 86_400_000;
 
 export interface MockDesktop {
@@ -52,27 +62,46 @@ export interface PairWorld {
   pc: DesktopPairing;
   mob: MobilePairing;
   published: DeviceListJson[];
+  enrolled: Enrolled[];
 }
 
-export async function pairWorld(o: { relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; registered?: boolean; serverList?: DeviceListJson; accountAik?: Uint8Array; now?: () => number } = {}): Promise<PairWorld> {
+export interface Enrolled {
+  deviceId: string;
+  roomId: Uint8Array;
+  /** 등록을 부른 때 폰 상태(pair.ok 전이어야 한다). */
+  phoneState: string;
+}
+
+export async function pairWorld(o: {
+  relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; enrollFails?: boolean; knownAik?: Uint8Array; seenListVersion?: number; now?: () => number;
+  accountClaim?: (aikPub: Uint8Array) => string; accountKeys?: Uint8Array[]; desktopName?: string;
+} = {}): Promise<PairWorld> {
   const relay = o.relay ?? new MemoryRelay();
   relay.tokenHash = (t) => toHex(sha256Hash(t));
   const desk = o.desk ?? (await mockDesktop());
   const phone = o.phone ?? mockPhone();
   const published: DeviceListJson[] = [];
+  const enrolled: Enrolled[] = [];
+  let mob: MobilePairing | null = null;
   const pc = new DesktopPairing({
     keys: desk.keys, deviceList: desk.deviceList, relayHost: RELAY, now: o.now,
-    isPhoneKeyRegistered: async () => o.registered ?? true,
+    enrollPhone: async (p) => {
+      if (o.enrollFails) throw new Error('relay.room_unavailable');
+      enrolled.push({ deviceId: p.deviceId, roomId: p.roomId, phoneState: mob?.state ?? 'none' });
+    },
     publishDeviceList: async (l) => {
       published.push(l);
     },
     registerMailbox: async (id, r, w) => relay.registerMailbox(id, toHex(sha256Hash(r)), toHex(sha256Hash(w))),
+    accountClaim: async () => (o.accountClaim ?? testAcctClaim)(desk.keys.aik.publicKey),
+    desktopName: o.desktopName,
   });
-  const mob = new MobilePairing({
-    keys: phone.keys, accountAikPub: o.accountAik ?? desk.keys.aik.publicKey, serverDeviceList: o.serverList ?? desk.deviceList, relayAllowlist: [RELAY], now: o.now,
+  mob = new MobilePairing({
+    keys: phone.keys, knownAikPub: o.knownAik, seenListVersion: o.seenListVersion, relayAllowlist: [RELAY], now: o.now,
+    accountKeys: o.accountKeys ?? [ACCOUNT_KEY.publicKey],
     pairOkTimeoutMs: 5000,
   });
-  return { relay, desk, phone, pc, mob, published };
+  return { relay, desk, phone, pc, mob, published, enrolled };
 }
 
 /** 정상 페어링 한 번(사용자가 폰의 SAS를 PC에 입력). */

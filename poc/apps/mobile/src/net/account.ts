@@ -1,17 +1,7 @@
-// 계정 서버에서 AIK_pub와 AIK 서명 기기 목록을 받는다(D08 §4.1, 페어링 3단계). 서버 값은 신뢰 앵커가 아니다:
-// 폰은 목록의 모든 항목을 AIK로 검사하고(MobilePairing.scan), PAIR_OK의 AIK_pub와 같을 때만 진행한다.
-// 실제 엔드포인트·폰 계정 로그인은 클라우드 트랙(services/*, M4-5) 몫이다. 여기서는 인터페이스와 개발용 구현만 둔다.
-import { fromB64, type DeviceListJson } from '@sax/remote';
-import { DEV_LOCAL, DEV_RELAY_HOST, PUBLIC_ORIGIN } from '../config';
-
-export interface AccountDirectory {
-  aikPub: Uint8Array;
-  deviceList: DeviceListJson;
-}
-
-export interface AccountApi {
-  directory(): Promise<AccountDirectory>;
-}
+// 계정 서비스 주소. 폰에는 계정 로그인이 없어 AIK_pub·기기 목록을 서버에서 받지 않는다: 페어링 3단계 검사는 PAIR_OK의
+// AIK 서명 목록으로 하고, 폰의 계정 등록은 PC가 데스크톱 기기 토큰으로 대신 한다(팀장 결정 2026-11-06, D08 §4.2 3·7단계).
+// 폰이 계정 서비스에 직접 부르는 것은 기기 토큰(POST /v1/device-tokens)뿐이다.
+import { DEV_LOCAL, DEV_RELAY_HOST, DEV_STACK, PUBLIC_ORIGIN } from '../config';
 
 export class AccountUnavailable extends Error {
   constructor() {
@@ -19,30 +9,12 @@ export class AccountUnavailable extends Error {
   }
 }
 
-/** 시뮬레이터 개발 빌드: 더미 PC(dev/dummy-pc.ts)가 같은 값을 준다. */
-const devApi: AccountApi = {
-  async directory() {
-    const r = await fetch(`http://${DEV_RELAY_HOST}/dev/account`);
-    if (!r.ok) throw new AccountUnavailable();
-    const j = (await r.json()) as { aikPub: string; deviceList: DeviceListJson };
-    return { aikPub: fromB64(j.aikPub), deviceList: j.deviceList };
-  },
-};
-
-const pendingApi: AccountApi = {
-  async directory() {
-    throw new AccountUnavailable();
-  },
-};
-
-export const accountApi = (): AccountApi => (DEV_LOCAL ? devApi : pendingApi);
-
 /**
  * 계정 서비스 origin(DPoP htu의 앞부분). 개발 빌드는 더미 PC(dev/dummy-pc.ts)다. 릴리스는 config PUBLIC_ORIGIN
  * (배포 때 넣는다). 비어 있으면 연결하지 않는다.
  */
 export function accountOrigin(): string {
-  if (DEV_LOCAL) return `http://${DEV_RELAY_HOST}`;
+  if (DEV_STACK) return `http://${DEV_RELAY_HOST}`;
   if (PUBLIC_ORIGIN) return PUBLIC_ORIGIN;
   throw new AccountUnavailable();
 }

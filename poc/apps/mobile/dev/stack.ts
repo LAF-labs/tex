@@ -1,20 +1,25 @@
 // 실제 계정·릴레이 서비스(services/account·relay, #63) 위의 통합 시험 스택. 시뮬레이터 앱은 바꾸지 않는다.
 //   node --conditions=development dev/stack.ts   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
 //   STACK_LIVE=0 이면 PC가 라이브 우편함에 붙지 않는다(Phase 1처럼 큐만).
+//   STACK_HOST=<소문자 LocalHostName>.local:8787 이면 같은 LAN의 실기기가 붙는다(공개 origin·QR의 릴레이 호스트가 이 이름이 된다).
+//     실기기 앱은 Metro를 EXPO_PUBLIC_TEX_DEV_HOST=<같은 값> 으로 띄운다. QR은 브라우저에서 /dev/qr.html 을 열어 폰 카메라로 찍는다.
 //   앞단 8787: /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이(127.0.0.1:8783), 나머지 /v1/* → 계정(127.0.0.1:8780), /dev/* → 더미 PC
-//   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → 폰 등록 대역 + PUT /v1/device-list
-//            → POST /v1/mailboxes → 번들 PUT → 큐 드레인(GET → 개봉 → ack) + 라이브 우편함.
-// 비밀은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 dev/out/stack-*.db(git 제외).
-// 대역(실제와 다른 것): 폰 기기 등록(POST /v1/devices/enroll)은 폰 계정 로그인이 아직 없어 더미 PC가 같은 계정 세션으로 대신 한다.
-//   /dev/account(폰이 페어링 3단계에 받는 AIK·기기 목록)도 같은 이유로 PC 세션의 GET /v1/device-list를 그대로 준다.
+//   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → SAS 일치 → 폰 대리 등록
+//            (POST /v1/devices/enroll, 데스크톱 기기 토큰 + roomId) → PUT /v1/device-list → POST /v1/mailboxes → pair.ok
+//            → 번들 PUT → 큐 드레인(GET → 개봉 → ack) + 라이브 우편함.
+// 비밀(토큰 서명 시드·큐 키·내부 토큰·한도 ID 키 등)은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 dev/out/stack-*.db(git 제외).
+// 폰에는 계정 로그인이 없다. 폰의 계정 등록은 PC가 대신 하고(팀장 결정 2026-11-06, #115), 폰은 기기 목록을 서버에서 받지 않는다
+// (PAIR_OK의 AIK 서명 목록을 검사한다). STACK_NO_BUNDLE=1 이면 번들을 올리지 않는다(폰의 'PC 연결 확인 안 됨' 화면 확인용).
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
+import { toQR } from 'toqr';
+import { devAcctClaim } from './test-account-key.ts';
 import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, softNoiseStatic, softSigner,
   uuid4, wsRelayClient, x25519Keygen, type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
@@ -26,8 +31,12 @@ import { ed25519Private, ed25519RawPublic } from '../../../services/shared/src/i
 const FRONT = 8787;
 const ACCT = 8780;
 const RELAY = 8783;
-const ORIGIN = `http://localhost:${FRONT}`;
-const HOST = `localhost:${FRONT}`;
+const HOST = process.env.STACK_HOST ?? `localhost:${FRONT}`;
+if (!/^(localhost|[a-z0-9-]{1,63}\.local):\d{1,5}$/.test(HOST)) throw new Error('STACK_HOST must be localhost:<port> or <lowercase name>.local:<port>');
+if (Number(HOST.split(':')[1]) !== FRONT) throw new Error(`STACK_HOST port must be ${FRONT}`);
+const ORIGIN = `http://${HOST}`;
+// 실기기용 .local이면 이 프로세스(더미 PC의 DPoP·WSS)도 mDNS 평문을 켠다. localhost면 끈 채로 둔다.
+allowDevLanHosts(HOST.endsWith('.local:' + FRONT));
 const OUT = join(import.meta.dirname, 'out');
 mkdirSync(join(OUT, 'received'), { recursive: true });
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -36,20 +45,21 @@ const hex = () => randomBytes(32).toString('hex');
 // ---- 서비스 기동(비밀은 매번 새로) ----
 for (const f of ['stack-account.db', 'stack-relay.db']) rmSync(join(OUT, f), { force: true });
 const tokenSeed = hex();
-const internal = randomBytes(32).toString('base64url');
+const internal = hex(); // INTERNAL_CALL_KEY(내부 호출 서명, #135)
+const limitIdKey = hex();
 const mail = new MockMailSender();
 const account = await startAccount(
   {
     SAX_SQLITE_FILE: join(OUT, 'stack-account.db'), TOKEN_SIGNING_SEED: tokenSeed, CODE_MAC_KEY: hex(), ACCOUNT_PUBLIC_ORIGIN: ORIGIN, WEBAUTHN_RP_ID: 'localhost',
-    WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_TOKEN: internal,
-    STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, PORT: String(ACCT), HOST: '127.0.0.1',
+    WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_CALL_KEY: internal,
+    STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, RELAY_INTERNAL_URL: `http://127.0.0.1:${RELAY}`, LIMIT_ID_KEY: limitIdKey, PORT: String(ACCT), HOST: '127.0.0.1',
   },
   { mail },
 );
 const relaySvc = await startRelay({
   SAX_SQLITE_FILE: join(OUT, 'stack-relay.db'), QUEUE_KEY: hex(), RELAY_PUBLIC_ORIGIN: ORIGIN,
   TOKEN_PUBLIC_KEYS: `k1:${ed25519RawPublic(ed25519Private(Buffer.from(tokenSeed, 'hex'))).toString('base64')}`,
-  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_TOKEN: internal, PORT: String(RELAY), HOST: '127.0.0.1',
+  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_CALL_KEY: internal, LIMIT_ID_KEY: limitIdKey, PORT: String(RELAY), HOST: '127.0.0.1',
 });
 log(`account ${account.url} · relay ${relaySvc.url}`);
 
@@ -75,6 +85,17 @@ function expect(r: { status: number; body: unknown }, ok: number, what: string) 
   return r.body as Record<string, unknown>;
 }
 
+/** QR 텍스트 → 단순 SVG 페이지(외부 자원 없음). */
+function qrPage(text: string): string {
+  const m = toQR(text);
+  const n = Math.sqrt(m.length);
+  let rects = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y * n + x]) rects += `<rect x="${x + 4}" y="${y + 4}" width="1" height="1"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 8} ${n + 8}" width="420" height="420" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
+  return `<!doctype html><meta charset="utf-8"><title>더미 PC 폰 연결</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:24px"><h2>폰 연결(더미 PC)</h2><div id="q">${svg}</div><p id="n" hidden><b>시간이 지났어요.</b> <button onclick="location.reload()" style="font-size:20px">새 QR</button></p><p>폰에서 PC와 연결하기를 누른 <b>다음</b> [새 QR]을 누르고 30초 안에 찍어 주세요(PC 대역은 30초만 기다리고, 룸은 계정당 시간당 5개까지라 저절로 바꾸지 않습니다).</p><p>폰에 뜬 6자리를 여기에 넣어 주세요(PC 앱의 입력 칸 대역).</p><form id="f"><input id="c" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:28px;width:180px;text-align:center;letter-spacing:6px"> <button style="font-size:20px">확인</button></form><p id="r"></p><script>document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const r=await fetch('/dev/sas',{method:'POST',body:JSON.stringify({code:document.getElementById('c').value})});const j=await r.json().catch(()=>({}));document.getElementById('r').textContent=j.ok?'연결됐어요. 폰 화면을 확인해 주세요.':'맞지 않아요'+(j.triesLeft!==undefined?' (남은 횟수 '+j.triesLeft+')':'');};
+const t=setInterval(async()=>{const st=await fetch('/dev/status').then(r=>r.json()).catch(()=>null);if(!st)return;const q=document.getElementById('q');if(st.pairing==='failed'){clearInterval(t);q.style.opacity='0.15';document.getElementById('n').hidden=false;}if(st.pairing==='paired'){clearInterval(t);document.getElementById('r').textContent='연결됐어요. 폰 화면을 확인해 주세요.';}},2000);</script></body>`;
+}
+
 // ---- 앞단: 한 공개 origin ----
 const isRelay = (p: string) => p.startsWith('/v1/mailboxes') || p.startsWith('/v1/rooms') || p.startsWith('/internal/');
 const front = createServer(async (req, res) => {
@@ -85,11 +106,9 @@ const front = createServer(async (req, res) => {
   };
   if (path.startsWith('/dev/')) {
     try {
-      if (req.method === 'GET' && path === '/dev/account') {
-        const r = expect(await call('GET', '/v1/device-list', { headers: bearer }), 200, 'GET /v1/device-list (대역 /dev/account)');
-        return send(200, JSON.stringify({ aikPub: r.aikPub, deviceList: r.deviceList }));
-      }
       if (req.method === 'GET' && path === '/dev/qr') return send(200, await startPairing(), 'text/plain');
+      // 실기기: 맥 화면의 QR을 폰 카메라로 찍는다(PC 앱의 [폰 연결] 화면 대역). 1회용·120초, 폰이 찍으면 새로고침해도 같은 QR이다.
+      if (req.method === 'GET' && path === '/dev/qr.html') return send(200, qrPage(await startPairing()), 'text/html; charset=utf-8');
       if (req.method === 'GET' && path === '/dev/status') return send(200, JSON.stringify({ pairing: pairing?.state ?? 'idle', received }));
       if (req.method === 'POST' && path === '/dev/sas') {
         let body = '';
@@ -165,13 +184,22 @@ async function startPairing(): Promise<string> {
   pairing?.cancel();
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
-    // 대역: 폰 등록은 publishDeviceList에서 같은 계정 세션으로 한다(폰 계정 로그인 없음)
-    isPhoneKeyRegistered: async () => true,
+    // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
+    // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(dev/test-account-key.ts)로 대신 서명한다.
+    accountClaim: async () => devAcctClaim(keys.aik.publicKey, email),
+    desktopName: '더미 PC',
+    enrollPhone: async (ph) => {
+      const r = await call('POST', '/v1/devices/enroll', {
+        headers: await dauth('POST', `${ORIGIN}/v1/devices/enroll`),
+        body: { deviceId: ph.deviceId, role: 'mobile', platform: ph.platform, name: ph.name, Sx: b64(ph.Sm), Vx: b64(ph.Vm), roomId: b64url(ph.roomId) },
+      });
+      if (r.status === 201) return void log('POST /v1/devices/enroll (PC 대리 등록) 201');
+      // 앞 시도에서 등록만 되고 목록을 못 올린 폰: 같은 키로 이미 있으면 성공으로 본다(계약: 같은 기기 ID 재등록은 400).
+      const list = expect(await call('GET', '/v1/devices', { headers: await dauth('GET', `${ORIGIN}/v1/devices`) }), 200, 'GET /v1/devices').devices as { deviceId: string; Sx: string; Vx: string }[];
+      if (list.some((d) => d.deviceId === ph.deviceId && d.Sx === b64(ph.Sm) && d.Vx === b64(ph.Vm))) return void log('POST /v1/devices/enroll', r.status, '(이미 같은 키로 등록됨)');
+      throw new Error(`POST /v1/devices/enroll: ${r.status} ${JSON.stringify(r.body)}`);
+    },
     publishDeviceList: async (l) => {
-      const added = l.entries.map((x) => x.entry).filter((e) => !deviceList.entries.some((y) => y.entry.device_id === e.device_id));
-      for (const e of added) {
-        expect(await call('POST', '/v1/devices/enroll', { headers: bearer, body: { deviceId: e.device_id, role: e.role, platform: 'ios', name: '폰', Sx: e.Sx, Vx: e.Vx } }), 201, 'POST /v1/devices/enroll (대역)');
-      }
       expect(await call('PUT', '/v1/device-list', { headers: await dauth('PUT', `${ORIGIN}/v1/device-list`), body: { deviceList: l } }), 200, 'PUT /v1/device-list');
       deviceList = l;
     },
@@ -213,8 +241,11 @@ async function serve(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array
   // 큐: Q_D 번들(실제 PC는 금고 안 Q_D, 7일마다 회전) → 2초마다 드레인
   const qd = x25519Keygen();
   const rq = relayQueue({ http: fetchJson, origin: ORIGIN, mbxId, tok, deviceAuth: dauth });
-  await rq.putBundle(await makeQBundle(keys.vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow() }));
-  log('PUT /v1/mailboxes/:id/bundle 204');
+  if (process.env.STACK_NO_BUNDLE === '1') log('bundle off (STACK_NO_BUNDLE=1)');
+  else {
+    await rq.putBundle(await makeQBundle(keys.vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow() }));
+    log('PUT /v1/mailboxes/:id/bundle 204');
+  }
   let seqMax = 0;
   void (async () => {
     for (;;) {

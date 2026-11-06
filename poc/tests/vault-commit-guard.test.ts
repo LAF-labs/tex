@@ -279,9 +279,11 @@ describe('R-C1 대조(실제 Chrome, 금고 서비스)', () => {
     assert.deepEqual(await result, { intentId: 'ok', stepId: 'issue', match: true });
     const ev = await eng.waitEvent((e) => e.method === 'Fetch.requestPaused' && e.sessionId === sid, mark);
     assert.doesNotMatch(JSON.stringify(ev), /alice|postData/);
+    // 이어 보낸 뒤의 /submit 응답 페이지 로드를 기다린다. 서버는 본문을 다 받고 나서 응답한다(fixtures/server.ts).
+    // 예전에는 mark(로그인 화면 이동 전)부터 찾아 /login의 loadEventFired에 바로 걸리고 2.5초 폴링만 남았다(windows-latest에서 흔들림).
+    const sent = eng.events.length;
     await eng.send('Fetch.continueRequest', { requestId: ev.params!.requestId }, sid);
-    await eng.waitEvent((e) => e.method === 'Page.loadEventFired' || (e.method === 'Page.frameNavigated' && String((e.params!.frame as { url: string }).url).endsWith('/submit')), mark);
-    for (let i = 0; i < 50 && !fx.bodies.some((b) => b.includes('user=alice')); i++) await new Promise((r) => setTimeout(r, 50));
+    await eng.waitEvent((e) => e.method === 'Page.loadEventFired' && e.sessionId === sid, sent);
     assert.ok(fx.bodies.some((b) => b.includes('user=alice')), '서버가 받았다');
     assert.ok(!JSON.stringify(eng.events.slice(mark)).includes('alice'), '엔진 이벤트에 본문 값이 없다');
   });

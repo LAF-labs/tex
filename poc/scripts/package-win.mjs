@@ -4,7 +4,8 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
-// 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음)
+// 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음),
+//       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인을 설정으로 끌 수 있다, 배포 불가)
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -16,7 +17,7 @@ const POC = path.resolve(import.meta.dirname, '..');
 const DESKTOP = path.join(POC, 'apps/desktop');
 const BUILD = path.join(DESKTOP, 'build');
 
-const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' } } });
+const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' } } });
 const OUT = path.resolve(args.out ?? path.join(POC, '.tmp/package-win'));
 const STAGE = path.join(OUT, 'stage');
 const DIST = path.join(OUT, 'dist');
@@ -107,6 +108,8 @@ async function main() {
     // 앱이 읽어 "미서명 빌드" 표시·자기 점검에 쓴다(데스크톱 트랙 제안, apps/desktop/build/README.md)
     signing: signing.mode,
     devOnlyIncluded: devOnly,
+    // 실계정 시험 빌드(팀장 결정 11-05). 앱은 이 칸이 true일 때만 업데이트 투명성 확인 끄기 설정을 받는다(harden isTestBuild)
+    testBuild: args['test-build'] === true,
   };
   fs.writeFileSync(path.join(STAGE, 'build-info.json'), JSON.stringify(buildInfo, null, 2) + '\n');
 
@@ -151,6 +154,7 @@ async function main() {
   if (!identity.publisherName) blockers.push({ code: 'publisher_dn_unset', detail: 'app-identity.json publisherName(서명 주체 CN, 출시 전 고정)' });
   if (devOnly.length) blockers.push({ code: 'dev_only_code_included', detail: 'ADR-035 W-7: 진입점이 데모·e2e·가짜 포털 코드에 닿는다', files: devOnly });
   if (outside.length) blockers.push({ code: 'runtime_reads_outside_app', detail: '설치본에 없는 저장소 경로를 런타임에 읽는다(ADR-028 결정 7 tokens.gen.ts)', files: outside });
+  if (buildInfo.testBuild) blockers.push({ code: 'test_build', detail: '실계정 시험 빌드(--test-build): 업데이트 투명성 확인을 끌 수 있어 배포본이 아니다' });
   blockers.push({ code: 'windows_run_unverified', detail: 'Windows 실기기 설치·실행 검증 보류' });
   const readiness = { betaDistributable: blockers.length === 0, signed: signing.mode === 'azure', blockers };
   const report = {

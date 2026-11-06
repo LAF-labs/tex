@@ -13,6 +13,9 @@
   ],
   "references": [
     {
+      "path": "../bundle"
+    },
+    {
       "path": "../db"
     },
     {
@@ -20,6 +23,9 @@
     },
     {
       "path": "../net"
+    },
+    {
+      "path": "../payroll"
     },
     {
       "path": "../platform"

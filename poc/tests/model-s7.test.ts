@@ -8,7 +8,6 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-// URL.pathname은 Windows에서 `/C:/…`라 cwd로 쓸 수 없다.
 const root = fileURLToPath(new URL('..', import.meta.url));
 
 describe('S7 회귀 스크립트(모의)', () => {

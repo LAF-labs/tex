@@ -2,7 +2,7 @@
 
 근거: D09 §2·§2.1·§2.2·§10, D08 §2.1·§9.4, ADR-029·034, B-28, C-09·C-30. 공통 형식(토큰·DPoP·서명 입력·오류 본문)은 [`../shared/CONTRACT.md`](../shared/CONTRACT.md). 요청 스키마는 `src/app.ts`의 `V`(ajv, `additionalProperties: false`)가 정본이고, 아래 표는 그 요약이다. 스키마 밖 필드·형식이 틀린 값은 모두 `400 request.param_rejected`.
 
-인증 표기: **없음**, **세션**(`Authorization: Bearer sxs1.…`), **기기:범위**(`Authorization: DPoP sxd1.…` + `DPoP:` 증명, 그 범위가 토큰에 있어야 함), **내부**(`Authorization: Internal <INTERNAL_TOKEN>`).
+인증 표기: **없음**, **세션**(`Authorization: Bearer sxs1.…`), **기기:범위**(`Authorization: DPoP sxd1.…` + `DPoP:` 증명, 그 범위가 토큰에 있어야 함), **내부**(`Authorization: SAX-Internal ts=…,nonce=…,sig=…`, `INTERNAL_CALL_KEY` HMAC-SHA256 over `SAX-internal-call-v1`‖메서드‖경로(쿼리 포함)‖sha256hex(본문)‖ts‖nonce, 줄바꿈 구분. 시각 ±60초, nonce 1회용(DB), 실패는 모두 `401 account.unauthorized`. 팀장 결정 2026-11-06 #135).
 
 공통 오류: `401 account.unauthorized`(세션·토큰 없음·만료·위조), `403 account.scope_denied`, `401 account.dpop_invalid`, `403 account.device_suspended`(정지·폐기·대기 기기), `429 policy.rate_limited`(+`Retry-After`), `413 request.too_large`(본문 64KB), `415 request.unsupported_media`(JSON만), `404 request.not_found`, `405 request.method_not_allowed`, `500 server.internal`.
 
@@ -61,11 +61,13 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `POST /v1/aik` | 세션 | `{aikPub, deviceList:{listVersion:1, entries:[자기 항목], revoked:[]}, platform:"windows"\|"macos", name}` | `201 {deviceId}` | `account.aik_already_pinned`, `account.aik_signature_invalid`. 계정당 1회, 알림 메일 |
 | `GET /v1/devices` | 세션 또는 기기:devlist | — | `200 {devices:[{deviceId, role, platform, name, state, registeredAt, Sx, Vx, holdUntil, deleteAfter}]}` | |
 | `POST /v1/devices/enroll` | 세션 | `{deviceId(uuid4), role, platform, name, Sx, Vx}` | `201 {holdUntil}` | 플랫폼·역할 불일치 400, `account.device_limit`(데스크톱 2·모바일 3, 폐기 제외), `account.device_churn_limit`(30일 추가 데스크톱 3·모바일 5), 이미 있는 기기 ID 400 |
+| `POST /v1/devices/enroll`(폰 대리 등록) | 데스크톱 기기:devlist | `{deviceId(uuid4), role:"mobile", platform:"ios"\|"android", name, Sx, Vx, roomId}` | `201 {holdUntil}`, 재등록 `200 {holdUntil, state}` | 폰 앱에는 계정 로그인이 없어서 페어링 7단계에서 PC가 대신 등록한다(팀장 결정 2026-11-06, D08 §4.2). `roomId`는 그 PC가 `POST /v1/rooms`로 만들고 폰이 실제로 붙은(정원 2가 찬) 1회용 룸이어야 하고, 등록에 한 번만 쓸 수 있다(릴레이 `/internal/v1/rooms/:id/redeem`). 룸이 없음·만료·미페어링·다른 PC는 모두 `404 relay.room_unavailable`, 그 PC의 룸이 이미 등록에 쓰였으면 `409 relay.room_used`. 폰 토큰 403 `account.scope_denied`. 상한·교체 한도는 세션 경로와 같고 룸을 소비하기 전에 본다. 등록된 폰은 pending이고 같은 PC의 `PUT /v1/device-list`로 활성이 된다. **재등록은 멱등이다**(팀장 결정 2026-11-06): 같은 계정·같은 `deviceId`·같은 `Sx`·`Vx`의 pending/active 폰이면 `200 {holdUntil(pending일 때만, 아니면 null), state}`로 기존 기록을 돌려준다. 이때 상한·교체 한도에 다시 넣지 않고 알림도 없다. **룸 하나에 enroll 성공은 한 번**이다. 200도 룸을 사용됨으로 표시한다(룸은 `PAIR_OK`까지 그대로 열려 있다). 같은 룸의 두 번째 enroll은 키와 무관하게 `409 relay.room_used`다. 같은 `deviceId`인데 키·계정이 다르거나 정지·폐기된 기록이면 `400 request.param_rejected`(룸 소비 전)이고, 폐기 뒤 새 기기 ID로 등록한다. `RELAY_INTERNAL_URL`이 없으면 이 경로는 닫힌다(404) |
 | `POST /v1/devices/:id/activate` | 세션 | — | `204` | `423 account.device_hold`(+`Retry-After`): 이메일만으로 추가한 기기는 72시간 뒤. `account.not_pending`, `account.device_not_found` |
 | `POST /v1/devices/:id/suspend` | 세션 | — | `204` | 긴급 정지. 즉시 릴레이·푸시 정지 훅 + 알림 메일 |
 | `POST /v1/devices/:id/delete-request` | 세션 | — | `202 {deleteAfter}` | 7일 유예 + 알림 메일 |
 | `POST /v1/devices/:id/delete-cancel` | 세션 | — | `204` | `account.device_not_found`(유예 중 아님). 폐기 유예(7일 미만 데스크톱의 폐기)도 여기서 취소된다 |
 | `GET /v1/device-list` | 세션 또는 기기:devlist | — | `200 {aikPub, deviceList}` | 페어링 3단계(폰이 AIK 서명 목록 확인) |
+| `GET /v1/acct-claim` | 데스크톱 기기:devlist | — | `200 {claim:{account_id, email, aik_pub, iat, exp}, sig}` | 서버 서명 계정 클레임(D08 §4.2 7단계, 팀장 결정 2026-11-06). PC가 받아 `PAIR_OK`에 싣고, 폰은 앱에 고정한 공개키로 검증하고 `aik_pub`가 `PAIR_OK`의 `AIK_pub`와 같은지 본다. 서명 입력은 `utf8("SAX-acct-claim-v1")‖JCS(claim)`([CONTRACT §11](../shared/CONTRACT.md)). `email`은 전체(소문자 정규화)이고 가림은 폰 화면에서 한다. `exp = iat + 10분`(밀리초). 클레임은 언제나 토큰 계정의 것이다. 폰 토큰 `403 account.scope_denied`, 정지된 PC `403 account.device_suspended`, AIK 미고정 `409 account.aik_not_pinned`, 기기당 30회/시. `ACCT_CLAIM_SIGNING_KEY`가 없으면 `404` |
 
 등록 신청한 기기는 `pending`이다. 활성화 경로는 둘: 기존 데스크톱이 AIK 서명 목록에 넣는다(즉시), 또는 72시간 뒤 `activate`. 어느 쪽이든 기기 범위 토큰은 AIK 인증서가 있어야 발급되므로 AIK 없이 이메일만 탈취한 공격자는 토큰을 얻지 못한다.
 
@@ -103,7 +105,7 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `POST /internal/v1/devices/:id/auto-suspend` | 내부 | `200 {suspended}`. 게이트웨이 자동 정지(D09 §3): 활성 기기만 정지 + 정지 훅 + 알림 메일 `device_auto_suspended`. 해제는 AIK 서명 재활성화뿐 |
 | `GET /healthz` | 없음 | `200 {ok:true}` |
 
-정지 훅(나가는 쪽): `POST <STOP_HOOK_URL>/internal/v1/devices/:id/stopped`, `Authorization: Internal <INTERNAL_TOKEN>`, 본문 없음.
+정지 훅(나가는 쪽): `POST <STOP_HOOK_URL>/internal/v1/devices/:id/stopped`, 내부 서명(위 표기), 본문 없음. 같은 배포 안의 서비스는 HTTP 없이 함수로 부른다(`@sax/svc-cloud`).
 
 ## 주기 작업(60초)
 

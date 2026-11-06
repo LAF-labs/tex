@@ -1,6 +1,6 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 공급사 자격 증명은 KMS가 주입하고 저장소·이미지에 두지 않는다(절대 규칙 ⑥).
 import { fileURLToPath } from 'node:url';
-import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv } from '@sax/svc-shared';
+import { HttpDeviceDirectory, InternalAuth, Logger, SqlNonceStore, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { pushRouter } from './app.ts';
 import { ApnsSender, FcmSender, MockPushSender, RoutingSender, type PushSender } from './senders.ts';
 import { PushService } from './service.ts';
@@ -34,22 +34,35 @@ export function senderFromEnv(env: NodeJS.ProcessEnv): PushSender {
   });
 }
 
-export async function startPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender } = {}) {
+/** 조립. 상시 서버와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false). directory를 주입하면(같은 배포) 계정 서비스를 함수로 부른다. */
+export async function buildPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender; directory?: DeviceDirectory } = {}, o: { migrate: boolean } = { migrate: true }) {
   const db = openFromEnv(env);
-  await migrate(db, 'push', MIGRATIONS_DIR);
+  if (o.migrate) {
+    await migrate(db, 'push', MIGRATIONS_DIR);
+    await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  }
   const logger = new Logger('push');
   const svc = new PushService({ db, tokenKey: key32(env.PUSH_TOKEN_KEY, 'PUSH_TOKEN_KEY'), sender: deps.sender ?? senderFromEnv(env), now: Date.now, onEvent: (e) => logger.event(e) });
-  const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
+  const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
+  const limits = sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
   const router = pushRouter({
     svc,
     verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)),
-    directory: new HttpDeviceDirectory({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), secret: internal }),
+    directory: deps.directory ?? new HttpDeviceDirectory({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), key: internalKey }),
     publicOrigin: env.PUSH_PUBLIC_ORIGIN ?? fail('PUSH_PUBLIC_ORIGIN'),
-    internalSecret: internal,
+    internal: new InternalAuth({ key: internalKey, nonces: new SqlNonceStore(db) }),
+    limits,
   });
+  return { db, svc, router, logger, sweep: () => limits.limiter.sweep() };
+}
+
+export async function startPush(env: NodeJS.ProcessEnv = process.env, deps: { sender?: PushSender; directory?: DeviceDirectory } = {}) {
+  const { db, svc, router, logger, sweep } = await buildPush(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
   const server = createServer(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8084), env.HOST ?? '0.0.0.0');
-  return { svc, server, url, close: async () => (server.close(), await db.close()) };
+  const timer = setInterval(() => void sweep().catch(() => undefined), 60_000);
+  timer.unref();
+  return { svc, server, url, close: async () => (clearInterval(timer), server.close(), await db.close()) };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

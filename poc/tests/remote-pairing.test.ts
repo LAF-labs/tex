@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
+  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, verifyAcctClaim, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
   toHex, upsertDevice, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
 } from '@sax/remote';
-import { DAY, RELAY, mockDesktop, mockPhone, pairOnce, pairWorld, until } from './remote-support.ts';
+import { ACCOUNT_KEY, DAY, RELAY, TEST_EMAIL, mockDesktop, mockPhone, pairOnce, pairWorld, testAcctClaim, until } from './remote-support.ts';
 
 describe('페어링 정상 흐름', () => {
   it('QR → XXpsk0 → 양쪽 같은 SAS → PC 입력 → pair.ok 검증 → 기기 목록 v2', async () => {
@@ -18,6 +18,13 @@ describe('페어링 정상 흐름', () => {
     assert.equal(w.mob.newDesktopWarning, false);
     assert.equal(phone.deviceList.listVersion, 2);
     assert.equal(w.published.length, 1);
+    assert.equal(w.enrolled.length, 1, 'PC가 폰을 한 번 대리 등록한다');
+    assert.equal(w.enrolled[0]!.deviceId, w.phone.keys.deviceId);
+    assert.deepEqual(w.enrolled[0]!.roomId, w.pc.roomId, '이 페어링 룸 id로 등록한다');
+    assert.equal(w.enrolled[0]!.phoneState, 'show_sas', 'pair.ok 전(룸이 열려 있을 때) 등록한다');
+    assert.deepEqual(phone.aikPub, w.desk.keys.aik.publicKey);
+    assert.equal(phone.identity.account.email, TEST_EMAIL, '검증된 계정 주장의 이메일(전체)');
+    assert.equal(phone.identity.desktopName, null);
     const chk = verifyDeviceList(phone.deviceList, w.desk.keys.aik.publicKey);
     assert.ok(chk.ok);
     assert.equal(chk.ok && chk.devices.filter((d) => d.role === 'mobile').length, 1);
@@ -48,11 +55,15 @@ describe('페어링 정상 흐름', () => {
     assert.match(deriveSas(h), /^\d{6}$/);
   });
 
-  it('24시간 안에 등록된 PC면 전면 경고 표시', async () => {
+  it('24시간 안에 등록된 PC면 PAIR_OK 검사 뒤(저장 전) 전면 경고 표시', async () => {
     const desk = await mockDesktop(Date.now() - 2 * 3_600_000);
     const w = await pairWorld({ desk });
-    await pairOnce(w);
-    assert.equal(w.mob.newDesktopWarning, true);
+    const { qr } = w.pc.offer();
+    assert.ok(w.mob.scan(qr));
+    assert.equal(w.mob.newDesktopWarning, false, '스캔만으로는 알 수 없다(서버 목록을 받지 않는다)');
+    const w2 = await pairWorld({ desk });
+    await pairOnce(w2);
+    assert.equal(w2.mob.newDesktopWarning, true);
   });
 
   it('서류 열람 범위: 기본 사업자만, 개인 프로필이 없으면 개인을 켤 수 없다', () => {
@@ -95,11 +106,22 @@ describe('SAS 입력(PC)', () => {
     assert.equal(w.pc.state, 'failed');
   });
 
-  it('폰 키가 계정에 등록되지 않았으면(QR 유출 공격자) 진행하지 않는다', async () => {
-    const w = await pairWorld({ registered: false });
+  it('대리 등록이 거부되면(룸 소비 실패·상한) 목록을 올리지 않고 pair.ok도 보내지 않는다', async () => {
+    const w = await pairWorld({ enrollFails: true });
     await assert.rejects(() => pairOnce(w));
     assert.equal(w.pc.state, 'failed');
     assert.equal(w.published.length, 0);
+    assert.equal(w.mob.state, 'failed');
+  });
+
+  it('이미 같은 키로 목록에 있는 폰(다시 연결)은 다시 등록하지 않는다', async () => {
+    const w = await pairWorld();
+    const { pc } = await pairOnce(w);
+    pc.channel.close();
+    const w2 = await pairWorld({ relay: w.relay, desk: { ...w.desk, deviceList: w.published[0]! }, phone: w.phone, knownAik: w.desk.keys.aik.publicKey, seenListVersion: 2 });
+    await pairOnce(w2);
+    assert.equal(w2.enrolled.length, 0);
+    assert.equal(w2.published.length, 1);
   });
 });
 
@@ -108,7 +130,7 @@ describe('폰 스캔 검사(3단계)', () => {
     const w = await pairWorld();
     const { qr } = w.pc.offer();
     const q = decodeQr(qr)!;
-    const mk = () => new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: w.desk.deviceList, relayAllowlist: [RELAY] });
+    const mk = () => new MobilePairing({ keys: w.phone.keys, relayAllowlist: [RELAY] });
     let m = mk();
     assert.equal(m.scan(encodeQr({ ...q, exp: Math.floor(Date.now() / 1000) - 1 })), false);
     assert.equal(m.failure, 'qr_expired');
@@ -125,7 +147,7 @@ describe('폰 스캔 검사(3단계)', () => {
   it('실패 뒤 다시 스캔하면 지난 실패를 지우고, 진행 중에는 스캔을 받지 않는다', async () => {
     const w = await pairWorld();
     const { qr } = w.pc.offer();
-    const m = new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: w.desk.deviceList, relayAllowlist: [RELAY] });
+    const m = new MobilePairing({ keys: w.phone.keys, relayAllowlist: [RELAY] });
     assert.equal(m.scan('garbage'), false);
     assert.equal(m.failure, 'qr_invalid');
     assert.equal(m.scan(qr), true);
@@ -136,29 +158,42 @@ describe('폰 스캔 검사(3단계)', () => {
     assert.throws(() => m.scan(qr), /busy/);
   });
 
-  it('기기 목록에 없는 PC(서버·공격자가 낀 Sd)는 중단', async () => {
+  it('스캔은 계정 서버 없이 QR만 본다(폰은 기기 목록을 조회하지 않는다)', async () => {
     const w = await pairWorld();
-    const other = await mockDesktop();
     const { qr } = w.pc.offer();
-    const q = decodeQr(qr)!;
-    const m = new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: w.desk.deviceList, relayAllowlist: [RELAY] });
-    assert.equal(m.scan(encodeQr({ ...q, desktopStatic: other.keys.noise.publicKey })), false);
-    assert.equal(m.failure, 'desktop_unknown');
+    const m = new MobilePairing({ keys: w.phone.keys, relayAllowlist: [RELAY] });
+    assert.equal(m.scan(qr), true);
+    assert.equal(m.state, 'scanned');
+  });
+});
+
+describe('PAIR_OK 기기 목록 검사(3단계를 7단계에서)', () => {
+  it('PAIR_OK 목록에 QR의 Sd가 데스크톱으로 없으면 중단(키를 저장하지 않는다)', async () => {
+    // 같은 AIK의 다른 PC 목록을 들고 온 PC: 서명은 맞지만 자기 Sd가 목록에 없다.
+    const aik = ed25519Keygen().secretKey;
+    const a = await mockDesktop(Date.now() - 30 * DAY, aik);
+    const b = await mockDesktop(Date.now() - 30 * DAY, aik);
+    const w = await pairWorld({ desk: { ...a, deviceList: b.deviceList } });
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.mob.failure, 'desktop_unknown');
+    assert.equal(w.mob.state, 'failed');
   });
 
-  it('AIK 서명이 없거나 틀린 기기 목록, 낮은 listVersion은 거부', async () => {
-    const w = await pairWorld();
-    const { qr } = w.pc.offer();
-    const forgedAik = softSigner(ed25519Keygen().secretKey, AIK_PURPOSES);
-    const attacker = await mockDesktop();
-    // 공격자가 자기 AIK로 서명한 목록(서버 내부자)
-    const forged: DeviceListJson = await addDevice(forgedAik, { listVersion: 1, entries: [], revoked: [] }, { deviceId: attacker.deviceId, role: 'desktop', noisePub: attacker.keys.noise.publicKey, signPub: attacker.keys.vd.publicKey, registeredAt: 1 });
-    let m = new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: forged, relayAllowlist: [RELAY] });
-    assert.equal(m.scan(qr), false);
-    assert.equal(m.failure, 'devlist_invalid');
-    m = new MobilePairing({ keys: w.phone.keys, accountAikPub: w.desk.keys.aik.publicKey, serverDeviceList: w.desk.deviceList, seenListVersion: 5, relayAllowlist: [RELAY] });
-    assert.equal(m.scan(qr), false);
-    assert.equal(m.failure, 'devlist_invalid');
+  it('이미 본 것보다 낮은 listVersion은 거부', async () => {
+    const w = await pairWorld({ seenListVersion: 5 });
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.mob.failure, 'devlist_invalid');
+  });
+
+  it('PAIR_OK 목록이 PAIR_OK의 AIK로 서명되지 않았으면 거부', async () => {
+    // 장악된 PC: 인증서는 계정 AIK로 서명하지만 기기 목록은 다른 키로 서명해 보낸다.
+    const desk = await mockDesktop();
+    const forged = softSigner(ed25519Keygen().secretKey, AIK_PURPOSES);
+    const real = desk.keys.aik;
+    desk.keys.aik = { publicKey: real.publicKey, sign: (purpose, msg) => (purpose === CTX.devlist ? forged.sign(purpose, msg) : real.sign(purpose, msg)) };
+    const w = await pairWorld({ desk });
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.mob.failure, 'devlist_invalid');
   });
 });
 
@@ -188,13 +223,11 @@ describe('핸드셰이크 공격', () => {
     assert.equal(await r, null);
   });
 
-  it('PAIR_OK의 AIK가 계정 AIK와 다르면 중단(가짜 PC)', async () => {
-    // 폰은 계정 AIK_A를 알고 있는데, 가짜 PC는 같은 정적키 목록을 AIK_B로 다시 서명해 보낸다.
-    const accountAik = ed25519Keygen().secretKey;
-    const realDesk = await mockDesktop(Date.now() - 30 * DAY, accountAik);
+  it('다시 연결할 때 PAIR_OK의 AIK가 앞서 고정한 AIK와 다르면 중단(가짜 PC)', async () => {
+    // 폰은 앞선 페어링에서 계정 AIK_A를 고정했는데, 가짜 PC는 자기 AIK_B로 서명한 목록을 보낸다.
+    const realDesk = await mockDesktop(Date.now() - 30 * DAY);
     const fake = await mockDesktop(Date.now() - 30 * DAY);
-    fake.keys.noise = realDesk.keys.noise; // 폰 검사를 통과하려고 같은 Sd를 쓴다(PC 장악 가정)
-    const w = await pairWorld({ desk: fake, serverList: realDesk.deviceList, accountAik: realDesk.keys.aik.publicKey });
+    const w = await pairWorld({ desk: fake, knownAik: realDesk.keys.aik.publicKey });
     await assert.rejects(() => pairOnce(w));
     assert.equal(w.mob.failure, 'aik_mismatch');
   });
@@ -254,7 +287,7 @@ describe('재시도와 신뢰할 수 없는 기기 목록', () => {
     assert.equal(w.published.length, 1, '실패 전에 목록은 이미 올라갔다');
     const published = w.published[0]!;
     w.relay.registerMailbox = real;
-    const w2 = await pairWorld({ relay: w.relay, desk: { ...w.desk, deviceList: published }, phone: w.phone, serverList: published });
+    const w2 = await pairWorld({ relay: w.relay, desk: { ...w.desk, deviceList: published }, phone: w.phone });
     const { phone } = await pairOnce(w2);
     assert.equal(phone.deviceList.listVersion, 3);
     const mine = phone.deviceList.entries.filter((e) => e.entry.device_id === w.phone.keys.deviceId);
@@ -277,7 +310,7 @@ describe('재시도와 신뢰할 수 없는 기기 목록', () => {
     assert.equal(again.entries.length, 2);
   });
 
-  it('모양이 틀린 목록은 던지지 않고 shape, 폰 스캔은 devlist_invalid로 끝난다', async () => {
+  it('모양이 틀린 목록은 던지지 않고 shape로 끝난다', async () => {
     const d = await mockDesktop();
     const good = d.deviceList;
     const e0 = good.entries[0]!;
@@ -293,9 +326,60 @@ describe('재시도와 신뢰할 수 없는 기기 목록', () => {
       assert.equal(r.ok, false);
       assert.ok(!r.ok && (r.reason === 'shape' || r.reason === 'signature'), JSON.stringify(b)?.slice(0, 80));
     }
-    const w = await pairWorld({ desk: d, serverList: { ...good, entries: [null] } as unknown as DeviceListJson });
-    const { qr } = w.pc.offer();
-    assert.equal(w.mob.scan(qr), false);
-    assert.equal(w.mob.failure, 'devlist_invalid');
+  });
+});
+
+describe('계정 확인 주장 acct_claim(설계 #120, 팀장 결정 2026-11-06)', () => {
+  it('PC가 알린 이름은 참고로만 받고, 제어·양방향 문자가 있으면 버린다', async () => {
+    let w = await pairWorld({ desktopName: '사무실 PC' });
+    assert.equal((await pairOnce(w)).phone.identity.desktopName, '사무실 PC');
+    w = await pairWorld({ desktopName: 'PC\u202Egnp.exe' });
+    assert.equal((await pairOnce(w)).phone.identity.desktopName, null);
+  });
+
+  it('고정 키가 아닌 키로 서명, 만료, 다른 AIK, 모양 틀림이면 저장하지 않고 중단', async () => {
+    const other = ed25519Keygen();
+    const now = Date.now();
+    const sec = Math.floor(now / 1000);
+    const cases: [string, (aik: Uint8Array) => string][] = [
+      ['다른 키', (aik) => testAcctClaim(aik, { sk: other.secretKey })],
+      ['만료', (aik) => testAcctClaim(aik, { iat: now - 600_001, exp: now - 1 })],
+      ['초 단위 iat·exp', (aik) => testAcctClaim(aik, { iat: sec, exp: sec + 600 })],
+      ['유효 기간 10분 초과', (aik) => testAcctClaim(aik, { iat: now, exp: now + 600_001 })],
+      ['다른 AIK', () => testAcctClaim(ed25519Keygen().publicKey)],
+      ['모양', () => 'AAAA'],
+      ['이메일 모양', (aik) => testAcctClaim(aik, { email: 'owner@exa\u0000mple.test' })],
+    ];
+    for (const [name, accountClaim] of cases) {
+      const w = await pairWorld({ accountClaim });
+      await assert.rejects(() => pairOnce(w), undefined, name);
+      assert.equal(w.mob.failure, 'acct_claim_invalid', name);
+      assert.equal(w.mob.state, 'failed', name);
+    }
+  });
+
+  it('앱에 고정한 키가 없으면 늘 실패한다(릴리스 키가 들어가기 전)', async () => {
+    const w = await pairWorld({ accountKeys: [] });
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.mob.failure, 'acct_claim_invalid');
+  });
+
+  it('verifyAcctClaim: 이유를 나눠 돌려주고, 키 회전 대비 여러 키 중 하나면 통과', () => {
+    const aik = ed25519Keygen().publicKey;
+    const old = ed25519Keygen();
+    const f = testAcctClaim(aik);
+    assert.equal(verifyAcctClaim(f, { accountKeys: [old.publicKey, ACCOUNT_KEY.publicKey], aikPub: aik }).ok, true);
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [old.publicKey], aikPub: aik }), { ok: false, reason: 'signature' });
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: ed25519Keygen().publicKey }), { ok: false, reason: 'aik_mismatch' });
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: Date.now() + 3_600_000 }), { ok: false, reason: 'expired' });
+    // 시각은 UTC 밀리초(SIGNING.md §8). 초 단위 exp가 오면 만료로 거절한다.
+    const sec = Math.floor(Date.now() / 1000);
+    assert.deepEqual(verifyAcctClaim(testAcctClaim(aik, { iat: sec, exp: sec + 600 }), { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'expired' });
+    // 경계: exp = iat + 600000은 통과, 지금 = exp면 만료.
+    const t = Date.now();
+    const edge = testAcctClaim(aik, { iat: t, exp: t + 600_000 });
+    assert.equal(verifyAcctClaim(edge, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: t + 599_999 }).ok, true);
+    assert.deepEqual(verifyAcctClaim(edge, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: t + 600_000 }), { ok: false, reason: 'expired' });
+    for (const bad of [null, 7, '', '***', 'A'.repeat(2000)]) assert.deepEqual(verifyAcctClaim(bad, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'shape' });
   });
 });
