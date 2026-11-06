@@ -12,6 +12,11 @@ const execFileAsync = promisify(execFile);
  * 도중에 죽이면 최상위만 고쳐진 채 확인을 통과하고 하위에는 옛 상속 ACE가 남는다.
  */
 export const TOOL_TIMEOUT_MS = 30_000;
+/**
+ * 소유자 읽기(PowerShell Get-Acl) 상한(ADR-039). 느린 Windows PC에서 PowerShell 기동이 3.4~15초, 부하 때는 30초를 넘었다(WIN-REALDEVICE §6.1).
+ * 소유자는 폴더 식별마다 프로세스당 한 번만 읽으므로(OwnerMemo) 다른 읽기 도구보다 길게 둔다.
+ */
+export const OWNER_TIMEOUT_MS = 90_000;
 const REPAIR: ExecFileOptions = { timeout: 0 };
 
 function run(file: string, args: string[], opts: ExecFileOptions = {}): Promise<{ stdout: string; stderr: string }> {
@@ -179,12 +184,68 @@ export async function readDacl(target: string): Promise<Dacl> {
   }
 }
 
-/** 소유자 SID. `icacls /save`에는 소유자가 없어 .NET으로 읽는다(PowerShell 기동 약 0.3초, PoC-1 실측). 경로는 환경 변수로 넘긴다. */
+/**
+ * 소유자 SID. `icacls /save`에는 소유자가 없어 .NET으로 읽는다. 경로는 환경 변수로 넘긴다.
+ * PoC-1 PC에서는 PowerShell 기동이 약 0.3초였지만 느린 PC에서는 3.4~15초다(WIN-REALDEVICE §6.1). 그래서 직접 부르지 않고 OwnerMemo를 거친다(ADR-039).
+ */
 export async function readOwner(target: string): Promise<string> {
   const script = '$o = (Get-Acl -LiteralPath $env:SAX_ACL_TARGET).GetOwner([System.Security.Principal.SecurityIdentifier]); if ($o) { $o.Value }';
-  const { stdout } = await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: target }) });
+  const { stdout } = await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { timeout: OWNER_TIMEOUT_MS, env: windowsPowerShellEnv({ SAX_ACL_TARGET: target }) });
   return stdout.trim();
 }
+
+/**
+ * 폴더 식별: 볼륨·파일 ID·생성 시각(ns). 지우고 같은 이름으로 다시 만들면 바뀐다. 링크·파일이거나 파일 ID를 주지 않는 파일 시스템(0)이면 null.
+ */
+export async function dirIdentity(dir: string): Promise<string | null> {
+  const st = await fs.lstat(dir, { bigint: true }).catch(() => null);
+  if (!st || !st.isDirectory() || st.ino === 0n) return null;
+  return `${st.dev}:${st.ino}:${st.birthtimeNs}`;
+}
+
+/**
+ * 신뢰 소유자 확인을 폴더 식별마다 프로세스당 한 번으로 줄인다(ADR-039).
+ * - 근거: 사용자 전용 DACL(사용자·SYSTEM만, checkPrivate가 매번 icacls로 확인)이면 소유자를 남에게 넘길 수 있는 것은 사용자·SYSTEM·관리자 특권뿐이다.
+ *   모두 isTrustedOwner가 이미 믿는 쪽이다. 그래서 한 번 신뢰 소유자로 확인한 폴더는, 같은 폴더(식별 동일)인 동안 다시 읽지 않아도 판정이 같다.
+ * - 신뢰 소유자만 기억한다. 남의 소유는 매번 다시 읽는다(관리자가 소유권을 고친 뒤 다시 시도하면 통한다).
+ * - 같은 폴더를 동시에 물으면 읽기 하나를 같이 기다린다(금고 미리 확인과 Chrome 기동이 겹칠 때). 읽기가 실패하면 기억하지 않는다.
+ */
+export class OwnerMemo {
+  private readonly trusted = new Map<string, string>();
+  private readonly inflight = new Map<string, Promise<string>>();
+  private readonly read: (dir: string) => Promise<string>;
+  private readonly identity: (dir: string) => Promise<string | null>;
+  constructor(read: (dir: string) => Promise<string> = readOwner, identity: (dir: string) => Promise<string | null> = dirIdentity) {
+    this.read = read;
+    this.identity = identity;
+  }
+
+  /** 소유자가 신뢰 소유자인가. */
+  async isTrusted(dir: string, userSid: string): Promise<boolean> {
+    const id = await this.identity(dir);
+    const known = id ? this.trusted.get(id) : undefined;
+    if (known !== undefined && isTrustedOwner(known, userSid)) return true;
+    const key = id ?? `path:${path.resolve(dir)}`;
+    let pending = this.inflight.get(key);
+    if (!pending) {
+      pending = this.read(dir).finally(() => this.inflight.delete(key));
+      this.inflight.set(key, pending);
+    }
+    const owner = await pending;
+    const ok = isTrustedOwner(owner, userSid);
+    // 읽는 동안 폴더가 바뀌었으면(다시 만들어짐) 기억하지 않는다.
+    if (ok && id && (await this.identity(dir)) === id) this.trusted.set(id, owner);
+    return ok;
+  }
+
+  /** 기억한 폴더 수(시험·진단). */
+  get size(): number {
+    return this.trusted.size;
+  }
+}
+
+/** 프로세스 공용(금고는 Chrome을 띄울 때마다 dirGuard()를 새로 만든다). */
+const ownerMemo = new OwnerMemo();
 
 /**
  * 소유자는 DACL과 무관하게 DACL을 다시 쓸 수 있다(암묵적 WRITE_DAC). 다른 계정이 먼저 만든 폴더면 우리가 고쳐도 그 계정이 다시 연다(PoC-1 S6m 보조 볼륨).
@@ -214,9 +275,20 @@ export function grantsUserFullControl(dacl: Dacl, userSid: string, local = false
   return dacl.aces.some((a) => a.type === 'A' && isUserSid(a.sid, userSid, local) && /^(FA|0x1f01ff)$/i.test(a.rights) && a.flags.includes('OI') && a.flags.includes('CI') && !a.flags.includes('IO'));
 }
 
+/** 프로세스 사용자는 바뀌지 않으므로 whoami는 한 번만 부른다(실패하면 다음에 다시). */
+let userOnce: Promise<{ sid: string; local: boolean }> | null = null;
+
 class WindowsDirGuard implements DirGuard {
+  private user(): Promise<{ sid: string; local: boolean }> {
+    userOnce ??= this.readUser().catch((e: unknown) => {
+      userOnce = null;
+      throw e;
+    });
+    return userOnce;
+  }
+
   /** 사용자 SID와 로컬 계정 여부(`whoami` 이름의 도메인 부분이 이 컴퓨터 이름이면 로컬). 로컬 여부는 SDDL 별칭 `LA`·`LG`를 풀 때만 쓴다. */
-  private async user(): Promise<{ sid: string; local: boolean }> {
+  private async readUser(): Promise<{ sid: string; local: boolean }> {
     const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
     const [name, sid] = stdout.trim().split('","').map((f) => f.replace(/"/g, ''));
     if (!sid?.startsWith('S-1-')) throw new Error('cannot resolve user SID');
@@ -231,7 +303,7 @@ class WindowsDirGuard implements DirGuard {
     await fs.mkdir(dir, { recursive: true });
     const { sid, local } = await this.user();
     // 다른 계정 소유 폴더의 DACL은 고쳐 쓰지 않는다. 고쳐도 소유자가 다시 열 수 있다(실패 닫힘).
-    if (!isTrustedOwner(await readOwner(dir), sid)) return this.checkPrivate(dir);
+    if (!(await ownerMemo.isTrusted(dir, sid))) return this.checkPrivate(dir);
     const icacls = windowsTool('icacls.exe');
     await run(icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F'], REPAIR);
     // 상속을 끊어도 명시 ACE(누가 직접 추가한 Users 읽기 등)는 남는다. 사용자·SYSTEM 밖은 지운다.
@@ -258,7 +330,7 @@ class WindowsDirGuard implements DirGuard {
     }
     if (!st.isDirectory()) problems.push('not_dir');
     const { sid, local } = await this.user();
-    if (!isTrustedOwner(await readOwner(dir), sid)) problems.push('not_owner');
+    if (!(await ownerMemo.isTrusted(dir, sid))) problems.push('not_owner');
     const dacl = await readDacl(dir);
     if (!dacl.protected || dacl.aces.some((a) => a.flags.includes('ID'))) problems.push('inherited');
     if (!grantsUserFullControl(dacl, sid, local)) problems.push('no_user_access');
