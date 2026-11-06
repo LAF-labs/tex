@@ -106,6 +106,12 @@ export class Relay {
   /** 측정용(S6b): 엔진이 보낸 메서드별 판정. */
   readonly methodStats = new Map<string, { forwarded: number; denied: number; synthetic: number; scope: 'root' | 'session' }>();
   readonly onSecretWindowClosed = new Set<(targetId: string) => void>();
+  /**
+   * 사람 입력 활성 창(human·remote) 동안 그 타깃의 엔진행 이벤트·응답을 내보내기 전에 부른다. SecretOps가 금고 세션에서
+   * 지금 값을 읽어 알려진 값(접두사 포함)으로 올린다. 값은 금고 밖으로 나가지 않는다(창 종료 때만 올리면 입력 도중 페이지가
+   * 주소·제목 등으로 흘린 값이 먼저 나간다, S6f 회귀).
+   */
+  activeValueHook?: (targetId: string) => Promise<void>;
   /** R-C1 커밋 본문 대조(금고 서비스가 붙인다). */
   commitGuard: CommitGuard | null = null;
 
@@ -531,6 +537,7 @@ export class Relay {
     // 받은 시점과 지금 중 엄격한 쪽(오염 표시·요청 바디 제거가 커밋 처리 순서에 밀리지 않게).
     const now = this.stateOf(t);
     const st = { active: now.active || !!at?.active, tainted: now.tainted || !!at?.tainted };
+    if (now.active && t.win?.kind !== 'typist') await this.activeValueHook?.(t.targetId).catch(() => {});
     // 자식 세션의 이동 시작: 허용 밖이면 커밋 전에 그 자식만 분리한다.
     if (es.child && msg.method === 'Page.frameStartedNavigating') {
       if (p.frameId === es.childTargetId && !urlAllowed(String(p.url ?? ''), this.policy.allowedHosts)) {
@@ -739,6 +746,7 @@ export class Relay {
     const t = this.targetOfSession(p.sessionId);
     if (!t) return out;
     const tainted = p.sentTainted || !!t.win;
+    if (t.win?.phase === 'active' && t.win.kind !== 'typist') await this.activeValueHook?.(t.targetId).catch(() => {});
     const [domain] = p.method.split('.');
     if (domain === 'DOM') {
       const secrets = this.secretsOf(t, p.sentSecretIds);

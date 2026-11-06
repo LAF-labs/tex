@@ -33,6 +33,10 @@ export const DELIVERED_RETENTION_DAYS = 400;
 /** 서명 정책 policy.daemon이 없을 때(정책을 한 번도 받지 못함) 쓰는 값. D10 §3 본문 값(±30분, 10분 유예, 30분 재시도) */
 export const DAEMON_POLICY_FALLBACK: Readonly<Pick<Policy['daemon'], 'windowJitterMin' | 'startupGraceMin' | 'retryAfterMin'>> = Object.freeze({ windowJitterMin: 30, startupGraceMin: 10, retryAfterMin: 30 });
 
+/**
+ * 엔진 main 전용 읽기 질의 `daemon.snapshot`의 응답 계약(D10 §3: main은 DB 키가 없다. 쓰기·실행 없음). 예:
+ * `{ policy: { expiresAt: '2026-11-09T00:00:00Z', daemon: policy.daemon }, status: { issuedAt, expiresAt }, profiles: [{ profileId, documents: DocumentRepo.list(), validityRules: [], schedules: [], settings: { reminderDay: 5, halfYearWithholding: false }, bundleSentPeriods: ['2026-09'], missing: missingReport({ month: bundlePeriod(today, 5, false)?.period }) ?? null, cardFetchedOn: '2026-10-20' }] }`
+ */
 export interface DaemonSnapshot {
   /** 엔진이 가진 마지막 유효 정책(서명·클램프를 거친 것) */
   policy: Pick<Policy, 'expiresAt' | 'daemon'> | null;
