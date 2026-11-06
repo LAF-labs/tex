@@ -14,6 +14,7 @@ export const LIMITS_MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', imp
 export const LIMITS_VISIBILITY = {
   lim_salts: { label: '솔트 용도(고정 문자열)', day: 'KST 날짜', salt: '당일 무작위 32바이트(다음 날 삭제)' },
   lim_windows: { k: '창 길이|용도:당일 솔트 HMAC', start_ms: '창 시작', n: '횟수', expires_at: '만료' },
+  int_nonces: { nonce: '내부 호출 서명의 1회용 무작위 값(16바이트 b64url, 요청 내용·출처 없음)', expires_at: '서명 시각 + 60초(지나면 삭제)' },
 } as const;
 
 export interface Hit {

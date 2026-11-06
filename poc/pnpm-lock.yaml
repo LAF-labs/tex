@@ -220,6 +220,9 @@ importers:
       '@sax/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@sax/remote':
+        specifier: workspace:*
+        version: link:../../packages/remote
       '@sax/updater':
         specifier: workspace:*
         version: link:../../packages/updater
@@ -403,6 +406,24 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  services/cloud:
+    dependencies:
+      '@sax/svc-account':
+        specifier: workspace:*
+        version: link:../account
+      '@sax/svc-gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@sax/svc-push':
+        specifier: workspace:*
+        version: link:../push
+      '@sax/svc-relay':
+        specifier: workspace:*
+        version: link:../relay
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
   services/gateway:
     dependencies:
       '@sax/model':
@@ -509,6 +530,9 @@ importers:
       js-tiktoken:
         specifier: 1.0.21
         version: 1.0.21
+      pg:
+        specifier: 8.16.3
+        version: 8.16.3
 
 packages:
 

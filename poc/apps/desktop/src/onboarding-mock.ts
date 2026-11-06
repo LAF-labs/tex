@@ -1,5 +1,5 @@
 // 온보딩 목업 어댑터(M4-2). 셸은 바깥 일만 이것으로 한다(onboarding-store.ts onboardingPorts). 실제 어댑터가 붙을 자리:
-// - recognizeBizCert: M4-3 등록증 OCR(docparse 샌드박스, ADR-014) · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유, #65)
+// - recognizeBizCert: 제품은 bizcert-read.ts(M4-3, docparse 샌드박스, ADR-014), 목업은 시연·e2e만 · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유, #65)
 // - findCerts: 제품은 이미 실제 길(금고 npki.list #93 → docparse 샌드박스 certInfo, npki-certs.ts). 목업 목록은 시연·e2e만 · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
 // - consentConfig: 설정 데이터(모델 상류 공급사 표)
 // recordConsent·saveProfile·save(저장)는 셸에서 쓰지 않는다. 엔진 명령으로 DB에 남긴다(onboarding-store.ts). 여기 것은 상태 기계 시험용이다.
@@ -8,6 +8,8 @@ import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, 
 
 /** 시연 등록증(fixture 가짜 홈택스의 공급자와 같은 값이어야 발급 시연이 이어진다, fixture-mode DEMO_PROFILE). */
 export const MOCK_BIZ_CERT: BizFields = { name: '가나다컴퍼니', bizNo: '1234567891', rep: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example' };
+/** 시연 거래처 등록증(거래처 [등록증으로 채우기], fixture). 번호는 검증 숫자가 맞는 합성 값이다. */
+export const MOCK_CP_CERT: BizFields = { name: '견본상사', bizNo: '3148601237', rep: '이견본', bizType: '도매', bizItem: '사무용품', address: '서울특별시 견본구 시험로 34', email: '' };
 
 /**
  * ② 처리자 표의 설정 데이터(목업). 실제로는 앱 설정(서명된 운영 설정)에서 받는다. 모델 상류가 OpenRouter라 공급사 목록이 바뀔 수 있어

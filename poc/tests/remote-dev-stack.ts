@@ -1,0 +1,99 @@
+// 데스크톱 계정·페어링 시험용 개발 스택: 실제 계정 서비스(services/account, SQLite 메모리)를 localhost에 띄우고,
+// remote-ports.ts의 AccountClient를 fetch로 구현한 시험용 클라이언트와 소프트 DesktopKeys를 준다.
+// 제품 클라이언트(egress 경유)는 클라우드 세션 몫이다(apps/desktop/src/remote-cloud.ts). 이 파일은 시험에서만 쓴다.
+import { randomBytes } from 'node:crypto';
+import type { Server } from 'node:http';
+import { AIK_PURPOSES, requestDeviceToken, softNoiseStatic, softSigner, VD_PURPOSES, x25519Public, type DesktopKeys, type HttpJson, type SignedAcctClaim } from '@sax/remote';
+import { AcctClaimSigner, AccountService, accountRouter, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway } from '../services/account/src/index.ts';
+import { createServer, ed25519RawPublic, Logger, listen, migrate, openSqlite, TokenIssuer, TokenVerifier } from '../services/shared/src/index.ts';
+import type { AccountClient } from '../apps/desktop/src/remote-ports.ts';
+import { Clock, edKey } from './services-kit.ts';
+
+export const ORIGIN = 'https://account.test.invalid';
+
+export interface DevStack {
+  clock: Clock;
+  mail: MockMailSender;
+  svc: AccountService;
+  server: Server;
+  base: string;
+  claimSigner: AcctClaimSigner;
+  /** 시험용 AccountClient(요청 URL은 ORIGIN으로 만들고 localhost로 보낸다: DPoP htu는 서버 publicOrigin 기준). */
+  client: AccountClient & { calls: string[] };
+  http: HttpJson;
+  close(): void;
+}
+
+const err = (status: number, body: unknown) => {
+  const e = (body as { error?: unknown } | null)?.error;
+  return Object.assign(new Error(`http ${status}`), { code: typeof e === 'string' ? e : `http.${status}` });
+};
+
+export async function startDevStack(): Promise<DevStack> {
+  const clock = new Clock();
+  const db = openSqlite();
+  await migrate(db, 'account', MIGRATIONS_DIR);
+  const mail = new MockMailSender();
+  const signKey = edKey().priv;
+  const claimSigner = AcctClaimSigner.fromSeedHex(randomBytes(32).toString('hex'));
+  const svc = new AccountService({
+    db,
+    mail,
+    payments: new MockPaymentGateway(),
+    tokens: new TokenIssuer('k1', signKey),
+    codeMacKey: randomBytes(32),
+    rp: { rpId: 'account.test.invalid', origins: [ORIGIN] },
+    publicOrigin: ORIGIN,
+    billingReturnUrl: 'https://app.test.invalid/billing/done',
+    acctClaims: claimSigner,
+    now: clock.now,
+  });
+  const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internalSecret: randomBytes(32).toString('hex') });
+  const server = createServer(router, { logger: new Logger('account', (l) => process.env.SAX_DEVSTACK_LOG && console.error(l), clock.now) });
+  const base = await listen(server);
+  const http: HttpJson = async (req) => {
+    const res = await fetch(req.url.replace(ORIGIN, base), { method: req.method, headers: req.headers, body: req.body });
+    const text = await res.text();
+    return { status: res.status, body: text ? JSON.parse(text) : null };
+  };
+  const calls: string[] = [];
+  const call = async (method: string, path: string, headers: Record<string, string>, body?: unknown) => {
+    calls.push(`${method} ${path}`);
+    const r = await http({ method, url: ORIGIN + path, headers: { ...headers, ...(body === undefined ? {} : { 'content-type': 'application/json' }) }, body: body === undefined ? undefined : JSON.stringify(body) });
+    if (r.status >= 300) throw err(r.status, r.body);
+    return r.body as Record<string, unknown>;
+  };
+  const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
+  const client: AccountClient & { calls: string[] } = {
+    calls,
+    startEmailCode: async (email) => (await call('POST', '/v1/auth/code', {}, { email })) as { loginId: string; expiresInSec: number },
+    verifyEmailCode: async (loginId, code) => (await call('POST', '/v1/auth/code/verify', {}, { loginId, code })) as { session: string; expiresInSec: number },
+    logout: async (s) => void (await call('POST', '/v1/auth/logout', bearer(s))),
+    deviceList: async (s) => (await call('GET', '/v1/device-list', bearer(s))) as never,
+    pinFirstDesktop: async (s, b) => (await call('POST', '/v1/aik', bearer(s), b)) as { deviceId: string },
+    deviceToken: async (cert, dpop) => {
+      calls.push('POST /v1/device-tokens');
+      return requestDeviceToken(http, ORIGIN, cert, dpop, clock.now());
+    },
+    acctClaim: async (auth) => (await call('GET', '/v1/acct-claim', await auth('GET', ORIGIN + '/v1/acct-claim'))) as unknown as SignedAcctClaim,
+    enrollPhone: async (auth, b) => void (await call('POST', '/v1/devices/enroll', await auth('POST', ORIGIN + '/v1/devices/enroll'), b)),
+    putDeviceList: async (auth, list) => void (await call('PUT', '/v1/device-list', await auth('PUT', ORIGIN + '/v1/device-list'), { deviceList: list })),
+  };
+  return { clock, mail, svc, server, base, claimSigner, client, http, close: () => server.close() };
+}
+
+/** 소프트 DesktopKeys(금고 대역). 같은 seed면 같은 키(같은 금고로 다시 설치). */
+export function softDesktopKeys(seed = randomBytes(32)): DesktopKeys {
+  const part = (i: number) => {
+    const b = new Uint8Array(seed);
+    b[0] = (b[0]! + i) & 0xff;
+    return b;
+  };
+  const kv = part(4);
+  return {
+    noise: softNoiseStatic(part(1)),
+    vd: softSigner(part(2), VD_PURPOSES),
+    aik: softSigner(part(3), AIK_PURPOSES),
+    kvPublic: () => x25519Public(kv),
+  };
+}

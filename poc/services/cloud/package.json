@@ -1,0 +1,21 @@
+{
+  "name": "@sax/svc-cloud",
+  "version": "0.0.0",
+  "private": true,
+  "description": "함수 배포 진입점: 계정·게이트웨이·릴레이·푸시를 한 프로세스에서 조립하고 서비스 사이 호출은 함수로 직접 부른다(팀장 결정 2026-11-06 #135)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@sax/svc-account": "workspace:*",
+    "@sax/svc-gateway": "workspace:*",
+    "@sax/svc-push": "workspace:*",
+    "@sax/svc-relay": "workspace:*",
+    "@sax/svc-shared": "workspace:*"
+  }
+}

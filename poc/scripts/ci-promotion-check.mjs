@@ -20,6 +20,8 @@ import path from 'node:path';
 
 const POC = path.resolve(import.meta.dirname, '..');
 const REPO = path.resolve(POC, '..');
+// 보고·비교용 상대 경로는 OS와 무관하게 `/`로 쓴다(Windows `\\`).
+const relPosix = (from, to) => path.relative(from, to).split(path.sep).join('/');
 const MARKER = '// PoC 폐기 대상';
 /** 제품 진입점(ADR-025 결정 8: 실비밀 진입점은 하드닝된 셸 하나 + 그것이 띄우는 금고·엔진 프로세스). 있는 것만 본다. */
 export const DEFAULT_ENTRIES = [
@@ -101,7 +103,7 @@ export function checkRef(ref, roots = [POC, REPO]) {
   const name = nameParts.join(' > ').trim();
   const abs = roots.map((r) => path.resolve(r, file.trim())).find((p) => fs.existsSync(p) && fs.statSync(p).isFile());
   if (!abs) return { ref, ok: false, problem: '파일 없음' };
-  const rel = path.relative(REPO, abs);
+  const rel = relPosix(REPO, abs);
   if (rel.startsWith('..')) return { ref, ok: false, problem: '저장소 밖 경로' };
   if (!name) return { ref, ok: true, file: rel };
   const src = fs.readFileSync(abs, 'utf8');
@@ -268,10 +270,10 @@ export function checkMarkers(entries = DEFAULT_ENTRIES) {
   const chain = (f) => {
     const c = [f];
     while (parent.has(c[0])) c.unshift(parent.get(c[0]));
-    return c.map((x) => path.relative(POC, x));
+    return c.map((x) => relPosix(POC, x));
   };
-  const reached = [...seen].filter(hasMarker).map((f) => ({ file: path.relative(POC, f), chain: chain(f) }));
-  return { entries: roots.map((r) => path.relative(POC, r)), files: seen.size, reached };
+  const reached = [...seen].filter(hasMarker).map((f) => ({ file: relPosix(POC, f), chain: chain(f) }));
+  return { entries: roots.map((r) => relPosix(POC, r)), files: seen.size, reached };
 }
 
 /** poc/ 아래 표지 파일 전체(git 추적 기준). */

@@ -132,7 +132,7 @@ describe('acct_claim 서명 키 구성(ACCT_CLAIM_SIGNING_KEY)', () => {
     WEBAUTHN_RP_ID: 'account.test.invalid',
     WEBAUTHN_ORIGINS: 'https://account.test.invalid',
     BILLING_RETURN_URL: 'https://app.test.invalid/done',
-    INTERNAL_TOKEN: 'internal-test',
+    INTERNAL_CALL_KEY: '55'.repeat(32),
     PG_PROVIDER: 'mock',
     MAIL_PROVIDER: 'mock',
     HOST: '127.0.0.1',

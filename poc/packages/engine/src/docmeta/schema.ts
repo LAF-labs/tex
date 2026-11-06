@@ -1,5 +1,5 @@
 // 추출 결과 JSON Schema. 저장 전에 통과해야 한다(형식이 어긋난 값이 DB·화면으로 가지 않게).
-import { createRequire } from 'node:module';
+import ajvMain from 'ajv';
 import type { ValidateFunction } from 'ajv';
 import type { DocMetaExtract } from './extract.ts';
 
@@ -63,7 +63,7 @@ let validator: ValidateFunction | null = null;
 /** 스키마 위반이면 null. 엔진은 null이면 저장하지 않고 schema 오류로 끝낸다. */
 export function validateDocMeta(v: unknown): DocMetaExtract | null {
   if (!validator) {
-    const Ajv = createRequire(import.meta.url)('ajv') as typeof import('ajv').default;
+    const Ajv = ajvMain.default as typeof import('ajv').default;
     validator = new Ajv({ allErrors: false, strict: false, $data: true }).compile(DOC_META_SCHEMA);
   }
   return validator(v) ? (v as DocMetaExtract) : null;

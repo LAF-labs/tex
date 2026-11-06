@@ -12,7 +12,7 @@
 | 푸시(M7-3) | `/v1/push-token`, `/v1/wake` |
 | 레지스트리(M4-7) | `/registry/*`, `/policy/*`, `/packages/*`, `/releases/*`(게시 `/admin/v1/*`은 공개 origin에 두지 않는다) |
 
-`/internal/v1/*`과 `/healthz`는 공개 origin에 내보내지 않는다(서비스끼리 내부 주소로만).
+`/internal/v1/*`과 `/healthz`는 공개 경로로 내보내지 않는다(서비스끼리 내부 주소로만). Vercel 배포에서는 서비스 사이 호출을 HTTP 없이 함수로 부르고, 공개 함수는 `/internal/*`을 모두 404로 막는다. HTTP는 룸 호스트 연결만이고 `INTERNAL_CALL_KEY` 서명을 쓴다([deploy/README](../deploy/README.md) 6절 ①).
 
 **배포 전제(yulmu 11-05, 미검증)**: DB는 Supabase Postgres, HTTP는 Vercel. 리전은 **미정**이다(서울이면 Supabase `ap-northeast-2`, Vercel 함수 `icn1`). 처리방침은 어느 쪽이든 "국외 이전 가능"으로 쓴다(R14). 모델 상류는 L1 판정 OpenAI Decisions 직결, 응답 OpenRouter(ZDR·수집 거부·공급자 고정, [ENV.md](ENV.md)). 게이트웨이는 무저장이라 함수로 올릴 수 있다. 한도(기기·계정 분당, 자동 정지 판정, 상한 뒤 안전 판정 속도)는 DB 카운터라 인스턴스가 여럿이어도 합산된다(키는 서버 비밀 HMAC, [CONTRACT §10](../shared/CONTRACT.md)).
 

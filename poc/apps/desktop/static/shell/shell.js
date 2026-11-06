@@ -2,6 +2,7 @@
 // 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
+import { accountCard, loginModal } from './shell-account.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -37,6 +38,9 @@ const state = {
   docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
+  setTab: 'auth', // 설정 화면에서 고른 항목: 'auth'(발급 인증) | 'devices'(기기 연결)
+  account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
+  login: null, // 로그인 창(A-01)이 열려 있으면 { draft: { email, code }, busy }
 };
 
 // ---- 공용 동작 ----
@@ -829,12 +833,34 @@ function cpPanel(c) {
   );
 }
 
-const CP_ERR = { invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요' };
+const CP_ERR = { invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
 
-/** 거래처 추가·수정(시연 DB). 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). */
+/** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). 저장 품목은 시연 DB에서만(제품 장부에 품목 열이 아직 없다). */
 function cpEditPanel(c) {
   const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
+  const demoBook = state.boot.cpBook !== 'local';
   let saving = false;
+  let reading = false;
+  // [등록증으로 채우기](M4-3 O-05): main이 파일을 고르게 하고 후보만 돌려준다. 값은 입력 칸 value로만 넣는다(HTML로 그리지 않는다).
+  const fillFromCert = async () => {
+    if (reading) return;
+    reading = true;
+    try {
+      const r = await call('counterparty.readCert', {});
+      if (!r.found) {
+        if (r.reason === 'unreadable') toast('등록증을 읽지 못했어요. 번호로 입력해 주세요');
+        return;
+      }
+      if (r.name) form.elements.name.value = r.name;
+      if (r.bizNo) form.elements.bizNo.value = fmtBiz(r.bizNo);
+      if (r.rep) form.elements.rep.value = r.rep;
+      toast('등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
+    } catch (err) {
+      toast(CP_ERR[errText(err)] ?? errText(err));
+    } finally {
+      reading = false;
+    }
+  };
   const form = h(
     'form',
     {
@@ -845,7 +871,7 @@ function cpEditPanel(c) {
         saving = true;
         const f = new FormData(form);
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item') });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: demoBook ? f.get('item') : null });
           state.cps = r.counterparties;
           render();
           openPanel({ kind: 'cp', id: r.id });
@@ -857,14 +883,15 @@ function cpEditPanel(c) {
         }
       },
     },
+    c ? null : h('div', { class: 'sx-actions' }, btn('등록증으로 채우기', fillFromCert, 'sx-btn-quiet', { 'data-act': 'cp-cert' })),
     field('상호', 'name', c?.name, { required: true, maxlength: 60 }),
     field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
     field('대표자', 'rep', c?.rep, { maxlength: 30 }),
     field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
-    field('저장 품목', 'item', c?.item, { maxlength: 40 }),
+    demoBook ? field('저장 품목', 'item', c?.item, { maxlength: 40 }) : null,
     h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
   );
-  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, '이 PC 거래처 장부(데모 DB)에만 저장해요'));
+  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
 }
 
 /** 내 사업장(캔버스 D-03): 사업자 프로필 · 개인 프로필 · 맡긴 업무. 고치기는 설정·대화로 넘긴다. */
@@ -1020,6 +1047,68 @@ function activityPanel(row) {
 }
 
 const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터'];
+/** 설정 항목 중 실제로 열리는 것(나머지는 목업). */
+const SETTINGS_TAB = { 0: 'auth', 4: 'devices' };
+
+function setTab(tab) {
+  state.setTab = tab;
+  render();
+  if (tab === 'devices') refreshAccount();
+}
+
+// ---- 계정 로그인(A-01) ----
+
+async function refreshAccount() {
+  try {
+    state.account = await call('account.view', {});
+  } catch {
+    state.account = { step: 'unavailable', email: null, codeExpiresAt: null, error: null };
+  }
+  render();
+}
+
+function openLogin() {
+  state.login = { draft: { email: state.account?.email ?? '', code: '' }, busy: false };
+  render();
+}
+
+function closeLogin() {
+  if (!state.login) return;
+  state.login = null;
+  render();
+  $('[data-act=account-login]')?.focus();
+}
+
+/** 로그인 창의 요청 하나. 끝나면 main이 준 단계로 다시 그린다. 등록이 끝나면 창을 닫는다. */
+async function accountStep(method, params) {
+  const l = state.login;
+  if (!l || l.busy) return;
+  l.busy = true;
+  render();
+  try {
+    state.account = await call(method, params);
+    if (method !== 'account.verify') l.draft.code = '';
+  } catch (err) {
+    state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: errText(err) };
+  } finally {
+    l.busy = false;
+  }
+  if (state.account?.step === 'signed_in') {
+    state.login = null;
+    toast('로그인했어요. 이 PC가 계정에 등록됐어요');
+  }
+  render();
+}
+
+const loginCtx = () => ({
+  view: state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null, error: null },
+  draft: state.login.draft,
+  busy: state.login.busy,
+  onClose: closeLogin,
+  sendCode: (email) => accountStep('account.sendCode', { email }),
+  verify: (code) => accountStep('account.verify', { code }),
+  back: () => accountStep('account.back', {}),
+});
 // 프로필 인증 문자열(shell-app SIGN: 사업자 간편인증·공동·금융인증서·보안카드·발급 인증 미설정)을 종류로 묶는다.
 const AUTH_KIND = [
   ['simple', /^사업자 간편인증/, '발급할 때마다 폰에서 승인해요'],
@@ -1051,9 +1140,15 @@ function settingsView() {
       'nav',
       { class: 'set-nav', 'aria-label': '설정 항목' },
       h('h1', { class: 'title-screen' }, '설정'),
-      SETTINGS_NAV.map((t, i) => h('button', { type: 'button', class: i === 0 ? 'is-on' : null, 'aria-current': i === 0 ? 'page' : null, onclick: i === 0 ? null : mock }, t)),
+      SETTINGS_NAV.map((t, i) => {
+        const tab = SETTINGS_TAB[i];
+        const on = tab === state.setTab;
+        return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab ?? null, onclick: tab ? () => setTab(tab) : mock }, t);
+      }),
     ),
-    h(
+    state.setTab === 'devices'
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin))
+      : h(
       'div',
       { class: 'set-body' },
       waitingChip(),
@@ -1179,16 +1274,19 @@ function passwordModal() {
 
 function renderModal() {
   const root = $('#modal');
-  const open = state.view === 'docs' && !!state.docImport && !state.docBusy;
+  const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
+  const login = !pw && !!state.login;
+  const open = pw || login;
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
-  root.replaceChildren(...(open ? [passwordModal()] : []));
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginModal(loginCtx())] : []));
   $('#app').inert = open;
-  if (open && focus) {
-    const i = root.querySelector('.doc-pw');
+  const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-email, .acct-code') : null;
+  if (i) {
     i.focus();
-    i.setSelectionRange(i.value.length, i.value.length);
+    // type=email은 선택 범위를 지원하지 않는다(던진다)
+    if (i.type !== 'email') i.setSelectionRange(i.value.length, i.value.length);
   }
 }
 
@@ -1440,7 +1538,8 @@ window.sax.onEvent((ev) => {
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && $('#modal').firstChild) {
-    cancelPassword();
+    if (state.login) closeLogin();
+    else cancelPassword();
     return;
   }
   if (e.key === 'Escape' && state.menu) {

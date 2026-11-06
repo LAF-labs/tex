@@ -5,7 +5,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';
 import { parseBizCert } from '@sax/engine/bizcert';
-import { certInfoInSandbox, DOCPARSE_SCHEME, ocrInSandbox } from '../dist/docparse.js';
+import { readBizCert } from '../dist/bizcert-read.js';
+import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, ocrInSandbox, parsePdfInSandbox } from '../dist/docparse.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-e2e-${process.pid}`));
@@ -24,10 +25,26 @@ async function docparseTests(): Promise<void> {
   await w.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
   await sleep(300);
   const png = (await w.webContents.capturePage()).toPNG();
+  const pdf = await w.webContents.printToPDF({});
   w.destroy();
   const ocr = await ocrInSandbox(new Uint8Array(png));
   const parsed = parseBizCert(ocr.text);
   check('docparse 샌드박스 OCR(kor) → 등록번호·대표자·개업일', parsed.fields.repName === '최마바' && parsed.fields.openDate === '20210630' && (parsed.fields.bizNo === '2208162517' || parsed.bizNoSuggestions.includes('2208162517')), { ms: ocr.ms, confidence: ocr.confidence, fields: parsed.fields });
+  // 온보딩 O-02 경로(M4-3): 고른 파일(그림·글자 층 PDF) → 실제 샌드박스 → bizcert.parse와 같은 해석 → 온보딩 칸
+  const logs: unknown[] = [];
+  const read = (bytes: Buffer) =>
+    readBizCert({
+      pick: async () => new Uint8Array(bytes),
+      pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
+      imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
+      parse: async (text) => parseBizCert(text),
+      log: (n, d) => logs.push([n, d]),
+    });
+  const fromPng = await read(png);
+  check('O-02 등록증 그림 → 샌드박스 OCR(증명서 모드) → 상호·대표자·주소', fromPng?.rep === '최마바' && /마바사/.test(fromPng.name) && /해운대구/.test(fromPng.address), { fields: fromPng, logs: logs.slice() });
+  const fromPdf = await read(pdf);
+  check('O-02 등록증 PDF(글자 층) → 샌드박스 → 번호·상호·대표자 정확', fromPdf?.bizNo === '2208162517' && fromPdf.name === '마바사상회' && fromPdf.rep === '최마바', { fields: fromPdf, log: logs.at(-1) });
+  check('O-02 로그는 형식·경로 코드만(글자·값 없음)', !JSON.stringify(logs).includes('마바사') && !JSON.stringify(logs).includes('2208162517'), logs);
   const ses = session.fromPartition('sax-docparse');
   const net = await ses.fetch('https://example.com/').then((r) => `status ${r.status}`, (e: Error) => `blocked: ${e.message.slice(0, 60)}`);
   check('docparse 파티션 외부 네트워크 차단', net.startsWith('blocked'), net);

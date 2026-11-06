@@ -430,7 +430,7 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
       signal = init.signal ?? undefined;
       return new Promise<Response>((_r, reject) => init.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
     }) as unknown as typeof fetch;
-    await assert.rejects(httpSuspender('http://acct.invalid', 's', hang, 20).suspend('d1'));
+    await assert.rejects(httpSuspender('http://acct.invalid', randomBytes(32), hang, 20).suspend('d1'));
     assert.ok(signal?.aborted);
   });
 

@@ -167,14 +167,11 @@ jobs:
           if-no-files-found: ignore
 
   windows:
-    name: Windows build·lint·test(비차단, #113 후속)
+    name: Windows build·lint·test
     # ADR-035 결정 1 (나): 두 OS. GitHub 호스트 러너(windows-latest). 공개 저장소에 self-hosted 러너는 붙이지 않는다
     # (fork PR 코드가 사용자 노트북에서 돈다). 실물 인증서·Hello·TPM 확인은 .github/RUNNER-WINDOWS.md의 수동 절차로.
     runs-on: windows-latest
-    # 임시(#113 후속): audit-v 파일이 끝나지 않는 문제(핸들 누수 추정)와 V3·V10 실패를 고칠 때까지 머지를 막지 않고 20분에서 끊는다.
-    # 고치면 continue-on-error를 빼고 timeout-minutes를 되돌린다.
-    continue-on-error: true
-    timeout-minutes: 20
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: poc
