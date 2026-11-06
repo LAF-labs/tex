@@ -135,10 +135,12 @@ class MemOutbox implements OutboxStore {
 class MemSink implements ReceiveSink {
   receipts = new Map<string, string>();
   cash = new Map<string, CashEntryBody>();
+  storeCalls = 0;
   async hasReceipt(id: string) {
     return this.receipts.has(id);
   }
   async storeReceipt(r: Parameters<ReceiveSink['storeReceipt']>[0]) {
+    this.storeCalls++;
     this.receipts.set(r.msgId, toHex(sha256Hash(r.jpeg)));
   }
   async hasCash(id: string) {
@@ -275,6 +277,27 @@ describe('큐 전송(라이브 없음)', () => {
     const r4 = await queueOutbox(t.outbox, { queue: t.q, pairId: t.pairId, vm: t.vm, bundle: fresh, mbxEpoch: t.mbxEpoch, nextSeq: () => 999, now: NOW + QUEUE.keepMs });
     assert.deepEqual(r4.expired, [cash.msgId]);
     assert.equal(t.outbox.items.size, 0);
+  });
+});
+
+describe('24시간 뒤 다시 넣은 사진(팀장 결정 ④: PC가 한 장만)', () => {
+  it('같은 msgId로 다시 오므로 offer 단계에서 거르고 저장을 다시 부르지 않는다', async () => {
+    const t = await world();
+    const { jpeg, offer } = await addReceipt(t.outbox, QUEUE.chunk * 3 + 9);
+    await t.send();
+    await t.drain();
+    assert.equal(t.sink.storeCalls, 1);
+    const later = NOW + QUEUE.ttlMs;
+    const r = await t.send(later);
+    assert.deepEqual(r.queued, [offer.msgId]);
+    assert.equal(t.relay.envs.length, 1 + 4, '다시 넣은 offer + 청크 4');
+    const d = await t.drain(later);
+    assert.equal(d.handled, 5);
+    assert.equal(t.sink.storeCalls, 1, '두 번째 저장 없음');
+    assert.equal(t.sink.receipts.size, 1);
+    assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
+    assert.equal(t.receive.assembling, 0, '조립 버퍼도 남지 않는다');
+    assert.equal(t.relay.envs.length, 0);
   });
 });
 

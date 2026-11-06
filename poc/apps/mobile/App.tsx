@@ -94,6 +94,7 @@ export default function App() {
         {route === 'connection' && (
           <ConnectionScreen
             onDone={home}
+            onRepair={() => setRoute('pair')}
             onReset={() => {
               lock();
               setBoot({ hasDevice: false });
