@@ -1,0 +1,19 @@
+{
+  "name": "@sax/daemon",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "서류 데몬 notify 모드(D10, D14 M4-8): 스케줄러·실행 창·만료 계산·알림 계획. 순수 TS, Electron·네트워크·금고·엔진 실행 없음",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "dependencies": {
+    "@sax/bundle": "workspace:*",
+    "@sax/db": "workspace:*",
+    "@sax/engine": "workspace:*"
+  }
+}
