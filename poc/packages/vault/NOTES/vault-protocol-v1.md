@@ -7,7 +7,7 @@
 | 포트 | 기존 | 추가 |
 |---|---|---|
 | engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `crypto.publicKeys`·`crypto.noiseDH`·`crypto.signVd`·`crypto.signAik`·`crypto.hpkeOpen` |
-| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list` |
+| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list`, `crypto.*` 다섯(main 페어링) |
 | secretInput | secret.provide | `secret.store`(등록 창 T-06 전용) |
 
 commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.
@@ -87,7 +87,7 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
   - 로그는 `vault.commit_armed{fields}`·`vault.commit_compared{match, why?}`뿐이다. 값·경로·본문은 남기지 않는다.
 
 ## 7. 장기 키 연산 — net/remote 트랙
-- 구현: `crypto/ops.ts`(`VaultCrypto`). 엔진 포트에서만 부른다.
+- 구현: `crypto/ops.ts`(`VaultCrypto`). 엔진 포트(모델 게이트웨이 DPoP)와 control 포트(main의 계정·기기·페어링, `apps/desktop/src/remote-keys.ts` `vaultDesktopKeys`)에서 부른다. 비밀 입력 포트에는 없다.
 - `crypto.publicKeys` → `{noiseStatic, vd, qd, kv, aik}`(각 32B 공개키). `aik`를 더했다(remote `DesktopKeys.aik.publicKey`).
 - `crypto.noiseDH{remotePub(32B), ctx ∈ NOISE_CONTEXTS}` → `{shared}`. 낮은 차수 점은 `bad_point`다. 개인키는 금고 밖으로 나가지 않는다.
 - `crypto.signVd{purpose ∈ VD_PURPOSES, msg}` → `{sig}`(Ed25519 64B).

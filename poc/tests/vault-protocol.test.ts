@@ -16,14 +16,19 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
     assert.deepEqual([...RPC_BY_PORT.secretInput].sort(), ['secret.provide', 'secret.store']);
   });
 
-  it('세션 추종·저장 목록·삭제·Hello 열기는 control(main)에만, 타이피스트·커밋 가드·키 연산은 engine에만', () => {
+  it('세션 추종·저장 목록·삭제·Hello 열기는 control(main)에만, 타이피스트·커밋 가드는 engine에만, 키 연산은 둘 다', () => {
     for (const m of ['session.event', 'session.idle', 'vault.unlock', 'vault.setStrict', 'secret.list', 'secret.has', 'secret.forget', 'run.begin', 'run.end', 'secretWindow.userDone']) {
       assert.ok(RPC_BY_PORT.control.includes(m), m);
       assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
     }
-    for (const m of ['typist.fill', 'typist.authFailed', 'commitGuard.arm', 'commitGuard.disarm', 'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.hpkeOpen', 'getDbKeyOnce', 'browser.launch']) {
+    for (const m of ['typist.fill', 'typist.authFailed', 'commitGuard.arm', 'commitGuard.disarm', 'getDbKeyOnce', 'browser.launch']) {
       assert.ok(RPC_BY_PORT.engine.includes(m), m);
       assert.ok(!RPC_BY_PORT.control.includes(m), `${m}는 main이 부르지 않는다`);
+    }
+    // 장기 키 연산: 엔진(모델 게이트웨이 DPoP)과 main(계정·기기·페어링, remote-ports.ts) 둘 다. 비밀 입력 포트에는 없다.
+    for (const m of ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen']) {
+      assert.ok(RPC_BY_PORT.engine.includes(m) && RPC_BY_PORT.control.includes(m), m);
+      assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
     }
     // 개인키를 꺼내는 메서드는 없다(D05 §5.1).
     for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
@@ -97,7 +102,7 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
     for (const m of ['session.event', 'secret.forget', 'secret.list', 'vault.unlock', 'secret.store', 'secret.provide']) {
       await assert.rejects(h.client.rpc(m, {}), /denied/, m);
     }
-    for (const m of ['crypto.signVd', 'commitGuard.arm', 'typist.fill']) await assert.rejects(h.control.rpc(m, {}), /denied/, m);
+    for (const m of ['getDbKeyOnce', 'commitGuard.arm', 'typist.fill']) await assert.rejects(h.control.rpc(m, {}), /denied/, m);
   });
 });
 
