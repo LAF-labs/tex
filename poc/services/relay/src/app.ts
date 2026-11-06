@@ -204,7 +204,9 @@ export class RelayHub {
       requireInternal(ctx, this.o.internalSecret);
       const { deviceId } = V.redeem(ctx.body);
       const room = this.rooms.get(ctx.params.id!);
-      if (!room || room.expires <= svc.now() || !room.paired || room.redeemed || !safeEqual(room.owner, sha256hex(deviceId))) fail('relay.room_unavailable');
+      if (!room || room.expires <= svc.now() || !room.paired || !safeEqual(room.owner, sha256hex(deviceId))) fail('relay.room_unavailable');
+      // 룸 하나에 enroll 성공은 한 번(같은 키 재등록 200 포함). 룸 자체는 PAIR_OK·연결 종료까지 그대로 둔다. 409는 그 룸을 만든 PC에만 보인다
+      if (room!.redeemed) fail('relay.room_used');
       room!.redeemed = true;
       return json(200, { ok: true });
     });
