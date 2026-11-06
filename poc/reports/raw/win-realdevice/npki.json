@@ -1,0 +1,39 @@
+{
+  "env": {
+    "node": "v26.13.0",
+    "os": "Windows 10 Pro 10.0.19045",
+    "cpus": 2,
+    "cpu": "Intel(R) Celeron(R) CPU 3855U @ 1.60GHz",
+    "memGb": 7.9
+  },
+  "roots": [
+    {
+      "kind": "locallow",
+      "exists": true
+    },
+    {
+      "kind": "program_files",
+      "exists": true
+    }
+  ],
+  "scanMs": 40,
+  "count": 1,
+  "skipped": {},
+  "certs": [
+    {
+      "root": "locallow",
+      "hasKey": true,
+      "certBytes": 1436,
+      "idLen": 16,
+      "parsed": true,
+      "subjectCn": "***",
+      "issuerO": "KICA",
+      "notAfterYm": "2027-10",
+      "expired": false
+    }
+  ],
+  "removableDrives": 0,
+  "usb": [],
+  "defaultScanIncludesUsb": false,
+  "elapsedMs": 7270
+}

@@ -224,6 +224,16 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'google_signin_detected', '세션 중 Google 로그인');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { abcdefghijklmnop: { location: 1 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
+      // 외부 구성요소 설치 중 Chrome이 먼저 쓰는 업데이트 확인 기록만 든 항목은 확장이 아니다(Windows 실기기, WIN-REALDEVICE §5.1)
+      const secure = path.join(b.paths.chromeProfile, 'Default', 'Secure Preferences');
+      await fs.writeFile(prefs, JSON.stringify(ok));
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { nmmhkkegccagdldgiimedpiccmgmieda: { lastpingday: '13438339200344256' } } } }));
+      assert.equal(await v.profileBlocker(), null, '기록만 든 항목');
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { nmmhkkegccagdldgiimedpiccmgmieda: { lastpingday: '1', location: 10, path: 'x' } } } }));
+      assert.equal(await v.profileBlocker(), null, '설치가 끝나면 외부 구성요소(10)');
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { abcdefghijklmnop: { lastpingday: '1', path: 'x' } } } }));
+      assert.equal(await v.profileBlocker(), 'extension_not_allowed', 'location이 없어도 path가 있으면 설치 확장');
+      await fs.rm(secure);
       await fs.writeFile(prefs, JSON.stringify({ ...ok, credentials_enable_service: true }));
       assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch');
     } finally {

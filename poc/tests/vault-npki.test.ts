@@ -54,6 +54,20 @@ function noKeyAccess(calls: Array<{ op: string; p: string }>) {
 
 const roots = (dir: string, kind: NpkiRoot['kind'] = 'locallow'): NpkiRoot[] => [{ kind, dir }];
 
+// Windows는 개발자 모드·관리자가 아니면 심볼릭 링크를 만들 수 없다(EPERM). 디렉터리 링크는 정션으로 만든다(재분석 지점이라 lstat·Dirent에서 링크로 보인다).
+const dirLink = process.platform === 'win32' ? 'junction' : 'dir';
+
+/** 파일 심볼릭 링크. Windows에서 권한이 없으면 false(정션은 파일에 못 쓴다). */
+async function fileLink(target: string, p: string): Promise<boolean> {
+  try {
+    await fs.symlink(target, p, 'file');
+    return true;
+  } catch (e) {
+    if (process.platform === 'win32' && (e as NodeJS.ErrnoException).code === 'EPERM') return false;
+    throw e;
+  }
+}
+
 describe('NPKI 탐지 위치', () => {
   it('Windows LocalLow·Program Files, macOS Preferences·Documents·홈, 그 밖은 홈', () => {
     assert.deepEqual(npkiRoots('win32', { USERPROFILE: 'C:\\Users\\kim', ProgramFiles: 'D:\\PF' }, 'C:\\Users\\kim'), [
@@ -114,7 +128,7 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
     try {
       const real = path.join(base, 'real');
       await cert(real, 'yessign', 'cn=TEST1');
-      await fs.symlink(real, path.join(base, 'link'));
+      await fs.symlink(real, path.join(base, 'link'), dirLink);
       await fs.writeFile(path.join(base, 'file'), 'x');
       const r = await scanNpki({ roots: [{ kind: 'home', dir: path.join(base, 'none') }, { kind: 'home', dir: path.join(base, 'file') }, { kind: 'documents', dir: path.join(base, 'link') }] });
       assert.deepEqual(r, { certs: [], skipped: {} });
@@ -134,17 +148,18 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
       const d1 = path.join(root, 'yessign', 'USER', 'cn=TEST링크');
       await fs.mkdir(d1, { recursive: true });
       await fs.writeFile(path.join(d1, 'signPri.key'), KEY_SENTINEL);
-      await fs.symlink(path.join(d1, 'signPri.key'), path.join(d1, 'signCert.der'));
+      // Windows 표준 사용자는 파일 링크를 만들 수 없다. 그때는 이 경우만 빠지고 폴더 링크 셋은 그대로 본다.
+      const madeFileLink = await fileLink(path.join(d1, 'signPri.key'), path.join(d1, 'signCert.der'));
       // 밖을 가리키는 cn·USER·CA 링크
       const ext = await cert(outside, 'yessign', 'cn=TEST밖');
-      await fs.symlink(ext.dir, path.join(root, 'yessign', 'USER', 'cn=TEST밖링크'));
+      await fs.symlink(ext.dir, path.join(root, 'yessign', 'USER', 'cn=TEST밖링크'), dirLink);
       await fs.mkdir(path.join(root, 'CrossCert'), { recursive: true });
-      await fs.symlink(path.join(outside, 'yessign', 'USER'), path.join(root, 'CrossCert', 'USER'));
-      await fs.symlink(path.join(outside, 'yessign'), path.join(root, 'SignKorea'));
+      await fs.symlink(path.join(outside, 'yessign', 'USER'), path.join(root, 'CrossCert', 'USER'), dirLink);
+      await fs.symlink(path.join(outside, 'yessign'), path.join(root, 'SignKorea'), dirLink);
       const audit = auditFs();
       const r = await scanNpki({ roots: roots(root), fs: audit.fs });
       assert.deepEqual(r.certs, []);
-      assert.deepEqual(r.skipped, { symlink: 4 });
+      assert.deepEqual(r.skipped, { symlink: madeFileLink ? 4 : 3 });
       assert.equal(audit.calls.filter((x) => x.op === 'open').length, 0, '아무것도 열지 않는다');
       assert.ok(!audit.calls.some((x) => x.p.startsWith(outside)), '밖으로 나가지 않는다');
       assert.ok(!audit.calls.some((x) => /signpri\.key$/i.test(x.p)));

@@ -6,8 +6,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const root = new URL('..', import.meta.url).pathname;
+// URL.pathname은 Windows에서 `/C:/…`라 cwd로 쓸 수 없다.
+const root = fileURLToPath(new URL('..', import.meta.url));
 
 describe('S7 회귀 스크립트(모의)', () => {
   const run = (n: number) => {

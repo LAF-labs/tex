@@ -9,6 +9,7 @@
 // 실측일 때만 intent_route_v1 구어 코퍼스(300문장+)도 돌려 플레이북 정확도와 mentions_tax_advice 오탐·누락률을 잰다(D04 §3, M6-11).
 // 모의 서버는 의도 답을 흉내 내지 않으므로 모의 모드에서는 건너뛴다. 배포 게이트는 screen_state_v2만 본다(D04 §9).
 import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { BundleCatalog, DefaultModelLayer, OpenAICompatDecideAdapter, OpenAIDecisionsAdapter, ThresholdProfiles, evaluateMapping, localRunToken, statesOf, type BundleAnswers, type DecideAdapter, type Usage } from '@sax/model';
 import { Egress } from '@sax/net';
 import { DemoEgress } from '@sax/net/demo';
@@ -219,7 +220,7 @@ async function main() {
     misses: rows.filter((r) => r.got !== r.expect).slice(0, 30),
     intent,
   };
-  const out = outArg ?? new URL(`../reports/raw/s7-${mode}.json`, import.meta.url).pathname;
+  const out = outArg ?? fileURLToPath(new URL(`../reports/raw/s7-${mode}.json`, import.meta.url));
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
   console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass}`);
   if (intent) console.log(`intent_route_v1: n=${intent.n} playbook=${intent.playbookAccuracy} taxAdviceFP=${intent.taxAdviceFalsePositiveRate} taxAdviceMiss=${intent.taxAdviceMissRate}`);

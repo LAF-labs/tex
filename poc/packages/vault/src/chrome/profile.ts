@@ -58,6 +58,17 @@ export async function verifyProfileSettings(profileDir: string): Promise<string[
 // Chrome extensions::mojom::ManifestLocation: 5 = kComponent, 10 = kExternalComponent
 const COMPONENT_LOCATIONS = new Set([5, 10]);
 
+/**
+ * 불러올 확장이 없는 기록 항목. Chrome은 외부 구성요소(웹 스토어 결제 등, location 10)를 받는 동안 업데이트 확인 기록(`{lastpingday}`)만 든 항목을
+ * 먼저 쓰고, 설치가 끝나면 location·path·manifest를 채운다. 느린 Windows 실기기에서 새 프로필 기동 뒤 10~20초 이 상태가 보였다(reports/WIN-REALDEVICE.md §5.1).
+ * location·path·manifest가 모두 없으면 Chrome이 불러올 수 없으므로 설치 확장으로 세지 않는다. 셋 중 하나라도 있으면 그대로 센다.
+ */
+function isRecordOnly(s: unknown): boolean {
+  if (!s || typeof s !== 'object') return true;
+  const e = s as Json;
+  return e.location === undefined && e.path === undefined && e.manifest === undefined;
+}
+
 /** 설치 확장 ID 열거(S6i 전 간이판: Preferences·Secure Preferences의 extensions.settings). */
 export async function listInstalledExtensions(profileDir: string): Promise<string[]> {
   const ids = new Set<string>();
@@ -66,7 +77,8 @@ export async function listInstalledExtensions(profileDir: string): Promise<strin
     const settings = getPath(j, 'extensions.settings');
     if (!settings || typeof settings !== 'object') continue;
     for (const [id, s] of Object.entries(settings as Json)) {
-      const loc = (s as Json | null)?.location;
+      if (isRecordOnly(s)) continue;
+      const loc = (s as Json).location;
       if (typeof loc === 'number' && COMPONENT_LOCATIONS.has(loc)) continue;
       ids.add(id);
     }

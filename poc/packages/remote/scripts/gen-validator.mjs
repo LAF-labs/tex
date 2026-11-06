@@ -4,9 +4,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const here = path.dirname(new URL(import.meta.url).pathname);
+// URL.pathname은 Windows에서 `/C:/…`라 경로로 쓰면 `C:\C:\…`가 된다. fileURLToPath를 쓴다.
+const here = path.dirname(fileURLToPath(import.meta.url));
 export const SCHEMA_PATH = path.resolve(here, '../../../../sovereign-ax/design/schemas/remote-envelope.schema.json');
 export const OUT_PATH = path.resolve(here, '../src/schema.gen.ts');
 
