@@ -23,7 +23,6 @@ describe('IPC 채널 이름(한곳에 정의, preload는 글자 그대로)', () 
   it('preload·창 코드가 쓰는 채널이 IPC 상수와 같다', () => {
     const shellPreload = read('apps/desktop/static/preload-shell.cjs');
     assert.ok(shellPreload.includes(`ipcRenderer.invoke('${IPC.call}'`) && shellPreload.includes(`ipcRenderer.on('${IPC.event}'`));
-    assert.ok(read('apps/desktop/static/preload-app.cjs').includes(`ipcRenderer.invoke('${IPC.call}'`));
     assert.ok(read('apps/desktop/static/preload-secret.cjs').includes(`ipcRenderer.once('${IPC.secretPort}'`));
     assert.ok(read('apps/desktop/static/preload-docparse.cjs').includes(`ipcRenderer.once('${IPC.docparsePort}'`));
     assert.ok(read('apps/desktop/src/docparse.ts').includes(`postMessage('${IPC.docparsePort}'`));
@@ -33,7 +32,7 @@ describe('IPC 채널 이름(한곳에 정의, preload는 글자 그대로)', () 
   });
 
   it('preload는 좁은 함수만 노출한다(raw ipcRenderer 금지)', () => {
-    for (const p of ['apps/desktop/static/preload-shell.cjs', 'apps/desktop/static/preload-app.cjs']) {
+    for (const p of ['apps/desktop/static/preload-shell.cjs']) {
       const src = read(p);
       assert.equal(src.split('exposeInMainWorld(').length - 1, 1, p);
       assert.ok(!/exposeInMainWorld\([^)]*ipcRenderer\s*[,)]/.test(src), `${p}: ipcRenderer 그대로 노출`);

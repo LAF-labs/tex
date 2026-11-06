@@ -3,13 +3,13 @@
 // 가짜 홈택스·시연 씨앗·시연 모델은 시연 진입점(demo-shell.ts, pnpm demo)에만 있고, 이 파일은 그 코드에 닿지 않는다(ADR-035 W-7).
 import fs from 'node:fs';
 import path from 'node:path';
-import { appPaths, defaultAppRoot, prepareLayout } from '@sax/platform';
+import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
 import { app, dialog } from 'electron';
 import { BUILD_WARN_TEXT, packagedProblems } from './harden.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
 registerShellSchemes();
-// app.exit가 바로 끝나지 않는 Electron이어도 확인 안 된 앱 폴더로 엔진·금고를 띄우지 않는다(main.ts와 같은 막음).
+// app.exit가 바로 끝나지 않는 Electron이어도 확인 안 된 앱 폴더로 엔진·금고를 띄우지 않는다.
 let refused = false;
 // 설치본 자기 점검(#76 인계): asar에서 로드됐는지, 데이터 루트 안에 설치되지 않았는지, build-info.json. 개발 실행(isPackaged 아님)은 건너뛴다.
 const readBuildInfo = (): unknown => {
@@ -26,9 +26,10 @@ if (problems.some((p) => p.startsWith('fatal:'))) {
   app.exit(1);
 }
 const buildBadges = problems.filter((p) => p.startsWith('warn:')).map((p) => BUILD_WARN_TEXT[p.slice(5)] ?? p.slice(5));
-// 앱 폴더를 확인·복구한 뒤에만 Electron에 넘긴다(main.ts와 같은 순서). 사용자 전용 권한을 못 걸면 열지 않는다.
+// 앱 폴더를 확인·복구한 뒤에만 Electron에 넘긴다. Electron은 넘겨받은 폴더에 ready 무렵부터 쓰므로, 그 자리의 링크를 치우기 전에 넘기면 루트 밖에 쓴다.
+// ESM 진입점의 최상위 await가 끝날 때까지 ready가 오지 않는다(Electron 45 실측). 사용자 전용 권한을 못 걸면 열지 않는다.
 const root = defaultAppRoot();
-const prepared = refused ? null : await prepareLayout(root).catch(() => null);
+const prepared: PreparedLayout | null = refused ? null : await prepareLayout(root).catch(() => null);
 if (refused) {
   // 설치 점검에서 멈췄다
 } else if (!prepared?.root.ok) {
@@ -36,6 +37,9 @@ if (refused) {
   refused = true;
   app.exit(1);
 } else {
+  // 치운 항목(루트 밖으로 가는 링크 등)은 원인을 나중에 볼 수 있게 로그 파일에 남긴다(값·경로 없음, 이름만).
+  const layoutLog = new FileEventLog(prepared.paths.logs, 'main');
+  for (const name of prepared.setAside) layoutLog.event('main.layout_set_aside', { name });
   const paths = appPaths(root);
   app.setPath('userData', paths.userData);
   app.setPath('logs', paths.logs);

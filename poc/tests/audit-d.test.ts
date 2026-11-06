@@ -59,18 +59,19 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
 
   it('every file that constructs BrowserWindow calls hardenWindow (e2e 제외)', () => {
     const makers = srcFiles.filter((f) => !f.endsWith('e2e.ts') && /new BrowserWindow\(/.test(src(f)));
-    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'main.ts', 'secret-window.ts', 'shell-app.ts']);
+    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'secret-window.ts', 'shell-app.ts']);
     for (const f of makers) assert.match(src(f), /hardenWindow\(/, f);
   });
 
-  it('main.ts and shell-app.ts both import harden.ts and call hardenApp; ApprovalBar checks switches first', () => {
-    for (const f of ['main.ts', 'shell-app.ts']) {
+  it('shell-app.ts imports harden.ts and calls hardenApp; ApprovalBar checks switches first; 개발 콘솔은 없다(W-1)', () => {
+    for (const f of ['shell-app.ts']) {
       assert.match(src(f), /from '\.\/harden\.ts'/, f);
       assert.match(src(f), /hardenApp\(app,/, f);
     }
     assert.match(src('approval-bar.ts'), /constructor\([^)]*\) \{\s*(\/\/[^\n]*\n\s*)*assertNoDebugSwitches\(app\);/);
-    // 개발 콘솔의 옛 수동 경로가 없다.
-    for (const m of ['browser.open', 'secret.openInput', 'approval.demo', 'startProcesses']) assert.ok(!src('main.ts').includes(m), m);
+    // 개발 콘솔(main.ts·app.html·app.js·app.css·vault-panel.js·preload-app.cjs)을 지웠고, 패키지 main은 제품 셸이다.
+    for (const f of ['src/main.ts', 'static/app.html', 'static/app.js', 'static/app.css', 'static/vault-panel.js', 'static/preload-app.cjs']) assert.ok(!fs.existsSync(path.join(root, 'apps/desktop', f)), f);
+    assert.equal(JSON.parse(fs.readFileSync(path.join(root, 'apps/desktop/package.json'), 'utf8')).main, 'dist/shell.js');
   });
 
   it('DEBUG_SWITCHES has all nine switches; Chromium 스위치와 Node 인자를 모두 본다', () => {
@@ -153,7 +154,6 @@ describe('audit-d: D3 금고가 부르는 비밀 창(N-44·N-11)', () => {
 
   it('secret.html is served only by the shell protocol', () => {
     assert.ok(!fs.existsSync(path.join(root, 'apps/desktop/static/secret.html')), '개발 콘솔 정적 비밀 창 없음');
-    assert.ok(!/secret/.test(src('main.ts').replace(/secretInput|Secret/g, '')), 'main.ts는 비밀 창을 제공하지 않는다');
     assert.match(src('shell-app.ts'), /p === '\/secret\.html'/);
     // 렌더러 IPC에 비밀 창 명령이 없다. 창은 금고 secret.needed로만 열린다.
     assert.ok(!src('shell-app.ts').includes("'secret.openInput'"));
@@ -189,7 +189,6 @@ describe('audit-d: D4 사용자 동작 결속(N-27)', () => {
     assert.match(s, /if \(typeof p\.pickId !== 'string'\) needGesture\(3_000\);/);
     assert.match(s, /'docs\.open': docsCall\(async \(p\) => \{\s*needGesture\(3_000\);/);
     assert.match(s, /importPdf\(params, engine, win\)/);
-    assert.match(src('main.ts'), /case 'ocr\.bizcert': \{[\s\S]*?needGesture\(\);/);
   });
 
   it('게이트 없이 끝난 실행 연속 3회면 잠시 준비를 받지 않는다(게이트가 뜨면 풀림)', async () => {
@@ -344,8 +343,8 @@ describe('audit-d: D9 스모크 임시 루트(N-57)', () => {
 });
 
 describe('audit-d: D10·D11 단일 인스턴스, docparse 대화상자(N-29·N-68)', () => {
-  it('shell entry and main.ts call requestSingleInstanceLock before whenReady', () => {
-    for (const f of ['shell.ts', 'main.ts']) {
+  it('shell entry calls requestSingleInstanceLock before whenReady', () => {
+    for (const f of ['shell.ts']) {
       const s = src(f);
       const lock = s.indexOf('app.requestSingleInstanceLock()');
       assert.ok(lock > 0 && lock < s.indexOf('app.whenReady()'), f);
