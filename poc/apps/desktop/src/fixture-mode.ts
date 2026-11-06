@@ -1,6 +1,6 @@
 // fixture 모드(시연·e2e 전용): 홈택스 대신 가짜 H-01 페이지(127.0.0.1)에 붙는다. 실제 앱 폴더·OS 키체인을 쓰지 않는다.
 // 금고는 main 프로세스 안에서 시험 정책(127.0.0.1만)·메모리 키·시험용 Chrome 인자로 돈다. 엔진은 진짜 utilityProcess다.
-// 앱 금고 entry(@sax/vault/entry)는 지금처럼 설정을 받지 않는다. 이 파일은 shell.ts·shell-e2e.ts만 쓴다.
+// 앱 금고 entry(@sax/vault/entry)는 지금처럼 설정을 받지 않는다. 이 파일은 demo-dev.ts(시연 진입점·e2e)만 쓴다.
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
