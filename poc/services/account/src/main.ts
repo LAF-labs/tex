@@ -17,7 +17,7 @@ export function httpStopHook(base: string, secret: string, fetchFn: typeof fetch
   };
 }
 
-/** 릴레이 내부 API의 페어링 룸 소비(/internal/v1/rooms/:id/redeem). 200만 성공, 그 밖(404·장애·시간 초과)은 실패로 본다. */
+/** 릴레이 내부 API의 페어링 룸 소비(/internal/v1/rooms/:id/redeem). 200만 성공, 409는 이미 사용, 그 밖(404·장애·시간 초과)은 사용 불가로 본다. */
 export function httpPairingRooms(base: string, secret: string, fetchFn: typeof fetch = fetch, timeoutMs = 5000): PairingRooms {
   return {
     async redeem(roomId, desktopDeviceId) {
@@ -28,7 +28,7 @@ export function httpPairingRooms(base: string, secret: string, fetchFn: typeof f
         redirect: 'error',
         signal: AbortSignal.timeout(timeoutMs),
       }).catch(() => null);
-      return res?.status === 200;
+      return res?.status === 200 ? 'ok' : res?.status === 409 ? 'used' : 'unavailable';
     },
   };
 }

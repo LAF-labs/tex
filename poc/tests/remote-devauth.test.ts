@@ -5,7 +5,7 @@ import { createHash, createPublicKey, verify as edVerify } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { jcs as engineJcs } from '@sax/engine/gate';
 import {
-  CTX, DeviceAuthError, DeviceTokenCache, addDevice, athOf, b64, checkHtu, decodeCertField, deviceAuthHeaders, encodeCertField, issueCert, jcs, makeDpop,
+  CTX, DeviceAuthError, DeviceTokenCache, addDevice, allowDevLanHosts, athOf, b64, checkHtu, decodeCertField, deviceAuthHeaders, encodeCertField, issueCert, jcs, makeDpop,
   parseJcs, requestDeviceToken, revokeDevice, utf8, uuid4, verifyCert, type HttpJson, type SignedCert,
 } from '@sax/remote';
 import { DAY, mockDesktop, mockPhone, pairOnce, pairWorld } from './remote-support.ts';
@@ -145,6 +145,14 @@ describe('DPoP(SAX-dpop-v1)', () => {
     const ph = mockPhone();
     assert.equal(checkHtu('https://a.example/v1/x'), 'https://a.example/v1/x');
     assert.equal(checkHtu('http://localhost:8787/v1/x'), 'http://localhost:8787/v1/x');
+    assert.throws(() => checkHtu('http://mac-mini.local:8787/v1/x'), /bad htu/, 'mDNS 평문은 기본 꺼짐(릴리스)');
+    allowDevLanHosts(true);
+    try {
+      assert.equal(checkHtu('http://mac-mini.local:8787/v1/x'), 'http://mac-mini.local:8787/v1/x', '실기기 개발 빌드: 같은 LAN의 mDNS 이름');
+    } finally {
+      allowDevLanHosts(false);
+    }
+    for (const u of ['http://192.168.0.10:8787/v1/x', 'http://a.b.local/v1/x', 'http://relay.tex.laf-co.com/v1/x']) assert.throws(() => checkHtu(u), /bad htu/, u);
     for (const u of ['http://a.example/v1/x', 'https://a.example/v1/x?q=1', 'https://a.example/v1/x#f', 'https://u:p@a.example/x', 'ftp://a/x', 'nope']) {
       assert.throws(() => checkHtu(u), undefined, u);
     }

@@ -458,19 +458,42 @@ export class AccountService {
    * 조건: 요청 기기가 활성 데스크톱(라우터의 기기 토큰 검사), 그 PC가 만든 1회용 페어링 룸이 소비됨(릴레이 확인, 한 번만), 계정당 모바일 상한·교체 한도.
    * 등록된 폰은 다른 등록과 같이 pending이고, 같은 PC가 AIK 서명 기기 목록(PUT /v1/device-list)을 올리면 활성이 된다.
    */
-  async enrollByDesktop(requester: { accountId: string; deviceId: string }, o: { deviceId: string; platform: string; name: string; Sx: string; Vx: string; roomId: string }): Promise<{ holdUntil: number }> {
+  /**
+   * PC가 폰을 대신 등록(페어링 7단계). 재등록은 멱등이다(팀장 결정 2026-11-06, #118):
+   * 같은 계정·같은 기기 ID·같은 Sx·Vx의 pending/active 모바일이면 기존 기록을 돌려준다(created: false, 상한·교체 한도에 다시 넣지 않음).
+   * 이때도 룸은 소비한다(룸 하나에 enroll 성공 한 번, 팀장 결정 2026-11-06). 같은 룸의 두 번째 enroll은 키와 무관하게 409 relay.room_used.
+   * 같은 기기 ID인데 키·계정·역할이 다르거나 정지·폐기된 기록이면 지금처럼 400이다(폐기 뒤 새 기기 ID로 재등록). 이 판단은 룸 소비 전에 한다(실패는 룸을 쓰지 않는다).
+   */
+  async enrollByDesktop(
+    requester: { accountId: string; deviceId: string },
+    o: { deviceId: string; platform: string; name: string; Sx: string; Vx: string; roomId: string },
+  ): Promise<{ created: boolean; holdUntil: number | null; state: 'pending' | 'active' }> {
     if (!this.d.pairing) fail('relay.room_unavailable');
+    const same = (d: DeviceRow) => ({ created: false, holdUntil: d.state === 'pending' ? d.email_hold_until : null, state: d.state as 'pending' | 'active' });
+    // 룸 하나에 enroll 성공은 한 번이다(같은 키 재등록 200도 룸을 'enroll 사용됨'으로 표시한다). 이미 쓴 룸은 409 relay.room_used
+    const redeem = async () => {
+      const r = await this.d.pairing!.redeem(o.roomId, requester.deviceId);
+      if (r === 'used') fail('relay.room_used');
+      if (r !== 'ok') fail('relay.room_unavailable');
+    };
+    const prev = await this.mobileReenroll(this.db, requester, o);
+    if (prev) {
+      await this.requireActiveDesktop(this.db, requester);
+      await redeem();
+      return same(prev);
+    }
     // 상한은 룸을 소비하기 전에 한 번 보고(헛되이 룸을 쓰지 않게), 쓰기 트랜잭션에서 다시 본다
     if (!(await this.countOk(this.db, requester.accountId, 'mobile'))) fail('account.device_limit');
     if (!(await this.churnOk(this.db, requester.accountId, 'mobile'))) fail('account.device_churn_limit');
-    if (!(await this.d.pairing!.redeem(o.roomId, requester.deviceId))) fail('relay.room_unavailable');
+    await redeem();
     const r = await this.db.tx(async (q) => {
       await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
-      const me = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [requester.deviceId, requester.accountId]);
-      if (!me || me.role !== 'desktop' || me.state !== 'active') fail('account.scope_denied');
+      await this.requireActiveDesktop(q, requester);
+      // 동시에 같은 폰을 등록한 다른 요청이 먼저 넣었으면 그 기록을 돌려준다(키가 다르면 400)
+      const raced = await this.mobileReenroll(q, requester, o);
+      if (raced) return same(raced);
       if (!(await this.countOk(q, requester.accountId, 'mobile'))) fail('account.device_limit');
       if (!(await this.churnOk(q, requester.accountId, 'mobile'))) fail('account.device_churn_limit');
-      if (await q.one('SELECT 1 AS x FROM devices WHERE device_id = $1', [o.deviceId])) fail('request.param_rejected');
       const now = this.now();
       const holdUntil = now + DEVICE.emailOnlyAddDelayHours * MS.H;
       await q.run("INSERT INTO devices (device_id, account_id, role, platform, name, sx, vx, registered_at, state, email_hold_until) VALUES ($1, $2, 'mobile', $3, $4, $5, $6, $7, 'pending', $8)", [
@@ -484,10 +507,23 @@ export class AccountService {
         holdUntil,
       ]);
       await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'mobile', 'add', $2)", [requester.accountId, kstDay(now)]);
-      return { holdUntil };
+      return { created: true, holdUntil, state: 'pending' as const };
     });
-    await this.notify(requester.accountId, 'device_enrolled');
+    if (r.created) await this.notify(requester.accountId, 'device_enrolled');
     return r;
+  }
+
+  private async requireActiveDesktop(q: Sql, requester: { accountId: string; deviceId: string }): Promise<void> {
+    const me = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [requester.deviceId, requester.accountId]);
+    if (!me || me.role !== 'desktop' || me.state !== 'active') fail('account.scope_denied');
+  }
+
+  /** 같은 기기 ID 기록: 없으면 null, 같은 계정·모바일·같은 키·pending/active면 그 행(멱등 재등록), 그 밖은 400. */
+  private async mobileReenroll(q: Sql, requester: { accountId: string }, o: { deviceId: string; Sx: string; Vx: string }): Promise<DeviceRow | null> {
+    const d = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1', [o.deviceId]);
+    if (!d) return null;
+    if (d.account_id === requester.accountId && d.role === 'mobile' && (d.state === 'pending' || d.state === 'active') && d.sx === o.Sx && d.vx === o.Vx) return d;
+    return fail('request.param_rejected');
   }
 
   /**
@@ -498,8 +534,7 @@ export class AccountService {
     if (!this.d.acctClaims) fail('request.not_found');
     const a = await this.account(requester.accountId);
     if (a.status !== 'active') fail('account.unauthorized');
-    const me = await this.db.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [requester.deviceId, requester.accountId]);
-    if (!me || me.role !== 'desktop' || me.state !== 'active') fail('account.scope_denied');
+    await this.requireActiveDesktop(this.db, requester);
     if (!a.aik_pub) fail('account.aik_not_pinned');
     return this.d.acctClaims!.sign({ account_id: a.id, email: a.email, aik_pub: a.aik_pub! }, this.now());
   }

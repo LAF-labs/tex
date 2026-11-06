@@ -32,7 +32,7 @@ const noise = softNoiseStatic(s.secretKey);
 const vmSigner = softSigner(vm.secretKey, VM_PURPOSES);
 const mp = new MobilePairing({
   keys: { noise, vmPub: vm.publicKey, kmPub: km.publicKey, deviceId: uuid4(), name: 'smoke', platform: 'ios' },
-  relayAllowlist: [HOST], pairOkTimeoutMs: 15_000,
+  relayAllowlist: [HOST], pairOkTimeoutMs: 15_000, accountKeys: [fromB64('3uABVr6gwZIYy5ir9UMb2ohr2fxONenkzT9XtRRIBCY=')], // dev/test-account-key.ts
 });
 if (!mp.scan(qr)) throw new Error(`scan failed: ${mp.failure}`);
 const link = await client.joinRoom(mp.roomId, 'mobile');

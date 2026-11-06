@@ -1,6 +1,8 @@
 // 실제 계정·릴레이 서비스(services/account·relay, #63) 위의 통합 시험 스택. 시뮬레이터 앱은 바꾸지 않는다.
 //   node --conditions=development dev/stack.ts   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
 //   STACK_LIVE=0 이면 PC가 라이브 우편함에 붙지 않는다(Phase 1처럼 큐만).
+//   STACK_HOST=<소문자 LocalHostName>.local:8787 이면 같은 LAN의 실기기가 붙는다(공개 origin·QR의 릴레이 호스트가 이 이름이 된다).
+//     실기기 앱은 Metro를 EXPO_PUBLIC_TEX_DEV_HOST=<같은 값> 으로 띄운다. QR은 브라우저에서 /dev/qr.html 을 열어 폰 카메라로 찍는다.
 //   앞단 8787: /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이(127.0.0.1:8783), 나머지 /v1/* → 계정(127.0.0.1:8780), /dev/* → 더미 PC
 //   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → SAS 일치 → 폰 대리 등록
 //            (POST /v1/devices/enroll, 데스크톱 기기 토큰 + roomId) → PUT /v1/device-list → POST /v1/mailboxes → pair.ok
@@ -13,9 +15,11 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
+import { toQR } from 'toqr';
+import { devAcctClaim } from './test-account-key.ts';
 import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, softNoiseStatic, softSigner,
   uuid4, wsRelayClient, x25519Keygen, type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
@@ -27,8 +31,12 @@ import { ed25519Private, ed25519RawPublic } from '../../../services/shared/src/i
 const FRONT = 8787;
 const ACCT = 8780;
 const RELAY = 8783;
-const ORIGIN = `http://localhost:${FRONT}`;
-const HOST = `localhost:${FRONT}`;
+const HOST = process.env.STACK_HOST ?? `localhost:${FRONT}`;
+if (!/^(localhost|[a-z0-9-]{1,63}\.local):\d{1,5}$/.test(HOST)) throw new Error('STACK_HOST must be localhost:<port> or <lowercase name>.local:<port>');
+if (Number(HOST.split(':')[1]) !== FRONT) throw new Error(`STACK_HOST port must be ${FRONT}`);
+const ORIGIN = `http://${HOST}`;
+// 실기기용 .local이면 이 프로세스(더미 PC의 DPoP·WSS)도 mDNS 평문을 켠다. localhost면 끈 채로 둔다.
+allowDevLanHosts(HOST.endsWith('.local:' + FRONT));
 const OUT = join(import.meta.dirname, 'out');
 mkdirSync(join(OUT, 'received'), { recursive: true });
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -77,6 +85,16 @@ function expect(r: { status: number; body: unknown }, ok: number, what: string) 
   return r.body as Record<string, unknown>;
 }
 
+/** QR 텍스트 → 단순 SVG 페이지(외부 자원 없음). */
+function qrPage(text: string): string {
+  const m = toQR(text);
+  const n = Math.sqrt(m.length);
+  let rects = '';
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y * n + x]) rects += `<rect x="${x + 4}" y="${y + 4}" width="1" height="1"/>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 8} ${n + 8}" width="420" height="420" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
+  return `<!doctype html><meta charset="utf-8"><title>더미 PC 폰 연결</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:24px"><h2>폰 연결(더미 PC)</h2>${svg}<p>tex 앱 → PC와 연결하기 → 이 QR을 찍어 주세요. 120초 안에.</p><p>6자리는 터미널에서 <code>curl -X POST ${ORIGIN}/dev/sas -d '{"code":"……"}'</code></p></body>`;
+}
+
 // ---- 앞단: 한 공개 origin ----
 const isRelay = (p: string) => p.startsWith('/v1/mailboxes') || p.startsWith('/v1/rooms') || p.startsWith('/internal/');
 const front = createServer(async (req, res) => {
@@ -88,6 +106,8 @@ const front = createServer(async (req, res) => {
   if (path.startsWith('/dev/')) {
     try {
       if (req.method === 'GET' && path === '/dev/qr') return send(200, await startPairing(), 'text/plain');
+      // 실기기: 맥 화면의 QR을 폰 카메라로 찍는다(PC 앱의 [폰 연결] 화면 대역). 1회용·120초, 폰이 찍으면 새로고침해도 같은 QR이다.
+      if (req.method === 'GET' && path === '/dev/qr.html') return send(200, qrPage(await startPairing()), 'text/html; charset=utf-8');
       if (req.method === 'GET' && path === '/dev/status') return send(200, JSON.stringify({ pairing: pairing?.state ?? 'idle', received }));
       if (req.method === 'POST' && path === '/dev/sas') {
         let body = '';
@@ -164,6 +184,9 @@ async function startPairing(): Promise<string> {
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
     // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
+    // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(dev/test-account-key.ts)로 대신 서명한다.
+    accountClaim: async () => devAcctClaim(keys.aik.publicKey, email),
+    desktopName: '더미 PC',
     enrollPhone: async (ph) => {
       const r = await call('POST', '/v1/devices/enroll', {
         headers: await dauth('POST', `${ORIGIN}/v1/devices/enroll`),
