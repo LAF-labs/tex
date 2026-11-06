@@ -1,5 +1,6 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): §2 스키마 파일 9종 → 12종(`status`·`revoked_keys` 엔진 PR #52, `data_descriptor` 엔진 PR #85).
 > 2026-11-05 팀장 지시(R15 조사 발견): §8 H-01 발췌에 `s19d`(합계 산술 `sumEquals`)와 `s19f`(되읽은 값 ↔ 입력 인자 대조)를 더해 §2.1·§4의 readback 규칙과 맞춤. 엔진 M2-3이 구현한다(PoC 코드에는 `s19d`만 있다).
 > 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05). §2 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52).
 > AUDIT-D 반영 2026-11-03: `secretKind`·`secretPurpose`와 V-02 결박(§2.1·§6), verify `maxMs`·실패 신호 쌍(§4.4), 보조 중복 키 `$dup.recentSameAmount`(§7), 골든 H-01 s19e 작성일자 대조·s33 메일 상태 부정 우선·V-03j′(§6.1·§8)(ADR-025·026·027, D19 §3.5).
@@ -33,7 +34,7 @@
 - `effects[]`: 이 플레이북이 일으킬 수 있는 비가역 효과의 종류 `{issue_document, send, sign, pay}`. 데몬 실행 가능 여부는 이 값을 **런타임에** 본다(R-D1, D03 §12, B-27).
 - `bundlesUsed[]`: 참조하는 번들 ID·버전·다이제스트. **번들 정의는 앱 바이너리에만 포함되고 레지스트리로 배포하지 않는다**(BV-06, ADR-003). 다이제스트가 앱 내장 허용 목록에 없으면 패키지를 로드하지 않는다. 게이트웨이의 409는 배포 불일치 감지용일 뿐이다(B-14, B-21, B/C-20). 이름 대응: IR의 `decide.bundle`은 `"<id>_v<ver>"`(예: `screen_state_v2`)이고, manifest `bundlesUsed[]`와 번들 정의(bundle.schema)는 `id`(`screen_state`)와 `ver`(`2`)를 나눠 적는다. 로더는 둘을 이 규칙으로 맞춰 본다.
 - `lookupsUsed[]`(B-08): `verify`가 부르는 조회 하위 플레이북의 ID·버전·다이제스트. 이 다이제스트는 게이트 토큰의 `packageDigest`에 들어간다(D03 §3). 조회 패키지는 핫픽스 대상이 아니다.
-- 스키마 파일 9종이 저장소에 있다(v1.3): `playbook-ir`, `manifest`, `selectors`, `hotfix`, `bundle`, `policy`, `gateway-request`, `remote-envelope`, `intent-envelope`. 앞의 7종은 M1-4 착수 전, 리모트 2종은 Phase 2 착수 전에 동결한다.
+- 스키마 파일 ~~9종~~ 12종이 저장소에 있다: v1.3의 `playbook-ir`, `manifest`, `selectors`, `hotfix`, `bundle`, `policy`, `gateway-request`, `remote-envelope`, `intent-envelope`에 `status`·`revoked_keys`(엔진 PR #52), `data_descriptor`(엔진 PR #85)가 더해졌다. 앞의 7종은 M1-4 착수 전, 리모트 2종은 Phase 2 착수 전에 동결한다.
 
 ### 2.1 셀렉터 사전 항목
 

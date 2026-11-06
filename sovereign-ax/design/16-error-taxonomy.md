@@ -1,9 +1,10 @@
 # D16. 오류·결과 코드 체계 (초안)
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): 클라이언트 표에 `assert.original_mismatch`(ADR-036 결정 3.5), `bizstatus.unavailable`(제안, 사용자 확인 전), `update.*` 8개(패키징 PR #76, `packages/updater/README.md`)를 더함. "서버 응답 코드" 절에 레지스트리 게시 관문·`.sxp`·정책·핫픽스 코드(클라우드 PR #56 `PROPOSED_D16`). 보안 이벤트 목록에 `update.root_change_unsigned`·`update.feed_mismatch`·`update.digest_mismatch`.
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
 > 같은 날 팀장 지시: `assert.total_mismatch`·`input_mismatch`(D02 §8 `s19d`·`s19f`).
 > 같은 날 팀장 결정: 모델·egress PR #48의 `egress.pii_tripwire`·`egress.image_rejected`·`egress.unminted_text`를 표와 보안 이벤트 목록에 추가.
-> 클라우드 PR #46 반영 2026-11-05(팀장 결정): `account.device_hold`(423, 기기 추가 72시간 대기) 추가. PR #46의 나머지 `PROPOSED_D16` 코드는 아직 넣지 않았다.
+> 클라우드 PR #46 반영 2026-11-05(팀장 결정): `account.device_hold`(423, 기기 추가 72시간 대기) 추가. ~~PR #46의 나머지 `PROPOSED_D16` 코드는 아직 넣지 않았다.~~ 2026-11-06 모두 넣었다.
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 신규 코드와 보안 이벤트를 추가하고 리모트 오류 코드의 송신 범위를 정했다(C/X-12). 재감사(E) 반영 코드: `policy.stale`, `policy.issued_in_future`, `vault.secret_window_close_denied`, `ledger.concurrent_other_pc`, `registry.head_mismatch`(Phase 1 미러 비교). · AUDIT-D 반영 2026-11-03: 아래 `portal`·`policy` 행 뒤의 AUDIT-D 행(ADR-025~029, D19 §3.5).
 
 모든 `StepResult.code`, 텔레메트리 `code`, 데몬 원인 코드, 게이트웨이 응답, 핸드오프 사유, 사용자 메시지는 이 체계에서 나온다. 형식 `<영역>.<코드>`, 소문자 스네이크. 값(화면 텍스트·입력·셀렉터 문자열·비밀 길이)은 코드에 넣지 않는다.
@@ -54,6 +55,8 @@
 | `portal` | `unexpected_page` / `extra_auth_repeat` / `unobservable` / `unknown_screen` | 기대 경로 밖 화면, 로그인 밖 반복 추가 인증(차단 신호 보고 제외), 화면 확인 불가로 게이트·커밋 전 정지, 기대 화면 미도착 누적(ADR-025) | `err.portal.*` | handoff / 보수 모드·쿨다운 |
 | `policy` | `poc_irreversible_total` | PoC 누적 실발급 3건 도달(ADR-025) | `err.policy.poc_irreversible_total` | 시작 거부 |
 | `assert` | `issue_date_mismatch` | 포털 작성일자 ≠ 실행 시작 KST 날짜(ADR-027) | `err.assert.issue_date_mismatch` | 게이트 전 정지 |
+| `assert` | `original_mismatch` | 발급 취소에서 되읽은 당초분(공급받는자 사업자번호·합계·작성일자)이 원장 기록과 다르거나, 합계 ≤ 0이거나, 이미 수정분임(ADR-036 결정 3.5 4단계, D14 M3-8) | `err.assert.original_mismatch` | 게이트 전 정지, 아무것도 발급하지 않음(08 §11) |
+| `bizstatus` | `unavailable` | 거래처 상태조회 실패(제안, 사용자 확인 전): 상태조회 프록시의 원천 장애(서버 `gateway.upstream_error` 503)·네트워크·한도, 또는 내 키(BYO) 없음·거부. 엔진 `bizverify` 사유 `no_key`·`unauthorized`·`quota`·`upstream`·`network`·`bad_request`를 이 코드 하나로 묶는다 | `err.bizstatus.unavailable` | 막지 않음. O-02 '확인 불가' 배지만 붙이고 다음 발급 때 자동으로 다시 조회(02 §4, 08 §4 O-02, R15 P1-1) |
 | `assert` | `total_mismatch` / `input_mismatch` | 되읽은 공급가액 + 세액 ≠ 되읽은 합계(D02 §8 `s19d`) / 되읽은 공급받는자 사업자번호·공급가액·세액 ≠ 실행 입력(`s19f`)(2026-11-05) | `err.assert.*` | 게이트 전 정지 |
 | `vault` | `leak_suspected` / `keystore_mismatch` / `credential_suspect` | 알려진 값 치환 적중, DB 키 길이 불일치(기동 거부), 포털 인증 실패 뒤 저장 자격 보류(ADR-025·026·029, **보안 이벤트**: `leak_suspected`·`keystore_mismatch`) | `err.vault.*` | 정지 / 기동 거부 / 금고에서 확인 |
 | `db` | `key_missing` / `locked_by_other_instance` | 키 항목 없음 + DB 파일 있음(새 키 생성 금지), 두 번째 인스턴스(ADR-025·029) | `err.db.*` | 기동 거부·복구 화면(Phase 1) |
@@ -76,6 +79,11 @@
 | `account` | `device_hold` | 이메일 세션으로 추가한 기기의 72시간 대기 중(HTTP 423, D09 §2.2, `recovery_hold`와 구분, 클라우드 PR #46) | `err.account.device_hold` | 대기 |
 | `registry` | `revoked_shrunk` | 새 `revoked_keys.json`이 저장된 목록보다 짧거나 이전 키가 빠짐(롤백 방지, D09 §8.4, ADR-028 결정 8, 엔진 PR #52, **보안 이벤트**) | — | 그 목록 거부, 마지막 유효 목록 유지 |
 | `registry` | `expired` / `issued_in_future` / `not_found` | 레지스트리 메타데이터 만료 / `issuedAt`이 현재 + 5분보다 미래(**보안 이벤트**) / 패키지·파일 없음(클라우드 PR #46) | `err.registry.*` | 로드 거부, 마지막 유효 상태 유지 |
+| `update` | `manifest_invalid` / `channel_mismatch` / `validity_too_long` | 앱 릴리스 매니페스트 모양 오류 / 매니페스트 채널 ≠ 구독 채널 / 유효 기간 14일 초과(`@sax/updater`, ADR-028, 패키징 PR #76) | `err.update.*` | 받지 않음, 지금 설치본으로 계속("업데이트를 확인하지 못했습니다") |
+| `update` | `root_change_unsigned` | 뿌리 변경 릴리스(`rootChange`)에 루트 2-of-3 서명 없음(ADR-028 결정 3, **보안 이벤트**) | `err.update.*` | 받지 않음 |
+| `update` | `transparency_unverified` | 투명성 로그 포함 증명·미러 확인을 못 함(ADR-028 결정 2. 헤드 불일치는 `registry.head_mismatch`) | `err.update.*` | 보류(`hold`), 지금 설치본으로 계속 |
+| `update` | `feed_mismatch` | electron-updater가 읽은 `latest.yml` ≠ 검증한 매니페스트(**보안 이벤트**) | `err.update.*` | 받지 않음 |
+| `update` | `size_mismatch` / `digest_mismatch` | 받은 설치본 크기 / sha512 불일치(`digest_mismatch`는 **보안 이벤트**) | `err.update.*` | 설치하지 않음 |
 | `daemon` | `window_closed` / `pc_busy` / `in_doubt_pending` / `consent_missing` / `demoted_to_notify` | 스케줄러 | `err.daemon.*` | — |
 | `daemon` | `effects_denied` | 데몬 트리거인데 `manifest.effects ⊄ {issue_document}`(R-D1, B-27) | `err.daemon.effects_denied` | 실행 안 함 |
 | `postprocess` | `file_not_detected` / `pdf_unreadable` / `meta_extraction_failed` / `sync_folder_warning` | 후처리 모드 | `err.postprocess.*` | 수동 메타 입력 |
@@ -99,8 +107,14 @@
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
 | `relay` | `mailbox_limit`(409) / `queue_full`(429) / `mailbox_not_found`(404) | 우편함 수 상한 / 큐 가득 참 / 우편함 없음 | 재페어링·나중에 재시도 |
 | `push` | `token_not_found`(404) | 등록된 푸시 토큰 없음 | 폰 앱이 다시 등록 |
+| `registry` | `schema_invalid`(422) / `key_epoch_mismatch`(422) / `key_epoch_rollback`(422) / `version_rollback`(422) / `timestamp_invalid`(422) | 레지스트리 게시 관문(클라우드 PR #56 `services/registry/API.md`. 엔진 로더도 받을 때 같은 이름을 쓴다): 알려진 필드 밖·모양 오류 / `keyEpoch` ≠ 앱 핀 / `keyEpoch` 역행 / 같은 `keyEpoch` 안 `monotonic` 역행 / 타임스탬프 서명 오류(SIGNING.md §3) | 게시 거부. 운영자가 고쳐 다시 올림 |
+| `registry` | `expired_on_arrival`(422) / `index_validity_too_long`·`status_validity_too_long`·`revoked_validity_too_long`·`release_validity_too_long`(422) | 도착 시 이미 만료 / 문서별 유효 기간 상한 초과(SIGNING.md 표) | 게시 거부 |
+| `registry` | `portal_blocked`(422) / `content_digest_mismatch`(422) / `unauthorized`(401) | 허락 회신 전 포털(`wetax`, ADR-022 결정 2) / 인덱스가 가리키는 `.sxp` 바이트가 `sxpDigest`·`size`와 다름 / 관리 토큰 없음·틀림 | 게시 거부 |
+| `policy` | `validity_too_long`(422) / `expired_on_arrival`(422) | 정책 유효 기간 상한 초과 / 도착 시 이미 만료 | 게시 거부 |
+| `hotfix` | `validity_too_long`(422) / `expired`(422) | 핫픽스 유효 기간 14일 초과 / 만료 | 게시 거부 |
+| `sxp` | `too_large`(422) / `malformed`(422) / `not_canonical`(422) / `unknown_format`(422) | `.sxp` 16MB 초과 / 모양 오류 / JCS 정규형 아님(다시 직렬화하면 바이트가 다름) / `format` ≠ `sxp/1`(SIGNING.md §6) | 게시 거부 |
 
 규칙:
-- **보안 이벤트**는 다음뿐이다: `gate.token_invalid`, `gate.token_consumed`, `commit_guard.blocked_request`, `remote.replay_detected`, `vault.origin_not_allowed`, `vault.cdp_denied`, `vault.preinjected_script`, `vault.origin_left`, `vault.dbkey_requested_twice`, `step.commit_shadow`, `security.commit_payload_mismatch`, `ledger.intent_reuse`, `policy.rejected_not_conservative`, `registry.version_jump_rejected`, `registry.key_revoked`, `gateway.pii_tripwire`, `vault.crypto_rate_anomaly`, `postprocess.open_denied`, `pairing.aik_mismatch`, `registry.head_mismatch`, `policy.issued_in_future`, `registry.revoked_shrunk`, `registry.issued_in_future`, `account.billing_signature_invalid`, `egress.pii_tripwire`, `egress.image_rejected`, `egress.unminted_text`(2026-11-05 추가). 만료·거부·불일치(`step.readback_mismatch`, `step.pre_dispatch_mismatch`, `step.identity_mismatch`)는 보안 이벤트가 아니다.
+- **보안 이벤트**는 다음뿐이다: `gate.token_invalid`, `gate.token_consumed`, `commit_guard.blocked_request`, `remote.replay_detected`, `vault.origin_not_allowed`, `vault.cdp_denied`, `vault.preinjected_script`, `vault.origin_left`, `vault.dbkey_requested_twice`, `step.commit_shadow`, `security.commit_payload_mismatch`, `ledger.intent_reuse`, `policy.rejected_not_conservative`, `registry.version_jump_rejected`, `registry.key_revoked`, `gateway.pii_tripwire`, `vault.crypto_rate_anomaly`, `postprocess.open_denied`, `pairing.aik_mismatch`, `registry.head_mismatch`, `policy.issued_in_future`, `registry.revoked_shrunk`, `registry.issued_in_future`, `account.billing_signature_invalid`, `egress.pii_tripwire`, `egress.image_rejected`, `egress.unminted_text`(2026-11-05 추가), `update.root_change_unsigned`, `update.feed_mismatch`, `update.digest_mismatch`(2026-11-06 추가, 패키징 PR #76). 만료·거부·불일치(`step.readback_mismatch`, `step.pre_dispatch_mismatch`, `step.identity_mismatch`)는 보안 이벤트가 아니다.
 - 리모트 영역 코드(`remote.*`)는 로컬 UI 전용이다. 폰↔PC 프로토콜로 오류 코드를 보내지 않으며, 실패는 무응답으로 처리한다(D08, C/X-12).
 - 텔레메트리에는 코드만 보내고 메시지 키는 로컬에서 해석한다. 텔레메트리 집계 단위는 D12 §1(일 단위, 5건 버킷)이다.

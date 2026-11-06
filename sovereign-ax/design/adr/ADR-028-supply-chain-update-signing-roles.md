@@ -2,6 +2,7 @@
 
 > 상태: 채택(2026-11-03) · 개정: ADR-013(결과 절 배정표·로그 대상), D09 §8.2·§8.3, D11 §2 T13·§4, D12 §6 · 관련: ADR-015 결정 6, D01 §7, [RETRO-2026-11-02](../../../poc/reports/RETRO-2026-11-02.md) A-12·A-14·A-18·B-01
 > 2026-11-05 개정: 결정 8(폐기 목록 축소 금지, `registry.revoked_shrunk`)과 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52, 팀장 결정).
+> 2026-11-06 정합(팀장 지시, 큐 1~15): 결정 2 비고(`requireTransparency`, 패키징 PR #76), 결정 4 비고(Windows 코드서명은 법인 설립 뒤, 그 전 베타는 미서명 빌드·자동 업데이트 보류, yulmu 결정 2026-11-05), 결정 6 갱신 목록에 `@sax/docparse`(docparse PR #78).
 > 근거: [AUDIT-D](../../research/AUDIT-D-v13-poc-security.md) N-10·N-32·N-42·N-80(4건) = [D19 §3.5](../19-attack-surface.md) D-02·D-23·D-27·D-50
 
 ## 맥락
@@ -15,8 +16,10 @@
 
 1. **앱 매니페스트 키는 CI 밖 하드웨어에 둔다(N-10, D-02).** `latest.yml` Ed25519 키는 비운영자 1인이 하드웨어 토큰에 보관한다. 릴리스 CI는 다이제스트만 만들고 서명 권한이 없다. D09 §8.2 키 표에 "앱 릴리스 매니페스트 키" 행을 더한다.
 2. **설치 전에 로그와 미러를 본다(N-10, D-02).** `latest.yml` 다이제스트·설치본 sha512·SBOM 다이제스트를 ADR-013 투명성 로그에 먼저 기록한다. main은 E-14 미러 트리 헤드 비교와 포함 증명을 확인한 뒤에만 electron-updater에 sha512를 넘긴다. electron-updater의 sha512·DN 검사는 2차 방어로 유지한다. 확인하지 못하면 설치본을 유지하고 기존 문구로 알린다.
+   - 비고(팀장 결정 2026-11-05, 패키징 PR #76): `@sax/updater`의 `requireTransparency`는 제품 빌드에서 true다. 실계정 시험·베타 빌드만 설정으로 끌 수 있고, 제품 빌드는 그 설정을 무시한다. 레지스트리에 투명성 로그가 아직 없어서, 켜 두면 모든 업데이트가 보류된다(`update.transparency_unverified`).
 3. **뿌리를 바꾸는 릴리스만 2-of-3(N-10, D-02).** 핀 키 교체(`keyEpoch`)·내장 허용 목록·앱 내장 상한을 바꾸는 앱 릴리스는 2-of-3 서명을 로그 항목에 동봉한다. 모든 릴리스의 2-of-3은 팀 규모가 허락할 때 한다(검증자 정정 최소안).
 4. **외부 단일 키를 고지한다(N-10, D-02).** D11 T13·D19 §8에 "코드서명(Artifact Signing)은 Microsoft가 보관하는 외부 단일 키"를 적는다.
+   - 비고(yulmu 결정 2026-11-05): 코드서명은 법인 설립 뒤 Artifact Signing으로 한다. 그 전 베타 설치본은 미서명 빌드로 배포한다. 앱 상단에 "미서명 빌드"를 늘 표시하고, SmartScreen 경고 안내는 D15 F-06과 D12 §8.5에 둔다. 자동 업데이트는 서명 전까지 보류한다(D14 M4-9·P0-13, `apps/desktop/build/SIGNING-SETUP.md`).
 5. **역할 규칙(필수, N-42, D-27).** 역할당 1인 1키다. 레지스트리 호스팅·CDN·투명성 로그·미러의 쓰기 권한자는 서명 키를 갖지 않는다. 루트 메타데이터에 키 ID → 보유자 역할 표를 공개해, 로그 항목마다 어느 두 역할이 서명했는지 외부에서 보이게 한다. 2-of-3을 채우지 못하면 핫픽스를 멈추고 CI 서명으로 대체하지 않는다(D12 운영 SLA). ADR-013 결과 절에 인원·역할 배정표를 둔다. 선택 항목(비엔지니어 서명 전 확인 목록, 루트 카드 1장 사외 보관, 미러 운영자 분리·외부 증인 조기 도입)은 SP-4 리허설에서 정한다.
 6. **코드 경계는 기계가 지킨다(N-32, D-23).**
    - RETRO A-12(송신 규칙 범위·규칙 단위 면제)에 더한다.
@@ -25,7 +28,7 @@
    - 금고 utilityProcess는 진입점 첫 import에서 `module.registerHooks`로 `net`·`http`·`https`·`tls`·`dgram`·`dns`·`http2`·`electron` 해석을 거부한다.
    - CI(RETRO B-01)는 push·PR 필수 체크로 `--frozen-lockfile` → build → lint → test → `bundles-digest --check` → `pnpm audit --prod`를 돈다.
    - `allowlist.ts`·`profiles/thresholds.json`·`bundles/*.json`에 CODEOWNERS 보안 리뷰를 건다.
-   - Renovate로 electron·playwright-core·pdfjs-dist·tesseract.js·better-sqlite3-multiple-ciphers 보안 릴리스를 받는다(`minimumReleaseAge`는 RETRO A-14).
+   - Renovate로 electron·playwright-core·pdfjs-dist·tesseract.js·better-sqlite3-multiple-ciphers 보안 릴리스를 받는다(`minimumReleaseAge`는 RETRO A-14). `@sax/docparse`(docparse PR #78)도 이 갱신 목록에 올린다. 새 외부 의존은 없다(ajv 8.20.0은 기존 의존, OCR 언어 데이터는 `@tesseract.js-data/kor` 안의 다른 파일).
 7. **승인 바 색은 앱 내장이다(N-80, D-50).** `approval-gate.ts`에 내장 팔레트(accent·on-accent·accent-soft·ink·ink-3·surface·line-strong·attention·attention-soft, 라이트·다크)를 둔다. 외부 토큰은 `^#[0-9A-Fa-f]{6}$`와 상태별 글자/배경 대비 ≥ 4.5:1을 통과한 색만 받는다. 하나라도 실패하면 내장 팔레트 전체로 대체하고 `bar.tokens_rejected`를 남긴다. 레이아웃·가시성 규칙은 앱 상수다. 빌드 시 생성기(`tokens.gen.ts`)는 RETRO A-18과 함께 Phase 1 패키징 때 선택한다.
 8. **폐기 목록은 축소할 수 없다.** 채택(2026-11-05 팀장). 한 번 폐기된 키는 새 `revoked_keys.json`에서 빠질 수 없다. 엔진은 저장된 목록보다 짧거나 이전 키가 빠진 목록을 `registry.revoked_shrunk`로 거부한다(롤백 방지, 엔진 PR #52, D09 §8.4). 서명 바이트 규약의 정본은 `design/schemas/SIGNING.md`(엔진 트랙 작성)다.
 
