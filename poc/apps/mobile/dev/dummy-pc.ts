@@ -1,6 +1,5 @@
 // 시뮬레이터 개발용 더미 PC + 릴레이(D14 M7-2·M7-4 "PC 역할은 시험 더미"). 실제 PC 배선은 데스크톱·금고 트랙 몫이다.
 //   node dev/dummy-pc.ts          → http://localhost:8787
-//   GET  /dev/account             계정 AIK_pub + AIK 서명 기기 목록(계정 서버 대역)
 //   GET  /dev/qr                  새 페어링 QR 텍스트(시뮬레이터에는 카메라가 없어 앱의 개발 버튼이 가져간다)
 //   POST /dev/sas  {"code":"123456"}  사용자가 PC에 6자리를 입력하는 것을 대신한다
 //   POST /v1/device-tokens        계정 서비스 대역(AIK 인증서 + DPoP → 15분 토큰, dev/dev-auth.ts)
@@ -13,7 +12,7 @@ import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, sha256Hash,
   softNoiseStatic, softSigner, toHex, uuid4, wsRelayClient, x25519Keygen,
   type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
@@ -66,7 +65,7 @@ async function startPairing(): Promise<string> {
   pairing?.cancel();
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
-    isPhoneKeyRegistered: async () => true,
+    enrollPhone: async () => {}, // 계정 서비스 대역 없음(실제 계정 POST /v1/devices/enroll은 dev/stack.ts)
     publishDeviceList: async (l) => {
       deviceList = l;
     },
@@ -164,7 +163,6 @@ const server = createServer(async (req, res) => {
       log('device-token', r.status);
       return send(r.status, JSON.stringify(r.body));
     }
-    if (req.method === 'GET' && req.url === '/dev/account') return send(200, JSON.stringify({ aikPub: b64(keys.aik.publicKey), deviceList }));
     if (req.method === 'GET' && req.url === '/dev/qr') return send(200, await startPairing(), 'text/plain');
     if (req.method === 'GET' && req.url === '/dev/status') return send(200, JSON.stringify({ pairing: pairing?.state ?? 'idle', pairs: pairs.length, received, frames: relay.frames }));
     if (req.method === 'POST' && req.url === '/dev/sas') {

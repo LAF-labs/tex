@@ -24,7 +24,6 @@ const client = wsRelayClient({
   deviceAuth: async (htm, htu) => deviceAuthHeaders(await tokens!.token(), vmSigner, htm, htu),
 });
 
-const acct = (await (await fetch(`${base}/dev/account`)).json()) as { aikPub: string; deviceList: never };
 const qr = await (await fetch(`${base}/dev/qr`)).text();
 const s = x25519Keygen();
 const vm = ed25519Keygen();
@@ -33,7 +32,7 @@ const noise = softNoiseStatic(s.secretKey);
 const vmSigner = softSigner(vm.secretKey, VM_PURPOSES);
 const mp = new MobilePairing({
   keys: { noise, vmPub: vm.publicKey, kmPub: km.publicKey, deviceId: uuid4(), name: 'smoke', platform: 'ios' },
-  accountAikPub: fromB64(acct.aikPub), serverDeviceList: acct.deviceList, relayAllowlist: [HOST], pairOkTimeoutMs: 15_000,
+  relayAllowlist: [HOST], pairOkTimeoutMs: 15_000,
 });
 if (!mp.scan(qr)) throw new Error(`scan failed: ${mp.failure}`);
 const link = await client.joinRoom(mp.roomId, 'mobile');
