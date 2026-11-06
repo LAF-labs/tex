@@ -1,7 +1,7 @@
 // 모델 게이트웨이 본체(D09 §3, D04 §7, gateway-request.schema.json 규칙 (1)~(7)).
 // 본문은 메모리에서만 다룬다: DB에는 계량(계정·월·토큰·비용), 35일 호출 기록(본문 없음), 계정 없는 운영 통계, 실행 예산 카운터만 쓴다.
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
 import { QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
@@ -30,7 +30,7 @@ import { GATEWAY, ZERO_PRICES, type Prices } from './constants.ts';
 import { ProviderError, type ModelProvider, type ProviderUsage } from './providers.ts';
 import { NtsUnavailable, type BizStatus, type BizStatusSource } from './nts.ts';
 
-const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+const Ajv2020 = ajv2020.default as typeof import('ajv').default;
 const SCHEMA_ID = 'https://sovereign-ax.dev/schemas/gateway-request.schema.json';
 
 /** 정본 스키마는 packages/net/schemas 한 곳(B-20). 게이트웨이는 그 파일을 그대로 읽는다(사본 없음). */

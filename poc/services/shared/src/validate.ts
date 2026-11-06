@@ -1,9 +1,9 @@
 // JSON Schema 검증(ajv, 저장소가 이미 고정한 8.20.0). 스키마 밖 필드는 모두 거부(additionalProperties:false를 스키마가 갖는다).
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import { fail, type ErrorCode } from './errors.ts';
 
-const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+const Ajv2020 = ajv2020.default as typeof import('ajv').default;
 const ajv = new Ajv2020({ allErrors: false, strict: false });
 
 export type Schema = Record<string, unknown>;

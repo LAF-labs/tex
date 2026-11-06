@@ -1,7 +1,7 @@
 // 스키마 10종(D02 §2 7종 + 레지스트리 status·폐기 목록 + 데이터 패키지 기술자, M1-4·M6-10)의 Ajv 2020 검증기. 레지스트리 CI와 엔진이 같은 함수를 쓴다(D02 §1).
 // 스키마 파일은 packages/engine/schemas에 있는 설계 정본(sovereign-ax/design/schemas)의 사본이다(동일성은 테스트가 확인).
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { ErrorObject, ValidateFunction } from 'ajv';
 import type { Violation } from './types.ts';
 
@@ -22,7 +22,7 @@ let compiled: Map<SchemaName, ValidateFunction> | null = null;
 
 function validators(): Map<SchemaName, ValidateFunction> {
   if (compiled) return compiled;
-  const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as AjvCtor;
+  const Ajv2020 = ajv2020.default as AjvCtor;
   // strict: 모르는 키워드·형식은 컴파일 오류. strictTypes는 oneOf 가지마다 type을 반복하지 않는 스키마 관례 때문에 끈다.
   const ajv = new Ajv2020({ allErrors: true, strict: true, strictTypes: false, strictRequired: false, allowUnionTypes: true });
   ajv.addFormat('date', DATE);
