@@ -46,6 +46,7 @@
 | | `bundle.markOpened` | `profileId, exportId, via, sentTo?` | 기록 |
 | | `bundle.markSent` | `profileId, exportId, note?` | 기록 |
 | | `payroll.exportRecord` | `profileId, fromMonth?, toMonth?` | `{record, file, months, password}` |
+| 데몬 | `daemon.snapshot` | — | `@sax/daemon` `DaemonSnapshot` `{policy, status, profiles[]}`. 읽기 전용, main 전용(`DAEMON_READ_QUERIES`) |
 | 설정 | `db.query.rateTables.installed` | — | `{packageId, installed, tables[{id, kind, effectiveFrom, effectiveTo, review}]}` |
 
 ### 인자 설명
