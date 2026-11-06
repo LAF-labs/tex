@@ -1,6 +1,6 @@
 // P-06 연결 상태: PC 켜짐·꺼짐, 마지막 접속, 페어링, PC로 아직 못 보낸 사진·현금매출 건수.
 import { useState } from 'react';
-import { Alert, StyleSheet, View } from 'react-native';
+import { Alert, ScrollView, StyleSheet, View } from 'react-native';
 import { sp1Report, type Sp1Report } from '../diag';
 import { identityLines } from '../pairing/identity';
 import { resetDevice } from '../keyring';
@@ -40,7 +40,8 @@ export function ConnectionScreen({ onDone, onReset, onRepair }: { onDone: () => 
   const certDays = pair ? Math.floor((pair.certNotAfter - Date.now()) / 86_400_000) : 0;
   return (
     <Screen>
-      <View style={st.pad} testID="connection-screen">
+      {/* 실기기 점검(2026-11-06): 줄이 늘어 보호 상태 보고가 화면 밖으로 밀렸다. 스크롤로 끝까지 볼 수 있게 한다. */}
+      <ScrollView contentContainerStyle={st.pad} testID="connection-screen">
         <T v="title">PC 연결</T>
         <Card>
           <Row k="PC" v={state} testID="conn-state" />
@@ -64,8 +65,8 @@ export function ConnectionScreen({ onDone, onReset, onRepair }: { onDone: () => 
             <T v="caption" c="ink3">
               열쇠: {sp1.keychain.accessible} · 생체 {sp1.keychain.biometric ? '필요' : '없음(시뮬레이터 개발)'}
             </T>
-            {sp1.files.slice(0, 8).map((f) => (
-              <T key={f.path} v="caption" c={f.excludedFromBackup ? 'ink3' : 'attention'}>
+            {sp1.files.slice(0, 8).map((f, i) => (
+              <T key={`${i}:${f.path}`} v="caption" c={f.excludedFromBackup ? 'ink3' : 'attention'}>
                 {f.path} · 백업 {f.excludedFromBackup ? '제외' : '포함'} · {f.protection}
               </T>
             ))}
@@ -90,7 +91,7 @@ export function ConnectionScreen({ onDone, onReset, onRepair }: { onDone: () => 
             }
           />
         )}
-      </View>
+      </ScrollView>
     </Screen>
   );
 }
