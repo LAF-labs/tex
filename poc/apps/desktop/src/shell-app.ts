@@ -30,6 +30,7 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
+import { engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
 import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -147,6 +148,8 @@ export interface ShellOptions {
    * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
    */
   remote?: RemoteWiring;
+  /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
+  intent?: IntentResolver;
 }
 
 /** ShellOptions.remote. */
@@ -597,6 +600,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
         },
   );
+  // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 엔진에 명령이 없으면 오프라인 정규식.
+  const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
+  const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null) => {
+    if (reply.kind === 'draft') {
+      reply.run.interp = via;
+      pushBoard(); // 초안은 update 이벤트 없이 생긴다
+    }
+    return { ...reply, via, note };
+  };
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
   const keysOf = (): Promise<DesktopKeys> => {
@@ -647,21 +659,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile = p.kind;
       return { profile };
     },
-    // 시연 모델이 있으면 먼저 묻고(4초 상한), 없거나 실패하면 정규식. via는 화면 구석 표시용(모델 해석/오프라인 해석).
+    // 시연 모델이 있으면 먼저 묻고(4초 상한), 아니면 엔진 intent.resolve(M4-3 ③, 4초 상한). 둘 다 없거나 실패하면 정규식.
+    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다. via는 화면 구석 표시용(모델 해석/오프라인 해석).
     'request.send': async (p) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
-      const model = demo && modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
-      const via = model ? 'model' : 'offline';
-      if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
-      const reply = interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
-      if (reply.kind === 'draft') {
-        reply.run.interp = via;
-        pushBoard(); // 초안은 update 이벤트 없이 생긴다
+      const local = parseRegex(text, runs.counterparties);
+      if (demo) {
+        const model = modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
+        const via = model ? 'model' : 'offline';
+        log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
+        return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null);
       }
-      return { ...reply, via };
+      const r = text.trim() ? await intent.resolve(text) : { route: null, fallback: 'empty' };
+      const via = r.route?.via === 'model' ? 'model' : 'offline';
+      log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
+      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null);
+      const to = routed(r.route, local);
+      if ('say' in to) {
+        runs.pending.asked = null;
+        return { kind: 'say', text: to.say, via, note: null };
+      }
+      return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note);
     },
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {

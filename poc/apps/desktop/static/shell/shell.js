@@ -496,6 +496,8 @@ async function send() {
     state.interp = r.via === 'model' ? 'model' : 'offline';
     renderTitlebar();
   }
+  // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
+  if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
     putRun(r.run);
     openPanel({ kind: 'run', id: r.run.id });
