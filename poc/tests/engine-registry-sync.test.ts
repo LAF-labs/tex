@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { openDatabase, RateTableRepo } from '@sax/db';
+import { openDatabase, RateTableRepo, type Db } from '@sax/db';
 import {
   acceptIndex, memoryRegistryStore, packagePath, rateTableSink, REGISTRY_PATHS, REGISTRY_TRUST_PIN, RegistrySync, rolloutBucket, settingsRegistryStore, trustRootsFromPin,
   type DataSink, type RegistryFetch, type RegistryIndex, type RegistryResponse, type TrustPin,
@@ -53,9 +53,18 @@ const baseFiles = () => ({
 });
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-regsync-'));
-after(() => fs.rmSync(tmp, { recursive: true, force: true }));
+const opened: Db[] = [];
+// Windows는 열린 DB 파일을 지우지 못한다(EPERM). 닫고 지운다.
+after(() => {
+  for (const d of opened) d.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
 let dbn = 0;
-const freshDb = () => openDatabase(path.join(tmp, `${dbn++}.sqlite`), new Uint8Array(randomBytes(32)));
+const freshDb = () => {
+  const d = openDatabase(path.join(tmp, `${dbn++}.sqlite`), new Uint8Array(randomBytes(32)));
+  opened.push(d);
+  return d;
+};
 
 function setup(files = baseFiles(), o: { now?: () => number; store?: ReturnType<typeof memoryRegistryStore>; sinks?: DataSink[]; deviceId?: string } = {}) {
   const reg = fakeRegistry(files);

@@ -46,10 +46,26 @@ export class DirStore implements Store {
     const tmp = `${file}.tmp-${process.pid}-${randomUUID()}`;
     try {
       await fs.writeFile(tmp, bytes);
-      await fs.rename(tmp, file);
+      await renameReplacing(tmp, file);
     } catch (e) {
       await fs.rm(tmp, { force: true });
       throw e;
+    }
+  }
+}
+
+/**
+ * rename으로 덮어쓰기. Windows는 같은 대상으로 동시에 rename하거나 대상이 잠깐 열려 있으면 EPERM·EBUSY·EACCES를 낸다
+ * (POSIX는 원자적으로 바꾼다). 짧게 몇 번 다시 해 본다. 다른 오류와 마지막 실패는 그대로 던진다.
+ */
+async function renameReplacing(from: string, to: string): Promise<void> {
+  for (let i = 0; ; i++) {
+    try {
+      return await fs.rename(from, to);
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (process.platform !== 'win32' || i >= 8 || !['EPERM', 'EBUSY', 'EACCES'].includes(code ?? '')) throw e;
+      await new Promise((r) => setTimeout(r, 10 * 2 ** i));
     }
   }
 }
