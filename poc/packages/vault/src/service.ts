@@ -4,7 +4,7 @@ import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLo
 import { EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
 import { findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
-import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
+import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfileResidue, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
 import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
 import {
@@ -481,6 +481,9 @@ export class Vault {
     const count = await removeCrashDumps(profileDir).catch(() => 0);
     if (count > 0) this.opts.log.event('vault.chrome_dump_removed', { count });
     else if (count < 0) this.opts.log.event('vault.chrome_dump_dir_link');
+    const residue = await removeProfileResidue(profileDir).catch(() => 0);
+    if (residue > 0) this.opts.log.event('vault.chrome_residue_removed', { count: residue });
+    else if (residue < 0) this.opts.log.event('vault.chrome_residue_link');
   }
 
   private async attachRelay(conn: LaunchedChrome['conn']): Promise<LaunchResult> {

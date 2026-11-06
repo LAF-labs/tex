@@ -203,6 +203,21 @@ export function knownValueVariants(secret: string): string[] {
   return [...v].filter((s) => s.length >= KNOWN_VALUE_MIN_LEN);
 }
 
+/** 접두사 상한: 이보다 긴 값은 전체 값 변형만 둔다(비밀번호·보안카드 칸은 훨씬 짧다). */
+export const KNOWN_PREFIX_MAX_LEN = 64;
+
+/**
+ * 값과 그 접두사(KNOWN_VALUE_MIN_LEN자 이상)의 변형. 입력 도중(활성 창) 페이지가 글자마다 값을 흘리면
+ * 엔진행 메시지에는 접두사가 실린다. KNOWN_VALUE_MIN_LEN자 미만 접두사는 지우지 않는다(남는 위험, 오탐 방지).
+ */
+export function knownValuePrefixVariants(secret: string): string[] {
+  const cps = [...secret];
+  if (cps.length > KNOWN_PREFIX_MAX_LEN) return knownValueVariants(secret);
+  const v = new Set<string>();
+  for (let i = KNOWN_VALUE_MIN_LEN; i <= cps.length; i++) for (const x of knownValueVariants(cps.slice(0, i).join(''))) v.add(x);
+  return [...v];
+}
+
 export function scrubKnownValues(raw: string, variants: readonly string[]): { text: string; hits: number } {
   let text = raw;
   let hits = 0;
