@@ -72,6 +72,8 @@ export class PdfSaver {
   private readonly max: number;
   private armed: Armed | null = null;
   private readonly active = new Map<string, Active>();
+  /** 무장 없이 시작돼 취소한 다운로드. 끝 이벤트(canceled·completed)가 오면 남은 파일을 다시 지운다(Windows는 취소 직후 Chrome이 .crdownload를 만들거나 잡고 있다). */
+  private readonly rejected = new Set<string>();
   private printing = false;
   private closed = false;
 
@@ -88,6 +90,7 @@ export class PdfSaver {
 
   shutdown(): void {
     this.closed = true;
+    this.rejected.clear();
     if (this.armed) clearTimeout(this.armed.timer);
     this.armed = null;
     this.active.clear();
@@ -182,6 +185,7 @@ export class PdfSaver {
       if (!ok || this.armed !== a || !a) {
         // 무장 없는 다운로드·다른 타깃의 다운로드는 받지 않는다(원래 파일 이름·URL은 로그에 넣지 않는다).
         this.o.log.event('vault.download_unexpected');
+        this.rejected.add(guid);
         await this.cancel(guid);
         return;
       }
@@ -191,6 +195,13 @@ export class PdfSaver {
       return;
     }
     if (method !== 'Browser.downloadProgress') return;
+    if (this.rejected.has(guid)) {
+      if (p.state === 'canceled' || p.state === 'completed') {
+        this.rejected.delete(guid);
+        await this.removeGuidFiles(guid);
+      }
+      return;
+    }
     const d = this.active.get(guid);
     if (!d) return;
     const state = p.state;
@@ -269,7 +280,8 @@ export class PdfSaver {
   }
 
   private async removeGuidFiles(guid: string): Promise<void> {
-    for (const name of [guid, `${guid}.crdownload`]) await fs.rm(path.join(this.o.staging, name), { force: true }).catch(() => {});
+    // Windows는 Chrome이 막 놓은 파일을 잠깐 잡고 있어 EPERM·EBUSY가 난다. 짧게 다시 시도한다(maxRetries는 recursive일 때만 듣는다, 없으면 force로 통과).
+    for (const name of [guid, `${guid}.crdownload`]) await fs.rm(path.join(this.o.staging, name), { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 5 : 0, retryDelay: 50 }).catch(() => {});
   }
 
   // ───────────────────────── staging ─────────────────────────
