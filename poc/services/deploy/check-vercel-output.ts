@@ -20,7 +20,10 @@ import { LIMITS_MIGRATIONS_DIR, ed25519Private, ed25519RawPublic, migrate, openS
 
 interface Probe {
   method: string;
-  path: string;
+  /** 함수 경로(`/api/…?__p=…`). `public`이 있으면 그 공개 경로에 vercel.json 재작성을 플랫폼처럼 적용한 값을 쓴다 */
+  path?: string;
+  /** 공개 경로(`/registry/log/head.json` 등): 재작성 → 이 함수여야 한다 */
+  public?: string;
   headers?: Record<string, string>;
   body?: unknown;
   /** 기대 상태 코드 */
@@ -28,6 +31,39 @@ interface Probe {
 }
 
 const hex = () => randomBytes(32).toString('hex');
+
+interface Rewrite {
+  source: string;
+  destination: string;
+}
+
+/**
+ * vercel.json 재작성을 플랫폼처럼 적용한다(첫 일치). 소스 매개변수(`:path*`·`:id`)를 목적지에 치환하고, 플랫폼이 하는 대로 같은 이름으로
+ * 쿼리에 다시 붙인 뒤 원래 쿼리를 잇는다(2026-11-06 운영 확인: `/registry/log/head.json` → `/api/registry?__p=/registry/log/head.json&path=head.json`).
+ * 외부 목적지(https://)거나 일치가 없으면 null.
+ */
+export function rewriteLikeVercel(rewrites: readonly Rewrite[], publicUrl: string): string | null {
+  const u = new URL(publicUrl, 'https://tax.check.invalid');
+  for (const r of rewrites) {
+    const names: string[] = [];
+    const re = new RegExp(
+      `^${r.source
+        .replace(/[.]/g, '\\.')
+        .replace(/\/:([a-z]+)\*/g, (_, n: string) => (names.push(n), '(?:/(.*))?'))
+        .replace(/\/:([a-z]+)/g, (_, n: string) => (names.push(n), '/([^/]+)'))}$`,
+    );
+    const m = re.exec(u.pathname);
+    if (!m) continue;
+    if (/^https?:/.test(r.destination)) return null;
+    const vals = Object.fromEntries(names.map((n, i) => [n, m[i + 1] ?? '']));
+    const dest = r.destination.replace(/:([a-z]+)\*?/g, (_, n: string) => vals[n] ?? '');
+    const extra = names.map((n) => `${n}=${encodeURIComponent(vals[n]!)}`);
+    const orig = u.search.slice(1);
+    const q = [...extra, ...(orig ? [orig] : [])].join('&');
+    return q ? `${dest}${dest.includes('?') ? '&' : '?'}${q}` : dest;
+  }
+  return null;
+}
 
 /** 묶음 하나를 임시 폴더로 복사하고 filePathMap 링크를 되살린다. 돌려주는 값은 복사본 경로와 진입점 상대 경로 */
 export function materialize(funcDir: string, root: string, into: string): { dir: string; handler: string } {
@@ -145,12 +181,13 @@ function runFunction(dir: string, handler: string, env: Record<string, string>, 
   }
   const errLines = (r.stderr ?? '').split('\n').filter((l) => /Error|Cannot find|ENOENT|ERR_/.test(l)).slice(0, 6).join('\n');
   if (!got) return `진입점을 띄우지 못했다 (exit ${r.status})\n${errLines}`;
-  const bad = probes.map((p, i) => (got[i] === p.status ? null : `${p.method} ${p.path} → ${got[i]} (기대 ${p.status})`)).filter(Boolean);
+  const bad = probes.map((p, i) => (got[i] === p.status ? null : `${p.method} ${p.public ?? p.path} → ${got[i]} (기대 ${p.status})`)).filter(Boolean);
   return bad.length ? `${bad.join('\n')}\n${errLines}` : null;
 }
 
 export async function checkVercelOutput(root: string): Promise<{ name: string; error: string | null }[]> {
   const fnRoot = path.join(root, '.vercel', 'output', 'functions', 'api');
+  const rewrites = (JSON.parse(fs.readFileSync(path.join(root, 'poc', 'services', 'deploy', 'vercel', 'vercel.json'), 'utf8')) as { rewrites: Rewrite[] }).rewrites;
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-vercel-check-'));
   try {
     fs.mkdirSync(path.join(work, 'db'));
@@ -166,18 +203,28 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
         { method: 'POST', path: '/api/sax?__p=/v1/mailboxes', body: {}, status: 401 },
         { method: 'PUT', path: '/api/sax?__p=/v1/push-token', body: {}, status: 401 },
         { method: 'GET', path: '/api/sax?__p=/internal/v1/devices/x', status: 404 },
+        // 공개 경로 → 재작성(플랫폼이 붙이는 path 매개변수 포함)
+        { method: 'GET', public: '/v1/me', status: 401 },
+        { method: 'GET', public: '/v1/mailboxes/mb-x/envelopes?since=0', status: 401 },
       ]],
-      internal: ['internal', {}, [{ method: 'GET', path: '/api/internal?__p=/internal/v1/devices/dev-x', status: 401 }]],
+      internal: ['internal', {}, [
+        { method: 'GET', path: '/api/internal?__p=/internal/v1/devices/dev-x', status: 401 },
+        { method: 'GET', public: '/api/internal/internal/v1/devices/dev-x', status: 401 },
+      ]],
       cron: ['cron', {}, [
         { method: 'GET', path: '/api/cron', headers: cron, status: 200 },
         { method: 'GET', path: '/api/cron', status: 401 },
       ]],
       'registry(구성 없음)': ['registry', {}, [
         { method: 'GET', path: '/api/registry?__p=/registry/log/head.json', status: 503 },
+        { method: 'GET', public: '/registry/log/head.json', status: 503 },
         { method: 'GET', path: '/api/registry?__p=/registry/status.json', status: 404 },
       ]],
       registry: ['registry', reg, [
         { method: 'GET', path: '/api/registry?__p=/registry/log/head.json', status: 200 },
+        // 재작성 경로(운영 400 request.param_rejected 회귀): 헤드 200, 빈 로그 항목 404
+        { method: 'GET', public: '/registry/log/head.json', status: 200 },
+        { method: 'GET', public: '/registry/log/entries/0.json', status: 404 },
         { method: 'PUT', path: '/api/registry?__p=/admin/v1/status', body: {}, status: 401 },
         { method: 'GET', path: '/api/registry?__p=/policy/current.json', status: 404 },
       ]],
@@ -197,7 +244,18 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       }
       if (!made.has(func)) made.set(func, materialize(funcDir, root, path.join(work, `${func}.func`)));
       const m = made.get(func)!;
-      out.push({ name, error: runFunction(m.dir, m.handler, { ...env, ...extra }, probes) });
+      const resolved: Probe[] = [];
+      let bad: string | null = null;
+      for (const p of probes) {
+        if (!p.public) {
+          resolved.push(p);
+          continue;
+        }
+        const to = rewriteLikeVercel(rewrites, p.public);
+        if (!to || !to.startsWith(`/api/${func}?`)) bad = `${p.public} → ${to ?? '재작성 없음'} (기대 /api/${func})`;
+        else resolved.push({ ...p, path: to });
+      }
+      out.push({ name, error: bad ?? runFunction(m.dir, m.handler, { ...env, ...extra }, resolved) });
     }
     return out;
   } finally {
