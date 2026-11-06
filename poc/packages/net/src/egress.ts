@@ -18,6 +18,57 @@ export const DESTINATIONS = {
 
 export type DestinationName = keyof typeof DESTINATIONS;
 
+/**
+ * 레지스트리 origin(앱 내장 상수, 팀장 결정 2026-11-06). 실물이 다른 저장소(Supabase Storage 등)에 있어도 이 origin 아래 재작성으로 두고,
+ * 클라이언트에는 다른 도메인을 넣지 않는다. 게이트웨이와 같은 origin이다.
+ */
+export const REGISTRY_ORIGIN = 'https://tax.laf-co.com';
+/** 릴리스 채널(packages/updater CHANNELS와 같다, D09 §8.6) */
+export const REGISTRY_CHANNELS = ['stable', 'beta', 'hotfix'] as const;
+/** 레지스트리 응답 상한(매니페스트·status·폐기 키·로그 헤드·항목·증명은 작다) */
+export const REGISTRY_MAX_BYTES = 1024 * 1024;
+
+const DEC = '(0|[1-9][0-9]{0,14})';
+/** 레지스트리 허용 경로(GET만). 쿼리는 경로마다 정해진 키만 정확히 한 번씩, 그 밖은 거부한다(D09 §8, ADR-028). */
+const REGISTRY_ROUTES: ReadonlyArray<{ path: RegExp; query: Readonly<Record<string, RegExp>> }> = [
+  { path: new RegExp(`^/releases/(${REGISTRY_CHANNELS.join('|')})/latest\\.json$`), query: {} },
+  { path: /^\/registry\/status\.json$/, query: {} },
+  { path: /^\/registry\/revoked_keys\.json$/, query: {} },
+  // 투명성 로그(RFC 9162, D09 §8.3): 서명된 트리 헤드, 항목, 포함 증명(leaf = 잎 해시 hex), 일관성 증명
+  { path: /^\/registry\/log\/head\.json$/, query: {} },
+  { path: new RegExp(`^/registry/log/entries/${DEC}\\.json$`), query: {} },
+  { path: /^\/registry\/log\/proof\/inclusion$/, query: { leaf: /^[0-9a-f]{64}$/, size: new RegExp(`^${DEC}$`) } },
+  { path: /^\/registry\/log\/proof\/consistency$/, query: { from: new RegExp(`^${DEC}$`), to: new RegExp(`^${DEC}$`) } },
+];
+
+/**
+ * 레지스트리 GET 대상(경로 + 쿼리, origin 없이)이 허용 목록에 맞는지 본다. 정규화 우회(`..`, 퍼센트 인코딩, 중복 슬래시)·조각·
+ * 다른 origin·추가·중복·빠진 쿼리 키를 모두 거부한다.
+ */
+export function registryTargetAllowed(target: string): boolean {
+  if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//') || target.length > 512) return false;
+  // 퍼센트 인코딩·+·공백·백슬래시 같은 변형을 받지 않는다(허용 경로와 쿼리 값은 이 문자만 쓴다)
+  if (!/^[A-Za-z0-9/_.?=&-]+$/.test(target)) return false;
+  let url: URL;
+  try {
+    url = new URL(target, REGISTRY_ORIGIN);
+  } catch {
+    return false;
+  }
+  if (url.origin !== REGISTRY_ORIGIN || url.hash || url.pathname + url.search !== target) return false;
+  const route = REGISTRY_ROUTES.find((r) => r.path.test(url.pathname));
+  if (!route) return false;
+  const keys = [...url.searchParams.keys()];
+  const want = Object.keys(route.query);
+  if (keys.length !== want.length || new Set(keys).size !== keys.length) return false;
+  if (want.length === 0) return url.search === '';
+  for (const k of want) {
+    const v = url.searchParams.get(k);
+    if (v === null || !route.query[k]!.test(v)) return false;
+  }
+  return true;
+}
+
 /** 게이트웨이 경로 설정. 번들 허용 목록은 앱 내장본(BYOK와 같은 목록), 인증은 금고 DPoP 서명기. */
 export interface GatewayConfig {
   auth: GatewayAuth;
@@ -218,6 +269,43 @@ export class Egress {
   /** postJson 목적지 조회. 제품 Egress는 DESTINATIONS뿐이다(시연 목적지는 @sax/net/demo의 DemoEgress만 연다, ADR-035 W-5). */
   protected destinationOf(dest: string): Destination | undefined {
     return Object.hasOwn(DESTINATIONS, dest) ? (DESTINATIONS[dest as DestinationName] as Destination) : undefined;
+  }
+
+  /**
+   * 레지스트리 GET의 유일한 입구(업데이터·레지스트리 검증기용). origin은 REGISTRY_ORIGIN 하나로 고정이고 경로·쿼리는 허용 목록만이다.
+   * 응답 JSON은 비신뢰 값 그대로 돌려준다(서명·포함 증명 검증은 호출자, ADR-028). 리다이렉트는 따라가지 않는다.
+   */
+  async getRegistry(target: string): Promise<EgressResponse> {
+    if (!registryTargetAllowed(target)) throw new EgressError('path_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const path = new URL(target, REGISTRY_ORIGIN).pathname;
+    const origin = this.opts.testOrigins?.registry ?? REGISTRY_ORIGIN;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 10_000);
+    try {
+      const res = await fetch(origin + target, { method: 'GET', headers: { accept: 'application/json' }, signal: ctl.signal, redirect: 'error' });
+      this.audit.push({ dest: 'registry', path, status: res.status });
+      const len = Number(res.headers.get('content-length') ?? '0');
+      if (len > REGISTRY_MAX_BYTES) {
+        await res.body?.cancel();
+        throw new EgressError('bad_response', res.status);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > REGISTRY_MAX_BYTES) throw new EgressError('bad_response', res.status);
+      let json: unknown = null;
+      try {
+        json = buf.length ? JSON.parse(buf.toString('utf8')) : null;
+      } catch {
+        if (res.ok) throw new EgressError('bad_response', res.status);
+      }
+      return { status: res.status, json };
+    } catch (e) {
+      if (e instanceof EgressError) throw e;
+      this.audit.push({ dest: 'registry', path, status: 'error' });
+      throw new EgressError((e as Error).name === 'AbortError' ? 'timeout' : 'network');
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async postJson(dest: DestinationName, path: string, body: unknown, headers: Record<string, string> = {}): Promise<EgressResponse> {
