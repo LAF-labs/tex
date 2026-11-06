@@ -13,6 +13,8 @@
 | `injection.sec.ts` | M5-1 인젝션 레드팀 회귀 | 모델 트랙 코퍼스(`s9-screens`·`l0-corpus`) → 결정적 사전 필터. 놓침 0(알려진 1건 목록화)·오탐 ≤ 5%(S17)·회피 변형 6종 | 돈다(오탐 3.2%) | S17 200건 코퍼스(M3-7·M1-8) |
 | `parsers.sec.ts` | M6-12 파서 퍼징·거부 | 파서 표(모듈·생성기·성질): 엔진 parseBizCert·extractDocMeta, docparse imageInfo(PNG·JPEG)·parse 입구(HEIC·SVG 등 받지 않는 형식)·readXlsx→parseSettlement(정상 xlsx 비트 변조)·readCertInfo(signCert.der 변조·8KB 초과·PEM·BER·뒤 덧붙임 거부)·parseReceipt. 거부는 코드 있는 오류로만. docparse `seedCorpus` 32종(PDF 제외)을 parse 입구에 넣고 fetch·소켓·DNS·eval·Function 가로채기 0건, 폭탄 압축·대용량·디코드 폭탄은 정해진 코드로 거부 | 돈다(퍼징 8·고정 대조 1·시드 32+2) | PDF 시드(Electron e2e), 숨김 텍스트 회귀, ADR-028 의존성 목록 |
 | `promotion-check.sec.ts` | ADR-035 결정 1.3 (라) | 제품 진입점이 `// PoC 폐기 대상` 파일을 import하지 않는다 | 돈다 | — |
+| (`tests/vault-s6-regress.test.ts`) | M5-1 S6c~f 회귀(#101) | 금고 중계 S6c~f·누출 스캐너 확장(활성 창 URL·프로필 잔존물). `*.test.ts`라 `pnpm test`로 CI 기본 잡(Linux)에서 돈다 | 돈다 | — |
+| (`scripts/ci-phone-relay.mjs`) | M5-1 폰 릴레이 경로 | 더미 PC + 개발 릴레이에 Node 폰으로 페어링 → 기기 토큰(AIK·DPoP) → 라이브(WSS)·HTTPS 큐 전송. 폰 앱 `test/*.spec.ts`·형식 검사와 함께 CI 기본 잡(Linux)에서 돈다 | 돈다(2 경로) | 실릴레이(services/relay) 상대 스모크 |
 
 알려진 발견(소유 트랙에 보고):
 - `injection.sec.ts` KNOWN_MISSES `s9:inj_answer_steer`: 키워드·역할 태그 없이 판정기에게 답을 지시하는 문장을 사전 필터가 놓친다(엔진 `l0/injection-filter.ts`).
