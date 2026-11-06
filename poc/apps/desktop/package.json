@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "main": "dist/main.js",
+  "main": "dist/shell.js",
   "scripts": {
     "package:win": "node ../../scripts/package-win.mjs"
   },

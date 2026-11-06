@@ -11,7 +11,7 @@
 | `packages/redaction` | 마스킹 최소판, `RedactedText` 브랜드 | D06 §4·§8 |
 | `packages/model` | L1·L2 계약, 번들 8종 + BV 검증기, 임계값 프로필, OpenAI Decisions·Responses 어댑터, Upstage 스텁 | D04, ADR-003·015 |
 | `packages/platform` | `%LOCALAPPDATA%\SovereignAX` 경로·ACL·로그·포트 추상화 | D07 §1.1 |
-| `apps/desktop` | Electron main(utilityProcess 배선·환경 변수 허용 목록, 기동 자기 점검 `harden.ts`, 승인 바, docparse 샌드박스, 금고 요청으로만 여는 비밀 입력 창), 셸(`shell*.ts`, `static/shell/`), 개발 콘솔(`main.ts`, 엔진·금고 연결 확인용) | D01 §2.1, ADR-014·021, 08 |
+| `apps/desktop` | Electron main(utilityProcess 배선·환경 변수 허용 목록, 기동 자기 점검 `harden.ts`, 승인 바, docparse 샌드박스, 금고 요청으로만 여는 비밀 입력 창), 셸(`shell*.ts`, `static/shell/`, 제품 진입점 `shell.ts`·시연 진입점 `demo-shell.ts`), e2e·측정(`apps/desktop/e2e`) | D01 §2.1, ADR-014·021, 08 |
 | `tests` | 통합 테스트·픽스처·앱 스모크 | D13 S6 |
 
 ```bash
@@ -23,10 +23,10 @@ pnpm build && pnpm lint && pnpm test
 ```
 
 ```bash
-./node_modules/.bin/electron apps/desktop/dist/e2e.js
+./node_modules/.bin/electron apps/desktop/e2e-dist/ocr-e2e.js
 ```
 
-데모 셸(가짜 홈택스 페이지, 시험 구성 금고)과 그 e2e·스크린샷(`reports/raw/poc-6/shell/`). Linux에서 root로 돌리면 `xvfb-run -a pnpm exec electron apps/desktop/dist/shell-e2e.js --no-sandbox`:
+데모 셸(가짜 홈택스 페이지, 시험 구성 금고)과 그 e2e·스크린샷(`reports/raw/poc-6/shell/`). Linux에서 root로 돌리면 `xvfb-run -a pnpm exec electron apps/desktop/e2e-dist/shell-e2e.js --no-sandbox`:
 
 ```bash
 pnpm demo

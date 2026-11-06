@@ -114,7 +114,7 @@ describe('보관함(DocumentService)', () => {
     assert.match((await fsp.readdir(vault))[0]!, /^other_20261110_/);
   });
 
-  // 화면(vault-panel.js)은 바뀐 칸만 보낸다. 엔진은 저장값과 같은 값을 '바뀌지 않음'으로도 본다(화면이 세 칸을 다 보내도 같은 결과).
+  // 화면(셸 문서함)은 바뀐 칸만 보낸다. 엔진은 저장값과 같은 값을 '바뀌지 않음'으로도 본다(화면이 세 칸을 다 보내도 같은 결과).
   it('사용자 확인: 그대로 확인하면 추정이 확인함으로, 날짜를 넣으면 그 값, 종류·발급일을 바꾸면 규칙으로 다시', async () => {
     await business();
     const b = await call<DocumentView>('document.import', { bytes: pdf('b'), extract: extract(bizText) });
@@ -327,10 +327,12 @@ describe('보관함(DocumentService)', () => {
 });
 
 describe('main 경계: document.import·document.file은 렌더러가 부를 수 없다', () => {
-  it('MAIN_ONLY에 두고 RENDERER_METHODS에서 뺀다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
+  it('MAIN_ONLY에 두고, 셸 렌더러 요청 표에는 엔진 명령이 없다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
     assert.deepEqual([...MAIN_ONLY].sort(), ['bizcert.parse', 'document.file', 'document.import']);
-    const src = await fsp.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/main.ts'), 'utf8');
-    const line = src.split('\n').find((l) => l.includes('const RENDERER_METHODS'))!;
-    assert.match(line, /COMMANDS\.filter\(\(c\) => !MAIN_ONLY\.includes\(c\)\)/);
+    // 렌더러 요청은 셸 표(SHELL_METHODS)로만 온다. 엔진 명령 이름을 그대로 넘기는 길이 없다(개발 콘솔 RENDERER_METHODS는 W-1에서 지웠다).
+    const { SHELL_METHODS } = await import('../apps/desktop/src/ipc.ts');
+    for (const m of MAIN_ONLY) assert.ok(!(m in SHELL_METHODS), m);
+    const src = await fsp.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
+    assert.ok(!/\.rpc\(method\b/.test(src) && !src.includes('RENDERER_METHODS'), '셸 main은 렌더러가 고른 엔진 명령을 그대로 부르지 않는다');
   });
 });
