@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';
 import { buildAttestRequest, buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
-import { ATTEST_ACTION_TEXT, kstToday, summarize, type SummaryLine } from '../dist/approval-gate.js';
+import { ACTION_TEXT, ATTEST_ACTION_TEXT, ATTEST_STOP_TEXT, cardTargets, kstToday, summarize, type SummaryLine } from '../dist/approval-gate.js';
 import { lastWebPrefs, webPrefsProblems } from '../dist/harden.js';
 import { SHELL_METHODS } from '../dist/ipc.js';
 import { barBounds, SHELL } from '../dist/shell-layout.js';
@@ -86,9 +86,18 @@ async function sendText(text: string): Promise<void> {
 }
 const lastRunId = () => js<string | null>(`[...document.querySelectorAll('[data-run]')].pop()?.dataset.run ?? null`);
 
-// 바 입력(바 기준 DIP 좌표)
+// 승인 카드 입력(카드 기준 DIP 좌표). 판정 영역은 main 스냅숏의 targets(카드 정적 배치)다.
 const barWc = () => S.bar.view.webContents;
-const mid = () => ({ x: Math.floor(S.bar.snapshot().bounds.width / 2), y: Math.floor(SHELL.barHeight / 2) });
+const center = (r: { x: number; y: number; width: number; height: number }) => ({ x: Math.floor(r.x + r.width / 2), y: Math.floor(r.y + r.height / 2) });
+/** [승인하고 발급] 가운데. */
+const mid = () => center(S.bar.snapshot().targets.approve);
+/** [중지] 가운데. */
+const stopMid = () => center(S.bar.snapshot().targets.stop);
+function cardStopClick(): void {
+  const p = stopMid();
+  barWc().sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+  barWc().sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+}
 function barEnterMove(): void {
   const p = mid();
   barWc().sendInputEvent({ type: 'mouseEnter', x: p.x, y: p.y });
@@ -155,8 +164,10 @@ async function approveOnBar(): Promise<void> {
   barClick();
 }
 
+/** 승인 대기면 main 승인 카드의 [중지](main이 관찰한 클릭), 아니면 대화 카드의 [중지]. */
 async function stopRun(id: string): Promise<void> {
-  await click(`[data-run="${id}"] [data-act=stop]`);
+  if (S.bar.snapshot().visible && S.bar.runId === id) cardStopClick();
+  else await click(`[data-run="${id}"] [data-act=stop]`);
   await until('stopped', () => runStatus(id) === 'stopped' && !S.bar.snapshot().visible, 8000);
 }
 
@@ -220,14 +231,18 @@ async function flow(): Promise<void> {
   const f = new Map(req?.fields.map((x) => [x.fieldKey, x.value]));
   check('게이트 요청: 엔진이 되읽은 13칸 + 예약 키, main이 다시 계산한 해시가 맞는다(D03 §3)', !!req && req.v === 2 && gateSelfCheck(req) === null && !S.bar.snapshot().refusal && f.get('supplierBizNo') === '1234567891' && f.get('totalAmount') === '3630000' && f.get('counterpartEmail') === 'tax@asangsa.example', req?.fields);
   check('원장이 비어 있으면 처음 거래·처음 보내는 주소(원장 HMAC 열, 확정 건만 셈)', f.get('$first.bizNo') === 'true' && f.get('$first.email') === 'true' && !f.has('$dup.businessKey'));
-  const firstTotal = (summarize(req) as SummaryLine[])[1]!.pieces.map((x) => x.text).join('');
-  check('작성일자 = KST 오늘이면 바 합계 줄에 작성일 조각이 없다(가짜 H-01도 KST)', f.get('issueDate') === kstToday(Date.now()) && !firstTotal.includes('작성일'), { issueDate: f.get('issueDate'), firstTotal });
-  check('카드·패널은 엔진이 되읽은 값으로 바뀐다(홈택스 확정)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && (await js<string>(`document.querySelector('[data-run="${id}"]').textContent`)).includes('초안과 같아요'));
+  const firstRows = summarize(req) as SummaryLine[];
+  const dateRow = firstRows.find((l) => l.label === '작성일자');
+  check('승인 카드 줄 = 합계(공급가액·세액)·공급받는자·품목·작성일자·받는 이메일, 값은 게이트 요청 fields 그대로', firstRows.map((l) => l.label).join() === '합계,공급받는자,품목,작성일자,받는 이메일' && firstRows[0]!.pieces.map((x) => x.text).join('') === '3,630,000원 · 공급가액 3,300,000원 · 세액 330,000원' && firstRows[2]!.pieces[0]!.text === f.get('itemName'), firstRows);
+  check('작성일자 = KST 오늘이면 "오늘 아님" 표시가 없다(가짜 H-01도 KST)', f.get('issueDate') === kstToday(Date.now()) && dateRow?.pieces[0]?.text === f.get('issueDate') && !dateRow?.flag, { issueDate: f.get('issueDate'), dateRow });
+  const folded = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
+  check('대화의 작성 카드는 "작성 완료" 한 줄로 접히고 되읽은 값·승인·[중지] 버튼을 그리지 않는다(결정 7)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && folded.includes('작성 완료') && !/3,630,000|A상사|tax@asangsa|214-86-51233|승인하고 발급/.test(folded) && (await js<number>(`document.querySelectorAll('[data-run="${id}"] button').length`)) === 0, folded);
   const snap = S.bar.snapshot();
   const [cw, ch] = S.win.getContentSize() as [number, number];
   const exp = barBounds(cw, ch);
   check('승인 대기에 바가 뜬다(main이 창 크기로 정한 자리)', snap.visible && snap.bounds.x === exp.x && snap.bounds.y === exp.y && snap.bounds.width === exp.width, { snap: snap.bounds, exp });
-  check('바는 처음에 무장 전(흐림)이다', snap.mode === 'unarmed' && !snap.armed, snap);
+  check('카드는 처음에 무장 전(동작 버튼 흐림)이다', snap.mode === 'unarmed' && !snap.armed, snap);
+  check('카드 높이는 main이 H-01 줄 수로 정하고, 두 버튼은 앱 상수 간격으로 떨어져 있다', snap.bounds.height === SHELL.barHeight && snap.targets.approve.x - (snap.targets.stop.x + snap.targets.stop.width) === 32 && snap.stop === '중지' && JSON.stringify(snap.targets) === JSON.stringify(cardTargets(snap.bounds.width, snap.bounds.height, ACTION_TEXT)), snap);
   // 무장 전 클릭: 거부 + "잠시 뒤 다시 눌러 주세요", 600ms 재시작
   barEnterMove();
   barClick();
@@ -250,15 +265,51 @@ async function flow(): Promise<void> {
   check('바가 떠도 입력창은 제자리에 있다', Math.abs(inputAfter - inputBefore) <= 1, { inputBefore, inputAfter });
   observations.layout = { content: [cw, ch], bar: b, slot, composerGapAt1Line: (await js<number>(`document.querySelector('.sx-input').getBoundingClientRect().top`)) - (b.y + b.height) };
 
-  // 키보드·렌더러·중계 통로로는 승인되지 않는다
-  for (const keyCode of ['Enter', 'Space', 'Return']) {
-    barWc().sendInputEvent({ type: 'keyDown', keyCode });
-    barWc().sendInputEvent({ type: 'keyUp', keyCode });
+  // 키보드·렌더러·중계 통로로는 승인되지 않는다. 카드의 Enter·Space·Esc는 [중지]라(아래 C테크 건에서 본다) 여기서는 다른 키만 보낸다.
+  for (const k of [{ keyCode: 'Tab' }, { keyCode: 'Y', modifiers: ['alt'] as Array<'alt'> }, { keyCode: 'A' }, { keyCode: 'Right' }]) {
+    barWc().sendInputEvent({ type: 'keyDown', ...k });
+    barWc().sendInputEvent({ type: 'keyUp', ...k });
   }
   S.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
   S.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
   await sleep(100);
-  check('Enter·Space(바·입력창 모두)로는 승인되지 않는다', runStatus(id) === 'waiting' && S.bar.snapshot().visible);
+  check('키(카드의 Tab·Alt+Y·글자·화살표, 입력창 Enter)로는 승인되지 않는다', runStatus(id) === 'waiting' && S.bar.snapshot().visible);
+  // 렌더러 위조: 대화 화면이 카드 자리에 똑같은 [승인하고 발급]을 그리고 스스로 누르거나, 그 자리에 입력이 와도 근거가 아니다.
+  // (메인 창 webContents로 간 입력은 렌더러가 받는다. 카드는 맨 위 자식 뷰라 렌더러가 그 위에 그릴 수 없다: OS hit-test는 미시험.)
+  const bs = S.bar.snapshot();
+  const apScreen = { x: bs.bounds.x + mid().x, y: bs.bounds.y + mid().y };
+  const forgedClicks = await js<number>(`(() => {
+    const b = document.createElement('button');
+    b.textContent = '승인하고 발급';
+    b.style.cssText = 'position:fixed;z-index:2147483647;left:${apScreen.x - 60}px;top:${apScreen.y - 18}px;width:120px;height:36px';
+    let n = 0;
+    b.addEventListener('click', () => n++);
+    document.body.append(b);
+    b.click();
+    b.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, clientX: ${apScreen.x}, clientY: ${apScreen.y} }));
+    b.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, clientX: ${apScreen.x}, clientY: ${apScreen.y} }));
+    window.__forged = b;
+    return n;
+  })()`);
+  await sleep(700);
+  S.win.webContents.sendInputEvent({ type: 'mouseMove', x: apScreen.x, y: apScreen.y, movementX: 3, movementY: 0 });
+  await sleep(200);
+  S.win.webContents.sendInputEvent({ type: 'mouseDown', x: apScreen.x, y: apScreen.y, button: 'left', clickCount: 1 });
+  S.win.webContents.sendInputEvent({ type: 'mouseUp', x: apScreen.x, y: apScreen.y, button: 'left', clickCount: 1 });
+  await sleep(150);
+  await js(`window.__forged.remove()`);
+  check('렌더러가 카드 자리에 그린 가짜 [승인하고 발급]·그 자리로 간 메인 창 입력은 승인이 아니다(바 그대로, 발급 POST 없음)', forgedClicks === 1 && runStatus(id) === 'waiting' && S.bar.snapshot().visible && S.bar.runId === id && !S.runs.get(id)?.approvedPending && fx().fixture.posts() === 0, { forgedClicks, snap: S.bar.snapshot() });
+  // 카드 안이라도 [승인하고 발급] 영역 밖(값 줄·비가역 줄·[중지]와 동작 버튼 사이 간격)의 클릭은 승인이 아니다.
+  await waitArmed();
+  for (const p of [{ x: 40, y: 20 }, { x: 200, y: bs.targets.approve.y - 30 }, { x: bs.targets.approve.x - 16, y: mid().y }]) {
+    barWc().sendInputEvent({ type: 'mouseEnter', x: p.x, y: p.y });
+    barWc().sendInputEvent({ type: 'mouseMove', x: p.x, y: p.y, movementX: 2, movementY: 1 });
+    await sleep(200);
+    barWc().sendInputEvent({ type: 'mouseDown', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+    barWc().sendInputEvent({ type: 'mouseUp', x: p.x, y: p.y, button: 'left', clickCount: 1 });
+  }
+  await sleep(80);
+  check('카드 안 [승인하고 발급] 밖(값 줄·비가역 줄·버튼 사이 간격) 클릭은 승인도 중지도 아니다', runStatus(id) === 'waiting' && S.bar.snapshot().visible && fx().fixture.posts() === 0);
   const forged = await js<string[]>(`Promise.all(['bar.hide', 'run.approve', 'gate.answer', 'answerGate', 'approval.demo'].map((m) => window.sax.call(m, { id: ${JSON.stringify(id)} }).then(() => 'accepted', (e) => String(e.message).includes('unknown_method') ? 'unknown' : e.message)))`);
   check('렌더러에는 승인·바 숨김 명령이 없다', forged.every((x) => x === 'unknown') && runStatus(id) === 'waiting' && S.bar.snapshot().visible, forged);
   // 중계 통로(엔진 parentPort)로 승인 근거를 보내면 엔진이 거부하고 보안 이벤트를 남긴다. 게이트 포트만 받는다.
@@ -398,9 +449,9 @@ async function flow(): Promise<void> {
   const fd = new Map(gates.get(idDup)!.fields.map((x) => [x.fieldKey, x.value]));
   const dupLines = summarize(gates.get(idDup)!) as SummaryLine[];
   await waitArmed();
-  check('같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 "이미 발급됨"·"한 번 더 발급"', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[1]?.flag === '이미 발급됨(승인번호 있음)' && dupLines[1]?.tone === 'attention' && S.bar.snapshot().action === '그래도 한 번 더 발급', { fields: [...fd], action: S.bar.snapshot().action });
+  check('같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 카드는 주의 색 "이미 발급됨"·"한 번 더 발급"', fd.get('$dup.businessKey') === 'committed' && fd.get('$first.bizNo') === 'false' && dupLines[0]?.flag === '이미 발급됨(승인번호 있음)' && dupLines[0]?.tone === 'attention' && S.bar.snapshot().action === '그래도 한 번 더 발급', { fields: [...fd], action: S.bar.snapshot().action });
   const dupCard = await js<string>(`document.querySelector('[data-run="${idDup}"]').textContent`);
-  check('승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다', dupCard.includes('한 번 더 발급하면 같은 계산서가 2건이 돼요') && dupCard.includes('[그래도 한 번 더 발급]'), dupCard.slice(0, 300));
+  check('중복 경고는 main 카드에만: 접힌 대화 카드는 값·경고를 그리지 않는다', dupCard.includes('작성 완료') && !dupCard.includes('한 번 더 발급'), dupCard.slice(0, 300));
   await shot('17-dup-warning');
   await stopRun(idDup);
 
@@ -488,15 +539,21 @@ async function flow(): Promise<void> {
   await until('secret closed by run end', () => S.secretWindow() === null, 3000);
   await sleep(500);
   check('실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다', S.secretWindow() === null);
-  check('승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
+  check('승인 대기에서 카드 [중지](무장 전에도) → 카드가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
 
   // 처음 거래·처음 보내는 주소(C테크)
   const id3 = await toWaiting('C테크에 120만원 세금계산서 메일로');
   const lines = summarize(gates.get(id3)!) as SummaryLine[];
-  check('처음 거래·처음 보내는 주소 표시는 엔진 원장 판정(fields)에서 나온다', lines[0]?.flag === '처음 거래' && lines[2]?.flag === '처음 보내는 주소');
+  check('처음 거래·처음 보내는 주소 표시는 엔진 원장 판정(fields)에서 나온다', lines[1]?.flag === '처음 거래' && lines[4]?.flag === '처음 보내는 주소');
   await waitArmed();
   await shot('18-first-trade');
-  await stopRun(id3);
+  // 기본 포커스 [중지]: 카드에 키보드 포커스가 오면 Enter는 중지다(승인이 아니라 안전한 실패). 발급 POST·원장 행 없음.
+  const postsBeforeKey = fx().fixture.posts();
+  barWc().focus();
+  barWc().sendInputEvent({ type: 'keyDown', keyCode: 'Enter' });
+  barWc().sendInputEvent({ type: 'keyUp', keyCode: 'Enter' });
+  await until('stopped by Enter', () => runStatus(id3) === 'stopped' && !S.bar.snapshot().visible, 8000);
+  check('카드 포커스에서 Enter = [중지](승인 아님): 실행 중지, 발급 POST·원장 행 없음, 포커스는 대화 화면으로', runStatus(id3) === 'stopped' && fx().fixture.posts() === postsBeforeKey && (await inspect(id3)).ledger === null && !barWc().isFocused(), { status: runStatus(id3) });
 
   // 승인한 뒤 화면 값이 바뀌면 발급 버튼을 누르지 않는다(R-G7: 클릭 직전 readback 재계산).
   const idMut = await toWaiting('B상사에 20만원 세금계산서');
@@ -556,7 +613,7 @@ async function flow(): Promise<void> {
   const wideDone = S.bar.open(wide);
   await waitArmed();
   check('값이 넘치면 바를 띠로 넓혀 무장한다(무장 거부로 막히지 않음)', S.bar.snapshot().band && !S.bar.snapshot().refusal && S.bar.snapshot().bounds.x === SHELL.rail, S.bar.snapshot());
-  check('작성일자가 KST 오늘과 다르면 합계 줄 끝에 줄이지 않는 " · 작성일 2026-11-01"', kstToday(Date.now()) !== '2026-11-01' && (summarize(wide) as SummaryLine[])[1]!.pieces.at(-1)?.text === ' · 작성일 2026-11-01');
+  check('작성일자가 KST 오늘과 다르면 작성일자 줄에 "오늘 아님"', kstToday(Date.now()) !== '2026-11-01' && (summarize(wide) as SummaryLine[])[3]!.flag === '오늘 아님');
   check('열린 게이트가 있으면 새 게이트로 바꾸지 않는다', (await S.bar.open(gate('wide-2'))).decision === 'closed' && S.bar.snapshot().reqId === 'wide-1');
   await shot('24-wide-band');
   S.bar.close('e2e');
@@ -575,7 +632,8 @@ async function flow(): Promise<void> {
   // 반대로 커서가 (바를 덮은 알림 위 등에서) 자리를 옮겼다면 들어오자마자 누른 클릭은 머무름으로 거부한다.
   const cb = S.win.getContentBounds();
   const wb = barBounds(cb.width, cb.height, true);
-  const inside = (dx: number) => ({ x: cb.x + wb.x + Math.floor(wb.width / 2) + dx, y: cb.y + wb.y + Math.floor(wb.height / 2) });
+  const wt = center(cardTargets(wb.width, wb.height, ACTION_TEXT).approve);
+  const inside = (dx: number) => ({ x: cb.x + wb.x + wt.x + dx, y: cb.y + wb.y + wt.y });
   Object.assign(cursor, inside(0));
   const still = S.bar.open(gate('wide-3'));
   await waitArmed();
@@ -662,8 +720,8 @@ async function flow(): Promise<void> {
   check('판에는 "발급 여부 확인 필요" 줄', await until('board in doubt', boardHasDoubt, 3000));
   await click(`[data-run="${idDoubt}"] [data-act=check-list]`);
   check(
-    '[홈택스에서 직접 확인] → 패널에 찾을 건(작성일자·공급받는자·사업자번호·합계)과 복사, "없음" 확인은 승인 바 자리에서만',
-    await until('check list', () => js<boolean>(`(() => { const p = document.querySelector('[data-check-list="${idDoubt}"]'); return !!p && p.querySelectorAll('.sx-copy').length === 4 && p.textContent.includes('황토색 바로만'); })()`), 3000),
+    '[홈택스에서 직접 확인] → 패널에 찾을 건(작성일자·공급받는자·사업자번호·합계)과 복사, "없음" 확인은 황토색 확인 카드(main)에서만',
+    await until('check list', () => js<boolean>(`(() => { const p = document.querySelector('[data-check-list="${idDoubt}"]'); return !!p && p.querySelectorAll('.sx-copy').length === 4 && p.textContent.includes('황토색 확인 카드로만'); })()`), 3000),
   );
   await shot('28b-in-doubt');
 
@@ -686,14 +744,17 @@ async function flow(): Promise<void> {
   await openCheck();
   const aSnap = S.bar.snapshot();
   check(
-    '카드를 열면 승인 바 자리에 황토색 증언 바: 그 요청, 동작 글자 "홈택스 발급목록에 없음을 확인했어요", 무장 거부 없음',
-    aSnap.kind === 'attest' && aSnap.reqId === attestReq.attestReqId && aSnap.runId === idDoubt && aSnap.action === ATTEST_ACTION_TEXT && !aSnap.refusal,
+    '카드를 열면 승인 카드 자리에 같은 틀의 황토색 증언 카드: 그 요청, 동작 글자 "홈택스 발급목록에 없음을 확인했어요"·[닫기], 무장 거부 없음',
+    aSnap.kind === 'attest' && aSnap.reqId === attestReq.attestReqId && aSnap.runId === idDoubt && aSnap.action === ATTEST_ACTION_TEXT && aSnap.stop === ATTEST_STOP_TEXT && !aSnap.refusal,
     { aSnap },
   );
   await waitArmed();
   await shot('28c-attest-bar');
   await click('#panel .panel-x');
   check('카드(안내)를 닫으면 증언 바가 내려간다(증언이 안 될 뿐인 안전한 실패)', await until('attest bar hidden', () => !S.bar.snapshot().visible, 3000));
+  await openCheck();
+  cardStopClick();
+  check('증언 카드의 [닫기](main이 관찰한 클릭)는 증언 없이 내린다(요청은 그대로 남아 다시 열 수 있다)', (await until('attest closed', () => !S.bar.snapshot().visible, 3000)) && (await attestNote()) === 'ready' && !!S.runs.attestFor(idDoubt));
   await openCheck();
   const ledgerBefore = (await inspect(idDoubt)).ledger;
   await approveOnBar();

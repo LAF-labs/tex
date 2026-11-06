@@ -376,8 +376,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   }, 60_000);
   boardDayTimer.unref();
   // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
-  bar.on('shown', (e: { band: boolean }) => send({ type: 'bar', active: true, band: e.band }));
-  bar.on('layout', (e: { band: boolean }) => send({ type: 'bar-layout', band: e.band }));
+  bar.on('shown', (e: { band: boolean; height: number }) => send({ type: 'bar', active: true, band: e.band, height: e.height }));
+  bar.on('layout', (e: { band: boolean; height: number }) => send({ type: 'bar-layout', band: e.band, height: e.height }));
   bar.on('hidden', (reason: string) => send({ type: 'bar', active: false, reason }));
   runs.on('update', (run) => {
     send({ type: 'run', run });
@@ -470,6 +470,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         const r = await host.answerGate(o.approval);
         if (!r.ok) log.event('main.gate_answer_not_ok', { code: r.code ?? '', verdict: r.verdict });
         await runs.onAnswer(runId, r);
+      } else if (o.reason === 'stopped') {
+        // 카드의 [중지](main이 관찰한 클릭·키). 렌더러 [중지]와 같은 경로로 실행을 멈춘다(안전한 실패).
+        await runs.stop(runId).catch((e: Error) => log.event('main.card_stop_failed', { error: e.message.slice(0, 80) }));
       } else if (o.reason === 'load_failed') await runs.abortGate(runId, 'bar.load_failed');
       else if (o.reason === 'busy') log.event('main.gate_while_open');
     });
@@ -485,6 +488,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void bar.openAttest(req).then(async (o) => {
       if (o.decision !== 'attest') {
         if (o.reason === 'load_failed') log.event('main.attest_bar_load_failed');
+        // 증언 카드의 [닫기]: 카드를 다시 열 때(incident.open)까지 띄우지 않는다.
+        if (o.reason === 'dismissed' && incidentOpen === runId) incidentOpen = null;
         return;
       }
       if (!verifyLocalAttestation(key, o.attestation) || o.attestation.attestReqId !== req.attestReqId) return log.event('main.attest_self_check_failed');

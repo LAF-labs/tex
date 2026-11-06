@@ -8,16 +8,23 @@ import {
   ACTION_TEXT,
   ACTIVATION_GRACE_MS,
   actionText,
-  ATTEST_ACTION_TEXT,
+  ATTEST_TEXT,
   attestRefusalText,
+  attestRows,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
   BAR_CSP,
   BarGate,
   barCss,
   barPalette,
-  buildBarHtml,
+  buildCardHtml,
+  CARD_ROWS,
+  cardHeight,
+  cardTargets,
+  GATE_TEXT,
+  gateText,
   HandoffMark,
+  inBox,
   issueLocalApproval,
   issueLocalAttestation,
   kstToday,
@@ -25,10 +32,13 @@ import {
   REFUSAL_TEXT,
   refusalText,
   summarize,
+  STOP_KEYS,
   summarizeAttest,
   type AttestRequest,
   type BarMode,
   type BarPalette,
+  type CardTargets,
+  type CardText,
   type GateRequest,
   type LocalApproval,
   type LocalAttestation,
@@ -38,8 +48,10 @@ import { appHeaders, assertNoDebugSwitches, hardenSession, lastWebPrefs, webPref
 import type { Rect } from './shell-layout.ts';
 import { loadTokens } from './shell-tokens.ts';
 
-// ADR-021 결정 1: main 소유 승인 바. 메인 창 contentView의 자식 WebContentsView이고, 스크립트·preload가 없는 정적 페이지다.
-// 위치는 main이 창 크기(와 게이트 값의 폭)로 정하고, 승인은 main이 이 뷰의 before-mouse-event로 직접 관찰한 클릭으로만 인정한다.
+// ADR-021 결정 1·7: main 소유 승인 카드. 메인 창 contentView의 맨 위 자식 WebContentsView이고, 스크립트·preload가 없는 정적 페이지다.
+// 값 전체(엔진 게이트 요청 fields), 비가역 한 줄, 떨어진 두 버튼 [중지]·[승인하고 발급]을 그린다. 위치·높이는 main이 창 크기와
+// 서류 종류별 줄 수로 정하고, 승인은 main이 이 뷰의 before-mouse-event로 직접 관찰한 [승인하고 발급] 영역 클릭으로만 인정한다.
+// 이 파일과 shell-app의 '바'는 이 카드를 뜻한다(옛 이름).
 
 export const APPROVAL_SCHEME = 'sax-approval';
 const HOST = 'bar';
@@ -76,8 +88,8 @@ function barSession(): Session {
   return ses;
 }
 
-/** 바 자리 계산. wide면 레일 오른쪽부터 창 끝까지의 띠(값이 대화 열 폭에 안 들어갈 때). */
-export type Placer = (contentWidth: number, contentHeight: number, wide: boolean) => Rect & { band?: boolean };
+/** 카드 자리 계산. wide면 레일 오른쪽부터 창 끝까지의 띠(값이 대화 열 폭에 안 들어갈 때). height는 main이 줄 수로 정한 카드 높이. */
+export type Placer = (contentWidth: number, contentHeight: number, wide: boolean, height: number) => Rect & { band?: boolean };
 
 export type BarOutcome = { decision: 'approve'; approval: LocalApproval } | { decision: 'closed'; reason: string };
 export type AttestOutcome = { decision: 'attest'; attestation: LocalAttestation } | { decision: 'closed'; reason: string };
@@ -107,6 +119,10 @@ export interface BarSnapshot {
   refusal: string | null;
   /** 동작 글자(중복 경고가 있으면 "같은 건 기록을 확인했고 발급"). */
   action: string;
+  /** [중지] 자리 글자(증언 카드는 "닫기"). */
+  stop: string;
+  /** 두 판정 영역(카드 기준 DIP). */
+  targets: CardTargets;
 }
 
 export interface BarOptions {
@@ -131,7 +147,10 @@ export class ApprovalBar extends EventEmitter {
   private readonly cursorPoint: () => { x: number; y: number };
   private req: BarItem | null = null;
   private lines: SummaryLine[] | null = null;
-  private action = ACTION_TEXT;
+  private text: CardText = GATE_TEXT;
+  /** 줄 수로 정한 카드 높이(게이트마다 한 번). */
+  private height = cardHeight(CARD_ROWS['H-01']);
+  private targets: CardTargets = cardTargets(0, 0, ACTION_TEXT);
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
   private armTimer: NodeJS.Timeout | undefined;
@@ -182,14 +201,17 @@ export class ApprovalBar extends EventEmitter {
     wc.on('will-navigate', (e) => e.preventDefault());
     wc.on('will-redirect', (e) => e.preventDefault());
     wc.on('before-mouse-event', (_e, m) => this.onMouse(m));
-    // 키보드 승인은 없다(Enter·Space·조합키 모두). 바로 간 키보드 포커스는 대화 화면으로 돌려준다.
+    // 키보드 승인은 없다(Enter·Space·조합키 모두). 카드는 뜰 때 포커스를 가져가지 않는다(입력창 타이핑을 끊지 않음).
+    // 사용자가 카드를 눌러 포커스가 카드에 오면 기본 포커스는 [중지]다: Enter·Space·Esc는 중지(안전한 실패), 나머지 키는 버린다.
     wc.on('before-input-event', (e, i) => {
       e.preventDefault();
+      if (i.type === 'keyDown' && !i.isAutoRepeat && this.req && this.shown && STOP_KEYS.includes(i.key)) return this.stopByUser('key');
       // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
       if (this.req?.kind === 'gate' && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
     });
+    // 숨은 카드로 간 포커스는 대화 화면으로 돌려준다(보이는 동안만 카드가 키를 받는다).
     wc.on('focus', () => {
-      if (!win.isDestroyed()) win.webContents.focus();
+      if (!this.shown && !win.isDestroyed()) win.webContents.focus();
     });
     wc.on('did-finish-load', () => {
       wc.setZoomFactor(1);
@@ -216,7 +238,7 @@ export class ApprovalBar extends EventEmitter {
     };
     screen.on('display-metrics-changed', onDisplay);
     // 페이지 CSS가 prefers-color-scheme로 스스로 바뀐다. 뷰 배경색만 맞춘다.
-    const onTheme = () => this.paintBackground(this.mode);
+    const onTheme = () => this.paintBackground();
     nativeTheme.on('updated', onTheme);
     win.on('closed', () => {
       screen.off('display-metrics-changed', onDisplay);
@@ -252,7 +274,8 @@ export class ApprovalBar extends EventEmitter {
 
   snapshot(): BarSnapshot {
     const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
-    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.action };
+    const t = this.targets;
+    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.text.action, stop: this.text.stop, targets: { approve: { ...t.approve }, stop: { ...t.stop } } };
   }
 
   /**
@@ -272,7 +295,8 @@ export class ApprovalBar extends EventEmitter {
     }
     const summary = bad ? null : summarize(req, kstToday(Date.now()));
     this.lines = Array.isArray(summary) ? summary : [];
-    this.action = bad ? ACTION_TEXT : actionText(req);
+    this.text = gateText(bad ? ACTION_TEXT : actionText(req));
+    this.height = cardHeight(CARD_ROWS['H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
       this.req = { kind: 'gate', id: req.reqId, runId: req.runId, gate: req, done };
@@ -296,7 +320,8 @@ export class ApprovalBar extends EventEmitter {
     }
     const summary = bad ? null : summarizeAttest(req);
     this.lines = Array.isArray(summary) ? summary : [];
-    this.action = ATTEST_ACTION_TEXT;
+    this.text = ATTEST_TEXT;
+    this.height = cardHeight(attestRows(req.manualCheck));
     this.baseRefusal = bad ? attestRefusalText(REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : attestRefusalText(refusalText(summary!));
     return new Promise<AttestOutcome>((done) => {
       this.req = { kind: 'attest', id: req.attestReqId, runId: req.runId, attest: req, done };
@@ -338,7 +363,7 @@ export class ApprovalBar extends EventEmitter {
     this.view.setVisible(true);
     this.shown = true;
     if (!this.win.isFocused()) this.win.flashFrame(true); // 포커스는 가져오지 않는다.
-    this.emit('shown', { band: this.band, kind: req.kind });
+    this.emit('shown', { band: this.band, kind: req.kind, height: this.bounds.height });
     this.rearm('shown');
   }
 
@@ -359,8 +384,11 @@ export class ApprovalBar extends EventEmitter {
     clearTimeout(this.armTimer);
     clearTimeout(this.activationTimer);
     if (!this.win.isDestroyed()) {
+      // 카드가 키보드 포커스를 가졌으면 대화 화면으로 돌려준다.
+      const hadFocus = this.view.webContents.isFocused();
       this.view.setVisible(false);
       this.win.flashFrame(false);
+      if (hadFocus) this.win.webContents.focus();
       // 다음 게이트에 앞 게이트의 값이 남아 보이지 않게 빈 페이지로 바꾸고, 이 게이트의 페이지를 지운다.
       this.pageId = null;
       this.committed = null;
@@ -374,6 +402,14 @@ export class ApprovalBar extends EventEmitter {
     else item.done(o.decision === 'approve' ? { decision: 'closed', reason: 'kind_mismatch' } : o);
   }
 
+  /** [중지](또는 증언 카드의 [닫기]). main이 관찰한 카드 입력이다. 게이트는 shell-app이 실행 중지로 이어 간다. */
+  private stopByUser(via: 'click' | 'key'): void {
+    const req = this.req;
+    if (!req) return;
+    this.emit('judged', { event: `stop:${via}` });
+    this.finish({ decision: 'closed', reason: req.kind === 'gate' ? 'stopped' : 'dismissed' });
+  }
+
   private approve(): void {
     const req = this.req;
     if (!req) return;
@@ -382,10 +418,10 @@ export class ApprovalBar extends EventEmitter {
     if (!this.win.isDestroyed()) this.win.webContents.focus();
   }
 
-  /** 창 크기와 게이트 값만으로 자리를 정한다. 값이 대화 열 폭에 안 들어가면 띠로 넓힌다. */
+  /** 창 크기와 게이트 값만으로 자리를 정한다. 값·버튼이 대화 열 폭에 안 들어가면 띠로 넓힌다. */
   private decide(w: number, h: number): Rect & { band?: boolean } {
-    const b = this.place(w, h, false);
-    return this.lines?.length && overflowLine(this.lines, b.width) ? this.place(w, h, true) : b;
+    const b = this.place(w, h, false, this.height);
+    return this.req && overflowLine(this.lines ?? [], b.width, this.text) ? this.place(w, h, true, this.height) : b;
   }
 
   private relayout(rearm = true): void {
@@ -395,11 +431,12 @@ export class ApprovalBar extends EventEmitter {
     const changed = b.x !== this.bounds.x || b.y !== this.bounds.y || b.width !== this.bounds.width || b.height !== this.bounds.height;
     this.bounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     this.view.setBounds(this.bounds);
-    this.gate.setSize(b.width, b.height);
+    this.targets = cardTargets(b.width, b.height, this.text.action);
+    this.gate.setTargets(this.targets);
     const band = !!b.band;
     if (band !== this.band) {
       this.band = band;
-      if (this.shown) this.emit('layout', { band });
+      if (this.shown) this.emit('layout', { band, height: b.height });
     }
     if (this.req) this.updateRefusal();
     if (changed && rearm) this.rearm('resize');
@@ -423,19 +460,17 @@ export class ApprovalBar extends EventEmitter {
     }
   }
 
-  /** OS 커서가 지금 바의 화면 영역 안에 있는가(무장 사건 때 "멈춘 커서 아래 뜸"을 판단). */
+  /** OS 커서가 지금 [승인하고 발급] 영역의 화면 자리 안에 있는가(무장 사건 때 "멈춘 커서 아래 뜸"을 판단). */
   private cursorInside(): boolean {
     if (this.win.isDestroyed()) return false;
     const p = this.cursorPoint();
     const cb = this.win.getContentBounds();
-    const x = p.x - cb.x - this.bounds.x;
-    const y = p.y - cb.y - this.bounds.y;
-    return x >= 0 && y >= 0 && x < this.bounds.width && y < this.bounds.height;
+    return inBox(this.targets.approve, p.x - cb.x - this.bounds.x, p.y - cb.y - this.bounds.y);
   }
 
   private updateRefusal(): void {
     if (!this.lines) return;
-    const over = this.baseRefusal ? null : overflowLine(this.lines, this.bounds.width);
+    const over = this.baseRefusal ? null : overflowLine(this.lines, this.bounds.width, this.text);
     this.refusal = this.baseRefusal ?? (over ? REFUSAL_TEXT.overflow(over) : null);
   }
 
@@ -492,8 +527,11 @@ export class ApprovalBar extends EventEmitter {
   private onMouse(m: Electron.MouseInputEvent): void {
     const now = this.now();
     const ev = { type: m.type, x: m.x, y: m.y, button: m.button, movementX: m.movementX, movementY: m.movementY };
-    // 들어옴·나감·움직임은 바가 숨었거나 무장을 거부한 동안에도 기록한다(추적 상태가 게이트를 넘어 남지 않게).
-    if (!this.req || !this.shown || this.refusal) return this.gate.track(ev, now);
+    // 들어옴·나감·움직임은 카드가 숨었거나 무장을 거부한 동안에도 기록한다(추적 상태가 게이트를 넘어 남지 않게).
+    if (!this.req || !this.shown) return this.gate.track(ev, now);
+    // [중지]는 무장을 기다리지 않고, 무장 거부 중에도 받는다(결정 7 원칙 4).
+    if (this.gate.stop(ev)) return this.stopByUser('click');
+    if (this.refusal) return this.gate.track(ev, now);
     // 무장은 "무장됨 페이지가 화면에 올라옴"까지 요구한다. 아직 앞 페이지가 보이면 무장 지연을 다시 센다.
     if (m.type === 'mouseDown' && m.button === 'left' && this.gate.armed(now) && !(this.committedFor(this.req) && this.committed?.mode === 'armed')) {
       this.gate.deferArm(now);
@@ -515,15 +553,14 @@ export class ApprovalBar extends EventEmitter {
     }
   }
 
-  private paintBackground(mode: BarMode): void {
+  /** 카드 바탕은 모드와 상관없이 surface다(동작 버튼만 색이 바뀐다). 페이지를 바꾸는 사이 빈 뷰가 다른 색으로 번쩍이지 않게 맞춘다. */
+  private paintBackground(): void {
     if (this.win.isDestroyed()) return;
-    const t = barColors().palette[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'];
-    const attn = !!this.lines?.some((l) => l.tone === 'attention');
-    this.view.setBackgroundColor(mode === 'armed' ? (attn ? t.attention : t.accent) : mode === 'unarmed' ? (attn ? t['attention-soft'] : t['accent-soft']) : t.surface);
+    this.view.setBackgroundColor(barColors().palette[nativeTheme.shouldUseDarkColors ? 'dark' : 'light'].surface);
   }
 
   /**
-   * 정적 페이지 세 가지(무장 전·무장됨·무장됨 + 문구)와 무장 거부를 바꿔 불러온다. 애니메이션·insertCSS 없음.
+   * 정적 페이지 세 가지(무장 전·무장됨·무장됨 + 문구)와 무장 거부([중지]만)를 바꿔 불러온다. 애니메이션·insertCSS 없음.
    * 페이지가 화면에 올라오면(loadURL 완료) committed가 그 페이지를 가리킨다.
    */
   private render(mode: BarMode, msg: string | null): Promise<void> {
@@ -535,9 +572,9 @@ export class ApprovalBar extends EventEmitter {
     if (this.pageId && effective === this.mode && text === this.msg) return this.lastRender;
     this.mode = effective;
     this.msg = text;
-    this.paintBackground(effective);
+    this.paintBackground();
     const id = randomUUID();
-    pages.set(id, buildBarHtml(this.lines, effective, text ?? undefined, this.action));
+    pages.set(id, buildCardHtml(this.lines, effective, text ?? undefined, this.text));
     this.myPages.add(id);
     const prev = this.pageId;
     this.pageId = id;

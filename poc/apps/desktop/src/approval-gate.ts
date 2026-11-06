@@ -93,43 +93,54 @@ export function kstToday(nowMs: number): string {
   return new Date(nowMs + 9 * 3_600_000).toISOString().slice(0, 10);
 }
 
+const AMOUNT = /^(0|[1-9]\d{0,14})$/;
+
+/** 서류 종류별 카드 줄 수(앱 내장 표, ADR-021 결정 7). 카드 높이는 이 줄 수로만 정한다(렌더러 보고 없음). */
+export const CARD_ROWS = { 'H-01': 5 } as const;
+
 /**
- * H-01 요약 줄: 공급받는자(상호 · 사업자번호) / 합계 · 세액 / 받는 이메일. 해시한 fields에서만 고른다.
- * 작성일자가 KST 오늘과 다르면 합계 줄 끝에 줄이지 않는 조각 " · 작성일 YYYY-MM-DD"를 붙인다(같으면 화면은 그대로).
+ * H-01 승인 카드 줄(ADR-021 결정 7): 합계(· 공급가액 · 세액) / 공급받는자(상호 · 사업자번호) / 품목 / 작성일자 / 받는 이메일.
+ * 값은 해시한 게이트 요청 fields에서만 고른다(엔진 readback, V-03h). 줄 수는 CARD_ROWS['H-01']로 늘 같다.
+ * 작성일자가 KST 오늘과 다르면 "오늘 아님" 표시를 붙인다. 중복 경고는 합계 줄 표시 칸에 가장 위험한 것 하나를 둔다.
  */
 export function summarize(req: Pick<GateRequest, 'fields'>, todayKst: string = kstToday(Date.now())): SummaryLine[] | ArmRefusal {
   const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
   // 같은 키가 둘이면 Map은 마지막 값만 보이고 해시는 둘 다 덮는다. 보이는 값과 해시한 값이 갈리지 않게 거부한다.
   if (f.size !== req.fields.length) return { reason: 'duplicate' };
   const need = [
+    ['totalAmount', '합계'],
+    ['supplyAmount', '합계'],
+    ['taxAmount', '합계'],
     ['counterpartName', '공급받는자'],
     ['counterpartBizNo', '공급받는자'],
-    ['totalAmount', '합계'],
-    ['taxAmount', '합계'],
+    ['itemName', '품목'],
+    ['issueDate', '작성일자'],
   ] as const;
   for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
   for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
+  for (const k of ['totalAmount', 'supplyAmount', 'taxAmount'] as const) if (!AMOUNT.test(f.get(k)!)) return { reason: 'unsafe', label: '합계' };
   if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
-  if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!) || !/^(0|[1-9]\d{0,14})$/.test(f.get('taxAmount')!)) return { reason: 'unsafe', label: '합계' };
-  const issueDate = f.get('issueDate');
-  if (issueDate !== undefined && !/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return { reason: 'unsafe', label: '합계' };
+  const issueDate = f.get('issueDate')!;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(issueDate)) return { reason: 'unsafe', label: '작성일자' };
+  const count = f.get('itemCount');
+  if (count !== undefined && !/^[1-9]\d{0,3}$/.test(count)) return { reason: 'unsafe', label: '품목' };
   const dup = dupState(f);
-  const total: Piece[] = [{ text: won(f.get('totalAmount')!) }, { text: ` · 세액 ${won(f.get('taxAmount')!)}` }];
-  if (issueDate && issueDate !== todayKst) total.push({ text: ` · 작성일 ${issueDate}` });
-  const head: SummaryLine[] = [
+  const rows: SummaryLine[] = [
+    { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }, { text: ` · 공급가액 ${won(f.get('supplyAmount')!)} · 세액 ${won(f.get('taxAmount')!)}` }], flag: dup?.flag, tone: dup?.tone },
     { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], flag: f.get('$first.bizNo') === 'true' ? '처음 거래' : undefined },
-    { label: '합계', pieces: total, flag: dup?.flag, tone: dup?.tone },
+    { label: '품목', pieces: [{ text: f.get('itemName')!, shrink: true }, ...(count && count !== '1' ? [{ text: ` · ${count}개 품목` }] : [])] },
+    { label: '작성일자', pieces: [{ text: issueDate }], flag: issueDate !== todayKst ? '오늘 아님' : undefined },
   ];
   // 받는 이메일이 비면 홈택스가 메일을 보내지 않는다(H-01 s15 ifAbsent: clear). 빈 값을 감추지 않고 "없음"으로 보인다.
   const email = f.get('counterpartEmail') ?? '';
-  if (!email) return [...head, { label: '받는 이메일', pieces: [{ text: '없음 · 메일을 보내지 않아요' }] }];
+  if (!email) return [...rows, { label: '받는 이메일', pieces: [{ text: '없음 · 메일을 보내지 않아요' }] }];
   if (UNSAFE_CHARS.test(email)) return { reason: 'unsafe', label: '받는 이메일' };
   const at = email.lastIndexOf('@');
   if (at <= 0) return { reason: 'unsafe', label: '받는 이메일' };
   // 국제화 도메인은 punycode로 보인다.
   const domain = domainToASCII(email.slice(at + 1));
   if (!domain) return { reason: 'unsafe', label: '받는 이메일' };
-  return [...head, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
+  return [...rows, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
 }
 
 // ---- InDoubt 증언 바(ADR-021 결정 5) ----
@@ -142,9 +153,12 @@ const PORTAL_NAME: Record<string, string> = { hometax: '홈택스', gov24: '정�
 /** 정지 하향으로 조회 없이 받는 증언(manualCheck)에 더하는 문구(ADR-021 개정 메모). */
 export const attestManualText = (portal: string) => `${PORTAL_NAME[portal] ?? '홈택스'} 발급목록을 직접 확인한 뒤 답해 주세요`;
 
+/** 증언 카드 줄 수: 값 2줄 + E-13 고정 줄(정지 하향이면 직접 확인 줄 하나 더). */
+export const attestRows = (manualCheck?: boolean) => (manualCheck === true ? 4 : 3);
+
 /**
- * 증언 바 요약 2줄: 공급받는자(상호 · 사업자번호) / 합계. 엔진이 보낸 ATTEST_SUMMARY_KEYS 3칸에서만 고른다(그 해시가 summaryHash).
- * 두 줄 모두 주의 색이고, 그 아래 E-13 고정 줄(정지 하향이면 직접 확인 줄도)을 둔다.
+ * 증언 카드 줄: 공급받는자(상호 · 사업자번호) / 합계. 엔진이 보낸 ATTEST_SUMMARY_KEYS 3칸에서만 고른다(그 해시가 summaryHash).
+ * 두 줄 모두 주의 색이고, 그 아래 E-13 고정 줄(정지 하향이면 직접 확인 줄도)을 둔다. 줄 수는 attestRows와 같다.
  */
 export function summarizeAttest(req: Pick<AttestRequest, 'fields' | 'manualCheck' | 'portal'>): SummaryLine[] | ArmRefusal {
   const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
@@ -157,7 +171,7 @@ export function summarizeAttest(req: Pick<AttestRequest, 'fields' | 'manualCheck
   for (const [k, label] of need) if (!f.get(k)) return { reason: 'missing', label };
   for (const [k, label] of need) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
   if (!/^\d{10}$/.test(f.get('counterpartBizNo')!)) return { reason: 'unsafe', label: '공급받는자' };
-  if (!/^(0|[1-9]\d{0,14})$/.test(f.get('totalAmount')!)) return { reason: 'unsafe', label: '합계' };
+  if (!AMOUNT.test(f.get('totalAmount')!)) return { reason: 'unsafe', label: '합계' };
   const lines: SummaryLine[] = [
     { label: '공급받는자', pieces: [{ text: f.get('counterpartName')!, shrink: true }, { text: ` · ${bizNo(f.get('counterpartBizNo')!)}` }], tone: 'attention' },
     { label: '합계', pieces: [{ text: won(f.get('totalAmount')!) }], tone: 'attention' },
@@ -167,35 +181,83 @@ export function summarizeAttest(req: Pick<AttestRequest, 'fields' | 'manualCheck
   return lines;
 }
 
-// ---- 배치·폭 어림 ----
+// ---- 카드 치수·폭 어림(ADR-021 결정 7) ----
 
-/** 바 안의 고정 치수(DIP). 바 높이는 요약 줄 수로 정한다. */
-export const BAR = {
-  height: 90,
+/**
+ * 승인 카드 안의 고정 치수(DIP). 높이는 줄 수로만(cardHeight), 버튼 자리는 이 상수와 카드 폭·동작 글자로만(cardTargets) 정한다.
+ * cardCss가 같은 상수로 그리고, main은 이 값으로 클릭을 판정한다. 렌더러가 보고하는 값은 쓰지 않는다.
+ */
+export const CARD = {
   padX: 16,
+  padY: 14,
   label: 76,
-  action: 132,
   gap: 12,
   flagPad: 16,
   /** 14px 글자 한 칸 폭의 보수적 어림. 한글 등 동아시아 문자는 두 칸. */
   unit: 8.5,
+  row: 22,
+  /** 비가역 한 줄(13px) 위 간격·높이 */
+  irrGap: 8,
+  irr: 20,
+  /** 문구 줄(다시 눌러 주세요·무장 거부, 12px) */
+  msg: 18,
+  btnGap: 8,
+  btn: 36,
+  /** [중지] 폭과 두 버튼 사이 앱 상수 간격(결정 7 원칙 4) */
+  stop: 88,
+  apart: 32,
+  /** 동작 버튼 글자(15px 굵게) 한 칸 어림과 좌우 안쪽 여백 */
+  btnUnit: 9.5,
+  btnPadX: 20,
 } as const;
 
-const wide = /[\u1100-\u115f\u2e80-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]/u;
+const wide = /[ᄀ-ᅟ⺀-꓏가-힣豈-﫿︰-﹏＀-｠￠-￦]/u;
 export const cells = (s: string) => [...s].reduce((n, c) => n + (wide.test(c) ? 2 : 1), 0);
 
-/** 줄이지 않는 조각이 바 폭 안에 들어가는지 어림한다. 넘친 줄의 라벨, 다 들어가면 null. */
-export function overflowLine(lines: SummaryLine[], barWidth: number): string | null {
-  // barCss 배치와 같은 식: 좌우 여백, [요약 줄 | 간격 | 동작 칸], 요약 줄 안 [라벨 | 간격 | 값 | 간격 | 표시]. 간격은 셋이다.
-  const valueWidth = barWidth - BAR.padX * 2 - BAR.action - BAR.gap - BAR.label - BAR.gap * 2;
+/** 줄 수로 정한 카드 높이: 위 여백 · 값 줄 · 비가역 한 줄 · 문구 줄 · 버튼 줄 · 아래 여백. */
+export const cardHeight = (rows: number) => CARD.padY * 2 + rows * CARD.row + CARD.irrGap + CARD.irr + CARD.msg + CARD.btnGap + CARD.btn;
+
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+/** 카드 기준 DIP의 두 판정 영역. */
+export interface CardTargets {
+  approve: Box;
+  stop: Box;
+}
+
+export const approveWidth = (action: string) => Math.ceil(cells(action) * CARD.btnUnit) + CARD.btnPadX * 2;
+
+/** 두 버튼 자리. 오른쪽 아래에 [중지] · 앱 상수 간격 · [동작] 순서다. */
+export function cardTargets(width: number, height: number, action: string): CardTargets {
+  const y = height - CARD.padY - CARD.btn;
+  const aw = approveWidth(action);
+  const ax = width - CARD.padX - aw;
+  return { approve: { x: ax, y, width: aw, height: CARD.btn }, stop: { x: ax - CARD.apart - CARD.stop, y, width: CARD.stop, height: CARD.btn } };
+}
+
+/** 점이 영역 안인가(오른쪽·아래 경계는 밖). */
+export const inBox = (b: Box, x: number, y: number) => x >= b.x && y >= b.y && x < b.x + b.width && y < b.y + b.height;
+
+/**
+ * 줄이지 않는 조각·비가역 한 줄·버튼 줄이 카드 폭 안에 들어가는지 어림한다. 넘친 줄의 라벨('안내'·'버튼' 포함), 다 들어가면 null.
+ */
+export function overflowLine(lines: SummaryLine[], cardWidth: number, text: CardText = GATE_TEXT): string | null {
+  // cardCss 배치와 같은 식: 좌우 여백, 줄 안 [라벨 | 간격 | 값 | 간격 | 표시]. 간격은 둘이다.
+  const valueWidth = cardWidth - CARD.padX * 2 - CARD.label - CARD.gap * 2;
   for (const l of lines) {
-    const keep = l.pieces.filter((p) => !p.shrink).reduce((n, p) => n + cells(p.text), 0) * BAR.unit;
-    const flag = l.flag ? cells(l.flag) * BAR.unit * (12 / 14) + BAR.flagPad : 0;
+    const keep = l.pieces.filter((p) => !p.shrink).reduce((n, p) => n + cells(p.text), 0) * CARD.unit;
+    const flag = l.flag ? cells(l.flag) * CARD.unit * (12 / 14) + CARD.flagPad : 0;
     // 줄일 수 있는 조각도 "…" 한 글자 자리는 남긴다.
-    const shrinkMin = l.pieces.some((p) => p.shrink) ? 2 * BAR.unit : 0;
+    const shrinkMin = l.pieces.some((p) => p.shrink) ? 2 * CARD.unit : 0;
     // 고정 안내 줄은 라벨이 비어 있다. 넘쳤다는 표시가 빈 문자열(거짓)이 되지 않게 '안내'로 돌려준다.
     if (keep + flag + shrinkMin > valueWidth) return l.label || '안내';
   }
+  if (cells(text.irreversible) * CARD.unit * (13 / 14) > cardWidth - CARD.padX * 2) return '안내';
+  if (CARD.padX * 2 + CARD.stop + CARD.apart + approveWidth(text.action) > cardWidth) return '버튼';
   return null;
 }
 
@@ -205,7 +267,7 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 export const BAR_CSP = "default-src 'none'; style-src 'self'";
 
-/** 무장 전(흐림)·무장됨·무장 거부. 문구(msg)는 요약 값·동작 글자가 아니라서 다시 무장하지 않는다. */
+/** 무장 전(동작 버튼 흐림)·무장됨·무장 거부(동작 버튼 없음, [중지]는 있음). 문구(msg)는 값·동작 글자가 아니라서 다시 무장하지 않는다. */
 export type BarMode = 'unarmed' | 'armed' | 'refused';
 export const BAR_MESSAGES = {
   arming: '잠시 뒤 다시 눌러 주세요',
@@ -215,21 +277,43 @@ export const BAR_MESSAGES = {
 export const ACTION_TEXT = '승인하고 발급';
 export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
 export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
+/** 비가역 한 줄(앱 고정 문구, 패키지 문자열 아님). */
+export const IRREVERSIBLE_TEXT = '승인하면 바로 발급돼요. 발급한 세금계산서는 되돌릴 수 없어요.';
+export const ATTEST_IRREVERSIBLE_TEXT = '확인하면 이 건을 발급 안 됨으로 기록해요. 되돌릴 수 없어요.';
+export const STOP_TEXT = '중지';
+export const ATTEST_STOP_TEXT = '닫기';
+/** 카드 CSS가 버튼 폭을 미리 가진 동작 글자 전부(페이지에 style 속성을 쓰지 않는다: CSP style-src 'self'). */
+export const CARD_ACTIONS = [ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED, ATTEST_ACTION_TEXT] as const;
 
-/** 스크립트 없는 정적 페이지. 값은 이스케이프해 텍스트로만 넣는다. 바 전체가 동작 하나라 안에 작은 버튼이 없다. */
-export function buildBarHtml(lines: SummaryLine[], mode: BarMode, msg?: string, action = ACTION_TEXT): string {
+/** 카드의 앱 고정 글자: 동작 버튼, 비가역 한 줄, [중지] 자리. */
+export interface CardText {
+  action: string;
+  irreversible: string;
+  stop: string;
+}
+export const GATE_TEXT: CardText = { action: ACTION_TEXT, irreversible: IRREVERSIBLE_TEXT, stop: STOP_TEXT };
+export const ATTEST_TEXT: CardText = { action: ATTEST_ACTION_TEXT, irreversible: ATTEST_IRREVERSIBLE_TEXT, stop: ATTEST_STOP_TEXT };
+export const gateText = (action: string): CardText => ({ ...GATE_TEXT, action });
+
+/**
+ * 스크립트 없는 정적 페이지. 값은 이스케이프해 텍스트로만 넣는다. 버튼 둘은 그림일 뿐이고(포커스·클릭 처리 없음)
+ * 판정은 main이 cardTargets 영역으로 한다. [중지]는 기본 포커스 모양(테두리 고리)으로 늘 그린다.
+ */
+export function buildCardHtml(lines: SummaryLine[], mode: BarMode, msg?: string, text: CardText = GATE_TEXT): string {
+  const a = (CARD_ACTIONS as readonly string[]).indexOf(text.action);
+  if (a < 0) throw new Error('card.action_unknown');
   const body = lines
     .map((l) => {
       const v = l.pieces.map((p) => `<span class="${p.shrink ? 'sh' : 'kp'}">${esc(p.text)}</span>`).join('');
       return `<div class="ln${l.note ? ' nt' : ''}"><span class="lb">${esc(l.label)}</span><span class="v">${v}</span>${l.flag ? `<span class="fl">${esc(l.flag)}</span>` : '<span></span>'}</div>`;
     })
     .join('');
-  const act = mode === 'refused' ? '' : `<div class="act">${esc(action)}</div>`;
+  const act = mode === 'refused' ? '' : `<div class="btn ap" role="button">${esc(text.action)}</div>`;
   const attn = lines.some((l) => l.tone === 'attention') ? ' attn' : '';
   return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="${BAR_CSP}">
 <link rel="stylesheet" href="bar.css"></head>
-<body class="${mode}${attn}"><div class="lines">${body}</div><div class="side">${act}${msg ? `<div class="msg">${esc(msg)}</div>` : ''}</div></body></html>`;
+<body class="${mode}${attn} a${a}"><div class="lines">${body}</div><div class="irr">${esc(text.irreversible)}</div><div class="msg">${msg ? esc(msg) : ''}</div><div class="btn st" role="button">${esc(text.stop)}</div>${act}</body></html>`;
 }
 
 // ---- 색(앱 내장 팔레트, ADR-028 결정 7) ----
@@ -264,7 +348,7 @@ export function contrast(a: string, b: string): number {
   return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05);
 }
 
-/** 외부 토큰을 검사해 바 팔레트로. 하나라도 형식(#RRGGBB)·대비(4.5:1)에 실패하면 내장 팔레트 전체와 이유. */
+/** 외부 토큰을 검사해 카드 팔레트로. 하나라도 형식(#RRGGBB)·대비(4.5:1)에 실패하면 내장 팔레트 전체와 이유. */
 export function barPalette(t: { light: Record<string, string>; dark: Record<string, string> }): { palette: BarPalette; rejected: string | null } {
   const out = { light: {}, dark: {} } as BarPalette;
   for (const theme of ['light', 'dark'] as const) {
@@ -279,35 +363,45 @@ export function barPalette(t: { light: Record<string, string>; dark: Record<stri
 }
 
 /**
- * 디자인 시스템 ApprovalBar 명세(v1.2)를 옮긴 앱 내장 CSS. 직각, 그림자 없음, 시스템 서체, 애니메이션 없음.
- * 치수(BAR)는 overflowLine의 폭 어림과 같은 식이라 바꾸지 않는다. v1.2는 색·굵기·표시 칩 모서리만 다듬었다:
- * 라벨 12px 500(무장 상태에서는 on-accent 78%로 값보다 한 단 뒤), 표시 칩 모서리 6px(radius-sm), 동작 글자 자간 -0.01em.
- * 색은 barPalette를 통과한 값만 받는다. 중복 가능성(attn)은 주의 색: 무장됨 attention 바탕, 무장 전 attention-soft 바탕.
+ * 승인 카드 앱 내장 CSS. 직각에 가까운 모서리, 그림자 없음, 시스템 서체, 애니메이션 없음.
+ * 치수는 CARD 상수 그대로라 cardHeight·cardTargets·overflowLine과 같은 식이다. 버튼 폭은 동작 글자마다(a0~a3) 미리 둔다.
+ * 색은 barPalette를 통과한 값만 받는다. 바탕은 surface, 동작 버튼은 무장됨 accent·무장 전 accent-soft,
+ * 중복 가능성·증언(attn)은 주의 색(attention·attention-soft)이고 카드 테두리도 주의 색이다.
  */
 export function barCss(t: BarPalette): string {
   const theme = (c: BarColors) => `
-body.armed{background:${c.accent};color:${c['on-accent']}}
-body.armed .lb{color:${c['on-accent']};opacity:.78}
-body.unarmed{background:${c['accent-soft']};color:${c.accent}}
-body.unarmed .lb{color:${c['ink-3']}}
-body.armed.attn{background:${c.attention};color:${c['on-accent']}}
-body.unarmed.attn{background:${c['attention-soft']};color:${c.attention}}
-body.refused{background:${c.surface};color:${c.ink};box-shadow:inset 0 0 0 1px ${c['line-strong']}}
-body.refused .lb{color:${c['ink-3']}}`;
+body{background:${c.surface};color:${c.ink};box-shadow:inset 0 0 0 1px ${c['line-strong']}}
+body.attn{box-shadow:inset 0 0 0 2px ${c.attention}}
+.lb{color:${c['ink-3']}}
+.fl{color:${c.accent};background:${c['accent-soft']}}
+body.attn .fl{color:${c.attention};background:${c['attention-soft']}}
+.st{background:${c.surface};color:${c.ink};box-shadow:inset 0 0 0 1px ${c['line-strong']};outline:2px solid ${c.accent};outline-offset:2px}
+body.armed .ap{background:${c.accent};color:${c['on-accent']}}
+body.unarmed .ap{background:${c['accent-soft']};color:${c.accent}}
+body.armed.attn .ap{background:${c.attention};color:${c['on-accent']}}
+body.unarmed.attn .ap{background:${c['attention-soft']};color:${c.attention}}`;
+  const widths = CARD_ACTIONS.map((a, i) => {
+    const w = approveWidth(a);
+    return `body.a${i} .ap{width:${w}px}body.a${i} .st{right:${CARD.padX + w + CARD.apart}px}`;
+  }).join('\n');
+  const bottomMsg = CARD.padY + CARD.btn + CARD.btnGap;
   return `html,body{margin:0;height:100%;overflow:hidden}
-body{box-sizing:border-box;display:grid;grid-template-columns:minmax(0,1fr) ${BAR.action}px;column-gap:${BAR.gap}px;align-items:center;padding:0 ${BAR.padX}px;
-font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size:14px;line-height:22px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
-.lines{min-width:0}
-.ln{display:grid;grid-template-columns:${BAR.label}px minmax(0,1fr) auto;column-gap:${BAR.gap}px;align-items:center;white-space:nowrap}
-.lb{font-size:12px;line-height:22px;font-weight:500}
+body{position:relative;box-sizing:border-box;padding:${CARD.padY}px ${CARD.padX}px;
+font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size:14px;line-height:${CARD.row}px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
+.ln{display:grid;grid-template-columns:${CARD.label}px minmax(0,1fr) auto;column-gap:${CARD.gap}px;align-items:center;white-space:nowrap;height:${CARD.row}px}
+.lb{font-size:12px;line-height:${CARD.row}px;font-weight:500}
 .v{display:flex;min-width:0}
 .sh{overflow:hidden;text-overflow:ellipsis;min-width:2ch}
 .kp{flex:none;white-space:pre}
-.fl{font-size:12px;line-height:18px;font-weight:500;padding:0 6px;border:1px solid currentColor;border-radius:6px}
-.side{text-align:right}
-.act{font-size:18px;line-height:26px;font-weight:700;letter-spacing:-0.01em;word-break:keep-all}
-.msg{font-size:12px;line-height:16px;margin-top:2px;opacity:.9}
-.nt{font-size:12px;line-height:18px}
+.fl{font-size:12px;line-height:18px;font-weight:500;padding:0 6px;border-radius:6px}
+.nt{font-size:12px}
+.irr,.msg{position:absolute;left:${CARD.padX}px;right:${CARD.padX}px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.irr{bottom:${bottomMsg + CARD.msg}px;height:${CARD.irr}px;font-size:13px;line-height:${CARD.irr}px;font-weight:600}
+.msg{bottom:${bottomMsg}px;height:${CARD.msg}px;font-size:12px;line-height:${CARD.msg}px}
+.btn{position:absolute;bottom:${CARD.padY}px;height:${CARD.btn}px;box-sizing:border-box;display:flex;align-items:center;justify-content:center;border-radius:6px;font-size:15px;font-weight:700;letter-spacing:-0.01em;white-space:nowrap;overflow:hidden}
+.st{width:${CARD.stop}px}
+.ap{right:${CARD.padX}px}
+${widths}
 ${theme(t.light)}
 @media (prefers-color-scheme: dark){${theme(t.dark)}}`;
 }
@@ -339,15 +433,20 @@ export const KEYBOARD_APPROVAL = false;
 
 export type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof typeof BAR_MESSAGES } | null;
 
+/** 카드가 포커스를 가졌을 때 [중지]로 받는 키(기본 포커스가 [중지]다, ADR-021 결정 7 원칙 3). 승인 키는 없다. */
+export const STOP_KEYS: readonly string[] = ['Enter', ' ', 'Escape'];
+
 /**
- * 승인 바 입력 판정. main이 바 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 바 기준 DIP, 시각은 단조 시계).
+ * 승인 카드 입력 판정. main이 카드 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 카드 기준 DIP, 시각은 단조 시계).
+ * 아래의 "바 안"은 [승인하고 발급] 영역(setTargets의 approve) 안이다. 카드의 다른 자리는 바깥으로 본다(결정 7 원칙 4).
+ * [중지] 영역은 stop()이 따로 본다: 무장을 기다리지 않고 down → up이 같은 영역 안이면 중지다.
  * - 무장 지연: 무장 사건(rearm) 뒤 ARM_DELAY_MS 동안 입력 무시. 그 사이 mouseDown이면 지연을 다시 시작한다.
  * - 머무름: 마지막 mouseLeave·무장 사건 뒤 바 안에서 처음 실제로 움직인 때부터 DWELL_MS가 지났거나,
  *   무장 사건 때부터 커서가 바 안에 멈춰 있었을 때만 mouseDown을 인정한다. "무장 사건 때 바 안"은 main이
  *   OS 커서 위치로 정해 rearm에 넘긴다(앞 게이트에서 남은 추적 상태를 믿지 않는다). 그 예외는 mouseDown 때
  *   OS 커서가 무장 사건 때와 같은 자리일 때만 쓴다(cursorUnmoved). 바를 덮은 알림 위에서 커서가 움직였다면
  *   바는 나감을 받지 못하므로, 위치 비교로 "멈춰 있었음"을 확인한다.
- * - 승인 = 바 안에서 왼쪽 mouseDown → mouseUp.
+ * - 승인 = [승인하고 발급] 영역 안에서 왼쪽 mouseDown → mouseUp.
  */
 export class BarGate {
   private armAt = Number.POSITIVE_INFINITY;
@@ -357,15 +456,19 @@ export class BarGate {
   private movedAt: number | null = null;
   private activatedAt: number | null = null;
   private blocked = false;
-  private size = { width: 0, height: 0 };
+  private target: Box = { x: 0, y: 0, width: 0, height: 0 };
+  private stopTarget: Box = { x: 0, y: 0, width: 0, height: 0 };
+  private stopPressed = false;
   private readonly armDelayMs: number;
 
   constructor(armDelayMs = ARM_DELAY_MS) {
     this.armDelayMs = armDelayMs;
   }
 
-  setSize(width: number, height: number): void {
-    this.size = { width, height };
+  /** 두 판정 영역(카드 기준 DIP). main이 cardTargets로 정한다. */
+  setTargets(t: CardTargets): void {
+    this.target = { ...t.approve };
+    this.stopTarget = { ...t.stop };
   }
 
   /**
@@ -426,7 +529,20 @@ export class BarGate {
   }
 
   private within(x: number, y: number): boolean {
-    return x >= 0 && y >= 0 && x < this.size.width && y < this.size.height;
+    return inBox(this.target, x, y);
+  }
+
+  /** [중지] 판정. 무장·머무름·커서 위장과 상관없다(안전한 실패). 중지가 성립하면 true. */
+  stop(ev: MouseIn): boolean {
+    if (ev.button !== 'left' || (ev.type !== 'mouseDown' && ev.type !== 'mouseUp')) return false;
+    const inside = inBox(this.stopTarget, ev.x, ev.y);
+    if (ev.type === 'mouseDown') {
+      this.stopPressed = inside;
+      return false;
+    }
+    const ok = this.stopPressed && inside;
+    this.stopPressed = false;
+    return ok;
   }
 
   private leave(): void {
@@ -452,6 +568,7 @@ export class BarGate {
       return null;
     }
     if (ev.type === 'mouseDown') {
+      if (ev.button === 'left' && !this.within(ev.x, ev.y)) this.pressed = false;
       if (ev.button !== 'left' || !this.within(ev.x, ev.y)) return null;
       this.inside = true;
       if (this.blocked) return { kind: 'refused', reason: 'cursor' };

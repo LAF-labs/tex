@@ -251,15 +251,16 @@ export function taskCard(run, act) {
     const signing = run.steps[4].state === 'done';
     card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('목업: 폰으로 다시 요청한 것으로 칠게요')), signing ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })));
   } else if (st === 'waiting') {
-    // 중복 경고는 승인 바에도 있다(바 글자가 "같은 건 기록을 확인했고 발급"으로 바뀐다). 카드 문구는 보조다.
-    const action = run.action || (run.warnings.length ? '같은 건 기록을 확인했고 발급' : '승인하고 발급');
-    const read = run.readbackDiffers ? '홈택스에 입력한 값을 다시 읽었어요. 초안과 다른 값이 있어요.' : '홈택스에 입력한 값을 다시 읽어 확인했어요. 초안과 같아요.';
+    // ADR-021 결정 7: 작성 카드는 "작성 완료" 한 줄로 접는다. 되읽은 값·중복 경고·[중지]는 대화 열 아래 main 승인 카드에 있다.
+    // 승인 뒤 2초(거부 우선 창)에는 승인 카드가 내려가므로 여기에 [중지]를 둔다.
+    card.replaceChildren();
+    card.classList.add('is-folded');
     card.append(
-      line(`${read} 발급하면 ${run.email.value ? `${run.counterparty.name} 메일로 전송되고 ` : ''}되돌릴 수 없어요.`),
-      run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
-      ...run.warnings.map((w) => note(w, true)),
-      note(run.approvedPending ? '승인했어요. 2초 안에 [중지]하면 발급하지 않아요' : `아래 [${action}]에서 값을 한 번 더 확인하고 눌러 주세요`),
-      h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })),
+      ...[
+        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title' }, '세금계산서 작성 완료'), run.approvedPending ? null : h('span', { class: 'sx-meta' }, '아래 승인 카드에서 확인해 주세요'), chip(shownStatus(run))),
+        run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
+        run.approvedPending ? h('div', { class: 'sx-actions' }, note('승인했어요. 2초 안에 [중지]하면 발급하지 않아요'), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })) : null,
+      ].filter(Boolean),
     );
   } else if (st === 'done') {
     const r = run.result;
@@ -362,7 +363,7 @@ export function runPanel(run, act) {
 
 /**
  * InDoubt 패널의 "홈택스에서 직접 확인" 안내. 찾을 건의 값(작성일자·공급받는자·사업자번호·합계)과 복사만 둔다.
- * "발급목록에 없음" 확인은 여기서 받지 않는다. 승인 바 자리의 황토색 증언 바(main)에서만 받는다(ADR-021 결정 5).
+ * "발급목록에 없음" 확인은 여기서 받지 않는다. 승인 카드 자리의 황토색 증언 카드(main)에서만 받는다(ADR-021 결정 5·7).
  */
 function checkListGuide(run, act) {
   const c = (v) => () => act.copy(v);
@@ -377,7 +378,7 @@ function checkListGuide(run, act) {
       ['사업자번호', fmtBiz(run.counterparty.bizNo), { mono: true, copy: c(fmtBiz(run.counterparty.bizNo)) }],
       ['합계', won(run.total), { copy: c(String(run.total)) }],
     ]),
-    h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 승인 바 자리에 뜨는 황토색 바로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
+    h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 대화 아래에 뜨는 황토색 확인 카드로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
     run.attest?.note ? note(run.attest.note, run.attest.state !== 'sent') : null,
   );
 }

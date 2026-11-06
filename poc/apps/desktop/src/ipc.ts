@@ -194,11 +194,11 @@ export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> 
 
 // ---- main → renderer 이벤트 ----
 
-/** 렌더러에 보내는 이벤트 전부. 바 내용·좌표·승인 근거는 보내지 않는다(배치용 신호만, ADR-021). */
+/** 렌더러에 보내는 이벤트 전부. 카드 내용·좌표·승인 근거는 보내지 않는다(자리 비우기용 띠 여부·높이만, ADR-021 결정 7). */
 export type ShellEvent =
-  | { type: 'bar'; active: true; band: boolean }
+  | { type: 'bar'; active: true; band: boolean; height: number }
   | { type: 'bar'; active: false; reason: string }
-  | { type: 'bar-layout'; band: boolean }
+  | { type: 'bar-layout'; band: boolean; height: number }
   | { type: 'run'; run: unknown }
   | { type: 'doc'; doc: unknown }
   | { type: 'docs-reload' }
