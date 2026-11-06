@@ -47,7 +47,8 @@ export async function startHarness(opts: { policy?: RelayPolicy; headful?: boole
   vault.attachPort('engine', tapPort(wrapPort(ch.port1, 'node'), (dir, m) => capture.add(`ipc.engine.${dir}`, m)));
   const client = new VaultClient(wrapPort(ch.port2, 'node'));
   const ctl = new MessageChannel();
-  vault.attachPort('control', wrapPort(ctl.port1, 'node'));
+  // control 포트 IPC도 담는다(main ↔ 금고, 누출 스캐너 확장). 비밀 입력 포트(secret.provide)는 비밀을 싣는 것이 정상이라 담지 않는다.
+  vault.attachPort('control', tapPort(wrapPort(ctl.port1, 'node'), (dir, m) => capture.add(`ipc.control.${dir}`, m)));
   const channels = [ch, ctl];
   const secretPort = (bind?: SecretInputBind): VaultClient => {
     const sec = new MessageChannel();
