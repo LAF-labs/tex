@@ -16,7 +16,9 @@ export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
  * Chrome 기동 인자 허용 목록(D05 §3.1). 이 밖의 인자는 붙이지 않는다.
  * `--kiosk-printing`은 S3a 결과 전이라 넣지 않았다.
  */
-export const CHROME_ARG_ALLOWLIST = ['--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad'] as const;
+// --disable-default-apps: Chrome 기본 앱(Web Store 결제 구성요소 nmmhkkegccagdldgiimedpiccmgmieda 등)이 전용 프로필에 깔리지 않게 한다.
+// 깔리면 확장 검사(extension_not_allowed, 실패 닫힘)가 비밀 창을 막아 발급이 멈춘다. 확장을 줄이는 쪽이라 보안을 약하게 하지 않는다(D05 §3.1, 팀장 결정 2026-11-06).
+export const CHROME_ARG_ALLOWLIST = ['--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps'] as const;
 export const FORBIDDEN_CHROME_ARGS = ['--remote-debugging-port', '--remote-allow-origins', '--no-sandbox', '--disable-extensions'];
 
 /** Chrome 자식 프로세스 환경 변수 화이트리스트(디버그·로깅·프록시 변수 제거). */

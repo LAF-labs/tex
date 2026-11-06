@@ -179,7 +179,7 @@ describe('audit-v V1 Crashpad', () => {
   it('audit-v: buildChromeArgs always carries --disable-breakpad', () => {
     for (const extra of [[], ['--headless=new']]) {
       const args = buildChromeArgs('/p', extra);
-      assert.deepEqual(args.slice(0, 4), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run', '--disable-breakpad']);
+      assert.deepEqual(args.slice(0, 5), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run', '--disable-breakpad', '--disable-default-apps']);
     }
   });
 
@@ -228,6 +228,15 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'google_signin_detected', '세션 중 Google 로그인');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { abcdefghijklmnop: { location: 1 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
+      // 진단 이벤트에는 확장 ID만 남는다. ID 꼴이 아닌 키(경로 등)는 'unknown'으로 바뀐다(팀장 결정 2026-11-06).
+      const wallet = 'nmmhkkegccagdldgiimedpiccmgmieda';
+      await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { [wallet]: { location: 1, path: '/Users/x/secret-ext', manifest: { name: 'Store' } }, 'C:\\Users\\x\\ext': { location: 4 } } } }));
+      assert.equal(await v.profileBlocker(), 'extension_not_allowed', '기본 앱');
+      const ev = b.log.lines.filter((l) => l.includes('"vault.extension_not_allowed"')).at(-1)!;
+      const e = JSON.parse(ev) as Record<string, unknown>;
+      assert.equal(e.count, 2);
+      assert.deepEqual([e.ext0, e.ext1].sort(), ['unknown', wallet].sort());
+      assert.ok(!/secret-ext|Store|Users/.test(ev), ev);
       await fs.writeFile(prefs, JSON.stringify({ ...ok, credentials_enable_service: true }));
       assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, download: { default_directory: path.join(b.paths.root, 'elsewhere'), prompt_for_download: false } }));
