@@ -12,3 +12,4 @@ export { PARSE_RESULT_SCHEMA, parseOutcomeErrors, SANDBOX_OUTPUT_SCHEMA, validat
 export { shortId, STORED_DOC_TYPE, storedFileName } from './storage.ts';
 export * from './types.ts';
 export { imageInfo, MAX_INPUT_BYTES, SANDBOX_ERRORS, sniffFormat, type Cell, type ImageInfo, type SheetTable } from './sandbox/index.ts';
+export { CERT_MAX_BYTES, readCertInfo, type CertInfo } from './sandbox/x509.ts';

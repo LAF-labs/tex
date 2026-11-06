@@ -54,6 +54,7 @@ export const SANDBOX_ERRORS = [
   'sheet_too_large',
   'sheet_invalid',
   'text_decode_failed',
+  'cert_invalid',
 ] as const;
 export type SandboxErrorCode = (typeof SANDBOX_ERRORS)[number];
 
