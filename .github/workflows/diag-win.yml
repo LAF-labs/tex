@@ -30,18 +30,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: poc/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile && pnpm build
-      - name: pg-tls
+      - name: vault-relay 10회
         continue-on-error: true
-        run: |
-          set +e
-          which -a openssl; openssl version; env | grep -i -E "^NODE|SSL|CA" | grep -v -i token
-          d=$(mktemp -d); cd $d
-          node -e "const c=require('crypto');for(const n of ['a','s'])require('fs').writeFileSync(n+'.key',c.generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({type:'pkcs8',format:'pem'}))"
-          openssl req -x509 -sha256 -new -key a.key -nodes -out a.pem -days 2 -subj /CN=anchor -addext basicConstraints=critical,CA:TRUE -addext keyUsage=critical,keyCertSign -addext subjectKeyIdentifier=hash
-          printf 'subjectAltName=DNS:localhost\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n' > s.ext
-          openssl req -sha256 -new -key s.key -nodes -out s.csr -subj /CN=localhost
-          openssl x509 -req -sha256 -in s.csr -CA a.pem -CAkey a.key -set_serial 0x1234 -out s.pem -days 2 -extfile s.ext
-          openssl x509 -in a.pem -noout -text | head -40; openssl x509 -in s.pem -noout -text | head -45
-          openssl verify -CAfile a.pem s.pem
-          node -e "const {X509Certificate}=require('crypto');const fs=require('fs');const a=new X509Certificate(fs.readFileSync('a.pem'));const s=new X509Certificate(fs.readFileSync('s.pem'));console.log('checkIssued',s.checkIssued(a),'verify',s.verify(a.publicKey),'ca',a.ca)"
-          cd $GITHUB_WORKSPACE/poc && node --conditions=development --test tests/services-pg-tls.test.ts 2>&1 | grep -E "ℹ (pass|fail)|^  [+-] '"
+        run: for i in 1 2 3 4 5 6 7 8 9 10; do node --conditions=development --test tests/vault-relay.test.ts 2>&1 | grep -E "DIAG ext|ℹ (pass|fail)" | head -10; done
