@@ -1,6 +1,6 @@
 import { domainToASCII } from 'node:url';
 import { jcs, sha256hex } from '../gate.ts';
-import { READBACK_FIELDS, type PortalConfig, type ReadbackKey, type SelectorKey } from './portal.ts';
+import { READBACK_FIELDS, type PortalConfig, type ReadbackKey, type SelectorKey } from '../portal.ts';
 
 // H-01 전자세금계산서 건별발급(D02 §8 v2.1)의 발급 구간. 로그인(s0~s6)·decide(모델)·캡차(s90~)·signFlow·save_pdf는
 // PoC-3 이후에 붙인다. 스텝 id는 D02 §8과 같게 둔다.
