@@ -302,6 +302,9 @@ importers:
       '@sax/net':
         specifier: workspace:*
         version: link:../net
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../payroll
       '@sax/platform':
         specifier: workspace:*
         version: link:../platform
