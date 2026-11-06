@@ -274,7 +274,10 @@ describe('audit-v V3 고정 화면 확인 식', () => {
       await h.control.rpc('run.begin', { runId: 'v3', trigger: 'local' });
       await page.goto(`${fx.origin}/login`);
       await warmForSecretWindow(page);
-      assert.deepEqual(await h.client.rpc('secretWindow.openForHuman', { runId: 'v3', targetId, frame: 'main', element: '#pw' }), { ok: true });
+      const opened = await h.client.rpc('secretWindow.openForHuman', { runId: 'v3', targetId, frame: 'main', element: '#pw' });
+      // Linux CI에서 드물게 secret_window_refused(#108·#112). 거절 사유는 금고 로그에만 있어 실패 메시지에 싣는다(흔들림 추적).
+      const refused = async () => (await Promise.all((await fs.readdir(h.paths.logs).catch(() => [])).map((f) => fs.readFile(path.join(h.paths.logs, f), 'utf8').catch(() => '')))).join('\n').split('\n').filter((l) => /secret_window_refused|profile_prefs_mismatch|extension_not_allowed|google_signin_detected/.test(l)).join('\n');
+      assert.deepEqual(opened, { ok: true }, (opened as { ok: boolean }).ok ? undefined : `금고 로그:\n${await refused()}`);
       const vt = h.vault.relay!.targets.get(targetId)!;
       const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
       await h.vault.relay!.send('Runtime.evaluate', { expression: `document.getElementById('pw').focus()` }, vt.vaultSession);
