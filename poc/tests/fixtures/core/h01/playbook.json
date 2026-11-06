@@ -411,7 +411,8 @@
      "column": "status",
      "sent": "mail.status.sent",
      "notSent": "mail.status.notSent"
-    }
+    },
+    "maxMs": 50000
    },
    "on": {
     "committed": "s34",
