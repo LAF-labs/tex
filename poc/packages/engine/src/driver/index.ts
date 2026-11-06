@@ -5,3 +5,6 @@ export * from './actuator.ts';
 export * from './wire.ts';
 export * from './aria-tree.ts';
 export * from './screen.ts';
+export * from './lookup.ts';
+export * from './pdf.ts';
+export * from './secret.ts';
