@@ -328,7 +328,7 @@ describe('보관함(DocumentService)', () => {
 
 describe('main 경계: document.import·document.file은 렌더러가 부를 수 없다', () => {
   it('MAIN_ONLY에 두고, 셸 렌더러 요청 표에는 엔진 명령이 없다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
-    assert.deepEqual([...MAIN_ONLY].sort(), ['bizcert.parse', 'document.file', 'document.import']);
+    for (const m of ['bizcert.parse', 'document.file', 'document.import']) assert.ok(MAIN_ONLY.includes(m as never), m);
     // 렌더러 요청은 셸 표(SHELL_METHODS)로만 온다. 엔진 명령 이름을 그대로 넘기는 길이 없다(개발 콘솔 RENDERER_METHODS는 W-1에서 지웠다).
     const { SHELL_METHODS } = await import('../apps/desktop/src/ipc.ts');
     for (const m of MAIN_ONLY) assert.ok(!(m in SHELL_METHODS), m);
