@@ -14,6 +14,7 @@
     "@sax/engine": "workspace:*",
     "@sax/net": "workspace:*",
     "@sax/platform": "workspace:*",
+    "@sax/remote": "workspace:*",
     "@sax/updater": "workspace:*",
     "@sax/vault": "workspace:*",
     "@tesseract.js-data/kor": "1.0.0",
