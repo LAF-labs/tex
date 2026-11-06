@@ -32,4 +32,4 @@ jobs:
       - run: pnpm install --frozen-lockfile && pnpm build
       - name: vault-relay 전체(Preferences 항목)
         continue-on-error: true
-        run: node --conditions=development --test tests/vault-relay.test.ts 2>&1 | grep -E "DIAG|ℹ (pass|fail)" | head -20
+        run: for i in 1 2 3 4 5 6; do node --conditions=development --test tests/vault-relay.test.ts 2>&1 | grep -E "DIAG ext|ℹ (pass|fail)" | head -10; done
