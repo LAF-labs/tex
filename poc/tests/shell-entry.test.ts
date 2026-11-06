@@ -94,7 +94,10 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
     const src = fs.readFileSync(path.join(SRC, '../../../scripts/package-win.mjs'), 'utf8');
     assert.match(src, /'test-build': \{ type: 'boolean' \}/);
     assert.match(src, /testBuild: args\['test-build'\] === true,/);
-    assert.match(src, /if \(buildInfo\.testBuild\) blockers\.push\(\{ code: 'test_build'/);
+    // 판정은 release-readiness.mjs로 옮겼다(채널별 판정표 시험은 release-readiness.test.ts). package-win은 testBuild를 넘긴다.
+    assert.match(src, /judgeReadiness\(\{[^)]*testBuild: buildInfo\.testBuild/);
+    const judge = fs.readFileSync(path.join(SRC, '../../../scripts/release-readiness.mjs'), 'utf8');
+    assert.match(judge, /if \(f\.testBuild\) blockers\.push\(\{ code: 'test_build'/);
   });
 
   it('제품 진입점이 점검을 데이터 루트 준비 전에 하고, fatal이면 열지 않으며 warn은 배지로 넘긴다', () => {
