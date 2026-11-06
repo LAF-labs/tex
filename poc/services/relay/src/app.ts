@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { DeviceAuth, RateLimiter, Router, ServiceError, clientIp, fail, json, memoryLimits, requireInternal, validator, type Ctx, type DeviceClaims, type DeviceDirectory, type KeySalt, type Limits, type Logger, type TokenVerifier } from '@sax/svc-shared';
+import { DeviceAuth, RateLimiter, Router, ServiceError, clientIp, fail, json, memoryLimits, requireInternal, safeEqual, sha256hex, validator, type Ctx, type DeviceClaims, type DeviceDirectory, type KeySalt, type Limits, type Logger, type TokenVerifier } from '@sax/svc-shared';
 import { OUTER, RELAY } from './constants.ts';
 import { RelayService, raw32, type OuterEnvelope } from './service.ts';
 import { CLOSE, WsConn, acceptUpgrade, rejectUpgrade } from './ws.ts';
@@ -19,6 +19,7 @@ const V = {
   ack: validator<{ seq: number }>({ type: 'object', additionalProperties: false, required: ['seq'], properties: { seq: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } }),
   bundle: validator<{ bundle: string }>({ type: 'object', additionalProperties: false, required: ['bundle'], properties: { bundle: b64(4096) } }),
   room: validator<{ roomId: string }>({ type: 'object', additionalProperties: false, required: ['roomId'], properties: { roomId: { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } } }),
+  redeem: validator<{ deviceId: string }>({ type: 'object', additionalProperties: false, required: ['deviceId'], properties: { deviceId: { type: 'string', minLength: 1, maxLength: 64 } } }),
 };
 
 type Side = 'd' | 'm';
@@ -32,6 +33,12 @@ interface Room {
   conns: WsConn[];
   expires: number;
   timer: NodeJS.Timeout;
+  /** 룸을 만든 데스크톱 기기 ID의 sha256(메모리만, 계정 ID 없음). 폰 대리 등록 때 같은 PC인지 본다 */
+  owner: string;
+  /** 정원 2가 한 번이라도 찼다(폰이 실제로 붙었다) */
+  paired: boolean;
+  /** 계정 서비스가 폰 등록에 한 번 썼다 */
+  redeemed: boolean;
 }
 
 export interface RelayAppOpts {
@@ -182,7 +189,7 @@ export class RelayHub {
       const expires = svc.now() + RELAY.roomTtlMs;
       const timer = setTimeout(() => this.closeRoom(roomId), RELAY.roomTtlMs);
       timer.unref();
-      this.rooms.set(roomId, { conns: [], expires, timer });
+      this.rooms.set(roomId, { conns: [], expires, timer, owner: sha256hex(c.dev), paired: false, redeemed: false });
       return json(201, { expiresAt: expires });
     });
     // 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다. 이후 연결·호출은 기기 상태 확인에서 막힌다.
@@ -190,6 +197,16 @@ export class RelayHub {
       requireInternal(ctx, this.o.internalSecret);
       this.o.directory.invalidate?.(ctx.params.id!);
       return json(200, { closed: this.stopDevice(ctx.params.id!) });
+    });
+    // 계정 서비스의 폰 대리 등록(페어링 7단계): 이 PC가 만든 룸에 폰이 붙었고 아직 쓰지 않았으면 한 번만 소비한다.
+    // 없음·만료·미페어링·다른 PC·이미 소비는 모두 같은 404(존재 오라클 없음)
+    r.add('POST', '/internal/v1/rooms/:id/redeem', (ctx) => {
+      requireInternal(ctx, this.o.internalSecret);
+      const { deviceId } = V.redeem(ctx.body);
+      const room = this.rooms.get(ctx.params.id!);
+      if (!room || room.expires <= svc.now() || !room.paired || room.redeemed || !safeEqual(room.owner, sha256hex(deviceId))) fail('relay.room_unavailable');
+      room!.redeemed = true;
+      return json(200, { ok: true });
     });
     r.add('POST', '/internal/v1/queues/purge', async (ctx) => {
       requireInternal(ctx, this.o.internalSecret);
@@ -279,6 +296,7 @@ export class RelayHub {
     if (!acceptUpgrade(req, socket)) return;
     const ws = new WsConn(socket, { maxPayload: RELAY.frameMax, idleMs: RELAY.roomTtlMs });
     room!.conns.push(ws);
+    if (room!.conns.length === 2) room!.paired = true;
     let fails = 0;
     ws.on({
       onMessage: (data, text) => {

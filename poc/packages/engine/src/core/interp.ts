@@ -67,6 +67,11 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.mfa_pending', 'handoff'],
   ['portal.captcha', 'handoff'],
   ['portal.busy', 'handoff'],
+  // 커밋 가드(D03 §5.4, D16): 무장 없는 커밋 요청·잡지 못한 커밋 요청·무장 거부는 중단, 본문 불일치는 핸드오프
+  ['commit_guard.blocked_request', 'abort'],
+  ['commit_guard.unintercepted', 'abort'],
+  ['commit_guard.arm_refused', 'abort'],
+  ['security.commit_payload_mismatch', 'handoff'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {

@@ -20,7 +20,7 @@
 | lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
 
-없는 것: 평문 IP(한도 키는 당일 솔트 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 계정 ID, 기기↔우편함 연결, 페어링 룸(메모리), Noise·HPKE 평문, 의도 봉투의 `pair_id`·`seq`·`exp`. 접근 로그는 라우트 패턴뿐이고 `aid`도 남기지 않는다.
+없는 것: 평문 IP(한도 키는 당일 솔트 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 계정 ID, 기기↔우편함 연결, 페어링 룸(메모리, 만든 데스크톱 기기 ID의 sha256과 소비 여부만 같이), Noise·HPKE 평문, 의도 봉투의 `pair_id`·`seq`·`exp`. 접근 로그는 라우트 패턴뿐이고 `aid`도 남기지 않는다.
 
 ## 구현 메모
 

@@ -20,7 +20,7 @@ import {
   type DeviceRecord,
   type Sql,
 } from '@sax/svc-shared';
-import { PLAN, type DeviceStopHook, type MailSender, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
+import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
 import { ACCOUNT, DEVICE, MS, PROFILE } from './constants.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
@@ -71,6 +71,8 @@ export interface AccountDeps {
   /** 결제 완료 후 돌아올 URL(설정 고정, 클라이언트가 고를 수 없다) */
   billingReturnUrl: string;
   stopHooks?: DeviceStopHook[];
+  /** 릴레이 페어링 룸 소비 확인(PC가 폰을 대신 등록). 없으면 그 경로는 닫힌다 */
+  pairing?: PairingRooms;
   now?: () => number;
 }
 
@@ -445,6 +447,43 @@ export class AccountService {
       return { holdUntil };
     });
     await this.notify(s.accountId, 'device_enrolled');
+    return r;
+  }
+
+  /**
+   * 폰 대리 등록(팀장 결정 2026-11-06): 폰 앱에는 계정 로그인이 없어서 페어링 7단계에서 PC가 데스크톱 기기 토큰으로 대신 등록한다.
+   * 조건: 요청 기기가 활성 데스크톱(라우터의 기기 토큰 검사), 그 PC가 만든 1회용 페어링 룸이 소비됨(릴레이 확인, 한 번만), 계정당 모바일 상한·교체 한도.
+   * 등록된 폰은 다른 등록과 같이 pending이고, 같은 PC가 AIK 서명 기기 목록(PUT /v1/device-list)을 올리면 활성이 된다.
+   */
+  async enrollByDesktop(requester: { accountId: string; deviceId: string }, o: { deviceId: string; platform: string; name: string; Sx: string; Vx: string; roomId: string }): Promise<{ holdUntil: number }> {
+    if (!this.d.pairing) fail('relay.room_unavailable');
+    // 상한은 룸을 소비하기 전에 한 번 보고(헛되이 룸을 쓰지 않게), 쓰기 트랜잭션에서 다시 본다
+    if (!(await this.countOk(this.db, requester.accountId, 'mobile'))) fail('account.device_limit');
+    if (!(await this.churnOk(this.db, requester.accountId, 'mobile'))) fail('account.device_churn_limit');
+    if (!(await this.d.pairing!.redeem(o.roomId, requester.deviceId))) fail('relay.room_unavailable');
+    const r = await this.db.tx(async (q) => {
+      await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
+      const me = await q.one<DeviceRow>('SELECT * FROM devices WHERE device_id = $1 AND account_id = $2', [requester.deviceId, requester.accountId]);
+      if (!me || me.role !== 'desktop' || me.state !== 'active') fail('account.scope_denied');
+      if (!(await this.countOk(q, requester.accountId, 'mobile'))) fail('account.device_limit');
+      if (!(await this.churnOk(q, requester.accountId, 'mobile'))) fail('account.device_churn_limit');
+      if (await q.one('SELECT 1 AS x FROM devices WHERE device_id = $1', [o.deviceId])) fail('request.param_rejected');
+      const now = this.now();
+      const holdUntil = now + DEVICE.emailOnlyAddDelayHours * MS.H;
+      await q.run("INSERT INTO devices (device_id, account_id, role, platform, name, sx, vx, registered_at, state, email_hold_until) VALUES ($1, $2, 'mobile', $3, $4, $5, $6, $7, 'pending', $8)", [
+        o.deviceId,
+        requester.accountId,
+        o.platform,
+        o.name,
+        o.Sx,
+        o.Vx,
+        now,
+        holdUntil,
+      ]);
+      await q.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, 'mobile', 'add', $2)", [requester.accountId, kstDay(now)]);
+      return { holdUntil };
+    });
+    await this.notify(requester.accountId, 'device_enrolled');
     return r;
   }
 
