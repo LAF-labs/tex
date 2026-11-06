@@ -30,6 +30,10 @@
       "destination": "/api/account?__p=/v1/device-list"
     },
     {
+      "source": "/v1/acct-claim",
+      "destination": "/api/account?__p=/v1/acct-claim"
+    },
+    {
       "source": "/v1/aik",
       "destination": "/api/account?__p=/v1/aik"
     },

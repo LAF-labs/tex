@@ -11,7 +11,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 
 | 경로(공개 origin `https://tax.laf-co.com`) | 어디서 | 비고 |
 |---|---|---|
-| `/v1/auth/*` `/v1/oauth/*` `/v1/passkeys*` `/v1/me` `/v1/consents` `/v1/billing/*` `/v1/devices*` `/v1/device-tokens` `/v1/device-list` `/v1/aik` `/v1/slots*` | Vercel 함수 `api/account` | |
+| `/v1/auth/*` `/v1/oauth/*` `/v1/passkeys*` `/v1/me` `/v1/consents` `/v1/billing/*` `/v1/devices*` `/v1/device-tokens` `/v1/device-list` `/v1/acct-claim` `/v1/aik` `/v1/slots*` | Vercel 함수 `api/account` | |
 | `/v1/run-tokens` `/v1/decide` `/v1/respond` `/v1/biz/status` | Vercel 함수 `api/gateway` | 최대 60초 |
 | `/v1/mailboxes*`(HTTPS 큐만) | Vercel 함수 `api/relay` | 라이브 WSS 꺼짐(D08 §8 Phase 1) |
 | `/v1/push-token` `/v1/wake` | Vercel 함수 `api/push` | 푸시 공급사는 모의(Phase 1) |
@@ -45,7 +45,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 
 | 서비스 | 이름(`<서비스>__` 접두) |
 |---|---|
-| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, 아래 ⑤), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL` |
+| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, 아래 ⑤), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL` |
 | 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `ACCOUNT_INTERNAL_URL`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE` |
 | 릴레이 `RELAY__` | `DATABASE_URL` ⚿, `QUEUE_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `RELAY_PUBLIC_ORIGIN`, `ACCOUNT_INTERNAL_URL` |
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `ACCOUNT_INTERNAL_URL`, `PUSH_PROVIDER`(`mock`) |
@@ -82,6 +82,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
    7. Deployment Protection은 Production 도메인에 걸지 않는다(클라이언트 API다). Preview에는 걸어 둔다.
    8. Firewall에 IP 한도 규칙을 넣는다(#108 체크리스트: `/v1/auth/*`, `/v1/mailboxes/*`, `/v1/device-tokens`, 초과 시 429, Attack Challenge Mode는 API 경로에 쓰지 않음). `/api/*/internal/*`에도 IP당 분당 상한을 둔다.
    9. Pro 플랜이면 Cron이 매시 돈다. Hobby면 `vercel.json`의 `schedule`을 하루 1회로 바꿔야 한다(팀장 결정).
+   10. **acct_claim 공개키 고정**(D08 §4.2 7단계, #125): `ACCOUNT__ACCT_CLAIM_SIGNING_KEY`를 `TOKEN_SIGNING_SEED`와 다른 새 값으로 만든다. 공개키(공개 값)를 `cd poc && node --conditions=development services/account/src/acct-claim-pubkey-cli.ts < 시드_파일`로 뽑아 팀장(폰 앱 고정값)에 알린다. 시드 값은 비밀번호 관리자에만 둔다. 키를 바꾸면 폰 앱 고정값도 함께 바꿔야 한다.
 4. **GoDaddy DNS**(laf-co.com 도메인 관리 → DNS)
    - `tax`: Vercel이 보여 준 값(보통 CNAME `cname.vercel-dns.com`). 소유 확인 TXT `_vercel`를 요구하면 그것도 넣는다.
    - `rooms.tax`: 룸 호스트의 A/AAAA 또는 CNAME(5번에서 정해짐).
@@ -157,4 +158,6 @@ supabase db push --workdir services/deploy --db-url "<직접 연결 URL>"
    - 확인 수단은 5절 스모크다. 로컬 시험은 같은 진입점을 Node HTTP 서버로 돌려 경로 복원·cron·조립을 본다.
 5. **메일**: 저장소에는 모의 메일만 있다(`MAIL_PROVIDER=mock`). SES 어댑터 PR 전에는 로그인 코드가 발송되지 않아 실제 로그인을 할 수 없다.
 6. **레지스트리**(Supabase Storage + CDN)는 후속 PR이다. 그 전까지 `/registry/*` 등은 404다.
+   - 실물을 Storage에 두더라도 공개 경로는 `https://tax.laf-co.com` 아래 Vercel 재작성으로 둔다(`/releases/*`·`/registry/*`·`/registry/log/*`·`/policy/*`·`/packages/*`).
+   - 클라이언트 egress 허용 목록은 이 origin 하나로 고정한다. Supabase 도메인은 클라이언트에 넣지 않는다(팀장 결정 2026-11-06).
 7. **릴레이 큐 GET 응답 상한**: Vercel 함수 응답은 4.5MB다. 큐 상한 6 MiB 전부를 한 번에 돌려줄 수 없다. 큐 GET 페이지 나누기가 후속 PR이다(그 전에는 큐가 4.5MB를 넘으면 실패한다).
