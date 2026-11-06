@@ -215,7 +215,8 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
   const pol = d.policy();
   const minElapsedMs = Math.max(s.lookup.notCommittedPolicy.minElapsedMs, pol.minElapsedMs);
   const lookups = Math.max(s.lookup.notCommittedPolicy.lookups, pol.lookups);
-  const maxMs = pol.maxMs ?? 300_000;
+  // 사후 확인(baseline:none)만 자기 상한을 쓸 수 있다(V-03n). 주 비가역 verify는 정책 값(앱 하한 300초).
+  const maxMs = s.lookup.baseline === 'none' && s.lookup.maxMs !== undefined ? s.lookup.maxMs : (pol.maxMs ?? 300_000);
   const iv = d.intervals ?? VERIFY_INTERVALS;
   const b0 = s.lookup.baseline === 'none' ? new Set<string>() : d.book.baseline(s.id);
   // 기준선 없이는 새 건을 셀 수 없다(재시작 뒤 등): 판정하지 않는다.

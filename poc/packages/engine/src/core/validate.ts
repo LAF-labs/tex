@@ -439,6 +439,13 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   }
   // baseline:none 일반 규칙(§4.4)
   for (const s of steps) if (s.type === 'verify' && s.lookup.baseline === 'none' && !Object.values(s.lookup.match).some((r) => boundByVerify(steps, refHead(r, 'vars')))) bad('V-04', 'baseline:none은 앞선 verify.bind 값을 키로 쓸 때만', s.id);
+  // V-03n(팀장 결정 2026-11-06): 사후 부수효과 확인(baseline:none)은 행이 있는 것만으로 성공이 아니다(메일 '전송실패' 행도 행이다).
+  // 그래서 상태 문구 판정 rowVerdict가 필수다. verify별 상한 maxMs는 이 사후 확인에만 쓸 수 있다(주 비가역 verify는 앱 하한 300초를 지킨다).
+  for (const s of steps) {
+    if (s.type !== 'verify') continue;
+    if (s.lookup.baseline === 'none' && !s.lookup.rowVerdict) bad('V-03n', 'baseline:none 사후 확인 verify에 rowVerdict가 없음', s.id);
+    if (s.lookup.maxMs !== undefined && s.lookup.baseline !== 'none') bad('V-03n', 'verify.lookup.maxMs는 baseline:none 사후 확인에만', s.id);
+  }
 
   // ---- V-05 ----
   for (const [id, i] of info) if (i.step.type === 'repeat' && i.repeats.length >= 2) bad('V-05', 'repeat 중첩이 2를 넘음', id);

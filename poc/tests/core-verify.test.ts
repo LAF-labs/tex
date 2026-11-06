@@ -287,7 +287,7 @@ describe('verify baseline:none·rowVerdict(D02 §4.4, 스키마 v1.3.4, 골든 s
     const h = mk([rows(mail('B-7', '알 수 없음'))]);
     h.scope.vars.set('approvalNo', 'B-7');
     assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
-    assert.ok(h.lookup.reqs.length > 3);
+    assert.equal(h.lookup.reqs.length, 3, 's33 maxMs 50초: 1·12·33초에 조회');
     assert.equal(h.book.ref('s33'), undefined);
     const later = mk([rows(mail('B-7', '')), rows(mail('B-7', '발송완료'))]);
     later.scope.vars.set('approvalNo', 'B-7');
@@ -304,6 +304,23 @@ describe('verify baseline:none·rowVerdict(D02 §4.4, 스키마 v1.3.4, 골든 s
     const h = mk([rows(mail('B-7', '전송실패'))]);
     h.scope.vars.set('approvalNo', 'B-7');
     assert.deepEqual(await judgeVerify(h.d, S33_PLAIN), { result: 'committed', ref: 'B-7' });
+  });
+
+  it('s33 maxMs 50초(H01Runner verifyMail과 같은 시간): 미결론이면 50초에서 unknown. 주 비가역 verify에 두어도 실행 시 무시(V-03n이 로드 때 막는다)', async () => {
+    const h = mk([rows(mail('B-7', '알 수 없음'))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    const t0 = h.clock.now();
+    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
+    const took = h.clock.now() - t0;
+    assert.ok(took >= 50_000 && took < 100_000, `${took}ms`);
+    const s30 = structuredClone(S30);
+    s30.lookup.maxMs = 50_000;
+    const x = mk([rows()]);
+    await takeBaseline(x.d, IR, S20);
+    await x.dispatched();
+    const t1 = x.clock.now();
+    assert.deepEqual(await judgeVerify(x.d, s30), { result: 'unknown' });
+    assert.ok(x.clock.now() - t1 >= 300_000, '정책 maxMs(300초)');
   });
 
   it('rowVerdictOf: 패턴이 strings에 없으면 unknown(로드 때는 V-01이 막는다)', () => {
