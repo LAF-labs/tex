@@ -20,6 +20,8 @@ import { fixturePortal, HOMETAX_PORTAL } from './h01/portal.ts';
 import { RunEnd } from './h01/runner.ts';
 import { GATE_ONLY_METHODS, RUN_COMMANDS, type EngineInit } from './protocol.ts';
 import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
+import { PHONE_COMMANDS } from './protocol.ts';
+import { PhoneIntake } from '@sax/bundle';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -33,6 +35,8 @@ let log = new FileEventLog(null, 'engine');
 let data: DataService | null = null;
 /** 급여·꾸러미·S-06(BundleService). DB와 컬럼 키를 가진다. 컬럼 키는 이 프로세스 밖으로 나가지 않고 로그에도 남기지 않는다. */
 let payroll: BundleService | null = null;
+/** 폰 사진·현금 수신(PhoneIntake). 보관함 파일과 documents·receipts 행을 한 번에 쓴다. */
+let phone: PhoneIntake | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
 let initialized = false;
@@ -41,6 +45,8 @@ const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 const PAYROLL = new Set<string>([...PAYROLL_READ_QUERIES, ...PAYROLL_COMMANDS]);
 for (const m of PAYROLL) ALLOWED.add(m);
+const PHONE = new Set<string>(PHONE_COMMANDS);
+for (const m of PHONE) ALLOWED.add(m);
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -62,6 +68,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
+  phone = new PhoneIntake(db, { vaultDir: paths.vault });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -108,6 +115,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (method === 'browser.close') {
     await browser?.close();
     return {};
+  }
+  if (PHONE.has(method)) {
+    if (!phone) throw new Error('db_not_ready');
+    return phone.handle(method, params);
   }
   if (PAYROLL.has(method)) {
     if (!payroll) throw new Error('db_not_ready');
