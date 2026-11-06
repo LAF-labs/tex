@@ -1,10 +1,14 @@
 import { chromium, type Browser, type Page } from 'playwright-core';
+import type { CdpSessionLike } from './commitguard/cdp.ts';
+import { CdpTap } from './driver/cdp-tap.ts';
 import type { VaultClient } from './vault-client.ts';
 
 export interface RunBrowser {
   browser: Browser;
   page: Page;
   targetId: string;
+  /** 실행 탭의 페이지 세션(Playwright와 같은 세션, 커밋 가드 Fetch용, M2-4 D). */
+  cdp: CdpSessionLike;
 }
 
 /** 금고가 띄운 Chrome에 금고 중계(MessagePort)로 Playwright를 붙인다(S6b). */
@@ -12,7 +16,8 @@ export async function connectRunBrowser(vault: VaultClient): Promise<RunBrowser>
   const { targetId } = await vault.rpc<{ targetId: string; webdriver: boolean }>('browser.launch');
   // 공개 타입에는 없지만 1.64 클라이언트가 ConnectionTransport 오버로드를 받는다(S6b 보고서 참조).
   const connect = chromium.connectOverCDP as unknown as (t: unknown, o: Record<string, unknown>) => Promise<Browser>;
-  const browser = await connect.call(chromium, vault.cdpTransport(), { noDefaults: true, isLocal: true, timeout: 30_000 });
+  const tap = new CdpTap(vault.cdpTransport());
+  const browser = await connect.call(chromium, tap.transport, { noDefaults: true, isLocal: true, timeout: 30_000 });
   try {
     const ctx = browser.contexts()[0];
     if (!ctx) throw new Error('no default context');
@@ -22,7 +27,8 @@ export async function connectRunBrowser(vault: VaultClient): Promise<RunBrowser>
       page = ctx.pages()[0];
     }
     if (!page) throw new Error('run page not exposed');
-    return { browser, page, targetId };
+    const cdp = await tap.session(targetId);
+    return { browser, page, targetId, cdp };
   } catch (e) {
     await browser.close().catch(() => {});
     throw e;
