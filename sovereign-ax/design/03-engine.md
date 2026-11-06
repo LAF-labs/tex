@@ -1,5 +1,6 @@
 # D03. 플레이북 엔진
 
+> 2026-11-06 팀장 결정: §3.1-6 정적 검증에 V-03n(`baseline: none` 사후 확인 verify는 `lookup.rowVerdict` 필수, D02 §4.4·§6.1, 엔진 #170)을 명시.
 > ADR-021 결정 7(2026-11-06, 사용자 지시): 승인 표시는 main 승인 카드 하나(되읽은 값 전체·비가역 한 줄·[중지]·[승인하고 발급], 기본 포커스 [중지]). §3 로컬 승인 문단, §3.1-8 요약 표를 카드 줄 목록으로.
 > 2026-11-06 팀장 결정: §3.1-6 정적 검증에 V-03m(D02 §6.1, 금액·상대방 readback ↔ `$inputs` 대조 assert 필수, 선택 입력은 `readbackEquals.ifAbsent: "empty"`)을 명시. 같은 날 엔진 #158 이름으로 정정(옛 `isEmpty`).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): §5.4 커밋 가드 모듈 위치 `net/commitguard` → 엔진 `packages/engine/src/commitguard/`(net은 송신 전용, 가드는 엔진 소유. 금고 R-C1 PR #81과 짝).
@@ -111,7 +112,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 3. **버전**: 같은 `keyEpoch` 안에서만 버전을 비교한다. 새 단조 값은 저장값보다 커야 하고 `+1000` 이하여야 한다(넘으면 `registry.version_jump_rejected`, 버전 인플레이션 잠금 공격 방지). 패키지·핫픽스·정책·인덱스에 같은 규칙을 쓴다.
 4. **번들**: `bundlesUsed[].digest`가 앱 바이너리에 내장된 번들 다이제스트 허용 목록에 있다(BV-06).
 5. **조회 하위 플레이북**: `lookupsUsed[]`의 각 패키지가 설치되어 있고, 서명·`kind: lookup`·다이제스트가 일치한다(V-22).
-6. **정적 검증**: 스키마 + V-01~V-24. 여기에는 V-03m이 들어 있다: 게이트 앞 readback의 금액·상대방 `fieldKey`마다 `$inputs` 대조 assert(합계는 `sumEquals`, 선택 입력은 `readbackEquals.ifAbsent: "empty"`, 입력으로 채우지 않는 칸은 `readbackEmpty`)가 없으면 로드하지 않는다(D02 §6.1·§8 `s19d`·`s19f`, 팀장 결정 2026-11-06). 셀렉터 CI 규칙 SV-01~06은 **레지스트리 CI에서만** 돌고, 2-of-3 서명이 그 통과를 전제로 한다(클라이언트는 녹화 DOM·HAR이 없어 다시 돌리지 않는다). 대신 클라이언트는 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 **매번** 한다(§5.2). 이 문장이 SV 실행 위치의 정본이다(D02 §2.2·§6.3, D12 §3, ADR-012, E-03).
+6. **정적 검증**: 스키마 + V-01~V-24. `baseline: none` 사후 확인 verify에 `lookup.rowVerdict`가 없으면 거부한다(V-03n, D02 §4.4·§6.1, 팀장 결정 2026-11-06, 엔진 #170). 여기에는 V-03m도 들어 있다: 게이트 앞 readback의 금액·상대방 `fieldKey`마다 `$inputs` 대조 assert(합계는 `sumEquals`, 선택 입력은 `readbackEquals.ifAbsent: "empty"`, 입력으로 채우지 않는 칸은 `readbackEmpty`)가 없으면 로드하지 않는다(D02 §6.1·§8 `s19d`·`s19f`, 팀장 결정 2026-11-06). 셀렉터 CI 규칙 SV-01~06은 **레지스트리 CI에서만** 돌고, 2-of-3 서명이 그 통과를 전제로 한다(클라이언트는 녹화 DOM·HAR이 없어 다시 돌리지 않는다). 대신 클라이언트는 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 **매번** 한다(§5.2). 이 문장이 SV 실행 위치의 정본이다(D02 §2.2·§6.3, D12 §3, ADR-012, E-03).
 7. **핫픽스**([hotfix.schema.json](schemas/hotfix.schema.json)): `appliesTo.packageDigest`가 정확히 이 패키지, 2-of-3 서명, 단조 `monotonic`, `expiresAt − issuedAt ≤ 14일`이고 만료 전, `entries`의 각 항목이 적격 항목(D02 §2.2: 비커밋·비비밀·비readback 조건에 더해, 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, IR의 `decide.scope`·조건식(`cond`)·`signFlow.rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 어떤 커밋 구간 `W(X)` 안 스텝이 참조하는 항목은 **불가** — 엔진이 IR에서 참조 집합을 계산해 확인, E-03)이며, `commitEndpointsAdd`는 추가만. 반영한 사전에 6단계를 **다시 돌리고**, 실패하면 핫픽스를 거부(`registry.hotfix_rejected`)하고 패키지는 원래 후보로 돈다. 조회 패키지에 대한 핫픽스는 항상 거부한다.
 8. **승인 카드 줄 목록**(ADR-021 결정 7, 2026-11-06 개정 전 이름 '승인 바 요약 표'): 커밋 게이트가 있는 패키지는 그 서류 종류가 앱 내장 승인 카드 줄 목록에 있어야 하고, 카드 줄에 쓰는 `fieldKey`가 게이트 카드 필드에 모두 있어야 한다. 없으면 `loader.approval_summary_missing`으로 로드하지 않는다(PC에서 무장할 수 없는 게이트를 미리 막는다). 코드 이름은 그대로다.
 
