@@ -13,6 +13,7 @@ import {
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
+import { scanNpki, type NpkiFs, type NpkiRoot } from './npki-scan.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
 import { Relay } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
@@ -89,6 +90,8 @@ export interface VaultOptions {
    * 없으면 메모리 백엔드(저장해도 프로세스 밖에 남지 않음, 시험·픽스처 모드).
    */
   human?: HumanSecretVault;
+  /** 시험 전용: NPKI 탐지 위치·파일 접근(감사). 기본은 표준 위치·node:fs. */
+  npki?: { roots?: NpkiRoot[]; fs?: NpkiFs };
 }
 
 /** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
@@ -384,6 +387,8 @@ export class Vault {
       case 'secretWindow.userDone':
         await this.requireOps().userDone(String(p.targetId));
         return {};
+      case 'npki.list':
+        return scanNpki({ roots: this.opts.npki?.roots, fs: this.opts.npki?.fs, log: this.opts.log });
       case 'status':
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
     }
