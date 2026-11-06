@@ -13,7 +13,11 @@ import {
   ATTEST_FIXED,
   attestManualText,
   attestRefusalText,
-  buildBarHtml,
+  ATTEST_STOP_TEXT,
+  ATTEST_TEXT,
+  attestRows,
+  attestText,
+  buildCardHtml,
   issueLocalAttestation,
   overflowLine,
   REFUSAL_TEXT,
@@ -78,11 +82,11 @@ describe('증언 바 내용(approval-gate, ADR-021 결정 5)', () => {
     const lines = summarizeAttest(attestFor('r')) as SummaryLine[];
     assert.ok(Array.isArray(lines));
     assert.deepEqual(
-      lines.map((l) => [l.label, l.pieces.map((p) => p.text).join(''), l.note === true]),
+      lines.map((l) => [l.label, l.pieces.map((p) => p.text).join(''), l.note === true, l.amount === true]),
       [
-        ['공급받는자', 'C테크 · 418-25-77343', false],
-        ['합계', '440,000원', false],
-        ['', ATTEST_FIXED, true],
+        ['합계', '440,000원', false, true],
+        ['공급받는자', 'C테크 · 418-25-77343', false, false],
+        ['', ATTEST_FIXED, true, false],
       ],
     );
     assert.ok(lines.every((l) => l.tone === 'attention'), '바 전체가 황토색');
@@ -100,16 +104,23 @@ describe('증언 바 내용(approval-gate, ADR-021 결정 5)', () => {
     assert.equal(attestRefusalText(REFUSAL_TEXT.hash()), '값 대조가 맞지 않아 확인 결과를 받을 수 없어요');
   });
 
-  it('정적 HTML: 동작 글자는 승인과 다르고(발급·승인이라는 말 없음), 고정 줄이 페이지에 들어 있다. 고정 줄이 넘치면 띠로 넓힌다', () => {
+  it('정적 HTML: 승인 카드와 같은 틀(값·비가역 한 줄·[닫기]·동작 버튼). 동작 글자는 승인과 다르고, 고정 줄·버튼이 넘치면 띠로 넓힌다', () => {
     const lines = summarizeAttest(attestFor('r', {}, true)) as SummaryLine[];
-    const html = buildBarHtml(lines, 'armed', undefined, ATTEST_ACTION_TEXT);
+    assert.equal(lines.filter((l) => !l.amount).length, attestRows(true));
+    assert.equal((summarizeAttest(attestFor('r')) as SummaryLine[]).filter((l) => !l.amount).length, attestRows(false));
+    const html = buildCardHtml(lines, 'armed', undefined, attestText('C테크'));
     assert.ok(html.includes('class="armed attn"'), '주의 색');
+    assert.ok(html.includes('<span class="tt">세금계산서 · C테크</span><span class="cp">확인 필요</span>'));
+    assert.ok(html.includes(`<div class="btn st" role="button">${ATTEST_STOP_TEXT}</div><div class="btn ap" role="button"><span>${ATTEST_ACTION_TEXT}</span></div>`), '[닫기]·[홈택스 발급목록에 없음을 확인했어요]');
+    assert.ok(html.includes(`<div class="irr">${ATTEST_TEXT.irreversible}</div>`) && ATTEST_TEXT.irreversible.includes('되돌릴 수 없어요'));
     assert.ok(html.includes(ATTEST_ACTION_TEXT) && html.includes(ATTEST_FIXED) && html.includes('직접 확인한 뒤 답해 주세요'));
     assert.ok(!/승인하고|발급하기|발급할게요/.test(html) && !FORBIDDEN.test(html));
     assert.ok(!ATTEST_ACTION_TEXT.includes('승인') && !ATTEST_ACTION_TEXT.includes('발급할'));
     assert.ok(!/<script|\son\w+=/i.test(html), "스크립트 없음");
-    assert.equal(overflowLine(lines, 2000), null);
-    assert.equal(overflowLine(lines, 560), '안내', '라벨 없는 고정 줄이 넘쳐도 넘쳤다고 알린다');
+    assert.equal(overflowLine(lines, 2000, ATTEST_TEXT), null);
+    assert.equal(overflowLine(lines, 600, ATTEST_TEXT), null, '대화 열 폭(600)에는 들어간다');
+    assert.equal(overflowLine(lines, 520, ATTEST_TEXT), '버튼', '증언 동작 글자가 길어 좁은 열에서는 띠로');
+    assert.equal(overflowLine(lines, 440, ATTEST_TEXT), '안내', '라벨 없는 고정 줄이 넘쳐도 넘쳤다고 알린다');
   });
 
   it('LocalAttestation: 그 요청에 묶이고 엔진 checkAttestation을 지난다. 승인 근거로는 통하지 않는다(다른 HMAC 문맥)', () => {
@@ -319,7 +330,7 @@ describe('증언 경계(소스)', () => {
     const open = between(bar, '  open(req: GateRequest)', '  openAttest(');
     assert.ok(open.includes("this.req?.kind === 'gate'") && open.includes("this.finish({ decision: 'closed', reason: 'gate' })"));
     const openAttest = between(bar, '  openAttest(req: AttestRequest)', '  close(reason');
-    assert.ok(openAttest.includes("if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' })") && openAttest.includes('attestSelfCheck(req)') && openAttest.includes('ATTEST_ACTION_TEXT'));
+    assert.ok(openAttest.includes("if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' })") && openAttest.includes('attestSelfCheck(req)') && openAttest.includes('this.text = attestText('));
     const approve = between(bar, '  private approve(): void {', '  /** 창 크기와');
     assert.ok(approve.includes("req.kind === 'gate'") && approve.includes('issueLocalApproval(this.key, req.gate') && approve.includes('issueLocalAttestation(this.key, req.attest)'));
     assert.ok(bar.includes("reason: 'kind_mismatch'"));
