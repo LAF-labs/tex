@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519RawPublic, jcs, listen, migrate, openSqlite, type DeviceDirectory, type Sql } from '../services/shared/src/index.ts';
 import { AccountService, AcctClaimSigner, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter, type DeviceStopHook, type PairingRooms } from '../services/account/src/index.ts';
-import { Clock, D, cert, client, device, dpop, edKey, entry, type Device, type EdKey } from './services-kit.ts';
+import { Clock, D, cert, client, device, dpop, edKey, entry, internalAuth, type Device, type EdKey } from './services-kit.ts';
 
 export const ACCOUNT_ORIGIN = 'https://account.test.invalid';
 
@@ -50,7 +50,7 @@ export async function accountStack(clock = new Clock(), o: { acctClaims?: boolea
     now: clock.now,
   });
   const verifier = new TokenVerifier({ k1: ed25519RawPublic(signKey) });
-  const server = createServer(accountRouter({ svc, verifier, publicOrigin: ACCOUNT_ORIGIN, internalSecret: 'internal-test' }), { logger: new Logger('account', () => undefined, clock.now) });
+  const server = createServer(accountRouter({ svc, verifier, publicOrigin: ACCOUNT_ORIGIN, internal: internalAuth() }), { logger: new Logger('account', () => undefined, clock.now) });
   const req = client(await listen(server));
   return { clock, db, mail, svc, server, req, verifier, directory: { get: (id) => svc.deviceRecord(id) }, stopped, hooks, pairing, acctClaimPub: acctClaims?.publicKey ?? null, close: () => server.close() };
 }

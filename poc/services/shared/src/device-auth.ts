@@ -1,7 +1,7 @@
 // 기기 범위 토큰 + DPoP 인증 미들웨어와 기기 상태 조회(긴급 정지 즉시 반영, D09 §2.2·D08 §9.3).
-import { fromB64, safeEqual } from './crypto.ts';
+import { fromB64 } from './crypto.ts';
 import { fail, type ErrorCode } from './errors.ts';
-import type { Ctx } from './http.ts';
+import { InternalClient } from './internal-call.ts';
 import { JtiCache, TokenVerifier, dpopToken, verifyDpop, type DeviceClaims, type Scope } from './token.ts';
 
 export type DeviceState = 'pending' | 'active' | 'suspended' | 'revoked';
@@ -19,24 +19,19 @@ export interface DeviceDirectory {
 }
 
 /**
- * 내부 HTTP 구현(GET {base}/internal/v1/devices/{id}). 캐시는 짧게(기본 5초) 두고, 계정 서비스의 정지 알림(onStopped)이 오면 즉시 지운다.
- * fetch는 주입한다(서비스 경계 밖 송신이 한 곳에 모이게).
+ * 내부 HTTP 구현(GET {base}/internal/v1/devices/{id}, 서명 호출). 같은 배포 안에서는 쓰지 않고 계정 서비스를 함수로 부른다(cloud 진입점).
+ * 룸 호스트처럼 다른 호스트에서만 쓴다. 캐시는 짧게(기본 5초) 두고, 계정 서비스의 정지 알림(onStopped)이 오면 즉시 지운다.
  */
 export class HttpDeviceDirectory implements DeviceDirectory {
   private readonly cache = new Map<string, { rec: DeviceRecord | null; until: number }>();
-  private readonly base: string;
-  private readonly secret: string;
+  private readonly client: InternalClient;
   private readonly ttlMs: number;
   private readonly now: () => number;
-  private readonly fetchFn: typeof fetch;
-  private readonly timeoutMs: number;
-  constructor(o: { base: string; secret: string; ttlMs?: number; now?: () => number; fetchFn?: typeof fetch; timeoutMs?: number }) {
-    this.base = o.base;
-    this.secret = o.secret;
+  constructor(o: { base: string; key: Buffer; ttlMs?: number; now?: () => number; fetchFn?: typeof fetch; timeoutMs?: number }) {
+    // 계정 서비스가 느리거나 멈춰도 요청이 매달리지 않게 기본 3초 제한(넘으면 directory_unavailable → 500, 기기를 통과시키지 않는다)
+    this.client = new InternalClient({ base: o.base, key: o.key, fetchFn: o.fetchFn, now: o.now, timeoutMs: o.timeoutMs ?? 3000 });
     this.ttlMs = o.ttlMs ?? 5000;
     this.now = o.now ?? Date.now;
-    this.fetchFn = o.fetchFn ?? fetch;
-    this.timeoutMs = o.timeoutMs ?? 3000;
   }
   invalidate(deviceId: string): void {
     this.cache.delete(deviceId);
@@ -44,19 +39,13 @@ export class HttpDeviceDirectory implements DeviceDirectory {
   async get(deviceId: string): Promise<DeviceRecord | null> {
     const c = this.cache.get(deviceId);
     if (c && c.until > this.now()) return c.rec;
-    // 계정 서비스가 느리거나 멈춰도 요청이 매달리지 않게 기본 3초 제한(넘으면 directory_unavailable → 500, 기기를 통과시키지 않는다)
-    const res = await this.fetchFn(`${this.base}/internal/v1/devices/${encodeURIComponent(deviceId)}`, { headers: { authorization: `Internal ${this.secret}` }, redirect: 'error', signal: AbortSignal.timeout(this.timeoutMs) });
+    const res = await this.client.request('GET', `/internal/v1/devices/${encodeURIComponent(deviceId)}`);
     let rec: DeviceRecord | null = null;
     if (res.status === 200) rec = (await res.json()) as DeviceRecord;
     else if (res.status !== 404) throw new Error('directory_unavailable');
     this.cache.set(deviceId, { rec, until: this.now() + this.ttlMs });
     return rec;
   }
-}
-
-export function requireInternal(ctx: Ctx, secret: string): void {
-  const m = /^Internal (.+)$/.exec(String(ctx.headers.authorization ?? ''));
-  if (!m || !secret || !safeEqual(m[1]!, secret)) fail('account.unauthorized');
 }
 
 export interface DeviceAuthOpts {

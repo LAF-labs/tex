@@ -833,12 +833,34 @@ function cpPanel(c) {
   );
 }
 
-const CP_ERR = { invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요' };
+const CP_ERR = { invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
 
-/** 거래처 추가·수정(시연 DB). 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). */
+/** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). 저장 품목은 시연 DB에서만(제품 장부에 품목 열이 아직 없다). */
 function cpEditPanel(c) {
   const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
+  const demoBook = state.boot.cpBook !== 'local';
   let saving = false;
+  let reading = false;
+  // [등록증으로 채우기](M4-3 O-05): main이 파일을 고르게 하고 후보만 돌려준다. 값은 입력 칸 value로만 넣는다(HTML로 그리지 않는다).
+  const fillFromCert = async () => {
+    if (reading) return;
+    reading = true;
+    try {
+      const r = await call('counterparty.readCert', {});
+      if (!r.found) {
+        if (r.reason === 'unreadable') toast('등록증을 읽지 못했어요. 번호로 입력해 주세요');
+        return;
+      }
+      if (r.name) form.elements.name.value = r.name;
+      if (r.bizNo) form.elements.bizNo.value = fmtBiz(r.bizNo);
+      if (r.rep) form.elements.rep.value = r.rep;
+      toast('등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
+    } catch (err) {
+      toast(CP_ERR[errText(err)] ?? errText(err));
+    } finally {
+      reading = false;
+    }
+  };
   const form = h(
     'form',
     {
@@ -849,7 +871,7 @@ function cpEditPanel(c) {
         saving = true;
         const f = new FormData(form);
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item') });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: demoBook ? f.get('item') : null });
           state.cps = r.counterparties;
           render();
           openPanel({ kind: 'cp', id: r.id });
@@ -861,14 +883,15 @@ function cpEditPanel(c) {
         }
       },
     },
+    c ? null : h('div', { class: 'sx-actions' }, btn('등록증으로 채우기', fillFromCert, 'sx-btn-quiet', { 'data-act': 'cp-cert' })),
     field('상호', 'name', c?.name, { required: true, maxlength: 60 }),
     field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
     field('대표자', 'rep', c?.rep, { maxlength: 30 }),
     field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
-    field('저장 품목', 'item', c?.item, { maxlength: 40 }),
+    demoBook ? field('저장 품목', 'item', c?.item, { maxlength: 40 }) : null,
     h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
   );
-  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, '이 PC 거래처 장부(데모 DB)에만 저장해요'));
+  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
 }
 
 /** 내 사업장(캔버스 D-03): 사업자 프로필 · 개인 프로필 · 맡긴 업무. 고치기는 설정·대화로 넘긴다. */

@@ -160,7 +160,8 @@ describe('bizFieldsOf·bizCertFormat', () => {
 describe('셸 배선(소스 검사)', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/src/shell-app.ts'), 'utf8');
   it('제품 온보딩 O-02는 고른 파일 → 샌드박스(PDF ocrPages 1, 그림 document) → 엔진 bizcert.parse, fixture는 목업 그대로', () => {
-    assert.match(src, /recognizeBizCert: \(\) =>\s*readBizCert\(\{/);
+    assert.match(src, /recognizeBizCert: \(\) => readBizCert\(bizCertPorts\)/);
+    assert.match(src, /const bizCertPorts: BizCertReadPorts = \{/);
     assert.match(src, /pickFileBytes\(\[\{ name: '사업자등록증\(PDF·사진\)', extensions: \['pdf', 'png', 'jpg', 'jpeg'\] \}\], win\)/);
     assert.match(src, /parsePdfInSandbox\(b, \{ ocrPages: 1, forceOcr: o\.forceOcr \}\)/);
     assert.match(src, /ocrImageInSandbox\(b, \{ mode: 'document' \}\)/);

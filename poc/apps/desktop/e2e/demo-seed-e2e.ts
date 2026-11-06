@@ -105,6 +105,21 @@ async function main(): Promise<void> {
   await until('form', async () => js<boolean>(`!!document.querySelector('.cp-form')`), 5_000);
   await js(`(() => { const f = document.querySelector('.cp-form'); f.name.value = '견본화면상사'; f.bizNo.value = ${JSON.stringify(syntheticBizNo(778))}; f.email.value = 'ui@gyeonbon-test.example'; f.requestSubmit(); })()`);
   check('화면에서 거래처 추가 → 상세 패널·목록', await until('cp added', async () => js<boolean>(`document.querySelector('[data-panel-cp] .sx-card-title')?.textContent === '견본화면상사' && [...document.querySelectorAll('[data-cp-row]')].length === 11`), 5_000));
+
+  // [등록증으로 채우기](M4-3 O-05): 실제 입력 없이 부르면 gesture_required, 누르면 시연 등록증 후보가 칸에 들어간다(주소는 오지 않는다)
+  await sleep(3_100);
+  check('등록증 읽기는 실제 입력 뒤에만', (await call('counterparty.readCert', {})) === 'ERR:gesture_required');
+  await js(`document.querySelector('[data-act=cp-add]').click()`);
+  await until('form 2', async () => js<boolean>(`!!document.querySelector('.cp-form [data-act=cp-cert]')`), 5_000);
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('.cp-form [data-act=cp-cert]').click()`);
+  const filled = await until('cert filled', async () => js<boolean>(`(() => { const f = document.querySelector('.cp-form'); return f.name.value === '견본상사' && f.bizNo.value === '314-86-01237' && f.rep.value === '이견본'; })()`), 5_000);
+  check('등록증으로 채우기 → 상호·번호·대표자 후보', filled);
+  await js(`document.querySelector('.cp-form').requestSubmit()`);
+  check('등록증 후보로 추가', await until('cp cert added', async () => js<boolean>(`document.querySelector('[data-panel-cp] .sx-card-title')?.textContent === '견본상사' && [...document.querySelectorAll('[data-cp-row]')].length === 12`), 5_000));
+  const row = ((await S!.host.rpc('db.query.counterparties.list')) as Array<{ bizNo: string; source: string; address: string | null }>).find((c) => c.bizNo === '3148601237');
+  check('등록증으로 넣은 거래처는 source ocr·주소(main이 든 값)', row?.source === 'ocr' && row.address === '서울특별시 견본구 시험로 34', row);
 }
 
 app.whenReady().then(async () => {

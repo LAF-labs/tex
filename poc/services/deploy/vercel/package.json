@@ -1,0 +1,6 @@
+{
+  "name": "sax-deploy-vercel",
+  "private": true,
+  "type": "module",
+  "description": "Vercel 프로젝트 루트(tax.laf-co.com). 의존성은 poc 워크스페이스에서 설치한다."
+}

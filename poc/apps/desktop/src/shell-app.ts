@@ -14,7 +14,7 @@ import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, pow
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
-import { MockOnboardingPorts } from './onboarding-mock.ts';
+import { MOCK_CP_CERT, MockOnboardingPorts } from './onboarding-mock.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
@@ -35,7 +35,8 @@ import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
-import { readBizCert } from './bizcert-read.ts';
+import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
+import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
 import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
@@ -519,19 +520,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
-  /** 시연 DB 쓰기(렌더러 처리기는 이 두 함수만 부른다. 엔진 명령은 여기서 고정한다). fixture 모드가 아니면 거부한다. */
+  /** 시연 DB 쓰기(발급 인증 기본 바꾸기). fixture 모드가 아니면 거부한다. 거래처 추가·수정은 제품에서도 된다(cpBook). */
   const demoDb = {
-    async saveCounterparty(p: Record<string, unknown>) {
-      if (!fixture) throw new Error('unsupported');
-      const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
-      const v = { name: text(p.name, 60), repName: text(p.rep, 30) || null, email: text(p.email, 100) || null };
-      const id = typeof p.id === 'string' && p.id ? p.id : null;
-      const saved = (id ? await host.rpc('counterparty.update', { id, patch: v }) : await host.rpc('counterparty.create', { ...v, bizNo: text(p.bizNo, 20).replace(/\D/g, '') })) as DbCounterparty;
-      const item = text(p.item, 40);
-      if (item) fixture.itemHints[saved.bizNo] = item;
-      await refresh();
-      return { id: saved.id, counterparties: cps };
-    },
     async setDefaultAuth(p: Record<string, unknown>) {
       if (!fixture) throw new Error('unsupported');
       const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
@@ -573,24 +563,40 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const onbMock = new MockOnboardingPorts({ saveProfile: async () => {} });
   // 공동인증서 목록: 제품은 금고 npki.list(이 PC의 NPKI 폴더 열거) → docparse 샌드박스 certInfo → 표시 행(npki-certs.ts).
   // 시연·e2e(fixture)는 이 PC를 훑지 않고 목업 목록을 쓴다.
+  // 사업자등록증 읽기(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 후보. 온보딩 O-02와 거래처 O-05가 같은 길을 쓴다.
+  const bizCertPorts: BizCertReadPorts = {
+    pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
+    pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
+    imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
+    parse: (text) => host.rpc('bizcert.parse', { text }),
+    log: (n, d) => log.event(n, d),
+  };
   const onbExternal: OnboardingExternal = fixture
     ? onbMock
     : {
         // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
-        recognizeBizCert: () =>
-          readBizCert({
-            pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
-            pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
-            imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
-            parse: (text) => host.rpc('bizcert.parse', { text }),
-            log: (n, d) => log.event(n, d),
-          }),
+        recognizeBizCert: () => readBizCert(bizCertPorts),
         checkBizNo: (bizNo) => onbMock.checkBizNo(bizNo),
         registerSecrets: (binds) => onbMock.registerSecrets(binds),
         consentConfig: () => onbMock.consentConfig(),
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
+  // 거래처 장부(M4-3 O-05). [등록증으로 채우기]는 같은 등록증 읽기(fixture는 시연 거래처 등록증). 골랐지만 못 읽은 것과 고르지 않은 것을 나눈다.
+  const cpBook = new CounterpartyBook(
+    (m, p) => host.rpc(m, p),
+    fixture
+      ? async () => ({ ...MOCK_CP_CERT })
+      : async () => {
+          let picked = false;
+          const pick = async () => {
+            const b = await bizCertPorts.pick();
+            picked = b !== null;
+            return b;
+          };
+          return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
+        },
+  );
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
   const keysOf = (): Promise<DesktopKeys> => {
@@ -633,6 +639,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       build: opts.buildBadges ?? [],
       history: seed?.history ?? null,
       onboarding: await onbView(),
+      // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
+      cpBook: fixture ? 'demo' : 'local',
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -725,8 +733,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       desktop.showItemInFolder(await docFile(String(p.id)));
       return {};
     }),
-    // 시연 DB에서만: 거래처 추가·수정, 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
-    'counterparty.save': (p) => demoDb.saveCounterparty(p),
+    // 거래처 추가·수정(엔진 counterparty.create/update, cpBook). 저장 품목은 DB 열이 없어 시연(fixture)에서만 남긴다.
+    'counterparty.save': async (p) => {
+      const saved = await cpBook.save(p);
+      const item = String(p.item ?? '').trim().slice(0, CP_FIELD_MAX.item);
+      if (fixture && item) fixture.itemHints[saved.bizNo] = item;
+      await refresh();
+      return { id: saved.id, counterparties: cps };
+    },
+    // [등록증으로 채우기]: 파일 고르기를 여니 실제 클릭 뒤에만(ADR-027 결정 8). 후보만 돌려준다(주소는 main이 든다).
+    'counterparty.readCert': () => {
+      needGesture(3_000);
+      return cpBook.readCert();
+    },
+    // 시연 DB에서만: 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
     'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
