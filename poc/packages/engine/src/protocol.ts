@@ -10,6 +10,7 @@ export const COMMANDS = [
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId',
+  'counterparty.setItems', 'counterparty.getItems',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
