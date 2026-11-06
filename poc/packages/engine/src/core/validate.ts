@@ -51,7 +51,6 @@ export function condTargets(c: Cond): string[] {
   walkCond(c, (x) => {
     if ('exists' in x) out.push(x.exists);
     else if ('textMatches' in x) out.push(x.textMatches.target);
-    else if ('sumEquals' in x) out.push(x.sumEquals.target);
   });
   return out;
 }
@@ -682,6 +681,8 @@ function checkRefs(ir: PlaybookIR, cfg: Cfg, steps: Step[], irreversible: Set<st
           use(`$readback.${x.readbackEquals.fieldKey}`, s.id, 'other');
           use(x.readbackEquals.ref, s.id, 'other');
         }
+        // sumEquals는 readback 값만 쓴다(D02 §8 s19d): parts·total 모두 그 앞 readback이 지배해야 한다.
+        if ('sumEquals' in x) for (const f of [...x.sumEquals.parts, x.sumEquals.total]) use(`$readback.${f}`, s.id, 'other');
         if ('inputPresent' in x && !ir.inputs[x.inputPresent]) bad('V-15', `inputPresent ${x.inputPresent}가 선언되지 않음`, s.id);
       });
   }

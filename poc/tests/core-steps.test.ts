@@ -213,8 +213,8 @@ describe('wait·assert·extract·branch·end(D02 §4·§4.1)', () => {
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { any: [{ inputPresent: 'nope' }, { varSet: 'x' }] } }, env), { t: 'fail', code: 'step.assert_failed' });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { textMatches: { target: 'f.result', patternRef: 'pat.ok' } } }, env), { t: 'next' }, '공백 접기 뒤 비교');
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { exists: 'f.dup' } }, env), { t: 'fail', code: 'step.selector_miss' }, '모호하면 없음이 아니라 오류');
-    for (const cond of [{ sumEquals: { names: ['a'], target: 'f.amount' } }, { readbackEquals: { fieldKey: 'x', ref: '$inputs.name' } }, { fieldsFilled: { fields: ['x'] } }, { profileHas: 'bizNo' }] as never[])
-      assert.deepEqual(await run1({ id: 's8', type: 'assert', cond }, env), { t: 'fail', code: 'step.cond_unsupported' });
+    // readback 조건(sumEquals·readbackEquals·fieldsFilled)은 tests/core-readback.test.ts(M2-3).
+    assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { profileHas: 'bizNo' } }, env), { t: 'fail', code: 'step.cond_unsupported' });
   });
   it('전제조건 판정(inputVerified·profileHas·artifact)은 넘겨 준 함수로', async () => {
     const { env } = setup();
