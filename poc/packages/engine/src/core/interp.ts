@@ -81,6 +81,9 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.logged_out_by_other_session', 'handoff'],
   // verify 기준선 조회 실패(B-07, D16): 아직 커밋 전이라 게이트를 열지 않고 핸드오프. 다시 조회해도 같은 화면이라 재시도하지 않는다.
   ['verify.baseline_missing', 'handoff'],
+  // 비가역 진입 전 거부(D03 §3 R-G7): 토큰이 맞지 않거나 원장 armed를 쓰지 못했다. 누르지 않았다. 다시 해도 같은 거부라 중단.
+  ['gate.token_invalid', 'abort'],
+  ['ledger.arm_failed', 'abort'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {

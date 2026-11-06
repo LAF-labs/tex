@@ -16,7 +16,9 @@ import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
 import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.ts';
 import type { PlaybookIR, Step, StepOf } from '../core/types.ts';
-import type { VerifyJudgement } from '../core/verify.ts';
+import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudgement } from '../core/verify.ts';
+import { readField } from '../core/readback.ts';
+import { SECURITY_REJECTIONS } from '../core/token.ts';
 import { buildGateRequest, type GateField, type GateRequest } from '../gate.ts';
 
 /**
@@ -31,6 +33,31 @@ export const CONTROL_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['run.aborted', 'abort'],
   ['gate.unavailable', 'handoff'],
 ]);
+
+/**
+ * 클릭 결과 코드 중 "요청이 나가지 않았음"이 확실한 것(가드·R-A1·동작 가능성 사전 확인·정책 거부, D03 §5.3).
+ * 이 밖의 실패는 실제 클릭 도중의 예외일 수 있으므로 dispatched로 보고 verify로 간다.
+ */
+export const CLICK_NOT_SENT: ReadonlySet<string> = new Set([
+  'step.identity_mismatch', 'step.irreversible_unguarded', 'step.commit_shadow', 'step.not_clickable', 'step.secret_field', 'step.selector_miss',
+  'portal.blocked', 'policy.cooldown', 'policy.actuations_per_run', 'policy.wall_clock', 'policy.irreversible_per_day', 'run.stopped',
+]);
+
+/**
+ * 커밋 구간 진입 포트(D03 §3 R-G7, §5.4). 원장 결과(dispatched·committed·not_committed·in_doubt)는 상태 머신 효과로 onEffect에 간다.
+ * 이 포트는 R-G7 순서에서 결과를 기다려야 하는 두 단계만 맡는다.
+ */
+export interface CommitPort {
+  /**
+   * 원장 armed + 게이트 요청 approved → consumed(한 트랜잭션, synchronous=FULL, 하루 비가역 수 증가 포함).
+   * 이미 행이 있거나 요청이 approved가 아니면 거부. 메모리 토큰은 조율기가 이 앞에서 소비했다.
+   */
+  arm(a: { stepId: string; reqId: string; actionHash: string }): ActResult | Promise<ActResult>;
+  /** 커밋 가드 무장(토큰당 maxRequests회, armedUntil = 토큰 exp. R-C1 expectedHash는 포트가 고정된 readback으로 만든다). */
+  armGuard(a: { stepId: string; armedUntil: number }): Promise<ActResult>;
+  /** 커밋 구간을 나갈 때(verify 결과·누르지 않고 종결). */
+  disarmGuard(): Promise<void>;
+}
 
 export type GateAnswer = { reqId: string; decision: 'approved' | 'denied'; by: 'local' | 'remote'; actionHash: string };
 export type HumanAnswer = { reqId: string; value?: string };
@@ -114,6 +141,10 @@ export interface RunControllerInput {
    * Running으로 남을 때만 on[결과]로 간다. 없으면 verify 스텝은 실행하지 않는다(unhandled).
    */
   verifyStep?: (v: StepOf<'verify'>) => Promise<VerifyJudgement>;
+  /** 커밋 구간 진입(R-G7). 없으면 submit은 실행하지 않는다(step.irreversible_unguarded). */
+  commit?: CommitPort;
+  /** submit이 클릭 시각·클릭 전 실패 신호를 남기는 곳(verify 판정이 읽는다). */
+  verifyBook?: VerifyBook;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
   /** 상태 이벤트(UI·main). ui는 이 전이의 ui.* 효과. */
   onState?: (e: RunStateEvent) => void;
@@ -159,6 +190,8 @@ const RESTING: ReadonlySet<RunStateName> = new Set(['HandedOff', 'Paused', 'Inte
 const CONTROLLER_EFFECTS: ReadonlySet<string> = new Set([
   'input.lock', 'token.issue', 'rewind.pre_gate', 'rewind.checkpoint', 'checkpoint.restore', 'resume_at', 'step.rerun_failed',
   'pre_safety_check', 'verify.baseline', 'dup.portal_existing', 'card.from_readback', 'gate.request_publish', 'verify.run',
+  // R-G7 진입(enter_commit): submit 핸들러가 이 순서로 직접 한다(토큰 소비·CommitPort.arm·재계산·armGuard·클릭).
+  'token.verify', 'ledger.arm+token.consume', 'readback.recompute', 'commit_guard.arm', 'click',
 ]);
 
 export class RunController {
@@ -181,6 +214,13 @@ export class RunController {
   private gateWake: ((w: GateWait) => void) | null = null;
   private humanWait: { reqId: string; step: StepOf<'human'>; wake: (w: HumanWait) => void } | null = null;
   private readonly tokensByGate = new Map<string, { token: GateToken; reqId: string }>();
+  /** 승인한 게이트의 readback 값(R-G7 재계산 대조). */
+  private readonly approvedReadback = new Map<string, ReadonlyMap<string, string>>();
+  /** 지금 무장된 커밋 항목(GuardedActuator.commitArmed)과 그 submit의 expectConfirm. 커밋 구간 안 클릭 직전부터 그 클릭까지만. */
+  private armedKey: string | null = null;
+  private armedConfirmRe: RegExp | null = null;
+  /** 커밋 가드가 무장됐는가(구간을 나갈 때 푼다). */
+  private guardArmed = false;
   private pending: 'abort' | 'downgrade' | null = null;
   private resumeAt: string | null = null;
   private cancelHandoffTimer: (() => void) | null = null;
@@ -205,7 +245,13 @@ export class RunController {
         if (cp) this.staticPreGate.set(id, cp);
       }
     }
-    const bound = { ...i.handlers, gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep, ...(i.verifyStep ? { verify: this.verifyStep } : {}) } as Handlers;
+    // 비가역 스텝은 언제나 조율기 것이다(넘겨받은 핸들러로 덮을 수 없다). human_commit·send_email은 아직 없어 실행하지 않는다.
+    const bound = {
+      ...i.handlers,
+      gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep,
+      submit: this.submitStep, human_commit: this.refuseIrreversible, send_email: this.refuseIrreversible,
+      ...(i.verifyStep ? { verify: this.verifyStep } : {}),
+    } as Handlers;
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
     this.interp = new Interpreter(i.ir, bound, i.env, { ...i.interp, forcedStops }, { beforeStep: this.beforeStep, event: i.stepEvent });
   }
@@ -217,6 +263,16 @@ export class RunController {
   /** 게이트가 발급한 토큰(M2-3 submit이 R-G7 순서로 쓴다). 폐기되면 없어진다. */
   tokenFor(gateStepId: string): { token: GateToken; reqId: string } | null {
     return this.tokensByGate.get(gateStepId) ?? null;
+  }
+
+  /** GuardedActuator.commitArmed: 이 커밋 항목이 지금 무장돼 있는가(R-G7을 마친 submit의 그 클릭만). */
+  commitArmed(key: string): boolean {
+    return this.st.commit && this.armedKey === key;
+  }
+
+  /** GuardedActuator.armedConfirm: 무장된 submit의 expectConfirm 패턴(V-24). 그 밖은 null. */
+  armedConfirm(): RegExp | null {
+    return this.st.commit && this.armedKey ? this.armedConfirmRe : null;
   }
 
   // ---------------- 바깥(RunHandle, D03 §11) ----------------
@@ -407,6 +463,11 @@ export class RunController {
     if (this.name() !== 'Recovering') return;
     this.resumeAt = resumeAt;
     this.fire({ t: 'recovery_failed', then: 'handoff' }, at, code);
+    this.handedOff(at);
+  }
+
+  /** HandedOff에 들어온 뒤: 가드는 관측(R-C2), 핸드오프 상한 타이머. */
+  private handedOff(at: string): void {
     if (this.name() !== 'HandedOff') return;
     this.i.guardMode?.('observing');
     this.cancelHandoffTimer = this.timers.after(this.i.handoffTimeoutMs ?? 30 * 60_000, () => {
@@ -570,6 +631,7 @@ export class RunController {
         }
         this.fire({ t: 'gate_approved' }, g.id, null);
         this.tokensByGate.set(g.id, { token: d.token, reqId: req.reqId });
+        this.approvedReadback.set(g.id, new Map(this.i.env.scope.readback));
         done('approved');
         return NEXT;
       }
@@ -603,11 +665,149 @@ export class RunController {
     const j = await this.i.verifyStep!(v).catch((): VerifyJudgement => ({ result: 'unknown' }));
     this.i.journal('verify.result', { stepId: v.id, result: j.result });
     if (this.st.commit) {
+      await this.disarm();
       if (!this.fire({ t: 'verify', result: j.result }, v.id, j.result === 'unknown' ? 'verify.unknown' : null)) return fail('run.state_stop');
       if (this.name() !== 'Running') return fail('run.state_stop');
     }
     return { t: 'jump', to: v.on[j.result] };
   };
+
+  /** 아직 핸들러가 없는 비가역(human_commit·send_email): 실행하지 않는다. 재시도·onFail 없이 중단(FORCED_STOPS). */
+  private readonly refuseIrreversible: Handler<'human_commit' | 'send_email'> = async (s) => {
+    this.i.journal('step.irreversible_unguarded', { stepId: s.id, type: s.type });
+    return fail('step.irreversible_unguarded');
+  };
+
+  /**
+   * submit(D03 §3 R-G7·§5.3, D02 §4·§4.5). 이 순서가 아니면 누르지 않는다:
+   *   ① 이 X의 게이트가 발급한 토큰 검증·소비(메모리) → ② 원장 armed + 게이트 요청 consumed(포트, 한 트랜잭션) → 커밋 구간 진입
+   *   → ③ readback 재계산(승인한 값과 다르면 not_committed(pre_dispatch_mismatch), 게이트 앞으로) → ④ 커밋 가드 무장
+   *   → R-A1로 버튼 확인 → 클릭(GuardedActuator는 이 항목이 무장됐을 때만 누른다) → dispatched → signFlow → verify.
+   * 진입 뒤 누르기 전에 막히면 not_committed(identity_mismatch) + HandedOff(재개는 게이트 앞). 누른 뒤의 실패는 곧바로 verify(§5.3).
+   * 재계산과 클릭 사이에는 디스크 I/O가 없다(원장 dispatched는 클릭 뒤).
+   */
+  private readonly submitStep: Handler<'submit'> = async (s) => {
+    const g = this.gateOf.get(s.id);
+    const held = g ? this.tokensByGate.get(g) : undefined;
+    const approved = g ? this.approvedReadback.get(g) : undefined;
+    if (!this.i.commit || !g || !held || !approved) {
+      this.i.journal('step.irreversible_unguarded', { stepId: s.id, type: s.type, ...(this.i.commit ? {} : { cause: 'no_commit_port' }) });
+      return fail('step.irreversible_unguarded');
+    }
+    // ① 토큰: 이 게이트·이 actionHash·이 X, 기한 안. 실패면 누르지 않는다(위조·다른 실행·재사용은 보안 이벤트).
+    this.tokensByGate.delete(g);
+    const rej = this.i.tokens.consume(held.token, { gateStepId: g, actionHash: held.token.actionHash, stepId: s.id }, this.i.clock.now());
+    if (rej) {
+      this.i.journal(SECURITY_REJECTIONS.has(rej) ? 'security.gate_token_rejected' : 'gate.token_rejected', { stepId: s.id, reason: rej, ...(SECURITY_REJECTIONS.has(rej) ? { security: true } : {}) });
+      return fail('gate.token_invalid');
+    }
+    // ② 원장 armed + 요청 consumed
+    const armed = await Promise.resolve()
+      .then(() => this.i.commit!.arm({ stepId: s.id, reqId: held.reqId, actionHash: held.token.actionHash }))
+      .catch((): ActResult => ({ ok: false, code: 'ledger.error' }));
+    if (!armed.ok) {
+      this.i.journal('ledger.arm_failed', { stepId: s.id, cause: armed.code });
+      return fail('ledger.arm_failed');
+    }
+    this.i.journal('ledger.armed', { stepId: s.id, reqId: held.reqId });
+    if (!this.fire({ t: 'enter_commit' }, s.id, null)) return fail('run.state_stop');
+    try {
+      return await this.commitSection(s, g, held.token, approved);
+    } catch {
+      // 구간 안 예외: 눌렀는지 모른다. 곧바로 verify(§5.3).
+      this.armedKey = null;
+      this.fire({ t: 'step_failed' }, s.id, 'step.port_error');
+      return { t: 'jump', to: s.verify };
+    }
+  };
+
+  private async commitSection(s: StepOf<'submit'>, g: string, token: GateToken, approved: ReadonlyMap<string, string>): Promise<Outcome> {
+    const env = this.i.env;
+    // ③ readback 재계산: 승인한 값을 화면에서 다시 읽어 같아야 한다.
+    for (const [f, v] of approved) {
+      const r = await readField(env.page, env.dict, f).catch(() => null);
+      if (!r?.ok || r.value !== v) {
+        this.i.journal('step.pre_dispatch_mismatch', { stepId: s.id });
+        this.fire({ t: 'pre_dispatch_mismatch' }, s.id, 'step.pre_dispatch_mismatch');
+        await this.disarm();
+        if (this.name() !== 'Running') return fail('run.state_stop');
+        const cp = this.preGateCp;
+        return cp ? { t: 'jump', to: cp } : this.handoffWith('portal.unexpected_page');
+      }
+    }
+    // ④ 커밋 가드 무장
+    const ga = await this.i.commit!.armGuard({ stepId: s.id, armedUntil: token.exp }).catch((): ActResult => ({ ok: false, code: 'commit_guard.arm_refused' }));
+    if (!ga.ok) return this.notSent(s, g, ga.code);
+    this.guardArmed = true;
+    // R-A1: 버튼 동일성. 확인한 그 요소를 누른다.
+    const t = await waitTarget(env, s.target, s.timeoutMs ?? env.defaultTimeoutMs, { allowCommit: true });
+    if (!t.ok) return this.notSent(s, g, t.code);
+    const v = verifyOfIrreversible(this.i.ir, s.id);
+    const failBefore = v ? await failSignalKeys(env.page, v.failSignals ?? []).catch(() => new Set<string>()) : new Set<string>();
+    this.armedKey = s.target;
+    this.armedConfirmRe = s.expectConfirm ? stringRe(env.strings[s.expectConfirm]) : null;
+    const c = await env.act.click(t.t);
+    if (!c.ok && CLICK_NOT_SENT.has(c.code)) return this.notSent(s, g, c.code);
+    this.fire({ t: 'click_returned' }, s.id, null);
+    if (v) this.i.verifyBook?.markDispatched(v.id, this.i.clock.now(), failBefore);
+    if (!c.ok) this.i.journal('step.dispatch_error', { stepId: s.id, cause: c.code });
+    else if (s.signFlow) await this.signFlow(s, s.signFlow);
+    this.armedKey = null;
+    return { t: 'jump', to: s.verify };
+  }
+
+  /**
+   * submit.signFlow(D02 §4.5): 클릭 뒤 서명. 무장된 커밋 구간 안에서만. 실패·maxWaitMs 초과는 곧바로 verify(결과는 verify가 판정).
+   * 실제 순서(클릭 → confirm → 서명 → 서버 요청)는 S1 확인 전이다.
+   */
+  private async signFlow(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>): Promise<void> {
+    const env = this.i.env;
+    const deadline = this.i.clock.now() + f.maxWaitMs;
+    const left = () => Math.max(0, deadline - this.i.clock.now());
+    const method = f.method === '$profile.signMethod' ? env.scope.profile.signMethod : f.method;
+    // steps를 선언했으면 그 방식의 동작이 있어야 한다. 모르는 방식은 서명하지 않고(확인 버튼도 누르지 않고) verify로.
+    const actions = typeof method !== 'string' ? null : f.steps ? f.steps[method as keyof typeof f.steps] : [];
+    if (!actions) return this.i.journal('signflow.method_unknown', { stepId: s.id });
+    for (const a of actions) {
+      if (a === 'human:secret') {
+        // 금고 비밀 창이 서명 대화상자에 직접 넣는다(D05 §3.5). 상태 머신 사람 차례가 아니다(구간 안).
+        const r = await this.i.human.secret({ runId: this.i.runId, stepId: s.id, ttlMs: left() }).catch(() => 'ttl' as const);
+        if (r !== 'done') return this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+      } else if (a === 'wait:push') {
+        // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다.
+        const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : await env.page.waitNavigation(left());
+        if (!ok) return this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+      } else {
+        // secret_fill:security_card(rowLabel)은 M2-3 나머지. 아직 없으므로 하지 않고 verify로.
+        return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
+      }
+    }
+    if (!f.confirmTarget) return;
+    const t = await waitTarget(env, f.confirmTarget, left(), { allowCommit: true });
+    if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
+    this.armedKey = f.confirmTarget;
+    const c = await env.act.click(t.t);
+    if (!c.ok) this.i.journal('signflow.confirm_failed', { stepId: s.id, code: c.code });
+  }
+
+  /** 진입 뒤 누르기 전에 막혔다: 원장 not_committed(identity_mismatch), HandedOff, 재개는 게이트 앞(재게이트). */
+  private async notSent(s: StepOf<'submit'>, g: string, code: string): Promise<Outcome> {
+    this.armedKey = null;
+    this.i.journal('submit.not_sent', { stepId: s.id, cause: code });
+    await this.disarm();
+    this.resumeAt = this.preGateCp ?? this.staticPreGate.get(g) ?? g;
+    this.fire({ t: 'identity_mismatch' }, s.id, 'step.identity_mismatch');
+    this.handedOff(s.id);
+    return fail('run.state_stop');
+  }
+
+  private async disarm(): Promise<void> {
+    this.armedKey = null;
+    this.armedConfirmRe = null;
+    if (!this.guardArmed) return;
+    this.guardArmed = false;
+    await this.i.commit?.disarmGuard().catch(() => {});
+  }
 
   /** waitMs 초과: Paused, 재개하면 게이트 앞 체크포인트부터(재게이트). */
   private gateExpired(g: StepOf<'gate'>, done: (why: GateCloseReason) => void): Outcome {
@@ -773,5 +973,14 @@ function inputOk(spec: StepOf<'human'>['inputSpec'], v: string | undefined): boo
     return compileRe2(spec.pattern).test(v);
   } catch {
     return false;
+  }
+}
+
+function stringRe(p: string | undefined): RegExp | null {
+  if (typeof p !== 'string') return null;
+  try {
+    return compileRe2(p);
+  } catch {
+    return null;
   }
 }
