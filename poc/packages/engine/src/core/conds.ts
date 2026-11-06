@@ -81,13 +81,19 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
   if ('artifact' in c) return env.pre?.artifact ? bool(env.pre.artifact(c.artifact)) : { ok: false, code: 'step.cond_unsupported' };
   if ('readbackEquals' in c) {
     // 되읽은 값 ↔ $inputs·$profile(B-05, s19c·s19e·s19f). 어느 쪽이든 없으면 평가할 수 없다(fail-closed).
-    const { fieldKey, ref } = c.readbackEquals;
+    // ifAbsent 'empty': 선택 입력이 비었으면 되읽은 칸도 비어야 한다(값 없이 보내지 않게, V-03m).
+    const { fieldKey, ref, ifAbsent } = c.readbackEquals;
     const got = env.scope.readback.get(fieldKey);
     const want = readRef(env.scope, ref);
-    if (got === undefined || isAbsent(want)) return { ok: false, code: 'step.ref_unresolved' };
+    if (got === undefined) return { ok: false, code: 'step.ref_unresolved' };
+    if (isAbsent(want)) return ifAbsent === 'empty' ? bool(got === '') : { ok: false, code: 'step.ref_unresolved' };
     const w = scalar(want);
     if (w === null) return { ok: false, code: 'step.ref_unresolved' };
     return bool(normalizeFor(env.dict, fieldKey, w) === got);
+  }
+  if ('readbackEmpty' in c) {
+    const got = env.scope.readback.get(c.readbackEmpty);
+    return got === undefined ? { ok: false, code: 'step.ref_unresolved' } : bool(got === '');
   }
   if ('sumEquals' in c) {
     // readback 산술(s19d): Σ parts = total. 정수가 아닌 값은 맞는다고 볼 수 없다(not으로 뒤집히지 않게 오류).
