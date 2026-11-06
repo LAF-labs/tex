@@ -28,6 +28,9 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
   - 함수는 다섯이다: 공개 `api/sax`, 내부 `api/internal`, 정리 `api/cron`은 `pnpm build`가 만든 `services/cloud/dist/index.js`를 쓴다. 레지스트리 `api/registry`·`api/registry-cron`은 `services/registry/dist/index.js`를 쓴다(실패 영역 분리: 레지스트리 구성이 틀려도 로그인·게이트웨이는 돈다).
   - 조립은 `services/cloud/src/index.ts`(`@sax/svc-cloud`)다. 네 서비스를 한 프로세스에서 조립하고, 서비스 사이 호출(기기 상태·자동 정지·정지 알림)은 **HTTP 없이 함수로** 부른다(팀장 결정 2026-11-06 #135 (1)). 서비스마다 자기 DB 역할·키를 따로 쓰고, 상시 서버의 `build*`와 같은 코드다.
 - **경로 복원**: 재작성 규칙이 원래 경로를 `__p`로 넘기고 진입점이 되살린다(`services/shared/src/deploy.ts`). DPoP `htu`는 공개 origin에 원래 경로를 붙인 값이다.
+  - Vercel은 재작성 소스의 이름 붙은 매개변수(`:path*`의 `path`, `:id`의 `id`)를 목적지에서 이미 썼어도 쿼리에 다시 붙인다(2026-11-06 운영 확인: `/registry/log/head.json` → `?__p=/registry/log/head.json&path=head.json`, 레지스트리 로그의 엄격한 쿼리 검사가 400을 냈다).
+  - `restorePath`는 값이 `__p`의 끝 구간인 `path`·`id`만 뺀다(`REWRITE_PARAMS`). 다른 값은 원래 요청의 쿼리로 남긴다. 라우터는 이 이름을 쿼리 키로 쓰지 않는다(시험).
+  - 배포 전 점검(`check-vercel-output.ts`)은 공개 경로에 이 재작성을 플랫폼처럼 적용해서도 요청한다.
 - **정리**: Vercel Cron이 매시 `/api/cron`을 `Authorization: Bearer <CRON_SECRET>`으로 부른다. 정리 대상은 만료 행, 한도 창, 지난 날 솔트다. Hobby 플랜에서는 cron이 하루 1회뿐이라 Pro가 필요하다.
 - **DB**: Supabase 프로젝트 하나, PostgreSQL 하나다. 서비스마다 스키마 `<서비스>`, 한도 스키마 `<서비스>_limits`, 로그인 역할 `sax_<서비스>`를 둔다.
   - 역할은 자기 두 스키마의 **행만** 읽고 쓴다. DDL 권한도, 다른 서비스 스키마 권한도 없다(시험이 PG 17에서 확인).

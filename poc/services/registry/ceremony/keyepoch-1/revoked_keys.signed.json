@@ -1,0 +1,25 @@
+{
+  "revoked": [
+    {
+      "keyId": "package-0",
+      "role": "package",
+      "revokedAt": "2026-11-06T07:52:13Z"
+    }
+  ],
+  "monotonic": 1,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-06T07:52:13Z",
+  "expiresAt": "2026-11-07T07:52:13Z",
+  "signatures": [
+    {
+      "keyId": "root-1",
+      "alg": "ed25519",
+      "sig": "HbQ7VEdxyB4ARwTmY8urnvXLVEd3pnAt0HgmVw16HCLpPhO69Nu82OUaKr3QIi5n3or2TpeXB5fM8BcqlxkgCg"
+    },
+    {
+      "keyId": "root-2",
+      "alg": "ed25519",
+      "sig": "lKkIXRodKAGrfoxBgtEjwDW-gxVaC-M2h3kbxTp9VelPM4mWsnpR3orfDcf3S40RoPL-E5jtsCxOnjdDS1j_DA"
+    }
+  ]
+}

@@ -16,12 +16,26 @@ export function serviceEnv(prefix: string, env: NodeJS.ProcessEnv): NodeJS.Proce
 /** 재작성 규칙이 원래 경로를 `__p`로 넘긴다. 함수 런타임이 req.url을 어떻게 주든 서비스는 원래 경로·쿼리를 본다(DPoP htu = origin + 경로). */
 export const PATH_PARAM = '__p';
 
-/** `/api/x?__p=/v1/a&q=1` → `/v1/a?q=1`. `__p`가 없거나 `/`로 시작하지 않으면 null */
+/**
+ * 재작성 규칙 소스의 이름 붙은 매개변수(`/registry/log/:path*`의 `path`, `/…/devices/:id`의 `id`). 플랫폼이 목적지에서 이미 쓴 매개변수도
+ * 쿼리에 다시 붙여 넘긴다(2026-11-06 운영 확인: `/registry/log/head.json` → `?__p=/registry/log/head.json&path=head.json`).
+ * 원래 요청의 쿼리가 아니므로 복원할 때 뺀다. 서비스 라우터는 이 이름을 쿼리 키로 쓰지 않는다(시험이 vercel.json·라우터와 대조한다).
+ */
+export const REWRITE_PARAMS = ['path', 'id'] as const;
+
+/**
+ * `/api/x?__p=/v1/a&q=1` → `/v1/a?q=1`. `__p`가 없거나 `/`로 시작하지 않으면 null.
+ * 재작성 매개변수(REWRITE_PARAMS)는 값이 모두 `__p`의 끝 구간(또는 빈 값)일 때만 뺀다. 그 밖의 값이면 원래 요청에서 온 것으로 보고 남긴다(라우터가 거부한다).
+ */
 export function restorePath(url: string | undefined): string | null {
   const u = new URL(url ?? '/', 'http://fn.invalid');
   const p = u.searchParams.get(PATH_PARAM);
   if (!p || !p.startsWith('/') || p.startsWith('//')) return null;
   u.searchParams.delete(PATH_PARAM);
+  for (const name of REWRITE_PARAMS) {
+    const vals = u.searchParams.getAll(name);
+    if (vals.length && vals.every((v) => v === '' || p.endsWith(`/${v}`))) u.searchParams.delete(name);
+  }
   const q = u.searchParams.toString();
   return q ? `${p}?${q}` : p;
 }
