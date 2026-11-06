@@ -1,0 +1,13 @@
+/* 폰 연결 창(S-03). 화면 캡처를 막은 main 소유 창이다(setContentProtection). 색은 디자인 시스템 토큰. */
+html, body { margin: 0; background: var(--surface); color: var(--ink); }
+body { box-sizing: border-box; padding: 20px; font-family: "Malgun Gothic", "Apple SD Gothic Neo", system-ui, sans-serif; font-size: 14px; line-height: 22px; }
+h1 { margin: 0 0 4px; font-size: 18px; line-height: 26px; }
+p { margin: 0 0 12px; }
+.muted { color: var(--ink-3); font-size: 13px; }
+.qr { display: block; width: 240px; height: 240px; margin: 8px auto 12px; background: #fff; }
+.sas { display: flex; gap: 8px; align-items: center; margin: 8px 0 12px; }
+.sas input { font: inherit; font-size: 20px; letter-spacing: 6px; width: 140px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
+button { font: inherit; padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }
+button.primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+.acts { display: flex; gap: 8px; justify-content: flex-end; }
+.err { color: var(--danger, #b42318); }

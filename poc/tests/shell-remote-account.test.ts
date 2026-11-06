@@ -46,7 +46,7 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.equal(sent.email, EMAIL);
     assert.ok(sent.codeExpiresAt! > s.clock.now());
     const v = await a.verify(s.mail.lastCode(EMAIL)!);
-    assert.deepEqual(v, { step: 'signed_in', email: EMAIL, codeExpiresAt: null, error: null });
+    assert.deepEqual(v, { step: 'signed_in', email: EMAIL, codeExpiresAt: null, error: null, phones: 0 });
     assert.deepEqual(s.client.calls, ['POST /v1/auth/code', 'POST /v1/auth/code/verify', 'GET /v1/device-list', 'POST /v1/aik', 'POST /v1/auth/logout']);
     const raw = fs.readFileSync(path.join(dir, 'remote-identity.json'), 'utf8');
     const id = checkIdentity(JSON.parse(raw), s.clock.now())!;

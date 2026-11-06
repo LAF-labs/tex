@@ -18,6 +18,7 @@ export interface DevStack {
   server: Server;
   base: string;
   claimSigner: AcctClaimSigner;
+  rooms: FakeRooms;
   /** 시험용 AccountClient(요청 URL은 ORIGIN으로 만들고 localhost로 보낸다: DPoP htu는 서버 publicOrigin 기준). */
   client: AccountClient & { calls: string[] };
   http: HttpJson;
@@ -29,6 +30,21 @@ const err = (status: number, body: unknown) => {
   return Object.assign(new Error(`http ${status}`), { code: typeof e === 'string' ? e : `http.${status}` });
 };
 
+/** 릴레이 룸 소비 대역(services/account PairingRooms): 데스크톱이 연 룸만, 한 번만. */
+export class FakeRooms {
+  readonly opened = new Map<string, { owner: string; used: boolean }>();
+  open(roomId: string, owner: string) {
+    this.opened.set(roomId, { owner, used: false });
+  }
+  async redeem(roomId: string, desktopDeviceId: string): Promise<'ok' | 'used' | 'unavailable'> {
+    const r = this.opened.get(roomId);
+    if (!r || r.owner !== desktopDeviceId) return 'unavailable';
+    if (r.used) return 'used';
+    r.used = true;
+    return 'ok';
+  }
+}
+
 export async function startDevStack(): Promise<DevStack> {
   const clock = new Clock();
   const db = openSqlite();
@@ -36,6 +52,7 @@ export async function startDevStack(): Promise<DevStack> {
   const mail = new MockMailSender();
   const signKey = edKey().priv;
   const claimSigner = AcctClaimSigner.fromSeedHex(randomBytes(32).toString('hex'));
+  const rooms = new FakeRooms();
   const svc = new AccountService({
     db,
     mail,
@@ -46,6 +63,7 @@ export async function startDevStack(): Promise<DevStack> {
     publicOrigin: ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/billing/done',
     acctClaims: claimSigner,
+    pairing: rooms,
     now: clock.now,
   });
   const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internalSecret: randomBytes(32).toString('hex') });
@@ -79,7 +97,7 @@ export async function startDevStack(): Promise<DevStack> {
     enrollPhone: async (auth, b) => void (await call('POST', '/v1/devices/enroll', await auth('POST', ORIGIN + '/v1/devices/enroll'), b)),
     putDeviceList: async (auth, list) => void (await call('PUT', '/v1/device-list', await auth('PUT', ORIGIN + '/v1/device-list'), { deviceList: list })),
   };
-  return { clock, mail, svc, server, base, claimSigner, client, http, close: () => server.close() };
+  return { clock, mail, svc, server, base, claimSigner, rooms, client, http, close: () => server.close() };
 }
 
 /** 소프트 DesktopKeys(금고 대역). 같은 seed면 같은 키(같은 금고로 다시 설치). */
