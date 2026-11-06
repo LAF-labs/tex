@@ -8,6 +8,7 @@ import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
+import type { DesktopKeys } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
@@ -35,6 +36,8 @@ import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert } from './bizcert-read.ts';
+import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
+import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
@@ -77,6 +80,7 @@ const FILES: Record<string, string> = {
   '/shell-views.js': 'text/javascript',
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
+  '/shell-account.js': 'text/javascript',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
 };
@@ -137,6 +141,19 @@ export interface ShellOptions {
    * 레지스트리 origin(egress 목적지), latest.json·폐기 목록·핀 키·투명성 확인 포트, 실계정 시험 빌드 여부와 설정.
    */
   update?: UpdateWiring;
+  /**
+   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 클라우드 포트(egress)·금고 키 연결이 갖춰지면 진입점이 넘긴다.
+   * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
+   */
+  remote?: RemoteWiring;
+}
+
+/** ShellOptions.remote. */
+export interface RemoteWiring {
+  cloud: CloudPorts | null;
+  keys: VaultKeysFactory | null;
+  /** 계정 기기 목록에 보일 이름. 사람 이름이 들어가지 않게 기본은 운영체제 이름. */
+  deviceName?: string;
 }
 
 /** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
@@ -574,6 +591,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
+  // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
+  let remoteKeys: Promise<DesktopKeys> | null = null;
+  const keysOf = (): Promise<DesktopKeys> => {
+    const f = opts.remote?.keys;
+    if (!f) return Promise.reject(Object.assign(new Error('keys'), { code: 'account.keys_unavailable' }));
+    remoteKeys ??= f((m, p) => host.control(m, p)).catch((e: unknown) => {
+      remoteKeys = null;
+      throw e;
+    });
+    return remoteKeys;
+  };
+  const account = new DesktopAccount({
+    client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
+    keys: keysOf,
+    identity: new RemoteIdentityFile(appPaths(root ?? defaultAppRoot()).userData),
+    platform: process.platform === 'darwin' ? 'macos' : 'windows',
+    deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    log: (n, d) => log.event(n, d),
+  });
+  let accountReady: Promise<unknown> | null = null;
+  const accountInit = () => (accountReady ??= account.init());
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -698,6 +736,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).
+    // 계정 로그인(A-01). 단계·이메일·코드 만료 시각·오류 코드만 돌려준다(세션·토큰은 main에만).
+    'account.view': async () => {
+      await accountInit();
+      return account.view();
+    },
+    'account.sendCode': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.sendCode(String(p.email));
+    },
+    'account.verify': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.verify(String(p.code));
+    },
+    'account.back': async () => {
+      await accountInit();
+      return account.back();
+    },
     'onboarding.reply': async (p) => {
       needGesture(3_000);
       if (!onb) throw new Error('onboarding_done');
