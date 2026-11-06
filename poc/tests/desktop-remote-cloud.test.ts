@@ -205,9 +205,11 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     assert.match(tok.token, /^sxd1\./);
     // 다른 Vx로 증명하면 서버 코드 그대로
     await assert.rejects(account.deviceToken(cert, softSigner(ed25519Keygen().secretKey, VD_PURPOSES)), (e: Error & { code: string }) => /^account\./.test(e.code));
-    const auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(tok.token, keys.vd, htm, htu) as Promise<{ Authorization: string; DPoP: string }>;
+    const auth: DeviceAuth = async (htm, htu) => deviceAuthHeaders(tok.token, keys.vd, htm, htu);
 
     const claim = await account.acctClaim(auth);
+    // 데스크톱 헤더도 egress 허용 목록을 지난다(쿠키 등은 보내지 않는다)
+    await assert.rejects(account.acctClaim(async (htm, htu) => ({ ...(await auth(htm, htu)), cookie: 'x' })), { code: 'net.header_not_allowed' });
     assert.equal(claim.claim.email, email);
     // 폰과 같은 검증: PAIR_OK 필드 = b64(JCS(응답 그대로)), 앱 고정 공개키, AIK 일치
     const v = verifyAcctClaim(b64(jcsBytes(claim)), { accountKeys: [s.acctClaimPub], aikPub: keys.aik.publicKey });

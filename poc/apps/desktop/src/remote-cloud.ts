@@ -1,8 +1,9 @@
-// 계정·릴레이 클라우드 포트(데스크톱 main 전용, 팀장 결정 2026-11-06 (가)). 포트 정본은 remote-ports.ts(데스크톱 PR), 서버 정본은
+// 계정·릴레이 클라우드 포트(데스크톱 main 전용, 팀장 결정 2026-11-06 (가)). 포트 정본은 remote-ports.ts(#143), 서버 정본은
 // services/account/API.md·services/relay/API.md. 송신은 @sax/net Egress.cloud()·openCloudSocket()으로만 한다(D01 §3).
 // 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
 // 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
+import type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
 import {
   b64url,
   relayOrigin,
@@ -16,38 +17,8 @@ import {
   type WebSocketLike,
 } from '@sax/remote';
 
-// ---- 포트 타입(remote-ports.ts가 main에 오면 그것을 import한다. 모양은 desktop-pending.md 「계정·기기·페어링 포트」와 같다) ----
-
-/** 기기 범위 호출의 헤더(데스크톱이 금고 Vd 서명과 토큰 캐시로 만든다). htu는 요청 URL 전체 */
-export type DeviceAuth = (htm: CloudMethod, htu: string) => Promise<{ Authorization: string; DPoP: string }>;
-
-export interface AccountClient {
-  startEmailCode(email: string): Promise<{ loginId: string; expiresInSec: number }>;
-  verifyEmailCode(loginId: string, code: string): Promise<{ session: string; expiresInSec: number }>;
-  logout(session: string): Promise<void>;
-  deviceList(session: string): Promise<{ aikPub: string | null; deviceList: DeviceListJson | null }>;
-  pinFirstDesktop(session: string, o: { aikPub: string; deviceList: DeviceListJson; platform: 'windows' | 'macos'; name: string }): Promise<{ deviceId: string }>;
-  deviceToken(cert: SignedCert, dpop: DpopSigner): Promise<DeviceToken>;
-  acctClaim(auth: DeviceAuth): Promise<SignedAcctClaim>;
-  enrollPhone(auth: DeviceAuth, o: { deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }): Promise<void>;
-  putDeviceList(auth: DeviceAuth, list: DeviceListJson): Promise<void>;
-}
-
-export interface RelayHttpClient {
-  createRoom(auth: DeviceAuth, roomId: Uint8Array): Promise<{ expiresAt: number }>;
-  registerMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokRead: Uint8Array, tokWrite: Uint8Array): Promise<void>;
-  deleteMailbox(auth: DeviceAuth, mbxId: Uint8Array, tokWrite: Uint8Array): Promise<void>;
-}
-
-export interface CloudPorts {
-  account: AccountClient;
-  relay: RelayHttpClient;
-  /** QR·WSS의 릴레이 호스트(포트 포함 가능). 운영은 룸 호스트 rooms.tax.laf-co.com */
-  relayHost: string;
-  /** 개발 스택(ws://localhost)이면 true. wsRelayClient·relayUrl에 그대로 넘긴다 */
-  insecureLocal: boolean;
-  openSocket(url: string, headers?: Record<string, string>): WebSocketLike;
-}
+// 포트 정본은 remote-ports.ts(#143). 여기서는 그 타입을 구현한다.
+export type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
 
 export interface CloudPortsOptions {
   egress: Egress;
@@ -106,10 +77,8 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     if (!str(session, 512)) throw new CloudPortError('account.unauthorized');
     return { authorization: `Bearer ${session}` };
   };
-  const authed = async (auth: DeviceAuth, method: CloudMethod, url: string) => {
-    const h = await auth(method, url);
-    return { authorization: h.Authorization, dpop: h.DPoP };
-  };
+  // 데스크톱이 만든 헤더를 그대로 붙인다. 이름 검사·소문자화는 egress(cloudHeaders: authorization·dpop·x-mbx-*만)
+  const authed = async (auth: DeviceAuth, method: CloudMethod, url: string): Promise<Record<string, string>> => ({ ...(await auth(method, url)) });
   const bytes = (b: Uint8Array, n: number) => {
     if (!(b instanceof Uint8Array) || b.length !== n) throw new CloudPortError('request.param_rejected');
     return b64url(b);
