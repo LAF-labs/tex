@@ -39,7 +39,7 @@ pnpm package:win            # 결과: poc/.tmp/package-win/
 
 ```ts
 /** 앱 안 build-info.json(scripts/package-win.mjs가 쓴다) */
-export interface BuildInfo { productName: string; version: string; channel: 'stable' | 'beta'; signing: 'azure' | 'unsigned'; commit: string; devOnlyIncluded: string[] }
+export interface BuildInfo { productName: string; version: string; channel: 'stable' | 'beta'; signing: 'azure' | 'unsigned'; commit: string; devOnlyIncluded: string[]; testBuild?: boolean }
 
 /**
  * 패키지된 앱만(app.isPackaged). 빈 배열이면 통과. 'fatal:'로 시작하면 열지 않는다, 'warn:'은 배너.
@@ -49,11 +49,13 @@ export interface BuildInfo { productName: string; version: string; channel: 'sta
  * - warn:install_unexpected   %LOCALAPPDATA%\Programs\<productName> 밖(사용자 /D 설치·복사본)
  * - warn:unsigned_build       signing !== 'azure' → 화면 상단 "미서명 빌드" 표시, 베타 배포본이 아니다
  * - warn:dev_code_included    devOnlyIncluded가 비어 있지 않다
+ * - warn:test_build           testBuild가 true다 → "실계정 시험 빌드" 배지
  */
 export function packagedProblems(o: { isPackaged: boolean; appPath: string; execPath: string; localAppData: string; buildInfo: unknown }): string[];
 ```
 
 - asar 내용 변조는 `EnableEmbeddedAsarIntegrityValidation` 퓨즈가 Electron 단계에서 막는다(앱 코드가 돌기 전에 종료). 자기 점검은 그 퓨즈가 실제로 걸린 실행 파일인지(asar에서 로드됐는지)만 본다.
+- 실계정 시험 빌드는 `node scripts/package-win.mjs --test-build`(poc에서)로 만든다. build-info `testBuild: true`이고 release-readiness에 `test_build` 블로커가 붙는다(배포 불가). 앱은 `isTestBuild(buildInfo)`일 때만 업데이트 투명성 확인 끄기 설정을 받는다(팀장 결정 11-05, update-host `updatePolicy`). 칸이 없거나 모양이 틀리면 제품 빌드다.
 - 서명 상태는 `build-info.json`으로 보인다. 실행 중인 exe의 Authenticode를 앱이 직접 확인하는 것(PowerShell·WinVerifyTrust)은 프로세스를 띄우거나 네이티브가 필요해 Phase 1에서는 하지 않는다. 업데이트 설치 전 DN 검사는 electron-updater(`verifyUpdateCodeSignature`)가 한다.
 
 ### 2. 업데이트 배선(main, `update-host.ts` 같은 새 파일)

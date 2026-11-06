@@ -74,6 +74,11 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['commit_guard.unintercepted', 'abort'],
   ['commit_guard.arm_refused', 'abort'],
   ['security.commit_payload_mismatch', 'handoff'],
+  // decide(M2-2 B, D16 decide.*·portal.*): 화면 확인 불가·판정기 불가·중복 로그인은 재시도 없이 핸드오프(자동 재로그인 없음, D03 §10)
+  ['portal.unobservable', 'handoff'],
+  ['decide.unavailable', 'handoff'],
+  ['decide.unknown', 'handoff'],
+  ['portal.logged_out_by_other_session', 'handoff'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {

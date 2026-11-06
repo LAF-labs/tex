@@ -1,6 +1,7 @@
 // 레지스트리 HTTP. 공개 GET은 정적 파일(ETag 조건부), 게시 PUT은 운영자 토큰 + 서명 검증 관문(규칙 정본: design/schemas/SIGNING.md, 엔진 로더).
 // 게시 토큰은 호스팅 쓰기 권한일 뿐 서명 권한이 아니다: 2-of-3 서명이 없는 산출물은 토큰이 있어도 올라가지 않는다(ADR-013, D09 §8.2 역할 분리).
 import { Router, fail, fromB64, json, safeEqual, sha256hex, type Ctx, type Reply } from '@sax/svc-shared';
+import type { LogKind, TransparencyLog } from './log.ts';
 import type { Store } from './store.ts';
 import {
   CHANNELS,
@@ -30,6 +31,8 @@ export interface RegistryAppOpts {
   now: () => number;
   /** 게시 이벤트(카운트만) */
   onEvent?: (e: string) => void;
+  /** 투명성 로그(D09 §8.3). 있으면 게시마다 공개 전에 항목을 먼저 쓰고 /registry/log/*를 연다. 운영 기동(main)은 반드시 둔다 */
+  log?: TransparencyLog;
 }
 
 /** 조회 주기 파일(ADR-023): 15분 폴링 + ETag, max-age=60 */
@@ -57,7 +60,12 @@ export function registryRouter(o: RegistryAppOpts): Router {
     if (!(CHANNELS as readonly string[]).includes(c)) fail('registry.not_found');
     return c as Channel;
   };
-  const putJson = (key: string, v: unknown) => store.put(key, Buffer.from(JSON.stringify(v)));
+  /** 공개: 투명성 로그 항목을 먼저 쓰고(실패하면 공개하지 않는다), 그다음 파일을 쓴다(D09 §8.3 "먼저 기록") */
+  const publish = async (kind: LogKind, key: string, bytes: Buffer) => {
+    if (o.log) await o.log.append({ kind, path: key, sha256: sha256hex(bytes) });
+    await store.put(key, bytes);
+  };
+  const putJson = (kind: LogKind, key: string, v: unknown) => publish(kind, key, Buffer.from(JSON.stringify(v)));
   /** 검증을 돌리고, 통과하든 거부되든 그동안 생긴 이벤트(registry.key_revoked 등)를 남긴다 */
   const checked = <T>(fn: (v: Verdict) => T): T => {
     const v: Verdict = { events: [] };
@@ -103,6 +111,49 @@ export function registryRouter(o: RegistryAppOpts): Router {
   r.add('GET', '/releases/:channel/latest.yml', (ctx) => serve(ctx, `releases/${channelOf(ctx.params.channel!)}/latest.yml`, POLL, 'text/yaml; charset=utf-8'));
   r.add('GET', '/healthz', () => json(200, { ok: true }));
 
+  // ---------- 투명성 로그(RFC 9162, D09 §8.3) ----------
+  // 쿼리는 경로마다 정해진 키만 정확히 한 번씩(클라이언트 egress 허용 목록과 같은 규칙)
+  const DEC = /^(0|[1-9][0-9]{0,14})$/;
+  const query = (ctx: Ctx, want: Record<string, RegExp>): Record<string, string> => {
+    const keys = [...ctx.query.keys()];
+    const names = Object.keys(want);
+    if (keys.length !== names.length || new Set(keys).size !== keys.length) fail('request.param_rejected');
+    const out: Record<string, string> = {};
+    for (const k of names) {
+      const v = ctx.query.get(k);
+      if (v === null || !want[k]!.test(v)) fail('request.param_rejected');
+      out[k] = v!;
+    }
+    return out;
+  };
+  const logOf = (): TransparencyLog => o.log ?? fail('registry.not_found');
+  const LOG_CACHE = 'public, max-age=60';
+  const noQuery = (ctx: Ctx) => query(ctx, {});
+  r.add('GET', '/registry/log/head.json', async (ctx) => {
+    noQuery(ctx);
+    return { status: 200, headers: { 'cache-control': LOG_CACHE }, body: await logOf().head() };
+  });
+  r.add('GET', '/registry/log/entries/:file', async (ctx) => {
+    noQuery(ctx);
+    const m = /^(0|[1-9][0-9]{0,14})\.json$/.exec(ctx.params.file!);
+    if (!m) fail('registry.not_found');
+    const e = await logOf().entry(Number(m![1]));
+    if (!e) fail('registry.not_found');
+    return { status: 200, headers: { 'cache-control': IMMUTABLE }, body: e };
+  });
+  r.add('GET', '/registry/log/proof/inclusion', async (ctx) => {
+    const q = query(ctx, { leaf: /^[0-9a-f]{64}$/, size: DEC });
+    const p = await logOf().inclusion(q.leaf!, Number(q.size));
+    if (!p) fail('registry.not_found');
+    return { status: 200, headers: { 'cache-control': IMMUTABLE }, body: p };
+  });
+  r.add('GET', '/registry/log/proof/consistency', async (ctx) => {
+    const q = query(ctx, { from: DEC, to: DEC });
+    const p = await logOf().consistency(Number(q.from), Number(q.to));
+    if (!p) fail('registry.not_found');
+    return { status: 200, headers: { 'cache-control': IMMUTABLE }, body: p };
+  });
+
   // ---------- 게시(운영자, 서명 검증 관문) ----------
   r.add(
     'PUT',
@@ -121,7 +172,8 @@ export function registryRouter(o: RegistryAppOpts): Router {
         // .sxp 안의 manifest·hotfix 서명(패키지 키 2-of-3)·스키마·내용 다이제스트까지 본다(엔진이 받지 않을 패키지는 올리지 않는다)
         const revoked = await revokedSet();
         const info = checked((v) => verifySxp(data!, { id: m![1]!, version: m![2]! }, o.trust, revoked, o.now(), v));
-        await store.put(`packages/${f}`, data!);
+        // 같은 바이트 재게시(멱등)는 로그에 다시 쓰지 않는다
+        if (!cur) await publish('package', `packages/${f}`, data!);
         o.onEvent?.('package_staged');
         return json(201, { sxpDigest: sha256hex(data!), size: data!.length, kind: info.kind });
       });
@@ -149,7 +201,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
           const info = checked((v) => verifySxp(b!, e, o.trust, revoked, o.now(), v));
           if (info.kind !== e.kind || (e.portal !== undefined && e.portal !== info.portal)) fail('registry.schema_invalid');
         }
-        await putJson(key, doc);
+        await putJson('index', key, doc);
         o.onEvent?.('index_published');
         return json(200, { monotonic: doc.monotonic });
       });
@@ -167,8 +219,8 @@ export function registryRouter(o: RegistryAppOpts): Router {
       // current.json 쓰기가 실패해도 {ver}.json은 같은 내용으로만 다시 쓸 수 있으므로, 같은 문서로 재시도하면 끝난다.
       const prev = await readJson<SignedPolicy>(`policy/${doc.version}.json`);
       if (prev && (prev.monotonic !== doc.monotonic || contentDigest(prev) !== contentDigest(doc))) fail('registry.version_rollback');
-      await putJson(`policy/${doc.version}.json`, doc);
-      await putJson('policy/current.json', doc);
+      await putJson('policy', `policy/${doc.version}.json`, doc);
+      await putJson('policy', 'policy/current.json', doc);
       o.onEvent?.(v.emergency ? 'policy_emergency' : 'policy_published');
       return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
     });
@@ -180,7 +232,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const doc = ctx.body as RegistryStatus;
       const [revoked, stored] = [await revokedSet(), await readJson<RegistryStatus>('registry/status.json')];
       const v = checked((x) => verifyStatus(doc, o.trust, revoked, stored, o.now(), x));
-      await putJson('registry/status.json', doc);
+      await putJson('status', 'registry/status.json', doc);
       o.onEvent?.(v.emergency ? 'status_emergency' : 'status_published');
       return json(200, { monotonic: doc.monotonic, emergency: v.emergency });
     });
@@ -192,7 +244,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const doc = ctx.body as RevokedKeys;
       const stored = await readJson<RevokedKeys>('registry/revoked_keys.json');
       checked((v) => verifyRevoked(doc, o.trust, stored, o.now(), v));
-      await putJson('registry/revoked_keys.json', doc);
+      await putJson('revoked_keys', 'registry/revoked_keys.json', doc);
       o.onEvent?.('revoked_published');
       return json(200, { monotonic: doc.monotonic });
     });
@@ -206,8 +258,8 @@ export function registryRouter(o: RegistryAppOpts): Router {
       const [revoked, stored] = [await revokedSet(), await readJson<ReleaseManifest>(`releases/${channel}/latest.json`)];
       checked((v) => verifyRelease(doc, channel, o.trust, revoked, stored, o.now(), v));
       // yml을 먼저 쓰고 json을 마지막에 쓴다: json이 "게시됨"의 기준이라, 중간에 실패하면 같은 버전으로 다시 올릴 수 있다
-      await store.put(`releases/${channel}/latest.yml`, Buffer.from(renderLatestYml(doc)));
-      await putJson(`releases/${channel}/latest.json`, doc);
+      await publish('release', `releases/${channel}/latest.yml`, Buffer.from(renderLatestYml(doc)));
+      await putJson('release', `releases/${channel}/latest.json`, doc);
       o.onEvent?.('release_published');
       return json(200, { version: doc.version });
     });

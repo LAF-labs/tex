@@ -220,6 +220,9 @@ importers:
       '@sax/platform':
         specifier: workspace:*
         version: link:../../packages/platform
+      '@sax/remote':
+        specifier: workspace:*
+        version: link:../../packages/remote
       '@sax/updater':
         specifier: workspace:*
         version: link:../../packages/updater
@@ -308,6 +311,9 @@ importers:
       '@sax/net':
         specifier: workspace:*
         version: link:../net
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../payroll
       '@sax/platform':
         specifier: workspace:*
         version: link:../platform

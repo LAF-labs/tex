@@ -20,6 +20,10 @@ import { fixturePortal, HOMETAX_PORTAL } from './h01/portal.ts';
 import { RunEnd } from './h01/runner.ts';
 import { GATE_ONLY_METHODS, RUN_COMMANDS, type EngineInit } from './protocol.ts';
 import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
+import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
+import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
+import { rateTableSink } from './registry-sinks.ts';
+import { RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
@@ -40,12 +44,16 @@ let payroll: BundleService | null = null;
 let phone: PhoneIntake | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
+/** 레지스트리 동기화(main 전용 질의·명령). 핀 키가 없으면 null(registry.not_pinned). */
+let registry: RegistrySync | null = null;
 let initialized = false;
 
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 const PAYROLL = new Set<string>([...PAYROLL_READ_QUERIES, ...PAYROLL_COMMANDS]);
 for (const m of PAYROLL) ALLOWED.add(m);
+const REGISTRY = new Set<string>([...REGISTRY_READ_QUERIES, ...REGISTRY_COMMANDS]);
+for (const m of REGISTRY) ALLOWED.add(m);
 const PHONE = new Set<string>(PHONE_COMMANDS);
 for (const m of PHONE) ALLOWED.add(m);
 // daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
@@ -74,6 +82,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
+  // 레지스트리 GET은 Egress 레지스트리 목적지(클라우드 트랙)가 들어오면 fetch로 넘긴다. 그 전에는 sync가 registry.fetch_unavailable이다.
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: null, store: settingsRegistryStore(db), sinks: [rateTableSink(db)], log });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
@@ -121,6 +131,11 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (method === 'browser.close') {
     await browser?.close();
     return {};
+  }
+  if (REGISTRY.has(method)) {
+    if (!data) throw new Error('db_not_ready');
+    if (!registry) throw new Error('registry.not_pinned');
+    return registry.handle(method);
   }
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');

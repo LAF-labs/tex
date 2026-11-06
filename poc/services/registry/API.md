@@ -39,6 +39,10 @@
 | `/packages/{id}@{x.y.z}.sxp` | `public, max-age=31536000, immutable` | `application/octet-stream`. `id`는 manifest 패턴 `^[a-z0-9]+(\.[a-z0-9_]+)+$`(예 `hometax.invoice.issue@2.1.0.sxp`, 핫픽스 `hometax.invoice.issue.hotfix@1.3.0.sxp`) |
 | `/releases/{channel}/latest.json` | `public, max-age=60` | 서명된 릴리스 매니페스트(클라이언트 main이 검증) |
 | `/releases/{channel}/latest.yml` | `public, max-age=60` | electron-updater용. 검증된 `latest.json`에서만 만든다 |
+| `/registry/log/head.json` | `public, max-age=60` | 서명 트리 헤드(아래 "투명성 로그") |
+| `/registry/log/entries/{n}.json` | `public, max-age=31536000, immutable` | `n`은 앞자리 0 없는 10진수 |
+| `/registry/log/proof/inclusion?leaf=&size=` | `public, max-age=31536000, immutable` | 쿼리는 정확히 `leaf`(잎 해시 소문자 hex 64)·`size` |
+| `/registry/log/proof/consistency?from=&to=` | `public, max-age=31536000, immutable` | 쿼리는 정확히 `from`·`to`, `1 ≤ from ≤ to ≤ 현재 크기` |
 | `/healthz` | | `{"ok":true}` |
 
 모든 파일 응답에 `ETag: "<sha256 앞 32 hex>"`. `If-None-Match`가 같으면 `304`(본문 없음). 없는 파일 `404 {"error":"registry.not_found"}`. 요청 본문·쿼리·쿠키는 쓰지 않는다.
@@ -116,6 +120,28 @@
 
 `files` 1~8개, `url`은 `^[A-Za-z0-9._-]{1,128}$`(경로·개행 없음, YAML 주입 없음). `latest.yml`은 이 매니페스트에서 `version`·`files`·`path`·`sha512`·`releaseDate`만 옮긴다. 클라이언트 main은 `latest.json` 서명·만료·다운그레이드를 직접 검증한 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
 
+## 투명성 로그(RFC 9162, D09 §8.3, ADR-028, 팀장 결정 2026-11-06)
+
+모든 게시 PUT은 산출물을 **공개하기 전에** 항목을 하나 append한다. append가 실패하면 공개하지 않는다(`500`). 같은 바이트의 패키지 재게시(멱등)는 다시 쓰지 않는다. 정책은 `{ver}.json`과 `current.json` 두 항목이고, 릴리스는 `latest.yml`과 `latest.json` 두 항목이다.
+
+```
+항목   = JCS({v:1, kind, path, sha256, loggedAt})       kind: package·index·policy·status·revoked_keys·release, path: 앞 슬래시 없는 공개 경로, sha256: 공개 바이트, loggedAt: UTC ms
+잎     = SHA-256(0x00 ‖ 항목 바이트),  노드 = SHA-256(0x01 ‖ 왼쪽 ‖ 오른쪽)   (엔진 packages/engine registry.ts와 같다)
+헤드   = {treeSize, rootHash(hex), timestamp(UTC ms), signature:{keyId, alg:"ed25519", sig:base64url}}
+서명   = Ed25519(utf8("SAX-tree-head-v1") ‖ JCS({treeSize, rootHash, timestamp})), 키는 핀 고정된 타임스탬프 역할 키(D09 §8.2)
+```
+
+- 빈 로그의 헤드는 `treeSize 0`, `rootHash = SHA-256("")`이다.
+- 응답 형식:
+  - `entries/{n}.json`: `{index, entry, leafHash}`
+  - `inclusion`: `{leafIndex, treeSize, path:[hex]}`(RFC 9162 §2.1.3)
+  - `consistency`: `{from, to, proof:[hex]}`(RFC 9162 §2.1.4)
+- 거부:
+  - 쿼리 키가 더 있거나·겹치거나·빠졌거나, 값 형식이 틀리면 `400 request.param_rejected`다.
+  - 범위 밖·없는 잎은 `404 registry.not_found`다.
+- 참조 검증기: `verifyTreeHead`·`verifyInclusion`(`src/log.ts`), 엔진 `merkleRoot`·`verifyConsistency`·`headMismatch`.
+  - 시험이 서버 산출물을 이 검증기들로 그대로 검증한다.
+
 ## 오류 코드
 
 엔진 로더(#52)와 같은 이름을 쓴다(D16, 서버 표에 없는 것은 `PROPOSED_D16`).
@@ -127,4 +153,4 @@
 
 ## 범위 밖(후속)
 
-- 투명성 로그(RFC 9162 트리 헤드)·별도 호스트 미러: 엔진에 `merkleRoot`·`verifyConsistency`가 있다. 레지스트리 쪽 로그 추가·헤드 서명 바이트는 D09 §8과 함께 정한다.
+- 별도 호스트 미러(다른 도메인·다른 운영 계정)와 헤드 교차 확인: 미러 운영은 후속이다(투명성 로그 자체는 위 절).

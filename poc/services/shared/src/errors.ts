@@ -118,8 +118,6 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'registry.unauthorized',
   'relay.unauthorized',
   'relay.device_suspended',
-  'relay.room_unavailable',
-  'relay.room_used',
   'push.unauthorized',
   'push.device_suspended',
   'push.target_not_found',

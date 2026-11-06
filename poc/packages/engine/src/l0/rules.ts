@@ -147,16 +147,21 @@ export const INTENT_DICT: Array<[string, RegExp]> = [
   ['hometax.invoice.list', /계산서\s*.{0,6}(조회|목록|내역|저장)/],
   ['hometax.cert.business', /사업자\s*등록\s*증명|사업자등록증\s*.{0,4}(발급|뽑|떼)/],
   ['gov24.localtax.cert', /지방세\s*(납세|완납)\s*증명/],
-  ['hometax.cert.taxpayment', /(?<!지방세\s*)(국세\s*)?(납세|완납)\s*증명/],
+  ['hometax.cert.taxpayment', /(?<!(지방세|보험)\s*)(국세\s*)?(납세|완납)\s*증명/],
   ['gov24.resident.copy', /등본|초본|주민\s*등록/],
   ['gov24.nhis.eligibility', /자격\s*득실/],
   ['gov24.land.register', /토지\s*대장|건축물\s*대장/],
   ['gov24.localtax.itemized', /세목별/],
   ['sminfo.sme.cert', /중소기업\s*확인서/],
-  ['fourins.paid.cert', /[4사]대\s*보험|가입자\s*명부/],
+  // '4대보험'만으로는 증명서 요청이 아니다(급여 문장 "4대보험 빼고 실수령액"이 걸렸다). 앞이 한글이면 낱말 안의 '사대'다.
+  ['fourins.paid.cert', /(?<![가-힣])(4|사)대\s*(사회\s*)?보험\s*.{0,8}(완납|납부\s*증명|증명|가입자)|가입자\s*명부/],
   ['counterparty.bizstatus.check', /휴업|폐업|진위\s*확인|사업자\s*상태/],
   ['hometax.summary.view', /합계표|매출\s*.{0,4}매입\s*.{0,4}(합계|조회)/],
   ['query.documents', /만료|언제까지|보관함/],
+  // 화면만 여는 선택지(M6-11, ADR-031·032). 급여 계산 요청은 세무 상담이 아니다(taxAdvice에 걸리면 기권).
+  ['payroll.ledger', /급여\s*(대장|명세|정리|계산)|(월급|임금)\s*.{0,2}(명세|정리|계산)|원천세|실수령/],
+  ['bundle.monthly', /꾸러미|세무사\s*.{0,8}(자료|보낼|넘길|묶)/],
+  ['hometax.card.refresh', /카드\s*(사용\s*)?내역\s*.{0,6}(최신화|불러|가져|새로)|카드값\s*.{0,10}(가져|불러|최신화)|카드\s*.{0,4}최신화/],
 ];
 
 const intentRoute: Record<string, (o: Observation) => WireAnswer | null> = {

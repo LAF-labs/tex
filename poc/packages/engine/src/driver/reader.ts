@@ -114,6 +114,16 @@ export class PlaywrightPageReader implements PageReader {
     return ariaValue(snap, ariaHead(snap).role);
   }
 
+  /** aria 스냅숏(읽기 전용, decide 화면 관측). el이 없으면 문서 전체. 잡은 요소가 locator와 달라졌으면 null. */
+  async ariaSnapshot(el: ElementRef | null): Promise<string | null> {
+    if (!el) return this.page.mainFrame().locator('body').ariaSnapshot({ timeout: this.timeoutMs }).catch(() => null);
+    const h = this.held.get(el.ref);
+    if (!h) return null;
+    const same = await h.loc.evaluate((a, b) => a === b, h.handle).catch(() => false);
+    if (!same) return null;
+    return h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => null);
+  }
+
   async bodyText(): Promise<string> {
     return this.page.mainFrame().locator('body').innerText({ timeout: this.timeoutMs }).catch(() => '');
   }
