@@ -103,6 +103,11 @@ export const ACTIVE_WINDOW_DENY_PREFIXES = [
   'Input.', 'DOM.focus', 'Target.activateTarget', 'Emulation.', 'Page.captureScreenshot', 'Page.startScreencast',
   'Page.captureSnapshot', 'Page.getResourceContent', 'Accessibility.', 'DOMSnapshot.', 'Runtime.',
 ];
+/**
+ * 엔진에 늘 전달하지 않는 이벤트. 다운로드는 금고가 받는다(D05 §3.3): 엔진은 guid(staging 파일 이름)·원래 파일 이름 대신
+ * download.completed{fileId}·download.failed{reason}만 받는다.
+ */
+export const RELAY_DROPPED_EVENTS = new Set(['Page.downloadWillBegin', 'Page.downloadProgress']);
 /** 활성 상태에서 엔진에 전달하지 않는 이벤트. */
 export const ACTIVE_WINDOW_DROP_EVENTS = new Set(['Runtime.bindingCalled', 'Runtime.consoleAPICalled']);
 
@@ -156,7 +161,9 @@ export type VaultEvent =
   | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed'
   // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)
   | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed'
-  | 'vault.npki_listed';
+  | 'vault.npki_listed'
+  // PDF 저장(save_pdf): 경로·종류·사유·크기만(파일 이름·URL·내용 없음)
+  | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
@@ -165,6 +172,17 @@ export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
   ['autofill.profile_enabled', false],
   ['autofill.credit_card_enabled', false],
 ];
+/**
+ * 다운로드·저장 대화 상자 폴더를 staging으로 고정한다(D05 §3.3). 기록하고 비밀 창을 열 때마다 확인한다(프로필 점검).
+ * 실제 다운로드는 금고 세션의 Browser.setDownloadBehavior(allowAndName, staging)가 정한다. 이것은 그 밖의 경로(사용자 저장 대화 상자)용이다.
+ */
+export function downloadPreferences(staging: string): Array<[string, unknown]> {
+  return [
+    ['download.default_directory', staging],
+    ['savefile.default_directory', staging],
+    ['download.prompt_for_download', false],
+  ];
+}
 /** Local State 보고 설정(D05 §3.6). */
 export const REQUIRED_LOCAL_STATE: Array<[string, unknown]> = [
   ['user_experience_metrics.reporting_enabled', false],
