@@ -13,7 +13,7 @@
 
 | 모드 | 조건 | 동작 | 플랜 | 출시 |
 |---|---|---|---|---|
-| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰. 단계는 ~~`schedules.remind_days`~~ `validity_rules.remind_days`(서류 종류별, D07 §3 DDL, db PR #109 `schedule-repo.ts`) 기본 `'7,1'`이 정본이고 D-1 단계는 당일까지 이어진다. D-30은 홈 판 카드(`EXPIRING_WITHIN_DAYS=30`, ADR-033)가 맡는다, PR #98). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
+| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰. 단계는 ~~`schedules.remind_days`~~ `validity_rules.remind_days`(서류 종류별, D07 §2 DDL, db PR #109 `schedule-repo.ts`) 기본 `'7,1'`이 정본이고 D-1 단계는 당일까지 이어진다. D-30은 홈 판 카드(`EXPIRING_WITHIN_DAYS=30`, ADR-033)가 맡는다, PR #98). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
 | `semi_auto` | 사용자가 서류별 동의(§2.1 결속) | 예정 시각에 폰·데스크톱으로 "갱신 시작할까요" **시작 동의**(`consent.request`/`consent.response`, 토큰 아님) → 실행 → 로그인(간편인증 PUSH는 사용자가 승인, 또는 폰 봉인 비밀) → 비가역 직전 **커밋 게이트**(`gate.request`, 건별 토큰, 폰 승인 한 번) | 9,900원 한 플랜 | Phase 2 |
 | `auto` | 서류별 동의 + `StandingAuthorization` + 법률 의견 플래그(`policy.daemon.autoAllowed`) **그리고 앱 빌드 플래그** + 사람 없이 끝나는 로그인 경로 존재 | 예정 시각에 무인 실행. 엔진이 `StandingAuthorization{scheduleId, playbookId@major, docType, profileId, maxPerPeriod, expiresAt, userSignature}`에서 **건별 단일 사용 토큰**을 만든다 | 9,900원 한 플랜 | **보류** |
 
