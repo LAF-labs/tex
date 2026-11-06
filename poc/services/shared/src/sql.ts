@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import pg from 'pg';
+import { pgConnectConfig } from './pg-tls.ts';
 
 export type Param = string | number | Buffer | null;
 
@@ -132,9 +133,9 @@ class PgSql implements Sql {
   }
 }
 
-/** 운영: DATABASE_URL. TLS는 연결 문자열로(공급사 중립, D09 §9.1). 풀 크기는 인스턴스당(함수는 1~2, 상시 서버는 10). */
+/** 운영: DATABASE_URL. TLS는 고정 앵커로 항상 검증(pg-tls.ts, sslmode=verify-full). 풀 크기는 인스턴스당(함수는 1~2, 상시 서버는 10). */
 export function openPg(url: string, max = 10): Sql {
-  const pool = new pg.Pool({ connectionString: url, max });
+  const pool = new pg.Pool({ ...pgConnectConfig(url), max });
   return new PgSql(pool, pool);
 }
 

@@ -4,7 +4,7 @@
 
 | 이름 | 필수 | 형식 | 설명 |
 |---|---|---|---|
-| `DATABASE_URL` | 둘 중 하나 | `postgres://…` | 운영 DB(PostgreSQL) |
+| `DATABASE_URL` | 둘 중 하나 | `postgres://…?sslmode=verify-full` | 운영 DB(PostgreSQL). 원격은 `sslmode=verify-full`(고정 앵커 검증, `services/shared/src/pg-tls.ts`) |
 | `SAX_SQLITE_FILE` | 둘 중 하나 | 경로 | 개발·시험용 node:sqlite 파일 |
 | `DATABASE_POOL_MAX` | 아니오(`10`) | 1~99 | 인스턴스당 PostgreSQL 연결 수. 함수는 `1` |
 | `MIGRATE_ON_START` | 아니오(`1`) | `0`·`1` | `0`이면 기동 때 마이그레이션을 하지 않는다(DDL 권한 없는 서비스 역할, [deploy/README](../deploy/README.md) 4절) |

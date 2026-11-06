@@ -71,7 +71,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
    2. Project Settings → Database에서 **직접 연결 URL**(5432, `postgres`)과 **트랜잭션 풀러 URL**(6543)을 확인한다.
    3. 이 PC에서 Supabase CLI로 마이그레이션을 적용한다(아래 4절).
    4. SQL Editor에서 서비스 역할 비밀번호 4개를 정한다: `ALTER ROLE sax_account WITH PASSWORD '…';`. `sax_gateway`·`sax_relay`·`sax_push`도 같다. 값은 비밀번호 관리자에서 만들고 SQL 기록에 남지 않게 한 번만 실행한다.
-   5. 서비스별 `DATABASE_URL` = 트랜잭션 풀러 URL. 사용자명은 `sax_<서비스>.<프로젝트 ref>`, 비밀번호는 위 값이다. TLS 검증은 아래 "알려진 차이" ③을 본다.
+   5. 서비스별 `DATABASE_URL` = 트랜잭션 풀러 URL **끝에 `?sslmode=verify-full`**. 사용자명은 `sax_<서비스>.<프로젝트 ref>`, 비밀번호는 위 값이다. TLS는 아래 "알려진 차이" ③.
    6. Database → Settings에서 **Network Restrictions**는 열어 둔다(Vercel 함수 IP가 고정이 아니다). API(PostgREST)의 노출 스키마에 `account` 등을 **넣지 않는다**(기본값 그대로).
 3. **Vercel**
    1. vercel.com에 로그인해 GitHub `LAF-labs/tex`를 Import한다.
@@ -168,9 +168,16 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
    - 조건은 시험으로 고정했다(PG 17): 역할 간 교차 GRANT 0(모든 역할 쌍에서 다른 서비스 스키마의 USAGE·CREATE, 표 권한 없음), 역할 구성원 없음, `search_path`는 역할 설정으로 자기 두 스키마만(`public` 없음). 릴레이 역할은 `account.accounts`를 읽을 수 없고 계정 역할은 `relay.mailboxes`를 읽을 수 없다.
    - 잔여 위험: DB 관리자(Supabase `postgres`)나 DB가 침해되면 두 스키마를 연결할 수 있다. Phase 2에 DB를 분리한다(D19 잔여 위험 행은 설계 세션이 넣는다).
    - 분리할 때는 릴레이·푸시를 별도 Supabase 프로젝트로 옮긴다. env만 바뀌고 코드 변경은 없다.
-3. **TLS 검증**: node-pg는 연결 문자열의 `sslmode`로 TLS를 정한다.
-   - Supabase CA로 서버 인증서를 검증하려면 `sslrootcert`가 필요하다. 함수 번들에 CA 파일을 넣는 방법은 배포 때 확인한다.
-   - 그 전까지 `sslmode=require`의 검증 수준을 스모크로 확인한다. 검증하지 않는 설정은 쓰지 않는다.
+3. **TLS 검증**(팀장 결정 2026-11-06): 신뢰 앵커를 **Supabase Root 2021 CA 하나로 고정**하고 체인·만료·호스트 이름을 항상 검증한다([`services/shared/src/pg-tls.ts`](../shared/src/pg-tls.ts)).
+   - 앵커는 공개 인증서다. 정본 사본은 [`supabase-root-2021.crt`](supabase-root-2021.crt)이다(SHA-256 `80:70:25:AD:50:D4:ED:21:9D:2C:9C:7D:29:9C:00:4F:82:4E:B0:0C:F7:F6:5A:FE:F6:07:D0:7B:72:E6:CA:FA`, 만료 2031-04-26).
+     - 공식 배포본 `prod-ca-2021.crt`와 풀러가 보내는 루트가 같다(2026-11-06 확인).
+     - 코드에 문자열로 들어 있어 함수 묶음에 항상 포함된다. 시험이 파일과 지문을 대조한다.
+   - node-pg는 연결 문자열의 `sslmode`·`sslrootcert`로 우리가 넘긴 TLS 옵션을 덮어쓴다. 그래서 문자열에서 `sslmode`를 빼고 TLS 옵션을 직접 넘긴다.
+   - 원격 DB의 `sslmode`
+     - `verify-full`을 쓴다. `require`·`verify-ca`도 `verify-full`로 올린다.
+     - 없음·`disable`·`prefer`·`allow`·`no-verify`, `sslrootcert`·`sslcert`·`ssl=` 매개변수는 설정 오류다(`config_DATABASE_URL_*`, 이름만).
+     - TLS 없는 연결은 localhost·127.0.0.1·::1만이다(로컬 개발·시험).
+   - 루트가 바뀌면(2031 만료 전 Supabase 교체 공지) 새 루트를 같은 방식으로 추가하는 PR이 필요하다.
 4. **Vercel 동작 미검증**(이 저장소에서는 배포하지 않았다):
    - 재작성 목적지 쿼리의 `:path*` 치환
    - 외부 재작성(룸 발급)이 `Authorization`·`DPoP`·`X-Forwarded-For`를 넘기는지
