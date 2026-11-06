@@ -25,7 +25,7 @@ import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbo
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
-import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
+import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
@@ -39,7 +39,8 @@ import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
 import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
-import { PairingHost, type QrMatrix } from './remote-pairing.ts';
+import { PairingHost } from './remote-pairing.ts';
+import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
@@ -108,7 +109,7 @@ function serve(): void {
     const type = FILES[p];
     if (!type) return new Response('', { status: 404 });
     // 폰 연결 창(S-03)은 비밀 창과 같은 좁은 CSP(연결·폼 전송 없음)
-    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type, p === '/pair.html' ? SECRET_CSP : undefined) });
+    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type, p === '/pair.html' ? PAIR_CSP : undefined) });
   });
   // 렌더러는 네트워크가 없다(D01 §2.1). 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${SHELL_SCHEME}://`) && !d.url.startsWith('devtools://') }));
@@ -162,8 +163,6 @@ export interface RemoteWiring {
   keys: VaultKeysFactory | null;
   /** 계정 기기 목록에 보일 이름. 사람 이름이 들어가지 않게 기본은 운영체제 이름. */
   deviceName?: string;
-  /** 폰 연결 QR 인코더(글자 → 칸 행렬). 없으면 폰 연결 창을 열지 않는다(pair_unavailable). */
-  qr?: QrMatrix;
   /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
   relayClient?: RelayClient;
 }
@@ -636,9 +635,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const pairWindow = (): PairWindow => {
     if (pairWin) return pairWin;
     const cloud = opts.remote?.cloud;
-    const qr = opts.remote?.qr;
     const device = account.device();
-    if (!cloud || !qr || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
+    if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
     const host = new PairingHost({
       account: cloud.account,
       relayHttp: cloud.relay,
@@ -646,7 +644,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       relayHost: cloud.relayHost,
       device,
       keys: keysOf,
-      qr,
+      qr: qrSvgDataUrl,
       desktopName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
       log: (n, d) => log.event(n, d),
       onView: (v) => pairWin?.push(v),

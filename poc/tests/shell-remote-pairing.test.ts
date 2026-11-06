@@ -9,7 +9,9 @@ import { b64url, fromB64, MemoryRelay, MobilePairing, sha256Hash, toHex, type De
 import { DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
 import { PairingHost, type PairView } from '../apps/desktop/src/remote-pairing.ts';
 import type { RelayHttpClient } from '../apps/desktop/src/remote-ports.ts';
+import { qrSvgDataUrl } from '../apps/desktop/src/remote-qr.ts';
 import { softDesktopKeys, startDevStack, type DevStack } from './remote-dev-stack.ts';
+import { decodeQrDataUrl } from './remote-qr-decode.ts';
 import { mockPhone, until } from './remote-support.ts';
 
 const EMAIL = 'owner@gyeonbon-test.example';
@@ -54,7 +56,7 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
       relayHost: RELAY_HOST,
       device: acct.device()!,
       keys: async () => keys,
-      qr: (t) => ((qrText = t), [[true, false], [false, true]]),
+      qr: (t) => ((qrText = t), qrSvgDataUrl(t)),
       desktopName: 'Windows PC',
       now: s.clock.now,
       log: (n, d) => logs.push([n, d]),
@@ -64,10 +66,13 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
     });
     return { acct, host, keys, dir };
   };
+  /** 폰은 화면의 QR 이미지를 읽는다(jsQR로 다시 읽은 글자). */
   const phoneScan = async (accountKeys = [fromB64(s.claimSigner.publicKey)]) => {
     const phone = mockPhone('사장님 폰');
     const mob = new MobilePairing({ keys: phone.keys, accountKeys, relayAllowlist: [RELAY_HOST], now: s.clock.now, pairOkTimeoutMs: 5_000 });
-    assert.ok(mob.scan(qrText!), `scan: ${mob.failure}`);
+    const shown = decodeQrDataUrl(views.findLast((v) => v.qr)!.qr!);
+    assert.equal(shown, qrText, 'QR 이미지를 다시 읽으면 원문과 같다');
+    assert.ok(mob.scan(shown!), `scan: ${mob.failure}`);
     const run = mob.run(await relay.joinRoom(mob.roomId, 'mobile'));
     return { phone, mob, run };
   };
@@ -94,7 +99,7 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
     const { host, acct, dir } = await setup();
     const v = await host.start();
     assert.equal(v.step, 'waiting_phone');
-    assert.deepEqual(v.qr, [[true, false], [false, true]]);
+    assert.ok(v.qr!.startsWith('data:image/svg+xml;base64,'));
     assert.ok(!JSON.stringify(views).includes(qrText!), 'QR 글자(psk)는 화면 값에 없다');
     const { mob, run } = await phoneScan();
     await until(() => host.view().step === 'awaiting_sas', 5_000);
@@ -181,7 +186,7 @@ describe('폰 연결: 룸 → QR → 6자리 → 대리 등록·목록·우편�
       relayHost: RELAY_HOST,
       device: acct.device()!,
       keys: async () => keys,
-      qr: () => [],
+      qr: () => '',
       now: s.clock.now,
     });
     const v = await h.start();

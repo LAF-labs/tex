@@ -1,7 +1,7 @@
-// 폰 연결 창(S-03): main(remote-pairing.ts)이 준 화면 값으로만 그린다. QR은 칸 행렬로 오고 SVG 칸으로 그린다(QR 글자는 이 창에 없다).
+// 폰 연결 창(S-03): main(remote-pairing.ts)이 준 화면 값으로만 그린다. QR은 main이 만든 SVG data URL 이미지로 오고 <img src>로만 쓴다(QR 글자는 이 창에 없다, HTML 삽입 없음).
 // 값은 모두 textContent로 넣는다. 6자리는 폰에서 보고 이 PC에 입력한다("일치" 버튼은 없다, D08 §4.2).
 const root = document.getElementById('root');
-const NS = 'http://www.w3.org/2000/svg';
+const QR_PREFIX = 'data:image/svg+xml;base64,';
 const ERR = {
   'pair.sas_wrong': '6자리가 맞지 않아요. 폰에 보이는 숫자를 다시 확인해 주세요',
   'pair.sas_shape': '6자리 숫자를 넣어 주세요',
@@ -27,26 +27,11 @@ function el(tag, attrs = {}, ...kids) {
   return e;
 }
 
-function qrSvg(m) {
-  const n = m.length;
-  const q = 4;
-  const svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('class', 'qr');
-  svg.setAttribute('viewBox', `0 0 ${n + 2 * q} ${n + 2 * q}`);
-  svg.setAttribute('shape-rendering', 'crispEdges');
-  svg.setAttribute('role', 'img');
-  svg.setAttribute('aria-label', '폰 연결 QR');
-  for (let y = 0; y < n; y++)
-    for (let x = 0; x < n; x++) {
-      if (!m[y][x]) continue;
-      const r = document.createElementNS(NS, 'rect');
-      r.setAttribute('x', String(x + q));
-      r.setAttribute('y', String(y + q));
-      r.setAttribute('width', '1');
-      r.setAttribute('height', '1');
-      svg.append(r);
-    }
-  return svg;
+function qrImg(src) {
+  if (typeof src !== 'string' || !src.startsWith(QR_PREFIX)) return null;
+  const i = el('img', { class: 'qr', alt: '폰 연결 QR', draggable: 'false' });
+  i.src = src;
+  return i;
 }
 
 let busy = false;
@@ -74,7 +59,7 @@ function render(v) {
     kids.push(
       el('h1', {}, '폰 연결'),
       el('p', {}, '폰 앱에서 [PC 연결]을 누르고 이 QR을 찍어 주세요.'),
-      v.qr ? qrSvg(v.qr) : null,
+      qrImg(v.qr),
       el('p', { class: 'muted', 'data-pair-ttl': '' }, left !== null ? `${left}초 안에 찍어 주세요. 이 창은 화면 캡처에 찍히지 않아요.` : ''),
       el('div', { class: 'acts' }, el('button', { type: 'button', 'data-act': 'pair-cancel', onclick: act(() => window.pair.cancel().then((x) => (window.close(), x))) }, '취소')),
     );

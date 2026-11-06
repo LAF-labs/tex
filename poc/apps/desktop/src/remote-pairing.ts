@@ -1,5 +1,5 @@
 // 폰 연결(S-03, D08 §4.2) main 쪽: 룸 열기 → QR → 폰 핸드셰이크 → 사용자가 폰의 6자리를 PC에 입력 → 7단계(대리 등록·목록·우편함·acctClaim) → pair.ok.
-// 이 파일은 Electron을 쓰지 않는다(창은 pair-window.ts). 화면(창)에 가는 값은 PairView뿐이고, QR은 칸 행렬로만 간다(psk가 든 글자를 넘기지 않는다).
+// 이 파일은 Electron을 쓰지 않는다(창은 pair-window.ts). 화면(창)에 가는 값은 PairView뿐이고, QR은 SVG data URL 이미지로만 간다(remote-qr.ts, psk가 든 글자를 넘기지 않는다).
 // - 계정 확인 주장(acctClaim)은 GET /v1/acct-claim을 받아 b64(JCS({claim, sig}))로 pair.ok에 싣는다(DeviceSession.acctClaimField).
 // - 우편함을 등록한 뒤 페어링이 실패하면 우편함을 지운다(D08 §4.2, 기기당 3회 상한을 아끼려고).
 // - 로그는 단계·결과 코드만(폰 이름·키·SAS·QR 없음).
@@ -7,13 +7,13 @@ import { b64, b64url, DesktopPairing, QR_TTL_SEC, SAS_MAX_TRIES, type DesktopKey
 import type { DeviceSession } from './remote-account.ts';
 import type { AccountClient, RelayHttpClient } from './remote-ports.ts';
 
-/** QR 글자 → 칸 행렬(참이면 검은 칸). 인코더는 포트로 받는다. */
-export type QrMatrix = (text: string) => boolean[][];
+/** QR 글자 → 이미지 data URL(data:image/svg+xml;base64,…). 제품은 remote-qr.ts qrSvgDataUrl. */
+export type QrImage = (text: string) => string;
 
 export interface PairView {
   step: 'idle' | 'opening' | 'waiting_phone' | 'awaiting_sas' | 'checking' | 'paired' | 'failed';
-  /** waiting_phone일 때만. */
-  qr: boolean[][] | null;
+  /** waiting_phone일 때만. SVG data URL(창은 <img src>로만 쓴다). */
+  qr: string | null;
   /** QR 만료(ms). */
   expiresAt: number | null;
   /** 폰이 알린 이름(awaiting_sas 뒤, textContent로만 그린다). */
@@ -31,7 +31,7 @@ export interface PairingHostOptions {
   relayHost: string;
   device: DeviceSession;
   keys: () => Promise<DesktopKeys>;
-  qr: QrMatrix;
+  qr: QrImage;
   desktopName?: string;
   now?: () => number;
   log?: (name: string, data: Record<string, string | number>) => void;

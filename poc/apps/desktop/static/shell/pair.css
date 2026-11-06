@@ -4,7 +4,7 @@ body { box-sizing: border-box; padding: 20px; font-family: "Malgun Gothic", "App
 h1 { margin: 0 0 4px; font-size: 18px; line-height: 26px; }
 p { margin: 0 0 12px; }
 .muted { color: var(--ink-3); font-size: 13px; }
-.qr { display: block; width: 240px; height: 240px; margin: 8px auto 12px; background: #fff; }
+.qr { display: block; width: 240px; height: 240px; margin: 8px auto 12px; background: #fff; image-rendering: pixelated; user-select: none; }
 .sas { display: flex; gap: 8px; align-items: center; margin: 8px 0 12px; }
 .sas input { font: inherit; font-size: 20px; letter-spacing: 6px; width: 140px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); }
 button { font: inherit; padding: 6px 14px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink); cursor: pointer; }

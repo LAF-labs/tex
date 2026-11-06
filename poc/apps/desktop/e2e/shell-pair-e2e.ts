@@ -1,10 +1,13 @@
 // 폰 연결 e2e(S-03, remote-pairing.ts·pair-window.ts): 로그인 → 설정 > 기기 연결 [폰 연결] → main 소유 창(QR, 화면 캡처 차단) → 폰(MobilePairing)이 찍고
 // 폰의 6자리를 그 창에 넣는다 → 폰이 계정 서비스 서명 acctClaim을 검증한다. 계정·릴레이는 메모리 가짜, 금고 키는 소프트 키.
+// QR은 실제 인코더(qrcode-generator)로 main이 만든 이미지다. 폰 대신 창에 그려진 <img>를 캔버스로 읽어 jsQR(개발용)로 푼다.
 // 실행: electron apps/desktop/e2e-dist/shell-pair-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
 import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { app, BrowserWindow } from 'electron';
+
 import {
   AIK_PURPOSES,
   b64,
@@ -27,6 +30,9 @@ import {
 import type { AccountClient, CloudPorts, RelayHttpClient } from '../dist/remote-ports.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
+
+// jsQR(개발용, devDependencies): CJS라 require로 부른다
+const jsQR = createRequire(import.meta.url)('jsqr') as (d: Uint8ClampedArray, w: number, h: number) => { data: string } | null;
 
 registerShellSchemes();
 const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-pair-${process.pid}`);
@@ -119,13 +125,12 @@ function softKeys(): DesktopKeys {
 
 async function main() {
   const { cloud, calls } = fakeCloud();
-  let qrText: string | null = null;
   S = await startShell({
     dev: DEMO_DEV,
     width: 1280,
     height: 820,
     show: false,
-    remote: { cloud, keys: async () => softKeys(), qr: (t) => ((qrText = t), Array.from({ length: 21 }, (_, y) => Array.from({ length: 21 }, (_, x) => (x + y) % 3 === 0))), relayClient: relay },
+    remote: { cloud, keys: async () => softKeys(), relayClient: relay },
   });
   S.win.webContents.on('console-message', (e) => {
     if (e.level === 'error') console.log(`  [renderer] ${e.message}`);
@@ -152,9 +157,14 @@ async function main() {
   const pw = () => BrowserWindow.getAllWindows().find((w) => w !== S!.win && w.getTitle() === '폰 연결') ?? null;
   check('폰 연결 창이 따로 뜬다', await until('pair window', () => !!pw()));
   const w = pw()!;
-  check('QR 단계(칸 행렬로 그린 SVG)', await until('qr', async () => (await js<string>(`document.body.dataset.pair ?? ''`, w)) === 'waiting_phone' && (await js<number>(`document.querySelectorAll('svg.qr rect').length`, w)) > 50));
+  check('QR 단계(main이 만든 SVG data URL 이미지)', await until('qr', async () => (await js<string>(`document.body.dataset.pair ?? ''`, w)) === 'waiting_phone' && (await js<boolean>(`(() => { const i = document.querySelector('img.qr'); return !!i && i.complete && i.naturalWidth > 0 && i.src.startsWith('data:image/svg+xml;base64,'); })()`, w))));
+  check('창에 SVG 요소를 넣지 않는다(이미지로만)', (await js<number>(`document.querySelectorAll('svg').length`, w)) === 0);
+  // 폰 카메라 대신: 화면에 그려진 이미지를 캔버스에 옮겨 읽는다
+  const px = await js<{ w: number; d: number[] }>(`(() => { const i = document.querySelector('img.qr'); const n = 400; const c = document.createElement('canvas'); c.width = c.height = n; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, n, n); g.imageSmoothingEnabled = false; g.drawImage(i, 0, 0, n, n); return { w: n, d: Array.from(g.getImageData(0, 0, n, n).data) }; })()`, w);
+  const qrText = jsQR(Uint8ClampedArray.from(px.d), px.w, px.w)?.data ?? null;
+  check('그려진 QR을 다시 읽는다', !!qrText && qrText.length > 20);
   check('셸 렌더러에는 QR 글자가 없다', !!qrText && !(await js<string>(`document.documentElement.outerHTML`)).includes(qrText!));
-  check('창 페이지에도 QR 글자는 없다(칸만)', !(await js<string>(`document.documentElement.outerHTML`, w)).includes(qrText!));
+  check('창 페이지에도 QR 글자는 없다(이미지만)', !(await js<string>(`document.documentElement.outerHTML`, w)).includes(qrText!));
 
   // 폰: QR을 찍고 룸에 들어간다
   const phoneS = x25519Keygen();
