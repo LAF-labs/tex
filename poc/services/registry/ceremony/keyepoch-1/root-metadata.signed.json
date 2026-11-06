@@ -1,7 +1,7 @@
 {
   "kind": "sax.trust-root/v1",
   "keyEpoch": 1,
-  "createdAt": "2026-11-06T07:50:06Z",
+  "createdAt": "2026-11-06T08:03:56Z",
   "mode": "solo",
   "keys": {
     "root": {
@@ -23,7 +23,7 @@
       "emergency-1": "h0wUMJvNWJGy7Hg+QGxKkNPFaSuPv+mBJSebxJXukOc="
     },
     "timestamp": {
-      "timestamp-1": "aIVsa2jN03OAaNZ+uPMjh1kIqGBF0d2eHchk44b86SA="
+      "timestamp-1": "KU0/rmJmf1mrL+6VSZbNyxfW+kdob9LRvQJDHttVYVg="
     },
     "release": {
       "release-1": "DQG3gnFx0VJ6J/TXOxKZ5LMR0D6Wng5mMZmUDxldXwE="
@@ -107,12 +107,12 @@
     {
       "keyId": "root-1",
       "alg": "ed25519",
-      "sig": "Ud1MD00BvvKcsEm0yLI5yFM2FuV6uaiffPsTtG_xne1dP1_ZGV0khDlNI56wH3KU5B_CmsKpGkYDc1Ebcr7rCg"
+      "sig": "fkjwPIhyxWamn3zat-QqCDcS1LT0pNNt1sHMqxmiOyKbqlMkPHQ5BJIZNzBhlanpkXWXOasQ3_Mwz7a_05yqAg"
     },
     {
       "keyId": "root-2",
       "alg": "ed25519",
-      "sig": "p3SSvVKJ-JJwX9mNGvj0k9IFnfX1GD2sIMZJLvUz2PtT5idHJbBUPYruprr5DuH6iR0ceBjAKtOtTJL2ZJY7AQ"
+      "sig": "Mw6IB_Z-Uz51uAJVjtzuzzUqN7xJXNHDNfoRp_NLIHH4Y3UVeCR-REKDm5rWGGswYs8oEvE-IjrOTPrkKXK1AQ"
     }
   ]
 }

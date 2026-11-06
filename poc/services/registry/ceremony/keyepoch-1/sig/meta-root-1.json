@@ -1,8 +1,8 @@
 {
   "keyId": "root-1",
   "alg": "ed25519",
-  "sig": "Ud1MD00BvvKcsEm0yLI5yFM2FuV6uaiffPsTtG_xne1dP1_ZGV0khDlNI56wH3KU5B_CmsKpGkYDc1Ebcr7rCg",
+  "sig": "fkjwPIhyxWamn3zat-QqCDcS1LT0pNNt1sHMqxmiOyKbqlMkPHQ5BJIZNzBhlanpkXWXOasQ3_Mwz7a_05yqAg",
   "kind": "trust_root",
   "part": "content",
-  "sha256": "2d08bfe2bc4fff1be6fec1123235690d126c6078f5fccd999d7ae7190702fac5"
+  "sha256": "b965cdcd6ef6a18397eaf5ce52dcc5c4f54ec45d5207bad2128d6a1e1d0e032c"
 }

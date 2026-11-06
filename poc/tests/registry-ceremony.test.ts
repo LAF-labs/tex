@@ -393,8 +393,8 @@ describe('keyEpoch 1 공개 산출물(services/registry/ceremony/keyepoch-1)', (
   const files = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(d, e.name)) : [path.join(d, e.name)]));
 
   it('trust-root.json SHA-256과 루트 메타데이터·폐기 목록 확인 코드가 PR에 적은 값과 같다', () => {
-    assert.equal(createHash('sha256').update(fs.readFileSync(path.join(dir, 'trust-root.json'))).digest('hex'), 'aeaa9f00096d739d60ae0e1a992ec7744a8c80afbc9808b0d35cc48b004c0b17');
-    assert.equal(confirmCode(createHash('sha256').update(signingBytes('trust_root', read('root-metadata.json'))).digest('hex')), '2d08-bfe2-bc4f-ff1b-e6fe-c112-3235-690d');
+    assert.equal(createHash('sha256').update(fs.readFileSync(path.join(dir, 'trust-root.json'))).digest('hex'), 'de24c32c46e46ab81020d0a2aa684cba99ed4fed48a6c2d02d5c72fa08e793e7');
+    assert.equal(confirmCode(createHash('sha256').update(signingBytes('trust_root', read('root-metadata.json'))).digest('hex')), 'b965-cdcd-6ef6-a183-97ea-f5ce-52dc-c5c4');
     assert.equal(confirmCode(createHash('sha256').update(signingBytes('revoked_keys', read('revoked_keys.json'))).digest('hex')), 'b40b-6342-09b4-db36-c4a1-e422-ae47-eddc');
   });
 
