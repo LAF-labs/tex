@@ -17,7 +17,7 @@
 | 2 | 금고 키체인 | ✅ Credential Manager 저장·읽기·삭제, 2,560B 상한, 40개. ⚠️ 지속성 ENTERPRISE(설계 LOCAL_MACHINE). TPM 없음 → DPAPI 등급, 네이티브 헬퍼가 없어 저장 거부(설계대로 실패 닫힘)(§4) |
 | 3 | 전용 Chrome 프로필 | ✅ 13회 기동·CDP(파이프)·종료·잔존물 삭제, EBUSY/EPERM 0회. ⚠️ 강제 종료 뒤 자식 프로세스가 남아 프로필 전체 삭제는 EBUSY 1회(§5). 🔧 새 프로필 기동 뒤 10~20초 비밀 창 거부(확장 기록 항목, §5.1) |
 | — | 금고 ACL 점검(PowerShell `Get-Acl`) | ⚠️ 이 PC에서 3.4~15초, 부하 때는 30초 상한 초과 → Chrome 기동 실패(§6.1) |
-| 4 | 서명 없는 설치 파일 | 🔧 빌드 스크립트 Windows 실패 2건, **설치본이 기동하지 못하던 포장 제외 패턴**, 로그 이벤트 이름 덮어쓰기를 고침. ✅ 설치·첫 실행·제거. ⚠️ 설치 폴더 `sovereign-ax`(앱은 "예상 밖 설치 위치" 배지). ⏳ SmartScreen 경고 화면(§7) |
+| 4 | 서명 없는 설치 파일 | 🔧 빌드 스크립트 Windows 실패 2건, **설치본이 기동하지 못하던 포장 제외 패턴**, 로그 이벤트 이름 덮어쓰기를 고침. ✅ 설치·첫 실행·제거. ⚠️ 설치 폴더 `sovereign-ax`(앱은 "예상 밖 설치 위치" 배지). SmartScreen "Windows의 PC 보호" · 게시자 "알 수 없는 게시자"(§7) |
 | 5 | 측정 | 첫 기동 첫 화면 **21.0초**(두 번째 11.5초), 최대 메모리 **681 MB**, docparse OCR 1건 **5.4초**(e2e 최대 534 MB)(§8) |
 
 ## 1. 기기
@@ -205,7 +205,9 @@ $env:SAX_ACL_TARGET = $env:TEMP
 | 첫 화면 | [screens/first-launch-0.png](raw/win-realdevice/screens/first-launch-0.png): 약관 화면, 배지 "견본 데이터 · PoC 데모"·"예상 밖 설치 위치"·"미서명 빌드"·"개발용 코드 포함 빌드" |
 | 제거(`Uninstall SovereignAX.exe /currentuser /S`) | 3초. 설치 폴더·바로가기·제거 키 삭제(시작 메뉴 바로가기는 몇 초 뒤 지워짐). `%LOCALAPPDATA%\SovereignAX`는 남김(설계, `deleteAppDataOnUninstall: false`) |
 
-**SmartScreen** ⏳: 인터넷 표시(Zone.Identifier `ZoneId=3`)를 붙인 설치 파일을 `ShellExecute`로 연 두 번은 `smartscreen.exe`가 떠서 약 7초 검사한 뒤 **경고 없이 실행**됐고, 그 뒤 파일의 인터넷 표시가 지워져 있었다. 탐색기로 연 세 번째는 에이전트 쪽에서 대화상자를 볼 수 없었다. 사람이 탐색기에서 더블클릭해 화면을 확인한다(§9).
+**SmartScreen** ✅(경고 확인): 내려받은 파일처럼 인터넷 표시(Zone.Identifier `ZoneId=3`)를 붙인 설치 파일을 **사람이 탐색기에서 더블클릭**하면 "Windows의 PC 보호" 창이 뜬다. 처음엔 "인식할 수 없는 앱의 시작을 차단했습니다"와 [실행 안 함]만 보이고, "추가 정보"를 누르면 앱 `SovereignAX-Setup-0.0.0.exe`, **게시자: 알 수 없는 게시자**, [실행]·[실행 안 함]이 나온다. 화면: [screens/smartscreen-more-info.png](raw/win-realdevice/screens/smartscreen-more-info.png)(사람이 찍은 전체 화면에서 경고 창 영역만 잘라 냈다). 서명(`unsigned_build`·`publisher_dn_unset`)이 풀리기 전까지 사용자는 이 단계를 거친다.
+- 에이전트 PowerShell에서 `ShellExecute`로 연 두 번은 `smartscreen.exe`가 약 7초 검사한 뒤 에이전트 쪽에서는 경고 없이 설치가 시작됐다. 사람이 보는 화면과 실행 환경이 달라 측정에서는 제외한다.
+- SmartScreen 창은 UWP `CoreWindow`라 `PrintWindow`로 찍으면 검게 나온다(`s6e-capture.ps1`로는 못 찍는다).
 
 로그 문제(🔧): `main.log`가 `{"code":1}` `{"code":"engine_exit"}` `{"code":0}`처럼 이벤트 이름 없이 남았다. `FileEventLog.event`가 필드를 머리 키 뒤에 펼쳐 `code` 필드(`main.engine_exit {code}`·`run.signal {code}`·`main.gate_answer_not_ok {code}` 등)가 이벤트 이름을 덮었다. `packages/platform/src/log.ts`: 머리 키(`at`·`c`·`code`)와 같은 필드는 `<키>_`로 적는다. 시험 `tests/platform-log.test.ts`.
 
@@ -242,5 +244,4 @@ $env:SAX_ACL_TARGET = $env:TEMP
 - [ ] 데스크톱 온보딩 인증서 목록을 실 `npki.list`에 잇기(데스크톱 트랙). 설치본의 `dev_only_code_included`(모의 온보딩·셸)와 같은 일
 - [ ] 금고 ACL 점검을 PowerShell 없이(§6.1), `h01-policy` 정리(§6.2), 잔존물 삭제 실패 기록(§6.3), Credential Manager 지속성(§6.4) — 금고·플랫폼 트랙 결정
 - [ ] 설치 폴더 이름 `sovereign-ax` vs 문서·앱 기대 `SovereignAX`(§7) — 업데이트 경로 결정
-- [ ] SmartScreen 화면: 사람이 인터넷 표시가 있는 설치 파일을 탐색기에서 더블클릭(§7)
 - [ ] Electron 바이너리 누락(§2.1)을 다른 Windows 기기에서 재확인
