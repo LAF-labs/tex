@@ -1,5 +1,6 @@
 # D03. 플레이북 엔진
 
+> ADR-021 결정 7(2026-11-06, 사용자 지시): 승인 표시는 main 승인 카드 하나(되읽은 값 전체·비가역 한 줄·[중지]·[승인하고 발급], 기본 포커스 [중지]). §3 로컬 승인 문단, §3.1-8 요약 표를 카드 줄 목록으로.
 > 2026-11-06 팀장 결정: §3.1-6 정적 검증에 V-03m(D02 §6.1, 금액·상대방 readback ↔ `$inputs` 대조 assert 필수, 선택 입력은 없으면 `isEmpty`)을 명시.
 > 2026-11-06 정합(팀장 지시, 큐 1~15): §5.4 커밋 가드 모듈 위치 `net/commitguard` → 엔진 `packages/engine/src/commitguard/`(net은 송신 전용, 가드는 엔진 소유. 금고 R-C1 PR #81과 짝).
 > 스키마 정렬 2026-11-05(PR #45): §6 L2 금지 대상·비밀 칸 가드의 `secretSlot`을 `secretKind` 항목으로, §7 정책 예시에 `limits.*.loginFailuresPerDay`·`verify.maxMs` 추가(policy 스키마 v1.3.1).
@@ -87,8 +88,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - readback은 토큰 소비 **뒤**, 클릭 **직전**에 다시 계산해 `readbackHash`와 비교한다(R-G7). 재계산과 클릭 사이에는 디스크 I/O를 두지 않는다. 불일치면 클릭하지 않고 원장을 `not_committed`(`pre_dispatch_mismatch`)로 종결한 뒤 게이트 앞으로 돌아간다(보안 이벤트 아님).
 - 토큰 폐기(R-G2): `Recovering`, `WaitingHuman`, `HandedOff`, `Paused`, `Interrupted` 진입, 체크포인트 복귀, 게이트 "수정하기", L2 셀렉터 적용, 핫픽스 적용 중 하나라도 일어나면 미소비 토큰 전부 폐기.
 - 보안 이벤트는 위조·다른 실행의 토큰·이미 소비된 토큰에만. 만료는 보안 이벤트가 아니다.
-- **로컬 승인**(A-15, ADR-021): 비가역 승인은 **main 소유 승인 바**에서만 한다. 대화 카드에는 승인 버튼이 없고, 카드의 렌더러 신호는 승인 근거가 아니다.
-  - 승인 바는 main이 메인 창에 자식으로 붙이는 `WebContentsView`다(`sandbox`, `javascript:false`, preload 없음, 전용 세션 파티션). 내용은 main이 신뢰 계획값(readback 값 + 앱 내장 라벨)으로 만든 정적 HTML(CSP `default-src 'none'; style-src 'self'`)이고, 요약 3줄 이하와 "승인하고 발급"이 한 버튼이다. H-01 요약은 공급받는자(상호·사업자번호), 합계와 세액, 받는 이메일이다.
+- **로컬 승인**(A-15, ADR-021): 비가역 승인은 **main 소유 승인 카드**(2026-11-06 개정 전 이름 '승인 바')에서만 한다. 대화 카드에는 승인 버튼이 없고, 카드의 렌더러 신호는 승인 근거가 아니다.
+  - 승인 카드는 main이 메인 창에 자식으로 붙이는 `WebContentsView`다(`sandbox`, `javascript:false`, preload 없음, 전용 세션 파티션). 내용은 main이 신뢰 계획값(readback 값 + 앱 내장 라벨)으로 만든 정적 HTML(CSP `default-src 'none'; style-src 'self'`)이다. 금액, 되읽은 값 전체, 비가역 한 줄, 떨어진 두 버튼 [중지]·[승인하고 발급]을 둔다. 기본 포커스는 [중지]이고 키보드로는 승인되지 않는다. H-01 카드는 합계·공급가액·세액, 공급받는자(상호·사업자번호), 품목, 작성일자, 이메일, 처음 거래·중복 경고다(ADR-021 결정 7). 렌더러의 작성 카드는 "작성 완료" 한 줄로 접힌다.
   - 위치는 main이 창 크기만으로 정한다(대화 열 하단, 입력창 예약 영역 위). 렌더러가 보고하는 좌표는 쓰지 않는다. 앱 내장 요약 표에 없는 서류 종류의 커밋 게이트는 패키지 로더가 거부한다(§3.1).
   - 승인 입력은 main이 그 뷰의 `before-mouse-event`로 **직접 관찰한 클릭**(바 안 왼쪽 down → up)만 인정한다. 바가 보이거나 요약·동작이 바뀌거나, 창이 옮겨지거나 다시 보이거나 활성화된 뒤 600ms는 무시하고(무장 전 mouseDown이면 다시 시작, 바를 눌러 창을 활성화한 경우는 예외), 바 안에서 실제로 움직인 뒤 150ms가 지난 mouseDown만 인정한다. 대화 화면 커서가 숨겨지거나 바뀌어 있으면 무장하지 않는다. **키보드 승인은 없다**(Enter·조합키 모두).
   - 바는 `WaitingGate`(main이 엔진에서 직접 받은 상태)일 때만 뜨고, 한 게이트에서 한 번 뜨면 게이트가 끝날 때까지 남는다(렌더러의 숨김 요청은 무시). `trigger=local`이 아닌 실행에서는 자동으로 띄우지 않는다.
@@ -112,7 +113,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 5. **조회 하위 플레이북**: `lookupsUsed[]`의 각 패키지가 설치되어 있고, 서명·`kind: lookup`·다이제스트가 일치한다(V-22).
 6. **정적 검증**: 스키마 + V-01~V-24. 여기에는 V-03m이 들어 있다: 게이트 앞 readback의 금액·상대방 `fieldKey`마다 `$inputs` 대조 assert(합계는 `sumEquals`, 값이 없는 선택 입력은 `isEmpty`)가 없으면 로드하지 않는다(D02 §6.1·§8 `s19d`·`s19f`, 팀장 결정 2026-11-06). 셀렉터 CI 규칙 SV-01~06은 **레지스트리 CI에서만** 돌고, 2-of-3 서명이 그 통과를 전제로 한다(클라이언트는 녹화 DOM·HAR이 없어 다시 돌리지 않는다). 대신 클라이언트는 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 **매번** 한다(§5.2). 이 문장이 SV 실행 위치의 정본이다(D02 §2.2·§6.3, D12 §3, ADR-012, E-03).
 7. **핫픽스**([hotfix.schema.json](schemas/hotfix.schema.json)): `appliesTo.packageDigest`가 정확히 이 패키지, 2-of-3 서명, 단조 `monotonic`, `expiresAt − issuedAt ≤ 14일`이고 만료 전, `entries`의 각 항목이 적격 항목(D02 §2.2: 비커밋·비비밀·비readback 조건에 더해, 어떤 항목의 `landmark` 값으로 쓰이는 stable_id, IR의 `decide.scope`·조건식(`cond`)·`signFlow.rowLabel`·`readback.fields`·`signFlow.confirmTarget`이 참조하는 항목, 어떤 커밋 구간 `W(X)` 안 스텝이 참조하는 항목은 **불가** — 엔진이 IR에서 참조 집합을 계산해 확인, E-03)이며, `commitEndpointsAdd`는 추가만. 반영한 사전에 6단계를 **다시 돌리고**, 실패하면 핫픽스를 거부(`registry.hotfix_rejected`)하고 패키지는 원래 후보로 돈다. 조회 패키지에 대한 핫픽스는 항상 거부한다.
-8. **승인 바 요약 표**(ADR-021): 커밋 게이트가 있는 패키지는 그 서류 종류가 앱 내장 승인 바 요약 표에 있어야 하고, 요약 줄에 쓰는 `fieldKey`가 게이트 카드 필드에 모두 있어야 한다. 없으면 `loader.approval_summary_missing`으로 로드하지 않는다(PC에서 무장할 수 없는 게이트를 미리 막는다).
+8. **승인 카드 줄 목록**(ADR-021 결정 7, 2026-11-06 개정 전 이름 '승인 바 요약 표'): 커밋 게이트가 있는 패키지는 그 서류 종류가 앱 내장 승인 카드 줄 목록에 있어야 하고, 카드 줄에 쓰는 `fieldKey`가 게이트 카드 필드에 모두 있어야 한다. 없으면 `loader.approval_summary_missing`으로 로드하지 않는다(PC에서 무장할 수 없는 게이트를 미리 막는다). 코드 이름은 그대로다.
 
 **레지스트리 status 소비**(B-22, E-05): 엔진은 `/registry/status.json`(포털별 `portalModeCeiling`과 `killPlaybooks[]`)을 받아 `portalModeCeiling`은 정책 위의 **하향 전용** 상한으로, `killPlaybooks`는 실행 거부로 적용한다. 서명 규칙: 내용은 정책 키 2-of-3 또는 1인 긴급 키(하향·킬스위치 추가만, §7.1 보수성 판정)로 서명하고, 신선도는 온라인 타임스탬프 키(HSM 안, 자동)가 **48시간마다 재서명**한다(만료 ≤ 48시간). status는 하향·킬스위치만 표현할 수 있으므로 내용 변경에 단일 긴급 키를 허용한다. **1인 긴급 키만으로 서명된 하향 status는 72시간 뒤 자동 만료**되고, 그 안에 2-of-3 재확인이 없으면 엔진은 마지막 2-of-3 서명 status 값으로 되돌린다. `issuedAt`이 현재 시각 + 5분보다 미래인 status는 거부한다. 마지막 유효 status가 48시간을 넘으면 stale(`registry.status_stale`)로 표시하고, **72시간** 동안 갱신을 받지 못하면 데몬 실행을 멈추고, 홈택스 `auto` 실행마다 "최신 운영 정책을 확인하지 못했습니다" 경고를 띄운다. 투명성 로그의 포함 증명이 없는 인덱스를 거부하는 규칙은 **Phase 2**다. **Phase 1 split-view 점검**(E-14): 폰이 없는 Phase 1에서도 엔진은 투명성 로그 트리 헤드를 레지스트리와 **별도 호스트(다른 도메인·다른 운영 계정)의 미러 1곳**에서 함께 받아 비교하고, 같은 트리 크기에서 헤드가 다르거나 미러가 일관성 증명을 줄 수 없으면 `registry.head_mismatch`(보안 이벤트)를 남기고 새 패키지·정책·핫픽스 적용을 보류한다. 단 §7.1 보수 방향 표로 엄격하게 보수적인 정책·status는 보류 중에도 적용한다(ADR-023 결정 4). 키 운영·투명성 로그·status 발행 절차는 D09 §8과 ADR-013에 있다. status·정책을 언제 조회하고 진행 중인 실행에 어떻게 적용하는지는 §7.1 '조회와 적용'(ADR-023)이다.
 
