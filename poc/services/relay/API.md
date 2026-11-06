@@ -27,6 +27,7 @@
 | `POST /v1/rooms` | 데스크톱 | — | `{roomId}`(16B base64url 22자, QR의 `room_id`) | `201 {expiresAt}` | 계정당 시간당 5개 `policy.rate_limited`, 중복 `request.param_rejected` |
 | `POST /internal/v1/devices/:id/stopped` | 내부(`Internal <secret>`) | — | — | `200 {closed}` | 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다 |
 | `POST /internal/v1/queues/purge` | 내부 | — | — | `200 {deleted}` | 릴레이 침해 대응: 큐 전면 폐기(D09 §11) |
+| `POST /internal/v1/rooms/:id/redeem` | 내부 | — | `{deviceId}`(등록하는 데스크톱) | `200 {ok:true}` | 계정 서비스의 폰 대리 등록(팀장 결정 2026-11-06). 그 데스크톱이 만든 룸이고, 정원 2가 한 번 찼고(폰이 붙음), 만료 전이고, 아직 쓰지 않았으면 한 번만 소비한다. 그 밖은 모두 `404 relay.room_unavailable` |
 
 ## WSS
 
@@ -47,6 +48,7 @@
 - 정원 2, 발급 후 120초 안에만 참가, 1회용: 한쪽이 나가면 룸을 폐기하고 다른 쪽도 끊는다. 120초가 지나면 연결도 끊는다.
 - 바이너리 프레임 규칙은 라이브 우편함과 같다(HS·DATA, Noise 핸드셰이크·전송).
 - 룸 레코드는 메모리에만 있고 계정이 없다. 룸과 그 뒤 만들어지는 영구 우편함의 연관은 기록하지 않는다.
+- 폰 대리 등록용으로 룸을 만든 데스크톱 기기 ID의 sha256, 정원이 찼는지, 등록에 썼는지만 같은 메모리 레코드에 둔다(룸이 폐기되면 함께 사라진다). 그래서 PC는 **룸이 열려 있는 동안**, 즉 7단계에서 `PAIR_OK`를 보내기 전에 `POST /v1/devices/enroll`을 부른다.
 
 ## 오류 코드
 

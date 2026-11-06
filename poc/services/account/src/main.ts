@@ -1,7 +1,7 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 비밀은 KMS가 환경 변수로 주입한다(저장소·이미지에 없음).
 import { fileURLToPath } from 'node:url';
 import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
-import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PaymentGateway } from './adapters.ts';
+import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
 import { accountRouter } from './app.ts';
 import { AccountService } from './service.ts';
 
@@ -12,6 +12,22 @@ export function httpStopHook(base: string, secret: string, fetchFn: typeof fetch
   return {
     async stopped(deviceId) {
       await fetchFn(`${base}/internal/v1/devices/${encodeURIComponent(deviceId)}/stopped`, { method: 'POST', headers: { authorization: `Internal ${secret}` }, redirect: 'error' });
+    },
+  };
+}
+
+/** 릴레이 내부 API의 페어링 룸 소비(/internal/v1/rooms/:id/redeem). 200만 성공, 그 밖(404·장애·시간 초과)은 실패로 본다. */
+export function httpPairingRooms(base: string, secret: string, fetchFn: typeof fetch = fetch, timeoutMs = 5000): PairingRooms {
+  return {
+    async redeem(roomId, desktopDeviceId) {
+      const res = await fetchFn(`${base}/internal/v1/rooms/${encodeURIComponent(roomId)}/redeem`, {
+        method: 'POST',
+        headers: { authorization: `Internal ${secret}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ deviceId: desktopDeviceId }),
+        redirect: 'error',
+        signal: AbortSignal.timeout(timeoutMs),
+      }).catch(() => null);
+      return res?.status === 200;
     },
   };
 }
@@ -36,6 +52,7 @@ export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: {
     publicOrigin,
     billingReturnUrl: env.BILLING_RETURN_URL ?? fail('BILLING_RETURN_URL'),
     stopHooks: (env.STOP_HOOK_URLS ?? '').split(',').filter(Boolean).map((u) => httpStopHook(u, env.INTERNAL_TOKEN ?? '')),
+    pairing: env.RELAY_INTERNAL_URL ? httpPairingRooms(env.RELAY_INTERNAL_URL, env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN')) : undefined,
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
   const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internalSecret: env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN'), limits });
