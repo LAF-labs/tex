@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, MessageChannelMain, session, type MessagePortMain, type Session } from 'electron';
-import { DocparseError, MAX_INPUT_BYTES, parse, SANDBOX_ERRORS as SANDBOX_ERROR_LIST, validateSandboxOutput, type DocKind, type DocparseHost, type ImageOcr, type ParseOptions, type ParseOutcome, type PdfExtract, type SheetOutput } from '@sax/docparse';
+import { CERT_MAX_BYTES, DocparseError, MAX_INPUT_BYTES, parse, SANDBOX_ERRORS as SANDBOX_ERROR_LIST, validateSandboxOutput, type CertInfo, type DocKind, type DocparseHost, type ImageOcr, type ParseOptions, type ParseOutcome, type PdfExtract, type SheetOutput } from '@sax/docparse';
 import { hardenWindow } from './harden.ts';
 
 export { DocparseError };
@@ -285,6 +285,18 @@ export async function readSheetInSandbox(bytes: Uint8Array, opts: { timeoutMs?: 
   const v = validateSandboxOutput('sheet', out);
   if (!v) throw new DocparseError('schema');
   return { ...v, ms, peakMemoryKb };
+}
+
+/**
+ * 공동인증서(NPKI signCert.der) → 고정 4필드(D05 §6 (2), D17 §3 certInfo, #95). main은 DER를 읽지 않는다: 샌드박스가 읽고 main은 스키마로 검증만 한다.
+ * 금고 npki.list가 준 바이트(비신뢰, 1~8192바이트)만. 범위 밖은 input_size, 해석 실패는 cert_invalid, 모양이 틀리면 schema.
+ */
+export async function certInfoInSandbox(der: Uint8Array, opts: { timeoutMs?: number } = {}): Promise<CertInfo> {
+  if (!(der instanceof Uint8Array) || der.length === 0 || der.length > CERT_MAX_BYTES) throw new DocparseError('input_size');
+  const { out } = await runJob({ kind: 'certInfo', bytes: der.slice() }, opts.timeoutMs ?? 10_000, 600_000);
+  const v = validateSandboxOutput('certInfo', out);
+  if (!v) throw new DocparseError('schema');
+  return v;
 }
 
 /** @sax/docparse parse()가 부르는 샌드박스 host. ms·메모리 같은 측정값은 떼고 스키마 모양만 넘긴다 */
