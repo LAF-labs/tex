@@ -5,6 +5,7 @@
 // - commits:true 항목·비가역 스텝은 여기서 실행하지 않는다(커밋 구간은 M2-3 submit만, step.irreversible_unguarded).
 // - 저널·로그에 화면 텍스트·입력 값을 남기지 않는다(⑦). 결과에는 코드만 있다.
 import { evalCond, stringPattern, type CondEnv } from './conds.ts';
+import { normalizeFieldValue, readField } from './readback.ts';
 import { normalizeName } from './constants.ts';
 import type { Actuator, Clock, PageReader, Resolved } from './page.ts';
 import { resolveTarget } from './resolve.ts';
@@ -38,16 +39,6 @@ export type Handlers = { [K in StepType]?: Handler<K> };
 export const NEXT: Outcome = { t: 'next' };
 const fail = (code: string): Outcome => ({ t: 'fail', code });
 const timeoutOf = (s: Step, env: StepEnv) => s.timeoutMs ?? env.defaultTimeoutMs;
-
-/** 금액·수량 칸: 공백·쉼표·'원'을 뺀다. 사업자번호: 하이픈을 뺀다. 그 밖: 이름 정규화(NFKC·제로폭·공백 접기). */
-const NUMERIC_KEYS = new Set(['supplyAmount', 'taxAmount', 'totalAmount', 'itemCount']);
-const BIZNO_KEYS = new Set(['supplierBizNo', 'counterpartBizNo']);
-export function normalizeFieldValue(entry: Pick<SelectorEntry, 'fieldKey' | 'inputType'>, raw: string): string {
-  const s = normalizeName(raw);
-  if (entry.inputType === 'number' || (entry.fieldKey && NUMERIC_KEYS.has(entry.fieldKey))) return s.replace(/[\s,원]/g, '');
-  if (entry.fieldKey && BIZNO_KEYS.has(entry.fieldKey)) return s.replace(/[\s-]/g, '');
-  return s;
-}
 
 type TargetResult = { ok: true; t: Resolved } | { ok: false; code: string };
 
@@ -202,8 +193,24 @@ const branch: Handler<'branch'> = async (s, env) => {
 
 const end: Handler<'end'> = async (s) => ({ t: 'end', status: s.status });
 
-/** M2-1 핸들러 묶음. decide·gate·human·checkpoint 등은 M2-2·M2-3이 더한다. */
-export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end };
+/**
+ * readback(M2-3, D02 §2.1 B-06): 나열한 fieldKey를 세 값 일치로 되읽어 $readback에 고정한다.
+ * 하나라도 실패하면 이 스텝의 값을 하나도 남기지 않는다(뒤 assert·게이트 카드가 반쯤 읽은 값을 쓰지 않게).
+ */
+const readback: Handler<'readback'> = async (s, env) => {
+  for (const f of s.fields) env.scope.readback.delete(f);
+  const got: Array<[string, string]> = [];
+  for (const f of s.fields) {
+    const r = await readField(env.page, env.dict, f);
+    if (!r.ok) return fail(r.code);
+    got.push([f, r.value]);
+  }
+  for (const [f, v] of got) env.scope.readback.set(f, v);
+  return NEXT;
+};
+
+/** M2-1 핸들러 묶음 + readback(M2-3). decide·gate·human·checkpoint는 실행 조율기(run/)가 더한다. */
+export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end, readback };
 
 export interface StepEnvInput {
   page: PageReader;
