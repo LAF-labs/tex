@@ -20,8 +20,8 @@
 | `PG_PROVIDER` | 예 | `mock` | 이 저장소에는 모의 PG만 있다. 다른 값이면 기동하지 않는다 |
 | `MOCK_PG_SECRET` ⚿ | 아니오 | 문자열 | 모의 PG 웹훅 서명 비밀(없으면 기동마다 무작위) |
 | `MAIL_PROVIDER` | 예 | `mock` | 이 저장소에는 모의 메일만 있다 |
-| `INTERNAL_TOKEN` ⚿ | 예 | 문자열(32바이트 이상 권장) | 내부 API(`/internal/v1/…`) 공유 비밀. 릴레이·푸시·게이트웨이와 같은 값 |
-| `STOP_HOOK_URLS` | 아니오 | 쉼표 구분 내부 URL | 긴급 정지·폐기를 알릴 릴레이·푸시 서비스 |
-| `RELAY_INTERNAL_URL` | 아니오 | 내부 URL | 폰 대리 등록 때 페어링 룸 소비를 확인할 릴레이 내부 주소(`/internal/v1/rooms/:id/redeem`, `INTERNAL_TOKEN`). 없으면 데스크톱 기기 토큰의 폰 등록은 `404 relay.room_unavailable` |
+| `INTERNAL_CALL_KEY` ⚿ | 예 | hex 64자 | 내부 호출 서명 키(HMAC-SHA256: 메서드·경로·본문 SHA-256·시각 ±60초·1회용 nonce, 상수 시간 비교, 팀장 결정 2026-11-06 #135). 서비스·룸 호스트가 같은 값. `TOKEN_SIGNING_SEED`·`ACCT_CLAIM_SIGNING_KEY`와 같으면 기동하지 않는다 |
+| `STOP_HOOK_URLS` | 아니오 | 쉼표 구분 내부 URL | 긴급 정지·폐기를 알릴 **다른 호스트**의 릴레이·푸시(서명 호출). 함수 배포에서는 같은 배포 안 푸시를 함수로 부르고 여기에는 룸 호스트만 둔다 |
+| `RELAY_INTERNAL_URL` | 아니오 | 내부 URL | 폰 대리 등록 때 페어링 룸 소비를 확인할 릴레이 내부 주소(`/internal/v1/rooms/:id/redeem`, `INTERNAL_CALL_KEY` 서명). 없으면 데스크톱 기기 토큰의 폰 등록은 `404 relay.room_unavailable` |
 | `TRUST_PROXY` | 아니오 | `1` | 앞단 프록시의 `X-Forwarded-For`를 한도 키에 쓴다(IP는 저장하지 않고 당일 솔트 HMAC만, CONTRACT §10) |
 | `PORT` / `HOST` | 아니오(`8080` / `0.0.0.0`) | | |

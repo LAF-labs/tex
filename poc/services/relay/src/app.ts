@@ -4,7 +4,7 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, Server } from 'node:http';
 import type { Duplex } from 'node:stream';
-import { DeviceAuth, RateLimiter, Router, ServiceError, clientIp, fail, json, memoryLimits, requireInternal, safeEqual, sha256hex, validator, type Ctx, type DeviceClaims, type DeviceDirectory, type KeySalt, type Limits, type Logger, type TokenVerifier } from '@sax/svc-shared';
+import { DeviceAuth, RateLimiter, Router, ServiceError, clientIp, fail, json, memoryLimits, safeEqual, sha256hex, validator, type Ctx, type DeviceClaims, type DeviceDirectory, type InternalCheck, type KeySalt, type Limits, type Logger, type TokenVerifier } from '@sax/svc-shared';
 import { OUTER, RELAY } from './constants.ts';
 import { RelayService, raw32, type OuterEnvelope } from './service.ts';
 import { CLOSE, WsConn, acceptUpgrade, rejectUpgrade } from './ws.ts';
@@ -46,7 +46,8 @@ export interface RelayAppOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory & { invalidate?(deviceId: string): void };
   publicOrigin: string;
-  internalSecret: string;
+  /** 내부 경로(/internal/*) 서명 검사(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135) */
+  internal: InternalCheck;
   logger: Logger;
   trustProxy?: boolean;
   /** HTTP 경로 한도 카운터·키 솔트. 배포는 DB(`sqlLimits`, 인스턴스 공유), 없으면 메모리 */
@@ -198,15 +199,23 @@ export class RelayHub {
       return json(201, { expiresAt: expires });
     });
     // 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다. 이후 연결·호출은 기기 상태 확인에서 막힌다.
-    r.add('POST', '/internal/v1/devices/:id/stopped', (ctx) => {
-      requireInternal(ctx, this.o.internalSecret);
-      this.o.directory.invalidate?.(ctx.params.id!);
-      return json(200, { closed: this.stopDevice(ctx.params.id!) });
-    });
+    r.add(
+      'POST',
+      '/internal/v1/devices/:id/stopped',
+      async (ctx) => {
+        await this.o.internal.check(ctx);
+        this.o.directory.invalidate?.(ctx.params.id!);
+        return json(200, { closed: this.stopDevice(ctx.params.id!) });
+      },
+      { raw: true },
+    );
     // 계정 서비스의 폰 대리 등록(페어링 7단계): 이 PC가 만든 룸에 폰이 붙었고 아직 쓰지 않았으면 한 번만 소비한다.
     // 없음·만료·미페어링·다른 PC·이미 소비는 모두 같은 404(존재 오라클 없음)
-    r.add('POST', '/internal/v1/rooms/:id/redeem', (ctx) => {
-      requireInternal(ctx, this.o.internalSecret);
+    r.add(
+      'POST',
+      '/internal/v1/rooms/:id/redeem',
+      async (ctx) => {
+      await this.o.internal.check(ctx);
       const { deviceId } = V.redeem(ctx.body);
       const room = this.rooms.get(ctx.params.id!);
       if (!room || room.expires <= svc.now() || !room.paired || !safeEqual(room.owner, sha256hex(deviceId))) fail('relay.room_unavailable');
@@ -214,11 +223,18 @@ export class RelayHub {
       if (room!.redeemed) fail('relay.room_used');
       room!.redeemed = true;
       return json(200, { ok: true });
-    });
-    r.add('POST', '/internal/v1/queues/purge', async (ctx) => {
-      requireInternal(ctx, this.o.internalSecret);
-      return json(200, { deleted: await svc.purgeQueues() });
-    });
+      },
+      { raw: true },
+    );
+    r.add(
+      'POST',
+      '/internal/v1/queues/purge',
+      async (ctx) => {
+        await this.o.internal.check(ctx);
+        return json(200, { deleted: await svc.purgeQueues() });
+      },
+      { raw: true },
+    );
     r.add('GET', '/healthz', () => json(200, { ok: true }));
   }
 

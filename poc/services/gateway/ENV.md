@@ -9,8 +9,8 @@
 | `MIGRATE_ON_START` | 아니오(`1`) | `0`·`1` | `0`이면 기동 때 마이그레이션을 하지 않는다(DDL 권한 없는 서비스 역할, [deploy/README](../deploy/README.md) 4절) |
 | `GATEWAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
-| `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회·자동 정지 |
-| `INTERNAL_TOKEN` ⚿ | 예 | 문자열 | 내부 API 공유 비밀 |
+| `ACCOUNT_INTERNAL_URL` | 상시 서버만 | 내부 URL | 기기 상태 조회·자동 정지(서명 호출). 함수 배포(`@sax/svc-cloud`)는 계정 서비스를 함수로 부르므로 쓰지 않는다 |
+| `INTERNAL_CALL_KEY` ⚿ | 상시 서버만 | hex 64자 | 내부 호출 서명 키(`ACCOUNT_INTERNAL_URL`과 함께, 계정 서비스와 같은 값) |
 | `RUN_TOKEN_SEED` ⚿ | 예 | hex 64자 | runToken 서명 키(Ed25519 시드) |
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `CACHE_KEY_SECRET` ⚿ | 예 | hex 64자 | `prompt_cache_key` HMAC 비밀 |

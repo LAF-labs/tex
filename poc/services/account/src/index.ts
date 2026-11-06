@@ -8,4 +8,3 @@ export * from './service.ts';
 export * from './webauthn.ts';
 export * from './main.ts';
 export * from './visibility.ts';
-export * from './vercel.ts';

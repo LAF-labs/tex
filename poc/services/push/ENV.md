@@ -11,8 +11,8 @@
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `PUSH_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
-| `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회(깨울 폰이 같은 계정의 활성 폰인지) |
-| `INTERNAL_TOKEN` ⚿ | 예 | 문자열 | 내부 API 공유 비밀(정지 훅) |
+| `ACCOUNT_INTERNAL_URL` | 상시 서버만 | 내부 URL | 기기 상태 조회(깨울 폰이 같은 계정의 활성 폰인지, 서명 호출). 함수 배포는 계정 서비스를 함수로 부르므로 쓰지 않는다 |
+| `INTERNAL_CALL_KEY` ⚿ | 예 | hex 64자 | 내부 호출 서명 키(HMAC-SHA256: 메서드·경로·본문 SHA-256·시각 ±60초·1회용 nonce, 상수 시간 비교, 팀장 결정 2026-11-06 #135). 서비스·룸 호스트가 같은 값. 받는 쪽: 정지 훅 |
 | `PUSH_PROVIDER` | 아니오(`mock`) | `mock` \| `sandbox` | |
 | `APNS_TEAM_ID` / `APNS_KEY_ID` / `APNS_TOPIC` | sandbox | | APNs 제공자 토큰·번들 ID |
 | `APNS_P8` ⚿ | sandbox | PEM | APNs 인증 키(.p8) |

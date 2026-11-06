@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, type Sql } from '../services/shared/src/index.ts';
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS, OUTER, RELAY, RELAY_VISIBILITY, RelayHub, RelayService, newRoomId } from '../services/relay/src/index.ts';
 import { ApnsSender, FcmSender, MIGRATIONS_DIR as PUSH_MIGRATIONS, MockPushSender, PUSH_VISIBILITY, PushService, WAKE, pushRouter } from '../services/push/src/index.ts';
-import { D, H, client, device, entry } from './services-kit.ts';
-import { DEVICE, httpPairingRooms } from '../services/account/src/index.ts';
+import { D, H, INTERNAL_KEY, client, device, entry, internalAuth, internalHeaders } from './services-kit.ts';
+import { DEVICE, httpPairingRooms, httpStopHook } from '../services/account/src/index.ts';
 import { ACCOUNT_ORIGIN, accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
 const RO = 'https://relay.test.invalid';
@@ -57,19 +57,19 @@ async function start(flags: { rooms?: boolean; live?: boolean } = {}): Promise<E
   const logs: string[] = [];
   const logger = new Logger('relay', (l) => logs.push(l), s.clock.now);
   const svc = new RelayService({ db, queueKey: randomBytes(32), now: s.clock.now });
-  const hub = new RelayHub({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: RO, internalSecret: 'internal-test', logger, ...flags });
+  const hub = new RelayHub({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: RO, internal: internalAuth(), logger, ...flags });
   const relay = createServer(hub.router, { logger });
   hub.attach(relay);
   const rbase = await listen(relay);
   const sender = new MockPushSender();
   const psvc = new PushService({ db: pushDb, tokenKey: randomBytes(32), sender, now: s.clock.now });
-  const push = createServer(pushRouter({ svc: psvc, verifier: s.verifier, directory: s.directory, publicOrigin: PO, internalSecret: 'internal-test' }), { logger: new Logger('push', (l) => logs.push(l), s.clock.now) });
+  const push = createServer(pushRouter({ svc: psvc, verifier: s.verifier, directory: s.directory, publicOrigin: PO, internal: internalAuth() }), { logger: new Logger('push', (l) => logs.push(l), s.clock.now) });
   const pbase = await listen(push);
   const r = client(rbase);
   const p = client(pbase);
-  // 계정 서비스의 정지 훅 → 릴레이·푸시 내부 API(운영과 같은 HTTP 경로)
-  s.pairing.impl = httpPairingRooms(rbase, 'internal-test');
-  for (const base of [rbase, pbase]) s.hooks.push({ stopped: async (id) => void (await client(base)('POST', `/internal/v1/devices/${id}/stopped`, { headers: { authorization: 'Internal internal-test' } })) });
+  // 계정 서비스의 정지 훅 → 릴레이·푸시 내부 API(룸 호스트와 같은 서명 HTTP 경로)
+  s.pairing.impl = httpPairingRooms(rbase, INTERNAL_KEY);
+  for (const base of [rbase, pbase]) s.hooks.push(httpStopHook(base, INTERNAL_KEY));
   const pc0 = await signedDesktop(s, 'relay@example.com');
   const pc = { ...pc0, ...cached(pc0, s) };
   const ph = await signedPhone(s, pc0);
@@ -287,7 +287,7 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     assert.deepEqual((await e.call(e.phone, 'GET', `/v1/mailboxes/${m.mbxId}/bundle`, { headers: { 'x-mbx-read': m.tokRead } })).json, { bundle });
     await e.call(e.phone, 'POST', `/v1/mailboxes/${m.mbxId}/envelopes`, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() });
     assert.equal((await e.r('POST', '/internal/v1/queues/purge')).json.error, 'account.unauthorized');
-    assert.deepEqual((await e.r('POST', '/internal/v1/queues/purge', { headers: { authorization: 'Internal internal-test' } })).json, { deleted: 1 });
+    assert.deepEqual((await e.r('POST', '/internal/v1/queues/purge', { headers: internalHeaders('POST', '/internal/v1/queues/purge') })).json, { deleted: 1 });
   });
 });
 
@@ -594,7 +594,7 @@ describe('릴레이 기능 스위치: 룸 꺼짐(RELAY_ROOMS)·라이브 꺼짐(
     const roomId = newRoomId();
     assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId } })).json.error, 'request.not_found');
     assert.equal(await open(`${e.wsBase}/v1/rooms/${roomId}`), null);
-    const redeem = await e.r('POST', `/internal/v1/rooms/${roomId}/redeem`, { headers: { authorization: 'Internal internal-test' }, body: { deviceId: e.pc.d.id } });
+    const redeem = await e.r('POST', `/internal/v1/rooms/${roomId}/redeem`, { headers: internalHeaders('POST', `/internal/v1/rooms/${roomId}/redeem`, { deviceId: e.pc.d.id }), body: { deviceId: e.pc.d.id } });
     assert.equal(redeem.json.error, 'relay.room_unavailable');
     const m = newMailbox();
     assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).status, 201);

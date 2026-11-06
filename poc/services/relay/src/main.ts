@@ -1,6 +1,6 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP + WSS. TLS는 서버 직접 또는 L4/TLS 프록시(D09 §4, 특정 LB 기능에 의존하지 않음).
 import { fileURLToPath } from 'node:url';
-import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
+import { HttpDeviceDirectory, InternalAuth, Logger, SqlNonceStore, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { RelayHub } from './app.ts';
 import { RelayService } from './service.ts';
 
@@ -24,10 +24,10 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
 }
 
 /**
- * 조립. 상시 서버(룸 호스트)와 함수 진입점(`vercel.ts`, HTTPS 큐만)이 같은 것을 쓴다.
+ * 조립. 상시 서버(룸 호스트)와 함수 진입점(`@sax/svc-cloud`, HTTPS 큐만)이 같은 것을 쓴다.
  * 페어링 룸(`RELAY_ROOMS=1`, "룸 켬")과 우편함 라이브 WSS(`RELAY_LIVE=1`)는 켤 때만 연다(Phase 1 기본 꺼짐, 팀장 결정 2026-11-05·11-06).
  */
-export async function buildRelay(env: NodeJS.ProcessEnv = process.env, o: { migrate: boolean; stateful: boolean } = { migrate: true, stateful: true }) {
+export async function buildRelay(env: NodeJS.ProcessEnv = process.env, o: { migrate: boolean; stateful: boolean } = { migrate: true, stateful: true }, deps: { directory?: DeviceDirectory } = {}) {
   const db = openFromEnv(env);
   if (o.migrate) {
     await migrate(db, 'relay', MIGRATIONS_DIR);
@@ -36,13 +36,14 @@ export async function buildRelay(env: NodeJS.ProcessEnv = process.env, o: { migr
   for (const k of ['RELAY_ROOMS', 'RELAY_LIVE'] as const) if (env[k] !== undefined && env[k] !== '0' && env[k] !== '1') fail(k);
   const logger = new Logger('relay');
   const svc = new RelayService({ db, queueKey: key32(env.QUEUE_KEY, 'QUEUE_KEY'), now: Date.now, onEvent: (e) => logger.event(e) });
-  const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
+  // 내부 경로(정지 알림·룸 소비·큐 정리)는 서명 호출만. 기기 상태는 주입(같은 배포)이 없으면 계정 서비스에 서명 HTTP(룸 호스트)
+  const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
   const hub = new RelayHub({
     svc,
     verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)),
-    directory: new HttpDeviceDirectory({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), secret: internal }),
+    directory: deps.directory ?? new HttpDeviceDirectory({ base: env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL'), key: internalKey }),
     publicOrigin: env.RELAY_PUBLIC_ORIGIN ?? fail('RELAY_PUBLIC_ORIGIN'),
-    internalSecret: internal,
+    internal: new InternalAuth({ key: internalKey, nonces: new SqlNonceStore(db) }),
     logger,
     trustProxy: env.TRUST_PROXY === '1',
     limits: sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY')),

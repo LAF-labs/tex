@@ -16,6 +16,7 @@
 | run_scopes | scope_hash, kind, l1, l2_calls, l2_turns, expires_at | **D09 추가 필요**: 실행 예산 카운터(범위는 HMAC, runId 원문 없음, 2시간) |
 | lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
+| int_nonces | nonce, expires_at | 내부 호출 서명의 1회용 무작위 값(요청 내용·출처 없음). 서명 시각 + 60초 뒤 삭제 |
 
 D09 §3 (2)의 운영 통계 키 `playbook`은 게이트웨이 요청에 플레이북 ID가 없어 담지 않는다(번들·툴셋 단위).
 

@@ -3,4 +3,3 @@ export * from './main.ts';
 export * from './senders.ts';
 export * from './service.ts';
 export * from './visibility.ts';
-export * from './vercel.ts';

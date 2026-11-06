@@ -136,7 +136,16 @@ CREATE TABLE lim_windows (
 );
 CREATE INDEX lim_windows_expires ON lim_windows (expires_at);
 
+-- shared/migrations/002_internal_nonces.sql
+-- 내부 호출 서명의 1회용 nonce(팀장 결정 2026-11-06 #135 (1)). 무작위 16바이트(b64url)와 만료 시각만. 요청 내용·출처는 없다.
+CREATE TABLE int_nonces (
+  nonce TEXT PRIMARY KEY,                   -- 보낸 쪽이 만든 무작위 값(재전송 거부)
+  expires_at BIGINT NOT NULL            -- 서명 시각 + 60초 + 1ms. 지나면 다음 기록 때 지운다
+);
+CREATE INDEX int_nonces_expires ON int_nonces (expires_at);
+
 INSERT INTO account.schema_migrations (service, version) VALUES ('limits', 1) ON CONFLICT DO NOTHING;
+INSERT INTO account.schema_migrations (service, version) VALUES ('limits', 2) ON CONFLICT DO NOTHING;
 
 -- 권한: 이 서비스 역할만 행을 읽고 쓴다(DDL 없음). Supabase API 역할(anon·authenticated)과 PUBLIC에는 아무것도 없다.
 REVOKE ALL ON ALL TABLES IN SCHEMA account, account_limits FROM PUBLIC;
