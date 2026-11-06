@@ -306,6 +306,11 @@ describe('V-04~V-24', () => {
     assert.ok(nameTemplateProblem('/abs/{docType}.pdf'));
     expectRule('V-23', (_p, s) => (s('s32').nameTemplate = 'a//{docType}.pdf'));
   });
+  it('V-23a save_pdf strategy는 이 엔진이 하는 print·page_pdf만(original·wallet은 로드 때 거부)', () => {
+    expectRule('V-23a', (_p, s) => (s('s32').strategy = 'original'));
+    expectRule('V-23a', (_p, s) => (s('s32').strategy = 'wallet'));
+    assert.deepEqual([...rulesOf(mutate((_p, s) => (s('s32').strategy = 'page_pdf')))], [], 'page_pdf는 통과');
+  });
   it('CE-13 expectConfirm ".*"', () => {
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '.*'));
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '^.*$'));

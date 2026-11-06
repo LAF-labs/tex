@@ -3,7 +3,8 @@
 //   검사(15 MiB, %PDF- 머리, %%EOF 꼬리)를 통과하면 staging/<fileId>.pdf로 두고 fileId만 준다(금고 #164 계약).
 //   엔진의 Page.printToPDF·Page/Browser.setDownloadBehavior는 중계가 거부한다(A-13).
 // - 보관함 이동(docparse → 보관함, V-23 이름)은 포트 store가 한다. 파일 이름에 PII 없음({docType}_{yyyyMMdd}_{shortId}.pdf).
-// - strategy print만 있다. original(다운로드 버튼)은 IR에 버튼 타깃이 없어 아직 못 한다. page_pdf·wallet도 아직 없다.
+// - Phase 1 엔진은 print·page_pdf만 한다. 둘 다 금고 pdf.print(금고 세션의 Page.printToPDF, 지금 포털 탭)다.
+//   original(다운로드 버튼)은 IR에 버튼 타깃이 없고 wallet은 구현이 없다. 둘은 로드 때 V-23a로 거부하고, 실행 시에도 금고를 부르지 않는다.
 // - 저널에는 스텝 id·docType·사유 코드만(⑦). fileId·보관함 id는 남기지 않는다.
 import type { SavePdfStep } from './types.ts';
 
@@ -46,11 +47,14 @@ export interface SavePdfDeps {
 /** $artifacts.X 키. 사후조건 {artifact: "pdf"}·send_email.attach "$artifacts.pdf"(D02 §8). */
 export const PDF_ARTIFACT = 'pdf';
 
+/** 이 엔진이 하는 save_pdf strategy(V-23a). */
+export const SAVE_PDF_STRATEGIES: ReadonlySet<SavePdfStep['strategy']> = new Set(['print', 'page_pdf']);
+
 export type SavePdfResult = { ok: true } | { ok: false; code: 'save_pdf.unsupported' | 'save_pdf.failed' };
 
 /** save_pdf 한 번. 실패해도 예외를 내지 않는다(사유는 저널, 결과는 코드). */
 export async function savePdf(d: SavePdfDeps, s: SavePdfStep): Promise<SavePdfResult> {
-  if (s.strategy !== 'print') {
+  if (!SAVE_PDF_STRATEGIES.has(s.strategy)) {
     d.journal('save_pdf.unsupported', { stepId: s.id, strategy: s.strategy });
     return { ok: false, code: 'save_pdf.unsupported' };
   }

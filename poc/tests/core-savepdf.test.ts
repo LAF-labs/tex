@@ -3,7 +3,7 @@
 
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { PDF_ARTIFACT, savePdf, STAGED_FILE_ID, type PdfFileResult, type PdfPort, type SavePdfStep, type StepOf } from '@sax/engine/core';
+import { PDF_ARTIFACT, SAVE_PDF_STRATEGIES, savePdf, STAGED_FILE_ID, type PdfFileResult, type PdfPort, type SavePdfStep, type StepOf } from '@sax/engine/core';
 import { h01 } from './core-fixtures.ts';
 
 const S32 = h01().playbook.steps.find((s) => s.id === 's32') as StepOf<'save_pdf'>;
@@ -82,8 +82,15 @@ describe('save_pdf(M2-3, D02 §4, D05 §3.3, 금고 #164)', () => {
     assert.equal(e.journal[0]![1].reason, 'port_error');
   });
 
-  it('original·page_pdf·wallet은 아직 없다: 금고를 부르지 않고 save_pdf.unsupported(재시도 없이 중단, FORCED_STOPS)', async () => {
-    for (const strategy of ['original', 'page_pdf', 'wallet'] as const) {
+  it('page_pdf도 금고 pdf.print(지금 포털 탭 Page.printToPDF)', async () => {
+    const h = mk();
+    assert.deepEqual(await savePdf(h.d, { ...S32, strategy: 'page_pdf' }), { ok: true });
+    assert.deepEqual(h.calls, ['print run-1 s32', 'store']);
+    assert.deepEqual([...SAVE_PDF_STRATEGIES].sort(), ['page_pdf', 'print']);
+  });
+
+  it('original·wallet은 없다(로드 때 V-23a 거부). 실행 시에도 금고를 부르지 않고 save_pdf.unsupported(재시도 없이 중단, FORCED_STOPS)', async () => {
+    for (const strategy of ['original', 'wallet'] as const) {
       const h = mk();
       assert.deepEqual(await savePdf(h.d, { ...S32, strategy }), { ok: false, code: 'save_pdf.unsupported' });
       assert.deepEqual(h.calls, [], strategy);
