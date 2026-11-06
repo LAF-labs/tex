@@ -98,6 +98,51 @@ describe('V-02 타깃·속성', () => {
   it('readback 필드의 fieldKey 항목 없음', () => expectRule('V-02', (_p, s) => (s('s19b').fields as string[]).push('ghostField')));
 });
 
+describe('V-03m 금액·상대방 입력 대조(팀장 결정 2026-11-07, D02 §8 s19d·s19f)', () => {
+  const v03m = (f: Mut) => run(mutate(f)).filter((x) => x.rule === 'V-03m').map((x) => x.message.match(/필드 (\w+)/)?.[1]).sort();
+  const remove = (steps: Step[], id: string) => steps.splice(steps.findIndex((s) => s.id === id), 1);
+  it('골든 H-01은 통과한다(s19f가 공급받는자·공급가액·세액, s19d가 합계)', () => assert.deepEqual(v03m(() => {}), []));
+  it('s19f가 빠지면 금액·상대방·받는 이메일 필드 전부, 합계도(parts가 대조되지 않음) 거부', () =>
+    assert.deepEqual(v03m((_p, _s, steps) => remove(steps, 's19f')), ['counterpartBizNo', 'counterpartEmail', 'supplyAmount', 'taxAmount', 'totalAmount']));
+  it('s19d가 빠지면 합계만 거부', () => assert.deepEqual(v03m((_p, _s, steps) => remove(steps, 's19d')), ['totalAmount']));
+  it('대조가 any·not 안에 있으면 셈하지 않는다', () => {
+    const f19 = (wrap: (c: unknown) => unknown) => v03m((_p, s) => (s('s19f').cond = wrap(s('s19f').cond)));
+    const all5 = ['counterpartBizNo', 'counterpartEmail', 'supplyAmount', 'taxAmount', 'totalAmount'];
+    assert.deepEqual(f19((c) => ({ any: [c, { inputPresent: 'issueDate' }] })), all5);
+    assert.deepEqual(f19((c) => ({ not: { not: c } })), all5);
+    assert.deepEqual(f19((c) => ({ all: [c] })), [], 'all 중첩은 셈한다');
+  });
+  it('$inputs가 아닌 참조($profile)와의 대조는 입력 대조가 아니다', () =>
+    assert.deepEqual(v03m((_p, s) => (s('s19f').cond = { all: [
+      { readbackEquals: { fieldKey: 'counterpartBizNo', ref: '$profile.bizNo' } },
+      { readbackEquals: { fieldKey: 'supplyAmount', ref: '$inputs.amounts.supply' } },
+      { readbackEquals: { fieldKey: 'taxAmount', ref: '$inputs.amounts.tax' } },
+      { readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.email', ifAbsent: 'empty' } },
+    ] })), ['counterpartBizNo']));
+  const withoutEmailEq = (cond: { all: Array<Record<string, unknown>> }) => cond.all.filter((c) => !('readbackEquals' in c && (c.readbackEquals as { fieldKey: string }).fieldKey === 'counterpartEmail'));
+  it('받는 이메일: 이메일 입력 있음 + 대조 assert 없음 → 거부', () =>
+    assert.deepEqual(v03m((_p, s) => (s('s19f').cond = { all: withoutEmailEq(s('s19f').cond as never) })), ['counterpartEmail']));
+  it('받는 이메일: 이메일 입력 없음 + readbackEmpty 없음 → 거부, readbackEmpty가 있으면 통과', () => {
+    const noInput: Mut = (p, s) => {
+      delete (p.playbook.inputs as Record<string, unknown>).email;
+      s('s15').value = '$inputs.counterpart.email';
+      s('s19f').cond = { all: withoutEmailEq(s('s19f').cond as never) };
+    };
+    assert.deepEqual(v03m(noInput), ['counterpartEmail']);
+    assert.deepEqual(v03m((p, s, steps) => {
+      noInput(p, s, steps);
+      (s('s19f').cond as { all: unknown[] }).all.push({ readbackEmpty: 'counterpartEmail' });
+    }), []);
+  });
+  it("받는 이메일: 선택 입력과 대조하면서 ifAbsent:'empty'가 없으면 거부(입력이 빈 실행을 덮지 않음)", () =>
+    assert.deepEqual(v03m((_p, s) => {
+      const c = s('s19f').cond as { all: Array<Record<string, unknown>> };
+      c.all = [...withoutEmailEq(c as never), { readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.email' } }];
+    }), ['counterpartEmail']));
+  it('합계를 입력과 직접 대조하면 s19d 없이도 된다', () =>
+    assert.deepEqual(v03m((_p, s) => (s('s19d').cond = { readbackEquals: { fieldKey: 'totalAmount', ref: '$inputs.amounts.total' } })), []));
+});
+
 describe('V-03 커밋 구간', () => {
   it('V-03a 게이트 둘이 같은 X를 허가', () => expectRule('V-03a', (_p, _s, steps) => insertAfter(steps, 's19e', { id: 's19g', type: 'gate', card: 'invoice.confirm', authorizes: ['s21'] })));
   it('V-03b 게이트를 우회하는 경로', () =>

@@ -55,6 +55,18 @@ export function condTargets(c: Cond): string[] {
   return out;
 }
 
+/** 조건식의 연언 잎: all은 펼치고, any·not 아래는 넣지 않는다(V-03m: 반드시 평가되어 참이어야 하는 조건만). */
+export function conjuncts(c: Cond): Cond[] {
+  if ('all' in c) return c.all.flatMap(conjuncts);
+  if ('any' in c || 'not' in c) return [];
+  return [c];
+}
+
+/** V-03m 대상 fieldKey: 금액(…Amount)과 상대방 식별(사업자·등록번호). */
+export const AMOUNT_KEY = /Amount$/;
+export const COUNTERPART_KEY = /^counterpart(BizNo|RegNo)$/;
+export const EMAIL_KEY = /^counterpartEmail$/;
+
 const fromTarget = (f: From): string => ('selector' in f ? f.selector : 'regex' in f ? f.regex.target : f.a11y.target);
 
 export function stepConds(s: Step): Cond[] {
@@ -221,6 +233,12 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if (s.type === 'assert') walkCond(s.cond, (x) => 'fieldsFilled' in x && x.fieldsFilled.fields.forEach((f) => !fieldKeyEntries.has(f) && bad('V-02', `fieldsFilled ${f}의 항목이 없음`, s.id)));
   }
 
+  /** 선택 입력: required가 아니고 기본값도 없다(V-03m 이메일). */
+  const optionalInput = (n: string | null) => {
+    const d = n ? ir.inputs[n] : undefined;
+    return !!d && d.required !== true && d.default === undefined;
+  };
+
   // ---- V-03: 커밋 구간 ----
   const gates = steps.filter((s): s is StepOf<'gate'> => s.type === 'gate');
   const gateOf = new Map<string, string>();
@@ -279,6 +297,23 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     for (const f of dateFields) {
       const has = asserts.some((a) => 'readbackEquals' in a.cond && a.cond.readbackEquals.fieldKey === f && a.cond.readbackEquals.ref.startsWith('$inputs.'));
       if (!has) bad('V-03j′', `날짜 필드 ${f}의 readbackEquals{$inputs} assert가 게이트 앞에 없음`, g.id);
+    }
+    // V-03m(팀장 결정 2026-11-07, D02 §8 s19f 일반화): 게이트가 보낼 금액·상대방 fieldKey는 R→G 사이 assert에서 $inputs와 대조해야 한다.
+    // 합계처럼 입력 인자가 없는 금액은 sumEquals(s19d)의 total이고 parts가 모두 $inputs 대조된 것이면 된다.
+    // assert의 all 안은 셈하고 any·not 안은 셈하지 않는다(그 대조가 실패해도 통과할 수 있다).
+    const leaves = asserts.flatMap((a) => conjuncts(a.cond));
+    const inputEq = new Set(leaves.flatMap((c) => ('readbackEquals' in c && c.readbackEquals.ref.startsWith('$inputs.') ? [c.readbackEquals.fieldKey] : [])));
+    const sums = leaves.flatMap((c) => ('sumEquals' in c ? [c.sumEquals] : []));
+    const covered = (f: string) => inputEq.has(f) || sums.some((x) => x.total === f && x.parts.every((p) => inputEq.has(p)));
+    for (const f of rbFields) if ((AMOUNT_KEY.test(f) || COUNTERPART_KEY.test(f)) && !covered(f)) bad('V-03m', `금액·상대방 필드 ${f}의 $inputs 대조 assert(readbackEquals 또는 대조된 parts의 sumEquals)가 게이트 앞에 없음`, g.id);
+    // 받는 이메일(팀장 결정 2026-11-07): 입력이 있으면 readbackEquals{$inputs}, 없으면 비었음(readbackEmpty) 중 하나가 반드시 있어야 한다.
+    // 선택 입력(required 아님·기본값 없음)과의 대조는 ifAbsent:'empty'여야 입력이 빈 실행도 덮는다.
+    for (const f of rbFields) {
+      if (!EMAIL_KEY.test(f)) continue;
+      const eqs = leaves.flatMap((c) => ('readbackEquals' in c && c.readbackEquals.fieldKey === f && c.readbackEquals.ref.startsWith('$inputs.') ? [c.readbackEquals] : []));
+      const empty = leaves.some((c) => 'readbackEmpty' in c && c.readbackEmpty === f);
+      if (!eqs.length && !empty) bad('V-03m', `받는 이메일 필드 ${f}의 입력 대조(readbackEquals{$inputs}) 또는 비었음(readbackEmpty) assert가 게이트 앞에 없음`, g.id);
+      for (const e of eqs) if (optionalInput(refHead(e.ref, 'inputs')) && e.ifAbsent !== 'empty') bad('V-03m', `받는 이메일 필드 ${f}가 선택 입력과 대조하는데 ifAbsent:'empty'가 없음(입력이 빈 실행을 덮지 않음)`, g.id);
     }
   }
   for (const [x, g] of gateOf) {
@@ -683,6 +718,7 @@ function checkRefs(ir: PlaybookIR, cfg: Cfg, steps: Step[], irreversible: Set<st
         }
         // sumEquals는 readback 값만 쓴다(D02 §8 s19d): parts·total 모두 그 앞 readback이 지배해야 한다.
         if ('sumEquals' in x) for (const f of [...x.sumEquals.parts, x.sumEquals.total]) use(`$readback.${f}`, s.id, 'other');
+        if ('readbackEmpty' in x) use(`$readback.${x.readbackEmpty}`, s.id, 'other');
         if ('inputPresent' in x && !ir.inputs[x.inputPresent]) bad('V-15', `inputPresent ${x.inputPresent}가 선언되지 않음`, s.id);
       });
   }

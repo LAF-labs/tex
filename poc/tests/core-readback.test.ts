@@ -27,6 +27,7 @@ const INPUTS = {
   amounts: { supply: 1000000, tax: 100000 },
   items: [{ name: '컨설팅' }],
   issueDate: '2026-11-06',
+  email: 'tax@Example.COM',
 };
 const PROFILE = { bizNo: '1068114550' };
 
@@ -150,6 +151,16 @@ describe('readback 조건식(D02 §4.1): 고정한 값만 쓰고 화면을 다�
     const r2 = await readAll();
     assert.deepEqual(await run1(assert1({ readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.nope' } }), r2.env), { t: 'fail', code: 'step.ref_unresolved' });
   });
+  it('readbackEmpty·readbackEquals ifAbsent empty: 되읽은 값이 비었는가', async () => {
+    const r = h01Run({ inputs: { ...INPUTS, email: '' }, screen: { counterpartEmail: '' } });
+    assert.deepEqual(await run1(h01().playbook.steps.find((s) => s.id === 's19b')!, r.env), { t: 'next' });
+    assert.deepEqual(await run1(assert1({ readbackEmpty: 'counterpartEmail' }), r.env), { t: 'next' });
+    assert.deepEqual(await run1(assert1({ readbackEmpty: 'supplyAmount' }), r.env), { t: 'fail', code: 'step.assert_failed' });
+    assert.deepEqual(await run1(assert1({ readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.email', ifAbsent: 'empty' } }), r.env), { t: 'next' });
+    assert.deepEqual(await run1(assert1({ readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.email' } }), r.env), { t: 'fail', code: 'step.ref_unresolved' }, 'ifAbsent 없으면 빈 입력은 오류');
+    assert.deepEqual(await run1(assert1({ readbackEquals: { fieldKey: 'supplyAmount', ref: '$inputs.email', ifAbsent: 'empty' } }), r.env), { t: 'fail', code: 'step.assert_failed' }, '입력이 비었는데 칸에 값이 있음');
+    assert.deepEqual(await run1(assert1({ readbackEmpty: 'nope' }), r.env), { t: 'fail', code: 'step.ref_unresolved' });
+  });
   it('readbackEquals는 화면을 다시 읽지 않는다: readback 뒤 화면이 바뀌어도 고정 값으로 본다', async () => {
     const r = await readAll();
     r.page.els.get('hometax.invoice.form.item1.supply')!.value = '9,999';
@@ -208,6 +219,7 @@ describe('골든 H-01 픽스처(D02 §8): s19d·s19f가 readback과 게이트 �
       { readbackEquals: { fieldKey: 'counterpartBizNo', ref: '$inputs.counterpart.bizNo' } },
       { readbackEquals: { fieldKey: 'supplyAmount', ref: '$inputs.amounts.supply' } },
       { readbackEquals: { fieldKey: 'taxAmount', ref: '$inputs.amounts.tax' } },
+      { readbackEquals: { fieldKey: 'counterpartEmail', ref: '$inputs.email', ifAbsent: 'empty' } },
     ] });
     assert.equal(by('s19f').code, 'assert.input_mismatch');
     for (const id of ['s19c', 's19d', 's19f', 's19e']) assert.deepEqual(by(id).onFail, { retry: 0, then: 'abort' }, id);
@@ -238,6 +250,13 @@ describe('리플레이: 골든 H-01 s19a → s20(게이트)', () => {
   it('공급받는자 사업자번호가 입력과 다르면 s19f에서 중단', async () => {
     const r = h01Run({ screen: { counterpartBizNo: '220-81-62518' } });
     assert.deepEqual(await r.it.run('s19a'), { t: 'abort', at: 's19f', code: 'assert.input_mismatch' });
+  });
+  it('받는 이메일: 입력이 있으면 되읽은 값과 같아야 하고, 입력이 없으면 칸이 비어야 한다(V-03m, ifAbsent empty)', async () => {
+    const noEmail: Record<string, unknown> = { ...INPUTS };
+    delete noEmail.email;
+    assert.deepEqual(await h01Run({ screen: { counterpartEmail: 'other@example.com' } }).it.run('s19a'), { t: 'abort', at: 's19f', code: 'assert.input_mismatch' }, '다른 주소');
+    assert.deepEqual(await h01Run({ inputs: noEmail, screen: { counterpartEmail: '' } }).it.run('s19a'), { t: 'abort', at: 's20', code: null }, '입력 없음 + 빈 칸 → 게이트');
+    assert.deepEqual(await h01Run({ inputs: noEmail }).it.run('s19a'), { t: 'abort', at: 's19f', code: 'assert.input_mismatch' }, '입력 없음인데 포털 칸에 주소가 남음');
   });
   it('공급자(내 사업자)가 다르면 s19c에서, 작성일이 다르면 s19e에서 중단', async () => {
     assert.deepEqual(await h01Run({ screen: { supplierBizNo: '999-99-99999' } }).it.run('s19a'), { t: 'abort', at: 's19c', code: 'step.assert_failed' });
