@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsPowerShellEnv, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -94,7 +94,7 @@ describe('경로와 접근 통제', () => {
     const lockOut = async (dir: string) => {
       if (!win) return fs.chmod(dir, 0o000);
       const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
-      await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: dir } });
+      await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: dir }) });
     };
     await lockOut(root);
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['no_user_access']);
@@ -136,7 +136,7 @@ describe('경로와 접근 통제', () => {
     // Get-Acl 객체는 SACL까지 다시 쓰려 해 SeSecurityPrivilege가 필요하다. DACL만 담은 새 객체로 쓴다.
     // 경로는 생산 코드처럼 환경 변수로 넘긴다(작은따옴표가 든 사용자 이름에서도 깨지지 않게).
     const script = `$a = New-Object System.Security.AccessControl.DirectorySecurity; $a.SetSecurityDescriptorSddlForm('D:PAI(XA;OICI;FR;;;WD;(Exists Foo))${sddl}', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $a)`;
-    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: root } });
+    await run(ps, ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: root }) });
     assert.ok((await readDacl(root)).aces.some((a) => a.type === 'XA' && a.sid === 'WD'), 'Everyone 조건부 허용이 보인다');
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '조건부 ACE 복구');
@@ -348,7 +348,7 @@ describe('경로와 접근 통제', () => {
     // SYSTEM만 전체, 소유자에게는 SYNCHRONIZE·FILE_WRITE_ATTRIBUTES만. 우리 소유여도 READ_CONTROL·WRITE_DAC가 없어 icacls·Get-Acl이 실패한다.
     // FILE_WRITE_ATTRIBUTES는 정리용이다(libuv 1.48+ rmdir이 이 권한으로 연다). 우리에게 아무것도 주지 않는 실제 다른 계정 폴더는 PoC-1 §5.1 확인 항목.
     const script = "$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:P(A;OICI;FA;;;SY)(A;;0x100100;;;OW)', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)";
-    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: paths.chromeProfile } });
+    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: paths.chromeProfile }) });
     await assert.rejects(dirGuard().checkPrivate(paths.chromeProfile), '확인 도구가 이 폴더에서 실패한다');
     const r = await preparePrivateDir(paths.chromeProfile);
     assert.deepEqual([r.check.ok, r.before, r.reason], [true, ['unreadable'], ['unreadable']]);
@@ -505,5 +505,12 @@ describe('사업자 진위확인(H-05, 자기 키, 모의 서버)', () => {
     const e = new Egress();
     await assert.rejects(e.postJson('odcloud', '/api/other', {}), (err: unknown) => err instanceof EgressError && err.code === 'path_not_allowed');
     await assert.rejects(e.postJson('evil' as never, '/', {}), (err: unknown) => err instanceof EgressError && err.code === 'destination_not_allowed');
+  });
+});
+
+describe('Windows PowerShell 5.1 자식 환경(PSModulePath)', () => {
+  it('PSModulePath는 대소문자와 상관없이 빼고 나머지·추가 값은 그대로 넘긴다(pwsh 7에서 띄워도 Get-Acl이 돈다)', () => {
+    const env = windowsPowerShellEnv({ SAX_ACL_TARGET: 'C:\\x' }, { Path: 'C:\\Windows', PSModulePath: 'C:\\pwsh7\\Modules', psmodulepath: 'y', SystemRoot: 'C:\\Windows' });
+    assert.deepEqual(env, { Path: 'C:\\Windows', SystemRoot: 'C:\\Windows', SAX_ACL_TARGET: 'C:\\x' });
   });
 });

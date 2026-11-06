@@ -99,6 +99,17 @@ export function windowsTool(exe: string): string {
   return path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', exe);
 }
 
+/**
+ * Windows PowerShell 5.1(System32 powershell.exe)에 넘길 환경. PSModulePath는 빼서 5.1이 자기 기본 경로를 다시 만들게 한다.
+ * PowerShell 7(pwsh)에서 앱을 띄우면 PSModulePath가 7의 모듈 폴더를 가리킨 채 상속되고, 5.1이 Microsoft.PowerShell.Security를
+ * 7의 판으로 읽으려다 실패해 Get-Acl 등을 못 쓴다("module could not be loaded", windows-latest CI에서 확인).
+ */
+export function windowsPowerShellEnv(extra: Record<string, string>, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(base)) if (k.toLowerCase() !== 'psmodulepath') env[k] = v;
+  return { ...env, ...extra };
+}
+
 // SDDL 별칭 → SID. /remove에 넘길 때만 쓴다. 모르는 별칭은 지우지 못하고 extra_principal로 남는다(실패 닫힘).
 const SDDL_ALIASES: Record<string, string> = {
   SY: 'S-1-5-18', BA: 'S-1-5-32-544', BU: 'S-1-5-32-545', BG: 'S-1-5-32-546', PU: 'S-1-5-32-547',
@@ -171,7 +182,7 @@ export async function readDacl(target: string): Promise<Dacl> {
 /** 소유자 SID. `icacls /save`에는 소유자가 없어 .NET으로 읽는다(PowerShell 기동 약 0.3초, PoC-1 실측). 경로는 환경 변수로 넘긴다. */
 export async function readOwner(target: string): Promise<string> {
   const script = '$o = (Get-Acl -LiteralPath $env:SAX_ACL_TARGET).GetOwner([System.Security.Principal.SecurityIdentifier]); if ($o) { $o.Value }';
-  const { stdout } = await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: { ...process.env, SAX_ACL_TARGET: target } });
+  const { stdout } = await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { env: windowsPowerShellEnv({ SAX_ACL_TARGET: target }) });
   return stdout.trim();
 }
 
@@ -218,7 +229,7 @@ class WindowsDirGuard implements DirGuard {
     // icacls는 조건부(콜백) ACE 등을 지우지 못한다(PoC-1 실측). 남으면 DACL 전체를 바꾼다.
     // Get-Acl 객체는 SACL까지 쓰려 해 SeSecurityPrivilege가 필요하므로 DACL만 담은 새 객체로 쓴다. 경로는 환경 변수로 넘긴다.
     const script = `$s = New-Object System.Security.AccessControl.DirectorySecurity; $s.SetSecurityDescriptorSddlForm('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;${sid})', 'Access'); [System.IO.Directory]::SetAccessControl($env:SAX_ACL_TARGET, $s)`;
-    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { ...REPAIR, env: { ...process.env, SAX_ACL_TARGET: dir } });
+    await run(windowsTool('WindowsPowerShell\\v1.0\\powershell.exe'), ['-NoProfile', '-NonInteractive', '-Command', script], { ...REPAIR, env: windowsPowerShellEnv({ SAX_ACL_TARGET: dir }) });
     return this.checkPrivate(dir);
   }
 
