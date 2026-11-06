@@ -231,11 +231,13 @@ function authCard(o, u, reply, act) {
   const opts = AUTH.map(([k, label, line]) =>
     h(
       'button',
-      { type: 'button', class: `sx-opt onb-auth${k === 'cert' && u.showCerts ? ' is-on' : ''}`, 'data-onb': k, 'aria-pressed': String(k === 'cert' && u.showCerts), onclick: () => (k === 'cert' ? ((u.certId = u.certId ?? o.certs[0]?.id ?? null), (u.showCerts = true), act.rerender()) : reply(k)) },
+      { type: 'button', class: `sx-opt onb-auth${k === 'cert' && u.showCerts ? ' is-on' : ''}`, 'data-onb': k, 'aria-pressed': String(k === 'cert' && u.showCerts), onclick: () => (k === 'cert' ? ((u.certId = u.certId ?? o.certs.find((c) => c.usable !== false)?.id ?? null), (u.showCerts = true), act.rerender()) : reply(k)) },
       h('span', { class: 'sx-radio' }),
       h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line)),
     ),
   );
+  const usable = (c) => c.usable !== false;
+  const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
   const certs =
     u.showCerts &&
     h(
@@ -246,9 +248,14 @@ function authCard(o, u, reply, act) {
             ...o.certs.map((c) =>
               h(
                 'button',
-                { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), onclick: () => ((u.certId = c.id), act.rerender()) },
+                { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
                 h('span', { class: 'sx-radio' }),
-                h('span', { class: 'onb-auth-main' }, h('b', {}, `${c.owner} · ${c.usage}`), h('span', { class: `sx-meta${soon(c) ? ' is-attention' : ''}` }, `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}`)),
+                h(
+                  'span',
+                  { class: 'onb-auth-main' },
+                  h('b', {}, `${c.owner} · ${c.usage}`),
+                  h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
+                ),
               ),
             ),
             h('div', { class: 'sx-actions' }, btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId })),

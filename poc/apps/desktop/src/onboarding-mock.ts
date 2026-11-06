@@ -49,8 +49,8 @@ export class MockOnboardingPorts implements OnboardingPorts {
   }
   async findCerts() {
     return [
-      { id: 'npki-1', owner: '가나다컴퍼니', usage: '사업자 범용', expiresOn: dayOffset(240) },
-      { id: 'npki-2', owner: '김가나', usage: '개인 은행·보험용', expiresOn: dayOffset(12) },
+      { id: 'npki-1', owner: '가나다컴퍼니', usage: '사업자 범용', expiresOn: dayOffset(240), usable: true },
+      { id: 'npki-2', owner: '김가나', usage: '개인 은행·보험용', expiresOn: dayOffset(12), usable: true },
     ];
   }
   async registerSecrets(binds: StoreBindRequest[]) {
