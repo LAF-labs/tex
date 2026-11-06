@@ -20,7 +20,7 @@ import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
 import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
 import type { AppUpdaterLike } from './update-electron.ts';
-import { certInfoInSandbox, DOCPARSE_SCHEME } from './docparse.ts';
+import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
@@ -33,7 +33,8 @@ import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRe
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
-import { cancelPick, importPdf } from './vault-import.ts';
+import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
+import { readBizCert } from './bizcert-read.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
@@ -545,7 +546,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void updater?.check();
   };
   // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
-  // 바깥 일(등록증 읽기·진위확인·NPKI·금고 등록 창·처리자 표)은 아직 목업 어댑터 뒤(onboarding-mock.ts): M4-3·#65·#93·금고 T-06.
+  // 바깥 일: 등록증 읽기(bizcert-read.ts, M4-3)·NPKI(npki-certs.ts, #93)는 제품 어댑터다. 진위확인·금고 등록 창·처리자 표는 아직 목업(onboarding-mock.ts): #65·금고 T-06.
   let onb: OnboardingFlow | null = null;
   /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
   let onbShow = true;
@@ -558,7 +559,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const onbExternal: OnboardingExternal = fixture
     ? onbMock
     : {
-        recognizeBizCert: () => onbMock.recognizeBizCert(),
+        // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
+        recognizeBizCert: () =>
+          readBizCert({
+            pick: () => pickFileBytes([{ name: '사업자등록증(PDF·사진)', extensions: ['pdf', 'png', 'jpg', 'jpeg'] }], win),
+            pdfText: async (b, o) => (await parsePdfInSandbox(b, { ocrPages: 1, forceOcr: o.forceOcr })).text,
+            imageText: async (b) => (await ocrImageInSandbox(b, { mode: 'document' })).text,
+            parse: (text) => host.rpc('bizcert.parse', { text }),
+            log: (n, d) => log.event(n, d),
+          }),
         checkBizNo: (bizNo) => onbMock.checkBizNo(bizNo),
         registerSecrets: (binds) => onbMock.registerSecrets(binds),
         consentConfig: () => onbMock.consentConfig(),
