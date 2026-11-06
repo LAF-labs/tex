@@ -139,7 +139,8 @@ describe('경로와 접근 통제', () => {
   it('Windows: 거부 ACE·조건부 ACE도 잡고 기동 시 지운다', { skip: !win }, async () => {
     const root = path.join(await tmpRoot(), 'SovereignAX');
     assert.equal((await prepareLayout(root)).root.ok, true);
-    assert.match(await readOwner(root), /^S-1-5-21-/, '사용자가 만든 폴더의 소유자는 사용자');
+    // 승격 관리자(windows-latest runneradmin)가 만든 폴더의 기본 소유자는 Administrators다(isTrustedOwner).
+    assert.match(await readOwner(root), /^(S-1-5-21-.+|S-1-5-32-544)$/, '사용자가 만든 폴더의 소유자는 사용자(승격 관리자면 Administrators)');
     await run(windowsTool('icacls.exe'), [root, '/deny', '*S-1-5-32-546:(W)']); // Guests 쓰기 거부
     assert.deepEqual((await dirGuard().checkPrivate(root)).problems, ['extra_principal']);
     assert.equal((await prepareLayout(root)).root.ok, true, '거부 ACE 복구');
@@ -396,9 +397,10 @@ describe('암호화 DB와 CRUD', () => {
     assert.equal(isEncryptedFile(file), true);
     if (!win) return assert.equal((await fs.stat(file)).mode & 0o777, 0o600);
     const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
-    const me = stdout.trim().split(',').pop()?.replace(/"/g, '');
+    const [name = '', me = ''] = stdout.trim().split('","').map((f) => f.replace(/"/g, ''));
+    const local = name.split('\\')[0]?.toLowerCase() === process.env.COMPUTERNAME?.toLowerCase();
     const sids = (await readDacl(file)).aces.map((a) => a.sid);
-    assert.ok(sids.length > 0 && sids.every((s) => s === me || s === 'SY'), `DB 파일 ACE: ${sids.join(', ')}`);
+    assert.ok(sids.length > 0 && sids.every((s) => isUserSid(s, me, local) || s === 'SY'), `DB 파일 ACE: ${sids.join(', ')}`);
   });
 
   it('프로필: 개인 1 + 사업자 1, 같은 종류는 갱신, 사업자번호 검증', async () => {
