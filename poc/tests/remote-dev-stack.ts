@@ -89,9 +89,10 @@ export async function startDevStack(): Promise<DevStack> {
     logout: async (s) => void (await call('POST', '/v1/auth/logout', bearer(s))),
     deviceList: async (s) => (await call('GET', '/v1/device-list', bearer(s))) as never,
     pinFirstDesktop: async (s, b) => (await call('POST', '/v1/aik', bearer(s), b)) as { deviceId: string },
-    deviceToken: async (cert, dpop) => {
-      calls.push('POST /v1/device-tokens');
-      return requestDeviceToken(http, ORIGIN, cert, dpop, clock.now());
+    deviceToken: async (cert, dpop, scopes) => {
+      calls.push(scopes ? `POST /v1/device-tokens ${scopes.join(',')}` : 'POST /v1/device-tokens');
+      const h: HttpJson = scopes ? (req) => http({ ...req, body: JSON.stringify({ ...(JSON.parse(req.body!) as object), scopes: [...scopes] }) }) : http;
+      return requestDeviceToken(h, ORIGIN, cert, dpop, clock.now());
     },
     acctClaim: async (auth) => (await call('GET', '/v1/acct-claim', await auth('GET', ORIGIN + '/v1/acct-claim'))) as unknown as SignedAcctClaim,
     enrollPhone: async (auth, b) => void (await call('POST', '/v1/devices/enroll', await auth('POST', ORIGIN + '/v1/devices/enroll'), b)),

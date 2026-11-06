@@ -27,6 +27,9 @@ import {
 } from '@sax/remote';
 import type { AccountClient, DeviceAuth } from './remote-ports.ts';
 
+/** 엔진에 가는 기기 토큰의 범위(gateway-auth.ts). 게이트웨이는 이 범위만 본다. */
+export const GATEWAY_SCOPES: readonly string[] = Object.freeze(['gateway']);
+
 /** 인증서를 새로 서명하는 때(만료 14일 전). 서버는 not_after ≤ 지금 + 91일만 받는다. */
 export const CERT_RENEW_MS = 14 * 86_400_000;
 const FILE_VERSION = 1;
@@ -287,6 +290,9 @@ export class DeviceSession {
   #id: RemoteIdentity;
   #now: () => number;
   #cache: DeviceTokenCache;
+  /** 게이트웨이 전용 범위 토큰(엔진 auth 포트용, gateway-auth.ts). 전체 범위 토큰과 따로 두고 따로 지운다. */
+  #gwCache: DeviceTokenCache;
+  #gwInflight: Promise<string> | null = null;
   #onChange: (id: RemoteIdentity) => void;
 
   constructor(client: AccountClient, keys: () => Promise<DesktopKeys>, file: RemoteIdentityFile, id: RemoteIdentity, now: () => number, onChange: (id: RemoteIdentity) => void = () => {}) {
@@ -297,6 +303,12 @@ export class DeviceSession {
     this.#id = id;
     this.#now = now;
     this.#cache = new DeviceTokenCache(async () => this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd), now);
+    this.#gwCache = new DeviceTokenCache(async () => {
+      const t = await this.#client.deviceToken(await this.#cert(), (await this.#keys()).vd, GATEWAY_SCOPES);
+      // 엔진이 받는 Authorization에는 토큰 원문이 든다. 서버가 범위를 줄이지 않았으면(구 서버 등) 그 토큰을 쓰지 않는다.
+      if (t.scopes.length !== GATEWAY_SCOPES.length || t.scopes.some((s, i) => s !== GATEWAY_SCOPES[i])) throw Object.assign(new Error('scope'), { code: 'account.scope_unavailable' });
+      return t;
+    }, now);
   }
 
   get deviceList(): DeviceListJson {
@@ -308,6 +320,20 @@ export class DeviceSession {
 
   clearToken(): void {
     this.#cache.clear();
+  }
+
+  /**
+   * 게이트웨이 요청 헤더(엔진 auth 포트 전용). 토큰은 scopes ['gateway']만인 것을 따로 받는다.
+   * 동시에 여럿 와도 토큰은 한 번만 받는다(기기당 시간 한도 60).
+   */
+  async gatewayAuth(htm: 'POST', htu: string): Promise<Record<string, string>> {
+    const p = (this.#gwInflight ??= this.#gwCache.token().finally(() => (this.#gwInflight = null)));
+    return deviceAuthHeaders(await p, (await this.#keys()).vd, htm, htu, this.#now());
+  }
+
+  /** 게이트웨이 전용 토큰만 버린다(엔진이 401을 받았을 때). 전체 범위 토큰은 그대로다. */
+  clearGatewayToken(): void {
+    this.#gwCache.clear();
   }
 
   /** pair.ok acctClaim 필드(b64 JCS({claim, sig})). 받은 주장이 이 계정·이 AIK 것인지 먼저 본다(서명은 폰이 고정 키로 본다). */
