@@ -12,6 +12,7 @@ export * from './image.ts';
 export * from './limits.ts';
 export * from './sheet.ts';
 export * from './text.ts';
+export * from './x509.ts';
 export * from './xlsx.ts';
 export * from './xml.ts';
 export * from './zip.ts';

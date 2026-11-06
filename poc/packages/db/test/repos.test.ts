@@ -178,6 +178,38 @@ describe('근무표·시행일 표', () => {
     assert.equal(r.effectiveOn('nontax_limits', '2026-04-30')!.id, 'nt-b');
     assert.equal(r.effectiveOn('nontax_limits', '2026-05-01'), null);
   });
+
+  it('서명 배포 패키지 설치(M6-10): 한 트랜잭션, 하나라도 거부되면 기존 표·설치 기록 그대로, 같은 표는 처음 실린 판 유지', () => {
+    const r = new RateTableRepo(db);
+    const t = { kind: 'simple_tax_table' as const, rounding: 'floor_10', signatureOk: true };
+    const D1 = '1'.repeat(64), D2 = '2'.repeat(64);
+    assert.equal(r.installedPackage('payroll.rate-tables'), null);
+    const v1 = [{ ...t, id: 'st-2026', effectiveFrom: '2026-03-01', effectiveTo: null, body: { y: 2026 }, packageVersion: '2026.11.1' }];
+    assert.deepEqual(r.installPackage({ id: 'payroll.rate-tables', version: '2026.11.1', digest: D1 }, v1, '2026-11-06T00:00:00Z'), { added: ['st-2026'], closed: [], unchanged: [] });
+    assert.deepEqual(r.installedPackage('payroll.rate-tables'), { version: '2026.11.1', digest: D1, installedAt: '2026-11-06T00:00:00Z' });
+    // 다음 판: 같은 표를 다시 싣고 열린 끝을 닫고, 다음 표를 더한다
+    const v2 = [
+      { ...v1[0]!, effectiveTo: '2027-02-28', packageVersion: '2027.1.0' },
+      { ...t, id: 'st-2027', effectiveFrom: '2027-03-01', effectiveTo: null, body: { y: 2027 }, packageVersion: '2027.1.0' },
+    ];
+    assert.deepEqual(r.installPackage({ id: 'payroll.rate-tables', version: '2027.1.0', digest: D2 }, v2), { added: ['st-2027'], closed: ['st-2026'], unchanged: [] });
+    assert.equal(r.get('st-2026')!.packageVersion, '2026.11.1', '처음 실린 판');
+    assert.equal(r.get('st-2027')!.packageVersion, '2027.1.0');
+    assert.deepEqual(r.installPackage({ id: 'payroll.rate-tables', version: '2027.1.0', digest: D2 }, v2), { added: [], closed: [], unchanged: ['st-2026', 'st-2027'] }, '재설치');
+    // 앞 행은 새 표(받을 수 있음), 뒤 행이 같은 id 다른 내용 → 전부 되돌림
+    const bad = [
+      { ...t, id: 'st-2028', effectiveFrom: '2028-03-01', effectiveTo: null, body: { y: 2028 }, packageVersion: '2028.1.0' },
+      { ...v2[1]!, body: { y: 9999 }, packageVersion: '2028.1.0' },
+    ];
+    assert.throws(() => r.installPackage({ id: 'payroll.rate-tables', version: '2028.1.0', digest: '3'.repeat(64) }, bad), /rate_table_id_reused/);
+    assert.equal(r.get('st-2028'), null, '앞 행도 들어가지 않음');
+    assert.equal(r.installedPackage('payroll.rate-tables')!.version, '2027.1.0', '설치 기록 그대로');
+    assert.equal(r.effectiveOn('simple_tax_table', '2028-06-01')!.id, 'st-2027', '기존 표로 계속');
+    assert.throws(() => r.installPackage({ id: 'payroll.rate-tables', version: '2028.1', digest: D2 }, v2), /invalid_package_version/);
+    assert.throws(() => r.installPackage({ id: 'x', version: '2028.1.0', digest: D2 }, v2), /invalid_package_id/);
+    assert.throws(() => r.installPackage({ id: 'payroll.rate-tables', version: '2028.1.0', digest: 'zz' }, v2), /invalid_package_digest/);
+    assert.throws(() => r.installPackage({ id: 'payroll.rate-tables', version: '2028.1.0', digest: D2 }, []), /empty_package/);
+  });
 });
 
 describe('세무사 꾸러미 항목·달별 상태·내보내기 기록', () => {
