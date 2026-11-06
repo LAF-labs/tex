@@ -42,7 +42,7 @@ export async function accountStack(clock = new Clock()): Promise<Stack> {
     publicOrigin: ACCOUNT_ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/done',
     stopHooks: hooks,
-    pairing: { redeem: (roomId, dev) => (pairing.impl ? pairing.impl.redeem(roomId, dev) : Promise.resolve(false)) },
+    pairing: { redeem: (roomId, dev) => (pairing.impl ? pairing.impl.redeem(roomId, dev) : Promise.resolve('unavailable' as const)) },
     now: clock.now,
   });
   const verifier = new TokenVerifier({ k1: ed25519RawPublic(signKey) });
