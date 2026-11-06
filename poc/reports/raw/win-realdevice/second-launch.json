@@ -1,0 +1,144 @@
+﻿{
+    "exeVersion":  "0.0.0.0",
+    "installDirLeaf":  "sovereign-ax",
+    "firstRun":  false,
+    "attached":  false,
+    "attachLagMs":  0,
+    "marks":  {
+                  "windowHandleMs":  6556,
+                  "vaultStartedMs":  7848,
+                  "dbOpenedMs":  9629,
+                  "uiReadyMs":  11497
+              },
+    "peak":  {
+                 "wsMb":  621,
+                 "privMb":  362,
+                 "procs":  7
+             },
+    "exitedBySelf":  false,
+    "exitCode":  0,
+    "leftoverProcs":  0,
+    "timeline":  [
+                     {
+                         "ms":  352,
+                         "procs":  1,
+                         "wsMb":  12.5
+                     },
+                     {
+                         "ms":  1611,
+                         "procs":  1,
+                         "wsMb":  79.3
+                     },
+                     {
+                         "ms":  2810,
+                         "procs":  1,
+                         "wsMb":  79.3
+                     },
+                     {
+                         "ms":  3990,
+                         "procs":  1,
+                         "wsMb":  79.3
+                     },
+                     {
+                         "ms":  5158,
+                         "procs":  1,
+                         "wsMb":  79.3
+                     },
+                     {
+                         "ms":  6556,
+                         "procs":  7,
+                         "wsMb":  370.6
+                     },
+                     {
+                         "ms":  8101,
+                         "procs":  7,
+                         "wsMb":  493
+                     },
+                     {
+                         "ms":  9236,
+                         "procs":  7,
+                         "wsMb":  577.9
+                     },
+                     {
+                         "ms":  10375,
+                         "procs":  7,
+                         "wsMb":  620
+                     },
+                     {
+                         "ms":  11470,
+                         "procs":  7,
+                         "wsMb":  620.9
+                     },
+                     {
+                         "ms":  12569,
+                         "procs":  7,
+                         "wsMb":  620.8
+                     },
+                     {
+                         "ms":  13634,
+                         "procs":  7,
+                         "wsMb":  620.8
+                     },
+                     {
+                         "ms":  14699,
+                         "procs":  7,
+                         "wsMb":  620.8
+                     },
+                     {
+                         "ms":  15770,
+                         "procs":  7,
+                         "wsMb":  621
+                     },
+                     {
+                         "ms":  16829,
+                         "procs":  7,
+                         "wsMb":  621
+                     },
+                     {
+                         "ms":  17890,
+                         "procs":  7,
+                         "wsMb":  612.7
+                     },
+                     {
+                         "ms":  18958,
+                         "procs":  7,
+                         "wsMb":  612.7
+                     },
+                     {
+                         "ms":  20020,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  21093,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  22166,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  23223,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  24290,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  25366,
+                         "procs":  7,
+                         "wsMb":  611
+                     },
+                     {
+                         "ms":  26427,
+                         "procs":  7,
+                         "wsMb":  611
+                     }
+                 ],
+    "shots":  null
+}

@@ -25,9 +25,15 @@ const DIST = path.join(OUT, 'dist');
 /** 앱에 들어가면 베타 배포를 막는 파일(ADR-035 W-7, RETRO B-05): 데모·e2e·실측·가짜 포털·목업. 도달하지 않으면 지운다. */
 const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.]|$)|poc\d+-measure/;
 
+// Windows의 pnpm은 대개 pnpm.cmd(npm 전역 설치·corepack 심)라 셸 없이 띄우면 ENOENT(status null)로 끝난다(WIN-REALDEVICE §7).
+// .cmd는 셸로만 띄울 수 있다(Node CVE-2024-27980 이후). 인자는 고정 문자열과 경로뿐이라 공백·따옴표만 감싼다.
+const quoteWin = (a) => (/[\s"]/.test(a) ? `"${a.replace(/"/g, '""')}"` : a);
 const run = (cmd, argv, cwd = POC) => {
-  const r = spawnSync(cmd, argv, { cwd, stdio: 'inherit', env: process.env });
-  if (r.status !== 0) throw new Error(`${cmd} ${argv.join(' ')} → ${r.status}`);
+  const viaShell = process.platform === 'win32' && cmd === 'pnpm';
+  const r = viaShell
+    ? spawnSync([cmd, ...argv].map(quoteWin).join(' '), { cwd, stdio: 'inherit', env: process.env, shell: true })
+    : spawnSync(cmd, argv, { cwd, stdio: 'inherit', env: process.env });
+  if (r.status !== 0) throw new Error(`${cmd} ${argv.join(' ')} → ${r.status}${r.error ? ` (${r.error.code})` : ''}`);
 };
 const git = (...a) => spawnSync('git', a, { cwd: POC, encoding: 'utf8' }).stdout.trim();
 const rel = (p) => path.relative(POC, p);
@@ -130,10 +136,12 @@ async function main() {
   const asarPath = path.join(unpacked, 'resources/app.asar');
   const libRequire = createRequire(createRequire(require.resolve('electron-builder')).resolve('app-builder-lib'));
   const asar = libRequire('@electron/asar');
-  const asarFiles = asar.listPackage(asarPath, { isPack: false }).map((f) => f.replaceAll('\\', '/'));
+  // listPackage는 Windows에서 `\` 경로를 준다. 보고서에는 `/`로 쓰지만 statFile은 path.sep으로 나누므로 원래 경로로 묻는다(WIN-REALDEVICE §7).
+  const asarRaw = asar.listPackage(asarPath, { isPack: false });
+  const asarFiles = asarRaw.map((f) => f.replaceAll('\\', '/'));
   const asarTop = {};
-  for (const f of asarFiles) {
-    const st = asar.statFile(asarPath, f.replace(/^\//, ''), false);
+  for (const [i, f] of asarFiles.entries()) {
+    const st = asar.statFile(asarPath, asarRaw[i].replace(/^[\\/]/, ''), false);
     if (!st || !('size' in st) || st.size === undefined) continue;
     const parts = f.split('/').filter(Boolean);
     const key = parts[0] === 'node_modules' ? parts.slice(0, parts[1]?.startsWith('@') ? 3 : 2).join('/') : parts[0];

@@ -1,7 +1,7 @@
 # Windows 실기기 검증 (Phase 1, 2026-11-06)
 
-범위: Phase 1 Windows 실기기 검증 1~3번(NPKI 열거, 금고 키체인, 전용 Chrome 프로필)과 준비 단계(install·build·test). 4~5번(서명 없는 설치 파일, 측정)은 둘째 PR에서 이 문서에 덧붙인다.
-원자료: [raw/win-realdevice/](raw/win-realdevice/). 점검 스크립트: `tests/win-realdevice.ts`(수동 실행, 아래 각 절의 "재실행").
+범위: Phase 1 Windows 실기기 검증 1~3번(NPKI 열거, 금고 키체인, 전용 Chrome 프로필, 첫 PR)과 준비 단계(install·build·test), 4~5번(서명 없는 설치 파일, 측정, 둘째 PR).
+원자료: [raw/win-realdevice/](raw/win-realdevice/). 점검 스크립트: `tests/win-realdevice.ts`·`tests/win-realdevice-launch.ps1`(수동 실행, 아래 각 절의 "재실행").
 
 상태 표기: ✅ 확인 · ⚠️ 설계와 다름·문제 · 🔧 이 PR에서 고침 · ⏳ 남음.
 
@@ -17,6 +17,8 @@
 | 2 | 금고 키체인 | ✅ Credential Manager 저장·읽기·삭제, 2,560B 상한, 40개. ⚠️ 지속성 ENTERPRISE(설계 LOCAL_MACHINE). TPM 없음 → DPAPI 등급, 네이티브 헬퍼가 없어 저장 거부(설계대로 실패 닫힘)(§4) |
 | 3 | 전용 Chrome 프로필 | ✅ 13회 기동·CDP(파이프)·종료·잔존물 삭제, EBUSY/EPERM 0회. ⚠️ 강제 종료 뒤 자식 프로세스가 남아 프로필 전체 삭제는 EBUSY 1회(§5). 🔧 새 프로필 기동 뒤 10~20초 비밀 창 거부(확장 기록 항목, §5.1) |
 | — | 금고 ACL 점검(PowerShell `Get-Acl`) | ⚠️ 이 PC에서 3.4~15초, 부하 때는 30초 상한 초과 → Chrome 기동 실패(§6.1) |
+| 4 | 서명 없는 설치 파일 | 🔧 빌드 스크립트 Windows 실패 2건, **설치본이 기동하지 못하던 포장 제외 패턴**, 로그 이벤트 이름 덮어쓰기를 고침. ✅ 설치·첫 실행·제거. ⚠️ 설치 폴더 `sovereign-ax`(앱은 "예상 밖 설치 위치" 배지). ⏳ SmartScreen 경고 화면(§7) |
+| 5 | 측정 | 첫 기동 첫 화면 **21.0초**(두 번째 11.5초), 최대 메모리 **681 MB**, docparse OCR 1건 **5.4초**(e2e 최대 534 MB)(§8) |
 
 ## 1. 기기
 
@@ -179,10 +181,66 @@ $env:SAX_ACL_TARGET = $env:TEMP
 
 §4. @napi-rs/keyring 2.1.2가 지속성을 고르게 하지 않는다. LOCAL_MACHINE으로 쓰려면 네이티브 헬퍼나 다른 바인딩이 필요하다(W-4).
 
-## 7. 남은 것
+## 7. 서명 없는 설치 파일(4번)
+
+빌드: `node scripts/package-win.mjs`(서명 환경 변수가 없으면 자동으로 미서명). 이 PC에서 처음엔 빌드도, 만든 설치본의 기동도 실패했고 아래 셋을 고친 뒤 통과했다.
+
+| 증상 | 원인 | 수정 |
+|---|---|---|
+| `pnpm build → null`(1초 만에 실패) | `spawnSync('pnpm')`: Windows의 pnpm은 `pnpm.cmd` 심이라 셸 없이 띄울 수 없다(ENOENT) | 🔧 `scripts/package-win.mjs`: win32에서 pnpm만 셸로(인자 따옴표 처리), 오류에 `r.error.code` |
+| 설치본을 만든 뒤 `"node_modules/@napi-rs/keyring" was not found in this archive` | asar 목록을 `/`로 바꾼 경로로 `statFile` → `@electron/asar`는 Windows에서 `\`로 나눈다 | 🔧 같은 파일: 원래 경로로 `statFile`, 보고서에는 `/` |
+| **설치본이 기동 뒤 30초쯤 스스로 꺼짐**(첫 화면 없음, stderr `shell start failed: engine_exit`, DB·`db-key` 안 생김) | 제외 패턴 `'!**/src/**'`가 node_modules 전체의 `src/`를 지워 실행 코드가 `src/` 아래인 의존성(`officecrypto-tool` `./src/util/common`, `debug`·`tesseract.js`의 main)이 빠짐 → 엔진이 import에서 끝남. 같은 Electron 45를 Node 모드로 띄워 설치본 asar의 `@sax/engine/dist/entry.js`를 import해 `MODULE_NOT_FOUND`로 확인 | 🔧 `apps/desktop/build/electron-builder.config.mjs`: `'!src/**'`, `'!node_modules/@sax/*/src/**'`로 좁힘. `tests/updater-packaging.test.ts`가 전체 `src` 제외를 막는다. 운영체제와 무관한 문제다(설치본을 실행해 본 적이 없어 드러나지 않았다: `windows_run_unverified`) |
+
+결과(고친 뒤):
+
+| 항목 | 값 |
+|---|---|
+| 빌드 시간 | 9분 14초(`--skip-build`, Electron zip·NSIS 내려받기 포함) |
+| 설치 파일 | `SovereignAX-Setup-0.0.0.exe` 119.1 MB, sha256 `e8516046…5460c44`, Authenticode `NotSigned` |
+| 앱 | asar 110.0 MB(파일 3,594개, 고치기 전 3,516개), 압축 해제 423.2 MB |
+| 배포 판정 | `unsigned_build`·`publisher_dn_unset`·`dev_only_code_included`(`dist/onboarding-mock.js`·`dist/shell-mock.js`, §3 온보딩 모의와 같은 뿌리)·`windows_run_unverified` |
+| 설치 | 사용자별, UAC 없음, 60~76초. 바탕화면·시작 메뉴 바로가기 "소버린 AX(가칭)", 제거 키 `HKCU\…\Uninstall\45454e41-6e5b-5ebd-a579-cc345390db8d`(게시자 칸 빈칸, 버전 0.0.0) |
+| **설치 폴더** | ⚠️ `%LOCALAPPDATA%\Programs\sovereign-ax`. README·`installer.nsh`·`harden.ts`는 `…\Programs\SovereignAX`를 기대해 앱이 **"예상 밖 설치 위치" 배지**를 띄운다(화면). 원클릭 사용자별 설치는 폴더 이름을 `extraMetadata.name`(`'sovereign-ax'`)에서 가져온다. 업데이트 경로가 걸린 결정이라 고치지 않았다 |
+| 설치 후 자동 실행(`runAfterFinish`) | 탐색기로 연 설치에서는 끝난 뒤 앱이 떴다. 에이전트 PowerShell `Start-Process`로 연 두 번은 뜨지 않았다(실행 환경 차이로 본다) |
+| 첫 화면 | [screens/first-launch-0.png](raw/win-realdevice/screens/first-launch-0.png): 약관 화면, 배지 "견본 데이터 · PoC 데모"·"예상 밖 설치 위치"·"미서명 빌드"·"개발용 코드 포함 빌드" |
+| 제거(`Uninstall SovereignAX.exe /currentuser /S`) | 3초. 설치 폴더·바로가기·제거 키 삭제(시작 메뉴 바로가기는 몇 초 뒤 지워짐). `%LOCALAPPDATA%\SovereignAX`는 남김(설계, `deleteAppDataOnUninstall: false`) |
+
+**SmartScreen** ⏳: 인터넷 표시(Zone.Identifier `ZoneId=3`)를 붙인 설치 파일을 `ShellExecute`로 연 두 번은 `smartscreen.exe`가 떠서 약 7초 검사한 뒤 **경고 없이 실행**됐고, 그 뒤 파일의 인터넷 표시가 지워져 있었다. 탐색기로 연 세 번째는 에이전트 쪽에서 대화상자를 볼 수 없었다. 사람이 탐색기에서 더블클릭해 화면을 확인한다(§9).
+
+로그 문제(🔧): `main.log`가 `{"code":1}` `{"code":"engine_exit"}` `{"code":0}`처럼 이벤트 이름 없이 남았다. `FileEventLog.event`가 필드를 머리 키 뒤에 펼쳐 `code` 필드(`main.engine_exit {code}`·`run.signal {code}`·`main.gate_answer_not_ok {code}` 등)가 이벤트 이름을 덮었다. `packages/platform/src/log.ts`: 머리 키(`at`·`c`·`code`)와 같은 필드는 `<키>_`로 적는다. 시험 `tests/platform-log.test.ts`.
+
+재현(고치기 전 설정): `node scripts/package-win.mjs` → 설치 → `SovereignAX.exe` 실행 → 30초쯤 뒤 종료, `%LOCALAPPDATA%\SovereignAX\db`가 비어 있음. 확인: `$env:ELECTRON_RUN_AS_NODE=1; node_modules\electron\dist\electron.exe -e "import('file:///<설치 폴더>/resources/app.asar/node_modules/@sax/engine/dist/entry.js').catch(e=>console.error(e.message))"` → `Cannot find module './src/util/common'`.
+
+## 8. 측정(5번)
+
+기기는 §1(Celeron 3855U 2C/2T, RAM 7.9 GB, Windows 10 Pro 22H2, TPM 없음). 앱에는 기동 시간 기록·측정 스위치가 없어(디버그 스위치·RunAsNode 퓨즈 거부) 밖에서 쟀다: `tests/win-realdevice-launch.ps1`(로그 줄의 `at`과 메인 프로세스 StartTime 차이, 창·버튼은 250 ms·1초 폴링, 메모리는 같은 이름 프로세스 전체 작업 집합 합을 250 ms마다).
+
+| 항목 | 첫 기동(데이터·`db-key` 없음) | 두 번째 기동 |
+|---|---|---|
+| 창 핸들 | 14.6초 | 6.6초 |
+| `vault.started` | 15.6초 | 7.8초 |
+| `engine.db_opened` | 19.5초 | 9.6초 |
+| **첫 화면**(약관 '동의하고 시작' 버튼) | **21.0초** | **11.5초** |
+| 최대 메모리(작업 집합 / 전용) | **681 MB** / 402 MB, 프로세스 7개 | 621 MB / 362 MB, 7개 |
+
+첫 기동의 처음 약 13.5초는 메인 프로세스 하나(82 MB)만 떠 있다(두 번째 기동은 약 6초). Electron ready 전에 앱 데이터 폴더를 만들고 ACL을 거는 단계(`prepareLayout` → icacls·PowerShell)로, §6.1과 같은 비용이다. 원자료 [first-launch.json](raw/win-realdevice/first-launch.json)·[second-launch.json](raw/win-realdevice/second-launch.json).
+
+| docparse OCR 1건 | 값 |
+|---|---|
+| 방법 | `electron apps/desktop/e2e-dist/ocr-e2e.js`(개발 Electron 45.1.0, 설치본은 측정 스위치가 없다). 합성 사업자등록증 PNG, `ocrInSandbox` |
+| 시간 | **5,389 ms**(숨은 샌드박스 창 생성 → 페이지 → OCR 워커 → 한국어 모델 로드 → 인식, 나눠 재지 않음), 신뢰도 90 |
+| 결과 | 등록번호·상호·대표자·개업일 맞음, 주소 글자 1~2개 오인. e2e 9개 항목 모두 통과(O-02 그림·PDF, 샌드박스 네트워크 차단, certInfo) |
+| 최대 메모리 | e2e 전체(22.3초) 동안 Electron 프로세스 6개 합 **533.5 MB** / 전용 339.1 MB |
+
+원자료 [ocr-e2e.json](raw/win-realdevice/ocr-e2e.json)·[ocr-measure.json](raw/win-realdevice/ocr-measure.json). 설치본에서 OCR(온보딩 "사업자등록증 올리기")은 사람 클릭과 파일 선택이 필요해 재지 않았다.
+
+재실행: `powershell -NoProfile -File tests/win-realdevice-launch.ps1 -Exe "$env:LOCALAPPDATA\Programs\sovereign-ax\SovereignAX.exe" -OutJson <json> [-ShotPrefix <png 접두>] [-AttachWaitSec 900]`(`-AttachWaitSec`: 설치 마법사가 띄운 첫 실행에 붙는다).
+
+## 9. 남은 것
 
 - [ ] USB NPKI 열거(사람이 USB를 꽂고 §3 재실행)
-- [ ] 데스크톱 온보딩 인증서 목록을 실 `npki.list`에 잇기(데스크톱 트랙)
+- [ ] 데스크톱 온보딩 인증서 목록을 실 `npki.list`에 잇기(데스크톱 트랙). 설치본의 `dev_only_code_included`(모의 온보딩·셸)와 같은 일
 - [ ] 금고 ACL 점검을 PowerShell 없이(§6.1), `h01-policy` 정리(§6.2), 잔존물 삭제 실패 기록(§6.3), Credential Manager 지속성(§6.4) — 금고·플랫폼 트랙 결정
+- [ ] 설치 폴더 이름 `sovereign-ax` vs 문서·앱 기대 `SovereignAX`(§7) — 업데이트 경로 결정
+- [ ] SmartScreen 화면: 사람이 인터넷 표시가 있는 설치 파일을 탐색기에서 더블클릭(§7)
 - [ ] Electron 바이너리 누락(§2.1)을 다른 Windows 기기에서 재확인
-- [ ] 둘째 PR: 서명 없는 설치 파일 빌드·설치·첫 실행·제거·SmartScreen 화면, 첫 기동 시간·docparse OCR 1건·최대 메모리
