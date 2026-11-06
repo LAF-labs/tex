@@ -245,9 +245,6 @@ importers:
       '@sax/db':
         specifier: workspace:*
         version: link:../db
-      '@sax/docparse':
-        specifier: workspace:*
-        version: link:../docparse
       '@sax/payroll':
         specifier: workspace:*
         version: link:../payroll
@@ -293,6 +290,9 @@ importers:
 
   packages/engine:
     dependencies:
+      '@sax/bundle':
+        specifier: workspace:*
+        version: link:../bundle
       '@sax/db':
         specifier: workspace:*
         version: link:../db

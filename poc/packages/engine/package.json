@@ -39,6 +39,7 @@
     }
   },
   "dependencies": {
+    "@sax/bundle": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",
