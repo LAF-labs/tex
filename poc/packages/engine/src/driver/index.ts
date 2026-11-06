@@ -3,3 +3,5 @@ export * from './cdp-tap.ts';
 export * from './reader.ts';
 export * from './actuator.ts';
 export * from './wire.ts';
+export * from './aria-tree.ts';
+export * from './screen.ts';
