@@ -3,5 +3,5 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist" },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../../packages/daemon" }, { "path": "../../packages/db" }, { "path": "../../packages/engine" }, { "path": "../../packages/docparse" }, { "path": "../../packages/platform" }, { "path": "../../packages/vault" }, { "path": "../../packages/net" }]
+  "references": [{ "path": "../../packages/daemon" }, { "path": "../../packages/db" }, { "path": "../../packages/engine" }, { "path": "../../packages/docparse" }, { "path": "../../packages/platform" }, { "path": "../../packages/vault" }, { "path": "../../packages/net" }, { "path": "../../packages/updater" }]
 }
