@@ -2,7 +2,7 @@
 // 이전 output을 replay로 그대로 이어 붙인다. 응답 도구 호출은 로컬 툴셋 정의·스키마로 다시 검증한다(C-24).
 // BYOK에는 게이트웨이 태그가 없으므로 어댑터가 실행 범위 HMAC 태그를 붙이고 replay 때 확인한다(gateway-request replay 규칙과 같은 모양).
 import { createHmac, randomBytes } from 'node:crypto';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import OpenAI from 'openai';
 import type { ValidateFunction } from 'ajv';
 import { GatewayError, ModelGuardError, isRespondResponse, type Egress, type GatewayRespondBody } from '@sax/net';
@@ -31,7 +31,7 @@ export interface OpenAIResponsesOptions {
   sleep?: (ms: number) => Promise<void>;
 }
 
-const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+const Ajv2020 = ajv2020.default as typeof import('ajv').default;
 
 export class OpenAIResponsesAdapter {
   readonly model: string;
