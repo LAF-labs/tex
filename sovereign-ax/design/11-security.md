@@ -1,5 +1,6 @@
 # D11. 보안·위협 모델
 
+> ADR-021 결정 7(2026-11-06, 사용자 지시): 승인 표시는 main 승인 카드 하나(되읽은 값 전체·비가역 한 줄·[중지]·[승인하고 발급], 기본 포커스 [중지]). §0 위협 R 행(표시 위조 범위), §4 승인 바 행(렌더러 IPC의 중지), §8.1 금지 문구.
 > 2026-11-06 정합(팀장 지시, 폰 PR #102·#118): §2 T6 잔여 위험의 "서버가 준 `AIK_pub`"를 "`PAIR_OK`로 처음 받은 `AIK_pub`"로 고쳤다. Phase 1 폰은 서버 기기 목록을 받지 않는다(D08 §4.2 7단계).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, [D19](19-attack-surface.md)) 반영. 발견 ID를 괄호로 표기한다. · AUDIT-D 반영 2026-11-03: 위협 주체 W·제3자 단말 추가와 M·P6·T·R 완화 갱신(§0), T2·T13·T15·T17(§2), 저장 계층 시각(§3), 공용 하드닝·env·IPC 사용자 동작·바 색·CI(§4), 복구 경로 사고 대응(§7), 텔레메트리·진위확인·코드서명 문구(§8)(ADR-025~029, D19 §3.5).
 > 2026-11-05 R13 §5 후속(팀장 지시): §8.1 표현 사전(금지·허용·고정 고지)을 더함(R13 §2.3·§2.4·§2.5).
@@ -13,7 +14,7 @@
 |---|---|---|
 | E | 엔진 RCE(포털 텍스트·모델 응답·리모트 메시지·의존성) | 경계 아님. 중계 허용 목록·응답 정리·비밀 창으로 되읽기 창을 좁힘(Phase 1), 원자적 타이핑(Phase 2), 고수준 브로커 검토(Phase 3) |
 | P | 서명된 악성·오류 플레이북·핫픽스·정책(키 유출·내부자·당직 실수) | 막는다: V-01~24·SV·BV, 핫픽스 범위(ADR-012), 정책 상한, 2-of-3 서명(ADR-013), 내장 허용 목록 |
-| R | 렌더러 침해 | 막는다: 승인 위조(main 소유 승인 바, ADR-021), CSP, sanitizer. 줄인다: 클릭 유도(바 위치는 main이 정함, 한 번 뜨면 남음, 창 수준 사건 재무장, 무장 지연·머무름, 커서 위장 중 무장 거부). 카드 본문의 표시 위조는 바의 요약 줄까지만. 비밀 등록 창 위장: OS 프레임 별도 창, 렌더러는 비밀 칸을 그리지 못한다(lint)(ADR-026, D-03(N-11)) |
+| R | 렌더러 침해 | 막는다: 승인 위조(main 소유 승인 바, ADR-021), CSP, sanitizer. 줄인다: 클릭 유도(바 위치는 main이 정함, 한 번 뜨면 남음, 창 수준 사건 재무장, 무장 지연·머무름, 커서 위장 중 무장 거부). 표시 위조는 main 승인 카드의 되읽은 값 전체에서 막는다(2026-11-06 전에는 바의 요약 줄까지만, ADR-021 결정 7). 비밀 등록 창 위장: OS 프레임 별도 창, 렌더러는 비밀 칸을 그리지 못한다(lint)(ADR-026, D-03(N-11)) |
 | D | docparse 침해(무클릭 PDF) | 막는다: 렌더러 샌드박스(ADR-014) |
 | M | 같은 OS 사용자 악성코드 | 경계 아님. 완화: 기기 결박 KEK(오프라인 복호 차단), 엄격 모드 Hello, 데몬의 사람 비밀 미사용, 덤프 제외. 금고가 열린 동안의 무음 사용은 막지 못한다(ADR-026, D-01(N-07)) |
 | W | PC 앞 제3자(동료·방문자·가족·퇴사자) | 잠기지 않은 PC. 줄인다: 금고 유휴 잠금(15분)·Windows 잠금 연동·승인 바 10분 만료. 엄격 모드(발급마다 Hello)면 막는다(ADR-026, D-01(N-07)) |
@@ -103,7 +104,7 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 | `shell.openExternal` | main만 호출, 렌더러·플레이북은 URL이 아니라 **키**(`portalId`·strings 키)만 전달, URL은 `https:`·userinfo·포트 없음·호스트 ∈ 내장 eTLD+1 허용 목록 |
 | 경로 | `app.setPath('userData'\|'logs'\|'crashDumps')`를 `%LOCALAPPDATA%\SovereignAX\…`로 앱 준비 전에 설정(로밍 `%APPDATA%` 금지). 루트 DACL = 소유자 + SYSTEM, 상속 차단, 매 기동 확인. Windows 검색 색인 제외 |
 | 프로세스 | 엔진·금고·docparse 기동 시 `execArgv` 고정, `env` 화이트리스트(`DEBUG`·`NODE_DEBUG`·`NODE_OPTIONS`·`ELECTRON_*`·`PLAYWRIGHT_*` 제거). utilityProcess는 env 허용 목록과 `execArgv: []`로 띄운다. 엔진은 디버그·TLS 변조 변수가 보이면 기동을 거부한다(ADR-025, D-14(N-23)). docparse 창은 `disableDialogs: true`다(ADR-025, D-44(N-68)). '린트 + CI로 검증'은 CI 필수 체크(build·lint·test·`bundles-digest --check`·`pnpm audit --prod`)와 CODEOWNERS로 실재한다(ADR-028, D-23(N-32)). `utilityProcess`는 샌드박스가 아니다: 금고의 네트워크 금지는 린트 + 런타임 `net` 제거 + 아웃바운드 소켓 감시(OS 경계 아님을 명시). **docparse는 utilityProcess가 아니라 Chromium 렌더러 샌드박스**(숨김 `BrowserWindow`, 네트워크 차단 세션 파티션, 바이트 입력·JSON Schema 출력, `pdfjs isEvalSupported:false`) |
-| 승인 바(ADR-021) | 승인 바 색은 앱 내장 팔레트다. 외부 토큰은 형식(`#RRGGBB`)·대비(≥ 4.5:1)를 통과한 색만 받고 하나라도 실패하면 내장 팔레트로 돌아간다(ADR-028, D-50(N-80)). 메인 창 `contentView`의 자식 `WebContentsView`: `sandbox`·`javascript:false`·preload 없음·`devTools:false`·`focusOnNavigation:false`, 확대 배율 1 고정, 전용 메모리 파티션(자기 스킴 밖 요청 취소·권한 거부·탐색·새 창 거부), CSP `default-src 'none'; style-src 'self'`, 배경색 지정, 보일 때마다 맨 위로. 메인 창: `webviewTag: false`, `disableDialogs: true`, `content-bounds-updated` 차단(렌더러의 창 이동·크기 변경), `cursor-changed` 감시(승인 대기 중 `none`·`custom`이면 무장 안 함), 앱 CSS 커스텀 커서 lint 금지. main은 렌더러 IPC로 `sendInputEvent`·`webContents.debugger`를 부르지 않고, `sendInputEvent`를 쓰는 e2e 코드는 제품 빌드에서 뺀다. 승인 바에 관한 렌더러 IPC는 표시 요청(원격·데몬 실행이나 확인 필요 카드를 연 때), Hello 설정 바 요청(켜기·끄기), 중지뿐이다. 엔진의 `answerGate`·`attestNotCommitted`는 main↔엔진 전용 포트(렌더러 명령 중계와 분리)로만 받는다 |
+| 승인 카드(ADR-021, 2026-11-06 개정 전 이름 '승인 바') | 승인 카드 색은 앱 내장 팔레트다. 외부 토큰은 형식(`#RRGGBB`)·대비(≥ 4.5:1)를 통과한 색만 받고 하나라도 실패하면 내장 팔레트로 돌아간다(ADR-028, D-50(N-80)). 메인 창 `contentView`의 자식 `WebContentsView`: `sandbox`·`javascript:false`·preload 없음·`devTools:false`·`focusOnNavigation:false`, 확대 배율 1 고정, 전용 메모리 파티션(자기 스킴 밖 요청 취소·권한 거부·탐색·새 창 거부), CSP `default-src 'none'; style-src 'self'`, 배경색 지정, 보일 때마다 맨 위로. 메인 창: `webviewTag: false`, `disableDialogs: true`, `content-bounds-updated` 차단(렌더러의 창 이동·크기 변경), `cursor-changed` 감시(승인 대기 중 `none`·`custom`이면 무장 안 함), 앱 CSS 커스텀 커서 lint 금지. main은 렌더러 IPC로 `sendInputEvent`·`webContents.debugger`를 부르지 않고, `sendInputEvent`를 쓰는 e2e 코드는 제품 빌드에서 뺀다. 승인 카드에 관한 렌더러 IPC는 표시 요청(원격·데몬 실행이나 확인 필요 카드를 연 때), Hello 설정 바 요청(켜기·끄기), 중지뿐이다. 카드의 [중지]·[승인하고 발급]은 main이 관찰한 클릭으로 받는다. 기본 포커스는 [중지]이고 키보드로는 승인되지 않는다(ADR-021 결정 7). 엔진의 `answerGate`·`attestNotCommitted`는 main↔엔진 전용 포트(렌더러 명령 중계와 분리)로만 받는다 |
 | 기동 자기 점검 | 두 main은 같은 `hardenApp()`/`hardenWindow()`를 부른다: ready 전 디버그 스위치 9종 검사 → 종료, 권한 요청 거부, 새 창·이동·리디렉트·webview 거부, `content-bounds-updated` 차단, 배율 고정. `ApprovalBar` 생성자도 스위치를 검사한다(ADR-025, D-37(N-24), D-44(N-68)). 스위치 9종: `remote-debugging-port`·`remote-debugging-pipe`·`remote-allow-origins`·`enable-logging`·`log-file`·`inspect`·`inspect-brk`·`inspect-port`·`js-flags`. main은 이 스위치가 자기 프로세스에 있으면 종료한다(best-effort, M 대상. CDP로 넣은 마우스 이벤트도 승인 바의 `before-mouse-event`를 일으키므로 ADR-021도 이 점검에 기댄다). 금고는 `navigator.webdriver === true` 확인(ADR-010) |
 | 덤프 | 금고: `sodium_malloc` + `WerRegisterExcludedMemoryBlock`(Phase 1), Electron 밖 Rust 실행 파일 분리(Phase 2). 엔진·main: 로컬 생성도 사용자 요청 시에만, **업로드 금지**, 힙 없는 구조화 오류 보고만 옵트인 |
 | 로그 | 릴리스 빌드에서 CDP 프로토콜 로깅 코드 경로 제거(환경 변수로 켤 수 없음), 결과 코드·ID만, 14일 보존, 진단 내보내기 전 누출 스캐너 실행 |
@@ -185,7 +186,7 @@ A = 신뢰 불가 입력, B = 민감 데이터, C = 외부 행위·상태 변경
 |---|---|
 | 금지(기존) | 세금환급, 세금신고 대행, 절세전문, 기장대행, 급여 대행, 세무사·세무법인·세무대리 유사 표현, 세무사 제휴 허위 표시, 환급 보장·성공률 |
 | 금지(R13 추가) | 세무 업무를 대신 처리, 사장님 전담 세무팀, 신고부터 환급까지 알아서, 기장 없이 세무 완료, 원천세 업무 일괄 처리, AI 세무사, 세무 전문가가 대신 처리, 노무 대행, 법정 수당 확정, 법적 검토 완료, 세무사 추천, 검증된 제휴 세무사, 절세 보장, 등록·인증 불필요 확정, 국세청 승인(회신 전) |
-| 금지(문구) | "승인 바만 보면 된다"(대신 "카드의 값과 승인 바를 확인하고 승인합니다", R13 §2.2), "마스킹했으므로 개인정보가 아니다"·"국외 이전이 아니다"(대신 "식별 정보를 찾아 지우지만 탐지 방식이라 일부가 남을 수 있다", R13 §2.5), 보안카드 자동 입력이 "적법"하다는 홍보(공문 2 회신 전, R13 L5) |
+| 금지(문구) | ~~"승인 바만 보면 된다"(대신 "카드의 값과 승인 바를 확인하고 승인합니다", R13 §2.2)~~ (2026-11-06 ADR-021 결정 7: 값 전체가 main 승인 카드 하나에 있어 이 금지는 없어진다. 문구는 "승인 카드의 값을 확인하고 승인합니다"), "마스킹했으므로 개인정보가 아니다"·"국외 이전이 아니다"(대신 "식별 정보를 찾아 지우지만 탐지 방식이라 일부가 남을 수 있다", R13 §2.5), 보안카드 자동 입력이 "적법"하다는 홍보(공문 2 회신 전, R13 L5) |
 | 허용(기능 설명) | 전자세금계산서 발급 보조, 세금계산서 입력 도구, 사용자 승인 후 홈택스에서 발급, 임금명세서 작성 보조, 이미 계약한 세무사에게 자료 보내기 |
 | 고정 고지 | "세무 신고·기장·상담을 대행하지 않습니다"(기능 설명과 같은 화면에) |
 | 역할 문구 | "이 프로그램은 사용자가 입력·선택한 내용을 홈택스에 입력하고 계산을 보조합니다. 거래의 과세유형, 기재사항과 발급 여부는 사용자가 확인하고 승인합니다. 세무 신고·기장·상담을 대행하지 않습니다." 온보딩, 설정의 "하지 않는 일", 약관 첫 조항에 같은 문장을 쓴다(R13 §2.3) |
