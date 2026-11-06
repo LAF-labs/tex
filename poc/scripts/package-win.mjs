@@ -1,5 +1,5 @@
 // Windows NSIS 설치본 만들기(D14 M4-9). 실행: cd poc/apps/desktop && pnpm package:win (또는 poc에서 node scripts/package-win.mjs).
-// macOS·Linux에서도 돈다: 그때는 서명 없는 설치본("미서명 빌드", 베타 배포 불가)이 나온다. 서명은 Windows 러너 + Artifact Signing 시크릿에서만.
+// macOS·Linux에서도 돈다: 그때는 서명 없는 설치본("미서명 빌드")이 나온다. beta 채널은 미서명 빌드를 배포한다(stable은 불가, scripts/release-readiness.mjs). 서명은 Windows 러너 + Artifact Signing 시크릿에서만.
 //
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
@@ -12,6 +12,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
+import { readiness as judgeReadiness, readWinReport } from './release-readiness.mjs';
 
 const POC = path.resolve(import.meta.dirname, '..');
 const DESKTOP = path.join(POC, 'apps/desktop');
@@ -149,14 +150,8 @@ async function main() {
   const FUSES_WANT = { RunAsNode: false, EnableCookieEncryption: true, EnableNodeOptionsEnvironmentVariable: false, EnableNodeCliInspectArguments: false, EnableEmbeddedAsarIntegrityValidation: true, OnlyLoadAppFromAsar: true, GrantFileProtocolExtraPrivileges: false };
   const fuseBad = Object.entries(FUSES_WANT).filter(([k, v]) => fuseState[k] !== v).map(([k]) => k);
   if (fuseBad.length) throw new Error(`퓨즈가 D11 §4와 다르다: ${fuseBad.join(', ')}`);
-  const blockers = [];
-  if (signing.mode !== 'azure') blockers.push({ code: 'unsigned_build', detail: signing.reason, missing: signing.missing });
-  if (!identity.publisherName) blockers.push({ code: 'publisher_dn_unset', detail: 'app-identity.json publisherName(서명 주체 CN, 출시 전 고정)' });
-  if (devOnly.length) blockers.push({ code: 'dev_only_code_included', detail: 'ADR-035 W-7: 진입점이 데모·e2e·가짜 포털 코드에 닿는다', files: devOnly });
-  if (outside.length) blockers.push({ code: 'runtime_reads_outside_app', detail: '설치본에 없는 저장소 경로를 런타임에 읽는다(ADR-028 결정 7 tokens.gen.ts)', files: outside });
-  if (buildInfo.testBuild) blockers.push({ code: 'test_build', detail: '실계정 시험 빌드(--test-build): 업데이트 투명성 확인을 끌 수 있어 배포본이 아니다' });
-  blockers.push({ code: 'windows_run_unverified', detail: 'Windows 실기기 설치·실행 검증 보류' });
-  const readiness = { betaDistributable: blockers.length === 0, signed: signing.mode === 'azure', blockers };
+  // 판정은 scripts/release-readiness.mjs(채널별 판정표 시험: tests/release-readiness.test.ts, SIGNING-SETUP.md §4)
+  const readiness = judgeReadiness({ channel: identity.channel, signing, publisherName: identity.publisherName, devOnly, outside, testBuild: buildInfo.testBuild, winReport: readWinReport() });
   const report = {
     buildInfo,
     installer: { file: exe, size: bytes.byteLength, sha512: createHash('sha512').update(bytes).digest('base64'), sha256: createHash('sha256').update(bytes).digest('hex') },
@@ -175,8 +170,8 @@ async function main() {
   console.log(`sha256: ${report.installer.sha256}`);
   console.log(`asar: ${mb(report.asar.size)}, 파일 ${report.asar.files}개, 압축 해제 ${mb(report.unpackedSize)}`);
   console.log(`앱 dist: 포함 ${included.length}개, 제외 ${removed.length}개`);
-  if (readiness.betaDistributable) console.log('베타 배포 가능');
-  else console.log(`베타 배포 불가: ${blockers.map((b) => b.code).join(', ')}${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
+  if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
+  else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
   console.log(`보고서: ${rel(path.join(OUT, 'report.json'))}`);
 }
 

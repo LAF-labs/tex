@@ -228,6 +228,16 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'google_signin_detected', '세션 중 Google 로그인');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { abcdefghijklmnop: { location: 1 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
+      // 외부 구성요소 설치 중 Chrome이 먼저 쓰는 업데이트 확인 기록만 든 항목은 확장이 아니다(Windows 실기기, WIN-REALDEVICE §5.1)
+      const secure = path.join(b.paths.chromeProfile, 'Default', 'Secure Preferences');
+      await fs.writeFile(prefs, JSON.stringify(ok));
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { nmmhkkegccagdldgiimedpiccmgmieda: { lastpingday: '13438339200344256' } } } }));
+      assert.equal(await v.profileBlocker(), null, '기록만 든 항목');
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { nmmhkkegccagdldgiimedpiccmgmieda: { lastpingday: '1', location: 10, path: 'x' } } } }));
+      assert.equal(await v.profileBlocker(), null, '설치가 끝나면 외부 구성요소(10)');
+      await fs.writeFile(secure, JSON.stringify({ extensions: { settings: { abcdefghijklmnop: { lastpingday: '1', path: 'x' } } } }));
+      assert.equal(await v.profileBlocker(), 'extension_not_allowed', 'location이 없어도 path가 있으면 설치 확장');
+      await fs.rm(secure);
       // 진단 이벤트에는 확장 ID만 남는다. ID 꼴이 아닌 키(경로 등)는 'unknown'으로 바뀐다(팀장 결정 2026-11-06).
       const wallet = 'nmmhkkegccagdldgiimedpiccmgmieda';
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { [wallet]: { location: 1, path: '/Users/x/secret-ext', manifest: { name: 'Store' } }, 'C:\\Users\\x\\ext': { location: 4 } } } }));
@@ -289,7 +299,10 @@ describe('audit-v V3 고정 화면 확인 식', () => {
       await h.control.rpc('run.begin', { runId: 'v3', trigger: 'local' });
       await page.goto(`${fx.origin}/login`);
       await warmForSecretWindow(page);
-      assert.deepEqual(await h.client.rpc('secretWindow.openForHuman', { runId: 'v3', targetId, frame: 'main', element: '#pw' }), { ok: true });
+      const opened = await h.client.rpc('secretWindow.openForHuman', { runId: 'v3', targetId, frame: 'main', element: '#pw' });
+      // Linux CI에서 드물게 secret_window_refused(#108·#112). 거절 사유는 금고 로그에만 있어 실패 메시지에 싣는다(흔들림 추적).
+      const refused = async () => (await Promise.all((await fs.readdir(h.paths.logs).catch(() => [])).map((f) => fs.readFile(path.join(h.paths.logs, f), 'utf8').catch(() => '')))).join('\n').split('\n').filter((l) => /secret_window_refused|profile_prefs_mismatch|extension_not_allowed|google_signin_detected/.test(l)).join('\n');
+      assert.deepEqual(opened, { ok: true }, (opened as { ok: boolean }).ok ? undefined : `금고 로그:\n${await refused()}`);
       const vt = h.vault.relay!.targets.get(targetId)!;
       const closed = h.client.once('secret_window.closed', (d) => d.targetId === targetId, 5000);
       await h.vault.relay!.send('Runtime.evaluate', { expression: `document.getElementById('pw').focus()` }, vt.vaultSession);

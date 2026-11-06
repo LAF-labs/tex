@@ -4,6 +4,9 @@
 //   0건이면서 minElapsedMs가 지났고 lookups회 연속 0건이며, 클릭 뒤 새로 보이고 문구까지 맞는 실패 신호가 있을 때만 not_committed.
 //   그 밖은 maxMs(앱 하한 300초)까지 지수 간격으로 다시 조회하고, 상한에서 unknown.
 // - 조회 실패는 부재 증거가 아니다(연속 0건을 끊는다). 3회 연속 실패하거나 차단 신호면 더 두드리지 않고 unknown(D03 §7).
+// - rowVerdict(v1.3.4, 사후 부수효과 확인, 골든 s33 메일 발송): 새 행 하나의 상태 열 문구로 가른다. notSent 패턴이면 not_committed의
+//   명시적 근거(먼저 본다, H01Runner mailStatusVerdict와 같은 부정 우선), sent 패턴이면 committed, 그 밖은 상한까지 다시 보고 unknown.
+//   unknown을 committed로 치지 않는다(fail-closed). 판정 문구는 서명된 패키지 strings에 있다(감사 가능).
 // - 조회는 포트가 새 탭에서 하고 닫는다. 원래 탭은 실패 신호를 읽기만 한다. 값은 저널·로그에 남기지 않는다(⑦).
 import { FORCED_STOPS } from './interp.ts';
 import { normalizeName } from './constants.ts';
@@ -13,7 +16,7 @@ import { compileRe2 } from './re2.ts';
 import { normalizeFor } from './readback.ts';
 import { readRef, scalar, type RunScope } from './scope.ts';
 import type { Handler } from './steps.ts';
-import type { FailSignal, Lookup, PlaybookIR, Policy, SelectorDict, Step, StepOf } from './types.ts';
+import type { FailSignal, Lookup, PlaybookIR, Policy, SelectorDict, Step, StepOf, Strings } from './types.ts';
 import { flatten } from './cfg.ts';
 
 /** 조회 행: 열 이름(fieldKey·approvalNo) → 화면 문구. */
@@ -88,6 +91,8 @@ export interface VerifyDeps {
   page: PageReader;
   clock: Clock;
   dict: SelectorDict;
+  /** 패키지 strings(rowVerdict 패턴). */
+  strings: Strings;
   scope: RunScope;
   /** 정책 policy.verify(클램프 뒤 값, maxMs 채워짐). */
   policy: () => Policy['verify'];
@@ -124,25 +129,57 @@ export function resolveMatch(scope: RunScope, match: Lookup['match']): Record<st
   return out;
 }
 
-/** match에 맞는 행의 승인번호 집합(fieldKey 정규화 규칙으로 비교, 승인번호 없는 행은 뺀다). */
-export function matchingIds(dict: SelectorDict, rows: readonly LookupRow[], want: Readonly<Record<string, string>>): Set<string> {
+/** match에 맞는 행을 승인번호별로(fieldKey 정규화 규칙으로 비교, 승인번호 없는 행은 뺀다). */
+export function matchingRows(dict: SelectorDict, rows: readonly LookupRow[], want: Readonly<Record<string, string>>): Map<string, LookupRow[]> {
   const keys = Object.entries(want).map(([k, v]) => [k, normalizeFor(dict, k, v)] as const);
-  const out = new Set<string>();
+  const out = new Map<string, LookupRow[]>();
   for (const r of rows) {
     if (!keys.every(([k, v]) => normalizeFor(dict, k, r[k] ?? '') === v)) continue;
     const id = normalizeName(r[VERIFY_ID_COLUMN] ?? '');
-    if (id) out.add(id);
+    if (id) out.set(id, [...(out.get(id) ?? []), r]);
   }
   return out;
 }
 
-type Ids = { ok: true; ids: Set<string> } | { ok: false; code: string };
+/** match에 맞는 행의 승인번호 집합. */
+export function matchingIds(dict: SelectorDict, rows: readonly LookupRow[], want: Readonly<Record<string, string>>): Set<string> {
+  return new Set(matchingRows(dict, rows, want).keys());
+}
+
+export type RowVerdict = 'sent' | 'not_sent' | 'unknown';
+
+/**
+ * 한 승인번호의 행들의 상태 문구 판정(rowVerdict): 하나라도 notSent면 not_sent(부정 우선), 아니면 하나라도 sent면 sent, 그 밖 unknown.
+ * 문구는 NFKC·공백 제거 뒤 패턴에 건다. 패턴이 없거나 컴파일되지 않으면 unknown(V-01이 로드 때 막는다).
+ */
+export function rowVerdictOf(strings: Strings, rv: NonNullable<Lookup['rowVerdict']>, rows: readonly LookupRow[]): RowVerdict {
+  const pat = (k: string): RegExp | null => {
+    const p = strings[k];
+    if (typeof p !== 'string') return null;
+    try {
+      return compileRe2(p);
+    } catch {
+      return null;
+    }
+  };
+  const sent = pat(rv.sent);
+  const notSent = pat(rv.notSent);
+  if (!sent || !notSent) return 'unknown';
+  // H01Runner mailStatusVerdict와 같은 정규화: NFKC 뒤 공백을 모두 뺀다("전송 완료" = "전송완료").
+  const texts = rows.map((r) => (r[rv.column] ?? '').normalize('NFKC').replace(/\s+/g, ''));
+  if (texts.some((t) => notSent.test(t))) return 'not_sent';
+  return texts.some((t) => sent.test(t)) ? 'sent' : 'unknown';
+}
+
+type Ids = { ok: true; ids: Set<string>; rows: Map<string, LookupRow[]> } | { ok: false; code: string };
 
 async function lookupIds(d: VerifyDeps, s: StepOf<'verify'>, purpose: LookupRequest['purpose']): Promise<Ids> {
   const want = resolveMatch(d.scope, s.lookup.match);
   if (!want) return { ok: false, code: 'step.ref_unresolved' };
   const r = await d.lookup.run({ stepId: s.id, playbook: s.lookup.playbook, match: want, window: s.lookup.window, purpose }).catch(() => ({ ok: false as const, code: 'verify.lookup_failed' }));
-  return r.ok ? { ok: true, ids: matchingIds(d.dict, r.rows, want) } : { ok: false, code: r.code };
+  if (!r.ok) return { ok: false, code: r.code };
+  const rows = matchingRows(d.dict, r.rows, want);
+  return { ok: true, ids: new Set(rows.keys()), rows };
 }
 
 /** 차단 신호처럼 다시 조회해도 안 되는 실패(FORCED_STOPS abort). */
@@ -178,7 +215,8 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
   const pol = d.policy();
   const minElapsedMs = Math.max(s.lookup.notCommittedPolicy.minElapsedMs, pol.minElapsedMs);
   const lookups = Math.max(s.lookup.notCommittedPolicy.lookups, pol.lookups);
-  const maxMs = pol.maxMs ?? 300_000;
+  // 사후 확인(baseline:none)만 자기 상한을 쓸 수 있다(V-03n). 주 비가역 verify는 정책 값(앱 하한 300초).
+  const maxMs = s.lookup.baseline === 'none' && s.lookup.maxMs !== undefined ? s.lookup.maxMs : (pol.maxMs ?? 300_000);
   const iv = d.intervals ?? VERIFY_INTERVALS;
   const b0 = s.lookup.baseline === 'none' ? new Set<string>() : d.book.baseline(s.id);
   // 기준선 없이는 새 건을 셀 수 없다(재시작 뒤 등): 판정하지 않는다.
@@ -197,15 +235,20 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
     } else {
       fails = 0;
       const fresh = [...r.ids].filter((n) => !b0.has(n));
-      if (fresh.length === 1) {
+      const rv = s.lookup.rowVerdict;
+      const verdict = fresh.length === 1 && rv ? rowVerdictOf(d.strings, rv, r.rows.get(fresh[0]!) ?? []) : null;
+      if (verdict === 'not_sent') return { result: 'not_committed' };
+      if (verdict === 'unknown') {
+        // 행은 있으나 상태가 아직 결론이 아니다(예: 처리 중 문구가 패턴 밖). 부재가 아니므로 0건 연속을 끊고 다시 본다.
+        zeros = 0;
+      } else if (fresh.length === 1) {
         const ref = fresh[0]!;
         const bind = s.lookup.bind?.approvalNo;
         if (bind) d.scope.vars.set(bind, ref);
         d.book.setRef(s.id, ref);
         return { result: 'committed', ref };
-      }
-      if (fresh.length > 1) break;
-      zeros++;
+      } else if (fresh.length > 1) break;
+      else zeros++;
       if (dispatch && zeros >= lookups && d.clock.now() - t0 >= minElapsedMs) {
         const now = await failSignalKeys(d.page, s.failSignals ?? []).catch(() => new Set<string>());
         if ([...now].some((k) => !dispatch.failBefore.has(k))) return { result: 'not_committed' };

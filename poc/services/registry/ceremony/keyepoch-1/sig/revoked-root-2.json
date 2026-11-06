@@ -1,0 +1,8 @@
+{
+  "keyId": "root-2",
+  "alg": "ed25519",
+  "sig": "lKkIXRodKAGrfoxBgtEjwDW-gxVaC-M2h3kbxTp9VelPM4mWsnpR3orfDcf3S40RoPL-E5jtsCxOnjdDS1j_DA",
+  "kind": "revoked_keys",
+  "part": "content",
+  "sha256": "b40b634209b4db36c4a1e422ae47eddcfe8ea65fe8874eea1f8343fbbb503203"
+}

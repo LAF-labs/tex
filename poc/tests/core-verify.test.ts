@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  failSignalKeys, judgeVerify, matchingIds, newScope, takeBaseline, verifyHandler, verifyOfIrreversible, VerifyBook, VERIFY_FAILS_IN_A_ROW,
+  failSignalKeys, judgeVerify, matchingIds, rowVerdictOf, newScope, takeBaseline, verifyHandler, verifyOfIrreversible, VerifyBook, VERIFY_FAILS_IN_A_ROW,
   type LookupRequest, type LookupResult, type LookupRow, type PlaybookIR, type Policy, type StepOf, type VerifyDeps,
 } from '@sax/engine/core';
 import { FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
@@ -58,7 +58,7 @@ function mk(script: Array<LookupResult | (() => LookupResult)>, o: { els?: FEl[]
   for (const [k, v] of Object.entries(o.readback ?? RB)) scope.readback.set(k, v);
   const lookup = new ScriptLookup(clock, script);
   const book = new VerifyBook();
-  const d: VerifyDeps = { lookup, book, page, clock, dict: DICT, scope, policy: () => o.policy ?? POLICY };
+  const d: VerifyDeps = { lookup, book, page, clock, dict: DICT, strings: GOLDEN.strings, scope, policy: () => o.policy ?? POLICY };
   /** 기준선을 찍고, 클릭을 보냈다고 기록한다(클릭 직전 실패 신호와 함께). */
   const dispatched = async () => book.markDispatched('s30', clock.now(), await failSignalKeys(page, S30.failSignals ?? []));
   return { clock, page, scope, lookup, book, d, dispatched };
@@ -247,16 +247,85 @@ describe('verify 판정(D02 §4.4, D03 §5.6)', () => {
   });
 });
 
-describe('verify baseline:none(D02 §4.4, 골든 s33 메일 발송 확인)', () => {
-  it('앞선 verify의 bind 값($vars.approvalNo)으로 조회: 그 행이 1건이면 committed. 값이 없으면 조회하지 않고 unknown', async () => {
-    const h = mk([rows({ approvalNo: 'B-7' }, { approvalNo: 'C-1' })]);
-    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' }, '$vars.approvalNo 없음');
+describe('verify baseline:none·rowVerdict(D02 §4.4, 스키마 v1.3.4, 골든 s33 메일 발송 확인)', () => {
+  const mail = (approvalNo: string, status: string): LookupRow => ({ approvalNo, status });
+  const S33_PLAIN = (() => {
+    const v = structuredClone(S33);
+    delete v.lookup.rowVerdict;
+    return v;
+  })();
+
+  it('골든 s33은 rowVerdict(status 열, strings mail.status.*)를 선언한다', () => {
+    assert.deepEqual(S33.lookup.rowVerdict, { column: 'status', sent: 'mail.status.sent', notSent: 'mail.status.notSent' });
+  });
+
+  it('앞선 verify의 bind 값($vars.approvalNo)으로 조회한다. 값이 없으면 조회하지 않고 unknown', async () => {
+    const h = mk([rows(mail('B-7', '전송완료'))]);
+    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
     assert.equal(h.lookup.reqs.length, 0);
     h.scope.vars.set('approvalNo', 'B-7');
     assert.deepEqual(await judgeVerify(h.d, S33), { result: 'committed', ref: 'B-7' });
     const q = h.lookup.reqs[0]!;
     assert.deepEqual([q.playbook, q.window, q.match], ['hometax.invoice.email_status', 'today', { approvalNo: 'B-7' }]);
     assert.equal(h.book.ref('s33'), 'B-7');
+  });
+
+  it('sent 문구 → committed, notSent 문구 → 곧바로 not_committed(명시적 근거), 다른 승인번호의 행은 보지 않는다', async () => {
+    const sent = mk([rows(mail('C-1', '전송실패'), mail('B-7', '전송 완료'))]);
+    sent.scope.vars.set('approvalNo', 'B-7');
+    assert.deepEqual(await judgeVerify(sent.d, S33), { result: 'committed', ref: 'B-7' });
+    for (const st of ['전송실패', '미전송', '발송대기', '오류', '전송중']) {
+      const h = mk([rows(mail('B-7', st))]);
+      h.scope.vars.set('approvalNo', 'B-7');
+      assert.deepEqual(await judgeVerify(h.d, S33), { result: 'not_committed' }, st);
+      assert.equal(h.lookup.reqs.length, 1, `${st}: 다시 조회하지 않는다`);
+      assert.equal(h.book.ref('s33'), undefined);
+    }
+  });
+
+  it('둘 다 아닌 문구는 committed가 아니다(fail-closed): 상한까지 다시 보고 unknown. 그 사이 sent가 되면 committed', async () => {
+    const h = mk([rows(mail('B-7', '알 수 없음'))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
+    assert.equal(h.lookup.reqs.length, 3, 's33 maxMs 50초: 1·12·33초에 조회');
+    assert.equal(h.book.ref('s33'), undefined);
+    const later = mk([rows(mail('B-7', '')), rows(mail('B-7', '발송완료'))]);
+    later.scope.vars.set('approvalNo', 'B-7');
+    assert.deepEqual(await judgeVerify(later.d, S33), { result: 'committed', ref: 'B-7' });
+  });
+
+  it('부정 우선: 같은 승인번호에 sent와 notSent 행이 같이 있으면 not_committed', async () => {
+    const h = mk([rows(mail('B-7', '전송완료'), mail('B-7', '전송실패'))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'not_committed' });
+  });
+
+  it('rowVerdict가 없는 패키지는 지금 의미 그대로: 그 행이 1건이면 상태 문구와 관계없이 committed', async () => {
+    const h = mk([rows(mail('B-7', '전송실패'))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    assert.deepEqual(await judgeVerify(h.d, S33_PLAIN), { result: 'committed', ref: 'B-7' });
+  });
+
+  it('s33 maxMs 50초(H01Runner verifyMail과 같은 시간): 미결론이면 50초에서 unknown. 주 비가역 verify에 두어도 실행 시 무시(V-03n이 로드 때 막는다)', async () => {
+    const h = mk([rows(mail('B-7', '알 수 없음'))]);
+    h.scope.vars.set('approvalNo', 'B-7');
+    const t0 = h.clock.now();
+    assert.deepEqual(await judgeVerify(h.d, S33), { result: 'unknown' });
+    const took = h.clock.now() - t0;
+    assert.ok(took >= 50_000 && took < 100_000, `${took}ms`);
+    const s30 = structuredClone(S30);
+    s30.lookup.maxMs = 50_000;
+    const x = mk([rows()]);
+    await takeBaseline(x.d, IR, S20);
+    await x.dispatched();
+    const t1 = x.clock.now();
+    assert.deepEqual(await judgeVerify(x.d, s30), { result: 'unknown' });
+    assert.ok(x.clock.now() - t1 >= 300_000, '정책 maxMs(300초)');
+  });
+
+  it('rowVerdictOf: 패턴이 strings에 없으면 unknown(로드 때는 V-01이 막는다)', () => {
+    assert.equal(rowVerdictOf({}, S33.lookup.rowVerdict!, [mail('B-7', '전송완료')]), 'unknown');
+    assert.equal(rowVerdictOf(GOLDEN.strings, S33.lookup.rowVerdict!, []), 'unknown');
   });
 });
 
