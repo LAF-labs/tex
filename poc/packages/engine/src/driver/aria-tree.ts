@@ -105,3 +105,20 @@ export function ariaToTree(snapshot: string, o: { rootRole?: string; isSecret?: 
   }
   return root;
 }
+
+/** aria 스냅숏 첫 줄 `- role "name": value`의 값. combobox는 [selected] 항목 이름. */
+export function ariaValue(snapshot: string, role: string): string {
+  const unq = (v: string) => {
+    const t = v.trim();
+    if (t.startsWith('"')) return JSON.parse(t) as string;
+    if (t.startsWith("'")) return t.slice(1, -1).replace(/''/g, "'");
+    return t;
+  };
+  const lines = snapshot.split('\n');
+  if (role === 'combobox') {
+    const sel = lines.map((l) => /^\s*- option "((?:[^"\\]|\\.)*)".*\[selected\]/.exec(l)).find(Boolean);
+    return sel ? (JSON.parse(`"${sel[1]}"`) as string) : '';
+  }
+  const m = /^- [a-z]+(?: "(?:[^"\\]|\\.)*")?(?: \[[^\]]*\])*(?::(.*))?$/.exec(lines[0] ?? '');
+  return m?.[1] !== undefined ? unq(m[1]) : '';
+}

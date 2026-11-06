@@ -16,8 +16,19 @@ export interface ExportService {
 
 const dirOf = (svc: string) => fileURLToPath(new URL(`../../${svc}/migrations/`, import.meta.url));
 
-/** 함수·룸 호스트로 올리는 서비스(레지스트리는 정적 파일이라 DB가 없다) */
-export const SUPABASE_SERVICES: readonly ExportService[] = ['account', 'gateway', 'relay', 'push'].map((name) => ({ name, migrationsDir: dirOf(name) }));
+/**
+ * 내보내기 단계. **이미 적용된 단계의 파일은 바꾸지 않는다**(Supabase는 파일 이름으로 적용 여부를 기억한다): 새 서비스·새 마이그레이션은 새 단계로 더한다(증분).
+ * 시험이 적용된 단계 파일의 다이제스트를 고정한다(services-deploy.test.ts).
+ * - 2026110600: 계정·게이트웨이·릴레이·푸시(#135, 운영 tex-prod에 적용됨)
+ * - 2026110601: 레지스트리 투명성 로그(#132 로그 DB, 팀장 결정 2026-11-06)
+ */
+export const SUPABASE_PHASES: readonly { prefix: string; rolesFile: string; services: readonly ExportService[] }[] = [
+  { prefix: '2026110600', rolesFile: '20261106000000_sax_roles.sql', services: ['account', 'gateway', 'relay', 'push'].map((name) => ({ name, migrationsDir: dirOf(name) })) },
+  { prefix: '2026110601', rolesFile: '20261106010000_sax_roles_registry.sql', services: [{ name: 'registry', migrationsDir: dirOf('registry') }] },
+];
+
+/** 함수·룸 호스트로 올리는 서비스 전부(단계 순서) */
+export const SUPABASE_SERVICES: readonly ExportService[] = SUPABASE_PHASES.flatMap((p) => p.services);
 
 export const roleOf = (svc: string) => `sax_${svc}`;
 export const limitsSchemaOf = (svc: string) => `${svc}_limits`;
@@ -68,7 +79,10 @@ function serviceSql(s: ExportService): string {
   return out.join('\n');
 }
 
-/** supabase/migrations/<시각>_<이름>.sql 목록. 시각은 고정(같은 입력이면 같은 출력, 시험이 저장소 파일과 대조한다) */
-export function exportSupabase(services: readonly ExportService[] = SUPABASE_SERVICES): { name: string; sql: string }[] {
-  return [{ name: '20261106000000_sax_roles.sql', sql: rolesSql(services) }, ...services.map((s, i) => ({ name: `2026110600${String(i + 1).padStart(2, '0')}00_sax_${s.name}.sql`, sql: serviceSql(s) }))];
+/** supabase/migrations/<시각>_<이름>.sql 목록. 시각은 고정(같은 입력이면 같은 출력, 시험이 저장소 파일과 대조한다). 단계마다 역할 파일 + 서비스 파일 */
+export function exportSupabase(phases: typeof SUPABASE_PHASES = SUPABASE_PHASES): { name: string; sql: string }[] {
+  return phases.flatMap((p) => [
+    { name: p.rolesFile, sql: rolesSql(p.services) },
+    ...p.services.map((s, i) => ({ name: `${p.prefix}${String(i + 1).padStart(2, '0')}00_sax_${s.name}.sql`, sql: serviceSql(s) })),
+  ]);
 }

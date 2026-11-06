@@ -177,6 +177,22 @@ export class TransparencyLog {
     });
   }
 
+  /**
+   * 헤드 신선도 재서명(정리 cron): 저장된 헤드의 timestamp가 maxAgeMs보다 오래되면 같은 treeSize·rootHash에 새 timestamp로 다시 서명한다.
+   * 항목은 바꾸지 않는다(트리 내용 그대로). 메타 행 잠금 안에서 하므로 append와 섞이지 않는다. 반환 true = 새로 서명했다.
+   */
+  async refreshHead(maxAgeMs: number): Promise<boolean> {
+    return this.db.tx(async (q) => {
+      const m = await q.one<{ tree_size: number; head: string | null }>(`SELECT tree_size, head FROM log_meta WHERE id = 1${q.forUpdate}`);
+      const size = Number(m?.tree_size ?? 0);
+      const cur = m?.head ? (JSON.parse(m.head) as SignedTreeHead) : null;
+      if (cur && cur.treeSize === size && this.now() - cur.timestamp < maxAgeMs) return false;
+      const head = this.signHead(size, rootOf(await this.leavesIn(q, size)));
+      await q.run('UPDATE log_meta SET head = $1 WHERE id = 1 AND tree_size = $2', [jcs(head), size]);
+      return true;
+    });
+  }
+
   /** 현재 서명 헤드. 빈 로그는 처음 부를 때 크기 0 헤드에 서명해 둔다. */
   async head(): Promise<SignedTreeHead> {
     const m = await this.db.one<{ tree_size: number; head: string | null }>('SELECT tree_size, head FROM log_meta WHERE id = 1');

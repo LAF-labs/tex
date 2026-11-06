@@ -22,7 +22,7 @@
 | [ADR-018](ADR-018-document-demand-priority.md) | 서류 수요 기반 플레이북 우선순위: 홈택스 민원증명 묶음을 MVP 코어로, 법인등기·위택스 베타, 공고문 → 서류 꾸러미 | 채택, 결정 3·조건의 W-01·S-03·S-02를 켜는 방법은 ADR-022로 정정 |
 | [ADR-019](ADR-019-single-session-chat-ui.md) | 단일 메인 세션과 대화 중심 화면, PC·폰 공용 타임라인(원본은 PC 로컬 DB, 서버 무저장) | 채택 |
 | [ADR-020](ADR-020-design-review-issuance-auth-approval.md) | 화면 디자인 검토 결정: 발급 인증 고정·설정 변경, 보안카드 완전 위임(로컬 암호화), 카드 승인(별도 승인 창 폐지), 응답 끊김 자동 조회, 부가세 토글, 새 PC는 폰 승인·PASS | 채택(PoC 확인 조건 있음), 결정 4의 버튼 위치·승인 근거는 ADR-021, 결정 3의 저장 방식은 ADR-026으로 대체, 결정 7의 복구 경로는 ADR-029로 구체화 |
-| [ADR-021](ADR-021-pc-approval-evidence-main-approval-bar.md) | PC 승인의 근거: main 소유 승인 바(스크립트 없는 `WebContentsView`, main이 위치를 정하고 클릭을 직접 관찰, 대화 카드에는 승인 버튼 없음)와 선택 Windows Hello 확인 | 채택(PoC-6 확인·PoC-9 배치 선택 조건 있음), 클릭 활성화 예외·중복 표시는 ADR-027, Hello 합치기는 ADR-026으로 개정 |
+| [ADR-021](ADR-021-pc-approval-evidence-main-approval-bar.md) | PC 승인의 근거: main 소유 승인 바(스크립트 없는 `WebContentsView`, main이 위치를 정하고 클릭을 직접 관찰, 대화 카드에는 승인 버튼 없음)와 선택 Windows Hello 확인 | 채택(PoC-6 확인·PoC-9 배치 선택 조건 있음), **2026-11-06 개정 결정 7: main 승인 카드 하나(값 전체·[중지]·[승인하고 발급], 기본 포커스 [중지])**, 클릭 활성화 예외·중복 표시는 ADR-027, Hello 합치기는 ADR-026으로 개정 |
 | [ADR-022](ADR-022-wetax-portal-ceiling.md) | 위택스 운영 수준 상한(`wetax: postprocess`)과 포털 상한 판정 기준: 사전 허락이 필요한 포털은 허락 회신 + 앱 업데이트 뒤에만 자동화 | 채택 |
 | [ADR-023](ADR-023-policy-poll-interval.md) | 운영 정책·status 조회 주기(15분 + 실행 직전 재조회)와 반영 시간 목표(켜진 앱 20분) | 채택 |
 | [ADR-024](ADR-024-cross-pc-duplicate-warning.md) | 기기 간 중복 발급 경고: Phase 1은 포털 발급목록 기준선(`$dup.portalExisting`, 서버 기록 없음), 서버 업무 키 표시는 Phase 2·데스크톱 2대 이상 계정만, `K_idx`는 새 PC 연결(A-03)이 넘김 | 채택; 결정 6의 RK 보관 방식은 ADR-029 결정 1이 정함 |
