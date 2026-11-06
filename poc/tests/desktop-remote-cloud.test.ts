@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import { connect, type AddressInfo } from 'node:net';
 import { after, before, describe, it } from 'node:test';
-import { CLOUD_ORIGIN, CLOUD_WS_HOST, Egress, cloudHeaders, cloudRequestCheck, cloudSocketCheck } from '../packages/net/src/index.ts';
+import { CLOUD_ORIGIN, CLOUD_WS_HOST, Egress, cloudHeaders, cloudRequestCheck, cloudSocketCheck } from '@sax/net';
 import {
   AIK_PURPOSES,
   VD_PURPOSES,
