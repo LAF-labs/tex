@@ -1,5 +1,6 @@
 # D05. 금고와 비밀 처리
 
+> 2026-11-06 정합(팀장 지시, 큐 16~22): §8 전용 프로필 위생(기동 전·종료 후 History* 등 삭제, `vault.profile_hygiene{removed}`, 금고 S6, 팀장 승인 2026-11-06. D11·D13 "프로필 디스크 0건"을 지키는 수단 추가, 설계 변경 아님).
 > 2026-11-05 명확화(팀장 결정, 금고 트랙 질문 Q-1·Q-2, 설계 변경 아님): 포털 아이디는 비밀이 아니다(§4 주석 1, §2 표의 `portal/<profile>/id` 항목을 대체). 금고의 scope(ProfileId)는 run 시작 때 고정(§4 주석 2).
 > AUDIT-D 반영 2026-11-03: 사람 비밀 등급을 칸 단위·TPM 결박 KEK·Windows 세션 추종 금고·엄격 모드 Hello로 정합(§2·§7, ADR-026), PDF 열기 암호·DB 키 유실 규칙(§2), 쿠키 헤더·MHTML·다운로드 경로·Crashpad·개시 조건 재검사·창 상태 머신·1회용 비밀 TTL·`secret.needed`·trigger 허용 목록·T-06 OS 프레임(§3.3~§3.8), kind↔칸 결박(§4), 실사용 누출 트립와이어(§8)(ADR-025·026·029, D19 §3.5).
 > 2026-11-02 — ADR-020 결정 2·3 반영(outreach/06 §3 #4·#5·#18): 공동·금융인증서 비밀번호는 저장·자동 입력하지 않고, 보안카드 번호와 보안카드 경로의 홈택스 아이디·비밀번호는 **위임** 등급(AES-256-GCM 암호문, 열쇠는 DPAPI·자격 증명 관리자, Windows Hello에는 결박하지 않음)으로 둔다. 아래 v1.2의 '보안카드 칸 단위 저장'을 대체한다. 위임 등급의 저장 방식(JSON 묶음·DPAPI)은 바로 위 줄의 ADR-026이 다시 대체한다(공동·금융인증서 비밀번호를 저장·자동 입력하지 않는 규칙은 그대로).
@@ -253,7 +254,8 @@ interface VaultCrypto {
 - **클립보드** (A-32): 금고는 비밀을 클립보드에 쓰지 않는다. 앱이 클립보드에 쓰는 모든 값(D17 복사 버튼)은 같은 쓰기에 기록·클라우드 제외 형식(`ExcludeClipboardContentFromMonitorProcessing`, `CanIncludeInClipboardHistory=0`, `CanUploadToCloudClipboard=0`)을 포함한다. Electron에서 사용자 정의 형식을 같은 쓰기로 넣을 수 있는지는 **S6l**, 불가하면 네이티브 헬퍼.
 - **누출 스캐너**(D13 §6)는 글자 단위 CDP 메시지·IPC 캡처·클립보드·전용 프로필 디스크에 더해 **엔진이 받은 CDP 이벤트 스트림(요청 바디 포함)**을 본다(A-02). S6 통과 기준에 다음을 넣는다: "다른 OS 사용자 계정에서 CDP 접속 불가", "엔진이 지정한 엔드포인트로 금고가 접속하지 않음(인자 없음)", "브라우저 타깃·`Storage` 도메인 호출 시 거부 + `vault.cdp_denied`", "비밀 창 활성 상태의 엔진 수신 메시지(`Runtime` 응답 포함) = 허용 목록"(S6f).
 - 금고는 비밀 사용 직후 그 값의 변형으로 `logs\`·`staging\`을 스캔해 건수만 `vault.leak_scan{files, findings}`로 남긴다(PoC 빌드). 알려진 값 치환이 적중하면 `secret_window.leak_suspected{hits}`를 엔진·main에 보내 실행을 멈춘다. 전용 Chrome의 로컬 크래시 덤프는 만들지 않고 남은 것은 지운다(ADR-025, D-11(N-17), D-07(N-04)).
-- **금고 보안 이벤트**(D16 등록 교차 요청): `vault.cdp_denied`, `vault.origin_left`, `vault.profile_prefs_mismatch`, `vault.extension_not_allowed`, `vault.google_signin_detected`, `vault.secret_window_refused`, `vault.preinjected_script`(Phase 2), `vault.dbkey_requested_twice`, `vault.crypto_rate_anomaly`, `vault.secret_window_close_denied`, `vault.chrome_dump_removed`, `vault.leak_scan`, `secret_window.leak_suspected`, `secret_window.refused`, `vault.secret_input_unbound`, `vault.keystore_mismatch`, `vault.credential_suspect`(AUDIT-D). 모두 인자·값 없이 코드와 타깃 ID만 남긴다.
+- **전용 프로필 위생**(금고 S6, 팀장 승인 2026-11-06, 설계 변경 아님): 금고는 전용 Chrome 기동 전과 종료 후에 프로필의 `History*`·`Sessions/`·`Current Session`·`Last Session`·`Tabs`·`ukm_db`·`Visited Links`를 지운다. 방식은 크래시 덤프 정리(`removeCrashDumps`)와 같고 링크는 따라가지 않고 거부한다. 지운 건수만 `vault.profile_hygiene{removed}`로 남긴다. 크래시로 종료 후 정리를 못 하면 다음 기동 전 정리가 그것을 덮는다. D11·D13의 "전용 프로필 디스크 0건"을 지키는 수단이다.
+- **금고 보안 이벤트**(D16 등록 교차 요청): `vault.cdp_denied`, `vault.origin_left`, `vault.profile_prefs_mismatch`, `vault.extension_not_allowed`, `vault.google_signin_detected`, `vault.secret_window_refused`, `vault.preinjected_script`(Phase 2), `vault.dbkey_requested_twice`, `vault.crypto_rate_anomaly`, `vault.secret_window_close_denied`, `vault.chrome_dump_removed`, `vault.leak_scan`, `vault.profile_hygiene`(2026-11-06), `secret_window.leak_suspected`, `secret_window.refused`, `vault.secret_input_unbound`, `vault.keystore_mismatch`, `vault.credential_suspect`(AUDIT-D). 모두 인자·값 없이 코드와 타깃 ID만 남긴다.
 
 ## 9. 동의와 투명성
 

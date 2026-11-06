@@ -1,5 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
+> 2026-11-06 정합(팀장 지시, 큐 16~22): `daemon.window_invalid`·`policy_stale`·`status_stale`·`snapshot_failed`(데몬 PR #98 구현값, 제안, 사용자 확인 전), `vault.profile_hygiene`(금고 S6, 이벤트).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): 클라이언트 표에 `assert.original_mismatch`(ADR-036 결정 3.5), `bizstatus.unavailable`(제안, 사용자 확인 전), `update.*` 8개(패키징 PR #76, `packages/updater/README.md`)를 더함. "서버 응답 코드" 절에 레지스트리 게시 관문·`.sxp`·정책·핫픽스 코드(클라우드 PR #56 `PROPOSED_D16`). 보안 이벤트 목록에 `update.root_change_unsigned`·`update.feed_mismatch`·`update.digest_mismatch`.
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
 > 같은 날 팀장 지시: `assert.total_mismatch`·`input_mismatch`(D02 §8 `s19d`·`s19f`).
@@ -85,6 +86,7 @@
 | `update` | `feed_mismatch` | electron-updater가 읽은 `latest.yml` ≠ 검증한 매니페스트(**보안 이벤트**) | `err.update.*` | 받지 않음 |
 | `update` | `size_mismatch` / `digest_mismatch` | 받은 설치본 크기 / sha512 불일치(`digest_mismatch`는 **보안 이벤트**) | `err.update.*` | 설치하지 않음 |
 | `daemon` | `window_closed` / `pc_busy` / `in_doubt_pending` / `consent_missing` / `demoted_to_notify` | 스케줄러 | `err.daemon.*` | — |
+| `daemon` | `window_invalid` / `policy_stale` / `status_stale` / `snapshot_failed` | 일정의 실행 창 JSON 해석 실패 / 정책 신선도 만료 / 레지스트리 status 만료 / `daemon.snapshot` 질의 연속 실패(제안, 사용자 확인 전, 데몬 PR #98 `@sax/daemon`) | `err.daemon.*` | 실행 안 함. `notify` 알림은 계속(D10 §6) |
 | `daemon` | `effects_denied` | 데몬 트리거인데 `manifest.effects ⊄ {issue_document}`(R-D1, B-27) | `err.daemon.effects_denied` | 실행 안 함 |
 | `postprocess` | `file_not_detected` / `pdf_unreadable` / `meta_extraction_failed` / `sync_folder_warning` | 후처리 모드 | `err.postprocess.*` | 수동 메타 입력 |
 | `run` | `completed` / `completed_with_issues` / `failed` / `aborted` / `interrupted` / `in_doubt` | 종료 상태 | `run.status.*` | — |
