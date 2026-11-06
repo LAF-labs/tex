@@ -1,5 +1,6 @@
 # 서명 바이트 규약 v1
 
+> 2026-11-06 팀장 결정(#120): §8에 서버 서명 계정 클레임 `SAX-acct-claim-v1`(이메일 전체, `exp = iat + 10분`, account 서비스 전용 키, 앱 고정)을 더했다. 이 문서를 바꿀 때 필요한 ADR은 ADR-016 개정 메모다.
 > 정본. 레지스트리 서명 도구·게시 관문(D09 §8, 클라우드 트랙 `services/registry`, M4-7), 엔진(`poc/packages/engine/src/core/registry.ts`·`loader.ts`·`datapkg.ts`·`sxp.ts`·`canon.ts`), 금고·폰·클라우드의 기기·AIK 서명(§8)이 같은 바이트를 쓴다. 팀장 확정 2026-11-05(엔진 PR #52, 레지스트리 대조 결정 포함). 이 문서는 "무엇을 어떤 바이트로 서명하는가"만 정한다. 키·역할·쿼럼·발행 절차는 D09 §8, 수용 규칙은 D03 §3.1·§7.1, 기기 키 계층은 D08 §2.1·§3에 있다. 바꾸려면 ADR이 필요하다.
 
 ## 1. 공통
@@ -84,7 +85,8 @@
 - **AIK 서명 객체의 정규형** = `utf8(ctx) ‖ JCS(JSON)`: 맥락 문자열(`SAX-devlist-v1`·`SAX-revoke-v1`·`SAX-cert-v1`·`SAX-aik-rotate-v1`·`SAX-kek-v1`·`SAX-acct-op-v1`) 뒤에 대상 객체의 JCS 바이트를 붙인다. 구분 바이트가 없다.
 - **인코딩**: 서명(64바이트)·공개키(32바이트)는 **표준 base64(패딩 있음)**. 토큰·DPoP의 바깥 형식만 base64url(패딩 없음)이다(CONTRACT.md §2·§3).
 - 이 객체들의 값은 정수·문자열·불리언뿐이다(시각은 UTC 밀리초 정수, DPoP `iat`만 초). §1의 JCS 규칙과 같다.
-- `Px`(P-256) 서명의 바이트 형식은 D08 §6.1이 정한다. 이 절은 Ed25519 키(`Vx`·AIK)만 다룬다.
+- **서버 서명 계정 클레임**(팀장 결정 2026-11-06, ADR-016 개정): `SAX-acct-claim-v1`의 서명 입력은 `utf8("SAX-acct-claim-v1") ‖ JCS({account_id, email, aik_pub, iat, exp})`다. 구분 바이트는 없다. `email`은 가리지 않은 전체 문자열, `aik_pub`는 표준 base64, `iat`·`exp`는 UTC 밀리초 정수이고 `exp = iat + 600000`이다. 서명 키는 account 서비스의 전용 Ed25519 키다. 레지스트리 키·토큰 키(`SAX-token-v1`)와 섞지 않는다. 공개키는 앱에 고정하고, 교체는 레지스트리 핀 키 규칙(`keyEpoch`, ADR-028 결정 3)을 따른다. 폰은 서명·`exp`·`aik_pub == PAIR_OK.AIK_pub`를 검증한다(D08 §4.2 7단계).
+- `Px`(P-256) 서명의 바이트 형식은 D08 §6.1이 정한다. 이 절은 Ed25519 키(`Vx`·AIK·계정 클레임 서버 키)만 다룬다.
 
 ## 9. 범위 밖
 
