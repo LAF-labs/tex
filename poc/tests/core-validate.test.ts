@@ -32,7 +32,7 @@ const withFollowUp: Mut = (p, s, steps) => {
   insertAfter(steps, 's32b',
     { id: 's32c', type: 'readback', fields: ['counterpartEmail'], onFail: { retry: 0, then: 'handoff' } },
     { id: 's36', type: 'send_email', via: 'portal', to: '$inputs.email', followUpOf: 's21', intent: '$intent.id', verify: 's37', onFail: { retry: 0, then: 'handoff' } },
-    { id: 's37', type: 'verify', lookup: { playbook: 'hometax.invoice.email_status', match: { approvalNo: '$vars.approvalNo' }, window: 'today', baseline: 'none', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 } }, on: { committed: 's33', not_committed: 's35', unknown: 's35' } },
+    { id: 's37', type: 'verify', lookup: { playbook: 'hometax.invoice.email_status', match: { approvalNo: '$vars.approvalNo' }, window: 'today', baseline: 'none', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 }, rowVerdict: { column: 'status', sent: 'mail.status.sent', notSent: 'mail.status.notSent' } }, on: { committed: 's33', not_committed: 's35', unknown: 's35' } },
   );
 };
 
@@ -58,6 +58,12 @@ describe('V-01 스키마·RE2', () => {
   it('namePattern 전후방 탐색은 RE2 밖', () => expectRule('V-01', (p) => (p.selectors.entries['hometax.nav.home']!.namePattern = '^(?=홈)홈$')));
   it('patternRef 역참조는 RE2 밖', () => expectRule('V-01', (p) => (p.strings['counterpart.nameRegex'] = '^(a)\\1$')));
   it('patternRef가 strings에 없으면 거부', () => expectRule('V-01', (p) => delete p.strings['counterpart.nameRegex']));
+  it('verify.rowVerdict 문구 키가 strings에 없으면 거부(v1.3.4)', () => expectRule('V-01', (p) => delete p.strings['mail.status.notSent']));
+  it('verify.rowVerdict 문구도 RE2로 본다(역참조 거부)', () => expectRule('V-01', (p) => (p.strings['mail.status.sent'] = '^(전송)\\1$')));
+  it('verify.rowVerdict 미정의 필드·빈 column은 스키마에서 거부', () => {
+    expectRule('V-01', (_p, s) => ((s('s33') as { lookup: Record<string, unknown> }).lookup.rowVerdict = { column: 'status', sent: 'mail.status.sent', notSent: 'mail.status.notSent', extra: 1 }));
+    expectRule('V-01', (_p, s) => ((s('s33') as { lookup: Record<string, unknown> }).lookup.rowVerdict = { column: '', sent: 'mail.status.sent', notSent: 'mail.status.notSent' }));
+  });
   it('expectConfirm 정규식도 RE2로 본다(전후방 탐색 거부)', () => expectRule('V-01', (p) => (p.strings['confirm.issue'] = '^(?=발급)발급하시겠습니까\\?$')));
   it('사후조건 textMatches의 patternRef도 RE2로 본다', () =>
     expectRule('V-01', (p) => {
@@ -304,5 +310,27 @@ describe('V-04~V-24', () => {
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '.*'));
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '^.*$'));
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '^(발급)?.*$'));
+  });
+});
+
+describe('V-03n 사후 확인 verify(팀장 결정 2026-11-06, 스키마 v1.3.4)', () => {
+  type L = { lookup: Record<string, unknown> };
+  it('골든 s33은 rowVerdict·maxMs 50초를 선언하고 통과한다', () => {
+    const p = h01();
+    const s33 = p.playbook.steps.find((s) => s.id === 's33') as unknown as L;
+    assert.equal(s33.lookup.maxMs, 50_000);
+    assert.ok(s33.lookup.rowVerdict);
+    assert.ok(!rulesOf(p).has('V-03n'));
+  });
+  it('baseline:none 사후 확인 verify에 rowVerdict가 없으면 거부', () => expectRule('V-03n', (_p, s) => delete (s('s33') as unknown as L).lookup.rowVerdict));
+  it('후속 비가역(send_email)의 verify도 baseline:none이면 rowVerdict 필수', () =>
+    expectRule('V-03n', (p, s, steps) => {
+      withFollowUp(p, s, steps);
+      delete (s('s37') as unknown as L).lookup.rowVerdict;
+    }));
+  it('maxMs는 사후 확인에만: 주 비가역 verify(s30, pre_gate_snapshot)에 두면 거부(앱 하한 300초를 줄이지 못한다)', () => expectRule('V-03n', (_p, s) => ((s('s30') as unknown as L).lookup.maxMs = 50_000)));
+  it('maxMs 범위는 스키마(10초~300초)', () => {
+    expectRule('V-01', (_p, s) => ((s('s33') as unknown as L).lookup.maxMs = 5_000));
+    expectRule('V-01', (_p, s) => ((s('s33') as unknown as L).lookup.maxMs = 600_000));
   });
 });

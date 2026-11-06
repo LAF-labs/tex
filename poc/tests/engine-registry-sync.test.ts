@@ -355,8 +355,14 @@ describe('핀 키·main 통로', () => {
     assert.equal(trustRootsFromPin(noRelease).keyEpoch, 1);
   });
 
-  it('제품 핀은 아직 없다(서명 의식 전), 시험 키를 넣지 않았다', () => {
-    assert.equal(REGISTRY_TRUST_PIN, null);
+  it('제품 핀은 keyEpoch 1 서명 의식 결과(trust-root.json)와 같고, 시험 키를 넣지 않았다', () => {
+    const published = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../services/registry/ceremony/keyepoch-1/trust-root.json'), 'utf8')) as TrustPin;
+    assert.deepEqual(REGISTRY_TRUST_PIN, published);
+    assert.equal(trustRootsFromPin(REGISTRY_TRUST_PIN!).keyEpoch, 1);
+    const pubs = (p: TrustPin) => Object.values(p.keys).flatMap((ks) => Object.values(ks ?? {}));
+    const fixture = new Set(pubs(TRUST));
+    assert.ok(!pubs(REGISTRY_TRUST_PIN!).some((k) => fixture.has(k)), '시험 시드 공개키가 제품 핀에 있다');
+    assert.equal(new Set(pubs(REGISTRY_TRUST_PIN!)).size, 12, '키 12개, 서로 다르다');
   });
 
   it('질의·명령은 main 전용 목록에만 있다(렌더러 목록 READ_QUERIES·COMMANDS에 없음), handle이 같은 이름을 받는다', async () => {

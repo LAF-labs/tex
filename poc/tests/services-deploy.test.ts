@@ -23,6 +23,7 @@ import {
   migrate,
   openPg,
   openSqlite,
+  REWRITE_PARAMS,
   restorePath,
   roleOf,
   schemaColumns,
@@ -35,7 +36,7 @@ import { MIGRATIONS_DIR as GATEWAY_MIGRATIONS } from '../services/gateway/src/in
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS } from '../services/relay/src/index.ts';
 import { MIGRATIONS_DIR as PUSH_MIGRATIONS } from '../services/push/src/index.ts';
 import { INTERNAL_FUNCTION_ROUTES, buildCloud, cloudFunction, cronFunction, internalFunction } from '../services/cloud/src/index.ts';
-import { materialize } from '../services/deploy/check-vercel-output.ts';
+import { materialize, rewriteLikeVercel } from '../services/deploy/check-vercel-output.ts';
 import { TransparencyLog } from '../services/registry/src/index.ts';
 import { client } from './services-kit.ts';
 
@@ -55,6 +56,47 @@ describe('함수 진입점 공용(serviceEnv·restorePath·functionEntry·cronEn
     assert.equal(restorePath('/api/sax'), null);
     assert.equal(restorePath('/api/sax?__p=v1/x'), null);
     assert.equal(restorePath('/api/sax?__p=//evil.example/x'), null);
+  });
+
+  it('재작성 소스의 이름 붙은 매개변수(path·id)를 플랫폼이 쿼리에 다시 붙여도 원래 쿼리만 남긴다(운영 /registry/log/head.json 400 회귀)', () => {
+    assert.equal(restorePath('/api/registry?__p=/registry/log/head.json&path=head.json'), '/registry/log/head.json');
+    assert.equal(restorePath('/api/registry?path=proof%2Fconsistency&__p=/registry/log/proof/consistency&from=0&to=3'), '/registry/log/proof/consistency?from=0&to=3');
+    assert.equal(restorePath('/api/registry?__p=/registry/log&path='), '/registry/log');
+    assert.equal(restorePath('/api/internal?__p=/internal/v1/devices/dev-1&id=dev-1'), '/internal/v1/devices/dev-1');
+    assert.equal(restorePath('/api/sax?__p=/v1/auth/code&path=code'), '/v1/auth/code');
+    // 경로 끝과 다른 값은 원래 요청의 것: 남긴다(라우터가 판단)
+    assert.equal(restorePath('/api/registry?__p=/registry/log/head.json&path=evil'), '/registry/log/head.json?path=evil');
+    assert.equal(restorePath('/api/registry?__p=/registry/log/head.json&path=head.json&path=x'), '/registry/log/head.json?path=head.json&path=x');
+    assert.equal(restorePath('/api/internal?__p=/internal/v1/devices/dev-1&id=dev-2'), '/internal/v1/devices/dev-1?id=dev-2');
+  });
+
+  it('점검 스크립트의 재작성 흉내는 운영에서 본 모양과 같다(소스 매개변수를 쿼리에 다시 붙임)', () => {
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/registry/log/head.json'), '/api/registry?__p=/registry/log/head.json&path=head.json');
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/registry/log/proof/consistency?from=0&to=3'), '/api/registry?__p=/registry/log/proof/consistency&path=proof%2Fconsistency&from=0&to=3');
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/v1/me'), '/api/sax?__p=/v1/me');
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/api/internal/internal/v1/devices/d1'), '/api/internal?__p=/internal/v1/devices/d1&id=d1');
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/registry/status.json'), null, '버킷 외부 재작성');
+    assert.equal(rewriteLikeVercel(vercel.rewrites, '/nope'), null);
+    // 그 결과를 restorePath가 원래 경로·쿼리로 되돌린다
+    for (const p of ['/registry/log/head.json', '/registry/log/proof/consistency?from=0&to=3', '/v1/mailboxes/mb/envelopes?since=2', '/api/internal/internal/v1/devices/d1']) {
+      const want = p.startsWith('/api/internal/internal') ? p.replace('/api/internal', '') : p;
+      assert.equal(restorePath(rewriteLikeVercel(vercel.rewrites, p)!), want, p);
+    }
+  });
+
+  it('재작성 매개변수 이름은 vercel.json 소스의 이름과 같고, 어느 서비스 라우터도 그 이름을 쿼리 키로 읽지 않는다', () => {
+    const names = new Set(vercel.rewrites.flatMap((r) => [...r.source.matchAll(/:([a-z]+)\*?/g)].map((m) => m[1]!)));
+    assert.deepEqual([...names].sort(), [...REWRITE_PARAMS].sort());
+    for (const svc of ['account', 'gateway', 'relay', 'push', 'registry']) {
+      const dir = path.join(import.meta.dirname, '..', 'services', svc, 'src');
+      for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.ts'))) {
+        const src = fs.readFileSync(path.join(dir, f), 'utf8');
+        for (const n of REWRITE_PARAMS) {
+          assert.ok(!new RegExp(`(query|searchParams)\\.(get|getAll|has)\\(\\s*'${n}'`).test(src), `${svc}/${f}: ${n}`);
+          assert.ok(!new RegExp(`query\\(ctx, \\{[^}]*\\b${n}:`).test(src), `${svc}/${f}: ${n}`);
+        }
+      }
+    }
   });
 
   const serve = async (h: (q: http.IncomingMessage, r: http.ServerResponse) => Promise<void>) => {

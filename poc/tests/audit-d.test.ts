@@ -60,7 +60,7 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
 
   it('every file that constructs BrowserWindow calls hardenWindow (e2e 제외)', () => {
     const makers = srcFiles.filter((f) => !f.endsWith('e2e.ts') && /new BrowserWindow\(/.test(src(f)));
-    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'secret-window.ts', 'shell-app.ts']);
+    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'pair-window.ts', 'secret-window.ts', 'shell-app.ts']);
     for (const f of makers) assert.match(src(f), /hardenWindow\(/, f);
   });
 
