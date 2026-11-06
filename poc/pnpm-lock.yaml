@@ -258,6 +258,18 @@ importers:
         specifier: 4.1.1
         version: 4.1.1
 
+  packages/daemon:
+    dependencies:
+      '@sax/bundle':
+        specifier: workspace:*
+        version: link:../bundle
+      '@sax/db':
+        specifier: workspace:*
+        version: link:../db
+      '@sax/engine':
+        specifier: workspace:*
+        version: link:../engine
+
   packages/db:
     dependencies:
       '@sax/platform':
@@ -424,6 +436,9 @@ importers:
       '@sax/bundle':
         specifier: workspace:*
         version: link:../packages/bundle
+      '@sax/daemon':
+        specifier: workspace:*
+        version: link:../packages/daemon
       '@sax/db':
         specifier: workspace:*
         version: link:../packages/db
