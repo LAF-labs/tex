@@ -2,9 +2,10 @@
 
 > D14 P0-13·M4-9, ADR-028 결정 1·4·5, D11 §4 자동 업데이트 행. 대표·yulmu가 해야 할 일이다. 리드타임은 신원 확인 1~20영업일이다(P0-13).
 > 2026-11-06 정합(팀장 지시, 큐 1~15), yulmu 결정 2026-11-05: 서명은 **법인 설립 뒤** 이 체크리스트대로 한다. 그 전 베타 설치본은 미서명 빌드로 배포한다(앱 상단 "미서명 빌드" 표시, SmartScreen 경고 안내는 D15 F-06·D12 §8.5). 자동 업데이트는 서명 전까지 보류한다(ADR-028 결정 4 비고, D14 M4-9).
+> 2026-11-06 팀장 결정: `betaDistributable`을 미서명 베타 결정(2026-11-05)에 맞춘다. `unsigned_build`는 beta 채널에서 블로커가 아니고 stable 채널에서만 블로커다. `windows_run_unverified`는 조건 없이 넣지 않고, Windows 실기기 점검 보고서의 설치·첫 실행 통과가 있으면 뺀다. 필드 이름은 그대로다(§4). 스크립트(`poc/scripts/package-win.mjs:159`)는 아직 옛 규칙이고, 코드 후속은 CI 세션이 한다.
 > 이 문서의 가격·지원 국가·리전은 2026-11-05 작성 시점에 공식 문서로 다시 확인해야 한다(아래 "확인 필요" 표시).
 
-지금 상태: 인증서 없음. `pnpm package:win`은 **미서명 빌드**를 만들고 `release-readiness.json`에 `unsigned_build`를 적어 ~~**베타 배포 불가**~~ 미서명 빌드로 표시한다. 법인 설립 전 베타는 이 미서명 빌드를 배포한다(위 결정). `betaDistributable:false`의 이름·뜻 정리는 코드 후속이다.
+지금 상태: 인증서 없음. `pnpm package:win`은 **미서명 빌드**를 만들고 `release-readiness.json`에 `unsigned_build`를 적어 ~~**베타 배포 불가**~~ 미서명 빌드로 표시한다. 법인 설립 전 베타는 이 미서명 빌드를 배포한다(위 결정). `betaDistributable`은 이 결정에 맞춰 beta 채널에서 `unsigned_build`를 블로커로 세지 않는다(팀장 결정 2026-11-06, §4, 코드 후속).
 
 ## 1. 무엇을 누가 갖는가(ADR-028 결정 5: 역할당 1인 1키)
 
@@ -50,13 +51,15 @@
 
 ## 4. 베타 배포 조건(`release-readiness.json`이 `betaDistributable: true`)
 
+채널은 `app-identity.json` `channel`이다(지금 `beta`). 아래 표가 팀장 결정(2026-11-06) 기준이다. 스크립트는 아직 옛 규칙(`unsigned_build`는 채널과 상관없이 블로커, `windows_run_unverified`는 늘 블로커)이라 지금은 늘 false다. 코드 후속은 CI 세션이 한다. 필드 이름 `betaDistributable`은 그대로 둔다.
+
 | 막는 것 | 푸는 방법 |
 |---|---|
-| `unsigned_build` | 위 2~3 |
+| `unsigned_build` | **stable 채널에서만** 블로커다. beta 채널은 미서명 빌드를 배포한다(yulmu 결정 2026-11-05, 앱 상단 "미서명 빌드" 표시). stable은 위 2~3 |
 | `publisher_dn_unset` | `app-identity.json` `publisherName` |
 | `dev_only_code_included` | 진입점이 데모·가짜 포털 코드에 닿지 않게(ADR-035 W-7, 데스크톱 트랙) |
 | `runtime_reads_outside_app` | 디자인 토큰을 빌드 때 앱 안으로(ADR-028 결정 7 `tokens.gen.ts`, 데스크톱 트랙) |
-| `windows_run_unverified` | Windows 실기기에서 설치·실행·제거·업데이트 확인(아래 표), 그 뒤 스크립트에서 이 항목을 뺀다 |
+| `windows_run_unverified` | 조건 없이 넣지 않는다. Windows 실기기 점검 보고서 `poc/reports/WIN-REALDEVICE.md`(PR #152)에 설치·첫 실행 통과가 있으면 뺀다. 보고서의 설치 파일 항목은 #152의 둘째 PR 범위다 |
 
 Windows 실기기 확인(보류): 설치 경로 `%LOCALAPPDATA%\Programs\SovereignAX`, 관리자 권한 요청 없음, 데이터 폴더 `%LOCALAPPDATA%\SovereignAX` 분리, asar 변조 시 기동 거부, SmartScreen 표시, 제거 후 데이터 폴더 남음.
 

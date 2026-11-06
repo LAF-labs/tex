@@ -74,6 +74,8 @@ export const ERROR_STATUS = {
   'registry.portal_blocked': 422,
   'registry.content_digest_mismatch': 422,
   'registry.unauthorized': 401,
+  /** 레지스트리 함수가 구성 전(서명 의식 전 TRUST_ROOT_JSON 없음)이거나 구성 오류로 기동하지 않았다(팀장 결정 2026-11-06) */
+  'registry.unavailable': 503,
   'relay.mailbox_limit': 409,
   'relay.queue_full': 429,
   'relay.mailbox_not_found': 404,
@@ -116,6 +118,7 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'registry.portal_blocked',
   'registry.content_digest_mismatch',
   'registry.unauthorized',
+  'registry.unavailable',
   'relay.unauthorized',
   'relay.device_suspended',
   'push.unauthorized',

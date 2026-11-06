@@ -3,6 +3,7 @@
 //   배포 때처럼 되살린다. 그 폴더에는 위쪽 node_modules가 없어서, 묶음에 없는 파일은 그대로 ERR_MODULE_NOT_FOUND·ENOENT로 드러난다.
 // - 함수마다 진입점(handler)을 import하고 요청을 보내 조립(네 서비스 build)까지 거친다. 공개 함수 sax는 계정·게이트웨이·릴레이·푸시 라우터,
 //   내부 함수는 서명 없음 401, 정리 함수는 CRON_SECRET으로 200을 기대한다.
+// - 레지스트리 함수 둘은 구성 없음(서명 의식 전) 503과, 이 스크립트가 만든 시험 trust(무작위 공개키)·메모리 저장소로 로그 헤드 200·재서명 cron 200을 본다.
 // - env 값은 이 스크립트가 만든 시험용 무작위 값이고, DB는 미리 마이그레이션한 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
 // 사용(깨끗한 사본에서 vercel build를 한 뒤): cd poc && node --conditions=development services/deploy/check-vercel-output.ts <사본 루트>
 import { spawnSync } from 'node:child_process';
@@ -14,6 +15,7 @@ import { MIGRATIONS_DIR as ACCOUNT_MIGRATIONS } from '../account/src/index.ts';
 import { MIGRATIONS_DIR as GATEWAY_MIGRATIONS } from '../gateway/src/index.ts';
 import { MIGRATIONS_DIR as PUSH_MIGRATIONS } from '../push/src/index.ts';
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS } from '../relay/src/index.ts';
+import { LOG_MIGRATIONS_DIR as REGISTRY_MIGRATIONS } from '../registry/src/index.ts';
 import { LIMITS_MIGRATIONS_DIR, ed25519Private, ed25519RawPublic, migrate, openSqlite } from '../shared/src/index.ts';
 
 interface Probe {
@@ -46,7 +48,7 @@ export function materialize(funcDir: string, root: string, into: string): { dir:
 /** 함수 env(서비스 접두 + 공통). 시험용 값만 */
 async function testEnv(dbDir: string): Promise<Record<string, string>> {
   const file = (svc: string) => path.join(dbDir, `${svc}.db`);
-  for (const [svc, mig] of [['account', ACCOUNT_MIGRATIONS], ['gateway', GATEWAY_MIGRATIONS], ['relay', RELAY_MIGRATIONS], ['push', PUSH_MIGRATIONS]] as const) {
+  for (const [svc, mig] of [['account', ACCOUNT_MIGRATIONS], ['gateway', GATEWAY_MIGRATIONS], ['relay', RELAY_MIGRATIONS], ['push', PUSH_MIGRATIONS], ['registry', REGISTRY_MIGRATIONS]] as const) {
     const db = openSqlite(file(svc));
     await migrate(db, svc, mig);
     await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
@@ -89,6 +91,21 @@ async function testEnv(dbDir: string): Promise<Record<string, string>> {
     PUSH__LIMIT_ID_KEY: hex(),
     PUSH__PUSH_PUBLIC_ORIGIN: origin,
     PUSH__PUSH_PROVIDER: 'mock',
+  };
+}
+
+/** 레지스트리 시험 구성: 역할마다 무작위 키의 공개키(trust), 타임스탬프 시드, 메모리 저장소 + 미리 마이그레이션한 sqlite */
+function registryEnv(dbDir: string): Record<string, string> {
+  const pub = (seedHex: string) => ed25519RawPublic(ed25519Private(Buffer.from(seedHex, 'hex'))).toString('base64');
+  const keys = (role: string, n: number) => Object.fromEntries(Array.from({ length: n }, (_, i) => [`${role}-${i}`, pub(hex())]));
+  const ts = hex();
+  const trust = { keyEpoch: 1, keys: { root: keys('root', 3), package: keys('package', 3), policy: keys('policy', 3), timestamp: { 'timestamp-0': pub(ts) }, emergency: keys('emergency', 1), release: keys('release', 1) } };
+  return {
+    REGISTRY__TRUST_ROOT_JSON: JSON.stringify(trust),
+    REGISTRY__REGISTRY_LOG_SIGNING_KEY: ts,
+    REGISTRY__REGISTRY_ADMIN_TOKEN: hex(),
+    REGISTRY__REGISTRY_STORE: 'memory',
+    REGISTRY__SAX_SQLITE_FILE: path.join(dbDir, 'registry.db'),
   };
 }
 
@@ -138,30 +155,49 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
   try {
     fs.mkdirSync(path.join(work, 'db'));
     const env = await testEnv(path.join(work, 'db'));
-    const probes: Record<string, Probe[]> = {
-      sax: [
+    const reg = registryEnv(path.join(work, 'db'));
+    const cron = { authorization: `Bearer ${env.CRON_SECRET}` };
+    // 이름 → [함수, 추가 env, 요청들]. 레지스트리는 구성 없음·시험 구성 두 번
+    const checks: Record<string, [string, Record<string, string>, Probe[]]> = {
+      sax: ['sax', {}, [
         { method: 'POST', path: '/api/sax?__p=/v1/auth/code', body: { email: 'check@example.com' }, status: 200 },
         { method: 'GET', path: '/api/sax?__p=/v1/me', status: 401 },
         { method: 'POST', path: '/api/sax?__p=/v1/run-tokens', body: {}, status: 401 },
         { method: 'POST', path: '/api/sax?__p=/v1/mailboxes', body: {}, status: 401 },
         { method: 'PUT', path: '/api/sax?__p=/v1/push-token', body: {}, status: 401 },
         { method: 'GET', path: '/api/sax?__p=/internal/v1/devices/x', status: 404 },
-      ],
-      internal: [{ method: 'GET', path: '/api/internal?__p=/internal/v1/devices/dev-x', status: 401 }],
-      cron: [
-        { method: 'GET', path: '/api/cron', headers: { authorization: `Bearer ${env.CRON_SECRET}` }, status: 200 },
+      ]],
+      internal: ['internal', {}, [{ method: 'GET', path: '/api/internal?__p=/internal/v1/devices/dev-x', status: 401 }]],
+      cron: ['cron', {}, [
+        { method: 'GET', path: '/api/cron', headers: cron, status: 200 },
         { method: 'GET', path: '/api/cron', status: 401 },
-      ],
+      ]],
+      'registry(구성 없음)': ['registry', {}, [
+        { method: 'GET', path: '/api/registry?__p=/registry/log/head.json', status: 503 },
+        { method: 'GET', path: '/api/registry?__p=/registry/status.json', status: 404 },
+      ]],
+      registry: ['registry', reg, [
+        { method: 'GET', path: '/api/registry?__p=/registry/log/head.json', status: 200 },
+        { method: 'PUT', path: '/api/registry?__p=/admin/v1/status', body: {}, status: 401 },
+        { method: 'GET', path: '/api/registry?__p=/policy/current.json', status: 404 },
+      ]],
+      'registry-cron(구성 없음)': ['registry-cron', {}, [{ method: 'GET', path: '/api/registry-cron', headers: cron, status: 503 }]],
+      'registry-cron': ['registry-cron', reg, [
+        { method: 'GET', path: '/api/registry-cron', status: 401 },
+        { method: 'GET', path: '/api/registry-cron', headers: cron, status: 200 },
+      ]],
     };
     const out: { name: string; error: string | null }[] = [];
-    for (const name of Object.keys(probes)) {
-      const funcDir = path.join(fnRoot, `${name}.func`);
+    const made = new Map<string, { dir: string; handler: string }>();
+    for (const [name, [func, extra, probes]] of Object.entries(checks)) {
+      const funcDir = path.join(fnRoot, `${func}.func`);
       if (!fs.existsSync(funcDir)) {
-        out.push({ name, error: `${name}.func가 없다(vercel build를 먼저)` });
+        out.push({ name, error: `${func}.func가 없다(vercel build를 먼저)` });
         continue;
       }
-      const m = materialize(funcDir, root, path.join(work, `${name}.func`));
-      out.push({ name, error: runFunction(m.dir, m.handler, env, probes[name]!) });
+      if (!made.has(func)) made.set(func, materialize(funcDir, root, path.join(work, `${func}.func`)));
+      const m = made.get(func)!;
+      out.push({ name, error: runFunction(m.dir, m.handler, { ...env, ...extra }, probes) });
     }
     return out;
   } finally {

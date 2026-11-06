@@ -1,15 +1,29 @@
 // 데스크톱 계정 로그인·첫 PC 등록·기기 토큰(remote-account.ts, D08 §4.2, D09 §2): 실제 계정 서비스(개발 스택)에 붙여 돌린다.
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
+import { dirGuard, isUserSid, readDacl, windowsTool } from '@sax/platform';
 import { b64, fromB64, verifyAcctClaim, verifyCert } from '@sax/remote';
 import { CERT_RENEW_MS, checkIdentity, DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
 import { ORIGIN, softDesktopKeys, startDevStack, type DevStack } from './remote-dev-stack.ts';
 
 const EMAIL = 'owner@gyeonbon-test.example';
+
+/**
+ * 신원 파일이 사용자만 읽는지. POSIX는 모드 0600. Windows는 모드 비트가 없어(0o666으로 보인다) 제품처럼
+ * 앱 루트(userData의 부모) DACL 상속으로 막는다(D07 §1.1): 파일 ACE가 사용자·SYSTEM뿐이어야 한다.
+ */
+async function assertUserOnly(file: string): Promise<void> {
+  if (process.platform !== 'win32') return assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+  const [name = '', me = ''] = execFileSync(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' }).trim().split('","').map((f) => f.replace(/"/g, ''));
+  const local = name.split('\\')[0]?.toLowerCase() === process.env.COMPUTERNAME?.toLowerCase();
+  const sids = (await readDacl(file)).aces.map((a) => a.sid);
+  assert.ok(sids.length > 0 && sids.every((x) => isUserSid(x, me, local) || x === 'SY'), `신원 파일 ACE: ${sids.join(', ')}`);
+}
 
 describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 토큰', () => {
   let root: string;
@@ -25,13 +39,15 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
   };
 
   before(async () => {
-    root = await fsp.mkdtemp(path.join(os.tmpdir(), 'sax-remote-acct-'));
+    root = await fsp.mkdtemp(path.join(await fsp.realpath(os.tmpdir()), 'sax-remote-acct-'));
   });
   after(async () => {
     await fsp.rm(root, { recursive: true, force: true });
   });
   beforeEach(async () => {
     dir = await fsp.mkdtemp(path.join(root, 'u-'));
+    // 제품의 userData는 prepareLayout이 잠근 앱 루트 아래다. 시험 폴더도 같은 상태로 만든다(Windows DACL 판정의 전제).
+    assert.equal((await dirGuard().ensurePrivate(dir)).ok, true);
     s = await startDevStack();
     logs = [];
   });
@@ -55,7 +71,7 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     const c = verifyCert(id.cert, keys.aik.publicKey, s.clock.now())!;
     assert.equal(c.device_id, id.deviceId);
     assert.equal(b64(c.Vx), b64(keys.vd.publicKey));
-    assert.equal(fs.statSync(path.join(dir, 'remote-identity.json')).mode & 0o777, 0o600);
+    await assertUserOnly(path.join(dir, 'remote-identity.json'));
     for (const bad of ['session', 'loginId', 'sxd1.', s.mail.lastCode(EMAIL)!]) assert.ok(!raw.includes(bad), bad);
     const dl = (await s.svc.deviceList((await s.svc.verifyEmailCode((await s.svc.startEmailCode(EMAIL)).loginId, s.mail.lastCode(EMAIL)!)).accountId)) as { aikPub: string };
     assert.equal(dl.aikPub, id.aikPub, '서버에 이 AIK가 고정됐다');
