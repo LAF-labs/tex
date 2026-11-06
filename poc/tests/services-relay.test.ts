@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, type Sql } from '../services/shared/src/index.ts';
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS, OUTER, RELAY, RELAY_VISIBILITY, RelayHub, RelayService, newRoomId } from '../services/relay/src/index.ts';
 import { ApnsSender, FcmSender, MIGRATIONS_DIR as PUSH_MIGRATIONS, MockPushSender, PUSH_VISIBILITY, PushService, WAKE, pushRouter } from '../services/push/src/index.ts';
-import { D, H, client } from './services-kit.ts';
-import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
+import { D, H, client, device, entry } from './services-kit.ts';
+import { DEVICE, httpPairingRooms } from '../services/account/src/index.ts';
+import { ACCOUNT_ORIGIN, accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
 const RO = 'https://relay.test.invalid';
 const PO = 'https://push.test.invalid';
@@ -67,6 +68,7 @@ async function start(): Promise<Env> {
   const r = client(rbase);
   const p = client(pbase);
   // 계정 서비스의 정지 훅 → 릴레이·푸시 내부 API(운영과 같은 HTTP 경로)
+  s.pairing.impl = httpPairingRooms(rbase, 'internal-test');
   for (const base of [rbase, pbase]) s.hooks.push({ stopped: async (id) => void (await client(base)('POST', `/internal/v1/devices/${id}/stopped`, { headers: { authorization: 'Internal internal-test' } })) });
   const pc0 = await signedDesktop(s, 'relay@example.com');
   const pc = { ...pc0, ...cached(pc0, s) };
@@ -393,6 +395,89 @@ describe('M7-3 릴레이: 1회용 페어링 룸(정원 2·120초·계정 없음)
     assert.equal(await open(`${e.wsBase}/v1/rooms/${roomId}`), null);
     for (let i = 0; i < 4; i++) assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId: newRoomId() } })).status, 201);
     assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId: newRoomId() } })).json.error, 'policy.rate_limited');
+  });
+});
+
+describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기 토큰 + 소비된 1회용 페어링 룸으로 폰을 등록', () => {
+  let e: Env;
+  beforeEach(async () => (e = await start()));
+  afterEach(() => stop(e));
+
+  const enrollBody = (phone: ReturnType<typeof device>, roomId: string) => ({ deviceId: phone.id, role: 'mobile', platform: 'android', name: '새 폰', Sx: phone.S.b64, Vx: phone.V.b64, roomId });
+  const enroll = async (body: object, who: Who = e.pc) => {
+    const t = await who.token();
+    return e.s.req('POST', '/v1/devices/enroll', { headers: who.headers('POST', ACCOUNT_ORIGIN, '/v1/devices/enroll', t), body });
+  };
+  /** PC가 룸을 만들고 두 쪽이 붙는다(폰은 아직 기기 토큰이 없다: 룸 참가에는 인증이 없다) */
+  const pairedRoom = async (join = 2) => {
+    const roomId = newRoomId();
+    assert.equal((await e.call(e.pc, 'POST', '/v1/rooms', { body: { roomId } })).status, 201);
+    const socks: Sock[] = [];
+    for (let i = 0; i < join; i++) socks.push((await open(`${e.wsBase}/v1/rooms/${roomId}`))!);
+    return { roomId, socks };
+  };
+
+  it('룸이 페어링된 뒤 한 번만 등록되고, 같은 PC의 AIK 서명 기기 목록으로 활성이 되어 폰 기기 토큰을 받는다', async () => {
+    const { roomId, socks } = await pairedRoom();
+    const phone = device('mobile', e.s.clock.now());
+    const r = await enroll(enrollBody(phone, roomId));
+    assert.equal(r.status, 201, r.text);
+    assert.ok(e.s.mail.outbox.some((m) => m.kind === 'device_enrolled'));
+    // 같은 룸으로 두 번째 등록은 안 된다(1회용)
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'relay.room_unavailable');
+    // 그 뒤 PUT /v1/device-list(같은 PC의 AIK 서명)로 활성
+    const cur = (await e.s.req('GET', '/v1/device-list', { headers: { authorization: `Bearer ${e.pc.session}` } })).json.deviceList as { listVersion: number; entries: unknown[] };
+    const t = await e.pc.token();
+    const up = await e.s.req('PUT', '/v1/device-list', {
+      headers: e.pc.headers('PUT', ACCOUNT_ORIGIN, '/v1/device-list', t),
+      body: { deviceList: { listVersion: cur.listVersion + 1, entries: [...cur.entries, entry(e.pc.aik, phone, cur.listVersion + 1)], revoked: [] } },
+    });
+    assert.equal(up.status, 200, up.text);
+    const row = await e.s.db.one<{ state: string; role: string }>('SELECT state, role FROM devices WHERE device_id = $1', [phone.id]);
+    assert.deepEqual({ ...row }, { state: 'active', role: 'mobile' });
+    for (const s of socks) s.ws.close();
+  });
+
+  it('페어링되지 않은 룸(폰이 안 붙음)·다른 PC가 만든 룸·없는 룸·만료된 룸은 모두 같은 404', async () => {
+    const lone = await pairedRoom(1);
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), lone.roomId))).json.error, 'relay.room_unavailable');
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), newRoomId()))).json.error, 'relay.room_unavailable');
+    // 다른 PC(다른 계정)는 이 PC가 만든 룸을 쓸 수 없다
+    const { roomId, socks } = await pairedRoom();
+    const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId), pc2)).json.error, 'relay.room_unavailable');
+    const late = await pairedRoom();
+    e.s.clock.advance(120_000);
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), late.roomId))).json.error, 'relay.room_unavailable');
+    for (const s of [...lone.socks, ...socks, ...late.socks]) s.ws.close();
+    // 실패한 시도는 기기를 만들지 않는다
+    assert.equal((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n, 1);
+  });
+
+  it('폰 기기 토큰으로는 등록할 수 없고, 형식(role·플랫폼·roomId)이 틀리면 400, 계정 세션 경로는 roomId를 받지 않는다', async () => {
+    const { roomId, socks } = await pairedRoom();
+    const phone = device('mobile', e.s.clock.now());
+    assert.equal((await enroll(enrollBody(phone, roomId), e.phone)).status, 403);
+    for (const bad of [{ role: 'desktop' }, { platform: 'windows' }, { roomId: 'short' }, { extra: 1 }]) assert.equal((await enroll({ ...enrollBody(phone, roomId), ...bad })).status, 400, JSON.stringify(bad));
+    const viaSession = await e.s.req('POST', '/v1/devices/enroll', { headers: { authorization: `Bearer ${e.pc.session}` }, body: enrollBody(phone, roomId) });
+    assert.equal(viaSession.status, 400);
+    // 위 거절들은 룸을 소비하지 않았다
+    assert.equal((await enroll(enrollBody(phone, roomId))).status, 201);
+    for (const s of socks) s.ws.close();
+  });
+
+  it('계정당 모바일 상한을 넘으면 룸을 소비하지 않고 account.device_limit', async () => {
+    for (let i = 1; i < DEVICE.maxMobiles; i++) {
+      const { roomId, socks } = await pairedRoom();
+      assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).status, 201);
+      for (const s of socks) s.ws.close();
+    }
+    const { roomId, socks } = await pairedRoom();
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'account.device_limit');
+    // 한 대를 폐기 처리(여기서는 DB로 대신)하면 같은 룸으로 등록할 수 있다
+    await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [e.phone.id]);
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).status, 201);
+    for (const s of socks) s.ws.close();
   });
 });
 

@@ -42,6 +42,10 @@ const V = {
     obj({ deviceId: S.uuid4, role: { enum: ['desktop', 'mobile'] }, platform: { enum: ['windows', 'macos', 'ios', 'android'] }, name: { type: 'string', minLength: 1, maxLength: 40 }, Sx: S.b64key32, Vx: S.b64key32 }),
   ),
   deviceList: validator<{ deviceList: DeviceList }>(obj({ deviceList: deviceListSchema })),
+  /** PC가 폰을 대신 등록(페어링 7단계). roomId는 그 PC가 만든 1회용 페어링 룸(16B base64url, D08 §4.2) */
+  enrollMobile: validator<{ deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }>(
+    obj({ deviceId: S.uuid4, role: { const: 'mobile' }, platform: { enum: ['ios', 'android'] }, name: { type: 'string', minLength: 1, maxLength: 40 }, Sx: S.b64key32, Vx: S.b64key32, roomId: { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } }),
+  ),
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
   deviceToken: validator<{ cert: SignedCert }>(obj({ cert: signedCertSchema })),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
@@ -177,6 +181,13 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('GET', '/v1/devices', async (ctx) => json(200, { devices: await svc.listDevices(await sessionOrDevice(ctx)) }));
   r.add('POST', '/v1/devices/enroll', async (ctx) => {
+    // 데스크톱 기기 토큰(DPoP)이면 폰 대리 등록(페어링 룸 소비 필요), 아니면 계정 세션 등록
+    if (String(ctx.headers.authorization ?? '').startsWith('DPoP ')) {
+      const c = await device(ctx, 'devlist');
+      if (c.role !== 'desktop') fail('account.scope_denied');
+      const b = V.enrollMobile(ctx.body);
+      return json(201, await svc.enrollByDesktop({ accountId: c.acc, deviceId: c.dev }, b));
+    }
     const s = await session(ctx);
     const b = V.enroll(ctx.body);
     if (PLATFORM_ROLE[b.platform] !== b.role) fail('request.param_rejected');

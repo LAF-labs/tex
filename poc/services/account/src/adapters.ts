@@ -79,3 +79,11 @@ export class MockMailSender implements MailSender {
 export interface DeviceStopHook {
   stopped(deviceId: string): Promise<void>;
 }
+
+/**
+ * 릴레이의 1회용 페어링 룸 소비 확인(팀장 결정 2026-11-06, D08 §4.2 7단계). PC가 폰을 대신 등록할 때
+ * 그 PC가 만든 룸에 폰이 실제로 붙었고(정원 2가 찼고) 아직 등록에 쓰이지 않았으면 true를 주고 룸을 소비 처리한다.
+ */
+export interface PairingRooms {
+  redeem(roomId: string, desktopDeviceId: string): Promise<boolean>;
+}

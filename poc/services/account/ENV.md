@@ -19,5 +19,6 @@
 | `MAIL_PROVIDER` | 예 | `mock` | 이 저장소에는 모의 메일만 있다 |
 | `INTERNAL_TOKEN` ⚿ | 예 | 문자열(32바이트 이상 권장) | 내부 API(`/internal/v1/…`) 공유 비밀. 릴레이·푸시·게이트웨이와 같은 값 |
 | `STOP_HOOK_URLS` | 아니오 | 쉼표 구분 내부 URL | 긴급 정지·폐기를 알릴 릴레이·푸시 서비스 |
+| `RELAY_INTERNAL_URL` | 아니오 | 내부 URL | 폰 대리 등록 때 페어링 룸 소비를 확인할 릴레이 내부 주소(`/internal/v1/rooms/:id/redeem`, `INTERNAL_TOKEN`). 없으면 데스크톱 기기 토큰의 폰 등록은 `404 relay.room_unavailable` |
 | `TRUST_PROXY` | 아니오 | `1` | 앞단 프록시의 `X-Forwarded-For`를 한도 키에 쓴다(IP는 저장하지 않고 당일 솔트 HMAC만, CONTRACT §10) |
 | `PORT` / `HOST` | 아니오(`8080` / `0.0.0.0`) | | |
