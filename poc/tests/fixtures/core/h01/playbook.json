@@ -274,6 +274,13 @@
        "fieldKey": "taxAmount",
        "ref": "$inputs.amounts.tax"
       }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "counterpartEmail",
+       "ref": "$inputs.email",
+       "ifAbsent": "empty"
+      }
      }
     ]
    },
