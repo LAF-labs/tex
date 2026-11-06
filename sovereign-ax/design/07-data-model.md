@@ -1,5 +1,6 @@
 # D07. 데이터 모델
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): §8 OCR 폴백의 언어 데이터 정정(`kor_fast` → `@tesseract.js-data/kor`의 `4.0.0_best_int`·`4.0.0`, docparse PR #78).
 > 제품 정의 반영 2026-11-05: 급여대장(`employees`·`payroll_months`·`payroll_lines`·`rate_tables`, ADR-031)과 세무사 꾸러미(`bundle_items`·`bundle_entries`·`card_txns`·`receipts`·`cash_sales`, ADR-032) 테이블을 §2에 더했다. 모두 로컬 전용이고 서버 색인 대상이 아니다.
 > ADR-034 결정 8 채택 2026-11-05: 근무표 범위 축소, `shifts` 삭제 제안(데이터 트랙 확인 전).
 > 2026-11-05 팀장 결정(데이터 PR #53·#67): `rate_tables` 시행일 표 규칙(열린 표의 끝, 겹침, 고르기, `rate_table_missing`).
@@ -435,7 +436,7 @@ CREATE INDEX ON doc_index(account_id, slot_token, doc_type, expires_on);
 ## 8. PDF 텍스트 추출 메모(R3)
 
 - `pdfjs-dist`로 한글 텍스트 추출. 공백이 U+0001로 나오는 경우가 있어 정규화한다. ToUnicode 맵이 없는 PDF는 추출이 깨지므로 S13에서 부재율을 측정한다.
-- `mupdf` npm은 AGPL이라 제외. OCR 폴백은 `tesseract.js` + 번들 `kor_fast`, 그 다음 OS OCR.
+- `mupdf` npm은 AGPL이라 제외. OCR 폴백은 `tesseract.js` + `@tesseract.js-data/kor`(사진 `4.0.0_best_int`, 증명서 `4.0.0`. ~~번들 `kor_fast`~~는 그 패키지에 없다, docparse PR #78), 그 다음 OS OCR.
 
 ## 9. 평문 잔존 지점과 처리(R-B D-4·D-5, 상충 A/C-01·A/C-02)
 

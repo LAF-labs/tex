@@ -1,5 +1,6 @@
 // 두 main(셸 shell-app.ts·개발 콘솔 main.ts)이 같이 쓰는 하드닝(ADR-025 결정 8, D11 §4).
 // Electron 값은 인자로만 받는다(타입 import만). node --test에서 상수·판정을 불러 시험할 수 있다.
+import path from 'node:path';
 import type { App, BrowserWindow, Session, WebContents, WebPreferences } from 'electron';
 
 /**
@@ -120,4 +121,72 @@ export function hardenWindow(win: BrowserWindow): void {
     wc.setZoomFactor(1);
     void wc.setVisualZoomLevelLimits(1, 1);
   });
+}
+
+// ---- 설치본 자기 점검(#76 인계, apps/desktop/build/README.md "기동 자기 점검") ----
+
+/** 앱 안 build-info.json(scripts/package-win.mjs가 쓴다). */
+export interface BuildInfo {
+  productName: string;
+  version: string;
+  channel: 'stable' | 'beta';
+  signing: 'azure' | 'unsigned';
+  commit: string;
+  devOnlyIncluded: string[];
+}
+
+export function isBuildInfo(x: unknown): x is BuildInfo {
+  const b = x as Partial<BuildInfo> | null;
+  return (
+    !!b &&
+    typeof b === 'object' &&
+    typeof b.productName === 'string' &&
+    !!b.productName &&
+    typeof b.version === 'string' &&
+    (b.channel === 'stable' || b.channel === 'beta') &&
+    (b.signing === 'azure' || b.signing === 'unsigned') &&
+    typeof b.commit === 'string' &&
+    Array.isArray(b.devOnlyIncluded) &&
+    b.devOnlyIncluded.every((f) => typeof f === 'string')
+  );
+}
+
+/** 화면 상단 배지 문구(warn:만). 사실만 적는다. */
+export const BUILD_WARN_TEXT: Record<string, string> = {
+  unsigned_build: '미서명 빌드',
+  dev_code_included: '개발용 코드 포함 빌드',
+  install_unexpected: '예상 밖 설치 위치',
+};
+
+/**
+ * 패키지된 앱만(isPackaged). 빈 배열이면 통과. 'fatal:'이면 열지 않고, 'warn:'이면 상단 배지(BUILD_WARN_TEXT).
+ * - fatal:not_asar             appPath가 resources\app.asar가 아니다(OnlyLoadAppFromAsar 퓨즈가 꺼졌거나 다른 실행 파일)
+ * - fatal:install_in_data_root execPath가 데이터 루트(%LOCALAPPDATA%\SovereignAX) 아래다(D07 §1.1 DACL 루트와 섞임)
+ * - fatal:build_info_missing   build-info.json이 없거나 모양이 틀리다
+ * - warn:install_unexpected    %LOCALAPPDATA%\Programs\<productName> 밖(사용자 /D 설치·복사본)
+ * - warn:unsigned_build        signing !== 'azure'(베타 배포본이 아니다)
+ * - warn:dev_code_included     devOnlyIncluded가 비어 있지 않다
+ * Windows 경로는 대소문자를 가리지 않는다. 데이터 루트 이름은 productName이 아니라 고정 'SovereignAX'다(@sax/platform 데이터 루트).
+ */
+export function packagedProblems(o: { isPackaged: boolean; appPath: string; execPath: string; localAppData: string; buildInfo: unknown; platform?: NodeJS.Platform }): string[] {
+  if (!o.isPackaged) return [];
+  const p = (o.platform ?? process.platform) === 'win32' ? path.win32 : path.posix;
+  const norm = (s: string) => {
+    const r = p.resolve(s);
+    return p === path.win32 ? r.toLowerCase() : r;
+  };
+  const under = (child: string, parent: string) => {
+    const rel = p.relative(norm(parent), norm(child));
+    return rel === '' || (!!rel && !rel.startsWith('..') && !p.isAbsolute(rel));
+  };
+  const out: string[] = [];
+  const app = norm(o.appPath);
+  if (p.basename(app) !== 'app.asar' || p.basename(p.dirname(app)) !== 'resources') out.push('fatal:not_asar');
+  if (o.localAppData && under(o.execPath, p.join(o.localAppData, 'SovereignAX'))) out.push('fatal:install_in_data_root');
+  const info = isBuildInfo(o.buildInfo) ? o.buildInfo : null;
+  if (!info) out.push('fatal:build_info_missing');
+  if (info && o.localAppData && !under(o.execPath, p.join(o.localAppData, 'Programs', info.productName))) out.push('warn:install_unexpected');
+  if (info && info.signing !== 'azure') out.push('warn:unsigned_build');
+  if (info && info.devOnlyIncluded.length) out.push('warn:dev_code_included');
+  return out;
 }

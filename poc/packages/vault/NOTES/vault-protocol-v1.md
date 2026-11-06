@@ -6,11 +6,11 @@
 
 | 포트 | 기존 | 추가 |
 |---|---|---|
-| engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `crypto.publicKeys`·`crypto.noiseDH`·`crypto.signVd`·`crypto.hpkeOpen` |
-| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget` |
+| engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `crypto.publicKeys`·`crypto.noiseDH`·`crypto.signVd`·`crypto.signAik`·`crypto.hpkeOpen` |
+| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list` |
 | secretInput | secret.provide | `secret.store`(등록 창 T-06 전용) |
 
-commitGuard·crypto는 타입만 정해 두었다(구현은 다음 PR, 지금은 `not_implemented`).
+commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.
 
 ## 2. 프로필 범위(`ProfileScope`) — 결정 Q-2
 - Phase 1은 프로필 하나(사업자)로 운영한다. 값은 `'business'`이고, `'personal'`은 PoC 시험(audit-v V5) 호환으로 남긴다.
@@ -112,3 +112,21 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
 - 그 전까지 Windows에서는 사람 비밀 저장을 거부한다(`vault.native_helper_missing`, fail-closed).
 - 인터페이스: `poc/packages/vault/src/keychain/backend.ts`의 `WindowsKeyHelper`(TPM·DPAPI)와 `HelloProvider`(Hello).
 - 필요한 네이티브 호출과 실측 항목: `poc/reports/M1-3-windows.md`(W-1~W-7).
+
+## 9. 공동인증서 탐지 `npki.list` — desktop(main)·docparse 트랙
+- control 포트 전용이다. 인자는 없다(`{}`). 결과는 `NpkiListResult{certs: NpkiCertEntry[], skipped}`다. 부를 때 한 번 훑고 감시하지 않는다(D05 §6 (4)).
+- 위치(R3 §3)
+  - Windows: `%USERPROFILE%\AppData\LocalLow\NPKI`, `%ProgramFiles%\NPKI`
+  - macOS: `~/Library/Preferences/NPKI`, `~/Documents/NPKI`, `~/NPKI`
+  - 그 밖(개발): `~/NPKI`
+  - 이동식 저장소는 자동으로 훑지 않는다(사용자가 고른 파일만, 후속).
+- 구조는 `<위치>/<CA>/USER/<cn=…>/signCert.der`다. `USER`·파일 이름은 대소문자를 가리지 않는다. CA 이름은 인쇄 가능한 ASCII 64자 이하만 받는다.
+- 항목: `{id(sha256(dir) 앞 16hex), root, ca, dir, certFile, certDer, hasKey}`
+  - **금고는 `certDer`를 파싱하지 않는다.** main이 docparse 샌드박스 `certInfo(der)`에 넘기고 고정 4필드 `{subject, issuer, notBefore, notAfter}`를 스키마로 검증해 쓴다(ADR-014 결정 1, D17 §3).
+  - `hasKey`는 같은 폴더에 `signPri.key` 이름의 일반 파일 항목이 있다는 뜻이다. **signPri.key는 열지도 stat하지도 않는다**(D05 §6 (3)). 시험이 파일 접근을 감사한다.
+  - `dir`·`certFile`·`ca`는 화면과 S1b 파일 선택에만 쓴다. 텔레메트리·모델·로그로 보내지 않는다(D05 §6 (5)). CA·cn은 비신뢰 문자열이니 `textContent`로만 표시한다.
+- 비신뢰 위치(LocalLow)라 다음은 읽지 않고 `skipped`에 이유별 개수만 센다.
+  - 디렉터리·파일 심볼릭 링크(`symlink`), 일반 파일이 아님(`not_file`), 0바이트(`empty`), 8KB(`NPKI_CERT_MAX_BYTES`) 초과(`too_large`)
+  - 열거 뒤 바꿔치기(lstat과 연 파일의 dev·ino 불일치, `changed`), 하드링크(nlink>1, `linked`), 읽기 실패(`unreadable`)
+  - CA 32·CA당 cn 64·전체 128 상한(`limit`), 이상한 CA 이름(`bad_name`)
+- 로그는 `vault.npki_listed{roots, certs, skipped}` 개수뿐이다.

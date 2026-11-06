@@ -33,6 +33,7 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
+    'npki.list',
   ],
   secretInput: ['secret.provide', 'secret.store'],
 };
@@ -419,6 +420,36 @@ export interface HpkeOpenParams {
   ct: Uint8Array;
   info: 'SAX-env-v1';
   aad: Uint8Array;
+}
+
+// ───────────────────────── 공동인증서 탐지(control) ─────────────────────────
+
+/** signCert.der 읽기 상한(바이트). 실제 인증서는 2KB 안팎이다. */
+export const NPKI_CERT_MAX_BYTES = 8192;
+export type NpkiRootKind = 'locallow' | 'program_files' | 'preferences' | 'documents' | 'home';
+/**
+ * `npki.list{}` → NpkiListResult(D05 §6 허용 동작 (1)~(3), A-28).
+ * - 금고는 signCert.der를 **파싱하지 않는다**. main이 `certDer`를 docparse 샌드박스 `certInfo(der)`에 넘기고
+ *   고정 4필드 `{subject, issuer, notBefore, notAfter}`를 스키마로 검증해 쓴다(ADR-014, D17 §3).
+ * - signPri.key는 열지 않는다. 같은 폴더에 그 이름의 일반 파일 항목이 있는지만 `hasKey`로 알린다.
+ * - `dir`·`certFile`은 화면·S1b 파일 선택에만 쓴다. 텔레메트리·모델·로그로 보내지 않는다(D05 §6 (5)).
+ * - 심볼릭 링크·하드링크·특수 파일·8KB 초과·열거 뒤 바꿔치기는 건너뛰고 `skipped`에 이유별 개수만 센다.
+ */
+export interface NpkiCertEntry {
+  /** sha256(dir) 앞 16 hex. 같은 PC에서 다시 불러도 같다. */
+  id: string;
+  root: NpkiRootKind;
+  /** CA 폴더 이름(yessign 등, 비신뢰 문자열 — 표시 전 이스케이프) */
+  ca: string;
+  /** 인증서 폴더 절대 경로(`<root>/<ca>/USER/<cn=…>`) */
+  dir: string;
+  certFile: string;
+  certDer: Uint8Array;
+  hasKey: boolean;
+}
+export interface NpkiListResult {
+  certs: NpkiCertEntry[];
+  skipped: Partial<Record<'symlink' | 'not_file' | 'too_large' | 'empty' | 'changed' | 'linked' | 'unreadable' | 'limit' | 'bad_name', number>>;
 }
 
 // ───────────────────────── 금고 이벤트 ─────────────────────────
