@@ -8,6 +8,7 @@ export * from './open.ts';
 export * from './payroll-repo.ts';
 export * from './onboarding-repo.ts';
 export * from './rate.ts';
+export * from './schedule-repo.ts';
 export * from './repo.ts';
 export * from './schema.ts';
 export * from './telemetry.ts';
