@@ -55,7 +55,9 @@ test('설정: 퓨즈·asar·사용자별 NSIS·게시 없음·미서명이면 �
 });
 
 test('제외 목록: 소스·지도·시험·다른 OS 네이티브', () => {
-  for (const p of ['!**/*.ts', '!**/*.map', '!**/src/**', '!build/**', '!node_modules/@napi-rs/canvas*/**']) assert.ok((EXCLUDE as string[]).includes(p), p);
+  for (const p of ['!**/*.ts', '!**/*.map', '!src/**', '!node_modules/@sax/*/src/**', '!build/**', '!node_modules/@napi-rs/canvas*/**']) assert.ok((EXCLUDE as string[]).includes(p), p);
+  // 실행 코드가 src/ 아래인 의존성(debug·tesseract.js main, officecrypto-tool ./src)을 지우면 설치본 엔진이 import에서 끝난다
+  assert.ok(!(EXCLUDE as string[]).some((p) => p === '!**/src/**' || p === '!node_modules/**/src/**'), 'node_modules 전체 src 제외 금지');
 });
 
 test('설치 경로: 설치 폴더 이름이 데이터 루트 이름과 같아도 경로는 Programs 아래로 나뉜다(installer.nsh가 데이터 루트 안 설치를 막는다)', () => {
