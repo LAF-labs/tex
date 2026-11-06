@@ -1,0 +1,217 @@
+﻿{
+    "exeVersion":  "0.0.0.0",
+    "installDirLeaf":  "sovereign-ax",
+    "firstRun":  true,
+    "attached":  true,
+    "attachLagMs":  127,
+    "marks":  {
+                  "windowHandleMs":  14578,
+                  "vaultStartedMs":  15646,
+                  "dbOpenedMs":  19493,
+                  "uiReadyMs":  21049
+              },
+    "peak":  {
+                 "wsMb":  681,
+                 "privMb":  402,
+                 "procs":  7
+             },
+    "exitedBySelf":  false,
+    "exitCode":  null,
+    "leftoverProcs":  0,
+    "timeline":  [
+                     {
+                         "ms":  415,
+                         "procs":  1,
+                         "wsMb":  4.3
+                     },
+                     {
+                         "ms":  1417,
+                         "procs":  1,
+                         "wsMb":  80.7
+                     },
+                     {
+                         "ms":  2589,
+                         "procs":  1,
+                         "wsMb":  81.9
+                     },
+                     {
+                         "ms":  3899,
+                         "procs":  1,
+                         "wsMb":  81.9
+                     },
+                     {
+                         "ms":  5074,
+                         "procs":  1,
+                         "wsMb":  81.9
+                     },
+                     {
+                         "ms":  6319,
+                         "procs":  1,
+                         "wsMb":  81.9
+                     },
+                     {
+                         "ms":  7458,
+                         "procs":  1,
+                         "wsMb":  82
+                     },
+                     {
+                         "ms":  8629,
+                         "procs":  1,
+                         "wsMb":  82.3
+                     },
+                     {
+                         "ms":  9885,
+                         "procs":  1,
+                         "wsMb":  82.3
+                     },
+                     {
+                         "ms":  11135,
+                         "procs":  1,
+                         "wsMb":  82.3
+                     },
+                     {
+                         "ms":  12354,
+                         "procs":  1,
+                         "wsMb":  82.3
+                     },
+                     {
+                         "ms":  13487,
+                         "procs":  1,
+                         "wsMb":  82.3
+                     },
+                     {
+                         "ms":  14578,
+                         "procs":  7,
+                         "wsMb":  371.4
+                     },
+                     {
+                         "ms":  16405,
+                         "procs":  7,
+                         "wsMb":  480.4
+                     },
+                     {
+                         "ms":  17515,
+                         "procs":  7,
+                         "wsMb":  522.9
+                     },
+                     {
+                         "ms":  18713,
+                         "procs":  7,
+                         "wsMb":  586.3
+                     },
+                     {
+                         "ms":  19846,
+                         "procs":  7,
+                         "wsMb":  606.9
+                     },
+                     {
+                         "ms":  21023,
+                         "procs":  7,
+                         "wsMb":  679.2
+                     },
+                     {
+                         "ms":  22148,
+                         "procs":  7,
+                         "wsMb":  661.1
+                     },
+                     {
+                         "ms":  23212,
+                         "procs":  7,
+                         "wsMb":  664.2
+                     },
+                     {
+                         "ms":  24302,
+                         "procs":  7,
+                         "wsMb":  649
+                     },
+                     {
+                         "ms":  25378,
+                         "procs":  7,
+                         "wsMb":  649.1
+                     },
+                     {
+                         "ms":  26456,
+                         "procs":  7,
+                         "wsMb":  649.1
+                     },
+                     {
+                         "ms":  27525,
+                         "procs":  7,
+                         "wsMb":  649.1
+                     },
+                     {
+                         "ms":  28588,
+                         "procs":  7,
+                         "wsMb":  640.8
+                     },
+                     {
+                         "ms":  29659,
+                         "procs":  7,
+                         "wsMb":  640.8
+                     },
+                     {
+                         "ms":  30730,
+                         "procs":  7,
+                         "wsMb":  639
+                     },
+                     {
+                         "ms":  31804,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  32875,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  33954,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  35026,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  36096,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  37181,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  38248,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  39323,
+                         "procs":  7,
+                         "wsMb":  629.7
+                     },
+                     {
+                         "ms":  40394,
+                         "procs":  7,
+                         "wsMb":  628.9
+                     }
+                 ],
+    "shots":  {
+                  "value":  [
+                                {
+                                    "class":  "Chrome_WidgetWin_1",
+                                    "title":  "소버린 AX (PoC 데모)",
+                                    "left":  35,
+                                    "top":  0,
+                                    "width":  1296,
+                                    "height":  754,
+                                    "file":  "first-launch-0.png"
+                                }
+                            ],
+                  "Count":  1
+              }
+}
