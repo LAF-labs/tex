@@ -9,6 +9,7 @@
 // 전송은 주입한 WebSocket 생성자로만 한다: 폰은 RN 내장 WebSocket(헤더는 세 번째 인자), PC는 @sax/net egress가 만든 것을 넘긴다.
 // 토큰은 URL에 넣지 않는다(접근 로그 노출 방지).
 
+import { isDevPlainHost } from './devhosts.ts';
 import { b64url } from './bytes.ts';
 import { KIND } from './frame.ts';
 import type { Link, MailboxTokens, RelayClient } from './relay.ts';
@@ -34,24 +35,20 @@ export interface WsRelayOptions {
    * `deviceAuthHeaders(await cache.token(), key, htm, htu)`(devauth.ts). 없으면 우편함에 들어가지 않는다.
    */
   deviceAuth?: (htm: 'GET', htu: string) => Promise<Record<string, string>>;
-  /** 개발용 로컬 릴레이(ws://, localhost 또는 같은 LAN의 mDNS `*.local` 이름만. 실기기 개발 빌드가 맥의 개발 스택에 붙을 때). */
+  /** 개발용 로컬 릴레이(ws://, localhost만. 개발 빌드가 allowDevLanHosts(true)를 켰으면 같은 LAN의 mDNS `<이름>.local`도). */
   insecureLocal?: boolean;
   joinTimeoutMs?: number;
   /** ping 간격(기본 30초, 0이면 끈다). */
   pingMs?: number;
 }
 
-const LOCAL = new Set(['localhost', '127.0.0.1', '[::1]']);
-/** mDNS 링크 로컬 이름(맥의 LocalHostName.local). IP 주소·공개 도메인은 평문을 허용하지 않는다. */
-const MDNS_LOCAL = /^[A-Za-z0-9-]{1,63}\.local$/;
 /** 서버 프레임 상한(services/relay RELAY.frameMax). */
 export const RELAY_FRAME_MAX = 65_535;
 export const RELAY_CLOSE = { tokenExpired: 4001, replaced: 4002, policy: 1008, tooBig: 1009 } as const;
 
 function checkHost(host: string, insecureLocal: boolean): void {
   if (!/^[A-Za-z0-9.-]+(:\d{1,5})?$|^\[::1\](:\d{1,5})?$/.test(host)) throw new Error('relay: bad host');
-  const name = host.replace(/:\d+$/, '');
-  if (insecureLocal && !LOCAL.has(name) && !MDNS_LOCAL.test(name)) throw new Error('relay: insecure only for localhost');
+  if (insecureLocal && !isDevPlainHost(host.replace(/:\d+$/, ''))) throw new Error('relay: insecure only for localhost');
 }
 
 /** DPoP htu의 origin(https, 로컬 개발만 http). */

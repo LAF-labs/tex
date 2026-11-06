@@ -19,7 +19,7 @@ import { toQR } from 'toqr';
 import { devAcctClaim } from './test-account-key.ts';
 import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, softNoiseStatic, softSigner,
   uuid4, wsRelayClient, x25519Keygen, type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
@@ -35,6 +35,8 @@ const HOST = process.env.STACK_HOST ?? `localhost:${FRONT}`;
 if (!/^(localhost|[a-z0-9-]{1,63}\.local):\d{1,5}$/.test(HOST)) throw new Error('STACK_HOST must be localhost:<port> or <lowercase name>.local:<port>');
 if (Number(HOST.split(':')[1]) !== FRONT) throw new Error(`STACK_HOST port must be ${FRONT}`);
 const ORIGIN = `http://${HOST}`;
+// 실기기용 .local이면 이 프로세스(더미 PC의 DPoP·WSS)도 mDNS 평문을 켠다. localhost면 끈 채로 둔다.
+allowDevLanHosts(HOST.endsWith('.local:' + FRONT));
 const OUT = join(import.meta.dirname, 'out');
 mkdirSync(join(OUT, 'received'), { recursive: true });
 const log = (...a: unknown[]) => console.log(new Date().toISOString().slice(11, 19), ...a);

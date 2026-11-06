@@ -1,27 +1,24 @@
-// 앱 내장 값. 릴레이 허용 목록은 바이너리에 고정한다(OTA 없음, ADR-028 앱 채널 = 스토어 서명 빌드만, D01 §6).
+// 앱 내장 값. 개발 스택 판정은 devhost.ts(순수 함수, 릴리스 거절 시험 대상)에 있다.
 import * as Device from 'expo-device';
+import { allowDevLanHosts } from '@sax/remote';
+import { RELAY_ALLOWLIST, resolveDevConfig } from './devhost';
 
+export { RELAY_ALLOWLIST };
 export const APP_VERSION = '0.1.0';
-export const RELAY_ALLOWLIST: readonly string[] = ['relay.tex.laf-co.com'];
 
 /**
- * 시뮬레이터 개발 빌드만 참이다. 릴리스 빌드(__DEV__ = false)와 실기기에서는 항상 거짓.
- * 시뮬레이터 전용 완화(생체 인증 없는 키, 견본 영수증 카메라)를 켠다. 실기기 개발 빌드에서는 켜지 않는다.
+ * EXPO_PUBLIC_TEX_DEV_HOST=<소문자 LocalHostName>.local:8787 은 실기기 개발 빌드가 붙을 맥의 개발 스택이다(Metro를 띄울 때 넣으면
+ * Expo가 번들 때 값을 박는다). __DEV__가 거짓이면 무시한다.
  */
-export const DEV_LOCAL: boolean = __DEV__ && !Device.isDevice;
+const DEV = resolveDevConfig({ isDev: __DEV__, isDevice: Device.isDevice, envHost: process.env.EXPO_PUBLIC_TEX_DEV_HOST });
+// mDNS 평문(http/ws <이름>.local)은 실기기 개발 빌드만 켠다. 릴리스·시뮬레이터에서는 꺼진 채로 둔다.
+allowDevLanHosts(DEV.allowLan);
 
-/**
- * 실기기 개발 빌드가 붙을 맥의 개발 스택(dev/stack.ts). Metro를 띄울 때 EXPO_PUBLIC_TEX_DEV_HOST=<소문자 LocalHostName>.local:8787 로 넣는다
- * (Expo가 번들 때 값을 박는다). 같은 LAN의 mDNS 이름만 받는다. 릴리스 빌드에서는 쓰지 않는다.
- */
-const DEV_DEVICE_HOST: string | null = (() => {
-  const h = process.env.EXPO_PUBLIC_TEX_DEV_HOST;
-  return __DEV__ && Device.isDevice && typeof h === 'string' && /^[a-z0-9-]{1,63}\.local:\d{1,5}$/.test(h) ? h : null;
-})();
-
+/** 시뮬레이터 개발 빌드만 참. 시뮬레이터 전용 완화(생체 인증 없는 키, 견본 영수증 카메라)를 켠다. 실기기·릴리스에서는 늘 거짓. */
+export const DEV_LOCAL: boolean = DEV.devLocal;
 /** 개발 스택(계정·릴레이·더미 PC)에 붙는 개발 빌드: 시뮬레이터, 또는 EXPO_PUBLIC_TEX_DEV_HOST를 넣은 실기기. */
-export const DEV_STACK: boolean = DEV_LOCAL || DEV_DEVICE_HOST !== null;
-export const DEV_RELAY_HOST: string = DEV_DEVICE_HOST ?? 'localhost:8787';
+export const DEV_STACK: boolean = DEV.devStack;
+export const DEV_RELAY_HOST: string = DEV.devRelayHost;
 
 /**
  * 계정·릴레이 공개 origin(DPoP htu 앞부분, 팀장 결정 2026-11-05: 둘 다 https://tax.laf-co.com, 경로는 services API.md).
@@ -37,7 +34,7 @@ const RELEASE_ACCOUNT_KEYS: readonly string[] = [];
 const DEV_ACCOUNT_KEY = '3uABVr6gwZIYy5ir9UMb2ohr2fxONenkzT9XtRRIBCY=';
 export const accountKeys = (): readonly string[] => (DEV_STACK ? [DEV_ACCOUNT_KEY] : RELEASE_ACCOUNT_KEYS);
 
-export const relayAllowlist = (): readonly string[] => (DEV_STACK ? [...RELAY_ALLOWLIST, DEV_RELAY_HOST] : RELAY_ALLOWLIST);
+export const relayAllowlist = (): readonly string[] => DEV.relayAllowlist;
 
 /** P-01: 백그라운드 30초 뒤 다시 잠근다. */
 export const LOCK_AFTER_MS = 30_000;
