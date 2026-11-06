@@ -1,0 +1,60 @@
+﻿# pnpm test (Windows 10 Pro 22H2, Celeron 3855U, Node 26.13.0, 2026-11-06)
+# 고치기 전 전체 실행. 7,072초(h01-policy 멈춤 80분, 수동 종료 포함).
+
+ℹ tests 1599
+ℹ suites 336
+ℹ pass 1540
+ℹ fail 27
+ℹ cancelled 18
+ℹ skipped 4
+ℹ todo 10
+ℹ duration_ms 7066722.2087
+
+# 실패·취소 목록(위치	이름	첫 오류 줄)
+tests\audit-v.test.ts:268:3	✖ audit-v: SignalWatch.inspect reads body text through relay in tainted state (60002.5863ms)	'test timed out after 60000ms'
+tests\audit-v.test.ts:606:3	✖ audit-v: Set-Cookie from a login response never reaches the engine (60151.5329ms)	'test timed out after 60000ms'
+tests\core-registry-samples.test.ts:31:3	✖ 파일은 생성 결과와 바이트 단위로 같다(서명은 결정적) (15.9409ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\core-run.test.ts:93:1	✖ 원장·gate_requests 연결 (R-G7·R-G8, B-33) (10828.943ms)	Error: EPERM, Permission denied: '%USERPROFILE%\AppData\Local\Temp\sax-core-run-0b1dUW'
+tests\h01-engine.test.ts:226:3	✖ 초안 → 게이트 → 승인 근거 v2 → 발급 → verify 새 1건 → 메일 확인 → 원장 committed (30127.4248ms)	Error: timeout
+tests\h01-engine.test.ts:273:3	✖ 같은 건 두 번째: 처음 표시 없음, 중복 경고($dup.businessKey) → [중지]하면 발급하지 않는다 (5.573ms)	Error: busy
+tests\h01-engine.test.ts:289:3	✖ 공급자 사업자번호가 프로필과 다르면(다른 사업자 세션) 게이트를 열지 않는다 (0.5023ms)	Error: busy
+tests\h01-engine.test.ts:303:3	✖ 승인 뒤 화면 값이 바뀌면 클릭하지 않고 not_committed(pre_dispatch_mismatch) (0.3688ms)	Error: busy
+tests\h01-engine.test.ts:318:3	✖ 발급 요청을 보냈는데 목록에 안 보이면 in_doubt(중복 위험을 숨기지 않는다) (0.3336ms)	Error: busy
+tests\h01-engine.test.ts:332:3	✖ 명시적 실패 신호 + 부재 증거면 not_committed, 같은 건 다음 게이트에 직전 시도 경고 (0.3915ms)	Error: busy
+tests\h01-engine.test.ts:353:3	✖ 기준선 조회 중 [중지]: 게이트를 열지 않는다 (0.3354ms)	Error: busy
+tests\h01-engine.test.ts:367:3	✖ 승인 직후(거부 우선 창 2초) [중지]가 이긴다, 커밋 구간에 들어간 뒤에는 already_issuing (0.3919ms)	Error: busy
+tests\h01-engine.test.ts:388:3	✖ 승인 대기가 waitMs를 넘으면 만료(발급 없음), 만료 뒤 근거는 통하지 않는다 (30188.6328ms)	Error: timeout
+tests\h01-engine.test.ts:400:3	✖ 실행은 한 번에 하나, 홈택스 포털은 시작 전에 거부 (1.3007ms)	Error: busy
+tests\h01-engine.test.ts:410:3	✖ audit-e: delayed reflection beyond minElapsed resolves committed instead of in_doubt (0.3773ms)	Error: busy
+tests\h01-engine.test.ts:423:3	✖ audit-e: leak_suspected before the gate ends the run with vault.leak_suspected (0.3755ms)	Error: busy
+tests\h01-engine.test.ts:438:3	✖ audit-e: leak_suspected after arm is journaled and verify continues (0.2942ms)	Error: busy
+tests\h01-engine.test.ts:450:3	✖ audit-e: portal issueDate different from intent ends assert.issue_date_mismatch before the gate (2340.4861ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\h01-engine.test.ts:473:3	✖ 메일 verify는 승인한 받는 이메일로 정한다(초안에 이메일이 없어도 포털이 다시 채운 주소를 승인했으면 확인한다) (0.7531ms)	Error: busy
+tests\h01-policy.test.ts:92:3	✖ 정상 발급: 실행 수·발급 수가 남고(발급은 armed와 같은 트랜잭션), 차단 신호 없음	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:103:3	✖ 차단 안내 페이지: 바로 멈추고 그 뒤 엔진 요청 0회, 게이트·원장 없음, 연속 2회째에 24시간 쿨다운 → 시작 거부	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:133:3	✖ 깨끗한 실행(포털 화면을 보고 신호 없음)이 끼면 연속이 끊겨 쿨다운하지 않는다	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:153:3	✖ 승인 대기 중 포털 응답 429: 게이트를 닫아 승인할 수 없고, 발급하지 않는다	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:177:3	✖ 대화상자 문구·조회 팝업·문서 403도 차단 신호다(게이트를 열지 않는다)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:200:3	✖ audit-e: dismissed alert text rides on the end event and never in run_events	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:216:3	✖ 네비게이션 없이 뜬 안내 레이어도 다음 동작 전에 잡는다	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:230:3	✖ 커밋 직전 분당 네비게이션 자리를 기다리는 동안 뜬 안내도 잡는다(누르지 않고 무장도 하지 않는다)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:252:3	✖ 기준선 조회 중에 뜬 안내는 게이트를 열기 전에 잡는다(게이트 진입 직전 판정)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:268:3	✖ 기대한 화면(발급 폼)을 못 찾고 끝난 실행은 연속을 끊지 않는다(사전에 없는 차단 화면일 수 있다)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:286:3	✖ 추가 인증: 1회는 핸드오프, 연속 2회째는 반복 추가 인증(차단 신호와 구분, 연속에는 넣는다). 캡차는 횟수를 남기고 핸드오프	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:301:3	✖ 상한: 하루 실행 수를 넘으면 시작하지 않고, 분당 네비게이션이 차면 기다린다(기다리는 동안 [중지]를 받는다)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:320:3	✖ 발급이 확정된 뒤 걸린 차단 신호는 숨기지 않는다(완료·확인 필요, 승인번호 유지)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:335:3	✖ verify 조회가 3번 연속 실패하면 더 조회하지 않고 발급됐는지 모름으로 둔다	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:353:3	✖ 커밋 구간·verify는 실행당 동작 수 상한으로 끊지 않는다(끊으면 발급됐는지 모름만 생긴다)	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:362:3	✖ 실행당 동작 수 상한을 넘으면 커밋 전에 멈춘다	'test did not finish before its parent and was cancelled'
+tests\h01-policy.test.ts:21:1	✖ H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright) (87684.3739ms)	Error: Command failed: C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe -NoProfile -NonInteractive -Command $o = (Get-Acl -LiteralPath $env:SAX_ACL_TARGET).GetOwner([System.Security.Principal…
+tests\model-s7.test.ts:24:3	✖ 결과 라벨별 라운드 로빈 표본, 게이트 판정, 의도 구간은 모의에서 생략 (15.9791ms)	TypeError [ERR_INVALID_ARG_TYPE]: The "message" argument must be one of type string or function. Received undefined
+tests\model-s7.test.ts:36:3	✖ 결과 칸 안에서 템플릿을 번갈아 뽑아 기본 100장이 이 번들의 템플릿을 모두 덮는다 (8.1357ms)	TypeError [ERR_INVALID_ARG_TYPE]: The "message" argument must be one of type string or function. Received undefined
+tests\playwright-relay.test.ts:101:3	✖ 타이피스트 + Playwright: 제출 요청 postData가 엔진에 없고(메인·워커), 오염 중 screenshot 거부 (1362.6386ms)	AssertionError [ERR_ASSERTION]: 금고가 secret.needed로 부른다
+tests\playwright-relay.test.ts:133:3	✖ human:secret 활성 창 동안 Playwright 조작은 실패하고, 종료 후 클릭은 된다 (777.4352ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\remote-envelope.test.ts:71:3	✖ schema.gen.ts가 스키마 최신본에서 만든 것과 같다(스키마를 고치면 gen:schema) (376.5699ms)	Error: ENOENT: no such file or directory, open 'C:\%USERPROFILE%\Desktop\TEX\sovereign-ax\design\schemas\remote-envelope.schema.json'
+tests\shell-tokens.test.ts:1:1	✖ tests\shell-tokens.test.ts (280.4465ms)	'test failed'
+tests\vault-npki.test.ts:112:3	✖ 없는 위치·파일인 위치·링크인 위치는 건너뛴다(오류 없음) (22.9472ms)	Error: EPERM: operation not permitted, symlink '%USERPROFILE%\AppData\Local\Temp\sax-npki-CbLp60\real' -> '%USERPROFILE%\AppData\Local\Temp\sax-npki-CbLp60\link'
+tests\vault-npki.test.ts:129:3	✖ 심볼릭 링크는 따라가지 않는다: signCert.der→signPri.key, cn·USER·CA 폴더 링크 (21.0372ms)	Error: EPERM: operation not permitted, symlink '%USERPROFILE%\AppData\Local\Temp\sax-npki-waBpnR\yessign\USER\cn=TEST링크\signPri.key' -> '%USERPROFILE%\AppData\Local\Temp\sax-npki-waBpnR\yessign\USER\c…
+tests\vault-relay.test.ts:208:3	✖ human:secret 활성 창: 엔진 Runtime·Input·AX·스크린샷 거부, 콘솔 이벤트 비전달, blur 후 종료(S6f) (2002.1902ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\vault-relay.test.ts:245:3	✖ SPA 로그인(문서 커밋 없음): 활성 창 종료 후 엔진 클릭 가능, fetch 바디 제거 (255.7624ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\vault-s6-regress.test.ts:245:3	✖ removeProfileResidue: 탐색 기록·세션 복원·UKM만 지우고 쿠키·Local Storage·Preferences는 남긴다, 링크면 -1 (104.5589ms)	Error: EPERM: operation not permitted, symlink '%USERPROFILE%\AppData\Local\Temp\sax-residue-out-2oTT37' -> '%USERPROFILE%\AppData\Local\Temp\sax-residue-qBEaiV\Default\Sessions'
