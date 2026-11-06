@@ -799,8 +799,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const close = async () => {
     clearInterval(boardDayTimer);
     daemon?.stop();
-    updater?.stop();
     powerMonitor.removeListener('resume', onResume);
+    updater?.stop();
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});
