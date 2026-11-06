@@ -80,8 +80,11 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon 
     productName: identity.productName,
     copyright: identity.copyright,
     directories: { output: outDir, buildResources: buildDir },
-    // 스테이지 package.json을 덮는다(스테이지 = pnpm deploy 결과, scripts/package-win.mjs)
-    extraMetadata: { name: 'sovereign-ax', productName: identity.productName, version, main: identity.entry, description: identity.description, author: identity.companyName },
+    // 스테이지 package.json을 덮는다(스테이지 = pnpm deploy 결과, scripts/package-win.mjs).
+    // name = installDirName: 원클릭 사용자별 NSIS는 설치 폴더 이름을 productName이 아니라 name에서 가져온다
+    // (app-builder-lib getWindowsInstallationDirName: oneClick·perMachine 아님 → sanitizedName). 예전 'sovereign-ax'면
+    // %LOCALAPPDATA%\Programs\sovereign-ax에 깔려 앱이 "예상 밖 설치 위치" 배지를 띄웠다(Windows 실기기 #166).
+    extraMetadata: { name: identity.installDirName, productName: identity.productName, version, main: identity.entry, description: identity.description, author: identity.companyName },
     files: ['**/*', ...EXCLUDE],
     asar: true,
     // .node는 asar 안에서 dlopen할 수 없다
