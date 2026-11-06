@@ -179,7 +179,7 @@ describe('audit-v V1 Crashpad', () => {
   it('audit-v: buildChromeArgs always carries --disable-breakpad', () => {
     for (const extra of [[], ['--headless=new']]) {
       const args = buildChromeArgs('/p', extra);
-      assert.deepEqual(args.slice(0, 4), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run', '--disable-breakpad']);
+      assert.deepEqual(args.slice(0, 5), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run', '--disable-breakpad', '--disable-default-apps']);
     }
   });
 
@@ -215,7 +215,11 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'profile_not_checked', '첫 점검 전');
       const prefs = path.join(b.paths.chromeProfile, 'Default', 'Preferences');
       await fs.mkdir(path.dirname(prefs), { recursive: true });
-      const ok = { credentials_enable_service: false, profile: { password_manager_enabled: false }, autofill: { profile_enabled: false, credit_card_enabled: false } };
+      const ok = {
+        credentials_enable_service: false, profile: { password_manager_enabled: false }, autofill: { profile_enabled: false, credit_card_enabled: false },
+        // 다운로드·저장 대화 상자 폴더 = staging(D05 §3.3)
+        download: { default_directory: b.paths.staging, prompt_for_download: false }, savefile: { default_directory: b.paths.staging },
+      };
       await fs.writeFile(prefs, JSON.stringify(ok));
       await fs.writeFile(path.join(b.paths.chromeProfile, 'Local State'), JSON.stringify({ user_experience_metrics: { reporting_enabled: false } }));
       v.profileProblems = []; // 기동 1.5초 뒤 점검 통과
@@ -224,8 +228,19 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'google_signin_detected', '세션 중 Google 로그인');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { abcdefghijklmnop: { location: 1 } } } }));
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
+      // 진단 이벤트에는 확장 ID만 남는다. ID 꼴이 아닌 키(경로 등)는 'unknown'으로 바뀐다(팀장 결정 2026-11-06).
+      const wallet = 'nmmhkkegccagdldgiimedpiccmgmieda';
+      await fs.writeFile(prefs, JSON.stringify({ ...ok, extensions: { settings: { [wallet]: { location: 1, path: '/Users/x/secret-ext', manifest: { name: 'Store' } }, 'C:\\Users\\x\\ext': { location: 4 } } } }));
+      assert.equal(await v.profileBlocker(), 'extension_not_allowed', '기본 앱');
+      const ev = b.log.lines.filter((l) => l.includes('"vault.extension_not_allowed"')).at(-1)!;
+      const e = JSON.parse(ev) as Record<string, unknown>;
+      assert.equal(e.count, 2);
+      assert.deepEqual([e.ext0, e.ext1].sort(), ['unknown', wallet].sort());
+      assert.ok(!/secret-ext|Store|Users/.test(ev), ev);
       await fs.writeFile(prefs, JSON.stringify({ ...ok, credentials_enable_service: true }));
       assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch');
+      await fs.writeFile(prefs, JSON.stringify({ ...ok, download: { default_directory: path.join(b.paths.root, 'elsewhere'), prompt_for_download: false } }));
+      assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch', '다운로드 폴더가 staging이 아니다');
     } finally {
       await b.close();
     }

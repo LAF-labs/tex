@@ -13,6 +13,12 @@
     },
     "api/cron.js": {
       "maxDuration": 60
+    },
+    "api/registry.js": {
+      "maxDuration": 30
+    },
+    "api/registry-cron.js": {
+      "maxDuration": 60
     }
   },
   "rewrites": [
@@ -113,6 +119,30 @@
       "destination": "https://rooms.tax.laf-co.com/v1/rooms"
     },
     {
+      "source": "/registry/log/:path*",
+      "destination": "/api/registry?__p=/registry/log/:path*"
+    },
+    {
+      "source": "/admin/v1/:path*",
+      "destination": "/api/registry?__p=/admin/v1/:path*"
+    },
+    {
+      "source": "/registry/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/registry/:path*"
+    },
+    {
+      "source": "/policy/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/policy/:path*"
+    },
+    {
+      "source": "/packages/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/packages/:path*"
+    },
+    {
+      "source": "/releases/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/releases/:path*"
+    },
+    {
       "source": "/api/internal/internal/v1/devices/:id",
       "destination": "/api/internal?__p=/internal/v1/devices/:id"
     }
@@ -121,6 +151,10 @@
     {
       "path": "/api/cron",
       "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/registry-cron",
+      "schedule": "15 * * * *"
     }
   ],
   "headers": [

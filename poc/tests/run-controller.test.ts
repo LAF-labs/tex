@@ -92,6 +92,8 @@ interface Opts {
   els?: FEl[];
   submit?: Handlers['submit'];
   verify?: (x: string) => Promise<VerifyResult>;
+  verifyStep?: RunControllerInput['verifyStep'];
+  preGate?: RunControllerInput['preGate'];
   recover?: RunControllerInput['recover'];
   beforeStep?: (s: Step, c: RunController) => void;
 }
@@ -146,6 +148,8 @@ function mk(steps: Step[], o: Opts = {}) {
     reentry: { navigate: async (u) => void rec.navs.push(u), loggedIn: async () => st.loggedIn.shift() ?? true },
     recover: o.recover,
     verify: o.verify ? async (x) => (rec.verifies.push(x), o.verify!(x)) : undefined,
+    verifyStep: o.verifyStep ? async (v) => (rec.verifies.push(v.id), o.verifyStep!(v)) : undefined,
+    preGate: o.preGate,
     journal: (t, p) => rec.journal.push([t, p ?? {}]),
     onState: (e) => rec.states.push(e),
     onEffect: (e) => rec.effects.push(e),
@@ -545,5 +549,114 @@ describe('정지·중지·진입 확인(D03 §2 규칙, ADR-023 결정 5·6)', (
     const last = h.rec.states.at(-1)!;
     assert.deepEqual({ ...last, ui: [] }, { runId: 'run-1', state: 'Aborted', prev: 'WaitingGate', at: 's20', code: 'gate.denied', ui: [] });
     assert.ok(!JSON.stringify(h.rec.states).includes('값-'), '카드 값 없음');
+  });
+});
+
+describe('verify 스텝(M2-3, D02 §4.4, D03 §5.3·§5.6)', () => {
+  // 게이트 → submit(가짜, 토큰 소비 자리) → verify. not_committed는 게이트 앞 체크포인트로 돌아간다(V-03f).
+  const V: Step = { id: 's22', type: 'verify', lookup: { playbook: 'hometax.invoice.lookup', match: { supplyAmount: '$readback.supplyAmount' }, window: 'issueDate', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 }, bind: { approvalNo: 'approvalNo' } }, on: { committed: 's23', not_committed: 's1', unknown: 'handoff' } };
+  const MAIL: Step = { id: 's23', type: 'verify', lookup: { playbook: 'hometax.invoice.email_status', match: { approvalNo: '$vars.approvalNo' }, window: 'today', baseline: 'none', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 } }, on: { committed: 's24', not_committed: 's25', unknown: 's25' } };
+  const OK: Step = { id: 's24', type: 'end', status: 'success' };
+  const ISSUES: Step = { id: 's25', type: 'end', status: 'completed_with_issues' };
+  const FLOW = [CP, GATE, { ...SUBMIT, verify: 's22' } as Step, V, MAIL, OK, ISSUES];
+  const judge = (...rs: VerifyResult[]) => async () => ({ result: rs.length > 1 ? rs.shift()! : rs[0]! });
+  /** 커밋 구간 진입(R-G7 enter_commit)은 submit 핸들러(다음 PR)가 한다. 여기서는 가짜 submit이 그 전이만 대신 건다. */
+  const enterCommit = (c: RunController): Handlers['submit'] => async (s) => {
+    const fire = (c as unknown as { fire(ev: { t: 'enter_commit' }, at: string, code: null): boolean }).fire.bind(c);
+    assert.ok(c.tokenFor('s20'), '토큰이 있어야 커밋 구간에 들어간다');
+    assert.ok(fire({ t: 'enter_commit' }, s.id, null));
+    assert.equal(c.state.commit, true);
+    return NEXT;
+  };
+  const mkv = (o: Opts) => {
+    const h: ReturnType<typeof mk> = mk(FLOW, { ...o, submit: (s, env) => enterCommit(h.c)!(s, env) });
+    return h;
+  };
+
+  it('커밋 구간의 committed → 원장 committed{verify_ref}·후속 토큰·입력 잠금 해제 → 사후 스텝(구간 밖 verify는 on[결과]만)', async () => {
+    const h = mkv({ verifyStep: judge('committed', 'committed') });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.equal(r.state, 'Completed');
+    assert.deepEqual(h.rec.verifies, ['s22', 's23']);
+    const led = h.rec.effects.filter((e) => e.startsWith('ledger.'));
+    assert.deepEqual(led, ['ledger.arm+token.consume', 'ledger.committed{verify_ref}'], '원장 결과 기록은 커밋 구간 verify 한 번만(s23은 구간 밖)');
+    assert.ok(h.rec.effects.includes('token.issue_followup'));
+    assert.deepEqual(h.rec.locks, [true, false], 'verify가 구간을 나갈 때 입력 잠금 해제');
+    assert.deepEqual(h.rec.journal.filter(([t]) => t === 'verify.result').map(([, p]) => [p.stepId, p.result]), [['s22', 'committed'], ['s23', 'committed']]);
+  });
+
+  it('구간 밖 verify(s23 메일 확인)의 unknown은 그 on으로만 간다: 완료(문제 있음), InDoubt 아님', async () => {
+    const h = mkv({ verifyStep: judge('committed', 'unknown') });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    assert.equal((await p).state, 'CompletedWithIssues');
+    assert.deepEqual(h.rec.effects.filter((e) => e.startsWith('ledger.')), ['ledger.arm+token.consume', 'ledger.committed{verify_ref}']);
+  });
+
+  it('커밋 구간의 not_committed → 원장 not_committed{verify}·잠금 해제 → 게이트 앞 체크포인트(재게이트, 새 요청)', async () => {
+    const h = mkv({ verifyStep: judge('not_committed') });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    await h.atGate(2);
+    assert.ok(h.rec.effects.includes('ledger.not_committed{verify}'));
+    assert.notEqual(h.rec.published[0]!.reqId, h.rec.published[1]!.reqId);
+    h.c.abort();
+    assert.equal((await p).state, 'Aborted');
+  });
+
+  it('커밋 구간의 unknown → InDoubt(원장 in_doubt, 토큰 폐기). on.unknown(handoff)으로 가지 않는다', async () => {
+    const h = mkv({ verifyStep: judge('unknown') });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.deepEqual([r.state, r.code], ['InDoubt', 'verify.unknown']);
+    assert.ok(h.rec.effects.includes('ledger.in_doubt'));
+    assert.ok(!h.names().includes('HandedOff'));
+    assert.deepEqual(h.rec.verifies, ['s22']);
+  });
+
+  it('판정이 예외면 unknown(InDoubt)', async () => {
+    const h = mkv({ verifyStep: async () => Promise.reject(new Error('lookup tab crashed')) });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    assert.equal((await p).state, 'InDoubt');
+  });
+
+  it('커밋 구간 중 중지는 verify 결과를 원장에 쓴 뒤 적용한다(committed → Aborted, 사후 스텝 없음)', async () => {
+    const h = mkv({
+      verifyStep: async () => {
+        h.c.abort();
+        return { result: 'committed' };
+      },
+    });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    assert.equal((await p).state, 'Aborted');
+    assert.ok(h.rec.effects.includes('ledger.committed{verify_ref}'));
+    assert.deepEqual(h.rec.verifies, ['s22'], '사후 verify(s23)는 돌지 않는다');
+  });
+
+  it('기준선 조회 실패(preGate verify.baseline_missing) → 게이트를 열지 않고 핸드오프(재시도 없음)', async () => {
+    let calls = 0;
+    const h = mkv({ verifyStep: judge('committed'), preGate: async () => (calls++, { ok: false, code: 'verify.baseline_missing' }) });
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code, r.resumeAt], ['HandedOff', 'verify.baseline_missing', 's20']);
+    assert.equal(calls, 1);
+    assert.equal(h.rec.published.length, 0, '게이트 요청 없음');
+    assert.deepEqual(h.rec.verifies, []);
+  });
+
+  it('verifyStep이 없으면 verify 스텝은 실행하지 않는다(engine.unhandled_step)', async () => {
+    const h = mk([V, OK]);
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code], ['Failed', 'engine.unhandled_step']);
   });
 });
