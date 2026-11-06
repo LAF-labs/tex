@@ -11,6 +11,7 @@
 | `TOKEN_SIGNING_SEED` ⚿ | 예 | hex 64자 | 기기 범위 토큰 서명 키(Ed25519 시드). 공개키는 게이트웨이·릴레이·푸시에 `TOKEN_PUBLIC_KEYS`로 준다 |
 | `TOKEN_KID` | 아니오(`k1`) | 문자열 | 토큰 키 ID. 회전 시 새 kid로 바꾸고 검증 쪽에는 둘 다 둔다 |
 | `CODE_MAC_KEY` ⚿ | 예 | hex 64자 | 로그인 코드 HMAC 키 |
+| `ACCT_CLAIM_SIGNING_KEY` ⚿ | 아니오(없으면 `GET /v1/acct-claim` 404) | hex 64자 | `acct_claim` 전용 서명 키(Ed25519 시드). 기기 토큰 키·레지스트리 키와 섞지 않는다(`TOKEN_SIGNING_SEED`와 같으면 기동하지 않음). 공개키는 폰 앱에 고정한다. `cd poc && node --conditions=development services/account/src/acct-claim-pubkey-cli.ts < 시드_파일`(시드는 표준 입력으로, 셸 기록에 남기지 않는다) |
 | `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `ACCOUNT_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증에 쓰는 공개 origin |
 | `WEBAUTHN_RP_ID` | 예 | 도메인 | 패스키 RP ID |
