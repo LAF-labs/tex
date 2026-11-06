@@ -16,7 +16,7 @@ import { MockOnboardingPorts } from './onboarding-mock.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
-import { startFixtureMode, type FixtureMode } from './fixture-mode.ts';
+import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
@@ -28,8 +28,8 @@ import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf } from './vault-import.ts';
-import { mergeParsed, type DemoModel } from './demo-model.ts';
-import { startDemoSeed, type DemoSeed } from './demo-seed.ts';
+import type { DemoModel, mergeParsed } from './demo-model.ts';
+import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
@@ -102,7 +102,7 @@ export interface ShellOptions {
   show?: boolean;
   /** e2e: OS 커서 위치를 바꿔 끼운다. */
   cursorPoint?: () => { x: number; y: number };
-  /** 앱 금고(utilityProcess·OS 키체인)와 앱 폴더로 띄운다. 없으면 fixture 모드. */
+  /** 앱 금고(utilityProcess·OS 키체인)와 앱 폴더로 띄운다. 없으면 fixture 모드(dev가 있어야 한다). */
   engine?: { root?: string; portal: EnginePortal };
   /** fixture 모드에서 실행 Chrome을 화면에 띄운다(시연). */
   headful?: boolean;
@@ -114,8 +114,22 @@ export interface ShellOptions {
   demoModel?: DemoModel | null;
   /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
   demoSeed?: boolean;
+  /**
+   * 개발 전용 연결: 가짜 홈택스(fixture 모드)·시연 씨앗·시연 모델 병합. 제품 진입점(shell.ts)은 넘기지 않으므로 제품 dist가
+   * 이 코드에 닿지 않는다(ADR-035 W-7, package-win 포함 목록). 시연 진입점(demo-shell.ts)과 e2e만 demo-dev.ts의 DEMO_DEV를 넘긴다.
+   */
+  dev?: ShellDev;
+  /** 설치본 자기 점검 warn 배지 문구(harden.ts BUILD_WARN_TEXT에서 고른 것). 제품 진입점만 넘긴다. */
+  buildBadges?: string[];
   /** 온보딩(08 §4)부터 시작한다(시연·e2e). 엔진 모드에서는 DB에 사업자 프로필이 없으면 저절로 시작한다. */
   onboarding?: boolean;
+}
+
+/** 개발 전용 연결(ShellOptions.dev). 여기에는 타입만 있고, 구현은 demo-dev.ts가 묶는다. */
+export interface ShellDev {
+  startFixture(opts: { headful?: boolean }): Promise<FixtureMode>;
+  startDemoSeed: typeof startDemoSeed;
+  mergeParsed: typeof mergeParsed;
 }
 
 export interface Shell {
@@ -163,7 +177,9 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
-  const fixture = opts.engine ? null : await startFixtureMode({ headful: opts.headful });
+  // 제품 진입점은 엔진 모드만 있다. fixture 모드는 개발 연결(dev)이 있을 때만 띄운다.
+  if (!opts.engine && !opts.dev) throw new Error('shell.no_portal');
+  const fixture = opts.engine ? null : await opts.dev!.startFixture({ headful: opts.headful });
   const made: { host?: EngineHost } = {};
   try {
     return wireShell(opts, fixture, key, store, made);
@@ -178,6 +194,7 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore, made: { host?: EngineHost }): Shell {
   // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
   const demo = fixture ? (opts.demoModel ?? null) : null;
+  const dev = fixture ? opts.dev! : null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
@@ -531,6 +548,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       quick: QUICK,
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
+      // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
+      build: opts.buildBadges ?? [],
       history: seed?.history ?? null,
       onboarding: await onbView(),
     }),
@@ -548,7 +567,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const model = demo && modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
       const via = model ? 'model' : 'offline';
       if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
-      const reply = interpret(text, vat, profile, runs, model ? mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
+      const reply = interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
       if (reply.kind === 'draft') {
         reply.run.interp = via;
         pushBoard(); // 초안은 update 이벤트 없이 생긴다
@@ -666,7 +685,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     }
     if (fixture) await fixture.seed(host);
-    if (fixture && opts.demoSeed) seed = await startDemoSeed(host, store, fixture.root, fixture.itemHints);
+    if (fixture && dev && opts.demoSeed) seed = await dev.startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
     // 온보딩: 시연·e2e는 opts.onboarding. 엔진 모드는 이어 하기 저장이 있으면 그 자리부터(끝났으면 대화 없이 동의·할 일만),
     // 저장이 없고 사업자 프로필도 없으면 처음부터. 사업자를 건너뛰고 끝낸 사용자도 다음 기동에 약관부터 다시 묻지 않는다.

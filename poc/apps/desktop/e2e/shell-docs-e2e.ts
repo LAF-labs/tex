@@ -1,19 +1,20 @@
 // 셸 문서함 e2e(PoC-8 후속): 데모 셸의 문서함에서 PDF 가져오기 → docparse 샌드박스 → 셸 엔진(fixture 모드, 임시 앱 폴더)의 보관함
 // → 목록·만료 출처·확인 필요 → 문서 패널에서 확인(후보 넣기, 바뀐 칸만 보냄). 열기 암호 흐름, 중복·실패·다른 화면에 있을 때,
 // 렌더러가 대화상자 없이 가져오기를 부르는 경로도 본다. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다.
-// 실행: electron apps/desktop/dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다(fixture 모드).
+// 실행: electron apps/desktop/e2e-dist/shell-docs-e2e.js → reports/raw/poc-8-shell-docs.json, reports/raw/poc-8/shell-docs.png. 앱 폴더·키체인을 쓰지 않는다(fixture 모드).
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, dialog, shell as desktop } from 'electron';
 import { formatBizNo } from '@sax/db';
 import { appPaths } from '@sax/platform';
-import type { EngineHost } from './engine-host.ts';
-import { DEMO_PROFILE } from './fixture-mode.ts';
-import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
-import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
-import { encryptedTestPdf, syntheticCerts } from './synthetic-certs.ts';
-import { importPdf, type EngineCall } from './vault-import.ts';
+import type { EngineHost } from '../dist/engine-host.js';
+import { DEMO_PROFILE } from '../dist/fixture-mode.js';
+import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
+import { DEMO_DEV } from '../dist/demo-dev.js';
+import { engineDocsProvider, type DocsProvider } from '../dist/shell-docs.js';
+import { encryptedTestPdf, syntheticCerts } from '../dist/synthetic-certs.js';
+import { importPdf, type EngineCall } from '../dist/vault-import.js';
 
 registerShellSchemes();
 // 시험용 앱 폴더(데모 공급자 폴더 이름 sax-shell-docs-*와 겹치지 않게). 끝나면 지운다.
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
   const opened: string[] = [];
   desktop.openPath = (async (p: string) => (opened.push(p), '')) as typeof desktop.openPath;
 
-  S = await startShell({ width: 1280, height: 820, show: false, docs });
+  S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, docs });
   host = S.host;
   vaultDir = appPaths(S.fixture!.root).vault;
   await S.ready;

@@ -4,9 +4,9 @@
 // "확인 없이 확정했는데 틀린 건"이 0건.
 //
 // 실행(빌드 뒤):
-//   electron apps/desktop/dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(파일 목록만 든 빈 정답 틀). 사람이 PDF를 보고
+//   electron apps/desktop/e2e-dist/poc8-measure.js <폴더> --draft   → <폴더>/labels.draft.json(파일 목록만 든 빈 정답 틀). 사람이 PDF를 보고
 //                                                                  종류·날짜·번호를 채워 labels.json으로 저장한다(추출값을 미리 채우지 않는다: 정답이 추출기 쪽으로 쏠리지 않게)
-//   electron apps/desktop/dist/poc8-measure.js <폴더>           → 순번별 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
+//   electron apps/desktop/e2e-dist/poc8-measure.js <폴더>           → 순번별 결과. 저장소에는 값 없는 요약(reports/raw/poc-8-real.json)만 쓴다
 // 열기 암호가 걸린 PDF는 --password-stdin으로 한 줄 넣는다(셸 기록·파일에 남기지 않는다). 오래된 표본은 SAX_POC8_TODAY=YYYY-MM-DD.
 //
 // labels.json: [{ "file": "a.pdf", "docType": "national_tax_cert" | "biz_registration_cert" | "other",
@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, protocol } from 'electron';
 import { decideExpiry, extractDocMeta, l0ShadowPick, readScore, validateDocMeta, worthOcr, type DocMetaExtract } from '@sax/engine/docmeta';
-import { DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun } from './docparse.ts';
+import { DOCPARSE_SCHEME, DocparseError, parsePdfInSandbox, type PdfExtractRun } from '../dist/docparse.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-poc8-measure-${process.pid}`));
@@ -73,7 +73,7 @@ async function main(): Promise<number> {
   const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
   const dir = args[0] ? path.resolve(args[0]) : '';
   if (!dir) {
-    console.error('사용법: electron apps/desktop/dist/poc8-measure.js <git 작업 폴더 밖 폴더> [--draft] [--password-stdin]');
+    console.error('사용법: electron apps/desktop/e2e-dist/poc8-measure.js <git 작업 폴더 밖 폴더> [--draft] [--password-stdin]');
     return 2;
   }
   if (insideGitWorkTree(dir)) {
