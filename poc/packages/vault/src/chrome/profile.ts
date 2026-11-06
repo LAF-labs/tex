@@ -35,10 +35,10 @@ const prefsFile = (dir: string) => path.join(dir, 'Default', 'Preferences');
 const localStateFile = (dir: string) => path.join(dir, 'Local State');
 
 /** D05 §3.6: 기동 전 Preferences·Local State 기록(엔터프라이즈 정책 미사용). */
-export async function writeProfileSettings(profileDir: string): Promise<void> {
+export async function writeProfileSettings(profileDir: string, extra: Array<[string, unknown]> = []): Promise<void> {
   await fs.mkdir(path.join(profileDir, 'Default'), { recursive: true, mode: 0o700 });
   const prefs = await readJson(prefsFile(profileDir));
-  for (const [k, v] of REQUIRED_PREFERENCES) setPath(prefs, k, v);
+  for (const [k, v] of [...REQUIRED_PREFERENCES, ...extra]) setPath(prefs, k, v);
   await fs.writeFile(prefsFile(profileDir), JSON.stringify(prefs), { mode: 0o600 });
   const ls = await readJson(localStateFile(profileDir));
   for (const [k, v] of REQUIRED_LOCAL_STATE) setPath(ls, k, v);
@@ -46,11 +46,11 @@ export async function writeProfileSettings(profileDir: string): Promise<void> {
 }
 
 /** 기동 후 다시 읽어 확인. 불일치 키 목록을 돌려준다. */
-export async function verifyProfileSettings(profileDir: string): Promise<string[]> {
+export async function verifyProfileSettings(profileDir: string, extra: Array<[string, unknown]> = []): Promise<string[]> {
   const prefs = await readJson(prefsFile(profileDir));
   const ls = await readJson(localStateFile(profileDir));
   const bad: string[] = [];
-  for (const [k, v] of REQUIRED_PREFERENCES) if (getPath(prefs, k) !== v) bad.push(k);
+  for (const [k, v] of [...REQUIRED_PREFERENCES, ...extra]) if (getPath(prefs, k) !== v) bad.push(k);
   for (const [k, v] of REQUIRED_LOCAL_STATE) if (getPath(ls, k) !== v) bad.push(k);
   return bad;
 }

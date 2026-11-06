@@ -79,6 +79,8 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['decide.unavailable', 'handoff'],
   ['decide.unknown', 'handoff'],
   ['portal.logged_out_by_other_session', 'handoff'],
+  // verify 기준선 조회 실패(B-07, D16): 아직 커밋 전이라 게이트를 열지 않고 핸드오프. 다시 조회해도 같은 화면이라 재시도하지 않는다.
+  ['verify.baseline_missing', 'handoff'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {

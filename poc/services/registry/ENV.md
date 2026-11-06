@@ -9,9 +9,15 @@
 | `DATABASE_URL` ⚿ | 운영 예 | `postgres://…` | 투명성 로그 저장(PostgreSQL). 개발은 `SAX_SQLITE_FILE`(파일), `REGISTRY_STORE=memory`면 메모리 SQLite |
 | `MIGRATE_ON_START` | 아니오(켬) | `0` | `0`이면 기동 때 로그 테이블 마이그레이션을 하지 않는다(배포 절차가 적용) |
 | `REGISTRY_ADMIN_TOKEN` ⚿ | 예 | 문자열 | 게시 PUT의 `Authorization: Admin <token>`. **호스팅 쓰기 권한일 뿐 서명 권한이 아니다**(서명 없는 산출물은 이 토큰으로도 올라가지 않는다). KMS 주입·90일 회전 |
-| `REGISTRY_DIR` | `REGISTRY_STORE=memory`가 아니면 예 | 경로 | 정적 파일 저장 위치(원자적 tmp+rename 쓰기). 운영은 이 디렉터리를 CDN 원본으로 쓴다 |
+| `REGISTRY_DIR` | 상시 서버: `REGISTRY_STORE=memory`가 아니면 예 | 경로 | 정적 파일 저장 위치(원자적 tmp+rename 쓰기). 상시 서버는 이 디렉터리를 CDN 원본으로 쓴다 |
+| `S3_ENDPOINT` | Vercel 함수: 예 | `https://…` | S3 호환 저장소 엔드포인트(경로 방식, 운영 `https://<ref>.supabase.co/storage/v1/s3`). 있으면 `REGISTRY_DIR`보다 앞선다(`store-s3.ts`, 표준 SigV4만) |
+| `S3_REGION` / `S3_BUCKET` | `S3_ENDPOINT`가 있으면 예 | | 리전, 버킷(`sax-registry`, 공개 읽기) |
+| `S3_ACCESS_KEY_ID` ⚿ / `S3_SECRET_ACCESS_KEY` ⚿ | `S3_ENDPOINT`가 있으면 예 | | Storage 전용 S3 접근 키(DB 권한 없음) |
 | `REGISTRY_STORE` | 아니오 | `memory` | 개발·시험용 메모리 저장소 |
 | `TRUST_PROXY` | 아니오 | `1` | 앞단 프록시 신뢰 |
+| `CRON_SECRET` ⚿ | Vercel 함수: 예 | 32자 이상 | 재서명 cron(`api/registry-cron`)의 `Authorization: Bearer <값>`. 공통 env(접두 없음) |
 | `PORT` / `HOST` | 아니오(`8082` / `0.0.0.0`) | | |
 
 `keyEpoch`를 올리는 키 회전은 앱 업데이트로 새 `TRUST_ROOT_JSON`을 핀 고정한 뒤에만 한다(ADR-013). 게시 관문은 핀과 다른 `keyEpoch` 산출물을 거부한다.
+
+Vercel 함수(`api/registry`·`api/registry-cron`, `deploy.ts`)에서는 위 이름 앞에 `REGISTRY__`를 붙인다(공통 `CRON_SECRET`·`TRUST_PROXY`는 접두 없음). `TRUST_ROOT_JSON`이 없으면(서명 의식 전) 두 함수 모두 `503 registry.unavailable`이고, 다른 값이 틀려도 503이며 로그에는 `registry.start_failed.config_<이름>`만 남는다. 함수는 DDL을 하지 않는다(`MIGRATE_ON_START` 없음, Supabase 마이그레이션이 적용한다). 배포 절차는 [`../deploy/README.md`](../deploy/README.md) 7절.
