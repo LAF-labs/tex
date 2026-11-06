@@ -10,7 +10,7 @@ import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax
 import { READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
-  type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type TokenDiscardTrigger, type VerifyResult,
+  type Handlers, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type TokenDiscardTrigger, type VerifyResult,
 } from '@sax/engine/core';
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
 
@@ -104,6 +104,7 @@ interface Opts {
   preGate?: RunControllerInput['preGate'];
   recover?: RunControllerInput['recover'];
   beforeStep?: (s: Step, c: RunController) => void;
+  handlers?: Partial<Handlers>;
 }
 
 function mk(steps: Step[], o: Opts = {}) {
@@ -146,7 +147,7 @@ function mk(steps: Step[], o: Opts = {}) {
   };
   const judge: RunControllerInput['verifyStep'] = o.verifyStep === null ? undefined : (o.verifyStep ?? (async () => ({ result: 'committed' as const })));
   const c: RunController = new RunController({
-    runId: 'run-1', intentId: 'intent-1', packageDigest: 'd'.repeat(64), ir: ir(steps), handlers: BASIC_HANDLERS, env, interp: POL, clock, timers, gates, tokens,
+    runId: 'run-1', intentId: 'intent-1', packageDigest: 'd'.repeat(64), ir: ir(steps), handlers: { ...BASIC_HANDLERS, ...o.handlers } as Handlers, env, interp: POL, clock, timers, gates, tokens,
     beforeStep: o.beforeStep ? (s) => o.beforeStep!(s, c) : undefined,
     ledgerStates: () => st.ledger, inDoubtStep: () => st.inDoubt, allowed: () => st.allowed,
     card: () => ({ readback: RB, reserved: [] }), wmaxMs: () => 90_000, commitWindowMs: 600_000,
@@ -916,5 +917,88 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.ok(u.rec.journal.some(([t]) => t === 'signflow.method_unknown'));
       assert.deepEqual(u.rec.armedAtClick, [['f.issue', true]], '모르는 방식이면 확인 버튼을 누르지 않는다');
     });
+  });
+});
+
+describe('sign(M2-3, D02 §4): 로그인 등 커밋 구간 밖 포털 서명 흐름. 방식마다 then[]의 그 동작만', () => {
+  const SIGN = (o: Record<string, unknown> = {}): Step => ({ id: 's4', type: 'sign', method: '$profile.signMethod', then: ['human:secret'], ...o }) as Step;
+  const profile = (h: ReturnType<typeof mk>, m: string) => ((h.env.scope.profile as { signMethod?: string }).signMethod = m);
+
+  it('cert($profile.signMethod): 금고 비밀 창 사람 차례(값은 엔진에 오지 않는다) → Running → 다음 스텝. TTL이면 Paused', async () => {
+    const h = mk([CP, SIGN(), END]);
+    assert.equal((await h.c.start()).state, 'Completed');
+    assert.deepEqual(h.rec.secret, [{ runId: 'run-1', stepId: 's4', ttlMs: 120_000 }]);
+    assert.ok(h.names().includes('WaitingHuman'), '커밋 구간 밖 서명은 사람 차례다');
+    assert.deepEqual(h.act.log, [], '엔진은 칸을 채우지도 누르지도 않는다');
+    assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.started' && p.method === 'cert'));
+
+    const k = mk([CP, SIGN(), END]);
+    k.st.secret = 'ttl';
+    const r = await k.c.start();
+    assert.deepEqual([r.state, r.resumeAt], ['Paused', 's1']);
+  });
+
+  it('simple_auth: 엔진 입력 없음(then의 human:secret도 하지 않음). PUSH 승인 대기는 뒤따르는 wait 스텝', async () => {
+    const h = mk([CP, SIGN(), END]);
+    profile(h, 'simple_auth');
+    assert.equal((await h.c.start()).state, 'Completed');
+    assert.deepEqual(h.rec.secret, []);
+    assert.ok(!h.names().includes('WaitingHuman'));
+  });
+
+  it('그 방식의 동작이 then[]에 없음(sign.no_path)·보안카드(아직 없음, sign.unsupported)·모르는 방식(sign.method_unknown) → 재시도 없이 핸드오프, 비밀 창 없음', async () => {
+    for (const [m, then, code] of [['cert', [], 'sign.no_path'], ['security_card', ['secret_fill:security_card'], 'sign.unsupported'], ['security_card', ['human:secret'], 'sign.no_path'], ['otp_app', ['human:secret'], 'sign.method_unknown']] as const) {
+      const h = mk([CP, SIGN({ then }), END]);
+      profile(h, m);
+      const r = await h.c.start();
+      assert.deepEqual([r.state, r.code], ['HandedOff', code], `${m} ${then.join()}`);
+      assert.deepEqual(h.rec.secret, []);
+      assert.equal(h.rec.journal.filter(([t]) => t === 'step.retry').length, 0, '재시도 없음');
+    }
+  });
+
+  it('비밀 창 동안 중지 → Aborted', async () => {
+    const h = mk([CP, SIGN(), END]);
+    h.st.secret = 'done';
+    const orig = h.rec.secret.push.bind(h.rec.secret);
+    h.rec.secret.push = (...a) => (h.c.abort(), orig(...a));
+    assert.equal((await h.c.start()).state, 'Aborted');
+  });
+
+  it('음성: 커밋 구간 안에서는 거부한다. 승인한 토큰을 든 채(X 전)면 아무것도 하지 않고 중단, 입력 잠금 해제', async () => {
+    const h = mk([CP, GATE, SIGN(), SUBMIT, SV, END], { readback: { supplyAmount: '1000' } });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.deepEqual([r.state, r.code], ['Failed', 'sign.refused_in_commit']);
+    assert.deepEqual(h.rec.secret, [], '비밀 창 없음');
+    assert.deepEqual(h.act.log, [], '클릭 없음');
+    assert.deepEqual(h.rec.commit, [], '원장·가드 없음');
+    assert.equal(h.rec.locks.at(-1), false, '입력 잠금 해제');
+    assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.refused_in_commit' && p.consumed === false));
+  });
+
+  it('음성: 커밋 구간 안에서는 거부한다. 토큰을 쓴 뒤(누른 뒤)면 아무것도 하지 않고 InDoubt(원장 in_doubt, 사람 확인), 가드 해제', async () => {
+    // 정적 검증(V-03c)을 지나친 IR: X의 verify 자리에 sign
+    const h = mk([CP, GATE, { ...SUBMIT, verify: 's4' } as Step, SIGN(), SV, END], { readback: { supplyAmount: '1000' } });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    const r = await p;
+    assert.equal(r.state, 'InDoubt');
+    assert.deepEqual(h.rec.secret, [], '비밀 창 없음');
+    assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]], '클릭은 발급 버튼 하나');
+    assert.deepEqual(h.rec.commit, ['arm s21', 'guard s21', 'disarm']);
+    assert.ok(h.rec.effects.includes('ledger.in_doubt'));
+    assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.refused_in_commit' && p.consumed === true));
+  });
+
+  it('넘겨받은 handlers.sign으로 덮을 수 없다(커밋 구간을 아는 조율기 것)', async () => {
+    let called = 0;
+    const h = mk([CP, SIGN(), END], { handlers: { sign: async () => (called++, { t: 'next' }) } });
+    assert.equal((await h.c.start()).state, 'Completed');
+    assert.equal(called, 0);
+    assert.equal(h.rec.secret.length, 1);
   });
 });
