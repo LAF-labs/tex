@@ -1,6 +1,7 @@
 // 레지스트리 서명 의식 CLI(CEREMONY.md). 실행: node --conditions=development services/registry/src/ceremony/cli.ts <명령> …
 //   keygen        키체인에 서명 키 만들기(Secure Enclave로 감싼 블롭만 저장) → 공개키 기록
-//   keygen-all    단독 모드 한 세대 12개(root·package·policy 각 3, emergency·release·timestamp 각 1)
+//   keygen-all    단독 모드 한 세대 11개(root·package·policy 각 3, emergency·release 각 1). 타임스탬프 키는 서버 비밀값이라 만들지 않는다
+//   timestamp-pubkey  서버 env의 타임스탬프 시드(REGISTRY_LOG_SIGNING_KEY, hex 64자)에서 공개키만 뽑아 공개키 기록으로
 //   pubkey        이미 있는 키의 공개키 기록
 //   trust         공개키 기록들 → TRUST_ROOT_JSON(핀) + 루트 메타데이터(키 ID → 보유자 역할 표)
 //   prepare       문서 → 서명 입력 바이트(.tosign)와 확인 코드
@@ -20,7 +21,7 @@ import { countSignatures, verifyIndex, verifyPolicy, verifyRelease, verifyRevoke
 import { attachTimestamp, buildTrust, collectSignatures, ROLE_COUNTS, signWithBackend, type KeyRecord, type SignatureRecord, type TrustMode, type TrustPin } from './collect.ts';
 import { CeremonyError, confirmCode, DOC_KINDS, prepare, quorumFor, signingBytes, SIGNER_ROLES, type DocKind } from './content.ts';
 import { MacKeychainBackend, type KeyStoreBackend } from './device.ts';
-import { openBackup, sealBackup, wipeEntries } from './wrap.ts';
+import { ed25519PubFromSeed, openBackup, sealBackup, wipeEntries } from './wrap.ts';
 
 export const DEFAULT_HELPER = path.join(os.homedir(), '.sax', 'bin', 'sax-keychain');
 
@@ -29,6 +30,8 @@ export interface CliDeps {
   /** 암호 입력(화면에 보이지 않게). confirm이면 두 번 묻고 같아야 한다. */
   passphrase(prompt: string, confirm: boolean): Promise<string>;
   out(line: string): void;
+  /** 환경 변수(timestamp-pubkey만 읽는다) */
+  env: NodeJS.ProcessEnv;
   read(path: string): Buffer;
   write(path: string, data: string | Buffer): void;
   now(): Date;
@@ -75,6 +78,7 @@ const defaultDeps: CliDeps = {
     return a;
   },
   out: (l) => process.stdout.write(`${l}\n`),
+  env: process.env,
   read: (p) => fs.readFileSync(p),
   write: (p, d) => fs.writeFileSync(p, d, { flag: 'wx', mode: 0o600 }), // 이미 있는 파일은 덮지 않는다
   now: () => new Date(),
@@ -102,8 +106,9 @@ const roleOf = (keyId: string): Role => {
   return r;
 };
 
-/** 단독 모드 한 세대의 keyId 12개(D09 §8.2 역할별 개수). timestamp는 Phase 1에 같은 맥에 둔다(CEREMONY.md §2). */
-export const SOLO_KEY_IDS = (Object.entries(ROLE_COUNTS) as Array<[Role, number]>).flatMap(([r, n]) => Array.from({ length: n }, (_, i) => `${r}-${i + 1}`));
+/** 단독 모드 한 세대에서 키체인에 두는 keyId 11개(D09 §8.2 역할별 개수). timestamp-1은 서버 온라인 키라 빠진다(ADR-037 결정 (3)). */
+export const SOLO_KEY_IDS = (Object.entries(ROLE_COUNTS) as Array<[Role, number]>).filter(([r]) => r !== 'timestamp').flatMap(([r, n]) => Array.from({ length: n }, (_, i) => `${r}-${i + 1}`));
+export const TIMESTAMP_ENV = 'REGISTRY_LOG_SIGNING_KEY';
 
 export async function main(argv: readonly string[], deps: CliDeps = defaultDeps): Promise<number> {
   const [cmd, ...rest] = argv;
@@ -138,7 +143,7 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
   switch (cmd) {
     case 'keygen': {
       const keyId = one('key-id');
-      roleOf(keyId);
+      if (roleOf(keyId) === 'timestamp') throw new CeremonyError('ceremony.usage', '타임스탬프 키는 서버 비밀값이다(timestamp-pubkey)');
       const pub = await backend().generate(keyId);
       writeJson(one('out'), record(keyId, pub));
       deps.out(`키 ${keyId}(${roleOf(keyId)}) 만듦: ${pub.toString('base64')}`);
@@ -152,7 +157,24 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
         writeJson(path.join(dir, `${keyId}.json`), record(keyId, pub));
         deps.out(`키 ${keyId} 만듦: ${pub.toString('base64')}`);
       }
-      deps.out(`${SOLO_KEY_IDS.length}개. 다음: backup-export로 오프라인 백업 1개를 만든다(CEREMONY.md §4)`);
+      deps.out(`${SOLO_KEY_IDS.length}개. 다음: backup-export로 오프라인 백업 1개, timestamp-pubkey로 서버 타임스탬프 공개키(CEREMONY.md §4)`);
+      return 0;
+    }
+    case 'timestamp-pubkey': {
+      // 서버 비밀값(REGISTRY_LOG_SIGNING_KEY와 같은 키)에서 공개키만. 시드는 출력·파일·로그에 남기지 않고 바로 0으로 덮는다.
+      const name = one('env', false) || TIMESTAMP_ENV;
+      const hex = deps.env[name];
+      if (typeof hex !== 'string' || !/^[0-9a-f]{64}$/i.test(hex.trim())) throw new CeremonyError('ceremony.timestamp_seed_invalid', `${name}: hex 64자`);
+      const seed = Buffer.from(hex.trim(), 'hex');
+      let pub: Buffer;
+      try {
+        pub = ed25519PubFromSeed(seed);
+      } finally {
+        seed.fill(0);
+      }
+      const rec: KeyRecord = { keyId: 'timestamp-1', role: 'timestamp', publicKey: pub.toString('base64'), holder: one('holder', false) || '레지스트리 서버(온라인)', backend: 'server-env' };
+      writeJson(one('out'), rec);
+      deps.out(`timestamp-1 공개키(${name}): ${rec.publicKey}`);
       return 0;
     }
     case 'pubkey': {
@@ -276,7 +298,7 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
       }
     }
   }
-  deps.out('명령: keygen | keygen-all | pubkey | trust | prepare | sign | collect | timestamp | check | backup-export | backup-verify | backup-import (CEREMONY.md)');
+  deps.out('명령: keygen | keygen-all | timestamp-pubkey | pubkey | trust | prepare | sign | collect | timestamp | check | backup-export | backup-verify | backup-import (CEREMONY.md)');
   return 64;
 }
 

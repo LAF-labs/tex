@@ -18,8 +18,8 @@ export interface KeyRecord {
   publicKey: string;
   /** 보유자 역할 이름(실명 아님, 예 "단독 보유자", "보유자 A(운영)", "릴리스 보유자") */
   holder: string;
-  /** 키가 사는 곳: macos-se(키체인 + Secure Enclave 감싸기, 단독 모드), yubikey-piv(승격 뒤), hsm(서버) */
-  backend: 'macos-se' | 'yubikey-piv' | 'hsm';
+  /** 키가 사는 곳: macos-se(키체인 + Secure Enclave 감싸기, 단독 모드), yubikey-piv(승격 뒤), server-env(레지스트리 서버 비밀값, 타임스탬프 키) */
+  backend: 'macos-se' | 'yubikey-piv' | 'server-env';
   /** yubikey-piv만: 슬롯·일련번호·증명(attestation) 확인 여부 */
   slot?: string | null;
   serial?: number | null;
@@ -64,7 +64,9 @@ export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, crea
     if (raw.length !== 32 || raw.toString('base64') !== r.publicKey) throw new CeremonyError('ceremony.trust_invalid', `publicKey ${r.keyId}`);
     if (ids.has(r.keyId)) throw new CeremonyError('ceremony.trust_invalid', `keyId 중복 ${r.keyId}`);
     if (pubs.has(r.publicKey)) throw new CeremonyError('ceremony.trust_invalid', `같은 공개키 두 번 ${r.keyId}`);
-    if (!['macos-se', 'yubikey-piv', 'hsm'].includes(r.backend)) throw new CeremonyError('ceremony.trust_invalid', `backend ${r.keyId}`);
+    if (!['macos-se', 'yubikey-piv', 'server-env'].includes(r.backend)) throw new CeremonyError('ceremony.trust_invalid', `backend ${r.keyId}`);
+    // 타임스탬프 키는 서버 온라인 키다(ADR-037 결정 (3), D09 §8.2). 다른 역할 키는 서버에 두지 않는다.
+    if ((r.role === 'timestamp') !== (r.backend === 'server-env')) throw new CeremonyError('ceremony.trust_invalid', `${r.keyId}: 타임스탬프 키만 서버 비밀값`);
     if (r.backend === 'yubikey-piv' && !r.attested) throw new CeremonyError('ceremony.trust_invalid', `장치 증명 없음 ${r.keyId}`);
     if (typeof r.holder !== 'string' || !r.holder.trim()) throw new CeremonyError('ceremony.trust_invalid', `보유자 없음 ${r.keyId}`);
     ids.add(r.keyId);

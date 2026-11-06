@@ -68,12 +68,21 @@ const FAST_KDF = { N: 1 << 14, r: 8, p: 1 };
 const PASS = '나무 바다 구름 시계 연필 사과 의자 강물';
 const TS = { keyId: '', alg: 'ed25519', sig: '' };
 
+/** 레지스트리 서버의 타임스탬프 키(REGISTRY_LOG_SIGNING_KEY 시드, 서버 Cron이 자동 재서명). 시험에서는 소프트웨어 키. */
+const SERVER_TS_SEED = Buffer.alloc(32, 0x51);
+const serverTimestamp = (kind: DocKind, doc: unknown): SignatureRecord => {
+  const p = prepare(kind, doc, 'timestamp');
+  return { keyId: 'timestamp-1', alg: 'ed25519', sig: edSign(null, p.bytes, edPriv(SERVER_TS_SEED)).toString('base64url'), kind, part: 'timestamp', sha256: p.sha256 };
+};
+
 async function soloCeremony() {
   const kc = new FakeKeychain();
   const recs: KeyRecord[] = [];
   for (const keyId of SOLO_KEY_IDS) recs.push({ keyId, role: keyId.split('-')[0] as KeyRecord['role'], publicKey: (await kc.generate(keyId)).toString('base64'), holder: '단독 보유자', backend: 'macos-se' });
+  recs.push({ keyId: 'timestamp-1', role: 'timestamp', publicKey: ed25519PubFromSeed(SERVER_TS_SEED).toString('base64'), holder: '레지스트리 서버(온라인)', backend: 'server-env' });
   const built = buildTrust(recs, 1, '2026-11-07T00:00:00Z', 'solo');
   const sign = (kind: DocKind, doc: unknown, keyId: string, part: 'content' | 'timestamp' = 'content') => {
+    if (part === 'timestamp') return Promise.resolve(serverTimestamp(kind, doc));
     const p = prepare(kind, doc, part);
     const role = keyId.split('-')[0] as KeyRecord['role'];
     return signWithBackend(kc, { kind, part, bytes: p.bytes, role, keyId, confirm: confirmCode(p.sha256), expectedPublicKey: built.trust.keys[role]![keyId] });
@@ -82,9 +91,10 @@ async function soloCeremony() {
 }
 
 describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서', () => {
-  it('한 세대 12개(역할별 3·3·3·1·1·1), 엔진 trustRootsFromPin이 받는다, 메타데이터에 mode solo와 보유자 표', async () => {
+  it('키체인 11개 + 서버 타임스탬프 1개(역할별 3·3·3·1·1·1), 엔진 trustRootsFromPin이 받는다, 메타데이터에 mode solo와 보유자 표', async () => {
     const c = await soloCeremony();
-    assert.deepEqual(SOLO_KEY_IDS, ['root-1', 'root-2', 'root-3', 'package-1', 'package-2', 'package-3', 'policy-1', 'policy-2', 'policy-3', 'emergency-1', 'timestamp-1', 'release-1']);
+    assert.deepEqual(SOLO_KEY_IDS, ['root-1', 'root-2', 'root-3', 'package-1', 'package-2', 'package-3', 'policy-1', 'policy-2', 'policy-3', 'emergency-1', 'release-1']);
+    assert.equal(c.metadata.holders.find((h) => h.keyId === 'timestamp-1')!.backend, 'server-env');
     assert.equal(trustRootsFromPin(c.trust).keyEpoch, 1);
     assert.equal(c.metadata.mode, 'solo');
     assert.deepEqual(c.metadata.holders.find((h) => h.keyId === 'policy-2'), { keyId: 'policy-2', role: 'policy', holder: '단독 보유자', backend: 'macos-se' });
@@ -122,8 +132,9 @@ describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서'
     em = attachTimestamp('status', er.doc, await c.sign('status', er.doc, 'timestamp-1', 'timestamp'), c.trust);
     const ae = acceptStatus(em as unknown as RegistryStatus, { roots, revoked: new Set(), current: as.ok ? as.accepted : null, now: NOW });
     assert.equal(ae.ok && ae.accepted.emergency, true);
-    // 서명마다 Touch ID 창에 확인 코드가 간다
-    assert.ok(c.kc.signs.length >= 12 && c.kc.signs.every((s) => /^[0-9a-f]{4}(-[0-9a-f]{4}){7}$/.test(s.confirm)));
+    // 서명마다 Touch ID 창에 확인 코드가 간다. 타임스탬프는 서버가 하므로 키체인에 닿지 않는다
+    assert.ok(c.kc.signs.length >= 10 && c.kc.signs.every((s) => /^[0-9a-f]{4}(-[0-9a-f]{4}){7}$/.test(s.confirm)));
+    assert.ok(!c.kc.signs.some((s) => s.keyId === 'timestamp-1'));
   });
 });
 
@@ -174,6 +185,8 @@ describe('의식: 거부', () => {
     bad((r) => r.map((x) => (x.keyId === 'policy-1' ? { ...x, publicKey: r.find((y) => y.keyId === 'package-1')!.publicKey } : x)), /같은 공개키/);
     bad((r) => r.map((x) => (x.keyId === 'policy-3' ? { ...x, keyId: 'root-9' } : x)), /keyId/);
     bad((r) => r.map((x) => (x.keyId === 'policy-3' ? { ...x, backend: 'usb' as never } : x)), /backend/);
+    bad((r) => r.map((x) => (x.keyId === 'timestamp-1' ? { ...x, backend: 'macos-se' as const } : x)), /타임스탬프 키만 서버 비밀값/);
+    bad((r) => r.map((x) => (x.keyId === 'package-2' ? { ...x, backend: 'server-env' as const } : x)), /타임스탬프 키만 서버 비밀값/);
     bad((r) => r, /root 보유자가 3명이 아님/, 'quorum');
     const q = (r: KeyRecord[]) => r.map((x) => ({ ...x, holder: x.role === 'release' ? '릴리스' : (['A', 'B', 'C'][Number(x.keyId.split('-')[1]) - 1] ?? 'A') }));
     assert.equal(buildTrust(q(structuredClone(c.recs)), 1, 'x', 'quorum').metadata.mode, 'quorum');
@@ -289,6 +302,7 @@ describe('백업 SAX-ceremony-backup-v1', () => {
         backend: () => mac,
         passphrase: async (_p, confirm) => (asked.push(confirm ? 'twice' : 'once'), PASS),
         out: (l) => lines.push(l),
+        env: { REGISTRY_LOG_SIGNING_KEY: SERVER_TS_SEED.toString('hex') },
         read: (f) => fs.readFileSync(f),
         write: (f, d) => fs.writeFileSync(f, d, { flag: 'wx' }),
         now: () => new Date(NOW),
@@ -297,6 +311,13 @@ describe('백업 SAX-ceremony-backup-v1', () => {
       const p = (f: string) => path.join(dir, f);
       fs.mkdirSync(p('keys'));
       assert.equal(await run('keygen-all', '--holder', '단독 보유자', '--out-dir', p('keys')), 0);
+      assert.equal(fs.readdirSync(p('keys')).length, 11, '타임스탬프 키는 만들지 않는다');
+      await assert.rejects(run('keygen', '--key-id', 'timestamp-1', '--holder', 'x', '--out', p('ts-x.json')), /서버 비밀값/);
+      // 타임스탬프 공개키는 서버 env 시드에서(시드는 출력·파일에 없다)
+      assert.equal(await run('timestamp-pubkey', '--out', p('keys/timestamp-1.json')), 0);
+      assert.ok(!lines.join('\n').includes(SERVER_TS_SEED.toString('hex')) && !fs.readFileSync(p('keys/timestamp-1.json'), 'utf8').includes(SERVER_TS_SEED.toString('hex')));
+      await assert.rejects(main(['timestamp-pubkey', '--out', p('ts-bad.json')], { ...deps, env: { REGISTRY_LOG_SIGNING_KEY: 'zz' } }), /timestamp_seed_invalid/);
+      await assert.rejects(main(['timestamp-pubkey', '--out', p('ts-bad.json')], { ...deps, env: {} }), /timestamp_seed_invalid/);
       const keyFiles = fs.readdirSync(p('keys')).map((f) => p(`keys/${f}`));
       assert.equal(keyFiles.length, 12);
       assert.equal(await run('trust', '--key-epoch', '1', '--mode', 'solo', '--out-trust', p('trust-root.json'), '--out-metadata', p('root-metadata.json'), ...keyFiles), 0);
@@ -312,7 +333,7 @@ describe('백업 SAX-ceremony-backup-v1', () => {
       assert.equal(a.exports, 1, 'Touch ID 한 번(도우미 export 한 번)');
       assert.equal(JSON.parse(fs.readFileSync(p('backup.sax'), 'utf8')).kdf.N, 1 << 17, '만들 때는 N = 2^17');
       assert.equal(await run('backup-verify', '--in', p('backup.sax'), '--trust', p('trust-root.json')), 0);
-      assert.ok(lines.some((l) => /백업 열림: 키 12개, 핀과 같음/.test(l)));
+      assert.ok(lines.some((l) => /백업 열림: 키 11개, 핀과 같음/.test(l)));
       mac = b;
       assert.equal(await run('backup-import', '--in', p('backup.sax'), '--trust', p('trust-root.json')), 0);
       assert.deepEqual(await b.list(), [...SOLO_KEY_IDS].sort());

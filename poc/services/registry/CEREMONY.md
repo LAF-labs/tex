@@ -6,6 +6,7 @@
 - [SIGNING.md](../../../sovereign-ax/design/schemas/SIGNING.md) §1~§4(서명 바이트)
 - ADR-013·023·028
 - 팀장 결정 2026-11-06: 물리 키 없음, Phase 1은 사용자 혼자 보유. macOS 키체인 + Touch ID, 역할마다 Ed25519 키 3개, 생체 인증 필수, 디스크 평문 금지, 암호로 잠근 오프라인 백업 1개. YubiKey PIV는 승격 때 쓴다(인터페이스만).
+- 팀장 결정 2026-11-06(타임스탬프): 타임스탬프 키는 서버 온라인 키다(ADR-037 결정 (3), D09 §8.2). 운영 env `REGISTRY_LOG_SIGNING_KEY`와 같은 키다. 맥 키체인에 두지 않는다. 신선도 재서명은 서버 Cron이 자동으로 한다.
 
 도구:
 - CLI `services/registry/src/ceremony/cli.ts`(아래 `ceremony`)
@@ -28,6 +29,7 @@
 - **서명은 도우미 메모리 안에서 한다.**
   - Touch ID → 풀기 → CryptoKit Ed25519 서명 → 시드 버퍼를 0으로 덮기
   - Node에는 서명만 간다. Touch ID 창에는 keyId와 확인 코드가 뜬다.
+- 타임스탬프 키(`timestamp-1`)만은 서버 온라인 키다. 시드가 서버 비밀값(env)에 있다(§2). 이 키는 신선도만 서명하고 내용을 바꾸지 못한다.
 - **예외는 백업 내보내기·들여오기뿐이다.** 그때만 시드가 Node 메모리를 지나간다. Node는 바로 scrypt + ChaCha20-Poly1305로 잠그거나(내보내기) 도우미에 넘겨 다시 감싸고(들여오기), 버퍼를 0으로 덮는다.
 - **정족수는 그대로 2-of-3이다.** 모으는 도구는 서로 다른 핀 키 2개 이상인지 본다. 단독 모드에서 2-of-3은 **키 분리일 뿐 사람 분리가 아니다**. 한 사람·한 맥이 모든 키를 갖는다(ADR-037이 받아들인 남는 위험). 루트 메타데이터의 `mode: "solo"`가 이를 공개한다.
 
@@ -36,7 +38,7 @@
 - 사람 쿼럼이 없다. 사용자 계정이 털리면 모든 역할이 함께 위험하다. 그래서 보유자가 늘면 바로 승격한다(§8).
 - 시드가 CryptoKit 내부 사본에 잠깐 있다. Swift·Node 모두 우리가 쥔 버퍼만 0으로 덮을 수 있다(최선 노력).
 
-## 2. 키와 역할(keyEpoch 1, 한 세대 12개)
+## 2. 키와 역할(keyEpoch 1, 한 세대 12개 = 맥 키체인 11 + 서버 1)
 
 | keyId | 역할 | 정족수 | 서명하는 것 |
 |---|---|---|---|
@@ -45,10 +47,14 @@
 | `policy-1`~`policy-3` | 정책 | 2-of-3 | 정책, `registry/status.json` |
 | `emergency-1` | 1인 긴급 | 1 | 엄격하게 보수적인 정책·status 변경만(D03 §7.1), 72시간 자동 만료 |
 | `release-1` | 앱 릴리스 | 1 | `releases/{channel}/latest.json` |
-| `timestamp-1` | 타임스탬프 | 1 | 정책·status·폐기 목록 신선도 재서명 |
+| `timestamp-1` | 타임스탬프(서버 온라인 키) | 1 | 폐기 목록 24시간·status·정책 48시간 신선도 재서명, 투명성 로그 헤드(서버 Cron이 자동) |
 
-- 모든 키가 한 맥의 키체인에 있다(`backend: "macos-se"`).
-- 타임스탬프 키도 Phase 1에는 같은 맥에 둔다. 그래서 폐기 목록 24시간·status 48시간 재서명을 사람이 Touch ID로 한다. 놓치면 클라이언트가 새 패키지를 보류한다(안전한 쪽). 서버 자동 재서명(HSM)은 결정이 필요하다(§10).
+- 타임스탬프 말고 11개는 한 맥의 키체인에 있다(`backend: "macos-se"`).
+- **`timestamp-1`은 서버 비밀값이다**(`backend: "server-env"`). 운영 env `REGISTRY_LOG_SIGNING_KEY`(Ed25519 시드 hex 64자)와 같은 키다.
+  - 시드는 키체인 도구가 아니라 서버 env(배포 비밀 저장소)에 직접 넣는다.
+  - 의식 때는 `timestamp-pubkey`로 **공개키만** 뽑아 TRUST_ROOT_JSON `keys.timestamp`에 넣는다(§4).
+  - 도구는 타임스탬프 키를 키체인에 만들지 않는다(`keygen`이 거부한다). 다른 역할 키를 서버에 두는 기록도 거부한다.
+- 사람이 매일 Touch ID로 재서명하는 방식은 쓰지 않는다. 하루만 놓쳐도 업데이트가 멈추기 때문이다.
 
 ## 3. 준비
 
@@ -84,7 +90,13 @@ W를 만들고 자체 시험을 한다. Touch ID 창이 한 번 뜬다. 자체 �
 node --conditions=development services/registry/src/ceremony/cli.ts keygen-all --holder "단독 보유자" --out-dir ceremony/keyepoch-1/keys
 ```
 
-- 12개를 만든다(Touch ID 없음: 감쌀 때는 W 공개키만 쓴다). 공개키 기록 JSON이 나온다(비밀 없음).
+- 11개를 만든다(Touch ID 없음: 감쌀 때는 W 공개키만 쓴다). 공개키 기록 JSON이 나온다(비밀 없음).
+
+타임스탬프 키의 공개키는 서버 시드에서 뽑는다. 시드는 출력·파일에 남지 않는다. 이 명령은 시드를 볼 수 있는 곳(배포 비밀 저장소를 여는 셸)에서만 돌린다. 시드를 새로 만들 때는 그 저장소에서 만들고, 이 맥에 두지 않는다.
+
+```bash
+REGISTRY_LOG_SIGNING_KEY=… node --conditions=development services/registry/src/ceremony/cli.ts timestamp-pubkey --out ceremony/keyepoch-1/keys/timestamp-1.json
+```
 
 **같은 날** 백업 1개를 만든다. Touch ID 한 번과 암호 두 번을 묻는다.
 
@@ -138,10 +150,8 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 같은 자리에서 **폐기 목록 첫 판**(`monotonic` 1)을 만든다.
 - 스키마상 항목이 1개 이상이어야 하므로 쓰지 않을 `package-0` 하나를 넣는다.
 - 루트 2개로 서명하고 모은다(`--kind revoked_keys`).
-- 타임스탬프를 붙인다.
-  1. `prepare --kind revoked_keys --part timestamp`
-  2. `sign --part timestamp --key-id timestamp-1`
-  3. `timestamp`
+- 타임스탬프는 서버가 붙인다. 루트 2개로 서명한 목록을 레지스트리에 올리면 서버 Cron이 `timestamp-1`로 신선도 서명을 붙여 게시한다(클라우드 레지스트리 배포 PR).
+- 서버가 돌려준 `timestamp` 서명 기록을 손으로 붙여 확인할 때는 `timestamp` 명령을 쓴다.
 - `check`가 통과해야 한다.
 
 핀 PR:
@@ -160,12 +170,13 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 | 문서 | `--kind` | 키 | 타임스탬프 |
 |---|---|---|---|
 | 인덱스·manifest·hotfix·데이터 기술자 | `index`·`manifest`·`hotfix`·`data_descriptor` | 패키지 2개 | 없음(≤ 14일) |
-| 정책·status 내용 변경 | `policy`·`status` | 정책 2개, 또는 긴급 1개(엄격하게 보수적일 때만) | `timestamp-1` |
-| 폐기 목록 | `revoked_keys` | 루트 2개 | `timestamp-1`(24시간마다) |
+| 정책·status 내용 변경 | `policy`·`status` | 정책 2개, 또는 긴급 1개(엄격하게 보수적일 때만) | 서버가 붙인다(48시간마다 자동 재서명) |
+| 폐기 목록 | `revoked_keys` | 루트 2개 | 서버가 붙인다(24시간마다 자동 재서명) |
 | 앱 릴리스 | `release` | `release-1` | 없음(≤ 14일) |
 | 핀·keyEpoch 변경 릴리스 | `root_change` → `release` | 루트 2개 → `release-1` | 없음 |
 
-- 재서명(신선도)은 내용이 같으니 `timestamp`만 새로 붙인다. 폐기 목록은 하루 한 번, status는 이틀에 한 번이다.
+- **신선도 재서명은 서버 Cron이 자동으로 한다**: 폐기 목록 24시간, status·정책 48시간, 투명성 로그 헤드. 구현은 클라우드 세션의 레지스트리 배포 PR이다. 사람은 하지 않는다.
+- **내용이 바뀌는 서명**(위 표의 키 열)은 지금처럼 사람이 이 맥에서 Touch ID로 한다.
 - CI는 서명 대상 문서만 만든다. 서명은 이 맥에서 사람이 한다.
 
 ## 7. 맥·키를 잃었을 때
@@ -176,6 +187,7 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 | 맥 분실·도난(잠긴 상태) | 감싼 블롭은 그 맥의 Secure Enclave와 지문 없이는 풀 수 없다. 백업으로 새 맥에 되살린다. 분실 맥이 잠금 해제된 채였다면 유출로 본다(아래) |
 | 키 유출이 의심됨(맥이 털림, 잠금 해제 상태로 분실) | 이 세대의 모든 키를 의심한다. 백업으로 깨끗한 새 맥에 되살려 **새 세대로 바로 옮긴다**(§8의 keyEpoch+1). 유출된 세대의 키로는 세대 변경(`rootChange`) 말고는 새로 서명하지 않는다. 폐기 목록에 의심 키를 넣는다. 공격자도 같은 키를 갖고 있을 수 있으니 앱 업데이트로 핀을 빨리 바꾼다 |
 | 백업 암호를 잊음 | 백업은 열 수 없다. 키체인 키가 살아 있으면 바로 새 백업을 만든다(§4) |
+| 타임스탬프 키(서버 env) 유출 | 루트 2개가 `timestamp-1`을 폐기 목록에 넣는다. 그 목록이 그 키로 찍는 마지막 문서다. 새 타임스탬프 키는 keyEpoch+1 앱 업데이트로만 들어온다(D09 §8.4). 그때까지 클라이언트는 stale로 보수적으로 멈춘다 |
 | 맥과 백업을 둘 다 잃음 | 루트 2-of-3이 없어 `rootChange`를 서명할 수 없다. 앱 안 갱신으로 핀을 바꾸지 못한다. 새 설치본을 공식 경로로 다시 받게 하는 수동 복구뿐이다. 그래서 백업을 두 곳에 둔다 |
 
 ## 8. 승격(보유자가 생기면): 새 보유자의 새 키, keyEpoch+1, 이전 키 폐기
@@ -206,7 +218,7 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 ## 10. 결정·실측이 남은 것
 
 - **실측(사용자 손 필요)**: Secure Enclave 키 "사용"(Touch ID 프롬프트 → ECDH)은 아직 사람 손으로 확인하지 않았다. §3의 `selftest` 한 번으로 확인한다. 키 생성·재로드·키체인 저장은 실증했다(서명 안 된·ad-hoc 둘 다, M5 Pro·macOS 26.5.1).
-- **타임스탬프 자동화**: Phase 1은 사람이 하루 한 번 Touch ID로 재서명한다. 서버 HSM(또는 PIN·터치 없는 전용 장치) 자동 재서명은 결정이 필요하다.
+- **타임스탬프 자동화**(결정됨, 구현은 클라우드): 서버 온라인 키(`REGISTRY_LOG_SIGNING_KEY`)로 Cron이 재서명한다. 레지스트리 배포 PR에서 넣는다. 그 전에 핀을 반영하면 첫 폐기 목록이 24시간 뒤 낡는다. 그래서 핀 PR은 Cron이 돈 뒤에 머지한다.
 - **ADR-037**: 단독 보유의 남는 위험(§1)과 승격 조건(언제 보유자를 늘리나)을 ADR이 정한다. 설계 세션 작성 중이다.
 
 ## 부록 A. 감싸기 규약 `SAX-ceremony-wrap-v1`
