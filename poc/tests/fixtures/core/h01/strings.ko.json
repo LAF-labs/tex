@@ -5,5 +5,7 @@
  "counterpart.nameRegex": "^[^\\n]{1,60}$",
  "confirm.issue": "^(전자)?세금계산서를 발급하시겠습니까\\?$",
  "captcha.prompt": "그림의 문자를 입력해 주세요",
- "hometax.login.successMarker": "로그아웃"
+ "hometax.login.successMarker": "로그아웃",
+ "mail.status.sent": "^(전송|발송)완료$",
+ "mail.status.notSent": "실패|미전송|대기|오류|중$"
 }

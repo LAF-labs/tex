@@ -406,6 +406,11 @@
     "notCommittedPolicy": {
      "minElapsedMs": 60000,
      "lookups": 2
+    },
+    "rowVerdict": {
+     "column": "status",
+     "sent": "mail.status.sent",
+     "notSent": "mail.status.notSent"
     }
    },
    "on": {

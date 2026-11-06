@@ -28,8 +28,8 @@
       "version": "2.1.0",
       "kind": "playbook",
       "portal": "hometax",
-      "sxpDigest": "164d0cdb4b661018a6145841a19a6d6027e7e261568aa7759fc746d926b11758",
-      "size": 20783,
+      "sxpDigest": "01b6f5d5f32d2dd370fdd6218c602e7870984375740552bb5a599702780f0618",
+      "size": 21043,
       "rolloutPercent": 100
     },
     {
@@ -45,12 +45,12 @@
     {
       "keyId": "package-1",
       "alg": "ed25519",
-      "sig": "0LqCaQybZRLv-S1pCiw-oFVUk3xuN9lqbFNiDZTeyMGmT055FZr8O-o1nVc9vTeF4G0umpHc52Om9K2Tda4ZCg"
+      "sig": "foe8fhjjNeyg7MXXc1CQc5Q3FegHtSzP7TiMIYG4AYrt_mhpocrQoREh8cMDQkIdGq5xJx_xCb3WLnJqKbXpDg"
     },
     {
       "keyId": "package-2",
       "alg": "ed25519",
-      "sig": "HRuhfWL0S55qyFhx5uHJfRZRecOFMTAYpx1BbIunVBl755mJR1KADv8_x2bLN-zzF-Sp8HvgmkBEywAZL5TtCQ"
+      "sig": "K3e8hfeCvOdP0uXbg72wsqXJn2PhfjFPqSm99t6kqSEkYk6uVkE5pZDLOJ4eHeOYEer80vlONRGirh5z8Q9gCw"
     }
   ]
 }

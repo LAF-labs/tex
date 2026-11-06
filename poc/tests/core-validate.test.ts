@@ -58,6 +58,12 @@ describe('V-01 스키마·RE2', () => {
   it('namePattern 전후방 탐색은 RE2 밖', () => expectRule('V-01', (p) => (p.selectors.entries['hometax.nav.home']!.namePattern = '^(?=홈)홈$')));
   it('patternRef 역참조는 RE2 밖', () => expectRule('V-01', (p) => (p.strings['counterpart.nameRegex'] = '^(a)\\1$')));
   it('patternRef가 strings에 없으면 거부', () => expectRule('V-01', (p) => delete p.strings['counterpart.nameRegex']));
+  it('verify.rowVerdict 문구 키가 strings에 없으면 거부(v1.3.4)', () => expectRule('V-01', (p) => delete p.strings['mail.status.notSent']));
+  it('verify.rowVerdict 문구도 RE2로 본다(역참조 거부)', () => expectRule('V-01', (p) => (p.strings['mail.status.sent'] = '^(전송)\\1$')));
+  it('verify.rowVerdict 미정의 필드·빈 column은 스키마에서 거부', () => {
+    expectRule('V-01', (_p, s) => ((s('s33') as { lookup: Record<string, unknown> }).lookup.rowVerdict = { column: 'status', sent: 'mail.status.sent', notSent: 'mail.status.notSent', extra: 1 }));
+    expectRule('V-01', (_p, s) => ((s('s33') as { lookup: Record<string, unknown> }).lookup.rowVerdict = { column: '', sent: 'mail.status.sent', notSent: 'mail.status.notSent' }));
+  });
   it('expectConfirm 정규식도 RE2로 본다(전후방 탐색 거부)', () => expectRule('V-01', (p) => (p.strings['confirm.issue'] = '^(?=발급)발급하시겠습니까\\?$')));
   it('사후조건 textMatches의 patternRef도 RE2로 본다', () =>
     expectRule('V-01', (p) => {

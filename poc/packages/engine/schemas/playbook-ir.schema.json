@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/playbook-ir.schema.json",
-  "title": "Sovereign AX Playbook IR v2 (rev v1.3.3)",
-  "description": "v1.3.3 (M2-3 B: readbackEquals.ifAbsent \"empty\", readbackEmpty cond, static rule V-03m). v1.3.2 (M2-3: sumEquals {parts, total} = readback fieldKeys, no screen re-read; was {names, target}). v1.3.1 (M1-4: step `code`, verify `failSignals` for V-03j''). v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
+  "title": "Sovereign AX Playbook IR v2 (rev v1.3.4)",
+  "description": "v1.3.4 (M2-3: verify lookup.rowVerdict {column, sent, notSent} strings patterns, row status verdict for post-commit side-effect checks). v1.3.3 (M2-3 B: readbackEquals.ifAbsent \"empty\", readbackEmpty cond, static rule V-03m). v1.3.2 (M2-3: sumEquals {parts, total} = readback fieldKeys, no screen re-read; was {names, target}). v1.3.1 (M1-4: step `code`, verify `failSignals` for V-03j''). v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
   "type": "object",
   "required": ["ir", "id", "version", "portal", "profileKinds", "effects", "inputs", "steps", "postconditions"],
   "additionalProperties": false,
@@ -88,7 +88,7 @@
       ]
     },
     "lookup": {
-      "description": "B-07/B-08. playbook must be listed in manifest.lookupsUsed and be a kind=lookup package (V-22). committed iff (B1 \\ B0) has exactly one row; not_committed only after minElapsedMs, `lookups` consecutive empty results and an explicit failure signal; anything else is unknown. baseline=none only when match keys on a $vars value bound by an earlier verify (unique, did not exist before the gate).",
+      "description": "B-07/B-08. playbook must be listed in manifest.lookupsUsed and be a kind=lookup package (V-22). committed iff (B1 \\ B0) has exactly one row; not_committed only after minElapsedMs, `lookups` consecutive empty results and an explicit failure signal; anything else is unknown. With rowVerdict the single new row's status column decides (notSent → not_committed, sent → committed, else unknown). baseline=none only when match keys on a $vars value bound by an earlier verify (unique, did not exist before the gate).",
       "type": "object", "required": ["playbook", "match", "window", "baseline", "notCommittedPolicy"], "additionalProperties": false,
       "properties": {
         "playbook": {"type": "string", "pattern": "^[a-z0-9]+(\\.[a-z0-9_]+)+$"},
@@ -96,7 +96,8 @@
         "window": {"enum": ["issueDate", "today", "last7d"]},
         "baseline": {"enum": ["pre_gate_snapshot", "none"]},
         "notCommittedPolicy": {"type": "object", "required": ["minElapsedMs", "lookups"], "additionalProperties": false, "properties": {"minElapsedMs": {"type": "integer", "minimum": 30000}, "lookups": {"type": "integer", "minimum": 2, "maximum": 4}}},
-        "bind": {"type": "object", "additionalProperties": false, "properties": {"approvalNo": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}}}
+        "bind": {"type": "object", "additionalProperties": false, "properties": {"approvalNo": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}}},
+        "rowVerdict": {"description": "v1.3.4. Row status verdict on the single new row: column text (NFKC, all whitespace removed) matching strings[notSent] is explicit not_committed evidence (checked first), strings[sent] is committed, anything else is unknown (never committed, fail-closed). Without rowVerdict a single new row is committed.", "type": "object", "required": ["column", "sent", "notSent"], "additionalProperties": false, "properties": {"column": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}, "sent": {"$ref": "#/$defs/stringsKey"}, "notSent": {"$ref": "#/$defs/stringsKey"}}}
       }
     },
     "failSignals": {

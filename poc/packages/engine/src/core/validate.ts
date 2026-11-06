@@ -185,6 +185,10 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     if ((s.type === 'extract' || s.type === 'capture') && 'regex' in s.from) patternRefs.add(s.from.regex.patternRef);
     if (s.type === 'human') re('V-01', s.inputSpec?.pattern, 'human.inputSpec.pattern', s.id);
     if (s.type === 'verify') for (const f of s.failSignals ?? []) re('V-01', f.text, 'verify.failSignals.text', s.id);
+    if (s.type === 'verify' && s.lookup.rowVerdict) for (const k of [s.lookup.rowVerdict.sent, s.lookup.rowVerdict.notSent]) {
+      if (strings[k] === undefined) bad('V-01', `verify.rowVerdict ${k}가 strings에 없음`, s.id);
+      else re('V-01', strings[k], `strings ${k}(rowVerdict)`, s.id);
+    }
     if (s.type === 'submit' && s.expectConfirm && strings[s.expectConfirm] !== undefined) re('V-01', strings[s.expectConfirm], `strings ${s.expectConfirm}(expectConfirm)`, s.id);
   }
   for (const c of [...(ir.preconditions ?? []), ...ir.postconditions]) walkCond(c, (x) => 'textMatches' in x && patternRefs.add(x.textMatches.patternRef));
