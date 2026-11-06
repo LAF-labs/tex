@@ -1,12 +1,13 @@
 // 시연 씨앗 e2e(pnpm demo의 견본 데이터): 거래처 9곳·지난 발급 14건(상태 섞임), 문서함 견본 증명서 5장이 실제 가져오기 길로 들어감
 // (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 발급 인증 기본 바꾸기, 화면의 추가 폼.
-// 실행: electron apps/desktop/dist/demo-seed-e2e.js. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다. fixture 모드라 앱 폴더·키체인을 쓰지 않는다.
+// 실행: electron apps/desktop/e2e-dist/demo-seed-e2e.js. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다. fixture 모드라 앱 폴더·키체인을 쓰지 않는다.
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { app, shell as desktop } from 'electron';
 import { syntheticBizNo } from '@sax/db';
-import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
-import { dayOffset } from './shell-mock.ts';
+import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
+import { DEMO_DEV } from '../dist/demo-dev.js';
+import { dayOffset } from '../dist/shell-mock.js';
 
 registerShellSchemes();
 const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-seed-${process.pid}`);
@@ -48,7 +49,7 @@ interface ShellDoc {
 async function main(): Promise<void> {
   const opened: string[] = [];
   desktop.openPath = (async (p: string) => (opened.push(p), '')) as typeof desktop.openPath;
-  S = await startShell({ show: false, demoSeed: true });
+  S = await startShell({ dev: DEMO_DEV, show: false, demoSeed: true });
   await S.ready;
   await until('boot', async () => js<boolean>(`!!document.querySelector('#titlebar .tb-co')`));
 

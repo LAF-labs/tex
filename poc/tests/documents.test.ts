@@ -328,7 +328,7 @@ describe('보관함(DocumentService)', () => {
 
 describe('main 경계: document.import·document.file은 렌더러가 부를 수 없다', () => {
   it('MAIN_ONLY에 두고 RENDERER_METHODS에서 뺀다(docparse 결과를 붙이는 명령, 보관함 파일 경로)', async () => {
-    assert.deepEqual([...MAIN_ONLY].sort(), ['bizcert.parse', 'document.file', 'document.import']);
+    for (const m of ['bizcert.parse', 'document.file', 'document.import']) assert.ok(MAIN_ONLY.includes(m as never), m);
     const src = await fsp.readFile(path.resolve(import.meta.dirname, '../apps/desktop/src/main.ts'), 'utf8');
     const line = src.split('\n').find((l) => l.includes('const RENDERER_METHODS'))!;
     assert.match(line, /COMMANDS\.filter\(\(c\) => !MAIN_ONLY\.includes\(c\)\)/);

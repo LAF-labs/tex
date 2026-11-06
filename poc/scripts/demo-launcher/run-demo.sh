@@ -40,7 +40,7 @@ export PATH="${LOGIN_PATH:+$LOGIN_PATH:}/opt/homebrew/bin:/usr/local/bin:/usr/bi
     alert "빌드에 실패했어요."
     exit 1
   fi
-  SAX_DEMO_MODEL=openrouter pnpm exec electron apps/desktop/dist/shell.js
+  SAX_DEMO_MODEL=openrouter pnpm exec electron apps/desktop/dist/demo-shell.js
   code=$?
   echo "== $(date '+%H:%M:%S') 끝 (exit $code)"
   if [ "$code" -ne 0 ]; then alert "데모가 비정상으로 끝났어요(exit $code)."; fi
