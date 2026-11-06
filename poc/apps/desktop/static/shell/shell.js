@@ -2,7 +2,7 @@
 // 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
-import { accountCard, loginModal } from './shell-account.js';
+import { accountCard, accountErrText, loginModal } from './shell-account.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -496,6 +496,8 @@ async function send() {
     state.interp = r.via === 'model' ? 'model' : 'offline';
     renderTitlebar();
   }
+  // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
+  if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
     putRun(r.run);
     openPanel({ kind: 'run', id: r.run.id });
@@ -1072,6 +1074,15 @@ function openLogin() {
   render();
 }
 
+/** [폰 연결]: main이 따로 창을 연다(QR·6자리는 그 창에만 있다). */
+async function openPair() {
+  try {
+    await call('pair.open', {});
+  } catch (err) {
+    toast(accountErrText(errText(err)) ?? errText(err));
+  }
+}
+
 function closeLogin() {
   if (!state.login) return;
   state.login = null;
@@ -1147,7 +1158,7 @@ function settingsView() {
       }),
     ),
     state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin))
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair))
       : h(
       'div',
       { class: 'set-body' },
@@ -1501,6 +1512,11 @@ function addDoc(doc) {
 // ---- main 이벤트 ----
 
 window.sax.onEvent((ev) => {
+  if (ev.type === 'account') {
+    state.account = ev.account;
+    if (state.view === 'settings') render();
+    return;
+  }
   if (ev.type === 'run') {
     const prev = state.runs.get(ev.run.id);
     putRun(ev.run);

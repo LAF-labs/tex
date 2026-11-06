@@ -20,10 +20,12 @@
     "@tesseract.js-data/kor": "1.0.0",
     "electron-updater": "6.8.11",
     "pdfjs-dist": "6.4.299",
+    "qrcode-generator": "1.4.4",
     "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "electron": "45.1.0",
-    "electron-builder": "26.18.0"
+    "electron-builder": "26.18.0",
+    "jsqr": "1.4.0"
   }
 }
