@@ -19,7 +19,7 @@ export function HomeScreen({ go }: { go: (to: 'pair' | 'capture' | 'cash' | 'con
           : s.pc === 'queued'
             ? '◐ PC 꺼짐 · 맡겨 둠'
             : s.pc === 'stale'
-              ? '○ PC 오래 꺼짐 · PC를 켜 주세요'
+              ? '○ PC 연결 확인 안 됨'
               : `○ PC 꺼짐 · ${ago(s.data.lastSeenPc)}`;
   return (
     <Screen>
@@ -34,6 +34,15 @@ export function HomeScreen({ go }: { go: (to: 'pair' | 'capture' | 'cash' | 'con
             </T>
           )}
         </Pressable>
+
+        {paired && s.pc === 'stale' && (
+          <Card>
+            <T c="ink2" testID="stale-note">
+              PC와 연결을 확인할 수 없어요. PC를 켜 두거나 다시 연결하세요.
+            </T>
+            <Button testID="re-pair" kind="secondary" label="다시 연결하기" onPress={() => go('pair')} />
+          </Card>
+        )}
 
         {!paired ? (
           <Card>
