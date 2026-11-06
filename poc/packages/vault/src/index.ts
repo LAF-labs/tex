@@ -1,5 +1,6 @@
 export * from './constants.ts';
 export * from './crypto/ops.ts';
+export * from './npki-scan.ts';
 export * from './keystore.ts';
 export * from './protocol.ts';
 export * from './service.ts';

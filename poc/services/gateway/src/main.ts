@@ -5,7 +5,7 @@ import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, ed25519Privat
 import { gatewayRouter } from './app.ts';
 import { ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
-import { MockProvider, OpenAICompatProvider, OpenRouterProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
+import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -27,6 +27,15 @@ function fail(name: string): never {
   throw new Error(`config_${name}`);
 }
 
+/** 진위확인 원천. 서비스 키는 서버 환경 변수 NTS_BIZ_API_KEY로만 읽는다(저장소·로그·메시지 금지). */
+export function ntsFromEnv(env: NodeJS.ProcessEnv): BizStatusSource {
+  if (env.NTS_PROVIDER === 'mock') return new MockNtsSource();
+  if (env.NTS_PROVIDER !== 'odcloud') return fail('NTS_PROVIDER');
+  const base = env.NTS_BIZ_API_BASE ?? 'https://api.odcloud.kr/api';
+  if (!/^https:\/\/[^/?#]+(\/[^?#]*)?$/.test(base)) fail('NTS_BIZ_API_BASE');
+  return new OdcloudNtsSource({ serviceKey: env.NTS_BIZ_API_KEY || fail('NTS_BIZ_API_KEY'), baseUrl: `${base.replace(/\/$/, '')}/nts-businessman/v1` });
+}
+
 /** 양의 정수만(NaN·0·음수·소수면 기동 거부). 잘못된 한도가 조용히 한도 없음이 되지 않게 */
 export function positiveInt(v: string, name: string): number {
   if (!/^[1-9][0-9]{0,14}$/.test(v)) fail(name);
@@ -46,13 +55,21 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
   return out;
 }
 
+function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): OpenRouterProvider {
+  // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
+  const routing = parseOpenRouterRouting(env);
+  if (!routing) fail('OPENROUTER_ROUTING');
+  return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent });
+}
+
 export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
   switch (env.GW_PROVIDER) {
-    case 'openrouter': {
-      // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
-      const routing = parseOpenRouterRouting(env);
-      if (!routing) fail('OPENROUTER_ROUTING');
-      return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent });
+    case 'openrouter':
+      return openRouterFromEnv(env, onEvent);
+    case 'openai+openrouter': {
+      // L1 판정은 OpenAI Decisions 직결, 응답은 OpenRouter(팀장 결정 2026-11-05). 키는 서버 환경 변수만.
+      const openai = new OpenAICompatProvider({ baseUrl: env.OPENAI_BASE_URL ?? 'https://api.openai.com', apiKey: env.OPENAI_API_KEY ?? fail('OPENAI_API_KEY') });
+      return new SplitProvider(openai, openRouterFromEnv(env, onEvent));
     }
     case 'openai-compat':
       return new OpenAICompatProvider({ baseUrl: env.PROVIDER_BASE_URL ?? fail('PROVIDER_BASE_URL'), apiKey: env.PROVIDER_API_KEY ?? fail('PROVIDER_API_KEY') });
@@ -72,7 +89,7 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
   const prices: Prices = env.GW_PRICES_JSON ? { ...ZERO_PRICES, ...(JSON.parse(env.GW_PRICES_JSON) as Partial<Prices>) } : ZERO_PRICES;
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
   const accountBase = env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL');
-  const nts = deps.nts ?? (env.NTS_PROVIDER === 'odcloud' ? new OdcloudNtsSource({ serviceKey: env.NTS_SERVICE_KEY ?? fail('NTS_SERVICE_KEY') }) : env.NTS_PROVIDER === 'mock' ? new MockNtsSource() : fail('NTS_PROVIDER'));
+  const nts = deps.nts ?? ntsFromEnv(env);
   const logger = new Logger('gateway');
   const svc = new GatewayService({
     db,
