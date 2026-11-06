@@ -41,6 +41,8 @@ export interface InterpOptions {
   random?: () => number;
   /** 실행당 스텝 실행 상한(순환 방어. loopGuard와 별개의 엔진 안전망). */
   maxStepExecutions?: number;
+  /** FORCED_STOPS에 더할 코드(실행 조율기가 스스로 상태를 바꾼 멈춤: 게이트 거부·TTL 등). */
+  forcedStops?: ReadonlyMap<string, 'handoff' | 'abort'>;
 }
 
 export const MAX_STEP_EXECUTIONS = 2_000;
@@ -151,7 +153,7 @@ export class Interpreter {
     const retries = IRREVERSIBLE_TYPES.has(s.type) || this.env.irreversible.has(s.id) ? 0 : Math.max(0, Math.min(of.retry, this.opts.retries.stepMax));
     for (let attempt = 0; ; attempt++) {
       const pre = await this.hooks.beforeStep?.(s);
-      if (pre && !pre.ok) return FORCED_STOPS.get(pre.code) === 'handoff' ? { t: 'handoff', at: s.id, resumeAt: s.id, code: pre.code } : { t: 'abort', at: s.id, code: pre.code };
+      if (pre && !pre.ok) return this.forced(pre.code) === 'handoff' ? { t: 'handoff', at: s.id, resumeAt: s.id, code: pre.code } : { t: 'abort', at: s.id, code: pre.code };
       this.hooks.event?.('step.started', { stepId: s.id, type: s.type, ...(attempt ? { attempt } : {}) });
       let out: Outcome;
       try {
@@ -163,7 +165,7 @@ export class Interpreter {
       this.hooks.event?.('step.finished', { stepId: s.id, type: s.type, ...(out.t === 'fail' ? this.codes(s, out.code) : {}) });
       if (out.t !== 'fail') return this.after(s, out);
       // 재시도·onFail을 거치지 않는 코드(D16 처리 열): 같은 동작을 다시 해도 같은 거부라 바로 멈춘다.
-      const forced = FORCED_STOPS.get(out.code);
+      const forced = this.forced(out.code);
       if (forced === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.id, code: out.code };
       if (forced === 'abort') return { t: 'abort', at: s.id, code: out.code };
       if (attempt < retries) {
@@ -174,6 +176,10 @@ export class Interpreter {
       }
       return this.onFail(s, of.then, this.codes(s, out.code).code);
     }
+  }
+
+  private forced(code: string): 'handoff' | 'abort' | undefined {
+    return this.opts.forcedStops?.get(code) ?? FORCED_STOPS.get(code);
   }
 
   /** 보고 코드: 스텝의 code(D02 §4 공통 필드)가 있으면 그것, 원래 코드는 cause. */
