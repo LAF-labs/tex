@@ -1,5 +1,6 @@
 # D03. 플레이북 엔진
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): §5.4 커밋 가드 모듈 위치 `net/commitguard` → 엔진 `packages/engine/src/commitguard/`(net은 송신 전용, 가드는 엔진 소유. 금고 R-C1 PR #81과 짝).
 > 스키마 정렬 2026-11-05(PR #45): §6 L2 금지 대상·비밀 칸 가드의 `secretSlot`을 `secretKind` 항목으로, §7 정책 예시에 `limits.*.loginFailuresPerDay`·`verify.maxMs` 추가(policy 스키마 v1.3.1).
 > 팀장 결정 2026-11-05: §7 `loginFailuresPerDay`는 모든 포털 2(채택).
 > v1.3.2 — AUDIT-D 반영 2026-11-03: 재시작 복원은 테이블 상태 승격·`run.reverify`(§2), 게이트 대기 10분·금고 잠금 시 바 내림(§3), 작성일자 KST·s19e 대조(§5), 확인 불가 fail-closed·입력 잠금 두 구간·trial 클릭(§5.3), verify 상한 5분·실패 신호 쌍(§5.6), 포털 문구 표시(§6), 2차 인증·모르는 화면·로그인 실패·시계 전진·PoC 상한(§7·§7.1), 체인 자체 검증(§9)(ADR-025·026·027, D19 §3.5). v1.3.1 — ADR-021 반영: 로컬 승인 근거를 main 소유 승인 바로 바꿨다(§1·§2·§3·§11). v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영. 바뀐 절에는 근거 ID를 괄호로 붙였다. 이전 판 v1.1은 Review A를 반영해 상태 머신 전이표, 아이덴포턴시 원장, 게이트 토큰, 커밋 구간 런타임 규칙, Actuator 기반 요청률 집행, 복구 계층의 비가역 차단, 운영 수준을 정의했다.
@@ -209,7 +210,7 @@ for step in plan(current):
 - **R-C2 핸드오프 중 관측**(B-04): `HandedOff`·`WaitingHuman(manual)` 중에는 가드가 커밋 요청을 **차단하지 않고 관측**한다. 관측되면 현재 의도의 해당 스텝으로 원장에 `observed_manual`을 쓰고 상태를 `in_doubt`로 둔다. 재개 시 `in_doubt`이면 `resumeAt` 대신 verify를 먼저 실행한다(§2). 핸드오프 배너 고정 문구: "직접 발급하셨다면 '직접 발급함'을 눌러 주세요. 다시 실행하면 중복 발급됩니다."
 - **R-C3 미분류 요청 기록**(B-03): 실행 중 포털 호스트로 가는 요청 중 `commitEndpoints`에도 `knownEndpoints`에도 없는 것은 저널 `commit_guard.unclassified`로 남긴다(경로 패턴만, 본문·쿼리 없음). 커밋 랜드마크가 화면에 있는 동안 이런 요청을 차단하도록 승격할지는 S1·베타 데이터로 정한다(**Phase 2**).
 - `commitEndpoints` 합집합이 비어 있는 포털은 `auto`·`assisted`에서 실행하지 않는다(SV-06과 같은 조건을 엔진이 실행 시에도 확인).
-- 가드는 엔진의 토큰 로직과 다른 모듈(`net/commitguard`)에 두고, 토큰 검증 결과를 `armedUntil`·`intentId`·`stepId`·`readbackHash`만으로 받는다. R-C1 본문 대조는 Phase 1부터 금고, 인터셉트와 무장 근거 검증을 금고로 옮기는 것은 Phase 2(A-03, §1).
+- 가드는 엔진의 토큰 로직과 다른 모듈(~~`net/commitguard`~~ 엔진 `packages/engine/src/commitguard/`. net은 송신 전용이고 가드는 엔진이 소유한다. 금고 R-C1 PR #81과 짝)에 두고, 토큰 검증 결과를 `armedUntil`·`intentId`·`stepId`·`readbackHash`만으로 받는다. R-C1 본문 대조는 Phase 1부터 금고, 인터셉트와 무장 근거 검증을 금고로 옮기는 것은 Phase 2(A-03, §1).
 - 라우팅과 본문 검사가 포털 쪽에서 관측 가능한 차이(지연·헤더)를 만드는지는 확인 필요(S8).
 
 ### 5.5 체크포인트와 복귀

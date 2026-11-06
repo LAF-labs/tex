@@ -1,5 +1,5 @@
 // 셸 문서함 공급자(PoC-8 후속): 엔진 보관함 항목 → 셸 서류, 엔진 공급자(RPC).
-// 엔진 쪽은 실제 DataService(임시 DB·보관함)를 RPC로 부른다. 화면 흐름(가져오기 버튼·열기 암호·확인)은 Electron e2e(apps/desktop/src/shell-docs-e2e.ts)가
+// 엔진 쪽은 실제 DataService(임시 DB·보관함)를 RPC로 부른다. 화면 흐름(가져오기 버튼·열기 암호·확인)은 Electron e2e(apps/desktop/e2e/shell-docs-e2e.ts)가
 // 셸 엔진(fixture 모드)으로 본다.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';

@@ -1,5 +1,6 @@
 # D04. 모델 계층
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): §7에 게이트웨이 상류 공급사(L1 `decide`는 OpenAI 직결, L2 `respond`는 OpenRouter, 팀장 결정 2026-11-05)를 적음.
 > 팀장 결정 2026-11-05: §5에 `unknown` 사유 목록(`questions_digest_mismatch`·`gateway:*` 등)과 respond의 `toolset_digest_mismatch`를 적음(모델·egress PR #48).
 > 2026-11-05(팀장 결정, 게이트웨이 PR #50): §6 하드 상한 뒤 안전 판정의 "낮은 속도"를 계정당 분당 6회로 적음(제안, 사용자 확인 전).
 > 스키마 정렬 2026-11-05(PR #45): §3 `form_ready_v2` 행의 `secretSlot`을 `secretKind` 항목으로, 엔진의 `ready`가 결과 이름이 아님을 명시.
@@ -255,6 +256,8 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `POST /v1/respond` | `respond`: `{toolset, messages(role=user, input_text만), replay[](게이트웨이 태그 `HMAC(gw_key, accountId‖deviceId‖runToken‖item)`가 맞는 항목과 그 `call_id`의 `function_call_output`만), runToken}` | Responses 응답 + 태그 | `effort`·`max_output_tokens`·툴 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의에 따라 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·캐시 브레이크포인트를 보내면 400. **Phase 1은 이미지 입력을 400으로 거부**(`GW_ALLOW_IMAGES=false`, B-18) |
 | `POST /v1/run-tokens` | 기기 범위 토큰 필요 | 게이트웨이 서명 `runToken` | 실행당 예산을 묶는다 |
 | `GET /v1/usage/me` | — | 월 사용량·한도 | |
+
+**상류 공급사**(팀장 결정 2026-11-05, 게이트웨이 PR #50 후속): L1 `decide`는 OpenAI Decisions에 직결한다(OpenRouter에는 보정 확률 엔드포인트가 없다). L2 `respond`는 OpenRouter(OpenAI 호환 Responses, 무상태)로 보낸다. BYOK(§8)는 지금처럼 사용자 키로 OpenAI에 직결한다. 공급사 중립 자리(Upstage System One 등, ADR-015)는 그대로다.
 
 게이트웨이 인증(ADR-029, D-26(N-41)): 모델 게이트웨이는 계정 세션 토큰을 받지 않는다. 데스크톱 기기 범위 토큰(AIK 기기 인증서 결속, DPoP `SAX-dpop-v1`)만 받고 `X-Device-Id`는 토큰에서 유도한다. 자동 정지는 기기 단위로 먼저 건다(D09 §2.1).
 

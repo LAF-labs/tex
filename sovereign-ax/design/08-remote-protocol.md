@@ -1,5 +1,6 @@
 # D08. 리모트 컨트롤 프로토콜
 
+> 2026-11-06 정합(팀장 지시, 큐 1~15): Phase 1 릴레이는 HTTPS 큐 폴링만(WSS 라이브·페어링 룸은 상시 호스트가 생기면 켜는 선택 기능, 팀장 결정 2026-11-05). §6 사진(DATA) 예외와 메시지 표 `receipt.*`·`cash.entry`(폰 PR #60·#84). §7 전송 봉투 `xfer`(intent-envelope v1.5)·HPKE 스위트·패딩 버킷 33,792B·큐 한도 160 봉투/6 MiB/사진 24시간·ack 규칙(PR #84). §8 한도·보존 갱신.
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
 > 팀장 결정 2026-11-05(클라우드 답): §2.1 `SAX-acct-op-v1`은 클라이언트 AIK 서명·서버 검증만(앞 "서버 서명" 표기는 오기), 대상 계정 작업 `device.reactivate`·`slot.rebind_rk`. `SAX-revoke-v1` 대상 `{device_id, revoked_at}`. HMAC·해시·AEAD 라벨은 이 표에 넣지 않는다.
 > 팀장 결정 2026-11-05(클라우드 릴레이 PR #63): §6 바깥 봉투 `ver`=1, `kind` HS=1·DATA=2·ENV=3 채택. §8 릴레이 API(의도 봉투 큐는 HTTPS, 라이브는 WSS `/v1/mailboxes/:id/live`, 페어링 룸 `/v1/rooms`), §8.2 저장하지 않는 것.
@@ -159,6 +160,8 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 ```
 
 - 바이트 값(채택, 팀장 결정 2026-11-05, PR #63): `ver` = 1, `kind` HS = 1·DATA = 2·ENV = 3. 릴레이·폰 앱(M7-2)·데스크톱이 같은 값을 쓴다. 릴레이는 라이브 WSS 프레임에서 `ver`·`kind`(HS·DATA)·`len` 일치만 검사하고, 다른 값이면 전달하지 않고 연결을 끊는다. 의도 봉투(ENV)는 WSS가 아니라 HTTPS 큐로 가며 JSON 바깥 객체 `{v: 1, kind: "ENV", enc, ct}`를 쓴다(§8).
+- **Phase 1은 HTTPS 큐 폴링만 쓴다**(팀장 결정 2026-11-05). 라이브 세션(HS·DATA over WSS)과 페어링 룸은 상시 호스트가 생기면 켜는 선택 기능이다. 그 전에는 폰↔PC 데이터가 §7 큐 봉투로만 간다. 앱은 라이브를 먼저 시도하고 없으면 큐로 넘어간다(폰 PR #84).
+- **사진(DATA) 예외**(폰 PR #60·#84, 팀장 결정 2026-11-05): 폰이 찍은 영수증 사진은 아래 블롭 규칙을 쓰지 않고 `receipt.offer`·`receipt.chunk`로 직접 보낸다. WSS 라이브가 켜진 뒤의 기본 경로는 라이브 세션이다(청크 49,152B). 라이브가 없으면(Phase 1은 늘 그렇다) intent-envelope `xfer` 봉투로 HTTPS 우편함 큐에 넣는다(청크 32 KiB = 32,768B, §7). 어느 쪽이든 E2EE 암호문이고 큐 TTL은 24시간, 받는 쪽이 ack하면 지운다.
 - 수신 측은 `ctr` 슬라이딩 윈도(1024)로 중복·역전을 거른다. Noise 전송 한도 65,535B. **PDF·이미지는 릴레이로 보내지 않고** 블롭 저장소에 올린 뒤 `blob_id`와 래핑 DEK만 보낸다(캡차 크롭 ≤ 200KB는 예외적으로 인라인 허용, 버킷 패딩).
 - 서명·MAC 입력에는 항상 §2.1의 컨텍스트 문자열, `pair_id`, 방향(`from/to`)을 포함한다(반사 공격 무효).
 - `inner.ttl`(≤ 86,400초)은 **라이브 메시지 전용**이다. 오프라인 의도의 만료는 의도 봉투 안쪽 `exp`(≤ 72시간)가 정하며 별도 스키마를 쓴다(C/X-14 해소, §7).
@@ -182,6 +185,7 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
 | `consent.response` | 폰→PC | `{reqId, decision, consentHash, sigAlg, sig = Sign("SAX-consent-v1"‖pair_id‖reqId‖challenge‖consentHash‖decision)}` | `gate.response`와 문맥 분리. 결과는 `schedules.consent_json.deviceSig` |
 | `human.request` | PC→폰 | `{runId, stepId, reqId, kind, prompt, imageChunks?, imageSha256?(captcha 필수), ttl, vaultChallenge?, origin?, secretKind?}` | `secret`은 이미지 없음·`vaultChallenge` 필수. 캡차 이미지는 ≤ 200KB를 16KB 청크로 나눠 보낸다(Noise 프레임 상한 65,535B) |
 | `human.response` | 폰→PC | `{runId, stepId, reqId, value}` 또는 `{runId, stepId, reqId, sealed}` | 비밀은 `sealed`만: 폰 `Km`으로 인증 봉인(HPKE Auth 또는 `crypto_box`)해 `Kv`로 보내고 AAD = `{pair_id, runId, stepId, reqId, vaultChallenge, exp, origin, secretKind}`. `vaultChallenge`는 금고가 `human.request`에 실어 보낸 1회용 값. 라이브 세션 전용 |
+| `receipt.offer` / `receipt.chunk` / `cash.entry` | 폰→PC | 영수증 사진 알림(`chunkSize` 49,152 라이브 / 32,768 큐, `chunkCount` ≤ 128)·사진 청크(`index` ≤ 127)·현금매출 1건(remote-envelope v1.5, 폰 PR #60·#84) | 라이브 또는 큐 `xfer`(§7). 큐로 온 것에는 응답하지 않는다 |
 | `file.offer` | PC→폰 | `{docId(UUIDv4), docType, bytes, blobId, wDEK, kekVer}` | 본문은 블롭 경유. 문서 단위 wDEK 1개만 |
 | `query.documents` / `query.result` | 폰→PC / PC→폰 | 보관함 조회 | |
 | `rotate.static` / `close` / `ping` / `pong` | | `rotate.static{oldStatic, newStatic, ts, sig}` | §5 |
@@ -209,20 +213,26 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
   - `inputs`는 해당 플레이북 입력 스키마를 따르며 `x-secret: true` 필드는 넣을 수 없고 문자열은 200자 이하다. 거래처는 식별값(사업자번호·이메일) 대신 **로컬 거래처 ID 참조**(`counterpartyRef`)를 우선 쓴다(C-34).
   - `intent_hash = SHA-256(CBOR{cmd_id, playbookId, playbookMajor, inputs})`. 실행 시 게이트의 `actionHash`(readback 기반)와 **다른 값**이다(v1.2의 `action_hash`를 개명).
   - `exp ≤ iat + queue.ttlHours`(72시간).
-- 큐 상한: `queue.maxIntentsPerPair = 5`(v1.2의 50에서 축소), `queue.ttlHours = 72`.
+- 큐 상한: `queue.maxIntentsPerPair = 5`(v1.2의 50에서 축소), `queue.ttlHours = 72`. 릴레이 우편함 전체 한도는 봉투 160개·6 MiB이고, 사진 `xfer` 봉투의 TTL은 24시간이다(PR #84).
 - PC 부팅 → IK 세션 → 드레인: 개봉 실패는 조용히 폐기, 서명·`exp`·`seq` 윈도·`cmd_id` 미처리·화이트리스트·입력 스키마 검사. 통과한 의도들은 **카드 1장으로 묶어** 보여 준다.
 - **2단계 게이트**: 드레인한 의도는 먼저 **시작 게이트**(`gateKind = start`, 새 챌린지, 카드에 `queuedAt`과 "N시간 전 요청" 표시)를 통과해야 실행을 시작한다. 시작 전에는 로그인·화면 조작도 하지 않는다. 비가역 단계에서는 다시 **커밋 게이트**(`gateKind = commit`, readback 카드, §6.1 규칙)를 받는다(D10 `semi_auto`와 같은 구조).
-- `ACK{seq}` 후 서버가 삭제. 수신 상태(`max_seq`, 비트맵, 처리 `cmd_id`)는 디스크 영속.
+- `ACK{seq}` 후 서버가 그 `seq`까지(포함) 지운다(PR #84). 수신 상태(`max_seq`, 비트맵, 처리 `cmd_id`)는 디스크 영속.
+- **전송 봉투 `xfer`**(intent-envelope v1.5, 폰 PR #84, 팀장 결정 2026-11-05): 사진·현금매출은 실행 의도가 아니라 데이터라서 시작 게이트를 지나지 않는다.
+  - HPKE 평문은 `{xfer, sig}`이고 `xfer = {pair_id, from, to, seq, iat, exp, qbundle_seq, type, body}`다. `type`은 `receipt.offer`·`receipt.chunk`(32 KiB)·`cash.entry` 중 하나이고, `sig = Sign_Vm("SAX-env-v1"‖canonical-CBOR(xfer))`다. 바깥은 의도와 같은 `{v, kind:"ENV", enc, ct}`이고 `ct` ≤ 65,536자다.
+  - HPKE는 Base 모드, DHKEM(X25519, HKDF-SHA256)·HKDF-SHA256·ChaCha20-Poly1305다. `pkR`은 우편함 번들의 `Q_D`, aad는 `"SAX-env-v1"‖u64be(mbx_epoch)`다.
+  - 패딩 버킷: 256·1024·4096·16384·33,792B(§6 버킷 확장. 32 KiB 청크 하나가 봉투 하나다).
+  - PC는 서명·`pair_id`·`exp`(≤ 24시간)·`iat` 차이 ±5분·`seq` > 저장된 최고값을 본 뒤 라이브와 같은 수신 처리로 넘기고 응답하지 않는다. 실패한 봉투는 오류 코드 없이 버리고 ack에는 포함한다.
+  - 폰은 큐가 차면 미루고, 24시간이 지나면 다시 넣고, 7일이 지나면 지운다. PC는 같은 메시지 ID를 중복으로 저장하지 않는다.
 - 실패는 모두 무응답·정상 처리와 시간 차 최소화, 오류 코드 없음. 우편함당 실패 상한 후 연결 종료.
 
 ## 8. 릴레이(내용을 볼 수 없는 우편함)
 
-- **API**(채택, 팀장 결정 2026-11-05, PR #63 `services/relay/API.md`): 의도 봉투 큐는 HTTPS다. 넣기 `POST /v1/mailboxes/:id/envelopes`(폰, 쓰기 토큰), 꺼내기 `GET /v1/mailboxes/:id/envelopes`(PC, 읽기 토큰), 지우기 `POST /v1/mailboxes/:id/ack{seq}`. 우편함 만들기·지우기는 `POST /v1/mailboxes`·`DELETE /v1/mailboxes/:id`, 우편함 번들 슬롯은 `PUT`·`GET /v1/mailboxes/:id/bundle`(≤ 2KB, 릴레이는 검증하지 않음)이다. 라이브 세션(HS·DATA)만 WSS `GET /v1/mailboxes/:id/live`(Upgrade)이고, PC가 붙어 있으면 큐에 새 봉투가 들어왔음을 `{"t":"env"}`로 알린다. 페어링 룸은 `POST /v1/rooms{roomId}`로 만들고 `GET /v1/rooms/:roomId`(Upgrade)로 붙는다. 모든 우편함 호출에는 기기 범위 토큰과 능력 토큰이 둘 다 필요하다.
+- **API**(채택, 팀장 결정 2026-11-05, PR #63 `services/relay/API.md`): 의도 봉투 큐는 HTTPS다. **Phase 1은 이 HTTPS 큐만 연다.** 아래 WSS 라이브와 페어링 룸은 상시 호스트가 생기면 켜는 선택 기능이다(팀장 결정 2026-11-05). 넣기 `POST /v1/mailboxes/:id/envelopes`(폰, 쓰기 토큰), 꺼내기 `GET /v1/mailboxes/:id/envelopes`(PC, 읽기 토큰), 지우기 `POST /v1/mailboxes/:id/ack{seq}`. 우편함 만들기·지우기는 `POST /v1/mailboxes`·`DELETE /v1/mailboxes/:id`, 우편함 번들 슬롯은 `PUT`·`GET /v1/mailboxes/:id/bundle`(≤ 2KB, 릴레이는 검증하지 않음)이다. 라이브 세션(HS·DATA)만 WSS `GET /v1/mailboxes/:id/live`(Upgrade)이고, PC가 붙어 있으면 큐에 새 봉투가 들어왔음을 `{"t":"env"}`로 알린다. 페어링 룸은 `POST /v1/rooms{roomId}`로 만들고 `GET /v1/rooms/:roomId`(Upgrade)로 붙는다. 모든 우편함 호출에는 기기 범위 토큰과 능력 토큰이 둘 다 필요하다.
 - ~~WSS.~~ 우편함 = 32B CSPRNG ID + 능력 토큰(`tok_read`/`tok_write`, 32B CSPRNG, 서버는 해시만 저장, §4.2 7단계). 기기 인증 토큰은 별도 레이어(남용 방지용, 우편함 ID와 조인되지 않게 분리 저장).
 - **정직한 서술(C-14)**: 릴레이는 내용과 키를 볼 수 없다. 계정과 우편함의 연결은 분리 저장·접근 통제·짧은 보존으로 줄이지만, 운영자는 연결 시점·IP 상관으로 언제든 연결할 수 있다. '영지식'이라고 부르지 않는다.
 - 접속 IP: 평문 저장 대신 **일 단위 회전 솔트 HMAC**으로만 레이트리밋에 쓴다(솔트는 하루 뒤 폐기). 평문 IP는 법정 접속기록 대상인 운영자 접근 로그에만 둔다(보존은 D09 §10).
-- 한도(이 절이 정본, D09 §4는 참조만, C/X-03): 우편함당 초당 메시지 20, 기기당 우편함 3, 연결당 실패 상한, 프레임 ≤ 65,535B, 큐는 우편함당 의도 봉투 `queue.maxIntentsPerPair`(5)건·1MiB·72시간. 길이 패딩 버킷으로 크기 유출 완화.
-- 보존(C/X-02): 큐 본문 72시간, 메시지 크기 버킷·시각 메타데이터 7일.
+- 한도(이 절이 정본, D09 §4는 참조만, C/X-03): 우편함당 초당 메시지 20, 기기당 우편함 3, 연결당 실패 상한, 프레임 ≤ 65,535B, 큐는 ~~우편함당 의도 봉투 `queue.maxIntentsPerPair`(5)건·1MiB·72시간~~ 우편함당 봉투 160개·6 MiB(그중 의도 봉투는 `queue.maxIntentsPerPair`(5)건·72시간, 사진 `xfer`는 24시간, PR #84). 길이 패딩 버킷으로 크기 유출 완화.
+- 보존(C/X-02): 큐 본문 72시간(사진 `xfer` 봉투는 24시간), 메시지 크기 버킷·시각 메타데이터 7일.
 - Phase 3 후보: 남용 방지용 기기 인증을 별도 연결·별도 엔드포인트의 비연결 토큰(Privacy Pass 계열)으로 바꾼다(SP-10).
 
 ### 8.1 깨우기 푸시 (C-15, C/X-04, 스파이크 SP-3)

@@ -150,6 +150,27 @@ export class OpenAICompatProvider implements ModelProvider {
 }
 
 /**
+ * 판정과 응답을 서로 다른 공급사로 보낸다(팀장 결정 2026-11-05): L1 판정은 OpenAI Decisions 직결(확률·임계값 계약 D04 유지),
+ * 응답(Terra)은 OpenRouter(ZDR·데이터 수집 거부·공급자 고정). 어느 쪽 어댑터든 자기 fail-closed 규칙을 그대로 지킨다.
+ */
+export class SplitProvider implements ModelProvider {
+  readonly name: string;
+  private readonly d: ModelProvider;
+  private readonly r: ModelProvider;
+  constructor(decide: ModelProvider, respond: ModelProvider) {
+    this.d = decide;
+    this.r = respond;
+    this.name = `${decide.name}+${respond.name}`;
+  }
+  decide(s: DecideSpec): Promise<DecideResult> {
+    return this.d.decide(s);
+  }
+  respond(s: RespondSpec): Promise<RespondResult> {
+    return this.r.respond(s);
+  }
+}
+
+/**
  * OpenRouter 라우팅 설정(법적 검토 R14 ①). 코드 상수가 아니라 운영 환경 설정에서만 온다(ENV.md):
  * ZDR 엔드포인트만, 데이터 수집 거부, 공급자 고정(only + allow_fallbacks:false), 요청 매개변수를 다 지원하는 공급자만.
  * 하나라도 빠지거나 다른 값이면 생성·호출을 거부한다(fail-closed).

@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, type RespondSpec } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -433,6 +433,49 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: null }), /config_OPENROUTER_ROUTING/);
     assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: { zdr: true, dataCollection: 'deny', only: [] } }), /config_OPENROUTER_ROUTING/);
     assert.equal(providerFromEnv({ GW_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV }).name, 'openrouter');
+  });
+
+  it('L1 판정은 OpenAI 직결, 응답은 OpenRouter(openai+openrouter): 키·라우팅 중 하나라도 없으면 기동 거부', async () => {
+    const both = { GW_PROVIDER: 'openai+openrouter', OPENAI_API_KEY: 'ok', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV };
+    assert.equal(providerFromEnv(both).name, 'openai-compat+openrouter');
+    assert.throws(() => providerFromEnv({ ...both, OPENAI_API_KEY: undefined }), /config_OPENAI_API_KEY/);
+    assert.throws(() => providerFromEnv({ ...both, OPENROUTER_ZDR: undefined }), /config_OPENROUTER_ROUTING/);
+    assert.throws(() => providerFromEnv({ ...both, OPENAI_BASE_URL: 'http://api.openai.com' }), /config_PROVIDER_BASE_URL/);
+    const calls: string[] = [];
+    const fake = (n: string): ModelProvider => ({
+      name: n,
+      decide: () => (calls.push(`${n}.decide`), Promise.resolve({ model: 'm', answers: {}, usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 } })),
+      respond: () => (calls.push(`${n}.respond`), Promise.resolve({ model: 'm', status: 'completed', output: [], usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 } })),
+    });
+    const sp = new SplitProvider(fake('a'), fake('b'));
+    await sp.decide({} as never);
+    await sp.respond(SPEC);
+    assert.deepEqual(calls, ['a.decide', 'b.respond']);
+  });
+
+  it('진위확인 원천: 키는 NTS_BIZ_API_KEY로만, 주소는 {NTS_BIZ_API_BASE}/nts-businessman/v1/status, 상태코드는 해석 없이 그대로', async () => {
+    assert.throws(() => ntsFromEnv({ NTS_PROVIDER: 'odcloud' }), /config_NTS_BIZ_API_KEY/);
+    assert.throws(() => ntsFromEnv({ NTS_PROVIDER: 'odcloud', NTS_BIZ_API_KEY: '' }), /config_NTS_BIZ_API_KEY/);
+    assert.throws(() => ntsFromEnv({ NTS_PROVIDER: 'odcloud', NTS_BIZ_API_KEY: 'k', NTS_BIZ_API_BASE: 'http://api.odcloud.kr/api' }), /config_NTS_BIZ_API_BASE/);
+    assert.throws(() => ntsFromEnv({}), /config_NTS_PROVIDER/);
+    assert.ok(ntsFromEnv({ NTS_PROVIDER: 'odcloud', NTS_BIZ_API_KEY: 'k' }) instanceof OdcloudNtsSource);
+    let url = '';
+    const fetchFn = ((u: string) => {
+      url = u;
+      return Promise.resolve(new Response(JSON.stringify({ status_code: 'OK', data: [{ b_no: '1234567891', b_stt: '휴업자', b_stt_cd: '02', tax_type: '부가가치세 간이과세자', tax_type_cd: '02', end_dt: '', utcc_yn: 'N' }] }), { status: 200 }));
+    }) as unknown as typeof fetch;
+    const src = new OdcloudNtsSource({ serviceKey: 'k+/=', baseUrl: 'https://api.odcloud.kr/api/nts-businessman/v1', fetchFn });
+    assert.deepEqual(await src.status(['1234567891']), [{ b_no: '1234567891', b_stt_cd: '02', tax_type_cd: '02', end_dt: '' }]);
+    assert.equal(url, 'https://api.odcloud.kr/api/nts-businessman/v1/status?serviceKey=k%2B%2F%3D');
+  });
+
+  // 로컬 실호출(기본 건너뜀): set -a; . ./.env.local; set +a; SAX_NTS_LIVE=1 NTS_PROVIDER=odcloud node --conditions=development --test tests/services-gateway.test.ts
+  // 등록되지 않은 번호(0000000000) 하나만 보낸다. 키·응답 원문은 출력하지 않는다.
+  it('진위확인 실호출(SAX_NTS_LIVE=1일 때만)', { skip: process.env.SAX_NTS_LIVE !== '1' }, async () => {
+    const r = await ntsFromEnv({ ...process.env, NTS_PROVIDER: 'odcloud' }).status(['0000000000']);
+    assert.equal(r.length, 1);
+    assert.equal(r[0]!.b_no, '0000000000');
+    assert.equal(r[0]!.b_stt_cd, '');
   });
 
   it('OpenRouter 요청마다 provider{zdr, data_collection:deny, only, allow_fallbacks:false}를 싣고 적용 사실만 이벤트로, 고정 밖 공급자 응답은 버린다', async () => {
