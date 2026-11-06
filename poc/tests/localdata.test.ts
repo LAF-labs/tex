@@ -12,7 +12,7 @@ import { promisify } from 'node:util';
 import { isEncryptedFile, isValidBizNo, openDatabase, syntheticBizNo, type Db } from '@sax/db';
 import { BizVerifier, DataService, READ_QUERIES } from '@sax/engine';
 import { Egress, EgressError } from '@sax/net';
-import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsPowerShellEnv, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
+import { appPaths, defaultAppRoot, dirGuard, findReparsePoint, grantsUserFullControl, isTrustedOwner, isUserSid, parseDacl, prepareLayout, preparePrivateDir, readDacl, readOwner, windowsPowerShellEnv, windowsTool, type AclCheck, type DirGuard } from '@sax/platform';
 import { scanDir } from '@sax/vault';
 
 const run = promisify(execFile);
@@ -84,6 +84,18 @@ describe('경로와 접근 통제', () => {
     assert.equal(grants(`D:PAI(A;OI;FA;;;${me})`), false, '하위 폴더에 상속되지 않음');
     assert.equal(grants(`D:PAI(A;CI;FA;;;${me})`), false, '하위 파일에 상속되지 않음');
     assert.equal(grants(`D:PAI(A;OICI;FA;;;S-1-5-21-1-2-3-1002)`), false, '다른 계정');
+  });
+
+  it('SDDL 별칭 LA·LG: 이 컴퓨터의 기본 제공 Administrator·Guest 로컬 계정일 때만 사용자로 본다(windows-latest runneradmin)', () => {
+    const admin = 'S-1-5-21-1-2-3-500';
+    const dacl = parseDacl('D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;LA)');
+    assert.equal(grantsUserFullControl(dacl, admin, true), true, '로컬 Administrator');
+    assert.equal(grantsUserFullControl(dacl, admin, false), false, '도메인 계정 RID 500은 이 컴퓨터의 LA가 아니다(실패 닫힘)');
+    assert.equal(grantsUserFullControl(dacl, 'S-1-5-21-1-2-3-1001', true), false, '다른 로컬 계정');
+    assert.equal(isUserSid('LG', 'S-1-5-21-1-2-3-501', true), true, '로컬 Guest');
+    assert.equal(isUserSid('LA', 'S-1-5-21-1-2-3-501', true), false, 'Guest에게 LA는 남이다');
+    assert.equal(isUserSid('LA', 'S-1-5-21-1-2-3-1500', true), false, 'RID가 500으로 끝나기만 하는 계정');
+    assert.equal(isUserSid('BA', admin, true), false, 'Administrators 그룹은 사용자가 아니다');
   });
 
   it('사용자 자신에게 권한이 없는 폴더는 no_user_access, 기동 시 제자리에서 고친다', async () => {

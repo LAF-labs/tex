@@ -197,31 +197,45 @@ export function isTrustedOwner(owner: string, userSid: string): boolean {
 const isSystem = (sid: string): boolean => sid === 'SY' || sid === 'S-1-5-18';
 
 /**
+ * ACE의 SID가 현재 사용자인지. SDDL은 이 컴퓨터의 기본 제공 Administrator(RID 500)·Guest(RID 501)를 전체 SID 대신 `LA`·`LG`로 쓴다
+ * (GitHub windows-latest 러너 계정 runneradmin이 RID 500이다). 별칭은 이 컴퓨터 계정만 뜻하므로 로컬 계정일 때만 같다고 본다.
+ */
+export function isUserSid(aceSid: string, userSid: string, local: boolean): boolean {
+  if (aceSid === userSid) return true;
+  if (!local || !/^S-1-5-21-\d+-\d+-\d+-50[01]$/.test(userSid)) return false;
+  return aceSid === (userSid.endsWith('-500') ? 'LA' : 'LG');
+}
+
+/**
  * 사용자에게 이 폴더와 하위 전체의 모든 권한을 주는 ACE가 있는지. ensurePrivate가 쓰는 `(A;OICI;FA;;;<사용자>)` 모양이다.
  * 상속 전용(IO)은 폴더 자체에 효력이 없다. ACE가 하나도 없는 보호 DACL(복구가 끊긴 흔적 등)도 여기서 걸린다.
  */
-export function grantsUserFullControl(dacl: Dacl, userSid: string): boolean {
-  return dacl.aces.some((a) => a.type === 'A' && a.sid === userSid && /^(FA|0x1f01ff)$/i.test(a.rights) && a.flags.includes('OI') && a.flags.includes('CI') && !a.flags.includes('IO'));
+export function grantsUserFullControl(dacl: Dacl, userSid: string, local = false): boolean {
+  return dacl.aces.some((a) => a.type === 'A' && isUserSid(a.sid, userSid, local) && /^(FA|0x1f01ff)$/i.test(a.rights) && a.flags.includes('OI') && a.flags.includes('CI') && !a.flags.includes('IO'));
 }
 
 class WindowsDirGuard implements DirGuard {
-  private async userSid(): Promise<string> {
+  /** 사용자 SID와 로컬 계정 여부(`whoami` 이름의 도메인 부분이 이 컴퓨터 이름이면 로컬). 로컬 여부는 SDDL 별칭 `LA`·`LG`를 풀 때만 쓴다. */
+  private async user(): Promise<{ sid: string; local: boolean }> {
     const { stdout } = await run(windowsTool('whoami.exe'), ['/user', '/fo', 'csv', '/nh']);
-    const sid = stdout.trim().split(',').pop()?.replace(/"/g, '');
+    const [name, sid] = stdout.trim().split('","').map((f) => f.replace(/"/g, ''));
     if (!sid?.startsWith('S-1-')) throw new Error('cannot resolve user SID');
-    return sid;
+    const domain = name?.includes('\\') ? name.split('\\')[0] : '';
+    // NetBIOS 이름(COMPUTERNAME)은 15자로 잘리므로 호스트 이름과 둘 다 본다. 둘 다 아니면 로컬로 보지 않는다(실패 닫힘).
+    const machine = [process.env.COMPUTERNAME, os.hostname()].filter((n): n is string => !!n).map((n) => n.toLowerCase());
+    return { sid, local: !!domain && machine.includes(domain.toLowerCase()) };
   }
 
   async ensurePrivate(dir: string): Promise<AclCheck> {
     if (await findReparsePoint(dir)) return { ok: false, problems: ['reparse_point'] };
     await fs.mkdir(dir, { recursive: true });
-    const sid = await this.userSid();
+    const { sid, local } = await this.user();
     // 다른 계정 소유 폴더의 DACL은 고쳐 쓰지 않는다. 고쳐도 소유자가 다시 열 수 있다(실패 닫힘).
     if (!isTrustedOwner(await readOwner(dir), sid)) return this.checkPrivate(dir);
     const icacls = windowsTool('icacls.exe');
     await run(icacls, [dir, '/inheritance:r', '/grant:r', `*${sid}:(OI)(CI)F`, '/grant:r', '*S-1-5-18:(OI)(CI)F'], REPAIR);
     // 상속을 끊어도 명시 ACE(누가 직접 추가한 Users 읽기 등)는 남는다. 사용자·SYSTEM 밖은 지운다.
-    const extra = new Set((await readDacl(dir)).aces.map((a) => a.sid).filter((s) => s !== sid && !isSystem(s)));
+    const extra = new Set((await readDacl(dir)).aces.map((a) => a.sid).filter((s) => !isUserSid(s, sid, local) && !isSystem(s)));
     const removable = [...extra].map((s) => (s.startsWith('S-1-') ? s : SDDL_ALIASES[s])).filter((s): s is string => !!s);
     if (removable.length) await run(icacls, [dir, '/remove', ...removable.map((s) => `*${s}`)], REPAIR);
     const check = await this.checkPrivate(dir);
@@ -243,12 +257,12 @@ class WindowsDirGuard implements DirGuard {
       return { ok: false, problems: ['missing'] };
     }
     if (!st.isDirectory()) problems.push('not_dir');
-    const sid = await this.userSid();
+    const { sid, local } = await this.user();
     if (!isTrustedOwner(await readOwner(dir), sid)) problems.push('not_owner');
     const dacl = await readDacl(dir);
     if (!dacl.protected || dacl.aces.some((a) => a.flags.includes('ID'))) problems.push('inherited');
-    if (!grantsUserFullControl(dacl, sid)) problems.push('no_user_access');
-    if (dacl.aces.some((a) => a.type !== 'A' || (a.sid !== sid && !isSystem(a.sid)))) problems.push('extra_principal');
+    if (!grantsUserFullControl(dacl, sid, local)) problems.push('no_user_access');
+    if (dacl.aces.some((a) => a.type !== 'A' || (!isUserSid(a.sid, sid, local) && !isSystem(a.sid)))) problems.push('extra_principal');
     return { ok: problems.length === 0, problems };
   }
 
