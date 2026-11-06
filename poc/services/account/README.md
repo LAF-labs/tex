@@ -1,8 +1,8 @@
 # 계정·구독 서비스(D14 M4-5)
 
-로그인(이메일 6자리 코드·패스키·데스크톱 루프백 PKCE), 구독(9,900원 한 플랜, ADR-034), 기기(AIK 고정·AIK 서명 기기 목록·긴급 정지·삭제 유예·기기 범위 토큰), 프로필 슬롯·사업자 HMAC 재바인딩(B-28)을 맡는다. API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md), 공통 형식은 [../shared/CONTRACT.md](../shared/CONTRACT.md).
+로그인(이메일 6자리 코드·패스키·이메일+비밀번호(ADR-038, 선택)·데스크톱 루프백 PKCE·자동 로그인 갱신 토큰), 구독(9,900원 한 플랜, ADR-034), 기기(AIK 고정·AIK 서명 기기 목록·긴급 정지·삭제 유예·기기 범위 토큰), 프로필 슬롯·사업자 HMAC 재바인딩(B-28)을 맡는다. API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md), 공통 형식은 [../shared/CONTRACT.md](../shared/CONTRACT.md).
 
-**침해되면 무엇이 새는가**(D09 §1): 이메일, 기기 목록(이름·플랫폼·공개키), 구독 상태, 슬롯 수와 사업자 프로필 유무(HMAC), 동의 이력, 패스키 공개키. 대화 본문·화면 텍스트·비밀·사업자번호 평문·결제 수단·IP는 이 서비스에 없다. 사업자 HMAC 키는 클라이언트의 RK에서 파생되어 서버에 없으므로 HMAC으로 사업자번호를 되찾을 수 없다(서버는 열쇠를 갖지 않는다, ADR-029).
+**침해되면 무엇이 새는가**(D09 §1): 이메일, 기기 목록(이름·플랫폼·공개키), 구독 상태, 슬롯 수와 사업자 프로필 유무(HMAC), 동의 이력, 패스키 공개키, 비밀번호 해시(argon2id + 페퍼: 페퍼는 환경 변수에만 있어 DB만으로는 대입할 수 없다). 대화 본문·화면 텍스트·비밀·사업자번호 평문·결제 수단·IP는 이 서비스에 없다. 사업자 HMAC 키는 클라이언트의 RK에서 파생되어 서버에 없으므로 HMAC으로 사업자번호를 되찾을 수 없다(서버는 열쇠를 갖지 않는다, ADR-029).
 
 ## 저장 컬럼 ↔ D09 §1.1 운영자 가시성
 
@@ -13,9 +13,14 @@
 | accounts | id, email, status, created_at, last_login_at | 계정·이메일·상태·가입·로그인 시각 |
 | accounts | aik_pub, aik_pinned_at, device_list_version, device_list_json | AIK_pub, 기기 목록(AIK 서명) |
 | accounts | last_biz_change_at | **D09 추가 필요**: 사업자 HMAC 재바인딩 시각(90일 규칙) |
-| sessions | token_hash, account_id, auth_method, created_at, expires_at | 세션(토큰 해시만) |
+| sessions | token_hash, account_id, auth_method, created_at, expires_at | 세션(토큰 해시만, 1시간) |
+| sessions | auth_at | **D09 추가 필요**: 인증 시각(최근 로그인 판정, ADR-038) |
+| pw_creds | account_id, pw_hash, salt, params, set_at | **D09 추가 필요**: 비밀번호 해시(argon2id + 페퍼, 평문 없음)·솔트·매개변수·설정 시각 |
+| pw_locks | account_id, fails, locked_until, lock_level, updated_at | **D09 추가 필요**: 비밀번호 연속 실패·잠금(하루 조용하면 삭제) |
+| reset_codes | reset_id_hash, account_id, code_mac, attempts, expires_at | **D09 추가 필요**: 재설정 코드(HMAC만, 10분) |
+| refresh_tokens | token_hash, account_id, family_id, parent_hash, auth_method, issued_at, expires_at, rotated_at | **D09 추가 필요**: 갱신 토큰(해시만, 30일 미사용 만료, 회전 계보) |
 | login_codes | login_id_hash, email, code_mac, attempts, expires_at | 이메일 발송(코드는 HMAC만, 10분) |
-| oauth_codes | code_hash, account_id, auth_method, client_id, redirect_uri, code_challenge, expires_at | 루프백 인가 코드(해시, 60초) |
+| oauth_codes | code_hash, account_id, auth_method, client_id, redirect_uri, code_challenge, expires_at, auth_at | 루프백 인가 코드(해시, 60초). auth_at은 **D09 추가 필요**: 원래 세션 인증 시각 |
 | passkeys | credential_id, account_id, public_key, alg, sign_count, created_at | **D09 추가 필요**: 패스키 공개키·카운터 |
 | webauthn_challenges | challenge_hash, account_id, kind, expires_at | 패스키 챌린지(해시, 5분) |
 | devices | device_id, account_id, role, platform, name, sx, vx, registered_at, attest_signal, state, email_hold_until, delete_after, revoke_record | 기기 목록, 상태, 72시간 대기, 7일 삭제 유예 |
@@ -28,12 +33,13 @@
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
 | int_nonces | nonce, expires_at | 내부 호출 서명의 1회용 무작위 값(요청 내용·출처 없음). 서명 시각 + 60초 뒤 삭제 |
 
-저장하지 않는 것: 평문 IP·이메일·기기 ID 한도 키(한도 키는 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 로그인 코드 평문, 사업자번호, 결제 수단, 접근 로그의 본문·경로 변수 값.
+저장하지 않는 것: 평문 IP·이메일·기기 ID 한도 키(한도 키는 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 로그인·재설정 코드 평문, 비밀번호 평문·페퍼, 세션·갱신 토큰 평문, 사업자번호, 결제 수단, 접근 로그의 본문·경로 변수 값.
 
 ## 어댑터(ADR-015: 공급사 종속 코드는 한 곳)
 
 - 결제: `PaymentGateway`(`src/adapters.ts`). 이 저장소에는 `MockPaymentGateway`만 있다. 실제 PG 어댑터와 자격 증명은 저장소 밖(배포 시 주입)이다.
 - 메일: `MailSender`. 이 저장소에는 `MockMailSender`만 있다(국내 발송 사업자 어댑터는 같은 인터페이스로 붙인다). 계정 서버의 "서버 메일 경로"(ADR-034 결정 10)는 구현하지 않는다. 로그인 코드·보안 알림만 보낸다.
+- 비밀번호 해시: Node 내장 `crypto.argon2`(Node 24.7+). 네이티브 애드온이 없다. 흔한·유출 목록은 `data/common-passwords.txt.gz`(로컬, 외부 호출 없음, [data/README.md](data/README.md)).
 - 정지 훅: `DeviceStopHook`. 운영은 내부 HTTP(`STOP_HOOK_URLS`).
 
 ## 실행

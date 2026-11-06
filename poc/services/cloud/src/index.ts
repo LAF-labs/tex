@@ -7,7 +7,7 @@ import { buildAccount } from '@sax/svc-account';
 import { buildGateway, type DeviceSuspender } from '@sax/svc-gateway';
 import { buildPush } from '@sax/svc-push';
 import { buildRelay } from '@sax/svc-relay';
-import { Logger, cronEntry, functionEntry, requestListener, serviceEnv, type DeviceDirectory, type Router } from '@sax/svc-shared';
+import { cronEntry, functionEntry, requestListener, serviceEnv, type DeviceDirectory, type Router } from '@sax/svc-shared';
 
 type Listener = (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void>;
 
@@ -23,7 +23,7 @@ export async function buildCloud(env: NodeJS.ProcessEnv = process.env) {
   push = await buildPush(serviceEnv('PUSH', env), { directory }, { migrate: false });
   const trust = (e: NodeJS.ProcessEnv) => e.TRUST_PROXY === '1';
   const services: { router: Router; listener: Listener }[] = [
-    { router: account.router, listener: requestListener(account.router, { logger: new Logger('account'), trustProxy: trust(serviceEnv('ACCOUNT', env)) }) },
+    { router: account.router, listener: requestListener(account.router, { logger: account.logger, trustProxy: trust(serviceEnv('ACCOUNT', env)) }) },
     { router: gateway.router, listener: requestListener(gateway.router, { logger: gateway.logger, trustProxy: trust(serviceEnv('GATEWAY', env)) }) },
     { router: relay.hub.router, listener: requestListener(relay.hub.router, { logger: relay.logger, trustProxy: trust(serviceEnv('RELAY', env)) }) },
     { router: push.router, listener: requestListener(push.router, { logger: push.logger, trustProxy: trust(serviceEnv('PUSH', env)) }) },
@@ -54,7 +54,7 @@ export function internalFunction(env: NodeJS.ProcessEnv = process.env): Listener
     build: async () => {
       const e = serviceEnv('ACCOUNT', env);
       const b = await buildAccount(e, {}, { migrate: false });
-      return requestListener(b.router, { logger: new Logger('account'), trustProxy: e.TRUST_PROXY === '1' });
+      return requestListener(b.router, { logger: b.logger, trustProxy: e.TRUST_PROXY === '1' });
     },
   });
 }
