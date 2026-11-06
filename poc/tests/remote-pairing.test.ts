@@ -339,10 +339,13 @@ describe('계정 확인 주장 acct_claim(설계 #120, 팀장 결정 2026-11-06)
 
   it('고정 키가 아닌 키로 서명, 만료, 다른 AIK, 모양 틀림이면 저장하지 않고 중단', async () => {
     const other = ed25519Keygen();
-    const now = Math.floor(Date.now() / 1000);
+    const now = Date.now();
+    const sec = Math.floor(now / 1000);
     const cases: [string, (aik: Uint8Array) => string][] = [
       ['다른 키', (aik) => testAcctClaim(aik, { sk: other.secretKey })],
-      ['만료', (aik) => testAcctClaim(aik, { iat: now - 1200, exp: now - 1 })],
+      ['만료', (aik) => testAcctClaim(aik, { iat: now - 600_001, exp: now - 1 })],
+      ['초 단위 iat·exp', (aik) => testAcctClaim(aik, { iat: sec, exp: sec + 600 })],
+      ['유효 기간 10분 초과', (aik) => testAcctClaim(aik, { iat: now, exp: now + 600_001 })],
       ['다른 AIK', () => testAcctClaim(ed25519Keygen().publicKey)],
       ['모양', () => 'AAAA'],
       ['이메일 모양', (aik) => testAcctClaim(aik, { email: 'owner@exa\u0000mple.test' })],
@@ -369,6 +372,14 @@ describe('계정 확인 주장 acct_claim(설계 #120, 팀장 결정 2026-11-06)
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [old.publicKey], aikPub: aik }), { ok: false, reason: 'signature' });
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: ed25519Keygen().publicKey }), { ok: false, reason: 'aik_mismatch' });
     assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: Date.now() + 3_600_000 }), { ok: false, reason: 'expired' });
+    // 시각은 UTC 밀리초(SIGNING.md §8). 초 단위 exp가 오면 만료로 거절한다.
+    const sec = Math.floor(Date.now() / 1000);
+    assert.deepEqual(verifyAcctClaim(testAcctClaim(aik, { iat: sec, exp: sec + 600 }), { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'expired' });
+    // 경계: exp = iat + 600000은 통과, 지금 = exp면 만료.
+    const t = Date.now();
+    const edge = testAcctClaim(aik, { iat: t, exp: t + 600_000 });
+    assert.equal(verifyAcctClaim(edge, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: t + 599_999 }).ok, true);
+    assert.deepEqual(verifyAcctClaim(edge, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: t + 600_000 }), { ok: false, reason: 'expired' });
     for (const bad of [null, 7, '', '***', 'A'.repeat(2000)]) assert.deepEqual(verifyAcctClaim(bad, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'shape' });
   });
 });

@@ -13,7 +13,7 @@
 [내 계정 맞음]을 눌러야 저장한다. [아니에요, 중단]을 누르면 아무것도 저장하지 않는다.
 
 - **acct_claim(팀장 결정 2026-11-06):** `PAIR_OK.acctClaim` = `b64(JCS({claim:{account_id, email, aik_pub, iat, exp}, sig}))`.
-  - 계정 서비스가 `utf8("SAX-acct-claim-v1") ‖ JCS(claim)`에 Ed25519로 서명한다. `iat`·`exp`는 초 단위다.
+  - 계정 서비스가 `utf8("SAX-acct-claim-v1") ‖ JCS(claim)`에 Ed25519로 서명한다. `iat`·`exp`는 UTC 밀리초 정수이고 `exp = iat + 600000`이다(SIGNING.md §8). 초 단위 값은 만료로 거절한다.
   - 폰은 앱에 고정한 계정 서비스 공개키로 서명을 검증한다. 그리고 `exp`가 지나지 않았는지, `aik_pub`가 `PAIR_OK.aikPub`와 같은지 본다. 하나라도 어긋나면 `acct_claim_invalid`로 중단하고 저장하지 않는다.
   - 서버 구현 전이라 개발 스택은 시험 키(`apps/mobile/dev/test-account-key.ts`)로 서명한다.
   - 릴리스 빌드의 고정 키 목록은 비어 있어서 페어링이 늘 실패한다. 실제 키는 클라우드 세션이 만들면 넣는다.

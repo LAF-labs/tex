@@ -11,8 +11,9 @@ export const TEST_EMAIL = 'owner@example.test';
 
 /** 계정 서비스가 이 PC의 AIK로 서명해 주는 계정 확인 주장(시험 대역). */
 export function testAcctClaim(aikPub: Uint8Array, o: { sk?: Uint8Array; email?: string; iat?: number; exp?: number } = {}): string {
-  const now = Math.floor(Date.now() / 1000);
-  return signAcctClaim(o.sk ?? ACCOUNT_KEY.secretKey, { account_id: 'acc_test', email: o.email ?? TEST_EMAIL, aik_pub: b64(aikPub), iat: o.iat ?? now, exp: o.exp ?? now + 600 });
+  // iat·exp는 UTC 밀리초, exp = iat + 600000(SIGNING.md §8)
+  const now = Date.now();
+  return signAcctClaim(o.sk ?? ACCOUNT_KEY.secretKey, { account_id: 'acc_test', email: o.email ?? TEST_EMAIL, aik_pub: b64(aikPub), iat: o.iat ?? now, exp: o.exp ?? now + 600_000 });
 }
 export const DAY = 86_400_000;
 
