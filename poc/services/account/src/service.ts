@@ -457,8 +457,9 @@ export class AccountService {
    */
   /**
    * PC가 폰을 대신 등록(페어링 7단계). 재등록은 멱등이다(팀장 결정 2026-11-06, #118):
-   * 같은 계정·같은 기기 ID·같은 Sx·Vx의 pending/active 모바일이면 룸을 소비하지 않고 기존 기록을 돌려준다(created: false, 상한·교체 한도에 다시 넣지 않음).
-   * 같은 기기 ID인데 키·계정·역할이 다르거나 정지·폐기된 기록이면 지금처럼 400이다(폐기 뒤 새 기기 ID로 재등록). 이 판단도 룸 소비 전에 한다.
+   * 같은 계정·같은 기기 ID·같은 Sx·Vx의 pending/active 모바일이면 기존 기록을 돌려준다(created: false, 상한·교체 한도에 다시 넣지 않음).
+   * 이때도 룸은 소비한다(룸 하나에 enroll 성공 한 번, 팀장 결정 2026-11-06). 같은 룸의 두 번째 enroll은 키와 무관하게 409 relay.room_used.
+   * 같은 기기 ID인데 키·계정·역할이 다르거나 정지·폐기된 기록이면 지금처럼 400이다(폐기 뒤 새 기기 ID로 재등록). 이 판단은 룸 소비 전에 한다(실패는 룸을 쓰지 않는다).
    */
   async enrollByDesktop(
     requester: { accountId: string; deviceId: string },
@@ -466,15 +467,22 @@ export class AccountService {
   ): Promise<{ created: boolean; holdUntil: number | null; state: 'pending' | 'active' }> {
     if (!this.d.pairing) fail('relay.room_unavailable');
     const same = (d: DeviceRow) => ({ created: false, holdUntil: d.state === 'pending' ? d.email_hold_until : null, state: d.state as 'pending' | 'active' });
+    // 룸 하나에 enroll 성공은 한 번이다(같은 키 재등록 200도 룸을 'enroll 사용됨'으로 표시한다). 이미 쓴 룸은 409 relay.room_used
+    const redeem = async () => {
+      const r = await this.d.pairing!.redeem(o.roomId, requester.deviceId);
+      if (r === 'used') fail('relay.room_used');
+      if (r !== 'ok') fail('relay.room_unavailable');
+    };
     const prev = await this.mobileReenroll(this.db, requester, o);
     if (prev) {
       await this.requireActiveDesktop(this.db, requester);
+      await redeem();
       return same(prev);
     }
     // 상한은 룸을 소비하기 전에 한 번 보고(헛되이 룸을 쓰지 않게), 쓰기 트랜잭션에서 다시 본다
     if (!(await this.countOk(this.db, requester.accountId, 'mobile'))) fail('account.device_limit');
     if (!(await this.churnOk(this.db, requester.accountId, 'mobile'))) fail('account.device_churn_limit');
-    if (!(await this.d.pairing!.redeem(o.roomId, requester.deviceId))) fail('relay.room_unavailable');
+    await redeem();
     const r = await this.db.tx(async (q) => {
       await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [requester.accountId]);
       await this.requireActiveDesktop(q, requester);
