@@ -2,6 +2,7 @@
 import { fileURLToPath } from 'node:url';
 import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
+import { AcctClaimSigner } from './acct-claim.ts';
 import { accountRouter } from './app.ts';
 import { AccountService } from './service.ts';
 
@@ -38,6 +39,9 @@ export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: {
   await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
   const kid = env.TOKEN_KID ?? 'k1';
   const signKey = ed25519Private(key32(env.TOKEN_SIGNING_SEED, 'TOKEN_SIGNING_SEED'));
+  // acct_claim 전용 키. 없으면 그 경로가 닫힌다. 기기 토큰 키와 같은 값이면 기동하지 않는다(키를 섞지 않는다)
+  if (env.ACCT_CLAIM_SIGNING_KEY !== undefined && env.ACCT_CLAIM_SIGNING_KEY === env.TOKEN_SIGNING_SEED) fail('ACCT_CLAIM_SIGNING_KEY');
+  const acctClaims = env.ACCT_CLAIM_SIGNING_KEY !== undefined ? AcctClaimSigner.fromSeedHex(env.ACCT_CLAIM_SIGNING_KEY) : undefined;
   const publicOrigin = env.ACCOUNT_PUBLIC_ORIGIN ?? fail('ACCOUNT_PUBLIC_ORIGIN');
   if (env.PG_PROVIDER !== 'mock' || env.MAIL_PROVIDER !== 'mock') {
     if (!deps.mail || !deps.payments) throw new Error('config_provider: 이 저장소에는 모의 어댑터만 있다(PG_PROVIDER=mock, MAIL_PROVIDER=mock)');
@@ -52,6 +56,7 @@ export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: {
     publicOrigin,
     billingReturnUrl: env.BILLING_RETURN_URL ?? fail('BILLING_RETURN_URL'),
     stopHooks: (env.STOP_HOOK_URLS ?? '').split(',').filter(Boolean).map((u) => httpStopHook(u, env.INTERNAL_TOKEN ?? '')),
+    acctClaims,
     pairing: env.RELAY_INTERNAL_URL ? httpPairingRooms(env.RELAY_INTERNAL_URL, env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN')) : undefined,
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
