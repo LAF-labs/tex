@@ -52,6 +52,10 @@ export interface Lookup {
   baseline: 'pre_gate_snapshot' | 'none';
   notCommittedPolicy: { minElapsedMs: number; lookups: number };
   bind?: { approvalNo?: string };
+  /** 새 행 하나의 상태 문구 판정(v1.3.4): notSent 패턴 → not_committed 근거(먼저 본다), sent → committed, 그 밖 unknown. */
+  rowVerdict?: { column: string; sent: string; notSent: string };
+  /** 이 verify만의 다시 보기 상한(v1.3.4, baseline:none 사후 확인만, V-03n). 없으면 policy.verify.maxMs. */
+  maxMs?: number;
 }
 
 export type SignFlowAction = 'human:secret' | 'secret_fill:security_card' | 'wait:push';
