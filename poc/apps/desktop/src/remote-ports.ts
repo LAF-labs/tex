@@ -48,7 +48,7 @@ export interface RelayHttpClient {
 export interface CloudPorts {
   account: AccountClient;
   relay: RelayHttpClient;
-  /** 릴레이 호스트(pairPrologue·QR에 들어간다). 운영 tax.laf-co.com, 개발 스택 localhost:<port>. */
+  /** 릴레이 호스트(pairPrologue·QR에 들어간다, WSS는 이 호스트로). 운영 relayHost = rooms.tax.laf-co.com(QR 호스트·WSS), HTTPS 큐는 tax.laf-co.com. 개발 스택 localhost:<port>. */
   relayHost: string;
   /** 개발 스택(ws://localhost)이면 참. 제품 빌드는 늘 거짓. */
   insecureLocal: boolean;

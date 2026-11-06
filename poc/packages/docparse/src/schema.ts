@@ -1,6 +1,6 @@
 // schema/*.json 검증기(ajv). 샌드박스 출력은 main이 쓰기 전에, parse 결과는 내보내기 전에 통과해야 한다.
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajvMain from 'ajv';
 import type { ValidateFunction } from 'ajv';
 import { DOC_META_SCHEMA } from '@sax/engine/docmeta';
 import type { CertInfo } from './sandbox/x509.ts';
@@ -19,7 +19,7 @@ function validator(ref: string): ValidateFunction {
   let v = cache.get(ref);
   if (v) return v;
   if (!ajv) {
-    const AjvCtor = createRequire(import.meta.url)('ajv') as typeof import('ajv').default;
+    const AjvCtor = ajvMain.default as typeof import('ajv').default;
     ajv = new AjvCtor({ allErrors: false, strict: false, $data: true });
     ajv.addSchema(DOC_META_SCHEMA as object);
     ajv.addSchema(SANDBOX_OUTPUT_SCHEMA);

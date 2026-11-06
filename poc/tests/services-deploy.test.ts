@@ -34,6 +34,7 @@ import { MIGRATIONS_DIR as GATEWAY_MIGRATIONS } from '../services/gateway/src/in
 import { MIGRATIONS_DIR as RELAY_MIGRATIONS } from '../services/relay/src/index.ts';
 import { MIGRATIONS_DIR as PUSH_MIGRATIONS } from '../services/push/src/index.ts';
 import { INTERNAL_FUNCTION_ROUTES, buildCloud, cloudFunction, cronFunction, internalFunction } from '../services/cloud/src/index.ts';
+import { materialize } from '../services/deploy/check-vercel-output.ts';
 import { client } from './services-kit.ts';
 
 const DEPLOY = path.join(import.meta.dirname, '..', 'services', 'deploy');
@@ -267,6 +268,47 @@ function routes(svc: string): string[] {
   const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'services', svc, 'src', 'app.ts'), 'utf8');
   return [...src.matchAll(/r\.add\(\s*'[A-Z]+',\s*'([^']+)'/g)].map((m) => m[1]!.replace(/:[a-z]+/g, 'x'));
 }
+
+describe('Vercel 함수 묶음(파일 추적이 따라갈 수 있는 모듈만, 팀장 결정 2026-11-06)', () => {
+  it('packages·services 소스에 createRequire가 없다(ajv/dist/2020이 묶음에서 빠져 모든 함수가 죽었다): 의존성은 정적 import로', () => {
+    const root = path.join(import.meta.dirname, '..');
+    const hits: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const f = path.join(d, e.name);
+        if (e.isDirectory()) walk(f);
+        else if (/\.(ts|js|mjs)$/.test(e.name) && /\bcreateRequire\b/.test(fs.readFileSync(f, 'utf8'))) hits.push(path.relative(root, f));
+      }
+    };
+    for (const top of ['packages', 'services']) {
+      for (const pkg of fs.readdirSync(path.join(root, top))) {
+        const src = path.join(root, top, pkg, 'src');
+        if (fs.existsSync(src)) walk(src);
+      }
+    }
+    assert.deepEqual(hits, []);
+  });
+
+  it('점검 스크립트는 filePathMap의 링크를 배포 때처럼 되살린다(작업공간 링크·의존성 폴더)', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sax-vc-'));
+    try {
+      fs.mkdirSync(path.join(root, 'poc/node_modules/.pnpm/x@1/node_modules/x'), { recursive: true });
+      fs.writeFileSync(path.join(root, 'poc/node_modules/.pnpm/x@1/node_modules/x/index.js'), 'module.exports = 1;');
+      fs.mkdirSync(path.join(root, 'poc/svc/node_modules'), { recursive: true });
+      fs.symlinkSync('../../node_modules/.pnpm/x@1/node_modules/x', path.join(root, 'poc/svc/node_modules/x'));
+      const func = path.join(root, 'out/a.func');
+      fs.mkdirSync(path.join(func, 'poc/node_modules/.pnpm/x@1/node_modules/x'), { recursive: true });
+      fs.writeFileSync(path.join(func, 'poc/node_modules/.pnpm/x@1/node_modules/x/index.js'), 'module.exports = 1;');
+      fs.writeFileSync(path.join(func, '.vc-config.json'), JSON.stringify({ handler: 'poc/svc/h.js', filePathMap: { 'poc/svc/node_modules/x': 'poc/svc/node_modules/x' } }));
+      const m = materialize(func, root, path.join(root, 'copy'));
+      assert.equal(m.handler, 'poc/svc/h.js');
+      assert.equal(fs.readlinkSync(path.join(m.dir, 'poc/svc/node_modules/x')), '../../node_modules/.pnpm/x@1/node_modules/x');
+      assert.equal(fs.readFileSync(path.join(m.dir, 'poc/svc/node_modules/x/index.js'), 'utf8'), 'module.exports = 1;');
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 기본 거부)', () => {
   it('모든 공개 경로가 공개 함수로 가고 __p가 원래 경로와 같다. 서비스끼리 공개 경로가 겹치지 않는다', () => {
