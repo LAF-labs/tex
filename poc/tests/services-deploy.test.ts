@@ -310,7 +310,8 @@ describe('Vercel 함수 묶음(파일 추적이 따라갈 수 있는 모듈만, 
       fs.writeFileSync(path.join(func, '.vc-config.json'), JSON.stringify({ handler: 'poc/svc/h.js', filePathMap: { 'poc/svc/node_modules/x': 'poc/svc/node_modules/x' } }));
       const m = materialize(func, root, path.join(root, 'copy'));
       assert.equal(m.handler, 'poc/svc/h.js');
-      assert.equal(fs.readlinkSync(path.join(m.dir, 'poc/svc/node_modules/x')), '../../node_modules/.pnpm/x@1/node_modules/x');
+      // Windows는 symlink를 만들 때 대상의 `/`를 `\\`로 바꿔 저장한다. 같은 대상인지는 구분자를 맞춰 본다.
+      assert.equal(fs.readlinkSync(path.join(m.dir, 'poc/svc/node_modules/x')).split(path.sep).join('/'), '../../node_modules/.pnpm/x@1/node_modules/x');
       assert.equal(fs.readFileSync(path.join(m.dir, 'poc/svc/node_modules/x/index.js'), 'utf8'), 'module.exports = 1;');
     } finally {
       fs.rmSync(root, { recursive: true, force: true });
