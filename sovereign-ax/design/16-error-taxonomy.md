@@ -1,6 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
-> 2026-11-06 정합(팀장 지시, 큐 16~22): `daemon.window_invalid`·`policy_stale`·`status_stale`·`snapshot_failed`(데몬 PR #98 구현값, 제안, 사용자 확인 전), `vault.profile_hygiene`(금고 S6, 이벤트).
+> 2026-11-06 정합(팀장 지시, 큐 16~22): `daemon.window_invalid`·`policy_stale`·`status_stale`·`snapshot_failed`(데몬 PR #98 구현값, 제안, 사용자 확인 전).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): 클라이언트 표에 `assert.original_mismatch`(ADR-036 결정 3.5), `bizstatus.unavailable`(제안, 사용자 확인 전), `update.*` 8개(패키징 PR #76, `packages/updater/README.md`)를 더함. "서버 응답 코드" 절에 레지스트리 게시 관문·`.sxp`·정책·핫픽스 코드(클라우드 PR #56 `PROPOSED_D16`). 보안 이벤트 목록에 `update.root_change_unsigned`·`update.feed_mismatch`·`update.digest_mismatch`.
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
 > 같은 날 팀장 지시: `assert.total_mismatch`·`input_mismatch`(D02 §8 `s19d`·`s19f`).
