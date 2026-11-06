@@ -18,6 +18,7 @@ import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.t
 import type { PlaybookIR, Step, StepOf } from '../core/types.ts';
 import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudgement } from '../core/verify.ts';
 import { readField } from '../core/readback.ts';
+import { savePdf, type PdfPort } from '../core/savepdf.ts';
 import { SECURITY_REJECTIONS } from '../core/token.ts';
 import { buildGateRequest, type GateField, type GateRequest } from '../gate.ts';
 
@@ -146,6 +147,8 @@ export interface RunControllerInput {
   verifyStep?: (v: StepOf<'verify'>) => Promise<VerifyJudgement>;
   /** 커밋 구간 진입(R-G7). 없으면 submit은 실행하지 않는다(step.irreversible_unguarded). */
   commit?: CommitPort;
+  /** save_pdf 포트(금고 pdf.print·download.*, 보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
+  pdf?: PdfPort;
   /** submit이 클릭 시각·클릭 전 실패 신호를 남기는 곳(verify 판정이 읽는다). */
   verifyBook?: VerifyBook;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
@@ -255,6 +258,7 @@ export class RunController {
       gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep,
       submit: this.submitStep, human_commit: this.refuseIrreversible, send_email: this.refuseIrreversible, sign: this.signStep,
       ...(i.verifyStep ? { verify: this.verifyStep } : {}),
+      ...(i.pdf ? { save_pdf: this.savePdfStep } : {}),
     } as Handlers;
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
     this.interp = new Interpreter(i.ir, bound, i.env, { ...i.interp, forcedStops }, { beforeStep: this.beforeStep, event: i.stepEvent });
@@ -674,6 +678,21 @@ export class RunController {
       if (this.name() !== 'Running') return fail('run.state_stop');
     }
     return { t: 'jump', to: v.on[j.result] };
+  };
+
+  /**
+   * save_pdf(D02 §4 표, D05 §3.3): 금고가 인쇄해 staging에 둔 PDF를 보관함으로 옮기고 $artifacts.pdf에 문서 id를 둔다.
+   * 같은 실행에 committed가 있으면(사후 스텝) 실패는 재시도·핸드오프 없이 CompletedWithIssues다(D03 §2 "비가역 커밋 뒤 후속(PDF) 실패",
+   * 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다"). 커밋 전이면 보통 스텝 실패(재시도·onFail)다.
+   */
+  private readonly savePdfStep: Handler<'save_pdf'> = async (s) => {
+    const r = await savePdf({ pdf: this.i.pdf!, runId: this.i.runId, artifacts: this.i.env.scope.artifacts, journal: (t, p) => this.i.journal(t, p) }, s);
+    if (r.ok) return NEXT;
+    if (this.i.ledgerStates().includes('committed')) {
+      this.fire({ t: 'post_commit_failed' }, s.id, r.code);
+      return fail('run.state_stop');
+    }
+    return fail(r.code);
   };
 
   /** 아직 핸들러가 없는 비가역(human_commit·send_email): 실행하지 않는다. 재시도·onFail 없이 중단(FORCED_STOPS). */

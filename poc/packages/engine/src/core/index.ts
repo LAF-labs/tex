@@ -21,6 +21,7 @@ export * from './scope.ts';
 export * from './conds.ts';
 export * from './readback.ts';
 export * from './verify.ts';
+export * from './savepdf.ts';
 export * from './steps.ts';
 export * from './interp.ts';
 export * from './datapkg.ts';

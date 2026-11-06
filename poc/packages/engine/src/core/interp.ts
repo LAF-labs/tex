@@ -83,6 +83,8 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['sign.method_unknown', 'handoff'],
   ['sign.no_path', 'handoff'],
   ['sign.unsupported', 'handoff'],
+  // save_pdf(M2-3): 아직 없는 strategy는 플레이북 결함이라 재시도 없이 중단(사후 스텝이면 조율기가 CompletedWithIssues로)
+  ['save_pdf.unsupported', 'abort'],
   ['portal.logged_out_by_other_session', 'handoff'],
   // verify 기준선 조회 실패(B-07, D16): 아직 커밋 전이라 게이트를 열지 않고 핸드오프. 다시 조회해도 같은 화면이라 재시도하지 않는다.
   ['verify.baseline_missing', 'handoff'],
