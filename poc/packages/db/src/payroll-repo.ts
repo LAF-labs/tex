@@ -550,6 +550,20 @@ const endAgainst = (x: Span, other: Span): string => x.effectiveTo ?? (other.eff
 /** 두 표가 같은 날을 덮는가(시작일이 같거나, 닫힌 기간이 다른 표의 기간과 겹친다) */
 export const rateSpansConflict = (a: Span, b: Span): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
 
+export interface InstalledRatePackage {
+  version: string;
+  /** JCS(기술자 − signatures)의 SHA-256 */
+  digest: string;
+  installedAt: string;
+}
+export interface RatePackageInstall {
+  added: string[];
+  closed: string[];
+  unchanged: string[];
+}
+/** 설치 기록은 settings 한 칸(마이그레이션 없음): `rate_tables.package.<패키지 id>` */
+const packageKey = (packageId: string): string => `rate_tables.package.${packageId}`;
+
 /** 시행일 표 저장(D07 rate_tables). 패키지 검증(서명·스키마)은 설치 전에 끝나 있어야 한다. 기간이 겹치면 거부한다 */
 export class RateTableRepo {
   private readonly db: Db;
@@ -592,6 +606,38 @@ export class RateTableRepo {
         .prepare('INSERT INTO rate_tables (id, kind, effective_from, effective_to, body_json, rounding, package_version, signature_ok) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
         .run(t.id, t.kind, t.effectiveFrom, t.effectiveTo, JSON.stringify(t.body), t.rounding, t.packageVersion, 1);
     })();
+  }
+
+  /** 설치된 서명 배포 패키지의 판·기술자 다이제스트(엔진 loadDataPackage의 ctx.installed). 없으면 null */
+  installedPackage(packageId: string): InstalledRatePackage | null {
+    const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(packageKey(packageId)) as string | undefined;
+    return v ? (JSON.parse(v) as InstalledRatePackage) : null;
+  }
+
+  /**
+   * 서명 배포 패키지 한 판을 한 트랜잭션으로 설치한다(D14 M6-10). 하나라도 거부되면(rate_table_overlap·rate_table_id_reused 등) 전부 되돌리고
+   * 기존 표와 설치 기록은 그대로다. 서명·본문 검증은 엔진 loadDataPackage와 @sax/payroll validatePackage가 먼저 끝낸다.
+   * - 이미 있는 id는 내용이 같아야 한다. 패키지 판(packageVersion)은 처음 실린 판을 그대로 둔다(새 판이 같은 표를 다시 실어도 재설치로 본다)
+   * - 열린 끝을 날짜로 닫는 것만 고친다(install 규칙 그대로). 새 판에 없는 예전 표는 지우지 않는다(급여대장 재현용)
+   */
+  installPackage(pkg: { id: string; version: string; digest: string }, rows: readonly RateTableRow[], at: string = new Date().toISOString()): RatePackageInstall {
+    need(/^[a-z0-9]+(\.[a-z0-9_-]+)+$/.test(pkg.id) && pkg.id.length <= 128, 'invalid_package_id');
+    need(/^\d+\.\d+\.\d+$/.test(pkg.version), 'invalid_package_version');
+    need(/^[0-9a-f]{64}$/.test(pkg.digest), 'invalid_package_digest');
+    need(rows.length > 0, 'empty_package');
+    const out: RatePackageInstall = { added: [], closed: [], unchanged: [] };
+    this.db.transaction(() => {
+      for (const t of rows) {
+        const same = this.get(t.id);
+        this.install(same ? { ...t, packageVersion: same.packageVersion } : t);
+        (!same ? out.added : same.effectiveTo === t.effectiveTo ? out.unchanged : out.closed).push(t.id);
+      }
+      const rec: InstalledRatePackage = { version: pkg.version, digest: pkg.digest, installedAt: at };
+      this.db
+        .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+        .run(packageKey(pkg.id), JSON.stringify(rec));
+    })();
+    return out;
   }
 
   /** 그날 시행 중인 표: 시작일이 그날 이전인 표 중 가장 늦게 시작한 것. 그 표가 그날 전에 닫혔으면 null(빈 기간) */

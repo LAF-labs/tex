@@ -13,7 +13,7 @@ import {
 } from '@sax/db';
 import {
   addCustomItem, clearCardSlipEnough, ensureItems, exportBundle, exportPayrollRecord, generatePassword, markCardSlipEnough, missingReport, monthStatus, netOfCancellations,
-  escapeFormulaText, matchInsuranceNotice, periodFor, RRN_HIDDEN_NOTE, tidyInvoices, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext, type TaxInvoiceRow,
+  confirmNoticeCard, escapeFormulaText, matchInsuranceNotice, missingView, noticeConfirmCard, periodFor, RRN_HIDDEN_NOTE, tidyInvoices, unmatchedCardTxns, ZIP_OPEN_GUIDE, type MonthContext, type TaxInvoiceRow,
 } from '@sax/bundle';
 
 configure({ useWebWorkers: false });
@@ -311,5 +311,63 @@ describe('이번 달 상태와 빠진 것', () => {
       { rowId: 'S!6:pension', employeeId: null, basis: 'none' },
       { rowId: 'S!7:pension', employeeId: emps.list(profileId).find((e) => e.name === '이직원')!.id, basis: 'name_only' },
     ]);
+  });
+
+  it('S-06 확인 카드: 사람별로 묶고 근로자 고지액(산재 제외)을 computePayroll notices 모양으로, 고른 결과를 직원별 고지액으로', () => {
+    const emps = new EmployeeRepo(db, cipher).list(profileId, { activeInMonth: '2026-10' });
+    const id = (n: string, b?: string) => emps.find((e) => e.name === n && (!b || e.birthDate === b))!.id;
+    const r = (rowId: string, name: string, birthDate: string | null, insurance: 'pension' | 'health' | 'ltc' | 'employment' | 'industrial', employee: number) =>
+      ({ rowId, name, birthDate, insurance, base: 2_500_000, total: employee * 2, employee, employer: employee });
+    const card = noticeConfirmCard(db, cipher, {
+      profileId, month: '2026-10', noticeDocId: 'doc-2',
+      rows: [
+        r('A!2:pension', '김 직원', '1990-01-01', 'pension', 112_500), r('A!2:health', '김직원', '1990-01-01', 'health', 88_620), r('A!2:ltc', '김직원', '1990-01-01', 'ltc', 11_470),
+        r('A!2:employment', '김직원', '1990-01-01', 'employment', 22_500), r('A!2:industrial', '김직원', '1990-01-01', 'industrial', 0),
+        r('A!3:pension', '박직원', null, 'pension', 90_000), r('A!4:pension', '박직원', null, 'pension', 91_000), r('A!3:health', '박직원', null, 'health', 70_000),
+      ],
+    });
+    assert.equal(card.people.length, 2);
+    const [kim, park] = card.people as [typeof card.people[0], typeof card.people[0]];
+    assert.deepEqual({ ...kim, candidates: kim.candidates.length }, {
+      key: '김직원|1990-01-01', name: '김 직원', birthDate: '1990-01-01', rowIds: ['A!2:pension', 'A!2:health', 'A!2:ltc', 'A!2:employment', 'A!2:industrial'],
+      employeeId: id('김직원'), basis: 'name_birth', candidates: 0, notices: { pension: 112_500, health: 88_620, ltc: 11_470, employment: 22_500 }, conflicts: [], needsChoice: false,
+    });
+    assert.equal(park.basis, 'ambiguous');
+    assert.deepEqual(park.conflicts, ['pension'], '같은 보험이 두 번: 동명이인이 섞임');
+    assert.deepEqual(park.notices, { health: 70_000 });
+    assert.deepEqual(park.candidates.map((c) => c.employeeId), [id('박직원', '1988-03-03'), id('박직원', '1999-09-09')].sort());
+    assert.ok(park.candidates.every((c) => c.name === '박직원' && /^\d{4}-\d{2}-\d{2}$/.test(c.birthDate)));
+    assert.equal(card.needsChoice, 1);
+    assert.ok(card.notOnNotice.some((e) => e.employeeId === id('이직원')), '재직인데 고지에 없는 직원은 보여 주기만');
+    assert.ok(!card.notOnNotice.some((e) => e.employeeId === id('김직원')));
+
+    assert.throws(() => confirmNoticeCard(card, {}), /notice_choice_needed/);
+    const got = confirmNoticeCard(card, { [park.key]: id('박직원', '1988-03-03') });
+    assert.deepEqual([...got.entries()], [[id('김직원'), kim.notices], [id('박직원', '1988-03-03'), { health: 70_000 }]]);
+    assert.deepEqual([...confirmNoticeCard(card, { [park.key]: null }).keys()], [id('김직원')], 'null은 건너뜀');
+    assert.throws(() => confirmNoticeCard(card, { [park.key]: id('김직원') }), /notice_employee_twice/);
+    assert.throws(() => confirmNoticeCard(card, { [park.key]: 'no-such' }), /notice_employee_not_active/);
+    assert.throws(() => confirmNoticeCard(card, { [park.key]: null, 'x|': null }), /notice_unknown_person/);
+  });
+
+  it("M6-14 '빠진 것' 화면 구획: 채울 것은 펼침, 확인용 표시는 접힘, 빈 구획 없음, 막는 칸 없음", () => {
+    const base = { month: '2026-10', emptyItems: [], payroll: null, cardWithoutEvidence: [], memosNeedCheck: 0, cardSlipEnough: false, invoiceSumGaps: [] };
+    assert.deepEqual(missingView(base), { month: '2026-10', sections: [], openCount: 0, cardSlipEnough: false });
+    const v = missingView({
+      ...base,
+      emptyItems: [{ itemId: 'i1', name: '종이 증빙', tier: 1, period: '2026-10', status: 'missing' }],
+      payroll: { state: 'draft', revision: 1, employeesWithoutLine: [{ id: 'e1', name: '김직원' }, { id: 'e2', name: '이직원' }] },
+      cardWithoutEvidence: [{ txnId: 't1', usedOn: '2026-10-03', merchant: '가게', amount: 10_000, hasMemo: false }],
+      memosNeedCheck: 2,
+      invoiceSumGaps: [{ direction: 'purchase', issueDate: '2026-10-07', approvalNo: 'a', counterpartyName: '상호', gap: 1 }],
+    });
+    assert.deepEqual(v.sections.map((x) => [x.key, x.display, x.count]), [
+      ['empty_items', 'open', 1], ['payroll', 'open', 2], ['card_without_evidence', 'collapsed', 1], ['memos_need_check', 'collapsed', 2], ['invoice_sum_gaps', 'collapsed', 1],
+    ]);
+    assert.equal(v.openCount, 3, '접힌 구획은 배지에 세지 않는다');
+    assert.ok(v.sections.every((x) => !('blocking' in x)));
+    const draftOnly = missingView({ ...base, payroll: { state: 'draft', revision: 1, employeesWithoutLine: [] }, cardSlipEnough: true });
+    assert.deepEqual(draftOnly.sections.map((x) => [x.key, x.count]), [['payroll', 1]], '초안만 있으면 1건');
+    assert.equal(draftOnly.cardSlipEnough, true);
   });
 });

@@ -2,7 +2,9 @@
 // docparse는 읽기만 하고 매칭하지 않는다. 입력·출력 형식은 @sax/docparse의 InsuranceNoticeMatchInput·InsuranceNoticeMatch 그대로다.
 // 판정이 아니라 후보 제시다: 사장님이 확인 카드에서 고른다. 주민번호는 쓰지 않는다(이름·생년월일만, 직원 주민번호를 복호화하지 않는다).
 import { EmployeeRepo, type ColumnCipher, type Db } from '@sax/db';
-import type { InsuranceNoticeMatch, InsuranceNoticeMatchInput } from '@sax/docparse';
+import type { InsuranceKind, InsuranceNoticeMatch, InsuranceNoticeMatchInput } from '@sax/docparse';
+import type { NoticeAmounts } from '@sax/payroll';
+import { BundleError } from './items.ts';
 
 /** 이름 비교: 앞뒤·가운데 공백을 지우고 NFC로 맞춘다(고지내역은 '홍 길동'처럼 띄어 쓴 경우가 있다) */
 const normName = (s: string): string => s.normalize('NFC').replace(/\s+/g, '');
@@ -31,4 +33,106 @@ export function matchInsuranceNotice(db: Db, cipher: ColumnCipher, input: Insura
     if (byName.length > 1) return { rowId: row.rowId, employeeId: null, basis: 'ambiguous', candidates: ids(byName) };
     return { rowId: row.rowId, employeeId: null, basis: 'none' };
   });
+}
+
+// ── S-06 확인 카드(데스크톱이 그리는 데이터). 문구는 데스크톱이 갖는다 ──────────────────────────
+
+/** 카드에 보이는 직원 한 명(그 달 재직) */
+export interface NoticeCardEmployee {
+  employeeId: string;
+  name: string;
+  birthDate: string;
+  hiredOn: string;
+}
+
+/** 고지내역의 한 사람(같은 이름·생년월일의 보험별 행을 묶음) */
+export interface NoticeCardPerson {
+  /** 묶음 키(정규화한 이름|생년월일). 사장님 선택을 이 키로 돌려받는다 */
+  key: string;
+  name: string;
+  birthDate: string | null;
+  rowIds: string[];
+  /** 자동으로 맞은 직원(name_birth·name_only). 아니면 null */
+  employeeId: string | null;
+  basis: InsuranceNoticeMatch['basis'];
+  /** 고를 후보(ambiguous·none). 없으면 빈 배열이고 화면은 재직 직원 전체(card.employees)에서 고르게 한다 */
+  candidates: NoticeCardEmployee[];
+  /** 근로자 부담 고지액(computePayroll의 notices). 산재는 사업주 부담뿐이라 넣지 않는다 */
+  notices: Partial<NoticeAmounts>;
+  /** 같은 보험이 두 번 나온 종류(동명이인이 생년월일 없이 섞인 경우). 그 종류 금액은 notices에 넣지 않는다 */
+  conflicts: InsuranceKind[];
+  /** 사장님이 골라야 한다: name_birth가 아니거나 conflicts가 있다(name_only도 확인을 받는다) */
+  needsChoice: boolean;
+}
+
+export interface NoticeCard {
+  month: string;
+  noticeDocId: string;
+  people: NoticeCardPerson[];
+  /** 그 달 재직 직원 전체(고르기 목록) */
+  employees: NoticeCardEmployee[];
+  /** 그 달 재직인데 고지내역에 자동으로 맞은 행이 없는 직원(입사 직후 미가입 등. 판정하지 않고 보여 주기만) */
+  notOnNotice: NoticeCardEmployee[];
+  needsChoice: number;
+}
+
+const NOTICE_KINDS = ['pension', 'health', 'ltc', 'employment'] as const satisfies readonly (keyof NoticeAmounts)[];
+
+/** 고지내역 결과 → S-06 확인 카드. 매칭은 matchInsuranceNotice와 같다(후보 제시, 판정 아님) */
+export function noticeConfirmCard(db: Db, cipher: ColumnCipher, input: InsuranceNoticeMatchInput): NoticeCard {
+  const list = new EmployeeRepo(db, cipher).list(input.profileId, { activeInMonth: input.month });
+  const employees = list.map((e): NoticeCardEmployee => ({ employeeId: e.id, name: e.name, birthDate: e.birthDate, hiredOn: e.hiredOn }));
+  const byId = new Map(employees.map((e) => [e.employeeId, e]));
+  const matches = new Map(matchInsuranceNotice(db, cipher, input).map((m) => [m.rowId, m]));
+  const groups = new Map<string, NoticeCardPerson>();
+  for (const row of input.rows) {
+    const key = `${normName(row.name)}|${row.birthDate ?? ''}`;
+    const m = matches.get(row.rowId)!;
+    let p = groups.get(key);
+    if (!p) {
+      p = { key, name: row.name.trim(), birthDate: row.birthDate, rowIds: [], employeeId: m.employeeId, basis: m.basis, candidates: (m.candidates ?? []).map((id) => byId.get(id)!), notices: {}, conflicts: [], needsChoice: false };
+      groups.set(key, p);
+    }
+    p.rowIds.push(row.rowId);
+    const kind = row.insurance;
+    if (kind === 'industrial') continue;
+    if (p.conflicts.includes(kind)) continue;
+    if (kind in p.notices) {
+      p.conflicts.push(kind);
+      delete p.notices[kind];
+    } else if (row.employee !== null) p.notices[kind] = row.employee;
+  }
+  const people = [...groups.values()];
+  for (const p of people) {
+    p.notices = Object.fromEntries(NOTICE_KINDS.filter((k) => k in p.notices).map((k) => [k, p.notices[k]])) as Partial<NoticeAmounts>;
+    p.needsChoice = p.basis !== 'name_birth' || p.conflicts.length > 0;
+  }
+  const matched = new Set(people.map((p) => p.employeeId).filter((id): id is string => id !== null));
+  return {
+    month: input.month,
+    noticeDocId: input.noticeDocId,
+    people,
+    employees,
+    notOnNotice: employees.filter((e) => !matched.has(e.employeeId)),
+    needsChoice: people.filter((p) => p.needsChoice).length,
+  };
+}
+
+/**
+ * 사장님이 카드에서 정한 결과 → 직원별 고지액(computePayroll notices). choices: 사람 key → 직원 id(고치거나 고름) 또는 null(이 사람은 건너뜀).
+ * choices에 없는 사람은 자동 매칭을 따른다(needsChoice인 사람은 choices가 있어야 한다). 한 직원에 두 사람을 붙이면 거부.
+ */
+export function confirmNoticeCard(card: NoticeCard, choices: Readonly<Record<string, string | null>>): Map<string, Partial<NoticeAmounts>> {
+  const active = new Set(card.employees.map((e) => e.employeeId));
+  const out = new Map<string, Partial<NoticeAmounts>>();
+  for (const k of Object.keys(choices)) if (!card.people.some((p) => p.key === k)) throw new BundleError('notice_unknown_person');
+  for (const p of card.people) {
+    const chosen = Object.hasOwn(choices, p.key) ? choices[p.key]! : p.needsChoice ? undefined : p.employeeId;
+    if (chosen === undefined) throw new BundleError('notice_choice_needed');
+    if (chosen === null) continue;
+    if (!active.has(chosen)) throw new BundleError('notice_employee_not_active');
+    if (out.has(chosen)) throw new BundleError('notice_employee_twice');
+    out.set(chosen, p.notices);
+  }
+  return out;
 }

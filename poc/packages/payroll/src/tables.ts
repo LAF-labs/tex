@@ -112,7 +112,7 @@ const dayBefore = (d: string): string => new Date(Date.parse(`${d}T00:00:00Z`) -
 /** 열린 표(effectiveTo null)는 other가 더 늦게 시작하면 그 전날 끝난다 */
 const endAgainst = (x: TableMeta, other: TableMeta): string => x.effectiveTo ?? (other.effectiveFrom > x.effectiveFrom ? dayBefore(other.effectiveFrom) : '9999-12-31');
 /** 같은 날을 두 표가 덮는가: 시작일이 같거나, 닫힌 기간이 다른 표의 기간과 겹친다(@sax/db rateSpansConflict와 같은 규칙) */
-const overlaps = (a: TableMeta, b: TableMeta): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
+export const tableSpansOverlap = (a: TableMeta, b: TableMeta): boolean => a.effectiveFrom <= endAgainst(b, a) && b.effectiveFrom <= endAgainst(a, b);
 
 /**
  * 패키지 검증(서명 검증은 레지스트리 채널이 먼저 한다, D14 M6-10). 스키마 + 의미 규칙:
@@ -130,7 +130,7 @@ export function validatePackage(pkg: unknown): string[] {
     ids.add(t.id);
     if (t.effectiveTo !== null && t.effectiveTo < t.effectiveFrom) bad.push(`range:${t.id}`);
   }
-  for (const [i, a] of p.tables.entries()) for (const b of p.tables.slice(i + 1)) if (a.kind === b.kind && overlaps(a, b)) bad.push(`overlap:${a.id}:${b.id}`);
+  for (const [i, a] of p.tables.entries()) for (const b of p.tables.slice(i + 1)) if (a.kind === b.kind && tableSpansOverlap(a, b)) bad.push(`overlap:${a.id}:${b.id}`);
   for (const t of p.tables) {
     if (t.kind === 'simple_tax_table') bad.push(...checkSimpleTax(t as RateTable<'simple_tax_table'>));
     if (t.kind === 'pension_bounds') {
@@ -182,7 +182,7 @@ export function pickTables(tables: readonly RateTable[], at: { taxDate: string; 
   };
 }
 
-/** 앱에 같이 싣는 기본 패키지(data/). 서명 배포 패키지가 설치되면 그것을 우선한다(레지스트리 채널, 클라우드 트랙) */
+/** 앱에 같이 싣는 기본 패키지(data/). 서명 배포 표가 설치되면 그것이 먼저다(availableTables, distribution.ts) */
 export function loadBundledPackage(): RateTablePackage {
   const p = JSON.parse(fs.readFileSync(new URL('../data/rate-tables.json', import.meta.url), 'utf8')) as unknown;
   const bad = validatePackage(p);
