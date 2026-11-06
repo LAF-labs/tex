@@ -10,10 +10,11 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { openDatabase, type Db } from '@sax/db';
 import {
-  ariaHead, CommitGuard, connectRunBrowser, FetchInterceptor, PlaywrightActuator, PlaywrightPageReader, RateGuard, ratePolicyFrom, RunEnforcer, SIGNAL_DICT, wireRun,
+  ariaHead, CommitGuard, connectRunBrowser, FetchInterceptor, PlaywrightActuator, PlaywrightPageReader, PlaywrightScreenSource, RateGuard, ratePolicyFrom, RunEnforcer, SIGNAL_DICT, treeToObservation, wireRun,
   type RunBrowser, type RunWiring,
 } from '@sax/engine';
 import { clampPolicy, GuardedActuator, resolveTarget, type Policy, type Resolved, type SelectorDict, type SelectorEntry } from '@sax/engine/core';
+import { Redactor } from '@sax/redaction';
 import { POLICY_EXAMPLE } from './core-fixtures.ts';
 import { FakeClock } from './core-page-fakes.ts';
 import { startHarness, type Harness } from './harness.ts';
@@ -27,6 +28,8 @@ const FORM = `<!doctype html><html><head><meta charset="utf-8"><title>form</titl
   <button id="al" type="button" onclick="alert('안내 문구입니다')">알림</button>
   <button id="cf" type="button" onclick="out.textContent=confirm('발급하시겠습니까?')?'yes':'no'">확인창</button>
   <a id="go" href="/next">다음 화면</a>
+  <label for="pw">비밀번호</label><input id="pw" type="password" value="pw-s3cr3t">
+  <p>담당 010-1234-5678</p>
 </form>
 <div id="out" role="status"></div>
 </main></body></html>`;
@@ -74,6 +77,7 @@ const DICT: SelectorDict = {
     'f.alert': entry({ role: 'button', namePattern: '^알림$', landmark: 'f.root', candidates: [{ kind: 'css', value: '#al' }] }),
     'f.confirm': entry({ role: 'button', namePattern: '^확인창$', landmark: 'f.root', candidates: [{ kind: 'css', value: '#cf' }], reviewNote: { by: 'qa', reason: '시험 확인창' } }),
     'f.go': entry({ role: 'link', namePattern: '^다음 화면$', landmark: 'f.root', candidates: [{ kind: 'role', role: 'link', name: '다음 화면' }], navigationOnly: true, reviewNote: { by: 'qa', reason: '조회 이동' } }),
+    'f.pw': entry({ role: 'textbox', namePattern: '^비밀번호$', landmark: 'f.root', candidates: [{ kind: 'label', value: '비밀번호' }], inputType: 'password', secretKind: 'portal_password', secretPurpose: 'login' }),
     'f.out': entry({ role: 'status', namePattern: '^$', landmark: 'p.root', candidates: [{ kind: 'css', value: '#out' }] }),
   },
 };
@@ -148,6 +152,37 @@ describe('Playwright 드라이버(금고 중계 + Chrome)', () => {
       assert.match(await s.reader.bodyText(), /다음 화면/);
       assert.equal(s.reader.url(), `${fx.origin}/form`);
       assert.deepEqual(ariaHead('- textbox "공급가액": "1,000"'), { role: 'textbox', name: '공급가액' });
+    } finally {
+      await s.wiring.dispose();
+    }
+  });
+
+  it('decide 화면 관측(PlaywrightScreenSource): root·scope 스냅숏 → A11yNode, 입력 값·비밀 칸 값 없음, 마스킹 입력(M2-2 B)', async () => {
+    const s = await setup();
+    try {
+      assert.deepEqual(await s.raw.goto(`${fx.origin}/form`), { ok: true });
+      assert.deepEqual(await s.raw.fill(await s.res('f.amt'), '1234567', { keyEvents: false }), { ok: true });
+      const src = new PlaywrightScreenSource({ page: run.page, reader: s.reader, dict: DICT });
+      const root = await src.capture('root');
+      assert.ok(root);
+      assert.equal(root.title, 'form');
+      assert.equal(root.url, `${fx.origin}/form`);
+      const pw = JSON.stringify(root.tree);
+      assert.ok(!pw.includes('pw-s3cr3t'), '비밀 칸 값은 트리에 없다');
+      const red = new Redactor({ runId: 'r1' }).applyTree(root.tree, { maxBytes: 6144 }).redacted;
+      for (const raw of ['1234567', 'pw-s3cr3t', '010-1234-5678']) assert.ok(!red.includes(raw), `${raw}: ${red}`);
+      assert.match(red, /form "발급 양식"/);
+      assert.match(red, /button "발급하기"/);
+      const obs = treeToObservation(root.tree, root.url, root.title);
+      assert.ok(!JSON.stringify(obs).includes('1234567'));
+      assert.ok(obs.nodes.some((n) => n.role === 'button' && n.name === '조회') || obs.nodes.some((n) => n.role === 'button' && n.name === '발급하기'));
+      const form = await src.capture('f.root');
+      assert.ok(form);
+      assert.deepEqual([form.tree.children?.length, form.tree.children?.[0]?.role, form.tree.children?.[0]?.scopeId], [1, 'form', 'f.root']);
+      const fred = new Redactor({ runId: 'r1' }).applyTree(form.tree, { maxBytes: 6144, scopeId: 'f.root' }).redacted;
+      assert.ok(!fred.includes('#out') && !fred.includes('status'), fred);
+      await s.reader.release();
+      assert.equal(await src.capture('f.nothing'), null, '사전에 없는 scope');
     } finally {
       await s.wiring.dispose();
     }
