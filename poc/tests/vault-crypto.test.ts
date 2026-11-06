@@ -222,12 +222,13 @@ async function vaultDesktop() {
 }
 
 describe('받는 쪽 검증(금고 엔진 포트 경유)', () => {
-  it('공개키는 Uint8Array 32B 다섯 개, control 포트에서는 crypto.*를 부를 수 없다', async () => {
+  it('공개키는 Uint8Array 32B 다섯 개, control 포트(main)도 같은 키로 부른다', async () => {
     const d = await vaultDesktop();
     try {
       assert.deepEqual(Object.keys(d.pk).sort(), ['aik', 'kv', 'noiseStatic', 'qd', 'vd']);
       for (const v of Object.values(d.pk)) assert.ok(v instanceof Uint8Array && v.length === 32);
-      for (const m of ['crypto.publicKeys', 'crypto.signVd', 'crypto.signAik', 'crypto.noiseDH', 'crypto.hpkeOpen']) await assert.rejects(d.control.rpc(m, {}), /denied/, m);
+      assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk, 'main과 엔진이 같은 키를 본다');
+      await assert.rejects(d.control.rpc('crypto.signAik', { purpose: 'SAX-dpop-v1', msg: new Uint8Array(1) }), /purpose_not_allowed/);
       await assert.rejects(d.client.rpc('crypto.signAik', { purpose: 'SAX-dpop-v1', msg: new Uint8Array(1) }), /purpose_not_allowed/);
       // 결과 모양(NOTES §7): {shared}·{sig}·{pt}
       const peer = x25519FromSeed(new Uint8Array(32).fill(4));
