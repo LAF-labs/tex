@@ -24,10 +24,10 @@ export interface PairState {
   mbxEpoch: number;
   relayHost: string;
   pairedAt: number;
-  /** 사용자가 [내 계정 맞음]으로 확인한 PC 이름(설계 #120, PAIR_OK 가정 필드). 없으면 PC가 보내지 않았다. */
+  /** 사용자가 [내 계정 맞음]으로 확인한 계정 이메일(계정 서비스 서명 acct_claim에서 검증, 설계 #120). */
+  accountEmail?: string;
+  /** PC가 스스로 알린 이름(서명 없음, 참고 표시만). 없으면 PC가 보내지 않았다. */
   desktopName?: string | null;
-  /** 같은 확인 화면의 계정 이메일. 가린 값만 저장한다(maskEmail). */
-  accountEmailMasked?: string | null;
 }
 
 export interface CashRecord {

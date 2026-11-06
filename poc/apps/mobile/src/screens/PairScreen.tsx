@@ -1,16 +1,16 @@
 // S-03 폰 쪽(D08 §4): 앱 안 스캐너로 PC의 QR을 찍고 → 검사(만료·릴레이 허용 목록) → Noise XXpsk0 → 6자리를 보여 준다
 // (사용자가 PC에 입력, "일치" 버튼 없음) → pair.ok 검사(AIK 서명 기기 목록·이 PC가 목록에 있음) → 24시간 경고
-// → PC 이름·가린 계정 이메일 확인([내 계정 맞음], 설계 #120) → 저장.
+// → 계정 확인(계정 서비스 서명 acct_claim의 이메일 전체 + PC가 알려 준 이름, [내 계정 맞음], 설계 #120) → 저장.
 // 폰에는 계정 로그인이 없어 서버에서 기기 목록을 받지 않는다. 계정 등록은 PC가 대신 한다(팀장 결정 2026-11-06, D08 §4.2 3·7단계).
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Device from 'expo-device';
 import { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { MobilePairing, b64, fromB64, softNoiseStatic, type MobilePairFailure, type MobilePairResult } from '@sax/remote';
-import { DEV_LOCAL, relayAllowlist } from '../config';
+import { DEV_LOCAL, accountKeys, relayAllowlist } from '../config';
 import { inflight } from '../inflight';
 import { devFetchQr } from '../net/account';
-import { identityLines, maskEmail } from '../pairing/identity';
+import { identityLines } from '../pairing/identity';
 import { relayFor } from '../net/pc';
 import { useSession } from '../session';
 import { space, usePalette } from '../theme';
@@ -27,6 +27,7 @@ const FAIL: Record<MobilePairFailure | 'relay' | 'save', string> = {
   handshake: 'PC와 연결하지 못했어요. PC에서 [새 QR]을 눌러 다시 해 주세요.',
   pair_ok_invalid: 'PC가 보낸 연결 정보가 맞지 않아요. 연결을 멈췄어요.',
   aik_mismatch: '계정 정보가 서로 달라요. 연결을 멈췄어요. 계정 메일을 확인해 주세요.',
+  acct_claim_invalid: '계정을 확인하지 못했어요. 연결을 멈췄어요. PC에서 [새 QR]을 눌러 다시 해 주세요.',
   timeout: '시간이 지났어요. PC에서 다시 시작해 주세요.',
   relay: '연결 서버에 닿지 않아요. 인터넷 연결을 확인해 주세요.',
   save: '연결 정보를 이 폰에 저장하지 못했어요. PC에서 [새 QR]을 눌러 다시 연결해 주세요.',
@@ -79,6 +80,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
       // 다시 연결이면 앞서 고정한 계정 AIK와 같아야 한다(C-01). 처음이면 QR·6자리로 고른 이 PC의 AIK를 믿는다(TOFU).
       knownAikPub: s.data.pair ? fromB64(s.data.pair.aikPub) : undefined,
       seenListVersion: s.data.seenListVersion,
+      accountKeys: accountKeys().map((k) => fromB64(k)),
       relayAllowlist: relayAllowlist(),
     });
     pairing.current = mp;
@@ -133,7 +135,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
         ...d,
         pair: {
           pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
-          desktopName: r.identity.desktopName, accountEmailMasked: r.identity.accountEmail ? maskEmail(r.identity.accountEmail) : null,
+          accountEmail: r.identity.account.email, desktopName: r.identity.desktopName,
           kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokRead: r.tokRead,
             tokWrite: r.tokWrite,
           mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
@@ -191,20 +193,22 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
 
   if (phase === 'confirm' && pendingRef.current) {
     const id = pendingRef.current.identity;
-    const lines = identityLines({ desktopName: id.desktopName, accountEmailMasked: id.accountEmail ? maskEmail(id.accountEmail) : null });
+    const lines = identityLines({ accountEmail: id.account.email, desktopName: id.desktopName });
     return (
       <Screen>
         <View style={st.wrap} testID="pair-confirm">
           <T v="title">내 PC와 내 계정이 맞나요?</T>
           <Card>
             <T v="label" c="ink3">
-              PC
+              계정(계정 서버가 확인함)
+            </T>
+            <T v="title" testID="confirm-account">
+              {lines.account}
+            </T>
+            <T v="label" c="ink3">
+              PC가 알려 준 이름(참고)
             </T>
             <T testID="confirm-pc">{lines.pc}</T>
-            <T v="label" c="ink3">
-              계정
-            </T>
-            <T testID="confirm-account">{lines.account}</T>
           </Card>
           <T c="ink2">내 계정이 아니면 중단하세요. 중단하면 이 폰에 연결 정보를 저장하지 않아요. 연결한 뒤에도 PC 연결 화면에서 늘 볼 수 있어요.</T>
           <Button testID="confirm-mine" label="내 계정 맞음" onPress={() => pendingRef.current && void save(pendingRef.current)} />

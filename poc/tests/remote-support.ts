@@ -1,10 +1,19 @@
 // remote-*.test.ts 공용: 모의 키(금고 역할은 소프트 키로 흉내), 기기, 메모리 릴레이 위 페어링.
 import {
-  AIK_PURPOSES, DesktopPairing, MemoryRelay, MobilePairing, VD_PURPOSES, VM_PURPOSES, b64, ed25519Keygen, initialDeviceList, sha256Hash, softNoiseStatic,
+  AIK_PURPOSES, DesktopPairing, signAcctClaim, MemoryRelay, MobilePairing, VD_PURPOSES, VM_PURPOSES, b64, ed25519Keygen, initialDeviceList, sha256Hash, softNoiseStatic,
   softSigner, toHex, uuid4, x25519Keygen, type DesktopKeys, type DeviceListJson, type PhoneKeys,
 } from '@sax/remote';
 
 export const RELAY = 'relay.sax.test';
+/** 시험용 계정 서비스 키(acct_claim 서명). 실제 키는 클라우드 세션이 만든다. */
+export const ACCOUNT_KEY = ed25519Keygen();
+export const TEST_EMAIL = 'owner@example.test';
+
+/** 계정 서비스가 이 PC의 AIK로 서명해 주는 계정 확인 주장(시험 대역). */
+export function testAcctClaim(aikPub: Uint8Array, o: { sk?: Uint8Array; email?: string; iat?: number; exp?: number } = {}): string {
+  const now = Math.floor(Date.now() / 1000);
+  return signAcctClaim(o.sk ?? ACCOUNT_KEY.secretKey, { account_id: 'acc_test', email: o.email ?? TEST_EMAIL, aik_pub: b64(aikPub), iat: o.iat ?? now, exp: o.exp ?? now + 600 });
+}
 export const DAY = 86_400_000;
 
 export interface MockDesktop {
@@ -62,7 +71,10 @@ export interface Enrolled {
   phoneState: string;
 }
 
-export async function pairWorld(o: { relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; enrollFails?: boolean; knownAik?: Uint8Array; seenListVersion?: number; now?: () => number } = {}): Promise<PairWorld> {
+export async function pairWorld(o: {
+  relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; enrollFails?: boolean; knownAik?: Uint8Array; seenListVersion?: number; now?: () => number;
+  accountClaim?: (aikPub: Uint8Array) => string; accountKeys?: Uint8Array[]; desktopName?: string;
+} = {}): Promise<PairWorld> {
   const relay = o.relay ?? new MemoryRelay();
   relay.tokenHash = (t) => toHex(sha256Hash(t));
   const desk = o.desk ?? (await mockDesktop());
@@ -80,9 +92,12 @@ export async function pairWorld(o: { relay?: MemoryRelay; desk?: MockDesktop; ph
       published.push(l);
     },
     registerMailbox: async (id, r, w) => relay.registerMailbox(id, toHex(sha256Hash(r)), toHex(sha256Hash(w))),
+    accountClaim: async () => (o.accountClaim ?? testAcctClaim)(desk.keys.aik.publicKey),
+    desktopName: o.desktopName,
   });
   mob = new MobilePairing({
     keys: phone.keys, knownAikPub: o.knownAik, seenListVersion: o.seenListVersion, relayAllowlist: [RELAY], now: o.now,
+    accountKeys: o.accountKeys ?? [ACCOUNT_KEY.publicKey],
     pairOkTimeoutMs: 5000,
   });
   return { relay, desk, phone, pc, mob, published, enrolled };

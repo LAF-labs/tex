@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, readPairIdentity, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
+  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, verifyAcctClaim, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
   toHex, upsertDevice, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
 } from '@sax/remote';
-import { DAY, RELAY, mockDesktop, mockPhone, pairOnce, pairWorld, until } from './remote-support.ts';
+import { ACCOUNT_KEY, DAY, RELAY, TEST_EMAIL, mockDesktop, mockPhone, pairOnce, pairWorld, testAcctClaim, until } from './remote-support.ts';
 
 describe('페어링 정상 흐름', () => {
   it('QR → XXpsk0 → 양쪽 같은 SAS → PC 입력 → pair.ok 검증 → 기기 목록 v2', async () => {
@@ -23,7 +23,8 @@ describe('페어링 정상 흐름', () => {
     assert.deepEqual(w.enrolled[0]!.roomId, w.pc.roomId, '이 페어링 룸 id로 등록한다');
     assert.equal(w.enrolled[0]!.phoneState, 'show_sas', 'pair.ok 전(룸이 열려 있을 때) 등록한다');
     assert.deepEqual(phone.aikPub, w.desk.keys.aik.publicKey);
-    assert.deepEqual(phone.identity, { desktopName: null, accountEmail: null }, '설계 #120 필드는 아직 PC가 보내지 않는다');
+    assert.equal(phone.identity.account.email, TEST_EMAIL, '검증된 계정 주장의 이메일(전체)');
+    assert.equal(phone.identity.desktopName, null);
     const chk = verifyDeviceList(phone.deviceList, w.desk.keys.aik.publicKey);
     assert.ok(chk.ok);
     assert.equal(chk.ok && chk.devices.filter((d) => d.role === 'mobile').length, 1);
@@ -328,16 +329,46 @@ describe('재시도와 신뢰할 수 없는 기기 목록', () => {
   });
 });
 
-describe('저장 전 확인 화면 값(설계 #120, 가정 필드)', () => {
-  it('PC 이름·계정 이메일은 모양이 맞을 때만 받고, 제어·양방향 문자는 버린다', () => {
-    assert.deepEqual(readPairIdentity({ desktopName: ' 사무실 PC ', accountEmail: 'owner@example.test' }), { desktopName: '사무실 PC', accountEmail: 'owner@example.test' });
-    const bad = [
-      { desktopName: '', accountEmail: 'owner' },
-      { desktopName: 'x'.repeat(41), accountEmail: 'a@b' },
-      { desktopName: 'PC\u202Egnp.exe', accountEmail: 'owner@exa\u0000mple.test' },
-      { desktopName: 7, accountEmail: ['a@b.c'] },
+describe('계정 확인 주장 acct_claim(설계 #120, 팀장 결정 2026-11-06)', () => {
+  it('PC가 알린 이름은 참고로만 받고, 제어·양방향 문자가 있으면 버린다', async () => {
+    let w = await pairWorld({ desktopName: '사무실 PC' });
+    assert.equal((await pairOnce(w)).phone.identity.desktopName, '사무실 PC');
+    w = await pairWorld({ desktopName: 'PC\u202Egnp.exe' });
+    assert.equal((await pairOnce(w)).phone.identity.desktopName, null);
+  });
+
+  it('고정 키가 아닌 키로 서명, 만료, 다른 AIK, 모양 틀림이면 저장하지 않고 중단', async () => {
+    const other = ed25519Keygen();
+    const now = Math.floor(Date.now() / 1000);
+    const cases: [string, (aik: Uint8Array) => string][] = [
+      ['다른 키', (aik) => testAcctClaim(aik, { sk: other.secretKey })],
+      ['만료', (aik) => testAcctClaim(aik, { iat: now - 1200, exp: now - 1 })],
+      ['다른 AIK', () => testAcctClaim(ed25519Keygen().publicKey)],
+      ['모양', () => 'AAAA'],
+      ['이메일 모양', (aik) => testAcctClaim(aik, { email: 'owner@exa\u0000mple.test' })],
     ];
-    for (const b of bad) assert.deepEqual(readPairIdentity(b), { desktopName: null, accountEmail: null }, JSON.stringify(b));
-    assert.deepEqual(readPairIdentity(null), { desktopName: null, accountEmail: null });
+    for (const [name, accountClaim] of cases) {
+      const w = await pairWorld({ accountClaim });
+      await assert.rejects(() => pairOnce(w), undefined, name);
+      assert.equal(w.mob.failure, 'acct_claim_invalid', name);
+      assert.equal(w.mob.state, 'failed', name);
+    }
+  });
+
+  it('앱에 고정한 키가 없으면 늘 실패한다(릴리스 키가 들어가기 전)', async () => {
+    const w = await pairWorld({ accountKeys: [] });
+    await assert.rejects(() => pairOnce(w));
+    assert.equal(w.mob.failure, 'acct_claim_invalid');
+  });
+
+  it('verifyAcctClaim: 이유를 나눠 돌려주고, 키 회전 대비 여러 키 중 하나면 통과', () => {
+    const aik = ed25519Keygen().publicKey;
+    const old = ed25519Keygen();
+    const f = testAcctClaim(aik);
+    assert.equal(verifyAcctClaim(f, { accountKeys: [old.publicKey, ACCOUNT_KEY.publicKey], aikPub: aik }).ok, true);
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [old.publicKey], aikPub: aik }), { ok: false, reason: 'signature' });
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: ed25519Keygen().publicKey }), { ok: false, reason: 'aik_mismatch' });
+    assert.deepEqual(verifyAcctClaim(f, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik, now: Date.now() + 3_600_000 }), { ok: false, reason: 'expired' });
+    for (const bad of [null, 7, '', '***', 'A'.repeat(2000)]) assert.deepEqual(verifyAcctClaim(bad, { accountKeys: [ACCOUNT_KEY.publicKey], aikPub: aik }), { ok: false, reason: 'shape' });
   });
 });

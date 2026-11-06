@@ -5,18 +5,22 @@
 `PAIR_OK` 검사(AIK 서명 목록·Sd·Cert_M·Kv)를 통과한 뒤, 키를 저장하기 전에 띄운다. 순서는 다음과 같다.
 
 1. SAS 일치
-2. `PAIR_OK` 검사
+2. `PAIR_OK` 검사(**acct_claim 포함**)
 3. 24시간 경고(해당할 때만)
-4. **PC 이름·가린 계정 이메일 확인**
+4. **계정 확인**
 5. 저장
 
 [내 계정 맞음]을 눌러야 저장한다. [아니에요, 중단]을 누르면 아무것도 저장하지 않는다.
 
-- **필드 이름은 가정이다.** `PAIR_OK.desktopName`·`PAIR_OK.accountEmail`이고, `readPairIdentity`가 읽는다(packages/remote).
-  - 이메일이 서명된 채로 오는지는 설계 세션이 확인 중이다. 스키마와 PC는 아직 보내지 않는다.
-  - 그래서 지금 화면에는 "이름을 받지 못했어요"·"계정 정보를 받지 못했어요"가 보인다.
-  - 모양이 틀린 값과 제어·양방향 문자가 든 값은 버린다.
-- 폰에는 **가린 이메일만** 저장한다(`ow•••@example.test`). 연결 화면(P-06)에 "연결한 PC"·"계정" 줄로 늘 보인다.
+- **acct_claim(팀장 결정 2026-11-06):** `PAIR_OK.acctClaim` = `b64(JCS({claim:{account_id, email, aik_pub, iat, exp}, sig}))`.
+  - 계정 서비스가 `utf8("SAX-acct-claim-v1") ‖ JCS(claim)`에 Ed25519로 서명한다. `iat`·`exp`는 초 단위다.
+  - 폰은 앱에 고정한 계정 서비스 공개키로 서명을 검증한다. 그리고 `exp`가 지나지 않았는지, `aik_pub`가 `PAIR_OK.aikPub`와 같은지 본다. 하나라도 어긋나면 `acct_claim_invalid`로 중단하고 저장하지 않는다.
+  - 서버 구현 전이라 개발 스택은 시험 키(`apps/mobile/dev/test-account-key.ts`)로 서명한다.
+  - 릴리스 빌드의 고정 키 목록은 비어 있어서 페어링이 늘 실패한다. 실제 키는 클라우드 세션이 만들면 넣는다.
+- 화면에는 검증된 **이메일 전체**를 보인다.
+- PC 이름은 서명 없는 `PAIR_OK.desktopName`이다. "PC가 알려 준 이름(참고)"으로만 보이고, 제어·양방향 문자가 있으면 버린다.
+- 이메일과 PC 이름은 상태 파일(봉인)에 저장하고, 연결 화면(P-06)에 늘 보인다.
+- 스키마: `remote-envelope.schema.json` v1.6에서 `pair.ok`에 `acctClaim`(필수)·`desktopName`(선택)을 더했다.
 
 | 확인 화면 | 연결 화면 | 앱 스위처(영수증 확인 화면에서) |
 |---|---|---|

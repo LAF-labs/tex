@@ -11,6 +11,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { join } from 'node:path';
 import { WebSocket as WS } from 'ws';
+import { devAcctClaim } from './test-account-key.ts';
 import {
   AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, sha256Hash,
@@ -66,6 +67,8 @@ async function startPairing(): Promise<string> {
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
     enrollPhone: async () => {}, // 계정 서비스 대역 없음(실제 계정 POST /v1/devices/enroll은 dev/stack.ts)
+    accountClaim: async () => devAcctClaim(keys.aik.publicKey, 'owner@example.test'),
+    desktopName: '더미 PC',
     publishDeviceList: async (l) => {
       deviceList = l;
     },

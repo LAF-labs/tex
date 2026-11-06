@@ -16,6 +16,7 @@ import { createServer, request, type IncomingMessage } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { toQR } from 'toqr';
+import { devAcctClaim } from './test-account-key.ts';
 import { WebSocket as WS } from 'ws';
 import {
   AIK_PURPOSES, CAP, DesktopPairing, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
@@ -181,6 +182,9 @@ async function startPairing(): Promise<string> {
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
     // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
+    // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(dev/test-account-key.ts)로 대신 서명한다.
+    accountClaim: async () => devAcctClaim(keys.aik.publicKey, email),
+    desktopName: '더미 PC',
     enrollPhone: async (ph) => {
       const r = await call('POST', '/v1/devices/enroll', {
         headers: await dauth('POST', `${ORIGIN}/v1/devices/enroll`),
