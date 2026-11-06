@@ -13,9 +13,10 @@ import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approva
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
 import { MockOnboardingPorts } from './onboarding-mock.ts';
-import { EngineOnboardingStore, onboardingPorts } from './onboarding-store.ts';
+import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
+import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
-import { DOCPARSE_SCHEME } from './docparse.ts';
+import { certInfoInSandbox, DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
@@ -511,7 +512,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
   /** M4-2 목업 때의 이어 하기 파일. DB에 행이 없으면 한 번 옮기고 지운다. */
   const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
-  const onbPorts = onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), onbStore, refresh);
+  const onbMock = new MockOnboardingPorts({ saveProfile: async () => {} });
+  // 공동인증서 목록: 제품은 금고 npki.list(이 PC의 NPKI 폴더 열거) → docparse 샌드박스 certInfo → 표시 행(npki-certs.ts).
+  // 시연·e2e(fixture)는 이 PC를 훑지 않고 목업 목록을 쓴다.
+  const onbExternal: OnboardingExternal = fixture
+    ? onbMock
+    : {
+        recognizeBizCert: () => onbMock.recognizeBizCert(),
+        checkBizNo: (bizNo) => onbMock.checkBizNo(bizNo),
+        registerSecrets: (binds) => onbMock.registerSecrets(binds),
+        consentConfig: () => onbMock.consentConfig(),
+        findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
+      };
+  const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';

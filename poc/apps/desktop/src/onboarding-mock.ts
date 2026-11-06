@@ -1,6 +1,6 @@
 // 온보딩 목업 어댑터(M4-2). 셸은 바깥 일만 이것으로 한다(onboarding-store.ts onboardingPorts). 실제 어댑터가 붙을 자리:
 // - recognizeBizCert: M4-3 등록증 OCR(docparse 샌드박스, ADR-014) · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유, #65)
-// - findCerts: NPKI 탐지(금고 npki.list #93 + docparse certInfo) · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
+// - findCerts: 제품은 이미 실제 길(금고 npki.list #93 → docparse 샌드박스 certInfo, npki-certs.ts). 목업 목록은 시연·e2e만 · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
 // - consentConfig: 설정 데이터(모델 상류 공급사 표)
 // recordConsent·saveProfile·save(저장)는 셸에서 쓰지 않는다. 엔진 명령으로 DB에 남긴다(onboarding-store.ts). 여기 것은 상태 기계 시험용이다.
 import { dayOffset } from './shell-mock.ts';
