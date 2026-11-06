@@ -46,6 +46,15 @@ async function readPicked(file: string): Promise<Uint8Array> {
   }
 }
 
+/** 메인 창에 붙인 모달로 파일 하나를 골라 바이트로 읽는다(일반 파일, 15MB까지). 취소하면 null. 경로는 돌려주지 않는다. */
+export async function pickFileBytes(filters: Electron.FileFilter[], parent?: BrowserWindow): Promise<Uint8Array | null> {
+  const owner = parent ?? BrowserWindow.getFocusedWindow();
+  const opts: Electron.OpenDialogOptions = { properties: ['openFile'], filters };
+  const pick = await (owner ? dialog.showOpenDialog(owner, opts) : dialog.showOpenDialog(opts));
+  if (pick.canceled || !pick.filePaths[0]) return null;
+  return readPicked(pick.filePaths[0]);
+}
+
 /**
  * pickId 없이 부르면 파일 고르기부터. 암호가 필요하면 pickId를 돌려주고, 같은 pickId와 password로 다시 부른다. 고르기를 취소하면 null.
  * 대화상자는 parent(메인 창)에 붙인 모달이다. 없으면 앞에 있는 창.
@@ -58,11 +67,9 @@ export async function importPdf(params: Record<string, unknown>, engine: EngineC
   if (pickId) bytes = picks.retry(pickId, Date.now());
   else {
     // 메인 창에 붙여 모달로 연다(고르는 동안 다른 화면으로 옮겨 가지 않게)
-    const owner = parent ?? BrowserWindow.getFocusedWindow();
-    const opts: Electron.OpenDialogOptions = { properties: ['openFile'], filters: [{ name: 'PDF 문서', extensions: ['pdf'] }] };
-    const pick = await (owner ? dialog.showOpenDialog(owner, opts) : dialog.showOpenDialog(opts));
-    if (pick.canceled || !pick.filePaths[0]) return null;
-    bytes = await readPicked(pick.filePaths[0]);
+    const got = await pickFileBytes([{ name: 'PDF 문서', extensions: ['pdf'] }], parent);
+    if (!got) return null;
+    bytes = got;
   }
   const password = typeof params.password === 'string' && params.password ? params.password : undefined;
   try {
