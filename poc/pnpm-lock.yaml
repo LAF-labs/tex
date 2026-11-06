@@ -406,6 +406,24 @@ importers:
         specifier: workspace:*
         version: link:../shared
 
+  services/cloud:
+    dependencies:
+      '@sax/svc-account':
+        specifier: workspace:*
+        version: link:../account
+      '@sax/svc-gateway':
+        specifier: workspace:*
+        version: link:../gateway
+      '@sax/svc-push':
+        specifier: workspace:*
+        version: link:../push
+      '@sax/svc-relay':
+        specifier: workspace:*
+        version: link:../relay
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
   services/gateway:
     dependencies:
       '@sax/model':

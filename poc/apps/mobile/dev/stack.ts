@@ -45,13 +45,13 @@ const hex = () => randomBytes(32).toString('hex');
 // ---- 서비스 기동(비밀은 매번 새로) ----
 for (const f of ['stack-account.db', 'stack-relay.db']) rmSync(join(OUT, f), { force: true });
 const tokenSeed = hex();
-const internal = randomBytes(32).toString('base64url');
+const internal = hex(); // INTERNAL_CALL_KEY(내부 호출 서명, #135)
 const limitIdKey = hex();
 const mail = new MockMailSender();
 const account = await startAccount(
   {
     SAX_SQLITE_FILE: join(OUT, 'stack-account.db'), TOKEN_SIGNING_SEED: tokenSeed, CODE_MAC_KEY: hex(), ACCOUNT_PUBLIC_ORIGIN: ORIGIN, WEBAUTHN_RP_ID: 'localhost',
-    WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_TOKEN: internal,
+    WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_CALL_KEY: internal,
     STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, RELAY_INTERNAL_URL: `http://127.0.0.1:${RELAY}`, LIMIT_ID_KEY: limitIdKey, PORT: String(ACCT), HOST: '127.0.0.1',
   },
   { mail },
@@ -59,7 +59,7 @@ const account = await startAccount(
 const relaySvc = await startRelay({
   SAX_SQLITE_FILE: join(OUT, 'stack-relay.db'), QUEUE_KEY: hex(), RELAY_PUBLIC_ORIGIN: ORIGIN,
   TOKEN_PUBLIC_KEYS: `k1:${ed25519RawPublic(ed25519Private(Buffer.from(tokenSeed, 'hex'))).toString('base64')}`,
-  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_TOKEN: internal, LIMIT_ID_KEY: limitIdKey, PORT: String(RELAY), HOST: '127.0.0.1',
+  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_CALL_KEY: internal, LIMIT_ID_KEY: limitIdKey, PORT: String(RELAY), HOST: '127.0.0.1',
 });
 log(`account ${account.url} · relay ${relaySvc.url}`);
 
@@ -92,7 +92,8 @@ function qrPage(text: string): string {
   let rects = '';
   for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) if (m[y * n + x]) rects += `<rect x="${x + 4}" y="${y + 4}" width="1" height="1"/>`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${n + 8} ${n + 8}" width="420" height="420" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><g fill="#000">${rects}</g></svg>`;
-  return `<!doctype html><meta charset="utf-8"><title>더미 PC 폰 연결</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:24px"><h2>폰 연결(더미 PC)</h2>${svg}<p>tex 앱 → PC와 연결하기 → 이 QR을 찍어 주세요. 120초 안에.</p><p>6자리는 터미널에서 <code>curl -X POST ${ORIGIN}/dev/sas -d '{"code":"……"}'</code></p></body>`;
+  return `<!doctype html><meta charset="utf-8"><title>더미 PC 폰 연결</title><body style="font-family:-apple-system,sans-serif;text-align:center;padding:24px"><h2>폰 연결(더미 PC)</h2><div id="q">${svg}</div><p id="n" hidden><b>시간이 지났어요.</b> <button onclick="location.reload()" style="font-size:20px">새 QR</button></p><p>폰에서 PC와 연결하기를 누른 <b>다음</b> [새 QR]을 누르고 30초 안에 찍어 주세요(PC 대역은 30초만 기다리고, 룸은 계정당 시간당 5개까지라 저절로 바꾸지 않습니다).</p><p>폰에 뜬 6자리를 여기에 넣어 주세요(PC 앱의 입력 칸 대역).</p><form id="f"><input id="c" inputmode="numeric" maxlength="6" autocomplete="off" style="font-size:28px;width:180px;text-align:center;letter-spacing:6px"> <button style="font-size:20px">확인</button></form><p id="r"></p><script>document.getElementById('f').onsubmit=async(e)=>{e.preventDefault();const r=await fetch('/dev/sas',{method:'POST',body:JSON.stringify({code:document.getElementById('c').value})});const j=await r.json().catch(()=>({}));document.getElementById('r').textContent=j.ok?'연결됐어요. 폰 화면을 확인해 주세요.':'맞지 않아요'+(j.triesLeft!==undefined?' (남은 횟수 '+j.triesLeft+')':'');};
+const t=setInterval(async()=>{const st=await fetch('/dev/status').then(r=>r.json()).catch(()=>null);if(!st)return;const q=document.getElementById('q');if(st.pairing==='failed'){clearInterval(t);q.style.opacity='0.15';document.getElementById('n').hidden=false;}if(st.pairing==='paired'){clearInterval(t);document.getElementById('r').textContent='연결됐어요. 폰 화면을 확인해 주세요.';}},2000);</script></body>`;
 }
 
 // ---- 앞단: 한 공개 origin ----

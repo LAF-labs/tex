@@ -179,14 +179,19 @@ export function send(res: http.ServerResponse, reply: Reply, extra: Record<strin
   return payload.length;
 }
 
-export function createServer(router: Router, opts: ServeOpts): http.Server {
-  return http.createServer((req, res) => {
+/** 요청 처리기(라우팅·응답·접근 로그). `createServer`와 함수 진입점(Vercel 등)이 같은 것을 쓴다. */
+export function requestListener(router: Router, opts: ServeOpts): (req: http.IncomingMessage, res: http.ServerResponse) => Promise<void> {
+  return async (req, res) => {
     const started = performance.now();
-    void dispatch(router, req, opts).then(({ reply, route, bytesIn, code, aid }) => {
-      const bytesOut = send(res, reply, opts.headers);
-      opts.logger.access({ m: req.method ?? '-', route, status: reply.status, code, bytesIn, bytesOut, ms: performance.now() - started, aid });
-    });
-  });
+    const { reply, route, bytesIn, code, aid } = await dispatch(router, req, opts);
+    const bytesOut = send(res, reply, opts.headers);
+    opts.logger.access({ m: req.method ?? '-', route, status: reply.status, code, bytesIn, bytesOut, ms: performance.now() - started, aid });
+  };
+}
+
+export function createServer(router: Router, opts: ServeOpts): http.Server {
+  const listener = requestListener(router, opts);
+  return http.createServer((req, res) => void listener(req, res));
 }
 
 export async function listen(server: http.Server, port = 0, host = '127.0.0.1'): Promise<string> {
