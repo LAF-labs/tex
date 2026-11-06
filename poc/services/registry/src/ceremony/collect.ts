@@ -8,22 +8,26 @@ export interface TrustPin {
 }
 import { countSignatures, type Role, type Sig, type TrustRoot } from '../verify.ts';
 import { CeremonyError, confirmCode, quorumFor, sha256, signingBytes, SIGNER_ROLES, TIMESTAMPED, timestampBytes, type DocKind } from './content.ts';
-import { edVerifyRaw, ROLE_SLOT, type SigningDevice } from './device.ts';
+import { edVerifyRaw, type SigningBackend } from './device.ts';
 
-/** 보유자가 의식에서 낸 공개키 기록(장치에서 export + 증명 검사 결과). */
+/** 공개키 기록(keygen 결과). 비밀은 없다. */
 export interface KeyRecord {
   keyId: string;
   role: Role;
   /** 표준 base64 32바이트 */
   publicKey: string;
-  /** 보유자 역할 이름(실명 아님, 예 "보유자 A(운영)", "릴리스 보유자") */
+  /** 보유자 역할 이름(실명 아님, 예 "단독 보유자", "보유자 A(운영)", "릴리스 보유자") */
   holder: string;
-  slot: string | null;
-  serial: number | null;
-  firmware: string | null;
-  /** 장치 증명으로 장치 안 생성·PIN/터치 ALWAYS를 확인했는가(타임스탬프 키는 HSM이라 false일 수 있다) */
-  attested: boolean;
+  /** 키가 사는 곳: macos-se(키체인 + Secure Enclave 감싸기, 단독 모드), yubikey-piv(승격 뒤), hsm(서버) */
+  backend: 'macos-se' | 'yubikey-piv' | 'hsm';
+  /** yubikey-piv만: 슬롯·일련번호·증명(attestation) 확인 여부 */
+  slot?: string | null;
+  serial?: number | null;
+  attested?: boolean;
 }
+
+/** solo = Phase 1 단독 보유(ADR-037), quorum = 보유자 3명 + 릴리스 1명(D09 §8.2). */
+export type TrustMode = 'solo' | 'quorum';
 
 /** 역할별 키 수(D09 §8.2). release는 엔진 핀에 없고 main 업데이터가 쓴다. */
 export const ROLE_COUNTS: Record<Role, number> = { root: 3, package: 3, policy: 3, emergency: 1, timestamp: 1, release: 1 };
@@ -35,19 +39,21 @@ export interface RootMetadata {
   createdAt: string;
   keys: TrustPin['keys'];
   /** keyId → 보유자 역할 표(D09 §8.2 "루트 메타데이터에 키 ID → 보유자 역할 표를 공개한다") */
-  holders: Array<{ keyId: string; role: Role; holder: string; slot: string | null; serial: number | null; attested: boolean }>;
+  /** 보유 형태(solo면 모든 키를 한 사람이 한 맥에 갖는다. 2-of-3은 키 분리일 뿐 사람 분리가 아니다) */
+  mode: TrustMode;
+  holders: Array<{ keyId: string; role: Role; holder: string; backend: KeyRecord['backend'] }>;
   signatures: Sig[];
 }
 
 /**
  * 공개키 기록 → 핀과 루트 메타데이터. 어긋나면 던진다.
  * - 역할별 개수, keyId 모양(역할-번호), keyId·공개키 중복 없음(역할 사이에도)
- * - root·package·policy는 역할마다 보유자 3명이 서로 다르다(1인 1키, D09 §8.2)
- * - 릴리스 보유자는 root·package·policy 키를 갖지 않는다(비운영자, ADR-028)
- * - 타임스탬프 키 말고는 장치 증명이 있어야 한다
+ * - quorum: root·package·policy는 역할마다 보유자 3명이 서로 다르다(1인 1키, D09 §8.2), 릴리스 보유자는 운영 키를 갖지 않는다(ADR-028),
+ *   yubikey-piv 키는 장치 증명이 있어야 한다
+ * - solo: 보유자 한 명(ADR-037). 사람 분리 검사를 하지 않는다
  * (엔진 trustRootsFromPin이 받는 모양이다: 시험이 대조한다)
  */
-export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, createdAt: string): { trust: TrustPin; metadata: RootMetadata } {
+export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, createdAt: string, mode: TrustMode = 'solo'): { trust: TrustPin; metadata: RootMetadata } {
   if (!Number.isSafeInteger(keyEpoch) || keyEpoch < 1) throw new CeremonyError('ceremony.trust_invalid', 'keyEpoch');
   const ids = new Set<string>();
   const pubs = new Set<string>();
@@ -58,7 +64,8 @@ export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, crea
     if (raw.length !== 32 || raw.toString('base64') !== r.publicKey) throw new CeremonyError('ceremony.trust_invalid', `publicKey ${r.keyId}`);
     if (ids.has(r.keyId)) throw new CeremonyError('ceremony.trust_invalid', `keyId 중복 ${r.keyId}`);
     if (pubs.has(r.publicKey)) throw new CeremonyError('ceremony.trust_invalid', `같은 공개키 두 번 ${r.keyId}`);
-    if (!r.attested && r.role !== 'timestamp') throw new CeremonyError('ceremony.trust_invalid', `장치 증명 없음 ${r.keyId}`);
+    if (!['macos-se', 'yubikey-piv', 'hsm'].includes(r.backend)) throw new CeremonyError('ceremony.trust_invalid', `backend ${r.keyId}`);
+    if (r.backend === 'yubikey-piv' && !r.attested) throw new CeremonyError('ceremony.trust_invalid', `장치 증명 없음 ${r.keyId}`);
     if (typeof r.holder !== 'string' || !r.holder.trim()) throw new CeremonyError('ceremony.trust_invalid', `보유자 없음 ${r.keyId}`);
     ids.add(r.keyId);
     pubs.add(r.publicKey);
@@ -68,17 +75,19 @@ export function buildTrust(records: readonly KeyRecord[], keyEpoch: number, crea
     const got = Object.keys(keys[role] ?? {}).length;
     if (got !== n) throw new CeremonyError('ceremony.trust_invalid', `${role} ${got}/${n}`);
   }
-  for (const role of ['root', 'package', 'policy'] as const) {
-    const holders = new Set(records.filter((r) => r.role === role).map((r) => r.holder));
-    if (holders.size !== 3) throw new CeremonyError('ceremony.trust_invalid', `${role} 보유자가 3명이 아님`);
-  }
-  const releaseHolder = records.find((r) => r.role === 'release')!.holder;
-  if (records.some((r) => ['root', 'package', 'policy'].includes(r.role) && r.holder === releaseHolder)) throw new CeremonyError('ceremony.trust_invalid', '릴리스 보유자가 운영 키를 가짐');
+  if (mode === 'quorum') {
+    for (const role of ['root', 'package', 'policy'] as const) {
+      const holders = new Set(records.filter((r) => r.role === role).map((r) => r.holder));
+      if (holders.size !== 3) throw new CeremonyError('ceremony.trust_invalid', `${role} 보유자가 3명이 아님`);
+    }
+    const releaseHolder = records.find((r) => r.role === 'release')!.holder;
+    if (records.some((r) => ['root', 'package', 'policy'].includes(r.role) && r.holder === releaseHolder)) throw new CeremonyError('ceremony.trust_invalid', '릴리스 보유자가 운영 키를 가짐');
+  } else if (mode !== 'solo') throw new CeremonyError('ceremony.trust_invalid', `mode ${String(mode)}`);
   const sorted: TrustPin['keys'] = {};
   for (const role of Object.keys(ROLE_COUNTS) as Role[]) sorted[role] = Object.fromEntries(Object.entries(keys[role]!).sort(([a], [b]) => a.localeCompare(b)));
   const trust: TrustPin = { keyEpoch, keys: sorted };
-  const holders = [...records].sort((a, b) => a.keyId.localeCompare(b.keyId)).map((r) => ({ keyId: r.keyId, role: r.role, holder: r.holder, slot: r.slot, serial: r.serial, attested: r.attested }));
-  return { trust, metadata: { kind: 'sax.trust-root/v1', keyEpoch, createdAt, keys: sorted, holders, signatures: [] } };
+  const holders = [...records].sort((a, b) => a.keyId.localeCompare(b.keyId)).map((r) => ({ keyId: r.keyId, role: r.role, holder: r.holder, backend: r.backend }));
+  return { trust, metadata: { kind: 'sax.trust-root/v1', keyEpoch, createdAt, mode, keys: sorted, holders, signatures: [] } };
 }
 
 // ---- 보유자 서명 ----
@@ -91,19 +100,18 @@ export interface SignatureRecord extends Sig {
 }
 
 /**
- * 장치로 서명한다. confirm은 진행자가 읽은 확인 코드(confirmCode(sha256))와 같아야 한다(보유자가 화면 값을 맞춰 봤다는 뜻).
- * expectedPublicKey(핀 또는 공개키 기록)가 있으면 장치 슬롯 공개키와 같아야 한다(다른 사람의 장치·슬롯 방지). 서명은 장치 공개키로 다시 검증한다.
+ * 백엔드로 서명한다. confirm은 화면에 보인 확인 코드(confirmCode(sha256))를 서명자가 다시 입력한 값이어야 한다(문서를 맞춰 봤다는 뜻).
+ * 단독 모드에서는 prepare가 보인 코드를 sign에 다시 넣는다(복사·붙여넣기가 아니라 눈으로 맞춰 본다). Touch ID 창에도 같은 코드가 뜬다.
+ * expectedPublicKey(핀 또는 공개키 기록)가 있으면 백엔드의 그 keyId 공개키와 같아야 한다. 서명은 그 공개키로 다시 검증한다.
  */
-export async function signWithDevice(device: SigningDevice, o: { kind: DocKind; part: 'content' | 'timestamp'; bytes: Buffer; role: Role; keyId: string; confirm: string; expectedPublicKey?: string }): Promise<SignatureRecord> {
+export async function signWithBackend(backend: SigningBackend, o: { kind: DocKind; part: 'content' | 'timestamp'; bytes: Buffer; role: Role; keyId: string; confirm: string; expectedPublicKey?: string }): Promise<SignatureRecord> {
   const sha = sha256(o.bytes);
   if (o.confirm.trim().toLowerCase() !== confirmCode(sha)) throw new CeremonyError('ceremony.confirm_mismatch');
   if (o.part === 'timestamp' ? o.role !== 'timestamp' : !SIGNER_ROLES[o.kind].includes(o.role)) throw new CeremonyError('ceremony.role_not_allowed', `${o.kind}/${o.part}: ${o.role}`);
   if (!o.keyId.startsWith(`${o.role}-`)) throw new CeremonyError('ceremony.role_not_allowed', o.keyId);
-  const slot = ROLE_SLOT[o.role];
-  if (!slot) throw new CeremonyError('ceremony.role_not_allowed', `${o.role}: 장치 슬롯 없음`);
-  const pub = await device.publicKey(slot);
-  if (o.expectedPublicKey && !pub.equals(Buffer.from(o.expectedPublicKey, 'base64'))) throw new CeremonyError('ceremony.wrong_key', `${o.keyId} 슬롯 ${slot}`);
-  const sig = await device.sign(slot, o.bytes);
+  const pub = await backend.publicKey(o.keyId);
+  if (o.expectedPublicKey && !pub.equals(Buffer.from(o.expectedPublicKey, 'base64'))) throw new CeremonyError('ceremony.wrong_key', o.keyId);
+  const sig = await backend.sign(o.keyId, o.bytes, confirmCode(sha));
   if (!edVerifyRaw(pub, o.bytes, sig)) throw new CeremonyError('ceremony.signature_invalid');
   return { keyId: o.keyId, alg: 'ed25519', sig: sig.toString('base64url'), kind: o.kind, part: o.part, sha256: sha };
 }

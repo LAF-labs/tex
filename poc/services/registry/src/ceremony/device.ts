@@ -1,37 +1,45 @@
-// 서명 장치(YubiKey 5, 펌웨어 5.7 이상 PIV Ed25519). 개인키는 장치 안에서 만들고 장치 밖으로 나오지 않는다.
-// 이 모듈은 장치에 "이 바이트에 서명하라"와 "공개키·증명서를 달라"만 보낸다. PIN은 다루지 않는다:
-// pkcs11-tool·ykman이 터미널에서 직접 묻는다(명령줄·환경 변수·파일에 PIN을 두지 않는다). 터치는 장치가 요구한다(정책 ALWAYS).
+// 서명 백엔드. Phase 1 단독 모드(ADR-037): macOS 키체인 + Secure Enclave 감싸기 + Touch ID(macos/sax-keychain.swift 도우미).
+// 이 모듈은 도우미에 "이 keyId로 이 바이트에 서명하라"만 보낸다. 서명은 도우미 프로세스 안에서 하고 시드는 Node로 오지 않는다.
+// 예외는 백업 내보내기·들여오기(exportSeeds·importSeed)뿐이다. 부르는 쪽이 바로 암호로 잠그고 버퍼를 0으로 덮는다.
+// 보유자 여럿으로 승격하면 YubiKey PIV(아래 PivDevice 인터페이스)로 옮긴다(CEREMONY.md §8). 그 구현은 승격 때 넣는다.
 import { spawn } from 'node:child_process';
 import { createPublicKey, verify as edVerify } from 'node:crypto';
-import fs from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import type { Role } from '../verify.ts';
 import { CeremonyError } from './content.ts';
 
-/** PIV 슬롯(팀장 결정: 82 package, 83 policy, 84 root). 85 release·86 emergency는 이 절차서의 제안이다(CEREMONY.md §1·§10). */
-export const ROLE_SLOT: Partial<Record<Role, PivSlot>> = { package: '82', policy: '83', root: '84', release: '85', emergency: '86' };
-export type PivSlot = '82' | '83' | '84' | '85' | '86';
-
-/** ykcs11 객체 id: 9a=1, 9c=2, 9d=3, 9e=4, 82~95 = 5~24(16진 05~18), f9 = 25. */
-export function ykcs11KeyId(slot: PivSlot): string {
-  const n = 5 + (parseInt(slot, 16) - 0x82);
-  return n.toString(16).padStart(2, '0');
-}
-
-/** 한 번에 장치로 보내는 서명 입력 상한. 펌웨어 5.7 PIV Ed25519의 실제 메시지 한도는 실측 전이다(CEREMONY.md §10). */
+/** 한 번에 서명하는 입력 상한(도우미와 같다). 인덱스 게시 상한(512KB)과 같다. */
 export const MAX_SIGN_BYTES = 512 * 1024;
 
-export interface SigningDevice {
-  /** 화면 표시용(일련번호 등, 비밀 없음) */
+export interface SigningBackend {
+  /** 화면 표시용(비밀 없음) */
   describe(): string;
-  /** 슬롯 공개키(Ed25519 원시 32바이트) */
+  /** keyId의 Ed25519 공개키 32B(Touch ID 없음) */
+  publicKey(keyId: string): Promise<Buffer>;
+  /** keyId로 message 전체에 서명(PureEdDSA, 64B). Touch ID 창에 confirm(확인 코드)을 보인다. */
+  sign(keyId: string, message: Buffer, confirm: string): Promise<Buffer>;
+}
+
+/** 키를 만들고 백업할 수 있는 백엔드(단독 모드 키체인). */
+export interface KeyStoreBackend extends SigningBackend {
+  generate(keyId: string): Promise<Buffer>;
+  list(): Promise<string[]>;
+  /** 백업 전용. Touch ID 한 번. 돌려받은 seed 버퍼는 부르는 쪽이 0으로 덮는다. */
+  exportSeeds(keyIds: readonly string[]): Promise<Array<{ keyId: string; pub: string; seed: Buffer }>>;
+  /** 백업 들여오기. 같은 keyId가 있으면 거부(덮지 않는다). 돌려주는 값은 공개키. */
+  importSeed(keyId: string, seed: Buffer): Promise<Buffer>;
+}
+
+/**
+ * 승격 뒤 YubiKey PIV(펌웨어 5.7 이상 Ed25519, 슬롯 82 package·83 policy·84 root, PIN·터치 ALWAYS, 팀장 결정 2026-11-06)의 자리.
+ * 인터페이스만 둔다: ykcs11 + pkcs11-tool EDDSA로 서명하고 ykman으로 공개키·증명(attestation)을 받는다. PIN은 도구를 지나가지 않는다.
+ */
+export interface PivDevice {
   publicKey(slot: PivSlot): Promise<Buffer>;
-  /** 슬롯 키로 message 전체에 서명(PureEdDSA). PIN·터치는 장치가 요구한다. 64바이트. */
   sign(slot: PivSlot, message: Buffer): Promise<Buffer>;
-  /** PIV 증명(attestation): 슬롯 키 인증서와 장치 증명 중간 인증서(f9) PEM */
   attestation(slot: PivSlot): Promise<{ attestation: string; intermediate: string }>;
 }
+export type PivSlot = '82' | '83' | '84' | '85' | '86';
+export const PIV_ROLE_SLOT: Partial<Record<Role, PivSlot>> = { package: '82', policy: '83', root: '84', release: '85', emergency: '86' };
 
 const SPKI_ED25519 = Buffer.from('302a300506032b6570032100', 'hex');
 
@@ -57,96 +65,99 @@ export function edVerifyRaw(pubRaw: Uint8Array, message: Uint8Array, sig: Uint8A
   }
 }
 
-/** 외부 명령 실행기. interactive면 표준 입출력을 터미널에 그대로 붙인다(PIN 입력). 시험은 가짜를 넣는다. */
-export type Runner = (cmd: string, args: readonly string[], o: { interactive: boolean }) => Promise<{ code: number; stdout: string }>;
+/** 도우미 실행기: stdin 한 덩어리를 넣고 stdout 한 줄 JSON을 받는다. Touch ID 창은 OS가 띄운다(터미널 입력 없음). 시험은 가짜를 넣는다. */
+export type HelperRunner = (helper: string, args: readonly string[], stdin: string | null) => Promise<{ code: number; stdout: string }>;
 
-export const spawnRunner: Runner = (cmd, args, o) =>
+export const spawnHelper: HelperRunner = (helper, args, stdin) =>
   new Promise((resolve, reject) => {
-    const p = spawn(cmd, args, { stdio: o.interactive ? ['inherit', 'inherit', 'inherit'] : ['ignore', 'pipe', 'inherit'], shell: false });
-    let out = '';
-    p.stdout?.on('data', (d: Buffer) => (out += d.toString('utf8')));
+    const p = spawn(helper, args, { stdio: ['pipe', 'pipe', 'inherit'], shell: false });
+    const chunks: Buffer[] = [];
+    p.stdout.on('data', (d: Buffer) => chunks.push(d));
     p.on('error', reject);
-    p.on('close', (code) => resolve({ code: code ?? 1, stdout: out }));
+    p.on('close', (code) => {
+      const buf = Buffer.concat(chunks);
+      const stdout = buf.toString('utf8');
+      buf.fill(0); // 내보내기 응답에는 시드가 실린다
+      for (const c of chunks) c.fill(0);
+      resolve({ code: code ?? 1, stdout });
+    });
+    p.stdin.end(stdin ?? '');
   });
 
-export interface YubiKeyOptions {
-  /** ykcs11 라이브러리 경로(yubico-piv-tool 2.5 이상, macOS 예 /usr/local/lib/libykcs11.dylib, Windows 예 C:\Program Files\Yubico\Yubico PIV Tool\bin\libykcs11.dll) */
-  module: string;
-  /** 장치 일련번호(여러 대가 꽂혀 있을 때 ykman --device). PKCS#11 쪽은 tokenLabel로 고른다. */
-  serial?: string;
-  /** PKCS#11 토큰 이름(ykcs11은 "YubiKey PIV #<serial>"). 없으면 serial로 만든다. */
-  tokenLabel?: string;
-  ykman?: string;
-  pkcs11Tool?: string;
-  run?: Runner;
-  /** 임시 파일 위치(기본 OS 임시 폴더 아래 0700 폴더). 서명 입력·서명만 잠시 둔다(비밀 아님). */
-  tmpRoot?: string;
-}
+const KEY_ID = /^(root|package|policy|emergency|timestamp|release)-[0-9]+$/;
 
-/**
- * YubiKey PIV(ykcs11 + OpenSC pkcs11-tool로 서명, ykman으로 공개키·증명).
- * 서명: pkcs11-tool --module M --token-label L --login --sign --mechanism EDDSA --id <ykcs11 id> --input-file in --output-file out
- *  - --pin을 넘기지 않는다(pkcs11-tool이 묻는다). 터치는 장치 LED가 깜빡일 때 보유자가 한다.
- */
-export class YubiKeyPiv implements SigningDevice {
-  private readonly o: YubiKeyOptions;
-  private readonly run: Runner;
-  constructor(o: YubiKeyOptions) {
-    this.o = o;
-    this.run = o.run ?? spawnRunner;
+/** macOS 키체인 + Secure Enclave + Touch ID(도우미 sax-keychain). */
+export class MacKeychainBackend implements KeyStoreBackend {
+  private readonly helper: string;
+  private readonly run: HelperRunner;
+  constructor(o: { helper: string; run?: HelperRunner }) {
+    this.helper = o.helper;
+    this.run = o.run ?? spawnHelper;
   }
 
   describe(): string {
-    return `YubiKey PIV${this.o.serial ? ` #${this.o.serial}` : ''}`;
+    return 'macOS 키체인(Secure Enclave·Touch ID)';
   }
 
-  private ykman(args: string[]): string[] {
-    return [...(this.o.serial ? ['--device', this.o.serial] : []), ...args];
-  }
-
-  private async tmp<T>(fn: (dir: string) => Promise<T>): Promise<T> {
-    const dir = await fs.mkdtemp(path.join(this.o.tmpRoot ?? os.tmpdir(), 'sax-ceremony-'));
-    await fs.chmod(dir, 0o700).catch(() => {});
+  private async call(args: string[], stdin: string | null = null): Promise<Record<string, unknown>> {
+    for (const a of args.slice(1)) if (!KEY_ID.test(a) && !/^[0-9a-f]{4}(-[0-9a-f]{4}){7}$/.test(a)) throw new CeremonyError('ceremony.usage', '도우미 인자');
+    let r;
     try {
-      return await fn(dir);
-    } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      r = await this.run(this.helper, args, stdin);
+    } catch {
+      throw new CeremonyError('ceremony.helper_missing', this.helper);
     }
+    let o: Record<string, unknown>;
+    try {
+      o = JSON.parse(r.stdout.trim().split('\n').pop() ?? '') as Record<string, unknown>;
+    } catch {
+      throw new CeremonyError('ceremony.helper_failed');
+    }
+    if (r.code !== 0 || typeof o.error === 'string') throw new CeremonyError(typeof o.error === 'string' ? o.error : 'ceremony.helper_failed');
+    return o;
   }
 
-  async publicKey(slot: PivSlot): Promise<Buffer> {
-    return this.tmp(async (dir) => {
-      const out = path.join(dir, 'pub.pem');
-      const r = await this.run(this.o.ykman ?? 'ykman', this.ykman(['piv', 'keys', 'export', slot, out]), { interactive: false });
-      if (r.code !== 0) throw new CeremonyError('ceremony.device_failed', `ykman piv keys export ${slot}`);
-      return rawEd25519FromSpki(await fs.readFile(out, 'utf8'));
-    });
+  private pubOf(o: Record<string, unknown>, keyId: string): Buffer {
+    const b = typeof o.pub === 'string' ? Buffer.from(o.pub, 'base64') : Buffer.alloc(0);
+    if (o.keyId !== keyId || b.length !== 32) throw new CeremonyError('ceremony.helper_failed');
+    return b;
   }
 
-  async attestation(slot: PivSlot): Promise<{ attestation: string; intermediate: string }> {
-    return this.tmp(async (dir) => {
-      const a = path.join(dir, 'attest.pem');
-      const f9 = path.join(dir, 'f9.pem');
-      const r1 = await this.run(this.o.ykman ?? 'ykman', this.ykman(['piv', 'keys', 'attest', slot, a]), { interactive: false });
-      const r2 = await this.run(this.o.ykman ?? 'ykman', this.ykman(['piv', 'certificates', 'export', 'f9', f9]), { interactive: false });
-      if (r1.code !== 0 || r2.code !== 0) throw new CeremonyError('ceremony.device_failed', 'ykman attest');
-      return { attestation: await fs.readFile(a, 'utf8'), intermediate: await fs.readFile(f9, 'utf8') };
-    });
+  async publicKey(keyId: string): Promise<Buffer> {
+    return this.pubOf(await this.call(['pubkey', keyId]), keyId);
   }
 
-  async sign(slot: PivSlot, message: Buffer): Promise<Buffer> {
+  async generate(keyId: string): Promise<Buffer> {
+    return this.pubOf(await this.call(['generate', keyId]), keyId);
+  }
+
+  async list(): Promise<string[]> {
+    const o = await this.call(['list']);
+    return Array.isArray(o.keys) ? (o.keys as unknown[]).filter((k): k is string => typeof k === 'string') : [];
+  }
+
+  async sign(keyId: string, message: Buffer, confirm: string): Promise<Buffer> {
     if (message.length === 0 || message.length > MAX_SIGN_BYTES) throw new CeremonyError('ceremony.message_size');
-    return this.tmp(async (dir) => {
-      const inp = path.join(dir, 'tosign.bin');
-      const out = path.join(dir, 'sig.bin');
-      await fs.writeFile(inp, message, { mode: 0o600 });
-      const label = this.o.tokenLabel ?? (this.o.serial ? `YubiKey PIV #${this.o.serial}` : undefined);
-      const args = ['--module', this.o.module, ...(label ? ['--token-label', label] : []), '--login', '--sign', '--mechanism', 'EDDSA', '--id', ykcs11KeyId(slot), '--input-file', inp, '--output-file', out];
-      const r = await this.run(this.o.pkcs11Tool ?? 'pkcs11-tool', args, { interactive: true });
-      if (r.code !== 0) throw new CeremonyError('ceremony.device_failed', 'pkcs11-tool --sign');
-      const sig = await fs.readFile(out);
-      if (sig.length !== 64) throw new CeremonyError('ceremony.signature_invalid', `${sig.length}B`);
-      return sig;
-    });
+    const o = await this.call(['sign', keyId, confirm], message.toString('base64'));
+    const sig = typeof o.sig === 'string' ? Buffer.from(o.sig, 'base64') : Buffer.alloc(0);
+    if (o.keyId !== keyId || sig.length !== 64) throw new CeremonyError('ceremony.signature_invalid');
+    return sig;
+  }
+
+  async exportSeeds(keyIds: readonly string[]): Promise<Array<{ keyId: string; pub: string; seed: Buffer }>> {
+    const o = await this.call(['export', ...keyIds]);
+    const keys = Array.isArray(o.keys) ? (o.keys as Array<{ keyId?: unknown; pub?: unknown; seed?: unknown }>) : [];
+    const out = keys.map((k) => ({ keyId: String(k.keyId), pub: String(k.pub), seed: Buffer.from(String(k.seed), 'base64') }));
+    for (const k of keys) k.seed = undefined;
+    if (out.length !== keyIds.length || out.some((k, i) => k.keyId !== keyIds[i] || k.seed.length !== 32)) {
+      for (const k of out) k.seed.fill(0);
+      throw new CeremonyError('ceremony.helper_failed');
+    }
+    return out;
+  }
+
+  async importSeed(keyId: string, seed: Buffer): Promise<Buffer> {
+    if (seed.length !== 32) throw new CeremonyError('ceremony.usage');
+    return this.pubOf(await this.call(['import', keyId], seed.toString('base64')), keyId);
   }
 }

@@ -1,200 +1,251 @@
-# 레지스트리 서명 의식 절차서 (keyEpoch 1)
+# 레지스트리 서명 의식 절차서 — 단독 모드 (keyEpoch 1)
 
 근거:
-- D09 §8.2(역할 분리·1인 1키·하드웨어 쿼럼)·§8.4(폐기·keyEpoch)·§8.5(긴급 키)
+- ADR-037(Phase 1 단독 보유, 설계 세션 작성 중)
+- D09 §8.2(역할·정족수)·§8.4(폐기·keyEpoch)·§8.5(긴급 키)
 - [SIGNING.md](../../../sovereign-ax/design/schemas/SIGNING.md) §1~§4(서명 바이트)
 - ADR-013·023·028
-- 팀장 결정 2026-11-06: YubiKey 5 PIV Ed25519, 보유자 3명 + 릴리스 1명, 슬롯 82·83·84, PIN·터치 ALWAYS
+- 팀장 결정 2026-11-06: 물리 키 없음, Phase 1은 사용자 혼자 보유. macOS 키체인 + Touch ID, 역할마다 Ed25519 키 3개, 생체 인증 필수, 디스크 평문 금지, 암호로 잠근 오프라인 백업 1개. YubiKey PIV는 승격 때 쓴다(인터페이스만).
 
-도구: `services/registry/src/ceremony/cli.ts`(아래 `ceremony`).
+도구:
+- CLI `services/registry/src/ceremony/cli.ts`(아래 `ceremony`)
+
+  ```bash
+  node --conditions=development services/registry/src/ceremony/cli.ts <명령> …
+  ```
+
+- macOS 도우미 `services/registry/src/ceremony/macos/sax-keychain.swift`
+- 시험 `tests/registry-ceremony.test.ts`(가짜 키체인 백엔드, macOS에서는 도우미를 빌드해 시험 벡터를 대조)
+
+## 1. 무엇을 지키나
+
+- **시드 평문은 디스크·키체인 어디에도 없다.**
+  - Ed25519 시드는 도우미 프로세스 안에서 만든다.
+  - 곧바로 이 맥의 Secure Enclave P-256 키 W로 감싼다(부록 A). 로그인 키체인에는 감싼 블롭만 둔다.
+- **풀 때마다 Touch ID.**
+  - W의 접근 제어는 `privateKeyUsage + biometryCurrentSet`이다. W는 Secure Enclave 밖으로 나오지 않는다.
+  - 지문을 새로 등록하면 W를 쓸 수 없게 된다(biometryCurrentSet). 그때는 백업으로 되살린다(§7).
+- **서명은 도우미 메모리 안에서 한다.**
+  - Touch ID → 풀기 → CryptoKit Ed25519 서명 → 시드 버퍼를 0으로 덮기
+  - Node에는 서명만 간다. Touch ID 창에는 keyId와 확인 코드가 뜬다.
+- **예외는 백업 내보내기·들여오기뿐이다.** 그때만 시드가 Node 메모리를 지나간다. Node는 바로 scrypt + ChaCha20-Poly1305로 잠그거나(내보내기) 도우미에 넘겨 다시 감싸고(들여오기), 버퍼를 0으로 덮는다.
+- **정족수는 그대로 2-of-3이다.** 모으는 도구는 서로 다른 핀 키 2개 이상인지 본다. 단독 모드에서 2-of-3은 **키 분리일 뿐 사람 분리가 아니다**. 한 사람·한 맥이 모든 키를 갖는다(ADR-037이 받아들인 남는 위험). 루트 메타데이터의 `mode: "solo"`가 이를 공개한다.
+
+남는 위험(단독 모드):
+- 맥이 잠금 해제된 채로 악성코드가 돌면, 사용자가 Touch ID를 누르는 순간 다른 문서에 서명할 수 있다. 막는 것은 Touch ID 창의 확인 코드다. 창의 코드가 `prepare`가 보인 코드와 같은지 보고 누른다.
+- 사람 쿼럼이 없다. 사용자 계정이 털리면 모든 역할이 함께 위험하다. 그래서 보유자가 늘면 바로 승격한다(§8).
+- 시드가 CryptoKit 내부 사본에 잠깐 있다. Swift·Node 모두 우리가 쥔 버퍼만 0으로 덮을 수 있다(최선 노력).
+
+## 2. 키와 역할(keyEpoch 1, 한 세대 12개)
+
+| keyId | 역할 | 정족수 | 서명하는 것 |
+|---|---|---|---|
+| `root-1`~`root-3` | 오프라인 루트 | 2-of-3 | 루트 메타데이터, 폐기 목록 본문, 릴리스 `rootChange`(핀·keyEpoch 변경) |
+| `package-1`~`package-3` | 패키지 | 2-of-3 | 인덱스, `.sxp` 안 manifest·hotfix·데이터 기술자 |
+| `policy-1`~`policy-3` | 정책 | 2-of-3 | 정책, `registry/status.json` |
+| `emergency-1` | 1인 긴급 | 1 | 엄격하게 보수적인 정책·status 변경만(D03 §7.1), 72시간 자동 만료 |
+| `release-1` | 앱 릴리스 | 1 | `releases/{channel}/latest.json` |
+| `timestamp-1` | 타임스탬프 | 1 | 정책·status·폐기 목록 신선도 재서명 |
+
+- 모든 키가 한 맥의 키체인에 있다(`backend: "macos-se"`).
+- 타임스탬프 키도 Phase 1에는 같은 맥에 둔다. 그래서 폐기 목록 24시간·status 48시간 재서명을 사람이 Touch ID로 한다. 놓치면 클라이언트가 새 패키지를 보류한다(안전한 쪽). 서버 자동 재서명(HSM)은 결정이 필요하다(§10).
+
+## 3. 준비
+
+- Apple 실리콘(또는 T2) 맥, macOS 14 이상, Touch ID 등록
+- Xcode 명령줄 도구(`swiftc`)와 이 저장소(태그 고정 커밋)
+
+도우미를 빌드한다. ad-hoc 서명으로 충분하다(실증: 서명 안 된·ad-hoc CLI에서 Secure Enclave 키 생성·키체인 저장이 된다).
 
 ```bash
-node --conditions=development services/registry/src/ceremony/cli.ts <명령> …
+mkdir -p ~/.sax/bin && swiftc -O services/registry/src/ceremony/macos/sax-keychain.swift -o ~/.sax/bin/sax-keychain && codesign -s - -f ~/.sax/bin/sax-keychain
 ```
 
-**개인키와 PIN은 이 도구를 지나가지 않는다.**
-- 개인키는 YubiKey 안에서 만들고 밖으로 나오지 않는다.
-- 도구는 장치에 "이 바이트에 서명하라"만 보낸다.
-- PIN은 `pkcs11-tool`이 터미널에서 직접 묻는다.
-- 터치는 장치가 요구한다.
-
-시험: `tests/registry-ceremony.test.ts`(소프트웨어 가짜 장치).
-
-## 1. 역할과 키
-
-| keyId | 역할 | 보관 | 정족수 | 서명하는 것 |
-|---|---|---|---|---|
-| `root-1`·`root-2`·`root-3` | 오프라인 루트 | 보유자 A·B·C의 YubiKey 슬롯 **84** | 2-of-3 | 루트 메타데이터, 폐기 목록 `revoked_keys.json` 본문, 릴리스 `rootChange`(핀·keyEpoch 변경) |
-| `package-1`·`-2`·`-3` | 패키지 | 보유자 A·B·C의 슬롯 **82** | 2-of-3 | 인덱스 `registry/{channel}/index.json`, `.sxp` 안 manifest·hotfix·데이터 기술자 |
-| `policy-1`·`-2`·`-3` | 정책 | 보유자 A·B·C의 슬롯 **83** | 2-of-3 | 정책, `registry/status.json` |
-| `emergency-1` | 1인 긴급(당직) | 보유자 A(당직)의 슬롯 **86** *(제안, §10)* | 1 | 엄격하게 보수적인 정책·status 변경만(D03 §7.1). 72시간 뒤 자동 만료 |
-| `release-1` | 앱 릴리스 | 릴리스 보유자 R(비운영자)의 YubiKey 슬롯 **85** *(제안, §10)* | 1 | `releases/{channel}/latest.json` |
-| `timestamp-1` | 타임스탬프(온라인) | 레지스트리 서버 HSM *(결정 필요, §10)* | 1 | 정책·status·폐기 목록의 신선도 재서명(자동) |
-
-- **1인 1키**: 한 사람이 같은 역할 키를 둘 갖지 않는다. 보유자 A·B·C는 역할마다 1개씩 갖는다. 그래서 장치 하나를 잃어도 남은 둘로 2-of-3이 된다(§8).
-- **릴리스 보유자는 운영 키(root·package·policy)를 갖지 않는다**(ADR-028). 도구가 이를 검사한다.
-- 레지스트리 호스팅·CDN·미러의 쓰기 권한자는 서명 키를 갖지 않는다(D09 §8.2).
-- 남는 위험: 루트 키가 일상용 패키지·정책 키와 같은 YubiKey에 있다(팀장 결정). 루트는 연 1회만 쓰지만, 장치 하나를 빼앗기면 세 역할을 한꺼번에 잃는다. 대신 PIN·터치 ALWAYS가 원격 오용을 막는다.
-
-## 2. 준비물
-
-- YubiKey 5 시리즈, **펌웨어 5.7 이상**(PIV Ed25519). 확인: `ykman info`.
-- 각 보유자 PC
-  - `ykman` 5.4 이상
-  - Yubico PIV Tool 2.5 이상(`libykcs11`)
-  - OpenSC `pkcs11-tool` 0.25 이상(`--mechanism EDDSA`)
-  - Node 24와 이 저장소(태그 고정 커밋)
-- Yubico PIV 증명 루트·중간 인증서 PEM. Yubico 공식 페이지에서 받고, **두 사람이 지문(SHA-256)을 따로 확인**해 의식 기록에 적는다.
-- 의식 기록부(§9): 참석자, 장치 일련번호, 확인 코드, 산출물 SHA-256.
-- 루트 서명(§5)을 하는 PC는 그 시간 동안 네트워크를 끊는다.
-
-## 3. 장치 초기화와 키 생성(보유자 각자, 자기 장치로)
-
-공장 기본값(PIN 123456, PUK 12345678, 기본 관리 키)을 먼저 바꾼다.
+W를 만들고 자체 시험을 한다. Touch ID 창이 한 번 뜬다. 자체 시험은 키체인에 아무것도 남기지 않는다.
 
 ```bash
-ykman piv access change-pin
-```
-
-```bash
-ykman piv access change-puk
-```
-
-```bash
-ykman piv access change-management-key --generate --protect
-```
-
-슬롯마다 키를 장치 안에서 만든다(보유자 A·B·C는 82·83·84, A는 86도, 릴리스 보유자는 85만):
-
-```bash
-ykman piv keys generate --algorithm ED25519 --pin-policy ALWAYS --touch-policy ALWAYS 84 root-pub.pem
+~/.sax/bin/sax-keychain init
 ```
 
 ```bash
-ykman piv certificates generate --subject "CN=SAX root-1" 84 root-pub.pem
+~/.sax/bin/sax-keychain selftest
 ```
 
-- 두 번째 명령은 자체 서명 인증서를 넣는다. `libykcs11`이 그 슬롯의 개인키 객체를 보이게 하려는 것이다(실측 필요, §10).
-- **키를 가져오지(import) 않는다.** 증명 검사(§4)가 장치 안에서 생성된 키만 받는다.
-- PIN·PUK는 보유자만 안다. 적어 둔다면 장치와 다른 곳에 봉인한다. PIN 3회·PUK 3회를 틀리면 장치를 초기화해야 하고, 그러면 키를 잃는다(§8).
+- `{"ok":true}`면 Secure Enclave 풀기·서명이 이 맥에서 된다.
+- 시험 벡터도 대조한다. 출력이 부록 A의 벡터와 같아야 한다.
 
-## 4. 공개키 수집과 증명 검사
+  ```bash
+  ~/.sax/bin/sax-keychain vector
+  ```
 
-보유자가 자기 장치를 꽂고 슬롯마다 실행한다.
+## 4. 키 만들기와 오프라인 백업
 
 ```bash
-node --conditions=development services/registry/src/ceremony/cli.ts pubkey --role root --key-id root-1 --holder "보유자 A" --module /usr/local/lib/libykcs11.dylib --serial 30000001 --yubico-root yubico-piv-root.pem --yubico-intermediate yubico-piv-attest-b1.pem --out keys/root-1.json
+node --conditions=development services/registry/src/ceremony/cli.ts keygen-all --holder "단독 보유자" --out-dir ceremony/keyepoch-1/keys
 ```
 
-- 도구가 확인하는 것
-  - 슬롯 공개키(`ykman piv keys export`)
-  - 증명서 사슬: 슬롯 증명 ← 장치 f9 ← (Yubico 중간) ← Yubico 루트. 유효 기간도 본다.
-  - 증명서 공개키 = export한 공개키
-  - **PIN 정책 always·터치 정책 always**(Yubico 확장 1.3.6.1.4.1.41482.3.8). 아니면 `ceremony.policy_not_always`로 멈춘다.
-  - 일련번호·펌웨어를 기록에 남긴다.
-- keyId 번호는 보유자 순서다(A=1, B=2, C=3). 역할 이름은 실명이 아니라 역할로 적는다(예 "보유자 A(운영·당직)").
-- 타임스탬프 키는 서버 HSM의 공개키 PEM으로 기록한다(증명 없음, `attested: false`).
+- 12개를 만든다(Touch ID 없음: 감쌀 때는 W 공개키만 쓴다). 공개키 기록 JSON이 나온다(비밀 없음).
+
+**같은 날** 백업 1개를 만든다. Touch ID 한 번과 암호 두 번을 묻는다.
 
 ```bash
-node --conditions=development services/registry/src/ceremony/cli.ts pubkey --role timestamp --key-id timestamp-1 --holder "레지스트리 서버 HSM" --pubkey-pem ts-pub.pem --out keys/timestamp-1.json
+node --conditions=development services/registry/src/ceremony/cli.ts backup-export --out /Volumes/SAX-BACKUP/keyepoch-1.sax
 ```
 
-## 5. TRUST_ROOT_JSON·루트 메타데이터 → 루트 2-of-3
+- 암호는 20자 이상, 단어 5개 이상을 권한다. 이 암호는 어디에도 저장하지 않는다. 종이에 적어 봉인한다면 백업 매체와 다른 장소에 둔다.
+- 파일은 `SAX-ceremony-backup-v1`이다(부록 B, scrypt N=2^17·r=8·p=1 + ChaCha20-Poly1305). 0600, 덮어쓰기 거부.
+- 오프라인 매체(USB 2개, 서로 다른 장소)에 옮긴다. 이 맥에 남은 임시 사본은 지운다.
+- 핀을 만든 뒤(§5) 백업이 열리고 핀과 같은지 확인한다(들여오지 않는다).
 
-진행자가 공개키 기록 12개로 핀과 메타데이터를 만든다.
+  ```bash
+  node --conditions=development services/registry/src/ceremony/cli.ts backup-verify --in /Volumes/SAX-BACKUP/keyepoch-1.sax --trust ceremony/keyepoch-1/trust-root.json
+  ```
+
+## 5. TRUST_ROOT_JSON → 루트 2-of-3 → 핀 PR
 
 ```bash
-node --conditions=development services/registry/src/ceremony/cli.ts trust --key-epoch 1 --out-trust trust-root.json --out-metadata root-metadata.json keys/*.json
+node --conditions=development services/registry/src/ceremony/cli.ts trust --mode solo --key-epoch 1 --out-trust ceremony/keyepoch-1/trust-root.json --out-metadata ceremony/keyepoch-1/root-metadata.json ceremony/keyepoch-1/keys/*.json
 ```
 
-- `trust-root.json`(TRUST_ROOT_JSON)은 `{keyEpoch: 1, keys: {역할: {keyId: base64 공개키}}}`이다. 엔진 `TrustPin`·`@sax/updater` `TrustRoot`·`tests/fixtures/registry/trust.json`과 같은 모양이다.
-- `root-metadata.json`(`sax.trust-root/v1`)은 핀 키 + **keyId → 보유자 역할 표**(슬롯·장치 일련번호·증명 여부)다. 공개한다(D09 §8.2).
-- 도구가 검사하는 것
-  - 역할별 키 수: root·package·policy 3, emergency·timestamp·release 1
-  - keyId·공개키 중복이 없다
-  - root·package·policy는 보유자 3명이 서로 다르다
-  - 릴리스 보유자는 운영 키를 갖지 않는다
-  - 타임스탬프 키 말고는 장치 증명이 있다
-- 보유자 각자가 같은 `keys/*.json`으로 `trust`를 다시 돌려 `trust-root.json`의 SHA-256이 같은지 확인한다.
+- `trust-root.json`은 `{keyEpoch, keys: {역할: {keyId: base64}}}`이다(엔진 `TrustPin`·`@sax/updater` `TrustRoot`·`tests/fixtures/registry/trust.json` 모양).
+- `root-metadata.json`(`sax.trust-root/v1`)은 핀 + keyId → 보유자 역할 표 + `mode: "solo"`다.
 
-루트 메타데이터에 루트 2-of-3 서명을 한다. 서명할 때마다 아래 순서를 따른다.
-1. 진행자가 `prepare`로 확인 코드를 만들어 소리 내어 읽는다.
+서명은 문서마다 세 단계다.
+1. `prepare`가 확인 코드(SHA-256 앞 128비트, 4자씩 8묶음)를 보인다.
 
    ```bash
-   node --conditions=development services/registry/src/ceremony/cli.ts prepare --kind trust_root root-metadata.json
+   node --conditions=development services/registry/src/ceremony/cli.ts prepare --kind trust_root ceremony/keyepoch-1/root-metadata.json
    ```
 
-2. 보유자는 **자기 PC에서 같은 문서로** 서명한다. 도구가 다시 계산한 확인 코드와 입력한 값이 다르면 장치에 넘기지 않는다. 핀과 장치 공개키가 다르면(남의 장치·다른 슬롯) 멈춘다.
+2. `sign`에 그 코드를 **눈으로 맞춰 다시 입력**한다. 도구가 다시 계산한 값과 다르면 도우미를 부르지 않는다. Touch ID 창에도 같은 코드가 뜬다.
 
    ```bash
-   node --conditions=development services/registry/src/ceremony/cli.ts sign --kind trust_root --role root --key-id root-1 --confirm abcd-…-…(확인 코드) --trust trust-root.json --module /usr/local/lib/libykcs11.dylib --serial 30000001 --out sig/root-1.json root-metadata.json
+   node --conditions=development services/registry/src/ceremony/cli.ts sign --kind trust_root --key-id root-1 --confirm <확인 코드> --trust ceremony/keyepoch-1/trust-root.json --out ceremony/keyepoch-1/sig/meta-root-1.json ceremony/keyepoch-1/root-metadata.json
    ```
 
-3. 진행자가 모은다. 서로 다른 핀 키가 2개 이상이어야 한다. 같은 키 두 번, 다른 역할 키, 다른 문서 서명, 서명 뒤 바뀐 문서, 4개 이상은 거부한다.
+   같은 명령을 `--key-id root-2`로 한 번 더 한다.
+
+3. 모은다. **서로 다른 핀 키 2개 이상**이어야 한다. 같은 키 두 번, 다른 역할, 다른 문서, 서명 뒤 바뀐 문서, 4개 이상은 거부한다. 그 뒤 게시 관문과 같은 규칙으로 확인한다.
 
    ```bash
-   node --conditions=development services/registry/src/ceremony/cli.ts collect --kind trust_root --trust trust-root.json --out root-metadata.signed.json root-metadata.json sig/root-1.json sig/root-3.json
+   node --conditions=development services/registry/src/ceremony/cli.ts collect --kind trust_root --trust ceremony/keyepoch-1/trust-root.json --out ceremony/keyepoch-1/root-metadata.signed.json ceremony/keyepoch-1/root-metadata.json ceremony/keyepoch-1/sig/meta-root-1.json ceremony/keyepoch-1/sig/meta-root-2.json
    ```
 
    ```bash
-   node --conditions=development services/registry/src/ceremony/cli.ts check --kind trust_root --trust trust-root.json root-metadata.signed.json
+   node --conditions=development services/registry/src/ceremony/cli.ts check --kind trust_root --trust ceremony/keyepoch-1/trust-root.json ceremony/keyepoch-1/root-metadata.signed.json
    ```
 
-같은 자리에서 **폐기 목록 첫 판**(`monotonic` 1, 루트 2-of-3)도 만든다. 서명은 위와 같은 순서이고 `--kind revoked_keys`다. 그 뒤 타임스탬프 키로 `timestamp`를 붙이고 `check`로 게시 관문 규칙을 통과하는지 본다. 이것이 없으면 클라이언트는 24시간 신선도를 얻지 못하고 새 패키지를 보류한다.
+같은 자리에서 **폐기 목록 첫 판**(`monotonic` 1)을 만든다.
+- 스키마상 항목이 1개 이상이어야 하므로 쓰지 않을 `package-0` 하나를 넣는다.
+- 루트 2개로 서명하고 모은다(`--kind revoked_keys`).
+- 타임스탬프를 붙인다.
+  1. `prepare --kind revoked_keys --part timestamp`
+  2. `sign --part timestamp --key-id timestamp-1`
+  3. `timestamp`
+- `check`가 통과해야 한다.
 
-## 6. 핀 반영 PR(REGISTRY_TRUST_PIN)
-
-- `packages/engine/src/registry-pin.ts`의 `REGISTRY_TRUST_PIN`을 `trust-root.json` 내용으로 바꾼다. 데스크톱 업데이터의 `TrustRoot`도 같은 값을 쓴다(엔진 `db.query.registry.pins`).
-- `root-metadata.signed.json`을 공개한다(저장소 `services/registry/ceremony/keyepoch-1/`, 레지스트리 정적 경로는 클라우드 트랙이 정한다).
+핀 PR:
+- `packages/engine/src/registry-pin.ts`의 `REGISTRY_TRUST_PIN`을 `trust-root.json` 값으로 바꾼다. 데스크톱 업데이터는 `db.query.registry.pins`로 같은 값을 받는다.
+- `root-metadata.signed.json`을 저장소 `services/registry/ceremony/keyepoch-1/`에 커밋해 공개한다.
 - PR 본문에 적는 것
-  - 의식 날짜·참석 역할
-  - 장치 일련번호
+  - 날짜
   - `trust-root.json` SHA-256
   - 루트 메타데이터 확인 코드
   - `check` 결과
-- 리뷰어 2명이 각자 `check --kind trust_root`를 돌린다.
+  - `backup-verify` 결과
 - 시험 키(`tests/fixtures/registry`)는 핀에 넣지 않는다.
 
-## 7. 일상 서명
+## 6. 일상 서명
 
-| 문서 | `--kind` | 누가 | 타임스탬프 |
+| 문서 | `--kind` | 키 | 타임스탬프 |
 |---|---|---|---|
-| 인덱스·manifest·hotfix·데이터 기술자 | `index`·`manifest`·`hotfix`·`data_descriptor` | 패키지 키 2명 | 없음(인덱스 ≤ 14일) |
-| 정책·status 내용 변경 | `policy`·`status` | 정책 키 2명, 또는 긴급 키 1명(엄격하게 보수적일 때만) | 서버가 붙인다 |
-| 폐기 목록 변경 | `revoked_keys` | 루트 키 2명 | 서버가 붙인다(24시간마다 재서명) |
-| 앱 릴리스 | `release` | 릴리스 보유자 | 없음(≤ 14일) |
-| 핀·keyEpoch 변경 릴리스 | `root_change`(먼저) → `release` | 루트 키 2명 → 릴리스 보유자 | 없음 |
+| 인덱스·manifest·hotfix·데이터 기술자 | `index`·`manifest`·`hotfix`·`data_descriptor` | 패키지 2개 | 없음(≤ 14일) |
+| 정책·status 내용 변경 | `policy`·`status` | 정책 2개, 또는 긴급 1개(엄격하게 보수적일 때만) | `timestamp-1` |
+| 폐기 목록 | `revoked_keys` | 루트 2개 | `timestamp-1`(24시간마다) |
+| 앱 릴리스 | `release` | `release-1` | 없음(≤ 14일) |
+| 핀·keyEpoch 변경 릴리스 | `root_change` → `release` | 루트 2개 → `release-1` | 없음 |
 
-- CI는 서명 대상 문서만 만든다. 서명 권한은 없다(D09 §8.2). 2-of-3을 채우지 못하면 핫픽스를 멈춘다. CI 서명으로 대체하지 않는다.
-- 긴급 키를 쓰면 다른 보유자에게 바로 알린다. 72시간 안에 정책 키 2-of-3으로 다시 서명하거나, 만료로 되돌아가게 둔다(D09 §8.5).
+- 재서명(신선도)은 내용이 같으니 `timestamp`만 새로 붙인다. 폐기 목록은 하루 한 번, status는 이틀에 한 번이다.
+- CI는 서명 대상 문서만 만든다. 서명은 이 맥에서 사람이 한다.
 
-## 8. 분실·도난·폐기
+## 7. 맥·키를 잃었을 때
 
-폐기는 되돌릴 수 없다. 폐기 목록은 늘기만 한다(`registry.revoked_shrunk`). 폐기된 키의 서명은 클라이언트가 세지 않는다.
+| 상황 | 할 일 |
+|---|---|
+| 지문을 새로 등록함(W 사용 불가), 맥 교체·초기화 | 새 맥에서 §3(빌드·`init`·`selftest`) → `backup-import --in <백업> --trust trust-root.json`. 공개키가 같은지 도구가 대조한다. 핀은 그대로다 |
+| 맥 분실·도난(잠긴 상태) | 감싼 블롭은 그 맥의 Secure Enclave와 지문 없이는 풀 수 없다. 백업으로 새 맥에 되살린다. 분실 맥이 잠금 해제된 채였다면 유출로 본다(아래) |
+| 키 유출이 의심됨(맥이 털림, 잠금 해제 상태로 분실) | 이 세대의 모든 키를 의심한다. 백업으로 깨끗한 새 맥에 되살려 **새 세대로 바로 옮긴다**(§8의 keyEpoch+1). 유출된 세대의 키로는 세대 변경(`rootChange`) 말고는 새로 서명하지 않는다. 폐기 목록에 의심 키를 넣는다. 공격자도 같은 키를 갖고 있을 수 있으니 앱 업데이트로 핀을 빨리 바꾼다 |
+| 백업 암호를 잊음 | 백업은 열 수 없다. 키체인 키가 살아 있으면 바로 새 백업을 만든다(§4) |
+| 맥과 백업을 둘 다 잃음 | 루트 2-of-3이 없어 `rootChange`를 서명할 수 없다. 앱 안 갱신으로 핀을 바꾸지 못한다. 새 설치본을 공식 경로로 다시 받게 하는 수동 복구뿐이다. 그래서 백업을 두 곳에 둔다 |
 
-| 상황 | 바로 할 일 | 그다음 |
-|---|---|---|
-| 보유자 한 명의 장치 분실·도난 | 남은 루트 2명이 그 보유자의 `package-N`·`policy-N`·`root-N`(A면 `emergency-1`도)을 넣은 폐기 목록을 서명해 게시한다. 엔진은 루트 서명을 **이전** 폐기 목록으로 세므로 남은 루트 둘이면 된다 | 남은 2명으로 2-of-3은 유지된다(여유 0). 새 장치로 새 키를 만들고 keyEpoch 2 핀 변경 릴리스(`root_change` 루트 2 + 릴리스)를 낸다 |
-| PIN 3회 틀림 | PUK로 PIN을 다시 정한다 | 기록부에 적는다 |
-| PUK까지 잠김·장치 고장 | 장치 분실과 같다(키를 꺼낼 수 없다) | 위와 같다 |
-| 키 하나만 의심(예: 서명 기록과 투명성 로그가 다름) | 그 keyId를 폐기한다 | 다음 keyEpoch에 교체한다 |
-| 루트 키 분실 | 남은 루트 2명이 그 `root-N`을 폐기한다 | keyEpoch 2에서 새 루트를 넣는다 |
-| 두 보유자 동시 분실(정족수 상실) | 핫픽스·인덱스·정책 변경이 멈춘다. 긴급 키로 하향만 할 수 있다 | 루트 2-of-3이 없으면 `rootChange`를 서명할 수 없어 앱 안 갱신으로 핀을 바꾸지 못한다. 새 설치본을 공식 경로로 다시 받게 하는 수동 복구다. 이 위험 때문에 세 장치를 다른 장소에 둔다 |
-| 릴리스 키 분실 | 루트 2명이 `release-1`을 폐기한다 | 앱 업데이트가 멈춘다. 새 릴리스 키는 핀 변경이라 위 수동 복구와 같다. 백업 릴리스 장치가 필요한지 정해야 한다(§10) |
-| 타임스탬프 키 유출 | 루트 2명이 `timestamp-1`을 폐기한다 | 그 목록이 그 키로 찍는 마지막 문서다. 새 타임스탬프 키는 keyEpoch 2 앱 업데이트로만 들어온다. 그때까지 클라이언트는 stale로 보수적으로 멈춘다(D09 §8.4) |
-| 긴급 키 분실·오용 | 루트 2명이 `emergency-1`을 폐기한다 | 긴급 하향은 72시간 뒤 자동으로 되돌아간다. 정책 키 2-of-3으로 정상 status를 다시 낸다 |
+## 8. 승격(보유자가 생기면): 새 보유자의 새 키, keyEpoch+1, 이전 키 폐기
 
-## 9. 기록·감사
+1. **새 키를 새 보유자 장치에서 만든다.**
+   - 보유자 A·B·C(각자 YubiKey 5 PIV, 펌웨어 5.7 이상: 82 package, 83 policy, 84 root, PIN·터치 ALWAYS)
+   - 릴리스 보유자(비운영자)
+   - 긴급 당직
+   - 타임스탬프는 서버 HSM
+   - 이전 세대 키를 옮기지 않는다(새 키만).
+   - YubiKey 백엔드 구현과 증명(attestation) 검사는 이때 넣는다(`device.ts` `PivDevice` 인터페이스).
+2. **새 핀**: `trust --mode quorum --key-epoch 2 …`
+   - 도구가 보유자 분리(역할마다 3명), 릴리스 보유자 분리, 장치 증명을 검사한다.
+3. **세대 변경 서명**: 핀 변경 릴리스의 `rootChange{keyEpoch: 2, changes: ["keyEpoch"]}`에 **이전 세대(keyEpoch 1) 루트 2개**가 단독 맥에서 서명한다(`--kind root_change`). 그다음 릴리스 키가 매니페스트에 서명한다. 앱 업데이트로 새 핀이 들어간다.
+4. **이전 키 폐기**
+   - 새 앱이 퍼진 뒤 keyEpoch 2의 첫 폐기 목록에 keyEpoch 1의 keyId를 모두 넣는다.
+   - 혼동을 막으려고 새 세대는 keyId 번호를 이어서 쓴다(예 `root-4`~`root-6`).
+   - 단독 맥의 키체인 항목은 `sax-keychain delete <keyId>`(Touch ID)로 지운다.
+   - 이전 세대 백업 파일은 폐기 사실을 기록한 뒤 파쇄한다.
+5. 루트 메타데이터를 `mode: "quorum"`으로 다시 공개한다.
 
-- 의식 기록부(서명마다 한 줄): 날짜·시각, 문서 종류, `--kind`, 산출물 SHA-256, 확인 코드, 서명한 keyId, 장치 일련번호, 진행자·증인.
-- YubiKey에는 사용 로그가 없다. 서명 1건마다 기록부와 투명성 로그 항목을 대조한다(D09 §8.2 사용 감사, SP-4·SP-6).
-- 장치는 보유자가 따로 보관한다(서로 다른 장소). 루트 의식 때만 모인다.
+## 9. 기록
+
+- 서명마다 한 줄을 남긴다: 날짜·시각, `--kind`, 문서 SHA-256, 확인 코드, keyId.
+- 키체인·Secure Enclave에는 사용 로그가 없다. 이 기록과 투명성 로그를 대조한다(D09 §8.2).
+- 백업 매체 위치와 마지막 `backup-verify` 날짜도 남긴다.
 
 ## 10. 결정·실측이 남은 것
 
-- **타임스탬프 키 보관**(결정 필요): D09는 "국내 서버 HSM, 자동"이다. 후보는 서버에 붙인 YubiHSM 2, 또는 PIN·터치 정책이 NEVER인 전용 YubiKey다. 자동 재서명이라 터치를 요구할 수 없다.
-- **슬롯 85(release)·86(emergency)**: 이 절차서의 제안이다. 팀장 결정은 82·83·84뿐이다. 긴급 키를 보유자 A(당직)에 둘지 다섯 번째 사람에게 둘지 정해야 한다.
-- **펌웨어 5.7 PIV Ed25519 메시지 길이**(실측 필요): Ed25519는 다이제스트가 아니라 서명 입력 전체에 서명한다. 인덱스는 최대 512KB다. ykcs11 `CKM_EDDSA`로 몇 KB까지 되는지 실제 장치로 잰다. 도구 상한은 `MAX_SIGN_BYTES` 512KB다.
-- **ykcs11의 은퇴 슬롯(82~95) 키 노출**(실측 필요): 인증서가 없으면 개인키 객체가 안 보일 수 있어 §3에서 자체 서명 인증서를 넣는다. ykcs11 id는 82→05 … 86→09로 가정했다(`ykcs11KeyId`).
-- **Yubico 증명 사슬**: 5.7.4 이후 장치는 중간 인증서가 하나 더 있는 새 계층이다. `--yubico-intermediate`로 넘긴다(도구는 깊이 4까지 잇는다).
-- **릴리스 키 백업**: 릴리스 키를 잃으면 앱 업데이트가 멈춘다. 두 번째 릴리스 키(핀에 2개)를 둘지 정해야 한다. 지금 엔진·업데이터 핀은 release 1개다.
+- **실측(사용자 손 필요)**: Secure Enclave 키 "사용"(Touch ID 프롬프트 → ECDH)은 아직 사람 손으로 확인하지 않았다. §3의 `selftest` 한 번으로 확인한다. 키 생성·재로드·키체인 저장은 실증했다(서명 안 된·ad-hoc 둘 다, M5 Pro·macOS 26.5.1).
+- **타임스탬프 자동화**: Phase 1은 사람이 하루 한 번 Touch ID로 재서명한다. 서버 HSM(또는 PIN·터치 없는 전용 장치) 자동 재서명은 결정이 필요하다.
+- **ADR-037**: 단독 보유의 남는 위험(§1)과 승격 조건(언제 보유자를 늘리나)을 ADR이 정한다. 설계 세션 작성 중이다.
+
+## 부록 A. 감싸기 규약 `SAX-ceremony-wrap-v1`
+
+- W: Secure Enclave P-256(KeyAgreement), 접근 제어 `privateKeyUsage + biometryCurrentSet`, `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`. W 블롭(Secure Enclave만 쓸 수 있는 불투명 값)은 키체인 서비스 `com.laf.sax.registry-ceremony`, 계정 `wrap-key`에 둔다.
+- 감싸기(키마다)
+
+  ```
+  e      = 새 P-256 임시 키
+  Z      = ECDH(e, W_pub)의 x 좌표 32B
+  info   = utf8("SAX-ceremony-wrap-v1") ‖ X9.63(e_pub) 65B ‖ X9.63(W_pub) 65B ‖ utf8(keyId)
+  KEK    = HKDF-SHA256(ikm = Z, salt = 빈 값, info, L = 32)
+  aad    = utf8("SAX-ceremony-wrap-v1") ‖ utf8(keyId)
+  ct‖tag = ChaCha20-Poly1305(KEK, nonce 12B 난수, seed 32B, aad)
+  블롭   = JCS({v:1, alg:"SAX-ceremony-wrap-v1", keyId, pub: b64(Ed25519 공개키), epk: b64(e_pub), nonce: b64, ct: b64(ct‖tag 48B)})
+  ```
+
+  키체인 계정은 `key/<keyId>`다.
+- 풀기: ECDH(W, e_pub)(Secure Enclave, Touch ID) → 같은 KEK → 열기 → Ed25519(seed) 공개키 = 블롭 `pub`. 다르면 거부한다.
+- 맥락 문자열 `SAX-ceremony-wrap-v1`은 레지스트리·기기 서명 맥락(SIGNING.md §8)과 겹치지 않는다. 서명이 아니라 키 합의·AEAD에만 쓴다.
+- **시험 벡터**: W 비밀 스칼라 = 0x11×32(Secure Enclave 대신 소프트웨어), e = 0x22×32, nonce = 0x33×12, seed = 0x07×32, keyId = `root-1`
+
+  ```
+  {"alg":"SAX-ceremony-wrap-v1","ct":"ozs0ERLB39bSVzrHX7TZJP223SkmVcvkz/zD9LFbgdhoBAlwVmPbO0gqvU2Pr8eh","epk":"BNZak5d8qj0bCBhS/1ennkZfFmBXcwS66tUF3TpIWJzzUBheiVNy32Ih6joTdVfkc/3bZ1XwW9UHw8Uz/OnJEoU=","keyId":"root-1","nonce":"MzMzMzMzMzMzMzMz","pub":"6kpsY+KcUgq+9VB7Ey7F+ZVHdq6+vnuSQh7qaRRG0iw=","v":1}
+  ```
+
+  - `pub`은 SIGNING.md §10.2와 같은 시드 0x07×32의 공개키(`ea4a6c63…`)다.
+  - Node(`wrap.ts` `wrapSeed`)와 Swift 도우미(`sax-keychain vector`)가 같은 바이트를 낸다(시험이 대조한다).
+
+## 부록 B. 백업 형식 `SAX-ceremony-backup-v1`
+
+```
+key    = scrypt(utf8(NFC(passphrase)), salt 16B, N = 2^17, r = 8, p = 1, 32B)
+header = {v:1, alg:"SAX-ceremony-backup-v1", kdf:{name:"scrypt", N, r, p, salt: b64}, nonce: b64(12B), createdAt}
+aad    = utf8("SAX-ceremony-backup-v1") ‖ JCS(header)
+ct‖tag = ChaCha20-Poly1305(key, nonce, JCS({keys: [{keyId, pub, seed}] keyId 순}), aad)
+파일   = JCS({...header, ct: b64(ct‖tag)}) + "\n"
+```
+
+- 열 때 받는 kdf: N은 2^14~2^20인 2의 거듭제곱, r = 8, p = 1. 그 밖은 `ceremony.backup_invalid`다. 만들 때는 늘 N = 2^17이다.
+- 헤더는 aad로 묶인다. createdAt 한 글자만 바꿔도 열리지 않는다(`ceremony.backup_open_failed`).
+- 각 항목의 seed → Ed25519 공개키가 `pub`과 같아야 한다. 들여올 때는 핀(`--trust`)과도 대조한다.
