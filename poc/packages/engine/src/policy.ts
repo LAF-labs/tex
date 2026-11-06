@@ -1,9 +1,9 @@
 import { performance } from 'node:perf_hooks';
 import { RateRepo, type Db, type Ledger } from '@sax/db';
 import type { Dialog, Page } from 'playwright-core';
-import { pathExpected, type PortalConfig } from './h01/portal.ts';
-import { RunEnd, type RunnerPolicy } from './h01/runner.ts';
-import { SIGNAL_DICT, SignalWatch, type InspectUnavailable, type SignalHit, type SignalKind } from './h01/signals.ts';
+import { pathExpected, type PortalConfig } from './portal.ts';
+import { RunEnd, type RunnerPolicy } from './run-end.ts';
+import { SIGNAL_DICT, SignalWatch, type InspectUnavailable, type SignalHit, type SignalKind } from './signals.ts';
 
 // 요청률 정책(D03 §7)의 PoC 최소판. 앱 내장 정책은 홈택스 하나다. 서명·신선도·긴급 키·데몬·리모트·큐·캡차 중계·
 // POLICY_FLOOR 클램프는 외부 정책 파일이 없어 두지 않는다. 카운터는 SQLite에 영속하고(KST) 증가를 커밋한 뒤 행동한다.

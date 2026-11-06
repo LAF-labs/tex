@@ -6,9 +6,10 @@ import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
 import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval } from './gate.ts';
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
-import { portalProblems, type PortalConfig } from './h01/portal.ts';
-import { H01Runner, RunEnd, type Readback, type RunInputs, type RunStatus } from './h01/runner.ts';
-import { SIGNAL_DICT } from './h01/signals.ts';
+import { portalProblems, type PortalConfig } from './portal.ts';
+import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
+import { RunEnd, type RunStatus } from './run-end.ts';
+import { SIGNAL_DICT } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도

@@ -6,7 +6,7 @@
 import type { ElementHandle, Frame, Locator, Page } from 'playwright-core';
 import type { ElementInfo, ElementRef, PageReader } from '../core/page.ts';
 import type { Candidate } from '../core/types.ts';
-import { ariaValue } from '../h01/runner.ts';
+import { ariaValue } from './aria-tree.ts';
 
 interface Held {
   handle: ElementHandle;

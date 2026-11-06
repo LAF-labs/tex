@@ -8,8 +8,8 @@
 // Playwright 이벤트 배선(네비게이션·응답·대화상자 → observe*)은 드라이버 PR이 한다. 이 파일은 포트에만 의존한다.
 import type { ActResult, ActionKind, ActionPolicy, Clock, Policy, Portal } from './core/index.ts';
 import { re2Problem } from './core/re2.ts';
-import { HTTP_RULES, matchSignal, type SignalEntry, type SignalHit, type SignalKind } from './h01/signals.ts';
-import { RunEnd } from './h01/runner.ts';
+import { HTTP_RULES, matchSignal, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
+import { RunEnd } from './run-end.ts';
 import { EXTRA_AUTH_FOR_SIGNAL, POC_BUILD, POC_OVERRIDES, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
 
 export type PaceProfile = 'interactive' | 'daemon';

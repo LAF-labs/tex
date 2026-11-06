@@ -131,6 +131,11 @@ describe('6단계 정적 검증', () => {
     assert.equal(code(r), 'loader.static_invalid');
     assert.ok(!r.ok && r.violations.some((v) => v.rule.startsWith('V-')));
   });
+  it('서명이 맞아도 입력 대조 assert(s19f)가 빠진 플레이북은 로드하지 않는다(V-03m)', () => {
+    const r = load(signH01((p) => p.playbook.steps.splice(p.playbook.steps.findIndex((s) => s.id === 's19f'), 1)));
+    assert.equal(code(r), 'loader.static_invalid');
+    assert.deepEqual([...new Set(!r.ok ? r.violations.map((v) => v.rule) : [])], ['V-03m']);
+  });
 });
 
 describe('8단계 승인 바 요약 표(ADR-021)', () => {

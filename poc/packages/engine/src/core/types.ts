@@ -20,8 +20,12 @@ export type Cond =
   | { inputVerified: string }
   | { profileHas: string }
   | { artifact: string }
-  | { sumEquals: { names: string[]; target: string } }
-  | { readbackEquals: { fieldKey: string; ref: string } }
+  /** readback 값 산술(D02 §8 s19d): parts의 합 = total. 둘 다 readback fieldKey이고 화면을 다시 읽지 않는다(IR rev v1.3.2). */
+  | { sumEquals: { parts: string[]; total: string } }
+  /** ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류. */
+  | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' } }
+  /** 되읽은 값이 비었는가(IR rev v1.3.3). 플레이북에 그 입력이 없을 때 칸이 비었음을 확인한다(V-03m). */
+  | { readbackEmpty: string }
   | { fieldsFilled: { fields: string[] } }
   | { all: Cond[] }
   | { any: Cond[] }

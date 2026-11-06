@@ -2,7 +2,9 @@ import { performance } from 'node:perf_hooks';
 import type { ElementHandle, Locator, Page } from 'playwright-core';
 import { readbackHash } from '../gate.ts';
 import { H01, normalizeField, type Cond, type Phase, type Step } from './playbook.ts';
-import { failureMatches, READBACK_FIELDS, SELECTOR_KEYS, type LookupDef, type PortalConfig, type ReadbackKey, type SelectorKey } from './portal.ts';
+import { failureMatches, READBACK_FIELDS, SELECTOR_KEYS, type LookupDef, type PortalConfig, type ReadbackKey, type SelectorKey } from '../portal.ts';
+import { ariaValue } from '../driver/aria-tree.ts';
+import { RunEnd, type RunnerPolicy, type RunStatus } from '../run-end.ts';
 
 // H-01 발급 구간 실행기(D03 §5). 페이지에 닿는 동작은 모두 여기 있고, 게이트·원장·토큰은 hooks(RunService)가 한다.
 // 클릭·입력 직전마다 동일성 검사(R-A1)와 커밋 그림자 검사(R-A2)를 하고, 동작은 모두 요청률 정책(policy, D03 §7)을 먼저 지난다.
@@ -16,19 +18,6 @@ export interface RunInputs {
 }
 
 export type Readback = Record<ReadbackKey, string>;
-
-export type RunStatus = 'success' | 'completed_with_issues' | 'failed' | 'handoff' | 'stopped' | 'expired' | 'in_doubt';
-
-/** 실행이 끝났다(정상 종료가 아닌 경우도). code는 사용자 문구를 고르는 키다(값 없음). */
-export class RunEnd extends Error {
-  readonly status: RunStatus;
-  readonly code: string;
-  constructor(status: RunStatus, code: string) {
-    super(code);
-    this.status = status;
-    this.code = code;
-  }
-}
 
 export interface RunnerHooks {
   phase(p: Phase, state: 'now' | 'done' | 'attention', code?: string): void;
@@ -46,23 +35,6 @@ export interface RunnerHooks {
  * 요청률 정책(D03 §5.2 Actuator의 policy, §7). 페이지에 닿는 동작은 모두 act()를 먼저 지난다.
  * 차단 신호가 걸쇠에 걸렸으면 어느 메서드든 RunEnd를 던진다.
  */
-export interface RunnerPolicy {
-  /** 스텝 사이 지연(요청률 상한). [중지]를 받는다. */
-  beforeStep(): Promise<void>;
-  /** 동작 직전: 실행당 동작 수·벽시계, 네비게이션이면 분당 상한(증가 커밋 → 행동). */
-  act(kind: 'navigate' | 'click' | 'fill'): Promise<void>;
-  /** 네비게이션 뒤 안정 대기 + 그 화면의 차단 신호 확인. */
-  settled(page: Page): Promise<void>;
-  /** 게이트 진입 직전 판정(W 밖, D03 §5.3 사전 안전 판정): 결정적 차단 신호가 없어야 게이트를 연다. */
-  beforeGate(): Promise<void>;
-  /** 커밋 직전 판정(W 안, 결정적 신호·실행당 상한·분당 네비게이션). 바로 뒤에 hooks.arm()을 부른다. */
-  beforeCommit(): Promise<void>;
-  /** 걸쇠에 걸린 신호(없으면 null). 무장 뒤 클릭 직전에 동기로 본다. */
-  halted(): RunEnd | null;
-  /** 기대한 화면(체크포인트 도착 조건)을 확인했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건이다. */
-  reached(): void;
-}
-
 /** verify 조회가 이만큼 연속 실패하면 더 조회하지 않는다(결과는 unknown). */
 const VERIFY_FAILS_IN_A_ROW = 3;
 
@@ -78,23 +50,6 @@ export interface RunResult {
 
 const fail = (code: string) => new RunEnd('failed', code);
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** aria 스냅숏 첫 줄 `- role "name": value`의 값. combobox는 [selected] 항목 이름. */
-export function ariaValue(snapshot: string, role: string): string {
-  const unq = (v: string) => {
-    const t = v.trim();
-    if (t.startsWith('"')) return JSON.parse(t) as string;
-    if (t.startsWith("'")) return t.slice(1, -1).replace(/''/g, "'");
-    return t;
-  };
-  const lines = snapshot.split('\n');
-  if (role === 'combobox') {
-    const sel = lines.map((l) => /^\s*- option "((?:[^"\\]|\\.)*)".*\[selected\]/.exec(l)).find(Boolean);
-    return sel ? (JSON.parse(`"${sel[1]}"`) as string) : '';
-  }
-  const m = /^- [a-z]+(?: "(?:[^"\\]|\\.)*")?(?: \[[^\]]*\])*(?::(.*))?$/.exec(lines[0] ?? '');
-  return m?.[1] !== undefined ? unq(m[1]) : '';
-}
 
 const MAIL_NOT_SENT = /실패|미전송|대기|오류|중$/;
 /** 정확 허용 목록(PoC-3 실측으로 확정). 부분 일치로 '전송실패'가 '보냈음'이 되지 않게 부정 우선으로 본다. */
