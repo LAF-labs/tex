@@ -140,6 +140,16 @@ export class RunEnforcer implements ActionPolicy {
     return OK;
   }
 
+  /**
+   * 바깥 장치(커밋 가드)가 실행을 멈춘다. 걸쇠는 차단처럼 다른 신호에 덮이지 않고, 그 뒤 모든 동작·스텝이 이 코드로 멈춘다.
+   * 카운터·쿨다운은 건드리지 않는다(포털 신호가 아니다).
+   */
+  haltFor(code: string): void {
+    if (this.latch?.kind === 'block') return;
+    this.latch = { code, kind: 'block' };
+    this.i.onLatch?.(code);
+  }
+
   noteDialog(): void {
     this.actuations++;
   }
