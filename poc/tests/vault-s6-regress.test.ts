@@ -18,6 +18,8 @@ import { writeMeasure } from './measure-out.ts';
 import { RawEngine, sleep } from './raw-engine.ts';
 import { CdpLeakTap } from './security/lib/cdp-leak.ts';
 
+const dirLink = process.platform === 'win32' ? 'junction' : 'dir';
+
 async function userType(h: Harness, targetId: string, text: string): Promise<void> {
   const t = h.vault.relay!.targets.get(targetId)!;
   await h.vault.relay!.send('Input.insertText', { text }, t.vaultSession);
@@ -262,12 +264,13 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
       // 링크: 너머를 지우지 않는다
       const outside = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-residue-out-'));
       await fs.writeFile(path.join(outside, 'Session_9'), 'keep');
-      await fs.symlink(outside, path.join(dir, 'Default', 'Sessions'));
+      // Windows는 개발자 모드·관리자가 아니면 심볼릭 링크를 만들 수 없다(EPERM). 디렉터리 링크는 정션으로 만든다(재분석 지점이라 lstat에서 링크로 보인다).
+      await fs.symlink(outside, path.join(dir, 'Default', 'Sessions'), dirLink);
       assert.equal(await removeProfileResidue(dir), -1);
       assert.equal(await fs.readFile(path.join(outside, 'Session_9'), 'utf8'), 'keep');
       await fs.rm(path.join(dir, 'Default', 'Sessions'));
       await fs.rename(path.join(dir, 'Default'), path.join(dir, 'D2'));
-      await fs.symlink(outside, path.join(dir, 'Default'));
+      await fs.symlink(outside, path.join(dir, 'Default'), dirLink);
       assert.equal(await removeProfileResidue(dir), -1, 'Default 자체가 링크');
       assert.equal(await fs.readFile(path.join(outside, 'Session_9'), 'utf8'), 'keep');
       await fs.rm(outside, { recursive: true, force: true });

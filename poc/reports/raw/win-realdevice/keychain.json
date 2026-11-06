@@ -1,0 +1,79 @@
+{
+  "env": {
+    "node": "v26.13.0",
+    "os": "Windows 10 Pro 10.0.19045",
+    "cpus": 2,
+    "cpu": "Intel(R) Celeron(R) CPU 3855U @ 1.60GHz",
+    "memGb": 7.9
+  },
+  "service": "SovereignAX",
+  "itemMaxBytes": 2560,
+  "roundTrip": [
+    {
+      "size": 1,
+      "same": true,
+      "setMs": 110,
+      "deleted": true,
+      "delMs": 2,
+      "goneAfterDelete": true
+    },
+    {
+      "size": 32,
+      "same": true,
+      "setMs": 5,
+      "deleted": true,
+      "delMs": 1,
+      "goneAfterDelete": true
+    },
+    {
+      "size": 256,
+      "same": true,
+      "setMs": 6,
+      "deleted": true,
+      "delMs": 2,
+      "goneAfterDelete": true
+    },
+    {
+      "size": 2560,
+      "same": true,
+      "setMs": 9,
+      "deleted": true,
+      "delMs": 1,
+      "goneAfterDelete": true
+    }
+  ],
+  "deleteMissing": false,
+  "appRejectsOver": "vault.item_too_large",
+  "osLimit": {
+    "2561": "GenericFailure",
+    "5120": "GenericFailure"
+  },
+  "manyWriteMs": 2057,
+  "cmdkeyCount": 40,
+  "persist": "ENTERPRISE",
+  "many": {
+    "written": 40,
+    "readOk": 40
+  },
+  "osKeyStore": {
+    "emptyFirst": true,
+    "readBack": true,
+    "mismatch": "vault.keystore_mismatch"
+  },
+  "backend": {
+    "tier": "dpapi",
+    "wrap": "vault.native_helper_missing",
+    "helloAvailable": false
+  },
+  "dpapiProbe": "262 True",
+  "tpmtool": [
+    "정보를 가져오지 못했습니다. HR: 0x800710DF",
+    "EXIT=-2147020577"
+  ],
+  "cleanup": {
+    "attempted": 49,
+    "left": 0,
+    "cmdkeyAfter": 0
+  },
+  "elapsedMs": 24919
+}
