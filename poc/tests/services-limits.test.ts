@@ -87,6 +87,59 @@ function sqlCases(name: string, open: () => Sql, skip: boolean) {
       await Promise.all([a.close(), b.close()]);
     });
 
+    it('병렬 증가 N개 → 정확히 N(잃는 증가·중복 번호 없음, 연결 넷)', async () => {
+      const c = new Clock();
+      const first = await fresh(open);
+      const dbs = [first, open(), open(), open()];
+      const ls = dbs.map((d) => new SqlLimiter(d, c.now));
+      await ls[0]!.reset('par', 60_000);
+      const N = 200;
+      const hits = await Promise.all(Array.from({ length: N }, (_, i) => ls[i % ls.length]!.hit('par', 10_000, 60_000)));
+      assert.ok(hits.every((h) => h.ok));
+      assert.deepEqual(
+        hits.map((h) => h.n).sort((x, y) => x - y),
+        Array.from({ length: N }, (_, i) => i + 1),
+      );
+      assert.equal((await ls[1]!.count('par', 60_000)).n, N);
+      await ls[0]!.reset('par', 60_000);
+      await Promise.all(dbs.map((d) => d.close()));
+    });
+
+    it('KST 자정 솔트 행 생성 경합: 날짜가 바뀐 첫 순간 여러 인스턴스가 동시에 읽어도 새 날 행은 하나, 모두 같은 솔트, 지난 날 행은 지워진다', async () => {
+      const c = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 999)); // KST 11-10 23:59:59.999
+      const first = await fresh(open);
+      const dbs = [first, open(), open(), open()];
+      await first.run("DELETE FROM lim_salts WHERE label = 'mid'");
+      const salts = Array.from({ length: 12 }, (_, i) => new SqlKeySalt(dbs[i % dbs.length]!, 'mid', c.now));
+      const before = await salts[0]!.hash('198.51.100.1');
+      c.advance(1); // KST 11-11 00:00:00.000
+      const after = await Promise.all(salts.map((s) => s.hash('198.51.100.1')));
+      assert.equal(new Set(after).size, 1);
+      assert.notEqual(after[0], before);
+      assert.deepEqual((await first.all<{ day: string }>("SELECT day FROM lim_salts WHERE label = 'mid'")).map((r) => r.day), ['2026-11-11']);
+      await first.run("DELETE FROM lim_salts WHERE label = 'mid'");
+      await Promise.all(dbs.map((d) => d.close()));
+    });
+
+    it('자정 시계 어긋남: 시계가 늦은 인스턴스가 자정 직후 기동해도 새 날 행을 지우지 않고, 그가 다시 만든 지난 날 행은 sweep이 지운다', async () => {
+      const ahead = new Clock(Date.UTC(2026, 10, 10, 15, 0, 0, 5)); // KST 11-11 00:00:00.005
+      const behind = new Clock(Date.UTC(2026, 10, 10, 14, 59, 59, 995)); // KST 11-10 23:59:59.995
+      const a = await fresh(open);
+      const b = open();
+      await a.run("DELETE FROM lim_salts WHERE label = 'skew'");
+      const today = await new SqlKeySalt(a, 'skew', ahead.now).hash('x');
+      const days = async () => (await a.all<{ day: string }>("SELECT day FROM lim_salts WHERE label = 'skew' ORDER BY day")).map((r) => r.day);
+      await new SqlKeySalt(b, 'skew', behind.now).hash('x'); // 늦은 인스턴스의 첫 읽기: 지난 날 행을 다시 만들지만 새 날 행은 지우지 않는다
+      assert.deepEqual(await days(), ['2026-11-10', '2026-11-11']);
+      // 1분 sweep이 지난 날 행을 지운다
+      await new SqlLimiter(a, ahead.now).sweep();
+      assert.deepEqual(await days(), ['2026-11-11']);
+      // 새 날 행은 그대로라 새로 기동한 인스턴스도 같은 키를 본다
+      assert.equal(await new SqlKeySalt(b, 'skew', ahead.now).hash('x'), today);
+      await a.run("DELETE FROM lim_salts WHERE label = 'skew'");
+      await Promise.all([a.close(), b.close()]);
+    });
+
     it('당일 솔트는 인스턴스끼리 같고, 날짜(KST)가 바뀌면 새 솔트로 바뀌며 지난 날 행은 지워진다', async () => {
       const c = new Clock(Date.UTC(2026, 10, 10, 14, 0, 0)); // KST 11-10 23:00
       const a = await fresh(open);

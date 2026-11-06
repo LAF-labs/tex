@@ -104,8 +104,11 @@ export class SqlLimiter implements Limiter {
   async reset(key: string, windowMs: number): Promise<void> {
     await this.db.run('DELETE FROM lim_windows WHERE k = $1', [`${windowMs}|${key}`]);
   }
+  /** 끝난 창과 지난 날 솔트 행(늦은 시계의 인스턴스가 자정 뒤 다시 만든 것 포함)을 지운다 */
   async sweep(): Promise<void> {
-    await this.db.run('DELETE FROM lim_windows WHERE expires_at <= $1', [this.now()]);
+    const now = this.now();
+    await this.db.run('DELETE FROM lim_windows WHERE expires_at <= $1', [now]);
+    await this.db.run('DELETE FROM lim_salts WHERE day < $1', [kstDay(now)]);
   }
 }
 
@@ -132,7 +135,7 @@ export class MemoryKeySalt implements KeySalt {
 
 /**
  * DB 당일 솔트: (label, KST 날짜)마다 무작위 32바이트 한 행. 처음 쓰는 인스턴스가 만들고(동시 생성은 ON CONFLICT DO NOTHING 뒤 다시 읽어 하나로) 모두 같은 행을 쓴다.
- * 날짜가 바뀐 뒤 처음 읽을 때 지난 날 행을 지운다. 메모리에는 당일 값만 캐시한다.
+ * 날짜가 바뀐 뒤 처음 읽을 때와 1분 sweep에서 지난 날 행을 지운다(자기 날짜보다 앞선 행만). 메모리에는 당일 값만 캐시한다.
  */
 export class SqlKeySalt implements KeySalt {
   private cache: { day: string; salt: Buffer } | null = null;
@@ -150,7 +153,8 @@ export class SqlKeySalt implements KeySalt {
     if (this.cache?.day === day) return this.cache.salt;
     this.cache?.salt.fill(0);
     this.cache = null;
-    await this.db.run('DELETE FROM lim_salts WHERE label = $1 AND day <> $2', [this.label, day]);
+    // 자기 날짜보다 **앞선** 행만 지운다. 시계가 조금 늦은 인스턴스가 자정 직후 막 기동해도 다른 인스턴스가 만든 새 날 행을 지우지 않는다
+    await this.db.run('DELETE FROM lim_salts WHERE label = $1 AND day < $2', [this.label, day]);
     await this.db.run('INSERT INTO lim_salts (label, day, salt) VALUES ($1, $2, $3) ON CONFLICT (label, day) DO NOTHING', [this.label, day, randomBytes(32)]);
     const r = await this.db.one<{ salt: Buffer | Uint8Array }>('SELECT salt FROM lim_salts WHERE label = $1 AND day = $2', [this.label, day]);
     const salt = Buffer.from(r!.salt);
