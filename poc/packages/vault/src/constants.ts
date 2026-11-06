@@ -148,7 +148,7 @@ export type VaultEvent =
   | 'vault.cdp_denied' | 'vault.origin_left' | 'vault.profile_prefs_mismatch' | 'vault.extension_not_allowed'
   | 'vault.google_signin_detected' | 'vault.secret_window_refused' | 'vault.dbkey_requested_twice'
   | 'vault.secret_window_close_denied' | 'vault.webdriver_selfcheck_failed' | 'vault.user_tab_hidden'
-  | 'vault.chrome_dump_removed' | 'vault.chrome_dump_dir_link' | 'vault.chrome_residue_removed' | 'vault.chrome_residue_link' | 'vault.secret_input_unbound' | 'vault.leak_scan' | 'vault.leak_scan_skipped'
+  | 'vault.chrome_dump_removed' | 'vault.chrome_dump_dir_link' | 'vault.chrome_residue_removed' | 'vault.chrome_residue_link' | 'vault.chrome_residue_busy' | 'vault.chrome_dump_busy' | 'vault.secret_input_unbound' | 'vault.leak_scan' | 'vault.leak_scan_skipped'
   | 'vault.keystore_mismatch' | 'vault.dbkey_missing' | 'vault.net_deny_unavailable'
   // 사람 비밀 세션 결박(ADR-026): 값·칸 번호 없이 종류·등급·건수만
   | 'vault.credential_suspect' | 'vault.locked' | 'vault.secret_stored' | 'vault.secret_forgotten' | 'vault.kek_unwrap_failed'

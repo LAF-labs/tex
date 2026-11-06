@@ -494,10 +494,11 @@ export class Vault {
 
   /** 전용 Chrome 크래시 덤프 삭제(N-04). 기동 전·종료 뒤. */
   private async removeDumps(profileDir: string): Promise<void> {
-    const count = await removeCrashDumps(profileDir).catch(() => 0);
+    // 잠금으로 못 지운 경로는 건수만 남긴다(다음 기동 전 정리에서 다시 지운다, WIN-REALDEVICE §6.3).
+    const count = await removeCrashDumps(profileDir, { onFailed: (n) => this.opts.log.event('vault.chrome_dump_busy', { count: n }) }).catch(() => 0);
     if (count > 0) this.opts.log.event('vault.chrome_dump_removed', { count });
     else if (count < 0) this.opts.log.event('vault.chrome_dump_dir_link');
-    const residue = await removeProfileResidue(profileDir).catch(() => 0);
+    const residue = await removeProfileResidue(profileDir, { onFailed: (n) => this.opts.log.event('vault.chrome_residue_busy', { count: n }) }).catch(() => 0);
     if (residue > 0) this.opts.log.event('vault.chrome_residue_removed', { count: residue });
     else if (residue < 0) this.opts.log.event('vault.chrome_residue_link');
   }

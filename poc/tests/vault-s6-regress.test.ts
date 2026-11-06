@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   ACTIVE_WINDOW_DENY_PREFIXES, ACTIVE_WINDOW_DROP_EVENTS, CRYPTO_KEY_ITEMS, KNOWN_PREFIX_MAX_LEN, KNOWN_VALUE_MIN_LEN, knownValuePrefixVariants,
-  knownValueVariants, PROFILE_RESIDUE_PATHS, removeProfileResidue, scanDir, scrubKnownValues, testSecret, type KeyStore, type NpkiListResult,
+  knownValueVariants, PROFILE_RESIDUE_PATHS, removeCrashDumps, removeProfileResidue, RESIDUE_RM_ATTEMPTS, scanDir, scrubKnownValues, testSecret, type KeyStore, type NpkiListResult,
 } from '@sax/vault';
 import { startFixture, type Fixture } from './fixtures/server.ts';
 import { startHarness, type Harness } from './harness.ts';
@@ -242,6 +242,57 @@ describe('알려진 값 접두사·프로필 잔존물(단위)', () => {
     let text = JSON.stringify({ url: 'https://x/#abcdefgh', title: 'abcdefg' });
     for (const x of sorted) text = scrubKnownValues(text, [x]).text;
     assert.equal(text, JSON.stringify({ url: 'https://x/#[vault-redacted]', title: '[vault-redacted]' }));
+  });
+
+  it('removeProfileResidue·removeCrashDumps: 잠금(EBUSY·EPERM)은 다시 시도하고, 끝내 잠긴 경로만 건너뛰고 나머지는 지운다, 실패 수를 알린다', async () => {
+    const dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-residue-busy-'));
+    try {
+      const make = async () => {
+        for (const rel of ['Default/History', 'Default/Visited Links', 'Default/Favicons']) {
+          await fs.mkdir(path.join(dir, 'Default'), { recursive: true });
+          await fs.writeFile(path.join(dir, ...rel.split('/')), 'x');
+        }
+      };
+      const busy = (code: string) => Object.assign(new Error(code), { code });
+      // History: 두 번 EBUSY 뒤 지워진다(Windows 자식 프로세스가 곧 놓는 경우)
+      await make();
+      let tries = 0;
+      const failed: number[] = [];
+      const flaky = async (p: string, o: { recursive: true; force: true }) => {
+        if (p.endsWith('History') && tries++ < 2) throw busy('EBUSY');
+        await fs.rm(p, o);
+      };
+      assert.equal(await removeProfileResidue(dir, { rm: flaky, retryDelayMs: 0, onFailed: (n) => failed.push(n) }), 3);
+      assert.equal(tries, 3);
+      assert.deepEqual(failed, []);
+      // Visited Links: 늘 EPERM → 그 경로만 남고 Favicons는 지워진다(예전에는 첫 실패에서 멈췄다), 실패 1을 알린다
+      await make();
+      let calls = 0;
+      const stuck = async (p: string, o: { recursive: true; force: true }) => {
+        if (p.endsWith('Visited Links')) {
+          calls++;
+          throw busy('EPERM');
+        }
+        await fs.rm(p, o);
+      };
+      assert.equal(await removeProfileResidue(dir, { rm: stuck, retryDelayMs: 0, onFailed: (n) => failed.push(n) }), 2);
+      assert.equal(calls, RESIDUE_RM_ATTEMPTS);
+      assert.deepEqual(failed, [1]);
+      assert.ok(await fs.lstat(path.join(dir, 'Default', 'Visited Links')));
+      assert.equal(await fs.lstat(path.join(dir, 'Default', 'Favicons')).catch(() => null), null);
+      // 잠금이 아닌 오류는 다시 시도하지 않는다
+      let other = 0;
+      await removeProfileResidue(dir, { rm: async () => { other++; throw busy('EIO'); }, retryDelayMs: 0 });
+      assert.equal(other, 1, 'Visited Links 한 번만');
+      // 크래시 덤프도 같다
+      await fs.mkdir(path.join(dir, 'Crashpad', 'reports'), { recursive: true });
+      await fs.writeFile(path.join(dir, 'Crashpad', 'reports', 'a.dmp'), 'x');
+      let d = 0;
+      assert.equal(await removeCrashDumps(dir, { rm: async (p, o) => { if (d++ < 1) throw busy('EBUSY'); await fs.rm(p, o); }, retryDelayMs: 0 }), 1);
+      assert.equal(await fs.lstat(path.join(dir, 'Crashpad')).catch(() => null), null);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it('removeProfileResidue: 탐색 기록·세션 복원·UKM만 지우고 쿠키·Local Storage·Preferences는 남긴다, 링크면 -1', async () => {
