@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@sax/db": "workspace:*",
-    "@sax/docparse": "workspace:*",
     "@sax/payroll": "workspace:*",
     "@zip.js/zip.js": "2.24.0",
     "officecrypto-tool": "0.0.19",
