@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
-import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, type Sql } from '../services/shared/src/index.ts';
+import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
@@ -27,16 +27,20 @@ interface Env {
   pc: Signed;
   call(path: string, body: unknown, who?: Signed): ReturnType<Env['req']>;
   runToken(who?: Signed, scope?: object): Promise<string>;
+  /** 같은 DB·키를 쓰는 두 번째 인스턴스(한도 카운터는 DB로 공유, 메모리 캐시는 따로) */
+  twin(): Promise<{ server: Server; req: Env['req']; call: Env['call'] }>;
 }
 
-async function start(o: { monthlyTokens?: number } = {}): Promise<Env> {
+async function start(o: { monthlyTokens?: number; sqlLimits?: boolean } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'gateway', MIGRATIONS_DIR);
+  if (o.sqlLimits) await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
+  const idKey = randomBytes(32);
   const provider = new MockProvider();
   const nts = new MockNtsSource();
   const events: string[] = [];
-  const svc = new GatewayService({
+  const deps = {
     db,
     provider,
     catalog,
@@ -52,10 +56,14 @@ async function start(o: { monthlyTokens?: number } = {}): Promise<Env> {
     onEvent: (e) => events.push(e),
     now: s.clock.now,
     sleep: async () => undefined,
-  });
+  };
+  const instance = async () => {
+    const svc = new GatewayService({ ...deps, limits: o.sqlLimits ? sqlLimits(db, s.clock.now, idKey) : undefined });
+    const server = createServer(gatewayRouter({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: GW }), { logger: new Logger('gateway', (l) => logs.push(l), s.clock.now) });
+    return { svc, server, req: client(await listen(server)) };
+  };
   const logs: string[] = [];
-  const server = createServer(gatewayRouter({ svc, verifier: s.verifier, directory: s.directory, publicOrigin: GW }), { logger: new Logger('gateway', (l) => logs.push(l), s.clock.now) });
-  const req = client(await listen(server));
+  const { svc, server, req } = await instance();
   const pc = await signedDesktop(s, 'gw@example.com');
   const call = async (path: string, body: unknown, who: Signed = pc) => req('POST', path, { headers: who.headers('POST', GW, path, await who.token()), body });
   const runToken = async (who: Signed = pc, scope: object = { runId: `run-${randomBytes(6).toString('hex')}` }) => {
@@ -63,7 +71,11 @@ async function start(o: { monthlyTokens?: number } = {}): Promise<Env> {
     assert.equal(r.status, 200, r.text);
     return r.json.runToken as string;
   };
-  return { s, db, provider, nts, svc, server, req, logs, events, pc, call, runToken };
+  const twin = async () => {
+    const t = await instance();
+    return { server: t.server, req: t.req, call: async (path: string, body: unknown, who: Signed = pc) => t.req('POST', path, { headers: who.headers('POST', GW, path, await who.token()), body }) };
+  };
+  return { s, db, provider, nts, svc, server, req, logs, events, pc, call, runToken, twin };
 }
 
 const decideBody = (rt: string, b = SCREEN, input = '홈택스 > 조회/발급 화면입니다.') => ({ bundleId: b.wireId, bundleDigest: b.digest, input, runToken: rt });
@@ -328,6 +340,38 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
     assert.deepEqual(e.s.stopped, [e.pc.d.id], '창은 정지 때 비워져 처음부터 센다');
     await e.call('/v1/decide', decideBody(rt2, SCREEN, '900101-1234567'));
     assert.deepEqual(e.s.stopped, [e.pc.d.id, e.pc.d.id]);
+  });
+
+  it('DB 한도(인스턴스 둘): 트립와이어는 두 인스턴스 합산 20회에서 한 번 정지, 분당 L1 한도도 합산(팀장 결정 (가))', async () => {
+    const g = await start({ sqlLimits: true });
+    const other = await g.twin();
+    try {
+      const rt = await g.runToken();
+      for (let i = 0; i < GATEWAY.abuseThreshold - 1; i++) await (i % 2 ? g.call : other.call)('/v1/decide', decideBody(rt, SCREEN, '900101-1234567'));
+      assert.deepEqual(g.s.stopped, []);
+      await other.call('/v1/decide', decideBody(rt, SCREEN, '900101-1234567'));
+      assert.deepEqual(g.s.stopped, [g.pc.d.id]);
+      // 저장된 한도 키에 평문 기기·계정 ID가 없다
+      const ks = (await g.db.all<{ k: string }>('SELECT k FROM lim_windows')).map((r) => r.k);
+      assert.ok(ks.length > 0 && ks.every((k) => !k.includes(g.pc.d.id)));
+
+      await g.s.db.run("UPDATE devices SET state = 'active' WHERE device_id = $1", [g.pc.d.id]);
+      g.s.clock.advance(H);
+      const codes: string[] = [];
+      const tok = await g.pc.token(); // 기기 토큰은 한 번만 받는다(계정 서비스의 발급 한도와 섞지 않게)
+      let rt2 = '';
+      for (let i = 0; i < GATEWAY.l1PerMinute + 1; i++) {
+        if (i % 10 === 0) rt2 = await g.runToken(); // 실행 예산(L1 ≤ 12)보다 먼저 분당 한도를 본다
+        const r = await (i % 2 ? g.req : other.req)('POST', '/v1/decide', { headers: g.pc.headers('POST', GW, '/v1/decide', tok), body: decideBody(rt2) });
+        codes.push(r.status === 200 ? 'ok' : (r.json.error as string));
+      }
+      assert.deepEqual(codes.slice(0, -1), Array(GATEWAY.l1PerMinute).fill('ok'));
+      assert.equal(codes.at(-1), 'policy.rate_limited');
+    } finally {
+      other.server.close();
+      g.server.close();
+      g.s.close();
+    }
   });
 
   it('GW_MONTHLY_TOKENS가 양의 정수가 아니면 기동 거부(조용히 한도 없음이 되지 않게)', () => {

@@ -6,6 +6,7 @@
 |---|---|---|---|
 | `DATABASE_URL` / `SAX_SQLITE_FILE` | 둘 중 하나 | | 우편함 해시·큐 DB. **계정 DB와 다른 DB**(분리 저장, D08 §8) |
 | `QUEUE_KEY` ⚿ | 예 | hex 64자 | 큐 본문·번들 저장 전 봉인 키(AES-256-GCM). 바꾸면 남은 큐(≤ 72시간)는 열리지 않고 버려진다 |
+| `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `RELAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin(WSS 업그레이드는 같은 origin + 경로) |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회 |

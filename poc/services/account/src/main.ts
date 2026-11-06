@@ -1,6 +1,6 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 비밀은 KMS가 환경 변수로 주입한다(저장소·이미지에 없음).
 import { fileURLToPath } from 'node:url';
-import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv } from '@sax/svc-shared';
+import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PaymentGateway } from './adapters.ts';
 import { accountRouter } from './app.ts';
 import { AccountService } from './service.ts';
@@ -19,6 +19,7 @@ export function httpStopHook(base: string, secret: string, fetchFn: typeof fetch
 export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: { mail?: MailSender; payments?: PaymentGateway } = {}) {
   const db = openFromEnv(env);
   await migrate(db, 'account', MIGRATIONS_DIR);
+  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
   const kid = env.TOKEN_KID ?? 'k1';
   const signKey = ed25519Private(key32(env.TOKEN_SIGNING_SEED, 'TOKEN_SIGNING_SEED'));
   const publicOrigin = env.ACCOUNT_PUBLIC_ORIGIN ?? fail('ACCOUNT_PUBLIC_ORIGIN');
@@ -36,10 +37,11 @@ export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: {
     billingReturnUrl: env.BILLING_RETURN_URL ?? fail('BILLING_RETURN_URL'),
     stopHooks: (env.STOP_HOOK_URLS ?? '').split(',').filter(Boolean).map((u) => httpStopHook(u, env.INTERNAL_TOKEN ?? '')),
   });
-  const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internalSecret: env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN') });
+  const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
+  const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internalSecret: env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN'), limits });
   const server = createServer(router, { logger: new Logger('account'), trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8080), env.HOST ?? '0.0.0.0');
-  const timer = setInterval(() => void svc.sweep().catch(() => undefined), 60_000);
+  const timer = setInterval(() => void Promise.all([svc.sweep(), limits.limiter.sweep()]).catch(() => undefined), 60_000);
   timer.unref();
   return { svc, server, url, close: async () => (clearInterval(timer), server.close(), await db.close()) };
 }

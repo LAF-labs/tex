@@ -1,7 +1,7 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP. 공급사 키·K_sid·캐시 비밀은 KMS가 환경 변수로 주입한다(D09 §3 키 관리).
 import { fileURLToPath } from 'node:url';
 import { BundleCatalog } from '@sax/model';
-import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv } from '@sax/svc-shared';
+import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { gatewayRouter } from './app.ts';
 import { ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
@@ -86,6 +86,7 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
   if (env.GW_ALLOW_IMAGES && env.GW_ALLOW_IMAGES !== 'false') fail('GW_ALLOW_IMAGES'); // Phase 1: 이미지 없음(B-18)
   const db = openFromEnv(env);
   await migrate(db, 'gateway', MIGRATIONS_DIR);
+  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
   const prices: Prices = env.GW_PRICES_JSON ? { ...ZERO_PRICES, ...(JSON.parse(env.GW_PRICES_JSON) as Partial<Prices>) } : ZERO_PRICES;
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
   const accountBase = env.ACCOUNT_INTERNAL_URL ?? fail('ACCOUNT_INTERNAL_URL');
@@ -106,6 +107,7 @@ export async function startGateway(env: NodeJS.ProcessEnv = process.env, deps: {
     prices,
     nts,
     suspender: httpSuspender(accountBase, internal),
+    limits: sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY')),
   });
   const directory = new HttpDeviceDirectory({ base: accountBase, secret: internal });
   const router = gatewayRouter({ svc, verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)), directory, publicOrigin: env.GATEWAY_PUBLIC_ORIGIN ?? fail('GATEWAY_PUBLIC_ORIGIN') });
