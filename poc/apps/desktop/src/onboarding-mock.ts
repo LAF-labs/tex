@@ -8,6 +8,8 @@ import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, 
 
 /** 시연 등록증(fixture 가짜 홈택스의 공급자와 같은 값이어야 발급 시연이 이어진다, fixture-mode DEMO_PROFILE). */
 export const MOCK_BIZ_CERT: BizFields = { name: '가나다컴퍼니', bizNo: '1234567891', rep: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example' };
+/** 시연 거래처 등록증(거래처 [등록증으로 채우기], fixture). 번호는 검증 숫자가 맞는 합성 값이다. */
+export const MOCK_CP_CERT: BizFields = { name: '견본상사', bizNo: '3148601237', rep: '이견본', bizType: '도매', bizItem: '사무용품', address: '서울특별시 견본구 시험로 34', email: '' };
 
 /**
  * ② 처리자 표의 설정 데이터(목업). 실제로는 앱 설정(서명된 운영 설정)에서 받는다. 모델 상류가 OpenRouter라 공급사 목록이 바뀔 수 있어
