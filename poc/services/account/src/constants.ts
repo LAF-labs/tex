@@ -30,6 +30,8 @@ export const DEVICE = {
   deviceTokensPerHour: 60,
   /** 검증 전 IP당 시도(같은 사무실 NAT 뒤 여러 기기) */
   deviceTokenAttemptsPerIpHour: 600,
+  /** acct_claim 발급(페어링 7단계마다 한 번), 기기당 */
+  acctClaimsPerHour: 30,
 } as const;
 
 export const PROFILE = {

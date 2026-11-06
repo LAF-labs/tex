@@ -1,3 +1,4 @@
+export * from './acct-claim.ts';
 export * from './adapters.ts';
 export * from './aik.ts';
 export * from './app.ts';

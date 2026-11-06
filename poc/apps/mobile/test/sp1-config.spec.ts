@@ -5,6 +5,7 @@ import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { RELAY_ALLOWLIST, resolveDevConfig } from '../src/devhost.ts';
 
 const root = join(import.meta.dirname, '..');
 const app = JSON.parse(readFileSync(join(root, 'app.json'), 'utf8')).expo;
@@ -24,7 +25,13 @@ describe('SP-1 키 저장', () => {
     const k = src('src/keyring.ts');
     assert.match(k, /keychainAccessible: SecureStore\.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY,\s*requireAuthentication: true/);
     assert.match(k, /if \(DEV_LOCAL\) return \{[^}]*WHEN_UNLOCKED_THIS_DEVICE_ONLY/);
-    assert.match(src('src/config.ts'), /DEV_LOCAL: boolean = __DEV__ && !Device\.isDevice/);
+    assert.match(src('src/config.ts'), /resolveDevConfig\(\{ isDev: __DEV__, isDevice: Device\.isDevice,/);
+    assert.match(src('src/config.ts'), /DEV_LOCAL: boolean = DEV\.devLocal;/);
+    // 시뮬레이터 개발 빌드만 완화. 실기기 개발 빌드·릴리스는 늘 거짓(#124).
+    assert.equal(resolveDevConfig({ isDev: true, isDevice: false, envHost: undefined }).devLocal, true);
+    for (const e of [{ isDev: true, isDevice: true }, { isDev: false, isDevice: false }, { isDev: false, isDevice: true }]) {
+      assert.equal(resolveDevConfig({ ...e, envHost: 'mac.local:8787' }).devLocal, false, JSON.stringify(e));
+    }
   });
   it('ThisDeviceOnly가 아닌 키체인 등급을 어디에서도 쓰지 않는다', () => {
     for (const { f, s } of appSources) {
@@ -88,7 +95,9 @@ describe('업데이트 채널(ADR-028, D01 §6)', () => {
     assert.equal({ ...pkg.dependencies }['expo-updates'], undefined);
   });
   it('릴레이 허용 목록은 바이너리 내장값', () => {
-    assert.match(src('src/config.ts'), /RELAY_ALLOWLIST: readonly string\[\] = \['relay\.tex\.laf-co\.com'\]/);
+    assert.match(src('src/devhost.ts'), /RELAY_ALLOWLIST: readonly string\[\] = \['relay\.tex\.laf-co\.com'\]/);
+    assert.deepEqual(resolveDevConfig({ isDev: false, isDevice: true, envHost: 'evil.local:8787' }).relayAllowlist, RELAY_ALLOWLIST);
+    assert.match(src('src/config.ts'), /relayAllowlist = \(\): readonly string\[\] => DEV\.relayAllowlist;/);
   });
 });
 

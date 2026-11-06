@@ -1,4 +1,5 @@
 // 계정·구독 도메인(D09 §2). HTTP와 무관한 규칙만 여기에 둔다(라우트·요청 검증은 app.ts).
+import type { AcctClaimSigner, SignedAcctClaim } from './acct-claim.ts';
 import { randomBytes, randomInt, randomUUID } from 'node:crypto';
 import {
   DESKTOP_SCOPES,
@@ -73,6 +74,8 @@ export interface AccountDeps {
   stopHooks?: DeviceStopHook[];
   /** 릴레이 페어링 룸 소비 확인(PC가 폰을 대신 등록). 없으면 그 경로는 닫힌다 */
   pairing?: PairingRooms;
+  /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
+  acctClaims?: AcctClaimSigner;
   now?: () => number;
 }
 
@@ -521,6 +524,19 @@ export class AccountService {
     if (!d) return null;
     if (d.account_id === requester.accountId && d.role === 'mobile' && (d.state === 'pending' || d.state === 'active') && d.sx === o.Sx && d.vx === o.Vx) return d;
     return fail('request.param_rejected');
+  }
+
+  /**
+   * 서버 서명 계정 클레임(D08 §4.2 7단계). 요청한 기기가 그 계정의 활성 데스크톱이어야 하고, 계정 AIK가 고정되어 있어야 한다.
+   * 클레임은 언제나 토큰의 계정 것이다(다른 계정을 지정할 수 없다).
+   */
+  async acctClaim(requester: { accountId: string; deviceId: string }): Promise<SignedAcctClaim> {
+    if (!this.d.acctClaims) fail('request.not_found');
+    const a = await this.account(requester.accountId);
+    if (a.status !== 'active') fail('account.unauthorized');
+    await this.requireActiveDesktop(this.db, requester);
+    if (!a.aik_pub) fail('account.aik_not_pinned');
+    return this.d.acctClaims!.sign({ account_id: a.id, email: a.email, aik_pub: a.aik_pub! }, this.now());
   }
 
   /** (b) 경로: 이메일 확인 + 72시간 대기 끝. 패스키 계정은 패스키 세션이어야 한다. */

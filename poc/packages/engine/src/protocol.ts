@@ -48,6 +48,11 @@ export const REGISTRY_READ_QUERIES = ['db.query.registry.revocation', 'db.query.
 export const REGISTRY_COMMANDS = ['registry.sync'] as const;
 export const REGISTRY_MAIN_ONLY: readonly ((typeof REGISTRY_READ_QUERIES)[number] | (typeof REGISTRY_COMMANDS)[number])[] = [...REGISTRY_READ_QUERIES, ...REGISTRY_COMMANDS];
 /**
+ * 폰 사진·현금 수신(데스크톱 ③c 계약, 팀장 결정 2026-11-06). main 전용이다(렌더러에 열지 않는다). 처리는 @sax/bundle PhoneIntake다.
+ * 폰 큐(@sax/remote ReceiveSink)가 엔진 rpc에 얇게 붙는다. 중복은 msgId(receipts.phone_msg_id)로만 보고, 고아 문서·파일을 남기지 않는다.
+ */
+export const PHONE_COMMANDS = ['receipt.phoneHas', 'receipt.phoneStore', 'cash.phonePut'] as const;
+/**
  * 데몬 스냅숏(D10 §3, 팀장 결정 2026-11-06). main 전용 읽기 질의다(렌더러에 열지 않는다). 쓰기·실행·DB 키 노출이 없다.
  * 응답은 @sax/daemon DaemonSnapshot. 처리는 @sax/bundle BundleService(daemonSnapshot)다.
  */

@@ -49,6 +49,10 @@ export interface PairOkBody {
   tokRead: string;
   tokWrite: string;
   mbxEpoch: number;
+  /** 계정 서비스가 서명한 계정 확인 주장(acctclaim.ts, v1.6). 폰은 검증 실패면 저장하지 않는다. */
+  acctClaim: string;
+  /** PC가 스스로 알린 이름(서명 없음, 참고 표시만). */
+  desktopName?: string;
 }
 export interface KekGrantBody {
   kek: string;
