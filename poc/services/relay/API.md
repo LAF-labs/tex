@@ -9,7 +9,7 @@
 | 기기 범위 토큰 | `Authorization: DPoP <token>` + `DPoP: <증명>`(`relay` 범위, 계정 서비스 발급, 공통 [CONTRACT.md](../shared/CONTRACT.md)) | 남용 방지·긴급 정지. 정지·폐기된 기기는 `403 relay.device_suspended`, 계정 세션 토큰은 `401 relay.unauthorized` |
 | 우편함 능력 토큰 | `X-Mbx-Read: <tok_read>` / `X-Mbx-Write: <tok_write>`(32B base64url 43자) | 우편함 접근 권한. PC가 CSPRNG로 만들어 `PAIR_OK`로 폰에 준다(D08 §4.2 7단계). 서버는 SHA-256 해시만 저장 |
 
-- 우편함 ID·토큰이 틀리거나 우편함이 없으면 모두 `404 relay.mailbox_not_found`(존재 오라클 없음). 실패는 IP(일 회전 HMAC)당 10분 20회까지, 넘으면 맞는 토큰도 창이 끝날 때까지 `429 policy.rate_limited`.
+- 우편함 ID·토큰이 틀리거나 우편함이 없으면 모두 `404 relay.mailbox_not_found`(존재 오라클 없음). 실패는 IP(당일 솔트 HMAC, DB 카운터라 인스턴스 합산)당 10분 20회까지, 넘으면 맞는 토큰도 창이 끝날 때까지 `429 policy.rate_limited`.
 - 서버는 두 레이어의 연결(어느 기기가 어느 우편함을 쓰는지)을 **저장하지 않는다**. 같은 요청에서 둘을 함께 보므로 운영자는 상관시킬 수 있다(정직한 서술, D08 §8).
 - 쪽(side)은 토큰의 역할에서 정한다(데스크톱 `d`, 모바일 `m`). 클라이언트가 고르지 않는다.
 

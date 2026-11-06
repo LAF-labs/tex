@@ -1,6 +1,6 @@
 // 기동: 환경 변수(ENV.md) → DB 마이그레이션 → HTTP + WSS. TLS는 서버 직접 또는 L4/TLS 프록시(D09 §4, 특정 LB 기능에 의존하지 않음).
 import { fileURLToPath } from 'node:url';
-import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv } from '@sax/svc-shared';
+import { HttpDeviceDirectory, Logger, TokenVerifier, createServer, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { RelayHub } from './app.ts';
 import { RelayService } from './service.ts';
 
@@ -26,6 +26,7 @@ export function parseTokenKeys(v: string | undefined): Record<string, Buffer> {
 export async function startRelay(env: NodeJS.ProcessEnv = process.env) {
   const db = openFromEnv(env);
   await migrate(db, 'relay', MIGRATIONS_DIR);
+  await migrate(db, 'limits', LIMITS_MIGRATIONS_DIR);
   const logger = new Logger('relay');
   const svc = new RelayService({ db, queueKey: key32(env.QUEUE_KEY, 'QUEUE_KEY'), now: Date.now, onEvent: (e) => logger.event(e) });
   const internal = env.INTERNAL_TOKEN ?? fail('INTERNAL_TOKEN');
@@ -37,13 +38,13 @@ export async function startRelay(env: NodeJS.ProcessEnv = process.env) {
     internalSecret: internal,
     logger,
     trustProxy: env.TRUST_PROXY === '1',
+    limits: sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY')),
   });
   const server = createServer(hub.router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   hub.attach(server);
   const url = await listen(server, Number(env.PORT ?? 8083), env.HOST ?? '0.0.0.0');
   const timer = setInterval(() => {
-    hub.sweep();
-    void svc.sweep().catch(() => undefined);
+    void Promise.all([hub.sweep(), svc.sweep()]).catch(() => undefined);
   }, 60_000);
   timer.unref();
   return { svc, hub, server, url, close: async () => (clearInterval(timer), hub.closeAll(), server.close(), await db.close()) };

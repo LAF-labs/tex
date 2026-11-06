@@ -599,7 +599,7 @@ export class AccountService {
    * AIK가 서명한 기기 인증서를 내고, 같은 요청에 그 인증서의 Vx로 서명한 DPoP 증명(ath = sha256(JCS(cert)))을 붙인다.
    * Phase 1 폰 토큰은 relay·push 범위만(ADR-034, D09 §2.1).
    */
-  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
+  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
     const d = await this.db.one<DeviceRow & { aik_pub: string | null }>('SELECT d.*, a.aik_pub FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = $1 AND a.status = $2', [c.cert.device_id, 'active']);
     if (!d || !d.aik_pub) fail('account.cert_invalid');
     const now = this.now();
@@ -609,7 +609,7 @@ export class AccountService {
     verifyDpop(dpop, { method: 'POST', htu, token: jcs(c), cnf: vx, now, jti: this.jti, code: 'account.dpop_invalid' });
     if (d!.state !== 'active') fail('account.device_suspended');
     // 기기별 발급 한도는 인증서·DPoP가 맞고 기기가 활성일 때만 센다(남이 device_id나 정지 기기의 인증서로 한도를 태우지 못하게)
-    onVerified?.();
+    await onVerified?.();
     const scopes = d!.role === 'desktop' ? [...DESKTOP_SCOPES] : [...MOBILE_SCOPES_P1];
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
     return { token, expiresAt: claims.exp, scopes };
