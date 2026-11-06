@@ -1,10 +1,12 @@
 // 조건식 평가(D02 §4.1). 결정적이고 스크립트가 없다. 평가할 수 없으면 거짓이 아니라 오류(fail-closed)다.
-// sumEquals·readbackEquals·fieldsFilled는 readback 값에 기대므로 M2-3(readback 핸들러)에서 붙인다. 그 전에는 step.cond_unsupported.
+// readbackEquals·sumEquals는 readback이 고정한 값($readback.*)만 쓰고 화면을 다시 읽지 않는다(D02 §8 s19c~s19f, M2-3).
+// fieldsFilled는 입력 칸의 DOM 값이 비었는지만 본다(B-34, 값·길이는 남기지 않는다).
 import { normalizeName } from './constants.ts';
+import { domValue, inputEntryKey, normalizeFor } from './readback.ts';
 import type { PageReader } from './page.ts';
 import { compileRe2 } from './re2.ts';
 import { resolveTarget } from './resolve.ts';
-import { isAbsent, readRef, type RunScope } from './scope.ts';
+import { isAbsent, readRef, scalar, type RunScope } from './scope.ts';
 import { isSecretEntry, type Cond, type SelectorDict, type Strings } from './types.ts';
 
 export interface CondEnv {
@@ -77,6 +79,42 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
   if ('inputVerified' in c) return env.pre?.inputVerified ? bool(env.pre.inputVerified(c.inputVerified)) : { ok: false, code: 'step.cond_unsupported' };
   if ('profileHas' in c) return env.pre?.profileHas ? bool(env.pre.profileHas(c.profileHas)) : { ok: false, code: 'step.cond_unsupported' };
   if ('artifact' in c) return env.pre?.artifact ? bool(env.pre.artifact(c.artifact)) : { ok: false, code: 'step.cond_unsupported' };
-  // sumEquals·readbackEquals·fieldsFilled: M2-3
+  if ('readbackEquals' in c) {
+    // 되읽은 값 ↔ $inputs·$profile(B-05, s19c·s19e·s19f). 어느 쪽이든 없으면 평가할 수 없다(fail-closed).
+    // ifAbsent 'empty': 선택 입력이 비었으면 되읽은 칸도 비어야 한다(값 없이 보내지 않게, V-03m).
+    const { fieldKey, ref, ifAbsent } = c.readbackEquals;
+    const got = env.scope.readback.get(fieldKey);
+    const want = readRef(env.scope, ref);
+    if (got === undefined) return { ok: false, code: 'step.ref_unresolved' };
+    if (isAbsent(want)) return ifAbsent === 'empty' ? bool(got === '') : { ok: false, code: 'step.ref_unresolved' };
+    const w = scalar(want);
+    if (w === null) return { ok: false, code: 'step.ref_unresolved' };
+    return bool(normalizeFor(env.dict, fieldKey, w) === got);
+  }
+  if ('readbackEmpty' in c) {
+    const got = env.scope.readback.get(c.readbackEmpty);
+    return got === undefined ? { ok: false, code: 'step.ref_unresolved' } : bool(got === '');
+  }
+  if ('sumEquals' in c) {
+    // readback 산술(s19d): Σ parts = total. 정수가 아닌 값은 맞는다고 볼 수 없다(not으로 뒤집히지 않게 오류).
+    const { parts, total } = c.sumEquals;
+    const vals = [...parts, total].map((f) => env.scope.readback.get(f));
+    if (vals.some((v) => v === undefined)) return { ok: false, code: 'step.ref_unresolved' };
+    if (!vals.every((v) => /^-?\d+$/.test(v!))) return { ok: false, code: 'step.assert_failed' };
+    const sum = parts.reduce((a, f) => a + BigInt(env.scope.readback.get(f)!), 0n);
+    return bool(sum === BigInt(env.scope.readback.get(total)!));
+  }
+  if ('fieldsFilled' in c) {
+    for (const f of c.fieldsFilled.fields) {
+      const k = inputEntryKey(env.dict, f);
+      if (!k) return { ok: false, code: 'step.selector_miss' };
+      const entry = env.dict.entries[k]!;
+      if (isSecretEntry(entry)) return { ok: false, code: 'step.secret_field' };
+      const r = await resolveTarget(env.page, env.dict, k);
+      if (!r.ok) return { ok: false, code: r.code };
+      if (normalizeName(await domValue(env.page, entry, r.t.el)) === '') return F;
+    }
+    return T;
+  }
   return { ok: false, code: 'step.cond_unsupported' };
 }

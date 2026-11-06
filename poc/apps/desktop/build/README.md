@@ -1,5 +1,7 @@
 # 데스크톱 패키징(D14 M4-9)
 
+> 2026-11-06 팀장 결정: 산출물 `release-readiness.json` 설명을 바뀐 `betaDistributable` 규칙(beta 채널은 미서명 허용, 실기기 보고서로 `windows_run_unverified` 해제)에 맞춤. 스크립트는 코드 후속.
+
 Windows NSIS 설치본을 만든다. 서명 온보딩은 [SIGNING-SETUP.md](SIGNING-SETUP.md), 업데이트 검증은 [`@sax/updater`](../../../packages/updater/README.md).
 
 ```
@@ -29,7 +31,7 @@ pnpm package:win            # 결과: poc/.tmp/package-win/
 
 - `dist/SovereignAX-Setup-<ver>.exe`, `dist/win-unpacked/`
 - `report.json`: 설치본 크기·sha512·sha256, asar 크기·파일 수·패키지별 크기, `asar.unpacked` 목록, 퓨즈 상태, 앱 dist 포함·제외 목록, 배포 판정
-- `release-readiness.json`: `betaDistributable`(막는 것 목록). 미서명이면 항상 false
+- `release-readiness.json`: `betaDistributable`(막는 것 목록). 팀장 결정(2026-11-06): beta 채널에서는 `unsigned_build`가 블로커가 아니고 stable에서만 블로커다. `windows_run_unverified`는 실기기 보고서의 설치·첫 실행 통과가 있으면 빠진다. 스크립트는 아직 옛 규칙이라 지금은 늘 false다(코드 후속, [SIGNING-SETUP.md §4](SIGNING-SETUP.md))
 - `asar-files.txt`: asar 안 파일 전체 목록
 - 앱 안 `build-info.json`: 버전·채널·커밋·`signing`(`azure`|`unsigned`)·`devOnlyIncluded`
 
