@@ -52,27 +52,40 @@ export interface PairWorld {
   pc: DesktopPairing;
   mob: MobilePairing;
   published: DeviceListJson[];
+  enrolled: Enrolled[];
 }
 
-export async function pairWorld(o: { relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; registered?: boolean; serverList?: DeviceListJson; accountAik?: Uint8Array; now?: () => number } = {}): Promise<PairWorld> {
+export interface Enrolled {
+  deviceId: string;
+  roomId: Uint8Array;
+  /** 등록을 부른 때 폰 상태(pair.ok 전이어야 한다). */
+  phoneState: string;
+}
+
+export async function pairWorld(o: { relay?: MemoryRelay; desk?: MockDesktop; phone?: MockPhone; enrollFails?: boolean; knownAik?: Uint8Array; seenListVersion?: number; now?: () => number } = {}): Promise<PairWorld> {
   const relay = o.relay ?? new MemoryRelay();
   relay.tokenHash = (t) => toHex(sha256Hash(t));
   const desk = o.desk ?? (await mockDesktop());
   const phone = o.phone ?? mockPhone();
   const published: DeviceListJson[] = [];
+  const enrolled: Enrolled[] = [];
+  let mob: MobilePairing | null = null;
   const pc = new DesktopPairing({
     keys: desk.keys, deviceList: desk.deviceList, relayHost: RELAY, now: o.now,
-    isPhoneKeyRegistered: async () => o.registered ?? true,
+    enrollPhone: async (p) => {
+      if (o.enrollFails) throw new Error('relay.room_unavailable');
+      enrolled.push({ deviceId: p.deviceId, roomId: p.roomId, phoneState: mob?.state ?? 'none' });
+    },
     publishDeviceList: async (l) => {
       published.push(l);
     },
     registerMailbox: async (id, r, w) => relay.registerMailbox(id, toHex(sha256Hash(r)), toHex(sha256Hash(w))),
   });
-  const mob = new MobilePairing({
-    keys: phone.keys, accountAikPub: o.accountAik ?? desk.keys.aik.publicKey, serverDeviceList: o.serverList ?? desk.deviceList, relayAllowlist: [RELAY], now: o.now,
+  mob = new MobilePairing({
+    keys: phone.keys, knownAikPub: o.knownAik, seenListVersion: o.seenListVersion, relayAllowlist: [RELAY], now: o.now,
     pairOkTimeoutMs: 5000,
   });
-  return { relay, desk, phone, pc, mob, published };
+  return { relay, desk, phone, pc, mob, published, enrolled };
 }
 
 /** 정상 페어링 한 번(사용자가 폰의 SAS를 PC에 입력). */
