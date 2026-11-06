@@ -80,6 +80,8 @@ export const ERROR_STATUS = {
   'relay.unauthorized': 401,
   'relay.device_suspended': 403,
   'relay.room_unavailable': 404,
+  /** 그 PC의 페어링 룸이 이미 폰 등록 한 번에 쓰였다(룸 하나에 enroll 성공 한 번, 팀장 결정 2026-11-06) */
+  'relay.room_used': 409,
   'push.unauthorized': 401,
   'push.device_suspended': 403,
   'push.target_not_found': 404,
@@ -117,6 +119,7 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'relay.unauthorized',
   'relay.device_suspended',
   'relay.room_unavailable',
+  'relay.room_used',
   'push.unauthorized',
   'push.device_suspended',
   'push.target_not_found',

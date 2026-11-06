@@ -2,7 +2,7 @@
 // 경로 규칙(룸·우편함 라이브), 우편함 헤더(기기 토큰 DPoP + X-Mbx-Read/Write), 토큰은 URL에 없고, 프레임 순서를 지킨다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, type WebSocketLike } from '@sax/remote';
+import { allowDevLanHosts, b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, type WebSocketLike } from '@sax/remote';
 
 class FakeWs implements WebSocketLike {
   binaryType = 'blob';
@@ -74,6 +74,15 @@ describe('ws-link(services/relay/API.md)', () => {
     assert.equal(relayUrl('localhost:8787', '/v1/rooms/x', true), 'ws://localhost:8787/v1/rooms/x');
     assert.equal(relayOrigin('relay.tex.laf-co.com'), 'https://relay.tex.laf-co.com');
     assert.equal(relayOrigin('localhost:8787', true), 'http://localhost:8787');
+    assert.throws(() => relayOrigin('mac-mini.local:8787', true), /insecure only/, 'mDNS 평문은 기본 꺼짐(릴리스)');
+    allowDevLanHosts(true);
+    try {
+      assert.equal(relayOrigin('mac-mini.local:8787', true), 'http://mac-mini.local:8787', '실기기 개발 빌드: 같은 LAN의 mDNS 이름');
+      for (const h of ['192.168.0.10:8787', 'a.b.local:8787']) assert.throws(() => relayOrigin(h, true), /insecure only/, h);
+    } finally {
+      allowDevLanHosts(false);
+    }
+    for (const h of ['192.168.0.10:8787', 'relay.tex.laf-co.com', 'evil.local.example.com:8787', 'a.b.local:8787']) assert.throws(() => relayOrigin(h, true), /insecure only/, h);
     assert.throws(() => relayUrl('relay.tex.laf-co.com', '/', true));
     assert.throws(() => relayUrl('evil.com/x?y', '/'));
     assert.throws(() => relayUrl('a b', '/'));

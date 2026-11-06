@@ -7,6 +7,7 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
+import type { Channel } from '@sax/updater';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
@@ -17,6 +18,8 @@ import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from 
 import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
+import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
+import type { AppUpdaterLike } from './update-electron.ts';
 import { certInfoInSandbox, DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
@@ -128,6 +131,21 @@ export interface ShellOptions {
   buildBadges?: string[];
   /** 온보딩(08 §4)부터 시작한다(시연·e2e). 엔진 모드에서는 DB에 사업자 프로필이 없으면 저절로 시작한다. */
   onboarding?: boolean;
+  /**
+   * 앱 업데이트(update-host.ts, M4-9). 설치본(app.isPackaged)·엔진 모드에서만 돈다. 제품 진입점이 원천을 갖출 때 넘긴다:
+   * 레지스트리 origin(egress 목적지), latest.json·폐기 목록·핀 키·투명성 확인 포트, 실계정 시험 빌드 여부와 설정.
+   */
+  update?: UpdateWiring;
+}
+
+/** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
+export interface UpdateWiring {
+  channel: Channel;
+  origin: string;
+  sources: UpdateSources;
+  testBuild: boolean;
+  setting?: { requireTransparency?: unknown } | null;
+  updater?: AppUpdaterLike;
 }
 
 /** 개발 전용 연결(ShellOptions.dev). 여기에는 타입만 있고, 구현은 demo-dev.ts가 묶는다. */
@@ -521,7 +539,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     n.on('close', () => liveNotices.delete(n));
     n.show();
   };
-  const onResume = () => daemon?.requestReload();
+  let updater: UpdateHost | null = null;
+  const onResume = () => {
+    daemon?.requestReload();
+    void updater?.check();
+  };
   // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
   // 바깥 일(등록증 읽기·진위확인·NPKI·금고 등록 창·처리자 표)은 아직 목업 어댑터 뒤(onboarding-mock.ts): M4-3·#65·#93·금고 T-06.
   let onb: OnboardingFlow | null = null;
@@ -687,6 +709,41 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return dispatchShell(e.senderFrame, SHELL_URL, handlers, req);
   });
 
+  const startAppUpdater = async (w: UpdateWiring): Promise<UpdateHost | null> => {
+    try {
+      const { electronInstaller } = await import('./update-electron.ts');
+      const u = w.updater ?? ((await import('electron-updater')).default.autoUpdater as unknown as AppUpdaterLike);
+      const h = startUpdateHost({
+        sources: w.sources,
+        installer: electronInstaller(u, { origin: w.origin, channel: w.channel }),
+        channel: w.channel,
+        installedVersion: app.getVersion(),
+        stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'updater-state.json'),
+        policy: updatePolicy({ testBuild: w.testBuild, setting: w.setting, log: (n, d) => log.event(n, d) }),
+        idle: () => {
+          const list = runs.list();
+          return {
+            runActive: list.some((r) => runs.isActive(r.id)),
+            commitZone: bar.visible || list.some((r) => r.status === 'issuing' || r.inDoubt === true),
+            daemonRunning: false,
+          };
+        },
+        onStale: () => {
+          try {
+            showOsNotification({ title: '소버린 AX', body: '14일 동안 업데이트를 확인하지 못했어요. 인터넷 연결을 확인해 주세요.' }, () => {});
+          } catch {
+            // 알림을 못 띄우는 환경이면 로그(main.update_stale_notice)만 남는다
+          }
+        },
+        log: (n, d) => log.event(n, d),
+      });
+      void h.check();
+      return h;
+    } catch (e) {
+      log.event('main.update_start_failed', { error: (e as Error).message.slice(0, 80) });
+      return null;
+    }
+  };
   const ready = (async () => {
     try {
       await host.ready;
@@ -727,6 +784,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       });
       powerMonitor.on('resume', onResume);
     }
+    // 앱 업데이트(M4-9): 설치본만. 실행 중·커밋 구간(승인 바·발급 중·제출 여부 모름)에는 설치를 미룬다(D11 §4). 데몬은 notify만이라 실행이 없다.
+    if (!fixture && app.isPackaged && opts.update) updater = await startAppUpdater(opts.update);
     // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed
       ?.fill()
@@ -741,6 +800,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     clearInterval(boardDayTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
+    updater?.stop();
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});

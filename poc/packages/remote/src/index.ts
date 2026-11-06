@@ -12,6 +12,8 @@ export * from './hpke.ts';
 export * from './jcs.ts';
 export * from './keys.ts';
 export * from './noise.ts';
+export * from './acctclaim.ts';
+export * from './devhosts.ts';
 export * from './pairing.ts';
 export * from './qbundle.ts';
 export * from './qr.ts';
