@@ -4,9 +4,10 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { bundleCss, loadTokens, tokensCss } from '../apps/desktop/src/shell-tokens.ts';
+import { pathToFileURL } from 'node:url';
 
 const DESK = path.join(import.meta.dirname, '../apps/desktop');
-const gen = (await import(path.join(DESK, 'scripts/gen-tokens.mjs'))) as { render(): string; OUT: string; resolveTokens(t: unknown): unknown; DESIGN_SYSTEM: string };
+const gen = (await import(pathToFileURL(path.join(DESK, 'scripts/gen-tokens.mjs')).href)) as { render(): string; OUT: string; resolveTokens(t: unknown): unknown; DESIGN_SYSTEM: string };
 
 describe('셸 토큰(생성 파일)', () => {
   it('tokens.gen.ts가 디자인 시스템 원본과 같다(다르면 node apps/desktop/scripts/gen-tokens.mjs)', () => {

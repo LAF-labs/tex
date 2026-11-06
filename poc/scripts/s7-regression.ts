@@ -16,6 +16,7 @@ import { Redactor, apply, type A11yNode } from '@sax/redaction';
 import type { ScreenObservation } from '@sax/engine';
 import { intentCorpus, screenCorpus, type Sample } from '../tests/fixtures/l0-corpus.ts';
 import { startOpenAIMock } from '../tests/fixtures/openai-mock.ts';
+import { fileURLToPath } from 'node:url';
 
 const BUNDLE = 'screen_state_v2';
 const forceMock = process.argv.includes('--mock');
@@ -219,7 +220,7 @@ async function main() {
     misses: rows.filter((r) => r.got !== r.expect).slice(0, 30),
     intent,
   };
-  const out = outArg ?? new URL(`../reports/raw/s7-${mode}.json`, import.meta.url).pathname;
+  const out = outArg ?? fileURLToPath(new URL(`../reports/raw/s7-${mode}.json`, import.meta.url));
   fs.writeFileSync(out, `${JSON.stringify(result, null, 2)}\n`);
   console.log(`S7 ${mode}: n=${result.n} accuracy=${result.accuracy} blocked=${result.recall.blocked} captcha=${result.recall.captcha} p50=${result.latencyMs.p50}ms p95=${result.latencyMs.p95}ms tokens=${result.inputTokensAvg} cost=$${result.costUsd} pass=${result.pass}`);
   if (intent) console.log(`intent_route_v1: n=${intent.n} playbook=${intent.playbookAccuracy} taxAdviceFP=${intent.taxAdviceFalsePositiveRate} taxAdviceMiss=${intent.taxAdviceMissRate}`);
