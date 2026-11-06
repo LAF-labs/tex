@@ -92,10 +92,16 @@ describe('Wmax(X) (D03 §3)', () => {
 
 describe('원장·gate_requests 연결 (R-G7·R-G8, B-33)', () => {
   const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-core-run-'));
-  after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  // 연 DB를 닫은 뒤 지운다(Windows는 열린 파일을 지우지 못해 EPERM).
+  const opened: Db[] = [];
+  after(() => {
+    for (const d of opened) d.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
   let n = 0;
   const fresh = (): { db: Db; gates: GateRepo; ledger: Ledger; runs: RunRepo } => {
     const db = openDatabase(path.join(dir, `${n++}.sqlite`), new Uint8Array(randomBytes(32)));
+    opened.push(db);
     const runs = new RunRepo(db);
     runs.create({ id: 'run-1', playbookId: 'hometax.invoice.issue', playbookVersion: '2.1.0', packageDigest: 'd'.repeat(64), profileId: 'p1', trigger: 'local', inputsHash: 'i'.repeat(64) });
     return { db, gates: new GateRepo(db), ledger: new Ledger(db), runs };

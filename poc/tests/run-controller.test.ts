@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { GateRepo, openDatabase, RunRepo, type LedgerState } from '@sax/db';
+import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax/db';
 import { READBACK_KEYS, RunController, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, NEXT, newScope, stepEnv,
@@ -80,7 +80,12 @@ async function until(pred: () => boolean, what: string) {
 }
 
 const dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-run-ctl-'));
-after(() => fs.rmSync(dir, { recursive: true, force: true }));
+const opened: Db[] = [];
+// Windows는 열린 DB 파일을 지우지 못한다(EPERM). 닫고 지운다.
+after(() => {
+  for (const d of opened) d.close();
+  fs.rmSync(dir, { recursive: true, force: true });
+});
 let dbn = 0;
 
 interface Opts {
@@ -93,6 +98,7 @@ interface Opts {
 
 function mk(steps: Step[], o: Opts = {}) {
   const db = openDatabase(path.join(dir, `${dbn++}.sqlite`), new Uint8Array(randomBytes(32)));
+  opened.push(db);
   new RunRepo(db).create({ id: 'run-1', playbookId: 'test.pb', playbookVersion: '1.0.0', packageDigest: 'd'.repeat(64), profileId: 'p1', trigger: 'local', inputsHash: 'i'.repeat(64) });
   const gates = new GateRepo(db);
   const tokens = new GateTokens('run-1');
