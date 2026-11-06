@@ -1,4 +1,4 @@
-// 두 main(셸 shell-app.ts·개발 콘솔 main.ts)이 같이 쓰는 하드닝(ADR-025 결정 8, D11 §4).
+// 셸(shell-app.ts·진입점 shell.ts)과 승인 바·docparse·비밀 창이 같이 쓰는 하드닝(ADR-025 결정 8, D11 §4).
 // Electron 값은 인자로만 받는다(타입 import만). node --test에서 상수·판정을 불러 시험할 수 있다.
 import path from 'node:path';
 import type { App, BrowserWindow, Session, WebContents, WebPreferences } from 'electron';
