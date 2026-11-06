@@ -14,10 +14,10 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { acceptIndex, trustRootsFromPin } from '@sax/engine';
 import { acceptRevoked, acceptStatus, canonicalJson, type RegistryStatus, type RevokedKeys } from '@sax/engine/core';
-import { verifyIndex, verifyRelease, verifyRevoked, verifyStatus } from '../services/registry/src/verify.ts';
+import { countSignatures, verifyIndex, verifyRelease, verifyRevoked, verifyStatus } from '../services/registry/src/verify.ts';
 import { main, SOLO_KEY_IDS, type CliDeps } from '../services/registry/src/ceremony/cli.ts';
 import { attachTimestamp, buildTrust, collectSignatures, signWithBackend, type KeyRecord, type SignatureRecord, type TrustPin } from '../services/registry/src/ceremony/collect.ts';
-import { confirmCode, prepare, type DocKind } from '../services/registry/src/ceremony/content.ts';
+import { confirmCode, prepare, quorumFor, signingBytes, type DocKind } from '../services/registry/src/ceremony/content.ts';
 import { MacKeychainBackend, type KeyStoreBackend } from '../services/registry/src/ceremony/device.ts';
 import { BACKUP_ALG, ed25519PubFromSeed, openBackup, sealBackup, unwrapSeed, WRAP_ALG, wrapSeed, type WrappedKey } from '../services/registry/src/ceremony/wrap.ts';
 
@@ -383,5 +383,48 @@ describe('macOS 키체인 백엔드(도우미 호출 인자)', () => {
     await assert.rejects(new MacKeychainBackend({ helper: 'x', run: async () => ({ code: 0, stdout: 'garbage' }) }).publicKey('root-1'), /helper_failed/);
     await assert.rejects(new MacKeychainBackend({ helper: 'x', run: async () => ({ code: 0, stdout: JSON.stringify({ keyId: 'root-2', pub }) }) }).publicKey('root-1'), /helper_failed/);
     await assert.rejects(new MacKeychainBackend({ helper: 'x', run: async () => Promise.reject(new Error('ENOENT')) }).publicKey('root-1'), /helper_missing/);
+  });
+});
+
+// 공개된 keyEpoch 1 의식 산출물(2026-11-06, 단독 모드). 핀 PR의 근거를 저장소 안에서 다시 확인한다.
+describe('keyEpoch 1 공개 산출물(services/registry/ceremony/keyepoch-1)', () => {
+  const dir = path.resolve(import.meta.dirname, '../services/registry/ceremony/keyepoch-1');
+  const read = <T>(f: string): T => JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')) as T;
+  const files = (d: string): string[] => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(d, e.name)) : [path.join(d, e.name)]));
+
+  it('trust-root.json SHA-256과 루트 메타데이터·폐기 목록 확인 코드가 PR에 적은 값과 같다', () => {
+    assert.equal(createHash('sha256').update(fs.readFileSync(path.join(dir, 'trust-root.json'))).digest('hex'), 'aeaa9f00096d739d60ae0e1a992ec7744a8c80afbc9808b0d35cc48b004c0b17');
+    assert.equal(confirmCode(createHash('sha256').update(signingBytes('trust_root', read('root-metadata.json'))).digest('hex')), '2d08-bfe2-bc4f-ff1b-e6fe-c112-3235-690d');
+    assert.equal(confirmCode(createHash('sha256').update(signingBytes('revoked_keys', read('revoked_keys.json'))).digest('hex')), 'b40b-6342-09b4-db36-c4a1-e422-ae47-eddc');
+  });
+
+  it('루트 메타데이터: 핀 키와 같고, 서로 다른 루트 2개 서명이 게시 관문 규칙을 통과한다', () => {
+    const trust = read<TrustPin>('trust-root.json');
+    const meta = read<{ keyEpoch: number; mode: string; keys: unknown; signatures: unknown }>('root-metadata.signed.json');
+    assert.equal(meta.keyEpoch, 1);
+    assert.equal(meta.mode, 'solo');
+    assert.deepEqual(meta.keys, trust.keys);
+    const { valid } = countSignatures(signingBytes('trust_root', meta), meta.signatures, 'root', trust as never, new Set());
+    assert.deepEqual(valid.sort(), ['root-1', 'root-2']);
+    assert.ok(valid.length >= quorumFor('root'));
+  });
+
+  it('폐기 목록 첫 판: 루트 2개 서명은 맞고, timestamp는 아직 없다(서버 Cron이 붙인다)', () => {
+    const trust = read<TrustPin>('trust-root.json');
+    const rk = read<{ monotonic: number; signatures: unknown; timestamp?: unknown }>('revoked_keys.signed.json');
+    assert.equal(rk.monotonic, 1);
+    assert.equal(rk.timestamp, undefined);
+    const { valid } = countSignatures(signingBytes('revoked_keys', rk), rk.signatures, 'root', trust as never, new Set());
+    assert.deepEqual(valid.sort(), ['root-1', 'root-2']);
+  });
+
+  it('공개 파일뿐이다: 시드·감싼 키·백업·암호 필드가 없다', () => {
+    const all = files(dir);
+    assert.equal(all.length, 21);
+    for (const f of all) {
+      assert.match(f, /\.json$/);
+      const text = fs.readFileSync(f, 'utf8');
+      assert.doesNotMatch(text, /"(seed|privateKey|priv|secret|passphrase|wrapped|ct|epk|nonce|d)"\s*:/i, f);
+    }
   });
 });

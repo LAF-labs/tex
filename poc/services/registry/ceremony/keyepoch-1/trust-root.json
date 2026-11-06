@@ -1,0 +1,29 @@
+{
+  "keyEpoch": 1,
+  "keys": {
+    "root": {
+      "root-1": "uybpi640dHXw0f8mCe/g9Ej1ZKgmXtC+hezBf084NBg=",
+      "root-2": "N5gawj6akHawn/AsIF698DpmQPrOwIgZ+2dWRG8SzBI=",
+      "root-3": "Oyzmx1CCMbDgBkmMtA/xUaYmtb6d8mMBgYwrSWiw4cc="
+    },
+    "package": {
+      "package-1": "OGw4mQc2I4ZDKRYjQfGfvH9YTcw9+NdVEpeLXfsxRik=",
+      "package-2": "AwV3cSZHYgCiLKD3edkacjQrgvoEtTJ7v7cQzgIENws=",
+      "package-3": "baNYHUP7VEEvFDZF9QRv3/UVyipItqjWT+rsUwomyy8="
+    },
+    "policy": {
+      "policy-1": "Auoy1stbA0UFtrZUpnytK2KCYvTTRCSQDirrwGr4yGQ=",
+      "policy-2": "dF90/DrgXXmBZ7/ldgNEyddWdEgpJjq6KT0IfLHYsAI=",
+      "policy-3": "EvkupMcIA9JGpjddNNhtbgScqA/J7u2EkTTTKVrsy1c="
+    },
+    "emergency": {
+      "emergency-1": "h0wUMJvNWJGy7Hg+QGxKkNPFaSuPv+mBJSebxJXukOc="
+    },
+    "timestamp": {
+      "timestamp-1": "aIVsa2jN03OAaNZ+uPMjh1kIqGBF0d2eHchk44b86SA="
+    },
+    "release": {
+      "release-1": "DQG3gnFx0VJ6J/TXOxKZ5LMR0D6Wng5mMZmUDxldXwE="
+    }
+  }
+}

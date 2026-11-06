@@ -1,0 +1,8 @@
+{
+  "keyId": "root-1",
+  "alg": "ed25519",
+  "sig": "Ud1MD00BvvKcsEm0yLI5yFM2FuV6uaiffPsTtG_xne1dP1_ZGV0khDlNI56wH3KU5B_CmsKpGkYDc1Ebcr7rCg",
+  "kind": "trust_root",
+  "part": "content",
+  "sha256": "2d08bfe2bc4fff1be6fec1123235690d126c6078f5fccd999d7ae7190702fac5"
+}
