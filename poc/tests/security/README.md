@@ -11,7 +11,7 @@
 | `gate-bypass.sec.ts` | M5-1 게이트 우회 CE-7~16 | 정적 반쪽(엔진 core-validate·core-selector-ci 시험이 이름대로 있는지), CE-16 내장 상한 | 정적·CE-16 돈다, 실행 반쪽 10건 todo | 엔진 M2-1~M2-4 뒤 실행기 직접 주입 시나리오 |
 | `registry.sec.ts` | M5-1 레지스트리 회귀 | 엔진 고정 시드 샘플(`tests/fixtures/registry`): status·폐기 목록 한 글자 변조 거부, .sxp 비트 뒤집기 → 거부하거나 내용 동일, status 되감기 거부 | 돈다(4건) | 낮은 버전·keyEpoch 패키지 되감기(서명 샘플 필요), #56 상호 검증 |
 | `injection.sec.ts` | M5-1 인젝션 레드팀 회귀 | 모델 트랙 코퍼스(`s9-screens`·`l0-corpus`) → 결정적 사전 필터. 놓침 0(알려진 1건 목록화)·오탐 ≤ 5%(S17)·회피 변형 6종 | 돈다(오탐 3.2%) | S17 200건 코퍼스(M3-7·M1-8) |
-| `parsers.sec.ts` | M6-12 파서 퍼징·거부 | 파서 표(모듈·생성기·성질): 엔진 parseBizCert·extractDocMeta, docparse imageInfo(PNG·JPEG)·parse 입구(HEIC·SVG 등 받지 않는 형식)·readXlsx→parseSettlement(정상 xlsx 비트 변조)·parseReceipt. 거부는 코드 있는 오류로만. docparse `seedCorpus` 32종(PDF 제외)을 parse 입구에 넣고 fetch·소켓·DNS·eval·Function 가로채기 0건, 폭탄 압축·대용량·디코드 폭탄은 정해진 코드로 거부 | 돈다(퍼징 7·시드 32+2) | PDF 시드(Electron e2e), 숨김 텍스트 회귀, ADR-028 의존성 목록 |
+| `parsers.sec.ts` | M6-12 파서 퍼징·거부 | 파서 표(모듈·생성기·성질): 엔진 parseBizCert·extractDocMeta, docparse imageInfo(PNG·JPEG)·parse 입구(HEIC·SVG 등 받지 않는 형식)·readXlsx→parseSettlement(정상 xlsx 비트 변조)·readCertInfo(signCert.der 변조·8KB 초과·PEM·BER·뒤 덧붙임 거부)·parseReceipt. 거부는 코드 있는 오류로만. docparse `seedCorpus` 32종(PDF 제외)을 parse 입구에 넣고 fetch·소켓·DNS·eval·Function 가로채기 0건, 폭탄 압축·대용량·디코드 폭탄은 정해진 코드로 거부 | 돈다(퍼징 8·고정 대조 1·시드 32+2) | PDF 시드(Electron e2e), 숨김 텍스트 회귀, ADR-028 의존성 목록 |
 | `promotion-check.sec.ts` | ADR-035 결정 1.3 (라) | 제품 진입점이 `// PoC 폐기 대상` 파일을 import하지 않는다 | 돈다 | — |
 
 알려진 발견(소유 트랙에 보고):
