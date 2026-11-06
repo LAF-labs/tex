@@ -3,7 +3,7 @@
 // 하나라도 실패하면 호출하지 않는다. 실패 기록은 코드·카운트만(본문 무저장, D09·D16).
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import { identifierTripwire, normalizeForRedaction, wasMinted, type RedactedText } from '@sax/redaction';
 import type { ValidateFunction } from 'ajv';
 
@@ -90,7 +90,7 @@ function loadValidators(): NonNullable<typeof validators> {
   if (validators) return validators;
   // src·dist 모두 패키지 루트 한 단계 아래라 같은 상대 경로로 닿는다.
   const schema = JSON.parse(fs.readFileSync(new URL('../schemas/gateway-request.schema.json', import.meta.url), 'utf8')) as { $defs: Record<string, object> };
-  const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+  const Ajv2020 = ajv2020.default as typeof import('ajv').default;
   const ajv = new Ajv2020({ allErrors: false, strict: false });
   ajv.addSchema(schema);
   const id = 'https://sovereign-ax.dev/schemas/gateway-request.schema.json';

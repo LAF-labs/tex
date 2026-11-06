@@ -2,7 +2,7 @@
 // 형태는 schema/rate-table-package.schema.json 이 정본이고, 여기 타입은 그 모양을 그대로 옮긴 것이다.
 // 요율은 백만분율(ppm, 1% = 10,000), 금액은 원 단위 정수.
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import type { Rounding } from './money.ts';
 
@@ -103,7 +103,7 @@ let validator: ValidateFunction | null = null;
 function schemaValidator(): ValidateFunction {
   if (validator) return validator;
   const s = JSON.parse(fs.readFileSync(new URL('../schema/rate-table-package.schema.json', import.meta.url), 'utf8')) as object;
-  const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+  const Ajv2020 = ajv2020.default as typeof import('ajv').default;
   validator = new Ajv2020({ allErrors: true, strict: false }).compile(s);
   return validator;
 }

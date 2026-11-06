@@ -1,0 +1,175 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "cd ../../.. && pnpm install --frozen-lockfile",
+  "buildCommand": "cd ../../.. && pnpm build",
+  "outputDirectory": "public",
+  "functions": {
+    "api/sax.js": {
+      "maxDuration": 60
+    },
+    "api/internal.js": {
+      "maxDuration": 10
+    },
+    "api/cron.js": {
+      "maxDuration": 60
+    },
+    "api/registry.js": {
+      "maxDuration": 30
+    },
+    "api/registry-cron.js": {
+      "maxDuration": 60
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/v1/me",
+      "destination": "/api/sax?__p=/v1/me"
+    },
+    {
+      "source": "/v1/consents",
+      "destination": "/api/sax?__p=/v1/consents"
+    },
+    {
+      "source": "/v1/device-tokens",
+      "destination": "/api/sax?__p=/v1/device-tokens"
+    },
+    {
+      "source": "/v1/device-list",
+      "destination": "/api/sax?__p=/v1/device-list"
+    },
+    {
+      "source": "/v1/acct-claim",
+      "destination": "/api/sax?__p=/v1/acct-claim"
+    },
+    {
+      "source": "/v1/aik",
+      "destination": "/api/sax?__p=/v1/aik"
+    },
+    {
+      "source": "/v1/passkeys",
+      "destination": "/api/sax?__p=/v1/passkeys"
+    },
+    {
+      "source": "/v1/devices",
+      "destination": "/api/sax?__p=/v1/devices"
+    },
+    {
+      "source": "/v1/slots",
+      "destination": "/api/sax?__p=/v1/slots"
+    },
+    {
+      "source": "/v1/auth/:path*",
+      "destination": "/api/sax?__p=/v1/auth/:path*"
+    },
+    {
+      "source": "/v1/oauth/:path*",
+      "destination": "/api/sax?__p=/v1/oauth/:path*"
+    },
+    {
+      "source": "/v1/billing/:path*",
+      "destination": "/api/sax?__p=/v1/billing/:path*"
+    },
+    {
+      "source": "/v1/passkeys/:path*",
+      "destination": "/api/sax?__p=/v1/passkeys/:path*"
+    },
+    {
+      "source": "/v1/devices/:path*",
+      "destination": "/api/sax?__p=/v1/devices/:path*"
+    },
+    {
+      "source": "/v1/slots/:path*",
+      "destination": "/api/sax?__p=/v1/slots/:path*"
+    },
+    {
+      "source": "/v1/run-tokens",
+      "destination": "/api/sax?__p=/v1/run-tokens"
+    },
+    {
+      "source": "/v1/decide",
+      "destination": "/api/sax?__p=/v1/decide"
+    },
+    {
+      "source": "/v1/respond",
+      "destination": "/api/sax?__p=/v1/respond"
+    },
+    {
+      "source": "/v1/biz/status",
+      "destination": "/api/sax?__p=/v1/biz/status"
+    },
+    {
+      "source": "/v1/mailboxes",
+      "destination": "/api/sax?__p=/v1/mailboxes"
+    },
+    {
+      "source": "/v1/mailboxes/:path*",
+      "destination": "/api/sax?__p=/v1/mailboxes/:path*"
+    },
+    {
+      "source": "/v1/push-token",
+      "destination": "/api/sax?__p=/v1/push-token"
+    },
+    {
+      "source": "/v1/wake",
+      "destination": "/api/sax?__p=/v1/wake"
+    },
+    {
+      "source": "/v1/rooms",
+      "destination": "https://rooms.tax.laf-co.com/v1/rooms"
+    },
+    {
+      "source": "/registry/log/:path*",
+      "destination": "/api/registry?__p=/registry/log/:path*"
+    },
+    {
+      "source": "/admin/v1/:path*",
+      "destination": "/api/registry?__p=/admin/v1/:path*"
+    },
+    {
+      "source": "/registry/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/registry/:path*"
+    },
+    {
+      "source": "/policy/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/policy/:path*"
+    },
+    {
+      "source": "/packages/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/packages/:path*"
+    },
+    {
+      "source": "/releases/:path*",
+      "destination": "https://gncmivowifnzqurroecr.supabase.co/storage/v1/object/public/sax-registry/releases/:path*"
+    },
+    {
+      "source": "/api/internal/internal/v1/devices/:id",
+      "destination": "/api/internal?__p=/internal/v1/devices/:id"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/registry-cron",
+      "schedule": "15 * * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Strict-Transport-Security",
+          "value": "max-age=63072000; includeSubDomains"
+        },
+        {
+          "key": "X-Content-Type-Options",
+          "value": "nosniff"
+        }
+      ]
+    }
+  ]
+}

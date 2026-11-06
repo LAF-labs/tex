@@ -29,7 +29,7 @@ const K = sampleKeys();
 
 describe('레지스트리 샘플 묶음(고정 시드)', () => {
   it('파일은 생성 결과와 바이트 단위로 같다(서명은 결정적)', () => {
-    const listed = fs.readdirSync(DIR, { recursive: true, withFileTypes: true }).filter((d) => d.isFile() && d.name !== 'README.md').map((d) => path.relative(DIR, path.join(d.parentPath, d.name))).sort();
+    const listed = fs.readdirSync(DIR, { recursive: true, withFileTypes: true }).filter((d) => d.isFile() && d.name !== 'README.md').map((d) => path.relative(DIR, path.join(d.parentPath, d.name)).split(path.sep).join('/')).sort();
     assert.deepEqual(listed, [...samples.keys()].sort());
     for (const [p, b] of samples) assert.ok(file(p).equals(b), p);
   });

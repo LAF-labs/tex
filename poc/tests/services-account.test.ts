@@ -17,14 +17,14 @@ import {
   migrate,
   openSqlite,
   schemaColumns,
+  signInternalCall,
   type Sql,
 } from '../services/shared/src/index.ts';
 import { ACCOUNT_VISIBILITY, AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter } from '../services/account/src/index.ts';
-import { Clock, D, H, SoftPasskey, acctOp, cert, client, device, dpop, edKey, entry, revokeRec, type Device, type EdKey } from './services-kit.ts';
+import { Clock, D, H, SoftPasskey, acctOp, cert, client, device, dpop, edKey, entry, internalAuth, internalHeaders, revokeRec, type Device, type EdKey } from './services-kit.ts';
 
 const ORIGIN = 'https://account.test.invalid';
 const RP = { rpId: 'account.test.invalid', origins: [ORIGIN] };
-const INTERNAL = randomBytes(32).toString('hex');
 
 interface Env {
   clock: Clock;
@@ -59,7 +59,7 @@ async function start(): Promise<Env> {
     now: clock.now,
   });
   const logs: string[] = [];
-  const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internalSecret: INTERNAL });
+  const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internal: internalAuth() });
   const server = createServer(router, { logger: new Logger('account', (l) => logs.push(l), clock.now) });
   const base = await listen(server);
   return { clock, db, mail, pg, svc, server, req: client(base), logs, stopped };
@@ -633,22 +633,25 @@ describe('M4-5 계정: 내부 API·로그·저장 컬럼(D09 §1.1)', () => {
   before(async () => (e = await start()));
   after(() => e.server.close());
 
-  it('내부 기기 상태 API는 내부 비밀이 있어야 한다', async () => {
+  it('내부 기기 상태 API는 INTERNAL_CALL_KEY 서명이 있어야 한다(옛 Internal 비밀·다른 키 서명은 401)', async () => {
     const s = await login(e, 'int@example.com');
     const pc = await desktop(e, s);
-    assert.equal((await e.req('GET', `/internal/v1/devices/${pc.d.id}`)).status, 401);
-    assert.equal((await e.req('GET', `/internal/v1/devices/${pc.d.id}`, { headers: { authorization: 'Internal wrong' } })).status, 401);
-    const r = await e.req('GET', `/internal/v1/devices/${pc.d.id}`, { headers: { authorization: `Internal ${INTERNAL}` } });
+    const dev = `/internal/v1/devices/${pc.d.id}`;
+    const sus = `${dev}/auto-suspend`;
+    assert.equal((await e.req('GET', dev)).status, 401);
+    assert.equal((await e.req('GET', dev, { headers: { authorization: 'Internal wrong' } })).status, 401);
+    assert.equal((await e.req('GET', dev, { headers: { authorization: signInternalCall(randomBytes(32), 'GET', dev) } })).status, 401);
+    const r = await e.req('GET', dev, { headers: internalHeaders('GET', dev) });
     assert.equal(r.json.state, 'active');
     assert.equal(r.json.role, 'desktop');
-    // 게이트웨이 자동 정지(D09 §3): 내부 비밀 필요, 정지 훅·알림, 두 번째는 변화 없음
-    assert.equal((await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`)).status, 401);
-    const a = await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`, { headers: { authorization: `Internal ${INTERNAL}` } });
+    // 게이트웨이 자동 정지(D09 §3): 서명 필요, 정지 훅·알림, 두 번째는 변화 없음
+    assert.equal((await e.req('POST', sus)).status, 401);
+    const a = await e.req('POST', sus, { headers: internalHeaders('POST', sus) });
     assert.deepEqual(a.json, { suspended: true });
     assert.deepEqual(e.stopped, [pc.d.id]);
     assert.ok(e.mail.outbox.some((m) => m.kind === 'device_auto_suspended'));
-    assert.deepEqual((await e.req('POST', `/internal/v1/devices/${pc.d.id}/auto-suspend`, { headers: { authorization: `Internal ${INTERNAL}` } })).json, { suspended: false });
-    assert.equal((await e.req('GET', `/internal/v1/devices/${pc.d.id}`, { headers: { authorization: `Internal ${INTERNAL}` } })).json.state, 'suspended');
+    assert.deepEqual((await e.req('POST', sus, { headers: internalHeaders('POST', sus) })).json, { suspended: false });
+    assert.equal((await e.req('GET', dev, { headers: internalHeaders('GET', dev) })).json.state, 'suspended');
   });
 
   it('접근 로그는 고정 필드·라우트 패턴뿐이고 이메일·IP·토큰·기기 ID가 없다', async () => {

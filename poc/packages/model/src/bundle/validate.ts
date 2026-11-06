@@ -1,7 +1,7 @@
 // 번들 정의 검증: 스키마 → 구조 → BV-01~06(D03 §3.2) + 선택지 ≤ 26(D04 §1, System One 호환).
 // 엔진 로더와 번들 CI(tests/model-bundles.test.ts)가 같은 함수를 쓴다.
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
+import ajv2020 from 'ajv/dist/2020.js';
 import type { ValidateFunction } from 'ajv';
 import { computeDigest } from './digest.ts';
 import { progressOutcomes, reachableOutcomes, regions, representativeStates, resolveAnswer } from './evaluate.ts';
@@ -28,7 +28,7 @@ let schemaValidator: ValidateFunction | null = null;
 function schema(): ValidateFunction {
   if (schemaValidator) return schemaValidator;
   const s = JSON.parse(fs.readFileSync(new URL('../../schemas/bundle.schema.json', import.meta.url), 'utf8')) as object;
-  const Ajv2020 = createRequire(import.meta.url)('ajv/dist/2020') as typeof import('ajv').default;
+  const Ajv2020 = ajv2020.default as typeof import('ajv').default;
   schemaValidator = new Ajv2020({ allErrors: true, strict: false }).compile(s);
   return schemaValidator;
 }

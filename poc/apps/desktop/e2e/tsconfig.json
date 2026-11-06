@@ -3,5 +3,5 @@
   "$comment": "e2e·측정(ADR-035 W-7). 앱(src)과 따로 컴파일해 제품 dist에 들어가지 않는다. 앱 모듈은 빌드된 ../dist/*.js(타입은 .d.ts)로 부른다. 출력은 ../e2e-dist.",
   "compilerOptions": { "rootDir": ".", "outDir": "../e2e-dist" },
   "include": ["*.ts"],
-  "references": [{ "path": ".." }, { "path": "../../../packages/db" }, { "path": "../../../packages/engine" }, { "path": "../../../packages/docparse" }, { "path": "../../../packages/platform" }, { "path": "../../../packages/vault" }, { "path": "../../../packages/net" }]
+  "references": [{ "path": ".." }, { "path": "../../../packages/db" }, { "path": "../../../packages/engine" }, { "path": "../../../packages/docparse" }, { "path": "../../../packages/platform" }, { "path": "../../../packages/vault" }, { "path": "../../../packages/net" }, { "path": "../../../packages/remote" }]
 }

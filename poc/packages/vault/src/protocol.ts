@@ -34,6 +34,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
+    // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))도 부른다. 개인키는 그대로 금고 안이다.
+    'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
   ],
   secretInput: ['secret.provide', 'secret.store'],
 };

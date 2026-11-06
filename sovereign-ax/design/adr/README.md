@@ -22,7 +22,7 @@
 | [ADR-018](ADR-018-document-demand-priority.md) | 서류 수요 기반 플레이북 우선순위: 홈택스 민원증명 묶음을 MVP 코어로, 법인등기·위택스 베타, 공고문 → 서류 꾸러미 | 채택, 결정 3·조건의 W-01·S-03·S-02를 켜는 방법은 ADR-022로 정정 |
 | [ADR-019](ADR-019-single-session-chat-ui.md) | 단일 메인 세션과 대화 중심 화면, PC·폰 공용 타임라인(원본은 PC 로컬 DB, 서버 무저장) | 채택 |
 | [ADR-020](ADR-020-design-review-issuance-auth-approval.md) | 화면 디자인 검토 결정: 발급 인증 고정·설정 변경, 보안카드 완전 위임(로컬 암호화), 카드 승인(별도 승인 창 폐지), 응답 끊김 자동 조회, 부가세 토글, 새 PC는 폰 승인·PASS | 채택(PoC 확인 조건 있음), 결정 4의 버튼 위치·승인 근거는 ADR-021, 결정 3의 저장 방식은 ADR-026으로 대체, 결정 7의 복구 경로는 ADR-029로 구체화 |
-| [ADR-021](ADR-021-pc-approval-evidence-main-approval-bar.md) | PC 승인의 근거: main 소유 승인 바(스크립트 없는 `WebContentsView`, main이 위치를 정하고 클릭을 직접 관찰, 대화 카드에는 승인 버튼 없음)와 선택 Windows Hello 확인 | 채택(PoC-6 확인·PoC-9 배치 선택 조건 있음), 클릭 활성화 예외·중복 표시는 ADR-027, Hello 합치기는 ADR-026으로 개정 |
+| [ADR-021](ADR-021-pc-approval-evidence-main-approval-bar.md) | PC 승인의 근거: main 소유 승인 바(스크립트 없는 `WebContentsView`, main이 위치를 정하고 클릭을 직접 관찰, 대화 카드에는 승인 버튼 없음)와 선택 Windows Hello 확인 | 채택(PoC-6 확인·PoC-9 배치 선택 조건 있음), **2026-11-06 개정 결정 7: main 승인 카드 하나(값 전체·[중지]·[승인하고 발급], 기본 포커스 [중지])**, 클릭 활성화 예외·중복 표시는 ADR-027, Hello 합치기는 ADR-026으로 개정 |
 | [ADR-022](ADR-022-wetax-portal-ceiling.md) | 위택스 운영 수준 상한(`wetax: postprocess`)과 포털 상한 판정 기준: 사전 허락이 필요한 포털은 허락 회신 + 앱 업데이트 뒤에만 자동화 | 채택 |
 | [ADR-023](ADR-023-policy-poll-interval.md) | 운영 정책·status 조회 주기(15분 + 실행 직전 재조회)와 반영 시간 목표(켜진 앱 20분) | 채택 |
 | [ADR-024](ADR-024-cross-pc-duplicate-warning.md) | 기기 간 중복 발급 경고: Phase 1은 포털 발급목록 기준선(`$dup.portalExisting`, 서버 기록 없음), 서버 업무 키 표시는 Phase 2·데스크톱 2대 이상 계정만, `K_idx`는 새 PC 연결(A-03)이 넘김 | 채택; 결정 6의 RK 보관 방식은 ADR-029 결정 1이 정함 |
@@ -39,5 +39,6 @@
 | [ADR-035](ADR-035-poc-promotion-two-week-phase1.md) | PoC 코드를 Phase 1 기반으로 승격, 2주 병렬 개발(트랙·파일 경계·팀장 경유 계약), G1을 통합 판정(G1-a)·출시 판정(G1-b)으로 재정의, D14 공수는 범위 기준량 | 채택(2026-11-05, 결정 1~5 본문), "(제안)" 항목은 제안 |
 | [ADR-036](ADR-036-issuance-auth-fallback-pipeline.md) | 발급 인증 폴백 파이프라인: 공동인증서·보안카드·간편인증의 로그인·서명 경로, 화면 판정·복구 단계 0~4(D03 L0~L3·D04 L0/L1/L2 재사용, 커밋 구간은 단계 0만), 발급 취소 H-01c(전액 상쇄 수정세금계산서), 실측 계획 | 채택(2026-11-05, 결정 1~3 본문), 결정 4·5의 일정·경로·공수와 "(제안)" 항목은 제안 |
 | [ADR-037](ADR-037-phase1-registry-solo-software-keys.md) | Phase 1 레지스트리 서명 키 단독 보유·소프트웨어 키 모드: 사용자 1인이 루트·패키지·정책·긴급·릴리스 키 보유(macOS 키체인·Touch ID), 2-of-3 형식 유지, 타임스탬프 키는 서버 비밀값, 잃는 성질과 승격 경로 | 채택(사용자 결정 2026-11-06) |
+| [ADR-038](ADR-038-email-password-login-auto-login.md) | 이메일·비밀번호 로그인과 자동 로그인: 비밀번호·이메일 코드·패스키, `argon2id` + 서버 페퍼, 계정 잠금·열거 방지, 코드 재설정, 회전 갱신 토큰(재사용 감지 시 전체 폐기), 금고·기기 키와 무관 | 채택(사용자 결정 2026-11-06) |
 
 AUDIT-D(설계 v1.3 + PoC 코드) 확정 53건의 처리 배정은 [D19 §3.5](../19-attack-surface.md)에 있다. ADR-025~029가 48건, D19 등록만이 5건이다. AUDIT-D는 처음에 ADR-022~026으로 적었고, main의 ADR-022·023과 겹쳐 2026-11-03 병합 때 ADR-025~029로 옮겼다(022→025 … 026→029, 예약 027→030).

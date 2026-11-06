@@ -1,0 +1,72 @@
+<!-- @dsCard group="승인" height=760 -->
+<!doctype html>
+<html lang="ko">
+<head><meta charset="utf-8"><title>ApprovalCard</title></head>
+<body>
+<style>
+/* 미리보기 전용. 실제 카드는 main이 앱 내장 CSS로 그린다(ADR-021 결정 7). */
+.ac-view { background: var(--canvas); padding: 12px; font-family: var(--font-system); max-width: 600px; }
+.ac-done { display: inline-flex; align-items: center; gap: 8px; height: 30px; padding: 0 12px; border-radius: 15px; background: var(--surface); border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); margin-bottom: 10px; }
+.ac-done b { color: var(--ink); font-weight: 600; }
+.ac { background: var(--surface); border: 1.5px solid var(--accent); border-radius: var(--radius-lg); padding: 16px; display: grid; gap: 12px; color: var(--ink); }
+.ac.is-attention { border-color: var(--attention); }
+.ac-hd { display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 600; }
+.ac-chip { font-size: 12px; font-weight: 500; height: 22px; padding: 0 8px; border-radius: 11px; display: inline-flex; align-items: center; gap: 6px; color: var(--accent); border: 1px solid var(--accent); }
+.ac-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.ac.is-attention .ac-chip { color: var(--attention); border-color: var(--attention); }
+.ac-total { font-size: 24px; line-height: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ac-split { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.ac-kv { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 6px 12px; margin: 0; font-size: 14px; line-height: 22px; }
+.ac-kv dt { font-size: 12px; font-weight: 500; color: var(--ink-3); }
+.ac-kv dd { margin: 0; display: flex; gap: 8px; align-items: center; min-width: 0; font-variant-numeric: tabular-nums; }
+.ac-flag { font-size: 12px; font-weight: 500; line-height: 18px; padding: 0 6px; border: 1px solid currentColor; border-radius: var(--radius-sm); color: var(--accent); white-space: nowrap; }
+.ac-note { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.ac-acts { display: flex; gap: 48px; }
+.ac-acts button { font: inherit; height: 44px; border-radius: var(--radius-md); font-size: 16px; cursor: default; }
+.ac-stop { width: 112px; flex: none; background: var(--surface); border: 1px solid var(--line-strong); color: var(--ink); font-weight: 500; outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.ac-go { flex: 1; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 700; }
+.ac-go.is-unarmed { background: var(--accent-soft); color: var(--accent); }
+.ac.is-attention .ac-go { background: var(--attention); color: var(--on-accent); }
+.ac-label { font-family: var(--font-sans); font-size: 12px; color: var(--ink-3); margin: 16px 0 6px; }
+</style>
+<div class="sx-stage">
+  <div class="ac-label">승인 (무장됨) · 처음 거래</div>
+  <div class="ac-view">
+    <div class="ac-done"><span aria-hidden="true">✓</span><b>작성 완료</b>세금계산서 · 한빛식자재 · 3,630,000원</div>
+    <article class="ac" aria-label="승인 카드">
+      <div class="ac-hd"><span>세금계산서 · 한빛식자재</span><span class="ac-chip">승인 대기</span></div>
+      <div><div class="ac-total">3,630,000원</div><div class="ac-split">공급가 3,300,000 + 세액 330,000</div></div>
+      <dl class="ac-kv">
+        <dt>공급받는자</dt><dd>한빛식자재 · 214-86-51234 <span class="ac-flag">처음 거래</span></dd>
+        <dt>품목</dt><dd>식자재 납품</dd>
+        <dt>작성일자</dt><dd>2026-11-06</dd>
+        <dt>받는 이메일</dt><dd>tax@hanbit-food.kr</dd>
+      </dl>
+      <div class="ac-note">홈택스에서 다시 읽은 값이에요. 승인하면 바로 발급되고 한빛식자재 메일로 가요. 되돌릴 수 없어요.</div>
+      <div class="ac-acts"><button type="button" class="ac-stop">중지</button><button type="button" class="ac-go">승인하고 발급</button></div>
+    </article>
+  </div>
+
+  <div class="ac-label">무장 전 0.6초</div>
+  <div class="ac-view">
+    <article class="ac" aria-label="승인 카드 무장 전">
+      <div class="ac-hd"><span>세금계산서 · 한빛식자재</span><span class="ac-chip">승인 대기</span></div>
+      <div class="ac-acts"><button type="button" class="ac-stop">중지</button><button type="button" class="ac-go is-unarmed">승인하고 발급</button></div>
+    </article>
+  </div>
+
+  <div class="ac-label">InDoubt 증언(황토, 같은 틀)</div>
+  <div class="ac-view">
+    <article class="ac is-attention" aria-label="증언 카드">
+      <div class="ac-hd"><span>세금계산서 · 한빛식자재</span><span class="ac-chip">확인 필요</span></div>
+      <dl class="ac-kv">
+        <dt>공급받는자</dt><dd>한빛식자재 · 214-86-51234</dd>
+        <dt>합계</dt><dd>3,630,000원 · 세액 330,000원</dd>
+      </dl>
+      <div class="ac-note">홈택스에서 직접 확인했을 때만 눌러 주세요. 발급목록 반영이 늦을 수 있습니다.</div>
+      <div class="ac-acts"><button type="button" class="ac-stop">중지</button><button type="button" class="ac-go">홈택스 발급목록에 없음을 확인했어요</button></div>
+    </article>
+  </div>
+</div>
+</body>
+</html>
