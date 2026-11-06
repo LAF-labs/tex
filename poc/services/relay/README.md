@@ -19,6 +19,7 @@
 | relay_stats | day, kind, size_bucket, n | 메시지 수·크기 버킷·시각(7일), 바깥 kind |
 | lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
+| int_nonces | nonce, expires_at | 내부 호출 서명의 1회용 무작위 값(요청 내용·출처 없음). 서명 시각 + 60초 뒤 삭제 |
 
 없는 것: 평문 IP(한도 키는 당일 솔트 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 계정 ID, 기기↔우편함 연결, 페어링 룸(메모리, 만든 데스크톱 기기 ID의 sha256과 소비 여부만 같이), Noise·HPKE 평문, 의도 봉투의 `pair_id`·`seq`·`exp`. 접근 로그는 라우트 패턴뿐이고 `aid`도 남기지 않는다.
 
@@ -31,7 +32,7 @@
 
 ```bash
 cd poc && pnpm build
-SAX_SQLITE_FILE=relay.db QUEUE_KEY=… LIMIT_ID_KEY=… RELAY_PUBLIC_ORIGIN=https://relay.example TOKEN_PUBLIC_KEYS=k1:… ACCOUNT_INTERNAL_URL=http://account:8080 INTERNAL_TOKEN=… node services/relay/dist/main.js
+SAX_SQLITE_FILE=relay.db QUEUE_KEY=… LIMIT_ID_KEY=… RELAY_PUBLIC_ORIGIN=https://relay.example TOKEN_PUBLIC_KEYS=k1:… ACCOUNT_INTERNAL_URL=http://account:8080 INTERNAL_CALL_KEY=… node services/relay/dist/main.js
 ```
 
 컨테이너: `docker build -f services/relay/Dockerfile .`(빌드 컨텍스트 `poc/`). 실제 배포는 Phase 1 범위 밖이다.

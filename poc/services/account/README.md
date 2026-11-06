@@ -26,6 +26,7 @@
 | consents | account_id, version, at | 동의 이력 |
 | lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
+| int_nonces | nonce, expires_at | 내부 호출 서명의 1회용 무작위 값(요청 내용·출처 없음). 서명 시각 + 60초 뒤 삭제 |
 
 저장하지 않는 것: 평문 IP·이메일·기기 ID 한도 키(한도 키는 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 로그인 코드 평문, 사업자번호, 결제 수단, 접근 로그의 본문·경로 변수 값.
 

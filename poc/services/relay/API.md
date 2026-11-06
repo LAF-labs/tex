@@ -25,7 +25,7 @@
 | `PUT /v1/mailboxes/:id/bundle` | 데스크톱 | 쓰기 | `{bundle: base64}`(≤ 2KB) | `204` | 우편함 번들 슬롯(`Vx` 서명 `{Qx, valid_from, valid_to, seq}`, 릴레이는 검증하지 않음) |
 | `GET /v1/mailboxes/:id/bundle` | 둘 다 | 읽기 | — | `200 {bundle}` | 없으면 `relay.mailbox_not_found` |
 | `POST /v1/rooms` | 데스크톱 | — | `{roomId}`(16B base64url 22자, QR의 `room_id`) | `201 {expiresAt}` | 계정당 시간당 5개 `policy.rate_limited`, 중복 `request.param_rejected` |
-| `POST /internal/v1/devices/:id/stopped` | 내부(`Internal <secret>`) | — | — | `200 {closed}` | 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다 |
+| `POST /internal/v1/devices/:id/stopped` | 내부(서명, [계정 API](../account/API.md) 인증 표기) | — | — | `200 {closed}` | 계정 서비스의 긴급 정지·폐기 훅: 그 기기의 라이브 연결을 즉시 끊는다 |
 | `POST /internal/v1/queues/purge` | 내부 | — | — | `200 {deleted}` | 릴레이 침해 대응: 큐 전면 폐기(D09 §11) |
 | `POST /internal/v1/rooms/:id/redeem` | 내부 | — | `{deviceId}`(등록하는 데스크톱) | `200 {ok:true}` | 계정 서비스의 폰 대리 등록(팀장 결정 2026-11-06). 그 데스크톱이 만든 룸이고, 정원 2가 한 번 찼고(폰이 붙음), 만료 전이고, 아직 쓰지 않았으면 한 번만 소비한다(룸은 닫지 않는다). 이미 쓴 룸이면 `409 relay.room_used`(그 PC에만 보인다). 그 밖은 모두 `404 relay.room_unavailable` |
 

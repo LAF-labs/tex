@@ -132,19 +132,23 @@ class PgSql implements Sql {
   }
 }
 
-/** 운영: DATABASE_URL. TLS·풀 크기는 연결 문자열로(공급사 중립, D09 §9.1). */
-export function openPg(url: string): Sql {
-  const pool = new pg.Pool({ connectionString: url, max: 10 });
+/** 운영: DATABASE_URL. TLS는 연결 문자열로(공급사 중립, D09 §9.1). 풀 크기는 인스턴스당(함수는 1~2, 상시 서버는 10). */
+export function openPg(url: string, max = 10): Sql {
+  const pool = new pg.Pool({ connectionString: url, max });
   return new PgSql(pool, pool);
 }
 
 export function openFromEnv(env: NodeJS.ProcessEnv): Sql {
-  if (env.DATABASE_URL) return openPg(env.DATABASE_URL);
+  if (env.DATABASE_URL) {
+    const max = env.DATABASE_POOL_MAX ?? '10';
+    if (!/^[1-9][0-9]?$/.test(max)) throw new Error('config_DATABASE_POOL_MAX');
+    return openPg(env.DATABASE_URL, Number(max));
+  }
   if (env.SAX_SQLITE_FILE) return openSqlite(env.SAX_SQLITE_FILE);
   throw new Error('config_DATABASE_URL');
 }
 
-const subst = (sqlText: string, dialect: Sql['dialect']) =>
+export const subst = (sqlText: string, dialect: Sql['dialect']) =>
   sqlText.replaceAll('{{BLOB}}', dialect === 'pg' ? 'BYTEA' : 'BLOB').replaceAll('{{BIGINT}}', dialect === 'pg' ? 'BIGINT' : 'INTEGER');
 
 /** migrations/NNN_*.sql을 차례로 적용한다(서비스 이름별 버전 기록). 이미 적용한 번호는 건너뛴다. */
