@@ -1,13 +1,14 @@
 // 셸 온보딩 e2e(M4-2, 08 §4 O-01~O-06·동의 4종): 실제 렌더러·preload·main 처리기로 온보딩을 끝까지 간다(fixture 모드, 목업 어댑터).
-// 실행: electron apps/desktop/dist/shell-onboarding-e2e.js → reports/raw/m4-2-onboarding.json. 앱 폴더·키체인을 쓰지 않는다.
+// 실행: electron apps/desktop/e2e-dist/shell-onboarding-e2e.js → reports/raw/m4-2-onboarding.json. 앱 폴더·키체인을 쓰지 않는다.
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app } from 'electron';
 import type { Profile as DbProfile } from '@sax/db';
-import { CONSENT_NOTICES } from './onboarding.ts';
-import { MOCK_CONSENT_CONFIG } from './onboarding-mock.ts';
-import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
+import { CONSENT_NOTICES } from '../dist/onboarding.js';
+import { MOCK_CONSENT_CONFIG } from '../dist/onboarding-mock.js';
+import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
+import { DEMO_DEV } from '../dist/demo-dev.js';
 
 registerShellSchemes();
 const USER_DATA = path.join(app.getPath('temp'), `sax-e2e-onb-${process.pid}`);
@@ -49,7 +50,7 @@ const callErr = (m: string, p: unknown) => js<string>(`window.sax.call(${JSON.st
 const noPasswordInputs = () => js<boolean>(`!document.querySelector('input[type=password]')`);
 
 async function main() {
-  S = await startShell({ width: 1280, height: 820, show: false, onboarding: true });
+  S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, onboarding: true });
   S.win.webContents.on('console-message', (e) => {
     if (e.level === 'error') console.log(`  [renderer] ${e.message}`);
   });

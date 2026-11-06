@@ -81,10 +81,12 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
     assert.equal(findDebugSwitch((s) => s === 'remote-debugging-port'), 'remote-debugging-port');
   });
 
-  it('pnpm start:hometax = shell.js --portal=hometax, shell.ts가 그 인자로 hometax 엔진을 띄운다', () => {
+  it('pnpm start:hometax = shell.js, 제품 진입점 shell.ts는 hometax 엔진만 띄운다(fixture·시연 연결 없음, ADR-035 W-7)', () => {
     const pkg = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')) as { scripts: Record<string, string> };
     assert.equal(pkg.scripts['start:hometax'], 'pnpm build && electron apps/desktop/dist/shell.js --portal=hometax');
-    assert.match(src('shell.ts'), /--portal=hometax/);
+    // 가짜 홈택스·시연은 demo-shell.ts(pnpm demo)에만 있다. 제품 진입점에는 그 길이 없다.
+    assert.ok(!/dev:|DEMO_DEV|demo-|fixture/.test(src('shell.ts').replace(/^\/\/.*$/gm, '')));
+    assert.equal(pkg.scripts.demo, 'pnpm build && electron apps/desktop/dist/demo-shell.js');
     assert.match(src('shell.ts'), /engine: \{ portal: \{ kind: 'hometax' \} \}/);
     assert.match(src('shell.ts'), /prepareLayout\(root\)/);
   });

@@ -1,6 +1,7 @@
 # ADR-014 docparse 렌더러 샌드박스 격리와 main 승인 창 기반 로컬 비가역 승인
 
 상태: 채택(S13b 조건부) · 2026-10-28 (docparse 성능은 스파이크 S13b 결과에 조건부, 승인 입력은 재감사 E-06 반영) · **§2(main 승인 창)는 ADR-020으로 대체(2026-10-30), 로컬 승인 근거는 ADR-021(main 소유 승인 바, 2026-10-31)** · docparse 창 `disableDialogs: true`와 공용 하드닝은 [ADR-025](ADR-025-poc3-real-account-safety-baseline.md) 결정 8(2026-11-03, AUDIT-D N-68)
+2026-11-06 정합(팀장 지시, 큐 1~15): 결정의 pdf.js `isEvalSupported:false` 줄에 버전 비고(docparse PR #78).
 근거: 공격표면 감사 A-14, A-15(research/AUDIT-A-local-desktop.md), A/C-06, design/19-attack-surface.md
 
 ## 맥락
@@ -15,7 +16,7 @@
 - 전용 `session` 파티션: 모든 네트워크 요청 취소, 권한 요청·확인 전부 거부, 탐색·새 창 거부.
 - preload는 MessagePort 수신 하나만 노출한다. 그 안에서 pdf.js와 tesseract.js(wasm)가 돈다.
 - 입력은 main이 읽은 **바이트**(파일 핸들·경로 아님), 출력은 main이 JSON Schema로 검증한 `{text, pages, hasTextLayer}`(또는 인증서 `{subject, issuer, notBefore, notAfter}`)뿐이다. 스키마 밖 출력은 버린다.
-- pdf.js `isEvalSupported:false`, 버전 고정, 월 1회 공지 점검. 작업마다 새 창, 끝나면 파기. 처리 시간·메모리 상한 초과 시 파기.
+- pdf.js `isEvalSupported:false`, 버전 고정, 월 1회 공지 점검. 비고(docparse PR #78): `isEvalSupported:false`는 pdf.js 6.4.299에서 명시적 안전장치다. 이 버전에는 eval 경로가 없다. 작업마다 새 창, 끝나면 파기. 처리 시간·메모리 상한 초과 시 파기.
 - 같은 샌드박스에서 NPKI `signCert.der`(공개 인증서)를 파싱한다(D05 §6).
 - **자동 파싱 축소**: 자동 파싱 대상은 staging(금고가 정한 다운로드·인쇄 경로)과 사용자가 고른 파일뿐이다. 다운로드·인쇄·사용자 지정 폴더는 "작업 시작 후 생성 + 사용자 확인" 후보만 만든다(D17 §1.3).
 

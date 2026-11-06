@@ -1,6 +1,7 @@
 # 소버린 AX 하네스 — 사업·개발 기획서
 
 > 작성일: 2026-10-27 · 상태: **기획 v1.2 · 설계 v1.3(공격표면 감사 반영, 2026-10-28) · AUDIT-D 반영 2026-11-03(ADR-025~029) · PoC 코드 승격·2주 병렬 개발 2026-11-05(ADR-035)** · 출시 게이트(G1-a 통합·G1-b 출시)는 04 문서, 가능성 검토는 06 문서, 감사 처리 결정은 design/19
+> 2026-11-06 정합(팀장 지시, 큐 15): 문서 표의 JSON 스키마 9종 → 12종.
 > 모토: **"본인의 데이터는 본인이 갖고 있어야 한다 — 소버린 AX"**
 
 ## 한 줄 정의
@@ -31,7 +32,7 @@
 | [08-screen-plan.md](08-screen-plan.md) | 화면·기능 기획: 제품 원칙, 정보 구조, 화면 34개(PC 27·모바일 7), 채팅 온보딩, 작업 상태 흐름, 서류 꾸러미 카드, 예외 상태, Claude Design 전달 사항 |
 | [design-system/](design-system/README.md) | 디자인 시스템: 색(파랑 한 색 + 황토 주의색, 라이트·다크), 서체, 데이터 위계 D1~D6과 값의 확실성, 컴포넌트 15개 |
 | [outreach/](outreach/README.md) | 대외 문서 초안(D15 F-04): 행안부·국세청 공문, 개인정보위 질의, 법률 질의 6건, 붙임, 설계 대조표. 발송 전 yulmu 확인 |
-| [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 9종, ADR-001~029(ADR-024는 별도 PR, ADR-030 예약) |
+| [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 12종(`status`·`revoked_keys`·`data_descriptor` 추가), ADR-001~029(ADR-024는 별도 PR, ADR-030 예약) |
 | [design/19-attack-surface.md](design/19-attack-surface.md) | 공격표면 감사 101건(Critical 1·High 31·Medium 57·Low 12, 채택 97·변형 3·수용 1) 처리 결정 등록부, 보안 재감사 신규 18건, 위협 주체 통합표, 상충 해소, 운영자 가시성, 데이터 주권 지점, AUDIT-D 확정 53건(High 3·Medium 33·Low 17, §3.5) |
 | [research/](research/) | 리서치 노트 R1~R15(R9 공고문 제출서류 집계, R10 서류 발급 사실표, R11 PC 승인 근거: Electron 입력 이벤트·Windows Hello, R13 법적 리스크 1차 검토: 로폼 AI 질의 10건과 구조를 바꾸지 않는 해법, R14 법적 리스크 2차 검토: 11-05 결정·제안 10건, 1차 자료 기반, R15 시온랩 회계 자동화 조사와 배울 점·시연 영상 절차서 대조), 검수 REVIEW-A~E, 감사 AUDIT-A~D |
 
