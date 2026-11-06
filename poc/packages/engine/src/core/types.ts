@@ -20,7 +20,8 @@ export type Cond =
   | { inputVerified: string }
   | { profileHas: string }
   | { artifact: string }
-  | { sumEquals: { names: string[]; target: string } }
+  /** readback 값 산술(D02 §8 s19d): parts의 합 = total. 둘 다 readback fieldKey이고 화면을 다시 읽지 않는다(IR rev v1.3.2). */
+  | { sumEquals: { parts: string[]; total: string } }
   | { readbackEquals: { fieldKey: string; ref: string } }
   | { fieldsFilled: { fields: string[] } }
   | { all: Cond[] }
