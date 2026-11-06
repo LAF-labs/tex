@@ -4,6 +4,7 @@
 // 마스킹을 거치지 않은 텍스트(발급 영수증 없음)·식별자 모양·이미지는 보안 이벤트(코드만)를 남기고 차단한다(D06 §4).
 import { createHash, randomUUID } from 'node:crypto';
 import { GATEWAY_ORIGIN, GATEWAY_PATHS, GatewayError, gatewayErrorOf, type EgressSecurityEvent, type GatewayAuth } from './gateway.ts';
+import { CLOUD_MAX_BODY, CLOUD_MAX_BYTES, cloudHeaders, cloudRequestCheck, cloudSocketCheck, type CloudMethod } from './cloud.ts';
 import { ModelGuard, type BundleAllowEntry, type GatewayDecideBody, type GatewayRespondBody, type GuardCode, type ModelGuardConfig } from './model-guard.ts';
 
 export interface Destination {
@@ -94,6 +95,19 @@ export interface EgressOptions {
   onSecurityEvent?: (e: EgressSecurityEvent) => void;
   /** 시험용: process.env 대신 볼 환경. */
   env?: NodeJS.ProcessEnv;
+  /**
+   * 개발 스택(http/ws://localhost·127.0.0.1)의 계정·릴레이를 연다. 개발 빌드 진입점만 켠다. 기본은 꺼짐이라 운영 빌드의 cloud()는
+   * https://tax.laf-co.com·wss://rooms.tax.laf-co.com만 연다.
+   */
+  cloudDevLocal?: boolean;
+}
+
+/** cloud() 요청. url은 공개 주소 전체(DPoP htu와 같은 값), body는 JSON 문자열(GET·DELETE는 없음) */
+export interface CloudRequest {
+  method: CloudMethod;
+  url: string;
+  headers?: Record<string, string>;
+  body?: string;
 }
 
 /** TLS 신뢰를 바꾸는 환경 변수 이름(N-23). 보이면 모델·odcloud 요청을 보내지 않는다. */
@@ -130,7 +144,7 @@ export interface EgressResponse {
 }
 
 export class EgressError extends Error {
-  readonly code: 'destination_not_allowed' | 'path_not_allowed' | 'timeout' | 'network' | 'bad_response' | 'egress_env_tampered';
+  readonly code: 'destination_not_allowed' | 'path_not_allowed' | 'header_not_allowed' | 'timeout' | 'network' | 'bad_response' | 'egress_env_tampered';
   readonly status?: number;
   constructor(code: EgressError['code'], status?: number) {
     super(code);
@@ -306,6 +320,80 @@ export class Egress {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /**
+   * 계정·릴레이 HTTP의 유일한 입구(cloud.ts 허용 목록). 메서드·경로는 정확히 일치, 헤더는 인증·DPoP·우편함 토큰만, 리디렉션은 따르지 않는다.
+   * 감사 기록에는 경로 대신 경로 이름만 남긴다(우편함 ID 등 없음). 응답 JSON은 비신뢰 값 그대로 돌려준다.
+   */
+  async cloud(req: CloudRequest): Promise<EgressResponse> {
+    const check = cloudRequestCheck(req.method, req.url);
+    if (check === 'origin') throw new EgressError('destination_not_allowed');
+    if (check === 'path') throw new EgressError('path_not_allowed');
+    if (check.kind === 'dev' && !this.opts.cloudDevLocal) throw new EgressError('destination_not_allowed');
+    const headers = cloudHeaders(req.headers);
+    if (!headers) throw new EgressError('header_not_allowed');
+    const hasBody = req.method === 'POST' || req.method === 'PUT';
+    if (hasBody !== (req.body !== undefined)) throw new EgressError('path_not_allowed');
+    if (req.body !== undefined) {
+      if (typeof req.body !== 'string' || Buffer.byteLength(req.body) > CLOUD_MAX_BODY) throw new EgressError('path_not_allowed');
+      try {
+        JSON.parse(req.body);
+      } catch {
+        throw new EgressError('path_not_allowed');
+      }
+    }
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const u = new URL(req.url);
+    const target = check.kind === 'prod' && this.opts.testOrigins?.cloud ? this.opts.testOrigins.cloud + u.pathname : req.url;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 10_000);
+    try {
+      const res = await fetch(target, {
+        method: req.method,
+        headers: { accept: 'application/json', ...(req.body !== undefined ? { 'content-type': 'application/json' } : {}), ...headers },
+        body: req.body,
+        signal: ctl.signal,
+        redirect: 'error',
+      });
+      this.audit.push({ dest: 'cloud', path: check.route, status: res.status });
+      if (Number(res.headers.get('content-length') ?? '0') > CLOUD_MAX_BYTES) {
+        await res.body?.cancel();
+        throw new EgressError('bad_response', res.status);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > CLOUD_MAX_BYTES) throw new EgressError('bad_response', res.status);
+      let json: unknown = null;
+      try {
+        json = buf.length ? JSON.parse(buf.toString('utf8')) : null;
+      } catch {
+        if (res.ok) throw new EgressError('bad_response', res.status);
+      }
+      return { status: res.status, json };
+    } catch (e) {
+      if (e instanceof EgressError) throw e;
+      this.audit.push({ dest: 'cloud', path: check.route, status: 'error' });
+      throw new EgressError((e as Error).name === 'AbortError' ? 'timeout' : 'network');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 릴레이 WSS의 유일한 입구(페어링 룸·라이브 우편함). 주소·헤더는 cloud.ts 허용 목록만. 소켓은 런타임 WebSocket(Node·Electron main 내장,
+   * 헤더는 생성 옵션)으로 연다. 메시지 내용은 보지 않는다(Noise·HPKE가 지킨다).
+   */
+  openCloudSocket(url: string, headers?: Record<string, string>): WebSocket {
+    const check = cloudSocketCheck(url);
+    if (!check) throw new EgressError('path_not_allowed');
+    if (check.kind === 'dev' && !this.opts.cloudDevLocal) throw new EgressError('destination_not_allowed');
+    const h = cloudHeaders(headers);
+    if (!h) throw new EgressError('header_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const target = check.kind === 'prod' && this.opts.testOrigins?.cloudWs ? this.opts.testOrigins.cloudWs + new URL(url).pathname : url;
+    this.audit.push({ dest: 'cloud.ws', path: check.route, status: 101 });
+    // Node(undici)·Electron main의 WebSocket은 두 번째 인자 {headers}를 받는다(브라우저 표준 밖 확장)
+    return new WebSocket(target, (Object.keys(h).length ? { headers: h } : undefined) as never);
   }
 
   async postJson(dest: DestinationName, path: string, body: unknown, headers: Record<string, string> = {}): Promise<EgressResponse> {
