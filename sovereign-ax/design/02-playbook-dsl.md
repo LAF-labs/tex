@@ -1,5 +1,6 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-06 팀장 결정: §6.1에 V-03m(금액·상대방 readback ↔ `$inputs` 대조 assert 필수, 없으면 로드 거부)을 더하고 §8 검증 근거에 반영. 같은 날 팀장 결정: 상대방에 `counterpartEmail`을 넣고, 선택 입력은 값이 없으면 `isEmpty`로 빈 값을 확인한다(§4.1 조건 추가, §8 `s19f`). 이름 V-03k는 B-02 규칙이 이미 쓴다(엔진 `validate.ts`도 같다, 엔진 PR #156). 엔진 M2-3 B가 같은 이름으로 구현한다.
 > 2026-11-06 정합(팀장 지시, 큐 1~15): §2 스키마 파일 9종 → 12종(`status`·`revoked_keys` 엔진 PR #52, `data_descriptor` 엔진 PR #85).
 > 2026-11-05 팀장 지시(R15 조사 발견): §8 H-01 발췌에 `s19d`(합계 산술 `sumEquals`)와 `s19f`(되읽은 값 ↔ 입력 인자 대조)를 더해 §2.1·§4의 readback 규칙과 맞춤. 엔진 M2-3이 구현한다(PoC 코드에는 `s19d`만 있다).
 > 스키마 정렬 2026-11-05(PR #45 "스키마 변경" 표): 셀렉터 사전 v1.1에서 불리언 `secretSlot`을 `secretKind`+`secretPurpose`로 바꾼 것을 §2.1·§2.2·§4·§6.1 본문에 반영, 스텝 공통 `code`(§4)와 verify `failSignals[]`(§4.4) 필드 추가, §8 s19 결과 이름을 번들 `form_ready_v2`의 실제 결과 `no_visible_error`로 정정(V-07). §1 RE2 바인딩 Phase 1 보류 결정(팀장 2026-11-05). §2 서명 바이트 규약 정본 `schemas/SIGNING.md` 가리킴(엔진 PR #52).
@@ -159,8 +160,9 @@
 
 ### 4.1 조건식
 
-열거형 객체만: `{exists}`, `{textMatches:{target, patternRef}}`, `{varEquals}`, `{varSet}`, `{inputPresent}`, `{sumEquals}`, `{readbackEquals:{fieldKey, ref}}`, `{fieldsFilled:{fields[]}}`, `{all}`, `{any}`, `{not}`, 그리고 전제·사후조건 전용 `{inputVerified}`, `{profileHas}`, `{artifact}`. `patternRef`는 strings 파일의 정규식 키이고 RE2로 컴파일되어야 한다(V-01, B-35). 임의 스크립트 없음.
+열거형 객체만: `{exists}`, `{textMatches:{target, patternRef}}`, `{varEquals}`, `{varSet}`, `{inputPresent}`, `{sumEquals}`, `{readbackEquals:{fieldKey, ref}}`, `{isEmpty:{fieldKey}}`, `{fieldsFilled:{fields[]}}`, `{all}`, `{any}`, `{not}`, 그리고 전제·사후조건 전용 `{inputVerified}`, `{profileHas}`, `{artifact}`. `patternRef`는 strings 파일의 정규식 키이고 RE2로 컴파일되어야 한다(V-01, B-35). 임의 스크립트 없음.
 - `readbackEquals`(B-05): readback 값과 `$profile.*`·`$inputs.*` 참조를 정규화해 비교한다. 대표 용도는 `supplierBizNo == $profile.bizNo`로, 잘못된 사업자 세션으로 발급하는 것과 대리 사용(B-28)을 함께 막는다.
+- `isEmpty`(V-03m, 팀장 결정 2026-11-06): readback이 고정한 `$readback.<fieldKey>`가 정규화 뒤 빈 값인지 본다. 화면을 다시 읽지 않는다. 선택 입력에 값이 없을 때 그 칸이 비었는지 확인하는 데 쓴다(포털이 미리 채운 이전 주소가 남는 것을 막는다). IR 스키마·엔진 구현은 엔진 M2-3 B가 한다.
 - `fieldsFilled`(B-34): 나열한 `fieldKey` 칸이 비어 있지 않은지 엔진이 결정적으로 검사한다(값·길이는 기록하지 않음). 모델 predicate `required_fields_filled`를 대체한다.
 
 ### 4.2 값 참조
@@ -237,6 +239,7 @@
 | **V-03j′** | readback에 날짜형 fieldKey(`issueDate` 등)가 있으면 입력값 대조 assert(`readbackEquals{fieldKey, ref:'$inputs.…'}`)가 게이트 앞에 필수다(ADR-027, D-20(N-26)) |
 | **V-03j″** | `verify`의 실패 신호 목록 항목은 (css, `^…$` 문구) 쌍이다. 문구가 없거나 앵커가 없는 항목은 거부한다(ADR-025, D-05(N-02)) |
 | **V-03k** | `press.key=Enter`는 `target`이 필수다(스키마). 그 타깃의 `landmark` 안에 `commits:true` 항목이 하나라도 있으면 그 `press`는 비가역 스텝으로 간주한다. `select`의 타깃이 `commits:true`이면 비가역 스텝이다(B-02) |
+| **V-03m** | **금액·상대방 입력 대조**(팀장 결정 2026-11-06). 게이트 `G(X)` 앞 readback이 금액·상대방 `fieldKey`를 되읽으면, 그 키마다 R→G 사이에 입력 대조 assert가 있어야 한다. 없으면 로드를 거부한다. 플레이북이 `$inputs.*`로 채우는 키는 `readbackEquals{fieldKey, ref:'$inputs.…'}`이고, `ref`는 그 칸을 채운 `fill.value`와 같은 참조다. 입력으로 채우지 않는 합계는 `sumEquals{parts, total}`이고, `parts`는 모두 이 대조를 가진 키다(§8 `s19d`). 금액·상대방 키는 앱 내장 `fieldKey` 사전이 정한다. H-01 기준 금액은 `supplyAmount`·`taxAmount`·`totalAmount`, 상대방은 `counterpartBizNo`·`counterpartEmail`이다. 이메일이 잘못된 주소로 가면 거래 정보가 새고 되돌릴 수 없어서 넣는다. 포털이 조회로 채우는 표시 값(`counterpartName`)은 대상이 아니다(§8 `s14` `textMatches`가 본다). 날짜는 V-03j′가 본다. **선택 입력인 키**(H-01 `counterpartEmail` ← `$inputs.email`)는 두 경우를 한 assert에 모두 적는다. 값이 있으면 `readbackEquals`, 없으면 `isEmpty{fieldKey}`다. 모양은 `any[all[inputPresent, readbackEquals], all[not inputPresent, isEmpty]]`이고, 대조를 건너뛰는 경로는 없다. R→G 사이에는 `assert`만 오므로(V-03h) `branch`로 나누지 않는다. 엔진의 `all`·`any`는 앞 항목에서 결과가 정해지면 멈춘다. 그래서 입력이 없을 때 `readbackEquals`는 평가되지 않는다. `readbackEquals`가 입력 없음에 fail-closed여도(엔진 PR #156 `conds.ts`) 막히지 않는다 |
 | **V-03l** | 어떤 게이트 G를 지배하면서 G로 가는 경로 위에 있고 복귀 지점(`not_committed`·`recover`·Paused/HandedOff 재개의 목적지)이 될 수 있는 체크포인트는 `url`이 필수이고 `reentry: "reload"`여야 한다(B-13) |
 | V-04 | 모든 비가역 스텝은 `intent: "$intent.id"`와 `verify`를 가진다. 그 `verify.lookup.match`는 X 앞 `readback` 필드를 `$readback.*`로 포함하고 `baseline: pre_gate_snapshot`이다(B-07) |
 | V-05 | `repeat.max ≤ 20`, 중첩 ≤ 2 |
@@ -349,7 +352,9 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
     {"id": "s19d", "type": "assert", "cond": {"sumEquals": {"parts": ["supplyAmount", "taxAmount"], "total": "totalAmount"}}, "code": "assert.total_mismatch", "onFail": {"retry": 0, "then": "abort"}},
     {"id": "s19f", "type": "assert", "cond": {"all": [{"readbackEquals": {"fieldKey": "counterpartBizNo", "ref": "$inputs.counterpart.bizNo"}},
                                                      {"readbackEquals": {"fieldKey": "supplyAmount", "ref": "$inputs.amounts.supply"}},
-                                                     {"readbackEquals": {"fieldKey": "taxAmount", "ref": "$inputs.amounts.tax"}}]},
+                                                     {"readbackEquals": {"fieldKey": "taxAmount", "ref": "$inputs.amounts.tax"}},
+                                                     {"any": [{"all": [{"inputPresent": "email"}, {"readbackEquals": {"fieldKey": "counterpartEmail", "ref": "$inputs.email"}}]},
+                                                              {"all": [{"not": {"inputPresent": "email"}}, {"isEmpty": {"fieldKey": "counterpartEmail"}}]}]}]},
      "code": "assert.input_mismatch", "onFail": {"retry": 0, "then": "abort"}},
     {"id": "s19e", "type": "assert", "cond": {"readbackEquals": {"fieldKey": "issueDate", "ref": "$inputs.issueDate"}}, "code": "assert.issue_date_mismatch", "onFail": {"retry": 0, "then": "abort"}},
     {"id": "s20", "type": "gate", "card": "invoice.confirm", "authorizes": ["s21"], "waitMs": 600000},
@@ -383,7 +388,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - **이메일**(B-05, B-11, B/C-04, B/C-18): 홈택스는 발급과 동시에 매입자에게 이메일을 자동 발송하므로(R2:86) `send`는 `s21` 커밋에 딸린 효과다. v2.0의 별도 `send_email`(옛 s33)은 Phase 1에서 제거했다. 대신 이메일 칸을 `s15`에서 입력하거나 비우고(포털이 미리 채운 이전 주소 제거), readback·카드에 넣으며, 새 `s33`이 메일발송목록을 조회해 발송을 확인한다. 확인되지 않으면 `CompletedWithIssues`("발급은 완료되었습니다. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요")로 끝나고 재실행을 막는다. 재발송 자동화는 Phase 2에서 "미발송·실패일 때만 재발송 + V-03c′"로 설계한다.
 - readback `s19b`는 발급 버튼 랜드마크 안 `fieldKey` 전부(V-03j)다. 공급자·비고·청구/영수·품목 수가 카드에 보인다. `s19c`(`supplierBizNo == $profile.bizNo`)는 다른 사업자 세션으로 발급하는 것과 대리 사용을 막고, 실패하면 중단한다(B-05, B-28).
 - `s19d`는 `s19b`가 되읽어 고정한 값(`$readback.*`)으로 공급가액 + 세액 = 합계를 엔진이 산술로 본다(모델에 묻지 않는다, D04 §3). `parts`·`total`은 readback `fieldKey`다. 화면을 다시 읽지 않는다. 승인 카드·승인 바가 그 고정 값을 보이므로, 검사도 같은 값이어야 한다. 다르면 게이트 전에 `assert.total_mismatch`로 멈춘다.
-- `s19f`는 되읽은 값을 실행 입력 인자와 대조한다: 공급받는자 사업자번호, 공급가액, 세액. 합계는 `s19d`(되읽은 합계 = 되읽은 공급가액 + 세액)와 이 대조로 입력 합계와 같아진다. 작성일은 `s19e`가 본다. 하나라도 다르면 게이트 전에 `assert.input_mismatch`로 멈춘다. readback의 세 값 일치(§2.1, DOM `value`·접근성 트리·`readbackOf` 표시 요소)는 화면 안의 일치이고, `s19f`는 화면 값과 사용자가 정한 값의 일치다. 둘 다 있어야 승인 카드가 사용자가 넣은 값을 보인다.
+- `s19f`는 되읽은 값을 실행 입력 인자와 대조한다: 공급받는자 사업자번호, 공급가액, 세액, 공급받는자 이메일. 이메일은 선택 입력이라, 값이 있으면 `$inputs.email`과 같은지, 없으면 칸이 비었는지(`isEmpty`, `s15` `ifAbsent: clear`의 결과) 본다(V-03m). 합계는 `s19d`(되읽은 합계 = 되읽은 공급가액 + 세액)와 이 대조로 입력 합계와 같아진다. 작성일은 `s19e`가 본다. 하나라도 다르면 게이트 전에 `assert.input_mismatch`로 멈춘다. readback의 세 값 일치(§2.1, DOM `value`·접근성 트리·`readbackOf` 표시 요소)는 화면 안의 일치이고, `s19f`는 화면 값과 사용자가 정한 값의 일치다. 둘 다 있어야 승인 카드가 사용자가 넣은 값을 보인다. 이 대조와 `s19d`가 없으면 V-03m 위반이라 로드하지 않는다(팀장 결정 2026-11-06).
 - `s19d`·`s19f`는 엔진 M2-3(스텝 핸들러·readback, D14)이 구현한다. PoC 코드(`poc/packages/engine/src/h01/playbook.ts`)에는 `s19d`만 있고 이 발췌와 같은 모양(`{parts, total}`, readback 키)이다. IR 스키마(`schemas/playbook-ir.schema.json`)의 `sumEquals{names, target}`는 `target`이 셀렉터라 화면을 다시 읽으므로, M2-3에서 스키마를 readback 키 모양(`{parts, total}`)으로 바꾼다(2026-11-05).
 - `s19e`는 포털 작성일자를 실행 시작 시 KST 날짜(`$inputs.issueDate`)와 대조한다. 다르면 게이트 전에 `assert.issue_date_mismatch`로 멈춘다(V-03j′, ADR-027, D-20(N-26)).
 - `s33` 메일 상태 판정은 부정 우선이다. NFKC·공백 제거 뒤 실패·미전송·대기·오류·…중이면 `not_committed`, 정확 허용 목록(`전송완료`·`발송완료`, PoC-3 실측으로 확정)이면 `committed`, 그 밖은 `unknown`이다(ADR-025, D-39(N-58)).
