@@ -9,11 +9,8 @@ import {
   relayOrigin,
   requestDeviceToken,
   type DeviceListJson,
-  type DeviceToken,
-  type DpopSigner,
   type HttpJson,
   type SignedAcctClaim,
-  type SignedCert,
   type WebSocketLike,
 } from '@sax/remote';
 
