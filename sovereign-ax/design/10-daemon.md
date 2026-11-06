@@ -1,6 +1,7 @@
 # D10. 서류 데몬
 
-> 2026-11-06 정합(팀장 지시, 큐 16~22): 데몬 notify 구현(PR #98)과 맞춤. §2 알림 단계는 `schedules.remind_days` 기본 `'7,1'`이 정본, §3 하루 알림 상한 5건·기본 알림 창 매일 09–18시(제안, 사용자 확인 전), §6 정책·status가 stale이어도 알림은 계속(팀장 확인 2026-11-06).
+> 2026-11-06 정합(팀장 지시): 알림 단계 `remind_days`는 `schedules`가 아니라 `validity_rules` 칸이다(서류 종류별, D07 DDL, db PR #109 deff4dc `schedule-repo.ts`의 실제 테이블). 머리말 아래 줄과 §2 표를 고침.
+> 2026-11-06 정합(팀장 지시, 큐 16~22): 데몬 notify 구현(PR #98)과 맞춤. §2 알림 단계는 ~~`schedules.remind_days`~~ `validity_rules.remind_days`(서류 종류별) 기본 `'7,1'`이 정본, §3 하루 알림 상한 5건·기본 알림 창 매일 09–18시(제안, 사용자 확인 전), §6 정책·status가 stale이어도 알림은 계속(팀장 확인 2026-11-06).
 > AUDIT-D 반영 2026-11-03: 데몬의 사람 비밀 미사용을 trigger 허용 목록으로, `semi_auto` 로그인은 폰 시작 게이트 뒤에만 저장 자격 사용(§6)(ADR-025·026·029, D19 §3.5 D-01·D-34).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: 데몬 실행은 키체인 저장 비밀을 쓰지 않음(금고가 `typist.fill` 거부), 효과 제한을 트리거 기준 런타임 검사(R-D1)로, 동의 결속(`consent_json`)과 시작 동의 메시지 분리(`consent.request/response`, `SAX-consent-v1`), `policy.daemon.autoAllowed` 이름 통일, 데몬은 AIK를 쓰지 않음, 스케줄러는 DB 키 없이 엔진 질의 IPC 사용, 추출 만료일 확정 조건.
 
@@ -12,7 +13,7 @@
 
 | 모드 | 조건 | 동작 | 플랜 | 출시 |
 |---|---|---|---|---|
-| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰. 단계는 `schedules.remind_days` 기본 `'7,1'`이 정본이고 D-1 단계는 당일까지 이어진다. D-30은 홈 판 카드(`EXPIRING_WITHIN_DAYS=30`, ADR-033)가 맡는다, PR #98). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
+| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰. 단계는 ~~`schedules.remind_days`~~ `validity_rules.remind_days`(서류 종류별, D07 §2 DDL, db PR #109 `schedule-repo.ts`) 기본 `'7,1'`이 정본이고 D-1 단계는 당일까지 이어진다. D-30은 홈 판 카드(`EXPIRING_WITHIN_DAYS=30`, ADR-033)가 맡는다, PR #98). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
 | `semi_auto` | 사용자가 서류별 동의(§2.1 결속) | 예정 시각에 폰·데스크톱으로 "갱신 시작할까요" **시작 동의**(`consent.request`/`consent.response`, 토큰 아님) → 실행 → 로그인(간편인증 PUSH는 사용자가 승인, 또는 폰 봉인 비밀) → 비가역 직전 **커밋 게이트**(`gate.request`, 건별 토큰, 폰 승인 한 번) | 9,900원 한 플랜 | Phase 2 |
 | `auto` | 서류별 동의 + `StandingAuthorization` + 법률 의견 플래그(`policy.daemon.autoAllowed`) **그리고 앱 빌드 플래그** + 사람 없이 끝나는 로그인 경로 존재 | 예정 시각에 무인 실행. 엔진이 `StandingAuthorization{scheduleId, playbookId@major, docType, profileId, maxPerPeriod, expiresAt, userSignature}`에서 **건별 단일 사용 토큰**을 만든다 | 9,900원 한 플랜 | **보류** |
 
