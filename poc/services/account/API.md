@@ -67,6 +67,7 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `POST /v1/devices/:id/delete-request` | 세션 | — | `202 {deleteAfter}` | 7일 유예 + 알림 메일 |
 | `POST /v1/devices/:id/delete-cancel` | 세션 | — | `204` | `account.device_not_found`(유예 중 아님). 폐기 유예(7일 미만 데스크톱의 폐기)도 여기서 취소된다 |
 | `GET /v1/device-list` | 세션 또는 기기:devlist | — | `200 {aikPub, deviceList}` | 페어링 3단계(폰이 AIK 서명 목록 확인) |
+| `GET /v1/acct-claim` | 데스크톱 기기:devlist | — | `200 {claim:{account_id, email, aik_pub, iat, exp}, sig}` | 서버 서명 계정 클레임(D08 §4.2 7단계, 팀장 결정 2026-11-06). PC가 받아 `PAIR_OK`에 싣고, 폰은 앱에 고정한 공개키로 검증하고 `aik_pub`가 `PAIR_OK`의 `AIK_pub`와 같은지 본다. 서명 입력은 `utf8("SAX-acct-claim-v1")‖JCS(claim)`([CONTRACT §11](../shared/CONTRACT.md)). `email`은 전체(소문자 정규화)이고 가림은 폰 화면에서 한다. `exp = iat + 10분`(밀리초). 클레임은 언제나 토큰 계정의 것이다. 폰 토큰 `403 account.scope_denied`, 정지된 PC `403 account.device_suspended`, AIK 미고정 `409 account.aik_not_pinned`, 기기당 30회/시. `ACCT_CLAIM_SIGNING_KEY`가 없으면 `404` |
 
 등록 신청한 기기는 `pending`이다. 활성화 경로는 둘: 기존 데스크톱이 AIK 서명 목록에 넣는다(즉시), 또는 72시간 뒤 `activate`. 어느 쪽이든 기기 범위 토큰은 AIK 인증서가 있어야 발급되므로 AIK 없이 이메일만 탈취한 공격자는 토큰을 얻지 못한다.
 

@@ -58,7 +58,7 @@ export function safeEqual(a: string | Buffer, b: string | Buffer): boolean {
 }
 
 /** D08 §2.1 서명 컨텍스트. 검증기는 컨텍스트를 고정 비교한다(C-33). */
-export type SigContext = 'SAX-devlist-v1' | 'SAX-revoke-v1' | 'SAX-cert-v1' | 'SAX-acct-op-v1' | 'SAX-dpop-v1' | 'SAX-token-v1' | 'SAX-run-token-v1';
+export type SigContext = 'SAX-devlist-v1' | 'SAX-revoke-v1' | 'SAX-cert-v1' | 'SAX-acct-op-v1' | 'SAX-dpop-v1' | 'SAX-token-v1' | 'SAX-run-token-v1' | 'SAX-acct-claim-v1';
 
 export const sigInput = (ctx: SigContext, obj: unknown): Buffer => Buffer.from(ctx + jcs(obj), 'utf8');
 

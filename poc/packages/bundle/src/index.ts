@@ -5,4 +5,5 @@ export * from './items.ts';
 export * from './missing-view.ts';
 export * from './month.ts';
 export * from './notice-match.ts';
+export * from './phone-intake.ts';
 export * from './service.ts';

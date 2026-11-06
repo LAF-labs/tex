@@ -17,6 +17,7 @@
 | `SAX-dpop-v1` | 기기 Vx | DPoP 증명 `{htm, htu, iat, jti, ath}` | 신규(서버 전용), §3 |
 | `SAX-token-v1` | 계정 서비스 토큰 키 | 기기 범위 토큰 클레임 | 신규(서버 전용), §2 |
 | `SAX-run-token-v1` | 게이트웨이 | runToken 클레임 | 신규(서버 전용), M4-6 |
+| `SAX-acct-claim-v1` | 계정 서비스 acct_claim 전용 키 | 계정 클레임 `{account_id, email, aik_pub, iat, exp}` | 신규(서버 서명, 폰 검증), §11 |
 
 시각은 모두 UTC 밀리초 정수다(DPoP `iat`만 초).
 
@@ -87,3 +88,20 @@ proof = { htm:"POST", htu:"https://<서비스 공개 origin><경로>", iat:<초>
 - 라이브 연결(WSS, Phase 1 기본 꺼짐)의 프레임 속도는 연결이 붙은 인스턴스 메모리에서만 센다.
 - `DATABASE_URL`이 없는 단위 시험·로컬은 `memoryLimits`(같은 인터페이스, 메모리 솔트).
 - PostgreSQL 시험: `SAX_PG_TEST_URL=postgres://…`이면 `tests/services-limits.test.ts`가 SQLite와 같은 시험(연결 넷 병렬 증가 N → 정확히 N, KST 자정 솔트 생성 경합, 자정 시계 어긋남, 만료 정리)을 PG에도 돌린다. 기본은 꺼짐(빈 DB 하나면 된다, 시험이 마이그레이션을 적용한다).
+
+## 11. 계정 클레임 acct_claim(SAX-acct-claim-v1, D08 §4.2 7단계, 팀장 결정 2026-11-06)
+
+```
+GET /v1/acct-claim (데스크톱 기기 토큰 + DPoP, scp devlist)
+→ 200 { claim: { account_id, email, aik_pub, iat, exp }, sig: <표준 base64(Ed25519(utf8("SAX-acct-claim-v1") ‖ JCS(claim)))> }
+```
+
+- `email`은 계정 이메일 전체(소문자 정규화)다. `aik_pub`는 계정 AIK 공개키(표준 base64 32B)다. `iat`·`exp`는 UTC 밀리초이고 `exp = iat + 600000`이다.
+- 서명 키는 이 용도 전용 Ed25519(`ACCT_CLAIM_SIGNING_KEY`)다. 기기 토큰 키(`SAX-token-v1`)·레지스트리 키와 섞지 않는다. `kid`는 없다. 키를 바꾸면 앱이 고정한 공개키도 바꾼다.
+- 폰 검증(참조 구현 `services/account/src/acct-claim.ts` `verifyAcctClaim`):
+  - `claim`의 필드가 정확히 다섯이어야 한다.
+  - 고정 공개키로 서명을 검증한다.
+  - `exp > now`이고, `iat ≤ now + 60초`이고, `exp - iat ≤ 10분`이어야 한다.
+  - `aik_pub`가 `PAIR_OK`의 `AIK_pub`와 같아야 한다.
+  - 하나라도 어긋나면 중단한다.
+- 클레임은 언제나 토큰 계정의 것이다. 다른 계정을 지정하는 입력은 없다.

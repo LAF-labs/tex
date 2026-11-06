@@ -209,6 +209,13 @@ export function accountRouter(o: AccountAppOpts): Router {
     return json(204, undefined);
   });
   r.add('GET', '/v1/device-list', async (ctx) => json(200, await svc.deviceList(await sessionOrDevice(ctx))));
+  // 서버 서명 계정 클레임(페어링 7단계, PC가 PAIR_OK에 싣는다). 데스크톱 기기 토큰만
+  r.add('GET', '/v1/acct-claim', async (ctx) => {
+    const c = await device(ctx, 'devlist');
+    if (c.role !== 'desktop') fail('account.scope_denied');
+    await limit(`acctclaim:${await devSalt.hash(c.dev)}`, DEVICE.acctClaimsPerHour, MS.H);
+    return json(200, await svc.acctClaim({ accountId: c.acc, deviceId: c.dev }));
+  });
 
   // 기기(데스크톱 기기 범위 토큰 + DPoP + AIK 서명)
   r.add('PUT', '/v1/device-list', async (ctx) => {
