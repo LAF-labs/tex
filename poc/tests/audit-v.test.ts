@@ -77,7 +77,7 @@ interface FakePage {
 }
 
 /** 실행 page(RUN)를 노출하고 엔진 세션(E-1)까지 붙인 Relay + 가짜 password 칸 하나. */
-async function setup(opts: { leak?: (hits: number) => void } = {}) {
+async function setup(opts: { leak?: (hits: number) => void; now?: () => number } = {}) {
   const conn = new FakeConn();
   const toEngine: Json[] = [];
   const log = new FileEventLog(null, 'vault');
@@ -112,7 +112,7 @@ async function setup(opts: { leak?: (hits: number) => void } = {}) {
   relay.onEngineMessage(JSON.stringify({ id: 1, method: 'Target.setAutoAttach', params: { autoAttach: true, waitForDebuggerOnStart: true, flatten: true } }));
   await tick();
   const events: Array<{ to: readonly string[]; name: string; data: Json }> = [];
-  const ops = new SecretOps(relay, policy, log, { emit: (to, name, data) => events.push({ to, name, data }) });
+  const ops = new SecretOps(relay, policy, log, { emit: (to, name, data) => events.push({ to, name, data }), now: opts.now });
   ops.openBlocker = async () => null;
   ops.runTriggers.set('r1', 'local');
   const t = relay.targets.get('RUN')!;
@@ -459,36 +459,58 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
 describe('audit-v V6 사람 입력 창 정착', () => {
   const human = { runId: 'r1', targetId: 'RUN', frame: 'main', element: '#pw' };
 
+  // 정착 판정은 주입한 시계로 본다(부하에서 타이머가 밀려도 결과가 같다). tick은 250ms 주기 판정을 직접 한 번 부른다.
+  const humanTick = (s: Awaited<ReturnType<typeof setup>>) => (s.ops as unknown as { tickHuman(t: unknown): Promise<void> }).tickHuman(s.t);
+
   it('audit-v: human window survives a 1s blur from a keypad click', async () => {
-    const s = await setup();
+    let now = 1_000_000;
+    const s = await setup({ now: () => now });
     assert.deepEqual(await s.ops.openForHuman(human), { ok: true });
     s.page.value = 'abc';
     s.page.len = 3;
     s.page.active = false; // 가상키패드 클릭으로 blur
-    await sleep(1000);
+    await humanTick(s);
+    now += 1000;
+    await humanTick(s);
     assert.equal(s.t.win?.phase, 'active', '1초 blur로는 닫히지 않는다');
     s.page.active = true; // 키패드가 포커스를 돌려줌
-    await sleep(300);
+    now += 300;
+    await humanTick(s);
     s.page.active = false;
-    await sleep(1000);
+    await humanTick(s);
+    now += 1000;
+    await humanTick(s);
     assert.equal(s.t.win?.phase, 'active', '포커스가 돌아오면 다시 센다');
     s.page.len = 4; // 키패드로 한 글자 더
-    await sleep(1000);
+    await humanTick(s);
+    now += 1000;
+    await humanTick(s);
     assert.equal(s.t.win?.phase, 'active', '길이가 바뀌면 다시 센다');
-    await s.ops.userDone('RUN');
+    now += 499;
+    await humanTick(s);
+    assert.equal(s.t.win?.phase, 'active', '정착 1499ms');
+    now += 1;
+    await humanTick(s);
+    assert.equal(s.t.win?.phase, 'tainted', '정착 1500ms에 닫힌다');
   });
 
-  it('audit-v: human window closes 1.5s after blur with stable value', async () => {
-    const s = await setup();
+  it('audit-v: human window closes 1.5s after blur with stable value (주기 타이머 경로)', async () => {
+    let now = 1_000_000;
+    const s = await setup({ now: () => now });
     assert.deepEqual(await s.ops.openForHuman(human), { ok: true });
     s.page.value = 'TEST-CERT-settle01';
     s.page.len = 18;
     s.page.active = false;
-    const started = Date.now();
-    while (s.t.win?.phase === 'active' && Date.now() - started < 4000) await sleep(50);
-    const took = Date.now() - started;
-    assert.equal(s.t.win?.phase, 'tainted');
-    assert.ok(took >= 1500 && took < 2600, `정착 뒤 닫힘(${took}ms)`);
+    const watch = () => (s.ops as unknown as { human: Map<string, { idleSince?: number }> }).human.get('RUN');
+    // 주기 타이머가 blur를 처음 본 때까지(시계는 멈춰 있다)
+    for (let i = 0; i < 200 && watch()?.idleSince === undefined; i++) await sleep(20);
+    assert.equal(watch()?.idleSince, now);
+    now += 1499;
+    await sleep(600); // 주기 판정이 두 번 이상 돈다
+    assert.equal(s.t.win?.phase, 'active', '정착 전에는 닫지 않는다');
+    now += 1;
+    for (let i = 0; i < 200 && s.t.win?.phase === 'active'; i++) await sleep(20);
+    assert.equal(s.t.win?.phase, 'tainted', '정착 1500ms 뒤 주기 판정이 닫는다');
   });
 });
 

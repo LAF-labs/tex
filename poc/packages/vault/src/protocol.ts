@@ -26,7 +26,7 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'typist.fill', 'typist.authFailed',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
-    'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.hpkeOpen',
+    'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
     'getDbKeyOnce',
   ],
   control: [
@@ -359,22 +359,37 @@ export function commitExpectedHash(values: Record<string, string>, bodyFieldMap:
 // ───────────────────────── 장기 키 연산(engine) ─────────────────────────
 
 /**
- * Vd 서명 용도 허용 목록(D05 §5.1, D08 §2.1). 목록 밖 purpose는 거부한다. 서명 대상은 purpose‖0x00‖msg.
- * `SAX-consent-v1`은 로컬 동의(Vd) 서명이다.
+ * Vd 서명 용도 허용 목록(D05 §5.1, D08 §2.1). 목록 밖 purpose는 거부한다.
+ * 서명 대상은 `utf8(purpose) ‖ msg`이고 구분 바이트가 없다(schemas/SIGNING.md §8). `SAX-consent-v1`은 로컬 동의(Vd) 서명이다.
+ * 클라우드가 검증하는 Vd 맥락은 `SAX-dpop-v1`뿐이다. 서버 전용 맥락(SAX-token-v1·SAX-run-token-v1)은 넣지 않는다.
  */
 export const VD_PURPOSES = ['SAX-qbundle-v1', 'SAX-ckpt-v1', 'SAX-docrec-v1', 'SAX-consent-v1', 'SAX-dpop-v1', 'SAX-rotate-v1', 'SAX-kv-v1'] as const;
 export type VdPurpose = (typeof VD_PURPOSES)[number];
+
+/**
+ * AIK(계정 신원 키, Ed25519) 서명 용도 허용 목록(D08 §2.1). 서명 대상은 `utf8(purpose) ‖ msg`이고 구분 바이트가 없다.
+ * msg는 호출자가 만든 대상 객체의 JCS 바이트다(금고는 바이트만 서명한다, schemas/SIGNING.md §8).
+ * 서버가 검증하는 것은 acct-op·devlist·revoke·cert이고, aik-rotate·kek은 Phase 1 서버 미사용이다.
+ * AIK는 RK에서 HKDF("aik")로 파생하고 개인키는 금고 밖으로 나가지 않는다.
+ * Phase 1 잔여 위험: 매 호출 사용자 존재 확인(Hello)과 trigger=daemon 거부는 Phase 2다(C-22, D05 §5.1).
+ */
+export const AIK_PURPOSES = ['SAX-devlist-v1', 'SAX-revoke-v1', 'SAX-cert-v1', 'SAX-aik-rotate-v1', 'SAX-kek-v1', 'SAX-acct-op-v1'] as const;
+export type AikPurpose = (typeof AIK_PURPOSES)[number];
 
 /** Noise DH 문맥(D08 §4·§5). */
 export const NOISE_CONTEXTS = ['SAX-pair-v1', 'SAX-session-v1'] as const;
 export type NoiseContext = (typeof NOISE_CONTEXTS)[number];
 
-/** crypto.publicKeys 결과: 공개키만(32B). Sd=Noise 정적키(X25519), Vd=서명(Ed25519), Qd=우편함 HPKE(X25519), Kv=금고 비밀 봉인(X25519). */
+/**
+ * crypto.publicKeys 결과: 공개키만(32B). Sd=Noise 정적키(X25519), Vd=서명(Ed25519), Qd=우편함 HPKE(X25519),
+ * Kv=금고 비밀 봉인(X25519), aik=계정 신원 키(Ed25519, RK 파생).
+ */
 export interface VaultPublicKeys {
   noiseStatic: Uint8Array;
   vd: Uint8Array;
   qd: Uint8Array;
   kv: Uint8Array;
+  aik: Uint8Array;
 }
 
 /**
@@ -389,7 +404,16 @@ export interface SignVdParams {
   purpose: VdPurpose;
   msg: Uint8Array;
 }
-/** HPKE Base(RFC 9180, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305) 개봉. info는 고정, aad = "SAX-env-v1"‖mbx_epoch. */
+export interface SignAikParams {
+  purpose: AikPurpose;
+  msg: Uint8Array;
+}
+/** crypto.* 서명·DH·개봉 입력 상한(바이트). */
+export const CRYPTO_MSG_MAX = 65_536;
+/**
+ * HPKE Base(RFC 9180, DHKEM(X25519, HKDF-SHA256), HKDF-SHA256, ChaCha20-Poly1305) 단발 개봉(seq 0). info는 고정,
+ * aad = utf8("SAX-env-v1")‖mbx_epoch(앞 10바이트가 다르면 bad_params). 결과는 평문 바이트(의도 봉투, 비밀 봉투는 큐 금지).
+ */
 export interface HpkeOpenParams {
   enc: Uint8Array;
   ct: Uint8Array;

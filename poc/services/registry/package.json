@@ -1,0 +1,22 @@
+{
+  "name": "@sax/svc-registry",
+  "version": "0.0.0",
+  "private": true,
+  "description": "플레이북 레지스트리·앱 업데이트 경로(D09 §8, D14 M4-7)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@sax/engine": "workspace:*",
+    "@sax/payroll": "workspace:*",
+    "@sax/svc-shared": "workspace:*"
+  }
+}

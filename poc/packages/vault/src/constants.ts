@@ -151,7 +151,9 @@ export type VaultEvent =
   // 종류별 입력 규칙(ADR-020 결정 2·ADR-025 결정 10·D05 §4): 값·칸 번호 없이
   | 'vault.typist_kind_refused' | 'vault.card_row_mismatch' | 'vault.secret_input_unrequested'
   // R-C1 커밋 본문 대조(D05 §3.3): 결과·필드 수·사유만(본문·값 없음)
-  | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed';
+  | 'vault.commit_armed' | 'vault.commit_arm_refused' | 'vault.commit_compared' | 'vault.commit_block_failed'
+  // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)
+  | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
