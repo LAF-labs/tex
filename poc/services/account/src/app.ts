@@ -7,9 +7,9 @@ import {
   fail,
   json,
   memoryLimits,
-  requireInternal,
   validator,
   type Ctx,
+  type InternalCheck,
   type DeviceDirectory,
   type TokenVerifier,
   type Limits,
@@ -58,7 +58,8 @@ export interface AccountAppOpts {
   /** 이 서비스가 발급한 기기 토큰을 검증(기기 범위 엔드포인트용) */
   verifier: TokenVerifier;
   publicOrigin: string;
-  internalSecret: string;
+  /** 내부 경로(/internal/*) 서명 검사(INTERNAL_CALL_KEY HMAC, 팀장 결정 2026-11-06 #135) */
+  internal: InternalCheck;
   /** 한도 카운터·키 솔트. 없으면 메모리(단일 인스턴스). 운영은 sqlLimits(db) */
   limits?: Limits;
 }
@@ -254,14 +255,19 @@ export function accountRouter(o: AccountAppOpts): Router {
 
   // 내부(게이트웨이·릴레이가 기기 상태를 묻는다)
   r.add('GET', '/internal/v1/devices/:id', async (ctx) => {
-    requireInternal(ctx, o.internalSecret);
+    await o.internal.check(ctx);
     const rec = await svc.deviceRecord(ctx.params.id!);
     return rec ? json(200, rec) : json(404, { error: 'account.device_not_found' });
   });
-  r.add('POST', '/internal/v1/devices/:id/auto-suspend', async (ctx) => {
-    requireInternal(ctx, o.internalSecret);
-    return json(200, { suspended: await svc.autoSuspend(ctx.params.id!) });
-  });
+  r.add(
+    'POST',
+    '/internal/v1/devices/:id/auto-suspend',
+    async (ctx) => {
+      await o.internal.check(ctx);
+      return json(200, { suspended: await svc.autoSuspend(ctx.params.id!) });
+    },
+    { raw: true },
+  );
   r.add('GET', '/healthz', () => json(200, { ok: true }));
   return r;
 }

@@ -2,7 +2,7 @@
 
 근거: D09 §2·§2.1·§2.2·§10, D08 §2.1·§9.4, ADR-029·034, B-28, C-09·C-30. 공통 형식(토큰·DPoP·서명 입력·오류 본문)은 [`../shared/CONTRACT.md`](../shared/CONTRACT.md). 요청 스키마는 `src/app.ts`의 `V`(ajv, `additionalProperties: false`)가 정본이고, 아래 표는 그 요약이다. 스키마 밖 필드·형식이 틀린 값은 모두 `400 request.param_rejected`.
 
-인증 표기: **없음**, **세션**(`Authorization: Bearer sxs1.…`), **기기:범위**(`Authorization: DPoP sxd1.…` + `DPoP:` 증명, 그 범위가 토큰에 있어야 함), **내부**(`Authorization: Internal <INTERNAL_TOKEN>`).
+인증 표기: **없음**, **세션**(`Authorization: Bearer sxs1.…`), **기기:범위**(`Authorization: DPoP sxd1.…` + `DPoP:` 증명, 그 범위가 토큰에 있어야 함), **내부**(`Authorization: SAX-Internal ts=…,nonce=…,sig=…`, `INTERNAL_CALL_KEY` HMAC-SHA256 over `SAX-internal-call-v1`‖메서드‖경로(쿼리 포함)‖sha256hex(본문)‖ts‖nonce, 줄바꿈 구분. 시각 ±60초, nonce 1회용(DB), 실패는 모두 `401 account.unauthorized`. 팀장 결정 2026-11-06 #135).
 
 공통 오류: `401 account.unauthorized`(세션·토큰 없음·만료·위조), `403 account.scope_denied`, `401 account.dpop_invalid`, `403 account.device_suspended`(정지·폐기·대기 기기), `429 policy.rate_limited`(+`Retry-After`), `413 request.too_large`(본문 64KB), `415 request.unsupported_media`(JSON만), `404 request.not_found`, `405 request.method_not_allowed`, `500 server.internal`.
 
@@ -105,7 +105,7 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 | `POST /internal/v1/devices/:id/auto-suspend` | 내부 | `200 {suspended}`. 게이트웨이 자동 정지(D09 §3): 활성 기기만 정지 + 정지 훅 + 알림 메일 `device_auto_suspended`. 해제는 AIK 서명 재활성화뿐 |
 | `GET /healthz` | 없음 | `200 {ok:true}` |
 
-정지 훅(나가는 쪽): `POST <STOP_HOOK_URL>/internal/v1/devices/:id/stopped`, `Authorization: Internal <INTERNAL_TOKEN>`, 본문 없음.
+정지 훅(나가는 쪽): `POST <STOP_HOOK_URL>/internal/v1/devices/:id/stopped`, 내부 서명(위 표기), 본문 없음. 같은 배포 안의 서비스는 HTTP 없이 함수로 부른다(`@sax/svc-cloud`).
 
 ## 주기 작업(60초)
 
