@@ -394,6 +394,12 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
 
+  services/push:
+    dependencies:
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
   services/registry:
     dependencies:
       '@sax/engine':
@@ -402,6 +408,12 @@ importers:
       '@sax/payroll':
         specifier: workspace:*
         version: link:../../packages/payroll
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  services/relay:
+    dependencies:
       '@sax/svc-shared':
         specifier: workspace:*
         version: link:../shared
