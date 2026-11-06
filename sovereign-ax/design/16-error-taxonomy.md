@@ -1,5 +1,7 @@
 # D16. 오류·결과 코드 체계 (초안)
 
+> 2026-11-06 정합(팀장 지시, 폰 PR #102·#118): `pairing.aik_mismatch` 뜻을 "서버가 준 `AIK_pub`와 불일치"에서 "다시 연결할 때 고정한 `AIK_pub`와 불일치"로 고쳤다. Phase 1 폰은 서버 기기 목록을 받지 않는다.
+> 2026-11-06 정합(팀장 지시): 엔진 PR #111(M2-4 C 커밋 가드) 결정 7의 저널 코드 8개 `commit_guard.armed`·`passed`·`arm_refused`·`arm_expired`·`rc1_missing`·`unintercepted`·`fetch_enable_failed`·`ledger_failed`를 표에 더함. 보안 이벤트가 아니다(보안 이벤트는 `commit_guard.blocked_request`·`security.commit_payload_mismatch` 그대로).
 > 2026-11-06 팀장 결정(폰 통합 시험 PR #102): `relay.mailbox_not_found`는 우편함·번들 없음과 토큰 불일치를 묶은 단일 코드.
 > 2026-11-06 정합(팀장 지시, 큐 16~22): `daemon.window_invalid`·`policy_stale`·`status_stale`·`snapshot_failed`(데몬 PR #98 구현값, 제안, 사용자 확인 전).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): 클라이언트 표에 `assert.original_mismatch`(ADR-036 결정 3.5), `bizstatus.unavailable`(제안, 사용자 확인 전), `update.*` 8개(패키징 PR #76, `packages/updater/README.md`)를 더함. "서버 응답 코드" 절에 레지스트리 게시 관문·`.sxp`·정책·핫픽스 코드(클라우드 PR #56 `PROPOSED_D16`). 보안 이벤트 목록에 `update.root_change_unsigned`·`update.feed_mismatch`·`update.digest_mismatch`.
@@ -38,6 +40,13 @@
 | `ledger` | `intent_reuse` | 같은 intentId에 다른 입력·플레이북(B-10, **보안 이벤트**) | `err.ledger.intent_reuse` | 거부 |
 | `commit_guard` | `blocked_request` | 무장 없이 커밋 요청 시도(보안 이벤트) | `err.commit_guard.blocked_request` | 중단 |
 | `commit_guard` | `unclassified` | 커밋·알려진 엔드포인트 어디에도 없는 포털 요청(R-C3, 기록만) | — | 없음(Phase 2 승격 검토) |
+| `commit_guard` | `armed` / `passed` | 커밋 가드 무장(효과, R-C1 대상 여부) / 무장된 커밋 요청 통과(R-C1 결과 `true`·`opaque`, 또는 R-C1 대상 아님)(엔진 PR #111 결정 7. 보안 이벤트 아님) | — | 저널만 |
+| `commit_guard` | `arm_refused` | 무장 거부. 사유는 저널 `reason`: 이미 무장, 기한 지남, 그 효과의 엔드포인트 없음, R-C1 대상이 둘 이상, 경로를 금고 Fetch 패턴으로 바꿀 수 없음, readback 해시 형식 오류, 금고 거부(PR #111) | `err.commit_guard.arm_refused` | 실행 중단(`FORCED_STOPS`) |
+| `commit_guard` | `arm_expired` | 금고 R-C1 무장이 커밋 요청 없이 만료됨(`match: expired`)(PR #111) | — | 저널만 |
+| `commit_guard` | `rc1_missing` | R-C1 대상 요청에 금고 대조 결과가 `RC1_RESULT_WAIT_MS`(5초) 안에 오지 않음(PR #111) | — | 요청을 막고 `commit_guard.blocked_request`로 실행 중단 |
+| `commit_guard` | `unintercepted` | 고정 전 호스트로 간 커밋 요청을 Fetch로 잡지 못하고 Network로만 봄(PR #111) | `err.commit_guard.unintercepted` | 실행 중단(`FORCED_STOPS`), 무장된 의도는 원장 `in_doubt` |
+| `commit_guard` | `fetch_enable_failed` | 호스트 고정 `Fetch.enable` 다시 걸기 실패(호스트 수만 기록)(PR #111) | — | 저널만 |
+| `commit_guard` | `ledger_failed` | 가드가 원장 결과(`not_committed`·`in_doubt`)를 쓰지 못함(PR #111) | — | 저널만. 정지는 그대로 |
 | `commit` | `confirm_accepted` | 무장 구간에서 `expectConfirm` 일치 confirm 수락, 텍스트 해시 기록(V-24) | — | 저널만 |
 | `security` | `commit_payload_mismatch` | 커밋 요청 본문 ≠ readback 값(R-C1, 금고가 대조해 `match:false`, **보안 이벤트**) | `err.security.commit_payload_mismatch` | 요청 중단, 원장 `not_committed`, 핸드오프 |
 | `verify` | `committed` / `not_committed` / `unknown` | 조회 결과 | — | 분기 |
@@ -72,7 +81,7 @@
 | `pairing` | `new_desktop_warning` | 최근 24시간 안에 새 데스크톱이 페어링됨(C-01) | `err.pairing.new_desktop_warning` | 사용자 확인 |
 | `vault` | `google_signin_detected` / `secret_window_refused` / `crypto_rate_anomaly` / `secret_window_close_denied` | 전용 프로필에 Google 로그인 감지(A-10) / 비밀 창 개시 거부(사유 포함) / 장기 키 연산 호출 빈도 이상(C-19, **보안 이벤트**) / 엔진의 활성 창 종료 요청을 금고가 거부(대상 노드 포커스 유지, E-01) | `err.vault.*` | 비밀 창 거부·안내 / human:secret / 거부·경고 / 활성 창 유지 |
 | `postprocess` | `open_denied` | `openExternal` 대상이 https·내장 eTLD+1 허용 목록 밖(A-17, **보안 이벤트**) | `err.postprocess.open_denied` | 열지 않음 |
-| `pairing` | `aik_mismatch` | 서버가 준 `AIK_pub`와 `PAIR_OK`의 값 불일치(C-01, **보안 이벤트**) | `err.pairing.aik_mismatch` | 페어링 중단 |
+| `pairing` | `aik_mismatch` | 다시 연결할 때 앞서 고정한 `AIK_pub`와 `PAIR_OK`의 값 불일치(C-01, **보안 이벤트**, D08 §4.2 7단계, 폰 PR #118) | `err.pairing.aik_mismatch` | 페어링 중단 |
 | `remote` | `daily_limit` / `new_counterparty_local_only` | 원격 비가역 일일 상한 도달 / 처음 쓰는 거래처·수신자는 PC 로컬 승인만(C-06). 로컬 UI 전용 | `err.remote.*` | 로컬 승인으로 |
 | `queue` | `qd_expired` | 만료된 `Q_D`로는 의도를 봉인하지 않음(C-17, 폰 UI 전용) | `err.queue.qd_expired` | "PC가 오래 꺼져 있음" 안내 |
 | `devlist` | `version_mismatch` | 기기 목록 버전 불일치로 비가역 승인·비밀 요청 보류(C-20) | `err.devlist.version_mismatch` | 목록 갱신 후 재시도 |

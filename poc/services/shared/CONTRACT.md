@@ -67,9 +67,23 @@ proof = { htm:"POST", htu:"https://<서비스 공개 origin><경로>", iat:<초>
 ## 8. 로그(D09 §3·§10)
 
 - 접근 로그는 고정 필드만: `t, svc, m, route(패턴, 예 /v1/devices/:id), status, code, bytesIn, bytesOut, ms, aid?`. 본문·쿼리·IP·헤더·경로 변수 값은 남기지 않는다.
-- `aid`는 계정 ID의 일 회전 HMAC(KST 날짜마다 메모리 안 무작위 솔트, 영속하지 않음). 한도용 IP 키도 같은 방식이다. 하루가 지나면 그날의 키를 다시 계산할 수 없다.
+- `aid`는 계정 ID의 일 회전 HMAC(KST 날짜마다 메모리 안 무작위 솔트, 영속하지 않음). 하루가 지나면 그날의 키를 다시 계산할 수 없다.
+- 한도 키는 §10의 HMAC이다(IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀). 평문은 카운터에도 없다.
 - `looksSensitive`(주민번호·사업자번호·카드·이메일·긴 토큰·IPv4 탐지기)를 시험에서 모든 로그 줄에 돌린다. 운영에서는 싱크 앞단에 둔다.
 
 ## 9. 저장(DB)
 
 운영 PostgreSQL(`DATABASE_URL`), 시험 `node:sqlite`. 마이그레이션은 `services/<이름>/migrations/NNN_*.sql`, 서비스별 `schema_migrations(service, version)`. 시험이 마이그레이션의 실제 컬럼을 각 서비스의 가시성 표(`src/visibility.ts`)와 맞춰 보고, 금지 컬럼 이름(`ip, body, content, prompt, response, bizno, rrn, password, secret, plaintext …`)을 막는다.
+
+## 10. 한도(팀장 결정 2026-11-05 (가), D09 §4·D08 §8)
+
+함수 인스턴스가 여럿이어도 같은 한도를 보도록 카운터와 키 솔트를 각 서비스 DB에 둔다(`src/limits.ts`, 공용 마이그레이션 `migrations/001_limits.sql`, `migrate(db, 'limits', LIMITS_MIGRATIONS_DIR)`). 서비스마다 자기 DB에 만든다(릴레이 DB는 계정 DB와 분리, D08 §8).
+
+- 카운터 `lim_windows`: 고정 창. 한 문장 upsert라 동시 요청도 한도를 넘겨 통과시키지 않는다. 횟수는 한도 + 1에서 멈춘다. 창이 끝난 행은 1분마다 sweep으로 지운다(창은 길어야 1시간).
+- 솔트 `lim_salts`: (용도, KST 날짜)마다 무작위 32바이트 한 행. 처음 쓰는 인스턴스가 만들고 모두 같은 행을 읽는다. 날짜가 바뀐 뒤 처음 읽을 때와 1분 sweep에서 지난 날 행을 지운다(자기 날짜보다 **앞선** 행만: 시계가 조금 늦은 인스턴스가 자정 직후 기동해도 새 날 행을 지우지 않는다) → 지난 날의 HMAC은 다시 계산할 수 없다.
+- 계정·기기 ID 키는 DB 솔트가 아니라 서버 비밀 `LIMIT_ID_KEY` HMAC(용도 ‖ KST 날짜 ‖ ID)이다(`idSalt`). 비밀은 환경 변수로만 주입되어 DB를 읽어도 다시 계산할 수 없고, 날짜가 들어가 키가 날마다 바뀐다.
+- 노출 면(D09 §4에 추가 제안, IP·이메일 키): Phase 1 다중 인스턴스에서는 솔트가 당일 DB 행이라 DB를 읽는 사람은 당일 키를 다시 계산할 수 있다(당일 한정). Supabase에서는 별도 스키마에 두고 함수 역할만 읽고 쓴다(supabase/migrations 내보내기 PR).
+- IP 한도는 이 DB 카운터와 Vercel 방화벽(1차 방어) 둘 다다. 방화벽 규칙은 배포 체크리스트에 둔다.
+- 라이브 연결(WSS, Phase 1 기본 꺼짐)의 프레임 속도는 연결이 붙은 인스턴스 메모리에서만 센다.
+- `DATABASE_URL`이 없는 단위 시험·로컬은 `memoryLimits`(같은 인터페이스, 메모리 솔트).
+- PostgreSQL 시험: `SAX_PG_TEST_URL=postgres://…`이면 `tests/services-limits.test.ts`가 SQLite와 같은 시험(연결 넷 병렬 증가 N → 정확히 N, KST 자정 솔트 생성 경합, 자정 시계 어긋남, 만료 정리)을 PG에도 돌린다. 기본은 꺼짐(빈 DB 하나면 된다, 시험이 마이그레이션을 적용한다).
