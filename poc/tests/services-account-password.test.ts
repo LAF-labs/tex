@@ -5,6 +5,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { Logger, ServiceError, TokenIssuer, TokenVerifier, createServer, ed25519RawPublic, listen, looksSensitive, migrate, openSqlite, type Sql } from '../services/shared/src/index.ts';
@@ -115,10 +116,11 @@ describe('ADR-038 정책·해시', () => {
       }
     };
     assert.equal(check('a'.repeat(9)), 'account.password_too_short');
-    assert.equal(check('abcdefghij'), 'ok', '소문자만 10자도 된다');
+    assert.equal(check('lanternfjord'), 'ok', '소문자만 10자 이상도 된다');
+    assert.equal(check('abcdefghij'), 'account.password_breached');
     assert.equal(check('가'.repeat(10)), 'ok', '한글 10자(코드 포인트)');
     assert.equal(check('😀'.repeat(10)), 'ok', '이모지는 UTF-16 길이가 아니라 코드 포인트로 센다');
-    assert.equal(check('x'.repeat(128)), 'ok');
+    assert.equal(check('xy'.repeat(64)), 'ok');
     assert.equal(check('x'.repeat(129)), 'account.password_too_long');
     // 전각 → 반각(NFKC): 같은 비밀번호로 본다
     assert.equal(check('ｋｉｍ-secret-pass'), 'account.password_contains_identity');
@@ -128,7 +130,13 @@ describe('ADR-038 정책·해시', () => {
     assert.equal(check('ab-secret-pass', 'ab@example.com'), 'ok', '로컬 부분이 3자 미만이면 보지 않는다');
     assert.equal(check('1234567890'), 'account.password_breached');
     assert.equal(check('1Q2W3E4R5T'), 'account.password_breached', '대소문자 무시');
-    assert.ok(common.size >= 10);
+    assert.equal(common.size, 96_525, '10만 줄 → NFKC 소문자 중복 제거');
+  });
+
+  it('흔한 목록은 SecLists 커밋 고정본(원본 그대로 gzip): 풀면 기록한 SHA-256(data/README.md)', () => {
+    const raw = gunzipSync(fs.readFileSync(fileURLToPath(COMMON_PASSWORDS_FILE)));
+    assert.equal(createHash('sha256').update(raw).digest('hex'), 'e30e15faecc8db2d3181c3126e3b2c0cd5c187af10a5e4e83babfa157edab188');
+    assert.equal(raw.length, 781_959);
   });
 
   it('PASSWORD_PEPPER_KEYS 형식: kid:hex64 목록, 첫 키가 현재 키, 중복·형식 오류는 기동 거부', () => {

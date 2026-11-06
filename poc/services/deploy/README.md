@@ -147,6 +147,8 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 - [`check-vercel-output.ts`](check-vercel-output.ts)는 `.vercel/output/functions/api/*.func`를 저장소 밖으로 복사하고 `.vc-config.json`의 `filePathMap` 링크를 배포 때처럼 되살린다.
 - 그 복사본에서 다섯 함수를 띄워 요청을 보낸다. 네 서비스 조립까지 거친다. 기대: 계정 코드 200, 인증 없는 경로 401, 내부 경로 404, cron 200, 레지스트리: 구성 없음 503 → 시험 구성(공개 시험 trust·메모리 저장소)으로 로그 헤드 200·재서명 cron 200.
 - env는 시험용 무작위 값과 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
+- **비밀번호(ADR-038)**: 페퍼를 넣은 `sax(비밀번호)` 점검이 묶음 안에서 argon2id·흔한 목록(`data/common-passwords.txt.gz`)을 실제로 돌린다(로그인 401, 재설정 200). `sax`·`internal`·`cron` 묶음에 `.node` 네이티브 애드온이 없어야 한다.
+- **런타임**: 계정 묶음 `.vc-config.json`의 런타임이 `nodejs24.x` 이상이어야 한다(`node:crypto` argon2는 Node 24.7+). 지금 프로젝트 설정은 `24.x`다(저장소 `engines`는 26.x). 부 버전은 빌드 결과로 알 수 없으므로 배포 뒤 스모크(5절 비밀번호 행)가 실제 런타임 확인이다. 런타임과 같은 주 버전 node가 있으면 `CHECK_NODE=<그 node 경로>`로 묶음을 그 버전에서 돌린다(출력 첫 줄에 쓴 node 버전).
 - 소스 규칙: `packages/*/src`·`services/*/src`에서 `createRequire`로 의존성을 부르지 않는다(파일 추적이 못 따라간다). 시험이 막는다.
 
 ## 5. 배포 뒤 스모크(사용자 또는 팀장)
@@ -155,7 +157,7 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 |---|---|
 | `GET https://tax.laf-co.com/v1/me` | `401 {"error":"account.unauthorized"}`. 재작성과 경로 복원이 동작함 |
 | `POST /v1/auth/code {"email":…}` | `200 {loginId, expiresInSec}`. ⑤ 전에는 메일이 가지 않는다 |
-| `POST /v1/auth/password {"email":"none@example.invalid","password":"x"}` | 페퍼가 있으면 `401 {"error":"account.credentials_invalid"}`(약 0.7초 뒤), 없으면 `404`. Vercel 로그의 cron 뒤 `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`(운영 실측) |
+| `POST /v1/auth/password {"email":"none@example.invalid","password":"x"}` | 페퍼가 있으면 `401 {"error":"account.credentials_invalid"}`(약 0.7초 뒤). **이것이 운영 런타임에서 argon2id가 도는 확인이다.** 페퍼를 넣었는데 `404`면 런타임에 `crypto.argon2`가 없다(로그 `account.password_disabled.argon2_unavailable`): Vercel Node 버전을 올린다. Vercel 로그의 cron 뒤 `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`(운영 실측) |
 | `POST /v1/auth/refresh {"refreshToken":"sxa1.AAAA…(43자)"}` | `401` |
 | `GET /healthz`, `GET /internal/v1/devices/x` | 404(Vercel) |
 | `GET /api/sax?__p=/internal/v1/devices/x`, `GET /api/sax?__p=/v1/%2e%2e/internal/v1/devices/x` | `404`(공개 함수는 내부 경로를 받지 않는다) |
