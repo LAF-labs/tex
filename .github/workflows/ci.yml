@@ -53,8 +53,16 @@ jobs:
         run: |
           echo "CI_OUT=$RUNNER_TEMP/ci-out" >> "$GITHUB_ENV"
           echo "SAX_MEASURE_DIR=$RUNNER_TEMP/ci-out/measure" >> "$GITHUB_ENV"
-      - name: xvfb
-        run: command -v xvfb-run >/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q xvfb)
+      - name: xvfb·한글 글꼴
+        # 러너 이미지에는 한글 글꼴이 없다: OCR 시험(tests/ocr.test.ts)이 Chrome으로 그린 등록증의 한글이 빈 네모가 되어
+        # tesseract kor가 읽지 못한다. sans-serif 대체로 Noto CJK가 잡히게 깐다(맥은 Apple SD Gothic Neo, 윈도는 Malgun Gothic).
+        run: |
+          pkgs="fonts-noto-cjk"
+          command -v xvfb-run >/dev/null || pkgs="$pkgs xvfb"
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends $pkgs
+          fc-cache -f >/dev/null
+          echo "한글 글꼴:"; fc-list :lang=ko family | sort -u | head -5
+          test -n "$(fc-list :lang=ko)"
       - name: 버전
         run: node -v && pnpm -v && (google-chrome --version || true)
       - name: 설치(lockfile 고정)
