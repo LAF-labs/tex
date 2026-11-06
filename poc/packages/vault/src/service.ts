@@ -570,7 +570,9 @@ export class Vault {
     const ext = (await listInstalledExtensions(profileDir)).filter((id) => !EXTENSION_ALLOWLIST.includes(id));
     if (ext.length) {
       problems.push('extension_not_allowed');
-      this.opts.log.event('vault.extension_not_allowed', { count: ext.length });
+      // 진단: 확장 ID만 ext0~ext3에 남긴다(경로·이름 없음). ID 꼴(a-p 32자)이 아니면 'unknown'으로 바꿔 파일 내용이 로그에 섞이지 않게 한다.
+      const ids = Object.fromEntries(ext.slice(0, 4).map((id, i) => [`ext${i}`, /^[a-p]{32}$/.test(id) ? id : 'unknown']));
+      this.opts.log.event('vault.extension_not_allowed', { count: ext.length, ...ids });
     }
     if (await hasGoogleSignin(profileDir)) {
       problems.push('google_signin_detected');

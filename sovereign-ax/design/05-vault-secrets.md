@@ -63,7 +63,7 @@
 - `browser.launch()`는 **인자가 없다**. 엔진은 프로필 경로·기동 플래그·CDP 엔드포인트를 지정할 수 없다. 호출 주체는 엔진 포트로 한정한다.
 - 금고 바이너리 상수:
   - `vault.chromeProfileDir = %LOCALAPPDATA%\SovereignAX\chrome-profile`
-  - `vault.chromeArgs`(허용 목록, 이 밖의 인자는 붙이지 않는다): `--remote-debugging-pipe`, `--user-data-dir=<vault.chromeProfileDir>`, `--no-first-run`, 그리고 S3a 결과에 따라 `--kiosk-printing`.
+  - `vault.chromeArgs`(허용 목록, 이 밖의 인자는 붙이지 않는다): `--remote-debugging-pipe`, `--user-data-dir=<vault.chromeProfileDir>`, `--no-first-run`, `--disable-breakpad`(§8, N-04), `--disable-default-apps`(기본 앱이 전용 프로필에 깔리면 §3.6 확장 검사가 비밀 창을 막아 발급이 멈춘다, 팀장 결정 2026-11-06), 그리고 S3a 결과에 따라 `--kiosk-printing`.
 - 기동 전 확인: 경로가 상수와 같다, 경로의 어느 구성 요소도 재분석 지점(심볼릭 링크·정션)이 아니다, 폴더 ACL이 사용자 전용(소유자 + SYSTEM, 상속 차단)이다. 하나라도 어긋나면 기동하지 않는다. Chrome 136+가 기본 데이터 폴더를 명시 경로로 받았을 때 파이프 디버깅을 거부하는지는 **S6j**에서 확인한다(확인과 무관하게 위 규칙으로 막는다).
 - Chrome 자식 프로세스 환경 변수는 화이트리스트로 정리한다(디버그·로깅·프록시 관련 변수 제거).
 
@@ -259,7 +259,7 @@ interface VaultCrypto {
 - **누출 스캐너**(D13 §6)는 글자 단위 CDP 메시지·IPC 캡처·클립보드·전용 프로필 디스크에 더해 **엔진이 받은 CDP 이벤트 스트림(요청 바디 포함)**을 본다(A-02). S6 통과 기준에 다음을 넣는다: "다른 OS 사용자 계정에서 CDP 접속 불가", "엔진이 지정한 엔드포인트로 금고가 접속하지 않음(인자 없음)", "브라우저 타깃·`Storage` 도메인 호출 시 거부 + `vault.cdp_denied`", "비밀 창 활성 상태의 엔진 수신 메시지(`Runtime` 응답 포함) = 허용 목록"(S6f).
 - 금고는 비밀 사용 직후 그 값의 변형으로 `logs\`·`staging\`을 스캔해 건수만 `vault.leak_scan{files, findings}`로 남긴다(PoC 빌드). 알려진 값 치환이 적중하면 `secret_window.leak_suspected{hits}`를 엔진·main에 보내 실행을 멈춘다. 전용 Chrome의 로컬 크래시 덤프는 만들지 않고 남은 것은 지운다(ADR-025, D-11(N-17), D-07(N-04)).
 - **전용 프로필 잔존물 삭제**(금고 S6, 팀장 승인 2026-11-06, 금고 PR #101, 설계 변경 아님): 페이지가 비밀을 주소에 넣거나 자식 프레임 폼으로 POST하면 `Default/History`·`Default/Sessions/`(자식 프레임 POST 바디 포함)·`segmentation_platform/ukm_db`에 평문이 남던 누출을 막는다. 금고는 전용 Chrome 기동 전과 종료 뒤에(`removeCrashDumps`와 같은 자리) `History`·`Sessions`·`Current/Last Session`·`Tabs`·`Visited Links`·`Top Sites`·`Shortcuts`·`Network Action Predictor`·`Favicons`·`segmentation_platform`을 지운다(`removeProfileResidue(PROFILE_RESIDUE_PATHS)`). 링크면 그 너머를 지우지 않고 `vault.chrome_residue_link`를 남긴다. 지우면 `vault.chrome_residue_removed{count}`다. 쿠키·`Local Storage`·`Preferences`는 포털 로그인 유지를 위해 남긴다. D11·D13의 "전용 프로필 디스크 0건"을 지키는 수단이다.
-- **금고 보안 이벤트**(D16 등록 교차 요청): `vault.cdp_denied`, `vault.origin_left`, `vault.profile_prefs_mismatch`, `vault.extension_not_allowed`, `vault.google_signin_detected`, `vault.secret_window_refused`, `vault.preinjected_script`(Phase 2), `vault.dbkey_requested_twice`, `vault.crypto_rate_anomaly`, `vault.secret_window_close_denied`, `vault.chrome_dump_removed`, `vault.leak_scan`, `vault.chrome_residue_removed`, `vault.chrome_residue_link`(2026-11-06), `secret_window.leak_suspected`, `secret_window.refused`, `vault.secret_input_unbound`, `vault.keystore_mismatch`, `vault.credential_suspect`(AUDIT-D). 모두 인자·값 없이 코드와 타깃 ID만 남긴다.
+- **금고 보안 이벤트**(D16 등록 교차 요청): `vault.cdp_denied`, `vault.origin_left`, `vault.profile_prefs_mismatch`, `vault.extension_not_allowed`, `vault.google_signin_detected`, `vault.secret_window_refused`, `vault.preinjected_script`(Phase 2), `vault.dbkey_requested_twice`, `vault.crypto_rate_anomaly`, `vault.secret_window_close_denied`, `vault.chrome_dump_removed`, `vault.leak_scan`, `vault.chrome_residue_removed`, `vault.chrome_residue_link`(2026-11-06), `secret_window.leak_suspected`, `secret_window.refused`, `vault.secret_input_unbound`, `vault.keystore_mismatch`, `vault.credential_suspect`(AUDIT-D). 모두 인자·값 없이 코드와 타깃 ID만 남긴다. `vault.extension_not_allowed`는 진단용으로 확장 ID(`ext0`~`ext3`, a-p 32자 꼴만, 아니면 `unknown`)와 개수를 더한다. 경로·이름은 남기지 않는다(2026-11-06).
 
 ## 9. 동의와 투명성
 
