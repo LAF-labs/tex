@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { Logger, TokenIssuer, TokenVerifier, createServer, ed25519RawPublic, jcs, listen, migrate, openSqlite, type DeviceDirectory, type Sql } from '../services/shared/src/index.ts';
-import { AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter, type DeviceStopHook } from '../services/account/src/index.ts';
+import { AccountService, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, accountRouter, type DeviceStopHook, type PairingRooms } from '../services/account/src/index.ts';
 import { Clock, D, cert, client, device, dpop, edKey, entry, type Device, type EdKey } from './services-kit.ts';
 
 export const ACCOUNT_ORIGIN = 'https://account.test.invalid';
@@ -19,6 +19,8 @@ export interface Stack {
   directory: DeviceDirectory;
   stopped: string[];
   hooks: DeviceStopHook[];
+  /** 페어링 룸 소비 확인(릴레이 시험이 실제 릴레이 내부 API로 바꿔 끼운다). 기본은 항상 실패 */
+  pairing: { impl: PairingRooms | null };
   close(): void;
 }
 
@@ -29,6 +31,7 @@ export async function accountStack(clock = new Clock()): Promise<Stack> {
   const signKey = edKey().priv;
   const stopped: string[] = [];
   const hooks: DeviceStopHook[] = [{ stopped: async (id) => void stopped.push(id) }];
+  const pairing: Stack['pairing'] = { impl: null };
   const svc = new AccountService({
     db,
     mail,
@@ -39,12 +42,13 @@ export async function accountStack(clock = new Clock()): Promise<Stack> {
     publicOrigin: ACCOUNT_ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/done',
     stopHooks: hooks,
+    pairing: { redeem: (roomId, dev) => (pairing.impl ? pairing.impl.redeem(roomId, dev) : Promise.resolve(false)) },
     now: clock.now,
   });
   const verifier = new TokenVerifier({ k1: ed25519RawPublic(signKey) });
   const server = createServer(accountRouter({ svc, verifier, publicOrigin: ACCOUNT_ORIGIN, internalSecret: 'internal-test' }), { logger: new Logger('account', () => undefined, clock.now) });
   const req = client(await listen(server));
-  return { clock, db, mail, svc, server, req, verifier, directory: { get: (id) => svc.deviceRecord(id) }, stopped, hooks, close: () => server.close() };
+  return { clock, db, mail, svc, server, req, verifier, directory: { get: (id) => svc.deviceRecord(id) }, stopped, hooks, pairing, close: () => server.close() };
 }
 
 export interface Signed {
