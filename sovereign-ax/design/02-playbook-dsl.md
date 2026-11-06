@@ -147,7 +147,7 @@
 | `human` | `kind`: `captcha`\|`otp`\|`secret`\|`manual`, `prompt`, `region?`, `target?`(secret·otp 입력 대상), `inputSpec?`(RE2), `ttlMs` | 사람 입력. `secret`은 타이피스트 경유 | 아니오 |
 | `human_commit` | `prompt`, `verify`, `followUpOf?` | 사람이 직접 누르는 비가역(운영 수준 `assisted`). 토큰 소비 → `armed` → 사람 → 증언 → `verify`. 증언은 verify를 대신하지 못함 | **예** |
 | `secret_fill` | `target`(`secretKind` 항목 필수, `secret == secretKind`), `secret`: `cert_password`\|`portal_password`\|`security_card`, `rowFrom?` | **금고가 직접 입력**. 보안카드는 `rowFrom`(화면에서 읽은 칸 번호 변수, 비밀 아님). `cert_password`는 사용자가 직접 넣으므로(ADR-020 결정 2) 금고에 실 포털 허용 origin이 없어 입력하지 않는다(D05 §3.7) | 아니오 |
-| `sign` | `method`, `then[]` | 로그인 등 **커밋 구간 밖** 포털 서명 흐름 래퍼(모듈 위임). 내부 동작도 Actuator를 거침. 발급 시 전자서명은 `submit.signFlow`로 쓴다 | 아니오 |
+| `sign` | `method`, `then[]` | 로그인 등 **커밋 구간 밖** 포털 서명 흐름 래퍼(모듈 위임). 내부 동작도 Actuator를 거침. 발급 시 전자서명은 `submit.signFlow`로 쓴다. `then` 중 `method`에 대응하는 동작만 실행한다(`cert`→`human:secret`, `security_card`→`secret_fill:security_card`, `simple_auth`는 입력 없음·PUSH는 뒤 `wait`). 대응 동작이 없으면 핸드오프하고, 커밋 구간 안 `sign`은 거부한다(엔진 #176, 팀장 결정 2026-11-06) | 아니오 |
 | `submit` | `target`(`commits:true`), `intent: "$intent.id"`, `verify`(stepRef), `expectConfirm?`(V-24), `signFlow?`(§4.5) | 비가역 제출. `retry: 0` 고정, `onFail.then ∈ {handoff, abort}` | **예** |
 | `verify` | `lookup`: `{playbook, match{fieldKey: $ref}, window, baseline, notCommittedPolicy, bind?}`, `on`{`committed`\|`not_committed`\|`unknown` → stepRef\|handoff\|abort} | **포털 조회 하위 흐름**으로 제출 여부를 결정적으로 비교(§4.4). 새 탭에서 실행. 커밋된 스텝의 포털 측 부수효과(예: 자동 이메일 발송) 확인에도 쓴다 | 아니오 |
 | `capture` | `name`, `from` | 결과 화면 값 캡처(보조 대조용). 승인번호의 원천은 `verify.bind`다(B-08) | 아니오 |
