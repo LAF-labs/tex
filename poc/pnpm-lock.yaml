@@ -394,6 +394,18 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
 
+  services/registry:
+    dependencies:
+      '@sax/engine':
+        specifier: workspace:*
+        version: link:../../packages/engine
+      '@sax/payroll':
+        specifier: workspace:*
+        version: link:../../packages/payroll
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
   services/shared:
     dependencies:
       ajv:
