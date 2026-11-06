@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
-import { EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
+import { downloadPreferences, EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
 import { findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfileResidue, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
@@ -15,6 +15,7 @@ import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
 import { scanNpki, type NpkiFs, type NpkiRoot } from './npki-scan.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
+import { PdfSaver } from './pdf/save.ts';
 import { Relay } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
 import { HumanSecretVault } from './keychain/human.ts';
@@ -92,6 +93,8 @@ export interface VaultOptions {
   human?: HumanSecretVault;
   /** 시험 전용: NPKI 탐지 위치·파일 접근(감사). 기본은 표준 위치·node:fs. */
   npki?: { roots?: NpkiRoot[]; fs?: NpkiFs };
+  /** 시험 전용: PDF 저장 상한(기본 PDF_MAX_BYTES)·다운로드 무장 유효 시간(기본 DOWNLOAD_ARM_TTL_MS). */
+  pdf?: { maxBytes?: number; armTtlMs?: number };
 }
 
 /** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
@@ -105,6 +108,7 @@ export interface LaunchResult {
 /** 금고(TB-1). Chrome 파이프 단독 소유자이며 엔진에는 허용 목록 중계만 준다(ADR-005 v3). */
 export class Vault {
   private readonly opts: VaultOptions;
+  private pdf: PdfSaver | null = null;
   private readonly policy: RelayPolicy;
   private chrome: LaunchedChrome | null = null;
   private launching = false;
@@ -323,6 +327,13 @@ export class Vault {
       case 'commitGuard.disarm':
         this.requireGuard().disarm(p);
         return {};
+      case 'pdf.print':
+        return this.requirePdf().print(p);
+      case 'download.arm':
+        return this.requirePdf().arm(p);
+      case 'download.disarm':
+        this.requirePdf().disarm();
+        return {};
       case 'run.begin': {
         // 열거형 밖 트리거는 저장하지 않는다(N-77, fail-closed).
         if (!RUN_TRIGGERS.includes(p.trigger as RunTrigger)) throw new Error('bad_trigger');
@@ -411,6 +422,11 @@ export class Vault {
     return g;
   }
 
+  private requirePdf(): PdfSaver {
+    if (!this.pdf) throw new Error('browser not launched');
+    return this.pdf;
+  }
+
   private requireOps(): SecretOps {
     if (!this.ops) throw new Error('browser not launched');
     return this.ops;
@@ -443,7 +459,7 @@ export class Vault {
     if (profile.before.length) this.opts.log.event('vault.profile_dir_problem', { problems: profile.before.join(':'), reason: profile.reason?.join(':'), setAside: profile.setAside, ok: profile.check.ok });
     if (!profile.check.ok) throw new Error(`chrome profile not private: ${profile.check.problems.join(',')}`);
     await this.removeDumps(profileDir);
-    await writeProfileSettings(profileDir);
+    await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
     const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
     this.chrome = chrome;
@@ -525,7 +541,20 @@ export class Vault {
     relay.onSecretWindowClosed.add((targetId) => {
       if (this.enginePort) this.post(this.enginePort, { t: 'ev', name: 'secret_window.closed', data: { targetId, ok: true } });
     });
+    this.pdf?.shutdown();
+    const pdf = new PdfSaver({
+      staging: this.opts.paths.staging,
+      log: this.opts.log,
+      send: (m, params, sid) => relay.send(m, params, sid),
+      exposed: (id) => relay.exposedTarget(id),
+      emit: (name, data) => emit(['engine'], name, data),
+      maxBytes: this.opts.pdf?.maxBytes,
+      armTtlMs: this.opts.pdf?.armTtlMs,
+    });
+    this.pdf = pdf;
+    relay.onDownloadEvent = (m, params) => pdf.onBrowserEvent(m, params);
     await relay.init();
+    await pdf.init();
     const targetId = await relay.createRunPage();
     const webdriver = await this.selfCheck(relay, targetId);
     return { targetId, webdriver };
@@ -563,7 +592,7 @@ export class Vault {
 
   private async readProfileProblems(profileDir: string): Promise<string[]> {
     const problems: string[] = [];
-    if ((await verifyProfileSettings(profileDir)).length) {
+    if ((await verifyProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging))).length) {
       problems.push('profile_prefs_mismatch');
       this.opts.log.event('vault.profile_prefs_mismatch');
     }
@@ -622,9 +651,11 @@ export class Vault {
     this.profileProblems = null;
     // 닫기를 기다리기 전에 떼어 낸다. 닫는 동안 온 run.begin·secret.provide가 버려질 ops에 들어가지 않게.
     // chrome은 닫힐 때까지 남겨 그사이의 launch를 already launched로 막는다.
-    const { ops, relay, chrome } = this;
+    const { ops, relay, chrome, pdf } = this;
     this.ops = null;
     this.relay = null;
+    this.pdf = null;
+    pdf?.shutdown();
     // 실행 트리거(run.begin)는 Chrome보다 오래 산다. 다시 띄우면 새 ops로 옮긴다.
     for (const [k, v] of ops?.runTriggers ?? []) this.pendingTriggers.set(k, v);
     ops?.shutdown();

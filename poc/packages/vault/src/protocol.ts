@@ -28,6 +28,7 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'commitGuard.arm', 'commitGuard.disarm',
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
     'getDbKeyOnce',
+    'pdf.print', 'download.arm', 'download.disarm',
   ],
   control: [
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
@@ -454,13 +455,53 @@ export interface NpkiListResult {
   skipped: Partial<Record<'symlink' | 'not_file' | 'too_large' | 'empty' | 'changed' | 'linked' | 'unreadable' | 'limit' | 'bad_name', number>>;
 }
 
+// ───────────────────────── PDF 저장(engine, save_pdf) ─────────────────────────
+
+/**
+ * 엔진 save_pdf 핸들러의 금고 쪽(D05 §3.3 다운로드·인쇄 경로, ADR-025, 팀장 결정 2026-11-06).
+ * 엔진의 `Page.printToPDF`·`Page.setDownloadBehavior`·`Browser.setDownloadBehavior`는 중계가 계속 거부한다.
+ * 금고가 자기 세션에서 인쇄하거나 무장된 다운로드 1건을 받고, 검사를 통과하면 staging에 `<fileId>.pdf`(무작위 이름,
+ * 사용자 전용 권한)로 둔다. 엔진에는 fileId만 간다(바이트·원래 파일 이름·URL 없음). 보관함 이동은 엔진 문서 가져오기가
+ * `stagedPdfPath(paths.staging, fileId)`로 읽어 docparse를 거친 뒤 지운다(D05 §3.3, D07 §1).
+ *
+ * - `pdf.print {runId, targetId, landscape?}` → PdfPrintResult. 성공하면 `download.completed{fileId}` 이벤트도 같은 fileId로 간다.
+ * - `download.arm {runId, targetId}` → DownloadArmResult. 그 타깃(하위 프레임 포함)의 다음 다운로드 1건만 받는다.
+ *   결과는 이벤트로만: `download.completed{fileId}` 또는 `download.failed{reason}`. DOWNLOAD_ARM_TTL_MS 안에 시작되지 않으면 expired.
+ *   무장 없이 시작된 다운로드는 취소하고 지운다(vault.download_unexpected).
+ * - `download.disarm {}` → {}.
+ */
+export interface PdfPrintParams {
+  runId: string;
+  targetId: string;
+  landscape?: boolean;
+}
+export type PdfRefuseReason = 'bad_params' | 'target_not_exposed' | 'secret_window_open' | 'busy' | 'print_failed' | 'too_large' | 'not_pdf';
+export type PdfPrintResult = { ok: true; fileId: string } | { ok: false; reason: PdfRefuseReason };
+export interface DownloadArmParams {
+  runId: string;
+  targetId: string;
+}
+export type DownloadArmResult = { armed: true } | { armed: false; reason: 'bad_params' | 'target_not_exposed' | 'already_armed' };
+/** download.failed 사유. unreadable: 링크·특수 파일·하드링크이거나 읽지 못했다. */
+export type DownloadFailReason = 'too_large' | 'not_pdf' | 'canceled' | 'expired' | 'unreadable';
+export interface DownloadCompletedEvent {
+  fileId: string;
+}
+export interface DownloadFailedEvent {
+  reason: DownloadFailReason;
+}
+/** PDF 상한(docparse MAX_INPUT_BYTES와 같다: 넘으면 어차피 가져오지 못한다). */
+export const PDF_MAX_BYTES = 15 * 1024 * 1024;
+/** download.arm 유효 시간. */
+export const DOWNLOAD_ARM_TTL_MS = 60_000;
+
 // ───────────────────────── 금고 이벤트 ─────────────────────────
 
 /**
  * 금고 → main(control)·엔진 이벤트(I-2·I-3).
- * - 엔진 포트: secret_window.refused·secret_window.leak_suspected·secret_window.closed·commit.body_compared
+ * - 엔진 포트: secret_window.refused·secret_window.leak_suspected·secret_window.closed·commit.body_compared·download.completed·download.failed
  * - control 포트: secret.needed·secret.expired·secret_window.refused·secret_window.leak_suspected·vault.state·secret.suspect
  */
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
-  | 'commit.body_compared' | 'vault.state' | 'secret.suspect';
+  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed';

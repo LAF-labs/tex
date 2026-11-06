@@ -1,5 +1,5 @@
 import type { EventLog } from '@sax/platform';
-import { ACTIVE_WINDOW_DROP_EVENTS } from '../constants.ts';
+import { ACTIVE_WINDOW_DROP_EVENTS, RELAY_DROPPED_EVENTS } from '../constants.ts';
 import type { CdpMessage, PipeConnection } from '../cdp/connection.ts';
 import type { CommitGuard } from './commit-guard.ts';
 import { checkSessionCommand, urlAllowed, type RelayPolicy, type Verdict } from './policy.ts';
@@ -114,6 +114,8 @@ export class Relay {
   activeValueHook?: (targetId: string) => Promise<void>;
   /** R-C1 커밋 본문 대조(금고 서비스가 붙인다). */
   commitGuard: CommitGuard | null = null;
+  /** 브라우저 수준 Browser.downloadWillBegin·downloadProgress(금고 PDF 저장이 붙인다). 엔진에는 가지 않는다. */
+  onDownloadEvent?: (method: string, params: Json) => Promise<void>;
 
   constructor(opts: RelayOptions) {
     this.conn = opts.conn;
@@ -353,6 +355,10 @@ export class Relay {
         }
         return;
       }
+      case 'Browser.downloadWillBegin':
+      case 'Browser.downloadProgress':
+        await this.onDownloadEvent?.(String(msg.method), p);
+        return;
     }
   }
 
@@ -533,6 +539,7 @@ export class Relay {
     const es = this.engineSessions.get(msg.sessionId!);
     const t = es ? this.targets.get(es.targetId) : undefined;
     if (!es || !t || !t.exposed) return null;
+    if (RELAY_DROPPED_EVENTS.has(String(msg.method))) return null;
     const p = (msg.params ?? {}) as Json;
     // 받은 시점과 지금 중 엄격한 쪽(오염 표시·요청 바디 제거가 커밋 처리 순서에 밀리지 않게).
     const now = this.stateOf(t);

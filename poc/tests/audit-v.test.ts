@@ -215,7 +215,11 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'profile_not_checked', '첫 점검 전');
       const prefs = path.join(b.paths.chromeProfile, 'Default', 'Preferences');
       await fs.mkdir(path.dirname(prefs), { recursive: true });
-      const ok = { credentials_enable_service: false, profile: { password_manager_enabled: false }, autofill: { profile_enabled: false, credit_card_enabled: false } };
+      const ok = {
+        credentials_enable_service: false, profile: { password_manager_enabled: false }, autofill: { profile_enabled: false, credit_card_enabled: false },
+        // 다운로드·저장 대화 상자 폴더 = staging(D05 §3.3)
+        download: { default_directory: b.paths.staging, prompt_for_download: false }, savefile: { default_directory: b.paths.staging },
+      };
       await fs.writeFile(prefs, JSON.stringify(ok));
       await fs.writeFile(path.join(b.paths.chromeProfile, 'Local State'), JSON.stringify({ user_experience_metrics: { reporting_enabled: false } }));
       v.profileProblems = []; // 기동 1.5초 뒤 점검 통과
@@ -226,6 +230,8 @@ describe('audit-v V2 비밀 창 개시 조건 재검사', () => {
       assert.equal(await v.profileBlocker(), 'extension_not_allowed', '세션 중 확장 설치');
       await fs.writeFile(prefs, JSON.stringify({ ...ok, credentials_enable_service: true }));
       assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch');
+      await fs.writeFile(prefs, JSON.stringify({ ...ok, download: { default_directory: path.join(b.paths.root, 'elsewhere'), prompt_for_download: false } }));
+      assert.equal(await v.profileBlocker(), 'profile_prefs_mismatch', '다운로드 폴더가 staging이 아니다');
     } finally {
       await b.close();
     }
