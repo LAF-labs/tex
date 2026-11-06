@@ -1,18 +1,8 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { BUNDLE_CSS, TOKENS } from './tokens.gen.ts';
 
-// 디자인 시스템 tokens.json을 CSS 변수로 옮긴다(PoC: 저장소의 원본을 기동 때 읽는다. 앱 번들에 넣는 것은 Phase 1).
-
-export const DESIGN_SYSTEM = path.resolve(import.meta.dirname, '../../../../sovereign-ax/design-system');
-
-interface TokenFile {
-  color: { tokens: Array<{ name: string; value: { light: string; dark: string } }> };
-  type: { families: Record<string, string> };
-  spacing: { tokens: Array<{ name: string; value: string }> };
-  radius: { tokens: Array<{ name: string; value: string }> };
-  shadow: { tokens: Array<{ name: string; value: { light: string; dark: string } }> };
-  layout: { tokens: Array<{ name: string; value: string }> };
-}
+// 디자인 시스템 토큰을 CSS 변수로 옮긴다. 값은 빌드에 들어가는 생성 파일(tokens.gen.ts)에서만 읽는다(ADR-028 결정 7).
+// 설치본은 저장소의 디자인 시스템 폴더를 읽을 수 없다. 원본이 바뀌면 node apps/desktop/scripts/gen-tokens.mjs로 다시 만든다
+// (tests/shell-tokens.test.ts가 생성 파일이 원본과 같은지 본다).
 
 export interface Tokens {
   light: Record<string, string>;
@@ -20,24 +10,8 @@ export interface Tokens {
   common: Record<string, string>;
 }
 
-let cached: Tokens | null = null;
-
 export function loadTokens(): Tokens {
-  if (cached) return cached;
-  const t = JSON.parse(fs.readFileSync(path.join(DESIGN_SYSTEM, 'tokens.json'), 'utf8')) as TokenFile;
-  const light: Record<string, string> = {};
-  const dark: Record<string, string> = {};
-  for (const c of [...t.color.tokens, ...t.shadow.tokens]) {
-    light[c.name] = c.value.light;
-    dark[c.name] = c.value.dark;
-  }
-  // "{accent}" 같은 참조를 푼다.
-  for (const m of [light, dark]) for (const [k, v] of Object.entries(m)) m[k] = v.replace(/^\{(.+)\}$/, (_s, ref: string) => m[ref] ?? v);
-  const common: Record<string, string> = {};
-  for (const [k, v] of Object.entries(t.type.families)) common[`font-${k}`] = v;
-  for (const g of [t.spacing.tokens, t.radius.tokens, t.layout.tokens]) for (const x of g) common[x.name] = x.value;
-  cached = { light, dark, common };
-  return cached;
+  return TOKENS;
 }
 
 const vars = (m: Record<string, string>) =>
@@ -51,7 +25,7 @@ export function tokensCss(): string {
   return `:root{${vars(t.common)}${vars(t.light)}color-scheme:light dark}\n@media (prefers-color-scheme: dark){:root{${vars(t.dark)}}}\n`;
 }
 
-/** 디자인 시스템 컴포넌트 스타일. 렌더러는 네트워크가 없으므로 Google Fonts @import를 뺀다(서체는 대체 서체로). */
+/** 디자인 시스템 컴포넌트 스타일(Google Fonts @import는 생성 때 뺐다). */
 export function bundleCss(): string {
-  return fs.readFileSync(path.join(DESIGN_SYSTEM, 'components/bundle.css'), 'utf8').replace(/^@import[^;]+;\s*/m, '');
+  return BUNDLE_CSS;
 }
