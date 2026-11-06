@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
-import type { DesktopKeys } from '@sax/remote';
+import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
@@ -25,11 +25,12 @@ import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbo
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
-import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, SECRET_CSP } from './harden.ts';
+import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
+import { engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
 import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -39,12 +40,16 @@ import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
 import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
+import { PairingHost } from './remote-pairing.ts';
+import { qrSvgDataUrl } from './remote-qr.ts';
+import { PairWindow } from './pair-window.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
 import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
+const PAIR_URL = `${SHELL_SCHEME}://shell/pair.html`;
 
 export function registerShellSchemes(): void {
   // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
@@ -82,6 +87,9 @@ const FILES: Record<string, string> = {
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',
+  '/pair.html': 'text/html; charset=utf-8',
+  '/pair.js': 'text/javascript',
+  '/pair.css': 'text/css',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
 };
@@ -101,7 +109,8 @@ function serve(): void {
     if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
     const type = FILES[p];
     if (!type) return new Response('', { status: 404 });
-    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type) });
+    // 폰 연결 창(S-03)은 비밀 창과 같은 좁은 CSP(연결·폼 전송 없음)
+    return new Response(await fs.readFile(path.join(STATIC, 'shell', p.slice(1))), { headers: appHeaders(type, p === '/pair.html' ? PAIR_CSP : undefined) });
   });
   // 렌더러는 네트워크가 없다(D01 §2.1). 자기 스킴 밖 요청을 취소한다.
   session.defaultSession.webRequest.onBeforeRequest((d, cb) => cb({ cancel: !d.url.startsWith(`${SHELL_SCHEME}://`) && !d.url.startsWith('devtools://') }));
@@ -143,10 +152,12 @@ export interface ShellOptions {
    */
   update?: UpdateWiring;
   /**
-   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 클라우드 포트(egress)·금고 키 연결이 갖춰지면 진입점이 넘긴다.
+   * 계정·기기 연결(A-01 로그인, S-03 폰 연결, remote-ports.ts). 제품 진입점은 remote-wiring.ts productRemote(cloudPorts + vaultDesktopKeys)를 넘긴다.
    * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
    */
   remote?: RemoteWiring;
+  /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
+  intent?: IntentResolver;
 }
 
 /** ShellOptions.remote. */
@@ -155,6 +166,8 @@ export interface RemoteWiring {
   keys: VaultKeysFactory | null;
   /** 계정 기기 목록에 보일 이름. 사람 이름이 들어가지 않게 기본은 운영체제 이름. */
   deviceName?: string;
+  /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
+  relayClient?: RelayClient;
 }
 
 /** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
@@ -597,6 +610,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
         },
   );
+  // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 엔진에 명령이 없으면 오프라인 정규식.
+  const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
+  const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null) => {
+    if (reply.kind === 'draft') {
+      reply.run.interp = via;
+      pushBoard(); // 초안은 update 이벤트 없이 생긴다
+    }
+    return { ...reply, via, note };
+  };
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
   const keysOf = (): Promise<DesktopKeys> => {
@@ -618,6 +640,34 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   let accountReady: Promise<unknown> | null = null;
   const accountInit = () => (accountReady ??= account.init());
+  // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
+  // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
+  let pairWin: PairWindow | null = null;
+  const pairedThisRun: DesktopPairResult[] = [];
+  const pairWindow = (): PairWindow => {
+    if (pairWin) return pairWin;
+    const cloud = opts.remote?.cloud;
+    const device = account.device();
+    if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
+    const host = new PairingHost({
+      account: cloud.account,
+      relayHttp: cloud.relay,
+      relay: opts.remote?.relayClient ?? wsRelayClient({ host: cloud.relayHost, open: cloud.openSocket, insecureLocal: cloud.insecureLocal }),
+      relayHost: cloud.relayHost,
+      device,
+      keys: keysOf,
+      qr: qrSvgDataUrl,
+      desktopName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+      log: (n, d) => log.event(n, d),
+      onView: (v) => pairWin?.push(v),
+      onPaired: (r) => {
+        pairedThisRun.push(r);
+        send({ type: 'account', account: account.view() });
+      },
+    });
+    pairWin = new PairWindow({ parent: win, url: PAIR_URL, host, onClosed: () => send({ type: 'account', account: account.view() }) });
+    return pairWin;
+  };
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -647,21 +697,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile = p.kind;
       return { profile };
     },
-    // 시연 모델이 있으면 먼저 묻고(4초 상한), 없거나 실패하면 정규식. via는 화면 구석 표시용(모델 해석/오프라인 해석).
+    // 시연 모델이 있으면 먼저 묻고(4초 상한), 아니면 엔진 intent.resolve(M4-3 ③, 4초 상한). 둘 다 없거나 실패하면 정규식.
+    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다. via는 화면 구석 표시용(모델 해석/오프라인 해석).
     'request.send': async (p) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
-      const model = demo && modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
-      const via = model ? 'model' : 'offline';
-      if (demo) log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
-      const reply = interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, parseRegex(text, runs.counterparties), text) : undefined);
-      if (reply.kind === 'draft') {
-        reply.run.interp = via;
-        pushBoard(); // 초안은 update 이벤트 없이 생긴다
+      const local = parseRegex(text, runs.counterparties);
+      if (demo) {
+        const model = modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
+        const via = model ? 'model' : 'offline';
+        log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
+        return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null);
       }
-      return { ...reply, via };
+      const r = text.trim() ? await intent.resolve(text) : { route: null, fallback: 'empty' };
+      const via = r.route?.via === 'model' ? 'model' : 'offline';
+      log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
+      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null);
+      const to = routed(r.route, local);
+      if ('say' in to) {
+        runs.pending.asked = null;
+        return { kind: 'say', text: to.say, via, note: null };
+      }
+      return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note);
     },
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {
@@ -775,6 +834,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       return account.back();
     },
+    // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
+    'pair.open': async () => {
+      needGesture(3_000);
+      await accountInit();
+      pairWindow().open();
+      return {};
+    },
     'onboarding.reply': async (p) => {
       needGesture(3_000);
       if (!onb) throw new Error('onboarding_done');
@@ -887,6 +953,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     updater?.stop();
+    pairWin?.dispose();
+    for (const r of pairedThisRun) r.channel.close();
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});

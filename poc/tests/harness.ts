@@ -71,7 +71,8 @@ export async function startHarness(opts: { policy?: RelayPolicy; headful?: boole
         c.port1.close();
         c.port2.close();
       }
-      await fs.rm(root, { recursive: true, force: true });
+      // Windows: Chrome 주 프로세스가 끝나도 자식이 프로필 파일(Network/Cookies 등)을 잠시 잡는다(WIN-REALDEVICE §5). 잠금이면 다시 시도한다.
+      await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
     },
   };
 }

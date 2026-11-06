@@ -103,6 +103,8 @@ export interface AccountView {
   email: string | null;
   codeExpiresAt: number | null;
   error: string | null;
+  /** 이 계정에 연결된 폰 수(AIK 서명 기기 목록의 mobile 항목). 로그인 전이면 0. */
+  phones: number;
 }
 
 export interface DesktopAccountOptions {
@@ -156,11 +158,11 @@ export class DesktopAccount {
   }
 
   view(): AccountView {
-    if (!this.#o.client) return { step: 'unavailable', email: null, codeExpiresAt: null, error: null };
-    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: null };
-    if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null };
-    if (this.#pending && this.#pending.expiresAt > this.#now()) return { step: 'code_sent', email: this.#pending.email, codeExpiresAt: this.#pending.expiresAt, error: this.#error };
-    return { step: 'signed_out', email: this.#pending?.email ?? this.#lastEmail, codeExpiresAt: null, error: this.#pending ? (this.#error ?? 'account.code_expired') : this.#error };
+    if (!this.#o.client) return { step: 'unavailable', email: null, codeExpiresAt: null, error: null, phones: 0 };
+    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length };
+    if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
+    if (this.#pending && this.#pending.expiresAt > this.#now()) return { step: 'code_sent', email: this.#pending.email, codeExpiresAt: this.#pending.expiresAt, error: this.#error, phones: 0 };
+    return { step: 'signed_out', email: this.#pending?.email ?? this.#lastEmail, codeExpiresAt: null, error: this.#pending ? (this.#error ?? 'account.code_expired') : this.#error, phones: 0 };
   }
 
   get identity(): RemoteIdentity | null {
@@ -223,7 +225,7 @@ export class DesktopAccount {
   /** 기기 범위 호출(토큰·DPoP). 등록 전이면 null. */
   device(): DeviceSession | null {
     if (!this.#id || !this.#o.client) return null;
-    if (!this.#device) this.#device = new DeviceSession(this.#o.client, this.#o.keys, this.#o.identity, this.#id, this.#now);
+    if (!this.#device) this.#device = new DeviceSession(this.#o.client, this.#o.keys, this.#o.identity, this.#id, this.#now, (id) => (this.#id = id));
     return this.#device;
   }
 
@@ -285,8 +287,10 @@ export class DeviceSession {
   #id: RemoteIdentity;
   #now: () => number;
   #cache: DeviceTokenCache;
+  #onChange: (id: RemoteIdentity) => void;
 
-  constructor(client: AccountClient, keys: () => Promise<DesktopKeys>, file: RemoteIdentityFile, id: RemoteIdentity, now: () => number) {
+  constructor(client: AccountClient, keys: () => Promise<DesktopKeys>, file: RemoteIdentityFile, id: RemoteIdentity, now: () => number, onChange: (id: RemoteIdentity) => void = () => {}) {
+    this.#onChange = onChange;
     this.#client = client;
     this.#keys = keys;
     this.#file = file;
@@ -321,6 +325,7 @@ export class DeviceSession {
   async setDeviceList(list: DeviceListJson): Promise<void> {
     this.#id = { ...this.#id, deviceList: list };
     await this.#file.save(this.#id);
+    this.#onChange(this.#id);
   }
 
   async #cert(): Promise<SignedCert> {
@@ -330,6 +335,7 @@ export class DeviceSession {
     const cert = await issueCert(k.aik, { device_id: this.#id.deviceId, role: 'desktop', Sx: k.noise.publicKey, Vx: k.vd.publicKey, not_after: certNotAfter(now) });
     this.#id = { ...this.#id, cert };
     await this.#file.save(this.#id);
+    this.#onChange(this.#id);
     return cert;
   }
 }

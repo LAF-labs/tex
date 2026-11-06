@@ -49,7 +49,10 @@ export const EXCLUDE = [
   '!**/*.map',
   '!**/*.tsbuildinfo',
   '!**/tsconfig*.json',
-  '!**/src/**',
+  // TS 소스는 앱과 작업 공간 패키지(@sax/*)에서만 뺀다. 런타임은 dist다. node_modules 전체의 src/를 빼면 실행 코드가 src/ 아래인
+  // 의존성(debug·tesseract.js의 main, officecrypto-tool의 ./src)이 빠져 엔진이 import 단계에서 끝난다(Windows 실기기 설치본 첫 실행, WIN-REALDEVICE §7).
+  '!src/**',
+  '!node_modules/@sax/*/src/**',
   '!**/{test,tests,__tests__,e2e,fixtures,example,examples,docs}/**',
   '!**/*.{md,markdown}',
   '!**/{LICENSE,LICENSE.*,license,CHANGELOG*,README*}',

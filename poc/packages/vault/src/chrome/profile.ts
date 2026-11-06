@@ -58,6 +58,17 @@ export async function verifyProfileSettings(profileDir: string, extra: Array<[st
 // Chrome extensions::mojom::ManifestLocation: 5 = kComponent, 10 = kExternalComponent
 const COMPONENT_LOCATIONS = new Set([5, 10]);
 
+/**
+ * 불러올 확장이 없는 기록 항목. Chrome은 외부 구성요소(웹 스토어 결제 등, location 10)를 받는 동안 업데이트 확인 기록(`{lastpingday}`)만 든 항목을
+ * 먼저 쓰고, 설치가 끝나면 location·path·manifest를 채운다. 느린 Windows 실기기에서 새 프로필 기동 뒤 10~20초 이 상태가 보였다(reports/WIN-REALDEVICE.md §5.1).
+ * location·path·manifest가 모두 없으면 Chrome이 불러올 수 없으므로 설치 확장으로 세지 않는다. 셋 중 하나라도 있으면 그대로 센다.
+ */
+function isRecordOnly(s: unknown): boolean {
+  if (!s || typeof s !== 'object') return true;
+  const e = s as Json;
+  return e.location === undefined && e.path === undefined && e.manifest === undefined;
+}
+
 /** 설치 확장 ID 열거(S6i 전 간이판: Preferences·Secure Preferences의 extensions.settings). */
 export async function listInstalledExtensions(profileDir: string): Promise<string[]> {
   const ids = new Set<string>();
@@ -66,7 +77,8 @@ export async function listInstalledExtensions(profileDir: string): Promise<strin
     const settings = getPath(j, 'extensions.settings');
     if (!settings || typeof settings !== 'object') continue;
     for (const [id, s] of Object.entries(settings as Json)) {
-      const loc = (s as Json | null)?.location;
+      if (isRecordOnly(s)) continue;
+      const loc = (s as Json).location;
       if (typeof loc === 'number' && COMPONENT_LOCATIONS.has(loc)) continue;
       ids.add(id);
     }
@@ -105,8 +117,46 @@ export const PROFILE_RESIDUE_PATHS = [
   'Default/Favicons', 'Default/Favicons-journal', 'segmentation_platform',
 ] as const;
 
+/**
+ * 잔존물·덤프 삭제 옵션.
+ * - Windows는 Browser.close 뒤 주 프로세스가 끝나도 자식(네트워크 서비스 등)이 잠시 파일을 잡고 있다. 실기기 10회 중 1회 자식 2개가 남았다
+ *   (reports WIN-REALDEVICE §5). 그동안 지우면 EBUSY·EPERM이 난다.
+ * - 잠금 오류는 경로마다 짧게 다시 시도한다(전체 상한 RESIDUE_RETRY_BUDGET_MS). 그래도 안 되면 그 경로만 건너뛰고 다음 경로를 지운다.
+ *   `onFailed`로 실패 경로 수를 알린다(§6.3: 예전에는 첫 실패에서 멈추고 아무 기록도 없었다).
+ */
+export interface RemoveOptions {
+  /** 시험 전용. 기본 fs.rm. */
+  rm?: (p: string, o: { recursive: true; force: true }) => Promise<void>;
+  /** 다시 시도 간격 기본값(ms, 시도마다 늘어난다). 시험은 0. */
+  retryDelayMs?: number;
+  onFailed?: (count: number) => void;
+}
+/** 경로당 시도 횟수(첫 시도 포함). */
+export const RESIDUE_RM_ATTEMPTS = 6;
+/** 한 번의 정리 전체에서 다시 시도에 쓰는 시간 상한. 넘으면 남은 경로는 한 번씩만 시도한다. */
+export const RESIDUE_RETRY_BUDGET_MS = 3_000;
+const BUSY_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
+
+/** 지우고 성공 여부를 돌려준다. 잠금 오류만 다시 시도한다. */
+async function rmWithRetry(p: string, o: RemoveOptions, budget: { until: number }): Promise<boolean> {
+  const rm = o.rm ?? ((x, opt) => fs.rm(x, opt));
+  const step = o.retryDelayMs ?? 100;
+  for (let i = 1; ; i++) {
+    try {
+      await rm(p, { recursive: true, force: true });
+      return true;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code ?? '';
+      if (!BUSY_CODES.has(code) || i >= RESIDUE_RM_ATTEMPTS || Date.now() >= budget.until) return false;
+      await new Promise((r) => setTimeout(r, step * i));
+    }
+  }
+}
+
 /** 탐색 기록 잔존물 삭제. 지운 파일 수, 경로 중 하나라도 링크면 링크 너머를 지우지 않고 -1. */
-export async function removeProfileResidue(profileDir: string): Promise<number> {
+export async function removeProfileResidue(profileDir: string, opts: RemoveOptions = {}): Promise<number> {
+  const budget = { until: Date.now() + RESIDUE_RETRY_BUDGET_MS };
+  let failed = 0;
   let count = 0;
   for (const rel of PROFILE_RESIDUE_PATHS) {
     const p = path.join(profileDir, ...rel.split('/'));
@@ -115,27 +165,31 @@ export async function removeProfileResidue(profileDir: string): Promise<number> 
     const st = await fs.lstat(p).catch(() => null);
     if (!st) continue;
     if (st.isSymbolicLink()) return -1;
-    if (st.isDirectory()) count += await countFiles(p);
-    else count++;
-    await fs.rm(p, { recursive: true, force: true });
+    const n = st.isDirectory() ? await countFiles(p) : 1;
+    if (await rmWithRetry(p, opts, budget)) count += n;
+    else failed++;
   }
+  if (failed) opts.onFailed?.(failed);
   return count;
 }
 
 /**
  * 전용 Chrome 크래시 덤프 삭제(N-04). 지운 파일 수를 돌려준다.
- * 덤프 폴더가 심링크·재분석 지점이면 링크 너머를 지우지 않고 -1.
+ * 덤프 폴더가 심링크·재분석 지점이면 링크 너머를 지우지 않고 -1. 잠금 오류는 removeProfileResidue와 같이 다시 시도한다.
  */
-export async function removeCrashDumps(profileDir: string): Promise<number> {
+export async function removeCrashDumps(profileDir: string, opts: RemoveOptions = {}): Promise<number> {
+  const budget = { until: Date.now() + RESIDUE_RETRY_BUDGET_MS };
+  let failed = 0;
   let count = 0;
   for (const name of CRASH_DUMP_DIRS) {
     const dir = path.join(profileDir, name);
     const st = await fs.lstat(dir).catch(() => null);
     if (!st) continue;
     if (st.isSymbolicLink()) return -1;
-    if (st.isDirectory()) count += await countFiles(dir);
-    else count++;
-    await fs.rm(dir, { recursive: true, force: true });
+    const n = st.isDirectory() ? await countFiles(dir) : 1;
+    if (await rmWithRetry(dir, opts, budget)) count += n;
+    else failed++;
   }
+  if (failed) opts.onFailed?.(failed);
   return count;
 }
