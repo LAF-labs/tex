@@ -1,0 +1,13 @@
+{
+  "revoked": [
+    {
+      "keyId": "package-0",
+      "role": "package",
+      "revokedAt": "2026-11-06T07:52:13Z"
+    }
+  ],
+  "monotonic": 1,
+  "keyEpoch": 1,
+  "issuedAt": "2026-11-06T07:52:13Z",
+  "expiresAt": "2026-11-07T07:52:13Z"
+}
