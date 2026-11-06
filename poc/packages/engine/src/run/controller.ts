@@ -16,6 +16,7 @@ import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
 import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.ts';
 import type { PlaybookIR, Step, StepOf } from '../core/types.ts';
+import type { VerifyJudgement } from '../core/verify.ts';
 import { buildGateRequest, type GateField, type GateRequest } from '../gate.ts';
 
 /**
@@ -108,6 +109,11 @@ export interface RunControllerInput {
   recover?: (stop: Extract<RunStop, { t: 'recover' }>) => Promise<boolean>;
   /** 주 비가역 X의 verify(조회만, M2-3). 없으면 unknown(InDoubt). */
   verify?: (x: string) => Promise<VerifyResult>;
+  /**
+   * verify 스텝 판정(core/verify.ts judgeVerify, D02 §4.4). 커밋 구간이면 결과를 상태 머신에 넣고(원장 기록·입력 잠금 해제는 그 효과),
+   * Running으로 남을 때만 on[결과]로 간다. 없으면 verify 스텝은 실행하지 않는다(unhandled).
+   */
+  verifyStep?: (v: StepOf<'verify'>) => Promise<VerifyJudgement>;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
   /** 상태 이벤트(UI·main). ui는 이 전이의 ui.* 효과. */
   onState?: (e: RunStateEvent) => void;
@@ -199,7 +205,7 @@ export class RunController {
         if (cp) this.staticPreGate.set(id, cp);
       }
     }
-    const bound = { ...i.handlers, gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep } as Handlers;
+    const bound = { ...i.handlers, gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep, ...(i.verifyStep ? { verify: this.verifyStep } : {}) } as Handlers;
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
     this.interp = new Interpreter(i.ir, bound, i.env, { ...i.interp, forcedStops }, { beforeStep: this.beforeStep, event: i.stepEvent });
   }
@@ -586,6 +592,21 @@ export class RunController {
         done('aborted');
         return fail('run.aborted');
     }
+  };
+
+  /**
+   * verify(D02 §4.4, D03 §5.3·§5.6): 판정은 조회만이다. 커밋 구간(토큰 소비 ~ verify 완료)이면 결과로 구간을 나간다:
+   * committed → 원장 committed{verify_ref}·사후 스텝, not_committed → 원장 not_committed·게이트 앞, unknown → InDoubt(멈춤).
+   * 구간 안에서 온 중지·하향은 machine이 이때 적용한다. 구간 밖(사후 부수효과 확인, 예: 메일 발송)은 on[결과]로만 간다.
+   */
+  private readonly verifyStep: Handler<'verify'> = async (v) => {
+    const j = await this.i.verifyStep!(v).catch((): VerifyJudgement => ({ result: 'unknown' }));
+    this.i.journal('verify.result', { stepId: v.id, result: j.result });
+    if (this.st.commit) {
+      if (!this.fire({ t: 'verify', result: j.result }, v.id, j.result === 'unknown' ? 'verify.unknown' : null)) return fail('run.state_stop');
+      if (this.name() !== 'Running') return fail('run.state_stop');
+    }
+    return { t: 'jump', to: v.on[j.result] };
   };
 
   /** waitMs 초과: Paused, 재개하면 게이트 앞 체크포인트부터(재게이트). */
