@@ -1,0 +1,38 @@
+# 진단 전용(claude/p1-ci-diag-v3 브랜치만, PR 아님).
+name: diag-win
+on:
+  push:
+    branches: [claude/p1-ci-diag-v3]
+permissions:
+  contents: read
+jobs:
+  d:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    defaults:
+      run:
+        working-directory: poc
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: poc/package.json
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: poc/.nvmrc
+          cache: pnpm
+          cache-dependency-path: poc/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile && pnpm build
+      - name: vault-relay 단독
+        continue-on-error: true
+        run: node --conditions=development --test tests/vault-relay.test.ts 2>&1 | grep -E "DIAG|✖|ℹ (pass|fail)" | head -40
+      - name: 전체
+        continue-on-error: true
+        run: pnpm test 2>&1 | grep -E "DIAG|^✖|ℹ (pass|fail)" | head -80

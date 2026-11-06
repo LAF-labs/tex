@@ -210,6 +210,7 @@ describe('vault relay (raw engine)', () => {
     secrets.push(secret);
     await eng.navigate(sid, `${fx.origin}/login`);
     const open = await h.client.rpc<{ ok: boolean }>('secretWindow.openForHuman', { runId: 'r1', targetId, frame: 'main', element: '#pw' });
+    if (!open.ok) console.log('DIAG S6f', JSON.stringify(h.log.lines.filter((l) => /refused|mismatch|extension|signin/.test(l))), JSON.stringify(await import('@sax/vault').then(async (v) => ({ prefs: await (v as unknown as { verifyProfileSettings?: (d: string) => Promise<string[]> }).verifyProfileSettings?.(h.paths.chromeProfile), ext: await (v as unknown as { listInstalledExtensions?: (d: string) => Promise<string[]> }).listInstalledExtensions?.(h.paths.chromeProfile) })).catch((e) => String(e))));
     assert.deepEqual(open, { ok: true });
     const mark = eng.events.length;
     const activeDenied: Record<string, boolean> = {};
