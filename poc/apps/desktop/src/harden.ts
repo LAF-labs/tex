@@ -10,6 +10,8 @@ import type { App, BrowserWindow, Session, WebContents, WebPreferences } from 'e
 export const APP_CSP = "default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'; img-src 'self' data:; require-trusted-types-for 'script'";
 /** 비밀 입력 창 페이지(main이 만든다): 스크립트·스타일은 자기 스킴 파일만, 이미지·연결 없음. */
 export const SECRET_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; connect-src 'none'; require-trusted-types-for 'script'";
+/** 폰 연결 창: SECRET_CSP에 QR 이미지(main이 만든 SVG data URL)만 더 연다. */
+export const PAIR_CSP = `${SECRET_CSP}; img-src data:`;
 
 /** 앱 스킴 응답 헤더: 형식, CSP, 형식 추측 금지. */
 export function appHeaders(type: string, csp: string = APP_CSP): Record<string, string> {
