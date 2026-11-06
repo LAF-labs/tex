@@ -44,7 +44,9 @@ jobs:
         with:
           node-version-file: poc/.nvmrc
           cache: pnpm
-          cache-dependency-path: poc/pnpm-lock.yaml
+          cache-dependency-path: |
+            poc/pnpm-lock.yaml
+            poc/apps/mobile/pnpm-lock.yaml
       - name: 출력 폴더(저장소 밖)
         # 시험 로그·측정 산출물은 러너 임시 폴더에 둔다(tests/measure-out.ts). 실패 시 아티팩트로 올린다.
         run: |
@@ -70,6 +72,18 @@ jobs:
         run: |
           set -o pipefail
           xvfb-run -a pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
+      # 폰 앱은 루트 작업공간에서 빠져 있다(apps/mobile/pnpm-workspace.yaml, 자체 잠금 파일). PR 기본 잡에서만 돈다(M5-1·M7).
+      - name: 폰 앱 의존성(lockfile 고정)
+        run: pnpm --dir apps/mobile install --frozen-lockfile
+      - name: 폰 앱 형식 검사·시험
+        run: |
+          set -o pipefail
+          pnpm --dir apps/mobile typecheck
+          pnpm --dir apps/mobile test 2>&1 | tee "$CI_OUT/test-mobile.log"
+      - name: 폰 릴레이 경로 스모크(더미 PC, 라이브·HTTPS 큐)
+        run: |
+          set -o pipefail
+          node scripts/ci-phone-relay.mjs 2>&1 | tee "$CI_OUT/phone-relay.log"
       - name: 작업 트리 깨끗함(측정 산출물 격리)
         if: ${{ !cancelled() }}
         # TODO(M1-1-CI): 소유 트랙의 measure-out 한 줄 변경이 머지되면 --warn을 뺀다.
