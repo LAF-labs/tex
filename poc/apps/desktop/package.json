@@ -8,6 +8,7 @@
     "package:win": "node ../../scripts/package-win.mjs"
   },
   "dependencies": {
+    "@sax/daemon": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/docparse": "workspace:*",
     "@sax/engine": "workspace:*",

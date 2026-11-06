@@ -1,10 +1,42 @@
 // S-06 4대보험 고지내역 → 직원 매칭(데이터 트랙, docparse #78 제안·팀장 전달 2026-11-05).
 // docparse는 읽기만 하고 매칭하지 않는다. 입력·출력 형식은 @sax/docparse의 InsuranceNoticeMatchInput·InsuranceNoticeMatch 그대로다.
+// 타입은 여기서 같은 모양으로 다시 적는다. 엔진이 이 패키지를 가져오는데 docparse가 엔진을 가져와서, 직접 가져오면 의존이 돌기 때문이다.
+// 두 모양이 같은지는 tests/payroll-commands.test.ts가 타입으로 확인한다.
 // 판정이 아니라 후보 제시다: 사장님이 확인 카드에서 고른다. 주민번호는 쓰지 않는다(이름·생년월일만, 직원 주민번호를 복호화하지 않는다).
 import { EmployeeRepo, type ColumnCipher, type Db } from '@sax/db';
-import type { InsuranceKind, InsuranceNoticeMatch, InsuranceNoticeMatchInput } from '@sax/docparse';
 import type { NoticeAmounts } from '@sax/payroll';
 import { BundleError } from './items.ts';
+
+/** @sax/docparse InsuranceKind와 같다 */
+export type InsuranceKind = 'pension' | 'health' | 'ltc' | 'employment' | 'industrial';
+
+/** @sax/docparse InsuranceNoticeMatchInput과 같다(docparse insurance_notice 결과를 담는 S-06 매칭 입력) */
+export interface InsuranceNoticeMatchInput {
+  profileId: string;
+  /** 고지 년월. 사장님이 확인 카드에서 고친 값 */
+  month: string;
+  /** 고지내역 원본 documents.id(payroll_months.notice_doc_ids_json에 들어갈 값) */
+  noticeDocId: string;
+  rows: Array<{
+    rowId: string;
+    name: string;
+    birthDate: string | null;
+    insurance: InsuranceKind;
+    base: number | null;
+    total: number | null;
+    employee: number | null;
+    employer: number | null;
+  }>;
+}
+
+/** @sax/docparse InsuranceNoticeMatch와 같다 */
+export interface InsuranceNoticeMatch {
+  rowId: string;
+  employeeId: string | null;
+  /** name_birth: 이름·생년월일 일치, name_only: 이름만(생년월일 없음), ambiguous: 후보 여럿, none: 없음 */
+  basis: 'name_birth' | 'name_only' | 'ambiguous' | 'none';
+  candidates?: string[];
+}
 
 /** 이름 비교: 앞뒤·가운데 공백을 지우고 NFC로 맞춘다(고지내역은 '홍 길동'처럼 띄어 쓴 경우가 있다) */
 const normName = (s: string): string => s.normalize('NFC').replace(/\s+/g, '');

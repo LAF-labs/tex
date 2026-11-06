@@ -21,11 +21,15 @@ export interface FetchInterceptorInput {
   guard: CommitGuard;
   domains: readonly string[];
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
+  /** 시험 픽스처 전용: 127.0.0.1·localhost는 http도 잡는다(금고 정책도 http를 루프백에만 허용). */
+  insecureLoopback?: boolean;
 }
+
+const LOOPBACK = new Set(['127.0.0.1', 'localhost']);
 
 export class FetchInterceptor {
   private readonly i: FetchInterceptorInput;
-  /** Fetch.enable이 끝나 실제로 잡고 있는 호스트. */
+  /** Fetch.enable이 끝나 실제로 잡고 있는 호스트(포트 포함, 루프백 http는 `http://` 접두). */
   private pinned = new Set<string>();
   private wanted = new Set<string>();
   private chain: Promise<unknown> = Promise.resolve();
@@ -72,8 +76,8 @@ export class FetchInterceptor {
     } catch {
       return Promise.resolve();
     }
-    const h = u.hostname.toLowerCase();
-    if (u.protocol !== 'https:' || this.wanted.has(h) || !hostAllowed(h, this.i.domains)) return Promise.resolve();
+    const h = this.key(u);
+    if (!h || this.wanted.has(h) || !hostAllowed(u.hostname.toLowerCase(), this.i.domains)) return Promise.resolve();
     this.wanted.add(h);
     return this.enable();
   }
@@ -84,7 +88,7 @@ export class FetchInterceptor {
     const run = async () => {
       if (!this.started || !hosts.length) return;
       try {
-        await this.i.session.send('Fetch.enable', { patterns: hosts.map((h) => ({ urlPattern: `https://${h}/*`, requestStage: 'Request' })) });
+        await this.i.session.send('Fetch.enable', { patterns: hosts.map((h) => ({ urlPattern: h.startsWith('http://') ? `${h}/*` : `https://${h}/*`, requestStage: 'Request' })) });
         this.pinned = new Set(hosts);
       } catch {
         this.i.journal('commit_guard.fetch_enable_failed', { hosts: hosts.length });
@@ -93,6 +97,14 @@ export class FetchInterceptor {
     const p = this.chain.then(run, run);
     this.chain = p;
     return p;
+  }
+
+  /** 고정 키: https는 host(포트 포함), 루프백 http는 시험 픽스처에서만 `http://host`. 그 밖은 null(잡지 않음). */
+  private key(u: URL): string | null {
+    const host = u.host.toLowerCase();
+    if (u.protocol === 'https:') return host;
+    if (u.protocol === 'http:' && this.i.insecureLoopback && LOOPBACK.has(u.hostname)) return `http://${host}`;
+    return null;
   }
 
   private async onPaused(p: Json): Promise<void> {
@@ -111,15 +123,16 @@ export class FetchInterceptor {
   private onWillBeSent(p: Json): void {
     const req = (p.request ?? {}) as Json;
     const url = String(req.url ?? '');
-    let host: string;
+    let u: URL;
     try {
-      host = new URL(url).hostname.toLowerCase();
+      u = new URL(url);
     } catch {
       return;
     }
-    if (!hostAllowed(host, this.i.domains)) return;
-    if (!this.pinned.has(host)) this.i.guard.onUnintercepted({ url, method: String(req.method ?? 'GET'), postData: typeof req.postData === 'string' ? req.postData : null, contentType: header(req.headers, 'content-type') });
-    if (p.type === 'Document' || !this.wanted.has(host)) void this.learn(url);
+    if (!hostAllowed(u.hostname.toLowerCase(), this.i.domains)) return;
+    const host = this.key(u);
+    if (!host || !this.pinned.has(host)) this.i.guard.onUnintercepted({ url, method: String(req.method ?? 'GET'), postData: typeof req.postData === 'string' ? req.postData : null, contentType: header(req.headers, 'content-type') });
+    if (host && !this.wanted.has(host)) void this.learn(url);
   }
 }
 

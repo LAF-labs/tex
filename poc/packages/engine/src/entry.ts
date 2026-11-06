@@ -8,6 +8,8 @@ import { hkdfSync } from 'node:crypto';
 import type { MessagePortMain } from 'electron';
 import path from 'node:path';
 import { openDatabase } from '@sax/db';
+import { ColumnCipher, deriveColumnKey } from '@sax/db';
+import { BundleService } from '@sax/bundle';
 import { Egress } from '@sax/net';
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort, type PortLike } from '@sax/platform';
 import { BizVerifier } from './bizverify.ts';
@@ -17,6 +19,7 @@ import type { GatePortMessage } from './gate.ts';
 import { fixturePortal, HOMETAX_PORTAL } from './h01/portal.ts';
 import { RunEnd } from './h01/runner.ts';
 import { GATE_ONLY_METHODS, RUN_COMMANDS, type EngineInit } from './protocol.ts';
+import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -28,12 +31,16 @@ interface ParentPort {
 const parentPort = (process as unknown as { parentPort: ParentPort }).parentPort;
 let log = new FileEventLog(null, 'engine');
 let data: DataService | null = null;
+/** 급여·꾸러미·S-06(BundleService). DB와 컬럼 키를 가진다. 컬럼 키는 이 프로세스 밖으로 나가지 않고 로그에도 남기지 않는다. */
+let payroll: BundleService | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
 let initialized = false;
 
 const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
+const PAYROLL = new Set<string>([...PAYROLL_READ_QUERIES, ...PAYROLL_COMMANDS]);
+for (const m of PAYROLL) ALLOWED.add(m);
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -46,10 +53,15 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const db = openDatabase(path.join(paths.db, 'db.sqlite'), key);
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
+  // 컬럼 키(주민번호 rrn_enc 등, D07 §2 *_enc)도 DB 키를 지우기 전에 한 번 파생한다. ColumnCipher가 복사해 갖고, 파생 바이트는 바로 지운다.
+  const columnKey = deriveColumnKey(key);
+  const cipher = new ColumnCipher(columnKey);
+  columnKey.fill(0);
   key.fill(0);
   const egress = new Egress();
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
+  payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -96,6 +108,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (method === 'browser.close') {
     await browser?.close();
     return {};
+  }
+  if (PAYROLL.has(method)) {
+    if (!payroll) throw new Error('db_not_ready');
+    return payroll.handle(method, params);
   }
   if (!data) throw new Error('db_not_ready');
   return data.handle(method, params);

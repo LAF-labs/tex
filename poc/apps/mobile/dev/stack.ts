@@ -2,11 +2,12 @@
 //   node --conditions=development dev/stack.ts   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
 //   STACK_LIVE=0 이면 PC가 라이브 우편함에 붙지 않는다(Phase 1처럼 큐만).
 //   앞단 8787: /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이(127.0.0.1:8783), 나머지 /v1/* → 계정(127.0.0.1:8780), /dev/* → 더미 PC
-//   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → 폰 등록 대역 + PUT /v1/device-list
-//            → POST /v1/mailboxes → 번들 PUT → 큐 드레인(GET → 개봉 → ack) + 라이브 우편함.
-// 비밀은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 dev/out/stack-*.db(git 제외).
-// 대역(실제와 다른 것): 폰 기기 등록(POST /v1/devices/enroll)은 폰 계정 로그인이 아직 없어 더미 PC가 같은 계정 세션으로 대신 한다.
-//   /dev/account(폰이 페어링 3단계에 받는 AIK·기기 목록)도 같은 이유로 PC 세션의 GET /v1/device-list를 그대로 준다.
+//   더미 PC: 계정 로그인(모의 메일 코드) → AIK 고정 → 기기 토큰 → POST /v1/rooms → 페어링 → SAS 일치 → 폰 대리 등록
+//            (POST /v1/devices/enroll, 데스크톱 기기 토큰 + roomId) → PUT /v1/device-list → POST /v1/mailboxes → pair.ok
+//            → 번들 PUT → 큐 드레인(GET → 개봉 → ack) + 라이브 우편함.
+// 비밀(토큰 서명 시드·큐 키·내부 토큰·한도 ID 키 등)은 기동마다 새로 만들고 출력하지 않는다. 로그에 금액·사진·토큰을 넣지 않는다. DB는 dev/out/stack-*.db(git 제외).
+// 폰에는 계정 로그인이 없다. 폰의 계정 등록은 PC가 대신 하고(팀장 결정 2026-11-06, #115), 폰은 기기 목록을 서버에서 받지 않는다
+// (PAIR_OK의 AIK 서명 목록을 검사한다). STACK_NO_BUNDLE=1 이면 번들을 올리지 않는다(폰의 'PC 연결 확인 안 됨' 화면 확인용).
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, request, type IncomingMessage } from 'node:http';
@@ -37,19 +38,20 @@ const hex = () => randomBytes(32).toString('hex');
 for (const f of ['stack-account.db', 'stack-relay.db']) rmSync(join(OUT, f), { force: true });
 const tokenSeed = hex();
 const internal = randomBytes(32).toString('base64url');
+const limitIdKey = hex();
 const mail = new MockMailSender();
 const account = await startAccount(
   {
     SAX_SQLITE_FILE: join(OUT, 'stack-account.db'), TOKEN_SIGNING_SEED: tokenSeed, CODE_MAC_KEY: hex(), ACCOUNT_PUBLIC_ORIGIN: ORIGIN, WEBAUTHN_RP_ID: 'localhost',
     WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_TOKEN: internal,
-    STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, PORT: String(ACCT), HOST: '127.0.0.1',
+    STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, RELAY_INTERNAL_URL: `http://127.0.0.1:${RELAY}`, LIMIT_ID_KEY: limitIdKey, PORT: String(ACCT), HOST: '127.0.0.1',
   },
   { mail },
 );
 const relaySvc = await startRelay({
   SAX_SQLITE_FILE: join(OUT, 'stack-relay.db'), QUEUE_KEY: hex(), RELAY_PUBLIC_ORIGIN: ORIGIN,
   TOKEN_PUBLIC_KEYS: `k1:${ed25519RawPublic(ed25519Private(Buffer.from(tokenSeed, 'hex'))).toString('base64')}`,
-  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_TOKEN: internal, PORT: String(RELAY), HOST: '127.0.0.1',
+  ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_TOKEN: internal, LIMIT_ID_KEY: limitIdKey, PORT: String(RELAY), HOST: '127.0.0.1',
 });
 log(`account ${account.url} · relay ${relaySvc.url}`);
 
@@ -85,10 +87,6 @@ const front = createServer(async (req, res) => {
   };
   if (path.startsWith('/dev/')) {
     try {
-      if (req.method === 'GET' && path === '/dev/account') {
-        const r = expect(await call('GET', '/v1/device-list', { headers: bearer }), 200, 'GET /v1/device-list (대역 /dev/account)');
-        return send(200, JSON.stringify({ aikPub: r.aikPub, deviceList: r.deviceList }));
-      }
       if (req.method === 'GET' && path === '/dev/qr') return send(200, await startPairing(), 'text/plain');
       if (req.method === 'GET' && path === '/dev/status') return send(200, JSON.stringify({ pairing: pairing?.state ?? 'idle', received }));
       if (req.method === 'POST' && path === '/dev/sas') {
@@ -165,13 +163,19 @@ async function startPairing(): Promise<string> {
   pairing?.cancel();
   const p = new DesktopPairing({
     keys, deviceList, relayHost: HOST,
-    // 대역: 폰 등록은 publishDeviceList에서 같은 계정 세션으로 한다(폰 계정 로그인 없음)
-    isPhoneKeyRegistered: async () => true,
+    // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
+    enrollPhone: async (ph) => {
+      const r = await call('POST', '/v1/devices/enroll', {
+        headers: await dauth('POST', `${ORIGIN}/v1/devices/enroll`),
+        body: { deviceId: ph.deviceId, role: 'mobile', platform: ph.platform, name: ph.name, Sx: b64(ph.Sm), Vx: b64(ph.Vm), roomId: b64url(ph.roomId) },
+      });
+      if (r.status === 201) return void log('POST /v1/devices/enroll (PC 대리 등록) 201');
+      // 앞 시도에서 등록만 되고 목록을 못 올린 폰: 같은 키로 이미 있으면 성공으로 본다(계약: 같은 기기 ID 재등록은 400).
+      const list = expect(await call('GET', '/v1/devices', { headers: await dauth('GET', `${ORIGIN}/v1/devices`) }), 200, 'GET /v1/devices').devices as { deviceId: string; Sx: string; Vx: string }[];
+      if (list.some((d) => d.deviceId === ph.deviceId && d.Sx === b64(ph.Sm) && d.Vx === b64(ph.Vm))) return void log('POST /v1/devices/enroll', r.status, '(이미 같은 키로 등록됨)');
+      throw new Error(`POST /v1/devices/enroll: ${r.status} ${JSON.stringify(r.body)}`);
+    },
     publishDeviceList: async (l) => {
-      const added = l.entries.map((x) => x.entry).filter((e) => !deviceList.entries.some((y) => y.entry.device_id === e.device_id));
-      for (const e of added) {
-        expect(await call('POST', '/v1/devices/enroll', { headers: bearer, body: { deviceId: e.device_id, role: e.role, platform: 'ios', name: '폰', Sx: e.Sx, Vx: e.Vx } }), 201, 'POST /v1/devices/enroll (대역)');
-      }
       expect(await call('PUT', '/v1/device-list', { headers: await dauth('PUT', `${ORIGIN}/v1/device-list`), body: { deviceList: l } }), 200, 'PUT /v1/device-list');
       deviceList = l;
     },
@@ -213,8 +217,11 @@ async function serve(rec: PairRecord, mbxId: Uint8Array, tok: { read: Uint8Array
   // 큐: Q_D 번들(실제 PC는 금고 안 Q_D, 7일마다 회전) → 2초마다 드레인
   const qd = x25519Keygen();
   const rq = relayQueue({ http: fetchJson, origin: ORIGIN, mbxId, tok, deviceAuth: dauth });
-  await rq.putBundle(await makeQBundle(keys.vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow() }));
-  log('PUT /v1/mailboxes/:id/bundle 204');
+  if (process.env.STACK_NO_BUNDLE === '1') log('bundle off (STACK_NO_BUNDLE=1)');
+  else {
+    await rq.putBundle(await makeQBundle(keys.vd, { Qx: qd.publicKey, seq: 1, ...qbundleWindow() }));
+    log('PUT /v1/mailboxes/:id/bundle 204');
+  }
   let seqMax = 0;
   void (async () => {
     for (;;) {

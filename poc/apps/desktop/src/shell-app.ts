@@ -8,7 +8,7 @@ import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
 import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
@@ -16,6 +16,7 @@ import { MockOnboardingPorts } from './onboarding-mock.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
+import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
 import { certInfoInSandbox, DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
@@ -99,6 +100,8 @@ function serve(): void {
 }
 
 export interface ShellOptions {
+  /** 서류 데몬(OS 알림). 제품 기본 켬, fixture는 늘 끔. 시험이 false로 끈다. */
+  daemon?: boolean;
   width?: number;
   height?: number;
   show?: boolean;
@@ -504,6 +507,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { profiles: profiles() };
     },
   };
+  // 서류 데몬(daemon-host.ts). 알림 객체는 눌리거나 닫힐 때까지 잡아 둔다(가비지 수집되면 click이 오지 않는다).
+  let daemon: DaemonHost | null = null;
+  const liveNotices = new Set<Notification>();
+  const showOsNotification: ShowNotification = (t, onClick) => {
+    if (!Notification.isSupported()) throw new Error('notify_unsupported');
+    const n = new Notification({ title: t.title, body: t.body });
+    liveNotices.add(n);
+    n.on('click', () => {
+      liveNotices.delete(n);
+      onClick();
+    });
+    n.on('close', () => liveNotices.delete(n));
+    n.show();
+  };
+  const onResume = () => daemon?.requestReload();
   // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
   // 바깥 일(등록증 읽기·진위확인·NPKI·금고 등록 창·처리자 표)은 아직 목업 어댑터 뒤(onboarding-mock.ts): M4-3·#65·#93·금고 T-06.
   let onb: OnboardingFlow | null = null;
@@ -692,6 +710,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       } else if (!business) onb = new OnboardingFlow(onbPorts);
     }
     await win.loadURL(SHELL_URL);
+    // 서류 데몬(D10 notify, M4-8): 제품만. 시연·e2e(fixture)는 이 PC에 OS 알림을 띄우지 않는다.
+    if (!fixture && opts.daemon !== false) {
+      daemon = startDaemonHost({
+        rpc: (m, p) => host.rpc(m, p),
+        show: showOsNotification,
+        onDelivered: () => pushBoard(),
+        onOpen: () => {
+          if (win.isDestroyed()) return;
+          if (win.isMinimized()) win.restore();
+          win.show();
+          win.focus();
+        },
+        stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'daemon-state.json'),
+        log: (n, d) => log.event(n, d),
+      });
+      powerMonitor.on('resume', onResume);
+    }
     // 견본 PDF·보관함 가져오기는 창을 띄운 뒤 뒤에서(몇 초). 끝나면 렌더러가 문서함을 다시 읽는다.
     void seed
       ?.fill()
@@ -704,6 +739,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   })();
   const close = async () => {
     clearInterval(boardDayTimer);
+    daemon?.stop();
+    powerMonitor.removeListener('resume', onResume);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});
