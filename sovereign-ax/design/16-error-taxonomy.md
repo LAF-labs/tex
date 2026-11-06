@@ -1,6 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
-> 2026-11-06 정합(팀장 지시): 엔진 PR #127(M2-2 실행 조율기) 제안 8개를 넣었다. 결과 코드는 `gate.unavailable`·`engine.unhandled_step`·`engine.falloff`·`run.handoff_timeout`이다. `RunHandle` 거절 코드는 호출자 반환 전용이고 저널에 남기지 않는다: `gate.no_request`·`gate.action_mismatch`·`human.no_request`·`human.bad_input`. 클라우드 PR #122의 `relay.room_used`(409, 같은 룸 두 번째 enroll)도 넣었다. 이름과 처리는 각 PR 코드를 따른다.
+> 2026-11-06 정합(팀장 지시): 엔진 PR #127(M2-2 실행 조율기) 제안 8개를 넣었다. 결과 코드는 `gate.unavailable`·`engine.unhandled_step`·`engine.falloff`·`run.handoff_timeout`이다. `RunHandle` 거절 코드는 호출자 반환 전용이고 저널에 남기지 않는다: `gate.no_request`·`gate.action_mismatch`·`human.no_request`·`human.bad_input`. 클라우드 PR #122의 `relay.room_used`(409, 같은 룸 두 번째 enroll)도 넣었다. `relay.room_unavailable`(404) 행도 넣었다(main 코드에서 쓰임, 팀장 지시). `relay.mailbox_not_found`는 이미 행이 있다. 이름과 처리는 각 PR 코드를 따른다.
 > 2026-11-06 정합(팀장 지시, 폰 PR #102·#118): `pairing.aik_mismatch` 뜻을 "서버가 준 `AIK_pub`와 불일치"에서 "다시 연결할 때 고정한 `AIK_pub`와 불일치"로 고쳤다. Phase 1 폰은 서버 기기 목록을 받지 않는다.
 > 2026-11-06 정합(팀장 지시): 엔진 PR #111(M2-4 C 커밋 가드) 결정 7의 저널 코드 8개 `commit_guard.armed`·`passed`·`arm_refused`·`arm_expired`·`rc1_missing`·`unintercepted`·`fetch_enable_failed`·`ledger_failed`를 표에 더함. 보안 이벤트가 아니다(보안 이벤트는 `commit_guard.blocked_request`·`security.commit_payload_mismatch` 그대로).
 > 2026-11-06 팀장 결정(폰 통합 시험 PR #102): `relay.mailbox_not_found`는 우편함·번들 없음과 토큰 불일치를 묶은 단일 코드.
@@ -124,6 +124,7 @@
 | `account` | `billing_signature_invalid`(400) | PG 웹훅 서명 불일치(**보안 이벤트**) | 무시·기록 |
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
 | `relay` | `room_used`(409) | 같은 룸의 두 번째 enroll(키와 무관). 룸 하나에 enroll 성공은 한 번이다(팀장 결정 2026-11-06, 클라우드 PR #122). 409는 그 룸을 만든 PC에만 보이고, 다른 PC·없음·만료·미페어링은 `404 relay.room_unavailable`이다(존재 오라클 없음) | 다시 보내지 않는다(첫 enroll이 이미 성공함). 새 폰은 새 룸으로 페어링 |
+| `relay` | `room_unavailable`(404) | 페어링 룸을 쓸 수 없음: 룸 없음·만료·정원 참(접속 거절, `relay/src/app.ts` 297행), redeem 때 그 룸을 만든 PC가 아님·아직 페어링 안 됨(207행), 계정 서비스에 룸 기능이 꺼짐·redeem 실패(`account/src/service.ts` 468·474행). 원격 링크에서는 업그레이드 전 거절이라 코드 없이 닫힌다(`remote/src/ws-link.ts` 223행). 없음·남의 룸을 같은 코드로 묶는다(존재 오라클 없음, 클라우드 PR #122) | 다시 보내지 않음. 사용자에게 새 QR로 다시 연결하라고 안내. 룸 꺼진 배포에서는 페어링 불가 |
 | `relay` | `mailbox_limit`(409) / `queue_full`(429) / `mailbox_not_found`(404) | 우편함 수 상한 / 큐 가득 참 / 우편함·번들 없음 **또는** 능력 토큰 불일치(하나의 코드, 존재 오라클 방지, 팀장 결정 2026-11-06, 폰 PR #102) | 재페어링·나중에 재시도. 폰은 `mailbox_not_found`에 다시 연결 안내 |
 | `push` | `token_not_found`(404) | 등록된 푸시 토큰 없음 | 폰 앱이 다시 등록 |
 | `registry` | `schema_invalid`(422) / `key_epoch_mismatch`(422) / `key_epoch_rollback`(422) / `version_rollback`(422) / `timestamp_invalid`(422) | 레지스트리 게시 관문(클라우드 PR #56 `services/registry/API.md`. 엔진 로더도 받을 때 같은 이름을 쓴다): 알려진 필드 밖·모양 오류 / `keyEpoch` ≠ 앱 핀 / `keyEpoch` 역행 / 같은 `keyEpoch` 안 `monotonic` 역행 / 타임스탬프 서명 오류(SIGNING.md §3) | 게시 거부. 운영자가 고쳐 다시 올림 |
