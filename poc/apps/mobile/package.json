@@ -35,7 +35,8 @@
     "typecheck": "tsc -p . && tsc -p test",
     "test": "node --test test/*.spec.ts",
     "dummy-pc": "node dev/dummy-pc.ts",
-    "smoke": "node dev/smoke-phone.ts"
+    "smoke": "node dev/smoke-phone.ts",
+    "stack": "node --conditions=development dev/stack.ts"
   },
   "private": true
 }
