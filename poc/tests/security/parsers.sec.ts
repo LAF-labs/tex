@@ -132,6 +132,48 @@ const xlsxGen: Gen = async (r) => {
   return r() < 0.15 ? b.slice(0, Math.floor(r() * b.length)) : b;
 };
 
+/** 최소 DER 작성기(NPKI 모양 합성 인증서, 서명 자리는 임의 바이트. readCertInfo는 서명을 검증하지 않는다) */
+const derLen = (n: number) => (n < 0x80 ? [n] : n < 0x100 ? [0x81, n] : [0x82, n >> 8, n & 0xff]);
+const tlvOf = (tag: number, ...body: Uint8Array[]): Uint8Array => {
+  const v = Buffer.concat(body);
+  return new Uint8Array(Buffer.concat([Buffer.from([tag, ...derLen(v.length)]), v]));
+};
+const derOid = (o: string): Uint8Array => {
+  const a = o.split('.').map(Number);
+  const out = [a[0]! * 40 + a[1]!];
+  for (const x of a.slice(2)) {
+    const enc = [x & 0x7f];
+    for (let v = x >>> 7; v > 0; v >>>= 7) enc.unshift((v & 0x7f) | 0x80);
+    out.push(...enc);
+  }
+  return tlvOf(0x06, Buffer.from(out));
+};
+const rdn = (o: string, v: string, tag = 0x0c) => tlvOf(0x31, tlvOf(0x30, derOid(o), tlvOf(tag, Buffer.from(v, tag === 0x0c ? 'utf8' : 'latin1'))));
+const certDer = (cn: string, pad = 0): Uint8Array => {
+  const nm = (x: string) => tlvOf(0x30, rdn('2.5.4.6', 'kr', 0x13), rdn('2.5.4.10', 'yessign', 0x13), rdn('2.5.4.11', '개인'), rdn('2.5.4.3', x));
+  const alg = tlvOf(0x30, derOid('1.3.101.112'));
+  const tbs = tlvOf(0x30, tlvOf(0xa0, tlvOf(0x02, Buffer.from([2]))), tlvOf(0x02, Buffer.from([1, 0x23])), alg, nm('TEST-CA'), tlvOf(0x30, tlvOf(0x17, Buffer.from('260102030405Z')), tlvOf(0x17, Buffer.from('270102235959Z'))), nm(cn), tlvOf(0x30, alg, tlvOf(0x03, Buffer.alloc(33))), ...(pad ? [tlvOf(0xa3, Buffer.alloc(pad))] : []));
+  return tlvOf(0x30, tbs, alg, tlvOf(0x03, Buffer.alloc(65, 7)));
+};
+
+/** signCert.der: 정상 합성 인증서를 0~4곳 비트 뒤집기·길이 바이트 바꾸기·자르기, 8KB 초과, DER이 아닌 것(BER 무한 길이·PEM·뒤 덧붙임). */
+const certGen: Gen = (r) => {
+  const base = certDer(`TEST홍길동()${Math.floor(r() * 1e12)}`);
+  const k = r();
+  if (k < 0.08) return certDer('TEST', 8200); // 상한 초과(input_size)
+  if (k < 0.14) return new TextEncoder().encode(`-----BEGIN CERTIFICATE-----\n${Buffer.from(base).toString('base64')}\n-----END CERTIFICATE-----\n`); // PEM
+  if (k < 0.2) return new Uint8Array([0x30, 0x80, ...base.subarray(2), 0, 0]); // BER 무한 길이
+  if (k < 0.26) return new Uint8Array([...base, Math.floor(r() * 256)]); // 뒤 덧붙임
+  const b = base.slice();
+  const flips = Math.floor(r() * 5);
+  for (let i = 0; i < flips; i++) {
+    const at = Math.floor(r() * b.length);
+    if (r() < 0.3) b[at] = pick(r, [0x80, 0x81, 0x82, 0x84, 0xff, 0x00]); // 길이 자리 흉내
+    else b[at]! ^= 1 << Math.floor(r() * 8);
+  }
+  return r() < 0.15 ? b.slice(0, Math.floor(r() * b.length)) : b;
+};
+
 export const PARSERS: readonly ParserCase[] = [
   {
     name: 'OCR 사업자등록증 문자 파서 parseBizCert',
@@ -197,6 +239,25 @@ export const PARSERS: readonly ParserCase[] = [
     owner: 'M6-12(docparse M6-5)',
   },
   {
+    name: '인증서 메타 readCertInfo(signCert.der 변조·8KB 초과·DER 아님)',
+    module: '@sax/docparse/sandbox',
+    export: 'readCertInfo',
+    input: certGen,
+    call: async (fn, x) => {
+      const info = fn(x);
+      const { validateSandboxOutput } = await import('@sax/docparse');
+      if (!validateSandboxOutput('certInfo', info)) return { bad: 'validateSandboxOutput(certInfo)가 거부하는 출력' };
+      // 상한 초과·PEM·BER·뒤 덧붙임은 통과하면 안 된다
+      const raw = x as Uint8Array;
+      if (raw.length > 8192) return { bad: `8KB 초과(${raw.length})를 통과시킴` };
+      if (raw[0] !== 0x30 || raw[1] === 0x80) return { bad: 'DER 아닌 입력(PEM·BER)을 통과시킴' };
+      return { bad: null };
+    },
+    okThrow: (e) => coded(e) && ['cert_invalid', 'input_size'].includes((e as { code: string }).code),
+    check: (o) => (o as { bad: string | null }).bad,
+    owner: 'M6-12(docparse certInfo, D05 §6 (2))',
+  },
+  {
     name: '영수증 문자 parseReceipt(OCR 글자)',
     module: '@sax/docparse',
     export: 'parseReceipt',
@@ -247,6 +308,26 @@ describe('M6-12 파서 퍼징 하네스', async () => {
       if (c.allReject) assert.equal(threw, iter, `${c.name}: 받지 않는 형식을 ${iter - threw}건 통과시킴`);
       else assert.ok(threw < iter, `${c.name}: 모든 입력에서 예외`);
     });
+  });
+
+  it('readCertInfo 고정 대조: 정상 합성 DER은 읽고, 8KB 초과는 input_size, PEM·BER 무한 길이·뒤 덧붙임은 cert_invalid', async (t) => {
+    const m = (await import('@sax/docparse/sandbox').catch(() => null)) as Record<string, unknown> | null;
+    if (typeof m?.readCertInfo !== 'function') return t.skip('@sax/docparse/sandbox#readCertInfo 없음');
+    const read = m.readCertInfo as (b: Uint8Array) => { subject: string };
+    const codeOf = (b: Uint8Array) => {
+      try {
+        read(b);
+        return 'ok';
+      } catch (e) {
+        return coded(e) ? (e as { code: string }).code : `throw:${(e as Error).message}`;
+      }
+    };
+    const base = certDer('TEST홍길동()0001');
+    assert.match(read(base).subject, /^CN=TEST홍길동\(\)0001,OU=개인,O=yessign,C=kr$/);
+    assert.equal(codeOf(certDer('TEST', 8200)), 'input_size');
+    assert.equal(codeOf(new TextEncoder().encode(`-----BEGIN CERTIFICATE-----\n${Buffer.from(base).toString('base64')}\n-----END CERTIFICATE-----\n`)), 'cert_invalid');
+    assert.equal(codeOf(new Uint8Array([0x30, 0x80, ...base.subarray(2), 0, 0])), 'cert_invalid');
+    assert.equal(codeOf(new Uint8Array([...base, 0])), 'cert_invalid');
   });
 
   it.todo('숨김 텍스트·인젝션 회귀(흰 글자·0pt·화면 밖·주석 레이어 PDF, 숨김 시트·셀 주석 엑셀)를 injection.sec.ts 코퍼스에 추가 — M6-12');
