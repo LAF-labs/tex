@@ -3,3 +3,6 @@ export * from './main.ts';
 export * from './store.ts';
 export * from './verify.ts';
 export * from './log.ts';
+export * from './store-s3.ts';
+export * from './resign.ts';
+export * from './deploy.ts';
