@@ -25,6 +25,9 @@
       "path": "../net"
     },
     {
+      "path": "../payroll"
+    },
+    {
       "path": "../platform"
     },
     {

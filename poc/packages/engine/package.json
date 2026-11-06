@@ -43,6 +43,7 @@
     "@sax/db": "workspace:*",
     "@sax/model": "workspace:*",
     "@sax/net": "workspace:*",
+    "@sax/payroll": "workspace:*",
     "@sax/platform": "workspace:*",
     "@sax/redaction": "workspace:*",
     "ajv": "8.20.0",
