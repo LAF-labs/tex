@@ -17,8 +17,10 @@
 | mailbox_bundles | mbx_key, sealed | **추가 필요**: 우편함 번들 슬롯(D08 §7) |
 | mailbox_quota | device_id, n | **추가 필요**: 기기당 우편함 3개 상한용 개수(어느 우편함인지 없음) |
 | relay_stats | day, kind, size_bucket, n | 메시지 수·크기 버킷·시각(7일), 바깥 kind |
+| lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
+| lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
 
-없는 것: 평문 IP(레이트리밋은 메모리의 일 회전 HMAC만), 계정 ID, 기기↔우편함 연결, 페어링 룸(메모리), Noise·HPKE 평문, 의도 봉투의 `pair_id`·`seq`·`exp`. 접근 로그는 라우트 패턴뿐이고 `aid`도 남기지 않는다.
+없는 것: 평문 IP(한도 키는 당일 솔트 HMAC만, [CONTRACT §10](../shared/CONTRACT.md)), 계정 ID, 기기↔우편함 연결, 페어링 룸(메모리), Noise·HPKE 평문, 의도 봉투의 `pair_id`·`seq`·`exp`. 접근 로그는 라우트 패턴뿐이고 `aid`도 남기지 않는다.
 
 ## 구현 메모
 
@@ -29,7 +31,7 @@
 
 ```bash
 cd poc && pnpm build
-SAX_SQLITE_FILE=relay.db QUEUE_KEY=… RELAY_PUBLIC_ORIGIN=https://relay.example TOKEN_PUBLIC_KEYS=k1:… ACCOUNT_INTERNAL_URL=http://account:8080 INTERNAL_TOKEN=… node services/relay/dist/main.js
+SAX_SQLITE_FILE=relay.db QUEUE_KEY=… LIMIT_ID_KEY=… RELAY_PUBLIC_ORIGIN=https://relay.example TOKEN_PUBLIC_KEYS=k1:… ACCOUNT_INTERNAL_URL=http://account:8080 INTERNAL_TOKEN=… node services/relay/dist/main.js
 ```
 
 컨테이너: `docker build -f services/relay/Dockerfile .`(빌드 컨텍스트 `poc/`). 실제 배포는 Phase 1 범위 밖이다.

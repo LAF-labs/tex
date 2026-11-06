@@ -6,6 +6,7 @@
 |---|---|---|---|
 | `DATABASE_URL` / `SAX_SQLITE_FILE` | 둘 중 하나 | | 푸시 토큰 DB. 릴레이·계정 DB와 분리 |
 | `PUSH_TOKEN_KEY` ⚿ | 예 | hex 64자 | 푸시 토큰 봉인 키("별도 키", D09 §4.2) |
+| `LIMIT_ID_KEY` ⚿ | 예 | hex 64자 | 한도 키(계정·기기 ID) HMAC 비밀. DB에 없다(DB를 읽어도 한도 키를 다시 계산할 수 없음, [CONTRACT §10](../shared/CONTRACT.md)). 바꾸면 진행 중인 한도 창(≤ 1시간)만 처음부터 센다 |
 | `PUSH_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin |
 | `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
 | `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회(깨울 폰이 같은 계정의 활성 폰인지) |

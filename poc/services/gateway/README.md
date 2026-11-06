@@ -14,6 +14,8 @@
 | call_records | call_id, account_id, device_id, at, surface, input_tokens, output_tokens | 계정, `X-Device-Id`, 번들·툴셋 ID, 토큰 수, 시각 — (3) 호출 단위 계정 연결 35일 |
 | ops_stats | day, surface, outcome, n, latency_ms_sum | 번들·툴셋 ID, 지연 — (2) 운영 통계(계정·기기 없음) |
 | run_scopes | scope_hash, kind, l1, l2_calls, l2_turns, expires_at | **D09 추가 필요**: 실행 예산 카운터(범위는 HMAC, runId 원문 없음, 2시간) |
+| lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
+| lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
 
 D09 §3 (2)의 운영 통계 키 `playbook`은 게이트웨이 요청에 플레이북 ID가 없어 담지 않는다(번들·툴셋 단위).
 
@@ -39,4 +41,3 @@ GW_PROVIDER=mock NTS_PROVIDER=mock … node services/gateway/dist/main.js
 
 - 스트리밍 프록시(지금은 공급사 응답 전체를 받아 돌려준다. 본문은 여전히 메모리에서만).
 - `summarize`·`intent_fill` 툴셋(정의가 `packages/model`에 생기면 붙는다).
-- 여러 인스턴스 간 분당 한도 공유(지금은 인스턴스 메모리. 실행 예산·월 한도는 DB라 공유된다).

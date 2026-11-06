@@ -2,16 +2,17 @@
 import {
   DailySalt,
   DeviceAuth,
-  RateLimiter,
   Router,
   S,
   fail,
   json,
+  memoryLimits,
   requireInternal,
   validator,
   type Ctx,
   type DeviceDirectory,
   type TokenVerifier,
+  type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
 import { ACCOUNT, DEVICE, MS } from './constants.ts';
@@ -54,20 +55,25 @@ export interface AccountAppOpts {
   verifier: TokenVerifier;
   publicOrigin: string;
   internalSecret: string;
+  /** 한도 카운터·키 솔트. 없으면 메모리(단일 인스턴스). 운영은 sqlLimits(db) */
+  limits?: Limits;
 }
 
 export function accountRouter(o: AccountAppOpts): Router {
   const { svc } = o;
   const r = new Router();
-  const limits = new RateLimiter(svc.now);
-  const ipSalt = new DailySalt('ip', svc.now);
+  // 한도: 카운터와 키 솔트는 다중 인스턴스면 DB(팀장 결정 2026-11-05 (가)), 로그용 aid 솔트는 인스턴스 메모리
+  const limits = o.limits ?? memoryLimits(svc.now);
+  const ipSalt = limits.salt('ip');
+  const emailSalt = limits.salt('email');
+  const devSalt = limits.idSalt('dev');
   const idSalt = new DailySalt('aid', svc.now);
-  const emailSalt = new DailySalt('email', svc.now);
   const directory: DeviceDirectory = { get: (id) => svc.deviceRecord(id) };
   const deviceAuth = new DeviceAuth({ verifier: o.verifier, directory, publicOrigin: o.publicOrigin, now: svc.now });
 
-  const limit = (key: string, n: number, windowMs: number) => {
-    if (!limits.hit(key, n, windowMs)) fail('policy.rate_limited', { retryAfterSec: limits.retryAfter(key, windowMs) });
+  const limit = async (key: string, n: number, windowMs: number) => {
+    const h = await limits.limiter.hit(key, n, windowMs);
+    if (!h.ok) fail('policy.rate_limited', { retryAfterSec: h.retryAfterSec });
   };
   const ipKey = (ctx: Ctx) => ipSalt.hash(ctx.ip);
   const session = async (ctx: Ctx): Promise<Session> => {
@@ -90,24 +96,24 @@ export function accountRouter(o: AccountAppOpts): Router {
   // 로그인
   r.add('POST', '/v1/auth/code', async (ctx) => {
     const b = V.codeStart(ctx.body);
-    limit(`code-ip:${ipKey(ctx)}`, ACCOUNT.loginCodeSendsPerIpHour, MS.H);
-    limit(`code-email:${emailSalt.hash(b.email.trim().toLowerCase())}`, ACCOUNT.loginCodeSendsPerEmailHour, MS.H);
+    await limit(`code-ip:${await ipKey(ctx)}`, ACCOUNT.loginCodeSendsPerIpHour, MS.H);
+    await limit(`code-email:${await emailSalt.hash(b.email.trim().toLowerCase())}`, ACCOUNT.loginCodeSendsPerEmailHour, MS.H);
     return json(200, await svc.startEmailCode(b.email));
   });
   r.add('POST', '/v1/auth/code/verify', async (ctx) => {
     const b = V.codeVerify(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.verifyEmailCode(b.loginId, b.code);
     ctx.logAid = idSalt.hash(out.accountId);
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
   });
   r.add('POST', '/v1/auth/passkey/options', async (ctx) => {
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     return json(200, await svc.passkeyLoginOptions());
   });
   r.add('POST', '/v1/auth/passkey/verify', async (ctx) => {
     const b = V.passkeyLogin(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.passkeyLogin(b.challenge, b);
     ctx.logAid = idSalt.hash(out.accountId);
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
@@ -125,7 +131,7 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
   r.add('POST', '/v1/oauth/token', async (ctx) => {
     const b = V.token(ctx.body);
-    limit(`auth-ip:${ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.exchangeCode({ code: b.code, verifier: b.code_verifier, redirectUri: b.redirect_uri, clientId: b.client_id });
     return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
   });
@@ -207,9 +213,9 @@ export function accountRouter(o: AccountAppOpts): Router {
   r.add('POST', '/v1/device-tokens', async (ctx) => {
     const b = V.deviceToken(ctx.body);
     // 검증 전에는 IP 단위만(서명 검증 비용), 기기 단위는 검증 통과 뒤에 센다
-    limit(`devtok-ip:${ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
+    await limit(`devtok-ip:${await ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
     const dpop = ctx.headers.dpop;
-    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, () => limit(`devtok:${b.cert.cert.device_id}`, DEVICE.deviceTokensPerHour, MS.H));
+    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H));
     return json(200, out);
   });
 
