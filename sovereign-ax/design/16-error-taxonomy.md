@@ -1,5 +1,6 @@
 # D16. 오류·결과 코드 체계 (초안)
 
+> 2026-11-06 팀장 결정(폰 통합 시험 PR #102): `relay.mailbox_not_found`는 우편함·번들 없음과 토큰 불일치를 묶은 단일 코드.
 > 2026-11-06 정합(팀장 지시, 큐 16~22): `daemon.window_invalid`·`policy_stale`·`status_stale`·`snapshot_failed`(데몬 PR #98 구현값, 제안, 사용자 확인 전).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): 클라이언트 표에 `assert.original_mismatch`(ADR-036 결정 3.5), `bizstatus.unavailable`(제안, 사용자 확인 전), `update.*` 8개(패키징 PR #76, `packages/updater/README.md`)를 더함. "서버 응답 코드" 절에 레지스트리 게시 관문·`.sxp`·정책·핫픽스 코드(클라우드 PR #56 `PROPOSED_D16`). 보안 이벤트 목록에 `update.root_change_unsigned`·`update.feed_mismatch`·`update.digest_mismatch`.
 > 팀장 결정 2026-11-05: 클라우드 PR #46 `PROPOSED_D16`의 나머지와 엔진 PR #52의 `registry.revoked_shrunk`를 아래 표와 "서버 응답 코드" 절에 추가.
@@ -107,7 +108,7 @@
 | `account` | `aik_not_pinned`(409) / `aik_already_pinned`(409) / `aik_signature_invalid`(400) / `list_version_stale`(409) | AIK 미고정 / 이미 고정 / AIK 서명 오류 / 기기 목록 버전이 저장값보다 낮음(D08 §4.1) | 목록 다시 받기 |
 | `account` | `billing_signature_invalid`(400) | PG 웹훅 서명 불일치(**보안 이벤트**) | 무시·기록 |
 | `gateway` | `run_token_invalid`(401) / `run_budget_exceeded`(429) / `device_suspended`(403) | `runToken`(`SAX-run-token-v1`) 오류 / 실행당 예산 초과 / 정지된 기기 | 해당 호출 `unknown`, 예산 초과는 핸드오프 |
-| `relay` | `mailbox_limit`(409) / `queue_full`(429) / `mailbox_not_found`(404) | 우편함 수 상한 / 큐 가득 참 / 우편함 없음 | 재페어링·나중에 재시도 |
+| `relay` | `mailbox_limit`(409) / `queue_full`(429) / `mailbox_not_found`(404) | 우편함 수 상한 / 큐 가득 참 / 우편함·번들 없음 **또는** 능력 토큰 불일치(하나의 코드, 존재 오라클 방지, 팀장 결정 2026-11-06, 폰 PR #102) | 재페어링·나중에 재시도. 폰은 `mailbox_not_found`에 다시 연결 안내 |
 | `push` | `token_not_found`(404) | 등록된 푸시 토큰 없음 | 폰 앱이 다시 등록 |
 | `registry` | `schema_invalid`(422) / `key_epoch_mismatch`(422) / `key_epoch_rollback`(422) / `version_rollback`(422) / `timestamp_invalid`(422) | 레지스트리 게시 관문(클라우드 PR #56 `services/registry/API.md`. 엔진 로더도 받을 때 같은 이름을 쓴다): 알려진 필드 밖·모양 오류 / `keyEpoch` ≠ 앱 핀 / `keyEpoch` 역행 / 같은 `keyEpoch` 안 `monotonic` 역행 / 타임스탬프 서명 오류(SIGNING.md §3) | 게시 거부. 운영자가 고쳐 다시 올림 |
 | `registry` | `expired_on_arrival`(422) / `index_validity_too_long`·`status_validity_too_long`·`revoked_validity_too_long`·`release_validity_too_long`(422) | 도착 시 이미 만료 / 문서별 유효 기간 상한 초과(SIGNING.md 표) | 게시 거부 |

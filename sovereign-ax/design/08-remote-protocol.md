@@ -1,5 +1,6 @@
 # D08. 리모트 컨트롤 프로토콜
 
+> 2026-11-06 팀장 결정(폰 통합 시험 PR #102): 폰에는 계정 로그인이 없다. §4.2 모바일 enroll은 7단계에서 PC가 데스크톱 기기 토큰으로 대신 한다(소비된 1회용 룸 id 결속, 계정당 모바일 상한). 3단계 기기 목록 조회는 `PAIR_OK`의 AIK 서명 목록 검사로 대신한다. §8 `relay.mailbox_not_found`는 단일 코드(존재 오라클 방지). §7 PC → 폰 ack 없음, 폰 7일 보관·24시간 뒤 재전송, PC 드레인은 offer id·SHA 기준 멱등.
 > 2026-11-06 정합(팀장 지시, 큐 16~22): §4.2 Phase 1 첫 페어링 룸은 HTTPS 폴링(짧은 롱폴, WSS 없음, 팀장 결정 2026-11-05). §8 일 회전 솔트를 KST 날짜별 Postgres 한 행에 두는 비고(클라우드 배포 전제 2번 PR, 팀장 결정 2026-11-06).
 > 2026-11-06 정합(팀장 지시, 큐 1~15): Phase 1 릴레이는 HTTPS 큐 폴링만(WSS 라이브·페어링 룸은 상시 호스트가 생기면 켜는 선택 기능, 팀장 결정 2026-11-05). §6 사진(DATA) 예외와 메시지 표 `receipt.*`·`cash.entry`(폰 PR #60·#84). §7 전송 봉투 `xfer`(intent-envelope v1.5)·HPKE 스위트·패딩 버킷 33,792B·큐 한도 160 봉투/6 MiB/사진 24시간·ack 규칙(PR #84). §8 한도·보존 갱신.
 > 클라우드 PR #46 반영 2026-11-05(팀장 결정): §2.1 서명 맥락 표에 서버 서명 `SAX-token-v1`·`SAX-run-token-v1` 추가, `SAX-dpop-v1` 행에 서명 주체(클라이언트 기기 키 `Vx`)와 증명 필드 명시. `SAX-acct-op-v1`은 기존 행(AIK) 그대로.
@@ -128,11 +129,11 @@ QR 페이로드(바이너리, URL 아님): `SAXP|v1 | intent | 릴레이 호스�
 
 1. [PC] "기기 추가" → OS 사용자 존재 확인(Windows Hello/Touch ID) → `room_id`·`ps`·`exp` 생성 → 클라우드 API에서 1회용 룸 발급(정원 2, TTL 120초, 룸 레코드에 계정 ID 없음, 계정당 시간당 5회 [제안]). QR·SAS 입력 창은 `setContentProtection(true)`로 화면 캡처·원격 공유에서 가린다.
 2. [PC] QR 표시, 룸에서 응답자로 대기.
-3. [폰] 앱 내부 스캐너로만 스캔. 검사: `exp` 미경과, 릴레이 호스트 허용 목록, 서버에서 받은 기기 목록의 **모든 항목이 계정 `AIK_pub`로 서명되어 있고** `Sd`가 role=desktop 항목에 있음(없으면 중단). 해당 항목의 `registered_at`이 **24시간 이내**면 전면 경고("이 PC는 오늘 등록되었습니다. 직접 등록한 PC가 아니면 중단하세요")를 띄우고 기존 기기·이메일에 알린다(`pairing.newDesktopWarnHours = 24`).
+3. [폰] 앱 내부 스캐너로만 스캔. (Phase 1, 팀장 결정 2026-11-06, PR #102: 폰에는 계정 세션도 devlist 토큰도 없으므로 서버 기기 목록을 조회하지 않는다. 아래 기기 목록 검사는 7단계 `PAIR_OK`로 받은 AIK 서명 목록에 대해 하고, 실패하면 키 저장·우편함 사용 전에 중단한다. 24시간 경고도 그때 띄운다.) 검사: `exp` 미경과, 릴레이 호스트 허용 목록, 서버에서 받은 기기 목록의 **모든 항목이 계정 `AIK_pub`로 서명되어 있고** `Sd`가 role=desktop 항목에 있음(없으면 중단). 해당 항목의 `registered_at`이 **24시간 이내**면 전면 경고("이 PC는 오늘 등록되었습니다. 직접 등록한 PC가 아니면 중단하세요")를 띄우고 기존 기기·이메일에 알린다(`pairing.newDesktopWarnHours = 24`).
 4. [폰→PC] `Noise_XXpsk0_25519_ChaChaPoly_BLAKE2b`, 개시자 폰, `psk=ps`, prologue=`"SAX-pair-v1"‖room_id‖릴레이‖exp`. msg2에서 폰은 `rs == Sd` 확인. msg3 페이로드: 기기 이름·플랫폼·`Vm`·`Km`·`Px_pub`(있으면). 푸시 토큰은 보내지 않는다(깨우기는 서버 경로, §8.1). msg3 직후·7단계 `Cert_M` 서명 전에 폰은 `px.attest{chain[]}`를 보낸다. 체인의 `attestationChallenge`는 `HKDF(h, 'SAX-attest-v1')`이다. 검증에 실패하거나 제출이 없으면 `Px_pub`를 `Cert_M`에 넣지 않고 `hw_attest_state='unverified'`로 저장한다(ADR-029, D-36(N-55)).
 5. [양쪽] 핸드셰이크 해시 `h`로 `SAS = HKDF(h,"SAX-SAS-v1") mod 10^6`. 폰이 6자리를 표시하고 **바로 옆에** 경고를 둔다: "이 숫자는 지금 내 앞의 PC 화면에만 입력하세요. 웹페이지·전화·문자로 이 숫자를 요구하면 입력하지 마세요"(C-01).
 6. [PC] 사용자가 **폰의 6자리를 PC에 입력**("일치" 버튼 금지). 3회 실패·TTL 경과 시 룸 폐기. 동시에 PC는 폰의 `Sm`이 폰이 계정에 등록한 기기 키 목록에 있는지 확인한다(QR 유출 공격자 차단용. 이 목록은 아직 AIK 서명 전이므로 신뢰 앵커가 아니다).
-7. [PC] AIK(사용자 존재 확인)로 `Cert_M = Sign_AIK(utf8("SAX-cert-v1")‖JCS({device_id, Sx, Vx, Kx, Px_pub?, role, not_after}))`와(폰이면 `Sx`=폰의 `Sm`, `Vx`=`Vm`, `Kx`=`Km`. 키 이름은 §4.1 정규형) 폰의 새 `DeviceListEntry`(`list_version + 1`)를 서명해 서버에 올린다. 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, Kv_pub(Vd 서명, `SAX-kv-v1`), 서명된 기기 목록, mbx_id, tok_read, tok_write, mbx_epoch}`를 보낸다. **`mbx_id`·`tok_read`·`tok_write`는 PC가 CSPRNG로 만든 32B 난수**이며 핸드셰이크 해시 `h`에서 파생하지 않는다. `h`는 SAS와 채널 바인딩에만 쓴다(C-16). `PAIR_OK`에는 `KEK_N`을 넣지 않는다.
+7. [PC] (Phase 1, 팀장 결정 2026-11-06, PR #102) 폰에는 계정 로그인이 없으므로 **모바일 기기 등록(enroll)은 PC가 데스크톱 기기 토큰으로 대신 한다.** 서버는 이 요청을 방금 소비된 1회용 룸 id에 묶어서만 받고, 계정당 모바일 기기 수 상한을 둔다. 그 뒤 AIK(사용자 존재 확인)로 `Cert_M = Sign_AIK(utf8("SAX-cert-v1")‖JCS({device_id, Sx, Vx, Kx, Px_pub?, role, not_after}))`와(폰이면 `Sx`=폰의 `Sm`, `Vx`=`Vm`, `Kx`=`Km`. 키 이름은 §4.1 정규형) 폰의 새 `DeviceListEntry`(`list_version + 1`)를 서명해 서버에 올린다. 수립된 Noise 채널 안에서 `PAIR_OK{Cert_M, AIK_pub, Kv_pub(Vd 서명, `SAX-kv-v1`), 서명된 기기 목록, mbx_id, tok_read, tok_write, mbx_epoch}`를 보낸다. **`mbx_id`·`tok_read`·`tok_write`는 PC가 CSPRNG로 만든 32B 난수**이며 핸드셰이크 해시 `h`에서 파생하지 않는다. `h`는 SAS와 채널 바인딩에만 쓴다(C-16). `PAIR_OK`에는 `KEK_N`을 넣지 않는다.
 8. [PC·폰] **서류 열람 허용(별도 단계)**: 8단계 '서류 열람 허용'은 [사업자 서류] [개인 서류] 두 토글이다. 기본은 사업자만이고 개인 프로필이 없으면 두 번째 토글을 숨긴다. 결과는 `remote_devices.doc_scope_json`과 기기 범위 토큰 클레임에 들어간다(ADR-029, D-35(N-53)). 페어링 마지막 화면에서 이 토글을 물어, 사용자가 허용하면 PC가 다시 Hello 확인을 받고 라이브 세션 안에서 `kek.grant{KEK_N, kek_ver, KekRecord}`를 보낸다(C-01, REVIEW-B C-7). 허용하지 않은 폰은 조회·승인만 한다.
 9. [양쪽] `ps`·임시키·룸 폐기. 폰은 §3.1 규칙대로 키를 저장하고, 기기 범위 토큰으로 서버에 푸시 토큰을 등록한다(§8.1).
 
@@ -225,12 +226,12 @@ pad   = ISO/IEC 7816-4, 버킷 {256, 512, 1K, 4K, 16K, 64K−오버헤드}
   - HPKE는 Base 모드, DHKEM(X25519, HKDF-SHA256)·HKDF-SHA256·ChaCha20-Poly1305다. `pkR`은 우편함 번들의 `Q_D`, aad는 `"SAX-env-v1"‖u64be(mbx_epoch)`다.
   - 패딩 버킷: 256·1024·4096·16384·33,792B(§6 버킷 확장. 32 KiB 청크 하나가 봉투 하나다).
   - PC는 서명·`pair_id`·`exp`(≤ 24시간)·`iat` 차이 ±5분·`seq` > 저장된 최고값을 본 뒤 라이브와 같은 수신 처리로 넘기고 응답하지 않는다. 실패한 봉투는 오류 코드 없이 버리고 ack에는 포함한다.
-  - 폰은 큐가 차면 미루고, 24시간이 지나면 다시 넣고, 7일이 지나면 지운다. PC는 같은 메시지 ID를 중복으로 저장하지 않는다.
+  - **PC → 폰 ack는 없다**(팀장 결정 2026-11-06, PR #102). 폰은 보낸 사진을 7일 보관하고 24시간 뒤 한 번 더 넣는다. 큐가 차면 미룬다. PC 드레인은 offer id·SHA-256 기준으로 멱등이다(같은 사진을 두 번 저장하지 않는다).
 - 실패는 모두 무응답·정상 처리와 시간 차 최소화, 오류 코드 없음. 우편함당 실패 상한 후 연결 종료.
 
 ## 8. 릴레이(내용을 볼 수 없는 우편함)
 
-- **API**(채택, 팀장 결정 2026-11-05, PR #63 `services/relay/API.md`): 의도 봉투 큐는 HTTPS다. **Phase 1은 이 HTTPS 큐만 연다.** 아래 WSS 라이브와 페어링 룸은 상시 호스트가 생기면 켜는 선택 기능이다(팀장 결정 2026-11-05). 넣기 `POST /v1/mailboxes/:id/envelopes`(폰, 쓰기 토큰), 꺼내기 `GET /v1/mailboxes/:id/envelopes`(PC, 읽기 토큰), 지우기 `POST /v1/mailboxes/:id/ack{seq}`. 우편함 만들기·지우기는 `POST /v1/mailboxes`·`DELETE /v1/mailboxes/:id`, 우편함 번들 슬롯은 `PUT`·`GET /v1/mailboxes/:id/bundle`(≤ 2KB, 릴레이는 검증하지 않음)이다. 라이브 세션(HS·DATA)만 WSS `GET /v1/mailboxes/:id/live`(Upgrade)이고, PC가 붙어 있으면 큐에 새 봉투가 들어왔음을 `{"t":"env"}`로 알린다. 페어링 룸은 `POST /v1/rooms{roomId}`로 만들고 `GET /v1/rooms/:roomId`(Upgrade)로 붙는다. 모든 우편함 호출에는 기기 범위 토큰과 능력 토큰이 둘 다 필요하다.
+- **API**(채택, 팀장 결정 2026-11-05, PR #63 `services/relay/API.md`): 의도 봉투 큐는 HTTPS다. **Phase 1은 이 HTTPS 큐만 연다.** 아래 WSS 라이브와 페어링 룸은 상시 호스트가 생기면 켜는 선택 기능이다(팀장 결정 2026-11-05). 넣기 `POST /v1/mailboxes/:id/envelopes`(폰, 쓰기 토큰), 꺼내기 `GET /v1/mailboxes/:id/envelopes`(PC, 읽기 토큰), 지우기 `POST /v1/mailboxes/:id/ack{seq}`. 우편함 만들기·지우기는 `POST /v1/mailboxes`·`DELETE /v1/mailboxes/:id`, 우편함 번들 슬롯은 `PUT`·`GET /v1/mailboxes/:id/bundle`(≤ 2KB, 릴레이는 검증하지 않음)이다. 라이브 세션(HS·DATA)만 WSS `GET /v1/mailboxes/:id/live`(Upgrade)이고, PC가 붙어 있으면 큐에 새 봉투가 들어왔음을 `{"t":"env"}`로 알린다. 페어링 룸은 `POST /v1/rooms{roomId}`로 만들고 `GET /v1/rooms/:roomId`(Upgrade)로 붙는다. 모든 우편함 호출에는 기기 범위 토큰과 능력 토큰이 둘 다 필요하다. 우편함·번들이 없을 때와 능력 토큰이 틀릴 때는 같은 `404 relay.mailbox_not_found` 하나로 답한다(존재 오라클 방지, 팀장 결정 2026-11-06, PR #102). 폰은 이 코드를 받으면 다시 연결하라고 안내한다.
 - ~~WSS.~~ 우편함 = 32B CSPRNG ID + 능력 토큰(`tok_read`/`tok_write`, 32B CSPRNG, 서버는 해시만 저장, §4.2 7단계). 기기 인증 토큰은 별도 레이어(남용 방지용, 우편함 ID와 조인되지 않게 분리 저장).
 - **정직한 서술(C-14)**: 릴레이는 내용과 키를 볼 수 없다. 계정과 우편함의 연결은 분리 저장·접근 통제·짧은 보존으로 줄이지만, 운영자는 연결 시점·IP 상관으로 언제든 연결할 수 있다. '영지식'이라고 부르지 않는다.
 - 접속 IP: 평문 저장 대신 **일 단위 회전 솔트 HMAC**으로만 레이트리밋에 쓴다(솔트는 하루 뒤 폐기). Phase 1 저장 방식은 D09 §4 비고(KST 날짜별 Postgres 한 행)를 따른다. 평문 IP는 법정 접속기록 대상인 운영자 접근 로그에만 둔다(보존은 D09 §10).
