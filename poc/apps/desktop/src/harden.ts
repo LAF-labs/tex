@@ -133,6 +133,11 @@ export interface BuildInfo {
   signing: 'azure' | 'unsigned';
   commit: string;
   devOnlyIncluded: string[];
+  /**
+   * 실계정 시험 빌드(package-win --test-build, 팀장 결정 11-05). 이 빌드만 업데이트 투명성 확인을 설정으로 끌 수 있다(update-host updatePolicy).
+   * 없으면 제품 빌드다(이 칸이 생기기 전 build-info도 그대로 받는다). 배포 가능 판정은 막힌다(release-readiness test_build).
+   */
+  testBuild?: boolean;
 }
 
 export function isBuildInfo(x: unknown): x is BuildInfo {
@@ -147,15 +152,20 @@ export function isBuildInfo(x: unknown): x is BuildInfo {
     (b.signing === 'azure' || b.signing === 'unsigned') &&
     typeof b.commit === 'string' &&
     Array.isArray(b.devOnlyIncluded) &&
-    b.devOnlyIncluded.every((f) => typeof f === 'string')
+    b.devOnlyIncluded.every((f) => typeof f === 'string') &&
+    (b.testBuild === undefined || typeof b.testBuild === 'boolean')
   );
 }
+
+/** 실계정 시험 빌드인가. 모양이 틀리거나 칸이 없으면 제품 빌드(false, fail-closed). */
+export const isTestBuild = (x: unknown): boolean => isBuildInfo(x) && x.testBuild === true;
 
 /** 화면 상단 배지 문구(warn:만). 사실만 적는다. */
 export const BUILD_WARN_TEXT: Record<string, string> = {
   unsigned_build: '미서명 빌드',
   dev_code_included: '개발용 코드 포함 빌드',
   install_unexpected: '예상 밖 설치 위치',
+  test_build: '실계정 시험 빌드',
 };
 
 /**
@@ -166,6 +176,7 @@ export const BUILD_WARN_TEXT: Record<string, string> = {
  * - warn:install_unexpected    %LOCALAPPDATA%\Programs\<productName> 밖(사용자 /D 설치·복사본)
  * - warn:unsigned_build        signing !== 'azure'(베타 배포본이 아니다)
  * - warn:dev_code_included     devOnlyIncluded가 비어 있지 않다
+ * - warn:test_build            testBuild가 true다(실계정 시험 빌드, 배포본이 아니다)
  * Windows 경로는 대소문자를 가리지 않는다. 데이터 루트 이름은 productName이 아니라 고정 'SovereignAX'다(@sax/platform 데이터 루트).
  */
 export function packagedProblems(o: { isPackaged: boolean; appPath: string; execPath: string; localAppData: string; buildInfo: unknown; platform?: NodeJS.Platform }): string[] {
@@ -188,5 +199,6 @@ export function packagedProblems(o: { isPackaged: boolean; appPath: string; exec
   if (info && o.localAppData && !under(o.execPath, p.join(o.localAppData, 'Programs', info.productName))) out.push('warn:install_unexpected');
   if (info && info.signing !== 'azure') out.push('warn:unsigned_build');
   if (info && info.devOnlyIncluded.length) out.push('warn:dev_code_included');
+  if (info?.testBuild === true) out.push('warn:test_build');
   return out;
 }
