@@ -186,7 +186,9 @@ export function accountRouter(o: AccountAppOpts): Router {
       const c = await device(ctx, 'devlist');
       if (c.role !== 'desktop') fail('account.scope_denied');
       const b = V.enrollMobile(ctx.body);
-      return json(201, await svc.enrollByDesktop({ accountId: c.acc, deviceId: c.dev }, b));
+      // 같은 폰(같은 키)의 재등록은 멱등 200(룸 소비·상한 계산 없음), 새 등록은 201
+      const { created, ...out } = await svc.enrollByDesktop({ accountId: c.acc, deviceId: c.dev }, b);
+      return json(created ? 201 : 200, created ? { holdUntil: out.holdUntil } : out);
     }
     const s = await session(ctx);
     const b = V.enroll(ctx.body);

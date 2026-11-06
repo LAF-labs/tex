@@ -12,12 +12,14 @@
     "@sax/db": "workspace:*",
     "@sax/docparse": "workspace:*",
     "@sax/engine": "workspace:*",
-    "@sax/platform": "workspace:*",
-    "@sax/vault": "workspace:*",
-    "tesseract.js": "7.0.0",
-    "@tesseract.js-data/kor": "1.0.0",
     "@sax/net": "workspace:*",
-    "pdfjs-dist": "6.4.299"
+    "@sax/platform": "workspace:*",
+    "@sax/updater": "workspace:*",
+    "@sax/vault": "workspace:*",
+    "@tesseract.js-data/kor": "1.0.0",
+    "electron-updater": "6.8.11",
+    "pdfjs-dist": "6.4.299",
+    "tesseract.js": "7.0.0"
   },
   "devDependencies": {
     "electron": "45.1.0",

@@ -19,3 +19,4 @@ export { envProblems } from './env-guard.ts';
 export * as core from './core/index.ts';
 export * from './commitguard/index.ts';
 export * from './driver/index.ts';
+export * from './run/index.ts';
