@@ -16,6 +16,7 @@ import { exportBundle, exportPayrollRecord, generatePassword } from './export.ts
 import { addCustomItem, BundleError, ensureItems, INDUSTRIES, type Industry } from './items.ts';
 import { missingView } from './missing-view.ts';
 import { clearCardSlipEnough, markCardSlipEnough, missingReport, monthStatus, type MonthContext, type TaxInvoiceRow } from './month.ts';
+import { daemonSnapshot, type DaemonSnapshotSources } from './daemon-snapshot.ts';
 import { confirmNoticeCard, noticeConfirmCard, type InsuranceKind, type InsuranceNoticeMatchInput } from './notice-match.ts';
 
 type Params = Record<string, unknown>;
@@ -187,6 +188,8 @@ export interface BundleServiceOptions {
   exportDir: string;
   /** 시험용 시각 */
   now?: () => Date;
+  /** daemon.snapshot의 정책·status. 엔진이 서명 정책·status를 들고 있게 되면 넘긴다. 없으면 둘 다 null */
+  daemon?: DaemonSnapshotSources;
 }
 
 /**
@@ -397,6 +400,12 @@ export class BundleService {
         const r = await exportPayrollRecord({ db: this.db, cipher: this.cipher, profileId, outDir: this.outDir(profileId), password, fromMonth: optMonth(p.fromMonth), toMonth: optMonth(p.toMonth), now: this.opts.now });
         return { ...r, password };
       }
+      // ── 데몬(D10 §3) ──
+      case 'daemon.snapshot':
+        return daemonSnapshot(this.db, this.cipher, this.opts.daemon ?? { policy: () => null, status: () => null }, {
+          now: this.opts.now?.() ?? new Date(),
+          payrollEnabled: (id) => this.payrollEnabled(id),
+        });
       default:
         return fail('unknown_method');
     }
