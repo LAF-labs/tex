@@ -195,6 +195,10 @@ describe('레지스트리 함수(api/registry·api/registry-cron)', () => {
     const f = await serve(registryFunction(env(), { now: () => SAMPLE_NOW }));
     const head = await f.req('GET', '/api/registry?__p=/registry/log/head.json');
     assert.equal(head.status, 200, head.text);
+    // Vercel 재작성이 실제로 넘기는 모양(소스 매개변수 path가 쿼리에 다시 붙음): 200. 경로와 다른 값은 원래 쿼리라 400
+    assert.equal((await f.req('GET', '/api/registry?__p=/registry/log/head.json&path=head.json')).status, 200);
+    assert.notEqual((await f.req('GET', '/api/registry?__p=/registry/log/proof/consistency&path=proof%2Fconsistency&from=0&to=0')).status, 400);
+    assert.equal((await f.req('GET', '/api/registry?__p=/registry/log/head.json&path=x')).status, 400);
     assert.ok(verifyTreeHead(TRUST.keys.timestamp![K.ts.keyId]!, head.json));
     assert.equal((await f.req('PUT', '/api/registry?__p=/admin/v1/revoked-keys', { body: sampleDoc('registry/revoked_keys.json') })).status, 401);
     const ok = await f.req('PUT', '/api/registry?__p=/admin/v1/revoked-keys', { headers: { authorization: `Admin ${ADMIN}` }, body: sampleDoc('registry/revoked_keys.json') });

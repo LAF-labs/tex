@@ -16,3 +16,4 @@ export * from './secret/ops.ts';
 export * from './keychain/backend.ts';
 export * from './keychain/human.ts';
 export * from './keychain/session.ts';
+export * from './pdf/save.ts';
