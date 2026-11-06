@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { ESLint } from 'eslint';
 import { buildChromeArgs, chromeEnv } from '@sax/vault';
 import { buildGateRequest, gateSelfCheck, type GateField } from '@sax/engine/gate';
-import { ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED, actionText, BAR_PALETTE_DEFAULT, BarGate, barCss, buildCardHtml, CARD, CARD_ROWS, cardHeight, cardTargets, gateText, inBox, IRREVERSIBLE_TEXT, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, STOP_KEYS, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
+import { ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED, actionText, BAR_PALETTE_DEFAULT, BarGate, barCss, buildCardHtml, CARD, CARD_ROWS, cardHeight, cardTargets, gateText, inBox, IRREVERSIBLE_TEXT, IRREVERSIBLE_TEXT_NO_MAIL, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, STOP_KEYS, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
 import { barBounds, SHELL } from '../apps/desktop/src/shell-layout.ts';
 
 const barCssFor = () => barCss(BAR_PALETTE_DEFAULT);
@@ -175,22 +175,22 @@ describe('정적·구성 경계', () => {
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'left' }), true);
   });
 
-  it('승인 카드 치수: 높이는 서류 종류별 줄 수로만, 두 버튼은 떨어져 있고 카드 오른쪽 아래, 판정 영역 = 그린 자리', () => {
-    assert.equal(CARD_ROWS['H-01'], 5);
-    assert.equal(cardHeight(5), CARD.padY * 2 + 5 * CARD.row + CARD.irrGap + CARD.irr + CARD.msg + CARD.btnGap + CARD.btn);
-    assert.equal(SHELL.barHeight, cardHeight(CARD_ROWS['H-01']));
-    for (const action of [ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED]) {
-      const t = cardTargets(600, cardHeight(5), action);
-      assert.equal(t.approve.x + t.approve.width, 600 - CARD.padX, '동작 버튼은 오른쪽 끝');
-      assert.equal(t.approve.y + t.approve.height, cardHeight(5) - CARD.padY, '버튼 줄은 아래 끝');
-      assert.equal(t.approve.x - (t.stop.x + t.stop.width), CARD.apart, '두 버튼 사이는 앱 상수 간격');
-      assert.ok(CARD.apart >= 24 && t.stop.x >= CARD.padX, action);
+  it('승인 카드 치수: 높이는 서류 종류별 값 줄 수로만, [중지] 112 · 간격 48 · [동작] 남은 폭, 판정 영역 = 그린 자리', () => {
+    assert.equal(CARD_ROWS['H-01'], 4);
+    const H = cardHeight(4);
+    assert.equal(H, CARD.padY * 2 + CARD.head + CARD.headGap + CARD.total + CARD.sub + CARD.amountGap + 4 * CARD.row + CARD.irrGap + CARD.irr + CARD.btnGap + CARD.btn);
+    assert.equal(SHELL.barHeight, H);
+    assert.deepEqual([CARD.stop, CARD.apart, CARD.btn], [112, 48, 44], '디자인 시스템 ApprovalCard 치수');
+    for (const w of [520, 600, 1220]) {
+      const t = cardTargets(w, H);
+      assert.deepEqual(t.stop, { x: CARD.padX, y: H - CARD.padY - CARD.btn, width: 112, height: 44 }, '[중지]는 왼쪽 아래');
+      assert.equal(t.approve.x - (t.stop.x + t.stop.width), 48, '두 버튼 사이는 앱 상수 간격');
+      assert.equal(t.approve.x + t.approve.width, w - CARD.padX, '[동작]은 남은 폭 전부');
       assert.ok(!inBox(t.approve, t.stop.x + t.stop.width / 2, t.stop.y + t.stop.height / 2) && !inBox(t.stop, t.approve.x + 1, t.approve.y + 1), '영역이 겹치지 않는다');
-      // CSS의 버튼 자리 = 판정 영역(오른쪽·아래 여백과 폭).
-      const css = barCssFor();
-      const i = [ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED].indexOf(action);
-      assert.ok(css.includes(`body.a${i} .ap{width:${t.approve.width}px}body.a${i} .st{right:${600 - t.stop.x - t.stop.width}px}`), action);
     }
+    // CSS의 버튼 자리 = 판정 영역(왼쪽·오른쪽·아래 여백과 [중지] 폭).
+    const css = barCssFor();
+    assert.ok(css.includes(`.st{left:${CARD.padX}px;width:${CARD.stop}px}`) && css.includes(`.ap{left:${CARD.padX + CARD.stop + CARD.apart}px;right:${CARD.padX}px}`) && css.includes(`.btn{position:absolute;bottom:${CARD.padY}px;height:${CARD.btn}px;`));
   });
 
   it('승인 카드 내용: 값 전체는 fields에서만, 값 이스케이프, 위험 문자·빈 값·중복 키 거부, 넘치면 띠로, CSP', () => {
@@ -201,9 +201,9 @@ describe('정적·구성 경계', () => {
     const lines = summarize(base(), '2026-11-03') as SummaryLine[];
     assert.ok(Array.isArray(lines));
     assert.deepEqual(lines.map((l) => l.label), ['합계', '공급받는자', '품목', '작성일자', '받는 이메일'], '금액 먼저, 되읽은 값 전체(결정 7)');
-    assert.equal(lines.length, CARD_ROWS['H-01'], '줄 수는 서류 종류별 표 그대로');
+    assert.equal(lines.filter((l) => !l.amount).length, CARD_ROWS['H-01'], '값 줄 수는 서류 종류별 표 그대로');
     assert.equal(lines[1]!.flag, '처음 거래');
-    assert.equal(lines[0]!.pieces.map((p) => p.text).join(''), '3,630,000원 · 공급가액 3,300,000원 · 세액 330,000원');
+    assert.deepEqual([lines[0]!.amount, ...lines[0]!.pieces.map((p) => p.text)], [true, '3,630,000원', '공급가액 3,300,000원 · 세액 330,000원']);
     assert.equal(lines[2]!.pieces.map((p) => p.text).join(''), '경영 컨설팅');
     assert.equal((summarize(base({ itemCount: '3' }), '2026-11-03') as SummaryLine[])[2]!.pieces.map((p) => p.text).join(''), '경영 컨설팅 · 3개 품목');
     assert.deepEqual([lines[3]!.pieces[0]!.text, lines[3]!.flag], ['2026-11-03', undefined]);
@@ -221,23 +221,28 @@ describe('정적·구성 경계', () => {
     assert.deepEqual(summarize(base({ counterpartEmail: 'a‮@x.example' })), { reason: 'unsafe', label: '받는 이메일' });
     assert.deepEqual(summarize(base({}, [{ fieldKey: 'counterpartName', value: 'B상사' }])), { reason: 'duplicate' });
     assert.equal(overflowLine(lines, 600), null);
-    assert.equal(overflowLine(lines, 420), '합계');
+    assert.equal(overflowLine(lines, 420), '안내', '비가역 한 줄도 폭 어림에 든다');
     // 10억 이상·긴 이메일 도메인·처음 보내는 주소도 띠(창 폭)로 넓히면 들어간다. "창을 넓혀 주세요"는 띠로도 넘칠 때만.
     const long = summarize(base({ counterpartEmail: 'a@회사이름이긴곳.한국', '$first.email': 'true', totalAmount: '1100000000', supplyAmount: '1000000000', taxAmount: '100000000' }), '2026-11-03') as SummaryLine[];
-    assert.equal(overflowLine(long, barBounds(1280, 820).width), '합계');
+    assert.equal(overflowLine(long, barBounds(1280, 820).width), '받는 이메일');
     assert.equal(overflowLine(long, barBounds(1280, 820, true).width), null);
-    assert.equal(overflowLine(lines, 600, gateText(ACTION_TEXT_DUP)), null, '중복 경고 동작 글자도 대화 열 폭에 들어간다');
-    const html = buildCardHtml(summarize(base({ counterpartName: '<script>alert(1)</script>' })) as SummaryLine[], 'armed');
+    assert.equal(overflowLine(summarize(base({ '$dup.businessKey': 'committed' })) as SummaryLine[], 600, gateText(ACTION_TEXT_DUP_COMMITTED)), null, '중복 경고(표시·동작 글자)도 대화 열 폭에 들어간다');
+    assert.equal(overflowLine(lines, 600, gateText(ACTION_TEXT_DUP)), null);
+    const html = buildCardHtml(summarize(base({ counterpartName: '<script>alert(1)</script>' })) as SummaryLine[], 'armed', undefined, gateText(ACTION_TEXT, '<script>alert(1)</script>'));
     assert.ok(!html.includes('<script'));
     assert.ok(html.includes('&lt;script&gt;'));
     assert.match(html, /default-src 'none'; style-src 'self'/);
     assert.ok(!/<button|<a |<input|<form|onclick|style=|tabindex|autofocus/i.test(html), '정적 그림뿐: 실제 버튼·링크·입력·인라인 스타일·포커스 속성이 없다');
-    assert.match(html, /<div class="irr">승인하면 바로 발급돼요\. 발급한 세금계산서는 되돌릴 수 없어요\.<\/div>/, '비가역 한 줄(앱 고정 문구)');
-    assert.equal(IRREVERSIBLE_TEXT, '승인하면 바로 발급돼요. 발급한 세금계산서는 되돌릴 수 없어요.');
-    assert.match(html, /<div class="btn st" role="button">중지<\/div><div class="btn ap" role="button">승인하고 발급<\/div>/, '[중지]·[승인하고 발급] 두 버튼');
+    assert.match(html, /<div class="hd"><span class="tt">세금계산서 · &lt;script&gt;alert\(1\)&lt;\/script&gt;<\/span><span class="cp">승인 대기<\/span><\/div>/, '머리 줄: 서류 종류 · 상호(이스케이프) + 상태 칩');
+    assert.ok(html.includes('<div class="am"><span class="tot">3,630,000원</span></div><div class="sub">공급가액 3,300,000원 · 세액 330,000원</div>'), '금액 칸: 합계 + 공급가액·세액');
+    assert.ok(buildCardHtml(summarize(base({ '$dup.businessKey': 'committed' })) as SummaryLine[], 'armed').includes('<span class="tot">3,630,000원</span><span class="fl">이미 발급됨(승인번호 있음)</span>'), '중복 경고는 합계 끝에 하나');
+    assert.ok(html.includes(`<div class="irr">${IRREVERSIBLE_TEXT}</div>`), '비가역 한 줄(앱 고정 문구)');
+    assert.equal(IRREVERSIBLE_TEXT, '승인하면 바로 발급되고 메일로 가요. 되돌릴 수 없어요.');
+    assert.equal(gateText(ACTION_TEXT, 'A상사', false).irreversible, IRREVERSIBLE_TEXT_NO_MAIL);
+    assert.match(html, /<div class="btn st" role="button">중지<\/div><div class="btn ap" role="button"><span>승인하고 발급<\/span><\/div>/, '[중지]·[승인하고 발급] 두 버튼');
+    assert.match(buildCardHtml(lines, 'unarmed', '잠시 뒤 다시 눌러 주세요'), /<span>승인하고 발급<\/span><small>잠시 뒤 다시 눌러 주세요<\/small>/, '문구는 동작 글자 아래 작은 줄');
     const refused = buildCardHtml(lines, 'refused', '값 대조가 맞지 않아 승인할 수 없어요');
-    assert.ok(refused.includes('class="btn st"') && !refused.includes('class="btn ap"'), '무장 거부 중에는 [중지]만 그린다');
-    assert.throws(() => buildCardHtml(lines, 'armed', undefined, gateText('지금 발급')), /card\.action_unknown/, 'CSS에 폭이 없는 동작 글자는 그리지 않는다');
+    assert.ok(refused.includes('<div class="btn st" role="button">중지</div>') && refused.includes('<div class="btn ap rf" role="button" aria-disabled="true">값 대조가 맞지 않아 승인할 수 없어요</div>') && !refused.includes('승인하고 발급'), '무장 거부: 동작 자리에 사유(무채색), [중지]는 그대로');
     // 중복 경고($dup.*)는 합계 줄 표시와 동작 글자로 카드에 보인다(ADR-021). 이 클릭이 D02 §7 명시 확인이다.
     // 원장 상태별로 다르게(ADR-027 결정 3): 발급 확정은 "이미 발급됨"·주의 색·"한 번 더 발급".
     const dup = base({ '$dup.businessKey': 'committed' });
@@ -251,7 +256,7 @@ describe('정적·구성 경계', () => {
     for (const [states, flag] of [['committed,not_committed', '이미 발급됨(승인번호 있음)'], ['in_doubt,not_committed', '발급 여부 확인 안 됨'], ['dispatched,not_committed', '발급 여부 확인 안 됨']]) {
       assert.equal((summarize(base({ '$dup.businessKey': states!, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[0]!.flag, flag, states);
     }
-    assert.match(buildCardHtml(summarize(dup) as SummaryLine[], 'armed', undefined, gateText(actionText(dup))), /<body class="armed attn a2">.*그래도 한 번 더 발급/s);
+    assert.match(buildCardHtml(summarize(dup) as SummaryLine[], 'armed', undefined, gateText(actionText(dup))), /<body class="armed attn">.*그래도 한 번 더 발급/s);
   });
 
   it('게이트 요청 v2: main이 fields로 해시를 다시 계산한다. 예약 키를 빼거나 값을 바꾸면 맞지 않는다. LocalApproval v2', () => {
@@ -281,8 +286,8 @@ describe('정적·구성 경계', () => {
   it('승인 카드 배치: 창 크기와 main이 정한 높이만으로 대화 열 하단·입력창 위, 좁으면 레일 오른쪽부터 창 끝까지 띠', () => {
     const b = barBounds(1280, 820);
     assert.deepEqual(b, { x: SHELL.rail + Math.floor((1280 - SHELL.rail - SHELL.panel - 600) / 2), y: 820 - SHELL.composerReserve - SHELL.gap - SHELL.barHeight, width: 600, height: SHELL.barHeight, band: false });
-    const a = barBounds(1280, 820, false, cardHeight(3));
-    assert.deepEqual([a.y + a.height, a.height], [b.y + b.height, cardHeight(3)], '높이가 달라도 아래 끝(입력창 예약 위 간격)은 같다');
+    const a = barBounds(1280, 820, false, cardHeight(2));
+    assert.deepEqual([a.y + a.height, a.height], [b.y + b.height, cardHeight(2)], '높이가 달라도 아래 끝(입력창 예약 위 간격)은 같다');
     const n = barBounds(900, 700);
     assert.equal(n.band, true);
     assert.equal(n.x, SHELL.rail);

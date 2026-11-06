@@ -233,16 +233,16 @@ async function flow(): Promise<void> {
   check('원장이 비어 있으면 처음 거래·처음 보내는 주소(원장 HMAC 열, 확정 건만 셈)', f.get('$first.bizNo') === 'true' && f.get('$first.email') === 'true' && !f.has('$dup.businessKey'));
   const firstRows = summarize(req) as SummaryLine[];
   const dateRow = firstRows.find((l) => l.label === '작성일자');
-  check('승인 카드 줄 = 합계(공급가액·세액)·공급받는자·품목·작성일자·받는 이메일, 값은 게이트 요청 fields 그대로', firstRows.map((l) => l.label).join() === '합계,공급받는자,품목,작성일자,받는 이메일' && firstRows[0]!.pieces.map((x) => x.text).join('') === '3,630,000원 · 공급가액 3,300,000원 · 세액 330,000원' && firstRows[2]!.pieces[0]!.text === f.get('itemName'), firstRows);
+  check('승인 카드 줄 = 합계(공급가액·세액)·공급받는자·품목·작성일자·받는 이메일, 값은 게이트 요청 fields 그대로', firstRows.map((l) => l.label).join() === '합계,공급받는자,품목,작성일자,받는 이메일' && firstRows[0]!.pieces.map((x) => x.text).join(' / ') === '3,630,000원 / 공급가액 3,300,000원 · 세액 330,000원' && firstRows[2]!.pieces[0]!.text === f.get('itemName'), firstRows);
   check('작성일자 = KST 오늘이면 "오늘 아님" 표시가 없다(가짜 H-01도 KST)', f.get('issueDate') === kstToday(Date.now()) && dateRow?.pieces[0]?.text === f.get('issueDate') && !dateRow?.flag, { issueDate: f.get('issueDate'), dateRow });
   const folded = await js<string>(`document.querySelector('[data-run="${id}"]').textContent`);
-  check('대화의 작성 카드는 "작성 완료" 한 줄로 접히고 되읽은 값·승인·[중지] 버튼을 그리지 않는다(결정 7)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && folded.includes('작성 완료') && !/3,630,000|A상사|tax@asangsa|214-86-51233|승인하고 발급/.test(folded) && (await js<number>(`document.querySelectorAll('[data-run="${id}"] button').length`)) === 0, folded);
+  check('대화의 작성 카드는 "작성 완료" 한 줄(서류·거래처·합계)로 접히고 되읽은 값 전체·승인·[중지] 버튼을 그리지 않는다(결정 7)', S.runs.get(id)!.confirmed && S.runs.get(id)!.counterparty.first && folded.includes('작성 완료') && folded.includes('세금계산서 · A상사 · 3,630,000원') && !/tax@asangsa|214-86-51233|경영 컨설팅|공급가액|승인하고 발급|승인 카드|승인 바/.test(folded) && (await js<number>(`document.querySelectorAll('[data-run="${id}"] button').length`)) === 0, folded);
   const snap = S.bar.snapshot();
   const [cw, ch] = S.win.getContentSize() as [number, number];
   const exp = barBounds(cw, ch);
   check('승인 대기에 바가 뜬다(main이 창 크기로 정한 자리)', snap.visible && snap.bounds.x === exp.x && snap.bounds.y === exp.y && snap.bounds.width === exp.width, { snap: snap.bounds, exp });
   check('카드는 처음에 무장 전(동작 버튼 흐림)이다', snap.mode === 'unarmed' && !snap.armed, snap);
-  check('카드 높이는 main이 H-01 줄 수로 정하고, 두 버튼은 앱 상수 간격으로 떨어져 있다', snap.bounds.height === SHELL.barHeight && snap.targets.approve.x - (snap.targets.stop.x + snap.targets.stop.width) === 32 && snap.stop === '중지' && JSON.stringify(snap.targets) === JSON.stringify(cardTargets(snap.bounds.width, snap.bounds.height, ACTION_TEXT)), snap);
+  check('카드 높이는 main이 H-01 줄 수로 정하고, [중지](왼쪽 112)와 [승인하고 발급]은 앱 상수 간격 48로 떨어져 있다', snap.bounds.height === SHELL.barHeight && snap.targets.stop.width === 112 && snap.targets.approve.x - (snap.targets.stop.x + snap.targets.stop.width) === 48 && snap.stop === '중지' && snap.action === ACTION_TEXT && JSON.stringify(snap.targets) === JSON.stringify(cardTargets(snap.bounds.width, snap.bounds.height)), snap);
   // 무장 전 클릭: 거부 + "잠시 뒤 다시 눌러 주세요", 600ms 재시작
   barEnterMove();
   barClick();
@@ -632,7 +632,7 @@ async function flow(): Promise<void> {
   // 반대로 커서가 (바를 덮은 알림 위 등에서) 자리를 옮겼다면 들어오자마자 누른 클릭은 머무름으로 거부한다.
   const cb = S.win.getContentBounds();
   const wb = barBounds(cb.width, cb.height, true);
-  const wt = center(cardTargets(wb.width, wb.height, ACTION_TEXT).approve);
+  const wt = center(cardTargets(wb.width, wb.height).approve);
   const inside = (dx: number) => ({ x: cb.x + wb.x + wt.x + dx, y: cb.y + wb.y + wt.y });
   Object.assign(cursor, inside(0));
   const still = S.bar.open(gate('wide-3'));

@@ -8,13 +8,13 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import type { GateField } from '@sax/engine/gate';
 import {
-  ACTION_TEXT,
   ACTION_TEXT_DUP,
   BarGate,
   buildCardHtml,
   CARD_ROWS,
   cardHeight,
   cardTargets,
+  gateText,
   inBox,
   KEYBOARD_APPROVAL,
   STOP_KEYS,
@@ -35,7 +35,7 @@ const between = (s: string, start: string, end: string) => {
 
 const W = 600;
 const H = cardHeight(CARD_ROWS['H-01']);
-const T = cardTargets(W, H, ACTION_TEXT);
+const T = cardTargets(W, H);
 const mid = (r: { x: number; y: number; width: number; height: number }) => ({ x: Math.floor(r.x + r.width / 2), y: Math.floor(r.y + r.height / 2) });
 
 /** 무장된(멈춘 커서 아래 뜬 지 600ms 지난) 카드 판정기. 이 상태에서 down→up 하나면 승인되는 가장 느슨한 조건이다. */
@@ -140,28 +140,30 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
     assert.ok(show.indexOf('this.win.contentView.addChildView(this.view)') >= 0 && show.indexOf('this.win.contentView.addChildView(this.view)') < show.indexOf('this.view.setVisible(true)'));
     assert.match(bar, /javascript: false, devTools: false/);
     const lines = summarize({ fields: Object.entries({ counterpartName: '<img src=x onerror=alert(1)>', counterpartBizNo: '2148651233', totalAmount: '110', supplyAmount: '100', taxAmount: '10', itemName: '"><script>x()</script>', issueDate: '2026-11-06' }).map(([fieldKey, value]) => ({ fieldKey, value })) as GateField[] }, '2026-11-06') as SummaryLine[];
-    const html = buildCardHtml(lines, 'armed', undefined, { action: ACTION_TEXT_DUP, irreversible: 'x', stop: '중지' });
+    const html = buildCardHtml(lines, 'armed', undefined, gateText(ACTION_TEXT_DUP, '<img src=x onerror=alert(1)>'));
     assert.ok(!/<script|<img|<[^>]*\son\w+=|style=|<button|<a |<input|<form/i.test(html), html);
     assert.ok(html.includes('&lt;img src=x onerror=alert(1)&gt;') && html.includes('&quot;&gt;&lt;script&gt;x()&lt;/script&gt;'), '값은 이스케이프한 글자로만');
     assert.match(html, /default-src 'none'; style-src 'self'/);
   });
 
-  it('렌더러의 대화 카드는 승인 대기 중 "작성 완료" 한 줄: 되읽은 값·승인 버튼을 그리지 않는다', () => {
+  it('렌더러의 대화 카드는 승인 대기 중 "작성 완료" 한 줄(서류·거래처·합계): 되읽은 값 전체·승인 버튼을 그리지 않는다', () => {
     const views = read('apps/desktop/static/shell/shell-views.js');
-    const waiting = between(views, "} else if (st === 'waiting') {", "} else if (st === 'done') {");
-    assert.ok(waiting.includes('card.replaceChildren()') && waiting.includes('작성 완료'));
-    for (const bad of ['run.total', 'run.supply', 'run.tax', 'run.counterparty', 'run.email', 'run.warnings', 'amount(', '승인하고 발급', 'act.approve']) assert.ok(!waiting.includes(bad), bad);
+    // 주석은 빼고 본다(화면에 나가는 코드만).
+    const waiting = between(views, "} else if (st === 'waiting') {", "} else if (st === 'done') {").replace(/^\s*\/\/.*$/gm, '');
+    assert.ok(waiting.includes('card.replaceChildren()') && waiting.includes('작성 완료') && waiting.includes('`세금계산서 · ${run.counterparty.name} · ${won(run.total)}`'));
+    for (const bad of ['run.supply', 'run.tax', 'run.counterparty.bizNo', 'run.email', 'run.item', 'run.writeDate', 'run.warnings', 'amount(', 'kv(', '승인하고 발급', '승인 카드', '승인 바', 'act.approve']) assert.ok(!waiting.includes(bad), bad);
     // 렌더러는 main이 알린 높이만큼 자리를 비울 뿐이고, 범위 밖 값은 기본 높이로 둔다.
     const js = read('apps/desktop/static/shell/shell.js');
     const set = between(js, 'function setBarHeight(px) {', '\n}');
     assert.ok(set.includes('Number.isInteger(px) && px > 0 && px <= 600') && set.includes("'--l-bar-h'"));
   });
 
-  it('카드 판정 영역 = 카드 CSS가 그린 버튼 자리(가짜 버튼을 다른 자리에 그려도 main 판정 영역은 그대로)', () => {
+  it('카드 판정 영역은 카드 폭·높이만의 함수다(렌더러가 무엇을 그려도 그대로)', () => {
     for (const w of [520, 600, 1220]) {
-      const t = cardTargets(w, H, ACTION_TEXT);
-      assert.ok(inBox(t.approve, w - 17, H - 15) && !inBox(t.approve, w - 15, H - 15), `${w}: 오른쪽 여백 16 안쪽이 끝`);
-      assert.equal(t.approve.y, H - 14 - 36);
+      const t = cardTargets(w, H);
+      assert.ok(inBox(t.approve, w - 21, H - 17) && !inBox(t.approve, w - 20, H - 17), `${w}: 오른쪽 여백 20 안쪽이 끝`);
+      assert.equal(t.approve.y, H - 16 - 44);
+      assert.deepEqual(cardTargets(w, H), t);
     }
   });
 });

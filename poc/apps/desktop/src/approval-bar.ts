@@ -8,9 +8,9 @@ import {
   ACTION_TEXT,
   ACTIVATION_GRACE_MS,
   actionText,
-  ATTEST_TEXT,
   attestRefusalText,
   attestRows,
+  attestText,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
   BAR_CSP,
@@ -150,7 +150,7 @@ export class ApprovalBar extends EventEmitter {
   private text: CardText = GATE_TEXT;
   /** 줄 수로 정한 카드 높이(게이트마다 한 번). */
   private height = cardHeight(CARD_ROWS['H-01']);
-  private targets: CardTargets = cardTargets(0, 0, ACTION_TEXT);
+  private targets: CardTargets = cardTargets(0, 0);
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
   private armTimer: NodeJS.Timeout | undefined;
@@ -295,7 +295,9 @@ export class ApprovalBar extends EventEmitter {
     }
     const summary = bad ? null : summarize(req, kstToday(Date.now()));
     this.lines = Array.isArray(summary) ? summary : [];
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req));
+    // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
+    const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
+    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'));
     this.height = cardHeight(CARD_ROWS['H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
@@ -320,7 +322,7 @@ export class ApprovalBar extends EventEmitter {
     }
     const summary = bad ? null : summarizeAttest(req);
     this.lines = Array.isArray(summary) ? summary : [];
-    this.text = ATTEST_TEXT;
+    this.text = attestText(Array.isArray(summary) ? req.fields.find((x) => x.fieldKey === 'counterpartName')?.value : undefined);
     this.height = cardHeight(attestRows(req.manualCheck));
     this.baseRefusal = bad ? attestRefusalText(REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : attestRefusalText(refusalText(summary!));
     return new Promise<AttestOutcome>((done) => {
@@ -431,7 +433,7 @@ export class ApprovalBar extends EventEmitter {
     const changed = b.x !== this.bounds.x || b.y !== this.bounds.y || b.width !== this.bounds.width || b.height !== this.bounds.height;
     this.bounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     this.view.setBounds(this.bounds);
-    this.targets = cardTargets(b.width, b.height, this.text.action);
+    this.targets = cardTargets(b.width, b.height);
     this.gate.setTargets(this.targets);
     const band = !!b.band;
     if (band !== this.band) {

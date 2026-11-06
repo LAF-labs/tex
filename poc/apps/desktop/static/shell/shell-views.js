@@ -251,13 +251,14 @@ export function taskCard(run, act) {
     const signing = run.steps[4].state === 'done';
     card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('목업: 폰으로 다시 요청한 것으로 칠게요')), signing ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })));
   } else if (st === 'waiting') {
-    // ADR-021 결정 7: 작성 카드는 "작성 완료" 한 줄로 접는다. 되읽은 값·중복 경고·[중지]는 대화 열 아래 main 승인 카드에 있다.
+    // ADR-021 결정 7: 작성 카드는 "작성 완료" 한 줄로 접는다. 되읽은 값 전체·중복 경고·[중지]는 대화 열 아래 main 승인 카드에 있다.
     // 승인 뒤 2초(거부 우선 창)에는 승인 카드가 내려가므로 여기에 [중지]를 둔다.
     card.replaceChildren();
     card.classList.add('is-folded');
     card.append(
       ...[
-        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title' }, '세금계산서 작성 완료'), run.approvedPending ? null : h('span', { class: 'sx-meta' }, '아래 승인 카드에서 확인해 주세요'), chip(shownStatus(run))),
+        // 디자인 시스템 ApprovalCard: 체크 + "작성 완료" + 서류·거래처·합계 한 줄(초안의 값). 안내 문장은 두지 않는다(값이 바로 아래 카드에 있다).
+        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title sx-folded' }, icon('check'), '작성 완료'), h('span', { class: 'sx-meta sx-folded-line' }, `세금계산서 · ${run.counterparty.name} · ${won(run.total)}`), chip(shownStatus(run))),
         run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
         run.approvedPending ? h('div', { class: 'sx-actions' }, note('승인했어요. 2초 안에 [중지]하면 발급하지 않아요'), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })) : null,
       ].filter(Boolean),

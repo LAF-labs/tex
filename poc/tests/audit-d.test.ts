@@ -254,7 +254,7 @@ describe('audit-d: D6 중복 경고 상태별 표시(N-22·N-02)', () => {
     const l = (summarize(req, '2026-11-03') as SummaryLine[])[0]!;
     assert.deepEqual([l.flag, l.tone], ['이미 발급됨(승인번호 있음)', 'attention']);
     assert.equal(actionText(req), ACTION_TEXT_DUP_COMMITTED);
-    assert.match(buildCardHtml(summarize(req) as SummaryLine[], 'unarmed', undefined, gateText(actionText(req))), /<body class="unarmed attn a2">/);
+    assert.match(buildCardHtml(summarize(req) as SummaryLine[], 'unarmed', undefined, gateText(actionText(req))), /<body class="unarmed attn">/);
   });
 
   it('in_doubt duplicate → 발급 여부 확인 안 됨', () => {
