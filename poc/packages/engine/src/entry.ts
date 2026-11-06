@@ -20,6 +20,7 @@ import { fixturePortal, HOMETAX_PORTAL } from './h01/portal.ts';
 import { RunEnd } from './h01/runner.ts';
 import { GATE_ONLY_METHODS, RUN_COMMANDS, type EngineInit } from './protocol.ts';
 import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
+import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -41,6 +42,11 @@ const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 const PAYROLL = new Set<string>([...PAYROLL_READ_QUERIES, ...PAYROLL_COMMANDS]);
 for (const m of PAYROLL) ALLOWED.add(m);
+// daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
+for (const m of DAEMON_READ_QUERIES) {
+  PAYROLL.add(m);
+  ALLOWED.add(m);
+}
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());

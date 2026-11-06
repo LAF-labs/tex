@@ -423,8 +423,11 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     const r = await enroll(enrollBody(phone, roomId));
     assert.equal(r.status, 201, r.text);
     assert.ok(e.s.mail.outbox.some((m) => m.kind === 'device_enrolled'));
-    // 같은 룸으로 두 번째 등록은 안 된다(1회용)
-    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'relay.room_unavailable');
+    // 같은 룸 두 번째 enroll은 409(1회용): 다른 폰이든 같은 폰(같은 키)이든
+    const second = await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId));
+    assert.equal(second.status, 409);
+    assert.equal(second.json.error, 'relay.room_used');
+    assert.equal((await enroll(enrollBody(phone, roomId))).json.error, 'relay.room_used');
     // 그 뒤 PUT /v1/device-list(같은 PC의 AIK 서명)로 활성
     const cur = (await e.s.req('GET', '/v1/device-list', { headers: { authorization: `Bearer ${e.pc.session}` } })).json.deviceList as { listVersion: number; entries: unknown[] };
     const t = await e.pc.token();
@@ -463,6 +466,107 @@ describe('폰 대리 등록(팀장 결정 2026-11-06): PC가 데스크톱 기기
     assert.equal(viaSession.status, 400);
     // 위 거절들은 룸을 소비하지 않았다
     assert.equal((await enroll(enrollBody(phone, roomId))).status, 201);
+    for (const s of socks) s.ws.close();
+  });
+
+  it('같은 폰(같은 기기 ID·같은 Sx·Vx) 재등록은 멱등 200: 상한·교체 한도·알림에 다시 넣지 않고, 그 룸은 enroll 사용됨이 된다(팀장 결정 2026-11-06)', async () => {
+    const first = await pairedRoom();
+    const phone = device('mobile', e.s.clock.now());
+    const r1 = await enroll(enrollBody(phone, first.roomId));
+    assert.equal(r1.status, 201, r1.text);
+    const countState = async () => ({
+      devices: Number((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n),
+      events: Number((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM device_events WHERE role = 'mobile'"))!.n),
+      mails: e.s.mail.outbox.filter((m) => m.kind === 'device_enrolled').length,
+    });
+    const before = await countState();
+    // PC 목록이 낡아 같은 폰을 다시 연결: 새 룸으로 다시 등록 → 200 기존 기록(pending)
+    const again = await pairedRoom();
+    const r2 = await enroll(enrollBody(phone, again.roomId));
+    assert.equal(r2.status, 200, r2.text);
+    assert.deepEqual(r2.json, { holdUntil: r1.json.holdUntil, state: 'pending' });
+    assert.deepEqual(await countState(), before);
+    // 이미 쓴 첫 룸으로는 같은 키라도 409
+    assert.equal((await enroll(enrollBody(phone, first.roomId))).json.error, 'relay.room_used');
+    for (const s of [...first.socks, ...again.socks]) s.ws.close();
+  });
+
+  it('같은 룸 두 번째 enroll 409: 200(같은 키 재등록)으로 쓴 룸도 다른 폰·같은 폰 모두 409이고, 룸 자체는 열려 있다', async () => {
+    const a = await pairedRoom();
+    const phone = device('mobile', e.s.clock.now());
+    assert.equal((await enroll(enrollBody(phone, a.roomId))).status, 201);
+    const { roomId, socks } = await pairedRoom();
+    assert.equal((await enroll(enrollBody(phone, roomId))).status, 200);
+    const before = Number((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n);
+    for (const body of [enrollBody(device('mobile', e.s.clock.now()), roomId), enrollBody(phone, roomId)]) {
+      const r = await enroll(body);
+      assert.equal(r.status, 409, r.text);
+      assert.equal(r.json.error, 'relay.room_used');
+    }
+    assert.equal(Number((await e.s.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM devices WHERE role = 'mobile'"))!.n), before);
+    // 룸은 PAIR_OK 전까지 열려 있다: 두 쪽 연결이 그대로 프레임을 주고받는다
+    const f = hs(96);
+    socks[0]!.ws.send(f);
+    assert.deepEqual(await socks[1]!.next(), f);
+    // 다른 PC는 이 룸이 쓰였는지 알 수 없다(여전히 404)
+    const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId), pc2)).json.error, 'relay.room_unavailable');
+    for (const s of [...a.socks, ...socks]) s.ws.close();
+  });
+
+  it('같은 기기 ID인데 키가 다르거나(Sx·Vx), 폐기·정지된 기록이면 400이고 룸을 소비하지 않는다(폐기 뒤 새 기기 ID로 재등록)', async () => {
+    const a = await pairedRoom();
+    const phone = device('mobile', e.s.clock.now());
+    assert.equal((await enroll(enrollBody(phone, a.roomId))).status, 201);
+    const { roomId, socks } = await pairedRoom();
+    const other = device('mobile', e.s.clock.now());
+    for (const keys of [{ Sx: other.S.b64 }, { Vx: other.V.b64 }, { Sx: other.S.b64, Vx: other.V.b64 }]) {
+      const r = await enroll({ ...enrollBody(phone, roomId), ...keys });
+      assert.equal(r.status, 400, JSON.stringify(keys));
+      assert.equal(r.json.error, 'request.param_rejected');
+    }
+    // 데스크톱 기기 ID(같은 계정)·다른 계정 PC가 이 폰 ID로는 400
+    assert.equal((await enroll({ ...enrollBody(phone, roomId), deviceId: e.pc.d.id })).status, 400);
+    const pc2 = await signedDesktop(e.s, 'other-pc@example.com');
+    assert.equal((await enroll(enrollBody(phone, roomId), pc2)).status, 400);
+    // 정지·폐기된 같은 키 기록은 멱등이 아니다
+    await e.s.db.run("UPDATE devices SET state = 'suspended' WHERE device_id = $1", [phone.id]);
+    assert.equal((await enroll(enrollBody(phone, roomId))).status, 400);
+    await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [phone.id]);
+    assert.equal((await enroll(enrollBody(phone, roomId))).status, 400);
+    // 위 거절들은 룸을 소비하지 않았다: 새 기기 ID로 같은 룸에 등록된다
+    assert.equal((await enroll(enrollBody(other, roomId))).status, 201);
+    for (const s of [...a.socks, ...socks]) s.ws.close();
+  });
+
+  it('활성 폰도 같은 키면 200 {holdUntil:null, state:"active"}', async () => {
+    const { roomId, socks } = await pairedRoom();
+    const act = (await e.s.db.one<{ sx: string; vx: string }>('SELECT sx, vx FROM devices WHERE device_id = $1', [e.phone.id]))!;
+    const r = await enroll({ ...enrollBody(device('mobile', e.s.clock.now()), roomId), deviceId: e.phone.id, Sx: act.sx, Vx: act.vx });
+    assert.equal(r.status, 200, r.text);
+    assert.deepEqual(r.json, { holdUntil: null, state: 'active' });
+    for (const s of socks) s.ws.close();
+  });
+
+  it('상한에 찬 계정에서도 이미 등록된 폰의 재등록은 200이고 상한 계산은 바뀌지 않는다', async () => {
+    const phones: Array<ReturnType<typeof device>> = [];
+    for (let i = 1; i < DEVICE.maxMobiles; i++) {
+      const { roomId, socks } = await pairedRoom();
+      const p = device('mobile', e.s.clock.now());
+      assert.equal((await enroll(enrollBody(p, roomId))).status, 201);
+      phones.push(p);
+      for (const s of socks) s.ws.close();
+    }
+    for (const p of phones) {
+      const { roomId, socks } = await pairedRoom();
+      assert.equal((await enroll(enrollBody(p, roomId))).status, 200);
+      for (const s of socks) s.ws.close();
+    }
+    // 여전히 꽉 차 있다(재등록이 칸을 더 쓰지도 비우지도 않았다). 상한 거절은 룸을 쓰지 않는다
+    const { roomId, socks } = await pairedRoom();
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).json.error, 'account.device_limit');
+    await e.s.db.run("UPDATE devices SET state = 'revoked' WHERE device_id = $1", [phones[0]!.id]);
+    assert.equal((await enroll(enrollBody(device('mobile', e.s.clock.now()), roomId))).status, 201);
     for (const s of socks) s.ws.close();
   });
 
