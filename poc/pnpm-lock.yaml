@@ -202,6 +202,9 @@ importers:
 
   apps/desktop:
     dependencies:
+      '@sax/daemon':
+        specifier: workspace:*
+        version: link:../../packages/daemon
       '@sax/db':
         specifier: workspace:*
         version: link:../../packages/db
