@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createRequire } from 'node:module';
 import type { ValidateFunction } from 'ajv';
 import { DOC_META_SCHEMA } from '@sax/engine/docmeta';
+import type { CertInfo } from './sandbox/x509.ts';
 import type { ImageOcr, ParseOutcome, PdfExtract, SheetOutput } from './types.ts';
 
 const load = (name: string) => JSON.parse(fs.readFileSync(new URL(`../schema/${name}`, import.meta.url), 'utf8')) as { $id: string };
@@ -30,8 +31,8 @@ function validator(ref: string): ValidateFunction {
   return v;
 }
 
-export type SandboxOp = 'pdf' | 'image' | 'sheet' | 'legacyOcr' | 'error';
-type SandboxShape = { pdf: PdfExtract; image: ImageOcr; sheet: SheetOutput; legacyOcr: { text: string; confidence: number }; error: { error: string } };
+export type SandboxOp = 'pdf' | 'image' | 'sheet' | 'certInfo' | 'legacyOcr' | 'error';
+type SandboxShape = { pdf: PdfExtract; image: ImageOcr; sheet: SheetOutput; certInfo: CertInfo; legacyOcr: { text: string; confidence: number }; error: { error: string } };
 
 /** 샌드박스 출력 검증. 통과하면 같은 값, 아니면 null(main은 schema 오류로 끝낸다). */
 export function validateSandboxOutput<K extends SandboxOp>(op: K, v: unknown): SandboxShape[K] | null {

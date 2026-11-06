@@ -47,8 +47,8 @@ describe('H-01 승인 경계(ADR-021)', () => {
     assert.match(src, /e\.sender !== wc \|\| e\.senderFrame\?\.url !== SHELL_URL/);
   });
 
-  it('shell-runs·main.ts(개발 콘솔)·렌더러 정적 파일에는 게이트 답 경로가 없다', () => {
-    for (const p of ['apps/desktop/src/shell-runs.ts', 'apps/desktop/src/main.ts', 'apps/desktop/static/preload-shell.cjs', 'apps/desktop/static/shell/shell.js', 'apps/desktop/static/shell/shell-views.js']) {
+  it('shell-runs·렌더러 정적 파일에는 게이트 답 경로가 없다', () => {
+    for (const p of ['apps/desktop/src/shell-runs.ts', 'apps/desktop/static/preload-shell.cjs', 'apps/desktop/static/shell/shell.js', 'apps/desktop/static/shell/shell-views.js']) {
       const src = read(p);
       for (const bad of ['answerGate', 'gate.answer', 'gatePort', 'answerAttest', 'attest.answer']) assert.ok(!src.includes(bad), `${p}: ${bad}`);
     }

@@ -1,11 +1,11 @@
 // Electron e2e: docparse 샌드박스 OCR. 앱 폴더·키체인을 쓰지 않는다.
 // 승인 바(ADR-021) e2e는 shell-e2e.ts(PoC-9)로 옮겼다.
-// 실행: electron apps/desktop/dist/e2e.js
+// 실행: electron apps/desktop/e2e-dist/ocr-e2e.js (옛 src/e2e.ts, 개발 콘솔 삭제 W-1 때 옮겼다)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';
 import { parseBizCert } from '@sax/engine/bizcert';
-import { DOCPARSE_SCHEME, ocrInSandbox } from './docparse.ts';
+import { DOCPARSE_SCHEME, ocrInSandbox } from '../dist/docparse.js';
 
 protocol.registerSchemesAsPrivileged([{ scheme: DOCPARSE_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
 app.setPath('userData', path.join(app.getPath('temp'), `sax-e2e-${process.pid}`));

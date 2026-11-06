@@ -1,5 +1,5 @@
 // 암호 도우미. 서명 입력 규칙(CONTRACT.md §1): utf8(context) ‖ utf8(JCS(object)). context는 D08 §2.1 표의 고정 문자열이다.
-import { createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, randomBytes, sign as edSign, timingSafeEqual, verify as edVerify, type KeyObject } from 'node:crypto';
 
 /** RFC 8785 JCS(정수·문자열·불리언·null·배열·객체만). 엔진 gate.ts의 jcs와 같은 규칙이다. */
 const LONE_SURROGATE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/;
@@ -127,5 +127,30 @@ export class DailySalt {
       this.day = d;
     }
     return hmacHex(this.salt, this.label, '\u0000', value).slice(0, 32);
+  }
+}
+
+/**
+ * 저장 전 봉인(AES-256-GCM): iv(12) ‖ tag(16) ‖ ct. aad에 행 식별자를 넣어 다른 행으로 옮겨 붙이지 못하게 한다.
+ * 릴레이 큐(이미 E2E 암호문)와 푸시 토큰("별도 키로 암호화", D09 §4.2)에 쓴다. 키는 KMS가 주입한다.
+ */
+export function sealAead(key: Buffer, aad: string, pt: Buffer): Buffer {
+  const iv = randomBytes(12);
+  const c = createCipheriv('aes-256-gcm', key, iv);
+  c.setAAD(Buffer.from(aad, 'utf8'));
+  const ct = Buffer.concat([c.update(pt), c.final()]);
+  return Buffer.concat([iv, c.getAuthTag(), ct]);
+}
+
+/** sealAead의 역. 키·aad가 다르거나 변조되면 null. */
+export function openAead(key: Buffer, aad: string, sealed: Buffer): Buffer | null {
+  if (sealed.length < 28) return null;
+  try {
+    const d = createDecipheriv('aes-256-gcm', key, sealed.subarray(0, 12));
+    d.setAAD(Buffer.from(aad, 'utf8'));
+    d.setAuthTag(sealed.subarray(12, 28));
+    return Buffer.concat([d.update(sealed.subarray(28)), d.final()]);
+  } catch {
+    return null;
   }
 }

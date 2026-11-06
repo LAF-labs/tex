@@ -258,6 +258,18 @@ importers:
         specifier: 4.1.1
         version: 4.1.1
 
+  packages/daemon:
+    dependencies:
+      '@sax/bundle':
+        specifier: workspace:*
+        version: link:../bundle
+      '@sax/db':
+        specifier: workspace:*
+        version: link:../db
+      '@sax/engine':
+        specifier: workspace:*
+        version: link:../engine
+
   packages/db:
     dependencies:
       '@sax/platform':
@@ -394,6 +406,12 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
 
+  services/push:
+    dependencies:
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
   services/registry:
     dependencies:
       '@sax/engine':
@@ -402,6 +420,12 @@ importers:
       '@sax/payroll':
         specifier: workspace:*
         version: link:../../packages/payroll
+      '@sax/svc-shared':
+        specifier: workspace:*
+        version: link:../shared
+
+  services/relay:
+    dependencies:
       '@sax/svc-shared':
         specifier: workspace:*
         version: link:../shared
@@ -424,6 +448,9 @@ importers:
       '@sax/bundle':
         specifier: workspace:*
         version: link:../packages/bundle
+      '@sax/daemon':
+        specifier: workspace:*
+        version: link:../packages/daemon
       '@sax/db':
         specifier: workspace:*
         version: link:../packages/db

@@ -1,0 +1,20 @@
+{
+  "name": "@sax/svc-relay",
+  "version": "0.0.0",
+  "private": true,
+  "description": "릴레이 우편함·페어링 룸(D08 §4.2·§7·§8, D09 §4, D14 M7-3)",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@sax/svc-shared": "workspace:*"
+  }
+}

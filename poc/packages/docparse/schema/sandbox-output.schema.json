@@ -11,7 +11,7 @@
       "required": ["error"],
       "properties": {
         "error": {
-          "enum": ["password_required", "password_incorrect", "invalid_pdf", "worker_failed", "parse_failed", "render_failed", "ocr_failed", "input_size", "unsupported_format", "image_too_large", "image_decode_failed", "zip_invalid", "zip_unsupported", "zip_bomb", "xml_invalid", "xml_doctype", "sheet_too_large", "sheet_invalid", "text_decode_failed"]
+          "enum": ["password_required", "password_incorrect", "invalid_pdf", "worker_failed", "parse_failed", "render_failed", "ocr_failed", "input_size", "unsupported_format", "image_too_large", "image_decode_failed", "zip_invalid", "zip_unsupported", "zip_bomb", "xml_invalid", "xml_doctype", "sheet_too_large", "sheet_invalid", "text_decode_failed", "cert_invalid"]
         }
       }
     },
@@ -32,6 +32,18 @@
           "required": ["loadMs", "textMs", "ocrMs"],
           "properties": { "loadMs": { "$ref": "#/definitions/ms" }, "textMs": { "$ref": "#/definitions/ms" }, "ocrMs": { "$ref": "#/definitions/ms" } }
         }
+      }
+    },
+    "certInfo": {
+      "description": "NPKI signCert.der 고정 4필드(D05 §6 (2), D17 §3). 주체·발급자는 RFC 4514 문자열(비신뢰, textContent로만 표시), 기간은 ISO 8601 UTC",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["subject", "issuer", "notBefore", "notAfter"],
+      "properties": {
+        "subject": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "issuer": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "notBefore": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+        "notAfter": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" }
       }
     },
     "legacyOcr": {

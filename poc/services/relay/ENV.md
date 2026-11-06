@@ -1,0 +1,16 @@
+# 릴레이 환경 변수
+
+비밀(⚿)은 클라우드 KMS가 주입하고 90일마다 회전한다. 저장소·이미지·CI에 두지 않는다. 값이 없거나 형식이 틀리면 기동하지 않는다(`config_<이름>`).
+
+| 이름 | 필수 | 형식 | 설명 |
+|---|---|---|---|
+| `DATABASE_URL` / `SAX_SQLITE_FILE` | 둘 중 하나 | | 우편함 해시·큐 DB. **계정 DB와 다른 DB**(분리 저장, D08 §8) |
+| `QUEUE_KEY` ⚿ | 예 | hex 64자 | 큐 본문·번들 저장 전 봉인 키(AES-256-GCM). 바꾸면 남은 큐(≤ 72시간)는 열리지 않고 버려진다 |
+| `RELAY_PUBLIC_ORIGIN` | 예 | `https://…` | DPoP `htu` 검증 origin(WSS 업그레이드는 같은 origin + 경로) |
+| `TOKEN_PUBLIC_KEYS` | 예 | `kid:base64(32B)[,…]` | 계정 서비스 기기 범위 토큰 공개키 |
+| `ACCOUNT_INTERNAL_URL` | 예 | 내부 URL | 기기 상태 조회 |
+| `INTERNAL_TOKEN` ⚿ | 예 | 문자열 | 내부 API 공유 비밀(계정 서비스의 정지 훅, 큐 전면 폐기) |
+| `TRUST_PROXY` | 아니오 | `1` | 앞단 L4/TLS 프록시 신뢰(레이트리밋 IP HMAC용) |
+| `PORT` / `HOST` | 아니오(`8083` / `0.0.0.0`) | | |
+
+계정 서비스의 `STOP_HOOK_URLS`에 이 서비스의 내부 주소를 넣어야 긴급 정지·폐기가 라이브 연결을 즉시 끊는다.
