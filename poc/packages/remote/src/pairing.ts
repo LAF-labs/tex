@@ -12,6 +12,7 @@ import { encodeHs, KIND, parseFrame, Transport } from './frame.ts';
 import type { DesktopKeys, NoiseStatic } from './keys.ts';
 import { Handshake } from './noise.ts';
 import { decodeQr, encodeQr, QR_TTL_SEC, type PairIntent } from './qr.ts';
+import { hasControl, verifyAcctClaim, type AcctClaim } from './acctclaim.ts';
 import { attachQueue, nextFrame, type Link } from './relay.ts';
 import { ulid } from './ulid.ts';
 
@@ -77,6 +78,13 @@ export interface DesktopPairingOptions {
    * 이 PC의 기기 목록에 이미 같은 키로 있는 폰(다시 연결)은 부르지 않는다.
    */
   enrollPhone: (p: { deviceId: string; platform: 'ios' | 'android'; name: string; Sm: Uint8Array; Vm: Uint8Array; roomId: Uint8Array }) => Promise<void>;
+  /**
+   * 계정 서비스가 서명한 계정 확인 주장(acctclaim.ts 운반 형식 그대로). pair.ok에 싣는다(설계 #120, 팀장 결정 2026-11-06).
+   * 폰은 이것 없이는 저장하지 않는다.
+   */
+  accountClaim: () => Promise<string>;
+  /** PC가 폰에 알릴 이름(서명 없음, 폰은 참고 표시만). */
+  desktopName?: string;
   /** 새 기기 목록을 서버에 올린다(7단계). */
   publishDeviceList: (list: DeviceListJson) => Promise<void>;
   /** 우편함 등록(서버는 토큰 해시만 저장). */
@@ -219,9 +227,11 @@ export class DesktopPairing {
       await this.#o.registerMailbox(mbxId, tokRead, tokWrite);
       const kvPub = this.#o.keys.kvPublic();
       const mbxEpoch = this.#o.mbxEpoch ?? 0;
+      const acctClaim = await this.#o.accountClaim();
       const body: PairOkBody = {
         cert, aikPub: b64(this.#o.keys.aik.publicKey), kvPub: b64(kvPub), kvSig: await signKv(this.#o.keys.vd, kvPub), deviceList: list,
-        mbxId: b64(mbxId), tokRead: b64(tokRead), tokWrite: b64(tokWrite), mbxEpoch,
+        mbxId: b64(mbxId), tokRead: b64(tokRead), tokWrite: b64(tokWrite), mbxEpoch, acctClaim,
+        ...(this.#o.desktopName ? { desktopName: this.#o.desktopName.slice(0, 40) } : {}),
       };
       const pairId = ulid(now);
       const channel = new Channel(this.#link!, new Transport(this.#hs.split()), { pairId, me: 'desktop', now: this.#now });
@@ -254,7 +264,9 @@ export function docScopeJson(scope: { business: boolean; personal: boolean }, ha
 // ============================ 폰(개시자) ============================
 
 export type MobilePairState = 'idle' | 'scanned' | 'handshaking' | 'show_sas' | 'paired' | 'failed';
-export type MobilePairFailure = 'qr_invalid' | 'qr_expired' | 'relay_not_allowed' | 'devlist_invalid' | 'desktop_unknown' | 'handshake' | 'pair_ok_invalid' | 'aik_mismatch' | 'timeout';
+export type MobilePairFailure =
+  | 'qr_invalid' | 'qr_expired' | 'relay_not_allowed' | 'devlist_invalid' | 'desktop_unknown' | 'handshake' | 'pair_ok_invalid' | 'aik_mismatch'
+  | 'acct_claim_invalid' | 'timeout';
 
 export interface PhoneKeys {
   noise: NoiseStatic;
@@ -272,6 +284,8 @@ export interface MobilePairingOptions {
    * 폰에는 계정 로그인이 없어 서버에서 AIK_pub·기기 목록을 받지 않는다(팀장 결정 2026-11-06, D08 §4.2 3단계).
    */
   knownAikPub?: Uint8Array;
+  /** 앱에 고정한 계정 서비스 공개키(acct_claim 검증, 회전 대비 여러 개). 비어 있으면 페어링은 늘 실패한다. */
+  accountKeys: readonly Uint8Array[];
   /** 이 폰이 본 가장 높은 listVersion(재페어링이면 저장값). */
   seenListVersion?: number;
   relayAllowlist: readonly string[];
@@ -279,6 +293,20 @@ export interface MobilePairingOptions {
   /** pair.ok 대기(사용자가 PC에 6자리를 입력할 시간 포함). */
   pairOkTimeoutMs?: number;
 }
+
+/**
+ * 저장 전 확인 화면(설계 #120, 팀장 결정 2026-11-06). account는 계정 서비스 서명을 검증한 주장이다(이메일 전체를 보인다).
+ * desktopName은 PC가 스스로 알린 이름이라 "PC가 알려 준 이름"으로 참고 표시만 한다.
+ */
+export interface PairIdentity {
+  account: AcctClaim;
+  desktopName: string | null;
+}
+
+const readDesktopName = (v: unknown): string | null => {
+  const t = typeof v === 'string' ? v.trim() : '';
+  return t.length >= 1 && t.length <= 40 && !hasControl(t) ? t : null;
+};
 
 export interface MobilePairResult {
   pairId: string;
@@ -296,6 +324,8 @@ export interface MobilePairResult {
   mbxEpoch: number;
   relayHost: string;
   certNotAfter: number;
+  /** 저장 전 확인 화면(검증된 계정 주장·PC가 알린 이름). */
+  identity: PairIdentity;
   channel: Channel;
 }
 
@@ -309,6 +339,7 @@ export class MobilePairing {
   #now: () => number;
   #qr: ReturnType<typeof decodeQr> = null;
   #desktop: { deviceId: string; Vd: Uint8Array } | null = null;
+  #account: AcctClaim | null = null;
   #onState: ((s: MobilePairState) => void)[] = [];
 
   constructor(o: MobilePairingOptions) {
@@ -340,6 +371,7 @@ export class MobilePairing {
     this.newDesktopWarning = false;
     this.#qr = null;
     this.#desktop = null;
+    this.#account = null;
     const q = decodeQr(text);
     if (!q || q.intent !== 'pair') return this.#fail('qr_invalid');
     if (this.#now() / 1000 > q.exp) return this.#fail('qr_expired');
@@ -413,7 +445,7 @@ export class MobilePairing {
     return {
       pairId: env.pairId, cert: decodeCertField(b.cert)!, aikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
       desktopDeviceId: this.#desktop!.deviceId, kvPub: fromB64Strict(b.kvPub), deviceList: b.deviceList, mbxId: b.mbxId, tokRead: b.tokRead,
-      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, channel,
+      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, identity: { account: this.#account!, desktopName: readDesktopName(b.desktopName) }, channel,
     };
   }
 
@@ -428,6 +460,10 @@ export class MobilePairing {
     if (aik.length !== 32) return 'pair_ok_invalid';
     // 다시 연결이면 앞서 고정한 AIK_pub와 같을 때만 진행(C-01). 처음 페어링은 QR·SAS로 고른 이 PC의 AIK를 믿는다(TOFU, §1 E-12).
     if (this.#o.knownAikPub && !equal(aik, this.#o.knownAikPub)) return 'aik_mismatch';
+    // 계정 서비스 서명 주장: 고정 키로 서명, exp 미경과, aik_pub == PAIR_OK.aikPub. 하나라도 어긋나면 저장하지 않는다(설계 #120).
+    const ac = verifyAcctClaim(b.acctClaim, { accountKeys: this.#o.accountKeys, aikPub: aik, now: this.#now() });
+    if (!ac.ok) return 'acct_claim_invalid';
+    this.#account = ac.claim;
     const cert = verifyCert(b.cert, aik, this.#now());
     if (!cert || cert.device_id !== k.deviceId || cert.role !== 'mobile' || !equal(cert.Sx, k.noise.publicKey) || !equal(cert.Vx, k.vmPub) || !cert.Kx || !equal(cert.Kx, k.kmPub) || cert.Px) return 'pair_ok_invalid';
     // 3단계 검사를 여기서: 목록의 모든 항목이 AIK 서명, 이미 본 listVersion 이상, QR의 Sd가 role=desktop 항목에 있음.
