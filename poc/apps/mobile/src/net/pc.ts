@@ -7,7 +7,7 @@ import {
   CAP, QUEUE, flushOutbox, fromB64, monotonicClock, openMobileSession, queueOutbox, relayOrigin, relayQueue, softNoiseStatic, softSigner, verifyQBundle,
   wsRelayClient, VM_PURPOSES, type FlushResult, type Link, type QueueSendResult, type WebSocketLike,
 } from '@sax/remote';
-import { APP_VERSION, DEV_LOCAL, DEV_RELAY_HOST } from '../config';
+import { APP_VERSION, DEV_RELAY_HOST, DEV_STACK } from '../config';
 import { deviceAuthFor, fetchJson, type Htm } from './devauth';
 import type { DeviceKeys } from '../keyring';
 import type { FileOutbox } from '../storage/outbox';
@@ -39,7 +39,7 @@ const RnWs = WebSocket as unknown as RnWebSocket;
 export function relayFor(host: string, deviceAuth?: (htm: Htm, htu: string) => Promise<Record<string, string>>) {
   return wsRelayClient({
     host,
-    insecureLocal: DEV_LOCAL && host === DEV_RELAY_HOST,
+    insecureLocal: DEV_STACK && host === DEV_RELAY_HOST,
     // RN WebSocket은 세 번째 인자로 헤더를 받는다(기기 토큰·우편함 토큰. URL에는 넣지 않는다).
     open: (url, headers) => new RnWs(url, undefined, headers ? { headers } : undefined),
     deviceAuth,
@@ -111,7 +111,7 @@ async function viaLive(d: SyncDeps, pair: Pair): Promise<SyncResult | null> {
 async function viaQueue(d: SyncDeps, pair: Pair): Promise<SyncResult> {
   const vm = softSigner(d.keys.vm, VM_PURPOSES);
   try {
-    const origin = relayOrigin(pair.relayHost, DEV_LOCAL && pair.relayHost === DEV_RELAY_HOST);
+    const origin = relayOrigin(pair.relayHost, DEV_STACK && pair.relayHost === DEV_RELAY_HOST);
     const q = relayQueue({
       http: fetchJson,
       origin,
