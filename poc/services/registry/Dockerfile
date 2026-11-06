@@ -1,5 +1,6 @@
 # 레지스트리 이미지. 빌드 컨텍스트는 poc/ (docker build -f services/registry/Dockerfile .)
-# 이미지에는 공개키(TRUST_ROOT_JSON, 실행 시 주입)만 들어간다. 서명 개인 키는 이미지·CI·저장소 어디에도 없다(ADR-013·028).
+# 이미지에는 공개키(TRUST_ROOT_JSON, 실행 시 주입)만 들어간다. 산출물 서명 개인 키는 이미지·CI·저장소 어디에도 없다(ADR-013·028).
+# 투명성 로그 헤드용 타임스탬프 키(REGISTRY_LOG_SIGNING_KEY)는 실행 시 KMS가 env로 주입한다(이미지에 없음, D09 §8.2).
 # 이 저장소에서는 빌드·배포하지 않는다(Phase 1). 운영에서는 CDN(정적 파일) 앞단 + 이 서비스는 게시 관문으로만 쓴다.
 FROM node:26-slim AS build
 WORKDIR /app
