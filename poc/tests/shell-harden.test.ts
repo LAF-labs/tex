@@ -16,7 +16,7 @@ const SRC = 'apps/desktop/src';
 const srcFiles = fs.readdirSync(path.join(root, SRC)).filter((f) => f.endsWith('.ts'));
 /** 제품 경로 소스(e2e·시험 도구 제외). */
 const productFiles = srcFiles.filter((f) => !f.includes('e2e') && !['h01-fixture.ts', 'poc8-measure.ts', 'smoke-plan.ts'].includes(f));
-const staticJs = ['shell/shell.js', 'shell/shell-views.js', 'shell/shell-g24.js', 'shell/shell-onboarding.js', 'shell/secret.js', 'app.js', 'vault-panel.js'];
+const staticJs = ['shell/shell.js', 'shell/shell-views.js', 'shell/shell-g24.js', 'shell/shell-onboarding.js', 'shell/secret.js'];
 const directives = (csp: string) => new Map(csp.split(';').map((d) => d.trim().split(/\s+/)).map(([k, ...v]) => [k!, v.join(' ')]));
 /** 생성자 호출 하나의 webPreferences 블록(괄호 짝 맞춰 자른다). */
 function prefsBlocks(src: string, ctor: string): string[] {
@@ -77,7 +77,7 @@ describe('D11 §4 렌더러: contextIsolation·sandbox·nodeIntegration·좁은 
         assert.ok(!/nodeIntegration: true|contextIsolation: false|webviewTag: true|webSecurity: false/.test(b), f);
       }
     }
-    assert.ok(n >= 6, `${n}`);
+    assert.ok(n >= 5, `${n}`); // 셸 창·승인 바·비밀 창·docparse·시연 씨앗(개발 콘솔 창은 W-1에서 지웠다)
   });
 
   it('devTools: 셸 메인 창은 제품 빌드에서 끄고, 비밀 창·승인 바·docparse는 늘 끈다. 셸은 webview를 끈다', () => {
@@ -87,7 +87,7 @@ describe('D11 §4 렌더러: contextIsolation·sandbox·nodeIntegration·좁은 
   });
 
   it('원격 콘텐츠: 앱 창은 자기 스킴만 불러오고, 기본 세션은 자기 스킴 밖 요청을 취소한다', () => {
-    for (const f of ['shell-app.ts', 'main.ts']) {
+    for (const f of ['shell-app.ts']) {
       const src = read(`${SRC}/${f}`);
       assert.match(src, /onBeforeRequest\(\(d, cb\) => cb\(\{ cancel: !d\.url\.startsWith\(`\$\{[A-Z_]+_SCHEME\}:\/\/`\)/, f);
     }
@@ -129,8 +129,8 @@ describe('D11 §4 CSP(앱 스킴 응답 헤더)', () => {
     assert.deepEqual(appHeaders('text/css'), { 'content-type': 'text/css', 'content-security-policy': APP_CSP, 'x-content-type-options': 'nosniff' });
   });
 
-  it('셸·개발 콘솔·승인 바는 본문 있는 응답마다 CSP 헤더를 단다(빈 404만 예외)', () => {
-    for (const f of ['shell-app.ts', 'main.ts', 'approval-bar.ts']) {
+  it('셸·승인 바는 본문 있는 응답마다 CSP 헤더를 단다(빈 404만 예외)', () => {
+    for (const f of ['shell-app.ts', 'approval-bar.ts']) {
       const src = read(`${SRC}/${f}`);
       const responses = [...src.matchAll(/new Response\(([^\n]*)/g)].map((m) => m[1]!);
       assert.ok(responses.length >= 2, f);
@@ -148,7 +148,7 @@ describe('D11 §4 CSP(앱 스킴 응답 헤더)', () => {
   });
 
   it("정적 페이지의 meta CSP도 'self'·connect-src 'none'(헤더와 겹쳐 걸린다)", () => {
-    for (const f of ['shell/shell.html', 'app.html']) {
+    for (const f of ['shell/shell.html']) {
       const m = /http-equiv="Content-Security-Policy" content="([^"]+)"/.exec(read(`apps/desktop/static/${f}`));
       assert.ok(m, f);
       const d = directives(m[1]!);
@@ -256,9 +256,9 @@ describe('D11 §4 전역 핸들러: 권한 거부, 이동·리디렉트·새 창
     assert.deepEqual(z, [1, 1, 1]);
   });
 
-  it('창을 만드는 제품 소스는 모두 hardenWindow를 부르고, 두 main은 hardenApp·hardenSession을 부른다', () => {
+  it('창을 만드는 제품 소스는 모두 hardenWindow를 부르고, 셸 main은 hardenApp·hardenSession을 부른다', () => {
     for (const f of productFiles.filter((f) => read(`${SRC}/${f}`).includes('new BrowserWindow('))) assert.match(read(`${SRC}/${f}`), /hardenWindow\(/, f);
-    for (const f of ['shell-app.ts', 'main.ts']) assert.ok(/hardenApp\(app,/.test(read(`${SRC}/${f}`)) && read(`${SRC}/${f}`).includes('hardenSession(session.defaultSession)'), f);
+    for (const f of ['shell-app.ts']) assert.ok(/hardenApp\(app,/.test(read(`${SRC}/${f}`)) && read(`${SRC}/${f}`).includes('hardenSession(session.defaultSession)'), f);
     assert.ok(read(`${SRC}/approval-bar.ts`).includes('hardenSession(ses)'), '승인 바 전용 파티션도');
   });
 });
@@ -270,8 +270,6 @@ describe('D11 §4 IPC: 수신부 검사, 최상위 프레임, 사용자 동작 �
     assert.match(h, /e\.sender !== wc \|\| e\.senderFrame\?\.url !== SHELL_URL/);
     assert.match(h, /return dispatchShell\(e\.senderFrame, SHELL_URL, handlers, req\)/);
     assert.ok(src.includes('const handlers: ShellHandlers'), '처리기 표 형이 요청 표와 묶여 있다');
-    // 개발 콘솔도 최상위 프레임만.
-    assert.match(read(`${SRC}/main.ts`), /e\.senderFrame\?\.parent !== null/);
   });
 
   it('run.prepare 분당 3회, docs.open 분당 5회(ADR-027, D-21(N-27))', () => {
@@ -292,8 +290,9 @@ describe('D11 §4 shell.openExternal: main만, URL이 아니라 키만', () => {
 });
 
 describe('D11 §4 경로: 앱 준비 전 setPath, 사용자 전용 루트', () => {
-  it('두 진입점은 앱 폴더 준비(prepareLayout) 뒤에 setPath를 하고, 그 뒤에 ready를 기다린다', () => {
-    for (const [f, prepCall] of [['main.ts', 'await prepareAppLayout()'], ['shell.ts', 'await prepareLayout(root)']] as const) {
+  it('제품 진입점은 앱 폴더 준비(prepareLayout) 뒤에 setPath를 하고, 그 뒤에 ready를 기다린다. 치운 항목은 로그에 남긴다', () => {
+    assert.match(read(`${SRC}/shell.ts`), /for \(const name of prepared\.setAside\) layoutLog\.event\('main\.layout_set_aside', \{ name \}\)/);
+    for (const [f, prepCall] of [['shell.ts', 'await prepareLayout(root)']] as const) {
       const src = read(`${SRC}/${f}`);
       const prep = src.indexOf(prepCall);
       const set = src.indexOf("app.setPath('userData', paths.userData)");
