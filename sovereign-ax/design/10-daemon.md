@@ -1,5 +1,6 @@
 # D10. 서류 데몬
 
+> 2026-11-06 정합(팀장 지시, 큐 16~22): 데몬 notify 구현(PR #98)과 맞춤. §2 알림 단계는 `schedules.remind_days` 기본 `'7,1'`이 정본, §3 하루 알림 상한 5건·기본 알림 창 매일 09–18시(제안, 사용자 확인 전), §6 정책·status가 stale이어도 알림은 계속(팀장 확인 2026-11-06).
 > AUDIT-D 반영 2026-11-03: 데몬의 사람 비밀 미사용을 trigger 허용 목록으로, `semi_auto` 로그인은 폰 시작 게이트 뒤에만 저장 자격 사용(§6)(ADR-025·026·029, D19 §3.5 D-01·D-34).
 > v1.3 — 공격표면 감사(research/AUDIT-A·B·C, design/19-attack-surface.md) 반영: 데몬 실행은 키체인 저장 비밀을 쓰지 않음(금고가 `typist.fill` 거부), 효과 제한을 트리거 기준 런타임 검사(R-D1)로, 동의 결속(`consent_json`)과 시작 동의 메시지 분리(`consent.request/response`, `SAX-consent-v1`), `policy.daemon.autoAllowed` 이름 통일, 데몬은 AIK를 쓰지 않음, 스케줄러는 DB 키 없이 엔진 질의 IPC 사용, 추출 만료일 확정 조건.
 
@@ -11,7 +12,7 @@
 
 | 모드 | 조건 | 동작 | 플랜 | 출시 |
 |---|---|---|---|---|
-| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
+| `notify` | 기본 | D-7, D-1 알림(데스크톱·폰. 단계는 `schedules.remind_days` 기본 `'7,1'`이 정본이고 D-1 단계는 당일까지 이어진다. D-30은 홈 판 카드(`EXPIRING_WITHIN_DAYS=30`, ADR-033)가 맡는다, PR #98). 사용자가 "지금 갱신" 탭 → 일반 실행 | 9,900원 한 플랜 | Phase 1 |
 | `semi_auto` | 사용자가 서류별 동의(§2.1 결속) | 예정 시각에 폰·데스크톱으로 "갱신 시작할까요" **시작 동의**(`consent.request`/`consent.response`, 토큰 아님) → 실행 → 로그인(간편인증 PUSH는 사용자가 승인, 또는 폰 봉인 비밀) → 비가역 직전 **커밋 게이트**(`gate.request`, 건별 토큰, 폰 승인 한 번) | 9,900원 한 플랜 | Phase 2 |
 | `auto` | 서류별 동의 + `StandingAuthorization` + 법률 의견 플래그(`policy.daemon.autoAllowed`) **그리고 앱 빌드 플래그** + 사람 없이 끝나는 로그인 경로 존재 | 예정 시각에 무인 실행. 엔진이 `StandingAuthorization{scheduleId, playbookId@major, docType, profileId, maxPerPeriod, expiresAt, userSignature}`에서 **건별 단일 사용 토큰**을 만든다 | 9,900원 한 플랜 | **보류** |
 
@@ -30,6 +31,7 @@
 - `main` 프로세스, 1분 틱, 조건 확인 후 엔진에 `trigger: 'daemon'`으로 실행 요청. `main`은 DB 키를 갖지 않는다. 일정은 엔진의 **읽기 전용 IPC 질의**(`db.query.schedules`)로 읽는다(DB 소유 프로세스는 엔진 하나, D05 §2). (A-24, A/C-08)
 - 실행 조건: 실행 창 안(요일·시간대), PC 유휴(사용자 입력 없음 5분 이상) 또는 사용자 허용, 네트워크 OK, 쿨다운 아님, 포털별 동시 실행 없음, 일일 상한 여유, R-D1 통과, 동의 결속 일치(§2.1).
 - 시각 지터·간격·유예·재시도 상수는 서명된 `policy.daemon`에서 온다(±30분, 5~15분, 10분, 30분).
+- `notify` 알림(제안, 사용자 확인 전, 데몬 PR #98 구현값): 하루 알림 상한 5건(`DAEMON_MAX_NOTIFICATIONS_PER_DAY`), 기본 알림 창 매일 09–18시. 주말도 포함한다(주말을 빼면 주말에 걸린 D-1 알림이 사라진다).
 - 실패: 직전 실행에 `in_doubt` 원장이 있으면 재시도하지 않고 `notify`로 강등. 그 외 1회 재시도(`policy.daemon.retryAfterMin`), 그래도 실패 → `notify` 강등 + 알림 + 원인 코드.
 - PC 꺼짐으로 놓침: 다음 기동 시 "놓친 갱신 N건" 카드 → 사용자가 실행 선택. 자동 모드라도 기동 직후 자동 실행은 하지 않는다(사용자가 막 켠 PC에서 브라우저가 튀어나오는 경험 방지, 10분 유예).
 
@@ -48,6 +50,7 @@
 ## 6. 안전장치
 
 - 데몬 실행은 `policy.pace.daemon`(더 느림) 적용.
+- 정책·status가 stale이어도 `notify` 알림은 계속한다. D12 §4의 "데몬 중지"는 데몬 **실행**(`semi_auto`·`auto`) 중지로 읽는다(팀장 확인 2026-11-06, PR #98). 원인 코드는 `daemon.policy_stale`·`daemon.status_stale`(D16)이다.
 - **저장 비밀 미사용** (A-23): 데몬 실행(`trigger:'daemon'`)은 키체인에 저장된 비밀을 쓰지 않는다. 로그인은 간편인증 PUSH 또는 폰 봉인 비밀(`fillFromRemote`, 라이브 세션)만 쓴다. 금고는 `trigger=daemon` 실행의 `typist.fill`을 `denied`로 거부한다(D05 §4). 유휴 시간에는 Hello 프롬프트를 받을 사람이 없으므로, 이 규칙이 없으면 구현 단계에서 사람 비밀을 무인 등급에 저장하게 되어 같은 사용자 악성코드가 조용히 읽을 수 있는 비밀이 늘어난다.
 - 데몬은 사람 비밀을 쓰지 않는다. 금고는 `typist.fill`을 `trigger ∈ {local, remote}`에만 허용하므로 `daemon`은 fail-closed로 거부된다. `semi_auto`의 로그인은 폰 시작 게이트(생체 + 기기 키 서명, D08 §7) 뒤에만 저장 자격을 쓴다(ADR-026·029, D-01(N-07), D-34(N-13)).
 - **AIK 미사용** (감사 C C-22): 데몬은 AIK를 쓰지 않는다. AIK가 필요한 작업(기기 추가·폐기·삭제·KEK 회전)은 데몬 실행에서 일어나지 않으며, 금고는 `trigger=daemon` 문맥의 AIK 서명 요청을 거부한다.

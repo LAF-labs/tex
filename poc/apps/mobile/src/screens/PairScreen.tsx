@@ -129,6 +129,8 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
           mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
         },
         deviceList: r.deviceList,
+        // 다시 연결하면 새 우편함·새 번들이다(seq가 처음부터). 옛 최고값을 두면 새 번들을 거부한다.
+        qbundleSeq: 0,
         seenListVersion: Math.max(d.seenListVersion, r.deviceList.listVersion),
       })));
     } catch {

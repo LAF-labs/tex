@@ -17,23 +17,32 @@ export function HomeScreen({ go }: { go: (to: 'pair' | 'capture' | 'cash' | 'con
         : s.pc === 'connecting'
           ? '◌ PC 찾는 중'
           : s.pc === 'queued'
-            ? '◐ PC 꺼짐 · 맡겨 두었어요(PC가 켜지면 받아요)'
+            ? '◐ PC 꺼짐 · 맡겨 둠'
             : s.pc === 'stale'
-              ? '○ PC가 오래 꺼져 있어 맡길 수 없어요 · PC를 켜 주세요'
+              ? '○ PC 연결 확인 안 됨'
               : `○ PC 꺼짐 · ${ago(s.data.lastSeenPc)}`;
   return (
     <Screen>
       <View style={st.wrap}>
         <Pressable testID="pc-status" accessibilityRole="button" onPress={() => go('connection')} style={[st.status, { borderColor: p.line, backgroundColor: p.surface }]}>
-          <T v="label" c={s.pc === 'online' ? 'accent' : 'ink2'}>
+          <T v="label" c={s.pc === 'online' ? 'accent' : 'ink2'} style={{ flexShrink: 1 }}>
             {line}
           </T>
           {waiting > 0 && (
             <T v="caption" c="ink3">
-              PC로 보낼 것 {waiting}건
+              {s.pc === 'queued' ? '맡긴 것' : 'PC로 보낼 것'} {waiting}건
             </T>
           )}
         </Pressable>
+
+        {paired && s.pc === 'stale' && (
+          <Card>
+            <T c="ink2" testID="stale-note">
+              PC와 연결을 확인할 수 없어요. PC를 켜 두거나 다시 연결하세요.
+            </T>
+            <Button testID="re-pair" kind="secondary" label="다시 연결하기" onPress={() => go('pair')} />
+          </Card>
+        )}
 
         {!paired ? (
           <Card>

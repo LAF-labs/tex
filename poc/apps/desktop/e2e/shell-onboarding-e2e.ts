@@ -96,6 +96,20 @@ async function main() {
   // O-06
   check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드 · 금고에 등록함') && t.includes('세금계산서 발급·메일 전송, 사업자등록증명') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·보안카드)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'security_card'))));
+  // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
+  {
+    const host = S.host;
+    const biz = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((p) => p.kind === 'business' && p.email === 'billing@ganada.example')!;
+    const latest = (kind: string) => host.rpc('consent.latest', { profileId: biz.id, kind }) as Promise<{ choice: string; via: string; noticeVersion: string; processorsVersion: string | null } | null>;
+    const [terms, deleg, model, tele, orphan] = await Promise.all([latest('terms'), latest('delegation'), latest('model'), latest('telemetry'), host.rpc('consent.latest', { profileId: null, kind: 'terms' })]);
+    check(
+      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·위임은 금고 등록 사실 T-06·모델 거절은 처리자 표 판과 함께·사용 기록 끔)',
+      terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg?.via === 'T-06' && model?.choice === 'declined' && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
+      { terms, deleg, model, tele, orphan },
+    );
+    const st = (await host.rpc('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null } | null;
+    check('포털 아이디는 프로필 열, 이어 하기는 DB 한 행(앱 폴더 JSON 없음)', biz.portalLoginId === 'ganada01' && st?.step === 'first' && st.profileId === biz.id, { portalLoginId: biz.portalLoginId, st: st && { step: st.step, profileId: st.profileId } });
+  }
   const meBefore = await js<number>(`document.querySelectorAll('.sx-me').length`);
   await press('[data-onb=try]');
   await until('done', async () => (await js<boolean>(`!document.querySelector('[data-onb-step]')`)) === true);
