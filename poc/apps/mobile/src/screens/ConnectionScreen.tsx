@@ -20,7 +20,7 @@ function Row({ k, v, testID }: { k: string; v: string; testID?: string }) {
   );
 }
 
-export function ConnectionScreen({ onDone, onReset }: { onDone: () => void; onReset: () => void }) {
+export function ConnectionScreen({ onDone, onReset, onRepair }: { onDone: () => void; onReset: () => void; onRepair: () => void }) {
   const s = useSession();
   const pair = s.data.pair;
   const [sp1, setSp1] = useState<Sp1Report | null>(null);
@@ -34,7 +34,7 @@ export function ConnectionScreen({ onDone, onReset }: { onDone: () => void; onRe
           : s.pc === 'queued'
             ? '꺼짐 · 릴레이에 암호화해 맡김(24시간, PC가 켜지면 받음)'
             : s.pc === 'stale'
-              ? 'PC가 오래 꺼져 있어 맡길 수 없음 · PC를 켜 주세요'
+              ? 'PC와 연결을 확인할 수 없어요. PC를 켜 두거나 다시 연결하세요.'
               : '꺼짐 또는 응답 없음';
   const certDays = pair ? Math.floor((pair.certNotAfter - Date.now()) / 86_400_000) : 0;
   return (
@@ -50,6 +50,7 @@ export function ConnectionScreen({ onDone, onReset }: { onDone: () => void; onRe
           <Row k="보낼 것" v={`사진 ${s.pending.receipts}장 · 현금매출 ${s.pending.cash}건`} testID="conn-pending" />
         </Card>
         {pair && <Button label="지금 보내기" onPress={() => void s.sync()} busy={s.syncing} />}
+        {pair && s.pc === 'stale' && <Button testID="re-pair" kind="secondary" label="다시 연결하기" onPress={onRepair} />}
         <Button kind="secondary" label="닫기" onPress={onDone} />
         <Button testID="sp1" kind="quiet" label="이 폰 보호 상태 보기" onPress={async () => setSp1(await sp1Report())} />
         {sp1 && (
