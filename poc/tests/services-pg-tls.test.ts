@@ -2,7 +2,7 @@
 // 가짜 PG 서버가 SSLRequest에 'S'로 답하고 TLS를 연다. 연결되면 시작 메시지에 ErrorResponse('tls-ok')로 끊는다(클라이언트는 그 메시지로 실패한다).
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { X509Certificate } from 'node:crypto';
+import { generateKeyPairSync, randomBytes, X509Certificate } from 'node:crypto';
 import fs from 'node:fs';
 import net, { type AddressInfo } from 'node:net';
 import os from 'node:os';
@@ -57,15 +57,30 @@ describe('DATABASE_URL → TLS 설정(문자열의 ssl 매개변수는 빼고 ss
   });
 });
 
-/** 시험용 PKI(openssl CLI): 루트 둘(앵커·다른 루트), localhost용·다른 이름용 서버 인증서(체인 포함) */
+/**
+ * 시험용 PKI(openssl CLI): 루트 둘(앵커·다른 루트), localhost용·다른 이름용 서버 인증서(체인 포함).
+ * openssl 판마다 기본값이 다르다: LibreSSL(/usr/bin)은 EC 서명 SHA-1·곡선 명시 매개변수·SKI·AKI 없음, OpenSSL 1.1.1은 확장 중복(아래).
+ * 키·설정·다이제스트·키 식별자·keyUsage·일련번호를 모두 명시해 OpenSSL 1.1·3·4, LibreSSL에서 같은 체인을 만든다.
+ */
 function pki(dir: string) {
   const run = (...a: string[]) => execFileSync('openssl', a, { cwd: dir, stdio: 'pipe' });
-  const root = (name: string) =>
-    run('req', '-x509', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.pem`, '-days', '2', '-subj', `/CN=${name}`, '-addext', 'basicConstraints=critical,CA:TRUE', '-addext', 'keyUsage=critical,keyCertSign');
+  // 키는 Node가 만든다(이름 붙은 곡선 P-256). LibreSSL `-newkey ec`는 곡선을 명시 매개변수로 써 Node가 거부한다.
+  const key = (name: string) => fs.writeFileSync(path.join(dir, `${name}.key`), generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }));
+  // 설정 파일을 직접 준다. OpenSSL 1.1.1(macOS 러너의 Homebrew openssl)은 `-addext`에 기본 설정(v3_ca)의 basicConstraints·SKI를
+  // 한 번 더 붙여 확장이 중복되고, Node(OpenSSL 3)는 그 루트를 발급자로 쓰지 않는다("unable to verify the first certificate").
+  const cnf = (name: string, cn: string, ext: string) =>
+    fs.writeFileSync(path.join(dir, `${name}.cnf`), `[req]\ndistinguished_name=dn\nprompt=no\n[dn]\nCN=${cn}\n[v3]\n${ext}`);
+  const root = (name: string) => {
+    key(name);
+    cnf(name, name, 'basicConstraints=critical,CA:TRUE\nkeyUsage=critical,keyCertSign\nsubjectKeyIdentifier=hash\n');
+    run('req', '-x509', '-sha256', '-new', '-config', `${name}.cnf`, '-extensions', 'v3', '-key', `${name}.key`, '-out', `${name}.pem`, '-days', '2');
+  };
   const leaf = (name: string, dns: string) => {
-    fs.writeFileSync(path.join(dir, `${name}.ext`), `subjectAltName=DNS:${dns}\nbasicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n`);
-    run('req', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256', '-nodes', '-keyout', `${name}.key`, '-out', `${name}.csr`, '-subj', `/CN=${dns}`);
-    run('x509', '-req', '-in', `${name}.csr`, '-CA', 'anchor.pem', '-CAkey', 'anchor.key', '-CAcreateserial', '-out', `${name}.pem`, '-days', '2', '-extfile', `${name}.ext`);
+    fs.writeFileSync(path.join(dir, `${name}.ext`), `subjectAltName=DNS:${dns}\nbasicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=serverAuth\nsubjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n`);
+    key(name);
+    cnf(name, dns, '');
+    run('req', '-sha256', '-new', '-config', `${name}.cnf`, '-key', `${name}.key`, '-out', `${name}.csr`);
+    run('x509', '-req', '-sha256', '-in', `${name}.csr`, '-CA', 'anchor.pem', '-CAkey', 'anchor.key', '-set_serial', `0x${randomBytes(8).toString('hex')}`, '-out', `${name}.pem`, '-days', '2', '-extfile', `${name}.ext`);
   };
   root('anchor');
   root('other');
