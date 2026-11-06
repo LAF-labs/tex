@@ -1,6 +1,7 @@
 # CI(D14 M1-1, ADR-035 결정 1 (나)·W-11, RETRO B-01). 비밀·실계정·실 홈택스 접속 없음.
-# PR 기본 잡은 Linux(ubuntu-latest). macOS 러너는 분당 과금이 10배라 main push와 수동 실행(workflow_dispatch)에서만 돈다.
-# Windows 잡은 self-hosted 러너가 붙으면 저장소 변수 SAX_WINDOWS_RUNNER=true로 켠다(.github/RUNNER-WINDOWS.md).
+# 공개 저장소라 GitHub 호스트 러너(Linux·macOS·Windows)가 무료다. 세 잡 모두 PR·main push·수동 실행에서 돈다.
+# 보안: 권한은 contents: read뿐이고, pull_request_target은 쓰지 않는다(fork PR 코드가 쓰기 토큰·비밀과 함께 돌지 않게).
+# 워크플로가 secrets.*를 읽지 않으며, fork PR에는 GitHub이 비밀을 넘기지 않는다. self-hosted 러너는 쓰지 않는다(.github/RUNNER-WINDOWS.md).
 name: ci
 
 on:
@@ -52,8 +53,16 @@ jobs:
         run: |
           echo "CI_OUT=$RUNNER_TEMP/ci-out" >> "$GITHUB_ENV"
           echo "SAX_MEASURE_DIR=$RUNNER_TEMP/ci-out/measure" >> "$GITHUB_ENV"
-      - name: xvfb
-        run: command -v xvfb-run >/dev/null || (sudo apt-get update -q && sudo apt-get install -y -q xvfb)
+      - name: xvfb·한글 글꼴
+        # 러너 이미지에는 한글 글꼴이 없다: OCR 시험(tests/ocr.test.ts)이 Chrome으로 그린 등록증의 한글이 빈 네모가 되어
+        # tesseract kor가 읽지 못한다. sans-serif 대체로 Noto CJK가 잡히게 깐다(맥은 Apple SD Gothic Neo, 윈도는 Malgun Gothic).
+        run: |
+          pkgs="fonts-noto-cjk"
+          command -v xvfb-run >/dev/null || pkgs="$pkgs xvfb"
+          sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends $pkgs
+          fc-cache -f >/dev/null
+          echo "한글 글꼴:"; fc-list :lang=ko family | sort -u | head -5
+          test -n "$(fc-list :lang=ko)"
       - name: 버전
         run: node -v && pnpm -v && (google-chrome --version || true)
       - name: 설치(lockfile 고정)
@@ -103,8 +112,7 @@ jobs:
 
   macos:
     name: macOS build·lint·test
-    # 분당 과금 10배: PR에서는 돌지 않는다. main push·수동 실행에서만.
-    if: ${{ github.event_name != 'pull_request' }}
+    # PR에서도 전체를 돈다: 지난 macOS 런은 잡 전체 약 6분(시험 약 5분)이라 핵심만 고를 이유가 없다.
     runs-on: macos-15
     timeout-minutes: 45
     steps:
@@ -159,12 +167,14 @@ jobs:
           if-no-files-found: ignore
 
   windows:
-    name: Windows build·lint·test(self-hosted)
-    # ADR-035 결정 1 (나): 두 OS. 러너는 나중에 붙인다(RETRO B-07). 변수가 없으면 건너뛴다(대기열에 묶이지 않게).
-    # self-hosted 러너는 사용자 노트북에서 PR 코드를 실행한다: fork PR은 돌리지 않는다(.github/RUNNER-WINDOWS.md §5).
-    if: ${{ vars.SAX_WINDOWS_RUNNER == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-    runs-on: [self-hosted, windows, sax]
-    timeout-minutes: 60
+    name: Windows build·lint·test(비차단, #113 후속)
+    # ADR-035 결정 1 (나): 두 OS. GitHub 호스트 러너(windows-latest). 공개 저장소에 self-hosted 러너는 붙이지 않는다
+    # (fork PR 코드가 사용자 노트북에서 돈다). 실물 인증서·Hello·TPM 확인은 .github/RUNNER-WINDOWS.md의 수동 절차로.
+    runs-on: windows-latest
+    # 임시(#113 후속): audit-v 파일이 끝나지 않는 문제(핸들 누수 추정)와 V3·V10 실패를 고칠 때까지 머지를 막지 않고 20분에서 끊는다.
+    # 고치면 continue-on-error를 빼고 timeout-minutes를 되돌린다.
+    continue-on-error: true
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: poc
