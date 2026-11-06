@@ -11,7 +11,7 @@ const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.
 /**
  * 아직 진입점에 남는 목업 어댑터(실제 저장소가 오면 바뀐다). 이 목록은 줄기만 해야 한다.
  * - shell-mock.ts: 거래처·문서 목업 저장소, 꾸러미·설정 목업(M4-3·M4-4, 데이터 트랙)
- * - onboarding-mock.ts: 온보딩 포트(#53 OnboardingRepo·ConsentRepo, #65 checkBizNo)
+ * - onboarding-mock.ts: 온보딩 바깥 일(M4-3 등록증 OCR, #65 checkBizNo, #93 NPKI, 금고 T-06 등록 창). 저장은 onboarding-store.ts(엔진 #91)
  */
 const STAND_INS = ['onboarding-mock.ts', 'shell-mock.ts'];
 

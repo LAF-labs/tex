@@ -1,8 +1,8 @@
-// 온보딩 목업 어댑터(M4-2). 실제 어댑터가 붙을 자리:
-// - recognizeBizCert: M4-3 등록증 OCR(docparse 샌드박스, ADR-014) · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유)
-// - findCerts: NPKI 탐지(파일 메타만) · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
-// - recordConsent: 동의 레코드 저장(DB) · consentConfig: 설정 데이터(모델 상류 공급사 표) · save: 이어 하기(DB)
-// saveProfile만 실제 길(엔진 profile.upsert)을 부르는 쪽이 넘긴다.
+// 온보딩 목업 어댑터(M4-2). 셸은 바깥 일만 이것으로 한다(onboarding-store.ts onboardingPorts). 실제 어댑터가 붙을 자리:
+// - recognizeBizCert: M4-3 등록증 OCR(docparse 샌드박스, ADR-014) · checkBizNo: 진위확인(packages/net egress, ADR-029 서버 경유, #65)
+// - findCerts: NPKI 탐지(금고 npki.list #93 + docparse certInfo) · registerSecrets: 금고 T-06 등록 창(금고 프로토콜 v1 secret.store, #42)
+// - consentConfig: 설정 데이터(모델 상류 공급사 표)
+// recordConsent·saveProfile·save(저장)는 셸에서 쓰지 않는다. 엔진 명령으로 DB에 남긴다(onboarding-store.ts). 여기 것은 상태 기계 시험용이다.
 import { dayOffset } from './shell-mock.ts';
 import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, OnboardingPorts, StoreBindRequest, VaultConsentRecord } from './onboarding.ts';
 
@@ -29,8 +29,6 @@ export interface MockOnboardingOptions {
   bizStatus?: 'active' | 'suspended' | 'closed';
   /** 금고 등록 창 결과(시험이 바꾼다). */
   register?: 'ok' | 'cancelled';
-  /** 이어 하기 저장을 실제로 남길 곳(엔진 모드: 앱 폴더 JSON). DB 온보딩 상태 칸이 생기면 그쪽으로 옮긴다. */
-  persist?: (s: OnbState) => Promise<void>;
 }
 
 export class MockOnboardingPorts implements OnboardingPorts {
@@ -73,6 +71,5 @@ export class MockOnboardingPorts implements OnboardingPorts {
   }
   async save(s: OnbState) {
     this.saved = s;
-    await this.o.persist?.(s);
   }
 }

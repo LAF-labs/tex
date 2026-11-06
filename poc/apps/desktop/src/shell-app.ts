@@ -11,8 +11,9 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
-import { OnboardingFlow, onboardingTodos, parseOnbState, type OnbProfile, type OnbState } from './onboarding.ts';
+import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
 import { MockOnboardingPorts } from './onboarding-mock.ts';
+import { EngineOnboardingStore, onboardingPorts } from './onboarding-store.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { DOCPARSE_SCHEME } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
@@ -502,35 +503,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { profiles: profiles() };
     },
   };
-  // 온보딩(08 §4, M4-2). 바깥 일은 목업 어댑터 뒤(onboarding-mock.ts), 프로필 저장만 엔진 profile.upsert(실제 DB)로 간다.
+  // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
+  // 바깥 일(등록증 읽기·진위확인·NPKI·금고 등록 창·처리자 표)은 아직 목업 어댑터 뒤(onboarding-mock.ts): M4-3·#65·#93·금고 T-06.
   let onb: OnboardingFlow | null = null;
   /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
   let onbShow = true;
-  // 이어 하기 저장(비밀 없음, 포털 아이디는 비밀 아님): 엔진 모드에서만 앱 폴더 JSON. DB 온보딩 상태 칸(데이터 트랙 #53 후속)이 오면 옮긴다.
-  const onbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
-  const persistOnb = async (s: OnbState) => {
-    await fs.mkdir(path.dirname(onbFile), { recursive: true });
-    const tmp = `${onbFile}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(s));
-    await fs.rename(tmp, onbFile);
-  };
-  const loadOnb = async (): Promise<OnbState | null> => {
-    try {
-      return parseOnbState(JSON.parse(await fs.readFile(onbFile, 'utf8')));
-    } catch {
-      return null;
-    }
-  };
-  const onbPorts = new MockOnboardingPorts({
-    persist: fixture ? undefined : persistOnb,
-    saveProfile: async (p: OnbProfile) => {
-      // 포털 아이디(금고 v1이 돌려주는 비밀 아닌 값)는 DB profiles.portal_login_id 열이 생기면 함께 저장한다(#42). 지금은 버린다.
-      const row: Omit<OnbProfile, 'portalLoginId'> & { portalLoginId?: string } = { ...p };
-      delete row.portalLoginId;
-      await host.rpc('profile.upsert', { ...row, corpNo: null });
-      await refresh();
-    },
-  });
+  const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
+  /** M4-2 목업 때의 이어 하기 파일. DB에 행이 없으면 한 번 옮기고 지운다. */
+  const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
+  const onbPorts = onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), onbStore, refresh);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -691,7 +672,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 저장이 없고 사업자 프로필도 없으면 처음부터. 사업자를 건너뛰고 끝낸 사용자도 다음 기동에 약관부터 다시 묻지 않는다.
     if (opts.onboarding) onb = new OnboardingFlow(onbPorts);
     else if (!fixture) {
-      const saved = await loadOnb();
+      const saved = (await onbStore.load()) ?? (await onbStore.importLegacyFile(legacyOnbFile));
       if (saved) {
         onb = new OnboardingFlow(onbPorts, saved);
         onbShow = saved.step !== 'done';
