@@ -14,7 +14,7 @@
 
 `/internal/v1/*`과 `/healthz`는 공개 origin에 내보내지 않는다(서비스끼리 내부 주소로만).
 
-**배포 전제(yulmu 11-05, 미검증)**: DB는 Supabase Postgres, HTTP는 Vercel. 리전은 **미정**이다(서울이면 Supabase `ap-northeast-2`, Vercel 함수 `icn1`). 처리방침은 어느 쪽이든 "국외 이전 가능"으로 쓴다(R14). 모델 상류는 L1 판정 OpenAI Decisions 직결, 응답 OpenRouter(ZDR·수집 거부·공급자 고정, [ENV.md](ENV.md)). 게이트웨이는 무저장이라 함수로 올릴 수 있지만, 지금의 메모리 한도(IP·기기 분당, 자동 정지 판정, 상한 뒤 안전 판정 속도)는 인스턴스마다 따로 센다. 함수로 올리면 한도를 Postgres로 옮기는 작업이 먼저다(후속 PR).
+**배포 전제(yulmu 11-05, 미검증)**: DB는 Supabase Postgres, HTTP는 Vercel. 리전은 **미정**이다(서울이면 Supabase `ap-northeast-2`, Vercel 함수 `icn1`). 처리방침은 어느 쪽이든 "국외 이전 가능"으로 쓴다(R14). 모델 상류는 L1 판정 OpenAI Decisions 직결, 응답 OpenRouter(ZDR·수집 거부·공급자 고정, [ENV.md](ENV.md)). 게이트웨이는 무저장이라 함수로 올릴 수 있다. 한도(기기·계정 분당, 자동 정지 판정, 상한 뒤 안전 판정 속도)는 DB 카운터라 인스턴스가 여럿이어도 합산된다(키는 서버 비밀 HMAC, [CONTRACT §10](../shared/CONTRACT.md)).
 
 **인증**: 모든 `/v1/*`는 데스크톱 기기 범위 토큰(`gateway` 범위) + DPoP(`htu = GATEWAY_PUBLIC_ORIGIN + 경로`). 계정 세션 토큰·폰 토큰은 거부한다. 기기 ID는 토큰에서 유도한다(`X-Device-Id` 헤더 없음, N-41). 긴급 정지·자동 정지된 기기는 `403 gateway.device_suspended`.
 
@@ -74,7 +74,7 @@
 |---|---|
 | `{b_no: ["0123456789", …]}` 1~10건, 숫자 10자리 | `200 {data:[{b_no, b_stt_cd, tax_type_cd, end_dt}]}` |
 
-- 번호는 메모리로만 통과해 공공데이터포털(`nts-businessman/v1/status`)로 간다. DB·로그·통계에 남기지 않고, **이 경로의 접근 로그에는 계정 식별자(`aid`)도 없다**(상태코드·지연·바이트만). 한도는 계정당 분당 30회(메모리 카운터, 일 회전 HMAC 키).
+- 번호는 메모리로만 통과해 공공데이터포털(`nts-businessman/v1/status`)로 간다. DB·로그·통계에 남기지 않고, **이 경로의 접근 로그에는 계정 식별자(`aid`)도 없다**(상태코드·지연·바이트만). 한도는 계정당 분당 30회(DB 카운터, 서버 비밀 HMAC 키).
 - 원천 장애는 `503 gateway.upstream_error`.
 - 상태코드(`b_stt_cd` 01 계속·02 휴업·03 폐업·'' 미등록, `tax_type_cd` 과세유형)는 원천 값을 그대로 넘기고 게이트웨이가 해석하지 않는다. 키는 `NTS_BIZ_API_KEY`(ENV.md).
 - 원천 호출 한도(공공데이터포털 15081808 "호출허용건수"): **1회 100건, 1일 100만 건**. 게이트웨이 한도(요청당 10건, 계정당 분당 30회)가 이보다 좁다. 일 한도를 넘기면 원천이 거절하고 게이트웨이는 `503 gateway.upstream_error`를 낸다.
@@ -85,4 +85,4 @@
 
 ## 기기 자동 정지(D09 §3)
 
-트립와이어·공급사 거절(refusal)이 한 기기에서 1시간에 20회가 되면 계정 서비스 `POST /internal/v1/devices/:id/auto-suspend`를 부른다. 계정 서비스가 그 기기를 정지하고 릴레이·푸시 정지 훅과 알림 메일(`device_auto_suspended`)을 보낸다. 해제는 사용자의 AIK 서명 재활성화뿐이다.
+트립와이어·공급사 거절(refusal)이 한 기기에서 1시간 창(고정 창, 인스턴스 합산)에 20회가 되면 계정 서비스 `POST /internal/v1/devices/:id/auto-suspend`를 부른다. 계정 서비스가 그 기기를 정지하고 릴레이·푸시 정지 훅과 알림 메일(`device_auto_suspended`)을 보낸다. 해제는 사용자의 AIK 서명 재활성화뿐이다.

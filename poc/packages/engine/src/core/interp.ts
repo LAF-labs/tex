@@ -5,6 +5,7 @@
 // 멈춤(RunStop)으로 돌려주고, 상태 머신(machine.ts)과 실행 조율(M2-2)이 이어 받는다.
 import { effectiveOnFail, flatten, IRREVERSIBLE_TYPES, type StepInfo } from './cfg.ts';
 import { evalCond } from './conds.ts';
+import type { ActResult } from './page.ts';
 import type { Handler, Handlers, Outcome, StepEnv } from './steps.ts';
 import type { EndStep, OnFailThen, PlaybookIR, Policy, Step } from './types.ts';
 
@@ -23,8 +24,11 @@ export type RunStop =
   | { t: 'falloff'; at: string };
 
 export interface InterpHooks {
-  /** 정책 집행 지점(Actuator.policy.beforeStep, M2-4). */
-  beforeStep?(s: Step): Promise<void> | void;
+  /**
+   * 정책 집행 지점(Actuator.policy.beforeStep, M2-4: 스텝 지연·걸쇠·정지). {ok:false, code}를 돌려주면 스텝을 실행하지 않고 멈춘다:
+   * FORCED_STOPS에 있는 코드는 그 처리(핸드오프·중단), 없는 코드는 중단.
+   */
+  beforeStep?(s: Step): Promise<void | ActResult> | void | ActResult;
   /** 저널. 값 없이 스텝 id·타입·코드·시도 횟수만. */
   event?(name: 'step.started' | 'step.finished' | 'step.retry' | 'step.loop_guard', data: { stepId: string; type: string; code?: string; cause?: string; attempt?: number }): void;
 }
@@ -46,11 +50,28 @@ export const MAX_STEP_EXECUTIONS = 2_000;
  * 재시도·onFail 없이 곧바로 멈추는 실패 코드(D16 처리 열). 보고 코드는 스텝 code로 바꾸지 않고 원래 코드다.
  * - step.commit_shadow: 클릭 안 함, 핸드오프(보안 이벤트).
  * - step.irreversible_unguarded·step.secret_field: 플레이북 결함(정적 검증 V-03g·V-04·V-20을 지나친 것). 재시도해도 같으므로 중단(PROPOSED_D16).
+ * - 정책 집행기(M2-4 B) 거부: 차단 신호·쿨다운·실행당 상한·정지는 중단(D16 portal.blocked "중단+쿨다운"),
+ *   추가 인증·캡차·대기열은 핸드오프(사람이 풀고 이어 간다).
  */
 export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['step.commit_shadow', 'handoff'],
   ['step.irreversible_unguarded', 'abort'],
   ['step.secret_field', 'abort'],
+  ['portal.blocked', 'abort'],
+  ['portal.extra_auth_repeat', 'abort'],
+  ['policy.cooldown', 'abort'],
+  ['policy.actuations_per_run', 'abort'],
+  ['policy.wall_clock', 'abort'],
+  ['policy.irreversible_per_day', 'abort'],
+  ['run.stopped', 'abort'],
+  ['portal.mfa_pending', 'handoff'],
+  ['portal.captcha', 'handoff'],
+  ['portal.busy', 'handoff'],
+  // 커밋 가드(D03 §5.4, D16): 무장 없는 커밋 요청·잡지 못한 커밋 요청·무장 거부는 중단, 본문 불일치는 핸드오프
+  ['commit_guard.blocked_request', 'abort'],
+  ['commit_guard.unintercepted', 'abort'],
+  ['commit_guard.arm_refused', 'abort'],
+  ['security.commit_payload_mismatch', 'handoff'],
 ]);
 
 export function retryDelayMs(attempt: number, r: Pick<Policy['retries'], 'baseMs' | 'capMs'>, floorMs: number, u: number): number {
@@ -129,7 +150,8 @@ export class Interpreter {
     // 비가역 스텝은 재시도하지 않는다(V-03f). 정책 stepMax가 상한.
     const retries = IRREVERSIBLE_TYPES.has(s.type) || this.env.irreversible.has(s.id) ? 0 : Math.max(0, Math.min(of.retry, this.opts.retries.stepMax));
     for (let attempt = 0; ; attempt++) {
-      await this.hooks.beforeStep?.(s);
+      const pre = await this.hooks.beforeStep?.(s);
+      if (pre && !pre.ok) return FORCED_STOPS.get(pre.code) === 'handoff' ? { t: 'handoff', at: s.id, resumeAt: s.id, code: pre.code } : { t: 'abort', at: s.id, code: pre.code };
       this.hooks.event?.('step.started', { stepId: s.id, type: s.type, ...(attempt ? { attempt } : {}) });
       let out: Outcome;
       try {
