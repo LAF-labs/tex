@@ -235,6 +235,55 @@
    }
   },
   {
+   "id": "s19d",
+   "type": "assert",
+   "cond": {
+    "sumEquals": {
+     "parts": [
+      "supplyAmount",
+      "taxAmount"
+     ],
+     "total": "totalAmount"
+    }
+   },
+   "code": "assert.total_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
+   "id": "s19f",
+   "type": "assert",
+   "cond": {
+    "all": [
+     {
+      "readbackEquals": {
+       "fieldKey": "counterpartBizNo",
+       "ref": "$inputs.counterpart.bizNo"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "supplyAmount",
+       "ref": "$inputs.amounts.supply"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "taxAmount",
+       "ref": "$inputs.amounts.tax"
+      }
+     }
+    ]
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
    "id": "s19e",
    "type": "assert",
    "cond": {

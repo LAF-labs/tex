@@ -99,7 +99,7 @@ describe('V-02 타깃·속성', () => {
 });
 
 describe('V-03 커밋 구간', () => {
-  it('V-03a 게이트 둘이 같은 X를 허가', () => expectRule('V-03a', (_p, _s, steps) => insertAfter(steps, 's19e', { id: 's19f', type: 'gate', card: 'invoice.confirm', authorizes: ['s21'] })));
+  it('V-03a 게이트 둘이 같은 X를 허가', () => expectRule('V-03a', (_p, _s, steps) => insertAfter(steps, 's19e', { id: 's19g', type: 'gate', card: 'invoice.confirm', authorizes: ['s21'] })));
   it('V-03b 게이트를 우회하는 경로', () =>
     expectRule('V-03b', (_p, _s, steps) => insertAfter(steps, 's18', { id: 's18a', type: 'branch', on: { inputPresent: 'email' }, cases: { true: 's21' }, default: 's19' })));
   it('CE-17 커밋 구간 안 decide', () =>
