@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
+  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, readPairIdentity, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
   toHex, upsertDevice, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
 } from '@sax/remote';
 import { DAY, RELAY, mockDesktop, mockPhone, pairOnce, pairWorld, until } from './remote-support.ts';
@@ -23,6 +23,7 @@ describe('페어링 정상 흐름', () => {
     assert.deepEqual(w.enrolled[0]!.roomId, w.pc.roomId, '이 페어링 룸 id로 등록한다');
     assert.equal(w.enrolled[0]!.phoneState, 'show_sas', 'pair.ok 전(룸이 열려 있을 때) 등록한다');
     assert.deepEqual(phone.aikPub, w.desk.keys.aik.publicKey);
+    assert.deepEqual(phone.identity, { desktopName: null, accountEmail: null }, '설계 #120 필드는 아직 PC가 보내지 않는다');
     const chk = verifyDeviceList(phone.deviceList, w.desk.keys.aik.publicKey);
     assert.ok(chk.ok);
     assert.equal(chk.ok && chk.devices.filter((d) => d.role === 'mobile').length, 1);
@@ -324,5 +325,19 @@ describe('재시도와 신뢰할 수 없는 기기 목록', () => {
       assert.equal(r.ok, false);
       assert.ok(!r.ok && (r.reason === 'shape' || r.reason === 'signature'), JSON.stringify(b)?.slice(0, 80));
     }
+  });
+});
+
+describe('저장 전 확인 화면 값(설계 #120, 가정 필드)', () => {
+  it('PC 이름·계정 이메일은 모양이 맞을 때만 받고, 제어·양방향 문자는 버린다', () => {
+    assert.deepEqual(readPairIdentity({ desktopName: ' 사무실 PC ', accountEmail: 'owner@example.test' }), { desktopName: '사무실 PC', accountEmail: 'owner@example.test' });
+    const bad = [
+      { desktopName: '', accountEmail: 'owner' },
+      { desktopName: 'x'.repeat(41), accountEmail: 'a@b' },
+      { desktopName: 'PC\u202Egnp.exe', accountEmail: 'owner@exa\u0000mple.test' },
+      { desktopName: 7, accountEmail: ['a@b.c'] },
+    ];
+    for (const b of bad) assert.deepEqual(readPairIdentity(b), { desktopName: null, accountEmail: null }, JSON.stringify(b));
+    assert.deepEqual(readPairIdentity(null), { desktopName: null, accountEmail: null });
   });
 });

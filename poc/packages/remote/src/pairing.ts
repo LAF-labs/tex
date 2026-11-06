@@ -280,6 +280,35 @@ export interface MobilePairingOptions {
   pairOkTimeoutMs?: number;
 }
 
+/**
+ * PAIR_OK에서 저장 전 확인 화면에 보여 줄 PC 이름과 계정 이메일(설계 #120). **필드 이름(`desktopName`·`accountEmail`)과
+ * 서명 범위는 가정이다**: 설계 세션이 PAIR_OK에 서명된 채로 오는지 확인 중이다(팀장 지시 2026-11-06). 스키마에 들어가기 전에는
+ * PC가 보내지 않으므로 null이다. 모양이 틀린 값도 null로 본다(화면에 그대로 내지 않는다).
+ */
+export interface PairIdentity {
+  desktopName: string | null;
+  accountEmail: string | null;
+}
+
+/** 제어 문자·줄 구분자·양방향 재정렬 문자(화면을 속이는 데 쓰인다)가 있으면 참. */
+function hasControl(t: string): boolean {
+  for (const ch of t) {
+    const c = ch.codePointAt(0)!;
+    if (c < 0x20 || (c >= 0x7f && c <= 0x9f) || c === 0x2028 || c === 0x2029 || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)) return true;
+  }
+  return false;
+}
+
+export function readPairIdentity(body: unknown): PairIdentity {
+  const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
+  const name = typeof b.desktopName === 'string' ? b.desktopName.trim() : '';
+  const email = typeof b.accountEmail === 'string' ? b.accountEmail.trim() : '';
+  return {
+    desktopName: name.length >= 1 && name.length <= 40 && !hasControl(name) ? name : null,
+    accountEmail: email.length <= 254 && /^[^\s@]{1,64}@[^\s@]+\.[^\s@]+$/.test(email) && !hasControl(email) ? email : null,
+  };
+}
+
 export interface MobilePairResult {
   pairId: string;
   /** AIK 서명 기기 인증서. 계정 서비스 POST /v1/device-tokens의 `cert`로 그대로 보낸다. */
@@ -296,6 +325,8 @@ export interface MobilePairResult {
   mbxEpoch: number;
   relayHost: string;
   certNotAfter: number;
+  /** 저장 전 확인 화면(PC 이름·계정 이메일). 가정 필드, readPairIdentity. */
+  identity: PairIdentity;
   channel: Channel;
 }
 
@@ -413,7 +444,7 @@ export class MobilePairing {
     return {
       pairId: env.pairId, cert: decodeCertField(b.cert)!, aikPub, desktopStatic: this.#qr!.desktopStatic, desktopVd: this.#desktop!.Vd,
       desktopDeviceId: this.#desktop!.deviceId, kvPub: fromB64Strict(b.kvPub), deviceList: b.deviceList, mbxId: b.mbxId, tokRead: b.tokRead,
-      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, channel,
+      tokWrite: b.tokWrite, mbxEpoch: b.mbxEpoch, relayHost, certNotAfter: cert.not_after, identity: readPairIdentity(b), channel,
     };
   }
 

@@ -26,7 +26,10 @@ export const athOf = (boundTo: string): string => b64url(sha256Hash(utf8(boundTo
 
 const METHODS = new Set(['GET', 'POST', 'PUT', 'DELETE']);
 
-/** htu는 쿼리·조각 없는 공개 주소(origin + 경로). https만, 로컬 개발만 http://localhost·127.0.0.1. */
+/**
+ * htu는 쿼리·조각 없는 공개 주소(origin + 경로). https만, 로컬 개발만 http://localhost·127.0.0.1과 같은 LAN의 mDNS `*.local` 이름
+ * (실기기 개발 빌드가 맥의 개발 스택에 붙을 때, ws-link의 insecureLocal과 같은 규칙).
+ */
 export function checkHtu(htu: string): string {
   let u: URL;
   try {
@@ -34,7 +37,7 @@ export function checkHtu(htu: string): string {
   } catch {
     throw new Error('dpop: bad htu');
   }
-  const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1');
+  const local = u.protocol === 'http:' && (u.hostname === 'localhost' || u.hostname === '127.0.0.1' || /^[a-z0-9-]{1,63}\.local$/.test(u.hostname));
   if ((u.protocol !== 'https:' && !local) || u.search || u.hash || u.username || u.password || htu.includes('?') || htu.includes('#')) {
     throw new Error('dpop: bad htu');
   }

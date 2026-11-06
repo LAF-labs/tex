@@ -1,5 +1,6 @@
 // S-03 폰 쪽(D08 §4): 앱 안 스캐너로 PC의 QR을 찍고 → 검사(만료·릴레이 허용 목록) → Noise XXpsk0 → 6자리를 보여 준다
-// (사용자가 PC에 입력, "일치" 버튼 없음) → pair.ok 검사(AIK 서명 기기 목록·이 PC가 목록에 있음) → 24시간 경고 → 저장.
+// (사용자가 PC에 입력, "일치" 버튼 없음) → pair.ok 검사(AIK 서명 기기 목록·이 PC가 목록에 있음) → 24시간 경고
+// → PC 이름·가린 계정 이메일 확인([내 계정 맞음], 설계 #120) → 저장.
 // 폰에는 계정 로그인이 없어 서버에서 기기 목록을 받지 않는다. 계정 등록은 PC가 대신 한다(팀장 결정 2026-11-06, D08 §4.2 3·7단계).
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Device from 'expo-device';
@@ -9,12 +10,13 @@ import { MobilePairing, b64, fromB64, softNoiseStatic, type MobilePairFailure, t
 import { DEV_LOCAL, relayAllowlist } from '../config';
 import { inflight } from '../inflight';
 import { devFetchQr } from '../net/account';
+import { identityLines, maskEmail } from '../pairing/identity';
 import { relayFor } from '../net/pc';
 import { useSession } from '../session';
 import { space, usePalette } from '../theme';
 import { Button, Card, Notice, Screen, T } from '../ui/kit';
 
-type Phase = 'scan' | 'warn' | 'working' | 'sas' | 'done' | 'failed';
+type Phase = 'scan' | 'warn' | 'confirm' | 'working' | 'sas' | 'done' | 'failed';
 
 const FAIL: Record<MobilePairFailure | 'relay' | 'save', string> = {
   qr_invalid: 'tex의 연결 QR이 아니에요. PC 화면의 QR을 다시 찍어 주세요.',
@@ -41,7 +43,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
   const noiseRef = useRef<ReturnType<typeof softNoiseStatic> | null>(null);
   const scanned = useRef(false);
   const linkRef = useRef<{ close(): void } | null>(null);
-  /** 24시간 경고에서 사용자가 고르기 전까지 들고 있는 pair.ok 결과(아직 저장하지 않았다). */
+  /** 24시간 경고·계정 확인에서 사용자가 고르기 전까지 들고 있는 pair.ok 결과(아직 저장하지 않았다). */
   const pendingRef = useRef<MobilePairResult | null>(null);
   const gone = useRef(false);
 
@@ -113,14 +115,15 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
     }
     r.channel.close();
     if (gone.current) return;
-    // 3단계 24시간 경고는 PAIR_OK의 AIK 서명 목록으로 판단한다. 사용자가 계속을 고르기 전에는 저장하지 않는다.
-    if (mp.newDesktopWarning) {
-      pendingRef.current = r;
-      setPhase('warn');
-      return;
-    }
-    await save(r);
+    // 3단계 24시간 경고는 PAIR_OK의 AIK 서명 목록으로 판단한다. 그 뒤 PC 이름·계정을 확인한다. 둘 다 고르기 전에는 저장하지 않는다.
+    pendingRef.current = r;
+    setPhase(mp.newDesktopWarning ? 'warn' : 'confirm');
   }
+
+  const stop = () => {
+    pendingRef.current = null;
+    onDone();
+  };
 
   async function save(r: MobilePairResult) {
     pendingRef.current = null;
@@ -130,6 +133,7 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
         ...d,
         pair: {
           pairId: r.pairId, desktopStatic: b64(r.desktopStatic), desktopVd: b64(r.desktopVd), desktopDeviceId: r.desktopDeviceId,
+          desktopName: r.identity.desktopName, accountEmailMasked: r.identity.accountEmail ? maskEmail(r.identity.accountEmail) : null,
           kvPub: b64(r.kvPub), aikPub: b64(r.aikPub), cert: r.cert, certNotAfter: r.certNotAfter, mbxId: r.mbxId, tokRead: r.tokRead,
             tokWrite: r.tokWrite,
           mbxEpoch: r.mbxEpoch, relayHost: r.relayHost, pairedAt: Date.now(),
@@ -178,16 +182,33 @@ export function PairScreen({ onDone }: { onDone: () => void }) {
         <View style={st.wrap}>
           <Notice>이 PC는 오늘 등록되었습니다. 직접 등록한 PC가 아니면 중단하세요.</Notice>
           <T c="ink2">중단하면 이 폰에 연결 정보를 저장하지 않아요. 계정에 다른 기기가 있으면 그 기기와 메일로도 알려요.</T>
-          <Button
-            testID="warn-stop"
-            kind="secondary"
-            label="중단"
-            onPress={() => {
-              pendingRef.current = null;
-              onDone();
-            }}
-          />
-          <Button testID="warn-continue" kind="quiet" label="내가 등록한 PC예요. 계속" onPress={() => pendingRef.current && void save(pendingRef.current)} />
+          <Button testID="warn-stop" kind="secondary" label="중단" onPress={stop} />
+          <Button testID="warn-continue" kind="quiet" label="내가 등록한 PC예요. 계속" onPress={() => setPhase('confirm')} />
+        </View>
+      </Screen>
+    );
+  }
+
+  if (phase === 'confirm' && pendingRef.current) {
+    const id = pendingRef.current.identity;
+    const lines = identityLines({ desktopName: id.desktopName, accountEmailMasked: id.accountEmail ? maskEmail(id.accountEmail) : null });
+    return (
+      <Screen>
+        <View style={st.wrap} testID="pair-confirm">
+          <T v="title">내 PC와 내 계정이 맞나요?</T>
+          <Card>
+            <T v="label" c="ink3">
+              PC
+            </T>
+            <T testID="confirm-pc">{lines.pc}</T>
+            <T v="label" c="ink3">
+              계정
+            </T>
+            <T testID="confirm-account">{lines.account}</T>
+          </Card>
+          <T c="ink2">내 계정이 아니면 중단하세요. 중단하면 이 폰에 연결 정보를 저장하지 않아요. 연결한 뒤에도 PC 연결 화면에서 늘 볼 수 있어요.</T>
+          <Button testID="confirm-mine" label="내 계정 맞음" onPress={() => pendingRef.current && void save(pendingRef.current)} />
+          <Button testID="confirm-stop" kind="secondary" label="아니에요, 중단" onPress={stop} />
         </View>
       </Screen>
     );

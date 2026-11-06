@@ -2,6 +2,7 @@
 import { useState } from 'react';
 import { Alert, StyleSheet, View } from 'react-native';
 import { sp1Report, type Sp1Report } from '../diag';
+import { identityLines } from '../pairing/identity';
 import { resetDevice } from '../keyring';
 import { useSession } from '../session';
 import { space } from '../theme';
@@ -44,6 +45,8 @@ export function ConnectionScreen({ onDone, onReset, onRepair }: { onDone: () => 
         <Card>
           <Row k="PC" v={state} testID="conn-state" />
           <Row k="마지막 접속" v={ago(s.data.lastSeenPc)} />
+          {pair && <Row k="연결한 PC" v={identityLines({ desktopName: pair.desktopName ?? null, accountEmailMasked: null }).pc} testID="conn-pc-name" />}
+          {pair && <Row k="계정" v={identityLines({ desktopName: null, accountEmailMasked: pair.accountEmailMasked ?? null }).account} testID="conn-account" />}
           {pair && <Row k="연결한 날" v={new Date(pair.pairedAt).toLocaleDateString('ko-KR')} />}
           {pair && <Row k="PC 기기" v={`…${pair.desktopDeviceId.slice(-6)}`} />}
           {pair && <Row k="인증서" v={certDays > 0 ? `${certDays}일 남음(PC가 켜지면 갱신)` : '만료 — PC와 다시 연결'} />}

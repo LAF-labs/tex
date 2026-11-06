@@ -145,6 +145,8 @@ describe('DPoP(SAX-dpop-v1)', () => {
     const ph = mockPhone();
     assert.equal(checkHtu('https://a.example/v1/x'), 'https://a.example/v1/x');
     assert.equal(checkHtu('http://localhost:8787/v1/x'), 'http://localhost:8787/v1/x');
+    assert.equal(checkHtu('http://mac-mini.local:8787/v1/x'), 'http://mac-mini.local:8787/v1/x', '실기기 개발 빌드: 같은 LAN의 mDNS 이름');
+    for (const u of ['http://192.168.0.10:8787/v1/x', 'http://a.b.local/v1/x', 'http://relay.tex.laf-co.com/v1/x']) assert.throws(() => checkHtu(u), /bad htu/, u);
     for (const u of ['http://a.example/v1/x', 'https://a.example/v1/x?q=1', 'https://a.example/v1/x#f', 'https://u:p@a.example/x', 'ftp://a/x', 'nope']) {
       assert.throws(() => checkHtu(u), undefined, u);
     }
