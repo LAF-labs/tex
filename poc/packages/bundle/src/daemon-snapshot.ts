@@ -32,7 +32,7 @@ export interface ProfileSnapshotRow extends DaemonProfileInputs {
 
 export interface DaemonSnapshotResult<P extends SnapshotPolicyLike = SnapshotPolicyLike, S extends SnapshotStatusLike = SnapshotStatusLike> {
   policy: { expiresAt: P['expiresAt']; daemon: P['daemon'] } | null;
-  status: { issuedAt: string; expiresAt: string } | null;
+  status: { issuedAt: S['issuedAt']; expiresAt: S['expiresAt'] } | null;
   profiles: ProfileSnapshotRow[];
 }
 
