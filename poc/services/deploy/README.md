@@ -124,6 +124,21 @@ supabase db push --workdir services/deploy --db-url "<직접 연결 URL>"
   - 빈 시험 DB에 적용하고, 역할마다 자기 스키마만 읽고 쓰는지, 다른 서비스 테이블과 DDL이 거부되는지 본다.
   - 운영 DB에는 돌리지 않는다(스키마를 지우고 다시 만든다).
 
+### 배포 전 함수 묶음 점검(로컬, 배포 명령 없음)
+
+Vercel 파일 추적이 pnpm 링크 너머 의존성을 빠뜨리면 모든 함수가 `FUNCTION_INVOCATION_FAILED`로 죽는다(2026-11-06: `ajv/dist/2020`). 배포 전에 같은 묶음을 로컬에서 띄워 본다.
+
+```bash
+# 프로젝트 tex에 링크된 깨끗한 사본(git archive)에서. env는 내려받지 않는다(vercel pull 없음)
+vercel build --yes
+cd poc && node --conditions=development services/deploy/check-vercel-output.ts <사본 루트>
+```
+
+- [`check-vercel-output.ts`](check-vercel-output.ts)는 `.vercel/output/functions/api/*.func`를 저장소 밖으로 복사하고 `.vc-config.json`의 `filePathMap` 링크를 배포 때처럼 되살린다.
+- 그 복사본에서 세 함수를 띄워 요청을 보낸다. 네 서비스 조립까지 거친다. 기대: 계정 코드 200, 인증 없는 경로 401, 내부 경로 404, cron 200.
+- env는 시험용 무작위 값과 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
+- 소스 규칙: `packages/*/src`·`services/*/src`에서 `createRequire`로 의존성을 부르지 않는다(파일 추적이 못 따라간다). 시험이 막는다.
+
 ## 5. 배포 뒤 스모크(사용자 또는 팀장)
 
 | 요청 | 기대 |
@@ -162,7 +177,7 @@ supabase db push --workdir services/deploy --db-url "<직접 연결 URL>"
    - `/api/internal/internal/v1/devices/:id` 재작성(함수 파일 `api/internal.js`와 같은 접두)
    - 한 함수에 네 서비스(번들 크기·콜드 스타트·인스턴스당 DB 연결 4개)
    - Cron 경로
-   - pnpm 워크스페이스 밖 import 번들링
+   - pnpm 워크스페이스 밖 import 번들링(묶음 내용은 위 「배포 전 함수 묶음 점검」으로 로컬에서 본다)
    - 함수 런타임의 Node 버전(저장소는 26.x를 요구한다)
    - 확인 수단은 5절 스모크다. 로컬 시험은 같은 진입점을 Node HTTP 서버로 돌려 경로 복원·cron·조립을 본다.
 5. **메일**: 저장소에는 모의 메일만 있다(`MAIL_PROVIDER=mock`). SES 어댑터 PR 전에는 로그인 코드가 발송되지 않아 실제 로그인을 할 수 없다.
