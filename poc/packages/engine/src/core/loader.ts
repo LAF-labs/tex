@@ -7,7 +7,7 @@ import { applyHotfix, hotfixEligibilityViolations } from './hotfix.ts';
 import { countSignatures, epochProblem, issuedInFuture, versionProblem, type TrustRoots, type VersionMark } from './registry.ts';
 import { schemaViolations } from './schema.ts';
 import { FIXTURE_PORTAL, type Hotfix, type Manifest, type PackageFiles, type PlaybookIR, type SelectorDict, type Strings, type Violation } from './types.ts';
-import { semanticViolations, validatePackage, type BundleOutcomes } from './validate.ts';
+import { fixtureUrlProblem, semanticViolations, urlProblem, validatePackage, type BundleOutcomes } from './validate.ts';
 
 const DAY = 86_400_000;
 
@@ -16,6 +16,33 @@ const DAY = 86_400_000;
  * 읽히고, 제품 설치본에는 진입점에서 닿는 dist/*.js만 들어간다(package-win). 설정·인자로 켜는 길은 두지 않는다.
  */
 export const FIXTURE_LOAD_ALLOWED: boolean = new URL(import.meta.url).pathname.endsWith('.ts');
+
+/**
+ * fixture 출처 허가(ADR-039 결정 2 ②의 같은 관문, 팀장 결정 2026-11-07). 액추에이터·goto 핸들러의 출처 판정은 제품의 마지막 방어선이라
+ * 허용 목록을 넓히지 않고, fixture 패키지를 실행할 때만 이 허가를 따로 주입한다. 허가는 이 모듈이 발급한 객체만 유효하고(WeakSet),
+ * 관문(FIXTURE_LOAD_ALLOWED)이 닫힌 제품 dist에서는 발급도 인정도 하지 않는다.
+ */
+export interface FixtureOriginGrant {
+  readonly portal: typeof FIXTURE_PORTAL;
+}
+const grants = new WeakSet<FixtureOriginGrant>();
+
+/** 로드한 fixture 패키지에 출처 허가를 낸다. 관문이 닫혔거나 portal이 fixture가 아니면 null. */
+export function fixtureOriginGrant(pkg: Pick<LoadedPackage, 'files'>): FixtureOriginGrant | null {
+  if (!FIXTURE_LOAD_ALLOWED || pkg.files.manifest.portal !== FIXTURE_PORTAL) return null;
+  const g: FixtureOriginGrant = Object.freeze({ portal: FIXTURE_PORTAL });
+  grants.add(g);
+  return g;
+}
+
+/**
+ * 실행 시 이동 URL 판정. 이 모듈이 발급한 허가가 있고 관문이 열려 있을 때만 fixture 규칙(V-25: http://127.0.0.1·[::1]:PORT)을 쓴다.
+ * 그때도 실제 포털 URL은 받지 않는다(규칙을 합치지 않고 바꾼다). 그 밖은 실제 포털 규칙(V-06)이다.
+ */
+export function navigationUrlProblem(url: string, domains: readonly string[], grant?: FixtureOriginGrant | null): string | null {
+  if (grant && FIXTURE_LOAD_ALLOWED && grants.has(grant)) return fixtureUrlProblem(url, domains);
+  return urlProblem(url, domains);
+}
 
 /** 레지스트리에서 받은 원시 바이트(contentDigests는 이 바이트의 SHA-256). */
 export interface RawPackage {
