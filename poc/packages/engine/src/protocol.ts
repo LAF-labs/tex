@@ -63,6 +63,11 @@ export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
  * 결과는 route·refuse_advice·unknown 셋이고, 판정을 못 하면 decide.unavailable(main은 오프라인 파서). 실행·저장은 없다.
  */
 export const INTENT_COMMANDS = ['intent.resolve'] as const;
+/**
+ * 세무사 요청 붙여넣기 → 꾸러미 항목 후보(D14 M6-7, ADR-032 결정 8·11). main 전용이다(붙여 넣은 글이 오간다). 규칙 사전만, 모델 없음.
+ * 처리는 @sax/bundle BundleService다. 읽기만 하고 DB에 쓰지 않는다. 고른 후보는 bundle.addItem {source:'pasted_request'}로 넣는다.
+ */
+export const BUNDLE_REQUEST_COMMANDS = ['bundle.requestCandidates'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
