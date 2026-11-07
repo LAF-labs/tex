@@ -23,14 +23,26 @@ import {
 } from '@sax/svc-shared';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, PROFILE } from './constants.ts';
+import { ACCOUNT, DEVICE, MS, PASSWORD, PROFILE } from './constants.ts';
+import { checkPasswordPolicy, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
-export type AuthMethod = 'email_code' | 'passkey';
+/** 세션을 준 수단. refresh = 갱신 토큰으로 새로 받은 세션(강한 인증·최근 로그인으로 치지 않는다) */
+export type AuthMethod = 'email_code' | 'passkey' | 'password' | 'refresh';
 
 export interface Session {
   accountId: string;
   authMethod: AuthMethod;
+  /** 실제로 인증한 시각(ms). 루프백 교환으로 받은 세션은 원래 세션의 인증 시각을 잇는다. 비밀번호 설정·삭제의 최근 로그인 판정 */
+  authAt: number;
+}
+
+/** 비밀번호 로그인 구성(ADR-038). 없으면 비밀번호 경로는 닫힌다(PASSWORD_PEPPER_KEYS 없음·argon2id 미지원) */
+export interface PasswordDeps {
+  hasher: PasswordHasher;
+  common: CommonPasswords;
+  /** 이벤트(이름만): 잠금·재사용 감지·재해시 */
+  onEvent?: (name: string) => void;
 }
 
 interface AccountRow {
@@ -76,10 +88,14 @@ export interface AccountDeps {
   pairing?: PairingRooms;
   /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
   acctClaims?: AcctClaimSigner;
+  passwords?: PasswordDeps;
   now?: () => number;
 }
 
 const SESSION_PREFIX = 'sxs1.';
+/** 갱신 토큰(자동 로그인, ADR-038 (f)). 서버는 sha256만 저장 */
+const REFRESH_PREFIX = 'sxa1.';
+const REFRESH_RE = /^sxa1\.[A-Za-z0-9_-]{43}$/;
 const LOOPBACK = /^http:\/\/(127\.0\.0\.1|\[::1\]):(\d{4,5})(\/[A-Za-z0-9._~/-]{0,128})?$/;
 const DESKTOP_CLIENT = 'sax-desktop';
 
@@ -143,10 +159,17 @@ export class AccountService {
     return { session: await this.createSession(acc.id, 'email_code'), accountId: acc.id };
   }
 
-  private async createSession(accountId: string, method: AuthMethod): Promise<string> {
+  private async createSession(accountId: string, method: AuthMethod, authAt?: number): Promise<string> {
     const token = SESSION_PREFIX + randomToken();
     const now = this.now();
-    await this.db.run('INSERT INTO sessions (token_hash, account_id, auth_method, created_at, expires_at) VALUES ($1, $2, $3, $4, $5)', [sha256hex(token), accountId, method, now, now + ACCOUNT.sessionTtlMs]);
+    await this.db.run('INSERT INTO sessions (token_hash, account_id, auth_method, created_at, auth_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6)', [
+      sha256hex(token),
+      accountId,
+      method,
+      now,
+      authAt ?? now,
+      now + ACCOUNT.sessionTtlMs,
+    ]);
     await this.db.run('UPDATE accounts SET last_login_at = $1 WHERE id = $2', [now, accountId]);
     return token;
   }
@@ -155,12 +178,12 @@ export class AccountService {
   async session(authorization: string | undefined): Promise<Session> {
     const m = /^Bearer (sxs1\.[A-Za-z0-9_-]{43})$/.exec(authorization ?? '');
     if (!m) fail('account.unauthorized');
-    const row = await this.db.one<{ account_id: string; auth_method: AuthMethod; expires_at: number; status: string }>(
-      'SELECT s.account_id, s.auth_method, s.expires_at, a.status FROM sessions s JOIN accounts a ON a.id = s.account_id WHERE s.token_hash = $1',
+    const row = await this.db.one<{ account_id: string; auth_method: AuthMethod; auth_at: number; expires_at: number; status: string }>(
+      'SELECT s.account_id, s.auth_method, s.auth_at, s.expires_at, a.status FROM sessions s JOIN accounts a ON a.id = s.account_id WHERE s.token_hash = $1',
       [sha256hex(m![1]!)],
     );
-    if (!row || row.expires_at <= this.now() || row.status !== 'active') fail('account.unauthorized');
-    return { accountId: row!.account_id, authMethod: row!.auth_method };
+    if (!row || Number(row.expires_at) <= this.now() || row.status !== 'active') fail('account.unauthorized');
+    return { accountId: row!.account_id, authMethod: row!.auth_method, authAt: Number(row!.auth_at) };
   }
 
   async logout(authorization: string | undefined): Promise<void> {
@@ -168,9 +191,242 @@ export class AccountService {
     if (m) await this.db.run('DELETE FROM sessions WHERE token_hash = $1', [sha256hex(m[1]!)]);
   }
 
-  /** 사고 대응(D09 §9.2): 계정 세션 전면 무효화. 운영 도구에서만 부른다(공개 API 없음). */
-  async revokeAllSessions(accountId: string): Promise<number> {
+  /**
+   * 계정 세션·갱신 토큰 전면 무효화. 사고 대응(D09 §9.2) 운영 도구, [모든 기기에서 로그아웃], 비밀번호 재설정, 갱신 토큰 재사용 감지가 부른다.
+   * 기기 범위 토큰·기기 등록은 그대로다(ADR-038 (e)(f)). keepToken이 있으면 그 세션 하나는 남긴다.
+   */
+  async revokeAllSessions(accountId: string, keepToken?: string): Promise<number> {
+    await this.db.run('DELETE FROM refresh_tokens WHERE account_id = $1', [accountId]);
+    if (keepToken) return this.db.run('DELETE FROM sessions WHERE account_id = $1 AND token_hash <> $2', [accountId, sha256hex(keepToken)]);
     return this.db.run('DELETE FROM sessions WHERE account_id = $1', [accountId]);
+  }
+
+  // ---------- 자동 로그인: 갱신 토큰(ADR-038 (f)) ----------
+
+  /** 로그인 성공 뒤 `remember: true`면 새 계보의 갱신 토큰(30일 미사용 만료) */
+  async issueRefresh(accountId: string, method: AuthMethod): Promise<string> {
+    const token = REFRESH_PREFIX + randomToken();
+    const now = this.now();
+    await this.db.run('INSERT INTO refresh_tokens (token_hash, account_id, family_id, parent_hash, auth_method, issued_at, expires_at, rotated_at) VALUES ($1, $2, $3, NULL, $4, $5, $6, NULL)', [
+      sha256hex(token),
+      accountId,
+      randomUUID(),
+      method,
+      now,
+      now + ACCOUNT.refreshTtlMs,
+    ]);
+    return token;
+  }
+
+  /**
+   * 갱신: 쓸 때마다 회전한다(새 토큰, 이전 토큰은 회전됨 표시). 회전된 토큰이 다시 오면 복제 신호로 보고 그 계정의 세션·갱신 토큰을 모두 폐기한다.
+   * 실패는 모두 account.unauthorized(이유를 가르지 않는다).
+   */
+  async refresh(tokenRaw: string): Promise<{ session: string; refreshToken: string; accountId: string }> {
+    if (!REFRESH_RE.test(tokenRaw)) fail('account.unauthorized');
+    const h = sha256hex(tokenRaw);
+    const now = this.now();
+    const next = REFRESH_PREFIX + randomToken();
+    const out = await this.db.tx(async (q) => {
+      const row = await q.one<{ account_id: string; family_id: string; auth_method: string; expires_at: number; rotated_at: number | null; status: string }>(
+        `SELECT r.account_id, r.family_id, r.auth_method, r.expires_at, r.rotated_at, a.status FROM refresh_tokens r JOIN accounts a ON a.id = r.account_id WHERE r.token_hash = $1${q.forUpdate}`,
+        [h],
+      );
+      if (!row) return 'invalid' as const;
+      if (row.rotated_at !== null && row.rotated_at !== undefined) {
+        await q.run('DELETE FROM refresh_tokens WHERE account_id = $1', [row.account_id]);
+        await q.run('DELETE FROM sessions WHERE account_id = $1', [row.account_id]);
+        return { reuse: row.account_id };
+      }
+      if (Number(row.expires_at) <= now || row.status !== 'active') {
+        await q.run('DELETE FROM refresh_tokens WHERE token_hash = $1', [h]);
+        return 'invalid' as const;
+      }
+      await q.run('UPDATE refresh_tokens SET rotated_at = $1 WHERE token_hash = $2', [now, h]);
+      await q.run('INSERT INTO refresh_tokens (token_hash, account_id, family_id, parent_hash, auth_method, issued_at, expires_at, rotated_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)', [
+        sha256hex(next),
+        row.account_id,
+        row.family_id,
+        h,
+        row.auth_method,
+        now,
+        now + ACCOUNT.refreshTtlMs,
+      ]);
+      return { accountId: row.account_id };
+    });
+    if (out === 'invalid') fail('account.unauthorized');
+    const { reuse, accountId } = out as { reuse?: string; accountId?: string };
+    if (reuse) {
+      this.d.passwords?.onEvent?.('account.refresh_reuse_detected');
+      await this.notify(reuse, 'sessions_revoked');
+      fail('account.unauthorized');
+    }
+    return { session: await this.createSession(accountId!, 'refresh'), refreshToken: next, accountId: accountId! };
+  }
+
+  /** [로그인 상태 유지 끄기]: 그 토큰의 계보 전체를 폐기한다. 없는 토큰이어도 같은 결과(204) */
+  async revokeRefresh(tokenRaw: string): Promise<void> {
+    if (!REFRESH_RE.test(tokenRaw)) return;
+    const row = await this.db.one<{ family_id: string }>('SELECT family_id FROM refresh_tokens WHERE token_hash = $1', [sha256hex(tokenRaw)]);
+    if (row) await this.db.run('DELETE FROM refresh_tokens WHERE family_id = $1', [row.family_id]);
+  }
+
+  // ---------- 비밀번호(ADR-038 (a)~(e)) ----------
+
+  private pw(): PasswordDeps {
+    return this.d.passwords ?? fail('request.not_found');
+  }
+
+  get passwordsEnabled(): boolean {
+    return !!this.d.passwords;
+  }
+
+  /**
+   * 비밀번호 로그인. 이메일 없음·비밀번호 없음·틀림·잠금·정지 계정은 모두 account.credentials_invalid이고, 모두 argon2id를 한 번 돈다(없으면 더미).
+   * 응답 시각 하한은 라우트(withFloor)가 맞춘다. 계정당 5회 연속 실패면 잠그고(15분 × 2^단계, 상한 24시간) 잠금마다 알림 1회.
+   * 잠금은 비밀번호만 막는다. 이메일 코드·패스키 로그인은 그대로다.
+   */
+  async passwordLogin(emailRaw: string, pw: string): Promise<{ session: string; accountId: string }> {
+    const p = this.pw();
+    const email = normEmail(emailRaw);
+    const row = await this.db.one<{ id: string; status: string; pw_hash: string | null; salt: string | null; params: string | null; fails: number | null; locked_until: number | null; lock_level: number | null }>(
+      'SELECT a.id, a.status, c.pw_hash, c.salt, c.params, l.fails, l.locked_until, l.lock_level FROM accounts a LEFT JOIN pw_creds c ON c.account_id = a.id LEFT JOIN pw_locks l ON l.account_id = a.id WHERE a.email = $1',
+      [email],
+    );
+    const now = this.now();
+    const stored = row?.pw_hash && row.salt && row.params ? { hash: row.pw_hash, salt: row.salt, params: row.params } : null;
+    const v = await p.hasher.verify(pw, stored);
+    if (!row || !stored) fail('account.credentials_invalid');
+    const locked = row!.locked_until !== null && row!.locked_until !== undefined && Number(row!.locked_until) > now;
+    // 잠금 중에는 맞아도 틀린 것과 같은 응답이고, 실패 횟수도 쌓지 않는다(잠금 주기 하나에 알림 하나)
+    if (locked) fail('account.credentials_invalid');
+    if (!v.ok) {
+      const lockedNow = await this.db.tx(async (q) => {
+        const l = await q.one<{ fails: number; lock_level: number; locked_until: number | null }>(`SELECT fails, lock_level, locked_until FROM pw_locks WHERE account_id = $1${q.forUpdate}`, [row!.id]);
+        if (l && l.locked_until !== null && Number(l.locked_until) > now) return false;
+        const fails = Number(l?.fails ?? 0) + 1;
+        const level = Number(l?.lock_level ?? 0);
+        if (fails >= PASSWORD.maxFails) {
+          const until = now + Math.min(PASSWORD.lockBaseMs * 2 ** level, PASSWORD.lockMaxMs);
+          await this.upsertLock(q, row!.id, 0, until, level + 1, now);
+          return true;
+        }
+        await this.upsertLock(q, row!.id, fails, null, level, now);
+        return false;
+      });
+      if (lockedNow) {
+        p.onEvent?.('account.password_locked');
+        await this.notify(row!.id, 'password_locked');
+      }
+      fail('account.credentials_invalid');
+    }
+    if (row!.status !== 'active') fail('account.credentials_invalid');
+    await this.db.run('DELETE FROM pw_locks WHERE account_id = $1', [row!.id]);
+    if (v.needsRehash) {
+      const h = await p.hasher.hash(pw);
+      await this.db.run('UPDATE pw_creds SET pw_hash = $1, salt = $2, params = $3 WHERE account_id = $4', [h.hash, h.salt, h.params, row!.id]);
+      p.onEvent?.('account.password_rehashed');
+    }
+    return { session: await this.createSession(row!.id, 'password'), accountId: row!.id };
+  }
+
+  private async upsertLock(q: Sql, accountId: string, fails: number, lockedUntil: number | null, level: number, now: number): Promise<void> {
+    const n = await q.run('UPDATE pw_locks SET fails = $1, locked_until = $2, lock_level = $3, updated_at = $4 WHERE account_id = $5', [fails, lockedUntil, level, now, accountId]);
+    if (n === 0) await q.run('INSERT INTO pw_locks (account_id, fails, locked_until, lock_level, updated_at) VALUES ($1, $2, $3, $4, $5)', [accountId, fails, lockedUntil, level, now]);
+  }
+
+  /** 최근(10분) 코드·패스키·비밀번호 로그인 세션만. 갱신으로 받은 세션은 다시 로그인해야 한다 */
+  private requireRecentLogin(s: Session): void {
+    if (s.authMethod === 'refresh' || this.now() - s.authAt > PASSWORD.reauthMaxAgeMs) fail('account.reauth_required');
+  }
+
+  private async setHash(accountId: string, pw: string): Promise<void> {
+    const h = await this.pw().hasher.hash(pw);
+    const now = this.now();
+    const n = await this.db.run('UPDATE pw_creds SET pw_hash = $1, salt = $2, params = $3, set_at = $4 WHERE account_id = $5', [h.hash, h.salt, h.params, now, accountId]);
+    if (n === 0) await this.db.run('INSERT INTO pw_creds (account_id, pw_hash, salt, params, set_at) VALUES ($1, $2, $3, $4, $5)', [accountId, h.hash, h.salt, h.params, now]);
+    await this.db.run('DELETE FROM pw_locks WHERE account_id = $1', [accountId]);
+  }
+
+  /** 비밀번호 설정·바꾸기(선택, 가입 뒤). 정책은 서버가 판정한다 */
+  async setPassword(s: Session, pw: string): Promise<void> {
+    const p = this.pw();
+    this.requireRecentLogin(s);
+    const a = await this.account(s.accountId);
+    checkPasswordPolicy(pw, a.email, p.common);
+    await this.setHash(s.accountId, pw);
+    await this.notify(s.accountId, 'password_set');
+  }
+
+  /** 비밀번호 삭제(코드·패스키만 쓰는 계정으로). 보존표: 비밀번호 삭제 때 해시·잠금 삭제(D09 §10) */
+  async deletePassword(s: Session): Promise<void> {
+    this.pw();
+    this.requireRecentLogin(s);
+    await this.db.run('DELETE FROM pw_creds WHERE account_id = $1', [s.accountId]);
+    await this.db.run('DELETE FROM pw_locks WHERE account_id = $1', [s.accountId]);
+  }
+
+  private resetMac(resetId: string, code: string): string {
+    return hmacHex(this.d.codeMacKey, 'SAX-reset-code-v1', '\u0000', resetId, '\u0000', code);
+  }
+
+  /** 재설정 코드 요청. 계정이 있을 때만 메일을 보내지만 응답은 같다(시각 하한은 라우트) */
+  async startPasswordReset(emailRaw: string): Promise<{ resetId: string; expiresInSec: number }> {
+    this.pw();
+    const email = normEmail(emailRaw);
+    const resetId = randomToken();
+    const acc = await this.db.one<{ id: string; status: string }>('SELECT id, status FROM accounts WHERE email = $1', [email]);
+    if (acc && acc.status === 'active') {
+      const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+      await this.db.run('INSERT INTO reset_codes (reset_id_hash, account_id, code_mac, attempts, expires_at) VALUES ($1, $2, $3, 0, $4)', [sha256hex(resetId), acc.id, this.resetMac(resetId, code), this.now() + PASSWORD.resetCodeTtlMs]);
+      await this.d.mail.sendResetCode(email, code);
+    }
+    return { resetId, expiresInSec: PASSWORD.resetCodeTtlMs / 1000 };
+  }
+
+  /**
+   * 재설정 완료: 코드가 맞으면 새 비밀번호를 정책에 맞춰 보고 저장한다. 정책에 맞지 않으면 코드는 남는다(다른 비밀번호로 다시).
+   * 저장하면 그 계정의 다른 세션·갱신 토큰을 모두 폐기하고 알림 메일을 보낸 뒤, 새 세션을 준다(코드로 메일함을 증명했다).
+   * 금고·기기 키·기기 목록·기기 범위 토큰은 건드리지 않는다(ADR-038 (e)).
+   */
+  async finishPasswordReset(resetId: string, code: string, pw: string): Promise<{ session: string; accountId: string }> {
+    const p = this.pw();
+    const h = sha256hex(resetId);
+    const outcome = await this.db.tx(async (q) => {
+      const row = await q.one<{ account_id: string; code_mac: string; attempts: number; expires_at: number }>(`SELECT account_id, code_mac, attempts, expires_at FROM reset_codes WHERE reset_id_hash = $1${q.forUpdate}`, [h]);
+      if (!row || Number(row.expires_at) <= this.now()) {
+        if (row) await q.run('DELETE FROM reset_codes WHERE reset_id_hash = $1', [h]);
+        return 'invalid' as const;
+      }
+      if (!safeEqual(row.code_mac, this.resetMac(resetId, code))) {
+        const attempts = row.attempts + 1;
+        if (attempts >= PASSWORD.resetCodeMaxAttempts) {
+          await q.run('DELETE FROM reset_codes WHERE reset_id_hash = $1', [h]);
+          return 'locked' as const;
+        }
+        await q.run('UPDATE reset_codes SET attempts = $1 WHERE reset_id_hash = $2', [attempts, h]);
+        return 'invalid' as const;
+      }
+      return { accountId: row.account_id };
+    });
+    if (outcome === 'invalid') fail('account.code_invalid');
+    if (outcome === 'locked') fail('account.code_locked');
+    const accountId = (outcome as { accountId: string }).accountId;
+    const a = await this.account(accountId);
+    if (a.status !== 'active') fail('account.unauthorized');
+    checkPasswordPolicy(pw, a.email, p.common);
+    // 코드는 한 번만: 동시에 온 두 요청 중 지운 쪽만 이어 간다
+    if ((await this.db.run('DELETE FROM reset_codes WHERE reset_id_hash = $1', [h])) === 0) fail('account.code_invalid');
+    await this.setHash(accountId, pw);
+    await this.revokeAllSessions(accountId);
+    await this.db.run('DELETE FROM reset_codes WHERE account_id = $1', [accountId]);
+    await this.notify(accountId, 'password_reset');
+    return { session: await this.createSession(accountId, 'email_code'), accountId };
+  }
+
+  /** [모든 기기에서 로그아웃]: 계정 세션·갱신 토큰 전부(이 세션 포함). 기기 범위 토큰·기기 등록은 그대로 */
+  async logoutAll(s: Session): Promise<void> {
+    await this.revokeAllSessions(s.accountId);
   }
 
   // ---------- 데스크톱 로그인: RFC 8252 루프백 + PKCE(디바이스 플로우 없음) ----------
@@ -180,7 +436,7 @@ export class AccountService {
     const lb = LOOPBACK.exec(o.redirectUri);
     if (!lb || Number(lb[2]) < 1024 || Number(lb[2]) > 65535) fail('account.redirect_not_loopback');
     const code = randomToken();
-    await this.db.run('INSERT INTO oauth_codes (code_hash, account_id, auth_method, client_id, redirect_uri, code_challenge, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7)', [
+    await this.db.run('INSERT INTO oauth_codes (code_hash, account_id, auth_method, client_id, redirect_uri, code_challenge, expires_at, auth_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)', [
       sha256hex(code),
       s.accountId,
       s.authMethod,
@@ -188,6 +444,7 @@ export class AccountService {
       o.redirectUri,
       o.codeChallenge,
       this.now() + ACCOUNT.oauthCodeTtlMs,
+      s.authAt,
     ]);
     const u = new URL(o.redirectUri);
     u.searchParams.set('code', code);
@@ -195,17 +452,18 @@ export class AccountService {
     return { redirect: u.toString() };
   }
 
-  async exchangeCode(o: { code: string; verifier: string; redirectUri: string; clientId: string }): Promise<{ session: string }> {
+  async exchangeCode(o: { code: string; verifier: string; redirectUri: string; clientId: string }): Promise<{ session: string; accountId: string; authMethod: AuthMethod }> {
     const h = sha256hex(o.code);
     const row = await this.db.tx(async (q) => {
-      const r = await q.one<{ account_id: string; auth_method: AuthMethod; client_id: string; redirect_uri: string; code_challenge: string; expires_at: number }>(`SELECT * FROM oauth_codes WHERE code_hash = $1${q.forUpdate}`, [h]);
+      const r = await q.one<{ account_id: string; auth_method: AuthMethod; client_id: string; redirect_uri: string; code_challenge: string; expires_at: number; auth_at: number | null }>(`SELECT * FROM oauth_codes WHERE code_hash = $1${q.forUpdate}`, [h]);
       // 1회용: 맞든 틀리든 지운다.
       if (r) await q.run('DELETE FROM oauth_codes WHERE code_hash = $1', [h]);
       return r;
     });
     if (!row || row.expires_at <= this.now() || row.client_id !== o.clientId || row.redirect_uri !== o.redirectUri) fail('account.pkce_invalid');
     if (!safeEqual(b64u(sha256(o.verifier)), row!.code_challenge)) fail('account.pkce_invalid');
-    return { session: await this.createSession(row!.account_id, row!.auth_method) };
+    // 새 세션은 원래 세션의 인증 시각을 잇는다(교환으로 최근 로그인을 새로 만들지 않는다). 마이그레이션 전 코드는 0
+    return { session: await this.createSession(row!.account_id, row!.auth_method, Number(row!.auth_at ?? 0)), accountId: row!.account_id, authMethod: row!.auth_method };
   }
 
   // ---------- 패스키(WebAuthn) ----------
@@ -778,6 +1036,10 @@ export class AccountService {
     await this.db.run('DELETE FROM oauth_codes WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM webauthn_challenges WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM sessions WHERE expires_at <= $1', [now]);
+    await this.db.run('DELETE FROM refresh_tokens WHERE expires_at <= $1', [now]);
+    await this.db.run('DELETE FROM reset_codes WHERE expires_at <= $1', [now]);
+    // 잠금이 끝나고 하루 동안 실패가 없으면 점증 단계를 0으로
+    await this.db.run('DELETE FROM pw_locks WHERE updated_at <= $1 AND (locked_until IS NULL OR locked_until <= $2)', [now - PASSWORD.lockDecayMs, now]);
     await this.db.run('DELETE FROM device_events WHERE day < $1', [kstDay(now - DEVICE.churnWindowDays * MS.D)]);
     await this.db.run("DELETE FROM devices WHERE state = 'pending' AND registered_at <= $1", [now - DEVICE.pendingTtlDays * MS.D]);
     const due = await this.db.all<DeviceRow>("SELECT * FROM devices WHERE delete_after IS NOT NULL AND delete_after <= $1 AND state <> 'revoked'", [now]);

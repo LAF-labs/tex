@@ -7,4 +7,5 @@ export * from './constants.ts';
 export * from './service.ts';
 export * from './webauthn.ts';
 export * from './main.ts';
+export * from './password.ts';
 export * from './visibility.ts';
