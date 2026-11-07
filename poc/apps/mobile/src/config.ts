@@ -27,12 +27,10 @@ export const DEV_RELAY_HOST: string = DEV.devRelayHost;
 export const PUBLIC_ORIGIN: string = '';
 
 /**
- * acct_claim(설계 #120) 서명을 검증할 계정 서비스 공개키. 릴리스 키는 클라우드 세션이 만들면 넣는다. 비어 있으면 페어링은 늘 실패한다.
- * 개발 스택에서는 시험 키(dev/test-account-key.ts)만 쓴다. 릴리스 빌드에는 시험 키가 들어가지 않는다(DEV_STACK은 __DEV__에서만 참).
+ * acct_claim(설계 #120) 서명을 검증할 계정 서비스 공개키(devhost.ts RELEASE_ACCOUNT_KEYS·DEV_ACCOUNT_KEY).
+ * 개발 스택에서는 시험 키만, 릴리스 빌드에서는 운영 키만 쓴다(DEV_STACK은 __DEV__에서만 참).
  */
-const RELEASE_ACCOUNT_KEYS: readonly string[] = [];
-const DEV_ACCOUNT_KEY = '3uABVr6gwZIYy5ir9UMb2ohr2fxONenkzT9XtRRIBCY=';
-export const accountKeys = (): readonly string[] => (DEV_STACK ? [DEV_ACCOUNT_KEY] : RELEASE_ACCOUNT_KEYS);
+export const accountKeys = (): readonly string[] => DEV.accountKeys;
 
 export const relayAllowlist = (): readonly string[] => DEV.relayAllowlist;
 
