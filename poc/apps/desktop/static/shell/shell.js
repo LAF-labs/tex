@@ -835,9 +835,9 @@ function cpPanel(c) {
   );
 }
 
-const CP_ERR = { invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
+const CP_ERR = { bad_item_name: '품목 이름을 확인해 주세요', too_many_items: '저장 품목은 20개까지예요', invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
 
-/** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). 저장 품목은 시연 DB에서만(제품 장부에 품목 열이 아직 없다). */
+/** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). [저장 품목]은 저장 품목 목록의 첫 품목이다(#144). */
 function cpEditPanel(c) {
   const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
   const demoBook = state.boot.cpBook !== 'local';
@@ -873,7 +873,7 @@ function cpEditPanel(c) {
         saving = true;
         const f = new FormData(form);
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: demoBook ? f.get('item') : null });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item') });
           state.cps = r.counterparties;
           render();
           openPanel({ kind: 'cp', id: r.id });
@@ -890,7 +890,7 @@ function cpEditPanel(c) {
     field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
     field('대표자', 'rep', c?.rep, { maxlength: 30 }),
     field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
-    demoBook ? field('저장 품목', 'item', c?.item, { maxlength: 40 }) : null,
+    field('저장 품목', 'item', c?.item, { maxlength: 40, placeholder: '자주 쓰는 품목(발급 때 후보로 채워요)' }),
     h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
   );
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
