@@ -50,5 +50,7 @@
 ## 결과
 
 - 골든 대조 하네스(PR-C)는 같은 s10~s37을 가짜 페이지 셀렉터·루프백 URL로 묶은 fixture 패키지로 IR 조율기를 돌린다.
+  - 빌더는 `tests/h01-fixture-package.ts`(PR-A2)다. 스텝은 골든 IR s10~s35를 그대로 쓴다. 셀렉터·조회 화면·실패 신호는 H01Runner의 `fixturePortal(origin)`에서 가져온다.
+  - 골든과 다른 곳은 `FIXTURE_SUBSTITUTIONS`에 적은 것뿐이다(s21 signFlow·expectConfirm: 가짜 페이지에 서명 창·확인 대화상자가 없다. s30 failSignals: 가짜 페이지 문구). 시험이 그 밖의 차이가 없는지 본다.
 - 실제 포털 패키지는 바뀌지 않는다. 기존 패키지는 V-25에 걸리지 않는다(domains에 IP가 없다).
 - 되돌리기: 이 ADR의 스키마 enum·패턴, V-25, 로더 검사, BLOCKED_PORTALS 항목을 함께 되돌린다. 원장·DB 변화는 없다.
