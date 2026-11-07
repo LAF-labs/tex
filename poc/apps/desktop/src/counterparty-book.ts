@@ -3,8 +3,10 @@
 //   결과는 후보다. 사용자가 폼에서 보고 고친 뒤 [추가]를 눌러야 저장한다.
 // - 주소는 렌더러로 보내지 않고 main이 들고 있다가, 같은 번호로 새 거래처를 저장할 때 source 'ocr'과 함께 넣는다(30분 안, 한 번만).
 //   렌더러가 주소·출처를 정하지 못한다. 번호를 고쳐 저장하면 등록증과 다른 거래처라 손으로 넣은 것('manual')으로 본다.
+// - 저장 품목(08 §144, #144 counterparty.setItems·getItems): 폼의 [저장 품목] 칸은 목록의 첫 품목이다. 칸을 바꾸면 첫 품목만 바꾸고
+//   나머지 품목·같은 이름 품목의 단가·단위는 그대로 둔다. 칸을 비우면 첫 품목을 뺀다. 품목은 발급 값이 아니라 요청 때의 후보다.
 // - 글자·필드 값은 로그에 남기지 않는다(bizcert-read가 형식·결과 코드만 남긴다).
-import type { Counterparty as DbCounterparty } from '@sax/db';
+import { COUNTERPARTY_ITEMS_MAX, type Counterparty as DbCounterparty, type CounterpartyItem } from '@sax/db';
 import type { BizFields } from './onboarding.ts';
 
 /** 폼 칸 상한(렌더러 cpEditPanel의 maxlength와 같다). */
@@ -60,5 +62,30 @@ export class CounterpartyBook {
     const saved = (await this.rpc('counterparty.create', { ...v, bizNo, source: h ? 'ocr' : 'manual', ...(h?.address ? { address: h.address } : {}) })) as DbCounterparty;
     if (h) this.hold = null;
     return saved;
+  }
+
+  /** 저장 품목 목록(엔진 counterparty.getItems). 못 읽으면 빈 목록(화면은 품목 없이 그린다). */
+  async items(id: string): Promise<CounterpartyItem[]> {
+    try {
+      const r = await this.rpc('counterparty.getItems', { id });
+      return Array.isArray(r) ? (r as CounterpartyItem[]) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * 폼의 [저장 품목] 칸(첫 품목)을 반영한다. 값이 null·undefined면(칸을 보내지 않음) 건드리지 않는다.
+   * 같은 이름이 목록에 있으면 그 품목(단가·단위)을 맨 앞으로 옮긴다. 바뀐 것이 없으면 쓰지 않는다.
+   */
+  async setFirstItem(id: string, raw: unknown): Promise<void> {
+    if (raw === null || raw === undefined) return;
+    const name = text(raw, CP_FIELD_MAX.item);
+    const cur = await this.items(id);
+    const same = cur.find((i) => i.name === name);
+    const rest = cur.slice(1).filter((i) => i.name !== name);
+    const next = (name ? [same ?? { name, unitPrice: null, unit: null }, ...rest] : rest).slice(0, COUNTERPARTY_ITEMS_MAX);
+    if (JSON.stringify(next) === JSON.stringify(cur)) return;
+    await this.rpc('counterparty.setItems', { id, items: next });
   }
 }
