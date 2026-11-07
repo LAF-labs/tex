@@ -34,11 +34,13 @@ const svc = (name: string, from: number, to: number): ExportService => ({ name, 
  * - 2026110600: 계정·게이트웨이·릴레이·푸시(#135, 운영 tex-prod에 적용됨)
  * - 2026110601: 레지스트리 투명성 로그(#132 로그 DB, 팀장 결정 2026-11-06, #161 운영 적용)
  * - 2026110602: 계정 002 비밀번호 로그인·자동 로그인(ADR-038). 역할·한도 표는 이미 있다
+ * - 2026110700: 계정 003 알림 메일 발송 큐(notice_outbox, ADR-038 (b)·(d))
  */
 export const SUPABASE_PHASES: readonly ExportPhase[] = [
   { prefix: '2026110600', rolesFile: '20261106000000_sax_roles.sql', limits: true, services: [svc('account', 1, 1), svc('gateway', 1, 1), svc('relay', 1, 1), svc('push', 1, 1)] },
   { prefix: '2026110601', rolesFile: '20261106010000_sax_roles_registry.sql', limits: true, services: [svc('registry', 1, 1)] },
   { prefix: '2026110602', rolesFile: null, limits: false, services: [svc('account', 2, 2)] },
+  { prefix: '2026110700', rolesFile: null, limits: false, services: [svc('account', 3, 3)] },
 ];
 
 /** 함수·룸 호스트로 올리는 서비스 전부(이름마다 하나, 처음 나온 단계 순서) */
