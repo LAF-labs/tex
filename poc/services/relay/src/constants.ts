@@ -14,6 +14,11 @@ export const RELAY = {
    */
   queueMaxEnvelopes: 160,
   queueMaxBytes: 6 * 1024 * 1024,
+  /**
+   * [제안] 큐 GET 한 번에 돌려주는 봉투 바이트 상한. 큐 전체(6 MiB)는 Vercel 함수 응답 상한(4.5MB)을 넘으므로 나눈다.
+   * 3 MiB면 JSON 감싸기를 더해도 상한 아래이고, 4 MiB 사진(봉투 129개)은 두 번에 받는다. 봉투 하나(≤ 약 66KB)는 언제나 들어간다.
+   */
+  queuePageMaxBytes: 3 * 1024 * 1024,
   /** intent-envelope v1.5 바깥 객체의 `ct`(base64) 상한 */
   envelopeCtMax: 65_536,
   /**

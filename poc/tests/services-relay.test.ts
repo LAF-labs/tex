@@ -89,7 +89,8 @@ async function start(flags: { rooms?: boolean; live?: boolean } = {}): Promise<E
     logs,
     pc,
     phone,
-    call: async (who, method, path, o = {}) => r(method, path, { headers: { ...who.headers(method, RO, path, await who.token()), ...(o.headers ?? {}) }, body: o.body }),
+    // DPoP htu = origin + 경로(쿼리 제외, RFC 9449 §4.3)
+    call: async (who, method, path, o = {}) => r(method, path, { headers: { ...who.headers(method, RO, path.split('?')[0]!, await who.token()), ...(o.headers ?? {}) }, body: o.body }),
     pcall: async (who, method, path, body) => p(method, path, { headers: who.headers(method, PO, path, await who.token()), body }),
     wsHeaders: async (who, path, extra = {}) => ({ ...who.headers('GET', RO, path, await who.token()), ...extra }),
   };
@@ -237,7 +238,7 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     assert.equal((await e.call(e.phone, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json.error, 'account.scope_denied');
     assert.equal((await e.call(e.pc, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).json.error, 'account.scope_denied');
     const got = await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } });
-    assert.deepEqual(got.json, { envelopes: [{ seq: 1, env: env1 }] });
+    assert.deepEqual(got.json, { envelopes: [{ seq: 1, env: env1 }], more: false });
     // 저장은 봉인본: 암호문 원문도 DB에 그대로 있지 않다
     const raw = await e.db.all<{ sealed: Buffer }>('SELECT sealed FROM queue');
     assert.ok(!raw[0]!.sealed.toString('latin1').includes(env1.ct.slice(0, 40)));
@@ -251,7 +252,7 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     assert.deepEqual(((await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json.envelopes as Array<{ seq: number }>).map((x) => x.seq), Array.from({ length: RELAY.queueMaxEnvelopes - 3 }, (_, i) => i + 4));
     // 72시간 만료
     e.s.clock.advance(72 * H);
-    assert.deepEqual((await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json, { envelopes: [] });
+    assert.deepEqual((await e.call(e.pc, 'GET', path, { headers: { 'x-mbx-read': m.tokRead } })).json, { envelopes: [], more: false });
     await e.svc.sweep();
     assert.equal((await e.db.all('SELECT seq FROM queue')).length, 0);
     assert.equal((await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: envelope() })).json.seq, RELAY.queueMaxEnvelopes + 1);
@@ -276,6 +277,60 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
     }
     assert.equal(n, Math.floor(RELAY.queueMaxBytes / Buffer.byteLength(JSON.stringify(big(RELAY.envelopeCtMax)))));
     assert.ok(n < RELAY.queueMaxEnvelopes);
+  });
+
+  it('큐 GET은 쪽으로 나눈다(Vercel 응답 4.5MB 상한): 3 MiB까지·남으면 more, after로 ACK 전 다음 쪽, 옛 클라이언트(ACK 뒤 다시 읽기)도 전부 받는다', async () => {
+    const m = newMailbox();
+    await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m });
+    const path = `/v1/mailboxes/${m.mbxId}/envelopes`;
+    const big = () => ({ v: 1, kind: 'ENV', enc: randomBytes(32).toString('base64'), ct: randomBytes(48_000).toString('base64').slice(0, RELAY.envelopeCtMax) });
+    const sent: unknown[] = [];
+    for (;;) {
+      e.s.clock.advance(1000);
+      const b = big();
+      const r = await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: b });
+      if (r.status !== 202) break;
+      sent.push(b);
+    }
+    const one = Buffer.byteLength(JSON.stringify(sent[0]));
+    const perPage = Math.floor(RELAY.queuePageMaxBytes / one);
+    assert.ok(sent.length > perPage, `${sent.length} > ${perPage}`);
+    const get = (q = '') => e.call(e.pc, 'GET', path + q, { headers: { 'x-mbx-read': m.tokRead } });
+    // 첫 쪽: 상한 안, 응답 본문은 Vercel 상한 아래
+    const p1 = await get();
+    const e1 = p1.json.envelopes as Array<{ seq: number; env: unknown }>;
+    assert.equal(p1.json.more, true);
+    assert.equal(e1.length, perPage);
+    assert.ok(Buffer.byteLength(p1.text) < 4_500_000, `${Buffer.byteLength(p1.text)}`);
+    assert.deepEqual(e1.map((x) => x.env), sent.slice(0, perPage));
+    // ACK 전에 after로 다음 쪽
+    const p2 = await get(`?after=${e1.at(-1)!.seq}`);
+    const e2 = p2.json.envelopes as Array<{ seq: number; env: unknown }>;
+    assert.deepEqual([...e1, ...e2].map((x) => x.env), sent.slice(0, e1.length + e2.length));
+    assert.equal(p2.json.more, e1.length + e2.length < sent.length);
+    // 옛 클라이언트: 첫 쪽만 보고 ACK → 다시 읽으면 나머지
+    await e.call(e.pc, 'POST', `/v1/mailboxes/${m.mbxId}/ack`, { headers: { 'x-mbx-read': m.tokRead }, body: { seq: e1.at(-1)!.seq } });
+    const rest: unknown[] = [];
+    for (let guard = 0; guard < 10; guard++) {
+      const p = await get();
+      const es = p.json.envelopes as Array<{ seq: number; env: unknown }>;
+      rest.push(...es.map((x) => x.env));
+      if (!es.length) break;
+      await e.call(e.pc, 'POST', `/v1/mailboxes/${m.mbxId}/ack`, { headers: { 'x-mbx-read': m.tokRead }, body: { seq: es.at(-1)!.seq } });
+      if (!p.json.more) break;
+    }
+    assert.deepEqual(rest, sent.slice(perPage));
+    // 봉투 하나는 상한과 무관하게 들어간다(서비스 계층)
+    e.s.clock.advance(1000);
+    await e.call(e.phone, 'POST', path, { headers: { 'x-mbx-write': m.tokWrite }, body: big() });
+    const key = (await e.db.one<{ mbx_key: string }>('SELECT mbx_key FROM queue LIMIT 1'))!.mbx_key;
+    const tiny = await e.svc.list(key, 0, 1);
+    assert.equal(tiny.envelopes.length, 1);
+    // 형식: after는 0 또는 양의 정수 한 개, 다른 쿼리 키는 거부
+    for (const q of ['?after=-1', '?after=01', '?after=x', '?after=1&after=2', '?limit=5', '?after=1e3', '?after=9999999999999999']) {
+      assert.equal((await get(q)).json.error, 'request.param_rejected', q);
+    }
+    assert.deepEqual((await get('?after=0')).json.more, false);
   });
 
   it('우편함 번들 슬롯: PC가 게시하고 폰이 읽는다. 큐 전면 폐기는 내부 API', async () => {

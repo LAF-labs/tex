@@ -204,7 +204,7 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
    - 확인 수단은 5절 스모크다. 로컬 시험은 같은 진입점을 Node HTTP 서버로 돌려 경로 복원·cron·조립을 본다.
 5. **메일**: 저장소에는 모의 메일만 있다(`MAIL_PROVIDER=mock`). SES 어댑터 PR 전에는 로그인 코드가 발송되지 않아 실제 로그인을 할 수 없다.
 6. **레지스트리**: 7절. 클라이언트 egress 허용 목록은 `https://tax.laf-co.com` 하나로 고정한다. Supabase 도메인은 클라이언트에 넣지 않는다(팀장 결정 2026-11-06).
-7. **릴레이 큐 GET 응답 상한**: Vercel 함수 응답은 4.5MB다. 큐 상한 6 MiB 전부를 한 번에 돌려줄 수 없다. 큐 GET 페이지 나누기가 후속 PR이다(그 전에는 큐가 4.5MB를 넘으면 실패한다).
+7. **릴레이 큐 GET 응답 상한**: Vercel 함수 응답은 4.5MB이고 큐 상한은 6 MiB다. 큐 GET은 봉투 바이트 3 MiB씩 쪽으로 나눠 돌려준다(`more`, 선택 `after`, relay API.md). 클라이언트가 `more`를 보고 곧바로 다음 쪽을 읽게 하는 것은 `packages/remote` `drainQueue` 몫이다(그 전에는 ACK 뒤 다음 폴링에서 받는다).
 8. **라이브 우편함(`RELAY_LIVE=1`) 켜기 전 체크**: 데스크톱은 라이브 WSS의 DPoP `htu`를 `https://rooms.tax.laf-co.com/v1/mailboxes/:id/live`(QR 호스트)로 만들고, 룸 호스트의 `RELAY_PUBLIC_ORIGIN`은 `https://tax.laf-co.com`이다. 켜는 PR에서 둘을 맞춘다(팀장 결정 2026-11-06, #145).
 
 ## 7. 레지스트리(정적 GET·투명성 로그·게시 관문·타임스탬프 자동 재서명)
