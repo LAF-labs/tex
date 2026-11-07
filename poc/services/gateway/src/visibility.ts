@@ -19,11 +19,11 @@ export const GATEWAY_VISIBILITY: Record<string, Record<string, string>> = {
   },
   ops_stats: { day: '시각(KST 일)', surface: '번들·툴셋 ID', outcome: 'D09 §3 계량 분리 (2) 운영 통계 outcome', n: '호출 수', latency_ms_sum: '지연' },
   run_scopes: {
-    scope_hash: 'D09 추가 필요: 실행 예산 범위(HMAC(계정·runId), 원문 없음)',
-    kind: 'D09 추가 필요: 실행·대화 구분',
-    l1: 'D09 추가 필요: 실행당 L1 사용 수',
-    l2_calls: 'D09 추가 필요: 실행당 L2 사용 수',
-    l2_turns: 'D09 추가 필요: 실행당 L2 턴 수',
-    expires_at: 'D09 추가 필요: 실행 예산 만료(2시간)',
+    scope_hash: 'D09 §1.1 보충: 실행 예산 범위(HMAC(계정·runId), 원문 없음)',
+    kind: 'D09 §1.1 보충: 실행·대화 구분',
+    l1: 'D09 §1.1 보충: 실행당 L1 사용 수',
+    l2_calls: 'D09 §1.1 보충: 실행당 L2 사용 수',
+    l2_turns: 'D09 §1.1 보충: 실행당 L2 턴 수',
+    expires_at: 'D09 §1.1 보충: 실행 예산 만료(2시간)',
   },
 };

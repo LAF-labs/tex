@@ -14,7 +14,7 @@ export const RELAY_VISIBILITY: Record<string, Record<string, string>> = {
     bytes: '크기(큐 6 MiB 상한 계산)',
     expires_at: '시각(만료, 72시간)',
   },
-  mailbox_bundles: { mbx_key: '우편함 ID(해시)', sealed: 'D09 추가 필요: 우편함 번들 슬롯(PC의 Vx 서명 공개 번들, 봉인)' },
-  mailbox_quota: { device_id: 'D09 추가 필요: 기기당 우편함 개수(어느 우편함인지 없음)', n: 'D09 추가 필요: 개수' },
+  mailbox_bundles: { mbx_key: '우편함 ID(해시)', sealed: 'D09 §1.1 보충: 우편함 번들 슬롯(PC의 Vx 서명 공개 번들, 봉인)' },
+  mailbox_quota: { device_id: 'D09 §1.1 보충: 기기당 우편함 개수(어느 우편함인지 없음)', n: 'D09 §1.1 보충: 개수' },
   relay_stats: { day: '시각(KST 일, 7일)', kind: '바깥 kind', size_bucket: '크기 버킷', n: '메시지 수' },
 };
