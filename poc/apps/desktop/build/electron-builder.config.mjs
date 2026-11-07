@@ -49,7 +49,10 @@ export const EXCLUDE = [
   '!**/*.map',
   '!**/*.tsbuildinfo',
   '!**/tsconfig*.json',
-  '!**/src/**',
+  // TS 소스는 앱과 작업 공간 패키지(@sax/*)에서만 뺀다. 런타임은 dist다. node_modules 전체의 src/를 빼면 실행 코드가 src/ 아래인
+  // 의존성(debug·tesseract.js의 main, officecrypto-tool의 ./src)이 빠져 엔진이 import 단계에서 끝난다(Windows 실기기 설치본 첫 실행, WIN-REALDEVICE §7).
+  '!src/**',
+  '!node_modules/@sax/*/src/**',
   '!**/{test,tests,__tests__,e2e,fixtures,example,examples,docs}/**',
   '!**/*.{md,markdown}',
   '!**/{LICENSE,LICENSE.*,license,CHANGELOG*,README*}',
@@ -80,8 +83,11 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon 
     productName: identity.productName,
     copyright: identity.copyright,
     directories: { output: outDir, buildResources: buildDir },
-    // 스테이지 package.json을 덮는다(스테이지 = pnpm deploy 결과, scripts/package-win.mjs)
-    extraMetadata: { name: 'sovereign-ax', productName: identity.productName, version, main: identity.entry, description: identity.description, author: identity.companyName },
+    // 스테이지 package.json을 덮는다(스테이지 = pnpm deploy 결과, scripts/package-win.mjs).
+    // name = installDirName: 원클릭 사용자별 NSIS는 설치 폴더 이름을 productName이 아니라 name에서 가져온다
+    // (app-builder-lib getWindowsInstallationDirName: oneClick·perMachine 아님 → sanitizedName). 예전 'sovereign-ax'면
+    // %LOCALAPPDATA%\Programs\sovereign-ax에 깔려 앱이 "예상 밖 설치 위치" 배지를 띄웠다(Windows 실기기 #166).
+    extraMetadata: { name: identity.installDirName, productName: identity.productName, version, main: identity.entry, description: identity.description, author: identity.companyName },
     files: ['**/*', ...EXCLUDE],
     asar: true,
     // .node는 asar 안에서 dlopen할 수 없다

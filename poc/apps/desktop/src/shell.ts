@@ -6,6 +6,7 @@ import path from 'node:path';
 import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
 import { app, dialog } from 'electron';
 import { BUILD_WARN_TEXT, packagedProblems } from './harden.ts';
+import { productRemote } from './remote-wiring.ts';
 import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
 
 registerShellSchemes();
@@ -63,7 +64,8 @@ app.on('window-all-closed', () => {
 void app.whenReady().then(async () => {
   if (refused) return;
   try {
-    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges });
+    // 계정 로그인·폰 연결: 클라우드 포트(egress) + 금고 키. 운영 목적지만, 개발 스택은 설치본이 아닐 때 SAX_CLOUD_DEV로만(remote-wiring.ts)
+    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges, remote: productRemote({ isPackaged: app.isPackaged, env: process.env }) });
     await shell.ready;
   } catch (e) {
     console.error('shell start failed:', (e as Error).message);

@@ -165,7 +165,8 @@ process.exit(0);
 
 /** 함수 하나 점검. 실패면 이유(오류 첫 줄들)를 돌려준다 */
 function runFunction(dir: string, handler: string, env: Record<string, string>, probes: Probe[]): string | null {
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', CHILD], {
+  // CHECK_NODE: 묶음을 돌릴 node 실행 파일(배포 런타임과 같은 주 버전으로 돌려 볼 때). 없으면 지금 node
+  const r = spawnSync(process.env.CHECK_NODE || process.execPath, ['--input-type=module', '-e', CHILD], {
     cwd: dir,
     // 사용자 env(실제 키 등)는 넘기지 않는다
     env: { PATH: process.env.PATH ?? '', NODE_ENV: 'production', ...env, CHECK_HANDLER: path.join(dir, handler), CHECK_PROBES: JSON.stringify(probes) },
@@ -206,6 +207,16 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
         // 공개 경로 → 재작성(플랫폼이 붙이는 path 매개변수 포함)
         { method: 'GET', public: '/v1/me', status: 401 },
         { method: 'GET', public: '/v1/mailboxes/mb-x/envelopes?since=0', status: 401 },
+        // 페퍼 없음: 비밀번호 경로만 닫힌다. 갱신은 열려 있다(형식 오류 400, 모르는 토큰 401)
+        { method: 'POST', public: '/v1/auth/password', body: { email: 'check@example.com', password: 'x' }, status: 404 },
+        { method: 'POST', public: '/v1/auth/refresh', body: { refreshToken: 'x' }, status: 400 },
+        { method: 'POST', public: '/v1/auth/refresh', body: { refreshToken: 'sxa1.' + 'A'.repeat(43) }, status: 401 },
+      ]],
+      // ADR-038: 묶음 안에서 argon2id(Node 내장)와 흔한 비밀번호 목록(data/common-passwords.txt.gz)이 실제로 돈다
+      'sax(비밀번호)': ['sax', { ACCOUNT__PASSWORD_PEPPER_KEYS: `k1:${hex()}` }, [
+        { method: 'POST', public: '/v1/auth/password', body: { email: 'check@example.com', password: 'correct horse battery' }, status: 401 },
+        { method: 'PUT', public: '/v1/password', body: { password: 'correct horse battery' }, status: 401 },
+        { method: 'POST', public: '/v1/auth/password/reset', body: { email: 'check@example.com' }, status: 200 },
       ]],
       internal: ['internal', {}, [
         { method: 'GET', path: '/api/internal?__p=/internal/v1/devices/dev-x', status: 401 },
@@ -257,6 +268,21 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       }
       out.push({ name, error: bad ?? runFunction(m.dir, m.handler, { ...env, ...extra }, resolved) });
     }
+    // 런타임: 계정 묶음은 node:crypto argon2(Node 24.7+)를 쓴다. .vc-config.json 런타임 주 버전이 24 미만이면 실패.
+    // 24.x의 부 버전은 여기서 알 수 없다: 배포 뒤 스모크(README 5절, 비밀번호 401·cron의 account.argon2_probe_ms)가 실제 런타임 확인이다
+    for (const func of ['sax', 'internal', 'cron']) {
+      const cfgFile = path.join(fnRoot, `${func}.func`, '.vc-config.json');
+      if (!fs.existsSync(cfgFile)) continue;
+      const runtime = String((JSON.parse(fs.readFileSync(cfgFile, 'utf8')) as { runtime?: string }).runtime ?? '');
+      const major = Number(/^nodejs(\d+)\.x$/.exec(runtime)?.[1] ?? 0);
+      out.push({ name: `${func}(런타임 ${runtime || '?'})`, error: major >= 24 ? null : `argon2id에는 Node 24.7+가 필요하다(지금 ${runtime || '알 수 없음'})` });
+    }
+    // 계정을 싣는 묶음에 네이티브 애드온(.node)이 없다(argon2id는 node:crypto 내장, ADR-038). 레지스트리 묶음은 엔진 경유 better-sqlite3 prebuild가 있다(후속)
+    for (const [func, m] of made) {
+      if (!['sax', 'internal', 'cron'].includes(func)) continue;
+      const natives = (fs.readdirSync(m.dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.node'));
+      out.push({ name: `${func}(네이티브 없음)`, error: natives.length ? natives.slice(0, 5).join(', ') : null });
+    }
     return out;
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
@@ -266,6 +292,8 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
 if (import.meta.main) {
   const root = path.resolve(process.argv[2] ?? '..');
   const res = await checkVercelOutput(root);
+  const nodeV = spawnSync(process.env.CHECK_NODE || process.execPath, ['-v'], { encoding: 'utf8' }).stdout.trim();
+  process.stdout.write(`묶음을 돌린 node: ${nodeV}${process.env.CHECK_NODE ? ' (CHECK_NODE)' : ''}\n`);
   for (const r of res) process.stdout.write(`${r.error ? '✖' : '✔'} api/${r.name}${r.error ? `\n${r.error}` : ''}\n`);
   process.exitCode = res.every((r) => !r.error) ? 0 : 1;
 }

@@ -15,24 +15,44 @@ import {
   type Limits,
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS } from './constants.ts';
-import type { AccountService, Session } from './service.ts';
+import { ACCOUNT, DEVICE, MS, PASSWORD } from './constants.ts';
+import { withFloor } from './password.ts';
+import type { AccountService, AuthMethod, Session } from './service.ts';
 
 const obj = (properties: Record<string, unknown>, required: string[] = Object.keys(properties)) => ({ type: 'object', additionalProperties: false, required, properties });
 const b64u = (min: number, max: number) => ({ type: 'string', pattern: `^[A-Za-z0-9_-]{${min},${max}}$` });
 
+const EMAIL = { type: 'string', minLength: 3, maxLength: 254 } as const;
+/** 요청 상한만(정규화 전). 길이 정책 10~128자(NFKC 코드 포인트)는 서버 정책 검사가 판정한다 */
+const PASSWORD_IN = { type: 'string', minLength: 1, maxLength: 1024 } as const;
+const REMEMBER = { type: 'boolean' } as const;
+const REFRESH_TOKEN = { type: 'string', pattern: '^sxa1\\.[A-Za-z0-9_-]{43}$' } as const;
+
 const V = {
-  codeStart: validator<{ email: string }>(obj({ email: { type: 'string', minLength: 3, maxLength: 254 } })),
-  codeVerify: validator<{ loginId: string; code: string }>(obj({ loginId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' } })),
+  codeStart: validator<{ email: string }>(obj({ email: EMAIL })),
+  codeVerify: validator<{ loginId: string; code: string; remember?: boolean }>(obj({ loginId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' }, remember: REMEMBER }, ['loginId', 'code'])),
+  passwordLogin: validator<{ email: string; password: string; remember?: boolean }>(obj({ email: EMAIL, password: PASSWORD_IN, remember: REMEMBER }, ['email', 'password'])),
+  passwordSet: validator<{ password: string }>(obj({ password: PASSWORD_IN })),
+  resetStart: validator<{ email: string }>(obj({ email: EMAIL })),
+  resetVerify: validator<{ resetId: string; code: string; password: string; remember?: boolean }>(
+    obj({ resetId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' }, password: PASSWORD_IN, remember: REMEMBER }, ['resetId', 'code', 'password']),
+  ),
+  refresh: validator<{ refreshToken: string }>(obj({ refreshToken: REFRESH_TOKEN })),
   authorize: validator<{ client_id: string; redirect_uri: string; code_challenge: string; code_challenge_method: string; state: string }>(
     obj({ client_id: { type: 'string', maxLength: 64 }, redirect_uri: { type: 'string', maxLength: 200 }, code_challenge: b64u(43, 43), code_challenge_method: { const: 'S256' }, state: b64u(16, 128) }),
   ),
-  token: validator<{ grant_type: string; code: string; code_verifier: string; redirect_uri: string; client_id: string }>(
-    obj({ grant_type: { const: 'authorization_code' }, code: S.token, code_verifier: { type: 'string', pattern: '^[A-Za-z0-9._~-]{43,128}$' }, redirect_uri: { type: 'string', maxLength: 200 }, client_id: { type: 'string', maxLength: 64 } }),
+  token: validator<{ grant_type: string; code: string; code_verifier: string; redirect_uri: string; client_id: string; remember?: boolean }>(
+    obj(
+      { grant_type: { const: 'authorization_code' }, code: S.token, code_verifier: { type: 'string', pattern: '^[A-Za-z0-9._~-]{43,128}$' }, redirect_uri: { type: 'string', maxLength: 200 }, client_id: { type: 'string', maxLength: 64 }, remember: REMEMBER },
+      ['grant_type', 'code', 'code_verifier', 'redirect_uri', 'client_id'],
+    ),
   ),
   passkeyRegister: validator<{ challenge: string; clientDataJSON: string; attestationObject: string }>(obj({ challenge: S.token, clientDataJSON: b64u(1, 6000), attestationObject: b64u(1, 11000) })),
-  passkeyLogin: validator<{ challenge: string; credentialId: string; clientDataJSON: string; authenticatorData: string; signature: string; userHandle?: string }>(
-    obj({ challenge: S.token, credentialId: b64u(16, 1400), clientDataJSON: b64u(1, 6000), authenticatorData: b64u(37, 1400), signature: b64u(64, 200), userHandle: b64u(1, 100) }, ['challenge', 'credentialId', 'clientDataJSON', 'authenticatorData', 'signature']),
+  passkeyLogin: validator<{ challenge: string; credentialId: string; clientDataJSON: string; authenticatorData: string; signature: string; userHandle?: string; remember?: boolean }>(
+    obj(
+      { challenge: S.token, credentialId: b64u(16, 1400), clientDataJSON: b64u(1, 6000), authenticatorData: b64u(37, 1400), signature: b64u(64, 200), userHandle: b64u(1, 100), remember: REMEMBER },
+      ['challenge', 'credentialId', 'clientDataJSON', 'authenticatorData', 'signature'],
+    ),
   ),
   consent: validator<{ version: string }>(obj({ version: { type: 'string', pattern: '^[a-z0-9.-]{1,32}$' } })),
   pinAik: validator<{ aikPub: string; deviceList: DeviceList; platform: string; name: string }>(
@@ -81,6 +101,19 @@ export function accountRouter(o: AccountAppOpts): Router {
     if (!h.ok) fail('policy.rate_limited', { retryAfterSec: h.retryAfterSec });
   };
   const ipKey = (ctx: Ctx) => ipSalt.hash(ctx.ip);
+  /** 로그인 응답. remember면 갱신 토큰을 함께 준다(자동 로그인, ADR-038 (f)) */
+  const loggedIn = async (ctx: Ctx, out: { session: string; accountId: string }, method: AuthMethod, remember: boolean | undefined) => {
+    ctx.logAid = idSalt.hash(out.accountId);
+    const body: Record<string, unknown> = { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 };
+    if (remember) {
+      body.refreshToken = await svc.issueRefresh(out.accountId, method);
+      body.refreshExpiresInSec = ACCOUNT.refreshTtlMs / 1000;
+    }
+    return json(200, body);
+  };
+  const passwordsOn = () => {
+    if (!svc.passwordsEnabled) fail('request.not_found');
+  };
   const session = async (ctx: Ctx): Promise<Session> => {
     const s = await svc.session(ctx.headers.authorization);
     ctx.logAid = idSalt.hash(s.accountId);
@@ -109,8 +142,7 @@ export function accountRouter(o: AccountAppOpts): Router {
     const b = V.codeVerify(ctx.body);
     await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.verifyEmailCode(b.loginId, b.code);
-    ctx.logAid = idSalt.hash(out.accountId);
-    return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
+    return loggedIn(ctx, out, 'email_code', b.remember);
   });
   r.add('POST', '/v1/auth/passkey/options', async (ctx) => {
     await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
@@ -119,12 +151,66 @@ export function accountRouter(o: AccountAppOpts): Router {
   r.add('POST', '/v1/auth/passkey/verify', async (ctx) => {
     const b = V.passkeyLogin(ctx.body);
     await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
-    const out = await svc.passkeyLogin(b.challenge, b);
-    ctx.logAid = idSalt.hash(out.accountId);
-    return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
+    const { remember, ...assertion } = b;
+    const out = await svc.passkeyLogin(b.challenge, assertion);
+    return loggedIn(ctx, out, 'passkey', remember);
   });
   r.add('POST', '/v1/auth/logout', async (ctx) => {
     await svc.logout(ctx.headers.authorization);
+    return json(204, undefined);
+  });
+  /** [모든 기기에서 로그아웃]: 계정 세션·갱신 토큰 전부. 기기 범위 토큰·기기 등록은 그대로 */
+  r.add('POST', '/v1/auth/logout-all', async (ctx) => {
+    await svc.logoutAll(await session(ctx));
+    return json(204, undefined);
+  });
+
+  // 비밀번호(ADR-038). 응답 시각 하한은 계정 존재·잠금과 무관하게 같다(열거 방지). IP 한도는 하한 밖(이유가 계정과 무관)
+  r.add('POST', '/v1/auth/password', async (ctx) => {
+    passwordsOn();
+    const b = V.passwordLogin(ctx.body);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    const out = await withFloor(PASSWORD.responseFloorMs, () => svc.passwordLogin(b.email, b.password));
+    return loggedIn(ctx, out, 'password', b.remember);
+  });
+  r.add('PUT', '/v1/password', async (ctx) => {
+    passwordsOn();
+    const s = await session(ctx);
+    const b = V.passwordSet(ctx.body);
+    await svc.setPassword(s, b.password);
+    return json(204, undefined);
+  });
+  r.add('DELETE', '/v1/password', async (ctx) => {
+    passwordsOn();
+    await svc.deletePassword(await session(ctx));
+    return json(204, undefined);
+  });
+  r.add('POST', '/v1/auth/password/reset', async (ctx) => {
+    passwordsOn();
+    const b = V.resetStart(ctx.body);
+    await limit(`reset-ip:${await ipKey(ctx)}`, PASSWORD.resetSendsPerIpHour, MS.H);
+    await limit(`reset-email:${await emailSalt.hash(b.email.trim().toLowerCase())}`, PASSWORD.resetSendsPerEmailHour, MS.H);
+    return json(200, await withFloor(PASSWORD.responseFloorMs, () => svc.startPasswordReset(b.email)));
+  });
+  r.add('POST', '/v1/auth/password/reset/verify', async (ctx) => {
+    passwordsOn();
+    const b = V.resetVerify(ctx.body);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    const out = await svc.finishPasswordReset(b.resetId, b.code, b.password);
+    return loggedIn(ctx, out, 'email_code', b.remember);
+  });
+
+  // 자동 로그인: 갱신 토큰 회전(ADR-038 (f)). 실패는 이유를 가르지 않고 401
+  r.add('POST', '/v1/auth/refresh', async (ctx) => {
+    const b = V.refresh(ctx.body);
+    await limit(`refresh-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    const out = await svc.refresh(b.refreshToken);
+    ctx.logAid = idSalt.hash(out.accountId);
+    return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000, refreshToken: out.refreshToken, refreshExpiresInSec: ACCOUNT.refreshTtlMs / 1000 });
+  });
+  r.add('POST', '/v1/auth/refresh/revoke', async (ctx) => {
+    const b = V.refresh(ctx.body);
+    await svc.revokeRefresh(b.refreshToken);
     return json(204, undefined);
   });
 
@@ -138,7 +224,7 @@ export function accountRouter(o: AccountAppOpts): Router {
     const b = V.token(ctx.body);
     await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
     const out = await svc.exchangeCode({ code: b.code, verifier: b.code_verifier, redirectUri: b.redirect_uri, clientId: b.client_id });
-    return json(200, { session: out.session, expiresInSec: ACCOUNT.sessionTtlMs / 1000 });
+    return loggedIn(ctx, out, out.authMethod, b.remember);
   });
 
   // 패스키 등록

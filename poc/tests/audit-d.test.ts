@@ -15,7 +15,8 @@ import {
   BarGate,
   barCss,
   barPalette,
-  buildBarHtml,
+  buildCardHtml,
+  gateText,
   HANDOFF_RETURN_MS,
   HandoffMark,
   kstToday,
@@ -40,7 +41,7 @@ const srcFiles = fs.readdirSync(SRC).filter((f) => f.endsWith('.ts'));
 
 const fieldsOf = (v: Record<string, string>) => ({ fields: Object.entries(v).map(([fieldKey, value]) => ({ fieldKey, value })) as GateField[] });
 const base = (over: Record<string, string> = {}) =>
-  fieldsOf({ counterpartName: 'A상사', counterpartBizNo: '2148651233', counterpartEmail: 'tax@asangsa.example', totalAmount: '3630000', taxAmount: '330000', ...over });
+  fieldsOf({ counterpartName: 'A상사', counterpartBizNo: '2148651233', counterpartEmail: 'tax@asangsa.example', totalAmount: '3630000', supplyAmount: '3300000', taxAmount: '330000', itemName: '경영 컨설팅', issueDate: '2026-11-03', ...over });
 
 const CPS: Counterparty[] = [{ id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: '', lastIssuedOn: null }];
 class FakeHost extends EventEmitter {
@@ -59,7 +60,7 @@ describe('audit-d: D1 하드닝 진입점(N-24·N-68)', () => {
 
   it('every file that constructs BrowserWindow calls hardenWindow (e2e 제외)', () => {
     const makers = srcFiles.filter((f) => !f.endsWith('e2e.ts') && /new BrowserWindow\(/.test(src(f)));
-    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'secret-window.ts', 'shell-app.ts']);
+    assert.deepEqual(makers.sort(), ['demo-seed.ts', 'docparse.ts', 'pair-window.ts', 'secret-window.ts', 'shell-app.ts']);
     for (const f of makers) assert.match(src(f), /hardenWindow\(/, f);
   });
 
@@ -212,7 +213,7 @@ describe('audit-d: D5 클릭 활성화 예외 축소(N-48)', () => {
   const at = { x: 300, y: 45 };
   const mk = () => {
     const g = new BarGate(600);
-    g.setSize(600, 90);
+    g.setTargets({ approve: { x: 200, y: 20, width: 200, height: 50 }, stop: { x: 20, y: 20, width: 88, height: 50 } });
     return g;
   };
   it('activation not from a handoff rejects the first click and rearms', () => {
@@ -250,16 +251,16 @@ describe('audit-d: D5 클릭 활성화 예외 축소(N-48)', () => {
 describe('audit-d: D6 중복 경고 상태별 표시(N-22·N-02)', () => {
   it('committed duplicate → attention tone, 이미 발급됨, 한 번 더 발급 action', () => {
     const req = base({ '$dup.businessKey': 'committed' });
-    const l = (summarize(req, '2026-11-03') as SummaryLine[])[1]!;
+    const l = (summarize(req, '2026-11-03') as SummaryLine[])[0]!;
     assert.deepEqual([l.flag, l.tone], ['이미 발급됨(승인번호 있음)', 'attention']);
     assert.equal(actionText(req), ACTION_TEXT_DUP_COMMITTED);
-    assert.match(buildBarHtml(summarize(req) as SummaryLine[], 'unarmed'), /<body class="unarmed attn">/);
+    assert.match(buildCardHtml(summarize(req) as SummaryLine[], 'unarmed', undefined, gateText(actionText(req))), /<body class="unarmed attn">/);
   });
 
   it('in_doubt duplicate → 발급 여부 확인 안 됨', () => {
     for (const s of ['in_doubt', 'armed', 'dispatched', 'observed_manual', 'not_committed,in_doubt']) {
       const req = base({ '$dup.businessKey': s, '$dup.priorNotCommitted': 'true' });
-      const l = (summarize(req) as SummaryLine[])[1]!;
+      const l = (summarize(req) as SummaryLine[])[0]!;
       assert.deepEqual([l.flag, l.tone], ['발급 여부 확인 안 됨', 'attention'], s);
       assert.equal(actionText(req), ACTION_TEXT_DUP);
     }
@@ -267,25 +268,26 @@ describe('audit-d: D6 중복 경고 상태별 표시(N-22·N-02)', () => {
 
   it('only not_committed → 직전 시도 미발급 판정 with normal tone', () => {
     const req = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
-    const l = (summarize(req) as SummaryLine[])[1]!;
+    const l = (summarize(req) as SummaryLine[])[0]!;
     assert.deepEqual([l.flag, l.tone], ['직전 시도 미발급 판정', 'normal']);
     assert.equal(actionText(req), ACTION_TEXT_DUP);
-    assert.doesNotMatch(buildBarHtml(summarize(req) as SummaryLine[], 'armed'), /attn/);
+    assert.doesNotMatch(buildCardHtml(summarize(req) as SummaryLine[], 'armed', undefined, gateText(actionText(req))), /attn/);
   });
 });
 
-describe('audit-d: D7 작성일 조각·가짜 H-01 KST(N-26·I-8)', () => {
-  const totalText = (r: ReturnType<typeof summarize>) => (r as SummaryLine[])[1]!.pieces.map((p) => p.text).join('');
-  it('issueDate equal to KST today adds nothing to the bar', () => {
-    assert.equal(totalText(summarize(base({ issueDate: '2026-11-03' }), '2026-11-03')), '3,630,000원 · 세액 330,000원');
+describe('audit-d: D7 작성일자 줄·가짜 H-01 KST(N-26·I-8)', () => {
+  const dateRow = (r: ReturnType<typeof summarize>) => (r as SummaryLine[]).find((l) => l.label === '작성일자')!;
+  it('issueDate equal to KST today: 작성일자 줄에 표시 없음', () => {
+    const l = dateRow(summarize(base({ issueDate: '2026-11-03' }), '2026-11-03'));
+    assert.deepEqual([l.pieces.map((p) => p.text).join(''), l.flag], ['2026-11-03', undefined]);
   });
-  it('different issueDate appends 작성일 piece (줄이지 않는 조각)', () => {
-    const r = summarize(base({ issueDate: '2026-11-02' }), '2026-11-03') as SummaryLine[];
-    assert.equal(totalText(r), '3,630,000원 · 세액 330,000원 · 작성일 2026-11-02');
-    assert.equal(r[1]!.pieces.at(-1)!.shrink, undefined);
+  it('different issueDate: "오늘 아님" 표시, 날짜는 줄이지 않는 조각', () => {
+    const l = dateRow(summarize(base({ issueDate: '2026-11-02' }), '2026-11-03'));
+    assert.deepEqual([l.pieces.map((p) => p.text).join(''), l.flag], ['2026-11-02', '오늘 아님']);
+    assert.equal(l.pieces.at(-1)!.shrink, undefined);
   });
   it('malformed issueDate refuses arming', () => {
-    for (const bad of ['2026-11-3', '2026/11/03', '20261103', '2026-11-03 ']) assert.deepEqual(summarize(base({ issueDate: bad }), '2026-11-03'), { reason: 'unsafe', label: '합계' }, bad);
+    for (const bad of ['2026-11-3', '2026/11/03', '20261103', '2026-11-03 ']) assert.deepEqual(summarize(base({ issueDate: bad }), '2026-11-03'), { reason: 'unsafe', label: '작성일자' }, bad);
   });
   it('fixture today() is the KST day at 14:30Z (and kstToday agrees)', () => {
     const t = Date.parse('2026-11-02T14:30:00Z');
@@ -320,8 +322,9 @@ describe('audit-d: D8 승인 바 내장 팔레트(N-80)', () => {
     assert.equal(r.rejected, null);
     assert.deepEqual(r.palette, BAR_PALETTE_DEFAULT);
     const css = barCss(r.palette);
-    assert.match(css, /body\.armed\.attn\{background:#8A5A0B;color:#FFFFFF\}/);
-    assert.match(css, /body\.unarmed\.attn\{background:#F8EEDC;color:#8A5A0B\}/);
+    assert.match(css, /body\.armed\.attn \.ap\{background:#8A5A0B;color:#FFFFFF\}/);
+    assert.match(css, /body\.unarmed\.attn \.ap\{background:#F8EEDC;color:#8A5A0B\}/);
+    assert.match(css, /\.st\{background:#FFFFFF;color:#16191D;[^}]*outline:2px solid #2A4F9E/, '[중지]는 기본 포커스 고리로 그린다');
   });
 });
 

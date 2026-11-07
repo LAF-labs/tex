@@ -51,7 +51,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 
 | 서비스 | 이름(`<서비스>__` 접두) |
 |---|---|
-| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, 아래 ⑤), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL` |
+| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, 아래 ⑤), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL`, `PASSWORD_PEPPER_KEYS` ⚿(선택, 없으면 비밀번호 로그인만 닫힘, 아래 3절 3.11) |
 | 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE` |
 | 릴레이 `RELAY__` | `DATABASE_URL` ⚿, `QUEUE_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `RELAY_PUBLIC_ORIGIN` |
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
@@ -90,6 +90,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
    8. Firewall에 IP 한도 규칙을 넣는다(#108 체크리스트: `/v1/auth/*`, `/v1/mailboxes/*`, `/v1/device-tokens`, 초과 시 429, Attack Challenge Mode는 API 경로에 쓰지 않음). `/api/internal*`에도 IP당 분당 상한을 둔다(호출하는 곳은 룸 호스트 한 대뿐이다).
    9. Pro 플랜이면 Cron이 매시 돈다. Hobby면 `vercel.json`의 `schedule`을 하루 1회로 바꿔야 한다(팀장 결정).
    10. **acct_claim 공개키 고정**(D08 §4.2 7단계, #125): `ACCOUNT__ACCT_CLAIM_SIGNING_KEY`를 `TOKEN_SIGNING_SEED`와 다른 새 값으로 만든다. 공개키(공개 값)를 `cd poc && node --conditions=development services/account/src/acct-claim-pubkey-cli.ts < 시드_파일`로 뽑아 팀장(폰 앱 고정값)에 알린다. 시드 값은 비밀번호 관리자에만 둔다. 키를 바꾸면 폰 앱 고정값도 함께 바꿔야 한다.
+   11. **비밀번호 페퍼**(ADR-038): `ACCOUNT__PASSWORD_PEPPER_KEYS` = `k1:<hex 64자>`. 값은 비밀번호 관리자에서 새로 만들고(다른 비밀과 다른 값), 거기에만 둔다. 잃으면 모든 비밀번호가 맞지 않게 된다(사용자는 재설정·코드 로그인으로 복구). 회전은 `k2:<새 값>,k1:<옛 값>`으로 넣고 재배포한다.
 4. **GoDaddy DNS**(laf-co.com 도메인 관리 → DNS)
    - `tax`: Vercel이 보여 준 값(보통 CNAME `cname.vercel-dns.com`). 소유 확인 TXT `_vercel`를 요구하면 그것도 넣는다.
    - `rooms.tax`: 룸 호스트의 A/AAAA 또는 CNAME(5번에서 정해짐).
@@ -111,7 +112,8 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 생성 파일은 [`supabase/migrations/`](supabase/migrations/)에 있다.
 - 단계마다 역할 파일 하나 + 서비스 파일(테이블, `schema_migrations` 기록, 권한). 역할 파일에는 비밀번호가 없다.
   - `2026110600…`: 계정·게이트웨이·릴레이·푸시(`20261106000000_sax_roles.sql` + 서비스 4개). 운영 tex-prod에 적용됨.
-  - `2026110601…`: 레지스트리 투명성 로그(`20261106010000_sax_roles_registry.sql` + `20261106010100_sax_registry.sql`). 이 PR에서 더했다.
+  - `2026110601…`: 레지스트리 투명성 로그(`20261106010000_sax_roles_registry.sql` + `20261106010100_sax_registry.sql`). 운영에 적용됨(#161).
+  - `2026110602…`: 계정 마이그레이션 002(ADR-038 비밀번호·갱신 토큰, `20261106020100_sax_account.sql`). 역할 파일 없음(역할은 그대로). 기존 세션은 옮겨진다(만료 시각 유지).
 - **증분 내보내기**: 적용된 단계의 파일은 바꾸지 않는다(Supabase는 파일 이름으로 적용 여부를 기억한다). 시험이 적용된 단계 파일의 SHA-256을 고정한다. 새 서비스나 새 마이그레이션은 `SUPABASE_PHASES`(`services/shared/src/supabase.ts`)에 새 단계로 더한다.
 
 ```bash
@@ -124,7 +126,7 @@ supabase db push --workdir services/deploy --db-url "<직접 연결 URL>"
 
 - 이미 적용한 파일은 Supabase가 건너뛴다(`supabase_migrations.schema_migrations`).
 - 서비스 마이그레이션을 새로 더하면 `services/<서비스>/migrations/NNN_*.sql`을 추가하고 1)을 다시 돌린다.
-  - 적용된 단계의 서비스에 새 번호를 더하면 그 단계 파일이 바뀌어 고정 다이제스트 시험이 실패한다. 그때는 새 번호만 담는 단계를 더한다(그 서비스의 첫 증분 때 단계 정의에 "번호 범위"를 더한다, 후속).
+  - 적용된 단계의 서비스에 새 번호를 더하면 새 번호만 담는 단계를 더한다: 단계의 서비스마다 번호 범위(`svc('account', 2, 2)`)를 둔다. 범위 밖 번호가 생기면 내보내기가 `export_versions_<서비스>`로 멈춘다(적용된 파일이 조용히 바뀌지 않게).
 - 확인(선택):
   ```bash
   SAX_PG_TEST_URL=postgres://<슈퍼유저>@<빈 시험 DB> node --conditions=development --test tests/services-deploy.test.ts
@@ -145,6 +147,8 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 - [`check-vercel-output.ts`](check-vercel-output.ts)는 `.vercel/output/functions/api/*.func`를 저장소 밖으로 복사하고 `.vc-config.json`의 `filePathMap` 링크를 배포 때처럼 되살린다.
 - 그 복사본에서 다섯 함수를 띄워 요청을 보낸다. 네 서비스 조립까지 거친다. 기대: 계정 코드 200, 인증 없는 경로 401, 내부 경로 404, cron 200, 레지스트리: 구성 없음 503 → 시험 구성(공개 시험 trust·메모리 저장소)으로 로그 헤드 200·재서명 cron 200.
 - env는 시험용 무작위 값과 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
+- **비밀번호(ADR-038)**: 페퍼를 넣은 `sax(비밀번호)` 점검이 묶음 안에서 argon2id·흔한 목록(`data/common-passwords.txt.gz`)을 실제로 돌린다(로그인 401, 재설정 200). `sax`·`internal`·`cron` 묶음에 `.node` 네이티브 애드온이 없어야 한다.
+- **런타임**: 계정 묶음 `.vc-config.json`의 런타임이 `nodejs24.x` 이상이어야 한다(`node:crypto` argon2는 Node 24.7+). 운영 프로젝트 설정은 `26.x`다(팀장이 Vercel API로 확인, 2026-11-06). 로컬 링크 사본의 `.vercel/project.json`이 오래되면 `nodejs24.x`로 빌드될 수 있으니 점검 출력의 런타임을 본다. 부 버전은 빌드 결과로 알 수 없으므로 배포 뒤 스모크(5절 비밀번호 행)가 실제 런타임 확인이다. 런타임과 같은 주 버전 node가 있으면 `CHECK_NODE=<그 node 경로>`로 묶음을 그 버전에서 돌린다(출력 첫 줄에 쓴 node 버전).
 - 소스 규칙: `packages/*/src`·`services/*/src`에서 `createRequire`로 의존성을 부르지 않는다(파일 추적이 못 따라간다). 시험이 막는다.
 
 ## 5. 배포 뒤 스모크(사용자 또는 팀장)
@@ -153,6 +157,8 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 |---|---|
 | `GET https://tax.laf-co.com/v1/me` | `401 {"error":"account.unauthorized"}`. 재작성과 경로 복원이 동작함 |
 | `POST /v1/auth/code {"email":…}` | `200 {loginId, expiresInSec}`. ⑤ 전에는 메일이 가지 않는다 |
+| `POST /v1/auth/password {"email":"none@example.invalid","password":"x"}` | 페퍼가 있으면 `401 {"error":"account.credentials_invalid"}`(약 0.7초 뒤). **이것이 운영 런타임에서 argon2id가 도는 확인이다.** 페퍼를 넣었는데 `404`면 런타임에 `crypto.argon2`가 없다(로그 `account.password_disabled.argon2_unavailable`): Vercel Node 버전을 올린다. Vercel 로그의 cron 뒤 `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`(운영 실측) |
+| `POST /v1/auth/refresh {"refreshToken":"sxa1.AAAA…(43자)"}` | `401` |
 | `GET /healthz`, `GET /internal/v1/devices/x` | 404(Vercel) |
 | `GET /api/sax?__p=/internal/v1/devices/x`, `GET /api/sax?__p=/v1/%2e%2e/internal/v1/devices/x` | `404`(공개 함수는 내부 경로를 받지 않는다) |
 | `GET /api/internal/internal/v1/devices/x`(서명 없이) | `401` |
@@ -246,7 +252,9 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
    - 의식 뒤(`TRUST_ROOT_JSON` 넣고 재배포): 로그 헤드 200, 게시 PUT 200, `GET /registry/status.json` 200(`cache-control: public, max-age=60`), Vercel 로그의 재서명 cron 200과 대상별 결과.
 
 ### 7.4 알려진 차이·미검증
-- 의식 전 공개 정적 경로는 503이 아니라 Storage의 not found다(함수를 거치지 않기 때문). 클라이언트는 어느 쪽이든 "새 파일 없음"으로 다룬다.
+- 의식 전 공개 정적 경로는 503이 아니라 Storage의 not found다(함수를 거치지 않기 때문). 본문은 `{"statusCode":"404","error":"not_found","message":"Object not found"}`(400, `max-age=0`)이다.
+  - **판단(2026-11-06): 그대로 둔다.** 엔진 `registry-sync`는 404가 아닌 오류를 `registry.fetch_failed`로 다루지만, 어느 단계든 마지막 유효본을 유지하고 업데이터는 `feed_failed`로 멈춘다(fail-closed). 내용에 비밀·내부 정보가 없고 캐시되지 않는다.
+  - 고치려면 공개 GET을 함수로 돌리거나(패키지 16MB가 함수 응답 상한을 넘는다) 클라이언트에 공급사 오류 모양을 넣어야 한다(ADR-015 위반). 둘 다 이득보다 비용이 크고, 이 창은 서명 의식에서 닫힌다.
 - **패키지 게시 크기**: 게시 PUT 본문은 base64 JSON이라 함수 요청 상한(4.5MB) 때문에 원본 약 3.3MB를 넘는 `.sxp`는 함수로 올릴 수 없다. 그 크기가 생기면 관문 검증 뒤 서명된 업로드 URL로 바로 올리는 경로를 더한다(후속).
 - Supabase 공개 객체가 S3로 넣은 `Cache-Control`·`Content-Type`을 그대로 돌려주는지는 배포 뒤 스모크로 확인한다.
 - 게시 PUT의 직렬화(`serial`)는 인스턴스 안에서만이다. 운영자 게시 둘이 다른 인스턴스에서 겹치면 나중 쓰기가 이긴다(기존 상시 서버와 같은 한계, 게시는 운영자 한 명이 한다). 재서명과 게시가 겹치는 경우는 위 `changed`로 막는다.

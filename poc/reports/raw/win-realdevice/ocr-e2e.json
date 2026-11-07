@@ -1,0 +1,129 @@
+[
+  {
+    "name": "docparse 샌드박스 OCR(kor) → 등록번호·대표자·개업일",
+    "ok": true,
+    "detail": {
+      "ms": 5389,
+      "confidence": 90,
+      "fields": {
+        "bizNo": "2208162517",
+        "name": "마바사상회",
+        "repName": "최마바",
+        "openDate": "20210630",
+        "corpNo": null,
+        "address": "부산광역시 해운대구 센팀로 5",
+        "bizType": null,
+        "bizItem": null,
+        "kind": "individual"
+      }
+    }
+  },
+  {
+    "name": "O-02 등록증 그림 → 샌드박스 OCR(증명서 모드) → 상호·대표자·주소",
+    "ok": true,
+    "detail": {
+      "fields": {
+        "name": "마바사상회",
+        "bizNo": "2208162517",
+        "rep": "최마바",
+        "bizType": "",
+        "bizItem": "",
+        "address": "부산광역시 해운대구 셈로 5",
+        "email": ""
+      },
+      "logs": [
+        [
+          "main.bizcert_read",
+          {
+            "format": "png",
+            "via": "ocr",
+            "result": "ok",
+            "blanks": 2
+          }
+        ]
+      ]
+    }
+  },
+  {
+    "name": "O-02 등록증 PDF(글자 층) → 샌드박스 → 번호·상호·대표자 정확",
+    "ok": true,
+    "detail": {
+      "fields": {
+        "name": "마바사상회",
+        "bizNo": "2208162517",
+        "rep": "최마바",
+        "bizType": "",
+        "bizItem": "",
+        "address": "부산광역시 해운대구 센텀로 5",
+        "email": ""
+      },
+      "log": [
+        "main.bizcert_read",
+        {
+          "format": "pdf",
+          "via": "text",
+          "result": "ok",
+          "blanks": 2
+        }
+      ]
+    }
+  },
+  {
+    "name": "O-02 로그는 형식·경로 코드만(글자·값 없음)",
+    "ok": true,
+    "detail": [
+      [
+        "main.bizcert_read",
+        {
+          "format": "png",
+          "via": "ocr",
+          "result": "ok",
+          "blanks": 2
+        }
+      ],
+      [
+        "main.bizcert_read",
+        {
+          "format": "pdf",
+          "via": "text",
+          "result": "ok",
+          "blanks": 2
+        }
+      ]
+    ]
+  },
+  {
+    "name": "docparse 파티션 외부 네트워크 차단",
+    "ok": true,
+    "detail": "blocked: net::ERR_BLOCKED_BY_CLIENT"
+  },
+  {
+    "name": "빈 입력 거부",
+    "ok": true,
+    "detail": "input_size"
+  },
+  {
+    "name": "certInfo: 샌드박스가 읽은 고정 4필드(주체·발급자 RFC 4514, 유효기간 UTC)",
+    "ok": true,
+    "detail": {
+      "subject": "CN=TEST홍길동()0001234567890123,O=yessign,C=kr",
+      "issuer": "CN=TEST-yessignCA Class 2,O=yessign,C=kr",
+      "notBefore": "2026-01-02T03:04:05Z",
+      "notAfter": "2027-01-02T23:59:59Z"
+    }
+  },
+  {
+    "name": "certInfo 크기 경계: 0·8193바이트는 샌드박스에 가기 전 input_size, 1·8192바이트는 샌드박스가 읽고 cert_invalid",
+    "ok": true,
+    "detail": {
+      "0": "input_size",
+      "1": "cert_invalid",
+      "8192": "cert_invalid",
+      "8193": "input_size"
+    }
+  },
+  {
+    "name": "certInfo: 뒤에 덧붙인 바이트·잘린 DER은 cert_invalid",
+    "ok": true
+  }
+]

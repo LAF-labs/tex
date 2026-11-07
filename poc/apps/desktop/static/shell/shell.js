@@ -1,8 +1,8 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
-// 승인 바는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 그 자리를 비우기만 한다(ADR-021).
+// 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
-import { accountCard, loginModal } from './shell-account.js';
+import { accountCard, accountErrText, loginModal } from './shell-account.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -496,6 +496,8 @@ async function send() {
     state.interp = r.via === 'model' ? 'model' : 'offline';
     renderTitlebar();
   }
+  // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
+  if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
     putRun(r.run);
     openPanel({ kind: 'run', id: r.run.id });
@@ -1072,6 +1074,15 @@ function openLogin() {
   render();
 }
 
+/** [폰 연결]: main이 따로 창을 연다(QR·6자리는 그 창에만 있다). */
+async function openPair() {
+  try {
+    await call('pair.open', {});
+  } catch (err) {
+    toast(accountErrText(errText(err)) ?? errText(err));
+  }
+}
+
 function closeLogin() {
   if (!state.login) return;
   state.login = null;
@@ -1147,7 +1158,7 @@ function settingsView() {
       }),
     ),
     state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin))
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair))
       : h(
       'div',
       { class: 'set-body' },
@@ -1501,14 +1512,20 @@ function addDoc(doc) {
 // ---- main 이벤트 ----
 
 window.sax.onEvent((ev) => {
+  if (ev.type === 'account') {
+    state.account = ev.account;
+    if (state.view === 'settings') render();
+    return;
+  }
   if (ev.type === 'run') {
     const prev = state.runs.get(ev.run.id);
     putRun(ev.run);
     if (prev?.status !== 'waiting' && ev.run.status === 'waiting' && state.view === 'chat') openPanel({ kind: 'run', id: ev.run.id });
     if (prev?.status !== 'done' && ev.run.status === 'done') appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
   } else if (ev.type === 'bar') {
-    // 바 자리 비우기: 바 위치는 main이 정하고, 렌더러는 같은 상수로 그 자리를 비울 뿐이다.
+    // 승인 카드 자리 비우기: 카드 위치·높이는 main이 정하고(ADR-021 결정 7), 렌더러는 그 높이만큼 자리를 비울 뿐이다.
     state.barActive = ev.active;
+    if (ev.active) setBarHeight(ev.height);
     document.body.classList.toggle('bar-active', ev.active);
     document.body.classList.toggle('bar-band', !!ev.band);
     autoGrow();
@@ -1516,6 +1533,7 @@ window.sax.onEvent((ev) => {
     else render();
   } else if (ev.type === 'bar-layout') {
     document.body.classList.toggle('bar-band', !!ev.band);
+    setBarHeight(ev.height);
   } else if (ev.type === 'doc') {
     addDoc(ev.doc);
   } else if (ev.type === 'board') {
@@ -1583,8 +1601,14 @@ setInterval(() => {
   renderRail();
 }, 60_000);
 
-// 바가 띠(레일 오른쪽~창 끝)인지는 main이 'bar'·'bar-layout' 이벤트로 알려 준다. 렌더러는 그대로 따라 패널 아래를 비운다.
+// 카드가 띠(레일 오른쪽~창 끝)인지와 높이는 main이 'bar'·'bar-layout' 이벤트로 알려 준다. 렌더러는 그대로 따라 자리를 비운다.
 function applyLayout() {}
+
+/** main이 알린 카드 높이(DIP). 숫자가 아니거나 범위 밖이면 기동 때 받은 기본 높이를 둔다. */
+function setBarHeight(px) {
+  const v = Number.isInteger(px) && px > 0 && px <= 600 ? px : state.boot?.layout?.barHeight;
+  if (v) document.documentElement.style.setProperty('--l-bar-h', `${v}px`);
+}
 
 async function boot() {
   state.boot = await call('shell.bootstrap');

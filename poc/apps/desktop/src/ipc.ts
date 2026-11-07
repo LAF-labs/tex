@@ -124,6 +124,8 @@ export const SHELL_METHODS = {
   'account.sendCode': { email: { t: 'string', max: 254, required: true } },
   'account.verify': { code: { t: 'string', max: 6, required: true } },
   'account.back': {},
+  // 폰 연결 창 열기(S-03). 인자 없음. 실제 입력 뒤에만.
+  'pair.open': {},
   // 온보딩 답 하나(O-01~O-06·동의 4종). 동의는 화면마다 명시 클릭이라 실제 입력 뒤에만 받는다(USER_ACTION_METHODS).
   'onboarding.reply': ONB_ANSWER,
 } as const satisfies Record<string, MethodSpec>;
@@ -136,7 +138,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -194,13 +196,14 @@ export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> 
 
 // ---- main → renderer 이벤트 ----
 
-/** 렌더러에 보내는 이벤트 전부. 바 내용·좌표·승인 근거는 보내지 않는다(배치용 신호만, ADR-021). */
+/** 렌더러에 보내는 이벤트 전부. 카드 내용·좌표·승인 근거는 보내지 않는다(자리 비우기용 띠 여부·높이만, ADR-021 결정 7). */
 export type ShellEvent =
-  | { type: 'bar'; active: true; band: boolean }
+  | { type: 'bar'; active: true; band: boolean; height: number }
   | { type: 'bar'; active: false; reason: string }
-  | { type: 'bar-layout'; band: boolean }
+  | { type: 'bar-layout'; band: boolean; height: number }
   | { type: 'run'; run: unknown }
   | { type: 'doc'; doc: unknown }
   | { type: 'docs-reload' }
   | { type: 'board'; board: unknown }
-  | { type: 'onboarding'; onboarding: unknown };
+  | { type: 'onboarding'; onboarding: unknown }
+  | { type: 'account'; account: unknown };

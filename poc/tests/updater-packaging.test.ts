@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { test } from 'node:test';
 // @ts-expect-error 설정은 .mjs(타입 없음)
 import { EXCLUDE, makeConfig, SIGNING_ENV, signingFrom } from '../apps/desktop/build/electron-builder.config.mjs';
@@ -54,8 +55,25 @@ test('설정: 퓨즈·asar·사용자별 NSIS·게시 없음·미서명이면 �
   assert.equal(signed.win.verifyUpdateCodeSignature, true);
 });
 
+test('설치 폴더: 원클릭 사용자별 NSIS가 고르는 폴더 이름이 installDirName이다(harden.ts·installer.nsh·README가 기대하는 %LOCALAPPDATA%\\Programs\\SovereignAX)', () => {
+  const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: signingFrom({}, 'darwin'), icon: null });
+  assert.equal(c.nsis.oneClick, true);
+  assert.equal(c.nsis.perMachine, false);
+  assert.equal(c.extraMetadata.name, identity.installDirName);
+  assert.equal(identity.installDirName, identity.productName, 'harden.ts는 Programs\\<productName>을 기대한다');
+  // electron-builder가 실제로 쓰는 함수로 확인한다(NsisTarget: APP_FILENAME = getWindowsInstallationDirName(appInfo, !oneClick || perMachine)).
+  const req = createRequire(createRequire(path.join(import.meta.dirname, '../apps/desktop/package.json')).resolve('electron-builder'));
+  const lib = createRequire(req.resolve('app-builder-lib'));
+  const { getWindowsInstallationDirName } = lib('./targets/targetUtil.js') as { getWindowsInstallationDirName: (a: object, b: boolean) => string };
+  const { sanitizeFileName } = createRequire(lib.resolve('builder-util'))('builder-util/out/filename') as { sanitizeFileName: (s: string) => string };
+  const appInfo = { productFilename: sanitizeFileName(c.productName), sanitizedName: sanitizeFileName(c.extraMetadata.name) };
+  assert.equal(getWindowsInstallationDirName(appInfo, !c.nsis.oneClick || c.nsis.perMachine), identity.installDirName);
+});
+
 test('제외 목록: 소스·지도·시험·다른 OS 네이티브', () => {
-  for (const p of ['!**/*.ts', '!**/*.map', '!**/src/**', '!build/**', '!node_modules/@napi-rs/canvas*/**']) assert.ok((EXCLUDE as string[]).includes(p), p);
+  for (const p of ['!**/*.ts', '!**/*.map', '!src/**', '!node_modules/@sax/*/src/**', '!build/**', '!node_modules/@napi-rs/canvas*/**']) assert.ok((EXCLUDE as string[]).includes(p), p);
+  // 실행 코드가 src/ 아래인 의존성(debug·tesseract.js main, officecrypto-tool ./src)을 지우면 설치본 엔진이 import에서 끝난다
+  assert.ok(!(EXCLUDE as string[]).some((p) => p === '!**/src/**' || p === '!node_modules/**/src/**'), 'node_modules 전체 src 제외 금지');
 });
 
 test('설치 경로: 설치 폴더 이름이 데이터 루트 이름과 같아도 경로는 Programs 아래로 나뉜다(installer.nsh가 데이터 루트 안 설치를 막는다)', () => {

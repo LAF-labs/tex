@@ -438,21 +438,24 @@ describe('Supabase 마이그레이션 내보내기', () => {
     for (const m of want) assert.equal(fs.readFileSync(path.join(dir, m.name), 'utf8'), m.sql, m.name);
   });
 
-  it('적용된 단계의 파일은 바뀌지 않는다(증분 내보내기: 운영 tex-prod에 적용된 2026110600 단계 다이제스트 고정)', () => {
+  it('적용된 단계의 파일은 바뀌지 않는다(증분 내보내기: 운영 tex-prod에 적용된 2026110600·2026110601 단계 다이제스트 고정)', () => {
     const applied: Record<string, string> = {
       '20261106000000_sax_roles.sql': 'c5563037286098d40065cf9bb30fd3a230d542b0dee626959580d686fb18a76e',
       '20261106000100_sax_account.sql': 'e51b0c6b6c8b00d14dfd8da02c3459333dbe18b0ca36a3428b4c62c0a969440f',
       '20261106000200_sax_gateway.sql': '72d99c5c0e83aadfdde1ba2099975a02f047427dfb2898fc2ed2281aee56b64a',
       '20261106000300_sax_relay.sql': '550bb0ad245e0c00a9ba0b02c8c1efcd20af789eec0e38d2a823df830c1b4bf5',
       '20261106000400_sax_push.sql': '8128117933efbf53bb171b7a97716b41f5f6bf85f0bb33f5486fcd80aad155ea',
+      // 2026110601 단계(레지스트리, #161): 운영에 적용됨
+      '20261106010000_sax_roles_registry.sql': 'a15e3cc4b5fa2fdcf9363e928b805e4fce68e15a0ebe14c009edf0c57e7a2003',
+      '20261106010100_sax_registry.sql': '212a7c65cb8ecd76603df6e734f6ef9bd4f8ccf840111230a178d1ef8b28c816',
     };
     const out = new Map(exportSupabase().map((m) => [m.name, m.sql]));
     for (const [name, digest] of Object.entries(applied)) assert.equal(createHash('sha256').update(out.get(name) ?? '').digest('hex'), digest, name);
     // 새 단계는 뒤에 붙는다(이름 순서 = 적용 순서)
     const names = [...out.keys()];
     assert.deepEqual(names, [...names].sort());
-    assert.deepEqual(names.slice(5), ['20261106010000_sax_roles_registry.sql', '20261106010100_sax_registry.sql']);
-    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => s.name)), [['account', 'gateway', 'relay', 'push'], ['registry']]);
+    assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql']);
+    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => `${s.name}:${s.versions.from}-${s.versions.to}`)), [['account:1-1', 'gateway:1-1', 'relay:1-1', 'push:1-1'], ['registry:1-1'], ['account:2-2']]);
   });
 
   it('비밀번호·키 같은 값은 생성 SQL에 없다', () => {
