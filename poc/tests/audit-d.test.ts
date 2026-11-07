@@ -426,7 +426,9 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
 
   it('금고 이벤트·fatal 문장: Google 로그인, 설정 바뀜, 누출 의심, 만료, 키 유실, env 변조', async () => {
     assert.match(vaultNotice('secret_window.refused', { reason: 'google_signin_detected' })!.text, /Google 계정이 로그인돼 있어/);
-    assert.match(vaultNotice('secret_window.refused', { reason: 'extension_not_allowed' })!.text, /전용 Chrome 설정이 바뀌어/);
+    assert.deepEqual(vaultNotice('secret_window.refused', { reason: 'extension_not_allowed' }), { text: 'Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.', retry: 'extension' });
+    assert.match(vaultNotice('secret_window.refused', { reason: 'profile_prefs_mismatch' })!.text, /전용 Chrome 설정이 바뀌어/);
+    assert.equal(vaultNotice('secret_window.refused', { reason: 'profile_prefs_mismatch' })!.retry, undefined);
     assert.equal(vaultNotice('secret_window.leak_suspected', { hits: 2 })!.text, NOTE['vault.leak_suspected']);
     assert.deepEqual(vaultNotice('secret.expired', { runId: 'run-a', kind: 'cert_password' }), { runId: 'run-a', text: '입력한 비밀번호를 5분 안에 쓰지 않아 지웠어요. 필요할 때 다시 물어볼게요.' });
     assert.equal(vaultNotice('secret.needed', {}), null);
@@ -447,5 +449,26 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     // 끝났거나 모르는 실행의 알림도 진행 중인 실행 카드에 붙는다(끝난 카드에 묻히지 않게).
     runs.notice('run-gone', 'y');
     assert.deepEqual(runs.get(d.run.id)!.notices, ['x', 'y']);
+    assert.equal(runs.get(d.run.id)!.retry, undefined);
+  });
+
+  it('확장 감지 거절: 진행 중 카드에 고정 문장과 retry, 발급 없이 끝난 카드만 [다시 시도](입력창 채우기만, [지난번과 같게]와 같은 길)', async () => {
+    const host = new FakeHost();
+    const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '' });
+    const d = interpret('A상사에 10만원 세금계산서', null, 'business', runs);
+    assert.ok(d.kind === 'draft');
+    await runs.prepare(d.run.id);
+    const n = vaultNotice('secret_window.refused', { reason: 'extension_not_allowed', count: 3, ids: 'ext0' })!;
+    runs.notice(n.runId, n.text, n.retry);
+    const r = runs.get(d.run.id)!;
+    assert.deepEqual([r.notices, r.retry], [['Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.'], 'extension']);
+    // 화면 문장에는 확장 ID·개수·경로가 없다
+    assert.ok(!/ext0|3개|\/|\\/.test(r.notices!.join()));
+    const views = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8');
+    assert.ok(views.includes("if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {"));
+    assert.ok(views.includes("btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })"));
+    // [다시 시도]는 main을 부르지 않는다(새 IPC 없음): 같은 요청을 입력창에 채우기만 한다.
+    const shell = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell.js'), 'utf8');
+    assert.match(shell, /again: \(run\) => \{\n\s+state\.vat = run\.vat;[^\n]*\n\s+fillComposer\(/);
   });
 });

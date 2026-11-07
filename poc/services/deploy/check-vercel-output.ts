@@ -277,9 +277,9 @@ export async function checkVercelOutput(root: string): Promise<{ name: string; e
       const major = Number(/^nodejs(\d+)\.x$/.exec(runtime)?.[1] ?? 0);
       out.push({ name: `${func}(런타임 ${runtime || '?'})`, error: major >= 24 ? null : `argon2id에는 Node 24.7+가 필요하다(지금 ${runtime || '알 수 없음'})` });
     }
-    // 계정을 싣는 묶음에 네이티브 애드온(.node)이 없다(argon2id는 node:crypto 내장, ADR-038). 레지스트리 묶음은 엔진 경유 better-sqlite3 prebuild가 있다(후속)
+    // 어느 묶음에도 네이티브 애드온(.node)이 없다. 계정은 argon2id가 node:crypto 내장이고(ADR-038), 레지스트리는 엔진 코어 경유로 @sax/db의
+    // better-sqlite3 JS만 따라온다(애드온은 생성자에서만 읽는데 레지스트리는 열지 않는다). prebuild는 vercel.json excludeFiles로 뺀다
     for (const [func, m] of made) {
-      if (!['sax', 'internal', 'cron'].includes(func)) continue;
       const natives = (fs.readdirSync(m.dir, { recursive: true }) as string[]).filter((f) => f.endsWith('.node'));
       out.push({ name: `${func}(네이티브 없음)`, error: natives.length ? natives.slice(0, 5).join(', ') : null });
     }

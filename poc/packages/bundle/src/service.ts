@@ -17,6 +17,7 @@ import { addCustomItem, BundleError, ensureItems, INDUSTRIES, type Industry } fr
 import { missingView } from './missing-view.ts';
 import { clearCardSlipEnough, markCardSlipEnough, missingReport, monthStatus, type MonthContext, type TaxInvoiceRow } from './month.ts';
 import { daemonSnapshot, type DaemonSnapshotSources } from './daemon-snapshot.ts';
+import { requestCandidates } from './request-paste.ts';
 import { confirmNoticeCard, noticeConfirmCard, type InsuranceKind, type InsuranceNoticeMatchInput } from './notice-match.ts';
 
 type Params = Record<string, unknown>;
@@ -360,7 +361,14 @@ export class BundleService {
       case 'bundle.addItem': {
         const profileId = this.profile(p.profileId);
         const cadence = CADENCES.includes(p.cadence as BundleCadence) ? (p.cadence as BundleCadence) : fail('bad_cadence');
-        return addCustomItem(new BundleRepo(this.db), profileId, text(p.name, 'bad_item_name', 60), cadence);
+        // 붙여 넣은 요청에서 고른 후보는 source 'pasted_request'로 남긴다(M6-7). 빼면 'user'(기존 동작)
+        const source = p.source === undefined || p.source === 'user' ? 'user' : p.source === 'pasted_request' ? 'pasted_request' : fail('bad_item_source');
+        return addCustomItem(new BundleRepo(this.db), profileId, text(p.name, 'bad_item_name', 60), cadence, source);
+      }
+      case 'bundle.requestCandidates': {
+        // 세무사 요청 붙여넣기 → 항목 후보(M6-7, 규칙 사전, 모델 없음). 읽기만 한다(DB에 쓰지 않음, 글을 저장·기록하지 않음)
+        const profileId = this.profile(p.profileId);
+        return { candidates: requestCandidates({ text: p.text as string, items: new BundleRepo(this.db).items(profileId) }) };
       }
       case 'bundle.cardSlipEnough': {
         const profileId = this.profile(p.profileId);
