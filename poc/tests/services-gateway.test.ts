@@ -190,9 +190,39 @@ describe('M4-6 게이트웨이: /v1/decide 번들 주입·스키마·트립와�
     }
     assert.equal(e.provider.decides.length, 0);
     assert.equal(e.events.filter((x) => x === 'pii_tripwire').length, 4);
-    assert.ok(!e.logs.some((l) => l.includes('900101') || l.includes('4111')));
+    assertNoPii(e.logs, ['900101-1234567', '123-45-67890', '4111 1111 1111 1111', '110-123-456789']);
+  });
+
+  it('PII 누출 단언은 무작위 필드(aid HMAC 16진수·ms)의 우연한 숫자에 흔들리지 않고, 진짜 누출은 그대로 잡는다', () => {
+    // 2026-11-07 엔진 #184 Windows CI: aid 16진수가 '4111'을 우연히 담아 옛 부분 문자열 단언이 실패했다
+    const access = (o: Record<string, unknown>) => JSON.stringify({ t: 0, svc: 'gateway', m: 'POST', route: '/v1/decide', status: 400, code: 'gateway.pii_tripwire', bytesIn: 1, bytesOut: 1, ...o });
+    const raw = ['900101-1234567', '4111 1111 1111 1111'];
+    assertNoPii([access({ aid: 'e94111900101ab12', ms: 4111 }), access({ aid: '9001011234567aaa', ms: 900101 })], raw);
+    for (const leak of [access({ code: '900101-1234567' }), access({ code: '9001011234567' }), access({ route: '/v1/x?c=4111111111111111' }), access({ code: '900101-12' }), access({ x: 'a 4111 1111' }), access({ code: 'c4111' }), access({ aid: 'x 900101-1234567 y' })]) {
+      assert.throws(() => assertNoPii([leak], raw), leak);
+    }
   });
 });
+
+/**
+ * 로그에 원문 PII가 없다는 단언(경계 있는 비교).
+ * - 줄 전체(무작위 필드 포함)에서 원문 값과 숫자만 남긴 값이 영숫자 경계로 나타나면 실패. 16진수 aid 안에 우연히 숫자가 이어져도 경계가 없어 걸리지 않는다
+ * - 무작위 필드(aid: 실행마다 새 솔트의 HMAC, ms: 측정값)를 뺀 나머지에서는 숫자 조각만 있어도 실패(잘린 누출). 고정 필드라 우연이 없다
+ */
+function assertNoPii(lines: readonly string[], raws: readonly string[]): void {
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const bounded = raws.flatMap((v) => [v, v.replace(/\D/g, '')]).map((v) => new RegExp(`(?<![0-9A-Za-z])${esc(v)}(?![0-9A-Za-z])`));
+  // 조각: 숫자만 남긴 값의 앞 6자리, 그리고 4자리 이상인 첫 묶음(옛 단언의 '900101'·'4111'을 포함한다)
+  const fragments = [...new Set(raws.flatMap((v) => [v.replace(/\D/g, '').slice(0, 6), /^\D*(\d+)/.exec(v)![1]!]).filter((f) => f.length >= 4))];
+  for (const line of lines) {
+    for (const re of bounded) assert.ok(!re.test(line), `원문 PII ${re.source}: ${line}`);
+    const rest = JSON.stringify(JSON.parse(line), (k, v: unknown) => (k === 'aid' || k === 'ms' ? undefined : v));
+    for (const f of fragments) {
+      // 잘린 값도 구분자를 지운 형태로 본다(900101-12 → 90010112)
+      assert.ok(!rest.includes(f) && !rest.replace(/[\s-]/g, '').includes(f), `원문 PII 조각 ${f}: ${line}`);
+    }
+  }
+}
 
 describe('M4-6 게이트웨이: runToken·실행당 예산·한도', () => {
   let e: Env;
