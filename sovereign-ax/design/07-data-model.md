@@ -323,7 +323,7 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
   - 첨부는 두 파일이다. 암호 엑셀(ECMA-376 암호화)과, 사진·PDF가 있으면 같은 암호의 AES-256 ZIP이다. 사진·PDF를 암호 밖에 두지 않는다. 메일 창(ADR-034 결정 10 (가))에는 두 파일과 받는 쪽 안내 문구(예: "암호는 따로 알려 드려요. ZIP은 반디집·알집·7-Zip으로 여세요". 최종 문구는 화면 트랙)가 함께 들어간다. 운영체제 기본 압축 풀기가 AES ZIP을 못 여는 경우가 있어서다(데이터 PR #58 본문).
   - 급여 시트의 주민번호는 근거 확인 전 **가림이 기본**이다(R13 D-L3, yulmu 결정 2026-11-05). 사장님이 설정 `bundle.includeRrn`을 켜면 전체 번호를 넣고, 그 회차 행의 `bundle_exports.rrn_included`를 1로 남긴다(엑셀과 ZIP은 한 행에 함께 적는다). 처리 근거 질의(R13 Q9) 회신에 따라 기본값을 다시 본다.
   - [급여 기록 내보내기](08 D-06, 3년 보관용)에는 주민번호를 넣지 않는다.
-  - "증빙과 대조되지 않은 카드 지출"은 '빠진 것' 시트와 화면에 표시만 한다. 판정하지 않고, 화면에서는 기본으로 접는다. 사장님이 "카드 전표로 충분"에 체크하면 그 건은 목록에서 뺀다. 체크 상태를 담을 컬럼은 데이터 트랙이 정한다(제안: `card_txn_memos`와 같은 match_key로 잇는 표시).
+  - "증빙과 대조되지 않은 카드 지출"은 '빠진 것' 시트와 화면에 표시만 한다. 판정하지 않고, 화면에서는 기본으로 접는다. 사장님이 "카드 전표로 충분"에 체크하면 다음 달부터 이 목록을 뺀다. 체크는 건마다가 아니라 사업장 설정 한 칸 `settings` `profile.<id>.bundle.cardSlipEnoughFrom`(시작 달)이고, 끄면 지우고 목록이 돌아온다(데이터 트랙 결정, decisions.tsv 2026-11-05 M6-14, PR #58). 건별 표시가 필요해지면 `card_txn_memos`에 표시 칸을 더한다.
 - 월초 "세무사 꾸러미 준비됨" 알림은 `schedules`(서류 갱신용) 행이 아니라 설정 `bundle.reminderDay`·`payroll.halfYearWithholding`으로 데몬 `notify`가 계산한다.
 - 설정(ADR-034): `bundle.accountantEmail`("내 세무사" 주소, 채택(ADR-034 결정 10). 로컬 설정이고 서버로 보내지 않는다), `bundle.industries`(2층 업종), `payroll.enabled`(급여대장 켬, 기본 끔. 끄면 레일에서 숨긴다), `payroll.shiftsEnabled`(근무표 = 세후 계산기 켬, 기본 끔), `bundle.includeRrn`(꾸러미 급여 시트에 주민번호 전체를 넣음, 기본 끔, R13 D-L3). 이 다섯은 프로필마다 다르므로 키에 프로필 ID를 붙여 `profile.<id>.bundle.accountantEmail`처럼 저장한다. `bundle.reminderDay`·`payroll.halfYearWithholding`도 같다.
 - 이번 달 판(ADR-033)은 따로 테이블을 두지 않는다. `bundle_entries`·`documents`·`schedules`·거래처 발급 이력에서 매번 계산한다.

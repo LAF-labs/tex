@@ -30,7 +30,8 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
+import { ADVICE_TEXT, engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
+import { offlineAdviceMentioned } from './advice-words.ts';
 import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, sentFromGateway, type Counterparty, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -746,7 +747,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const sent = sentFromGateway(gwIssuedSince(mark));
       const via = r.route?.via === 'model' ? 'model' : 'offline';
       log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
-      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null, sent);
+      // 판정 불가(decide.unavailable)일 때만 로컬 낱말로 고정 문구를 덧붙인다(D04 §3, 팀장 결정 2026-11-07). 작업은 그대로다.
+      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, r.fallback === 'decide.unavailable' && offlineAdviceMentioned(text) ? ADVICE_TEXT : null, sent);
       const to = routed(r.route, local);
       if ('say' in to) {
         runs.pending.asked = null;
