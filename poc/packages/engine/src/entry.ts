@@ -30,6 +30,7 @@ import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, IntentResolver } from './intent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
+import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -68,6 +69,11 @@ for (const m of DAEMON_READ_QUERIES) {
 }
 // 세무사 요청 붙여넣기 후보(M6-7)도 BundleService가 맡는다(꾸러미 항목을 읽어 이미 있는 항목을 가리킨다).
 for (const m of BUNDLE_REQUEST_COMMANDS) {
+  PAYROLL.add(m);
+  ALLOWED.add(m);
+}
+// 사업용 카드 내역 화면(M6-3)도 BundleService가 맡는다.
+for (const m of [...CARD_READ_QUERIES, ...CARD_COMMANDS]) {
   PAYROLL.add(m);
   ALLOWED.add(m);
 }

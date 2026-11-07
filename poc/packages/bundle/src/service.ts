@@ -5,7 +5,7 @@
 // 계산 결과는 엔진이 다시 계산해 저장한다: main이 금액을 지어 보내 저장하는 길이 없다(payroll.saveDraft는 compute와 같은 입력을 받는다).
 import path from 'node:path';
 import {
-  BundleExportRepo, BundleRepo, ColumnCipherError, DocumentRepo, EmployeeRepo, PayrollRepo, ProfileRepo, RateTableRepo, ShiftRepo, ValidationError,
+  BundleExportRepo, BundleRepo, CardRepo, ColumnCipherError, DocumentRepo, EmployeeRepo, PayrollRepo, ProfileRepo, RateTableRepo, ShiftRepo, ValidationError,
   type BundleCadence, type ColumnCipher, type Db, type Employee,
 } from '@sax/db';
 import {
@@ -18,6 +18,7 @@ import { missingView } from './missing-view.ts';
 import { clearCardSlipEnough, markCardSlipEnough, missingReport, monthStatus, type MonthContext, type TaxInvoiceRow } from './month.ts';
 import { daemonSnapshot, type DaemonSnapshotSources } from './daemon-snapshot.ts';
 import { requestCandidates } from './request-paste.ts';
+import { cardMonthView } from './card-view.ts';
 import { confirmNoticeCard, noticeConfirmCard, type InsuranceKind, type InsuranceNoticeMatchInput } from './notice-match.ts';
 
 type Params = Record<string, unknown>;
@@ -304,6 +305,24 @@ export class BundleService {
         return monthStatus(this.ctx(p));
       case 'db.query.bundle.missing':
         return missingView(missingReport(this.ctx(p)));
+      // ── 사업용 카드 내역(08 D-04, M6-3). 읽기·메모만, [최신화] 실행은 플레이북 몫 ──
+      case 'db.query.card.list':
+        return cardMonthView(this.db, this.profile(p.profileId), month(p.month), this.opts.now?.() ?? new Date());
+      case 'card.setMemo': {
+        const profileId = this.profile(p.profileId);
+        const repo = new CardRepo(this.db);
+        if (!repo.txn(profileId, typeof p.txnId === 'string' ? p.txnId : '')) return fail('not_found');
+        if (typeof p.memo !== 'string') return fail('bad_memo');
+        return repo.setMemo(p.txnId as string, p.memo);
+      }
+      case 'card.reattachMemo': {
+        const profileId = this.profile(p.profileId);
+        return new CardRepo(this.db).reattachMemo(profileId, typeof p.memoId === 'string' ? p.memoId : '', typeof p.txnId === 'string' ? p.txnId : '');
+      }
+      case 'card.deleteMemo': {
+        const profileId = this.profile(p.profileId);
+        return { deleted: new CardRepo(this.db).deleteMemo(profileId, typeof p.memoId === 'string' ? p.memoId : '') };
+      }
       case 'db.query.rateTables.installed': {
         const installed = new RateTableRepo(this.db).installedPackage(RATE_TABLES_PACKAGE_ID);
         const tables = availableTables(new RateTableRepo(this.db).list(), loadBundledPackage()).map((t) => ({ id: t.id, kind: t.kind, effectiveFrom: t.effectiveFrom, effectiveTo: t.effectiveTo, review: t.review }));

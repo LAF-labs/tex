@@ -19,6 +19,7 @@ import {
   MIGRATIONS_DIR,
   MockMailSender,
   MockPaymentGateway,
+  NOTICE,
   PASSWORD,
   PasswordHasher,
   accountRouter,
@@ -27,8 +28,35 @@ import {
   checkPasswordPolicy,
   parsePepperKeys,
   withFloor,
+  type NoticeKind,
   type PasswordDeps,
 } from '../services/account/src/index.ts';
+
+/** 알림 발송이 실패·지연되는 메일(실제 어댑터의 장애 흉내). 코드 메일은 그대로 */
+class FlakyMail extends MockMailSender {
+  failNotices = 0;
+  hold: Promise<void> | null = null;
+  calls = 0;
+  failResets = 0;
+  override async sendResetCode(to: string, code: string): Promise<void> {
+    this.calls++;
+    if (this.hold) await this.hold;
+    if (this.failResets > 0) {
+      this.failResets--;
+      throw new Error('mail down');
+    }
+    return super.sendResetCode(to, code);
+  }
+  override async sendNotice(to: string, kind: NoticeKind): Promise<void> {
+    this.calls++;
+    if (this.hold) await this.hold;
+    if (this.failNotices > 0) {
+      this.failNotices--;
+      throw new Error('mail down');
+    }
+    return super.sendNotice(to, kind);
+  }
+}
 import { fileURLToPath } from 'node:url';
 import { Clock, D, H, client, edKey, internalAuth } from './services-kit.ts';
 
@@ -52,13 +80,19 @@ interface Env {
   req: ReturnType<typeof client>;
   logs: string[];
   events: string[];
+  /** 계정 서비스 이벤트(onEvent: 알림 큐 등) */
+  svcEvents: string[];
+  /** 응답과 따로 돌린 일(알림 큐 즉시 발송)을 모두 기다린다 */
+  flush(): Promise<void>;
 }
 
-async function start(o: { passwords?: boolean; db?: Sql; keys?: string; clock?: Clock } = {}): Promise<Env> {
+async function start(o: { passwords?: boolean; db?: Sql; keys?: string; clock?: Clock; mail?: MockMailSender } = {}): Promise<Env> {
   const clock = o.clock ?? new Clock();
   const db = o.db ?? openSqlite();
   await migrate(db, 'account', MIGRATIONS_DIR);
-  const mail = new MockMailSender();
+  const mail = o.mail ?? new MockMailSender();
+  const deferred: Array<() => Promise<void>> = [];
+  const svcEvents: string[] = [];
   const signKey = edKey().priv;
   const events: string[] = [];
   const svc = new AccountService({
@@ -71,12 +105,17 @@ async function start(o: { passwords?: boolean; db?: Sql; keys?: string; clock?: 
     publicOrigin: ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/billing/done',
     passwords: o.passwords === false ? undefined : pwDeps(o.keys, events),
+    onEvent: (n) => void svcEvents.push(n),
+    defer: (t) => void deferred.push(t),
     now: clock.now,
   });
+  const flush = async () => {
+    while (deferred.length) await deferred.shift()!();
+  };
   const logs: string[] = [];
   const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internal: internalAuth() });
   const server = createServer(router, { logger: new Logger('account', (l) => logs.push(l), clock.now) });
-  return { clock, db, mail, svc, server, req: client(await listen(server)), logs, events };
+  return { clock, db, mail, svc, server, req: client(await listen(server)), logs, events, svcEvents, flush };
 }
 
 const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
@@ -294,6 +333,7 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     const r2 = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'en@example.com' } });
     assert.equal(r1.status, 200);
     assert.deepEqual(Object.keys(r1.json).sort(), Object.keys(r2.json).sort());
+    await e.flush();
     assert.equal(e.mail.lastResetCode('ghost@example.com'), undefined);
     assert.ok(e.mail.lastResetCode('en@example.com'));
   });
@@ -306,7 +346,12 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     for (let i = 0; i < 5; i++) assert.equal(await login('nope nope ' + i), 'account.credentials_invalid');
     assert.equal(await login(GOOD), 'account.credentials_invalid', '잠금 중에는 맞아도 같은 실패');
     assert.equal(await login('nope again'), 'account.credentials_invalid');
+    // 알림은 응답 경로에서 보내지 않는다: 큐에 하나, 응답 뒤 일이 돌아야 메일이 나간다
+    assert.equal(e.mail.outbox.filter((m) => m.kind === 'password_locked').length, 0);
+    assert.equal((await e.db.all('SELECT * FROM notice_outbox')).length, 1);
+    await e.flush();
     assert.equal(e.mail.outbox.filter((m) => m.kind === 'password_locked').length, 1);
+    assert.equal((await e.db.all('SELECT * FROM notice_outbox')).length, 0);
     assert.deepEqual(e.events.filter((x) => x === 'account.password_locked'), ['account.password_locked']);
     // 잠금은 비밀번호 수단만
     await codeLogin(e, 'lk@example.com');
@@ -314,6 +359,7 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     assert.equal(await login(GOOD), 'account.credentials_invalid');
     e.clock.advance(1);
     for (let i = 0; i < 5; i++) await login('nope nope ' + i);
+    await e.flush();
     assert.equal(e.mail.outbox.filter((m) => m.kind === 'password_locked').length, 2);
     e.clock.advance(30 * 60_000 - 1);
     assert.equal(await login(GOOD), 'account.credentials_invalid', '두 번째 잠금은 30분');
@@ -330,6 +376,84 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     e.clock.advance(PASSWORD.lockDecayMs + 1);
     await e.svc.sweep();
     assert.equal(await e.db.one('SELECT 1 AS x FROM pw_locks'), undefined);
+  });
+
+  it('잠금 알림 발송 큐: 메일이 멈추거나 실패해도 로그인 응답은 같은 401·같은 하한, 알림은 사라지지 않고 정리 때 다시 보낸다', async () => {
+    const mail = new FlakyMail();
+    const f = await start({ mail });
+    try {
+      await withPassword(f, 'q@example.com');
+      mail.calls = 0; // 설정 알림(password_set)은 세지 않는다
+      const pwReq = () => f.req('POST', '/v1/auth/password', { body: { email: 'q@example.com', password: 'nope nope x' } });
+      for (let i = 0; i < 4; i++) assert.equal((await pwReq()).status, 401);
+      // 다섯 번째(잠금): 메일이 영영 응답하지 않아도 응답은 하한 근처에서 같은 401이다
+      let release!: () => void;
+      mail.hold = new Promise<void>((ok) => (release = ok));
+      mail.failNotices = 1;
+      const t0 = performance.now();
+      const r = await pwReq();
+      const ms = performance.now() - t0;
+      assert.deepEqual([r.status, r.json], [401, { error: 'account.credentials_invalid' }]);
+      assert.ok(ms < PASSWORD.responseFloorMs + 400, `${ms}ms`);
+      assert.equal(mail.calls, 0, '응답 경로에서 메일을 부르지 않는다');
+      // 응답 뒤 일: 메일 실패 → 행은 남고 5분 뒤로
+      const run = f.flush();
+      release();
+      await run;
+      assert.equal(mail.calls, 1);
+      const row = (await f.db.one<{ attempts: number; next_at: number }>('SELECT attempts, next_at FROM notice_outbox'))!;
+      assert.deepEqual([Number(row.attempts), Number(row.next_at) - f.clock.now()], [1, NOTICE.retryBaseMs]);
+      assert.ok(f.svcEvents.includes('account.notice_retry.password_locked'));
+      // 기한 전 정리는 보내지 않고, 기한이 지나면 정리(cron)가 보낸다
+      mail.hold = null;
+      await f.svc.sweep();
+      assert.equal(mail.outbox.filter((m) => m.kind === 'password_locked').length, 0);
+      f.clock.advance(NOTICE.retryBaseMs);
+      await f.svc.sweep();
+      assert.deepEqual(mail.outbox.filter((m) => m.kind === 'password_locked').map((m) => m.to), ['q@example.com']);
+      assert.equal((await f.db.all('SELECT * FROM notice_outbox')).length, 0);
+      assert.ok(f.svcEvents.includes('account.notice_sent.password_locked'));
+      // 이벤트는 이름·종류만(주소·ID 없음)
+      for (const ev of f.svcEvents) assert.ok(!ev.includes('@') && !looksSensitive(ev), ev);
+    } finally {
+      f.server.close();
+    }
+  });
+
+  it('발송 큐: 동시에 도는 두 처리자도 한 번만 보내고, 계속 실패하면 상한(8회) 뒤 버린다, 계정을 지우면 행도 지운다', async () => {
+    const mail = new FlakyMail();
+    const f = await start({ mail });
+    try {
+      await withPassword(f, 'c@example.com');
+      mail.calls = 0; // 설정 알림(password_set)은 세지 않는다
+      for (let i = 0; i < 5; i++) await code(f.svc.passwordLogin('c@example.com', 'nope nope ' + i));
+      f.events.length = 0;
+      // 응답 뒤 일과 cron이 겹친다
+      await Promise.all([f.flush(), f.svc.drainNotices(), f.svc.drainNotices()]);
+      assert.equal(mail.outbox.filter((m) => m.kind === 'password_locked').length, 1);
+      assert.equal(mail.calls, 1);
+      // 계속 실패: 5분 × 2^(n-1), 상한 6시간, 8번째 실패에서 버림
+      const acc = (await f.db.one<{ id: string }>('SELECT id FROM accounts WHERE email = $1', ['c@example.com']))!.id;
+      await f.db.run("INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ('x1', $1, 'password_locked', $2, 0, $2)", [acc, f.clock.now()]);
+      mail.failNotices = 100;
+      const waits: number[] = [];
+      for (let i = 0; i < NOTICE.maxAttempts; i++) {
+        await f.svc.drainNotices();
+        const r = await f.db.one<{ next_at: number }>("SELECT next_at FROM notice_outbox WHERE id = 'x1'");
+        if (!r) break;
+        waits.push(Number(r.next_at) - f.clock.now());
+        f.clock.advance(Number(r.next_at) - f.clock.now());
+      }
+      assert.deepEqual(waits, [1, 2, 4, 8, 16, 32, 64].map((k) => Math.min(k * NOTICE.retryBaseMs, NOTICE.retryMaxMs)));
+      assert.equal(await f.db.one("SELECT 1 AS x FROM notice_outbox WHERE id = 'x1'"), undefined);
+      assert.ok(f.svcEvents.includes('account.notice_dropped.password_locked'));
+      // 계정 삭제(ON DELETE CASCADE)면 큐 행도 사라진다
+      await f.db.run("INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ('x2', $1, 'password_locked', $2, 0, $2)", [acc, f.clock.now()]);
+      await f.db.run('DELETE FROM accounts WHERE id = $1', [acc]);
+      assert.equal(await f.db.one("SELECT 1 AS x FROM notice_outbox WHERE id = 'x2'"), undefined);
+    } finally {
+      f.server.close();
+    }
   });
 
   it('정지 계정은 맞아도 같은 실패', async () => {
@@ -367,6 +491,7 @@ describe('ADR-038 재설정(이메일 코드)', { skip: !argon2Available() }, ()
     assert.equal(st.status, 200);
     assert.equal(st.json.expiresInSec, 600);
     const resetId = st.json.resetId as string;
+    await e.flush();
     const c = e.mail.lastResetCode('rs@example.com')!;
     const wrong = c === '000000' ? '000001' : '000000';
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_invalid');
@@ -383,15 +508,60 @@ describe('ADR-038 재설정(이메일 코드)', { skip: !argon2Available() }, ()
     assert.equal(await code(e.svc.passwordLogin('rs@example.com', GOOD2)), 'ok', '잠금도 풀렸다');
   });
 
+  it('재설정 코드 메일은 응답 경로 밖(ADR-038 (e) ①): 메일이 멈추거나 실패해도 계정 유무와 같은 200·같은 하한, 실패는 이벤트 이름만, 다시 요청하면 새 코드', async () => {
+    const mail = new FlakyMail();
+    const f = await start({ mail });
+    try {
+      await withPassword(f, 'rm@example.com');
+      mail.calls = 0;
+      let release!: () => void;
+      mail.hold = new Promise<void>((ok) => (release = ok));
+      mail.failResets = 1;
+      const timed = async (email: string) => {
+        const t0 = performance.now();
+        const r = await f.req('POST', '/v1/auth/password/reset', { body: { email } });
+        return { r, ms: performance.now() - t0 };
+      };
+      const a = await timed('rm@example.com');
+      const b = await timed('ghost-rm@example.com');
+      for (const x of [a, b]) {
+        assert.equal(x.r.status, 200);
+        assert.ok(x.ms >= PASSWORD.responseFloorMs - 5 && x.ms < PASSWORD.responseFloorMs + 400, `${x.ms}ms`);
+      }
+      assert.deepEqual(Object.keys(a.r.json).sort(), Object.keys(b.r.json).sort());
+      assert.equal(mail.calls, 0, '응답 경로에서 메일을 부르지 않는다');
+      const run = f.flush();
+      release();
+      await run;
+      assert.equal(mail.calls, 1, '계정 없는 주소로는 보내지 않는다');
+      assert.equal(mail.lastResetCode('rm@example.com'), undefined, '첫 발송은 실패');
+      assert.deepEqual(f.svcEvents.filter((x) => x.startsWith('account.reset_mail')), ['account.reset_mail_failed']);
+      // 큐(DB)에 코드 평문이 없다: 재설정 행은 HMAC뿐, 알림 큐에 행 없음
+      assert.equal((await f.db.all('SELECT * FROM notice_outbox')).length, 0);
+      // 다시 요청하면 새 코드가 간다
+      mail.hold = null;
+      const again = await f.req('POST', '/v1/auth/password/reset', { body: { email: 'rm@example.com' } });
+      await f.flush();
+      const c = mail.lastResetCode('rm@example.com')!;
+      assert.ok(c);
+      const ok = await f.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: again.json.resetId, code: c, password: GOOD2 } });
+      assert.equal(ok.status, 200, ok.text);
+    } finally {
+      f.server.close();
+    }
+  });
+
   it('5회 틀리면 코드 폐기(code_locked), 10분 만료', async () => {
     await withPassword(e, 'rs2@example.com');
     const st = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'rs2@example.com' } });
+    await e.flush();
     const c = e.mail.lastResetCode('rs2@example.com')!;
     const wrong = c === '000000' ? '000001' : '000000';
     for (let i = 0; i < 4; i++) assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_invalid');
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_locked');
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: c, password: GOOD2 } })).json.error, 'account.code_invalid');
     const st2 = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'rs2@example.com' } });
+    await e.flush();
     e.clock.advance(PASSWORD.resetCodeTtlMs);
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st2.json.resetId, code: e.mail.lastResetCode('rs2@example.com'), password: GOOD2 } })).json.error, 'account.code_invalid');
     const row = await e.db.one<Record<string, unknown>>('SELECT * FROM reset_codes');
@@ -472,7 +642,7 @@ describe('ADR-038 마이그레이션 002', () => {
       await migrate(db, 'account', dir);
       await db.run("INSERT INTO accounts (id, email, status, created_at) VALUES ('a1', 'm@example.com', 'active', 1)");
       await db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, expires_at) VALUES ('h1', 'a1', 'passkey', 5, 99)");
-      assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [2]);
+      assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [2, 3]);
       assert.deepEqual({ ...(await db.one('SELECT token_hash, account_id, auth_method, created_at, auth_at, expires_at FROM sessions'))! }, { token_hash: 'h1', account_id: 'a1', auth_method: 'passkey', created_at: 5, auth_at: 5, expires_at: 99 });
       await db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, auth_at, expires_at) VALUES ('h2', 'a1', 'refresh', 1, 1, 2)");
       await assert.rejects(db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, auth_at, expires_at) VALUES ('h3', 'a1', 'magic', 1, 1, 2)"));

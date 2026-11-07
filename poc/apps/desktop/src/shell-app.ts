@@ -30,14 +30,15 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
+import { ADVICE_TEXT, engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
+import { offlineAdviceMentioned } from './advice-words.ts';
 import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
-import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
+import { CounterpartyBook } from './counterparty-book.ts';
 import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
@@ -210,15 +211,15 @@ function profileView(p: DbProfile): Profile {
   return { kind: p.kind, name: p.displayName, bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? '발급 인증 미설정' };
 }
 
-/** DB 거래처 → 셸 화면 모델. 품목 열이 DB에 없어 fixture 시연 값(itemHints)을 쓴다. */
-function counterpartyView(c: DbCounterparty, items: Record<string, string>): Counterparty {
+/** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
+function counterpartyView(c: DbCounterparty, items: Record<string, string>, saved?: string): Counterparty {
   return {
     id: c.id,
     name: c.name,
     bizNo: c.bizNo,
     rep: c.repName ?? '',
     email: c.email ?? '',
-    item: items[c.bizNo] ?? '',
+    item: saved || (items[c.bizNo] ?? ''),
     status: c.verifiedStatus ?? '확인 전',
     checkedOn: c.verifiedAt?.slice(0, 10) ?? '',
     lastIssuedOn: c.lastUsedAt?.slice(0, 10) ?? null,
@@ -263,7 +264,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     business = b ? profileView(b) : null;
     // 최근 발급일: 원장(DB)에 없으면 문서함 세금계산서(지난 발급 견본 포함)에서
     const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
-    cps = ((await host.rpc('db.query.counterparties.list')) as DbCounterparty[]).map((c) => counterpartyView(c, fixture?.itemHints ?? {})).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
+    const rows = (await host.rpc('db.query.counterparties.list')) as DbCounterparty[];
+    // 저장 품목의 첫 이름(못 읽으면 없음). 거래처 목록 모양은 #141 그대로라 품목은 따로 읽는다(#144).
+    const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
+    cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
   };
   let seed: DemoSeed | null = null;
   const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
@@ -726,7 +730,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = text.trim() ? await intent.resolve(text) : { route: null, fallback: 'empty' };
       const via = r.route?.via === 'model' ? 'model' : 'offline';
       log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
-      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null);
+      // 판정 불가(decide.unavailable)일 때만 로컬 낱말로 고정 문구를 덧붙인다(D04 §3, 팀장 결정 2026-11-07). 작업은 그대로다.
+      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, r.fallback === 'decide.unavailable' && offlineAdviceMentioned(text) ? ADVICE_TEXT : null);
       const to = routed(r.route, local);
       if ('say' in to) {
         runs.pending.asked = null;
@@ -804,12 +809,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       desktop.showItemInFolder(await docFile(String(p.id)));
       return {};
     }),
-    // 거래처 추가·수정(엔진 counterparty.create/update, cpBook). 저장 품목은 DB 열이 없어 시연(fixture)에서만 남긴다.
+    // 거래처 추가·수정(엔진 counterparty.create/update) + [저장 품목] 칸 = 첫 저장 품목(counterparty.setItems, #144).
+    // 시연 값(itemHints)은 저장한 뒤로는 쓰지 않는다(DB가 정본).
     'counterparty.save': async (p) => {
       const saved = await cpBook.save(p);
-      const item = String(p.item ?? '').trim().slice(0, CP_FIELD_MAX.item);
-      if (fixture && item) fixture.itemHints[saved.bizNo] = item;
-      await refresh();
+      if (fixture) delete fixture.itemHints[saved.bizNo];
+      try {
+        await cpBook.setFirstItem(saved.id, p.item);
+      } finally {
+        await refresh();
+      }
       return { id: saved.id, counterparties: cps };
     },
     // [등록증으로 채우기]: 파일 고르기를 여니 실제 클릭 뒤에만(ADR-027 결정 8). 후보만 돌려준다(주소는 main이 든다).

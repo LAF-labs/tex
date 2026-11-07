@@ -41,11 +41,11 @@
 | `POST /v1/auth/password` | 없음 | `{email, password, remember?}` | `200 {session, expiresInSec, refreshToken?, refreshExpiresInSec?}` | `401 account.credentials_invalid`: 이메일 없음·비밀번호 없음·틀림·잠금·정지 계정 **모두 같은 본문**이고 모두 argon2id를 한 번 돈 뒤(없으면 더미) 응답 시각 하한 700ms에 맞춘다. IP당 60회/시(`auth-ip`, 코드·패스키와 같은 창). 해시 대기 줄이 차면 `429 policy.rate_limited`(`Retry-After: 1`) |
 | `PUT /v1/password` | 세션(최근 10분 안의 코드·패스키·비밀번호 로그인) | `{password}` | `204` + 알림 메일 `password_set` | `403 account.reauth_required`(갱신 세션이거나 인증 뒤 10분 지남), `400 account.password_too_short`·`password_too_long`(NFKC 뒤 코드 포인트 10~128), `account.password_contains_identity`(이메일 전체·로컬 부분 3자 이상·서비스명), `account.password_breached`(로컬 흔한·유출 목록) |
 | `DELETE /v1/password` | 세션(위와 같음) | — | `204` | 해시·잠금 행 삭제 |
-| `POST /v1/auth/password/reset` | 없음 | `{email}` | `200 {resetId, expiresInSec:600}` | 계정이 있을 때만 메일(6자리)을 보내지만 응답은 같고 시각 하한도 같다. 이메일당 5회/시, IP당 30회/시 |
+| `POST /v1/auth/password/reset` | 없음 | `{email}` | `200 {resetId, expiresInSec:600}` | 계정이 있을 때만 메일(6자리)을 보내지만 응답은 같고 시각 하한도 같다. 메일은 응답 경로에서 기다리지 않는다(응답과 따로 메모리에서 한 번 보낸다, 큐 없음: 코드 평문을 DB에 두지 않는다). 실패하면 이벤트 `account.reset_mail_failed`뿐이고 사용자가 다시 요청한다(ADR-038 (e)). 이메일당 5회/시, IP당 30회/시 |
 | `POST /v1/auth/password/reset/verify` | 없음 | `{resetId, code, password, remember?}` | `200 {session, expiresInSec, refreshToken?, …}` | `account.code_invalid`(틀림·만료·다른 resetId·이미 씀), 5회째 틀리면 `account.code_locked`(코드 폐기). 정책 오류(위)는 코드를 남긴다. 성공하면 잠금 해제, **그 계정의 다른 세션·갱신 토큰 전부 폐기**, 알림 메일 `password_reset`. 금고·기기 키·기기 목록·기기 범위 토큰은 건드리지 않는다 |
 
 - 해시: argon2id(m=64MiB, t=3, p=1, 솔트 16B, 출력 32B) over HMAC-SHA256(페퍼, utf8(NFKC(비밀번호))). 매개변수 문자열(`a2id-v1:m65536:t3:p1:k<kid>`)에 페퍼 키 ID가 있고, 현재와 다르면 로그인 성공 때 다시 해시한다.
-- 잠금: 계정당 연속 5회 실패면 15분 × 2^단계(상한 24시간), 잠금마다 알림 메일 `password_locked` 1회. 잠금 중에는 맞아도 같은 실패이고 실패 수도 쌓지 않는다. 잠금은 비밀번호만 막는다(코드·패스키 로그인은 그대로). 잠금이 끝나고 하루 동안 실패가 없으면 단계를 지운다.
+- 잠금: 계정당 연속 5회 실패면 15분 × 2^단계(상한 24시간), 잠금마다 알림 메일 `password_locked` 1회. 알림은 응답 경로에서 보내지 않는다. 잠금과 같은 트랜잭션으로 발송 큐(`notice_outbox`)에 넣고, 응답과 따로 곧바로 한 번 시도한 뒤 남으면 주기 작업이 보낸다. 그래서 메일 지연·실패가 응답 본문·시각을 바꾸지 않고 알림도 사라지지 않는다(ADR-038 (b)·(d)). 잠금 중에는 맞아도 같은 실패이고 실패 수도 쌓지 않는다. 잠금은 비밀번호만 막는다(코드·패스키 로그인은 그대로). 잠금이 끝나고 하루 동안 실패가 없으면 단계를 지운다.
 - 패스키가 있는 계정에서 비밀번호 세션은 패스키 세션이 아니다(기기 추가 등은 `account.passkey_required`, D09 §2.2).
 
 ## 자동 로그인: 갱신 토큰(ADR-038 (f))
@@ -141,4 +141,4 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 
 ## 주기 작업(60초)
 
-만료 로그인 코드·인가 코드·패스키 챌린지·세션·갱신 토큰·재설정 코드 삭제, 하루 조용한 비밀번호 잠금 행 삭제, argon2id 실측 이벤트(한 시간에 한 번, `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`, 수치만), 30일 지난 기기 교체 이력 삭제, 7일 지난 대기 기기 삭제, 삭제·폐기 유예가 끝난 기기 폐기(+정지 훅).
+만료 로그인 코드·인가 코드·패스키 챌린지·세션·갱신 토큰·재설정 코드 삭제, 하루 조용한 비밀번호 잠금 행 삭제, 알림 발송 큐 비우기(기한이 된 행을 임대 5분으로 집어 보낸다. 실패하면 5분 × 2^(시도-1), 상한 6시간 뒤 다시, 8번 실패하면 버린다. 이벤트 `account.notice_sent.<종류>`·`notice_retry.<종류>`·`notice_dropped.<종류>`, 주소·ID 없음. 운영 정리 cron은 한 시간마다라 즉시 시도가 멈춘 알림은 최대 한 시간 늦는다), argon2id 실측 이벤트(한 시간에 한 번, `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`, 수치만), 30일 지난 기기 교체 이력 삭제, 7일 지난 대기 기기 삭제, 삭제·폐기 유예가 끝난 기기 폐기(+정지 훅).

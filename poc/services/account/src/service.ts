@@ -24,7 +24,7 @@ import {
 } from '@sax/svc-shared';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, PASSWORD, PROFILE } from './constants.ts';
+import { ACCOUNT, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
 import { checkPasswordPolicy, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -92,6 +92,11 @@ export interface AccountDeps {
   passwords?: PasswordDeps;
   /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
   onEvent?: (name: string) => void;
+  /**
+   * 응답과 따로 돌릴 일(알림 큐 즉시 발송, 재설정 코드 메일). 기본은 기다리지 않고 바로 시작한다. 플랫폼이 응답 뒤 실행을 멈춰도
+   * 큐 행이 남으므로 정리 작업(sweep)이 다시 보낸다. 시험은 일을 모아 두었다가 기다린다.
+   */
+  defer?: (task: () => Promise<void>) => void;
   now?: () => number;
 }
 
@@ -312,6 +317,8 @@ export class AccountService {
         if (fails >= PASSWORD.maxFails) {
           const until = now + Math.min(PASSWORD.lockBaseMs * 2 ** level, PASSWORD.lockMaxMs);
           await this.upsertLock(q, row!.id, 0, until, level + 1, now);
+          // 알림은 잠금과 같은 트랜잭션으로 큐에 넣는다(잠금 주기마다 정확히 1회). 메일은 응답 경로에서 보내지 않는다
+          await this.enqueueNotice(q, row!.id, 'password_locked', now);
           return true;
         }
         await this.upsertLock(q, row!.id, fails, null, level, now);
@@ -319,7 +326,7 @@ export class AccountService {
       });
       if (lockedNow) {
         p.onEvent?.('account.password_locked');
-        await this.notify(row!.id, 'password_locked');
+        this.kickNotices();
       }
       fail('account.credentials_invalid');
     }
@@ -373,7 +380,11 @@ export class AccountService {
     return hmacHex(this.d.codeMacKey, 'SAX-reset-code-v1', '\u0000', resetId, '\u0000', code);
   }
 
-  /** 재설정 코드 요청. 계정이 있을 때만 메일을 보내지만 응답은 같다(시각 하한은 라우트) */
+  /**
+   * 재설정 코드 요청. 계정이 있을 때만 메일을 보내지만 응답은 같다(시각 하한은 라우트).
+   * 메일은 응답 경로에서 기다리지 않는다(ADR-038 (e), 팀장 결정 2026-11-07 ①): 메일 지연·실패가 응답 본문·시각을 바꾸지 않는다.
+   * 코드 평문은 큐(DB)에 두지 않으므로 메모리에서만 따로 보낸다. 플랫폼이 멈춰 유실되면 사용자가 다시 요청한다(실패는 이벤트 이름만).
+   */
   async startPasswordReset(emailRaw: string): Promise<{ resetId: string; expiresInSec: number }> {
     this.pw();
     const email = normEmail(emailRaw);
@@ -382,7 +393,7 @@ export class AccountService {
     if (acc && acc.status === 'active') {
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
       await this.db.run('INSERT INTO reset_codes (reset_id_hash, account_id, code_mac, attempts, expires_at) VALUES ($1, $2, $3, 0, $4)', [sha256hex(resetId), acc.id, this.resetMac(resetId, code), this.now() + PASSWORD.resetCodeTtlMs]);
-      await this.d.mail.sendResetCode(email, code);
+      this.later(() => this.d.mail.sendResetCode(email, code), 'account.reset_mail_failed');
     }
     return { resetId, expiresInSec: PASSWORD.resetCodeTtlMs / 1000 };
   }
@@ -572,6 +583,67 @@ export class AccountService {
 
   async consent(s: Session, version: string): Promise<void> {
     await this.db.run('INSERT INTO consents (account_id, version, at) VALUES ($1, $2, $3) ON CONFLICT (account_id, version) DO NOTHING', [s.accountId, version, this.now()]);
+  }
+
+  // ---------- 알림 메일 발송 큐(notice_outbox) ----------
+
+  private async enqueueNotice(q: Sql, accountId: string, kind: NoticeKind, now: number): Promise<void> {
+    await q.run('INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ($1, $2, $3, $4, 0, $4)', [randomToken(), accountId, kind, now]);
+  }
+
+  /** 응답과 따로 돌린다(AccountDeps.defer). 실패는 이벤트 이름만 */
+  private later(task: () => Promise<unknown>, failEvent: string): void {
+    const run = () => task().then(
+      () => undefined,
+      () => this.d.onEvent?.(failEvent),
+    );
+    if (this.d.defer) this.d.defer(run);
+    else void run();
+  }
+
+  /** 큐를 응답과 따로 비운다(행은 남아 실패해도 다음 정리 때 다시) */
+  private kickNotices(): void {
+    this.later(() => this.drainNotices(), 'account.notice_drain_failed');
+  }
+
+  /**
+   * 기한이 된 알림을 보낸다(요청 뒤 즉시 시도와 정리 cron이 부른다). 행마다 임대를 걸어 동시에 도는 처리자가 같은 알림을 두 번 보내지 않게 한다.
+   * 보내면 지우고, 실패하면 5분 × 2^(시도-1)(상한 6시간) 뒤로 미룬다. 8번 실패하면 버린다. 이벤트는 이름·종류만(계정·주소 없음).
+   */
+  async drainNotices(limit: number = NOTICE.batch): Promise<{ sent: number; failed: number }> {
+    const now = this.now();
+    const due = await this.db.all<{ id: string; account_id: string; kind: NoticeKind; attempts: number; next_at: number }>(
+      'SELECT id, account_id, kind, attempts, next_at FROM notice_outbox WHERE next_at <= $1 ORDER BY next_at, id LIMIT $2',
+      [now, limit],
+    );
+    let sent = 0;
+    let failed = 0;
+    for (const r of due) {
+      const claimed = await this.db.run('UPDATE notice_outbox SET next_at = $1 WHERE id = $2 AND next_at = $3', [now + NOTICE.leaseMs, r.id, r.next_at]);
+      if (!claimed) continue;
+      const a = await this.db.one<{ email: string }>('SELECT email FROM accounts WHERE id = $1', [r.account_id]);
+      // 메일 호출만 실패로 본다(보낸 뒤 DB 오류로 다시 보내지 않게). 계정이 사라졌으면 보내지 않고 지운다
+      const ok = !a || (await this.d.mail.sendNotice(a.email, r.kind).then(() => true, () => false));
+      if (ok) {
+        await this.db.run('DELETE FROM notice_outbox WHERE id = $1', [r.id]);
+        if (a) {
+          sent++;
+          this.d.onEvent?.(`account.notice_sent.${r.kind}`);
+        }
+      } else {
+        failed++;
+        const attempts = Number(r.attempts) + 1;
+        if (attempts >= NOTICE.maxAttempts) {
+          await this.db.run('DELETE FROM notice_outbox WHERE id = $1', [r.id]);
+          this.d.onEvent?.(`account.notice_dropped.${r.kind}`);
+        } else {
+          const wait = Math.min(NOTICE.retryBaseMs * 2 ** (attempts - 1), NOTICE.retryMaxMs);
+          await this.db.run('UPDATE notice_outbox SET attempts = $1, next_at = $2 WHERE id = $3', [attempts, now + wait, r.id]);
+          this.d.onEvent?.(`account.notice_retry.${r.kind}`);
+        }
+      }
+    }
+    return { sent, failed };
   }
 
   private async notify(accountId: string, kind: NoticeKind): Promise<void> {
@@ -1047,6 +1119,8 @@ export class AccountService {
     await this.db.run('DELETE FROM sessions WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM refresh_tokens WHERE expires_at <= $1', [now]);
     await this.db.run('DELETE FROM reset_codes WHERE expires_at <= $1', [now]);
+    // 응답 뒤 즉시 시도가 끝나지 못한(플랫폼이 멈춤·메일 실패) 알림을 보낸다
+    await this.drainNotices();
     // 잠금이 끝나고 하루 동안 실패가 없으면 점증 단계를 0으로
     await this.db.run('DELETE FROM pw_locks WHERE updated_at <= $1 AND (locked_until IS NULL OR locked_until <= $2)', [now - PASSWORD.lockDecayMs, now]);
     await this.db.run('DELETE FROM device_events WHERE day < $1', [kstDay(now - DEVICE.churnWindowDays * MS.D)]);

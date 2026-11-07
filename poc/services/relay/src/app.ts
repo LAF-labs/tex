@@ -158,8 +158,12 @@ export class RelayHub {
     r.add('GET', '/v1/mailboxes/:id/envelopes', async (ctx) => {
       const c = await this.device(ctx);
       if (c.role !== 'desktop') fail('account.scope_denied');
+      // 선택 쿼리 after(seq, 정수). 다른 쿼리 키·형식은 거부. DPoP htu는 쿼리를 빼고 origin + 경로다
+      const keys = [...ctx.query.keys()];
+      const afterRaw = ctx.query.get('after');
+      if (keys.some((k) => k !== 'after') || ctx.query.getAll('after').length > 1 || (afterRaw !== null && !/^(0|[1-9]\d{0,14})$/.test(afterRaw))) fail('request.param_rejected');
       const key = await this.mailbox(ctx.ip, ctx.params.id!, tok(ctx, 'x-mbx-read'), 'read');
-      return json(200, { envelopes: await svc.list(key) });
+      return json(200, await svc.list(key, afterRaw === null ? 0 : Number(afterRaw)));
     });
     r.add('POST', '/v1/mailboxes/:id/ack', async (ctx) => {
       const c = await this.device(ctx);
@@ -310,7 +314,7 @@ export class RelayHub {
     const o = other();
     ws.send(JSON.stringify({ t: 'peer', online: !!o }));
     o?.ws.send(JSON.stringify({ t: 'peer', online: true }));
-    if (side === 'd' && (await this.o.svc.list(key)).length) ws.send(JSON.stringify({ t: 'env' }));
+    if (side === 'd' && (await this.o.svc.hasPending(key))) ws.send(JSON.stringify({ t: 'env' }));
   }
 
   private joinRoom(req: IncomingMessage, socket: Duplex, roomId: string): void {

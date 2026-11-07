@@ -20,7 +20,7 @@
 | `POST /v1/mailboxes` | 데스크톱 | — | `{mbxId, tokRead, tokWrite}`(서로 다른 32B base64url) | `201 {ok:true}` | `relay.mailbox_limit`(기기당 3), 중복·같은 값 `request.param_rejected` |
 | `DELETE /v1/mailboxes/:id` | 데스크톱 | 쓰기 | — | `204` | 큐·번들도 삭제, 라이브 연결 종료(재발급 `mbx.reissue` 뒤 옛 우편함) |
 | `POST /v1/mailboxes/:id/envelopes` | 모바일 | 쓰기 | `{v:1, kind:"ENV", enc, ct}`(intent-envelope 바깥 객체, `ct` ≤ 65,536자, 서버는 봉투 종류를 보지 않고 크기만 검사) | `202 {seq}` | `relay.queue_full`(우편함당 160건·6 MiB), 그 밖 필드 `request.param_rejected` |
-| `GET /v1/mailboxes/:id/envelopes` | 데스크톱 | 읽기 | — | `200 {envelopes:[{seq, env}]}` | 만료(72시간)분은 빠진다. 사진 24시간은 봉투 안 서명된 `exp`로 PC가 집행(서버는 종류를 모른다) |
+| `GET /v1/mailboxes/:id/envelopes[?after=<seq>]` | 데스크톱 | 읽기 | — | `200 {envelopes:[{seq, env}], more}` | 만료(72시간)분은 빠진다. 사진 24시간은 봉투 안 서명된 `exp`로 PC가 집행(서버는 종류를 모른다). **쪽 나누기**: 한 번에 봉투 바이트 3 MiB까지(봉투 하나는 언제나), 남으면 `more: true`(Vercel 함수 응답 상한 4.5MB, 큐 상한 6 MiB). 다음 쪽은 ACK 뒤 다시 읽거나 ACK 전에 `after=<받은 마지막 seq>`. `after`는 0 또는 양의 정수 하나이고 다른 쿼리 키는 `request.param_rejected`. DPoP `htu`는 쿼리를 뺀 origin + 경로다. `more`를 모르는 클라이언트도 ACK 뒤 다음 폴링에서 나머지를 받는다 |
 | `POST /v1/mailboxes/:id/ack` | 데스크톱 | 읽기 | `{seq}` | `200 {deleted}` | `seq` 이하 삭제(D08 §7 `ACK{seq}`) |
 | `PUT /v1/mailboxes/:id/bundle` | 데스크톱 | 쓰기 | `{bundle: base64}`(≤ 2KB) | `204` | 우편함 번들 슬롯(`Vx` 서명 `{Qx, valid_from, valid_to, seq}`, 릴레이는 검증하지 않음) |
 | `GET /v1/mailboxes/:id/bundle` | 둘 다 | 읽기 | — | `200 {bundle}` | 없으면 `relay.mailbox_not_found` |
