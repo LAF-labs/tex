@@ -470,7 +470,8 @@ describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
   it('listPage가 없는 옛 큐(list만)는 한 쪽만 읽는다', async () => {
     let reads = 0;
     const d = await drainQueue({ ...(await base()), queue: { list: async () => (reads++, [{ seq: 1, env: {} }]), ack: async () => {} } });
-    assert.deepEqual({ pages: d.pages, more: d.more, reads }, { pages: 1, more: false, reads: 1 });
+    assert.equal(reads, 1);
+    assert.deepEqual(d, { handled: 0, dropped: 1, ackedTo: 1 }, '옛 결과 모양 그대로(pages·more 없음)');
   });
 
   it('listPage(after): 쿼리는 요청 URL에만, DPoP htu는 쿼리 없는 경로. more가 없는 옛 응답은 한 쪽', async () => {

@@ -320,10 +320,10 @@ export interface DrainResult {
   handled: number;
   dropped: number;
   ackedTo: number | null;
-  /** 읽은 쪽 수 */
-  pages: number;
-  /** 서버가 more라고 했는데 상한·빈 쪽·진전 없음으로 멈췄다(호출자는 곧 다시 부르면 된다) */
-  more: boolean;
+  /** 읽은 쪽 수(listPage로 쪽을 읽을 때만. list만 있는 옛 큐는 옛 결과 모양 그대로) */
+  pages?: number;
+  /** 서버가 more라고 했는데 상한·빈 쪽·진전 없음으로 멈췄다(호출자는 곧 다시 부르면 된다). listPage일 때만 */
+  more?: boolean;
 }
 
 /**
@@ -338,14 +338,17 @@ export const DRAIN_MAX_PAGES = 8;
  * DRAIN_MAX_PAGES에서 멈추고 more: true로 돌려준다. 쪽 중간에 실패하면 그때까지 처리한 seq까지 ack하고 던진다.
  */
 export async function drainQueue(o: QueueReceiverOptions): Promise<DrainResult> {
-  const res: DrainResult = { handled: 0, dropped: 0, ackedTo: null, pages: 0, more: false };
+  const paged = typeof o.queue.listPage === 'function';
+  const res: DrainResult = paged ? { handled: 0, dropped: 0, ackedTo: null, pages: 0, more: false } : { handled: 0, dropped: 0, ackedTo: null };
   let max = await o.seqMax.get();
   // 큐에서는 PC가 폰에 답할 곳이 없다(receipt.ack 등은 버린다).
   const replier = { pairId: o.pairId, send: () => '' } as unknown as Parameters<ReceiveQueue['handle']>[0];
-  const readPage = async (): Promise<QueuePage> => (o.queue.listPage ? o.queue.listPage() : { envelopes: await o.queue.list(), more: false });
+  const readPage = async (): Promise<QueuePage> => (paged ? o.queue.listPage!() : { envelopes: await o.queue.list(), more: false });
+  let pages = 0;
   for (;;) {
     const page = await readPage();
-    res.pages++;
+    pages++;
+    if (paged) res.pages = pages;
     const envs = [...page.envelopes].sort((a, b) => a.seq - b.seq);
     const before = res.ackedTo;
     let pageAck: number | null = null;
@@ -371,7 +374,7 @@ export async function drainQueue(o: QueueReceiverOptions): Promise<DrainResult> 
     if (!page.more) return res;
     // more인데 빈 쪽이거나 앞으로 가지 않으면(서버 이상) 멈춘다. 상한도 같다.
     const progressed = pageAck !== null && (before === null || pageAck > before);
-    if (!progressed || res.pages >= DRAIN_MAX_PAGES) {
+    if (!progressed || pages >= DRAIN_MAX_PAGES) {
       res.more = true;
       return res;
     }
