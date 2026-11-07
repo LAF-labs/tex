@@ -31,7 +31,7 @@ import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
-import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, type Counterparty, type G24Doc, type Profile, type VatMode } from './shell-mock.ts';
+import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, sentFromGateway, type Counterparty, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-mock.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
@@ -621,12 +621,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   );
   // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 엔진에 명령이 없으면 오프라인 정규식.
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
-  const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null) => {
+  const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
     if (reply.kind === 'draft') {
       reply.run.interp = via;
+      reply.run.sent = sent;
       pushBoard(); // 초안은 update 이벤트 없이 생긴다
     }
-    return { ...reply, via, note };
+    return { ...reply, via, note, sent };
   };
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
@@ -650,10 +651,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let accountReady: Promise<unknown> | null = null;
   const accountInit = () => (accountReady ??= account.init());
   // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
-  const gwAuth = new GatewayAuthHost({ device: async () => {
+  // 내준 헤더의 경로(활동 기록 근거). 번호를 붙여 최근 200개만 둔다.
+  let gwSeq = 0;
+  let gwLog: Array<[number, string]> = [];
+  const gwIssuedSince = (n: number) => gwLog.filter(([i]) => i > n).map(([, p]) => p);
+  const gwAuth = new GatewayAuthHost({
+    device: async () => {
       await accountInit().catch(() => null);
       return account.device();
-    }, log: (n, d) => log.event(n, d) });
+    },
+    log: (n, d) => log.event(n, d),
+    onIssued: (path) => {
+      gwLog = [...gwLog.slice(-199), [++gwSeq, path]];
+    },
+  });
   host.setGatewayAuth((m) => gwAuth.handle(m));
   // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
@@ -721,21 +732,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
       if (demo) {
-        const model = modelOk() && text.trim() ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
+        // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
+        const ask = modelOk() && !!text.trim();
+        const model = ask ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
         const via = model ? 'model' : 'offline';
         log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
-        return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null);
+        return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null, ask ? ['openrouter_demo'] : []);
       }
+      // 이 해석 동안 main이 내준 게이트웨이 헤더가 곧 우리 서버로 간 것이다(헤더 없이는 엔진이 게이트웨이를 부를 수 없다).
+      // 해석은 한 번에 하나라(렌더러 sending) 이 구간의 발급은 이 요청 것이다.
+      const mark = gwSeq;
       const r = text.trim() ? await intent.resolve(text) : { route: null, fallback: 'empty' };
+      const sent = sentFromGateway(gwIssuedSince(mark));
       const via = r.route?.via === 'model' ? 'model' : 'offline';
       log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
-      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null);
+      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, null, sent);
       const to = routed(r.route, local);
       if ('say' in to) {
         runs.pending.asked = null;
-        return { kind: 'say', text: to.say, via, note: null };
+        return { kind: 'say', text: to.say, via, note: null, sent };
       }
-      return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note);
+      return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note, sent);
     },
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {
