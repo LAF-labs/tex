@@ -399,12 +399,14 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     const target = encodeURIComponent(`http://localhost:${port}/login`);
     await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/redirect?to=${target}') && 1`); // 서버 302
     await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/bounce?to=${target}') && 1`); // 커밋 후 스크립트 이동
-    await sleep(3500);
+    // 두 팝업이 모두 허용 host까지 간 뒤에 노출 여부를 본다(시험이 헛돌지 않게). 느린 Windows CI에서는 3.5초 안에 하나만 닿았다(2026-11-07):
+    // 정해진 시간만 기다리면 늦게 닿은 팝업의 노출은 보지 못한다.
+    const landed = () => [...h.vault.relay!.targets.values()].filter((t) => t.revoked && t.url === `http://localhost:${port}/login`).length;
+    for (const until = Date.now() + 15_000; landed() < 2 && Date.now() < until; ) await sleep(50);
+    assert.equal(landed(), 2, '두 팝업 모두 허용 host에 닿았다');
+    await sleep(500); // 닿은 뒤 늦은 부착이 있으면 여기서 잡힌다
     const attaches = eng.events.slice(mark).filter((e) => e.method === 'Target.attachedToTarget' && !e.sessionId);
     assert.deepEqual(attaches.map((e) => (e.params!.targetInfo as { url: string }).url), [], '리디렉션 뒤 허용 host에 와도 노출하지 않는다');
-    // 두 팝업 모두 실제로 허용 host까지 갔는지 확인(시험이 헛돌지 않게)
-    const landed = [...h.vault.relay!.targets.values()].filter((t) => t.revoked && t.url === `http://localhost:${port}/login`);
-    assert.equal(landed.length, 2);
   });
 
   it('OOPIF의 문서 커밋은 부모 page를 끊지 않는다', async () => {

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { constants as fsc, type Dirent, type Stats } from 'node:fs';
+import { constants as fsc, type BigIntStats, type Dirent } from 'node:fs';
 import fsp, { type FileHandle } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,7 +13,8 @@ import { NPKI_CERT_MAX_BYTES, type NpkiCertEntry, type NpkiListResult, type Npki
 //   (4) 감시하지 않는다(부를 때 한 번 읽는다)
 //   (5) 경로·파일명·CA 이름은 로그에 남기지 않는다(개수만)
 // LocalLow는 낮은 무결성 프로세스도 쓸 수 있는 위치라 내용과 구조를 비신뢰로 다룬다.
-// 심볼릭 링크(디렉터리·파일 모두)는 따라가지 않고, 연 파일이 열거한 파일과 같은지(dev·ino) 확인한다.
+// 심볼릭 링크(디렉터리·파일 모두)는 따라가지 않고, 연 파일이 열거한 파일과 같은지(dev·ino, bigint) 확인한다.
+// Windows의 ino는 64비트 NTFS 파일 ID라 Number로 받으면 2^53 위에서 뭉개져 다른 파일이 같아 보인다(Windows CI에서 바꿔치기를 놓쳤다).
 
 export interface NpkiRoot {
   kind: NpkiRootKind;
@@ -45,13 +46,14 @@ export function npkiRoots(platform: NodeJS.Platform = process.platform, env: Nod
 
 /** 시험에서 접근을 감사하려고 주입한다. 기본은 node:fs/promises. open은 signCert.der에만 쓴다. */
 export interface NpkiFs {
-  lstat(p: string): Promise<Stats>;
+  /** bigint로 돌려준다(dev·ino 비교, Windows 64비트 파일 ID). */
+  lstat(p: string): Promise<BigIntStats>;
   readdir(p: string): Promise<Dirent[]>;
   open(p: string, flags: number): Promise<FileHandle>;
 }
 
 export const nodeNpkiFs: NpkiFs = {
-  lstat: (p) => fsp.lstat(p),
+  lstat: (p) => fsp.lstat(p, { bigint: true }),
   readdir: (p) => fsp.readdir(p, { withFileTypes: true }),
   open: (p, flags) => fsp.open(p, flags),
 };
@@ -169,7 +171,7 @@ async function dirs(fs: NpkiFs, p: string, skip: (w: NpkiSkip) => void): Promise
 async function readCert(fs: NpkiFs, file: string, ent: Dirent): Promise<Uint8Array | NpkiSkip> {
   if (ent.isSymbolicLink()) return 'symlink';
   if (!ent.isFile()) return 'not_file';
-  let before: Stats;
+  let before: BigIntStats;
   try {
     before = await fs.lstat(file);
   } catch {
@@ -177,8 +179,8 @@ async function readCert(fs: NpkiFs, file: string, ent: Dirent): Promise<Uint8Arr
   }
   if (before.isSymbolicLink()) return 'symlink';
   if (!before.isFile()) return 'not_file';
-  if (before.size > NPKI_CERT_MAX_BYTES) return 'too_large';
-  if (before.size === 0) return 'empty';
+  if (before.size > BigInt(NPKI_CERT_MAX_BYTES)) return 'too_large';
+  if (before.size === 0n) return 'empty';
   let fh: FileHandle;
   try {
     fh = await fs.open(file, fsc.O_RDONLY | NOFOLLOW);
@@ -186,11 +188,12 @@ async function readCert(fs: NpkiFs, file: string, ent: Dirent): Promise<Uint8Arr
     return 'unreadable';
   }
   try {
-    const st = await fh.stat();
+    const st = await fh.stat({ bigint: true });
     // 열거와 열기 사이에 바뀌었으면(링크 바꿔치기) 버린다. 하드링크(다른 파일과 같은 내용)도 받지 않는다.
-    if (!st.isFile() || st.dev !== before.dev || st.ino !== before.ino) return 'changed';
-    if (st.nlink > 1) return 'linked';
-    if (st.size > NPKI_CERT_MAX_BYTES) return 'too_large';
+    // 파일 ID를 주지 않는 파일 시스템(ino 0)은 같은 파일인지 알 수 없으니 바뀐 것으로 본다.
+    if (!st.isFile() || st.ino === 0n || st.dev !== before.dev || st.ino !== before.ino) return 'changed';
+    if (st.nlink > 1n) return 'linked';
+    if (st.size > BigInt(NPKI_CERT_MAX_BYTES)) return 'too_large';
     const buf = Buffer.alloc(NPKI_CERT_MAX_BYTES + 1);
     let n = 0;
     while (n < buf.length) {
