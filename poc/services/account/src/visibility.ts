@@ -22,6 +22,14 @@ export const ACCOUNT_VISIBILITY: Record<string, Record<string, string>> = {
     set_at: 'D09 추가 필요: 비밀번호 설정 시각',
   },
   pw_locks: { account_id: '계정', fails: 'D09 추가 필요: 비밀번호 연속 실패 수', locked_until: 'D09 추가 필요: 비밀번호 잠금 끝 시각', lock_level: 'D09 추가 필요: 비밀번호 잠금 단계', updated_at: 'D09 추가 필요: 마지막 실패 시각' },
+  notice_outbox: {
+    id: 'D09 추가 필요: 알림 메일 발송 대기(무작위 ID)',
+    account_id: '계정',
+    kind: 'D09 추가 필요: 알림 종류(고정 문구, 값 없음)',
+    created_at: 'D09 추가 필요: 알림 대기 시각',
+    attempts: 'D09 추가 필요: 알림 발송 실패 수',
+    next_at: 'D09 추가 필요: 알림 다음 시도 시각',
+  },
   reset_codes: { reset_id_hash: 'D09 추가 필요: 비밀번호 재설정 요청(결속 해시)', account_id: '계정', code_mac: 'D09 추가 필요: 재설정 코드(HMAC, 평문 없음)', attempts: '재설정 시도 수', expires_at: '재설정 코드 만료(10분)' },
   refresh_tokens: {
     token_hash: 'D09 추가 필요: 갱신 토큰(해시, 자동 로그인)',

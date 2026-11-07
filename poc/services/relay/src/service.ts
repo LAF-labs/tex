@@ -96,15 +96,31 @@ export class RelayService {
     return { seq };
   }
 
-  async list(key: string): Promise<Array<{ seq: number; env: OuterEnvelope }>> {
-    const rows = await this.d.db.all<{ seq: number; sealed: Buffer }>('SELECT seq, sealed FROM queue WHERE mbx_key = $1 AND expires_at > $2 ORDER BY seq', [key, this.now()]);
+  /**
+   * 큐 읽기(한 쪽). `after`보다 큰 seq를 순서대로, 봉투 바이트 합이 `maxBytes`를 넘기 전까지 돌려준다(봉투 하나는 언제나).
+   * 남은 봉투가 있으면 `more: true`다. 받는 쪽은 ACK한 뒤 다시 읽거나, ACK 전에 `after = 마지막 seq`로 다음 쪽을 읽는다.
+   */
+  async list(key: string, after = 0, maxBytes: number = RELAY.queuePageMaxBytes): Promise<{ envelopes: Array<{ seq: number; env: OuterEnvelope }>; more: boolean }> {
+    // 봉인본을 다 읽기 전에 바이트(평문 길이 열)로 자른다: 쪽 하나만 복호화한다
+    const rows = await this.d.db.all<{ seq: number; bytes: number }>('SELECT seq, bytes FROM queue WHERE mbx_key = $1 AND expires_at > $2 AND seq > $3 ORDER BY seq', [key, this.now(), after]);
+    let used = 0;
+    let n = 0;
+    while (n < rows.length && (n === 0 || used + Number(rows[n]!.bytes) <= maxBytes)) used += Number(rows[n++]!.bytes);
     const out: Array<{ seq: number; env: OuterEnvelope }> = [];
-    for (const r of rows) {
-      const pt = openAead(this.d.queueKey, `SAX-relay-q-v1|${key}|${Number(r.seq)}`, r.sealed);
-      if (pt) out.push({ seq: Number(r.seq), env: JSON.parse(pt.toString('utf8')) as OuterEnvelope });
-      else this.d.onEvent?.('queue_unseal_failed');
+    if (n > 0) {
+      const sealed = await this.d.db.all<{ seq: number; sealed: Buffer }>('SELECT seq, sealed FROM queue WHERE mbx_key = $1 AND seq > $2 AND seq <= $3 ORDER BY seq', [key, after, Number(rows[n - 1]!.seq)]);
+      for (const r of sealed) {
+        const pt = openAead(this.d.queueKey, `SAX-relay-q-v1|${key}|${Number(r.seq)}`, r.sealed);
+        if (pt) out.push({ seq: Number(r.seq), env: JSON.parse(pt.toString('utf8')) as OuterEnvelope });
+        else this.d.onEvent?.('queue_unseal_failed');
+      }
     }
-    return out;
+    return { envelopes: out, more: n < rows.length };
+  }
+
+  /** 만료되지 않은 봉투가 있는가(라이브 연결 때 알림용, 복호화 없음) */
+  async hasPending(key: string): Promise<boolean> {
+    return !!(await this.d.db.one('SELECT 1 AS x FROM queue WHERE mbx_key = $1 AND expires_at > $2 LIMIT 1', [key, this.now()]));
   }
 
   /** ACK{seq}: seq 이하를 지운다(D08 §7). */

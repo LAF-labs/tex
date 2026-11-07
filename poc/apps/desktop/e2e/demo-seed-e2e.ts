@@ -103,8 +103,13 @@ async function main(): Promise<void> {
   await until('cps view', async () => js<boolean>(`!!document.querySelector('[data-act=cp-add]')`), 5_000);
   await js(`document.querySelector('[data-act=cp-add]').click()`);
   await until('form', async () => js<boolean>(`!!document.querySelector('.cp-form')`), 5_000);
-  await js(`(() => { const f = document.querySelector('.cp-form'); f.name.value = '견본화면상사'; f.bizNo.value = ${JSON.stringify(syntheticBizNo(778))}; f.email.value = 'ui@gyeonbon-test.example'; f.requestSubmit(); })()`);
+  await js(`(() => { const f = document.querySelector('.cp-form'); f.name.value = '견본화면상사'; f.bizNo.value = ${JSON.stringify(syntheticBizNo(778))}; f.email.value = 'ui@gyeonbon-test.example'; f.item.value = '화면 품목'; f.requestSubmit(); })()`);
   check('화면에서 거래처 추가 → 상세 패널·목록', await until('cp added', async () => js<boolean>(`document.querySelector('[data-panel-cp] .sx-card-title')?.textContent === '견본화면상사' && [...document.querySelectorAll('[data-cp-row]')].length === 11`), 5_000));
+  // 저장 품목 칸 = 엔진 저장 품목의 첫 품목(#144). 다시 읽어도(목록 새로 고침) 같은 값, 비우면 없어진다.
+  const uiCp = ((await call<Array<{ id: string; name: string; item: string }>>('counterparties.list', {})) as Array<{ id: string; name: string; item: string }>).find((c) => c.name === '견본화면상사');
+  const panelItem = await js<boolean>(`document.querySelector('[data-panel-cp]')?.textContent.includes('화면 품목')`);
+  const cleared = (await call<{ counterparties: Array<{ id: string; item: string }> }>('counterparty.save', { id: uiCp?.id, name: '견본화면상사', email: 'ui@gyeonbon-test.example', item: '' })) as { counterparties: Array<{ id: string; item: string }> };
+  check('저장 품목: 폼 칸 → 엔진 저장 품목 첫 이름(목록·상세 패널), 비우면 없음', uiCp?.item === '화면 품목' && panelItem && cleared.counterparties.find((c) => c.id === uiCp?.id)?.item === '', { uiCp, panelItem });
 
   // [등록증으로 채우기](M4-3 O-05): 실제 입력 없이 부르면 gesture_required, 누르면 시연 등록증 후보가 칸에 들어간다(주소는 오지 않는다)
   await sleep(3_100);

@@ -11,7 +11,7 @@ import type { Actuator, Clock, PageReader, Resolved } from './page.ts';
 import { resolveTarget } from './resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from './scope.ts';
 import { isSecretEntry, type EndStep, type SelectorDict, type SelectorEntry, type Step, type StepOf, type StepType, type Strings } from './types.ts';
-import { urlProblem } from './validate.ts';
+import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
 
 export type Outcome =
   | { t: 'next' }
@@ -25,6 +25,8 @@ export interface StepEnv extends CondEnv {
   clock: Clock;
   /** manifest.domains(V-06의 실행 시 재확인). */
   domains: readonly string[];
+  /** fixture 패키지 실행일 때만(loader.fixtureOriginGrant, ADR-039). 없으면 실제 포털 규칙만. */
+  fixtureGrant?: FixtureOriginGrant | null;
   /** 정적으로 계산한 비가역 스텝 id(validate.irreversibleSteps). */
   irreversible: ReadonlySet<string>;
   /** 스텝에 timeoutMs가 없을 때. */
@@ -78,7 +80,7 @@ const act = async (p: Promise<{ ok: true } | { ok: false; code: string }>): Prom
 };
 
 const goto: Handler<'goto'> = async (s, env) => {
-  if (urlProblem(s.url, env.domains)) return fail('step.url_not_allowed');
+  if (navigationUrlProblem(s.url, env.domains, env.fixtureGrant)) return fail('step.url_not_allowed');
   return act(env.act.goto(s.url));
 };
 
@@ -220,6 +222,7 @@ export interface StepEnvInput {
   strings: Strings;
   scope: RunScope;
   domains: readonly string[];
+  fixtureGrant?: FixtureOriginGrant | null;
   irreversible: ReadonlySet<string>;
   defaultTimeoutMs?: number;
   pollMs?: number;

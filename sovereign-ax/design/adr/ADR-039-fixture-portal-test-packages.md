@@ -31,6 +31,9 @@
 2. **세 곳에서 따로 거부한다.** 각각 시험이 있다.
    - ① 정적 검증기: V-25(위 1).
    - ② 제품 엔진 로더: `loadPackage`는 portal fixture면 서명·결속을 보기 전에 `loader.fixture_package`로 거부한다. 예외는 엔진을 TS 소스로 읽을 때(`--conditions=development`, 시험·개발)뿐이다(`FIXTURE_LOAD_ALLOWED`). 제품 설치본에는 진입점에서 닿는 `dist/*.js`만 들어가므로 이 값은 언제나 거짓이다. 설정·인자로 켜는 길은 없다. 실기기 시험 빌드(`--test-build`)도 dist라 거부한다(조건보다 좁다). 엔진의 레지스트리 인덱스 수용도 fixture 항목이 있으면 인덱스를 거부한다(`registry.portal_blocked`, 개발 조건에서도).
+   - ②′ 실행 시 출처 판정(팀장 결정 2026-11-07): 액추에이터(`GuardedActuator.goto`)와 goto 핸들러의 출처 판정은 제품의 마지막 방어선이다. 그래서 허용 목록을 넓히지 않는다. fixture 패키지를 실행할 때만 로더가 낸 허가(`fixtureOriginGrant`)를 따로 주입한다.
+     - 허가가 있으면 규칙을 fixture 규칙(V-25)으로 바꾼다. 합치지 않으므로 그때도 실제 포털 URL은 거부한다. 허가가 없으면 실제 포털 규칙(V-06)만 쓴다.
+     - 관문은 ②와 같은 `FIXTURE_LOAD_ALLOWED`다. 제품 dist는 허가를 내지 않는다. 다른 곳에서 만든 허가(소스가 낸 것, 같은 모양의 객체)도 인정하지 않는다. 시험(`core-fixture-origin`)은 dist 액추에이터·핸들러를 직접 불러 이것을 확인한다.
    - ③ 레지스트리: 게시(패키지 검증)와 배포(인덱스)에서 모두 `registry.portal_blocked`로 거부한다. services/registry `BLOCKED_PORTALS`에 `fixture`를 넣어 위택스와 같은 길로 막는다. 엔진 PR-A에서 함께 고친다(팀장 결정: 결정 하나를 PR 하나로). 엔진 인덱스 수용과 같은 판정인지 대조 시험(engine-registry-sync)이 본다.
 3. **fixture 패키지는 운영 신뢰 루트로 서명하지 않는다.** 시험 전용 키(`tests/core-fixtures.ts` testKeys)로 시험 중에 만들어 서명한다. 가짜 페이지의 포트가 시험마다 다르므로, 패키지는 저장소에 서명된 채로 두지 않고 하네스가 그때 만든다. 운영 키로 서명되더라도 ②·③이 서명과 무관하게 거부한다.
 4. **설치본에 들어가면 betaDistributable이 막는다(2차 방어).** 1차 방어는 결정 2 ②의 제품 로더 거부다. 포장 제외는 그 뒤의 2차다.
@@ -47,5 +50,7 @@
 ## 결과
 
 - 골든 대조 하네스(PR-C)는 같은 s10~s37을 가짜 페이지 셀렉터·루프백 URL로 묶은 fixture 패키지로 IR 조율기를 돌린다.
+  - 빌더는 `tests/h01-fixture-package.ts`(PR-A2)다. 스텝은 골든 IR s10~s35를 그대로 쓴다. 셀렉터·조회 화면·실패 신호는 H01Runner의 `fixturePortal(origin)`에서 가져온다.
+  - 골든과 다른 곳은 `FIXTURE_SUBSTITUTIONS`에 적은 것뿐이다(s21 signFlow·expectConfirm: 가짜 페이지에 서명 창·확인 대화상자가 없다. s30 failSignals: 가짜 페이지 문구). 시험이 그 밖의 차이가 없는지 본다.
 - 실제 포털 패키지는 바뀌지 않는다. 기존 패키지는 V-25에 걸리지 않는다(domains에 IP가 없다).
 - 되돌리기: 이 ADR의 스키마 enum·패턴, V-25, 로더 검사, BLOCKED_PORTALS 항목을 함께 되돌린다. 원장·DB 변화는 없다.
