@@ -74,8 +74,8 @@ export interface DesktopPairingOptions {
   /**
    * §4.2 7단계(팀장 결정 2026-11-06): 폰에는 계정 로그인이 없으므로 PC가 데스크톱 기기 토큰으로 폰을 계정에 대신 등록한다
    * (`POST /v1/devices/enroll` + 이 룸 id). 릴레이는 룸이 열려 있는 동안만 받으므로 `pair.ok` 전에 부른다.
-   * 같은 키로 이미 등록된 폰이면 성공으로 끝낸다(목록을 올리기 전에 실패한 시도의 재시도). 던지면 페어링을 멈춘다.
-   * 이 PC의 기기 목록에 이미 같은 키로 있는 폰(다시 연결)은 부르지 않는다.
+   * 서버는 같은 키 재등록을 200으로 받는다(#122, 룸 미소비): 목록을 올리기 전에 실패한 시도의 재시도도 그대로 부르면 된다.
+   * 던지면 페어링을 멈춘다. 이 PC의 기기 목록에 이미 같은 키로 있는 폰(다시 연결)은 부르지 않는다(D08 §4.2 7단계).
    */
   enrollPhone: (p: { deviceId: string; platform: 'ios' | 'android'; name: string; Sm: Uint8Array; Vm: Uint8Array; roomId: Uint8Array }) => Promise<void>;
   /**
