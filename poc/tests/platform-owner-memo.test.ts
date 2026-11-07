@@ -1,4 +1,4 @@
-// 폴더 소유자 확인 기억(ADR-039, WIN-REALDEVICE §6.1). 느린 Windows PC에서 PowerShell Get-Acl이 3.4~15초 걸려,
+// 폴더 소유자 확인 기억(ADR-041, WIN-REALDEVICE §6.1). 느린 Windows PC에서 PowerShell Get-Acl이 3.4~15초 걸려,
 // 신뢰 소유자로 확인한 폴더는 같은 폴더(볼륨·파일 ID·생성 시각)인 동안 프로세스당 한 번만 읽는다. 시험은 읽기를 주입해 모든 OS에서 돈다.
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
@@ -15,7 +15,7 @@ async function tmpDir(): Promise<string> {
   return fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-owner-'));
 }
 
-describe('OwnerMemo(ADR-039)', () => {
+describe('OwnerMemo(ADR-041)', () => {
   it('신뢰 소유자는 같은 폴더면 한 번만 읽고, 동시에 물어도 읽기 하나를 같이 기다린다', async () => {
     const dir = await tmpDir();
     try {
@@ -129,7 +129,7 @@ describe('OwnerMemo(ADR-039)', () => {
   });
 });
 
-describe('금고 폴더 확인 미리 하기(ADR-039)', () => {
+describe('금고 폴더 확인 미리 하기(ADR-041)', () => {
   it('warmDirChecks: 앱 루트·전용 프로필을 확인하고 걸린 시간만 남긴다(결과는 쓰지 않는다)', async () => {
     const root = await tmpDir();
     try {

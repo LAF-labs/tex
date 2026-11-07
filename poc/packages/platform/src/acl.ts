@@ -13,7 +13,7 @@ const execFileAsync = promisify(execFile);
  */
 export const TOOL_TIMEOUT_MS = 30_000;
 /**
- * 소유자 읽기(PowerShell Get-Acl) 상한(ADR-039). 느린 Windows PC에서 PowerShell 기동이 3.4~15초, 부하 때는 30초를 넘었다(WIN-REALDEVICE §6.1).
+ * 소유자 읽기(PowerShell Get-Acl) 상한(ADR-041). 느린 Windows PC에서 PowerShell 기동이 3.4~15초, 부하 때는 30초를 넘었다(WIN-REALDEVICE §6.1).
  * 소유자는 폴더 식별마다 프로세스당 한 번만 읽으므로(OwnerMemo) 다른 읽기 도구보다 길게 둔다.
  */
 export const OWNER_TIMEOUT_MS = 90_000;
@@ -186,7 +186,7 @@ export async function readDacl(target: string): Promise<Dacl> {
 
 /**
  * 소유자 SID. `icacls /save`에는 소유자가 없어 .NET으로 읽는다. 경로는 환경 변수로 넘긴다.
- * PoC-1 PC에서는 PowerShell 기동이 약 0.3초였지만 느린 PC에서는 3.4~15초다(WIN-REALDEVICE §6.1). 그래서 직접 부르지 않고 OwnerMemo를 거친다(ADR-039).
+ * PoC-1 PC에서는 PowerShell 기동이 약 0.3초였지만 느린 PC에서는 3.4~15초다(WIN-REALDEVICE §6.1). 그래서 직접 부르지 않고 OwnerMemo를 거친다(ADR-041).
  */
 export async function readOwner(target: string): Promise<string> {
   const script = '$o = (Get-Acl -LiteralPath $env:SAX_ACL_TARGET).GetOwner([System.Security.Principal.SecurityIdentifier]); if ($o) { $o.Value }';
@@ -204,7 +204,7 @@ export async function dirIdentity(dir: string): Promise<string | null> {
 }
 
 /**
- * 신뢰 소유자 확인을 폴더 식별마다 프로세스당 한 번으로 줄인다(ADR-039).
+ * 신뢰 소유자 확인을 폴더 식별마다 프로세스당 한 번으로 줄인다(ADR-041).
  * - 근거: 사용자 전용 DACL(사용자·SYSTEM만, checkPrivate가 매번 icacls로 확인)이면 소유자를 남에게 넘길 수 있는 것은 사용자·SYSTEM·관리자 특권뿐이다.
  *   모두 isTrustedOwner가 이미 믿는 쪽이다. 그래서 한 번 신뢰 소유자로 확인한 폴더는, 같은 폴더(식별 동일)인 동안 다시 읽지 않아도 판정이 같다.
  * - 신뢰 소유자만 기억한다. 남의 소유는 매번 다시 읽는다(관리자가 소유권을 고친 뒤 다시 시도하면 통한다).

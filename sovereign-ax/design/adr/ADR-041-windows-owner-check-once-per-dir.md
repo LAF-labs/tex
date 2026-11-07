@@ -1,4 +1,4 @@
-# ADR-039. Windows 폴더 소유자 확인을 폴더마다 프로세스당 한 번으로
+# ADR-041. Windows 폴더 소유자 확인을 폴더마다 프로세스당 한 번으로
 
 > 상태: 채택(팀장 지시 2026-11-06, WIN-REALDEVICE §6.1 후속) · Phase 1. D07 §1.1·D05 §3.1의 "매 기동 확인"에서 소유자 읽기 빈도만 바꾼다. DACL 확인·복구 규칙은 그대로다.
 > 관련: D07 §1.1, D05 §3.1·§3.6, [poc/reports/WIN-REALDEVICE.md](../../../poc/reports/WIN-REALDEVICE.md) §6.1, PoC-1 S6m
