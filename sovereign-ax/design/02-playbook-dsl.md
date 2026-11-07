@@ -1,5 +1,6 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-06 팀장 결정: §6.1에 V-04a(비가역 스텝 X마다 자기 verify, `X.verify` 중복이면 로드 거부, V-03c′의 Y→Xc verify 재통과는 허용)를 더함(엔진 PR-B).
 > 2026-11-06 팀장 결정: §4.4에 조회 패키지 행 판정 `lookup.rowVerdict{column, sent, notSent}`(스키마 rev v1.3.4, 엔진 #170)를 더하고, §6.1에 V-03n(`baseline: none` 사후 확인 verify는 `rowVerdict` 필수), §8 `s33`에 `rowVerdict`를 더함. 같은 날 정합: V-03m의 선택 입력 처리를 엔진 #158(스키마 rev v1.3.3) 이름에 맞춤. `isEmpty`·`any` 모양 → `readbackEquals.ifAbsent: "empty"`·`readbackEmpty`(§4.1·§6.1·§8 `s19f`).
 > ADR-021 결정 7(2026-11-06): §7·§8의 '승인 바'를 main 승인 카드로 맞춤.
 > 2026-11-06 팀장 결정: §6.1에 V-03m(금액·상대방 readback ↔ `$inputs` 대조 assert 필수, 없으면 로드 거부)을 더하고 §8 검증 근거에 반영. 같은 날 팀장 결정: 상대방에 `counterpartEmail`을 넣고, 선택 입력은 값이 없으면 `isEmpty`로 빈 값을 확인한다(§4.1 조건 추가, §8 `s19f`). 이름 V-03k는 B-02 규칙이 이미 쓴다(엔진 `validate.ts`도 같다, 엔진 PR #156). 엔진 M2-3 B가 같은 이름으로 구현한다.
@@ -254,6 +255,7 @@
 | **V-03n** | **사후 확인 verify의 행 판정 필수**(팀장 결정 2026-11-06, 엔진 #170). 비가역 스텝 X 자신의 verify가 아니고 `baseline: none`인 verify(앞선 verify의 `bind` 값을 키로 메일 발송 같은 사후 부수효과를 확인하는 것, H-01 `s33`)는 `lookup.rowVerdict`(§4.4)를 가져야 한다. 없으면 로드를 거부한다. 사후 부수효과 목록은 행이 있다는 것만으로 성공이 아니기 때문이다(메일 '전송실패' 행도 행이다). X 자신의 verify는 행 = 발급이라 `rowVerdict` 없이 "새 행 1건 = `committed`"가 맞다 |
 | **V-03l** | 어떤 게이트 G를 지배하면서 G로 가는 경로 위에 있고 복귀 지점(`not_committed`·`recover`·Paused/HandedOff 재개의 목적지)이 될 수 있는 체크포인트는 `url`이 필수이고 `reentry: "reload"`여야 한다(B-13) |
 | V-04 | 모든 비가역 스텝은 `intent: "$intent.id"`와 `verify`를 가진다. 그 `verify.lookup.match`는 X 앞 `readback` 필드를 `$readback.*`로 포함하고 `baseline: pre_gate_snapshot`이다(B-07) |
+| **V-04a** | **비가역 스텝마다 자기 verify**(팀장 결정 2026-11-06). 비가역 스텝 X(`submit`·`human_commit`·`send_email`)의 `verify` 필드가 가리키는 verify 스텝 id는 X마다 달라야 한다. 두 X가 같은 verify를 가리키면 로드를 거부한다. 한 verify 판정을 어느 X의 원장 행에 붙일지 정할 수 없고, 잘못 붙이면 발급되지 않은 건을 발급됨으로(또는 그 반대로) 적어 중복 발급으로 이어질 수 있어서다. 후속 Y가 W(Y) 안에서 주 비가역 Xc의 verify를 다시 지나는 것(V-03c′)은 그대로 허용한다. 막는 것은 `X.verify` 필드의 중복뿐이다. 엔진 원장 포트는 검증기를 거치지 않은 IR로 이 길에 닿으면 추측하지 않고 판정을 붙이지 않은 채 그 X들의 열린 행을 `in_doubt`로 닫는다(엔진 PR-B) |
 | V-05 | `repeat.max ≤ 20`, 중첩 ≤ 2 |
 | V-06 | `goto.url`을 WHATWG URL로 파싱: `https:`, userinfo 없음, 포트 없음, `hostname ∈ manifest.domains` |
 | V-07 | `decide.on` 키 집합 = 번들 결과 − `reservedOutcomes`(엔진 처리: `blocked`, `logged_out_by_other_session`) 이고 `unknown` 포함. V-07b: `unknown`의 목적지는 `handoff`/`abort`, 또는 비가역 스텝을 거치지 않고 같은 `decide`로 돌아오는 대기 루프(`loopGuard` 필수) |

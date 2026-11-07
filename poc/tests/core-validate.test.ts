@@ -222,6 +222,17 @@ describe('V-04~V-24', () => {
   it('V-04 verify.match가 $inputs', () => expectRule('V-04', (_p, s) => ((s('s30').lookup as { match: Record<string, string> }).match.supplyAmount = '$inputs.amounts.supply')));
   it('V-04 주 비가역 verify baseline none', () => expectRule('V-04', (_p, s) => ((s('s30').lookup as { baseline: string }).baseline = 'none')));
   it('V-04 submit.verify가 verify 스텝이 아님', () => expectRule('V-04', (_p, s) => (s('s21').verify = 's32')));
+  it('V-04a 두 비가역 X가 같은 verify를 가리키면 거부(후속 send_email s36.verify = 주 verify s30)', () => {
+    const r = run(mutate((p, s, steps) => {
+      withFollowUp(p, s, steps);
+      s('s36').verify = 's30';
+    }));
+    assert.ok(r.some((x) => x.rule === 'V-04a' && x.step === 's36' && x.target === 's30'), JSON.stringify(r.map((x) => x.rule)));
+  });
+  it('V-04a 후속 Y가 W(Y) 안에서 Xc의 verify를 다시 지나는 것은 허용(X.verify 필드 중복만 막는다)', () => {
+    assert.ok(!rulesOf(mutate(withFollowUp)).has('V-04a'), '골든 + 후속 send_email(자기 verify s37)은 통과');
+    assert.ok(!rulesOf(h01()).has('V-04a'));
+  });
   it('V-05 repeat 경계를 넘는 점프', () =>
     expectRule('V-05', (_p, _s, steps) => insertAfter(steps, 's18', { id: 's18a', type: 'repeat', max: 2, until: { varSet: 'x' }, steps: [{ id: 's18b', type: 'branch', on: { inputPresent: 'email' }, cases: { true: 's19' }, default: 's18c' }, { id: 's18c', type: 'extract', name: 'x', from: { a11y: { target: 'hometax.invoice.form.remark' } } }] })));
   it('V-05 repeat 3중 중첩', () =>
