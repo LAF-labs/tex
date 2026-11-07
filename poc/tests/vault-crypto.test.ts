@@ -129,7 +129,12 @@ describe('금고 장기 키 연산', () => {
   it('허용 목록은 remote 패키지(서명하는 쪽 정본)와 같다', () => {
     assert.deepEqual([...AIK_PURPOSES].sort(), [...REMOTE_AIK].sort());
     assert.deepEqual([...VD_PURPOSES].sort(), [...REMOTE_VD].sort());
-    assert.ok(RPC_BY_PORT.engine.includes('crypto.signAik'));
+    for (const m of CRYPTO_METHODS) {
+      assert.ok(!RPC_BY_PORT.engine.includes(m), `엔진 포트에 ${m}`);
+      assert.ok(RPC_BY_PORT.control.includes(m), `control 포트에 ${m} 없음`);
+      assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
+    }
+    assert.deepEqual(RPC_BY_PORT.engine.filter((m) => m.startsWith('crypto.')), [], '엔진 포트에 장기 키 연산이 없다');
   });
 
   it('noiseDH: X25519(Sd, 상대) = X25519(상대, Sd), 문맥·길이 검사, 낮은 차수 점 거부', async () => {
@@ -196,7 +201,9 @@ describe('금고 장기 키 연산', () => {
   });
 });
 
-/** 금고 서비스 엔진 포트(VaultClient)로 만든 데스크톱 키(packages/remote DesktopKeys 모양). */
+const CRYPTO_METHODS = ['crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen'] as const;
+
+/** 금고 서비스 control 포트(main, VaultClient)로 만든 데스크톱 키(packages/remote DesktopKeys 모양). `engine`은 거부 확인용. */
 async function vaultDesktop() {
   const root = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-crypto-'));
   const log = new FileEventLog(null, 'vault');
@@ -205,8 +212,9 @@ async function vaultDesktop() {
   const ctl = new MessageChannel();
   vault.attachPort('engine', wrapPort(eng.port1, 'node'));
   vault.attachPort('control', wrapPort(ctl.port1, 'node'));
-  const client = new VaultClient(wrapPort(eng.port2, 'node'));
-  const control = new VaultClient(wrapPort(ctl.port2, 'node'));
+  const engine = new VaultClient(wrapPort(eng.port2, 'node'));
+  const client = new VaultClient(wrapPort(ctl.port2, 'node'));
+  const control = client;
   const pk = await client.rpc<VaultPublicKeys>('crypto.publicKeys');
   const vd: VdSigner = { publicKey: pk.vd, sign: (purpose, msg) => client.rpc<{ sig: Uint8Array }>('crypto.signVd', { purpose, msg }).then((r) => r.sig) };
   const aik: AikSigner = { publicKey: pk.aik, sign: (purpose, msg) => client.rpc<{ sig: Uint8Array }>('crypto.signAik', { purpose, msg }).then((r) => r.sig) };
@@ -218,18 +226,43 @@ async function vaultDesktop() {
     }
     await fs.rm(root, { recursive: true, force: true });
   };
-  return { pk, vd, aik, client, control, log, close };
+  return { pk, vd, aik, client, control, engine, log, close };
 }
 
-describe('받는 쪽 검증(금고 엔진 포트 경유)', () => {
-  it('공개키는 Uint8Array 32B 다섯 개, control 포트(main)도 같은 키로 부른다', async () => {
+describe('받는 쪽 검증(금고 control 포트 경유)', () => {
+  it('엔진 포트: crypto.* 다섯 개 모두 denied(vault.rpc_denied), 키 연산은 하지 않는다', async () => {
+    const d = await vaultDesktop();
+    try {
+      const before = d.log.lines.filter((l) => l.includes('vault.crypto_op')).length;
+      const peer = x25519FromSeed(new Uint8Array(32).fill(6));
+      const params: Record<(typeof CRYPTO_METHODS)[number], Record<string, unknown>> = {
+        'crypto.publicKeys': {},
+        'crypto.noiseDH': { remotePub: peer.pub, ctx: 'SAX-session-v1' },
+        'crypto.signVd': { purpose: 'SAX-dpop-v1', msg: utf8('x') },
+        'crypto.signAik': { purpose: 'SAX-acct-op-v1', msg: utf8('x') },
+        'crypto.hpkeOpen': { enc: new Uint8Array(32), ct: new Uint8Array(32), info: 'SAX-env-v1', aad: utf8('SAX-env-v1\u0001') },
+      };
+      for (const m of CRYPTO_METHODS) {
+        await assert.rejects(d.engine.rpc(m, params[m]), /vault: denied/, m);
+        assert.ok(d.log.lines.some((l) => l.includes('vault.rpc_denied') && l.includes(m) && l.includes('"port":"engine"')), `${m} 거부 기록`);
+      }
+      assert.equal(d.log.lines.filter((l) => l.includes('vault.crypto_op')).length, before, '거부된 요청은 키 연산을 하지 않는다');
+      // 같은 요청이 control 포트에서는 된다
+      assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk);
+      assert.equal(((await d.control.rpc('crypto.signVd', params['crypto.signVd'])) as { sig: Uint8Array }).sig.length, 64);
+      assert.equal(((await d.control.rpc('crypto.signAik', params['crypto.signAik'])) as { sig: Uint8Array }).sig.length, 64);
+    } finally {
+      await d.close();
+    }
+  });
+
+  it('공개키는 Uint8Array 32B 다섯 개, control 포트(main)로 부른다', async () => {
     const d = await vaultDesktop();
     try {
       assert.deepEqual(Object.keys(d.pk).sort(), ['aik', 'kv', 'noiseStatic', 'qd', 'vd']);
       for (const v of Object.values(d.pk)) assert.ok(v instanceof Uint8Array && v.length === 32);
-      assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk, 'main과 엔진이 같은 키를 본다');
+      assert.deepEqual(await d.control.rpc('crypto.publicKeys'), d.pk);
       await assert.rejects(d.control.rpc('crypto.signAik', { purpose: 'SAX-dpop-v1', msg: new Uint8Array(1) }), /purpose_not_allowed/);
-      await assert.rejects(d.client.rpc('crypto.signAik', { purpose: 'SAX-dpop-v1', msg: new Uint8Array(1) }), /purpose_not_allowed/);
       // 결과 모양(NOTES §7): {shared}·{sig}·{pt}
       const peer = x25519FromSeed(new Uint8Array(32).fill(4));
       const dh = await d.client.rpc<{ shared: Uint8Array }>('crypto.noiseDH', { remotePub: peer.pub, ctx: 'SAX-session-v1' });
