@@ -164,6 +164,12 @@ export interface QueuePage {
   more: boolean;
 }
 
+/** 큐 GET 한 쪽(services/relay/API.md, #204): 봉투 바이트 3 MiB까지, 남으면 more. */
+export interface QueuePage {
+  envelopes: { seq: number; env: unknown }[];
+  more: boolean;
+}
+
 export interface RelayQueue {
   post(e: OuterEnv): Promise<PostResult>;
   /** 첫 쪽의 봉투만(옛 호출자용). 남은 쪽은 ACK 뒤 다음 호출에서 받는다. */

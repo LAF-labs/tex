@@ -452,6 +452,42 @@ export class CardRepo {
     return toMemo(this.db.prepare('SELECT * FROM card_txn_memos WHERE profile_id = ? AND match_key = ?').get(txn.profileId, key) as Row);
   }
 
+  /** 한 행(프로필 확인 포함). 없거나 다른 프로필이면 null */
+  txn(profileId: string, txnId: string): CardTxn | null {
+    const r = this.db.prepare('SELECT * FROM card_txns WHERE id = ? AND profile_id = ?').get(txnId, profileId) as Row | undefined;
+    return r ? toTxn(r) : null;
+  }
+
+  memo(profileId: string, memoId: string): CardMemo | null {
+    const r = this.db.prepare('SELECT * FROM card_txn_memos WHERE id = ? AND profile_id = ?').get(memoId, profileId) as Row | undefined;
+    return r ? toMemo(r) : null;
+  }
+
+  /**
+   * 떠 있는 메모("확인 필요", txn_id NULL)를 사장님이 고른 행에 다시 잇는다(D14 M6-3). 키는 그 행의 지금 match_key로 바꾼다.
+   * 그 행에 이미 메모가 있으면 memo_exists(덮어쓰지 않는다). 이미 이어진 메모는 memo_not_detached.
+   */
+  reattachMemo(profileId: string, memoId: string, txnId: string, at: string = nowIso()): CardMemo {
+    return this.db.transaction(() => {
+      const m = this.memo(profileId, memoId);
+      need(!!m, 'not_found');
+      need(m!.txnId === null, 'memo_not_detached');
+      const t = this.txn(profileId, txnId);
+      need(!!t, 'not_found');
+      const siblings = this.db.prepare('SELECT * FROM card_txns WHERE fetch_run_id = ? ORDER BY seq').all(t!.fetchRunId).map((r) => toTxn(r as Row));
+      const key = cardMatchKeys(siblings)[siblings.findIndex((x) => x.id === txnId)]!;
+      const taken = this.db.prepare('SELECT 1 FROM card_txn_memos WHERE profile_id = ? AND (match_key = ? OR txn_id = ?) AND id <> ?').get(profileId, key, txnId, memoId);
+      need(!taken, 'memo_exists');
+      this.db.prepare('UPDATE card_txn_memos SET match_key = ?, txn_id = ?, updated_at = ? WHERE id = ?').run(key, txnId, at, memoId);
+      return this.memo(profileId, memoId)!;
+    })();
+  }
+
+  /** 메모 하나를 지운다(떠 있는 메모 정리 포함). 없으면 false */
+  deleteMemo(profileId: string, memoId: string): boolean {
+    return this.db.prepare('DELETE FROM card_txn_memos WHERE id = ? AND profile_id = ?').run(memoId, profileId).changes > 0;
+  }
+
   memos(profileId: string): CardMemo[] {
     return this.db.prepare('SELECT * FROM card_txn_memos WHERE profile_id = ? ORDER BY updated_at').all(profileId).map((r) => toMemo(r as Row));
   }
