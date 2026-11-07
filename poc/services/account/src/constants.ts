@@ -42,6 +42,19 @@ export const PASSWORD = {
   resetSendsPerIpHour: 30,
 } as const;
 
+/** 알림 메일 발송 큐(notice_outbox). 응답 경로 밖에서 보낸다(ADR-038 (b)·(d)) */
+export const NOTICE = {
+  /** 한 번에 꺼내 보내는 수 */
+  batch: 50,
+  /** 보내는 동안 다른 처리자가 같은 행을 집지 않게 미루는 시간 */
+  leaseMs: 5 * 60_000,
+  /** 실패 뒤 다시 시도: 5분 × 2^(시도-1), 상한 6시간. 정리 cron(한 시간)이 다시 집는다 */
+  retryBaseMs: 5 * 60_000,
+  retryMaxMs: 6 * H,
+  /** 이만큼 실패하면 버린다(이벤트 이름만) */
+  maxAttempts: 8,
+} as const;
+
 export const DEVICE = {
   emailOnlyAddDelayHours: 72,
   newDeviceCoolingDays: 7,
