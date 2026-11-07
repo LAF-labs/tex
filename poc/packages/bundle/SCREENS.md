@@ -39,7 +39,8 @@
 | 꾸러미 | `db.query.bundle.status` | `profileId, month` | `ItemStatus[]` |
 | | `db.query.bundle.missing` | `profileId, month` | `missingView` |
 | | `bundle.ensureItems` | `profileId, industries[]` | 항목 |
-| | `bundle.addItem` | `profileId, name, cadence` | 3층 항목 |
+| | `bundle.addItem` | `profileId, name, cadence, source?` | 3층 항목. `source`는 `user`(기본)·`pasted_request`(붙여넣기 후보에서 고름) |
+| | `bundle.requestCandidates` | `profileId, text` | `{candidates[{name, cadence, cadenceFromText, basis, existing, duplicateOf}]}`. 읽기만(M6-7, `BUNDLE_REQUEST_COMMANDS`) |
 | | `bundle.cardSlipEnough` | `profileId, on, month(on일 때)` | `{from}`(다음 달부터, 끄면 null) |
 | | `bundle.setIncludeRrn` | `profileId, on` | `{includeRrn}` |
 | | `bundle.export` | `profileId, month, taxInvoices?` | `exportBundle` 결과 + `password` |
@@ -86,6 +87,11 @@
 ### 세무사 꾸러미(이번 달 판 · 빠진 것 · 내보내기)
 
 - 항목: 온보딩·설정 뒤에 `bundle.ensureItems`를 부른다. 여러 번 불러도 같다. 3층은 `bundle.addItem`이다.
+- 세무사 요청 붙여넣기(M6-7): 붙여 넣은 글을 `bundle.requestCandidates`로 보내 후보를 받는다. 규칙 사전만 쓰고 모델은 부르지 않는다. 글은 저장하지 않는다.
+  - 후보는 고칠 수 있는 줄로 보인다(이름·주기). `cadenceFromText: false`면 주기는 기본값이라 확인을 받는다.
+  - `existing`이 있으면 이미 있는 1·2층 항목이다. 새로 넣지 않는다. `itemId: null`이면 꺼진 2층이고, `industry`를 켜자고 안내한다(`bundle.ensureItems`).
+  - `duplicateOf`가 있으면 같은 이름의 3층 항목이 이미 있다.
+  - 사장님이 고른 것만 `bundle.addItem { source: 'pasted_request' }`로 넣는다. 후보 이름은 화면에 글자로만 그린다(HTML 아님).
 - 이번 달 판: `db.query.bundle.status` → `ItemStatus[] { item, period, status: missing|partial|ready|not_applicable, basis: entry|derived, docIds, note, counts }`.
 - 빠진 것: `db.query.bundle.missing` → `{ month, sections[], openCount, cardSlipEnough }`.
   - `sections`는 화면 순서로 온다. 펼침: `empty_items`, `payroll`. 접힘: `card_without_evidence`, `memos_need_check`, `invoice_sum_gaps`.
