@@ -27,6 +27,8 @@ import { RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
+import { INTENT_COMMANDS } from './protocol.ts';
+import { gatewayIntentModel, IntentResolver } from './intent.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -42,6 +44,8 @@ let data: DataService | null = null;
 let payroll: BundleService | null = null;
 /** 폰 사진·현금 수신(PhoneIntake). 보관함 파일과 documents·receipts 행을 한 번에 쓴다. */
 let phone: PhoneIntake | null = null;
+/** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main 오프라인 대체). */
+let intent: IntentResolver | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
 /** 레지스트리 동기화(main 전용 질의·명령). 핀 키가 없으면 null(registry.not_pinned). */
@@ -61,6 +65,9 @@ for (const m of DAEMON_READ_QUERIES) {
   PAYROLL.add(m);
   ALLOWED.add(m);
 }
+
+const INTENT = new Set<string>(INTENT_COMMANDS);
+for (const m of INTENT) ALLOWED.add(m);
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -85,6 +92,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   // 레지스트리 GET은 Egress 레지스트리 목적지(클라우드 트랙)가 들어오면 fetch로 넘긴다. 그 전에는 sync가 registry.fetch_unavailable이다.
   if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: null, store: settingsRegistryStore(db), sinks: [rateTableSink(db)], log });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
+  intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -140,6 +148,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');
     return phone.handle(method, params);
+  }
+  if (INTENT.has(method)) {
+    if (!intent) throw new Error('db_not_ready');
+    return intent.handle(method, params);
   }
   if (PAYROLL.has(method)) {
     if (!payroll) throw new Error('db_not_ready');
