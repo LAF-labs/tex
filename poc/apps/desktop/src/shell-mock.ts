@@ -254,7 +254,7 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
     Object.assign(pending, { cp: null, asked: null, amount: null });
     return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? parsed.vat, parsed.item) };
   }
-  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 이 데모에서는 세금계산서 발급과 정부24 직접 발급 안내를 보여 드려요.' };
+  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
   return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', chips: QUICK.filter((q) => !q.soon) };
 }
 

@@ -216,6 +216,34 @@ describe('NPKI 열거·읽기(D05 §6)', () => {
     }
   });
 
+  it('dev·ino는 bigint로 비교한다: 2^53 위에서 Number로는 같아 보이는 두 파일 ID, 파일 ID 0도 바뀐 것으로 본다(Windows NTFS 64비트 ID)', async () => {
+    const root = await tmpRoot();
+    try {
+      await cert(root, 'yessign', 'cn=TEST큰ID');
+      // 열거 때와 연 뒤의 파일 ID를 고정한다. 둘은 Number로 바꾸면 같은 값이 된다.
+      const idAt = (ino: bigint): NpkiFs => ({
+        ...nodeNpkiFs,
+        lstat: async (p) => {
+          const st = await nodeNpkiFs.lstat(p);
+          return p.endsWith('signCert.der') ? Object.assign(st, { ino: 2n ** 60n + 2n }) : st;
+        },
+        open: async (p, f) => {
+          const fh = await nodeNpkiFs.open(p, f);
+          if (!p.endsWith('signCert.der')) return fh;
+          const stat = fh.stat.bind(fh);
+          return Object.assign(fh, { stat: async (o?: { bigint?: boolean }) => Object.assign(await stat(o as { bigint: true }), { ino }) }) as typeof fh;
+        },
+      });
+      assert.equal(Number(2n ** 60n + 1n), Number(2n ** 60n + 2n), '시험 전제: Number로는 같다');
+      assert.deepEqual(await scanNpki({ roots: roots(root), fs: idAt(2n ** 60n + 1n) }), { certs: [], skipped: { changed: 1 } });
+      assert.deepEqual(await scanNpki({ roots: roots(root), fs: idAt(0n) }), { certs: [], skipped: { changed: 1 } });
+      const same = await scanNpki({ roots: roots(root), fs: idAt(2n ** 60n + 2n) });
+      assert.equal(same.certs.length, 1, '같은 ID면 받는다');
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('개수 상한(CA·cn·전체)과 이상한 CA 이름', async () => {
     const root = await tmpRoot();
     try {

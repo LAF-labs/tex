@@ -50,7 +50,35 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     assert.equal(saved.address, null);
     assert.equal(saved.email, null, '빈 이메일은 null');
     assert.deepEqual(calls.map(([m]) => m), ['counterparty.create']);
-    assert.ok(!('item' in calls[0]![1]), '저장 품목은 엔진에 보내지 않는다(DB 열이 없다)');
+    assert.ok(!('item' in calls[0]![1]), '품목은 거래처 행이 아니라 저장 품목 명령(setFirstItem)으로 간다');
+  });
+
+  it('[저장 품목] 칸 = 첫 저장 품목: 넣기·바꾸기(나머지·단가 유지)·같은 이름은 앞으로·비우면 첫 품목만 뺌·안 바뀌면 쓰지 않음', async () => {
+    const b = book();
+    const cp = await b.save({ id: null, name: '견본상사', bizNo: '314-86-01237' });
+    const items = () => svc.handle('counterparty.getItems', { id: cp.id }) as Promise<Array<{ name: string; unitPrice: number | null; unit: string | null }>>;
+    await b.setFirstItem(cp.id, '  사무용품  ');
+    assert.deepEqual(await items(), [{ name: '사무용품', unitPrice: null, unit: null }]);
+    // 다른 화면(나중)에서 단가·단위를 넣은 둘째 품목이 있다고 하자
+    await svc.handle('counterparty.setItems', { id: cp.id, items: [{ name: '사무용품', unitPrice: 1000, unit: '개' }, { name: '복사지', unitPrice: 5000, unit: '박스' }] });
+    calls = [];
+    await b.setFirstItem(cp.id, '사무용품');
+    assert.deepEqual(calls.map(([m]) => m), ['counterparty.getItems'], '같으면 쓰지 않는다');
+    await b.setFirstItem(cp.id, '경영 컨설팅');
+    assert.deepEqual(await items(), [{ name: '경영 컨설팅', unitPrice: null, unit: null }, { name: '복사지', unitPrice: 5000, unit: '박스' }], '첫 품목만 바뀌고 둘째는 그대로');
+    await b.setFirstItem(cp.id, '복사지');
+    assert.deepEqual(await items(), [{ name: '복사지', unitPrice: 5000, unit: '박스' }], '같은 이름은 그 품목(단가·단위)을 앞으로');
+    await b.setFirstItem(cp.id, '');
+    assert.deepEqual(await items(), [], '비우면 첫 품목을 뺀다');
+    calls = [];
+    await b.setFirstItem(cp.id, null);
+    await b.setFirstItem(cp.id, undefined);
+    assert.deepEqual(calls, [], '칸을 보내지 않으면 건드리지 않는다');
+    // 칸 상한(40자)에서 자르고, 엔진 검사 오류는 그대로 올라간다
+    await b.setFirstItem(cp.id, '가'.repeat(60));
+    assert.equal((await items())[0]!.name.length, 40);
+    await assert.rejects(b.setFirstItem(cp.id, 'a\u0000b'), /bad_item_name/);
+    assert.deepEqual(await b.items('cp-none'), [], '없는 거래처는 빈 목록');
   });
 
   it('[등록증으로 채우기] → 같은 번호로 추가하면 source ocr·주소(렌더러는 주소를 보내지 않는다), 한 번만', async () => {
@@ -127,13 +155,15 @@ describe('셸 배선(소스 검사)', () => {
     assert.doesNotMatch(src, /saveCounterparty/);
     assert.match(src, /readBizCert\(\{ \.\.\.bizCertPorts, pick \}\)\) \?\? \(picked \? 'unreadable' : null\)/);
     assert.match(src, /\? async \(\) => \(\{ \.\.\.MOCK_CP_CERT \}\)/);
-    assert.match(src, /if \(fixture && item\) fixture\.itemHints\[saved\.bizNo\] = item;/);
+    assert.match(src, /if \(fixture\) delete fixture\.itemHints\[saved\.bizNo\];\s*try \{\s*await cpBook\.setFirstItem\(saved\.id, p\.item\);/);
+    assert.match(src, /host\.rpc\('counterparty\.getItems', \{ id: c\.id \}\)/);
   });
-  it('렌더러는 후보를 입력 칸 value로만 넣는다(innerHTML 없음), 제품 장부에서는 저장 품목 칸이 없다', () => {
+  it('렌더러는 후보를 입력 칸 value로만 넣는다(innerHTML 없음), 저장 품목 칸은 제품·시연 모두에 있다(#144)', () => {
     const panel = js.slice(js.indexOf('function cpEditPanel('), js.indexOf('function bizView('));
     assert.match(panel, /call\('counterparty\.readCert', \{\}\)/);
     assert.match(panel, /form\.elements\.name\.value = r\.name/);
     assert.doesNotMatch(panel, /innerHTML|insertAdjacentHTML/);
-    assert.match(panel, /demoBook \? field\('저장 품목'/);
+    assert.match(panel, /^ {4}field\('저장 품목', 'item', c\?\.item, \{ maxlength: 40/m);
+    assert.match(panel, /item: f\.get\('item'\) \}\)/);
   });
 });

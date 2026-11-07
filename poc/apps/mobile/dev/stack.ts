@@ -1,6 +1,8 @@
 // 실제 계정·릴레이 서비스(services/account·relay, #63) 위의 통합 시험 스택. 시뮬레이터 앱은 바꾸지 않는다.
 //   node --conditions=development dev/stack.ts   → http://localhost:8787 (운영처럼 계정·릴레이가 한 공개 origin, 팀장 결정 2026-11-05)
-//   STACK_LIVE=0 이면 PC가 라이브 우편함에 붙지 않는다(Phase 1처럼 큐만).
+//   STACK_LIVE=0 이면 릴레이 라이브 WSS를 끄고 PC도 붙지 않는다(Phase 1처럼 큐만). 페어링 룸은 늘 켠다(RELAY_ROOMS=1).
+//   acct_claim은 계정 서비스가 시험 시드(dev/test-account-key.ts)로 서명한다(GET /v1/acct-claim). 개발 앱은 DEV_ACCOUNT_KEY로 검증한다.
+//   Node 폰 스모크: 이 스택을 띄운 뒤 node --conditions=development dev/smoke-phone.ts [--queue]
 //   STACK_HOST=<소문자 LocalHostName>.local:8787 이면 같은 LAN의 실기기가 붙는다(공개 origin·QR의 릴레이 호스트가 이 이름이 된다).
 //     실기기 앱은 Metro를 EXPO_PUBLIC_TEX_DEV_HOST=<같은 값> 으로 띄운다. QR은 브라우저에서 /dev/qr.html 을 열어 폰 카메라로 찍는다.
 //   앞단 8787: /v1/mailboxes·/v1/rooms(WSS 포함) → 릴레이(127.0.0.1:8783), 나머지 /v1/* → 계정(127.0.0.1:8780), /dev/* → 더미 PC
@@ -16,10 +18,10 @@ import { createServer, request, type IncomingMessage } from 'node:http';
 import { connect } from 'node:net';
 import { join } from 'node:path';
 import { toQR } from 'toqr';
-import { devAcctClaim } from './test-account-key.ts';
+import { TEST_ONLY_SEED_HEX } from './test-account-key.ts';
 import { WebSocket as WS } from 'ws';
 import {
-  AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
+  AIK_PURPOSES, CAP, DesktopPairing, allowDevLanHosts, jcsBytes, DeviceTokenCache, ReceiveQueue, VD_PURPOSES, acceptDesktopSession, b64, b64url, certNotAfter, deviceAuthHeaders,
   drainQueue, ed25519Keygen, hpkeOpen, initialDeviceList, issueCert, makeQBundle, qbundleWindow, relayQueue, requestDeviceToken, softNoiseStatic, softSigner,
   uuid4, wsRelayClient, x25519Keygen, type DesktopKeys, type DeviceListJson, type HttpJson, type Link, type PairRecord, type WebSocketLike,
 } from '../../../packages/remote/src/index.ts';
@@ -53,6 +55,8 @@ const account = await startAccount(
     SAX_SQLITE_FILE: join(OUT, 'stack-account.db'), TOKEN_SIGNING_SEED: tokenSeed, CODE_MAC_KEY: hex(), ACCOUNT_PUBLIC_ORIGIN: ORIGIN, WEBAUTHN_RP_ID: 'localhost',
     WEBAUTHN_ORIGINS: ORIGIN, BILLING_RETURN_URL: `${ORIGIN}/done`, PG_PROVIDER: 'mock', MAIL_PROVIDER: 'mock', INTERNAL_CALL_KEY: internal,
     STOP_HOOK_URLS: `http://127.0.0.1:${RELAY}`, RELAY_INTERNAL_URL: `http://127.0.0.1:${RELAY}`, LIMIT_ID_KEY: limitIdKey, PORT: String(ACCT), HOST: '127.0.0.1',
+    // acct_claim은 실제 계정 서비스가 서명한다(GET /v1/acct-claim, #125). 키는 공개된 시험 시드라 개발 앱의 DEV_ACCOUNT_KEY로 검증된다.
+    ACCT_CLAIM_SIGNING_KEY: TEST_ONLY_SEED_HEX,
   },
   { mail },
 );
@@ -60,6 +64,8 @@ const relaySvc = await startRelay({
   SAX_SQLITE_FILE: join(OUT, 'stack-relay.db'), QUEUE_KEY: hex(), RELAY_PUBLIC_ORIGIN: ORIGIN,
   TOKEN_PUBLIC_KEYS: `k1:${ed25519RawPublic(ed25519Private(Buffer.from(tokenSeed, 'hex'))).toString('base64')}`,
   ACCOUNT_INTERNAL_URL: `http://127.0.0.1:${ACCT}`, INTERNAL_CALL_KEY: internal, LIMIT_ID_KEY: limitIdKey, PORT: String(RELAY), HOST: '127.0.0.1',
+  // 페어링 룸은 운영에서 룸 호스트만 켠다(#135). 이 스택은 한 프로세스라 룸을 켜고, 라이브 WSS는 STACK_LIVE를 따른다.
+  RELAY_ROOMS: '1', RELAY_LIVE: process.env.STACK_LIVE === '0' ? '0' : '1',
 });
 log(`account ${account.url} · relay ${relaySvc.url}`);
 
@@ -186,17 +192,16 @@ async function startPairing(): Promise<string> {
     keys, deviceList, relayHost: HOST,
     // 7단계: SAS 일치 뒤, pair.ok 전(룸이 열려 있을 때) 데스크톱 기기 토큰 + 이 룸 id로 폰을 대신 등록한다.
     // 설계 #120: 계정 서비스가 서명할 acct_claim. 서버 구현 전이라 시험 키(dev/test-account-key.ts)로 대신 서명한다.
-    accountClaim: async () => devAcctClaim(keys.aik.publicKey, email),
+    // 계정 서비스가 서명한 acct_claim을 그대로 싣는다(운반 형식 b64(JCS({claim, sig}))).
+    accountClaim: async () => b64(jcsBytes(expect(await call('GET', '/v1/acct-claim', { headers: await dauth('GET', `${ORIGIN}/v1/acct-claim`) }), 200, 'GET /v1/acct-claim'))),
     desktopName: '더미 PC',
     enrollPhone: async (ph) => {
       const r = await call('POST', '/v1/devices/enroll', {
         headers: await dauth('POST', `${ORIGIN}/v1/devices/enroll`),
         body: { deviceId: ph.deviceId, role: 'mobile', platform: ph.platform, name: ph.name, Sx: b64(ph.Sm), Vx: b64(ph.Vm), roomId: b64url(ph.roomId) },
       });
-      if (r.status === 201) return void log('POST /v1/devices/enroll (PC 대리 등록) 201');
-      // 앞 시도에서 등록만 되고 목록을 못 올린 폰: 같은 키로 이미 있으면 성공으로 본다(계약: 같은 기기 ID 재등록은 400).
-      const list = expect(await call('GET', '/v1/devices', { headers: await dauth('GET', `${ORIGIN}/v1/devices`) }), 200, 'GET /v1/devices').devices as { deviceId: string; Sx: string; Vx: string }[];
-      if (list.some((d) => d.deviceId === ph.deviceId && d.Sx === b64(ph.Sm) && d.Vx === b64(ph.Vm))) return void log('POST /v1/devices/enroll', r.status, '(이미 같은 키로 등록됨)');
+      // 201 새 등록, 200 같은 키 재등록(서버 멱등, #122: 룸 미소비·상한 불변). 다른 키 400·룸 재사용 409 등은 실패.
+      if (r.status === 201 || r.status === 200) return void log(`POST /v1/devices/enroll (PC 대리 등록) ${r.status}`);
       throw new Error(`POST /v1/devices/enroll: ${r.status} ${JSON.stringify(r.body)}`);
     },
     publishDeviceList: async (l) => {
