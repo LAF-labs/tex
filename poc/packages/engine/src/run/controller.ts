@@ -34,6 +34,9 @@ export const CONTROL_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['gate.unavailable', 'handoff'],
 ]);
 
+/** sign 방식마다 엔진이 할 then[] 동작(null = 엔진 입력 없음). */
+const SIGN_ACTION: Readonly<Record<string, 'human:secret' | 'secret_fill:security_card' | null>> = { cert: 'human:secret', security_card: 'secret_fill:security_card', simple_auth: null };
+
 /**
  * 클릭 결과 코드 중 "요청이 나가지 않았음"이 확실한 것(가드·R-A1·동작 가능성 사전 확인·정책 거부, D03 §5.3).
  * 이 밖의 실패는 실제 클릭 도중의 예외일 수 있으므로 dispatched로 보고 verify로 간다.
@@ -246,10 +249,11 @@ export class RunController {
       }
     }
     // 비가역 스텝은 언제나 조율기 것이다(넘겨받은 핸들러로 덮을 수 없다). human_commit·send_email은 아직 없어 실행하지 않는다.
+    // sign도 조율기 것이다: 커밋 구간을 알아야 거부할 수 있다.
     const bound = {
       ...i.handlers,
       gate: this.gateStep, human: this.humanStep, checkpoint: this.checkpointStep,
-      submit: this.submitStep, human_commit: this.refuseIrreversible, send_email: this.refuseIrreversible,
+      submit: this.submitStep, human_commit: this.refuseIrreversible, send_email: this.refuseIrreversible, sign: this.signStep,
       ...(i.verifyStep ? { verify: this.verifyStep } : {}),
     } as Handlers;
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
@@ -817,14 +821,55 @@ export class RunController {
     return fail('gate.expired');
   }
 
+  /**
+   * sign(D02 §4 표): 로그인 등 **커밋 구간 밖** 포털 서명 흐름. 발급 때 전자서명은 submit.signFlow다.
+   * - 커밋 구간 W(X) 안(승인한 토큰을 들고 X를 기다리는 동안, 토큰 소비 ~ verify)이면 아무것도 하지 않고 거부한다(V-03c의 실행 시 방어).
+   *   토큰을 든 동안이면 중단(sign.refused_in_commit). 토큰을 쓴 뒤(눌렀을 수 있음)면 판정할 verify가 없으니 InDoubt(사람 확인).
+   * - 방식(method, $profile.signMethod)마다 포털 서명 모듈이 하는 일이 다르다. 엔진은 then[] 가운데 그 방식의 동작만 한다:
+   *   cert → human:secret(인증서 암호는 사용자가 금고 비밀 창에 직접, ADR-020 결정 2), security_card → secret_fill:security_card,
+   *   simple_auth → 입력 없음(PUSH 승인 대기는 뒤따르는 결정적 wait 스텝, D02 §8 예 s5).
+   * - 그 방식의 동작이 then[]에 없으면 sign.no_path, 모르는 방식이면 sign.method_unknown, 보안카드는 아직 없어(M2-3 나머지) sign.unsupported.
+   *   셋 다 재시도 없이 핸드오프다(사람이 로그인을 마저 한다).
+   */
+  private readonly signStep: Handler<'sign'> = async (s) => {
+    if (this.st.commit || this.tokensByGate.size > 0) {
+      this.i.journal('sign.refused_in_commit', { stepId: s.id, consumed: this.st.commit });
+      if (!this.st.commit) return fail('sign.refused_in_commit');
+      await this.disarm();
+      this.fire({ t: 'verify_timeout' }, s.id, 'sign.refused_in_commit');
+      return fail('run.state_stop');
+    }
+    const m: unknown = s.method === '$profile.signMethod' ? this.i.env.scope.profile.signMethod : s.method;
+    const method = typeof m === 'string' && Object.hasOwn(SIGN_ACTION, m) ? m : null;
+    const need = method === null ? undefined : SIGN_ACTION[method];
+    if (method === null || need === undefined) {
+      this.i.journal('sign.method_unknown', { stepId: s.id });
+      return fail('sign.method_unknown');
+    }
+    this.i.journal('sign.started', { stepId: s.id, method });
+    if (need === null) return NEXT;
+    if (!(s.then ?? []).includes(need)) {
+      this.i.journal('sign.no_path', { stepId: s.id, method });
+      return fail('sign.no_path');
+    }
+    if (need === 'secret_fill:security_card') {
+      this.i.journal('sign.unsupported', { stepId: s.id, action: need });
+      return fail('sign.unsupported');
+    }
+    if (!this.fire({ t: 'human_reached' }, s.id, null)) return fail('run.state_stop');
+    return this.secretTurn(s.id, { ttlMs: this.i.secretTtlMs ?? 120_000 });
+  };
+
+  /** 금고 비밀 창 사람 차례(D05 §3.5): 값은 금고가 포털 칸에 직접 넣는다. 엔진은 끝났는지만 안다. */
+  private async secretTurn(at: string, r: { target?: string; prompt?: string; ttlMs: number }): Promise<Outcome> {
+    const out = await this.i.human.secret({ runId: this.i.runId, stepId: at, ...r }).catch(() => 'ttl' as const);
+    if (this.pending === 'abort') return this.abortInTurn(at);
+    return out === 'ttl' ? this.ttl(at) : this.afterHuman(at);
+  }
+
   private readonly humanStep: Handler<'human'> = async (h) => {
     if (!this.fire({ t: 'human_reached' }, h.id, null)) return fail('run.state_stop');
-    if (h.kind === 'secret') {
-      // 값은 금고 비밀 창이 포털 칸에 직접 넣는다(D05 §3.5). 엔진은 끝났는지만 안다.
-      const r = await this.i.human.secret({ runId: this.i.runId, stepId: h.id, target: h.target, prompt: h.prompt, ttlMs: h.ttlMs }).catch(() => 'ttl' as const);
-      if (this.pending === 'abort') return this.abortInTurn(h.id);
-      return r === 'ttl' ? this.ttl(h.id) : this.afterHuman(h.id);
-    }
+    if (h.kind === 'secret') return this.secretTurn(h.id, { target: h.target, prompt: h.prompt, ttlMs: h.ttlMs });
     if (h.kind === 'manual') this.i.guardMode?.('observing');
     const reqId = `${this.i.runId}:${h.id}:${this.i.clock.now()}`;
     this.i.human.request({ runId: this.i.runId, stepId: h.id, reqId, kind: h.kind, prompt: h.prompt, region: h.region, ttlMs: h.ttlMs, inputSpec: h.inputSpec });

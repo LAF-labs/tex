@@ -78,6 +78,11 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.unobservable', 'handoff'],
   ['decide.unavailable', 'handoff'],
   ['decide.unknown', 'handoff'],
+  // sign(M2-3, D02 §4): 커밋 구간 안 sign은 중단, 로그인 서명을 엔진이 못 하면 핸드오프(사람이 마저 한다)
+  ['sign.refused_in_commit', 'abort'],
+  ['sign.method_unknown', 'handoff'],
+  ['sign.no_path', 'handoff'],
+  ['sign.unsupported', 'handoff'],
   ['portal.logged_out_by_other_session', 'handoff'],
   // verify 기준선 조회 실패(B-07, D16): 아직 커밋 전이라 게이트를 열지 않고 핸드오프. 다시 조회해도 같은 화면이라 재시도하지 않는다.
   ['verify.baseline_missing', 'handoff'],

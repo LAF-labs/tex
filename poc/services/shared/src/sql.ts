@@ -179,15 +179,22 @@ export function schemaColumns(dir: string): Record<string, string[]> {
   const out: Record<string, string[]> = {};
   for (const f of fs.readdirSync(dir).filter((x) => x.endsWith('.sql')).sort()) {
     const text = fs.readFileSync(path.join(dir, f), 'utf8').replace(/--.*$/gm, '');
-    for (const m of text.matchAll(/CREATE TABLE(?: IF NOT EXISTS)? (\w+) \(([\s\S]*?)\);/g)) {
-      const cols = m[2]!
-        .split(/,(?![^(]*\))/)
-        .map((s) => s.trim())
-        .filter((s) => s && !/^(PRIMARY KEY|UNIQUE|FOREIGN KEY|CHECK|CONSTRAINT)\b/i.test(s))
-        .map((s) => s.split(/\s+/)[0]!);
-      out[m[1]!] = [...(out[m[1]!] ?? []), ...cols];
+    // 문장 순서대로: CREATE(표 만들기), DROP(지우기), RENAME(표 다시 만들기 뒤 이름 바꾸기), ADD COLUMN
+    const re = /CREATE TABLE(?: IF NOT EXISTS)? (\w+) \(([\s\S]*?)\);|DROP TABLE(?: IF EXISTS)? (\w+);|ALTER TABLE (\w+) RENAME TO (\w+);|ALTER TABLE (\w+) ADD COLUMN (\w+)/g;
+    for (const m of text.matchAll(re)) {
+      if (m[1]) {
+        const cols = m[2]!
+          .split(/,(?![^(]*\))/)
+          .map((s) => s.trim())
+          .filter((s) => s && !/^(PRIMARY KEY|UNIQUE|FOREIGN KEY|CHECK|CONSTRAINT)\b/i.test(s))
+          .map((s) => s.split(/\s+/)[0]!);
+        out[m[1]] = cols;
+      } else if (m[3]) delete out[m[3]];
+      else if (m[4]) {
+        out[m[5]!] = out[m[4]] ?? [];
+        delete out[m[4]];
+      } else if (m[6]) out[m[6]] = [...(out[m[6]] ?? []), m[7]!];
     }
-    for (const m of text.matchAll(/ALTER TABLE (\w+) ADD COLUMN (\w+)/g)) out[m[1]!] = [...(out[m[1]!] ?? []), m[2]!];
   }
   return out;
 }
