@@ -42,6 +42,21 @@ export interface Counterparty {
   localApprovedAt: string | null;
 }
 
+/** 거래처 저장 품목(08 §144 "자주 쓰는 품목을 저장한다"). 세금계산서 요청 때 고르는 후보일 뿐 발급 값이 아니다 */
+export interface CounterpartyItem {
+  name: string;
+  /** 원 단위 정수(0 이상). 정하지 않았으면 null */
+  unitPrice: number | null;
+  /** 예: 개, 식, 시간. 없으면 null */
+  unit: string | null;
+}
+
+/** 거래처 하나에 저장하는 품목 수 상한 */
+export const COUNTERPARTY_ITEMS_MAX = 20;
+export const COUNTERPARTY_ITEM_NAME_MAX = 100;
+export const COUNTERPARTY_ITEM_UNIT_MAX = 20;
+const ITEM_PRICE_MAX = 999_999_999_999;
+
 export type CounterpartyInput = Pick<Counterparty, 'bizNo' | 'name'> & Partial<Pick<Counterparty, 'repName' | 'address' | 'email' | 'source'>>;
 
 export class ValidationError extends Error {
@@ -95,6 +110,34 @@ export function normalizeLoginId(raw: string): string {
   const id = raw.trim();
   if (!id || id.length > 64 || /[\s\p{Cc}]/u.test(id)) throw new ValidationError('bad_login_id');
   return id;
+}
+
+const itemText = (v: unknown, max: number, code: string, required: boolean): string | null => {
+  if (v === undefined || v === null || (typeof v === 'string' && !v.trim() && !required)) {
+    if (required) throw new ValidationError(code);
+    return null;
+  }
+  if (typeof v !== 'string') throw new ValidationError(code);
+  const t = v.trim();
+  if (!t || [...t].length > max || /\p{Cc}/u.test(t)) throw new ValidationError(code);
+  return t;
+};
+
+/** 저장 품목 목록 검사: 배열, 상한 이하, 이름 필수·겹치지 않음, 단가는 0 이상 정수 또는 null. 다른 칸은 버린다 */
+export function normalizeCounterpartyItems(raw: unknown): CounterpartyItem[] {
+  if (!Array.isArray(raw)) throw new ValidationError('bad_items');
+  if (raw.length > COUNTERPARTY_ITEMS_MAX) throw new ValidationError('too_many_items');
+  const seen = new Set<string>();
+  return raw.map((it) => {
+    if (typeof it !== 'object' || it === null || Array.isArray(it)) throw new ValidationError('bad_items');
+    const r = it as Record<string, unknown>;
+    const name = itemText(r.name, COUNTERPARTY_ITEM_NAME_MAX, 'bad_item_name', true)!;
+    if (seen.has(name)) throw new ValidationError('item_name_twice');
+    seen.add(name);
+    const p = r.unitPrice;
+    if (p !== undefined && p !== null && !(Number.isSafeInteger(p) && (p as number) >= 0 && (p as number) <= ITEM_PRICE_MAX)) throw new ValidationError('bad_item_price');
+    return { name, unitPrice: (p as number | null | undefined) ?? null, unit: itemText(r.unit, COUNTERPARTY_ITEM_UNIT_MAX, 'bad_item_unit', false) };
+  });
 }
 
 function checkEmail(email: string | null | undefined): void {
@@ -232,6 +275,26 @@ export class CounterpartyRepo {
   setVerification(id: string, status: string, at: string = now()): Counterparty {
     if (this.db.prepare('UPDATE counterparties SET verified_status=?, verified_at=? WHERE id=?').run(status, at, id).changes === 0) throw new ValidationError('not_found');
     return this.get(id)!;
+  }
+
+  /** 저장 품목(저장 순서). 거래처가 없으면 not_found */
+  getItems(id: string): CounterpartyItem[] {
+    const r = this.db.prepare('SELECT saved_items_json FROM counterparties WHERE id = ?').get(id) as { saved_items_json: string | null } | undefined;
+    if (!r) throw new ValidationError('not_found');
+    if (!r.saved_items_json) return [];
+    try {
+      return normalizeCounterpartyItems(JSON.parse(r.saved_items_json));
+    } catch {
+      return [];
+    }
+  }
+
+  /** 저장 품목을 통째로 바꾼다(빈 배열이면 지운다). 검사한 목록을 돌려준다 */
+  setItems(id: string, items: unknown): CounterpartyItem[] {
+    const list = normalizeCounterpartyItems(items);
+    const json = list.length ? JSON.stringify(list) : null;
+    if (this.db.prepare('UPDATE counterparties SET saved_items_json = ? WHERE id = ?').run(json, id).changes === 0) throw new ValidationError('not_found');
+    return list;
   }
 
   markUsed(id: string): void {

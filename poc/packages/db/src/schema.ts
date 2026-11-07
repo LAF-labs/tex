@@ -4,6 +4,8 @@
 // v3(M1-2): D07 §2의 나머지 코어 테이블(스케줄·패키지·정책·레지스트리·미리보기·사용량·리모트).
 // v4(M1-2, ADR-031·034): 급여대장(직원·달·줄·근무표·시행일 표).
 // v5(M1-2, ADR-032·034): 세무사 꾸러미(항목·달별 상태·내보내기·카드 조회·카드 내역·메모·종이 증빙·현금매출).
+// v6(db #53): 온보딩(포털 로그인 ID·동의 기록·이어 하기 상태).
+// v7(08 §144·O-05, 데스크톱 #141): 거래처 저장 품목(이름·단가·단위 JSON 배열, 개수 상한은 CounterpartyRepo). 개인정보·비밀이 아니라 평문 열이다(D07 §2 원칙).
 export interface Migration {
   version: number;
   name: string;
@@ -282,6 +284,13 @@ CREATE TABLE onboarding_state (
   profile_id TEXT REFERENCES profiles(id) ON DELETE SET NULL,
   step TEXT NOT NULL, state_json TEXT NOT NULL, updated_at TEXT NOT NULL
 );
+`,
+  },
+  {
+    version: 7,
+    name: 'counterparty_items',
+    sql: `
+ALTER TABLE counterparties ADD COLUMN saved_items_json TEXT;
 `,
   },
 ];
