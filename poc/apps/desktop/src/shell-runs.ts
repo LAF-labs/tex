@@ -121,15 +121,18 @@ function dupWarnings(req: GateRequest): string[] {
   return out;
 }
 
-/** 금고 이벤트(I-2) → 카드 문장. runId가 없으면 진행 중인 실행에 붙인다. 모르는 이벤트는 null. */
-export function vaultNotice(name: string, data: unknown): { runId?: string; text: string } | null {
+/** 금고가 전용 Chrome에서 확장을 보고 비밀 창을 거절했다(extension_not_allowed). 확장 ID·개수·경로는 화면에 두지 않는다(금고 로그에만). */
+export const EXTENSION_REFUSED_TEXT = 'Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.';
+
+/** 금고 이벤트(I-2) → 카드 문장. runId가 없으면 진행 중인 실행에 붙인다. 모르는 이벤트는 null. retry면 끝난 카드에 [다시 시도]. */
+export function vaultNotice(name: string, data: unknown): { runId?: string; text: string; retry?: 'extension' } | null {
   const d = (data ?? {}) as Record<string, unknown>;
   if (name === 'secret.expired') return { runId: typeof d.runId === 'string' ? d.runId : undefined, text: '입력한 비밀번호를 5분 안에 쓰지 않아 지웠어요. 필요할 때 다시 물어볼게요.' };
   if (name === 'secret_window.leak_suspected') return { text: NOTE['vault.leak_suspected']! };
   if (name === 'secret_window.refused') {
-    return d.reason === 'google_signin_detected'
-      ? { text: '전용 Chrome에 Google 계정이 로그인돼 있어 비밀번호 창을 열지 않았어요. 전용 Chrome에서 로그아웃한 뒤 다시 준비해 주세요.' }
-      : { text: '전용 Chrome 설정이 바뀌어 비밀번호 창을 열지 않았어요. 앱을 다시 시작해 주세요.' };
+    if (d.reason === 'google_signin_detected') return { text: '전용 Chrome에 Google 계정이 로그인돼 있어 비밀번호 창을 열지 않았어요. 전용 Chrome에서 로그아웃한 뒤 다시 준비해 주세요.' };
+    if (d.reason === 'extension_not_allowed') return { text: EXTENSION_REFUSED_TEXT, retry: 'extension' };
+    return { text: '전용 Chrome 설정이 바뀌어 비밀번호 창을 열지 않았어요. 앱을 다시 시작해 주세요.' };
   }
   return null;
 }
@@ -384,12 +387,13 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** 카드에 문장 하나를 더한다(금고 이벤트 등). runId가 없거나 끝난 실행이면 진행 중인 실행에. 같은 문장은 한 번만. */
-  notice(runId: string | undefined, text: string): void {
+  notice(runId: string | undefined, text: string, retry?: 'extension'): void {
     const own = runId ? this.runs.get(runId) : undefined;
     const active = [...this.runs.values()].find((x) => this.isActive(x.id));
     const r = own && this.isActive(own.id) ? own : (active ?? own);
     if (!r) return;
     r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
+    if (retry) r.retry = retry;
     this.emit('update', r);
   }
 

@@ -535,10 +535,25 @@ async function flow(): Promise<void> {
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T3', kind: 'portal_password', scope: 'business' });
   await until('secret window 3', () => !!S.secretWindow(), 5000);
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'security_card', scope: 'business', row: 9 });
+  // 확장 감지 거절: 진행 중에는 문장만, 발급 없이 끝나면 [다시 시도](입력창 채우기만)
+  S.host.emit('vault-event', 'secret_window.refused', { reason: 'extension_not_allowed', count: 1 });
+  await sleep(300);
+  const extLive = await js<{ text: boolean; btn: number }>(`(() => { const c = document.querySelector('[data-run="${id2}"]'); return { text: c.textContent.includes('Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.'), btn: c.querySelectorAll('[data-act="retry"]').length }; })()`);
   await stopRun(id2);
   await until('secret closed by run end', () => S.secretWindow() === null, 3000);
   await sleep(500);
   check('실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다', S.secretWindow() === null);
+  const runsBeforeRetry = S.runs.list().length;
+  const retryBtn = await js<number>(`document.querySelectorAll('[data-run="${id2}"] [data-act="retry"]').length`);
+  await js(`document.querySelector('[data-run="${id2}"] [data-act="retry"]')?.click()`);
+  await sleep(200);
+  const retryFilled = await js<string>(`document.querySelector('#composer').value`);
+  check(
+    '확장 감지 거절: 진행 중 카드는 고정 문장만(ID·개수 없음), 발급 없이 끝나면 [다시 시도] → 같은 요청을 입력창에 채우기만(새 실행·발급 없음)',
+    extLive.text && extLive.btn === 0 && retryBtn === 1 && retryFilled.includes('세금계산서') && S.runs.list().length === runsBeforeRetry && !S.runs.get(id2)!.result,
+    { extLive, retryBtn, retryFilled, runs: [runsBeforeRetry, S.runs.list().length] },
+  );
+  await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); t.blur(); })()`);
   check('승인 대기에서 카드 [중지](무장 전에도) → 카드가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)', !S.bar.snapshot().visible && !S.runs.get(id2)!.result && (await inspect(id2)).ledger === null && fx().fixture.posts() === 1);
 
   // 처음 거래·처음 보내는 주소(C테크)
