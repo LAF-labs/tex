@@ -47,6 +47,10 @@
 | | `bundle.markOpened` | `profileId, exportId, via, sentTo?` | 기록 |
 | | `bundle.markSent` | `profileId, exportId, note?` | 기록 |
 | | `payroll.exportRecord` | `profileId, fromMonth?, toMonth?` | `{record, file, months, password}` |
+| 카드 내역 | `db.query.card.list` | `profileId, month` | `{month, lastFetch, daysSinceFetch, coverage: full\|partial\|none, rows[{…, memo}], detachedMemos[{id, text, usedOn, amount}]}`(M6-3, `CARD_READ_QUERIES`) |
+| | `card.setMemo` | `profileId, txnId, memo` | 메모(빈 글이면 지움, 500자) |
+| | `card.reattachMemo` | `profileId, memoId, txnId` | 떠 있던 메모를 고른 행에 다시 잇는다. 그 행에 메모가 있으면 `memo_exists` |
+| | `card.deleteMemo` | `profileId, memoId` | `{deleted}` |
 | 데몬 | `daemon.snapshot` | — | `@sax/daemon` `DaemonSnapshot` `{policy, status, profiles[]}`. 읽기 전용, main 전용(`DAEMON_READ_QUERIES`) |
 | 설정 | `db.query.rateTables.installed` | — | `{packageId, installed, tables[{id, kind, effectiveFrom, effectiveTo, review}]}` |
 
@@ -107,6 +111,14 @@
   - 메일 프로그램이나 폴더를 열 때 `bundle.markOpened { via: 'mail_client' | 'folder', sentTo }`.
   - 사장님이 "보냈어요"를 누르면 `bundle.markSent { note }`.
 - 급여 기록(3년 보관): `payroll.exportRecord`. 주민번호는 늘 뺀다.
+
+### 사업용 카드 내역(08 D-04)
+
+- `db.query.card.list`로 그달 행을 그린다. 메모는 건마다 `card.setMemo`로 단다. 용도 분류·경비 인정 판단 문구는 쓰지 않는다(ADR-032 결정 3).
+- "마지막 최신화: n일 전"은 `daysSinceFetch`다(한국 날짜, 오늘이면 0). 한 번도 안 했으면 `lastFetch: null`이다.
+- `coverage`가 `partial`·`none`이면 그달 일부가 조회되지 않았다고 알리고 [최신화]를 권한다. 이번 달은 오늘까지만 본다.
+- [최신화]를 다시 눌러 행이 바뀌면, 다시 잇지 못한 메모가 `detachedMemos`("확인 필요")에 사용일·금액과 함께 온다. 사장님이 행을 골라 `card.reattachMemo`로 잇거나 `card.deleteMemo`로 지운다.
+- [최신화] 실행 자체는 이 명령에 없다(플레이북 H-12, M6-1).
 
 ### 시행일 표 업데이트(화면 없음, 업데이트 채널)
 

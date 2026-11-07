@@ -68,6 +68,14 @@ export const INTENT_COMMANDS = ['intent.resolve'] as const;
  * 처리는 @sax/bundle BundleService다. 읽기만 하고 DB에 쓰지 않는다. 고른 후보는 bundle.addItem {source:'pasted_request'}로 넣는다.
  */
 export const BUNDLE_REQUEST_COMMANDS = ['bundle.requestCandidates'] as const;
+/**
+ * 사업용 카드 내역 화면(08 D-04, D14 M6-3). 처리는 @sax/bundle BundleService다. 가게 이름·금액·메모가 오가므로 조회까지 main 전용이다.
+ * - db.query.card.list {profileId, month}: 그달 행·건별 메모, 마지막 최신화·며칠 전, 그달 덮임(full|partial|none), 다시 잇지 못한 메모.
+ * - card.setMemo {profileId, txnId, memo}(빈 글이면 지움), card.reattachMemo {profileId, memoId, txnId}, card.deleteMemo {profileId, memoId}.
+ * [최신화] 실행은 여기 없다(플레이북 H-12, M6-1).
+ */
+export const CARD_READ_QUERIES = ['db.query.card.list'] as const;
+export const CARD_COMMANDS = ['card.setMemo', 'card.reattachMemo', 'card.deleteMemo'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
