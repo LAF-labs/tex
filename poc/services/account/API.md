@@ -116,7 +116,7 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}}` | `200 {token, expiresAt, scopes}` | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈) |
+| `POST /v1/device-tokens` | DPoP(Vx, `ath = b64u(sha256(JCS(cert)))`) | `{cert:{cert:{device_id, role, Sx, Vx, Kx?, Px?, not_after}, aikSig}, scopes?: string[]}` | `200 {token, expiresAt, scopes}`(`scopes`는 실제로 준 범위, 역할 범위 순서) | `account.cert_invalid`(AIK 서명·만료·91일 초과·키 불일치), `account.device_suspended`, `request.param_rejected`(`scopes`가 빈 배열·모르는 이름·중복이면 검증 전 스키마에서, 역할 범위의 부분집합이 아니면 검증 뒤), IP당 600회/시(검증 전), 기기당 60회/시(인증서·DPoP 검증 통과 뒤에만 셈). `scopes`가 없으면 역할 전체(하위 호환). 범위 축소는 엔진용 gateway 전용 토큰 등에 쓴다(ADR-040 결정 1). 발급 기록은 이벤트 이름 `account.device_token_issued.<역할>.<범위를 -로 이음 \| all>`뿐이다(기기·계정 ID 없음) |
 
 ## 프로필 슬롯·사업자 HMAC(B-28, C-09)
 

@@ -36,6 +36,8 @@ interface Env {
   req: ReturnType<typeof client>;
   logs: string[];
   stopped: string[];
+  events: string[];
+  verifyKey: Uint8Array;
 }
 
 async function start(): Promise<Env> {
@@ -46,6 +48,7 @@ async function start(): Promise<Env> {
   const pg = new MockPaymentGateway();
   const signKey = edKey().priv;
   const stopped: string[] = [];
+  const events: string[] = [];
   const svc = new AccountService({
     db,
     mail,
@@ -56,13 +59,14 @@ async function start(): Promise<Env> {
     publicOrigin: ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/billing/done',
     stopHooks: [{ stopped: async (id) => void stopped.push(id) }],
+    onEvent: (n) => void events.push(n),
     now: clock.now,
   });
   const logs: string[] = [];
   const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internal: internalAuth() });
   const server = createServer(router, { logger: new Logger('account', (l) => logs.push(l), clock.now) });
   const base = await listen(server);
-  return { clock, db, mail, pg, svc, server, req: client(base), logs, stopped };
+  return { clock, db, mail, pg, svc, server, req: client(base), logs, stopped, events, verifyKey: ed25519RawPublic(signKey) };
 }
 
 const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
@@ -294,6 +298,34 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     // 이제는 고정된 계정
     const again = edKey();
     assert.equal((await e.req('POST', '/v1/aik', { headers: bearer(s), body: { aikPub: again.b64, deviceList: { listVersion: 1, entries: [entry(again, other, 1)], revoked: [] }, platform: 'windows', name: 'PC' } })).json.error, 'account.aik_already_pinned');
+  });
+
+  it('기기 토큰 범위 축소(ADR-040 결정 1): 부분집합만, 빈 배열·모르는 범위·중복·역할 밖은 400, 발급 기록에 역할·범위(ID 없음)', async () => {
+    const s = await login(e, 'scope@example.com');
+    const { aik, d } = await desktop(e, s);
+    const htu = ORIGIN + '/v1/device-tokens';
+    const ask = (scopes: unknown) => {
+      const c = cert(aik, d, e.clock.now() + 90 * D);
+      return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, e.clock.now()) }, body: { cert: c, scopes } });
+    };
+    e.events.length = 0;
+    const g = await ask(['gateway']);
+    assert.equal(g.status, 200, g.text);
+    assert.deepEqual(g.json.scopes, ['gateway']);
+    const v = new TokenVerifier({ k1: e.verifyKey }).verify(g.json.token as string, e.clock.now(), 'account.unauthorized');
+    assert.deepEqual(v.scp, ['gateway']);
+    // 순서는 역할 범위 순서로
+    assert.deepEqual((await ask(['devlist', 'gateway'])).json.scopes, ['gateway', 'devlist']);
+    // 역할의 전체를 다 고르면 전체와 같다
+    assert.deepEqual((await ask(['acct_op', 'devlist', 'slots', 'wake', 'relay', 'gateway'])).json.scopes, ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op']);
+    for (const bad of [[], ['gateway', 'gateway'], ['admin'], 'gateway', [1], ['push']]) assert.equal((await ask(bad)).json.error, 'request.param_rejected', JSON.stringify(bad));
+    assert.deepEqual(e.events, ['account.device_token_issued.desktop.gateway', 'account.device_token_issued.desktop.gateway-devlist', 'account.device_token_issued.desktop.all']);
+    // 범위 없는 요청은 전체(하위 호환)
+    const c = cert(aik, d, e.clock.now() + 90 * D);
+    const all = await e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', htu, jcs(c), d.V, e.clock.now()) }, body: { cert: c } });
+    assert.deepEqual(all.json.scopes, ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op']);
+    assert.equal(e.events.at(-1), 'account.device_token_issued.desktop.all');
+    for (const ev of e.events) assert.ok(!looksSensitive(ev) && !ev.includes(d.id), ev);
   });
 
   it('기기 토큰: AIK 인증서 + Vx DPoP만. 다른 키의 DPoP·만료 인증서·위조 인증서·jti 재사용 거부', async () => {
