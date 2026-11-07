@@ -151,9 +151,18 @@ export interface RelayQueueOptions {
 
 export type PostResult = 'ok' | 'full' | 'failed';
 
+/** 큐 GET 한 쪽(services/relay/API.md, #204): 봉투 바이트 3 MiB까지, 남으면 more. */
+export interface QueuePage {
+  envelopes: { seq: number; env: unknown }[];
+  more: boolean;
+}
+
 export interface RelayQueue {
   post(e: OuterEnv): Promise<PostResult>;
+  /** 첫 쪽의 봉투만(옛 호출자용). 남은 쪽은 ACK 뒤 다음 호출에서 받는다. */
   list(): Promise<{ seq: number; env: unknown }[]>;
+  /** 한 쪽과 more. after는 ACK 전에 다음 쪽을 받을 때만(받은 마지막 seq). */
+  listPage(after?: number): Promise<QueuePage>;
   ack(seq: number): Promise<void>;
   getBundle(): Promise<string | null>;
   putBundle(b: string): Promise<void>;
@@ -161,11 +170,11 @@ export interface RelayQueue {
 
 export function relayQueue(o: RelayQueueOptions): RelayQueue {
   const base = `/v1/mailboxes/${b64url(o.mbxId)}`;
-  const call = async (method: 'GET' | 'POST' | 'PUT', path: string, tokHeader: 'X-Mbx-Read' | 'X-Mbx-Write', body?: unknown) => {
+  const call = async (method: 'GET' | 'POST' | 'PUT', path: string, tokHeader: 'X-Mbx-Read' | 'X-Mbx-Write', body?: unknown, query = '') => {
     const url = o.origin.replace(/\/+$/, '') + base + path;
     const headers: Record<string, string> = { ...(await o.deviceAuth(method, url)), [tokHeader]: b64url(tokHeader === 'X-Mbx-Read' ? o.tok.read : o.tok.write) };
     if (body !== undefined) headers['content-type'] = 'application/json';
-    return o.http({ method, url, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    return o.http({ method, url: url + query, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   };
   return {
     async post(e) {
@@ -175,11 +184,21 @@ export function relayQueue(o: RelayQueueOptions): RelayQueue {
       return r.status === 429 && code === 'relay.queue_full' ? 'full' : 'failed';
     },
     async list() {
-      const r = await call('GET', '/envelopes', 'X-Mbx-Read');
+      return (await this.listPage()).envelopes;
+    },
+    async listPage(after?: number) {
+      if (after !== undefined && !(Number.isSafeInteger(after) && after >= 0)) throw new Error('queue: bad after');
+      // DPoP htu는 쿼리를 뺀 origin + 경로다(API.md). 쿼리는 요청 URL에만 붙인다.
+      const r = await call('GET', '/envelopes', 'X-Mbx-Read', undefined, after === undefined ? '' : `?after=${after}`);
       if (r.status !== 200) throw new Error(`queue: list ${r.status}`);
-      const envs = (r.body as { envelopes?: unknown } | null)?.envelopes;
+      const b = r.body as { envelopes?: unknown; more?: unknown } | null;
+      const envs = b?.envelopes;
       if (!Array.isArray(envs)) throw new Error('queue: list shape');
-      return envs.filter((x): x is { seq: number; env: unknown } => !!x && Number.isSafeInteger((x as { seq?: unknown }).seq));
+      return {
+        envelopes: envs.filter((x): x is { seq: number; env: unknown } => !!x && Number.isSafeInteger((x as { seq?: unknown }).seq)),
+        // more를 모르는 옛 서버는 필드가 없다 → 한 쪽으로 본다
+        more: b?.more === true,
+      };
     },
     async ack(seq) {
       const r = await call('POST', '/ack', 'X-Mbx-Read', { seq });
@@ -283,7 +302,8 @@ async function* xfersOf(store: OutboxStore, it: OutboxItem, o: QueueSendOptions,
 // ---- PC: 큐 → 수신 큐 ----
 
 export interface QueueReceiverOptions {
-  queue: Pick<RelayQueue, 'list' | 'ack'>;
+  /** listPage가 있으면 more를 보고 쪽을 이어 읽는다. list만 있으면 한 쪽(옛 동작). */
+  queue: Pick<RelayQueue, 'list' | 'ack'> & Partial<Pick<RelayQueue, 'listPage'>>;
   /** 금고 crypto.hpkeOpen */
   hpkeOpen: HpkeOpenFn;
   pairId: string;
@@ -300,30 +320,60 @@ export interface DrainResult {
   handled: number;
   dropped: number;
   ackedTo: number | null;
+  /** 읽은 쪽 수 */
+  pages: number;
+  /** 서버가 more라고 했는데 상한·빈 쪽·진전 없음으로 멈췄다(호출자는 곧 다시 부르면 된다) */
+  more: boolean;
 }
 
-/** 큐를 비운다. 연 봉투든 버린 봉투든 처리한 relay seq까지 ack한다(버린 것은 폰이 TTL 뒤 다시 넣는다). */
+/**
+ * 한 번 드레인에서 읽는 쪽 상한. 큐는 우편함당 160건·6 MiB이고 한 쪽은 3 MiB까지라 보통 3쪽 안이다(#204).
+ * 서버가 more를 계속 주어도 이 수에서 멈춘다(무한 루프 방지).
+ */
+export const DRAIN_MAX_PAGES = 8;
+
+/**
+ * 큐를 비운다. 연 봉투든 버린 봉투든 처리한 relay seq까지 쪽마다 ack한다(버린 것은 폰이 TTL 뒤 다시 넣는다).
+ * more면 ack한 뒤 곧바로 다음 쪽을 읽는다(ack로 앞쪽이 지워져 after가 필요 없다). 빈 쪽이나 seq가 앞으로 가지 않는 쪽,
+ * DRAIN_MAX_PAGES에서 멈추고 more: true로 돌려준다. 쪽 중간에 실패하면 그때까지 처리한 seq까지 ack하고 던진다.
+ */
 export async function drainQueue(o: QueueReceiverOptions): Promise<DrainResult> {
-  const res: DrainResult = { handled: 0, dropped: 0, ackedTo: null };
-  const envs = (await o.queue.list()).sort((a, b) => a.seq - b.seq);
+  const res: DrainResult = { handled: 0, dropped: 0, ackedTo: null, pages: 0, more: false };
   let max = await o.seqMax.get();
   // 큐에서는 PC가 폰에 답할 곳이 없다(receipt.ack 등은 버린다).
   const replier = { pairId: o.pairId, send: () => '' } as unknown as Parameters<ReceiveQueue['handle']>[0];
-  try {
-    for (const { seq, env } of envs) {
-      const x = await openXfer(env, { hpkeOpen: o.hpkeOpen, pairId: o.pairId, phoneVm: o.phoneVm, mbxEpoch: o.mbxEpoch, now: o.now?.() });
-      if (!x || x.seq <= max) {
-        res.dropped++;
-      } else {
-        await o.receive.handle(replier, asEnvelope(x));
-        max = x.seq;
-        await o.seqMax.set(max);
-        res.handled++;
+  const readPage = async (): Promise<QueuePage> => (o.queue.listPage ? o.queue.listPage() : { envelopes: await o.queue.list(), more: false });
+  for (;;) {
+    const page = await readPage();
+    res.pages++;
+    const envs = [...page.envelopes].sort((a, b) => a.seq - b.seq);
+    const before = res.ackedTo;
+    let pageAck: number | null = null;
+    try {
+      for (const { seq, env } of envs) {
+        const x = await openXfer(env, { hpkeOpen: o.hpkeOpen, pairId: o.pairId, phoneVm: o.phoneVm, mbxEpoch: o.mbxEpoch, now: o.now?.() });
+        if (!x || x.seq <= max) {
+          res.dropped++;
+        } else {
+          await o.receive.handle(replier, asEnvelope(x));
+          max = x.seq;
+          await o.seqMax.set(max);
+          res.handled++;
+        }
+        pageAck = seq;
       }
-      res.ackedTo = seq;
+    } finally {
+      if (pageAck !== null) {
+        await o.queue.ack(pageAck);
+        res.ackedTo = pageAck;
+      }
     }
-  } finally {
-    if (res.ackedTo !== null) await o.queue.ack(res.ackedTo);
+    if (!page.more) return res;
+    // more인데 빈 쪽이거나 앞으로 가지 않으면(서버 이상) 멈춘다. 상한도 같다.
+    const progressed = pageAck !== null && (before === null || pageAck > before);
+    if (!progressed || res.pages >= DRAIN_MAX_PAGES) {
+      res.more = true;
+      return res;
+    }
   }
-  return res;
 }

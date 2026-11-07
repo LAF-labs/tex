@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  CTX, ENV_PAD_BUCKETS, QUEUE, ReceiveQueue, VD_PURPOSES, VM_PURPOSES, b64, drainQueue, ed25519Keygen, enqueueCash, fromHex, hpkeDeriveKeyPair, hpkeOpen, hpkeSeal,
+  CTX, DRAIN_MAX_PAGES, ENV_PAD_BUCKETS, QUEUE, ReceiveQueue, VD_PURPOSES, VM_PURPOSES, b64, drainQueue, ed25519Keygen, enqueueCash, fromHex, hpkeDeriveKeyPair, hpkeOpen, hpkeSeal,
   makeCashEntry, makeQBundle, makeReceiptOffer, newFileKey, openOutboxFile, openXfer, qbundleWindow, relayQueue, sealOutboxFile, sealXfer, sha256Hash, softSigner, toHex,
   ulid, utf8, verifyQBundle, x25519Keygen, type CashEntryBody, type HttpJson, type OuterEnv, type OutboxItem, type OutboxStore, type QBundle, type ReceiveSink, type Xfer,
 } from '@sax/remote';
@@ -75,9 +75,14 @@ describe('우편함 번들(SAX-qbundle-v1)', () => {
 });
 
 // ---- 시험용 릴레이 큐(services/relay 한도: 160 봉투 / 6 MiB / ct 65,536자, ack = seq까지 삭제) ----
+// GET은 #204처럼 쪽을 나눈다: 봉투 바이트 pageBytes까지(봉투 하나는 언제나), 남으면 more, 선택 ?after=<seq>.
 class FakeRelay {
   envs: { seq: number; env: OuterEnv; size: number }[] = [];
   seq = 0;
+  pageBytes = 3 * 1024 * 1024;
+  /** 이 횟수를 넘는 GET /envelopes는 500(중간 실패 시험) */
+  failGetAfter = Infinity;
+  gets = 0;
   bundle: string | null = null;
   posts = 0;
   seen: { method: string; url: string; headers: Record<string, string> }[] = [];
@@ -95,7 +100,15 @@ class FakeRelay {
       this.envs.push({ seq: ++this.seq, env: body, size });
       return { status: 202, body: { seq: this.seq } };
     }
-    if (path.endsWith('/envelopes') && req.method === 'GET') return { status: 200, body: { envelopes: this.envs.map(({ seq, env }) => ({ seq, env })) } };
+    if (path.endsWith('/envelopes') && req.method === 'GET') {
+      if (++this.gets > this.failGetAfter) return { status: 500, body: { error: 'internal' } };
+      const after = Number(new URL(req.url).searchParams.get('after') ?? '0');
+      const pending = this.envs.filter((e) => e.seq > after);
+      let n = 0;
+      let bytes = 0;
+      while (n < pending.length && (n === 0 || bytes + pending[n]!.size <= this.pageBytes)) bytes += pending[n++]!.size;
+      return { status: 200, body: { envelopes: pending.slice(0, n).map(({ seq, env }) => ({ seq, env })), more: n < pending.length } };
+    }
     if (path.endsWith('/ack')) {
       this.envs = this.envs.filter((e) => e.seq > body.seq);
       return { status: 200, body: {} };
@@ -340,5 +353,139 @@ describe('PC 검사(조용히 버린다)', () => {
     await assert.rejects(sealXfer(t.xfer({ body: { msgId: 'x' } as unknown as CashEntryBody }), t.vm, t.bundle.Qx, t.mbxEpoch));
     // 서명 용도는 SAX-env-v1
     assert.equal(CTX.env, 'SAX-env-v1');
+  });
+});
+
+/** FakeRelay와 같은 규칙으로 쪽마다 봉투 수를 센다(봉투 하나는 언제나). */
+function pageSplit(sizes: number[], pageBytes: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < sizes.length; ) {
+    let n = 0;
+    let bytes = 0;
+    while (i + n < sizes.length && (n === 0 || bytes + sizes[i + n]! <= pageBytes)) bytes += sizes[i + n++]!;
+    out.push(n);
+    i += n;
+  }
+  return out;
+}
+
+describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
+  it('more를 보고 ack 뒤 곧바로 다음 쪽을 읽어 한 번에 비운다', async () => {
+    const t = await world();
+    const { jpeg, offer } = await addReceipt(t.outbox, QUEUE.chunk * 5 + 7, 4);
+    const cash = makeCashEntry('2026-11-05', 1000, NOW);
+    await enqueueCash(t.outbox, cash, NOW);
+    await t.send();
+    assert.equal(t.relay.envs.length, 1 + 6 + 1);
+    // 한 쪽에 사진 조각 둘쯤만 들어가게 줄인다
+    t.relay.pageBytes = Math.max(...t.relay.envs.map((e) => e.size)) * 2;
+    const split = pageSplit(t.relay.envs.map((e) => e.size), t.relay.pageBytes);
+    assert.ok(split.length >= 3, `${split}`);
+    const acks = () => t.relay.seen.filter((x) => x.url.endsWith('/ack')).length;
+    const d = await t.drain();
+    assert.equal(d.handled, 8);
+    assert.equal(d.more, false);
+    assert.equal(d.pages, split.length);
+    assert.equal(acks(), split.length, '쪽마다 ack');
+    assert.equal(t.relay.envs.length, 0);
+    assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
+    assert.equal(t.sink.cash.get(cash.msgId)?.amount, 1000);
+    // ack 뒤 다시 읽으므로 after 쿼리를 쓰지 않는다
+    assert.ok(t.relay.seen.filter((x) => x.method === 'GET' && x.url.includes('/envelopes')).every((x) => x.url.endsWith('/envelopes')));
+  });
+
+  it('4 MiB 사진(봉투 129개)은 3 MiB 쪽 둘로 나뉘어도 한 번 드레인으로 모두 받는다', async () => {
+    const t = await world();
+    const { jpeg, offer } = await addReceipt(t.outbox, 4 * 1024 * 1024, 5);
+    await t.send();
+    const d = await t.drain();
+    assert.equal(d.pages, 2);
+    assert.equal(d.handled, 129);
+    assert.equal(t.relay.envs.length, 0);
+    assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
+  });
+
+  it('중간 쪽 GET이 실패하면 앞쪽은 ack된 채로 던지고, 다음 드레인이 나머지를 받는다(한 장만 저장)', async () => {
+    const t = await world();
+    const { jpeg, offer } = await addReceipt(t.outbox, QUEUE.chunk * 5 + 7, 6);
+    await t.send();
+    t.relay.pageBytes = Math.max(...t.relay.envs.map((e) => e.size)) * 3;
+    const first = pageSplit(t.relay.envs.map((e) => e.size), t.relay.pageBytes)[0]!;
+    assert.ok(first < 7);
+    t.relay.failGetAfter = 1;
+    await assert.rejects(() => t.drain(), /queue: list 500/);
+    assert.equal(t.relay.envs.length, 7 - first, '첫 쪽은 ack로 지워졌다');
+    assert.equal(t.getSeqMax() > 0, true);
+    assert.equal(t.sink.storeCalls, 0, '조각이 다 오기 전에는 저장하지 않는다');
+    t.relay.failGetAfter = Infinity;
+    const d = await t.drain();
+    assert.equal(d.handled, 7 - first);
+    assert.equal(d.more, false);
+    assert.equal(t.relay.envs.length, 0);
+    assert.equal(t.sink.storeCalls, 1);
+    assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
+  });
+
+  // 서버가 이상할 때: drainQueue에 가짜 쪽을 직접 준다(연 봉투는 없어도 seq·ack 흐름만 본다).
+  const base = async () => {
+    const t = await world();
+    return { hpkeOpen: t.openOpts.hpkeOpen, pairId: t.pairId, phoneVm: t.vm.publicKey, mbxEpoch: t.mbxEpoch, receive: t.receive, seqMax: { get: async () => 0, set: async () => {} } };
+  };
+
+  it('more인데 빈 쪽이면 한 번 읽고 멈춘다(more: true, ack 없음)', async () => {
+    const acked: number[] = [];
+    let reads = 0;
+    const d = await drainQueue({
+      ...(await base()),
+      queue: { list: async () => [], listPage: async () => (reads++, { envelopes: [], more: true }), ack: async (n) => void acked.push(n) },
+    });
+    assert.deepEqual({ pages: d.pages, more: d.more, ackedTo: d.ackedTo }, { pages: 1, more: true, ackedTo: null });
+    assert.equal(reads, 1);
+    assert.deepEqual(acked, []);
+  });
+
+  it('ack를 무시하고 같은 쪽을 다시 주면 진전 없음으로 멈춘다', async () => {
+    const acked: number[] = [];
+    const page = { envelopes: [{ seq: 1, env: { bad: true } }, { seq: 2, env: { bad: true } }], more: true };
+    const d = await drainQueue({ ...(await base()), queue: { list: async () => page.envelopes, listPage: async () => page, ack: async (n) => void acked.push(n) } });
+    assert.equal(d.pages, 2);
+    assert.equal(d.more, true);
+    assert.equal(d.dropped, 4, '모양이 틀린 봉투는 열지 않고 버린다');
+    assert.deepEqual(acked, [2, 2]);
+  });
+
+  it('서버가 more를 끝없이 주어도 DRAIN_MAX_PAGES 쪽에서 멈춘다', async () => {
+    let next = 0;
+    const acked: number[] = [];
+    const d = await drainQueue({
+      ...(await base()),
+      queue: { list: async () => [], listPage: async () => ({ envelopes: [{ seq: ++next, env: {} }], more: true }), ack: async (n) => void acked.push(n) },
+    });
+    assert.equal(d.pages, DRAIN_MAX_PAGES);
+    assert.equal(d.more, true);
+    assert.equal(acked.length, DRAIN_MAX_PAGES);
+    assert.equal(d.ackedTo, DRAIN_MAX_PAGES);
+  });
+
+  it('listPage가 없는 옛 큐(list만)는 한 쪽만 읽는다', async () => {
+    let reads = 0;
+    const d = await drainQueue({ ...(await base()), queue: { list: async () => (reads++, [{ seq: 1, env: {} }]), ack: async () => {} } });
+    assert.deepEqual({ pages: d.pages, more: d.more, reads }, { pages: 1, more: false, reads: 1 });
+  });
+
+  it('listPage(after): 쿼리는 요청 URL에만, DPoP htu는 쿼리 없는 경로. more가 없는 옛 응답은 한 쪽', async () => {
+    const relay = new FakeRelay();
+    const htus: string[] = [];
+    const q = relayQueue({
+      http: relay.http, origin: 'https://tax.laf-co.com', mbxId: new Uint8Array(16).fill(7), tok: { read: new Uint8Array(32).fill(1), write: new Uint8Array(32).fill(2) },
+      deviceAuth: async (_m, htu) => (htus.push(htu), { Authorization: 'DPoP t', DPoP: 'proof' }),
+    });
+    await q.listPage(5);
+    assert.ok(relay.seen.at(-1)!.url.endsWith('/envelopes?after=5'));
+    assert.ok(htus.at(-1)!.endsWith('/envelopes'));
+    await assert.rejects(() => q.listPage(-1), /bad after/);
+    await assert.rejects(() => q.listPage(1.5), /bad after/);
+    const old = relayQueue({ http: async () => ({ status: 200, body: { envelopes: [{ seq: 1, env: {} }] } }), origin: 'https://x', mbxId: new Uint8Array(16), tok: { read: new Uint8Array(32), write: new Uint8Array(32) }, deviceAuth: async () => ({}) });
+    assert.deepEqual(await old.listPage(), { envelopes: [{ seq: 1, env: {} }], more: false });
   });
 });
