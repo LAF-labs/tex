@@ -6,8 +6,8 @@
 
 | 포트 | 기존 | 추가 |
 |---|---|---|
-| engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `crypto.publicKeys`·`crypto.noiseDH`·`crypto.signVd`·`crypto.signAik`·`crypto.hpkeOpen` |
-| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list`, `crypto.*` 다섯(main 페어링) |
+| engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `pdf.print`·`download.arm`·`download.disarm`. **`crypto.*`는 없다**(2026-11-06 엔진 포트에서 뺌: 엔진이 뚫려도 기기 키로 서명하지 못한다) |
+| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list`, `crypto.*` 다섯(main 계정·기기·페어링, 이 포트에만) |
 | secretInput | secret.provide | `secret.store`(등록 창 T-06 전용) |
 
 commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.

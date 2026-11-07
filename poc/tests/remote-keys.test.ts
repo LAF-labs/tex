@@ -45,12 +45,13 @@ async function vault() {
 const NOW = Date.now();
 
 describe('vaultDesktopKeys(금고 control 포트)', () => {
-  it('공개키는 crypto.publicKeys 한 번, 엔진 포트가 보는 것과 같다', async () => {
+  it('공개키는 crypto.publicKeys 한 번, control 포트 값과 같다(엔진 포트는 crypto.*를 거부한다)', async () => {
     const v = await vault();
     try {
       const k = await vaultDesktopKeys(v.rpc);
       assert.deepEqual(v.calls, ['crypto.publicKeys']);
-      const pk = await v.engine.rpc<Record<string, Uint8Array>>('crypto.publicKeys');
+      await assert.rejects(v.engine.rpc('crypto.publicKeys'), /vault: denied/);
+      const pk = (await v.rpc('crypto.publicKeys')) as Record<string, Uint8Array>;
       assert.deepEqual(k.noise.publicKey, pk.noiseStatic);
       assert.deepEqual(k.vd.publicKey, pk.vd);
       assert.deepEqual(k.aik.publicKey, pk.aik);

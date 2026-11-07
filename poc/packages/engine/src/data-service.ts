@@ -23,6 +23,11 @@ const id = (v: unknown): string => {
   if (typeof v !== 'string' || !v) throw new DataError('profile_not_found');
   return v;
 };
+/** 거래처 id(저장 품목 명령). 문자열이 아니면 거래처가 없는 것과 같다 */
+const cpId = (v: unknown): string => {
+  if (typeof v !== 'string' || !v) throw new DataError('not_found');
+  return v;
+};
 const nullableId = (v: unknown): string | null => (v === null || v === undefined ? null : id(v));
 /** 없으면 사업자(기본). 그 밖의 값은 거부(저장소 load·clear는 종류를 검사하지 않는다). */
 const profileKind = (v: unknown): OnboardingState['profileKind'] => {
@@ -99,6 +104,10 @@ export class DataService {
         return this.counterparties.update(String(p.id), (p.patch ?? {}) as never);
       case 'counterparty.delete':
         return this.counterparties.delete(String(p.id));
+      case 'counterparty.getItems':
+        return this.counterparties.getItems(cpId(p.id));
+      case 'counterparty.setItems':
+        return this.counterparties.setItems(cpId(p.id), p.items);
       case 'counterparty.status': {
         const cp = this.counterparties.get(String(p.id));
         if (!cp) throw new DataError('not_found');

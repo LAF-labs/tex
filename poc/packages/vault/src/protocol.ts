@@ -1,5 +1,5 @@
 // 금고 포트 메시지(D01 §2.1: MessagePort 기반 타입드 IPC). 포트는 세 종류다.
-// - engine: CDP 프레임(cdp)과 RPC(typist·secretWindow·browser·commitGuard·crypto·getDbKeyOnce)
+// - engine: CDP 프레임(cdp)과 RPC(typist·secretWindow·browser·commitGuard·pdf·download·getDbKeyOnce). 장기 키 연산(crypto.*)은 없다(아래 RPC_BY_PORT 주석)
 // - control(main): 실행 트리거 통지, 사용자 "입력 완료", Windows 세션 상태, 저장된 비밀 목록·삭제, 상태
 // - secretInput(금고 직결 입력 창): 한 번 쓰는 비밀 제공(oneshot) 또는 등록 창(T-06)의 저장(store). main은 이 포트의 내용을 보지 않는다.
 //
@@ -26,7 +26,9 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'typist.fill', 'typist.authFailed',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
-    'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
+    // crypto.*(Sd·Vd·AIK·Qd 연산)는 엔진 포트에 열지 않는다(팀장 결정 2026-11-06, 게이트웨이 인증 설계 ADR-040 예정).
+    // 엔진 소스는 쓰지 않는다. 열려 있으면 엔진이 뚫렸을 때 기기 키로 DPoP·기기 목록·계정 작업(acct-op)에 서명할 수 있다.
+    // 키 연산은 main(control)만 하고, 엔진은 main이 만들어 주는 게이트웨이 범위 헤더만 받는다.
     'getDbKeyOnce',
     'pdf.print', 'download.arm', 'download.disarm',
   ],
@@ -35,7 +37,7 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
-    // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))도 부른다. 개인키는 그대로 금고 안이다.
+    // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))만 부른다. 개인키는 그대로 금고 안이다.
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
   ],
   secretInput: ['secret.provide', 'secret.store'],
@@ -360,7 +362,7 @@ export function commitExpectedHash(values: Record<string, string>, bodyFieldMap:
   return createHash('sha256').update('SAX-rc1-v1\n' + JSON.stringify(pairs), 'utf8').digest('hex');
 }
 
-// ───────────────────────── 장기 키 연산(engine) ─────────────────────────
+// ───────────────────────── 장기 키 연산(control 전용) ─────────────────────────
 
 /**
  * Vd 서명 용도 허용 목록(D05 §5.1, D08 §2.1). 목록 밖 purpose는 거부한다.

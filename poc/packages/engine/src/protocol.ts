@@ -10,6 +10,7 @@ export const COMMANDS = [
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId',
+  'counterparty.setItems', 'counterparty.getItems',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
@@ -57,6 +58,11 @@ export const PHONE_COMMANDS = ['receipt.phoneHas', 'receipt.phoneStore', 'cash.p
  * 응답은 @sax/daemon DaemonSnapshot. 처리는 @sax/bundle BundleService(daemonSnapshot)다.
  */
 export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
+/**
+ * 대화 의도 판정(M4-3 ③, D01 §5.1, 계약: desktop-pending.md 「M4-3 ③」). main 전용이다(렌더러에 열지 않는다: main이 입력창 문장만 넘긴다).
+ * 결과는 route·refuse_advice·unknown 셋이고, 판정을 못 하면 decide.unavailable(main은 오프라인 파서). 실행·저장은 없다.
+ */
+export const INTENT_COMMANDS = ['intent.resolve'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

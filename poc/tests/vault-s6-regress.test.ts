@@ -181,11 +181,11 @@ describe('S6c~f 회귀·누출 스캐너 확장(금고 중계, 가짜 포털)', 
   });
 
   it('누출 스캐너 확장: engine·control IPC, 로그, 앱 루트에서 시험 비밀·장기 키 시드·NPKI 개인키 내용 0건', async () => {
-    // 장기 키를 만들고 쓴다(엔진 포트). 시드는 금고 KeyStore에만 있어야 한다.
-    const pk = await h.client.rpc<{ vd: Uint8Array }>('crypto.publicKeys');
+    // 장기 키를 만들고 쓴다(control 포트: 엔진 포트에는 crypto.*가 없다). 시드는 금고 KeyStore에만 있어야 한다.
+    const pk = await h.control.rpc<{ vd: Uint8Array }>('crypto.publicKeys');
     assert.equal(pk.vd.length, 32);
-    await h.client.rpc('crypto.signVd', { purpose: 'SAX-dpop-v1', msg: new Uint8Array([1, 2, 3]) });
-    await h.client.rpc('crypto.signAik', { purpose: 'SAX-devlist-v1', msg: new Uint8Array([4, 5, 6]) });
+    await h.control.rpc('crypto.signVd', { purpose: 'SAX-dpop-v1', msg: new Uint8Array([1, 2, 3]) });
+    await h.control.rpc('crypto.signAik', { purpose: 'SAX-devlist-v1', msg: new Uint8Array([4, 5, 6]) });
     const ks = (h.vault as unknown as { opts: { keyStore: KeyStore } }).opts.keyStore;
     const seeds: Buffer[] = [];
     for (const name of Object.values(CRYPTO_KEY_ITEMS)) seeds.push(Buffer.from((await ks.get(name, 32))!));
