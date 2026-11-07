@@ -10,6 +10,7 @@ export const COMMANDS = [
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId',
+  'counterparty.setItems', 'counterparty.getItems',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
@@ -57,6 +58,11 @@ export const PHONE_COMMANDS = ['receipt.phoneHas', 'receipt.phoneStore', 'cash.p
  * 응답은 @sax/daemon DaemonSnapshot. 처리는 @sax/bundle BundleService(daemonSnapshot)다.
  */
 export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
+/**
+ * 대화 의도 판정(M4-3 ③, D01 §5.1, 계약: desktop-pending.md 「M4-3 ③」). main 전용이다(렌더러에 열지 않는다: main이 입력창 문장만 넘긴다).
+ * 결과는 route·refuse_advice·unknown 셋이고, 판정을 못 하면 decide.unavailable(main은 오프라인 파서). 실행·저장은 없다.
+ */
+export const INTENT_COMMANDS = ['intent.resolve'] as const;
 /**
  * 세무사 요청 붙여넣기 → 꾸러미 항목 후보(D14 M6-7, ADR-032 결정 8·11). main 전용이다(붙여 넣은 글이 오간다). 규칙 사전만, 모델 없음.
  * 처리는 @sax/bundle BundleService다. 읽기만 하고 DB에 쓰지 않는다. 고른 후보는 bundle.addItem {source:'pasted_request'}로 넣는다.
