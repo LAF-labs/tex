@@ -30,7 +30,7 @@ claims = { v:1, typ:"device", kid, acc, dev, role:"desktop"|"mobile", scp:[...],
 
 - 발급: 계정 서비스 `POST /v1/device-tokens`(AIK 인증서 + Vx DPoP). 수명 15분. 비밀(계정 세션·로그인 토큰)과 분리된다.
 - 검증: 각 서비스가 계정 서비스의 토큰 공개키(`kid`별, 회전 중 둘 이상)로 오프라인 검증한다. 가운데 JSON이 JCS 정규형이 아니면 거부한다.
-- 범위(`scp`): 데스크톱 `gateway, relay, wake, slots, devlist, acct_op`, Phase 1 모바일 `relay, push`(정보 모드 원칙상 폰은 모델·슬롯·기기 목록 권한이 없다).
+- 범위(`scp`): 데스크톱 `gateway, relay, wake, slots, devlist, acct_op`, Phase 1 모바일 `relay, push`(정보 모드 원칙상 폰은 모델·슬롯·기기 목록 권한이 없다). 발급 요청의 `scopes`로 역할 범위의 비어 있지 않은 부분집합만 받을 수 있다(엔진은 `['gateway']`만, ADR-040 결정 1).
 - 사용: `Authorization: DPoP <token>` + `DPoP: <증명>`. 토큰만으로는 쓸 수 없다(§3).
 - 긴급 정지: 각 서비스는 토큰 검증 뒤 계정 서비스의 기기 상태(`GET /internal/v1/devices/:id`, 5초 캐시)를 보고 `active`가 아니면 거부한다. 정지·폐기 시 계정 서비스가 릴레이·푸시에 `POST /internal/v1/devices/:id/stopped`를 보내 캐시를 즉시 버리게 한다.
 
