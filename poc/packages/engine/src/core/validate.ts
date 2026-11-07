@@ -1,4 +1,4 @@
-// D02 §6.1 정적 검증 규칙 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″ 포함). 레지스트리 CI와 엔진 로더가 같은 함수를 쓴다.
+// D02 §6.1 정적 검증 규칙 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″·V-04a 포함). 레지스트리 CI와 엔진 로더가 같은 함수를 쓴다.
 // 위반은 규칙 번호·스텝·타깃 이름만 담는다(값 없음).
 import { ABORT, buildCfg, commitWindow, dominates, END, FALLOFF, hNode, IRREVERSIBLE_TYPES, isSynthetic, reachable, sccs, type Cfg, type EdgeKind } from './cfg.ts';
 import { compileRe2, isAnchored, re2Problem } from './re2.ts';
@@ -437,6 +437,18 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
     } else if (vs.lookup.baseline === 'none' && !Object.values(vs.lookup.match).some((r) => boundByVerify(steps, refHead(r, 'vars')))) {
       bad('V-04', 'baseline:none인데 앞선 verify.bind 값을 키로 쓰지 않음', vid);
     }
+  }
+  // ---- V-04a(팀장 결정 2026-11-06) ----
+  // 비가역 X마다 자기 verify. 두 X의 verify 필드가 같은 스텝을 가리키면 그 판정을 어느 X의 원장 행에 붙일지 정할 수 없다
+  // (잘못 붙이면 중복 발급). 후속 Y가 W(Y) 안에서 Xc의 verify를 다시 지나는 것(V-03c′)은 X.verify 필드가 아니라 허용한다.
+  const xByVerify = new Map<string, string>();
+  for (const x of irreversible) {
+    const s = info.get(x)!.step;
+    const vid = 'verify' in s && typeof s.verify === 'string' ? s.verify : undefined;
+    if (!vid) continue;
+    const first = xByVerify.get(vid);
+    if (first) bad('V-04a', `${first}와 같은 verify를 가리킴`, x, vid);
+    else xByVerify.set(vid, x);
   }
   // baseline:none 일반 규칙(§4.4)
   for (const s of steps) if (s.type === 'verify' && s.lookup.baseline === 'none' && !Object.values(s.lookup.match).some((r) => boundByVerify(steps, refHead(r, 'vars')))) bad('V-04', 'baseline:none은 앞선 verify.bind 값을 키로 쓸 때만', s.id);

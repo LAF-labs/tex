@@ -167,18 +167,21 @@ describe('LedgerCommitPort(원장·가드 포트, D03 §3 R-G7)', () => {
     assert.equal(ledger.get(INTENT, 's21')?.state, 'committed');
   });
 
-  it('ledgerEffect: 두 X가 같은 verify를 가리키면 마지막으로 무장한 X 행, 무장 전(재시작)이면 effect_unbound', () => {
+  it('ledgerEffect: 두 X가 같은 verify를 가리키면(V-04a 위반) 추측하지 않고 열린 행을 in_doubt로 닫는다, committed로 적지 않는다', () => {
     const steps = structuredClone(STEPS) as Array<Step & { verify?: string }>;
     steps.find((s) => s.id === 's25')!.verify = 'sv';
     const ir = { ...IR, steps } as unknown as PlaybookIR;
-    const fresh = mk({ ir });
-    fresh.port.ledgerEffect('ledger.in_doubt', 'sv');
-    assert.deepEqual(fresh.journal, [['ledger.effect_unbound', { effect: 'in_doubt' }]]);
-    const { port } = mk({ ir });
+    const { port, journal } = mk({ ir });
     armRow(port);
     port.ledgerEffect('ledger.dispatched', 's21');
-    port.ledgerEffect('ledger.committed{verify_ref}', 'sv');
-    assert.equal(ledger.get(INTENT, 's21')?.state, 'committed');
+    assert.equal(port.ledgerEffect('ledger.committed{verify_ref}', 'sv'), true);
+    const r = ledger.get(INTENT, 's21');
+    assert.equal(r?.state, 'in_doubt');
+    assert.equal(r?.verifyRef, null);
+    assert.equal(ledger.get(INTENT, 's25'), null, '행이 없는 X는 건드리지 않는다');
+    assert.deepEqual(journal.slice(-2), [['ledger.verify_ambiguous', { effect: 'committed', candidates: 2 }], ['ledger.in_doubt', { stepId: 's21' }]]);
+    port.ledgerEffect('ledger.not_committed{verify}', 'sv');
+    assert.equal(ledger.get(INTENT, 's21')?.state, 'in_doubt', 'not_committed로도 적지 않는다');
   });
 
   it('ledgerEffect: 원장 효과가 아니면 false, 자리 없으면 effect_unbound, 원장 거부는 write_failed(던지지 않음)', () => {

@@ -4,6 +4,7 @@
 // - armGuard·disarmGuard: CommitGuard.arm(효과 = X 타깃의 commitEffect, armedUntil = 토큰 exp)·disarm.
 // - ledgerEffect: 상태 머신 효과 ledger.*를 원장 쓰기로 옮긴다. at이 verify 스텝이면 그 verify를 가리키는 X의 행이다.
 //   committed의 verify_ref는 VerifyBook.ref(그 verify)다. 값은 저널에 남기지 않는다(⑦).
+//   한 verify를 여러 X가 가리키면(V-04a가 로드 때 거부하는 모양) 판정을 붙이지 않고 열린 행을 in_doubt로 닫는다.
 import { LedgerError, type ArmRow, type Db, type Ledger, type NotCommittedReason } from '@sax/db';
 import type { ArmInput } from '../commitguard/guard.ts';
 import { flatten } from '../core/cfg.ts';
@@ -41,15 +42,17 @@ class TxRefused extends Error {
 export class LedgerCommitPort implements CommitPort {
   private readonly i: LedgerPortInput;
   private readonly targetOf = new Map<string, string>();
-  /** verify 스텝 → 그것을 verify로 가리키는 X. 둘 이상의 X가 같은 verify를 가리키면 null(모호, 이 포트가 마지막으로 무장한 X로 정한다). */
-  private readonly xOfVerify = new Map<string, string | null>();
-  private lastArmed: string | null = null;
+  /**
+   * verify 스텝 → 그것을 verify로 가리키는 X들. V-04a가 둘 이상을 로드 때 거부하므로 보통 하나다.
+   * 둘 이상이면(검증기를 거치지 않은 IR) 추측하지 않는다: 판정을 붙이지 않고 그 X들의 열린 행을 in_doubt로 닫는다(팀장 결정 2026-11-06).
+   */
+  private readonly xsOfVerify = new Map<string, string[]>();
 
   constructor(i: LedgerPortInput) {
     this.i = i;
     for (const [id, { step }] of flatten(i.ir.steps).info) {
       if (step.type === 'submit') this.targetOf.set(id, step.target);
-      if (step.type === 'submit' || step.type === 'send_email') this.xOfVerify.set(step.verify, this.xOfVerify.has(step.verify) ? null : id);
+      if (step.type === 'submit' || step.type === 'send_email') this.xsOfVerify.set(step.verify, [...(this.xsOfVerify.get(step.verify) ?? []), id]);
     }
   }
 
@@ -66,7 +69,6 @@ export class LedgerCommitPort implements CommitPort {
       if (e instanceof TxRefused) return { ok: false, code: e.code };
       return { ok: false, code: e instanceof LedgerError ? e.code : 'ledger.error' };
     }
-    this.lastArmed = a.stepId;
     return { ok: true };
   }
 
@@ -88,12 +90,17 @@ export class LedgerCommitPort implements CommitPort {
   ledgerEffect(effect: string, at: string | null): boolean {
     const m = /^ledger\.(dispatched|committed|not_committed|in_doubt)(?:\{([a-z_]+)\})?$/.exec(effect);
     if (!m) return false;
-    const x = at ? this.xOf(at) : null;
-    if (!x) {
-      this.i.journal('ledger.effect_unbound', { effect: m[1]! });
+    const [, kind, arg] = m;
+    const xs = at ? (this.xsOfVerify.get(at) ?? [at]) : [];
+    if (!xs.length) {
+      this.i.journal('ledger.effect_unbound', { effect: kind! });
       return true;
     }
-    const [, kind, arg] = m;
+    if (xs.length > 1) {
+      this.closeAmbiguous(xs, kind!);
+      return true;
+    }
+    const x = xs[0]!;
     try {
       if (kind === 'dispatched') this.i.ledger.dispatched(this.i.intentId, x);
       else if (kind === 'committed') this.i.ledger.resolve(this.i.intentId, x, 'committed', null, at && at !== x ? this.i.verifyRef(at) : null);
@@ -106,14 +113,19 @@ export class LedgerCommitPort implements CommitPort {
     return true;
   }
 
-  /** 효과 자리 → 원장 행의 X. verify 자리면 그 verify의 X, 모호하면 마지막으로 무장한 X(그 X의 verify일 때만). */
-  private xOf(at: string): string | null {
-    if (!this.xOfVerify.has(at)) return at;
-    const x = this.xOfVerify.get(at);
-    if (x) return x;
-    const last = this.lastArmed;
-    const s = last ? flatten(this.i.ir.steps).info.get(last)?.step : undefined;
-    return s && (s.type === 'submit' || s.type === 'send_email') && s.verify === at ? last : null;
+  /** 한 verify를 여러 X가 가리킨다(V-04a 위반이 로더를 지나온 경우). 판정을 붙이지 않고 열린 행을 모두 in_doubt로(사람 확인, 재발급 막음). */
+  private closeAmbiguous(xs: string[], kind: string): void {
+    this.i.journal('ledger.verify_ambiguous', { effect: kind, candidates: xs.length });
+    for (const x of xs) {
+      const st = this.i.ledger.get(this.i.intentId, x)?.state;
+      if (st !== 'armed' && st !== 'dispatched') continue;
+      try {
+        this.i.ledger.resolve(this.i.intentId, x, 'in_doubt');
+        this.i.journal('ledger.in_doubt', { stepId: x });
+      } catch (e) {
+        this.i.journal('ledger.write_failed', { effect: 'in_doubt', code: e instanceof LedgerError ? e.code : 'ledger.error' });
+      }
+    }
   }
 
   private effectOf(x: string): Effect | null {
