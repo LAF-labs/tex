@@ -163,7 +163,8 @@ export type VaultEvent =
   | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed'
   | 'vault.npki_listed'
   // PDF 저장(save_pdf): 경로·종류·사유·크기만(파일 이름·URL·내용 없음)
-  | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected';
+  | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected'
+  | 'vault.staging_swept';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [

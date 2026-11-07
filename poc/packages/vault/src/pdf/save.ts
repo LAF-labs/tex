@@ -19,6 +19,8 @@ const TARGET_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const GUID_RE = /^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$/;
 /** fileId: 128비트 무작위 hex. staging 파일 이름은 `<fileId>.pdf`. */
 export const PDF_FILE_ID_RE = /^[0-9a-f]{32}$/;
+/** staging에 남겨도 되는 이름(금고가 쓴 PDF). */
+const STAGED_NAME_RE = /^[0-9a-f]{32}\.pdf$/;
 /** IO.read 한 번의 크기. */
 const IO_CHUNK = 1024 * 1024;
 
@@ -76,6 +78,8 @@ export class PdfSaver {
   private readonly rejected = new Set<string>();
   private printing = false;
   private closed = false;
+  /** staging 정리는 한 번에 하나씩(겹치면 같은 파일을 두 번 지우려 한다). */
+  private sweeping: Promise<void> = Promise.resolve();
 
   constructor(o: PdfSaverOptions) {
     this.o = o;
@@ -125,6 +129,7 @@ export class PdfSaver {
       return { ok: true, fileId };
     } finally {
       this.printing = false;
+      this.sweepStaging();
     }
   }
 
@@ -275,6 +280,37 @@ export class PdfSaver {
   private async removeGuidFiles(guid: string): Promise<void> {
     // Windows는 Chrome이 막 놓은 파일을 잠깐 잡고 있어 EPERM·EBUSY가 난다. 짧게 다시 시도한다(maxRetries는 recursive일 때만 듣는다, 없으면 force로 통과).
     for (const name of [guid, `${guid}.crdownload`]) await fs.rm(path.join(this.o.staging, name), { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 5 : 0, retryDelay: 50 }).catch(() => {});
+    this.sweepStaging();
+  }
+
+  /**
+   * staging에는 금고가 쓴 `<32hex>.pdf`만 남긴다. 받는 중인 다운로드가 없을 때 나머지(Chrome 중간 파일 `*.crdownload`,
+   * 끝난 guid 파일, 그 밖의 것)를 지운다. Windows Chrome은 다운로드 guid와 다른 이름의 중간 파일을 남기고, 끝난 파일을
+   * 잠깐 잡고 있어(EBUSY) guid 이름만 지우면 거부한 바이트가 디스크에 남는다(Windows CI #196·#209).
+   * 기다리지 않는다(이벤트를 늦추지 않는다). 지운 개수만 남긴다(이름·크기 없음, ⑦).
+   */
+  private sweepStaging(): void {
+    this.sweeping = this.sweeping.then(async () => {
+      if (this.closed || this.active.size) return;
+      const names = await fs.readdir(this.o.staging).catch(() => [] as string[]);
+      let removed = 0;
+      let left = 0;
+      for (const name of names) {
+        if (STAGED_NAME_RE.test(name)) continue;
+        if (this.active.size) return; // 지우는 동안 새 다운로드가 시작됐다: 그 중간 파일은 건드리지 않는다
+        const ok = await fs
+          .rm(path.join(this.o.staging, name), { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 10 : 0, retryDelay: 100 })
+          .then(() => true, () => false);
+        if (ok) removed++;
+        else left++;
+      }
+      if (removed || left) this.o.log.event('vault.staging_swept', { removed, left });
+    });
+  }
+
+  /** 시험용: 예약된 staging 정리가 끝날 때까지 기다린다. */
+  async settled(): Promise<void> {
+    await this.sweeping;
   }
 
   // ───────────────────────── staging ─────────────────────────
