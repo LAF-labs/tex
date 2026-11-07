@@ -66,6 +66,9 @@ export interface CommitPort {
 export type GateAnswer = { reqId: string; decision: 'approved' | 'denied'; by: 'local' | 'remote'; actionHash: string };
 export type HumanAnswer = { reqId: string; value?: string };
 type ReadbackValues = Parameters<typeof buildGateRequest>[0]['readback'];
+/** 승인 뒤 이 시간 안에 온 [중지]가 이긴다(D03 §2 표, 거부 우선 창 2초). H01 RunService DENY_PRIORITY_MS와 같다. */
+export const GATE_DENY_PRIORITY_MS = 2_000;
+
 export type GateCloseReason = 'approved' | 'denied' | 'edit' | 'expired' | 'aborted' | 'stopped';
 
 export interface GatePort {
@@ -126,6 +129,8 @@ export interface RunControllerInput {
   wmaxMs: (x: string) => number;
   /** 정책 commitWindowMs. */
   commitWindowMs: number;
+  /** 거부 우선 창(D03 §2 WaitingGate→Running, R-G8). 기본 GATE_DENY_PRIORITY_MS. */
+  denyPriorityMs?: number;
   gate: GatePort;
   human: HumanPort;
   /** 포털 탭 입력 잠금(R-G6, 금고 중계). 잠그지 못하면 게이트를 열지 않는다. */
@@ -637,6 +642,15 @@ export class RunController {
           done('denied');
           return fail('gate.denied');
         }
+        // 거부 우선 창: 승인 뒤 짧은 시간 안에 온 [중지]가 이긴다. 토큰을 쓰지 않고 게이트 행을 거부로 돌린다(R-G8).
+        if (await this.denyWindowLost()) {
+          this.closeGateRow('cancel');
+          this.i.journal('gate.withdrawn', { stepId: g.id, cause: 'deny_priority' });
+          this.pending = null;
+          this.fire({ t: 'abort' }, g.id, 'run.aborted');
+          done('stopped');
+          return fail('run.aborted');
+        }
         this.fire({ t: 'gate_approved' }, g.id, null);
         this.tokensByGate.set(g.id, { token: d.token, reqId: req.reqId });
         this.approvedReadback.set(g.id, new Map(this.i.env.scope.readback));
@@ -833,8 +847,17 @@ export class RunController {
   }
 
   /** waitMs 초과: Paused, 재개하면 게이트 앞 체크포인트부터(재게이트). */
+  /** 거부 우선 창 동안 [중지](pending abort)가 오면 true. */
+  private async denyWindowLost(): Promise<boolean> {
+    const ms = this.i.denyPriorityMs ?? GATE_DENY_PRIORITY_MS;
+    const until = this.i.clock.now() + ms;
+    while (this.pending !== 'abort' && this.i.clock.now() < until) await this.i.clock.sleep(Math.min(50, until - this.i.clock.now()));
+    return this.pending === 'abort';
+  }
+
   private gateExpired(g: StepOf<'gate'>, done: (why: GateCloseReason) => void): Outcome {
     this.resumeAt = this.preGateCp ?? g.id;
+    this.i.journal('gate.expired', { stepId: g.id });
     this.fire({ t: 'gate_timeout' }, g.id, 'gate.expired');
     done('expired');
     return fail('gate.expired');

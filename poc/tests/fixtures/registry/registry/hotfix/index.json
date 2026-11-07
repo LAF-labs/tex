@@ -10,7 +10,7 @@
       "version": "1.3.0",
       "kind": "hotfix",
       "portal": "hometax",
-      "sxpDigest": "309cfaf6a3e075a2f7ab383528735a5eaf9c35236066257a46f021b53947ba55",
+      "sxpDigest": "3f290abf8a0dff2418af2462eff9655f23207e2d6290f10e6f88cba529c7e381",
       "size": 926,
       "rolloutPercent": 100
     }
@@ -19,12 +19,12 @@
     {
       "keyId": "package-1",
       "alg": "ed25519",
-      "sig": "IE6dsgYBc5mzrR0YqGltDfoa1R1Ea4T2iV2rCuvBB9Ug5j-LSy9tyEQRkCza8EJBkoCYN57Miw5P2nulscveDA"
+      "sig": "46JASwZmH7vLe9868jJPCpV2M4rs6PuHKQQR95mMyqtx01LwAhytkh8VINBwruv_aTfVw6n0hi2HgySJpPlgCw"
     },
     {
       "keyId": "package-2",
       "alg": "ed25519",
-      "sig": "g-PA9VQusfc3qyBOqxgUWZGyA33qv8N1iMMczvZOsQcvarMgMO_9X70qYwpcOYdikm2cAFdHxDtcqugLAfaFDg"
+      "sig": "xNz8yMs5DpPTfPJE6lTHWVx5YqJH7GQjRzvvB8CWVXh_d81UgGKeaWnkUP7LQHsOgwpjgIj8PnPIz9IIOVJ8Cw"
     }
   ]
 }

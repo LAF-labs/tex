@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax/db';
-import { READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
+import { GATE_DENY_PRIORITY_MS, READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
   type Handlers, type PdfPort, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type TokenDiscardTrigger, type VerifyResult,
@@ -217,6 +217,27 @@ describe('게이트(D03 §2 WaitingGate, §3 R-G6·R-G8)', () => {
     assert.deepEqual(h.deny(), { ok: false, code: 'gate.no_request' }, '두 번째 결정');
     assert.equal((await p).state, 'Completed');
     assert.equal(h.gates.state(h.gate().reqId), 'approved');
+  });
+  it('R-G8 거부 우선 창(D03 §2, 2초): 승인 직후 온 [중지]가 이긴다. 토큰을 쓰지 않고 게이트 행은 승인에서 철회, 커밋 구간에 들어가지 않는다', async () => {
+    const h = mk(GATE_FLOW);
+    const p = h.c.start();
+    await h.atGate();
+    assert.deepEqual(h.approve(), { ok: true });
+    h.c.abort();
+    const r = await p;
+    assert.deepEqual([r.state, r.code], ['Aborted', 'run.aborted']);
+    assert.deepEqual(h.rec.commit, [], '원장 armed·가드 무장 없음');
+    assert.equal(h.gates.state(h.gate().reqId), 'denied', '승인을 거부로 돌렸다');
+    assert.deepEqual(h.rec.closed, [[h.gate().reqId, 'stopped']]);
+    assert.ok(h.rec.journal.some(([t, x]) => t === 'gate.withdrawn' && x.cause === 'deny_priority'));
+    assert.ok(!h.names().includes('Running') || h.names().lastIndexOf('Running') < h.names().indexOf('WaitingGate'), '게이트 뒤 Running으로 가지 않았다');
+    // 창이 지난 뒤의 [중지]는 거부 우선이 아니다(창 길이만큼 기다렸다).
+    const k = mk(GATE_FLOW, {});
+    const q = k.c.start();
+    await k.atGate();
+    k.approve();
+    assert.equal((await q).state, 'Completed');
+    assert.ok(k.clock.sleeps.reduce((a, b) => a + b, 0) >= GATE_DENY_PRIORITY_MS, '창 동안 기다린다');
   });
   it('거부 → Aborted, 입력 잠금 해제, 토큰 없음', async () => {
     const h = mk(GATE_FLOW);

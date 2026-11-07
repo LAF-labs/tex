@@ -148,6 +148,10 @@
      "target": "hometax.invoice.form.counterpartName",
      "patternRef": "counterpart.nameRegex"
     }
+   },
+   "onFail": {
+    "retry": 3,
+    "then": "handoff"
    }
   },
   {
@@ -229,6 +233,7 @@
      "ref": "$profile.bizNo"
     }
    },
+   "code": "assert.supplier_mismatch",
    "onFail": {
     "retry": 0,
     "then": "abort"

@@ -30,11 +30,22 @@ export const isRef = (s: string): boolean => s.startsWith('$');
 
 const ROOTS = ['inputs', 'vars', 'human', 'profile', 'readback', 'intent', 'artifacts'] as const;
 
+/** 경로 한 마디: 이름 뒤에 배열 첨자(`items[0]`)를 둘 수 있다(스키마 valueRef 패턴). 그 밖의 모양은 null. */
+const SEGMENT = /^([A-Za-z0-9_]+)((?:\[\d{1,3}\])*)$/;
+
 function walk(v: unknown, path: string[]): unknown {
   let cur = v;
-  for (const p of path) {
-    if (cur === null || typeof cur !== 'object' || Array.isArray(cur) || !Object.prototype.hasOwnProperty.call(cur, p)) return undefined;
-    cur = (cur as Record<string, unknown>)[p];
+  const own = (o: unknown, k: string) => o !== null && typeof o === 'object' && !Array.isArray(o) && Object.prototype.hasOwnProperty.call(o, k);
+  for (const seg of path) {
+    const m = SEGMENT.exec(seg);
+    if (!m || !own(cur, m[1]!)) return undefined;
+    cur = (cur as Record<string, unknown>)[m[1]!];
+    for (const ix of m[2]!.match(/\d+/g) ?? []) {
+      if (!Array.isArray(cur)) return undefined;
+      const i = Number(ix);
+      if (i >= cur.length) return undefined;
+      cur = cur[i];
+    }
   }
   return cur;
 }
