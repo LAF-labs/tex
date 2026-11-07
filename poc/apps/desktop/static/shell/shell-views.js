@@ -295,6 +295,10 @@ export function taskCard(run, act) {
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
   for (const t of run.notices || []) card.append(note(t, true));
+  // 금고가 Chrome 확장을 보고 멈춘 실행이 발급 없이 끝났으면 [다시 시도]: 같은 요청을 입력창에 채우기만 한다(보내기·준비는 사용자가, [지난번과 같게]와 같은 길).
+  if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {
+    card.append(h('div', { class: 'sx-actions' }, btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })));
+  }
   return card;
 }
 

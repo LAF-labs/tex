@@ -290,6 +290,8 @@ export interface RunView {
   action?: string;
   /** 카드 꼬리 문장(포털 안내 문구·금고 알림). 텍스트로만 그린다. */
   notices?: string[];
+  /** 다시 해도 되는 멈춤이었다(금고가 Chrome 확장을 보고 비밀 창을 거절). 발급 없이 끝난 카드에 [다시 시도]를 둔다. */
+  retry?: 'extension';
   /** 홈택스에서 되읽은 값이 초안과 다르다. */
   readbackDiffers?: boolean;
   /** 승인했고 거부 우선 창(2초) 안이다. 이때 [중지]가 이긴다. */

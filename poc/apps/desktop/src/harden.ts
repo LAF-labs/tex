@@ -176,7 +176,7 @@ export const BUILD_WARN_TEXT: Record<string, string> = {
  * - fatal:install_in_data_root execPath가 데이터 루트(%LOCALAPPDATA%\SovereignAX) 아래다(D07 §1.1 DACL 루트와 섞임)
  * - fatal:build_info_missing   build-info.json이 없거나 모양이 틀리다
  * - warn:install_unexpected    %LOCALAPPDATA%\Programs\<productName> 밖(사용자 /D 설치·복사본)
- * - warn:unsigned_build        signing !== 'azure'(베타 배포본이 아니다)
+ * - warn:unsigned_build        signing !== 'azure'(Azure 서명이 아니다. 배포 가능 여부는 채널별로 release-readiness betaDistributable이 정한다: beta는 미서명 허용, SIGNING-SETUP.md §4)
  * - warn:dev_code_included     devOnlyIncluded가 비어 있지 않다
  * - warn:test_build            testBuild가 true다(실계정 시험 빌드, 배포본이 아니다)
  * Windows 경로는 대소문자를 가리지 않는다. 데이터 루트 이름은 productName이 아니라 고정 'SovereignAX'다(@sax/platform 데이터 루트).
