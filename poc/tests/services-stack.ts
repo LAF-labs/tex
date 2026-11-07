@@ -90,9 +90,10 @@ export async function signedDesktop(s: Stack, email: string): Promise<Signed> {
   };
 }
 
-export async function deviceToken(s: Stack, aik: EdKey, d: Device): Promise<string> {
+/** scopes: 범위 축소 요청(ADR-040 결정 1). 없으면 전체 */
+export async function deviceToken(s: Stack, aik: EdKey, d: Device, scopes?: string[]): Promise<string> {
   const c = cert(aik, d, s.clock.now() + 90 * D);
-  const t = await s.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ACCOUNT_ORIGIN + '/v1/device-tokens', jcs(c), d.V, s.clock.now()) }, body: { cert: c } });
+  const t = await s.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ACCOUNT_ORIGIN + '/v1/device-tokens', jcs(c), d.V, s.clock.now()) }, body: { cert: c, ...(scopes ? { scopes } : {}) } });
   assert.equal(t.status, 200, t.text);
   return t.json.token as string;
 }
