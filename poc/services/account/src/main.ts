@@ -4,7 +4,11 @@ import { InternalAuth, InternalClient, Logger, SqlNonceStore, TokenIssuer, Token
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
 import { AcctClaimSigner } from './acct-claim.ts';
 import { accountRouter } from './app.ts';
-import { AccountService } from './service.ts';
+import { CommonPasswords, COMMON_PASSWORDS_FILE, PasswordHasher, argon2Available, parsePepperKeys } from './password.ts';
+import { AccountService, type PasswordDeps } from './service.ts';
+
+/** argon2id 운영 실측(이벤트 이름·수치만, 한 시간에 한 번): 해시 1회 ms와 그때 RSS MB */
+const ARGON2_PROBE_EVERY_MS = 60 * 60_000;
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
 
@@ -34,6 +38,24 @@ export interface AccountBuildDeps {
   payments?: PaymentGateway;
   /** 같은 배포 안 서비스의 정지 처리(함수 직접 호출). STOP_HOOK_URLS(다른 호스트, 서명 HTTP) 앞에 붙는다 */
   stopHooks?: DeviceStopHook[];
+  /** 이벤트 로그(이름·수만). 없으면 새 Logger('account') */
+  logger?: Logger;
+}
+
+/**
+ * 비밀번호 로그인 구성(ADR-038). PASSWORD_PEPPER_KEYS가 없거나 런타임에 argon2id가 없으면 null(비밀번호 경로 404, 다른 로그인은 그대로).
+ * 페퍼 키는 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다).
+ */
+function passwordDeps(env: NodeJS.ProcessEnv, logger: Logger): PasswordDeps | undefined {
+  const peppers = parsePepperKeys(env.PASSWORD_PEPPER_KEYS);
+  if (!peppers) return undefined;
+  const others = [env.TOKEN_SIGNING_SEED, env.ACCT_CLAIM_SIGNING_KEY, env.INTERNAL_CALL_KEY, env.CODE_MAC_KEY, env.LIMIT_ID_KEY].filter((v): v is string => !!v).map((v) => v.toLowerCase());
+  for (const k of peppers.keys.values()) if (others.includes(k.toString('hex'))) fail('PASSWORD_PEPPER_KEYS');
+  if (!argon2Available()) {
+    logger.event('account.password_disabled.argon2_unavailable');
+    return undefined;
+  }
+  return { hasher: new PasswordHasher(peppers), common: CommonPasswords.fromFile(fileURLToPath(COMMON_PASSWORDS_FILE)), onEvent: (n) => logger.event(n) };
 }
 
 /** 조립(라우터·서비스·정리). 상시 서버(`startAccount`)와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false, 마이그레이션은 배포 절차). */
@@ -54,6 +76,8 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
   if (env.PG_PROVIDER !== 'mock' || env.MAIL_PROVIDER !== 'mock') {
     if (!deps.mail || !deps.payments) throw new Error('config_provider: 이 저장소에는 모의 어댑터만 있다(PG_PROVIDER=mock, MAIL_PROVIDER=mock)');
   }
+  const logger = deps.logger ?? new Logger('account');
+  const passwords = passwordDeps(env, logger);
   const svc = new AccountService({
     db,
     mail: deps.mail ?? new MockMailSender(),
@@ -66,16 +90,26 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
     stopHooks: [...(deps.stopHooks ?? []), ...(env.STOP_HOOK_URLS ?? '').split(',').filter(Boolean).map((u) => httpStopHook(u, internalKey))],
     acctClaims,
     pairing: env.RELAY_INTERNAL_URL ? httpPairingRooms(env.RELAY_INTERNAL_URL, internalKey) : undefined,
+    passwords,
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
   const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internal: new InternalAuth({ key: internalKey, nonces: new SqlNonceStore(db), now: svc.now }), limits });
-  const sweep = async () => void (await Promise.all([svc.sweep(), limits.limiter.sweep()]));
-  return { db, svc, router, sweep };
+  let lastProbe = -Infinity;
+  const probe = async () => {
+    if (!passwords || svc.now() - lastProbe < ARGON2_PROBE_EVERY_MS) return;
+    lastProbe = svc.now();
+    const t0 = performance.now();
+    await passwords.hasher.hash('argon2-probe-not-a-password');
+    logger.event('account.argon2_probe_ms', Math.round(performance.now() - t0));
+    logger.event('account.argon2_probe_rss_mb', Math.round(process.memoryUsage().rss / 2 ** 20));
+  };
+  const sweep = async () => void (await Promise.all([svc.sweep(), limits.limiter.sweep(), probe()]));
+  return { db, svc, router, sweep, logger };
 }
 
 export async function startAccount(env: NodeJS.ProcessEnv = process.env, deps: AccountBuildDeps = {}) {
-  const { db, svc, router, sweep } = await buildAccount(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
-  const server = createServer(router, { logger: new Logger('account'), trustProxy: env.TRUST_PROXY === '1' });
+  const { db, svc, router, sweep, logger } = await buildAccount(env, deps, { migrate: env.MIGRATE_ON_START !== '0' });
+  const server = createServer(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8080), env.HOST ?? '0.0.0.0');
   const timer = setInterval(() => void sweep().catch(() => undefined), 60_000);
   timer.unref();
