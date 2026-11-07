@@ -5,7 +5,7 @@
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { EventLog } from '@sax/platform';
+import { readRegularFile, type EventLog } from '@sax/platform';
 import {
   DOWNLOAD_ARM_TTL_MS, PDF_MAX_BYTES, type DownloadArmParams, type DownloadArmResult, type DownloadFailReason, type PdfPrintParams, type PdfPrintResult,
 } from '../protocol.ts';
@@ -233,22 +233,15 @@ export class PdfSaver {
 
   private async finishDownload(guid: string): Promise<void> {
     const src = path.join(this.o.staging, guid);
-    let bytes: Uint8Array;
-    try {
-      // 링크·특수 파일·하드링크는 받지 않는다(Chrome이 쓴 일반 파일만).
-      const st = await fs.lstat(src);
-      if (!st.isFile() || st.nlink !== 1) throw new Error('not_file');
-      if (st.size > this.max) {
-        await this.removeGuidFiles(guid);
-        this.fail('too_large');
-        return;
-      }
-      bytes = new Uint8Array(await fs.readFile(src));
-    } catch {
+    // 링크·특수 파일·하드링크·확인 뒤 바꿔치기는 받지 않는다(Chrome이 쓴 일반 파일만). 경로를 두 번 따라가지 않고
+    // 연 핸들에서 상한까지만 읽는다(@sax/platform readRegularFile, bigint dev·ino).
+    const r = await readRegularFile(src, this.max);
+    if (!r.ok) {
       await this.removeGuidFiles(guid);
-      this.fail('unreadable');
+      this.fail(r.reason === 'too_large' ? 'too_large' : 'unreadable');
       return;
     }
+    const bytes = r.bytes;
     await this.removeGuidFiles(guid);
     const verdict = checkPdfBytes(bytes, this.max);
     if (verdict !== 'ok') {
