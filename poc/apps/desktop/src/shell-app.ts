@@ -463,7 +463,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.on('vault-event', (name: string, data: unknown) => {
     if (name === 'secret.needed') return openSecret(data);
     const n = vaultNotice(name, data);
-    if (n) runs.notice(n.runId, n.text);
+    if (n) runs.notice(n.runId, n.text, n.retry);
   });
   // 실행이 끝나면 그 실행의 비밀 창도 닫는다.
   runs.on('update', (run: { id: string }) => {
