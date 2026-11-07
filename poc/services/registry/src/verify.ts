@@ -274,8 +274,11 @@ export interface SxpInfo extends Verdict {
   portal?: string;
 }
 
-/** 허락 회신 전 위택스 패키지는 레지스트리가 거부한다(D09 §8.6, ADR-022 결정 2). */
-export const BLOCKED_PORTALS: readonly string[] = ['wetax'];
+/**
+ * 레지스트리가 게시(패키지·핫픽스)와 배포(인덱스)에서 거부하는 portal.
+ * wetax: 허락 회신 전(D09 §8.6, ADR-022 결정 2). fixture: 엔진 시험 가짜 페이지 패키지는 레지스트리로 오가지 않는다(ADR-039 결정 2 ③).
+ */
+export const BLOCKED_PORTALS: readonly string[] = ['wetax', 'fixture'];
 
 const parse = (b: Uint8Array): unknown => {
   try {

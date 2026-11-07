@@ -1,5 +1,6 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-06 팀장 결정(ADR-039): §2에 manifest `portal: fixture`(엔진 시험 가짜 페이지 패키지 전용)를 두고, §6.1에 V-25(fixture는 `http://127.0.0.1:PORT`·`http://[::1]:PORT`만, 실제 포털과 섞이면 거부)를 더하고 V-06에 그 예외를 적음. 스키마 IR v1.3.5·manifest v1.3.1·셀렉터 v1.1.1(엔진 PR-A).
 > 2026-11-06 팀장 결정: §6.1에 V-04a(비가역 스텝 X마다 자기 verify, `X.verify` 중복이면 로드 거부, V-03c′의 Y→Xc verify 재통과는 허용)를 더함(엔진 PR-B).
 > 2026-11-06 팀장 결정: §4.4에 조회 패키지 행 판정 `lookup.rowVerdict{column, sent, notSent}`(스키마 rev v1.3.4, 엔진 #170)를 더하고, §6.1에 V-03n(`baseline: none` 사후 확인 verify는 `rowVerdict` 필수), §8 `s33`에 `rowVerdict`를 더함. 같은 날 정합: V-03m의 선택 입력 처리를 엔진 #158(스키마 rev v1.3.3) 이름에 맞춤. `isEmpty`·`any` 모양 → `readbackEquals.ifAbsent: "empty"`·`readbackEmpty`(§4.1·§6.1·§8 `s19f`).
 > ADR-021 결정 7(2026-11-06): §7·§8의 '승인 바'를 main 승인 카드로 맞춤.
@@ -14,7 +15,7 @@
 ## 1. 설계 결정 요약
 
 - 플레이북은 **TypeScript 빌더로 작성 → JSON IR로 컴파일 → 서명 패키지(2-of-3 임계 서명)로 배포 → 엔진이 해석**한다(ADR-002, B-22). 사용자 기기에서 임의 코드가 실행되지 않는다.
-- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-24·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35). **팀장 결정(2026-11-05)**: Phase 1은 RE2 네이티브·wasm 바인딩을 넣지 않는다. 검증기가 RE2 문법 부분집합(중첩 수량자·역참조·lookaround 거부)을 검사한 뒤 JS RegExp로 컴파일한다. 플레이북·셀렉터 사전은 2-of-3 서명이라 ReDoS 위협 주체가 제한된다. 핫픽스 채널에 외부 패턴이 들어오거나 Phase 2에 들어가면 바인딩을 재검토한다(엔진 PR #45, 의존성 공급망 범위 ADR-028).
+- IR은 JSON Schema([schemas/playbook-ir.schema.json](schemas/playbook-ir.schema.json)) + **정적 검증 규칙**(§6.1, V-01~V-25·V-03a~l·V-03c′)을 모두 통과해야 로드된다. 셀렉터 사전은 [schemas/selectors.schema.json](schemas/selectors.schema.json)과 **셀렉터 CI 규칙**(§6.3, SV-01~06)을 통과해야 한다. 검증기는 레지스트리 CI와 엔진이 **같은 구현**(Ajv 8, strict, ajv-formats)을 쓰고, 모든 정규식은 RE2로 컴파일한다(B-35). **팀장 결정(2026-11-05)**: Phase 1은 RE2 네이티브·wasm 바인딩을 넣지 않는다. 검증기가 RE2 문법 부분집합(중첩 수량자·역참조·lookaround 거부)을 검사한 뒤 JS RegExp로 컴파일한다. 플레이북·셀렉터 사전은 2-of-3 서명이라 ReDoS 위협 주체가 제한된다. 핫픽스 채널에 외부 패턴이 들어오거나 Phase 2에 들어가면 바인딩을 재검토한다(엔진 PR #45, 의존성 공급망 범위 ADR-028).
 - 비가역성의 원천은 셀렉터 사전의 **`commits` 속성**이다. 다만 이 값도 사람이 선언한 것이므로 세 겹으로 확인한다(B-01·B-02). ① 셀렉터 CI가 녹화(HAR·DOM)와 대조한다(SV-01 충돌, SV-02 HAR 상관·이름 린트). ② 런타임이 매 액추에이션 직전에 실제 요소의 역할·접근성 이름을 사전과 대조하고(R-A1), 비커밋 항목이 같은 랜드마크의 커밋 항목과 같은 요소로 해석되면 거부한다(R-A2, D03 §5.2). ③ 네트워크 커밋 가드가 요청을 막는다(D03 §5.4). **핫픽스는 이 근거 중 어느 것도 바꿀 수 없다**(§2.2, ADR-012).
 - `commits: true` 타깃을 누르는 스텝은 비가역 스텝이며 **커밋 구간 규칙**(V-03a~l, V-03c′)을 만족해야 한다.
 - 비가역 스텝의 결과는 화면 판정이 아니라 **포털 조회형 `verify`**로 확정한다. 게이트 직전 기준선과 비교해 "새로 생긴 1건"일 때만 `committed`다(§4.4, B-07). 조회 하위 플레이북은 버전·다이제스트로 고정한다(B-08). 미확정이면 `InDoubt`.
@@ -34,6 +35,7 @@
 
 - `signatures[]`(B-22): 앱에 핀 고정된 패키지 서명 키 3개 중 **서로 다른 2개 이상**의 Ed25519 서명이다. 서명 대상은 `JCS(manifest − signatures)`이고, manifest의 `contentDigests`가 나머지 세 파일을 묶는다. 서명 바이트 규약(서명 입력의 맥락 문자열·정규화·인코딩)의 정본은 [schemas/SIGNING.md](schemas/SIGNING.md)(엔진 트랙 작성, 엔진 PR #52)다. v1.1의 단일 `SIGNATURE` 파일은 폐지한다. 로드 규칙은 D03 §3.1, 키 운영은 D09 §8·ADR-013.
 - `kind`: `playbook` 또는 `lookup`(조회 하위 플레이북, `effects: []`, V-22)(B-08).
+- `portal`: 실제 포털(`hometax`·`gov24`·`wetax`·`sminfo`·`insure4`·`iros`·`public_api`) 또는 `fixture`다. `fixture`는 엔진 시험용 가짜 페이지 패키지다. 이 패키지만 `domains: ["127.0.0.1"]`·`["[::1]"]`와 `http://127.0.0.1:PORT`·`http://[::1]:PORT` URL을 쓴다(V-25). 제품 엔진 로더(`loader.fixture_package`)와 레지스트리 게시·배포(`registry.portal_blocked`)가 거부한다. 운영 키로 서명하지 않는다(ADR-039, 팀장 결정 2026-11-06). 정책 portalMap에는 `fixture`가 없다.
 - `domains[]`: 이동·요청 허용 호스트(정확 일치, 하위 도메인은 명시 와일드카드만). 엔진이 네비게이션·요청을 감시해 밖으로의 이동을 차단하고, 금고 중계도 매 문서 커밋마다 `내장 eTLD+1 ∩ domains`를 다시 확인한다(D05).
 - `effects[]`: 이 플레이북이 일으킬 수 있는 비가역 효과의 종류 `{issue_document, send, sign, pay}`. 데몬 실행 가능 여부는 이 값을 **런타임에** 본다(R-D1, D03 §12, B-27).
 - `bundlesUsed[]`: 참조하는 번들 ID·버전·다이제스트. **번들 정의는 앱 바이너리에만 포함되고 레지스트리로 배포하지 않는다**(BV-06, ADR-003). 다이제스트가 앱 내장 허용 목록에 없으면 패키지를 로드하지 않는다. 게이트웨이의 409는 배포 불일치 감지용일 뿐이다(B-14, B-21, B/C-20). 이름 대응: IR의 `decide.bundle`은 `"<id>_v<ver>"`(예: `screen_state_v2`)이고, manifest `bundlesUsed[]`와 번들 정의(bundle.schema)는 `id`(`screen_state`)와 `ver`(`2`)를 나눠 적는다. 로더는 둘을 이 규칙으로 맞춰 본다.
@@ -97,7 +99,7 @@
 - 포털 공통 `commitEndpoints`는 **추가만**(강화) 핫픽스로 허용한다(`commitEndpointsAdd`). 기존 항목의 수정·삭제는 정식 버전으로만.
 - 조회 하위 플레이북(`kind: lookup`)은 핫픽스 대상이 아니다(B-08).
 - 형식은 [schemas/hotfix.schema.json](schemas/hotfix.schema.json)이다. 금지 속성은 키 자체가 없어 스키마에서 막히고, 대상 항목의 적격 조건은 엔진이 검사한다. 핫픽스는 `appliesTo.packageDigest`로 **정확히 한 패키지**에 결속되고, 단조 `monotonic`·`keyEpoch`·`expiresAt`(≤ 14일)을 가지며, 2-of-3 서명이 있어야 로드된다(B-22).
-- 엔진은 핫픽스를 반영한 사전에 스키마와 V-01~V-24를 다시 돌리고, 하나라도 실패하면 핫픽스를 거부한다(D03 §3.1). **SV 실행 위치**(정본 D03 §3.1-6): SV-01~06은 레지스트리의 패키지·핫픽스 CI에서만 돌고 2-of-3 서명이 그 통과를 전제로 한다. 클라이언트는 SV를 다시 돌리지 않고 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 매번 한다.
+- 엔진은 핫픽스를 반영한 사전에 스키마와 V-01~V-25를 다시 돌리고, 하나라도 실패하면 핫픽스를 거부한다(D03 §3.1). **SV 실행 위치**(정본 D03 §3.1-6): SV-01~06은 레지스트리의 패키지·핫픽스 CI에서만 돌고 2-of-3 서명이 그 통과를 전제로 한다. 클라이언트는 SV를 다시 돌리지 않고 런타임에 R-A1·R-A2·`DENY_ACTION_NAME` 검사를 매번 한다.
 - 핫픽스 다이제스트는 게이트 토큰의 `packageDigest`에 들어가므로 적용 즉시 진행 중 실행의 미소비 토큰이 폐기된다.
 
 ## 3. IR 최상위 구조
@@ -257,7 +259,7 @@
 | V-04 | 모든 비가역 스텝은 `intent: "$intent.id"`와 `verify`를 가진다. 그 `verify.lookup.match`는 X 앞 `readback` 필드를 `$readback.*`로 포함하고 `baseline: pre_gate_snapshot`이다(B-07) |
 | **V-04a** | **비가역 스텝마다 자기 verify**(팀장 결정 2026-11-06). 비가역 스텝 X(`submit`·`human_commit`·`send_email`)의 `verify` 필드가 가리키는 verify 스텝 id는 X마다 달라야 한다. 두 X가 같은 verify를 가리키면 로드를 거부한다. 한 verify 판정을 어느 X의 원장 행에 붙일지 정할 수 없고, 잘못 붙이면 발급되지 않은 건을 발급됨으로(또는 그 반대로) 적어 중복 발급으로 이어질 수 있어서다. 후속 Y가 W(Y) 안에서 주 비가역 Xc의 verify를 다시 지나는 것(V-03c′)은 그대로 허용한다. 막는 것은 `X.verify` 필드의 중복뿐이다. 엔진 원장 포트는 검증기를 거치지 않은 IR로 이 길에 닿으면 추측하지 않고 판정을 붙이지 않은 채 그 X들의 열린 행을 `in_doubt`로 닫는다(엔진 PR-B) |
 | V-05 | `repeat.max ≤ 20`, 중첩 ≤ 2 |
-| V-06 | `goto.url`을 WHATWG URL로 파싱: `https:`, userinfo 없음, 포트 없음, `hostname ∈ manifest.domains` |
+| V-06 | `goto.url`을 WHATWG URL로 파싱: `https:`, userinfo 없음, 포트 없음, `hostname ∈ manifest.domains`. portal `fixture` 패키지는 V-06 대신 V-25를 따른다 |
 | V-07 | `decide.on` 키 집합 = 번들 결과 − `reservedOutcomes`(엔진 처리: `blocked`, `logged_out_by_other_session`) 이고 `unknown` 포함. V-07b: `unknown`의 목적지는 `handoff`/`abort`, 또는 비가역 스텝을 거치지 않고 같은 `decide`로 돌아오는 대기 루프(`loopGuard` 필수) |
 | V-08 | `secret_fill`은 `value` 없음, `secret` 열거값, 보안카드는 `rowFrom` 필수. `signFlow.steps`에 `secret_fill:security_card`가 있으면 `rowLabel` 필수 |
 | V-09 | `pace`는 `normal`/`slow`뿐(없음 선택 불가) |
@@ -277,6 +279,7 @@
 | **V-23** | **`nameTemplate` 토큰 제한**(B-25, A/C-07, B/C-09). `save_pdf.nameTemplate`은 `{docType}`·`{yyyy}`·`{MM}`·`{dd}`·`{yyyyMMdd}`·`{shortId}`와 `[A-Za-z0-9_/-]`만 쓸 수 있다(D07 §4 원칙: 파일명에 PII 없음). 생략하면 엔진 기본 템플릿을 쓴다. 엔진은 최종 경로를 정규화한 뒤 보관함 루트의 하위인지 확인하고, 기존 파일을 덮어쓰지 않는다. 사람이 읽는 이름은 '내보내기' 때 앱이 DB 표시 이름으로 만든다 |
 | **V-23a** | **`save_pdf.strategy` 지원 범위**(팀장 결정 2026-11-06). Phase 1 엔진은 `print`·`page_pdf`만 지원한다(둘 다 금고 `pdf.print`: 금고 세션의 `Page.printToPDF`로 지금 포털 탭을 인쇄, staging `fileId`만 엔진에, 금고 #164). `original`(포털 다운로드 버튼, IR에 버튼 타깃 없음)·`wallet`(구현 없음)은 실행 중에 터지지 않게 로드 때 거부한다. 원본 다운로드가 필요한 포털이 생기면 스키마(`save_pdf.target`)와 이 규칙을 함께 바꾼다(엔진 #177) |
 | **V-24** | **`expectConfirm` 앵커**(B-24). `expectConfirm`이 가리키는 정규식은 `^…$` 앵커가 필수이고, 빈 문자열이나 `.*`·`.+`에 맞으면 거부한다. 수락한 confirm 텍스트의 해시를 저널 `commit.confirm_accepted`에 남긴다 |
+| **V-25** | **fixture 포털 URL 경계**(ADR-039, 팀장 결정 2026-11-06). portal이 `fixture`인 패키지(manifest·IR·셀렉터 사전 중 하나라도)는 `domains`가 `127.0.0.1`·`[::1]`만이다. `goto`·`checkpoint` URL은 `http:`이고 호스트가 그 둘 중 하나(`domains` 안)이며 포트가 있고 userinfo가 없어야 한다. `localhost` 같은 이름은 받지 않는다(hosts 파일로 바뀐다). 실제 포털 패키지는 루프백 URL이나 IP 주소 `domains`를 쓸 수 없다. 둘이 섞이면 로드를 거부한다. 스키마는 모양만 넓히고(IR v1.3.5 URL 패턴, manifest v1.3.1) 묶음은 이 규칙이 본다. 제품 로더와 레지스트리도 따로 거부한다(ADR-039 결정 2) |
 
 ### 6.2 반례 회귀 세트
 

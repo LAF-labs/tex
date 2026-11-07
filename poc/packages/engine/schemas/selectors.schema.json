@@ -2,12 +2,12 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/selectors.schema.json",
   "title": "Sovereign AX selector dictionary (selectors.json) v1.1",
-  "description": "v1.1 (M1-4): secretSlot boolean replaced by secretKind + secretPurpose (D02 §2.1, ADR-026). v1.3 (B-01, B-02, B-03, B-05, B-06, B-17, B-25, B-26, A-05). Schema validity is necessary, not sufficient: selector CI rules SV-01..SV-06 (design/02-playbook-dsl.md §6.3) and engine checks run after this. Hotfixes may change only `candidates` of eligible entries and may only ADD commitEndpoints (schemas/hotfix.schema.json).",
+  "description": "v1.1.1 (ADR-039): portal \"fixture\" for the engine test fake page only. v1.1 (M1-4): secretSlot boolean replaced by secretKind + secretPurpose (D02 §2.1, ADR-026). v1.3 (B-01, B-02, B-03, B-05, B-06, B-17, B-25, B-26, A-05). Schema validity is necessary, not sufficient: selector CI rules SV-01..SV-06 (design/02-playbook-dsl.md §6.3) and engine checks run after this. Hotfixes may change only `candidates` of eligible entries and may only ADD commitEndpoints (schemas/hotfix.schema.json).",
   "type": "object",
   "required": ["portal", "entries", "commitEndpoints", "knownEndpoints"],
   "additionalProperties": false,
   "properties": {
-    "portal": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api"]},
+    "portal": {"enum": ["hometax", "gov24", "wetax", "sminfo", "insure4", "iros", "public_api", "fixture"]},
     "entries": {
       "type": "object",
       "propertyNames": {"pattern": "^[a-z0-9]+(\\.[A-Za-z0-9_]+)+$"},

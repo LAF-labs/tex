@@ -2,7 +2,7 @@
 // 골든 H-01 v2.1(tests/fixtures/core)을 복제해 한 군데만 바꾸고, 기대한 규칙 번호로 거부되는지 본다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { buildCfg, commitWindow, hostAllowed, lookupViolations, nameTemplateProblem, re2Problem, urlProblem, validatePackage, looksLikeUserData, type PackageFiles, type Step } from '@sax/engine/core';
+import { buildCfg, commitWindow, fixtureUrlProblem, hostAllowed, lookupViolations, nameTemplateProblem, re2Problem, urlProblem, validatePackage, looksLikeUserData, type PackageFiles, type Step } from '@sax/engine/core';
 import { bundleOutcomes, h01, lookups } from './core-fixtures.ts';
 
 const bundles = bundleOutcomes();
@@ -326,6 +326,56 @@ describe('V-04~V-24', () => {
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '.*'));
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '^.*$'));
     expectRule('V-24', (p) => (p.strings['confirm.issue'] = '^(발급)?.*$'));
+  });
+});
+
+/** 골든을 fixture 포털(ADR-039)로: portal 셋 다 fixture, domains 127.0.0.1, URL은 http://127.0.0.1:PORT. */
+const asFixture: Mut = (p) => {
+  p.manifest.portal = 'fixture';
+  p.playbook.portal = 'fixture';
+  p.selectors.portal = 'fixture';
+  p.manifest.domains = ['127.0.0.1'];
+  for (const st of p.playbook.steps) if ((st.type === 'goto' || st.type === 'checkpoint') && st.url) st.url = st.url.replace('https://hometax.go.kr', 'http://127.0.0.1:4100');
+};
+
+describe('V-25 fixture 포털 URL 경계(ADR-039)', () => {
+  it('fixture 패키지: http://127.0.0.1:PORT만이면 V-06·V-25 없음', () => {
+    const got = rulesOf(mutate(asFixture));
+    assert.ok(!got.has('V-25') && !got.has('V-06'), [...got].join(','));
+  });
+  it('fixture 패키지 [::1]도 받는다', () => {
+    const got = rulesOf(mutate((p, s, steps) => {
+      asFixture(p, s, steps);
+      p.manifest.domains = ['[::1]'];
+      for (const st of p.playbook.steps) if ((st.type === 'goto' || st.type === 'checkpoint') && st.url) st.url = st.url.replace('127.0.0.1', '[::1]');
+    }));
+    assert.ok(!got.has('V-25') && !got.has('V-06'), [...got].join(','));
+  });
+  it('섞임 거부: fixture 패키지에 https 실제 포털 URL', () => expectRule('V-25', (p, s, steps) => {
+    asFixture(p, s, steps);
+    s('s1').url = 'https://hometax.go.kr/';
+  }));
+  it('섞임 거부: fixture 패키지 domains에 실제 호스트', () => expectRule('V-25', (p, s, steps) => {
+    asFixture(p, s, steps);
+    p.manifest.domains = ['127.0.0.1', 'hometax.go.kr'];
+  }));
+  it('섞임 거부: 실제 포털 패키지에 http://127.0.0.1:PORT', () => expectRule('V-25', (_p, s) => (s('s1').url = 'http://127.0.0.1:4100/')));
+  it('섞임 거부: 실제 포털 패키지 domains에 IP 주소', () => expectRule('V-25', (p) => p.manifest.domains.push('127.0.0.1')));
+  it('fixture도 포트 없는 http·localhost 이름·다른 사설 주소는 스키마에서 거부(V-01)', () => {
+    for (const u of ['http://127.0.0.1/', 'http://localhost:4100/', 'http://10.0.0.1:4100/']) {
+      expectRule('V-01', (p, s, steps) => {
+        asFixture(p, s, steps);
+        s('s1').url = u;
+      });
+    }
+  });
+  it('fixtureUrlProblem: http·루프백·포트·domains 안', () => {
+    assert.equal(fixtureUrlProblem('http://127.0.0.1:4100/x', ['127.0.0.1']), null);
+    assert.ok(fixtureUrlProblem('https://127.0.0.1:4100/', ['127.0.0.1']));
+    assert.ok(fixtureUrlProblem('http://127.0.0.1/', ['127.0.0.1']));
+    assert.ok(fixtureUrlProblem('http://u:p@127.0.0.1:4100/', ['127.0.0.1']));
+    assert.ok(fixtureUrlProblem('http://[::1]:4100/', ['127.0.0.1']), 'domains 밖');
+    assert.ok(fixtureUrlProblem('http://localhost:4100/', ['127.0.0.1']));
   });
 });
 

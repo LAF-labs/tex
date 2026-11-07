@@ -6,10 +6,16 @@ import { HOTFIX_MAX_VALIDITY_D } from './constants.ts';
 import { applyHotfix, hotfixEligibilityViolations } from './hotfix.ts';
 import { countSignatures, epochProblem, issuedInFuture, versionProblem, type TrustRoots, type VersionMark } from './registry.ts';
 import { schemaViolations } from './schema.ts';
-import type { Hotfix, Manifest, PackageFiles, PlaybookIR, SelectorDict, Strings, Violation } from './types.ts';
+import { FIXTURE_PORTAL, type Hotfix, type Manifest, type PackageFiles, type PlaybookIR, type SelectorDict, type Strings, type Violation } from './types.ts';
 import { semanticViolations, validatePackage, type BundleOutcomes } from './validate.ts';
 
 const DAY = 86_400_000;
+
+/**
+ * fixture 패키지 로드 허용(ADR-039 조건 2 ②): 이 모듈을 TS 소스로 읽을 때만 참이다. 소스는 `--conditions=development`(시험·개발)로만
+ * 읽히고, 제품 설치본에는 진입점에서 닿는 dist/*.js만 들어간다(package-win). 설정·인자로 켜는 길은 두지 않는다.
+ */
+export const FIXTURE_LOAD_ALLOWED: boolean = new URL(import.meta.url).pathname.endsWith('.ts');
 
 /** 레지스트리에서 받은 원시 바이트(contentDigests는 이 바이트의 SHA-256). */
 export interface RawPackage {
@@ -112,6 +118,8 @@ export function loadPackage(raw: RawPackage, ctx: LoaderContext): LoadResult {
   if (!canonicalizable(manifest)) return fail('loader.schema_invalid', [{ rule: 'LOADER-1', message: 'JCS로 직렬화할 수 없는 값' }]);
   // 패키지 id는 핫픽스 인덱스 이름(<appliesTo.id>.hotfix, SIGNING.md §6)과 겹칠 수 없다.
   if (manifest.id.endsWith('.hotfix')) return fail('loader.schema_invalid', [{ rule: 'LOADER-1', message: '패키지 id는 .hotfix로 끝날 수 없음' }]);
+  // ADR-039: portal fixture(시험 가짜 페이지)는 개발 조건으로 소스를 읽을 때만 로드한다. 제품(dist)은 서명과 무관하게 거부한다.
+  if (manifest.portal === FIXTURE_PORTAL && !FIXTURE_LOAD_ALLOWED) return fail('loader.fixture_package', [{ rule: 'LOADER-0', message: 'fixture 패키지는 제품 엔진에서 로드하지 않음(ADR-039)' }]);
   const signed = canonicalWithout(manifest, ['signatures']);
   const q = countSignatures(signed, manifest.signatures, ctx.roots.packageKeys, ctx.revoked);
   if (q.revoked.length) events.push('registry.key_revoked');
