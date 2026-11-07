@@ -14,7 +14,7 @@ import { decideDialog, type DialogKind } from './dialog.ts';
 import type { ActResult, Actuator, PageReader, Resolved } from './page.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
 import { isSecretEntry, type PressStep, type SelectorDict, type SelectorEntry } from './types.ts';
-import { urlProblem } from './validate.ts';
+import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
 
 export type ActionKind = 'navigate' | 'click' | 'fill' | 'select' | 'press' | 'secret_window';
 
@@ -52,6 +52,8 @@ export interface GuardedActuatorInput {
   commitArmed?: (key: string) => boolean;
   /** 무장된 커밋 구간에서 그 submit의 expectConfirm 패턴. 그 밖은 null. */
   armedConfirm?: () => RegExp | null;
+  /** fixture 패키지 실행일 때만(loader.fixtureOriginGrant). 제품 dist에서는 발급되지 않고, 넘겨도 인정하지 않는다(ADR-039). */
+  fixtureGrant?: FixtureOriginGrant | null;
 }
 
 type Op = 'click' | 'fill' | 'clear' | 'select' | 'press' | 'secret_window';
@@ -73,6 +75,7 @@ export class GuardedActuator implements Actuator {
   private readonly events: ActuatorEvents;
   private readonly commitArmed: (key: string) => boolean;
   private readonly armedConfirm: () => RegExp | null;
+  private readonly fixtureGrant: FixtureOriginGrant | null;
   private lastNotice: string | null = null;
 
   constructor(i: GuardedActuatorInput) {
@@ -84,6 +87,7 @@ export class GuardedActuator implements Actuator {
     this.events = i.events;
     this.commitArmed = i.commitArmed ?? (() => false);
     this.armedConfirm = i.armedConfirm ?? (() => null);
+    this.fixtureGrant = i.fixtureGrant ?? null;
   }
 
   /** 실행이 닫은 포털 대화상자의 마지막 문구(실행 메모리 전용, 카드의 '홈택스 안내'). */
@@ -94,7 +98,7 @@ export class GuardedActuator implements Actuator {
   async goto(url: string): Promise<ActResult> {
     const p = await this.policy.beforeAction('navigate');
     if (!p.ok) return p;
-    if (urlProblem(url, this.domains)) return { ok: false, code: 'step.url_not_allowed' };
+    if (navigationUrlProblem(url, this.domains, this.fixtureGrant)) return { ok: false, code: 'step.url_not_allowed' };
     return this.driver.goto(url);
   }
 
