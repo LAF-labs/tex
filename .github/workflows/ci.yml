@@ -95,8 +95,7 @@ jobs:
           node scripts/ci-phone-relay.mjs 2>&1 | tee "$CI_OUT/phone-relay.log"
       - name: 작업 트리 깨끗함(측정 산출물 격리)
         if: ${{ !cancelled() }}
-        # TODO(M1-1-CI): 소유 트랙의 measure-out 한 줄 변경이 머지되면 --warn을 뺀다.
-        run: node scripts/ci-clean-tree.mjs --warn
+        run: node scripts/ci-clean-tree.mjs
       - name: 시험 요약
         if: ${{ failure() }}
         run: node scripts/ci-test-summary.mjs "$CI_OUT" >> "$GITHUB_STEP_SUMMARY"
@@ -152,8 +151,7 @@ jobs:
           pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
       - name: 작업 트리 깨끗함(측정 산출물 격리)
         if: ${{ !cancelled() }}
-        # TODO(M1-1-CI): 소유 트랙의 measure-out 한 줄 변경이 머지되면 --warn을 뺀다.
-        run: node scripts/ci-clean-tree.mjs --warn
+        run: node scripts/ci-clean-tree.mjs
       - name: 시험 요약
         if: ${{ failure() }}
         run: node scripts/ci-test-summary.mjs "$CI_OUT" >> "$GITHUB_STEP_SUMMARY"
@@ -208,7 +206,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 작업 트리 깨끗함
         if: ${{ !cancelled() }}
-        run: node scripts/ci-clean-tree.mjs --warn
+        run: node scripts/ci-clean-tree.mjs
       - name: 시험 요약
         if: ${{ failure() }}
         run: node scripts/ci-test-summary.mjs "$env:CI_OUT" >> $env:GITHUB_STEP_SUMMARY
