@@ -93,7 +93,7 @@ export interface AccountDeps {
   /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
   onEvent?: (name: string) => void;
   /**
-   * 응답과 따로 돌릴 일(알림 큐 즉시 발송). 기본은 기다리지 않고 바로 시작한다. 플랫폼이 응답 뒤 실행을 멈춰도
+   * 응답과 따로 돌릴 일(알림 큐 즉시 발송, 재설정 코드 메일). 기본은 기다리지 않고 바로 시작한다. 플랫폼이 응답 뒤 실행을 멈춰도
    * 큐 행이 남으므로 정리 작업(sweep)이 다시 보낸다. 시험은 일을 모아 두었다가 기다린다.
    */
   defer?: (task: () => Promise<void>) => void;
@@ -380,7 +380,11 @@ export class AccountService {
     return hmacHex(this.d.codeMacKey, 'SAX-reset-code-v1', '\u0000', resetId, '\u0000', code);
   }
 
-  /** 재설정 코드 요청. 계정이 있을 때만 메일을 보내지만 응답은 같다(시각 하한은 라우트) */
+  /**
+   * 재설정 코드 요청. 계정이 있을 때만 메일을 보내지만 응답은 같다(시각 하한은 라우트).
+   * 메일은 응답 경로에서 기다리지 않는다(ADR-038 (e), 팀장 결정 2026-11-07 ①): 메일 지연·실패가 응답 본문·시각을 바꾸지 않는다.
+   * 코드 평문은 큐(DB)에 두지 않으므로 메모리에서만 따로 보낸다. 플랫폼이 멈춰 유실되면 사용자가 다시 요청한다(실패는 이벤트 이름만).
+   */
   async startPasswordReset(emailRaw: string): Promise<{ resetId: string; expiresInSec: number }> {
     this.pw();
     const email = normEmail(emailRaw);
@@ -389,7 +393,7 @@ export class AccountService {
     if (acc && acc.status === 'active') {
       const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
       await this.db.run('INSERT INTO reset_codes (reset_id_hash, account_id, code_mac, attempts, expires_at) VALUES ($1, $2, $3, 0, $4)', [sha256hex(resetId), acc.id, this.resetMac(resetId, code), this.now() + PASSWORD.resetCodeTtlMs]);
-      await this.d.mail.sendResetCode(email, code);
+      this.later(() => this.d.mail.sendResetCode(email, code), 'account.reset_mail_failed');
     }
     return { resetId, expiresInSec: PASSWORD.resetCodeTtlMs / 1000 };
   }
@@ -587,14 +591,19 @@ export class AccountService {
     await q.run('INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ($1, $2, $3, $4, 0, $4)', [randomToken(), accountId, kind, now]);
   }
 
-  /** 큐를 응답과 따로 비운다. 실패는 이벤트 이름만(행은 남아 다음 정리 때 다시) */
-  private kickNotices(): void {
-    const run = () => this.drainNotices().then(
+  /** 응답과 따로 돌린다(AccountDeps.defer). 실패는 이벤트 이름만 */
+  private later(task: () => Promise<unknown>, failEvent: string): void {
+    const run = () => task().then(
       () => undefined,
-      () => this.d.onEvent?.('account.notice_drain_failed'),
+      () => this.d.onEvent?.(failEvent),
     );
     if (this.d.defer) this.d.defer(run);
     else void run();
+  }
+
+  /** 큐를 응답과 따로 비운다(행은 남아 실패해도 다음 정리 때 다시) */
+  private kickNotices(): void {
+    this.later(() => this.drainNotices(), 'account.notice_drain_failed');
   }
 
   /**
