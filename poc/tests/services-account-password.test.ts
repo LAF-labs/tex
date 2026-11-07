@@ -37,6 +37,16 @@ class FlakyMail extends MockMailSender {
   failNotices = 0;
   hold: Promise<void> | null = null;
   calls = 0;
+  failResets = 0;
+  override async sendResetCode(to: string, code: string): Promise<void> {
+    this.calls++;
+    if (this.hold) await this.hold;
+    if (this.failResets > 0) {
+      this.failResets--;
+      throw new Error('mail down');
+    }
+    return super.sendResetCode(to, code);
+  }
   override async sendNotice(to: string, kind: NoticeKind): Promise<void> {
     this.calls++;
     if (this.hold) await this.hold;
@@ -323,6 +333,7 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     const r2 = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'en@example.com' } });
     assert.equal(r1.status, 200);
     assert.deepEqual(Object.keys(r1.json).sort(), Object.keys(r2.json).sort());
+    await e.flush();
     assert.equal(e.mail.lastResetCode('ghost@example.com'), undefined);
     assert.ok(e.mail.lastResetCode('en@example.com'));
   });
@@ -480,6 +491,7 @@ describe('ADR-038 재설정(이메일 코드)', { skip: !argon2Available() }, ()
     assert.equal(st.status, 200);
     assert.equal(st.json.expiresInSec, 600);
     const resetId = st.json.resetId as string;
+    await e.flush();
     const c = e.mail.lastResetCode('rs@example.com')!;
     const wrong = c === '000000' ? '000001' : '000000';
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_invalid');
@@ -496,15 +508,60 @@ describe('ADR-038 재설정(이메일 코드)', { skip: !argon2Available() }, ()
     assert.equal(await code(e.svc.passwordLogin('rs@example.com', GOOD2)), 'ok', '잠금도 풀렸다');
   });
 
+  it('재설정 코드 메일은 응답 경로 밖(ADR-038 (e) ①): 메일이 멈추거나 실패해도 계정 유무와 같은 200·같은 하한, 실패는 이벤트 이름만, 다시 요청하면 새 코드', async () => {
+    const mail = new FlakyMail();
+    const f = await start({ mail });
+    try {
+      await withPassword(f, 'rm@example.com');
+      mail.calls = 0;
+      let release!: () => void;
+      mail.hold = new Promise<void>((ok) => (release = ok));
+      mail.failResets = 1;
+      const timed = async (email: string) => {
+        const t0 = performance.now();
+        const r = await f.req('POST', '/v1/auth/password/reset', { body: { email } });
+        return { r, ms: performance.now() - t0 };
+      };
+      const a = await timed('rm@example.com');
+      const b = await timed('ghost-rm@example.com');
+      for (const x of [a, b]) {
+        assert.equal(x.r.status, 200);
+        assert.ok(x.ms >= PASSWORD.responseFloorMs - 5 && x.ms < PASSWORD.responseFloorMs + 400, `${x.ms}ms`);
+      }
+      assert.deepEqual(Object.keys(a.r.json).sort(), Object.keys(b.r.json).sort());
+      assert.equal(mail.calls, 0, '응답 경로에서 메일을 부르지 않는다');
+      const run = f.flush();
+      release();
+      await run;
+      assert.equal(mail.calls, 1, '계정 없는 주소로는 보내지 않는다');
+      assert.equal(mail.lastResetCode('rm@example.com'), undefined, '첫 발송은 실패');
+      assert.deepEqual(f.svcEvents.filter((x) => x.startsWith('account.reset_mail')), ['account.reset_mail_failed']);
+      // 큐(DB)에 코드 평문이 없다: 재설정 행은 HMAC뿐, 알림 큐에 행 없음
+      assert.equal((await f.db.all('SELECT * FROM notice_outbox')).length, 0);
+      // 다시 요청하면 새 코드가 간다
+      mail.hold = null;
+      const again = await f.req('POST', '/v1/auth/password/reset', { body: { email: 'rm@example.com' } });
+      await f.flush();
+      const c = mail.lastResetCode('rm@example.com')!;
+      assert.ok(c);
+      const ok = await f.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: again.json.resetId, code: c, password: GOOD2 } });
+      assert.equal(ok.status, 200, ok.text);
+    } finally {
+      f.server.close();
+    }
+  });
+
   it('5회 틀리면 코드 폐기(code_locked), 10분 만료', async () => {
     await withPassword(e, 'rs2@example.com');
     const st = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'rs2@example.com' } });
+    await e.flush();
     const c = e.mail.lastResetCode('rs2@example.com')!;
     const wrong = c === '000000' ? '000001' : '000000';
     for (let i = 0; i < 4; i++) assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_invalid');
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: wrong, password: GOOD2 } })).json.error, 'account.code_locked');
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st.json.resetId, code: c, password: GOOD2 } })).json.error, 'account.code_invalid');
     const st2 = await e.req('POST', '/v1/auth/password/reset', { body: { email: 'rs2@example.com' } });
+    await e.flush();
     e.clock.advance(PASSWORD.resetCodeTtlMs);
     assert.equal((await e.req('POST', '/v1/auth/password/reset/verify', { body: { resetId: st2.json.resetId, code: e.mail.lastResetCode('rs2@example.com'), password: GOOD2 } })).json.error, 'account.code_invalid');
     const row = await e.db.one<Record<string, unknown>>('SELECT * FROM reset_codes');
