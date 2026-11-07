@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { InternalAuth, InternalClient, Logger, SqlNonceStore, TokenIssuer, TokenVerifier, createServer, ed25519Private, ed25519RawPublic, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits } from '@sax/svc-shared';
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
 import { AcctClaimSigner } from './acct-claim.ts';
+import { SesMailSender } from './mail-ses.ts';
 import { accountRouter } from './app.ts';
 import { CommonPasswords, COMMON_PASSWORDS_FILE, PasswordHasher, argon2Available, parsePepperKeys } from './password.ts';
 import { AccountService, type PasswordDeps } from './service.ts';
@@ -60,6 +61,12 @@ function passwordDeps(env: NodeJS.ProcessEnv, logger: Logger): PasswordDeps | un
 
 /** 조립(라우터·서비스·정리). 상시 서버(`startAccount`)와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false, 마이그레이션은 배포 절차). */
 export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: AccountBuildDeps = {}, o: { migrate: boolean } = { migrate: true }) {
+  // 메일 구성 오류는 DB를 열기 전에 낸다
+  // PG는 모의뿐이다. 메일은 mock(기본) 또는 ses(MAIL_PROVIDER=ses일 때만, SES_* env 3개). 그 밖의 값이면 기동하지 않는다
+  if (env.PG_PROVIDER !== 'mock' && !deps.payments) throw new Error('config_provider: 이 저장소에는 모의 PG만 있다(PG_PROVIDER=mock)');
+  if (env.MAIL_PROVIDER !== 'mock' && env.MAIL_PROVIDER !== 'ses' && !deps.mail) throw new Error('config_provider: MAIL_PROVIDER는 mock 또는 ses');
+  const logger = deps.logger ?? new Logger('account');
+  const mail = deps.mail ?? (env.MAIL_PROVIDER === 'ses' ? SesMailSender.fromEnv(env, { onEvent: (n) => logger.event(n) }) : new MockMailSender());
   const db = openFromEnv(env);
   if (o.migrate) {
     await migrate(db, 'account', MIGRATIONS_DIR);
@@ -73,14 +80,10 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
   const publicOrigin = env.ACCOUNT_PUBLIC_ORIGIN ?? fail('ACCOUNT_PUBLIC_ORIGIN');
   const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
   if (env.INTERNAL_CALL_KEY === env.TOKEN_SIGNING_SEED || env.INTERNAL_CALL_KEY === env.ACCT_CLAIM_SIGNING_KEY) fail('INTERNAL_CALL_KEY');
-  if (env.PG_PROVIDER !== 'mock' || env.MAIL_PROVIDER !== 'mock') {
-    if (!deps.mail || !deps.payments) throw new Error('config_provider: 이 저장소에는 모의 어댑터만 있다(PG_PROVIDER=mock, MAIL_PROVIDER=mock)');
-  }
-  const logger = deps.logger ?? new Logger('account');
   const passwords = passwordDeps(env, logger);
   const svc = new AccountService({
     db,
-    mail: deps.mail ?? new MockMailSender(),
+    mail,
     payments: deps.payments ?? new MockPaymentGateway(env.MOCK_PG_SECRET),
     tokens: new TokenIssuer(kid, signKey),
     codeMacKey: key32(env.CODE_MAC_KEY, 'CODE_MAC_KEY'),

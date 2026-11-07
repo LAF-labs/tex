@@ -622,9 +622,10 @@ export class AccountService {
       const claimed = await this.db.run('UPDATE notice_outbox SET next_at = $1 WHERE id = $2 AND next_at = $3', [now + NOTICE.leaseMs, r.id, r.next_at]);
       if (!claimed) continue;
       const a = await this.db.one<{ email: string }>('SELECT email FROM accounts WHERE id = $1', [r.account_id]);
-      // 메일 호출만 실패로 본다(보낸 뒤 DB 오류로 다시 보내지 않게). 계정이 사라졌으면 보내지 않고 지운다
-      const ok = !a || (await this.d.mail.sendNotice(a.email, r.kind).then(() => true, () => false));
-      if (ok) {
+      // 메일 호출만 실패로 본다(보낸 뒤 DB 오류로 다시 보내지 않게). 계정이 사라졌으면 보내지 않고 지운다.
+      // 어댑터가 다시 보내도 같다고 한 실패(retryable === false: 주소 거부·설정·인증)는 기다리지 않고 버린다
+      const res = !a ? 'ok' : await this.d.mail.sendNotice(a.email, r.kind).then(() => 'ok' as const, (e: unknown) => ((e as { retryable?: unknown } | null)?.retryable === false ? ('final' as const) : ('retry' as const)));
+      if (res === 'ok') {
         await this.db.run('DELETE FROM notice_outbox WHERE id = $1', [r.id]);
         if (a) {
           sent++;
@@ -633,7 +634,7 @@ export class AccountService {
       } else {
         failed++;
         const attempts = Number(r.attempts) + 1;
-        if (attempts >= NOTICE.maxAttempts) {
+        if (res === 'final' || attempts >= NOTICE.maxAttempts) {
           await this.db.run('DELETE FROM notice_outbox WHERE id = $1', [r.id]);
           this.d.onEvent?.(`account.notice_dropped.${r.kind}`);
         } else {

@@ -51,7 +51,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 
 | 서비스 | 이름(`<서비스>__` 접두) |
 |---|---|
-| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, 아래 ⑤), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL`, `PASSWORD_PEPPER_KEYS` ⚿(선택, 없으면 비밀번호 로그인만 닫힘, 아래 3절 3.11) |
+| 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, SES를 켤 때만 `ses`, 3절 6번·아래 ⑤), `SES_FROM_ADDRESS`·`SES_ACCESS_KEY_ID` ⚿·`SES_SECRET_ACCESS_KEY` ⚿(`MAIL_PROVIDER=ses`일 때만), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL`, `PASSWORD_PEPPER_KEYS` ⚿(선택, 없으면 비밀번호 로그인만 닫힘, 아래 3절 3.11) |
 | 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE` |
 | 릴레이 `RELAY__` | `DATABASE_URL` ⚿, `QUEUE_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `RELAY_PUBLIC_ORIGIN` |
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
@@ -100,11 +100,20 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
    2. TLS 인증서는 호스트나 앞단에서 받는다(`rooms.tax.laf-co.com`, WSS).
    3. 2절의 룸 호스트 env를 넣는다. `RELAY_ROOMS=1`, `MIGRATE_ON_START=0`이다.
    4. 인스턴스는 한 대로 고정한다(자동 확장 끔). 재시작하면 진행 중인 페어링만 다시 하면 된다.
-6. **AWS SES**(메일, 아래 ⑤ 어댑터 PR과 함께)
-   1. AWS 콘솔 → SES(1번 리전)에서 도메인 identity `tax.laf-co.com`을 만든다. Easy DKIM CNAME 3개를 GoDaddy에 넣고 Verified를 기다린다.
-   2. Custom MAIL FROM(`mail.tax.laf-co.com`)의 MX·SPF를 GoDaddy에 넣는다. DMARC는 `v=DMARC1; p=quarantine`부터 시작한다.
-   3. **Production access**를 요청한다. 샌드박스는 확인된 수신자에게만 보낸다. 용도는 로그인 코드·기기 알림 트랜잭션 메일이다.
-   4. IAM 사용자(또는 역할)에 `ses:SendEmail` 권한만, 그 identity로 한정해 준다. 자격 증명은 Vercel `ACCOUNT__…`에 넣는다(이름은 SES 어댑터 PR에서 정한다).
+6. **AWS SES 켜기 — 사용자 단계**(메일, 아래 ⑤). 코드(`services/account/src/mail-ses.ts`)는 저장소에 있고 **꺼져 있다**. 아래 셋을 마치고 env를 넣어야 켜진다. 어댑터는 서울(`ap-northeast-2`)만 받는다(D09 §1). 다른 리전이면 코드를 바꾸는 PR이 먼저다.
+   1. **SES 도메인 인증**
+      1. AWS 콘솔 → SES(서울)에서 도메인 identity `tax.laf-co.com`을 만든다. Easy DKIM CNAME 3개를 GoDaddy에 넣고 Verified를 기다린다.
+      2. Custom MAIL FROM(`mail.tax.laf-co.com`)의 MX·SPF TXT를 GoDaddy에 넣는다. DMARC는 `_dmarc` TXT `v=DMARC1; p=quarantine`부터 시작한다.
+      3. **Production access**(샌드박스 해제)를 요청한다. 샌드박스는 확인된 수신자에게만 보낸다. 용도는 로그인·재설정 코드와 기기·보안 알림 트랜잭션 메일이고, 광고 메일은 보내지 않는다.
+   2. **IAM 키 발급**
+      1. 이 용도 전용 IAM 사용자를 만든다. 정책은 `ses:SendEmail` 하나이고, 리소스는 `arn:aws:ses:ap-northeast-2:<계정 ID>:identity/tax.laf-co.com`으로 한정한다. 콘솔 로그인은 주지 않는다.
+      2. 액세스 키를 만든다. 값은 비밀번호 관리자에 두고 Vercel env로만 옮긴다(저장소·메시지·로그에 넣지 않는다). 회전할 때는 새 키를 넣고 재배포한 뒤 옛 키를 비활성화한다.
+   3. **env 3개 + 켜기**(Vercel Production, 2절 표)
+      - `ACCOUNT__SES_FROM_ADDRESS`: 보내는 주소. 예: `no-reply@tax.laf-co.com`(인증한 도메인 안).
+      - `ACCOUNT__SES_ACCESS_KEY_ID` ⚿: 위 2번 키 ID.
+      - `ACCOUNT__SES_SECRET_ACCESS_KEY` ⚿: 위 2번 비밀 키.
+      - 마지막에 `ACCOUNT__MAIL_PROVIDER`를 `mock`에서 `ses`로 바꾸고 재배포한다. 셋 중 하나라도 없거나 형식이 틀리면 계정 서비스가 기동하지 않는다(`config_SES_…`, 값은 오류에 나오지 않는다).
+      - 켠 뒤 5절 스모크에 더해 본인 주소로 로그인 코드를 한 번 받아 본다. 로그에는 `account.mail_ses.sent`가 남는다. 실패하면 `account.mail_ses.<auth_failed|config|throttled|unavailable|rejected>`가 남는다.
 7. 배포한 뒤 아래 5절 스모크를 돌리고 결과를 팀장에게 알린다.
 
 ## 4. 마이그레이션 적용 절차
@@ -203,7 +212,11 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
    - pnpm 워크스페이스 밖 import 번들링(묶음 내용은 위 「배포 전 함수 묶음 점검」으로 로컬에서 본다)
    - 함수 런타임의 Node 버전(저장소는 26.x를 요구한다)
    - 확인 수단은 5절 스모크다. 로컬 시험은 같은 진입점을 Node HTTP 서버로 돌려 경로 복원·cron·조립을 본다.
-5. **메일**: 저장소에는 모의 메일만 있다(`MAIL_PROVIDER=mock`). SES 어댑터 PR 전에는 로그인 코드가 발송되지 않아 실제 로그인을 할 수 없다.
+5. **메일**: SES v2 어댑터가 있지만 기본은 모의 메일이다(`MAIL_PROVIDER=mock`). 3절 6번을 마치기 전에는 로그인 코드가 발송되지 않아 실제 로그인을 할 수 없다.
+   - 송신 허용 목록은 어댑터가 강제한다. `POST https://email.ap-northeast-2.amazonaws.com/v2/email/outbound-emails` 하나뿐이고, 리디렉션은 따르지 않는다. PC 엔진의 `packages/net` Egress에는 넣지 않았다. 서버만 SES로 보내므로 PC 허용 목록을 넓히지 않는다.
+   - 본문은 종류별 고정 문구다. 값은 6자리 코드뿐이고 본문에만 있다(제목에는 없다). 이메일 주소는 수신자 칸에만 있다.
+   - 재시도 분류: 429·한도·5xx·네트워크·시간 초과는 다시 보낼 수 있는 실패다. 401·403(키), 계정 정지·발송 중지·도메인 미인증(설정), 그 밖의 400(거부)은 다시 보내도 같다. 알림 큐는 앞의 것을 백오프로 미루고 뒤의 것은 바로 버린다(`account.notice_dropped.<종류>`). 로그인 코드 송신 실패는 지금처럼 요청 오류로 돌아간다.
+   - 실제 AWS에 붙여 본 적은 없다. 시험은 가짜 SES 서버로 서명(AWS 공개 시험 벡터 포함)·본문·오류 분류를 본다.
 6. **레지스트리**: 7절. 클라이언트 egress 허용 목록은 `https://tax.laf-co.com` 하나로 고정한다. Supabase 도메인은 클라이언트에 넣지 않는다(팀장 결정 2026-11-06).
 7. **릴레이 큐 GET 응답 상한**: Vercel 함수 응답은 4.5MB이고 큐 상한은 6 MiB다. 큐 GET은 봉투 바이트 3 MiB씩 쪽으로 나눠 돌려준다(`more`, 선택 `after`, relay API.md). 클라이언트가 `more`를 보고 곧바로 다음 쪽을 읽게 하는 것은 `packages/remote` `drainQueue` 몫이다(그 전에는 ACK 뒤 다음 폴링에서 받는다).
 8. **라이브 우편함(`RELAY_LIVE=1`) 켜기 전 체크**: 데스크톱은 라이브 WSS의 DPoP `htu`를 `https://rooms.tax.laf-co.com/v1/mailboxes/:id/live`(QR 호스트)로 만들고, 룸 호스트의 `RELAY_PUBLIC_ORIGIN`은 `https://tax.laf-co.com`이다. 켜는 PR에서 둘을 맞춘다(팀장 결정 2026-11-06, #145).

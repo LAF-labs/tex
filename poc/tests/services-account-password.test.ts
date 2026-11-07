@@ -35,6 +35,8 @@ import {
 /** 알림 발송이 실패·지연되는 메일(실제 어댑터의 장애 흉내). 코드 메일은 그대로 */
 class FlakyMail extends MockMailSender {
   failNotices = 0;
+  /** 다시 보내도 같은 실패(어댑터의 retryable === false, 예: SES 주소 거부·설정 오류) */
+  finalFail = false;
   hold: Promise<void> | null = null;
   calls = 0;
   failResets = 0;
@@ -50,6 +52,7 @@ class FlakyMail extends MockMailSender {
   override async sendNotice(to: string, kind: NoticeKind): Promise<void> {
     this.calls++;
     if (this.hold) await this.hold;
+    if (this.finalFail) throw Object.assign(new Error('mail.rejected'), { retryable: false });
     if (this.failNotices > 0) {
       this.failNotices--;
       throw new Error('mail down');
@@ -420,7 +423,7 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     }
   });
 
-  it('발송 큐: 동시에 도는 두 처리자도 한 번만 보내고, 계속 실패하면 상한(8회) 뒤 버린다, 계정을 지우면 행도 지운다', async () => {
+  it('발송 큐: 동시에 도는 두 처리자도 한 번만 보내고, 계속 실패하면 상한(8회) 뒤 버린다, 다시 보내도 같은 실패는 바로 버린다, 계정을 지우면 행도 지운다', async () => {
     const mail = new FlakyMail();
     const f = await start({ mail });
     try {
@@ -447,6 +450,15 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
       assert.deepEqual(waits, [1, 2, 4, 8, 16, 32, 64].map((k) => Math.min(k * NOTICE.retryBaseMs, NOTICE.retryMaxMs)));
       assert.equal(await f.db.one("SELECT 1 AS x FROM notice_outbox WHERE id = 'x1'"), undefined);
       assert.ok(f.svcEvents.includes('account.notice_dropped.password_locked'));
+      // 다시 보내도 같은 실패(retryable === false)는 첫 시도에서 버린다
+      mail.failNotices = 0;
+      mail.finalFail = true;
+      f.svcEvents.length = 0;
+      await f.db.run("INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ('x3', $1, 'password_locked', $2, 0, $2)", [acc, f.clock.now()]);
+      assert.deepEqual(await f.svc.drainNotices(), { sent: 0, failed: 1 });
+      assert.equal(await f.db.one("SELECT 1 AS x FROM notice_outbox WHERE id = 'x3'"), undefined);
+      assert.deepEqual(f.svcEvents.filter((e) => e.startsWith('account.notice_')), ['account.notice_dropped.password_locked']);
+      mail.finalFail = false;
       // 계정 삭제(ON DELETE CASCADE)면 큐 행도 사라진다
       await f.db.run("INSERT INTO notice_outbox (id, account_id, kind, created_at, attempts, next_at) VALUES ('x2', $1, 'password_locked', $2, 0, $2)", [acc, f.clock.now()]);
       await f.db.run('DELETE FROM accounts WHERE id = $1', [acc]);
