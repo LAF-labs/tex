@@ -2,6 +2,8 @@
 // - 중계 통로(엔진 parentPort): main 질의·렌더러 명령·실행 명령, 엔진 → main 실행 이벤트.
 // - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘과 InDoubt 증언 요청·철회(엔진 → main), LocalApproval·LocalAttestation(main → 엔진)만.
 //   answerGate()·answerAttest() 둘로만 쓴다.
+// - auth 포트(MessageChannelMain, 세 번째 전달 포트): 엔진 → 게이트웨이 요청 헤더(gateway-auth.ts). 엔진 init 포트 순서는 [중계, 게이트, auth]다.
+//   답하는 쪽은 setGatewayAuth로 붙인다. 붙기 전에는 account.signed_out으로 답한다(엔진은 오프라인으로 간다).
 // 렌더러 IPC 처리기는 answerGate·answerAttest를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';
@@ -10,6 +12,7 @@ import type { AttestRejectCode, AttestRequest, AttestWithdrawReason, GatePortMes
 import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
 import { childEnv } from './child-env.ts';
+import type { GwAuthResult } from './gateway-auth.ts';
 import type { SecretInputBind } from './secret-labels.ts';
 
 const require = createRequire(import.meta.url);
@@ -55,6 +58,8 @@ export class EngineHost extends EventEmitter {
   private readonly vaultProc: UtilityProcess | null;
   private readonly controlPort: MessagePortMain;
   private readonly gatePort: MessagePortMain;
+  private readonly authPort: MessagePortMain;
+  private gatewayAuth: ((m: unknown) => Promise<GwAuthResult | null>) | null = null;
   private readonly pending = new Map<number, Pending>();
   private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
   private readonly attestAnswers = new Map<string, (r: AttestAnswerResult) => void>();
@@ -70,6 +75,7 @@ export class EngineHost extends EventEmitter {
     const relay = new MessageChannelMain();
     const ctl = new MessageChannelMain();
     const gate = new MessageChannelMain();
+    const auth = new MessageChannelMain();
     this.controlPort = ctl.port2;
     this.controlPort.on('message', (e) => {
       const m = e.data as { t?: string; name?: unknown; data?: unknown };
@@ -81,6 +87,9 @@ export class EngineHost extends EventEmitter {
     this.gatePort = gate.port2;
     this.gatePort.on('message', (e) => this.onGate(e.data as GatePortMessage));
     this.gatePort.start();
+    this.authPort = auth.port2;
+    this.authPort.on('message', (e) => void this.onAuth(e.data));
+    this.authPort.start();
     if (opts.vault === 'process') {
       this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore', env: childEnv(), execArgv: [] });
       this.vaultProc.postMessage({ ports: ['engine', 'control'] }, [relay.port1, ctl.port1]);
@@ -102,7 +111,7 @@ export class EngineHost extends EventEmitter {
     // 기다리는 쪽이 없을 때 엔진 fatal이 처리되지 않은 거부로 남지 않게 한다(부르는 쪽은 ready를 await한다).
     this.ready.catch((e: Error) => opts.log.event('main.engine_fatal', { code: e.message.slice(0, 60).replace(/[^A-Za-z0-9_.:-]/g, '_') }));
     const init: EngineInit = { t: 'init', root: opts.root, portal: opts.portal };
-    this.engine.postMessage(init, [relay.port2, gate.port1]);
+    this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);
     this.engine.on('exit', (c) => this.exited('engine', c));
   }
 
@@ -121,6 +130,23 @@ export class EngineHost extends EventEmitter {
     for (const a of this.attestAnswers.values()) a({ ok: false, code: `${who}_exit`, verdict: 'unknown' });
     this.attestAnswers.clear();
     this.emit('exit', who, code);
+  }
+
+  /** auth 포트에 답하는 쪽(shell-app이 계정을 만든 뒤 GatewayAuthHost.handle을 붙인다). */
+  setGatewayAuth(handler: (m: unknown) => Promise<GwAuthResult | null>): void {
+    this.gatewayAuth = handler;
+  }
+
+  private async onAuth(m: unknown): Promise<void> {
+    const req = m as { t?: unknown; id?: unknown } | null;
+    const id = req?.t === 'gw.auth' && typeof req.id === 'number' && Number.isSafeInteger(req.id) ? req.id : null;
+    let r: GwAuthResult | null;
+    try {
+      r = this.gatewayAuth ? await this.gatewayAuth(m) : id === null ? null : { t: 'gw.auth.result', id, code: 'account.signed_out' };
+    } catch {
+      r = id === null ? null : { t: 'gw.auth.result', id, code: 'auth.unavailable' };
+    }
+    if (r && !this.dead) this.authPort.postMessage(r);
   }
 
   private onReply(msg: { t?: string; id?: number; result?: unknown; error?: string }): void {

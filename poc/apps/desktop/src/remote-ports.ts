@@ -24,8 +24,11 @@ export interface AccountClient {
   deviceList(session: string): Promise<{ aikPub: string | null; deviceList: DeviceListJson | null }>;
   /** POST /v1/aik(세션): 첫 PC의 AIK 고정 + AIK 서명 목록(이 PC 한 줄). */
   pinFirstDesktop(session: string, b: { aikPub: string; deviceList: DeviceListJson; platform: 'windows' | 'macos'; name: string }): Promise<{ deviceId: string }>;
-  /** POST /v1/device-tokens: AIK 인증서 + DPoP(Vd) → 15분 토큰. @sax/remote requestDeviceToken과 같다. */
-  deviceToken(cert: SignedCert, dpop: DpopSigner): Promise<DeviceToken>;
+  /**
+   * POST /v1/device-tokens: AIK 인증서 + DPoP(Vd) → 15분 토큰. @sax/remote requestDeviceToken과 같다.
+   * scopes가 있으면 본문에 실어 그 범위만 달라고 한다(게이트웨이 전용 토큰, ADR-040 예정). 실제로 준 범위는 응답 scopes다.
+   */
+  deviceToken(cert: SignedCert, dpop: DpopSigner, scopes?: readonly string[]): Promise<DeviceToken>;
   /** GET /v1/acct-claim(기기 토큰, 데스크톱만). 응답 JSON 그대로(SignedAcctClaim). pair.ok 운반 형식(b64 JCS)은 데스크톱이 만든다. */
   acctClaim(auth: DeviceAuth): Promise<SignedAcctClaim>;
   /** POST /v1/devices/enroll(기기 토큰): 폰 대리 등록. roomId는 이 PC가 연 페어링 룸(16B base64url). 같은 키 재등록 200도 성공. */

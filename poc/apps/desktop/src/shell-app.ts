@@ -39,6 +39,7 @@ import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook, CP_FIELD_MAX } from './counterparty-book.ts';
 import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
+import { GatewayAuthHost } from './gateway-auth.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
@@ -645,6 +646,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   let accountReady: Promise<unknown> | null = null;
   const accountInit = () => (accountReady ??= account.init());
+  // 엔진 → 게이트웨이 인증(gateway-auth.ts): gateway 범위 기기 토큰으로 만든 헤더만 auth 포트로 간다. 로그인 전이면 account.signed_out.
+  const gwAuth = new GatewayAuthHost({ device: async () => {
+      await accountInit().catch(() => null);
+      return account.device();
+    }, log: (n, d) => log.event(n, d) });
+  host.setGatewayAuth((m) => gwAuth.handle(m));
   // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
   // 우편함 토큰·채널이 든 결과는 지금은 이 실행의 메모리에만 둔다(수신 배선 PR에서 금고 보관).
   let pairWin: PairWindow | null = null;

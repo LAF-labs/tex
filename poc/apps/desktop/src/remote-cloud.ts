@@ -119,9 +119,11 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       if (!isObj(b) || !str(b.deviceId, 64)) shape();
       return { deviceId: (b as { deviceId: string }).deviceId };
     },
-    async deviceToken(cert, dpop) {
+    async deviceToken(cert, dpop, scopes) {
       try {
-        return await requestDeviceToken(httpJson, accountOrigin, cert, dpop);
+        // @sax/remote requestDeviceToken은 본문이 {cert}뿐이다. 범위를 줄일 때만 본문에 scopes를 더한다(DPoP는 인증서에 묶여 본문과 무관).
+        const http: HttpJson = scopes ? (req) => httpJson({ ...req, body: JSON.stringify({ ...(JSON.parse(req.body!) as object), scopes: [...scopes] }) }) : httpJson;
+        return await requestDeviceToken(http, accountOrigin, cert, dpop);
       } catch (e) {
         const code = (e as { code?: unknown }).code;
         throw new CloudPortError(typeof code === 'string' && (CODE.test(code) || code === 'response.shape') ? code : 'server.unknown');
