@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
-import { canonicalWithout, hotfixDigest, loadPackage, packageDigest, type Hotfix, type LoadedPackage, type LoaderContext, type PackageFiles, type RawPackage, type VersionMark } from '@sax/engine/core';
+import { canonicalWithout, FIXTURE_LOAD_ALLOWED, hotfixDigest, loadPackage, packageDigest, type Hotfix, type LoadedPackage, type LoaderContext, type PackageFiles, type RawPackage, type VersionMark } from '@sax/engine/core';
 import { bundleOutcomes, digestOfRaw, h01, lookups, sigOf, signPackage, testKeys, type TestKey } from './core-fixtures.ts';
 
 const K = testKeys();
@@ -248,5 +248,29 @@ describe('7단계 핫픽스', () => {
     const any = Object.keys(files.selectors.entries)[0]!;
     const r = loadPackage(lraw, baseCtx({ hotfix: { hotfix: hotfix(lraw, { appliesTo: { id: files.manifest.id, version: files.manifest.version, packageDigest: digestOfRaw(lraw) }, entries: { [any]: { candidates: [{ kind: 'role', role: 'button', name: 'x' }] } } }), stored: null } }));
     rejected(r);
+  });
+});
+
+describe('ADR-039 fixture 패키지(조건 2 ②·3)', () => {
+  const asFixture = (p: PackageFiles) => {
+    p.manifest.portal = 'fixture';
+    p.playbook.portal = 'fixture';
+    p.selectors.portal = 'fixture';
+    p.manifest.domains = ['127.0.0.1'];
+    for (const st of p.playbook.steps) if ((st.type === 'goto' || st.type === 'checkpoint') && st.url) st.url = st.url.replace('https://hometax.go.kr', 'http://127.0.0.1:4100');
+  };
+  it('개발 조건(소스): 시험 키로 서명한 fixture 패키지를 로드한다', () => {
+    assert.equal(FIXTURE_LOAD_ALLOWED, true, '시험은 --conditions=development로 소스를 읽는다');
+    const r = load(signH01(asFixture));
+    assert.ok(r.ok, r.ok ? '' : `${r.code} ${JSON.stringify(r.violations)}`);
+  });
+  it('제품 로더(dist): 서명이 맞아도 loader.fixture_package로 거부, 실제 포털 패키지는 그대로 로드', async () => {
+    const dist = (await import(new URL('../packages/engine/dist/core/loader.js', import.meta.url).href)) as { loadPackage: typeof loadPackage; FIXTURE_LOAD_ALLOWED: boolean };
+    assert.equal(dist.FIXTURE_LOAD_ALLOWED, false);
+    const ctx = baseCtx({ installedLookups: LOOKUPS });
+    const r = dist.loadPackage(signH01(asFixture), ctx);
+    assert.equal(r.ok ? 'ok' : r.code, 'loader.fixture_package');
+    const real = dist.loadPackage(signH01(), ctx);
+    assert.ok(real.ok, real.ok ? '' : real.code);
   });
 });

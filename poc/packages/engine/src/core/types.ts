@@ -3,6 +3,13 @@
 
 export const PORTALS = ['hometax', 'gov24', 'wetax', 'sminfo', 'insure4', 'iros', 'public_api'] as const;
 export type Portal = (typeof PORTALS)[number];
+/**
+ * 패키지(manifest·IR·셀렉터 사전)의 portal. `fixture`는 엔진 시험용 가짜 페이지(127.0.0.1·[::1])만이다(ADR-039).
+ * 정책(portalMap)·실행 한도는 Portal만 받는다. fixture는 정적 검증(V-25)·제품 로더·레지스트리가 각각 거부한다.
+ */
+export const FIXTURE_PORTAL = 'fixture';
+export const PACKAGE_PORTALS = [...PORTALS, FIXTURE_PORTAL] as const;
+export type PackagePortal = (typeof PACKAGE_PORTALS)[number];
 export type Effect = 'issue_document' | 'send' | 'sign' | 'pay';
 export type ProfileKind = 'personal' | 'business';
 export type SecretKind = 'cert_password' | 'portal_password' | 'security_card';
@@ -127,7 +134,7 @@ export interface PlaybookIR {
   ir: 2;
   id: string;
   version: string;
-  portal: Portal;
+  portal: PackagePortal;
   profileKinds: ProfileKind[];
   effects: Effect[];
   inputs: Record<string, InputDecl>;
@@ -177,7 +184,7 @@ export interface CommitEndpoint {
 }
 
 export interface SelectorDict {
-  portal: Portal;
+  portal: PackagePortal;
   entries: Record<string, SelectorEntry>;
   commitEndpoints: CommitEndpoint[];
   knownEndpoints: EndpointMatch[];
@@ -198,7 +205,7 @@ export interface Manifest {
   id: string;
   version: string;
   kind: 'playbook' | 'lookup';
-  portal: Portal;
+  portal: PackagePortal;
   title: string;
   profileKinds: ProfileKind[];
   engineRange: string;

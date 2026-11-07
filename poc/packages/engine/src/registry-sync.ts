@@ -115,7 +115,8 @@ const ENTRY_KEYS = new Set(['id', 'version', 'kind', 'portal', 'sxpDigest', 'siz
 const ID_RE = /^[a-z0-9]+(\.[a-z0-9_-]+)+$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
 const ISO_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/;
-const BLOCKED_PORTALS = ['wetax'];
+/** wetax: 포털 정책(D17). fixture: 시험 가짜 페이지 패키지는 레지스트리로 오지 않는다(ADR-039 조건 2 ③, 개발 조건에서도). */
+const BLOCKED_PORTALS = ['wetax', 'fixture'];
 
 export interface AcceptedIndex {
   index: RegistryIndex;

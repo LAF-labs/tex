@@ -288,6 +288,7 @@ describe('인덱스 수용: services/registry verifyIndex와 같은 판정', () 
     ['원본', (ix) => ix, true],
     ['핫픽스 항목', (ix) => ({ ...ix, entries: [...ix.entries, { id: 'hometax.invoice.issue.hotfix', version: '1.3.0', kind: 'hotfix', portal: 'hometax', sxpDigest: 'a'.repeat(64), size: 10, rolloutPercent: 100 }] }), false],
     ['위택스', (ix) => ({ ...ix, entries: [...ix.entries, { ...ix.entries[0]!, id: 'wetax.x.y', portal: 'wetax' }] }), false],
+    ['fixture 포털(ADR-039)', (ix) => ({ ...ix, entries: [...ix.entries, { ...ix.entries[0]!, id: 'fixture.x.y', portal: 'fixture' }] }), false],
     ['중복 항목', (ix) => ({ ...ix, entries: [...ix.entries, ix.entries[0]!] }), false],
     ['모르는 필드', (ix) => ({ ...ix, extra: 1 }) as RegistryIndex, false],
     ['항목 모르는 필드', (ix) => ({ ...ix, entries: [{ ...ix.entries[0]!, x: 1 } as never] }), false],

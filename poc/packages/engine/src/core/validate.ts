@@ -1,9 +1,9 @@
-// D02 §6.1 정적 검증 규칙 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″·V-04a 포함). 레지스트리 CI와 엔진 로더가 같은 함수를 쓴다.
+// D02 §6.1 정적 검증 규칙 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″·V-04a·V-25 포함). 레지스트리 CI와 엔진 로더가 같은 함수를 쓴다.
 // 위반은 규칙 번호·스텝·타깃 이름만 담는다(값 없음).
 import { ABORT, buildCfg, commitWindow, dominates, END, FALLOFF, hNode, IRREVERSIBLE_TYPES, isSynthetic, reachable, sccs, type Cfg, type EdgeKind } from './cfg.ts';
 import { compileRe2, isAnchored, re2Problem } from './re2.ts';
 import { schemaViolations } from './schema.ts';
-import { isSecretEntry, type Cond, type Effect, type From, type PackageFiles, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type Violation } from './types.ts';
+import { FIXTURE_PORTAL, isSecretEntry, type Cond, type Effect, type From, type PackageFiles, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type Violation } from './types.ts';
 import { SAVE_PDF_STRATEGIES } from './savepdf.ts';
 
 /** 번들 결과 목록(V-07). 엔진 로더는 앱 내장 카탈로그(@sax/model BundleCatalog)에서 만든다. */
@@ -463,10 +463,25 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   // ---- V-05 ----
   for (const [id, i] of info) if (i.step.type === 'repeat' && i.repeats.length >= 2) bad('V-05', 'repeat 중첩이 2를 넘음', id);
 
-  // ---- V-06 ----
+  // ---- V-06·V-25(ADR-039) ----
+  // portal fixture(엔진 시험 가짜 페이지)는 http://127.0.0.1:PORT·http://[::1]:PORT만, 실제 포털은 https·포트 없음(V-06)만. 섞이면 V-25.
+  const fixture = manifest.portal === FIXTURE_PORTAL || ir.portal === FIXTURE_PORTAL || sel.portal === FIXTURE_PORTAL;
+  for (const d of manifest.domains) {
+    if (fixture && !FIXTURE_HOSTS.has(d)) bad('V-25', `fixture 패키지의 domains ${d}가 127.0.0.1·[::1]가 아님`);
+    if (!fixture && isIpLiteral(d)) bad('V-25', `실제 포털 패키지의 domains ${d}가 IP 주소`);
+  }
   for (const s of steps) {
     const url = s.type === 'goto' ? s.url : s.type === 'checkpoint' ? s.url : undefined;
     if (url === undefined) continue;
+    if (fixture) {
+      const p = fixtureUrlProblem(url, manifest.domains);
+      if (p) bad('V-25', p, s.id);
+      continue;
+    }
+    if (fixtureUrlProblem(url, [...FIXTURE_HOSTS]) === null) {
+      bad('V-25', '실제 포털 패키지에 fixture URL(127.0.0.1·[::1])', s.id);
+      continue;
+    }
     const p = urlProblem(url, manifest.domains);
     if (p) bad('V-06', p, s.id);
   }
@@ -652,6 +667,26 @@ function branchCondOk(c: Cond): boolean {
 
 function boundByVerify(steps: Step[], name: string | null): boolean {
   return !!name && steps.some((s) => s.type === 'verify' && s.lookup.bind?.approvalNo === name);
+}
+
+/** fixture 패키지가 쓸 수 있는 호스트(ADR-039). localhost 이름은 받지 않는다(hosts 파일로 바뀐다). */
+export const FIXTURE_HOSTS: ReadonlySet<string> = new Set(['127.0.0.1', '[::1]']);
+const isIpLiteral = (d: string) => /^\d{1,3}(\.\d{1,3}){3}$/.test(d) || d.startsWith('[');
+
+/** fixture 패키지 URL(ADR-039): http, 호스트 127.0.0.1·[::1](domains 안), 포트 필수, userinfo 없음. 문제가 없으면 null. */
+export function fixtureUrlProblem(url: string, domains: readonly string[]): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return 'URL 파싱 실패';
+  }
+  if (u.protocol !== 'http:') return 'fixture URL이 http가 아님';
+  if (u.username || u.password) return 'userinfo가 있음';
+  if (!FIXTURE_HOSTS.has(u.hostname)) return `fixture 호스트 ${u.hostname}가 127.0.0.1·[::1]가 아님`;
+  if (!u.port) return 'fixture URL에 포트가 없음';
+  if (!domains.includes(u.hostname)) return `호스트 ${u.hostname}가 manifest.domains 밖`;
+  return null;
 }
 
 export function urlProblem(url: string, domains: readonly string[]): string | null {

@@ -58,7 +58,7 @@ import {
 } from '../services/registry/src/index.ts';
 import { validatePackage } from '@sax/payroll';
 import { verifyRelease as updaterVerify } from '../packages/updater/src/index.ts';
-import { bundleOutcomes } from './core-fixtures.ts';
+import { bundleOutcomes, lookups, signPackage } from './core-fixtures.ts';
 import { SAMPLE_NOW, SAMPLE_RATE_TABLES, SAMPLE_SEEDS, buildSamples, sampleKeys } from './registry-samples.ts';
 import { Clock, D, H, client } from './services-kit.ts';
 
@@ -374,6 +374,13 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     assert.equal((await e.stage(LOOKUP, Buffer.from(canonicalJson({ format: 'sxp/2', kind: 'package' })))).json.error, 'sxp.unknown_format');
     // 다른 이름으로 올리면 거부(manifest id·version = 경로)
     assert.equal((await e.stage('hometax.invoice.lookup@1.0.1.sxp', sample(`packages/${LOOKUP}`))).json.error, 'registry.schema_invalid');
+    // ADR-039 결정 2 ③: 서명·결속이 맞아도 portal fixture 패키지는 게시하지 않는다
+    const fx = lookups().get('hometax.invoice.lookup')!;
+    fx.manifest.portal = 'fixture';
+    fx.playbook.portal = 'fixture';
+    fx.selectors.portal = 'fixture';
+    fx.manifest.domains = ['127.0.0.1'];
+    assert.equal((await e.stage(LOOKUP, encodeSxp({ kind: 'package', raw: signPackage(fx, sampleKeys().pkg.slice(0, 2)) }))).json.error, 'registry.portal_blocked');
     assert.equal((await e.stage('hometax.invoice.email_status@1.0.0.sxp', sample(`packages/${LOOKUP}`))).json.error, 'registry.schema_invalid');
     // 원시 파일 바꾸기 → contentDigests 불일치
     assert.equal((await e.stage(LOOKUP, repack(LOOKUP, (r) => (r.strings = Buffer.from('{}'))))).json.error, 'registry.content_digest_mismatch');
@@ -423,6 +430,7 @@ describe('M4-7 레지스트리: .sxp 관문(SIGNING.md §5·§6)', () => {
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, kind: 'playbook' }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, portal: 'gov24' }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, portal: 'wetax' }] }))).json.error, 'registry.portal_blocked');
+    assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, portal: 'fixture' }] }))).json.error, 'registry.portal_blocked', 'ADR-039: fixture는 배포 거부');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [entry, entry] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, rolloutPercent: 101 }] }))).json.error, 'registry.schema_invalid');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { entries: [{ ...entry, id: 'nodot' }] }))).json.error, 'registry.schema_invalid');
