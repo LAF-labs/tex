@@ -147,8 +147,10 @@ describe('M4-5 계정: 이메일 6자리 코드 로그인(C-30)', () => {
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer('sxs1.' + 'A'.repeat(43)) })).json.error, 'account.unauthorized');
     assert.equal((await e.req('GET', '/v1/me', { headers: { authorization: 'DPoP sxd1.x.y' } })).json.error, 'account.unauthorized');
     const s = await login(e, 'e@example.com');
-    e.clock.advance(31 * D);
-    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.error, 'account.unauthorized');
+    e.clock.advance(H - 1);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).status, 200);
+    e.clock.advance(1);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.error, 'account.unauthorized', '세션 1시간(ADR-038 (f))');
   });
 });
 
@@ -391,7 +393,7 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
   });
 
   it('폐기: 등록 7일 미만 데스크톱의 서명은 7일 유예 뒤 폐기, 7일 이상이면 즉시. 폐기 시 릴레이·푸시 정지 훅', async () => {
-    const s = await login(e, 'rev@example.com');
+    let s = await login(e, 'rev@example.com');
     const pc = await desktop(e, s);
     const p1 = device('mobile', 0);
     const p2 = device('mobile', 0);
@@ -406,10 +408,12 @@ describe('M4-5 계정: AIK 고정·기기 목록·기기 범위 토큰', () => {
     assert.deepEqual(e.stopped, []);
     // 유예 중 목록을 다시 올려도 유예는 다시 시작하지 않는다
     e.clock.advance(3 * D);
+    s = await login(e, 'rev@example.com'); // 세션 1시간(ADR-038 (f))
     assert.equal((await pc.call('PUT', '/v1/device-list', { deviceList: { listVersion: 4, entries: [entry(pc.aik, pc.d, 1), entry(pc.aik, p2, 2)], revoked: [revokeRec(pc.aik, p1.id, e.clock.now())] } })).status, 200);
     const list1b = (await e.req('GET', '/v1/devices', { headers: bearer(s) })).json.devices as Array<Record<string, unknown>>;
     assert.equal(list1b.find((x) => x.deviceId === p1.id)!.deleteAfter, deleteAfter);
     e.clock.advance(4 * D);
+    s = await login(e, 'rev@example.com');
     await e.svc.sweep();
     assert.deepEqual(e.stopped, [p1.id]);
     // 데스크톱이 7일 넘었으니 이번에는 즉시
@@ -457,7 +461,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
   });
 
   it('계정 세션 삭제 요청은 7일 유예 + 알림 + 취소 가능', async () => {
-    const s = await login(e, 'del@example.com');
+    let s = await login(e, 'del@example.com');
     const pc = await desktop(e, s);
     const r = await e.req('POST', `/v1/devices/${pc.d.id}/delete-request`, { headers: bearer(s) });
     assert.equal(r.status, 202);
@@ -467,6 +471,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     e.clock.advance(8 * D);
     await e.svc.sweep();
     assert.deepEqual(e.stopped, []);
+    s = await login(e, 'del@example.com'); // 세션 1시간(ADR-038 (f))
     await e.req('POST', `/v1/devices/${pc.d.id}/delete-request`, { headers: bearer(s) });
     e.clock.advance(7 * D - 1);
     await e.svc.sweep();
@@ -477,11 +482,12 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
   });
 
   it('이메일만으로 추가한 기기는 72시간 대기 뒤에야 활성화(AIK 인증서 없이는 여전히 토큰 없음)', async () => {
-    const s = await login(e, 'hold@example.com');
+    let s = await login(e, 'hold@example.com');
     await desktop(e, s);
     const phone = device('mobile', 0);
     await e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: phone.id, role: 'mobile', platform: 'android', name: '폰', Sx: phone.S.b64, Vx: phone.V.b64 } });
     e.clock.advance(72 * H - 1000);
+    s = await login(e, 'hold@example.com'); // 세션 1시간(ADR-038 (f))
     const early = await e.req('POST', `/v1/devices/${phone.id}/activate`, { headers: bearer(s) });
     assert.equal(early.json.error, 'account.device_hold');
     assert.ok(Number(early.headers.get('retry-after')) >= 1);
@@ -492,7 +498,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
   });
 
   it('기기 상한(모바일 3)·30일 등록 상한(모바일 5)·플랫폼과 역할 불일치·중복 ID', async () => {
-    const s = await login(e, 'lim@example.com');
+    let s = await login(e, 'lim@example.com');
     const enroll = (p: Device, platform = 'ios') => e.req('POST', '/v1/devices/enroll', { headers: bearer(s), body: { deviceId: p.id, role: p.role, platform, name: '폰', Sx: p.S.b64, Vx: p.V.b64 } });
     const ps = [device('mobile', 0), device('mobile', 0), device('mobile', 0)];
     for (const p of ps) assert.equal((await enroll(p)).status, 201);
@@ -502,6 +508,7 @@ describe('M4-5 계정: 긴급 정지·삭제 유예·기기 상한·72시간 대
     // 정지는 상한에서 빠지지 않는다(폐기만 빠진다). 폐기를 흉내 내려 대기 기기를 7일 뒤 정리
     e.clock.advance(8 * D);
     await e.svc.sweep();
+    s = await login(e, 'lim@example.com'); // 세션 1시간(ADR-038 (f))
     assert.equal((await enroll(device('mobile', 0))).json.error, 'account.device_limit');
     await e.db.run("UPDATE devices SET state = 'revoked'");
     assert.equal((await enroll(device('mobile', 0))).status, 201);
@@ -540,7 +547,7 @@ describe('M4-5 계정: 프로필 슬롯·사업자 HMAC 재바인딩 90일(B-28)
     e.clock.advance(91 * D);
     assert.equal((await pc.call('DELETE', `/v1/slots/${a}`)).status, 204);
     assert.equal((await pc.call('PUT', `/v1/slots/${b}/biz`, { bizHmac: h2 })).json.error, 'account.rebind_too_soon');
-    // 세션은 30일이라 시계를 181일 돌린 뒤엔 다시 로그인한다
+    // 세션은 1시간이라 시계를 181일 돌린 뒤엔 다시 로그인한다
     const s2 = await login(e, 'slot@example.com');
     const slots = await e.req('GET', '/v1/slots', { headers: bearer(s2) });
     assert.equal(slots.status, 200, slots.text);

@@ -24,6 +24,16 @@ export const ERROR_STATUS = {
   'account.scope_denied': 403,
   'account.dpop_invalid': 401,
   'account.code_invalid': 400,
+  /** 비밀번호 로그인 실패. 이메일 없음·비밀번호 없음·틀림·잠금 모두 같은 코드·같은 시각(ADR-038 (d)) */
+  'account.credentials_invalid': 401,
+  'account.password_too_short': 400,
+  'account.password_too_long': 400,
+  /** 유출·흔한 비밀번호 목록(로컬 상위 목록) */
+  'account.password_breached': 400,
+  /** 이메일(전체·로컬 부분)이나 서비스명을 포함 */
+  'account.password_contains_identity': 400,
+  /** 비밀번호 설정·삭제는 최근(10분) 코드·패스키·비밀번호 로그인 세션만 */
+  'account.reauth_required': 403,
   'account.code_locked': 429,
   'account.pkce_invalid': 400,
   'account.redirect_not_loopback': 400,
@@ -119,6 +129,12 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'registry.content_digest_mismatch',
   'registry.unauthorized',
   'registry.unavailable',
+  'account.credentials_invalid',
+  'account.password_too_short',
+  'account.password_too_long',
+  'account.password_breached',
+  'account.password_contains_identity',
+  'account.reauth_required',
   'relay.unauthorized',
   'relay.device_suspended',
   'push.unauthorized',

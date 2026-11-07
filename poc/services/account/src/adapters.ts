@@ -53,19 +53,42 @@ export class MockPaymentGateway implements PaymentGateway {
   }
 }
 
-export type NoticeKind = 'device_enrolled' | 'device_suspended' | 'device_auto_suspended' | 'device_delete_pending' | 'device_revoked' | 'aik_pinned' | 'passkey_added';
+export type NoticeKind =
+  | 'device_enrolled'
+  | 'device_suspended'
+  | 'device_auto_suspended'
+  | 'device_delete_pending'
+  | 'device_revoked'
+  | 'aik_pinned'
+  | 'passkey_added'
+  /** 비밀번호를 설정·바꿈(ADR-038) */
+  | 'password_set'
+  /** 재설정 완료: 다른 세션·갱신 토큰 모두 폐기(ADR-038 (e)) */
+  | 'password_reset'
+  /** "비밀번호가 여러 번 틀려 잠시 잠겼어요. 이메일 코드로 로그인할 수 있어요." 잠금 주기마다 1회(ADR-038 (d)) */
+  | 'password_locked'
+  /** 갱신 토큰 재사용 감지: 모든 기기에서 로그아웃됨(ADR-038 (f)) */
+  | 'sessions_revoked';
 
 export interface MailSender {
   sendLoginCode(to: string, code: string): Promise<void>;
+  /** 비밀번호 재설정 코드(6자리, 10분). 로그인 코드와 다른 문구 */
+  sendResetCode(to: string, code: string): Promise<void>;
   /** 알림 메일. 내용은 종류별 고정 문구이고 기기 이름 같은 값은 넣지 않는다. */
   sendNotice(to: string, kind: NoticeKind): Promise<void>;
 }
 
 /** 모의 메일. 받은 편지함을 메모리에만 둔다(표준 출력·로그에 쓰지 않는다). */
 export class MockMailSender implements MailSender {
-  readonly outbox: Array<{ to: string; kind: 'code' | NoticeKind; code?: string }> = [];
+  readonly outbox: Array<{ to: string; kind: 'code' | 'reset_code' | NoticeKind; code?: string }> = [];
   async sendLoginCode(to: string, code: string): Promise<void> {
     this.outbox.push({ to, kind: 'code', code });
+  }
+  async sendResetCode(to: string, code: string): Promise<void> {
+    this.outbox.push({ to, kind: 'reset_code', code });
+  }
+  lastResetCode(to: string): string | undefined {
+    return [...this.outbox].reverse().find((m) => m.to === to && m.kind === 'reset_code')?.code;
   }
   async sendNotice(to: string, kind: NoticeKind): Promise<void> {
     this.outbox.push({ to, kind });

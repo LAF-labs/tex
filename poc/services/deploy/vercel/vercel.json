@@ -51,6 +51,10 @@
       "destination": "/api/sax?__p=/v1/passkeys"
     },
     {
+      "source": "/v1/password",
+      "destination": "/api/sax?__p=/v1/password"
+    },
+    {
       "source": "/v1/devices",
       "destination": "/api/sax?__p=/v1/devices"
     },

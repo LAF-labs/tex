@@ -21,6 +21,8 @@ export interface GatewayMockOptions {
   tamperToolset?: boolean;
   /** decide 답: 질문 이름 → 확률(predicate) 또는 선택값(choice) */
   answers?: Record<string, number | string>;
+  /** choice 답의 신뢰도(기본 0.97). 낮추면 매핑 문턱(예: intent_route_v1 route ≥ 0.8) 아래로 간다 */
+  choiceConfidence?: number;
   /** respond 응답 output(기본: query_parse 구조화 출력 한 건) */
   respondOutput?: Array<Record<string, unknown>>;
 }
@@ -58,7 +60,8 @@ export async function startGatewayMock(opts: GatewayMockOptions = {}): Promise<G
           if (q.type === 'predicate') return { type: 'predicate', name: q.name, probability: typeof a[q.name] === 'number' ? a[q.name] : 0.02 };
           if (q.type === 'choice') {
             const choice = typeof a[q.name] === 'string' ? a[q.name] : 'unknown';
-            return { type: 'choice', name: q.name, choice, confidence: 0.97, probabilities: [{ value: choice, probability: 0.97 }] };
+            const c = state.opts.choiceConfidence ?? 0.97;
+            return { type: 'choice', name: q.name, choice, confidence: c, probabilities: [{ value: choice, probability: c }] };
           }
           return { type: 'score', name: q.name, score: 1, confidence: 0.9 };
         });

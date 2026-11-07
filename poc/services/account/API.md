@@ -1,6 +1,6 @@
 # 계정·구독 서비스 API(M4-5)
 
-근거: D09 §2·§2.1·§2.2·§10, D08 §2.1·§9.4, ADR-029·034, B-28, C-09·C-30. 공통 형식(토큰·DPoP·서명 입력·오류 본문)은 [`../shared/CONTRACT.md`](../shared/CONTRACT.md). 요청 스키마는 `src/app.ts`의 `V`(ajv, `additionalProperties: false`)가 정본이고, 아래 표는 그 요약이다. 스키마 밖 필드·형식이 틀린 값은 모두 `400 request.param_rejected`.
+근거: D09 §2·§2.1·§2.2·§10, D08 §2.1·§9.4, ADR-029·034·038, B-28, C-09·C-30. 공통 형식(토큰·DPoP·서명 입력·오류 본문)은 [`../shared/CONTRACT.md`](../shared/CONTRACT.md). 요청 스키마는 `src/app.ts`의 `V`(ajv, `additionalProperties: false`)가 정본이고, 아래 표는 그 요약이다. 스키마 밖 필드·형식이 틀린 값은 모두 `400 request.param_rejected`.
 
 인증 표기: **없음**, **세션**(`Authorization: Bearer sxs1.…`), **기기:범위**(`Authorization: DPoP sxd1.…` + `DPoP:` 증명, 그 범위가 토큰에 있어야 함), **내부**(`Authorization: SAX-Internal ts=…,nonce=…,sig=…`, `INTERNAL_CALL_KEY` HMAC-SHA256 over `SAX-internal-call-v1`‖메서드‖경로(쿼리 포함)‖sha256hex(본문)‖ts‖nonce, 줄바꿈 구분. 시각 ±60초, nonce 1회용(DB), 실패는 모두 `401 account.unauthorized`. 팀장 결정 2026-11-06 #135).
 
@@ -11,10 +11,13 @@
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류·한도 |
 |---|---|---|---|---|
 | `POST /v1/auth/code` | 없음 | `{email}` | `200 {loginId, expiresInSec:600}` | 이메일당 5회/시, IP당 30회/시 |
-| `POST /v1/auth/code/verify` | 없음 | `{loginId, code: 6자리}` | `200 {session, expiresInSec}` | `account.code_invalid`(틀림·만료·다른 loginId), 5회째 틀리면 `account.code_locked`(코드 폐기). IP당 60회/시. 첫 검증 때 계정 생성 |
+| `POST /v1/auth/code/verify` | 없음 | `{loginId, code: 6자리, remember?}` | `200 {session, expiresInSec:3600, refreshToken?, refreshExpiresInSec?}` | `account.code_invalid`(틀림·만료·다른 loginId), 5회째 틀리면 `account.code_locked`(코드 폐기). IP당 60회/시. 첫 검증 때 계정 생성 |
 | `POST /v1/auth/passkey/options` | 없음 | — | `200 {challenge, rpId, userVerification:"required", timeout}` | |
-| `POST /v1/auth/passkey/verify` | 없음 | `{challenge, credentialId, clientDataJSON, authenticatorData, signature, userHandle?}`(b64u) | `200 {session, expiresInSec}` | `account.passkey_invalid`(origin·rpId·UV·카운터 되감기·챌린지 재사용/만료 5분) |
+| `POST /v1/auth/passkey/verify` | 없음 | `{challenge, credentialId, clientDataJSON, authenticatorData, signature, userHandle?}`(b64u), `remember?` | `200 {session, expiresInSec, refreshToken?, refreshExpiresInSec?}` | `account.passkey_invalid`(origin·rpId·UV·카운터 되감기·챌린지 재사용/만료 5분) |
 | `POST /v1/auth/logout` | 세션 | — | `204` | |
+| `POST /v1/auth/logout-all` | 세션 | — | `204` | [모든 기기에서 로그아웃]: 계정 세션·갱신 토큰 전부(이 세션 포함). 기기 범위 토큰·기기 등록은 그대로 |
+
+세션(`sxs1.`)은 1시간이다. `remember: true`면 갱신 토큰(`sxa1.`)을 함께 준다(아래 자동 로그인).
 
 로그인 코드는 `loginId`(요청한 창에 결속)와 함께여야만 통한다. 서버는 코드 평문을 저장하지 않는다(HMAC).
 
@@ -23,9 +26,38 @@
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
 | `POST /v1/oauth/authorize` | 세션(계정 웹) | `{client_id:"sax-desktop", redirect_uri, code_challenge(43자), code_challenge_method:"S256", state(16~128 b64u)}` | `200 {redirect}` = `redirect_uri?code=…&state=…` | `account.redirect_not_loopback`: `http://127.0.0.1:<1024~65535>` 또는 `http://[::1]:<포트>`만(localhost·https·외부 호스트 거부) |
-| `POST /v1/oauth/token` | 없음 | `{grant_type:"authorization_code", code, code_verifier, redirect_uri, client_id}` | `200 {session, expiresInSec}` | `account.pkce_invalid`(검증자·주소·클라이언트 불일치, 60초 만료, 1회용: 틀린 시도에도 소진) |
+| `POST /v1/oauth/token` | 없음 | `{grant_type:"authorization_code", code, code_verifier, redirect_uri, client_id, remember?}` | `200 {session, expiresInSec, refreshToken?, refreshExpiresInSec?}` | `account.pkce_invalid`(검증자·주소·클라이언트 불일치, 60초 만료, 1회용: 틀린 시도에도 소진) |
+
+교환으로 받은 세션은 원래 세션의 로그인 방식과 **인증 시각**을 잇는다(교환으로 "최근 로그인"을 새로 만들지 않는다).
 
 디바이스 코드 플로우는 없다(D09 §2.2).
+
+## 비밀번호(ADR-038, 선택)
+
+`PASSWORD_PEPPER_KEYS`가 없거나 런타임에 argon2id가 없으면 이 절의 경로는 모두 `404 request.not_found`이고, 다른 로그인은 그대로다.
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류·한도 |
+|---|---|---|---|---|
+| `POST /v1/auth/password` | 없음 | `{email, password, remember?}` | `200 {session, expiresInSec, refreshToken?, refreshExpiresInSec?}` | `401 account.credentials_invalid`: 이메일 없음·비밀번호 없음·틀림·잠금·정지 계정 **모두 같은 본문**이고 모두 argon2id를 한 번 돈 뒤(없으면 더미) 응답 시각 하한 700ms에 맞춘다. IP당 60회/시(`auth-ip`, 코드·패스키와 같은 창). 해시 대기 줄이 차면 `429 policy.rate_limited`(`Retry-After: 1`) |
+| `PUT /v1/password` | 세션(최근 10분 안의 코드·패스키·비밀번호 로그인) | `{password}` | `204` + 알림 메일 `password_set` | `403 account.reauth_required`(갱신 세션이거나 인증 뒤 10분 지남), `400 account.password_too_short`·`password_too_long`(NFKC 뒤 코드 포인트 10~128), `account.password_contains_identity`(이메일 전체·로컬 부분 3자 이상·서비스명), `account.password_breached`(로컬 흔한·유출 목록) |
+| `DELETE /v1/password` | 세션(위와 같음) | — | `204` | 해시·잠금 행 삭제 |
+| `POST /v1/auth/password/reset` | 없음 | `{email}` | `200 {resetId, expiresInSec:600}` | 계정이 있을 때만 메일(6자리)을 보내지만 응답은 같고 시각 하한도 같다. 이메일당 5회/시, IP당 30회/시 |
+| `POST /v1/auth/password/reset/verify` | 없음 | `{resetId, code, password, remember?}` | `200 {session, expiresInSec, refreshToken?, …}` | `account.code_invalid`(틀림·만료·다른 resetId·이미 씀), 5회째 틀리면 `account.code_locked`(코드 폐기). 정책 오류(위)는 코드를 남긴다. 성공하면 잠금 해제, **그 계정의 다른 세션·갱신 토큰 전부 폐기**, 알림 메일 `password_reset`. 금고·기기 키·기기 목록·기기 범위 토큰은 건드리지 않는다 |
+
+- 해시: argon2id(m=64MiB, t=3, p=1, 솔트 16B, 출력 32B) over HMAC-SHA256(페퍼, utf8(NFKC(비밀번호))). 매개변수 문자열(`a2id-v1:m65536:t3:p1:k<kid>`)에 페퍼 키 ID가 있고, 현재와 다르면 로그인 성공 때 다시 해시한다.
+- 잠금: 계정당 연속 5회 실패면 15분 × 2^단계(상한 24시간), 잠금마다 알림 메일 `password_locked` 1회. 잠금 중에는 맞아도 같은 실패이고 실패 수도 쌓지 않는다. 잠금은 비밀번호만 막는다(코드·패스키 로그인은 그대로). 잠금이 끝나고 하루 동안 실패가 없으면 단계를 지운다.
+- 패스키가 있는 계정에서 비밀번호 세션은 패스키 세션이 아니다(기기 추가 등은 `account.passkey_required`, D09 §2.2).
+
+## 자동 로그인: 갱신 토큰(ADR-038 (f))
+
+| 메서드·경로 | 인증 | 요청 | 응답 | 오류·한도 |
+|---|---|---|---|---|
+| `POST /v1/auth/refresh` | 없음 | `{refreshToken: "sxa1.…"}` | `200 {session, expiresInSec, refreshToken, refreshExpiresInSec}` | 실패는 이유를 가르지 않고 `401 account.unauthorized`. IP당 60회/시(`refresh-ip`) |
+| `POST /v1/auth/refresh/revoke` | 없음 | `{refreshToken}` | `204`(없는 토큰도) | [로그인 상태 유지 끄기]: 그 토큰의 회전 계보 전체 폐기 |
+
+- 쓸 때마다 회전한다(새 토큰을 주고 이전 토큰은 "회전됨"). **회전된 토큰이 다시 오면 복제로 보고 그 계정의 세션·갱신 토큰을 모두 폐기**하고 알림 메일 `sessions_revoked`를 보낸다.
+- 30일 미사용 만료(회전마다 새로 30일). 서버는 sha256만 저장한다.
+- 갱신으로 받은 세션의 방식은 `refresh`다(최근 로그인·패스키 세션으로 치지 않는다).
 
 ## 패스키 등록
 
@@ -109,4 +141,4 @@ PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. �
 
 ## 주기 작업(60초)
 
-만료 로그인 코드·인가 코드·패스키 챌린지·세션 삭제, 30일 지난 기기 교체 이력 삭제, 7일 지난 대기 기기 삭제, 삭제·폐기 유예가 끝난 기기 폐기(+정지 훅).
+만료 로그인 코드·인가 코드·패스키 챌린지·세션·갱신 토큰·재설정 코드 삭제, 하루 조용한 비밀번호 잠금 행 삭제, argon2id 실측 이벤트(한 시간에 한 번, `account.argon2_probe_ms`·`account.argon2_probe_rss_mb`, 수치만), 30일 지난 기기 교체 이력 삭제, 7일 지난 대기 기기 삭제, 삭제·폐기 유예가 끝난 기기 폐기(+정지 훅).
