@@ -8,7 +8,9 @@ import {
   json,
   memoryLimits,
   validator,
+  ALL_SCOPES,
   type Ctx,
+  type Scope,
   type InternalCheck,
   type DeviceDirectory,
   type TokenVerifier,
@@ -67,7 +69,8 @@ const V = {
     obj({ deviceId: S.uuid4, role: { const: 'mobile' }, platform: { enum: ['ios', 'android'] }, name: { type: 'string', minLength: 1, maxLength: 40 }, Sx: S.b64key32, Vx: S.b64key32, roomId: { type: 'string', pattern: '^[A-Za-z0-9_-]{22}$' } }),
   ),
   op: validator<{ op: AcctOp; aikSig: string }>(signedOpSchema),
-  deviceToken: validator<{ cert: SignedCert }>(obj({ cert: signedCertSchema })),
+  /** scopes(선택): 범위 축소(ADR-040 결정 1). 비어 있지 않고 중복 없는 알려진 범위 이름 */
+  deviceToken: validator<{ cert: SignedCert; scopes?: Scope[] }>(obj({ cert: signedCertSchema, scopes: { type: 'array', minItems: 1, maxItems: ALL_SCOPES.length, uniqueItems: true, items: { enum: [...ALL_SCOPES] } } }, ['cert'])),
   bindBiz: validator<{ bizHmac: string; rkOp?: { op: AcctOp; aikSig: string } }>(obj({ bizHmac: S.hex32, rkOp: signedOpSchema }, ['bizHmac'])),
 } as const;
 
@@ -322,7 +325,7 @@ export function accountRouter(o: AccountAppOpts): Router {
     // 검증 전에는 IP 단위만(서명 검증 비용), 기기 단위는 검증 통과 뒤에 센다
     await limit(`devtok-ip:${await ipKey(ctx)}`, DEVICE.deviceTokenAttemptsPerIpHour, MS.H);
     const dpop = ctx.headers.dpop;
-    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H));
+    const out = await svc.issueDeviceToken(b.cert, Array.isArray(dpop) ? undefined : dpop, o.publicOrigin + ctx.path, async () => limit(`devtok:${await devSalt.hash(b.cert.cert.device_id)}`, DEVICE.deviceTokensPerHour, MS.H), b.scopes);
     return json(200, out);
   });
 

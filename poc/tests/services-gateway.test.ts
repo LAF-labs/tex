@@ -7,7 +7,7 @@ import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } fro
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
-import { accountStack, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
+import { ACCOUNT_ORIGIN, accountStack, deviceToken, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
 const GW = 'https://gw.test.invalid';
 const catalog = BundleCatalog.load();
@@ -96,6 +96,16 @@ describe('M4-6 게이트웨이: 인증(기기 범위 토큰 + DPoP, 데스크톱
     const pt = await phone.token();
     const r = await e.req('POST', '/v1/run-tokens', { headers: phone.headers('POST', GW, '/v1/run-tokens', pt), body: { runId: 'run-12345678' } });
     assert.equal(r.json.error, 'account.scope_denied');
+  });
+
+  it('gateway 전용 기기 토큰(ADR-040 결정 1): 게이트웨이는 통과, 같은 토큰으로 계정의 기기 범위 경로는 scope_denied', async () => {
+    const gt = await deviceToken(e.s, e.pc.aik, e.pc.d, ['gateway']);
+    const ok = await e.req('POST', '/v1/run-tokens', { headers: e.pc.headers('POST', GW, '/v1/run-tokens', gt), body: { runId: 'run-12345678' } });
+    assert.equal(ok.status, 200, ok.text);
+    for (const [m, p] of [['POST', '/v1/slots'], ['GET', '/v1/device-list']] as const) {
+      const r = await e.s.req(m, p, { headers: e.pc.headers(m, ACCOUNT_ORIGIN, p, gt) });
+      assert.equal(r.json.error, 'account.scope_denied', `${m} ${p}`);
+    }
   });
 
   it('긴급 정지된 데스크톱은 즉시 gateway.device_suspended', async () => {
