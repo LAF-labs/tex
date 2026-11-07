@@ -98,6 +98,26 @@ async function flow() {
   await send(`${cpName}에 220만원 세금계산서`);
   check('엔진 명령 없음 → 오프라인 정규식 카드', (await until('offline draft', async () => (await runs()) === n0 + 1)) && (await interp()) === 'offline');
   check('대화 중 실행된 것 없음(모두 초안)', !(await threadText()).includes('발급했어요'));
+
+  // 8) 판정 불가 + 상담 낱말(D04 §3 오프라인 보강, 팀장 결정 2026-11-07): 카드는 그대로, 고정 문구만 덧붙는다. 판정 불가가 아니면(명령 없음) 붙이지 않는다.
+  const adviceNotes = () => js<number>(`document.querySelectorAll('[data-advice-note]').length`);
+  answer = () => new Error('decide.unavailable');
+  let a0 = await adviceNotes();
+  n0 = await runs();
+  await send(`${cpName}에 120만원 세금계산서 끊고 절세 방법도 알려줘`);
+  check('판정 불가 + 상담 섞임 → 카드 그대로 + 고정 문구', (await until('offline advice draft', async () => (await runs()) === n0 + 1)) && (await until('offline advice note', async () => (await adviceNotes()) === a0 + 1)) && (await js<string>(`[...document.querySelectorAll('[data-advice-note]')].pop().textContent`)) === ADVICE);
+  a0 = await adviceNotes();
+  n0 = await runs();
+  await send(`${cpName}에 130만원 세금계산서`);
+  await until('offline plain draft', async () => (await runs()) === n0 + 1);
+  await sleep(200);
+  check('판정 불가 + 상담 없음 → 고정 문구 없음', (await adviceNotes()) === a0);
+  answer = () => new Error('unknown_method');
+  n0 = await runs();
+  await send(`${cpName}에 140만원 세금계산서 끊고 절세 방법도 알려줘`);
+  await until('no-method draft', async () => (await runs()) === n0 + 1);
+  await sleep(200);
+  check('명령 없음(판정 불가 아님) + 상담 낱말 → 고정 문구 없음(오프라인 보강은 decide.unavailable만)', (await adviceNotes()) === a0);
 }
 
 app.whenReady().then(async () => {
