@@ -370,7 +370,10 @@ describe('vault relay: 팝업·자식 프레임 origin 재집행(PR #1 리뷰)',
     await eng.evaluate(sid, `window.open('http://evil.localhost:${port}/slow?ms=3000') && 1`);
     await eng.evaluate(sid, `document.body.insertAdjacentHTML('beforeend', '<iframe id=slowbad src="http://evil.localhost:${port}/slow?ms=3000"></iframe>')`);
     await sleep(5000); // 응답 지연(3초)과 이전 폴백 시간(1.5초)을 모두 넘긴다
-    assert.deepEqual(attachesSince().map((e) => (e.params!.targetInfo as { type: string; url: string }).url), [], '지연된 허용 밖 팝업·iframe 비노출');
+    // 판정 대상은 허용 밖(evil.localhost)과 이 시험의 지연 대상(/slow)이다. 로그인 화면에 원래 있는 허용 iframe(`/child`, fixtures/server.ts)이
+    // 이 창 안에서 늦게 부착되는 것은 정상 노출이라 세지 않는다(CI macOS에서 한 번 이 부착으로 실패했다, 2026-11-06).
+    const exposed = attachesSince().map((e) => String((e.params!.targetInfo as { url: string }).url));
+    assert.deepEqual(exposed.filter((u) => { const x = new URL(u); return x.hostname !== 'localhost' || x.pathname === '/slow'; }), [], '지연된 허용 밖 팝업·iframe 비노출');
     assert.ok(h.log.lines.some((l) => l.includes('vault.popup_hidden')));
     // 빈 팝업은 about:blank 커밋 + opener 허용 확인 뒤 노출되지만, 허용 밖으로 이동을 "시작"하면 커밋 전에 분리된다.
     const m2 = eng.events.length;
