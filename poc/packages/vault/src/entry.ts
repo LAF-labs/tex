@@ -21,6 +21,8 @@ const log = new FileEventLog(paths.logs, 'vault');
 // 사람 비밀 저장소: Windows는 TPM→DPAPI 래핑(네이티브 헬퍼 S10c 전까지 저장 거부), macOS는 개발용 Keychain 래핑.
 const human = new HumanSecretVault({ backend: keychainBackend(), log });
 const vault = new Vault({ paths, log, keyStore: new OsKeyStore(), human });
+// Windows: 폴더 확인(소유자 PowerShell, 느린 PC 3~15초)을 금고 기동 때 미리 해 둔다. 첫 Chrome 기동이 기다리지 않는다(ADR-041).
+if (process.platform === 'win32') void vault.warmDirChecks();
 
 parentPort.on('message', (e) => {
   const data = e.data as { ports?: PortKind[]; bind?: unknown };

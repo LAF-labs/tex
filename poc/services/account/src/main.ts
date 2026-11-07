@@ -91,6 +91,7 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
     acctClaims,
     pairing: env.RELAY_INTERNAL_URL ? httpPairingRooms(env.RELAY_INTERNAL_URL, internalKey) : undefined,
     passwords,
+    onEvent: (n) => logger.event(n),
   });
   const limits = sqlLimits(db, svc.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY'));
   const router = accountRouter({ svc, verifier: new TokenVerifier({ [kid]: ed25519RawPublic(signKey) }), publicOrigin, internal: new InternalAuth({ key: internalKey, nonces: new SqlNonceStore(db), now: svc.now }), limits });

@@ -39,7 +39,9 @@ describe('LedgerCommitPort(원장·가드 포트, D03 §3 R-G7)', () => {
     root = await fsp.mkdtemp(path.join(os.tmpdir(), 'sax-lp-'));
   });
   after(async () => {
-    await fsp.rm(root, { recursive: true, force: true });
+    // 마지막 DB를 닫은 뒤 지운다(Windows는 열린 sqlite를 지우지 못한다, EBUSY).
+    db?.close();
+    await fsp.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   });
   beforeEach(() => {
     db?.close();

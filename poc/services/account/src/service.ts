@@ -19,6 +19,7 @@ import {
   sha256hex,
   verifyDpop,
   type DeviceRecord,
+  type Scope,
   type Sql,
 } from '@sax/svc-shared';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
@@ -89,6 +90,8 @@ export interface AccountDeps {
   /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
   acctClaims?: AcctClaimSigner;
   passwords?: PasswordDeps;
+  /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
+  onEvent?: (name: string) => void;
   now?: () => number;
 }
 
@@ -947,8 +950,10 @@ export class AccountService {
   /**
    * AIK가 서명한 기기 인증서를 내고, 같은 요청에 그 인증서의 Vx로 서명한 DPoP 증명(ath = sha256(JCS(cert)))을 붙인다.
    * Phase 1 폰 토큰은 relay·push 범위만(ADR-034, D09 §2.1).
+   * `want`가 있으면 그 범위만 준다(ADR-040 결정 1: 엔진용 gateway 전용 토큰 등). 빈 배열·모르는 이름·중복은 요청 스키마가 먼저 거부하고,
+   * 역할 범위의 부분집합이 아니면 여기서(검증된 기기 기록으로) 거부한다. 발급마다 이벤트 이름에 역할·범위를 남긴다(ID·토큰 없음).
    */
-  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
+  async issueDeviceToken(c: SignedCert, dpop: string | undefined, htu: string, onVerified?: () => void | Promise<void>, want?: readonly Scope[]): Promise<{ token: string; expiresAt: number; scopes: string[] }> {
     const d = await this.db.one<DeviceRow & { aik_pub: string | null }>('SELECT d.*, a.aik_pub FROM devices d JOIN accounts a ON a.id = d.account_id WHERE d.device_id = $1 AND a.status = $2', [c.cert.device_id, 'active']);
     if (!d || !d.aik_pub) fail('account.cert_invalid');
     const now = this.now();
@@ -957,10 +962,14 @@ export class AccountService {
     const vx = fromB64(d!.vx, 32)!;
     verifyDpop(dpop, { method: 'POST', htu, token: jcs(c), cnf: vx, now, jti: this.jti, code: 'account.dpop_invalid' });
     if (d!.state !== 'active') fail('account.device_suspended');
+    const roleScopes = d!.role === 'desktop' ? DESKTOP_SCOPES : MOBILE_SCOPES_P1;
+    if (want && (want.length === 0 || new Set(want).size !== want.length || !want.every((s) => roleScopes.includes(s)))) fail('request.param_rejected');
     // 기기별 발급 한도는 인증서·DPoP가 맞고 기기가 활성일 때만 센다(남이 device_id나 정지 기기의 인증서로 한도를 태우지 못하게)
     await onVerified?.();
-    const scopes = d!.role === 'desktop' ? [...DESKTOP_SCOPES] : [...MOBILE_SCOPES_P1];
+    // 순서는 역할 범위 순서로 고정한다(기록·비교가 요청 순서에 흔들리지 않게)
+    const scopes = want ? roleScopes.filter((s) => want.includes(s)) : [...roleScopes];
     const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
+    this.d.onEvent?.(`account.device_token_issued.${d!.role}.${want && scopes.length < roleScopes.length ? scopes.join('-') : 'all'}`);
     return { token, expiresAt: claims.exp, scopes };
   }
 

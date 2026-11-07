@@ -42,5 +42,6 @@
 | [ADR-038](ADR-038-email-password-login-auto-login.md) | 이메일·비밀번호 로그인과 자동 로그인: 비밀번호·이메일 코드·패스키, `argon2id` + 서버 페퍼, 계정 잠금·열거 방지, 코드 재설정, 회전 갱신 토큰(재사용 감지 시 전체 폐기), 금고·기기 키와 무관 | 채택(사용자 결정 2026-11-06) |
 | [ADR-039](ADR-039-fixture-portal-test-packages.md) | 엔진 시험용 fixture 포털 패키지: `portal: fixture`만 `http://127.0.0.1:PORT`·`http://[::1]:PORT`(V-25), 정적 검증·제품 로더(dist)·레지스트리 게시·배포 세 곳에서 거부, 운영 키 서명 없음, 금고 Chrome 호스트 매핑+시험 인증서 안(나)은 기각 | 채택(팀장 결정 2026-11-06) |
 | [ADR-040](ADR-040-engine-gateway-auth-scoped-device-token.md) | 엔진의 게이트웨이 인증: main이 gateway 범위 기기 토큰과 DPoP 헤더를 auth 포트로 요청마다 준다(허용 목록 3경로), `POST /v1/device-tokens` `scopes` 범위 축소·발급 기록, 금고 engine 포트의 장기 키 연산 제거, 401 1회 재시도·403 없음·`signed_out`은 오프라인 | 채택(팀장 결정 2026-11-06) |
+| [ADR-041](ADR-041-windows-owner-check-once-per-dir.md) | Windows 폴더 소유자 확인을 폴더(볼륨·파일 ID·생성 시각)마다 프로세스당 한 번으로: 신뢰 소유자만 기억, DACL은 매번 확인, 소유자 읽기 상한 90초, 금고 기동 때 미리 확인, 네이티브 헬퍼가 오면 PowerShell을 뺀다 | 채택(팀장 지시 2026-11-06) |
 
 AUDIT-D(설계 v1.3 + PoC 코드) 확정 53건의 처리 배정은 [D19 §3.5](../19-attack-surface.md)에 있다. ADR-025~029가 48건, D19 등록만이 5건이다. AUDIT-D는 처음에 ADR-022~026으로 적었고, main의 ADR-022·023과 겹쳐 2026-11-03 병합 때 ADR-025~029로 옮겼다(022→025 … 026→029, 예약 027→030).

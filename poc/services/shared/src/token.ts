@@ -10,6 +10,8 @@ import { fail, type ErrorCode } from './errors.ts';
 export type Scope = 'gateway' | 'relay' | 'wake' | 'push' | 'slots' | 'devlist' | 'acct_op';
 export const DESKTOP_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op'];
 export const MOBILE_SCOPES_P1: readonly Scope[] = ['relay', 'push'];
+/** 모든 범위 이름(요청 스키마의 열거, ADR-040 결정 1) */
+export const ALL_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'push', 'slots', 'devlist', 'acct_op'];
 
 export interface DeviceClaims {
   v: 1;
