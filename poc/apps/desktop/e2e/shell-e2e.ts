@@ -799,6 +799,9 @@ app.whenReady().then(async () => {
     S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, cursorPoint: () => cursor, preparePerMin: 100 });
     // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
     S.win.webContents.setBackgroundThrottling(false);
+    // 실제 OS 마우스는 이 창에 들어오지 않게 한다. 실제 커서가 카드 자리에 머물러 있으면 그 move·enter가 무장·머무름 판정을 흔들어
+    // 시험이 기계 상태에 따라 실패했다(main에서 "멈춘 커서"·"습관 클릭" 연속 실패). 시험 입력은 sendInputEvent라 그대로 닿는다.
+    S.win.setIgnoreMouseEvents(true);
     observations.visibilityAtStart = await S.ready.then(() => js('document.visibilityState'));
     await flow();
   } catch (e) {
