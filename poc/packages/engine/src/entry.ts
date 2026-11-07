@@ -32,6 +32,7 @@ import { gatewayIntentModel, IntentResolver } from './intent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
+import { closeOnShutdown } from './shutdown.ts';
 import { VaultClient } from './vault-client.ts';
 
 interface ParentPort {
@@ -90,6 +91,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   browser = slot;
   const key = await vault.rpc<Uint8Array>('getDbKeyOnce');
   const db = openDatabase(path.join(paths.db, 'db.sqlite'), key);
+  // 종료(SIGTERM·exit) 때 DB를 닫는다. 진행 중 실행이 있어도 프로세스가 끝나는 중이다(원장은 이미 커밋한 행만 믿는다).
+  closeOnShutdown(() => db.close());
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
   // 컬럼 키(주민번호 rrn_enc 등, D07 §2 *_enc)도 DB 키를 지우기 전에 한 번 파생한다. ColumnCipher가 복사해 갖고, 파생 바이트는 바로 지운다.
