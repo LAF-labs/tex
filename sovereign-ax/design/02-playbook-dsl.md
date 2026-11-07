@@ -151,7 +151,7 @@
 | `submit` | `target`(`commits:true`), `intent: "$intent.id"`, `verify`(stepRef), `expectConfirm?`(V-24), `signFlow?`(§4.5) | 비가역 제출. `retry: 0` 고정, `onFail.then ∈ {handoff, abort}` | **예** |
 | `verify` | `lookup`: `{playbook, match{fieldKey: $ref}, window, baseline, notCommittedPolicy, bind?}`, `on`{`committed`\|`not_committed`\|`unknown` → stepRef\|handoff\|abort} | **포털 조회 하위 흐름**으로 제출 여부를 결정적으로 비교(§4.4). 새 탭에서 실행. 커밋된 스텝의 포털 측 부수효과(예: 자동 이메일 발송) 확인에도 쓴다 | 아니오 |
 | `capture` | `name`, `from` | 결과 화면 값 캡처(보조 대조용). 승인번호의 원천은 `verify.bind`다(B-08) | 아니오 |
-| `save_pdf` | `strategy`, `docType`, `nameTemplate?`(V-23) | 저장 → 보관함. 생략 시 엔진 기본 `{docType}_{yyyyMMdd}_{shortId}.pdf`. 다운로드·인쇄 저장 폴더는 금고가 staging으로 고정하고 엔진의 `Browser.setDownloadBehavior`·`Page.setDownloadBehavior`는 거부된다(A-13) | 아니오 |
+| `save_pdf` | `strategy`, `docType`, `nameTemplate?`(V-23) | 저장 → 보관함. 생략 시 엔진 기본 `{docType}_{yyyyMMdd}_{shortId}.pdf`. 다운로드·인쇄 저장 폴더는 금고가 staging으로 고정하고 엔진의 `Browser.setDownloadBehavior`·`Page.setDownloadBehavior`는 거부된다(A-13). Phase 1 엔진은 `print`·`page_pdf`만 지원하고(둘 다 금고 `pdf.print`, 금고 #164), 그 밖은 정적 거부한다(V-23a, 엔진 #177, 팀장 결정 2026-11-06) | 아니오 |
 | `send_email` | `via`, `to`(`$inputs.*`만), `attach`(`$artifacts.*`만), `followUpOf`(stepRef), `verify` | 후속 비가역. 선행 커밋이 같은 실행에서 `committed`가 되는 순간 발급된 후속 토큰 사용. `via:"portal"`은 포털의 **재발송**이다(홈택스는 발급 시 자동 발송, B-11). W 규칙은 V-03c′ | **예** |
 | `branch` | `on`, `cases`{value→stepRef}, `default` | 정적 분기 | 아니오 |
 | `repeat` | `max`(≤ 20), `until`, `steps[]` | 유한 반복. `max` 소진은 실패(`onFail`) | 아니오 |
@@ -273,6 +273,7 @@
 | **V-21** | **상수 허용 목록**(B-25). `fill.value`·`select.option`의 상수는 타깃 사전 항목의 `allowedConstants[]`에 있는 값만 허용한다. 그 외는 `$inputs`·`$vars`·`$human`·`$profile`·`$readback` 참조만. `verify.lookup.match`는 참조만(스키마) |
 | **V-22** | **조회 하위 플레이북 신뢰 경계**(B-08). `verify.lookup.playbook`은 `manifest.lookupsUsed`에 있어야 하고, 그 패키지는 `kind: lookup`, `effects: []`이며, 스텝 타입은 `{goto, wait, assert, extract, select, fill(사전 role이 searchbox·combobox인 검색 조건 칸만), click(사전 navigationOnly:true 항목만), end}`만 쓴다. `decide`·`onFail: recover`·`human`·`secret_fill`·`sign`·`submit`·`send_email`·`human_commit`은 금지하고, `commits:true` 타깃을 참조할 수 없다. 조회 패키지 안의 실패는 모두 `unknown`이다 |
 | **V-23** | **`nameTemplate` 토큰 제한**(B-25, A/C-07, B/C-09). `save_pdf.nameTemplate`은 `{docType}`·`{yyyy}`·`{MM}`·`{dd}`·`{yyyyMMdd}`·`{shortId}`와 `[A-Za-z0-9_/-]`만 쓸 수 있다(D07 §4 원칙: 파일명에 PII 없음). 생략하면 엔진 기본 템플릿을 쓴다. 엔진은 최종 경로를 정규화한 뒤 보관함 루트의 하위인지 확인하고, 기존 파일을 덮어쓰지 않는다. 사람이 읽는 이름은 '내보내기' 때 앱이 DB 표시 이름으로 만든다 |
+| **V-23a** | **`save_pdf.strategy` 지원 범위**(팀장 결정 2026-11-06). Phase 1 엔진은 `print`·`page_pdf`만 지원한다(둘 다 금고 `pdf.print`: 금고 세션의 `Page.printToPDF`로 지금 포털 탭을 인쇄, staging `fileId`만 엔진에, 금고 #164). `original`(포털 다운로드 버튼, IR에 버튼 타깃 없음)·`wallet`(구현 없음)은 실행 중에 터지지 않게 로드 때 거부한다. 원본 다운로드가 필요한 포털이 생기면 스키마(`save_pdf.target`)와 이 규칙을 함께 바꾼다(엔진 #177) |
 | **V-24** | **`expectConfirm` 앵커**(B-24). `expectConfirm`이 가리키는 정규식은 `^…$` 앵커가 필수이고, 빈 문자열이나 `.*`·`.+`에 맞으면 거부한다. 수락한 confirm 텍스트의 해시를 저널 `commit.confirm_accepted`에 남긴다 |
 
 ### 6.2 반례 회귀 세트

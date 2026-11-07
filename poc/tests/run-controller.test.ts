@@ -10,7 +10,7 @@ import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax
 import { READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
-  type Handlers, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type TokenDiscardTrigger, type VerifyResult,
+  type Handlers, type PdfPort, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type TokenDiscardTrigger, type VerifyResult,
 } from '@sax/engine/core';
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
 
@@ -105,6 +105,7 @@ interface Opts {
   recover?: RunControllerInput['recover'];
   beforeStep?: (s: Step, c: RunController) => void;
   handlers?: Partial<Handlers>;
+  pdf?: PdfPort;
 }
 
 function mk(steps: Step[], o: Opts = {}) {
@@ -171,6 +172,7 @@ function mk(steps: Step[], o: Opts = {}) {
     verify: o.verify ? async (x) => (rec.verifies.push(x), o.verify!(x)) : undefined,
     verifyStep: judge ? async (v) => (rec.judged.push(v.id), judge(v)) : undefined,
     commit,
+    pdf: o.pdf,
     preGate: o.preGate,
     journal: (t, p) => rec.journal.push([t, p ?? {}]),
     onState: (e) => rec.states.push(e),
@@ -1000,5 +1002,59 @@ describe('sign(M2-3, D02 §4): 로그인 등 커밋 구간 밖 포털 서명 흐
     assert.equal((await h.c.start()).state, 'Completed');
     assert.equal(called, 0);
     assert.equal(h.rec.secret.length, 1);
+  });
+});
+
+describe('save_pdf(M2-3, D02 §4, D03 §2): 사후 스텝 실패는 CompletedWithIssues', () => {
+  const PDF: Step = { id: 's32', type: 'save_pdf', strategy: 'print', docType: 'tax_invoice' };
+  const port = (print: PdfPort['print'], n = { print: 0, store: 0 }): PdfPort & { n: typeof n } => ({
+    n,
+    print: async (r) => (n.print++, print(r)),
+    armDownload: async () => ({ armed: false, reason: 'unused' }),
+    awaitDownload: async () => ({ ok: false, reason: 'unused' }),
+    disarmDownload: async () => {},
+    store: async () => (n.store++, { ok: true, documentId: 'doc-1' }),
+  });
+  const OK = async () => ({ ok: true as const, fileId: 'b'.repeat(32) });
+  const BUSY = async () => ({ ok: false as const, reason: 'busy' });
+
+  it('발급 뒤(verify committed) print → 보관함 → $artifacts.pdf → 끝', async () => {
+    const pdf = port(OK);
+    const h = mk([CP, GATE, SUBMIT, { ...SV, on: { ...(SV as StepOf<'verify'>).on, committed: 's32' } } as Step, PDF, END], { readback: { supplyAmount: '1000' }, pdf });
+    const p = h.c.start();
+    await h.atGate();
+    h.approve();
+    assert.equal((await p).state, 'Completed');
+    assert.deepEqual(pdf.n, { print: 1, store: 1 });
+    assert.equal(h.env.scope.artifacts.get('pdf'), 'doc-1');
+  });
+
+  it('같은 실행에 committed가 있으면 실패는 재시도·핸드오프 없이 CompletedWithIssues("재실행하지 마세요")', async () => {
+    const pdf = port(BUSY);
+    const h = mk([CP, PDF, END], { pdf });
+    h.st.ledger = ['committed'];
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code], ['CompletedWithIssues', 'save_pdf.failed']);
+    assert.equal(pdf.n.print, 1, '재시도 없음');
+    assert.ok(h.rec.effects.includes('ui.fixed:issued_do_not_rerun'));
+  });
+
+  it('커밋 전이면 보통 스텝 실패: onFail(재시도·then)을 따른다. 아직 없는 strategy는 재시도 없이 중단(Failed)', async () => {
+    const pdf = port(BUSY);
+    const h = mk([CP, { ...PDF, onFail: { retry: 2, then: 'abort' } } as Step, END], { pdf });
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code], ['Failed', 'save_pdf.failed']);
+    assert.equal(pdf.n.print, 3, '처음 + 재시도 2');
+    const d = port(BUSY);
+    assert.equal((await mk([CP, PDF, END], { pdf: d }).c.start()).state, 'HandedOff', '기본 onFail은 핸드오프');
+
+    const u = port(OK);
+    const k = mk([CP, { ...PDF, strategy: 'original', onFail: { retry: 2, then: 'handoff' } } as Step, END], { pdf: u });
+    assert.deepEqual([(await k.c.start()).state, u.n.print], ['Failed', 0]);
+  });
+
+  it('포트가 없으면 save_pdf는 실행하지 않는다(engine.unhandled_step)', async () => {
+    const h = mk([CP, PDF, END]);
+    assert.deepEqual((await h.c.start()).code, 'engine.unhandled_step');
   });
 });

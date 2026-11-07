@@ -4,6 +4,7 @@ import { ABORT, buildCfg, commitWindow, dominates, END, FALLOFF, hNode, IRREVERS
 import { compileRe2, isAnchored, re2Problem } from './re2.ts';
 import { schemaViolations } from './schema.ts';
 import { isSecretEntry, type Cond, type Effect, type From, type PackageFiles, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type Violation } from './types.ts';
+import { SAVE_PDF_STRATEGIES } from './savepdf.ts';
 
 /** 번들 결과 목록(V-07). 엔진 로더는 앱 내장 카탈로그(@sax/model BundleCatalog)에서 만든다. */
 export interface BundleOutcomes {
@@ -591,6 +592,8 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
 
   // ---- V-23 ----
   for (const s of steps) if (s.type === 'save_pdf' && s.nameTemplate !== undefined && nameTemplateProblem(s.nameTemplate)) bad('V-23', `nameTemplate ${nameTemplateProblem(s.nameTemplate)}`, s.id);
+  // ---- V-23a: Phase 1 엔진이 하는 save_pdf strategy만(print·page_pdf). 그 밖은 실행 중에 터지지 않게 로드 때 거부(팀장 결정 2026-11-06) ----
+  for (const s of steps) if (s.type === 'save_pdf' && !SAVE_PDF_STRATEGIES.has(s.strategy)) bad('V-23a', `save_pdf strategy ${s.strategy}는 이 엔진이 지원하지 않음(print·page_pdf만)`, s.id);
 
   // ---- V-24 ----
   for (const s of steps) {
