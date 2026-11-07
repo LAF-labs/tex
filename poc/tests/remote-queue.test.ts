@@ -83,6 +83,14 @@ class FakeRelay {
   /** 이 횟수를 넘는 GET /envelopes는 500(중간 실패 시험) */
   failGetAfter = Infinity;
   gets = 0;
+  /** 우편함 초당 한도(services/relay 20건, 고정 창). tick()이 창을 넘긴다 */
+  ratePerWindow = Infinity;
+  windowPosts = 0;
+  windows = 0;
+  tick() {
+    this.windows++;
+    this.windowPosts = 0;
+  }
   bundle: string | null = null;
   posts = 0;
   seen: { method: string; url: string; headers: Record<string, string> }[] = [];
@@ -93,6 +101,7 @@ class FakeRelay {
     if (!req.headers.Authorization?.startsWith('DPoP ') || !req.headers.DPoP) return { status: 401, body: { error: 'auth' } };
     if (path.endsWith('/envelopes') && req.method === 'POST') {
       if (!req.headers['X-Mbx-Write']) return { status: 403, body: null };
+      if (++this.windowPosts > this.ratePerWindow) return { status: 429, body: { error: 'policy.rate_limited' } };
       if (body.ct.length > QUEUE.ctMaxChars) return { status: 413, body: { error: 'relay.too_large' } };
       const size = req.body!.length;
       if (this.envs.length >= QUEUE.maxEnvelopes || this.bytes + size > QUEUE.maxBytes) return { status: 429, body: { error: 'relay.queue_full' } };
@@ -184,7 +193,11 @@ async function world() {
   const receive = new ReceiveQueue(sink, {}, () => NOW);
   let seqMax = 0;
   const hpkeOpenVault = async (r: { enc: Uint8Array; ct: Uint8Array; info: Uint8Array; aad: Uint8Array }) => hpkeOpen(qd.secretKey, r.enc, r.info, r.aad, r.ct);
-  const send = (now = NOW) => import('@sax/remote').then((m) => m.queueOutbox(outbox, { queue: q, pairId, vm, bundle, mbxEpoch, nextSeq: () => ++seq, now }));
+  const sleeps: number[] = [];
+  const send = (now = NOW) =>
+    import('@sax/remote').then((m) =>
+      m.queueOutbox(outbox, { queue: q, pairId, vm, bundle, mbxEpoch, nextSeq: () => ++seq, now, sleep: async (ms) => void (sleeps.push(ms), relay.tick()) }),
+    );
   const drain = (now = NOW) =>
     drainQueue({ queue: q, hpkeOpen: hpkeOpenVault, pairId, phoneVm: vm.publicKey, mbxEpoch, receive, seqMax: { get: async () => seqMax, set: async (s) => void (seqMax = s) }, now: () => now });
   const xfer = (o: Partial<Xfer> = {}): Xfer => {
@@ -192,7 +205,7 @@ async function world() {
     return { pair_id: pairId, from: 'mobile', to: 'desktop', seq: ++seq, iat, exp: iat + 3600, qbundle_seq: 1, type: 'cash.entry', body: makeCashEntry('2026-11-05', 1000, NOW), ...o };
   };
   const openOpts = { hpkeOpen: hpkeOpenVault, pairId, phoneVm: vm.publicKey, mbxEpoch, now: NOW };
-  return { relay, q, vm, vd, qd, pairId, mbxEpoch, bundle, outbox, sink, receive, send, drain, xfer, openOpts, getSeqMax: () => seqMax };
+  return { relay, q, vm, vd, qd, pairId, mbxEpoch, bundle, outbox, sink, receive, send, drain, xfer, openOpts, getSeqMax: () => seqMax, sleeps, lastSeq: () => seq };
 }
 
 async function addReceipt(outbox: MemOutbox, size: number, seed = 1) {
@@ -488,5 +501,51 @@ describe('큐 쪽 나누기(#204: 3 MiB·more)', () => {
     await assert.rejects(() => q.listPage(1.5), /bad after/);
     const old = relayQueue({ http: async () => ({ status: 200, body: { envelopes: [{ seq: 1, env: {} }] } }), origin: 'https://x', mbxId: new Uint8Array(16), tok: { read: new Uint8Array(32), write: new Uint8Array(32) }, deviceAuth: async () => ({}) });
     assert.deepEqual(await old.listPage(), { envelopes: [{ seq: 1, env: {} }], more: false });
+  });
+});
+
+describe('우편함 초당 한도(429 policy.rate_limited)', () => {
+  it('4 MiB 사진(봉투 129개)도 1초씩 기다리며 같은 봉투를 다시 보내 한 번에 큐에 넣는다', async () => {
+    const t = await world();
+    t.relay.ratePerWindow = 20;
+    const { jpeg, offer } = await addReceipt(t.outbox, 4 * 1024 * 1024, 7);
+    const cash = makeCashEntry('2026-11-05', 1000, NOW);
+    await enqueueCash(t.outbox, cash, NOW);
+    const startSeq = t.lastSeq();
+    const r = await t.send();
+    assert.deepEqual(r.queued.sort(), [offer.msgId, cash.msgId].sort());
+    assert.deepEqual(r.waiting, []);
+    assert.equal(t.relay.envs.length, 130);
+    assert.equal(t.sleeps.length, Math.ceil(130 / 20) - 1, '창마다 한 번 기다림');
+    assert.ok(t.sleeps.every((ms) => ms === QUEUE.rateWaitMs));
+    assert.equal(t.lastSeq() - startSeq, 130, '다시 보낸 봉투는 새 seq를 쓰지 않는다');
+    const d = await t.drain();
+    assert.equal(d.handled, 130);
+    assert.equal(t.sink.receipts.get(offer.msgId), toHex(sha256Hash(jpeg)));
+    assert.equal(t.sink.cash.get(cash.msgId)?.amount, 1000);
+  });
+
+  it('기다려도 풀리지 않으면 rateRetries번 뒤 멈추고 남은 항목은 다음으로 미룬다', async () => {
+    const t = await world();
+    t.relay.ratePerWindow = 2;
+    t.relay.tick = () => void t.relay.windows++; // 창이 넘어가지 않는 서버
+    const { offer } = await addReceipt(t.outbox, QUEUE.chunk * 4, 8);
+    const cash = makeCashEntry('2026-11-05', 1000, NOW);
+    await enqueueCash(t.outbox, cash, NOW + 1);
+    const r = await t.send();
+    assert.deepEqual(r.queued, []);
+    assert.deepEqual(r.waiting.sort(), [offer.msgId, cash.msgId].sort(), '현금매출도 이번에는 보내지 않는다');
+    assert.equal(t.sleeps.length, QUEUE.rateRetries);
+    assert.equal(t.relay.envs.length, 2);
+  });
+
+  it('relayQueue.post: 429 policy.rate_limited → rate, relay.queue_full → full, 그 밖 → failed', async () => {
+    const mk = (status: number, body: unknown) =>
+      relayQueue({ http: async () => ({ status, body }), origin: 'https://x', mbxId: new Uint8Array(16), tok: { read: new Uint8Array(32), write: new Uint8Array(32) }, deviceAuth: async () => ({}) });
+    const e = { v: 1, kind: 'ENV', enc: 'a', ct: 'b' } as OuterEnv;
+    assert.equal(await mk(202, { seq: 1 }).post(e), 'ok');
+    assert.equal(await mk(429, { error: 'policy.rate_limited' }).post(e), 'rate');
+    assert.equal(await mk(429, { error: 'relay.queue_full' }).post(e), 'full');
+    assert.equal(await mk(500, { error: 'internal' }).post(e), 'failed');
   });
 });

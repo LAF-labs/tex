@@ -34,6 +34,12 @@ export const QUEUE = {
   ctMaxChars: 65_536,
   /** 폰 보관함에 큐 기록을 두는 기한 */
   keepMs: 7 * 24 * HOUR,
+  /**
+   * 릴레이 우편함당 초당 20건(services/relay RELAY.msgPerSecPerMailbox, 고정 1초 창). 429 policy.rate_limited면
+   * 이만큼 기다렸다가 같은 봉투를 다시 보낸다(봉투 하나당 rateRetries번까지).
+   */
+  rateWaitMs: 1_000,
+  rateRetries: 3,
 } as const;
 
 /** 큐 봉투 평문 패딩 버킷(intent-envelope v1.5). 가장 큰 버킷의 암호문 base64가 ctMaxChars 안에 든다. */
@@ -149,7 +155,8 @@ export interface RelayQueueOptions {
   deviceAuth: (htm: 'GET' | 'POST' | 'PUT', htu: string) => Promise<Record<string, string>>;
 }
 
-export type PostResult = 'ok' | 'full' | 'failed';
+/** rate: 우편함 초당 한도(429 policy.rate_limited). 기다렸다가 같은 봉투를 다시 보내면 된다. */
+export type PostResult = 'ok' | 'full' | 'rate' | 'failed';
 
 /** 큐 GET 한 쪽(services/relay/API.md, #204): 봉투 바이트 3 MiB까지, 남으면 more. */
 export interface QueuePage {
@@ -181,7 +188,9 @@ export function relayQueue(o: RelayQueueOptions): RelayQueue {
       const r = await call('POST', '/envelopes', 'X-Mbx-Write', e);
       if (r.status === 202) return 'ok';
       const code = (r.body as { error?: unknown } | null)?.error;
-      return r.status === 429 && code === 'relay.queue_full' ? 'full' : 'failed';
+      if (r.status === 429 && code === 'relay.queue_full') return 'full';
+      if (r.status === 429 && code === 'policy.rate_limited') return 'rate';
+      return 'failed';
     },
     async list() {
       return (await this.listPage()).envelopes;
@@ -230,6 +239,8 @@ export interface QueueSendOptions {
   /** 봉투마다 새 seq(앱이 영속, 단조 증가) */
   nextSeq: () => number;
   now?: number;
+  /** 429 rate 뒤 기다리기(시험은 가짜 시계). 기본 setTimeout */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface QueueSendResult {
@@ -246,7 +257,9 @@ export async function queueOutbox(store: OutboxStore, o: QueueSendOptions): Prom
   const res: QueueSendResult = { queued: [], waiting: [], expired: [] };
   if (o.bundle.validTo <= now) throw new Error('queue: bundle expired');
   const items = (await store.list()).sort((a, b) => a.createdAt - b.createdAt);
+  // full: 큐가 참, rate: 기다려도 초당 한도가 풀리지 않음. 둘 다 남은 항목은 다음으로 미룬다.
   let full = false;
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   for (const it of items) {
     if (it.queuedAt !== undefined && now - it.queuedAt < QUEUE.ttlMs) continue;
     if (it.firstQueuedAt !== undefined && now - it.firstQueuedAt >= QUEUE.keepMs) {
@@ -261,7 +274,13 @@ export async function queueOutbox(store: OutboxStore, o: QueueSendOptions): Prom
     let ok: PostResult = 'ok';
     try {
       for await (const x of xfersOf(store, it, o, now)) {
-        ok = await o.queue.post(await sealXfer(x, o.vm, o.bundle.Qx, o.mbxEpoch));
+        const sealed = await sealXfer(x, o.vm, o.bundle.Qx, o.mbxEpoch);
+        ok = await o.queue.post(sealed);
+        // 초당 한도: 같은 봉투(같은 seq)를 다시 보낸다. 새로 봉인하지 않는다(seq를 더 쓰지 않는다).
+        for (let i = 0; ok === 'rate' && i < QUEUE.rateRetries; i++) {
+          await sleep(QUEUE.rateWaitMs);
+          ok = await o.queue.post(sealed);
+        }
         if (ok !== 'ok') break;
       }
     } catch {
@@ -271,7 +290,7 @@ export async function queueOutbox(store: OutboxStore, o: QueueSendOptions): Prom
       await store.put({ ...it, queuedAt: now, firstQueuedAt: it.firstQueuedAt ?? now });
       res.queued.push(it.msgId);
     } else {
-      if (ok === 'full') full = true;
+      if (ok === 'full' || ok === 'rate') full = true;
       res.waiting.push(it.msgId);
     }
   }
