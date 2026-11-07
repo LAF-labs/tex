@@ -147,7 +147,8 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 - [`check-vercel-output.ts`](check-vercel-output.ts)는 `.vercel/output/functions/api/*.func`를 저장소 밖으로 복사하고 `.vc-config.json`의 `filePathMap` 링크를 배포 때처럼 되살린다.
 - 그 복사본에서 다섯 함수를 띄워 요청을 보낸다. 네 서비스 조립까지 거친다. 기대: 계정 코드 200, 인증 없는 경로 401, 내부 경로 404, cron 200, 레지스트리: 구성 없음 503 → 시험 구성(공개 시험 trust·메모리 저장소)으로 로그 헤드 200·재서명 cron 200.
 - env는 시험용 무작위 값과 sqlite 파일이다. 메일·결제·모델·NTS·푸시는 mock이라 외부 송신이 없다.
-- **비밀번호(ADR-038)**: 페퍼를 넣은 `sax(비밀번호)` 점검이 묶음 안에서 argon2id·흔한 목록(`data/common-passwords.txt.gz`)을 실제로 돌린다(로그인 401, 재설정 200). `sax`·`internal`·`cron` 묶음에 `.node` 네이티브 애드온이 없어야 한다.
+- **비밀번호(ADR-038)**: 페퍼를 넣은 `sax(비밀번호)` 점검이 묶음 안에서 argon2id·흔한 목록(`data/common-passwords.txt.gz`)을 실제로 돌린다(로그인 401, 재설정 200). 다섯 묶음 모두 `.node` 네이티브 애드온이 없어야 한다(`네이티브 없음`).
+- **레지스트리 묶음의 better-sqlite3**: 레지스트리는 `@sax/engine/core`를 쓰고, 엔진 코어가 `@sax/db`(데스크톱 원장, better-sqlite3-multiple-ciphers)를 값으로 가져온다. 그래서 그 패키지 JS가 묶음에 따라온다. 애드온은 `Database` 생성자에서만 읽고 레지스트리는 열지 않으므로, 플랫폼별 prebuild(16개, 약 20MB)는 `vercel.json`의 레지스트리 두 함수 `excludeFiles`로 뺀다. nft 무시 규칙은 `**`가 `.pnpm` 같은 점 폴더를 지나지 않아, 경로에 `.pnpm`을 직접 쓴다.
 - **런타임**: 계정 묶음 `.vc-config.json`의 런타임이 `nodejs24.x` 이상이어야 한다(`node:crypto` argon2는 Node 24.7+). 운영 프로젝트 설정은 `26.x`다(팀장이 Vercel API로 확인, 2026-11-06). 로컬 링크 사본의 `.vercel/project.json`이 오래되면 `nodejs24.x`로 빌드될 수 있으니 점검 출력의 런타임을 본다. 부 버전은 빌드 결과로 알 수 없으므로 배포 뒤 스모크(5절 비밀번호 행)가 실제 런타임 확인이다. 런타임과 같은 주 버전 node가 있으면 `CHECK_NODE=<그 node 경로>`로 묶음을 그 버전에서 돌린다(출력 첫 줄에 쓴 node 버전).
 - 소스 규칙: `packages/*/src`·`services/*/src`에서 `createRequire`로 의존성을 부르지 않는다(파일 추적이 못 따라간다). 시험이 막는다.
 

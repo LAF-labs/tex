@@ -395,6 +395,27 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
     assert.deepEqual(vercel.functions['api/sax.js'], { maxDuration: 60 });
   });
 
+  it('레지스트리 두 함수는 엔진 코어 경유로 따라오는 better-sqlite3 prebuild(.node)를 뺀다: 설치된 실제 prebuild 경로에 맞고, 그 패키지 JS는 남긴다', () => {
+    const pnpm = path.join(import.meta.dirname, '..', 'node_modules', '.pnpm');
+    const pkgDirs = fs.readdirSync(pnpm).filter((d) => d.startsWith('better-sqlite3-multiple-ciphers@'));
+    assert.ok(pkgDirs.length > 0, '설치된 better-sqlite3-multiple-ciphers가 없다');
+    for (const f of ['api/registry.js', 'api/registry-cron.js']) {
+      const glob = (vercel.functions[f] as { excludeFiles?: string }).excludeFiles;
+      assert.ok(glob, f);
+      for (const d of pkgDirs) {
+        const pkg = path.join(pnpm, d, 'node_modules', 'better-sqlite3-multiple-ciphers');
+        const natives = (fs.readdirSync(pkg, { recursive: true }) as string[]).filter((x) => x.endsWith('.node'));
+        assert.ok(natives.length > 0, d);
+        // 빌드 기준 경로는 저장소 루트 상대(poc/node_modules/.pnpm/...). 플랫폼 구분자는 /로
+        const rel = (x: string) => ['poc/node_modules/.pnpm', d, 'node_modules/better-sqlite3-multiple-ciphers', x.split(path.sep).join('/')].join('/');
+        for (const x of natives) assert.ok(path.posix.matchesGlob(rel(x), glob!), `${f}: ${rel(x)}`);
+        assert.ok(!path.posix.matchesGlob(rel('lib/database.js'), glob!), f);
+      }
+    }
+    // 계정·게이트웨이 함수는 원래 네이티브가 없으니 제외 규칙을 두지 않는다(점검은 check-vercel-output의 '네이티브 없음')
+    for (const f of ['api/sax.js', 'api/internal.js', 'api/cron.js']) assert.equal((vercel.functions[f] as { excludeFiles?: string }).excludeFiles, undefined, f);
+  });
+
   it('레지스트리: 공개 정적 GET은 공개 버킷의 같은 경로로, 로그 GET·게시 PUT만 레지스트리 함수로(__p가 원래 경로). 다른 함수와 겹치지 않는다', () => {
     const src = fs.readFileSync(path.join(import.meta.dirname, '..', 'services', 'registry', 'src', 'app.ts'), 'utf8');
     const all = [...src.matchAll(/r\.add\(\s*'([A-Z]+)',\s*'([^']+)'/g)].map((m) => ({ method: m[1]!, path: m[2]!.replace(/:[a-z]+/g, 'x') }))
