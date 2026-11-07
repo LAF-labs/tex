@@ -11,6 +11,7 @@ import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
+import { IrRun, type IrPackage } from './run/service-ir.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
 // 그 포트로 온 것만 받는다(ADR-021). Phase 1처럼 엔진은 HMAC 키가 없어 MAC을 검증하지 않고 포트 출처만 믿는다.
@@ -60,6 +61,8 @@ interface ActiveRun {
   pendingArm: { req: GateRequest; history: PendingGate['history'] } | null;
   /** 페이지를 받은 뒤(로그인보다 먼저) 만든다. */
   policy: RunPolicy | null;
+  /** IR 경로(engine 'ir')의 실행. H01 경로면 null. */
+  ir: IrRun | null;
 }
 
 export interface RunServiceDeps {
@@ -78,6 +81,14 @@ export interface RunServiceDeps {
   policy?: RatePolicy;
   /** 시험용: 벽시계·단조 시계. */
   clock?: Clock;
+  /**
+   * 실행기. 'h01'(기본): H01Runner(TS 플레이북). 'ir': 로드한 패키지(ir)를 RunController로 돌린다(RunService IR 전환 PR-C, 골든 대조 중).
+   * PR-D에서 기본을 'ir'로 바꾸고 H01Runner를 제품 import 그래프에서 뺀다.
+   */
+  engine?: 'h01' | 'ir';
+  ir?: IrPackage;
+  /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
+  trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -175,8 +186,12 @@ export class RunService extends EventEmitter {
     };
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
-    const digest = packageDigest(this.d.portal, profile.updatedAt);
-    const check = this.ledger.checkIntent(intentId, 's21', H01.id, inputsHash);
+    const irPkg = this.d.engine === 'ir' ? this.d.ir : undefined;
+    if (this.d.engine === 'ir' && !irPkg) throw new RunEnd('failed', 'package.not_loaded');
+    const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
+    const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
+    const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
+    const check = this.ledger.checkIntent(intentId, 's21', playbookId, inputsHash);
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
     // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
     try {
@@ -187,7 +202,7 @@ export class RunService extends EventEmitter {
       if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
       throw e;
     }
-    this.runs.create({ id: p.runId, playbookId: H01.id, playbookVersion: H01.version, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
+    this.runs.create({ id: p.runId, playbookId, playbookVersion, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
     // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
     const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
@@ -195,7 +210,7 @@ export class RunService extends EventEmitter {
       this.journal.append(p.runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
       this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
     }
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null };
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -207,7 +222,7 @@ export class RunService extends EventEmitter {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
-      a.policy = new RunPolicy(page, this.rate, this.d.portal, {
+      if (this.d.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, this.d.portal, {
         profileId: profile.id,
         checkStop: () => this.checkStop(a),
         journal: (type, payload) => this.journal.append(a.runId, type, payload),
@@ -216,7 +231,10 @@ export class RunService extends EventEmitter {
       // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
       if (this.d.portal.login) throw new RunEnd('failed', 'login.not_implemented');
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
-      result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy).run();
+      if (this.d.engine === 'ir') {
+        a.policy = null;
+        result = await this.executeIr(a, page, inputs, profile);
+      } else result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy!).run();
     } catch (e) {
       thrown = e;
       result = { status: 'failed', code: 'engine.error' };
@@ -254,9 +272,49 @@ export class RunService extends EventEmitter {
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
     this.active = null;
     // 포털이 한 말은 실패·핸드오프·모름에만 보인다. 저널·로그에는 쓰지 않는다(메모리 → 종료 이벤트만).
-    const notice = a.policy?.notice;
+    const notice = a.policy?.notice ?? a.ir?.notice;
     const showNotice = notice && (result.status === 'failed' || result.status === 'handoff' || result.status === 'in_doubt');
     this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
+  }
+
+  /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
+  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean }> {
+    const ir = this.d.ir!;
+    const playbookId = ir.pkg.files.manifest.id;
+    const run = new IrRun({
+      runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: this.d.portal, rate: this.rate,
+      profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
+      inputs: { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) },
+      db: this.d.db, ledger: this.ledger, gates: this.gates,
+      history: (rb) => {
+        const history = {
+          cpBizNoHmac: this.hmac('bizno', rb.counterpartBizNo),
+          recipientEmailHmac: rb.counterpartEmail ? this.hmac('email', canonicalEmail(rb.counterpartEmail)) : null,
+          businessKey: businessKey(rb),
+        };
+        const h = this.ledger.history(history);
+        const reserved: GateField[] = [{ fieldKey: '$first.bizNo', value: String(h.firstBizNo) }, { fieldKey: '$first.email', value: String(h.firstEmail) }];
+        if (h.businessKeyStates.length) reserved.push({ fieldKey: '$dup.businessKey', value: [...new Set(h.businessKeyStates)].sort().join(',') });
+        if (h.priorNotCommitted) reserved.push({ fieldKey: '$dup.priorNotCommitted', value: 'true' });
+        return {
+          reserved,
+          row: (x) => ({
+            intentId: a.intentId, stepId: x.stepId, runId: a.runId, businessKey: history.businessKey, playbookId, inputsHash: a.inputsHash,
+            packageDigest: a.packageDigest, actionHash: x.actionHash, deviceId: this.deviceId, cpBizNoHmac: history.cpBizNoHmac, recipientEmailHmac: history.recipientEmailHmac,
+          }),
+        };
+      },
+      journal: (type, payload) => this.journal.append(a.runId, type, payload),
+      phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
+      postGate: (m) => this.d.postGate(m),
+      waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
+      ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
+      ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
+    });
+    a.ir = run;
+    const r = await run.run();
+    a.armed = run.armed;
+    return { status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}) };
   }
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
@@ -269,6 +327,7 @@ export class RunService extends EventEmitter {
     return {
       phase: (phase: Phase, state: 'now' | 'done' | 'attention', code?: string) => this.ev({ runId: a.runId, type: 'phase', phase, state, code }),
       checkStop: () => this.checkStop(a),
+      ...(this.d.trace ? { step: (stepId: string, type: string) => this.d.trace!(a.runId, { name: 'step.started', stepId, type }) } : {}),
       gate: (rb: Readback) => this.openGate(a, rb),
       arm: () => this.arm(a),
       dispatched: () => {
@@ -390,6 +449,7 @@ export class RunService extends EventEmitter {
       if (a) this.journal.append(a.runId, 'gate.answer_rejected', { code });
       return { ok: false, code };
     };
+    if (a?.ir) return this.answerIr(a, a.ir, ap, reject);
     if (!a || !g) return reject('no_open_gate');
     if (a.stop) return reject('stopped');
     if (!ap || typeof ap !== 'object' || ap.v !== 2) return reject('bad_version');
@@ -409,6 +469,24 @@ export class RunService extends EventEmitter {
     return { ok: true };
   }
 
+  /** IR 경로의 승인 근거: H01과 같은 대조 뒤 조율기에 승인을 넘긴다(게이트 행 결정·저널은 조율기가 한다). */
+  private answerIr(a: ActiveRun, run: IrRun, ap: Partial<LocalApproval> | null, reject: (code: string) => { ok: boolean; code?: string }): { ok: boolean; code?: string } {
+    const req = run.gateReq;
+    if (!req) return reject('no_open_gate');
+    if (a.stop) return reject('stopped');
+    if (!ap || typeof ap !== 'object' || ap.v !== 2) return reject('bad_version');
+    if (ap.runId !== a.runId || ap.gateStepId !== req.gateStepId || ap.reqId !== req.reqId) return reject('wrong_gate');
+    if (ap.approvalNonce !== req.approvalNonce) return reject('wrong_nonce');
+    if (ap.actionHash !== req.actionHash) return reject('wrong_action');
+    const now = Date.now();
+    if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
+    if (now > run.gateDeadline) return reject('gate_expired');
+    if (!PRESENCE_OK.has(String(ap.presence))) return reject('presence_unsupported');
+    if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
+    const r = run.approve(req.reqId, req.actionHash);
+    return r.ok ? { ok: true } : reject('not_open');
+  }
+
   /** 중계 통로(렌더러 명령이 지나는 길)로 승인·증언이 왔다. 거부하고 보안 이벤트를 남긴다(ADR-021). */
   answerFromRelay(method: string): never {
     this.d.log.event('security.gate_answer_from_relay', { method: method.slice(0, 40).replace(/[^A-Za-z0-9_.:-]/g, '_') });
@@ -420,8 +498,12 @@ export class RunService extends EventEmitter {
   stop(runId: string): { stopped: boolean } {
     const a = this.active;
     if (!a || a.runId !== runId) return { stopped: false };
-    if (a.armed) throw new RunEnd('failed', 'already_issuing');
+    if (a.armed || a.ir?.armed) throw new RunEnd('failed', 'already_issuing');
     a.stop = true;
+    if (a.ir) {
+      a.ir.stop();
+      return { stopped: true };
+    }
     const g = a.gate;
     if (g) {
       if (this.gates.decide(g.req.reqId, 'denied', 'local')) this.journal.append(a.runId, 'gate.denied', { reqId: g.req.reqId });
@@ -439,7 +521,8 @@ export class RunService extends EventEmitter {
     const a = this.active;
     this.d.log.event('vault.leak_suspected', { active: !!a, armed: !!a?.armed });
     if (!a) return;
-    this.journal.append(a.runId, 'vault.leak_suspected', { armed: a.armed });
+    this.journal.append(a.runId, 'vault.leak_suspected', { armed: a.armed || !!a.ir?.armed });
+    if (a.ir) return a.ir.halt('vault.leak_suspected');
     if (a.armed || a.halt) return;
     const end = new RunEnd('failed', 'vault.leak_suspected');
     a.halt = end;

@@ -11,11 +11,12 @@ import { bundleOutcomes, h01, signPackage, testKeys, type TestKeys } from './cor
 /** 골든에서 가져오는 스텝 범위. 로그인(s0~s6)·캡차(s90~s93)는 뺀다: 가짜 페이지는 세션이 있다고 본다(H01Runner와 같음). */
 export const FIXTURE_STEP_IDS = ['s10', 's11', 's12', 's13', 's14', 's15', 's16', 's17', 's18', 's19', 's19a', 's19b', 's19c', 's19d', 's19f', 's19e', 's20', 's21', 's30', 's32', 's32b', 's33', 's34', 's35'] as const;
 
-/** 골든 스텝 중 가짜 페이지에 맞춰 바꾸는 필드(스텝 id → 바뀌는 최상위 키). 이 밖은 골든과 같다(id 접두·URL origin 제외). */
+/** 골든 스텝 중 가짜 페이지에 맞춰 바꾸는 필드(스텝 id → 바뀌는 키, 점으로 하위 키). 이 밖은 골든과 같다(id 접두·URL origin 제외). */
 export const FIXTURE_SUBSTITUTIONS: Readonly<Record<string, readonly string[]>> = {
   // 가짜 페이지에는 전자서명 창·확인 대화상자가 없다(H01Runner도 signFlow 없이 발급 버튼만 누른다).
   s21: ['signFlow', 'expectConfirm'],
   // 실패 신호는 가짜 페이지 문구(fixturePortal.failureSignal)다.
+  // 부재 판정 시간은 스키마 하한(30초) 때문에 패키지에서 바꾸지 않는다. 실행할 때 fixture 허가 뒤에서만 주입한다(IrPackage.verifyTiming).
   s30: ['failSignals'],
 };
 

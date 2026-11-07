@@ -259,7 +259,7 @@ describe('리플레이: 골든 H-01 s19a → s20(게이트)', () => {
     assert.deepEqual(await h01Run({ inputs: noEmail }).it.run('s19a'), { t: 'abort', at: 's19f', code: 'assert.input_mismatch' }, '입력 없음인데 포털 칸에 주소가 남음');
   });
   it('공급자(내 사업자)가 다르면 s19c에서, 작성일이 다르면 s19e에서 중단', async () => {
-    assert.deepEqual(await h01Run({ screen: { supplierBizNo: '999-99-99999' } }).it.run('s19a'), { t: 'abort', at: 's19c', code: 'step.assert_failed' });
+    assert.deepEqual(await h01Run({ screen: { supplierBizNo: '999-99-99999' } }).it.run('s19a'), { t: 'abort', at: 's19c', code: 'assert.supplier_mismatch' });
     assert.deepEqual(await h01Run({ screen: { issueDate: '2026.11.05' } }).it.run('s19a'), { t: 'abort', at: 's19e', code: 'assert.issue_date_mismatch' });
   });
   it('DOM 값과 접근성 값이 다르면 s19b readback에서 멈추고 게이트에 닿지 않는다', async () => {

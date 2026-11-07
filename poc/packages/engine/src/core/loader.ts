@@ -35,12 +35,17 @@ export function fixtureOriginGrant(pkg: Pick<LoadedPackage, 'files'>): FixtureOr
   return g;
 }
 
+/** 이 모듈이 발급한 허가이고 관문이 열려 있는가(제품 dist에서는 언제나 거짓). */
+export function isFixtureGrant(grant: FixtureOriginGrant | null | undefined): grant is FixtureOriginGrant {
+  return !!grant && FIXTURE_LOAD_ALLOWED && grants.has(grant);
+}
+
 /**
  * 실행 시 이동 URL 판정. 이 모듈이 발급한 허가가 있고 관문이 열려 있을 때만 fixture 규칙(V-25: http://127.0.0.1·[::1]:PORT)을 쓴다.
  * 그때도 실제 포털 URL은 받지 않는다(규칙을 합치지 않고 바꾼다). 그 밖은 실제 포털 규칙(V-06)이다.
  */
 export function navigationUrlProblem(url: string, domains: readonly string[], grant?: FixtureOriginGrant | null): string | null {
-  if (grant && FIXTURE_LOAD_ALLOWED && grants.has(grant)) return fixtureUrlProblem(url, domains);
+  if (isFixtureGrant(grant)) return fixtureUrlProblem(url, domains);
   return urlProblem(url, domains);
 }
 

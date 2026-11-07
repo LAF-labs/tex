@@ -29,6 +29,8 @@ export interface RunnerHooks {
   arm(): void;
   dispatched(): void;
   resolve(state: 'committed' | 'not_committed' | 'in_doubt', reason: 'pre_dispatch_mismatch' | 'identity_mismatch' | 'signal' | 'verify' | null, ref: string | null): void;
+  /** 시험용(골든 대조, RunService IR 전환 PR-C): 스텝 시작. 값 없이 id·타입만. */
+  step?(stepId: string, type: Step['type']): void;
 }
 
 /**
@@ -134,6 +136,8 @@ export class H01Runner {
       // 게이트 승인 뒤(커밋 구간·verify)에는 정지를 받지 않는다.
       if (!this.approvedHash) this.hooks.checkStop();
       if (step !== H01.steps[0] && PAGE_STEPS.has(step.type)) await this.policy.beforeStep();
+      // IR 조율기의 step.started와 같은 자리(정지·요청률 확인을 지난 뒤).
+      this.hooks.step?.(step.id, step.type);
       const next = await this.exec(step);
       if (typeof next !== 'string') return next;
       step = byId.get(next);

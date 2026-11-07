@@ -67,7 +67,8 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
     if (!re) return { ok: false, code: 'step.cond_unsupported' };
     const r = await resolveTarget(env.page, env.dict, target);
     if (!r.ok) return r.code === 'step.selector_miss' && !r.ambiguous ? F : { ok: false, code: r.code };
-    return bool(re.test(normalizeName(await env.page.text(r.t.el))));
+    // 입력 역할(textbox 등, 조회가 채우는 읽기 전용 칸 포함)은 DOM value, 아니면 보이는 텍스트(readback과 같은 규칙). innerText는 input에서 늘 빈 문자열이다.
+    return bool(re.test(normalizeName(await domValue(env.page, env.dict.entries[target]!, r.t.el))));
   }
   if ('varEquals' in c) {
     const v = env.scope.vars.get(c.varEquals.name);
