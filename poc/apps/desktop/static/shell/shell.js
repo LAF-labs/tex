@@ -3,7 +3,7 @@
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginModal } from './shell-account.js';
-import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -504,7 +504,7 @@ async function send() {
   } else if (r.kind === 'g24') {
     const id = `g24-${Date.now()}`;
     const now = new Date();
-    const g = { id, doc: r.doc, stage: 'guide', startedMs: now.getTime(), startedAt: now.toTimeString().slice(0, 5), today: localDate(now), candidates: [], picked: null, saving: false, interp: r.via };
+    const g = { id, doc: r.doc, stage: 'guide', startedMs: now.getTime(), startedAt: now.toTimeString().slice(0, 5), today: localDate(now), candidates: [], picked: null, saving: false, interp: r.via, sent: r.sent };
     state.g24.set(id, g);
     appendThread(h('div', { class: 'sx-app' }, `${r.doc}은 정부24 서류라 직접 발급해 주셔야 해요. 단계와 넣을 값을 옆에 정리했어요.`));
     renderG24(g);
@@ -995,7 +995,7 @@ function activityView() {
               h('td', {}, r.profile),
               h('td', {}, r.portal),
               h('td', { class: r.status === 'attention' ? 'is-attention' : r.status === 'stopped' ? 'is-muted' : null }, r.result),
-              (r.run?.interp ?? r.g24?.interp) === 'model' ? h('td', {}, 'OpenRouter(시연)') : h('td', { class: 'is-muted' }, '안 함'),
+              modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, '안 함'),
             ),
           ),
         )
@@ -1013,8 +1013,8 @@ function activityPanel(row) {
       ? [
           ['정부24', '앱은 요청을 보내지 않았어요 · 직접 발급'],
           ['보관', row.g24.stage === 'saved' ? '이 PC 문서함' : '넣지 않음'],
-          modelRow(row.g24.interp),
-          ['우리 서버', '보낸 것 없음'],
+          modelRow(row.g24.sent),
+          serverRow(row.g24.sent),
         ]
       : row.past
         ? [
@@ -1026,8 +1026,8 @@ function activityPanel(row) {
         : [
             // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
             ['홈택스', r.status === 'stopped' ? '발급하지 않음' : r.status === 'attention' ? '확인 필요 · 위 안내를 봐 주세요' : '진행 중'],
-            modelRow(r.interp),
-            ['우리 서버', '보낸 것 없음'],
+            modelRow(r.sent),
+            serverRow(r.sent),
           ];
   return h(
     'div',

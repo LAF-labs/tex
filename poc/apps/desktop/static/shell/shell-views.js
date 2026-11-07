@@ -302,8 +302,28 @@ export function taskCard(run, act) {
   return card;
 }
 
-/** 활동 기록의 모델 줄. 시연 모델(SAX_DEMO_MODEL=openrouter)로 해석한 요청이면 그 사실을, 아니면 쓰지 않음. */
-export const modelRow = (interp) => ['모델', interp === 'model' ? 'OpenRouter(시연 예외) · 채팅 문장과 가상 거래처 이름만 보냄' : '쓰지 않음(요청 해석은 이 PC 안 규칙)'];
+/**
+ * 활동 기록의 모델·우리 서버 줄(팀장 결정 2026-11-07). 해석 결과(via)가 아니라 main이 관찰한 실제 송신(run.sent)으로만 만든다.
+ * - openrouter_demo: 시연 모델을 불렀다(성공 여부와 무관). gateway.*: main이 그 경로의 게이트웨이 헤더를 내줬다.
+ * 모르는 값은 버린다. 아무것도 없으면 "쓰지 않음"·"보낸 것 없음".
+ */
+const sentSet = (sent) => new Set(Array.isArray(sent) ? sent.filter((x) => typeof x === 'string') : []);
+export const modelRow = (sent) => {
+  const s = sentSet(sent);
+  if (s.has('openrouter_demo')) return ['모델', 'OpenRouter(시연 예외) · 채팅 문장과 가상 거래처 이름만 보냄'];
+  if (s.has('gateway.decide')) return ['모델', '게이트웨이를 거쳐 의도 판정 · 마스킹한 요청 문장만 보냄'];
+  return ['모델', '쓰지 않음(요청 해석은 이 PC 안 규칙)'];
+};
+export const serverRow = (sent) => {
+  const s = sentSet(sent);
+  const parts = [s.has('gateway.run_tokens') ? '실행 토큰 요청(문장 없음)' : null, s.has('gateway.decide') ? '마스킹한 요청 문장(의도 판정)' : null, s.has('gateway.respond') ? '응답 확인' : null].filter(Boolean);
+  return ['우리 서버', parts.length ? `게이트웨이 · ${parts.join(', ')}` : '보낸 것 없음'];
+};
+/** 활동 기록 표의 모델 칸. */
+export const modelCell = (sent) => {
+  const s = sentSet(sent);
+  return s.has('openrouter_demo') ? 'OpenRouter(시연)' : s.has('gateway.decide') ? '게이트웨이' : null;
+};
 
 /** "어디로 무엇이 갔나요"(활동 기록 행을 카드 안에서 펼친 것). */
 export function whereRows(run) {
@@ -311,8 +331,8 @@ export function whereRows(run) {
     ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인'],
     ['메일', run.result.mailTo ? `${run.result.mailTo} · 홈택스가 보냄, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
     ['보관', '이 PC 문서함 · 파일명에는 거래처·승인번호를 넣지 않아요'],
-    modelRow(run.interp),
-    ['우리 서버', '보낸 것 없음'],
+    modelRow(run.sent),
+    serverRow(run.sent),
   ];
 }
 function whereItWent(run) {

@@ -27,6 +27,8 @@ export interface GatewayAuthHostOptions {
   device: () => GatewayDevice | null | Promise<GatewayDevice | null>;
   log?: (name: string, data: Record<string, string | number>) => void;
   now?: () => number;
+  /** 헤더를 실제로 내준 경로(/v1/decide 등). 활동 기록이 "무엇을 우리 서버로 보냈나"를 사실대로 적는 근거다(값·헤더는 넘기지 않는다). */
+  onIssued?: (path: string) => void;
 }
 
 /** 엔진이 인증을 받을 수 있는 htu(정확히 같은 문자열만). /v1/biz/status는 엔진이 쓰지 않으니 넣지 않는다. */
@@ -75,6 +77,7 @@ export class GatewayAuthHost {
       const authorization = h.Authorization;
       const dpop = h.DPoP;
       if (typeof authorization !== 'string' || typeof dpop !== 'string') return this.#fail(id, 'auth.unavailable');
+      this.#o.onIssued?.(m.htu.slice(GATEWAY_ORIGIN.length));
       return { t: 'gw.auth.result', id, headers: { authorization, dpop } };
     } catch (e) {
       const code = (e as { code?: unknown }).code;
