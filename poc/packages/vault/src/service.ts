@@ -622,6 +622,24 @@ export class Vault {
     return this.chrome?.proc.pid;
   }
 
+  /**
+   * 앱 루트·전용 프로필의 폴더 확인을 미리 한다(ADR-041). 결과는 쓰지 않는다: 기동할 때 다시 확인하고,
+   * 그때 소유자 읽기는 플랫폼 OwnerMemo가 기억한 값을 쓴다. 걸린 시간만 남긴다.
+   */
+  async warmDirChecks(): Promise<void> {
+    const guard = this.opts.dirGuard ?? dirGuard();
+    const t0 = Date.now();
+    let ok = true;
+    for (const d of [this.opts.paths.root, this.opts.paths.chromeProfile]) {
+      try {
+        if (!(await guard.checkPrivate(d)).ok) ok = false;
+      } catch {
+        ok = false;
+      }
+    }
+    this.opts.log.event('vault.dir_check_warm', { ms: Date.now() - t0, ok });
+  }
+
   /** 금고 기동당 1회(D05 §3.8, A-24). 두 번째는 거부 + 보안 이벤트. */
   async getDbKeyOnce(): Promise<Uint8Array> {
     if (this.dbKeyIssued) {
