@@ -198,7 +198,20 @@ export class Egress {
       if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{8,64}$/.test(id)) throw new EgressError('path_not_allowed');
     }
     const body = JSON.stringify(req.body);
-    const auth = await gw.auth.headers({ method: 'POST', url: GATEWAY_ORIGIN + path, bodySha256: sha256(body) });
+    const bodySha256 = sha256(body);
+    try {
+      return await this.gatewayOnce(gw, path, body, bodySha256);
+    } catch (e) {
+      // 401이면 기기 토큰을 버리게 하고 한 번만 다시 보낸다(ADR-040 결정 5). DPoP 증명은 요청마다 새로 받는다.
+      // 403(정지·범위 거부)·그 밖의 오류는 다시 보내지 않는다. 인증 실패는 실행 토큰 예산을 쓰지 않는다(게이트웨이가 인증 뒤에 센다).
+      if (!(e instanceof GatewayError) || e.code !== 'gateway.unauthorized' || !gw.auth.invalidate) throw e;
+      gw.auth.invalidate();
+      return await this.gatewayOnce(gw, path, body, bodySha256);
+    }
+  }
+
+  private async gatewayOnce(gw: GatewayConfig, path: string, body: string, bodySha256: string): Promise<unknown> {
+    const auth = await gw.auth.headers({ method: 'POST', url: GATEWAY_ORIGIN + path, bodySha256 });
     const origin = this.opts.testOrigins?.gateway ?? GATEWAY_ORIGIN;
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), gw.timeoutMs ?? 20_000);
