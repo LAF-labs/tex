@@ -121,11 +121,15 @@ export const SHELL_METHODS = {
   'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },
   // 계정 로그인(A-01, remote-account.ts). 코드 보내기·확인은 실제 입력 뒤에만(USER_ACTION_METHODS).
   'account.view': {},
-  'account.sendCode': { email: { t: 'string', max: 254, required: true } },
+  // signup: 계정 만들기 화면에서 보냈다(코드 확인 뒤 비밀번호가 없으면 만들기 단계, 인계 명세 §3).
+  'account.sendCode': { email: { t: 'string', max: 254, required: true }, signup: { t: 'boolean' } },
   'account.verify': { code: { t: 'string', max: 6, required: true } },
   'account.back': {},
   // 비밀번호 로그인(ADR-038). 비밀번호는 renderer → main → 계정 서비스로만 간다(로그·디스크·금고에 두지 않는다).
   'account.password': { email: { t: 'string', max: 254, required: true }, password: { t: 'string', max: 512, required: true } },
+  // 계정 만들기의 비밀번호 단계(PUT /v1/password). 비밀번호는 같은 규칙(로그·디스크·금고 없음). [나중에]는 인자 없음.
+  'account.setPassword': { password: { t: 'string', max: 512, required: true } },
+  'account.skipPassword': {},
   // 폰 연결 창 열기(S-03). 인자 없음. 실제 입력 뒤에만.
   'pair.open': {},
   // 온보딩 답 하나(O-01~O-06·동의 4종). 동의는 화면마다 명시 클릭이라 실제 입력 뒤에만 받는다(USER_ACTION_METHODS).
@@ -140,7 +144,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

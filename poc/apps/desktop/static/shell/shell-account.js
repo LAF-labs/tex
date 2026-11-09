@@ -1,5 +1,6 @@
 // 계정 로그인(A-01: 이메일 → 비밀번호, 또는 이메일 6자리 코드)과 설정 > 기기 연결의 계정 줄. main(remote-account.ts)이 단계를 정하고 여기서는 그리기만 한다.
 // 렌더러가 받는 값은 단계·이메일·코드 만료 시각·오류 코드뿐이다(세션·토큰은 main에만). 값은 모두 textContent·value로 넣는다.
+import { pwRules } from './password-rules.js';
 import { btn, h, icon } from './shell-views.js';
 
 /** 오류 코드 → 문구. 모르는 코드는 일반 문구(코드를 화면에 보이지 않는다). */
@@ -17,6 +18,12 @@ const ERR = {
   'account.device_churn_limit': '최근에 PC를 여러 번 바꿨어요. 며칠 뒤에 다시 해 주세요',
   'account.keys_unavailable': '금고가 열려 있지 않아요. 앱을 다시 켠 뒤 해 주세요',
   'policy.rate_limited': '요청이 많아요. 잠시 뒤에 다시 해 주세요',
+  // 비밀번호 만들기 거부(인계 명세 §3.2). 어느 목록에 걸렸는지는 말하지 않는다. too_short는 문구 없이 조건 1줄이 어긋남이다.
+  'account.password_breached': '많이 쓰이거나 이미 알려진 비밀번호예요. 다른 비밀번호를 써 주세요',
+  'account.password_contains_identity': '이메일 주소가 들어간 비밀번호는 쓸 수 없어요',
+  'account.password_contains_service': '서비스 이름이 들어간 비밀번호는 쓸 수 없어요',
+  'account.password_too_long': '128자까지 쓸 수 있어요',
+  'account.password_later': '지금은 비밀번호를 만들지 못했어요. 설정 > 계정에서 만들 수 있어요',
   gesture_required: '버튼을 다시 눌러 주세요',
   pair_unavailable: '이 빌드에서는 아직 폰을 연결할 수 없어요',
   account_required: '먼저 로그인해 주세요',
@@ -50,6 +57,51 @@ const links = (...bs) => h('div', { class: 'acct-links' }, ...bs.flatMap((b, i) 
 const quiet = (label, onClick, act) => btn(label, onClick, 'sx-btn-quiet', { 'data-act': act });
 const primary = (label, onClick, act, busy) => btn(label, onClick, 'sx-btn-primary sx-btn-lg', { 'data-act': act, disabled: busy });
 
+/** 보기 토글(눈 / 빗금 눈). 기본은 가림. */
+const eye = (draft, ctx) =>
+  h('button', { type: 'button', class: 'acct-eye', 'aria-label': draft.show ? '가리기' : '보기', 'aria-pressed': String(!!draft.show), onclick: () => ctx.toggleShow() }, icon(draft.show ? 'eyeOff' : 'eye'));
+
+const RULES = [
+  ['len', '10자 이상'],
+  ['common', '흔하거나 알려진 비밀번호가 아님'],
+  ['identity', '이메일·서비스 이름이 들어가지 않음'],
+];
+
+/**
+ * 새 비밀번호 칸 + 조건 3줄 + 경고 줄(인계 명세 §3.1·§3.2). 입력할 때마다 줄·경고·주 버튼만 고친다(칸은 다시 만들지 않는다).
+ * 서버 거부 코드(serverErr)는 입력값이 비어 있을 때(보낸 뒤 비웠다) 경고 줄에 보인다. 반환: { nodes, ok() }.
+ */
+function newPasswordField(ctx, { email, serverErr, onEnter, submitBtn }) {
+  const { draft } = ctx;
+  const i = h('input', { class: 'acct-in acct-password', type: draft.show ? 'text' : 'password', maxlength: 512, autocomplete: 'new-password', spellcheck: 'false', 'aria-label': '새 비밀번호', 'aria-describedby': 'acct-rules' });
+  i.value = draft.password ?? '';
+  const rows = RULES.map(([key, label]) => h('li', { class: 'acct-rule is-wait', 'data-rule': key }, h('span', { class: 'acct-rule-mk', 'aria-hidden': 'true' }), h('span', { class: 'sx-meta' }, label)));
+  const warn = h('p', { class: 'acct-err sx-body-sm', role: 'alert', 'data-acct-pw-warn': '' });
+  const update = () => {
+    const r = pwRules(draft.password ?? '', email);
+    rows.forEach((row) => {
+      const st = r[row.dataset.rule];
+      row.className = `acct-rule is-${st}`;
+      row.firstChild.replaceChildren(...(st === 'ok' ? [icon('check')] : st === 'bad' ? [icon('warn')] : []));
+    });
+    // 서버와 같은 순서(길이 → 이메일·서비스 이름 → 흔한 목록)로 하나만 보인다
+    const live = r.tooLong ? 'account.password_too_long' : r.identity === 'bad' ? (r.identityKind === 'service' ? 'account.password_contains_service' : 'account.password_contains_identity') : r.common === 'bad' ? 'account.password_breached' : null;
+    const code = live ?? (draft.password ? null : serverErr);
+    warn.hidden = !code;
+    warn.replaceChildren(...(code ? [icon('warn'), accountErrText(code)] : []));
+    i.classList.toggle('is-bad', !!live || (!draft.password && !!serverErr));
+    submitBtn.disabled = ctx.busy || !r.ok;
+    return r.ok;
+  };
+  i.addEventListener('input', () => {
+    draft.password = i.value;
+    update();
+  });
+  i.addEventListener('keydown', (e) => e.key === 'Enter' && update() && onEnter());
+  update();
+  return { nodes: [h('div', { class: 'acct-pw' }, i, eye(draft, ctx)), h('ul', { class: 'acct-rules', id: 'acct-rules' }, ...rows), warn] };
+}
+
 /** 남은 시간 m:ss(코드 만료). */
 const left = (at, now) => {
   const s = Math.max(0, Math.round((at - now) / 1000));
@@ -76,10 +128,21 @@ export function loginScreen(ctx) {
     return i;
   };
   const errNote = (code) => (code ? h('p', { class: 'acct-err sx-body-sm', role: 'alert' }, icon('warn'), accountErrText(code)) : null);
-  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : ctx.screen;
+  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : v.step === 'set_password' ? 'signup_pw' : ctx.screen;
   let body;
 
-  if (screen === 'working') {
+  if (screen === 'signup_pw') {
+    // 계정 만들기 비밀번호 단계(인계 명세 §3 pw·shown·common·mine). 확인 칸은 없다(보기 토글로 확인, 제안 2).
+    const submit = () => !busy && ctx.setPassword(draft.password ?? '');
+    const make = primary('만들기', submit, 'account-set-password', true);
+    const pwErr = err && err.startsWith('account.password_') ? err : null;
+    const f = newPasswordField(ctx, { email: v.email, serverErr: pwErr, onEnter: submit, submitBtn: make });
+    body = [
+      mark(),
+      head('비밀번호 만들기', '다음부터 메일을 열지 않고 로그인해요'),
+      h('div', { class: 'acct-stack' }, ...f.nodes, pwErr ? null : errNote(err), make, links(quiet('나중에', () => !busy && ctx.skipPassword(), 'account-skip-password'))),
+    ];
+  } else if (screen === 'working') {
     body = [mark(), head('이 PC를 계정에 등록하고 있어요', '잠시만 기다려 주세요', { 'data-account-working': '' })];
   } else if (screen === 'email') {
     const next = () => {
@@ -112,7 +175,7 @@ export function loginScreen(ctx) {
         'div',
         { class: 'acct-stack' },
         h('span', { class: 'acct-chip' }, h('span', { 'data-acct-email': '' }, email()), quiet('바꾸기', () => ctx.go('email'), 'account-change-email')),
-        h('div', { class: 'acct-pw' }, pw, h('button', { type: 'button', class: 'acct-eye', 'aria-label': draft.show ? '가리기' : '보기', 'aria-pressed': String(!!draft.show), onclick: () => ctx.toggleShow() }, icon(draft.show ? 'eyeOff' : 'eye'))),
+        h('div', { class: 'acct-pw' }, pw, eye(draft, ctx)),
         wrong
           ? h(
               'div',
