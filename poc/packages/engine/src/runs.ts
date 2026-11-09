@@ -82,8 +82,8 @@ export interface RunServiceDeps {
   /** 시험용: 벽시계·단조 시계. */
   clock?: Clock;
   /**
-   * 실행기. 'h01'(기본): H01Runner(TS 플레이북). 'ir': 로드한 패키지(ir)를 RunController로 돌린다(RunService IR 전환 PR-C, 골든 대조 중).
-   * PR-D에서 기본을 'ir'로 바꾸고 H01Runner를 제품 import 그래프에서 뺀다.
+   * 실행기. 'ir'(기본, PR-D1): 로드한 패키지(ir)를 RunController로 돌린다. 패키지가 없으면 시작이 package.not_loaded다.
+   * 'h01': H01Runner(TS 플레이북). 제품 entry는 패키지 공급(레지스트리 게시)과 시연 방식이 정해질 때까지 'h01'을 명시한다(PR-D2에서 뺀다).
    */
   engine?: 'h01' | 'ir';
   ir?: IrPackage;
@@ -124,9 +124,13 @@ export class RunService extends EventEmitter {
   private readonly deviceId: string;
   private active: ActiveRun | null = null;
 
+  /** 실행기(기본 'ir', RunServiceDeps.engine). */
+  private readonly engine: 'h01' | 'ir';
+
   constructor(d: RunServiceDeps) {
     super();
     this.d = d;
+    this.engine = d.engine ?? 'ir';
     this.runs = new RunRepo(d.db);
     this.gates = new GateRepo(d.db);
     this.ledger = new Ledger(d.db);
@@ -186,8 +190,8 @@ export class RunService extends EventEmitter {
     };
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
-    const irPkg = this.d.engine === 'ir' ? this.d.ir : undefined;
-    if (this.d.engine === 'ir' && !irPkg) throw new RunEnd('failed', 'package.not_loaded');
+    const irPkg = this.engine === 'ir' ? this.d.ir : undefined;
+    if (this.engine === 'ir' && !irPkg) throw new RunEnd('failed', 'package.not_loaded');
     const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
     const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
     const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
@@ -222,7 +226,7 @@ export class RunService extends EventEmitter {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
-      if (this.d.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, this.d.portal, {
+      if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, this.d.portal, {
         profileId: profile.id,
         checkStop: () => this.checkStop(a),
         journal: (type, payload) => this.journal.append(a.runId, type, payload),
@@ -231,7 +235,7 @@ export class RunService extends EventEmitter {
       // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
       if (this.d.portal.login) throw new RunEnd('failed', 'login.not_implemented');
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
-      if (this.d.engine === 'ir') {
+      if (this.engine === 'ir') {
         a.policy = null;
         result = await this.executeIr(a, page, inputs, profile);
       } else result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy!).run();

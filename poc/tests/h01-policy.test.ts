@@ -55,7 +55,7 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
     const runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log, policy, clock,
+      engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log, policy, clock,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
     });

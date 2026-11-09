@@ -165,7 +165,7 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     // 홈택스 kind이지만 실행 전 점검을 지나는 설정(셀렉터는 가짜 페이지 값). 페이지는 열리지 않는다.
     const portal: PortalConfig = { ...PORTAL, kind: 'hometax', verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 } };
     const log = new FileEventLog(null, 'engine');
-    const runs = new RunService({ db, data, ledgerKey: new Uint8Array(32), portal, policy: FIXTURE_POLICY, log, page: () => Promise.reject(new Error('no page')), postGate: () => {} });
+    const runs = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal, policy: FIXTURE_POLICY, log, page: () => Promise.reject(new Error('no page')), postGate: () => {} });
     const ended = new Promise<RunEvent>((r) => runs.on('event', (e: RunEvent) => e.type === 'end' && r(e)));
     runs.start({ runId: 'ht-dict', counterpartyId: cp, supply: 1000, tax: 100, itemName: 'x' });
     await ended;
@@ -258,7 +258,7 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     const cp = data.counterparties.create({ bizNo: '2148651233', name: 'A상사', email: 'tax@a.example' });
     const wall = Date.parse('2026-12-31T15:30:00Z'); // KST 2027-01-01 00:30, UTC·로컬로는 12-31
     const clock: Clock = { wall: () => wall, mono: () => performance.now() };
-    const runs = new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: PORTAL, clock, log: new FileEventLog(null, 'engine'), page: () => Promise.reject(new Error('no page')), postGate: () => {} });
+    const runs = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal: PORTAL, clock, log: new FileEventLog(null, 'engine'), page: () => Promise.reject(new Error('no page')), postGate: () => {} });
     const ended = new Promise<RunEvent>((r) => runs.on('event', (e: RunEvent) => e.type === 'end' && r(e)));
     runs.start({ runId: 'kst', counterpartyId: cp.id, supply: 1000, tax: 100, itemName: '경영 컨설팅' });
     await ended;

@@ -114,7 +114,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       db: s.db, data: s.data, ledgerKey, portal: fixturePortal(fx.origin), log,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => s.gateMsgs.push(m),
-      ...(ir ? { engine: 'ir' as const, ir } : {}),
+      ...(ir ? { engine: 'ir' as const, ir } : { engine: 'h01' as const }),
       trace: (runId, e) => {
         if (e.name !== 'step.started') return;
         const t = s.traces.get(runId) ?? [];

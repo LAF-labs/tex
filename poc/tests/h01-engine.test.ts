@@ -96,7 +96,7 @@ describe('원장(D03 §4, ADR-021)', () => {
     g.decide('qc', 'approved', 'local');
     new Ledger(db).consumeAndArm('qc', { intentId: 'IR', stepId: 's21', runId: 'rr', businessKey: 'bk2', playbookId: 'p', inputsHash: 'i', packageDigest: 'd', actionHash: 'a', deviceId: 'dv', cpBizNoHmac: 'h9', recipientEmailHmac: null });
     const data = new DataService(db, new BizVerifier(new Egress()));
-    new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log: new FileEventLog(null, 't'), page: () => Promise.reject(new Error('no')), postGate: () => {} });
+    new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log: new FileEventLog(null, 't'), page: () => Promise.reject(new Error('no')), postGate: () => {} });
     assert.deepEqual([g.state('qa'), g.state('qb'), g.state('qc')], ['expired', 'expired', 'consumed']);
     assert.equal(new Ledger(db).get('IR', 's21')!.state, 'in_doubt');
     assert.equal(runs.status('rr'), 'interrupted');
@@ -208,7 +208,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     cpA = data.counterparties.create({ ...A }).id;
     cpC = data.counterparties.create({ ...C }).id;
     runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log,
+      engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
     });
@@ -385,8 +385,18 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     }
   });
 
+  it('기본 실행기는 IR(PR-D1): 패키지가 없으면 브라우저를 열기 전에 package.not_loaded, 제품 entry는 h01을 명시한다', async () => {
+    let opened = 0;
+    const def = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: async () => (opened++, page!), postGate: () => {} });
+    assert.throws(() => def.start({ runId: `run-${++n}`, counterpartyId: cpC, supply: 150_000, tax: 15_000, itemName: '경영 컨설팅' }), (e: Error & { code?: string }) => e.code === 'package.not_loaded');
+    assert.equal(opened, 0);
+    const entry = (await fs.readFile(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8')).match(/new RunService\(\{[^\n]*\}\)/g) ?? [];
+    assert.equal(entry.length, 1);
+    assert.match(entry[0]!, /engine: 'h01'/);
+  });
+
   it('승인 대기가 waitMs를 넘으면 만료(발급 없음), 만료 뒤 근거는 통하지 않는다', async () => {
-    const short = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, gateWaitMs: 400, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
+    const short = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, gateWaitMs: 400, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
     short.on('event', (e: RunEvent) => events.push(e));
     const runId = `run-${++n}`;
     short.start({ runId, counterpartyId: cpC, supply: 140_000, tax: 14_000, itemName: '경영 컨설팅' });
@@ -403,7 +413,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     await gateFor(runId);
     runs.stop(runId);
     await endOf(runId);
-    const ht = new RunService({ db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log, page: () => Promise.reject(new Error('no')), postGate: () => {} });
+    const ht = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(32), portal: HOMETAX_PORTAL, log, page: () => Promise.reject(new Error('no')), postGate: () => {} });
     assert.throws(() => ht.start({ runId: 'ht-1', counterpartyId: cpA, supply: 1000, tax: 100, itemName: 'x' }), /selector_placeholder/);
   });
 
@@ -455,7 +465,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
       d.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
       const cp = d.counterparties.create({ ...C }).id;
       const clock: Clock = { wall: () => Date.now() + 86_400_000, mono: () => performance.now() };
-      const svc = new RunService({ db: t.db, data: d, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, clock, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
+      const svc = new RunService({ engine: 'h01', db: t.db, data: d, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, clock, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
       svc.on('event', (e: RunEvent) => events.push(e));
       const posts = fx.posts();
       const runId = `run-${++n}`;

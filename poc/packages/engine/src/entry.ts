@@ -115,7 +115,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
-    runs = new RunService({ db, data, ledgerKey, portal, page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m) });
+    // 실행기는 아직 H01Runner다(PR-D 결정 (가), 2026-11-09): 제품 IR 패키지 공급(레지스트리 게시)과 시연·e2e 방식(ADR-039, dist는 fixture 거부)이
+    // 정해지기 전에 IR로 바꾸면 앱 H-01 실행이 모두 package.not_loaded가 된다. PR-D2가 이 줄을 IR로 바꾸고 H01Runner를 시험 전용으로 옮긴다.
+    runs = new RunService({ db, data, ledgerKey, portal, engine: 'h01', page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m) });
     gate.onMessage((m) => {
       const g = m as GatePortMessage;
       // 증언 처리는 M2-3에서 붙인다. 그 전에는 엔진이 증언 요청을 내지 않으므로 어떤 증언도 미결 요청이 없다.
