@@ -52,6 +52,12 @@
 | | `bundle.markOpened` | `profileId, exportId, via, sentTo?` | 기록 |
 | | `bundle.markSent` | `profileId, exportId, note?` | 기록 |
 | | `payroll.exportRecord` | `profileId, fromMonth?, toMonth?` | `{record, file, months, password}` |
+| 꾸러미 PC 입력 | `db.query.cash.month` | `profileId, month` | `{month, days[{day, amount, source, enteredAt}], total}`(M6-2, `BUNDLE_PC_READ_QUERIES`) |
+| | `cash.put` | `profileId, day, amount` | `{day, amount, replaced: {amount, source}\|null}`. 같은 날이면 바꾼다(폰 값이어도) |
+| | `cash.remove` | `profileId, day` | `{removed}` |
+| | `db.query.receipt.list` | `profileId, month` | `{month, receipts[ReceiptView], unconfirmed}`. 확인 전 것이 먼저, 후보 `phoneOcr`·`ocr`은 기본값으로만 |
+| | `receipt.confirm` | `profileId, docId, issuedOn, amount, merchant?, merchantBizNo?` | 확인한 증빙. 이 값만 빠진 것 대조·내보내기에 쓴다 |
+| | `bundle.setEntry` | `profileId, itemId, month, status\|null, docIds?, note?` | `{period, entry\|null}`. 기간은 엔진이 항목 주기로 정한다 |
 | 카드 내역 | `db.query.card.list` | `profileId, month` | `{month, lastFetch, daysSinceFetch, coverage: full\|partial\|none, rows[{…, memo}], detachedMemos[{id, text, usedOn, amount}]}`(M6-3, `CARD_READ_QUERIES`) |
 | | `card.setMemo` | `profileId, txnId, memo` | 메모(빈 글이면 지움, 500자) |
 | | `card.reattachMemo` | `profileId, memoId, txnId` | 떠 있던 메모를 고른 행에 다시 잇는다. 그 행에 메모가 있으면 `memo_exists` |
@@ -125,6 +131,17 @@
   - 메일 프로그램이나 폴더를 열 때 `bundle.markOpened { via: 'mail_client' | 'folder', sentTo }`.
   - 사장님이 "보냈어요"를 누르면 `bundle.markSent { note }`.
 - 급여 기록(3년 보관): `payroll.exportRecord`. 주민번호는 늘 뺀다.
+
+### 꾸러미 PC 입력(08 D-05, M6-2·M6-4)
+
+- 현금매출: 하루 한 숫자를 `cash.put`으로 넣는다. `replaced`가 있으면 "그날 n원을 바꿨어요"라고 알린다. 폰에서 넣은 값이어도 바꾼다(나중 입력이 이긴다).
+- 종이 증빙: `db.query.receipt.list`의 확인 전 것을 위에 보인다. 읽어 낸 후보(`phoneOcr.candidates`·`ocr`)는 입력 칸의 기본값으로만 쓰고 글자로만 그린다. 사장님이 [확인]하면 `receipt.confirm`이다.
+  - 확인 전 증빙은 "증빙과 대조되지 않은 카드 지출" 대조에 쓰지 않는다.
+  - 사업자번호는 `-`가 있어도 된다. 비우면 null이다.
+- 항목 상태: [해당 없음]·[다 됐어요]·파일 붙이기는 `bundle.setEntry`다. 화면은 달만 넘기고, 분기·한 번 항목의 기간은 엔진이 정한다. 표시를 지우려면 `status: null`이다.
+  - 사업용 카드와 급여를 쓰는 업체의 급여대장은 앱이 센다. 해당 없음만 표시할 수 있다(`entry_derived`).
+  - `docIds`는 이미 보관함에 들어간 그 프로필 문서다. PC 파일을 보관함에 넣는 명령은 이 PR에 없다(다음 항목).
+- 오류: `bad_day`, `bad_amount`, `bad_issued_on`, `bad_merchant`, `bad_merchant_biz_no`, `receipt_not_found`, `item_not_found`, `bad_status`, `entry_derived`, `bad_doc_ids`, `doc_not_found`, `bad_note`.
 
 ### 사업용 카드 내역(08 D-04)
 
