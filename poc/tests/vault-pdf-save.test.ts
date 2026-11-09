@@ -55,6 +55,79 @@ describe('PDF 검사·경로(단위)', () => {
     }
   });
 
+  /** Chrome 없이 다운로드 이벤트를 넣는 PdfSaver. frameTreeMs만큼 늦게 답하는 Page.getFrameTree(하위 프레임 다운로드). */
+  async function fakeSaver(o: { frameTreeMs?: number; stallMs?: number } = {}) {
+    const staging = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pdf-order-'));
+    const emitted: Array<{ name: string; data: unknown }> = [];
+    const sent: string[] = [];
+    const log = { event: () => {} } as unknown as ConstructorParameters<typeof PdfSaver>[0]['log'];
+    const target = { targetId: 'T1', mainFrameId: 'T1', vaultSession: 'VS', type: 'page', url: '', paused: false, exposed: true, secretBackendIds: new Set<number>() };
+    const send = async (method: string) => {
+      sent.push(method);
+      if (method === 'Page.getFrameTree') {
+        await sleep(o.frameTreeMs ?? 0);
+        return { frameTree: { frame: { id: 'T1' }, childFrames: [{ frame: { id: 'SUB' } }] } };
+      }
+      return {};
+    };
+    const saver = new PdfSaver({
+      staging, log, send: send as never, exposed: (id) => (id === 'T1' ? target : undefined), emit: (name, data) => emitted.push({ name, data }),
+      maxBytes: 4096, stallMs: o.stallMs,
+    });
+    return { saver, staging, emitted, sent, close: () => fs.rm(staging, { recursive: true, force: true }) };
+  }
+
+  it('다운로드 이벤트 순서: downloadWillBegin을 처리하는 동안 온 completed를 버리지 않는다(Linux CI #239)', async () => {
+    // 중계는 브라우저 이벤트를 기다리지 않고 넘긴다. 작은 파일은 시작·끝 이벤트가 붙어 온다. 시작 처리(프레임 확인)가 끝나기 전에
+    // completed가 처리되면 그 다운로드는 "받는 중"으로 영원히 남고, 결과 이벤트가 없으며, 다음 무장은 already_armed가 된다.
+    for (const frameId of ['T1', 'SUB']) {
+      const f = await fakeSaver({ frameTreeMs: 50 });
+      try {
+        const guid = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
+        await fs.writeFile(path.join(f.staging, guid), '<!doctype html><html><body>not a pdf</body></html>');
+        assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: true });
+        const a = f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId });
+        const b = f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'completed', receivedBytes: 50, totalBytes: 50 });
+        await Promise.all([a, b]);
+        await f.saver.settled();
+        assert.deepEqual(f.emitted, [{ name: 'download.failed', data: { reason: 'not_pdf' } }], frameId);
+        assert.deepEqual(await fs.readdir(f.staging), [], `${frameId}: 거부한 바이트가 staging에 남지 않는다`);
+        assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: true }, `${frameId}: 다음 무장이 된다`);
+      } finally {
+        f.saver.shutdown();
+        await f.close();
+      }
+    }
+  });
+
+  it('끝 이벤트 없이 멈춘 다운로드는 상한 뒤 취소하고 canceled, 다음 무장이 된다', async () => {
+    const f = await fakeSaver({ stallMs: 200 });
+    try {
+      const guid = '11111111-2222-3333-4444-555555555555';
+      await fs.writeFile(path.join(f.staging, `${guid}.crdownload`), 'partial');
+      f.saver.arm({ runId: 'r1', targetId: 'T1' });
+      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' });
+      assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: false, reason: 'already_armed' }, '받는 중에는 무장 거부');
+      // 진행 이벤트는 기다림을 다시 센다.
+      await sleep(120);
+      await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'inProgress', receivedBytes: 10, totalBytes: 100 });
+      await sleep(120);
+      assert.deepEqual(f.emitted, [], '진행이 있으면 멈춘 것으로 보지 않는다');
+      await sleep(250);
+      await f.saver.settled();
+      assert.deepEqual(f.emitted, [{ name: 'download.failed', data: { reason: 'canceled' } }]);
+      assert.ok(f.sent.includes('Browser.cancelDownload'));
+      assert.deepEqual(await fs.readdir(f.staging), []);
+      assert.deepEqual(f.saver.arm({ runId: 'r1', targetId: 'T1' }), { armed: true });
+      // 뒤늦게 온 끝 이벤트는 무시한다(두 번 알리지 않는다).
+      await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'canceled' });
+      assert.equal(f.emitted.length, 1);
+    } finally {
+      f.saver.shutdown();
+      await f.close();
+    }
+  });
+
   it('엔진 포트에만 pdf.print·download.arm·download.disarm이 있다', () => {
     for (const m of ['pdf.print', 'download.arm', 'download.disarm']) {
       assert.ok(RPC_BY_PORT.engine.includes(m), m);
