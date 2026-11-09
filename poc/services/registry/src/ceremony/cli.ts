@@ -247,7 +247,8 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
         if (kind === 'revoked_keys') verifyRevoked(doc as never, trust, null, now);
         else if (kind === 'status') verifyStatus(doc as never, trust, revoked, null, now);
         else if (kind === 'policy') verifyPolicy(doc as never, trust, revoked, null, now);
-        else if (kind === 'index') verifyIndex(doc as never, channel, trust, revoked, null, now);
+        // 서버가 도장을 찍기 전 인덱스 초안(timestamp 없음)은 내용 서명·모양만 본다(ADR-043)
+        else if (kind === 'index') verifyIndex(doc as never, channel, trust, revoked, null, now, undefined, { content: doc.timestamp === undefined });
         else if (kind === 'release') verifyRelease(doc as never, channel, trust, revoked, null, now);
         else {
           const sigs = kind === 'root_change' ? (doc.rootChange as { signatures?: unknown } | undefined)?.signatures : doc.signatures;

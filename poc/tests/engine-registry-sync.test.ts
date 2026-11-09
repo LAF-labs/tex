@@ -12,11 +12,11 @@ import {
   acceptIndex, memoryRegistryStore, packagePath, rateTableSink, REGISTRY_PATHS, REGISTRY_TRUST_PIN, RegistrySync, rolloutBucket, settingsRegistryStore, trustRootsFromPin,
   type DataSink, type RegistryFetch, type RegistryIndex, type RegistryResponse, type TrustPin,
 } from '@sax/engine';
-import { canonicalWithout, sha256Hex, type RevokedKeys, type RegistryStatus } from '@sax/engine/core';
+import { sha256Hex, type RevokedKeys, type RegistryStatus } from '@sax/engine/core';
 import { COMMANDS, MAIN_ONLY, READ_QUERIES, REGISTRY_COMMANDS, REGISTRY_MAIN_ONLY, REGISTRY_READ_QUERIES } from '@sax/engine/protocol';
 import { FileEventLog } from '@sax/platform';
 import { rolloutBucket as serverBucket, verifyIndex } from '../services/registry/src/verify.ts';
-import { sigOf, signTimestamped } from './core-fixtures.ts';
+import { signTimestamped } from './core-fixtures.ts';
 import { SAMPLE_NOW, sampleKeys } from './registry-samples.ts';
 
 const DIR = path.resolve(import.meta.dirname, 'fixtures/registry');
@@ -301,6 +301,25 @@ describe('인덱스 수용: services/registry verifyIndex와 같은 판정', () 
     ['rollout 101', (ix) => ({ ...ix, entries: [{ ...ix.entries[0]!, rolloutPercent: 101 }] }), false],
     ['빈 항목', (ix) => ({ ...ix, entries: [] }), true],
   ];
+  // 신선도 서명(ADR-043): 내용 서명은 맞고 timestamp만 없거나 틀리면 둘 다 registry.timestamp_invalid
+  it('timestamp 없음·다른 키·다른 기간에 한 서명·내용 서명 키로 한 서명 → 거부(registry.timestamp_invalid), 폐기된 타임스탬프 키 → 거부', () => {
+    const good = sign(structuredClone(base));
+    const noTs = { ...good } as Partial<RegistryIndex>;
+    delete noTs.timestamp;
+    const other = sign({ ...structuredClone(base), expiresAt: '2026-11-12T00:00:00Z' });
+    const variants: Array<[string, RegistryIndex, ReadonlySet<string>]> = [
+      ['없음', noTs as RegistryIndex, new Set()],
+      ['다른 기간의 서명', { ...good, timestamp: other.timestamp }, new Set()],
+      ['패키지 키가 서명', { ...good, timestamp: { ...good.signatures[0]!, keyId: 'timestamp-1' } }, new Set()],
+      ['모양 틀림', { ...good, timestamp: 'x' as never }, new Set()],
+      ['폐기된 타임스탬프 키', good, new Set(['timestamp-1'])],
+    ];
+    for (const [name, doc, revoked] of variants) {
+      const e = acceptIndex(doc, { roots, revoked, current: null, now: SAMPLE_NOW });
+      assert.equal(e.ok ? 'ok' : e.code, 'registry.timestamp_invalid', `engine ${name}`);
+      assert.throws(() => verifyIndex(doc as never, 'stable', trust, revoked, null, SAMPLE_NOW), /registry\.timestamp_invalid/, `server ${name}`);
+    }
+  });
   for (const [name, mut, ok] of cases) {
     it(`${name} → ${ok ? '받음' : '거부'}`, () => {
       const doc = sign(mut(structuredClone(base)));
@@ -321,6 +340,8 @@ describe('인덱스 수용: services/registry verifyIndex와 같은 판정', () 
     assert.ok(cur.ok);
     const at = (m: (ix: RegistryIndex) => RegistryIndex) => acceptIndex(sign(m(structuredClone(base))), { roots, revoked: new Set(), current: cur.ok ? cur.accepted : null, now: SAMPLE_NOW });
     assert.equal(at((ix) => ix).ok, true);
+    // 같은 내용의 신선도 재서명(새 issuedAt·expiresAt·timestamp)은 같은 monotonic으로 받는다(ADR-043)
+    assert.equal(at((ix) => ({ ...ix, issuedAt: '2026-11-05T05:00:00Z', expiresAt: '2026-11-07T05:00:00Z' })).ok, true);
     assert.deepEqual(pick(at((ix) => ({ ...ix, monotonic: 6 }))), 'registry.version_rollback');
     assert.deepEqual(pick(at((ix) => ({ ...ix, entries: [] }))), 'registry.version_rollback');
     assert.deepEqual(pick(at((ix) => ({ ...ix, monotonic: 1008 }))), 'registry.version_jump_rejected');
@@ -398,11 +419,9 @@ describe('핀 키·main 통로', () => {
 function pick(r: { ok: boolean; code?: string }) {
   return r.ok ? 'ok' : r.code;
 }
-/** 인덱스를 패키지 키 1·2로 다시 서명한다. */
+/** 인덱스를 패키지 키 1·2(내용) + 타임스탬프 키(신선도)로 다시 서명한다(ADR-043). */
 function sign(ix: RegistryIndex): RegistryIndex {
-  const doc = { ...ix } as RegistryIndex & { signatures?: unknown };
-  delete doc.signatures;
-  return { ...doc, signatures: K.pkg.slice(0, 2).map((k) => sigOf(k, canonicalWithout(doc, ['signatures']))) } as RegistryIndex;
+  return signTimestamped(ix, K.pkg.slice(0, 2), K.ts);
 }
 function reindex(m: (ix: RegistryIndex) => RegistryIndex): Uint8Array {
   return bytes(sign(m(json<RegistryIndex>('registry/stable/index.json'))));

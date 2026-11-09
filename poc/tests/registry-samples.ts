@@ -107,12 +107,9 @@ export function buildSamples(): Map<string, Buffer> {
   const hfName = hotfixIndexName(hf);
   out.set(pkgPath(hfName.id, hfName.version), hfSxp);
 
-  // 인덱스(패키지 키 2-of-3, 서명 대상 = 인덱스 − signatures, 14일)
-  const index = (channel: string, es: Array<Record<string, unknown>>, monotonic: number) => {
-    const doc: Record<string, unknown> = { channel, monotonic, keyEpoch: 1, issuedAt: ISSUED, expiresAt: PLUS_H(14 * 24), entries: es };
-    doc.signatures = two.map((k) => sigOf(k, canonicalWithout(doc, ['signatures'])));
-    return json(doc);
-  };
+  // 인덱스(ADR-043): 내용 = 인덱스 − signatures·issuedAt·expiresAt·timestamp에 패키지 키 2-of-3, 신선도 = 타임스탬프 키(받는 쪽 상한 14일)
+  const index = (channel: string, es: Array<Record<string, unknown>>, monotonic: number) =>
+    json(signTimestamped({ channel, monotonic, keyEpoch: 1, issuedAt: ISSUED, expiresAt: PLUS_H(14 * 24), entries: es, signatures: [], timestamp: { keyId: '', alg: 'ed25519', sig: '' } }, two, K.ts));
   // 데이터 패키지(SIGNING.md §6 kind:data): 급여 비과세 한도 표 하나(sax.rate-tables/v1). 기술자 = 패키지 키 2-of-3, bodyDigest = 본문 원시 바이트.
   const body = json(SAMPLE_RATE_TABLES);
   const desc: Record<string, unknown> = { id: 'payroll.rate-tables', version: SAMPLE_RATE_TABLES.packageVersion, schema: SAMPLE_RATE_TABLES.schema, bodyDigest: sha256Hex(body), keyEpoch: 1, issuedAt: ISSUED };

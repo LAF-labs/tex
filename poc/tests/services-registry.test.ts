@@ -14,7 +14,6 @@ import {
   acceptRevoked,
   acceptStatus,
   canonicalJson,
-  canonicalWithout,
   countSignatures as engineCount,
   decodeSxp,
   encodeSxp,
@@ -142,11 +141,12 @@ const entryOf = (file: string, kind: string, o: object = {}) => {
   return { id: id!, version: v!, kind, portal: 'hometax', sxpDigest: sha256Hex(b), size: b.length, rolloutPercent: 10, ...o };
 };
 
-/** 패키지 키 2-of-3(기본 1·2번)로 서명한 인덱스. 내용 = index − signatures(만료 포함, 타임스탬프 없음) */
-function index(e: Env, o: { monotonic?: number; entries?: unknown[]; signers?: number[]; ring?: Role; issuedAt?: number; expiresAt?: number; keyEpoch?: number; channel?: string } = {}) {
+/** 패키지 키 2-of-3(기본 1·2번)로 서명한 인덱스(ADR-043): 내용 = index − signatures·issuedAt·expiresAt·timestamp, 신선도 = 타임스탬프 키 */
+function index(e: Env, o: { monotonic?: number; entries?: unknown[]; signers?: number[]; ring?: Role; issuedAt?: number; expiresAt?: number; keyEpoch?: number; channel?: string; noTimestamp?: boolean } = {}) {
   const now = e.clock.now();
-  const doc = { channel: o.channel ?? 'stable', monotonic: o.monotonic ?? 1, keyEpoch: o.keyEpoch ?? 1, issuedAt: iso(o.issuedAt ?? now), expiresAt: iso(o.expiresAt ?? now + 7 * D), entries: o.entries ?? [] };
-  return { ...doc, signatures: (o.signers ?? [0, 1]).map((i) => sigOf(doc, e.ring[o.ring ?? 'package'][i]!)) };
+  const issuedAt = o.issuedAt ?? now;
+  const body = { channel: o.channel ?? 'stable', monotonic: o.monotonic ?? 1, keyEpoch: o.keyEpoch ?? 1, entries: o.entries ?? [] };
+  return fresh(e, body, o.ring ?? 'package', o.signers ?? [0, 1], { issuedAt, ttl: (o.expiresAt ?? now + 7 * D) - issuedAt, noTimestamp: o.noTimestamp });
 }
 
 /** 정책·status·폐기 목록 공통: 내용 서명 + 타임스탬프 서명(SIGNING.md §2·§4) */
@@ -243,7 +243,7 @@ describe('M4-7 레지스트리: 엔진 샘플 묶음과 상호 검증(SIGNING.md
     const files = new Map<string, Buffer>();
     for (const ch of ['stable', 'hotfix']) {
       const ix = JSON.parse((await get(`/registry/${ch}/index.json`)).toString()) as { entries: Array<{ id: string; version: string; sxpDigest: string; size: number }>; signatures: never[] };
-      assert.equal(engineCount(canonicalWithout(ix, ['signatures']), ix.signatures, K.roots.packageKeys, new Set()).valid.length, 2, ch);
+      assert.equal(engineCount(Buffer.from(jcs(without(ix, FRESH))), ix.signatures, K.roots.packageKeys, new Set()).valid.length, 2, ch);
       for (const x of ix.entries) {
         const b = await get(`/packages/${x.id}@${x.version}.sxp`);
         assert.equal(sha256Hex(b), x.sxpDigest);
@@ -343,7 +343,10 @@ describe('M4-7 레지스트리: 인덱스 2-of-3·버전·만료·채널', () =>
     const same = index(e, { monotonic: 5 });
     assert.equal((await e.put('/admin/v1/index/stable', same)).status, 200);
     assert.equal((await e.put('/admin/v1/index/stable', same)).status, 200);
-    assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 5, expiresAt: e.clock.now() + 8 * D }))).json.error, 'registry.version_rollback');
+    // 같은 monotonic·같은 내용의 신선도 재발행(기간만 다름)은 받고, 같은 monotonic에 다른 항목은 롤백(ADR-043)
+    assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 5, expiresAt: e.clock.now() + 8 * D }))).status, 200);
+    await e.stage(LOOKUP);
+    assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 5, entries: [entryOf(LOOKUP, 'lookup')] }))).json.error, 'registry.version_rollback');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 4 }))).json.error, 'registry.version_rollback');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 1006 }))).json.error, 'registry.version_jump_rejected');
     assert.equal((await e.put('/admin/v1/index/stable', index(e, { monotonic: 1005 }))).status, 200);
@@ -606,7 +609,8 @@ describe('M4-7 레지스트리: 게시 원자성·재시도', () => {
 
   it('동시 게시는 하나씩: 같은 monotonic의 다른 인덱스 둘 중 하나만, 같은 키 동시 쓰기도 섞이지 않는다', async () => {
     const e = await start();
-    const rs = await Promise.all([e.put('/admin/v1/index/stable', index(e, { monotonic: 7 })), e.put('/admin/v1/index/stable', index(e, { monotonic: 7, expiresAt: e.clock.now() + 8 * D }))]);
+    await e.stage(LOOKUP);
+    const rs = await Promise.all([e.put('/admin/v1/index/stable', index(e, { monotonic: 7 })), e.put('/admin/v1/index/stable', index(e, { monotonic: 7, entries: [entryOf(LOOKUP, 'lookup')] }))]);
     assert.deepEqual(rs.map((r) => r.status).sort(), [200, 422]);
     e.server.close();
     const dir = await mkdtemp(path.join(tmpdir(), 'sax-registry-'));

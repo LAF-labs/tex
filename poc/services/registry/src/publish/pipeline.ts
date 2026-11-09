@@ -44,8 +44,6 @@ import { collectSignatures, type SignatureRecord, type TrustPin } from '../cerem
 import { CeremonyError, confirmCode, prepare as prepareDoc, type DocKind } from '../ceremony/content.ts';
 
 export const PLAN_TOOL = 'sax-publish/1';
-/** 인덱스 유효 기간(관문 상한 14일과 같다). 인덱스에는 타임스탬프가 없어 사람이 이 안에 다시 서명해야 한다 */
-export const INDEX_TTL_MS = 14 * 24 * 3_600_000;
 /** 게시 관문 함수 본문 상한(Vercel 함수 4.5MB, JSON base64 포함)보다 낮게 */
 export const PUT_BODY_MAX = 4_000_000;
 const DOC_MAX = 512 * 1024;
@@ -183,8 +181,8 @@ export interface Plan {
   keyEpoch: number;
   trustSha256: string;
   rolloutPercent: number;
-  /** 준비할 때 본 레지스트리 인덱스(assemble·push가 그사이 바뀌지 않았는지 본다) */
-  baseIndex: { monotonic: number; sha256: string } | null;
+  /** 준비할 때 본 레지스트리 인덱스(assemble·push가 그사이 바뀌지 않았는지 본다). 바이트가 아니라 내용으로 본다: cron 신선도 재서명은 바이트만 바꾼다(ADR-043) */
+  baseIndex: { monotonic: number; contentDigest: string } | null;
   packages: PlanPackage[];
   docs: PlanDoc[];
 }
@@ -451,7 +449,7 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     keyEpoch: o.trust.keyEpoch,
     trustSha256: sha(o.trustBytes),
     rolloutPercent: o.rolloutPercent,
-    baseIndex: index && indexBytes ? { monotonic: index.monotonic, sha256: sha(indexBytes) } : null,
+    baseIndex: index ? { monotonic: index.monotonic, contentDigest: contentDigest(index) } : null,
     packages: built.map((b) => b.pkg),
     docs,
   };
@@ -501,10 +499,10 @@ function loadPlan(w: Work, trust: TrustRoot, trustBytes: Buffer): Plan {
 
 async function checkBase(plan: Plan, registry: RegistryClient): Promise<RegistryIndex | null> {
   if (checkOrigin(plan.registry) !== registry.origin) err('publish.registry_changed', registry.origin);
-  const b = await registry.get(`/registry/${plan.channel}/index.json`);
-  const now = b ? { monotonic: parseJson<RegistryIndex>(b, 'index')!.monotonic, sha256: sha(b) } : null;
+  const cur = parseJson<RegistryIndex>(await registry.get(`/registry/${plan.channel}/index.json`), 'index');
+  const now = cur ? { monotonic: cur.monotonic, contentDigest: contentDigest(cur) } : null;
   if (JSON.stringify(now) !== JSON.stringify(plan.baseIndex)) err('publish.index_changed', '준비한 뒤 레지스트리 인덱스가 바뀌었다(prepare부터 다시)');
-  return parseJson<RegistryIndex>(b, 'index');
+  return cur;
 }
 
 export interface AssembleOpts {
@@ -562,15 +560,14 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
     verifyPackageBytes(b, e);
     verifySxp(b, e, o.trust, revoked, o.now);
   }
-  const index: RegistryIndex = {
+  // 초안에는 신선도 필드(issuedAt·expiresAt·timestamp)가 없다. 게시 관문이 올릴 때 타임스탬프 키로 붙이고, 그 뒤로는 cron이 다시 서명한다(ADR-043)
+  const index = {
     channel: plan.channel,
     monotonic: (current?.monotonic ?? 0) + 1,
     keyEpoch: o.trust.keyEpoch,
-    issuedAt: iso(o.now),
-    expiresAt: iso(o.now + INDEX_TTL_MS),
     entries: [...carried, ...entries].sort((a, b) => `${a.id}@${a.version}`.localeCompare(`${b.id}@${b.version}`)),
     signatures: [],
-  };
+  } as unknown as RegistryIndex;
   if (Buffer.byteLength(JSON.stringify(index)) > DOC_MAX) err('publish.body_too_large', 'index');
   for (const t of toWrite) {
     // 서명이 결정적(Ed25519)이라 다시 돌리면 같은 바이트다. 다르면 작업 폴더가 섞인 것이다
@@ -585,7 +582,7 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
   o.out(`묶음: 패키지 ${entries.length}개(엔진 로더·관문 규칙 통과, 실제 서명)`);
   for (const e of entries) o.out(`  ${e.id}@${e.version} ${e.kind} ${e.size}B sxp ${e.sxpDigest}`);
   if (carried.length) o.out(`  이어 둔 항목 ${carried.length}개: ${carried.map((e) => `${e.id}@${e.version}`).join(', ')}`);
-  o.out(`인덱스 ${plan.channel} monotonic ${index.monotonic}, ${index.issuedAt} ~ ${index.expiresAt}(이 안에 게시하고, 14일마다 다시 서명한다)`);
+  o.out(`인덱스 ${plan.channel} monotonic ${index.monotonic}, 항목 ${index.entries.length}개(기간은 서버가 붙이고 다시 서명한다)`);
   o.out(`인덱스 확인 코드 ${confirmCode(p.sha256)}`);
   o.out('다음: 서명 2번(Touch ID)');
   for (const keyId of ['package-1', 'package-2']) o.out(`  ${signCommand({ kind: 'index', keyId, confirm: confirmCode(p.sha256), trust: o.trustPath, doc: wp(w, W.index), out: wp(w, W.sig('index', keyId)) })}`);
@@ -657,7 +654,7 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
   if (hasIndex) {
     const draft = wjson<Record<string, unknown>>(w, W.index);
     index = collectSignatures('index', draft, sigRecords(w, 'index'), o.trust as unknown as TrustPin, revoked).doc as unknown as RegistryIndex;
-    verifyIndex(index, plan.channel, o.trust, revoked, current, o.now);
+    verifyIndex(index, plan.channel, o.trust, revoked, current, o.now, undefined, { content: true });
     for (const p of plan.packages.filter((x) => !x.published)) {
       const b = wread(w, W.sxp(p.name));
       const e = index.entries.find((x) => x.id === p.id && x.version === p.version) ?? err('publish.work_invalid', `${p.name} 인덱스 항목 없음`);
@@ -698,7 +695,13 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
     if (p.bytes && !b.equals(p.bytes)) err('publish.readback_failed', p.path);
     got.set(p.path, b);
   }
-  if (index && canonicalJson(parseJson(got.get(`registry/${plan.channel}/index.json`)!, 'index')) !== canonicalJson(index)) err('publish.readback_failed', 'index');
+  // 인덱스: 서명한 내용 그대로이고(서버는 신선도 필드만 붙인다), 붙인 신선도까지 관문 규칙을 통과해야 한다
+  let indexOut: RegistryIndex | null = null;
+  if (index) {
+    indexOut = parseJson<RegistryIndex>(got.get(`registry/${plan.channel}/index.json`)!, 'index')!;
+    if (contentDigest(indexOut) !== contentDigest(index) || canonicalJson(indexOut.signatures) !== canonicalJson(index.signatures)) err('publish.readback_failed', 'index');
+    verifyIndex(indexOut, plan.channel, o.trust, revoked, current, o.now);
+  }
   if (revokedOut) {
     const r = parseJson<RevokedKeys>(got.get('registry/revoked_keys.json')!, 'revoked_keys')!;
     if (contentDigest(r) !== contentDigest(revokedOut)) err('publish.readback_failed', 'revoked_keys');
@@ -742,7 +745,7 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
     channel: plan.channel,
     publishedAt: iso(o.now),
     published: logged,
-    index: index ? { monotonic: index.monotonic, expiresAt: index.expiresAt } : { monotonic: current?.monotonic ?? 0, expiresAt: current?.expiresAt ?? '' },
+    index: indexOut ? { monotonic: indexOut.monotonic, expiresAt: indexOut.expiresAt } : { monotonic: current?.monotonic ?? 0, expiresAt: current?.expiresAt ?? '' },
     logHead: { before: before.treeSize, after: after.treeSize, rootHash: after.rootHash },
   };
   wwrite(w, W.record, pretty(record));

@@ -29,8 +29,8 @@ export function quorumFor(role: Role): number {
   return 2;
 }
 
-/** 타임스탬프(신선도) 서명이 붙는 문서(SIGNING.md §4). 내용 서명과 따로, 온라인 타임스탬프 키 1개가 한다. */
-export const TIMESTAMPED: ReadonlySet<DocKind> = new Set(['revoked_keys', 'status', 'policy']);
+/** 타임스탬프(신선도) 서명이 붙는 문서(SIGNING.md §4, 인덱스는 ADR-043). 내용 서명과 따로, 온라인 타임스탬프 키 1개가 한다. */
+export const TIMESTAMPED: ReadonlySet<DocKind> = new Set(['revoked_keys', 'status', 'policy', 'index']);
 
 const FRESHNESS = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
 
@@ -54,8 +54,8 @@ export function signingBytes(kind: DocKind, doc: unknown): Buffer {
     case 'revoked_keys':
     case 'status':
     case 'policy':
+    case 'index': // ADR-043: 인덱스도 신선도 필드를 뺀 내용에 서명한다
       return canonicalWithout(d, FRESHNESS);
-    case 'index':
     case 'manifest':
     case 'hotfix':
     case 'data_descriptor':
