@@ -33,6 +33,7 @@ import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, IntentResolver } from './intent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
+import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -76,6 +77,11 @@ for (const m of BUNDLE_REQUEST_COMMANDS) {
 }
 // 사업용 카드 내역 화면(M6-3)도 BundleService가 맡는다.
 for (const m of [...CARD_READ_QUERIES, ...CARD_COMMANDS]) {
+  PAYROLL.add(m);
+  ALLOWED.add(m);
+}
+// 급여대장 직원 입력·지난달과 같나요?·급여 기능 켜기(M6-9)도 BundleService가 맡는다.
+for (const m of [...PAYROLL_EMPLOYEE_READ_QUERIES, ...PAYROLL_EMPLOYEE_COMMANDS]) {
   PAYROLL.add(m);
   ALLOWED.add(m);
 }
