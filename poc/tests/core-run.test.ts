@@ -337,6 +337,14 @@ describe('전이표 (D03 §2)', () => {
     assert.ok(r.ok && r.state.name === 'CompletedWithIssues' && r.effects.includes('ui.fixed:issued_do_not_rerun'));
     assert.equal(name(transition(running(), { t: 'end_with_issues' }, OK)), 'CompletedWithIssues');
   });
+  it('사후 스텝 실패 일반화(D03 §2): committed가 있으면 복구 실패(핸드오프·실패 모두)는 CompletedWithIssues, 없으면 그대로', () => {
+    const done: MachineCtx = { allowed: true, ledger: ['not_committed', 'committed'] };
+    for (const then of ['handoff', 'fail'] as const) {
+      const r = transition(state('Recovering'), { t: 'recovery_failed', then }, done);
+      assert.ok(r.ok && r.state.name === 'CompletedWithIssues' && r.effects.includes('ui.fixed:issued_do_not_rerun') && r.effects.includes('input.unlock'), then);
+      assert.equal(name(transition(state('Recovering'), { t: 'recovery_failed', then }, { allowed: true, ledger: ['not_committed'] })), then === 'handoff' ? 'HandedOff' : 'Failed');
+    }
+  });
   it('Paused·Interrupted 재개는 같은 package_digest일 때만(아니면 다시 시작만)', () => {
     assert.equal(name(transition(state('Paused'), { t: 'resume', samePackageDigest: true }, OK)), 'Running');
     assert.equal(name(transition(state('Paused'), { t: 'resume', samePackageDigest: false }, OK)), 'engine.restart_only');

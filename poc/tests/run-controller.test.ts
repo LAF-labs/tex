@@ -1074,6 +1074,22 @@ describe('save_pdf(M2-3, D02 §4, D03 §2): 사후 스텝 실패는 CompletedWit
     assert.deepEqual([(await k.c.start()).state, u.n.print], ['Failed', 0]);
   });
 
+  it('사후 스텝 실패 일반화: save_pdf 밖의 실패(end failed·handoff, 처리기 없음)도 committed가 있으면 CompletedWithIssues', async () => {
+    for (const step of [
+      { id: 's33', type: 'end', status: 'failed', code: 'mail.lookup_failed' },
+      { id: 's33', type: 'end', status: 'handoff', code: 'mail.lookup_failed' },
+      { id: 's33', type: 'save_pdf', strategy: 'print', docType: 'tax_invoice' },
+    ] as unknown as Step[]) {
+      const h = mk([CP, step, END]);
+      h.st.ledger = ['committed'];
+      const r = await h.c.start();
+      assert.equal(r.state, 'CompletedWithIssues', JSON.stringify(step));
+      assert.ok(h.rec.effects.includes('ui.fixed:issued_do_not_rerun'));
+      const before = mk([CP, step, END]);
+      assert.notEqual((await before.c.start()).state, 'CompletedWithIssues', `커밋 전은 그대로: ${JSON.stringify(step)}`);
+    }
+  });
+
   it('포트가 없으면 save_pdf는 실행하지 않는다(engine.unhandled_step)', async () => {
     const h = mk([CP, PDF, END]);
     assert.deepEqual((await h.c.start()).code, 'engine.unhandled_step');
