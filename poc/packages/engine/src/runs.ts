@@ -11,7 +11,7 @@ import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
-import { IrRun, type IrPackage } from './run/service-ir.ts';
+import { IrRun, type IrPackage, type IrSourceResult } from './run/service-ir.ts';
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
 // 그 포트로 온 것만 받는다(ADR-021). Phase 1처럼 엔진은 HMAC 키가 없어 MAC을 검증하지 않고 포트 출처만 믿는다.
@@ -63,6 +63,8 @@ interface ActiveRun {
   policy: RunPolicy | null;
   /** IR 경로(engine 'ir')의 실행. H01 경로면 null. */
   ir: IrRun | null;
+  /** 이 실행이 시작할 때 고른 패키지(engine 'ir'). 실행 중에 설치본이 바뀌어도 이 실행은 이것으로 끝난다. */
+  pkg: IrPackage | null;
 }
 
 export interface RunServiceDeps {
@@ -86,7 +88,13 @@ export interface RunServiceDeps {
    * 'h01': H01Runner(TS 플레이북). 제품 entry는 패키지 공급(레지스트리 게시)과 시연 방식이 정해질 때까지 'h01'을 명시한다(PR-D2에서 뺀다).
    */
   engine?: 'h01' | 'ir';
+  /** 고정 패키지(시험·골든 대조). 있으면 irSource보다 먼저 쓴다. */
   ir?: IrPackage;
+  /**
+   * 실행을 시작할 때마다 부르는 패키지 공급(PR-D2, installedIrSource: 레지스트리에서 받아 둔 설치본을 loadPackage로 다시 검증).
+   * 실패면 시작이 package.not_loaded(설치본 없음) 또는 package.load_failed(검증 실패, 로그에 코드)다.
+   */
+  irSource?: () => IrSourceResult;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
   trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
 }
@@ -190,8 +198,7 @@ export class RunService extends EventEmitter {
     };
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
-    const irPkg = this.engine === 'ir' ? this.d.ir : undefined;
-    if (this.engine === 'ir' && !irPkg) throw new RunEnd('failed', 'package.not_loaded');
+    const irPkg = this.engine === 'ir' ? this.packageForRun() : undefined;
     const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
     const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
     const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
@@ -214,7 +221,7 @@ export class RunService extends EventEmitter {
       this.journal.append(p.runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
       this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
     }
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null };
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -281,9 +288,19 @@ export class RunService extends EventEmitter {
     this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
   }
 
+  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
+  private packageForRun(): IrPackage {
+    if (this.d.ir) return this.d.ir;
+    const r = this.d.irSource?.() ?? { ok: false as const, code: 'package.not_loaded' };
+    if (r.ok) return r.ir;
+    if (r.code === 'package.not_loaded') throw new RunEnd('failed', 'package.not_loaded');
+    this.d.log.event('run.package_refused', { code: r.code });
+    throw new RunEnd('failed', 'package.load_failed');
+  }
+
   /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
   private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean }> {
-    const ir = this.d.ir!;
+    const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
       runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: this.d.portal, rate: this.rate,

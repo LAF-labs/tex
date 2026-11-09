@@ -406,11 +406,11 @@ describe('핀 키·main 통로', () => {
     assert.ok(Array.isArray(s.sync.revocation().keyIds));
   });
 
-  it('엔진 진입점 배선: 레지스트리 이름을 허용하고, 핀이 없으면 registry.not_pinned, fetch는 Egress 목적지가 들어오기 전까지 null', () => {
+  it('엔진 진입점 배선: 레지스트리 이름을 허용하고, 핀이 없으면 registry.not_pinned, fetch는 Egress 레지스트리 바이트 GET(PR-D2), H-01 패키지를 받는다', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
     assert.match(src, /REGISTRY_READ_QUERIES, \.\.\.REGISTRY_COMMANDS/);
     assert.match(src, /registry\.not_pinned/);
-    assert.match(src, /if \(REGISTRY_TRUST_PIN\) registry = new RegistrySync\(\{ trust: REGISTRY_TRUST_PIN, fetch: null,/);
+    assert.match(src, /if \(REGISTRY_TRUST_PIN\) registry = new RegistrySync\(\{ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch\(egress\), store: settingsRegistryStore\(db\), packages: \{ ids: \[PRODUCT_PACKAGES\.h01\] \},/);
     assert.ok(!/fetch\(/.test(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/registry-sync.ts'), 'utf8').replace(/this\.o\.fetch!\(/g, '')), '동기화 모듈은 전역 fetch를 쓰지 않는다');
   });
 });

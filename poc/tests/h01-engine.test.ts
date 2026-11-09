@@ -395,6 +395,21 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     assert.match(entry[0]!, /engine: 'h01'/);
   });
 
+  it('irSource(PR-D2 패키지 공급): 시작할 때마다 부르고, 설치본 없음은 package.not_loaded, 검증 실패는 package.load_failed(로그에는 코드만), 둘 다 브라우저를 열지 않는다', () => {
+    let opened = 0;
+    let calls = 0;
+    let answer: { ok: false; code: string } = { ok: false, code: 'package.not_loaded' };
+    const svc = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: async () => (opened++, page!), postGate: () => {}, irSource: () => (calls++, answer) });
+    const go = () => svc.start({ runId: `run-${++n}`, counterpartyId: cpC, supply: 150_000, tax: 15_000, itemName: '경영 컨설팅' });
+    assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.not_loaded');
+    answer = { ok: false, code: 'registry.signature_insufficient' };
+    const before = log.lines.length;
+    assert.throws(go, (e: Error & { code?: string }) => e.code === 'package.load_failed');
+    assert.deepEqual(log.lines.slice(before).map((l) => JSON.parse(l) as Record<string, unknown>).filter((l) => l.code === 'run.package_refused').map((l) => l.code_), ['registry.signature_insufficient']);
+    assert.equal(calls, 2);
+    assert.equal(opened, 0);
+  });
+
   it('승인 대기가 waitMs를 넘으면 만료(발급 없음), 만료 뒤 근거는 통하지 않는다', async () => {
     const short = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, gateWaitMs: 400, page: async () => page!, postGate: (m) => gateMsgs.push(m) });
     short.on('event', (e: RunEvent) => events.push(e));
