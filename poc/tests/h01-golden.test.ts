@@ -72,6 +72,8 @@ class Side {
   dir!: string;
   data!: DataService;
   cp: Record<'A' | 'C', string> = { A: '', C: '' };
+  /** IR 쪽 irSource 호출 수(실행 시작마다 하나). */
+  sourced = 0;
   constructor(engine: Engine) {
     this.engine = engine;
   }
@@ -114,7 +116,8 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       db: s.db, data: s.data, ledgerKey, portal: fixturePortal(fx.origin), log,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => s.gateMsgs.push(m),
-      ...(ir ? { engine: 'ir' as const, ir } : { engine: 'h01' as const }),
+      // IR 쪽은 제품과 같은 실행 시작 공급(irSource)으로 받는다(PR-D2). 시작마다 부른다.
+      ...(ir ? { engine: 'ir' as const, irSource: () => (s.sourced++, { ok: true as const, ir }) } : { engine: 'h01' as const }),
       trace: (runId, e) => {
         if (e.name !== 'step.started') return;
         const t = s.traces.get(runId) ?? [];
@@ -348,6 +351,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
   it('[IR ①] 발급 안 됨 → s11로 돌아가 두 번째 게이트: 카드에 $dup.priorNotCommitted, 첫 승인으로는 못 넘고 새 승인으로만 발급한다', async () => {
     const s = sides.ir;
     let first: GateRequest | null = null;
+    const sourced = s.sourced;
     const o = await observe(s, 'C', 910_000, async (req, runId, runs) => {
       first = req!;
       assert.deepEqual(runs.answer(approval(req!)), { ok: true });
@@ -362,6 +366,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.deepEqual([o.status, o.ledger, o.posts, o.approvalNo], ['success', 'committed', 2, true], JSON.stringify(o));
     assert.equal(o.steps.filter((x) => x === 's20').length, 2, '게이트 두 번');
     assert.equal(o.steps.filter((x) => x === 's21').length, 2, '제출 두 번(각각 새 승인 뒤)');
+    assert.equal(s.sourced - sourced, 1, '패키지는 실행 시작에 한 번 고르고, 재게이트는 같은 패키지로 이어간다');
   });
 
   it('[IR ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않고 s11로 돌아가, 바뀐 화면을 다시 채운 값으로 다시 승인받는다', async () => {

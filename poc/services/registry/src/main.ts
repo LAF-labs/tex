@@ -44,7 +44,7 @@ export async function startRegistry(env: NodeJS.ProcessEnv = process.env, deps: 
   const signer = logSigningKey(env.REGISTRY_LOG_SIGNING_KEY, trust);
   const db = env.DATABASE_URL || env.SAX_SQLITE_FILE ? openFromEnv(env) : env.REGISTRY_STORE === 'memory' ? openSqlite() : fail('DATABASE_URL');
   const log = await TransparencyLog.open({ db, signer, now: Date.now, migrate: env.MIGRATE_ON_START !== '0' });
-  const router = registryRouter({ store, trust, adminToken: env.REGISTRY_ADMIN_TOKEN ?? fail('REGISTRY_ADMIN_TOKEN'), now: Date.now, onEvent: (e) => logger.event(e), log });
+  const router = registryRouter({ store, trust, adminToken: env.REGISTRY_ADMIN_TOKEN ?? fail('REGISTRY_ADMIN_TOKEN'), now: Date.now, onEvent: (e) => logger.event(e), log, stamper: signer });
   const server = createServer(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const url = await listen(server, Number(env.PORT ?? 8082), env.HOST ?? '0.0.0.0');
   return { server, url, log, close: async () => (server.close(), await db.close()) };

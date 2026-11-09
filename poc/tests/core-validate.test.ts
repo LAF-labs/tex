@@ -1,5 +1,5 @@
 // D02 §6.1 정적 검증 V-01~V-24(V-03a~l·V-03c′·V-03j′·V-03j″)와 반례 회귀 CE-1~CE-14·CE-17·CE-18(D02 §6.2, D13 §7).
-// 골든 H-01 v2.1(tests/fixtures/core)을 복제해 한 군데만 바꾸고, 기대한 규칙 번호로 거부되는지 본다.
+// 골든 H-01 v2.1(제품 원본 packages/engine/playbooks)을 복제해 한 군데만 바꾸고, 기대한 규칙 번호로 거부되는지 본다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildCfg, commitWindow, fixtureUrlProblem, hostAllowed, lookupViolations, nameTemplateProblem, re2Problem, urlProblem, validatePackage, looksLikeUserData, type PackageFiles, type Step } from '@sax/engine/core';

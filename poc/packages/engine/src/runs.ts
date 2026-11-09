@@ -11,7 +11,10 @@ import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
-import { IrRun, type IrPackage } from './run/service-ir.ts';
+import { IrRun, type IrPackage, type IrSourceResult } from './run/service-ir.ts';
+import type { RunPermit } from './core/permit.ts';
+
+type Denied = Extract<RunPermit, { ok: false }>;
 
 // 실행·게이트·원장 조율(D03 §2~§5). 게이트 요청은 main↔엔진 전용 포트로만 내보내고, 승인 근거(LocalApproval v2)도
 // 그 포트로 온 것만 받는다(ADR-021). Phase 1처럼 엔진은 HMAC 키가 없어 MAC을 검증하지 않고 포트 출처만 믿는다.
@@ -63,6 +66,12 @@ interface ActiveRun {
   policy: RunPolicy | null;
   /** IR 경로(engine 'ir')의 실행. H01 경로면 null. */
   ir: IrRun | null;
+  /** 이 실행이 시작할 때 고른 패키지(engine 'ir'). 실행 중에 설치본이 바뀌어도 이 실행은 이것으로 끝난다. */
+  pkg: IrPackage | null;
+  /** 허가(permit)를 묻는 플레이북 id(IR은 패키지 manifest id, H01은 H01.id). */
+  playbookId: string;
+  /** H01 경로의 정지 하향 사유(한 번 정해지면 그대로). IR 경로는 IrRun이 갖는다. */
+  downgraded: Denied | null;
 }
 
 export interface RunServiceDeps {
@@ -86,7 +95,20 @@ export interface RunServiceDeps {
    * 'h01': H01Runner(TS 플레이북). 제품 entry는 패키지 공급(레지스트리 게시)과 시연 방식이 정해질 때까지 'h01'을 명시한다(PR-D2에서 뺀다).
    */
   engine?: 'h01' | 'ir';
+  /** 고정 패키지(시험·골든 대조). 있으면 irSource보다 먼저 쓴다. */
   ir?: IrPackage;
+  /**
+   * 실행을 시작할 때마다 부르는 패키지 공급(PR-D2, installedIrSource: 레지스트리에서 받아 둔 설치본을 loadPackage로 다시 검증).
+   * 실패면 시작이 package.not_loaded(설치본 없음) 또는 package.load_failed(검증 실패, 로그에 코드)다.
+   */
+  irSource?: () => IrSourceResult;
+  /**
+   * 실행 허가(D03 §2 Running 진입 확인·정지 하향, §3.1 status 소비, §12 실효 수준, ADR-023 결정 5·6). 시작 전, 스텝 경계마다,
+   * recheckPermit(레지스트리 동기화 뒤)에서 부른다. 제품 entry는 레지스트리 status로 계산한다(core runPermit). 없으면 늘 허가(시험).
+   */
+  permit?: (playbookId: string) => RunPermit;
+  /** 정지 하향이 postprocess·kill(hardStop)이면 실행이 끝난 뒤 자동화 Chrome을 닫는다(D03 §2 하향 행). */
+  closeBrowser?: () => Promise<void>;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
   trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
 }
@@ -190,11 +212,16 @@ export class RunService extends EventEmitter {
     };
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
-    const irPkg = this.engine === 'ir' ? this.d.ir : undefined;
-    if (this.engine === 'ir' && !irPkg) throw new RunEnd('failed', 'package.not_loaded');
+    const irPkg = this.engine === 'ir' ? this.packageForRun() : undefined;
     const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
     const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
     const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
+    // 서버 긴급 정지(status kill·상한): 브라우저를 열기 전, 요청률 카운터를 쓰기 전에 거부한다.
+    const pm = this.d.permit?.(playbookId);
+    if (pm && !pm.ok) {
+      this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: pm.code });
+      throw new RunEnd('failed', pm.code);
+    }
     const check = this.ledger.checkIntent(intentId, 's21', playbookId, inputsHash);
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
     // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
@@ -214,7 +241,7 @@ export class RunService extends EventEmitter {
       this.journal.append(p.runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
       this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
     }
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null };
+    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null, playbookId, downgraded: null };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -268,6 +295,8 @@ export class RunService extends EventEmitter {
       const code = latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
       result = { ...result, status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? result.approvalNo };
     }
+    // 정지 하향이 postprocess·kill이면 그 포털의 자동화 Chrome을 닫는다(무장 뒤 미룬 H01 하향도 실행이 끝났으니 닫는다).
+    if ((a.downgraded ?? a.ir?.downgraded)?.hardStop) await this.d.closeBrowser?.().catch(() => {});
     this.closeGate(a, 'run_ended');
     // 승인됐지만 armed까지 가지 못한 게이트(스텝 지연 중 신호, armed 트랜잭션 거부 등)는 거부로 되돌린다.
     if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
@@ -281,13 +310,24 @@ export class RunService extends EventEmitter {
     this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
   }
 
+  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
+  private packageForRun(): IrPackage {
+    if (this.d.ir) return this.d.ir;
+    const r = this.d.irSource?.() ?? { ok: false as const, code: 'package.not_loaded' };
+    if (r.ok) return r.ir;
+    if (r.code === 'package.not_loaded') throw new RunEnd('failed', 'package.not_loaded');
+    this.d.log.event('run.package_refused', { code: r.code });
+    throw new RunEnd('failed', 'package.load_failed');
+  }
+
   /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
   private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean }> {
-    const ir = this.d.ir!;
+    const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
       runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: this.d.portal, rate: this.rate,
       profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
+      ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
       inputs: { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) },
       db: this.d.db, ledger: this.ledger, gates: this.gates,
       history: (rb) => {
@@ -323,6 +363,11 @@ export class RunService extends EventEmitter {
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
   private checkStop(a: ActiveRun): void {
+    // 스텝 경계: 동기화 알림이 없어도 status가 바뀌었으면 여기서 멈춘다(D03 §2 하향 행 "다음 스텝 경계에서").
+    if (!a.downgraded) {
+      const p = this.d.permit?.(a.playbookId);
+      if (p && !p.ok) this.downgradeH01(a, p);
+    }
     if (a.halt) throw a.halt;
     if (a.stop) throw new RunEnd('stopped', 'run.stopped');
   }
@@ -515,6 +560,42 @@ export class RunService extends EventEmitter {
       g.reject(new RunEnd('stopped', 'gate.stopped'));
     }
     return { stopped: true };
+  }
+
+  /**
+   * 레지스트리 동기화 뒤(entry가 부른다): 진행 중 실행의 허가를 다시 본다. 없어졌으면 정지 하향(D03 §2 하향 행, §7.1 조회와 적용).
+   * IR: 조율기 downgrade(승인 대기면 게이트를 닫고, 커밋 구간이면 verify 뒤 정지 분기). H01: 무장 전이면 멈추고, 무장 뒤면 기록만 한다.
+   */
+  recheckPermit(): void {
+    const a = this.active;
+    if (!a) return;
+    if (a.ir) return void a.ir.recheck();
+    if (a.downgraded) return;
+    const p = this.d.permit?.(a.playbookId);
+    if (p && !p.ok) this.downgradeH01(a, p);
+  }
+
+  /**
+   * H01 경로의 정지 하향. 무장 전: 누출 의심과 같은 길(a.halt)로 다음 스텝 경계·게이트·무장 확인에서 멈춘다(handoff, 사유 코드).
+   * 무장 뒤(커밋 구간): 새 값을 적용하지 않는다(D03 §7.1). H01은 verify 뒤 사후 스텝(메일 확인, 조회만)까지 끝낸다(PR-D2에서 H01이 빠진다).
+   */
+  private downgradeH01(a: ActiveRun, p: Denied): void {
+    a.downgraded = p;
+    this.d.log.event('run.downgrade', { code: p.code, armed: a.armed });
+    if (a.armed) {
+      this.journal.append(a.runId, 'run.downgrade_deferred', { code: p.code });
+      return;
+    }
+    this.journal.append(a.runId, 'run.downgraded', { code: p.code });
+    if (a.halt) return;
+    const end = new RunEnd('handoff', p.code);
+    a.halt = end;
+    const g = a.gate;
+    if (g) {
+      if (this.gates.decide(g.req.reqId, 'denied', 'policy')) this.journal.append(a.runId, 'gate.denied', { reqId: g.req.reqId, by: 'policy' });
+      this.closeGate(a, 'stopped');
+      g.reject(end);
+    }
   }
 
   /**

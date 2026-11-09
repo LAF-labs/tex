@@ -310,6 +310,26 @@ describe('게이트(D03 §2 WaitingGate, §3 R-G6·R-G8)', () => {
     assert.equal(h.gates.state(h.gate().reqId), 'expired');
     assert.deepEqual(h.rec.closed.at(-1), [h.gate().reqId, 'stopped']);
   });
+  it('커밋 구간 중 정지 하향은 verify 뒤 정지 분기: 원장 쓰기가 효과로 뒤따라도 verify 결과를 먼저 반영한다(committed → CompletedWithIssues, not_committed → Paused, InDoubt 아님)', async () => {
+    for (const [result, want] of [['committed', 'CompletedWithIssues'], ['not_committed', 'Paused']] as const) {
+      // 시험 원장은 효과를 반영하지 않는다(armed 그대로). 조율기가 verify 전이 문맥에 결과를 넣어야 한다.
+      const h = mk(GATE_FLOW, {
+        verifyStep: async () => ({ result }),
+        beforeStep: (s, c) => {
+          if (s.id !== 'sv') return;
+          h.st.ledger = ['armed'];
+          h.st.allowed = false;
+          c.downgrade();
+        },
+      });
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      const r = await p;
+      assert.equal(r.state, want, result);
+      assert.equal(h.c.state.pendingDowngrade, false);
+    }
+  });
   it('게이트 대기 중 중지 → Aborted, 게이트 행 닫음(뒤늦은 승인이 토큰을 만들지 못한다)', async () => {
     const h = mk(GATE_FLOW);
     const p = h.c.start();

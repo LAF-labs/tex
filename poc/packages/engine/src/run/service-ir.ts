@@ -37,6 +37,7 @@ import { LedgerCommitPort } from './ledger-port.ts';
 import { BundleCatalog } from '@sax/model';
 import type { ReadbackKey } from '../gate.ts';
 import type { ArmRow } from '@sax/db';
+import type { RunPermit } from '../core/permit.ts';
 
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
@@ -56,6 +57,9 @@ export interface IrPackage {
   /** save_pdf 포트(금고 pdf.print·보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
   pdf?: PdfPort;
 }
+
+/** 실행 시작 패키지 공급 결과(RunServiceDeps.irSource). */
+export type IrSourceResult = { ok: true; ir: IrPackage } | { ok: false; code: string };
 
 /** 게이트 예약 키와 원장 행 재료(RunService가 H01과 같은 함수로 만든다). */
 export interface GateHistory {
@@ -86,6 +90,8 @@ export interface IrRunInput {
   /** 시험용: gate.waitMs 대신 쓸 값. */
   gateWaitMs?: number;
   clock?: Clock;
+  /** 실행 허가(status kill·실효 수준). Running 진입 확인·스텝 경계·recheck에서 부른다. 없으면 늘 허가. */
+  permit?: () => RunPermit;
   /** 스텝 궤적(골든 대조). 값 없이 스텝 id·타입·코드만. */
   trace?: (e: { name: string; stepId: string; type: string; code?: string }) => void;
 }
@@ -159,6 +165,10 @@ export class IrRun {
   gateDeadline = 0;
   /** 원장 armed 뒤(커밋 구간). 이 뒤로는 중지를 받지 않는다. */
   armed = false;
+  /** 정지 하향 사유(허가가 처음 없어진 때의 값, 이 실행 동안 그대로). */
+  private denied: Extract<RunPermit, { ok: false }> | null = null;
+  /** 조율기에 downgrade를 건넸다(한 번만, 커밋 구간 배너가 되풀이되지 않게). */
+  private downgradeSent = false;
 
   constructor(i: IrRunInput) {
     this.i = i;
@@ -171,6 +181,35 @@ export class IrRun {
   /** 걸쇠에 걸린 종료 코드(차단 신호 등). */
   get halted(): string | null {
     return this.enforcer?.halted ?? null;
+  }
+
+  /** 정지 하향 사유(없으면 null). RunService가 hardStop이면 자동화 Chrome을 닫는다. */
+  get downgraded(): Extract<RunPermit, { ok: false }> | null {
+    return this.denied;
+  }
+
+  /** 지금 허가가 없으면 그 사유. 처음 없어진 때 저널에 남기고, 그 뒤로는 같은 값이다(허가가 돌아와도 이 실행은 멈춘다). */
+  private denial(): Extract<RunPermit, { ok: false }> | null {
+    if (!this.denied) {
+      const p = this.i.permit?.();
+      if (p && !p.ok) {
+        this.denied = p;
+        this.i.journal('run.downgraded', { code: p.code });
+      }
+    }
+    return this.denied;
+  }
+
+  /**
+   * 허가가 없어졌으면 조율기에 정지 하향을 한 번 건넨다(스텝 경계·레지스트리 동기화 뒤). 조율기가 다음 스텝 경계에서 멈추고,
+   * 승인 대기면 게이트를 닫고, 커밋 구간·사람 차례면 verify·그 차례 뒤로 미룬다(D03 §2 하향 행, §5.3, ADR-023 결정 5).
+   * 건넸으면 true.
+   */
+  recheck(): boolean {
+    if (this.downgradeSent || !this.controller || !this.denial()) return false;
+    this.downgradeSent = true;
+    this.controller.downgrade();
+    return true;
   }
 
   /** RunService.answer가 승인 근거를 다 대조한 뒤 부른다. */
@@ -267,7 +306,12 @@ export class IrRun {
     const c = new RunController({
       runId: i.runId, intentId: i.intentId, packageDigest: i.packageDigest, ir, handlers, env,
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0 },
+      // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
+      allowed: () => !this.denial(),
+      hardStop: () => this.denial()?.hardStop ?? false,
       beforeStep: async (s) => {
+        // 스텝 경계: status가 바뀌었으면 조율기가 이 스텝 전에 멈춘다(요청률 지연을 기다리지 않는다).
+        if (this.recheck()) return { ok: true };
         const p = PHASE_OF[s.id];
         if (p && p !== phase) {
           if (phase) i.phase(phase, 'done');
@@ -373,6 +417,8 @@ export class IrRun {
       code = halted;
       status = halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
     }
+    // 정지 하향으로 쉬었거나(Paused → handoff) 확정 뒤 멈췄으면(CompletedWithIssues) 사유는 하향 코드다. InDoubt는 그 코드를 둔다.
+    if (this.denied && (status === 'handoff' || status === 'completed_with_issues') && (!code || code === 'run.state_stop')) code = this.denied.code;
     if (status === 'completed_with_issues' && this.mail === false && !code) code = 'mail.not_confirmed';
     return {
       status, state: out.state,

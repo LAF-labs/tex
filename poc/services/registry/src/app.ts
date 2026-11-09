@@ -1,7 +1,10 @@
 // 레지스트리 HTTP. 공개 GET은 정적 파일(ETag 조건부), 게시 PUT은 운영자 토큰 + 서명 검증 관문(규칙 정본: design/schemas/SIGNING.md, 엔진 로더).
 // 게시 토큰은 호스팅 쓰기 권한일 뿐 서명 권한이 아니다: 2-of-3 서명이 없는 산출물은 토큰이 있어도 올라가지 않는다(ADR-013, D09 §8.2 역할 분리).
+import type { KeyObject } from 'node:crypto';
+import { canonicalizable } from '@sax/engine/core';
 import { Router, fail, fromB64, json, safeEqual, sha256hex, type Ctx, type Reply } from '@sax/svc-shared';
 import type { LogKind, TransparencyLog } from './log.ts';
+import { RESIGN_TTL, restamp } from './resign.ts';
 import type { Store } from './store.ts';
 import {
   CHANNELS,
@@ -33,6 +36,12 @@ export interface RegistryAppOpts {
   onEvent?: (e: string) => void;
   /** 투명성 로그(D09 §8.3). 있으면 게시마다 공개 전에 항목을 먼저 쓰고 /registry/log/*를 연다. 운영 기동(main)은 반드시 둔다 */
   log?: TransparencyLog;
+  /**
+   * 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다"): 정책·status·폐기 목록을 `timestamp` 없이 올리면 이 타임스탬프 역할 키
+   * (로그 헤드와 같은 온라인 키, logSigningKey가 핀과 대조한 것)로 issuedAt·expiresAt·timestamp를 붙인 뒤 같은 관문 검증을 한다.
+   * 내용 서명(루트·정책·긴급 키)은 신선도 필드를 서명 바이트에서 빼므로 그대로다. 재서명 cron(resign.ts)과 같은 restamp·같은 유효 기간이다.
+   */
+  stamper?: { keyId: string; key: KeyObject };
 }
 
 /** 조회 주기 파일(ADR-023): 15분 폴링 + ETag, max-age=60 */
@@ -74,6 +83,14 @@ export function registryRouter(o: RegistryAppOpts): Router {
     } finally {
       for (const e of v.events) o.onEvent?.(e);
     }
+  };
+  /** timestamp가 없는 문서는 서버가 도장을 찍는다(stamper가 있을 때만). 있으면 그대로 검증한다(손대지 않는다) */
+  const stamped = <T extends { monotonic: number; issuedAt: string; expiresAt: string; timestamp: unknown }>(doc: T, ttl: number): T => {
+    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) fail('registry.schema_invalid');
+    if (doc.timestamp !== undefined || !o.stamper) return doc;
+    if (!Number.isSafeInteger(doc.monotonic) || !canonicalizable(doc)) fail('registry.schema_invalid');
+    o.onEvent?.('registry.stamped_on_publish');
+    return restamp(doc, ttl, o.now(), o.stamper);
   };
   // 게시는 인스턴스 안에서 하나씩(읽기 → 검증 → 쓰기 사이에 다른 게시가 끼어 단조 값·덮어쓰기 검사를 비켜 가지 않게)
   let chain: Promise<unknown> = Promise.resolve();
@@ -212,7 +229,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
   r.add('PUT', '/admin/v1/policy', async (ctx) => {
     admin(ctx);
     return serial(async () => {
-      const doc = ctx.body as SignedPolicy;
+      const doc = stamped(ctx.body as SignedPolicy, RESIGN_TTL.policy);
       const [revoked, stored] = [await revokedSet(), await readJson<SignedPolicy>('policy/current.json')];
       const v = checked((x) => verifyPolicy(doc, o.trust, revoked, stored, o.now(), x));
       // {ver}.json과 current.json은 같은 내용(ADR-023). 같은 버전 파일이 이미 있으면 monotonic·내용 다이제스트가 같을 때만(신선도 재발행).
@@ -229,7 +246,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
   r.add('PUT', '/admin/v1/status', async (ctx) => {
     admin(ctx);
     return serial(async () => {
-      const doc = ctx.body as RegistryStatus;
+      const doc = stamped(ctx.body as RegistryStatus, RESIGN_TTL.status);
       const [revoked, stored] = [await revokedSet(), await readJson<RegistryStatus>('registry/status.json')];
       const v = checked((x) => verifyStatus(doc, o.trust, revoked, stored, o.now(), x));
       await putJson('status', 'registry/status.json', doc);
@@ -241,7 +258,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
   r.add('PUT', '/admin/v1/revoked-keys', async (ctx) => {
     admin(ctx);
     return serial(async () => {
-      const doc = ctx.body as RevokedKeys;
+      const doc = stamped(ctx.body as RevokedKeys, RESIGN_TTL.revoked_keys);
       const stored = await readJson<RevokedKeys>('registry/revoked_keys.json');
       checked((v) => verifyRevoked(doc, o.trust, stored, o.now(), v));
       await putJson('revoked_keys', 'registry/revoked_keys.json', doc);
