@@ -3,7 +3,7 @@
 // 이 모듈은 아무것도 저장하지 않는다: 계정 세션·기기 토큰은 호출자(main 메모리)가 넘기고, 응답의 토큰은 그대로 돌려줄 뿐 파일·로그에 두지 않는다.
 // 오류는 Error.code에 서버 코드(`<영역>.<코드>`) 또는 `net.<egress 코드>`만 담는다. 메시지에 본문·URL·토큰·이메일을 넣지 않는다.
 import { CLOUD_ORIGIN, CLOUD_WS_HOST, EgressError, type CloudMethod, type Egress } from '@sax/net';
-import type { AccountClient, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
+import type { AccountClient, AccountLogin, CloudPorts, DeviceAuth, RelayHttpClient } from './remote-ports.ts';
 import {
   b64url,
   relayOrigin,
@@ -47,6 +47,21 @@ const shape = (): never => {
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const str = (v: unknown, max = 4096): v is string => typeof v === 'string' && v.length > 0 && v.length <= max;
 const int = (v: unknown): v is number => Number.isSafeInteger(v);
+
+/** 갱신 토큰 모양(금고 account.refresh와 같다). 다른 모양은 받지도 보내지도 않는다. */
+export const REFRESH_TOKEN = /^sxa1\.[A-Za-z0-9_-]{43}$/;
+const refreshOk = (v: unknown): v is string => typeof v === 'string' && REFRESH_TOKEN.test(v);
+
+/** 로그인 응답 모양 검사. 갱신 토큰은 있으면 모양까지 맞아야 한다. */
+function login(b: unknown): AccountLogin {
+  if (!isObj(b) || !str(b.session, 512) || !int(b.expiresInSec)) shape();
+  const r = b as { session: string; expiresInSec: number; refreshToken?: unknown; refreshExpiresInSec?: unknown };
+  if (r.refreshToken === undefined) return { session: r.session, expiresInSec: r.expiresInSec };
+  if (!refreshOk(r.refreshToken) || !int(r.refreshExpiresInSec)) shape();
+  return { session: r.session, expiresInSec: r.expiresInSec, refreshToken: r.refreshToken as string, refreshExpiresInSec: r.refreshExpiresInSec as number };
+}
+/** remember는 참일 때만 본문에 싣는다. */
+const rem = (remember?: boolean) => (remember ? { remember: true } : {});
 
 const DEV_ORIGIN = /^http:\/\/(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
@@ -99,17 +114,61 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       const r = b as { loginId: string; expiresInSec: number };
       return { loginId: r.loginId, expiresInSec: r.expiresInSec };
     },
-    async verifyEmailCode(loginId, code) {
-      const b = await call('POST', `${accountOrigin}/v1/auth/code/verify`, [200], { body: { loginId, code } });
-      if (!isObj(b) || !str(b.session, 512) || !int(b.expiresInSec)) shape();
-      const r = b as { session: string; expiresInSec: number };
-      return { session: r.session, expiresInSec: r.expiresInSec };
+    async verifyEmailCode(loginId, code, remember) {
+      return login(await call('POST', `${accountOrigin}/v1/auth/code/verify`, [200], { body: { loginId, code, ...rem(remember) } }));
     },
-    async passwordLogin(email, password) {
-      const b = await call('POST', `${accountOrigin}/v1/auth/password`, [200], { body: { email, password } });
-      if (!isObj(b) || !str(b.session, 512) || !int(b.expiresInSec)) shape();
-      const r = b as { session: string; expiresInSec: number };
-      return { session: r.session, expiresInSec: r.expiresInSec };
+    async passwordLogin(email, password, remember) {
+      return login(await call('POST', `${accountOrigin}/v1/auth/password`, [200], { body: { email, password, ...rem(remember) } }));
+    },
+    async me(session) {
+      const b = await call('GET', `${accountOrigin}/v1/me`, [200], { headers: bearer(session) });
+      if (!isObj(b) || !str(b.email, 254) || typeof b.hasPassword !== 'boolean' || !(b.reauthUntil === null || int(b.reauthUntil)) || !str(b.authMethod, 32)) shape();
+      const r = b as { email: string; hasPassword: boolean; reauthUntil: number | null; authMethod: string };
+      return { email: r.email, hasPassword: r.hasPassword, reauthUntil: r.reauthUntil, authMethod: r.authMethod };
+    },
+    async setPassword(session, password, currentPassword) {
+      const b = await call('PUT', `${accountOrigin}/v1/password`, [200, 204], { headers: bearer(session), body: currentPassword === undefined ? { password } : { password, currentPassword } });
+      if (b === null) return {};
+      if (!isObj(b) || !refreshOk(b.refreshToken) || !int(b.refreshExpiresInSec)) shape();
+      const r = b as { refreshToken: string; refreshExpiresInSec: number };
+      return { refreshToken: r.refreshToken, refreshExpiresInSec: r.refreshExpiresInSec };
+    },
+    async deletePassword(session) {
+      await call('DELETE', `${accountOrigin}/v1/password`, [204], { headers: bearer(session) });
+    },
+    async startReauth(session) {
+      const b = await call('POST', `${accountOrigin}/v1/auth/reauth`, [200], { headers: bearer(session), body: {} });
+      if (!isObj(b) || !str(b.reauthId, 256) || !int(b.expiresInSec)) shape();
+      const r = b as { reauthId: string; expiresInSec: number };
+      return { reauthId: r.reauthId, expiresInSec: r.expiresInSec };
+    },
+    async verifyReauth(session, reauthId, code) {
+      const b = await call('POST', `${accountOrigin}/v1/auth/reauth/verify`, [200], { headers: bearer(session), body: { reauthId, code } });
+      if (!isObj(b) || !int(b.authAt) || !int(b.reauthMaxAgeSec)) shape();
+      const r = b as { authAt: number; reauthMaxAgeSec: number };
+      return { authAt: r.authAt, reauthMaxAgeSec: r.reauthMaxAgeSec };
+    },
+    async startPasswordReset(email) {
+      const b = await call('POST', `${accountOrigin}/v1/auth/password/reset`, [200], { body: { email } });
+      if (!isObj(b) || !str(b.resetId, 256) || !int(b.expiresInSec)) shape();
+      const r = b as { resetId: string; expiresInSec: number };
+      return { resetId: r.resetId, expiresInSec: r.expiresInSec };
+    },
+    async verifyPasswordReset(resetId, code, password, remember) {
+      return login(await call('POST', `${accountOrigin}/v1/auth/password/reset/verify`, [200], { body: { resetId, code, password, ...rem(remember) } }));
+    },
+    async refresh(refreshToken) {
+      if (!refreshOk(refreshToken)) throw new CloudPortError('account.unauthorized');
+      const r = login(await call('POST', `${accountOrigin}/v1/auth/refresh`, [200], { body: { refreshToken } }));
+      if (r.refreshToken === undefined) shape();
+      return r as Required<AccountLogin>;
+    },
+    async revokeRefresh(refreshToken) {
+      if (!refreshOk(refreshToken)) return;
+      await call('POST', `${accountOrigin}/v1/auth/refresh/revoke`, [204], { body: { refreshToken } });
+    },
+    async logoutAll(session) {
+      await call('POST', `${accountOrigin}/v1/auth/logout-all`, [204], { headers: bearer(session), body: {} });
     },
     async logout(session) {
       await call('POST', `${accountOrigin}/v1/auth/logout`, [200, 204], { headers: bearer(session), body: {} });

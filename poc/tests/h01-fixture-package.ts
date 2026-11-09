@@ -1,5 +1,5 @@
 // ADR-039 fixture 포털 H-01 패키지 빌더(엔진 M2-3 PR-A2). RunService IR 전환 골든 대조(PR-C)가 이 패키지로 IR 조율기를 돌린다.
-// - 원천은 둘이다. 스텝은 골든 IR(tests/fixtures/core/h01/playbook.json) s10~s35를 그대로 쓴다. 셀렉터·조회 화면·실패 신호는
+// - 원천은 둘이다. 스텝은 골든 IR(제품 원본 packages/engine/playbooks/hometax.invoice.issue/playbook.json) s10~s35를 그대로 쓴다. 셀렉터·조회 화면·실패 신호는
 //   H01Runner가 가짜 H-01 페이지에서 쓰는 fixturePortal(origin)에서 가져온다. 그래서 두 실행기가 같은 화면 정의를 본다.
 // - 가짜 페이지 포트가 시험마다 달라서 패키지는 저장소에 서명된 채로 두지 않고, 시험 중에 만들어 시험 키로 서명한다(ADR-039 결정 3).
 // - 골든과 다른 곳은 FIXTURE_SUBSTITUTIONS에 적은 것뿐이다. 시험(h01-fixture-package.test.ts)이 그 밖의 차이가 없는지 본다.

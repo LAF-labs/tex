@@ -1,6 +1,6 @@
 // M2-3 readback·입력 대조(D02 §2.1 B-06·§4.1·§8 s19a~s19f, D03 §3, D16 assert.*): 세 값 일치로 되읽어 고정하고,
 // 고정한 값으로만 합계 산술(s19d)·입력 대조(s19f)·사업자 대조(s19c)·작성일 대조(s19e)·게이트 카드를 만든다.
-// 리플레이: 골든 H-01 픽스처(tests/fixtures/core/h01)의 s19a → s20(게이트)을 가짜 페이지로 돌린다. 실제 포털 접속 없음.
+// 리플레이: 골든 H-01(제품 원본 packages/engine/playbooks/hometax.invoice.issue)의 s19a → s20(게이트)을 가짜 페이지로 돌린다. 실제 포털 접속 없음.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readbackCard } from '@sax/engine';
