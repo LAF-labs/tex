@@ -73,6 +73,8 @@ export function packageDigest(p: { manifest: string; hotfix: string | null; look
 export const APPROVAL_SUMMARIES: ReadonlyMap<string, readonly string[]> = new Map([
   // H-01: 공급받는자(상호·사업자번호), 합계와 세액, 받는 이메일(D03 §3)
   ['invoice.confirm', ['counterpartName', 'counterpartBizNo', 'totalAmount', 'taxAmount', 'counterpartEmail']],
+  // 홈택스 민원증명 H-03·H-04·H-08·H-09 공통 카드(팀장 결정 2026-11-09): 서류·사용 용도·제출처·주민번호 공개 여부
+  ['cert.confirm', ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure']],
 ]);
 
 export interface LoadedPackage {

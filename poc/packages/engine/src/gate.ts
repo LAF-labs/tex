@@ -77,6 +77,8 @@ const hexBytes = (h: string) => {
 export const FIELD_KEYS = [
   'supplyAmount', 'taxAmount', 'totalAmount', 'counterpartBizNo', 'counterpartName', 'counterpartEmail', 'supplierBizNo', 'supplierName',
   'issueDate', 'itemName', 'itemCount', 'remark', 'receiptType',
+  // 홈택스 민원증명 승인 카드(H-03·H-04·H-08·H-09 공통 cert.confirm, 팀장 결정 2026-11-09)
+  'certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure',
   '$first.bizNo', '$first.email', '$dup.businessKey', '$dup.priorNotCommitted', '$dup.otherDevice',
 ] as const;
 export type FieldKey = (typeof FIELD_KEYS)[number];
