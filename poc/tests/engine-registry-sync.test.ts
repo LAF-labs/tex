@@ -12,7 +12,7 @@ import {
   acceptIndex, memoryRegistryStore, packagePath, rateTableSink, REGISTRY_PATHS, REGISTRY_TRUST_PIN, RegistrySync, rolloutBucket, settingsRegistryStore, trustRootsFromPin,
   type DataSink, type RegistryFetch, type RegistryIndex, type RegistryResponse, type TrustPin,
 } from '@sax/engine';
-import { canonicalWithout, sha256Hex, type RevokedKeys, type RegistryStatus } from '@sax/engine/core';
+import { canonicalWithout, sha256Hex, type Policy, type RevokedKeys, type RegistryStatus } from '@sax/engine/core';
 import { COMMANDS, MAIN_ONLY, READ_QUERIES, REGISTRY_COMMANDS, REGISTRY_MAIN_ONLY, REGISTRY_READ_QUERIES } from '@sax/engine/protocol';
 import { FileEventLog } from '@sax/platform';
 import { rolloutBucket as serverBucket, verifyIndex } from '../services/registry/src/verify.ts';
@@ -48,6 +48,7 @@ function fakeRegistry(files: Record<string, Uint8Array | (() => Uint8Array) | nu
 const baseFiles = () => ({
   [REGISTRY_PATHS.revoked]: file('registry/revoked_keys.json'),
   [REGISTRY_PATHS.status]: file('registry/status.json'),
+  [REGISTRY_PATHS.policy]: file('policy/current.json'),
   [REGISTRY_PATHS.index]: file('registry/stable/index.json'),
   [DATA_PATH]: file('packages/payroll.rate-tables@2026.11.1.sxp'),
 });
@@ -80,8 +81,8 @@ describe('레지스트리 동기화: 정상 경로(고정 시드 샘플)', () =>
   it('폐기 목록 → status → 인덱스 → 급여 시행일 표를 받아 엔진이 검증하고 DB에 넣는다', async () => {
     const s = setup();
     const r = await s.sync.sync();
-    assert.deepEqual(r, { revoked: 'accepted', status: 'accepted', index: 'accepted', data: { 'payroll.rate-tables': 'accepted' }, revokedFresh: true });
-    assert.deepEqual(s.reg.calls.map((c) => c.path), [REGISTRY_PATHS.revoked, REGISTRY_PATHS.status, REGISTRY_PATHS.index, DATA_PATH], '이 다섯 경로 말고는 부르지 않는다(핫픽스 인덱스·정책 없음)');
+    assert.deepEqual(r, { revoked: 'accepted', status: 'accepted', policy: 'accepted', index: 'accepted', data: { 'payroll.rate-tables': 'accepted' }, revokedFresh: true });
+    assert.deepEqual(s.reg.calls.map((c) => c.path), [REGISTRY_PATHS.revoked, REGISTRY_PATHS.status, REGISTRY_PATHS.policy, REGISTRY_PATHS.index, DATA_PATH], '이 다섯 경로 말고는 부르지 않는다(핫픽스 인덱스 없음)');
     assert.deepEqual(s.sync.revocation(), { keyIds: ['package-0'], fresh: true, monotonic: 1, expiresAt: '2026-11-06T00:00:00Z' });
     assert.deepEqual(s.sync.pins(), TRUST);
     assert.deepEqual(s.sync.status(), { freshness: 'fresh', emergency: false, monotonic: 10, portalModeCeiling: { hometax: 'auto' }, killPlaybooks: [] });
@@ -99,7 +100,7 @@ describe('레지스트리 동기화: 정상 경로(고정 시드 샘플)', () =>
     await s.sync.sync();
     s.reg.calls.length = 0;
     const r = await s.sync.sync();
-    assert.deepEqual(r, { revoked: 'unchanged', status: 'unchanged', index: 'unchanged', data: { 'payroll.rate-tables': 'unchanged' }, revokedFresh: true });
+    assert.deepEqual(r, { revoked: 'unchanged', status: 'unchanged', policy: 'unchanged', index: 'unchanged', data: { 'payroll.rate-tables': 'unchanged' }, revokedFresh: true });
     assert.ok(s.reg.calls.every((c) => c.etag), 'If-None-Match를 보낸다');
     assert.ok(!s.reg.calls.some((c) => c.path === DATA_PATH), '.sxp를 다시 받지 않는다');
   });
@@ -119,9 +120,9 @@ describe('레지스트리 동기화: 정상 경로(고정 시드 샘플)', () =>
     const b = new RegistrySync({ trust: TRUST, fetch: null, store: settingsRegistryStore(db), sinks: [rateTableSink(db)], now: () => SAMPLE_NOW });
     assert.deepEqual(b.revocation().keyIds, ['package-0']);
     assert.equal(b.status().monotonic, 10);
-    assert.deepEqual(await b.sync(), { revoked: 'registry.fetch_unavailable', status: 'registry.fetch_unavailable', index: 'registry.fetch_unavailable', data: {}, revokedFresh: true });
+    assert.deepEqual(await b.sync(), { revoked: 'registry.fetch_unavailable', status: 'registry.fetch_unavailable', policy: 'registry.fetch_unavailable', index: 'registry.fetch_unavailable', data: {}, revokedFresh: true });
     const keys = (db.prepare("SELECT key FROM settings WHERE key LIKE 'registry.%' ORDER BY key").pluck().all() as string[]);
-    assert.deepEqual(keys, ['registry.etag.index.stable', 'registry.etag.revoked', 'registry.etag.status', 'registry.index.stable', 'registry.revoked', 'registry.status', 'registry.status_quorum']);
+    assert.deepEqual(keys, ['registry.etag.index.stable', 'registry.etag.policy', 'registry.etag.revoked', 'registry.etag.status', 'registry.index.stable', 'registry.policy', 'registry.revoked', 'registry.status', 'registry.status_quorum']);
   });
 });
 
@@ -391,6 +392,88 @@ describe('핀 키·main 통로', () => {
     assert.match(src, /registry\.not_pinned/);
     assert.match(src, /if \(REGISTRY_TRUST_PIN\) registry = new RegistrySync\(\{ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch\(egress\), store: settingsRegistryStore\(db\), packages: \{ ids: \[PRODUCT_PACKAGES\.h01\] \},/);
     assert.ok(!/fetch\(/.test(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/registry-sync.ts'), 'utf8').replace(/this\.o\.fetch!\(/g, '')), '동기화 모듈은 전역 fetch를 쓰지 않는다');
+  });
+});
+
+describe('정책 동기화(/policy/current.json, D03 §7.1, 팀장 결정 2026-11-09 ②)', () => {
+  const POL = () => json<Policy>('policy/current.json');
+  /** 정책 키 2-of-3(또는 주어진 서명자) + 타임스탬프로 다시 서명. */
+  const signPolicy = (p: Policy, signers = K.pol.slice(0, 2)) => bytes(signTimestamped(p, signers, K.ts));
+
+  it('status 뒤에 받아 검증·클램프해 저장하고, policy()가 마지막 유효 정책과 신선도를 준다', async () => {
+    const s = setup();
+    assert.equal(s.sync.policy().freshness, 'none', '받기 전에는 none');
+    const r = await s.sync.sync();
+    assert.equal(r.policy, 'accepted');
+    const v = s.sync.policy();
+    assert.equal(v.freshness, 'fresh');
+    assert.equal(v.monotonic, POL().monotonic);
+    assert.equal(v.emergency, false);
+    assert.equal(v.policy?.limits.hometax?.runsPerDayPerProfile, POL().limits.hometax?.runsPerDayPerProfile);
+    assert.equal((await s.sync.sync()).policy, 'unchanged', 'ETag 304');
+  });
+
+  it('신선도: 만료 뒤 168시간 안은 stale(유지), 그 뒤는 fallback', async () => {
+    const s = setup();
+    await s.sync.sync();
+    const exp = Date.parse(s.sync.policy().policy!.expiresAt);
+    s.setNow(exp + 1);
+    assert.equal(s.sync.policy().freshness, 'stale');
+    assert.ok(s.sync.policy().policy, '마지막 유효 정책은 그대로 둔다');
+    s.setNow(exp + 168 * H + 1);
+    assert.equal(s.sync.policy().freshness, 'fallback');
+  });
+
+  it('서명이 모자라거나 내용이 바뀐 정책은 거부하고 마지막 유효 정책을 지킨다', async () => {
+    const files = baseFiles();
+    const s = setup(files);
+    await s.sync.sync();
+    const before = s.sync.policy();
+    const forged = POL();
+    forged.monotonic += 1;
+    forged.limits.hometax!.runsPerDayPerProfile += 1;
+    files[REGISTRY_PATHS.policy] = bytes(forged);
+    assert.equal((await s.sync.sync()).policy, 'registry.signature_insufficient');
+    files[REGISTRY_PATHS.policy] = signPolicy({ ...POL(), monotonic: POL().monotonic + 1 }, K.pol.slice(0, 1));
+    assert.equal((await s.sync.sync()).policy, 'registry.signature_insufficient', '정책 키 하나');
+    assert.deepEqual(s.sync.policy(), before);
+  });
+
+  it('1인 긴급 키: 엄격하게 보수적인 변경만 받는다(완화는 policy.rejected_not_conservative)', async () => {
+    const files = baseFiles();
+    const s = setup(files);
+    await s.sync.sync();
+    const base = POL();
+    const looser = structuredClone(base);
+    looser.monotonic += 1;
+    looser.limits.hometax!.runsPerDayPerProfile += 1;
+    files[REGISTRY_PATHS.policy] = signPolicy(looser, [K.emergency]);
+    assert.equal((await s.sync.sync()).policy, 'policy.rejected_not_conservative');
+    const tighter = structuredClone(base);
+    tighter.monotonic += 1;
+    tighter.limits.hometax!.runsPerDayPerProfile -= 1;
+    files[REGISTRY_PATHS.policy] = signPolicy(tighter, [K.emergency]);
+    assert.equal((await s.sync.sync()).policy, 'accepted');
+    assert.equal(s.sync.policy().emergency, true);
+    assert.equal(s.sync.policy().policy?.limits.hometax?.runsPerDayPerProfile, base.limits.hometax!.runsPerDayPerProfile - 1);
+  });
+
+  it('monotonic 역행은 거부한다', async () => {
+    const files = baseFiles();
+    const s = setup(files);
+    await s.sync.sync();
+    files[REGISTRY_PATHS.policy] = signPolicy({ ...POL(), monotonic: POL().monotonic - 1 });
+    assert.equal((await s.sync.sync()).policy, 'registry.version_rollback');
+  });
+
+  it('정책 파일이 없으면 registry.not_found, 다른 단계는 그대로 진행하고 policy()는 none', async () => {
+    const files = baseFiles() as Record<string, Uint8Array>;
+    delete files[REGISTRY_PATHS.policy];
+    const s = setup(files);
+    const r = await s.sync.sync();
+    assert.equal(r.policy, 'registry.not_found');
+    assert.equal(r.index, 'accepted');
+    assert.equal(s.sync.policy().freshness, 'none');
   });
 });
 

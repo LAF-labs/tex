@@ -109,7 +109,7 @@ describe('패키지 공급: 받기(가짜 레지스트리, 로더 전체 검증 
     const s = setup();
     const r = await s.sync.sync();
     assert.deepEqual(r.packages, { [ID]: 'accepted' });
-    assert.deepEqual(s.reg.calls, [REGISTRY_PATHS.revoked, REGISTRY_PATHS.status, REGISTRY_PATHS.index, sxpPath(ID, '2.1.0'), sxpPath(LOOKUP, '1.0.0'), sxpPath(MAIL, '1.0.0')]);
+    assert.deepEqual(s.reg.calls, [REGISTRY_PATHS.revoked, REGISTRY_PATHS.status, REGISTRY_PATHS.policy, REGISTRY_PATHS.index, sxpPath(ID, '2.1.0'), sxpPath(LOOKUP, '1.0.0'), sxpPath(MAIL, '1.0.0')]);
     assert.equal(current(s.store), '2.1.0');
     const rec = s.store.get(`pkg.${ID}@2.1.0`) as StoredPackage;
     assert.equal(rec.sxpDigest, sha256Hex(file(`packages/${ID}@2.1.0.sxp`)), '받은 .sxp 원본 바이트를 그대로 둔다');

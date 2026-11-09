@@ -29,8 +29,17 @@ describe('레지스트리 허용 경로(registryTargetAllowed)', () => {
       '/packages/hometax.invoice.issue@2.1.0.sxp',
       '/packages/payroll.rate-tables@2026.11.1.sxp',
       '/packages/hometax.invoice.issue.hotfix@1.3.0.sxp',
+      // 서명 정책(D03 §7.1, 팀장 결정 2026-11-09 ②): 정확히 이 경로 하나
+      '/policy/current.json',
     ];
     for (const t of ok) assert.ok(registryTargetAllowed(t), t);
+  });
+
+  it('정책은 /policy/current.json 하나뿐: 다른 이름·하위 경로·쿼리·대소문자·인코딩 변형은 거부', () => {
+    for (const t of [
+      '/policy/current.json?x=1', '/policy/current.json/', '/policy/next.json', '/policy/current.jsonp', '/policy/2026/current.json', '/policy/', '/policy',
+      '/Policy/current.json', '/policy/%63urrent.json', '/policy/../registry/status.json', '/registry/policy/current.json', 'https://evil.example/policy/current.json',
+    ]) assert.equal(registryTargetAllowed(t), false, t);
   });
 
   it('쿼리 키는 정확히 leaf·size / from·to만: 추가·중복·빠짐·값 형식 틀림·쿼리 없는 경로의 쿼리는 거부', () => {

@@ -12,7 +12,9 @@ import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type IrPackage, type IrSourceResult } from './run/service-ir.ts';
+import { ratePolicyFrom } from './enforcer.ts';
 import type { RunPermit } from './core/permit.ts';
+import type { Policy } from './core/types.ts';
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -107,6 +109,8 @@ export interface RunServiceDeps {
    * recheckPermit(레지스트리 동기화 뒤)에서 부른다. 제품 entry는 레지스트리 status로 계산한다(core runPermit). 없으면 늘 허가(시험).
    */
   permit?: (playbookId: string) => RunPermit;
+  /** 마지막 유효 서명 정책(레지스트리 동기화, 클램프 뒤). RateGuard가 내장 값과 필드마다 더 엄격한 쪽만 쓴다(홈택스만). */
+  receivedPolicy?: () => Policy | null;
   /** 정지 하향이 postprocess·kill(hardStop)이면 실행이 끝난 뒤 자동화 Chrome을 닫는다(D03 §2 하향 행). */
   closeBrowser?: () => Promise<void>;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
@@ -157,7 +161,12 @@ export class RunService extends EventEmitter {
     this.gates = new GateRepo(d.db);
     this.ledger = new Ledger(d.db);
     this.journal = new RunJournal(d.db);
-    this.rate = new RateGuard(d.db, d.portal.kind, d.policy ?? policyFor(d.portal.kind), d.clock);
+    // 받은 서명 정책은 홈택스 interactive 값으로 바꿔 RateGuard에 준다(그 포털 limits가 없으면 null = 내장 값만).
+    const received = d.receivedPolicy;
+    this.rate = new RateGuard(d.db, d.portal.kind, d.policy ?? policyFor(d.portal.kind), d.clock, received ? () => {
+      const p = received();
+      return p ? ratePolicyFrom(p, 'hometax', 'interactive') : null;
+    } : undefined);
     // 재시작: 종결되지 않은 원장 행은 in_doubt, 열린 게이트는 만료(토큰은 메모리에만 있었다, D03 §4.1).
     const promoted = this.ledger.promoteInDoubt();
     const expired = this.gates.expireOpen();
@@ -228,6 +237,7 @@ export class RunService extends EventEmitter {
     try {
       const total = pocTotalRefusal(this.ledger, this.d.portal.kind);
       if (total) throw total;
+      this.rate.pinRun();
       this.rate.admit(profile.id, { irreversible: true });
     } catch (e) {
       if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
@@ -300,6 +310,7 @@ export class RunService extends EventEmitter {
     this.closeGate(a, 'run_ended');
     // 승인됐지만 armed까지 가지 못한 게이트(스텝 지연 중 신호, armed 트랜잭션 거부 등)는 거부로 되돌린다.
     if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
+    this.rate.unpinRun();
     this.runs.finish(a.runId, result.status);
     this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '' });
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
