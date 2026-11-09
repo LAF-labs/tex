@@ -2,7 +2,7 @@
 // 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다)를 localhost HTTP로 띄우고(fake-account-http.ts), 셸은 제품 클라이언트
 // (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
 // 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
-// SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
+// SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3), reset이면 비밀번호 찾기(§4)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -101,11 +101,12 @@ function fakeAccount(o: { hasPassword?: boolean } = {}) {
     verifyReauth: async () => {
       throw fail('net.not_in_e2e');
     },
-    startPasswordReset: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    verifyPasswordReset: async () => {
-      throw fail('net.not_in_e2e');
+    startPasswordReset: async () => (calls.push('reset'), { resetId: 'R1', expiresInSec: 600 }),
+    verifyPasswordReset: async (_r, code, password) => {
+      calls.push('resetVerify');
+      if (code !== '654321') throw fail('account.code_invalid');
+      if (password === SERVER_ONLY_BREACHED) throw fail('account.password_breached');
+      return { session: 'sxs1.fake', expiresInSec: 3600 };
     },
     refresh: async () => {
       throw fail('account.unauthorized');
@@ -282,9 +283,72 @@ async function signup() {
   front.close();
 }
 
+/** 비밀번호 찾기(인계 명세 §4): 틀린 비밀번호 안내의 [비밀번호 찾기] → 이메일 → 코드 6자리(서버 검증 없음) → 새 비밀번호 → 바꿈 끝 → [계속]. */
+async function reset() {
+  const acct = fakeAccount();
+  const keys = softKeys();
+  const front = await serveAccount(acct.client);
+  const egress = new Egress({ cloudDevLocal: true });
+  const cloud = cloudPorts({ egress, env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } });
+  S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, remote: { cloud, keys: async () => keys } });
+  await S.ready;
+  await until('renderer ready 3', async () => (await js('document.body.dataset.ready')) === '1');
+  await js(`document.querySelector('#rail [data-view="settings"]').click()`);
+  await until('settings 3', async () => js<boolean>(`!!document.querySelector('[data-set-tab=devices]')`));
+  await js(`document.querySelector('[data-set-tab=devices]').click()`);
+  await until('account card 3', async () => js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_out'`));
+  await press('[data-act=account-login]');
+  await until('login 3', async () => (await screen()) === 'email');
+  await type('.acct-email', 'owner@gyeonbon-test.example');
+  await press('[data-act=account-next]');
+  await until('pw 3', async () => (await screen()) === 'password');
+  check('비밀번호 화면: [이메일 코드로 로그인] · [비밀번호 찾기]', await js<boolean>(`!!document.querySelector('[data-act=account-code-login]') && !!document.querySelector('[data-act=account-reset]')`));
+  await type('.acct-password', 'not-the-password-1');
+  await press('[data-act=account-password]');
+  await until('wrong 3', async () => js<boolean>(`!!document.querySelector('[data-acct-wrong]')`));
+  check('틀린 비밀번호 안내 아래에도 [비밀번호 찾기]', await js<boolean>(`!!document.querySelector('[data-act=account-reset]')`));
+  await press('[data-act=account-reset]');
+  check('비밀번호 찾기 화면(제목·부제, 이메일 그대로)', await until('reset email', async () => (await screen()) === 'reset_email' && js<boolean>(`document.querySelector('#acct-title').textContent === '비밀번호 찾기' && document.querySelector('.acct-head p').textContent === '가입한 이메일로 코드를 보내요' && document.querySelector('.acct-email').value === 'owner@gyeonbon-test.example'`)));
+  await shot('a01-reset-email');
+  await press('[data-act=account-reset-send]');
+  check('코드 받기 → 코드 6자리(받는 주소·남은 시간)', await until('reset code', async () => (await screen()) === 'reset_code' && (await loginStep()) === 'reset_code' && (await js<string>(`document.querySelector('[data-acct-to]').textContent`)) === 'owner@gyeonbon-test.example' && /^\d+:\d\d$/.test(await js<string>(`document.querySelector('[data-acct-left]')?.textContent ?? ''`))));
+  await shot('a01-reset-code');
+  const before = acct.calls.length;
+  await type('.acct-code', '111111');
+  check('6자리를 받으면 서버를 부르지 않고 새 비밀번호 화면(이메일 표시)', await until('reset new', async () => (await screen()) === 'reset_new' && js<boolean>(`document.querySelector('#acct-title').textContent === '새 비밀번호' && document.querySelector('[data-acct-to]').textContent === 'owner@gyeonbon-test.example'`)) && acct.calls.length === before);
+  check('새 비밀번호 칸: new-password, 조건 3줄, [바꾸기] 꺼짐', await js<boolean>(`document.querySelector('.acct-password').autocomplete === 'new-password' && document.querySelectorAll('[data-rule]').length === 3 && document.querySelector('[data-act=account-reset-finish]').disabled`));
+  await type('.acct-password', PASSWORD);
+  await shot('a01-reset-new');
+  await press('[data-act=account-reset-finish]');
+  check(
+    '틀린 코드: 코드 화면으로 돌아가 문구, 칸 비움, 새 비밀번호도 지움',
+    await until('reset wrong code', async () => (await screen()) === 'reset_code' && js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('코드가 맞지 않아요') === true && document.querySelector('.acct-code').value === ''`)) && !(await js<string>(`document.body.innerHTML`)).includes(PASSWORD),
+  );
+  await type('.acct-code', '654321');
+  await until('reset new 2', async () => (await screen()) === 'reset_new');
+  await type('.acct-password', SERVER_ONLY_BREACHED);
+  await press('[data-act=account-reset-finish]');
+  check('정책 거부: 새 비밀번호 화면에 남아 문구, 칸 비움', await until('reset breached', async () => (await screen()) === 'reset_new' && js<boolean>(`(() => { const w = document.querySelector('[data-acct-pw-warn]'); return !w.hidden && w.textContent === '많이 쓰이거나 이미 알려진 비밀번호예요. 다른 비밀번호를 써 주세요' && document.querySelector('.acct-password').value === ''; })()`)));
+  await type('.acct-password', PASSWORD);
+  await press('[data-act=account-reset-finish]');
+  check(
+    '바꿈 끝 화면: 제목, 두 줄(다른 곳 로그인 끝·금고와 기기 연결 그대로), [계속]에 포커스',
+    await until('reset done', async () => (await screen()) === 'reset_done' && js<boolean>(`document.querySelector('#acct-title').textContent === '비밀번호를 바꿨어요' && document.querySelector('.acct-box').textContent === '다른 곳의 로그인은 모두 끝났어요금고와 기기 연결은 그대로예요' && document.activeElement?.dataset.act === 'account-reset-done'`)),
+    await js(`({ s: document.querySelector('[data-acct-screen]')?.dataset.acctScreen, step: document.querySelector('[data-account-login]')?.dataset.accountLogin, t: document.querySelector('#acct-title')?.textContent, box: document.querySelector('.acct-box')?.textContent, f: document.activeElement?.outerHTML.slice(0, 80) })`),
+  );
+  await shot('a01-reset-done');
+  await press('[data-act=account-reset-done]');
+  check('[계속] → 닫히고 로그인 상태', await until('reset closed', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in'`)));
+  check('계정 호출 순서(비밀번호 → 재설정 코드 → 바꾸기 ×3 → 목록 → AIK → 로그아웃)', JSON.stringify(acct.calls) === JSON.stringify(['password', 'reset', 'resetVerify', 'resetVerify', 'resetVerify', 'list', 'aik', 'logout']), acct.calls);
+  check('재설정도 제품 Egress 허용 목록을 지났다(auth.reset·auth.resetVerify), 기록에 이메일·비밀번호 없음', egress.audit.some((x) => x.path === 'auth.reset') && egress.audit.some((x) => x.path === 'auth.resetVerify' && x.status === 200) && !/gyeonbon|kimchi|bindae/.test(JSON.stringify(egress.audit)), egress.audit);
+  check('렌더러에 세션·비밀번호 없음', !/sxs1|kimchi|bindae/.test(await js<string>(`document.body.innerHTML`)));
+  front.close();
+}
+
 app.whenReady().then(async () => {
   try {
     if (process.env.SAX_E2E_ACCOUNT === 'signup') await signup();
+    else if (process.env.SAX_E2E_ACCOUNT === 'reset') await reset();
     else await main();
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);

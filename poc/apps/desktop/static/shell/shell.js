@@ -1099,14 +1099,21 @@ async function accountStep(method, params) {
   render();
   try {
     state.account = await call(method, params);
-    if (method !== 'account.verify') l.draft.code = '';
+    // 재설정 바꾸기는 정책 거부면 받아 둔 코드로 다시 보낸다(코드 오류일 때만 아래에서 비운다)
+    if (method !== 'account.verify' && method !== 'account.finishReset') l.draft.code = '';
   } catch (err) {
     state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: errText(err) };
   } finally {
     l.busy = false;
-    if (method === 'account.password' || method === 'account.setPassword') l.draft.password = '';
+    if (method === 'account.password' || method === 'account.setPassword' || method === 'account.finishReset') l.draft.password = '';
+    // 비밀번호 찾기: 코드를 보냈으면 코드 칸부터. 코드 오류는 코드 칸으로 돌아가 칸을 비운다(새 비밀번호도 지웠다, 명세 §4).
+    if (method === 'account.startReset' && state.account?.step === 'reset_code') l.screen = 'reset_code';
+    if (method === 'account.finishReset' && /^account\.code_/.test(state.account?.error ?? '')) {
+      l.screen = 'reset_code';
+      l.draft.code = '';
+    }
     // 서버는 이메일·서비스 이름을 한 코드로 준다. 어느 쪽인지는 보내기 전에 같은 규칙으로 가려 둔 종류로 고른다(비밀번호는 남기지 않는다).
-    if (method === 'account.setPassword' && state.account?.error === 'account.password_contains_identity' && l.pwKind === 'service') state.account = { ...state.account, error: 'account.password_contains_service' };
+    if ((method === 'account.setPassword' || method === 'account.finishReset') && state.account?.error === 'account.password_contains_identity' && l.pwKind === 'service') state.account = { ...state.account, error: 'account.password_contains_service' };
     // 서버에 비밀번호 기능이 꺼져 있으면(404) 이메일 코드 로그인으로 바로 넘긴다(인계 명세 §1)
     if (method === 'account.password' && state.account?.error === 'request.not_found') {
       l.screen = 'code_email';
@@ -1114,7 +1121,11 @@ async function accountStep(method, params) {
     }
     if (method === 'account.verify' && (state.account?.error || state.account?.step === 'set_password')) l.draft.code = '';
   }
-  if (state.account?.step === 'signed_in') {
+  if (state.account?.step === 'signed_in' && method === 'account.finishReset') {
+    // 바꿈 끝 화면(§4 done)을 보이고 [계속]에서 닫는다
+    l.screen = 'reset_done';
+    l.draft.code = '';
+  } else if (state.account?.step === 'signed_in') {
     const later = state.account.error === 'account.password_later';
     state.login = null;
     state.account = { ...state.account, error: null };
@@ -1158,11 +1169,17 @@ const loginCtx = () => ({
     return accountStep('account.setPassword', { password });
   },
   skipPassword: () => accountStep('account.skipPassword', {}),
+  startReset: (email) => accountStep('account.startReset', { email }),
+  finishReset: (code, password) => {
+    state.login.pwKind = identityIn(password, state.account?.email ?? '');
+    return accountStep('account.finishReset', { code, password });
+  },
   verify: (code) => accountStep('account.verify', { code }),
   password: (email, password) => accountStep('account.password', { email, password }),
   // 코드 화면 [뒤로]: 코드를 버리고 코드 받기 화면으로(계정 만들기에서 왔으면 그대로)
   back: async () => {
-    if (state.login.screen !== 'signup') state.login.screen = 'code_email';
+    const s = state.login.screen;
+    state.login.screen = s === 'reset_code' || s === 'reset_new' ? 'reset_email' : s === 'signup' ? 'signup' : 'code_email';
     await accountStep('account.back', {});
   },
 });
@@ -1348,7 +1365,7 @@ function renderModal() {
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
   root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : []));
   $('#app').inert = open;
-  const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email') : null;
+  const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email, [data-act=account-reset-done]') : null;
   if (i) {
     i.focus();
     // type=email은 선택 범위를 지원하지 않는다(던진다)
