@@ -51,7 +51,7 @@ export function refusalText(r: ArmRefusal): string {
 /** 증언 바의 무장 거부 문구. 승인이 아니므로 "승인할 수 없어요"를 "확인 결과를 받을 수 없어요"로 바꾼다. */
 export const attestRefusalText = (text: string) => text.replace('승인할 수 없어요', '확인 결과를 받을 수 없어요');
 
-/** 같은 업무 키의 원장 상태 중 발급됐거나 발급됐을 수 있는 것. 이것이 있으면 "직전 시도 발급 안 됨"보다 먼저 보인다. */
+/** 같은 업무 키의 원장 상태 중 발급됐거나 발급됐을 수 있는 것. 이것이 있으면 "이전 시도는 발급되지 않았어요"보다 먼저 보인다. */
 export const ISSUED_OR_UNKNOWN = ['committed', 'in_doubt', 'armed', 'dispatched', 'observed_manual'];
 
 /** $dup.businessKey 값(원장 상태 목록)에 발급됐거나 모르는 건이 있는가. */
@@ -63,14 +63,14 @@ export type DupState = { flag: string; tone: 'normal' | 'attention'; action: str
 
 /**
  * 중복 경고 표시(D02 §7, ADR-027 결정 3). 칸이 하나라 가장 위험한 것을 고른다:
- * 발급 확정 있음 → 발급 여부 모름 → 직전 시도 미발급 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
+ * 발급 확정 있음 → 발급 여부 모름 → 이전 시도 미발급 → 그 밖의 같은 건 기록 → 다른 PC 확인 불가. 카드에는 해당하는 경고를 모두 둔다.
  * 발급됐거나 모르는 건은 주의 색이다. 첫 클릭이 명시 확인이라는 ADR-021 규칙은 그대로다.
  */
 export function dupState(f: Map<string, string>): DupState | undefined {
   const states = (f.get('$dup.businessKey') ?? '').split(',');
   if (states.includes('committed')) return { flag: '이미 발급됨(승인번호 있음)', tone: 'attention', action: ACTION_TEXT_DUP_COMMITTED };
   if (dupMayBeIssued(f)) return { flag: '발급 여부 확인 안 됨', tone: 'attention', action: ACTION_TEXT_DUP };
-  if (f.get('$dup.priorNotCommitted') === 'true') return { flag: '직전 시도 미발급 판정', tone: 'normal', action: ACTION_TEXT_DUP };
+  if (f.get('$dup.priorNotCommitted') === 'true') return { flag: '이전 시도는 발급되지 않았어요', tone: 'normal', action: ACTION_TEXT_DUP };
   if (f.get('$dup.businessKey')) return { flag: '같은 건 기록 있음', tone: 'normal', action: ACTION_TEXT_DUP };
   if (f.get('$dup.otherDevice')) return { flag: '다른 PC 기록 확인 불가', tone: 'normal', action: ACTION_TEXT_DUP };
   return undefined;
