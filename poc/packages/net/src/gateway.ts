@@ -15,6 +15,11 @@ export const GATEWAY_ORIGIN = 'https://tax.laf-co.com';
 /** DPoP 헤더 생성기(금고 crypto.signVd purpose SAX-dpop-v1). htm·htu·본문 해시를 받아 Authorization·DPoP 헤더를 돌려준다. 토큰·증명은 기록하지 않는다. */
 export interface GatewayAuth {
   headers(req: { method: 'POST'; url: string; bodySha256: string }): Promise<Record<string, string>>;
+  /**
+   * 게이트웨이가 401(gateway.unauthorized)을 줬다. 캐시한 기기 토큰을 버리게 한다(ADR-040 결정 3·5).
+   * 있으면 Egress.toGateway가 이것을 부른 뒤 한 번만 다시 보낸다. 없으면 다시 보내지 않는다(같은 토큰이라 소용없다).
+   */
+  invalidate?(): void;
 }
 
 /**

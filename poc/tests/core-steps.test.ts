@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
-  BASIC_HANDLERS, Interpreter, identityProblem, newScope, resolveTarget, retryDelayMs, stepEnv,
+  BASIC_HANDLERS, Interpreter, identityProblem, newScope, readRef, resolveTarget, retryDelayMs, stepEnv,
   type InterpHooks, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepEnv,
 } from '@sax/engine/core';
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
@@ -207,11 +207,25 @@ describe('wait·assert·extract·branch·end(D02 §4·§4.1)', () => {
     assert.deepEqual(await run1({ id: 's7', type: 'wait', for: 'selector', value: 'f.result', timeoutMs: 300 }, env), { t: 'fail', code: 'step.timeout' });
     assert.deepEqual(await run1({ id: 's7', type: 'wait', for: 'selector', value: 'f.result', timeoutMs: 300 }, env), { t: 'next' });
   });
+  it('참조의 배열 첨자: $inputs.items[0].name(골든 H-01 s16). 범위 밖·배열 아님·모양이 틀리면 없음', () => {
+    const sc = newScope({ inputs: { items: [{ name: '경영 컨설팅' }], amounts: { supply: '1000' } }, intentId: 'i' });
+    assert.equal(readRef(sc, '$inputs.items[0].name'), '경영 컨설팅');
+    assert.equal(readRef(sc, '$inputs.amounts.supply'), '1000');
+    assert.equal(readRef(sc, '$inputs.items[1].name'), undefined);
+    assert.equal(readRef(sc, '$inputs.amounts[0]'), undefined);
+    assert.equal(readRef(sc, '$inputs.items[x].name'), undefined);
+    assert.equal(readRef(sc, '$inputs.items.0.name'), undefined, '첨자는 대괄호로만');
+    assert.equal(readRef(sc, '$inputs.items[0]constructor'), undefined);
+  });
   it('assert: 참이면 다음, 거짓이면 step.assert_failed, 평가할 수 없으면 그 코드(fail-closed)', async () => {
     const { env } = setup({ inputs: { name: '갑' } });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { all: [{ exists: 'f.name' }, { inputPresent: 'name' }, { not: { exists: 'other.missing' } }] } }, env), { t: 'next' });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { any: [{ inputPresent: 'nope' }, { varSet: 'x' }] } }, env), { t: 'fail', code: 'step.assert_failed' });
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { textMatches: { target: 'f.result', patternRef: 'pat.ok' } } }, env), { t: 'next' }, '공백 접기 뒤 비교');
+    // 입력 역할(조회가 채우는 읽기 전용 칸, H-01 s14 공급받는자 상호)은 DOM value를 본다. innerText는 input에서 늘 빈 문자열이다.
+    const nm = setup({ els: els().map((x) => (x.id === 'nm' ? { ...x, value: '처리 결과: 3건', text: '' } : x)) });
+    assert.deepEqual(await run1({ id: 's14', type: 'assert', cond: { textMatches: { target: 'f.name', patternRef: 'pat.ok' } } }, nm.env), { t: 'next' }, '입력 칸은 value');
+    assert.deepEqual(await run1({ id: 's14', type: 'assert', cond: { textMatches: { target: 'f.name', patternRef: 'pat.ok' } } }, env), { t: 'fail', code: 'step.assert_failed' }, '빈 입력 칸은 거짓');
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { exists: 'f.dup' } }, env), { t: 'fail', code: 'step.selector_miss' }, '모호하면 없음이 아니라 오류');
     // readback 조건(sumEquals·readbackEquals·fieldsFilled)은 tests/core-readback.test.ts(M2-3).
     assert.deepEqual(await run1({ id: 's8', type: 'assert', cond: { profileHas: 'bizNo' } }, env), { t: 'fail', code: 'step.cond_unsupported' });

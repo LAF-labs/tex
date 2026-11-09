@@ -3,3 +3,4 @@ export * from './layout.ts';
 export * from './log.ts';
 export * from './paths.ts';
 export * from './port.ts';
+export * from './safe-read.ts';

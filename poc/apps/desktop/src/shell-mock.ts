@@ -263,6 +263,20 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
 export type RunStatus = 'draft' | 'preparing' | 'turn' | 'waiting' | 'issuing' | 'done' | 'stopped' | 'attention';
 export type StepState = 'todo' | 'now' | 'done' | 'attention';
 
+/**
+ * 요청 해석 중 실제 송신(활동 기록 근거, 팀장 결정 2026-11-07 "via + 실제 송신 대상").
+ * - openrouter_demo: 시연 모델(SAX_DEMO_MODEL, fixture)을 불렀다(성공 여부와 무관, 부르면 보낸 것이다).
+ * - gateway.decide·gateway.run_tokens·gateway.respond: main이 그 경로의 게이트웨이 인증 헤더를 엔진에 내줬다(gateway-auth.ts onIssued).
+ */
+export type SentTo = 'openrouter_demo' | 'gateway.decide' | 'gateway.run_tokens' | 'gateway.respond';
+
+/** 게이트웨이 경로 → SentTo(모르는 경로는 버린다). 같은 것은 한 번만, 순서는 고정. */
+export function sentFromGateway(paths: readonly string[]): SentTo[] {
+  const m: Record<string, SentTo> = { '/v1/run-tokens': 'gateway.run_tokens', '/v1/decide': 'gateway.decide', '/v1/respond': 'gateway.respond' };
+  const got = new Set(paths.map((p) => m[p]).filter((x): x is SentTo => !!x));
+  return (['gateway.run_tokens', 'gateway.decide', 'gateway.respond'] as const).filter((x) => got.has(x));
+}
+
 export interface RunView {
   id: string;
   doc: 'H-01';
@@ -298,6 +312,8 @@ export interface RunView {
   approvedPending?: boolean;
   /** 이 초안을 만든 요청 해석(활동 기록의 모델 줄). 시연 모델이면 'model'. */
   interp?: 'model' | 'offline';
+  /** 이 요청을 해석하려고 앱이 실제로 보낸 곳(main이 관찰한 것). 활동 기록의 모델·우리 서버 줄은 이것으로만 만든다. 없거나 빈 배열이면 보낸 것 없음. */
+  sent?: SentTo[];
   /** 발급됐는지 모른다(엔진 결과 in_doubt, 원장 in_doubt). 이 카드에는 다시 발급하는 버튼이 없다(08 §11). */
   inDoubt?: boolean;
   /** 발급목록 조회 몇 번째인지(엔진 verify 단계 이벤트의 attempt). 엔진이 보내지 않으면 없다. */

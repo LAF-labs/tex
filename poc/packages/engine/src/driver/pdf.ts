@@ -8,6 +8,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { ValidationError } from '@sax/db';
+import { readRegularFile } from '@sax/platform';
 import { STAGED_FILE_ID, type PdfFileResult, type PdfPort } from '../core/savepdf.ts';
 import type { DocumentView, NeedsOcr, PdfText } from '../documents.ts';
 
@@ -108,11 +109,14 @@ export class VaultPdfPort implements PdfPort {
     if (!STAGED_FILE_ID.test(r.fileId)) return { ok: false, reason: 'bad_file_id' };
     const file = path.join(this.i.staging, `${r.fileId}.pdf`);
     try {
-      const st = await fs.lstat(file).catch(() => null);
-      if (!st) return { ok: false, reason: 'staged_missing' };
-      if (!st.isFile() || st.nlink !== 1) return { ok: false, reason: 'staged_unreadable' };
-      if (st.size === 0 || st.size > (this.i.maxBytes ?? MAX_BYTES)) return { ok: false, reason: 'too_large' };
-      const bytes = new Uint8Array(await fs.readFile(file));
+      // 경로를 두 번 따라가지 않는다: 확인한 파일과 연 파일이 같은지(bigint dev·ino) 보고 그 핸들에서 상한까지만 읽는다.
+      const read = await readRegularFile(file, this.i.maxBytes ?? MAX_BYTES);
+      if (!read.ok) {
+        if (read.reason === 'missing') return { ok: false, reason: 'staged_missing' };
+        if (read.reason === 'empty' || read.reason === 'too_large') return { ok: false, reason: 'too_large' };
+        return { ok: false, reason: 'staged_unreadable' };
+      }
+      const bytes = read.bytes;
       const text = await this.i.extract(bytes, { ocr: false });
       let v = await this.i.documents.import(bytes, text);
       if ('needsOcr' in v) v = await this.i.documents.import(bytes, await this.i.extract(bytes, { ocr: true }), { altText: text.text, final: true });

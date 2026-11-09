@@ -58,7 +58,7 @@ describe('오프라인 세무 상담 낱말', () => {
 
   it('판정 불가(decide.unavailable)일 때만 고정 문구를 덧붙이고, 작업(interpret)은 그대로다', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
-    assert.ok(src.includes("if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, r.fallback === 'decide.unavailable' && offlineAdviceMentioned(text) ? ADVICE_TEXT : null);"));
+    assert.ok(src.includes("if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, r.fallback === 'decide.unavailable' && offlineAdviceMentioned(text) ? ADVICE_TEXT : null, sent);"));
     // 온라인 길(routed)은 모델 판정 그대로: 사전을 다른 곳에서 부르지 않는다
     assert.equal(src.split('offlineAdviceMentioned(').length - 1, 1);
   });

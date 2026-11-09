@@ -12,7 +12,9 @@ import { ColumnCipher, deriveColumnKey } from '@sax/db';
 import { BundleService } from '@sax/bundle';
 import { Egress } from '@sax/net';
 import { appPaths, defaultAppRoot, FileEventLog, wrapPort, type PortLike } from '@sax/platform';
+import { BundleCatalog } from '@sax/model';
 import { BizVerifier } from './bizverify.ts';
+import { portGatewayAuth } from './gateway-auth.ts';
 import { connectRunBrowser, RunBrowserSlot } from './browser.ts';
 import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
@@ -82,7 +84,7 @@ for (const m of [...CARD_READ_QUERIES, ...CARD_COMMANDS]) {
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
 
-async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined): Promise<void> {
+async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined, authPort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
   log = new FileEventLog(paths.logs, 'engine');
   const vault = new VaultClient(wrapPort(vaultPort, 'electron'));
@@ -100,7 +102,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const cipher = new ColumnCipher(columnKey);
   columnKey.fill(0);
   key.fill(0);
-  const egress = new Egress();
+  // 게이트웨이 인증은 main auth 포트로 요청마다 받는다(ADR-040 결정 3: gateway 범위 기기 토큰, 엔진은 토큰·키를 갖지 않는다).
+  // auth 포트가 없으면(개발 콘솔·시험 기동) 게이트웨이 구성 없이 둔다. 그때 intent.resolve는 decide.unavailable이다.
+  const egress = new Egress(authPort ? { gateway: { auth: portGatewayAuth(wrapPort(authPort, 'electron')), bundles: BundleCatalog.load().allowEntries() } } : {});
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
@@ -124,7 +128,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     // 금고가 비밀 값이 새는 기미를 보면 발급 전에 멈춘다(I-3).
     vault.on('secret_window.leak_suspected', () => runs?.leakSuspected());
   }
-  log.event('engine.db_opened', { portal: portal.kind, gatePort: !!gatePort });
+  log.event('engine.db_opened', { portal: portal.kind, gatePort: !!gatePort, authPort: !!authPort });
 }
 
 async function handle(method: string, params: Record<string, unknown>): Promise<unknown> {
@@ -185,7 +189,7 @@ parentPort.on('message', (e) => {
     // 초기화는 한 번만. 다시 받으면 재시작 처리(in_doubt 승격·게이트 만료)가 진행 중인 실행을 망가뜨린다.
     if (initialized) return log.event('engine.init_again');
     initialized = true;
-    init(msg as unknown as EngineInit, e.ports[0], e.ports[1]).then(
+    init(msg as unknown as EngineInit, e.ports[0], e.ports[1], e.ports[2]).then(
       () => parentPort.postMessage({ t: 'ready' }),
       (err: Error) => parentPort.postMessage({ t: 'fatal', code: err.message.slice(0, 80) }),
     );
