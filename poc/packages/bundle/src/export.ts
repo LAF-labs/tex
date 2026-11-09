@@ -24,6 +24,7 @@ import {
 import { withholdingSummary } from '@sax/payroll';
 import { BundleError, monthRange } from './items.ts';
 import { missingReport, monthStatus, tidyInvoices, type InvoiceLine, type MonthContext } from './month.ts';
+import { PLATFORM_KO, summaryOf } from './settlement.ts';
 
 configure({ useWebWorkers: false });
 
@@ -224,10 +225,22 @@ export async function exportBundle(input: BundleExportInput): Promise<BundleExpo
 
   const tier2 = status.filter((s) => s.item.tier === 2);
   if (tier2.length) {
-    const rows: Row[] = [header(['구분', '일자·기간', '금액', '상태', '파일'])];
+    // 정산 파일은 docparse가 읽은 요약(플랫폼·기간·합계)을 한 줄씩 적는다. 파일에서 읽은 값일 뿐 판정·신고 금액이 아니다(M6-5)
+    const rows: Row[] = [header(['구분', '일자·기간', '금액', '상태', '파일', '수수료', '입금액', '비고'])];
+    const docs = new DocumentRepo(db);
     for (const s of tier2) {
       if (s.item.kind === 'cash_sales') for (const c of new CashSalesRepo(db).range(profileId, from, to)) rows.push(['현금매출', c.day, num(c.amount), c.source === 'phone' ? '폰 입력' : 'PC 입력', '']);
-      else rows.push([s.item.name, s.period, null, STATUS_KO[s.status], s.docIds.map((d) => nameOf.get(d) ?? '').filter(Boolean).join(', ')]);
+      else {
+        const read = s.docIds.map((d) => ({ d, sum: summaryOf(docs.get(d)?.meta ?? null) })).filter((x) => x.sum && nameOf.has(x.d));
+        if (!read.length) rows.push([s.item.name, s.period, null, STATUS_KO[s.status], s.docIds.map((d) => nameOf.get(d) ?? '').filter(Boolean).join(', ')]);
+        for (const { d, sum } of read) {
+          const note = ['파일에서 읽은 값', ...(sum!.estimated ? ['형식 추정'] : []), ...(sum!.totalMismatch ? ['파일 합계와 다름'] : [])].join(', ');
+          rows.push([
+            `${s.item.name}(${sum!.platform ? PLATFORM_KO[sum!.platform] : '플랫폼 모름'})`, sum!.periodFrom && sum!.periodTo ? `${sum!.periodFrom}~${sum!.periodTo}` : s.period,
+            num(sum!.gross), STATUS_KO[s.status], text(nameOf.get(d)), num(sum!.fees), num(sum!.payout), note,
+          ]);
+        }
+      }
     }
     sheets.push({ sheet: '정산·현금매출', data: rows });
     tally.push({ sheet: '정산·현금매출', rows: rows.length - 1 });

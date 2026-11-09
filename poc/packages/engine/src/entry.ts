@@ -31,6 +31,7 @@ import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
 import { PC_FILE_COMMANDS } from './protocol.ts';
+import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, IntentResolver } from './intent.ts';
@@ -74,6 +75,11 @@ const PHONE = new Set<string>(PHONE_COMMANDS);
 for (const m of PHONE) ALLOWED.add(m);
 const PC_FILE = new Set<string>(PC_FILE_COMMANDS);
 for (const m of PC_FILE) ALLOWED.add(m);
+// 정산내역 넣기(M6-5)도 PcFileIntake가 맡는다(보관함 파일 + 문서 + 그달 표시를 한 번에).
+for (const m of SETTLEMENT_COMMANDS) {
+  PC_FILE.add(m);
+  ALLOWED.add(m);
+}
 // daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
 for (const m of DAEMON_READ_QUERIES) {
   PAYROLL.add(m);

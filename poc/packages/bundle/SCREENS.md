@@ -60,6 +60,7 @@
 | | `bundle.setEntry` | `profileId, itemId, month, status\|null, docIds?, note?` | `{period, entry\|null}`. 기간은 엔진이 항목 주기로 정한다 |
 | PC 파일 | `receipt.pcStore` | `profileId, bytes, format: jpg\|png\|pdf, ocr?` | `{docId, duplicate}`(`PC_FILE_COMMANDS`, 처리 `PcFileIntake`) |
 | | `bundle.attachFile` | `profileId, itemId, month, bytes, format: pdf\|jpg\|png\|xlsx\|xls\|docx\|hwp, displayName?` | `{docId, duplicate, period, entry}` |
+| | `settlement.store` | `profileId, itemId, month, bytes, format: xlsx\|csv, parsed, displayName?` | `{docId, duplicate, period, entry, summary}`(M6-5, `SETTLEMENT_COMMANDS`) |
 | 카드 내역 | `db.query.card.list` | `profileId, month` | `{month, lastFetch, daysSinceFetch, coverage: full\|partial\|none, rows[{…, memo}], detachedMemos[{id, text, usedOn, amount}]}`(M6-3, `CARD_READ_QUERIES`) |
 | | `card.setMemo` | `profileId, txnId, memo` | 메모(빈 글이면 지움, 500자) |
 | | `card.reattachMemo` | `profileId, memoId, txnId` | 떠 있던 메모를 고른 행에 다시 잇는다. 그 행에 메모가 있으면 `memo_exists` |
@@ -149,7 +150,14 @@
   - `format`은 main이 확장자로 정한다. 엔진은 머리 바이트가 맞는지만 본다(`format_mismatch`). 상한은 15MiB다(`input_size`).
   - 같은 파일(sha256)을 같은 프로필에 다시 넣으면 새로 쓰지 않는다(`duplicate: true`). 증빙이면 새 읽기 후보만 바꾸고, 확인한 값은 그대로다.
   - 보관함 파일 이름은 `{종류}_{yyyyMMdd}_{shortId}.{ext}`다. 원래 파일 이름은 쓰지 않는다.
+  - 파일 칸 문서의 종류(D07 §2): 정산 품목은 `settlement_file`, 급여대장 파일 칸은 `payroll_ledger`, 그 밖은 `bundle_file`이다.
   - 오류: `bad_format`, `format_mismatch`, `input_size`, `bad_ocr`, `bad_display_name`, `item_not_found`, `entry_derived`, `invalid_month`.
+- 정산내역(배달앱·오픈마켓, M6-5)
+  - main이 엑셀·csv를 docparse 샌드박스에 넣어 `SettlementResult`를 받는다. 그다음 `settlement.store { itemId, month, bytes, format, parsed }`로 넣는다. 엔진은 파일을 열지 않는다.
+  - 남는 것은 요약(`summary`)뿐이다: 플랫폼·기간·매출·수수료·입금액·부가세·행 수, 형식 추정(`estimated`), 파일 합계와 다름(`totalMismatch`). 행·열 이름은 남기지 않는다.
+  - 표시가 없었으면, 정산 기간이 그달을 다 덮을 때 `ready`, 아니면 `partial`이다. 화면은 `estimated`면 "형식을 추정해 읽었어요", `totalMismatch`면 "파일 합계와 달라요"를 보인다(판정 아님).
+  - 꾸러미 '정산·현금매출' 시트에 파일마다 한 줄로 적는다. 비고는 "파일에서 읽은 값"이다.
+  - 오류: `not_settlement_item`, `settlement_channel_mismatch`(배달앱 칸에 오픈마켓 파일 등), `bad_settlement`.
 - 오류: `bad_day`, `bad_amount`, `bad_issued_on`, `bad_merchant`, `bad_merchant_biz_no`, `receipt_not_found`, `item_not_found`, `bad_status`, `entry_derived`, `bad_doc_ids`, `doc_not_found`, `bad_note`.
 
 ### 사업용 카드 내역(08 D-04)
