@@ -14,7 +14,7 @@
   "run": { "maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1 },
   "cooldown": { "onBlockSignalHours": 24, "onCaptchaBurst": { "windowMin": 10, "count": 3, "action": "slow+notify" }, "positiveDetectionsForCooldown": 1 },
   "daemon": { "windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30, "autoAllowed": false },
-  "portalMode": { "hometax": "assisted", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess" },
+  "portalMode": { "hometax": "auto", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess" },
   "captchaRelay": { "hometax": "disabled", "gov24": "disabled", "wetax": "disabled", "sminfo": "disabled", "insure4": "disabled" },
   "browser": { "remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true },
   "verify": { "minElapsedMs": 60000, "lookups": 2, "maxMs": 300000 },

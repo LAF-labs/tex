@@ -36,14 +36,16 @@
 - 폐기 목록과 status가 함께 올라가는 이유: 엔진은 24시간 안의 폐기 목록이 없으면 새 패키지를 받지 않는다. status가 없으면 데몬이 멈춘다(`daemon_stop`).
 - 정책이 함께 올라가는 이유: 정책이 없거나 낡으면 엔진은 홈택스도 후처리(postprocess)로만 돈다(D03 §7.1, fail-closed).
 - 올린 뒤 폐기 목록(24시간)·정책·status·인덱스(48시간)는 서버 cron이 timestamp-1 키로 자동으로 다시 서명한다. 사람은 내용이 바뀔 때만 서명한다(ADR-043, 팀장 결정 2026-11-06·2026-11-09).
-- status 상한은 `hometax: assisted`(사람 보조)다. 실제 홈택스 화면과 셀렉터를 아직 대조하지 않았기 때문이다(팀장 결정 2026-11-09).
+- status 상한은 `hometax: auto`다(팀장 결정 2026-11-09, #234 뒤 정정).
+  - 엔진은 실효 수준이 auto가 아니면 자동 실행을 거부한다(#234). assisted로 바꿔 돌리는 실행이 아직 없기 때문이다.
+  - 그래도 되돌릴 수 없는 스텝은 매번 사람 승인 카드를 거친다. 커밋 뒤 verify와 서버 긴급 정지(`killPlaybooks`, 상한 하향)는 그대로 남는다.
 - **H-01 셀렉터는 실제 화면 미대조다. 첫 실기기 실행에서 확인한다**(ADR-025). 틀리면 판을 올려(2.1.1 등) 다시 게시한다. 이번 게시 판은 2.1.0 그대로다.
 
 ### 정책 2026.11
 
 원본은 `services/registry/policy/2026.11.json`이다. 서명 대상은 이 파일에 `monotonic`·`keyEpoch`를 붙인 내용이다. 기간과 타임스탬프는 서버가 붙인다.
 
-- `portalMode`: `hometax: assisted`, 나머지(`gov24`·`wetax`·`sminfo`·`insure4`)는 `postprocess`다. status 상한과 같다.
+- `portalMode`: `hometax: auto`, 나머지(`gov24`·`wetax`·`sminfo`·`insure4`)는 `postprocess`다. status 상한과 같다.
 - 홈택스 요청률 상한은 ADR-025의 PoC 값 그대로다(엔진 `POC_OVERRIDES`와 같다).
   - 프로필당 하루 실행 20회, 되돌릴 수 없는 실행 1회, 하루 로그인 3회, 차단 신호 1번이면 쿨다운
   - 그 밖의 값(로그인 세션당 15회, 분당 이동 12회, 로그인 실패 2회, 동시 1)은 정책 예시(SIGNING.md) 그대로다.
@@ -65,7 +67,7 @@
 ## 1. dry-run (Touch ID 없음, 운영에 쓰지 않음)
 
 ```bash
-node --conditions=development services/registry/src/publish/cli.ts dry-run --registry https://tax.laf-co.com --work ~/sax-publish/h01-dry --trust services/registry/ceremony/keyepoch-1/trust-root.json --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --policy services/registry/policy/2026.11.json --ceiling hometax=assisted packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
+node --conditions=development services/registry/src/publish/cli.ts dry-run --registry https://tax.laf-co.com --work ~/sax-publish/h01-dry --trust services/registry/ceremony/keyepoch-1/trust-root.json --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --policy services/registry/policy/2026.11.json --ceiling hometax=auto packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
 ```
 
 - 운영 레지스트리는 **읽기만** 한다(GET). 서명은 메모리 안 임시 키로 하고, 게시는 이 맥 안의 임시 로컬 레지스트리에만 한다.
@@ -80,8 +82,8 @@ node --conditions=development services/registry/src/publish/cli.ts dry-run --reg
   | `hometax.invoice.lookup@1.0.0` | `5935-5dd9-0788-f815-39eb-b5f3-f9e8-48c3` |
   | `hometax.invoice.email_status@1.0.0` | `8f91-2f81-f1ea-92c9-7591-aa92-3a38-3113` |
   | `hometax.invoice.issue@2.1.0` | `2bb4-aa6f-1263-b286-142a-e36e-3440-54da` |
-  | 정책 `2026.11` monotonic 1 | `4f32-761e-cb56-0667-e98a-de2b-c44b-ec9a` |
-  | status monotonic 1(`hometax: assisted`) | `71ba-dba0-765b-6603-d2bb-6333-7048-304d` |
+  | 정책 `2026.11` monotonic 1 | `955a-eddc-7af1-6b3a-b4d3-c67a-e90e-9260` |
+  | status monotonic 1(`hometax: auto`) | `9977-02fe-4c56-1b92-134f-715c-ec6a-d1d7` |
 
 - 오류가 나면 여기서 멈추고 팀장에게 알린다. 코드는 아래 "실패하면" 표에 있다.
 
@@ -90,7 +92,7 @@ node --conditions=development services/registry/src/publish/cli.ts dry-run --reg
 dry-run과 같은 인자에 `prepare`, 새 작업 폴더를 준다.
 
 ```bash
-node --conditions=development services/registry/src/publish/cli.ts prepare --registry https://tax.laf-co.com --work ~/sax-publish/h01-1 --trust services/registry/ceremony/keyepoch-1/trust-root.json --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --policy services/registry/policy/2026.11.json --ceiling hometax=assisted packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
+node --conditions=development services/registry/src/publish/cli.ts prepare --registry https://tax.laf-co.com --work ~/sax-publish/h01-1 --trust services/registry/ceremony/keyepoch-1/trust-root.json --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --policy services/registry/policy/2026.11.json --ceiling hometax=auto packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
 ```
 
 - 화면
