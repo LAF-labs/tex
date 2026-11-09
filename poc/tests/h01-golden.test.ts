@@ -114,7 +114,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
       db: s.db, data: s.data, ledgerKey, portal: fixturePortal(fx.origin), log,
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => s.gateMsgs.push(m),
-      ...(ir ? { engine: 'ir' as const, ir } : {}),
+      ...(ir ? { engine: 'ir' as const, ir } : { engine: 'h01' as const }),
       trace: (runId, e) => {
         if (e.name !== 'step.started') return;
         const t = s.traces.get(runId) ?? [];
@@ -258,7 +258,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.deepEqual([o.ir.status, o.ir.code], ['failed', 'assert.issue_date_mismatch']);
   });
 
-  it('[알려진 차이] 승인 뒤 화면 값이 바뀌면 클릭하지 않는다: 둘 다 원장 not_committed(pre_dispatch_mismatch)·제출 0. H01은 끝내고, IR은 D03대로 게이트 앞 checkpoint(s11)로 돌아간다', async () => {
+  it('[제품 동작 변화 ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않는다: 둘 다 원장 not_committed(pre_dispatch_mismatch)·제출 0. H01은 끝내고, IR은 D03대로 게이트 앞 checkpoint(s11)로 돌아간다', async () => {
     const o = await both('C', 700_000, async (x) => {
       await approve(x);
       fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
@@ -315,7 +315,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.deepEqual([o.ir.status, o.ir.ledger], ['success', 'committed']);
   });
 
-  it('[알려진 차이] 초안에 이메일이 없는데 포털이 주소를 다시 채우면: H01은 그 주소를 승인받아 메일까지 확인하고, IR은 V-03m(팀장 결정 2026-11-06)대로 s19f에서 멈춘다(게이트 없음·제출 0)', async () => {
+  it('[제품 동작 변화 ③, H01 결함] 초안에 이메일이 없는데 포털이 주소를 다시 채우면: H01은 그 주소를 승인받아 메일까지 확인하고, IR은 V-03m(팀장 결정 2026-11-06)대로 s19f에서 멈춘다(게이트 없음·제출 0)', async () => {
     const o = await both('A', 123_000, async ({ s, runId, runs }) => {
       if (s.engine === 'h01') assert.deepEqual(runs.answer(approval(await gateFor(s, runId))), { ok: true });
     }, { extra: { email: '' }, knob: { set: () => (fx.knobs.refillEmail = 'late@asangsa.example'), reset: () => (fx.knobs.refillEmail = null) }, noGate: true });
@@ -325,7 +325,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.deepEqual(o.ir.steps, o.h01.steps.slice(0, o.ir.steps.length));
   });
 
-  it('[알려진 차이] 명시적 실패 신호 + 부재 증거: 둘 다 원장 not_committed. H01은 실행을 끝내고(s36), IR은 D02 §8대로 s11로 돌아가 다시 게이트를 연다', async () => {
+  it('[제품 동작 변화 ①] 명시적 실패 신호 + 부재 증거: 둘 다 원장 not_committed. H01은 실행을 끝내고(s36), IR은 D02 §8대로 s11로 돌아가 다시 게이트를 연다', async () => {
     const o = await both('C', 900_000, async (x) => {
       await approve(x);
       if (x.s.engine === 'ir') {
@@ -341,6 +341,56 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     // 원장 행·제출 횟수·첫 게이트 카드와 s30까지의 궤적은 같다.
     assert.deepEqual(o.ir.gate, o.h01.gate);
     assert.deepEqual(o.ir.steps.slice(0, o.h01.steps.length), o.h01.steps);
+  });
+  // ---- PR-D: 세 경우의 IR 동작(설계, 팀장 결정 2026-11-09). 위 대조 시험은 두 실행기를 함께 고정하고, 아래는 IR 쪽만 끝까지 본다. ----
+  const ledgerIs = (s: Side, runId: string, state: string) => next(() => (s.runs.inspect(runId).ledger === state ? true : undefined));
+  /**
+   * ①·②는 두 번째 게이트 승인 뒤 원장 arm이 ledger_not_committed로 거부된다(원장 키 PRIMARY KEY(intent_id, step_id), D07 B-10,
+   * not_committed는 종결). D02 §8·D03 §2의 재게이트와 D07 키가 맞지 않는다. 팀장 결정(시도 번호 등) 전까지 todo로 둔다.
+   */
+  const REGATE_TODO = { todo: '재게이트 원장 키(D07 PK(intent_id, step_id))와 D02 §8 s30 not_committed → s11이 충돌: 팀장 결정 대기' };
+
+  it('[IR ①] 발급 안 됨 → s11로 돌아가 두 번째 게이트: 카드에 $dup.priorNotCommitted, 첫 승인으로는 못 넘고 새 승인으로만 발급한다', REGATE_TODO, async () => {
+    const s = sides.ir;
+    let first: GateRequest | null = null;
+    const o = await observe(s, 'C', 910_000, async (req, runId, runs) => {
+      first = req!;
+      assert.deepEqual(runs.answer(approval(req!)), { ok: true });
+      const again = await gateFor(s, runId, 1);
+      fx.knobs.failIssue = false;
+      assert.notEqual(again.reqId, first.reqId, '새 게이트 요청');
+      assert.ok(again.fields.some((f) => f.fieldKey === '$dup.priorNotCommitted' && f.value === 'true'), '이전 시도는 발급되지 않았다는 표시');
+      assert.ok(!first.fields.some((f) => f.fieldKey === '$dup.priorNotCommitted'), '첫 카드에는 없다');
+      assert.equal(runs.answer(approval(first)).ok, false, '첫 승인 근거를 다시 써도 두 번째 게이트는 열리지 않는다');
+      assert.deepEqual(runs.answer(approval(again)), { ok: true });
+    }, { knob: { set: () => (fx.knobs.failIssue = true), reset: () => (fx.knobs.failIssue = false) } });
+    assert.deepEqual([o.status, o.ledger, o.posts, o.approvalNo], ['success', 'committed', 2, true], JSON.stringify(o));
+    assert.equal(o.steps.filter((x) => x === 's20').length, 2, '게이트 두 번');
+    assert.equal(o.steps.filter((x) => x === 's21').length, 2, '제출 두 번(각각 새 승인 뒤)');
+  });
+
+  it('[IR ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않고 s11로 돌아가, 바뀐 화면을 다시 채운 값으로 다시 승인받는다', REGATE_TODO, async () => {
+    const s = sides.ir;
+    const o = await observe(s, 'C', 720_000, async (req, runId, runs) => {
+      assert.deepEqual(runs.answer(approval(req!)), { ok: true });
+      fx.knobs.mutate = { field: 'splAmt', value: '7000001' };
+      await ledgerIs(s, runId, 'not_committed');
+      fx.knobs.mutate = null; // 화면이 더 바뀌지 않으면 다시 채운 값(입력과 같음)으로 두 번째 게이트가 열린다
+      const again = await gateFor(s, runId, 1);
+      assert.notEqual(again.reqId, req!.reqId);
+      assert.ok(again.fields.some((f) => f.fieldKey === 'supplyAmount' && f.value === '720000'), '카드는 다시 읽은 값');
+      assert.deepEqual(runs.answer(approval(again)), { ok: true });
+    }, { knob: { set: () => {}, reset: () => (fx.knobs.mutate = null) } });
+    assert.deepEqual([o.status, o.ledger, o.posts], ['success', 'committed', 1], JSON.stringify(o));
+    assert.ok(o.journal.includes('checkpoint.reentry'));
+  });
+
+  it('[IR ③] 초안에 이메일이 없는데 포털이 주소를 다시 채우면 s19f(assert.input_mismatch)에서 멈춘다: 게이트 요청·제출·원장 행 없음', async () => {
+    const s = sides.ir;
+    const sent = s.gateMsgs.length;
+    const o = await observe(s, 'A', 124_000, async () => {}, { extra: { email: '' }, noGate: true, knob: { set: () => (fx.knobs.refillEmail = 'late@asangsa.example'), reset: () => (fx.knobs.refillEmail = null) } });
+    assert.deepEqual([o.status, o.code, o.posts, o.ledger, o.gate], ['failed', 'assert.input_mismatch', 0, null, null]);
+    assert.equal(s.gateMsgs.slice(sent).filter((m) => m.t === 'gate.request').length, 0, '승인하지 않은 주소로는 카드도 띄우지 않는다');
   });
 });
 

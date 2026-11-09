@@ -196,6 +196,9 @@ export function transition(st: RunState, ev: RunEvent, ctx: MachineCtx): Transit
         case 'recovered':
           return enterRunning(ctx, ['step.rerun_failed']);
         case 'recovery_failed':
+          // 비가역 커밋 뒤 후속 실패(D03 §2 Running → CompletedWithIssues): 같은 실행에 committed가 있으면 then(핸드오프·실패)과 상관없이
+          // 재시도·핸드오프 없이 끝낸다. 고정 문구 "재실행하지 마세요. 발급은 완료되었습니다". save_pdf만이 아니라 모든 사후 스텝이 같다.
+          if (ctx.ledger.includes('committed')) return to(state('CompletedWithIssues'), ['input.unlock', 'ui.fixed:issued_do_not_rerun']);
           // 승인 뒤 enter_commit 전의 W(X) 대기에서 복구에 실패할 수 있으므로 R-G6 입력 잠금을 푼다(사용자가 직접 마저 하도록).
           return ev.then === 'handoff' ? to(state('HandedOff'), ['input.unlock', 'ui.banner:handoff_manual_commit']) : to(state('Failed'), ['input.unlock']);
         case 'downgrade':
