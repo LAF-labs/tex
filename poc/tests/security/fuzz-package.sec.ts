@@ -1,5 +1,5 @@
 // M5-1 IR·셀렉터·정책 퍼징(D13 §1 보안 스위트, D02 §6). 대상: @sax/engine/core validatePackage·schemaViolations.
-// 골든 H-01 v2.1(tests/fixtures/core)을 씨앗 고정으로 변이해 성질을 본다:
+// 골든 H-01 v2.1(제품 원본 packages/engine/playbooks)을 씨앗 고정으로 변이해 성질을 본다:
 //   P1 예외·멈춤 없음(회차당 시간 상한), P2 결과는 위반 배열(규칙 번호·메시지 문자열), P3 같은 입력 → 같은 결과,
 //   P4 위반 메시지에 사용자 문자열 사전 값이 실리지 않음("위반은 값 없음", validate.ts 머리말),
 //   P5 게이트를 지운 패키지는 절대 통과하지 않음(비가역 스텝은 게이트 뒤에만, D02 V-03),

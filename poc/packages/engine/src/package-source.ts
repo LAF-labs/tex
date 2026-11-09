@@ -9,7 +9,7 @@ import type { IrSourceResult } from './run/service-ir.ts';
 
 /**
  * 조회 하위 패키지 id → 포털 조회 화면 정의(PopupLookupPort). H-01의 조회 패키지 두 개는 `<portal.kind>.invoice.lookup`(발급 목록)과
- * `<portal.kind>.invoice.email_status`(메일 발송 상태)다(fixture·hometax 같은 이름 규칙, tests/fixtures/core).
+ * `<portal.kind>.invoice.email_status`(메일 발송 상태)다(fixture·hometax 같은 이름 규칙, 제품 원본 packages/engine/playbooks).
  */
 export function portalLookupDefs(portal: PortalConfig): Map<string, LookupDef> {
   return new Map([
