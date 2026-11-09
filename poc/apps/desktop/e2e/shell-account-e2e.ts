@@ -2,6 +2,7 @@
 // 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다)를 localhost HTTP로 띄우고(fake-account-http.ts), 셸은 제품 클라이언트
 // (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
 // 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
+// SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -60,9 +61,13 @@ const callErr = (m: string, p: unknown) => js<string>(`window.sax.call(${JSON.st
 
 const PASSWORD = 'mangwon-kimchi-12';
 
-/** 메모리 계정 서비스: 코드 123456, 비밀번호 PASSWORD. /v1/aik는 AIK 서명 첫 목록을 실제로 검증한다. */
-function fakeAccount() {
+/** 서버 목록에만 있다고 치는 비밀번호(앱 번들 목록에는 없다): 서버 거부 문구를 보는 데 쓴다. */
+const SERVER_ONLY_BREACHED = 'gwangjang-bindae-3';
+
+/** 메모리 계정 서비스: 코드 123456, 비밀번호 PASSWORD. /v1/aik는 AIK 서명 첫 목록을 실제로 검증한다. hasPassword가 거짓이면 계정 만들기 뒤 비밀번호 단계가 뜬다. */
+function fakeAccount(o: { hasPassword?: boolean } = {}) {
   const calls: string[] = [];
+  let hasPw = o.hasPassword ?? true;
   let pinned: { aikPub: string; deviceId: string } | null = null;
   const fail = (code: string) => Object.assign(new Error(code), { code });
   const client: AccountClient = {
@@ -79,9 +84,13 @@ function fakeAccount() {
       return { session: 'sxs1.fake', expiresInSec: 3600 };
     },
     logout: async () => void calls.push('logout'),
-    me: async () => ({ email: 'owner@gyeonbon-test.example', hasPassword: true, reauthUntil: null, authMethod: 'password' }),
-    setPassword: async () => {
-      throw fail('net.not_in_e2e');
+    me: async () => (calls.push('me'), { email: 'owner@gyeonbon-test.example', hasPassword: hasPw, reauthUntil: null, authMethod: 'email_code' }),
+    setPassword: async (_s, password) => {
+      calls.push('setPassword');
+      if (password === SERVER_ONLY_BREACHED) throw fail('account.password_breached');
+      if (password !== PASSWORD) throw fail('account.password_too_short');
+      hasPw = true;
+      return {};
     },
     deletePassword: async () => {
       throw fail('net.not_in_e2e');
@@ -214,9 +223,69 @@ async function main() {
   check('로그인한 뒤에는 코드 보내기를 받지 않는다', (await (async () => (S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 }), await sleep(30), callErr('account.sendCode', { email: 'x@gyeonbon-test.example' })))()) === 'account_signed_in');
 }
 
+/** 계정 만들기 → 코드 → 비밀번호 만들기(인계 명세 §3 pw·shown·common·mine, §3.2 거부 문구). 새 셸·새 금고 키·비밀번호 없는 계정. */
+async function signup() {
+  const acct = fakeAccount({ hasPassword: false });
+  const keys = softKeys();
+  const front = await serveAccount(acct.client);
+  const egress = new Egress({ cloudDevLocal: true });
+  const cloud = cloudPorts({ egress, env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } });
+  S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, remote: { cloud, keys: async () => keys } });
+  await S.ready;
+  await until('renderer ready 2', async () => (await js('document.body.dataset.ready')) === '1');
+  await js(`document.querySelector('#rail [data-view="settings"]').click()`);
+  await until('settings 2', async () => js<boolean>(`!!document.querySelector('[data-set-tab=devices]')`));
+  await js(`document.querySelector('[data-set-tab=devices]').click()`);
+  await until('account card 2', async () => js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_out'`));
+  await press('[data-act=account-login]');
+  await until('login 2', async () => (await screen()) === 'email');
+  await press('[data-act=account-signup]');
+  await until('signup 2', async () => (await screen()) === 'signup');
+  await type('.acct-email', 'owner@gyeonbon-test.example');
+  await press('[data-act=account-send]');
+  await until('code 2', async () => (await screen()) === 'code');
+  await type('.acct-code', '123456');
+  check('계정 만들기 → 코드 → 비밀번호 만들기 화면(제목·부제·[나중에])', await until('signup pw', async () => (await screen()) === 'signup_pw' && (await loginStep()) === 'set_password' && js<boolean>(`document.querySelector('#acct-title').textContent === '비밀번호 만들기' && document.querySelector('.acct-head p').textContent === '다음부터 메일을 열지 않고 로그인해요' && !!document.querySelector('[data-act=account-skip-password]')`)));
+  check('새 비밀번호 칸: new-password, 가림, 확인 칸 없음', await js<boolean>(`(() => { const i = document.querySelectorAll('.acct-password'); return i.length === 1 && i[0].autocomplete === 'new-password' && i[0].type === 'password'; })()`));
+  const rules = () => js<string>(`[...document.querySelectorAll('[data-rule]')].map((r) => r.dataset.rule + ':' + r.className.replace('acct-rule is-', '')).join(',')`);
+  const made = () => js<boolean>(`document.querySelector('[data-act=account-set-password]').disabled`);
+  const warn = () => js<string>(`(() => { const w = document.querySelector('[data-acct-pw-warn]'); return w.hidden ? '' : w.textContent; })()`);
+  check('처음: 조건 3줄 모두 아직, [만들기] 꺼짐', (await rules()) === 'len:wait,common:wait,identity:wait' && (await made()));
+  await shot('a01-signup-pw');
+  await type('.acct-password', 'short1');
+  check('10자 미만: 세 줄 모두 아직(목록·이름 결과를 미리 보이지 않는다)', (await rules()) === 'len:wait,common:wait,identity:wait' && (await made()) && (await warn()) === '');
+  await type('.acct-password', '1234567890');
+  check('흔한 비밀번호: 2줄 어긋남 + 경고 줄 + 칸 테두리, [만들기] 꺼짐', (await rules()) === 'len:ok,common:bad,identity:ok' && (await made()) && (await warn()) === '많이 쓰이거나 이미 알려진 비밀번호예요. 다른 비밀번호를 써 주세요' && (await js<boolean>(`document.querySelector('.acct-password').classList.contains('is-bad')`)));
+  await shot('a01-signup-pw-common');
+  await type('.acct-password', 'my-owner-pass-9');
+  check('이메일 로컬 부분이 들어감: 3줄 어긋남 + 이메일 문구', (await rules()) === 'len:ok,common:ok,identity:bad' && (await made()) && (await warn()) === '이메일 주소가 들어간 비밀번호는 쓸 수 없어요');
+  await shot('a01-signup-pw-mine');
+  await type('.acct-password', 'Sovereign-pass-1');
+  check('서비스 이름이 들어감: 서비스 문구', (await rules()) === 'len:ok,common:ok,identity:bad' && (await warn()) === '서비스 이름이 들어간 비밀번호는 쓸 수 없어요');
+  await type('.acct-password', SERVER_ONLY_BREACHED);
+  check('세 줄 모두 맞음: [만들기] 켜짐, 경고 없음', (await rules()) === 'len:ok,common:ok,identity:ok' && !(await made()) && (await warn()) === '');
+  await press('.acct-eye');
+  check('보기 토글: 글자 보임(넣은 값 그대로), 줄 상태 유지', (await js<string>(`document.querySelector('.acct-password').type + '|' + document.querySelector('.acct-password').value`)) === `text|${SERVER_ONLY_BREACHED}` && (await rules()) === 'len:ok,common:ok,identity:ok');
+  await shot('a01-signup-pw-shown');
+  await press('.acct-eye');
+  await press('[data-act=account-set-password]');
+  check(
+    '서버 거부(목록): 같은 화면에 문구, 칸은 비우고 다시 채우지 않는다, 화면에 비밀번호 없음',
+    await until('server breached', async () => (await screen()) === 'signup_pw' && (await warn()) === '많이 쓰이거나 이미 알려진 비밀번호예요. 다른 비밀번호를 써 주세요' && (await js<string>(`document.querySelector('.acct-password').value`)) === ''),
+  );
+  check('보낸 비밀번호는 렌더러 어디에도 없다', !(await js<string>(`document.body.innerHTML + JSON.stringify(window.history.state ?? null)`)).includes(SERVER_ONLY_BREACHED));
+  await type('.acct-password', PASSWORD);
+  await press('[data-act=account-set-password]');
+  check('만들기 → 화면이 닫히고 로그인 상태(계정 줄에 이메일)', await until('pw set', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in'`)));
+  check('계정 호출 순서(코드 → 확인 → 목록 → AIK → me → 만들기 ×2 → 로그아웃)', JSON.stringify(acct.calls) === JSON.stringify(['code', 'verify', 'list', 'aik', 'me', 'setPassword', 'setPassword', 'logout']), acct.calls);
+  check('비밀번호 만들기도 제품 Egress 허용 목록을 지났다(GET /v1/me, PUT /v1/password)', front.hits.includes('GET /v1/me') && front.hits.includes('PUT /v1/password') && egress.audit.some((x) => x.path === 'password.put' && x.status === 204) && !JSON.stringify(egress.audit).includes(PASSWORD), { hits: front.hits });
+  front.close();
+}
+
 app.whenReady().then(async () => {
   try {
-    await main();
+    if (process.env.SAX_E2E_ACCOUNT === 'signup') await signup();
+    else await main();
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);
   }

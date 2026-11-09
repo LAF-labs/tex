@@ -1,8 +1,8 @@
 // 패키지 게시 CLI(PUBLISH-H01.md). 실행: node --conditions=development services/registry/src/publish/cli.ts <명령> …(poc/ 에서)
 //   dry-run   실제 레지스트리는 읽기만, 서명은 임시 키, 게시는 로컬 레지스트리에만(운영 PUT 0건)
-//   prepare   패키지 묶기 → manifest·status·폐기 목록 서명 대상과 확인 코드, 사용자 서명 명령(ceremony sign)
+//   prepare   패키지 묶기 → manifest·정책·status·폐기 목록 서명 대상과 확인 코드, 사용자 서명 명령(ceremony sign)
 //   assemble  서명 모으기 → .sxp → 엔진 로더·관문 규칙 → 인덱스 초안과 확인 코드
-//   push      인덱스 서명 모으기 → 게시 관문 PUT(폐기 목록 → status → 패키지 → 인덱스) → 되읽기 → 투명성 로그 포함 증명 → record.json
+//   push      인덱스 서명 모으기 → 게시 관문 PUT(폐기 목록 → 정책 → status → 패키지 → 인덱스) → 되읽기 → 투명성 로그 포함 증명 → record.json
 // 운영자 토큰은 터미널에서 보이지 않게 묻는다(파이프·인자로 받지 않는다). --token-env를 주면 그 이름의 env에서 읽는다(값은 출력·파일에 남기지 않는다).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -140,8 +140,12 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
     }
     const revokedFile = one('revoked', false);
     const revoked = revokedFile ? readJson<RevokedKeys>(revokedFile) : undefined;
+    // --policy services/registry/policy/<ver>.json: 정책 초안(정책 키 2-of-3으로 서명한다)
+    const policyFile = one('policy', false);
+    const policy = policyFile ? readJson<Record<string, unknown>>(policyFile) : undefined;
+    if (policy !== undefined && (!policy || typeof policy !== 'object' || Array.isArray(policy))) throw new CeremonyError('ceremony.file_invalid', policyFile);
     const rollout = one('rollout', false);
-    return { status, revoked, channel: (one('channel', false) || 'stable') as Channel, rolloutPercent: rollout ? Number(rollout) : 100 };
+    return { status, revoked, policy, channel: (one('channel', false) || 'stable') as Channel, rolloutPercent: rollout ? Number(rollout) : 100 };
   };
 
   switch (cmd) {
