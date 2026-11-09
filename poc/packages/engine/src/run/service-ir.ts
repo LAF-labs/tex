@@ -29,7 +29,7 @@ import type { Judge } from '../l0/judge.ts';
 import type { RateGuard } from '../policy.ts';
 import type { LookupDef, PortalConfig } from '../portal.ts';
 import type { RunStatus } from '../run-end.ts';
-import { SIGNAL_DICT } from '../signals.ts';
+import { SIGNAL_DICT, type SignalDict } from '../signals.ts';
 import { readbackCard } from './card.ts';
 import { RunController, type RunOutcome } from './controller.ts';
 import { bundleInfoFrom, DecideRunner } from './decide.ts';
@@ -90,6 +90,8 @@ export interface IrRunInput {
   /** 시험용: gate.waitMs 대신 쓸 값. */
   gateWaitMs?: number;
   clock?: Clock;
+  /** 신호 사전(없으면 포털 내장 사전). RunService가 받은 정책의 blockSignalsAdd를 더한 사전을 준다. */
+  signals?: SignalDict;
   /** 실행 허가(status kill·실효 수준). Running 진입 확인·스텝 경계·recheck에서 부른다. 없으면 늘 허가. */
   permit?: () => RunPermit;
   /** 스텝 궤적(골든 대조). 값 없이 스텝 id·타입·코드만. */
@@ -254,7 +256,7 @@ export class IrRun {
     const reader = new PlaywrightPageReader(page);
 
     const enforcer = new RunEnforcer({
-      guard: i.rate, clock, mono: () => performance.now(), dict: SIGNAL_DICT[i.portal.kind], profileId: i.profile.id,
+      guard: i.rate, clock, mono: () => performance.now(), dict: i.signals ?? SIGNAL_DICT[i.portal.kind], profileId: i.profile.id,
       journal: i.journal, stopRequested: () => this.stopRequested,
       // 승인 대기 중 신호가 걸리면 게이트를 닫는다(바뀐 화면을 승인하지 못하게).
       onLatch: () => {

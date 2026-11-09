@@ -11,6 +11,8 @@ import { openDatabase, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
+import type { Policy } from '@sax/engine/core';
+import { POLICY_EXAMPLE } from './core-fixtures.ts';
 import { FIXTURE_BLOCK_TEXT, startH01Fixture, type H01Fixture } from '../apps/desktop/src/h01-fixture.ts';
 import { startHarness, type Harness } from './harness.ts';
 
@@ -48,14 +50,14 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
   });
 
   /** 새 DB(카운터·쿨다운이 비어 있음)에 붙은 실행 서비스. 페이지는 같은 실행 탭을 쓴다. */
-  async function service(policy?: RatePolicy, clock?: Clock, portal: PortalConfig = fixturePortal(fx.origin)) {
+  async function service(policy?: RatePolicy, clock?: Clock, portal: PortalConfig = fixturePortal(fx.origin), receivedPolicy?: () => Policy | null) {
     const db = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
     const runs = new RunService({
-      engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log, policy, clock,
+      engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log, policy, clock, ...(receivedPolicy ? { receivedPolicy } : {}),
       page: async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page)),
       postGate: (m) => gateMsgs.push(m),
     });
@@ -125,6 +127,34 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       assert.ok(i2.policy.cooldownUntil && Date.parse(i2.policy.cooldownUntil) - Date.now() > 23.9 * 3_600_000);
       fx.knobs.block = null;
       assert.throws(() => start(), /policy\.cooldown/, '쿨다운 중에는 실행을 만들지 않는다');
+    } finally {
+      fx.knobs.block = null;
+    }
+  });
+
+  it('받은 정책 blockSignalsAdd(홈택스): 내장 사전에 없는 차단 안내 문구를 정책이 더하면 차단 신호로 멈춘다. 없으면 그 문구는 신호가 아니다', async () => {
+    // 홈택스 내장 사전에는 block 항목이 없다(실측 전). 가짜 페이지를 홈택스 종류로 돌려(하한 맞춘 verify) 받은 정책만 바꾼다.
+    const hometaxLike: PortalConfig = { ...fixturePortal(fx.origin), kind: 'hometax', verify: { minElapsedMs: 60_000, lookups: 2, intervalMs: 10_000, maxMs: 300_000 } };
+    const received = (add?: Policy['cooldown']['blockSignalsAdd']): Policy => {
+      const p = structuredClone(POLICY_EXAMPLE) as unknown as Policy;
+      // 시험 시간을 줄이려고 지연만 0(클램프 전 값을 그대로 준다. RateGuard는 내장 값과 엄격한 쪽을 쓴다).
+      p.pace.interactive = { stepDelayMs: [0, 0], keyEventDelayMs: 0, afterNavSettleMs: [0, 0], slowFactor: 1 };
+      if (add) p.cooldown.blockSignalsAdd = add;
+      return p;
+    };
+    fx.knobs.block = 'page';
+    try {
+      const plain = await service(FIXTURE_POLICY, undefined, hometaxLike, () => received());
+      const e0 = await endOf(plain.start());
+      assert.ok(e0.code !== 'portal.blocked' && e0.code !== 'policy.cooldown', `정책 추가가 없으면 홈택스 사전으로는 차단 신호가 아니다(${e0.code})`);
+      const added = await service(FIXTURE_POLICY, undefined, hometaxLike, () => received({ phrases: [FIXTURE_BLOCK_TEXT.replace(/\.$/, '')] }));
+      const r1 = added.start();
+      const e1 = await endOf(r1);
+      // PoC 홈택스는 양성 1회로 쿨다운한다(POC_OVERRIDES, ADR-025): 차단 신호 → 그 자리에서 쿨다운.
+      assert.deepEqual([e1.status, e1.code], ['failed', 'policy.cooldown']);
+      assert.ok(!opened(r1));
+      const j = added.runs.inspect(r1).journal;
+      assert.ok(j.includes('block.signal') && j.includes('cooldown.started'));
     } finally {
       fx.knobs.block = null;
     }

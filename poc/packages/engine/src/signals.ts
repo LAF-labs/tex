@@ -62,8 +62,15 @@ export const SIGNAL_INSPECT_EXPR = "(() => ({ text: document.body ? document.bod
 const RELAY_DENIED = /vault relay denied \S+ \((secret_window_(?:active|tainted))\)/;
 export type InspectUnavailable = 'secret_window_active' | 'secret_window_tainted';
 
+/**
+ * 신호 사전 또는 그 사전을 지금 돌려주는 함수. 함수면 검사할 때마다 부른다(받은 정책의 blockSignalsAdd는 다음 차단 신호 검사부터,
+ * D03 §7.1 조회와 적용). 부르는 쪽(RunService)이 커밋 구간에는 실행 시작 때의 사전을 돌려준다.
+ */
+export type SignalDict = readonly SignalEntry[] | (() => readonly SignalEntry[]);
+
 /** 가장 무거운 신호 하나(block > extra_auth > captcha > busy). */
-export function matchSignal(dict: readonly SignalEntry[], where: { url?: string; text?: string }): SignalHit | null {
+export function matchSignal(source: SignalDict, where: { url?: string; text?: string }): SignalHit | null {
+  const dict = typeof source === 'function' ? source() : source;
   const text = where.text ? squash(where.text) : '';
   let best: SignalEntry | null = null;
   for (const e of dict) {
@@ -74,7 +81,7 @@ export function matchSignal(dict: readonly SignalEntry[], where: { url?: string;
 }
 
 export interface WatchOptions {
-  dict: readonly SignalEntry[];
+  dict: SignalDict;
   /** 포털 호스트(응답 상태·네비게이션 수를 셀 대상). */
   portalHost: (hostname: string) => boolean;
   onHit: (h: SignalHit) => void;
