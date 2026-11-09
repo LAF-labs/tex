@@ -123,7 +123,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지(PR-D2)는 받아 두기만 하고, 실행기는 아직 'h01'이다(게시와 시연 방식 정합 뒤 irSource로 바꾼다).
-  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log });
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;

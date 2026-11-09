@@ -284,8 +284,20 @@ export interface RegistrySyncOptions {
   packages?: PackageSupplyOptions;
   /** 롤아웃 버킷용 기기 id. 없으면 rolloutPercent 100인 항목만 받는다. */
   deviceId?: () => string | null;
+  /**
+   * 이 앱의 판(semver, main이 init으로 준다, app.getVersion()). 인덱스 항목의 minAppVersion보다 낮으면 그 항목을 받지 않고,
+   * 설치본도 실행 시작 때 로드하지 않는다(registry.app_version_low). 모르거나 semver가 아니면 minAppVersion이 있는 항목은 모두 거부한다(fail-closed).
+   */
+  appVersion?: string | null;
   now?: () => number;
   log?: EventLog;
+}
+
+/** 이 앱 판으로 이 항목(minAppVersion)을 쓸 수 있는가. 항목에 minAppVersion이 없으면 늘 된다. 앱 판을 모르면 안 된다(fail-closed). */
+export function appVersionAllows(minAppVersion: string | undefined, appVersion: string | null | undefined): boolean {
+  if (minAppVersion === undefined) return true;
+  if (!appVersion || !SEMVER_RE.test(appVersion)) return false;
+  return (compareSemver(appVersion, minAppVersion) ?? -1) >= 0;
 }
 
 // ───────────────────────── 플레이북·조회 패키지 저장소 ─────────────────────────
@@ -302,6 +314,8 @@ export interface StoredPackage {
   sxpDigest: string;
   sxp: string;
   acceptedAt: number;
+  /** 받을 때 인덱스 항목의 minAppVersion(있으면). 실행 시작 로드가 앱 판과 다시 대조한다. */
+  minAppVersion?: string;
 }
 
 /** 제품이 받는 플레이북 id(엔진 entry). H-01 = 홈택스 전자세금계산서 발급(서명 전 원본 packages/engine/playbooks/hometax.invoice.issue). */
@@ -504,8 +518,9 @@ export class RegistrySync {
 
   private async syncData(sink: DataSink, index: RegistryIndex, revoked: ReadonlySet<string>, hold: boolean): Promise<SyncOutcome> {
     const deviceId = this.o.deviceId?.() ?? null;
-    const candidates = index.entries.filter((e) => e.kind === 'data' && e.id === sink.id && e.portal === undefined && (deviceId ? rolloutBucket(e.id, deviceId) < e.rolloutPercent : e.rolloutPercent === 100));
-    if (!candidates.length) return 'unchanged';
+    const rolled = index.entries.filter((e) => e.kind === 'data' && e.id === sink.id && e.portal === undefined && (deviceId ? rolloutBucket(e.id, deviceId) < e.rolloutPercent : e.rolloutPercent === 100));
+    const candidates = this.compatible(rolled, 'data');
+    if (!candidates.length) return rolled.length ? 'registry.app_version_low' : 'unchanged';
     const entry = candidates.reduce((a, b) => ((compareSemver(b.version, a.version) ?? 0) > 0 ? b : a));
     const installed = sink.installed();
     if (installed && entry.version === installed.version) return 'unchanged';
@@ -546,6 +561,16 @@ export class RegistrySync {
     };
   }
 
+  /**
+   * 앱 판으로 쓸 수 있는 항목만(minAppVersion, 팀장 지시 2026-11-09). 빠진 항목이 있으면 registry.app_version_low를 남긴다(항목 id·판은 남기지 않는다).
+   * 앱 판이 낮아 새 판을 못 받으면 쓸 수 있는 가장 높은 판(없으면 설치본 그대로)을 쓴다.
+   */
+  private compatible(entries: IndexEntry[], what: 'package' | 'data'): IndexEntry[] {
+    const ok = entries.filter((e) => appVersionAllows(e.minAppVersion, this.o.appVersion));
+    if (ok.length < entries.length) this.event('registry.app_version_low', { what });
+    return ok;
+  }
+
   /** 인덱스 항목이 가리키는 .sxp를 받아 크기·다이제스트(인덱스 서명으로 결속)와 종류를 본다. */
   private async fetchPackage(entry: IndexEntry): Promise<{ raw: RawPackage; bytes: Uint8Array }> {
     const res = await this.get(packagePath(entry.id, entry.version), null);
@@ -564,6 +589,8 @@ export class RegistrySync {
 
   /** 저장본 하나를 다시 로드한다(저장 다이제스트 → 로더 전체, 설치본이라 보류 중에도 같은 다이제스트면 로드). */
   private loadStored(s: StoredPackage, installedLookups: ReadonlyMap<string, LoadedPackage>, revoked: ReadonlySet<string>, hold: boolean, events: string[]): LoadedPackage {
+    // 받을 때 앱 판이 맞았어도(또는 앱을 내렸으면) 로드할 때마다 다시 본다.
+    if (!appVersionAllows(s.minAppVersion, this.o.appVersion)) throw new RegistrySyncError('registry.app_version_low');
     const bytes = Buffer.from(s.sxp, 'base64');
     if (sha256Hex(bytes) !== s.sxpDigest) throw new RegistrySyncError('package.store_corrupt');
     const r = loadPackage(this.decodePackage(bytes), this.loaderCtx(installedLookups, s, hold, revoked));
@@ -575,13 +602,14 @@ export class RegistrySync {
   }
 
   private record(entry: IndexEntry, pkg: LoadedPackage, bytes: Uint8Array): StoredPackage {
-    return { id: entry.id, version: entry.version, kind: entry.kind as StoredPackage['kind'], manifestDigest: pkg.manifestDigest, sxpDigest: entry.sxpDigest, sxp: Buffer.from(bytes).toString('base64'), acceptedAt: this.now() };
+    return { id: entry.id, version: entry.version, kind: entry.kind as StoredPackage['kind'], manifestDigest: pkg.manifestDigest, sxpDigest: entry.sxpDigest, sxp: Buffer.from(bytes).toString('base64'), acceptedAt: this.now(), ...(entry.minAppVersion !== undefined ? { minAppVersion: entry.minAppVersion } : {}) };
   }
 
   private async syncPackage(id: string, index: RegistryIndex, revoked: ReadonlySet<string>, hold: boolean): Promise<SyncOutcome> {
     const deviceId = this.o.deviceId?.() ?? null;
-    const candidates = index.entries.filter((e) => e.kind === 'playbook' && e.id === id && (deviceId ? rolloutBucket(e.id, deviceId) < e.rolloutPercent : e.rolloutPercent === 100));
-    if (!candidates.length) return 'unchanged';
+    const rolled = index.entries.filter((e) => e.kind === 'playbook' && e.id === id && (deviceId ? rolloutBucket(e.id, deviceId) < e.rolloutPercent : e.rolloutPercent === 100));
+    const candidates = this.compatible(rolled, 'package');
+    if (!candidates.length) return rolled.length ? 'registry.app_version_low' : 'unchanged';
     const entry = candidates.reduce((a, b) => ((compareSemver(b.version, a.version) ?? 0) > 0 ? b : a));
     const current = this.currentPackage(id);
     // 인덱스가 설치본과 같거나 낮은 판만 가리키면 받지 않는다(내림은 로더도 registry.version_rollback으로 거부한다)
@@ -601,6 +629,7 @@ export class RegistrySync {
         }
         const le = index.entries.find((e) => e.kind === 'lookup' && e.id === l.id && e.version === l.version);
         if (!le) throw new RegistrySyncError('loader.lookup_mismatch');
+        if (!appVersionAllows(le.minAppVersion, this.o.appVersion)) throw new RegistrySyncError('registry.app_version_low');
         const got = await this.fetchPackage(le);
         const r = loadPackage(got.raw, this.loaderCtx(new Map(), null, hold, revoked));
         events.push(...r.events);
