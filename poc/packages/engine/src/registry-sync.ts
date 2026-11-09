@@ -1,23 +1,28 @@
 // 레지스트리 동기화(엔진, D03 §3.1·§7.1, D09 §8.4, ADR-013·023·028). 폐기 목록·status·인덱스·데이터 패키지를 받아
 // 엔진 수용 함수(acceptRevoked·acceptStatus·loadDataPackage)로 다시 검증한 뒤에만 DB에 둔다(서버를 믿지 않는다, ADR-013).
 // - 네트워크는 주입한 RegistryFetch 하나로만 나간다. 제품은 @sax/net Egress의 레지스트리 GET(클라우드 트랙이 목적지를 넣는다)을 넘긴다.
-// - 순서: 폐기 목록 → status(새 폐기 목록으로) → stable 인덱스 → 데이터 패키지. 하나가 실패해도 그 문서만 버리고 마지막 유효본을 유지한다.
+// - 순서: 폐기 목록 → status(새 폐기 목록으로) → stable 인덱스 → 플레이북·조회 패키지 → 데이터 패키지. 하나가 실패해도 그 문서만 버리고 마지막 유효본을 유지한다.
+// - 플레이북·조회 패키지(PR-D2 앞부분): 받을 때 로더 전체(D03 §3.1)로 검증한 .sxp 원본만 저장하고, 실행을 시작할 때 저장본을 다시 loadPackage 한다
+//   (로드할 때마다 서명·내용 결속·버전을 다시 본다). 같은 id의 버전 내림·같은 버전 다른 내용은 받지 않는다.
 // - 폐기 목록이 24시간 신선도를 잃으면 보류(hold): status는 엄격하게 보수적인 것만, 데이터 패키지는 설치본과 같은 것만.
 // - main 전용 질의: 폐기 목록 keyIds·신선도, 핀 키, status 신선도(업데이터·데몬이 쓴다). main은 DB를 열지 않는다.
 // - 로그·결과에는 코드·개수만(경로·키 id·본문 없음).
 import { createHash } from 'node:crypto';
 import type { Db } from '@sax/db';
+import { BUNDLE_ALLOWLIST, BundleCatalog } from '@sax/model';
+import type { RegistryBytesResponse } from '@sax/net';
 import type { EventLog, LogFields } from '@sax/platform';
 import { canonicalWithout, canonicalizable, sha256Hex } from './core/canon.ts';
 import { ISSUED_AT_MAX_SKEW_MIN } from './core/constants.ts';
 import { loadDataPackage, type DataBodyValidator, type DataLoadResult } from './core/datapkg.ts';
-import { compareSemver } from './core/loader.ts';
+import { compareSemver, loadPackage, type LoadedPackage, type LoaderContext, type RawPackage } from './core/loader.ts';
 import {
   acceptRevoked, acceptStatus, contentBytes, countSignatures, ed25519PublicKey, effectiveStatus, epochProblem, monotonicProblem, revokedFresh,
   statusFreshness, type AcceptedRevoked, type AcceptedStatus, type KeyRole, type RegistryStatus, type RevokedKeys, type StatusFreshness, type TrustRoots,
 } from './core/registry.ts';
 import { decodeSxp } from './core/sxp.ts';
-import type { Signature } from './core/types.ts';
+import type { Manifest, Signature } from './core/types.ts';
+import type { BundleOutcomes } from './core/validate.ts';
 
 // ───────────────────────── 핀 키 ─────────────────────────
 
@@ -74,6 +79,17 @@ export interface RegistryResponse {
  * 네트워크 실패는 던진다(코드는 부르는 쪽이 registry.fetch_failed로 바꾼다).
  */
 export type RegistryFetch = (path: string, opts: { etag?: string }) => Promise<RegistryResponse>;
+
+/**
+ * 제품 RegistryFetch: @sax/net Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로·리디렉션 거부·시간 상한, ADR-028).
+ * Egress 오류는 그대로 던진다(RegistrySync가 registry.fetch_failed로 바꾼다).
+ */
+export function egressRegistryFetch(egress: { getRegistryBytes(target: string, o?: { etag?: string }): Promise<RegistryBytesResponse> }): RegistryFetch {
+  return async (path, opts) => {
+    const r = await egress.getRegistryBytes(path, opts.etag ? { etag: opts.etag } : {});
+    return { status: r.status, ...(r.body ? { body: r.body } : {}), ...(r.etag ? { etag: r.etag } : {}) };
+  };
+}
 
 /** 문서(JSON) 응답 상한. 인덱스 게시 상한(512KB)과 같다. `.sxp`는 인덱스 항목 size가 상한이다. */
 export const REGISTRY_DOC_MAX_BYTES = 512 * 1024;
@@ -221,6 +237,8 @@ export interface SyncReport {
   revoked: SyncOutcome;
   status: SyncOutcome;
   index: SyncOutcome;
+  /** 플레이북 id → 결과(RegistrySyncOptions.packages가 있을 때만). */
+  packages?: Record<string, SyncOutcome>;
   data: Record<string, SyncOutcome>;
   /** 이번 동기화 뒤 폐기 목록 신선도(24시간) */
   revokedFresh: boolean;
@@ -257,10 +275,61 @@ export interface RegistrySyncOptions {
   fetch: RegistryFetch | null;
   store: RegistryStore;
   sinks?: readonly DataSink[];
+  /** 받아 둘 플레이북 패키지(조회 하위 패키지는 manifest lookupsUsed를 따라 받는다). 없으면 플레이북·조회 패키지를 받지 않는다. */
+  packages?: PackageSupplyOptions;
   /** 롤아웃 버킷용 기기 id. 없으면 rolloutPercent 100인 항목만 받는다. */
   deviceId?: () => string | null;
   now?: () => number;
   log?: EventLog;
+}
+
+// ───────────────────────── 플레이북·조회 패키지 저장소 ─────────────────────────
+
+/**
+ * 검증을 마치고 저장한 패키지 하나(RegistryStore `pkg.<id>@<version>`, 제품은 암호화 DB settings). sxp = 받은 .sxp 원본 바이트(표준 base64).
+ * 같은 id@version은 불변이다(레지스트리 정적 경로와 같다). 플레이북의 지금 버전은 `pkg.current.<id>`이고 올라가기만 한다.
+ */
+export interface StoredPackage {
+  id: string;
+  version: string;
+  kind: 'playbook' | 'lookup';
+  manifestDigest: string;
+  sxpDigest: string;
+  sxp: string;
+  acceptedAt: number;
+}
+
+/** 제품이 받는 플레이북 id(엔진 entry). H-01 = 홈택스 전자세금계산서 발급(tests/fixtures/core/h01). */
+export const PRODUCT_PACKAGES = { h01: 'hometax.invoice.issue' } as const;
+
+export interface PackageSupplyOptions {
+  /** 받는 플레이북 id(예 hometax.invoice.issue). */
+  ids: readonly string[];
+  /** 시험용: 앱 내장 번들 허용 목록·결과(기본 @sax/model BUNDLE_ALLOWLIST·BundleCatalog). */
+  bundleAllowlist?: ReadonlyArray<{ id: string; digest: string }>;
+  bundles?: ReadonlyMap<string, BundleOutcomes>;
+}
+
+/** 설치본 로드 결과(실행 시작). lookups = lookupsUsed id → 로드한 조회 패키지. */
+export type InstalledPackage = { ok: true; pkg: LoadedPackage; lookups: ReadonlyMap<string, LoadedPackage>; events: string[] } | { ok: false; code: string; events: string[] };
+
+const PKG_ID = /^[a-z0-9]+(\.[a-z0-9_-]+)+$/;
+const SEMVER_ONLY = /^\d+\.\d+\.\d+$/;
+
+/** manifest의 lookupsUsed(받을 조회 패키지를 고르는 데만 쓴다. 서명·다이제스트는 로더가 다시 본다). 모양이 틀리면 빈 목록(로더가 거부한다). */
+function lookupsUsedOf(manifest: Uint8Array): Array<{ id: string; version: string; digest: string }> {
+  try {
+    const m = JSON.parse(Buffer.from(manifest).toString('utf8')) as Partial<Manifest>;
+    if (!Array.isArray(m.lookupsUsed) || m.lookupsUsed.length > 16) return [];
+    return m.lookupsUsed.filter((l) => l && typeof l.id === 'string' && PKG_ID.test(l.id) && typeof l.version === 'string' && SEMVER_ONLY.test(l.version) && typeof l.digest === 'string' && /^[0-9a-f]{64}$/.test(l.digest));
+  } catch {
+    return [];
+  }
+}
+
+/** 앱 내장 번들 결과(V-07, loader ctx.bundles). */
+export function appBundleOutcomes(): Map<string, BundleOutcomes> {
+  return new Map(BundleCatalog.load().list().map((b) => [b.wireId, { outcomes: b.def.outcomes.map((o) => o.name), reserved: b.def.reservedOutcomes }]));
 }
 
 const parseDoc = (b: Uint8Array | undefined): unknown => {
@@ -276,10 +345,12 @@ export class RegistrySync {
   private readonly o: RegistrySyncOptions;
   private readonly roots: TrustRoots;
   private running: Promise<SyncReport> | null = null;
+  private bundleCache: ReadonlyMap<string, BundleOutcomes> | null = null;
 
   constructor(o: RegistrySyncOptions) {
     this.o = o;
     this.roots = trustRootsFromPin(o.trust);
+    if (o.packages) for (const id of o.packages.ids) if (!PKG_ID.test(id) || id.endsWith('.hotfix')) throw new RegistrySyncError('registry.package_id_invalid');
   }
 
   private now(): number {
@@ -370,8 +441,13 @@ export class RegistrySync {
     report.status = await this.step('status', () => this.syncStatus(revokedIds, !report.revokedFresh));
     report.index = await this.step('index', () => this.syncIndex(revokedIds));
     const index = this.currentIndex();
+    if (this.o.packages) {
+      report.packages = {};
+      for (const id of this.o.packages.ids) report.packages[id] = index ? await this.step('package', () => this.syncPackage(id, index.index, revokedIds, !report.revokedFresh)) : 'registry.index_missing';
+    }
     for (const sink of this.o.sinks ?? []) report.data[sink.id] = index ? await this.step('data', () => this.syncData(sink, index.index, revokedIds, !report.revokedFresh)) : 'registry.index_missing';
-    this.event('registry.synced', { revoked: report.revoked, status: report.status, index: report.index, data: Object.values(report.data).filter((v) => v === 'accepted').length, fresh: report.revokedFresh });
+    const accepted = (r: Record<string, SyncOutcome> | undefined) => Object.values(r ?? {}).filter((v) => v === 'accepted').length;
+    this.event('registry.synced', { revoked: report.revoked, status: report.status, index: report.index, packages: accepted(report.packages), data: accepted(report.data), fresh: report.revokedFresh });
     return report;
   }
 
@@ -442,6 +518,132 @@ export class RegistrySync {
     const applied = sink.apply(loaded);
     if (!applied.ok) throw new RegistrySyncError(applied.code);
     return 'accepted';
+  }
+
+  // ---- 플레이북·조회 패키지 ----
+
+  private storedPackage(id: string, version: string): StoredPackage | null {
+    return (this.o.store.get(`pkg.${id}@${version}`) as StoredPackage | null) ?? null;
+  }
+
+  private currentPackage(id: string): StoredPackage | null {
+    const v = this.o.store.get(`pkg.current.${id}`);
+    return typeof v === 'string' ? this.storedPackage(id, v) : null;
+  }
+
+  private loaderCtx(installedLookups: ReadonlyMap<string, LoadedPackage>, installed: StoredPackage | null, hold: boolean, revoked: ReadonlySet<string>): LoaderContext {
+    this.bundleCache ??= this.o.packages?.bundles ?? appBundleOutcomes();
+    return {
+      roots: this.roots, revoked, bundleAllowlist: this.o.packages?.bundleAllowlist ?? BUNDLE_ALLOWLIST, bundles: this.bundleCache, installedLookups,
+      storedVersion: installed?.version ?? null, installedDigest: installed?.manifestDigest ?? null, hold,
+      // 핫픽스는 이 경로로 넣지 않는다(핫픽스 채널은 따로, 정책 신선도와 함께).
+      policyFresh: false, now: this.now(),
+    };
+  }
+
+  /** 인덱스 항목이 가리키는 .sxp를 받아 크기·다이제스트(인덱스 서명으로 결속)와 종류를 본다. */
+  private async fetchPackage(entry: IndexEntry): Promise<{ raw: RawPackage; bytes: Uint8Array }> {
+    const res = await this.get(packagePath(entry.id, entry.version), null);
+    if (res.notModified) throw new RegistrySyncError('registry.fetch_failed');
+    const bytes = res.body;
+    if (bytes.length !== entry.size || sha256Hex(bytes) !== entry.sxpDigest) throw new RegistrySyncError('registry.content_digest_mismatch');
+    return { raw: this.decodePackage(bytes), bytes };
+  }
+
+  private decodePackage(bytes: Uint8Array): RawPackage {
+    const sxp = decodeSxp(bytes);
+    if (!sxp.ok) throw new RegistrySyncError(sxp.code);
+    if (sxp.sxp.kind !== 'package') throw new RegistrySyncError('registry.kind_mismatch');
+    return sxp.sxp.raw;
+  }
+
+  /** 저장본 하나를 다시 로드한다(저장 다이제스트 → 로더 전체, 설치본이라 보류 중에도 같은 다이제스트면 로드). */
+  private loadStored(s: StoredPackage, installedLookups: ReadonlyMap<string, LoadedPackage>, revoked: ReadonlySet<string>, hold: boolean, events: string[]): LoadedPackage {
+    const bytes = Buffer.from(s.sxp, 'base64');
+    if (sha256Hex(bytes) !== s.sxpDigest) throw new RegistrySyncError('package.store_corrupt');
+    const r = loadPackage(this.decodePackage(bytes), this.loaderCtx(installedLookups, s, hold, revoked));
+    events.push(...r.events);
+    if (!r.ok) throw new RegistrySyncError(r.code);
+    const m = r.pkg.files.manifest;
+    if (m.id !== s.id || m.version !== s.version || m.kind !== s.kind || r.pkg.manifestDigest !== s.manifestDigest) throw new RegistrySyncError('package.store_corrupt');
+    return r.pkg;
+  }
+
+  private record(entry: IndexEntry, pkg: LoadedPackage, bytes: Uint8Array): StoredPackage {
+    return { id: entry.id, version: entry.version, kind: entry.kind as StoredPackage['kind'], manifestDigest: pkg.manifestDigest, sxpDigest: entry.sxpDigest, sxp: Buffer.from(bytes).toString('base64'), acceptedAt: this.now() };
+  }
+
+  private async syncPackage(id: string, index: RegistryIndex, revoked: ReadonlySet<string>, hold: boolean): Promise<SyncOutcome> {
+    const deviceId = this.o.deviceId?.() ?? null;
+    const candidates = index.entries.filter((e) => e.kind === 'playbook' && e.id === id && (deviceId ? rolloutBucket(e.id, deviceId) < e.rolloutPercent : e.rolloutPercent === 100));
+    if (!candidates.length) return 'unchanged';
+    const entry = candidates.reduce((a, b) => ((compareSemver(b.version, a.version) ?? 0) > 0 ? b : a));
+    const current = this.currentPackage(id);
+    // 인덱스가 설치본과 같거나 낮은 판만 가리키면 받지 않는다(내림은 로더도 registry.version_rollback으로 거부한다)
+    if (current && (compareSemver(entry.version, current.version) ?? -1) <= 0) return 'unchanged';
+    const events: string[] = [];
+    try {
+      const top = await this.fetchPackage(entry);
+      // 조회 하위 패키지: 저장본(같은 id@version·같은 다이제스트)이 있으면 그것을, 없으면 인덱스의 같은 id@version을 받는다.
+      const lookups = new Map<string, LoadedPackage>();
+      const fresh: StoredPackage[] = [];
+      for (const l of lookupsUsedOf(top.raw.manifest)) {
+        const have = this.storedPackage(l.id, l.version);
+        if (have) {
+          if (have.manifestDigest !== l.digest) throw new RegistrySyncError('loader.lookup_mismatch');
+          lookups.set(l.id, this.loadStored(have, new Map(), revoked, hold, events));
+          continue;
+        }
+        const le = index.entries.find((e) => e.kind === 'lookup' && e.id === l.id && e.version === l.version);
+        if (!le) throw new RegistrySyncError('loader.lookup_mismatch');
+        const got = await this.fetchPackage(le);
+        const r = loadPackage(got.raw, this.loaderCtx(new Map(), null, hold, revoked));
+        events.push(...r.events);
+        if (!r.ok) throw new RegistrySyncError(r.code);
+        if (r.pkg.files.manifest.id !== le.id || r.pkg.files.manifest.version !== le.version || r.pkg.files.manifest.kind !== 'lookup') throw new RegistrySyncError('registry.kind_mismatch');
+        lookups.set(l.id, r.pkg);
+        fresh.push(this.record(le, r.pkg, got.bytes));
+      }
+      const r = loadPackage(top.raw, this.loaderCtx(lookups, current, hold, revoked));
+      events.push(...r.events);
+      if (!r.ok) throw new RegistrySyncError(r.code);
+      const m = r.pkg.files.manifest;
+      if (m.id !== entry.id || m.version !== entry.version || m.kind !== 'playbook' || (entry.portal !== undefined && m.portal !== entry.portal)) throw new RegistrySyncError('registry.kind_mismatch');
+      // 조회 패키지 → 플레이북 → 지금 버전 순서로 쓴다(지금 버전이 마지막이라 중간에 끊겨도 이전 설치본이 그대로다).
+      for (const f of fresh) this.o.store.set(`pkg.${f.id}@${f.version}`, f);
+      this.o.store.set(`pkg.${id}@${entry.version}`, this.record(entry, r.pkg, top.bytes));
+      this.o.store.set(`pkg.current.${id}`, entry.version);
+      return 'accepted';
+    } finally {
+      for (const ev of new Set(events)) this.event(ev, { what: 'package' });
+    }
+  }
+
+  /**
+   * 실행 시작: 저장한 설치본을 다시 로드한다(D03 §3.1 "로드할 때마다"). 서명은 지금 폐기 목록으로, 버전은 설치본 기준으로 다시 보고,
+   * 저장 바이트가 받을 때의 다이제스트와 다르면 package.store_corrupt. 설치본이 없으면 package.not_loaded. 네트워크는 쓰지 않는다.
+   */
+  loadInstalled(id: string): InstalledPackage {
+    const events: string[] = [];
+    const current = this.currentPackage(id);
+    if (!current || current.kind !== 'playbook') return { ok: false, code: 'package.not_loaded', events };
+    const rev = this.currentRevoked();
+    const revoked = rev?.keyIds ?? new Set<string>();
+    const hold = !revokedFresh(rev, this.now());
+    try {
+      const top = Buffer.from(current.sxp, 'base64');
+      if (sha256Hex(top) !== current.sxpDigest) throw new RegistrySyncError('package.store_corrupt');
+      const lookups = new Map<string, LoadedPackage>();
+      for (const l of lookupsUsedOf(this.decodePackage(top).manifest)) {
+        const s = this.storedPackage(l.id, l.version);
+        if (!s || s.kind !== 'lookup' || s.manifestDigest !== l.digest) throw new RegistrySyncError('loader.lookup_mismatch');
+        lookups.set(l.id, this.loadStored(s, new Map(), revoked, hold, events));
+      }
+      const pkg = this.loadStored(current, lookups, revoked, hold, events);
+      return { ok: true, pkg, lookups, events: [...new Set(events)] };
+    } catch (e) {
+      return { ok: false, code: e instanceof RegistrySyncError ? e.code : 'package.load_failed', events: [...new Set(events)] };
+    }
   }
 
   // ---- main 통로 ----
