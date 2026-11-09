@@ -164,7 +164,9 @@ export type VaultEvent =
   | 'vault.npki_listed'
   // PDF 저장(save_pdf): 경로·종류·사유·크기만(파일 이름·URL·내용 없음)
   | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected'
-  | 'vault.staging_swept';
+  | 'vault.staging_swept'
+  // 계정 갱신 토큰(ADR-038 (f)): 이벤트 이름만(토큰 값·길이·해시 없음)
+  | 'vault.account_refresh_stored' | 'vault.account_refresh_forgotten' | 'vault.account_refresh_write_failed' | 'vault.account_refresh_corrupt';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [

@@ -289,3 +289,45 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .sx-card-title.sx-folded { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .sx-card-title.sx-folded svg { width: 16px; height: 16px; color: var(--accent); }
 .sx-folded-line { margin-right: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 로그인(A-01, 캔버스 v60 M2Login·M2LoginCode·M2Signup, 인계 명세 account-screens-v60 §1·§2·§6). 앱 위를 덮는 전체 화면, 가운데 360 한 열.
+   크기·색은 디자인 시스템 v1.2 토큰·컴포넌트(캔버스의 v2.1 덮어쓰기는 쓰지 않는다). */
+.acct-screen { position: fixed; inset: 0; z-index: 9; background: var(--canvas); display: grid; place-items: center; overflow: auto; padding: var(--space-5); box-sizing: border-box; }
+.acct-col { width: 360px; max-width: 100%; display: flex; flex-direction: column; gap: var(--space-5); }
+.acct-mark { width: 36px; height: 36px; border-radius: var(--radius-lg); background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 800; font-size: 15px; letter-spacing: -0.04em; }
+.acct-head { display: flex; flex-direction: column; gap: var(--space-1); }
+.acct-head h1 { margin: 0; }
+.acct-head p { margin: 0; color: var(--ink-3); }
+.acct-head b { font-weight: 600; color: var(--ink-2); }
+.acct-stack { display: flex; flex-direction: column; gap: var(--space-3); }
+.acct-back { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-1); padding: var(--space-1) var(--space-1) var(--space-1) 0; border: 0; background: none; color: var(--ink-3); font: inherit; font-size: 13px; cursor: pointer; border-radius: var(--radius-sm); }
+.acct-back svg { width: 14px; height: 14px; }
+.acct-back:hover { color: var(--ink); }
+.acct-in { height: var(--control-height-lg); width: 100%; box-sizing: border-box; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font: inherit; font-size: 14px; outline: none; }
+.acct-in:focus { border-color: var(--focus-ring); box-shadow: 0 0 0 1px var(--focus-ring); }
+.acct-in.is-bad, .acct-in.is-bad:focus { border-color: var(--attention); box-shadow: 0 0 0 1px var(--attention); }
+.acct-pw { position: relative; }
+.acct-pw .acct-in { padding-right: 44px; }
+.acct-eye { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 36px; height: 36px; display: grid; place-items: center; border: 0; background: none; color: var(--ink-2); border-radius: var(--radius-md); cursor: pointer; }
+.acct-eye svg { width: 16px; height: 16px; }
+.acct-stack > .sx-btn-lg { width: 100%; }
+.acct-btn svg { width: 16px; height: 16px; }
+.acct-links { display: flex; align-items: center; justify-content: center; gap: 2px; }
+.acct-dot { color: var(--ink-4); }
+.acct-chip { align-self: flex-start; display: inline-flex; align-items: center; gap: var(--space-2); height: var(--control-height-lg); padding: 0 4px 0 14px; border-radius: var(--radius-full); background: var(--surface); border: 1px solid var(--line); box-sizing: border-box; color: var(--ink); max-width: 100%; }
+.acct-chip > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-err { margin: 0; display: flex; align-items: flex-start; gap: var(--space-2); color: var(--attention); }
+.acct-err svg, .acct-alert-hd svg { width: 13px; height: 13px; flex: none; margin-top: 2px; }
+.acct-alert { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); border-radius: var(--radius-lg); background: var(--attention-soft); }
+.acct-alert p { margin: 0; }
+.acct-alert-hd { display: flex; align-items: flex-start; gap: var(--space-2); color: var(--attention); }
+.acct-alert-sub { padding-left: 21px; color: var(--ink-2); }
+.acct-alert .sx-btn-lg { width: 100%; }
+.acct-code-box { position: relative; }
+.acct-cells { display: flex; gap: var(--space-2); }
+.acct-cell { flex: 1; height: 56px; border-radius: var(--radius-md); background: var(--surface-tint); display: grid; place-items: center; font-family: var(--font-mono); font-size: 22px; font-weight: 600; color: var(--ink); }
+.acct-code-box:focus-within .acct-cell.is-at { box-shadow: 0 0 0 2px var(--accent); }
+.acct-code-in { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; border: 0; padding: 0; font-size: 16px; color: transparent; caret-color: transparent; background: transparent; cursor: text; }
+.acct-code-foot { display: flex; align-items: center; }
+.acct-code-foot .sx-btn { margin-left: auto; }
+.acct-left { color: var(--ink-3); font-family: var(--font-mono); font-variant-numeric: tabular-nums; }

@@ -38,11 +38,11 @@ const H = cardHeight(CARD_ROWS['H-01']);
 const T = cardTargets(W, H);
 const mid = (r: { x: number; y: number; width: number; height: number }) => ({ x: Math.floor(r.x + r.width / 2), y: Math.floor(r.y + r.height / 2) });
 
-/** 무장된(멈춘 커서 아래 뜬 지 600ms 지난) 카드 판정기. 이 상태에서 down→up 하나면 승인되는 가장 느슨한 조건이다. */
+/** 막 뜬 카드 판정기(기다림·머무름 없음, ADR-021 개정 2026-11-09). 이 상태에서 down→up 하나면 승인된다. */
 function armedGate(): BarGate {
-  const g = new BarGate(600);
+  const g = new BarGate();
   g.setTargets(T);
-  g.rearm(0, true);
+  g.reset();
   return g;
 }
 
@@ -51,11 +51,11 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     const g = armedGate();
     assert.equal(KEYBOARD_APPROVAL, false);
     const keys = ['Enter', ' ', 'Escape', 'Tab', 'y', 'Y', 'ㅛ', 'a', 'ArrowRight', 'Return'];
-    for (const key of keys) for (const mods of [{}, { alt: true }, { control: true }, { meta: true }]) assert.equal(g.key({ type: 'keyDown', key, ...mods }, 5000), null, `${key} ${JSON.stringify(mods)}`);
+    for (const key of keys) for (const mods of [{}, { alt: true }, { control: true }, { meta: true }]) assert.equal(g.key({ type: 'keyDown', key, ...mods }), null, `${key} ${JSON.stringify(mods)}`);
     assert.deepEqual([...STOP_KEYS], ['Enter', ' ', 'Escape']);
   });
 
-  it('[승인하고 발급] 영역 밖(값 줄·비가역 줄·[중지]·두 버튼 사이·카드 밖) down→up은 무장·멈춘 커서여도 승인이 아니다', () => {
+  it('[승인하고 발급] 영역 밖(값 줄·비가역 줄·[중지]·두 버튼 사이·카드 밖) down→up은 무장됨이어도 승인이 아니다', () => {
     const gapX = T.stop.x + T.stop.width + Math.floor((T.approve.x - T.stop.x - T.stop.width) / 2);
     const points = [
       { x: 40, y: 20 }, // 합계 줄
@@ -71,18 +71,18 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     ];
     for (const p of points) {
       const g = armedGate();
-      g.mouse({ type: 'mouseDown', ...p, button: 'left' }, 5000);
-      assert.equal(g.mouse({ type: 'mouseUp', ...p, button: 'left' }, 5010), null, JSON.stringify(p));
+      g.mouse({ type: 'mouseDown', ...p, button: 'left' });
+      assert.equal(g.mouse({ type: 'mouseUp', ...p, button: 'left' }), null, JSON.stringify(p));
     }
     // 안에서 누르고 밖에서 떼거나, 밖에서 누르고 안에서 떼면 승인이 아니다.
     const g = armedGate();
-    g.mouse({ type: 'mouseDown', ...mid(T.stop), button: 'left' }, 5000);
-    assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }, 5010), null);
-    assert.equal(g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' }, 5100), null, '눌림');
-    assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.stop), button: 'left' }, 5110), null);
+    g.mouse({ type: 'mouseDown', ...mid(T.stop), button: 'left' });
+    assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }), null);
+    assert.equal(g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' }), null, '눌림');
+    assert.equal(g.mouse({ type: 'mouseUp', ...mid(T.stop), button: 'left' }), null);
     // 대조: 같은 판정기에서 영역 안 down→up은 승인이다(위 거부가 판정기 고장이 아님).
-    g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' }, 5200);
-    assert.deepEqual(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }, 5210), { kind: 'approve' });
+    g.mouse({ type: 'mouseDown', ...mid(T.approve), button: 'left' });
+    assert.deepEqual(g.mouse({ type: 'mouseUp', ...mid(T.approve), button: 'left' }), { kind: 'approve' });
   });
 
   it('[중지]는 승인 근거를 만들지 않는다: 카드는 closed(stopped)로 끝나고 shell-app은 실행 중지로만 잇는다', () => {
@@ -103,11 +103,11 @@ describe('음성 ①: main이 관찰한 [승인하고 발급] 클릭 없이는 �
     // approve()를 부르는 곳은 둘: 마우스 판정 결과 approve, 그리고 꺼진 키보드 경로(KEYBOARD_APPROVAL=false라 gate.key가 늘 null).
     assert.equal(count(bar, 'this.approve()'), 2);
     assert.ok(between(bar, '  private onMouse(', '  private paintBackground(').includes("if (r.kind === 'approve') return this.approve();"));
-    assert.match(bar, /this\.gate\.key\(\{[^}]*\}, this\.now\(\)\)\?\.kind === 'approve'\) this\.approve\(\);/);
+    assert.match(bar, /this\.gate\.key\(\{[^}]*\}\)\?\.kind === 'approve'\) this\.approve\(\);/);
     // 무장 거부 중에는 [중지]만 받고 승인 판정에 넣지 않는다.
     const onMouse = between(bar, '  private onMouse(', '  private paintBackground(');
-    assert.ok(onMouse.indexOf('if (this.gate.stop(ev)) return this.stopByUser') < onMouse.indexOf('if (this.refusal) return this.gate.track(ev, now)'));
-    assert.ok(onMouse.indexOf('if (this.refusal) return this.gate.track(ev, now)') < onMouse.indexOf('this.gate.mouse(ev, now, unmoved)'));
+    assert.ok(onMouse.indexOf('if (this.gate.stop(ev)) return this.stopByUser') < onMouse.indexOf('if (this.refusal) return this.gate.track(ev)'));
+    assert.ok(onMouse.indexOf('if (this.refusal) return this.gate.track(ev)') > 0 && onMouse.indexOf('if (this.refusal) return this.gate.track(ev)') < onMouse.indexOf('this.gate.mouse(ev)'));
   });
 });
 
