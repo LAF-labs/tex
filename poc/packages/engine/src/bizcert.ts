@@ -39,6 +39,27 @@ export function tidyOcrValue(v: string): string {
   return out.join(' ');
 }
 
+/**
+ * 상호에 섞인 OCR 잡음 글자(#219 관찰: `가나상사상호 _ :： 가나상사`). 실제 상호에 쓰는 ( ) & . , - · ' 와 영숫자·한글 음절은 뺀다.
+ * 낱자모(ㄱ-ㅎ·ㅏ-ㅣ)도 상호에 혼자 쓰지 않는다(음절이 깨진 것).
+ */
+const NAME_JUNK = /[_:：;|\\~^*=<>{}[\]#@$%?!"“”‘’`]|[\u3131-\u318e]/u;
+/** 상호 칸에 다른 칸 라벨이 들어 있으면 줄이 합쳐진 것이다. '상호'·'성명'은 넣지 않는다(상호저축은행·대성명품처럼 실제 이름에 나온다). */
+const NAME_FOREIGN_LABELS = ['법인명', '대표자', '등록번호', '개업연월일', '소재지', '사업의종류', '업태', '종목', '교부사유', '생년월일', '주민등록번호', '공동사업자'];
+
+/**
+ * OCR로 깨진 상호인가. 깨졌으면 후보로 내지 않고 missing으로 보내 사용자가 다시 확인하게 한다(조용히 채우지 않는다, ADR-014).
+ * - 잡음 글자가 섞였다(구분 기호·밑줄·낱자모 등)
+ * - 다른 칸의 라벨이 들어 있다(줄 합쳐짐)
+ * - 같은 이름이 라벨을 사이에 두고 되풀이된다(`가나상사상호가나상사`)
+ */
+export function brokenBizName(v: string): boolean {
+  if (NAME_JUNK.test(v)) return true;
+  const c = v.replace(/\s+/gu, '');
+  if (NAME_FOREIGN_LABELS.some((l) => c.includes(l))) return true;
+  return /^(.+)(?:상호|법인명\(?단체명\)?)\1$/u.test(c);
+}
+
 const CONFUSABLE: Record<string, string[]> = { '0': ['9', '8', '6'], '9': ['0', '8'], '8': ['0', '3', '6', '9'], '6': ['8', '5', '0'], '5': ['6', '3'], '3': ['8', '5'], '1': ['7', '4'], '7': ['1'], '4': ['1'] };
 
 function bizNoSuggestions(d: string): string[] {
@@ -94,7 +115,8 @@ export function parseBizCert(raw: string): BizCertParse {
   if (/법\s*인\s*사\s*업\s*자/u.test(text) || /법\s*인\s*명/u.test(text)) fields.kind = 'corporate';
   else if (/일\s*반\s*과\s*세\s*자|간\s*이\s*과\s*세\s*자|개\s*인\s*사\s*업\s*자/u.test(text)) fields.kind = 'individual';
 
-  fields.name = after(text, ['법인명(단체명)', '법인명', '상호']);
+  const name = after(text, ['법인명(단체명)', '법인명', '상호']);
+  fields.name = name && !brokenBizName(name) ? name : null;
   const rep = after(text, ['대표자', '성명']);
   fields.repName = rep ? (/[가-힣]{2,5}(?:\s*외\s*\d+\s*명)?/u.exec(rep.replace(/\s+(?=[가-힣])/gu, ''))?.[0] ?? rep) : null;
 

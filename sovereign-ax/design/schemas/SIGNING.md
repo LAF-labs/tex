@@ -19,14 +19,15 @@
 | `manifest.json`(패키지, `.sxp` 안) | JCS(manifest − `signatures`) | 패키지 키 2-of-3 | 인덱스(14일) |
 | `hotfix.json`(`.sxp` 안) | JCS(hotfix − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt`(≤ 14일, 서명 대상에 포함) |
 | 데이터 기술자(`.sxp` kind:data 안, §6) | JCS(descriptor − `signatures`). 본문은 `bodyDigest` = SHA-256(본문 원시 바이트)로 묶는다 | 패키지 키 2-of-3 | 인덱스(14일) |
-| `registry/{channel}/index.json` | JCS(index − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt`(≤ 14일, 서명 대상에 포함, 타임스탬프 없음) |
+| `registry/{channel}/index.json` | JCS(index − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 패키지 키 2-of-3 | `timestamp`(≤ 14일, 48시간마다 재서명, [ADR-043](../adr/ADR-043-index-freshness-timestamp.md)) |
 | `policy/{ver}.json`·`current.json` | JCS(policy − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3, 또는 1인 긴급 키(엄격하게 보수적일 때만) | `timestamp`(≤ 72시간, 48시간마다 재서명) |
 | `registry/status.json` | JCS(status − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3, 또는 1인 긴급 키(하향·킬스위치 추가만) | `timestamp`(≤ 48시간, 48시간마다 재서명) |
 | `registry/revoked_keys.json` | JCS(list − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 오프라인 루트 키 2-of-3 | `timestamp`(≤ 24시간) |
 
 - status 모양: `{monotonic, keyEpoch, issuedAt, expiresAt, portalModeCeiling: {portal: mode}, killPlaybooks: [id], signatures, timestamp}`([status.schema.json](status.schema.json)). 없는 포털 = 추가 상한 없음.
 - 폐기 목록 모양: `{monotonic, keyEpoch, issuedAt, expiresAt, revoked: [{keyId, role, revokedAt}], signatures, timestamp}`([revoked_keys.schema.json](revoked_keys.schema.json)), `revoked` ≤ 64, keyId 중복 없음.
-- 정책·status·폐기 목록의 **내용 다이제스트** `contentDigest` = SHA-256(위 "내용 서명 바이트")다. 내용이 바뀌면 `monotonic`을 올린다.
+- 정책·status·폐기 목록·인덱스의 **내용 다이제스트** `contentDigest` = SHA-256(위 "내용 서명 바이트")다. 내용이 바뀌면 `monotonic`을 올린다.
+- 인덱스 모양: `{channel, monotonic, keyEpoch, issuedAt, expiresAt, entries: [{id, version, kind, portal?, sxpDigest, size, rolloutPercent, minAppVersion?}], signatures, timestamp}`. 인덱스는 2026-11-09까지 `JCS(index − signatures)`에 서명하고 타임스탬프가 없었다. ADR-043부터 옛 형식은 받지 않는다(게시된 적이 없다).
 - 긴급 status는 직전 status가 없어도(첫 설치) "상한 없음·킬 없음" 대비 엄격하게 보수적이면 받는다.
 
 ## 3. 쿼럼 세기와 폐기

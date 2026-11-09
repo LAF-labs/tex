@@ -37,7 +37,7 @@ export interface RegistryAppOpts {
   /** 투명성 로그(D09 §8.3). 있으면 게시마다 공개 전에 항목을 먼저 쓰고 /registry/log/*를 연다. 운영 기동(main)은 반드시 둔다 */
   log?: TransparencyLog;
   /**
-   * 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다"): 정책·status·폐기 목록을 `timestamp` 없이 올리면 이 타임스탬프 역할 키
+   * 첫 게시 도장(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다"): 정책·status·폐기 목록·인덱스(ADR-043)를 `timestamp` 없이 올리면 이 타임스탬프 역할 키
    * (로그 헤드와 같은 온라인 키, logSigningKey가 핀과 대조한 것)로 issuedAt·expiresAt·timestamp를 붙인 뒤 같은 관문 검증을 한다.
    * 내용 서명(루트·정책·긴급 키)은 신선도 필드를 서명 바이트에서 빼므로 그대로다. 재서명 cron(resign.ts)과 같은 restamp·같은 유효 기간이다.
    */
@@ -205,7 +205,7 @@ export function registryRouter(o: RegistryAppOpts): Router {
       admin(ctx);
       return serial(async () => {
         const channel = channelOf(ctx.params.channel!);
-        const doc = ctx.body as RegistryIndex;
+        const doc = stamped(ctx.body as RegistryIndex, RESIGN_TTL.index);
         const key = `registry/${channel}/index.json`;
         const revoked = await revokedSet();
         const stored = await readJson<RegistryIndex>(key);

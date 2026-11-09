@@ -12,10 +12,10 @@ import {
   egressRegistryFetch, fixturePortal, HOMETAX_PORTAL, installedIrSource, memoryRegistryStore, packagePath, portalLookupDefs, PRODUCT_PACKAGES, REGISTRY_PATHS, RegistrySync, settingsRegistryStore,
   type RegistryFetch, type StoredPackage, type TrustPin,
 } from '@sax/engine';
-import { canonicalWithout, decodeSxp, encodeSxp, manifestDigest, sha256Hex, type PackageFiles, type RevokedKeys } from '@sax/engine/core';
+import { decodeSxp, encodeSxp, manifestDigest, sha256Hex, type PackageFiles, type RevokedKeys } from '@sax/engine/core';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
-import { h01, sigOf, signPackage, signTimestamped, type TestKey } from './core-fixtures.ts';
+import { h01, signPackage, signTimestamped, type TestKey } from './core-fixtures.ts';
 import { SAMPLE_NOW, sampleKeys } from './registry-samples.ts';
 
 const DIR = path.resolve(import.meta.dirname, 'fixtures/registry');
@@ -51,10 +51,9 @@ function h01Sxp(version: string, o: { signers?: TestKey[]; edit?: (f: PackageFil
 type Entry = { id: string; version: string; kind: string; portal?: string; sxpDigest: string; size: number; rolloutPercent: number };
 const entryOf = (id: string, version: string, kind: string, sxp: Uint8Array, over: Partial<Entry> = {}): Entry => ({ id, version, kind, portal: 'hometax', sxpDigest: sha256Hex(sxp), size: sxp.length, rolloutPercent: 100, ...over });
 
-/** stable 인덱스(패키지 키 2-of-3). 샘플 인덱스(monotonic 7)보다 높은 monotonic으로 새로 서명한다. */
+/** stable 인덱스(내용 = 패키지 키 2-of-3, 신선도 = timestamp 키, ADR-043). 샘플 인덱스(monotonic 7)보다 높은 monotonic으로 새로 서명한다. */
 function indexBytes(entries: Entry[], monotonic: number): Uint8Array {
-  const doc: Record<string, unknown> = { channel: 'stable', monotonic, keyEpoch: 1, issuedAt: ISSUED, expiresAt: iso(Date.parse(ISSUED) + 14 * 24 * H), entries };
-  doc.signatures = TWO.map((k) => sigOf(k, canonicalWithout(doc, ['signatures'])));
+  const doc = signTimestamped({ channel: 'stable', monotonic, keyEpoch: 1, issuedAt: ISSUED, expiresAt: iso(Date.parse(ISSUED) + 14 * 24 * H), entries, signatures: [], timestamp: { keyId: '', alg: 'ed25519', sig: '' } }, TWO, K.ts);
   return new Uint8Array(Buffer.from(JSON.stringify(doc)));
 }
 

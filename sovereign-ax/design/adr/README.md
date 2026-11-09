@@ -44,5 +44,6 @@
 | [ADR-040](ADR-040-engine-gateway-auth-scoped-device-token.md) | 엔진의 게이트웨이 인증: main이 gateway 범위 기기 토큰과 DPoP 헤더를 auth 포트로 요청마다 준다(허용 목록 3경로), `POST /v1/device-tokens` `scopes` 범위 축소·발급 기록, 금고 engine 포트의 장기 키 연산 제거, 401 1회 재시도·403 없음·`signed_out`은 오프라인 | 채택(팀장 결정 2026-11-06) |
 | [ADR-041](ADR-041-windows-owner-check-once-per-dir.md) | Windows 폴더 소유자 확인을 폴더(볼륨·파일 ID·생성 시각)마다 프로세스당 한 번으로: 신뢰 소유자만 기억, DACL은 매번 확인, 소유자 읽기 상한 90초, 금고 기동 때 미리 확인, 네이티브 헬퍼가 오면 PowerShell을 뺀다 | 채택(팀장 지시 2026-11-06) |
 | [ADR-042](ADR-042-ledger-attempt-regate.md) | 원장 시도 번호: 키 `(intent_id, step_id, attempt)`, 같은 실행의 재게이트(D02 §8 `s30 → s11`, D03 §2 `rewind.pre_gate`)는 새 토큰 소비와 한 트랜잭션에서 새 시도, committed·미종결이 있으면 새 시도 금지(DB 부분 유일 색인), 이전 행은 v8에서 attempt=1로 자동 이전(실패하면 열지 않음), 행 다시 열기·재게이트 안 함은 기각 | 채택(팀장 결정 2026-11-09) |
+| [ADR-043](ADR-043-index-freshness-timestamp.md) | 인덱스의 내용 서명(패키지 키 2-of-3, JCS(index − signatures·issuedAt·expiresAt·timestamp))과 신선도 서명(timestamp 키, 서버가 첫 게시 도장·cron 48시간 재서명)을 나눈다, 받는 쪽 상한 14일 유지, 옛 형식은 받지 않음(운영에 게시된 인덱스 없음), 사람의 14일 재서명·기간 연장은 기각 | 채택(팀장 결정 2026-11-09) |
 
 AUDIT-D(설계 v1.3 + PoC 코드) 확정 53건의 처리 배정은 [D19 §3.5](../19-attack-surface.md)에 있다. ADR-025~029가 48건, D19 등록만이 5건이다. AUDIT-D는 처음에 ADR-022~026으로 적었고, main의 ADR-022·023과 겹쳐 2026-11-03 병합 때 ADR-025~029로 옮겼다(022→025 … 026→029, 예약 027→030).
