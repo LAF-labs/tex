@@ -253,10 +253,10 @@ describe('audit-d: D6 중복 경고 상태별 표시(N-22·N-02)', () => {
     }
   });
 
-  it('only not_committed → 직전 시도 미발급 판정 with normal tone', () => {
+  it('only not_committed → 이전 시도는 발급되지 않았어요 with normal tone', () => {
     const req = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
     const l = (summarize(req) as SummaryLine[])[0]!;
-    assert.deepEqual([l.flag, l.tone], ['직전 시도 미발급 판정', 'normal']);
+    assert.deepEqual([l.flag, l.tone], ['이전 시도는 발급되지 않았어요', 'normal']);
     assert.equal(actionText(req), ACTION_TEXT_DUP);
     assert.doesNotMatch(buildCardHtml(summarize(req) as SummaryLine[], 'armed', undefined, gateText(actionText(req))), /attn/);
   });
@@ -393,6 +393,17 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.equal(NOTE['policy.cooldown'], '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.');
     assert.equal(NOTE['policy.irreversible_per_day'], '오늘은 PoC 기간 하루 발급 상한(1건)에 닿았어요. 내일 다시 할 수 있어요.');
     assert.equal(NOTE['step.target_not_found'], '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.');
+  });
+
+  it('제품 플레이북(packages/engine/playbooks)의 스텝 멈춤 코드마다 NOTE 문구가 있다(s19d·s19f 포함, 값 없음)', () => {
+    const dir = new URL('../packages/engine/playbooks/', import.meta.url);
+    const codes = new Set<string>();
+    for (const id of fs.readdirSync(dir).filter((n) => fs.existsSync(new URL(`${n}/playbook.json`, dir)))) {
+      const pb = fs.readFileSync(new URL(`${id}/playbook.json`, dir), 'utf8');
+      for (const m of pb.matchAll(/"code":\s*"([^"]+)"/g)) codes.add(m[1]!);
+    }
+    assert.ok(codes.has('assert.input_mismatch') && codes.has('assert.total_mismatch'));
+    for (const c of codes) assert.ok(NOTE[c] && /아무것도 발급하지 않았어요\.$/.test(NOTE[c]!), c);
   });
 
   it('portalNotice is carried as plain text in the run view', async () => {
