@@ -86,6 +86,32 @@ function fakeCloud() {
       throw Object.assign(new Error('account.credentials_invalid'), { code: 'account.credentials_invalid' });
     },
     logout: async () => {},
+    me: async () => ({ email: EMAIL, hasPassword: false, reauthUntil: null, authMethod: 'email_code' }),
+    setPassword: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    deletePassword: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    startReauth: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    verifyReauth: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    startPasswordReset: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    verifyPasswordReset: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    refresh: async () => {
+      throw fail('account.unauthorized');
+    },
+    revokeRefresh: async () => {},
+    logoutAll: async () => {
+      throw fail('net.not_in_e2e');
+    },
     deviceList: async () => ({ aikPub, deviceList: deviceList as never }),
     pinFirstDesktop: async (_s, b) => {
       const l = verifyDeviceList(b.deviceList, fromB64(b.aikPub));

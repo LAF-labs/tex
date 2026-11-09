@@ -1,12 +1,16 @@
 // 계정 로그인 e2e(A-01, remote-account.ts): 설정 > 기기 연결 → [로그인] → 이메일 → 6자리 → 첫 PC 등록. 실제 렌더러·preload·main 처리기.
-// 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다), 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
+// 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다)를 localhost HTTP로 띄우고(fake-account-http.ts), 셸은 제품 클라이언트
+// (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
 // 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app, nativeTheme } from 'electron';
 import { AIK_PURPOSES, fromB64, softNoiseStatic, softSigner, VD_PURPOSES, verifyDeviceList, x25519Public, type DesktopKeys } from '@sax/remote';
-import type { AccountClient, CloudPorts } from '../dist/remote-ports.js';
+import { Egress } from '@sax/net';
+import type { AccountClient } from '../dist/remote-ports.js';
+import { cloudPorts } from '../dist/remote-cloud.js';
+import { serveAccount } from './fake-account-http.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
@@ -75,6 +79,32 @@ function fakeAccount() {
       return { session: 'sxs1.fake', expiresInSec: 3600 };
     },
     logout: async () => void calls.push('logout'),
+    me: async () => ({ email: 'owner@gyeonbon-test.example', hasPassword: true, reauthUntil: null, authMethod: 'password' }),
+    setPassword: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    deletePassword: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    startReauth: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    verifyReauth: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    startPasswordReset: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    verifyPasswordReset: async () => {
+      throw fail('net.not_in_e2e');
+    },
+    refresh: async () => {
+      throw fail('account.unauthorized');
+    },
+    revokeRefresh: async () => {},
+    logoutAll: async () => {
+      throw fail('net.not_in_e2e');
+    },
     deviceList: async () => (calls.push('list'), { aikPub: null, deviceList: null }),
     pinFirstDesktop: async (_s, b) => {
       calls.push('aik');
@@ -104,7 +134,10 @@ function softKeys(): DesktopKeys {
 async function main() {
   const acct = fakeAccount();
   const keys = softKeys();
-  const cloud = { account: acct.client, relay: null, relayHost: 'localhost', insecureLocal: true, openSocket: () => null } as unknown as CloudPorts;
+  // 제품 클라이언트 + 제품 Egress(허용 목록 그대로). 개발 origin(127.0.0.1)만 cloudDevLocal로 연다.
+  const front = await serveAccount(acct.client);
+  const egress = new Egress({ cloudDevLocal: true });
+  const cloud = cloudPorts({ egress, env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } });
   S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, remote: { cloud, keys: async () => keys } });
   S.win.webContents.on('console-message', (e) => {
     if (e.level === 'error') console.log(`  [renderer] ${e.message}`);
@@ -168,6 +201,11 @@ async function main() {
   await type('.acct-code', '123456');
   check('6자리를 다 넣으면 바로 확인 → 등록 끝: 화면이 닫히고 계정 줄에 이메일', await until('signed in', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in' && document.querySelector('[data-account-email]').textContent === 'owner@gyeonbon-test.example'`)));
   check('계정 호출 순서(비밀번호 → 코드 → 확인 → 코드 → 확인 → 목록 → AIK 고정 → 로그아웃)', JSON.stringify(acct.calls) === JSON.stringify(['password', 'code', 'verify', 'code', 'verify', 'list', 'aik', 'logout']), acct.calls);
+  check(
+    '계정 호출은 제품 클라이언트·제품 Egress 허용 목록을 지나 앞단에 닿았다(비밀번호 로그인 포함, #224 결함 재발 방지)',
+    front.hits.includes('POST /v1/auth/password') && egress.audit.some((x) => x.dest === 'cloud' && x.path === 'auth.password' && x.status === 401) && egress.audit.every((x) => x.dest === 'cloud') && JSON.stringify(egress.audit).indexOf('gyeonbon') < 0,
+    { hits: front.hits, audit: egress.audit },
+  );
   const idFile = path.join(S.fixture!.root, 'userData', 'remote-identity.json');
   const found = existsSync(idFile) ? idFile : null;
   const raw = found ? readFileSync(found, 'utf8') : '';
