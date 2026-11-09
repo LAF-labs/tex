@@ -17,11 +17,12 @@ import { ISSUED_AT_MAX_SKEW_MIN } from './core/constants.ts';
 import { loadDataPackage, type DataBodyValidator, type DataLoadResult } from './core/datapkg.ts';
 import { compareSemver, loadPackage, type LoadedPackage, type LoaderContext, type RawPackage } from './core/loader.ts';
 import {
-  acceptRevoked, acceptStatus, contentBytes, countSignatures, ed25519PublicKey, effectiveStatus, epochProblem, monotonicProblem, revokedFresh,
-  statusFreshness, verifyTimestamp, type AcceptedRevoked, type AcceptedStatus, type KeyRole, type RegistryStatus, type RevokedKeys, type StatusFreshness, type TrustRoots,
+  acceptPolicy, acceptRevoked, acceptStatus, contentBytes, countSignatures, ed25519PublicKey, effectiveStatus, epochProblem, monotonicProblem, revokedFresh,
+  statusFreshness, verifyTimestamp, type AcceptedPolicy, type AcceptedRevoked, type AcceptedStatus, type KeyRole, type RegistryStatus, type RevokedKeys, type StatusFreshness, type TrustRoots,
 } from './core/registry.ts';
 import { decodeSxp } from './core/sxp.ts';
-import type { Manifest, Signature } from './core/types.ts';
+import { policyFreshness, type PolicyFreshness } from './core/policy.ts';
+import type { Manifest, Policy, Signature } from './core/types.ts';
 import type { BundleOutcomes } from './core/validate.ts';
 
 // ───────────────────────── 핀 키 ─────────────────────────
@@ -64,7 +65,7 @@ export function trustRootsFromPin(pin: TrustPin): TrustRoots {
 
 // ───────────────────────── 받기 ─────────────────────────
 
-export const REGISTRY_PATHS = { revoked: '/registry/revoked_keys.json', status: '/registry/status.json', index: '/registry/stable/index.json' } as const;
+export const REGISTRY_PATHS = { revoked: '/registry/revoked_keys.json', status: '/registry/status.json', policy: '/policy/current.json', index: '/registry/stable/index.json' } as const;
 /** `.sxp` 경로. id·version은 인덱스 검증을 통과한 값만 넣는다. */
 export const packagePath = (id: string, version: string) => `/packages/${id}@${version}.sxp`;
 
@@ -241,12 +242,25 @@ export type SyncOutcome = 'accepted' | 'unchanged' | string;
 export interface SyncReport {
   revoked: SyncOutcome;
   status: SyncOutcome;
+  /** 서명 정책(D03 §7.1). 실패하면 마지막 유효 정책을 유지한다. */
+  policy: SyncOutcome;
   index: SyncOutcome;
   /** 플레이북 id → 결과(RegistrySyncOptions.packages가 있을 때만). */
   packages?: Record<string, SyncOutcome>;
   data: Record<string, SyncOutcome>;
   /** 이번 동기화 뒤 폐기 목록 신선도(24시간) */
   revokedFresh: boolean;
+}
+
+export interface PolicyView {
+  /** none(한 번도 받지 못함)·fresh·stale(만료 뒤 168시간 안, 유지·완화 거부)·fallback(그 뒤, 전 포털 postprocess) */
+  freshness: PolicyFreshness;
+  /** 클램프 뒤 값(엔진이 쓰는 값). 없으면 null. */
+  policy: Policy | null;
+  monotonic: number | null;
+  emergency: boolean;
+  /** 앱 내장 상한·하한으로 고정한 필드 경로 */
+  clamped: string[];
 }
 
 export interface RevocationView {
@@ -379,6 +393,11 @@ export class RegistrySync {
     return s ? { ...s } : null;
   }
 
+  private storedPolicy(): AcceptedPolicy | null {
+    const p = this.o.store.get('policy') as AcceptedPolicy | null;
+    return p ? structuredClone(p) : null;
+  }
+
   private currentIndex(): AcceptedIndex | null {
     const index = this.o.store.get('index.stable') as RegistryIndex | null;
     return index ? { index, contentDigest: sha256Hex(contentBytes(index)) } : null;
@@ -411,6 +430,12 @@ export class RegistrySync {
     };
   }
 
+  /** 마지막 유효 정책(클램프 뒤)과 신선도. 실행 허가(⑤)·요청률(RateGuard)이 쓴다. */
+  policy(): PolicyView {
+    const a = this.storedPolicy();
+    return { freshness: policyFreshness(a?.policy ?? null, this.now()), policy: a?.policy ?? null, monotonic: a?.raw.monotonic ?? null, emergency: a?.emergency ?? false, clamped: a?.clamped ?? [] };
+  }
+
   // ---- 동기화 ----
 
   /** 한 번에 하나만 돈다(겹친 호출은 진행 중인 결과를 함께 받는다). */
@@ -433,9 +458,9 @@ export class RegistrySync {
   }
 
   private async syncOnce(): Promise<SyncReport> {
-    const report: SyncReport = { revoked: 'skipped', status: 'skipped', index: 'skipped', data: {}, revokedFresh: false };
+    const report: SyncReport = { revoked: 'skipped', status: 'skipped', policy: 'skipped', index: 'skipped', data: {}, revokedFresh: false };
     if (!this.o.fetch) {
-      report.revoked = report.status = report.index = 'registry.fetch_unavailable';
+      report.revoked = report.status = report.policy = report.index = 'registry.fetch_unavailable';
       report.revokedFresh = revokedFresh(this.currentRevoked(), this.now());
       return report;
     }
@@ -444,6 +469,7 @@ export class RegistrySync {
     report.revokedFresh = revokedFresh(revoked, this.now());
     const revokedIds = revoked?.keyIds ?? new Set<string>();
     report.status = await this.step('status', () => this.syncStatus(revokedIds, !report.revokedFresh));
+    report.policy = await this.step('policy', () => this.syncPolicy(revokedIds, !report.revokedFresh));
     report.index = await this.step('index', () => this.syncIndex(revokedIds));
     const index = this.currentIndex();
     if (this.o.packages) {
@@ -452,7 +478,7 @@ export class RegistrySync {
     }
     for (const sink of this.o.sinks ?? []) report.data[sink.id] = index ? await this.step('data', () => this.syncData(sink, index.index, revokedIds, !report.revokedFresh)) : 'registry.index_missing';
     const accepted = (r: Record<string, SyncOutcome> | undefined) => Object.values(r ?? {}).filter((v) => v === 'accepted').length;
-    this.event('registry.synced', { revoked: report.revoked, status: report.status, index: report.index, packages: accepted(report.packages), data: accepted(report.data), fresh: report.revokedFresh });
+    this.event('registry.synced', { revoked: report.revoked, status: report.status, policy: report.policy, index: report.index, packages: accepted(report.packages), data: accepted(report.data), fresh: report.revokedFresh });
     return report;
   }
 
@@ -488,6 +514,18 @@ export class RegistrySync {
     this.o.store.set('status', rec);
     if (!a.emergency) this.o.store.set('status_quorum', rec);
     if (r.etag) this.o.store.set('etag.status', r.etag);
+    return 'accepted';
+  }
+
+  /** 정책(D03 §7.1): 정책 키 2-of-3 또는 1인 긴급 키(엄격하게 보수적인 변경만), 타임스탬프, 신선도, monotonic, 클램프(core acceptPolicy). */
+  private async syncPolicy(revoked: ReadonlySet<string>, hold: boolean): Promise<SyncOutcome> {
+    const r = await this.get(REGISTRY_PATHS.policy, 'policy');
+    if (r.notModified) return 'unchanged';
+    const d = acceptPolicy(parseDoc(r.body) as Policy, { roots: this.roots, revoked, current: this.storedPolicy(), hold, now: this.now() });
+    for (const ev of d.events) this.event(ev, { what: 'policy' });
+    if (!d.ok) throw new RegistrySyncError(d.code);
+    this.o.store.set('policy', d.accepted);
+    if (r.etag) this.o.store.set('etag.policy', r.etag);
     return 'accepted';
   }
 
@@ -542,7 +580,7 @@ export class RegistrySync {
       roots: this.roots, revoked, bundleAllowlist: this.o.packages?.bundleAllowlist ?? BUNDLE_ALLOWLIST, bundles: this.bundleCache, installedLookups,
       storedVersion: installed?.version ?? null, installedDigest: installed?.manifestDigest ?? null, hold,
       // 핫픽스는 이 경로로 넣지 않는다(핫픽스 채널은 따로, 정책 신선도와 함께).
-      policyFresh: false, now: this.now(),
+      policyFresh: this.policy().freshness === 'fresh', now: this.now(),
     };
   }
 

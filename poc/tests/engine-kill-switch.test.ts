@@ -280,6 +280,8 @@ describe('제품 entry 배선(서버 긴급 정지)', () => {
     const src = await fs.readFile(new URL('../packages/engine/src/entry.ts', import.meta.url), 'utf8');
     assert.match(src, /permit: \(id\) => runPermit\(registry\?\.status\(\) \?\? null, 'hometax', id\)/);
     assert.match(src, /closeBrowser: \(\) => slot\.close\(\)/);
+    // 정책 동기화(③): 받은 서명 정책을 RateGuard에 준다(내장 값과 더 엄격한 쪽만).
+    assert.match(src, /receivedPolicy: \(\) => registry\?\.policy\(\)\.policy \?\? null/);
     assert.match(src, /const r = await registry\.handle\(method\);\s*\/\/[^\n]*\n\s*runs\?\.recheckPermit\(\);/);
   });
 });
