@@ -868,6 +868,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       return account.verify(String(p.code));
     },
+    'account.password': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.passwordLogin(String(p.email), p.password);
+    },
     'account.back': async () => {
       await accountInit();
       return account.back();

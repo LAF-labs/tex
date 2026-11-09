@@ -4,7 +4,8 @@
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { AIK_PURPOSES, requestDeviceToken, softNoiseStatic, softSigner, VD_PURPOSES, x25519Public, type DesktopKeys, type HttpJson, type SignedAcctClaim } from '@sax/remote';
-import { AcctClaimSigner, AccountService, accountRouter, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway } from '../services/account/src/index.ts';
+import { fileURLToPath } from 'node:url';
+import { AcctClaimSigner, AccountService, accountRouter, argon2Available, COMMON_PASSWORDS_FILE, CommonPasswords, MIGRATIONS_DIR, MockMailSender, MockPaymentGateway, parsePepperKeys, PasswordHasher } from '../services/account/src/index.ts';
 import { createServer, ed25519RawPublic, Logger, listen, migrate, openSqlite, TokenIssuer, TokenVerifier } from '../services/shared/src/index.ts';
 import type { AccountClient } from '../apps/desktop/src/remote-ports.ts';
 import { Clock, edKey } from './services-kit.ts';
@@ -45,7 +46,11 @@ export class FakeRooms {
   }
 }
 
-export async function startDevStack(): Promise<DevStack> {
+/** 이 런타임에서 비밀번호 경로를 켤 수 있나(argon2id). 없으면 비밀번호 시험은 건너뛴다. */
+export const devStackPasswords = argon2Available();
+
+/** passwords: 비밀번호 경로(ADR-038)를 켠다(실제 argon2id + 페퍼, 흔한 비밀번호 목록). 기본은 꺼짐(지금 운영 기본과 같다). */
+export async function startDevStack(o: { passwords?: boolean } = {}): Promise<DevStack> {
   const clock = new Clock();
   const db = openSqlite();
   await migrate(db, 'account', MIGRATIONS_DIR);
@@ -65,6 +70,9 @@ export async function startDevStack(): Promise<DevStack> {
     acctClaims: claimSigner,
     pairing: rooms,
     now: clock.now,
+    ...(o.passwords && devStackPasswords
+      ? { passwords: { hasher: new PasswordHasher(parsePepperKeys(`k1:${randomBytes(32).toString('hex')}`)!), common: CommonPasswords.fromFile(fileURLToPath(COMMON_PASSWORDS_FILE)), onEvent: () => {} } }
+      : {}),
   });
   const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internalSecret: randomBytes(32).toString('hex') });
   const server = createServer(router, { logger: new Logger('account', (l) => process.env.SAX_DEVSTACK_LOG && console.error(l), clock.now) });
@@ -86,6 +94,7 @@ export async function startDevStack(): Promise<DevStack> {
     calls,
     startEmailCode: async (email) => (await call('POST', '/v1/auth/code', {}, { email })) as { loginId: string; expiresInSec: number },
     verifyEmailCode: async (loginId, code) => (await call('POST', '/v1/auth/code/verify', {}, { loginId, code })) as { session: string; expiresInSec: number },
+    passwordLogin: async (email, password) => (await call('POST', '/v1/auth/password', {}, { email, password })) as { session: string; expiresInSec: number },
     logout: async (s) => void (await call('POST', '/v1/auth/logout', bearer(s))),
     deviceList: async (s) => (await call('GET', '/v1/device-list', bearer(s))) as never,
     pinFirstDesktop: async (s, b) => (await call('POST', '/v1/aik', bearer(s), b)) as { deviceId: string },

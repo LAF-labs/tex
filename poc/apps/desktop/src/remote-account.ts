@@ -1,5 +1,5 @@
 // 데스크톱 계정 로그인(A-01)·첫 PC 등록·기기 토큰 보관(D08 §4.2, D09 §2.1·§2.2, 팀장 결정 2026-11-06 (가)).
-// 흐름: 이메일 → 6자리 코드 → 계정 세션(메모리) → 기기 목록 조회 → (첫 PC) AIK 서명 첫 목록 + POST /v1/aik → 자기 인증서(AIK 서명)
+// 흐름: 이메일 → 비밀번호(ADR-038) 또는 6자리 코드 → 계정 세션(메모리) → 기기 목록 조회 → (첫 PC) AIK 서명 첫 목록 + POST /v1/aik → 자기 인증서(AIK 서명)
 //       → 신원 파일 저장 → 로그아웃(세션 버림). 그 뒤 계정 호출은 기기 범위 토큰(인증서 + DPoP(Vd), 15분, 메모리 캐시)으로만 한다.
 // - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
 // - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
@@ -214,6 +214,37 @@ export class DesktopAccount {
         await client.logout(session).catch(() => {});
       }
     }, 'main.account_enroll');
+    return this.view();
+  }
+
+  /**
+   * 이메일 + 비밀번호 → 세션 → 첫 PC 등록(ADR-038 (a)). verify와 같이 세션은 이 함수 안에서만 쓰고 버린다.
+   * 비밀번호는 계정 서비스 호출 본문으로만 넘기고 어디에도 남기지 않는다. 기록은 결과 코드뿐이다.
+   * 틀림·없는 계정·잠금은 서버가 같은 응답(account.credentials_invalid)을 준다. 화면은 셋을 가르지 않는다.
+   */
+  async passwordLogin(emailRaw: string, password: string): Promise<AccountView> {
+    const client = this.#need();
+    const email = emailRaw.trim();
+    this.#error = null;
+    if (!isEmailShape(email)) {
+      this.#error = 'account.email_shape';
+      return this.view();
+    }
+    if (!password) {
+      this.#error = 'account.password_empty';
+      return this.view();
+    }
+    this.#pending = null;
+    this.#lastEmail = email;
+    await this.#run(async () => {
+      const { session } = await client.passwordLogin(email, password);
+      try {
+        this.#id = await this.#enroll(client, session, email);
+        this.#log('main.account_enroll', { result: 'ok' });
+      } finally {
+        await client.logout(session).catch(() => {});
+      }
+    }, 'main.account_password');
     return this.view();
   }
 
