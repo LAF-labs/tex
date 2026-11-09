@@ -19,6 +19,7 @@ import { clearCardSlipEnough, markCardSlipEnough, missingReport, monthStatus, ty
 import { daemonSnapshot, type DaemonSnapshotSources } from './daemon-snapshot.ts';
 import { requestCandidates } from './request-paste.ts';
 import { cardMonthView } from './card-view.ts';
+import { carryOver, EmployeeInputError, employeeInput, employeePatch, employeeView, ownEmployee } from './employees.ts';
 import { confirmNoticeCard, noticeConfirmCard, type InsuranceKind, type InsuranceNoticeMatchInput } from './notice-match.ts';
 
 type Params = Record<string, unknown>;
@@ -214,7 +215,7 @@ export class BundleService {
       return await this.dispatch(method, p ?? {});
     } catch (e) {
       if (e instanceof BundleServiceError) throw e;
-      if (e instanceof ValidationError || e instanceof TableError || e instanceof ShiftError || e instanceof BundleError || e instanceof ColumnCipherError) throw new BundleServiceError(e.code);
+      if (e instanceof ValidationError || e instanceof TableError || e instanceof ShiftError || e instanceof BundleError || e instanceof ColumnCipherError || e instanceof EmployeeInputError) throw new BundleServiceError(e.code);
       throw e;
     }
   }
@@ -298,8 +299,32 @@ export class BundleService {
       case 'db.query.payroll.employees': {
         const profileId = this.profile(p.profileId);
         const repo = new EmployeeRepo(this.db, this.cipher);
-        // 주민번호는 가린 값만(revealRrn은 부르지 않는다)
-        return repo.list(profileId, { activeInMonth: month(p.month) }).map((e) => ({ ...e, maskedRrn: e.hasRrn ? repo.maskedRrn(e.id) : null }));
+        // 주민번호는 가린 값만(revealRrn은 부르지 않는다). month를 빼면 퇴사자까지 모든 직원(직원 목록 화면, M6-9)
+        const m = p.month === undefined || p.month === null ? undefined : month(p.month);
+        return repo.list(profileId, m ? { activeInMonth: m } : {}).map((e) => employeeView(repo, e));
+      }
+      // ── 직원 입력·지난달과 같나요?·급여 기능 켜기(08 D-06, M6-9). 직원을 지우는 명령은 없다(임금대장 3년 보관, 퇴사는 leftOn) ──
+      case 'db.query.payroll.carryOver':
+        return carryOver(this.db, this.cipher, this.profile(p.profileId), month(p.month));
+      case 'db.query.payroll.enabled': {
+        const profileId = this.profile(p.profileId);
+        const set = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(payrollEnabledKey(profileId)) as string | undefined;
+        return { enabled: this.payrollEnabled(profileId), source: set === undefined ? 'employees' : 'setting' };
+      }
+      case 'payroll.setEnabled': {
+        const profileId = this.profile(p.profileId);
+        const on = bool(p.on, 'bad_on');
+        this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(payrollEnabledKey(profileId), JSON.stringify(on));
+        return { enabled: on };
+      }
+      case 'payroll.addEmployee': {
+        const repo = new EmployeeRepo(this.db, this.cipher);
+        return employeeView(repo, repo.create(employeeInput(this.profile(p.profileId), p.employee), (this.opts.now?.() ?? new Date()).toISOString()));
+      }
+      case 'payroll.updateEmployee': {
+        const repo = new EmployeeRepo(this.db, this.cipher);
+        const e = ownEmployee(repo, this.profile(p.profileId), p.employeeId);
+        return employeeView(repo, repo.update(e.id, employeePatch(p.patch), (this.opts.now?.() ?? new Date()).toISOString()));
       }
       case 'db.query.bundle.status':
         return monthStatus(this.ctx(p));

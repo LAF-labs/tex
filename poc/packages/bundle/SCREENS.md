@@ -28,6 +28,11 @@
 | 화면 | 이름 | 인자 | 결과 |
 |---|---|---|---|
 | 급여대장 | `db.query.payroll.employees` | `profileId, month` | 그달 재직 직원 + `maskedRrn`(가림값만, `revealRrn` 안 씀) |
+| | `db.query.payroll.carryOver` | `profileId, month` | `{month, from: {month, revision, status}\|null, inputs{employeeId: {extras}}, newEmployees[{id, name}], leftEmployees[{id, name}]}`. 읽기만(M6-9, `PAYROLL_EMPLOYEE_READ_QUERIES`) |
+| | `db.query.payroll.enabled` | `profileId` | `{enabled, source: setting\|employees}` |
+| | `payroll.setEnabled` | `profileId, on` | `{enabled}`(레일에서 급여대장을 보이고 숨김, ADR-034 결정 8) |
+| | `payroll.addEmployee` | `profileId, employee{name, birthDate, hiredOn, basePay, dependents, rrn?, leftOn?, job?, payType?, nontax?, children8to20?, withholdingPct?, pensionApplies?, healthApplies?, employmentApplies?, pensionBase?, healthBase?}` | 직원 + `maskedRrn`(주민번호 원문 없음) |
+| | `payroll.updateEmployee` | `profileId, employeeId, patch`(위 칸 중 바뀐 것, `rrn: null`은 지움) | 직원 + `maskedRrn`. 퇴사는 `leftOn`. 지우는 명령은 없다 |
 | | `db.query.payroll.month` | `profileId, month, revision?` | `{current, revisions, lines, summary}`. `revision`을 빼면 가장 큰 개정 |
 | | `payroll.compute` | `profileId, month, paidOn, inputs?, employerSize?, industrialAccidentPpm?` | 그달 재직 직원 전부: `{rateTableIds, lines[{employeeId, name, result, statementMissing}], summary}`. 저장하지 않는다 |
 | | `payroll.saveDraft` | compute 인자 + `noticeDocIds?` | compute 결과 + `draft`. 초안 줄은 그달 재직 직원과 같게 맞춘다. 확인한 달이면 `month_confirmed_use_revise` |
@@ -68,7 +73,16 @@
 
 ### 급여대장
 
-1. `db.query.payroll.employees`로 직원을 보인다.
+0. 직원 목록(처음 한 번 입력, M6-9)
+   - `db.query.payroll.employees`에서 `month`를 빼면 퇴사자까지 모든 직원이다. 넣기는 `payroll.addEmployee`, 고치기는 `payroll.updateEmployee`다.
+   - 생년월일은 꼭 받고, 주민번호는 선택이다. 주민번호 앞 7자리가 생년월일과 어긋나면 `rrn_birth_mismatch`다. 화면에는 `maskedRrn`만 보인다.
+   - 퇴사는 `leftOn`을 넣는다. 직원을 지우지 않는다(임금대장 3년 보관).
+   - 오류: `name_required`, `invalid_birth_date`, `invalid_hired_on`, `invalid_left_on`, `invalid_base_pay`, `invalid_dependents`, `invalid_children_8_20`, `invalid_pay_type`, `invalid_withholding_pct`, `invalid_nontax`(비과세는 `meal·vehicle·childcare·research`만), `invalid_rrn`, `rrn_birth_mismatch`, `bad_employee`, `bad_employee_field`, `employee_not_found`.
+   - 급여 기능은 `payroll.setEnabled`로 켜고 끈다. 설정이 없으면 직원이 있을 때 켜진 것으로 본다(`source: employees`).
+1. `db.query.payroll.employees`로 그달 직원을 보인다.
+   - "지난달과 같나요?"는 `db.query.payroll.carryOver`다. [같아요]면 `inputs`를 그대로 `payroll.compute`에 넣고, 바뀐 것만 고친다.
+   - 넘기는 것은 과세 수당·차감(`extras`)뿐이다. 근로일수·시간·고지액은 넘기지 않는다(달마다 다르고, 시급제 시간은 근무표, 고지액은 S-06). 비과세는 직원 설정에서 다시 나온다.
+   - `newEmployees`는 이번 달 입력을 따로 받는다. `leftEmployees`는 보여 주기만 한다.
 2. 입력을 바꿀 때마다 `payroll.compute`를 부른다.
    - `result.notes`는 확인 표시일 뿐 판정이 아니다. 예: `nontax_over_limit:meal`, `insurance_notice_differs:<kind>`, `table_needs_review:<id>`.
    - `table_needs_review`는 "검수 필요"로 보인다.

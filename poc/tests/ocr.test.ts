@@ -10,7 +10,7 @@ import { chromium, type Browser } from 'playwright-core';
 import { createWorker, type Worker } from 'tesseract.js';
 import { formatBizNo, syntheticBizNo } from '@sax/db';
 import { parseBizCert } from '@sax/engine';
-import { appendMeasure } from './measure-out.ts';
+import { appendMeasure, measurePath, writeMeasure } from './measure-out.ts';
 
 const require = createRequire(import.meta.url);
 const kor = require('@tesseract.js-data/kor') as { langPath: string; gzip: boolean };
@@ -30,6 +30,33 @@ ${row('사업장 소재지', f.addr)}
 <tr><th>사업의 종류</th><td>: 업태 ${f.type} &nbsp;&nbsp; 종목 ${f.item}</td></tr>
 ${row('교 부 사 유', '신규')}
 </table></body>`;
+}
+
+// 품질 하한: 세 OS 녹색 기록에서 두 표본 신뢰도는 86~87로 고정이었다(tesseract.js 7.0.0·kor 1.0.0 잠금, 결정적). 67은 한 번 본 깨진 입력(2026-11-07 #215 macOS).
+const OCR_CONFIDENCE_FLOOR = 80;
+
+/**
+ * 시험 입력 이미지를 안정된 상태로 찍는다(금고 경로 아님). 글꼴 적재(document.fonts.ready)와 두 프레임을 기다린 뒤,
+ * 연속 두 장이 바이트까지 같을 때의 이미지를 쓴다. 다섯 번 안에 안 같아지면 실패한다(입력이 흔들리면 OCR 결과로 판정하지 않는다).
+ */
+async function renderStable(browser: Browser, html: string): Promise<Buffer> {
+  const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 2 });
+  try {
+    await page.setContent(html, { waitUntil: 'load' });
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    });
+    let prev = await page.screenshot({ fullPage: true });
+    for (let i = 0; i < 5; i++) {
+      const cur = await page.screenshot({ fullPage: true });
+      if (cur.equals(prev)) return cur;
+      prev = cur;
+    }
+    throw new Error('시험 입력 이미지가 안정되지 않음(연속 스크린샷이 계속 다름)');
+  } finally {
+    await page.close();
+  }
 }
 
 describe('사업자등록증 OCR', () => {
@@ -72,24 +99,34 @@ describe('사업자등록증 OCR', () => {
     { bizNo: syntheticBizNo(12), name: '주식회사 다라테크', rep: '박다라', open: '2018 년 11 월 02 일', addr: '경기도 성남시 분당구 판교로 20', type: '서비스', item: '소프트웨어 개발', corpNo: '131111-0012345' },
   ]) {
     it(`렌더링된 등록증 이미지 → tesseract kor → 필드(${sample.name})`, async () => {
-      const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 2 });
-      await page.setContent(certHtml(sample));
-      const png = await page.screenshot({ fullPage: true });
-      await page.close();
+      const png = await renderStable(browser, certHtml(sample));
       const started = Date.now();
       const { data } = await worker.recognize(png);
       const ms = Date.now() - started;
       const r = parseBizCert(data.text);
-      await appendMeasure('ocr-samples.jsonl', JSON.stringify({ sample: sample.name, ms, confidence: data.confidence, fields: r.fields, missing: r.missing }) + '\n');
-      // OCR이 숫자를 잘못 읽으면 체크섬으로 감지하고 후보에 정답이 있어야 한다(사용자 확인 후 저장).
-      if (r.fields.bizNo !== sample.bizNo) {
-        assert.equal(r.bizNoChecksumOk, false, `wrong bizNo passed checksum:\n${data.text}`);
-        assert.ok(r.bizNoSuggestions.includes(sample.bizNo), `suggestions ${r.bizNoSuggestions} lack ${sample.bizNo}`);
+      await appendMeasure('ocr-samples.jsonl', { sample: sample.name, ms, confidence: data.confidence, fields: r.fields, missing: r.missing });
+      // 실패하면 입력 이미지와 OCR 원문을 측정 폴더에 남긴다(CI macOS는 test-summary-macos 아티팩트로 올라간다). 흔들림을 다음에 바로 볼 수 있게.
+      const keep = async () => {
+        const txt = await writeMeasure(`ocr-fail/${sample.bizNo}.txt`, `confidence ${data.confidence}\n${data.text}`);
+        await fs.writeFile(measurePath(`ocr-fail/${sample.bizNo}.png`), png);
+        console.error(`OCR 실패 입력·원문: ${path.dirname(txt)}`);
+      };
+      try {
+        // 제품 판정(항상 성립): 틀리게 읽은 등록번호는 체크섬을 통과하지 않는다. 못 읽은 필수 필드는 missing에 나온다(조용히 비우지 않는다).
+        if (r.fields.bizNo !== sample.bizNo) assert.equal(r.bizNoChecksumOk, false, `wrong bizNo passed checksum:\n${data.text}`);
+        for (const k of ['bizNo', 'name', 'repName', 'openDate'] as const) if (r.fields[k] === null) assert.ok(r.missing.includes(k), `${k} 못 읽었는데 missing에 없음`);
+        // OCR 품질 하한(이 깨끗한 합성 이미지에서): 신뢰도 ≥ OCR_CONFIDENCE_FLOOR, 등록번호는 그대로 읽거나 후보에 정답이 있다(사용자 확인 후 저장), 나머지 필드는 정답.
+        // 이 하한 아래면 파서가 아니라 입력·인식 쪽 문제다. 메시지가 그 둘을 가른다.
+        assert.ok(data.confidence >= OCR_CONFIDENCE_FLOOR, `OCR 품질 하한 미달: 신뢰도 ${data.confidence} < ${OCR_CONFIDENCE_FLOOR}(입력 이미지·인식 문제, 원문은 measure/ocr-fail)\n${data.text}`);
+        if (r.fields.bizNo !== sample.bizNo) assert.ok(r.bizNoSuggestions.includes(sample.bizNo), `suggestions ${r.bizNoSuggestions} lack ${sample.bizNo}`);
+        assert.equal(r.fields.repName, sample.rep);
+        assert.equal(r.fields.name?.replace(/\s/g, ''), sample.name.replace(/\s/g, ''), `name: ${r.fields.name}`);
+        assert.equal(r.fields.address?.replace(/\s/g, ''), sample.addr.replace(/\s/g, ''));
+        assert.equal(r.fields.openDate, sample.open.replace(/\D/g, ''));
+      } catch (e) {
+        await keep();
+        throw e;
       }
-      assert.equal(r.fields.repName, sample.rep);
-      assert.equal(r.fields.name?.replace(/\s/g, ''), sample.name.replace(/\s/g, ''), `name: ${r.fields.name}`);
-      assert.equal(r.fields.address?.replace(/\s/g, ''), sample.addr.replace(/\s/g, ''));
-      assert.equal(r.fields.openDate, sample.open.replace(/\D/g, ''));
     });
   }
 });

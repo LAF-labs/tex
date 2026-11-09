@@ -232,7 +232,7 @@ describe('SES v2 메일 어댑터', () => {
       password_locked: true,
       sessions_revoked: true,
     };
-    const kinds: MailKind[] = ['code', 'reset_code', ...(Object.keys(NOTICES) as NoticeKind[])];
+    const kinds: MailKind[] = ['code', 'reset_code', 'reauth_code', ...(Object.keys(NOTICES) as NoticeKind[])];
     const CODE = '482913';
     for (const k of kinds) {
       const c = mailContent(k, CODE);
@@ -242,7 +242,7 @@ describe('SES v2 메일 어댑터', () => {
       for (const line of all.split('\n')) assert.ok(!looksSensitive(line), `${k}: ${line}`);
       assert.ok(!/\d/.test(c.subject), `${k}: 제목에 숫자`);
       const digits = all.match(/\d+/g) ?? [];
-      if (k === 'code' || k === 'reset_code') assert.deepEqual(digits.filter((d) => d.length > 2), [CODE], k);
+      if (k === 'code' || k === 'reset_code' || k === 'reauth_code') assert.deepEqual(digits.filter((d) => d.length > 2), [CODE], k);
       else assert.ok(!all.includes(CODE) && digits.every((d) => d.length <= 2), `${k}: 알림에 코드·숫자 값`);
     }
     // 실제로 보낸 요청: 주소는 FromEmailAddress·Destination에만, 내용에는 주소·계정 값이 없다
@@ -251,6 +251,7 @@ describe('SES v2 메일 어댑터', () => {
       got.length = 0;
       if (k === 'code') await s.sendLoginCode(TO, CODE);
       else if (k === 'reset_code') await s.sendResetCode(TO, CODE);
+      else if (k === 'reauth_code') await s.sendReauthCode(TO, CODE);
       else await s.sendNotice(TO, k);
       const b = JSON.parse(got[0]!.body) as { Content: unknown };
       const content = JSON.stringify(b.Content);

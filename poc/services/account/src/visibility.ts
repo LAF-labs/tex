@@ -41,7 +41,7 @@ export const ACCOUNT_VISIBILITY: Record<string, Record<string, string>> = {
     expires_at: 'D09 §1.1 보충: 갱신 토큰 만료(30일 미사용)',
     rotated_at: 'D09 §1.1 보충: 갱신 토큰 회전 시각(재사용 감지)',
   },
-  login_codes: { login_id_hash: '이메일 발송(요청 결속 해시)', email: '이메일 발송: 수신 이메일', code_mac: '이메일 발송: 로그인 코드(HMAC, 평문 없음)', attempts: '로그인 시도 수', expires_at: '이메일 발송 시각(+10분)' },
+  login_codes: { login_id_hash: '이메일 발송(요청 결속 해시)', email: '이메일 발송: 수신 이메일', code_mac: '이메일 발송: 로그인·계정 설정 재인증 코드(HMAC, 용도별 라벨, 평문 없음)', attempts: '로그인 시도 수', expires_at: '이메일 발송 시각(+10분)' },
   oauth_codes: { code_hash: '루프백 인가 코드(해시, 60초)', account_id: '계정', auth_method: '로그인 방식', client_id: '클라이언트', redirect_uri: '루프백 주소', code_challenge: 'PKCE 챌린지', expires_at: '만료', auth_at: 'D09 §1.1 보충: 원래 세션 인증 시각' },
   passkeys: { credential_id: 'D09 §1.1 보충: 패스키 자격 증명 ID', account_id: '계정', public_key: 'D09 §1.1 보충: 패스키 공개키', alg: 'D09 §1.1 보충: 패스키 알고리즘', sign_count: 'D09 §1.1 보충: 패스키 서명 카운터', created_at: 'D09 §1.1 보충: 패스키 등록 시각' },
   webauthn_challenges: { challenge_hash: '패스키 챌린지(해시, 5분)', account_id: '계정', kind: '종류', expires_at: '만료' },

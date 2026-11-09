@@ -12,7 +12,7 @@ import type { AttestRejectCode, AttestRequest, AttestWithdrawReason, GatePortMes
 import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
 import { childEnv } from './child-env.ts';
-import type { GwAuthResult } from './gateway-auth.ts';
+import { authPortResponder, type GwAuthResult } from './gateway-auth.ts';
 import type { SecretInputBind } from './secret-labels.ts';
 
 const require = createRequire(import.meta.url);
@@ -88,7 +88,14 @@ export class EngineHost extends EventEmitter {
     this.gatePort.on('message', (e) => this.onGate(e.data as GatePortMessage));
     this.gatePort.start();
     this.authPort = auth.port2;
-    this.authPort.on('message', (e) => void this.onAuth(e.data));
+    // 받은 순서대로 하나씩(invalidate가 다음 gw.auth보다 먼저 토큰을 지운다).
+    const onAuth = authPortResponder(
+      () => this.gatewayAuth,
+      (r) => {
+        if (!this.dead) this.authPort.postMessage(r);
+      },
+    );
+    this.authPort.on('message', (e) => void onAuth(e.data));
     this.authPort.start();
     if (opts.vault === 'process') {
       this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore', env: childEnv(), execArgv: [] });
@@ -135,18 +142,6 @@ export class EngineHost extends EventEmitter {
   /** auth 포트에 답하는 쪽(shell-app이 계정을 만든 뒤 GatewayAuthHost.handle을 붙인다). */
   setGatewayAuth(handler: (m: unknown) => Promise<GwAuthResult | null>): void {
     this.gatewayAuth = handler;
-  }
-
-  private async onAuth(m: unknown): Promise<void> {
-    const req = m as { t?: unknown; id?: unknown } | null;
-    const id = req?.t === 'gw.auth' && typeof req.id === 'number' && Number.isSafeInteger(req.id) ? req.id : null;
-    let r: GwAuthResult | null;
-    try {
-      r = this.gatewayAuth ? await this.gatewayAuth(m) : id === null ? null : { t: 'gw.auth.result', id, code: 'account.signed_out' };
-    } catch {
-      r = id === null ? null : { t: 'gw.auth.result', id, code: 'auth.unavailable' };
-    }
-    if (r && !this.dead) this.authPort.postMessage(r);
   }
 
   private onReply(msg: { t?: string; id?: number; result?: unknown; error?: string }): void {

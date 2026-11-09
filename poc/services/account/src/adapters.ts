@@ -74,18 +74,26 @@ export interface MailSender {
   sendLoginCode(to: string, code: string): Promise<void>;
   /** 비밀번호 재설정 코드(6자리, 10분). 로그인 코드와 다른 문구 */
   sendResetCode(to: string, code: string): Promise<void>;
+  /** 계정 설정 재인증 코드(6자리, 10분). 로그인 세션 안에서 본인 확인만 하고 새 세션을 만들지 않는다(사용자 확정 2026-11-09) */
+  sendReauthCode(to: string, code: string): Promise<void>;
   /** 알림 메일. 내용은 종류별 고정 문구이고 기기 이름 같은 값은 넣지 않는다. */
   sendNotice(to: string, kind: NoticeKind): Promise<void>;
 }
 
 /** 모의 메일. 받은 편지함을 메모리에만 둔다(표준 출력·로그에 쓰지 않는다). */
 export class MockMailSender implements MailSender {
-  readonly outbox: Array<{ to: string; kind: 'code' | 'reset_code' | NoticeKind; code?: string }> = [];
+  readonly outbox: Array<{ to: string; kind: 'code' | 'reset_code' | 'reauth_code' | NoticeKind; code?: string }> = [];
   async sendLoginCode(to: string, code: string): Promise<void> {
     this.outbox.push({ to, kind: 'code', code });
   }
   async sendResetCode(to: string, code: string): Promise<void> {
     this.outbox.push({ to, kind: 'reset_code', code });
+  }
+  async sendReauthCode(to: string, code: string): Promise<void> {
+    this.outbox.push({ to, kind: 'reauth_code', code });
+  }
+  lastReauthCode(to: string): string | undefined {
+    return [...this.outbox].reverse().find((m) => m.to === to && m.kind === 'reauth_code')?.code;
   }
   lastResetCode(to: string): string | undefined {
     return [...this.outbox].reverse().find((m) => m.to === to && m.kind === 'reset_code')?.code;
