@@ -25,6 +25,7 @@ export interface InstalledIrSourceOptions {
   judge?: Pick<Judge, 'decide'>;
   pdf?: PdfPort;
   runToken?: RunToken;
+  runTokenFor?: (runId: string) => Promise<RunToken>;
 }
 
 /**
@@ -40,7 +41,7 @@ export function installedIrSource(registry: { loadInstalled(id: string): Install
     for (const id of r.lookups.keys()) if (!lookupDefs.has(id)) return { ok: false, code: 'package.lookup_undefined' };
     return {
       ok: true,
-      ir: { pkg: r.pkg, lookupDefs, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}) },
+      ir: { pkg: r.pkg, lookupDefs, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}) },
     };
   };
 }
