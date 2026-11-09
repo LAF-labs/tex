@@ -187,6 +187,12 @@ export class BundleRepo {
       .run(e.itemId, e.period, e.status, JSON.stringify([...new Set(docIds)]), note, at);
     return this.entry(e.itemId, e.period)!;
   }
+
+  /** 사장님 표시를 지운다(앱이 기록에서 센 상태로 돌아간다). 있었으면 true */
+  clearEntry(itemId: string, period: string): boolean {
+    need(PERIOD.test(period), 'invalid_period');
+    return this.db.prepare('DELETE FROM bundle_entries WHERE item_id = ? AND period = ?').run(itemId, period).changes > 0;
+  }
 }
 
 // ---- 내보내기 기록 ----
