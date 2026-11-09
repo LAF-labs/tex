@@ -8,13 +8,6 @@ import { cbor, LOCAL_APPROVAL_TTL_MS, LOCAL_ATTEST_CONTEXT, LOCAL_ATTEST_TTL_MS,
 
 export type { AttestRequest, GateRequest, LocalApproval, LocalAttestation };
 
-export const ARM_DELAY_MS = 600;
-export const DWELL_MS = 150;
-/** 창 활성화 뒤 이 시간 안에 바 안에서 시작된 mouseDown은 클릭 활성화로 보고 재무장하지 않는다(앱이 연 핸드오프에서 돌아올 때만). */
-export const ACTIVATION_GRACE_MS = 100;
-/** main이 전용 Chrome·비밀 창·Hello를 앞에 올린 뒤 이 시간 안에 돌아온 활성화만 핸드오프 복귀다(ADR-027 결정 5). */
-export const HANDOFF_RETURN_MS = 120_000;
-
 // ---- 요약 줄(서류 종류별 앱 내장 표) ----
 
 interface Piece {
@@ -282,11 +275,12 @@ const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&
 
 export const BAR_CSP = "default-src 'none'; style-src 'self'";
 
-/** 무장 전(동작 버튼 흐림)·무장됨·무장 거부(동작 자리에 거부 사유, [중지]는 그대로). 문구(msg)는 값·동작 글자가 아니라서 다시 무장하지 않는다. */
+/**
+ * 무장 안 됨(동작 버튼 흐림, 커서 위장 중일 때만)·무장됨·무장 거부(동작 자리에 거부 사유, [중지]는 그대로).
+ * 카드는 뜨자마자 무장됨이다. 기다리는 시간은 없다(ADR-021 개정 2026-11-09: 무장 지연 600ms·머무름 150ms 철회).
+ */
 export type BarMode = 'unarmed' | 'armed' | 'refused';
 export const BAR_MESSAGES = {
-  arming: '잠시 뒤 다시 눌러 주세요',
-  dwell: '마우스를 조금 움직인 뒤 눌러 주세요',
   cursor: '마우스 커서가 보이게 한 뒤 눌러 주세요',
 } as const;
 export const ACTION_TEXT = '승인하고 발급';
@@ -451,8 +445,6 @@ export interface MouseIn {
   x: number;
   y: number;
   button?: string;
-  movementX?: number;
-  movementY?: number;
 }
 
 export interface KeyIn {
@@ -475,33 +467,19 @@ export type GateResult = { kind: 'approve' } | { kind: 'refused'; reason: keyof 
 export const STOP_KEYS: readonly string[] = ['Enter', ' ', 'Escape'];
 
 /**
- * 승인 카드 입력 판정. main이 카드 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 카드 기준 DIP, 시각은 단조 시계).
+ * 승인 카드 입력 판정. main이 카드 뷰의 before-mouse-event로 관찰한 값만 넣는다(좌표는 카드 기준 DIP).
  * 아래의 "바 안"은 [승인하고 발급] 영역(setTargets의 approve) 안이다. 카드의 다른 자리는 바깥으로 본다(결정 7 원칙 4).
- * [중지] 영역은 stop()이 따로 본다: 무장을 기다리지 않고 down → up이 같은 영역 안이면 중지다.
- * - 무장 지연: 무장 사건(rearm) 뒤 ARM_DELAY_MS 동안 입력 무시. 그 사이 mouseDown이면 지연을 다시 시작한다.
- * - 머무름: 마지막 mouseLeave·무장 사건 뒤 바 안에서 처음 실제로 움직인 때부터 DWELL_MS가 지났거나,
- *   무장 사건 때부터 커서가 바 안에 멈춰 있었을 때만 mouseDown을 인정한다. "무장 사건 때 바 안"은 main이
- *   OS 커서 위치로 정해 rearm에 넘긴다(앞 게이트에서 남은 추적 상태를 믿지 않는다). 그 예외는 mouseDown 때
- *   OS 커서가 무장 사건 때와 같은 자리일 때만 쓴다(cursorUnmoved). 바를 덮은 알림 위에서 커서가 움직였다면
- *   바는 나감을 받지 못하므로, 위치 비교로 "멈춰 있었음"을 확인한다.
- * - 승인 = [승인하고 발급] 영역 안에서 왼쪽 mouseDown → mouseUp.
+ * [중지] 영역은 stop()이 따로 본다: down → up이 같은 영역 안이면 중지다.
+ * - 승인 = [승인하고 발급] 영역 안에서 왼쪽 mouseDown → mouseUp. 카드가 뜬 직후의 클릭도 승인이다(기다림·머무름 없음,
+ *   ADR-021 개정 2026-11-09). 누르는 사이 바를 나가거나 창 수준 사건(reset)이 오면 그 클릭은 취소된다.
+ * - 커서 위장(대화 화면 커서 none·custom) 중에는 승인하지 않고 이유를 알린다.
  */
 export class BarGate {
-  private armAt = Number.POSITIVE_INFINITY;
   private pressed = false;
-  private inside = false;
-  private stillSinceArm = false;
-  private movedAt: number | null = null;
-  private activatedAt: number | null = null;
   private blocked = false;
   private target: Box = { x: 0, y: 0, width: 0, height: 0 };
   private stopTarget: Box = { x: 0, y: 0, width: 0, height: 0 };
   private stopPressed = false;
-  private readonly armDelayMs: number;
-
-  constructor(armDelayMs = ARM_DELAY_MS) {
-    this.armDelayMs = armDelayMs;
-  }
 
   /** 두 판정 영역(카드 기준 DIP). main이 cardTargets로 정한다. */
   setTargets(t: CardTargets): void {
@@ -510,44 +488,14 @@ export class BarGate {
   }
 
   /**
-   * 무장 사건: 바가 보이기 시작함, 요약·동작 글자·위치가 바뀜, 창 표시·복원·배율 변경, 커서 위장 해제.
-   * cursorInside는 main이 OS 커서 위치와 바의 화면 영역으로 계산한 값이다.
+   * 창 수준 사건: 카드가 뜸, 요약·동작 글자·위치가 바뀜, 창 이동·크기·표시·복원·활성화, 배율 변경, 커서 위장 해제.
+   * 누르던 승인 클릭만 취소한다. 기다리는 시간은 두지 않는다.
    */
-  rearm(now: number, cursorInside: boolean): void {
-    this.armAt = now + this.armDelayMs;
-    this.pressed = false;
-    this.movedAt = null;
-    this.inside = cursorInside;
-    this.stillSinceArm = cursorInside;
-    this.activatedAt = null;
-  }
-
-  /** 무장 지연만 다시 시작한다(무장 전 mouseDown, 무장 표시가 아직 그려지지 않음). */
-  deferArm(now: number): void {
-    this.armAt = now + this.armDelayMs;
+  reset(): void {
     this.pressed = false;
   }
 
-  /**
-   * 앱 창 활성화. 앱이 연 핸드오프(전용 Chrome·비밀 창·Hello)에서 돌아온 경우만 클릭 활성화 예외(100ms)를 둔다.
-   * 그 밖에는 첫 클릭을 "앞으로 가져오기"로만 받는다: 눌린 상태를 취소하고 무장 지연을 다시 센다(ADR-027 결정 5).
-   * 핸드오프 복귀에서 이미 바 안에서 눌린 상태면(포커스가 mouseDown 뒤에 옴) 클릭 활성화로 보고 기다리지 않는다.
-   */
-  windowActivated(now: number, fromHandoff = false): void {
-    if (!fromHandoff) {
-      this.activatedAt = null;
-      this.deferArm(now);
-      return;
-    }
-    this.activatedAt = this.pressed ? null : now;
-  }
-
-  /** 활성화 뒤 ACTIVATION_GRACE_MS가 지났는데 바 안 mouseDown이 없었으면 재무장해야 한다(true). */
-  activationSettled(): boolean {
-    return this.activatedAt !== null;
-  }
-
-  /** 대화 화면 커서가 none·custom이면 무장하지 않는다(커서 위장). 풀리면 main이 재무장한다. */
+  /** 대화 화면 커서가 none·custom이면 무장하지 않는다(커서 위장). */
   setCursorBlocked(blocked: boolean): void {
     this.blocked = blocked;
     if (blocked) this.pressed = false;
@@ -557,20 +505,15 @@ export class BarGate {
     return this.blocked;
   }
 
-  armed(now: number): boolean {
-    return !this.blocked && now >= this.armAt;
-  }
-
-  /** 다음 무장 시각(표시 전환 타이머용). */
-  get armTime(): number {
-    return this.armAt;
+  armed(): boolean {
+    return !this.blocked;
   }
 
   private within(x: number, y: number): boolean {
     return inBox(this.target, x, y);
   }
 
-  /** [중지] 판정. 무장·머무름·커서 위장과 상관없다(안전한 실패). 중지가 성립하면 true. */
+  /** [중지] 판정. 커서 위장과 상관없다(안전한 실패). 중지가 성립하면 true. */
   stop(ev: MouseIn): boolean {
     if (ev.button !== 'left' || (ev.type !== 'mouseDown' && ev.type !== 'mouseUp')) return false;
     const inside = inBox(this.stopTarget, ev.x, ev.y);
@@ -583,80 +526,33 @@ export class BarGate {
     return ok;
   }
 
-  private leave(): void {
-    this.inside = false;
-    this.stillSinceArm = false;
-    this.movedAt = null;
-    this.pressed = false;
+  /** 나감만 기록한다(누르던 클릭 취소). 바가 숨었거나 무장을 거부한 동안에도 부른다. */
+  track(ev: MouseIn): void {
+    if (ev.type === 'mouseLeave' || ((ev.type === 'mouseMove' || ev.type === 'mouseEnter') && !this.within(ev.x, ev.y))) this.pressed = false;
   }
 
-  /** 들어옴·나감·움직임만 기록한다. 바가 숨었거나 무장을 거부한 동안에도 부른다. */
-  track(ev: MouseIn, now: number): void {
-    if (ev.type === 'mouseLeave' || ((ev.type === 'mouseMove' || ev.type === 'mouseEnter') && !this.within(ev.x, ev.y))) return this.leave();
-    if (ev.type === 'mouseEnter') this.inside = true;
-    if (ev.type === 'mouseMove') {
-      this.inside = true;
-      if (this.movedAt === null && (ev.movementX || ev.movementY)) this.movedAt = now;
-    }
-  }
-
-  mouse(ev: MouseIn, now: number, cursorUnmoved = true): GateResult {
+  mouse(ev: MouseIn): GateResult {
     if (ev.type !== 'mouseDown' && ev.type !== 'mouseUp') {
-      this.track(ev, now);
-      return null;
-    }
-    if (ev.type === 'mouseDown') {
-      if (ev.button === 'left' && !this.within(ev.x, ev.y)) this.pressed = false;
-      if (ev.button !== 'left' || !this.within(ev.x, ev.y)) return null;
-      this.inside = true;
-      if (this.blocked) return { kind: 'refused', reason: 'cursor' };
-      if (this.activatedAt !== null) {
-        // 클릭 활성화(다른 창에서 바를 바로 눌러 앱을 앞으로 가져옴)는 재무장하지 않고 그대로 판정한다.
-        // 활성화 뒤 ACTIVATION_GRACE_MS가 지났으면 재무장 타이머가 늦은 것이므로 지금 재무장하고 거부한다.
-        if (now - this.activatedAt <= ACTIVATION_GRACE_MS) this.activatedAt = null;
-        else {
-          this.rearm(now, true);
-          return { kind: 'refused', reason: 'arming' };
-        }
-      }
-      if (!this.armed(now)) {
-        this.deferArm(now);
-        return { kind: 'refused', reason: 'arming' };
-      }
-      const dwelled = (this.movedAt !== null && now - this.movedAt >= DWELL_MS) || (this.stillSinceArm && cursorUnmoved);
-      if (!dwelled) {
-        this.pressed = false;
-        return { kind: 'refused', reason: 'dwell' };
-      }
-      this.pressed = true;
+      this.track(ev);
       return null;
     }
     if (ev.button !== 'left') return null;
-    const ok = this.pressed && this.armed(now) && this.within(ev.x, ev.y);
+    if (ev.type === 'mouseDown') {
+      this.pressed = false;
+      if (!this.within(ev.x, ev.y)) return null;
+      if (this.blocked) return { kind: 'refused', reason: 'cursor' };
+      this.pressed = true;
+      return null;
+    }
+    const ok = this.pressed && !this.blocked && this.within(ev.x, ev.y);
     this.pressed = false;
     return ok ? { kind: 'approve' } : null;
   }
 
   /** 키 입력. KEYBOARD_APPROVAL이 꺼져 있으면 어떤 키도 승인이 아니다. */
-  key(ev: KeyIn, now: number): GateResult {
-    if (!KEYBOARD_APPROVAL || !this.armed(now) || ev.type !== 'keyDown') return null;
+  key(ev: KeyIn): GateResult {
+    if (!KEYBOARD_APPROVAL || this.blocked || ev.type !== 'keyDown') return null;
     return ev.alt && !ev.control && !ev.meta && (ev.key.toLowerCase() === 'y' || ev.key === 'ㅛ') ? { kind: 'approve' } : null;
-  }
-}
-
-/** 핸드오프 표시: main이 다른 창을 앞에 올렸다가 돌아왔음. 다음 활성화 한 번에만 쓴다(소비). */
-export class HandoffMark {
-  private at: number | null = null;
-
-  note(now: number): void {
-    this.at = now;
-  }
-
-  /** now가 표시 뒤 HANDOFF_RETURN_MS 안이면 true. 맞든 아니든 표시는 지운다. */
-  consume(now: number): boolean {
-    const at = this.at;
-    this.at = null;
-    return at !== null && now >= at && now - at <= HANDOFF_RETURN_MS;
   }
 }
 
