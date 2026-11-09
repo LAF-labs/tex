@@ -12,17 +12,59 @@ import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, SignedAcctCl
 /** 기기 범위 토큰 헤더(Authorization: DPoP <token> + DPoP 증명). htu는 요청 URL 전체(쿼리 없음). 데스크톱이 deviceAuthHeaders로 만든다. */
 export type DeviceAuth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => Promise<Record<string, string>>;
 
+/**
+ * 로그인 응답(코드·비밀번호·재설정). remember가 참이면 서버가 갱신 토큰(sxa1.)을 더 준다(ADR-038 (f)).
+ * 세션·갱신 토큰은 main 메모리에만 두고, 갱신 토큰은 금고(account.refresh)로만 옮긴다.
+ */
+export interface AccountLogin {
+  session: string;
+  expiresInSec: number;
+  refreshToken?: string;
+  refreshExpiresInSec?: number;
+}
+
+/** GET /v1/me에서 데스크톱이 쓰는 칸. reauthUntil은 이 세션의 최근 인증이 끝나는 시각(ms, 갱신 세션이면 null). */
+export interface AccountMe {
+  email: string;
+  hasPassword: boolean;
+  reauthUntil: number | null;
+  authMethod: string;
+}
+
 /** 계정 서비스(services/account) 클라이언트. 클라우드 세션 구현. origin은 구현이 고정한다(egress 허용 목록). */
 export interface AccountClient {
   /** POST /v1/auth/code {email} → 메일로 6자리. */
   startEmailCode(email: string): Promise<{ loginId: string; expiresInSec: number }>;
-  /** POST /v1/auth/code/verify {loginId, code} → 계정 세션(Bearer). */
-  verifyEmailCode(loginId: string, code: string): Promise<{ session: string; expiresInSec: number }>;
+  /** POST /v1/auth/code/verify {loginId, code, remember?} → 계정 세션(Bearer). 첫 검증 때 계정이 생긴다. */
+  verifyEmailCode(loginId: string, code: string, remember?: boolean): Promise<AccountLogin>;
   /**
    * POST /v1/auth/password {email, password} → 계정 세션(ADR-038 (a)). 비밀번호는 이 호출의 본문으로만 나간다(로그·저장 없음).
    * 틀림·없는 계정·잠금은 모두 account.credentials_invalid(같은 응답). 서버에서 비밀번호가 꺼져 있으면 request.not_found.
    */
-  passwordLogin(email: string, password: string): Promise<{ session: string; expiresInSec: number }>;
+  passwordLogin(email: string, password: string, remember?: boolean): Promise<AccountLogin>;
+  /** GET /v1/me(세션). */
+  me(session: string): Promise<AccountMe>;
+  /**
+   * PUT /v1/password(세션). 만들기(currentPassword 없음)는 최근 10분 인증이 필요하다(아니면 account.reauth_required).
+   * 바꾸기는 currentPassword가 필수이고, 이 기기용 새 갱신 토큰을 돌려준다(옛 계보는 서버가 폐기).
+   */
+  setPassword(session: string, password: string, currentPassword?: string): Promise<{ refreshToken?: string; refreshExpiresInSec?: number }>;
+  /** DELETE /v1/password(세션, 최근 10분 인증). */
+  deletePassword(session: string): Promise<void>;
+  /** POST /v1/auth/reauth(세션) → 계정 주소로 본인 확인 코드. */
+  startReauth(session: string): Promise<{ reauthId: string; expiresInSec: number }>;
+  /** POST /v1/auth/reauth/verify(코드를 요청한 그 세션) → 이 세션의 인증 시각이 지금이 된다(새 세션 없음). */
+  verifyReauth(session: string, reauthId: string, code: string): Promise<{ authAt: number; reauthMaxAgeSec: number }>;
+  /** POST /v1/auth/password/reset {email} → 계정이 없어도 같은 응답. */
+  startPasswordReset(email: string): Promise<{ resetId: string; expiresInSec: number }>;
+  /** POST /v1/auth/password/reset/verify. 성공하면 서버가 그 계정의 다른 세션·갱신 토큰을 모두 폐기한다. */
+  verifyPasswordReset(resetId: string, code: string, password: string, remember?: boolean): Promise<AccountLogin>;
+  /** POST /v1/auth/refresh {refreshToken} → 새 세션 + 회전된 갱신 토큰. 실패는 account.unauthorized 하나. */
+  refresh(refreshToken: string): Promise<Required<AccountLogin>>;
+  /** POST /v1/auth/refresh/revoke {refreshToken} → 그 계보 전체 폐기(없는 토큰도 204). */
+  revokeRefresh(refreshToken: string): Promise<void>;
+  /** POST /v1/auth/logout-all(세션) → 이 세션 포함 계정 세션·갱신 토큰 전부 폐기. 기기 범위 토큰·기기 등록은 그대로. */
+  logoutAll(session: string): Promise<void>;
   /** POST /v1/auth/logout. 기기 고정이 끝나면 데스크톱이 부르고 세션을 버린다. */
   logout(session: string): Promise<void>;
   /** GET /v1/device-list(세션). aikPub가 이미 있으면 첫 PC가 아니다(두 번째 PC 추가는 이 범위 밖: account.aik_already_pinned로 안내). */
