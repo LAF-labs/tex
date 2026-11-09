@@ -119,8 +119,10 @@ describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서'
     assert.doesNotThrow(() => verifyStatus(st as never, tr, new Set(), null, NOW));
     const as = acceptStatus(st as unknown as RegistryStatus, { roots, revoked: new Set(), current: null, now: NOW });
     assert.equal(as.ok, true, as.ok ? '' : as.code);
-    let ix: Record<string, unknown> = { channel: 'stable', monotonic: 1, keyEpoch: 1, issuedAt: ISO(0), expiresAt: ISO(14 * 24), entries: [], signatures: [] };
+    // 인덱스(ADR-043): 내용은 패키지 키 2개, 신선도는 타임스탬프 키(운영은 서버가 붙인다)
+    let ix: Record<string, unknown> = { channel: 'stable', monotonic: 1, keyEpoch: 1, issuedAt: ISO(0), expiresAt: ISO(48), entries: [], signatures: [], timestamp: TS };
     ix = collectSignatures('index', ix, [await c.sign('index', ix, 'package-1'), await c.sign('index', ix, 'package-3')], c.trust).doc;
+    ix = attachTimestamp('index', ix, await c.sign('index', ix, 'timestamp-1', 'timestamp'), c.trust);
     assert.doesNotThrow(() => verifyIndex(ix as never, 'stable', tr, new Set(), null, NOW));
     assert.equal(acceptIndex(ix as never, { roots, revoked: new Set(), current: null, now: NOW }).ok, true);
     let rel: Record<string, unknown> = { channel: 'stable', version: '1.0.0', releaseDate: ISO(0), expiresAt: ISO(7 * 24), rolloutPercent: 100, files: [{ url: 'SovereignAX-Setup-1.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 1 }], signature: TS };
@@ -175,7 +177,7 @@ describe('의식: 거부', () => {
     const p1 = await c.sign('status', st, 'policy-1');
     assert.throws(() => collectSignatures('status', st, [e, p1], c.trust), /key_not_pinned/);
     assert.throws(() => attachTimestamp('revoked_keys', doc, s1, c.trust), /wrong_document/);
-    assert.throws(() => attachTimestamp('index', doc, s1, c.trust), /no_timestamp/);
+    assert.throws(() => attachTimestamp('manifest', doc, s1, c.trust), /no_timestamp/);
   });
 
   it('핀 만들기: 역할 개수·공개키 중복·keyId·backend, quorum 모드는 보유자 분리·릴리스 분리·YubiKey 증명을 본다', async () => {

@@ -1,21 +1,22 @@
 // 타임스탬프 자동 재서명(정리 cron, 팀장 결정 2026-11-06, D09 §8.2 "타임스탬프 역할 = 온라인 키").
-// - 대상: 폐기 목록(24시간), status(48시간), 정책 current·{ver}(48시간), 투명성 로그 트리 헤드.
-// - 내용은 바꾸지 않는다. 바뀌는 것은 신선도 필드(issuedAt·expiresAt·timestamp)뿐이다. 내용 서명(루트·정책·긴급 키)은 신선도 필드를
+// - 대상: 폐기 목록(24시간), status(48시간), 정책 current·{ver}(48시간), 채널 인덱스(48시간, ADR-043), 투명성 로그 트리 헤드.
+// - 내용은 바꾸지 않는다. 바뀌는 것은 신선도 필드(issuedAt·expiresAt·timestamp)뿐이다. 내용 서명(루트·정책·긴급·패키지 키)은 신선도 필드를
 //   서명 바이트에서 빼므로 그대로 유효하다(SIGNING.md §2·§4). 내용이 바뀌는 서명은 사람이 서명 의식(#149)으로 한다.
 // - 서명 입력은 엔진 timestampBody(JCS({contentDigest, monotonic, issuedAt, expiresAt}))이고, 게시 전에 게시 관문과 같은 검증
-//   (verifyRevoked·verifyStatus·verifyPolicy, 저장본 대비 "같은 monotonic·같은 내용")을 통과해야 한다. 못 통과하면 다시 서명하지 않는다.
+//   (verifyRevoked·verifyStatus·verifyPolicy·verifyIndex, 저장본 대비 "같은 monotonic·같은 내용")을 통과해야 한다. 못 통과하면 다시 서명하지 않는다.
+//   인덱스가 가리키는 패키지는 다시 보지 않는다(게시 때 관문이 봤고 경로가 불변이다).
 // - 순서: 로그 항목을 먼저 쓰고(공개 전 기록) → 저장본이 그사이 바뀌지 않았는지 다시 읽어 보고 → 공개. 바뀌었으면(운영자 게시가 끼었으면) 이번 회차는 건너뛴다.
 import { sign, type KeyObject } from 'node:crypto';
 import { timestampBody } from '@sax/engine/core';
 import { sha256hex } from '@sax/svc-shared';
 import type { LogKind, TransparencyLog } from './log.ts';
 import type { Store } from './store.ts';
-import { contentDigest, verifyPolicy, verifyRevoked, verifyStatus, type RegistryStatus, type RevokedKeys, type SignedPolicy, type TrustRoot } from './verify.ts';
+import { CHANNELS, contentDigest, verifyIndex, verifyPolicy, verifyRevoked, verifyStatus, type Channel, type RegistryIndex, type RegistryStatus, type RevokedKeys, type SignedPolicy, type TrustRoot } from './verify.ts';
 
 const H = 3600_000;
 
-/** 재서명 뒤 유효 기간(팀장 결정: 폐기 목록 24시간, status·정책 48시간). 남은 기간이 절반 아래로 떨어지면 다시 서명한다 */
-export const RESIGN_TTL = { revoked_keys: 24 * H, status: 48 * H, policy: 48 * H } as const;
+/** 재서명 뒤 유효 기간(팀장 결정: 폐기 목록 24시간, status·정책 48시간, 인덱스 48시간 ADR-043). 남은 기간이 절반 아래로 떨어지면 다시 서명한다 */
+export const RESIGN_TTL = { revoked_keys: 24 * H, status: 48 * H, policy: 48 * H, index: 48 * H } as const;
 /** 헤드 timestamp가 이보다 오래되면 같은 트리에 다시 서명한다(cron 매시) */
 export const HEAD_MAX_AGE_MS = 30 * 60_000;
 
@@ -24,6 +25,8 @@ export interface ResignReport {
   revoked_keys: ResignOutcome;
   status: ResignOutcome;
   policy: ResignOutcome;
+  /** 채널마다(ADR-043). 인덱스가 없는 채널은 missing */
+  index: Record<Channel, ResignOutcome>;
   head: 'resigned' | 'fresh';
 }
 
@@ -138,7 +141,21 @@ export async function resignAll(d: ResignDeps): Promise<ResignReport> {
     );
   });
 
+  const index = {} as Record<Channel, ResignOutcome>;
+  for (const channel of CHANNELS) {
+    index[channel] = await one('index', async () => {
+      const key = `registry/${channel}/index.json`;
+      const before = await d.store.get(key);
+      const cur = parse<RegistryIndex>(before);
+      if (!cur || !before) return 'missing';
+      if (!due(cur, RESIGN_TTL.index)) return 'fresh';
+      const next = restamp(cur, RESIGN_TTL.index, now, d.signer);
+      verifyIndex(next, channel, d.trust, await revokedSet(), cur, now);
+      return publish('index', [{ key, before }], next);
+    });
+  }
+
   const head = (await d.log.refreshHead(HEAD_MAX_AGE_MS)) ? 'resigned' : 'fresh';
   if (head === 'resigned') d.onEvent?.('registry.resigned_head');
-  return { revoked_keys, status, policy, head };
+  return { revoked_keys, status, policy, index, head };
 }

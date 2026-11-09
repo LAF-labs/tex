@@ -8,13 +8,13 @@
 import { createHash } from 'node:crypto';
 import type { Db } from '@sax/db';
 import type { EventLog, LogFields } from '@sax/platform';
-import { canonicalWithout, canonicalizable, sha256Hex } from './core/canon.ts';
+import { canonicalizable, sha256Hex } from './core/canon.ts';
 import { ISSUED_AT_MAX_SKEW_MIN } from './core/constants.ts';
 import { loadDataPackage, type DataBodyValidator, type DataLoadResult } from './core/datapkg.ts';
 import { compareSemver } from './core/loader.ts';
 import {
   acceptRevoked, acceptStatus, contentBytes, countSignatures, ed25519PublicKey, effectiveStatus, epochProblem, monotonicProblem, revokedFresh,
-  statusFreshness, type AcceptedRevoked, type AcceptedStatus, type KeyRole, type RegistryStatus, type RevokedKeys, type StatusFreshness, type TrustRoots,
+  statusFreshness, verifyTimestamp, type AcceptedRevoked, type AcceptedStatus, type KeyRole, type RegistryStatus, type RevokedKeys, type StatusFreshness, type TrustRoots,
 } from './core/registry.ts';
 import { decodeSxp } from './core/sxp.ts';
 import type { Signature } from './core/types.ts';
@@ -107,10 +107,12 @@ export interface RegistryIndex {
   expiresAt: string;
   entries: IndexEntry[];
   signatures: Signature[];
+  /** 신선도 서명(ADR-043): 타임스탬프 키가 timestampBody(contentDigest, {monotonic, issuedAt, expiresAt})에 */
+  timestamp: Signature;
 }
 
 export const INDEX_MAX_VALIDITY_MS = 14 * 24 * 3_600_000;
-const INDEX_KEYS = new Set(['channel', 'monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'entries', 'signatures']);
+const INDEX_KEYS = new Set(['channel', 'monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'entries', 'signatures', 'timestamp']);
 const ENTRY_KEYS = new Set(['id', 'version', 'kind', 'portal', 'sxpDigest', 'size', 'rolloutPercent', 'minAppVersion']);
 const ID_RE = /^[a-z0-9]+(\.[a-z0-9_-]+)+$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
@@ -124,8 +126,9 @@ export interface AcceptedIndex {
 }
 
 /**
- * 인덱스 수용(services/registry verifyIndex와 같은 규칙, API.md "인덱스"): 모양 → keyEpoch → 패키지 키 2-of-3(폐기 반영) → 기간 ≤ 14일·미래 금지·도착 시 만료 금지 →
- * 같은 keyEpoch 안 단조(+1000 이하, 같은 값은 같은 내용만). 핫픽스 채널은 여기서 받지 않는다(stable만).
+ * 인덱스 수용(services/registry verifyIndex와 같은 규칙, API.md "인덱스", ADR-043): 모양 → keyEpoch → 내용(contentBytes = 신선도 필드를 뺀 JCS)에 패키지 키 2-of-3(폐기 반영) →
+ * 타임스탬프 키 신선도 서명(폐기 반영) → 기간 ≤ 14일·미래 금지·도착 시 만료 금지 → 같은 keyEpoch 안 단조(+1000 이하, 같은 값은 같은 내용만 = 신선도 재서명).
+ * 핫픽스 채널은 여기서 받지 않는다(stable만).
  */
 export function acceptIndex(doc: RegistryIndex, ctx: { roots: TrustRoots; revoked: ReadonlySet<string>; current: AcceptedIndex | null; now: number }): { ok: true; accepted: AcceptedIndex; events: string[] } | { ok: false; code: string; events: string[] } {
   const events: string[] = [];
@@ -151,16 +154,18 @@ export function acceptIndex(doc: RegistryIndex, ctx: { roots: TrustRoots; revoke
   }
   const ep = epochProblem(doc, ctx.roots);
   if (ep) return no(ep);
-  const content = canonicalWithout(doc, ['signatures']);
+  const content = contentBytes(doc);
+  const digest = sha256Hex(content);
   const q = countSignatures(content, doc.signatures, ctx.roots.packageKeys, ctx.revoked);
   if (q.revoked.length) events.push('registry.key_revoked');
   if (q.valid.length < 2) return no('registry.signature_insufficient');
+  const ts = doc.timestamp as Partial<Signature> | undefined;
+  if (!ts || typeof ts !== 'object' || Array.isArray(ts) || ts.alg !== 'ed25519' || typeof ts.keyId !== 'string' || typeof ts.sig !== 'string' || !verifyTimestamp(digest, doc, ctx.roots, ctx.revoked)) return no('registry.timestamp_invalid');
   const iss = Date.parse(doc.issuedAt);
   const exp = Date.parse(doc.expiresAt);
   if (!(exp > iss) || exp - iss > INDEX_MAX_VALIDITY_MS) return no('registry.index_validity_too_long');
   if (iss > ctx.now + ISSUED_AT_MAX_SKEW_MIN * 60_000) return no('registry.issued_in_future');
   if (exp <= ctx.now) return no('registry.expired_on_arrival');
-  const digest = sha256Hex(content);
   const vp = monotonicProblem(ctx.current ? { ...ctx.current.index, contentDigest: ctx.current.contentDigest } : null, doc, digest);
   if (vp) return no(vp);
   return { ok: true, accepted: { index: doc, contentDigest: digest }, events };
@@ -305,7 +310,7 @@ export class RegistrySync {
 
   private currentIndex(): AcceptedIndex | null {
     const index = this.o.store.get('index.stable') as RegistryIndex | null;
-    return index ? { index, contentDigest: sha256Hex(canonicalWithout(index, ['signatures'])) } : null;
+    return index ? { index, contentDigest: sha256Hex(contentBytes(index)) } : null;
   }
 
   // ---- 질의(main 전용) ----

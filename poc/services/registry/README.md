@@ -39,5 +39,4 @@ REGISTRY_STORE=memory REGISTRY_ADMIN_TOKEN=dev TRUST_ROOT_JSON='…' node servic
 ## 아직 하지 않는 것
 
 - 별도 호스트 미러 운영과 헤드 교차 확인(투명성 로그 자체는 [API.md](API.md) "투명성 로그").
-- 인덱스 자체의 타임스탬프 서명(지금은 14일 만료로 신선도를 묶는다).
 - 클라이언트 쪽 검증 연결(`apps/desktop` main): 데스크톱 트랙. 같은 규칙을 [`src/verify.ts`](src/verify.ts)가 순수 함수로 내보낸다.
