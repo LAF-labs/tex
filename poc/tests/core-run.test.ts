@@ -151,16 +151,28 @@ describe('원장·gate_requests 연결 (R-G7·R-G8, B-33)', () => {
     assert.equal(gates.state('req-1'), 'approved');
     assert.equal(armForCommit(ledger, t, { reqId: 'req-1', token: d.token, row: row({ actionHash: 'c'.repeat(64) }), gateStepId: 's20', now: NOW }).ok, false);
   });
-  it('같은 (intent_id, step_id) 행이 있으면 무장하지 않고 토큰도 소비하지 않는다(보안 이벤트 아님)', () => {
+  it('ADR-042: 앞선 시도가 committed·종결 안 됨이면 무장하지 않고 토큰도 소비하지 않는다(보안 이벤트 아님), 모두 not_committed면 다음 시도', () => {
+    const prior = (db: Db, state: string, attempt = 1) =>
+      db.prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id) VALUES ('intent-1','s21',?,'run-0','bk','hometax.invoice.issue','${'i'.repeat(64)}','${'d'.repeat(64)}','${AH}',?,'2026-11-01T00:00:00Z','dev')`).run(attempt, state);
+    for (const [states, code] of [[['committed'], 'ledger_committed'], [['in_doubt'], 'ledger_in_doubt'], [['not_committed', 'committed'], 'ledger_committed'], [['not_committed', 'dispatched'], 'ledger_dispatched']] as const) {
+      const { gates, ledger, db } = fresh();
+      states.forEach((st, i) => prior(db, st, i + 1));
+      gates.open('req-1', 'run-1');
+      const t = new GateTokens('run-1');
+      const d = decideGate(gates, t, dec('approved'));
+      assert.ok(d.won && d.decision === 'approved');
+      assert.deepEqual(armForCommit(ledger, t, { reqId: 'req-1', token: d.token, row: row(), gateStepId: 's20', now: NOW }), { ok: false, code, security: false }, states.join(','));
+      assert.equal(gates.state('req-1'), 'approved', '트랜잭션 롤백');
+      assert.equal(t.check(d.token, want, NOW), null, '토큰은 그대로');
+    }
     const { gates, ledger, db } = fresh();
-    db.prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id) VALUES ('intent-1','s21','run-0','bk','hometax.invoice.issue','${'i'.repeat(64)}','${'d'.repeat(64)}','${AH}','not_committed','2026-11-01T00:00:00Z','dev')`).run();
+    prior(db, 'not_committed');
     gates.open('req-1', 'run-1');
     const t = new GateTokens('run-1');
     const d = decideGate(gates, t, dec('approved'));
     assert.ok(d.won && d.decision === 'approved');
-    assert.deepEqual(armForCommit(ledger, t, { reqId: 'req-1', token: d.token, row: row(), gateStepId: 's20', now: NOW }), { ok: false, code: 'ledger_not_committed', security: false });
-    assert.equal(gates.state('req-1'), 'approved', '트랜잭션 롤백');
-    assert.equal(t.check(d.token, want, NOW), null, '토큰은 그대로');
+    assert.deepEqual(armForCommit(ledger, t, { reqId: 'req-1', token: d.token, row: row(), gateStepId: 's20', now: NOW }), { ok: true });
+    assert.deepEqual(ledger.attempts('intent-1', 's21').map((r) => [r.attempt, r.state]), [[1, 'not_committed'], [2, 'armed']]);
   });
   it('재시작 승격: armed·dispatched·observed_manual → in_doubt, open·approved 게이트 → expired, running → interrupted', () => {
     const { gates, ledger, runs, db } = fresh();
@@ -170,7 +182,7 @@ describe('원장·gate_requests 연결 (R-G7·R-G8, B-33)', () => {
     assert.ok(d.won && d.decision === 'approved');
     armForCommit(ledger, t, { reqId: 'req-1', token: d.token, row: row(), gateStepId: 's20', now: NOW });
     gates.open('req-2', 'run-1');
-    db.prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id) VALUES ('intent-2','s21','run-1','bk2','p','i','d','a','observed_manual','2026-11-01T00:00:00Z','dev')`).run();
+    db.prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id) VALUES ('intent-2','s21',1,'run-1','bk2','p','i','d','a','observed_manual','2026-11-01T00:00:00Z','dev')`).run();
     assert.deepEqual(recoverAfterRestart({ ledger, gates, runs }), { promotedInDoubt: 2, expiredGates: 1, interruptedRuns: 1 });
     assert.equal(ledger.get('intent-1', 's21')?.state, 'in_doubt');
     assert.equal(ledger.get('intent-2', 's21')?.state, 'in_doubt');

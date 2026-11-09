@@ -26,6 +26,8 @@ export interface ArmRow {
 }
 
 export interface LedgerRow extends ArmRow {
+  /** 같은 (intent_id, step_id)의 시도 번호(1부터, ADR-042). 앞선 시도가 모두 not_committed일 때만 다음 번호가 생긴다. */
+  attempt: number;
   state: LedgerState;
   reason: string | null;
   armedAt: string;
@@ -41,7 +43,7 @@ export type IntentCheck =
   /** 종결되지 않은 행이 있다. 재실행 금지. */
   | { kind: 'unresolved'; state: LedgerState }
   | { kind: 'committed'; runId: string }
-  /** not_committed로 끝났다. PoC는 같은 의도로 다시 게이트를 지나지 않는다(다시 준비하면 새 의도). */
+  /** 모든 시도가 not_committed로 끝났다. 같은 실행의 재게이트만 새 시도를 만든다(ADR-042). 새 실행은 새 의도로 시작한다. */
   | { kind: 'not_committed' };
 
 export interface History {
@@ -61,6 +63,7 @@ type Row = Record<string, unknown>;
 const toLedger = (r: Row): LedgerRow => ({
   intentId: String(r.intent_id),
   stepId: String(r.step_id),
+  attempt: Number(r.attempt),
   runId: String(r.run_id),
   businessKey: String(r.business_key),
   playbookId: String(r.playbook_id),
@@ -151,20 +154,37 @@ export class Ledger {
     this.db = db;
   }
 
+  /** 그 (intent, step)의 마지막 시도. 열린(종결 안 된) 행은 있으면 언제나 마지막 시도다(ADR-042 불변식). */
   get(intentId: string, stepId: string): LedgerRow | null {
-    const r = this.db.prepare('SELECT * FROM irreversible_log WHERE intent_id = ? AND step_id = ?').get(intentId, stepId) as Row | undefined;
+    const r = this.db.prepare('SELECT * FROM irreversible_log WHERE intent_id = ? AND step_id = ? ORDER BY attempt DESC LIMIT 1').get(intentId, stepId) as Row | undefined;
     return r ? toLedger(r) : null;
+  }
+
+  /** 그 (intent, step)의 모든 시도(시도 번호 순). 앞선 시도의 사유·verify_ref는 감사 근거로 남는다. */
+  attempts(intentId: string, stepId: string): LedgerRow[] {
+    return this.db.prepare('SELECT * FROM irreversible_log WHERE intent_id = ? AND step_id = ? ORDER BY attempt').all(intentId, stepId).map((r) => toLedger(r as Row));
+  }
+
+  /**
+   * 새 시도를 막는 상태(ADR-042 결정 1): 어느 시도든 committed면 영원히 ledger_committed, 종결되지 않은 행
+   * (armed·dispatched·in_doubt·observed_manual)이 있으면 ledger_<state>. 모두 not_committed(또는 행 없음)일 때만 null.
+   */
+  private blockingAttempt(rows: readonly LedgerRow[]): LedgerState | null {
+    if (rows.some((r) => r.state === 'committed')) return 'committed';
+    return rows.find((r) => r.state !== 'not_committed')?.state ?? null;
   }
 
   /** 같은 의도로 들어온 새 실행의 판정(D03 §4). */
   checkIntent(intentId: string, stepId: string, playbookId: string, inputsHash: string): IntentCheck {
     const rows = this.db.prepare('SELECT * FROM irreversible_log WHERE intent_id = ?').all(intentId).map((r) => toLedger(r as Row));
     if (rows.some((r) => r.playbookId !== playbookId || r.inputsHash !== inputsHash)) return { kind: 'reuse_mismatch' };
-    const row = rows.find((r) => r.stepId === stepId);
-    if (!row) return { kind: 'new' };
-    if (row.state === 'committed') return { kind: 'committed', runId: row.runId };
-    if (row.state === 'not_committed') return { kind: 'not_committed' };
-    return { kind: 'unresolved', state: row.state };
+    const steps = rows.filter((r) => r.stepId === stepId);
+    if (!steps.length) return { kind: 'new' };
+    const committed = steps.find((r) => r.state === 'committed');
+    if (committed) return { kind: 'committed', runId: committed.runId };
+    const open = steps.find((r) => r.state !== 'not_committed');
+    if (open) return { kind: 'unresolved', state: open.state };
+    return { kind: 'not_committed' };
   }
 
   /** 처음 거래·처음 보내는 주소는 committed 행만, 업무 중복은 모든 상태를 본다(ADR-021, D02 §7). */
@@ -180,20 +200,26 @@ export class Ledger {
   }
 
   /**
-   * 토큰 소비 + armed 기록(D03 §3 "소비는 원장 armed 기록과 한 트랜잭션"). 게이트가 approved가 아니거나
-   * 같은 (intent_id, step_id) 행이 이미 있으면 아무것도 쓰지 않고 던진다. not_committed 행도 덮어쓰지 않는다
-   * (업무 키의 "직전 시도 발급 안 됨" 경고가 그 행에서 나온다).
+   * 토큰 소비 + armed 기록(D03 §3 "소비는 원장 armed 기록과 한 트랜잭션"). 새 시도(attempt)는 이 트랜잭션에서만 생긴다(ADR-042 결정 2).
+   * 게이트가 approved가 아니면 gate_not_approved. 같은 (intent_id, step_id)의 앞선 시도가
+   * - 하나라도 committed면 ledger_committed(영원히 새 시도 없음),
+   * - 종결되지 않은 행(armed·dispatched·in_doubt·observed_manual)이 있으면 ledger_<그 상태>,
+   * - 플레이북·입력 해시가 다르면 ledger_intent_mismatch(같은 의도의 재게이트만 새 시도다, D07 B-10)
+   * 로 던지고 아무것도 쓰지 않는다. 모두 not_committed이면 다음 번호로 armed를 넣는다. 앞선 not_committed 행은 그대로 둔다
+   * (사유·verify_ref는 감사 근거이고, 업무 키의 "직전 시도 발급 안 됨" 경고가 그 행에서 나온다).
    */
   consumeAndArm(reqId: string, a: ArmRow): void {
     this.db.transaction(() => {
       const consumed = this.db.prepare(`UPDATE gate_requests SET state = 'consumed' WHERE req_id = ? AND state = 'approved'`).run(reqId).changes;
       if (consumed !== 1) throw new LedgerError('gate_not_approved');
-      const prev = this.get(a.intentId, a.stepId);
-      if (prev) throw new LedgerError(`ledger_${prev.state}`);
+      const prev = this.attempts(a.intentId, a.stepId);
+      const block = this.blockingAttempt(prev);
+      if (block) throw new LedgerError(`ledger_${block}`);
+      if (prev.some((r) => r.playbookId !== a.playbookId || r.inputsHash !== a.inputsHash)) throw new LedgerError('ledger_intent_mismatch');
       this.db
-        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-          VALUES (@intentId, @stepId, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
-        .run({ ...a, armedAt: now() });
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
+          VALUES (@intentId, @stepId, @attempt, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
+        .run({ ...a, attempt: prev.length + 1, armedAt: now() });
     })();
   }
 
@@ -202,7 +228,10 @@ export class Ledger {
     if (n !== 1) throw new LedgerError('ledger_not_armed');
   }
 
-  /** 종결(또는 in_doubt). armed·dispatched·in_doubt·observed_manual에서만 바뀐다. committed·not_committed는 다시 바뀌지 않는다. */
+  /**
+   * 종결(또는 in_doubt). armed·dispatched·in_doubt·observed_manual에서만 바뀐다. committed·not_committed는 다시 바뀌지 않는다.
+   * 열린 행은 (intent, step)마다 많아야 하나라서(ux_irr_live) 상태 조건만으로 그 시도 하나를 고른다.
+   */
   resolve(intentId: string, stepId: string, state: 'committed' | 'not_committed' | 'in_doubt', reason: NotCommittedReason | null = null, verifyRef: string | null = null): void {
     const n = this.db
       .prepare(`UPDATE irreversible_log SET state = ?, reason = ?, verify_ref = ?, resolved_at = ? WHERE intent_id = ? AND step_id = ? AND state IN ('armed','dispatched','in_doubt','observed_manual')`)
@@ -212,7 +241,7 @@ export class Ledger {
 
   /** 이 실행의 원장 행 상태들(armed_at 순) */
   statesByRun(runId: string): LedgerState[] {
-    return this.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at, rowid').pluck().all(runId) as LedgerState[];
+    return this.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at, attempt, rowid').pluck().all(runId) as LedgerState[];
   }
 
   /**
@@ -225,14 +254,15 @@ export class Ledger {
       const prev = this.get(a.intentId, a.stepId);
       if (!prev) {
         this.db
-          .prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-            VALUES (@intentId, @stepId, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'observed_manual', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
+          .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
+            VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'observed_manual', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
           .run({ ...a, armedAt: now() });
         return;
       }
+      // 관측은 새 시도를 만들지 않는다(새 시도는 토큰 소비로만, ADR-042 결정 2). 마지막 시도가 종결이면 그대로 던진다.
       if (prev.state === 'committed' || prev.state === 'not_committed') throw new LedgerError(`ledger_${prev.state}`);
       if (prev.state === 'observed_manual') return;
-      this.db.prepare(`UPDATE irreversible_log SET state = 'observed_manual' WHERE intent_id = ? AND step_id = ?`).run(a.intentId, a.stepId);
+      this.db.prepare(`UPDATE irreversible_log SET state = 'observed_manual' WHERE intent_id = ? AND step_id = ? AND attempt = ?`).run(a.intentId, a.stepId, prev.attempt);
     })();
   }
 
@@ -242,12 +272,13 @@ export class Ledger {
    */
   armFollowUp(primary: { intentId: string; stepId: string }, a: ArmRow): void {
     this.db.transaction(() => {
+      // 주 단계의 committed는 언제나 마지막 시도다(committed 뒤에는 새 시도가 없다).
       if (this.get(primary.intentId, primary.stepId)?.state !== 'committed') throw new LedgerError('ledger_primary_not_committed');
       const prev = this.get(a.intentId, a.stepId);
       if (prev) throw new LedgerError(`ledger_${prev.state}`);
       this.db
-        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-          VALUES (@intentId, @stepId, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
+          VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
         .run({ ...a, armedAt: now() });
     })();
   }

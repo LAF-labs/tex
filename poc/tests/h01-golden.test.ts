@@ -344,13 +344,8 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
   });
   // ---- PR-D: 세 경우의 IR 동작(설계, 팀장 결정 2026-11-09). 위 대조 시험은 두 실행기를 함께 고정하고, 아래는 IR 쪽만 끝까지 본다. ----
   const ledgerIs = (s: Side, runId: string, state: string) => next(() => (s.runs.inspect(runId).ledger === state ? true : undefined));
-  /**
-   * ①·②는 두 번째 게이트 승인 뒤 원장 arm이 ledger_not_committed로 거부된다(원장 키 PRIMARY KEY(intent_id, step_id), D07 B-10,
-   * not_committed는 종결). D02 §8·D03 §2의 재게이트와 D07 키가 맞지 않는다. 팀장 결정(시도 번호 등) 전까지 todo로 둔다.
-   */
-  const REGATE_TODO = { todo: '재게이트 원장 키(D07 PK(intent_id, step_id))와 D02 §8 s30 not_committed → s11이 충돌: 팀장 결정 대기' };
 
-  it('[IR ①] 발급 안 됨 → s11로 돌아가 두 번째 게이트: 카드에 $dup.priorNotCommitted, 첫 승인으로는 못 넘고 새 승인으로만 발급한다', REGATE_TODO, async () => {
+  it('[IR ①] 발급 안 됨 → s11로 돌아가 두 번째 게이트: 카드에 $dup.priorNotCommitted, 첫 승인으로는 못 넘고 새 승인으로만 발급한다', async () => {
     const s = sides.ir;
     let first: GateRequest | null = null;
     const o = await observe(s, 'C', 910_000, async (req, runId, runs) => {
@@ -369,7 +364,7 @@ describe('골든 대조: H01Runner와 IR 조율기(가짜 H-01 페이지, PR-C)'
     assert.equal(o.steps.filter((x) => x === 's21').length, 2, '제출 두 번(각각 새 승인 뒤)');
   });
 
-  it('[IR ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않고 s11로 돌아가, 바뀐 화면을 다시 채운 값으로 다시 승인받는다', REGATE_TODO, async () => {
+  it('[IR ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않고 s11로 돌아가, 바뀐 화면을 다시 채운 값으로 다시 승인받는다', async () => {
     const s = sides.ir;
     const o = await observe(s, 'C', 720_000, async (req, runId, runs) => {
       assert.deepEqual(runs.answer(approval(req!)), { ok: true });

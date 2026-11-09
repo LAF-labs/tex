@@ -135,14 +135,15 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 ## 4. 아이덴포턴시 원장 (B-04, B-07, B-10, B-30)
 
-`irreversible_log(PRIMARY KEY(intent_id, step_id), run_id, playbook_id, business_key, inputs_hash, package_digest, action_hash, state, reason, armed_at, dispatched_at, resolved_at, verify_ref, device_id)` (DDL은 D07. `reason`은 `not_committed` 종결 사유 `pre_dispatch_mismatch`·`identity_mismatch`·`payload_mismatch`·`verify`)
+`irreversible_log(PRIMARY KEY(intent_id, step_id, attempt), run_id, playbook_id, business_key, inputs_hash, package_digest, action_hash, state, reason, armed_at, dispatched_at, resolved_at, verify_ref, device_id)` (DDL은 D07. `reason`은 `not_committed` 종결 사유 `pre_dispatch_mismatch`·`identity_mismatch`·`payload_mismatch`·`verify`)
 
 - 행은 입력(`inputs_hash`)·패키지(`package_digest`)·승인 내용(`action_hash`)에 결속된다. 같은 의도의 비가역 둘(주·후속)은 `step_id`로 구분되어 서로 덮어쓰지 않는다.
 - 상태: `armed → dispatched → committed | not_committed | in_doubt`. 그리고 `observed_manual`: 핸드오프·`human(manual)` 중 가드가 관측한 커밋 요청 또는 사용자의 "직접 발급함"(R-C2). `observed_manual`은 verify로 `committed`/`not_committed`가 되거나 `in_doubt`로 남는다.
 - 순서: 토큰 소비 + `armed` 기록 커밋 → readback 재계산 → 클릭 → `dispatched` → verify → 종결 상태.
 - 재시작 시 `armed|dispatched|observed_manual`은 모두 `in_doubt`로 승격.
 - **의도 재사용 거부**: 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 원장의 것과 다르면 거부하고 보안 이벤트 `ledger.intent_reuse`를 남긴다.
-- 같은 `(intent_id, step_id)`에 종결되지 않은 행이 있으면 재실행 금지. `committed`이면:
+- 같은 실행의 재게이트(`rewind.pre_gate`, D02 §8 `s30.not_committed → s11`)는 새 시도(`attempt + 1`)로 무장한다. 새 시도는 앞선 시도가 모두 `not_committed`일 때만, 새 게이트 토큰 소비와 한 트랜잭션에서 생긴다(ADR-042).
+- 같은 `(intent_id, step_id)`의 어느 시도든 종결되지 않은 행이 있으면 재실행 금지. `committed`이면(어느 시도든, 새 시도는 영원히 없다):
   - **같은 `run_id`의 재개**일 때만 verify 결과(`bind` 포함)를 재사용해 사후 스텝으로 점프한다.
   - 다른 실행에서 `committed`를 발견하면 "InDoubt 아님, 이미 완료" 카드만 띄우고 사후 스텝(특히 `send_email`·PDF 저장·백업)은 실행하지 않는다.
   - "건너뛰기"는 존재하지 않는다.
