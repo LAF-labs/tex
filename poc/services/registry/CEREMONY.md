@@ -150,7 +150,7 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 같은 자리에서 **폐기 목록 첫 판**(`monotonic` 1)을 만든다.
 - 스키마상 항목이 1개 이상이어야 하므로 쓰지 않을 `package-0` 하나를 넣는다.
 - 루트 2개로 서명하고 모은다(`--kind revoked_keys`).
-- 타임스탬프는 서버가 붙인다. 루트 2개로 서명한 목록을 레지스트리에 올리면 서버 Cron이 `timestamp-1`로 신선도 서명을 붙여 게시한다(클라우드 레지스트리 배포 PR).
+- 타임스탬프는 서버가 붙인다. 루트 2개로 서명한 목록을 `timestamp` 없이 올리면 게시 관문이 `timestamp-1`로 도장을 찍고(첫 게시 도장, API.md), 그 뒤로는 서버 Cron이 24시간마다 다시 서명한다. 첫 게시는 [PUBLISH-H01.md](PUBLISH-H01.md)가 한다.
 - 서버가 돌려준 `timestamp` 서명 기록을 손으로 붙여 확인할 때는 `timestamp` 명령을 쓴다.
 - `check`가 통과해야 한다.
 
@@ -178,6 +178,7 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 - **신선도 재서명은 서버 Cron이 자동으로 한다**: 폐기 목록 24시간, status·정책 48시간, 투명성 로그 헤드. 구현은 클라우드 세션의 레지스트리 배포 PR이다. 사람은 하지 않는다.
 - **내용이 바뀌는 서명**(위 표의 키 열)은 지금처럼 사람이 이 맥에서 Touch ID로 한다.
 - CI는 서명 대상 문서만 만든다. 서명은 이 맥에서 사람이 한다.
+- 패키지·인덱스와 첫 폐기 목록·status 게시는 게시 도구가 서명할 문서와 `sign` 명령을 만들고, 서명을 모아 올린 뒤 되읽기·로그 증명까지 한다: [PUBLISH-H01.md](PUBLISH-H01.md) "H-01 게시 — 사용자 단계".
 
 ## 7. 맥·키를 잃었을 때
 

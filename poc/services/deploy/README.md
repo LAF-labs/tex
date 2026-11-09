@@ -242,6 +242,7 @@ cd poc && node --conditions=development services/deploy/check-vercel-output.ts <
 - 순서: 로그 항목 → 저장본을 다시 읽어 그대로인지 확인 → 공개. 그사이 운영자 게시가 끼면 덮어쓰지 않고 그 회차를 건너뛴다(`changed`).
 - 결과는 대상별 상태 이름만 응답한다: `resigned`·`fresh`·`missing`·`changed`·`rejected:<코드>`.
 - 시험(`tests/services-registry-deploy.test.ts`): 재서명본을 엔진 `acceptRevoked`·`acceptStatus`·`acceptPolicy`가 직전 수용본 대비로 받고, 원본을 가진 다른 관문도 PUT으로 받는다. 긴급 키 status도 같다. 로그 헤드는 핀 고정 키로 검증된다.
+- **첫 게시 도장**: 같은 키로 게시 관문이 `timestamp` 없이 올라온 정책·status·폐기 목록에 도장을 찍는다(재서명과 같은 `restamp`·유효 기간, [API.md](../registry/API.md) "첫 게시 도장"). 첫 폐기 목록·status는 이렇게 올라간다([PUBLISH-H01.md](../registry/PUBLISH-H01.md)).
 
 ### 7.3 사용자가 할 단계
 1. **Supabase Storage**
