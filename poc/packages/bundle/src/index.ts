@@ -9,5 +9,6 @@ export * from './missing-view.ts';
 export * from './month.ts';
 export * from './notice-match.ts';
 export * from './phone-intake.ts';
+export * from './pc-file.ts';
 export * from './request-paste.ts';
 export * from './service.ts';

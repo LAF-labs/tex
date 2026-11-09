@@ -93,6 +93,13 @@ export const PAYROLL_EMPLOYEE_COMMANDS = ['payroll.addEmployee', 'payroll.update
  */
 export const BUNDLE_PC_READ_QUERIES = ['db.query.cash.month', 'db.query.receipt.list'] as const;
 export const BUNDLE_PC_COMMANDS = ['cash.put', 'cash.remove', 'receipt.confirm', 'bundle.setEntry'] as const;
+/**
+ * PC 파일을 보관함에 넣기(08 D-05, D14 M6-2·M6-4). main 전용이다(파일 바이트·문서 id가 오간다). 처리는 @sax/bundle PcFileIntake다.
+ * - receipt.pcStore {profileId, bytes, format: jpg|png|pdf, ocr?}: 종이 증빙. ocr은 main이 docparse 샌드박스에서 받은 후보(기록만).
+ * - bundle.attachFile {profileId, itemId, month, bytes, format, displayName?}: 꾸러미 항목 파일 칸. 그달 표시에 문서를 더한다.
+ * 엔진은 파일을 열지 않는다(머리 바이트·크기만). 같은 파일(sha256)은 다시 쓰지 않는다.
+ */
+export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

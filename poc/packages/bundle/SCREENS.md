@@ -58,6 +58,8 @@
 | | `db.query.receipt.list` | `profileId, month` | `{month, receipts[ReceiptView], unconfirmed}`. 확인 전 것이 먼저, 후보 `phoneOcr`·`ocr`은 기본값으로만 |
 | | `receipt.confirm` | `profileId, docId, issuedOn, amount, merchant?, merchantBizNo?` | 확인한 증빙. 이 값만 빠진 것 대조·내보내기에 쓴다 |
 | | `bundle.setEntry` | `profileId, itemId, month, status\|null, docIds?, note?` | `{period, entry\|null}`. 기간은 엔진이 항목 주기로 정한다 |
+| PC 파일 | `receipt.pcStore` | `profileId, bytes, format: jpg\|png\|pdf, ocr?` | `{docId, duplicate}`(`PC_FILE_COMMANDS`, 처리 `PcFileIntake`) |
+| | `bundle.attachFile` | `profileId, itemId, month, bytes, format: pdf\|jpg\|png\|xlsx\|xls\|docx\|hwp, displayName?` | `{docId, duplicate, period, entry}` |
 | 카드 내역 | `db.query.card.list` | `profileId, month` | `{month, lastFetch, daysSinceFetch, coverage: full\|partial\|none, rows[{…, memo}], detachedMemos[{id, text, usedOn, amount}]}`(M6-3, `CARD_READ_QUERIES`) |
 | | `card.setMemo` | `profileId, txnId, memo` | 메모(빈 글이면 지움, 500자) |
 | | `card.reattachMemo` | `profileId, memoId, txnId` | 떠 있던 메모를 고른 행에 다시 잇는다. 그 행에 메모가 있으면 `memo_exists` |
@@ -140,7 +142,14 @@
   - 사업자번호는 `-`가 있어도 된다. 비우면 null이다.
 - 항목 상태: [해당 없음]·[다 됐어요]·파일 붙이기는 `bundle.setEntry`다. 화면은 달만 넘기고, 분기·한 번 항목의 기간은 엔진이 정한다. 표시를 지우려면 `status: null`이다.
   - 사업용 카드와 급여를 쓰는 업체의 급여대장은 앱이 센다. 해당 없음만 표시할 수 있다(`entry_derived`).
-  - `docIds`는 이미 보관함에 들어간 그 프로필 문서다. PC 파일을 보관함에 넣는 명령은 이 PR에 없다(다음 항목).
+  - `docIds`는 이미 보관함에 들어간 그 프로필 문서다. 파일을 떼려면 남길 목록으로 `docIds`를 다시 보낸다(파일은 보관함에 남는다).
+- PC 파일 넣기
+  - 종이 증빙: main이 파일 바이트를 docparse 샌드박스에 먼저 넣어 읽기 결과를 받는다. 그다음 `receipt.pcStore { bytes, format, ocr }`로 보관함에 넣는다. 엔진은 파일을 열지 않고, `ocr`은 후보로 기록만 한다. 이어서 확인 화면(`receipt.confirm`)으로 간다.
+  - 파일 칸: [파일 붙이기]는 `bundle.attachFile`이다. 그달 표시에 문서를 더한다. 표시가 없었으면 `ready`, 있었으면 상태는 그대로다. `displayName`은 원래 파일 이름이다(경로는 뺀다). 빼면 항목 이름이다.
+  - `format`은 main이 확장자로 정한다. 엔진은 머리 바이트가 맞는지만 본다(`format_mismatch`). 상한은 15MiB다(`input_size`).
+  - 같은 파일(sha256)을 같은 프로필에 다시 넣으면 새로 쓰지 않는다(`duplicate: true`). 증빙이면 새 읽기 후보만 바꾸고, 확인한 값은 그대로다.
+  - 보관함 파일 이름은 `{종류}_{yyyyMMdd}_{shortId}.{ext}`다. 원래 파일 이름은 쓰지 않는다.
+  - 오류: `bad_format`, `format_mismatch`, `input_size`, `bad_ocr`, `bad_display_name`, `item_not_found`, `entry_derived`, `invalid_month`.
 - 오류: `bad_day`, `bad_amount`, `bad_issued_on`, `bad_merchant`, `bad_merchant_biz_no`, `receipt_not_found`, `item_not_found`, `bad_status`, `entry_derived`, `bad_doc_ids`, `doc_not_found`, `bad_note`.
 
 ### 사업용 카드 내역(08 D-04)
