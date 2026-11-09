@@ -1,0 +1,62 @@
+{
+ "ir": 2,
+ "id": "hometax.cert.issued_list",
+ "version": "1.0.0",
+ "portal": "hometax",
+ "profileKinds": [
+  "business"
+ ],
+ "effects": [],
+ "inputs": {
+  "key": {
+   "type": "string",
+   "required": true
+  }
+ },
+ "steps": [
+  {
+   "id": "s0",
+   "type": "goto",
+   "url": "https://hometax.go.kr/cert/requests"
+  },
+  {
+   "id": "s1",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.certlookup.root"
+  },
+  {
+   "id": "s2",
+   "type": "fill",
+   "target": "hometax.certlookup.searchKey",
+   "value": "$inputs.key"
+  },
+  {
+   "id": "s3",
+   "type": "select",
+   "target": "hometax.certlookup.period",
+   "option": "1일"
+  },
+  {
+   "id": "s4",
+   "type": "click",
+   "target": "hometax.certlookup.searchButton"
+  },
+  {
+   "id": "s5",
+   "type": "extract",
+   "name": "rows",
+   "from": {
+    "a11y": {
+     "target": "hometax.certlookup.rows"
+    }
+   }
+  },
+  {
+   "id": "s6",
+   "type": "end",
+   "status": "success"
+  }
+ ],
+ "postconditions": []
+}
