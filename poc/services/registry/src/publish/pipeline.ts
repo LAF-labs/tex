@@ -222,8 +222,18 @@ export function signCommand(o: { kind: DocKind; keyId: string; confirm: string; 
   return `node --conditions=development services/registry/src/ceremony/cli.ts sign --kind ${o.kind} --key-id ${o.keyId} --confirm ${o.confirm} --trust ${shq(o.trust)} --out ${shq(o.out)} ${shq(o.doc)}`;
 }
 
-/** 셸에 그대로 붙여 넣을 수 있게: 안전한 문자만이면 그대로, 아니면 작은따옴표 */
-export const shq = (s: string) => (/^[A-Za-z0-9_@%+=:,./~-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+/**
+ * 셸에 그대로 붙여 넣을 수 있게: 안전한 문자만이면 그대로, 아니면 인용한다.
+ * 출력하는 명령의 경로 인용. POSIX 셸(macOS·Linux)은 작은따옴표, Windows(PowerShell·cmd)는 큰따옴표다.
+ * Windows 경로의 `\\`·`C:`는 그 셸에서 특별하지 않아 그대로 둔다(작은따옴표는 cmd가 벗기지 않는다). Windows 경로에는 `"`가 올 수 없다.
+ */
+export const shq = (s: string, platform: NodeJS.Platform = process.platform): string => {
+  if (platform === 'win32') {
+    if (s.includes('"')) return err('publish.path_invalid', s);
+    return /^[A-Za-z0-9_@%+=:,./~\\-]+$/.test(s) ? s : `"${s}"`;
+  }
+  return /^[A-Za-z0-9_@%+=:,./~-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+};
 
 // ───────────────────────── 엔진 로더 연습(임시 키) ─────────────────────────
 

@@ -17,7 +17,7 @@ import { RESIGN_TTL, buildRegistryDeploy, logSigningKey, registryRouter, resignA
 import { main as ceremony, type CliDeps } from '../services/registry/src/ceremony/cli.ts';
 import { signingBytes } from '../services/registry/src/ceremony/content.ts';
 import { main as publish, nodeFs, type PublishCliDeps } from '../services/registry/src/publish/cli.ts';
-import { appBundles, httpRegistry } from '../services/registry/src/publish/pipeline.ts';
+import { appBundles, httpRegistry, shq } from '../services/registry/src/publish/pipeline.ts';
 import { MemorySigner } from '../services/registry/src/publish/rehearsal.ts';
 import { SAMPLE_SEEDS } from './registry-samples.ts';
 
@@ -115,8 +115,37 @@ function ceremonyDeps(lines: string[]): CliDeps {
 async function runPrinted(lines: string[]): Promise<number> {
   const prefix = 'node --conditions=development services/registry/src/ceremony/cli.ts ';
   const cmds = lines.map((l) => l.trim()).filter((l) => l.startsWith(prefix));
-  for (const c of cmds) assert.equal(await ceremony(c.slice(prefix.length).split(' '), ceremonyDeps([])), 0, c);
+  for (const c of cmds) assert.equal(await ceremony(shellWords(c.slice(prefix.length)), ceremonyDeps([])), 0, c);
   return cmds.length;
+}
+
+/** 셸이 하는 만큼만 낱말로 나눈다: 공백 구분, '…'(POSIX, '\\'' 이어 붙이기)·"…"(Windows) 인용을 벗긴다 */
+function shellWords(c: string, platform: NodeJS.Platform = process.platform): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let open = false;
+  for (let i = 0; i < c.length; i++) {
+    const ch = c[i]!;
+    if (ch === ' ') {
+      if (open) out.push(cur);
+      cur = '';
+      open = false;
+    } else if (ch === "'" || ch === '"') {
+      const j = c.indexOf(ch, i + 1);
+      assert.ok(j > i, `닫히지 않은 인용: ${c}`);
+      cur += c.slice(i + 1, j);
+      open = true;
+      i = j;
+    } else if (ch === '\\' && platform !== 'win32') {
+      cur += c[++i] ?? '';
+      open = true;
+    } else {
+      cur += ch;
+      open = true;
+    }
+  }
+  if (open) out.push(cur);
+  return out;
 }
 
 /** 루트 2개로 서명한 폐기 목록(서명 의식 산출물 모양: 신선도 필드는 있지만 낡았다, timestamp 없음) */
@@ -333,6 +362,17 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
     const puts = prod.s3.counts.put;
     await assert.rejects(publish(['push', '--trust', TRUST_PATH, '--work', work], cliDeps([])), /publish\.index_changed/);
     assert.equal(prod.s3.counts.put, puts);
+  });
+
+  it('출력 명령의 경로 인용: POSIX는 작은따옴표, Windows는 큰따옴표(\\·드라이브 문자는 그대로), 셸 낱말로 되돌리면 같은 경로', () => {
+    assert.equal(shq('/Users/me/sax-publish/h01-1/manifests/hometax.invoice.lookup@1.0.0.json', 'darwin'), '/Users/me/sax-publish/h01-1/manifests/hometax.invoice.lookup@1.0.0.json');
+    assert.equal(shq("/tmp/a b/it's.json", 'darwin'), "'/tmp/a b/it'\\''s.json'");
+    assert.deepEqual(shellWords(`--out ${shq("/tmp/a b/it's.json", 'darwin')} x`, 'darwin'), ['--out', "/tmp/a b/it's.json", 'x']);
+    const win = 'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\sax-publish-x\\manifests\\hometax.invoice.lookup@1.0.0.json';
+    assert.equal(shq(win, 'win32'), win);
+    assert.equal(shq('C:\\Program Files\\sax\\trust.json', 'win32'), '"C:\\Program Files\\sax\\trust.json"');
+    assert.throws(() => shq('C:\\a"b', 'win32'), /publish\.path_invalid/);
+    assert.deepEqual(shellWords(`--out ${shq('C:\\Program Files\\x.json', 'win32')} ${shq(win, 'win32')}`, 'win32'), ['--out', 'C:\\Program Files\\x.json', win]);
   });
 
   it('레지스트리 origin은 https(시험만 127.0.0.1·localhost), 경로·쿼리·사용자 정보 없음', () => {
