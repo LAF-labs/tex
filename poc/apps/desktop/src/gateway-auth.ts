@@ -42,6 +42,28 @@ const SIGNED_OUT = new Set(['account.keys_unavailable', 'account.cert_invalid'])
 
 const ID_MAX = 2 ** 31;
 
+/**
+ * auth 포트 메시지를 받은 순서대로 하나씩 처리한다(EngineHost가 쓴다).
+ * 동시에 처리하면 401 뒤 invalidate와 재시도 gw.auth가 겹쳐 재시도가 지우기 전의 옛 토큰을 받는다(두 번째도 401).
+ * 답하는 쪽(handler)이 아직 없으면 account.signed_out, 던지면 auth.unavailable. invalidate·모르는 메시지에는 답하지 않는다.
+ */
+export function authPortResponder(handler: () => ((m: unknown) => Promise<GwAuthResult | null>) | null, post: (r: GwAuthResult) => void): (m: unknown) => Promise<void> {
+  let q: Promise<void> = Promise.resolve();
+  const one = async (m: unknown): Promise<void> => {
+    const req = m as { t?: unknown; id?: unknown } | null;
+    const id = req?.t === 'gw.auth' && typeof req.id === 'number' && Number.isSafeInteger(req.id) ? req.id : null;
+    const h = handler();
+    let r: GwAuthResult | null;
+    try {
+      r = h ? await h(m) : id === null ? null : { t: 'gw.auth.result', id, code: 'account.signed_out' };
+    } catch {
+      r = id === null ? null : { t: 'gw.auth.result', id, code: 'auth.unavailable' };
+    }
+    if (r) post(r);
+  };
+  return (m) => (q = q.then(() => one(m)).catch(() => {}));
+}
+
 export class GatewayAuthHost {
   readonly #o: GatewayAuthHostOptions;
   readonly #now: () => number;
