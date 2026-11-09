@@ -19,6 +19,7 @@ import { clearCardSlipEnough, markCardSlipEnough, missingReport, monthStatus, ty
 import { daemonSnapshot, type DaemonSnapshotSources } from './daemon-snapshot.ts';
 import { requestCandidates } from './request-paste.ts';
 import { cardMonthView } from './card-view.ts';
+import { cashMonthView, cashPut, cashRemove, PcEntryError, receiptConfirm, receiptMonthView, setEntry } from './pc-entry.ts';
 import { carryOver, EmployeeInputError, employeeInput, employeePatch, employeeView, ownEmployee } from './employees.ts';
 import { confirmNoticeCard, noticeConfirmCard, type InsuranceKind, type InsuranceNoticeMatchInput } from './notice-match.ts';
 
@@ -215,7 +216,7 @@ export class BundleService {
       return await this.dispatch(method, p ?? {});
     } catch (e) {
       if (e instanceof BundleServiceError) throw e;
-      if (e instanceof ValidationError || e instanceof TableError || e instanceof ShiftError || e instanceof BundleError || e instanceof ColumnCipherError || e instanceof EmployeeInputError) throw new BundleServiceError(e.code);
+      if (e instanceof ValidationError || e instanceof TableError || e instanceof ShiftError || e instanceof BundleError || e instanceof ColumnCipherError || e instanceof EmployeeInputError || e instanceof PcEntryError) throw new BundleServiceError(e.code);
       throw e;
     }
   }
@@ -316,6 +317,21 @@ export class BundleService {
         const on = bool(p.on, 'bad_on');
         this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(payrollEnabledKey(profileId), JSON.stringify(on));
         return { enabled: on };
+      }
+      // ── 꾸러미 PC 입력: 현금매출·종이 증빙 확인·항목 상태 표시(08 D-05, M6-2·M6-4) ──
+      case 'db.query.cash.month':
+        return cashMonthView(this.db, this.profile(p.profileId), month(p.month));
+      case 'cash.put':
+        return cashPut(this.db, this.profile(p.profileId), p.day, p.amount, (this.opts.now?.() ?? new Date()).toISOString());
+      case 'cash.remove':
+        return cashRemove(this.db, this.profile(p.profileId), p.day);
+      case 'db.query.receipt.list':
+        return receiptMonthView(this.db, this.profile(p.profileId), month(p.month));
+      case 'receipt.confirm':
+        return receiptConfirm(this.db, this.profile(p.profileId), p, (this.opts.now?.() ?? new Date()).toISOString());
+      case 'bundle.setEntry': {
+        const profileId = this.profile(p.profileId);
+        return setEntry(this.db, profileId, p, { month: month(p.month), payrollEnabled: this.payrollEnabled(profileId), at: (this.opts.now?.() ?? new Date()).toISOString() });
       }
       case 'payroll.addEmployee': {
         const repo = new EmployeeRepo(this.db, this.cipher);
