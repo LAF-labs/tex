@@ -89,6 +89,8 @@ const FILES: Record<string, string> = {
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',
+  '/password-rules.js': 'text/javascript',
+  '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
   '/pair.js': 'text/javascript',
   '/pair.css': 'text/css',
@@ -857,7 +859,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'account.sendCode': async (p) => {
       needGesture(3_000);
       await accountInit();
-      return account.sendCode(String(p.email));
+      return account.sendCode(String(p.email), p.signup === true);
     },
     'account.verify': async (p) => {
       needGesture(3_000);
@@ -868,6 +870,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       await accountInit();
       return account.passwordLogin(String(p.email), p.password);
+    },
+    'account.setPassword': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.setPassword(p.password);
+    },
+    'account.skipPassword': async () => {
+      await accountInit();
+      return account.skipPassword();
     },
     'account.back': async () => {
       await accountInit();

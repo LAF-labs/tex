@@ -3,6 +3,7 @@
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
+import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -1103,17 +1104,21 @@ async function accountStep(method, params) {
     state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: errText(err) };
   } finally {
     l.busy = false;
-    if (method === 'account.password') l.draft.password = '';
+    if (method === 'account.password' || method === 'account.setPassword') l.draft.password = '';
+    // 서버는 이메일·서비스 이름을 한 코드로 준다. 어느 쪽인지는 보내기 전에 같은 규칙으로 가려 둔 종류로 고른다(비밀번호는 남기지 않는다).
+    if (method === 'account.setPassword' && state.account?.error === 'account.password_contains_identity' && l.pwKind === 'service') state.account = { ...state.account, error: 'account.password_contains_service' };
     // 서버에 비밀번호 기능이 꺼져 있으면(404) 이메일 코드 로그인으로 바로 넘긴다(인계 명세 §1)
     if (method === 'account.password' && state.account?.error === 'request.not_found') {
       l.screen = 'code_email';
       state.account = { ...state.account, error: null };
     }
-    if (method === 'account.verify' && state.account?.error) l.draft.code = '';
+    if (method === 'account.verify' && (state.account?.error || state.account?.step === 'set_password')) l.draft.code = '';
   }
   if (state.account?.step === 'signed_in') {
+    const later = state.account.error === 'account.password_later';
     state.login = null;
-    toast('로그인했어요. 이 PC가 계정에 등록됐어요');
+    state.account = { ...state.account, error: null };
+    toast(later ? accountErrText('account.password_later') : method === 'account.setPassword' ? '비밀번호를 만들었어요. 다음부터 비밀번호로 로그인해요' : '로그인했어요. 이 PC가 계정에 등록됐어요');
   }
   render();
 }
@@ -1146,7 +1151,13 @@ const loginCtx = () => ({
     render();
     $('#modal .acct-password')?.focus();
   },
-  sendCode: (email) => accountStep('account.sendCode', { email }),
+  // 계정 만들기 화면에서 보낸 코드면 signup(확인 뒤 비밀번호가 없으면 만들기 단계)
+  sendCode: (email) => accountStep('account.sendCode', state.login.screen === 'signup' ? { email, signup: true } : { email }),
+  setPassword: (password) => {
+    state.login.pwKind = identityIn(password, state.account?.email ?? '');
+    return accountStep('account.setPassword', { password });
+  },
+  skipPassword: () => accountStep('account.skipPassword', {}),
   verify: (code) => accountStep('account.verify', { code }),
   password: (email, password) => accountStep('account.password', { email, password }),
   // 코드 화면 [뒤로]: 코드를 버리고 코드 받기 화면으로(계정 만들기에서 왔으면 그대로)
