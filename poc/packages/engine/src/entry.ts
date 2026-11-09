@@ -25,6 +25,7 @@ import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
+import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
@@ -130,7 +131,13 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     const gate: PortLike = wrapPort(gatePort, 'electron');
     // 실행기는 아직 H01Runner다(PR-D 결정 (가), 2026-11-09): 제품 IR 패키지 공급(레지스트리 게시)과 시연·e2e 방식(ADR-039, dist는 fixture 거부)이
     // 정해지기 전에 IR로 바꾸면 앱 H-01 실행이 모두 package.not_loaded가 된다. PR-D2가 이 줄을 IR로 바꾸고 H01Runner를 시험 전용으로 옮긴다.
-    runs = new RunService({ db, data, ledgerKey, portal, engine: 'h01', page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m) });
+    runs = new RunService({
+      db, data, ledgerKey, portal, engine: 'h01', page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
+      // 서버 긴급 정지(팀장 결정 2026-11-09 ④): 레지스트리 status의 killPlaybooks·portalModeCeiling(D03 §3.1·§12). fixture 포털도 홈택스 상한을 따른다.
+      // 핀이 없으면(status를 받을 수 없음) 내장 상한만 본다. 정책 수준·만료(fail-closed)는 정책 동기화와 함께 붙인다(D03 §7.1).
+      permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id),
+      closeBrowser: () => slot.close(),
+    });
     gate.onMessage((m) => {
       const g = m as GatePortMessage;
       // 증언 처리는 M2-3에서 붙인다. 그 전에는 엔진이 증언 요청을 내지 않으므로 어떤 증언도 미결 요청이 없다.
@@ -177,7 +184,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (REGISTRY.has(method)) {
     if (!data) throw new Error('db_not_ready');
     if (!registry) throw new Error('registry.not_pinned');
-    return registry.handle(method);
+    const r = await registry.handle(method);
+    // 동기화로 status가 바뀌었을 수 있다: 진행 중 실행의 허가를 다시 본다(kill이면 다음 스텝 전에, 승인 대기면 바로 멈춘다).
+    runs?.recheckPermit();
+    return r;
   }
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');

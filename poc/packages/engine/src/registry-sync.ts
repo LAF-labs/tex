@@ -304,7 +304,7 @@ export interface StoredPackage {
   acceptedAt: number;
 }
 
-/** 제품이 받는 플레이북 id(엔진 entry). H-01 = 홈택스 전자세금계산서 발급(tests/fixtures/core/h01). */
+/** 제품이 받는 플레이북 id(엔진 entry). H-01 = 홈택스 전자세금계산서 발급(서명 전 원본 packages/engine/playbooks/hometax.invoice.issue). */
 export const PRODUCT_PACKAGES = { h01: 'hometax.invoice.issue' } as const;
 
 export interface PackageSupplyOptions {

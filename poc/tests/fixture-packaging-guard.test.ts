@@ -5,6 +5,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { BUNDLE_ALLOWLIST } from '@sax/model';
+import { bundleOutcomes, h01, lookups } from './core-fixtures.ts';
+import { sampleKeys } from './registry-samples.ts';
 // @ts-expect-error 설정은 .mjs(타입 없음)
 import { EXCLUDE } from '../apps/desktop/build/electron-builder.config.mjs';
 
@@ -108,5 +111,34 @@ describe('ADR-039 결정 4 포장 가드(2차 방어)', () => {
       const m = JSON.parse(fs.readFileSync(f, 'utf8')) as { portal?: string };
       if (m.portal === 'fixture') assert.ok(path.relative(POC, f).split(path.sep).includes('fixtures'), path.relative(POC, f));
     }
+  });
+
+  it('제품 플레이북 원본(packages/engine/playbooks)은 실제 포털 패키지만, 서명 전이라 제품 로더가 받지 않고, 제품 소스는 이 폴더를 읽지 않는다', async () => {
+    const dir = path.join(POC, 'packages/engine/playbooks');
+    const ids = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+    assert.deepEqual(ids, ['hometax.invoice.email_status', 'hometax.invoice.issue', 'hometax.invoice.lookup']);
+    for (const id of ids) {
+      const m = JSON.parse(fs.readFileSync(path.join(dir, id, 'manifest.json'), 'utf8')) as { id: string; portal: string };
+      assert.equal(m.id, id, '폴더 이름 = 패키지 id');
+      assert.notEqual(m.portal, 'fixture', `${id}: fixture 포털 패키지는 tests/에만 둔다`);
+    }
+    // 설치본에 들어가도(pnpm deploy가 엔진 폴더를 복사한다) 서명이 없어 제품 로더(dist)가 거부한다
+    const dist = (await import(new URL('../packages/engine/dist/core/loader.js', import.meta.url).href)) as typeof import('../packages/engine/src/core/loader.ts');
+    const bytes = (o: unknown) => Buffer.from(JSON.stringify(o), 'utf8');
+    const raw = (f: ReturnType<typeof h01>) => ({ manifest: bytes(f.manifest), playbook: bytes(f.playbook), selectors: bytes(f.selectors), strings: bytes(f.strings) });
+    const ctx = { roots: sampleKeys().roots, revoked: new Set<string>(), bundleAllowlist: BUNDLE_ALLOWLIST, bundles: bundleOutcomes(), installedLookups: new Map(), storedVersion: null, installedDigest: null, hold: false, policyFresh: false, now: Date.now() };
+    for (const f of [h01(), ...lookups().values()]) {
+      const r = dist.loadPackage(raw(f), ctx);
+      assert.equal(r.ok ? 'ok' : r.code, 'registry.signature_insufficient', f.manifest.id);
+    }
+    // 제품 소스(설치본 의존 전이)에 이 폴더를 가리키는 문자열 리터럴이 없다(읽는 코드가 없다)
+    const offenders: string[] = [];
+    for (const [, d] of productPackages()) {
+      for (const f of walk(path.join(POC, d, 'src'))) {
+        if (!/\.(ts|mts|js|mjs)$/.test(f) || /\.test\.ts$/.test(f)) continue;
+        if (/['"`][^'"`\n]*playbooks\//.test(fs.readFileSync(f, 'utf8'))) offenders.push(path.relative(POC, f));
+      }
+    }
+    assert.deepEqual(offenders, []);
   });
 });

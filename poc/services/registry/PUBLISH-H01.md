@@ -57,7 +57,7 @@
 - 서명 의식을 한 맥이어야 한다. 키체인 키 11개와 도우미 `~/.sax/bin/sax-keychain`이 있어야 한다. **도우미를 다시 빌드하지 않는다.**
 - 저장소 `poc/`에서 main 최신으로 돌린다.
   - 첫 게시 도장(#229)·인덱스 신선도 분리(ADR-043, #232)·정책 묶기가 main에 있고 **운영에 배포된 뒤**여야 한다. 배포 전이면 폐기 목록·status·정책·인덱스가 `registry.schema_invalid`·`registry.timestamp_invalid`로 거부된다.
-  - 엔진 원본 위치 이동(엔진 #231)이 main에 있어야 한다. 아래 명령은 `packages/engine/playbooks/<id>`를 쓴다.
+  - 원본은 `packages/engine/playbooks/<패키지 id>/`다(엔진 #231·#237). H-01은 `hometax.invoice.issue`, 조회 패키지 2개는 `hometax.invoice.lookup`·`hometax.invoice.email_status`다.
 - 운영자 토큰(`REGISTRY__REGISTRY_ADMIN_TOKEN`의 값)을 비밀번호 관리자에서 꺼낼 수 있어야 한다.
   - 6단계에서 터미널이 보이지 않게 묻는다. 명령 인자·셸 기록·파일에 넣지 않는다.
 - 작업 폴더는 저장소 밖에 둔다(예 `~/sax-publish/h01-1`).

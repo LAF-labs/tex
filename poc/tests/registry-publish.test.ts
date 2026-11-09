@@ -24,7 +24,7 @@ import { SAMPLE_SEEDS } from './registry-samples.ts';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const TRUST_PATH = path.join(ROOT, 'tests/fixtures/registry/trust.json');
 const TRUST = JSON.parse(fs.readFileSync(TRUST_PATH, 'utf8')) as TrustRoot;
-const SOURCES = ['tests/fixtures/core/lookups/hometax.invoice.lookup', 'tests/fixtures/core/lookups/hometax.invoice.email_status', 'tests/fixtures/core/h01'].map((p) => path.join(ROOT, p));
+const SOURCES = ['packages/engine/playbooks/hometax.invoice.lookup', 'packages/engine/playbooks/hometax.invoice.email_status', 'packages/engine/playbooks/hometax.invoice.issue'].map((p) => path.join(ROOT, p));
 /** 정책 초안(팀장 결정 2026-11-09: 홈택스 auto, 요청률 상한은 ADR-025 PoC 값) */
 const POLICY_PATH = path.join(ROOT, 'services/registry/policy/2026.11.json');
 const TS_SEED = Buffer.alloc(32, SAMPLE_SEEDS.timestamp['timestamp-1']).toString('hex');
