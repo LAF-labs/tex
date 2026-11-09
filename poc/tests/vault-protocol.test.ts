@@ -32,8 +32,16 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
       assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
       assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
     }
-    // 개인키를 꺼내는 메서드는 없다(D05 §5.1).
-    for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
+    // 계정 갱신 토큰: main만 읽고 쓴다(ADR-038 (f)). 엔진·비밀 입력 포트에는 없다.
+    const ACCOUNT_REFRESH = ['account.refresh.read', 'account.refresh.write', 'account.refresh.forget'];
+    for (const m of ACCOUNT_REFRESH) {
+      assert.ok(RPC_BY_PORT.control.includes(m), m);
+      assert.ok(!RPC_BY_PORT.engine.includes(m), `${m}는 엔진이 부를 수 없다`);
+      assert.ok(!RPC_BY_PORT.secretInput.includes(m), m);
+    }
+    // 개인키·사이트 비밀을 꺼내는 메서드는 없다(D05 §5.1). 예외는 하나뿐이다: account.refresh.read는 계정 자격을 main(control)에게 준다.
+    // 규칙 ②는 사이트 비밀에 대한 것이고 계정 자격은 main이 세션 토큰을 드는 것과 같은 등급이다(팀장 결정 2026-11-09, D05 §2). 위에서 control 전용임을 확인했다.
+    for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) if (m !== 'account.refresh.read') assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
   });
 
   it('비밀 종류 표: 저장 가능 종류에 인증서 비밀번호가 없다, 모든 종류에 origin 목록이 있다', () => {
