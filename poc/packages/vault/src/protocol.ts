@@ -1,6 +1,6 @@
 // 금고 포트 메시지(D01 §2.1: MessagePort 기반 타입드 IPC). 포트는 세 종류다.
 // - engine: CDP 프레임(cdp)과 RPC(typist·secretWindow·browser·commitGuard·pdf·download·getDbKeyOnce). 장기 키 연산(crypto.*)은 없다(아래 RPC_BY_PORT 주석)
-// - control(main): 실행 트리거 통지, 사용자 "입력 완료", Windows 세션 상태, 저장된 비밀 목록·삭제, 상태
+// - control(main): 실행 트리거 통지, 사용자 "입력 완료", Windows 세션 상태, 저장된 비밀 목록·삭제, 계정 갱신 토큰, 상태
 // - secretInput(금고 직결 입력 창): 한 번 쓰는 비밀 제공(oneshot) 또는 등록 창(T-06)의 저장(store). main은 이 포트의 내용을 보지 않는다.
 //
 // 이 파일이 금고 IPC 계약의 정본이다. 바꾸면 PR 본문과 팀장 보고에 적는다(D05 §3.8, ADR-005 v3·020·025·026·029).
@@ -37,6 +37,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
+    // 계정 갱신 토큰(ADR-038 (f) 자동 로그인). main만 읽고 쓴다. 엔진·비밀 입력 창은 계정 자격을 다루지 않는다.
+    'account.refresh.read', 'account.refresh.write', 'account.refresh.forget',
     // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))만 부른다. 개인키는 그대로 금고 안이다.
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
   ],
@@ -193,6 +195,30 @@ export interface StoredSecretInfo {
   suspect: boolean;
   consentAt: string;
 }
+
+// ───────────────────────── 계정 갱신 토큰(control 전용) ─────────────────────────
+
+/**
+ * 계정 갱신 토큰(ADR-038 (f) 자동 로그인). 사이트 비밀(secret.*, 사람 비밀 세션 결박)과 따로 둔다:
+ * secret.list에 나오지 않고, 사이트 비밀 슬롯·엄격 모드 전환과 섞이지 않는다.
+ * 등급(팀장 결정 2026-11-09, D05 §2): 규칙 ②(평문이 금고 밖으로 나가지 않음)는 사이트 비밀에 대한 것이다. 계정 자격은 main이 계정 세션을
+ * 메모리에 드는 것과 같은 등급으로 보고 main(control)에게 값을 준다. 엔진 포트·비밀 입력 포트에는 없다.
+ * - 이 PC에 로그인한 계정의 토큰 하나만 둔다(데스크톱 신원 파일에 계정 ID가 없고, 이메일을 키체인 항목 이름에 넣지 않는다). 다른 계정으로 쓰면 바뀐다.
+ * - `account.refresh.read {}` → AccountRefreshReadResult. 금고가 잠겨 있으면 vault_locked(main은 로그인 화면으로 간다).
+ * - `account.refresh.write {token}` → AccountRefreshWriteResult. 회전 쓰기: 새 값을 다른 칸에 쓰고 되읽어 확인한 뒤 옛 칸을 지운다.
+ *   중간에 실패하면 옛 값이 남는다. 서버는 이미 회전했으므로 main은 실패하면 새 토큰을 메모리에 든 채 다시 쓰거나 forget한다(옛 토큰 재사용은 서버의 복제 감지로 계정 전체 폐기).
+ * - `account.refresh.forget {}` → `{removed}`. [로그인 상태 유지 끄기]·[모든 기기에서 로그아웃]·서버 거부 때. 잠겨 있어도 지운다.
+ * - 로그는 이벤트 이름만 남긴다(값·길이·해시 없음).
+ */
+export type AccountRefreshReadResult =
+  | { ok: true; token: string }
+  | { ok: false; reason: 'missing' | 'vault_locked' | 'corrupt' | 'kek_unavailable' };
+export type AccountRefreshWriteResult = { ok: true } | { ok: false; reason: 'vault_locked' | 'kek_unavailable' | 'write_failed' };
+export interface AccountRefreshWriteParams {
+  token: string;
+}
+/** 계정 서비스 갱신 토큰 모양(`services/account` REFRESH_RE). 이 밖은 bad_params로 받지 않는다. */
+export const ACCOUNT_REFRESH_TOKEN_RE = /^sxa1\.[A-Za-z0-9_-]{43}$/;
 
 // ───────────────────────── Windows 세션 추종(control) ─────────────────────────
 

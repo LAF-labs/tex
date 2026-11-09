@@ -7,7 +7,7 @@
 | 포트 | 기존 | 추가 |
 |---|---|---|
 | engine | browser.launch·shutdown, typist.fill, secretWindow.openForHuman·requestClose, getDbKeyOnce | `typist.authFailed`, `commitGuard.arm`·`commitGuard.disarm`, `pdf.print`·`download.arm`·`download.disarm`. **`crypto.*`는 없다**(2026-11-06 엔진 포트에서 뺌: 엔진이 뚫려도 기기 키로 서명하지 못한다) |
-| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list`, `crypto.*` 다섯(main 계정·기기·페어링, 이 포트에만) |
+| control(main) | run.begin·run.end, secretWindow.userDone, status | `session.event`, `session.idle`, `vault.unlock`, `vault.setStrict`, `secret.list`·`secret.has`·`secret.forget`, `npki.list`, `account.refresh.read`·`write`·`forget`(§10, 이 포트에만), `crypto.*` 다섯(main 계정·기기·페어링, 이 포트에만) |
 | secretInput | secret.provide | `secret.store`(등록 창 T-06 전용) |
 
 commitGuard(#81)·crypto(#87)·npki(§9)는 구현됐다.
@@ -130,3 +130,20 @@ utilityProcess에는 powerMonitor가 없어서 main이 이벤트를 넘긴다.
   - 열거 뒤 바꿔치기(lstat과 연 파일의 dev·ino 불일치, `changed`), 하드링크(nlink>1, `linked`), 읽기 실패(`unreadable`)
   - CA 32·CA당 cn 64·전체 128 상한(`limit`), 이상한 CA 이름(`bad_name`)
 - 로그는 `vault.npki_listed{roots, certs, skipped}` 개수뿐이다.
+
+## 10. 계정 갱신 토큰 `account.refresh.*` — desktop(main) 트랙
+- ADR-038 (f) 자동 로그인. control 포트 전용이다. engine·secretInput 포트는 `vault.rpc_denied`다.
+- 등급(팀장 결정 2026-11-09, D05 §2): 규칙 ②는 사이트 비밀에 대한 것이다. 계정 자격은 main이 계정 세션을 메모리에 드는 것과 같은 등급이라 main에게 값을 준다.
+- 사이트 비밀과 따로다. `secret.list`에 나오지 않고, `secret.forget`·엄격 모드 전환이 건드리지 않는다.
+- 이 PC에 로그인한 계정의 토큰 하나만 둔다. 데스크톱 신원 파일에 계정 ID가 없고, 이메일을 키체인 항목 이름에 넣지 않기 때문이다. 다른 계정으로 쓰면 바뀐다.
+- `account.refresh.read {}` → `{ok:true, token}` | `{ok:false, reason: missing|vault_locked|corrupt|kek_unavailable}`
+  - 금고가 잠겨 있으면(Windows 잠금·유휴·기동 직후 유휴 보고 전·엄격 모드 Hello 전) `vault_locked`다. main은 로그인 화면으로 간다. 기동 때는 `session.idle`을 먼저 보낸다.
+- `account.refresh.write {token}` → `{ok:true}` | `{ok:false, reason: vault_locked|kek_unavailable|write_failed}`
+  - token은 계정 서비스 모양 `^sxa1\.[A-Za-z0-9_-]{43}$`(`ACCOUNT_REFRESH_TOKEN_RE`)만 받는다. 아니면 RPC 오류 `bad_params`(값은 오류에 없다).
+  - 회전 쓰기는 원자적이다. 칸 a·b를 번갈아 쓴다. 새 값을 다른 칸에 쓰고 되읽어 확인한 뒤 옛 칸을 지운다. 중간에 실패하면 옛 값이 남는다. 옛 칸을 지우다 끊기면 세대가 큰 새 값을 읽는다.
+  - 칸마다 KEK(32B)를 새로 만들고 기기 결박 래핑(`kek/account/refresh/<칸>/device`, TPM → DPAPI)으로 둔다. 래핑이 안 되면(네이티브 헬퍼 없음) `kek_unavailable`이고 쓰지 않는다.
+  - main 주의: 서버는 이미 회전했다. 옛 토큰을 다시 보내면 재사용 감지로 계정 전체가 폐기된다. write가 실패하면 새 토큰을 메모리에 든 채 다시 쓰고, 그래도 안 되면 forget한다.
+- `account.refresh.forget {}` → `{removed}`. 잠겨 있어도 지운다.
+  - [로그인 상태 유지 끄기]: read로 토큰을 얻어 `POST /v1/auth/refresh/revoke`를 보낸 뒤 forget한다.
+  - [모든 기기에서 로그아웃]·서버 401(`account.unauthorized`): forget한다.
+- 로그는 이벤트 이름만이다: `vault.account_refresh_stored`·`_forgotten`·`_write_failed`·`_corrupt`. 값·길이·해시·세대가 없다.

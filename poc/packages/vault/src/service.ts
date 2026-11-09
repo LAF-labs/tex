@@ -398,6 +398,12 @@ export class Vault {
       case 'secretWindow.userDone':
         await this.requireOps().userDone(String(p.targetId));
         return {};
+      case 'account.refresh.read':
+        return this.human.account.read();
+      case 'account.refresh.write':
+        return this.human.account.write(p.token as string);
+      case 'account.refresh.forget':
+        return { removed: await this.human.account.forget() };
       case 'npki.list':
         return scanNpki({ roots: this.opts.npki?.roots, fs: this.opts.npki?.fs, log: this.opts.log });
       case 'status':
