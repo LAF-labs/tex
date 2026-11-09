@@ -113,6 +113,8 @@ export interface EngineInit {
   t: 'init';
   root?: string;
   portal: EnginePortal;
+  /** 앱 판(app.getVersion(), semver). 레지스트리 항목 minAppVersion 대조에 쓴다. 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(fail-closed). */
+  appVersion?: string;
 }
 
 /** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */
