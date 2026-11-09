@@ -29,7 +29,7 @@ after(() => {
 
 describe('거래처 저장 품목', () => {
   it('v7: counterparties.saved_items_json 열, 기존 v6 DB의 거래처는 그대로 남고 품목은 빈 목록', () => {
-    assert.equal(MIGRATIONS.at(-1)!.name, 'counterparty_items');
+    assert.deepEqual([MIGRATIONS[6]!.version, MIGRATIONS[6]!.name], [7, 'counterparty_items']);
     const file = tmpFile('v6.sqlite');
     const k = new Uint8Array(randomBytes(32));
     const v6 = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, 6) });

@@ -411,7 +411,7 @@ CE-1~CE-6(REVIEW-A §1)에 감사 반례를 더한 CE-1~CE-18이 검증기 퍼�
 - `s19e`는 포털 작성일자를 실행 시작 시 KST 날짜(`$inputs.issueDate`)와 대조한다. 다르면 게이트 전에 `assert.issue_date_mismatch`로 멈춘다(V-03j′, ADR-027, D-20(N-26)).
 - `s33` 메일 상태 판정은 부정 우선이다. NFKC·공백 제거 뒤 실패·미전송·대기·오류·…중이면 `not_committed`, 정확 허용 목록(`전송완료`·`발송완료`, PoC-3 실측으로 확정)이면 `committed`, 그 밖은 `unknown`이다(ADR-025, D-39(N-58)). 이 판정을 `lookup.rowVerdict`(§4.4)로 적는다. strings는 `mail.status.sent = ^(전송|발송)완료$`, `mail.status.notSent = 실패|미전송|대기|오류|중$`다(엔진 #170 골든 픽스처). `s33`은 `baseline: none` 사후 확인 verify라 V-03n에 따라 `rowVerdict`가 필수다. `대기`·`…중`도 곧바로 `not_committed`라서, 발송이 늦게 끝나면 `s35`("메일 발송 확인 못 함")로 끝난다. 발급에는 영향이 없다.
 - `s19a`는 모델 predicate 대신 결정적 칸 채움 검사다(B-34). 차단·보안 경고는 `s19`(W 밖)와 엔진의 결정적 차단 신호(D03 §7)로 W 진입 전에 판정한다(B/C-03, C-24).
-- `s30`은 게이트 직전 기준선 대비 새 건이 정확히 1건일 때만 `committed`이고, 승인번호는 `bind`로 얻는다(B-07, B-08). 결과 화면 `capture`는 쓰지 않는다. `s30.not_committed → s11`은 `reload` 체크포인트로 폼을 새로 읽고(V-03l) `s20`을 다시 지난다(V-03f). 재게이트 카드에는 직전 시도 경고가 붙는다(§7).
+- `s30`은 게이트 직전 기준선 대비 새 건이 정확히 1건일 때만 `committed`이고, 승인번호는 `bind`로 얻는다(B-07, B-08). 결과 화면 `capture`는 쓰지 않는다. `s30.not_committed → s11`은 `reload` 체크포인트로 폼을 새로 읽고(V-03l) `s20`을 다시 지난다(V-03f). 재게이트 카드에는 직전 시도 경고가 붙는다(§7). 두 번째 승인은 원장의 새 시도(`attempt`)로 무장하고, 첫 시도의 `not_committed` 행은 그대로 남는다(ADR-042).
 - `s0`·`s11`은 게이트를 지배하는 복귀 지점이라 `url` + `reload`다(V-03l). `blocked`·`logged_out_by_other_session`은 예약 결과라 `on`에 없다(V-07). PUSH 대기는 결정적 `wait`(s5)다. 로그인은 사업자 간편인증을 기본 경로로 두고(`s3`), 공동인증서 경로는 가상키패드 때문에 `sign.then`의 `human:secret`로 떨어진다(D05 §4).
 - 카드 `invoice.confirm`은 제목 키일 뿐이고, 표시 필드는 앱이 readback 13개 + `intent.id` + 고정 경고로 렌더링한다(V-03h). `save_pdf`는 엔진 기본 파일명을 쓴다(V-23).
 
