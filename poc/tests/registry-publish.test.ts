@@ -24,7 +24,7 @@ import { SAMPLE_SEEDS } from './registry-samples.ts';
 const ROOT = path.resolve(import.meta.dirname, '..');
 const TRUST_PATH = path.join(ROOT, 'tests/fixtures/registry/trust.json');
 const TRUST = JSON.parse(fs.readFileSync(TRUST_PATH, 'utf8')) as TrustRoot;
-const SOURCES = ['tests/fixtures/core/lookups/hometax.invoice.lookup', 'tests/fixtures/core/lookups/hometax.invoice.email_status', 'tests/fixtures/core/h01'].map((p) => path.join(ROOT, p));
+const SOURCES = ['packages/engine/playbooks/hometax.invoice.lookup', 'packages/engine/playbooks/hometax.invoice.email_status', 'packages/engine/playbooks/hometax.invoice.issue'].map((p) => path.join(ROOT, p));
 const TS_SEED = Buffer.alloc(32, SAMPLE_SEEDS.timestamp['timestamp-1']).toString('hex');
 const ADMIN = 'admin-token-for-publish-test-0123456789';
 const PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex');
