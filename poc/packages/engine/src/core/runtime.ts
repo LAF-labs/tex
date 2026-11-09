@@ -1,7 +1,9 @@
 // 게이트 결정·커밋 무장·재시작 승격·체크포인트 복귀를 원장(@sax/db)과 토큰에 잇는다(D03 §2·§3·§4·§5.5).
 // 순서 규칙: 승인은 gate_requests open → approved 원자 전이가 이긴 경우에만 토큰을 만든다(R-G8). 커밋 진입은
 // 토큰 검증 → 원장 armed + gate consumed(한 트랜잭션) → 토큰 소비 순서이고, 그 뒤 readback 재계산·가드 무장·클릭은 실행기 몫이다(R-G7).
-import { LedgerError, type ArmRow, type GateRepo, type Ledger, type RunRepo } from '@sax/db';
+// @sax/db는 타입으로만 쓴다. 값으로 가져오면 @sax/engine/core를 쓰는 묶음(클라우드 레지스트리 함수)에 better-sqlite3가 실린다
+// (#193은 excludeFiles로 막았다. 근본 정리, 시험 core-import-graph).
+import type { ArmRow, GateRepo, Ledger, RunRepo } from '@sax/db';
 import { SECURITY_REJECTIONS, type GateToken, type GateTokens, type TokenRejection } from './token.ts';
 import type { StepOf } from './types.ts';
 
@@ -29,6 +31,14 @@ export function decideGate(gates: Pick<GateRepo, 'decide'>, tokens: GateTokens, 
   return { won: true, decision: 'approved', token };
 }
 
+/** 원장 거절(@sax/db LedgerError: code = message = gate_not_approved·ledger_*)을 값 import 없이 알아본다. 아니면 null. */
+const LEDGER_CODE = /^(?:gate_not_approved|ledger_[a-z_]+)$/;
+export function ledgerRejection(e: unknown): string | null {
+  if (!(e instanceof Error)) return null;
+  const code = (e as { code?: unknown }).code;
+  return typeof code === 'string' && LEDGER_CODE.test(code) && e.message === code ? code : null;
+}
+
 export type ArmResult = { ok: true } | { ok: false; code: string; security: boolean };
 
 /**
@@ -43,7 +53,8 @@ export function armForCommit(ledger: Pick<Ledger, 'consumeAndArm'>, tokens: Gate
   try {
     ledger.consumeAndArm(p.reqId, p.row);
   } catch (e) {
-    if (e instanceof LedgerError) return { ok: false, code: e.code, security: false };
+    const code = ledgerRejection(e);
+    if (code) return { ok: false, code, security: false };
     throw e;
   }
   // 원장 트랜잭션이 커밋된 뒤 메모리 토큰을 소비한다. 같은 now로 방금 검사했으므로 실패할 수 없다.
