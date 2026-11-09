@@ -39,6 +39,8 @@ const REGISTRY_ROUTES: ReadonlyArray<{ path: RegExp; query: Readonly<Record<stri
   { path: new RegExp(`^/releases/(${REGISTRY_CHANNELS.join('|')})/latest\\.json$`), query: {} },
   { path: /^\/registry\/status\.json$/, query: {} },
   { path: /^\/registry\/revoked_keys\.json$/, query: {} },
+  // 서명 정책(D03 §7.1 조회와 적용): 정확히 이 경로 하나
+  { path: /^\/policy\/current\.json$/, query: {} },
   // 엔진 레지스트리 동기화(D09 §8 정적 호스팅, ADR-013): stable 인덱스와 그것이 가리키는 불변 `.sxp`
   { path: /^\/registry\/stable\/index\.json$/, query: {} },
   { path: PACKAGE_PATH, query: {} },

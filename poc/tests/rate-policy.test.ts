@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { EventEmitter } from 'node:events';
-import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGuard, SIGNAL_DICT, SignalWatch, type Clock, type RatePolicy } from '@sax/engine';
+import { FIXTURE_POLICY, HOMETAX_POLICY, kstDay, matchSignal, policyFor, RateGuard, RunEnd, SIGNAL_DICT, SignalWatch, stricterRate, type Clock, type RatePolicy } from '@sax/engine';
 import type { Page } from 'playwright-core';
 import { openDatabase, RateRepo, type Db } from '@sax/db';
 
@@ -212,5 +212,70 @@ describe('요청률 정책(D03 §7)', () => {
     assert.deepEqual(matchSignal(ht, { text: '접속대기 중입니다.' }), { kind: 'busy', id: 'hometax.netfunnel.wait' }, '모바일 스킨 문구');
     assert.deepEqual([...new Set(ht.map((e) => e.kind))], ['busy']);
     for (const e of [...ht, ...fx]) assert.ok(e.source.length > 0 && (e.url || e.text), e.id);
+  });
+});
+
+describe('받은 서명 정책 ∧ 내장 값: 필드마다 더 엄격한 쪽 (팀장 결정 2026-11-09 ③, D03 §7·§7.1)', () => {
+  let dir: string;
+  const dbs: Db[] = [];
+  before(async () => {
+    dir = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-rate-recv-'));
+  });
+  after(async () => {
+    for (const d of dbs) d.close();
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+  const db = () => {
+    const d = openDatabase(path.join(dir, `${dbs.length}.sqlite`), new Uint8Array(randomBytes(32)));
+    dbs.push(d);
+    return d;
+  };
+  /** 내장 값보다 어떤 필드는 엄격하고 어떤 필드는 느슨한 받은 값. */
+  const mixed = (): RatePolicy => ({
+    pace: { stepDelayMs: [1_000, 2_000], afterNavSettleMs: [500, 2_000], slowFactor: 2 },
+    limits: { runsPerDayPerProfile: 5, irreversiblePerDayPerProfile: 99, runsPerLoginSession: 99, navigationsPerMin: 6, loginsPerDay: 99, concurrent: 1 },
+    run: { maxActuationsPerRun: 999, maxWallClockMs: 60_000 },
+    cooldown: { onBlockSignalHours: 48, positiveDetectionsForCooldown: 9 },
+  });
+
+  it('stricterRate: 지연·slowFactor·쿨다운 시간은 큰 쪽, 횟수·상한은 작은 쪽, 없으면 내장 값 그대로', () => {
+    const b = HOMETAX_POLICY;
+    assert.equal(stricterRate(b, null), b);
+    assert.deepEqual(stricterRate(b, mixed()), {
+      pace: { stepDelayMs: [1_000, 2_500], afterNavSettleMs: [600, 2_000], slowFactor: 2 },
+      limits: { runsPerDayPerProfile: 5, irreversiblePerDayPerProfile: b.limits.irreversiblePerDayPerProfile, runsPerLoginSession: b.limits.runsPerLoginSession, navigationsPerMin: 6, loginsPerDay: b.limits.loginsPerDay, concurrent: 1 },
+      run: { maxActuationsPerRun: b.run.maxActuationsPerRun, maxWallClockMs: 60_000 },
+      cooldown: { onBlockSignalHours: 48, positiveDetectionsForCooldown: b.cooldown.positiveDetectionsForCooldown },
+    });
+    assert.deepEqual(stricterRate(b, mixed()), stricterRate(mixed(), b), '순서와 무관');
+  });
+
+  it('RateGuard(홈택스): 받은 값으로 상한을 조이고(admit), 느슨한 필드는 내장 값', () => {
+    let recv: RatePolicy | null = mixed();
+    const g = new RateGuard(db(), 'hometax', HOMETAX_POLICY, testClock().clock, () => recv);
+    assert.equal(g.policy.limits.runsPerDayPerProfile, 5);
+    assert.equal(g.policy.limits.loginsPerDay, HOMETAX_POLICY.limits.loginsPerDay);
+    for (let i = 0; i < 5; i++) g.admit('p1', { irreversible: false });
+    assert.throws(() => g.admit('p1', { irreversible: false }), (e: RunEnd) => e.code === 'policy.runs_per_day');
+    recv = null;
+    assert.equal(g.policy, HOMETAX_POLICY, '정책이 없으면 내장 값');
+  });
+
+  it('실행 중: 보수 쪽 변경은 다음 검사 지점부터, 완화는 다음 실행부터(pinRun)', () => {
+    let recv: RatePolicy = mixed();
+    const g = new RateGuard(db(), 'hometax', HOMETAX_POLICY, testClock().clock, () => recv);
+    g.pinRun();
+    recv = { ...mixed(), limits: { ...mixed().limits, navigationsPerMin: 3 } };
+    assert.equal(g.policy.limits.navigationsPerMin, 3, '조임은 바로');
+    recv = { ...mixed(), limits: { ...mixed().limits, runsPerDayPerProfile: 30 } };
+    assert.equal(g.policy.limits.runsPerDayPerProfile, 5, '실행 중 완화는 시작 때 값으로 막는다');
+    g.unpinRun();
+    g.pinRun();
+    assert.equal(g.policy.limits.runsPerDayPerProfile, Math.min(30, HOMETAX_POLICY.limits.runsPerDayPerProfile), '다음 실행부터 완화(내장 값보다는 못 푼다)');
+  });
+
+  it('fixture 포털은 받은 정책을 쓰지 않는다(내장 시험 값)', () => {
+    const g = new RateGuard(db(), 'fixture', FIXTURE_POLICY, testClock().clock, () => mixed());
+    assert.equal(g.policy, FIXTURE_POLICY);
   });
 });

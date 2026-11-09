@@ -137,6 +137,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       // 핀이 없으면(status를 받을 수 없음) 내장 상한만 본다. 정책 수준·만료(fail-closed)는 정책 동기화와 함께 붙인다(D03 §7.1).
       permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id),
       closeBrowser: () => slot.close(),
+      // 요청률은 받은 서명 정책과 내장 값 중 더 엄격한 쪽만(팀장 결정 2026-11-09 ③, D03 §7). 정책이 없으면 내장 값.
+      receivedPolicy: () => registry?.policy().policy ?? null,
     });
     gate.onMessage((m) => {
       const g = m as GatePortMessage;

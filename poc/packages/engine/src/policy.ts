@@ -46,6 +46,30 @@ export function policyFor(kind: string): RatePolicy {
   throw new RunEnd('failed', 'policy.portal_mode_denied');
 }
 
+/**
+ * 두 요청률 값 가운데 필드마다 더 엄격한 쪽(D03 §7 "정책은 강화만", 팀장 결정 2026-11-09 ③). 방향은 D03 §7.1 보수 방향 표와 같다:
+ * 지연·쿨다운 시간·slowFactor는 큰 쪽, 횟수·상한은 작은 쪽. b가 없으면 a.
+ */
+export function stricterRate(a: RatePolicy, b: RatePolicy | null): RatePolicy {
+  if (!b) return a;
+  const hi = Math.max;
+  const lo = Math.min;
+  const range = (x: readonly [number, number], y: readonly [number, number]) => [hi(x[0], y[0]), hi(x[1], y[1])] as const;
+  return {
+    pace: { stepDelayMs: range(a.pace.stepDelayMs, b.pace.stepDelayMs), afterNavSettleMs: range(a.pace.afterNavSettleMs, b.pace.afterNavSettleMs), slowFactor: hi(a.pace.slowFactor, b.pace.slowFactor) },
+    limits: {
+      runsPerDayPerProfile: lo(a.limits.runsPerDayPerProfile, b.limits.runsPerDayPerProfile),
+      irreversiblePerDayPerProfile: lo(a.limits.irreversiblePerDayPerProfile, b.limits.irreversiblePerDayPerProfile),
+      runsPerLoginSession: lo(a.limits.runsPerLoginSession, b.limits.runsPerLoginSession),
+      navigationsPerMin: lo(a.limits.navigationsPerMin, b.limits.navigationsPerMin),
+      loginsPerDay: lo(a.limits.loginsPerDay, b.limits.loginsPerDay),
+      concurrent: lo(a.limits.concurrent, b.limits.concurrent),
+    },
+    run: { maxActuationsPerRun: lo(a.run.maxActuationsPerRun, b.run.maxActuationsPerRun), maxWallClockMs: lo(a.run.maxWallClockMs, b.run.maxWallClockMs) },
+    cooldown: { onBlockSignalHours: hi(a.cooldown.onBlockSignalHours, b.cooldown.onBlockSignalHours), positiveDetectionsForCooldown: lo(a.cooldown.positiveDetectionsForCooldown, b.cooldown.positiveDetectionsForCooldown) },
+  };
+}
+
 // PoC 상한(ADR-025 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
 // 시간대 제한은 앱이 집행하지 않는 사람 규칙이다(위험 수용서).
 export const POC_BUILD = true;
@@ -106,19 +130,44 @@ export interface PolicyStatus {
  */
 export class RateGuard {
   readonly portal: string;
-  readonly policy: RatePolicy;
+  /** 앱 내장 값(포털 kind의 policyFor, 시험은 주입값). */
+  readonly builtIn: RatePolicy;
+  private readonly received: (() => RatePolicy | null) | null;
+  /** 이 실행이 시작할 때 받아 둔 정책 값(pinRun). 실행 중 완화는 다음 실행부터 적용한다(D03 §7.1 조회와 적용). */
+  private pinned: RatePolicy | null = null;
   private readonly db: Db;
   private readonly repo: RateRepo;
   private readonly c: Clock;
   private base: { t: number; m: number };
 
-  constructor(db: Db, portal: string, policy: RatePolicy, clock: Clock = SYSTEM_CLOCK) {
+  /** received: 마지막 유효 서명 정책의 요청률 값(레지스트리 동기화). 홈택스에만 적용한다(fixture는 내장 값만). */
+  constructor(db: Db, portal: string, policy: RatePolicy, clock: Clock = SYSTEM_CLOCK, received?: () => RatePolicy | null) {
     this.db = db;
     this.portal = portal;
-    this.policy = policy;
+    this.builtIn = policy;
+    this.received = portal === 'hometax' && received ? received : null;
     this.repo = new RateRepo(db);
     this.c = clock;
     this.base = { t: this.repo.lastSeen() ?? clock.wall(), m: clock.mono() };
+  }
+
+  /**
+   * 지금 쓰는 값: 내장 값 ∧ 지금 받은 정책 ∧ 실행 시작 때 받은 정책(필드마다 더 엄격한 쪽). 검사 지점마다 다시 계산하므로
+   * 보수 쪽으로 움직인 필드는 다음 검사 지점부터, 완화는 다음 실행부터 적용된다(D03 §7.1). 정책이 없으면 내장 값이다.
+   */
+  get policy(): RatePolicy {
+    if (!this.received) return this.builtIn;
+    return stricterRate(stricterRate(this.builtIn, this.received()), this.pinned);
+  }
+
+  /** 실행 시작: 그때 받은 정책을 이 실행의 하한으로 둔다(실행 중 완화를 막는다). */
+  pinRun(): void {
+    this.pinned = this.received?.() ?? null;
+  }
+
+  /** 실행 끝. */
+  unpinRun(): void {
+    this.pinned = null;
   }
 
   /**
