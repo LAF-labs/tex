@@ -85,6 +85,14 @@ export const CARD_COMMANDS = ['card.setMemo', 'card.reattachMemo', 'card.deleteM
  */
 export const PAYROLL_EMPLOYEE_READ_QUERIES = ['db.query.payroll.carryOver', 'db.query.payroll.enabled'] as const;
 export const PAYROLL_EMPLOYEE_COMMANDS = ['payroll.addEmployee', 'payroll.updateEmployee', 'payroll.setEnabled'] as const;
+/**
+ * 세무사 꾸러미 PC 입력(08 D-05, D14 M6-2·M6-4). 처리는 @sax/bundle BundleService다. 금액·가게 이름·문서 id가 오가므로 main 전용이다.
+ * - db.query.cash.month {profileId, month}, cash.put {profileId, day, amount}(source pc), cash.remove {profileId, day}.
+ * - db.query.receipt.list {profileId, month}, receipt.confirm {profileId, docId, issuedOn, amount, merchant?, merchantBizNo?}: 사장님이 확인한 값만 대조·내보내기에 쓴다.
+ * - bundle.setEntry {profileId, itemId, month, status|null, docIds?, note?}: 해당 없음·파일 칸. 기간은 엔진이 항목 주기로 정한다.
+ */
+export const BUNDLE_PC_READ_QUERIES = ['db.query.cash.month', 'db.query.receipt.list'] as const;
+export const BUNDLE_PC_COMMANDS = ['cash.put', 'cash.remove', 'receipt.confirm', 'bundle.setEntry'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
