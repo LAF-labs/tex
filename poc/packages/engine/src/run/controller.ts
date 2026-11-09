@@ -192,6 +192,8 @@ const fail = (code: string): Outcome => ({ t: 'fail', code });
 
 /** 전이로 바뀌는 토큰 폐기 사유(D03 §3 R-G3). */
 const DISCARD_BY_STATE: Partial<Record<RunStateName, TokenDiscardTrigger>> = { Recovering: 'Recovering', WaitingHuman: 'WaitingHuman', HandedOff: 'HandedOff', Paused: 'Paused', Interrupted: 'Interrupted' };
+/** 정지 분기에서 미종결로 보는 원장 상태(core machine과 같은 집합). */
+const UNRESOLVED_LEDGER: ReadonlySet<LedgerState> = new Set(['armed', 'dispatched', 'observed_manual', 'in_doubt']);
 const RESTING: ReadonlySet<RunStateName> = new Set(['HandedOff', 'Paused', 'Interrupted', 'InDoubt']);
 
 /**
@@ -992,13 +994,24 @@ export class RunController {
 
   // ---------------- 전이·효과 ----------------
 
-  private ctx(): MachineCtx {
-    return { allowed: this.i.allowed?.() ?? true, ledger: this.i.ledgerStates(), hardStop: this.i.hardStop?.() ?? false };
+  /**
+   * 전이의 문맥. MachineCtx.ledger는 "이 전이가 기록하는 결과를 먼저 반영한 값"이다. 원장 쓰기는 전이 뒤의 효과(ledger.*)라,
+   * verify·InDoubt 해소 결과(committed·not_committed) 전이에서는 그 X의 미종결 행을 결과로 바꿔 넘긴다. 그러지 않으면 커밋 구간에서 미룬
+   * 정지 하향이 verify committed 뒤에도 InDoubt로 간다(ADR-023 결정 6: committed → CompletedWithIssues).
+   */
+  private ctx(ev?: RunEvent): MachineCtx {
+    let ledger = this.i.ledgerStates();
+    const result = ev?.t === 'verify' || ev?.t === 'indoubt_resolved' ? ev.result : 'unknown';
+    if (result !== 'unknown') {
+      const x = ledger.findIndex((s) => UNRESOLVED_LEDGER.has(s));
+      if (x >= 0) ledger = ledger.map((s, j) => (j === x ? result : s));
+    }
+    return { allowed: this.i.allowed?.() ?? true, ledger, hardStop: this.i.hardStop?.() ?? false };
   }
 
   /** 전이 하나. 불법이면 기록하고 false(상태는 그대로). */
   private fire(ev: RunEvent, at: string | null, code: string | null): boolean {
-    const t = transition(this.st, ev, this.ctx());
+    const t = transition(this.st, ev, this.ctx(ev));
     if (!t.ok) {
       this.i.journal('engine.illegal_transition', { from: this.st.name, event: ev.t });
       return false;
