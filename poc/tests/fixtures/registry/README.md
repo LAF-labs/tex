@@ -12,4 +12,4 @@
   - `registry/status.json`(policy-1·2, monotonic 10)과 그 위의 `registry/status-emergency.json`(emergency-1 한 개, monotonic 11, hometax 하향·킬 추가).
   - `registry/revoked_keys.json`: root-1·2 + timestamp-1. 핀에 없는 `package-0` 하나만 폐기한다.
 - 엔진 확인: `poc/tests/core-registry-samples.test.ts`(파일 = 생성 결과 바이트 비교, 로더·데이터 로더(급여 `validatePackage`)·정책·status·폐기 목록 수용).
-- 다시 만들기(생성기 `poc/tests/registry-samples.ts`): `cd poc && SAX_WRITE_REGISTRY_SAMPLES=1 node --test --conditions=development tests/core-registry-samples.test.ts`. 골든 픽스처(`tests/fixtures/core`)가 바뀌면 다시 만들어야 한다.
+- 다시 만들기(생성기 `poc/tests/registry-samples.ts`): `cd poc && SAX_WRITE_REGISTRY_SAMPLES=1 node --test --conditions=development tests/core-registry-samples.test.ts`. 제품 H-01 원본(`packages/engine/playbooks`)이 바뀌면 다시 만들어야 한다.

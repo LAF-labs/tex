@@ -1,19 +1,19 @@
-// tests/fixtures/core의 골든 패키지(H-01 v2.1 + 조회 패키지 2개)를 읽는 도우미. 반례는 이것을 복제해 한 군데만 바꾼다.
+// 제품 H-01 원본(packages/engine/playbooks: H-01 v2.1 + 조회 패키지 2개, 서명 전)을 읽는 도우미. 반례는 이것을 복제해 한 군데만 바꾼다.
 import { generateKeyPairSync, sign as edSign, type KeyObject } from 'node:crypto';
 import fs from 'node:fs';
 import { BundleCatalog } from '@sax/model';
 import { canonicalWithout, contentBytes, manifestDigest, sha256Hex, timestampBody, type BundleOutcomes, type PackageFiles, type RawPackage, type TrustRoots } from '@sax/engine/core';
 
-const DIR = new URL('./fixtures/core/', import.meta.url);
+const DIR = new URL('../packages/engine/playbooks/', import.meta.url);
 const read = (p: string) => JSON.parse(fs.readFileSync(new URL(p, DIR), 'utf8')) as never;
 
 export function loadPkg(dir: string): PackageFiles {
   return { manifest: read(`${dir}/manifest.json`), playbook: read(`${dir}/playbook.json`), selectors: read(`${dir}/selectors.json`), strings: read(`${dir}/strings.ko.json`) };
 }
 
-export const h01 = (): PackageFiles => structuredClone(loadPkg('h01'));
+export const h01 = (): PackageFiles => structuredClone(loadPkg('hometax.invoice.issue'));
 export const lookups = (): Map<string, PackageFiles> =>
-  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, structuredClone(loadPkg(`lookups/${id}`))]));
+  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, structuredClone(loadPkg(id))]));
 
 export function bundleOutcomes(): Map<string, BundleOutcomes> {
   return new Map(BundleCatalog.load().list().map((b) => [b.wireId, { outcomes: b.def.outcomes.map((o) => o.name), reserved: b.def.reservedOutcomes }]));

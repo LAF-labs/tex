@@ -390,7 +390,7 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     const def = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: async () => (opened++, page!), postGate: () => {} });
     assert.throws(() => def.start({ runId: `run-${++n}`, counterpartyId: cpC, supply: 150_000, tax: 15_000, itemName: '경영 컨설팅' }), (e: Error & { code?: string }) => e.code === 'package.not_loaded');
     assert.equal(opened, 0);
-    const entry = (await fs.readFile(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8')).match(/new RunService\(\{[^\n]*\}\)/g) ?? [];
+    const entry = (await fs.readFile(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8')).match(/new RunService\(\{[\s\S]*?\}\)/g) ?? [];
     assert.equal(entry.length, 1);
     assert.match(entry[0]!, /engine: 'h01'/);
   });
