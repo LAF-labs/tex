@@ -133,9 +133,10 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     // 정해지기 전에 IR로 바꾸면 앱 H-01 실행이 모두 package.not_loaded가 된다. PR-D2가 이 줄을 IR로 바꾸고 H01Runner를 시험 전용으로 옮긴다.
     runs = new RunService({
       db, data, ledgerKey, portal, engine: 'h01', page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
-      // 서버 긴급 정지(팀장 결정 2026-11-09 ④): 레지스트리 status의 killPlaybooks·portalModeCeiling(D03 §3.1·§12). fixture 포털도 홈택스 상한을 따른다.
-      // 핀이 없으면(status를 받을 수 없음) 내장 상한만 본다. 정책 수준·만료(fail-closed)는 정책 동기화와 함께 붙인다(D03 §7.1).
-      permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id),
+      // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
+      // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
+      // fixture 개발 포털은 status 상한·kill만 따르고 정책은 보지 않는다(실제 포털 접속이 없다).
+      permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id, portal.kind === 'hometax' ? (registry?.policy() ?? { freshness: 'none', policy: null }) : undefined),
       closeBrowser: () => slot.close(),
       // 요청률은 받은 서명 정책과 내장 값 중 더 엄격한 쪽만(팀장 결정 2026-11-09 ③, D03 §7). 정책이 없으면 내장 값.
       receivedPolicy: () => registry?.policy().policy ?? null,
