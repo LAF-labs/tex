@@ -17,7 +17,7 @@ import { RESIGN_TTL, buildRegistryDeploy, logSigningKey, registryRouter, resignA
 import { main as ceremony, type CliDeps } from '../services/registry/src/ceremony/cli.ts';
 import { signingBytes } from '../services/registry/src/ceremony/content.ts';
 import { main as publish, nodeFs, type PublishCliDeps } from '../services/registry/src/publish/cli.ts';
-import { appBundles, httpRegistry, shq } from '../services/registry/src/publish/pipeline.ts';
+import { appBundles, httpRegistry, shq, type RegistryClient } from '../services/registry/src/publish/pipeline.ts';
 import { MemorySigner } from '../services/registry/src/publish/rehearsal.ts';
 import { SAMPLE_SEEDS } from './registry-samples.ts';
 
@@ -492,6 +492,103 @@ describe('H-01 게시 도구: push 중간 실패 뒤 같은 폴더로 다시', (
       assert.equal(rec.published.length, 6);
       // 첫 시도: 폐기 목록 0, status 1, 패키지 2·3·4. 다시: 폐기 목록·status 재도장 5·6, 패키지는 앞선 항목, 인덱스 7
       assert.deepEqual(rec.published.map((x) => x.logIndex), [5, 6, 2, 3, 4, 7]);
+    } finally {
+      await prod.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Vercel CDN 대역: 조회 주기 파일(head·status·폐기 목록·정책·인덱스, max-age=60)을 가상 시계로 60초 캐시한다(404도). frozenHead면 head는 끝까지 처음 것 */
+function cdnRegistry(origin: string, clock: { t: number }, o: { frozenHead?: boolean } = {}): RegistryClient {
+  const c = httpRegistry(origin);
+  const cache = new Map<string, { at: number; body: Buffer | null }>();
+  const polled = (p: string) => p === '/registry/log/head.json' || p === '/registry/status.json' || p === '/registry/revoked_keys.json' || /^\/registry\/[a-z]+\/index\.json$/.test(p) || p.startsWith('/policy/');
+  return {
+    ...c,
+    origin: c.origin,
+    async get(p) {
+      if (!polled(p)) return c.get(p);
+      const hit = cache.get(p);
+      if (hit && (clock.t - hit.at < 60_000 || (o.frozenHead && p === '/registry/log/head.json'))) return hit.body;
+      const body = await c.get(p);
+      cache.set(p, { at: clock.t, body });
+      return body;
+    },
+  };
+}
+
+describe('H-01 게시 도구: 공개 GET이 CDN 캐시일 때(운영 2026-11-09 18:18 publish.log_invalid)', () => {
+  const setup = async (prod: Awaited<ReturnType<typeof localProd>>, dir: string) => {
+    const work = path.join(dir, 'w');
+    const revokedFile = path.join(dir, 'revoked.json');
+    fs.writeFileSync(revokedFile, JSON.stringify(rootSignedRevoked()));
+    const p: string[] = [];
+    assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', work, '--revoked', revokedFile, '--policy', POLICY_PATH, '--ceiling', 'hometax=auto', ...SOURCES], cliDeps(p)), 0);
+    await runPrinted(p);
+    const a: string[] = [];
+    assert.equal(await publish(['assemble', '--trust', TRUST_PATH, '--work', work], cliDeps(a)), 0);
+    await runPrinted(a);
+    return work;
+  };
+  const viaCdn = (clock: { t: number }, sleeps: number[], o: { frozenHead?: boolean } = {}): PublishCliDeps => ({
+    ...cliDeps([]),
+    registry: (origin) => cdnRegistry(origin, clock, o),
+    settle: { sleep: async (ms) => void (sleeps.push(ms), (clock.t += ms)) },
+  });
+  type Rec = { published: Array<{ path: string; logIndex: number }>; logHead: { before: number | null; after: number } };
+
+  it('push는 head·되읽기가 옛 캐시면 다시 읽어(최대 약 90초) 끝까지 간다', async () => {
+    const prod = await localProd();
+    const dir = tmp();
+    try {
+      const work = await setup(prod, dir);
+      const clock = { t: 0 };
+      const sleeps: number[] = [];
+      const deps = viaCdn(clock, sleeps);
+      // push가 시작할 때 읽은 head(treeSize 0)·404가 캐시에 남는다
+      assert.equal(await publish(['push', '--trust', TRUST_PATH, '--work', work], deps), 0);
+      const rec = JSON.parse(read(path.join(work, 'record.json'))) as Rec;
+      assert.equal(rec.published.length, 8);
+      assert.deepEqual(rec.logHead, { ...rec.logHead, before: 0, after: 8 });
+      assert.ok(sleeps.length > 0 && sleeps.length <= 18, `다시 읽기 ${sleeps.length}번`);
+      assert.ok(clock.t >= 60_000 && clock.t <= 90_000, `기다린 시간 ${clock.t}ms`);
+    } finally {
+      await prod.close();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('head가 끝까지 안 바뀌면 log_invalid. 그 폴더로 verify(PUT 없음)가 record.json을 쓴다', async () => {
+    const prod = await localProd();
+    const dir = tmp();
+    try {
+      const work = await setup(prod, dir);
+      const sleeps: number[] = [];
+      await assert.rejects(publish(['push', '--trust', TRUST_PATH, '--work', work], viaCdn({ t: 0 }, sleeps, { frozenHead: true })), /publish\.log_invalid: registry\/revoked_keys\.json 항목 없음/);
+      assert.equal(sleeps.length, 18, '90초(5초 × 18) 기다린 뒤 멈춘다');
+      assert.ok(!fs.existsSync(path.join(work, 'record.json')));
+      assert.ok(fs.existsSync(path.join(work, 'push-started.json')));
+
+      const puts = prod.s3.counts.put;
+      const logSize = (await prod.built.log.head()).treeSize;
+      const v: string[] = [];
+      assert.equal(await publish(['verify', '--trust', TRUST_PATH, '--work', work], cliDeps(v)), 0);
+      assert.equal(prod.s3.counts.put, puts, 'verify는 PUT하지 않는다');
+      assert.equal((await prod.built.log.head()).treeSize, logSize);
+      const rec = JSON.parse(read(path.join(work, 'record.json'))) as Rec;
+      assert.deepEqual(rec.published.map((x) => x.logIndex), [0, 1, 2, 3, 4, 5, 6, 7]);
+      assert.deepEqual(rec.logHead, { ...rec.logHead, before: 0, after: 8 });
+      assert.ok(v.some((l) => l.startsWith('되읽기·로그 확인: 8건, 로그 크기 0 → 8')), v.join('\n'));
+      await assert.rejects(publish(['verify', '--trust', TRUST_PATH, '--work', work], cliDeps([])), /publish\.work_exists/);
+
+      // push-started.json이 없는 폴더(이 수정 전 push, 운영 h01-1): 일관성 증명만 건너뛰고 항목·포함 증명은 본다
+      fs.rmSync(path.join(work, 'record.json'));
+      fs.rmSync(path.join(work, 'push-started.json'));
+      const v2: string[] = [];
+      assert.equal(await publish(['verify', '--trust', TRUST_PATH, '--work', work], cliDeps(v2)), 0);
+      assert.ok(v2.some((l) => l.includes('push-started.json 없음')), v2.join('\n'));
+      assert.equal((JSON.parse(read(path.join(work, 'record.json'))) as Rec).logHead.before, null);
     } finally {
       await prod.close();
       fs.rmSync(dir, { recursive: true, force: true });

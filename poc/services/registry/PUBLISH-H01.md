@@ -156,6 +156,14 @@ node --conditions=development services/registry/src/publish/cli.ts push --trust 
   - `기록 …/record.json`
 - 되읽기: 공개 경로가 올린 바이트와 같은지 본다. 폐기 목록·정책·status·인덱스는 서명한 내용이 그대로인지와, 서버가 붙인 타임스탬프까지 핀 키로 검증한다. `policy/2026.11.json`과 `policy/current.json`은 같은 바이트여야 한다.
 - 투명성 로그: 새 헤드(timestamp-1 서명), 이전 헤드와의 일관성, 올린 경로마다 항목과 포함 증명을 본다.
+- 공개 GET(head·status·인덱스·정책)은 CDN이 60초까지 캐시한다. 옛 판이 보이면 5초마다 다시 읽고, 모두 합쳐 90초까지 기다린다. 그래서 마지막 줄까지 1분쯤 걸릴 수 있다.
+- **push가 `publish.log_invalid`·`publish.readback_failed`로 끝나면, 1~2분 뒤 같은 폴더로 `verify`를 돌린다.** 다시 올리지 않는다(PUT 없음). 확인이 통과하면 `record.json`을 쓴다.
+
+  ```bash
+  node --conditions=development services/registry/src/publish/cli.ts verify --trust services/registry/ceremony/keyepoch-1/trust-root.json --work ~/sax-publish/h01-1
+  ```
+
+  - `push-started.json`(push가 첫 PUT 직전에 남기는 이전 헤드)이 없는 폴더라면, 이전 헤드와의 일관성 증명만 건너뛴다. 이 수정 전에 push한 폴더(2026-11-09 18:18 `h01-1`)가 그렇다. `record.json`의 `logHead.before`는 `null`이다.
 
 ## 7. 기록
 
@@ -191,5 +199,5 @@ node --conditions=development services/registry/src/publish/cli.ts push --trust 
 | `publish.trust_changed` | 핀 파일이 준비 때와 다르다 | 같은 `--trust`를 쓴다 |
 | `registry.unauthorized` | 토큰이 틀렸다 | 아무것도 올라가지 않았다. 토큰을 다시 넣는다 |
 | `registry.schema_invalid`(폐기 목록·정책·status에서)·`registry.timestamp_invalid`(인덱스에서) | 운영이 첫 게시 도장·ADR-043 전 판이다 | 팀장에게 배포를 확인한다 |
-| `publish.readback_failed`·`publish.log_invalid` | 올린 것과 공개된 것이 다르거나 로그 증명이 맞지 않는다 | **멈추고 바로 팀장에게.** 다시 올리지 않는다 |
+| `publish.readback_failed`·`publish.log_invalid` | 90초를 기다려도 공개된 것이 올린 것과 다르거나 로그 증명이 맞지 않는다(CDN 캐시가 더 오래 남았을 수 있다) | 다시 올리지 않는다. 1~2분 뒤 같은 폴더로 `verify`(6단계). 그래도 같으면 **멈추고 바로 팀장에게** |
 | 6단계 중간에 네트워크 오류 | 일부만 올라갔다 | 같은 폴더로 push를 다시 한다. 폐기 목록·정책·status·패키지는 같은 내용이면 다시 받는다. 인덱스가 이미 올라갔으면 `publish.index_changed`가 나온다. 그때는 공개 경로로 확인하고 팀장에게 알린다 |
