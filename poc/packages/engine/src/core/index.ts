@@ -9,6 +9,7 @@ export * from './selector-ci.ts';
 export * from './hotfix.ts';
 export * from './canon.ts';
 export * from './policy.ts';
+export * from './permit.ts';
 export * from './registry.ts';
 export * from './loader.ts';
 export * from './sxp.ts';
