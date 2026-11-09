@@ -134,6 +134,7 @@ async function withPassword(e: Env, email: string, pw = GOOD): Promise<string> {
   const { session } = await codeLogin(e, email);
   const r = await e.req('PUT', '/v1/password', { headers: bearer(session), body: { password: pw } });
   assert.equal(r.status, 204, r.text);
+  await e.flush(); // 설정 알림(password_set)은 발송 큐로 간다
   return session;
 }
 
@@ -270,15 +271,15 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     assert.ok(!JSON.stringify(row).includes(GOOD));
     assert.match(String(row.params), /^a2id-v1:m65536:t3:p1:kk1$/);
     // 정책은 서버가 판정
-    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: 'short' } })).json.error, 'account.password_too_short');
-    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: '1234567890' } })).json.error, 'account.password_breached');
-    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: 'xx pw@example.com yy' } })).json.error, 'account.password_contains_identity');
+    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: 'short', currentPassword: GOOD } })).json.error, 'account.password_too_short');
+    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: '1234567890', currentPassword: GOOD } })).json.error, 'account.password_breached');
+    assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: 'xx pw@example.com yy', currentPassword: GOOD } })).json.error, 'account.password_contains_identity');
     assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(s), body: { password: GOOD, extra: 1 } })).status, 400);
     assert.equal((await e.req('PUT', '/v1/password', { body: { password: GOOD } })).json.error, 'account.unauthorized');
     for (const l of e.logs) assert.ok(!looksSensitive(l) && !l.includes(GOOD), l);
   });
 
-  it('설정·삭제는 10분 안의 코드·패스키·비밀번호 로그인만. 갱신 세션과 루프백 교환으로는 최근 로그인을 새로 만들지 못한다', async () => {
+  it('만들기·삭제는 10분 안의 코드·패스키·비밀번호 로그인만. 갱신 세션과 루프백 교환으로는 최근 로그인을 새로 만들지 못한다', async () => {
     const { session, refreshToken } = await codeLogin(e, 'reauth@example.com', true);
     e.clock.advance(PASSWORD.reauthMaxAgeMs + 1);
     assert.equal((await e.req('PUT', '/v1/password', { headers: bearer(session), body: { password: GOOD } })).json.error, 'account.reauth_required');
@@ -486,6 +487,163 @@ describe('ADR-038 비밀번호 로그인', { skip: !argon2Available() }, () => {
     } finally {
       e2.server.close();
     }
+  });
+});
+
+describe('계정 설정 비밀번호 재인증(사용자 확정 2026-11-09, ADR-038)', { skip: !argon2Available() }, () => {
+  let e: Env;
+  beforeEach(async () => (e = await start()));
+  afterEach(() => e.server.close());
+
+  const put = (session: string, body: Record<string, unknown>) => e.req('PUT', '/v1/password', { headers: bearer(session), body });
+  const me = async (session: string) => (await e.req('GET', '/v1/me', { headers: bearer(session) })).json as { hasPassword: boolean; reauthUntil: number | null; authMethod: string };
+  const reauth = async (session: string, email: string) => {
+    const r = await e.req('POST', '/v1/auth/reauth', { headers: bearer(session) });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.expiresInSec, 600);
+    return { reauthId: r.json.reauthId as string, code: e.mail.lastReauthCode(email)! };
+  };
+
+  it('만들기: 10분 지난 세션·갱신 세션은 reauth_required → 이메일 코드 재인증으로 이 세션의 auth_at 갱신 → 만들기 허용, 새 세션은 없다', async () => {
+    const { session, refreshToken } = await codeLogin(e, 'mk@example.com', true);
+    assert.equal((await me(session)).hasPassword, false);
+    e.clock.advance(PASSWORD.reauthMaxAgeMs + 1);
+    assert.equal((await put(session, { password: GOOD })).json.error, 'account.reauth_required');
+    const before = (await e.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM sessions'))!.n;
+    const { reauthId, code: c } = await reauth(session, 'mk@example.com');
+    assert.match(c, /^\d{6}$/);
+    assert.ok(!e.mail.outbox.some((m) => m.kind === 'code' && m.code === c), '로그인 코드 메일이 아니다');
+    // 틀린 코드 → code_invalid, 맞으면 200 + 이 세션이 최근 인증
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(session), body: { reauthId, code: c === '000000' ? '000001' : '000000' } })).json.error, 'account.code_invalid');
+    const v = await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(session), body: { reauthId, code: c } });
+    assert.equal(v.status, 200, v.text);
+    assert.equal(v.json.authAt, e.clock.now());
+    assert.equal(v.json.reauthMaxAgeSec, 600);
+    assert.equal((await e.db.one<{ n: number }>('SELECT COUNT(*) AS n FROM sessions'))!.n, before, '새 세션 없음');
+    assert.equal((await me(session)).reauthUntil, e.clock.now() + PASSWORD.reauthMaxAgeMs);
+    // 코드는 한 번만
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(session), body: { reauthId, code: c } })).json.error, 'account.code_invalid');
+    assert.equal((await put(session, { password: GOOD })).status, 204);
+    await e.flush();
+    assert.ok(e.mail.outbox.some((m) => m.to === 'mk@example.com' && m.kind === 'password_set'), '알림은 큐로 보낸다');
+    assert.equal((await me(session)).hasPassword, true);
+    // 갱신 세션은 auth_at이 지금이어도 최근 인증이 아니다 → 재인증하면 된다(방식이 email_code로 바뀐다)
+    await e.req('DELETE', '/v1/password', { headers: bearer(session) });
+    const rf = await e.req('POST', '/v1/auth/refresh', { body: { refreshToken } });
+    const rs = rf.json.session as string;
+    assert.equal((await me(rs)).reauthUntil, null);
+    assert.equal((await put(rs, { password: GOOD })).json.error, 'account.reauth_required');
+    const r2 = await reauth(rs, 'mk@example.com');
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(rs), body: r2 })).status, 200);
+    assert.equal((await me(rs)).authMethod, 'email_code');
+    assert.equal((await put(rs, { password: GOOD })).status, 204);
+    for (const l of e.logs) assert.ok(!looksSensitive(l) && !l.includes(GOOD), l);
+  });
+
+  it('재인증 코드는 요청한 세션에만 결속: 다른 세션·로그인 검증으로는 쓸 수 없고, 5회 틀리면 폐기, 10분 만료, 세션 없이는 401', async () => {
+    const a = (await codeLogin(e, 'rb@example.com')).session;
+    const b = (await codeLogin(e, 'rb@example.com')).session;
+    const r = await reauth(a, 'rb@example.com');
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(b), body: r })).json.error, 'account.code_invalid', '같은 계정 다른 세션');
+    const other = (await codeLogin(e, 'rb2@example.com')).session;
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(other), body: r })).json.error, 'account.code_invalid', '다른 계정');
+    assert.equal((await e.req('POST', '/v1/auth/code/verify', { body: { loginId: r.reauthId, code: r.code } })).json.error, 'account.code_invalid', '로그인 검증');
+    // 위 시도들이 시도 횟수를 쌓았다(다른 세션 1 + 로그인 검증 1). 남은 시도 안에서는 원래 세션이 아직 쓸 수 있다
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: r })).status, 200);
+    // 5회 틀리면 폐기
+    const r3 = await reauth(a, 'rb@example.com');
+    const wrong = r3.code === '111111' ? '222222' : '111111';
+    for (let i = 0; i < 4; i++) assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: { reauthId: r3.reauthId, code: wrong } })).json.error, 'account.code_invalid');
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: { reauthId: r3.reauthId, code: wrong } })).json.error, 'account.code_locked');
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: r3 })).json.error, 'account.code_invalid');
+    // 만료
+    const r4 = await reauth(a, 'rb@example.com');
+    e.clock.advance(ACCOUNT.loginCodeTtlMs + 1);
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: r4 })).json.error, 'account.code_invalid');
+    // 보내기 한도는 로그인 코드와 같은 이메일 묶음(로그인 2 + 재인증 3 = 5회/시)
+    assert.equal((await e.req('POST', '/v1/auth/reauth', { headers: bearer(a) })).json.error, 'policy.rate_limited');
+    assert.equal((await e.req('POST', '/v1/auth/code', { body: { email: 'rb@example.com' } })).json.error, 'policy.rate_limited');
+    assert.equal((await e.req('POST', '/v1/auth/reauth')).json.error, 'account.unauthorized');
+    assert.equal((await e.req('POST', '/v1/auth/reauth/verify', { headers: bearer(a), body: { ...r4, extra: 1 } })).status, 400);
+  });
+
+  it('바꾸기: 현재 비밀번호 필수(없으면 400, 잠금 횟수에 안 듦), 틀리면 403·하한·로그인과 같은 5회 잠금, 잠금 중에는 맞아도 실패', async () => {
+    const s = await withPassword(e, 'ch@example.com');
+    e.clock.advance(PASSWORD.reauthMaxAgeMs + 1); // 바꾸기는 최근 인증을 따로 보지 않는다(현재 비밀번호가 재인증)
+    assert.equal((await put(s, { password: GOOD2 })).json.error, 'account.current_password_required');
+    assert.equal(await e.db.one('SELECT 1 AS x FROM pw_locks'), undefined, '필수 누락은 실패로 세지 않는다');
+    const t0 = performance.now();
+    const w = await put(s, { password: GOOD2, currentPassword: 'wrong wrong 1' });
+    assert.equal(w.status, 403);
+    assert.equal(w.json.error, 'account.current_password_invalid');
+    assert.ok(performance.now() - t0 >= PASSWORD.responseFloorMs - 5, '응답 시각 하한');
+    // 로그인 실패와 같은 카운터: 로그인 3번 + 바꾸기 1번 더 = 5번째에서 잠금
+    for (let i = 0; i < 3; i++) await code(e.svc.passwordLogin('ch@example.com', 'nope nope ' + i));
+    assert.equal((await put(s, { password: GOOD2, currentPassword: 'wrong wrong 2' })).json.error, 'account.current_password_invalid');
+    const lock = (await e.db.one<{ locked_until: number | null }>('SELECT locked_until FROM pw_locks'))!;
+    assert.equal(Number(lock.locked_until), e.clock.now() + PASSWORD.lockBaseMs);
+    assert.ok(e.events.includes('account.password_locked'));
+    assert.equal((await e.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM notice_outbox WHERE kind = 'password_locked'"))!.n, 1);
+    // 잠금 중: 맞아도 같은 실패, 로그인도 잠겨 있다
+    assert.equal((await put(s, { password: GOOD2, currentPassword: GOOD })).json.error, 'account.current_password_invalid');
+    assert.equal(await code(e.svc.passwordLogin('ch@example.com', GOOD)), 'account.credentials_invalid');
+    // 정책 오류도 같은 하한(현재 비밀번호를 대조하기 전에 거른다)
+    const t1 = performance.now();
+    assert.equal((await put(s, { password: 'short', currentPassword: GOOD })).json.error, 'account.password_too_short');
+    assert.ok(performance.now() - t1 >= PASSWORD.responseFloorMs - 5);
+    // 잠금이 풀리면 맞는 현재 비밀번호로 바꾼다
+    e.clock.advance(PASSWORD.lockBaseMs);
+    assert.equal((await put(s, { password: GOOD2, currentPassword: GOOD })).status, 200);
+    assert.equal(await e.db.one('SELECT 1 AS x FROM pw_locks'), undefined, '바꾸면 잠금 행도 지운다');
+    assert.equal(await code(e.svc.passwordLogin('ch@example.com', GOOD)), 'account.credentials_invalid');
+    assert.ok((await e.svc.passwordLogin('ch@example.com', GOOD2)).session);
+  });
+
+  it('바꾼 뒤: 이 세션만 남고 그 계정의 옛 갱신 토큰 계보는 모두 폐기, 이 기기에는 새 계보의 갱신 토큰(password)을 준다, 다른 계정은 그대로, 알림은 큐', async () => {
+    const s = await withPassword(e, 'rv@example.com');
+    const other = await codeLogin(e, 'rv@example.com', true);
+    const mine = await e.svc.issueRefresh((await e.db.one<{ id: string }>("SELECT id FROM accounts WHERE email = 'rv@example.com'"))!.id, 'email_code');
+    const stranger = await codeLogin(e, 'st@example.com', true);
+    e.mail.outbox.length = 0;
+    const families = (await e.db.all<{ family_id: string }>('SELECT family_id FROM refresh_tokens')).map((r) => r.family_id);
+    const ch = await put(s, { password: GOOD2, currentPassword: GOOD });
+    assert.equal(ch.status, 200, ch.text);
+    assert.match(ch.json.refreshToken as string, /^sxa1\.[A-Za-z0-9_-]{43}$/);
+    assert.equal(ch.json.refreshExpiresInSec, ACCOUNT.refreshTtlMs / 1000);
+    assert.deepEqual(Object.keys(ch.json).sort(), ['refreshExpiresInSec', 'refreshToken']);
+    // 새 계보 하나(처음 토큰, auth_method password)만 이 계정에 남는다
+    const acc = (await e.db.one<{ id: string }>("SELECT id FROM accounts WHERE email = 'rv@example.com'"))!.id;
+    const rows = await e.db.all<{ family_id: string; parent_hash: string | null; auth_method: string; token_hash: string }>('SELECT family_id, parent_hash, auth_method, token_hash FROM refresh_tokens WHERE account_id = $1', [acc]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.auth_method, 'password');
+    assert.equal(rows[0]!.parent_hash, null);
+    assert.ok(!families.includes(rows[0]!.family_id), '새 계보');
+    assert.ok(!JSON.stringify(rows).includes(ch.json.refreshToken as string), '평문 없음');
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).status, 200, '이 세션은 남는다');
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(other.session) })).status, 401, '다른 세션 폐기');
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: other.refreshToken } })).status, 401, '다른 기기 갱신 토큰 폐기');
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: mine } })).status, 401, '이 기기의 옛 계보도 폐기');
+    // 이 기기만 새 토큰으로 갱신된다. 다른 기기가 옛 토큰을 다시 내도(재사용 감지 대상 아님: 행이 없다) 새 계보는 살아 있다
+    const r1 = await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: ch.json.refreshToken } });
+    assert.equal(r1.status, 200, r1.text);
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: other.refreshToken } })).status, 401);
+    const r2 = await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: r1.json.refreshToken } });
+    assert.equal(r2.status, 200, '회전한 새 토큰으로 계속 갱신');
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(r2.json.session as string) })).status, 200);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(stranger.session) })).status, 200, '다른 계정은 그대로');
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: stranger.refreshToken } })).status, 200);
+    // 알림: 응답 경로에서 보내지 않고 큐에 넣는다 → 즉시 시도(defer)에서 나간다
+    assert.ok(!e.mail.outbox.some((m) => m.kind === 'password_set'), '응답 전에는 보내지 않았다');
+    await e.flush();
+    assert.deepEqual(e.mail.outbox.filter((m) => m.kind === 'password_set').map((m) => m.to), ['rv@example.com']);
+    assert.ok(e.events.includes('account.password_changed'));
+    // 만들기(처음)는 다른 세션을 건드리지 않는다
+    const fresh = await codeLogin(e, 'mk2@example.com');
+    const second = await codeLogin(e, 'mk2@example.com');
+    const mk = await put(fresh.session, { password: GOOD });
+    assert.equal(mk.status, 204, '만들기는 갱신 토큰을 주지 않는다');
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(second.session) })).status, 200);
+    for (const l of e.logs) assert.ok(!looksSensitive(l) && !l.includes(GOOD) && !l.includes(GOOD2), l);
   });
 });
 

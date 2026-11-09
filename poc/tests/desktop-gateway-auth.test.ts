@@ -9,7 +9,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { GATEWAY_ORIGIN, GATEWAY_PATHS, type Egress } from '@sax/net';
 import { b64, certNotAfter, initialDeviceList, issueCert, uuid4, type DesktopKeys, type DeviceToken, type DpopSigner, type SignedCert } from '@sax/remote';
-import { GATEWAY_AUTH_HTU, GatewayAuthHost, GW_INVALIDATE_PER_MIN, type GatewayDevice, type GwAuthResult } from '../apps/desktop/src/gateway-auth.ts';
+import { authPortResponder, GATEWAY_AUTH_HTU, GatewayAuthHost, GW_INVALIDATE_PER_MIN, type GatewayDevice, type GwAuthResult } from '../apps/desktop/src/gateway-auth.ts';
 import { DeviceSession, GATEWAY_SCOPES, RemoteIdentityFile, type RemoteIdentity } from '../apps/desktop/src/remote-account.ts';
 import { cloudPorts } from '../apps/desktop/src/remote-cloud.ts';
 import type { AccountClient } from '../apps/desktop/src/remote-ports.ts';
@@ -238,11 +238,72 @@ describe('엔진 auth 포트 배선(소스)', () => {
 
   it('엔진 init 포트 순서는 [중계, 게이트, auth]. 답하는 쪽이 붙기 전에는 account.signed_out', () => {
     assert.ok(host.includes('this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);'));
-    assert.ok(/this\.gatewayAuth \? await this\.gatewayAuth\(m\) : id === null \? null : \{ t: 'gw\.auth\.result', id, code: 'account\.signed_out' \}/.test(host));
+    assert.ok(/r = h \? await h\(m\) : id === null \? null : \{ t: 'gw\.auth\.result', id, code: 'account\.signed_out' \}/.test(gw));
+    // EngineHost는 auth 포트를 authPortResponder(받은 순서대로 하나씩)로만 처리한다.
+    assert.ok(host.includes('const onAuth = authPortResponder(') && host.includes("this.authPort.on('message', (e) => void onAuth(e.data));"));
+    assert.ok(!host.includes('private async onAuth('));
   });
 
   it('shell-app은 GatewayAuthHost(계정 기기 세션)를 붙인다. 이 모듈은 금고·키·전체 범위 auth를 쓰지 않는다', () => {
     assert.ok(app.includes('new GatewayAuthHost({') && app.includes('host.setGatewayAuth((m) => gwAuth.handle(m));'));
     assert.ok(!/@sax\/vault|\.auth\(|\bkeys\(|DesktopKeys|signVd|clearToken\(\)/.test(gw.replace(/^\s*(\/\/|\*|\/\*\*).*$/gm, '')));
+  });
+});
+
+describe('auth 포트 순서(엔진 #216 시험에서 찾은 경합)', () => {
+  const HTU = GATEWAY_ORIGIN + GATEWAY_PATHS.decide;
+  /** 실제 GatewayAuthHost + 캐시를 지우면 새 토큰을 주는 기기. slow번째 device() 호출(invalidate 쪽)만 계정 읽기가 늦다. */
+  function realHost(slow: number) {
+    let gen = 0;
+    let calls = 0;
+    const device: GatewayDevice = {
+      gatewayAuth: async () => ({ Authorization: `DPoP tok-${gen}`, DPoP: 'proof' }),
+      clearGatewayToken: () => void gen++,
+    };
+    return new GatewayAuthHost({ device: async () => (await new Promise((r) => setTimeout(r, calls++ === slow ? 20 : 0)), device) });
+  }
+  const auth = (r: GwAuthResult | undefined) => (r && 'headers' in r ? r.headers.authorization : r?.code);
+
+  it('(대조) 동시에 처리하면 invalidate 직후 재시도가 지우기 전의 옛 토큰을 받는다', async () => {
+    const host = realHost(0);
+    const [, retry] = await Promise.all([host.handle({ t: 'gw.auth.invalidate' }), host.handle({ t: 'gw.auth', id: 2, htm: 'POST', htu: HTU })]);
+    assert.equal(auth(retry ?? undefined), 'DPoP tok-0');
+  });
+
+  it('authPortResponder(EngineHost가 쓰는 것)는 받은 순서대로: 401 → invalidate → 재시도가 새 토큰을 받는다', async () => {
+    const host = realHost(1);
+    const out: GwAuthResult[] = [];
+    const onAuth = authPortResponder(() => (m) => host.handle(m), (r) => out.push(r));
+    void onAuth({ t: 'gw.auth', id: 1, htm: 'POST', htu: HTU });
+    void onAuth({ t: 'gw.auth.invalidate' });
+    await onAuth({ t: 'gw.auth', id: 2, htm: 'POST', htu: HTU });
+    assert.deepEqual(out.map((r) => [r.id, auth(r)]), [[1, 'DPoP tok-0'], [2, 'DPoP tok-1']]);
+  });
+
+  it('답이 늦은 요청 뒤의 요청도 순서를 지키고, 던지면 auth.unavailable로 답하고 다음 것을 계속 처리한다', async () => {
+    const out: GwAuthResult[] = [];
+    let n = 0;
+    const onAuth = authPortResponder(
+      () => async (m) => {
+        const id = (m as { id: number }).id;
+        if (n++ === 0) await new Promise((r) => setTimeout(r, 20));
+        if (id === 2) throw new Error('x');
+        return { t: 'gw.auth.result', id, code: 'auth.denied' };
+      },
+      (r) => out.push(r),
+    );
+    void onAuth({ t: 'gw.auth', id: 1, htm: 'POST', htu: HTU });
+    void onAuth({ t: 'gw.auth', id: 2, htm: 'POST', htu: HTU });
+    await onAuth({ t: 'gw.auth', id: 3, htm: 'POST', htu: HTU });
+    assert.deepEqual(out.map((r) => [r.id, auth(r)]), [[1, 'auth.denied'], [2, 'auth.unavailable'], [3, 'auth.denied']]);
+  });
+
+  it('답하는 쪽이 붙기 전에는 gw.auth에 account.signed_out, invalidate·모르는 메시지에는 답하지 않는다', async () => {
+    const out: GwAuthResult[] = [];
+    const onAuth = authPortResponder(() => null, (r) => out.push(r));
+    await onAuth({ t: 'gw.auth.invalidate' });
+    await onAuth({ t: 'x' });
+    await onAuth({ t: 'gw.auth', id: 7, htm: 'POST', htu: HTU });
+    assert.deepEqual(out, [{ t: 'gw.auth.result', id: 7, code: 'account.signed_out' }]);
   });
 });

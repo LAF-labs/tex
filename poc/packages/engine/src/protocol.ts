@@ -76,6 +76,15 @@ export const BUNDLE_REQUEST_COMMANDS = ['bundle.requestCandidates'] as const;
  */
 export const CARD_READ_QUERIES = ['db.query.card.list'] as const;
 export const CARD_COMMANDS = ['card.setMemo', 'card.reattachMemo', 'card.deleteMemo'] as const;
+/**
+ * 급여대장 직원 입력·"지난달과 같나요?"·급여 기능 켜기(08 D-06, D14 M6-9). 처리는 @sax/bundle BundleService다. 이름·생년월일·주민번호가 오가므로 main 전용이다.
+ * - db.query.payroll.carryOver {profileId, month}: 지난달 가장 큰 개정의 과세 수당·차감을 이달 inputs로, 새로 들어온·퇴사한 직원. 읽기만.
+ * - db.query.payroll.enabled {profileId}: {enabled, source: setting|employees}. payroll.setEnabled {profileId, on}.
+ * - payroll.addEmployee {profileId, employee}, payroll.updateEmployee {profileId, employeeId, patch}: 결과는 가림값(maskedRrn)만, 주민번호 원문 없음.
+ * 직원을 지우는 명령은 없다(임금대장 3년 보관, 퇴사는 leftOn).
+ */
+export const PAYROLL_EMPLOYEE_READ_QUERIES = ['db.query.payroll.carryOver', 'db.query.payroll.enabled'] as const;
+export const PAYROLL_EMPLOYEE_COMMANDS = ['payroll.addEmployee', 'payroll.updateEmployee', 'payroll.setEnabled'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

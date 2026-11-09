@@ -80,7 +80,7 @@ export const amzDate = (ms: number) => new Date(ms).toISOString().replace(/[-:]/
 
 // ---------- 본문(고정 문구) ----------
 
-export type MailKind = 'code' | 'reset_code' | NoticeKind;
+export type MailKind = 'code' | 'reset_code' | 'reauth_code' | NoticeKind;
 
 const NOTICE_TEXT: Record<NoticeKind, { subject: string; body: string }> = {
   device_enrolled: { subject: '새 기기가 등록됐어요', body: '계정에 새 기기가 등록됐어요. 직접 한 일이 아니면 PC 앱에서 그 기기를 긴급 정지하세요.' },
@@ -101,9 +101,9 @@ const FOOTER = '\n\n이 메일은 보내기 전용이에요. 링크를 넣지 �
 
 /** 종류별 제목·본문. 값은 코드(6자리)뿐이다 */
 export function mailContent(kind: MailKind, code?: string): { subject: string; text: string } {
-  if (kind === 'code' || kind === 'reset_code') {
+  if (kind === 'code' || kind === 'reset_code' || kind === 'reauth_code') {
     if (!code || !/^\d{6}$/.test(code)) throw new MailError('mail.rejected', false);
-    const what = kind === 'code' ? '로그인' : '비밀번호 재설정';
+    const what = kind === 'code' ? '로그인' : kind === 'reset_code' ? '비밀번호 재설정' : '본인 확인';
     // 코드는 본문에만(알림 미리보기·잠금 화면에 제목이 보인다)
     return { subject: `${PREFIX}${what} 코드`, text: `${what} 코드: ${code}\n10분 동안 쓸 수 있어요. 요청하지 않았다면 이 메일을 무시하세요.${FOOTER}` };
   }
@@ -170,6 +170,10 @@ export class SesMailSender implements MailSender {
 
   async sendResetCode(to: string, code: string): Promise<void> {
     await this.send(to, mailContent('reset_code', code));
+  }
+
+  async sendReauthCode(to: string, code: string): Promise<void> {
+    await this.send(to, mailContent('reauth_code', code));
   }
 
   async sendNotice(to: string, kind: NoticeKind): Promise<void> {
