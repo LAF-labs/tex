@@ -82,6 +82,9 @@ function fakeCloud() {
       if (code !== '123456') throw fail('account.code_invalid');
       return { session: 'sxs1.fake', expiresInSec: 3600 };
     },
+    passwordLogin: async () => {
+      throw Object.assign(new Error('account.credentials_invalid'), { code: 'account.credentials_invalid' });
+    },
     logout: async () => {},
     deviceList: async () => ({ aikPub, deviceList: deviceList as never }),
     pinFirstDesktop: async (_s, b) => {
@@ -146,10 +149,14 @@ async function main() {
   await press('[data-act=account-login]');
   await until('login', async () => js<boolean>(`!!document.querySelector('.acct-email')`));
   await type('.acct-email', EMAIL);
+  // 로그인(A-01): 이메일 → [계속] → 비밀번호 화면의 [이메일 코드로 로그인] → 코드 받기 → 6자리(다 넣으면 바로 확인)
+  await press('[data-act=account-next]');
+  await until('pw', async () => js<boolean>(`!!document.querySelector('[data-act=account-code-login]')`));
+  await press('[data-act=account-code-login]');
+  await until('code email', async () => js<boolean>(`!!document.querySelector('[data-act=account-send]')`));
   await press('[data-act=account-send]');
   await until('code', async () => js<boolean>(`!!document.querySelector('.acct-code')`));
   await type('.acct-code', '123456');
-  await press('[data-act=account-verify]');
   check('로그인 끝: 연결된 폰 0대', await until('signed in', async () => js<boolean>(`document.querySelector('[data-account-phones]')?.dataset.accountPhones === '0'`)));
 
   // [폰 연결] → main 소유 창

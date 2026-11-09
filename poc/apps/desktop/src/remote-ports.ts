@@ -18,6 +18,11 @@ export interface AccountClient {
   startEmailCode(email: string): Promise<{ loginId: string; expiresInSec: number }>;
   /** POST /v1/auth/code/verify {loginId, code} → 계정 세션(Bearer). */
   verifyEmailCode(loginId: string, code: string): Promise<{ session: string; expiresInSec: number }>;
+  /**
+   * POST /v1/auth/password {email, password} → 계정 세션(ADR-038 (a)). 비밀번호는 이 호출의 본문으로만 나간다(로그·저장 없음).
+   * 틀림·없는 계정·잠금은 모두 account.credentials_invalid(같은 응답). 서버에서 비밀번호가 꺼져 있으면 request.not_found.
+   */
+  passwordLogin(email: string, password: string): Promise<{ session: string; expiresInSec: number }>;
   /** POST /v1/auth/logout. 기기 고정이 끝나면 데스크톱이 부르고 세션을 버린다. */
   logout(session: string): Promise<void>;
   /** GET /v1/device-list(세션). aikPub가 이미 있으면 첫 PC가 아니다(두 번째 PC 추가는 이 범위 밖: account.aik_already_pinned로 안내). */

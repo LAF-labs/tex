@@ -9,7 +9,7 @@ import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { dirGuard, isUserSid, readDacl, windowsTool } from '@sax/platform';
 import { b64, fromB64, verifyAcctClaim, verifyCert } from '@sax/remote';
 import { CERT_RENEW_MS, checkIdentity, DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
-import { ORIGIN, softDesktopKeys, startDevStack, type DevStack } from './remote-dev-stack.ts';
+import { devStackPasswords, ORIGIN, softDesktopKeys, startDevStack, type DevStack } from './remote-dev-stack.ts';
 
 const EMAIL = 'owner@gyeonbon-test.example';
 
@@ -149,6 +149,31 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     await assert.rejects(none.sendCode(EMAIL), /account_unavailable/);
   });
 
+  it('비밀번호 로그인(ADR-038): 틀림·없는 계정은 같은 코드, 맞으면 첫 PC 등록 후 로그아웃. 기록에 비밀번호·이메일이 없다', { skip: !devStackPasswords }, async () => {
+    s.close();
+    s = await startDevStack({ passwords: true });
+    const PW = 'mangwon-kimchi-12';
+    const v0 = await s.svc.verifyEmailCode((await s.svc.startEmailCode(EMAIL)).loginId, s.mail.lastCode(EMAIL)!);
+    await s.svc.setPassword(await s.svc.session(`Bearer ${v0.session}`), PW);
+    const a = account();
+    await a.init();
+    assert.equal((await a.passwordLogin('not-an-email', PW)).error, 'account.email_shape');
+    assert.equal((await a.passwordLogin(EMAIL, '')).error, 'account.password_empty');
+    const wrong = await a.passwordLogin(EMAIL, 'not-the-password-1');
+    const none = await a.passwordLogin('nobody@gyeonbon-test.example', PW);
+    assert.equal(wrong.step, 'signed_out');
+    assert.equal(wrong.error, 'account.credentials_invalid');
+    assert.equal(none.error, 'account.credentials_invalid', '없는 계정도 같은 코드(열거 방지)');
+    s.client.calls.length = 0;
+    const ok = await a.passwordLogin(` ${EMAIL} `, PW);
+    assert.deepEqual(ok, { step: 'signed_in', email: EMAIL, codeExpiresAt: null, error: null, phones: 0 });
+    assert.deepEqual(s.client.calls, ['POST /v1/auth/password', 'GET /v1/device-list', 'POST /v1/aik', 'POST /v1/auth/logout']);
+    const t = JSON.stringify(logs) + fs.readFileSync(path.join(dir, 'remote-identity.json'), 'utf8').replace(EMAIL, '');
+    for (const bad of [PW, 'not-the-password-1', 'nobody', 'sxs1.']) assert.ok(!t.includes(bad), bad);
+    assert.deepEqual(logs.map(([n, d]) => [n, d.result]), [['main.account_password', 'account.credentials_invalid'], ['main.account_password', 'account.credentials_invalid'], ['main.account_enroll', 'ok']]);
+    await assert.rejects(a.passwordLogin(EMAIL, PW), /account_signed_in/);
+  });
+
   it('인증서는 만료 14일 전에 AIK로 새로 서명해 파일에 둔다', async () => {
     const keys = softDesktopKeys();
     const a = account(keys);
@@ -180,6 +205,19 @@ describe('셸 배선(소스 검사)', () => {
     assert.deepEqual(Object.keys(SHELL_METHODS['account.verify']), ['code']);
     assert.match(src, /'account\.sendCode': async \(p\) => \{\s*needGesture\(3_000\);/);
     assert.match(src, /'account\.verify': async \(p\) => \{\s*needGesture\(3_000\);/);
+  });
+  it('비밀번호는 실제 입력 뒤 3초 안에만, 인자는 이메일·비밀번호 둘, 문자열로 다시 만들지 않고 계정 객체로만 넘긴다', async () => {
+    const { SHELL_METHODS, USER_ACTION_METHODS } = await import('../apps/desktop/src/ipc.ts');
+    assert.equal(USER_ACTION_METHODS['account.password'], 3_000);
+    assert.deepEqual(Object.keys(SHELL_METHODS['account.password']), ['email', 'password']);
+    assert.match(src, /'account\.password': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return account\.passwordLogin\(String\(p\.email\), p\.password\);\s*\}/);
+  });
+  it('로그인 화면: 비밀번호는 보낸 뒤 비우고, 틀림·없는 계정·잠금은 한 안내(안에 [이메일 코드로 로그인])', () => {
+    const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
+    assert.match(shell, /if \(method === 'account\.password'\) l\.draft\.password = '';/);
+    assert.match(js, /const wrong = err === 'account\.credentials_invalid';/);
+    assert.match(js, /'이메일 또는 비밀번호가 맞지 않아요'[\s\S]{0,200}'이메일 코드로는 바로 로그인할 수 있어요'[\s\S]{0,200}'account-code-from-wrong'/);
+    assert.doesNotMatch(js, /'[^'\n]*(잠겼|잠금|잠시 잠)[^'\n]*'/, '잠금은 화면 문구로 따로 알리지 않는다(ADR-038 (d))');
   });
   it('금고 키 연결이 없으면 계정 클라이언트도 쓰지 않는다(unavailable), 키는 금고 control로만', () => {
     assert.match(src, /client: opts\.remote\?\.keys \? \(opts\.remote\.cloud\?\.account \?\? null\) : null/);
