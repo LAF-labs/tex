@@ -25,7 +25,7 @@ import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
-import { RegistrySync, settingsRegistryStore } from './registry-sync.ts';
+import { egressRegistryFetch, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
@@ -120,8 +120,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   if (egress.envTampered.length) log.event('egress.env_tampered', { keys: egress.envTampered.join(',') });
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
-  // 레지스트리 GET은 Egress 레지스트리 목적지(클라우드 트랙)가 들어오면 fetch로 넘긴다. 그 전에는 sync가 registry.fetch_unavailable이다.
-  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: null, store: settingsRegistryStore(db), sinks: [rateTableSink(db)], log });
+  // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
+  // H-01 패키지(PR-D2)는 받아 두기만 하고, 실행기는 아직 'h01'이다(게시와 시연 방식 정합 뒤 irSource로 바꾼다).
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;

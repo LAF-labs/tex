@@ -8,6 +8,7 @@ export * from './intent.ts';
 export * from './registry-sync.ts';
 export * from './registry-sinks.ts';
 export * from './registry-pin.ts';
+export * from './package-source.ts';
 export * from './vault-client.ts';
 export * from './l0/index.ts';
 export * from './gate.ts';
