@@ -17,8 +17,6 @@ import {
   barPalette,
   buildCardHtml,
   gateText,
-  HANDOFF_RETURN_MS,
-  HandoffMark,
   kstToday,
   summarize,
   type SummaryLine,
@@ -209,42 +207,31 @@ describe('audit-d: D4 사용자 동작 결속(N-27)', () => {
   });
 });
 
-describe('audit-d: D5 클릭 활성화 예외 축소(N-48)', () => {
+describe('audit-d: D5 창 활성화(N-48, ADR-021 개정 2026-11-09)', () => {
   const at = { x: 300, y: 45 };
   const mk = () => {
-    const g = new BarGate(600);
+    const g = new BarGate();
     g.setTargets({ approve: { x: 200, y: 20, width: 200, height: 50 }, stop: { x: 20, y: 20, width: 88, height: 50 } });
     return g;
   };
-  it('activation not from a handoff rejects the first click and rearms', () => {
+  it('activation is a window-level event: it cancels a press in progress but adds no wait', () => {
     const g = mk();
-    g.rearm(0, true);
-    assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'left' }, 700), null, '무장됨에서 눌림');
-    g.windowActivated(705); // 포커스가 mouseDown 뒤에 옴(앞으로 가져오기)
-    assert.equal(g.mouse({ type: 'mouseUp', ...at, button: 'left' }, 710), null, '앞으로 가져오는 클릭은 승인이 아니다');
-    assert.equal(g.armed(1200), false, '무장 지연을 다시 센다');
-    assert.deepEqual(g.mouse({ type: 'mouseDown', ...at, button: 'left' }, 750), { kind: 'refused', reason: 'arming' });
+    g.reset();
+    assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'left' }), null, '눌림');
+    g.reset(); // 창 활성화(바는 win focus를 reset으로 받는다)
+    assert.equal(g.mouse({ type: 'mouseUp', ...at, button: 'left' }), null, '활성화 사이에 걸친 클릭은 승인이 아니다');
+    assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'left' }), null);
+    assert.deepEqual(g.mouse({ type: 'mouseUp', ...at, button: 'left' }), { kind: 'approve' }, '활성화 뒤 다음 클릭은 기다리지 않고 승인');
   });
 
-  it('activation within 120s of a handoff keeps the 100ms exception', () => {
-    const g = mk();
-    g.rearm(0, true);
-    g.mouse({ type: 'mouseDown', ...at, button: 'left' }, 700);
-    g.windowActivated(705, true);
-    assert.deepEqual(g.mouse({ type: 'mouseUp', ...at, button: 'left' }, 710), { kind: 'approve' });
-  });
-
-  it('handoff mark is consumed once and expires after 120s', () => {
-    const h = new HandoffMark();
-    assert.equal(h.consume(10), false);
-    h.note(1000);
-    assert.equal(h.consume(1000 + HANDOFF_RETURN_MS), true);
-    assert.equal(h.consume(1000 + HANDOFF_RETURN_MS), false, '한 번만');
-    h.note(0);
-    assert.equal(h.consume(HANDOFF_RETURN_MS + 1), false, '120초가 지나면 핸드오프 복귀가 아니다');
-    // 바: 비밀 창이 닫히면 noteHandoff, 창 blur면 무장 전 페이지.
-    assert.match(src('shell-app.ts'), /bar\.noteHandoff\(\)/);
-    assert.match(src('approval-bar.ts'), /win\.on\('blur'/);
+  it('bar source: no arming delay, dwell, activation grace or handoff mark remain', () => {
+    const bar = src('approval-bar.ts');
+    const gate = src('approval-gate.ts');
+    assert.match(bar, /win\.on\('focus', reset\('activate'\)\)/);
+    assert.doesNotMatch(bar, /win\.on\('blur'/, '창이 뒤로 가도 카드 페이지를 바꾸지 않는다');
+    for (const s of [bar, gate]) assert.doesNotMatch(s, /ARM_DELAY_MS|DWELL_MS|ACTIVATION_GRACE_MS|HandoffMark|noteHandoff|armTimer|setTimeout\(/);
+    assert.doesNotMatch(src('shell-app.ts'), /noteHandoff/);
+    for (const s of [bar, gate]) assert.doesNotMatch(s, /잠시 뒤 다시 눌러 주세요|마우스를 조금 움직인 뒤/);
   });
 });
 

@@ -125,8 +125,6 @@ export interface ShellOptions {
   width?: number;
   height?: number;
   show?: boolean;
-  /** e2e: OS 커서 위치를 바꿔 끼운다. */
-  cursorPoint?: () => { x: number; y: number };
   /** 앱 금고(utilityProcess·OS 키체인)와 앱 폴더로 띄운다. 없으면 fixture 모드(dev가 있어야 한다). */
   engine?: { root?: string; portal: EnginePortal };
   /** fixture 모드에서 실행 Chrome을 화면에 띄운다(시연). */
@@ -336,7 +334,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!gesture.within(performance.now(), ms)) throw new Error('gesture_required');
   };
 
-  const bar = new ApprovalBar(win, key, barBounds, { cursorPoint: opts.cursorPoint, log });
+  const bar = new ApprovalBar(win, key, barBounds, { log });
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
@@ -449,13 +447,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
     }
     secretWin = w;
-    // 사용자가 앱이 연 창에서 돌아옴: 다음 활성화 한 번만 클릭 활성화 예외(ADR-027 결정 5). 메인 창이 포커스를 받기 전에
-    // 표시해야 그 활성화가 표시를 쓴다('closed'는 포커스보다 늦을 수 있다).
+    // main이 닫은 창(실행 끝·종료)인지는 'close' 때 정한다('closed'보다 먼저 온다).
     let byApp = false;
     w.on('close', () => {
       byApp = appClosing === w;
       if (byApp) appClosing = null;
-      else bar.noteHandoff();
     });
     w.on('closed', () => {
       if (secretWin === w) secretWin = null;
@@ -867,6 +863,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       await accountInit();
       return account.verify(String(p.code));
+    },
+    'account.password': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.passwordLogin(String(p.email), p.password);
     },
     'account.back': async () => {
       await accountInit();

@@ -105,6 +105,12 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       const r = b as { session: string; expiresInSec: number };
       return { session: r.session, expiresInSec: r.expiresInSec };
     },
+    async passwordLogin(email, password) {
+      const b = await call('POST', `${accountOrigin}/v1/auth/password`, [200], { body: { email, password } });
+      if (!isObj(b) || !str(b.session, 512) || !int(b.expiresInSec)) shape();
+      const r = b as { session: string; expiresInSec: number };
+      return { session: r.session, expiresInSec: r.expiresInSec };
+    },
     async logout(session) {
       await call('POST', `${accountOrigin}/v1/auth/logout`, [200, 204], { headers: bearer(session), body: {} });
     },

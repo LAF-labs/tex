@@ -2,7 +2,7 @@
 // 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
-import { accountCard, accountErrText, loginModal } from './shell-account.js';
+import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -40,7 +40,7 @@ const state = {
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
   setTab: 'auth', // 설정 화면에서 고른 항목: 'auth'(발급 인증) | 'devices'(기기 연결)
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
-  login: null, // 로그인 창(A-01)이 열려 있으면 { draft: { email, code }, busy }
+  login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
 };
 
 // ---- 공용 동작 ----
@@ -1070,7 +1070,7 @@ async function refreshAccount() {
 }
 
 function openLogin() {
-  state.login = { draft: { email: state.account?.email ?? '', code: '' }, busy: false };
+  state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   render();
 }
 
@@ -1090,7 +1090,7 @@ function closeLogin() {
   $('[data-act=account-login]')?.focus();
 }
 
-/** 로그인 창의 요청 하나. 끝나면 main이 준 단계로 다시 그린다. 등록이 끝나면 창을 닫는다. */
+/** 로그인 화면의 요청 하나. 끝나면 main이 준 단계로 다시 그린다. 등록이 끝나면 화면을 닫는다. 비밀번호는 보낸 뒤 비운다. */
 async function accountStep(method, params) {
   const l = state.login;
   if (!l || l.busy) return;
@@ -1103,6 +1103,13 @@ async function accountStep(method, params) {
     state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: errText(err) };
   } finally {
     l.busy = false;
+    if (method === 'account.password') l.draft.password = '';
+    // 서버에 비밀번호 기능이 꺼져 있으면(404) 이메일 코드 로그인으로 바로 넘긴다(인계 명세 §1)
+    if (method === 'account.password' && state.account?.error === 'request.not_found') {
+      l.screen = 'code_email';
+      state.account = { ...state.account, error: null };
+    }
+    if (method === 'account.verify' && state.account?.error) l.draft.code = '';
   }
   if (state.account?.step === 'signed_in') {
     state.login = null;
@@ -1111,15 +1118,52 @@ async function accountStep(method, params) {
   render();
 }
 
+/** 화면 이동(렌더러 안). 앞 화면의 오류 문구는 지운다. */
+function loginGo(screen) {
+  const l = state.login;
+  if (!l || l.busy) return;
+  l.screen = screen;
+  l.draft.password = '';
+  l.draft.show = false;
+  if (state.account) state.account = { ...state.account, error: null };
+  render();
+}
+
 const loginCtx = () => ({
   view: state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null, error: null },
+  screen: state.login.screen,
   draft: state.login.draft,
   busy: state.login.busy,
+  now: () => Date.now(),
   onClose: closeLogin,
+  go: loginGo,
+  fail: (code) => {
+    state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: code };
+    render();
+  },
+  toggleShow: () => {
+    state.login.draft.show = !state.login.draft.show;
+    render();
+    $('#modal .acct-password')?.focus();
+  },
   sendCode: (email) => accountStep('account.sendCode', { email }),
   verify: (code) => accountStep('account.verify', { code }),
-  back: () => accountStep('account.back', {}),
+  password: (email, password) => accountStep('account.password', { email, password }),
+  // 코드 화면 [뒤로]: 코드를 버리고 코드 받기 화면으로(계정 만들기에서 왔으면 그대로)
+  back: async () => {
+    if (state.login.screen !== 'signup') state.login.screen = 'code_email';
+    await accountStep('account.back', {});
+  },
 });
+
+// 코드 화면의 남은 시간(1초마다 글자만 바꾼다)
+setInterval(() => {
+  const el = document.querySelector('[data-acct-left]');
+  const at = state.account?.codeExpiresAt;
+  if (!el || !at) return;
+  const sec = Math.max(0, Math.round((at - Date.now()) / 1000));
+  el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+}, 1000);
 // 프로필 인증 문자열(shell-app SIGN: 사업자 간편인증·공동·금융인증서·보안카드·발급 인증 미설정)을 종류로 묶는다.
 const AUTH_KIND = [
   ['simple', /^사업자 간편인증/, '발급할 때마다 폰에서 승인해요'],
@@ -1291,9 +1335,9 @@ function renderModal() {
   // 처음 띄울 때와 창 안에 있던 포커스는 새 입력 칸으로 옮긴다(다시 그릴 때마다 칸을 새로 만든다)
   const a = document.activeElement;
   const focus = !root.firstChild || !a || a === document.body || root.contains(a);
-  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginModal(loginCtx())] : []));
+  root.replaceChildren(...(pw ? [passwordModal()] : login ? [loginScreen(loginCtx())] : []));
   $('#app').inert = open;
-  const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-email, .acct-code') : null;
+  const i = open && focus ? root.querySelector(pw ? '.doc-pw' : '.acct-code, .acct-password, .acct-email') : null;
   if (i) {
     i.focus();
     // type=email은 선택 범위를 지원하지 않는다(던진다)

@@ -1,12 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { performance } from 'node:perf_hooks';
 import { app, nativeTheme, screen, session, WebContentsView, type BrowserWindow, type Session } from 'electron';
 import { attestSelfCheck, gateSelfCheck } from '@sax/engine/gate';
 import type { EventLog } from '@sax/platform';
 import {
   ACTION_TEXT,
-  ACTIVATION_GRACE_MS,
   actionText,
   attestRefusalText,
   attestRows,
@@ -23,8 +21,6 @@ import {
   cardTargets,
   GATE_TEXT,
   gateText,
-  HandoffMark,
-  inBox,
   issueLocalApproval,
   issueLocalAttestation,
   kstToday,
@@ -126,9 +122,6 @@ export interface BarSnapshot {
 }
 
 export interface BarOptions {
-  armDelayMs?: number;
-  /** OS 커서 위치(DIP 화면 좌표). e2e가 바꿔 끼운다. */
-  cursorPoint?: () => { x: number; y: number };
   /** 토큰 거부(bar.tokens_rejected)를 남길 곳. */
   log?: EventLog;
 }
@@ -144,7 +137,6 @@ export class ApprovalBar extends EventEmitter {
   private readonly win: BrowserWindow;
   private readonly key: Uint8Array;
   private readonly place: Placer;
-  private readonly cursorPoint: () => { x: number; y: number };
   private req: BarItem | null = null;
   private lines: SummaryLine[] | null = null;
   private text: CardText = GATE_TEXT;
@@ -153,24 +145,16 @@ export class ApprovalBar extends EventEmitter {
   private targets: CardTargets = cardTargets(0, 0);
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
-  private armTimer: NodeJS.Timeout | undefined;
-  private activationTimer: NodeJS.Timeout | undefined;
   private bounds: Rect = { x: 0, y: 0, width: 0, height: 0 };
   private band = false;
   private shown = false;
-  private mode: BarMode = 'unarmed';
+  private mode: BarMode = 'armed';
   private msg: string | null = null;
   private pageId: string | null = null;
   private committed: { id: string; reqId: string; mode: BarMode } | null = null;
   private lastRender: Promise<void> = Promise.resolve();
   /** 이 바가 만든 페이지 id. 게이트가 끝나면 지워 값(상호·금액·이메일)이 메모리에 남지 않게 한다. */
   private readonly myPages = new Set<string>();
-  /** 무장 사건 때의 OS 커서 위치("멈춘 커서" 예외 확인용). */
-  private armCursor: { x: number; y: number } | null = null;
-  /** main이 다른 창을 앞에 올렸다 돌아온 표시(다음 활성화에 한 번 쓴다). */
-  private readonly handoff = new HandoffMark();
-  /** 시계가 바뀌어도 무장 지연이 짧아지지 않게 단조 시계를 쓴다. */
-  private readonly now = () => performance.now();
 
   constructor(win: BrowserWindow, key: Uint8Array, place: Placer, opts: BarOptions = {}) {
     // 디버그 스위치(CDP·검사기)가 있으면 바 입력을 믿을 수 없다. 바를 만들지 않는다(ADR-025 결정 8).
@@ -181,8 +165,7 @@ export class ApprovalBar extends EventEmitter {
     this.win = win;
     this.key = key;
     this.place = place;
-    this.cursorPoint = opts.cursorPoint ?? (() => screen.getCursorScreenPoint());
-    this.gate = new BarGate(opts.armDelayMs);
+    this.gate = new BarGate();
     this.view = new WebContentsView({
       webPreferences: { session: barSession(), sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false, devTools: false, spellcheck: false, focusOnNavigation: false, webviewTag: false },
     });
@@ -207,7 +190,7 @@ export class ApprovalBar extends EventEmitter {
       e.preventDefault();
       if (i.type === 'keyDown' && !i.isAutoRepeat && this.req && this.shown && STOP_KEYS.includes(i.key)) return this.stopByUser('key');
       // 키보드 승인은 꺼져 있다(KEYBOARD_APPROVAL). 켜더라도 무장 거부·숨김 중에는 승인하지 않는다.
-      if (this.req?.kind === 'gate' && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta }, this.now())?.kind === 'approve') this.approve();
+      if (this.req?.kind === 'gate' && this.shown && !this.refusal && this.committedFor(this.req) && this.committed?.mode === 'armed' && this.gate.key({ type: i.type, key: i.key, alt: i.alt, control: i.control, meta: i.meta })?.kind === 'approve') this.approve();
     });
     // 숨은 카드로 간 포커스는 대화 화면으로 돌려준다(보이는 동안만 카드가 키를 받는다).
     wc.on('focus', () => {
@@ -219,22 +202,17 @@ export class ApprovalBar extends EventEmitter {
     });
     void wc.loadURL(`${APPROVAL_SCHEME}://${HOST}/${BLANK}`).catch(() => {});
 
-    const rearm = (why: string) => () => this.rearm(why);
+    // 창 수준 사건은 누르던 승인 클릭만 취소한다. 기다리는 시간은 없다(ADR-021 개정 2026-11-09).
+    const reset = (why: string) => () => this.reset(why);
     win.on('resize', () => this.relayout());
-    win.on('move', rearm('move'));
-    win.on('moved', rearm('moved'));
-    win.on('show', rearm('show'));
-    win.on('restore', rearm('restore'));
-    win.on('focus', () => this.onActivate());
-    // 창이 뒤로 가면 무장 전(흐림) 페이지로 바꿔 상태를 보인다. 무장 판정은 그대로 두고 돌아올 때 정한다(onActivate).
-    win.on('blur', () => {
-      if (!this.req || !this.shown) return;
-      clearTimeout(this.armTimer);
-      void this.render('unarmed', null);
-    });
+    win.on('move', reset('move'));
+    win.on('moved', reset('moved'));
+    win.on('show', reset('show'));
+    win.on('restore', reset('restore'));
+    win.on('focus', reset('activate'));
     const onDisplay = () => {
       this.relayout();
-      this.rearm('display-metrics-changed');
+      this.reset('display-metrics-changed');
     };
     screen.on('display-metrics-changed', onDisplay);
     // 페이지 CSS가 prefers-color-scheme로 스스로 바뀐다. 뷰 배경색만 맞춘다.
@@ -251,9 +229,8 @@ export class ApprovalBar extends EventEmitter {
       if (blocked === this.gate.cursorBlocked) return;
       this.gate.setCursorBlocked(blocked);
       if (blocked) {
-        clearTimeout(this.armTimer);
         if (this.req) void this.render('unarmed', null);
-      } else this.rearm('cursor-restored');
+      } else this.reset('cursor-restored');
     });
     this.relayout();
   }
@@ -308,7 +285,7 @@ export class ApprovalBar extends EventEmitter {
 
   /**
    * InDoubt 증언 바(ADR-021 결정 5). 사용자가 그 "확인 필요" 카드를 열었을 때만 shell-app이 부른다(자동으로 띄우지 않는다).
-   * 게이트·다른 증언이 떠 있으면 바꾸지 않고 'busy'. 판정 규칙(무장 지연·머무름·커서·키보드 없음)은 승인과 같고,
+   * 게이트·다른 증언이 떠 있으면 바꾸지 않고 'busy'. 판정 규칙(커서 위장 거부·키보드 없음)은 승인과 같고,
    * 클릭이 인정되면 승인 근거가 아니라 LocalAttestation을 발급한다.
    */
   openAttest(req: AttestRequest): Promise<AttestOutcome> {
@@ -350,9 +327,9 @@ export class ApprovalBar extends EventEmitter {
   private async show(req: BarItem): Promise<void> {
     this.keepOnScreen();
     this.relayout(false);
-    this.gate.rearm(this.now(), this.cursorInside());
-    this.armCursor = { ...this.cursorPoint() }; // 값으로 복사(같은 객체를 다시 받으면 비교가 늘 참이 된다)
-    void this.render('unarmed', null);
+    this.gate.reset();
+    // 첫 페이지부터 무장됨이다(커서 위장 중이면 무장 안 됨). 기다리는 시간은 없다.
+    void this.render(this.liveMode(), null);
     // 그 사이 다시 그렸으면(창 크기 변경 등) 마지막 페이지가 올라올 때까지 기다린다.
     let p: Promise<void>;
     do {
@@ -366,7 +343,7 @@ export class ApprovalBar extends EventEmitter {
     this.shown = true;
     if (!this.win.isFocused()) this.win.flashFrame(true); // 포커스는 가져오지 않는다.
     this.emit('shown', { band: this.band, kind: req.kind, height: this.bounds.height });
-    this.rearm('shown');
+    this.reset('shown');
   }
 
   private committedFor(req: BarItem): boolean {
@@ -381,10 +358,8 @@ export class ApprovalBar extends EventEmitter {
     this.refusal = null;
     this.baseRefusal = null;
     this.msg = null;
-    this.mode = 'unarmed';
+    this.mode = 'armed';
     this.shown = false;
-    clearTimeout(this.armTimer);
-    clearTimeout(this.activationTimer);
     if (!this.win.isDestroyed()) {
       // 카드가 키보드 포커스를 가졌으면 대화 화면으로 돌려준다.
       const hadFocus = this.view.webContents.isFocused();
@@ -426,7 +401,7 @@ export class ApprovalBar extends EventEmitter {
     return this.req && overflowLine(this.lines ?? [], b.width, this.text) ? this.place(w, h, true, this.height) : b;
   }
 
-  private relayout(rearm = true): void {
+  private relayout(reset = true): void {
     if (this.win.isDestroyed()) return;
     const [w, h] = this.win.getContentSize() as [number, number];
     const b = this.decide(w, h);
@@ -441,7 +416,7 @@ export class ApprovalBar extends EventEmitter {
       if (this.shown) this.emit('layout', { band, height: b.height });
     }
     if (this.req) this.updateRefusal();
-    if (changed && rearm) this.rearm('resize');
+    if (changed && reset) this.reset('resize');
   }
 
   /** 바가 디스플레이 작업 영역 밖이면 창을 작업 영역 안으로 옮긴다. */
@@ -462,14 +437,6 @@ export class ApprovalBar extends EventEmitter {
     }
   }
 
-  /** OS 커서가 지금 [승인하고 발급] 영역의 화면 자리 안에 있는가(무장 사건 때 "멈춘 커서 아래 뜸"을 판단). */
-  private cursorInside(): boolean {
-    if (this.win.isDestroyed()) return false;
-    const p = this.cursorPoint();
-    const cb = this.win.getContentBounds();
-    return inBox(this.targets.approve, p.x - cb.x - this.bounds.x, p.y - cb.y - this.bounds.y);
-  }
-
   private updateRefusal(): void {
     if (!this.lines) return;
     const over = this.baseRefusal ? null : overflowLine(this.lines, this.bounds.width, this.text);
@@ -477,82 +444,40 @@ export class ApprovalBar extends EventEmitter {
   }
 
   private armedNow(): boolean {
-    return this.gate.armed(this.now()) && !!this.req && !this.refusal;
+    return this.gate.armed() && !!this.req && !this.refusal;
   }
 
-  /** 무장 사건. 무장 전 페이지를 불러오고 600ms 뒤 무장됨 페이지로 바꾼다. */
-  private rearm(why: string): void {
+  /** 지금 그릴 모드: 커서 위장 중이면 무장 안 됨, 아니면 무장됨(무장 거부는 render가 덮는다). */
+  private liveMode(): BarMode {
+    return this.gate.cursorBlocked ? 'unarmed' : 'armed';
+  }
+
+  /** 창 수준 사건. 누르던 승인 클릭을 취소하고 문구를 지운다(같은 페이지면 render가 다시 불러오지 않는다). */
+  private reset(why: string): void {
     if (!this.req) return;
-    this.gate.rearm(this.now(), this.cursorInside());
-    this.armCursor = { ...this.cursorPoint() }; // 값으로 복사(같은 객체를 다시 받으면 비교가 늘 참이 된다)
-    this.emit('judged', { event: `rearm:${why}` });
-    // 같은 페이지면 render가 다시 불러오지 않는다(창을 끄는 동안 연달아 오는 move).
-    void this.render('unarmed', null);
-    this.scheduleArm();
-  }
-
-  private scheduleArm(): void {
-    clearTimeout(this.armTimer);
-    // 커서 위장 중에는 예약하지 않는다. 풀리면 rearm이 다시 예약한다.
-    if (!this.req || this.gate.cursorBlocked) return;
-    const delay = this.gate.armTime - this.now();
-    if (!Number.isFinite(delay)) return;
-    this.armTimer = setTimeout(() => {
-      if (this.req && this.gate.armed(this.now())) void this.render('armed', null);
-      else this.scheduleArm();
-    }, Math.max(0, delay) + 5);
-  }
-
-  /**
-   * main이 다른 창(비밀 창 등, Phase 1: 전용 Chrome·Hello)을 앞에 올렸다가 돌아왔다. 120초 안의 다음 활성화 한 번만
-   * 클릭 활성화 예외(100ms)를 받는다. 그 밖의 활성화는 첫 클릭을 앞으로 가져오기로만 받는다(ADR-027 결정 5).
-   */
-  noteHandoff(now = this.now()): void {
-    this.handoff.note(now);
-  }
-
-  private onActivate(): void {
-    const now = this.now();
-    // 게이트가 없을 때 온 활성화도 표시를 쓴다(표시는 한 번만).
-    const fromHandoff = this.handoff.consume(now);
-    if (!this.req) return;
-    clearTimeout(this.activationTimer);
-    this.gate.windowActivated(now, fromHandoff);
-    if (!fromHandoff) return this.rearm('activate');
-    // blur로 내린 무장됨 페이지를 되돌린다(무장 판정은 그대로). 100ms 안 바 클릭이 없으면 재무장한다.
-    if (this.gate.armed(now)) void this.render('armed', null);
-    this.activationTimer = setTimeout(() => {
-      if (this.gate.activationSettled()) this.rearm('activate');
-    }, ACTIVATION_GRACE_MS);
+    this.gate.reset();
+    this.emit('judged', { event: `reset:${why}` });
+    void this.render(this.liveMode(), null);
   }
 
   private onMouse(m: Electron.MouseInputEvent): void {
-    const now = this.now();
-    const ev = { type: m.type, x: m.x, y: m.y, button: m.button, movementX: m.movementX, movementY: m.movementY };
-    // 들어옴·나감·움직임은 카드가 숨었거나 무장을 거부한 동안에도 기록한다(추적 상태가 게이트를 넘어 남지 않게).
-    if (!this.req || !this.shown) return this.gate.track(ev, now);
-    // [중지]는 무장을 기다리지 않고, 무장 거부 중에도 받는다(결정 7 원칙 4).
+    const ev = { type: m.type, x: m.x, y: m.y, button: m.button };
+    // 나감은 카드가 숨었거나 무장을 거부한 동안에도 기록한다(누르던 상태가 게이트를 넘어 남지 않게).
+    if (!this.req || !this.shown) return this.gate.track(ev);
+    // [중지]는 무장 거부·커서 위장 중에도 받는다(결정 7 원칙 4).
     if (this.gate.stop(ev)) return this.stopByUser('click');
-    if (this.refusal) return this.gate.track(ev, now);
-    // 무장은 "무장됨 페이지가 화면에 올라옴"까지 요구한다. 아직 앞 페이지가 보이면 무장 지연을 다시 센다.
-    if (m.type === 'mouseDown' && m.button === 'left' && this.gate.armed(now) && !(this.committedFor(this.req) && this.committed?.mode === 'armed')) {
-      this.gate.deferArm(now);
+    if (this.refusal) return this.gate.track(ev);
+    // 승인은 "지금 값의 무장됨 페이지가 화면에 올라옴"까지 요구한다. 아직 앞 페이지가 보이면 그 클릭은 버린다(기다림·문구 없음).
+    if (m.type === 'mouseDown' && m.button === 'left' && this.gate.armed() && !(this.committedFor(this.req) && this.committed?.mode === 'armed')) {
+      this.gate.reset();
       this.emit('judged', { event: m.type, x: m.x, y: m.y, result: { kind: 'refused', reason: 'not_committed' } });
-      void this.render('unarmed', BAR_MESSAGES.arming);
-      this.scheduleArm();
       return;
     }
-    const p = m.type === 'mouseDown' ? this.cursorPoint() : null;
-    const unmoved = !!p && !!this.armCursor && p.x === this.armCursor.x && p.y === this.armCursor.y;
-    const r = this.gate.mouse(ev, now, unmoved);
+    const r = this.gate.mouse(ev);
     if (m.type === 'mouseDown' || m.type === 'mouseUp' || r) this.emit('judged', { event: m.type, x: m.x, y: m.y, result: r });
     if (!r) return;
     if (r.kind === 'approve') return this.approve();
-    if (r.reason === 'dwell') void this.render('armed', BAR_MESSAGES.dwell);
-    else {
-      void this.render('unarmed', BAR_MESSAGES[r.reason]);
-      this.scheduleArm();
-    }
+    void this.render('unarmed', BAR_MESSAGES[r.reason]);
   }
 
   /** 카드 바탕은 모드와 상관없이 surface다(동작 버튼만 색이 바뀐다). 페이지를 바꾸는 사이 빈 뷰가 다른 색으로 번쩍이지 않게 맞춘다. */
@@ -562,7 +487,7 @@ export class ApprovalBar extends EventEmitter {
   }
 
   /**
-   * 정적 페이지 세 가지(무장 전·무장됨·무장됨 + 문구)와 무장 거부([중지]만)를 바꿔 불러온다. 애니메이션·insertCSS 없음.
+   * 정적 페이지(무장됨, 커서 위장 중 무장 안 됨 + 문구)와 무장 거부([중지]만)를 바꿔 불러온다. 애니메이션·insertCSS 없음.
    * 페이지가 화면에 올라오면(loadURL 완료) committed가 그 페이지를 가리킨다.
    */
   private render(mode: BarMode, msg: string | null): Promise<void> {

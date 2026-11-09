@@ -1,10 +1,12 @@
-// 계정 로그인(A-01: 이메일 → 6자리 코드)과 설정 > 기기 연결의 계정 줄. main(remote-account.ts)이 단계를 정하고 여기서는 그리기만 한다.
+// 계정 로그인(A-01: 이메일 → 비밀번호, 또는 이메일 6자리 코드)과 설정 > 기기 연결의 계정 줄. main(remote-account.ts)이 단계를 정하고 여기서는 그리기만 한다.
 // 렌더러가 받는 값은 단계·이메일·코드 만료 시각·오류 코드뿐이다(세션·토큰은 main에만). 값은 모두 textContent·value로 넣는다.
-import { btn, h, icon, note } from './shell-views.js';
+import { btn, h, icon } from './shell-views.js';
 
 /** 오류 코드 → 문구. 모르는 코드는 일반 문구(코드를 화면에 보이지 않는다). */
 const ERR = {
   'account.email_shape': '이메일 형식이 아니에요',
+  'account.credentials_invalid': '이메일 또는 비밀번호가 맞지 않아요',
+  'account.password_empty': '비밀번호를 넣어 주세요',
   'account.code_shape': '6자리 숫자를 넣어 주세요',
   'account.code_invalid': '코드가 맞지 않아요. 메일의 6자리를 다시 확인해 주세요',
   'account.code_locked': '여러 번 틀려서 이 코드는 막혔어요. 코드를 다시 받아 주세요',
@@ -34,67 +36,147 @@ export function accountCard(view, onLogin, onPair) {
             h('p', { class: 'sx-meta', 'data-account-phones': String(v.phones ?? 0) }, v.phones ? `이 PC가 계정에 등록됐어요. 연결된 폰 ${v.phones}대.` : '이 PC가 계정에 등록됐어요. 아직 연결된 폰이 없어요.'),
             h('div', { class: 'sx-actions' }, btn('폰 연결', onPair, 'sx-btn-primary', { 'data-act': 'pair-open' }), h('span', { class: 'sx-meta' }, '새 창에 QR이 떠요. 폰 앱으로 찍고 폰에 보이는 6자리를 PC에 넣어요.')),
           ]
-        : [h('p', { class: 'sx-body-sm is-muted' }, '폰을 연결하려면 먼저 이메일로 로그인해 주세요. 메일로 받은 6자리 코드로 들어가요.'), h('div', { class: 'sx-actions' }, btn('로그인', onLogin, 'sx-btn-primary', { 'data-act': 'account-login' }))];
+        : [h('p', { class: 'sx-body-sm is-muted' }, '폰을 연결하려면 먼저 로그인해 주세요. 비밀번호나 메일로 받은 6자리 코드로 들어가요.'), h('div', { class: 'sx-actions' }, btn('로그인', onLogin, 'sx-btn-primary', { 'data-act': 'account-login' }))];
   return h('div', { class: 'sx-card', 'data-account': v.step }, h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '계정')), ...body);
 }
 
+/** 렌더러 안 이메일 모양 미리 보기(판정은 main isEmailShape). */
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const back = (label, onClick) => h('button', { type: 'button', class: 'acct-back', 'data-act': 'account-back', onclick: onClick }, icon('chevronLeft'), label);
+const mark = () => h('span', { class: 'acct-mark', 'aria-hidden': 'true' }, 'ax');
+const head = (title, sub, subAttrs) => h('div', { class: 'acct-head' }, h('h1', { class: 'title-screen', id: 'acct-title' }, title), sub ? h('p', { class: 'sx-body-sm', ...(subAttrs ?? {}) }, sub) : null);
+const links = (...bs) => h('div', { class: 'acct-links' }, ...bs.flatMap((b, i) => (i ? [h('span', { class: 'acct-dot', 'aria-hidden': 'true' }, '·'), b] : [b])));
+const quiet = (label, onClick, act) => btn(label, onClick, 'sx-btn-quiet', { 'data-act': act });
+const primary = (label, onClick, act, busy) => btn(label, onClick, 'sx-btn-primary sx-btn-lg', { 'data-act': act, disabled: busy });
+
+/** 남은 시간 m:ss(코드 만료). */
+const left = (at, now) => {
+  const s = Math.max(0, Math.round((at - now) / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
 /**
- * 로그인 창(A-01). ctx = { view, draft: { email, code }, busy, onClose, sendCode(email), verify(code), back() }.
- * 입력 중인 값은 draft에 둔다(다시 그려도 남는다. DOM 속성에는 넣지 않는다).
+ * 로그인(A-01, 캔버스 v60 M2Login·M2LoginCode·M2Signup 이메일 단계). 앱 위를 덮는 전체 화면이다.
+ * ctx = { view, screen, draft: { email, password, code, show }, busy, now, go(screen), onClose, sendCode(email), verify(code), password(email, pw), back() }.
+ * - screen(렌더러가 고른 화면): 'email' | 'password' | 'code_email' | 'signup'. 코드를 보낸 뒤(main step code_sent)는 코드 6자리 화면이다.
+ * - 비밀번호가 틀림·없는 계정·잠금은 같은 안내다(서버가 같은 응답, ADR-038 (d)). 안내 안에 [이메일 코드로 로그인]을 둔다.
+ * - 입력 중인 값은 draft에만 둔다(DOM 속성에 넣지 않는다). 비밀번호는 보낸 뒤 비운다.
  */
-export function loginModal(ctx) {
+export function loginScreen(ctx) {
   const { view: v, draft } = ctx;
-  const field = (label, cls, value, attrs, onEnter) => {
-    const i = h('input', { class: `doc-in ${cls}`, autocomplete: 'off', spellcheck: 'false', 'aria-label': label, ...attrs });
-    i.value = value ?? '';
-    i.addEventListener('input', () => (draft[cls === 'acct-email' ? 'email' : 'code'] = i.value));
+  const err = v.error;
+  const busy = ctx.busy || v.step === 'working';
+  const email = () => (draft.email ?? '').trim();
+  const input = (key, label, attrs, onEnter, cls = '') => {
+    const i = h('input', { class: `acct-in acct-${key} ${cls}`, autocomplete: 'off', spellcheck: 'false', 'aria-label': label, ...attrs });
+    i.value = draft[key] ?? '';
+    i.addEventListener('input', () => (draft[key] = i.value));
     i.addEventListener('keydown', (e) => e.key === 'Enter' && onEnter());
-    return h('label', { class: 'modal-field' }, h('span', { class: 'sx-meta' }, label), i);
+    return i;
   };
-  const err = accountErrText(v.error);
-  const sendCode = () => !ctx.busy && ctx.sendCode((draft.email ?? '').trim());
-  const verify = () => !ctx.busy && ctx.verify((draft.code ?? '').trim());
-  let title = '로그인';
-  let sub = '이메일로 6자리 코드를 보내 드려요. 비밀번호는 없어요.';
-  let rows;
-  if (v.step === 'code_sent') {
-    title = '코드 넣기';
-    sub = '';
-    rows = [
-      h('p', { class: 'sx-body-sm' }, h('b', { 'data-acct-to': '' }, v.email), '(으)로 보낸 6자리 코드를 넣어 주세요. 10분 안에 넣어야 해요.'),
-      field('6자리 코드', 'acct-code', draft.code, { inputmode: 'numeric', maxlength: 6, autocomplete: 'one-time-code' }, verify),
-      err ? note(err, true) : null,
+  const errNote = (code) => (code ? h('p', { class: 'acct-err sx-body-sm', role: 'alert' }, icon('warn'), accountErrText(code)) : null);
+  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : ctx.screen;
+  let body;
+
+  if (screen === 'working') {
+    body = [mark(), head('이 PC를 계정에 등록하고 있어요', '잠시만 기다려 주세요', { 'data-account-working': '' })];
+  } else if (screen === 'email') {
+    const next = () => {
+      if (busy) return;
+      if (!EMAIL_RE.test(email())) return ctx.fail('account.email_shape');
+      ctx.go('password');
+    };
+    body = [
+      ctx.onClose ? back('닫기', ctx.onClose) : null,
+      mark(),
+      head('로그인', '이메일이 아이디예요'),
       h(
         'div',
-        { class: 'modal-acts' },
-        btn('다른 이메일', ctx.back, 'sx-btn-quiet', { 'data-act': 'account-back' }),
-        btn('코드 다시 받기', () => !ctx.busy && ctx.sendCode(v.email), 'sx-btn-lg', { 'data-act': 'account-resend' }),
-        btn('확인', verify, 'sx-btn-primary sx-btn-lg', { 'data-act': 'account-verify', disabled: ctx.busy }),
+        { class: 'acct-stack' },
+        input('email', '이메일', { type: 'email', maxlength: 254, inputmode: 'email', autocomplete: 'username' }, next),
+        errNote(err),
+        primary('계속', next, 'account-next', busy),
+        // [패스키로 로그인](권장)·"또는"은 데스크톱 패스키가 되는 빌드에서 보인다(인계 명세 §8 G7: 누르면 안 되는 버튼을 두지 않는다).
+        links(quiet('계정 만들기', () => ctx.go('signup'), 'account-signup')),
       ),
     ];
-  } else if (v.step === 'working') {
-    rows = [h('p', { class: 'sx-body-sm', 'data-account-working': '' }, '이 PC를 계정에 등록하고 있어요…')];
-  } else {
-    rows = [
-      field('이메일', 'acct-email', draft.email ?? v.email, { type: 'email', maxlength: 254, inputmode: 'email' }, sendCode),
-      err ? note(err, true) : null,
-      h('div', { class: 'modal-note' }, icon('lock'), h('span', {}, '이 PC의 금고가 기기 키를 만들고 계정에 등록해요. 키는 PC 밖으로 나가지 않아요.')),
-      h('div', { class: 'modal-acts' }, btn('취소', ctx.onClose, 'sx-btn-lg', { 'data-act': 'account-cancel' }), btn('코드 받기', sendCode, 'sx-btn-primary sx-btn-lg', { 'data-act': 'account-send', disabled: ctx.busy })),
+  } else if (screen === 'password') {
+    const wrong = err === 'account.credentials_invalid';
+    const submit = () => !busy && ctx.password(email(), draft.password ?? '');
+    const pw = input('password', '비밀번호', { type: draft.show ? 'text' : 'password', maxlength: 512, autocomplete: 'current-password' }, submit, wrong ? 'is-bad' : '');
+    body = [
+      mark(),
+      head('비밀번호'),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        h('span', { class: 'acct-chip' }, h('span', { 'data-acct-email': '' }, email()), quiet('바꾸기', () => ctx.go('email'), 'account-change-email')),
+        h('div', { class: 'acct-pw' }, pw, h('button', { type: 'button', class: 'acct-eye', 'aria-label': draft.show ? '가리기' : '보기', 'aria-pressed': String(!!draft.show), onclick: () => ctx.toggleShow() }, icon(draft.show ? 'eyeOff' : 'eye'))),
+        wrong
+          ? h(
+              'div',
+              { class: 'acct-alert', role: 'alert', 'data-acct-wrong': '' },
+              h('p', { class: 'acct-alert-hd sx-body-sm' }, icon('warn'), '이메일 또는 비밀번호가 맞지 않아요'),
+              h('p', { class: 'acct-alert-sub sx-body-sm' }, '이메일 코드로는 바로 로그인할 수 있어요'),
+              btn([icon('mail'), '이메일 코드로 로그인'], () => !busy && ctx.sendCode(email()), 'sx-btn-lg acct-btn', { 'data-act': 'account-code-from-wrong' }),
+            )
+          : errNote(err),
+        primary('로그인', submit, 'account-password', busy),
+        wrong ? null : links(quiet('이메일 코드로 로그인', () => ctx.go('code_email'), 'account-code-login')),
+      ),
     ];
+  } else if (screen === 'code_email' || screen === 'signup') {
+    const signup = screen === 'signup';
+    const send = () => !busy && ctx.sendCode(email());
+    body = [
+      back('뒤로', () => ctx.go(signup ? 'email' : 'password')),
+      head(signup ? '계정 만들기' : '이메일 코드로 로그인', signup ? '이메일이 아이디예요' : null),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        input('email', '이메일', { type: 'email', maxlength: 254, inputmode: 'email', autocomplete: 'username' }, send),
+        errNote(err),
+        primary('코드 받기', send, 'account-send', busy),
+        links(signup ? quiet('로그인', () => ctx.go('email'), 'account-to-login') : quiet('비밀번호로 로그인', () => ctx.go('password'), 'account-to-password')),
+      ),
+    ];
+  } else {
+    // 코드 6자리: 칸 여섯 개는 보이기만 하고, 입력은 그 위를 덮는 숫자 칸 하나가 받는다(붙여 넣기·자동 채우기도 된다).
+    const code = (draft.code ?? '').replace(/\D/g, '').slice(0, 6);
+    const cells = h(
+      'div',
+      { class: 'acct-cells', 'aria-hidden': 'true' },
+      ...Array.from({ length: 6 }, (_, i) => h('span', { class: `acct-cell${i === Math.min(code.length, 5) ? ' is-at' : ''}` }, code[i] ?? '')),
+    );
+    const i = h('input', { class: 'acct-code-in acct-code', inputmode: 'numeric', maxlength: 6, autocomplete: 'one-time-code', 'aria-label': '6자리 코드', 'aria-describedby': 'acct-to' });
+    i.value = code;
+    i.addEventListener('input', () => {
+      draft.code = i.value.replace(/\D/g, '').slice(0, 6);
+      if (i.value !== draft.code) i.value = draft.code;
+      cells.querySelectorAll('.acct-cell').forEach((c, k) => {
+        c.textContent = draft.code[k] ?? '';
+        c.classList.toggle('is-at', k === Math.min(draft.code.length, 5));
+      });
+      if (draft.code.length === 6 && !busy) ctx.verify(draft.code);
+    });
+    i.addEventListener('keydown', (e) => e.key === 'Enter' && !busy && ctx.verify(draft.code ?? ''));
+    body = [
+      back('뒤로', ctx.back),
+      head('코드 6자리', [h('b', { 'data-acct-to': '' }, v.email), '로 보냈어요'], { id: 'acct-to' }),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        h('div', { class: 'acct-code-box' }, cells, i),
+        errNote(err),
+        h('div', { class: 'acct-code-foot' }, v.codeExpiresAt ? h('span', { class: 'acct-left', 'data-acct-left': '' }, left(v.codeExpiresAt, ctx.now())) : null, quiet('다시 받기', () => !busy && ctx.sendCode(v.email), 'account-resend')),
+      ),
+    ];
+    screen = 'code';
   }
   return h(
-    'div',
-    { class: 'modal-scrim' },
-    h(
-      'section',
-      { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'acct-title', 'data-account-login': v.step },
-      h(
-        'div',
-        { class: 'modal-hd' },
-        h('div', { class: 'modal-title' }, h('h2', { class: 'title-screen', id: 'acct-title' }, title), sub ? h('p', { class: 'sx-body-sm is-muted' }, sub) : null),
-        h('button', { type: 'button', class: 'panel-x', 'aria-label': '닫기', onclick: ctx.onClose }, icon('close')),
-      ),
-      ...rows,
-    ),
+    'section',
+    { class: 'acct-screen', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'acct-title', 'data-account-login': v.step, 'data-acct-screen': screen },
+    h('div', { class: 'acct-col' }, ...body),
   );
 }
