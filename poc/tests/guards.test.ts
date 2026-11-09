@@ -232,7 +232,7 @@ describe('정적·구성 경계', () => {
     assert.equal(actionText(base({ '$dup.businessKey': 'in_doubt' })), ACTION_TEXT_DUP);
     assert.equal(actionText(base()), ACTION_TEXT);
     const prior = base({ '$dup.businessKey': 'not_committed', '$dup.priorNotCommitted': 'true' });
-    assert.equal((summarize(prior) as SummaryLine[])[0]!.flag, '직전 시도 미발급 판정');
+    assert.equal((summarize(prior) as SummaryLine[])[0]!.flag, '이전 시도는 발급되지 않았어요');
     // 발급된(또는 모르는) 같은 건이 있으면 "직전 시도 미발급"보다 먼저 보인다(그 경고가 발급된 건을 가리면 중복 발급).
     for (const [states, flag] of [['committed,not_committed', '이미 발급됨(승인번호 있음)'], ['in_doubt,not_committed', '발급 여부 확인 안 됨'], ['dispatched,not_committed', '발급 여부 확인 안 됨']]) {
       assert.equal((summarize(base({ '$dup.businessKey': states!, '$dup.priorNotCommitted': 'true' })) as SummaryLine[])[0]!.flag, flag, states);

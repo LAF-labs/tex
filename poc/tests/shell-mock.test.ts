@@ -239,7 +239,7 @@ describe('셸 목업', () => {
     await runs.prepare(a.run.id);
     host.emit('gate', gateFor(a.run.id, {}, [{ fieldKey: '$first.bizNo', value: 'true' }, { fieldKey: '$first.email', value: 'true' }, { fieldKey: '$dup.businessKey', value: 'not_committed' }, { fieldKey: '$dup.priorNotCommitted', value: 'true' }]));
     assert.deepEqual(runs.get(a.run.id)!.warnings.length, 1);
-    assert.match(runs.get(a.run.id)!.warnings[0]!, /직전 시도는 발급 안 됨으로 판정했어요/);
+    assert.match(runs.get(a.run.id)!.warnings[0]!, /이전 시도는 발급되지 않았어요/);
     await runs.abortGate(a.run.id, 'answer.rejected');
     assert.ok(host.calls.some(([m]) => m === 'run.stop'));
     host.emit('run', { runId: a.run.id, type: 'end', status: 'stopped', code: 'gate.stopped' });
@@ -282,7 +282,7 @@ describe('셸 목업', () => {
     const w = runs.get(d.run.id)!.warnings;
     assert.equal(w.length, 2);
     assert.match(w[0]!, /이미 발급돼 있어요/);
-    assert.match(w[1]!, /직전 시도는 발급 안 됨으로 판정했어요/);
+    assert.match(w[1]!, /이전 시도는 발급되지 않았어요/);
     await assert.rejects(runs.stop('run-none'), /no_run/);
   });
 

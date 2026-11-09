@@ -63,6 +63,9 @@ export const NOTE: Record<string, string> = {
   'checkpoint.expect_failed': UNKNOWN_SCREEN,
   'portal.unexpected_page': '홈택스가 예상하지 못한 화면으로 보내 멈췄어요. 전용 Chrome 창의 안내를 확인해 주세요. 아무것도 발급하지 않았어요.',
   'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  // 게이트 앞 readback 대조(D02 §8 s19d·s19f, D16 assert.*): 값은 문구에 넣지 않는다. 승인 카드를 열지 않았다.
+  'assert.total_mismatch': '홈택스 화면의 공급가액과 세액을 더한 값이 합계와 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  'assert.input_mismatch': '홈택스 화면 값이 준비한 거래처 사업자번호·공급가액·세액·이메일과 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   'assert.issue_date_mismatch': '홈택스 작성일자가 오늘(한국 시간)과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
   'vault.leak_suspected': '보안 점검에서 이상이 보여 멈췄어요. 아무것도 발급하지 않았어요. 앱을 다시 시작해 주세요.',
   'step.readback_mismatch': '홈택스 화면 값을 확실히 읽지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -101,11 +104,11 @@ const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
 const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
 
-/** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 직전 시도 미발급. */
+/** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 이전 시도 미발급. */
 export const DUP_NOTE = {
   committed: '이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.',
   unknown: '같은 건이 발급됐는지 아직 확인하지 못했어요. 홈택스 발급목록을 먼저 확인해 주세요.',
-  notCommitted: '직전 시도는 발급 안 됨으로 판정했어요. 다시 발급하기 전에 홈택스 발급목록을 한 번 확인해 주세요.',
+  notCommitted: '이전 시도는 발급되지 않았어요. 다시 발급하기 전에 홈택스 발급목록을 한 번 확인해 주세요.',
   other: '같은 거래처·금액·날짜·품목의 기록이 있어요. 같은 건을 두 번 발급하는 것이 아닌지 확인해 주세요.',
 } as const;
 
