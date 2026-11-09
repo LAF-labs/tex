@@ -1,6 +1,8 @@
 // 데스크톱 계정 로그인(A-01)·첫 PC 등록·기기 토큰 보관(D08 §4.2, D09 §2.1·§2.2, 팀장 결정 2026-11-06 (가)).
 // 흐름: 이메일 → 비밀번호(ADR-038) 또는 6자리 코드 → 계정 세션(메모리) → 기기 목록 조회 → (첫 PC) AIK 서명 첫 목록 + POST /v1/aik → 자기 인증서(AIK 서명)
 //       → 신원 파일 저장 → 로그아웃(세션 버림). 그 뒤 계정 호출은 기기 범위 토큰(인증서 + DPoP(Vd), 15분, 메모리 캐시)으로만 한다.
+//   계정 만들기(코드)로 들어왔고 비밀번호가 없으면(GET /v1/me hasPassword) 등록 뒤 비밀번호 만들기 단계(set_password)를 둔다.
+//   그 단계 동안만 세션을 메모리에 둔다(방금 인증한 세션이라 PUT /v1/password를 바로 부른다, 10분 안). 만들거나 [나중에]면 로그아웃.
 // - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
 // - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
 // - 두 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 이 범위 밖이다: account.aik_already_pinned로 끝낸다.
@@ -102,7 +104,7 @@ export class RemoteIdentityFile {
 
 /** 렌더러가 보는 것(값은 이메일·만료 시각·오류 코드뿐). */
 export interface AccountView {
-  step: 'unavailable' | 'signed_out' | 'code_sent' | 'working' | 'signed_in';
+  step: 'unavailable' | 'signed_out' | 'code_sent' | 'working' | 'set_password' | 'signed_in';
   email: string | null;
   codeExpiresAt: number | null;
   error: string | null;
@@ -132,7 +134,9 @@ export class DesktopAccount {
   #now: () => number;
   #log: NonNullable<DesktopAccountOptions['log']>;
   #id: RemoteIdentity | null = null;
-  #pending: { email: string; loginId: string; expiresAt: number } | null = null;
+  #pending: { email: string; loginId: string; expiresAt: number; signup: boolean } | null = null;
+  /** 계정 만들기 뒤 비밀번호 만들기 단계(ADR-038 (a) 선택). 세션은 이 단계 동안만 메모리에 있다. */
+  #offer: { session: string; email: string } | null = null;
   /** 이메일 칸을 다시 채우는 값(코드를 쓴 뒤 등록이 실패했을 때). */
   #lastEmail: string | null = null;
   #working = false;
@@ -162,7 +166,9 @@ export class DesktopAccount {
 
   view(): AccountView {
     if (!this.#o.client) return { step: 'unavailable', email: null, codeExpiresAt: null, error: null, phones: 0 };
-    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length };
+    if (this.#offer) return { step: 'set_password', email: this.#offer.email, codeExpiresAt: null, error: this.#error, phones: 0 };
+    // 로그인 상태의 오류는 비밀번호 단계를 끝낸 이유(account.password_later)뿐이다
+    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length };
     if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
     if (this.#pending && this.#pending.expiresAt > this.#now()) return { step: 'code_sent', email: this.#pending.email, codeExpiresAt: this.#pending.expiresAt, error: this.#error, phones: 0 };
     return { step: 'signed_out', email: this.#pending?.email ?? this.#lastEmail, codeExpiresAt: null, error: this.#pending ? (this.#error ?? 'account.code_expired') : this.#error, phones: 0 };
@@ -172,8 +178,11 @@ export class DesktopAccount {
     return this.#id;
   }
 
-  /** 이메일 → 코드 보내기. 다시 보내기도 이것(서버가 시간당 5회로 막는다). */
-  async sendCode(emailRaw: string): Promise<AccountView> {
+  /**
+   * 이메일 → 코드 보내기. 다시 보내기도 이것(서버가 시간당 5회로 막는다).
+   * signup이면 계정 만들기 화면에서 왔다: 코드 확인·등록 뒤 비밀번호가 없으면 만들기 단계를 둔다. 서버 호출은 같다(첫 검증 때 계정 생성).
+   */
+  async sendCode(emailRaw: string, signup = false): Promise<AccountView> {
     const client = this.#need();
     const email = emailRaw.trim();
     this.#error = null;
@@ -183,7 +192,7 @@ export class DesktopAccount {
     }
     await this.#run(async () => {
       const r = await client.startEmailCode(email);
-      this.#pending = { email, loginId: r.loginId, expiresAt: this.#now() + r.expiresInSec * 1000 };
+      this.#pending = { email, loginId: r.loginId, expiresAt: this.#now() + r.expiresInSec * 1000, signup };
       this.#log('main.account_code', { result: 'sent' });
     }, 'main.account_code');
     return this.view();
@@ -207,11 +216,15 @@ export class DesktopAccount {
       // 코드는 한 번 쓰면 끝이다. 등록이 실패해도 코드 입력으로 돌아가지 않고 이메일부터 다시 한다.
       this.#pending = null;
       this.#lastEmail = p.email;
+      let keep = false;
       try {
         this.#id = await this.#enroll(client, session, p.email);
         this.#log('main.account_enroll', { result: 'ok' });
+        // 이미 비밀번호가 있으면 건너뛴다(인계 명세 §3). /v1/me가 실패하면 묻지 않는다(설정 > 계정에서 만든다).
+        if (p.signup) keep = (await client.me(session).then((m) => m.hasPassword === false).catch(() => false));
+        if (keep) this.#offer = { session, email: p.email };
       } finally {
-        await client.logout(session).catch(() => {});
+        if (!keep) await client.logout(session).catch(() => {});
       }
     }, 'main.account_enroll');
     return this.view();
@@ -246,6 +259,57 @@ export class DesktopAccount {
       }
     }, 'main.account_password');
     return this.view();
+  }
+
+  /**
+   * 계정 만들기 비밀번호 단계: PUT /v1/password(만들기, 204). 비밀번호는 이 호출 본문으로만 나가고 어디에도 남기지 않는다.
+   * 정책 거부(account.password_*)·요청이 많음은 이 단계에 남아 문구를 보인다. 세션이 쓸 수 없게 됐으면(재인증 필요·만료) 단계를 끝내고
+   * account.password_later를 남긴다(설정 > 계정에서 만든다). 성공하면 세션을 로그아웃하고 버린다.
+   */
+  async setPassword(password: string): Promise<AccountView> {
+    const client = this.#o.client;
+    const o = this.#offer;
+    if (!client || !o) throw new Error('account_no_offer');
+    if (this.#working) throw new Error('busy');
+    this.#error = null;
+    if (!password) {
+      this.#error = 'account.password_empty';
+      return this.view();
+    }
+    this.#working = true;
+    try {
+      await client.setPassword(o.session, password);
+      this.#log('main.account_password_set', { result: 'ok' });
+      await this.#endOffer();
+    } catch (e) {
+      const code = codeOf(e);
+      this.#log('main.account_password_set', { result: code });
+      // 서버에 비밀번호 기능이 꺼져 있어도(request.not_found) 이 단계는 끝낸다.
+      if (code === 'account.reauth_required' || code === 'account.unauthorized' || code === 'request.not_found') {
+        await this.#endOffer();
+        this.#error = 'account.password_later';
+      } else this.#error = code;
+    } finally {
+      this.#working = false;
+    }
+    return this.view();
+  }
+
+  /** 비밀번호 단계 [나중에]: 세션을 로그아웃하고 버린다. */
+  async skipPassword(): Promise<AccountView> {
+    if (this.#working) throw new Error('busy');
+    if (this.#offer) {
+      this.#log('main.account_password_set', { result: 'later' });
+      await this.#endOffer();
+    }
+    this.#error = null;
+    return this.view();
+  }
+
+  async #endOffer(): Promise<void> {
+    const o = this.#offer;
+    this.#offer = null;
+    if (o) await this.#o.client?.logout(o.session).catch(() => {});
   }
 
   /** [다른 이메일로] 코드 입력을 버린다. */
