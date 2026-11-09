@@ -35,7 +35,7 @@
   - 이 수동 절차는 임시다. ADR-043(인덱스 내용 서명과 신선도 서명 분리, 신선도는 cron이 timestamp-1 키로 재서명)이 배포되면 없어진다(팀장 결정 2026-11-09).
 - status 상한은 `hometax: assisted`(사람 보조)다. 실제 홈택스 화면과 셀렉터를 아직 대조하지 않았기 때문이다(팀장 결정 2026-11-09).
 - **H-01 셀렉터는 실제 화면 미대조다. 첫 실기기 실행에서 확인한다**(ADR-025). 틀리면 판을 올려(2.1.1 등) 다시 게시한다. 이번 게시 판은 2.1.0 그대로다.
-- 원본 경로는 지금 `tests/fixtures/core/h01`이다. 제품 위치(`packages/engine/playbooks/`)로 옮겨지면 아래 명령의 경로를 바꾼다(팀장 결정 2026-11-09, 엔진 세션이 옮긴다).
+- 원본 경로는 `packages/engine/playbooks/<패키지 id>/`다(#231, 팀장 결정 2026-11-09). H-01은 `hometax.invoice.issue`, 조회 패키지 2개는 `hometax.invoice.lookup`·`hometax.invoice.email_status`.
 
 ## 0. 준비
 
@@ -50,7 +50,7 @@
 ## 1. dry-run (Touch ID 없음, 운영에 쓰지 않음)
 
 ```bash
-node --conditions=development services/registry/src/publish/cli.ts dry-run --registry https://tax.laf-co.com --trust services/registry/ceremony/keyepoch-1/trust-root.json --work ~/sax-publish/h01-dry --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --ceiling hometax=assisted tests/fixtures/core/lookups/hometax.invoice.lookup tests/fixtures/core/lookups/hometax.invoice.email_status tests/fixtures/core/h01
+node --conditions=development services/registry/src/publish/cli.ts dry-run --registry https://tax.laf-co.com --trust services/registry/ceremony/keyepoch-1/trust-root.json --work ~/sax-publish/h01-dry --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --ceiling hometax=assisted packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
 ```
 
 - 운영 레지스트리는 **읽기만** 한다(GET). 서명은 메모리 안 임시 키로 하고, 게시는 이 맥 안의 임시 로컬 레지스트리에만 한다.
@@ -73,7 +73,7 @@ node --conditions=development services/registry/src/publish/cli.ts dry-run --reg
 dry-run과 같은 인자에 `prepare`, 새 작업 폴더를 준다.
 
 ```bash
-node --conditions=development services/registry/src/publish/cli.ts prepare --registry https://tax.laf-co.com --trust services/registry/ceremony/keyepoch-1/trust-root.json --work ~/sax-publish/h01-1 --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --ceiling hometax=assisted tests/fixtures/core/lookups/hometax.invoice.lookup tests/fixtures/core/lookups/hometax.invoice.email_status tests/fixtures/core/h01
+node --conditions=development services/registry/src/publish/cli.ts prepare --registry https://tax.laf-co.com --trust services/registry/ceremony/keyepoch-1/trust-root.json --work ~/sax-publish/h01-1 --revoked services/registry/ceremony/keyepoch-1/revoked_keys.signed.json --ceiling hometax=assisted packages/engine/playbooks/hometax.invoice.lookup packages/engine/playbooks/hometax.invoice.email_status packages/engine/playbooks/hometax.invoice.issue
 ```
 
 - 화면
