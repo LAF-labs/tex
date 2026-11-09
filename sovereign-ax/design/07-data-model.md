@@ -130,9 +130,12 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,  -- verify_ref: committed 판정의 B₁\B₀ 한 건(H-01 승인번호). bind 유무와 무관, verify가 committed로 판정하지 않은 행은 NULL (ADR-024)
   cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(ledgerHmacKey = 엔진이 DB 키에서 HKDF로 파생). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
   recipient_email_hmac TEXT,                 -- 받는 이메일 HMAC(같은 키, 소문자 + 도메인 punycode로 정규화). 처음 보내는 주소 판정(ADR-021)
-  PRIMARY KEY(intent_id, step_id)
+  attempt INTEGER NOT NULL CHECK(attempt >= 1),  -- 같은 (intent_id, step_id)의 시도 번호(ADR-042). 앞선 시도가 모두 not_committed일 때만 다음 번호(재게이트)
+  PRIMARY KEY(intent_id, step_id, attempt)
 );
 CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);
+CREATE INDEX ix_irr_run ON irreversible_log(run_id);
+CREATE UNIQUE INDEX ux_irr_live ON irreversible_log(intent_id, step_id) WHERE state <> 'not_committed';  -- (intent, step)마다 열린·committed 행은 하나(ADR-042)
 
 CREATE TABLE gate_requests (                 -- 게이트 요청 단일 사용·결정 주체 기록 (B-10·B-33)
   req_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),
@@ -330,7 +333,7 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 - 폰에서 받은 사진·현금매출(ADR-034)은 PC에 저장된 뒤에만 이 테이블에 들어간다. 폰 쪽 임시 보관은 앱 샌드박스의 파일 보호 등급 파일(iOS `NSFileProtectionComplete`, Android 앱 전용 저장소)로, 백업에서 빼고 카메라 롤·갤러리에는 저장하지 않는다. 파일 암호화 키만 `ThisDeviceOnly` 키 저장소에 둔다. PC가 받았다고 확인하면 지운다(D08 §3.1, D14 M7-4).
 - 임금대장은 3년 보존 의무가 있다. 로컬 전용이라 PC를 잃으면 함께 사라지므로, Phase 2 E2EE 백업 범위에 넣을지 Phase 2 설계 때 정한다.
 
-- 원장 규칙(B-10): 키는 `(intent_id, step_id)`다. 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`·`playbook_id`가 원장과 다르면 거부한다. '사후 스텝 점프'는 같은 `run_id`의 재개에만 적용한다(D03 §4).
+- 원장 규칙(B-10, ADR-042): 키는 `(intent_id, step_id, attempt)`다. 새 시도는 새 게이트 토큰 소비와 한 트랜잭션에서만 생기고, 같은 (intent, step)의 어느 시도든 `committed`이거나 종결되지 않은 행이 있으면 금지다(앞선 시도가 모두 `not_committed`일 때만). 앞선 시도의 사유·`verify_ref`는 감사 근거로 남는다. 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`·`playbook_id`가 원장과 다르면 거부한다. '사후 스텝 점프'는 같은 `run_id`의 재개에만 적용한다(D03 §4).
 - `schedules.consent_json`(B-27): `deviceSig`는 동의한 기기의 `Vx` 서명이며 문맥은 `"SAX-consent-v1"`(D08 §2.1)이다. 설치된 패키지의 `major`나 `effects`가 동의 당시와 다르면 `notify`로 강등하고 재동의를 받는다.
 
 ## 3. 문서 종류와 유효기간 규칙표 (초기값, 사용자 조정 가능)

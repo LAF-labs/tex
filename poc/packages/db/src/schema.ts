@@ -6,6 +6,9 @@
 // v5(M1-2, ADR-032·034): 세무사 꾸러미(항목·달별 상태·내보내기·카드 조회·카드 내역·메모·종이 증빙·현금매출).
 // v6(db #53): 온보딩(포털 로그인 ID·동의 기록·이어 하기 상태).
 // v7(08 §144·O-05, 데스크톱 #141): 거래처 저장 품목(이름·단가·단위 JSON 배열, 개수 상한은 CounterpartyRepo). 개인정보·비밀이 아니라 평문 열이다(D07 §2 원칙).
+// v8(ADR-042): 원장 시도 번호. PRIMARY KEY(intent_id, step_id) → (intent_id, step_id, attempt). 이전 행은 attempt=1로 옮긴다.
+//   SQLite는 PK를 바꾸지 못해 표를 새로 만들어 옮긴다(한 트랜잭션, 실패하면 이전 판 그대로 = fail-closed).
+//   불변식 일부를 DB에도 건다: (intent, step)마다 not_committed가 아닌 행은 많아야 하나(ux_irr_live). committed·미종결이 있으면 새 시도가 들어갈 수 없다.
 export interface Migration {
   version: number;
   name: string;
@@ -291,6 +294,31 @@ CREATE TABLE onboarding_state (
     name: 'counterparty_items',
     sql: `
 ALTER TABLE counterparties ADD COLUMN saved_items_json TEXT;
+`,
+  },
+  {
+    version: 8,
+    name: 'ledger_attempt',
+    sql: `
+CREATE TABLE irreversible_log_v8 (
+  intent_id TEXT NOT NULL, step_id TEXT NOT NULL, attempt INTEGER NOT NULL CHECK(attempt >= 1),
+  run_id TEXT NOT NULL, business_key TEXT NOT NULL, playbook_id TEXT NOT NULL,
+  inputs_hash TEXT NOT NULL, package_digest TEXT NOT NULL, action_hash TEXT NOT NULL,
+  state TEXT CHECK(state IN ('armed','dispatched','committed','not_committed','in_doubt','observed_manual')) NOT NULL,
+  reason TEXT, armed_at TEXT NOT NULL, dispatched_at TEXT, resolved_at TEXT, verify_ref TEXT, device_id TEXT NOT NULL,
+  cp_biz_no_hmac TEXT, recipient_email_hmac TEXT,
+  PRIMARY KEY(intent_id, step_id, attempt)
+);
+INSERT INTO irreversible_log_v8 (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, reason, armed_at, dispatched_at, resolved_at, verify_ref, device_id, cp_biz_no_hmac, recipient_email_hmac)
+  SELECT intent_id, step_id, 1, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, reason, armed_at, dispatched_at, resolved_at, verify_ref, device_id, cp_biz_no_hmac, recipient_email_hmac
+  FROM irreversible_log ORDER BY rowid;
+DROP TABLE irreversible_log;
+ALTER TABLE irreversible_log_v8 RENAME TO irreversible_log;
+CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);
+CREATE INDEX ix_irr_cp_hmac ON irreversible_log(cp_biz_no_hmac, state);
+CREATE INDEX ix_irr_email_hmac ON irreversible_log(recipient_email_hmac, state);
+CREATE INDEX ix_irr_run ON irreversible_log(run_id);
+CREATE UNIQUE INDEX ux_irr_live ON irreversible_log(intent_id, step_id) WHERE state <> 'not_committed';
 `,
   },
 ];

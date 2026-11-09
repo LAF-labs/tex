@@ -542,9 +542,9 @@ export class RunService extends EventEmitter {
     return this.active?.runId ?? null;
   }
 
-  /** 시험용 읽기(값 없음): 원장 상태, 저널 종류, 요청률 정책 상태(횟수·쿨다운). */
+  /** 시험용 읽기(값 없음): 원장 상태(마지막 시도), 저널 종류, 요청률 정책 상태(횟수·쿨다운). */
   inspect(runId: string): { ledger: string | null; journal: string[]; policy: PolicyStatus } {
-    const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ?').get(runId) as { state: string } | undefined;
+    const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at DESC, attempt DESC LIMIT 1').get(runId) as { state: string } | undefined;
     return { ledger: row?.state ?? null, journal: this.journal.types(runId), policy: this.rate.status(this.d.data.profiles.byKind('business')?.id ?? '') };
   }
 }
