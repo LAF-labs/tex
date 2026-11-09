@@ -478,7 +478,12 @@ export class OnboardingFlow {
           { mode: 'store', kind: 'security_card', scope: 'business', notice: { version } },
         ]);
         if (!r.ok) {
-          s.notice = r.reason === 'cancelled' ? '금고 창을 닫았어요. 다시 열거나 다른 인증으로 바꿀 수 있어요.' : '금고에 등록하지 못했어요. 다시 해 주세요.';
+          s.notice =
+            r.reason === 'cancelled'
+              ? '금고 창을 닫았어요. 다시 열거나 다른 인증으로 바꿀 수 있어요.'
+              : r.reason === 'unavailable'
+                ? '이 빌드에서는 아직 보안카드를 등록할 수 없어요. 다른 인증으로 바꿔 주세요.'
+                : '금고에 등록하지 못했어요. 다시 해 주세요.';
           // 상태는 delegation 그대로(답은 기록하지 않는다). 실패를 오류로 던지지 않아 안내가 남는다.
           return;
         }

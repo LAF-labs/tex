@@ -31,6 +31,11 @@ export interface EngineHostOptions {
   root?: string;
   portal: EnginePortal;
   log: EventLog;
+  /**
+   * 앱 판(app.getVersion(), semver). 엔진이 레지스트리 항목 minAppVersion과 대조한다(엔진 #243, D09 §8).
+   * 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(엔진 fail-closed).
+   */
+  appVersion?: string;
 }
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
@@ -117,7 +122,8 @@ export class EngineHost extends EventEmitter {
     });
     // 기다리는 쪽이 없을 때 엔진 fatal이 처리되지 않은 거부로 남지 않게 한다(부르는 쪽은 ready를 await한다).
     this.ready.catch((e: Error) => opts.log.event('main.engine_fatal', { code: e.message.slice(0, 60).replace(/[^A-Za-z0-9_.:-]/g, '_') }));
-    const init: EngineInit = { t: 'init', root: opts.root, portal: opts.portal };
+    // appVersion은 엔진 #243의 EngineInit 칸이다(그 전 엔진은 모르는 칸을 무시한다)
+    const init: EngineInit & { appVersion?: string } = { t: 'init', root: opts.root, portal: opts.portal, ...(opts.appVersion ? { appVersion: opts.appVersion } : {}) };
     this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);
     this.engine.on('exit', (c) => this.exited('engine', c));
   }
