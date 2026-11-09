@@ -28,6 +28,8 @@ import {
   type DesktopKeys,
 } from '../packages/remote/src/index.ts';
 import { cloudPorts, type CloudPorts, type DeviceAuth } from '../apps/desktop/src/remote-cloud.ts';
+import { CLOUD_ROUTES } from '../packages/net/src/cloud.ts';
+import { argon2Available } from '../services/account/src/index.ts';
 import { MockMailSender, startAccount } from '../services/account/src/index.ts';
 import { startRelay } from '../services/relay/src/index.ts';
 import { ed25519Private, ed25519RawPublic } from '../services/shared/src/index.ts';
@@ -58,6 +60,8 @@ async function stack() {
       BILLING_RETURN_URL: `${origin}/done`,
       PG_PROVIDER: 'mock',
       MAIL_PROVIDER: 'mock',
+      // 비밀번호 경로(ADR-038): argon2id가 있는 런타임에서만 켠다(없으면 404, 그 시험은 건너뛴다)
+      ...(argon2Available() ? { PASSWORD_PEPPER_KEYS: `k1:${hex()}` } : {}),
     },
     { mail },
   );
@@ -111,7 +115,7 @@ describe('egress 계정·릴레이 목적지(cloud.ts): 메서드·경로 정확
       ['POST', `${CLOUD_ORIGIN}/v1/x/../auth/code`], // 점 구간
       ['POST', `${CLOUD_ORIGIN}/v1/auth/%63ode`], // 인코딩
       ['POST', `${CLOUD_ORIGIN}//v1/auth/code`],
-      ['GET', `${CLOUD_ORIGIN}/v1/me`], // 목록 밖
+      ['POST', `${CLOUD_ORIGIN}/v1/me`], // 메서드(GET만)
       ['GET', `${CLOUD_ORIGIN}/internal/v1/devices/x`],
       ['DELETE', `${CLOUD_ORIGIN}/v1/mailboxes/${'a'.repeat(42)}`],
     ]) assert.equal(cloudRequestCheck(m!, u!), 'path', `${m} ${u}`);
@@ -157,6 +161,119 @@ describe('egress 계정·릴레이 목적지(cloud.ts): 메서드·경로 정확
     assert.deepEqual(prod.audit.map((a) => `${a.dest} ${a.path} ${a.status}`), ['cloud auth.code 200', 'cloud auth.logout error']);
     assert.ok(hits.every((h) => h.endsWith(' -')), '쿠키 등 호출자 헤더는 나가지 않았다');
     srv.close();
+  });
+});
+
+describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 net.path로 거부되던 결함 수정)', () => {
+  const ACCOUNT_SCREEN_ROUTES: Array<[string, string, string]> = [
+    ['POST', '/v1/auth/password', 'auth.password'],
+    ['POST', '/v1/auth/password/reset', 'auth.reset'],
+    ['POST', '/v1/auth/password/reset/verify', 'auth.resetVerify'],
+    ['POST', '/v1/auth/refresh', 'auth.refresh'],
+    ['POST', '/v1/auth/refresh/revoke', 'auth.refreshRevoke'],
+    ['POST', '/v1/auth/logout-all', 'auth.logoutAll'],
+    ['POST', '/v1/auth/reauth', 'auth.reauth'],
+    ['POST', '/v1/auth/reauth/verify', 'auth.reauthVerify'],
+    ['GET', '/v1/me', 'me.get'],
+    ['PUT', '/v1/password', 'password.put'],
+    ['DELETE', '/v1/password', 'password.delete'],
+  ];
+
+  it('11개는 메서드·경로 정확히 일치로 열린다(운영·개발 origin)', () => {
+    for (const [m, p, name] of ACCOUNT_SCREEN_ROUTES) {
+      assert.deepEqual(cloudRequestCheck(m, CLOUD_ORIGIN + p), { route: name, kind: 'prod' }, `${m} ${p}`);
+      assert.deepEqual(cloudRequestCheck(m, `http://localhost:8787${p}`), { route: name, kind: 'dev' }, `${m} ${p}`);
+    }
+    // 경로 정규식은 모두 ^…$ 고정이다(접두·와일드카드 없음). ID 칸이 있는 경로는 길이가 정해진 문자 묶음뿐이다.
+    for (const r of CLOUD_ROUTES) assert.ok(r.path.source.startsWith('^') && r.path.source.endsWith('$') && !/\.\*|\.\+|\[\^/.test(r.path.source), r.name);
+  });
+
+  it('반대 방향: 목록에 없는 계정 경로·메서드는 여전히 거부(net.path_not_allowed)', async () => {
+    const no: Array<[string, string]> = [
+      ['GET', '/internal/v1/accounts'],
+      ['POST', '/internal/v1/token-verify'],
+      ['POST', '/v1/auth'],
+      ['POST', '/v1/auth/password/'],
+      ['POST', '/v1/auth/password/x'],
+      ['POST', '/v1/auth/password/reset/verify/x'],
+      ['GET', '/v1/auth/password'],
+      ['PUT', '/v1/auth/password'],
+      ['POST', '/v1/auth/refresh/'],
+      ['POST', '/v1/auth/refresh/revoke/all'],
+      ['POST', '/v1/auth/reauth/verify2'],
+      ['POST', '/v1/me'],
+      ['GET', '/v1/me/x'],
+      ['GET', '/v1/password'],
+      ['POST', '/v1/password'],
+      ['PATCH', '/v1/password'],
+      ['POST', '/v1/passkeys/options'], // 패스키는 G7 결정 뒤
+      ['POST', '/v1/passkeys'],
+      ['POST', '/v1/auth/passkey/options'],
+      ['POST', '/v1/billing/checkout'],
+    ];
+    for (const [m, p] of no) assert.equal(cloudRequestCheck(m, CLOUD_ORIGIN + p), 'path', `${m} ${p}`);
+    const eg = new Egress();
+    for (const [m, p] of no.filter(([m]) => m !== 'PATCH')) {
+      await assert.rejects(eg.cloud({ method: m as never, url: CLOUD_ORIGIN + p, body: m === 'POST' || m === 'PUT' ? '{}' : undefined }), { code: 'path_not_allowed' }, `${m} ${p}`);
+    }
+    const ports = cloudPorts({ egress: eg, env: 'prod' });
+    await assert.rejects(ports.account.passwordLogin('a@example.com', 'x'.repeat(12)).then(() => null), (e: Error & { code: string }) => e.code !== 'net.path_not_allowed', '비밀번호 로그인은 허용 목록을 지난다(운영 origin, 네트워크 단계에서 실패)');
+  });
+
+  it('대조: main 계정·릴레이 클라이언트가 부르는 모든 (메서드, 경로)가 CLOUD_ROUTES에 있다(메서드를 더하면 이 표도 채워야 통과)', async () => {
+    const seen: Array<{ method: string; url: string; route: string }> = [];
+    const recorder = {
+      cloud: async (req: { method: string; url: string }) => {
+        const c = cloudRequestCheck(req.method, req.url);
+        seen.push({ method: req.method, url: req.url, route: typeof c === 'object' ? c.route : c });
+        return { status: 599, json: null };
+      },
+      openCloudSocket: () => {
+        throw new Error('no');
+      },
+    } as unknown as Egress;
+    const ports = cloudPorts({ egress: recorder, env: 'prod' });
+    const aik = softSigner(ed25519Keygen().secretKey, AIK_PURPOSES);
+    const vd = softSigner(ed25519Keygen().secretKey, VD_PURPOSES);
+    const cert = await issueCert(aik, { device_id: uuid4(), role: 'desktop', Sx: x25519Keygen().publicKey, Vx: vd.publicKey, not_after: certNotAfter() });
+    const auth: DeviceAuth = async () => ({});
+    const rt = `sxa1.${'A'.repeat(43)}`;
+    const list = await initialDeviceList(aik, { deviceId: uuid4(), role: 'desktop', noisePub: x25519Keygen().publicKey, signPub: vd.publicKey, registeredAt: Date.now() });
+    const args: Record<string, unknown[]> = {
+      startEmailCode: ['a@example.com'],
+      verifyEmailCode: ['L', '123456', true],
+      passwordLogin: ['a@example.com', 'pw-pw-pw-pw-1', true],
+      logout: ['sxs1.s'],
+      deviceList: ['sxs1.s'],
+      pinFirstDesktop: ['sxs1.s', { aikPub: b64(aik.publicKey), deviceList: list, platform: 'windows', name: 'PC' }],
+      deviceToken: [cert, vd],
+      acctClaim: [auth],
+      enrollPhone: [auth, { deviceId: uuid4(), role: 'mobile', platform: 'ios', name: '폰', Sx: 'x', Vx: 'y', roomId: 'r' }],
+      putDeviceList: [auth, list],
+      me: ['sxs1.s'],
+      setPassword: ['sxs1.s', 'pw-pw-pw-pw-1'],
+      deletePassword: ['sxs1.s'],
+      startReauth: ['sxs1.s'],
+      verifyReauth: ['sxs1.s', 'R', '123456'],
+      startPasswordReset: ['a@example.com'],
+      verifyPasswordReset: ['R', '123456', 'pw-pw-pw-pw-1', true],
+      refresh: [rt],
+      revokeRefresh: [rt],
+      logoutAll: ['sxs1.s'],
+    };
+    const methods = Object.keys(ports.account);
+    assert.deepEqual(methods.filter((m) => !(m in args)), [], '새 계정 메서드는 이 대조 표에 넣는다');
+    for (const m of methods) {
+      const before = seen.length;
+      await (ports.account as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[m]!(...args[m]!).catch(() => {});
+      assert.equal(seen.length, before + 1, `${m}는 요청 하나`);
+    }
+    const relayArgs: Record<string, unknown[]> = { createRoom: [auth, randomBytes(16)], registerMailbox: [auth, randomBytes(32), randomBytes(32), randomBytes(32)], deleteMailbox: [auth, randomBytes(32), randomBytes(32)] };
+    assert.deepEqual(Object.keys(ports.relay).filter((m) => !(m in relayArgs)), []);
+    for (const m of Object.keys(ports.relay)) await (ports.relay as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[m]!(...relayArgs[m]!).catch(() => {});
+    const bad = seen.filter((x) => x.route === 'path' || x.route === 'origin');
+    assert.deepEqual(bad, [], '허용 목록 밖으로 나가는 호출');
+    for (const [m, p, name] of ACCOUNT_SCREEN_ROUTES) assert.ok(seen.some((x) => x.method === m && x.url === CLOUD_ORIGIN + p && x.route === name), `${m} ${p}를 부르는 메서드가 있다`);
   });
 });
 
@@ -246,6 +363,58 @@ describe('cloudPorts(개발 스택 모양, 실제 계정·릴레이 서비스)',
     const audit = JSON.stringify(egress.audit);
     for (const secret of [email, session, tok.token, Buffer.from(mbx).toString('base64url')]) assert.ok(!audit.includes(secret));
     assert.ok(egress.audit.some((a) => a.dest === 'cloud.ws' && a.path === 'rooms.join'));
+  });
+
+  it('계정 화면 경로 전부를 제품 Egress로(실제 계정 서비스): 만들기·로그인·갱신 회전·재인증·바꾸기·지우기·재설정·모든 기기 로그아웃', { skip: !argon2Available() && 'argon2id 없음' }, async () => {
+    const { account } = ports;
+    const email = 'pw-desk@example.com';
+    const mailCode = (kind: string) => [...s.mail.outbox].reverse().find((m) => m.to === email && m.kind === kind)?.code ?? '';
+    const start = await account.startEmailCode(email);
+    const first = await account.verifyEmailCode(start.loginId, s.mail.lastCode(email)!);
+    assert.equal(first.refreshToken, undefined, 'remember 없으면 갱신 토큰 없음');
+    const me0 = await account.me(first.session);
+    assert.equal(me0.email, email);
+    assert.equal(me0.hasPassword, false);
+    assert.ok(typeof me0.reauthUntil === 'number' && me0.reauthUntil > Date.now(), '방금 코드로 들어온 세션은 최근 인증');
+    await assert.rejects(account.setPassword(first.session, 'short'), { code: 'account.password_too_short' });
+    await assert.rejects(account.setPassword(first.session, 'pw-desk-sovereign-1'), { code: 'account.password_contains_identity' });
+    assert.deepEqual(await account.setPassword(first.session, 'mangwon-kimchi-12'), {}, '만들기는 204');
+    assert.equal((await account.me(first.session)).hasPassword, true);
+    await assert.rejects(account.passwordLogin(email, 'not-the-password-1'), { code: 'account.credentials_invalid' });
+    const pw = await account.passwordLogin(email, 'mangwon-kimchi-12', true);
+    assert.match(pw.refreshToken ?? '', /^sxa1\./);
+    const r1 = await account.refresh(pw.refreshToken!);
+    assert.notEqual(r1.refreshToken, pw.refreshToken, '회전');
+    assert.equal((await account.me(r1.session)).reauthUntil, null, '갱신 세션은 최근 인증이 아니다');
+    await assert.rejects(account.deletePassword(r1.session), { code: 'account.reauth_required' });
+    const ra = await account.startReauth(r1.session);
+    await assert.rejects(account.verifyReauth(r1.session, ra.reauthId, '000000'), { code: 'account.code_invalid' });
+    const v = await account.verifyReauth(r1.session, ra.reauthId, mailCode('reauth_code'));
+    assert.equal(v.reauthMaxAgeSec, 600);
+    await assert.rejects(account.setPassword(r1.session, 'jangdok-gimbap-77', 'wrong-current-1'), { code: 'account.current_password_invalid' });
+    const changed = await account.setPassword(r1.session, 'jangdok-gimbap-77', 'mangwon-kimchi-12');
+    assert.match(changed.refreshToken ?? '', /^sxa1\./, '바꾸기는 이 기기용 새 갱신 토큰');
+    await assert.rejects(account.refresh(r1.refreshToken), { code: 'account.unauthorized' }, '바꾸면 옛 계보 폐기');
+    await account.revokeRefresh(changed.refreshToken!);
+    await assert.rejects(account.refresh(changed.refreshToken!), { code: 'account.unauthorized' });
+    await account.deletePassword(r1.session);
+    assert.equal((await account.me(r1.session)).hasPassword, false);
+    await assert.rejects(account.me(first.session), { code: 'account.unauthorized' }, '바꾸면 이 세션 뺀 세션 폐기');
+    await account.setPassword(r1.session, 'mangwon-kimchi-12');
+    const reset = await account.startPasswordReset(email);
+    const same = await account.startPasswordReset('nobody@example.com');
+    assert.equal(typeof same.resetId, 'string', '없는 계정도 같은 응답');
+    const after = await account.verifyPasswordReset(reset.resetId, mailCode('reset_code'), 'gwangjang-bindae-3', true);
+    assert.match(after.refreshToken ?? '', /^sxa1\./);
+    await assert.rejects(account.me(r1.session), { code: 'account.unauthorized' }, '재설정하면 다른 세션 폐기');
+    await account.logoutAll(after.session);
+    await assert.rejects(account.me(after.session), { code: 'account.unauthorized' });
+    await assert.rejects(account.refresh(after.refreshToken!), { code: 'account.unauthorized' });
+    // 모두 운영 허용 목록 이름으로 egress 감사 기록에 남고, 비밀번호·토큰·이메일은 없다
+    const names = new Set(egress.audit.map((a) => a.path));
+    for (const n of ['auth.password', 'me.get', 'password.put', 'password.delete', 'auth.refresh', 'auth.refreshRevoke', 'auth.reauth', 'auth.reauthVerify', 'auth.reset', 'auth.resetVerify', 'auth.logoutAll']) assert.ok(names.has(n), n);
+    const audit = JSON.stringify(egress.audit);
+    for (const secret of [email, 'mangwon-kimchi-12', 'jangdok-gimbap-77', pw.refreshToken!, first.session]) assert.ok(!audit.includes(secret));
   });
 
   it('egress가 cloudDevLocal을 켜지 않았으면 개발 스택에 닿지 않는다(net.destination_not_allowed)', async () => {

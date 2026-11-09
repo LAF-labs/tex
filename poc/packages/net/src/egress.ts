@@ -26,8 +26,12 @@ export type DestinationName = keyof typeof DESTINATIONS;
 export const REGISTRY_ORIGIN = 'https://tax.laf-co.com';
 /** 릴리스 채널(packages/updater CHANNELS와 같다, D09 §8.6) */
 export const REGISTRY_CHANNELS = ['stable', 'beta', 'hotfix'] as const;
-/** 레지스트리 응답 상한(매니페스트·status·폐기 키·로그 헤드·항목·증명은 작다) */
+/** 레지스트리 응답 상한(매니페스트·status·폐기 키·로그 헤드·항목·증명·인덱스는 작다) */
 export const REGISTRY_MAX_BYTES = 1024 * 1024;
+/** `.sxp` 패키지 응답 상한(엔진 SXP_MAX_BYTES·인덱스 항목 size 상한과 같다, D09 §8) */
+export const REGISTRY_PACKAGE_MAX_BYTES = 16 * 1024 * 1024;
+/** `.sxp` 경로: id는 manifest·데이터 기술자 id 규칙(점 필수, 조각마다 1자 이상이라 `..`이 없다), 버전은 x.y.z(API.md 정적 경로). */
+const PACKAGE_PATH = /^\/packages\/[a-z0-9]+(\.[a-z0-9_-]+)+@(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.sxp$/;
 
 const DEC = '(0|[1-9][0-9]{0,14})';
 /** 레지스트리 허용 경로(GET만). 쿼리는 경로마다 정해진 키만 정확히 한 번씩, 그 밖은 거부한다(D09 §8, ADR-028). */
@@ -35,6 +39,9 @@ const REGISTRY_ROUTES: ReadonlyArray<{ path: RegExp; query: Readonly<Record<stri
   { path: new RegExp(`^/releases/(${REGISTRY_CHANNELS.join('|')})/latest\\.json$`), query: {} },
   { path: /^\/registry\/status\.json$/, query: {} },
   { path: /^\/registry\/revoked_keys\.json$/, query: {} },
+  // 엔진 레지스트리 동기화(D09 §8 정적 호스팅, ADR-013): stable 인덱스와 그것이 가리키는 불변 `.sxp`
+  { path: /^\/registry\/stable\/index\.json$/, query: {} },
+  { path: PACKAGE_PATH, query: {} },
   // 투명성 로그(RFC 9162, D09 §8.3): 서명된 트리 헤드, 항목, 포함 증명(leaf = 잎 해시 hex), 일관성 증명
   { path: /^\/registry\/log\/head\.json$/, query: {} },
   { path: new RegExp(`^/registry/log/entries/${DEC}\\.json$`), query: {} },
@@ -48,8 +55,8 @@ const REGISTRY_ROUTES: ReadonlyArray<{ path: RegExp; query: Readonly<Record<stri
  */
 export function registryTargetAllowed(target: string): boolean {
   if (typeof target !== 'string' || !target.startsWith('/') || target.startsWith('//') || target.length > 512) return false;
-  // 퍼센트 인코딩·+·공백·백슬래시 같은 변형을 받지 않는다(허용 경로와 쿼리 값은 이 문자만 쓴다)
-  if (!/^[A-Za-z0-9/_.?=&-]+$/.test(target)) return false;
+  // 퍼센트 인코딩·+·공백·백슬래시 같은 변형을 받지 않는다(허용 경로와 쿼리 값은 이 문자만 쓴다, @는 .sxp 이름의 id@version)
+  if (!/^[A-Za-z0-9/_.?=&@-]+$/.test(target)) return false;
   let url: URL;
   try {
     url = new URL(target, REGISTRY_ORIGIN);
@@ -142,6 +149,16 @@ export interface EgressResponse {
   status: number;
   json: unknown;
 }
+
+/** 레지스트리 바이트 응답(getRegistryBytes). 304면 body 없음. 본문·ETag는 비신뢰 값이다(검증은 엔진 수용 함수·로더). */
+export interface RegistryBytesResponse {
+  status: number;
+  body?: Uint8Array;
+  etag?: string;
+}
+
+/** If-None-Match로 보낼 수 있는 ETag(RFC 9110 entity-tag, 128자 이하). 그 밖은 보내지 않는다(헤더 주입 방지). */
+const ETAG = /^(W\/)?"[\x21\x23-\x7e]{1,124}"$/;
 
 export class EgressError extends Error {
   readonly code: 'destination_not_allowed' | 'path_not_allowed' | 'header_not_allowed' | 'timeout' | 'network' | 'bad_response' | 'egress_env_tampered';
@@ -326,6 +343,47 @@ export class Egress {
         if (res.ok) throw new EgressError('bad_response', res.status);
       }
       return { status: res.status, json };
+    } catch (e) {
+      if (e instanceof EgressError) throw e;
+      this.audit.push({ dest: 'registry', path, status: 'error' });
+      throw new EgressError((e as Error).name === 'AbortError' ? 'timeout' : 'network');
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 레지스트리 바이트 GET(엔진 RegistrySync용). getRegistry와 같은 origin 고정·허용 경로·리디렉션 거부·시간 상한이고, 본문을 해석하지 않고
+   * 바이트 그대로 돌려준다(엔진이 원시 바이트의 다이제스트·서명을 본다, ADR-013). `.sxp`는 16MB, 그 밖은 1MB가 상한이다.
+   * etag를 주면 If-None-Match로 보내고 304는 본문 없이 돌려준다. 200·304·404 말고는 본문을 버린다.
+   */
+  async getRegistryBytes(target: string, o: { etag?: string } = {}): Promise<RegistryBytesResponse> {
+    if (!registryTargetAllowed(target)) throw new EgressError('path_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const path = new URL(target, REGISTRY_ORIGIN).pathname;
+    const max = PACKAGE_PATH.test(path) ? REGISTRY_PACKAGE_MAX_BYTES : REGISTRY_MAX_BYTES;
+    const origin = this.opts.testOrigins?.registry ?? REGISTRY_ORIGIN;
+    const headers: Record<string, string> = { accept: PACKAGE_PATH.test(path) ? 'application/octet-stream' : 'application/json' };
+    if (typeof o.etag === 'string' && ETAG.test(o.etag)) headers['if-none-match'] = o.etag;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? (max === REGISTRY_MAX_BYTES ? 10_000 : 60_000));
+    try {
+      const res = await fetch(origin + target, { method: 'GET', headers, signal: ctl.signal, redirect: 'error' });
+      this.audit.push({ dest: 'registry', path, status: res.status });
+      const tag = res.headers.get('etag');
+      const etag = tag && ETAG.test(tag) ? tag : undefined;
+      if (res.status !== 200) {
+        await res.body?.cancel();
+        return { status: res.status, ...(etag && res.status === 304 ? { etag } : {}) };
+      }
+      const len = Number(res.headers.get('content-length') ?? '0');
+      if (len > max) {
+        await res.body?.cancel();
+        throw new EgressError('bad_response', res.status);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > max) throw new EgressError('bad_response', res.status);
+      return { status: 200, body: new Uint8Array(buf), ...(etag ? { etag } : {}) };
     } catch (e) {
       if (e instanceof EgressError) throw e;
       this.audit.push({ dest: 'registry', path, status: 'error' });

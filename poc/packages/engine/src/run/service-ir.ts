@@ -57,6 +57,9 @@ export interface IrPackage {
   pdf?: PdfPort;
 }
 
+/** 실행 시작 패키지 공급 결과(RunServiceDeps.irSource). */
+export type IrSourceResult = { ok: true; ir: IrPackage } | { ok: false; code: string };
+
 /** 게이트 예약 키와 원장 행 재료(RunService가 H01과 같은 함수로 만든다). */
 export interface GateHistory {
   reserved: GateField[];
