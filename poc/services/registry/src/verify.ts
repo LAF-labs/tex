@@ -52,7 +52,7 @@ export const LIMITS = {
   releaseMaxValidityMs: 14 * 24 * HOUR,
 } as const;
 
-/** 정책·status·폐기 목록의 내용 서명에서 빼는 필드(SIGNING.md §2) */
+/** 정책·status·폐기 목록·인덱스의 내용 서명에서 빼는 필드(SIGNING.md §2, ADR-043) */
 const FRESHNESS_FIELDS = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
 /** manifest·hotfix·인덱스·패키지 id(manifest.schema.json id 패턴: 점 필수) */
 /** 인덱스 항목 id. 플레이북 manifest는 `-`를 받지 않지만 데이터 기술자(data_descriptor)는 받는다. 종류별 규칙은 .sxp 안 스키마가 본다. */
@@ -63,7 +63,7 @@ export function without<T extends Record<string, unknown>>(o: T, keys: string[])
   return Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 }
 
-/** 정책·status·폐기 목록의 내용 다이제스트 = SHA-256(JCS(문서 − signatures·issuedAt·expiresAt·timestamp)) */
+/** 정책·status·폐기 목록·인덱스의 내용 다이제스트 = SHA-256(JCS(문서 − signatures·issuedAt·expiresAt·timestamp)) */
 export const contentDigest = (doc: object): string => sha256Hex(canonicalWithout(doc, FRESHNESS_FIELDS));
 
 /**
@@ -374,16 +374,19 @@ export interface RegistryIndex {
   expiresAt: string;
   entries: IndexEntry[];
   signatures: Sig[];
+  /** 신선도 서명(ADR-043): 온라인 타임스탬프 키가 JCS({contentDigest, monotonic, issuedAt, expiresAt})에 */
+  timestamp: Sig;
 }
 
-const INDEX_KEYS = new Set(['channel', 'monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'entries', 'signatures']);
+const INDEX_KEYS = new Set(['channel', 'monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'entries', 'signatures', 'timestamp']);
 const ENTRY_KEYS = new Set(['id', 'version', 'kind', 'portal', 'sxpDigest', 'size', 'rolloutPercent', 'minAppVersion']);
 
 /**
- * 인덱스: JCS(index − signatures)에 패키지 키 2-of-3, 문서 안 issuedAt·expiresAt(≤ 14일, 타임스탬프 없음), 채널별 단조 +1000(SIGNING.md §2·§7).
- * 핫픽스 채널은 핫픽스 항목만, 다른 채널은 핫픽스 항목 없음. 위택스 거부.
+ * 인덱스(ADR-043): 내용 = JCS(index − signatures·issuedAt·expiresAt·timestamp)에 패키지 키 2-of-3, 신선도 = 타임스탬프 키(≤ 14일, cron이 48시간으로 재서명),
+ * 채널별 단조 +1000(같은 monotonic은 같은 내용만, SIGNING.md §2·§4·§7). 핫픽스 채널은 핫픽스 항목만, 다른 채널은 핫픽스 항목 없음. 위택스 거부.
+ * content: true면 내용 서명·모양·단조만 본다(게시 도구가 올리기 전, 서버가 도장을 찍기 전의 초안).
  */
-export function verifyIndex(doc: RegistryIndex, channel: Channel, trust: TrustRoot, revoked: ReadonlySet<string>, stored: RegistryIndex | null, now: number, v: Verdict = { events: [] }): Verdict {
+export function verifyIndex(doc: RegistryIndex, channel: Channel, trust: TrustRoot, revoked: ReadonlySet<string>, stored: RegistryIndex | null, now: number, v: Verdict = { events: [] }, opts: { content?: boolean } = {}): Verdict {
   if (!doc || typeof doc !== 'object' || Array.isArray(doc) || Object.keys(doc).some((k) => !INDEX_KEYS.has(k)) || doc.channel !== channel || !Array.isArray(doc.entries) || doc.entries.length > 500 || !canonicalizable(doc)) fail('registry.schema_invalid');
   const seen = new Set<string>();
   for (const e of doc.entries) {
@@ -403,10 +406,14 @@ export function verifyIndex(doc: RegistryIndex, channel: Channel, trust: TrustRo
     seen.add(k);
   }
   epoch(doc, trust);
-  const content = canonicalWithout(doc, ['signatures']);
+  const content = canonicalWithout(doc, FRESHNESS_FIELDS);
+  const digest = sha256Hex(content);
   quorum(content, doc.signatures, 'package', trust, revoked, 2, v);
-  checkWindow(doc.issuedAt, doc.expiresAt, LIMITS.indexMaxValidityMs, now, REGISTRY_WINDOW('registry.index_validity_too_long'));
-  checkMonotonic(doc, sha256Hex(content), stored ? { ...stored, digest: sha256Hex(canonicalWithout(stored, ['signatures'])) } : null);
+  if (!opts.content) {
+    timestamp(digest, doc, trust, revoked);
+    checkWindow(doc.issuedAt, doc.expiresAt, LIMITS.indexMaxValidityMs, now, REGISTRY_WINDOW('registry.index_validity_too_long'));
+  }
+  checkMonotonic(doc, digest, stored ? { ...stored, digest: contentDigest(stored) } : null);
   return v;
 }
 

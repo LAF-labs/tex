@@ -47,7 +47,7 @@
 | `policy-1`~`policy-3` | 정책 | 2-of-3 | 정책, `registry/status.json` |
 | `emergency-1` | 1인 긴급 | 1 | 엄격하게 보수적인 정책·status 변경만(D03 §7.1), 72시간 자동 만료 |
 | `release-1` | 앱 릴리스 | 1 | `releases/{channel}/latest.json` |
-| `timestamp-1` | 타임스탬프(서버 온라인 키) | 1 | 폐기 목록 24시간·status·정책 48시간 신선도 재서명, 투명성 로그 헤드(서버 Cron이 자동) |
+| `timestamp-1` | 타임스탬프(서버 온라인 키) | 1 | 폐기 목록 24시간·status·정책·인덱스(ADR-043) 48시간 신선도 재서명, 투명성 로그 헤드(서버 Cron이 자동) |
 
 - 타임스탬프 말고 11개는 한 맥의 키체인에 있다(`backend: "macos-se"`).
 - **`timestamp-1`은 서버 비밀값이다**(`backend: "server-env"`). 운영 env `REGISTRY_LOG_SIGNING_KEY`(Ed25519 시드 hex 64자)와 같은 키다.
@@ -169,13 +169,14 @@ node --conditions=development services/registry/src/ceremony/cli.ts trust --mode
 
 | 문서 | `--kind` | 키 | 타임스탬프 |
 |---|---|---|---|
-| 인덱스·manifest·hotfix·데이터 기술자 | `index`·`manifest`·`hotfix`·`data_descriptor` | 패키지 2개 | 없음(≤ 14일) |
+| 인덱스 | `index` | 패키지 2개(항목이 바뀔 때만) | 서버가 붙인다(48시간마다 자동 재서명, ADR-043) |
+| manifest·hotfix·데이터 기술자 | `manifest`·`hotfix`·`data_descriptor` | 패키지 2개 | 없음(hotfix는 문서 안 ≤ 14일) |
 | 정책·status 내용 변경 | `policy`·`status` | 정책 2개, 또는 긴급 1개(엄격하게 보수적일 때만) | 서버가 붙인다(48시간마다 자동 재서명) |
 | 폐기 목록 | `revoked_keys` | 루트 2개 | 서버가 붙인다(24시간마다 자동 재서명) |
 | 앱 릴리스 | `release` | `release-1` | 없음(≤ 14일) |
 | 핀·keyEpoch 변경 릴리스 | `root_change` → `release` | 루트 2개 → `release-1` | 없음 |
 
-- **신선도 재서명은 서버 Cron이 자동으로 한다**: 폐기 목록 24시간, status·정책 48시간, 투명성 로그 헤드. 구현은 클라우드 세션의 레지스트리 배포 PR이다. 사람은 하지 않는다.
+- **신선도 재서명은 서버 Cron이 자동으로 한다**: 폐기 목록 24시간, status·정책·채널 인덱스(ADR-043) 48시간, 투명성 로그 헤드. 구현은 클라우드 세션의 레지스트리 배포 PR이다. 사람은 하지 않는다.
 - **내용이 바뀌는 서명**(위 표의 키 열)은 지금처럼 사람이 이 맥에서 Touch ID로 한다.
 - CI는 서명 대상 문서만 만든다. 서명은 이 맥에서 사람이 한다.
 - 패키지·인덱스와 첫 폐기 목록·status 게시는 게시 도구가 서명할 문서와 `sign` 명령을 만들고, 서명을 모아 올린 뒤 되읽기·로그 증명까지 한다: [PUBLISH-H01.md](PUBLISH-H01.md) "H-01 게시 — 사용자 단계".

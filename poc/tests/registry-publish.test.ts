@@ -13,7 +13,7 @@ import { decodeSxp, loadPackage, type LoadedPackage } from '@sax/engine/core';
 import { RegistrySync, memoryRegistryStore, trustRootsFromPin, type TrustPin } from '@sax/engine';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import { Logger } from '../services/shared/src/index.ts';
-import { buildRegistryDeploy, registryRouter, MemoryStore, type TrustRoot } from '../services/registry/src/index.ts';
+import { RESIGN_TTL, buildRegistryDeploy, logSigningKey, registryRouter, resignAll, MemoryStore, type TrustRoot } from '../services/registry/src/index.ts';
 import { main as ceremony, type CliDeps } from '../services/registry/src/ceremony/cli.ts';
 import { signingBytes } from '../services/registry/src/ceremony/content.ts';
 import { main as publish, nodeFs, type PublishCliDeps } from '../services/registry/src/publish/cli.ts';
@@ -218,7 +218,13 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     const status = JSON.parse(prod.s3.objects.get('registry/status.json')!.body.toString()) as { timestamp: { keyId: string }; portalModeCeiling: unknown };
     assert.equal(status.timestamp.keyId, 'timestamp-1');
     assert.deepEqual(status.portalModeCeiling, { hometax: 'assisted' });
-    assert.equal(prod.events.filter((l) => l.includes('registry.stamped_on_publish')).length, 2);
+    // 폐기 목록·status·인덱스(ADR-043) 셋 다 서버가 신선도를 붙였다. 사용자가 서명한 인덱스 초안에는 기간이 없다
+    assert.equal(prod.events.filter((l) => l.includes('registry.stamped_on_publish')).length, 3);
+    const draft = JSON.parse(read(path.join(work, 'index.json'))) as Record<string, unknown>;
+    assert.deepEqual(['issuedAt', 'expiresAt', 'timestamp'].filter((k) => k in draft), []);
+    const ix = JSON.parse(prod.s3.objects.get('registry/stable/index.json')!.body.toString()) as { issuedAt: string; expiresAt: string; timestamp: { keyId: string } };
+    assert.equal(ix.timestamp.keyId, 'timestamp-1');
+    assert.equal(Date.parse(ix.expiresAt) - Date.parse(ix.issuedAt), RESIGN_TTL.index);
 
     // 토큰은 출력·작업 폴더·서버 로그 어디에도 없다
     for (const l of [...p, ...a, ...u, ...prod.events]) assert.ok(!l.includes(ADMIN));
@@ -259,6 +265,12 @@ describe('H-01 게시 도구: 로컬 레지스트리(가짜 S3)로 끝까지', (
     assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', path.join(dir, 'again'), ...SOURCES], cliDeps(p)), 0);
     assert.equal(p.filter((l) => l.includes('이미 게시됨(서명 없음)')).length, 3);
     assert.equal(await runPrinted(p), 0);
+    // 준비한 뒤 cron이 인덱스 신선도를 다시 서명해도(바이트만 바뀜) 내용이 같으니 이어 간다(ADR-043)
+    const before = prod.s3.objects.get('registry/stable/index.json')!.body;
+    const later = Date.now() + 30 * 3_600_000;
+    const rr = await resignAll({ store: prod.built.store, trust: prod.built.trust, log: prod.built.log, signer: logSigningKey(TS_SEED, prod.built.trust), now: () => later });
+    assert.equal(rr.index.stable, 'resigned');
+    assert.ok(!prod.s3.objects.get('registry/stable/index.json')!.body.equals(before));
     const a: string[] = [];
     assert.equal(await publish(['assemble', '--trust', TRUST_PATH, '--work', path.join(dir, 'again')], cliDeps(a)), 0);
     assert.ok(a.some((l) => l.startsWith('인덱스 stable monotonic 2')));

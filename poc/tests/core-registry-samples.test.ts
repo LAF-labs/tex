@@ -6,7 +6,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import {
-  acceptPolicy, acceptRevoked, acceptStatus, canonicalWithout, countSignatures, decodeSxp, ed25519PublicKey, hotfixDigest, loadDataPackage, loadPackage, sha256Hex,
+  acceptPolicy, acceptRevoked, acceptStatus, contentBytes, countSignatures, verifyTimestamp, decodeSxp, ed25519PublicKey, hotfixDigest, loadDataPackage, loadPackage, sha256Hex,
   type LoadedPackage, type LoaderContext, type Policy, type RegistryStatus, type RevokedKeys,
 } from '@sax/engine/core';
 import { validatePackage } from '@sax/payroll';
@@ -42,10 +42,11 @@ describe('레지스트리 샘플 묶음(고정 시드)', () => {
     assert.equal(Object.keys(t.keys.release!).join(), 'release-1', '릴리스 역할 키(시드 0x61, 앱 업데이트 서명)');
   });
 
-  it('인덱스: 패키지 키 2-of-3, sxpDigest·size = .sxp 바이트', () => {
+  it('인덱스: 내용(신선도 필드 뺌)에 패키지 키 2-of-3 + 타임스탬프, sxpDigest·size = .sxp 바이트(ADR-043)', () => {
     for (const ch of ['stable', 'hotfix']) {
-      const ix = doc<{ entries: Array<{ id: string; version: string; sxpDigest: string; size: number }>; signatures: never[] }>(`registry/${ch}/index.json`);
-      assert.equal(countSignatures(canonicalWithout(ix, ['signatures']), ix.signatures, K.roots.packageKeys, new Set()).valid.length, 2, ch);
+      const ix = doc<{ monotonic: number; issuedAt: string; expiresAt: string; timestamp: { keyId: string; alg: 'ed25519'; sig: string }; entries: Array<{ id: string; version: string; sxpDigest: string; size: number }>; signatures: never[] }>(`registry/${ch}/index.json`);
+      assert.equal(countSignatures(contentBytes(ix), ix.signatures, K.roots.packageKeys, new Set()).valid.length, 2, ch);
+      assert.ok(verifyTimestamp(sha256Hex(contentBytes(ix)), ix, K.roots, new Set()), ch);
       for (const e of ix.entries) {
         const b = file(`packages/${e.id}@${e.version}.sxp`);
         assert.equal(sha256Hex(b), e.sxpDigest);

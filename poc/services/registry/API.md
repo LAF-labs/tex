@@ -18,7 +18,7 @@
 |---|---|---|---|---|
 | `.sxp` 안 `manifest.json` | JCS(manifest − `signatures`) | 패키지 키 2-of-3 | 인덱스 | — |
 | `.sxp` 안 `hotfix.json` | JCS(hotfix − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt` ≤ 14일 | `hotfix.validity_too_long`(만료 `hotfix.expired`) |
-| 인덱스 `registry/{channel}/index.json` | JCS(index − `signatures`) | 패키지 키 2-of-3 | 문서 안 `issuedAt`·`expiresAt` ≤ 14일(**타임스탬프 없음**) | `registry.index_validity_too_long` |
+| 인덱스 `registry/{channel}/index.json` | JCS(index − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 패키지 키 2-of-3 | `timestamp` ≤ 14일(서버가 붙이고 48시간마다 재서명, ADR-043) | `registry.timestamp_invalid`·`registry.index_validity_too_long` |
 | 정책 `policy/{ver}.json`·`current.json` | JCS(policy − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3 또는 긴급 키 1 | `timestamp` ≤ 72시간 | `policy.validity_too_long` |
 | status `registry/status.json` | 위와 같은 규칙 | 정책 키 2-of-3 또는 긴급 키 1 | `timestamp` ≤ 48시간 | `registry.status_validity_too_long` |
 | 폐기 목록 `registry/revoked_keys.json` | 위와 같은 규칙 | 루트 키 2-of-3 | `timestamp` ≤ 24시간 | `registry.revoked_validity_too_long` |
@@ -61,11 +61,12 @@
 | `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함. 같은 version은 `files`가 같을 때만(신선도 재발행), 그 밖은 `registry.version_rollback`. `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
 
 **첫 게시 도장**(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다", 팀장 지시 2026-11-09):
-- 정책·status·폐기 목록을 `timestamp` 필드 **없이** 올리면, 서버가 타임스탬프 역할 온라인 키(`REGISTRY_LOG_SIGNING_KEY`, 기동 때 핀과 대조)로 `issuedAt`(지금)·`expiresAt`·`timestamp`를 붙인다. 유효 기간은 재서명 cron과 같다(폐기 목록 24시간, status·정책 48시간, `restamp`).
+- 정책·status·폐기 목록·인덱스(ADR-043)를 `timestamp` 필드 **없이** 올리면, 서버가 타임스탬프 역할 온라인 키(`REGISTRY_LOG_SIGNING_KEY`, 기동 때 핀과 대조)로 `issuedAt`(지금)·`expiresAt`·`timestamp`를 붙인다. 유효 기간은 재서명 cron과 같다(폐기 목록 24시간, status·정책·인덱스 48시간, `restamp`).
+- 인덱스는 `issuedAt`·`expiresAt` 없이 올려도 된다(게시 도구의 초안이 그렇다).
 - 그 뒤 위 표의 검증을 그대로 한다. 도장은 신선도뿐이다. 내용 서명(루트·정책·긴급 키)이 모자라면 거부한다.
 - `timestamp`가 있으면 손대지 않고 검증한다(틀리면 `registry.timestamp_invalid`).
 - 이벤트는 `registry.stamped_on_publish`다.
-- 쓰는 곳은 서명 의식 산출물(루트 2개로 서명한 첫 폐기 목록)과 게시 도구([PUBLISH-H01.md](PUBLISH-H01.md))다. 사람은 타임스탬프 키를 갖지 않는다.
+- 쓰는 곳은 서명 의식 산출물(루트 2개로 서명한 첫 폐기 목록)과 게시 도구([PUBLISH-H01.md](PUBLISH-H01.md), 인덱스 포함)다. 사람은 타임스탬프 키를 갖지 않는다.
 - 남는 위험: 토큰을 가진 사람은 내용 서명된 옛 문서를 새 도장으로 다시 올릴 수 있다. 단조 검사(저장본보다 큰 monotonic, 같은 monotonic은 같은 내용)가 저장된 판보다 옛것은 막는다. 재서명 cron이 갖는 성질과 같다.
 
 ## 형식
@@ -75,15 +76,17 @@
 ```json
 {
   "channel": "stable", "monotonic": 7, "keyEpoch": 1,
-  "issuedAt": "2026-11-05T00:00:00Z", "expiresAt": "2026-11-19T00:00:00Z",
+  "issuedAt": "2026-11-05T00:00:00Z", "expiresAt": "2026-11-07T00:00:00Z",
   "entries": [
     { "id": "hometax.invoice.issue", "version": "2.1.0", "kind": "playbook", "portal": "hometax",
       "sxpDigest": "<sha256 hex 64 = .sxp 파일 바이트>", "size": 19955, "rolloutPercent": 100, "minAppVersion": "1.2.0" }
   ],
-  "signatures": [ { "keyId": "package-1", "alg": "ed25519", "sig": "…" }, { "keyId": "package-2", "alg": "ed25519", "sig": "…" } ]
+  "signatures": [ { "keyId": "package-1", "alg": "ed25519", "sig": "…" }, { "keyId": "package-2", "alg": "ed25519", "sig": "…" } ],
+  "timestamp": { "keyId": "timestamp-1", "alg": "ed25519", "sig": "…" }
 }
 ```
 
+- 서명(ADR-043): `signatures`는 `issuedAt`·`expiresAt`·`timestamp`를 뺀 내용에, `timestamp`는 `{contentDigest, monotonic, issuedAt, expiresAt}`에 한다. 서버 cron이 남은 기간이 절반 아래면 같은 내용에 48시간으로 다시 붙인다(`resignAll` 결과 `index: {stable, beta, hotfix}`).
 - 최상위·항목 필드는 위에 적은 것만(그 밖은 `registry.schema_invalid`). `entries` ≤ 500, `id@version` 중복 금지, `id`는 점 필수(`[a-z0-9]+(\.[a-z0-9_-]+)+`, `-`는 데이터 패키지만: 종류별 id 규칙은 .sxp 안 스키마가 본다), `kind` ∈ `playbook|lookup|hotfix|data`, `size` 1B~16MB, `rolloutPercent` 0~100.
 - 핫픽스(SIGNING.md §6): `hotfix` 채널에만, `kind: "hotfix"`, `id` = `<appliesTo.id>.hotfix`, `version` = `<keyEpoch>.<monotonic>.0`. 다른 채널에 핫픽스 항목·`.hotfix`로 끝나는 패키지 id는 거부한다.
 - 데이터 패키지(`kind: "data"`, 급여 시행일 표 M6-10): `.sxp`는 SIGNING.md §6 `{format, kind:"data", descriptor, body}`(엔진 #85). 관문은 엔진 `loadDataPackage`를 그대로 부른다: 기술자 [`data_descriptor.schema.json`](../../packages/engine/schemas/data_descriptor.schema.json)·`.hotfix` 금지·keyEpoch·issuedAt·패키지 키 2-of-3(폐기 반영) → `bodyDigest` = 본문 원시 바이트 → 등록된 schema 이름의 검증기. `sax.rate-tables/v1` 검증기는 `@sax/payroll`의 `validatePackage`([`rate-table-package.schema.json`](../../packages/payroll/schema/rate-table-package.schema.json) + 같은 종류 겹침 규칙)이고 관문은 규칙을 다시 구현하지 않는다. 등록되지 않은 schema는 `registry.schema_invalid`. 인덱스 항목은 `portal` 없이, 안의 종류와 같아야 한다. 버전 내림은 인덱스 단조성이 막는다.
