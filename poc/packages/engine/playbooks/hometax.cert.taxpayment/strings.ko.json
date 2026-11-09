@@ -1,0 +1,6 @@
+{
+ "taxcert.title": "납세증명서(국세) 발급",
+ "taxcert.confirm": "납세증명서를 발급할까요?",
+ "captcha.prompt": "그림의 문자를 입력해 주세요",
+ "hometax.login.successMarker": "로그아웃"
+}

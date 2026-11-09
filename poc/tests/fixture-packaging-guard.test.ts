@@ -116,7 +116,7 @@ describe('ADR-039 결정 4 포장 가드(2차 방어)', () => {
   it('제품 플레이북 원본(packages/engine/playbooks)은 실제 포털 패키지만, 서명 전이라 제품 로더가 받지 않고, 제품 소스는 이 폴더를 읽지 않는다', async () => {
     const dir = path.join(POC, 'packages/engine/playbooks');
     const ids = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
-    assert.deepEqual(ids, ['hometax.invoice.email_status', 'hometax.invoice.issue', 'hometax.invoice.lookup']);
+    assert.deepEqual(ids, ['hometax.cert.issued_list', 'hometax.cert.taxpayment', 'hometax.invoice.email_status', 'hometax.invoice.issue', 'hometax.invoice.lookup']);
     for (const id of ids) {
       const m = JSON.parse(fs.readFileSync(path.join(dir, id, 'manifest.json'), 'utf8')) as { id: string; portal: string };
       assert.equal(m.id, id, '폴더 이름 = 패키지 id');
