@@ -34,6 +34,10 @@ export const ERROR_STATUS = {
   'account.password_contains_identity': 400,
   /** 비밀번호 설정·삭제는 최근(10분) 코드·패스키·비밀번호 로그인 세션만 */
   'account.reauth_required': 403,
+  /** 비밀번호 바꾸기에 현재 비밀번호가 없다(사용자 확정 2026-11-09) */
+  'account.current_password_required': 400,
+  /** 비밀번호 바꾸기의 현재 비밀번호 틀림·잠금. 로그인과 같은 5회 잠금·응답 하한(사용자 확정 2026-11-09) */
+  'account.current_password_invalid': 403,
   'account.code_locked': 429,
   'account.pkce_invalid': 400,
   'account.redirect_not_loopback': 400,
@@ -135,6 +139,8 @@ export const PROPOSED_D16: readonly ErrorCode[] = [
   'account.password_breached',
   'account.password_contains_identity',
   'account.reauth_required',
+  'account.current_password_required',
+  'account.current_password_invalid',
   'relay.unauthorized',
   'relay.device_suspended',
   'push.unauthorized',

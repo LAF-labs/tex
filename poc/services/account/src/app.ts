@@ -34,7 +34,8 @@ const V = {
   codeStart: validator<{ email: string }>(obj({ email: EMAIL })),
   codeVerify: validator<{ loginId: string; code: string; remember?: boolean }>(obj({ loginId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' }, remember: REMEMBER }, ['loginId', 'code'])),
   passwordLogin: validator<{ email: string; password: string; remember?: boolean }>(obj({ email: EMAIL, password: PASSWORD_IN, remember: REMEMBER }, ['email', 'password'])),
-  passwordSet: validator<{ password: string }>(obj({ password: PASSWORD_IN })),
+  passwordSet: validator<{ password: string; currentPassword?: string }>(obj({ password: PASSWORD_IN, currentPassword: PASSWORD_IN }, ['password'])),
+  reauthVerify: validator<{ reauthId: string; code: string }>(obj({ reauthId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' } })),
   resetStart: validator<{ email: string }>(obj({ email: EMAIL })),
   resetVerify: validator<{ resetId: string; code: string; password: string; remember?: boolean }>(
     obj({ resetId: S.token, code: { type: 'string', pattern: '^[0-9]{6}$' }, password: PASSWORD_IN, remember: REMEMBER }, ['resetId', 'code', 'password']),
@@ -180,8 +181,25 @@ export function accountRouter(o: AccountAppOpts): Router {
     passwordsOn();
     const s = await session(ctx);
     const b = V.passwordSet(ctx.body);
-    await svc.setPassword(s, b.password);
+    // 바꾸기의 현재 비밀번호 대조는 로그인과 같은 잠금·같은 하한(서비스가 맞춘다, 사용자 확정 2026-11-09)
+    await svc.setPassword(s, b.password, b.currentPassword);
     return json(204, undefined);
+  });
+  // 계정 설정 재인증: 이메일 코드로 이 세션의 인증 시각을 갱신한다(새 세션 없음). 보내기 한도는 로그인 코드와 같은 이메일 묶음
+  r.add('POST', '/v1/auth/reauth', async (ctx) => {
+    passwordsOn();
+    const s = await session(ctx);
+    await limit(`code-ip:${await ipKey(ctx)}`, ACCOUNT.loginCodeSendsPerIpHour, MS.H);
+    await limit(`code-email:${await emailSalt.hash((await svc.accountEmail(s.accountId)).trim().toLowerCase())}`, ACCOUNT.loginCodeSendsPerEmailHour, MS.H);
+    return json(200, await svc.startReauth(s));
+  });
+  r.add('POST', '/v1/auth/reauth/verify', async (ctx) => {
+    passwordsOn();
+    const s = await session(ctx);
+    const b = V.reauthVerify(ctx.body);
+    await limit(`auth-ip:${await ipKey(ctx)}`, ACCOUNT.authAttemptsPerIpHour, MS.H);
+    const out = await svc.finishReauth(s, b.reauthId, b.code);
+    return json(200, { authAt: out.authAt, reauthMaxAgeSec: PASSWORD.reauthMaxAgeMs / 1000 });
   });
   r.add('DELETE', '/v1/password', async (ctx) => {
     passwordsOn();
