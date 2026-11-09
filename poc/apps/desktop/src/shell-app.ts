@@ -578,7 +578,36 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     n.show();
   };
   let updater: UpdateHost | null = null;
+  // 레지스트리 동기화(D09 §8.1 인덱스 15분, D03 §7.1 정책 재조회): 제품만. 엔진이 운영 레지스트리(tax.laf-co.com, Egress 고정 origin·핀 키)에서
+  // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
+  // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
+  const REGISTRY_EVERY_MS = 15 * 60_000;
+  let registryAt = 0;
+  let registryInflight: Promise<void> | null = null;
+  const registrySync = (why: string): Promise<void> => {
+    if (fixture) return Promise.resolve();
+    return (registryInflight ??= host
+      .rpc('registry.sync', {})
+      .then(
+        (r) => {
+          registryAt = Date.now();
+          const x = (r ?? {}) as { index?: unknown; policy?: unknown; packages?: Record<string, unknown> };
+          log.event('main.registry_sync', { why, index: String(x.index ?? ''), policy: String(x.policy ?? ''), h01: String(x.packages?.['hometax.invoice.issue'] ?? '') });
+        },
+        (e: unknown) => log.event('main.registry_sync', { why, result: String((e as Error)?.message ?? 'failed').slice(0, 60) }),
+      )
+      .finally(() => (registryInflight = null)));
+  };
+  const registryFresh = async (): Promise<void> => {
+    if (fixture || Date.now() - registryAt < REGISTRY_EVERY_MS) return;
+    let t: NodeJS.Timeout | undefined;
+    await Promise.race([registrySync('run'), new Promise<void>((r) => (t = setTimeout(r, 10_000)))]);
+    clearTimeout(t);
+  };
+  const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
+  registryTimer.unref();
   const onResume = () => {
+    void registrySync('resume');
     daemon?.requestReload();
     void updater?.check();
   };
@@ -774,12 +803,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         amountText: typeof p.amountText === 'string' ? p.amountText.slice(0, 100) : undefined,
       }),
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
-    'run.prepare': (p) => {
+    'run.prepare': async (p) => {
       needGesture(2_000);
       if (runs.prepareThrottled() || !prepareRate.take(performance.now())) {
         log.event('main.prepare_throttled');
         throw new Error('throttled');
       }
+      // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
+      await registryFresh();
       return runs.prepare(String(p.id));
     },
     'run.stop': (p) => runs.stop(String(p.id)),
@@ -970,6 +1001,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     }
     if (fixture) await fixture.seed(host);
+    // 제품: 기동 때 한 번(기다리지 않는다)
+    void registrySync('boot');
     if (fixture && dev && opts.demoSeed) seed = await dev.startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
     // 온보딩: 시연·e2e는 opts.onboarding. 엔진 모드는 이어 하기 저장이 있으면 그 자리부터(끝났으면 대화 없이 동의·할 일만),
@@ -1014,6 +1047,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   })();
   const close = async () => {
     clearInterval(boardDayTimer);
+    clearInterval(registryTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     updater?.stop();

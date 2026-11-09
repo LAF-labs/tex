@@ -28,4 +28,14 @@ describe('제품 모드: 견본 데이터 없음', () => {
     const product = src.slice(src.indexOf('const onbExternal: OnboardingExternal = fixture'), src.indexOf('const onbPorts = onboardingPorts('));
     assert.ok(!product.includes('onbMock.checkBizNo') && !product.includes('onbMock.registerSecrets'));
   });
+  it('레지스트리 동기화(제품만): 기동 때 기다리지 않고 한 번, 15분마다, 절전 복귀, 실행 직전(15분 넘었으면 최대 10초)', () => {
+    assert.match(src, /const REGISTRY_EVERY_MS = 15 \* 60_000;/);
+    assert.match(src, /if \(fixture\) return Promise\.resolve\(\);\s*return \(registryInflight \?\?= host\s*\.rpc\('registry\.sync', \{\}\)/);
+    assert.match(src, /void registrySync\('boot'\);/);
+    assert.match(src, /setInterval\(\(\) => void registrySync\('timer'\), REGISTRY_EVERY_MS\)/);
+    assert.match(src, /const onResume = \(\) => \{\s*void registrySync\('resume'\);/);
+    assert.match(src, /await registryFresh\(\);\s*return runs\.prepare\(String\(p\.id\)\);/);
+    assert.match(src, /setTimeout\(r, 10_000\)/);
+    assert.match(src, /clearInterval\(registryTimer\);/);
+  });
 });
