@@ -56,7 +56,7 @@ describe('H-04 정적 검증', () => {
   it('반례: 게이트 앞 readback이 신청 양식 칸(주민번호 공개여부)을 빠뜨리면 V-03j', () => {
     const p = h04();
     const rb = step(p, 's19b') as { fields: string[] };
-    rb.fields = rb.fields.filter((f) => f !== 'residentNoDisclosure');
+    rb.fields = rb.fields.filter((f) => f !== 'rrnDisclosure');
     assert.ok(validatePackage(p, { bundles: BUNDLES, lookups: LOOKUPS() }).some((v) => v.rule === 'V-03j'));
   });
 
@@ -88,8 +88,9 @@ describe('H-04 로더(D03 §3.1)', () => {
     assert.ok(r.ok, r.ok ? '' : r.code);
     return new Map([[LK, r.pkg]]);
   };
-  // 앱 내장 승인 바 요약 표(ADR-021)에 H-04 카드가 들어가면 로드된다. 표 항목은 엔진 몫이라 이 PR에서는 주입한다(후속).
-  const SUMMARY = new Map([['taxcert.confirm', ['purpose', 'submitTo', 'supplierBizNo']]]);
+  // 앱 내장 승인 바 요약 표(ADR-021)의 민원증명 공통 카드 cert.confirm(팀장 결정 2026-11-09: H-03·08·09와 같은 카드, 요약 4칸).
+  // 표 항목은 데이터 세션 PR이 넣는다. 이 PR에서는 주입한다.
+  const SUMMARY = new Map([['cert.confirm', ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure']]]);
 
   it('서명 2-of-3·조회 결속·정적 검증·요약 표를 통과한다', () => {
     const lk = installed();
@@ -140,7 +141,7 @@ class SelectAct extends FakeAct {
 const INPUTS = { purpose: '대금수령', submitTo: '금융기관' };
 const PROFILE = { bizNo: '1068114550', signMethod: 'cert' };
 /** 신청 양식에 포털이 미리 채워 보여 주는 값(fieldKey → 화면 문자열). */
-const PREFILLED: Record<string, string> = { supplierBizNo: '106-81-14550', applicantName: '주식회사 보내는곳', purpose: '', submitTo: '', residentNoDisclosure: '', copies: '1' };
+const PREFILLED: Record<string, string> = { supplierBizNo: '106-81-14550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '', certSubmitTo: '', rrnDisclosure: '', copies: '1' };
 
 function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[]; inputs?: Record<string, unknown> } = {}) {
   const pkg = h04();
@@ -180,11 +181,11 @@ function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[];
 }
 
 describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → 게이트', () => {
-  it('용도·제출처를 고르고 주민번호 비공개로 두면 게이트에 닿고, 카드는 되읽은 6칸이다', async () => {
+  it('용도·제출처를 고르고 주민번호 비공개로 두면 게이트에 닿고, 카드는 되읽은 7칸이다(요약 4칸 certDoc·certPurpose·certSubmitTo·rrnDisclosure 포함)', async () => {
     const r = h04Run();
     assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's20', code: null });
-    assert.deepEqual(r.events, ['s10', 's11', 's12', 's13', 's14', 's19', 's19a', 's19b', 's19c', 's19f', 's20']);
-    assert.deepEqual(r.card(), { supplierBizNo: '1068114550', applicantName: '주식회사 보내는곳', purpose: '대금수령', submitTo: '금융기관', residentNoDisclosure: '공개안함', copies: '1' });
+    assert.deepEqual(r.events, ['s10', 's11', 's12', 's13', 's14', 's19', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
+    assert.deepEqual(r.card(), { supplierBizNo: '1068114550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '대금수령', certSubmitTo: '금융기관', rrnDisclosure: '공개안함', copies: '1' });
     assert.ok(!r.act.log.some((l) => l.startsWith('click hometax.cert.taxpayment.form.applyButton')), '게이트 전에 신청하기를 누르지 않는다');
   });
 
@@ -194,8 +195,14 @@ describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → �
     assert.equal(r.card(), 'none');
   });
 
+  it('다른 민원 양식(민원명이 납세증명서가 아님)이면 s19d에서 중단, 게이트에 닿지 않는다', async () => {
+    const r = h04Run({ screen: { certDoc: '사업자등록증명' } });
+    assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's19d', code: 'assert.input_mismatch' });
+    assert.equal(r.card(), 'none');
+  });
+
   it('포털이 사용용도 선택을 반영하지 않으면(이전 값 남음) s19f assert.input_mismatch로 중단, 게이트에 닿지 않는다', async () => {
-    const r = h04Run({ screen: { purpose: '기타' }, stuck: ['hometax.cert.taxpayment.form.purpose'] });
+    const r = h04Run({ screen: { certPurpose: '기타' }, stuck: ['hometax.cert.taxpayment.form.purpose'] });
     assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's19f', code: 'assert.input_mismatch' });
     assert.equal(r.card(), 'none');
   });

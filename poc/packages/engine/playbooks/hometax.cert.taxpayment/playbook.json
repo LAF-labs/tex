@@ -162,8 +162,9 @@
     "fieldsFilled": {
      "fields": [
       "supplierBizNo",
-      "purpose",
-      "submitTo"
+      "certDoc",
+      "certPurpose",
+      "certSubmitTo"
      ]
     }
    }
@@ -174,9 +175,10 @@
    "fields": [
     "supplierBizNo",
     "applicantName",
-    "purpose",
-    "submitTo",
-    "residentNoDisclosure",
+    "certDoc",
+    "certPurpose",
+    "certSubmitTo",
+    "rrnDisclosure",
     "copies"
    ]
   },
@@ -196,19 +198,34 @@
    }
   },
   {
+   "id": "s19d",
+   "type": "assert",
+   "cond": {
+    "textMatches": {
+     "target": "hometax.cert.taxpayment.form.certDoc",
+     "patternRef": "cert.doc.taxpayment"
+    }
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
    "id": "s19f",
    "type": "assert",
    "cond": {
     "all": [
      {
       "readbackEquals": {
-       "fieldKey": "purpose",
+       "fieldKey": "certPurpose",
        "ref": "$inputs.purpose"
       }
      },
      {
       "readbackEquals": {
-       "fieldKey": "submitTo",
+       "fieldKey": "certSubmitTo",
        "ref": "$inputs.submitTo"
       }
      }
@@ -223,7 +240,7 @@
   {
    "id": "s20",
    "type": "gate",
-   "card": "taxcert.confirm",
+   "card": "cert.confirm",
    "authorizes": [
     "s21"
    ],
@@ -246,8 +263,9 @@
    "lookup": {
     "playbook": "hometax.cert.issued_list",
     "match": {
-     "purpose": "$readback.purpose",
-     "submitTo": "$readback.submitTo"
+     "certDoc": "$readback.certDoc",
+     "certPurpose": "$readback.certPurpose",
+     "certSubmitTo": "$readback.certSubmitTo"
     },
     "window": "today",
     "baseline": "pre_gate_snapshot",

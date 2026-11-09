@@ -140,6 +140,23 @@
    "fieldKey": "supplierBizNo",
    "inputType": "text"
   },
+  "hometax.cert.taxpayment.form.certDoc": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "민원명"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^민원명$",
+   "frame": "main",
+   "landmark": "hometax.cert.taxpayment.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-09",
+   "fieldKey": "certDoc",
+   "inputType": "text"
+  },
   "hometax.cert.taxpayment.form.applicantName": {
    "candidates": [
     {
@@ -171,7 +188,7 @@
    "landmark": "hometax.cert.taxpayment.form.root",
    "commits": false,
    "lastVerified": "2026-11-09",
-   "fieldKey": "purpose",
+   "fieldKey": "certPurpose",
    "inputType": "select"
   },
   "hometax.cert.taxpayment.form.submitTo": {
@@ -188,7 +205,7 @@
    "landmark": "hometax.cert.taxpayment.form.root",
    "commits": false,
    "lastVerified": "2026-11-09",
-   "fieldKey": "submitTo",
+   "fieldKey": "certSubmitTo",
    "inputType": "select"
   },
   "hometax.cert.taxpayment.form.residentNoDisclosure": {
@@ -205,7 +222,7 @@
    "landmark": "hometax.cert.taxpayment.form.root",
    "commits": false,
    "lastVerified": "2026-11-09",
-   "fieldKey": "residentNoDisclosure",
+   "fieldKey": "rrnDisclosure",
    "inputType": "select",
    "allowedConstants": [
     "공개안함"

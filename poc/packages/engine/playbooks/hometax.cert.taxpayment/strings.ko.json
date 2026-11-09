@@ -1,6 +1,7 @@
 {
  "taxcert.title": "납세증명서(국세) 발급",
- "taxcert.confirm": "납세증명서를 발급할까요?",
+ "cert.confirm": "민원증명을 발급할까요?",
+ "cert.doc.taxpayment": "^납세증명서(\\(국세완납증명\\))?$",
  "captcha.prompt": "그림의 문자를 입력해 주세요",
  "hometax.login.successMarker": "로그아웃"
 }
