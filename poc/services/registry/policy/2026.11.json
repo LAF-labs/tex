@@ -1,0 +1,23 @@
+{
+  "version": "2026.11",
+  "pace": {
+    "interactive": { "stepDelayMs": [800, 2500], "keyEventDelayMs": 150, "afterNavSettleMs": [600, 1500], "slowFactor": 1.5 },
+    "daemon": { "stepDelayMs": [1200, 3500], "keyEventDelayMs": 150, "afterNavSettleMs": [800, 2000], "slowFactor": 1.5 }
+  },
+  "limits": {
+    "hometax": { "runsPerDayPerProfile": 20, "irreversiblePerDayPerProfile": 1, "runsPerLoginSession": 15, "navigationsPerMin": 12, "loginsPerDay": 3, "loginFailuresPerDay": 2, "concurrent": 1 },
+    "gov24": { "runsPerDayPerProfile": 0, "irreversiblePerDayPerProfile": 0, "runsPerLoginSession": 0, "navigationsPerMin": 0, "loginsPerDay": 0, "concurrent": 1 },
+    "sminfo": { "runsPerDayPerProfile": 0, "irreversiblePerDayPerProfile": 0, "runsPerLoginSession": 0, "navigationsPerMin": 0, "loginsPerDay": 0, "concurrent": 1 },
+    "insure4": { "runsPerDayPerProfile": 0, "irreversiblePerDayPerProfile": 0, "runsPerLoginSession": 0, "navigationsPerMin": 0, "loginsPerDay": 0, "concurrent": 1 }
+  },
+  "retries": { "stepMax": 3, "backoff": "equal_jitter", "baseMs": 800, "capMs": 10000 },
+  "run": { "maxActuationsPerRun": 150, "maxWallClockMs": 1800000, "commitWindowMs": 600000, "l2MaxAttempts": 1 },
+  "cooldown": { "onBlockSignalHours": 24, "onCaptchaBurst": { "windowMin": 10, "count": 3, "action": "slow+notify" }, "positiveDetectionsForCooldown": 1 },
+  "daemon": { "windowJitterMin": 30, "gapBetweenRunsMin": [5, 15], "startupGraceMin": 10, "retryAfterMin": 30, "autoAllowed": false },
+  "portalMode": { "hometax": "assisted", "gov24": "postprocess", "wetax": "postprocess", "sminfo": "postprocess", "insure4": "postprocess" },
+  "captchaRelay": { "hometax": "disabled", "gov24": "disabled", "wetax": "disabled", "sminfo": "disabled", "insure4": "disabled" },
+  "browser": { "remoteDebuggingPort": "forbidden", "webdriverSelfCheck": true },
+  "verify": { "minElapsedMs": 60000, "lookups": 2, "maxMs": 300000 },
+  "remote": { "irreversiblePerDay": 1, "newCounterpartyRequiresLocal": true, "notifyOnIrreversible": ["desktop", "email"], "minProtocolVersion": 1, "disabledFeatures": [] },
+  "queue": { "maxIntentsPerPair": 5, "ttlHours": 72 }
+}

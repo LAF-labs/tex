@@ -1,6 +1,7 @@
 // 패키지 게시 도구(PUBLISH-H01.md "H-01 게시 — 사용자 단계", 팀장 지시 2026-11-09, D09 §8, ADR-013·023·028).
-// 흐름: 패키지 묶기(prepare) → package 키 서명(사용자, ceremony sign, Touch ID) → .sxp·인덱스 묶기(assemble)
-//       → 인덱스(·status) 서명(사용자) → 게시 관문 PUT(push) → 되읽기·투명성 로그 포함 증명 → 기록(record.json).
+// 흐름: 패키지·정책 묶기(prepare) → package 키·policy 키 서명(사용자, ceremony sign, Touch ID) → .sxp·인덱스 묶기(assemble)
+//       → 인덱스 서명(사용자) → 게시 관문 PUT(push) → 되읽기·투명성 로그 포함 증명 → 기록(record.json).
+// 정책·status·폐기 목록·인덱스의 신선도(timestamp)는 서버가 올릴 때 붙이고 cron이 다시 서명한다(ADR-043).
 // 서명 단계 앞뒤(prepare·assemble·push)는 사람 없이 돈다. 이 모듈은 개인 키를 갖지 않는다: 서명은 ceremony sign이 도우미(Secure Enclave)로 하고,
 // 여기서는 서명 기록을 모아(collectSignatures) 같은 규칙으로 센다. 시험·리허설(rehearsal.ts)만 메모리 안 임시 키로 서명한다.
 // 형식은 지금 main 그대로다: .sxp v1(SIGNING.md §6, encodeSxp), 인덱스(API.md "인덱스"), 엔진 로더 loadPackage가 받는 모양.
@@ -14,6 +15,7 @@ import {
   encodeSxp,
   loadPackage,
   manifestDigest,
+  schemaViolations,
   verifyConsistency,
   type BundleOutcomes,
   type LoadedPackage,
@@ -30,6 +32,7 @@ import {
   engineRoots,
   verifyIndex,
   verifyPackageBytes,
+  verifyPolicy,
   verifyRevoked,
   verifySxp,
   verifyStatus,
@@ -38,6 +41,7 @@ import {
   type RegistryIndex,
   type RegistryStatus,
   type RevokedKeys,
+  type SignedPolicy,
   type TrustRoot,
 } from '../verify.ts';
 import { collectSignatures, type SignatureRecord, type TrustPin } from '../ceremony/collect.ts';
@@ -46,6 +50,10 @@ import { CeremonyError, confirmCode, prepare as prepareDoc, type DocKind } from 
 export const PLAN_TOOL = 'sax-publish/1';
 /** 게시 관문 함수 본문 상한(Vercel 함수 4.5MB, JSON base64 포함)보다 낮게 */
 export const PUT_BODY_MAX = 4_000_000;
+/** 정책 초안에서 도구·서버가 정하는 필드(초안에 있으면 버린다) */
+const POLICY_ASSIGNED = ['monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'timestamp', 'signatures'];
+const SIG_PROBE = { keyId: 'probe', alg: 'ed25519', sig: 'A'.repeat(86) };
+const without = (o: object, keys: readonly string[]): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 const DOC_MAX = 512 * 1024;
 const SXP_MAX = 16 * 1024 * 1024;
 const ID = /^[a-z0-9]+(\.[a-z0-9_]+)+$/;
@@ -164,7 +172,7 @@ export interface PlanPackage {
 }
 
 export interface PlanDoc {
-  kind: 'status' | 'revoked_keys';
+  kind: 'status' | 'revoked_keys' | 'policy';
   file: string;
   monotonic: number;
   confirm: string;
@@ -346,6 +354,11 @@ export interface PrepareOpts {
   status?: { portalModeCeiling: Record<string, string>; killPlaybooks: string[] };
   /** 서명 의식에서 루트 2개로 서명한 폐기 목록(신선도 필드는 버리고 서버가 도장을 찍는다) */
   revoked?: RevokedKeys;
+  /**
+   * 정책 초안(services/registry/policy/<ver>.json 모양: monotonic·keyEpoch·신선도·서명 없음). 정책 키 2-of-3으로 서명하고 서버가 타임스탬프를 붙인다.
+   * 레지스트리의 지금 정책과 내용이 같으면 그대로 쓴다(서명·게시 없음)
+   */
+  policy?: Record<string, unknown>;
   now: number;
   /** 엔진 로더 연습용 임시 서명(rehearsal.ts ephemeralPackageSigner) */
   rehearsalSign: (manifest: Manifest) => Manifest;
@@ -358,12 +371,13 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
   if (o.work.fs.exists(wp(o.work, W.plan))) err('publish.work_exists', o.work.dir);
   if (!(CHANNELS as readonly string[]).includes(o.channel) || o.channel === 'hotfix') err('publish.channel_invalid', o.channel);
   if (!Number.isInteger(o.rolloutPercent) || o.rolloutPercent < 0 || o.rolloutPercent > 100) err('publish.rollout_invalid');
-  if (!o.sources.length && !o.status && !o.revoked) err('ceremony.usage', '패키지 폴더 또는 --status·--revoked');
+  if (!o.sources.length && !o.status && !o.revoked && !o.policy) err('ceremony.usage', '패키지 폴더 또는 --status·--revoked·--policy');
 
   const indexBytes = await o.registry.get(`/registry/${o.channel}/index.json`);
   const index = parseJson<RegistryIndex>(indexBytes, 'index');
   const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
   const statusStored = parseJson<RegistryStatus>(await o.registry.get('/registry/status.json'), 'status');
+  const policyStored = parseJson<SignedPolicy>(await o.registry.get('/policy/current.json'), 'policy');
   const revokedIds = new Set(revokedStored?.revoked.map((r) => r.keyId) ?? []);
   if (index && index.keyEpoch !== o.trust.keyEpoch) err('registry.key_epoch_mismatch', 'index');
 
@@ -433,6 +447,27 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     wwrite(work, W.doc('revoked_keys'), pretty(r));
     docs.push({ kind: 'revoked_keys', file: W.doc('revoked_keys'), monotonic: r.monotonic!, confirm: confirmCode(content.sha256), signed });
   }
+  // 정책(D03 §7.1: 엔진은 정책이 없거나 낡으면 포털을 postprocess로 둔다). 폐기 목록 다음, status 앞에 올린다
+  let policyNote = '';
+  if (o.policy) {
+    const draft = structuredClone(o.policy);
+    for (const k of POLICY_ASSIGNED) delete draft[k];
+    if (typeof draft.version !== 'string') err('publish.policy_invalid', 'version');
+    const same = !!policyStored && policyStored.keyEpoch === o.trust.keyEpoch && canonicalJson(without(policyStored, POLICY_ASSIGNED)) === canonicalJson(draft);
+    if (same) policyNote = `  정책 ${policyStored.version} monotonic ${policyStored.monotonic}: 레지스트리에 같은 내용이 있다(서명·게시 없음, 신선도는 cron이 다시 서명한다)`;
+    else {
+      // {ver}.json은 같은 내용으로만 다시 쓸 수 있다(관문 규칙). 내용을 바꾸면 version을 올린다
+      if (policyStored && policyStored.version === draft.version) err('publish.policy_version_exists', `${String(draft.version)}: 내용을 바꾸면 version을 올린다`);
+      const doc = { ...draft, monotonic: (policyStored?.monotonic ?? 0) + 1, keyEpoch: o.trust.keyEpoch, signatures: [] };
+      // 스키마(엔진 policy.schema.json)는 서명 전에 본다. 신선도·서명 자리는 모양만 맞춘 값으로 채워 본다
+      const probe = { ...doc, issuedAt: iso(o.now), expiresAt: iso(o.now + 48 * 3_600_000), timestamp: SIG_PROBE, signatures: [SIG_PROBE, SIG_PROBE] };
+      const v = schemaViolations('policy', probe);
+      if (v.length) err('publish.policy_invalid', v.map((x) => x.message).join('; ').slice(0, 300));
+      const p = prepareDoc('policy', doc);
+      wwrite(work, W.doc('policy'), pretty(doc));
+      docs.push({ kind: 'policy', file: W.doc('policy'), monotonic: doc.monotonic, confirm: confirmCode(p.sha256), signed: false });
+    }
+  }
   if (o.status) {
     const s = { monotonic: (statusStored?.monotonic ?? 0) + 1, keyEpoch: o.trust.keyEpoch, portalModeCeiling: o.status.portalModeCeiling, killPlaybooks: o.status.killPlaybooks, signatures: [] };
     const p = prepareDoc('status', s);
@@ -460,6 +495,7 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
   o.out(`계획 ${work.dir}: 레지스트리 ${plan.registry}, 채널 ${plan.channel}, keyEpoch ${plan.keyEpoch}, 지금 인덱스 monotonic ${index?.monotonic ?? '없음'}`);
   for (const b of built) o.out(`  ${b.pkg.name}(${b.pkg.kind}, ${b.pkg.portal}) manifest ${b.pkg.manifestDigest}${b.pkg.published ? ' — 이미 게시됨(서명 없음)' : ` 확인 코드 ${b.pkg.confirm}`}`);
   o.out('엔진 로더 연습(임시 키): 통과. 서명 키만 실제 키로 바뀐다');
+  if (policyNote) o.out(policyNote);
   const cmds: string[] = [];
   for (const b of built) {
     if (b.pkg.published) continue;
@@ -644,6 +680,9 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
   };
   const revokedDoc = plan.docs.find((d) => d.kind === 'revoked_keys');
   const statusDoc = plan.docs.find((d) => d.kind === 'status');
+  const policyDoc = plan.docs.find((d) => d.kind === 'policy');
+  const policyOut = policyDoc ? (docOf(policyDoc) as unknown as SignedPolicy) : null;
+  const policyStored = parseJson<SignedPolicy>(await o.registry.get('/policy/current.json'), 'policy');
   const revokedOut = revokedDoc ? (docOf(revokedDoc) as unknown as RevokedKeys) : null;
   const statusOut = statusDoc ? (docOf(statusDoc) as unknown as RegistryStatus) : null;
   const revoked = new Set([...(revokedStored?.revoked.map((r) => r.keyId) ?? []), ...(revokedOut?.revoked.map((r) => r.keyId) ?? [])]);
@@ -664,12 +703,18 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
     }
   }
 
-  // 올리기: 폐기 목록 → status → 패키지(조회 먼저, 계획 순서) → 인덱스. 관문이 같은 규칙으로 다시 보고, 공개 전에 로그를 쓴다
+  // 올리기: 폐기 목록 → 정책 → status → 패키지(조회 먼저, 계획 순서) → 인덱스. 관문이 같은 규칙으로 다시 보고, 공개 전에 로그를 쓴다
   const published: Array<{ kind: string; path: string; bytes?: Buffer }> = [];
   if (revokedOut) {
     await putOk(o.registry, '/admin/v1/revoked-keys', revokedOut, o.token, 200);
     published.push({ kind: 'revoked_keys', path: 'registry/revoked_keys.json' });
     o.out(`게시 revoked_keys monotonic ${revokedOut.monotonic}`);
+  }
+  if (policyOut) {
+    await putOk(o.registry, '/admin/v1/policy', policyOut, o.token, 200);
+    // 관문은 {ver}.json과 current.json을 같은 바이트로 쓴다(ADR-023), 로그 항목도 둘
+    published.push({ kind: 'policy', path: `policy/${policyOut.version}.json` }, { kind: 'policy', path: 'policy/current.json' });
+    o.out(`게시 정책 ${policyOut.version} monotonic ${policyOut.monotonic}`);
   }
   if (statusOut) {
     await putOk(o.registry, '/admin/v1/status', statusOut, o.token, 200);
@@ -706,6 +751,13 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
     const r = parseJson<RevokedKeys>(got.get('registry/revoked_keys.json')!, 'revoked_keys')!;
     if (contentDigest(r) !== contentDigest(revokedOut)) err('publish.readback_failed', 'revoked_keys');
     verifyRevoked(r, o.trust, revokedStored, o.now);
+  }
+  if (policyOut) {
+    const cur = got.get('policy/current.json')!;
+    if (!cur.equals(got.get(`policy/${policyOut.version}.json`)!)) err('publish.readback_failed', 'policy {ver} ≠ current');
+    const pol = parseJson<SignedPolicy>(cur, 'policy')!;
+    if (contentDigest(pol) !== contentDigest(policyOut)) err('publish.readback_failed', 'policy');
+    verifyPolicy(pol, o.trust, revoked, policyStored, o.now);
   }
   if (statusOut) {
     const s = parseJson<RegistryStatus>(got.get('registry/status.json')!, 'status')!;

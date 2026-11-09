@@ -157,6 +157,7 @@ export interface DryRunOpts {
   rolloutPercent: number;
   status?: PrepareOpts['status'];
   revoked?: RevokedKeys;
+  policy?: PrepareOpts['policy'];
   now: number;
   fetchFn?: typeof fetch;
   out: (line: string) => void;
@@ -176,9 +177,16 @@ export async function dryRun(o: DryRunOpts): Promise<DryRunReport> {
 
   // 2. 로컬 레지스트리를 실제 레지스트리의 지금 문서로 채운다(같은 monotonic에서 시작). 실제 키로 서명된 기존 패키지는 임시 핀으로 검증할 수 없어 인덱스에 잇지 않는다.
   const seed = new Map<string, Buffer>();
-  for (const k of ['registry/revoked_keys.json', 'registry/status.json', `registry/${o.channel}/index.json`]) {
+  for (const k of ['registry/revoked_keys.json', 'registry/status.json', `registry/${o.channel}/index.json`, 'policy/current.json']) {
     const b = await o.registry.get(`/${k}`);
     if (b) seed.set(k, b);
+  }
+  // 정책 {ver}.json도 같이(관문은 같은 버전 파일이 있으면 같은 내용만 받는다)
+  const cur = seed.get('policy/current.json');
+  const ver = cur ? (JSON.parse(cur.toString('utf8')) as { version?: unknown }).version : undefined;
+  if (typeof ver === 'string' && /^\d{4}\.\d{2}(\.\d+)?$/.test(ver)) {
+    const b = await o.registry.get(`/policy/${ver}.json`);
+    if (b) seed.set(`policy/${ver}.json`, b);
   }
   const eph = ephemeralTrust(o.trust);
   const local = await localRegistry(eph.trust, eph.timestampSeedHex, seed);
