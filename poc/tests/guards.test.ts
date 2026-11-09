@@ -77,96 +77,77 @@ describe('정적·구성 경계', () => {
     assert.deepEqual(Object.keys(chromeEnv({ DISPLAY: ':99', XAUTHORITY: '/tmp/x/Xauthority', DEBUG: '1' })).sort(), ['DISPLAY', 'XAUTHORITY'], 'Linux X11·xvfb 화면 인증');
   });
 
-  it('승인 카드 판정: 무장 지연·재시작, 머무름, [승인하고 발급] 영역 안 down→up만, 클릭 활성화 예외, 커서 위장, 키보드 없음', () => {
-    const g = new BarGate(600);
+  it('승인 카드 판정: 뜬 직후 클릭도 승인(기다림·머무름 없음), [승인하고 발급] 영역 안 down→up만, 창 수준 사건은 누르던 클릭 취소, 커서 위장, 키보드 없음', () => {
+    const g = new BarGate();
     // [승인하고 발급] 영역은 (200,20)~(400,70). 그 밖은 카드 안이라도 "바깥"이다.
     g.setTargets({ approve: { x: 200, y: 20, width: 200, height: 50 }, stop: { x: 20, y: 20, width: 88, height: 50 } });
     const at = { x: 300, y: 45 };
-    const move = (t: number, dx = 3) => g.mouse({ type: 'mouseMove', ...at, movementX: dx, movementY: 0 }, t);
-    const down = (t: number, p = at) => g.mouse({ type: 'mouseDown', ...p, button: 'left' }, t);
-    const up = (t: number, p = at) => g.mouse({ type: 'mouseUp', ...p, button: 'left' }, t);
-    g.rearm(1000, false);
-    move(1050);
-    assert.deepEqual(down(1100), { kind: 'refused', reason: 'arming' }, '무장 전 down은 거부');
-    assert.equal(g.armed(1650), false, '무장 전 down이면 600ms를 다시 센다');
-    assert.equal(g.armed(1700), true);
-    assert.equal(up(1710), null, '거부된 down의 up은 승인이 아니다');
-    g.mouse({ type: 'mouseLeave', x: -1, y: -1 }, 1800);
-    move(1900);
-    assert.deepEqual(down(1950), { kind: 'refused', reason: 'dwell' }, '들어와 움직인 지 150ms 안의 클릭은 거부');
-    assert.equal(down(2060), null);
-    assert.equal(up(2070, { x: 300, y: 120 }), null, '바 밖에서 뗀 것은 승인이 아니다');
-    assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'right' }, 2100), null);
-    down(2200);
-    assert.deepEqual(up(2210), { kind: 'approve' });
-    // 앞 게이트에서 바 안에 있던 추적 상태가 다음 게이트로 넘어가지 않는다: main이 OS 커서로 정한 값(밖)을 쓴다.
-    g.rearm(5000, false);
-    move(5700);
-    assert.deepEqual(down(5720), { kind: 'refused', reason: 'dwell' }, '다음 게이트에서 입력창에서 튀어 올라온 클릭은 거부');
-    // 멈춘 커서 아래에 바가 뜬 경우(main이 안이라고 계산): 움직이지 않아도 600ms 뒤에는 된다.
-    g.rearm(6000, true);
-    down(6700);
-    assert.deepEqual(up(6710), { kind: 'approve' });
-    // 멈춘 커서 예외는 OS 커서가 무장 사건 때 자리 그대로일 때만: 바를 덮은 알림 위에서 움직였다가(바는 나감을 못 받음)
-    // 알림이 사라지자마자 누른 클릭은 머무름으로 거부한다.
-    g.rearm(6800, true);
-    move(7400);
-    assert.deepEqual(g.mouse({ type: 'mouseDown', ...at, button: 'left' }, 7410, false), { kind: 'refused', reason: 'dwell' });
-    // 바 밖으로 나가는 mouseMove는 나감으로 친다.
-    g.rearm(7000, true);
-    g.mouse({ type: 'mouseMove', x: 300, y: 200, movementX: 0, movementY: 9 }, 7100);
-    assert.deepEqual(down(7700), { kind: 'refused', reason: 'dwell' });
-    // 핸드오프 복귀 활성화: 100ms 안 바 클릭은 재무장 없이 판정, 아니면 재무장. 타이머가 늦어도 늦은 클릭은 재무장·거부.
-    g.rearm(8000, true);
-    g.windowActivated(8700, true);
-    down(8750);
-    assert.equal(g.activationSettled(), false);
-    assert.deepEqual(up(8760), { kind: 'approve' });
-    g.windowActivated(9000, true);
-    assert.equal(g.activationSettled(), true);
-    g.windowActivated(10_000, true);
-    assert.deepEqual(down(10_300), { kind: 'refused', reason: 'arming' }, '활성화 뒤 100ms가 지난 첫 클릭은 재무장');
-    assert.equal(g.armed(10_800), false);
-    // 포커스가 mouseDown 뒤에 오면(OS 순서) 클릭 활성화로 보고 그 클릭을 버리지 않는다(핸드오프 복귀일 때만).
-    g.rearm(11_000, true);
-    down(11_700);
-    g.windowActivated(11_710, true);
-    assert.equal(g.activationSettled(), false);
-    assert.deepEqual(up(11_720), { kind: 'approve' });
-    // 커서 위장 중에는 무장하지 않고 이유를 알린다.
-    g.rearm(12_000, true);
+    const down = (p = at) => g.mouse({ type: 'mouseDown', ...p, button: 'left' });
+    const up = (p = at) => g.mouse({ type: 'mouseUp', ...p, button: 'left' });
+    // 카드가 뜬 직후(움직임 없이) 클릭도 승인이다(ADR-021 개정 2026-11-09: 무장 지연 600ms·머무름 150ms 철회).
+    g.reset();
+    assert.equal(g.armed(), true);
+    assert.equal(down(), null);
+    assert.deepEqual(up(), { kind: 'approve' });
+    assert.equal(up(), null, 'down 없는 up은 승인이 아니다');
+    assert.equal(down(), null);
+    assert.equal(up({ x: 300, y: 120 }), null, '바 밖에서 뗀 것은 승인이 아니다');
+    assert.equal(down({ x: 100, y: 45 }), null);
+    assert.equal(up(), null, '바 밖에서 누른 것은 승인이 아니다');
+    assert.equal(g.mouse({ type: 'mouseDown', ...at, button: 'right' }), null);
+    assert.equal(g.mouse({ type: 'mouseUp', ...at, button: 'right' }), null, '오른쪽 버튼은 승인이 아니다');
+    // 누른 채 나가면(나감·바 밖 움직임) 그 클릭은 취소된다.
+    down();
+    g.mouse({ type: 'mouseLeave', x: -1, y: -1 });
+    assert.equal(up(), null);
+    down();
+    g.mouse({ type: 'mouseMove', x: 300, y: 200 });
+    assert.equal(up(), null);
+    down();
+    g.mouse({ type: 'mouseMove', x: 310, y: 50 });
+    assert.deepEqual(up(), { kind: 'approve' }, '바 안 움직임은 취소가 아니다');
+    // 창 수준 사건(이동·크기·활성화 등)은 누르던 클릭만 취소한다. 다음 클릭은 기다리지 않고 된다.
+    down();
+    g.reset();
+    assert.equal(up(), null);
+    down();
+    assert.deepEqual(up(), { kind: 'approve' });
+    // 커서 위장 중에는 무장하지 않고 이유를 알린다. 누르던 클릭도 취소된다. 풀리면 바로 된다.
+    down();
     g.setCursorBlocked(true);
-    assert.equal(g.armed(13_000), false);
-    assert.deepEqual(down(13_000), { kind: 'refused', reason: 'cursor' });
+    assert.equal(up(), null);
+    assert.equal(g.armed(), false);
+    assert.deepEqual(down(), { kind: 'refused', reason: 'cursor' });
+    assert.equal(up(), null);
     g.setCursorBlocked(false);
+    down();
+    assert.deepEqual(up(), { kind: 'approve' });
     // 키보드 승인 없음(Alt+Y 경로는 꺼 둠).
     assert.equal(KEYBOARD_APPROVAL, false);
-    assert.equal(g.key({ type: 'keyDown', key: 'y', alt: true }, 20_000), null);
-    assert.equal(g.key({ type: 'keyDown', key: 'Enter' }, 20_000), null);
-    for (const k of STOP_KEYS) assert.equal(g.key({ type: 'keyDown', key: k }, 20_000), null, `${JSON.stringify(k)}는 승인이 아니다(카드에서는 중지)`);
+    assert.equal(g.key({ type: 'keyDown', key: 'y', alt: true }), null);
+    assert.equal(g.key({ type: 'keyDown', key: 'Enter' }), null);
+    for (const k of STOP_KEYS) assert.equal(g.key({ type: 'keyDown', key: k }), null, `${JSON.stringify(k)}는 승인이 아니다(카드에서는 중지)`);
     assert.deepEqual([...STOP_KEYS], ['Enter', ' ', 'Escape']);
   });
 
-  it('승인 카드 [중지]: 무장을 기다리지 않고 같은 영역 down→up만. [중지]와 [승인하고 발급]은 서로의 클릭이 되지 않는다', () => {
-    const g = new BarGate(600);
+  it('승인 카드 [중지]: 같은 영역 down→up만. [중지]와 [승인하고 발급]은 서로의 클릭이 되지 않는다', () => {
+    const g = new BarGate();
     g.setTargets({ approve: { x: 200, y: 20, width: 200, height: 50 }, stop: { x: 20, y: 20, width: 88, height: 50 } });
     const st = { x: 60, y: 45 };
     const ap = { x: 300, y: 45 };
-    g.rearm(0, false);
-    // 무장 전(0ms 뒤 바로)에도 [중지]는 된다.
+    g.reset();
     assert.equal(g.stop({ type: 'mouseDown', ...st, button: 'left' }), false);
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'left' }), true);
-    assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }, 10), null, '[중지] 자리 down은 승인 판정에 들어가지 않는다');
+    assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }), null, '[중지] 자리 down은 승인 판정에 들어가지 않는다');
     // [중지]에서 눌러 [승인하고 발급]에서 떼면 둘 다 아니다. 거꾸로도 마찬가지.
-    g.rearm(1000, true);
     g.stop({ type: 'mouseDown', ...st, button: 'left' });
-    assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }, 1700), null);
+    assert.equal(g.mouse({ type: 'mouseDown', ...st, button: 'left' }), null);
     assert.equal(g.stop({ type: 'mouseUp', ...ap, button: 'left' }), false);
-    assert.equal(g.mouse({ type: 'mouseUp', ...ap, button: 'left' }, 1710), null, '[중지]에서 시작한 클릭은 승인이 아니다');
+    assert.equal(g.mouse({ type: 'mouseUp', ...ap, button: 'left' }), null, '[중지]에서 시작한 클릭은 승인이 아니다');
     g.stop({ type: 'mouseDown', ...ap, button: 'left' });
-    assert.equal(g.mouse({ type: 'mouseDown', ...ap, button: 'left' }, 1800), null, '무장됨·멈춘 커서: 눌림');
+    assert.equal(g.mouse({ type: 'mouseDown', ...ap, button: 'left' }), null, '눌림');
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'left' }), false, '[승인하고 발급]에서 시작한 클릭은 중지도 아니다');
-    assert.equal(g.mouse({ type: 'mouseUp', ...st, button: 'left' }, 1810), null);
+    assert.equal(g.mouse({ type: 'mouseUp', ...st, button: 'left' }), null);
     // 오른쪽 버튼·움직임은 [중지]가 아니다. 커서 위장 중에도 [중지]는 된다(안전한 실패).
     assert.equal(g.stop({ type: 'mouseDown', ...st, button: 'right' }), false);
     assert.equal(g.stop({ type: 'mouseUp', ...st, button: 'right' }), false);

@@ -130,8 +130,6 @@ async function prepare(id: string): Promise<void> {
 }
 /** 무장됨 = 판정상 무장 + 무장됨 페이지가 실제로 화면에 올라옴. */
 const waitArmed = () => until('bar armed', () => S.bar.snapshot().armed && S.bar.snapshot().committed?.mode === 'armed');
-/** OS 커서 위치(바의 "멈춘 커서 아래" 판단용). e2e 기본은 바 밖. */
-const cursor = { x: -9999, y: -9999 };
 
 
 /** 엔진이 보낸 게이트 요청(실행별 마지막). 바는 main이 이 fields로 해시를 다시 계산해 무장한다. */
@@ -155,12 +153,10 @@ async function toWaiting(text: string): Promise<string> {
   return id;
 }
 
-/** 바 안에서 움직이고 머문 뒤 클릭(정상 승인). */
+/** 바 안에서 클릭(정상 승인). 기다림·머무름은 없다(ADR-021 개정 2026-11-09). */
 async function approveOnBar(): Promise<void> {
   await waitArmed();
-  barLeave();
   barEnterMove();
-  await sleep(200);
   barClick();
 }
 
@@ -241,14 +237,8 @@ async function flow(): Promise<void> {
   const [cw, ch] = S.win.getContentSize() as [number, number];
   const exp = barBounds(cw, ch);
   check('승인 대기에 바가 뜬다(main이 창 크기로 정한 자리)', snap.visible && snap.bounds.x === exp.x && snap.bounds.y === exp.y && snap.bounds.width === exp.width, { snap: snap.bounds, exp });
-  check('카드는 처음에 무장 전(동작 버튼 흐림)이다', snap.mode === 'unarmed' && !snap.armed, snap);
+  check('카드는 뜰 때부터 무장됨이다(무장 지연 없음, 첫 페이지가 무장됨)', snap.mode === 'armed' && snap.armed && snap.committed?.mode === 'armed', snap);
   check('카드 높이는 main이 H-01 줄 수로 정하고, [중지](왼쪽 112)와 [승인하고 발급]은 앱 상수 간격 48로 떨어져 있다', snap.bounds.height === SHELL.barHeight && snap.targets.stop.width === 112 && snap.targets.approve.x - (snap.targets.stop.x + snap.targets.stop.width) === 48 && snap.stop === '중지' && snap.action === ACTION_TEXT && JSON.stringify(snap.targets) === JSON.stringify(cardTargets(snap.bounds.width, snap.bounds.height)), snap);
-  // 무장 전 클릭: 거부 + "잠시 뒤 다시 눌러 주세요", 600ms 재시작
-  barEnterMove();
-  barClick();
-  await until('arming msg', () => S.bar.snapshot().msg === '잠시 뒤 다시 눌러 주세요', 500);
-  check('무장 전 클릭은 거부하고 "잠시 뒤 다시 눌러 주세요"', runStatus(id) === 'waiting' && S.bar.snapshot().msg === '잠시 뒤 다시 눌러 주세요', S.bar.snapshot());
-  await shot('06-bar-arming-refused');
   await waitArmed();
   await shot('07-waiting-armed');
   // 렌더러가 비운 자리와 바가 맞는지(렌더러 좌표는 판정에 쓰지 않는다. 배치 규칙 확인용)
@@ -339,7 +329,7 @@ async function flow(): Promise<void> {
   const barJs = await Promise.race([barWc().executeJavaScript('1+1').then((v) => `ran:${v}`, (e: Error) => `blocked:${e.message.slice(0, 40)}`), sleep(500).then(() => 'no-result')]);
   check('바 페이지는 스크립트를 실행하지 않는다(javascript:false)', barJs !== 'ran:2', barJs);
 
-  // 습관 클릭: 입력창·간격 클릭은 바에 닿지 않고, 입력창에서 바로 올라와 누른 빠른 클릭은 머무름에 걸린다
+  // 입력창·간격 클릭은 바에 닿지 않는다
   const gapY = Math.round(b.y + b.height + SHELL.gap / 2);
   const inX = Math.round(b.x + b.width / 2);
   for (const y of [gapY, Math.round(b.y + b.height + SHELL.gap + 20)]) {
@@ -348,13 +338,14 @@ async function flow(): Promise<void> {
   }
   await sleep(80);
   check('렌더러 영역(간격·입력창) 클릭은 바 판정에 들어가지 않는다(OS hit-test는 미시험)', runStatus(id) === 'waiting');
+  // 누르는 사이 바를 나가면 그 클릭은 승인이 아니다(나갔다 다시 들어와 떼도).
+  barEnterMove();
+  barWc().sendInputEvent({ type: 'mouseDown', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
   barLeave();
   barEnterMove();
-  await sleep(40);
-  barClick();
-  await sleep(60);
-  check('습관 클릭: 바에 들어와 150ms 안에 누르면 거부("마우스를 조금 움직인 뒤")', runStatus(id) === 'waiting' && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
-  await shot('08-bar-dwell-refused');
+  barWc().sendInputEvent({ type: 'mouseUp', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
+  await sleep(80);
+  check('누른 채 바를 나갔다 들어와 뗀 클릭은 승인이 아니다', runStatus(id) === 'waiting' && S.bar.snapshot().visible);
 
   // 레일 화면으로 가도 바는 남는다
   await click('[data-view=docs]');
@@ -363,10 +354,14 @@ async function flow(): Promise<void> {
   await shot('09-docs-with-bar');
   await click('[data-view=chat]');
 
-  // 창 크기 변경 → 재배치·재무장, 좁은 창 → 띠
+  // 창 크기 변경 → 재배치, 누르던 클릭 취소(기다림 없음), 좁은 창 → 띠
+  barEnterMove();
+  barWc().sendInputEvent({ type: 'mouseDown', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
   S.win.setContentSize(1120, 760);
   await until('relayout', () => S.bar.snapshot().bounds.y === barBounds(1120, 760).y);
-  check('창 크기를 바꾸면 다시 배치하고 다시 무장한다', S.bar.snapshot().mode === 'unarmed', S.bar.snapshot());
+  barWc().sendInputEvent({ type: 'mouseUp', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
+  await sleep(80);
+  check('창 크기를 바꾸면 다시 배치하고 누르던 클릭은 취소한다(카드는 무장됨 그대로)', runStatus(id) === 'waiting' && S.bar.snapshot().mode === 'armed' && S.bar.snapshot().armed, S.bar.snapshot());
   S.win.setContentSize(900, 720);
   await until('band', () => S.bar.snapshot().bounds.width === 900 - SHELL.rail);
   await waitArmed();
@@ -457,27 +452,22 @@ async function flow(): Promise<void> {
 
   // 중지: 승인 대기에서 [중지] → 바가 내려가고 발급 없음. 그동안 다른 건은 준비할 수 없다(실행은 한 번에 하나).
   const id2 = await toWaiting('B상사에 55만원 세금계산서');
-  // 두 번째 게이트: 앞 게이트를 바 안에서 눌러 승인했고 그 뒤 mouseLeave를 보내지 않았다. OS 커서는 바 밖(입력창)이다.
   await waitArmed();
-  barWc().sendInputEvent({ type: 'mouseMove', x: mid().x, y: mid().y, movementX: 0, movementY: -6 });
-  await sleep(20);
-  barClick();
-  await sleep(60);
-  check('다음 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)', runStatus(id2) === 'waiting' && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
   const idBusy = await toDraft('C테크에 10만원 세금계산서');
   await prepare(idBusy);
   await sleep(150);
   check('승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다', runStatus(idBusy) === 'draft' && S.bar.runId === id2 && runStatus(id2) === 'waiting');
   await click(`[data-run="${idBusy}"] [data-act=cancel]`);
-  // 창이 뒤로 가면 무장 전 페이지, 핸드오프가 아닌 활성화는 무장 지연을 다시 센다(첫 클릭은 앞으로 가져오기, ADR-027 결정 5).
+  // 창 blur·활성화: 카드는 무장됨 그대로(기다림 없음). 활성화는 창 수준 사건이라 누르던 클릭만 취소한다.
   await waitArmed();
+  barEnterMove();
+  barWc().sendInputEvent({ type: 'mouseDown', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
   S.win.emit('blur');
-  await until('blur unarmed', () => S.bar.snapshot().committed?.mode === 'unarmed', 2000);
-  const blurred = S.bar.snapshot();
   S.win.emit('focus');
-  await sleep(30);
+  barWc().sendInputEvent({ type: 'mouseUp', x: mid().x, y: mid().y, button: 'left', clickCount: 1 });
+  await sleep(80);
   const refocused = S.bar.snapshot();
-  check('창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연', blurred.mode === 'unarmed' && refocused.mode === 'unarmed' && !refocused.armed, { blurred, refocused });
+  check('창 blur → 활성화: 카드는 무장됨 그대로, 활성화 사이에 걸친 클릭은 승인이 아니다', runStatus(id2) === 'waiting' && refocused.mode === 'armed' && refocused.armed && refocused.committed?.mode === 'armed', refocused);
   // 금고가 부르는 비밀 창(ADR-025 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
   S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'portal_password', scope: 'business' });
   await sleep(100);
@@ -643,36 +633,17 @@ async function flow(): Promise<void> {
   S.bar.close('e2e');
   await tamperedDone;
 
-  // 멈춘 커서 아래에 바가 뜸: OS 커서가 바 안에 그대로면 움직이지 않고 눌러도 600ms 뒤 승인된다.
-  // 반대로 커서가 (바를 덮은 알림 위 등에서) 자리를 옮겼다면 들어오자마자 누른 클릭은 머무름으로 거부한다.
-  const cb = S.win.getContentBounds();
-  const wb = barBounds(cb.width, cb.height, true);
-  const wt = center(cardTargets(wb.width, wb.height).approve);
-  const inside = (dx: number) => ({ x: cb.x + wb.x + wt.x + dx, y: cb.y + wb.y + wt.y });
-  Object.assign(cursor, inside(0));
-  const still = S.bar.open(gate('wide-3'));
-  await waitArmed();
-  Object.assign(cursor, inside(40));
-  barWc().sendInputEvent({ type: 'mouseEnter', x: mid().x + 40, y: mid().y });
-  barWc().sendInputEvent({ type: 'mouseMove', x: mid().x + 40, y: mid().y, movementX: 40, movementY: 0 });
-  await sleep(10);
-  barClick();
-  await sleep(60);
-  check('커서가 자리를 옮긴 뒤 바로 누른 클릭은 거부(가린 창이 사라지는 순간)', S.bar.snapshot().visible && S.bar.snapshot().msg === '마우스를 조금 움직인 뒤 눌러 주세요', S.bar.snapshot());
-  S.bar.close('e2e');
-  await still;
-  Object.assign(cursor, inside(0));
+  // 카드가 뜬 직후 클릭도 승인된다(무장 지연 600ms·머무름 150ms 철회, ADR-021 개정 2026-11-09).
   const judged: unknown[] = [];
   const onJudged = (e: unknown) => judged.push(e);
   S.bar.on('judged', onJudged);
-  const still2 = S.bar.open(gate('wide-4'));
-  await waitArmed();
+  const quick = S.bar.open(gate('wide-4'));
+  await until('quick bar', () => S.bar.snapshot().visible, 3000);
   barClick();
-  const o = await Promise.race([still2, sleep(1000).then(() => null)]);
+  const o = await Promise.race([quick, sleep(1000).then(() => null)]);
   S.bar.off('judged', onJudged);
-  check('멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)', o?.decision === 'approve' && o.approval.v === 2 && o.approval.reqId === 'wide-4' && o.approval.presence === 'click', { o, judged, snap: S.bar.snapshot(), cursor, cb: S.win.getContentBounds(), cbBefore: cb });
+  check('카드가 뜬 직후 클릭도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)', o?.decision === 'approve' && o.approval.v === 2 && o.approval.reqId === 'wide-4' && o.approval.presence === 'click', { o, judged, snap: S.bar.snapshot() });
   if (!o) S.bar.close('e2e');
-  Object.assign(cursor, { x: -9999, y: -9999 });
 
   // 차단 신호(D03 §7, PoC-10): 발급 화면 대신 차단 안내가 뜨면 바로 멈추고, 그 뒤로 가짜 홈택스에 요청을 보내지 않으며, 카드에 사유가 보인다.
   const idBlock = await toDraft('C테크에 44만원 세금계산서');
@@ -796,11 +767,11 @@ app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
     // 준비 분당 상한(사람 속도 3회)은 e2e가 짧은 시간에 여러 건을 돌리므로 넉넉히 둔다(audit-d가 상한 자체를 본다).
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, cursorPoint: () => cursor, preparePerMin: 100 });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100 });
     // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
     S.win.webContents.setBackgroundThrottling(false);
-    // 실제 OS 마우스는 이 창에 들어오지 않게 한다. 실제 커서가 카드 자리에 머물러 있으면 그 move·enter가 무장·머무름 판정을 흔들어
-    // 시험이 기계 상태에 따라 실패했다(main에서 "멈춘 커서"·"습관 클릭" 연속 실패). 시험 입력은 sendInputEvent라 그대로 닿는다.
+    // 실제 OS 마우스는 이 창에 들어오지 않게 한다. 실제 커서의 move·leave가 시험이 누르던 클릭을 취소하면 시험이 기계 상태에 따라
+    // 실패한다(옛 무장·머무름 판정 때 main에서 연속 실패). 시험 입력은 sendInputEvent라 그대로 닿는다.
     S.win.setIgnoreMouseEvents(true);
     observations.visibilityAtStart = await S.ready.then(() => js('document.visibilityState'));
     await flow();
