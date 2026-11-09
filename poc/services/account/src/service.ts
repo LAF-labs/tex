@@ -215,10 +215,10 @@ export class AccountService {
   // ---------- 자동 로그인: 갱신 토큰(ADR-038 (f)) ----------
 
   /** 로그인 성공 뒤 `remember: true`면 새 계보의 갱신 토큰(30일 미사용 만료) */
-  async issueRefresh(accountId: string, method: AuthMethod): Promise<string> {
+  async issueRefresh(accountId: string, method: AuthMethod, q: Sql = this.db): Promise<string> {
     const token = REFRESH_PREFIX + randomToken();
     const now = this.now();
-    await this.db.run('INSERT INTO refresh_tokens (token_hash, account_id, family_id, parent_hash, auth_method, issued_at, expires_at, rotated_at) VALUES ($1, $2, $3, NULL, $4, $5, $6, NULL)', [
+    await q.run('INSERT INTO refresh_tokens (token_hash, account_id, family_id, parent_hash, auth_method, issued_at, expires_at, rotated_at) VALUES ($1, $2, $3, NULL, $4, $5, $6, NULL)', [
       sha256hex(token),
       accountId,
       randomUUID(),
@@ -371,9 +371,11 @@ export class AccountService {
    * - 바꾸기(비밀번호 있음): 현재 비밀번호가 필수다. 틀림·잠금은 account.current_password_invalid이고 로그인과 같은 잠금 횟수에 들어간다.
    *   바꾸기는 성공·실패 모두 로그인과 같은 응답 시각 하한(700ms)에 맞춘다(틀림·잠금·정책 오류가 시각으로 갈리지 않게).
    *   바꾸면 이 세션을 뺀 그 계정의 세션과 갱신 토큰을 모두 폐기한다(재설정과 같다). 기기 범위 토큰·기기 등록은 그대로다.
+   *   같은 트랜잭션에서 이 세션용 새 갱신 토큰(새 계보, auth_method password)을 발급한다. 방금 현재 비밀번호로 본인 확인을 했으니
+   *   이 기기의 자동 로그인은 끊지 않는다(데스크톱이 금고 account.refresh를 이 값으로 바꾼다, 팀장 결정 2026-11-09).
    * 둘 다 알림 메일(password_set)을 같은 트랜잭션으로 큐에 넣는다.
    */
-  async setPassword(s: Session, pw: string, current?: string): Promise<{ changed: boolean; revokedSessions: number }> {
+  async setPassword(s: Session, pw: string, current?: string): Promise<{ changed: boolean; revokedSessions: number; refreshToken?: string }> {
     const p = this.pw();
     const a = await this.account(s.accountId);
     const cred = await this.db.one<{ pw_hash: string; salt: string; params: string; locked_until: number | null }>(
@@ -394,19 +396,21 @@ export class AccountService {
     });
   }
 
-  private async storePassword(s: Session, pw: string, changed: boolean): Promise<{ changed: boolean; revokedSessions: number }> {
+  private async storePassword(s: Session, pw: string, changed: boolean): Promise<{ changed: boolean; revokedSessions: number; refreshToken?: string }> {
     const p = this.pw();
     const h = await p.hasher.hash(pw);
     const now = this.now();
-    const revokedSessions = await this.db.tx(async (q) => {
+    const out = await this.db.tx(async (q) => {
       await this.setHash(q, s.accountId, h, now);
+      // 옛 계보는 모두 지우고(이 기기 것 포함) 그 뒤에 이 세션용 새 계보를 연다
       const n = changed ? await this.revokeAllSessions(s.accountId, { tokenHash: s.tokenHash }, q) : 0;
+      const refreshToken = changed ? await this.issueRefresh(s.accountId, 'password', q) : undefined;
       await this.enqueueNotice(q, s.accountId, 'password_set', now);
-      return n;
+      return { n, refreshToken };
     });
     p.onEvent?.(changed ? 'account.password_changed' : 'account.password_created');
     this.kickNotices();
-    return { changed, revokedSessions };
+    return { changed, revokedSessions: out.n, ...(out.refreshToken ? { refreshToken: out.refreshToken } : {}) };
   }
 
   // ---------- 계정 설정 재인증(이메일 코드, 사용자 확정 2026-11-09) ----------

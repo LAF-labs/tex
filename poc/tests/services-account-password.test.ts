@@ -593,23 +593,43 @@ describe('계정 설정 비밀번호 재인증(사용자 확정 2026-11-09, ADR-
     assert.ok(performance.now() - t1 >= PASSWORD.responseFloorMs - 5);
     // 잠금이 풀리면 맞는 현재 비밀번호로 바꾼다
     e.clock.advance(PASSWORD.lockBaseMs);
-    assert.equal((await put(s, { password: GOOD2, currentPassword: GOOD })).status, 204);
+    assert.equal((await put(s, { password: GOOD2, currentPassword: GOOD })).status, 200);
     assert.equal(await e.db.one('SELECT 1 AS x FROM pw_locks'), undefined, '바꾸면 잠금 행도 지운다');
     assert.equal(await code(e.svc.passwordLogin('ch@example.com', GOOD)), 'account.credentials_invalid');
     assert.ok((await e.svc.passwordLogin('ch@example.com', GOOD2)).session);
   });
 
-  it('바꾼 뒤: 이 세션만 남고 그 계정의 다른 세션·갱신 토큰(이 기기 것 포함)은 폐기, 다른 계정·기기 범위 토큰은 그대로, 알림은 큐', async () => {
+  it('바꾼 뒤: 이 세션만 남고 그 계정의 옛 갱신 토큰 계보는 모두 폐기, 이 기기에는 새 계보의 갱신 토큰(password)을 준다, 다른 계정은 그대로, 알림은 큐', async () => {
     const s = await withPassword(e, 'rv@example.com');
     const other = await codeLogin(e, 'rv@example.com', true);
     const mine = await e.svc.issueRefresh((await e.db.one<{ id: string }>("SELECT id FROM accounts WHERE email = 'rv@example.com'"))!.id, 'email_code');
     const stranger = await codeLogin(e, 'st@example.com', true);
     e.mail.outbox.length = 0;
-    assert.equal((await put(s, { password: GOOD2, currentPassword: GOOD })).status, 204);
+    const families = (await e.db.all<{ family_id: string }>('SELECT family_id FROM refresh_tokens')).map((r) => r.family_id);
+    const ch = await put(s, { password: GOOD2, currentPassword: GOOD });
+    assert.equal(ch.status, 200, ch.text);
+    assert.match(ch.json.refreshToken as string, /^sxa1\.[A-Za-z0-9_-]{43}$/);
+    assert.equal(ch.json.refreshExpiresInSec, ACCOUNT.refreshTtlMs / 1000);
+    assert.deepEqual(Object.keys(ch.json).sort(), ['refreshExpiresInSec', 'refreshToken']);
+    // 새 계보 하나(처음 토큰, auth_method password)만 이 계정에 남는다
+    const acc = (await e.db.one<{ id: string }>("SELECT id FROM accounts WHERE email = 'rv@example.com'"))!.id;
+    const rows = await e.db.all<{ family_id: string; parent_hash: string | null; auth_method: string; token_hash: string }>('SELECT family_id, parent_hash, auth_method, token_hash FROM refresh_tokens WHERE account_id = $1', [acc]);
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.auth_method, 'password');
+    assert.equal(rows[0]!.parent_hash, null);
+    assert.ok(!families.includes(rows[0]!.family_id), '새 계보');
+    assert.ok(!JSON.stringify(rows).includes(ch.json.refreshToken as string), '평문 없음');
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).status, 200, '이 세션은 남는다');
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(other.session) })).status, 401, '다른 세션 폐기');
     assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: other.refreshToken } })).status, 401, '다른 기기 갱신 토큰 폐기');
-    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: mine } })).status, 401, '갱신 토큰은 모두 폐기');
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: mine } })).status, 401, '이 기기의 옛 계보도 폐기');
+    // 이 기기만 새 토큰으로 갱신된다. 다른 기기가 옛 토큰을 다시 내도(재사용 감지 대상 아님: 행이 없다) 새 계보는 살아 있다
+    const r1 = await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: ch.json.refreshToken } });
+    assert.equal(r1.status, 200, r1.text);
+    assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: other.refreshToken } })).status, 401);
+    const r2 = await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: r1.json.refreshToken } });
+    assert.equal(r2.status, 200, '회전한 새 토큰으로 계속 갱신');
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(r2.json.session as string) })).status, 200);
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(stranger.session) })).status, 200, '다른 계정은 그대로');
     assert.equal((await e.req('POST', '/v1/auth/refresh', { body: { refreshToken: stranger.refreshToken } })).status, 200);
     // 알림: 응답 경로에서 보내지 않고 큐에 넣는다 → 즉시 시도(defer)에서 나간다
@@ -620,7 +640,8 @@ describe('계정 설정 비밀번호 재인증(사용자 확정 2026-11-09, ADR-
     // 만들기(처음)는 다른 세션을 건드리지 않는다
     const fresh = await codeLogin(e, 'mk2@example.com');
     const second = await codeLogin(e, 'mk2@example.com');
-    assert.equal((await put(fresh.session, { password: GOOD })).status, 204);
+    const mk = await put(fresh.session, { password: GOOD });
+    assert.equal(mk.status, 204, '만들기는 갱신 토큰을 주지 않는다');
     assert.equal((await e.req('GET', '/v1/me', { headers: bearer(second.session) })).status, 200);
     for (const l of e.logs) assert.ok(!looksSensitive(l) && !l.includes(GOOD) && !l.includes(GOOD2), l);
   });

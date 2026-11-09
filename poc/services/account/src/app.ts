@@ -182,7 +182,9 @@ export function accountRouter(o: AccountAppOpts): Router {
     const s = await session(ctx);
     const b = V.passwordSet(ctx.body);
     // 바꾸기의 현재 비밀번호 대조는 로그인과 같은 잠금·같은 하한(서비스가 맞춘다, 사용자 확정 2026-11-09)
-    await svc.setPassword(s, b.password, b.currentPassword);
+    const out = await svc.setPassword(s, b.password, b.currentPassword);
+    // 바꾸기: 옛 갱신 토큰은 모두 폐기됐고 이 기기용 새 토큰을 준다(자동 로그인 유지). 만들기는 204 그대로
+    if (out.refreshToken) return json(200, { refreshToken: out.refreshToken, refreshExpiresInSec: ACCOUNT.refreshTtlMs / 1000 });
     return json(204, undefined);
   });
   // 계정 설정 재인증: 이메일 코드로 이 세션의 인증 시각을 갱신한다(새 세션 없음). 보내기 한도는 로그인 코드와 같은 이메일 묶음
