@@ -60,6 +60,14 @@
 | `PUT /admin/v1/revoked-keys` | 폐기 목록 | `200 {"monotonic"}` | 이전 목록의 키가 빠지면 `registry.revoked_shrunk`(폐기는 되돌릴 수 없다) |
 | `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함. 같은 version은 `files`가 같을 때만(신선도 재발행), 그 밖은 `registry.version_rollback`. `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
 
+**첫 게시 도장**(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다", 팀장 지시 2026-11-09):
+- 정책·status·폐기 목록을 `timestamp` 필드 **없이** 올리면, 서버가 타임스탬프 역할 온라인 키(`REGISTRY_LOG_SIGNING_KEY`, 기동 때 핀과 대조)로 `issuedAt`(지금)·`expiresAt`·`timestamp`를 붙인다. 유효 기간은 재서명 cron과 같다(폐기 목록 24시간, status·정책 48시간, `restamp`).
+- 그 뒤 위 표의 검증을 그대로 한다. 도장은 신선도뿐이다. 내용 서명(루트·정책·긴급 키)이 모자라면 거부한다.
+- `timestamp`가 있으면 손대지 않고 검증한다(틀리면 `registry.timestamp_invalid`).
+- 이벤트는 `registry.stamped_on_publish`다.
+- 쓰는 곳은 서명 의식 산출물(루트 2개로 서명한 첫 폐기 목록)과 게시 도구([PUBLISH-H01.md](PUBLISH-H01.md))다. 사람은 타임스탬프 키를 갖지 않는다.
+- 남는 위험: 토큰을 가진 사람은 내용 서명된 옛 문서를 새 도장으로 다시 올릴 수 있다. 단조 검사(저장본보다 큰 monotonic, 같은 monotonic은 같은 내용)가 저장된 판보다 옛것은 막는다. 재서명 cron이 갖는 성질과 같다.
+
 ## 형식
 
 ### 인덱스

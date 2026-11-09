@@ -32,7 +32,7 @@ export async function buildRegistryDeploy(env: NodeJS.ProcessEnv, deps: { store?
   const db = env.DATABASE_URL || env.SAX_SQLITE_FILE ? openFromEnv(env) : memoryDb ? openSqlite() : need('DATABASE_URL');
   const log = await TransparencyLog.open({ db, signer, now, migrate: memoryDb });
   const logger = deps.logger ?? new Logger('registry');
-  const router = registryRouter({ store, trust, adminToken, now, onEvent: (e) => logger.event(e), log });
+  const router = registryRouter({ store, trust, adminToken, now, onEvent: (e) => logger.event(e), log, stamper: signer });
   const listener = requestListener(router, { logger, trustProxy: env.TRUST_PROXY === '1' });
   const resign = (): Promise<ResignReport> => resignAll({ store, trust, log, signer, now, onEvent: (e) => logger.event(e) });
   return { trust, store, db, log, logger, router, listener, resign, close: () => db.close() };
