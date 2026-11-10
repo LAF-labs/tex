@@ -913,6 +913,9 @@ export class RunController {
   }
 
   private readonly humanStep: Handler<'human'> = async (h) => {
+    // 캡차는 사람에게 넘기기만 한다(핸드오프, 팀장 결정 2026-11-09 절대 규칙, ADR-004). 받은 정책의 캡차 중계 값이 allowed여도
+    // 값 입력을 받아 엔진이 채우는 중계는 하지 않는다. 자동 풀이·탐지 회피 코드는 없다. 사람이 브라우저에서 직접 풀고 재개한다.
+    if (h.kind === 'captcha') return this.handoffWith('portal.captcha');
     if (!this.fire({ t: 'human_reached' }, h.id, null)) return fail('run.state_stop');
     if (h.kind === 'secret') return this.secretTurn(h.id, { target: h.target, prompt: h.prompt, ttlMs: h.ttlMs });
     if (h.kind === 'manual') this.i.guardMode?.('observing');

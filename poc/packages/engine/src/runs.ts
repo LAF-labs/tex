@@ -9,10 +9,10 @@ import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h
 import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
-import { SIGNAL_DICT } from './signals.ts';
-import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
+import { SIGNAL_DICT, type SignalDict } from './signals.ts';
+import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
-import { ratePolicyFrom } from './enforcer.ts';
+import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 
@@ -74,6 +74,10 @@ interface ActiveRun {
   playbookId: string;
   /** H01 경로의 정지 하향 사유(한 번 정해지면 그대로). IR 경로는 IrRun이 갖는다. */
   downgraded: Denied | null;
+  /** 이 실행의 포털 설정: verify 타이밍은 시작 때 받은 정책과 내장 값 가운데 엄격한 쪽(홈택스만). 실행 중에는 바꾸지 않는다(verify는 커밋 구간 안이다). */
+  portal: PortalConfig;
+  /** 이 실행의 신호 사전(runSignals). */
+  signals: SignalDict;
 }
 
 export interface RunServiceDeps {
@@ -252,7 +256,13 @@ export class RunService extends EventEmitter {
       this.journal.append(p.runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
       this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
     }
-    this.active = { runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null, playbookId, downgraded: null };
+    // 받은 서명 정책은 홈택스에만 쓴다(fixture는 내장 시험 값). 이 값이 실행 시작 때의 정책이다(RateGuard.pinRun과 같은 때).
+    const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
+    const portal = runPortalConfig(this.d.portal, startPolicy);
+    this.active = {
+      runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null, playbookId, downgraded: null,
+      portal, signals: this.runSignals(p.runId, startPolicy),
+    };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
   }
@@ -264,8 +274,9 @@ export class RunService extends EventEmitter {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
-      if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, this.d.portal, {
+      if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, a.portal, {
         profileId: profile.id,
+        signals: a.signals,
         checkStop: () => this.checkStop(a),
         journal: (type, payload) => this.journal.append(a.runId, type, payload),
         onLatch: (end) => this.latched(a, end),
@@ -277,7 +288,7 @@ export class RunService extends EventEmitter {
       if (this.engine === 'ir') {
         a.policy = null;
         result = await this.executeIr(a, page, inputs, profile);
-      } else result = await new H01Runner(page, this.d.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy!).run();
+      } else result = await new H01Runner(page, a.portal, inputs, { bizNo: profile.bizNo! }, this.hooks(a), a.policy!).run();
     } catch (e) {
       thrown = e;
       result = { status: 'failed', code: 'engine.error' };
@@ -325,6 +336,18 @@ export class RunService extends EventEmitter {
     this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
   }
 
+  /** 이 실행의 차단 신호 사전(runSignalDict). 받은 정책은 홈택스만 쓴다. 커밋 구간 = 이 실행의 원장 행이 armed·dispatched. */
+  private runSignals(runId: string, startPolicy: Policy | null): SignalDict {
+    const builtIn = SIGNAL_DICT[this.d.portal.kind];
+    const received = this.d.receivedPolicy;
+    if (this.d.portal.kind !== 'hometax' || !received) return builtIn;
+    return runSignalDict({
+      builtIn, atStart: startPolicy?.cooldown.blockSignalsAdd, current: () => received()?.cooldown.blockSignalsAdd,
+      inCommit: () => this.ledger.statesByRun(runId).some((st) => st === 'armed' || st === 'dispatched'),
+      onDropped: (where) => this.d.log.event('policy.block_signal_dropped', { where }),
+    });
+  }
+
   /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
   private packageForRun(): IrPackage {
     if (this.d.ir) return this.d.ir;
@@ -340,7 +363,7 @@ export class RunService extends EventEmitter {
     const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
-      runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: this.d.portal, rate: this.rate,
+      runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: a.portal, signals: a.signals, rate: this.rate,
       profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
       ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
       inputs: { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) },

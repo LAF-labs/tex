@@ -8,7 +8,7 @@
 // Playwright 이벤트 배선(네비게이션·응답·대화상자 → observe*)은 드라이버 PR이 한다. 이 파일은 포트에만 의존한다.
 import type { ActResult, ActionKind, ActionPolicy, Clock, Policy, Portal } from './core/index.ts';
 import { re2Problem } from './core/re2.ts';
-import { HTTP_RULES, matchSignal, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
+import { HTTP_RULES, matchSignal, type SignalDict, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
 import { RunEnd } from './run-end.ts';
 import { EXTRA_AUTH_FOR_SIGNAL, POC_BUILD, POC_OVERRIDES, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
 
@@ -58,6 +58,49 @@ export function signalDict(builtIn: readonly SignalEntry[], add: Policy['cooldow
   return Object.freeze(out);
 }
 
+/**
+ * 두 blockSignalsAdd의 합집합(앞쪽 순서 유지, 같은 값은 하나). 실행 시작 때 받은 것과 지금 받은 것을 합치면, 실행 중에 정책이 항목을 빼도
+ * 그 실행에는 남고(완화는 다음 실행부터) 더한 항목은 다음 검사부터 걸린다(보수 쪽은 바로, D03 §7.1 조회와 적용).
+ */
+export function unionBlockSignals(a: Policy['cooldown']['blockSignalsAdd'], b: Policy['cooldown']['blockSignalsAdd']): NonNullable<Policy['cooldown']['blockSignalsAdd']> {
+  const uniq = (x: readonly string[] | undefined, y: readonly string[] | undefined) => [...new Set([...(x ?? []), ...(y ?? [])])];
+  return { urlPatterns: uniq(a?.urlPatterns, b?.urlPatterns), phrases: uniq(a?.phrases, b?.phrases) };
+}
+
+export interface RunSignalInput {
+  builtIn: readonly SignalEntry[];
+  /** 실행 시작 때 받은 정책의 blockSignalsAdd. */
+  atStart: Policy['cooldown']['blockSignalsAdd'];
+  /** 지금 받은 정책의 blockSignalsAdd(검사할 때마다 부른다). */
+  current: () => Policy['cooldown']['blockSignalsAdd'];
+  /** 커밋 구간(토큰 소비 ~ verify 완료)인가. 그 안에서는 새 값을 적용하지 않는다(D03 §7.1). */
+  inCommit: () => boolean;
+  onDropped?: (where: string) => void;
+}
+
+/**
+ * 실행 하나의 차단 신호 사전(D03 §7 (d)·§7.1, 팀장 결정 2026-11-09): 앱 내장 ∪ 시작 때 받은 추가 ∪ 지금 받은 추가. 빼기는 없다.
+ * - 시작 때 받은 항목은 실행 끝까지 남는다(정책이 항목을 빼는 완화는 다음 실행부터).
+ * - 실행 중에 더해진 항목은 다음 차단 신호 검사부터 걸린다(보수 쪽은 바로).
+ * - 커밋 구간에는 시작 때 사전을 쓴다. 받은 추가가 바뀔 때만 다시 만든다.
+ */
+export function runSignalDict(i: RunSignalInput): () => readonly SignalEntry[] {
+  const startAdd = unionBlockSignals(i.atStart, undefined);
+  const atStart = signalDict(i.builtIn, startAdd, i.onDropped);
+  let key = JSON.stringify(startAdd);
+  let now = atStart;
+  return () => {
+    if (i.inCommit()) return atStart;
+    const add = unionBlockSignals(i.atStart, i.current());
+    const k = JSON.stringify(add);
+    if (k !== key) {
+      key = k;
+      now = signalDict(i.builtIn, add, i.onDropped);
+    }
+    return now;
+  };
+}
+
 /** 차단이 아닌 신호의 종료 코드(D16 portal.*). 이 코드들은 실행기 FORCED_STOPS에서 핸드오프다. */
 const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
 
@@ -72,7 +115,7 @@ export interface RunEnforcerInput {
   clock: Clock;
   /** 단조 시각(ms). 실행당 벽시계 상한·403 창을 잰다. */
   mono: () => number;
-  dict: readonly SignalEntry[];
+  dict: SignalDict;
   profileId: string;
   /** 저널(키·코드·id만). */
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;

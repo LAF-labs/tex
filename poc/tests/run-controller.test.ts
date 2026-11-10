@@ -396,6 +396,15 @@ describe('사람 차례(D03 §2 WaitingHuman, §8)', () => {
     assert.deepEqual(h.names(), ['Loaded', 'Preparing', 'Running', 'WaitingHuman', 'Running', 'Completed']);
     assert.deepEqual(h.rec.humanClosed, [[reqId, 'answered']]);
   });
+  it('captcha: 값 입력을 받지 않고 핸드오프(portal.captcha)만. 채우기·요청 없음(팀장 결정 2026-11-09 captchaRelay 절대 규칙, ADR-004)', async () => {
+    const CAP: Step = { id: 's90', type: 'human', kind: 'captcha', region: 'f.root', prompt: 'p.otp', ttlMs: 90_000 };
+    const h = mk([CP, CAP, { id: 's91', type: 'fill', target: 'f.otp', value: '$human.s90' }, END]);
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code], ['HandedOff', 'portal.captcha']);
+    assert.deepEqual(h.rec.human, [], '사람 입력 요청(중계) 없음');
+    assert.deepEqual(h.act.log, [], '엔진이 캡차 칸을 채우지 않는다');
+    assert.ok(!h.rec.journal.some(([t]) => t === 'human.requested'));
+  });
   it('TTL → Paused(재개 지점 = 마지막 체크포인트)', async () => {
     const h = mk([CP, OTP, END]);
     const p = h.c.start();

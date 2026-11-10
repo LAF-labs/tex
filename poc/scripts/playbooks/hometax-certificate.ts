@@ -4,15 +4,15 @@
 // (node scripts/gen-cert-playbooks.ts). 발급 확인 조회 hometax.cert.issued_list는 H-04와 공유하는 패키지라 여기서 만들지 않는다.
 // 시험(tests/cert-playbooks.test.ts)이 저장된 JSON과 이 템플릿 결과가 같은지 본다(손으로 고치면 시험이 깨진다).
 //
-// 셀렉터는 실제 화면과 대조하지 않았다(H-01과 같음, ADR-025 PoC 상한). 이름은 research/R2 §4(사업자등록증명 메뉴·입력 칸, 중간 신뢰)와
-// R10 §2-A에서 가져왔고, 모르는 것은 capture에 적어 실기기 캡처로 채운다. capture가 있는 항목 목록은 CAPTURE-hometax-cert.md로 같이 만든다.
+// 셀렉터 id·선택지는 2026-11-10 실기기 캡처(로그인 뒤 양식 화면, 개인사업자 사업자 인증서 로그인, 값은 넣지 않음)로 채웠다. 제출 뒤 화면(확인창·actionId·열람·PDF)과
+// H-09 화면은 아직 못 봤다. 모르는 것은 capture에 적어 실기기 캡처로 채운다. capture가 있는 항목 목록은 CAPTURE-hometax-cert.md로 같이 만든다.
 // 홈택스 로그인 구간(s0~s6·s90~s93)과 그 셀렉터는 H-01과 같다(같은 포털·같은 화면).
 import type { PackageFiles, SelectorEntry, Step } from '@sax/engine/core';
 
 export const CERT_VERSION = '1.0.0';
 /** 발급 확인 조회 패키지. H-04(금고 세션, LAF-labs/tex#247)와 같이 쓰는 IR 조회 패키지이고, 여기서는 참조만 한다(팀장 결정 2026-11-09) */
 export const LOOKUP_ID = 'hometax.cert.issued_list';
-const VERIFIED = '2026-11-09';
+const VERIFIED = '2026-11-10';
 const ZERO = '0'.repeat(64);
 /** H-01과 같은 앱 내장 번들 다이제스트(screen_state v2, form_ready v2) */
 const BUNDLES = [
@@ -39,8 +39,14 @@ interface DocField {
   fieldKey: string;
   label: string;
   role: 'textbox' | 'combobox';
-  capture: string;
+  /** 캡처한 요소 id(없으면 역할·이름만) */
+  css?: string;
+  /** 캡처로 확인했으면 없음 */
+  capture?: string;
 }
+
+/** 홈택스 민원증명 메뉴 직접 주소(캡처 2026-11-10). tm3lIdx가 서류 코드다 */
+const menuUrl = (code: string) => `https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=${code}`;
 
 export interface CertDoc {
   /** 카탈로그 번호(07 문서 카탈로그) */
@@ -55,36 +61,48 @@ export interface CertDoc {
   confirm: string;
   /** 서류별 입력 칸 */
   fields: DocField[];
-  /** 메뉴·양식 캡처 메모 */
-  menuCapture: string;
-  formCapture: string;
+  /** 메뉴 코드(tm3lIdx). 모르면 null이고 메뉴 클릭으로 들어간다 */
+  menuCode: string | null;
+  /** 양식 제목(form 랜드마크 이름) */
+  formTitle: string;
+  /** 제출 버튼(서류마다 다르다: H-03 작성완료, H-08 신청하기) */
+  submit: { name: string; css: string | null };
+  /** 메뉴·양식 캡처 메모(캡처했으면 없음) */
+  menuCapture?: string;
+  formCapture?: string;
 }
+
+const YEARS = '2026~1997 선택(캡처)';
+const HALF = ['1기', '2기'];
 
 export const CERT_DOCS: readonly CertDoc[] = [
   {
     code: 'H-03', id: 'hometax.cert.biz_registration', docType: 'biz_registration_cert', name: '사업자등록증명',
     title: '사업자등록증명 발급', confirm: '사업자등록증명을 발급할까요?', fields: [],
-    menuCapture: '「증명·등록·신청 > 민원증명(발급)」 아래 사업자등록증명 링크의 접근성 이름(R2 §4, 중간 신뢰)',
-    formCapture: '사업자등록증명 신청 양식의 form 랜드마크 이름',
+    menuCode: '4315010800', formTitle: '사업자등록증명 발급 신청', submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
   },
   {
     code: 'H-08', id: 'hometax.cert.vat_tax_base', docType: 'vat_tax_base_cert', name: '부가가치세 과세표준증명',
     title: '부가가치세 과세표준증명 발급', confirm: '부가가치세 과세표준증명을 발급할까요?',
+    menuCode: '4315010500', formTitle: '부가가치세 과세표준증명원 접수', submit: { name: '신청하기', css: '#mf_txppWframe_btn_apln' },
+    // 과세기간은 시작·종료 연도와 1기·2기(간이과세자 2013년 이후분은 1기). 발급희망개업일자는 필수이고 선택지는 개업일 하나다
     fields: [
-      { input: 'periodFrom', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodFrom', label: '과세기간 시작', role: 'combobox', capture: '과세기간 시작(연·월 또는 연·기 선택) 칸의 역할·이름·값 형식(신고가 끝난 과세기간만 고를 수 있음, R10)' },
-      { input: 'periodTo', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodTo', label: '과세기간 끝', role: 'combobox', capture: '과세기간 끝 칸의 역할·이름·값 형식' },
+      { input: 'periodStartYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodStartYear', label: '과세기간', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmStrtYear', capture: `시작 연도 접근성 이름(라벨 「과세기간」이 시작 연도에 붙어 있다), 값 ${YEARS}` },
+      { input: 'periodStartHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodStartHalf', label: '과세기간 시작년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_strtHt' },
+      { input: 'periodEndYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodEndYear', label: '과세기간 종료년도', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmEndYear' },
+      { input: 'periodEndHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodEndHalf', label: '과세기간 종료년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_endHt' },
+      { input: 'openDate', inputDef: { type: 'string', required: true }, fieldKey: 'bizOpenDate', label: '발급희망개업일자', role: 'combobox', css: '#mf_txppWframe_sbx_bmanOfbDt' },
     ],
-    menuCapture: '부가가치세 과세표준증명 메뉴 링크 이름(면세사업자 수입금액증명과 같은 화면인지도)',
-    formCapture: '부가가치세 과세표준증명 신청 양식의 form 랜드마크 이름',
   },
   {
     code: 'H-09', id: 'hometax.cert.financial_statements', docType: 'financial_statements_cert', name: '표준재무제표증명',
     title: '표준재무제표증명 발급', confirm: '표준재무제표증명을 발급할까요?',
     fields: [
-      { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '귀속연도', role: 'combobox', capture: '귀속연도(또는 사업연도) 칸의 역할·이름·값 형식. 신고가 전산에 반영되지 않은 해는 목록에 없을 수 있음(R10)' },
+      { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '귀속연도', role: 'combobox', capture: '귀속연도(또는 사업연도) 칸의 id·이름·값 형식. 신고가 전산에 반영되지 않은 해는 목록에 없을 수 있음(R10)' },
     ],
-    menuCapture: '표준재무제표증명(개인·법인) 메뉴 링크 이름. 개인·법인이 다른 메뉴인지',
-    formCapture: '표준재무제표증명 신청 양식의 form 랜드마크 이름과, 신고 미반영으로 발급이 안 될 때의 안내 문구',
+    menuCode: null, formTitle: '표준재무제표증명', submit: { name: '신청하기', css: null },
+    menuCapture: '표준재무제표증명 메뉴 코드(tm3lIdx). 2026-11-10 캡처에는 없다(소득금액증명 4315011000은 개인사업자 로그인에서 막혔다)',
+    formCapture: '표준재무제표증명 양식 제목·제출 버튼(작성완료·신청하기)·개인사업자 로그인에서 막히는지',
   },
 ];
 
@@ -120,35 +138,55 @@ function menuEntries(doc: CertDoc): Record<string, TplEntry> {
     },
     'hometax.cert.menu.doc': {
       entry: { candidates: [role('link', doc.name)], role: 'link', namePattern: lit(doc.name), landmark: 'hometax.page.root', commits: false, navigationOnly: true },
-      capture: doc.menuCapture,
+      ...(doc.menuCapture ? { capture: doc.menuCapture } : {}),
     },
   };
 }
 
 const FORM = 'hometax.cert.form.root';
 
-/** 양식: 공통 칸(신청인·용도·제출처·주민번호 공개 여부·수령 방법) + 서류별 칸 + 발급 버튼 */
+/** 사용용도·제출처 선택지(캡처 2026-11-10, H-03·H-08 같음) */
+export const PURPOSES = ['입찰, 계약용', '수금용', '관공서제출용', '대출용', '여권또는비자신청용', '건강보험·국민연금공단제출용', '금융기관제출용', '신용카드발급용', '기타'];
+export const SUBMIT_TO = ['금융기관', '관공서', '조합/협회', '거래처', '학교', '외교부/재외공관/재외동포청', '기타'];
+/** 수령방법·수량은 고정값만 쓴다(인터넷발급(프린터출력), 1매) */
+const RECEIVE = '인터넷발급(프린터출력)';
+const COPIES = '1매';
+const ALERT = 'hometax.cert.alert';
+
+/** 양식: 공통 칸(서류·신청인·발급유형·용도·제출처·주민번호 공개·수령방법·수량) + 서류별 칸 + 제출 버튼 + 메뉴 차단 알림 */
 function formEntries(doc: CertDoc): Record<string, TplEntry> {
-  const box = (name: string, r: string, fieldKey: string, inputType: SelectorEntry['inputType'], capture: string, extra: Partial<SelectorEntry> = {}): TplEntry => ({
-    entry: { candidates: [role(r, name)], role: r, namePattern: lit(name), landmark: FORM, commits: false, fieldKey, ...(inputType ? { inputType } : {}), ...extra },
-    capture,
+  const box = (name: string, r: string, fieldKey: string, inputType: SelectorEntry['inputType'], css: string | null, capture: string | undefined, extra: Partial<SelectorEntry> = {}): TplEntry => ({
+    entry: { candidates: [...(css ? [{ kind: 'css' as const, value: css }] : []), role(r, name)], role: r, namePattern: lit(name), landmark: FORM, commits: false, fieldKey, ...(inputType ? { inputType } : {}), ...extra },
+    ...(capture ? { capture } : {}),
   });
   const out: Record<string, TplEntry> = {
-    [FORM]: { entry: { candidates: [role('form', doc.name)], role: 'form', namePattern: lit(doc.name), landmark: 'hometax.page.root', commits: false }, capture: doc.formCapture },
-    'hometax.cert.form.docName': box('민원명', 'textbox', 'certDoc', 'text', '양식에 보이는 서류 이름(민원명·증명서 종류) 칸. 승인 카드 첫 줄 「서류」 값이다(읽기 전용 표시일 수 있음)'),
-    'hometax.cert.form.applicantBizNo': box('사업자등록번호', 'textbox', 'supplierBizNo', 'text', '신청 양식에 보이는 내 사업자등록번호 칸(읽기 전용일 수 있음). 여러 사업장이면 「내 사업자 선택」 화면이 먼저 나오는지(R2 §4)'),
-    'hometax.cert.form.applicantName': box('상호', 'textbox', 'supplierName', 'text', '신청 양식의 상호(법인명) 칸'),
-    'hometax.cert.form.purpose': box('사용 용도', 'combobox', 'certPurpose', undefined, '사용 용도 칸: 고르기(combobox)인지 직접 입력인지, 고를 수 있는 값 목록(R2 §4)'),
-    'hometax.cert.form.submitTo': box('제출처', 'textbox', 'certSubmitTo', 'text', '제출처 칸: 직접 입력인지 목록 선택인지, 글자 수 제한(R2 §4)'),
-    'hometax.cert.form.rrnDisclosure': box('주민등록번호 공개 여부', 'combobox', 'rrnDisclosure', undefined, '주민등록번호 공개 여부 칸의 역할(라디오·고르기)과 값 이름(「공개」·「비공개」 표기)(R2 §4)'),
-    'hometax.cert.form.receiveMethod': box('수령 방법', 'combobox', 'receiveMethod', undefined, '수령 방법 칸과 값 이름(인터넷 발급(프린터 출력) 등). allowedConstants를 실제 값으로', { allowedConstants: ['인터넷 발급'] }),
+    [FORM]: {
+      entry: { candidates: [{ kind: 'css', value: '#mf_txppWframe' }, role('form', doc.formTitle)], role: 'form', namePattern: lit(doc.formTitle), landmark: 'hometax.page.root', commits: false },
+      capture: doc.formCapture ?? '본문 틀 #mf_txppWframe의 역할(form인지)과 접근성 이름(양식 제목)',
+    },
+    // 서류·신청인은 입력 칸이 아니라 화면 표시다(신청인 사업자번호는 로그인에서 온다)
+    'hometax.cert.form.docName': box('민원명', 'textbox', 'certDoc', 'text', null, '양식 제목(서류 이름)을 읽을 요소. 제목 요소 id는 wq_uuid라 고정이 아니다 → 역할·이름 확인'),
+    'hometax.cert.form.applicantBizNo': box('사업자등록번호', 'textbox', 'supplierBizNo', 'text', null, '「기본 인적 사항」에 보이는 신청인 사업자번호 요소(입력 칸이 아님)의 id·역할'),
+    'hometax.cert.form.applicantName': box('상호', 'textbox', 'supplierName', 'text', null, '「기본 인적 사항」의 상호 요소의 id·역할'),
+    'hometax.cert.form.language': box('발급유형', 'radiogroup', 'certLanguage', 'radio', '#mf_txppWframe_rad_englCvaAplnYn', '라디오 묶음 요소(_input_0 한글, _input_1 영문증명)의 역할·이름', { allowedConstants: ['한글'] }),
+    'hometax.cert.form.purpose': box('사용용도', 'combobox', 'certPurpose', 'select', '#mf_txppWframe_sbx_cvaDcumUseUsgCd', undefined),
+    'hometax.cert.form.submitTo': box('제출처', 'combobox', 'certSubmitTo', 'select', '#mf_txppWframe_sbx_cvaDcumSbmsOrgnClCd', undefined),
+    'hometax.cert.form.rrnDisclosure': box('주민등록번호 공개여부', 'radiogroup', 'rrnDisclosure', 'radio', '#mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn', '라디오 묶음 요소(_input_0 공개, _input_1 비공개)의 역할·이름'),
+    'hometax.cert.form.receiveMethod': box('수령방법', 'combobox', 'receiveMethod', 'select', '#mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptMthd', undefined, { allowedConstants: [RECEIVE] }),
+    'hometax.cert.form.copies': box('발급희망수량', 'combobox', 'copies', 'select', '#mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty', undefined, { allowedConstants: [COPIES] }),
   };
-  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.label, f.role, f.fieldKey, undefined, f.capture);
+  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.label, f.role, f.fieldKey, 'select', f.css ?? null, f.capture);
   out['hometax.cert.form.issueButton'] = {
     entry: {
-      candidates: [role('button', '발급하기')], expect: { visible: true, enabled: true }, role: 'button', namePattern: '^발급하기$', landmark: FORM, commits: true, commitEffect: 'issue_document',
+      candidates: [...(doc.submit.css ? [{ kind: 'css' as const, value: doc.submit.css }] : []), role('button', doc.submit.name)], expect: { visible: true, enabled: true },
+      role: 'button', namePattern: lit(doc.submit.name), landmark: FORM, commits: true, commitEffect: 'issue_document',
     },
-    capture: '발급(신청) 버튼 이름(「발급하기」·「신청하기」·「열람」 중 무엇인지)과, 누른 뒤 확인 대화상자·전자서명 창이 뜨는지. 발급 요청의 wqAction actionId(HAR, commitEndpoints)',
+    capture: `[${doc.submit.name}]을 유효한 값으로 누른 뒤: 확인창·전자서명 창이 뜨는지, wqAction actionId(HAR → commitEndpoints). 접수가 실제로 생기므로 사용자 승인 뒤`,
+  };
+  // 메뉴 차단 알림(.w2window.msg). id(mf_wfHeader_info<숫자>)는 매번 바뀌어 css 후보를 쓸 수 없다 → 역할·이름
+  out[ALERT] = {
+    entry: { candidates: [role('dialog', '알림')], role: 'dialog', namePattern: '^알림$', landmark: 'hometax.page.root', commits: false },
+    capture: '알림창(.w2window.w2popup_window.msg)의 접근성 역할·이름. 본문 「해당 화면은 개인사업자는 이용할 수 없습니다.」',
   };
   return out;
 }
@@ -166,7 +204,21 @@ function steps(doc: CertDoc): Step[] {
   const decideLogin = (id: string, max: number, captcha: string, login: string): Step =>
     ({ id, type: 'decide', bundle: 'screen_state_v2', scope: 'root', loopGuard: { max }, on: { logged_in: 's10', login_required: login, captcha, mfa_pending: 's5', error: 'handoff', unknown: 'handoff' } }) as Step;
   const docFill: Step[] = doc.fields.map((f, i) => ({ id: `s16${String.fromCharCode(97 + i)}`, type: 'select', target: `hometax.cert.form.${f.input}`, option: `$inputs.${f.input}` }) as Step);
-  const docEq = doc.fields.map((f) => ({ readbackEquals: { fieldKey: f.fieldKey, ref: `$inputs.${f.input}` } }));
+  const entry = (d: CertDoc): Step[] =>
+    d.menuCode
+      ? [{ id: 's10', type: 'checkpoint', name: 'form', expect: { any: [{ exists: FORM }, { exists: ALERT }] }, url: menuUrl(d.menuCode), sessionRequired: true, reentry: 'reload' } as Step]
+      : ([
+          { id: 's10', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
+          { id: 's10a', type: 'click', target: 'hometax.cert.menu.civil' },
+          { id: 's10b', type: 'click', target: 'hometax.cert.menu.issue' },
+          { id: 's10c', type: 'click', target: 'hometax.cert.menu.doc' },
+        ] as Step[]);
+  // 날짜형 칸(fieldKey …Date)은 V-03j′대로 따로 assert한다(all 안에 넣으면 날짜 대조로 세지 않는다)
+  const isDate = (f: DocField) => /Date$/.test(f.fieldKey);
+  const docEq = doc.fields.filter((f) => !isDate(f)).map((f) => ({ readbackEquals: { fieldKey: f.fieldKey, ref: `$inputs.${f.input}` } }));
+  const dateEq: Step[] = doc.fields.filter(isDate).map((f, i) => ({
+    id: `s18${String.fromCharCode(97 + i)}`, type: 'assert', cond: { readbackEquals: { fieldKey: f.fieldKey, ref: `$inputs.${f.input}` } }, code: 'assert.input_mismatch', onFail: { retry: 0, then: 'abort' },
+  }) as Step);
   return [
     { id: 's0', type: 'checkpoint', name: 'session', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
     { id: 's1', type: 'goto', url: 'https://hometax.go.kr/' },
@@ -175,21 +227,22 @@ function steps(doc: CertDoc): Step[] {
     { id: 's4', type: 'sign', method: '$profile.signMethod', then: ['human:secret'] },
     { id: 's5', type: 'wait', for: 'text', value: 'hometax.login.successMarker', timeoutMs: 120000, pace: 'slow' },
     decideLogin('s6', 3, 's90', 'handoff'),
-    // 메뉴로 들어간다. 민원증명 화면의 직접 URL은 모른다(캡처 목록). 그래서 게이트를 지배하는 체크포인트(V-03l: url·reload)는 홈 화면에 두고,
-    // 다시 들어올 때(수정하기·발급 안 됨)도 홈 → 메뉴 → 양식 순서로 다시 채운다. 양식 URL을 알면 이 체크포인트를 양식 URL로 옮긴다(정식 버전).
-    { id: 's10', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
-    { id: 's10a', type: 'click', target: 'hometax.cert.menu.civil' },
-    { id: 's10b', type: 'click', target: 'hometax.cert.menu.issue' },
-    { id: 's10c', type: 'click', target: 'hometax.cert.menu.doc' },
+    // 양식 직접 주소를 알면 그 주소가 게이트를 지배하는 체크포인트다(V-03l: url·reload). 모르면(H-09) 홈 체크포인트 → 메뉴 클릭.
+    // 개인사업자 로그인으로 못 여는 화면은 알림이 뜬다: 체크포인트는 양식이나 알림 둘 중 하나를 기다리고, 알림이면 s10x에서 멈춘다.
+    ...entry(doc),
+    { id: 's10x', type: 'assert', cond: { not: { textMatches: { target: ALERT, patternRef: 'cert.block.personalOnly' } } }, code: 'portal.personal_login_required', onFail: { retry: 0, then: 'abort' } },
     { id: 's11', type: 'wait', for: 'selector', value: FORM },
-    { id: 's12', type: 'select', target: 'hometax.cert.form.purpose', option: '$inputs.purpose' },
-    { id: 's13', type: 'fill', target: 'hometax.cert.form.submitTo', value: '$inputs.submitTo' },
+    { id: 's12', type: 'select', target: 'hometax.cert.form.language', option: '$inputs.certLanguage' },
+    { id: 's13', type: 'select', target: 'hometax.cert.form.purpose', option: '$inputs.purpose' },
+    { id: 's13b', type: 'select', target: 'hometax.cert.form.submitTo', option: '$inputs.submitTo' },
     { id: 's14', type: 'select', target: 'hometax.cert.form.rrnDisclosure', option: '$inputs.rrnDisclosure' },
-    { id: 's15', type: 'select', target: 'hometax.cert.form.receiveMethod', option: '인터넷 발급' },
+    // 수량은 수령방법을 고른 뒤에 켜진다(캡처)
+    { id: 's15', type: 'select', target: 'hometax.cert.form.receiveMethod', option: RECEIVE },
+    { id: 's15b', type: 'select', target: 'hometax.cert.form.copies', option: COPIES },
     ...docFill,
     { id: 's19', type: 'decide', bundle: 'form_ready_v2', scope: FORM, on: { no_visible_error: 's19a', validation_error: 'handoff', unknown: 'handoff' } },
-    { id: 's19a', type: 'assert', cond: { fieldsFilled: { fields: ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', ...doc.fields.map((f) => f.fieldKey)] } }, code: 'assert.fields_missing' },
-    { id: 's19b', type: 'readback', fields: ['certDoc', 'supplierBizNo', 'supplierName', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', 'receiveMethod', ...doc.fields.map((f) => f.fieldKey)] },
+    { id: 's19a', type: 'assert', cond: { fieldsFilled: { fields: ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', 'receiveMethod', 'copies', ...doc.fields.map((f) => f.fieldKey)] } }, code: 'assert.fields_missing' },
+    { id: 's19b', type: 'readback', fields: ['certDoc', 'supplierBizNo', 'supplierName', 'certLanguage', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', 'receiveMethod', 'copies', ...doc.fields.map((f) => f.fieldKey)] },
     // 신청인이 내 사업자인지(다른 사업장 증명을 떼지 않게)
     { id: 's19c', type: 'assert', cond: { readbackEquals: { fieldKey: 'supplierBizNo', ref: '$profile.bizNo' } }, code: 'assert.supplier_mismatch', onFail: { retry: 0, then: 'abort' } },
     {
@@ -197,12 +250,14 @@ function steps(doc: CertDoc): Step[] {
       cond: { all: [
         // 양식이 고른 서류인지(메뉴를 잘못 타 다른 증명 양식에 채우지 않게)
         { readbackEquals: { fieldKey: 'certDoc', ref: '$inputs.certDoc' } },
+        { readbackEquals: { fieldKey: 'certLanguage', ref: '$inputs.certLanguage' } },
         { readbackEquals: { fieldKey: 'certPurpose', ref: '$inputs.purpose' } },
         { readbackEquals: { fieldKey: 'certSubmitTo', ref: '$inputs.submitTo' } },
         { readbackEquals: { fieldKey: 'rrnDisclosure', ref: '$inputs.rrnDisclosure' } },
         ...docEq,
       ] },
     },
+    ...dateEq,
     { id: 's20', type: 'gate', card: 'cert.confirm', authorizes: ['s21'], waitMs: 600000 },
     // 확인 대화상자·전자서명 창이 뜨는지는 캡처로 확인한다(뜨면 expectConfirm·signFlow를 더한다, 정식 버전)
     { id: 's21', type: 'submit', target: 'hometax.cert.form.issueButton', intent: '$intent.id', verify: 's30', onFail: { retry: 0, then: 'handoff' } },
@@ -210,8 +265,8 @@ function steps(doc: CertDoc): Step[] {
       id: 's30', type: 'verify',
       lookup: {
         playbook: LOOKUP_ID,
-        // 조회 열 이름은 hometax.cert.issued_list(H-04와 공유)를 따른다
-        match: { certDoc: '$readback.certDoc', certPurpose: '$readback.certPurpose', certSubmitTo: '$readback.certSubmitTo' },
+        // 처리결과 조회는 카드 목록이고 민원명·접수번호·처리상태·접수방법·접수일시만 있다(캡처 2026-11-10): 같은 민원명의 새 건 1건 = 접수, 접수번호를 묶는다
+        match: { certDoc: '$readback.certDoc' },
         window: 'today', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 }, bind: { approvalNo: 'issueNo' },
       },
       failSignals: [{ css: '#errorDialog', text: '^(발급|신청)(이|에) 실패했습니다.*$' }],
@@ -231,8 +286,10 @@ function inputs(doc: CertDoc): Record<string, unknown> {
   return {
     // 서류 이름은 패키지마다 하나로 고정이다(readback 대조용, 사용자가 바꾸지 않는다)
     certDoc: { type: 'enum', values: [doc.name], default: doc.name },
-    purpose: { type: 'string', required: true },
-    submitTo: { type: 'string', required: true },
+    // 발급유형은 한글만(영문증명은 다른 서류로 본다)
+    certLanguage: { type: 'enum', values: ['한글'], default: '한글' },
+    purpose: { type: 'enum', required: true, values: PURPOSES },
+    submitTo: { type: 'enum', required: true, values: SUBMIT_TO },
     // 주민번호는 기본으로 가린다(최소 노출, 02 §5.2-1과 같은 원칙)
     rrnDisclosure: { type: 'enum', values: ['공개', '비공개'], default: '비공개' },
     ...Object.fromEntries(doc.fields.map((f) => [f.input, f.inputDef])),
@@ -244,6 +301,8 @@ const strings = (doc: CertDoc): Record<string, string> => ({
   'cert.confirm': doc.confirm,
   'captcha.prompt': '그림의 문자를 입력해 주세요',
   'hometax.login.successMarker': '로그아웃',
+  // 개인사업자(사업자 인증서) 로그인으로 못 여는 화면의 알림(캡처 2026-11-10). 알림 글 전체에 이 문장이 들어 있으면 멈춘다
+  'cert.block.personalOnly': '^.*해당 화면은 개인사업자는 이용할 수 없습니다\\..*$',
 });
 
 function manifest(id: string, kind: 'playbook' | 'lookup', title: string, lookupsUsed: unknown[], bundles: unknown[], effects: string[]) {
@@ -289,8 +348,10 @@ export function captureList(): string {
     '',
     '`scripts/playbooks/hometax-certificate.ts`가 만든다(손으로 고치지 않는다). 셀렉터는 실제 화면과 대조하지 않았다. 아래 항목을 실기기에서 캡처(접근성 트리·스크린숏·HAR)해 채운다.',
     '',
+    '2026-11-10 캡처(로그인 뒤 양식, 개인사업자 사업자 인증서)로 H-03·H-08의 칸 id·선택지·제출 버튼·메뉴 주소를 채웠다. 아래는 아직 남은 것이다.',
+    '',
     '공통 흐름에서 확인할 것:',
-    '- 민원증명 발급 로그인 수단(공동·금융인증서, 사업자용 간편인증 가능 여부, S16)',
+    '- 민원증명 발급 로그인 수단(공동·금융인증서, 사업자용 간편인증 가능 여부, S16). 납세증명서·소득금액증명은 개인사업자 로그인으로 막힌다(대표자 개인 로그인 필요)',
     '- 발급 버튼을 누른 뒤 확인 대화상자·전자서명 창이 뜨는지(뜨면 submit에 expectConfirm·signFlow를 더한다)',
     '- 발급 요청의 `wqAction.do` actionId(HAR) → `commitEndpoints`',
     '- 발급 실패 안내의 요소와 문구 → verify `failSignals`(지금은 H-01과 같은 자리표시 `#errorDialog`)',

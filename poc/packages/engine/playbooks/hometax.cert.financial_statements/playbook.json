@@ -17,13 +17,40 @@
    ],
    "default": "표준재무제표증명"
   },
+  "certLanguage": {
+   "type": "enum",
+   "values": [
+    "한글"
+   ],
+   "default": "한글"
+  },
   "purpose": {
-   "type": "string",
-   "required": true
+   "type": "enum",
+   "required": true,
+   "values": [
+    "입찰, 계약용",
+    "수금용",
+    "관공서제출용",
+    "대출용",
+    "여권또는비자신청용",
+    "건강보험·국민연금공단제출용",
+    "금융기관제출용",
+    "신용카드발급용",
+    "기타"
+   ]
   },
   "submitTo": {
-   "type": "string",
-   "required": true
+   "type": "enum",
+   "required": true,
+   "values": [
+    "금융기관",
+    "관공서",
+    "조합/협회",
+    "거래처",
+    "학교",
+    "외교부/재외공관/재외동포청",
+    "기타"
+   ]
   },
   "rrnDisclosure": {
    "type": "enum",
@@ -145,6 +172,23 @@
    "target": "hometax.cert.menu.doc"
   },
   {
+   "id": "s10x",
+   "type": "assert",
+   "cond": {
+    "not": {
+     "textMatches": {
+      "target": "hometax.cert.alert",
+      "patternRef": "cert.block.personalOnly"
+     }
+    }
+   },
+   "code": "portal.personal_login_required",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
    "id": "s11",
    "type": "wait",
    "for": "selector",
@@ -153,14 +197,20 @@
   {
    "id": "s12",
    "type": "select",
+   "target": "hometax.cert.form.language",
+   "option": "$inputs.certLanguage"
+  },
+  {
+   "id": "s13",
+   "type": "select",
    "target": "hometax.cert.form.purpose",
    "option": "$inputs.purpose"
   },
   {
-   "id": "s13",
-   "type": "fill",
+   "id": "s13b",
+   "type": "select",
    "target": "hometax.cert.form.submitTo",
-   "value": "$inputs.submitTo"
+   "option": "$inputs.submitTo"
   },
   {
    "id": "s14",
@@ -172,7 +222,13 @@
    "id": "s15",
    "type": "select",
    "target": "hometax.cert.form.receiveMethod",
-   "option": "인터넷 발급"
+   "option": "인터넷발급(프린터출력)"
+  },
+  {
+   "id": "s15b",
+   "type": "select",
+   "target": "hometax.cert.form.copies",
+   "option": "1매"
   },
   {
    "id": "s16a",
@@ -201,6 +257,8 @@
       "certPurpose",
       "certSubmitTo",
       "rrnDisclosure",
+      "receiveMethod",
+      "copies",
       "fiscalYear"
      ]
     }
@@ -214,10 +272,12 @@
     "certDoc",
     "supplierBizNo",
     "supplierName",
+    "certLanguage",
     "certPurpose",
     "certSubmitTo",
     "rrnDisclosure",
     "receiveMethod",
+    "copies",
     "fiscalYear"
    ]
   },
@@ -250,6 +310,12 @@
       "readbackEquals": {
        "fieldKey": "certDoc",
        "ref": "$inputs.certDoc"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "certLanguage",
+       "ref": "$inputs.certLanguage"
       }
      },
      {
@@ -305,9 +371,7 @@
    "lookup": {
     "playbook": "hometax.cert.issued_list",
     "match": {
-     "certDoc": "$readback.certDoc",
-     "certPurpose": "$readback.certPurpose",
-     "certSubmitTo": "$readback.certSubmitTo"
+     "certDoc": "$readback.certDoc"
     },
     "window": "today",
     "baseline": "pre_gate_snapshot",

@@ -17,7 +17,7 @@
   {
    "id": "s0",
    "type": "goto",
-   "url": "https://hometax.go.kr/cert/requests"
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315050000&tm3lIdx=4315050000"
   },
   {
    "id": "s1",
@@ -33,9 +33,8 @@
   },
   {
    "id": "s3",
-   "type": "select",
-   "target": "hometax.certlookup.period",
-   "option": "1일"
+   "type": "click",
+   "target": "hometax.certlookup.week"
   },
   {
    "id": "s4",
