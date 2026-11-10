@@ -2,5 +2,6 @@
  "cert.title": "사업자등록증명 발급",
  "cert.confirm": "사업자등록증명을 발급할까요?",
  "captcha.prompt": "그림의 문자를 입력해 주세요",
- "hometax.login.successMarker": "로그아웃"
+ "hometax.login.successMarker": "로그아웃",
+ "cert.block.personalOnly": "^.*해당 화면은 개인사업자는 이용할 수 없습니다\\..*$"
 }
