@@ -116,38 +116,45 @@
    "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300"
   },
   {
-   "id": "s10a",
-   "type": "wait",
-   "for": "idle",
-   "timeoutMs": 10000
+   "id": "s11",
+   "type": "checkpoint",
+   "name": "form",
+   "expect": {
+    "any": [
+     {
+      "exists": "hometax.cert.taxpayment.form.root"
+     },
+     {
+      "exists": "hometax.cert.alert"
+     }
+    ]
+   },
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300",
+   "sessionRequired": true,
+   "reentry": "reload"
   },
   {
-   "id": "s10b",
+   "id": "s11a",
    "type": "assert",
    "cond": {
     "not": {
      "textMatches": {
-      "target": "hometax.alert.dialog",
-      "patternRef": "hometax.alert.bizBlocked"
+      "target": "hometax.cert.alert",
+      "patternRef": "cert.block.personalOnly"
      }
     }
    },
-   "code": "portal.login_type_mismatch",
+   "code": "portal.personal_login_required",
    "onFail": {
     "retry": 0,
     "then": "abort"
    }
   },
   {
-   "id": "s11",
-   "type": "checkpoint",
-   "name": "form",
-   "expect": {
-    "exists": "hometax.cert.taxpayment.form.root"
-   },
-   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300",
-   "sessionRequired": true,
-   "reentry": "reload"
+   "id": "s11b",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.taxpayment.form.root"
   },
   {
    "id": "s12",
@@ -295,7 +302,7 @@
      "lookups": 2
     },
     "bind": {
-     "approvalNo": "rcatNo"
+     "approvalNo": "issueNo"
     }
    },
    "on": {
@@ -366,7 +373,7 @@
  ],
  "postconditions": [
   {
-   "varSet": "rcatNo"
+   "varSet": "issueNo"
   },
   {
    "artifact": "pdf"

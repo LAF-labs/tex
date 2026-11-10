@@ -19,6 +19,10 @@
   "hometax.certlookup.root": {
    "candidates": [
     {
+     "kind": "css",
+     "value": "#mf_txppWframe"
+    },
+    {
      "kind": "role",
      "role": "form",
      "name": "민원신청 처리결과 조회"
@@ -29,7 +33,27 @@
    "frame": "main",
    "landmark": "hometax.page.root",
    "commits": false,
-   "lastVerified": "2026-11-09"
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.certlookup.searchKey": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_ibx_cvaKndNm"
+    },
+    {
+     "kind": "role",
+     "role": "searchbox",
+     "name": "민원명"
+    }
+   ],
+   "role": "searchbox",
+   "namePattern": "^민원명$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-10",
+   "inputType": "text"
   },
   "hometax.certlookup.week": {
    "candidates": [
@@ -44,39 +68,19 @@
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,
-   "lastVerified": "2026-11-09",
+   "lastVerified": "2026-11-10",
    "navigationOnly": true
-  },
-  "hometax.certlookup.searchKey": {
-   "candidates": [
-    {
-     "kind": "role",
-     "role": "searchbox",
-     "name": "민원명"
-    },
-    {
-     "kind": "css",
-     "value": "#mf_txppWframe_ibx_cvaKndNm"
-    }
-   ],
-   "role": "searchbox",
-   "namePattern": "^민원명$",
-   "frame": "main",
-   "landmark": "hometax.certlookup.root",
-   "commits": false,
-   "lastVerified": "2026-11-09",
-   "inputType": "text"
   },
   "hometax.certlookup.searchButton": {
    "candidates": [
     {
+     "kind": "css",
+     "value": "#mf_txppWframe_btn_search"
+    },
+    {
      "kind": "role",
      "role": "button",
      "name": "조회"
-    },
-    {
-     "kind": "css",
-     "value": "#mf_txppWframe_btn_search"
     }
    ],
    "role": "button",
@@ -84,23 +88,27 @@
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,
-   "lastVerified": "2026-11-09",
+   "lastVerified": "2026-11-10",
    "navigationOnly": true
   },
   "hometax.certlookup.rows": {
    "candidates": [
     {
+     "kind": "css",
+     "value": "#mf_txppWframe_gen_cvaInf"
+    },
+    {
      "kind": "role",
      "role": "list",
-     "name": "민원신청 처리결과 목록"
+     "name": "처리결과"
     }
    ],
    "role": "list",
-   "namePattern": "^민원신청 처리결과 목록$",
+   "namePattern": "^처리결과$",
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,
-   "lastVerified": "2026-11-09"
+   "lastVerified": "2026-11-10"
   }
  },
  "commitEndpoints": [],

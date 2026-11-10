@@ -28,15 +28,15 @@ H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉�
 
 2026-11-10 캡처(개인사업자 사업자 인증서 로그인)로 확정·반영한 것:
 - 메뉴 직접 주소: 납세증명서 `tm2lIdx=4315010000&tm3lIdx=4315010300`, 처리결과 조회 `4315050000`(둘 다 `websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43…`).
-- **납세증명서는 개인사업자(사업자 인증서) 로그인으로 열리지 않는다.** 알림 "해당 화면은 개인사업자는 이용할 수 없습니다."(`mf_wfHeader_info<숫자>`)가 뜬다. 그래서 `s10b`가 이 문구를 보면 `portal.login_type_mismatch`로 멈추고, 데스크톱이 "대표자 개인 인증서로 다시 로그인" 안내를 보인다. 양식은 대표자 개인(주민번호) 로그인으로 다시 캡처한다.
-- 처리결과 조회: 조회기간은 [1주일]·[1개월] 버튼, 민원명 칸 `#mf_txppWframe_ibx_cvaKndNm`, [조회] `#mf_txppWframe_btn_search`. 결과는 카드 목록이고 접수번호(`…_tbx_rcatNo`)를 눌러 들어간다. **용도·제출처 열이 없어** verify `match`는 민원명(`certDoc`)뿐이고 `bind`는 접수번호(`rcatNo`)다.
+- **납세증명서는 개인사업자(사업자 인증서) 로그인으로 열리지 않는다.** 알림 "해당 화면은 개인사업자는 이용할 수 없습니다."(`mf_wfHeader_info<숫자>`)가 뜬다. 그래서 양식 체크포인트(`s11`, 양식 또는 알림)를 지난 뒤 `s11a`가 이 문구를 보면 `portal.personal_login_required`(H-03·08·09와 같은 코드·알림 항목 `hometax.cert.alert`·문구 `cert.block.personalOnly`)로 멈추고, 데스크톱이 "대표자 개인 인증서로 다시 로그인" 안내를 보인다. 양식은 대표자 개인(주민번호) 로그인으로 다시 캡처한다.
+- 처리결과 조회: 조회기간은 [1주일]·[1개월] 버튼, 민원명 칸 `#mf_txppWframe_ibx_cvaKndNm`, [조회] `#mf_txppWframe_btn_search`. 결과는 카드 목록이고 접수번호(`…_tbx_rcatNo`)를 눌러 들어간다. **용도·제출처 열이 없어** verify `match`는 민원명(`certDoc`)뿐이다. `bind` 변수 이름은 즉시발급 3종과 같은 `issueNo`이고 값은 목록의 접수번호다.
 
 나머지는 아래 화면을 실기기에서 캡처해 확정한다. 이름·역할은 H-01과 같은 틀로 적었다(`lastVerified`는 원본을 쓴 날). 실기기에서 아래 화면을 캡처해 셀렉터(role·접근성 이름·css 후보)·URL·선택지를 확정한다. 그 전에는 레지스트리에 게시하지 않는다.
 
 | # | 화면 | 확정할 것 |
 |---|---|---|
 | CAP-1 | 홈택스 첫 화면(로그인 전·후) | `hometax.nav.home`, 로그인 성공 표지(`hometax.login.successMarker` 문구) |
-| CAP-2 | 로그인 화면: **대표자 개인** 공동·금융인증서 / 간편인증 선택 | `hometax.login.startButton`(지금 이름 "공동·금융인증서"), 인증서 창이 뜨는 프레임(금고 비밀 창 b 대상), 메뉴 차단 알림의 접근성 역할·이름(`hometax.alert.dialog`, 지금 dialog "알림") |
+| CAP-2 | 로그인 화면: **대표자 개인** 공동·금융인증서 / 간편인증 선택 | `hometax.login.startButton`(지금 이름 "공동·금융인증서"), 인증서 창이 뜨는 프레임(금고 비밀 창 b 대상), 메뉴 차단 알림의 접근성 역할·이름(`hometax.cert.alert`, 지금 dialog "알림") |
 | CAP-3 | 자동입력 방지 문자(나오는 경우) | `hometax.captcha.*` |
 | CAP-4 | 민원증명 › 납세증명서(국세완납증명) 신청 화면(**대표자 개인 로그인**) | 진입 URL(`s10`·`s11`), 양식 랜드마크 이름, 칸 7개(사업자등록번호·상호·민원명·사용용도·제출처·주민등록번호 공개여부·발급부수)의 역할·이름, 양식 안 다른 입력 칸(V-03j: 전부 readback 대상) |
 | CAP-5 | 사용용도·제출처 드롭다운 펼친 상태 | 선택지 문구 → IR `inputs.purpose.values`·`inputs.submitTo.values`. 주민등록번호 비공개 선택지 문구(`allowedConstants` "공개안함"). 민원명 표시 문구(`strings` `cert.doc.taxpayment`) |

@@ -31,9 +31,9 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
     for (const d of CERT_DOCS) assert.deepEqual(loadPkg(d.id), certPackage(d));
   });
 
-  it('흐름은 하나다: 서류마다 다른 스텝은 서류별 칸 채우기(s16*)뿐이고, 다른 셀렉터는 메뉴·양식 이름·서류별 칸뿐이다', () => {
+  it('흐름은 하나다: 서류마다 다른 스텝은 들어가는 길(s10*: 직접 주소 또는 메뉴)과 서류별 칸(s16*·s18*)뿐이고, 다른 셀렉터는 메뉴·양식 제목·제출 버튼·서류별 칸뿐이다', () => {
     const [h03, ...rest] = CERT_DOCS.map(certPackage);
-    const shared = (p: PackageFiles) => stepsOf(p).filter((s) => !/^s16[a-z]$/.test(s.id)).map((s) => {
+    const shared = (p: PackageFiles) => stepsOf(p).filter((s) => !/^s1[068][a-z]?$/.test(s.id) || s.id === 's10x').map((s) => {
       const c = structuredClone(s) as Record<string, unknown>;
       if (s.id === 's19a' || s.id === 's19b' || s.id === 's19f' || s.id === 's32') return { id: s.id, type: s.type };
       return c;
@@ -45,7 +45,7 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const keys = new Set(Object.keys(p.selectors.entries));
       assert.deepEqual([...keys].filter((k) => !base.has(k)).sort(), [...docKeys(CERT_DOCS[i + 1]!)].sort());
       for (const k of base) {
-        if (['hometax.cert.menu.doc', 'hometax.cert.form.root'].includes(k)) continue;
+        if (['hometax.cert.menu.doc', 'hometax.cert.form.root', 'hometax.cert.form.issueButton'].includes(k)) continue;
         assert.deepEqual(p.selectors.entries[k], h03!.selectors.entries[k], k);
       }
     }
@@ -72,7 +72,7 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const s = (id: string) => stepsOf(p).find((x) => x.id === id)!;
       assert.deepEqual(s('s19c').cond, { readbackEquals: { fieldKey: 'supplierBizNo', ref: '$profile.bizNo' } });
       const eq = (s('s19f').cond as { all: Array<{ readbackEquals: { fieldKey: string } }> }).all.map((c) => c.readbackEquals.fieldKey);
-      assert.deepEqual(eq, ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', ...d.fields.map((f) => f.fieldKey)]);
+      assert.deepEqual(eq, ['certDoc', 'certLanguage', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', ...d.fields.filter((f) => !/Date$/.test(f.fieldKey)).map((f) => f.fieldKey)]);
       assert.deepEqual((p.playbook.inputs as Record<string, { values?: string[]; default?: string }>).certDoc, { type: 'enum', values: [d.name], default: d.name });
       assert.deepEqual((p.playbook.inputs as Record<string, { default?: string }>).rrnDisclosure!.default, '비공개');
       assert.equal(s('s32').docType, d.docType);
@@ -86,14 +86,37 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const p = certPackage(d);
       assert.deepEqual(p.manifest.lookupsUsed.map((x) => x.id), [LOOKUP_ID]);
       const v = stepsOf(p).find((x) => x.id === 's30') as { lookup: { playbook: string; match: Record<string, string>; bind: Record<string, string> } };
-      assert.deepEqual([v.lookup.playbook, v.lookup.match, v.lookup.bind], [LOOKUP_ID, { certDoc: '$readback.certDoc', certPurpose: '$readback.certPurpose', certSubmitTo: '$readback.certSubmitTo' }, { approvalNo: 'issueNo' }]);
+      assert.deepEqual([v.lookup.playbook, v.lookup.match, v.lookup.bind], [LOOKUP_ID, { certDoc: '$readback.certDoc' }, { approvalNo: 'issueNo' }]);
     }
     assert.ok(![...certOutputs().keys()].some((k) => k.startsWith(`${LOOKUP_ID}/`)));
   });
 
+  it('캡처(2026-11-10) 반영: 메뉴 직접 주소·제출 버튼(H-03 작성완료, H-08 신청하기)·선택지·H-08 과세기간과 발급희망개업일자, 개인사업자 로그인 차단 알림이면 멈춘다', () => {
+    const [h03, h08, h09] = CERT_DOCS.map(certPackage);
+    const s10 = (p: PackageFiles) => stepsOf(p).find((x) => x.id === 's10')!;
+    assert.match(s10(h03!).url as string, /tm3lIdx=4315010800$/);
+    assert.match(s10(h08!).url as string, /tm3lIdx=4315010500$/);
+    assert.equal(s10(h09!).url, 'https://hometax.go.kr/', 'H-09는 메뉴 코드를 몰라 메뉴로 들어간다');
+    const btn = (p: PackageFiles) => p.selectors.entries['hometax.cert.form.issueButton']!;
+    assert.deepEqual([btn(h03!).namePattern, btn(h03!).candidates[0]], ['^작성완료$', { kind: 'css', value: '#mf_txppWframe_btn_wrtCmpl' }]);
+    assert.deepEqual([btn(h08!).namePattern, btn(h08!).candidates[0]], ['^신청하기$', { kind: 'css', value: '#mf_txppWframe_btn_apln' }]);
+    const inputs = h03!.playbook.inputs as Record<string, { values?: string[] }>;
+    assert.ok(inputs.purpose!.values!.includes('금융기관제출용') && inputs.submitTo!.values!.includes('금융기관'));
+    assert.deepEqual(h03!.selectors.entries['hometax.cert.form.receiveMethod']!.allowedConstants, ['인터넷발급(프린터출력)']);
+    for (const k of ['periodStartYear', 'periodStartHalf', 'periodEndYear', 'periodEndHalf', 'openDate']) assert.ok(k in (h08!.playbook.inputs as object), k);
+    assert.equal(h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0]!.kind === 'css' && (h08!.selectors.entries['hometax.cert.form.openDate']!.candidates[0] as { value: string }).value, '#mf_txppWframe_sbx_bmanOfbDt');
+    // 발급희망개업일자(날짜형)는 따로 입력 대조(V-03j′)
+    assert.deepEqual(stepsOf(h08!).find((x) => x.id === 's18a')!.cond, { readbackEquals: { fieldKey: 'bizOpenDate', ref: '$inputs.openDate' } });
+    for (const p of [h03!, h08!, h09!]) {
+      const x = stepsOf(p).find((s) => s.id === 's10x')!;
+      assert.deepEqual([x.code, x.onFail], ['portal.personal_login_required', { retry: 0, then: 'abort' }]);
+      assert.ok(new RegExp(p.strings['cert.block.personalOnly']!).test('레이어 팝업 레이어팝업시작 알림 해당 화면은 개인사업자는 이용할 수 없습니다. 레이어팝업끝'));
+    }
+  });
+
   it('캡처 목록(CAPTURE-hometax-cert.md)은 모르는 셀렉터마다 한 줄이고, 발급 버튼·로그인 수단·조회 표가 들어 있다', () => {
     const md = certOutputs().get('CAPTURE-hometax-cert.md')!;
-    for (const k of ['hometax.cert.form.issueButton', 'hometax.login.simpleAuthButton', 'hometax.cert.form.docName', 'hometax.cert.form.periodFrom', 'hometax.cert.form.fiscalYear']) assert.ok(md.includes(`\`${k}\``), k);
+    for (const k of ['hometax.cert.form.issueButton', 'hometax.login.simpleAuthButton', 'hometax.cert.form.docName', 'hometax.cert.alert', 'hometax.cert.form.fiscalYear']) assert.ok(md.includes(`\`${k}\``), k);
   });
 });
 
