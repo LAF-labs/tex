@@ -327,7 +327,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     useContentSize: true,
     minHeight: 560,
     show: opts.show ?? true,
-    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX (PoC 데모)',
+    // 설치본은 앱 이름만. 가짜 홈택스(fixture)일 때만 시연 표시를 남긴다.
+    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -340,6 +341,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       preload: path.join(STATIC, 'preload-shell.cjs'),
     },
   });
+  // 창 제목은 main이 정한다(페이지 <title>이 덮지 않게): 설치본 "소버린 AX", fixture만 시연 표시.
+  win.on('page-title-updated', (e) => e.preventDefault());
   const wc = win.webContents;
   // 새 창·이동 거부, 렌더러의 window.moveTo·resizeTo 무시, 배율 1 고정.
   hardenWindow(win);
@@ -718,6 +721,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     onIssued: (path) => {
       gwLog = [...gwLog.slice(-199), [++gwSeq, path]];
     },
+    // 온보딩 ②에서 모델을 거절했으면 게이트웨이 헤더를 내주지 않는다(입력 문장·화면이 모델로 가지 않게). 끝낸 기존 사용자(!onb)·동의한 사용자는 그대로.
+    modelAllowed: () => modelOk(),
   });
   host.setGatewayAuth((m) => gwAuth.handle(m));
   // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
