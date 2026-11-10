@@ -136,7 +136,8 @@ const left = (at, now) => {
 
 /**
  * 로그인(A-01, 캔버스 v60 M2Login·M2LoginCode·M2Signup 이메일 단계). 앱 위를 덮는 전체 화면이다.
- * ctx = { view, screen, draft: { email, password, code, show }, busy, now, go(screen), onClose, sendCode(email), verify(code), password(email, pw), back() }.
+ * ctx = { view, screen, draft: { email, password, code, show }, busy, now, go(screen), onClose, gate, sendCode(email), verify(code), password(email, pw), back() }.
+ * - gate: 로그인이 먼저인 화면(닫기 없음, onClose null).
  * - screen(렌더러가 고른 화면): 'email' | 'password' | 'code_email' | 'signup'. 코드를 보낸 뒤(main step code_sent)는 코드 6자리 화면이다.
  * - 비밀번호가 틀림·없는 계정·잠금은 같은 안내다(서버가 같은 응답, ADR-038 (d)). 안내 안에 [이메일 코드로 로그인]을 둔다.
  * - 입력 중인 값은 draft에만 둔다(DOM 속성에 넣지 않는다). 비밀번호는 보낸 뒤 비운다.
@@ -235,7 +236,8 @@ export function loginScreen(ctx) {
     body = [
       ctx.onClose ? back('닫기', ctx.onClose) : null,
       mark(),
-      head('로그인', '이메일이 아이디예요'),
+      // 로그인이 먼저인 화면(loginGate): 대화·온보딩 앞에서 막고 있다는 것을 한 줄로 알린다
+      head('로그인', ctx.gate ? '앱을 쓰려면 먼저 로그인해 주세요. 이메일이 아이디예요' : '이메일이 아이디예요', ctx.gate ? { 'data-login-gate': '' } : undefined),
       h(
         'div',
         { class: 'acct-stack' },

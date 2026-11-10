@@ -29,8 +29,7 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
-import { ADVICE_TEXT, engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
-import { offlineAdviceMentioned } from './advice-words.ts';
+import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { emptyDocStore, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -676,7 +675,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
         },
   );
-  // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 엔진에 명령이 없으면 오프라인 정규식.
+  // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
     if (reply.kind === 'draft') {
@@ -757,6 +756,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
   const modelOk = () => !onb || onb.modelAllowed();
+  /**
+   * 로그인이 먼저다(사용자 결정 2026-11-10): 제품은 계정에 로그인(첫 PC 등록)해야 약관 다음 온보딩·대화로 간다.
+   * 렌더러는 같은 조건으로 닫을 수 없는 로그인 화면을 띄우고, main은 그 전의 대화·온보딩 답을 account_required로 거절한다.
+   * 시연(fixture)·e2e는 계정 없이 돈다.
+   */
+  const loginRequired = !fixture;
+  const signedIn = async () => {
+    await accountInit().catch(() => null);
+    return account.view().step === 'signed_in';
+  };
+  const needLogin = async () => {
+    if (loginRequired && !(await signedIn())) throw new Error('account_required');
+  };
 
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
@@ -771,7 +783,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
       sample: !!sample,
       platform: process.platform,
-      interp: demo ? 'model' : 'offline',
+      loginRequired,
       // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
       build: opts.buildBadges ?? [],
       history: seed?.history ?? null,
@@ -784,11 +796,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile = p.kind;
       return { profile };
     },
-    // 시연 모델이 있으면 먼저 묻고(4초 상한), 아니면 엔진 intent.resolve(M4-3 ③, 4초 상한). 둘 다 없거나 실패하면 정규식.
-    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다. via는 화면 구석 표시용(모델 해석/오프라인 해석).
+    // 제품: 엔진 intent.resolve(M4-3 ③, 4초 상한). 실패(게이트웨이 불가·시간 초과·모양 다름)하면 정규식으로 의도를 고르지 않고
+    // kind 'unavailable'(연결 안 됨 + [다시 시도])을 돌려준다. 되묻던 것(pending)도 그대로 둔다(사용자 결정 2026-11-10 "오프라인 해석은 없다").
+    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다(D01 §5.1). 시연(fixture)은 시연 모델(4초 상한) → 실패하면 정규식(e2e가 기댄다).
     'request.send': async (p) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
+      await needLogin();
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
@@ -800,15 +814,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
         return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null, ask ? ['openrouter_demo'] : []);
       }
+      // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
+      if (fixture && !opts.intent) return finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
+      if (!text.trim()) return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', via: 'model', note: null, sent: [] };
+      // 온보딩 ②(모델 처리 동의) 전에는 문장을 모델로 보내지 않는다. "연결 안 됨"이 아니라 동의가 먼저라고 말한다.
+      if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
       // 이 해석 동안 main이 내준 게이트웨이 헤더가 곧 우리 서버로 간 것이다(헤더 없이는 엔진이 게이트웨이를 부를 수 없다).
       // 해석은 한 번에 하나라(렌더러 sending) 이 구간의 발급은 이 요청 것이다.
       const mark = gwSeq;
-      const r = text.trim() ? await intent.resolve(text) : { route: null, fallback: 'empty' };
+      const r = await intent.resolve(text);
       const sent = sentFromGateway(gwIssuedSince(mark));
-      const via = r.route?.via === 'model' ? 'model' : 'offline';
-      log.event('main.interpret', { via, path: r.route ? `engine.${r.route.via}` : `offline.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'offline', ms: Math.round(performance.now() - t0) });
-      // 판정 불가(decide.unavailable)일 때만 로컬 낱말로 고정 문구를 덧붙인다(D04 §3, 팀장 결정 2026-11-07). 작업은 그대로다.
-      if (!r.route) return finishReply(interpret(text, vat, profile, runs, local), via, r.fallback === 'decide.unavailable' && offlineAdviceMentioned(text) ? ADVICE_TEXT : null, sent);
+      log.event('main.interpret', { path: r.route ? `engine.${r.route.via}` : `unavailable.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'unavailable', ms: Math.round(performance.now() - t0) });
+      if (!r.route) return { kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, via: 'model', note: null, sent };
+      const via = 'model';
       const to = routed(r.route, local);
       if ('say' in to) {
         runs.pending.asked = null;
@@ -969,6 +987,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'onboarding.reply': async (p) => {
       needGesture(3_000);
       if (!onb) throw new Error('onboarding_done');
+      if (p.step !== 'terms') await needLogin();
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
       if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
@@ -1041,8 +1060,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     else if (!fixture) {
       const saved = (await onbStore.load()) ?? (await onbStore.importLegacyFile(legacyOnbFile));
       if (saved) {
+        // 모델 거절이 저장된 프로필은 ②를 다시 묻는다(reaskModel). 그때는 끝낸 온보딩이라도 대화로 다시 그린다.
         onb = new OnboardingFlow(onbPorts, saved);
-        onbShow = saved.step !== 'done';
+        onbShow = !onb.done;
       } else if (!business) onb = new OnboardingFlow(onbPorts);
     }
     await win.loadURL(SHELL_URL);

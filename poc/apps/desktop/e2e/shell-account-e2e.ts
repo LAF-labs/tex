@@ -3,15 +3,13 @@
 // (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
 // 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
 // SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3), reset이면 비밀번호 찾기(§4)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
-import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app, nativeTheme } from 'electron';
-import { AIK_PURPOSES, fromB64, softNoiseStatic, softSigner, VD_PURPOSES, verifyDeviceList, x25519Public, type DesktopKeys } from '@sax/remote';
 import { Egress } from '@sax/net';
-import type { AccountClient } from '../dist/remote-ports.js';
 import { cloudPorts } from '../dist/remote-cloud.js';
 import { serveAccount } from './fake-account-http.js';
+import { fakeAccount, PASSWORD, SERVER_ONLY_BREACHED, softKeys } from './fake-account.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
@@ -58,88 +56,6 @@ async function shot(name: string) {
 }
 const loginStep = () => js<string | null>(`document.querySelector('[data-account-login]')?.dataset.accountLogin ?? null`);
 const callErr = (m: string, p: unknown) => js<string>(`window.sax.call(${JSON.stringify(m)}, ${JSON.stringify(p)}).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`);
-
-const PASSWORD = 'mangwon-kimchi-12';
-
-/** 서버 목록에만 있다고 치는 비밀번호(앱 번들 목록에는 없다): 서버 거부 문구를 보는 데 쓴다. */
-const SERVER_ONLY_BREACHED = 'gwangjang-bindae-3';
-
-/** 메모리 계정 서비스: 코드 123456, 비밀번호 PASSWORD. /v1/aik는 AIK 서명 첫 목록을 실제로 검증한다. hasPassword가 거짓이면 계정 만들기 뒤 비밀번호 단계가 뜬다. */
-function fakeAccount(o: { hasPassword?: boolean } = {}) {
-  const calls: string[] = [];
-  let hasPw = o.hasPassword ?? true;
-  let pinned: { aikPub: string; deviceId: string } | null = null;
-  const fail = (code: string) => Object.assign(new Error(code), { code });
-  const client: AccountClient = {
-    startEmailCode: async () => (calls.push('code'), { loginId: 'L1', expiresInSec: 600 }),
-    verifyEmailCode: async (_l, code) => {
-      calls.push('verify');
-      if (code !== '123456') throw fail('account.code_invalid');
-      return { session: 'sxs1.fake', expiresInSec: 3600 };
-    },
-    passwordLogin: async (email, password) => {
-      calls.push('password');
-      // 틀림·없는 계정·잠금은 서버가 같은 응답을 준다(ADR-038 (d)).
-      if (email !== 'owner@gyeonbon-test.example' || password !== PASSWORD) throw fail('account.credentials_invalid');
-      return { session: 'sxs1.fake', expiresInSec: 3600 };
-    },
-    logout: async () => void calls.push('logout'),
-    me: async () => (calls.push('me'), { email: 'owner@gyeonbon-test.example', hasPassword: hasPw, reauthUntil: null, authMethod: 'email_code' }),
-    setPassword: async (_s, password) => {
-      calls.push('setPassword');
-      if (password === SERVER_ONLY_BREACHED) throw fail('account.password_breached');
-      if (password !== PASSWORD) throw fail('account.password_too_short');
-      hasPw = true;
-      return {};
-    },
-    deletePassword: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    startReauth: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    verifyReauth: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    startPasswordReset: async () => (calls.push('reset'), { resetId: 'R1', expiresInSec: 600 }),
-    verifyPasswordReset: async (_r, code, password) => {
-      calls.push('resetVerify');
-      if (code !== '654321') throw fail('account.code_invalid');
-      if (password === SERVER_ONLY_BREACHED) throw fail('account.password_breached');
-      return { session: 'sxs1.fake', expiresInSec: 3600 };
-    },
-    refresh: async () => {
-      throw fail('account.unauthorized');
-    },
-    revokeRefresh: async () => {},
-    logoutAll: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    deviceList: async () => (calls.push('list'), { aikPub: null, deviceList: null }),
-    pinFirstDesktop: async (_s, b) => {
-      calls.push('aik');
-      const l = verifyDeviceList(b.deviceList, fromB64(b.aikPub));
-      if (!l.ok || l.devices.length !== 1) throw fail('account.aik_signature_invalid');
-      pinned = { aikPub: b.aikPub, deviceId: l.devices[0]!.deviceId };
-      return { deviceId: pinned.deviceId };
-    },
-    deviceToken: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    acctClaim: async () => {
-      throw fail('net.not_in_e2e');
-    },
-    enrollPhone: async () => {},
-    putDeviceList: async () => {},
-  };
-  return { client, calls, pinned: () => pinned };
-}
-
-function softKeys(): DesktopKeys {
-  const k = () => new Uint8Array(randomBytes(32));
-  const kv = k();
-  return { noise: softNoiseStatic(k()), vd: softSigner(k(), VD_PURPOSES), aik: softSigner(k(), AIK_PURPOSES), kvPublic: () => x25519Public(kv) };
-}
 
 async function main() {
   const acct = fakeAccount();

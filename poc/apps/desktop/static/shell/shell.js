@@ -16,7 +16,6 @@ const state = {
   view: 'chat',
   profile: 'business',
   sending: false,
-  interp: 'offline', // 채팅 해석 경로(main이 정한다): 'model' | 'offline'. 제목줄 구석에 작게 보인다.
   runs: new Map(),
   g24: new Map(),
   docs: [],
@@ -230,7 +229,6 @@ function renderTitlebar() {
     h(
       'div',
       { class: 'tb-status' },
-      h('span', { class: 'tb-interp', 'data-interp': state.interp }, state.interp === 'model' ? '모델 해석' : '오프라인 해석'),
       h('span', {}, icon('lock'), '금고 열림'),
       h('span', {}, icon('phone'), '폰 연결 안 됨'),
     ),
@@ -336,6 +334,7 @@ const ONB_ERR = {
   no_tasks: '지금 되는 일 중 하나 이상 골라 주세요.',
   stale_step: '이미 답한 질문이에요.',
   gesture_required: '버튼을 직접 눌러 주세요.',
+  account_required: '먼저 로그인해 주세요.',
 };
 const onbAct = {
   reply: async (step, choice, extra = {}) => {
@@ -347,6 +346,8 @@ const onbAct = {
       renderTitlebar();
       renderToday();
       if (r.fill) fillComposer(r.fill);
+      // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
+      if (loginGate()) renderModal();
       return true;
     } catch (e) {
       toast(ONB_ERR[errText(e)] ?? '다시 해 주세요');
@@ -485,6 +486,14 @@ async function send() {
   autoGrow();
   renderQuick();
   appendThread(h('div', { class: 'sx-me' }, text));
+  await ask(text, vat);
+}
+
+/**
+ * 요청 하나를 main에 보내고 답을 그린다. 모델에 닿지 못하면(kind 'unavailable') 의도를 대신 고르지 않고
+ * 연결 안 됨 문장과 [다시 시도]를 보인다(정규식 대체 없음, 사용자 결정 2026-11-10). [다시 시도]는 같은 문장·부가세로 다시 보낸다.
+ */
+async function ask(text, vat) {
   let r;
   state.sending = true;
   const waitEl = h('div', { class: 'sx-app sx-meta' }, '요청을 읽고 있어요…');
@@ -499,9 +508,21 @@ async function send() {
     waitEl.remove();
     state.sending = false;
   }
-  if (r.via && r.via !== state.interp) {
-    state.interp = r.via === 'model' ? 'model' : 'offline';
-    renderTitlebar();
+  if (r.kind === 'unavailable') {
+    const box = h('div', { class: 'sx-app', 'data-intent-unavailable': '' }, h('p', {}, r.text));
+    const retry = btn(
+      '다시 시도',
+      () => {
+        if (state.sending) return;
+        box.remove();
+        void ask(text, vat);
+      },
+      'sx-btn-primary',
+      { 'data-act': 'intent-retry' },
+    );
+    box.append(h('div', { class: 'sx-actions' }, retry));
+    appendThread(box);
+    return;
   }
   // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
   if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
@@ -1081,6 +1102,16 @@ function openLogin() {
   render();
 }
 
+/**
+ * 로그인이 먼저다(사용자 결정 2026-11-10): 제품은 약관에 동의한 뒤 로그인(첫 PC 등록)해야 온보딩·대화로 간다.
+ * 끝낸 프로필이 로그아웃 상태로 켜져도 대화 대신 이 화면이 먼저다. 닫을 수 없다(main도 그 전 요청을 account_required로 거절한다).
+ */
+function loginGate() {
+  if (!state.boot?.loginRequired) return false;
+  if (state.onb && state.onb.consents?.terms?.choice !== 'agreed') return false; // 약관이 먼저
+  return state.account?.step !== 'signed_in';
+}
+
 /** [폰 연결]: main이 따로 창을 연다(QR·6자리는 그 창에만 있다). */
 async function openPair() {
   try {
@@ -1092,6 +1123,8 @@ async function openPair() {
 
 function closeLogin() {
   if (!state.login) return;
+  // 로그인 화면이 막고 있는 동안은 닫지 않는다(비밀번호 바꿈 끝 화면의 [계속]은 로그인된 뒤라 닫힌다)
+  if (loginGate()) return;
   state.login = null;
   render();
   $('[data-act=account-login]')?.focus();
@@ -1157,7 +1190,9 @@ const loginCtx = () => ({
   draft: state.login.draft,
   busy: state.login.busy,
   now: () => Date.now(),
-  onClose: closeLogin,
+  // 로그인 화면이 막고 있으면 [닫기]가 없다(바꿈 끝 화면의 [계속]은 로그인된 뒤라 닫힌다)
+  onClose: loginGate() && state.login.screen !== 'reset_done' ? null : closeLogin,
+  gate: loginGate(),
   go: loginGo,
   fail: (code) => {
     state.account = { ...(state.account ?? { step: 'signed_out', email: null, codeExpiresAt: null }), error: code };
@@ -1363,6 +1398,8 @@ function passwordModal() {
 
 function renderModal() {
   const root = $('#modal');
+  // 로그인 화면이 막아야 하면 연다(기동·약관 동의 직후·로그아웃 이벤트)
+  if (loginGate() && !state.login) state.login = { screen: 'email', draft: { email: state.account?.email ?? '', password: '', code: '', show: false }, busy: false };
   const pw = state.view === 'docs' && !!state.docImport && !state.docBusy;
   const login = !pw && !!state.login;
   const open = pw || login;
@@ -1592,7 +1629,7 @@ function addDoc(doc) {
 window.sax.onEvent((ev) => {
   if (ev.type === 'account') {
     state.account = ev.account;
-    if (state.view === 'settings') render();
+    if (state.view === 'settings' || loginGate()) render();
     return;
   }
   if (ev.type === 'run') {
@@ -1698,7 +1735,6 @@ async function boot() {
   state.boot = await call('shell.bootstrap');
   state.today = new Date();
   state.profile = state.boot.profile;
-  state.interp = state.boot.interp === 'model' ? 'model' : 'offline';
   state.docs = [...state.boot.docs];
   state.cps = state.boot.counterparties;
   state.board = state.boot.board ?? null;
@@ -1712,6 +1748,8 @@ async function boot() {
   applyLayout();
   renderTitlebar();
   buildChat();
+  // 로그인이 먼저다(제품): 계정 상태를 먼저 읽어 로그인 화면(loginGate)을 띄울지 정한다.
+  if (state.boot.loginRequired) await refreshAccount();
   render();
   document.body.dataset.ready = '1';
 }

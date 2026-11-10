@@ -175,7 +175,7 @@ describe('Egress.toGateway 오류 의미(ADR-040 결정 5)', () => {
   });
 });
 
-describe('intent.resolve: 인증 실패는 decide.unavailable(main 오프라인 대체)', () => {
+describe('intent.resolve: 인증 실패는 decide.unavailable(main은 연결 안 됨)', () => {
   let dir: string;
   let db: Db;
   before(() => {

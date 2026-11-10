@@ -80,12 +80,12 @@
 |---|---|---|
 | 게이트웨이 `401 gateway.unauthorized` | `invalidate` 뒤 **한 번만** 다시 보낸다. 두 번째 401이면 실패 | 실패면 아래 "게이트웨이 없음"과 같다 |
 | 게이트웨이 `403`(`gateway.device_suspended`·`account.scope_denied`) | 재시도하지 않는다 | 정지된 기기 안내(기존) |
-| `account.signed_out` | 게이트웨이를 부르지 않는다. `GatewayError('gateway.unavailable')` | 오프라인 대체(의도 해석은 로컬 정규식) |
-| `auth.denied`·`auth.unavailable`·auth 포트 5초 초과 | `GatewayError('gateway.unavailable')`. 재시도 없음 | 오프라인 대체 |
+| `account.signed_out` | 게이트웨이를 부르지 않는다. `GatewayError('gateway.unavailable')` | 연결 안 됨 + [다시 시도](2026-11-10 사용자 결정으로 오프라인 정규식 대체 없앰. 로그인 전에는 대화로 가지 못한다) |
+| `auth.denied`·`auth.unavailable`·auth 포트 5초 초과 | `GatewayError('gateway.unavailable')`. 재시도 없음 | 연결 안 됨 + [다시 시도] |
 | 그 밖(429·5xx·시간 초과) | 지금 계약 그대로(`gateway.*`) | 기존 |
 
 - 인증 실패(401)는 실행 토큰 예산을 쓰지 않는다. 게이트웨이는 인증을 통과한 뒤에 센다.
-- `intent.resolve`에서 위 실패는 모두 `decide.unavailable`이다. main은 그 코드로 오프라인 정규식으로 대체한다(desktop-pending "M4-3 ③", main 상한 4초).
+- `intent.resolve`에서 위 실패는 모두 `decide.unavailable`이다. main은 그 코드로 의도를 대신 고르지 않고 "연결하지 못했어요" + [다시 시도]를 보인다(main 상한 4초. 2026-11-10 사용자 결정 "오프라인 해석은 없다"로 예전의 오프라인 정규식 대체를 없앰).
 
 ## 기각한 대안
 

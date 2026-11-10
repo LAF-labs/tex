@@ -3,11 +3,11 @@
 // - 받는 것: {t:'gw.auth.result', id, headers:{authorization, dpop}} 또는 {…, code}.
 // - 엔진은 토큰·키를 갖지 않는다. 헤더는 이 요청 한 번에만 쓰고 저장·기록하지 않는다(코드도 기록하지 않는다. main이 이름만 남긴다).
 // - 실패(signed_out·denied·unavailable·모양 틀림)와 5초 초과는 모두 GatewayError('gateway.unavailable')다. 다시 보내지 않는다.
-//   intent.resolve는 그것을 decide.unavailable로 접고 main이 오프라인 정규식으로 대체한다.
+//   intent.resolve는 그것을 decide.unavailable로 접고 main은 "연결 안 됨"과 [다시 시도]를 보인다(오프라인 해석 없음, 사용자 결정 2026-11-10).
 import { GatewayError, type GatewayAuth } from '@sax/net';
 import type { PortLike } from '@sax/platform';
 
-/** auth 포트 응답 상한(ADR-040 결정 3). main의 의도 해석 상한(4초)보다 길어도 된다: 그때 main은 먼저 오프라인으로 간다. */
+/** auth 포트 응답 상한(ADR-040 결정 3). main의 의도 해석 상한(4초)보다 길어도 된다: 그때 main은 먼저 "연결 안 됨"으로 끝낸다. */
 export const GW_AUTH_TIMEOUT_MS = 5_000;
 /** 헤더 값 상한. 기기 토큰(서명 JWT)·DPoP 증명은 1~2KB다. */
 const HEADER_MAX = 8_192;

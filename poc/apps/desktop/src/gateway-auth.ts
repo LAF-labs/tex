@@ -2,7 +2,7 @@
 // - 엔진은 요청마다 {t:'gw.auth', id, htm, htu}를 보내고 {t:'gw.auth.result', id, headers:{authorization, dpop}} 또는 {…, code}를 받는다.
 // - 토큰은 gateway 범위만인 기기 토큰이다(DeviceSession.gatewayAuth). 전체 범위 토큰·키·인증서는 엔진에 가지 않는다.
 // - 허용은 POST + GATEWAY_ORIGIN의 세 경로(/v1/run-tokens·/v1/decide·/v1/respond)뿐이다. 문자열이 정확히 같아야 한다(쿼리·조각·`..`·끝 / 없음).
-// - 로그인 안 됨·신원 없음·금고 잠김이면 account.signed_out. 엔진은 게이트웨이를 부르지 않고 오프라인으로 간다.
+// - 로그인 안 됨·신원 없음·금고 잠김이면 account.signed_out. 엔진은 게이트웨이를 부르지 않고 decide.unavailable(대화는 연결 안 됨).
 // - {t:'gw.auth.invalidate'}는 게이트웨이 토큰만 지운다(분당 상한). 응답은 없다.
 // - 토큰·헤더·htu는 기록하지 않는다. 이벤트는 이름과 결과 코드만.
 import { GATEWAY_ORIGIN, GATEWAY_PATHS } from '@sax/net';
@@ -31,7 +31,7 @@ export interface GatewayAuthHostOptions {
   onIssued?: (path: string) => void;
   /**
    * 모델 처리 동의(온보딩 ②)를 지금 허락하는지. 거짓이면 어떤 경로든 헤더를 내주지 않는다(기기 토큰도 받지 않는다).
-   * 게이트웨이(decide·run-tokens·respond)는 모두 모델 상류로 가므로 뿌리에서 막는다. 엔진은 gateway.unavailable로 접어 오프라인 해석으로 간다.
+   * 게이트웨이(decide·run-tokens·respond)는 모두 모델 상류로 가므로 뿌리에서 막는다. 엔진은 gateway.unavailable로 접고 대화는 연결 안 됨이다(로그인·동의 전에는 대화로 가지 못하니 안전장치).
    * 없으면 늘 허락(시험·기존 호출).
    */
   modelAllowed?: () => boolean;

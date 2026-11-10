@@ -206,7 +206,7 @@ describe('동의 화면 4종', () => {
     assert.deepEqual(flow.state.registered, { at: flow.state.registered!.at, noticeVersion: 'f06-pre.1', items: 31 });
     assert.equal(flow.state.step, 'model');
     await walk(flow, [
-      { step: 'model', choice: 'decline' },
+      { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
       { step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-02': true } },
       { step: 'summary', choice: 'ok' },
@@ -232,7 +232,7 @@ describe('동의 화면 4종', () => {
     const flow = new OnboardingFlow(b.ports, resumed, NOW);
     assert.equal(flow.state.step, 'model');
     await walk(flow, [
-      { step: 'model', choice: 'decline' },
+      { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
       { step: 'tasks', choice: 'submit', tasks: { 'H-03': true } },
       { step: 'summary', choice: 'ok' },
@@ -256,7 +256,8 @@ describe('동의 화면 4종', () => {
     const body = src.slice(i, src.indexOf('await win.loadURL', i));
     // 이어 하기는 DB(엔진 onboarding.load)에서, 없으면 옛 목업 파일을 한 번 옮긴다(onboarding-store.ts).
     assert.match(body, /const saved = \(await onbStore\.load\(\)\) \?\? \(await onbStore\.importLegacyFile\(legacyOnbFile\)\);/);
-    assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = saved\.step !== 'done';/);
+    // 모델 거절이 저장된 끝낸 온보딩은 ②를 다시 묻는다(reaskModel): 보일지는 불러온 뒤의 단계로 정한다.
+    assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = !onb\.done;/);
     assert.ok(body.indexOf('onbStore.load') < body.indexOf('!business'), '저장을 먼저 본다');
     // 저장은 엔진 명령으로만(앱 폴더 JSON에 쓰지 않는다). 목업은 바깥 일에만.
     assert.doesNotMatch(src, /MockOnboardingPorts/, '제품 셸은 견본 바깥 일을 만들지 않는다(시연 연결 ShellDev.sample만)');
@@ -283,7 +284,7 @@ describe('동의 화면 4종', () => {
     assert.equal(flow.state.auth, null);
   });
 
-  it('②③④ 동의 레코드: 판·선택·시각, ②는 처리자 표 판(설정 데이터)도. 모델을 거절하면 modelAllowed false', async () => {
+  it('②③④ 동의 레코드: 판·선택·시각, ②는 처리자 표 판(설정 데이터)도. ②는 필수라 거절 답이 없다(사용자 결정 2026-11-10)', async () => {
     const { flow, ports } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -292,19 +293,45 @@ describe('동의 화면 4종', () => {
     ]);
     const view = await flow.view();
     assert.deepEqual(view.config, MOCK_CONSENT_CONFIG, '② 화면은 설정 데이터의 처리자 표를 그대로 받는다');
+    assert.deepEqual(ONB_CHOICES.model, ['agree'], '② 거절 선택지 없음');
+    assert.equal(await code(flow.answer({ step: 'model', choice: 'decline' } as unknown as OnbAnswer)), 'bad_choice');
+    assert.equal(flow.modelAllowed(), false, '동의 전에는 모델을 쓰지 않는다');
     await walk(flow, [
-      { step: 'model', choice: 'decline' },
+      { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'on' },
     ]);
     assert.deepEqual(
       ports.consents.map((c) => [c.kind, c.noticeKey, c.noticeVersion, c.choice, c.processorsVersion ?? null, c.at]),
       [
         ['terms', 'consent.terms', 'f06-pre.1', 'agreed', null, '2026-11-05T01:00:00.000Z'],
-        ['model', 'consent.model', 'f06-pre.1', 'declined', 'mock-2026-11-05', '2026-11-05T01:00:00.000Z'],
+        ['model', 'consent.model', 'f06-pre.2', 'agreed', 'mock-2026-11-05', '2026-11-05T01:00:00.000Z'],
         ['telemetry', 'consent.telemetry', 'f06-pre.1', 'agreed', null, '2026-11-05T01:00:00.000Z'],
       ],
     );
-    assert.equal(flow.modelAllowed(), false);
+    assert.equal(flow.modelAllowed(), true);
+  });
+
+  it('모델 거절이 저장된 프로필은 ②를 다시 묻고, 동의하면 있던 단계로 돌아간다(끝낸 온보딩 포함)', async () => {
+    const declined = { version: 'f06-pre.1', choice: 'declined' as const, at: '2026-11-05T01:00:00.000Z' };
+    const base = { tasks: ['H-03'], skipped: [], log: [{ step: 'terms', text: '동의했어요' }], consents: { terms: { version: 'f06-pre.1', choice: 'agreed', at: 'x' }, model: declined } };
+    for (const at of ['done', 'tasks', 'telemetry'] as const) {
+      const { ports } = make();
+      const flow = new OnboardingFlow(ports, parseOnbState({ ...base, step: at })!, NOW);
+      assert.equal(flow.state.step, 'model', at);
+      assert.equal(flow.state.resumeStep, at);
+      assert.equal(flow.done, false, '끝낸 온보딩도 ②를 다시 그린다');
+      await flow.answer({ step: 'model', choice: 'agree' });
+      assert.equal(flow.state.step, at, '동의하면 있던 자리로');
+      assert.equal(flow.state.resumeStep, null);
+      assert.equal(flow.modelAllowed(), true);
+      assert.deepEqual(ports.consents.map((c) => [c.kind, c.choice]), [['model', 'agreed']]);
+    }
+    // ②를 아직 지나지 않았거나 이미 동의했으면 그대로
+    const { ports } = make();
+    assert.equal(new OnboardingFlow(ports, parseOnbState({ ...base, step: 'auth' })!, NOW).state.step, 'auth');
+    assert.equal(new OnboardingFlow(ports, parseOnbState({ ...base, step: 'done', consents: { ...base.consents, model: { ...declined, choice: 'agreed' } } })!, NOW).state.step, 'done');
+    // 기억해 둔 단계가 모르는 값이면 저장을 버린다(처음부터)
+    assert.equal(parseOnbState({ ...base, step: 'model', resumeStep: 'nope' }), null);
   });
 });
 
