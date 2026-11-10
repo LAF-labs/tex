@@ -60,7 +60,7 @@ export const PHONE_COMMANDS = ['receipt.phoneHas', 'receipt.phoneStore', 'cash.p
 export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
 /**
  * 대화 의도 판정(M4-3 ③, D01 §5.1, 계약: desktop-pending.md 「M4-3 ③」). main 전용이다(렌더러에 열지 않는다: main이 입력창 문장만 넘긴다).
- * 결과는 route·refuse_advice·unknown 셋이고, 판정을 못 하면 decide.unavailable(main은 오프라인 파서). 실행·저장은 없다.
+ * 결과는 route·refuse_advice·unknown 셋이고, 판정을 못 하면 decide.unavailable(main은 "연결 안 됨"과 [다시 시도], 오프라인 해석 없음). 실행·저장은 없다.
  * chat.respond {text}: unknown 문장에 모델이 짧게 답한다(chat_reply, 팀장 지시 2026-11-10). 결과 {reply, kind, suggest, filtered},
  * 오류 bad_text·chat.unavailable·chat.bad_response·chat.budget_exceeded·chat.quota_exceeded·chat.input_too_large·chat.secret_rejected. 오프라인 대체 없음.
  */
