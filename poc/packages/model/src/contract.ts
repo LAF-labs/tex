@@ -99,7 +99,7 @@ export interface DecideResult {
   cached?: boolean;
 }
 
-export type Toolset = 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse';
+export type Toolset = 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply';
 
 export interface RedactedMessage {
   role: 'user';

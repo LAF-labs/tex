@@ -1,5 +1,6 @@
 // L2 툴셋 정의(D04 §4). effort·max_output_tokens·도구·출력 스키마는 툴셋이 정하고 클라이언트 필드가 아니다(B-20).
 // PoC-7 범위: selector_repair(S9 store:false 재생 측정)와 query_parse. summarize·intent_fill은 PoC-9 이후.
+// chat_reply: 작업으로 분류되지 않은 대화 입력에 짧은 안내 문장(팀장 지시 2026-11-10, D04 §4.1).
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import { canonicalJson } from './bundle/digest.ts';
@@ -18,6 +19,8 @@ export interface ToolsetDef {
   tools: ToolDef[];
   output: { name: string; schema: Record<string, unknown> };
   prefixKey: string;
+  /** false면 공통 판정기 머리말(_common)을 붙이지 않는다. 사용자에게 문장을 보여 주는 chat_reply만 쓴다(머리말이 "문장을 보여 주지 않는다"는 판정기 역할이라). */
+  commonPrefix?: boolean;
 }
 
 const ROLES = ['button', 'textbox', 'combobox', 'checkbox', 'radio', 'link', 'tab', 'menuitem'];
@@ -80,11 +83,54 @@ export const QUERY_PARSE: ToolsetDef = {
   },
 };
 
+/**
+ * chat_reply가 제안할 수 있는 작업(이 앱이 지금 할 수 있는 일의 고정 목록). id는 intent_route_v1 playbook 선택지와 같은 어휘다.
+ * 머리말(toolsets/chat_reply.ko.txt)의 목록과 출력 스키마 열거가 이 표 하나에서 나온다(시험이 대조한다).
+ */
+export const CHAT_CAPABILITIES = [
+  { id: 'hometax.invoice.issue', label: '전자세금계산서 발급(홈택스)' },
+  { id: 'hometax.cert.business', label: '사업자등록증명 발급(홈택스)' },
+  { id: 'hometax.cert.taxpayment', label: '납세증명서 발급(홈택스)' },
+] as const;
+export type ChatCapabilityId = (typeof CHAT_CAPABILITIES)[number]['id'];
+/** 답 문장 상한(글자). 공급사 strict 스키마가 maxLength를 받지 않을 수 있어 스키마에는 넣지 않고 엔진이 검사한다. */
+export const CHAT_REPLY_MAX_CHARS = 200;
+/** 제안 작업 상한 */
+export const CHAT_SUGGEST_MAX = 3;
+/** 답 종류. tax_advice면 엔진이 답 문장을 버리고 고정 문구로 바꾼다(D04 §3). */
+export const CHAT_REPLY_KINDS = ['help', 'clarify', 'smalltalk', 'tax_advice', 'out_of_scope'] as const;
+
+/** 대화 답(L2, 도구 없음, 1턴). 입력은 마스킹된 사용자 문장 하나뿐이다(이전 대화 턴은 보내지 않는다). */
+export const CHAT_REPLY: ToolsetDef = {
+  id: 'chat_reply',
+  effort: 'low',
+  maxOutputTokens: 1_000,
+  maxTurns: 1,
+  prefixKey: 'chat_reply',
+  commonPrefix: false,
+  tools: [],
+  output: {
+    name: 'chat_reply',
+    schema: {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', enum: [...CHAT_REPLY_KINDS] },
+        reply: { type: 'string' },
+        suggest: { type: 'array', maxItems: CHAT_SUGGEST_MAX, items: { type: 'string', enum: CHAT_CAPABILITIES.map((c) => c.id) } },
+      },
+      required: ['kind', 'reply', 'suggest'],
+      additionalProperties: false,
+    },
+  },
+};
+
 const DIR = new URL('../toolsets/', import.meta.url);
 
 export function toolsetPrefix(t: ToolsetDef): string {
+  const own = fs.readFileSync(new URL(`${t.prefixKey}.ko.txt`, DIR), 'utf8').trim();
+  if (t.commonPrefix === false) return own;
   const common = fs.readFileSync(new URL('../bundles/prefixes/_common.ko.txt', import.meta.url), 'utf8').trim();
-  return `${common}\n\n${fs.readFileSync(new URL(`${t.prefixKey}.ko.txt`, DIR), 'utf8').trim()}`;
+  return `${common}\n\n${own}`;
 }
 
 /**

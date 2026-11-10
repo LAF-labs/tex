@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { BundleCatalog, QUERY_PARSE, questionsDigest, toolsetDigest } from '@sax/model';
+import { BundleCatalog, CHAT_REPLY, QUERY_PARSE, questionsDigest, toolsetDigest } from '@sax/model';
 
 export interface GatewayMockCall {
   method: string;
@@ -25,6 +25,8 @@ export interface GatewayMockOptions {
   choiceConfidence?: number;
   /** respond 응답 output(기본: query_parse 구조화 출력 한 건) */
   respondOutput?: Array<Record<string, unknown>>;
+  /** respond 응답 status(기본 completed) */
+  respondStatus?: string;
 }
 
 export interface GatewayMock {
@@ -73,8 +75,8 @@ export async function startGatewayMock(opts: GatewayMockOptions = {}): Promise<G
           { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc' },
           { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ query_kind: 'documents_expiring', doc_type: null, from: null, to: null }) }] },
         ];
-        const td = state.opts.tamperToolset ? 'f'.repeat(64) : toolsetDigest(QUERY_PARSE);
-        return send(200, { model: 'gpt-6.1-terra', status: 'completed', output: output.map((item, i) => ({ item, tag: `gwtag${i}` })), usage: { input_tokens: 300, output_tokens: 40, input_tokens_details: { cached_tokens: 256, cache_write_tokens: 0 } }, toolsetDigest: td });
+        const td = state.opts.tamperToolset ? 'f'.repeat(64) : toolsetDigest(body?.toolset === CHAT_REPLY.id ? CHAT_REPLY : QUERY_PARSE);
+        return send(200, { model: 'gpt-6.1-terra', status: state.opts.respondStatus ?? 'completed', output: output.map((item, i) => ({ item, tag: `gwtag${i}` })), usage: { input_tokens: 300, output_tokens: 40, input_tokens_details: { cached_tokens: 256, cache_write_tokens: 0 } }, toolsetDigest: td });
       }
       if (path === '/v1/run-tokens') {
         const keys = Object.keys(body ?? {});

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { CHAT_REPLY, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -46,6 +46,7 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  * 게이트웨이 툴셋. selector_repair의 scopeId 열거는 엔진이 요청마다 채우는데 gateway-request 스키마에 scopeIds 필드가 없어
  * 게이트웨이는 형식 제한(영숫자 64자)으로 대신한다. 엔진은 로컬 툴셋 정의(열거 포함)로 도구 호출을 다시 검증한다(C-24).
  * summarize·intent_fill은 packages/model에 정의가 없어 아직 받지 않는다(400).
+ * chat_reply(대화 짧은 응대, 팀장 지시 2026-11-10)는 도구 없이 1턴이고 대화 범위(chatSessionId) 예산 l2PerChat을 쓴다.
  */
 export function gatewayToolsets(): Map<string, ToolsetDef> {
   const sr = selectorRepair(['x']);
@@ -56,6 +57,7 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
   return new Map<string, ToolsetDef>([
     [sr.id, sr],
     [QUERY_PARSE.id, QUERY_PARSE],
+    [CHAT_REPLY.id, CHAT_REPLY],
   ]);
 }
 

@@ -62,7 +62,8 @@
             "selector_repair",
             "summarize",
             "intent_fill",
-            "query_parse"
+            "query_parse",
+            "chat_reply"
           ]
         },
         "messages": {
