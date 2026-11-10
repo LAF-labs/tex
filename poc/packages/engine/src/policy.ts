@@ -1,9 +1,10 @@
 import { performance } from 'node:perf_hooks';
 import { RateRepo, type Db, type Ledger } from '@sax/db';
 import type { Dialog, Page } from 'playwright-core';
+import type { Policy } from './core/index.ts';
 import { pathExpected, type PortalConfig } from './portal.ts';
 import { RunEnd, type RunnerPolicy } from './run-end.ts';
-import { SIGNAL_DICT, SignalWatch, type InspectUnavailable, type SignalHit, type SignalKind } from './signals.ts';
+import { SIGNAL_DICT, SignalWatch, type InspectUnavailable, type SignalDict, type SignalHit, type SignalKind } from './signals.ts';
 
 // 요청률 정책(D03 §7)의 PoC 최소판. 앱 내장 정책은 홈택스 하나다. 서명·신선도·긴급 키·데몬·리모트·큐·캡차 중계·
 // POLICY_FLOOR 클램프는 외부 정책 파일이 없어 두지 않는다. 카운터는 SQLite에 영속하고(KST) 증가를 커밋한 뒤 행동한다.
@@ -68,6 +69,23 @@ export function stricterRate(a: RatePolicy, b: RatePolicy | null): RatePolicy {
     run: { maxActuationsPerRun: lo(a.run.maxActuationsPerRun, b.run.maxActuationsPerRun), maxWallClockMs: lo(a.run.maxWallClockMs, b.run.maxWallClockMs) },
     cooldown: { onBlockSignalHours: hi(a.cooldown.onBlockSignalHours, b.cooldown.onBlockSignalHours), positiveDetectionsForCooldown: lo(a.cooldown.positiveDetectionsForCooldown, b.cooldown.positiveDetectionsForCooldown) },
   };
+}
+
+/**
+ * 받은 서명 정책의 verify 타이밍과 내장(포털) 값 가운데 필드마다 더 엄격한 쪽(팀장 결정 2026-11-09, D03 §5.6·§7.1 verify 행).
+ * 엄격 = 부재 증거를 더 오래·더 많이 모은다: minElapsedMs·lookups·maxMs 모두 큰 쪽. maxMs는 minElapsedMs보다 짧게 두지 않는다
+ * (그러면 not_committed가 성립할 수 없다). 조회 간격(intervalMs)은 정책에 필드가 없어 내장 값 그대로다. b가 없으면 a.
+ */
+export function stricterVerify(a: PortalConfig['verify'], b: Policy['verify'] | null | undefined): PortalConfig['verify'] {
+  if (!b) return a;
+  const minElapsedMs = Math.max(a.minElapsedMs, b.minElapsedMs);
+  return { minElapsedMs, lookups: Math.max(a.lookups, b.lookups), intervalMs: a.intervalMs, maxMs: Math.max(a.maxMs, b.maxMs ?? 0, minElapsedMs) };
+}
+
+/** 실행 하나의 포털 설정: 홈택스면 verify 타이밍만 받은 정책과 엄격한 쪽으로 합친 사본(fixture·정책 없음은 그대로). */
+export function runPortalConfig(portal: PortalConfig, policy: Policy | null): PortalConfig {
+  if (portal.kind !== 'hometax' || !policy) return portal;
+  return { ...portal, verify: stricterVerify(portal.verify, policy.verify) };
 }
 
 // PoC 상한(ADR-025 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
@@ -318,6 +336,8 @@ export class RateGuard {
 
 export interface RunPolicyOptions {
   profileId: string;
+  /** 신호 사전(없으면 포털 내장 사전). 제품 홈택스는 RunService가 받은 정책의 blockSignalsAdd를 더한 사전을 준다. */
+  signals?: SignalDict;
   /** 정지 요청이 있으면 RunEnd를 던진다(커밋 전만 부른다). */
   checkStop: () => void;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
@@ -365,7 +385,7 @@ export class RunPolicy implements RunnerPolicy {
     this.portal = portal;
     const base = new URL(portal.origin).hostname;
     this.watch = new SignalWatch(page, {
-      dict: SIGNAL_DICT[portal.kind],
+      dict: o.signals ?? SIGNAL_DICT[portal.kind],
       portalHost: (h) => h === base || h.endsWith(`.${base}`),
       onHit: (h) => this.onHit(h),
       onDialog: (d) => this.dialog(d),
