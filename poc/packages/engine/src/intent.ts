@@ -3,7 +3,7 @@
 // → 게이트웨이(net/egress) → 로컬 매핑. 결과는 셋뿐이다: route·refuse_advice·unknown.
 // - 판정만 한다. 실행·DB 쓰기·원장·저널이 없다. 금액·날짜·거래처는 main 로컬 파서가 뽑고, 카드에서 사람이 확인하기 전에는 아무것도 하지 않는다.
 // - fail-closed: 모델 경로가 없거나(게이트웨이 미설정) 마스킹·게이트웨이·검사·공급사가 실패하면 decide.unavailable.
-//   main은 그 코드로 확인 카드 없이 오프라인 파서로 간다. 판정이 불확실하면(매핑 unknown·사전 필터 강등) unknown이다.
+//   main은 그 코드로 확인 카드 없이 "연결 안 됨"과 [다시 시도]를 보인다(오프라인 해석 없음, 사용자 결정 2026-11-10). 판정이 불확실하면(매핑 unknown·사전 필터 강등) unknown이다.
 // - 마스킹 사전: 거래처 상호·대표자·이메일·사업자번호와 내 프로필 상호·대표자. 금액(AMT)도 가린다(needsAmounts 아님).
 // - 로그·저널에 문장·금액·거래처를 남기지 않는다(⑦). 결과 종류·via만 돌려준다.
 import { randomUUID } from 'node:crypto';
@@ -46,7 +46,7 @@ export interface IntentModel {
 }
 
 export interface IntentResolverOptions {
-  /** 모델 경로. null이면 모든 요청이 decide.unavailable(오프라인 대체) */
+  /** 모델 경로. null이면 모든 요청이 decide.unavailable(main은 연결 안 됨) */
   model: IntentModel | null;
   now?: () => number;
 }
@@ -138,7 +138,7 @@ export class IntentResolver {
 
 /**
  * 엔진 기본 경로(게이트웨이)로 IntentModel을 만든다. Egress에 게이트웨이 설정(금고 DPoP 서명기)이 없으면 null이다.
- * 그때 intent.resolve는 decide.unavailable이고 main은 오프라인 파서를 쓴다.
+ * 그때 intent.resolve는 decide.unavailable이고 main은 연결 안 됨을 보인다.
  */
 export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): IntentModel | null {
   if (!egress.gatewayGuard) return null;

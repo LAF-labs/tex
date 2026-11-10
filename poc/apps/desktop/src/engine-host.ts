@@ -3,7 +3,7 @@
 // - 게이트 포트(MessageChannelMain): 게이트 요청·닫힘과 InDoubt 증언 요청·철회(엔진 → main), LocalApproval·LocalAttestation(main → 엔진)만.
 //   answerGate()·answerAttest() 둘로만 쓴다.
 // - auth 포트(MessageChannelMain, 세 번째 전달 포트): 엔진 → 게이트웨이 요청 헤더(gateway-auth.ts). 엔진 init 포트 순서는 [중계, 게이트, auth]다.
-//   답하는 쪽은 setGatewayAuth로 붙인다. 붙기 전에는 account.signed_out으로 답한다(엔진은 오프라인으로 간다).
+//   답하는 쪽은 setGatewayAuth로 붙인다. 붙기 전에는 account.signed_out으로 답한다(엔진은 decide.unavailable, 대화는 연결 안 됨).
 // 렌더러 IPC 처리기는 answerGate·answerAttest를 부르지 않는다(tests/h01-guards.test.ts가 소스로 확인한다).
 import { createRequire } from 'node:module';
 import { EventEmitter } from 'node:events';

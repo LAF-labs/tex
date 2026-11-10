@@ -19,7 +19,8 @@ export const ONB_CHOICES = {
   'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
   auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
   delegation: ['agree', 'switch'],
-  model: ['agree', 'decline'],
+  // ② 모델 처리 동의는 필수다(약관과 같은 취급, 사용자 결정 2026-11-10 "오프라인 해석은 없다"). 거절 선택지는 없다.
+  model: ['agree'],
   telemetry: ['on', 'off'],
   tasks: ['submit', 'later'],
   counterparties: ['done', 'later'],
@@ -61,9 +62,10 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
   model: {
     kind: 'model',
     key: 'consent.model',
-    version: V,
+    // 문구가 바뀌어(거절 선택지 없음) 판을 올렸다. 동의 레코드에 이 판이 남는다.
+    version: 'f06-pre.2',
     title: '문장 해석에 쓰는 모델(국외 이전)',
-    lines: ['입력한 문장을 해석할 때 이름·번호를 가린 문장만 모델에 보내요. 비밀번호·보안카드 번호는 보내지 않아요.', '아래 곳에서 처리하고, 보관 기간은 표에 적힌 대로예요.', '동의하지 않아도 이 PC 안의 해석으로 쓸 수 있어요. 설정에서 언제든 바꿀 수 있어요.'],
+    lines: ['입력한 문장을 해석할 때 이름·번호를 가린 문장만 모델에 보내요. 비밀번호·보안카드 번호는 보내지 않아요.', '아래 곳에서 처리하고, 보관 기간은 표에 적힌 대로예요.', '대화는 모델로 해석해요. 동의해야 앱을 쓸 수 있어요.'],
     draft: DRAFT,
   },
   // ③ 텔레메트리(선택, 기본 꺼짐)
@@ -220,6 +222,8 @@ export interface OnbState {
   skipped: SkipItem[];
   /** 지나간 답(대화의 "나" 말풍선). 비밀·사업자번호 외 개인정보는 넣지 않는다. */
   log: Array<{ step: OnbStep; text: string }>;
+  /** ②를 다시 묻는 중이면 동의한 뒤 돌아갈 단계(모델 거절이 저장된 프로필, reaskModel). 아니면 null. */
+  resumeStep: OnbStep | null;
   /**
    * ①에서 금고가 돌려준 포털 아이디(비밀 아님, #42 계약). 이어 하기 저장에 넣어 요약에서 프로필에 쓴다(DB profiles.portal_login_id).
    * 렌더러로 가는 view와 대화 기록(log)에는 넣지 않는다.
@@ -239,12 +243,13 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (!strs(o.tasks) || !strs(o.skipped) || !(o.skipped as string[]).every((t) => Object.hasOwn(SKIP_LABEL, t))) return null;
   if (!Array.isArray(o.log) || !o.log.every((l) => typeof l === 'object' && l !== null && typeof (l as { text?: unknown }).text === 'string')) return null;
   if (typeof o.consents !== 'object' || o.consents === null || Array.isArray(o.consents)) return null;
+  if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
   return { ...base, ...structuredClone(picked) } as OnbState;
 }
 
-export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], portalLoginId: null });
+export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, portalLoginId: null });
 
 /** 끝난 온보딩이 저장할 프로필(DB profile.upsert에 넘긴다, 비밀 없음). */
 export interface OnbProfile {
@@ -311,7 +316,7 @@ export class OnboardingFlow {
   constructor(ports: OnboardingPorts, initial: OnbState | null = null, now: () => Date = () => new Date()) {
     this.ports = ports;
     this.now = now;
-    this.s = initial ? { ...initialOnbState(), ...structuredClone(initial) } : initialOnbState();
+    this.s = initial ? reaskModel({ ...initialOnbState(), ...structuredClone(initial) }) : initialOnbState();
   }
 
   get state(): OnbState {
@@ -519,9 +524,10 @@ export class OnboardingFlow {
       }
       case 'model': {
         const cfg = await this.ports.consentConfig();
-        await this.consent('model', a.choice === 'agree' ? 'agreed' : 'declined', cfg.processorsVersion);
-        this.say(a.choice === 'agree' ? '동의해요' : '모델 없이 쓸게요');
-        s.step = 'telemetry';
+        await this.consent('model', 'agreed', cfg.processorsVersion);
+        this.say('동의해요');
+        s.step = s.resumeStep ?? 'telemetry';
+        s.resumeStep = null;
         return;
       }
       case 'telemetry':
@@ -598,6 +604,16 @@ export class OnboardingFlow {
     s.check = await this.ports.checkBizNo(s.biz.bizNo).catch((): BizCheck => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }));
     s.step = 'biz-confirm';
   }
+}
+
+/**
+ * ②를 지났는데 모델 동의가 없는(거절이 저장된) 상태면 ②로 돌려 다시 묻는다(사용자 결정 2026-11-10). 동의하면 있던 단계(resumeStep)로 돌아간다.
+ * ②를 아직 지나지 않았으면 그대로 둔다(차례가 오면 묻는다).
+ */
+export function reaskModel(s: OnbState): OnbState {
+  const at = ONB_STEPS.indexOf(s.step);
+  if (at <= ONB_STEPS.indexOf('model') || s.consents.model?.choice === 'agreed') return s;
+  return { ...s, resumeStep: s.step, step: 'model', notice: null };
 }
 
 /** 건너뛴 항목 → 판의 "할 일"(08 §4). 사업자·인증은 내 사업장(D-03), 거래처는 거래처(D-02), 업무는 대화로 고친다. */

@@ -83,7 +83,8 @@ async function main() {
 
   // ②③
   check('① 동의 → 금고 등록(목업) → ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=agree]', 'model')) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
-  check('② [모델 없이 쓸게요] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=decline]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
+  check('② 모델 동의는 필수: 버튼은 [동의하고 계속] 하나(거절 선택지 없음), main도 거절 답을 받지 않는다(bad_request)', (await js<string[]>(`[...document.querySelector('[data-consent="consent.model"]').querySelectorAll('button')].map((b) => b.textContent)`)).join() === '동의하고 계속' && (await callErr('onboarding.reply', { step: 'model', choice: 'decline' })) === 'bad_request');
+  check('② [동의하고 계속] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=agree]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
 
   // O-04·O-05
   await reply('[data-onb=off]', 'tasks');
@@ -103,8 +104,8 @@ async function main() {
     const latest = (kind: string) => host.rpc('consent.latest', { profileId: biz.id, kind }) as Promise<{ choice: string; via: string; noticeVersion: string; processorsVersion: string | null } | null>;
     const [terms, deleg, model, tele, orphan] = await Promise.all([latest('terms'), latest('delegation'), latest('model'), latest('telemetry'), host.rpc('consent.latest', { profileId: null, kind: 'terms' })]);
     check(
-      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·위임은 금고 등록 사실 T-06·모델 거절은 처리자 표 판과 함께·사용 기록 끔)',
-      terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg?.via === 'T-06' && model?.choice === 'declined' && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
+      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·위임은 금고 등록 사실 T-06·모델 동의는 고지 판·처리자 표 판과 함께·사용 기록 끔)',
+      terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg?.via === 'T-06' && model?.choice === 'agreed' && model.noticeVersion === CONSENT_NOTICES.model.version && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
       { terms, deleg, model, tele, orphan },
     );
     const st = (await host.rpc('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null } | null;
