@@ -385,14 +385,14 @@ describe('H-01 실행(가짜 페이지, 금고 중계 위 Playwright)', () => {
     }
   });
 
-  it('기본 실행기는 IR(PR-D1): 패키지가 없으면 브라우저를 열기 전에 package.not_loaded, 제품 entry는 h01을 명시한다', async () => {
+  it('기본 실행기는 IR(PR-D1): 패키지가 없으면 브라우저를 열기 전에 package.not_loaded, 제품 entry는 홈택스만 ir·fixture는 h01(PR-D2)', async () => {
     let opened = 0;
     const def = new RunService({ db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: async () => (opened++, page!), postGate: () => {} });
     assert.throws(() => def.start({ runId: `run-${++n}`, counterpartyId: cpC, supply: 150_000, tax: 15_000, itemName: '경영 컨설팅' }), (e: Error & { code?: string }) => e.code === 'package.not_loaded');
     assert.equal(opened, 0);
     const entry = (await fs.readFile(path.join(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8')).match(/new RunService\(\{[\s\S]*?\}\)/g) ?? [];
     assert.equal(entry.length, 1);
-    assert.match(entry[0]!, /engine: 'h01'/);
+    assert.match(entry[0]!, /engine: ir \? 'ir' : 'h01'/);
   });
 
   it('irSource(PR-D2 패키지 공급): 시작할 때마다 부르고, 설치본 없음은 package.not_loaded, 검증 실패는 package.load_failed(로그에는 코드만), 둘 다 브라우저를 열지 않는다', () => {

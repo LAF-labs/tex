@@ -11,9 +11,21 @@ export function loadPkg(dir: string): PackageFiles {
   return { manifest: read(`${dir}/manifest.json`), playbook: read(`${dir}/playbook.json`), selectors: read(`${dir}/selectors.json`), strings: read(`${dir}/strings.ko.json`) };
 }
 
-export const h01 = (): PackageFiles => structuredClone(loadPkg('hometax.invoice.issue'));
+/**
+ * 시험 고정 판(2026-11-09): 제품 원본 판은 재게시마다 올라간다(scripts/h01-republish.mjs). 시험·샘플 묶음은 판 이름을 첫 게시 판(H-01 2.1.0, 조회 1.0.0)으로 고정하고 내용만 원본을 따른다.
+ * 원본 판 자체를 보는 시험은 loadPkg를 쓴다.
+ */
+export const TEST_VERSIONS: Readonly<Record<string, string>> = { 'hometax.invoice.issue': '2.1.0', 'hometax.invoice.lookup': '1.0.0', 'hometax.invoice.email_status': '1.0.0' };
+function pinned(f: PackageFiles): PackageFiles {
+  const v = TEST_VERSIONS[f.manifest.id];
+  if (v) f.manifest.version = f.playbook.version = v;
+  f.manifest.lookupsUsed = f.manifest.lookupsUsed.map((l) => ({ ...l, version: TEST_VERSIONS[l.id] ?? l.version }));
+  return f;
+}
+
+export const h01 = (): PackageFiles => pinned(structuredClone(loadPkg('hometax.invoice.issue')));
 export const lookups = (): Map<string, PackageFiles> =>
-  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, structuredClone(loadPkg(id))]));
+  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, pinned(structuredClone(loadPkg(id)))]));
 
 export function bundleOutcomes(): Map<string, BundleOutcomes> {
   return new Map(BundleCatalog.load().list().map((b) => [b.wireId, { outcomes: b.def.outcomes.map((o) => o.name), reserved: b.def.reservedOutcomes }]));

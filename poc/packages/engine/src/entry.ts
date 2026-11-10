@@ -27,6 +27,7 @@ import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
 import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
+import { installedIrSource } from './package-source.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
@@ -34,7 +35,7 @@ import { PC_FILE_COMMANDS } from './protocol.ts';
 import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
-import { gatewayIntentModel, IntentResolver } from './intent.ts';
+import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
@@ -134,7 +135,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   data = new DataService(db, new BizVerifier(egress), { vaultDir: paths.vault });
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
-  // H-01 패키지(PR-D2)는 받아 두기만 하고, 실행기는 아직 'h01'이다(게시와 시연 방식 정합 뒤 irSource로 바꾼다).
+  // H-01 패키지는 받아 둔 서명 설치본을 실행 시작마다 다시 검증해 IR로 돌린다(PR-D2).
   if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
@@ -142,10 +143,14 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
-    // 실행기는 아직 H01Runner다(PR-D 결정 (가), 2026-11-09): 제품 IR 패키지 공급(레지스트리 게시)과 시연·e2e 방식(ADR-039, dist는 fixture 거부)이
-    // 정해지기 전에 IR로 바꾸면 앱 H-01 실행이 모두 package.not_loaded가 된다. PR-D2가 이 줄을 IR로 바꾸고 H01Runner를 시험 전용으로 옮긴다.
+    // 실행기(PR-D2, 팀장 지시 2026-11-09): 홈택스는 레지스트리에서 받은 서명 H-01 패키지를 IR로 돌린다(설치본이 없으면 package.not_loaded).
+    // fixture 개발 포털(시연·e2e)은 H01Runner 그대로다. 제품 dist 로더는 fixture 패키지를 거부하므로(ADR-039) 시연 경로를 막지 않으려는 최소한이다.
+    const ir = portal.kind === 'hometax';
+    const runJudge = ir ? gatewayRunJudge(egress) : null;
     runs = new RunService({
-      db, data, ledgerKey, portal, engine: 'h01', page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
+      db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
+      ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
+      page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
       // fixture 개발 포털은 status 상한·kill만 따르고 정책은 보지 않는다(실제 포털 접속이 없다).

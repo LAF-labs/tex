@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.issue",
- "version": "2.1.0",
+ "version": "2.1.1",
  "kind": "playbook",
  "portal": "hometax",
  "title": "invoice.title",
@@ -31,12 +31,12 @@
  "lookupsUsed": [
   {
    "id": "hometax.invoice.lookup",
-   "version": "1.0.0",
+   "version": "1.1.0",
    "digest": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   {
    "id": "hometax.invoice.email_status",
-   "version": "1.0.0",
+   "version": "1.1.0",
    "digest": "0000000000000000000000000000000000000000000000000000000000000000"
   }
  ],

@@ -10,7 +10,7 @@
       "version": "1.3.0",
       "kind": "hotfix",
       "portal": "hometax",
-      "sxpDigest": "3f290abf8a0dff2418af2462eff9655f23207e2d6290f10e6f88cba529c7e381",
+      "sxpDigest": "d21a3f950dc635087c1ab467c2815c6660ffcc08d9aa98a1fbee19aa8f9948e7",
       "size": 926,
       "rolloutPercent": 100
     }
@@ -19,17 +19,17 @@
     {
       "keyId": "package-1",
       "alg": "ed25519",
-      "sig": "Te8lXPpuq5lSxfEgjfS8IX3RrF68jGLR4XHdxxqJ_uCexRVtGIb7nJWpS_qQZ4osglXSTuHWdK0yoNDyq-fhCA"
+      "sig": "Vh867JMwFwEJYEScZs54q6tmwBalxufw9Xo-FGdzlEQmySZGai6JU6JlK6NuLKuF15o6GoJw-0UJwQCJnYMaCw"
     },
     {
       "keyId": "package-2",
       "alg": "ed25519",
-      "sig": "rXYNfhAdfl5vJpvOsmIbXfUic-1IqqLEdTlMHYe1VZx4vcyKYC-SelzKmklzInmO2GUIcxo5Mx5FqkTsfw9WCA"
+      "sig": "IBQtyyt2kwrB_e-O3H2Uj_S8XmfUZqlODJ7IlXHdtBGsnTQchozJdqtTOVFVA63tJQw2moFhVrbDS11YarGQCg"
     }
   ],
   "timestamp": {
     "keyId": "timestamp-1",
     "alg": "ed25519",
-    "sig": "pVQ2cqf1xPEPuQg72AJdQlatdKnopFHSJ-hNtHTlQP9GaydfzBL40T1sP9Mgvcp00kawZODD0SsZ2MJNNOWdDg"
+    "sig": "QcwtTUiaQRjMbZuPcZC_blDKW5w1kwatsCgBAFY9_LF2BNu4QZttYn8Rrz1phWIXMhhUn2ikIneTuC_yLbVUDw"
   }
 }

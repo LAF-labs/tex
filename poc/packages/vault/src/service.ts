@@ -15,7 +15,7 @@ import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
 import { scanNpki, type NpkiFs, type NpkiRoot } from './npki-scan.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
-import { PdfSaver } from './pdf/save.ts';
+import { PdfSaver, sweepStagingDir } from './pdf/save.ts';
 import { Relay } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
 import { HumanSecretVault } from './keychain/human.ts';
@@ -465,6 +465,8 @@ export class Vault {
     if (profile.before.length) this.opts.log.event('vault.profile_dir_problem', { problems: profile.before.join(':'), reason: profile.reason?.join(':'), setAside: profile.setAside, ok: profile.check.ok });
     if (!profile.check.ok) throw new Error(`chrome profile not private: ${profile.check.problems.join(',')}`);
     await this.removeDumps(profileDir);
+    // 지난 Chrome이 받는 중에 죽었으면 그 중간 파일(받은 PDF 바이트)이 staging에 남는다(WIN-REALDEVICE §10.4). 띄우기 전에 쓴다.
+    await this.sweepStaging('launch');
     await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
     const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
@@ -496,6 +498,12 @@ export class Vault {
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  /** staging에서 금고가 쓴 PDF 말고 지운다(Chrome이 없을 때: 기동 전·종료 뒤). 개수만 남긴다. */
+  private async sweepStaging(when: 'launch' | 'shutdown'): Promise<void> {
+    const r = await sweepStagingDir(this.opts.paths.staging).catch(() => ({ removed: 0, left: 0 }));
+    if (r.removed || r.left) this.opts.log.event('vault.staging_swept', { removed: r.removed, left: r.left, when });
   }
 
   /** 전용 Chrome 크래시 덤프 삭제(N-04). 기동 전·종료 뒤. */
@@ -689,7 +697,11 @@ export class Vault {
     relay?.commitGuard?.shutdown();
     relay?.clearKnownSecrets();
     await chrome?.close();
-    if (chrome) await this.removeDumps(this.opts.paths.chromeProfile);
+    if (chrome) {
+      await this.removeDumps(this.opts.paths.chromeProfile);
+      // Chrome이 끝난 뒤라 잠금이 풀려 있다. 받는 중에 내린 다운로드의 중간 파일을 남기지 않는다.
+      await this.sweepStaging('shutdown');
+    }
     if (this.chrome === chrome) this.chrome = null;
   }
 }

@@ -16,9 +16,11 @@ import { GateTokens, wmaxMs } from '../core/token.ts';
 import type { RunStateName } from '../core/machine.ts';
 import type { PlaybookIR, Step } from '../core/types.ts';
 import { semanticViolations } from '../core/validate.ts';
+import { flatten } from '../core/cfg.ts';
 import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/verify.ts';
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
+import { IrLookupPort } from '../driver/lookup-ir.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
 import { PlaywrightScreenSource } from '../driver/screen.ts';
@@ -42,13 +44,20 @@ import type { RunPermit } from '../core/permit.ts';
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
   pkg: LoadedPackage;
-  /** verify.lookup.playbook → 조회 화면 정의(PopupLookupPort). */
-  lookupDefs: ReadonlyMap<string, LookupDef>;
+  /**
+   * verify.lookup.playbook → 서명 조회 패키지(IrLookupPort, 제품). 있으면 조회는 그 패키지 IR을 팝업에서 돌린다(팀장 결정 2026-11-09 (가)).
+   * 조회 셀렉터·열 이름이 서명 패키지에 있으니 실기기에서 틀리면 다시 게시해 고친다.
+   */
+  lookupPackages?: ReadonlyMap<string, LoadedPackage>;
+  /** verify.lookup.playbook → 조회 화면 정의(PopupLookupPort, 가짜 페이지 시험). lookupPackages가 있으면 쓰지 않는다. */
+  lookupDefs?: ReadonlyMap<string, LookupDef>;
   /** portal fixture 패키지일 때만(loader.fixtureOriginGrant). */
   fixtureGrant?: FixtureOriginGrant | null;
   /** decide 판정기(L0 → 모델). 없으면 decide 스텝은 decide.unavailable(핸드오프). */
   judge?: Pick<Judge, 'decide'>;
   runToken?: RunToken;
+  /** 실행마다 받는 모델 실행 토큰(제품: 게이트웨이 run 토큰). runToken보다 먼저 쓴다. */
+  runTokenFor?: (runId: string) => Promise<RunToken>;
   /**
    * fixture 패키지의 부재 판정 시간(가짜 페이지는 반영이 바로 된다, H01Runner의 fixturePortal.verify와 같은 값).
    * IR 스키마 하한(30초) 아래라 패키지에 넣지 않고, fixtureGrant가 유효할 때만(개발 조건 소스) 실행 사본에 넣는다. 제품 dist에서는 무시한다.
@@ -103,6 +112,26 @@ export interface IrRunResult {
   mailConfirmed?: boolean;
   /** 조율기 마지막 상태(골든 대조). */
   state: RunStateName;
+  /**
+   * 멈춘 스텝(성공 끝이 아닐 때): 스텝 id·종류·대상 셀렉터 키·하위 패키지 안이면 그 id. 실기기 디버깅용이다.
+   * 셀렉터 키와 스텝 id만 담는다(화면 문구·입력 값 없음, ⑦).
+   */
+  stoppedAt?: StoppedAt;
+}
+
+export interface StoppedAt {
+  stepId: string;
+  type: string;
+  target?: string;
+}
+
+/** 스텝 id → 종류·대상(target·value가 셀렉터 키인 wait). */
+export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | undefined {
+  if (!stepId) return undefined;
+  const s = flatten(ir.steps).info.get(stepId)?.step as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
+  if (!s) return { stepId, type: 'unknown' };
+  const target = typeof s.target === 'string' ? s.target : s.type === 'wait' && s.for === 'selector' && typeof s.value === 'string' ? s.value : undefined;
+  return { stepId, type: s.type, ...(target ? { target } : {}) };
 }
 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
@@ -277,7 +306,12 @@ export class IrRun {
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
-      lookup: new PopupLookupPort({ page, origin: i.portal.origin, defs: i.ir.lookupDefs, policy: enforcer, domains }),
+      lookup: i.ir.lookupPackages
+        ? new IrLookupPort({
+          page, packages: i.ir.lookupPackages, policy: enforcer, clock, fixtureGrant: i.ir.fixtureGrant ?? null,
+          events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+        })
+        : new PopupLookupPort({ page, origin: i.portal.origin, defs: i.ir.lookupDefs ?? new Map(), policy: enforcer, domains }),
       book, page: reader, clock, dict, strings: files.strings, scope,
       policy: () => ({ minElapsedMs: vpol.minElapsedMs, lookups: vpol.lookups, maxMs: vpol.maxMs }),
       intervals: { firstMs: vpol.intervalMs, capMs: vpol.intervalMs },
@@ -285,7 +319,7 @@ export class IrRun {
     const decide = i.ir.judge
       ? new DecideRunner({
         screen: new PlaywrightScreenSource({ page, reader, dict }), redactor: new Redactor({ runId: i.runId }), judge: i.ir.judge,
-        runToken: i.ir.runToken ?? (i.runId as RunToken), bundle: bundleInfoFrom(BundleCatalog.load()), journal: i.journal,
+        runToken: i.ir.runTokenFor ? () => i.ir.runTokenFor!(i.runId) : (i.ir.runToken ?? (i.runId as RunToken)), bundle: bundleInfoFrom(BundleCatalog.load()), journal: i.journal,
       })
       : null;
     const commit = new LedgerCommitPort({
@@ -400,10 +434,10 @@ export class IrRun {
       await this.wiring?.dispose().catch(() => {});
       await reader.release().catch(() => {});
     }
-    return this.result(out, scope.vars.get('approvalNo'));
+    return this.result(out, scope.vars.get('approvalNo'), ir);
   }
 
-  private result(out: RunOutcome, approvalNo: string | undefined): IrRunResult {
+  private result(out: RunOutcome, approvalNo: string | undefined, ir: PlaybookIR): IrRunResult {
     const halted = this.halted;
     let status = out.state === 'Aborted' ? abortedStatus(out.code) : (STATUS_OF[out.state] ?? 'failed');
     let code = out.code ?? undefined;
@@ -420,9 +454,11 @@ export class IrRun {
     // 정지 하향으로 쉬었거나(Paused → handoff) 확정 뒤 멈췄으면(CompletedWithIssues) 사유는 하향 코드다. InDoubt는 그 코드를 둔다.
     if (this.denied && (status === 'handoff' || status === 'completed_with_issues') && (!code || code === 'run.state_stop')) code = this.denied.code;
     if (status === 'completed_with_issues' && this.mail === false && !code) code = 'mail.not_confirmed';
+    const stoppedAt = status === 'success' ? undefined : stoppedAtOf(ir, out.at);
     return {
       status, state: out.state,
       ...(code ? { code } : {}),
+      ...(stoppedAt ? { stoppedAt } : {}),
       ...(approvalNo ? { approvalNo } : {}),
       ...(this.verified ? { mailConfirmed: this.mail ?? false } : {}),
     };
