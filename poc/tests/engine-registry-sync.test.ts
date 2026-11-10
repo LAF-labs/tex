@@ -425,7 +425,7 @@ describe('핀 키·main 통로', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
     assert.match(src, /REGISTRY_READ_QUERIES, \.\.\.REGISTRY_COMMANDS/);
     assert.match(src, /registry\.not_pinned/);
-    assert.match(src, /if \(REGISTRY_TRUST_PIN\) registry = new RegistrySync\(\{ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch\(egress\), store: settingsRegistryStore\(db\), packages: \{ ids: \[PRODUCT_PACKAGES\.h01\] \},/);
+    assert.match(src, /if \(REGISTRY_TRUST_PIN\) registry = new RegistrySync\(\{ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch\(egress\), store: settingsRegistryStore\(db\), packages: \{ ids: PRODUCT_PACKAGE_IDS \},/);
     assert.ok(!/fetch\(/.test(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/registry-sync.ts'), 'utf8').replace(/this\.o\.fetch!\(/g, '')), '동기화 모듈은 전역 fetch를 쓰지 않는다');
   });
 });

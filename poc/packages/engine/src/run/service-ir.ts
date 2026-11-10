@@ -37,7 +37,6 @@ import { RunController, type RunOutcome } from './controller.ts';
 import { bundleInfoFrom, DecideRunner } from './decide.ts';
 import { LedgerCommitPort } from './ledger-port.ts';
 import { BundleCatalog } from '@sax/model';
-import type { ReadbackKey } from '../gate.ts';
 import type { ArmRow } from '@sax/db';
 import type { RunPermit } from '../core/permit.ts';
 
@@ -90,8 +89,8 @@ export interface IrRunInput {
   db: Db;
   ledger: Ledger;
   gates: GateRepo;
-  /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. */
-  history: (rb: Record<ReadbackKey, string>) => GateHistory;
+  /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
+  history: (rb: Readonly<Record<string, string>>, card: string) => GateHistory | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
   phase: (phase: string, state: 'now' | 'done' | 'attention', code?: string) => void;
   postGate: (m: GatePortMessage) => void;
@@ -362,11 +361,13 @@ export class IrRun {
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
       },
       clock, gates: i.gates, tokens: new GateTokens(i.runId), ledgerStates,
-      card: () => {
-        const rb = readbackCard(scope);
+      card: (g) => {
+        const rb = readbackCard(scope, g.card);
         if (!rb) return null;
-        this.history = i.history(rb);
-        return { readback: rb, reserved: this.history.reserved };
+        const h = i.history(rb, g.card);
+        if (!h) return null;
+        this.history = h;
+        return { readback: rb, reserved: h.reserved };
       },
       preGate: async (g): Promise<ActResult> => {
         const safe = decide?.safeForGate() ?? { ok: true as const };

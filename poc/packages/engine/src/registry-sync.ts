@@ -332,8 +332,20 @@ export interface StoredPackage {
   minAppVersion?: string;
 }
 
-/** 제품이 받는 플레이북 id(엔진 entry). H-01 = 홈택스 전자세금계산서 발급(서명 전 원본 packages/engine/playbooks/hometax.invoice.issue). */
-export const PRODUCT_PACKAGES = { h01: 'hometax.invoice.issue' } as const;
+/**
+ * 제품이 받는 플레이북 id(엔진 entry, 서명 전 원본 packages/engine/playbooks/<id>). H-01 = 홈택스 전자세금계산서 발급,
+ * H-03·H-04·H-08·H-09 = 홈택스 민원증명(승인 카드 cert.confirm, 팀장 지시 2026-11-09). 조회 하위 패키지(hometax.invoice.lookup·email_status,
+ * 민원증명 공통 hometax.cert.issued_list)는 여기 넣지 않는다: 플레이북 manifest lookupsUsed를 따라 같이 받는다(인덱스에 게시되지 않은 id는 'unchanged').
+ */
+export const PRODUCT_PACKAGES = {
+  h01: 'hometax.invoice.issue',
+  h03: 'hometax.cert.biz_registration',
+  h04: 'hometax.cert.taxpayment',
+  h08: 'hometax.cert.vat_tax_base',
+  h09: 'hometax.cert.financial_statements',
+} as const;
+/** RegistrySync packages.ids(제품). */
+export const PRODUCT_PACKAGE_IDS: readonly string[] = Object.values(PRODUCT_PACKAGES);
 
 export interface PackageSupplyOptions {
   /** 받는 플레이북 id(예 hometax.invoice.issue). */

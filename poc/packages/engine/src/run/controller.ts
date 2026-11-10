@@ -20,7 +20,7 @@ import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudge
 import { readField } from '../core/readback.ts';
 import { savePdf, type PdfPort } from '../core/savepdf.ts';
 import { SECURITY_REJECTIONS } from '../core/token.ts';
-import { buildGateRequest, type GateField, type GateRequest } from '../gate.ts';
+import { buildGateRequest, GATE_CARDS, type GateField, type GateRequest } from '../gate.ts';
 
 /**
  * 조율기가 상태를 이미 바꾼 뒤 실행기를 멈추게 하는 코드. 재시도·onFail을 거치지 않는다.
@@ -599,12 +599,13 @@ export class RunController {
 
   private readonly gateStep: Handler<'gate'> = async (g) => {
     const x = this.primaryOf.get(g.id);
-    const card = x ? this.i.card(g) : null;
+    // 승인 카드 id가 앱 내장 표(GATE_CARDS)에 없으면 게이트를 열지 않는다(로더 LOADER-8이 먼저 거른다).
+    const card = x && GATE_CARDS.has(g.card) ? this.i.card(g) : null;
     if (!x || !card) return fail('gate.unavailable');
     // 진입 전(W 밖): 사전 안전 판정·기준선
     const pre = this.i.preGate ? await this.i.preGate(g) : { ok: true as const };
     if (!pre.ok) return fail(pre.code);
-    const req = buildGateRequest({ runId: this.i.runId, gateStepId: g.id, readback: card.readback, reserved: card.reserved, packageDigest: this.i.packageDigest, authorizes: g.authorizes, intentId: this.i.intentId, waitMs: g.waitMs ?? 600_000 });
+    const req = buildGateRequest({ runId: this.i.runId, gateStepId: g.id, card: g.card, readback: card.readback, reserved: card.reserved, packageDigest: this.i.packageDigest, authorizes: g.authorizes, intentId: this.i.intentId, waitMs: g.waitMs ?? 600_000 });
     // 입력 잠금(R-G6)을 먼저 건다. 걸리지 않으면 게이트를 열지 않는다.
     if (this.i.inputLock && !(await this.i.inputLock(true).catch(() => false))) return fail('gate.unavailable');
     this.preGateCp = this.lastCp ?? this.staticPreGate.get(g.id) ?? null;
