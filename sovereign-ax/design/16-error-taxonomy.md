@@ -68,6 +68,7 @@
 | `registry` | `key_revoked` | 폐기 목록에 있는 키의 서명(C-26, **보안 이벤트**) | — | 그 서명 무시 |
 | `portal` | `blocked` / `logged_out_by_other_session` / `captcha` / `mfa_pending` / `session_expired` | 포털 상태(`blocked`는 모델 판정 또는 결정적 차단 신호 사전, C-24) | `err.portal.*` | 중단+쿨다운 / 일시정지 / human / wait / checkpoint |
 | `portal` | `unexpected_page` / `extra_auth_repeat` / `unobservable` / `unknown_screen` | 기대 경로 밖 화면, 로그인 밖 반복 추가 인증(차단 신호 보고 제외), 화면 확인 불가로 게이트·커밋 전 정지, 기대 화면 미도착 누적(ADR-025) | `err.portal.*` | handoff / 보수 모드·쿨다운 |
+| `portal` | `login_type_mismatch` | 로그인 유형이 그 메뉴를 막음(홈택스 "해당 화면은 개인사업자는 이용할 수 없습니다." 알림: 납세증명서는 대표자 개인 로그인만, 캡처 2026-11-10). 아무것도 신청하지 않았다 | `err.portal.*` | 중단 + "대표자 개인 인증서로 다시 로그인" 안내 |
 | `policy` | `poc_irreversible_total` | PoC 누적 실발급 3건 도달(ADR-025) | `err.policy.poc_irreversible_total` | 시작 거부 |
 | `assert` | `issue_date_mismatch` | 포털 작성일자 ≠ 실행 시작 KST 날짜(ADR-027) | `err.assert.issue_date_mismatch` | 게이트 전 정지 |
 | `assert` | `original_mismatch` | 발급 취소에서 되읽은 당초분(공급받는자 사업자번호·합계·작성일자)이 원장 기록과 다르거나, 합계 ≤ 0이거나, 이미 수정분임(ADR-036 결정 3.5 4단계, D14 M3-8) | `err.assert.original_mismatch` | 게이트 전 정지, 아무것도 발급하지 않음(08 §11) |

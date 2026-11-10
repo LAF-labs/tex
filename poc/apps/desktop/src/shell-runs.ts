@@ -63,6 +63,8 @@ export const NOTE: Record<string, string> = {
   'checkpoint.expect_failed': UNKNOWN_SCREEN,
   'portal.unexpected_page': '홈택스가 예상하지 못한 화면으로 보내 멈췄어요. 전용 Chrome 창의 안내를 확인해 주세요. 아무것도 발급하지 않았어요.',
   'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
+  // 납세증명서(H-04)는 사업자 인증서 로그인이면 홈택스가 메뉴를 막는다(캡처 2026-11-10).
+  'portal.login_type_mismatch': '납세증명서는 사업자 인증서로 로그인하면 홈택스가 열어 주지 않아요. 대표자 개인 인증서로 다시 로그인해 주세요. 아무것도 발급하지 않았어요.',
   // 게이트 앞 readback 대조(D02 §8 s19d·s19f, D16 assert.*): 값은 문구에 넣지 않는다. 승인 카드를 열지 않았다.
   'assert.total_mismatch': '홈택스 화면의 공급가액과 세액을 더한 값이 합계와 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   'assert.input_mismatch': '홈택스 화면 값이 준비한 거래처 사업자번호·공급가액·세액·이메일과 달라 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',

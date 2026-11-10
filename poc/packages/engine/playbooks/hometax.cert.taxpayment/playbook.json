@@ -113,7 +113,30 @@
   {
    "id": "s10",
    "type": "goto",
-   "url": "https://hometax.go.kr/cert/taxpayment"
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300"
+  },
+  {
+   "id": "s10a",
+   "type": "wait",
+   "for": "idle",
+   "timeoutMs": 10000
+  },
+  {
+   "id": "s10b",
+   "type": "assert",
+   "cond": {
+    "not": {
+     "textMatches": {
+      "target": "hometax.alert.dialog",
+      "patternRef": "hometax.alert.bizBlocked"
+     }
+    }
+   },
+   "code": "portal.login_type_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
   },
   {
    "id": "s11",
@@ -122,7 +145,7 @@
    "expect": {
     "exists": "hometax.cert.taxpayment.form.root"
    },
-   "url": "https://hometax.go.kr/cert/taxpayment",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300",
    "sessionRequired": true,
    "reentry": "reload"
   },
@@ -263,9 +286,7 @@
    "lookup": {
     "playbook": "hometax.cert.issued_list",
     "match": {
-     "certDoc": "$readback.certDoc",
-     "certPurpose": "$readback.certPurpose",
-     "certSubmitTo": "$readback.certSubmitTo"
+     "certDoc": "$readback.certDoc"
     },
     "window": "today",
     "baseline": "pre_gate_snapshot",
@@ -274,7 +295,7 @@
      "lookups": 2
     },
     "bind": {
-     "approvalNo": "issueNo"
+     "approvalNo": "rcatNo"
     }
    },
    "on": {
@@ -345,7 +366,7 @@
  ],
  "postconditions": [
   {
-   "varSet": "issueNo"
+   "varSet": "rcatNo"
   },
   {
    "artifact": "pdf"

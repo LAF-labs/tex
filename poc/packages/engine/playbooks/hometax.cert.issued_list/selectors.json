@@ -31,25 +31,21 @@
    "commits": false,
    "lastVerified": "2026-11-09"
   },
-  "hometax.certlookup.period": {
+  "hometax.certlookup.week": {
    "candidates": [
     {
      "kind": "role",
-     "role": "combobox",
-     "name": "조회기간"
+     "role": "button",
+     "name": "1주일"
     }
    ],
-   "role": "combobox",
-   "namePattern": "^조회기간$",
+   "role": "button",
+   "namePattern": "^1주일$",
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,
    "lastVerified": "2026-11-09",
-   "inputType": "select",
-   "allowedConstants": [
-    "1일",
-    "1주일"
-   ]
+   "navigationOnly": true
   },
   "hometax.certlookup.searchKey": {
    "candidates": [
@@ -57,6 +53,10 @@
      "kind": "role",
      "role": "searchbox",
      "name": "민원명"
+    },
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_ibx_cvaKndNm"
     }
    ],
    "role": "searchbox",
@@ -72,11 +72,15 @@
     {
      "kind": "role",
      "role": "button",
-     "name": "조회하기"
+     "name": "조회"
+    },
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_btn_search"
     }
    ],
    "role": "button",
-   "namePattern": "^조회하기$",
+   "namePattern": "^조회$",
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,
@@ -87,12 +91,12 @@
    "candidates": [
     {
      "kind": "role",
-     "role": "table",
-     "name": "처리결과"
+     "role": "list",
+     "name": "민원신청 처리결과 목록"
     }
    ],
-   "role": "table",
-   "namePattern": "^처리결과$",
+   "role": "list",
+   "namePattern": "^민원신청 처리결과 목록$",
    "frame": "main",
    "landmark": "hometax.certlookup.root",
    "commits": false,

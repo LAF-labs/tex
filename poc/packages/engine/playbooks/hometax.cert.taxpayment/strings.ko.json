@@ -3,5 +3,6 @@
  "cert.confirm": "민원증명을 발급할까요?",
  "cert.doc.taxpayment": "^납세증명서(\\(국세완납증명\\))?$",
  "captcha.prompt": "그림의 문자를 입력해 주세요",
- "hometax.login.successMarker": "로그아웃"
+ "hometax.login.successMarker": "로그아웃",
+ "hometax.alert.bizBlocked": "개인사업자는 이용할 수 없습니다"
 }

@@ -143,7 +143,7 @@ const PROFILE = { bizNo: '1068114550', signMethod: 'cert' };
 /** 신청 양식에 포털이 미리 채워 보여 주는 값(fieldKey → 화면 문자열). */
 const PREFILLED: Record<string, string> = { supplierBizNo: '106-81-14550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '', certSubmitTo: '', rrnDisclosure: '', copies: '1' };
 
-function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[]; inputs?: Record<string, unknown> } = {}) {
+function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[]; inputs?: Record<string, unknown>; alert?: string } = {}) {
   const pkg = h04();
   const clock = new FakeClock();
   const page = new FakePage(clock, screenOf(pkg.selectors));
@@ -155,6 +155,9 @@ function h04Run(o: { screen?: Partial<Record<string, string>>; stuck?: string[];
     el.text = el.value;
     el.a11y = el.value;
   }
+  // 홈택스 알림창(메뉴 차단 등). 없으면 요소를 지운다(정상 화면에는 알림이 없다).
+  if (o.alert === undefined) page.els.delete('hometax.alert.dialog');
+  else page.els.get('hometax.alert.dialog')!.text = o.alert;
   const act = new SelectAct(page);
   for (const k of o.stuck ?? []) act.stuck.add(k);
   const scope = newScope({ inputs: o.inputs ?? INPUTS, profile: PROFILE, intentId: 'intent-1' });
@@ -184,7 +187,7 @@ describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → �
   it('용도·제출처를 고르고 주민번호 비공개로 두면 게이트에 닿고, 카드는 되읽은 7칸이다(요약 4칸 certDoc·certPurpose·certSubmitTo·rrnDisclosure 포함)', async () => {
     const r = h04Run();
     assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's20', code: null });
-    assert.deepEqual(r.events, ['s10', 's11', 's12', 's13', 's14', 's19', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
+    assert.deepEqual(r.events, ['s10', 's10a', 's10b', 's11', 's12', 's13', 's14', 's19', 's19a', 's19b', 's19c', 's19d', 's19f', 's20']);
     assert.deepEqual(r.card(), { supplierBizNo: '1068114550', applicantName: '주식회사 보내는곳', certDoc: '납세증명서(국세완납증명)', certPurpose: '대금수령', certSubmitTo: '금융기관', rrnDisclosure: '공개안함', copies: '1' });
     assert.ok(!r.act.log.some((l) => l.startsWith('click hometax.cert.taxpayment.form.applyButton')), '게이트 전에 신청하기를 누르지 않는다');
   });
@@ -213,6 +216,31 @@ describe('H-04 리플레이(가짜 화면): 양식 → readback → 대조 → �
     assert.notEqual(out.t, 'end');
     assert.ok('at' in out && ['s19a', 's19f'].includes(out.at as string), JSON.stringify(out));
     assert.equal(r.card(), 'none');
+  });
+});
+
+describe('H-04 리플레이: 로그인 유형(캡처 2026-11-10)', () => {
+  it('개인사업자(사업자 인증서) 로그인이면 메뉴 차단 알림에서 portal.login_type_mismatch로 멈추고 양식에 들어가지 않는다', async () => {
+    const r = h04Run({ alert: '레이어 팝업 레이어팝업시작 알림 해당 화면은 개인사업자는 이용할 수 없습니다. 레이어팝업끝' });
+    assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's10b', code: 'portal.login_type_mismatch' });
+    assert.deepEqual(r.events, ['s10', 's10a', 's10b:portal.login_type_mismatch']);
+    assert.ok(!r.act.log.some((l) => l.startsWith('select ')), '양식 칸을 건드리지 않는다');
+    assert.equal(r.card(), 'none');
+  });
+
+  it('다른 알림(차단 문구 아님)은 이 신호가 아니다: 양식 확인으로 넘어간다', async () => {
+    const r = h04Run({ alert: '알림 처리 중입니다.' });
+    assert.deepEqual(await r.it.run('s10'), { t: 'abort', at: 's20', code: null });
+  });
+
+  it('차단 신호 코드에는 데스크톱 안내 문구(개인 인증서로 다시 로그인)가 있다', async () => {
+    const { NOTE } = await import('../apps/desktop/src/shell-runs.ts');
+    assert.match(NOTE['portal.login_type_mismatch'] ?? '', /개인 인증서로 다시 로그인/);
+  });
+
+  it('메뉴 주소는 홈택스 민원증명 직접 주소(납세증명서 4315010300, 처리결과 4315050000)다', () => {
+    assert.match((step(h04(), 's10') as { url: string }).url, /tm3lIdx=4315010300$/);
+    assert.match((step(lookup(), 's0') as { url: string }).url, /tm2lIdx=4315050000&tm3lIdx=4315050000$/);
   });
 });
 
