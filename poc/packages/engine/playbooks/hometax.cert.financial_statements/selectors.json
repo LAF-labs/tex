@@ -1,0 +1,349 @@
+{
+ "portal": "hometax",
+ "commitEndpoints": [],
+ "knownEndpoints": [
+  {
+   "method": "GET",
+   "pathPattern": "^/websquare/.*$"
+  },
+  {
+   "method": "POST",
+   "pathPattern": "^/wqAction\\.do$"
+  }
+ ],
+ "entries": {
+  "hometax.page.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "main",
+     "name": "홈택스"
+    }
+   ],
+   "role": "main",
+   "namePattern": "^홈택스$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.nav.home": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "홈"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^홈$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "navigationOnly": true,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.login.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "로그인"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^로그인$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.login.simpleAuthButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "간편인증"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^간편인증$",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "로그인 시작 버튼, 커밋 아님"
+   },
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.captcha.image": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "img",
+     "name": "자동입력 방지 문자"
+    }
+   ],
+   "role": "img",
+   "namePattern": "^자동입력 방지 문자$",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.captcha.input": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "자동입력 방지 문자 입력"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^자동입력 방지 문자 입력$",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.captcha.submit": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "확인"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^확인$",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "캡차 확인, 로그인 구간"
+   },
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.menu.civil": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "증명·등록·신청"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^증명·등록·신청$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "navigationOnly": true,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.menu.issue": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "민원증명(발급)"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^민원증명\\(발급\\)$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "navigationOnly": true,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.menu.doc": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "표준재무제표증명"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^표준재무제표증명$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "navigationOnly": true,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "표준재무제표증명"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^표준재무제표증명$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.docName": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "민원명"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^민원명$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "certDoc",
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.applicantBizNo": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "사업자등록번호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^사업자등록번호$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "supplierBizNo",
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.applicantName": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "상호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^상호$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "supplierName",
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.purpose": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "사용 용도"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^사용 용도$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "certPurpose",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.submitTo": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "제출처"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^제출처$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "certSubmitTo",
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.rrnDisclosure": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "주민등록번호 공개 여부"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^주민등록번호 공개 여부$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "rrnDisclosure",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.receiveMethod": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "수령 방법"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^수령 방법$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "receiveMethod",
+   "allowedConstants": [
+    "인터넷 발급"
+   ],
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.fiscalYear": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "귀속연도"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^귀속연도$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "fiscalYear",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.form.issueButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "발급하기"
+    }
+   ],
+   "expect": {
+    "visible": true,
+    "enabled": true
+   },
+   "role": "button",
+   "namePattern": "^발급하기$",
+   "landmark": "hometax.cert.form.root",
+   "commits": true,
+   "commitEffect": "issue_document",
+   "frame": "main",
+   "lastVerified": "2026-11-09"
+  }
+ }
+}
