@@ -342,7 +342,18 @@ describe('셸 배선(소스 검사)', () => {
     assert.deepEqual(Object.keys(SHELL_METHODS['account.sendCode']), ['email', 'signup']);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.verify']), ['code']);
     assert.match(src, /'account\.sendCode': async \(p\) => \{\s*needGesture\(3_000\);/);
-    assert.match(src, /'account\.verify': async \(p\) => \{\s*needGesture\(3_000\);/);
+    // 6자리 확인은 클릭·Enter·Space 또는 메인 창 키 입력(숫자·붙여 넣기) 3초 안(0.1.5 실사용: 칸을 누르고 메일을 보는 사이 3초가 지난다). 다른 명령은 그대로 needGesture.
+    assert.match(src, /'account\.verify': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
+    assert.equal((src.match(/needTyping\(/g) ?? []).length, 1, 'account.verify 하나뿐');
+    assert.match(src, /if \(isTypingKey\(i\)\) typing\.note\(performance\.now\(\)\);/);
+    assert.match(src, /if \(isGestureKey\(i\)\) gesture\.note\(performance\.now\(\)\);/);
+  });
+  it('코드 화면: [확인] 버튼, 입력을 못 봐 거절되면 코드를 칸에 남기고 "[확인]을 눌러 주세요"', () => {
+    const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
+    assert.match(js, /primary\('확인', \(\) => !busy && verify\(draft\.code \?\? ''\), 'account-verify', busy\)/);
+    assert.match(js, /errNote\(err === 'gesture_required' \? 'account\.confirm_click' : err\)/);
+    assert.match(js, /'account\.confirm_click': '\[확인\]을 눌러 주세요'/);
+    assert.match(shell, /if \(method === 'account\.verify' && \(\(state\.account\?\.error && state\.account\.error !== 'gesture_required'\) \|\| state\.account\?\.step === 'set_password'\)\) l\.draft\.code = '';/);
   });
   it('비밀번호는 실제 입력 뒤 3초 안에만, 인자는 이메일·비밀번호 둘, 문자열로 다시 만들지 않고 계정 객체로만 넘긴다', async () => {
     const { SHELL_METHODS, USER_ACTION_METHODS } = await import('../apps/desktop/src/ipc.ts');

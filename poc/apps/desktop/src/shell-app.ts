@@ -23,7 +23,7 @@ import type { AppUpdaterLike } from './update-electron.ts';
 import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
-import { GestureClock, isGestureKey, RateWindow } from './gesture.ts';
+import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
@@ -350,17 +350,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   hardenWindow(win);
   // 사용자 동작 결속(ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력(mouseUp, 수식키 없는 Enter·Space) 시각.
   const gesture = new GestureClock();
+  // 코드 칸 입력(이메일 6자리 확인만): 실제 입력 + 메인 창의 아무 키 입력(숫자·붙여 넣기). 이것도 main이 직접 본 입력이다.
+  const typing = new GestureClock();
   wc.on('before-mouse-event', (_e, m) => {
-    if (m.type === 'mouseUp') gesture.note(performance.now());
+    if (m.type === 'mouseUp') {
+      gesture.note(performance.now());
+      typing.note(performance.now());
+    }
   });
   wc.on('before-input-event', (_e, i) => {
     if (isGestureKey(i)) gesture.note(performance.now());
+    if (isTypingKey(i)) typing.note(performance.now());
   });
   const prepareRate = new RateWindow(opts.preparePerMin ?? 3, 60_000);
   const openRate = new RateWindow(5, 60_000);
   /** 실제 입력이 ms 안에 없으면 gesture_required. */
   const needGesture = (ms: number) => {
     if (!gesture.within(performance.now(), ms)) throw new Error('gesture_required');
+  };
+  /** 코드 칸이 6자리가 차서 바로 확인할 때: 클릭·Enter·Space 또는 키 입력이 ms 안에 있어야 한다. */
+  const needTyping = (ms: number) => {
+    if (!typing.within(performance.now(), ms)) throw new Error('gesture_required');
   };
 
   const bar = new ApprovalBar(win, key, barBounds, { log });
@@ -960,7 +970,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return account.sendCode(String(p.email), p.signup === true);
     },
     'account.verify': async (p) => {
-      needGesture(3_000);
+      // 6자리가 차면 렌더러가 바로 부른다: 숫자 키·붙여 넣기도 main이 본 입력으로 친다(클릭은 3초 전일 수 있다). 메뉴 붙여 넣기는 [확인] 클릭으로.
+      needTyping(3_000);
       await accountInit();
       return account.verify(String(p.code));
     },

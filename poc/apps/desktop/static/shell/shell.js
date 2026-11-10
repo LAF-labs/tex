@@ -1167,7 +1167,8 @@ async function accountStep(method, params) {
       l.screen = 'code_email';
       state.account = { ...state.account, error: null };
     }
-    if (method === 'account.verify' && (state.account?.error || state.account?.step === 'set_password')) l.draft.code = '';
+    // 코드 오류면 칸을 비운다. 실제 입력을 못 봐 거절(gesture_required)된 것은 코드가 틀린 게 아니라 칸에 남기고 [확인]을 누르게 한다.
+    if (method === 'account.verify' && ((state.account?.error && state.account.error !== 'gesture_required') || state.account?.step === 'set_password')) l.draft.code = '';
   }
   if (state.account?.step === 'signed_in' && method === 'account.finishReset') {
     // 바꿈 끝 화면(§4 done)을 보이고 [계속]에서 닫는다

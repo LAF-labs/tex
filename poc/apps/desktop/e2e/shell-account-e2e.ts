@@ -44,6 +44,16 @@ async function press(sel: string) {
   const ok = await js<boolean>(`(() => { const b = document.querySelector(${JSON.stringify(sel)}); if (!b || b.disabled) return false; b.click(); return true; })()`);
   if (!ok) throw new Error(`no button ${sel}`);
 }
+/** 실제 키 입력(main이 before-input-event로 본다): 칸에 초점을 두고 글자마다 keyDown·char·keyUp. */
+async function typeKeys(sel: string, text: string) {
+  await js(`document.querySelector(${JSON.stringify(sel)}).focus()`);
+  for (const ch of text) {
+    S!.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: ch });
+    S!.win.webContents.sendInputEvent({ type: 'char', keyCode: ch });
+    S!.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: ch });
+    await sleep(40);
+  }
+}
 const type = (sel: string, v: string) => js(`(() => { const i = document.querySelector(${JSON.stringify(sel)}); i.value = ${JSON.stringify(v)}; i.dispatchEvent(new Event('input')); })()`);
 const screen = () => js<string | null>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen ?? null`);
 /** SAX_E2E_SHOTS=<폴더>면 화면마다 실제 창을 찍어 둔다(캔버스 v60과 눈으로 맞춰 보는 용도). */
@@ -117,15 +127,25 @@ async function main() {
   await type('.acct-code', '48');
   check('칸 여섯 개에 넣은 숫자', (await js<string>(`[...document.querySelectorAll('.acct-cell')].map((c) => c.textContent).join('')`)) === '48');
   await shot('a01-code');
-  await type('.acct-code', '000000');
-  check('틀린 코드 문구, 코드 화면 유지, 칸 비움', await until('wrong', async () => (await screen()) === 'code' && js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('코드가 맞지 않아요') === true && document.querySelector('.acct-code').value === ''`)));
+  await type('.acct-code', '');
+  // 0.1.5 실사용 재현: 칸을 누르고 메일을 보느라 3초가 지난 뒤 숫자를 친다. 숫자 키도 main이 본 입력이라 서버 확인까지 간다.
+  await sleep(3_200);
+  await typeKeys('.acct-code', '000000');
+  check('틀린 코드 문구, 코드 화면 유지, 칸 비움(클릭 3초 뒤 키로 친 6자리도 서버 확인까지 간다)', await until('wrong', async () => (await screen()) === 'code' && js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('코드가 맞지 않아요') === true && document.querySelector('.acct-code').value === ''`)));
   await press('[data-act=account-back]');
   check('[뒤로] → 이메일 코드로 로그인 화면', await until('code email', async () => (await screen()) === 'code_email' && (await loginStep()) === 'signed_out'));
   await shot('a01-code-email');
   await press('[data-act=account-send]');
   await until('code again', async () => (await screen()) === 'code');
+  // 메뉴 붙여 넣기처럼 main이 입력을 못 본 채 3초가 지나 6자리가 차면: 거절되지만 코드는 칸에 남고 [확인]을 누르면 된다
+  await sleep(3_200);
   await type('.acct-code', '123456');
-  check('6자리를 다 넣으면 바로 확인 → 등록 끝: 화면이 닫히고 계정 줄에 이메일', await until('signed in', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in' && document.querySelector('[data-account-email]').textContent === 'owner@gyeonbon-test.example'`)));
+  check(
+    '입력을 못 본 6자리 → "[확인]을 눌러 주세요", 코드는 칸에 남는다(서버로 가지 않음)',
+    await until('confirm click', async () => js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('[확인]을 눌러 주세요') === true && document.querySelector('.acct-code').value === '123456'`)),
+  );
+  await press('[data-act=account-verify]');
+  check('[확인] 클릭 → 확인 → 등록 끝: 화면이 닫히고 계정 줄에 이메일', await until('signed in', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in' && document.querySelector('[data-account-email]').textContent === 'owner@gyeonbon-test.example'`)));
   check('계정 호출 순서(비밀번호 → 코드 → 확인 → 코드 → 확인 → 목록 → AIK 고정 → 로그아웃)', JSON.stringify(acct.calls) === JSON.stringify(['password', 'code', 'verify', 'code', 'verify', 'list', 'aik', 'logout']), acct.calls);
   check(
     '계정 호출은 제품 클라이언트·제품 Egress 허용 목록을 지나 앞단에 닿았다(비밀번호 로그인 포함, #224 결함 재발 방지)',

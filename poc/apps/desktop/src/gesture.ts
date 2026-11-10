@@ -34,6 +34,15 @@ export class RateWindow {
   }
 }
 
+/**
+ * 코드 칸 입력으로 칠 키: 메인 창에서 main이 직접 본 아무 keyDown(숫자, ⌘V·Ctrl+V 붙여 넣기 포함).
+ * 이메일 6자리 확인(account.verify)만 쓴다. 칸이 6자리가 차면 바로 확인하므로 마지막 클릭이 3초 넘게 지났을 수 있어서다(0.1.5 실사용).
+ * 다른 명령의 실제 입력 규칙(isGestureKey)은 넓히지 않는다.
+ */
+export function isTypingKey(i: { type: string }): boolean {
+  return i.type === 'keyDown';
+}
+
 /** 실제 입력으로 칠 키: 수식키 없는 Enter·Space의 keyDown. */
 export function isGestureKey(i: { type: string; key: string; alt?: boolean; control?: boolean; meta?: boolean; shift?: boolean }): boolean {
   return i.type === 'keyDown' && (i.key === 'Enter' || i.key === ' ') && !i.alt && !i.control && !i.meta && !i.shift;

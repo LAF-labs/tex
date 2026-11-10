@@ -25,6 +25,8 @@ const ERR = {
   'account.password_too_long': '128자까지 쓸 수 있어요',
   'account.password_later': '지금은 비밀번호를 만들지 못했어요. 설정 > 계정에서 만들 수 있어요',
   gesture_required: '버튼을 다시 눌러 주세요',
+  // 코드 칸: 메뉴로 붙여 넣는 등 main이 입력을 보지 못해 확인하지 못했을 때(코드는 칸에 남는다)
+  'account.confirm_click': '[확인]을 눌러 주세요',
   pair_unavailable: '이 빌드에서는 아직 폰을 연결할 수 없어요',
   account_required: '먼저 로그인해 주세요',
   busy: '처리 중이에요. 잠시만 기다려 주세요',
@@ -290,14 +292,17 @@ export function loginScreen(ctx) {
     ];
   } else {
     // 코드 6자리(로그인·계정 만들기)
+    const verify = (code) => (/^\d{6}$/.test(code) ? ctx.verify(code) : ctx.fail('account.code_shape'));
     body = [
       back('뒤로', ctx.back),
       head('코드 6자리', [h('b', { 'data-acct-to': '' }, v.email), '로 보냈어요'], { id: 'acct-to' }),
       h(
         'div',
         { class: 'acct-stack' },
-        codeField(ctx, busy, (code) => ctx.verify(code)),
-        errNote(err),
+        codeField(ctx, busy, verify),
+        errNote(err === 'gesture_required' ? 'account.confirm_click' : err),
+        // [확인]: 6자리가 차면 바로 확인하지만, 메뉴 붙여 넣기처럼 main이 키 입력을 못 본 경우 누르면 된다(클릭이 실제 입력)
+        primary('확인', () => !busy && verify(draft.code ?? ''), 'account-verify', busy),
         codeFoot(v, ctx, busy, () => ctx.sendCode(v.email)),
       ),
     ];
