@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax/db';
-import { GATE_DENY_PRIORITY_MS, READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
+import { CERT_READBACK_KEYS, GATE_DENY_PRIORITY_MS, gateSelfCheck, READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
   type Handlers, type PdfPort, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type TokenDiscardTrigger, type VerifyResult,
@@ -44,7 +44,7 @@ const RB = Object.fromEntries(READBACK_KEYS.map((k) => [k, `값-${k}`])) as RunC
 
 const FORM_URL = 'https://hometax.go.kr/form';
 const CP: Step = { id: 's1', type: 'checkpoint', name: 'form', expect: { exists: 'f.root' }, url: FORM_URL };
-const GATE: Step = { id: 's20', type: 'gate', card: 'card.issue', authorizes: ['s21'], waitMs: 1000 };
+const GATE: Step = { id: 's20', type: 'gate', card: 'invoice.confirm', authorizes: ['s21'], waitMs: 1000 };
 const SUBMIT: Step = { id: 's21', type: 'submit', target: 'f.issue', intent: '$intent.id', verify: 'sv', timeoutMs: 100 };
 /** 주 비가역 s21의 verify. 판정은 mk의 verifyStep(기본 committed). not_committed는 게이트 앞으로(V-03f). */
 const SV: Step = { id: 'sv', type: 'verify', lookup: { playbook: 'hometax.invoice.lookup', match: { supplyAmount: '$readback.supplyAmount' }, window: 'issueDate', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60_000, lookups: 2 }, bind: { approvalNo: 'approvalNo' } }, on: { committed: 's22', not_committed: 's1', unknown: 'handoff' } };
@@ -95,6 +95,8 @@ let dbn = 0;
 
 interface Opts {
   els?: FEl[];
+  /** 게이트 카드 덮기(없으면 H-01 13칸 RB). */
+  card?: RunControllerInput['card'];
   verify?: (x: string) => Promise<VerifyResult>;
   /** null이면 verify 스텝 판정 없음(unhandled). 없으면 committed. */
   verifyStep?: RunControllerInput['verifyStep'] | null;
@@ -151,7 +153,7 @@ function mk(steps: Step[], o: Opts = {}) {
     runId: 'run-1', intentId: 'intent-1', packageDigest: 'd'.repeat(64), ir: ir(steps), handlers: { ...BASIC_HANDLERS, ...o.handlers } as Handlers, env, interp: POL, clock, timers, gates, tokens,
     beforeStep: o.beforeStep ? (s) => o.beforeStep!(s, c) : undefined,
     ledgerStates: () => st.ledger, inDoubtStep: () => st.inDoubt, allowed: () => st.allowed,
-    card: () => ({ readback: RB, reserved: [] }), wmaxMs: () => 90_000, commitWindowMs: 600_000,
+    card: o.card ?? (() => ({ readback: RB, reserved: [] })), wmaxMs: () => 90_000, commitWindowMs: 600_000,
     gate: { publish: (r) => rec.published.push(r), closed: (id, why) => rec.closed.push([id, why]) },
     human: {
       request: (r) => rec.human.push(r),
@@ -347,6 +349,29 @@ describe('게이트(D03 §2 WaitingGate, §3 R-G6·R-G8)', () => {
     const r = await h.c.start();
     assert.deepEqual([r.state, r.code], ['HandedOff', 'gate.unavailable']);
     assert.deepEqual(h.rec.published, []);
+  });
+  it('승인 카드 id별 게이트 요청(팀장 지시 2026-11-09): cert.confirm이면 docType cert·민원증명 4칸, main 자기 일치 확인을 지난다', async () => {
+    const CERT_RB = { certDoc: '납세증명서', certPurpose: '대금수령', certSubmitTo: '관공서', rrnDisclosure: '공개 안 함' };
+    const seen: string[] = [];
+    const h = mk([CP, { ...GATE, card: 'cert.confirm' } as Step, SUBMIT, SV, END], { card: (g) => (seen.push(g.card), { readback: CERT_RB, reserved: [] }) });
+    const p = h.c.start();
+    await h.atGate();
+    const req = h.gate();
+    assert.deepEqual(seen, ['cert.confirm']);
+    assert.equal(req.docType, 'cert');
+    assert.deepEqual(req.fields.map((f) => f.fieldKey), [...CERT_READBACK_KEYS]);
+    assert.equal(gateSelfCheck(req), null);
+    assert.equal(gateSelfCheck({ ...req, docType: 'H-01' }), 'field_key', 'H-01로 바꾸면 앞 13칸이 아니라 거부');
+    h.deny();
+    assert.equal((await p).state, 'Aborted');
+  });
+  it('앱 내장 표(GATE_CARDS)에 없는 승인 카드는 카드를 만들지 않고 게이트를 열지 않는다(gate.unavailable, 발급 0)', async () => {
+    let asked = 0;
+    const h = mk([CP, { ...GATE, card: 'card.issue' } as Step, SUBMIT, SV, END], { card: () => (asked++, { readback: RB, reserved: [] }) });
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code, asked], ['HandedOff', 'gate.unavailable', 0]);
+    assert.deepEqual(h.rec.published, []);
+    assert.deepEqual(h.rec.commit, []);
   });
 });
 

@@ -4,7 +4,7 @@ import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type Db, type Profi
 import type { EventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
-import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval } from './gate.ts';
+import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval, type ReadbackKey } from './gate.ts';
 import { businessKey, canonicalEmail, H01, packageDigest, type Phase } from './h01/playbook.ts';
 import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
@@ -345,11 +345,14 @@ export class RunService extends EventEmitter {
       ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
       inputs: { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) },
       db: this.d.db, ledger: this.ledger, gates: this.gates,
-      history: (rb) => {
+      history: (rb, card) => {
+        // 이 실행기의 입력·원장 행 재료는 세금계산서(H-01)뿐이다. 다른 카드(민원증명 cert.confirm 등)는 게이트를 열지 않는다(gate.unavailable).
+        if (card !== 'invoice.confirm') return null;
+        const h01 = rb as Readonly<Record<ReadbackKey, string>>;
         const history = {
-          cpBizNoHmac: this.hmac('bizno', rb.counterpartBizNo),
-          recipientEmailHmac: rb.counterpartEmail ? this.hmac('email', canonicalEmail(rb.counterpartEmail)) : null,
-          businessKey: businessKey(rb),
+          cpBizNoHmac: this.hmac('bizno', h01.counterpartBizNo),
+          recipientEmailHmac: h01.counterpartEmail ? this.hmac('email', canonicalEmail(h01.counterpartEmail)) : null,
+          businessKey: businessKey(h01),
         };
         const h = this.ledger.history(history);
         const reserved: GateField[] = [{ fieldKey: '$first.bizNo', value: String(h.firstBizNo) }, { fieldKey: '$first.email', value: String(h.firstEmail) }];
