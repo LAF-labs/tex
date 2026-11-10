@@ -244,10 +244,10 @@ describe('동의 화면 4종', () => {
     assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = saved\.step !== 'done';/);
     assert.ok(body.indexOf('onbStore.load') < body.indexOf('!business'), '저장을 먼저 본다');
     // 저장은 엔진 명령으로만(앱 폴더 JSON에 쓰지 않는다). 목업은 바깥 일에만.
-    assert.match(src, /const onbMock = new MockOnboardingPorts\(\{ saveProfile: async \(\) => \{\} \}\);/);
+    assert.doesNotMatch(src, /MockOnboardingPorts/, '제품 셸은 견본 바깥 일을 만들지 않는다(시연 연결 ShellDev.sample만)');
     assert.match(src, /const onbPorts = onboardingPorts\(onbExternal, onbStore, refresh\);/);
     // 제품 공동인증서 목록은 금고 npki.list → 샌드박스 certInfo(npki-certs.ts). 목업 목록은 fixture만.
-    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? onbMock/);
+    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? sample!\.onboarding\(\)/);
     assert.match(src, /findCerts: \(\) => listNpkiCerts\(\(m, p\) => host\.control\(m, p\), \(der\) => certInfoInSandbox\(der\)/);
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });

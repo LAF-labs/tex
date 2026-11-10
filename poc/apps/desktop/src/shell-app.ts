@@ -12,9 +12,8 @@ import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClie
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
-import { buildBoard, type Board, type IssuedInvoice } from './board.ts';
-import { OnboardingFlow, onboardingTodos } from './onboarding.ts';
-import { MOCK_CP_CERT, MockOnboardingPorts } from './onboarding-mock.ts';
+import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
+import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
@@ -32,7 +31,7 @@ import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { ADVICE_TEXT, engineIntentResolver, routed, type IntentResolver } from './intent-route.ts';
 import { offlineAdviceMentioned } from './advice-words.ts';
-import { g24Candidates, interpret, mockBundle, MOCK_SETTINGS, MockStore, parseRegex, PROFILES, QUICK, seedTimeline, sentFromGateway, type Counterparty, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-mock.ts';
+import { emptyDocStore, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
@@ -190,13 +189,28 @@ export interface ShellDev {
   startFixture(opts: { headful?: boolean }): Promise<FixtureMode>;
   startDemoSeed: typeof startDemoSeed;
   mergeParsed: typeof mergeParsed;
+  /** 견본 데이터(시연·e2e만, shell-mock.ts·onboarding-mock.ts). 제품은 이 값을 갖지 않는다(ADR-035 W-7). */
+  sample: ShellSample;
+}
+
+/** 시연 견본: 견본 서류 저장소·사업장·대화·빠른 실행·꾸러미·카드·정부24 후보·온보딩 바깥 일·거래처 등록증. */
+export interface ShellSample {
+  store(): DocStore;
+  profiles: Record<Profile['kind'], Profile>;
+  timeline(): unknown[];
+  quick: typeof QUICK;
+  bundle(today: string): BoardInput['bundle'];
+  settings: { reminderDay: number; cardFetchedOn: string | null };
+  g24Candidates(doc: G24Doc, startedAt: number): Array<{ id: string; name: string; size: string; at: string }>;
+  onboarding(): OnboardingExternal;
+  cpCert: BizFields;
 }
 
 export interface Shell {
   win: BrowserWindow;
   bar: ApprovalBar;
   runs: ShellRuns;
-  store: MockStore;
+  store: DocStore;
   host: EngineHost;
   /** fixture 모드면 가짜 페이지·임시 앱 폴더. */
   fixture: FixtureMode | null;
@@ -236,9 +250,8 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
-  const store = new MockStore();
-  // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다.
-  if (opts.engine) store.docs.length = 0;
+  // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다. 견본 저장소는 시연 연결로만 온다.
+  const store: DocStore = opts.engine ? emptyDocStore() : opts.dev!.sample.store();
   // 제품 진입점은 엔진 모드만 있다. fixture 모드는 개발 연결(dev)이 있을 때만 띄운다.
   if (!opts.engine && !opts.dev) throw new Error('shell.no_portal');
   const fixture = opts.engine ? null : await opts.dev!.startFixture({ headful: opts.headful });
@@ -253,10 +266,12 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   }
 }
 
-function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: MockStore, made: { host?: EngineHost }): Shell {
+function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
   // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
   const demo = fixture ? (opts.demoModel ?? null) : null;
   const dev = fixture ? opts.dev! : null;
+  /** 견본 데이터는 fixture(시연·e2e)에서만 있다. 제품은 null. */
+  const sample = dev?.sample ?? null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion() });
@@ -277,7 +292,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let seed: DemoSeed | null = null;
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
-    fixture ? { business: business ?? PROFILES.business, personal: PROFILES.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
+    sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
@@ -352,7 +367,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const total = new Map((seed?.history ?? []).filter((x) => x.approvalNo).map((x) => [`d-${x.id}`, x.total]));
     return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
-  /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 목업 어댑터(shell-mock mockBundle·MOCK_SETTINGS). */
+  /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 아직 견본뿐이라 시연(sample)에서만 칸을 둔다. */
   // 문서함을 읽지 못하면 판을 만들지 않는다(보관함 서류가 빠진 판으로 온전한 판을 덮지 않게). 지난 판이 그대로 남고,
   // boardDay를 비워 두어 날짜 타이머가 1분 뒤 다시 계산한다.
   let boardDay = '';
@@ -365,14 +380,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     boardDay = today;
     return buildBoard({
       today,
-      reminderDay: MOCK_SETTINGS.reminderDay,
+      reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
       issued: issuedInvoices(),
       runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       // 세무사 꾸러미(D-05)·사업용 카드(D-04)는 아직 목업 어댑터다. 제품은 칸을 두지 않는다.
-      bundle: fixture ? mockBundle(today) : null,
-      cardFetchedOn: fixture ? MOCK_SETTINGS.cardFetchedOn : null,
-      cardEnabled: !!fixture,
+      bundle: sample ? sample.bundle(today) : null,
+      cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
+      cardEnabled: !!sample,
       setup: onboardingTodos(onb?.state ?? null),
     });
   };
@@ -612,14 +627,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     void updater?.check();
   };
   // 온보딩(08 §4, M4-2). 저장(동의 기록·이어 하기·프로필·포털 아이디)은 엔진 main 전용 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53).
-  // 바깥 일: 등록증 읽기(bizcert-read.ts, M4-3)·NPKI(npki-certs.ts, #93)는 제품 어댑터다. 진위확인·금고 등록 창·처리자 표는 아직 목업(onboarding-mock.ts): #65·금고 T-06.
+  // 바깥 일: 등록증 읽기(bizcert-read.ts, M4-3)·NPKI(npki-certs.ts, #93)는 제품 어댑터다. 진위확인(#65)·금고 등록 창(T-06)은 아직 없어 정직한 실패로 둔다.
+  // 처리자 표는 앱 내장 판(CONSENT_CONFIG). 시연·e2e(fixture)는 견본 바깥 일(ShellDev.sample.onboarding)을 쓴다.
   let onb: OnboardingFlow | null = null;
   /** 이번 기동에 온보딩 대화를 보일지. 지난 기동에 끝낸 온보딩은 불러와 두되(동의·할 일) 대화로 다시 그리지 않는다. */
   let onbShow = true;
   const onbStore = new EngineOnboardingStore((m, p) => host.rpc(m, p));
   /** M4-2 목업 때의 이어 하기 파일. DB에 행이 없으면 한 번 옮기고 지운다. */
   const legacyOnbFile = path.join(appPaths(root ?? defaultAppRoot()).userData, 'onboarding-state.json');
-  const onbMock = new MockOnboardingPorts({ saveProfile: async () => {} });
   // 공동인증서 목록: 제품은 금고 npki.list(이 PC의 NPKI 폴더 열거) → docparse 샌드박스 certInfo → 표시 행(npki-certs.ts).
   // 시연·e2e(fixture)는 이 PC를 훑지 않고 목업 목록을 쓴다.
   // 사업자등록증 읽기(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 후보. 온보딩 O-02와 거래처 O-05가 같은 길을 쓴다.
@@ -631,7 +646,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log: (n, d) => log.event(n, d),
   };
   const onbExternal: OnboardingExternal = fixture
-    ? onbMock
+    ? sample!.onboarding()
     : {
         // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
         recognizeBizCert: () => readBizCert(bizCertPorts),
@@ -639,7 +654,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         checkBizNo: async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }),
         // 금고 등록 창(T-06)이 main에 아직 없다. 견본 등록 대신 "지금은 등록할 수 없음"으로 끝내 다른 인증으로 바꾸게 한다.
         registerSecrets: async () => ({ ok: false, reason: 'unavailable' }),
-        consentConfig: () => onbMock.consentConfig(),
+        consentConfig: async () => structuredClone(CONSENT_CONFIG),
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
@@ -647,7 +662,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const cpBook = new CounterpartyBook(
     (m, p) => host.rpc(m, p),
     fixture
-      ? async () => ({ ...MOCK_CP_CERT })
+      ? async () => ({ ...sample!.cpCert })
       : async () => {
           let picked = false;
           const pick = async () => {
@@ -747,9 +762,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       counterparties: cps,
       docs: await listDocs(),
       // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
-      timeline: fixture ? seedTimeline() : [],
-      quick: fixture ? QUICK : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
-      sample: !!fixture,
+      timeline: sample ? sample.timeline() : [],
+      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
+      sample: !!sample,
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
       // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
@@ -892,7 +907,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return cps;
     },
     // 정부24 후보 파일은 아직 견본이다(다운로드 폴더를 읽지 않는다). 제품은 후보를 보이지 않는다.
-    'g24.candidates': (p) => (fixture ? g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),
+    'g24.candidates': (p) => (sample ? sample.g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).

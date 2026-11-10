@@ -105,6 +105,18 @@ export interface ConsentConfig {
   processors: ModelProcessor[];
 }
 
+/**
+ * ② 처리자 표(앱 내장 판). 서명된 운영 설정으로 받게 되면 바뀐다. 모델 상류가 OpenRouter라 공급사 목록이 바뀔 수 있어
+ * 렌더러·상태 기계에 고정하지 않는다(팀장 조건 (c)). 시연·시험은 onboarding-mock.ts의 MOCK_CONSENT_CONFIG(같은 표, 다른 판)를 쓴다.
+ */
+export const CONSENT_CONFIG: ConsentConfig = {
+  processorsVersion: '2026-11-05',
+  processors: [
+    { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음(설정 확인 전 30일)' },
+    { name: '모델 공급사(라우팅 대상)', role: '문장 해석', country: '미국·EU', retention: 'ZDR 승인 전 30일' },
+  ],
+};
+
 /** 앱이 남기는 동의 레코드(②③④). ①은 금고가 만든다(금고 ConsentRecord). */
 export interface AppConsentRecord {
   v: 1;

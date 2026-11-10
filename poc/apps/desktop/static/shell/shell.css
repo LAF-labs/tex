@@ -109,6 +109,8 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 .bar-slot { flex: none; height: 0; }
 body.bar-active .bar-slot { height: calc(var(--l-bar-h) + var(--l-gap)); }
 body.bar-active .quick-zone { display: none; }
+/* 작은 화면(1366×768: 콘텐츠 689)에서도 카드 자리와 입력창이 함께 보이게, 카드가 떠 있는 동안 이번 달 판은 줄어든다(안에서 스크롤). */
+body.bar-active .sx-board { flex: 0 1 auto; min-height: 0; }
 .composer-zone { flex: none; padding-bottom: 16px; }
 /* 입력창은 제자리(아래 여백 16)에 두고 예약 높이 안에서 위로만 늘어난다. */
 body.bar-active .composer-zone { height: var(--l-composer-reserve); box-sizing: border-box; display: flex; flex-direction: column; justify-content: flex-end; }

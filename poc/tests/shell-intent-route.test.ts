@@ -65,7 +65,7 @@ describe('작업 → 화면 해석(인자는 로컬 파서 그대로)', () => {
     for (const bad of ['세금신고 대행', '절세', '기장대행', '세무대리', '환급 보장', '대신 처리']) assert.ok(!all.includes(bad), bad);
   });
   it('오프라인(정규식) 안내 문구도 금지 표현이 없고, 제품 화면에 "데모"라고 하지 않는다', () => {
-    const src = fs.readFileSync(new URL('../apps/desktop/src/shell-mock.ts', import.meta.url), 'utf8');
+    const src = fs.readFileSync(new URL('../apps/desktop/src/shell-model.ts', import.meta.url), 'utf8');
     const says = [...src.matchAll(/kind: 'say', text: '([^']+)'/g)].map((m) => m[1]!);
     assert.ok(says.length >= 4, String(says.length));
     for (const t of says) {

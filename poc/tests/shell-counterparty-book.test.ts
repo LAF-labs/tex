@@ -154,7 +154,7 @@ describe('셸 배선(소스 검사)', () => {
     assert.match(src, /'counterparty\.save': async \(p\) => \{\s*const saved = await cpBook\.save\(p\);/);
     assert.doesNotMatch(src, /saveCounterparty/);
     assert.match(src, /readBizCert\(\{ \.\.\.bizCertPorts, pick \}\)\) \?\? \(picked \? 'unreadable' : null\)/);
-    assert.match(src, /\? async \(\) => \(\{ \.\.\.MOCK_CP_CERT \}\)/);
+    assert.match(src, /\? async \(\) => \(\{ \.\.\.sample!\.cpCert \}\)/);
     assert.match(src, /if \(fixture\) delete fixture\.itemHints\[saved\.bizNo\];\s*try \{\s*await cpBook\.setFirstItem\(saved\.id, p\.item\);/);
     assert.match(src, /host\.rpc\('counterparty\.getItems', \{ id: c\.id \}\)/);
   });

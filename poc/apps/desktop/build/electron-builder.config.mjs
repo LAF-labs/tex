@@ -58,7 +58,7 @@ export const EXCLUDE = [
   '!**/{LICENSE,LICENSE.*,license,CHANGELOG*,README*}',
   // pdfjs의 node 캔버스(@napi-rs/canvas)는 docparse가 렌더러 샌드박스에서 돌아 쓰지 않는다(D11 §4 프로세스 행)
   '!node_modules/@napi-rs/canvas*/**',
-  // better-sqlite3 미리 빌드: Windows x64만
+  // better-sqlite3 미리 빌드: 대상 OS·CPU 것만(아래 makeConfig가 대상에 맞춰 바꾼다. 기본 Windows x64)
   '!node_modules/better-sqlite3-multiple-ciphers/prebuilds/!(win32-x64.node)',
   '!node_modules/better-sqlite3-multiple-ciphers/{deps,src}/**',
   // 이 설정 폴더 자신(pnpm deploy가 스테이지로 복사한다)
@@ -75,9 +75,11 @@ export const EXCLUDE = [
  * @param {string} o.outDir 산출물 폴더
  * @param {ReturnType<typeof signingFrom>} o.signing
  * @param {string | null} o.icon icon.ico 경로(없으면 Electron 기본 아이콘)
+ * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS arm64는 미서명 .dmg(사용자 시험용)
  */
-export function makeConfig({ identity, version, buildDir, outDir, signing, icon }) {
+export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpu: 'x64' } }) {
   const signed = signing.mode === 'azure';
+  const prebuild = `${target.os}-${target.cpu}.node`;
   return {
     appId: identity.appId,
     productName: identity.productName,
@@ -88,7 +90,7 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon 
     // (app-builder-lib getWindowsInstallationDirName: oneClick·perMachine 아님 → sanitizedName). 예전 'sovereign-ax'면
     // %LOCALAPPDATA%\Programs\sovereign-ax에 깔려 앱이 "예상 밖 설치 위치" 배지를 띄웠다(Windows 실기기 #166).
     extraMetadata: { name: identity.installDirName, productName: identity.productName, version, main: identity.entry, description: identity.description, author: identity.companyName },
-    files: ['**/*', ...EXCLUDE],
+    files: ['**/*', ...EXCLUDE.map((x) => x.replace('!(win32-x64.node)', `!(${prebuild})`))],
     asar: true,
     // .node는 asar 안에서 dlopen할 수 없다
     asarUnpack: ['**/*.node'],
@@ -107,6 +109,15 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon 
       onlyLoadAppFromAsar: true,
       loadBrowserProcessSpecificV8Snapshot: false,
       grantFileProtocolExtraPrivileges: false,
+    },
+    // macOS(arm64) 시험 빌드: 서명·공증 없음. 받은 .dmg는 격리 속성 때문에 처음 열 때 [열기]를 한 번 더 눌러야 한다.
+    mac: {
+      target: [{ target: 'dmg', arch: ['arm64'] }],
+      identity: null,
+      hardenedRuntime: false,
+      gatekeeperAssess: false,
+      category: 'public.app-category.business',
+      artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,
     },
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],

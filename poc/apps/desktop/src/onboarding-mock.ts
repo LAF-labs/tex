@@ -4,6 +4,7 @@
 // - consentConfig: 설정 데이터(모델 상류 공급사 표)
 // recordConsent·saveProfile·save(저장)는 셸에서 쓰지 않는다. 엔진 명령으로 DB에 남긴다(onboarding-store.ts). 여기 것은 상태 기계 시험용이다.
 import { dayOffset } from './shell-mock.ts';
+import { CONSENT_CONFIG } from './onboarding.ts';
 import type { AppConsentRecord, BizFields, ConsentConfig, OnbProfile, OnbState, OnboardingPorts, StoreBindRequest, VaultConsentRecord } from './onboarding.ts';
 
 /** 시연 등록증(fixture 가짜 홈택스의 공급자와 같은 값이어야 발급 시연이 이어진다, fixture-mode DEMO_PROFILE). */
@@ -15,13 +16,7 @@ export const MOCK_CP_CERT: BizFields = { name: '견본상사', bizNo: '314860123
  * ② 처리자 표의 설정 데이터(목업). 실제로는 앱 설정(서명된 운영 설정)에서 받는다. 모델 상류가 OpenRouter라 공급사 목록이 바뀔 수 있어
  * 렌더러·상태 기계에 고정하지 않는다(팀장 조건 (c)).
  */
-export const MOCK_CONSENT_CONFIG: ConsentConfig = {
-  processorsVersion: 'mock-2026-11-05',
-  processors: [
-    { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음(설정 확인 전 30일)' },
-    { name: '모델 공급사(라우팅 대상)', role: '문장 해석', country: '미국·EU', retention: 'ZDR 승인 전 30일' },
-  ],
-};
+export const MOCK_CONSENT_CONFIG: ConsentConfig = { ...CONSENT_CONFIG, processorsVersion: 'mock-2026-11-05' };
 
 export interface MockOnboardingOptions {
   saveProfile: (p: OnbProfile) => Promise<void>;

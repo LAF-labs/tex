@@ -194,7 +194,8 @@ export function packagedProblems(o: { isPackaged: boolean; appPath: string; exec
   };
   const out: string[] = [];
   const app = norm(o.appPath);
-  if (p.basename(app) !== 'app.asar' || p.basename(p.dirname(app)) !== 'resources') out.push('fatal:not_asar');
+  // Windows: resources\app.asar, macOS: Contents/Resources/app.asar
+  if (p.basename(app) !== 'app.asar' || p.basename(p.dirname(app)).toLowerCase() !== 'resources') out.push('fatal:not_asar');
   if (o.localAppData && under(o.execPath, p.join(o.localAppData, 'SovereignAX'))) out.push('fatal:install_in_data_root');
   const info = isBuildInfo(o.buildInfo) ? o.buildInfo : null;
   if (!info) out.push('fatal:build_info_missing');
