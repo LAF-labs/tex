@@ -38,7 +38,7 @@ import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook } from './counterparty-book.ts';
-import { DesktopAccount, RemoteIdentityFile } from './remote-account.ts';
+import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
@@ -715,6 +715,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     client: opts.remote?.keys ? (opts.remote.cloud?.account ?? null) : null,
     keys: keysOf,
     identity: new RemoteIdentityFile(appPaths(root ?? defaultAppRoot()).userData),
+    // 받은 코드는 만료(10분)까지 쓴다: 앱을 껐다 켜도 코드 화면으로 돌아온다(대기 정보만, 코드 자체는 없다)
+    pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
     log: (n, d) => log.event(n, d),
@@ -995,7 +997,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return account.startReset(String(p.email));
     },
     'account.finishReset': async (p) => {
-      needGesture(3_000);
+      // [바꾸기]·Enter가 보통이지만, 코드·새 비밀번호를 치는 키 입력도 main이 본 입력으로 친다(account.verify와 같다)
+      needTyping(3_000);
       await accountInit();
       return account.finishReset(String(p.code), p.password);
     },

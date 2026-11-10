@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { dirGuard, isUserSid, readDacl, windowsTool } from '@sax/platform';
 import { b64, fromB64, verifyAcctClaim, verifyCert } from '@sax/remote';
-import { CERT_RENEW_MS, checkIdentity, DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
+import { CERT_RENEW_MS, checkIdentity, DesktopAccount, PendingCodeFile, RemoteIdentityFile } from '../apps/desktop/src/remote-account.ts';
 import { devStackPasswords, ORIGIN, softDesktopKeys, startDevStack, type DevStack } from './remote-dev-stack.ts';
 
 const EMAIL = 'owner@gyeonbon-test.example';
@@ -324,6 +324,47 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.ok(after > before);
   });
 
+  it('받은 코드는 만료까지: 앱을 껐다 켜도(새 DesktopAccount) 코드 화면으로 돌아와 같은 코드로 로그인, 파일엔 코드 없음·사용자만, 성공·[뒤로]·만료에 지운다', async () => {
+    const keys = softDesktopKeys();
+    const mk = () => new DesktopAccount({ client: s.client, keys: async () => keys, identity: new RemoteIdentityFile(dir), pending: new PendingCodeFile(dir), platform: 'windows', deviceName: 'Windows PC', now: s.clock.now });
+    const file = path.join(dir, 'remote-pending-code.json');
+    const a = mk();
+    await a.init();
+    const sent = await a.sendCode(EMAIL);
+    await new Promise((r) => setTimeout(r, 50));
+    const raw = fs.readFileSync(file, 'utf8');
+    const code = s.mail.lastCode(EMAIL)!;
+    assert.ok(!raw.includes(code), '코드 자체는 저장하지 않는다');
+    await assertUserOnly(file);
+    // 재시작
+    const b = mk();
+    const v = await b.init();
+    assert.deepEqual([v.step, v.email, v.codeExpiresAt], ['code_sent', EMAIL, sent.codeExpiresAt]);
+    // 틀린 코드(서버 거절)는 대기 정보를 지우지 않는다: 다시 켜도 같은 코드로
+    assert.equal((await b.verify(code === '000000' ? '111111' : '000000')).error, 'account.code_invalid');
+    const c = mk();
+    assert.equal((await c.init()).step, 'code_sent');
+    assert.equal((await c.verify(code)).step, 'signed_in');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(fs.existsSync(file), false, '성공하면 지운다');
+    // [뒤로]도 지운다
+    const d = new DesktopAccount({ client: s.client, keys: async () => softDesktopKeys(), identity: new RemoteIdentityFile(await fsp.mkdtemp(path.join(root, 'u-'))), pending: new PendingCodeFile(dir), platform: 'windows', deviceName: 'Windows PC', now: s.clock.now });
+    await d.init();
+    await d.sendCode('other@gyeonbon-test.example');
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(fs.existsSync(file), true);
+    d.back();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(fs.existsSync(file), false, '[뒤로]면 지운다');
+    // 만료·모양이 틀린 파일은 버린다
+    const f = new PendingCodeFile(dir);
+    await f.save({ email: EMAIL, loginId: 'L', expiresAt: s.clock.now() - 1, signup: false });
+    assert.equal(await f.load(s.clock.now()), null);
+    assert.equal(fs.existsSync(file), false);
+    fs.writeFileSync(file, '{"email":"x","loginId":"L","expiresAt":1,"signup":false}');
+    assert.equal(await f.load(s.clock.now()), null);
+  });
+
   it('로그에 이메일·코드·토큰이 없다', async () => {
     await signIn(account());
     const t = JSON.stringify(logs);
@@ -344,16 +385,18 @@ describe('셸 배선(소스 검사)', () => {
     assert.match(src, /'account\.sendCode': async \(p\) => \{\s*needGesture\(3_000\);/);
     // 6자리 확인은 클릭·Enter·Space 또는 메인 창 키 입력(숫자·붙여 넣기) 3초 안(0.1.5 실사용: 칸을 누르고 메일을 보는 사이 3초가 지난다). 다른 명령은 그대로 needGesture.
     assert.match(src, /'account\.verify': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
-    assert.equal((src.match(/needTyping\(/g) ?? []).length, 1, 'account.verify 하나뿐');
+    assert.match(src, /'account\.finishReset': async \(p\) => \{[^}]*?needTyping\(3_000\);/);
+    assert.equal((src.match(/needTyping\(/g) ?? []).length, 2, 'account.verify·account.finishReset 둘뿐');
     assert.match(src, /if \(isTypingKey\(i\)\) typing\.note\(performance\.now\(\)\);/);
     assert.match(src, /if \(isGestureKey\(i\)\) gesture\.note\(performance\.now\(\)\);/);
   });
-  it('코드 화면: [확인] 버튼, 입력을 못 봐 거절되면 코드를 칸에 남기고 "[확인]을 눌러 주세요"', () => {
+  it('코드 화면: 칸 바로 아래 [확인](6자리면 켜짐), 서버가 코드를 거절한 때만 칸을 비우고, 입력을 못 봐 거절되면 "[확인]을 눌러 주세요"', () => {
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
-    assert.match(js, /primary\('확인', \(\) => !busy && verify\(draft\.code \?\? ''\), 'account-verify', busy\)/);
-    assert.match(js, /errNote\(err === 'gesture_required' \? 'account\.confirm_click' : err\)/);
+    assert.match(js, /const ok = primary\('확인', \(\) => !busy && verify\(draft\.code \?\? ''\), 'account-verify', busy \|\| !\/\^\\d\{6\}\$\/\.test\(draft\.code \?\? ''\)\);/);
+    assert.match(js, /codeField\(ctx, busy, verify, \(c\) => \(ok\.disabled = busy \|\| !\/\^\\d\{6\}\$\/\.test\(c\)\)\),\s*ok,\s*errNote\(err === 'gesture_required' \? 'account\.confirm_click' : err\)/);
     assert.match(js, /'account\.confirm_click': '\[확인\]을 눌러 주세요'/);
-    assert.match(shell, /if \(method === 'account\.verify' && \(\(state\.account\?\.error && state\.account\.error !== 'gesture_required'\) \|\| state\.account\?\.step === 'set_password'\)\) l\.draft\.code = '';/);
+    assert.match(shell, /const SERVER_CODE_ERR = new Set\(\['account\.code_invalid', 'account\.code_locked', 'account\.code_expired'\]\);/);
+    assert.match(shell, /if \(method === 'account\.verify' && \(SERVER_CODE_ERR\.has\(state\.account\?\.error\) \|\| state\.account\?\.step === 'set_password'\)\) l\.draft\.code = '';/);
   });
   it('비밀번호는 실제 입력 뒤 3초 안에만, 인자는 이메일·비밀번호 둘, 문자열로 다시 만들지 않고 계정 객체로만 넘긴다', async () => {
     const { SHELL_METHODS, USER_ACTION_METHODS } = await import('../apps/desktop/src/ipc.ts');
@@ -385,7 +428,7 @@ describe('셸 배선(소스 검사)', () => {
     assert.equal(USER_ACTION_METHODS['account.finishReset'], 3_000);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.startReset']), ['email']);
     assert.deepEqual(Object.keys(SHELL_METHODS['account.finishReset']), ['code', 'password']);
-    assert.match(src, /'account\.finishReset': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return account\.finishReset\(String\(p\.code\), p\.password\);\s*\}/);
+    assert.match(src, /'account\.finishReset': async \(p\) => \{\s*(\/\/[^\n]*\n\s*)?needTyping\(3_000\);\s*await accountInit\(\);\s*return account\.finishReset\(String\(p\.code\), p\.password\);\s*\}/);
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
     assert.match(shell, /method === 'account\.finishReset'\) l\.draft\.password = '';/);
   });

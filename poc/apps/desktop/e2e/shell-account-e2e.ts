@@ -128,22 +128,26 @@ async function main() {
   check('칸 여섯 개에 넣은 숫자', (await js<string>(`[...document.querySelectorAll('.acct-cell')].map((c) => c.textContent).join('')`)) === '48');
   await shot('a01-code');
   await type('.acct-code', '');
-  // 0.1.5 실사용 재현: 칸을 누르고 메일을 보느라 3초가 지난 뒤 숫자를 친다. 숫자 키도 main이 본 입력이라 서버 확인까지 간다.
-  await sleep(3_200);
+  // 0.1.5 실사용 재현(사람 속도): 칸을 누르고 메일을 보느라 5초가 지난 뒤 숫자를 친다. 숫자 키도 main이 본 입력이라 서버 확인까지 간다.
+  await press('.acct-code');
+  await sleep(5_000);
   await typeKeys('.acct-code', '000000');
-  check('틀린 코드 문구, 코드 화면 유지, 칸 비움(클릭 3초 뒤 키로 친 6자리도 서버 확인까지 간다)', await until('wrong', async () => (await screen()) === 'code' && js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('코드가 맞지 않아요') === true && document.querySelector('.acct-code').value === ''`)));
+  check('틀린 코드 문구, 코드 화면 유지, 칸 비움(클릭 5초 뒤 키로 친 6자리도 서버 확인까지 간다)', await until('wrong', async () => (await screen()) === 'code' && js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('코드가 맞지 않아요') === true && document.querySelector('.acct-code').value === ''`)));
   await press('[data-act=account-back]');
   check('[뒤로] → 이메일 코드로 로그인 화면', await until('code email', async () => (await screen()) === 'code_email' && (await loginStep()) === 'signed_out'));
   await shot('a01-code-email');
   await press('[data-act=account-send]');
   await until('code again', async () => (await screen()) === 'code');
-  // 메뉴 붙여 넣기처럼 main이 입력을 못 본 채 3초가 지나 6자리가 차면: 거절되지만 코드는 칸에 남고 [확인]을 누르면 된다
-  await sleep(3_200);
+  check('[확인]은 코드 칸 바로 아래, 6자리 전에는 꺼져 있다', await js<boolean>(`(() => { const b = document.querySelector('[data-act=account-verify]'); return !!b && b.disabled && document.querySelector('.acct-code-box').nextElementSibling === b; })()`));
+  // 메뉴 붙여 넣기처럼 main이 입력을 못 본 채 5초가 지나 6자리가 차면: 거절되지만 코드는 칸에 남고 [확인]이 켜져 누르면 된다
+  await press('.acct-code');
+  await sleep(5_000);
   await type('.acct-code', '123456');
   check(
-    '입력을 못 본 6자리 → "[확인]을 눌러 주세요", 코드는 칸에 남는다(서버로 가지 않음)',
-    await until('confirm click', async () => js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('[확인]을 눌러 주세요') === true && document.querySelector('.acct-code').value === '123456'`)),
+    '입력을 못 본 6자리 → "[확인]을 눌러 주세요", 코드는 칸에 남고 [확인]이 켜진다(서버로 가지 않음)',
+    await until('confirm click', async () => js<boolean>(`document.querySelector('.acct-err')?.textContent.includes('[확인]을 눌러 주세요') === true && document.querySelector('.acct-code').value === '123456' && !document.querySelector('[data-act=account-verify]').disabled`)),
   );
+  check('"버튼을 다시 눌러 주세요"는 코드 화면에 뜨지 않는다', !(await js<string>(`document.querySelector('[data-acct-screen]').textContent`)).includes('버튼을 다시 눌러 주세요'));
   await press('[data-act=account-verify]');
   check('[확인] 클릭 → 확인 → 등록 끝: 화면이 닫히고 계정 줄에 이메일', await until('signed in', async () => (await loginStep()) === null && js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_in' && document.querySelector('[data-account-email]').textContent === 'owner@gyeonbon-test.example'`)));
   check('계정 호출 순서(비밀번호 → 코드 → 확인 → 코드 → 확인 → 목록 → AIK 고정 → 로그아웃)', JSON.stringify(acct.calls) === JSON.stringify(['password', 'code', 'verify', 'code', 'verify', 'list', 'aik', 'logout']), acct.calls);
@@ -181,6 +185,11 @@ async function signup() {
   await type('.acct-email', 'owner@gyeonbon-test.example');
   await press('[data-act=account-send]');
   await until('code 2', async () => (await screen()) === 'code');
+  // 붙여 넣기(⌘V·Ctrl+V): 칸을 누르고 5초 뒤 붙여 넣는다. 붙여 넣기 키도 main이 본 입력이라 바로 확인까지 간다.
+  await press('.acct-code');
+  await sleep(5_000);
+  await js(`document.querySelector('.acct-code').focus()`);
+  S.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'V', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
   await type('.acct-code', '123456');
   check('계정 만들기 → 코드 → 비밀번호 만들기 화면(제목·부제·[나중에])', await until('signup pw', async () => (await screen()) === 'signup_pw' && (await loginStep()) === 'set_password' && js<boolean>(`document.querySelector('#acct-title').textContent === '비밀번호 만들기' && document.querySelector('.acct-head p').textContent === '다음부터 메일을 열지 않고 로그인해요' && !!document.querySelector('[data-act=account-skip-password]')`)));
   check('새 비밀번호 칸: new-password, 가림, 확인 칸 없음', await js<boolean>(`(() => { const i = document.querySelectorAll('.acct-password'); return i.length === 1 && i[0].autocomplete === 'new-password' && i[0].type === 'password'; })()`));

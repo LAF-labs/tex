@@ -108,7 +108,7 @@ function newPasswordField(ctx, { email, serverErr, onEnter, submitBtn }) {
  * 코드 6자리: 칸 여섯 개는 보이기만 하고, 입력은 그 위를 덮는 숫자 칸 하나가 받는다(붙여 넣기·자동 채우기도 된다).
  * 6자리가 차거나 Enter면 onFull(code).
  */
-function codeField(ctx, busy, onFull) {
+function codeField(ctx, busy, onFull, onChange = () => {}) {
   const { draft } = ctx;
   const code = (draft.code ?? '').replace(/\D/g, '').slice(0, 6);
   const cells = h('div', { class: 'acct-cells', 'aria-hidden': 'true' }, ...Array.from({ length: 6 }, (_, i) => h('span', { class: `acct-cell${i === Math.min(code.length, 5) ? ' is-at' : ''}` }, code[i] ?? '')));
@@ -121,6 +121,7 @@ function codeField(ctx, busy, onFull) {
       c.textContent = draft.code[k] ?? '';
       c.classList.toggle('is-at', k === Math.min(draft.code.length, 5));
     });
+    onChange(draft.code);
     if (draft.code.length === 6 && !busy) onFull(draft.code);
   });
   i.addEventListener('keydown', (e) => e.key === 'Enter' && !busy && onFull(draft.code ?? ''));
@@ -293,16 +294,17 @@ export function loginScreen(ctx) {
   } else {
     // 코드 6자리(로그인·계정 만들기)
     const verify = (code) => (/^\d{6}$/.test(code) ? ctx.verify(code) : ctx.fail('account.code_shape'));
+    // [확인]: 코드 칸 바로 아래, 6자리가 차면 켜진다. 6자리가 차면 바로 확인하지만, 메뉴 붙여 넣기처럼 main이 키 입력을 못 본 경우 이 버튼(클릭이 실제 입력)으로 간다.
+    const ok = primary('확인', () => !busy && verify(draft.code ?? ''), 'account-verify', busy || !/^\d{6}$/.test(draft.code ?? ''));
     body = [
       back('뒤로', ctx.back),
       head('코드 6자리', [h('b', { 'data-acct-to': '' }, v.email), '로 보냈어요'], { id: 'acct-to' }),
       h(
         'div',
         { class: 'acct-stack' },
-        codeField(ctx, busy, verify),
+        codeField(ctx, busy, verify, (c) => (ok.disabled = busy || !/^\d{6}$/.test(c))),
+        ok,
         errNote(err === 'gesture_required' ? 'account.confirm_click' : err),
-        // [확인]: 6자리가 차면 바로 확인하지만, 메뉴 붙여 넣기처럼 main이 키 입력을 못 본 경우 누르면 된다(클릭이 실제 입력)
-        primary('확인', () => !busy && verify(draft.code ?? ''), 'account-verify', busy),
         codeFoot(v, ctx, busy, () => ctx.sendCode(v.email)),
       ),
     ];
