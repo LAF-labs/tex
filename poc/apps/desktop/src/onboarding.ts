@@ -224,6 +224,10 @@ export interface OnbState {
   log: Array<{ step: OnbStep; text: string }>;
   /** ②를 다시 묻는 중이면 동의한 뒤 돌아갈 단계(모델 거절이 저장된 프로필, reaskModel). 아니면 null. */
   resumeStep: OnbStep | null;
+  /** 끝낸 온보딩에서 건너뛴 사업자·인증을 다시 여는 중(reopen). 그 단계만 묻고 요약(프로필 저장) 뒤 바로 끝낸다. */
+  redo: 'biz' | 'auth' | null;
+  /** 다시 연 때의 대화 기록 길이(렌더러는 그 뒤 답만 새 자리에 그린다). */
+  redoFrom: number | null;
   /**
    * ①에서 금고가 돌려준 포털 아이디(비밀 아님, #42 계약). 이어 하기 저장에 넣어 요약에서 프로필에 쓴다(DB profiles.portal_login_id).
    * 렌더러로 가는 view와 대화 기록(log)에는 넣지 않는다.
@@ -243,13 +247,15 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (!strs(o.tasks) || !strs(o.skipped) || !(o.skipped as string[]).every((t) => Object.hasOwn(SKIP_LABEL, t))) return null;
   if (!Array.isArray(o.log) || !o.log.every((l) => typeof l === 'object' && l !== null && typeof (l as { text?: unknown }).text === 'string')) return null;
   if (typeof o.consents !== 'object' || o.consents === null || Array.isArray(o.consents)) return null;
+  if (o.redo !== undefined && o.redo !== null && o.redo !== 'biz' && o.redo !== 'auth') return null;
+  if (o.redoFrom !== undefined && o.redoFrom !== null && !(Number.isSafeInteger(o.redoFrom) && (o.redoFrom as number) >= 0)) return null;
   if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
   return { ...base, ...structuredClone(picked) } as OnbState;
 }
 
-export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, portalLoginId: null });
+export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, portalLoginId: null });
 
 /** 끝난 온보딩이 저장할 프로필(DB profile.upsert에 넘긴다, 비밀 없음). */
 export interface OnbProfile {
@@ -330,6 +336,38 @@ export class OnboardingFlow {
     return this.s.consents.model?.choice === 'agreed';
   }
 
+  /** 무엇이 빠졌나(세금계산서·증명서를 하려면 사업자 등록과 발급 인증이 필요하다). 끝낸 온보딩에서만 다시 열 수 있다. */
+  missing(): Array<'biz' | 'auth'> {
+    const s = this.s;
+    return [...(!s.biz || s.skipped.includes('biz') ? (['biz'] as const) : []), ...(!s.auth || s.skipped.includes('auth') ? (['auth'] as const) : [])];
+  }
+
+  /**
+   * 끝낸 온보딩에서 건너뛴 사업자(O-02)·인증(O-03)을 다시 연다(0.1.5 실사용: 사업자를 건너뛰면 발급 카드가 profile_missing으로 멈췄다).
+   * 그 단계만 묻고, 동의(②③)는 다시 묻지 않으며, 요약에서 프로필을 저장한 뒤 첫 작업 제안 없이 끝낸다. 빠진 것이 아니면 nothing_to_reopen.
+   */
+  async reopen(item: 'biz' | 'auth'): Promise<OnbResult> {
+    if (this.s.step !== 'done') throw new Error('onboarding_not_done');
+    if (!this.missing().includes(item)) throw new Error('nothing_to_reopen');
+    if (this.busy) throw new Error('busy');
+    this.busy = true;
+    const before = structuredClone(this.s);
+    try {
+      this.s.redo = item;
+      this.s.redoFrom = this.s.log.length;
+      this.s.notice = null;
+      if (item === 'biz') this.s.step = 'welcome';
+      else await this.toAuth();
+      await this.ports.save(this.state);
+      return { state: this.state };
+    } catch (e) {
+      this.s = before;
+      throw e;
+    } finally {
+      this.busy = false;
+    }
+  }
+
   async view(): Promise<OnbView> {
     const kind = CONSENT_STEP[this.s.step] ?? null;
     const st: Partial<OnbState> = this.state;
@@ -378,6 +416,25 @@ export class OnboardingFlow {
     this.s.step = 'auth';
     this.s.certs = await this.ports.findCerts().catch(() => []);
   }
+  /** 사업자 단계를 마쳤다(또는 건너뛰었다). 다시 여는 중이면 인증이 이미 있으면 요약으로, 없으면 인증을 묻는다. 건너뛰면 끝낸다. */
+  private async afterBiz(skipped: boolean) {
+    const s = this.s;
+    if (!s.redo) return this.toAuth();
+    if (skipped) return this.endRedo();
+    if (s.auth && !s.skipped.includes('auth')) s.step = 'summary';
+    else await this.toAuth();
+  }
+  /** 인증을 골랐다(또는 건너뛰었다). 처음이면 ②, 다시 여는 중이면 요약(프로필 저장)으로. */
+  private afterAuth(skipped = false) {
+    const s = this.s;
+    if (!s.redo) s.step = 'model';
+    else if (skipped && s.redo === 'auth') this.endRedo();
+    else s.step = 'summary';
+  }
+  private endRedo() {
+    this.s.step = 'done';
+    this.s.redo = null;
+  }
 
   private async apply(a: OnbAnswer): Promise<string | undefined> {
     const s = this.s;
@@ -392,7 +449,7 @@ export class OnboardingFlow {
         if (a.choice === 'later') {
           this.say('나중에 할게요');
           this.skip('biz');
-          await this.toAuth();
+          await this.afterBiz(true);
           return;
         }
         if (a.choice === 'number') {
@@ -427,7 +484,7 @@ export class OnboardingFlow {
         if (a.choice === 'later') {
           this.say('나중에 할게요');
           this.skip('biz');
-          await this.toAuth();
+          await this.afterBiz(true);
           return;
         }
         if (a.choice === 'edit') {
@@ -456,7 +513,7 @@ export class OnboardingFlow {
           if (s.check?.status !== 'unknown') throw new Error('bad_choice');
           this.say('맞습니다');
           this.unskip('biz');
-          await this.toAuth();
+          await this.afterBiz(false);
           return;
         }
         // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호는 위의 [맞습니다]로만 확정한다.
@@ -465,7 +522,7 @@ export class OnboardingFlow {
         if (!s.biz || s.check?.status !== 'active') throw new Error('biz_inactive');
         this.say('맞아요');
         this.unskip('biz');
-        await this.toAuth();
+        await this.afterBiz(false);
         return;
       case 'auth':
         if (a.choice === 'unsure') {
@@ -476,7 +533,7 @@ export class OnboardingFlow {
         if (a.choice === 'later') {
           this.say('나중에 할게요');
           this.skip('auth');
-          s.step = 'model';
+          this.afterAuth(true);
           return;
         }
         if (a.choice === 'cert') {
@@ -489,7 +546,8 @@ export class OnboardingFlow {
           s.auth = kind;
           this.unskip('auth');
           this.say(AUTH_LABEL[kind]);
-          s.step = kind === 'card' ? 'delegation' : 'model';
+          if (kind === 'card') s.step = 'delegation';
+          else this.afterAuth();
         }
         return;
       case 'delegation': {
@@ -519,7 +577,7 @@ export class OnboardingFlow {
         s.consents.delegation = { version, choice: 'agreed', at };
         if (r.portalLoginId) s.portalLoginId = r.portalLoginId;
         this.say('동의하고 금고에 등록했어요');
-        s.step = 'model';
+        this.afterAuth();
         return;
       }
       case 'model': {
@@ -578,7 +636,9 @@ export class OnboardingFlow {
           });
         }
         this.say('확인했어요');
-        s.step = 'first';
+        // 다시 연 것이면 첫 작업 제안 없이 끝낸다(이미 쓰던 사용자)
+        if (s.redo) this.endRedo();
+        else s.step = 'first';
         return;
       case 'first':
         this.say({ try: '지금 해 볼게요', invoice: '세금계산서 1건 발급', later: '나중에 할게요' }[a.choice as 'try' | 'invoice' | 'later']);

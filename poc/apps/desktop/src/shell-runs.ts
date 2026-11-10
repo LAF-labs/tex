@@ -47,6 +47,8 @@ export type RunState = (typeof RUN_STATES)[number];
 const UNKNOWN_SCREEN = '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.';
 
 /** 엔진 결과 코드 → 사용자 문구. 값은 넣지 않는다. */
+/** 받은 홈택스 작업 정보(서명 패키지)의 모양이 틀렸을 때. */
+const BAD_PACKAGE = '홈택스 작업 정보가 올바르지 않아 시작하지 않았어요. 앱 업데이트 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.';
 export const NOTE: Record<string, string> = {
   // 엔진 상태 paused(D03 §2). 정지 하향이면 이 포털 자동 실행이 멈춘 것이다. 이어 하려면 새로 승인해야 한다(REGATE_NOTE.paused).
   policy_downgrade: '앱이 홈택스 자동 실행을 멈춰서 이 건도 여기서 멈췄어요. 이어서 하려면 새로 승인해야 해요.',
@@ -99,12 +101,38 @@ export const NOTE: Record<string, string> = {
   'policy.logins_per_day': '오늘 홈택스 로그인 횟수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.actuations_per_run': '한 번의 실행에서 할 수 있는 동작 수를 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.wall_clock': '실행 시간 상한을 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
+  // 시작 전 검사(엔진 runs.ts start·H01 러너, 0.1.5 실사용 "멈췄어요(profile_missing)"). 코드는 화면에 보이지 않는다(로그에만).
+  profile_missing: '사업자 정보(사업자번호)가 등록되지 않아 시작하지 않았어요. 대화에서 [사업자 등록 마치기]로 등록해 주세요. 아무것도 발급하지 않았어요.',
+  counterparty_missing: '거래처 정보를 찾지 못해 시작하지 않았어요. 거래처 화면에서 확인한 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  bad_amount: '금액을 확인하지 못해 시작하지 않았어요. 카드에서 금액을 고친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  item_missing: '품목이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  'input.missing': '발급에 필요한 값이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  busy: '다른 작업이 진행 중이라 시작하지 않았어요. 그 작업이 끝난 뒤 다시 준비해 주세요.',
+  already_issuing: '이미 발급을 시작한 건이라 다시 시작하지 않았어요.',
+  bad_run_id: '이 카드를 시작하지 못했어요. 대화에서 다시 요청해 주세요. 아무것도 발급하지 않았어요.',
+  forbidden_channel: '허용되지 않은 경로로 들어온 요청이라 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  'ledger.intent_not_new': '같은 발급 요청을 이미 기록해 다시 시작하지 않았어요. 홈택스 발급목록을 확인해 주세요.',
+  'login.not_implemented': '고른 발급 인증으로는 아직 홈택스에 로그인할 수 없어요. 설정에서 다른 발급 인증을 골라 주세요. 아무것도 발급하지 않았어요.',
+  'package.not_loaded': '홈택스 작업 정보를 아직 받지 못해 시작하지 않았어요. 인터넷 연결을 확인하고 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  'package.load_failed': '홈택스 작업 정보를 확인하지 못해 시작하지 않았어요. 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  'policy.portal_mode_denied': '지금은 서버 설정으로 이 작업을 자동으로 할 수 없어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  'token.invalid': '실행 확인 값이 맞지 않아 멈췄어요. 아무것도 발급하지 않았어요. 다시 준비해 주세요.',
+  'step.commit_shadow': '발급 버튼 주변 화면이 예상과 달라 누르지 않았어요. 아무것도 발급하지 않았어요.',
+  'step.fill_mismatch': '홈택스 칸에 넣은 값이 준비한 값과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
+  // 서명 패키지 IR 검사(ir.*): 사용자가 고칠 것은 없다
+  'ir.bad_edge': BAD_PACKAGE,
+  'ir.bad_ref': BAD_PACKAGE,
+  'ir.no_end': BAD_PACKAGE,
+  'ir.gate_without_readback': BAD_PACKAGE,
+  'wait.timeout': '홈택스 화면이 제때 뜨지 않아 멈췄어요. 아무것도 발급하지 않았어요. 잠시 뒤 다시 준비해 주세요.',
 };
+/** 표에 없는 코드(새 코드·내부 오류)는 코드를 보이지 않고 이 문구로. 코드는 로그(main.run_end 등)에만 남는다. in_doubt는 늘 표의 문구라 이 문구를 쓰지 않는다. */
+export const UNKNOWN_STOP_NOTE = '멈췄어요. 아무것도 발급하지 않았어요. 다시 준비해 보고, 같은 일이 반복되면 앱을 다시 시작해 주세요.';
 /** 차단 신호로 끝났는데 발급됐는지 모름(verify 중 신호). */
 const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 /** in_doubt(발급됐는지 모름)는 코드와 관계없이 중복 위험을 알린다. 코드별 문구는 이 목록만. */
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
-const note = (code?: string) => (code && NOTE[code]) || (code ? `멈췄어요(${code}).` : '멈췄어요.');
+const note = (code?: string) => (code && NOTE[code]) || UNKNOWN_STOP_NOTE;
 
 /** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 이전 시도 미발급. */
 export const DUP_NOTE = {
@@ -187,6 +215,8 @@ const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
 export interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
+  /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
+  log?(name: string, data: Record<string, string>): void;
 }
 
 /**
@@ -639,6 +669,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
     const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
+    this.src.log?.('main.run_end', { status: e.status, code: (code ?? 'none').slice(0, 80) });
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
       const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };
       r.status = 'done';
