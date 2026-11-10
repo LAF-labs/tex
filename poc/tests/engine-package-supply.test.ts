@@ -9,7 +9,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 import { openDatabase, type Db } from '@sax/db';
 import {
-  egressRegistryFetch, fixturePortal, HOMETAX_PORTAL, installedIrSource, memoryRegistryStore, packagePath, portalLookupDefs, PRODUCT_PACKAGES, REGISTRY_PATHS, RegistrySync, settingsRegistryStore,
+  appVersionAllows, egressRegistryFetch, fixturePortal, HOMETAX_PORTAL, installedIrSource, memoryRegistryStore, packagePath, portalLookupDefs, PRODUCT_PACKAGES, REGISTRY_PATHS, RegistrySync, settingsRegistryStore,
   type RegistryFetch, type StoredPackage, type TrustPin,
 } from '@sax/engine';
 import { decodeSxp, encodeSxp, manifestDigest, sha256Hex, type PackageFiles, type RevokedKeys } from '@sax/engine/core';
@@ -48,7 +48,7 @@ function h01Sxp(version: string, o: { signers?: TestKey[]; edit?: (f: PackageFil
   return encodeSxp({ kind: 'package', raw: signPackage(f, o.signers ?? TWO, LOOKUP_DIGESTS) });
 }
 
-type Entry = { id: string; version: string; kind: string; portal?: string; sxpDigest: string; size: number; rolloutPercent: number };
+type Entry = { id: string; version: string; kind: string; portal?: string; sxpDigest: string; size: number; rolloutPercent: number; minAppVersion?: string };
 const entryOf = (id: string, version: string, kind: string, sxp: Uint8Array, over: Partial<Entry> = {}): Entry => ({ id, version, kind, portal: 'hometax', sxpDigest: sha256Hex(sxp), size: sxp.length, rolloutPercent: 100, ...over });
 
 /** stable 인덱스(내용 = 패키지 키 2-of-3, 신선도 = timestamp 키, ADR-043). 샘플 인덱스(monotonic 7)보다 높은 monotonic으로 새로 서명한다. */
@@ -92,12 +92,12 @@ function withVersions(versions: Array<{ version: string; sxp: Uint8Array; over?:
   return files;
 }
 
-function setup(files = sampleFiles(), o: { now?: number; store?: ReturnType<typeof memoryRegistryStore> } = {}) {
+function setup(files = sampleFiles(), o: { now?: number; store?: ReturnType<typeof memoryRegistryStore>; appVersion?: string } = {}) {
   const reg = fakeRegistry(files);
   const store = o.store ?? memoryRegistryStore();
   const log = new FileEventLog(null, 'engine');
   let now = o.now ?? SAMPLE_NOW;
-  const sync = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store, packages: { ids: [ID] }, log, now: () => now });
+  const sync = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store, packages: { ids: [ID] }, log, now: () => now, ...(o.appVersion ? { appVersion: o.appVersion } : {}) });
   return { sync, reg, store, log, setNow: (t: number) => (now = t) };
 }
 
@@ -296,6 +296,65 @@ describe('패키지 공급: 버전 내림 방지·보류', () => {
     const s = setup(sampleFiles(), { now: Date.parse(ISSUED) + 30 * H });
     const r = await s.sync.sync();
     assert.deepEqual(r.packages, { [ID]: 'registry.update_held' });
+  });
+});
+
+describe('패키지 공급: 앱 판(minAppVersion, 팀장 지시 2026-11-09)', () => {
+  const sample21 = () => ({ version: '2.1.0', sxp: file(`packages/${ID}@2.1.0.sxp`) });
+  it('appVersionAllows: 항목에 없으면 늘 된다, 같거나 높으면 된다, 낮거나 모르거나 semver가 아니면 안 된다', () => {
+    assert.equal(appVersionAllows(undefined, null), true);
+    assert.equal(appVersionAllows('1.2.0', '1.2.0'), true);
+    assert.equal(appVersionAllows('1.2.0', '1.10.0'), true, '숫자 비교(문자열 비교 아님)');
+    assert.equal(appVersionAllows('1.2.0', '1.1.9'), false);
+    for (const v of [null, undefined, '', 'dev', '1.2', '1.2.0-beta']) assert.equal(appVersionAllows('1.2.0', v), false, String(v));
+  });
+  it('앱 판이 낮으면 그 판은 받지 않고(.sxp도 부르지 않음) 맞는 가장 높은 판을 받는다', async () => {
+    const s = setup(withVersions([sample21(), { version: '2.2.0', sxp: h01Sxp('2.2.0'), over: { minAppVersion: '1.5.0' } }], 8), { appVersion: '1.4.9' });
+    assert.deepEqual((await s.sync.sync()).packages, { [ID]: 'accepted' });
+    assert.equal(current(s.store), '2.1.0');
+    assert.ok(!s.reg.calls.includes(sxpPath(ID, '2.2.0')));
+    assert.match(s.log.lines.join('\n'), /"registry\.app_version_low"/);
+    assert.ok(s.sync.loadInstalled(ID).ok);
+    // 앱을 올리면(같은 경계 값) 다음 동기화에서 받는다
+    const up = setup(s.reg.files, { appVersion: '1.5.0', store: s.store });
+    assert.deepEqual((await up.sync.sync()).packages, { [ID]: 'accepted' });
+    assert.equal(current(up.store), '2.2.0');
+  });
+  it('앱 판을 모르면(init에 없음·semver 아님) minAppVersion이 있는 판은 받지 않는다(fail-closed). 없는 판은 그대로 받는다', async () => {
+    for (const appVersion of [undefined, 'dev']) {
+      const s = setup(withVersions([{ version: '2.2.0', sxp: h01Sxp('2.2.0'), over: { minAppVersion: '0.0.1' } }], 8), appVersion ? { appVersion } : {});
+      assert.deepEqual((await s.sync.sync()).packages, { [ID]: 'registry.app_version_low' }, String(appVersion));
+      assert.equal(current(s.store), null);
+      assert.equal(s.sync.loadInstalled(ID).ok ? 'ok' : (s.sync.loadInstalled(ID) as { code: string }).code, 'package.not_loaded');
+    }
+    const plain = setup();
+    assert.deepEqual((await plain.sync.sync()).packages, { [ID]: 'accepted' }, 'minAppVersion 없는 항목은 앱 판 없이도');
+  });
+  it('조회 하위 패키지 항목의 minAppVersion이 앱보다 높으면 플레이북도 저장하지 않는다', async () => {
+    const files = sampleFiles();
+    const lk = file(`packages/${LOOKUP}@1.0.0.sxp`);
+    const entries = [entryOf(LOOKUP, '1.0.0', 'lookup', lk, { minAppVersion: '9.0.0' }), entryOf(MAIL, '1.0.0', 'lookup', file(`packages/${MAIL}@1.0.0.sxp`)), entryOf(ID, '2.1.0', 'playbook', file(`packages/${ID}@2.1.0.sxp`))];
+    files[REGISTRY_PATHS.index] = indexBytes(entries, 8);
+    const s = setup(files, { appVersion: '1.0.0' });
+    assert.deepEqual((await s.sync.sync()).packages, { [ID]: 'registry.app_version_low' });
+    assert.equal(current(s.store), null);
+    assert.equal(s.store.get(`pkg.${LOOKUP}@1.0.0`), null);
+  });
+  it('실행 시작 로드도 매번 앱 판을 다시 본다: 설치 뒤 앱 판이 낮아지면(앱 되돌림) registry.app_version_low', async () => {
+    const s = setup(withVersions([{ version: '2.2.0', sxp: h01Sxp('2.2.0'), over: { minAppVersion: '1.5.0' } }], 8), { appVersion: '1.5.0' });
+    await s.sync.sync();
+    assert.equal((s.store.get(`pkg.${ID}@2.2.0`) as StoredPackage).minAppVersion, '1.5.0', '받을 때의 minAppVersion을 저장');
+    assert.ok(s.sync.loadInstalled(ID).ok);
+    for (const appVersion of ['1.4.0', undefined]) {
+      const down = setup(s.reg.files, { store: s.store, ...(appVersion ? { appVersion } : {}) });
+      const l = down.sync.loadInstalled(ID);
+      assert.equal(l.ok ? 'ok' : l.code, 'registry.app_version_low', String(appVersion));
+    }
+  });
+  it('엔진 진입점: main init의 appVersion(문자열일 때만)을 RegistrySync에 준다', () => {
+    const src = fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8');
+    assert.match(src, /new RegistrySync\(\{[^\n]*appVersion: typeof msg\.appVersion === 'string' \? msg\.appVersion : null \}\)/);
+    assert.match(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/protocol.ts'), 'utf8'), /appVersion\?: string;/);
   });
 });
 

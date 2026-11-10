@@ -320,7 +320,7 @@ CREATE TABLE cash_sales (                      -- 영수증을 발행하지 않�
 원칙: 비밀 컬럼 없음. `inputs_json_enc`·`context_json_enc`·`temp_previews.body_enc`는 DB 키로 암호화된 컬럼이며, 비밀 참조(`secret_ref`)는 종류 이름만 담고 게이트 토큰·`runKey`는 절대 저장하지 않는다. 저널(`run_events`)은 상태 전이 기록이고, 재시작 복원은 원장·게이트·실행 테이블 상태 승격이다(D-45(N-71)).
 
 급여·세무사 꾸러미(ADR-031·032):
-- 테이블은 로컬 전용이며 서버 색인(§3·§5)에 올리지 않는다. 원본 파일은 `documents` 행으로 들어가는데, 그 doc_type(`paper_receipt`, `insurance_notice`, `settlement_file`, `payroll_ledger`, `pay_statement`, `bundle_export`)은 서버 색인을 끈 채 고정하고 설정으로도 켤 수 없다.
+- 테이블은 로컬 전용이며 서버 색인(§3·§5)에 올리지 않는다. 원본 파일은 `documents` 행으로 들어가는데, 그 doc_type(`paper_receipt`, `insurance_notice`, `settlement_file`, `payroll_ledger`, `pay_statement`, `bundle_export`, `bundle_file`)은 서버 색인을 끈 채 고정하고 설정으로도 켤 수 없다. `bundle_file`은 꾸러미 파일 칸에 붙인 그 밖의 파일(3층 추가 항목 등)이다. 정산 품목 파일은 `settlement_file`, 급여대장 파일 칸은 `payroll_ledger`로 둔다.
 - 주민번호(`employees.rrn_enc`)는 마스킹 계층(D06)의 주민번호 규칙 대상이다. 다만 Phase 1 보관함은 평문 PDF라(§1.4) 고지내역·급여대장·임금명세서 파일에는 주민번호가 평문으로 남을 수 있다. 화면과 설정에 이 점을 적는다.
 - 꾸러미 내보내기(팀장 결정 2026-11-05, ADR-032 결정 8):
   - 첨부는 두 파일이다. 암호 엑셀(ECMA-376 암호화)과, 사진·PDF가 있으면 같은 암호의 AES-256 ZIP이다. 사진·PDF를 암호 밖에 두지 않는다. 메일 창(ADR-034 결정 10 (가))에는 두 파일과 받는 쪽 안내 문구(예: "암호는 따로 알려 드려요. ZIP은 반디집·알집·7-Zip으로 여세요". 최종 문구는 화면 트랙)가 함께 들어간다. 운영체제 기본 압축 풀기가 AES ZIP을 못 여는 경우가 있어서다(데이터 PR #58 본문).

@@ -7,9 +7,35 @@
 | `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.1.0 |
 | `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.0.0 |
 | `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.0.0 |
+| `hometax.cert.taxpayment` | playbook(H-04 납세증명서(국세) 발급) | 1.0.0 |
+| `hometax.cert.issued_list` | lookup(민원신청 처리결과 조회. 민원증명 공통: H-04 verify, H-03·H-08·H-09도 같이 쓴다) | 1.0.0 |
 
 - 파일: `manifest.json`·`playbook.json`·`selectors.json`·`strings.ko.json`.
 - manifest의 `contentDigests`·`lookupsUsed[].digest`·`signatures`는 자리표시다. 게시 도구가 원시 바이트로 채우고 package 키 2개로 서명한다(클라우드 트랙 게시 도구, 서명은 사용자).
 - 홈택스 셀렉터는 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
 - 시험은 이 원본을 골든 패키지로 쓴다(`tests/core-fixtures.ts`). 바꾸면 레지스트리 샘플(`tests/fixtures/registry`)을 다시 만든다.
 - fixture 포털(가짜 페이지) 패키지는 여기 두지 않는다. `tests/`에서만 만든다(ADR-039).
+
+## H-04 납세증명서(국세) — 캡처 필요(실기기, S16)
+
+H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉터·URL은 **실제 화면과 대조하지 않은 자리표시**다. 이름·역할은 H-01과 같은 틀로 적었다(`lastVerified`는 원본을 쓴 날). 실기기에서 아래 화면을 캡처해 셀렉터(role·접근성 이름·css 후보)·URL·선택지를 확정한다. 그 전에는 레지스트리에 게시하지 않는다.
+
+| # | 화면 | 확정할 것 |
+|---|---|---|
+| CAP-1 | 홈택스 첫 화면(로그인 전·후) | `hometax.nav.home`, 로그인 성공 표지(`hometax.login.successMarker` 문구) |
+| CAP-2 | 로그인 화면: 공동·금융인증서 / 간편인증 선택 | `hometax.login.startButton`(지금 이름 "공동·금융인증서"), 인증서 창이 뜨는 프레임(금고 비밀 창 b 대상) |
+| CAP-3 | 자동입력 방지 문자(나오는 경우) | `hometax.captcha.*` |
+| CAP-4 | 민원증명 › 납세증명서(국세완납증명) 신청 화면 | 진입 URL(`s10`·`s11`), 양식 랜드마크 이름, 칸 7개(사업자등록번호·상호·민원명·사용용도·제출처·주민등록번호 공개여부·발급부수)의 역할·이름, 양식 안 다른 입력 칸(V-03j: 전부 readback 대상) |
+| CAP-5 | 사용용도·제출처 드롭다운 펼친 상태 | 선택지 문구 → IR `inputs.purpose.values`·`inputs.submitTo.values`. 주민등록번호 비공개 선택지 문구(`allowedConstants` "공개안함"). 민원명 표시 문구(`strings` `cert.doc.taxpayment`) |
+| CAP-6 | [신청하기] 직후(확인 대화상자·전자서명 창이 뜨는지) | 확인 문구가 있으면 `submit.expectConfirm`, 서명이 있으면 `submit.signFlow`(지금 없음), 실패·취소 신호 → `verify.failSignals` |
+| CAP-7 | 신청 요청의 HAR(`/wqAction.do` actionId) | `selectors.commitEndpoints`(지금 비어 있음: H-01 항목과 합집합이라 실행은 되지만 커밋 가드가 이 요청을 분류하지 못한다) |
+| CAP-8 | 민원신청 처리결과 조회 화면(신청 전·후) | 조회 URL, 조회기간·민원명 칸, 결과 표 이름·열(발급번호·민원명·용도·제출처·처리상태) → verify `match`·`bind` |
+| CAP-9 | 처리결과의 [출력]·[열람] → 증명서 화면 | `hometax.cert.taxpayment.result.printButton`, 문서 화면 랜드마크(`doc.root`), 새 창(팝업)인지, 인쇄 PDF에 유효기간 글자가 남는지(docmeta `national_tax_cert`) |
+| CAP-10 | 사업자용 간편인증으로 민원증명이 발급되는지(ADR-018 결정 10) | 안 되면 H-04는 공동·금융인증서 경로만 |
+
+- 로그인·비밀: 인증서 비밀번호는 사용자가 전용 Chrome의 인증서 창에 직접 넣는다(`sign` → `human:secret`, 금고 비밀 창 (b), ADR-020 결정 2). 보안카드는 전자(세금)계산서 발급 전용이라 H-04에 없다(02 §5.1).
+- 개인 프로필(02 §10 "개인/사업자")은 v1.0.0에 없다. 신청인 대조가 `$profile.bizNo`라 business만 받는다(V-12).
+- 승인 카드는 민원증명 공통 `cert.confirm`이고 요약 칸은 `certDoc`·`certPurpose`·`certSubmitTo`·`rrnDisclosure`다(팀장 결정 2026-11-09). 요약 표(`APPROVAL_SUMMARIES`)·`FIELD_KEYS` 항목은 데이터 세션 PR이 넣는다.
+- 조회 `hometax.cert.issued_list`는 IR 조회 패키지다(H-01 조회와 같은 방식, 서명 대상). 입력 `key`는 민원명이고, 즉시발급 3종도 같은 패키지를 쓴다.
+- 엔진 후속: `readbackCard`(H-01 13칸 전용)와 제품 패키지 id 목록.
+

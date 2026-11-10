@@ -8,7 +8,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { BizVerifier, connectRunBrowser, DataService, fixturePortal, RunEnd, RunService, type GatePortMessage, type GateRequest, type IrPackage, type LocalApproval, type RunEvent } from '@sax/engine';
-import { effectiveMode, fixtureOriginGrant, runPermit, type PdfPort, type PermitStatus } from '@sax/engine/core';
+import { effectiveMode, fixtureOriginGrant, runPermit, type PdfPort, type PermitStatus, type Policy } from '@sax/engine/core';
+import { POLICY_EXAMPLE } from './core-fixtures.ts';
 import { openDatabase, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
@@ -34,6 +35,33 @@ describe('runPermit: 실효 수준(내장 상한 ∧ status 상한)과 killPlayb
   });
   it('다른 포털의 상한은 이 포털에 영향이 없다', () => {
     assert.equal(runPermit(st({ portalModeCeiling: { wetax: 'postprocess' } }), 'hometax', 'x.y').ok, true);
+  });
+  describe('정책 수준·만료 규칙(fail-closed, 팀장 결정 2026-11-09 ⑤, D03 §7.1·§12)', () => {
+    const pol = (portalMode: Policy['portalMode']): Policy => ({ ...(structuredClone(POLICY_EXAMPLE) as unknown as Policy), portalMode });
+    const AUTO = pol({ hometax: 'auto' });
+    it('정책이 없으면(none·null) 홈택스는 postprocess: 거부·hardStop', () => {
+      assert.deepEqual(runPermit(null, 'hometax', 'hometax.invoice.issue', { freshness: 'none', policy: null }), { ok: false, code: 'policy.portal_mode_denied', mode: 'postprocess', hardStop: true });
+      assert.equal(effectiveMode(st(), 'hometax', { freshness: 'fresh', policy: null }), 'postprocess');
+    });
+    it('fresh·stale(만료 뒤 168시간 안)는 마지막 유효 정책의 portalMode를 쓴다', () => {
+      assert.deepEqual(runPermit(st(), 'hometax', 'hometax.invoice.issue', { freshness: 'fresh', policy: AUTO }), { ok: true, mode: 'auto' });
+      assert.deepEqual(runPermit(st(), 'hometax', 'hometax.invoice.issue', { freshness: 'stale', policy: AUTO }), { ok: true, mode: 'auto' });
+    });
+    it('fallback(만료 뒤 168시간 지남)은 postprocess, 코드는 policy.expired', () => {
+      assert.deepEqual(runPermit(st(), 'hometax', 'hometax.invoice.issue', { freshness: 'fallback', policy: AUTO }), { ok: false, code: 'policy.expired', mode: 'postprocess', hardStop: true });
+    });
+    it('정책 portalMode가 없거나 낮으면 그 수준(키 없음 = postprocess), 정책은 상한을 넘지 못한다', () => {
+      assert.equal(runPermit(st(), 'hometax', 'x.y', { freshness: 'fresh', policy: pol({}) }).ok, false);
+      assert.deepEqual(runPermit(st(), 'hometax', 'x.y', { freshness: 'fresh', policy: pol({ hometax: 'assisted' }) }), { ok: false, code: 'policy.portal_mode_denied', mode: 'assisted', hardStop: false });
+      assert.equal(effectiveMode(st({ portalModeCeiling: { hometax: 'postprocess' } }), 'hometax', { freshness: 'fresh', policy: AUTO }), 'postprocess', 'status 상한이 이긴다');
+      assert.equal(effectiveMode(st(), 'gov24', { freshness: 'fresh', policy: pol({ gov24: 'auto' }) }), 'postprocess', '내장 상한이 이긴다');
+    });
+    it('kill은 정책과 무관하게 policy.playbook_killed', () => {
+      assert.equal((runPermit(st({ killPlaybooks: ['x.y'] }), 'hometax', 'x.y', { freshness: 'none', policy: null }) as { code: string }).code, 'policy.playbook_killed');
+    });
+    it('정책을 넘기지 않으면(fixture 개발 포털) 정책은 보지 않는다', () => {
+      assert.deepEqual(runPermit(st(), 'hometax', 'x.y'), { ok: true, mode: 'auto' });
+    });
   });
   it('kill은 그 플레이북 id만, 수준과 무관하게 거부·hardStop', () => {
     assert.deepEqual(runPermit(st({ killPlaybooks: ['hometax.invoice.issue'] }), 'hometax', 'hometax.invoice.issue'), { ok: false, code: 'policy.playbook_killed', mode: 'auto', hardStop: true });
@@ -281,7 +309,8 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
 describe('제품 entry 배선(서버 긴급 정지)', () => {
   it('RunService에 레지스트리 status 허가·Chrome 닫기를 주고, 레지스트리 명령(동기화) 뒤 진행 중 실행을 다시 본다', async () => {
     const src = await fs.readFile(new URL('../packages/engine/src/entry.ts', import.meta.url), 'utf8');
-    assert.match(src, /permit: \(id\) => runPermit\(registry\?\.status\(\) \?\? null, 'hometax', id\)/);
+    // 홈택스는 정책을 함께 본다(없으면 none = postprocess, ⑤). fixture는 정책을 보지 않는다.
+    assert.match(src, /permit: \(id\) => runPermit\(registry\?\.status\(\) \?\? null, 'hometax', id, portal\.kind === 'hometax' \? \(registry\?\.policy\(\) \?\? \{ freshness: 'none', policy: null \}\) : undefined\)/);
     assert.match(src, /closeBrowser: \(\) => slot\.close\(\)/);
     // 정책 동기화(③): 받은 서명 정책을 RateGuard에 준다(내장 값과 더 엄격한 쪽만).
     assert.match(src, /receivedPolicy: \(\) => registry\?\.policy\(\)\.policy \?\? null/);

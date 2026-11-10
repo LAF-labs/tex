@@ -100,6 +100,11 @@ export const BUNDLE_PC_COMMANDS = ['cash.put', 'cash.remove', 'receipt.confirm',
  * 엔진은 파일을 열지 않는다(머리 바이트·크기만). 같은 파일(sha256)은 다시 쓰지 않는다.
  */
 export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as const;
+/**
+ * 배달앱·오픈마켓 정산내역 넣기(D14 M6-5, J-01·J-02). main 전용이다. 처리는 PC_FILE과 같은 @sax/bundle PcFileIntake다.
+ * - settlement.store {profileId, itemId, month, bytes, format: xlsx|csv, parsed, displayName?}: parsed는 docparse SettlementResult. 요약(플랫폼·기간·합계)만 남긴다.
+ */
+export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
@@ -113,6 +118,8 @@ export interface EngineInit {
   t: 'init';
   root?: string;
   portal: EnginePortal;
+  /** 앱 판(app.getVersion(), semver). 레지스트리 항목 minAppVersion 대조에 쓴다. 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(fail-closed). */
+  appVersion?: string;
 }
 
 /** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */

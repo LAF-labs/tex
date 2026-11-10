@@ -32,6 +32,7 @@ import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
 import { PC_FILE_COMMANDS } from './protocol.ts';
+import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
@@ -75,6 +76,11 @@ const PHONE = new Set<string>(PHONE_COMMANDS);
 for (const m of PHONE) ALLOWED.add(m);
 const PC_FILE = new Set<string>(PC_FILE_COMMANDS);
 for (const m of PC_FILE) ALLOWED.add(m);
+// 정산내역 넣기(M6-5)도 PcFileIntake가 맡는다(보관함 파일 + 문서 + 그달 표시를 한 번에).
+for (const m of SETTLEMENT_COMMANDS) {
+  PC_FILE.add(m);
+  ALLOWED.add(m);
+}
 // daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
 for (const m of DAEMON_READ_QUERIES) {
   PAYROLL.add(m);
@@ -130,7 +136,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지는 받아 둔 서명 설치본을 실행 시작마다 다시 검증해 IR로 돌린다(PR-D2).
-  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log });
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
@@ -145,9 +151,10 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
       ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
-      // 서버 긴급 정지(팀장 결정 2026-11-09 ④): 레지스트리 status의 killPlaybooks·portalModeCeiling(D03 §3.1·§12). fixture 포털도 홈택스 상한을 따른다.
-      // 핀이 없으면(status를 받을 수 없음) 내장 상한만 본다. 정책 수준·만료(fail-closed)는 정책 동기화와 함께 붙인다(D03 §7.1).
-      permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id),
+      // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
+      // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
+      // fixture 개발 포털은 status 상한·kill만 따르고 정책은 보지 않는다(실제 포털 접속이 없다).
+      permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id, portal.kind === 'hometax' ? (registry?.policy() ?? { freshness: 'none', policy: null }) : undefined),
       closeBrowser: () => slot.close(),
       // 요청률은 받은 서명 정책과 내장 값 중 더 엄격한 쪽만(팀장 결정 2026-11-09 ③, D03 §7). 정책이 없으면 내장 값.
       receivedPolicy: () => registry?.policy().policy ?? null,
