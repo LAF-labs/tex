@@ -3,6 +3,7 @@
 import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
+import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
@@ -331,6 +332,7 @@ const ONB_ERR = {
   biz_inactive: '이 사업자는 지금 등록할 수 없는 상태예요.',
   bad_cert: '인증서를 다시 골라 주세요.',
   bad_email: '이메일 주소 모양이 맞지 않아요. 다시 확인해 주세요.',
+  name_required: '상호를 넣어 주세요. [고칠게요]에서 채울 수 있어요.',
   no_tasks: '지금 되는 일 중 하나 이상 골라 주세요.',
   stale_step: '이미 답한 질문이에요.',
   gesture_required: '버튼을 직접 눌러 주세요.',
@@ -962,7 +964,41 @@ function cpEditPanel(c) {
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
 }
 
-/** 내 사업장(캔버스 D-03): 사업자 프로필 · 개인 프로필 · 맡긴 업무. 고치기는 설정·대화로 넘긴다. */
+const RUN_ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
+/** 내 사업장 사업자 카드(shell-biz.js): 보기 / [수정] 폼. 편집 중 값은 state.bizEdit에 둔다(다시 그려도 남는다). */
+function bizCard() {
+  const b = state.boot.profiles.business;
+  return bizProfileCard({
+    b,
+    edit: state.bizEdit,
+    runActive: [...state.runs.values()].some((r) => RUN_ACTIVE.includes(r.status)),
+    authReopen: !!state.boot.authReopen,
+    call,
+    toast,
+    rerender: render,
+    onEdit: () => {
+      state.bizEdit = bizEditStart(b);
+      render();
+    },
+    onCancel: () => {
+      state.bizEdit = null;
+      render();
+    },
+    onSaved: (r) => {
+      state.boot.profiles = r.profiles;
+      state.boot.profileEdits = r.edits;
+      state.bizEdit = null;
+      // 제목줄(상호)·판·카드에 바로 반영
+      render();
+      renderTitlebar();
+      renderToday();
+      toast(r.changed.length ? '저장했어요' : '바뀐 것이 없어요');
+    },
+    reopenAuth: () => reopenSetup('auth'),
+  });
+}
+
+/** 내 사업장(캔버스 D-03): 사업자 프로필(보기·[수정]) · 개인 프로필 · 맡긴 업무. */
 function bizView() {
   const p = state.boot.profiles;
   const b = p.business;
@@ -974,22 +1010,7 @@ function bizView() {
       'div',
       { class: 'rs-col' },
       railHead('내 사업장', `프로필 2개 중 ${used}개 사용`),
-      h(
-        'article',
-        { class: 'sx-card' },
-        h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `사업자 · ${b.name}`)),
-        kv(
-          [
-            ['상호', b.name],
-            ['사업자번호', fmtBiz(b.bizNo), { mono: true }],
-            ['대표자', b.rep],
-            ['이메일', b.email],
-            ['발급 인증', b.auth, { copy: () => go('settings'), copyLabel: '설정에서 변경' }],
-          ],
-          true,
-        ),
-        h('div', { class: 'sx-source' }, '이 PC의 내 사업장 정보 · 바꿀 때는 대화로 말해 주세요'),
-      ),
+      bizCard(),
       p.personal
         ? h(
             'article',
@@ -1028,6 +1049,13 @@ function activityRows() {
   for (const g of [...state.g24.values()].reverse()) {
     const result = { guide: '내 차례', pick: '내 차례', saved: '문서함에 넣음', stopped: '그만둠' }[g.stage];
     rows.push({ id: g.id, g24: g, at: `${today} ${g.startedAt}`, what: `${g.doc} · 정부24`, profile: '개인', portal: '정부24 · 직접', status: { guide: 'turn', pick: 'turn', saved: 'done', stopped: 'stopped' }[g.stage], result });
+  }
+  // 내 사업장 고친 기록(칸 이름만, 값 없음). 새것이 위.
+  const LABEL = { name: '상호', bizNo: '사업자번호', rep: '대표자', bizType: '업태', bizItem: '종목', address: '주소', email: '이메일' };
+  for (const [i, e] of [...(state.boot.profileEdits ?? []).entries()].reverse()) {
+    const d = new Date(e.at);
+    const at = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    rows.push({ id: `edit-${i}`, edit: e, at, what: `내 사업장 수정 · ${e.fields.map((f) => LABEL[f] ?? f).join('·')}`, profile: '사업자', portal: '이 PC', status: 'done', result: '저장함' });
   }
   // 시연 씨앗이 있으면 지난 발급 이력(최근 순, 상태가 섞여 있다), 없으면 타임라인의 지난 카드
   if (state.boot.history)
@@ -1082,7 +1110,14 @@ function activityPanel(row) {
           modelRow(row.g24.sent),
           serverRow(row.g24.sent),
         ]
-      : row.past
+      : row.edit
+        ? [
+            // 상태조회(checkBizNo)는 제품에서 아직 보내지 않는다(조회 못 함 → [맞습니다]). 프록시가 붙으면 여기도 바꾼다.
+            ['저장', `이 PC 내 사업장 정보 · 고친 칸 ${row.edit.fields.length}개(값은 기록하지 않아요)`],
+            ['모델', '쓰지 않음'],
+            serverRow([]),
+          ]
+        : row.past
         ? [
             ['홈택스', row.past.status === 'stopped' ? '발급하지 않음(승인 전에 중지)' : '전자세금계산서 1건 발급 · 발급목록에서 확인'],
             ['메일', row.past.status === 'stopped' ? '보내지 않음' : `${row.past.mail} · 홈택스가 보냄${row.past.status === 'attention' ? ', 메일발송목록에서 확인하지 못함' : ''}`],

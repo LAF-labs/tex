@@ -406,6 +406,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return [...this.runs.values()].some((x) => ['preparing', 'turn', 'waiting', 'issuing'].includes(x.status));
   }
 
+  /** 진행 중인 실행이 하나라도 있는가(내 사업장 저장을 막는다). */
+  anyActive(): boolean {
+    return this.busy();
+  }
+
   /** 진행 중인 실행인가(비밀 창은 이 실행의 요청만 연다). */
   isActive(runId: string): boolean {
     const r = this.runs.get(runId);
