@@ -65,7 +65,22 @@ describe('온보딩: 한 번에 하나씩', () => {
     ]);
     assert.equal(b.flow.state.check?.label, '폐업자');
     assert.equal(await code(b.flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive');
+    assert.equal(await code(b.flow.answer({ step: 'biz-confirm', choice: 'confirm_unverified' })), 'bad_choice', '휴·폐업으로 확인된 번호는 [맞습니다]로도 확정하지 않는다');
     assert.equal(b.flow.state.step, 'biz-confirm');
+  });
+
+  it('진위확인을 하지 못한 번호(unknown)는 [맞습니다]를 눌러야 확정되고, 상태는 확인 못 함 그대로 남는다(팀장 결정 2026-11-10)', async () => {
+    const { flow, ports } = make();
+    ports.checkBizNo = async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' });
+    await walk(flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'number' },
+      { step: 'biz-number', choice: 'submit', fields: { bizNo: '123-45-67891' } },
+    ]);
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive', '그냥 [맞아요]로는 확정하지 않는다');
+    await flow.answer({ step: 'biz-confirm', choice: 'confirm_unverified' });
+    assert.equal(flow.state.step, 'auth');
+    assert.deepEqual([flow.state.check?.status, flow.state.check?.label], ['unknown', '조회하지 못했어요'], '확인됐다고 바꾸지 않는다');
   });
 
   it('사업자 칸: 상한 안의 값은 자르지 않는다(이메일 320자). 모양이 틀린 이메일은 받을 때 거부, 등록증에서 읽은 틀린 이메일은 비운다', async () => {
@@ -244,10 +259,10 @@ describe('동의 화면 4종', () => {
     assert.match(body, /onb = new OnboardingFlow\(onbPorts, saved\);\s*onbShow = saved\.step !== 'done';/);
     assert.ok(body.indexOf('onbStore.load') < body.indexOf('!business'), '저장을 먼저 본다');
     // 저장은 엔진 명령으로만(앱 폴더 JSON에 쓰지 않는다). 목업은 바깥 일에만.
-    assert.match(src, /const onbMock = new MockOnboardingPorts\(\{ saveProfile: async \(\) => \{\} \}\);/);
+    assert.doesNotMatch(src, /MockOnboardingPorts/, '제품 셸은 견본 바깥 일을 만들지 않는다(시연 연결 ShellDev.sample만)');
     assert.match(src, /const onbPorts = onboardingPorts\(onbExternal, onbStore, refresh\);/);
     // 제품 공동인증서 목록은 금고 npki.list → 샌드박스 certInfo(npki-certs.ts). 목업 목록은 fixture만.
-    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? onbMock/);
+    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? sample!\.onboarding\(\)/);
     assert.match(src, /findCerts: \(\) => listNpkiCerts\(\(m, p\) => host\.control\(m, p\), \(der\) => certInfoInSandbox\(der\)/);
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });

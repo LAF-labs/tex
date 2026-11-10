@@ -167,7 +167,7 @@ describe('셸 배선(소스 검사)', () => {
     assert.match(src, /ocrImageInSandbox\(b, \{ mode: 'document' \}\)/);
     assert.match(src, /parse: \(text\) => host\.rpc\('bizcert\.parse', \{ text \}\)/);
     assert.doesNotMatch(src, /recognizeBizCert: \(\) => onbMock\.recognizeBizCert\(\)/);
-    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? onbMock/);
+    assert.match(src, /const onbExternal: OnboardingExternal = fixture\s*\? sample!\.onboarding\(\)/);
   });
   it('bizcert-read는 Electron·파일 시스템·x509·docparse 파서를 직접 쓰지 않는다', () => {
     const s = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/src/bizcert-read.ts'), 'utf8');

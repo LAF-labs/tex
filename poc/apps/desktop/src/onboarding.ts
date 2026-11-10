@@ -16,7 +16,7 @@ export const ONB_CHOICES = {
   terms: ['agree'],
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
-  'biz-confirm': ['confirm', 'edit', 'recheck', 'later'],
+  'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
   auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
   delegation: ['agree', 'switch'],
   model: ['agree', 'decline'],
@@ -104,6 +104,18 @@ export interface ConsentConfig {
   processorsVersion: string;
   processors: ModelProcessor[];
 }
+
+/**
+ * ② 처리자 표(앱 내장 판). 서명된 운영 설정으로 받게 되면 바뀐다. 모델 상류가 OpenRouter라 공급사 목록이 바뀔 수 있어
+ * 렌더러·상태 기계에 고정하지 않는다(팀장 조건 (c)). 시연·시험은 onboarding-mock.ts의 MOCK_CONSENT_CONFIG(같은 표, 다른 판)를 쓴다.
+ */
+export const CONSENT_CONFIG: ConsentConfig = {
+  processorsVersion: '2026-11-05',
+  processors: [
+    { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음(설정 확인 전 30일)' },
+    { name: '모델 공급사(라우팅 대상)', role: '문장 해석', country: '미국·EU', retention: 'ZDR 승인 전 30일' },
+  ],
+};
 
 /** 앱이 남기는 동의 레코드(②③④). ①은 금고가 만든다(금고 ConsentRecord). */
 export interface AppConsentRecord {
@@ -432,7 +444,17 @@ export class OnboardingFlow {
           await this.setBiz(s.biz);
           return;
         }
-        // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호도 확정하지 않는다.
+        // 진위확인을 하지 못한 번호(unknown)는 사용자가 [맞습니다]를 눌러야 확정한다(팀장 결정 2026-11-10, 08 §4 O-02).
+        // 확인됐다고 보이지 않는다: 상태는 unknown 그대로 남는다. 휴·폐업으로 확인된 번호는 막는다.
+        if (a.choice === 'confirm_unverified') {
+          if (!s.biz || !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
+          if (s.check?.status !== 'unknown') throw new Error('bad_choice');
+          this.say('맞습니다');
+          this.unskip('biz');
+          await this.toAuth();
+          return;
+        }
+        // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호는 위의 [맞습니다]로만 확정한다.
         // 등록증(OCR)에서 읽은 번호도 DB와 같은 체크섬을 지나야 확정한다(요약 저장에서 처음 걸리지 않게).
         if (s.biz && !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
         if (!s.biz || s.check?.status !== 'active') throw new Error('biz_inactive');

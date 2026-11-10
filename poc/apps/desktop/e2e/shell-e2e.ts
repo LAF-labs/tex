@@ -767,7 +767,9 @@ app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
     // 준비 분당 상한(사람 속도 3회)은 e2e가 짧은 시간에 여러 건을 돌리므로 넉넉히 둔다(audit-d가 상한 자체를 본다).
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100 });
+    // SAX_E2E_SIZE=1280x689: 작은 화면(1366×768 노트북의 창 콘텐츠, WIN-REALDEVICE §10.6) 배치를 본다.
+    const [ew, eh] = (process.env.SAX_E2E_SIZE ?? '1280x820').split('x').map(Number) as [number, number];
+    S = await startShell({ dev: DEMO_DEV, width: ew, height: eh, preparePerMin: 100 });
     // 다른 창에 가려져도 렌더러가 프레임을 계속 그리게 한다(ResizeObserver로 잡는 대화 열 폭이 가려진 동안 멈추지 않게). e2e 창에만.
     S.win.webContents.setBackgroundThrottling(false);
     // 실제 OS 마우스는 이 창에 들어오지 않게 한다. 실제 커서의 move·leave가 시험이 누르던 클릭을 취소하면 시험이 기계 상태에 따라

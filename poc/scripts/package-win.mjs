@@ -4,6 +4,7 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
+// --mac: macOS arm64 미서명 .dmg(사용자 시험용, 팀장 지시 2026-11-10). 기본 출력 poc/.tmp/package-mac. 배포 판정은 Windows 베타 기준이라 참고만.
 // 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음),
 //       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인을 설정으로 끌 수 있다, 배포 불가)
 import { spawnSync } from 'node:child_process';
@@ -18,8 +19,10 @@ const POC = path.resolve(import.meta.dirname, '..');
 const DESKTOP = path.join(POC, 'apps/desktop');
 const BUILD = path.join(DESKTOP, 'build');
 
-const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' } } });
-const OUT = path.resolve(args.out ?? path.join(POC, '.tmp/package-win'));
+const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' }, mac: { type: 'boolean' } } });
+/** 대상 OS·CPU(pnpm deploy 선택 의존성·네이티브 미리 빌드·electron-builder 대상) */
+const TARGET = args.mac ? { os: 'darwin', cpu: 'arm64', name: 'mac' } : { os: 'win32', cpu: 'x64', name: 'win' };
+const OUT = path.resolve(args.out ?? path.join(POC, `.tmp/package-${TARGET.name}`));
 const STAGE = path.join(OUT, 'stage');
 const DIST = path.join(OUT, 'dist');
 
@@ -77,13 +80,14 @@ async function main() {
   const version = process.env.SAX_APP_VERSION ?? desktopPkg.version;
   if (!semverOk(version)) throw new Error(`앱 버전이 semver(x.y.z)가 아니다: ${version}`);
   const { makeConfig, signingFrom } = await import('./../apps/desktop/build/electron-builder.config.mjs');
-  const signing = signingFrom(process.env, process.platform);
+  // macOS 빌드는 서명하지 않는다(Apple 개발자 서명·공증은 아직 없다)
+  const signing = TARGET.os === 'darwin' ? { mode: 'unsigned', reason: 'mac_signing_unset', missing: [] } : signingFrom(process.env, process.platform);
 
   if (!args['skip-build']) run('pnpm', ['build']);
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(OUT, { recursive: true });
   // 잠금 파일 그대로, 운영 의존성만, win32-x64 선택 의존성(@napi-rs/keyring 등), 설치 스크립트 없이(네이티브는 미리 빌드)
-  run('pnpm', ['--filter', '@sax/desktop', 'deploy', '--prod', '--os=win32', '--cpu=x64', '--ignore-scripts', '--config.node-linker=hoisted', STAGE]);
+  run('pnpm', ['--filter', '@sax/desktop', 'deploy', '--prod', `--os=${TARGET.os}`, `--cpu=${TARGET.cpu}`, '--ignore-scripts', '--config.node-linker=hoisted', STAGE]);
 
   // 앱 dist를 진입점에서 닿는 파일로 줄인다
   const stageDist = path.join(STAGE, 'dist');
@@ -125,16 +129,18 @@ async function main() {
   const builder = require('electron-builder');
   // 스테이지에는 devDependency electron이 없다: 데스크톱 패키지에 설치된 정확한 버전을 넘긴다(Electron zip은 electron-builder가 받아 sha256을 확인한다)
   const electronVersion = JSON.parse(fs.readFileSync(require.resolve('electron/package.json'), 'utf8')).version;
-  const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon }), electronVersion };
-  await builder.build({ projectDir: STAGE, targets: builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64), config, publish: 'never' });
+  const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
+  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
+  await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
 
   // 보고서
-  const exe = fs.readdirSync(DIST).find((f) => f.endsWith('.exe'));
-  if (!exe) throw new Error('설치본(.exe)이 없다');
+  const exe = fs.readdirSync(DIST).find((f) => f.endsWith(TARGET.os === 'darwin' ? '.dmg' : '.exe'));
+  if (!exe) throw new Error(`설치본(${TARGET.os === 'darwin' ? '.dmg' : '.exe'})이 없다`);
   const exePath = path.join(DIST, exe);
   const bytes = fs.readFileSync(exePath);
-  const unpacked = path.join(DIST, 'win-unpacked');
-  const asarPath = path.join(unpacked, 'resources/app.asar');
+  const unpacked = TARGET.os === 'darwin' ? path.join(DIST, 'mac-arm64', `${identity.productName}.app`) : path.join(DIST, 'win-unpacked');
+  const resources = TARGET.os === 'darwin' ? path.join(unpacked, 'Contents/Resources') : path.join(unpacked, 'resources');
+  const asarPath = path.join(resources, 'app.asar');
   const libRequire = createRequire(createRequire(require.resolve('electron-builder')).resolve('app-builder-lib'));
   const asar = libRequire('@electron/asar');
   // listPackage는 Windows에서 `\` 경로를 준다. 보고서에는 `/`로 쓰지만 statFile은 path.sep으로 나누므로 원래 경로로 묻는다(WIN-REALDEVICE §7).
@@ -148,11 +154,11 @@ async function main() {
     const key = parts[0] === 'node_modules' ? parts.slice(0, parts[1]?.startsWith('@') ? 3 : 2).join('/') : parts[0];
     asarTop[key] = (asarTop[key] ?? 0) + st.size;
   }
-  const unpackedDir = path.join(unpacked, 'resources/app.asar.unpacked');
+  const unpackedDir = path.join(resources, 'app.asar.unpacked');
   const unpackedFiles = fs.existsSync(unpackedDir) ? walk(unpackedDir).map((f) => path.relative(unpackedDir, f).replaceAll('\\', '/')) : [];
   // 퓨즈 읽어 확인(D11 §4 퓨즈 행). 다르면 빌드 실패
   const fuses = libRequire('@electron/fuses');
-  const wire = await fuses.getCurrentFuseWire(path.join(unpacked, `${identity.productName}.exe`));
+  const wire = await fuses.getCurrentFuseWire(TARGET.os === 'darwin' ? path.join(unpacked, 'Contents/MacOS', identity.productName) : path.join(unpacked, `${identity.productName}.exe`));
   const fuseState = {};
   for (const [i, name] of Object.entries(fuses.FuseV1Options)) if (!Number.isNaN(Number(i)) && wire[i] !== undefined) fuseState[name] = String.fromCharCode(wire[i]) === '1';
   const FUSES_WANT = { RunAsNode: false, EnableCookieEncryption: true, EnableNodeOptionsEnvironmentVariable: false, EnableNodeCliInspectArguments: false, EnableEmbeddedAsarIntegrityValidation: true, OnlyLoadAppFromAsar: true, GrantFileProtocolExtraPrivileges: false };

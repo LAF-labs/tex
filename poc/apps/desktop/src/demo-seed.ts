@@ -9,7 +9,7 @@ import { BrowserWindow, session, type Session } from 'electron';
 import type { EngineHost } from './engine-host.ts';
 import { DEMO_COUNTERPARTIES, DEMO_PROFILE } from './fixture-mode.ts';
 import { hardenSession, hardenWindow } from './harden.ts';
-import { dayOffset, split, ymd, type Doc, type MockStore } from './shell-mock.ts';
+import { dayOffset, split, ymd, type Doc, type DocStore } from './shell-model.ts';
 import { demoCerts, SAMPLE_MARK } from './synthetic-certs.ts';
 import { importBytes } from './vault-import.ts';
 
@@ -120,7 +120,7 @@ export interface DemoSeed {
  * 빈 데모 DB에 견본 거래처를 넣고(엔진 명령), 목업 문서함을 견본 서류로 바꾼다. 거래처의 지난 품목은 itemHints에 더한다.
  * PDF·보관함 가져오기는 fill()에서 한다(창을 먼저 띄우게).
  */
-export async function startDemoSeed(host: EngineHost, store: MockStore, root: string, itemHints: Record<string, string>): Promise<DemoSeed> {
+export async function startDemoSeed(host: EngineHost, store: DocStore, root: string, itemHints: Record<string, string>): Promise<DemoSeed> {
   const have = new Set(((await host.rpc('db.query.counterparties.list')) as Array<{ bizNo: string }>).map((c) => c.bizNo));
   for (const c of SEED_COUNTERPARTIES) {
     if (!have.has(c.bizNo)) await host.rpc('counterparty.create', { bizNo: c.bizNo, name: c.name, repName: c.repName, email: c.email });

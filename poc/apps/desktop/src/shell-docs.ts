@@ -2,7 +2,7 @@
 // 기본은 셸 엔진(PoC-6 엔진 호스트)의 RPC(db.query.documents.list, document.import, document.update, document.file)다.
 // fixture 모드에서는 엔진이 임시 앱 폴더의 DB·보관함을 쓴다. e2e는 이 공급자를 감싸 보내는 값을 적는다.
 import type { DocumentView } from '@sax/engine';
-import type { Doc } from './shell-mock.ts';
+import type { Doc } from './shell-model.ts';
 import type { EngineCall, ImportResult } from './vault-import.ts';
 
 /** 문서함 가져오기 결과. imported면 셸 서류(doc)를 함께 준다. */

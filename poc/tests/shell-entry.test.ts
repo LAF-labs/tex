@@ -8,12 +8,8 @@ import { BUILD_WARN_TEXT, isBuildInfo, isTestBuild, packagedProblems } from '../
 
 const SRC = path.join(import.meta.dirname, '../apps/desktop/src');
 const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.]|$)|poc\d+-measure/;
-/**
- * 아직 진입점에 남는 목업 어댑터(실제 저장소가 오면 바뀐다). 이 목록은 줄기만 해야 한다.
- * - shell-mock.ts: 거래처·문서 목업 저장소, 꾸러미·설정 목업(M4-3·M4-4, 데이터 트랙)
- * - onboarding-mock.ts: 온보딩 바깥 일(M4-3 등록증 OCR, #65 checkBizNo, #93 NPKI, 금고 T-06 등록 창). 저장은 onboarding-store.ts(엔진 #91)
- */
-const STAND_INS = ['onboarding-mock.ts', 'shell-mock.ts'];
+/** 제품 진입점에 남는 개발 전용 이름(없어야 한다). 견본은 시연 연결(ShellDev.sample, demo-dev.ts)로만 온다(WIN-REALDEVICE §10.2). */
+const STAND_INS: string[] = [];
 
 /** 값 import만 따라간다(import type·export type은 지워져 dist에 남지 않는다). */
 function reach(entry: string): string[] {
@@ -32,7 +28,7 @@ function reach(entry: string): string[] {
 }
 
 describe('제품 진입점(W-7)', () => {
-  it('shell.ts가 닿는 개발 전용 이름은 목업 어댑터 둘뿐이다(fixture·h01-fixture·synthetic-certs·demo-* 없음)', () => {
+  it('shell.ts는 개발 전용 이름에 닿지 않는다(mock·fixture·h01-fixture·synthetic-certs·demo-* 없음): 설치본 배지는 "미서명 빌드" 하나', () => {
     const files = reach('shell.ts');
     assert.ok(files.includes('shell-app.ts') && files.includes('approval-bar.ts'));
     assert.deepEqual(files.filter((f) => DEV_ONLY_RE.test(f)), STAND_INS);
@@ -51,6 +47,12 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
   const LAD = 'C:\\Users\\kim\\AppData\\Local';
   const info = { productName: 'SovereignAX', version: '0.1.0', channel: 'beta', signing: 'azure', commit: 'abc', devOnlyIncluded: [] as string[] };
   const ok = { isPackaged: true, appPath: `${LAD}\\Programs\\SovereignAX\\resources\\app.asar`, execPath: `${LAD}\\Programs\\SovereignAX\\SovereignAX.exe`, localAppData: LAD, buildInfo: info, platform: 'win32' as const };
+
+  it('macOS 시험 빌드(.app/Contents/Resources/app.asar)는 asar로 본다, LOCALAPPDATA가 없으니 설치 위치는 보지 않는다', () => {
+    const mac = { isPackaged: true, appPath: '/Applications/SovereignAX.app/Contents/Resources/app.asar', execPath: '/Applications/SovereignAX.app/Contents/MacOS/SovereignAX', localAppData: '', buildInfo: { ...info, signing: 'unsigned' }, platform: 'darwin' as const };
+    assert.deepEqual(packagedProblems(mac), ['warn:unsigned_build']);
+    assert.deepEqual(packagedProblems({ ...mac, appPath: '/Applications/SovereignAX.app/Contents/Resources/app' }), ['fatal:not_asar', 'warn:unsigned_build']);
+  });
 
   it('정상 설치본은 문제 없음, 개발 실행은 늘 통과', () => {
     assert.deepEqual(packagedProblems(ok), []);

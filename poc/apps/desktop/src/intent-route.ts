@@ -3,7 +3,7 @@
 //   확인 카드(초안)는 사용자가 [발급 준비]를 눌러야 실행된다. 대화만으로 실행하지 않는다.
 // - 엔진에 명령이 없거나(unknown_method) 판정을 못 하면(decide.unavailable·시간 초과) 오프라인 정규식으로 해석한다(화면 구석 '오프라인 해석').
 // - 응답은 신뢰하지 않는다: 모양이 다르면 오프라인으로 간다. 로그에는 결과 종류·경로만 남긴다(문장 없음).
-import type { Parsed } from './shell-mock.ts';
+import type { Parsed } from './shell-model.ts';
 
 /** intent_route_v1 선택지(packages/model/bundles/intent_route_v1.json의 choices, none_of_these 제외). */
 export const INTENT_PLAYBOOKS = [
