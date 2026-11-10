@@ -116,7 +116,10 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
       assert.ok(start >= 0, m);
       const next = table.slice(start + 3).search(/\n {4}'[a-z0-9.]+': /);
       const body = table.slice(start, next < 0 ? undefined : start + 3 + next);
-      assert.ok(body.includes(`needGesture(${ms.toLocaleString('en-US').replace(',', '_')})`), `${m}: needGesture(${ms})`);
+      const t = ms.toLocaleString('en-US').replace(',', '_');
+      // 코드 확인 둘(account.verify·finishReset)은 키 입력도 main이 본 입력으로 치는 needTyping(같은 시간)이다(0.1.5 실사용)
+      const fn = m === 'account.verify' || m === 'account.finishReset' ? 'needTyping' : 'needGesture';
+      assert.ok(body.includes(`${fn}(${t})`), `${m}: ${fn}(${ms})`);
     }
   });
 });

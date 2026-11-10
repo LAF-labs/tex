@@ -1168,6 +1168,9 @@ function closeLogin() {
   $('[data-act=account-login]')?.focus();
 }
 
+/** 서버가 받은 코드를 거절한 오류(이때만 코드 칸을 비운다). */
+const SERVER_CODE_ERR = new Set(['account.code_invalid', 'account.code_locked', 'account.code_expired']);
+
 /** 로그인 화면의 요청 하나. 끝나면 main이 준 단계로 다시 그린다. 등록이 끝나면 화면을 닫는다. 비밀번호는 보낸 뒤 비운다. */
 async function accountStep(method, params) {
   const l = state.login;
@@ -1185,7 +1188,7 @@ async function accountStep(method, params) {
     if (method === 'account.password' || method === 'account.setPassword' || method === 'account.finishReset') l.draft.password = '';
     // 비밀번호 찾기: 코드를 보냈으면 코드 칸부터. 코드 오류는 코드 칸으로 돌아가 칸을 비운다(새 비밀번호도 지웠다, 명세 §4).
     if (method === 'account.startReset' && state.account?.step === 'reset_code') l.screen = 'reset_code';
-    if (method === 'account.finishReset' && /^account\.code_/.test(state.account?.error ?? '')) {
+    if (method === 'account.finishReset' && SERVER_CODE_ERR.has(state.account?.error)) {
       l.screen = 'reset_code';
       l.draft.code = '';
     }
@@ -1196,7 +1199,8 @@ async function accountStep(method, params) {
       l.screen = 'code_email';
       state.account = { ...state.account, error: null };
     }
-    if (method === 'account.verify' && (state.account?.error || state.account?.step === 'set_password')) l.draft.code = '';
+    // 받은 코드는 만료까지 쓴다: 서버가 코드가 틀렸다·막혔다·지났다고 한 때만 칸을 비운다. 앱 쪽 거절(실제 입력 못 봄·모양)·연결 실패는 칸에 남긴다.
+    if (method === 'account.verify' && (SERVER_CODE_ERR.has(state.account?.error) || state.account?.step === 'set_password')) l.draft.code = '';
   }
   if (state.account?.step === 'signed_in' && method === 'account.finishReset') {
     // 바꿈 끝 화면(§4 done)을 보이고 [계속]에서 닫는다
