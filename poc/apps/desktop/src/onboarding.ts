@@ -16,7 +16,7 @@ export const ONB_CHOICES = {
   terms: ['agree'],
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
-  'biz-confirm': ['confirm', 'edit', 'recheck', 'later'],
+  'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
   auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
   delegation: ['agree', 'switch'],
   model: ['agree', 'decline'],
@@ -444,7 +444,17 @@ export class OnboardingFlow {
           await this.setBiz(s.biz);
           return;
         }
-        // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호도 확정하지 않는다.
+        // 진위확인을 하지 못한 번호(unknown)는 사용자가 [맞습니다]를 눌러야 확정한다(팀장 결정 2026-11-10, 08 §4 O-02).
+        // 확인됐다고 보이지 않는다: 상태는 unknown 그대로 남는다. 휴·폐업으로 확인된 번호는 막는다.
+        if (a.choice === 'confirm_unverified') {
+          if (!s.biz || !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
+          if (s.check?.status !== 'unknown') throw new Error('bad_choice');
+          this.say('맞습니다');
+          this.unskip('biz');
+          await this.toAuth();
+          return;
+        }
+        // 휴·폐업이면 등록을 멈춘다(08 §4 O-02). 확인하지 못한 번호는 위의 [맞습니다]로만 확정한다.
         // 등록증(OCR)에서 읽은 번호도 DB와 같은 체크섬을 지나야 확정한다(요약 저장에서 처음 걸리지 않게).
         if (s.biz && !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
         if (!s.biz || s.check?.status !== 'active') throw new Error('biz_inactive');
