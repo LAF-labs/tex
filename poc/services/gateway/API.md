@@ -60,7 +60,8 @@
 |---|---|
 | `{toolset, messages(role=user, input_text만), replay?, runToken}` | `200 {model, status, output:[{item, tag}], usage:{input_tokens, output_tokens}, toolsetDigest}` |
 
-- 툴셋: `selector_repair`, `query_parse`(정의 `packages/model/src/toolsets.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
+- 툴셋: `selector_repair`, `query_parse`, `chat_reply`(정의 `packages/model/src/toolsets.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
+- `chat_reply`(대화 짧은 응대, 2026-11-10): 도구 없음·1턴·`max_output_tokens` 1000·effort low, 공통 판정기 머리말 없이 `toolsets/chat_reply.ko.txt`만. 대화 범위(`chatSessionId`) runToken으로 부르고 범위당 새 L2 예산(`l2PerChat`)을 쓴다. 출력 `{kind, reply, suggest[]}`의 길이·세무 문장 차단은 엔진이 한다(게이트웨이는 본문을 보지 않는다).
 - `effort`·`max_output_tokens`·도구 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의로 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·도구·`store`를 보내면 `400`(Phase 1 `GW_ALLOW_IMAGES=false`). replay 항목 안의 이미지도 `400`.
 - `tag = HMAC-SHA256(gw_key, accountId ‖ 0 ‖ deviceId ‖ 0 ‖ runToken ‖ 0 ‖ 정규 JSON(item))` hex. replay는 이 태그가 맞는 항목과, 그 항목 중 `function_call`의 `call_id`에 답하는 `function_call_output`만 받는다. 태그는 runToken에 묶여 다른 실행에서 재사용할 수 없다.
 - `selector_repair`의 `scopeId`는 게이트웨이 정의에서 형식 제한(`^[A-Za-z0-9_.-]{1,64}$`)이다. 요청 스키마에 `scopeIds`가 없어서다. 엔진은 로컬 툴셋 정의(열거)로 도구 호출을 다시 검증한다.

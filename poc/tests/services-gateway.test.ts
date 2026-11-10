@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { BundleCatalog, OpenAIDecisionsAdapter, canonicalJson, type Egress } from '../packages/model/src/index.ts';
+import { BundleCatalog, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
@@ -351,6 +351,30 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     const f3 = await e.call('/v1/respond', respondBody(rt3, {}, 'selector_repair'));
     const t3 = (f3.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
     assert.equal((await e.call('/v1/respond', respondBody(rt3, { replay: [t3, { ...answer, output: '주민 900101-1234567' }] }, 'selector_repair'))).json.error, 'gateway.pii_tripwire');
+  });
+
+  it('chat_reply(대화 짧은 응대): 대화 범위 토큰으로 받고, 도구 없음·1턴·공통 판정기 머리말 없음, toolsetDigest는 로컬 정의와 같다', async () => {
+    const rt = await e.runToken(e.pc, { chatSessionId: 'chat-0003-abcd' });
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"help","reply":"세금계산서 발급을 도와드려요.","suggest":["hometax.invoice.issue"]}' }] }];
+    const body = { toolset: 'chat_reply', messages: [{ role: 'user', content: [{ type: 'input_text', text: '뭐 할 수 있어?' }] }], runToken: rt };
+    const r = await e.call('/v1/respond', body);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.toolsetDigest, toolsetDigest(CHAT_REPLY));
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.store, false);
+    assert.equal(sent.max_output_tokens, CHAT_REPLY.maxOutputTokens);
+    assert.equal(sent.tools, undefined);
+    assert.match(String(sent.prompt_cache_key), /^acct:[0-9a-f]{32}:t:chat_reply$/);
+    assert.equal((sent.text as { format: { name: string } }).format.name, 'chat_reply');
+    const dev = JSON.stringify((sent.input as unknown[])[0]);
+    assert.match(dev, /chat_reply/);
+    assert.doesNotMatch(dev, /판정기다/);
+    // 1턴: 이전 출력을 재생하면 예산 초과, 문장 속 식별자는 트립와이어
+    const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
+    assert.equal((await e.call('/v1/respond', { ...body, replay: [tagged] })).json.error, 'gateway.run_budget_exceeded');
+    const pii = { ...body, messages: [{ role: 'user', content: [{ type: 'input_text', text: '주민 900101-1234567 이거 뭐야' }] }] };
+    assert.equal((await e.call('/v1/respond', pii)).json.error, 'gateway.pii_tripwire');
+    assert.equal(e.provider.responds.length, 1);
   });
 
   it('query_parse 턴 상한 1: 이전 출력을 재생하면 예산 초과', async () => {

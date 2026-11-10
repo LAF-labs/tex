@@ -5,6 +5,7 @@ export * from './documents.ts';
 export * from './browser.ts';
 export * from './data-service.ts';
 export * from './intent.ts';
+export * from './chat.ts';
 export * from './registry-sync.ts';
 export * from './registry-sinks.ts';
 export * from './registry-pin.ts';
