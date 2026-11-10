@@ -103,7 +103,8 @@ export interface GateRequest {
   reqId: string;
   /** 엔진이 게이트 요청마다 만드는 로컬 전용 값(폰 챌린지·토큰 nonce와 다르다). */
   approvalNonce: string;
-  docType: 'H-01';
+  /** 서류 종류(승인 카드 id에서, CARD_DOC_TYPE). main은 이것으로 앞 readback 칸 수와 카드 줄을 고른다. */
+  docType: GateDocType;
   trigger: 'local';
   /** readback 값과 예약 키의 배열 전체. 순서도 cardHash에 들어간다. */
   fields: GateField[];
@@ -277,11 +278,31 @@ export type ReadbackKey = (typeof READBACK_KEYS)[number];
 /** readback 칸(예약 키가 아닌 것) 수. 엔진은 readback 13칸을 앞에, 예약 키를 뒤에 둔다. */
 export const READBACK_FIELD_COUNT = READBACK_KEYS.length;
 
+/** 홈택스 민원증명 승인 카드(cert.confirm, H-03·H-04·H-08·H-09 공통)의 readback 칸. 순서가 게이트 fields 앞 칸의 순서다(APPROVAL_SUMMARIES와 같다). */
+export const CERT_READBACK_KEYS = ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure'] as const satisfies readonly FieldKey[];
+
+/** 게이트 요청 서류 종류. H-01 = 세금계산서, cert = 홈택스 민원증명. */
+export type GateDocType = 'H-01' | 'cert';
+
+/** 승인 카드 id → 서류 종류·게이트 fields 앞 readback 칸(앱 내장 표, 팀장 결정 2026-11-09). 표에 없는 카드는 게이트를 열지 않는다. */
+export const GATE_CARDS: ReadonlyMap<string, { docType: GateDocType; keys: readonly FieldKey[] }> = new Map([
+  ['invoice.confirm', { docType: 'H-01', keys: READBACK_KEYS }],
+  ['cert.confirm', { docType: 'cert', keys: CERT_READBACK_KEYS }],
+]);
+
+/** 서류 종류 → readback 칸(gateSelfCheck가 앞 칸 수·키를 대조한다). */
+const DOC_KEYS: Readonly<Record<GateDocType, readonly FieldKey[]>> = { 'H-01': READBACK_KEYS, cert: CERT_READBACK_KEYS };
+/** 서류 종류별로 엔진이 늘 넣는 예약 키. H-01은 처음 거래·처음 보내는 주소다. 민원증명은 없다. */
+const DOC_REQUIRED_RESERVED: Readonly<Record<GateDocType, readonly FieldKey[]>> = { 'H-01': ['$first.bizNo', '$first.email'], cert: [] };
+
 /** 게이트 요청 하나를 만든다. 엔진 openGate·개발 콘솔 시험 값·e2e가 같은 식을 쓴다. */
 export function buildGateRequest(d: {
   runId: string;
   gateStepId: string;
-  readback: Readonly<Record<ReadbackKey, string>>;
+  /** 승인 카드 id(gate.card). 없으면 H-01 'invoice.confirm'. GATE_CARDS에 없으면 던진다. */
+  card?: string;
+  /** 카드의 readback 칸 값(GATE_CARDS keys 전부). */
+  readback: Readonly<Record<string, string>>;
   reserved: GateField[];
   packageDigest: string;
   authorizes: string[];
@@ -289,15 +310,22 @@ export function buildGateRequest(d: {
   waitMs: number;
   reqId?: string;
 }): GateRequest {
-  const fields: GateField[] = [...READBACK_KEYS.map((k) => ({ fieldKey: k, value: d.readback[k] })), ...d.reserved];
-  const cardHashInputs = { readbackHash: readbackHash(Object.fromEntries(READBACK_KEYS.map((k) => [k, d.readback[k]]))), packageDigest: d.packageDigest, authorizes: d.authorizes, intentId: d.intentId };
+  const card = GATE_CARDS.get(d.card ?? 'invoice.confirm');
+  if (!card) throw new Error('gate.unknown_card');
+  const value = (k: FieldKey) => {
+    const v = d.readback[k];
+    if (typeof v !== 'string') throw new Error('gate.readback_missing');
+    return v;
+  };
+  const fields: GateField[] = [...card.keys.map((k) => ({ fieldKey: k, value: value(k) })), ...d.reserved];
+  const cardHashInputs = { readbackHash: readbackHash(Object.fromEntries(card.keys.map((k) => [k, value(k)]))), packageDigest: d.packageDigest, authorizes: d.authorizes, intentId: d.intentId };
   return {
     v: 2,
     runId: d.runId,
     gateStepId: d.gateStepId,
     reqId: d.reqId ?? randomUUID(),
     approvalNonce: randomBytes(16).toString('base64url'),
-    docType: 'H-01',
+    docType: card.docType,
     trigger: 'local',
     fields,
     cardHashInputs,
@@ -310,14 +338,20 @@ export function buildGateRequest(d: {
  * main의 자기 일치 확인(ADR-021 "값 대조"): 닫힌 목록 밖 키·중복 키·예약 키 위치, readbackHash가 앞 13칸과 맞는지,
  * actionHash가 fields·cardHashInputs와 맞는지. 문제가 없으면 null. 엔진 버그를 잡는 장치이지 침해 방어가 아니다.
  */
-export function gateSelfCheck(req: Pick<GateRequest, 'fields' | 'cardHashInputs' | 'actionHash'>): 'field_key' | 'duplicate' | 'readback_hash' | 'action_hash' | null {
+export function gateSelfCheck(req: Pick<GateRequest, 'fields' | 'cardHashInputs' | 'actionHash'> & { docType?: GateDocType }): 'field_key' | 'duplicate' | 'readback_hash' | 'action_hash' | null {
+  // docType이 없으면 H-01(이전 요청 모양). 모르는 서류 종류는 거부한다.
+  const doc = req.docType ?? 'H-01';
+  const rbKeys = Object.hasOwn(DOC_KEYS, doc) ? DOC_KEYS[doc] : null;
+  if (!rbKeys) return 'field_key';
   const keys = req.fields.map((f) => f.fieldKey);
   if (!keys.every(isFieldKey) || req.fields.some((f) => typeof f.value !== 'string')) return 'field_key';
   if (new Set(keys).size !== keys.length) return 'duplicate';
-  // 처음 거래·처음 보내는 주소는 엔진이 늘 넣는다. 빠지면 바가 표시 없이 무장하게 되므로 엔진 버그로 본다.
-  if (!keys.includes('$first.bizNo') || !keys.includes('$first.email')) return 'field_key';
-  const rb = req.fields.slice(0, READBACK_FIELD_COUNT);
-  if (rb.length !== READBACK_FIELD_COUNT || rb.some((f) => f.fieldKey.startsWith('$')) || req.fields.slice(READBACK_FIELD_COUNT).some((f) => !f.fieldKey.startsWith('$'))) return 'field_key';
+  // H-01: 처음 거래·처음 보내는 주소는 엔진이 늘 넣는다. 빠지면 바가 표시 없이 무장하게 되므로 엔진 버그로 본다.
+  if (DOC_REQUIRED_RESERVED[doc].some((k) => !keys.includes(k))) return 'field_key';
+  // 앞 칸은 그 서류 종류의 readback 칸 그대로(키·순서), 뒤는 예약 키만.
+  const n = rbKeys.length;
+  const rb = req.fields.slice(0, n);
+  if (rb.length !== n || rb.some((f, i) => f.fieldKey !== rbKeys[i]) || req.fields.slice(n).some((f) => !f.fieldKey.startsWith('$'))) return 'field_key';
   try {
     if (readbackHash(Object.fromEntries(rb.map((f) => [f.fieldKey, f.value]))) !== req.cardHashInputs.readbackHash) return 'readback_hash';
     if (recomputeActionHash(req) !== req.actionHash) return 'action_hash';

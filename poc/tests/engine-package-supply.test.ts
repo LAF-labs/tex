@@ -144,6 +144,25 @@ describe('패키지 공급: 받기(가짜 레지스트리, 로더 전체 검증 
     assert.ok(l.ok, JSON.stringify(l));
   });
 
+  it('제품 id 목록(PRODUCT_PACKAGE_IDS, 팀장 지시 2026-11-09): H-01과 민원증명 H-03·H-04·H-08·H-09 플레이북. 게시되지 않은 민원증명 id는 unchanged이고 H-01 받기를 막지 않는다', async () => {
+    const dist = (await import(new URL('../packages/engine/dist/registry-sync.js', import.meta.url).href)) as { RegistrySync: typeof RegistrySync; PRODUCT_PACKAGE_IDS: readonly string[] };
+    const CERT = ['hometax.cert.biz_registration', 'hometax.cert.taxpayment', 'hometax.cert.vat_tax_base', 'hometax.cert.financial_statements'];
+    assert.deepEqual([...dist.PRODUCT_PACKAGE_IDS], [ID, ...CERT]);
+    assert.deepEqual(Object.values(PRODUCT_PACKAGES), [...dist.PRODUCT_PACKAGE_IDS]);
+    // 원본이 있는 플레이북이고, 조회(hometax.cert.issued_list 등)는 manifest lookupsUsed로 따라온다(목록에 넣지 않는다).
+    for (const id of dist.PRODUCT_PACKAGE_IDS) {
+      const m = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, `../packages/engine/playbooks/${id}/manifest.json`), 'utf8')) as { kind: string; lookupsUsed: Array<{ id: string }> };
+      assert.equal(m.kind, 'playbook', id);
+      if (id !== ID) assert.deepEqual(m.lookupsUsed.map((l) => l.id), ['hometax.cert.issued_list'], id);
+    }
+    assert.match(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/src/entry.ts'), 'utf8'), /packages: \{ ids: PRODUCT_PACKAGE_IDS \}/);
+    const reg = fakeRegistry(sampleFiles());
+    const sync = new dist.RegistrySync({ trust: TRUST, fetch: reg.fetch, store: memoryRegistryStore(), packages: { ids: dist.PRODUCT_PACKAGE_IDS }, now: () => SAMPLE_NOW });
+    assert.deepEqual((await sync.sync()).packages, { [ID]: 'accepted', ...Object.fromEntries(CERT.map((c) => [c, 'unchanged'])) });
+    assert.ok(sync.loadInstalled(ID).ok);
+    for (const c of CERT) assert.deepEqual(sync.loadInstalled(c), { ok: false, code: 'package.not_loaded', events: [] }, c);
+  });
+
   it('packages를 주지 않으면 플레이북·조회 패키지를 받지 않고 보고에도 없다(데이터 패키지만이던 동작 그대로)', async () => {
     const reg = fakeRegistry(sampleFiles());
     const sync = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store: memoryRegistryStore(), now: () => SAMPLE_NOW });
