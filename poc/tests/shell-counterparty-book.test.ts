@@ -95,6 +95,11 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     assert.equal(again.address, null);
   });
 
+  it('[등록증으로 채우기] 체크섬이 틀린 번호는 비운다(OCR 오인식을 채우지 않는다). 상호·대표자는 그대로', async () => {
+    const b = book([{ ...MOCK_CP_CERT, bizNo: '3148601238' }]);
+    assert.deepEqual(await b.readCert(), { found: true, name: '견본상사', bizNo: '', rep: '이견본' });
+  });
+
   it('번호를 고쳐 저장하거나 30분이 지나면 등록증 값으로 보지 않는다', async () => {
     const other = { ...MOCK_CP_CERT, bizNo: '2158701238' };
     const b = book([{ ...MOCK_CP_CERT }, { ...MOCK_CP_CERT }]);

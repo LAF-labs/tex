@@ -5,18 +5,8 @@
 /** 회색 음영(서식의 어두운 난)은 흰색으로, 글자는 검은색으로. */
 const THRESHOLD = 170;
 
-export function cleanForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): { removed: number } {
-  const dark = new Uint8Array(width * height);
-  for (let i = 0, p = 0; i < dark.length; i++, p += 4) {
-    const r = rgba[p]!;
-    const g = rgba[p + 1]!;
-    const b = rgba[p + 2]!;
-    const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    // 붉은 직인은 글자가 아니다. 직인 아래 검은 글자는 붉지 않아서 남는다.
-    const red = r > 120 && r - g > 60 && r - b > 60;
-    dark[i] = rgba[p + 3]! > 0 && y < THRESHOLD && !red ? 1 : 0;
-  }
-  // 글자 한 자는 300dpi에서 50px 안팎이다. 그보다 훨씬 긴 연속 선은 표 선으로 보고 지운다.
+/** 글자 한 자는 300dpi에서 50px 안팎이다. 그보다 훨씬 긴 연속 선(dark 마스크)은 표 선으로 본다. */
+function longLineMask(dark: Uint8Array, width: number, height: number): Uint8Array {
   const minH = Math.max(80, Math.round(width * 0.04));
   const minV = Math.max(80, Math.round(height * 0.025));
   const erase = new Uint8Array(width * height);
@@ -40,6 +30,21 @@ export function cleanForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number,
       }
     }
   }
+  return erase;
+}
+
+export function cleanForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): { removed: number } {
+  const dark = new Uint8Array(width * height);
+  for (let i = 0, p = 0; i < dark.length; i++, p += 4) {
+    const r = rgba[p]!;
+    const g = rgba[p + 1]!;
+    const b = rgba[p + 2]!;
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    // 붉은 직인은 글자가 아니다. 직인 아래 검은 글자는 붉지 않아서 남는다.
+    const red = r > 120 && r - g > 60 && r - b > 60;
+    dark[i] = rgba[p + 3]! > 0 && y < THRESHOLD && !red ? 1 : 0;
+  }
+  const erase = longLineMask(dark, width, height);
   let removed = 0;
   for (let i = 0, p = 0; i < dark.length; i++, p += 4) {
     const ink = dark[i] && !erase[i];
@@ -105,3 +110,57 @@ export function cleanPhotoForOcr(rgba: Uint8ClampedArray | Uint8Array, width: nu
   }
   return { dark };
 }
+
+/** 이 몫을 넘으면 바탕이 어두운 촬영본으로 본다(고정 임계로는 바탕까지 검게 뭉친다). 합성 등록증: 흰 바탕 PNG·스캔 3% 안팎, 폰 촬영 70~87%. */
+export const DOCUMENT_PHOTO_INK_SHARE = 0.25;
+/** 흰 종이의 옅은 바탕무늬·음영(이보다 밝은 회색)은 흰색으로 */
+const PAPER_WHITE = 200;
+
+/**
+ * 그림 증명서 모드 전처리(사업자등록증·민원증명 사진·캡처). 흑백으로 자르지 않고 회색 단계를 남긴다: tesseract LSTM은 회색 글자 가장자리를 쓴다.
+ * - 흰 종이(고정 임계로 검게 될 몫이 DOCUMENT_PHOTO_INK_SHARE 이하): 붉은 직인·긴 표 선·옅은 바탕무늬는 흰색으로, 나머지는 밝기 그대로.
+ * - 바탕이 어두운 촬영본: 회색조만(바탕이 고정 임계 아래라 선·무늬를 가를 수 없다).
+ * 2026-11-10 설치본: 폰으로 찍은 사업자등록증 JPEG에서 고정 임계(cleanForOcr)가 그늘진 아래쪽을 통째로 검게 만들어 대표자·주소·업태·종목이 비었다.
+ * 흰 바탕 합성 스캔에서도 흑백 자르기가 등록번호 "100"을 "190"으로 읽게 했다(회색조는 바르게 읽음). PDF 쪽 OCR은 그대로 cleanForOcr를 쓴다.
+ */
+export function cleanDocumentForOcr(rgba: Uint8ClampedArray | Uint8Array, width: number, height: number): { photo: boolean } {
+  const n = width * height;
+  const lum = new Uint8Array(n);
+  const red = new Uint8Array(n);
+  const dark = new Uint8Array(n);
+  let darkCount = 0;
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const r = rgba[p]!;
+    const g = rgba[p + 1]!;
+    const b = rgba[p + 2]!;
+    const y = rgba[p + 3]! === 0 ? 255 : Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+    lum[i] = y;
+    red[i] = r > 120 && r - g > 60 && r - b > 60 ? 1 : 0;
+    if (y < THRESHOLD && !red[i]) {
+      dark[i] = 1;
+      darkCount++;
+    }
+  }
+  const photo = n > 0 && darkCount / n > DOCUMENT_PHOTO_INK_SHARE;
+  const erase = photo ? null : longLineMask(dark, width, height);
+  for (let i = 0, p = 0; i < n; i++, p += 4) {
+    const v = photo ? lum[i]! : red[i] || erase![i] || lum[i]! >= PAPER_WHITE ? 255 : lum[i]!;
+    rgba[p] = v;
+    rgba[p + 1] = v;
+    rgba[p + 2] = v;
+    rgba[p + 3] = 255;
+  }
+  return { photo };
+}
+
+/**
+ * OCR에 넘길 배율. 긴 변이 ocrMaxSide보다 크면 줄인다. 증명서 모드에서 작은 그림(메신저로 받은 1000px 안팎 JPEG)은 2배까지 키운다:
+ * tesseract는 글자 높이 30px 안팎에서 잘 읽는다(합성 등록증 1000px JPEG: 키우지 않으면 '서울'→'서물' 같은 오인식).
+ */
+export function ocrScale(width: number, height: number, mode: 'document' | 'photo', maxSide: number): number {
+  const long = Math.max(width, height, 1);
+  if (mode === 'document' && long < OCR_UPSCALE_BELOW) return Math.min(2, maxSide / long);
+  return Math.min(1, maxSide / long);
+}
+/** 긴 변이 이보다 작은 문서 그림은 키운다 */
+export const OCR_UPSCALE_BELOW = 1800;
