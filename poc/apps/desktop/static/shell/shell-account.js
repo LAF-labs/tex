@@ -102,6 +102,32 @@ function newPasswordField(ctx, { email, serverErr, onEnter, submitBtn }) {
   return { nodes: [h('div', { class: 'acct-pw' }, i, eye(draft, ctx)), h('ul', { class: 'acct-rules', id: 'acct-rules' }, ...rows), warn] };
 }
 
+/**
+ * 코드 6자리: 칸 여섯 개는 보이기만 하고, 입력은 그 위를 덮는 숫자 칸 하나가 받는다(붙여 넣기·자동 채우기도 된다).
+ * 6자리가 차거나 Enter면 onFull(code).
+ */
+function codeField(ctx, busy, onFull) {
+  const { draft } = ctx;
+  const code = (draft.code ?? '').replace(/\D/g, '').slice(0, 6);
+  const cells = h('div', { class: 'acct-cells', 'aria-hidden': 'true' }, ...Array.from({ length: 6 }, (_, i) => h('span', { class: `acct-cell${i === Math.min(code.length, 5) ? ' is-at' : ''}` }, code[i] ?? '')));
+  const i = h('input', { class: 'acct-code-in acct-code', inputmode: 'numeric', maxlength: 6, autocomplete: 'one-time-code', 'aria-label': '6자리 코드', 'aria-describedby': 'acct-to' });
+  i.value = code;
+  i.addEventListener('input', () => {
+    draft.code = i.value.replace(/\D/g, '').slice(0, 6);
+    if (i.value !== draft.code) i.value = draft.code;
+    cells.querySelectorAll('.acct-cell').forEach((c, k) => {
+      c.textContent = draft.code[k] ?? '';
+      c.classList.toggle('is-at', k === Math.min(draft.code.length, 5));
+    });
+    if (draft.code.length === 6 && !busy) onFull(draft.code);
+  });
+  i.addEventListener('keydown', (e) => e.key === 'Enter' && !busy && onFull(draft.code ?? ''));
+  return h('div', { class: 'acct-code-box' }, cells, i);
+}
+
+const codeFoot = (v, ctx, busy, resend) =>
+  h('div', { class: 'acct-code-foot' }, v.codeExpiresAt ? h('span', { class: 'acct-left', 'data-acct-left': '' }, left(v.codeExpiresAt, ctx.now())) : null, quiet('다시 받기', () => !busy && resend(), 'account-resend'));
+
 /** 남은 시간 m:ss(코드 만료). */
 const left = (at, now) => {
   const s = Math.max(0, Math.round((at - now) / 1000));
@@ -128,10 +154,66 @@ export function loginScreen(ctx) {
     return i;
   };
   const errNote = (code) => (code ? h('p', { class: 'acct-err sx-body-sm', role: 'alert' }, icon('warn'), accountErrText(code)) : null);
-  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : v.step === 'set_password' ? 'signup_pw' : ctx.screen;
+  // 재설정 코드를 보낸 뒤(main step reset_code)는 코드 칸, 6자리를 받아 두면 렌더러가 새 비밀번호 칸으로 넘긴다(서버 검증은 마지막 제출 때, 명세 §8 G6).
+  const resetScreen = ctx.screen === 'reset_new' ? 'reset_new' : 'reset_code';
+  let screen = v.step === 'code_sent' ? 'code' : v.step === 'working' ? 'working' : v.step === 'set_password' ? 'signup_pw' : v.step === 'reset_code' ? resetScreen : ctx.screen;
   let body;
 
-  if (screen === 'signup_pw') {
+  if (screen === 'reset_email') {
+    // 비밀번호 찾기(인계 명세 §4 email). 계정이 없어도 같은 응답이라 늘 코드 단계로 간다.
+    const send = () => !busy && ctx.startReset(email());
+    body = [
+      back('뒤로', () => ctx.go('password')),
+      head('비밀번호 찾기', '가입한 이메일로 코드를 보내요'),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        input('email', '이메일', { type: 'email', maxlength: 254, inputmode: 'email', autocomplete: 'username' }, send),
+        errNote(err),
+        primary('코드 받기', send, 'account-reset-send', busy),
+        links(quiet('로그인으로', () => ctx.go('email'), 'account-to-login')),
+      ),
+    ];
+  } else if (screen === 'reset_code') {
+    body = [
+      back('뒤로', ctx.back),
+      head('코드 6자리', [h('b', { 'data-acct-to': '' }, v.email), '로 보냈어요'], { id: 'acct-to' }),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        codeField(ctx, busy, (code) => (/^\d{6}$/.test(code) ? ctx.go('reset_new') : ctx.fail('account.code_shape'))),
+        errNote(err),
+        codeFoot(v, ctx, busy, () => ctx.startReset(v.email)),
+      ),
+    ];
+  } else if (screen === 'reset_new') {
+    // 새 비밀번호(§4 new). 코드 오류면 렌더러가 코드 칸으로 돌린다(새 비밀번호는 지운다). 정책 거부는 여기 남는다.
+    const submit = () => !busy && ctx.finishReset(draft.code ?? '', draft.password ?? '');
+    const change = primary('바꾸기', submit, 'account-reset-finish', true);
+    const pwErr = err && err.startsWith('account.password_') ? err : null;
+    const f = newPasswordField(ctx, { email: v.email, serverErr: pwErr, onEnter: submit, submitBtn: change });
+    body = [
+      back('뒤로', () => ctx.go('reset_code')),
+      head('새 비밀번호', [h('b', { 'data-acct-to': '' }, v.email)]),
+      h('div', { class: 'acct-stack' }, ...f.nodes, pwErr ? null : errNote(err), change),
+    ];
+  } else if (screen === 'reset_done') {
+    // 바꿈 끝(§4 done): 서버가 다른 곳의 로그인을 모두 끝냈다. 금고·기기 연결은 그대로다.
+    body = [
+      h(
+        'div',
+        { class: 'acct-done' },
+        h('span', { class: 'acct-done-mk', 'aria-hidden': 'true' }, icon('check')),
+        h('h1', { class: 'title-screen', id: 'acct-title' }, '비밀번호를 바꿨어요'),
+      ),
+      h(
+        'div',
+        { class: 'acct-stack' },
+        h('div', { class: 'acct-box' }, h('p', { class: 'sx-body-sm' }, icon('pc'), '다른 곳의 로그인은 모두 끝났어요'), h('p', { class: 'sx-body-sm' }, icon('lock'), '금고와 기기 연결은 그대로예요')),
+        btn('계속', ctx.onClose, 'sx-btn-primary sx-btn-lg', { 'data-act': 'account-reset-done' }),
+      ),
+    ];
+  } else if (screen === 'signup_pw') {
     // 계정 만들기 비밀번호 단계(인계 명세 §3 pw·shown·common·mine). 확인 칸은 없다(보기 토글로 확인, 제안 2).
     const submit = () => !busy && ctx.setPassword(draft.password ?? '');
     const make = primary('만들기', submit, 'account-set-password', true);
@@ -186,7 +268,7 @@ export function loginScreen(ctx) {
             )
           : errNote(err),
         primary('로그인', submit, 'account-password', busy),
-        wrong ? null : links(quiet('이메일 코드로 로그인', () => ctx.go('code_email'), 'account-code-login')),
+        wrong ? links(quiet('비밀번호 찾기', () => ctx.go('reset_email'), 'account-reset')) : links(quiet('이메일 코드로 로그인', () => ctx.go('code_email'), 'account-code-login'), quiet('비밀번호 찾기', () => ctx.go('reset_email'), 'account-reset')),
       ),
     ];
   } else if (screen === 'code_email' || screen === 'signup') {
@@ -205,34 +287,16 @@ export function loginScreen(ctx) {
       ),
     ];
   } else {
-    // 코드 6자리: 칸 여섯 개는 보이기만 하고, 입력은 그 위를 덮는 숫자 칸 하나가 받는다(붙여 넣기·자동 채우기도 된다).
-    const code = (draft.code ?? '').replace(/\D/g, '').slice(0, 6);
-    const cells = h(
-      'div',
-      { class: 'acct-cells', 'aria-hidden': 'true' },
-      ...Array.from({ length: 6 }, (_, i) => h('span', { class: `acct-cell${i === Math.min(code.length, 5) ? ' is-at' : ''}` }, code[i] ?? '')),
-    );
-    const i = h('input', { class: 'acct-code-in acct-code', inputmode: 'numeric', maxlength: 6, autocomplete: 'one-time-code', 'aria-label': '6자리 코드', 'aria-describedby': 'acct-to' });
-    i.value = code;
-    i.addEventListener('input', () => {
-      draft.code = i.value.replace(/\D/g, '').slice(0, 6);
-      if (i.value !== draft.code) i.value = draft.code;
-      cells.querySelectorAll('.acct-cell').forEach((c, k) => {
-        c.textContent = draft.code[k] ?? '';
-        c.classList.toggle('is-at', k === Math.min(draft.code.length, 5));
-      });
-      if (draft.code.length === 6 && !busy) ctx.verify(draft.code);
-    });
-    i.addEventListener('keydown', (e) => e.key === 'Enter' && !busy && ctx.verify(draft.code ?? ''));
+    // 코드 6자리(로그인·계정 만들기)
     body = [
       back('뒤로', ctx.back),
       head('코드 6자리', [h('b', { 'data-acct-to': '' }, v.email), '로 보냈어요'], { id: 'acct-to' }),
       h(
         'div',
         { class: 'acct-stack' },
-        h('div', { class: 'acct-code-box' }, cells, i),
+        codeField(ctx, busy, (code) => ctx.verify(code)),
         errNote(err),
-        h('div', { class: 'acct-code-foot' }, v.codeExpiresAt ? h('span', { class: 'acct-left', 'data-acct-left': '' }, left(v.codeExpiresAt, ctx.now())) : null, quiet('다시 받기', () => !busy && ctx.sendCode(v.email), 'account-resend')),
+        codeFoot(v, ctx, busy, () => ctx.sendCode(v.email)),
       ),
     ];
     screen = 'code';

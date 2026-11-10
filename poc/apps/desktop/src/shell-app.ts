@@ -925,6 +925,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await accountInit();
       return account.skipPassword();
     },
+    'account.startReset': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.startReset(String(p.email));
+    },
+    'account.finishReset': async (p) => {
+      needGesture(3_000);
+      await accountInit();
+      return account.finishReset(String(p.code), p.password);
+    },
     'account.back': async () => {
       await accountInit();
       return account.back();
