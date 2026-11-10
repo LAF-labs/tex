@@ -28,6 +28,34 @@ const IO_CHUNK = 1024 * 1024;
  * 그 다운로드가 "받는 중"으로 남아 금고 세션 동안 다음 무장이 모두 already_armed가 된다. 진행 이벤트마다 다시 센다.
  */
 export const DOWNLOAD_STALL_MS = 60_000;
+/**
+ * staging을 다시 쓰는 간격(누적 약 46초). 다운로드가 끝난 뒤와, 정리가 파일을 못 지웠을 때 돈다. Windows는 Chrome이 막 놓은 파일을
+ * 백신 검사 등으로 몇 초씩 잡고 있고(EBUSY·EPERM), 끝난 파일을 끝 이벤트 뒤에 놓기도 해 한 번 쓸어서는 남는다(WIN-REALDEVICE §10.1).
+ */
+export const STAGING_RESWEEP_MS: readonly number[] = [500, 1_500, 4_000, 10_000, 30_000];
+
+/** staging 정리의 파일 삭제. 시험이 Windows 잠금을 흉내 내려고 바꾼다. */
+export type StagingRemove = (file: string) => Promise<void>;
+const removeStaged: StagingRemove = (file) => fs.rm(file, { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 10 : 0, retryDelay: 100 });
+
+/**
+ * staging에서 금고가 쓴 `<32hex>.pdf` 말고 모두 지운다(Chrome 중간 파일 `*.crdownload`, 끝난 guid 파일, 그 밖의 것).
+ * `stop()`이 참이 되면 그 자리에서 멈춘다(받는 중인 다운로드의 중간 파일은 건드리지 않는다). 이름은 돌려주지 않는다(개수만, ⑦).
+ */
+export async function sweepStagingDir(staging: string, o: { remove?: StagingRemove; stop?: () => boolean } = {}): Promise<{ removed: number; left: number; stopped: boolean }> {
+  const remove = o.remove ?? removeStaged;
+  const names = await fs.readdir(staging).catch(() => [] as string[]);
+  let removed = 0;
+  let left = 0;
+  for (const name of names) {
+    if (STAGED_NAME_RE.test(name)) continue;
+    if (o.stop?.()) return { removed, left, stopped: true };
+    const ok = await remove(path.join(staging, name)).then(() => true, () => false);
+    if (ok) removed++;
+    else left++;
+  }
+  return { removed, left, stopped: false };
+}
 
 /** staging 안 fileId의 파일 경로(엔진 문서 가져오기도 이것으로 찾는다). 모양이 틀린 id는 거부한다. */
 export function stagedPdfPath(staging: string, fileId: string): string {
@@ -63,6 +91,10 @@ export interface PdfSaverOptions {
   armTtlMs?: number;
   /** 시험 전용. 기본 DOWNLOAD_STALL_MS. */
   stallMs?: number;
+  /** 시험 전용. 기본 STAGING_RESWEEP_MS. */
+  resweepMs?: readonly number[];
+  /** 시험 전용(Windows 잠금 흉내). 기본은 fs.rm(Windows는 짧은 재시도). */
+  remove?: StagingRemove;
 }
 
 interface Armed {
@@ -93,6 +125,8 @@ export class PdfSaver {
    * downloadWillBegin(프레임 확인을 기다림)을 처리하는 사이에 completed가 먼저 처리돼 버려졌다(Linux CI #239).
    */
   private events: Promise<void> = Promise.resolve();
+  /** 다음 다시 쓸기(STAGING_RESWEEP_MS의 몇 번째인지). */
+  private resweep: { timer: NodeJS.Timeout | null; step: number } = { timer: null, step: 0 };
 
   constructor(o: PdfSaverOptions) {
     this.o = o;
@@ -112,6 +146,8 @@ export class PdfSaver {
     this.armed = null;
     for (const d of this.active.values()) clearTimeout(d.stall);
     this.active.clear();
+    if (this.resweep.timer) clearTimeout(this.resweep.timer);
+    this.resweep.timer = null;
   }
 
   // ───────────────────────── 인쇄(strategy print) ─────────────────────────
@@ -315,33 +351,45 @@ export class PdfSaver {
 
   private async removeGuidFiles(guid: string): Promise<void> {
     // Windows는 Chrome이 막 놓은 파일을 잠깐 잡고 있어 EPERM·EBUSY가 난다. 짧게 다시 시도한다(maxRetries는 recursive일 때만 듣는다, 없으면 force로 통과).
-    for (const name of [guid, `${guid}.crdownload`]) await fs.rm(path.join(this.o.staging, name), { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 5 : 0, retryDelay: 50 }).catch(() => {});
+    // 이벤트 줄을 오래 막지 않게 재시도는 짧다. 못 지운 것은 뒤의 정리·다시 쓸기가 맡는다.
+    const remove = this.o.remove ?? ((f: string) => fs.rm(f, { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 5 : 0, retryDelay: 50 }));
+    for (const name of [guid, `${guid}.crdownload`]) await remove(path.join(this.o.staging, name)).catch(() => {});
     this.sweepStaging();
   }
 
   /**
-   * staging에는 금고가 쓴 `<32hex>.pdf`만 남긴다. 받는 중인 다운로드가 없을 때 나머지(Chrome 중간 파일 `*.crdownload`,
-   * 끝난 guid 파일, 그 밖의 것)를 지운다. Windows Chrome은 다운로드 guid와 다른 이름의 중간 파일을 남기고, 끝난 파일을
-   * 잠깐 잡고 있어(EBUSY) guid 이름만 지우면 거부한 바이트가 디스크에 남는다(Windows CI #196·#209).
+   * staging에는 금고가 쓴 `<32hex>.pdf`만 남긴다. 받는 중인 다운로드가 없을 때 나머지를 지운다(sweepStagingDir).
+   * Windows Chrome은 다운로드 guid와 다른 이름의 중간 파일을 남기고, 끝난 파일을 잠깐 잡고 있어(EBUSY) guid 이름만 지우면
+   * 거부한 바이트가 디스크에 남는다(Windows CI #196·#209). 잡고 있는 시간이 몇 초를 넘기도 하므로(WIN-REALDEVICE §10.1)
+   * 다운로드 이벤트로 쓴 뒤에는 STAGING_RESWEEP_MS 간격으로 다시 쓴다. 다시 쓸기는 지울 것이 없으면 멈춘다.
    * 기다리지 않는다(이벤트를 늦추지 않는다). 지운 개수만 남긴다(이름·크기 없음, ⑦).
    */
-  private sweepStaging(): void {
+  private sweepStaging(again = false): void {
+    if (!again) {
+      // 새 이벤트: 다시 쓸기를 처음부터 센다.
+      if (this.resweep.timer) clearTimeout(this.resweep.timer);
+      this.resweep = { timer: null, step: 0 };
+    }
     this.sweeping = this.sweeping.then(async () => {
       if (this.closed || this.active.size) return;
-      const names = await fs.readdir(this.o.staging).catch(() => [] as string[]);
-      let removed = 0;
-      let left = 0;
-      for (const name of names) {
-        if (STAGED_NAME_RE.test(name)) continue;
-        if (this.active.size) return; // 지우는 동안 새 다운로드가 시작됐다: 그 중간 파일은 건드리지 않는다
-        const ok = await fs
-          .rm(path.join(this.o.staging, name), { force: true, recursive: true, maxRetries: process.platform === 'win32' ? 10 : 0, retryDelay: 100 })
-          .then(() => true, () => false);
-        if (ok) removed++;
-        else left++;
-      }
-      if (removed || left) this.o.log.event('vault.staging_swept', { removed, left });
+      const r = await sweepStagingDir(this.o.staging, { remove: this.o.remove, stop: () => this.closed || this.active.size > 0 });
+      if (r.removed || r.left) this.o.log.event('vault.staging_swept', { removed: r.removed, left: r.left });
+      if (r.stopped) return; // 새 다운로드가 시작됐다: 그 끝 이벤트가 다시 쓴다
+      // 이벤트 뒤 첫 다시 쓸기는 늘 한다(끝 이벤트 뒤에 놓인 파일). 그다음은 이번에 지울 것이 있었을 때만.
+      if (!again || r.removed || r.left) this.scheduleResweep();
     });
+  }
+
+  private scheduleResweep(): void {
+    const delays = this.o.resweepMs ?? STAGING_RESWEEP_MS;
+    if (this.closed || this.resweep.timer || this.resweep.step >= delays.length) return;
+    const timer = setTimeout(() => {
+      if (this.resweep.timer !== timer) return;
+      this.resweep.timer = null;
+      this.sweepStaging(true);
+    }, delays[this.resweep.step++]);
+    timer.unref?.();
+    this.resweep.timer = timer;
   }
 
   /** 시험용: 예약된 staging 정리가 끝날 때까지 기다린다. */
