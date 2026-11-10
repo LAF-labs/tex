@@ -46,7 +46,8 @@ export interface DecideRunnerInput {
   screen: ScreenSource;
   redactor: Pick<Redactor, 'applyTree'>;
   judge: Pick<Judge, 'decide'>;
-  runToken: RunToken;
+  /** 실행 토큰. 함수면 첫 decide 때 한 번 받아 둔다(제품: 게이트웨이 run 토큰, 실패면 decide.unavailable). */
+  runToken: RunToken | (() => Promise<RunToken>);
   /** 앱 내장 번들 카탈로그(BV-06). */
   bundle: (wireId: string) => BundleInfo | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
@@ -66,9 +67,21 @@ const fail = (code: string): Outcome => ({ t: 'fail', code });
 export class DecideRunner {
   private readonly i: DecideRunnerInput;
   private lastRec: DecideRecord | null = null;
+  private tokenP: Promise<RunToken> | null = null;
 
   constructor(i: DecideRunnerInput) {
     this.i = i;
+  }
+
+  /** 실행 토큰(함수면 한 번만 부른다. 실패하면 다음 decide에서 다시 받는다). */
+  private token(): Promise<RunToken> {
+    const t = this.i.runToken;
+    if (typeof t !== 'function') return Promise.resolve(t);
+    this.tokenP ??= t().catch((e: unknown) => {
+      this.tokenP = null;
+      throw e;
+    });
+    return this.tokenP;
   }
 
   /** 직전 decide 결과(사전 안전 판정이 본다). */
@@ -106,7 +119,7 @@ export class DecideRunner {
     const obs = treeToObservation(cap.tree, cap.url, cap.title);
     let r: DecideResult & { injectionHit?: boolean };
     try {
-      r = await this.i.judge.decide(s.bundle, obs, input, this.i.runToken);
+      r = await this.i.judge.decide(s.bundle, obs, input, await this.token());
     } catch {
       this.i.journal('decide.unavailable', { stepId: s.id, bundle: s.bundle });
       return fail('decide.unavailable');

@@ -249,6 +249,69 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.deepEqual(s.client.calls.slice(-2), ['GET /v1/me', 'POST /v1/auth/logout']);
   });
 
+  it('비밀번호 찾기(인계 명세 §4): 없는 계정도 같은 코드 단계, 틀린 코드·정책 거부는 단계에 남고, 바꾸면 다른 세션 폐기 → 첫 PC 등록 → 로그아웃. 기록에 비밀번호·코드 없음', { skip: !devStackPasswords }, async () => {
+    s.close();
+    s = await startDevStack({ passwords: true });
+    const OLD = 'mangwon-kimchi-12';
+    const NEW = 'jangdok-gimbap-77';
+    const v0 = await s.svc.verifyEmailCode((await s.svc.startEmailCode(EMAIL)).loginId, s.mail.lastCode(EMAIL)!);
+    await s.svc.setPassword(await s.svc.session(`Bearer ${v0.session}`), OLD);
+    const other = await s.client.passwordLogin(EMAIL, OLD);
+
+    const nobody = account();
+    await nobody.init();
+    const n = await nobody.startReset('nobody@gyeonbon-test.example');
+    assert.equal(n.step, 'reset_code', '계정이 없어도 같은 코드 단계(열거 방지)');
+    assert.equal(nobody.back().step, 'signed_out');
+
+    const a = account();
+    await a.init();
+    assert.equal((await a.startReset('not-an-email')).error, 'account.email_shape');
+    s.client.calls.length = 0;
+    const sent = await a.startReset(` ${EMAIL} `);
+    assert.deepEqual([sent.step, sent.email, sent.error], ['reset_code', EMAIL, null]);
+    assert.ok(sent.codeExpiresAt! > s.clock.now());
+    for (let i = 0; i < 50 && !s.mail.lastResetCode(EMAIL); i++) await new Promise((r) => setTimeout(r, 10));
+    const code = s.mail.lastResetCode(EMAIL)!;
+    const wrong = code === '000000' ? '111111' : '000000';
+    assert.equal((await a.finishReset('12', NEW)).error, 'account.code_shape');
+    assert.equal((await a.finishReset(code, '')).error, 'account.password_empty');
+    assert.deepEqual([(await a.finishReset(wrong, NEW)).step, (await a.finishReset(wrong, NEW)).error], ['reset_code', 'account.code_invalid']);
+    const pol = await a.finishReset(code, '1234567890');
+    assert.deepEqual([pol.step, pol.error], ['reset_code', 'account.password_breached'], '정책 거부는 코드를 남긴다');
+    s.client.calls.length = 0;
+    assert.deepEqual(await a.finishReset(code, NEW), { step: 'signed_in', email: EMAIL, codeExpiresAt: null, error: null, phones: 0 });
+    assert.deepEqual(s.client.calls, ['POST /v1/auth/password/reset/verify', 'GET /v1/device-list', 'POST /v1/aik', 'POST /v1/auth/logout']);
+    await assert.rejects(s.client.me(other.session), { code: 'account.unauthorized' }, '다른 곳의 로그인은 끝났다');
+    assert.ok((await s.client.passwordLogin(EMAIL, NEW)).session, '새 비밀번호로 로그인');
+    await assert.rejects(a.startReset(EMAIL), /account_signed_in/);
+    const t = JSON.stringify(logs);
+    for (const bad of [NEW, OLD, '1234567890', code, EMAIL, 'nobody', 'sxs1.']) assert.ok(!t.includes(bad), bad);
+    assert.deepEqual(logs.filter(([k]) => k === 'main.account_reset').map(([, d]) => d.result), ['sent', 'sent', 'account.code_invalid', 'account.code_invalid', 'account.password_breached', 'ok']);
+  });
+
+  it('비밀번호 찾기: 코드가 5번 틀리면 막히고(code_locked) 다시 받으면 새 코드로 이어 간다, 만료면 code_expired', { skip: !devStackPasswords }, async () => {
+    s.close();
+    s = await startDevStack({ passwords: true });
+    const v0 = await s.svc.verifyEmailCode((await s.svc.startEmailCode(EMAIL)).loginId, s.mail.lastCode(EMAIL)!);
+    await s.svc.setPassword(await s.svc.session(`Bearer ${v0.session}`), 'mangwon-kimchi-12');
+    const a = account();
+    await a.init();
+    await a.startReset(EMAIL);
+    for (let i = 0; i < 50 && !s.mail.lastResetCode(EMAIL); i++) await new Promise((r) => setTimeout(r, 10));
+    const first = s.mail.lastResetCode(EMAIL)!;
+    const wrong = first === '000000' ? '111111' : '000000';
+    let last = '';
+    for (let i = 0; i < 5; i++) last = (await a.finishReset(wrong, 'jangdok-gimbap-77')).error!;
+    assert.equal(last, 'account.code_locked');
+    assert.equal((await a.finishReset(first, 'jangdok-gimbap-77')).error, 'account.code_invalid', '막힌 뒤에는 맞는 코드도 안 된다');
+    await a.startReset(EMAIL);
+    for (let i = 0; i < 50 && s.mail.lastResetCode(EMAIL) === first; i++) await new Promise((r) => setTimeout(r, 10));
+    s.clock.t = s.clock.now() + 60 * 60_000;
+    const exp = await a.finishReset(s.mail.lastResetCode(EMAIL)!, 'jangdok-gimbap-77');
+    assert.deepEqual([exp.step, exp.error], ['signed_out', 'account.code_expired']);
+  });
+
   it('인증서는 만료 14일 전에 AIK로 새로 서명해 파일에 둔다', async () => {
     const keys = softDesktopKeys();
     const a = account(keys);
@@ -289,7 +352,7 @@ describe('셸 배선(소스 검사)', () => {
   });
   it('로그인 화면: 비밀번호는 보낸 뒤 비우고, 틀림·없는 계정·잠금은 한 안내(안에 [이메일 코드로 로그인])', () => {
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
-    assert.match(shell, /if \(method === 'account\.password' \|\| method === 'account\.setPassword'\) l\.draft\.password = '';/);
+    assert.match(shell, /if \(method === 'account\.password' \|\| method === 'account\.setPassword' \|\| method === 'account\.finishReset'\) l\.draft\.password = '';/);
     assert.match(js, /const wrong = err === 'account\.credentials_invalid';/);
     assert.match(js, /'이메일 또는 비밀번호가 맞지 않아요'[\s\S]{0,200}'이메일 코드로는 바로 로그인할 수 있어요'[\s\S]{0,200}'account-code-from-wrong'/);
     assert.doesNotMatch(js, /'[^'\n]*(잠겼|잠금|잠시 잠)[^'\n]*'/, '잠금은 화면 문구로 따로 알리지 않는다(ADR-038 (d))');
@@ -301,9 +364,19 @@ describe('셸 배선(소스 검사)', () => {
     assert.deepEqual(Object.keys(SHELL_METHODS['account.skipPassword']), []);
     assert.match(src, /'account\.setPassword': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return account\.setPassword\(p\.password\);\s*\}/);
     const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
-    assert.match(shell, /if \(method === 'account\.password' \|\| method === 'account\.setPassword'\) l\.draft\.password = '';/);
+    assert.match(shell, /if \(method === 'account\.password' \|\| method === 'account\.setPassword' \|\| method === 'account\.finishReset'\) l\.draft\.password = '';/);
     assert.match(js, /autocomplete: 'new-password'/);
     assert.doesNotMatch(js, /한 번 더/, '확인 칸은 없다(제안 2)');
+  });
+  it('비밀번호 찾기: 코드 받기·바꾸기는 실제 입력 뒤 3초 안에만, 인자는 이메일 / 코드·비밀번호, 렌더러는 보낸 뒤 비밀번호를 비운다', async () => {
+    const { SHELL_METHODS, USER_ACTION_METHODS } = await import('../apps/desktop/src/ipc.ts');
+    assert.equal(USER_ACTION_METHODS['account.startReset'], 3_000);
+    assert.equal(USER_ACTION_METHODS['account.finishReset'], 3_000);
+    assert.deepEqual(Object.keys(SHELL_METHODS['account.startReset']), ['email']);
+    assert.deepEqual(Object.keys(SHELL_METHODS['account.finishReset']), ['code', 'password']);
+    assert.match(src, /'account\.finishReset': async \(p\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*return account\.finishReset\(String\(p\.code\), p\.password\);\s*\}/);
+    const shell = fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
+    assert.match(shell, /method === 'account\.finishReset'\) l\.draft\.password = '';/);
   });
   it('금고 키 연결이 없으면 계정 클라이언트도 쓰지 않는다(unavailable), 키는 금고 control로만', () => {
     assert.match(src, /client: opts\.remote\?\.keys \? \(opts\.remote\.cloud\?\.account \?\? null\) : null/);
