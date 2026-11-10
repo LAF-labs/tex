@@ -52,7 +52,8 @@ const draftTag = (n) => (n?.draft ? h('span', { class: 'sx-meta onb-draft', 'dat
 export function onboardingView(o, act) {
   const items = [];
   let last = null;
-  for (const l of o.log) {
+  // 건너뛴 단계를 다시 연 것이면(redoFrom) 그 뒤 답만 그린다(지난 답은 위의 기록 자리에 남아 있다)
+  for (const l of o.redoFrom != null ? o.log.slice(o.redoFrom) : o.log) {
     if (l.step !== last) items.push(h('div', { class: 'sx-app' }, Q[l.step] ?? ''));
     last = l.step;
     items.push(h('div', { class: 'sx-me' }, l.text));

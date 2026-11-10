@@ -31,7 +31,7 @@ import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-model.ts';
+import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
@@ -51,6 +51,7 @@ const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
 /** 제품에서 사업장·개인 프로필을 아직 등록하지 않았을 때의 자리(견본 이름을 쓰지 않는다). */
 const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '', auth: '' };
+
 const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '' };
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 const PAIR_URL = `${SHELL_SCHEME}://shell/pair.html`;
@@ -227,7 +228,7 @@ export interface Shell {
 const SIGN: Record<string, string> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
 
 function profileView(p: DbProfile): Profile {
-  return { kind: p.kind, name: p.displayName, bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? '발급 인증 미설정' };
+  return { kind: p.kind, name: p.displayName, bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? NO_AUTH };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -295,7 +296,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
-  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
+  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, log: (n, d) => log.event(n, d) });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
   const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), (params, engine) => importPdf(params, engine, win));
@@ -786,6 +787,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const needLogin = async () => {
     if (loginRequired && !(await signedIn())) throw new Error('account_required');
   };
+  /**
+   * 세금계산서·증명서는 사업자 프로필(사업자번호)과 발급 인증이 있어야 시작할 수 있다(엔진 run.start가 profile_missing으로 멈춘다).
+   * 빠졌으면 카드를 만들지 않고 무엇이 빠졌는지와 [사업자 등록 마치기]·[발급 인증 고르기]를 보인다(0.1.5 실사용).
+   */
+  const setupGate = (parsed: Parsed) => {
+    if (profile !== 'business') return null;
+    if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
+    const missing = setupMissing(profiles().business);
+    if (!missing.length) return null;
+    runs.pending.asked = null;
+    return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
+  };
 
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
@@ -829,10 +842,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         const model = ask ? await demo.parse(text, runs.counterparties.map((c) => c.name)) : null;
         const via = model ? 'model' : 'offline';
         log.event('main.interpret', { via, ms: Math.round(performance.now() - t0) });
-        return finishReply(interpret(text, vat, profile, runs, model && dev ? dev.mergeParsed(model, local, text) : local), via, null, ask ? ['openrouter_demo'] : []);
+        const parsed = model && dev ? dev.mergeParsed(model, local, text) : local;
+        return setupGate(parsed) ?? finishReply(interpret(text, vat, profile, runs, parsed), via, null, ask ? ['openrouter_demo'] : []);
       }
       // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
-      if (fixture && !opts.intent) return finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
+      if (fixture && !opts.intent) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
       if (!text.trim()) return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', via: 'model', note: null, sent: [] };
       // 온보딩 ②(모델 처리 동의) 전에는 문장을 모델로 보내지 않는다. "연결 안 됨"이 아니라 동의가 먼저라고 말한다.
       if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
@@ -859,6 +873,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         runs.pending.asked = null;
         return { kind: 'say', text: to.say, via, note: null, sent };
       }
+      const gate = setupGate(to.parsed);
+      if (gate) return { ...gate, via, note: to.note, sent };
       return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note, sent);
     },
     'draft.update': (p) =>
@@ -1020,6 +1036,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
       if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
+    },
+    'onboarding.reopen': async (p) => {
+      needGesture(3_000);
+      await needLogin();
+      // 온보딩 기록이 없는 기존 사용자(!onb)는 다시 열 대화가 없다: 렌더러가 내 사업장으로 간다
+      if (!onb) throw new Error('onboarding_unavailable');
+      await onb.reopen(p.item as 'biz' | 'auth');
+      onbShow = true;
+      pushBoard();
+      return { onboarding: await onbView(), profiles: profiles() };
     },
     'clipboard.copy': (p) => {
       clipboard.writeText(String(p.text ?? '').slice(0, 200));
