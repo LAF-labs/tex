@@ -3,6 +3,8 @@
 //       → 신원 파일 저장 → 로그아웃(세션 버림). 그 뒤 계정 호출은 기기 범위 토큰(인증서 + DPoP(Vd), 15분, 메모리 캐시)으로만 한다.
 //   계정 만들기(코드)로 들어왔고 비밀번호가 없으면(GET /v1/me hasPassword) 등록 뒤 비밀번호 만들기 단계(set_password)를 둔다.
 //   그 단계 동안만 세션을 메모리에 둔다(방금 인증한 세션이라 PUT /v1/password를 바로 부른다, 10분 안). 만들거나 [나중에]면 로그아웃.
+// - 비밀번호 찾기(인계 명세 §4): 이메일 → 재설정 코드(계정이 없어도 같은 응답) → 코드 6자리(서버 검증 없음) + 새 비밀번호 → 재설정·로그인
+//   (서버가 다른 세션·갱신 토큰을 모두 폐기) → 첫 PC 등록 → 로그아웃. resetId는 이 객체 안 메모리에만 있다.
 // - 계정 세션·기기 토큰·loginId는 이 객체 안 메모리에만 있다. 렌더러에는 단계·이메일·만료 시각·오류 코드만 간다.
 // - 신원 파일(remote-identity.json)에는 비밀이 없다(deviceId·공개키·AIK 서명 인증서·목록·계정 이메일). 키 연산은 금고(DesktopKeys)가 한다.
 // - 두 번째 PC(A-03, 계정에 다른 AIK가 이미 있음)는 이 범위 밖이다: account.aik_already_pinned로 끝낸다.
@@ -104,7 +106,7 @@ export class RemoteIdentityFile {
 
 /** 렌더러가 보는 것(값은 이메일·만료 시각·오류 코드뿐). */
 export interface AccountView {
-  step: 'unavailable' | 'signed_out' | 'code_sent' | 'working' | 'set_password' | 'signed_in';
+  step: 'unavailable' | 'signed_out' | 'code_sent' | 'reset_code' | 'working' | 'set_password' | 'signed_in';
   email: string | null;
   codeExpiresAt: number | null;
   error: string | null;
@@ -135,6 +137,8 @@ export class DesktopAccount {
   #log: NonNullable<DesktopAccountOptions['log']>;
   #id: RemoteIdentity | null = null;
   #pending: { email: string; loginId: string; expiresAt: number; signup: boolean } | null = null;
+  /** 비밀번호 찾기(재설정 코드를 보냄). 코드가 틀리면 남는다(서버가 5회째에 막는다). */
+  #reset: { email: string; resetId: string; expiresAt: number } | null = null;
   /** 계정 만들기 뒤 비밀번호 만들기 단계(ADR-038 (a) 선택). 세션은 이 단계 동안만 메모리에 있다. */
   #offer: { session: string; email: string } | null = null;
   /** 이메일 칸을 다시 채우는 값(코드를 쓴 뒤 등록이 실패했을 때). */
@@ -170,6 +174,10 @@ export class DesktopAccount {
     // 로그인 상태의 오류는 비밀번호 단계를 끝낸 이유(account.password_later)뿐이다
     if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length };
     if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
+    if (this.#reset) {
+      if (this.#reset.expiresAt > this.#now()) return { step: 'reset_code', email: this.#reset.email, codeExpiresAt: this.#reset.expiresAt, error: this.#error, phones: 0 };
+      return { step: 'signed_out', email: this.#reset.email, codeExpiresAt: null, error: 'account.code_expired', phones: 0 };
+    }
     if (this.#pending && this.#pending.expiresAt > this.#now()) return { step: 'code_sent', email: this.#pending.email, codeExpiresAt: this.#pending.expiresAt, error: this.#error, phones: 0 };
     return { step: 'signed_out', email: this.#pending?.email ?? this.#lastEmail, codeExpiresAt: null, error: this.#pending ? (this.#error ?? 'account.code_expired') : this.#error, phones: 0 };
   }
@@ -312,10 +320,67 @@ export class DesktopAccount {
     if (o) await this.#o.client?.logout(o.session).catch(() => {});
   }
 
-  /** [다른 이메일로] 코드 입력을 버린다. */
-  back(): AccountView {
-    this.#lastEmail = this.#pending?.email ?? this.#lastEmail;
+  /**
+   * [비밀번호 찾기] → 재설정 코드 보내기(POST /v1/auth/password/reset). 계정이 없어도 같은 응답이라 늘 코드 단계로 간다(열거 방지).
+   * 다시 받기도 이것이다(새 resetId).
+   */
+  async startReset(emailRaw: string): Promise<AccountView> {
+    const client = this.#need();
+    const email = emailRaw.trim();
+    this.#error = null;
+    if (!isEmailShape(email)) {
+      this.#error = 'account.email_shape';
+      return this.view();
+    }
     this.#pending = null;
+    this.#lastEmail = email;
+    await this.#run(async () => {
+      const r = await client.startPasswordReset(email);
+      this.#reset = { email, resetId: r.resetId, expiresAt: this.#now() + r.expiresInSec * 1000 };
+      this.#log('main.account_reset', { result: 'sent' });
+    }, 'main.account_reset');
+    return this.view();
+  }
+
+  /**
+   * 코드 6자리 + 새 비밀번호 → POST /v1/auth/password/reset/verify(서버는 이때만 코드를 본다, 명세 §8 G6) → 받은 세션으로 첫 PC 등록 → 로그아웃.
+   * 코드 오류(code_invalid·code_locked)·정책 거부는 재설정 단계에 남는다(렌더러가 코드 칸 / 새 비밀번호 칸으로 돌린다). 비밀번호는 남기지 않는다.
+   */
+  async finishReset(code: string, password: string): Promise<AccountView> {
+    const client = this.#need();
+    const r = this.#reset;
+    this.#error = null;
+    if (!r || r.expiresAt <= this.#now()) {
+      this.#error = 'account.code_expired';
+      return this.view();
+    }
+    if (!/^\d{6}$/.test(code)) {
+      this.#error = 'account.code_shape';
+      return this.view();
+    }
+    if (!password) {
+      this.#error = 'account.password_empty';
+      return this.view();
+    }
+    await this.#run(async () => {
+      const { session } = await client.verifyPasswordReset(r.resetId, code, password);
+      this.#reset = null;
+      this.#log('main.account_reset', { result: 'ok' });
+      try {
+        this.#id = await this.#enroll(client, session, r.email);
+        this.#log('main.account_enroll', { result: 'ok' });
+      } finally {
+        await client.logout(session).catch(() => {});
+      }
+    }, 'main.account_reset');
+    return this.view();
+  }
+
+  /** [다른 이메일로] 코드 입력을 버린다(재설정 코드도). */
+  back(): AccountView {
+    this.#lastEmail = this.#pending?.email ?? this.#reset?.email ?? this.#lastEmail;
+    this.#pending = null;
+    this.#reset = null;
     this.#error = null;
     return this.view();
   }

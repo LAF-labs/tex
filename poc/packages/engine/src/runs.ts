@@ -11,7 +11,7 @@ import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
-import { IrRun, type IrPackage, type IrSourceResult } from './run/service-ir.ts';
+import { IrRun, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
 import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
@@ -36,7 +36,7 @@ export type RunEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
-  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string };
+  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt };
 
 interface PendingGate {
   req: GateRequest;
@@ -198,7 +198,8 @@ export class RunService extends EventEmitter {
   /** [홈택스에서 준비]. 실행은 한 번에 하나다. 검증에 실패하면 브라우저를 열기 전에 던진다. */
   start(p: StartParams): { runId: string; intentId: string } {
     if (this.active) throw new RunEnd('failed', 'busy');
-    const problems = portalProblems(this.d.portal);
+    // H01Runner는 포털 설정의 셀렉터·화면 경로·조회 표를 쓴다. IR 실행은 셀렉터·화면을 서명 패키지에서 받으므로 verify 하한만 본다.
+    const problems = this.engine === 'ir' ? portalProblems(this.d.portal).filter((x) => x === 'verify_below_floor') : portalProblems(this.d.portal);
     if (problems.length) {
       this.d.log.event('run.portal_not_ready', { kind: this.d.portal.kind, problems: problems.length });
       throw new RunEnd('failed', 'selector_placeholder');
@@ -267,7 +268,7 @@ export class RunService extends EventEmitter {
   }
 
   private async execute(a: ActiveRun, inputs: RunInputs, profile: Profile): Promise<void> {
-    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean };
+    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt };
     let thrown: unknown;
     try {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
@@ -281,7 +282,8 @@ export class RunService extends EventEmitter {
         onLatch: (end) => this.latched(a, end),
       });
       // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
-      if (this.d.portal.login) throw new RunEnd('failed', 'login.not_implemented');
+      // H01Runner에는 홈택스 로그인이 없다. IR 패키지(H-01 s0~s6)는 로그인 스텝을 스스로 돈다.
+      if (this.d.portal.login && this.engine !== 'ir') throw new RunEnd('failed', 'login.not_implemented');
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
       if (this.engine === 'ir') {
         a.policy = null;
@@ -323,7 +325,9 @@ export class RunService extends EventEmitter {
     if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
     this.rate.unpinRun();
     this.runs.finish(a.runId, result.status);
-    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '' });
+    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '', ...(result.stoppedAt ? { stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, ...(result.stoppedAt.target ? { target: result.stoppedAt.target } : {}) } : {}) });
+    // 실기기 디버깅(팀장 지시 2026-11-09): 어느 스텝·셀렉터에서 멈췄는지 엔진 로그 한 줄로 바로 보인다(스텝 id·셀렉터 키·코드만, ⑦).
+    if (result.stoppedAt) this.d.log.event('run.stopped_at', { runId: a.runId, status: result.status, code: result.code ?? '', stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, target: result.stoppedAt.target ?? '', playbook: a.playbookId });
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
     this.active = null;
     // 포털이 한 말은 실패·핸드오프·모름에만 보인다. 저널·로그에는 쓰지 않는다(메모리 → 종료 이벤트만).
@@ -355,7 +359,7 @@ export class RunService extends EventEmitter {
   }
 
   /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
-  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean }> {
+  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt }> {
     const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
@@ -382,7 +386,11 @@ export class RunService extends EventEmitter {
           }),
         };
       },
-      journal: (type, payload) => this.journal.append(a.runId, type, payload),
+      journal: (type, payload) => {
+        this.journal.append(a.runId, type, payload);
+        // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
+        if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+      },
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
       postGate: (m) => this.d.postGate(m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
@@ -392,7 +400,7 @@ export class RunService extends EventEmitter {
     a.ir = run;
     const r = await run.run();
     a.armed = run.armed;
-    return { status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}) };
+    return { status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
   }
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */

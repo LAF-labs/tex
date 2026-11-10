@@ -1,0 +1,11 @@
+﻿{
+    "setupStart":  "2026-11-09T17:51:20.2519529+09:00",
+    "setupEnd":  null,
+    "consentSeen":  false,
+    "smartscreenSeen":  true,
+    "appStart":  "2026-11-09T17:52:02.5132759+09:00",
+    "installDir":  {
+                       "SovereignAX":  true,
+                       "sovereign-ax":  false
+                   }
+}

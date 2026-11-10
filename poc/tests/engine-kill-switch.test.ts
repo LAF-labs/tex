@@ -250,6 +250,9 @@ describe('긴급 정지 배선: RunService(H01·IR) 시작 거부·실행 중 �
       assert.equal(o.posts, 0);
       assert.equal(o.ledger, null);
       assert.equal(o.closes, 1);
+      // 실기기 디버깅(PR-D2): IR은 멈춘 스텝을 종료 이벤트에 싣는다(H01Runner에는 IR 스텝이 없다)
+      if (e === 'ir') assert.ok(o.end.stoppedAt?.stepId && o.end.stoppedAt.type, JSON.stringify(o.end.stoppedAt));
+      else assert.equal(o.end.stoppedAt, undefined);
     });
 
     it(`[${e}] 실행 중 assisted 하향: 멈추지만 Chrome은 닫지 않는다(hardStop 아님)`, async () => {

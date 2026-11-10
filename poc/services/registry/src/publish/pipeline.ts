@@ -205,6 +205,8 @@ export const W = {
   assembled: 'assembled.json',
   doc: (kind: string) => `docs/${kind}.json`,
   record: 'record.json',
+  /** push가 첫 PUT 직전에 남기는 이전 로그 헤드(verify의 일관성 증명 기준) */
+  pushStarted: 'push-started.json',
 } as const;
 
 export interface Work {
@@ -636,7 +638,13 @@ export interface PushOpts {
   token: string;
   now: number;
   out: (line: string) => void;
+  /** 사후 확인 다시 읽기 사이 대기(시험은 바로 돌려준다) */
+  sleep?: (ms: number) => Promise<void>;
+  /** 사후 확인을 기다리는 최대 시간(기본 90초). 공개 GET은 CDN이 60초까지 캐시한다(head·status·인덱스·정책 max-age=60) */
+  settleMs?: number;
 }
+
+export type VerifyOpts = Omit<PushOpts, 'token'>;
 
 export interface PublishRecord {
   v: 1;
@@ -646,8 +654,12 @@ export interface PublishRecord {
   publishedAt: string;
   published: Array<{ kind: string; path: string; sha256: string; logIndex: number }>;
   index: { monotonic: number; expiresAt: string };
-  logHead: { before: number; after: number; rootHash: string };
+  /** before는 push 직전 헤드 크기. verify가 push-started.json 없이 확인했으면 null(일관성 증명 없음) */
+  logHead: { before: number | null; after: number; rootHash: string };
 }
+
+const SETTLE_MS = 90_000;
+const POLL_MS = 5_000;
 
 const putOk = async (registry: RegistryClient, p: string, body: unknown, token: string, want: number): Promise<Record<string, unknown>> => {
   const r = await registry.put(p, body, token);
@@ -655,45 +667,50 @@ const putOk = async (registry: RegistryClient, p: string, body: unknown, token: 
   return r.body;
 };
 
-async function logHead(registry: RegistryClient, trust: TrustRoot): Promise<SignedTreeHead> {
-  const h = parseJson<SignedTreeHead>(await registry.get('/registry/log/head.json'), 'log head');
+function checkHead(h: SignedTreeHead | null, trust: TrustRoot): SignedTreeHead {
   const pub = h ? trust.keys.timestamp?.[h.signature?.keyId] : undefined;
   if (!h || !pub || !verifyTreeHead(pub, h)) return err('publish.log_invalid', 'head');
   return h;
 }
 
-export async function push(o: PushOpts): Promise<PublishRecord> {
+const logHead = async (registry: RegistryClient, trust: TrustRoot): Promise<SignedTreeHead> => checkHead(parseJson<SignedTreeHead>(await registry.get('/registry/log/head.json'), 'log head'), trust);
+
+/** 올릴 것(push)·올린 것(verify). 서명을 모두 모으고 관문 규칙으로 먼저 본다 */
+interface Outgoing {
+  plan: Plan;
+  revoked: Set<string>;
+  revokedOut: RevokedKeys | null;
+  policyOut: SignedPolicy | null;
+  statusOut: RegistryStatus | null;
+  index: RegistryIndex | null;
+  sxps: Map<string, Buffer>;
+  /** 공개 경로마다 되읽기 때 기대하는 것. bytes가 있으면 바이트 그대로, 없으면 내용 다이제스트 */
+  published: Array<{ kind: string; path: string; bytes?: Buffer; digest?: string }>;
+}
+
+async function outgoing(o: VerifyOpts, stored: { revoked: RevokedKeys | null; current: RegistryIndex | null }): Promise<Outgoing> {
   const w = o.work;
   const plan = loadPlan(w, o.trust, o.trustBytes);
-  if (w.fs.exists(wp(w, W.record))) err('publish.work_exists', W.record);
-  if (!o.token || o.token.length < 16) err('publish.token_missing');
-  const current = await checkBase(plan, o.registry);
-  const before = await logHead(o.registry, o.trust);
-  const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
-  const statusStored = parseJson<RegistryStatus>(await o.registry.get('/registry/status.json'), 'status');
-
-  // 문서 서명 모으기(올리기 전에 모두 갖춰졌는지 먼저 본다: 중간에 멈추지 않게)
   const docOf = (d: PlanDoc): Record<string, unknown> => {
     const doc = wjson<Record<string, unknown>>(w, d.file);
     if (d.signed) return doc;
-    return collectSignatures(d.kind, doc, sigRecords(w, d.kind), o.trust as unknown as TrustPin, new Set(revokedStored?.revoked.map((r) => r.keyId) ?? [])).doc;
+    return collectSignatures(d.kind, doc, sigRecords(w, d.kind), o.trust as unknown as TrustPin, new Set(stored.revoked?.revoked.map((r) => r.keyId) ?? [])).doc;
   };
-  const revokedDoc = plan.docs.find((d) => d.kind === 'revoked_keys');
-  const statusDoc = plan.docs.find((d) => d.kind === 'status');
-  const policyDoc = plan.docs.find((d) => d.kind === 'policy');
-  const policyOut = policyDoc ? (docOf(policyDoc) as unknown as SignedPolicy) : null;
-  const policyStored = parseJson<SignedPolicy>(await o.registry.get('/policy/current.json'), 'policy');
+  const docFor = (kind: string) => plan.docs.find((d) => d.kind === kind);
+  const revokedDoc = docFor('revoked_keys');
+  const policyDoc = docFor('policy');
+  const statusDoc = docFor('status');
   const revokedOut = revokedDoc ? (docOf(revokedDoc) as unknown as RevokedKeys) : null;
+  const policyOut = policyDoc ? (docOf(policyDoc) as unknown as SignedPolicy) : null;
   const statusOut = statusDoc ? (docOf(statusDoc) as unknown as RegistryStatus) : null;
-  const revoked = new Set([...(revokedStored?.revoked.map((r) => r.keyId) ?? []), ...(revokedOut?.revoked.map((r) => r.keyId) ?? [])]);
+  const revoked = new Set([...(stored.revoked?.revoked.map((r) => r.keyId) ?? []), ...(revokedOut?.revoked.map((r) => r.keyId) ?? [])]);
 
-  const hasIndex = plan.packages.length > 0;
   let index: RegistryIndex | null = null;
   const sxps = new Map<string, Buffer>();
-  if (hasIndex) {
+  if (plan.packages.length > 0) {
     const draft = wjson<Record<string, unknown>>(w, W.index);
     index = collectSignatures('index', draft, sigRecords(w, 'index'), o.trust as unknown as TrustPin, revoked).doc as unknown as RegistryIndex;
-    verifyIndex(index, plan.channel, o.trust, revoked, current, o.now, undefined, { content: true });
+    verifyIndex(index, plan.channel, o.trust, revoked, stored.current, o.now, undefined, { content: true });
     for (const p of plan.packages.filter((x) => !x.published)) {
       const b = wread(w, W.sxp(p.name));
       const e = index.entries.find((x) => x.id === p.id && x.version === p.version) ?? err('publish.work_invalid', `${p.name} 인덱스 항목 없음`);
@@ -702,94 +719,176 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
       sxps.set(p.name, b);
     }
   }
+  // 올리는 순서: 폐기 목록 → 정책 → status → 패키지(조회 먼저, 계획 순서) → 인덱스. 관문이 같은 규칙으로 다시 보고, 공개 전에 로그를 쓴다
+  const published: Outgoing['published'] = [];
+  if (revokedOut) published.push({ kind: 'revoked_keys', path: 'registry/revoked_keys.json', digest: contentDigest(revokedOut) });
+  // 관문은 정책 {ver}.json과 current.json을 같은 바이트로 쓴다(ADR-023), 로그 항목도 둘
+  if (policyOut) for (const path of [`policy/${policyOut.version}.json`, 'policy/current.json']) published.push({ kind: 'policy', path, digest: contentDigest(policyOut) });
+  if (statusOut) published.push({ kind: 'status', path: 'registry/status.json', digest: contentDigest(statusOut) });
+  for (const [name, b] of sxps) published.push({ kind: 'package', path: `packages/${name}.sxp`, bytes: b });
+  if (index) published.push({ kind: 'index', path: `registry/${plan.channel}/index.json`, digest: contentDigest(index) });
+  return { plan, revoked, revokedOut, policyOut, statusOut, index, sxps, published };
+}
 
-  // 올리기: 폐기 목록 → 정책 → status → 패키지(조회 먼저, 계획 순서) → 인덱스. 관문이 같은 규칙으로 다시 보고, 공개 전에 로그를 쓴다
-  const published: Array<{ kind: string; path: string; bytes?: Buffer }> = [];
-  if (revokedOut) {
-    await putOk(o.registry, '/admin/v1/revoked-keys', revokedOut, o.token, 200);
-    published.push({ kind: 'revoked_keys', path: 'registry/revoked_keys.json' });
-    o.out(`게시 revoked_keys monotonic ${revokedOut.monotonic}`);
+export async function push(o: PushOpts): Promise<PublishRecord> {
+  const w = o.work;
+  const plan = loadPlan(w, o.trust, o.trustBytes);
+  if (w.fs.exists(wp(w, W.record))) err('publish.work_exists', W.record);
+  if (!o.token || o.token.length < 16) err('publish.token_missing');
+  const current = await checkBase(plan, o.registry);
+  const fresh = await logHead(o.registry, o.trust);
+  const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
+  const statusStored = parseJson<RegistryStatus>(await o.registry.get('/registry/status.json'), 'status');
+  const policyStored = parseJson<SignedPolicy>(await o.registry.get('/policy/current.json'), 'policy');
+  // 서명이 모두 갖춰졌는지 올리기 전에 먼저 본다(중간에 멈추지 않게)
+  const out = await outgoing(o, { revoked: revokedStored, current });
+  // 이전 헤드: 같은 폴더로 다시 push하면 처음 남긴 것을 쓴다(그때부터의 항목을 모두 증명한다)
+  const before = w.fs.exists(wp(w, W.pushStarted)) ? checkHead(wjson<SignedTreeHead>(w, W.pushStarted), o.trust) : fresh;
+  if (!w.fs.exists(wp(w, W.pushStarted))) wwrite(w, W.pushStarted, pretty(before));
+
+  if (out.revokedOut) {
+    await putOk(o.registry, '/admin/v1/revoked-keys', out.revokedOut, o.token, 200);
+    o.out(`게시 revoked_keys monotonic ${out.revokedOut.monotonic}`);
   }
-  if (policyOut) {
-    await putOk(o.registry, '/admin/v1/policy', policyOut, o.token, 200);
-    // 관문은 {ver}.json과 current.json을 같은 바이트로 쓴다(ADR-023), 로그 항목도 둘
-    published.push({ kind: 'policy', path: `policy/${policyOut.version}.json` }, { kind: 'policy', path: 'policy/current.json' });
-    o.out(`게시 정책 ${policyOut.version} monotonic ${policyOut.monotonic}`);
+  if (out.policyOut) {
+    await putOk(o.registry, '/admin/v1/policy', out.policyOut, o.token, 200);
+    o.out(`게시 정책 ${out.policyOut.version} monotonic ${out.policyOut.monotonic}`);
   }
-  if (statusOut) {
-    await putOk(o.registry, '/admin/v1/status', statusOut, o.token, 200);
-    published.push({ kind: 'status', path: 'registry/status.json' });
-    o.out(`게시 status monotonic ${statusOut.monotonic}`);
+  if (out.statusOut) {
+    await putOk(o.registry, '/admin/v1/status', out.statusOut, o.token, 200);
+    o.out(`게시 status monotonic ${out.statusOut.monotonic}`);
   }
-  for (const [name, b] of sxps) {
+  for (const [name, b] of out.sxps) {
     const r = await putOk(o.registry, `/admin/v1/packages/${name}.sxp`, { data: b.toString('base64') }, o.token, 201);
     if (r.sxpDigest !== sha(b) || r.size !== b.length) err('publish.registry_mismatch', name);
-    published.push({ kind: 'package', path: `packages/${name}.sxp`, bytes: b });
     o.out(`게시 ${name}.sxp ${b.length}B`);
   }
-  if (index) {
-    await putOk(o.registry, `/admin/v1/index/${plan.channel}`, index, o.token, 200);
-    published.push({ kind: 'index', path: `registry/${plan.channel}/index.json` });
-    o.out(`게시 인덱스 ${plan.channel} monotonic ${index.monotonic}`);
+  if (out.index) {
+    await putOk(o.registry, `/admin/v1/index/${plan.channel}`, out.index, o.token, 200);
+    o.out(`게시 인덱스 ${plan.channel} monotonic ${out.index.monotonic}`);
   }
+  return confirm(o, out, { before, current, revokedStored, statusStored, policyStored });
+}
 
-  // 되읽기: 공개 경로가 올린 것과 같은가(관문이 쓴 그 바이트를 공개 GET으로)
+/**
+ * 사후 확인만(PUT 없음): push가 올린 뒤 되읽기·로그 확인에서 멈췄을 때(예 CDN 캐시로 publish.log_invalid) 같은 폴더로 record.json을 쓴다.
+ * 올린 것이 사용자가 서명한 내용 그대로인지(내용 다이제스트·서명·바이트)를 보므로 단조 기준(저장본)은 쓰지 않는다
+ */
+export async function verifyPublished(o: VerifyOpts): Promise<PublishRecord> {
+  const w = o.work;
+  const plan = loadPlan(w, o.trust, o.trustBytes);
+  if (w.fs.exists(wp(w, W.record))) err('publish.work_exists', W.record);
+  if (checkOrigin(plan.registry) !== o.registry.origin) err('publish.registry_changed', o.registry.origin);
+  const revokedStored = parseJson<RevokedKeys>(await o.registry.get('/registry/revoked_keys.json'), 'revoked_keys');
+  const out = await outgoing(o, { revoked: revokedStored, current: null });
+  const before = w.fs.exists(wp(w, W.pushStarted)) ? checkHead(wjson<SignedTreeHead>(w, W.pushStarted), o.trust) : null;
+  if (!before) o.out(`  ${W.pushStarted} 없음: 이전 헤드와의 일관성 증명은 건너뛴다(항목·포함 증명은 본다)`);
+  return confirm(o, out, { before, current: null, revokedStored: null, statusStored: null, policyStored: null });
+}
+
+/** 되읽기·투명성 로그 포함 증명 → record.json. 공개 GET은 CDN 캐시(≤ 60초)라 맞을 때까지 다시 읽는다(최대 settleMs) */
+async function confirm(
+  o: VerifyOpts,
+  out: Outgoing,
+  base: { before: SignedTreeHead | null; current: RegistryIndex | null; revokedStored: RevokedKeys | null; statusStored: RegistryStatus | null; policyStored: SignedPolicy | null },
+): Promise<PublishRecord> {
+  const w = o.work;
+  const { plan, revoked } = out;
+  const sleep = o.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  // 기다림은 되읽기·로그 확인 전체에 한 번(기본 90초 = 5초 × 18): 캐시 만료(60초)는 경로마다가 아니라 한꺼번에 온다
+  let waits = Math.max(0, Math.ceil((o.settleMs ?? SETTLE_MS) / POLL_MS));
+  const until = async <T>(attempt: () => Promise<T | null>, fail: () => never): Promise<T> => {
+    for (;;) {
+      const r = await attempt();
+      if (r !== null) return r;
+      if (waits-- <= 0) return fail();
+      await sleep(POLL_MS);
+    }
+  };
+
+  // 되읽기: 공개 경로가 올린 것과 같은가(관문이 쓴 그 바이트를 공개 GET으로). 옛 판이 캐시에 남아 있으면 다시 읽는다
   const got = new Map<string, Buffer>();
-  for (const p of published) {
-    const b = (await o.registry.get(`/${p.path}`)) ?? err('publish.readback_failed', p.path);
-    if (p.bytes && !b.equals(p.bytes)) err('publish.readback_failed', p.path);
+  for (const p of out.published) {
+    const b = await until(
+      async () => {
+        const b = await o.registry.get(`/${p.path}`);
+        if (!b) return null;
+        if (p.bytes) return b.equals(p.bytes) ? b : null;
+        const doc = parseJson<Record<string, unknown>>(b, p.path);
+        return doc && contentDigest(doc) === p.digest ? b : null;
+      },
+      () => err('publish.readback_failed', p.path),
+    );
     got.set(p.path, b);
   }
   // 인덱스: 서명한 내용 그대로이고(서버는 신선도 필드만 붙인다), 붙인 신선도까지 관문 규칙을 통과해야 한다
   let indexOut: RegistryIndex | null = null;
-  if (index) {
+  if (out.index) {
     indexOut = parseJson<RegistryIndex>(got.get(`registry/${plan.channel}/index.json`)!, 'index')!;
-    if (contentDigest(indexOut) !== contentDigest(index) || canonicalJson(indexOut.signatures) !== canonicalJson(index.signatures)) err('publish.readback_failed', 'index');
-    verifyIndex(indexOut, plan.channel, o.trust, revoked, current, o.now);
+    if (canonicalJson(indexOut.signatures) !== canonicalJson(out.index.signatures)) err('publish.readback_failed', 'index');
+    verifyIndex(indexOut, plan.channel, o.trust, revoked, base.current, o.now);
   }
-  if (revokedOut) {
-    const r = parseJson<RevokedKeys>(got.get('registry/revoked_keys.json')!, 'revoked_keys')!;
-    if (contentDigest(r) !== contentDigest(revokedOut)) err('publish.readback_failed', 'revoked_keys');
-    verifyRevoked(r, o.trust, revokedStored, o.now);
-  }
-  if (policyOut) {
+  if (out.revokedOut) verifyRevoked(parseJson<RevokedKeys>(got.get('registry/revoked_keys.json')!, 'revoked_keys')!, o.trust, base.revokedStored, o.now);
+  if (out.policyOut) {
     const cur = got.get('policy/current.json')!;
-    if (!cur.equals(got.get(`policy/${policyOut.version}.json`)!)) err('publish.readback_failed', 'policy {ver} ≠ current');
-    const pol = parseJson<SignedPolicy>(cur, 'policy')!;
-    if (contentDigest(pol) !== contentDigest(policyOut)) err('publish.readback_failed', 'policy');
-    verifyPolicy(pol, o.trust, revoked, policyStored, o.now);
+    if (!cur.equals(got.get(`policy/${out.policyOut.version}.json`)!)) err('publish.readback_failed', 'policy {ver} ≠ current');
+    verifyPolicy(parseJson<SignedPolicy>(cur, 'policy')!, o.trust, revoked, base.policyStored, o.now);
   }
-  if (statusOut) {
-    const s = parseJson<RegistryStatus>(got.get('registry/status.json')!, 'status')!;
-    if (contentDigest(s) !== contentDigest(statusOut)) err('publish.readback_failed', 'status');
-    verifyStatus(s, o.trust, revoked, statusStored, o.now);
-  }
+  if (out.statusOut) verifyStatus(parseJson<RegistryStatus>(got.get('registry/status.json')!, 'status')!, o.trust, revoked, base.statusStored, o.now);
 
-  // 투명성 로그: 새 헤드(핀 고정 타임스탬프 키), 이전 헤드와의 일관성, 올린 경로마다 항목·포함 증명
-  const after = await logHead(o.registry, o.trust);
-  // 같은 바이트의 패키지 재게시(중간 실패 뒤 다시 push)는 로그에 다시 쓰지 않으므로 새 항목이 올린 건수보다 적을 수 있다
-  if (after.treeSize < before.treeSize || (before.treeSize === after.treeSize && before.rootHash !== after.rootHash)) err('publish.log_invalid', 'treeSize');
-  if (before.treeSize > 0) {
+  // 투명성 로그: 새 헤드(핀 고정 타임스탬프 키)가 올린 경로를 모두 담을 때까지 다시 읽는다. 이전 헤드와의 일관성, 경로마다 항목·포함 증명
+  const entries = new Map<number, LogEntryRecord | null>();
+  const entryAt = async (i: number) => {
+    if (!entries.has(i)) entries.set(i, parseJson<LogEntryRecord>(await o.registry.get(`/registry/log/entries/${i}.json`), 'log entry'));
+    return entries.get(i)!;
+  };
+  // 같은 바이트의 패키지 재게시(중간 실패 뒤 다시 push)는 로그에 다시 쓰지 않으므로 새 항목부터 거꾸로, 없으면 그 앞을 찾는다
+  const find = async (size: number, path: string, sha256: string) => {
+    for (let i = size - 1; i >= 0; i--) {
+      const e = await entryAt(i);
+      if (e && e.entry.path === path && e.entry.sha256 === sha256) return e;
+    }
+    return null;
+  };
+  let missing = '';
+  const settled = await until(
+    async () => {
+      const h = await logHead(o.registry, o.trust);
+      const b = base.before;
+      if (b && (h.treeSize < b.treeSize || (h.treeSize === b.treeSize && h.rootHash !== b.rootHash))) {
+        missing = 'treeSize';
+        return null;
+      }
+      const hits: LogEntryRecord[] = [];
+      for (const p of out.published) {
+        const e = await find(h.treeSize, p.path, sha(got.get(p.path)!));
+        if (!e) {
+          missing = `${p.path} 항목 없음`;
+          return null;
+        }
+        hits.push(e);
+      }
+      return { after: h, hits };
+    },
+    () => err('publish.log_invalid', missing),
+  );
+  const { after, hits } = settled;
+  const before = base.before;
+  if (before && before.treeSize > 0) {
     const c = parseJson<{ proof: string[] }>(await o.registry.get(`/registry/log/proof/consistency?from=${before.treeSize}&to=${after.treeSize}`), 'consistency');
     if (!c || !verifyConsistency(before, after, c.proof.map((h) => Buffer.from(h, 'hex')))) err('publish.log_invalid', 'consistency');
   }
   const logged: PublishRecord['published'] = [];
-  for (const p of published) {
-    const want = sha(got.get(p.path)!);
-    let hit: LogEntryRecord | null = null;
-    // 새 항목부터 거꾸로, 없으면 그 앞(다시 push한 같은 바이트 패키지는 앞선 항목에 있다)
-    for (let i = after.treeSize - 1; i >= 0 && !hit; i--) {
-      const e = parseJson<LogEntryRecord>(await o.registry.get(`/registry/log/entries/${i}.json`), 'log entry');
-      if (e && e.entry.path === p.path && e.entry.sha256 === want) hit = e;
-    }
-    if (!hit) return err('publish.log_invalid', `${p.path} 항목 없음`);
+  for (const [i, p] of out.published.entries()) {
+    const hit = hits[i]!;
     const leaf = leafHashOf(Buffer.from(canonicalJson(hit.entry), 'utf8')).toString('hex');
     if (leaf !== hit.leafHash) err('publish.log_invalid', `${p.path} 잎 해시`);
     const proof = parseJson<{ leafIndex: number; path: string[] }>(await o.registry.get(`/registry/log/proof/inclusion?leaf=${leaf}&size=${after.treeSize}`), 'inclusion');
     if (!proof || !verifyInclusion(Buffer.from(leaf, 'hex'), proof.leafIndex, after.treeSize, proof.path.map((h) => Buffer.from(h, 'hex')), Buffer.from(after.rootHash, 'hex'))) err('publish.log_invalid', `${p.path} 포함 증명`);
-    logged.push({ kind: p.kind, path: p.path, sha256: want, logIndex: hit.index });
+    logged.push({ kind: p.kind, path: p.path, sha256: hit.entry.sha256, logIndex: hit.index });
   }
 
+  const current = base.current;
   const record: PublishRecord = {
     v: 1,
     tool: PLAN_TOOL,
@@ -798,10 +897,10 @@ export async function push(o: PushOpts): Promise<PublishRecord> {
     publishedAt: iso(o.now),
     published: logged,
     index: indexOut ? { monotonic: indexOut.monotonic, expiresAt: indexOut.expiresAt } : { monotonic: current?.monotonic ?? 0, expiresAt: current?.expiresAt ?? '' },
-    logHead: { before: before.treeSize, after: after.treeSize, rootHash: after.rootHash },
+    logHead: { before: before?.treeSize ?? null, after: after.treeSize, rootHash: after.rootHash },
   };
   wwrite(w, W.record, pretty(record));
-  o.out(`되읽기·로그 확인: ${logged.length}건, 로그 크기 ${before.treeSize} → ${after.treeSize}, 루트 ${after.rootHash}`);
+  o.out(`되읽기·로그 확인: ${logged.length}건, 로그 크기 ${before?.treeSize ?? '?'} → ${after.treeSize}, 루트 ${after.rootHash}`);
   o.out(`기록 ${wp(w, W.record)}`);
   return record;
 }

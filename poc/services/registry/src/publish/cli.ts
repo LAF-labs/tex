@@ -3,6 +3,7 @@
 //   prepare   패키지 묶기 → manifest·정책·status·폐기 목록 서명 대상과 확인 코드, 사용자 서명 명령(ceremony sign)
 //   assemble  서명 모으기 → .sxp → 엔진 로더·관문 규칙 → 인덱스 초안과 확인 코드
 //   push      인덱스 서명 모으기 → 게시 관문 PUT(폐기 목록 → 정책 → status → 패키지 → 인덱스) → 되읽기 → 투명성 로그 포함 증명 → record.json
+//   verify    PUT 없이 push의 사후 확인만(되읽기·로그 포함 증명 → record.json). push가 publish.log_invalid·readback_failed로 끝났을 때
 // 운영자 토큰은 터미널에서 보이지 않게 묻는다(파이프·인자로 받지 않는다). --token-env를 주면 그 이름의 env에서 읽는다(값은 출력·파일에 남기지 않는다).
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,7 +11,7 @@ import { pathToFileURL } from 'node:url';
 import { parseTrustRoot } from '../main.ts';
 import type { Channel, RevokedKeys, TrustRoot } from '../verify.ts';
 import { CeremonyError } from '../ceremony/content.ts';
-import { assemble, httpRegistry, prepare, push, type PublishFs, type RegistryClient, type Work } from './pipeline.ts';
+import { assemble, httpRegistry, prepare, push, verifyPublished, type PublishFs, type RegistryClient, type Work } from './pipeline.ts';
 import { dryRun, rehearsalPackageSigner } from './rehearsal.ts';
 
 export interface PublishCliDeps {
@@ -21,6 +22,8 @@ export interface PublishCliDeps {
   /** 보이지 않는 입력(운영자 토큰) */
   secret(prompt: string): Promise<string>;
   env: NodeJS.ProcessEnv;
+  /** 사후 확인 다시 읽기(CDN 캐시 대기). 시험은 바로 돌려주는 sleep을 준다 */
+  settle?: { sleep?: (ms: number) => Promise<void>; settleMs?: number };
 }
 
 export const nodeFs: PublishFs = {
@@ -161,6 +164,7 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
       return 0;
     }
     case 'assemble':
+    case 'verify':
     case 'push': {
       const t = trustOf();
       const w = work();
@@ -170,13 +174,17 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
         await assemble({ ...t, work: w, registry, now: deps.now(), out: deps.out });
         return 0;
       }
+      if (cmd === 'verify') {
+        await verifyPublished({ ...t, work: w, registry, now: deps.now(), out: deps.out, ...deps.settle });
+        return 0;
+      }
       const envName = one('token-env', false);
       const token = envName ? (deps.env[envName] ?? '') : await deps.secret(`운영자 토큰(${registry.origin}, 보이지 않음): `);
-      await push({ ...t, work: w, registry, token, now: deps.now(), out: deps.out });
+      await push({ ...t, work: w, registry, token, now: deps.now(), out: deps.out, ...deps.settle });
       return 0;
     }
   }
-  deps.out('명령: dry-run | prepare | assemble | push (PUBLISH-H01.md)');
+  deps.out('명령: dry-run | prepare | assemble | push | verify (PUBLISH-H01.md)');
   return 64;
 }
 

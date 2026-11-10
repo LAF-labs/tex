@@ -236,6 +236,11 @@ describe('엔진 auth 포트 배선(소스)', () => {
   const app = src('apps/desktop/src/shell-app.ts');
   const gw = src('apps/desktop/src/gateway-auth.ts');
 
+  it('엔진 init에 앱 판(app.getVersion())을 싣는다: 엔진 #243 minAppVersion 대조(D09 §8)', () => {
+    assert.ok(host.includes("...(opts.appVersion ? { appVersion: opts.appVersion } : {})"));
+    assert.ok(app.includes('log, appVersion: app.getVersion() });'));
+  });
+
   it('엔진 init 포트 순서는 [중계, 게이트, auth]. 답하는 쪽이 붙기 전에는 account.signed_out', () => {
     assert.ok(host.includes('this.engine.postMessage(init, [relay.port2, gate.port1, auth.port1]);'));
     assert.ok(/r = h \? await h\(m\) : id === null \? null : \{ t: 'gw\.auth\.result', id, code: 'account\.signed_out' \}/.test(gw));
