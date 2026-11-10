@@ -125,6 +125,32 @@ async function main(): Promise<void> {
   check('등록증 후보로 추가', await until('cp cert added', async () => js<boolean>(`document.querySelector('[data-panel-cp] .sx-card-title')?.textContent === '견본상사' && [...document.querySelectorAll('[data-cp-row]')].length === 12`), 5_000));
   const row = ((await S!.host.rpc('db.query.counterparties.list')) as Array<{ bizNo: string; source: string; address: string | null }>).find((c) => c.bizNo === '3148601237');
   check('등록증으로 넣은 거래처는 source ocr·주소(main이 든 값)', row?.source === 'ocr' && row.address === '서울특별시 견본구 시험로 34', row);
+
+  // 내 사업장(D-03) 고치기: 온보딩 기록이 없는 기존 프로필(!onb)도 고친다. [파일에서 읽기]는 온보딩 O-02와 같은 등록증 읽기(시연 등록증).
+  const biz = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; bizItem: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
+  const before = await biz();
+  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  check('내 사업장(온보딩 기록 없음): [수정]은 있고 [바꾸기](온보딩 대화)는 없다', await until('biz view', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view] [data-act=biz-edit]') && ![...document.querySelectorAll('[data-biz-card=view] .sx-copy')].some((b) => b.textContent === '바꾸기')`), 5_000));
+  await sleep(3_100);
+  check('파일에서 읽기도 실제 입력 뒤에만', (await call('profile.readCert', {})) === 'ERR:gesture_required');
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('[data-act=biz-edit]').click()`);
+  await until('biz form', async () => js<boolean>(`!!document.querySelector('[data-biz-form] [data-act=biz-cert]')`), 5_000);
+  await js(`(() => { const f = document.querySelector('[data-biz-form]'); for (const k of ['bizType', 'bizItem', 'address']) { f[k].value = ''; f[k].dispatchEvent(new Event('input')); } })()`);
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('[data-act=biz-cert]').click()`);
+  const bizFilled = await until('biz cert filled', async () => js<boolean>(`(() => { const f = document.querySelector('[data-biz-form]'); return !!f && f.bizType.value === '서비스업' && f.bizItem.value === '경영 컨설팅' && f.address.value === '서울특별시 가나구 다라로 12, 3층' && f.bizNo.value === '123-45-67891'; })()`), 5_000);
+  check('[파일에서 읽기] → 업태·종목·주소·번호가 칸에 들어간다(아직 저장 안 함)', bizFilled && (await biz()).address === before.address);
+  await js(`(() => { const f = document.querySelector('[data-biz-form]'); f.rep.value = '김가나다'; f.rep.dispatchEvent(new Event('input')); })()`);
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('[data-act=biz-save]').click()`);
+  const saved = await until('biz saved', async () => (await biz()).repName === '김가나다' && js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000);
+  const after = await biz();
+  check('[저장] → 대표자·등록증 칸 저장, 번호·발급 인증 그대로', saved && after.address === '서울특별시 가나구 다라로 12, 3층' && after.bizType === '서비스업' && after.bizNo === before.bizNo && after.signMethod === before.signMethod, { before, after });
+  check('틀린 번호는 main이 거부', (gesture(), await sleep(30), await call('profile.edit', { fields: { bizNo: '123-45-67890' } })) === 'ERR:bad_biz_no');
 }
 
 app.whenReady().then(async () => {

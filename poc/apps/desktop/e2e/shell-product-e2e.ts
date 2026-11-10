@@ -141,6 +141,16 @@ async function main() {
   await until('biz-number', async () => (await onbStep()) === 'biz-number');
   await js(`(() => { const i = document.querySelector('[data-onb-step=biz-number] input'); i.value = '123-45-67891'; })()`);
   await press('[data-onb=submit]');
+  // 번호로 등록하면 상호가 비어 있다: 확정 버튼 대신 [고칠게요]로 상호부터(0.1.6 실사용: 상호 없이 확정되어 제목줄에 번호가 보였다)
+  check(
+    'O-02 상호가 비면 "상호를 넣어 주세요" + [맞습니다] 없이 [고칠게요]',
+    await until('name first', async () => (await onbStep()) === 'biz-confirm' && js<boolean>(`(() => { const c = [...document.querySelectorAll('[data-onb-step=biz-confirm]')].pop(); return c.textContent.includes('상호가 비어 있어요') && !c.querySelector('[data-onb=confirm-unverified]') && !!c.querySelector('[data-onb=edit]'); })()`)),
+  );
+  check('상호 없이 [맞습니다]를 보내도 main이 거부(name_required)', (await js<string>(`window.sax.call('onboarding.reply', { step: 'biz-confirm', choice: 'confirm_unverified' }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`)) === 'name_required');
+  await press('[data-onb=edit]');
+  await until('onb edit', async () => js<boolean>(`!!document.querySelector('[data-onb-step=biz-confirm] form [name=name]')`));
+  await js(`(() => { const f = [...document.querySelectorAll('[data-onb-step=biz-confirm] form')].pop(); f.name.value = '견본첫상사'; })()`);
+  await press('[data-onb=save]');
   check(
     'O-02 확인 불가: "국세청 확인을 하지 못했습니다" + [맞습니다], 확인됐다고 보이지 않음',
     await until('biz-confirm', async () => (await onbStep()) === 'biz-confirm' && js<boolean>(`(() => { const c = [...document.querySelectorAll('[data-onb-step=biz-confirm]')].pop(); return c.textContent.includes('국세청 확인을 하지 못했습니다. 번호가 맞는지 확인해 주세요.') && c.textContent.includes('조회하지 못했어요') && !!c.querySelector('[data-onb=confirm-unverified]') && !c.querySelector('[data-onb=confirm]'); })()`)),
@@ -172,6 +182,7 @@ async function main() {
     await press(sel);
   }
   await until('onb done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
+  check('제목줄 프로필 이름은 상호(번호 아님)', (await js<string>(`document.querySelector('.tb-co').textContent`)).includes('견본첫상사'), await js<string>(`document.querySelector('.tb-co').textContent`));
   const runCount = () => js<number>(`document.querySelectorAll('[data-run]').length`);
   await say('세금계산서 1000원 인스피릿에 끊자');
   check(
@@ -188,6 +199,49 @@ async function main() {
   await say('세금계산서 1000원 인스피릿에 끊자');
   check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다', await until('ask cp', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어느 거래처에 발급할까요') ?? false`)));
   check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
+
+  // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
+  const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
+  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  check('내 사업장: [수정]과 발급 인증 [바꾸기]', await until('biz view', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view] [data-act=biz-edit]') && [...document.querySelectorAll('[data-biz-card=view] .sx-copy')].some((b) => b.textContent === '바꾸기')`), 5_000));
+  await sleep(3_100);
+  check('실제 입력 없이 저장하면 거부(gesture_required)', (await js<string>(`window.sax.call('profile.edit', { fields: { rep: '박다라' } }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`)) === 'gesture_required');
+  await press('[data-act=biz-edit]');
+  await until('form', async () => js<boolean>(`!!document.querySelector('[data-biz-form]')`), 5_000);
+  check('폼은 지금 값으로 채워져 있다(번호 000-00-00000)', (await js<string>(`document.querySelector('[data-biz-form] [name=bizNo]').value`)) === '123-45-67891');
+  await type('[data-biz-form] [name=name]', '견본고침상사');
+  await type('[data-biz-form] [name=rep]', '박다라');
+  await type('[data-biz-form] [name=bizType]', '서비스');
+  await type('[data-biz-form] [name=address]', '서울시 가상구 견본로 1');
+  check('번호를 바꾸지 않으면 홈택스 사업자 안내가 없다', await js<boolean>(`document.querySelector('[data-bizno-note]').hidden`));
+  await press('[data-act=biz-save]');
+  check('[저장] → 보기 카드에 고친 값, DB에도(발급 인증 그대로)', await until('saved', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view]') && document.querySelector('section[data-view=biz]').textContent.includes('박다라') && document.querySelector('section[data-view=biz]').textContent.includes('서울시 가상구 견본로 1')`), 5_000) && (await business()).repName === '박다라' && (await business()).signMethod === 'simple_auth', { db: await business(), view: await js(`document.querySelector('#center')?.innerText`) });
+  check('고친 상호가 제목줄에 바로 보인다', (await js<string>(`document.querySelector('.tb-co').textContent`)).includes('견본고침상사'), await js<string>(`document.querySelector('.tb-co').textContent`));
+  check('main 로그에는 고친 칸 이름만(값 없음)', /main\.profile_edit.*"fields":"name\.rep\.bizType\.address"/.test(mainLog()) && !/박다라|견본로/.test(mainLog()));
+  // 번호 바꾸기: 제품은 상태조회가 없어 조회 불가 → [맞습니다]로만 저장
+  await press('[data-act=biz-edit]');
+  await until('form 2', async () => js<boolean>(`!!document.querySelector('[data-biz-form]')`), 5_000);
+  await type('[data-biz-form] [name=bizNo]', '220-81-62517');
+  check('번호를 바꾸면 한 줄 안내(홈택스에 로그인한 사업자와 달라질 수 있어요)', await js<boolean>(`(() => { const n = document.querySelector('[data-bizno-note]'); return !n.hidden && n.textContent.includes('홈택스에 로그인한 사업자와 달라질 수 있어요'); })()`));
+  await press('[data-act=biz-save]');
+  check('조회하지 못하면 저장하지 않고 [맞습니다]·[다시 조회]', await until('confirm', async () => js<boolean>(`!!document.querySelector('[data-biz-confirm=unknown] [data-act=biz-confirm-unverified]') && !!document.querySelector('[data-act=biz-recheck]')`), 5_000) && (await business()).bizNo === '1234567891');
+  await press('[data-act=biz-confirm-unverified]');
+  check('[맞습니다] → 새 번호로 저장', await until('saved no', async () => (await business()).bizNo === '2208162517' && js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000), await business());
+  // 활동 기록: 고친 칸만
+  await js(`document.querySelector('#rail [data-view="activity"], #rail button[aria-label="활동 기록"]')?.click()`);
+  check('활동 기록에 "내 사업장 수정 · 사업자번호", "… 상호·대표자·업태·주소"', await until('activity', async () => js<boolean>(`(() => { const t = document.querySelector('section[data-view=activity]')?.textContent ?? ''; return t.includes('내 사업장 수정 · 사업자번호') && t.includes('내 사업장 수정 · 상호·대표자·업태·주소'); })()`), 5_000), await js(`document.querySelector('#center')?.innerText`));
+  const edits = readFileSync(path.join(paths.userData, 'profile-edits.json'), 'utf8');
+  check('고친 기록 파일에 값이 없다', !/박다라|견본|2208162517|서울/.test(edits) && edits.includes('"bizNo"'), edits);
+  // [바꾸기]: O-03만 다시 묻고, [나중에]면 그 전 인증 그대로
+  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  await until('biz view 2', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000);
+  S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
+  await sleep(30);
+  await js(`[...document.querySelectorAll('[data-biz-card=view] .sx-copy')].find((b) => b.textContent === '바꾸기').click()`);
+  check('[바꾸기] → 대화 끝에 O-03 발급 인증', await until('reopen auth 2', async () => (await onbStep()) === 'auth'));
+  await press('[data-onb=later]');
+  await until('redo done 2', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`) );
+  check('[나중에] → 그 전 인증 그대로(간편인증), 할 일 없음', (await business()).signMethod === 'simple_auth' && (await business()).bizNo === '2208162517' && !(await js<boolean>(`!!document.querySelector('[data-setup-needed]:last-of-type [data-act=setup-auth]')`)));
 }
 
 app.whenReady().then(async () => {

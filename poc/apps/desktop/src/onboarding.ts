@@ -159,6 +159,8 @@ export const BIZ_FIELD_MAX: Record<(typeof BIZ_FIELD_KEYS)[number], number> = { 
 /** DB(packages/db repo.ts checkEmail)와 같은 이메일 모양. 받을 때 보고, 요약 저장에서 처음 걸리지 않게 한다. */
 const EMAIL_SHAPE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 export const emailOk = (s: string) => s === '' || EMAIL_SHAPE.test(s);
+/** O-02에서 상호가 비었을 때(번호로 등록·등록증에서 못 읽음). 확정 버튼 대신 [고칠게요]로 채우게 한다. */
+export const BIZ_NAME_NOTICE = '상호가 비어 있어요. [고칠게요]에서 상호를 넣어 주세요.';
 const EMPTY_BIZ: BizFields = { name: '', bizNo: '', rep: '', bizType: '', bizItem: '', address: '', email: '' };
 
 /** 국세청 진위확인 결과(ADR-029: 사업자번호만 보낸다). label은 화면 배지 글자, source는 배지 옆 출처. */
@@ -228,6 +230,8 @@ export interface OnbState {
   redo: 'biz' | 'auth' | null;
   /** 다시 연 때의 대화 기록 길이(렌더러는 그 뒤 답만 새 자리에 그린다). */
   redoFrom: number | null;
+  /** 이미 고른 발급 인증을 바꾸려고 다시 연 것이면 그 전 인증(O-03에서 [나중에]면 이것으로 되돌린다). 아니면 null. */
+  redoPrev: { auth: AuthKind; certId: string | null } | null;
   /**
    * ①에서 금고가 돌려준 포털 아이디(비밀 아님, #42 계약). 이어 하기 저장에 넣어 요약에서 프로필에 쓴다(DB profiles.portal_login_id).
    * 렌더러로 가는 view와 대화 기록(log)에는 넣지 않는다.
@@ -249,13 +253,17 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (typeof o.consents !== 'object' || o.consents === null || Array.isArray(o.consents)) return null;
   if (o.redo !== undefined && o.redo !== null && o.redo !== 'biz' && o.redo !== 'auth') return null;
   if (o.redoFrom !== undefined && o.redoFrom !== null && !(Number.isSafeInteger(o.redoFrom) && (o.redoFrom as number) >= 0)) return null;
+  if (o.redoPrev !== undefined && o.redoPrev !== null) {
+    const r = o.redoPrev as Record<string, unknown>;
+    if (typeof r !== 'object' || Array.isArray(r) || typeof r.auth !== 'string' || !Object.hasOwn(AUTH_LABEL, r.auth) || !(r.certId === null || typeof r.certId === 'string')) return null;
+  }
   if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
   return { ...base, ...structuredClone(picked) } as OnbState;
 }
 
-export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, portalLoginId: null });
+export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null, portalLoginId: null });
 
 /** 끝난 온보딩이 저장할 프로필(DB profile.upsert에 넘긴다, 비밀 없음). */
 export interface OnbProfile {
@@ -345,16 +353,19 @@ export class OnboardingFlow {
   /**
    * 끝낸 온보딩에서 건너뛴 사업자(O-02)·인증(O-03)을 다시 연다(0.1.5 실사용: 사업자를 건너뛰면 발급 카드가 profile_missing으로 멈췄다).
    * 그 단계만 묻고, 동의(②③)는 다시 묻지 않으며, 요약에서 프로필을 저장한 뒤 첫 작업 제안 없이 끝낸다. 빠진 것이 아니면 nothing_to_reopen.
+   * 발급 인증은 이미 골랐어도 바꾸려고 다시 열 수 있다(내 사업장 [발급 인증 바꾸기]): O-03에서 [나중에]면 그 전 인증 그대로 끝낸다.
    */
   async reopen(item: 'biz' | 'auth'): Promise<OnbResult> {
     if (this.s.step !== 'done') throw new Error('onboarding_not_done');
-    if (!this.missing().includes(item)) throw new Error('nothing_to_reopen');
+    const change = item === 'auth' && !this.missing().includes('auth');
+    if (!change && !this.missing().includes(item)) throw new Error('nothing_to_reopen');
     if (this.busy) throw new Error('busy');
     this.busy = true;
     const before = structuredClone(this.s);
     try {
       this.s.redo = item;
       this.s.redoFrom = this.s.log.length;
+      this.s.redoPrev = change && this.s.auth ? { auth: this.s.auth, certId: this.s.certId } : null;
       this.s.notice = null;
       if (item === 'biz') this.s.step = 'welcome';
       else await this.toAuth();
@@ -365,6 +376,25 @@ export class OnboardingFlow {
       throw e;
     } finally {
       this.busy = false;
+    }
+  }
+
+  /**
+   * 내 사업장(D-03)에서 고친 사업자 칸을 온보딩 상태에도 맞춘다(profile-edit.ts). 요약이 프로필을 저장할 때(인증을 다시 고른 뒤 등)
+   * 예전 칸으로 덮어쓰지 않게 하고, 건너뛴 사업자 할 일을 지운다. 끝낸 온보딩에서만(진행 중이면 onboarding_open).
+   */
+  async syncBiz(biz: BizFields): Promise<void> {
+    if (this.s.step !== 'done') throw new Error('onboarding_open');
+    if (!isValidBizNo(biz.bizNo)) throw new Error('bad_biz_no');
+    const before = structuredClone(this.s);
+    try {
+      if (this.s.biz?.bizNo !== biz.bizNo) this.s.check = null;
+      this.s.biz = { ...EMPTY_BIZ, ...biz };
+      this.unskip('biz');
+      await this.ports.save(this.state);
+    } catch (e) {
+      this.s = before;
+      throw e;
     }
   }
 
@@ -434,6 +464,7 @@ export class OnboardingFlow {
   private endRedo() {
     this.s.step = 'done';
     this.s.redo = null;
+    this.s.redoPrev = null;
   }
 
   private async apply(a: OnbAnswer): Promise<string | undefined> {
@@ -511,6 +542,7 @@ export class OnboardingFlow {
         if (a.choice === 'confirm_unverified') {
           if (!s.biz || !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
           if (s.check?.status !== 'unknown') throw new Error('bad_choice');
+          if (!s.biz.name.trim()) throw new Error('name_required');
           this.say('맞습니다');
           this.unskip('biz');
           await this.afterBiz(false);
@@ -520,6 +552,8 @@ export class OnboardingFlow {
         // 등록증(OCR)에서 읽은 번호도 DB와 같은 체크섬을 지나야 확정한다(요약 저장에서 처음 걸리지 않게).
         if (s.biz && !isValidBizNo(s.biz.bizNo)) throw new Error('bad_biz_no');
         if (!s.biz || s.check?.status !== 'active') throw new Error('biz_inactive');
+        // 상호는 필수다(0.1.6 실사용: 상호 없이 확정되어 제목줄에 번호가 이름처럼 보였다). [고칠게요]에서 채운다.
+        if (!s.biz.name.trim()) throw new Error('name_required');
         this.say('맞아요');
         this.unskip('biz');
         await this.afterBiz(false);
@@ -531,6 +565,14 @@ export class OnboardingFlow {
           return;
         }
         if (a.choice === 'later') {
+          // 바꾸려고 연 것이면 그 전 인증 그대로 둔다(건너뜀으로 바꾸지 않는다)
+          if (s.redo === 'auth' && s.redoPrev) {
+            this.say('지금 인증 그대로 둘게요');
+            s.auth = s.redoPrev.auth;
+            s.certId = s.redoPrev.certId;
+            this.endRedo();
+            return;
+          }
           this.say('나중에 할게요');
           this.skip('auth');
           this.afterAuth(true);
@@ -662,6 +704,7 @@ export class OnboardingFlow {
       return;
     }
     s.check = await this.ports.checkBizNo(s.biz.bizNo).catch((): BizCheck => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }));
+    if (!s.biz.name) s.notice = BIZ_NAME_NOTICE;
     s.step = 'biz-confirm';
   }
 }

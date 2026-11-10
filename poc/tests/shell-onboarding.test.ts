@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { MockOnboardingPorts, MOCK_BIZ_CERT, MOCK_CONSENT_CONFIG } from '../apps/desktop/src/onboarding-mock.ts';
-import { certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
+import { BIZ_NAME_NOTICE, certExpiringSoon, CONSENT_KINDS, CONSENT_NOTICES, ONB_CHOICES, OnboardingFlow, onboardingTodos, parseOnbState, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
 
 const NOW = () => new Date('2026-11-05T01:00:00Z');
 function make(o: Partial<ConstructorParameters<typeof MockOnboardingPorts>[0]> = {}) {
@@ -78,6 +78,11 @@ describe('온보딩: 한 번에 하나씩', () => {
       { step: 'biz-number', choice: 'submit', fields: { bizNo: '123-45-67891' } },
     ]);
     assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm' })), 'biz_inactive', '그냥 [맞아요]로는 확정하지 않는다');
+    // 번호로 등록하면 상호가 비어 있다: 확정 전에 채워야 한다(0.1.6 실사용: 상호 없이 확정되어 제목줄에 번호가 보였다)
+    assert.equal(flow.state.notice, BIZ_NAME_NOTICE);
+    assert.equal(await code(flow.answer({ step: 'biz-confirm', choice: 'confirm_unverified' })), 'name_required');
+    await flow.answer({ step: 'biz-confirm', choice: 'edit', fields: { name: '가나다상사' } });
+    assert.equal(flow.state.notice, null, '상호를 채우면 안내가 없어진다');
     await flow.answer({ step: 'biz-confirm', choice: 'confirm_unverified' });
     assert.equal(flow.state.step, 'auth');
     assert.deepEqual([flow.state.check?.status, flow.state.check?.label], ['unknown', '조회하지 못했어요'], '확인됐다고 바꾸지 않는다');

@@ -139,6 +139,10 @@ export const SHELL_METHODS = {
   'onboarding.reply': ONB_ANSWER,
   // 끝낸 온보딩에서 건너뛴 사업자·인증을 다시 연다([사업자 등록 마치기]·[발급 인증 고르기]). 실제 입력 뒤에만.
   'onboarding.reopen': { item: { t: 'enum', of: ['biz', 'auth'], required: true } },
+  // 내 사업장(D-03) 고치기(profile-edit.ts). 칸 상한은 온보딩 O-02와 같다. confirmUnverified: 번호를 조회하지 못해 [맞습니다]를 눌렀다.
+  'profile.edit': { fields: { t: 'object', required: true, fields: ONB_ANSWER.fields.fields }, confirmUnverified: { t: 'boolean' } },
+  // 내 사업장 [파일에서 읽기]: 등록증 파일 고르기 → 칸 후보. 인자 없음.
+  'profile.readCert': {},
 } as const satisfies Record<string, MethodSpec>;
 
 export type ShellMethod = keyof typeof SHELL_METHODS;
@@ -149,7 +153,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

@@ -122,7 +122,8 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     await f2.answer({ step: 'auth', choice: 'simple' });
     // biz는 아직 건너뜀 → summary(프로필 저장 없음) → done
     await f2.answer({ step: 'summary', choice: 'ok' });
-    await assert.rejects(f2.reopen('auth'), /nothing_to_reopen/);
+    // 이미 고른 인증은 바꾸려고 다시 열 수 있다(내 사업장 [바꾸기], tests/shell-profile-edit.test.ts). 사업자는 빠졌을 때만.
+    assert.deepEqual((await f2.reopen('auth')).state.redoPrev, { auth: 'simple', certId: null });
     assert.equal(parseOnbState({ ...f2.state, redo: 'x' }), null);
     assert.equal(parseOnbState({ ...f2.state, redoFrom: -1 }), null);
   });

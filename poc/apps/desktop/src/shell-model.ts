@@ -16,8 +16,14 @@ export interface Profile {
   name: string;
   bizNo?: string;
   rep?: string;
+  /** 업태·종목·주소(사업자 프로필, 내 사업장에서 보이고 고친다). */
+  bizType?: string;
+  bizItem?: string;
+  address?: string;
   email: string;
   auth: string;
+  /** 상호가 비어(또는 번호로 저장되어) name이 중립 표기("내 사업장")다. 번호를 이름처럼 보이지 않는다. */
+  nameMissing?: boolean;
 }
 
 /** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */

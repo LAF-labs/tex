@@ -38,6 +38,7 @@ import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
 import { CounterpartyBook } from './counterparty-book.ts';
+import { nameMissing, ProfileEditLog, ProfileEditor } from './profile-edit.ts';
 import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
@@ -92,6 +93,7 @@ const FILES: Record<string, string> = {
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',
+  '/shell-biz.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
@@ -228,7 +230,8 @@ export interface Shell {
 const SIGN: Record<string, string> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
 
 function profileView(p: DbProfile): Profile {
-  return { kind: p.kind, name: p.displayName, bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? NO_AUTH };
+  const unnamed = p.kind === 'business' && nameMissing(p);
+  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: SIGN[p.signMethod ?? ''] ?? NO_AUTH };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -689,6 +692,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
         },
   );
+  // 내 사업장(D-03) 고치기(profile-edit.ts): 엔진 profile.upsert 그대로. 번호가 바뀌면 온보딩과 같은 상태조회 포트, 고친 칸 이름만 기록.
+  const editLog = new ProfileEditLog(appPaths(root ?? defaultAppRoot()).userData);
+  const editor = new ProfileEditor({
+    list: async () => (await host.rpc('db.query.profiles.list')) as DbProfile[],
+    upsert: async (row) => (await host.rpc('profile.upsert', row)) as DbProfile,
+    checkBizNo: (n) => onbExternal.checkBizNo(n),
+    runActive: () => runs.anyActive(),
+    saved: async (biz, changed) => {
+      try {
+        if (onb?.done) await onb.syncBiz(biz);
+      } finally {
+        if (changed.length) editLog.add({ at: new Date().toISOString(), kind: 'business', fields: changed });
+        // 로그 값은 ID 모양만 받는다(쉼표 없음): 칸 이름을 점으로 잇는다
+        log.event('main.profile_edit', { fields: changed.join('.') || 'none' });
+        await refresh();
+        pushBoard();
+      }
+    },
+  });
+  /** [파일에서 읽기]: 온보딩 O-02와 같은 등록증 읽기(#265 개선 포함). 고르지 않음(null)과 골랐지만 못 읽음을 나눈다. */
+  const readOwnCert = async (): Promise<BizFields | 'unreadable' | null> => {
+    if (fixture) return onbExternal.recognizeBizCert();
+    let picked = false;
+    const pick = async () => {
+      const b = await bizCertPorts.pick();
+      picked = b !== null;
+      return b;
+    };
+    return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
+  };
+  let readingCert = false;
   // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
   // 대화 짧은 응대(엔진 chat.respond, #261): 의도가 unknown이고 되묻던 것에 답하는 문장이 아닐 때만. e2e가 바꿔 끼운다.
@@ -820,6 +854,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onboarding: await onbView(),
       // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
       cpBook: fixture ? 'demo' : 'local',
+      // 내 사업장 고친 기록(칸 이름만)과 [발급 인증 바꾸기]를 온보딩 대화로 열 수 있는지(온보딩 기록이 없는 옛 프로필은 못 연다)
+      profileEdits: editLog.list(),
+      authReopen: !!onb,
     }),
     'profile.set': (p) => {
       if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
@@ -1046,6 +1083,29 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onbShow = true;
       pushBoard();
       return { onboarding: await onbView(), profiles: profiles() };
+    },
+    // 내 사업장 [저장]: 실제 입력 뒤에만, 실행 중이면 거부(profile-edit.ts). 번호를 조회하지 못하면 confirm을 돌려주고 [맞습니다]면 confirmUnverified로 다시 온다.
+    'profile.edit': async (p) => {
+      needGesture(3_000);
+      await needLogin();
+      if (onb && !onb.done) throw new Error('onboarding_open');
+      const r = await editor.save((p.fields ?? {}) as Record<string, unknown>, p.confirmUnverified === true);
+      return { ...r, profiles: profiles(), edits: editLog.list() };
+    },
+    // 내 사업장 [파일에서 읽기]: 파일 고르기를 여니 실제 클릭 뒤에만. 칸 후보만 돌려준다(저장은 [저장]으로, 같은 검사를 거친다).
+    'profile.readCert': async () => {
+      needGesture(3_000);
+      await needLogin();
+      if (readingCert) throw new Error('busy');
+      readingCert = true;
+      try {
+        const f = await readOwnCert();
+        if (f === null) return { found: false, reason: 'cancelled' };
+        if (f === 'unreadable') return { found: false, reason: 'unreadable' };
+        return { found: true, fields: f };
+      } finally {
+        readingCert = false;
+      }
     },
     'clipboard.copy': (p) => {
       clipboard.writeText(String(p.text ?? '').slice(0, 200));

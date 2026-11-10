@@ -207,6 +207,7 @@ function bizCard(o, u, reply, act) {
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);
   }
   const unknown = o.check?.status === 'unknown';
+  const named = !!(b.name ?? '').trim();
   // 확인하지 못했다는 사실을 그대로 보인다(팀장 결정 2026-11-10). [맞습니다]를 눌러야 확정된다.
   const stop = !active && o.check ? note(unknown ? '국세청 확인을 하지 못했습니다. 번호가 맞는지 확인해 주세요.' : `${o.check.label} 상태라 등록을 멈췄어요. 번호가 맞는지 확인해 주세요.`, true) : null;
   return h(
@@ -221,10 +222,11 @@ function bizCard(o, u, reply, act) {
     h(
       'div',
       { class: 'sx-actions' },
-      active ? btn('맞아요', () => reply('confirm'), 'sx-btn-primary', { 'data-onb': 'confirm' }) : null,
-      unknown ? btn('맞습니다', () => reply('confirm_unverified'), 'sx-btn-primary', { 'data-onb': 'confirm-unverified' }) : null,
+      // 상호가 비었으면 확정 버튼 대신 [고칠게요]가 먼저다(main도 name_required로 거부한다)
+      active && named ? btn('맞아요', () => reply('confirm'), 'sx-btn-primary', { 'data-onb': 'confirm' }) : null,
+      unknown && named ? btn('맞습니다', () => reply('confirm_unverified'), 'sx-btn-primary', { 'data-onb': 'confirm-unverified' }) : null,
       unknown ? btn('다시 조회', () => reply('recheck'), '', { 'data-onb': 'recheck' }) : null,
-      btn('고칠게요', () => ((u.editing = true), act.rerender()), active || unknown ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
+      btn('고칠게요', () => ((u.editing = true), act.rerender()), (active || unknown) && named ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
       btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
     ),
   );
