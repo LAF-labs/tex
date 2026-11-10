@@ -7,7 +7,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { BundleService, PC_FILE_MAX, PcFileIntake, type ItemStatus, type ReceiptView } from '@sax/bundle';
 import { BundleRepo, ColumnCipher, deriveColumnKey, DocumentRepo, openDatabase, ProfileRepo, ReceiptRepo, syntheticBizNo, type BundleEntry, type Db } from '@sax/db';
-import { COMMANDS, MAIN_ONLY, PAYROLL_MAIN_ONLY, PC_FILE_COMMANDS, PHONE_COMMANDS, READ_QUERIES } from '@sax/engine/protocol';
+import { COMMANDS, MAIN_ONLY, PAYROLL_MAIN_ONLY, PC_FILE_COMMANDS, PHONE_COMMANDS, READ_QUERIES, SETTLEMENT_COMMANDS } from '@sax/engine/protocol';
 
 const root = path.resolve(import.meta.dirname, '..');
 const entry = fs.readFileSync(path.join(root, 'packages/engine/src/entry.ts'), 'utf8');
@@ -109,8 +109,8 @@ describe('bundle.attachFile(꾸러미 파일 칸)', () => {
     const a = await call<{ docId: string; period: string; entry: BundleEntry }>('bundle.attachFile', { profileId, itemId: deliv.id, month: '2026-10', bytes: xlsx(), format: 'xlsx', displayName: 'C:\\Users\\kim\\배민_10월.xlsx' });
     assert.deepEqual([a.period, a.entry.status, a.entry.docIds], ['2026-10', 'ready', [a.docId]]);
     const d = new DocumentRepo(db).get(a.docId)!;
-    assert.deepEqual([d.docType, d.displayName], ['bundle_file', '배민_10월.xlsx']);
-    assert.match(path.basename(d.path), /^bundle_file_20261109_[0-9A-Z]{4}\.xlsx$/);
+    assert.deepEqual([d.docType, d.displayName], ['settlement_file', '배민_10월.xlsx'], '정산 품목은 settlement_file(D07 §2)');
+    assert.match(path.basename(d.path), /^settlement_file_20261109_[0-9A-Z]{4}\.xlsx$/);
     await svc.handle('bundle.setEntry', { profileId, itemId: deliv.id, month: '2026-10', status: 'partial' });
     const b = await call<{ docId: string; entry: BundleEntry }>('bundle.attachFile', { profileId, itemId: deliv.id, month: '2026-10', bytes: pdf(), format: 'pdf' });
     assert.deepEqual([b.entry.status, b.entry.docIds], ['partial', [a.docId, b.docId]]);
@@ -156,6 +156,13 @@ describe('배선(추가만)', () => {
     for (const m of PC_FILE_COMMANDS) assert.ok(!others.has(m), m);
     assert.match(entry, /pcFiles = new PcFileIntake\(db, \{ vaultDir: paths\.vault \}\);/);
     assert.match(entry, /if \(PC_FILE\.has\(method\)\) \{\n\s+if \(!pcFiles\) throw new Error\('db_not_ready'\);\n\s+return pcFiles\.handle\(method, params\);/);
+  });
+
+  it('settlement.store(M6-5)도 main 전용이고 PcFileIntake로 간다', () => {
+    assert.deepEqual([...SETTLEMENT_COMMANDS], ['settlement.store']);
+    const others = new Set<string>([...READ_QUERIES, ...COMMANDS, ...MAIN_ONLY, ...PAYROLL_MAIN_ONLY, ...PHONE_COMMANDS, ...PC_FILE_COMMANDS]);
+    assert.ok(!others.has('settlement.store'));
+    assert.match(entry, /for \(const m of SETTLEMENT_COMMANDS\) \{\n\s+PC_FILE\.add\(m\);\n\s+ALLOWED\.add\(m\);\n\}/);
   });
 
   it('파일을 읽거나 파싱하지 않고, 모델·네트워크·로그를 쓰지 않는다', () => {
