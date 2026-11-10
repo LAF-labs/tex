@@ -1,0 +1,55 @@
+{
+ "id": "hometax.cert.biz_registration",
+ "version": "1.0.0",
+ "kind": "playbook",
+ "portal": "hometax",
+ "title": "cert.title",
+ "profileKinds": [
+  "business"
+ ],
+ "engineRange": ">=1.0.0 <2.0.0",
+ "domains": [
+  "hometax.go.kr",
+  "*.hometax.go.kr"
+ ],
+ "effects": [
+  "issue_document"
+ ],
+ "bundlesUsed": [
+  {
+   "id": "screen_state",
+   "ver": 2,
+   "digest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082"
+  },
+  {
+   "id": "form_ready",
+   "ver": 2,
+   "digest": "b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409"
+  }
+ ],
+ "lookupsUsed": [
+  {
+   "id": "hometax.cert.issued_list",
+   "version": "1.0.0",
+   "digest": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+ ],
+ "contentDigests": {
+  "playbook": "0000000000000000000000000000000000000000000000000000000000000000",
+  "selectors": "0000000000000000000000000000000000000000000000000000000000000000",
+  "strings": "0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ "createdAt": "2026-11-09T00:00:00+09:00",
+ "signatures": [
+  {
+   "keyId": "pkg-1",
+   "alg": "ed25519",
+   "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  {
+   "keyId": "pkg-2",
+   "alg": "ed25519",
+   "sig": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+  }
+ ]
+}
