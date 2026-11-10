@@ -22,7 +22,7 @@ import {
   type SummaryLine,
 } from '../apps/desktop/src/approval-gate.ts';
 import { childEnv } from '../apps/desktop/src/child-env.ts';
-import { GestureClock, isGestureKey, RateWindow } from '../apps/desktop/src/gesture.ts';
+import { GestureClock, isGestureKey, isTypingKey, RateWindow } from '../apps/desktop/src/gesture.ts';
 import { today as fixtureToday } from '../apps/desktop/src/h01-fixture.ts';
 import { DEBUG_SWITCHES, findDebugSwitch } from '../apps/desktop/src/harden.ts';
 import { MAX_TRIES, PICK_TTL_MS, PickStore } from '../apps/desktop/src/pick-store.ts';
@@ -174,6 +174,10 @@ describe('audit-d: D4 사용자 동작 결속(N-27)', () => {
     assert.equal(isGestureKey({ type: 'keyDown', key: 'Enter' }), true);
     assert.equal(isGestureKey({ type: 'keyDown', key: ' ', control: true }), false);
     assert.equal(isGestureKey({ type: 'keyDown', key: 'a' }), false);
+    // 코드 칸(account.verify만): 아무 keyDown(숫자·⌘V). keyUp·char는 세지 않는다
+    assert.equal(isTypingKey({ type: 'keyDown' }), true);
+    assert.equal(isTypingKey({ type: 'keyUp' }), false);
+    assert.equal(isTypingKey({ type: 'char' }), false);
   });
 
   it('RateWindow allows 3 per 60s and refuses the 4th', () => {

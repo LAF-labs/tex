@@ -104,6 +104,58 @@ export class RemoteIdentityFile {
   }
 }
 
+/** 받은 로그인 코드의 대기 정보(코드 자체는 없다). 이것만으로는 로그인할 수 없다(메일의 6자리가 있어야 한다). */
+export interface PendingCode {
+  email: string;
+  loginId: string;
+  expiresAt: number;
+  signup: boolean;
+}
+
+/**
+ * userData/remote-pending-code.json: 앱을 껐다 켜도 만료(10분) 전이면 같은 코드로 로그인한다(0.1.5 실사용, 부장 지시 2026-11-10).
+ * 코드 확인 성공·[뒤로]·다른 로그인·만료에 지운다. 임시 파일 + 이름 바꾸기, 사용자만 읽기·쓰기. 모양이 다르거나 만료면 버린다.
+ */
+export class PendingCodeFile {
+  readonly file: string;
+  constructor(dir: string) {
+    this.file = path.join(dir, 'remote-pending-code.json');
+  }
+  async load(now = Date.now()): Promise<PendingCode | null> {
+    let v: unknown;
+    try {
+      v = JSON.parse(await fs.readFile(this.file, 'utf8'));
+    } catch {
+      return null;
+    }
+    const o = v as Record<string, unknown> | null;
+    const ok =
+      !!o &&
+      typeof o === 'object' &&
+      typeof o.email === 'string' &&
+      isEmailShape(o.email) &&
+      typeof o.loginId === 'string' &&
+      o.loginId.length > 0 &&
+      o.loginId.length <= 200 &&
+      typeof o.expiresAt === 'number' &&
+      Number.isFinite(o.expiresAt) &&
+      typeof o.signup === 'boolean';
+    if (!ok || (o.expiresAt as number) <= now || (o.expiresAt as number) > now + 60 * 60 * 1000) {
+      await this.clear().catch(() => {});
+      return null;
+    }
+    return { email: o.email as string, loginId: o.loginId as string, expiresAt: o.expiresAt as number, signup: o.signup as boolean };
+  }
+  async save(p: PendingCode): Promise<void> {
+    const tmp = `${this.file}.${process.pid}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(p), { mode: 0o600 });
+    await fs.rename(tmp, this.file);
+  }
+  async clear(): Promise<void> {
+    await fs.rm(this.file, { force: true });
+  }
+}
+
 /** 렌더러가 보는 것(값은 이메일·만료 시각·오류 코드뿐). */
 export interface AccountView {
   step: 'unavailable' | 'signed_out' | 'code_sent' | 'reset_code' | 'working' | 'set_password' | 'signed_in';
@@ -119,6 +171,8 @@ export interface DesktopAccountOptions {
   client: AccountClient | null;
   keys: () => Promise<DesktopKeys>;
   identity: RemoteIdentityFile;
+  /** 받은 코드의 대기 정보 저장(없으면 메모리에만, 재시작하면 사라진다). */
+  pending?: PendingCodeFile;
   platform: 'windows' | 'macos';
   /** 계정 기기 목록에 보이는 이름(40자). 사람 이름이 들어가지 않게 진입점이 고른다. */
   deviceName: string;
@@ -136,7 +190,17 @@ export class DesktopAccount {
   #now: () => number;
   #log: NonNullable<DesktopAccountOptions['log']>;
   #id: RemoteIdentity | null = null;
-  #pending: { email: string; loginId: string; expiresAt: number; signup: boolean } | null = null;
+  #pendingCode: PendingCode | null = null;
+  #pendingWrite: Promise<void> = Promise.resolve();
+  /** 받은 코드(대기 정보). 바꿀 때마다 파일에도 순서대로 쓴다(지우기 포함). */
+  get #pending(): PendingCode | null {
+    return this.#pendingCode;
+  }
+  set #pending(p: PendingCode | null) {
+    this.#pendingCode = p;
+    const f = this.#o.pending;
+    if (f) this.#pendingWrite = this.#pendingWrite.then(() => (p ? f.save(p) : f.clear())).catch(() => {});
+  }
   /** 비밀번호 찾기(재설정 코드를 보냄). 코드가 틀리면 남는다(서버가 5회째에 막는다). */
   #reset: { email: string; resetId: string; expiresAt: number } | null = null;
   /** 계정 만들기 뒤 비밀번호 만들기 단계(ADR-038 (a) 선택). 세션은 이 단계 동안만 메모리에 있다. */
@@ -164,6 +228,15 @@ export class DesktopAccount {
       } catch (e) {
         this.#log('main.account_identity', { result: codeOf(e) });
       }
+    }
+    // 지난 실행에 받은 코드가 아직 살아 있으면 코드 화면으로 돌아온다(로그인돼 있으면 버린다)
+    const f = this.#o.pending;
+    if (f) {
+      const p = await f.load(this.#now());
+      if (p && !this.#id) {
+        this.#pendingCode = p;
+        this.#log('main.account_code', { result: 'resumed' });
+      } else if (p) this.#pending = null;
     }
     return this.view();
   }
