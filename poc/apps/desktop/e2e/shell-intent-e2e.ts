@@ -48,7 +48,7 @@ const resolver: IntentResolver = {
 const runs = () => js<number>(`document.querySelectorAll('[data-run]').length`);
 const lastApp = () => js<string>(`[...document.querySelectorAll('.sx-thread .sx-app')].map((e) => e.textContent).filter(Boolean).pop() ?? ''`);
 const threadText = () => js<string>(`document.querySelector('.sx-thread')?.textContent ?? ''`);
-const interp = () => js<string>(`document.querySelector('[data-interp]')?.dataset.interp ?? ''`);
+const unavailable = () => js<number>(`document.querySelectorAll('[data-intent-unavailable]').length`);
 async function send(text: string) {
   await js(`(() => { const t = document.querySelector('#composer'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
 }
@@ -65,7 +65,7 @@ async function flow() {
   await send(`${cpName}에 330만원 끊어줘`);
   check('작업 고름 → 확인 카드 하나', await until('draft', async () => (await runs()) === n0 + 1));
   check('카드에 로컬 파서 인자(거래처·금액)', (await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)).includes(cpName) && /3,000,000|3,300,000|330만/.test(await js<string>(`[...document.querySelectorAll('[data-run]')].pop().textContent`)));
-  check('모델이 고른 해석은 화면 구석에 모델 해석', (await interp()) === 'model');
+  check('제목줄에 해석 경로 표시(모델 해석/오프라인 해석)가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
   check('해석기에는 입력 문장만 간다', seen.at(-1) === `${cpName}에 330만원 끊어줘`, seen);
 
   // 2) 세무 질문이 섞임: 작업은 하고 고정 문구만
@@ -85,50 +85,45 @@ async function flow() {
   answer = () => ({ outcome: 'route', playbook: 'payroll.ledger', adviceMentioned: false, via: 'l0' });
   await send('이번 달 급여대장 정리해줘');
   check('급여대장 → 곧 안내(계산·실행 없음)', await until('soon', async () => (await lastApp()).startsWith('급여대장은(는) 곧')));
-  check('규칙(L0)이 고른 해석은 오프라인 해석', (await interp()) === 'offline');
 
   // 5) 모름 → 기본 안내
   answer = () => ({ outcome: 'unknown', via: 'model' });
   await send('오늘 날씨 어때');
   check('모름 → 세금계산서·증명서 안내', await until('unknown', async () => (await lastApp()).includes('세금계산서나 증명서를 말해 주세요')));
 
-  // 6) 엔진에 명령이 없다(unknown_method) → 오프라인 정규식으로 같은 카드
+  // 6) 오프라인 해석은 없다(사용자 결정 2026-11-10): 판정 못 함(명령 없음·판정 불가·시간 초과)이면 정규식으로 카드를 만들지 않고
+  //    "연결하지 못했어요" + [다시 시도]. 되묻던 것·입력 값은 그대로 두고, [다시 시도]가 같은 문장을 다시 보낸다.
+  for (const code of ['unknown_method', 'decide.unavailable', 'timeout']) {
+    n0 = await runs();
+    const u0 = await unavailable();
+    answer = () => new Error(code);
+    await send(`${cpName}에 220만원 세금계산서`);
+    check(`판정 못 함(${code}) → 카드 없이 연결 안 됨 + [다시 시도]`, (await until(`unavailable ${code}`, async () => (await unavailable()) === u0 + 1)) && (await runs()) === n0 && (await js<boolean>(`!![...document.querySelectorAll('[data-intent-unavailable]')].pop().querySelector('[data-act=intent-retry]')`)));
+  }
+  check('연결 안 됨 문장(정해진 문구, "데모" 없음)', (await lastApp()).startsWith('지금 AI 모델에 연결하지 못했어요') && !(await lastApp()).includes('데모'), await lastApp());
+  // [다시 시도]: 이번에는 모델이 고른다 → 같은 문장으로 카드 하나, 연결 안 됨 말풍선은 걷힌다
   n0 = await runs();
-  answer = () => new Error('unknown_method');
-  await send(`${cpName}에 220만원 세금계산서`);
-  check('엔진 명령 없음 → 오프라인 정규식 카드', (await until('offline draft', async () => (await runs()) === n0 + 1)) && (await interp()) === 'offline');
-
-  // 7) 판정 불가(decide.unavailable: 게이트웨이 미설정·로그인 전, 지금 제품의 기본 길) → 오프라인 정규식 카드, 화면에 '데모' 없음
+  const u1 = await unavailable();
+  const s0 = seen.length;
   answer = () => ({ outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'model' });
-  await send(`${cpName}에 10만원 세금계산서`);
-  await until('model again', async () => (await interp()) === 'model');
-  n0 = await runs();
-  answer = () => new Error('decide.unavailable');
-  await send(`${cpName}에 110만원 세금계산서`);
-  check('판정 불가 → 오프라인 정규식 카드, 구석 표시는 오프라인 해석으로 돌아온다', (await until('unavailable draft', async () => (await runs()) === n0 + 1)) && (await interp()) === 'offline');
-  await send('사업자등록증명 떼 줘');
-  check('판정 불가 + 증명서 → 고정 안내(제품 화면에 "데모" 없음)', await until('cert offline', async () => (await lastApp()).startsWith('증명서 발급은 곧') && !(await lastApp()).includes('데모')));
-  check('대화 중 실행된 것 없음(모두 초안)', !(await threadText()).includes('발급했어요'));
+  await js(`[...document.querySelectorAll('[data-act=intent-retry]')].pop().click()`);
+  check('[다시 시도] → 같은 문장으로 다시 묻고 카드 하나', (await until('retry draft', async () => (await runs()) === n0 + 1)) && seen.length === s0 + 1 && seen.at(-1) === `${cpName}에 220만원 세금계산서` && (await unavailable()) === u1 - 1);
 
-  // 8) 판정 불가 + 상담 낱말(D04 §3 오프라인 보강, 팀장 결정 2026-11-07): 카드는 그대로, 고정 문구만 덧붙는다. 판정 불가가 아니면(명령 없음) 붙이지 않는다.
-  const adviceNotes = () => js<number>(`document.querySelectorAll('[data-advice-note]').length`);
+  // 7) 되묻던 중 판정 못 함: 되묻기(거래처)가 남아 다음 답으로 이어 간다
+  answer = () => ({ outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'model' });
+  await send('세금계산서 끊어줘');
+  await until('ask cp', async () => (await lastApp()).includes('어느 거래처에 발급할까요'));
   answer = () => new Error('decide.unavailable');
-  let a0 = await adviceNotes();
+  const u2 = await unavailable();
+  await send(cpName);
+  await until('unavailable mid-ask', async () => (await unavailable()) === u2 + 1);
   n0 = await runs();
-  await send(`${cpName}에 120만원 세금계산서 끊고 절세 방법도 알려줘`);
-  check('판정 불가 + 상담 섞임 → 카드 그대로 + 고정 문구', (await until('offline advice draft', async () => (await runs()) === n0 + 1)) && (await until('offline advice note', async () => (await adviceNotes()) === a0 + 1)) && (await js<string>(`[...document.querySelectorAll('[data-advice-note]')].pop().textContent`)) === ADVICE);
-  a0 = await adviceNotes();
-  n0 = await runs();
-  await send(`${cpName}에 130만원 세금계산서`);
-  await until('offline plain draft', async () => (await runs()) === n0 + 1);
-  await sleep(200);
-  check('판정 불가 + 상담 없음 → 고정 문구 없음', (await adviceNotes()) === a0);
-  answer = () => new Error('unknown_method');
-  n0 = await runs();
-  await send(`${cpName}에 140만원 세금계산서 끊고 절세 방법도 알려줘`);
-  await until('no-method draft', async () => (await runs()) === n0 + 1);
-  await sleep(200);
-  check('명령 없음(판정 불가 아님) + 상담 낱말 → 고정 문구 없음(오프라인 보강은 decide.unavailable만)', (await adviceNotes()) === a0);
+  answer = () => ({ outcome: 'unknown', via: 'model' });
+  await send(cpName);
+  check('되묻던 것(거래처)은 연결 안 됨 뒤에도 남는다 → 금액을 묻는다', await until('ask amount', async () => (await lastApp()).includes('얼마를 발급할까요')));
+  await send('50만원');
+  check('금액 답 → 카드', await until('mid-ask draft', async () => (await runs()) === n0 + 1));
+  check('대화 중 실행된 것 없음(모두 초안)', !(await threadText()).includes('발급했어요'));
 }
 
 app.whenReady().then(async () => {

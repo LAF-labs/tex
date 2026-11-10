@@ -2,7 +2,10 @@
 // 임시 앱 폴더에서 셸을 띄워, 설치본이 홈 화면까지 가는 길을 본다(팀장 지시 2026-11-10 ③).
 // - 운영 레지스트리 동기화(인덱스·정책·H-01 패키지) → 레지스트리 상태 fresh·홈택스 상한
 // - 견본 데이터 없음(대화·표시·사업장), 온보딩부터
+// - 로그인이 먼저(사용자 결정 2026-11-10): 약관 동의 뒤 닫을 수 없는 로그인 화면, 그 전에는 대화를 받지 않는다(account_required)
 // - 계정 비밀번호 로그인이 제품 Egress로 운영 계정 서비스에 닿는다(없는 계정 → 같은 안내)
+// SAX_E2E_PRODUCT=login이면 계정 서비스만 localhost 메모리 가짜(e2e/fake-account.ts)로 바꿔 로그인까지 하고, 그 뒤 온보딩 O-02와
+// 오프라인 해석 없음(게이트웨이에 닿지 못하면 정규식 카드 대신 연결 안 됨 + [다시 시도])을 본다(셸은 프로세스에 하나라 따로 띄운다).
 // 홈택스·정부24에는 접속하지 않는다(실행 시작 전에서 멈춘다). 비밀을 저장하지 않는다.
 // 키체인: 금고는 기존 db-key를 읽기만 한다(없으면 새로 만들지만, 이미 DB가 있는 앱 폴더의 키를 덮지 않는다, 금고 N-30). 임시 앱 폴더는 끝나면 지운다.
 // 실행: electron apps/desktop/e2e-dist/shell-product-e2e.js → 요약을 표준 출력에.
@@ -11,7 +14,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 import { appPaths, prepareLayout } from '@sax/platform';
+import { Egress } from '@sax/net';
 import { productRemote } from '../dist/remote-wiring.js';
+import { cloudPorts } from '../dist/remote-cloud.js';
+import { serveAccount } from './fake-account-http.js';
+import { fakeAccount, PASSWORD, softKeys } from './fake-account.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 
 registerShellSchemes();
@@ -59,7 +66,15 @@ async function main() {
   app.setPath('userData', paths.userData);
   app.setPath('logs', paths.logs);
   const t0 = Date.now();
-  S = await startShell({ engine: { root: ROOT, portal: { kind: 'hometax' } }, remote: productRemote({ isPackaged: false, env: {} }), show: false, daemon: false });
+  const loginMode = process.env.SAX_E2E_PRODUCT === 'login';
+  const remote = loginMode
+    ? await (async () => {
+        const front = await serveAccount(fakeAccount().client);
+        const keys = softKeys();
+        return { cloud: cloudPorts({ egress: new Egress({ cloudDevLocal: true }), env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } }), keys: async () => keys };
+      })()
+    : productRemote({ isPackaged: false, env: {} });
+  S = await startShell({ engine: { root: ROOT, portal: { kind: 'hometax' } }, remote, show: false, daemon: false });
   await S.ready;
   await until('renderer ready', async () => (await js('document.body.dataset.ready')) === '1', 60_000);
   check(`엔진·금고 기동 → 첫 화면(${Math.round((Date.now() - t0) / 100) / 10}초)`, (await js('document.body.dataset.ready')) === '1');
@@ -77,10 +92,44 @@ async function main() {
   check('사업자 프로필이 없으면 온보딩부터', await until('onboarding', async () => js<boolean>(`!!document.querySelector('[data-onboarding]')`)));
   check('개발용 코드·미서명 배지는 개발 실행에서 없음(설치본 자기 점검만)', (await js<number>(`document.querySelectorAll('[data-build-badge]').length`)) === 0);
 
-  // 온보딩 O-02: 제품은 상태조회가 없어 확인 불가다. 그 사실을 보이고 [맞습니다]로만 확정한다(팀장 결정 2026-11-10).
+  // 로그인이 먼저다(사용자 결정 2026-11-10): 약관 동의 → 닫을 수 없는 로그인 화면. 그 전에는 대화를 받지 않는다.
   const onbStep = () => js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`);
+  const acctScreen = () => js<string | null>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen ?? null`);
+  check('약관 동의 전에는 로그인 화면이 없다(약관이 먼저)', (await js<boolean>(`!document.querySelector('[data-acct-screen]')`)));
   await press('[data-onb=agree]');
-  await until('welcome', async () => (await onbStep()) === 'welcome');
+  check('약관 동의 → 로그인 화면(닫기 없음, "먼저 로그인" 안내)', await until('login gate', async () => (await acctScreen()) === 'email' && js<boolean>(`!!document.querySelector('[data-login-gate]') && !document.querySelector('[data-act=account-back]') && document.querySelector('#app').inert`)));
+  await js(`document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))`);
+  await sleep(100);
+  check('Esc로도 닫히지 않는다', (await acctScreen()) === 'email');
+  check('로그인 전 대화는 main이 받지 않는다(account_required)', (await js<string>(`window.sax.call('request.send', { text: '세금계산서 1000원 끊자', vat: null }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`)) === 'account_required');
+  check('로그인 전 오프라인 해석 길로 가지 않았다(main.interpret 없음)', !/main\.interpret/.test(mainLog()));
+
+  if (!loginMode) {
+    // 레지스트리: 기동 때 기다리지 않고 동기화한다. 결과는 main 로그(결과 코드만)와 엔진 상태로 본다.
+    check('기동 동기화가 운영 레지스트리에서 H-01 패키지를 받았다(main.registry_sync h01=accepted)', await until('registry sync', async () => /main\.registry_sync.*"why":"boot".*"h01":"accepted"/.test(mainLog()), 60_000), mainLog().split('\n').filter((l) => l.includes('registry')).slice(-3));
+    const st = (await S.host.rpc('db.query.registry.status', {})) as { freshness?: string; portalModeCeiling?: Record<string, string>; killPlaybooks?: string[] };
+    check('레지스트리 상태 fresh, 홈택스 상한 auto, 정지 목록 없음', st.freshness === 'fresh' && st.portalModeCeiling?.hometax === 'auto' && (st.killPlaybooks ?? []).length === 0, st);
+    // 계정: 제품 클라이언트·Egress로 운영 계정 서비스에 닿는다. 없는 계정이면 같은 안내(만들지 않는다).
+    await type('.acct-email', `nobody-${Date.now()}@example.com`);
+    await press('[data-act=account-next]');
+    await until('pw', async () => (await acctScreen()) === 'password');
+    await type('.acct-password', 'not-a-real-password-1');
+    await press('[data-act=account-password]');
+    const wrong = await until('wrong', async () => js<boolean>(`!!document.querySelector('[data-acct-wrong]')`), 30_000);
+    check('로그인 화면의 비밀번호 로그인이 운영 계정 서비스까지 가서 같은 안내(account.credentials_invalid)', wrong, await js(`document.querySelector('.acct-err, [data-acct-wrong]')?.textContent ?? null`));
+    check('틀린 로그인 뒤에도 로그인 화면이 막고 있다', (await acctScreen()) === 'password' && (await js<boolean>(`document.querySelector('#app').inert`)));
+    return;
+  }
+
+  // (login) 가짜 계정 서비스로 비밀번호 로그인 → 첫 PC 등록 → 화면이 걷히고 온보딩이 이어진다
+  await type('.acct-email', 'owner@gyeonbon-test.example');
+  await press('[data-act=account-next]');
+  await until('pw', async () => (await acctScreen()) === 'password');
+  await type('.acct-password', PASSWORD);
+  await press('[data-act=account-password]');
+  check('로그인·PC 등록 → 로그인 화면이 걷히고 O-01 환영', await until('signed in', async () => (await acctScreen()) === null && (await onbStep()) === 'welcome' && !(await js<boolean>(`document.querySelector('#app').inert`)), 30_000));
+
+  // 온보딩 O-02: 제품은 상태조회가 없어 확인 불가다. 그 사실을 보이고 [맞습니다]로만 확정한다(팀장 결정 2026-11-10).
   await press('[data-onb=number]');
   await until('biz-number', async () => (await onbStep()) === 'biz-number');
   await js(`(() => { const i = document.querySelector('[data-onb-step=biz-number] input'); i.value = '123-45-67891'; })()`);
@@ -91,26 +140,23 @@ async function main() {
   );
   await press('[data-onb=confirm-unverified]');
   check('[맞습니다] → O-03 발급 인증', await until('auth', async () => (await onbStep()) === 'auth'));
+  await press('[data-onb=later]');
+  check('② 모델 동의: 버튼은 [동의하고 계속] 하나', await until('model', async () => (await onbStep()) === 'model' && (await js<string>(`[...document.querySelector('[data-consent="consent.model"]').querySelectorAll('button')].map((b) => b.textContent).join()`)) === '동의하고 계속'));
 
-  // 레지스트리: 기동 때 기다리지 않고 동기화한다. 결과는 main 로그(결과 코드만)와 엔진 상태로 본다.
-  check('기동 동기화가 운영 레지스트리에서 H-01 패키지를 받았다(main.registry_sync h01=accepted)', await until('registry sync', async () => /main\.registry_sync.*"why":"boot".*"h01":"accepted"/.test(mainLog()), 60_000), mainLog().split('\n').filter((l) => l.includes('registry')).slice(-3));
-  const st = (await S.host.rpc('db.query.registry.status', {})) as { freshness?: string; portalModeCeiling?: Record<string, string>; killPlaybooks?: string[] };
-  check('레지스트리 상태 fresh, 홈택스 상한 auto, 정지 목록 없음', st.freshness === 'fresh' && st.portalModeCeiling?.hometax === 'auto' && (st.killPlaybooks ?? []).length === 0, st);
+  const say = (t: string) => js(`(() => { const t = document.querySelector('#composer'); t.value = ${JSON.stringify(t)}; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+  await say('세금계산서 1000원 인스피릿에 끊자');
+  check('② 동의 전 대화 → 동의가 먼저라는 안내(모델로 보내지 않음)', await until('consent first', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('모델 처리에 동의하면') ?? false`)));
+  await press('[data-onb=agree]');
+  await until('telemetry', async () => (await onbStep()) === 'telemetry');
 
-  // 계정: 제품 클라이언트·Egress로 운영 계정 서비스에 닿는다. 없는 계정이면 같은 안내(만들지 않는다).
-  await js(`document.querySelector('#rail [data-view="settings"]').click()`);
-  await until('settings', async () => js<boolean>(`!!document.querySelector('[data-set-tab=devices]')`));
-  await js(`document.querySelector('[data-set-tab=devices]').click()`);
-  check('설정 > 기기 연결: 로그인 전', await until('account card', async () => js<boolean>(`document.querySelector('[data-account]')?.dataset.account === 'signed_out'`)));
-  await press('[data-act=account-login]');
-  await until('login', async () => js<boolean>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen === 'email'`));
-  await type('.acct-email', `nobody-${Date.now()}@example.com`);
-  await press('[data-act=account-next]');
-  await until('pw', async () => js<boolean>(`document.querySelector('[data-acct-screen]')?.dataset.acctScreen === 'password'`));
-  await type('.acct-password', 'not-a-real-password-1');
-  await press('[data-act=account-password]');
-  const wrong = await until('wrong', async () => js<boolean>(`!!document.querySelector('[data-acct-wrong]')`), 30_000);
-  check('비밀번호 로그인이 운영 계정 서비스까지 가서 같은 안내(account.credentials_invalid)', wrong, await js(`document.querySelector('.acct-err, [data-acct-wrong]')?.textContent ?? null`));
+  // 오프라인 해석 없음: 이 e2e는 게이트웨이 기기 토큰을 받지 못한다(가짜 계정) → 엔진 decide.unavailable → 정규식 카드 대신 연결 안 됨 + [다시 시도]
+  await say('세금계산서 1000원 인스피릿에 끊자');
+  check(
+    '모델에 닿지 못하면 카드 없이 "연결하지 못했어요" + [다시 시도]',
+    await until('unavailable', async () => js<boolean>(`(() => { const b = [...document.querySelectorAll('[data-intent-unavailable]')].pop(); return !!b && b.textContent.includes('연결하지 못했어요') && !!b.querySelector('[data-act=intent-retry]') && !document.querySelector('[data-run]'); })()`), 15_000),
+  );
+  check('main 로그: 오프라인 경로가 아니라 unavailable', /main\.interpret.*"path":"unavailable\./.test(mainLog()) && !/offline/.test(mainLog().split('\n').filter((l) => l.includes('main.interpret')).join('\n')), mainLog().split('\n').filter((l) => l.includes('main.interpret')).slice(-2));
+  check('제목줄에 해석 경로 표시가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
 }
 
 app.whenReady().then(async () => {

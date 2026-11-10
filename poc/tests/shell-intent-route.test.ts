@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { INTENT_DICT } from '../packages/engine/src/l0/rules.ts';
-import { ADVICE_TEXT, engineIntentResolver, INTENT_PLAYBOOKS, parseRoute, routed } from '../apps/desktop/src/intent-route.ts';
+import { ADVICE_TEXT, engineIntentResolver, INTENT_PLAYBOOKS, INTENT_UNAVAILABLE_TEXT, parseRoute, routed } from '../apps/desktop/src/intent-route.ts';
 import type { Parsed } from '../apps/desktop/src/shell-mock.ts';
 
 const local: Parsed = { intent: 'other', counterparties: ['A상사'], amount: 3_300_000, vat: null, item: null };
@@ -64,7 +64,7 @@ describe('작업 → 화면 해석(인자는 로컬 파서 그대로)', () => {
     const all = [ADVICE_TEXT, ...INTENT_PLAYBOOKS.map((p) => routed({ outcome: 'route', playbook: p, adviceMentioned: false, via: 'model' }, local)).flatMap((r) => ('say' in r ? [r.say] : []))].join('\n');
     for (const bad of ['세금신고 대행', '절세', '기장대행', '세무대리', '환급 보장', '대신 처리']) assert.ok(!all.includes(bad), bad);
   });
-  it('오프라인(정규식) 안내 문구도 금지 표현이 없고, 제품 화면에 "데모"라고 하지 않는다', () => {
+  it('되묻기·안내 문구(shell-model interpret)도 금지 표현이 없고, 제품 화면에 "데모"라고 하지 않는다', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-model.ts', import.meta.url), 'utf8');
     const says = [...src.matchAll(/kind: 'say', text: '([^']+)'/g)].map((m) => m[1]!);
     assert.ok(says.length >= 4, String(says.length));
@@ -82,7 +82,7 @@ describe('engineIntentResolver: 엔진 rpc 위', () => {
     assert.deepEqual(await r.resolve('A상사 330만원'), { route: { outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'l0' }, fallback: null });
     assert.deepEqual(calls, [['intent.resolve', { text: 'A상사 330만원' }]]);
   });
-  it('명령 없음·판정 불가·모양 다름·시간 초과는 오프라인(이유 코드만)', async () => {
+  it('명령 없음·판정 불가·모양 다름·시간 초과는 판정 못 함(이유 코드만)', async () => {
     const err = (m: string) => engineIntentResolver(async () => Promise.reject(new Error(m)));
     assert.deepEqual(await err('unknown_method').resolve('x'), { route: null, fallback: 'unknown_method' });
     assert.deepEqual(await err('decide.unavailable').resolve('x'), { route: null, fallback: 'decide.unavailable' });
@@ -91,5 +91,40 @@ describe('engineIntentResolver: 엔진 rpc 위', () => {
     const t0 = Date.now();
     assert.deepEqual(await engineIntentResolver(() => new Promise(() => {}), 50).resolve('x'), { route: null, fallback: 'timeout' });
     assert.ok(Date.now() - t0 < 1_000);
+  });
+});
+
+describe('오프라인 해석 없음·로그인 먼저(사용자 결정 2026-11-10)', () => {
+  const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
+  const send = src.slice(src.indexOf("'request.send': async"), src.indexOf("'draft.update':"));
+  it('제품: 판정을 못 하면 정규식으로 의도를 고르지 않고 unavailable(연결 안 됨)을 돌려준다. 되묻던 것은 그대로', () => {
+    const product = send.slice(send.indexOf('const r = await intent.resolve(text);'));
+    assert.ok(product.length > 0);
+    assert.match(product, /if \(!r\.route\) return \{ kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, via: 'model', note: null, sent \};/);
+    // 판정이 없을 때 interpret(정규식 의도)로 가는 줄이 없다
+    const before = product.slice(0, product.indexOf('const to = routed('));
+    assert.doesNotMatch(before, /interpret\(/);
+    assert.doesNotMatch(src, /advice-words|offlineAdviceMentioned/);
+    assert.match(INTENT_UNAVAILABLE_TEXT, /연결하지 못했어요/);
+  });
+  it('정규식 해석은 시연(fixture)이 해석기를 바꿔 끼우지 않았을 때만', () => {
+    assert.match(send, /if \(fixture && !opts\.intent\) return finishReply\(interpret\(text, vat, profile, runs, local\), 'offline', null, \[\]\);/);
+  });
+  it('제품은 로그인(PC 등록) 전에 대화·약관 다음 온보딩 답을 받지 않는다(account_required). 시연은 계정 없이', () => {
+    assert.match(src, /const loginRequired = !fixture;/);
+    assert.match(send, /if \(!termsOk\(\)\) throw new Error\('onboarding_terms'\);\s*await needLogin\(\);/);
+    const reply = src.slice(src.indexOf("'onboarding.reply': async"), src.indexOf("'clipboard.copy'"));
+    assert.match(reply, /if \(p\.step !== 'terms'\) await needLogin\(\);/);
+    assert.ok(reply.indexOf('needLogin') < reply.indexOf('onb.answer'));
+  });
+  it('렌더러: 제목줄 해석 표시 없음, 연결 안 됨에 [다시 시도], 로그인 화면은 약관 뒤·로그인 전 닫을 수 없음', () => {
+    const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(shell, /오프라인 해석|모델 해석|tb-interp/);
+    assert.match(shell, /r\.kind === 'unavailable'/);
+    assert.match(shell, /'data-act': 'intent-retry'/);
+    assert.match(shell, /function loginGate\(\) \{\s*if \(!state\.boot\?\.loginRequired\) return false;\s*if \(state\.onb && state\.onb\.consents\?\.terms\?\.choice !== 'agreed'\) return false;/);
+    assert.match(shell, /onClose: loginGate\(\) && state\.login\.screen !== 'reset_done' \? null : closeLogin,/);
+    const onb = fs.readFileSync(new URL('../apps/desktop/static/shell/shell-onboarding.js', import.meta.url), 'utf8');
+    assert.doesNotMatch(onb, /모델 없이|'decline'/);
   });
 });

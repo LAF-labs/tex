@@ -10,7 +10,7 @@ const Q = {
   'biz-confirm': '등록 내용을 확인해 주세요.',
   auth: '세금계산서를 발급할 때 어떤 인증을 쓰세요? 한 번 고르면 모든 발급에 쓰고, 설정에서만 바꿔요.',
   delegation: '보안카드를 쓰려면 먼저 이 PC 금고에 등록해야 해요.',
-  model: '문장을 해석할 때 모델을 써도 될까요?',
+  model: '대화는 AI 모델로 해석해요. 아래 내용을 확인하고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주시겠어요? 안 보내도 돼요.',
   tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
@@ -135,7 +135,8 @@ function consentCard(o, reply) {
   const n = o.consent;
   const buttons = {
     terms: [btn('동의하고 시작', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' })],
-    model: [btn('동의해요', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' }), btn('모델 없이 쓸게요', () => reply('decline'), '', { 'data-onb': 'decline' })],
+    // ②는 약관처럼 필수다(사용자 결정 2026-11-10: 오프라인 해석은 없다). 거절 버튼이 없다.
+    model: [btn('동의하고 계속', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' })],
     // 기본 꺼짐: [끄고 계속]을 먼저 둔다
     telemetry: [btn('끄고 계속', () => reply('off'), 'sx-btn-primary', { 'data-onb': 'off' }), btn('켜기', () => reply('on'), '', { 'data-onb': 'on' })],
     delegation: [btn('동의하고 금고 창 열기', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' }), btn('다른 인증으로 바꾸기', () => reply('switch'), '', { 'data-onb': 'switch' })],

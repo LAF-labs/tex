@@ -58,7 +58,7 @@ let payroll: BundleService | null = null;
 let phone: PhoneIntake | null = null;
 /** PC 파일 보관(PcFileIntake): 종이 증빙·꾸러미 파일 칸. 보관함 파일과 documents·receipts|bundle_entries 행을 한 번에 쓴다. */
 let pcFiles: PcFileIntake | null = null;
-/** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main 오프라인 대체). */
+/** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main은 연결 안 됨). */
 let intent: IntentResolver | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
