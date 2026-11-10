@@ -30,7 +30,8 @@ import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
-import { emptyDocStore, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-model.ts';
+import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
+import { answersPending, emptyDocStore, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
@@ -161,6 +162,8 @@ export interface ShellOptions {
   remote?: RemoteWiring;
   /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
   intent?: IntentResolver;
+  /** 대화 짧은 응대(chat-reply.ts). 기본은 엔진 `chat.respond`. e2e가 바꿔 끼운다. */
+  chat?: ChatResponder;
 }
 
 /** ShellOptions.remote. */
@@ -677,6 +680,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   );
   // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
+  // 대화 짧은 응대(엔진 chat.respond, #261): 의도가 unknown이고 되묻던 것에 답하는 문장이 아닐 때만. e2e가 바꿔 끼운다.
+  const chatReply: ChatResponder = opts.chat ?? engineChatResponder((m, p) => host.rpc(m, p));
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
     if (reply.kind === 'draft') {
       reply.run.interp = via;
@@ -823,10 +828,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 해석은 한 번에 하나라(렌더러 sending) 이 구간의 발급은 이 요청 것이다.
       const mark = gwSeq;
       const r = await intent.resolve(text);
-      const sent = sentFromGateway(gwIssuedSince(mark));
       log.event('main.interpret', { path: r.route ? `engine.${r.route.via}` : `unavailable.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'unavailable', ms: Math.round(performance.now() - t0) });
-      if (!r.route) return { kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, via: 'model', note: null, sent };
+      if (!r.route) return { kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, retry: true, via: 'model', note: null, sent: sentFromGateway(gwIssuedSince(mark)) };
       const via = 'model';
+      // 모름(unknown)이고 되묻던 것에 답하는 문장도 아니면 모델이 짧게 답한다(chat.respond). 고정 문구 "세금계산서나 증명서를 말해 주세요"는 빈 입력에만.
+      // 답은 텍스트로만 보이고, 제안 작업은 입력창을 채우는 칩일 뿐이다(실행은 사용자가 보내고 확인 카드를 거친다). 실패는 정규식 대체 없이 오류 문장.
+      if (r.route.outcome === 'unknown' && !answersPending(local, runs)) {
+        const c = await chatReply.respond(text);
+        const sent = sentFromGateway(gwIssuedSince(mark));
+        log.event('main.chat', 'reply' in c ? { result: 'ok', kind: c.reply.kind, filtered: c.reply.filtered ?? 'none', suggest: c.reply.suggest.length } : { result: c.error });
+        if ('error' in c) return { kind: 'unavailable', ...CHAT_ERROR_TEXT[c.error], via, note: null, sent };
+        runs.pending.asked = null;
+        return { kind: 'chat', text: c.reply.reply, suggest: suggestChips(c.reply.suggest), filtered: c.reply.filtered, via, note: null, sent };
+      }
+      const sent = sentFromGateway(gwIssuedSince(mark));
       const to = routed(r.route, local);
       if ('say' in to) {
         runs.pending.asked = null;

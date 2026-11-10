@@ -5,6 +5,7 @@ import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import type { IntentResolver, IntentRoute } from '../dist/intent-route.js';
+import type { ChatReply, ChatResponder } from '../dist/chat-reply.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
@@ -42,6 +43,17 @@ const resolver: IntentResolver = {
     const a = answer(text);
     if (a instanceof Error) return { route: null, fallback: a.message };
     return { route: a, fallback: null };
+  },
+};
+
+// 엔진 chat.respond 대역(chat-reply.ts 계약): 받은 문장을 적고, 정한 답이나 오류 코드를 돌려준다.
+const chatSeen: string[] = [];
+let chatAnswer: () => ChatReply | Error = () => ({ reply: '무엇을 도와드릴까요?', kind: 'help', suggest: [], filtered: null });
+const chatter: ChatResponder = {
+  async respond(text) {
+    chatSeen.push(text);
+    const a = chatAnswer();
+    return a instanceof Error ? { error: a.message as never } : { reply: a };
   },
 };
 
@@ -86,10 +98,45 @@ async function flow() {
   await send('이번 달 급여대장 정리해줘');
   check('급여대장 → 곧 안내(계산·실행 없음)', await until('soon', async () => (await lastApp()).startsWith('급여대장은(는) 곧')));
 
-  // 5) 모름 → 기본 안내
+  // 5) 모름 → 모델이 짧게 답한다(chat.respond). 답은 글자로만, 제안 작업은 입력창을 채우는 칩
   answer = () => ({ outcome: 'unknown', via: 'model' });
+  chatAnswer = () => ({ reply: '<b>날씨</b>는 알려 드리지 못해요. 세금계산서 발급이나 증명서를 도와드릴 수 있어요.', kind: 'out_of_scope', suggest: ['hometax.invoice.issue', 'hometax.cert.taxpayment'], filtered: null });
+  n0 = await runs();
   await send('오늘 날씨 어때');
-  check('모름 → 세금계산서·증명서 안내', await until('unknown', async () => (await lastApp()).includes('세금계산서나 증명서를 말해 주세요')));
+  const lastReply = () => js<{ text: string; html: boolean; chips: string[]; filtered: string | null } | null>(`(() => { const b = [...document.querySelectorAll('[data-chat-reply]')].pop(); return b ? { text: b.querySelector('p').textContent, html: !!b.querySelector('p b'), chips: [...b.querySelectorAll('[data-chat-suggest]')].map((c) => c.dataset.chatSuggest + ':' + c.textContent), filtered: b.dataset.chatReply } : null; })()`);
+  check('모름 → chat.respond에 문장 그대로, 답은 텍스트 노드(태그 해석 없음)', (await until('chat reply', async () => !!(await lastReply()))) && chatSeen.at(-1) === '오늘 날씨 어때' && (await lastReply())!.text.startsWith('<b>날씨</b>') && !(await lastReply())!.html);
+  check('제안 칩 2개(세금계산서 발급·납세증명서), 카드는 생기지 않는다', JSON.stringify((await lastReply())!.chips) === JSON.stringify(['hometax.invoice.issue:세금계산서 발급', 'hometax.cert.taxpayment:납세증명서']) && (await runs()) === n0);
+  check('고정 문구 "세금계산서나 증명서를 말해 주세요"가 기본 답이 아니다', !(await lastApp()).includes('세금계산서나 증명서를 말해 주세요'));
+  await js(`[...document.querySelectorAll('[data-chat-suggest="hometax.invoice.issue"]')].pop().click()`);
+  check('칩을 누르면 입력창에 시작 문장만 채운다(보내지 않음, 실행 없음)', (await js<string>(`document.querySelector('#composer').value`)) === '세금계산서 ' && (await runs()) === n0);
+  await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
+  chatAnswer = () => ({ reply: '세무 판단은 하지 않아요. 세무 대리인과 상담해 주세요.', kind: 'tax_advice', suggest: [], filtered: 'advice' });
+  await send('이거 경비로 넣어도 돼?');
+  check('filtered(advice) → 엔진 고정 문구 그대로, 칩 없음', (await until('filtered', async () => (await lastReply())?.filtered === 'advice')) && (await lastReply())!.text === ADVICE && (await lastReply())!.chips.length === 0);
+
+  // 5b) 대화 응대 오류 코드 → 문구. 연결 안 됨·응답 이상·예산은 [다시 시도], 한도·긴 문장·비밀 값은 문장만
+  const ERR: Array<[string, string, boolean]> = [
+    ['chat.unavailable', '지금 AI 모델에 연결하지 못했어요', true],
+    ['chat.bad_response', '지금 AI 모델에 연결하지 못했어요', true],
+    ['chat.budget_exceeded', '잠시 뒤에 다시', true],
+    ['chat.quota_exceeded', '이번 달 대화 한도', false],
+    ['chat.input_too_large', '짧게 나눠서', false],
+    ['chat.secret_rejected', '대화창에 입력하지 마세요', false],
+  ];
+  for (const [code, words, retry] of ERR) {
+    const u0 = await unavailable();
+    n0 = await runs();
+    chatAnswer = () => new Error(code);
+    await send(`잡담 ${code}`);
+    const got = (await until(`chat ${code}`, async () => (await unavailable()) === u0 + 1)) && (await js<{ t: string; r: boolean }>(`(() => { const b = [...document.querySelectorAll('[data-intent-unavailable]')].pop(); return { t: b.textContent, r: !!b.querySelector('[data-act=intent-retry]') }; })()`));
+    check(`${code} → "${words}"${retry ? ' + [다시 시도]' : ', 다시 시도 없음'}, 카드 없음`, !!got && got.t.includes(words) && got.r === retry && (await runs()) === n0, got);
+  }
+  // [다시 시도]가 대화 응대도 다시 부른다
+  const c0 = chatSeen.length;
+  chatAnswer = () => ({ reply: '네, 다시 말씀해 주세요.', kind: 'clarify', suggest: [], filtered: null });
+  await js(`[...document.querySelectorAll('[data-act=intent-retry]')].pop().click()`);
+  check('[다시 시도] → 같은 문장으로 해석·응대를 다시', (await until('chat retry', async () => (await lastReply())?.text === '네, 다시 말씀해 주세요.')) && chatSeen.length === c0 + 1 && chatSeen.at(-1) === '잡담 chat.budget_exceeded');
+  chatAnswer = () => ({ reply: '무엇을 도와드릴까요?', kind: 'help', suggest: [], filtered: null });
 
   // 6) 오프라인 해석은 없다(사용자 결정 2026-11-10): 판정 못 함(명령 없음·판정 불가·시간 초과)이면 정규식으로 카드를 만들지 않고
   //    "연결하지 못했어요" + [다시 시도]. 되묻던 것·입력 값은 그대로 두고, [다시 시도]가 같은 문장을 다시 보낸다.
@@ -120,7 +167,8 @@ async function flow() {
   n0 = await runs();
   answer = () => ({ outcome: 'unknown', via: 'model' });
   await send(cpName);
-  check('되묻던 것(거래처)은 연결 안 됨 뒤에도 남는다 → 금액을 묻는다', await until('ask amount', async () => (await lastApp()).includes('얼마를 발급할까요')));
+  const cs = chatSeen.length;
+  check('되묻던 것(거래처)은 연결 안 됨 뒤에도 남는다 → 금액을 묻는다(모델이 unknown이어도 대화 응대로 보내지 않음)', (await until('ask amount', async () => (await lastApp()).includes('얼마를 발급할까요'))) && chatSeen.length === cs);
   await send('50만원');
   check('금액 답 → 카드', await until('mid-ask draft', async () => (await runs()) === n0 + 1));
   check('대화 중 실행된 것 없음(모두 초안)', !(await threadText()).includes('발급했어요'));
@@ -128,7 +176,7 @@ async function flow() {
 
 app.whenReady().then(async () => {
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, intent: resolver });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, intent: resolver, chat: chatter });
     S.win.webContents.on('console-message', (e) => {
       if (e.level === 'error') console.log(`  [renderer] ${e.message}`);
     });
