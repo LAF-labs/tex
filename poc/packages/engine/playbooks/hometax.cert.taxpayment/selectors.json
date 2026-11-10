@@ -305,6 +305,21 @@
    "landmark": "hometax.page.root",
    "commits": false,
    "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.alert": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "dialog",
+     "name": "알림"
+    }
+   ],
+   "role": "dialog",
+   "namePattern": "^알림$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-09"
   }
  },
  "commitEndpoints": [],

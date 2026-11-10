@@ -113,18 +113,48 @@
   {
    "id": "s10",
    "type": "goto",
-   "url": "https://hometax.go.kr/cert/taxpayment"
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300"
   },
   {
    "id": "s11",
    "type": "checkpoint",
    "name": "form",
    "expect": {
-    "exists": "hometax.cert.taxpayment.form.root"
+    "any": [
+     {
+      "exists": "hometax.cert.taxpayment.form.root"
+     },
+     {
+      "exists": "hometax.cert.alert"
+     }
+    ]
    },
-   "url": "https://hometax.go.kr/cert/taxpayment",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010300",
    "sessionRequired": true,
    "reentry": "reload"
+  },
+  {
+   "id": "s11a",
+   "type": "assert",
+   "cond": {
+    "not": {
+     "textMatches": {
+      "target": "hometax.cert.alert",
+      "patternRef": "cert.block.personalOnly"
+     }
+    }
+   },
+   "code": "portal.personal_login_required",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
+   "id": "s11b",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.taxpayment.form.root"
   },
   {
    "id": "s12",
