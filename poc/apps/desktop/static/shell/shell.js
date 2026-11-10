@@ -510,6 +510,9 @@ async function ask(text, vat) {
   }
   if (r.kind === 'unavailable') {
     const box = h('div', { class: 'sx-app', 'data-intent-unavailable': '' }, h('p', {}, r.text));
+    appendThread(box);
+    // [다시 시도]는 다시 보내서 나아질 때만(연결 안 됨·잠시 뒤). 한도·비밀 값·긴 문장은 문장만.
+    if (r.retry === false) return;
     const retry = btn(
       '다시 시도',
       () => {
@@ -521,6 +524,12 @@ async function ask(text, vat) {
       { 'data-act': 'intent-retry' },
     );
     box.append(h('div', { class: 'sx-actions' }, retry));
+    return;
+  }
+  // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
+  if (r.kind === 'chat') {
+    const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
+    if (r.suggest?.length) box.append(h('div', { class: 'sx-actions' }, ...r.suggest.map((c) => btn(c.label, () => fillComposer(c.text), '', { 'data-chat-suggest': c.playbook }))));
     appendThread(box);
     return;
   }

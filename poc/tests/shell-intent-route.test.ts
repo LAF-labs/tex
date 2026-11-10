@@ -100,7 +100,7 @@ describe('오프라인 해석 없음·로그인 먼저(사용자 결정 2026-11-
   it('제품: 판정을 못 하면 정규식으로 의도를 고르지 않고 unavailable(연결 안 됨)을 돌려준다. 되묻던 것은 그대로', () => {
     const product = send.slice(send.indexOf('const r = await intent.resolve(text);'));
     assert.ok(product.length > 0);
-    assert.match(product, /if \(!r\.route\) return \{ kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, via: 'model', note: null, sent \};/);
+    assert.match(product, /if \(!r\.route\) return \{ kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, retry: true, via: 'model', note: null, sent: sentFromGateway\(gwIssuedSince\(mark\)\) \};/);
     // 판정이 없을 때 interpret(정규식 의도)로 가는 줄이 없다
     const before = product.slice(0, product.indexOf('const to = routed('));
     assert.doesNotMatch(before, /interpret\(/);

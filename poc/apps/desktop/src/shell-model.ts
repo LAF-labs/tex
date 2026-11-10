@@ -163,6 +163,16 @@ export function parseRegex(text: string, counterparties: Counterparty[]): Parsed
   };
 }
 
+/**
+ * 되묻던 것(거래처·금액)에 이 문장이 답하는가(interpret의 세금계산서 이어 가기와 같은 조건). 모델이 unknown이라도 이어 가기는 interpret가 맡고
+ * 대화 응대(chat.respond)로 보내지 않는다("인스피릿", "50만원" 같은 짧은 답).
+ */
+export function answersPending(parsed: Parsed, runs: Drafts): boolean {
+  const asked = runs.pending.asked;
+  const named = runs.counterparties.filter((c) => parsed.counterparties.includes(c.name));
+  return (asked === 'amount' && parsed.amount !== null) || (asked === 'counterparty' && named.length === 1);
+}
+
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
 export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;

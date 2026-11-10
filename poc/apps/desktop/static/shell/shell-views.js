@@ -321,7 +321,7 @@ export const modelRow = (sent) => {
 };
 export const serverRow = (sent) => {
   const s = sentSet(sent);
-  const parts = [s.has('gateway.run_tokens') ? '실행 토큰 요청(문장 없음)' : null, s.has('gateway.decide') ? '마스킹한 요청 문장(의도 판정)' : null, s.has('gateway.respond') ? '응답 확인' : null].filter(Boolean);
+  const parts = [s.has('gateway.run_tokens') ? '실행 토큰 요청(문장 없음)' : null, s.has('gateway.decide') ? '마스킹한 요청 문장(의도 판정)' : null, s.has('gateway.respond') ? '마스킹한 대화 문장(짧은 답)' : null].filter(Boolean);
   return ['우리 서버', parts.length ? `게이트웨이 · ${parts.join(', ')}` : '보낸 것 없음'];
 };
 /** 활동 기록 표의 모델 칸. */
