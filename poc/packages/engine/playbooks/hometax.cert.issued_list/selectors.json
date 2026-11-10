@@ -1,0 +1,109 @@
+{
+ "portal": "hometax",
+ "entries": {
+  "hometax.page.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "main",
+     "name": "홈택스"
+    }
+   ],
+   "role": "main",
+   "namePattern": "^홈택스$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.certlookup.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "민원신청 처리결과 조회"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^민원신청 처리결과 조회$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-09"
+  },
+  "hometax.certlookup.period": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "조회기간"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^조회기간$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-09",
+   "inputType": "select",
+   "allowedConstants": [
+    "1일",
+    "1주일"
+   ]
+  },
+  "hometax.certlookup.searchKey": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "searchbox",
+     "name": "민원명"
+    }
+   ],
+   "role": "searchbox",
+   "namePattern": "^민원명$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-09",
+   "inputType": "text"
+  },
+  "hometax.certlookup.searchButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "조회하기"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^조회하기$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-09",
+   "navigationOnly": true
+  },
+  "hometax.certlookup.rows": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "table",
+     "name": "처리결과"
+    }
+   ],
+   "role": "table",
+   "namePattern": "^처리결과$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-09"
+  }
+ },
+ "commitEndpoints": [],
+ "knownEndpoints": [
+  {
+   "method": "POST",
+   "pathPattern": "^/wqAction\\.do$"
+  }
+ ]
+}

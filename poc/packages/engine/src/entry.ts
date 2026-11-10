@@ -29,6 +29,9 @@ import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
+import { PcFileIntake } from '@sax/bundle';
+import { PC_FILE_COMMANDS } from './protocol.ts';
+import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, IntentResolver } from './intent.ts';
@@ -52,6 +55,8 @@ let data: DataService | null = null;
 let payroll: BundleService | null = null;
 /** 폰 사진·현금 수신(PhoneIntake). 보관함 파일과 documents·receipts 행을 한 번에 쓴다. */
 let phone: PhoneIntake | null = null;
+/** PC 파일 보관(PcFileIntake): 종이 증빙·꾸러미 파일 칸. 보관함 파일과 documents·receipts|bundle_entries 행을 한 번에 쓴다. */
+let pcFiles: PcFileIntake | null = null;
 /** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main 오프라인 대체). */
 let intent: IntentResolver | null = null;
 let browser: RunBrowserSlot | null = null;
@@ -68,6 +73,13 @@ const REGISTRY = new Set<string>([...REGISTRY_READ_QUERIES, ...REGISTRY_COMMANDS
 for (const m of REGISTRY) ALLOWED.add(m);
 const PHONE = new Set<string>(PHONE_COMMANDS);
 for (const m of PHONE) ALLOWED.add(m);
+const PC_FILE = new Set<string>(PC_FILE_COMMANDS);
+for (const m of PC_FILE) ALLOWED.add(m);
+// 정산내역 넣기(M6-5)도 PcFileIntake가 맡는다(보관함 파일 + 문서 + 그달 표시를 한 번에).
+for (const m of SETTLEMENT_COMMANDS) {
+  PC_FILE.add(m);
+  ALLOWED.add(m);
+}
 // daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
 for (const m of DAEMON_READ_QUERIES) {
   PAYROLL.add(m);
@@ -123,8 +135,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지(PR-D2)는 받아 두기만 하고, 실행기는 아직 'h01'이다(게시와 시연 방식 정합 뒤 irSource로 바꾼다).
-  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log });
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
+  pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
@@ -191,6 +204,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     // 동기화로 status가 바뀌었을 수 있다: 진행 중 실행의 허가를 다시 본다(kill이면 다음 스텝 전에, 승인 대기면 바로 멈춘다).
     runs?.recheckPermit();
     return r;
+  }
+  if (PC_FILE.has(method)) {
+    if (!pcFiles) throw new Error('db_not_ready');
+    return pcFiles.handle(method, params);
   }
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');

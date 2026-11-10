@@ -23,6 +23,11 @@ export const PDF_FILE_ID_RE = /^[0-9a-f]{32}$/;
 const STAGED_NAME_RE = /^[0-9a-f]{32}\.pdf$/;
 /** IO.read 한 번의 크기. */
 const IO_CHUNK = 1024 * 1024;
+/**
+ * 받는 중인 다운로드가 이만큼 아무 진행 이벤트 없이 멈추면 취소하고 canceled로 끝낸다. 끝 이벤트가 끝내 오지 않으면
+ * 그 다운로드가 "받는 중"으로 남아 금고 세션 동안 다음 무장이 모두 already_armed가 된다. 진행 이벤트마다 다시 센다.
+ */
+export const DOWNLOAD_STALL_MS = 60_000;
 
 /** staging 안 fileId의 파일 경로(엔진 문서 가져오기도 이것으로 찾는다). 모양이 틀린 id는 거부한다. */
 export function stagedPdfPath(staging: string, fileId: string): string {
@@ -56,6 +61,8 @@ export interface PdfSaverOptions {
   maxBytes?: number;
   /** 시험 전용. 기본 DOWNLOAD_ARM_TTL_MS. */
   armTtlMs?: number;
+  /** 시험 전용. 기본 DOWNLOAD_STALL_MS. */
+  stallMs?: number;
 }
 
 interface Armed {
@@ -67,6 +74,7 @@ interface Armed {
 interface Active {
   targetId: string;
   tooLarge: boolean;
+  stall: NodeJS.Timeout;
 }
 
 export class PdfSaver {
@@ -80,6 +88,11 @@ export class PdfSaver {
   private closed = false;
   /** staging 정리는 한 번에 하나씩(겹치면 같은 파일을 두 번 지우려 한다). */
   private sweeping: Promise<void> = Promise.resolve();
+  /**
+   * 다운로드 이벤트는 온 순서대로 하나씩 처리한다. 중계는 브라우저 이벤트를 기다리지 않고 넘기므로, 작은 파일은
+   * downloadWillBegin(프레임 확인을 기다림)을 처리하는 사이에 completed가 먼저 처리돼 버려졌다(Linux CI #239).
+   */
+  private events: Promise<void> = Promise.resolve();
 
   constructor(o: PdfSaverOptions) {
     this.o = o;
@@ -97,6 +110,7 @@ export class PdfSaver {
     this.rejected.clear();
     if (this.armed) clearTimeout(this.armed.timer);
     this.armed = null;
+    for (const d of this.active.values()) clearTimeout(d.stall);
     this.active.clear();
   }
 
@@ -179,8 +193,14 @@ export class PdfSaver {
     this.armed = null;
   }
 
-  /** 중계가 넘기는 브라우저 수준 Browser.download* 이벤트. */
-  async onBrowserEvent(method: string, p: Json): Promise<void> {
+  /** 중계가 넘기는 브라우저 수준 Browser.download* 이벤트. 온 순서대로 하나씩 처리한다(앞 이벤트 처리가 끝나야 다음). */
+  onBrowserEvent(method: string, p: Json): Promise<void> {
+    const run = this.events.then(() => this.handleBrowserEvent(method, p));
+    this.events = run.catch(() => {});
+    return run;
+  }
+
+  private async handleBrowserEvent(method: string, p: Json): Promise<void> {
     if (this.closed) return;
     const guid = typeof p.guid === 'string' && GUID_RE.test(p.guid) ? p.guid : null;
     if (!guid) return;
@@ -196,7 +216,7 @@ export class PdfSaver {
       }
       clearTimeout(a.timer);
       this.armed = null;
-      this.active.set(guid, { targetId: a.targetId, tooLarge: false });
+      this.active.set(guid, { targetId: a.targetId, tooLarge: false, stall: this.stallTimer(guid) });
       return;
     }
     if (method !== 'Browser.downloadProgress') return;
@@ -210,7 +230,9 @@ export class PdfSaver {
     const d = this.active.get(guid);
     if (!d) return;
     const state = p.state;
+    clearTimeout(d.stall);
     if (state === 'inProgress') {
+      d.stall = this.stallTimer(guid);
       const total = Number(p.totalBytes ?? 0);
       const got = Number(p.receivedBytes ?? 0);
       if (!d.tooLarge && (total > this.max || got > this.max)) {
@@ -234,6 +256,20 @@ export class PdfSaver {
       }
       await this.finishDownload(guid);
     }
+  }
+
+  /** 진행 없이 stallMs가 지나면 취소하고 canceled로 끝낸다. 뒤늦은 끝 이벤트는 거부한 다운로드처럼 파일만 지운다. */
+  private stallTimer(guid: string): NodeJS.Timeout {
+    const timer = setTimeout(() => {
+      if (this.active.get(guid)?.stall !== timer) return;
+      this.active.delete(guid);
+      this.rejected.add(guid);
+      this.o.log.event('vault.download_stalled');
+      this.fail('canceled');
+      void this.cancel(guid);
+    }, this.o.stallMs ?? DOWNLOAD_STALL_MS);
+    timer.unref?.();
+    return timer;
   }
 
   private async finishDownload(guid: string): Promise<void> {
