@@ -113,7 +113,8 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
     // macOS(arm64) 시험 빌드: 서명·공증 없음. 받은 .dmg는 격리 속성 때문에 처음 열 때 [열기]를 한 번 더 눌러야 한다.
     mac: {
       target: [{ target: 'dmg', arch: ['arm64'] }],
-      identity: null,
+      // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
+      identity: '-',
       hardenedRuntime: false,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
