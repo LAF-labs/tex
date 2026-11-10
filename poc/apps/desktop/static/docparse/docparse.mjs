@@ -7,7 +7,7 @@
 //   hasTextLayer: 쓸 만한 텍스트 층이 있다. scanned: 그 층이 보이지 않는 글자(스캐너·복합기 OCR)다. ocrConfidence: text를 여기서 OCR로 읽었으면 신뢰도.
 // pdf.js 워커는 직접 띄워 workerPort로 넘긴다. workerSrc로 두면 워커를 못 띄울 때 메인 스레드로 조용히 넘어간다.
 import * as pdfjs from 'sax-docparse://app/pdfjs/pdf.min.mjs';
-import { assessTextLayer, cleanForOcr, cleanPhotoForOcr, IMAGE_LIMITS, imageInfo, itemsToLines, readCertInfo, readSheetBytes, SANDBOX_ERRORS, tidyText } from 'sax-docparse://app/lib/index.js';
+import { assessTextLayer, cleanDocumentForOcr, cleanForOcr, cleanPhotoForOcr, IMAGE_LIMITS, imageInfo, itemsToLines, ocrScale, readCertInfo, readSheetBytes, SANDBOX_ERRORS, tidyText } from 'sax-docparse://app/lib/index.js';
 
 const BASE = 'sax-docparse://app/';
 const PDFJS = `${BASE}pdfjs/`;
@@ -45,7 +45,7 @@ async function ocrImageJob({ bytes, mode, model }) {
   } catch {
     throw new JobError('image_decode_failed');
   }
-  const scale = Math.min(1, IMAGE_LIMITS.ocrMaxSide / Math.max(bmp.width, bmp.height));
+  const scale = ocrScale(bmp.width, bmp.height, mode, IMAGE_LIMITS.ocrMaxSide);
   const canvas = document.createElement('canvas');
   canvas.width = Math.max(1, Math.round(bmp.width * scale));
   canvas.height = Math.max(1, Math.round(bmp.height * scale));
@@ -55,8 +55,9 @@ async function ocrImageJob({ bytes, mode, model }) {
   ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
   bmp.close();
   const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  // 증명서 모드는 회색 단계를 남긴다(cleanDocumentForOcr: 직인·표 선·바탕무늬만 지움, 어두운 촬영본은 회색조만)
   if (mode === 'photo') cleanPhotoForOcr(img.data, img.width, img.height);
-  else cleanForOcr(img.data, img.width, img.height);
+  else cleanDocumentForOcr(img.data, img.width, img.height);
   ctx.putImageData(img, 0, 0);
   const png = await new Promise((r) => canvas.toBlob(r, 'image/png'));
   canvas.width = 0;

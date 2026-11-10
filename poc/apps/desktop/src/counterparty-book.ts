@@ -6,7 +6,7 @@
 // - 저장 품목(08 §144, #144 counterparty.setItems·getItems): 폼의 [저장 품목] 칸은 목록의 첫 품목이다. 칸을 바꾸면 첫 품목만 바꾸고
 //   나머지 품목·같은 이름 품목의 단가·단위는 그대로 둔다. 칸을 비우면 첫 품목을 뺀다. 품목은 발급 값이 아니라 요청 때의 후보다.
 // - 글자·필드 값은 로그에 남기지 않는다(bizcert-read가 형식·결과 코드만 남긴다).
-import { COUNTERPARTY_ITEMS_MAX, type Counterparty as DbCounterparty, type CounterpartyItem } from '@sax/db';
+import { COUNTERPARTY_ITEMS_MAX, isValidBizNo, type Counterparty as DbCounterparty, type CounterpartyItem } from '@sax/db';
 import type { BizFields } from './onboarding.ts';
 
 /** 폼 칸 상한(렌더러 cpEditPanel의 maxlength와 같다). */
@@ -46,7 +46,8 @@ export class CounterpartyBook {
         return { found: false, reason: 'unreadable' };
       }
       this.hold = { bizNo: f.bizNo, address: f.address, at: this.now() };
-      return { found: true, name: f.name.slice(0, CP_FIELD_MAX.name), bizNo: f.bizNo, rep: f.rep.slice(0, CP_FIELD_MAX.rep) };
+      // 사업자번호는 체크섬이 맞을 때만 채운다. 거래처 폼에는 온보딩의 [고칠게요] 안내가 없어서, OCR이 한 자리 잘못 읽은 번호를 채우면 사용자가 못 알아챈다
+      return { found: true, name: f.name.slice(0, CP_FIELD_MAX.name), bizNo: isValidBizNo(f.bizNo) ? f.bizNo : '', rep: f.rep.slice(0, CP_FIELD_MAX.rep) };
     } finally {
       this.reading = false;
     }
