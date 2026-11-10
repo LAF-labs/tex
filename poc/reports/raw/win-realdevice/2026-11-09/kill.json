@@ -1,0 +1,351 @@
+{
+  "env": {
+    "node": "v26.13.0",
+    "os": "Windows 10 Pro 10.0.19045",
+    "cpus": 2,
+    "cpu": "Intel(R) Celeron(R) CPU 3855U @ 1.60GHz",
+    "memGb": 7.9
+  },
+  "cycles": [
+    {
+      "i": 0,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 0,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 1,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 291,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 1,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 9
+      }
+    },
+    {
+      "i": 1,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 1,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 2,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 228,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 2,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    },
+    {
+      "i": 2,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 2,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 3,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 251,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 3,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 11
+      }
+    },
+    {
+      "i": 3,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 3,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 4,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 163,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 4,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 9
+      }
+    },
+    {
+      "i": 4,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 4,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 5,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 281,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 5,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 11
+      }
+    },
+    {
+      "i": 5,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 5,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 6,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 223,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 6,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    },
+    {
+      "i": 6,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 6,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 7,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 192,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 7,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    },
+    {
+      "i": 7,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 7,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 8,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 90,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 8,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    },
+    {
+      "i": 8,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 8,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 9,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 126,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 9,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    },
+    {
+      "i": 9,
+      "stagingAtLaunch": {
+        "pdf": 0,
+        "crdownload": 9,
+        "guid": 0,
+        "other": 0
+      },
+      "armed": true,
+      "stagingBeforeKill": {
+        "pdf": 0,
+        "crdownload": 10,
+        "guid": 0,
+        "other": 0
+      },
+      "shutdownMs": 239,
+      "residueLeft": 0,
+      "stagingAfter": {
+        "pdf": 0,
+        "crdownload": 10,
+        "guid": 0,
+        "other": 0
+      },
+      "chromeProcsLeft": 0,
+      "events": {
+        "vault.download_armed": 1,
+        "vault.chrome_closed": 1,
+        "vault.chrome_dump_removed": 2,
+        "vault.chrome_residue_removed": 13
+      }
+    }
+  ],
+  "final": {
+    "afterRelaunch": {
+      "pdf": 0,
+      "crdownload": 10,
+      "guid": 0,
+      "other": 0
+    },
+    "afterUnarmedDownload": {
+      "pdf": 0,
+      "crdownload": 0,
+      "guid": 0,
+      "other": 0
+    },
+    "residueLeft": 0,
+    "events": {
+      "vault.download_unexpected": 1,
+      "vault.staging_swept": 10,
+      "vault.chrome_closed": 1,
+      "vault.chrome_dump_removed": 2,
+      "vault.chrome_residue_removed": 13
+    }
+  },
+  "summary": {
+    "runs": 10,
+    "errors": 0,
+    "residueLeftCycles": 0,
+    "busyEvents": 0,
+    "stagingLeftoverCycles": 10
+  },
+  "elapsedMs": 121387
+}
