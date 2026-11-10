@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.email_status",
- "version": "1.0.0",
+ "version": "1.1.0",
  "kind": "lookup",
  "portal": "hometax",
  "title": "lookup.title",

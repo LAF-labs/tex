@@ -10,8 +10,8 @@
       "version": "1.0.0",
       "kind": "lookup",
       "portal": "hometax",
-      "sxpDigest": "09d8a148cc17041e2eb9bed6d1e48158f3cadf0a4e124d128e8128b3e7bcfbf9",
-      "size": 4391,
+      "sxpDigest": "66b64d6306ac6aa8c5d544d66a3b31952f82c76456900b9cf97aad2e361e5890",
+      "size": 5523,
       "rolloutPercent": 100
     },
     {
@@ -19,8 +19,8 @@
       "version": "1.0.0",
       "kind": "lookup",
       "portal": "hometax",
-      "sxpDigest": "9b5e8cc0d84b4efd85962e6e8d12acd811194300727f1f53e5dc0959747c7890",
-      "size": 4415,
+      "sxpDigest": "d9b19310992dec9bf4022ce37f45ede668b340cb071d0e5ab1bfe3f493795e05",
+      "size": 5139,
       "rolloutPercent": 100
     },
     {
@@ -28,7 +28,7 @@
       "version": "2.1.0",
       "kind": "playbook",
       "portal": "hometax",
-      "sxpDigest": "70e0bb6d2bff3bf4df5e627bc7b6744978d40190d116a365b292cfbe7fd162f9",
+      "sxpDigest": "c25c7ea394801678d56661a62fa3f032e4a742f4b224052ff9010aca815aee0c",
       "size": 21159,
       "rolloutPercent": 100
     },
@@ -45,17 +45,17 @@
     {
       "keyId": "package-1",
       "alg": "ed25519",
-      "sig": "drdBqK6TkfFFnMmAaHKY4Yev_0UZBSP1I4bCbLnV-CwKQkWzmtojKGUY4s2MItTf3vMMhZ0tiaSdhl9DUHOTAg"
+      "sig": "B0sPzGFWfCELEMp25OuoyBPr414t8DVU5DeuVHhfwy4wS7lwsSk5J_JpZAvtZYGCc1Z4cfHHv8HKEwz6QEjrAw"
     },
     {
       "keyId": "package-2",
       "alg": "ed25519",
-      "sig": "j4uu9rEFzStKAcoBg64LuR92yL7OaWkyhzIqFjVJ5ErrWTJn5SNpa2ke7YZONWVwHpbgJZVe5SG_egt4e8RxCw"
+      "sig": "gcC_gSvnOMuZIrBWzDx0tJQNdbcBSOneoNX53nkW6kqb1xdbG5wGA3COJgTBynNANlY61j2Ub0J5wj-Er2lWBw"
     }
   ],
   "timestamp": {
     "keyId": "timestamp-1",
     "alg": "ed25519",
-    "sig": "A2CcRHH_HCL4_PpGxsl2dtXs0qrbQyiCT4a32wnn3wqT4VQ7GXGB3mC3faxgbfQ2B6e1J8kTNDUKk4eh-h6eCg"
+    "sig": "UYryamlRxFz-_-Fy3YDRNWA2kZXh3CCxpqSMYGMqYLOjWDnPAWsAYfGGm5sDd-NNmlACCiVtBls-RI5fSJMsAw"
   }
 }

@@ -394,7 +394,7 @@ describe('패키지 공급: 실행 시작 로드는 매번 다시 검증한다',
 });
 
 describe('installedIrSource(RunServiceDeps.irSource)', () => {
-  it('설치본 → IrPackage(포털 조회 정의 2개), 부를 때마다 다시 로드한다', async () => {
+  it('설치본 → IrPackage(함께 받은 서명 조회 패키지 2개, 앱 코드 조회 정의 없음), 부를 때마다 다시 로드한다', async () => {
     const s = setup();
     await s.sync.sync();
     let loads = 0;
@@ -403,8 +403,10 @@ describe('installedIrSource(RunServiceDeps.irSource)', () => {
     const a = src();
     assert.ok(a.ok);
     assert.equal(a.ir.pkg.files.manifest.id, ID);
-    assert.deepEqual([...a.ir.lookupDefs.keys()], [LOOKUP, MAIL]);
-    assert.equal(a.ir.lookupDefs.get(LOOKUP), HOMETAX_PORTAL.invoiceLookup);
+    // 조회는 서명 조회 패키지 IR로 돈다(IrLookupPort, 팀장 결정 2026-11-09 (가)). 앱 코드 HOMETAX_PORTAL 조회 정의(TODO)는 쓰지 않는다.
+    assert.deepEqual([...a.ir.lookupPackages!.keys()].sort(), [MAIL, LOOKUP].sort());
+    assert.equal(a.ir.lookupPackages!.get(LOOKUP)!.files.manifest.kind, 'lookup');
+    assert.equal(a.ir.lookupDefs, undefined);
     assert.equal(a.ir.fixtureGrant, undefined, '레지스트리 패키지에는 fixture 허가가 없다');
     src();
     assert.equal(loads, 2);
@@ -417,7 +419,7 @@ describe('installedIrSource(RunServiceDeps.irSource)', () => {
     assert.deepEqual(installedIrSource(s.sync, { id: ID, portal: fixturePortal('http://127.0.0.1:1') })(), { ok: false, code: 'package.portal_mismatch' });
   });
 
-  it('포털 조회 정의 이름 규칙: <kind>.invoice.lookup·<kind>.invoice.email_status', () => {
+  it('포털 조회 정의 이름 규칙(가짜 페이지 시험): <kind>.invoice.lookup·<kind>.invoice.email_status', () => {
     const p = fixturePortal('http://127.0.0.1:1');
     assert.deepEqual([...portalLookupDefs(p).keys()], ['fixture.invoice.lookup', 'fixture.invoice.email_status']);
   });

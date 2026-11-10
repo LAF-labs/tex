@@ -1,16 +1,32 @@
 {
  "ir": 2,
  "id": "hometax.invoice.lookup",
- "version": "1.0.0",
+ "version": "1.1.0",
  "portal": "hometax",
  "profileKinds": [
   "business"
  ],
  "effects": [],
  "inputs": {
-  "key": {
+  "counterpartBizNo": {
    "type": "string",
    "required": true
+  },
+  "issueDate": {
+   "type": "string",
+   "required": false
+  },
+  "supplyAmount": {
+   "type": "string",
+   "required": false
+  },
+  "taxAmount": {
+   "type": "string",
+   "required": false
+  },
+  "window": {
+   "type": "string",
+   "required": false
   }
  },
  "steps": [
@@ -29,7 +45,7 @@
    "id": "s2",
    "type": "fill",
    "target": "hometax.lookup.searchKey",
-   "value": "$inputs.key"
+   "value": "$inputs.counterpartBizNo"
   },
   {
    "id": "s3",
@@ -49,6 +65,17 @@
    "from": {
     "a11y": {
      "target": "hometax.lookup.rows"
+    }
+   }
+  },
+  {
+   "id": "s5b",
+   "type": "extract",
+   "name": "count",
+   "from": {
+    "regex": {
+     "target": "hometax.lookup.count",
+     "patternRef": "lookup.countPattern"
     }
    }
   },
