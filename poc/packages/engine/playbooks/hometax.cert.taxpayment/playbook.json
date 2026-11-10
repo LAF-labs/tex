@@ -263,9 +263,7 @@
    "lookup": {
     "playbook": "hometax.cert.issued_list",
     "match": {
-     "certDoc": "$readback.certDoc",
-     "certPurpose": "$readback.certPurpose",
-     "certSubmitTo": "$readback.certSubmitTo"
+     "certDoc": "$readback.certDoc"
     },
     "window": "today",
     "baseline": "pre_gate_snapshot",
