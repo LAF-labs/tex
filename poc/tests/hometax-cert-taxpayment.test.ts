@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import {
-  BASIC_HANDLERS, buildCfg, Interpreter, loadPackage, newScope, semanticViolations, stepEnv, validatePackage,
+  APPROVAL_SUMMARIES, BASIC_HANDLERS, buildCfg, Interpreter, loadPackage, newScope, semanticViolations, stepEnv, validatePackage,
   type Handler, type LoadedPackage, type LoaderContext, type PackageFiles, type Resolved, type SelectorDict,
 } from '@sax/engine/core';
 import { FakeAct, FakeClock, FakePage, type FEl } from './core-page-fakes.ts';
@@ -98,10 +98,11 @@ describe('H-04 로더(D03 §3.1)', () => {
     assert.equal(r.ok ? 'ok' : r.code, 'ok');
   });
 
-  it('지금 앱 내장 표에는 H-04 카드가 없다: loader.approval_summary_missing(엔진 후속 전까지 제품이 로드하지 않는다)', () => {
+  it('앱 내장 표(APPROVAL_SUMMARIES cert.confirm, LAF-labs/tex#250)로도 통과한다: 요약 칸이 시험 표 SUMMARY와 같다', () => {
     const lk = installed();
     const r = loadPackage(signPackage(h04(), two, [lk.get(LK)!.manifestDigest]), ctx({ installedLookups: lk }));
-    assert.equal(r.ok ? 'ok' : r.code, 'loader.approval_summary_missing');
+    assert.equal(r.ok ? 'ok' : r.code, 'ok');
+    assert.deepEqual(APPROVAL_SUMMARIES.get('cert.confirm'), SUMMARY.get('cert.confirm'));
   });
 
   it('조회 패키지가 설치되지 않았으면 loader.lookup_mismatch', () => {

@@ -91,7 +91,7 @@ export function kstToday(nowMs: number): string {
 const AMOUNT = /^(0|[1-9]\d{0,14})$/;
 
 /** 서류 종류별 값 줄 수(금액 칸 제외, 앱 내장 표, ADR-021 결정 7). 카드 높이는 이 줄 수로만 정한다(렌더러 보고 없음). */
-export const CARD_ROWS = { 'H-01': 4 } as const;
+export const CARD_ROWS = { 'H-01': 4, cert: 4 } as const;
 
 /**
  * H-01 승인 카드 줄(ADR-021 결정 7): 금액 칸(합계 / 공급가액 · 세액), 값 줄 공급받는자(상호 · 사업자번호) / 품목 / 작성일자 / 받는 이메일.
@@ -136,6 +136,31 @@ export function summarize(req: Pick<GateRequest, 'fields'>, todayKst: string = k
   const domain = domainToASCII(email.slice(at + 1));
   if (!domain) return { reason: 'unsafe', label: '받는 이메일' };
   return [...rows, { label: '받는 이메일', pieces: [{ text: email.slice(0, at), shrink: true }, { text: `@${domain}` }], flag: f.get('$first.email') === 'true' ? '처음 보내는 주소' : undefined }];
+}
+
+/** 홈택스 민원증명 승인 카드 줄(H-03·H-04·H-08·H-09 공통, 팀장 결정 2026-11-09). 요약 칸은 엔진 APPROVAL_SUMMARIES 'cert.confirm'과 같다. */
+export const CERT_SUMMARY_LABELS = [
+  ['certDoc', '서류'],
+  ['certPurpose', '사용 용도'],
+  ['certSubmitTo', '제출처'],
+  ['rrnDisclosure', '주민번호 공개'],
+] as const;
+
+/**
+ * 민원증명 카드 줄: 서류 / 사용 용도 / 제출처 / 주민번호 공개. 값은 해시한 게이트 요청 fields에서만 고른다. 값 줄 수는 CARD_ROWS.cert로 늘 같다.
+ * 중복 경고는 첫 줄 끝 표시 칸에 가장 위험한 것 하나를 둔다(H-01과 같은 규칙).
+ */
+export function summarizeCert(req: Pick<GateRequest, 'fields'>): SummaryLine[] | ArmRefusal {
+  const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
+  if (f.size !== req.fields.length) return { reason: 'duplicate' };
+  for (const [k, label] of CERT_SUMMARY_LABELS) if (!f.get(k)) return { reason: 'missing', label };
+  for (const [k, label] of CERT_SUMMARY_LABELS) if (UNSAFE_CHARS.test(f.get(k)!)) return { reason: 'unsafe', label };
+  const dup = dupState(f);
+  return CERT_SUMMARY_LABELS.map(([k, label], i) => ({
+    label,
+    pieces: [{ text: f.get(k)!, shrink: k !== 'rrnDisclosure' }],
+    ...(i === 0 && dup ? { flag: dup.flag, tone: dup.tone } : {}),
+  }));
 }
 
 // ---- InDoubt 증언 바(ADR-021 결정 5) ----
@@ -290,6 +315,8 @@ export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
 export const IRREVERSIBLE_TEXT = '승인하면 바로 발급되고 메일로 가요. 되돌릴 수 없어요.';
 export const IRREVERSIBLE_TEXT_NO_MAIL = '승인하면 바로 발급돼요. 메일은 보내지 않아요. 되돌릴 수 없어요.';
 export const ATTEST_IRREVERSIBLE_TEXT = '확인하면 이 건을 발급 안 됨으로 기록해요. 되돌릴 수 없어요.';
+/** 민원증명 비가역 한 줄(팀장 결정 2026-11-09) */
+export const CERT_IRREVERSIBLE_TEXT = '발급하면 홈택스 발급 이력에 남습니다. 되돌릴 수 없어요.';
 export const STOP_TEXT = '중지';
 export const ATTEST_STOP_TEXT = '닫기';
 const DOC_TITLE = '세금계산서';
@@ -308,6 +335,8 @@ export const ATTEST_TEXT: CardText = { title: DOC_TITLE, chip: '확인 필요', 
 /** 게이트 카드 글자. name은 검사를 지난 fields의 상호(없으면 서류 종류만), mail은 받는 이메일 유무. */
 export const gateText = (action: string, name?: string, mail = true): CardText => ({ ...GATE_TEXT, title: title(name), action, irreversible: mail ? IRREVERSIBLE_TEXT : IRREVERSIBLE_TEXT_NO_MAIL });
 export const attestText = (name?: string): CardText => ({ ...ATTEST_TEXT, title: title(name) });
+/** 민원증명 게이트 카드 글자. 머리 줄은 서류 이름(사업자등록증명 등, 앱 내장)이다 */
+export const certGateText = (docName: string, action: string): CardText => ({ title: docName, chip: '승인 대기', action, irreversible: CERT_IRREVERSIBLE_TEXT, stop: STOP_TEXT });
 
 /**
  * 스크립트 없는 정적 페이지. 값은 이스케이프해 텍스트로만 넣는다. 버튼 둘은 그림일 뿐이고(포커스·클릭 처리 없음)

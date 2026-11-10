@@ -1,0 +1,411 @@
+{
+ "ir": 2,
+ "id": "hometax.cert.vat_tax_base",
+ "version": "1.0.0",
+ "portal": "hometax",
+ "profileKinds": [
+  "business"
+ ],
+ "effects": [
+  "issue_document"
+ ],
+ "inputs": {
+  "certDoc": {
+   "type": "enum",
+   "values": [
+    "부가가치세 과세표준증명"
+   ],
+   "default": "부가가치세 과세표준증명"
+  },
+  "purpose": {
+   "type": "string",
+   "required": true
+  },
+  "submitTo": {
+   "type": "string",
+   "required": true
+  },
+  "rrnDisclosure": {
+   "type": "enum",
+   "values": [
+    "공개",
+    "비공개"
+   ],
+   "default": "비공개"
+  },
+  "periodFrom": {
+   "type": "string",
+   "required": true
+  },
+  "periodTo": {
+   "type": "string",
+   "required": true
+  }
+ },
+ "preconditions": [
+  {
+   "profileHas": "signMethod"
+  },
+  {
+   "profileHas": "bizNo"
+  }
+ ],
+ "steps": [
+  {
+   "id": "s0",
+   "type": "checkpoint",
+   "name": "session",
+   "expect": {
+    "exists": "hometax.nav.home"
+   },
+   "url": "https://hometax.go.kr/",
+   "sessionRequired": true,
+   "reentry": "reload"
+  },
+  {
+   "id": "s1",
+   "type": "goto",
+   "url": "https://hometax.go.kr/"
+  },
+  {
+   "id": "s2",
+   "type": "decide",
+   "bundle": "screen_state_v2",
+   "scope": "root",
+   "loopGuard": {
+    "max": 3
+   },
+   "on": {
+    "logged_in": "s10",
+    "login_required": "s3",
+    "captcha": "s90",
+    "mfa_pending": "s5",
+    "error": "handoff",
+    "unknown": "handoff"
+   }
+  },
+  {
+   "id": "s3",
+   "type": "click",
+   "target": "hometax.login.simpleAuthButton"
+  },
+  {
+   "id": "s4",
+   "type": "sign",
+   "method": "$profile.signMethod",
+   "then": [
+    "human:secret"
+   ]
+  },
+  {
+   "id": "s5",
+   "type": "wait",
+   "for": "text",
+   "value": "hometax.login.successMarker",
+   "timeoutMs": 120000,
+   "pace": "slow"
+  },
+  {
+   "id": "s6",
+   "type": "decide",
+   "bundle": "screen_state_v2",
+   "scope": "root",
+   "loopGuard": {
+    "max": 3
+   },
+   "on": {
+    "logged_in": "s10",
+    "login_required": "handoff",
+    "captcha": "s90",
+    "mfa_pending": "s5",
+    "error": "handoff",
+    "unknown": "handoff"
+   }
+  },
+  {
+   "id": "s10",
+   "type": "checkpoint",
+   "name": "form",
+   "expect": {
+    "exists": "hometax.nav.home"
+   },
+   "url": "https://hometax.go.kr/",
+   "sessionRequired": true,
+   "reentry": "reload"
+  },
+  {
+   "id": "s10a",
+   "type": "click",
+   "target": "hometax.cert.menu.civil"
+  },
+  {
+   "id": "s10b",
+   "type": "click",
+   "target": "hometax.cert.menu.issue"
+  },
+  {
+   "id": "s10c",
+   "type": "click",
+   "target": "hometax.cert.menu.doc"
+  },
+  {
+   "id": "s11",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.form.root"
+  },
+  {
+   "id": "s12",
+   "type": "select",
+   "target": "hometax.cert.form.purpose",
+   "option": "$inputs.purpose"
+  },
+  {
+   "id": "s13",
+   "type": "fill",
+   "target": "hometax.cert.form.submitTo",
+   "value": "$inputs.submitTo"
+  },
+  {
+   "id": "s14",
+   "type": "select",
+   "target": "hometax.cert.form.rrnDisclosure",
+   "option": "$inputs.rrnDisclosure"
+  },
+  {
+   "id": "s15",
+   "type": "select",
+   "target": "hometax.cert.form.receiveMethod",
+   "option": "인터넷 발급"
+  },
+  {
+   "id": "s16a",
+   "type": "select",
+   "target": "hometax.cert.form.periodFrom",
+   "option": "$inputs.periodFrom"
+  },
+  {
+   "id": "s16b",
+   "type": "select",
+   "target": "hometax.cert.form.periodTo",
+   "option": "$inputs.periodTo"
+  },
+  {
+   "id": "s19",
+   "type": "decide",
+   "bundle": "form_ready_v2",
+   "scope": "hometax.cert.form.root",
+   "on": {
+    "no_visible_error": "s19a",
+    "validation_error": "handoff",
+    "unknown": "handoff"
+   }
+  },
+  {
+   "id": "s19a",
+   "type": "assert",
+   "cond": {
+    "fieldsFilled": {
+     "fields": [
+      "certDoc",
+      "certPurpose",
+      "certSubmitTo",
+      "rrnDisclosure",
+      "taxPeriodFrom",
+      "taxPeriodTo"
+     ]
+    }
+   },
+   "code": "assert.fields_missing"
+  },
+  {
+   "id": "s19b",
+   "type": "readback",
+   "fields": [
+    "certDoc",
+    "supplierBizNo",
+    "supplierName",
+    "certPurpose",
+    "certSubmitTo",
+    "rrnDisclosure",
+    "receiveMethod",
+    "taxPeriodFrom",
+    "taxPeriodTo"
+   ]
+  },
+  {
+   "id": "s19c",
+   "type": "assert",
+   "cond": {
+    "readbackEquals": {
+     "fieldKey": "supplierBizNo",
+     "ref": "$profile.bizNo"
+    }
+   },
+   "code": "assert.supplier_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   }
+  },
+  {
+   "id": "s19f",
+   "type": "assert",
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "abort"
+   },
+   "cond": {
+    "all": [
+     {
+      "readbackEquals": {
+       "fieldKey": "certDoc",
+       "ref": "$inputs.certDoc"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "certPurpose",
+       "ref": "$inputs.purpose"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "certSubmitTo",
+       "ref": "$inputs.submitTo"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "rrnDisclosure",
+       "ref": "$inputs.rrnDisclosure"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "taxPeriodFrom",
+       "ref": "$inputs.periodFrom"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "taxPeriodTo",
+       "ref": "$inputs.periodTo"
+      }
+     }
+    ]
+   }
+  },
+  {
+   "id": "s20",
+   "type": "gate",
+   "card": "cert.confirm",
+   "authorizes": [
+    "s21"
+   ],
+   "waitMs": 600000
+  },
+  {
+   "id": "s21",
+   "type": "submit",
+   "target": "hometax.cert.form.issueButton",
+   "intent": "$intent.id",
+   "verify": "s30",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
+   "id": "s30",
+   "type": "verify",
+   "lookup": {
+    "playbook": "hometax.cert.issued_list",
+    "match": {
+     "certDoc": "$readback.certDoc",
+     "certPurpose": "$readback.certPurpose",
+     "certSubmitTo": "$readback.certSubmitTo"
+    },
+    "window": "today",
+    "baseline": "pre_gate_snapshot",
+    "notCommittedPolicy": {
+     "minElapsedMs": 60000,
+     "lookups": 2
+    },
+    "bind": {
+     "approvalNo": "issueNo"
+    }
+   },
+   "failSignals": [
+    {
+     "css": "#errorDialog",
+     "text": "^(발급|신청)(이|에) 실패했습니다.*$"
+    }
+   ],
+   "on": {
+    "committed": "s32",
+    "not_committed": "s10",
+    "unknown": "handoff"
+   }
+  },
+  {
+   "id": "s32",
+   "type": "save_pdf",
+   "strategy": "print",
+   "docType": "vat_tax_base_cert"
+  },
+  {
+   "id": "s34",
+   "type": "end",
+   "status": "success"
+  },
+  {
+   "id": "s90",
+   "type": "human",
+   "kind": "captcha",
+   "region": "hometax.captcha.image",
+   "prompt": "captcha.prompt",
+   "ttlMs": 90000
+  },
+  {
+   "id": "s91",
+   "type": "fill",
+   "target": "hometax.captcha.input",
+   "value": "$human.s90"
+  },
+  {
+   "id": "s92",
+   "type": "click",
+   "target": "hometax.captcha.submit"
+  },
+  {
+   "id": "s93",
+   "type": "decide",
+   "bundle": "screen_state_v2",
+   "scope": "root",
+   "loopGuard": {
+    "max": 2
+   },
+   "on": {
+    "logged_in": "s10",
+    "login_required": "s3",
+    "captcha": "handoff",
+    "mfa_pending": "s5",
+    "error": "handoff",
+    "unknown": "handoff"
+   }
+  }
+ ],
+ "postconditions": [
+  {
+   "varSet": "issueNo"
+  },
+  {
+   "artifact": "pdf"
+  }
+ ],
+ "pacing": {
+  "profile": "interactive"
+ }
+}
