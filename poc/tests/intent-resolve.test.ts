@@ -170,9 +170,10 @@ describe('판정만 한다: 실행·저장 없음', () => {
 
 describe('protocol·entry 배선(추가만)', () => {
   it('INTENT_COMMANDS는 main 전용 목록이다(렌더러 목록·다른 묶음에 없음)', () => {
-    assert.deepEqual([...INTENT_COMMANDS], ['intent.resolve']);
+    assert.deepEqual([...INTENT_COMMANDS], ['intent.resolve', 'chat.respond']);
     const others = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, ...MAIN_ONLY, ...PAYROLL_MAIN_ONLY, ...PHONE_COMMANDS]);
     assert.ok(!others.has('intent.resolve'));
+    assert.ok(!others.has('chat.respond'));
   });
 
   it('entry: ALLOWED에 더하고 IntentResolver로 보낸다, 모델 경로는 엔진 Egress 게이트웨이(gatewayIntentModel)뿐', () => {

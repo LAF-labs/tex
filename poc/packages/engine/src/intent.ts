@@ -8,11 +8,12 @@
 // - 로그·저널에 문장·금액·거래처를 남기지 않는다(⑦). 결과 종류·via만 돌려준다.
 import { randomUUID } from 'node:crypto';
 import { CounterpartyRepo, ProfileRepo, type Db } from '@sax/db';
-import { BundleCatalog, DefaultModelLayer, GatewayDecideAdapter, ThresholdProfiles, gatewayRunToken, type DecideResult, type RunToken } from '@sax/model';
+import { BundleCatalog, CHAT_REPLY, DefaultModelLayer, GatewayDecideAdapter, OpenAIResponsesAdapter, ThresholdProfiles, gatewayRunToken, type DecideResult, type RunToken } from '@sax/model';
 import type { Egress } from '@sax/net';
 import { Redactor } from '@sax/redaction';
 import { Judge } from './l0/judge.ts';
 import { loadPromotions } from './l0/promotion.ts';
+import { CHAT_INPUT_MAX_BYTES, ChatError, chatRespond, chatSecretShaped, type ChatModel, type ChatReply } from './chat.ts';
 
 export const INTENT_BUNDLE = 'intent_route_v1';
 /** 입력창 문장 상한(계약 ≤ 2000자) */
@@ -43,6 +44,8 @@ export interface IntentModel {
   runToken: (chatSessionId: string) => Promise<RunToken>;
   /** 번들 입력 상한(maxInputBytes)과 route 선택지 */
   bundle: { maxInputBytes: number; playbooks: readonly string[] };
+  /** 대화 짧은 응대(chat.respond, chat_reply 툴셋). 없으면 chat.respond는 chat.unavailable */
+  chat?: ChatModel;
 }
 
 export interface IntentResolverOptions {
@@ -65,11 +68,44 @@ export class IntentResolver {
     return this.opts.now?.() ?? Date.now();
   }
 
-  async handle(method: string, p: Record<string, unknown>): Promise<IntentResolution> {
-    if (method !== 'intent.resolve') throw new IntentError('unknown_method');
+  async handle(method: string, p: Record<string, unknown>): Promise<IntentResolution | ChatReply> {
+    if (method !== 'intent.resolve' && method !== 'chat.respond') throw new IntentError('unknown_method');
     const text = p?.text;
     if (typeof text !== 'string' || !text.trim() || [...text].length > INTENT_TEXT_MAX) throw new IntentError('bad_text');
-    return this.resolve(text);
+    return method === 'chat.respond' ? this.chat(text) : this.resolve(text);
+  }
+
+  /**
+   * chat.respond: 같은 대화 세션(마스킹 범위·실행 토큰·예산)으로 chat_reply를 부른다. 오류는 ChatError(code chat.*)로 던진다.
+   * 예산·월 한도 초과는 토큰을 새로 받아도 풀리지 않으므로(범위 예산) 토큰을 지우지 않는다. 경로 실패만 다음에 토큰을 다시 받는다.
+   */
+  private async chat(text: string): Promise<ChatReply> {
+    const chat = this.opts.model?.chat;
+    if (!chat) throw new ChatError('chat.unavailable');
+    if (chatSecretShaped(text)) throw new ChatError('chat.secret_rejected');
+    const s = this.chatSession();
+    let input;
+    try {
+      const red = new Redactor({ chatSessionId: s.id });
+      this.addNames(red);
+      input = red.apply(text, { frame: 'none' }).redacted;
+    } catch {
+      throw new ChatError('chat.unavailable');
+    }
+    // 잘라 보내지 않는다. 토큰도 받지 않는다.
+    if (Buffer.byteLength(input, 'utf8') > CHAT_INPUT_MAX_BYTES) throw new ChatError('chat.input_too_large');
+    try {
+      s.token ??= await this.opts.model!.runToken(s.id);
+    } catch {
+      s.token = null;
+      throw new ChatError('chat.unavailable');
+    }
+    try {
+      return await chatRespond(chat, input, s.token, s.id);
+    } catch (e) {
+      if (e instanceof ChatError && e.code === 'chat.unavailable') s.token = null;
+      throw e;
+    }
   }
 
   private async resolve(text: string): Promise<IntentResolution> {
@@ -149,7 +185,10 @@ export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatal
   const judge = new Judge(layer, opts.promoted ?? loadPromotions());
   const q = b.def.questions.find((x) => x.name === 'playbook');
   const playbooks = q && q.type === 'choice' ? q.choices.map((c) => c.value).filter((v) => v !== 'none_of_these') : [];
-  return { judge, runToken: (chatSessionId) => gatewayRunToken(egress, { chatSessionId }), bundle: { maxInputBytes: b.def.maxInputBytes, playbooks } };
+  // 대화 답(chat_reply)은 /v1/respond로만 간다. 어댑터가 출력 스키마·toolsetDigest를 검증하고 공급사 클라이언트는 만들지 않는다(transport gateway).
+  const responder = new OpenAIResponsesAdapter({ transport: 'gateway', egress });
+  const chat: ChatModel = { respond: (req) => responder.respond(CHAT_REPLY, req) };
+  return { judge, runToken: (chatSessionId) => gatewayRunToken(egress, { chatSessionId }), bundle: { maxInputBytes: b.def.maxInputBytes, playbooks }, chat };
 }
 
 /**

@@ -173,6 +173,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | `intent_fill` | `get_counterparties(query)`(마스킹 토큰으로 반환), `parse_amount(text)`, `propose_inputs(inputs)` | low | 6,000 | 2 |
 | `summarize` | 없음. 출력은 구조화 슬롯 스키마만 | low | 4,000 | 1 |
 | `query_parse` | 없음. 출력 `{query_kind: enum, doc_type: enum\|null, from: string(pattern `^\d{4}-\d{2}-\d{2}$`)\|null, to: 같음}`만(`format:'date'`는 ajv-formats 없이 무시되므로 쓰지 않는다, D-47(N-74)) | low | 1,000 | 1 |
+| `chat_reply` | 없음. 출력 `{kind: help\|clarify\|smalltalk\|tax_advice\|out_of_scope, reply: string, suggest: 플레이북 id[≤3] ∈ 고정 목록}`만. 공통 판정기 머리말 없이 `toolsets/chat_reply.ko.txt` | low | 1,000 | 1 |
 
 - **`query_agent` 툴셋 삭제** (감사 C C-10): 조회 질문에서 모델에는 **사용자 질문(마스킹본)만** 보낸다. PC가 꺼져 있을 때 마스킹은 **폰이 로컬에서** 한다(E-09, Phase 2): 폰은 D06 정규식 마스킹(숫자형 식별자·이메일·전화)을 적용하고, 상호·대표자·거래처 이름 사전은 PC가 페어링 채널로 폰에 동기화(Keychain 보호, 옵트인)한 뒤에만 조회 에이전트를 켠다. 사전 동기화 전에는 이름이 포함된 질문을 보내지 않는다(폰이 한글 2~4자 + 호칭 문맥을 보수적으로 치환). PC가 켜져 있으면 D06 전체 계층을 쓴다. 모델은 `query_parse`로 `query_kind`와 열거형 파라미터만 돌려준다. 메타데이터 행·서류 목록·만료 목록은 **어떤 경우에도 모델 입력에 들어가지 않는다**. 조회는 PC에서는 엔진이 로컬 DB로, PC가 꺼져 있으면 서버가 인증 토큰의 계정으로만 결정적으로 하고 결과를 템플릿에 채운다(서버 쪽 규칙은 D09 §7 담당). `list_documents`·`get_expiry` 도구는 없다.
 - `parallel_tool_calls: false`. 응답은 구조화 출력(`text.format = json_schema, strict`)으로 받고, `refusal` 콘텐츠·`incomplete` 상태를 파싱 전에 검사한다. 둘 다 L3 핸드오프.
@@ -186,6 +187,8 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 - 화면·PDF·이메일에서 온 텍스트를 요약한 **자유 문장은 표시하지 않는다**. 불가피한 예외 경로는 '포털 원문 요약(신뢰할 수 없음)' 고정 라벨과 함께 표시하고, 전화번호·URL·`비밀번호|인증서|보안카드|입력하세요` 패턴이 있거나 `mentions_tax_advice ≥ .5`(§3)이면 표시하지 않는다. 표시는 sanitizer를 거친 텍스트 노드로만 한다(원시 HTML 금지, ADR-014).
 - **대화창 비밀 DLP**: 대화창 입력은 모델로 보내기 전에 비밀 모양 검사(보안카드 숫자열 모양, '비밀번호는 …'·'비번 …' 문형, 한글 숫자 변환 사본 포함, D06 §4 ④)를 거친다. 걸리면 전송하지 않고 "비밀번호는 대화창에 입력하지 마세요"를 띄운다. 입력 문장은 저장하지 않는다.
 - 이 규칙들은 사용자를 사회공학하는 경로("보안 점검을 위해 인증서 비밀번호를 입력하세요"를 우리 앱의 말로 보이게 하는 것)를 막기 위한 것이다. S17 코퍼스에 사회공학 문구를 포함한다.
+
+**대화 짧은 응대 `chat_reply`** (팀장 지시 2026-11-10, 엔진 `chat.respond`): `intent_route_v1`이 작업으로 분류하지 못한 대화 문장(unknown)에만 쓴다. 범위는 "이 앱이 할 수 있는 일 안내·되묻기·짧은 응대"까지이고 세무 판단은 하지 않는다(§3 세무 상담 출력 차단). 입력은 Redactor로 마스킹한 **이번 문장 하나**뿐이다(이전 대화 턴·화면·PDF·이메일 텍스트 없음, 그래서 위 표시 규칙의 '외부 텍스트 요약 자유 문장'에 해당하지 않는다). 할 수 있는 일의 고정 목록(`CHAT_CAPABILITIES`: 전자세금계산서 발급·사업자등록증명·납세증명서)은 게이트웨이가 넣는 머리말과 출력 스키마 열거에만 있고 클라이언트가 바꿀 수 없다. 출력은 신뢰하지 않는다: 스키마·`toolsetDigest`가 다르거나 `reply`가 비었거나 200자를 넘으면(자르지 않는다) 오류 `chat.bad_response`. `kind = tax_advice`이거나 답에 세무 판단 말(절세·공제·경비 처리·세액·환급·신고 기한 …)이 있으면 고정 문구('세무 판단은 하지 않아요. 세무 대리인과 상담해 주세요.')로 바꾸고, 마스킹 토큰·숫자 식별자·이메일·링크·비밀 입력 유도 말(비밀번호·인증서·보안카드·입력하세요)이 있으면 고정 안내 문구로 바꾼다. 비밀 값을 적은 입력은 보내지 않는다(`chat.secret_rejected`, 위 대화창 비밀 DLP 최소판). 게이트웨이 불가는 오류이고 오프라인 대체는 없다. 예산은 대화 범위(`chatSessionId`)의 새 L2(`l2PerChat`)다.
 
 ### 4.1 예시: 셀렉터 복구 요청(개념)
 
