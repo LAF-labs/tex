@@ -184,7 +184,7 @@ describe('audit-d: D4 사용자 동작 결속(N-27)', () => {
 
   it('셸 처리기: run.prepare 2초·docs.import(pick)·docs.open 3초 결속, 대화상자는 메인 창 부모', () => {
     const s = src('shell-app.ts');
-    assert.match(s, /'run\.prepare': \(p\) => \{\s*needGesture\(2_000\);/);
+    assert.match(s, /'run\.prepare': async \(p\) => \{\s*needGesture\(2_000\);/);
     assert.match(s, /if \(typeof p\.pickId !== 'string'\) needGesture\(3_000\);/);
     assert.match(s, /'docs\.open': docsCall\(async \(p\) => \{\s*needGesture\(3_000\);/);
     assert.match(s, /importPdf\(params, engine, win\)/);

@@ -97,6 +97,8 @@ describe('받아야 할 증빙 · 세무사에게 줄 것', () => {
     assert.equal(card.detail, '마지막 최신화 38일 전');
     assert.deepEqual(card.target, { to: 'view', view: 'card' });
     assert.equal(buildBoard(base({ cardFetchedOn: null })).cards[0]!.items[0]!.detail, '아직 가져온 적 없어요');
+    // 카드 기능이 없는 빌드(제품 첫 설치본)는 [최신화] 칸을 두지 않는다
+    assert.ok(!buildBoard(base({ cardFetchedOn: null, cardEnabled: false })).cards.some((c) => c.items.some((i) => i.id === 'card')));
     assert.ok(!ids(buildBoard(base({ cardFetchedOn: '2026-11-01' }))).includes('card'));
   });
 });

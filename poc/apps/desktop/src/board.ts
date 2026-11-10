@@ -101,6 +101,8 @@ export interface BoardInput {
   cardFetchedOn: string | null;
   /** 온보딩에서 건너뛴 항목(onboardingTodos). */
   setup?: BoardSetup[];
+  /** 사업용 카드 내역(D-04) 기능이 있는 빌드인지. 거짓이면 [최신화] 칸을 두지 않는다(제품 첫 설치본, 팀장 2026-11-09). 기본 참. */
+  cardEnabled?: boolean;
 }
 
 export const EXPIRING_WITHIN_DAYS = 30;
@@ -187,7 +189,7 @@ export function buildBoard(input: BoardInput): Board {
     });
   }
   // 사업용 카드 내역이 이번 달에 최신화되지 않았으면(ADR-033 결정 5) 세무사에게 줄 것에 [최신화] 길을 둔다. 누르면 D-04로 간다(그 화면의 버튼이 실행 승인).
-  if (!input.cardFetchedOn || monthOf(input.cardFetchedOn) < month) {
+  if (input.cardEnabled !== false && (!input.cardFetchedOn || monthOf(input.cardFetchedOn) < month)) {
     const ago = input.cardFetchedOn ? `마지막 최신화 ${daysBetween(input.cardFetchedOn, input.today)}일 전` : '아직 가져온 적 없어요';
     items.push({ id: 'card', kind: 'accountant', label: '사업용 카드 내역', detail: ago, due: b && !b.sentOn ? dayOf(addMonths(b.month, 1), input.reminderDay) : reminder, showDue: false, tone: null, target: { to: 'view', view: 'card' } });
   }
