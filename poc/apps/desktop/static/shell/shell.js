@@ -222,11 +222,11 @@ function renderTitlebar() {
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), item('personal', `개인 · ${p.personal.name}`)) : null,
     ),
-    // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다.
-    state.boot?.sample === false ? null : h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모'),
+    // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
+    ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
-    h('button', { type: 'button', class: 'sx-search', onclick: () => toast('목업: 검색은 이 데모에 없어요') }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, 'Ctrl K')),
+    h('button', { type: 'button', class: 'sx-search', onclick: openSearch }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, isMac() ? '⌘K' : 'Ctrl K')),
     h(
       'div',
       { class: 'tb-status' },
@@ -236,6 +236,11 @@ function renderTitlebar() {
     ),
   );
 }
+
+/** macOS는 ⌘, 그 밖은 Ctrl(검색 단축키 표시·처리가 같은 판정을 쓴다). */
+const isMac = () => state.boot?.platform === 'darwin';
+/** 검색은 아직 없다. 버튼과 단축키(⌘K / Ctrl+K)가 같은 안내를 띄운다. */
+const openSearch = () => toast('검색은 곧 지원해요');
 
 function toggleMenu(open = !state.menu) {
   if (state.menu === open) return;
@@ -1628,6 +1633,12 @@ window.sax.onEvent((ev) => {
 });
 
 window.addEventListener('keydown', (e) => {
+  // 검색 단축키: macOS ⌘K, 그 밖 Ctrl+K(제목줄 표시와 같다)
+  if ((e.key === 'k' || e.key === 'K') && (isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && state.boot) {
+    e.preventDefault();
+    openSearch();
+    return;
+  }
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
     else cancelPassword();
@@ -1696,6 +1707,8 @@ async function boot() {
   const root = document.documentElement.style;
   for (const [k, v] of Object.entries({ rail: L.rail, panel: L.panel, titlebar: L.titlebar, 'chat-max': L.chatMax, gutter: L.gutter, 'composer-reserve': L.composerReserve, gap: L.gap, 'bar-h': L.barHeight })) root.setProperty(`--l-${k}`, `${v}px`);
   document.body.dataset.platform = state.boot.platform;
+  // 시연(fixture)이 아니면 개발용 표시(약관 "F-06 초안 전 문구" 배지 등)를 숨긴다(shell.css body[data-sample=false])
+  document.body.dataset.sample = String(state.boot.sample !== false);
   applyLayout();
   renderTitlebar();
   buildChat();

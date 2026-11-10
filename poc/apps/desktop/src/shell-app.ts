@@ -327,7 +327,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     useContentSize: true,
     minHeight: 560,
     show: opts.show ?? true,
-    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX (PoC 데모)',
+    // 설치본은 앱 이름만. 가짜 홈택스(fixture)일 때만 시연 표시를 남긴다.
+    title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
     webPreferences: {
       sandbox: true,
       contextIsolation: true,
@@ -340,6 +341,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       preload: path.join(STATIC, 'preload-shell.cjs'),
     },
   });
+  // 창 제목은 main이 정한다(페이지 <title>이 덮지 않게): 설치본 "소버린 AX", fixture만 시연 표시.
+  win.on('page-title-updated', (e) => e.preventDefault());
   const wc = win.webContents;
   // 새 창·이동 거부, 렌더러의 window.moveTo·resizeTo 무시, 배율 1 고정.
   hardenWindow(win);

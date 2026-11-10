@@ -14,7 +14,8 @@ describe('제품 모드: 견본 데이터 없음', () => {
     assert.match(src, /quick: sample \? sample\.quick : QUICK\.filter\(/);
     assert.match(src, /sample: !!sample,/);
     assert.match(src, /'g24\.candidates': \(p\) => \(sample \? sample\.g24Candidates\(/);
-    assert.match(js, /state\.boot\?\.sample === false \? null : h\('span', \{ class: 'mock-badge' \}, '견본 데이터 · PoC 데모'\)/);
+    // replaceChildren에 null을 넘기면 글자 "null"이 된다(설치본 0.1.3 확인). 펼쳐 넣는다.
+    assert.match(js, /\.\.\.\(state\.boot\?\.sample === false \? \[\] : \[h\('span', \{ class: 'mock-badge' \}, '견본 데이터 · PoC 데모'\)\]\)/);
   });
   it('견본 서류·견본 사업장 없음, 꾸러미·카드 견본 칸 없음, 처리자 표는 앱 내장 판', () => {
     assert.match(src, /const store: DocStore = opts\.engine \? emptyDocStore\(\) : opts\.dev!\.sample\.store\(\);/);
