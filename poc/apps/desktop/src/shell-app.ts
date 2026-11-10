@@ -758,35 +758,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
   const modelOk = () => !onb || onb.modelAllowed();
 
-  const handlers: ShellHandlers = {
-    'shell.bootstrap': async () => ({
-      board: await bootBoard(),
-      layout: SHELL,
-      profiles: profiles(),
-      profile,
-      counterparties: cps,
-      docs: await listDocs(),
-      // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
-      timeline: sample ? sample.timeline() : [],
-      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
-      sample: !!sample,
-      platform: process.platform,
-      interp: demo ? 'model' : 'offline',
-      // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
-      build: opts.buildBadges ?? [],
-      history: seed?.history ?? null,
-      onboarding: await onbView(),
-      // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
-      cpBook: fixture ? 'demo' : 'local',
-    }),
-    'profile.set': (p) => {
-      if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
-      profile = p.kind;
-      return { profile };
-    },
-    // 시연 모델이 있으면 먼저 묻고(4초 상한), 아니면 엔진 intent.resolve(M4-3 ③, 4초 상한). 둘 다 없거나 실패하면 정규식.
-    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다. via는 화면 구석 표시용(모델 해석/오프라인 해석).
-    'request.send': async (p) => {
+  /** 대화 요청 하나(request.send의 본문). */
+  const requestSend = async (p: Parameters<ShellHandlers['request.send']>[0]) => {
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
       const text = String(p.text ?? '').slice(0, 2000);
@@ -815,7 +788,48 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         return { kind: 'say', text: to.say, via, note: null, sent };
       }
       return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note, sent);
+    };
+  /**
+   * 로그인하면 모델 해석이 붙는데 지금 로그아웃 상태인가(계정이 있는 빌드에서). 모델 동의를 거절했으면(②) 게이트웨이를 쓰지 않으니 거짓.
+   * 렌더러는 이 값으로 대화에 한 번 [로그인]을 안내하고 제목줄 "오프라인 해석"을 로그인 버튼으로 바꾼다.
+   */
+  const loginNeeded = async (): Promise<boolean> => {
+    if (!modelOk()) return false;
+    await accountInit().catch(() => null);
+    const step = account.view().step;
+    return step === 'signed_out' || step === 'code_sent';
+  };
+  const handlers: ShellHandlers = {
+    'shell.bootstrap': async () => ({
+      board: await bootBoard(),
+      layout: SHELL,
+      profiles: profiles(),
+      profile,
+      counterparties: cps,
+      docs: await listDocs(),
+      // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
+      timeline: sample ? sample.timeline() : [],
+      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
+      sample: !!sample,
+      loginNeeded: await loginNeeded(),
+      platform: process.platform,
+      interp: demo ? 'model' : 'offline',
+      // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
+      build: opts.buildBadges ?? [],
+      history: seed?.history ?? null,
+      onboarding: await onbView(),
+      // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
+      cpBook: fixture ? 'demo' : 'local',
+    }),
+    'profile.set': (p) => {
+      if (p.kind !== 'business' && p.kind !== 'personal') throw new Error('bad_profile');
+      profile = p.kind;
+      return { profile };
     },
+    // 시연 모델이 있으면 먼저 묻고(4초 상한), 아니면 엔진 intent.resolve(M4-3 ③, 4초 상한). 둘 다 없거나 실패하면 정규식.
+    // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다. via는 화면 구석 표시용(모델 해석/오프라인 해석).
+    // 로그아웃 상태면 대화가 정규식(오프라인)으로만 돈다. 답에 login을 실어 렌더러가 한 번 로그인을 안내한다(모델 동의를 거절했으면 안내하지 않는다).
+    'request.send': async (p) => ({ ...((await requestSend(p)) as object), login: await loginNeeded() }),
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {
         vat: p.vat === 'separate' || p.vat === 'included' ? p.vat : undefined,

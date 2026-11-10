@@ -2,6 +2,7 @@
 // 계정 서비스는 메모리 가짜(코드 123456, AIK 서명 목록을 실제로 검증한다)를 localhost HTTP로 띄우고(fake-account-http.ts), 셸은 제품 클라이언트
 // (cloudPorts)와 제품 Egress 허용 목록으로 거기에 닿는다. 금고 키는 소프트 키다. 실제 계정 서비스 경로는 tests/shell-remote-account.test.ts.
 // 실행: electron apps/desktop/e2e-dist/shell-account-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
+// SAX_E2E_ACCOUNT=hint이면 로그아웃 상태 대화의 로그인 안내(한 번)와 제목줄 [로그인]을 본다.
 // SAX_E2E_ACCOUNT=signup이면 계정 만들기 → 비밀번호 만들기(인계 명세 §3), reset이면 비밀번호 찾기(§4)를 돈다(셸은 프로세스에 하나라 따로 띄운다).
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -345,10 +346,42 @@ async function reset() {
   front.close();
 }
 
+/** 로그아웃 상태: 대화가 오프라인 해석이면 한 번만 [로그인]을 안내하고, 제목줄 "오프라인 해석"을 누르면 로그인 창이 열린다. 로그인하면 거둔다. */
+async function hint() {
+  const acct = fakeAccount();
+  const keys = softKeys();
+  const front = await serveAccount(acct.client);
+  const egress = new Egress({ cloudDevLocal: true });
+  const cloud = cloudPorts({ egress, env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } });
+  S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, show: false, remote: { cloud, keys: async () => keys } });
+  await S.ready;
+  await until('renderer ready 4', async () => (await js('document.body.dataset.ready')) === '1');
+  check('기동: 제목줄은 "오프라인 해석 · 로그인" 버튼', await until('tb login', async () => js<boolean>(`!!document.querySelector('[data-act=interp-login]')`)));
+  const send = (text: string) => js(`(() => { const t = document.querySelector('#composer'); t.value = ${JSON.stringify(text)}; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+  const cp = await js<string>(`(async () => (await window.sax.call('counterparties.list', {}))[0]?.name ?? '')()`);
+  await send(`세금계산서 1000원 ${cp}에 끊자`);
+  check('로그아웃 상태 요청: 대화에 로그인 안내 한 번 + [로그인]', await until('hint', async () => js<boolean>(`document.querySelectorAll('[data-login-hint]').length === 1 && !!document.querySelector('[data-login-hint] [data-act=hint-login]') && document.querySelector('[data-login-hint]').textContent.includes('로그인하면 문장을 더 잘 알아들어요')`)));
+  await until('idle', async () => js<boolean>(`!document.querySelector('#composer').disabled`), 5_000);
+  await sleep(300);
+  await send('세금계산서');
+  await sleep(1_500);
+  check('두 번째 요청에는 다시 안내하지 않는다', (await js<number>(`document.querySelectorAll('[data-login-hint]').length`)) === 1);
+  await press('[data-act=interp-login]');
+  check('제목줄 [로그인] → 로그인 화면', await until('login from tb', async () => (await screen()) === 'email'));
+  await type('.acct-email', 'owner@gyeonbon-test.example');
+  await press('[data-act=account-next]');
+  await until('pw hint', async () => (await screen()) === 'password');
+  await type('.acct-password', PASSWORD);
+  await press('[data-act=account-password]');
+  check('로그인하면 제목줄 [로그인]을 거두고 "오프라인 해석" 글자로', await until('tb after login', async () => (await loginStep()) === null && js<boolean>(`!document.querySelector('[data-act=interp-login]') && !!document.querySelector('span.tb-interp')`)));
+  front.close();
+}
+
 app.whenReady().then(async () => {
   try {
     if (process.env.SAX_E2E_ACCOUNT === 'signup') await signup();
     else if (process.env.SAX_E2E_ACCOUNT === 'reset') await reset();
+    else if (process.env.SAX_E2E_ACCOUNT === 'hint') await hint();
     else await main();
   } catch (e) {
     check('e2e 예외 없음', false, (e as Error).stack);

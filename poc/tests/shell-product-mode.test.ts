@@ -41,4 +41,12 @@ describe('제품 모드: 견본 데이터 없음', () => {
     assert.match(src, /setTimeout\(r, 10_000\)/);
     assert.match(src, /clearInterval\(registryTimer\);/);
   });
+  it('로그아웃 상태 대화: request.send 답에 login(모델 동의 거절이면 거짓), 렌더러는 한 번만 안내하고 제목줄을 로그인 버튼으로', () => {
+    assert.match(src, /'request\.send': async \(p\) => \(\{ \.\.\.\(\(await requestSend\(p\)\) as object\), login: await loginNeeded\(\) \}\),/);
+    assert.match(src, /const loginNeeded = async \(\): Promise<boolean> => \{\s*if \(!modelOk\(\)\) return false;/);
+    assert.match(src, /return step === 'signed_out' \|\| step === 'code_sent';/);
+    assert.match(src, /loginNeeded: await loginNeeded\(\),/);
+    assert.match(js, /if \(r\.login && !state\.loginHinted\) \{\s*state\.loginHinted = true;/);
+    assert.match(js, /needsLogin\(\)\s*\? h\('button', \{ type: 'button', class: 'tb-interp is-login'/);
+  });
 });

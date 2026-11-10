@@ -42,6 +42,8 @@ const state = {
   setTab: 'auth', // 설정 화면에서 고른 항목: 'auth'(발급 인증) | 'devices'(기기 연결)
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
+  loginNeeded: false, // 로그아웃이라 대화가 오프라인 해석으로만 돈다(main이 정한다. 모델 동의를 거절했으면 거짓)
+  loginHinted: false, // 대화에 로그인 안내를 이번 실행에서 이미 보였다(매 요청마다 반복하지 않는다)
 };
 
 // ---- 공용 동작 ----
@@ -230,12 +232,18 @@ function renderTitlebar() {
     h(
       'div',
       { class: 'tb-status' },
-      h('span', { class: 'tb-interp', 'data-interp': state.interp }, state.interp === 'model' ? '모델 해석' : '오프라인 해석'),
+      // 로그아웃이라 오프라인이면 누르면 로그인 창이 열린다(로그인하면 모델 해석이 붙는다)
+      needsLogin()
+        ? h('button', { type: 'button', class: 'tb-interp is-login', 'data-interp': 'offline', 'data-act': 'interp-login', title: '로그인하면 문장을 더 잘 알아들어요', onclick: openLogin }, '오프라인 해석 · 로그인')
+        : h('span', { class: 'tb-interp', 'data-interp': state.interp }, state.interp === 'model' ? '모델 해석' : '오프라인 해석'),
       h('span', {}, icon('lock'), '금고 열림'),
       h('span', {}, icon('phone'), '폰 연결 안 됨'),
     ),
   );
 }
+
+/** 로그아웃이라 모델 해석을 못 쓰는 중(로그인을 마치면 바로 거짓). */
+const needsLogin = () => state.loginNeeded && state.account?.step !== 'signed_in';
 
 /** macOS는 ⌘, 그 밖은 Ctrl(검색 단축키 표시·처리가 같은 판정을 쓴다). */
 const isMac = () => state.boot?.platform === 'darwin';
@@ -499,9 +507,15 @@ async function send() {
     waitEl.remove();
     state.sending = false;
   }
-  if (r.via && r.via !== state.interp) {
+  if ((r.via && r.via !== state.interp) || !!r.login !== state.loginNeeded) {
     state.interp = r.via === 'model' ? 'model' : 'offline';
+    state.loginNeeded = !!r.login;
     renderTitlebar();
+  }
+  // 로그아웃이라 오프라인으로 해석했다: 이번 실행에서 한 번만 [로그인]을 안내한다(모델 동의를 거절했으면 main이 login을 보내지 않는다).
+  if (r.login && !state.loginHinted) {
+    state.loginHinted = true;
+    appendThread(h('div', { class: 'sx-app', 'data-login-hint': '' }, h('p', {}, '로그인하면 문장을 더 잘 알아들어요. 지금은 앱 안 규칙으로만 읽고 있어요.'), h('div', { class: 'sx-actions' }, btn('로그인', openLogin, 'sx-btn-primary', { 'data-act': 'hint-login' }))));
   }
   // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
   if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
@@ -1138,6 +1152,7 @@ async function accountStep(method, params) {
     toast(later ? accountErrText('account.password_later') : method === 'account.setPassword' ? '비밀번호를 만들었어요. 다음부터 비밀번호로 로그인해요' : '로그인했어요. 이 PC가 계정에 등록됐어요');
   }
   render();
+  renderTitlebar(); // 로그인을 마쳤으면 제목줄 [로그인] 표시를 거둔다
 }
 
 /** 화면 이동(렌더러 안). 앞 화면의 오류 문구는 지운다. */
@@ -1592,6 +1607,7 @@ function addDoc(doc) {
 window.sax.onEvent((ev) => {
   if (ev.type === 'account') {
     state.account = ev.account;
+    renderTitlebar(); // 로그인하면 제목줄 [로그인] 표시를 거둔다
     if (state.view === 'settings') render();
     return;
   }
@@ -1699,6 +1715,7 @@ async function boot() {
   state.today = new Date();
   state.profile = state.boot.profile;
   state.interp = state.boot.interp === 'model' ? 'model' : 'offline';
+  state.loginNeeded = state.boot.loginNeeded === true;
   state.docs = [...state.boot.docs];
   state.cps = state.boot.counterparties;
   state.board = state.boot.board ?? null;
