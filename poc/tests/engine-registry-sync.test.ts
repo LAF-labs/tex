@@ -67,13 +67,13 @@ const freshDb = () => {
   return d;
 };
 
-function setup(files = baseFiles(), o: { now?: () => number; store?: ReturnType<typeof memoryRegistryStore>; sinks?: DataSink[]; deviceId?: string } = {}) {
+function setup(files = baseFiles(), o: { now?: () => number; store?: ReturnType<typeof memoryRegistryStore>; sinks?: DataSink[]; deviceId?: string; appVersion?: string } = {}) {
   const reg = fakeRegistry(files);
   const db = freshDb();
   const store = o.store ?? memoryRegistryStore();
   const log = new FileEventLog(null, 'engine');
   let now = SAMPLE_NOW;
-  const sync = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store, sinks: o.sinks ?? [rateTableSink(db)], log, now: o.now ?? (() => now), deviceId: o.deviceId ? () => o.deviceId! : undefined });
+  const sync = new RegistrySync({ trust: TRUST, fetch: reg.fetch, store, sinks: o.sinks ?? [rateTableSink(db)], log, now: o.now ?? (() => now), deviceId: o.deviceId ? () => o.deviceId! : undefined, ...(o.appVersion ? { appVersion: o.appVersion } : {}) });
   return { sync, reg, db, store, log, setNow: (t: number) => (now = t), rates: new RateTableRepo(db) };
 }
 
@@ -263,6 +263,20 @@ describe('레지스트리 동기화: 실패는 그 문서만 버리고 마지막
     assert.equal(r.index, 'accepted');
     assert.equal(r.data['payroll.rate-tables'], 'unchanged');
     assert.ok(!s3.reg.calls.some((c) => c.path.startsWith('/packages/')));
+  });
+
+  it('데이터 패키지 minAppVersion: 앱 판이 낮거나 모르면 받지 않는다(registry.app_version_low, 표는 그대로), 맞으면 받는다', async () => {
+    const files = () => ({ ...baseFiles(), [REGISTRY_PATHS.index]: reindex((ix) => ({ ...ix, entries: ix.entries.map((e) => (e.kind === 'data' ? { ...e, minAppVersion: '1.3.0' } : e)) })) });
+    for (const appVersion of [undefined, '1.2.9']) {
+      const s = setup(files(), appVersion ? { appVersion } : {});
+      const r = await s.sync.sync();
+      assert.equal(r.data['payroll.rate-tables'], 'registry.app_version_low', String(appVersion));
+      assert.equal(s.rates.installedPackage('payroll.rate-tables'), null);
+      assert.ok(!s.reg.calls.some((c) => c.path === DATA_PATH), '.sxp를 받지도 않는다');
+      assert.match(s.log.lines.join('\n'), /"registry\.app_version_low"/);
+    }
+    const ok = setup(files(), { appVersion: '1.3.0' });
+    assert.equal((await ok.sync.sync()).data['payroll.rate-tables'], 'accepted');
   });
 
   it('롤아웃: 기기 id가 없으면 100%만, 있으면 서버와 같은 버킷 규칙', async () => {

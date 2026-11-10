@@ -31,6 +31,7 @@ import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
 import { PC_FILE_COMMANDS } from './protocol.ts';
+import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, IntentResolver } from './intent.ts';
@@ -74,6 +75,11 @@ const PHONE = new Set<string>(PHONE_COMMANDS);
 for (const m of PHONE) ALLOWED.add(m);
 const PC_FILE = new Set<string>(PC_FILE_COMMANDS);
 for (const m of PC_FILE) ALLOWED.add(m);
+// 정산내역 넣기(M6-5)도 PcFileIntake가 맡는다(보관함 파일 + 문서 + 그달 표시를 한 번에).
+for (const m of SETTLEMENT_COMMANDS) {
+  PC_FILE.add(m);
+  ALLOWED.add(m);
+}
 // daemon.snapshot도 BundleService가 맡는다(컬럼 키로 직원 이름을 읽는 missingReport가 들어 있다). 정책·status는 엔진이 들고 있게 되면 BundleService 옵션 daemon으로 넘긴다.
 for (const m of DAEMON_READ_QUERIES) {
   PAYROLL.add(m);
@@ -129,7 +135,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   payroll = new BundleService(db, cipher, { exportDir: path.join(paths.root, 'exports') });
   // 레지스트리 GET은 Egress 레지스트리 바이트 GET(origin tax.laf-co.com 고정·허용 경로, ADR-028)으로만 나간다. main이 registry.sync를 부를 때만 받는다.
   // H-01 패키지(PR-D2)는 받아 두기만 하고, 실행기는 아직 'h01'이다(게시와 시연 방식 정합 뒤 irSource로 바꾼다).
-  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log });
+  if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: [PRODUCT_PACKAGES.h01] }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });

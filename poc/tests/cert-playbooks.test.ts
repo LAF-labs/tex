@@ -15,45 +15,8 @@ import { bundleOutcomes, loadPkg, signPackage, testKeys } from './core-fixtures.
 const ROOT = path.resolve(import.meta.dirname, '..');
 const DIR = path.join(ROOT, 'packages/engine/playbooks');
 const bundles = bundleOutcomes();
-/**
- * 발급 확인 조회 hometax.cert.issued_list는 H-04(금고 세션, LAF-labs/tex#247)가 만든다. 저장소에 있으면 그것을, 아직 없으면 같은 모양의 대역을 쓴다
- * (#247 머지 뒤에는 저장소 것만 쓰인다). 대역은 #247 원본의 조회 흐름(민원신청 처리결과 조회, 조회·이동 클릭만)과 같다.
- */
-function issuedList(): PackageFiles {
-  if (fs.existsSync(path.join(DIR, LOOKUP_ID, 'manifest.json'))) return loadPkg(LOOKUP_ID);
-  const e = (role: string, name: string, landmark: string, extra: Record<string, unknown> = {}) => ({ candidates: [{ kind: 'role', role, name }], role, namePattern: `^${name}$`, frame: 'main', landmark, commits: false, lastVerified: '2026-11-09', ...extra });
-  const Z = '0'.repeat(64);
-  return {
-    manifest: { id: LOOKUP_ID, version: '1.0.0', kind: 'lookup', portal: 'hometax', title: 'certlookup.title', profileKinds: ['business'], engineRange: '>=1.0.0 <2.0.0', domains: ['hometax.go.kr', '*.hometax.go.kr'], effects: [], bundlesUsed: [], lookupsUsed: [], contentDigests: { playbook: Z, selectors: Z, strings: Z }, createdAt: '2026-11-09T00:00:00+09:00', signatures: [{ keyId: 'pkg-1', alg: 'ed25519', sig: 'A'.repeat(86) }, { keyId: 'pkg-2', alg: 'ed25519', sig: 'B'.repeat(86) }] },
-    playbook: {
-      ir: 2, id: LOOKUP_ID, version: '1.0.0', portal: 'hometax', profileKinds: ['business'], effects: [], inputs: { key: { type: 'string', required: true } },
-      steps: [
-        { id: 's0', type: 'goto', url: 'https://hometax.go.kr/cert/requests' },
-        { id: 's1', type: 'wait', for: 'selector', value: 'hometax.certlookup.root' },
-        { id: 's2', type: 'fill', target: 'hometax.certlookup.searchKey', value: '$inputs.key' },
-        { id: 's3', type: 'select', target: 'hometax.certlookup.period', option: '1일' },
-        { id: 's4', type: 'click', target: 'hometax.certlookup.searchButton' },
-        { id: 's5', type: 'extract', name: 'rows', from: { a11y: { target: 'hometax.certlookup.rows' } } },
-        { id: 's6', type: 'end', status: 'success' },
-      ],
-      postconditions: [],
-    },
-    selectors: {
-      portal: 'hometax',
-      entries: {
-        'hometax.page.root': e('main', '홈택스', 'hometax.page.root'),
-        'hometax.certlookup.root': e('form', '민원신청 처리결과 조회', 'hometax.page.root'),
-        'hometax.certlookup.period': e('combobox', '조회기간', 'hometax.certlookup.root', { inputType: 'select', allowedConstants: ['1일', '1주일'] }),
-        'hometax.certlookup.searchKey': e('searchbox', '민원명', 'hometax.certlookup.root', { inputType: 'text' }),
-        'hometax.certlookup.searchButton': e('button', '조회하기', 'hometax.certlookup.root', { navigationOnly: true }),
-        'hometax.certlookup.rows': e('table', '처리결과', 'hometax.certlookup.root'),
-      },
-      commitEndpoints: [],
-      knownEndpoints: [{ method: 'POST', pathPattern: '^/wqAction\\.do$' }],
-    },
-    strings: { 'certlookup.title': '민원신청 처리결과 조회' },
-  } as unknown as PackageFiles;
-}
+/** 발급 확인 조회: H-04(LAF-labs/tex#247)가 만든 공유 IR 조회 패키지(저장소 원본) */
+const issuedList = (): PackageFiles => loadPkg(LOOKUP_ID);
 const lookupMap = () => new Map([[LOOKUP_ID, issuedList()]]);
 const stepsOf = (p: PackageFiles) => p.playbook.steps as (Step & Record<string, unknown>)[];
 
@@ -123,7 +86,7 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       const p = certPackage(d);
       assert.deepEqual(p.manifest.lookupsUsed.map((x) => x.id), [LOOKUP_ID]);
       const v = stepsOf(p).find((x) => x.id === 's30') as { lookup: { playbook: string; match: Record<string, string>; bind: Record<string, string> } };
-      assert.deepEqual([v.lookup.playbook, v.lookup.match, v.lookup.bind], [LOOKUP_ID, { purpose: '$readback.certPurpose', submitTo: '$readback.certSubmitTo' }, { approvalNo: 'issueNo' }]);
+      assert.deepEqual([v.lookup.playbook, v.lookup.match, v.lookup.bind], [LOOKUP_ID, { certDoc: '$readback.certDoc', certPurpose: '$readback.certPurpose', certSubmitTo: '$readback.certSubmitTo' }, { approvalNo: 'issueNo' }]);
     }
     assert.ok(![...certOutputs().keys()].some((k) => k.startsWith(`${LOOKUP_ID}/`)));
   });

@@ -222,7 +222,8 @@ function renderTitlebar() {
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), item('personal', `개인 · ${p.personal.name}`)) : null,
     ),
-    h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모'),
+    // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다.
+    state.boot?.sample === false ? null : h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모'),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
     h('button', { type: 'button', class: 'sx-search', onclick: () => toast('목업: 검색은 이 데모에 없어요') }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, 'Ctrl K')),

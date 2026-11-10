@@ -50,6 +50,9 @@ import type { DemoSeed, startDemoSeed } from './demo-seed.ts';
 
 const STATIC = path.join(import.meta.dirname, '../static');
 export const SHELL_SCHEME = 'sax-shell';
+/** 제품에서 사업장·개인 프로필을 아직 등록하지 않았을 때의 자리(견본 이름을 쓰지 않는다). */
+const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '', auth: '' };
+const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '' };
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 const PAIR_URL = `${SHELL_SCHEME}://shell/pair.html`;
 
@@ -234,6 +237,8 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
   const store = new MockStore();
+  // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다.
+  if (opts.engine) store.docs.length = 0;
   // 제품 진입점은 엔진 모드만 있다. fixture 모드는 개발 연결(dev)이 있을 때만 띄운다.
   if (!opts.engine && !opts.dev) throw new Error('shell.no_portal');
   const fixture = opts.engine ? null : await opts.dev!.startFixture({ headful: opts.headful });
@@ -254,7 +259,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const dev = fixture ? opts.dev! : null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
-  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log });
+  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion() });
   made.host = host;
   let business: Profile | null = null;
   let cps: Counterparty[] = [];
@@ -270,7 +275,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
   };
   let seed: DemoSeed | null = null;
-  const profiles = () => ({ business: business ?? PROFILES.business, personal: PROFILES.personal });
+  // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
+  const profiles = () =>
+    fixture ? { business: business ?? PROFILES.business, personal: PROFILES.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
@@ -362,8 +369,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       issued: issuedInvoices(),
       runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
-      bundle: mockBundle(today),
-      cardFetchedOn: MOCK_SETTINGS.cardFetchedOn,
+      // 세무사 꾸러미(D-05)·사업용 카드(D-04)는 아직 목업 어댑터다. 제품은 칸을 두지 않는다.
+      bundle: fixture ? mockBundle(today) : null,
+      cardFetchedOn: fixture ? MOCK_SETTINGS.cardFetchedOn : null,
+      cardEnabled: !!fixture,
       setup: onboardingTodos(onb?.state ?? null),
     });
   };
@@ -569,7 +578,36 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     n.show();
   };
   let updater: UpdateHost | null = null;
+  // 레지스트리 동기화(D09 §8.1 인덱스 15분, D03 §7.1 정책 재조회): 제품만. 엔진이 운영 레지스트리(tax.laf-co.com, Egress 고정 origin·핀 키)에서
+  // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
+  // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
+  const REGISTRY_EVERY_MS = 15 * 60_000;
+  let registryAt = 0;
+  let registryInflight: Promise<void> | null = null;
+  const registrySync = (why: string): Promise<void> => {
+    if (fixture) return Promise.resolve();
+    return (registryInflight ??= host
+      .rpc('registry.sync', {})
+      .then(
+        (r) => {
+          registryAt = Date.now();
+          const x = (r ?? {}) as { index?: unknown; policy?: unknown; packages?: Record<string, unknown> };
+          log.event('main.registry_sync', { why, index: String(x.index ?? ''), policy: String(x.policy ?? ''), h01: String(x.packages?.['hometax.invoice.issue'] ?? '') });
+        },
+        (e: unknown) => log.event('main.registry_sync', { why, result: String((e as Error)?.message ?? 'failed').slice(0, 60) }),
+      )
+      .finally(() => (registryInflight = null)));
+  };
+  const registryFresh = async (): Promise<void> => {
+    if (fixture || Date.now() - registryAt < REGISTRY_EVERY_MS) return;
+    let t: NodeJS.Timeout | undefined;
+    await Promise.race([registrySync('run'), new Promise<void>((r) => (t = setTimeout(r, 10_000)))]);
+    clearTimeout(t);
+  };
+  const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
+  registryTimer.unref();
   const onResume = () => {
+    void registrySync('resume');
     daemon?.requestReload();
     void updater?.check();
   };
@@ -597,8 +635,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     : {
         // O-02 등록증(M4-3): 사용자가 고른 PDF·그림 → docparse 샌드박스 → 엔진 bizcert.parse(텍스트만) → 확인 화면 후보
         recognizeBizCert: () => readBizCert(bizCertPorts),
-        checkBizNo: (bizNo) => onbMock.checkBizNo(bizNo),
-        registerSecrets: (binds) => onbMock.registerSecrets(binds),
+        // 진위확인은 클라우드 프록시(M4-6)가 아직 없다. 견본 결과(계속사업자) 대신 "조회하지 못함"으로 둔다(온보딩은 그대로 이어 간다).
+        checkBizNo: async () => ({ status: 'unknown', label: '조회하지 못했어요', taxType: null, source: '국세청 조회' }),
+        // 금고 등록 창(T-06)이 main에 아직 없다. 견본 등록 대신 "지금은 등록할 수 없음"으로 끝내 다른 인증으로 바꾸게 한다.
+        registerSecrets: async () => ({ ok: false, reason: 'unavailable' }),
         consentConfig: () => onbMock.consentConfig(),
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
       };
@@ -706,8 +746,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       profile,
       counterparties: cps,
       docs: await listDocs(),
-      timeline: seedTimeline(),
-      quick: QUICK,
+      // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
+      timeline: fixture ? seedTimeline() : [],
+      quick: fixture ? QUICK : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
+      sample: !!fixture,
       platform: process.platform,
       interp: demo ? 'model' : 'offline',
       // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
@@ -761,12 +803,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         amountText: typeof p.amountText === 'string' ? p.amountText.slice(0, 100) : undefined,
       }),
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
-    'run.prepare': (p) => {
+    'run.prepare': async (p) => {
       needGesture(2_000);
       if (runs.prepareThrottled() || !prepareRate.take(performance.now())) {
         log.event('main.prepare_throttled');
         throw new Error('throttled');
       }
+      // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
+      await registryFresh();
       return runs.prepare(String(p.id));
     },
     'run.stop': (p) => runs.stop(String(p.id)),
@@ -847,7 +891,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await refresh();
       return cps;
     },
-    'g24.candidates': (p) => g24Candidates(g24Doc(p.doc), Number(p.startedAt)),
+    // 정부24 후보 파일은 아직 견본이다(다운로드 폴더를 읽지 않는다). 제품은 후보를 보이지 않는다.
+    'g24.candidates': (p) => (fixture ? g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),
     'g24.save': (p) => store.g24Save(String(p.id), g24Doc(p.doc)),
     // 비밀이 아닌 값(승인번호·사업자번호·주소)만. 클립보드 기록 제외 형식은 Phase 1(D17 §1.2).
     // 온보딩 답 하나. 동의·확정은 화면마다 실제 클릭이라 3초 안의 실제 입력이 있어야 한다(ADR-027 결정 8).
@@ -956,6 +1001,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     }
     if (fixture) await fixture.seed(host);
+    // 제품: 기동 때 한 번(기다리지 않는다)
+    void registrySync('boot');
     if (fixture && dev && opts.demoSeed) seed = await dev.startDemoSeed(host, store, fixture.root, fixture.itemHints);
     await refresh();
     // 온보딩: 시연·e2e는 opts.onboarding. 엔진 모드는 이어 하기 저장이 있으면 그 자리부터(끝났으면 대화 없이 동의·할 일만),
@@ -1000,6 +1047,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   })();
   const close = async () => {
     clearInterval(boardDayTimer);
+    clearInterval(registryTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     updater?.stop();

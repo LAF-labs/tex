@@ -3,7 +3,7 @@
 #   로그 표지는 로그 줄의 at(UTC)과 프로세스 StartTime의 차이라 폴링 간격과 무관하다. 창·버튼은 폴링(250 ms) 시각이다.
 # 메모리: 실행 파일 이름이 같은 프로세스 전체(Electron 메인·렌더러·GPU·utilityProcess 금고·엔진)의 작업 집합·전용 바이트 합을 250 ms마다 잰 최대값.
 # 첫 화면이 뜨면 SettleSec 동안 더 잰 뒤 s6e-capture.ps1로 앱 창만 찍고(-ShotPrefix), 창을 닫는다.
-# 실행: powershell -NoProfile -File tests/win-realdevice-launch.ps1 -Exe "$env:LOCALAPPDATA\Programs\sovereign-ax\SovereignAX.exe" -OutJson out.json [-ShotPrefix shots/first]
+# 실행: powershell -NoProfile -File tests/win-realdevice-launch.ps1 -Exe "$env:LOCALAPPDATA\Programs\SovereignAX\SovereignAX.exe" -OutJson out.json [-ShotPrefix shots/first]
 param(
   [Parameter(Mandatory = $true)][string]$Exe,
   [Parameter(Mandatory = $true)][string]$OutJson,

@@ -1,0 +1,74 @@
+{
+  "source": "apps/desktop/e2e-dist/shell-e2e.js (electron 45.1.0, win32)",
+  "total": 85,
+  "ok": 83,
+  "card": [
+    {
+      "ok": true,
+      "name": "카드는 뜰 때부터 무장됨이다(무장 지연 없음, 첫 페이지가 무장됨)"
+    },
+    {
+      "ok": true,
+      "name": "키(카드의 Tab·Alt+Y·글자·화살표, 입력창 Enter)로는 승인되지 않는다"
+    },
+    {
+      "ok": true,
+      "name": "카드 안 [승인하고 발급] 밖(값 줄·비가역 줄·버튼 사이 간격) 클릭은 승인도 중지도 아니다"
+    },
+    {
+      "ok": true,
+      "name": "카드 포커스에서 Enter = [중지](승인 아님): 실행 중지, 발급 POST·원장 행 없음, 포커스는 대화 화면으로"
+    },
+    {
+      "ok": true,
+      "name": "카드가 뜬 직후 클릭도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)"
+    }
+  ],
+  "fails": [
+    {
+      "name": "렌더러가 바 자리를 비운다(바 = 비운 자리 위쪽, 입력창 예약 영역과 12 DIP 간격)",
+      "detail": {
+        "slot": {
+          "top": 345.375,
+          "bottom": 657.375,
+          "colLeft": 200,
+          "colWidth": 600,
+          "composerTop": 657.375
+        },
+        "bar": {
+          "x": 200,
+          "y": 267,
+          "width": 600,
+          "height": 300
+        }
+      }
+    },
+    {
+      "name": "바가 떠도 입력창은 제자리에 있다",
+      "detail": {
+        "inputBefore": 673,
+        "inputAfter": 751.375
+      }
+    }
+  ],
+  "layout": {
+    "content": [
+      1280,
+      689
+    ],
+    "bar": {
+      "x": 200,
+      "y": 267,
+      "width": 600,
+      "height": 300
+    },
+    "slot": {
+      "top": 345.375,
+      "bottom": 657.375,
+      "colLeft": 200,
+      "colWidth": 600,
+      "composerTop": 657.375
+    },
+    "composerGapAt1Line": 138.375
+  }
+}

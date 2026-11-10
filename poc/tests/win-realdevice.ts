@@ -1,5 +1,6 @@
 // Windows 실기기 점검(수동 실행, Phase 1 WIN-REALDEVICE). 결과는 reports/WIN-REALDEVICE.md에 옮긴다.
-// 실행: node --conditions=development tests/win-realdevice.ts <npki|keychain|chrome|all>
+// 실행: node --conditions=development tests/win-realdevice.ts <npki|keychain|chrome|acl|kill|all>
+//   acl: 금고(Vault, 실제 Windows 폴더 확인)로 전용 Chrome 기동 시간(ADR-041). kill: 다운로드 중 Chrome 강제 종료 뒤 잔존물·staging(#178·#209).
 //   SAX_MEASURE_DIR=reports/raw/win-realdevice 로 두면 JSON을 그 폴더에 쓴다(기본은 measure-out 규칙).
 // 지키는 것:
 //   - NPKI: 목록만 읽는다(scanNpki와 같은 경로). signPri.key는 열지 않는다. 소유자 이름·일련번호·경로는 출력하지 않는다(가린 값만).
@@ -22,13 +23,17 @@ import {
   findInstalledChrome,
   keychainBackend,
   launchChrome,
+  nodeNpkiFs,
   npkiRoots,
   removeCrashDumps,
   removeProfileResidue,
   scanNpki,
   writeProfileSettings,
+  type NpkiFs,
 } from '@sax/vault';
+import { startHarness, type Harness } from './harness.ts';
 import { writeMeasure } from './measure-out.ts';
+import { RawEngine } from './raw-engine.ts';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const ms = (t0: bigint) => Number((process.hrtime.bigint() - t0) / 1_000_000n);
@@ -51,8 +56,21 @@ function removableDrives(): string[] | null {
 
 async function npki(): Promise<Record<string, unknown>> {
   const roots = npkiRoots();
+  // 파일 접근 감사: signPri.key 열기·stat 0회, 연 파일은 signCert.der뿐인지(경로는 남기지 않고 개수만).
+  const access = { open: 0, openNotCert: 0, keyTouched: 0 };
+  const isKey = (p: string) => /signpri\.key$/i.test(p);
+  const auditFs: NpkiFs = {
+    lstat: (p) => ((access.keyTouched += isKey(p) ? 1 : 0), nodeNpkiFs.lstat(p)),
+    readdir: (p) => nodeNpkiFs.readdir(p),
+    open: (p, f) => {
+      access.open++;
+      if (isKey(p)) access.keyTouched++;
+      if (!/signcert\.der$/i.test(p)) access.openNotCert++;
+      return nodeNpkiFs.open(p, f);
+    },
+  };
   const t0 = process.hrtime.bigint();
-  const res = await scanNpki();
+  const res = await scanNpki({ fs: auditFs });
   const scanMs = ms(t0);
   const now = Date.now();
   const certs = res.certs.map((c) => {
@@ -88,6 +106,7 @@ async function npki(): Promise<Record<string, unknown>> {
     scanMs,
     count: res.certs.length,
     skipped: res.skipped,
+    access,
     certs,
     removableDrives: drives === null ? 'query_timeout' : drives.length,
     usb,
@@ -311,6 +330,195 @@ async function chrome(): Promise<Record<string, unknown>> {
   return { exeKind, cycles, summary: { runs: cycles.length, failures: fails.length, errors: fails.map((c) => c.removeError ?? c.error ?? 'residue_left') } };
 }
 
+// ───────────────────────── 4) 금고 폴더 확인 속도(ADR-041) ─────────────────────────
+
+const shutdownChrome = (h: Harness) => h.client.rpc('browser.shutdown').catch((e: unknown) => errCode(e));
+
+/** 실제 Windows 폴더 확인(dirGuard 기본값)으로 금고가 전용 Chrome을 띄우는 시간. 앱처럼 warmDirChecks 뒤 같은 금고에서 10회. */
+async function acl(): Promise<Record<string, unknown>> {
+  // 비교: 금고 readOwner와 같은 PowerShell Get-Acl 한 번(11-06: 3.4~15초)
+  const getAclMs: Array<number | null> = [];
+  for (let i = 0; i < 3; i++) {
+    const t0 = process.hrtime.bigint();
+    const out = ps('(Get-Acl -LiteralPath $env:TEMP).GetOwner([System.Security.Principal.SecurityIdentifier]).Value', 90_000);
+    getAclMs.push(out === null ? null : ms(t0));
+  }
+  // 차가운 기동: 새 금고(새 앱 루트)에서 미리 확인 없이 바로 기동
+  const cold = await startHarness();
+  const coldRow: Record<string, unknown> = {};
+  try {
+    const t0 = process.hrtime.bigint();
+    try {
+      await cold.client.rpc('browser.launch');
+      coldRow.ok = true;
+    } catch (e) {
+      coldRow.ok = false;
+      coldRow.error = errCode(e);
+    }
+    coldRow.launchMs = ms(t0);
+    await shutdownChrome(cold);
+  } finally {
+    await cold.close().catch(() => {});
+  }
+  // 앱과 같은 순서: 금고 시작 때 warmDirChecks → 기동·내리기 10회
+  const h = await startHarness();
+  const runs: Record<string, unknown>[] = [];
+  let warm: Record<string, unknown> | undefined;
+  try {
+    const t0 = process.hrtime.bigint();
+    await h.vault.warmDirChecks();
+    const ev = h.log.lines.map((l) => JSON.parse(l) as Record<string, unknown>).find((e) => e.code === 'vault.dir_check_warm');
+    warm = { ms: ms(t0), ok: ev?.ok ?? null };
+    for (let i = 0; i < 10; i++) {
+      const from = h.log.lines.length;
+      const row: Record<string, unknown> = { i };
+      const t1 = process.hrtime.bigint();
+      try {
+        await h.client.rpc('browser.launch');
+        row.ok = true;
+      } catch (e) {
+        row.ok = false;
+        row.error = errCode(e);
+      }
+      row.launchMs = ms(t1);
+      const t2 = process.hrtime.bigint();
+      const sd = await shutdownChrome(h);
+      row.shutdownMs = ms(t2);
+      if (typeof sd === 'string') row.shutdownError = sd;
+      const codes = h.log.lines.slice(from).map((l) => String((JSON.parse(l) as Record<string, unknown>).code));
+      const problems = codes.filter((c) => /dir_problem|not_private|timed_out|busy/.test(c));
+      if (problems.length) row.events = problems;
+      runs.push(row);
+    }
+  } finally {
+    await h.close().catch(() => {});
+  }
+  const okMs = runs.filter((r) => r.ok).map((r) => r.launchMs as number);
+  return { getAclMs, cold: coldRow, warm, runs, summary: { ok: okMs.length, fail: runs.length - okMs.length, minMs: Math.min(...okMs), maxMs: Math.max(...okMs) } };
+}
+
+// ───────────────────────── 5) 다운로드 중 강제 종료 → 잔존물·staging(#178·#209) ─────────────────────────
+
+/** staging 파일을 종류별 개수로만(이름 없음). */
+async function stagingKinds(dir: string): Promise<Record<string, number>> {
+  const out = { pdf: 0, crdownload: 0, guid: 0, other: 0 };
+  for (const n of await fs.readdir(dir).catch(() => [] as string[])) {
+    if (/^[0-9a-f]{32}\.pdf$/.test(n)) out.pdf++;
+    else if (/\.crdownload$/i.test(n)) out.crdownload++;
+    else if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(n)) out.guid++;
+    else out.other++;
+  }
+  return out;
+}
+
+/** /doc의 #slow는 PDF 첨부를 16KB씩 100 ms마다 보낸다(4MB, 약 25초): 강제 종료 때 받는 중이다. */
+async function startSlowSite(): Promise<{ origin: string; close: () => Promise<void> }> {
+  const srv = http.createServer((req, res) => {
+    if (req.url === '/doc') {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      res.end('<!doctype html><title>doc</title><a id="slow" href="/slow.pdf">pdf</a>');
+      return;
+    }
+    if (req.url === '/slow.pdf') {
+      const total = 4 * 1024 * 1024;
+      res.writeHead(200, { 'content-type': 'application/pdf', 'content-length': String(total), 'content-disposition': 'attachment; filename="rd-slow.pdf"' });
+      let sent = 0;
+      const chunk = Buffer.alloc(16 * 1024, 0x20);
+      chunk.write('%PDF-1.4\n');
+      const t = setInterval(() => {
+        if (sent >= total) {
+          clearInterval(t);
+          res.end();
+          return;
+        }
+        res.write(chunk);
+        sent += chunk.length;
+      }, 100);
+      res.on('close', () => clearInterval(t));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+  return { origin: `http://127.0.0.1:${(srv.address() as { port: number }).port}`, close: () => new Promise((r) => srv.close(() => r())) };
+}
+
+const codeCounts = (lines: string[]) => {
+  const out: Record<string, number> = {};
+  for (const l of lines) {
+    const e = JSON.parse(l) as Record<string, unknown>;
+    const c = String(e.code);
+    if (!/chrome_closed|residue|dump|staging_swept|download_|pdf_saved/.test(c)) continue;
+    // count 필드가 있으면 그 값을 더한다(지운 개수·못 지운 개수)
+    out[c] = (out[c] ?? 0) + (typeof e.count === 'number' ? e.count : typeof e.removed === 'number' ? e.removed : 1);
+  }
+  return out;
+};
+
+async function kill(): Promise<Record<string, unknown>> {
+  const site = await startSlowSite();
+  const h = await startHarness();
+  const cycles: Record<string, unknown>[] = [];
+  const final: Record<string, unknown> = {};
+  try {
+    for (let i = 0; i < 10; i++) {
+      const from = h.log.lines.length;
+      const row: Record<string, unknown> = { i };
+      try {
+        await h.client.rpc('browser.launch');
+        row.stagingAtLaunch = await stagingKinds(h.paths.staging);
+        const eng = new RawEngine(h.client);
+        const { sessionId, targetId } = await eng.attachRunPage();
+        await eng.navigate(sessionId, `${site.origin}/doc`);
+        row.armed = ((await h.client.rpc('download.arm', { runId: 'r1', targetId })) as { armed?: boolean }).armed === true;
+        await eng.evaluate(sessionId, `document.getElementById('slow').click()`);
+        await sleep(2500);
+        row.stagingBeforeKill = await stagingKinds(h.paths.staging);
+        const pid = h.vault.chromePid;
+        if (pid) process.kill(pid, 'SIGKILL');
+        for (const until = Date.now() + 15_000; Date.now() < until && !h.log.lines.slice(from).some((l) => l.includes('vault.chrome_closed')); ) await sleep(100);
+        const t0 = process.hrtime.bigint();
+        const sd = await shutdownChrome(h);
+        row.shutdownMs = ms(t0);
+        if (typeof sd === 'string') row.shutdownError = sd;
+        row.residueLeft = residueLeft(h.paths.chromeProfile).length;
+        await sleep(3000);
+        row.stagingAfter = await stagingKinds(h.paths.staging);
+        row.chromeProcsLeft = chromeProcsFor(h.paths.chromeProfile);
+        row.events = codeCounts(h.log.lines.slice(from));
+      } catch (e) {
+        row.error = errCode(e);
+        await shutdownChrome(h);
+      }
+      cycles.push(row);
+    }
+    // 마지막: 다시 기동만 했을 때 staging이 정리되는지, 무장 없는 다운로드(정리 계기)가 오면 정리되는지
+    const from = h.log.lines.length;
+    await h.client.rpc('browser.launch');
+    await sleep(3000);
+    final.afterRelaunch = await stagingKinds(h.paths.staging);
+    const eng = new RawEngine(h.client);
+    const { sessionId } = await eng.attachRunPage();
+    await eng.navigate(sessionId, `${site.origin}/doc`);
+    await eng.evaluate(sessionId, `document.getElementById('slow').click()`);
+    await sleep(5000);
+    final.afterUnarmedDownload = await stagingKinds(h.paths.staging);
+    await shutdownChrome(h);
+    final.residueLeft = residueLeft(h.paths.chromeProfile).length;
+    final.events = codeCounts(h.log.lines.slice(from));
+  } finally {
+    await h.close().catch(() => {});
+    await site.close();
+  }
+  const busy = cycles.reduce((n, c) => n + Number((c.events as Record<string, number> | undefined)?.['vault.chrome_residue_busy'] ?? 0) + Number((c.events as Record<string, number> | undefined)?.['vault.chrome_dump_busy'] ?? 0), 0);
+  const leftover = cycles.filter((c) => {
+    const s = c.stagingAfter as Record<string, number> | undefined;
+    return s && s.crdownload + s.guid + s.other > 0;
+  }).length;
+  return { cycles, final, summary: { runs: cycles.length, errors: cycles.filter((c) => c.error).length, residueLeftCycles: cycles.filter((c) => Number(c.residueLeft) > 0).length, busyEvents: busy, stagingLeftoverCycles: leftover } };
+}
+
 // ───────────────────────── 실행 ─────────────────────────
 
 if (process.platform !== 'win32') {
@@ -319,7 +527,7 @@ if (process.platform !== 'win32') {
 }
 const what = process.argv[2] ?? 'all';
 const env = { node: process.version, os: `${os.version()} ${os.release()}`, cpus: os.cpus().length, cpu: os.cpus()[0]?.model, memGb: Math.round(os.totalmem() / 2 ** 30 * 10) / 10 };
-const jobs: Record<string, () => Promise<Record<string, unknown>>> = { npki, keychain, chrome };
+const jobs: Record<string, () => Promise<Record<string, unknown>>> = { npki, keychain, chrome, acl, kill };
 for (const [k, fn] of Object.entries(jobs)) {
   if (what !== 'all' && what !== k) continue;
   const t0 = process.hrtime.bigint();

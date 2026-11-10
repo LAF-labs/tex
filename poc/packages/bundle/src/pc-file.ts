@@ -1,4 +1,5 @@
-// PC 파일을 보관함에 넣는다(08 D-05, D14 M6-2·M6-4): 종이 증빙 사진·PDF(receipt.pcStore), 꾸러미 항목 파일 칸(bundle.attachFile).
+// PC 파일을 보관함에 넣는다(08 D-05, D14 M6-2·M6-4·M6-5): 종이 증빙 사진·PDF(receipt.pcStore), 꾸러미 항목 파일 칸(bundle.attachFile),
+// 배달앱·오픈마켓 정산내역(settlement.store, docparse 결과 요약을 함께 남김).
 // 사장님이 넣는 파일은 신뢰하지 않는 입력이라 여기서는 열지 않는다. 머리 바이트가 말한 형식과 맞는지와 크기만 본다(내용 읽기·OCR은 docparse 샌드박스 몫).
 // main이 샌드박스에서 받은 읽기 결과(ocr)는 후보로 기록만 한다. 사장님이 receipt.confirm으로 확인한 값만 대조·내보내기에 쓴다.
 // 보관함 파일 이름에는 PII를 넣지 않는다({종류}_{yyyyMMdd}_{shortId}.{ext}). 원래 파일 이름은 쓰지 않는다(displayName은 DB에만, 선택).
@@ -7,8 +8,9 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { BundleRepo, DocumentRepo, ProfileRepo, ReceiptRepo, ValidationError, type BundleEntry, type Db } from '@sax/db';
-import { BundleError, periodFor } from './items.ts';
+import { BundleRepo, DocumentRepo, ProfileRepo, ReceiptRepo, ValidationError, type BundleEntry, type BundleEntryStatus, type BundleItem, type Db } from '@sax/db';
+import { BundleError, monthRange, periodFor } from './items.ts';
+import { coversMonth, SettlementInputError, settlementSummary } from './settlement.ts';
 
 export class PcFileError extends Error {
   readonly code: string;
@@ -38,11 +40,23 @@ const MAGIC: Record<string, readonly number[]> = {
   docx: [0x50, 0x4b, 0x03, 0x04],
   xls: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1], // OLE(xls·hwp)
   hwp: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1],
+  // csv는 머리 바이트가 없다: 앞 4KiB에 NUL이 없는지만 본다(바이너리를 csv라 부르지 못하게)
+  csv: [],
 };
 /** 종이 증빙은 사진·PDF만 */
 export const RECEIPT_FORMATS = ['jpg', 'png', 'pdf'] as const;
 /** 꾸러미 파일 칸 */
 export const ATTACH_FORMATS = ['pdf', 'jpg', 'png', 'xlsx', 'xls', 'docx', 'hwp'] as const;
+/** 정산내역(docparse 입력 형식과 같다) */
+export const SETTLEMENT_FORMATS = ['xlsx', 'csv'] as const;
+
+/**
+ * 파일 칸 문서의 doc_type(D07 §2: 서버 색인을 끈 채 고정하는 종류). 정산 품목은 settlement_file, 급여대장 파일 칸은 payroll_ledger,
+ * 그 밖(3층 추가 항목 등)은 bundle_file.
+ */
+export function attachDocType(kind: string): 'settlement_file' | 'payroll_ledger' | 'bundle_file' {
+  return kind === 'settlement_delivery' || kind === 'settlement_market' ? 'settlement_file' : kind === 'payroll' ? 'payroll_ledger' : 'bundle_file';
+}
 
 const SHORT_ID = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const shortId = () => [...randomBytes(4)].map((b) => SHORT_ID[b & 31]).join('');
@@ -55,6 +69,7 @@ function fileOf(bytes: unknown, format: unknown, allowed: readonly string[]): { 
   if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > PC_FILE_MAX) return fail('input_size');
   const magic = MAGIC[format]!;
   if (bytes.length < magic.length || magic.some((b, i) => bytes[i] !== b)) return fail('format_mismatch');
+  if (format === 'csv' && bytes.subarray(0, 4096).includes(0)) return fail('format_mismatch');
   return { bytes, format };
 }
 
@@ -103,7 +118,7 @@ export class PcFileIntake {
       return await run;
     } catch (e) {
       if (e instanceof PcFileError) throw e;
-      if (e instanceof ValidationError || e instanceof BundleError) throw new PcFileError(e.code);
+      if (e instanceof ValidationError || e instanceof BundleError || e instanceof SettlementInputError) throw new PcFileError(e.code);
       throw e;
     }
   }
@@ -114,6 +129,8 @@ export class PcFileIntake {
         return this.storeReceipt(p);
       case 'bundle.attachFile':
         return this.attach(p);
+      case 'settlement.store':
+        return this.storeSettlement(p);
       default:
         return Promise.resolve(fail('unknown_method'));
     }
@@ -132,7 +149,9 @@ export class PcFileIntake {
    * 파일을 쓰고 한 트랜잭션에서 문서 행과 link(receipts·bundle_entries)를 넣는다. 같은 내용이 있으면 파일을 쓰지 않고 link만 한다.
    * 실패하면 롤백하고 새로 쓴 파일을 지운다.
    */
-  private async put<T>(profileId: string, docType: string, displayName: string, file: { bytes: Uint8Array; format: string }, link: (docId: string, duplicate: boolean) => T): Promise<T> {
+  private async put<T>(
+    profileId: string, docType: string, displayName: string, file: { bytes: Uint8Array; format: string }, link: (docId: string, duplicate: boolean) => T, extraMeta: Record<string, unknown> = {},
+  ): Promise<T> {
     const sha256 = createHash('sha256').update(file.bytes).digest('hex');
     const prev = this.sameDoc(profileId, docType, sha256);
     if (prev) return this.db.transaction(() => link(prev, true))();
@@ -142,7 +161,7 @@ export class PcFileIntake {
       return this.db.transaction(() => {
         const id = randomUUID();
         new DocumentRepo(this.db).insert(
-          { id, profileId, docType, displayName, issuedAt: null, expiresAt: null, issuer: null, path: dest, bytes: file.bytes.length, sha256, meta: { v: 1, source: 'pc_file', format: file.format }, runId: null },
+          { id, profileId, docType, displayName, issuedAt: null, expiresAt: null, issuer: null, path: dest, bytes: file.bytes.length, sha256, meta: { v: 1, source: 'pc_file', format: file.format, ...extraMeta }, runId: null },
           at.toISOString(),
         );
         this.opts.beforeLink?.();
@@ -175,21 +194,45 @@ export class PcFileIntake {
    * 앱이 기록에서 세는 항목(사업용 카드, 급여를 쓰는 업체의 급여대장)에는 붙이지 않는다(entry_derived).
    */
   private async attach(p: Params): Promise<{ docId: string; duplicate: boolean; period: string; entry: BundleEntry }> {
+    const { profileId, item, period } = this.slot(p);
+    const file = fileOf(p.bytes, p.format, ATTACH_FORMATS);
+    const displayName = displayNameOf(p.displayName) ?? item.name;
+    return this.put(profileId, attachDocType(item.kind), displayName, file, (docId, duplicate) => ({ docId, duplicate, period, entry: this.link(item, period, docId, 'ready') }));
+  }
+
+  /**
+   * settlement.store {profileId, itemId, month, bytes, format: xlsx|csv, parsed, displayName?} → {docId, duplicate, period, entry, summary}.
+   * parsed는 main이 docparse 샌드박스에서 받은 SettlementResult다. 요약(플랫폼·기간·합계)만 documents.meta.settlement에 남긴다.
+   * 정산 품목(배달앱·오픈마켓)에만, 채널이 품목과 같을 때만 받는다. 표시가 없었으면 기간이 그달을 다 덮을 때 ready, 아니면 partial.
+   * 같은 파일을 다시 넣으면 요약은 처음 것을 쓴다(같은 내용이라 같은 결과).
+   */
+  private async storeSettlement(p: Params) {
+    const { profileId, item, period } = this.slot(p);
+    if (item.kind !== 'settlement_delivery' && item.kind !== 'settlement_market') return fail('not_settlement_item');
+    const file = fileOf(p.bytes, p.format, SETTLEMENT_FORMATS);
+    const summary = settlementSummary(p.parsed, item);
+    const displayName = displayNameOf(p.displayName) ?? item.name;
+    const { from, to } = monthRange(p.month as string);
+    const status: BundleEntryStatus = coversMonth(summary, from, to) ? 'ready' : 'partial';
+    return this.put(profileId, 'settlement_file', displayName, file, (docId, duplicate) => ({ docId, duplicate, period, entry: this.link(item, period, docId, status), summary }), { settlement: summary });
+  }
+
+  /** 프로필의 항목과 그달 기간. 앱이 기록에서 세는 항목(사업용 카드, 급여를 쓰는 업체의 급여대장)에는 붙이지 않는다(entry_derived) */
+  private slot(p: Params): { profileId: string; item: BundleItem; period: string } {
     const profileId = this.profile(p.profileId);
-    const repo = new BundleRepo(this.db);
-    const item = typeof p.itemId === 'string' && p.itemId.length <= 64 ? repo.item(p.itemId) : null;
+    const item = typeof p.itemId === 'string' && p.itemId.length <= 64 ? new BundleRepo(this.db).item(p.itemId) : null;
     if (!item || item.profileId !== profileId) return fail('item_not_found');
     if (typeof p.month !== 'string') return fail('bad_month');
     const period = periodFor(p.month, item.cadence);
     if (item.kind === 'card' || (item.kind === 'payroll' && this.payrollEnabled(profileId))) return fail('entry_derived');
-    const file = fileOf(p.bytes, p.format, ATTACH_FORMATS);
-    const displayName = displayNameOf(p.displayName) ?? item.name;
-    return this.put(profileId, 'bundle_file', displayName, file, (docId, duplicate) => {
-      const cur = repo.entry(item.id, period);
-      const docIds = [...(cur?.docIds ?? []), docId];
-      const entry = repo.setEntry({ itemId: item.id, period, status: cur?.status ?? 'ready', docIds }, this.now().toISOString());
-      return { docId, duplicate, period, entry };
-    });
+    return { profileId, item, period };
+  }
+
+  /** 그달 표시에 문서를 더한다. 표시가 없었으면 status로, 있었으면 상태는 그대로 */
+  private link(item: BundleItem, period: string, docId: string, status: BundleEntryStatus): BundleEntry {
+    const repo = new BundleRepo(this.db);
+    const cur = repo.entry(item.id, period);
+    return repo.setEntry({ itemId: item.id, period, status: cur?.status ?? status, docIds: [...(cur?.docIds ?? []), docId] }, this.now().toISOString());
   }
 
   /** BundleService.payrollEnabled와 같은 규칙: 설정이 있으면 그것, 없으면 직원이 한 명이라도 있는가 */

@@ -1,6 +1,6 @@
 # Windows 실기기 검증 (Phase 1, 2026-11-06)
 
-범위: Phase 1 Windows 실기기 검증 1~3번(NPKI 열거, 금고 키체인, 전용 Chrome 프로필, 첫 PR)과 준비 단계(install·build·test), 4~5번(서명 없는 설치 파일, 측정, 둘째 PR).
+범위: Phase 1 Windows 실기기 검증 1~3번(NPKI 열거, 금고 키체인, 전용 Chrome 프로필, 첫 PR)과 준비 단계(install·build·test), 4~5번(서명 없는 설치 파일, 측정, 둘째 PR). **2026-11-09 재확인(main `0933b6d`)은 §10**.
 원자료: [raw/win-realdevice/](raw/win-realdevice/). 점검 스크립트: `tests/win-realdevice.ts`·`tests/win-realdevice-launch.ps1`(수동 실행, 아래 각 절의 "재실행").
 
 상태 표기: ✅ 확인 · ⚠️ 설계와 다름·문제 · 🔧 이 PR에서 고침 · ⏳ 남음.
@@ -245,3 +245,125 @@ $env:SAX_ACL_TARGET = $env:TEMP
 - [ ] 금고 ACL 점검을 PowerShell 없이(§6.1), `h01-policy` 정리(§6.2), 잔존물 삭제 실패 기록(§6.3), Credential Manager 지속성(§6.4) — 금고·플랫폼 트랙 결정
 - [ ] 설치 폴더 이름 `sovereign-ax` vs 문서·앱 기대 `SovereignAX`(§7) — 업데이트 경로 결정
 - [ ] Electron 바이너리 누락(§2.1)을 다른 Windows 기기에서 재확인
+
+## 10. 재확인(2026-11-09, main `0933b6d`)
+
+같은 기기에서 다시 확인했다(§1). 원자료: [raw/win-realdevice/2026-11-09/](raw/win-realdevice/2026-11-09/). 경로, 사용자 이름, 인증서 주체는 남기지 않았고 파일 이름은 종류별 개수로만 적었다. 지시대로 실패는 고치지 않고 재현 절차만 적었다.
+
+### 10.0 요약
+
+| # | 항목 | 결과 |
+|---|---|---|
+| 준비 | install·build·`pnpm test` | install 20초, build 58초. 시험 2,506개 **pass 2,479 · fail 7 · cancelled 3** · skipped 7 · todo 10. 11-06의 27 fail은 모두 사라졌다. 남은 실패는 부하에 따른 시간 초과, 시험 환경(openssl, 심볼릭 링크 권한), staging guid 파일이다(§10.1) |
+| 4 | 설치·첫 실행 | ⚠️ 다음 조건은 모두 맞다: UAC 없이 `%LOCALAPPDATA%\Programs\SovereignAX\SovereignAX.exe`에 설치, `Programs\sovereign-ax` 없음, "예상 밖 설치 위치" 배지 없음, 설정 > 앱 제거 뒤 `Programs\SovereignAX`는 사라지고 `%LOCALAPPDATA%\SovereignAX`는 남음. 다만 자기 점검 배지가 "미서명 빌드" 하나가 아니라 **"개발용 코드 포함 빌드"도 함께** 뜬다(§10.2) |
+| — | 금고 ACL 속도(ADR-041) | ✅ 전용 Chrome 기동 10/10 성공, 회당 2.7~3.7초. 11-06에는 Get-Acl이 3.4~15초 걸렸고 부하 때 30초를 넘어 기동이 실패했다(§10.3) |
+| — | Chrome 잔존물·staging(#178·#209) | ✅ 다운로드 중 강제 종료 10회 뒤 잔존물 삭제 10/10, EBUSY 0건. ❌ staging에 `*.crdownload`가 매회 남아 쌓이고, 다시 기동해도 지워지지 않는다(§10.4) |
+| — | NPKI(#199) | ✅ LocalLow 인증서 1개, 연 파일은 `signCert.der` 1개, `signPri.key` 접근 0회(§10.5) |
+| — | 승인 카드(#226) | ✅ 코드 검토와 이 PC의 `shell-e2e` 카드 5항목 통과: 뜬 직후 클릭이 승인되고, 기본 포커스 표시는 [중지]이고, Enter는 중지한다. ⚠️ 1366×768 화면에서는 카드가 뜨면 입력창이 밀려난다(e2e 배치 2건 실패)(§10.6) |
+| — | 측정 | 첫 화면까지 첫 기동 **22.2초**(11-06 21.0초), 두 번째 **9.8초**(11.5초). 최대 메모리 **647 MB**(681 MB)(§10.7) |
+
+### 10.1 `pnpm test` 비교(11-06 → 11-09)
+
+- 11-06: 1,599개 중 fail 27 · cancelled 18([pnpm-test.txt](raw/win-realdevice/pnpm-test.txt)).
+- 11-09: 2,506개 중 **fail 7 · cancelled 3**, 3,464초([2026-11-09/pnpm-test.txt](raw/win-realdevice/2026-11-09/pnpm-test.txt)).
+
+| 파일 | 11-06 | 11-09 전체 | 11-09 단독 | 원인·비고 |
+|---|---|---|---|---|
+| `h01-policy` | fail 1 · cancelled 16 · 80분 멈춤 | 통과 | — | ACL 점검 30초 초과가 사라졌다(ADR-041, §10.3) |
+| `h01-engine` | fail 15 | 통과 | — | |
+| `audit-v` | fail 2 | 통과 | — | |
+| `playwright-relay` | fail 2 | 통과 | — | |
+| `vault-npki`·`vault-s6-regress` | fail 2·1 | 통과 | — | #152(정션) |
+| `model-s7`·`remote-envelope`·`shell-tokens`·`core-registry-samples`·`core-run` | fail 2·1·1·1·1 | 통과 | — | main #137 |
+| `vault-relay` | fail 2 | fail 1(SPA 로그인 `timeout waiting secret_window.closed`) | **통과** | 부하 |
+| `h01-golden`(이번에 새로 실패) | — | fail 3 + **실패 뒤 프로세스가 끝나지 않음**(약 11분 뒤 수동 종료) | **통과**(5분 12초) | 실패는 부하 탓. 멈춤은 §6.2와 같은 모양 |
+| `vault-pdf-save` | — | fail 1("무장한 다운로드") | **fail 1**("크기 초과") | ❌ 두 번 모두 staging에 guid 이름 파일 1개가 8초 넘게 남았다(§10.4와 같은 영역) |
+| `services-pg-tls` | — | fail 1 · cancelled 3 | — | 시험 환경: `spawnSync openssl ENOENT`(이 PC의 PATH에 openssl이 없다) |
+| `driver-pdf`(#209 새 시험) | — | fail 1 | — | 시험 환경: 표준 권한에서 파일 `fs.symlink`가 EPERM(§2.2와 같은 원인) |
+| `services-deploy` | — | fail 1 | — | 시험 환경: 표준 권한에서 `fs.symlink`가 EPERM |
+
+재현:
+- `h01-golden` 멈춤: 부하가 걸린 전체 실행(`pnpm test`)에서 "✖ 골든 대조 …"가 나온 뒤에도 그 파일의 프로세스가 끝나지 않는다. `run-tests.mjs`에 시간 상한이 없어 실행 전체가 기다린다.
+- `vault-pdf-save`: `node --conditions=development --test tests/vault-pdf-save.test.ts`를 돌리면, 무장 다운로드나 인쇄 뒤 `stagingSettles`(8초)가 `['<guid>', '<32hex>.pdf']` 또는 `['<guid>']`로 끝난다.
+
+### 10.2 설치본(#179)
+
+`pnpm package:win`(8분 3초): `SovereignAX-Setup-0.0.0.exe` 119.2 MB, sha256 `45f7ce33…0f2f5`, asar 110.5 MB(파일 3,659개). 배포 판정은 `publisher_dn_unset`, `dev_only_code_included`, `windows_run_unverified`.
+
+| 확인 | 결과 |
+|---|---|
+| 설치 | 인터넷 표시(Zone.Identifier `ZoneId=3`)를 붙인 설치 파일을 사람이 탐색기에서 더블클릭했다. SmartScreen에서 "추가 정보 → 실행"을 눌렀고 **UAC 창은 뜨지 않았다**(`consent.exe` 0회). 설치 시작 42초 뒤 앱이 저절로 떴다([install.json](raw/win-realdevice/2026-11-09/install.json)) |
+| 설치 폴더 | ✅ `%LOCALAPPDATA%\Programs\SovereignAX\SovereignAX.exe`, `Programs\sovereign-ax` 없음 |
+| 첫 실행 배지 | ✅ "예상 밖 설치 위치" 없음. ⚠️ 자기 점검 배지는 "미서명 빌드"와 **"개발용 코드 포함 빌드"** 두 개다. 후자는 `harden.ts`의 `warn:dev_code_included`로, build-info의 `devOnlyIncluded`가 `onboarding-mock`·`shell-mock` 때문에 비어 있지 않아서 뜬다. 셸 표지 "견본 데이터 · PoC 데모"도 그대로 있다. 화면: [first-launch-0.png](raw/win-realdevice/2026-11-09/screens/first-launch-0.png) |
+| 제거(설정 > 앱, 사람이 함) | ✅ `Programs\SovereignAX`, 바탕화면·시작 메뉴 바로가기, HKCU 제거 키가 사라졌다. `%LOCALAPPDATA%\SovereignAX`(하위 폴더 7개)와 Credential Manager의 `db-key.SovereignAX`는 남았다(설계대로) |
+
+판정: 지시서 조건 중 "'미서명 빌드' 배지만 있고"가 글자 그대로는 맞지 않아(개발용 코드 배지가 함께 뜸) 요약에 ✅ 줄을 넣지 않았다. 모의 온보딩·셸을 진입점에서 떼면 이 배지도 사라진다(§9 둘째 항목).
+
+### 10.3 금고 ACL 속도(ADR-041, #185)
+
+`node --conditions=development tests/win-realdevice.ts acl`: 시험 하네스로 실제 금고(`Vault`)를 띄워 기동하고 내렸다. 폴더 확인은 Windows `dirGuard` 기본값을 쓰고, 앱 루트는 임시 폴더다. 원자료 [acl.json](raw/win-realdevice/2026-11-09/acl.json).
+
+| 항목 | 결과 |
+|---|---|
+| PowerShell `Get-Acl` 1회(비교용) | 1.3~1.8초. PC가 한가할 때 쟀다(11-06은 Chrome과 시험 부하 아래에서 3.4~15초) |
+| 미리 확인 없이 새 루트에서 첫 기동 | 성공, 8.6초 |
+| `warmDirChecks`(앱처럼 금고 시작 때) | 1.1초. `ok:false`는 전용 프로필 폴더가 아직 없어서다. 첫 기동이 폴더를 만들면서 `vault.profile_dir_problem` 1건이 남는다 |
+| 같은 금고에서 기동 10회 | **10/10 성공, 회당 2.7~3.7초**(내리기 0.4~0.7초) |
+
+### 10.4 다운로드 중 강제 종료 → 잔존물·staging(#178·#209)
+
+`node --conditions=development tests/win-realdevice.ts kill`로 10회 반복했다. 원자료 [kill.json](raw/win-realdevice/2026-11-09/kill.json). 한 회의 순서:
+
+1. 실제 금고로 Chrome을 띄운다.
+2. 가짜 페이지에서 무장한 PDF 다운로드를 시작한다(4 MB를 100 ms마다 16 KB씩, 약 25초).
+3. 2.5초 뒤 Chrome 주 프로세스를 강제 종료한다.
+4. `browser.shutdown`으로 금고가 정리하게 하고, 3초 뒤 확인한다.
+
+| 항목 | 결과 |
+|---|---|
+| 프로필 잔존물 | ✅ 10/10 남은 경로 0개(매회 9~13개 삭제). `vault.chrome_residue_busy`·`vault.chrome_dump_busy` 0건, 남은 Chrome 프로세스 0개 |
+| staging | ❌ 매회 `*.crdownload` 1개가 남는다. 다시 기동해도 지워지지 않아 10회 뒤 **10개**가 쌓였다. 그 뒤 무장하지 않은 다운로드가 한 번 오자 `vault.staging_swept` 10으로 모두 지워졌다 |
+
+원인(코드): `PdfSaver.sweepStaging()`은 다운로드 이벤트가 올 때와 인쇄가 끝날 때만 돈다. `PdfSaver.init()`(기동)과 `Vault.shutdown()`은 staging을 쓸지 않는다. 그래서 받는 중에 Chrome이 죽으면, Chrome 중간 파일(그때까지 받은 PDF 바이트)이 사용자 전용 staging에 다음 다운로드 때까지 남는다.
+
+재현: 위 명령을 돌린다. 직접 해 보려면 무장 다운로드가 받는 중일 때 `taskkill /F /PID <금고 Chrome PID>` → `browser.shutdown` → `browser.launch` 순서로 하면 staging에 `<guid>.crdownload`가 그대로 남아 있다.
+
+### 10.5 NPKI(#199)
+
+`tests/win-realdevice.ts npki`(이번에 파일 접근 감사를 더함): LocalLow 인증서 **1개**(KICA, `hasKey: true`, 만료 전, 주체 `***`), 131 ms. 연 파일은 `signCert.der` 1개이고, `signPri.key`는 열기·stat 모두 **0회**였다. 원자료 [npki.json](raw/win-realdevice/2026-11-09/npki.json).
+
+### 10.6 승인 카드(#226)
+
+사람이 데모 셸에서 눌러 본 결과는 기록하지 못했다. 그래서 코드 검토와 이 PC에서 돌린 e2e로 확인했다.
+
+| 확인 | 코드 | e2e(`electron apps/desktop/e2e-dist/shell-e2e.js`, 이 PC) |
+|---|---|---|
+| 뜬 직후 [승인하고 발급] 클릭 | `show()`는 첫 페이지부터 무장된 상태로 그리고, 그 페이지가 화면에 올라온 뒤에만 카드를 보인다(`approval-bar.ts` show). `BarGate.mouse`에는 시간 조건이 없어 승인 영역 안에서 왼쪽 버튼 down → up이면 승인이다. 남은 거부는 앞 페이지가 아직 보일 때(`not_committed`)뿐이다 | ✅ "카드는 뜰 때부터 무장됨", "카드가 뜬 직후 클릭도 승인된다" |
+| 기본 포커스 [중지] | 카드는 뜰 때 키보드 포커스를 가져가지 않는다(`focusOnNavigation:false`, `flashFrame`만). [중지]에는 포커스 테두리를 늘 그린다(`approval-gate.ts` `.st{outline…}`). 사용자가 카드를 눌러 포커스가 오면 키 입력은 [중지]로 간다 | ✅ 화면 [approval-card.png](raw/win-realdevice/2026-11-09/screens/approval-card.png)에서 [중지]에 테두리가 보인다 |
+| Enter로 승인되지 않음 | `KEYBOARD_APPROVAL = false`라서 `BarGate.key`는 어떤 키도 승인으로 판정하지 않는다. Enter·Space·Esc는 `STOP_KEYS`에 있어 `stopByUser('key')`로 간다 | ✅ "키(Tab·Alt+Y·글자·화살표, 입력창 Enter)로는 승인되지 않는다", "카드 포커스에서 Enter = [중지]", "버튼 밖 클릭은 승인도 중지도 아니다" |
+
+e2e 85개 중 83개 통과. ⚠️ 실패 2개는 화면 배치다. 이 PC 화면(1366×768, 창 내용 1280×689)에서는 카드가 뜨면 입력창이 아래로 밀려난다(입력창 위치 673 → 751, 비워 둔 자리 top 345인데 카드 y는 267). 카드 화면에서도 입력창이 보이지 않는다.
+
+재현: 1366×768 화면에서 `shell-e2e.js`를 돌리면 "렌더러가 바 자리를 비운다", "바가 떠도 입력창은 제자리에 있다"가 실패한다. 요약: [shell-e2e-card.json](raw/win-realdevice/2026-11-09/shell-e2e-card.json). e2e가 덮어쓰는 추적 파일(`reports/raw/poc-6/shell/*`)은 원래대로 되돌렸다.
+
+### 10.7 측정 다시
+
+`tests/win-realdevice-launch.ps1`로 쟀다. 첫 기동은 데이터와 `db-key`가 없는 상태에서, 설치 마법사가 띄운 실행에 붙어 쟀다(`-AttachWaitSec`).
+
+| 항목 | 11-06 첫 기동 | 11-09 첫 기동 | 11-06 두 번째 | 11-09 두 번째 |
+|---|---|---|---|---|
+| 창 핸들 | 14.6초 | 12.4초 | 6.6초 | **3.4초** |
+| `vault.started` | 15.6초 | 14.9초 | 7.8초 | 4.8초 |
+| `engine.db_opened` | 19.5초 | 20.8초 | 9.6초 | 8.2초 |
+| **첫 화면** | 21.0초 | **22.2초** | 11.5초 | **9.8초** |
+| 최대 메모리(작업 집합/전용) | 681 / 402 MB | **647 / 377 MB** | 621 / 362 MB | 648 / 384 MB |
+
+두 번째 기동은 창이 뜨기 전 단계가 6.6초에서 3.4초로 줄었다(ADR-041 폴더 확인). 첫 기동은 폴더를 새로 만들고 ACL을 거는 단계가 그대로라 11-06과 비슷하다. 또 첫 기동은 설치 마법사가 끝나기 전에 떠서 부하가 겹쳤다. 원자료: [first-launch.json](raw/win-realdevice/2026-11-09/first-launch.json), [second-launch.json](raw/win-realdevice/2026-11-09/second-launch.json).
+
+### 10.8 남은 것(11-09)
+
+- [ ] staging 중간 파일: 기동(`PdfSaver.init`)과 내리기 때도 staging을 쓸기(§10.4). `vault-pdf-save`의 guid 파일(§10.1)도 같은 영역 — 금고 트랙
+- [ ] "개발용 코드 포함 빌드" 배지: 모의 온보딩·셸을 진입점에서 떼기(§10.2, §9)
+- [ ] 작은 화면(1366×768)에서 승인 카드가 뜨면 입력창이 밀려남(§10.6) — 데스크톱 트랙
+- [ ] `h01-golden`이 실패 뒤 끝나지 않음, `run-tests.mjs`에 시간 상한 없음(§10.1, §6.2)
+- [ ] 시험 환경: Windows 표준 권한의 심볼릭 링크(`driver-pdf`, `services-deploy`), `services-pg-tls`가 쓰는 openssl

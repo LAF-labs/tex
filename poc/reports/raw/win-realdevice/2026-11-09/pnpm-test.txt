@@ -1,0 +1,24 @@
+﻿# pnpm test (Windows 10 Pro 22H2, Celeron 3855U, Node 26.13.0, main 0933b6d, 2026-11-09)
+# 전체 실행 3,464초. h01-golden이 실패 뒤 끝나지 않아 약 11분 뒤 그 프로세스만 수동 종료했다.
+
+ℹ tests 2506
+ℹ suites 533
+ℹ pass 2479
+ℹ fail 7
+ℹ cancelled 3
+ℹ skipped 7
+ℹ todo 10
+ℹ duration_ms 3459217.9626
+
+# 실패·취소 목록(위치	이름	첫 오류 줄)
+tests\driver-pdf.test.ts:136:3	✖ store: fileId 모양·없는 파일·링크·크기·보관함 거부는 사유 코드, 어느 경우에도 staging에 남기지 않는다 (8.8013ms)	Error: EPERM: operation not permitted, symlink '%USERPROFILE%\AppData\Local\Temp\sax-pdf-z031Yp\outside.pdf' -> '%USERPROFILE%\AppData\Local\Temp\sax-pdf-z031Yp\e86ea96f7768f185117ce56463b728d8.pdf'
+tests\h01-golden.test.ts:264:3	✖ [제품 동작 변화 ②] 승인 뒤 화면 값이 바뀌면 클릭하지 않는다: 둘 다 원장 not_committed(pre_dispatch_mismatch)·제출 0. H01은 끝내고, IR은 D03대로 게이트 앞 checkpoint(s11)로 돌아간다 (36193.1722ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\h01-golden.test.ts:321:3	✖ [제품 동작 변화 ③, H01 결함] 초안에 이메일이 없는데 포털이 주소를 다시 채우면: H01은 그 주소를 승인받아 메일까지 확인하고, IR은 V-03m(팀장 결정 2026-11-06)대로 s19f에서 멈춘다(게이트 없음·제출 0) (30161.3772ms)	Error: timeout
+tests\h01-golden.test.ts:331:3	✖ [제품 동작 변화 ①] 명시적 실패 신호 + 부재 증거: 둘 다 원장 not_committed. H01은 실행을 끝내고(s36), IR은 D02 §8대로 s11로 돌아가 다시 게이트를 연다 (83875.0525ms)	Error: timeout
+tests\services-deploy.test.ts:342:3	✖ 점검 스크립트는 filePathMap의 링크를 배포 때처럼 되살린다(작업공간 링크·의존성 폴더) (19.7005ms)	Error: EPERM: operation not permitted, symlink '..\..\node_modules\.pnpm\x@1\node_modules\x' -> '%USERPROFILE%\AppData\Local\Temp\sax-vc-c0hY3A\poc\svc\node_modules\x'
+tests\services-pg-tls.test.ts:141:3	✖ 맞는 앵커: TLS 핸드셰이크를 마치고 서버 메시지까지 받는다(pg Pool, 문자열 sslmode=verify-full)	'test did not finish before its parent and was cancelled'
+tests\services-pg-tls.test.ts:152:3	✖ 앵커 없음(다른 루트·운영 기본 앵커): 인증서 검증 실패로 거절한다	'test did not finish before its parent and was cancelled'
+tests\services-pg-tls.test.ts:164:3	✖ 호스트 이름이 다른 인증서(같은 앵커)는 거절한다(verify-full)	'test did not finish before its parent and was cancelled'
+tests\services-pg-tls.test.ts:132:1	✖ TLS 연결: 앵커 없음이면 거절, 앵커 있음이면 연결 (29.6259ms)	Error: spawnSync openssl ENOENT
+tests\vault-pdf-save.test.ts:209:3	✖ 무장한 다운로드: PDF면 무작위 이름으로 받고 download.completed{fileId}만 낸다(원래 이름 없음) (9137.2312ms)	AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+tests\vault-relay.test.ts:245:3	✖ SPA 로그인(문서 커밋 없음): 활성 창 종료 후 엔진 클릭 가능, fetch 바디 제거 (5686.7975ms)	Error: timeout waiting secret_window.closed

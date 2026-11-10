@@ -8,7 +8,7 @@
 - 발급 요청의 `wqAction.do` actionId(HAR) → `commitEndpoints`
 - 발급 실패 안내의 요소와 문구 → verify `failSignals`(지금은 H-01과 같은 자리표시 `#errorDialog`)
 - PDF 경로: [출력]·[PDF 저장]·인쇄 대화상자 중 무엇이 되는지 → `save_pdf.strategy`(R2 §4는 과거 공식 「출력불가 프린터」)
-- 발급 확인 조회는 `hometax.cert.issued_list`(H-04와 공유, LAF-labs/tex#247)다. 그 화면(민원신청 처리결과 조회)의 캡처는 그 패키지 몫이고, 여기서는 결과 표에 용도·제출처·발급번호 열이 보이는지만 같이 본다(verify match 키 purpose·submitTo, bind issueNo)
+- 발급 확인 조회는 `hometax.cert.issued_list`(H-04와 공유, LAF-labs/tex#247)다. 그 화면(민원신청 처리결과 조회)의 캡처는 그 패키지 몫이고, 여기서는 결과 표에 민원명·용도·제출처·발급번호 열이 보이는지만 같이 본다(verify match 키 certDoc·certPurpose·certSubmitTo, bind issueNo, H-04와 같음)
 
 | 서류 | 셀렉터 | 캡처할 것 |
 |---|---|---|

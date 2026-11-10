@@ -1,0 +1,94 @@
+{
+  "env": {
+    "node": "v26.13.0",
+    "os": "Windows 10 Pro 10.0.19045",
+    "cpus": 2,
+    "cpu": "Intel(R) Celeron(R) CPU 3855U @ 1.60GHz",
+    "memGb": 7.9
+  },
+  "getAclMs": [
+    1815,
+    1265,
+    1428
+  ],
+  "cold": {
+    "ok": true,
+    "launchMs": 8561
+  },
+  "warm": {
+    "ms": 1059,
+    "ok": false
+  },
+  "runs": [
+    {
+      "i": 0,
+      "ok": true,
+      "launchMs": 3673,
+      "shutdownMs": 628,
+      "events": [
+        "vault.profile_dir_problem"
+      ]
+    },
+    {
+      "i": 1,
+      "ok": true,
+      "launchMs": 3112,
+      "shutdownMs": 428
+    },
+    {
+      "i": 2,
+      "ok": true,
+      "launchMs": 2734,
+      "shutdownMs": 535
+    },
+    {
+      "i": 3,
+      "ok": true,
+      "launchMs": 3018,
+      "shutdownMs": 462
+    },
+    {
+      "i": 4,
+      "ok": true,
+      "launchMs": 2975,
+      "shutdownMs": 680
+    },
+    {
+      "i": 5,
+      "ok": true,
+      "launchMs": 3281,
+      "shutdownMs": 744
+    },
+    {
+      "i": 6,
+      "ok": true,
+      "launchMs": 2914,
+      "shutdownMs": 569
+    },
+    {
+      "i": 7,
+      "ok": true,
+      "launchMs": 3015,
+      "shutdownMs": 520
+    },
+    {
+      "i": 8,
+      "ok": true,
+      "launchMs": 2841,
+      "shutdownMs": 593
+    },
+    {
+      "i": 9,
+      "ok": true,
+      "launchMs": 2817,
+      "shutdownMs": 558
+    }
+  ],
+  "summary": {
+    "ok": 10,
+    "fail": 0,
+    "minMs": 2734,
+    "maxMs": 3673
+  },
+  "elapsedMs": 57936
+}
