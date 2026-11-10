@@ -1,5 +1,6 @@
 // H-01 셀렉터를 고친 뒤 다시 게시하는 한 명령(팀장 지시 2026-11-09 3, PUBLISH-H01.md "판을 바꿀 때", ADR-025).
 // poc/ 에서: node scripts/h01-republish.mjs 2.1.1            (운영 게시: Touch ID 4번 + 운영자 토큰)
+//           node scripts/h01-republish.mjs 2.1.2 --lookups 1.1.1  (조회 셀렉터도 고쳤을 때: 조회 패키지 2개 판·H-01 lookupsUsed도 올림, Touch ID 8번)
 //           node scripts/h01-republish.mjs 2.1.1 --dry-run  (운영은 읽기만, 임시 키, Touch ID 없음)
 // 하는 일: 소스 판 올리기(manifest.json·playbook.json) → prepare → 패키지 서명 2번 → assemble → 인덱스 서명 2번 → push.
 // 게시 CLI(services/registry/src/publish/cli.ts)·서명 CLI(ceremony sign)를 그대로 부른다. 이 스크립트는 키도 토큰도 갖지 않는다.
@@ -15,7 +16,8 @@ import { pathToFileURL } from 'node:url';
 
 const POC = path.resolve(import.meta.dirname, '..');
 export const H01_DIR = 'packages/engine/playbooks/hometax.invoice.issue';
-export const SOURCES = ['packages/engine/playbooks/hometax.invoice.lookup', 'packages/engine/playbooks/hometax.invoice.email_status', H01_DIR];
+export const LOOKUP_DIRS = ['packages/engine/playbooks/hometax.invoice.lookup', 'packages/engine/playbooks/hometax.invoice.email_status'];
+export const SOURCES = [...LOOKUP_DIRS, H01_DIR];
 const TRUST = 'services/registry/ceremony/keyepoch-1/trust-root.json';
 const REGISTRY = 'https://tax.laf-co.com';
 const PUBLISH = ['--conditions=development', 'services/registry/src/publish/cli.ts'];
@@ -49,6 +51,16 @@ export function bumpTopVersion(text, version) {
   return out;
 }
 
+/** manifest 텍스트의 lookupsUsed[id].version만 바꾼다(그 id 항목 바로 다음 줄의 version). 없는 id면 던진다 */
+export function bumpLookupsUsed(text, id, version) {
+  const re = new RegExp(`("id": "${id.replaceAll('.', '\\.')}",\\r?\\n[ \\t]+"version": ")[^"]*(")`);
+  if (!re.test(text)) throw new Error(`h01.lookup_missing ${id}`);
+  const out = text.replace(re, `$1${version}$2`);
+  const m = JSON.parse(out);
+  if (m.lookupsUsed?.find((l) => l.id === id)?.version !== version) throw new Error('h01.bump_failed');
+  return out;
+}
+
 /** prepare·assemble 화면에서 서명 명령 줄만 뽑는다(pipeline.ts signCommand 모양) */
 export function signLines(output) {
   return output
@@ -68,19 +80,19 @@ export function signParts(cmd) {
 }
 
 function parseArgs(argv) {
-  const o = { version: null, work: null, registry: REGISTRY, dryRun: false, yes: false };
+  const o = { version: null, lookups: null, work: null, registry: REGISTRY, dryRun: false, yes: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--dry-run') o.dryRun = true;
     else if (a === '--yes') o.yes = true;
-    else if (a === '--work' || a === '--registry') {
+    else if (a === '--work' || a === '--registry' || a === '--lookups') {
       const v = argv[++i];
       if (!v || v.startsWith('--')) throw new Error(`h01.usage ${a} 값 없음`);
       o[a.slice(2)] = v;
     } else if (!a.startsWith('--') && !o.version) o.version = a;
     else throw new Error(`h01.usage ${a}`);
   }
-  if (!o.version || !SEMVER.exec(o.version)) throw new Error('h01.usage: node scripts/h01-republish.mjs <새 판, 예 2.1.1> [--dry-run] [--work 폴더] [--yes]');
+  if (!o.version || !SEMVER.exec(o.version) || (o.lookups && !SEMVER.exec(o.lookups))) throw new Error('h01.usage: node scripts/h01-republish.mjs <새 판, 예 2.1.1> [--lookups 조회 판] [--dry-run] [--work 폴더] [--yes]');
   return o;
 }
 
@@ -123,8 +135,22 @@ async function confirm(q, yes) {
 }
 
 /** 소스 판을 올린다. 이미 그 판이면 그대로, 더 낮은 판이면 거부(불변 경로, publish.version_exists) */
-function bumpSources(version) {
-  const files = ['manifest.json', 'playbook.json'].map((f) => path.join(POC, H01_DIR, f));
+function bumpSources(version, lookups) {
+  const changed = [];
+  if (lookups) {
+    // 조회 패키지 2개 판 → H-01 manifest lookupsUsed 판(로더가 id·판·다이제스트를 대조한다. 다이제스트는 게시 도구가 채운다)
+    changed.push(...bumpDirs(LOOKUP_DIRS, lookups));
+    const mf = path.join(POC, H01_DIR, 'manifest.json');
+    let text = fs.readFileSync(mf, 'utf8');
+    for (const d of LOOKUP_DIRS) text = bumpLookupsUsed(text, path.basename(d), lookups);
+    fs.writeFileSync(mf, text);
+  }
+  changed.push(...bumpDirs([H01_DIR], version));
+  return changed;
+}
+
+function bumpDirs(dirs, version) {
+  const files = dirs.flatMap((d) => ['manifest.json', 'playbook.json'].map((f) => path.join(POC, d, f)));
   const changed = [];
   for (const f of files) {
     const text = fs.readFileSync(f, 'utf8');
@@ -141,7 +167,7 @@ export async function main(argv) {
   const o = parseArgs(argv);
   if (process.platform === 'win32') throw new Error('h01.mac_only 서명(Touch ID)은 서명 의식을 한 맥에서만 한다');
   const work = path.resolve(o.work ?? path.join(os.homedir(), 'sax-publish', `h01-${o.version}${o.dryRun ? '-dry' : ''}`));
-  const changed = bumpSources(o.version);
+  const changed = bumpSources(o.version, o.lookups);
   say(changed.length ? `판 올림: ${changed.join(', ')}` : `판: 소스가 이미 ${o.version}`);
 
   const base = ['--trust', TRUST, '--work', work];

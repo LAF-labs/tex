@@ -20,6 +20,7 @@ import { flatten } from '../core/cfg.ts';
 import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/verify.ts';
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
+import { IrLookupPort } from '../driver/lookup-ir.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
 import { PlaywrightScreenSource } from '../driver/screen.ts';
@@ -43,8 +44,13 @@ import type { RunPermit } from '../core/permit.ts';
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
   pkg: LoadedPackage;
-  /** verify.lookup.playbook → 조회 화면 정의(PopupLookupPort). */
-  lookupDefs: ReadonlyMap<string, LookupDef>;
+  /**
+   * verify.lookup.playbook → 서명 조회 패키지(IrLookupPort, 제품). 있으면 조회는 그 패키지 IR을 팝업에서 돌린다(팀장 결정 2026-11-09 (가)).
+   * 조회 셀렉터·열 이름이 서명 패키지에 있으니 실기기에서 틀리면 다시 게시해 고친다.
+   */
+  lookupPackages?: ReadonlyMap<string, LoadedPackage>;
+  /** verify.lookup.playbook → 조회 화면 정의(PopupLookupPort, 가짜 페이지 시험). lookupPackages가 있으면 쓰지 않는다. */
+  lookupDefs?: ReadonlyMap<string, LookupDef>;
   /** portal fixture 패키지일 때만(loader.fixtureOriginGrant). */
   fixtureGrant?: FixtureOriginGrant | null;
   /** decide 판정기(L0 → 모델). 없으면 decide 스텝은 decide.unavailable(핸드오프). */
@@ -300,7 +306,12 @@ export class IrRun {
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
-      lookup: new PopupLookupPort({ page, origin: i.portal.origin, defs: i.ir.lookupDefs, policy: enforcer, domains }),
+      lookup: i.ir.lookupPackages
+        ? new IrLookupPort({
+          page, packages: i.ir.lookupPackages, policy: enforcer, clock, fixtureGrant: i.ir.fixtureGrant ?? null,
+          events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+        })
+        : new PopupLookupPort({ page, origin: i.portal.origin, defs: i.ir.lookupDefs ?? new Map(), policy: enforcer, domains }),
       book, page: reader, clock, dict, strings: files.strings, scope,
       policy: () => ({ minElapsedMs: vpol.minElapsedMs, lookups: vpol.lookups, maxMs: vpol.maxMs }),
       intervals: { firstMs: vpol.intervalMs, capMs: vpol.intervalMs },

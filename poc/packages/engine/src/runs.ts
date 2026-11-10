@@ -363,7 +363,11 @@ export class RunService extends EventEmitter {
           }),
         };
       },
-      journal: (type, payload) => this.journal.append(a.runId, type, payload),
+      journal: (type, payload) => {
+        this.journal.append(a.runId, type, payload);
+        // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
+        if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+      },
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
       postGate: (m) => this.d.postGate(m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),

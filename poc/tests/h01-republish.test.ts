@@ -22,6 +22,17 @@ describe('h01-republish: 판 올림', () => {
       if (cur.lookupsUsed) assert.deepEqual(next.lookupsUsed, cur.lookupsUsed);
     }
   });
+  it('lookupsUsed 판 올림: 그 id 항목만, 줄 수 그대로, 없는 id는 던진다(실제 H-01 manifest)', () => {
+    const text = fs.readFileSync(path.join(POC, rp.H01_DIR, 'manifest.json'), 'utf8');
+    const out = rp.bumpLookupsUsed(text, 'hometax.invoice.email_status', '9.9.9');
+    const m = JSON.parse(out) as { version: string; lookupsUsed: { id: string; version: string }[] };
+    const cur = JSON.parse(text) as typeof m;
+    assert.deepEqual(m.lookupsUsed.map((l) => l.version), [cur.lookupsUsed[0]!.version, '9.9.9']);
+    assert.equal(m.version, cur.version);
+    assert.equal(out.split('\n').length, text.split('\n').length);
+    assert.throws(() => rp.bumpLookupsUsed(text, 'hometax.nope', '1.0.0'), /h01.lookup_missing/);
+    assert.deepEqual(rp.LOOKUP_DIRS.map((d: string) => path.basename(d)), cur.lookupsUsed.map((l) => l.id));
+  });
   it('최상위 판이 없으면 던진다', () => assert.throws(() => rp.bumpTopVersion('{\n "id": "x",\n "a": {\n  "version": "1.0.0"\n }\n}', '1.0.1'), /h01.version_missing/));
   it('판 비교는 숫자로(2.1.10 > 2.1.9), 같으면 크지 않다', () => {
     assert.equal(rp.semverGreater('2.1.10', '2.1.9'), true);

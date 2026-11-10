@@ -1,16 +1,20 @@
 {
  "ir": 2,
  "id": "hometax.invoice.email_status",
- "version": "1.0.0",
+ "version": "1.1.0",
  "portal": "hometax",
  "profileKinds": [
   "business"
  ],
  "effects": [],
  "inputs": {
-  "key": {
+  "approvalNo": {
    "type": "string",
    "required": true
+  },
+  "window": {
+   "type": "string",
+   "required": false
   }
  },
  "steps": [
@@ -29,7 +33,7 @@
    "id": "s2",
    "type": "fill",
    "target": "hometax.lookup.searchKey",
-   "value": "$inputs.key"
+   "value": "$inputs.approvalNo"
   },
   {
    "id": "s3",
@@ -45,10 +49,21 @@
   {
    "id": "s5",
    "type": "extract",
-   "name": "mailRows",
+   "name": "rows",
    "from": {
     "a11y": {
      "target": "hometax.lookup.rows"
+    }
+   }
+  },
+  {
+   "id": "s5b",
+   "type": "extract",
+   "name": "count",
+   "from": {
+    "regex": {
+     "target": "hometax.lookup.count",
+     "patternRef": "lookup.countPattern"
     }
    }
   },
