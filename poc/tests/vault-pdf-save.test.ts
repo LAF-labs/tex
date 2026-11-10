@@ -8,7 +8,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { checkPdfBytes, PDF_FILE_ID_RE, PDF_MAX_BYTES, PdfSaver, RPC_BY_PORT, stagedPdfPath, type PdfPrintResult } from '@sax/vault';
+import { checkPdfBytes, PDF_FILE_ID_RE, PDF_MAX_BYTES, PdfSaver, RPC_BY_PORT, stagedPdfPath, sweepStagingDir, type PdfPrintResult, type StagingRemove } from '@sax/vault';
 import { startHarness, type Harness } from './harness.ts';
 import { RawEngine, sleep } from './raw-engine.ts';
 
@@ -56,7 +56,7 @@ describe('PDF 검사·경로(단위)', () => {
   });
 
   /** Chrome 없이 다운로드 이벤트를 넣는 PdfSaver. frameTreeMs만큼 늦게 답하는 Page.getFrameTree(하위 프레임 다운로드). */
-  async function fakeSaver(o: { frameTreeMs?: number; stallMs?: number } = {}) {
+  async function fakeSaver(o: { frameTreeMs?: number; stallMs?: number; resweepMs?: number[]; remove?: StagingRemove } = {}) {
     const staging = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pdf-order-'));
     const emitted: Array<{ name: string; data: unknown }> = [];
     const sent: string[] = [];
@@ -72,7 +72,7 @@ describe('PDF 검사·경로(단위)', () => {
     };
     const saver = new PdfSaver({
       staging, log, send: send as never, exposed: (id) => (id === 'T1' ? target : undefined), emit: (name, data) => emitted.push({ name, data }),
-      maxBytes: 4096, stallMs: o.stallMs,
+      maxBytes: 4096, stallMs: o.stallMs, resweepMs: o.resweepMs, remove: o.remove,
     });
     return { saver, staging, emitted, sent, close: () => fs.rm(staging, { recursive: true, force: true }) };
   }
@@ -125,6 +125,88 @@ describe('PDF 검사·경로(단위)', () => {
     } finally {
       f.saver.shutdown();
       await f.close();
+    }
+  });
+
+  /** 조건이 참이 될 때까지(최대 ms) 짧게 기다린다. */
+  async function until(f: () => Promise<boolean>, ms = 3000): Promise<boolean> {
+    for (const end = Date.now() + ms; Date.now() < end; await sleep(10)) if (await f()) return true;
+    return f();
+  }
+
+  it('Windows 잠금 흉내: 끝난 guid 파일을 몇 초 잡고 있어 첫 정리가 못 지워도 다시 쓸어 지운다(WIN-REALDEVICE §10.1)', async () => {
+    // 실기기에서는 Chrome·백신이 막 끝난 파일을 몇 초 잡아(EBUSY) 끝 이벤트 직후의 정리와 짧은 재시도를 넘겼다. 그 뒤 쓸 사람이 없었다.
+    const guid = '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0';
+    let locked = 3;
+    const remove: StagingRemove = async (file) => {
+      if (path.basename(file) === guid && locked-- > 0) throw Object.assign(new Error('EBUSY'), { code: 'EBUSY' });
+      await fs.rm(file, { force: true, recursive: true });
+    };
+    const f = await fakeSaver({ resweepMs: [20, 20, 20, 20, 20], remove });
+    try {
+      await fs.writeFile(path.join(f.staging, guid), MINI_PDF);
+      f.saver.arm({ runId: 'r1', targetId: 'T1' });
+      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' });
+      await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'completed', receivedBytes: 10, totalBytes: 10 });
+      assert.equal(f.emitted[0]?.name, 'download.completed');
+      assert.ok(await until(async () => (await fs.readdir(f.staging)).every((n) => /^[0-9a-f]{32}\.pdf$/.test(n))), '잠금이 풀린 뒤 다시 쓸기가 guid 파일을 지운다');
+      assert.equal(locked, -1, '세 번 잠겼다가 네 번째에 지웠다');
+    } finally {
+      f.saver.shutdown();
+      await f.close();
+    }
+  });
+
+  it('끝 이벤트 뒤에 나타난 파일(Chrome이 늦게 놓음)도 다시 쓸기가 지운다', async () => {
+    const f = await fakeSaver({ resweepMs: [30, 30] });
+    try {
+      const guid = '11111111-2222-3333-4444-555555555555';
+      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid, frameId: 'T1' }); // 무장 없음 → 취소
+      await f.saver.onBrowserEvent('Browser.downloadProgress', { guid, state: 'canceled' });
+      await f.saver.settled();
+      await fs.writeFile(path.join(f.staging, `${guid}.crdownload`), 'late');
+      assert.ok(await until(async () => (await fs.readdir(f.staging)).length === 0), '늦게 놓인 중간 파일');
+    } finally {
+      f.saver.shutdown();
+      await f.close();
+    }
+  });
+
+  it('다시 쓸기는 지울 것이 없으면 멈추고, 내리면(shutdown) 더 쓸지 않는다', async () => {
+    let calls = 0;
+    const remove: StagingRemove = async (file) => {
+      calls++;
+      await fs.rm(file, { force: true });
+    };
+    const f = await fakeSaver({ resweepMs: [10, 10, 10, 10, 10], remove });
+    try {
+      await f.saver.onBrowserEvent('Browser.downloadWillBegin', { guid: '99999999-8888-7777-6666-555555555555', frameId: 'T1' });
+      await sleep(150);
+      const after = calls;
+      await fs.writeFile(path.join(f.staging, 'x.tmp'), 'x');
+      await sleep(80);
+      assert.equal(calls, after, '지울 것이 없던 다시 쓸기 뒤에는 예약이 없다');
+      f.saver.shutdown();
+    } finally {
+      await f.close();
+    }
+  });
+
+  it('sweepStagingDir: <32hex>.pdf만 남기고 지운 개수·못 지운 개수를 센다(이름 없음), stop이면 멈춘다', async () => {
+    const staging = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'sax-pdf-dir-'));
+    try {
+      const keep = `${'b'.repeat(32)}.pdf`;
+      for (const n of [keep, 'a.crdownload', 'b', 'c']) await fs.writeFile(path.join(staging, n), 'x');
+      const stuck: StagingRemove = async (file) => {
+        if (path.basename(file) === 'c') throw new Error('EPERM');
+        await fs.rm(file, { force: true });
+      };
+      assert.deepEqual(await sweepStagingDir(staging, { remove: stuck }), { removed: 2, left: 1, stopped: false });
+      assert.deepEqual((await fs.readdir(staging)).sort(), [keep, 'c']);
+      assert.deepEqual(await sweepStagingDir(staging, { stop: () => true }), { removed: 0, left: 0, stopped: true });
+      assert.deepEqual(await sweepStagingDir(path.join(staging, 'nope')), { removed: 0, left: 0, stopped: false });
+    } finally {
+      await fs.rm(staging, { recursive: true, force: true });
     }
   });
 
@@ -189,7 +271,7 @@ async function clearStaging(h: Harness): Promise<void> {
  * Windows Chrome은 중간 파일(`*.crdownload`)을 잠깐 잡고 있어 바로 보면 남아 있다(Windows CI #196·#209).
  * 끝내 맞지 않으면 마지막 목록을 돌려줘 assert가 무엇이 남았는지 보이게 한다.
  */
-async function stagingSettles(h: Harness, expected: string[], ms = 8000): Promise<string[]> {
+async function stagingSettles(h: Harness, expected: string[], ms = process.platform === 'win32' ? 20_000 : 8000): Promise<string[]> {
   let names = await stagingNames(h);
   for (const until = Date.now() + ms; JSON.stringify(names) !== JSON.stringify([...expected].sort()) && Date.now() < until; ) {
     await sleep(100);
@@ -324,5 +406,27 @@ describe('금고 PDF 저장(실제 Chrome)', () => {
     off2();
     assert.deepEqual(await h.client.rpc('download.arm', { runId: 'r1', targetId }), { armed: true });
     assert.deepEqual(await h.client.once('download.failed', () => true, 5000), { reason: 'expired' });
+  });
+});
+
+describe('금고 기동·종료 때 staging 정리(실제 Chrome, WIN-REALDEVICE §10.4)', () => {
+  it('받는 중에 Chrome이 죽어 남은 중간 파일을 다음 기동 전에 지우고, 내릴 때도 지운다(금고가 쓴 PDF는 남긴다)', async () => {
+    const h = await startHarness();
+    try {
+      const keep = `${'c'.repeat(32)}.pdf`;
+      await fs.mkdir(h.paths.staging, { recursive: true });
+      for (const n of [keep, '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0.crdownload', '11111111-2222-3333-4444-555555555555']) await fs.writeFile(path.join(h.paths.staging, n), 'x');
+      await h.client.rpc('browser.launch');
+      assert.deepEqual(await stagingNames(h), [keep], '기동 전 정리');
+      await fs.writeFile(path.join(h.paths.staging, '22222222-3333-4444-5555-666666666666.crdownload'), 'partial');
+      await h.client.rpc('browser.shutdown');
+      assert.deepEqual(await stagingNames(h), [keep], '종료 뒤 정리');
+      const swept = h.log.lines.filter((l) => l.includes('vault.staging_swept'));
+      assert.ok(swept.some((l) => l.includes('"when":"launch"') && l.includes('"removed":2')), swept.join('\n'));
+      assert.ok(swept.some((l) => l.includes('"when":"shutdown"') && l.includes('"removed":1')), swept.join('\n'));
+      assert.ok(!h.log.lines.join('\n').includes('crdownload'), '로그에 파일 이름이 없다');
+    } finally {
+      await h.close();
+    }
   });
 });
