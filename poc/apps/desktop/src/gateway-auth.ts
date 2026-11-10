@@ -11,7 +11,7 @@ import { GATEWAY_ORIGIN, GATEWAY_PATHS } from '@sax/net';
 export type GwAuthRequest = { t: 'gw.auth'; id: number; htm: string; htu: string } | { t: 'gw.auth.invalidate' };
 
 /** 실패 코드. 엔진은 무엇이든 gateway.unavailable로 접는다(코드는 로컬 기록용). */
-export type GwAuthCode = 'auth.denied' | 'auth.bad_request' | 'account.signed_out' | 'account.scope_unavailable' | 'auth.unavailable';
+export type GwAuthCode = 'auth.denied' | 'auth.bad_request' | 'account.signed_out' | 'account.scope_unavailable' | 'auth.unavailable' | 'consent.model_declined';
 
 /** main이 돌려주는 것. headers 키는 소문자 둘뿐이다. */
 export type GwAuthResult = { t: 'gw.auth.result'; id: number; headers: { authorization: string; dpop: string } } | { t: 'gw.auth.result'; id: number; code: GwAuthCode };
@@ -29,6 +29,12 @@ export interface GatewayAuthHostOptions {
   now?: () => number;
   /** 헤더를 실제로 내준 경로(/v1/decide 등). 활동 기록이 "무엇을 우리 서버로 보냈나"를 사실대로 적는 근거다(값·헤더는 넘기지 않는다). */
   onIssued?: (path: string) => void;
+  /**
+   * 모델 처리 동의(온보딩 ②)를 지금 허락하는지. 거짓이면 어떤 경로든 헤더를 내주지 않는다(기기 토큰도 받지 않는다).
+   * 게이트웨이(decide·run-tokens·respond)는 모두 모델 상류로 가므로 뿌리에서 막는다. 엔진은 gateway.unavailable로 접어 오프라인 해석으로 간다.
+   * 없으면 늘 허락(시험·기존 호출).
+   */
+  modelAllowed?: () => boolean;
 }
 
 /** 엔진이 인증을 받을 수 있는 htu(정확히 같은 문자열만). /v1/biz/status는 엔진이 쓰지 않으니 넣지 않는다. */
@@ -87,6 +93,7 @@ export class GatewayAuthHost {
     if (typeof id !== 'number' || !Number.isSafeInteger(id) || id < 0 || id >= ID_MAX) return null;
     if (typeof m.htm !== 'string' || typeof m.htu !== 'string') return this.#fail(id, 'auth.bad_request');
     if (m.htm !== 'POST' || !GATEWAY_AUTH_HTU.has(m.htu)) return this.#fail(id, 'auth.denied');
+    if (this.#o.modelAllowed && !this.#o.modelAllowed()) return this.#fail(id, 'consent.model_declined');
     let device: GatewayDevice | null;
     try {
       device = await this.#o.device();

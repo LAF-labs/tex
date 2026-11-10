@@ -211,6 +211,30 @@ describe('DeviceSession 게이트웨이 토큰 캐시', () => {
   });
 });
 
+describe('모델 처리 동의(온보딩 ②) 거절이면 게이트웨이 헤더 없음', () => {
+  it('거절: 로그인·PC 등록이 돼 있어도 세 경로 모두 consent.model_declined, 기기 토큰도 받지 않고 onIssued(활동 기록 sent)도 없다', async () => {
+    const f = fakeDevice();
+    let allowed = false;
+    let devices = 0;
+    const issued: string[] = [];
+    const logs: string[] = [];
+    const h = new GatewayAuthHost({ device: () => (devices++, f.d), modelAllowed: () => allowed, onIssued: (p) => issued.push(p), log: (n, x) => logs.push(n + JSON.stringify(x)) });
+    for (const [i, htu] of [...GATEWAY_AUTH_HTU].entries()) assert.deepEqual(await h.handle({ t: 'gw.auth', id: i, htm: 'POST', htu }), { t: 'gw.auth.result', id: i, code: 'consent.model_declined' });
+    assert.deepEqual([devices, f.calls.length, issued.length], [0, 0, 0]);
+    assert.ok(logs.every((l) => l.includes('consent.model_declined')) && !logs.join().includes('sxd1'));
+    // 동의로 바뀌면 기존대로 헤더를 내준다
+    allowed = true;
+    assert.deepEqual(await h.handle({ t: 'gw.auth', id: 9, htm: 'POST', htu: DECIDE }), { t: 'gw.auth.result', id: 9, headers: { authorization: 'DPoP sxd1.gw-token', dpop: 'proof.jwt' } });
+    assert.deepEqual(issued, [GATEWAY_PATHS.decide]);
+  });
+
+  it('shell-app: 헤더 발급(뿌리)이 modelOk()(!onb 또는 ② 동의)를 본다', () => {
+    const app = readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
+    assert.match(app, /new GatewayAuthHost\(\{[\s\S]*?modelAllowed: \(\) => modelOk\(\),\s*\}\);/);
+    assert.match(app, /const modelOk = \(\) => !onb \|\| onb\.modelAllowed\(\);/);
+  });
+});
+
 describe('클라우드 포트: 범위를 줄인 기기 토큰 요청', () => {
   it('scopes를 주면 본문 {cert, scopes}, 안 주면 지금처럼 {cert}', async () => {
     const bodies: unknown[] = [];

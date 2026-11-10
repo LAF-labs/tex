@@ -721,6 +721,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     onIssued: (path) => {
       gwLog = [...gwLog.slice(-199), [++gwSeq, path]];
     },
+    // 온보딩 ②에서 모델을 거절했으면 게이트웨이 헤더를 내주지 않는다(입력 문장·화면이 모델로 가지 않게). 끝낸 기존 사용자(!onb)·동의한 사용자는 그대로.
+    modelAllowed: () => modelOk(),
   });
   host.setGatewayAuth((m) => gwAuth.handle(m));
   // 폰 연결(S-03, remote-pairing.ts·pair-window.ts). 로그인(첫 PC 등록)을 마치고 클라우드 포트·QR 인코더가 있을 때만.
