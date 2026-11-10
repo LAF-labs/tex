@@ -20,6 +20,22 @@ export interface Profile {
   auth: string;
 }
 
+/** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */
+export const NO_AUTH = '발급 인증 미설정';
+
+/** 발급에 필요한 등록 중 빠진 것: 사업자번호가 없으면 biz, 발급 인증(signMethod)이 없으면 auth. */
+export function setupMissing(b: Profile): Array<'biz' | 'auth'> {
+  return [...(!b.bizNo ? (['biz'] as const) : []), ...(!b.auth || b.auth === NO_AUTH ? (['auth'] as const) : [])];
+}
+export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기' } as const;
+/** 빠진 등록 안내(무엇이 빠졌는지 말한다). */
+export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<'biz' | 'auth'>): string {
+  const what = work === 'invoice' ? '세금계산서를 발급하려면' : '증명서를 떼려면';
+  if (missing.includes('biz') && missing.includes('auth')) return `${what} 먼저 사업자 정보와 발급 인증을 등록해 주세요. 지금은 둘 다 비어 있어요.`;
+  if (missing.includes('biz')) return `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`;
+  return `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`;
+}
+
 export interface Counterparty {
   id: string;
   name: string;

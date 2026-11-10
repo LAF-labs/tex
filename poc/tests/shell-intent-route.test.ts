@@ -108,7 +108,7 @@ describe('오프라인 해석 없음·로그인 먼저(사용자 결정 2026-11-
     assert.match(INTENT_UNAVAILABLE_TEXT, /연결하지 못했어요/);
   });
   it('정규식 해석은 시연(fixture)이 해석기를 바꿔 끼우지 않았을 때만', () => {
-    assert.match(send, /if \(fixture && !opts\.intent\) return finishReply\(interpret\(text, vat, profile, runs, local\), 'offline', null, \[\]\);/);
+    assert.match(send, /if \(fixture && !opts\.intent\) return setupGate\(local\) \?\? finishReply\(interpret\(text, vat, profile, runs, local\), 'offline', null, \[\]\);/);
   });
   it('제품은 로그인(PC 등록) 전에 대화·약관 다음 온보딩 답을 받지 않는다(account_required). 시연은 계정 없이', () => {
     assert.match(src, /const loginRequired = !fixture;/);

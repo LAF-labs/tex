@@ -371,6 +371,28 @@ function renderOnboarding() {
 }
 const onbActive = () => !!state.onb && state.onb.step !== 'done';
 
+/**
+ * 건너뛴 사업자(O-02)·인증(O-03)을 다시 연다([사업자 등록 마치기]·[발급 인증 고르기], 판의 "등록 할 일"). 그 단계만 대화로 묻는다.
+ * 지난 온보딩 자리는 기록으로 남기고, 새 자리를 대화 끝에 둔다(다시 연 뒤의 답만 그린다, OnbView.redoFrom).
+ */
+async function reopenSetup(item) {
+  try {
+    const r = await call('onboarding.reopen', { item });
+    state.onb = r.onboarding;
+    if (r.profiles) state.boot.profiles = r.profiles;
+    if (state.view !== 'chat') go('chat');
+    chat.thread.querySelector('[data-onboarding]')?.removeAttribute('data-onboarding');
+    appendThread(h('div', { 'data-onboarding': '' }));
+    renderOnboarding();
+    renderTitlebar();
+    renderToday();
+  } catch (e) {
+    const c = errText(e);
+    if (c === 'onboarding_unavailable') go('biz');
+    else toast(c === 'nothing_to_reopen' ? '이미 등록돼 있어요' : (ONB_ERR[c] ?? '다시 해 주세요'));
+  }
+}
+
 function timelineItem(it) {
   switch (it.type) {
     case 'day':
@@ -526,6 +548,13 @@ async function ask(text, vat) {
     box.append(h('div', { class: 'sx-actions' }, retry));
     return;
   }
+  // 발급에 필요한 등록이 빠졌다(main이 카드를 만들기 전에 막았다): 무엇이 빠졌는지와 그 단계를 다시 여는 버튼
+  if (r.kind === 'setup') {
+    const box = h('div', { class: 'sx-app', 'data-setup-needed': r.missing.map((m) => m.id).join(' ') }, h('p', {}, r.text));
+    box.append(h('div', { class: 'sx-actions' }, ...r.missing.map((m, i) => btn(m.label, () => reopenSetup(m.id), i ? '' : 'sx-btn-primary', { 'data-act': `setup-${m.id}` }))));
+    appendThread(box);
+    return;
+  }
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
@@ -618,7 +647,7 @@ function renderToday() {
   const items = b ? b.cards.flatMap((c) => c.items) : [];
   const setup = b?.setup ?? [];
   const setupRow = setup.length
-    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => go(x.view) }, x.label)))
+    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
     : null;
   const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
   const counts = b

@@ -16,6 +16,7 @@ import { app } from 'electron';
 import { appPaths, prepareLayout } from '@sax/platform';
 import { Egress } from '@sax/net';
 import { productRemote } from '../dist/remote-wiring.js';
+import { engineIntentResolver, type IntentResolver } from '../dist/intent-route.js';
 import { cloudPorts } from '../dist/remote-cloud.js';
 import { serveAccount } from './fake-account-http.js';
 import { fakeAccount, PASSWORD, softKeys } from './fake-account.js';
@@ -74,7 +75,13 @@ async function main() {
         return { cloud: cloudPorts({ egress: new Egress({ cloudDevLocal: true }), env: 'dev', dev: { accountOrigin: front.origin, relayHost: '127.0.0.1:9' } }), keys: async () => keys };
       })()
     : productRemote({ isPackaged: false, env: {} });
-  S = await startShell({ engine: { root: ROOT, portal: { kind: 'hometax' } }, remote, show: false, daemon: false });
+  // (login) 의도 해석: 처음에는 실제 엔진(게이트웨이에 닿지 못해 연결 안 됨), 뒤에는 세금계산서로 고르는 대역(발급 등록 검사를 보려고)
+  let routeInvoice = false;
+  const intent: IntentResolver = {
+    resolve: (t) => (routeInvoice ? Promise.resolve({ route: { outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'model' }, fallback: null }) : engineIntentResolver((m, p) => S!.host.rpc(m, p)).resolve(t)),
+  };
+  S = await startShell({ engine: { root: ROOT, portal: { kind: 'hometax' } }, remote, show: false, daemon: false, ...(loginMode ? { intent } : {}) });
+  const setRoute = (v: boolean) => (routeInvoice = v);
   await S.ready;
   await until('renderer ready', async () => (await js('document.body.dataset.ready')) === '1', 60_000);
   check(`엔진·금고 기동 → 첫 화면(${Math.round((Date.now() - t0) / 100) / 10}초)`, (await js('document.body.dataset.ready')) === '1');
@@ -157,6 +164,30 @@ async function main() {
   );
   check('main 로그: 오프라인 경로가 아니라 unavailable', /main\.interpret.*"path":"unavailable\./.test(mainLog()) && !/offline/.test(mainLog().split('\n').filter((l) => l.includes('main.interpret')).join('\n')), mainLog().split('\n').filter((l) => l.includes('main.interpret')).slice(-2));
   check('제목줄에 해석 경로 표시가 없다', !(await js<string>(`document.querySelector('#titlebar').textContent`)).includes('해석'));
+
+  // 발급에 필요한 등록(0.1.5 실사용: 사업자를 건너뛰면 카드가 profile_missing으로 멈췄다): 온보딩을 마친 뒤(사업자는 확인 불가로 확정, 인증은 나중에)
+  setRoute(true);
+  for (const [st, sel] of [['telemetry', '[data-onb=off]'], ['tasks', '[data-onb=later]'], ['summary', '[data-onb=ok]'], ['first', '[data-onb=later]']] as const) {
+    await until(st, async () => (await onbStep()) === st);
+    await press(sel);
+  }
+  await until('onb done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
+  const runCount = () => js<number>(`document.querySelectorAll('[data-run]').length`);
+  await say('세금계산서 1000원 인스피릿에 끊자');
+  check(
+    '발급 인증이 빠졌으면 카드를 만들지 않고 무엇이 빠졌는지 + [발급 인증 고르기]',
+    await until('setup needed', async () => js<boolean>(`(() => { const b = [...document.querySelectorAll('[data-setup-needed]')].pop(); return !!b && b.dataset.setupNeeded === 'auth' && b.textContent.includes('발급할 때 쓸 인증') && !!b.querySelector('[data-act=setup-auth]'); })()`)),
+  );
+  check('카드·실행 없음', (await runCount()) === 0 && !/멈췄어요\(/.test(await js<string>(`document.body.textContent`)));
+  await press('[data-act=setup-auth]');
+  check('[발급 인증 고르기] → 대화 끝에 O-03 발급 인증만 다시 묻는다', await until('reopen auth', async () => (await onbStep()) === 'auth'));
+  await press('[data-onb=simple]');
+  check('인증을 고르면 동의를 다시 묻지 않고 요약', await until('redo summary', async () => (await onbStep()) === 'summary'));
+  await press('[data-onb=ok]');
+  await until('redo done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
+  await say('세금계산서 1000원 인스피릿에 끊자');
+  check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다', await until('ask cp', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어느 거래처에 발급할까요') ?? false`)));
+  check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
 }
 
 app.whenReady().then(async () => {
