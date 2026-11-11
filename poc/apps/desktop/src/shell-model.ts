@@ -67,6 +67,8 @@ export interface Doc {
   expiresOn: string | null;
   source: '앱이 발급' | '직접 발급' | '직접 추가';
   purpose?: string;
+  /** 실행이 보관한 발급 PDF(엔진 보관함 run_id). 같은 실행의 메모리 줄(d-<runId>)을 대신한다. */
+  runId?: string;
   /** 보관함(엔진 DocumentService) 서류만: 확인·수정할 수 있고, 만료일 출처와 확인 필요 이유가 있다(shell-docs.ts) */
   vault?: {
     expirySource: 'document' | 'rule' | 'user' | null;

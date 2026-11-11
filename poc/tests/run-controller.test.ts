@@ -108,6 +108,8 @@ interface Opts {
   beforeStep?: (s: Step, c: RunController) => void;
   handlers?: Partial<Handlers>;
   pdf?: PdfPort;
+  /** reentry.navigate 때 페이지를 바꾼다(빈 탭 → 양식 등). */
+  onNav?: (url: string, page: FakePage) => void;
 }
 
 function mk(steps: Step[], o: Opts = {}) {
@@ -169,7 +171,7 @@ function mk(steps: Step[], o: Opts = {}) {
     },
     guardMode: (m) => rec.guard.push(m),
     observedManual: () => st.observed,
-    reentry: { navigate: async (u) => void rec.navs.push(u), loggedIn: async () => st.loggedIn.shift() ?? true },
+    reentry: { navigate: async (u) => void (rec.navs.push(u), o.onNav?.(u, page)), loggedIn: async () => st.loggedIn.shift() ?? true },
     recover: o.recover,
     verify: o.verify ? async (x) => (rec.verifies.push(x), o.verify!(x)) : undefined,
     verifyStep: judge ? async (v) => (rec.judged.push(v.id), judge(v)) : undefined,
@@ -581,6 +583,25 @@ describe('체크포인트 복귀(D03 §5.5)', () => {
     assert.deepEqual(re, ['s1:escalate_session', 's0:resumed', 's1:resumed']);
     h.approve();
     assert.equal((await p).state, 'Completed');
+  });
+  it('첫 스텝 체크포인트가 빈 탭(about:blank)에서 시작하면 한 번 url로 가서 다시 본다(H-01 s0)', async () => {
+    const S0: Step = { id: 's0', type: 'checkpoint', name: 'session', expect: { exists: 'p.root' }, url: 'https://hometax.go.kr/' };
+    const all = els();
+    const h = mk([S0, CP, GATE, SUBMIT, SV, END], { els: [], onNav: (_u, page) => all.forEach((e) => page.els.set(e.id, e)) });
+    const p = h.c.start();
+    await h.atGate();
+    assert.deepEqual(h.rec.navs, ['https://hometax.go.kr/']);
+    h.approve();
+    assert.equal((await p).state, 'Completed');
+  });
+  it('첫 스텝 체크포인트가 url로 가 봐도 expect가 거짓이면 전처럼 step.assert_failed, 첫 스텝이 아닌 체크포인트는 가지 않는다', async () => {
+    const S0: Step = { id: 's0', type: 'checkpoint', name: 'session', expect: { exists: 'p.root' }, url: 'https://hometax.go.kr/' };
+    const a = mk([S0, GATE, SUBMIT, SV, END], { els: [] });
+    assert.equal((await a.c.start()).code, 'step.assert_failed');
+    assert.deepEqual(a.rec.navs, ['https://hometax.go.kr/']);
+    const b = mk([{ id: 's1', type: 'goto', url: 'https://hometax.go.kr/a' }, { ...CP, id: 's2' } as Step, END], { els: [] });
+    assert.equal((await b.c.start()).code, 'step.assert_failed');
+    assert.deepEqual(b.rec.navs, []);
   });
   it('복귀해 expect가 맞지 않으면 url로 다시 가 보고, 그래도 아니면 핸드오프', async () => {
     const h = mk(GATE_FLOW);
