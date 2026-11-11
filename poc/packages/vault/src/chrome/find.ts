@@ -10,10 +10,13 @@ function expandWin(p: string): string {
   return p.replace(/%([^%]+)%/g, (_, k: string) => process.env[k] ?? '');
 }
 
-/** macOS·Linux 후보의 `~/`는 이 사용자 홈이다(환경 변수가 아니라 os.homedir). 홈을 모르면 그 후보는 건너뛴다. */
+/**
+ * macOS·Linux 후보의 `~/`는 이 사용자 홈이다(환경 변수가 아니라 os.homedir). 홈을 모르면 그 후보는 건너뛴다.
+ * 이어 붙이기는 실행 중인 OS의 path다(macOS에서는 posix와 같다. 다른 OS의 시험에서 구분자가 섞이지 않게).
+ */
 function expandHome(p: string, home: string): string {
   if (!p.startsWith('~/')) return p;
-  return home ? path.posix.join(home, p.slice(2)) : '';
+  return home ? path.join(home, p.slice(2)) : '';
 }
 
 /** 사용자 설치 Chrome을 내장 후보 경로에서 찾는다. 인자로 경로를 받지 않는다(home은 시험용). */
