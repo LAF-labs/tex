@@ -156,6 +156,20 @@ const wait: Handler<'wait'> = async (s, env) => {
         await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
       }
     }
+    case 'dialog': {
+      // 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등, 엔진 정책이 이미 닫았다)의 문구를 판정한다(홈택스 등록번호 [확인] → alert).
+      // 다른 문구면 기다리지 않고 실패한다(재시도해도 같은 대화상자는 다시 오지 않는다). 문구는 남기지 않는다(⑦).
+      const re = s.value ? stringPattern(env.strings, s.value) : null;
+      if (!re || !env.act.dialogSinceAction) return fail('step.cond_unsupported');
+      const deadline = env.clock.now() + ms;
+      for (;;) {
+        const d = env.act.dialogSinceAction();
+        if (d) return re.test(normalizeName(d.notice)) ? NEXT : fail('step.dialog_mismatch');
+        if (env.stopRequested?.()) return fail('run.stopped');
+        if (env.clock.now() >= deadline) return fail('step.timeout');
+        await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
+      }
+    }
   }
   return fail('step.cond_unsupported');
 };

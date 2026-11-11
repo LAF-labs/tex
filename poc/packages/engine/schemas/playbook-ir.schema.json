@@ -115,6 +115,10 @@
         "steps": {"type": "object", "propertyNames": {"enum": ["cert", "simple_auth", "security_card"]}, "additionalProperties": {"type": "array", "maxItems": 3, "items": {"enum": ["human:secret", "secret_fill:security_card", "wait:push"]}}},
         "rowLabel": {"$ref": "#/$defs/targetRef"},
         "confirmTarget": {"$ref": "#/$defs/targetRef"},
+        "openTargets": {"description": "IR rev v1.3.5: commits:true entries (same commitEffect as the submit target) clicked once each, in order, right after the submit click (e.g. a portal confirm window's proceed button).", "type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/targetRef"}},
+        "methodTargets": {"description": "IR rev v1.3.5: per sign method, the commits:true entry clicked once after openTargets (e.g. the portal's auth-type choice).", "type": "object", "propertyNames": {"enum": ["cert", "simple_auth", "security_card"]}, "additionalProperties": {"$ref": "#/$defs/targetRef"}},
+        "readyTarget": {"description": "IR rev v1.3.5: non-commit entry that shows the signing UI is up (waited before the method's actions).", "$ref": "#/$defs/targetRef"},
+        "doneTarget": {"description": "IR rev v1.3.5: non-commit entry that shows signing finished (waited after human:secret, and by wait:push when there is no confirmTarget).", "$ref": "#/$defs/targetRef"},
         "maxWaitMs": {"type": "integer", "minimum": 10000, "maximum": 180000}
       }
     },
@@ -141,8 +145,8 @@
         {"properties": {"type": {"const": "select"}, "target": {"$ref": "#/$defs/targetRef"}, "option": {"$ref": "#/$defs/valueRef"}}, "required": ["target", "option"]},
         {"properties": {"type": {"const": "press"}, "key": {"enum": ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"]}, "target": {"$ref": "#/$defs/targetRef"}}, "required": ["key"],
          "allOf": [{"if": {"properties": {"key": {"const": "Enter"}}}, "then": {"required": ["target"]}}]},
-        {"properties": {"type": {"const": "wait"}, "for": {"enum": ["selector", "navigation", "text", "idle"]}, "value": {"anyOf": [{"$ref": "#/$defs/targetRef"}, {"$ref": "#/$defs/stringsKey"}]}}, "required": ["for"],
-         "allOf": [{"if": {"properties": {"for": {"enum": ["selector", "text"]}}}, "then": {"required": ["value"]}}, {"if": {"properties": {"for": {"enum": ["navigation", "idle"]}}}, "then": {"not": {"required": ["value"]}}}]},
+        {"properties": {"type": {"const": "wait"}, "for": {"enum": ["selector", "navigation", "text", "idle", "dialog"]}, "value": {"anyOf": [{"$ref": "#/$defs/targetRef"}, {"$ref": "#/$defs/stringsKey"}]}}, "required": ["for"],
+         "allOf": [{"if": {"properties": {"for": {"enum": ["selector", "text", "dialog"]}}}, "then": {"required": ["value"]}}, {"if": {"properties": {"for": {"enum": ["navigation", "idle"]}}}, "then": {"not": {"required": ["value"]}}}]},
         {"properties": {"type": {"const": "assert"}, "cond": {"$ref": "#/$defs/cond"}}, "required": ["cond"]},
         {"properties": {"type": {"const": "extract"}, "name": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}, "from": {"$ref": "#/$defs/from"}, "readback": {"type": "boolean"}}, "required": ["name", "from"]},
         {"properties": {"type": {"const": "decide"}, "bundle": {"type": "string", "pattern": "^[a-z_]+_v\\d+$"}, "scope": {"$ref": "#/$defs/scopeRef"}, "on": {"type": "object", "required": ["unknown"], "propertyNames": {"pattern": "^[a-z_]+$"}, "additionalProperties": {"$ref": "#/$defs/outcomeTarget"}}}, "required": ["bundle", "scope", "on"]},
