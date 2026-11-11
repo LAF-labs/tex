@@ -193,7 +193,7 @@ export function taskCard(run, act) {
   const st = run.status;
   const card = h('section', { class: `sx-card${st === 'turn' || st === 'waiting' ? ' is-turn' : ''}`, 'data-run': run.id, 'data-status': st });
   card.addEventListener('click', (e) => {
-    if (!e.target.closest('button, input, dl, .sx-where')) act.open(run.id);
+    if (!e.target.closest('button, input, select, dl, .sx-where')) act.open(run.id);
   });
   const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(shownStatus(run)));
   // 내 차례·확인 필요는 합계만(사람이 할 일이 먼저 보이게), 나머지는 분해까지.
@@ -201,7 +201,42 @@ export function taskCard(run, act) {
   const now = nowStep(run);
 
   if (st === 'draft') {
-    if (act.editing === run.id) {
+    const noItem = !String(run.item ?? '').trim();
+    // 품목·받는 이메일은 카드에서 보이고 그 자리에서 고친다(08 §2). 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
+    card.append(
+      h(
+        'div',
+        { class: 'sx-meta', 'data-draft-fields': '' },
+        h('span', { 'data-draft-item': run.item ?? '' }, `품목 · ${noItem ? '비어 있음' : run.item}${!noItem && run.itemGuessed ? ' (저장 품목)' : ''}`),
+        ' · ',
+        h('span', { 'data-draft-email': run.email.value ?? '' }, `받는 이메일 · ${run.email.value || '없음(메일은 보내지 않아요)'}`),
+      ),
+    );
+    if (act.editingFields === run.id) {
+      const item = h('input', { class: 'doc-in', name: 'item', value: run.item ?? '', maxlength: 100, autocomplete: 'off', 'aria-label': '품목', placeholder: '예: 컨설팅 용역' });
+      const email = h('input', { class: 'doc-in', name: 'email', type: 'email', value: run.email.value ?? '', maxlength: 320, autocomplete: 'off', 'aria-label': '받는 이메일' });
+      const save = () => act.saveFields(run.id, item.value, email.value);
+      for (const i of [item, email])
+        i.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.isComposing) save();
+          if (e.key === 'Escape') act.editFields(null);
+        });
+      card.append(
+        h('div', { class: 'cp-form', 'data-draft-edit': '' }, h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '품목'), item), h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '받는 이메일(비우면 메일을 보내지 않아요)'), email)),
+        h('div', { class: 'sx-actions' }, btn('바꾸기', save, 'sx-btn-primary', { 'data-act': 'fields-save' }), btn('그만두기', () => act.editFields(null), 'sx-btn-quiet', { 'data-act': 'fields-cancel' })),
+      );
+      setTimeout(() => item.focus(), 0);
+    } else if (act.editingCp === run.id) {
+      // 거래처 바꾸기(F-14): 장부의 거래처에서 고른다. [취소] 뒤 다시 말하지 않아도 된다.
+      const others = (act.counterparties ?? []).filter((c) => c.id !== run.counterparty.id);
+      const sel = h('select', { class: 'doc-in', name: 'counterparty', 'aria-label': '거래처' }, ...others.map((c) => h('option', { value: c.id }, c.name)));
+      card.append(
+        others.length
+          ? h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '거래처'), sel, btn('바꾸기', () => act.saveCp(run.id, sel.value), 'sx-btn-primary', { 'data-act': 'draft-cp-save' }), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' }))
+          : h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '장부에 다른 거래처가 없어요. 거래처 화면에서 추가할 수 있어요.'), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' })),
+      );
+      setTimeout(() => sel.focus(), 0);
+    } else if (act.editing === run.id) {
       const input = h('input', { class: 'sx-amount-edit', type: 'text', inputmode: 'numeric', value: num(run.amount), 'aria-label': '금액' });
       const save = () => act.saveAmount(run.id, input.value);
       input.addEventListener('keydown', (e) => {
@@ -211,18 +246,21 @@ export function taskCard(run, act) {
       card.append(h('div', { class: 'sx-actions' }, h('span', { class: 'sx-meta' }, run.vat === 'separate' ? '공급가액' : '합계'), input, btn('바꾸기', save, 'sx-btn-primary'), btn('그만두기', () => act.editAmount(null), 'sx-btn-quiet')));
       setTimeout(() => input.focus(), 0);
     } else {
-      // 품목은 거래처 저장 품목(추정), 부가세는 고르지 않았으면 기본값(추정)
-      const guessed = [run.vatGuessed ? '부가세' : null, '품목'].filter(Boolean);
+      // 품목은 거래처 저장 품목에서 왔으면 추정, 부가세는 고르지 않았으면 기본값(추정)
+      const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
       card.append(
+        noItem ? note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true) : null,
         h(
           'div',
           { class: 'sx-actions' },
-          btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare' }),
+          btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem }),
           run.vat === 'separate' ? btn('부가세 포함하기', () => act.vat(run.id, 'included'), '', { 'data-act': 'vat' }) : btn('부가세 별도로 하기', () => act.vat(run.id, 'separate'), '', { 'data-act': 'vat' }),
           btn('금액 수정', () => act.editAmount(run.id)),
+          btn('품목·이메일 고치기', () => act.editFields(run.id), noItem ? 'sx-btn-primary' : '', { 'data-act': 'fields-edit' }),
+          btn('거래처 바꾸기', () => act.editCp(run.id), '', { 'data-act': 'draft-cp' }),
           btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
         ),
-        h('div', { class: 'sx-meta' }, `추정 값 ${guessed.length}개 · ${guessed.join(', ')} · 아직 아무것도 보내지 않았어요`),
+        h('div', { class: 'sx-meta' }, guessed.length ? `추정 값 ${guessed.length}개 · ${guessed.join(', ')} · 아직 아무것도 보내지 않았어요` : '아직 아무것도 보내지 않았어요'),
       );
     }
   } else if (st === 'preparing') {
@@ -352,7 +390,7 @@ export function runPanel(run, act) {
   const confirmed = run.confirmed;
   const tag = confirmed ? { state: 'verified', tag: '홈택스 확정' } : {};
   const r = run.result;
-  const guessed = [run.vatGuessed ? '부가세' : null, '품목'].filter(Boolean);
+  const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
   const rows = [
     st === 'done' && r ? ['승인번호', r.approvalNo, { mono: true }] : null,
     ['공급자', act.supplier()],
@@ -361,7 +399,7 @@ export function runPanel(run, act) {
     st === 'draft' ? ['부가세', run.vat === 'separate' ? '별도' : '포함', run.vatGuessed ? { state: 'inferred', tag: '기본값' } : {}] : null,
     ['공급가', won(run.supply), tag],
     ['세액', won(run.tax), confirmed ? tag : run.vatGuessed ? { state: 'inferred', tag: '추정' } : {}],
-    ['품목', run.item, confirmed ? tag : { state: 'inferred', tag: '추정' }],
+    ['품목', run.item || null, confirmed ? tag : run.itemGuessed ? { state: 'inferred', tag: '저장 품목' } : {}],
     ['작성일자', run.writeDate, tag],
     ['받는 이메일', run.email.value, { ...(st === 'done' && r?.mailConfirmed ? { state: 'verified', tag: '전송 확인' } : tag), flag: run.email.first ? '처음 보내는 주소' : null }],
     ['발급 인증', run.auth, { tag: '설정에서 변경' }],
@@ -372,7 +410,7 @@ export function runPanel(run, act) {
       : confirmed
         ? `홈택스에서 다시 읽음 · ${run.createdAt} 요청`
         : st === 'draft'
-          ? `초안 · 추정 값 ${guessed.length}개 · 아직 아무것도 보내지 않았어요`
+          ? `초안 · ${guessed.length ? `추정 값 ${guessed.length}개 · ` : ''}아직 아무것도 보내지 않았어요`
           : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
   // 작업 패널의 [중지](T-04). 발급 전에만 있다. 승인은 여기에도 없다.
   const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && run.steps[4].state !== 'done');

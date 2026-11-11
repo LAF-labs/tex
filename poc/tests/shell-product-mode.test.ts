@@ -37,7 +37,7 @@ describe('제품 모드: 견본 데이터 없음', () => {
     assert.match(src, /void registrySync\('boot'\);/);
     assert.match(src, /setInterval\(\(\) => void registrySync\('timer'\), REGISTRY_EVERY_MS\)/);
     assert.match(src, /const onResume = \(\) => \{\s*void registrySync\('resume'\);/);
-    assert.match(src, /await registryFresh\(\);\s*return runs\.prepare\(String\(p\.id\)\);/);
+    assert.match(src, /await registryFresh\(\);\s*const id = String\(p\.id\);\s*const r = await runs\.prepare\(id\);/);
     assert.match(src, /setTimeout\(r, 10_000\)/);
     assert.match(src, /clearInterval\(registryTimer\);/);
   });

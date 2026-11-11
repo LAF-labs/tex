@@ -85,7 +85,8 @@ export const SHELL_METHODS = {
   'shell.bootstrap': {},
   'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
-  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
+  // 초안 카드에서 고치기: 부가세·금액·품목·받는 이메일(품목은 엔진 상한 100자, 넘치면 거부)
+  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 }, item: { t: 'string', max: 200 }, email: { t: 'string', max: 320 }, counterpartyId: { t: 'string', max: 128 } },
   'run.prepare': { id: ID },
   'run.stop': { id: ID },
   // 핸드오프 [다 했어요]·[직접 발급함](D03 §2 HandedOff). 재개·확인으로만 가고 발급하지 않는다(엔진이 원장에 observed_manual을 쓴다).

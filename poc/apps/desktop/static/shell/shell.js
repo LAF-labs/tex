@@ -24,6 +24,8 @@ const state = {
   panel: null, // { kind: 'run'|'g24'|'doc'|'cp'|'act', id }
   menu: false, // 제목줄 프로필 메뉴
   editing: null,
+  editingFields: null, // 초안 카드의 품목·이메일 칸을 연 run id
+  editingCp: null, // 초안 카드의 거래처 고르기를 연 run id
   vat: null,
   fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
   composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
@@ -109,7 +111,7 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : c);
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : c === 'item_required' ? '품목이 비어 있어요. 카드에서 [품목·이메일 고치기]로 넣고 다시 준비해 주세요.' : c);
     }
   },
   vat: async (id, vat) => {
@@ -121,7 +123,44 @@ const act = {
   },
   editAmount: (id) => {
     state.editing = id;
+    state.editingFields = null;
+    state.editingCp = null;
     for (const r of state.runs.values()) renderRun(r);
+  },
+  // 초안 카드의 [품목·이메일 고치기]: 칸을 열고, [바꾸기]면 main이 검사해 카드 값을 바꾼다(다시 [홈택스에서 준비]로 확인)
+  editFields: (id) => {
+    state.editingFields = id;
+    state.editing = null;
+    state.editingCp = null;
+    for (const r of state.runs.values()) renderRun(r);
+  },
+  // 초안 카드의 [거래처 바꾸기](F-14): 장부에서 고르면 main이 받는 이메일·추정 품목을 그 거래처 것으로 바꾼다.
+  editCp: (id) => {
+    state.editingCp = id;
+    state.editing = null;
+    state.editingFields = null;
+    for (const r of state.runs.values()) renderRun(r);
+  },
+  saveCp: async (id, counterpartyId) => {
+    try {
+      putRun(await call('draft.update', { id, counterpartyId: String(counterpartyId) }));
+      state.editingCp = null;
+      renderRun(state.runs.get(id));
+      toast('거래처를 바꿨어요');
+    } catch (e) {
+      toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요');
+    }
+  },
+  saveFields: async (id, item, email) => {
+    try {
+      putRun(await call('draft.update', { id, item: String(item), email: String(email) }));
+      state.editingFields = null;
+      renderRun(state.runs.get(id));
+      toast('카드 값을 바꿨어요');
+    } catch (e) {
+      const c = errText(e);
+      toast(c === 'item_required' ? '품목을 넣어 주세요. 예: 컨설팅 용역' : c === 'bad_email' ? '이메일 주소 모양이 맞지 않아요' : '바꾸지 못했어요. 다시 해 주세요');
+    }
   },
   saveAmount: async (id, text) => {
     try {
@@ -619,7 +658,7 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const el = taskCard(run, { ...act, editing: state.editing });
+  const el = taskCard(run, { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps });
   const old = chat.thread.querySelector(`[data-run="${run.id}"]`);
   if (old) old.replaceWith(el);
   else appendThread(el);
@@ -924,7 +963,10 @@ function cpEditPanel(c) {
       if (r.name) form.elements.name.value = r.name;
       if (r.bizNo) form.elements.bizNo.value = fmtBiz(r.bizNo);
       if (r.rep) form.elements.rep.value = r.rep;
-      toast('등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
+      // 등록증 종목은 저장 품목 후보로만(F-15). 이미 적어 둔 품목은 덮지 않는다.
+      const itemFilled = !!r.item && !String(form.elements.item.value).trim();
+      if (itemFilled) form.elements.item.value = r.item;
+      toast(itemFilled ? '등록증에서 읽었어요. 저장 품목은 등록증의 종목이에요. 발급할 품목과 다르면 고친 뒤 추가해 주세요' : '등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
     } catch (err) {
       toast(CP_ERR[errText(err)] ?? errText(err));
     } finally {

@@ -753,6 +753,46 @@ async function flow(): Promise<void> {
   );
   await click('#panel .panel-x');
 
+  // 저장 품목이 없는 거래처(리허설 발견 2026-11-11: 빈 품목 카드가 실행에서야 item_missing으로 멈췄다): 카드 전에 품목을 묻고 →
+  // 답 → 카드에 품목 → 카드에서 품목·이메일을 고치고 → [홈택스에서 준비]가 그 품목으로 승인 대기까지 → 처음 쓴 품목은 저장 품목으로. 발급은 하지 않는다([중지]).
+  {
+    // 가짜 홈택스가 아는 거래처(C테크)의 저장 품목·시연 품목을 비워 "품목 없는 거래처"로 만든다(이 뒤의 검사는 C테크를 쓰지 않는다)
+    const ctech = (await js<Array<{ id: string; name: string; rep: string; email: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === 'C테크')!;
+    await js(`window.sax.call('counterparty.save', ${JSON.stringify({ id: ctech.id, name: 'C테크', rep: ctech.rep, email: 'noitem@gyeonbon-test.example', item: '' })})`);
+    await S.host.rpc('counterparty.setItems', { id: ctech.id, items: [] });
+    const made = (await js<Array<{ id: string; item: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.id === ctech.id && c.item === '');
+    const lastApp = () => js<string>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent ?? ''`);
+    const runsBefore = await js<number>(`document.querySelectorAll('[data-run]').length`);
+    await sendText('C테크에 1,230원 세금계산서 끊어 줘');
+    check('품목 없는 거래처: 카드 전에 "어떤 품목으로 발급할까요?"', !!made?.id && (await until('ask item', async () => (await lastApp()).includes('어떤 품목으로 발급할까요'), 5000)) && (await js<number>(`document.querySelectorAll('[data-run]').length`)) === runsBefore, { made: !!made, last: await lastApp() });
+    const idItem = await toDraft('컨설팅 용역');
+    check('답한 품목으로 카드(품목·받는 이메일이 카드에 보인다)', (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '컨설팅 용역' && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-email]')?.dataset.draftEmail ?? ''`)) === 'noitem@gyeonbon-test.example');
+    await click(`[data-run="${idItem}"] [data-act=fields-edit]`);
+    await until('fields form', async () => js<boolean>(`!!document.querySelector('[data-run="${idItem}"] [data-draft-edit] [name=item]')`), 3000);
+    await js(`(() => { const c = document.querySelector('[data-run="${idItem}"]'); c.querySelector('[name=item]').value = '디자인 용역'; c.querySelector('[name=email]').value = 'design@gyeonbon-test.example'; })()`);
+    await click(`[data-run="${idItem}"] [data-act=fields-save]`);
+    check('카드에서 품목·이메일을 고치면 카드 값이 바뀐다', await until('fields saved', async () => (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '디자인 용역', 3000) && S.runs.get(idItem)!.email.value === 'design@gyeonbon-test.example');
+    await prepare(idItem);
+    await until('waiting item', () => runStatus(idItem) === 'waiting', 15_000);
+    const cpsNow = (await js<Array<{ name: string; item: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === 'C테크');
+    check('[홈택스에서 준비] → 고친 품목으로 승인 대기까지(엔진이 품목을 받았다), 처음 쓴 품목은 저장 품목으로 남고 카드가 알린다', runStatus(idItem) === 'waiting' && S.runs.get(idItem)!.item === '디자인 용역' && cpsNow?.item === '디자인 용역' && (S.runs.get(idItem)!.notices ?? []).some((t) => t.includes('저장 품목으로 남겼어요')), { status: runStatus(idItem), note: S.runs.get(idItem)!.stoppedNote, cpsNow, notices: S.runs.get(idItem)!.notices });
+    await stopRun(idItem);
+    await until('item run stopped', () => runStatus(idItem) === 'stopped' && !S.bar.snapshot().visible, 20_000);
+
+    // 카드에서 거래처 바꾸기(F-14): [취소] 뒤 다시 말하지 않고 장부에서 고른다. 받는 이메일·저장 품목(추정)은 새 거래처의 장부 값(앞 카드에서 고친 이메일은 그 카드에만).
+    const idCp = await toDraft('B상사에 4,560원 세금계산서');
+    await click(`[data-run="${idCp}"] [data-act=draft-cp]`);
+    await until('cp select', async () => js<boolean>(`!!document.querySelector('[data-run="${idCp}"] [data-draft-cp] select')`), 3000);
+    const opts = await js<string[]>(`[...document.querySelectorAll('[data-run="${idCp}"] [data-draft-cp] option')].map((o) => o.textContent)`);
+    await js(`(() => { const s = document.querySelector('[data-run="${idCp}"] [data-draft-cp] select'); s.value = ${JSON.stringify(ctech.id)}; })()`);
+    await click(`[data-run="${idCp}"] [data-act=draft-cp-save]`);
+    const switched = await until('cp switched', async () => (await js<string>(`document.querySelector('[data-run="${idCp}"] .sx-card-title')?.textContent ?? ''`)).includes('C테크'), 3000);
+    const rCp = S.runs.get(idCp)!;
+    check('확인 카드 [거래처 바꾸기]: 장부의 다른 거래처만 고를 수 있고, 고르면 카드 제목·받는 이메일·저장 품목이 그 거래처 것(금액 그대로)', switched && !opts.includes('B상사') && opts.includes('C테크') && rCp.counterparty.id === ctech.id && rCp.email.value === 'noitem@gyeonbon-test.example' && rCp.item === '디자인 용역' && rCp.itemGuessed && rCp.amount === 4560, { opts, cp: rCp.counterparty.name, email: rCp.email.value, item: rCp.item });
+    await click(`[data-run="${idCp}"] [data-act=cancel]`);
+    await until('cp draft cancelled', () => runStatus(idCp) === 'stopped', 3000);
+  }
+
   // 엔진 프로세스가 승인 대기 중에 끝남: 바가 내려가고 카드는 "승인 전에 끝났어요"(발급 없음), 이후 호출은 기다리지 않고 실패.
   const postsExit = fx().fixture.posts();
   const idExit = await toWaiting('B상사에 33만원 세금계산서');
