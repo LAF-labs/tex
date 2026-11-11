@@ -173,8 +173,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 홈택스 민원증명은 H-01과 같은 원장·게이트·verify 길을 쓴다. 다른 것은 아래뿐이다.
 
 - **시작**: `run.startCert {runId, playbookId, inputs}`. engine `ir`에서만 돈다. 패키지는 id별 설치본을 실행 시작마다 다시 검증해 쓴다(`installedIrSource`, §3.1).
-- **입력 검사**: 그 서명 패키지의 `playbook.inputs` 선언(필수·enum 값·기본값)으로 한다. 선언에 없는 키는 `cert.input_unknown`, 빠진 필수 칸은 `cert.input_missing`, 선언 밖 값·위험 문자는 `cert.input_invalid`다.
-  - 사업자번호가 없으면 `profile_missing`, 발급 인증(`signMethod`)이 없으면 `profile_sign_missing`이다. 브라우저를 열기 전에 거절한다.
+- **입력 검사**: 그 서명 패키지의 `playbook.inputs` 선언(필수·enum 값·기본값)으로 한다. 선언에 없는 키는 `cert.input_unknown`, 빠진 필수 칸은 `input.missing`(H-01과 같은 코드), 선언 밖 값·위험 문자는 `cert.input_invalid`다.
+  - 사업자번호나 발급 인증(`signMethod`)이 없으면 `profile_missing`이다. 제품이 받지 않는 서류 id·IR이 아닌 실행 방식은 `package.not_loaded`다. 모두 브라우저를 열기 전에 거절한다.
 - **승인 카드** `cert.confirm`(docType `cert`): 4칸은 `certDoc`·`certPurpose`·`certSubmitTo`·`rrnDisclosure`이고 readback으로 고정한 값이다.
   - 예약 키는 `$dup.businessKey`·`$dup.priorNotCommitted`만 있다. 거래처가 없어 `$first.*`·`$dup.portalExisting`은 없다.
 - **업무 키**: `SHA-256(JCS{kind:"cert", playbookId, bizNo, day(KST), inputs})`. 같은 날 같은 사업자가 같은 서류를 같은 입력으로 다시 떼면 카드가 경고한다(차단 아님).

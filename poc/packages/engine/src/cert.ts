@@ -19,7 +19,8 @@ export interface CertStartParams {
 }
 
 /** 입력 거절 코드(RunEnd failed). */
-export type CertInputCode = 'cert.input_missing' | 'cert.input_invalid' | 'cert.input_unknown';
+/** 빠진 필수 칸은 H-01과 같은 input.missing(데스크톱 문구 있음). 선언 밖 값·키는 데스크톱이 카드 선택지만 보내면 생기지 않는 오류다. */
+export type CertInputCode = 'input.missing' | 'cert.input_invalid' | 'cert.input_unknown';
 
 export type CertInputResult = { ok: true; inputs: Record<string, string> } | { ok: false; code: CertInputCode; field: string };
 
@@ -35,7 +36,7 @@ const SCALAR = new Set<InputDecl['type']>(['enum', 'string', 'date']);
 /**
  * 패키지 선언으로 입력을 검사하고 기본값을 채운다. 값은 문자열만(앞뒤 공백은 잘라 낸다).
  * - 선언에 없는 키 → cert.input_unknown
- * - 값이 없고 기본값도 없는데 required → cert.input_missing(빈 문자열도 없음으로 본다)
+ * - 값이 없고 기본값도 없는데 required → input.missing(빈 문자열도 없음으로 본다)
  * - 문자열이 아님·위험 문자·너무 김·enum 밖·date 모양 아님·지원하지 않는 선언 종류 → cert.input_invalid
  */
 export function certInputs(decl: Readonly<Record<string, InputDecl>>, raw: unknown): CertInputResult {
@@ -49,7 +50,7 @@ export function certInputs(decl: Readonly<Record<string, InputDecl>>, raw: unkno
     if (typeof v === 'string') v = v.trim();
     if (v === undefined || v === null || v === '') v = d.default;
     if (v === undefined || v === null || v === '') {
-      if (d.required) return { ok: false, code: 'cert.input_missing', field: k };
+      if (d.required) return { ok: false, code: 'input.missing', field: k };
       continue;
     }
     if (typeof v !== 'string' || v.length > MAX_LEN || UNSAFE.test(v)) return { ok: false, code: 'cert.input_invalid', field: k };

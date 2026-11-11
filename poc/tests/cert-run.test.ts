@@ -277,16 +277,16 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     const refuse = (p: Partial<CertStartParams>, code: string, r = runs) => {
       assert.throws(() => r.startCert({ runId: `bad-${++n}`, playbookId: ID('H-03'), inputs: INPUTS['H-03'], ...p } as CertStartParams), (e: unknown) => e instanceof RunEnd && e.code === code, code);
     };
-    refuse({ inputs: { submitTo: '금융기관' } }, 'cert.input_missing');
+    refuse({ inputs: { submitTo: '금융기관' } }, 'input.missing');
     refuse({ inputs: { ...INPUTS['H-03'], purpose: '아무 용도' } }, 'cert.input_invalid');
     refuse({ inputs: { ...INPUTS['H-03'], purpose: '대출용‮' } }, 'cert.input_invalid');
     refuse({ inputs: { ...INPUTS['H-03'], rrn: '900101-1234567' } }, 'cert.input_unknown');
     refuse({ inputs: { ...INPUTS['H-03'], certDoc: '납세증명서' } }, 'cert.input_invalid');
-    refuse({ playbookId: ID('H-08'), inputs: { purpose: '대출용', submitTo: '금융기관' } }, 'cert.input_missing');
-    refuse({ playbookId: 'fixture.cert.nope' }, 'cert.unknown_doc');
-    refuse({ playbookId: 'Hometax/../x' }, 'cert.unknown_doc');
+    refuse({ playbookId: ID('H-08'), inputs: { purpose: '대출용', submitTo: '금융기관' } }, 'input.missing');
+    refuse({ playbookId: 'fixture.cert.nope' }, 'package.not_loaded');
+    refuse({ playbookId: 'Hometax/../x' }, 'package.not_loaded');
     refuse({ runId: 'bad id' }, 'bad_run_id');
-    refuse({}, 'cert.engine_unavailable', svc({ engine: 'h01' }));
+    refuse({}, 'package.not_loaded', svc({ engine: 'h01' }));
     refuse({}, 'package.not_loaded', svc({ certSource: undefined }));
     // 입력 값은 엔진 로그에 남지 않는다(입력 이름·코드만)
     assert.deepEqual(certInputs({ a: { type: 'enum', values: ['x'], required: true } }, { a: ' x ' }), { ok: true, inputs: { a: 'x' } });
@@ -295,7 +295,7 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     const prof = data.profiles.byKind('business')!;
     data.profiles.upsert({ ...prof, signMethod: null });
     try {
-      refuse({}, 'profile_sign_missing');
+      refuse({}, 'profile_missing');
     } finally {
       data.profiles.upsert({ ...prof });
     }

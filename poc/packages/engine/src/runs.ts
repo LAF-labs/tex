@@ -248,25 +248,26 @@ export class RunService extends EventEmitter {
 
   /**
    * 민원증명(H-03·H-04·H-08·H-09) 실행 시작(run.startCert). engine 'ir'에서만 돈다. 검사에 실패하면 브라우저를 열기 전에 던진다.
-   * 입력은 그 서명 패키지의 playbook.inputs 선언으로 검사한다(cert.ts certInputs). 사업자번호·발급 인증이 없으면 profile_missing·profile_sign_missing.
+   * 입력은 그 서명 패키지의 playbook.inputs 선언으로 검사한다(cert.ts certInputs). 사업자번호나 발급 인증이 없으면 profile_missing이다.
+   * 거절 코드는 데스크톱 멈춤 문구 표(shell-runs NOTE)에 있는 것을 쓴다: 받을 수 없는 서류·실행 방식은 package.not_loaded(이 서류의 작업 정보가 없다).
    * 그 뒤(허가·원장 의도·요청률·게이트·원장 행)는 H-01과 같은 길이다. 승인 카드는 cert.confirm(docType cert)이다.
    */
   startCert(p: CertStartParams): { runId: string; intentId: string } {
     if (this.active) throw new RunEnd('failed', 'busy');
-    if (this.engine !== 'ir') throw new RunEnd('failed', 'cert.engine_unavailable');
+    if (this.engine !== 'ir') throw new RunEnd('failed', 'package.not_loaded');
     if (portalProblems(this.d.portal).includes('verify_below_floor')) {
       this.d.log.event('run.portal_not_ready', { kind: this.d.portal.kind, problems: 1 });
       throw new RunEnd('failed', 'selector_placeholder');
     }
     if (typeof p?.runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.runId)) throw new RunEnd('failed', 'bad_run_id');
-    if (typeof p.playbookId !== 'string' || !/^[a-z0-9_.]{1,80}$/.test(p.playbookId)) throw new RunEnd('failed', 'cert.unknown_doc');
+    if (typeof p.playbookId !== 'string' || !/^[a-z0-9_.]{1,80}$/.test(p.playbookId)) throw new RunEnd('failed', 'package.not_loaded');
     const profile = this.d.data.profiles.byKind('business');
     if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
-    if (!profile.signMethod) throw new RunEnd('failed', 'profile_sign_missing');
+    if (!profile.signMethod) throw new RunEnd('failed', 'profile_missing');
     const irPkg = this.certPackageFor(p.playbookId);
     const files = irPkg.pkg.files;
     // 민원증명 승인 카드가 있는 플레이북만(H-01 등 다른 패키지를 이 길로 돌리지 않는다).
-    if (files.manifest.id !== p.playbookId || !files.playbook.steps.some((s) => s.type === 'gate' && s.card === CERT_CARD)) throw new RunEnd('failed', 'cert.unknown_doc');
+    if (files.manifest.id !== p.playbookId || !files.playbook.steps.some((s) => s.type === 'gate' && s.card === CERT_CARD)) throw new RunEnd('failed', 'package.not_loaded');
     const checked = certInputs(files.playbook.inputs, p.inputs);
     if (!checked.ok) {
       this.d.log.event('run.cert_input_refused', { playbook: p.playbookId, code: checked.code, field: checked.field });
@@ -494,7 +495,9 @@ export class RunService extends EventEmitter {
     if (this.d.ir && this.d.ir.pkg.files.manifest.id === playbookId) return this.d.ir;
     const r = this.d.certSource?.(playbookId) ?? { ok: false as const, code: 'package.not_loaded' };
     if (r.ok) return r.ir;
-    if (r.code === 'package.not_loaded' || r.code === 'cert.unknown_doc') throw new RunEnd('failed', r.code);
+    // 제품이 받지 않는 서류 id(cert.unknown_doc)도 사람에게는 "이 서류의 작업 정보가 없다"와 같다. 로그에는 코드를 남긴다.
+    if (r.code === 'cert.unknown_doc') this.d.log.event('run.cert_unknown_doc', { playbook: playbookId });
+    if (r.code === 'package.not_loaded' || r.code === 'cert.unknown_doc') throw new RunEnd('failed', 'package.not_loaded');
     this.d.log.event('run.package_refused', { code: r.code, playbook: playbookId });
     throw new RunEnd('failed', 'package.load_failed');
   }
