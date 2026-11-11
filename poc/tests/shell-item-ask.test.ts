@@ -123,6 +123,7 @@ describe('카드에서 품목·받는 이메일 고치기, 품목 없이는 준�
   });
   it('그래도 엔진이 item_missing으로 멈추면 할 일을 말한다', () => {
     assert.match(NOTE.item_missing!, /품목/);
+    assert.match(NOTE.item_missing!, /거래처 화면에서 \[저장 품목\]을 넣거나/);
     assert.match(NOTE.item_missing!, /다시 하면 품목을 물어볼게요/);
   });
 });
@@ -190,6 +191,7 @@ describe('배선', () => {
   });
   it('[등록증으로 채우기]는 비어 있는 저장 품목 칸에만 종목을 채운다', () => {
     const shell = read('apps/desktop/static/shell/shell.js');
-    assert.match(shell, /const itemFilled = !!r\.item && !String\(form\.elements\.item\.value\)\.trim\(\);\s*if \(itemFilled\) form\.elements\.item\.value = r\.item;/);
+    assert.match(shell, /const itemIn = form\.elements\.namedItem\('item'\);\s*const itemFilled = !!r\.item && !!itemIn && !String\(itemIn\.value\)\.trim\(\);\s*if \(itemFilled\) itemIn\.value = r\.item;/);
+    assert.doesNotMatch(shell, /form\.elements\.item\b/, 'elements.item은 HTMLFormControlsCollection.item() 메서드다');
   });
 });

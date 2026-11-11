@@ -113,6 +113,8 @@ export const SHELL_METHODS = {
     rep: { t: 'string', max: 100, nullable: true },
     email: { t: 'string', max: 320, nullable: true },
     item: { t: 'string', max: 200, nullable: true },
+    // [등록증으로 채우기]가 돌려준 읽기 표(값 없음). OCR이 번호를 잘못 읽어 비운 칸에 사용자가 번호를 넣었을 때 같은 읽기의 주소를 붙인다.
+    certHold: { t: 'string', max: 64, nullable: true },
   },
   // [등록증으로 채우기](M4-3 O-05): 파일 고르기 → 후보(상호·번호·대표자). 인자 없음.
   'counterparty.readCert': {},
@@ -126,6 +128,8 @@ export const SHELL_METHODS = {
   'account.sendCode': { email: { t: 'string', max: 254, required: true }, signup: { t: 'boolean' } },
   'account.verify': { code: { t: 'string', max: 6, required: true } },
   'account.back': {},
+  // 설정 > 계정 [로그아웃](실제 입력 뒤에만). 인자 없음.
+  'account.signOut': {},
   // 비밀번호 로그인(ADR-038). 비밀번호는 renderer → main → 계정 서비스로만 간다(로그·디스크·금고에 두지 않는다).
   'account.password': { email: { t: 'string', max: 254, required: true }, password: { t: 'string', max: 512, required: true } },
   // 계정 만들기의 비밀번호 단계(PUT /v1/password). 비밀번호는 같은 규칙(로그·디스크·금고 없음). [나중에]는 인자 없음.
@@ -154,7 +158,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

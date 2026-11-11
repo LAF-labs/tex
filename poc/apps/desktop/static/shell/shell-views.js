@@ -248,8 +248,9 @@ export function taskCard(run, act) {
     } else {
       // 품목은 거래처 저장 품목에서 왔으면 추정, 부가세는 고르지 않았으면 기본값(추정)
       const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
+      // card.append(null)은 "null" 글자를 넣는다: 안내는 품목이 빌 때만 따로 붙인다
+      if (noItem) card.append(note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true));
       card.append(
-        noItem ? note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true) : null,
         h(
           'div',
           { class: 'sx-actions' },
@@ -292,7 +293,7 @@ export function taskCard(run, act) {
   } else if (st === 'turn') {
     card.append(note(run.turn.text, false, run.turn.note, 'phone'));
     const signing = run.steps[4].state === 'done';
-    card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('목업: 폰으로 다시 요청한 것으로 칠게요')), signing ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })));
+    card.append(h('div', { class: 'sx-actions' }, btn('다시 요청', () => act.toast('폰으로 다시 요청하기는 곧 지원해요')), signing ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })));
   } else if (st === 'waiting') {
     // ADR-021 결정 7: 작성 카드는 "작성 완료" 한 줄로 접는다. 되읽은 값 전체·중복 경고·[중지]는 대화 열 아래 main 승인 카드에 있다.
     // 승인 뒤 2초(거부 우선 창)에는 승인 카드가 내려가므로 여기에 [중지]를 둔다.
@@ -522,7 +523,7 @@ export function docPanel(doc, today, act, review) {
         ['프로필', doc.profile === 'business' ? '사업자' : '개인'],
         ['보관', '이 PC 문서함'],
       ]),
-      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('목업: 메일을 보내지 않아요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('메일로 보내기는 곧 지원해요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
       h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
     ],
   );
@@ -533,7 +534,7 @@ function docPreview() {
   const bar = (cls) => h('div', { class: `pv-line ${cls}` });
   return h(
     'figure',
-    { class: 'preview', 'aria-label': '미리보기 자리(목업)' },
+    { class: 'preview', 'aria-label': '미리보기 자리' },
     h(
       'div',
       { class: 'pv-page', 'aria-hidden': 'true' },

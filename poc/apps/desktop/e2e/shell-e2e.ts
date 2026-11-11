@@ -766,7 +766,7 @@ async function flow(): Promise<void> {
     await sendText('C테크에 1,230원 세금계산서 끊어 줘');
     check('품목 없는 거래처: 카드 전에 "어떤 품목으로 발급할까요?"', !!made?.id && (await until('ask item', async () => (await lastApp()).includes('어떤 품목으로 발급할까요'), 5000)) && (await js<number>(`document.querySelectorAll('[data-run]').length`)) === runsBefore, { made: !!made, last: await lastApp() });
     const idItem = await toDraft('컨설팅 용역');
-    check('답한 품목으로 카드(품목·받는 이메일이 카드에 보인다)', (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '컨설팅 용역' && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-email]')?.dataset.draftEmail ?? ''`)) === 'noitem@gyeonbon-test.example');
+    check('답한 품목으로 카드(품목·받는 이메일이 카드에 보인다, 빈 값 글자 없음)', !/\bnull\b|undefined/.test(await js<string>(`document.querySelector('[data-run="${idItem}"]')?.innerText ?? ''`)) && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '컨설팅 용역' && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-email]')?.dataset.draftEmail ?? ''`)) === 'noitem@gyeonbon-test.example');
     await click(`[data-run="${idItem}"] [data-act=fields-edit]`);
     await until('fields form', async () => js<boolean>(`!!document.querySelector('[data-run="${idItem}"] [data-draft-edit] [name=item]')`), 3000);
     await js(`(() => { const c = document.querySelector('[data-run="${idItem}"]'); c.querySelector('[name=item]').value = '디자인 용역'; c.querySelector('[name=email]').value = 'design@gyeonbon-test.example'; })()`);
