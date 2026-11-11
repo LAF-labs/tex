@@ -201,6 +201,15 @@ async function main() {
   check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다', await until('ask cp', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어느 거래처에 발급할까요') ?? false`)));
   check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
 
+  // 저장 품목이 없는 거래처(등록증·직접 입력 모두 품목 칸이 선택): 카드 전에 품목을 묻고, 모델이 답을 세금계산서로 골라도 이어 간다. 준비는 누르지 않는다(홈택스 접속 없음).
+  const saved = await js<{ id?: string }>(`window.sax.call('counterparty.save', { id: null, name: '견본무품목상사', bizNo: '1010111113', rep: '', email: 'noitem@gyeonbon-test.example', item: '' })`);
+  await say('견본무품목상사에 1000원 세금계산서 끊어 줘');
+  check('품목 없는 거래처 → 카드 없이 "어떤 품목으로 발급할까요?"', !!saved?.id && (await until('ask item', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어떤 품목으로 발급할까요') ?? false`))) && (await runCount()) === 0);
+  await say('컨설팅 용역');
+  check('답 → 그 품목의 카드, [홈택스에서 준비]가 켜져 있다', await until('item card', async () => js<boolean>(`(() => { const c = [...document.querySelectorAll('[data-run]')].pop(); return !!c && c.querySelector('[data-draft-item]')?.dataset.draftItem === '컨설팅 용역' && !c.querySelector('[data-act=prepare]').disabled; })()`)));
+  await js(`[...document.querySelectorAll('[data-run]')].pop().querySelector('[data-act=cancel]').click()`);
+  await until('cancel', async () => js<boolean>(`[...document.querySelectorAll('[data-run]')].pop()?.dataset.status === 'stopped'`), 5_000);
+
   // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
   const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
   await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
