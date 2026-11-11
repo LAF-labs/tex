@@ -23,6 +23,9 @@ export type Importer = (params: Record<string, unknown>, engine: EngineCall) => 
 
 /** 엔진 보관함 항목 → 셸 서류. 보관함 서류는 vault 칸(만료일 출처·확인 필요·후보)을 가진다. */
 export function toShellDoc(v: DocumentView): Doc {
+  // 앱이 실행에서 보관한 발급 결과(save_pdf, tax_invoice): 확인할 칸이 없어 vault 칸을 두지 않는다(문서함은 앱 발급 서류로 그린다).
+  if (v.docType === 'tax_invoice')
+    return { id: v.id, name: v.displayName, kind: '세금계산서', docName: v.displayName, profile: 'business', issuedOn: v.issuedOn, expiresOn: null, source: '앱이 발급', ...(v.runId ? { runId: v.runId } : {}) };
   return {
     id: v.id,
     name: v.displayName,

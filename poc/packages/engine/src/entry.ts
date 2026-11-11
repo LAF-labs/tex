@@ -7,7 +7,7 @@ import { ENV_TAMPERED } from './env-guard.ts';
 import { hkdfSync } from 'node:crypto';
 import type { MessagePortMain } from 'electron';
 import path from 'node:path';
-import { openDatabase } from '@sax/db';
+import { openDatabase, type Db } from '@sax/db';
 import { ColumnCipher, deriveColumnKey } from '@sax/db';
 import { BundleService } from '@sax/bundle';
 import { Egress } from '@sax/net';
@@ -20,7 +20,7 @@ import { COMMANDS, DataService, READ_QUERIES } from './data-service.ts';
 import type { GatePortMessage } from './gate.ts';
 import { fixturePortal, HOMETAX_PORTAL } from './portal.ts';
 import { RunEnd } from './run-end.ts';
-import { GATE_ONLY_METHODS, RUN_COMMANDS, type EngineInit } from './protocol.ts';
+import { GATE_ONLY_METHODS, RUN_COMMANDS, RUN_HISTORY_QUERIES, type EngineInit } from './protocol.ts';
 import { PAYROLL_COMMANDS, PAYROLL_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
@@ -28,6 +28,8 @@ import { rateTableSink } from './registry-sinks.ts';
 import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { installedIrSource } from './package-source.ts';
+import { VaultPdfPort } from './driver/pdf.ts';
+import { recordRunInputs, runHistory } from './run-history.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
@@ -65,8 +67,10 @@ let runs: RunService | null = null;
 /** 레지스트리 동기화(main 전용 질의·명령). 핀 키가 없으면 null(registry.not_pinned). */
 let registry: RegistrySync | null = null;
 let initialized = false;
+/** 실행 이력 조회·입력 요약 봉인(run-history.ts). DB·컬럼 키는 init이 연다. */
+let history: { db: Db; cipher: ColumnCipher } | null = null;
 
-const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, 'browser.open', 'browser.close', 'engine.status']);
+const ALLOWED = new Set<string>([...READ_QUERIES, ...COMMANDS, ...RUN_COMMANDS, ...RUN_HISTORY_QUERIES, 'browser.open', 'browser.close', 'engine.status']);
 const GATE_ONLY = new Set<string>(GATE_ONLY_METHODS);
 const PAYROLL = new Set<string>([...PAYROLL_READ_QUERIES, ...PAYROLL_COMMANDS]);
 for (const m of PAYROLL) ALLOWED.add(m);
@@ -127,6 +131,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   const columnKey = deriveColumnKey(key);
   const cipher = new ColumnCipher(columnKey);
   columnKey.fill(0);
+  history = { db, cipher };
   key.fill(0);
   // 게이트웨이 인증은 main auth 포트로 요청마다 받는다(ADR-040 결정 3: gateway 범위 기기 토큰, 엔진은 토큰·키를 갖지 않는다).
   // auth 포트가 없으면(개발 콘솔·시험 기동) 게이트웨이 구성 없이 둔다. 그때 intent.resolve는 decide.unavailable이다.
@@ -147,9 +152,18 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     // fixture 개발 포털(시연·e2e)은 H01Runner 그대로다. 제품 dist 로더는 fixture 패키지를 거부하므로(ADR-039) 시연 경로를 막지 않으려는 최소한이다.
     const ir = portal.kind === 'hometax';
     const runJudge = ir ? gatewayRunJudge(egress) : null;
+    // save_pdf(H-01 s32): 금고가 지금 실행 탭을 인쇄해 staging에 두면 보관함에 실행 산출물로 넣는다(발급 결과 PDF, 재시작 뒤에도 남는다).
+    // 포트가 없으면 s32가 engine.unhandled_step이 되어 메일 확인(s33)까지 건너뛴다(2026-11-11 리허설).
+    const pdf = new VaultPdfPort({
+      vault,
+      targetId: () => slot.current?.targetId ?? '',
+      staging: paths.staging,
+      documents: data.documents,
+      artifact: (bytes, o) => data!.documents.importRunArtifact(bytes, o),
+    });
     runs = new RunService({
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
-      ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
+      ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, pdf, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
@@ -182,11 +196,23 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     throw new Error('forbidden_channel');
   }
   if (!ALLOWED.has(method)) throw new Error('unknown_method');
+  if (method === 'db.query.runs.history') {
+    if (!history) throw new Error('db_not_ready');
+    return runHistory(history.db, history.cipher, typeof params.limit === 'number' ? params.limit : 50);
+  }
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
   if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
-    return method === 'run.start' ? runs.start(params as unknown as StartParams) : runs.stop(String(params.runId));
+    if (method === 'run.stop') return runs.stop(String(params.runId));
+    const started = runs.start(params as unknown as StartParams);
+    // 재시작 뒤 결과 카드·지난 실행 안내용 입력 요약(거래처 id·금액, 컬럼 키로 봉인). 실행 동작과 무관하다(쓰지 못해도 실행은 그대로).
+    try {
+      if (history) recordRunInputs(history.db, history.cipher, started.runId, { counterpartyId: params.counterpartyId as string, supply: params.supply as number, tax: params.tax as number });
+    } catch {
+      log.event('engine.run_inputs_not_recorded');
+    }
+    return started;
   }
   // 실행 중에는 개발 콘솔의 브라우저 명령을 받지 않는다(실행 탭을 옮기거나 닫지 못하게).
   if ((method === 'browser.open' || method === 'browser.close') && runs?.activeRunId) throw new Error('busy');

@@ -306,7 +306,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   /** 문서함 = 보관함 서류 + 실행이 만든 서류(세금계산서·정부24 목업) */
   const listDocs = async () => {
     try {
-      return [...(await docs.list()), ...store.docs];
+      // 실행이 보관한 발급 PDF가 있으면 같은 실행의 메모리 줄(d-<runId>, 거래처 이름)을 그 PDF 줄로 바꾼다([열기]가 보관함 파일을 연다).
+      const vault = await docs.list();
+      const mem = new Map(store.docs.map((d) => [d.id, d]));
+      const named = vault.map((d) => (d.runId && mem.has(`d-${d.runId}`) ? { ...d, name: mem.get(`d-${d.runId}`)!.name } : d));
+      const runs = new Set(vault.flatMap((d) => (d.runId ? [`d-${d.runId}`] : [])));
+      return [...named, ...store.docs.filter((d) => !runs.has(d.id))];
     } catch (e) {
       throw docsError(e);
     }
