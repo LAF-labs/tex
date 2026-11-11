@@ -4,7 +4,10 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
-// --mac: macOS arm64 미서명 .dmg(사용자 시험용, 팀장 지시 2026-11-10). 기본 출력 poc/.tmp/package-mac. 배포 판정은 Windows 베타 기준이라 참고만.
+// --mac: macOS .dmg(팀장 지시 2026-11-10). --arch arm64(기본, Apple Silicon)|x64(Intel). 기본 출력 poc/.tmp/package-mac(x64는 package-mac-x64).
+//        서명 환경(SAX_MAC_IDENTITY·APPLE_API_KEY·APPLE_API_KEY_ID·APPLE_API_ISSUER)이 다 있으면 Developer ID 서명 + 공증, 없으면 애드혹.
+//        배포 판정은 Windows 베타 기준이라 참고만.
+// 설치본 옆에 <설치본>.sha256(sha256sum 형식 한 줄)을 쓴다. 고객에게 설치본과 함께 준다(sovereign-ax/install-guide/CUSTOMER-DIST.md §3).
 // 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음),
 //       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인을 설정으로 끌 수 있다, 배포 불가)
 import { spawnSync } from 'node:child_process';
@@ -19,9 +22,12 @@ const POC = path.resolve(import.meta.dirname, '..');
 const DESKTOP = path.join(POC, 'apps/desktop');
 const BUILD = path.join(DESKTOP, 'build');
 
-const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' }, mac: { type: 'boolean' } } });
+const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' }, mac: { type: 'boolean' }, arch: { type: 'string' } } });
 /** 대상 OS·CPU(pnpm deploy 선택 의존성·네이티브 미리 빌드·electron-builder 대상) */
-const TARGET = args.mac ? { os: 'darwin', cpu: 'arm64', name: 'mac' } : { os: 'win32', cpu: 'x64', name: 'win' };
+const MAC_ARCH = args.arch ?? 'arm64';
+if (!args.mac && args.arch) throw new Error('--arch는 --mac과 함께만 쓴다(Windows는 x64 하나)');
+if (MAC_ARCH !== 'arm64' && MAC_ARCH !== 'x64') throw new Error(`--arch는 arm64 또는 x64: ${MAC_ARCH}`);
+const TARGET = args.mac ? { os: 'darwin', cpu: MAC_ARCH, name: MAC_ARCH === 'arm64' ? 'mac' : 'mac-x64' } : { os: 'win32', cpu: 'x64', name: 'win' };
 const OUT = path.resolve(args.out ?? path.join(POC, `.tmp/package-${TARGET.name}`));
 const STAGE = path.join(OUT, 'stage');
 const DIST = path.join(OUT, 'dist');
@@ -79,9 +85,9 @@ async function main() {
   const desktopPkg = JSON.parse(fs.readFileSync(path.join(DESKTOP, 'package.json'), 'utf8'));
   const version = process.env.SAX_APP_VERSION ?? desktopPkg.version;
   if (!semverOk(version)) throw new Error(`앱 버전이 semver(x.y.z)가 아니다: ${version}`);
-  const { makeConfig, signingFrom } = await import('./../apps/desktop/build/electron-builder.config.mjs');
-  // macOS 빌드는 서명하지 않는다(Apple 개발자 서명·공증은 아직 없다)
-  const signing = TARGET.os === 'darwin' ? { mode: 'unsigned', reason: 'mac_signing_unset', missing: [] } : signingFrom(process.env, process.platform);
+  const { makeConfig, signingFrom, macSigningFrom } = await import('./../apps/desktop/build/electron-builder.config.mjs');
+  // macOS: Developer ID 서명 환경이 다 있으면 서명·공증, 아니면 애드혹(Apple 개발자 계정 전까지)
+  const signing = TARGET.os === 'darwin' ? macSigningFrom(process.env, process.platform) : signingFrom(process.env, process.platform);
 
   if (!args['skip-build']) run('pnpm', ['build']);
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -130,7 +136,7 @@ async function main() {
   // 스테이지에는 devDependency electron이 없다: 데스크톱 패키지에 설치된 정확한 버전을 넘긴다(Electron zip은 electron-builder가 받아 sha256을 확인한다)
   const electronVersion = JSON.parse(fs.readFileSync(require.resolve('electron/package.json'), 'utf8')).version;
   const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
-  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
+  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch[TARGET.cpu]) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
   await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
 
   // 보고서
@@ -138,7 +144,8 @@ async function main() {
   if (!exe) throw new Error(`설치본(${TARGET.os === 'darwin' ? '.dmg' : '.exe'})이 없다`);
   const exePath = path.join(DIST, exe);
   const bytes = fs.readFileSync(exePath);
-  const unpacked = TARGET.os === 'darwin' ? path.join(DIST, 'mac-arm64', `${identity.productName}.app`) : path.join(DIST, 'win-unpacked');
+  // electron-builder 출력 폴더: arm64는 mac-arm64, x64는 mac
+  const unpacked = TARGET.os === 'darwin' ? path.join(DIST, TARGET.cpu === 'arm64' ? 'mac-arm64' : 'mac', `${identity.productName}.app`) : path.join(DIST, 'win-unpacked');
   const resources = TARGET.os === 'darwin' ? path.join(unpacked, 'Contents/Resources') : path.join(unpacked, 'resources');
   const asarPath = path.join(resources, 'app.asar');
   const libRequire = createRequire(createRequire(require.resolve('electron-builder')).resolve('app-builder-lib'));
@@ -179,13 +186,17 @@ async function main() {
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   fs.writeFileSync(path.join(OUT, 'release-readiness.json'), JSON.stringify(readiness, null, 2) + '\n');
   fs.writeFileSync(path.join(OUT, 'asar-files.txt'), asarFiles.join('\n') + '\n');
+  // 고객 전달용 해시 파일(`shasum -a 256 -c`·PowerShell Get-FileHash로 대조)
+  fs.writeFileSync(`${exePath}.sha256`, `${report.installer.sha256}  ${exe}\n`);
 
   console.log(`\n설치본: ${rel(exePath)} (${mb(bytes.byteLength)})`);
   console.log(`sha256: ${report.installer.sha256}`);
   console.log(`asar: ${mb(report.asar.size)}, 파일 ${report.asar.files}개, 압축 해제 ${mb(report.unpackedSize)}`);
   console.log(`앱 dist: 포함 ${included.length}개, 제외 ${removed.length}개`);
-  if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
-  else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
+  const unsignedNote = signing.mode === 'unsigned' ? '  ← 미서명 빌드' : '';
+  if (TARGET.os === 'darwin') console.log(`macOS ${TARGET.cpu}: ${signing.mode === 'developer_id' ? 'Developer ID 서명·공증' : '애드혹 서명(Gatekeeper가 막는다)'}`);
+  if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${unsignedNote}`);
+  else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${unsignedNote}`);
   console.log(`보고서: ${rel(path.join(OUT, 'report.json'))}`);
 }
 

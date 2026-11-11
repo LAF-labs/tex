@@ -68,3 +68,27 @@ Windows 실기기 확인(보류): 설치 경로 `%LOCALAPPDATA%\Programs\Soverei
 - OV 코드서명 인증서 + 클라우드 HSM 서명(인증서 발급사 원격 서명 서비스). 키는 여전히 외부 단일 키다(ADR-028 결정 4 문구 그대로).
 - EV는 SmartScreen을 우회하지 않는다(D11 §4). 비용만 늘어난다.
 - 어느 쪽이든 `signingFrom`에 서명 방식 하나를 더하는 일이고, `latest.json` 검증 구조는 바뀌지 않는다.
+
+## 6. macOS Developer ID 서명·공증 (고객 PoC, 2026-11-11)
+
+지금 상태: 인증서 없음 → `pnpm package:mac`·`package:mac:x64`는 **애드혹 서명**(`identity: '-'`)이다. 받은 dmg는 Gatekeeper가 막고(공증 없음), 지정 요구사항이 cdhash라 새 판마다 키체인 허용 창이 다시 뜬다(`sovereign-ax/install-guide/CUSTOMER-DIST.md` §2).
+
+사람이 할 일(대표):
+- [ ] Apple Developer Program 가입(법인 또는 개인). 법인이면 D-U-N-S 번호가 필요하다(확인 필요).
+- [ ] **Developer ID Application** 인증서 발급 → 빌드 Mac 로그인 키체인에 설치(사용자가 직접, 개인키 포함). 인증서 이름 = `SAX_MAC_IDENTITY`(예: `Developer ID Application: LAF (ABCDE12345)`).
+- [ ] App Store Connect > 사용자 및 액세스 > 통합 > **App Store Connect API** 키(역할: Developer) 발급. `.p8` 파일은 저장소 밖에 두고 그 경로 = `APPLE_API_KEY`, 키 ID = `APPLE_API_KEY_ID`, 발급자 ID = `APPLE_API_ISSUER`.
+
+빌드:
+
+| 환경 변수 | 값 |
+|---|---|
+| `SAX_MAC_IDENTITY` | 키체인의 Developer ID Application 인증서 이름 |
+| `APPLE_API_KEY` | `.p8` 파일 경로 |
+| `APPLE_API_KEY_ID` | API 키 ID |
+| `APPLE_API_ISSUER` | 발급자 ID(UUID) |
+
+- 넷이 모두 있고 macOS 호스트면 `macSigningFrom`이 `developer_id`를 고른다 → 서명 + 하드닝 런타임 + `build/entitlements.mac.plist`(allow-jit·allow-unsigned-executable-memory) + 공증(notarytool, 스테이플). 하나라도 없으면 애드혹(빌드는 실패하지 않는다).
+- build-info `signing: developer_id` → 앱의 "미서명 빌드" 배지가 사라진다(`apps/desktop/src/harden.ts`).
+- 확인: `spctl --assess --type execute -vv <앱>` → `accepted`·`source=Notarized Developer ID`, `xcrun stapler validate <dmg>`.
+- 키체인: 애드혹 빌드가 만든 항목(`SovereignAX`/`db-key` 등)은 첫 서명 판에서 한 번 더 허용 창이 뜬다(ACL에 옛 cdhash만 있음). 그 뒤 판부터는 뜨지 않는다.
+- 하드닝 런타임에서 네이티브 모듈(`@napi-rs/keyring`, `better-sqlite3-multiple-ciphers`)이 열리는지 첫 서명 판을 Mac에서 띄워 확인한다(CUSTOMER-DIST §5). 열리지 않으면 `disable-library-validation`을 더하는 대신 `.node` 서명 상태부터 본다.

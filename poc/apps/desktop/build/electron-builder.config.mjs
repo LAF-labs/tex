@@ -42,6 +42,30 @@ export function signingFrom(env, platform) {
   };
 }
 
+/**
+ * macOS Developer ID 서명·공증 환경 변수 이름(값은 CI 시크릿·빌드 Mac 키체인, 저장소에 넣지 않는다). SIGNING-SETUP.md §6과 같다.
+ * - identity: 키체인에 든 "Developer ID Application: <이름> (<팀 ID>)" 인증서 이름. electron-builder가 codesign에 넘긴다.
+ * - apiKey·apiKeyId·apiIssuer: App Store Connect API 키(.p8 파일 경로·키 ID·발급자 ID). electron-builder notarize가 notarytool에 넘긴다.
+ */
+export const MAC_SIGNING_ENV = {
+  identity: 'SAX_MAC_IDENTITY',
+  apiKey: 'APPLE_API_KEY',
+  apiKeyId: 'APPLE_API_KEY_ID',
+  apiIssuer: 'APPLE_API_ISSUER',
+};
+
+/**
+ * macOS 서명 판정: 값이 모두 있고 macOS 호스트일 때만 Developer ID 서명 + 하드닝 런타임 + 공증. 하나라도 없으면 지금처럼 애드혹('-').
+ * 애드혹 빌드는 지정 요구사항이 cdhash라 빌드마다 키체인 허용 창이 다시 뜨고, 받은 dmg는 Gatekeeper가 막는다(CUSTOMER-DIST §2).
+ */
+export function macSigningFrom(env, platform) {
+  const v = Object.fromEntries(Object.entries(MAC_SIGNING_ENV).map(([k, name]) => [k, env[name] ?? '']));
+  const missing = Object.entries(MAC_SIGNING_ENV).filter(([k]) => !v[k]).map(([, name]) => name);
+  if (missing.length) return { mode: 'unsigned', reason: 'mac_signing_env_missing', missing };
+  if (platform !== 'darwin') return { mode: 'unsigned', reason: 'mac_signing_needs_mac_host', missing: [] };
+  return { mode: 'developer_id', identity: v.identity };
+}
+
 /** 앱 안에 넣지 않는 것(ADR-035 W-7, RETRO B-05): 타입·소스·지도 파일과 다른 OS 네이티브 바이너리. 데모·e2e·실측 파일은 스크립트가 도달성으로 거른다. */
 export const EXCLUDE = [
   '!**/*.ts',
@@ -73,12 +97,13 @@ export const EXCLUDE = [
  * @param {string} o.version 앱 버전(semver)
  * @param {string} o.buildDir apps/desktop/build 절대 경로
  * @param {string} o.outDir 산출물 폴더
- * @param {ReturnType<typeof signingFrom>} o.signing
+ * @param {ReturnType<typeof signingFrom> | ReturnType<typeof macSigningFrom>} o.signing
  * @param {string | null} o.icon icon.ico 경로(없으면 Electron 기본 아이콘)
- * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS arm64는 미서명 .dmg(사용자 시험용)
+ * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS는 arm64·x64 .dmg(서명 환경이 없으면 애드혹)
  */
 export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpu: 'x64' } }) {
   const signed = signing.mode === 'azure';
+  const macSigned = signing.mode === 'developer_id';
   const prebuild = `${target.os}-${target.cpu}.node`;
   return {
     appId: identity.appId,
@@ -110,15 +135,21 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       loadBrowserProcessSpecificV8Snapshot: false,
       grantFileProtocolExtraPrivileges: false,
     },
-    // macOS(arm64) 시험 빌드: 서명·공증 없음. 받은 .dmg는 격리 속성 때문에 처음 열 때 [열기]를 한 번 더 눌러야 한다.
+    // macOS: Apple Silicon(arm64)·Intel(x64) 따로 .dmg(유니버설은 네이티브 모듈 합치기가 필요해 쓰지 않는다).
+    // 서명 환경(MAC_SIGNING_ENV)이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
     mac: {
-      target: [{ target: 'dmg', arch: ['arm64'] }],
+      target: [{ target: 'dmg', arch: [target.os === 'darwin' ? target.cpu : 'arm64'] }],
       // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
-      identity: '-',
-      hardenedRuntime: false,
+      identity: macSigned ? signing.identity : '-',
+      // 공증은 하드닝 런타임을 요구한다. V8 JIT 때문에 entitlements.mac.plist의 allow-jit가 필요하다(Electron 코드 서명 안내).
+      hardenedRuntime: macSigned,
+      entitlements: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
+      entitlementsInherit: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
+      // APPLE_API_KEY·APPLE_API_KEY_ID·APPLE_API_ISSUER로 notarytool 제출 → 스테이플
+      notarize: macSigned,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
-      artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,
+      artifactName: `${identity.installDirName}-\${version}-\${arch}.\${ext}`,
     },
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],

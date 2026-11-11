@@ -6,7 +6,8 @@
   "main": "dist/shell.js",
   "scripts": {
     "package:win": "node ../../scripts/package-win.mjs",
-    "package:mac": "node ../../scripts/package-win.mjs --mac"
+    "package:mac": "node ../../scripts/package-win.mjs --mac",
+    "package:mac:x64": "node ../../scripts/package-win.mjs --mac --arch x64"
   },
   "dependencies": {
     "@sax/daemon": "workspace:*",

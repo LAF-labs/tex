@@ -5,7 +5,8 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 // @ts-expect-error 설정은 .mjs(타입 없음)
-import { EXCLUDE, makeConfig, SIGNING_ENV, signingFrom } from '../apps/desktop/build/electron-builder.config.mjs';
+import { EXCLUDE, MAC_SIGNING_ENV, macSigningFrom, makeConfig, SIGNING_ENV, signingFrom } from '../apps/desktop/build/electron-builder.config.mjs';
+import { packagedProblems } from '../apps/desktop/src/harden.ts';
 
 const BUILD = path.join(import.meta.dirname, '../apps/desktop/build');
 const identity = JSON.parse(fs.readFileSync(path.join(BUILD, 'app-identity.json'), 'utf8'));
@@ -82,4 +83,60 @@ test('설치 경로: 설치 폴더 이름이 데이터 루트 이름과 같아�
   assert.match(nsh, /\$LOCALAPPDATA\\SovereignAX/);
   assert.match(nsh, /!macro customInit/);
   assert.match(nsh, /Quit/);
+});
+
+// ── macOS 배포(고객 PoC, CUSTOMER-DIST §2): Intel·Apple Silicon 따로, Developer ID 서명·공증은 환경이 다 있을 때만 ──
+
+const MAC_FULL = Object.fromEntries(Object.values(MAC_SIGNING_ENV as Record<string, string>).map((k) => [k, `v-${k}`]));
+
+test('macOS 서명 판정: 값이 하나라도 없거나 Mac이 아니면 애드혹(unsigned), 다 있으면 developer_id', () => {
+  const none = macSigningFrom({}, 'darwin');
+  assert.equal(none.mode, 'unsigned');
+  assert.deepEqual(none.missing, ['SAX_MAC_IDENTITY', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']);
+  const partial = Object.fromEntries(Object.entries(MAC_FULL).filter(([k]) => k !== 'APPLE_API_ISSUER'));
+  assert.deepEqual(macSigningFrom(partial, 'darwin').missing, ['APPLE_API_ISSUER']);
+  assert.deepEqual(macSigningFrom(MAC_FULL, 'win32'), { mode: 'unsigned', reason: 'mac_signing_needs_mac_host', missing: [] });
+  assert.deepEqual(macSigningFrom(MAC_FULL, 'darwin'), { mode: 'developer_id', identity: 'v-SAX_MAC_IDENTITY' });
+});
+
+test('macOS 설정: 대상 CPU로 dmg를 만들고 파일 이름에 CPU가 들어간다, 애드혹은 하드닝·공증 없음', () => {
+  for (const cpu of ['arm64', 'x64']) {
+    const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom({}, 'darwin'), icon: null, target: { os: 'darwin', cpu } });
+    assert.deepEqual(c.mac.target, [{ target: 'dmg', arch: [cpu] }]);
+    assert.equal(c.mac.identity, '-', '애드혹: 퓨즈·asar 무결성 뒤 서명이 맞아야 Apple Silicon이 띄운다');
+    assert.equal(c.mac.hardenedRuntime, false);
+    assert.equal(c.mac.notarize, false);
+    assert.equal(c.mac.entitlements, undefined);
+    assert.equal(c.mac.artifactName, `${identity.installDirName}-\${version}-\${arch}.\${ext}`);
+  }
+});
+
+test('macOS 설정: Developer ID면 그 인증서로 서명, 하드닝 런타임·JIT 권한·공증', () => {
+  const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom(MAC_FULL, 'darwin'), icon: null, target: { os: 'darwin', cpu: 'arm64' } });
+  assert.equal(c.mac.identity, 'v-SAX_MAC_IDENTITY');
+  assert.equal(c.mac.hardenedRuntime, true);
+  assert.equal(c.mac.notarize, true);
+  assert.equal(c.mac.entitlements, path.join(BUILD, 'entitlements.mac.plist'));
+  const ent = fs.readFileSync(c.mac.entitlements, 'utf8');
+  assert.match(ent, /com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/);
+  assert.doesNotMatch(ent, /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>/, '네이티브 모듈은 같은 인증서로 서명된다');
+  assert.equal(c.win.signExecutable, false, 'macOS 서명이 Windows 서명을 켜지 않는다');
+});
+
+test('설치본 자기 점검: Developer ID 빌드는 "미서명 빌드" 배지가 없다, 애드혹은 있다', () => {
+  const base = { productName: 'SovereignAX', version: '0.1.9', channel: 'beta', commit: 'abc', devOnlyIncluded: [] as string[] };
+  const mac = { isPackaged: true, appPath: '/Applications/SovereignAX.app/Contents/Resources/app.asar', execPath: '/Applications/SovereignAX.app/Contents/MacOS/SovereignAX', localAppData: '', platform: 'darwin' as const };
+  assert.deepEqual(packagedProblems({ ...mac, buildInfo: { ...base, signing: 'developer_id' } }), []);
+  assert.deepEqual(packagedProblems({ ...mac, buildInfo: { ...base, signing: 'unsigned' } }), ['warn:unsigned_build']);
+  assert.deepEqual(packagedProblems({ ...mac, buildInfo: { ...base, signing: 'notarized' } }), ['fatal:build_info_missing'], '모르는 서명 값은 받지 않는다');
+});
+
+test('패키징 스크립트: macOS --arch(arm64|x64), electron-builder 출력 폴더(mac-arm64|mac), 설치본 옆 .sha256', () => {
+  const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/package-win.mjs'), 'utf8');
+  assert.match(src, /arch: \{ type: 'string' \}/);
+  assert.match(src, /TARGET\.cpu === 'arm64' \? 'mac-arm64' : 'mac'/);
+  assert.match(src, /builder\.Arch\[TARGET\.cpu\]/);
+  assert.match(src, /`\$\{exePath\}\.sha256`/);
+  const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/package.json'), 'utf8'));
+  assert.equal(pkg.scripts['package:mac:x64'], 'node ../../scripts/package-win.mjs --mac --arch x64');
 });
