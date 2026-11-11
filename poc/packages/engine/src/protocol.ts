@@ -112,6 +112,8 @@ export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
  * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).
  */
 export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect'] as const;
+/** 실행 이력(재시작 뒤 활동 기록·결과 카드·지난 실행 안내, run-history.ts). main만 부른다. */
+export const RUN_HISTORY_QUERIES = ['db.query.runs.history'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
 export const GATE_ONLY_METHODS = ['gate.answer', 'answerGate', 'attestNotCommitted'] as const;
 

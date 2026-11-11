@@ -9,11 +9,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
-  BizVerifier, certInputs, connectRunBrowser, DataService, fixturePortal, gateSelfCheck, RunEnd, RunService,
+  BizVerifier, certInputs, connectRunBrowser, recordCertInputs, runHistory, DataService, fixturePortal, gateSelfCheck, RunEnd, RunService,
   type CertStartParams, type GatePortMessage, type GateRequest, type IrPackage, type LocalApproval, type RunEvent, type RunServiceDeps,
 } from '@sax/engine';
 import { fixtureOriginGrant, type PdfPort } from '@sax/engine/core';
-import { openDatabase, type Db } from '@sax/db';
+import { ColumnCipher, openDatabase, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
@@ -271,6 +271,21 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     } finally {
       fx.knobs.lookupDown = false;
     }
+  });
+
+  it('실행 이력: 민원증명 입력 요약(선택값만, 컬럼 키로 봉인)이 이력에 서류 id·원장·접수번호와 같이 나온다', () => {
+    const cipher = new ColumnCipher(new Uint8Array(randomBytes(32)));
+    const row0 = runHistory(db, cipher, 200).find((r) => r.playbookId === ID('H-03') && r.ledger === 'committed')!;
+    assert.ok(row0);
+    recordCertInputs(db, cipher, row0.runId, { certDoc: '사업자등록증명', certLanguage: '한글', ...INPUTS['H-03'] });
+    const row = runHistory(db, cipher, 200).find((r) => r.runId === row0.runId)!;
+    assert.deepEqual(row.certInputs, { certDoc: '사업자등록증명', certLanguage: '한글', ...INPUTS['H-03'] });
+    assert.equal(row.approvalNo, fx.records.find((r) => r.doc === 'H-03')!.receiptNo);
+    assert.deepEqual([row.counterpartyId, row.supply, row.tax], [null, null, null]);
+    // 다른 키로는 읽지 못한다(봉인), 모양이 다른 요약은 쓰지 않는다
+    assert.equal(runHistory(db, new ColumnCipher(new Uint8Array(randomBytes(32))), 200).find((r) => r.runId === row0.runId)!.certInputs, null);
+    recordCertInputs(db, cipher, row0.runId, { 'bad key': 'x' });
+    assert.ok(runHistory(db, cipher, 200).find((r) => r.runId === row0.runId)!.certInputs);
   });
 
   it('입력·프로필·서류 검사: 브라우저를 열기 전에 사람 말로 옮길 수 있는 코드로 거절한다', () => {

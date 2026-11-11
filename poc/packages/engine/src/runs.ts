@@ -760,6 +760,12 @@ export class RunService extends EventEmitter {
     }
   }
 
+  /** 진행 중인 민원증명 실행의 검사한 입력(선택값만, 비밀 없음). 실행 이력 요약(entry recordCertInputs)이 쓴다. 다른 실행·H-01이면 null. */
+  certInputsOf(runId: string): Readonly<Record<string, string>> | null {
+    const a = this.active;
+    return a && a.runId === runId && a.cert ? { ...a.cert.inputs } : null;
+  }
+
   get activeRunId(): string | null {
     return this.active?.runId ?? null;
   }

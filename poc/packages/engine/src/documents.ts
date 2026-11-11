@@ -21,7 +21,8 @@ export interface PdfText {
 /** 보관함 저장 형식(meta_json). 원문 텍스트는 두지 않는다. */
 export interface StoredMeta {
   v: 1;
-  extractor: DocMetaExtract['extractor'];
+  /** run_artifact: 실행이 보관한 발급 결과(글자를 읽지 않았다) */
+  extractor: DocMetaExtract['extractor'] | 'run_artifact';
   kind: DetectedKind;
   fields: Pick<DocMetaExtract, 'issuedOn' | 'validUntil' | 'issuer' | 'docNo' | 'subjectBizNo'>;
   expiry: { source: ExpirySource | null; needsUser: boolean; reasons: string[] };
@@ -32,7 +33,8 @@ export interface StoredMeta {
   confirmedAt: string | null;
 }
 
-export type StoredDocType = DocType | 'other';
+/** tax_invoice: 앱이 실행에서 발급하고 보관한 전자세금계산서(importRunArtifact). 사용자 가져오기의 종류(DocType)에는 없다. */
+export type StoredDocType = DocType | 'tax_invoice' | 'other';
 export type TextSource = 'text' | 'ocr' | 'scan';
 
 /** 렌더러에 주는 보관함 항목. 파일 경로는 주지 않는다. */
@@ -59,6 +61,8 @@ export interface DocumentView {
   textSource: TextSource;
   bytes: number;
   createdAt: string;
+  /** 실행이 보관한 서류(source app)의 실행 id */
+  runId: string | null;
   /** 같은 파일이 이미 있어 새로 저장하지 않았다 */
   duplicate?: boolean;
 }
@@ -68,7 +72,9 @@ export interface NeedsOcr {
   needsOcr: true;
 }
 
-const DISPLAY: Record<StoredDocType, string> = { national_tax_cert: '납세증명서(국세)', biz_registration_cert: '사업자등록증명', other: '서류' };
+const DISPLAY: Record<StoredDocType, string> = { national_tax_cert: '납세증명서(국세)', biz_registration_cert: '사업자등록증명', tax_invoice: '전자세금계산서', other: '서류' };
+/** 실행 산출물로 보관할 수 있는 종류(save_pdf docType). */
+export const RUN_ARTIFACT_DOC_TYPES: ReadonlySet<string> = new Set(['tax_invoice']);
 const KIND_DISPLAY: Partial<Record<DetectedKind, string>> = { localtax_cert: '지방세 납세증명서', biz_registration: '사업자등록증', closure_cert: '휴업·폐업 사실증명', english_cert: '영문 증명' };
 const MAX_PDF = 15 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
@@ -125,6 +131,53 @@ export class DocumentService {
     const run = this.chain.then(() => this.importNow(bytes, extract, opts));
     this.chain = run.catch(() => {});
     return run;
+  }
+
+  /**
+   * 실행 산출물(save_pdf, D07 §1): 금고가 인쇄해 staging에 둔 발급 결과 PDF를 보관함에 넣는다. 방금 이 앱이 발급한 서류라 종류·발급일(KST 오늘)을 안다.
+   * 그래서 글자를 읽지 않는다(엔진은 PDF를 파싱하지 않는다, ADR-014). 확인 필요 없음, 만료일 없음, run_id로 실행과 잇는다(source 'app').
+   * 같은 파일(sha256)이 이미 있으면 그 줄을 준다.
+   */
+  importRunArtifact(bytes: unknown, o: { runId: string; docType: string }): Promise<DocumentView> {
+    const run = this.chain.then(() => this.importArtifactNow(bytes, o));
+    this.chain = run.catch(() => {});
+    return run;
+  }
+
+  private async importArtifactNow(bytes: unknown, o: { runId: string; docType: string }): Promise<DocumentView> {
+    if (!(bytes instanceof Uint8Array) || bytes.length === 0 || bytes.length > MAX_PDF) throw new ValidationError('input_size');
+    if (Buffer.from(bytes.subarray(0, 1024)).indexOf('%PDF-') < 0) throw new ValidationError('not_pdf');
+    if (!RUN_ARTIFACT_DOC_TYPES.has(o.docType)) throw new ValidationError('invalid_doc_type');
+    if (typeof o.runId !== 'string' || !o.runId || o.runId.length > 100) throw new ValidationError('bad_run');
+    const docType = o.docType as StoredDocType;
+    const sha256 = createHash('sha256').update(bytes).digest('hex');
+    const today = kstToday(this.now());
+    const existing = this.repo.bySha256(sha256);
+    if (existing) return { ...this.view(await this.restoreFile(existing, bytes), today), duplicate: true };
+    const business = this.profiles.byKind('business');
+    if (!business) throw new ValidationError('profile_required');
+    const none: Field = { value: null, reason: 'not_applicable' };
+    const stored: StoredMeta = {
+      v: 1,
+      extractor: 'run_artifact',
+      kind: 'unknown',
+      fields: { issuedOn: { value: today, reason: null }, validUntil: none, issuer: { value: '국세청 홈택스', reason: null }, docNo: none, subjectBizNo: business.bizNo ? { value: business.bizNo, reason: null } : none },
+      expiry: { source: null, needsUser: false, reasons: [] },
+      text: { pages: 0, totalPages: 0, hasTextLayer: false, scanned: false, ocrConfidence: null, source: 'text' },
+      subjectMismatch: false,
+      confirmedAt: today,
+    };
+    const file = await this.writeFile(bytes, docType, today);
+    try {
+      const row = this.repo.insert({
+        id: randomUUID(), profileId: business.id, docType, displayName: DISPLAY[docType], issuedAt: today, expiresAt: null, issuer: '국세청 홈택스',
+        path: file, bytes: bytes.length, sha256, meta: stored as unknown as Record<string, unknown>, runId: o.runId,
+      });
+      return this.view(row, today);
+    } catch (e) {
+      await fs.unlink(file).catch(() => {});
+      throw e;
+    }
   }
 
   private async importNow(bytes: unknown, extract: unknown, opts: { altText?: unknown; final?: boolean }): Promise<DocumentView | NeedsOcr> {
@@ -207,6 +260,8 @@ export class DocumentService {
     const dateOrNull = (v: unknown) => v === null || typeof v === 'string';
     if (typeof s !== 'object' || s === null || typeof s.docType !== 'string' || !dateOrNull(s.issuedOn) || !dateOrNull(s.expiresOn)) throw new ValidationError('seen_required');
     if (s.docType !== row.docType || s.issuedOn !== row.issuedAt || s.expiresOn !== row.expiresAt) throw new ValidationError('stale');
+    // 앱이 발급해 보관한 서류는 고칠 칸이 없다(종류·발급일은 실행이 정했다).
+    if (RUN_ARTIFACT_DOC_TYPES.has(row.docType)) throw new ValidationError('app_document');
     const today = kstToday(this.now());
     const date = (v: unknown, code: string) => {
       if (v === null) return null;
@@ -313,6 +368,7 @@ export class DocumentService {
       subjectBizNo: value(f?.subjectBizNo),
       subjectMismatch: m.subjectMismatch ?? false,
       source: r.runId ? 'app' : 'import',
+      runId: r.runId ?? null,
       textSource: m.text?.source ?? 'text',
       bytes: r.bytes,
       createdAt: r.createdAt,
