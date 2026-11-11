@@ -159,7 +159,7 @@ function consentCard(o, reply) {
     h('ul', { class: 'onb-lines' }, ...n.lines.map((l) => h('li', {}, l))),
     table,
     h('div', { class: 'sx-actions' }, ...buttons),
-    o.step === 'terms' ? h('div', { class: 'sx-meta' }, '약관 전문과 처리방침 전문은 F-06이 확정되면 여기서 열어 볼 수 있어요.') : null,
+    o.step === 'terms' ? h('div', { class: 'sx-meta' }, '약관 전문과 개인정보 처리방침 전문은 곧 여기서 열어 볼 수 있어요.') : null,
   );
 }
 
@@ -175,7 +175,7 @@ function bizCard(o, u, reply, act) {
     ['사업자 이메일', b.email || '—'],
     ['상태', o.check?.label ?? '—', { tag: o.check?.source, state: active ? null : 'attention' }],
   ];
-  const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'), h('span', { class: 'sx-meta' }, 'O-02'));
+  const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
   const privacy = p('등록증 파일은 이 PC 안에서만 읽어요 · 사업자번호만 국세청 진위확인에 보내요(기본: 우리 서버 경유, 설정에서 내 키)', true);
   if (u.editing) {
     const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
@@ -275,7 +275,7 @@ function authCard(o, u, reply, act) {
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '발급 인증'), h('span', { class: 'sx-meta' }, 'O-03')),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '발급 인증')),
     explain,
     h('div', { class: 'onb-opts' }, ...opts),
     certs || null,
@@ -293,7 +293,7 @@ function tasksCard(o, u, reply, act) {
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '맡길 업무'), h('span', { class: 'sx-meta' }, 'O-04')),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '맡길 업무')),
     h('div', { class: 'sx-quick onb-tasks' }, ...chips),
     p('회색은 곧 되는 일이에요. 신고와 세금 판단은 하지 않아요.', true),
     h('div', { class: 'sx-actions' }, btn('다음', () => reply('submit', { tasks: { ...u.tasks } }), 'sx-btn-primary', { 'data-onb': 'submit', disabled: !any }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
@@ -313,7 +313,7 @@ function summaryCard(o, reply, act) {
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '등록 내용'), h('span', { class: 'sx-meta' }, 'O-06')),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '등록 내용')),
     kv(rows, true),
     h(
       'div',

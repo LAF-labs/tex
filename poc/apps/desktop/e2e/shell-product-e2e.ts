@@ -9,7 +9,7 @@
 // 홈택스·정부24에는 접속하지 않는다(실행 시작 전에서 멈춘다). 비밀을 저장하지 않는다.
 // 키체인: 금고는 기존 db-key를 읽기만 한다(없으면 새로 만들지만, 이미 DB가 있는 앱 폴더의 키를 덮지 않는다, 금고 N-30). 임시 앱 폴더는 끝나면 지운다.
 // 실행: electron apps/desktop/e2e-dist/shell-product-e2e.js → 요약을 표준 출력에.
-import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
@@ -95,6 +95,7 @@ async function main() {
   S!.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
   S!.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
   check('검색 단축키를 누르면 같은 안내', await until('search toast', async () => js<boolean>(`!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent === '검색은 곧 지원해요'`), 3_000));
+  check('약관 카드 안내문에 내부 코드(F-06)가 없다', await until('terms text', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); return !!c && c.textContent.includes('곧 여기서 열어 볼 수 있어요') && !/F-06이 확정/.test(c.innerText); })()`)));
   check('약관 카드의 "F-06 초안 전 문구" 배지는 설치본에서 보이지 않는다(문구는 그대로)', await until('terms', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); const d = c?.querySelector('.onb-draft'); return !!c && c.querySelectorAll('li').length > 0 && (!d || getComputedStyle(d).display === 'none'); })()`)));
   check('사업자 프로필이 없으면 온보딩부터', await until('onboarding', async () => js<boolean>(`!!document.querySelector('[data-onboarding]')`)));
   check('개발용 코드·미서명 배지는 개발 실행에서 없음(설치본 자기 점검만)', (await js<number>(`document.querySelectorAll('[data-build-badge]').length`)) === 0);
@@ -203,6 +204,7 @@ async function main() {
   // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
   const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
   await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  check('내 사업장: 저장된 개인 프로필이 없으면 "개인 · 개인" 카드가 없다', await until('no personal', async () => js<boolean>(`!!document.querySelector('section[data-view=biz]') && !document.querySelector('[data-personal-card]') && !document.querySelector('section[data-view=biz]').textContent.includes('개인 · 개인')`), 5_000));
   check('내 사업장: [수정]과 발급 인증 [바꾸기]', await until('biz view', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view] [data-act=biz-edit]') && [...document.querySelectorAll('[data-biz-card=view] .sx-copy')].some((b) => b.textContent === '바꾸기')`), 5_000));
   await sleep(3_100);
   check('실제 입력 없이 저장하면 거부(gesture_required)', (await js<string>(`window.sax.call('profile.edit', { fields: { rep: '박다라' } }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`)) === 'gesture_required');
@@ -242,6 +244,16 @@ async function main() {
   await press('[data-onb=later]');
   await until('redo done 2', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`) );
   check('[나중에] → 그 전 인증 그대로(간편인증), 할 일 없음', (await business()).signMethod === 'simple_auth' && (await business()).bizNo === '2208162517' && !(await js<boolean>(`!!document.querySelector('[data-setup-needed]:last-of-type [data-act=setup-auth]')`)));
+
+  // 설정 > 기기 연결의 계정: 로그인한 이메일과 [로그아웃] → 로그인 화면이 다시 막는다(받아 둔 코드·신원 파일 정리)
+  await js(`document.querySelector('#rail [data-view="settings"]')?.click()`);
+  await until('settings', async () => js<boolean>(`!!document.querySelector('[data-set-tab=devices]')`), 5_000);
+  await js(`document.querySelector('[data-set-tab=devices]').click()`);
+  check('설정 > 계정: 로그인한 이메일과 [로그아웃]', await until('account card', async () => js<boolean>(`document.querySelector('[data-account-email]')?.textContent === 'owner@gyeonbon-test.example' && !!document.querySelector('[data-act=account-signout]')`), 10_000));
+  await press('[data-act=account-signout]');
+  check('[로그아웃] → 닫을 수 없는 로그인 화면(이메일 칸은 채워져 있다)', await until('login again', async () => (await acctScreen()) === 'email' && js<boolean>(`document.querySelector('#app').inert && document.querySelector('.acct-email')?.value === 'owner@gyeonbon-test.example'`), 10_000));
+  check('로그아웃 뒤 신원 파일이 없다', !existsSync(path.join(paths.userData, 'remote-identity.json')));
+  check('로그아웃 뒤 대화는 main이 받지 않는다(account_required)', (await js<string>(`window.sax.call('request.send', { text: '세금계산서 1000원 끊자', vat: null }).then(() => 'ok', (e) => String(e.message).replace(/^.*Error: /, ''))`)) === 'account_required');
 }
 
 app.whenReady().then(async () => {
