@@ -5,7 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { test } from 'node:test';
 // @ts-expect-error 설정은 .mjs(타입 없음)
-import { EXCLUDE, MAC_SIGNING_ENV, macSigningFrom, makeConfig, SIGNING_ENV, signingFrom } from '../apps/desktop/build/electron-builder.config.mjs';
+import { EXCLUDE, macSigningFrom, makeConfig, parseIdentities, SIGNING_ENV, signingFrom } from '../apps/desktop/build/electron-builder.config.mjs';
 import { packagedProblems } from '../apps/desktop/src/harden.ts';
 
 const BUILD = path.join(import.meta.dirname, '../apps/desktop/build');
@@ -85,41 +85,49 @@ test('설치 경로: 설치 폴더 이름이 데이터 루트 이름과 같아�
   assert.match(nsh, /Quit/);
 });
 
-// ── macOS 배포(고객 PoC, CUSTOMER-DIST §2): Intel·Apple Silicon 따로, Developer ID 서명·공증은 환경이 다 있을 때만 ──
+// ── macOS 배포(고객 PoC, CUSTOMER-DIST §2): Apple Silicon만, Developer ID 서명·공증은 키체인 신원 + notarytool 프로필이 있을 때만 ──
 
-const MAC_FULL = Object.fromEntries(Object.values(MAC_SIGNING_ENV as Record<string, string>).map((k) => [k, `v-${k}`]));
+const DEV_ID = 'Developer ID Application: Example Name (ABCDE12345)';
+const FIND_IDENTITY = `  1) ${'A'.repeat(40)} "Apple Development: someone@example.com (ZZZZZ99999)"\n  2) ${'B'.repeat(40)} "${DEV_ID}"\n     2 valid identities found\n`;
 
-test('macOS 서명 판정: 값이 하나라도 없거나 Mac이 아니면 애드혹(unsigned), 다 있으면 developer_id', () => {
-  const none = macSigningFrom({}, 'darwin');
-  assert.equal(none.mode, 'unsigned');
-  assert.deepEqual(none.missing, ['SAX_MAC_IDENTITY', 'APPLE_API_KEY', 'APPLE_API_KEY_ID', 'APPLE_API_ISSUER']);
-  const partial = Object.fromEntries(Object.entries(MAC_FULL).filter(([k]) => k !== 'APPLE_API_ISSUER'));
-  assert.deepEqual(macSigningFrom(partial, 'darwin').missing, ['APPLE_API_ISSUER']);
-  assert.deepEqual(macSigningFrom(MAC_FULL, 'win32'), { mode: 'unsigned', reason: 'mac_signing_needs_mac_host', missing: [] });
-  assert.deepEqual(macSigningFrom(MAC_FULL, 'darwin'), { mode: 'developer_id', identity: 'v-SAX_MAC_IDENTITY' });
+test('키체인 신원 읽기: find-identity 출력의 따옴표 안 이름만', () => {
+  assert.deepEqual(parseIdentities(FIND_IDENTITY), ['Apple Development: someone@example.com (ZZZZZ99999)', DEV_ID]);
+  assert.deepEqual(parseIdentities('     0 valid identities found\n'), []);
 });
 
-test('macOS 설정: 대상 CPU로 dmg를 만들고 파일 이름에 CPU가 들어간다, 애드혹은 하드닝·공증 없음', () => {
-  for (const cpu of ['arm64', 'x64']) {
-    const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom({}, 'darwin'), icon: null, target: { os: 'darwin', cpu } });
-    assert.deepEqual(c.mac.target, [{ target: 'dmg', arch: [cpu] }]);
-    assert.equal(c.mac.identity, '-', '애드혹: 퓨즈·asar 무결성 뒤 서명이 맞아야 Apple Silicon이 띄운다');
-    assert.equal(c.mac.hardenedRuntime, false);
-    assert.equal(c.mac.notarize, false);
-    assert.equal(c.mac.entitlements, undefined);
-    assert.equal(c.mac.artifactName, `${identity.installDirName}-\${version}-\${arch}.\${ext}`);
-  }
+test('macOS 서명 판정: Mac·Developer ID 하나·공증 프로필이 다 있어야 developer_id, 아니면 애드혹(이유 코드)', () => {
+  const ids = parseIdentities(FIND_IDENTITY);
+  const env = { SAX_NOTARY_PROFILE: 'sax-notary' };
+  assert.deepEqual(macSigningFrom({ env, platform: 'darwin', identities: ids }), { mode: 'developer_id', identity: 'Example Name (ABCDE12345)', fullName: DEV_ID, teamId: 'ABCDE12345', notaryProfile: 'sax-notary' });
+  assert.equal(macSigningFrom({ env, platform: 'win32', identities: ids }).reason, 'mac_signing_needs_mac_host');
+  assert.equal(macSigningFrom({ env, platform: 'darwin', identities: ['Apple Development: x (ZZZZZ99999)'] }).reason, 'developer_id_missing', 'Apple Development 신원으로는 배포 서명하지 않는다');
+  assert.equal(macSigningFrom({ env: {}, platform: 'darwin', identities: ids }).reason, 'notary_profile_unset');
+  assert.equal(macSigningFrom({ env: { SAX_NOTARY_PROFILE: 'x; rm -rf ~' }, platform: 'darwin', identities: ids }).reason, 'notary_profile_bad_name');
+  const two = [...ids, 'Developer ID Application: Other (QQQQQ11111)'];
+  assert.equal(macSigningFrom({ env, platform: 'darwin', identities: two }).reason, 'developer_id_ambiguous');
+  assert.equal(macSigningFrom({ env: { ...env, SAX_MAC_IDENTITY: 'QQQQQ11111' }, platform: 'darwin', identities: two }).identity, 'Other (QQQQQ11111)', 'SAX_MAC_IDENTITY로 고른다');
 });
 
-test('macOS 설정: Developer ID면 그 인증서로 서명, 하드닝 런타임·JIT 권한·공증', () => {
-  const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom(MAC_FULL, 'darwin'), icon: null, target: { os: 'darwin', cpu: 'arm64' } });
-  assert.equal(c.mac.identity, 'v-SAX_MAC_IDENTITY');
+test('macOS 설정: 애드혹은 arm64 dmg·하드닝·공증 없음', () => {
+  const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: macSigningFrom({ env: {}, platform: 'darwin', identities: [] }), icon: null, target: { os: 'darwin', cpu: 'arm64' } });
+  assert.deepEqual(c.mac.target, [{ target: 'dmg', arch: ['arm64'] }], 'Intel Mac 미지원(대표 결정 2026-11-11)');
+  assert.equal(c.mac.identity, '-', '애드혹: 퓨즈·asar 무결성 뒤 서명이 맞아야 Apple Silicon이 띄운다');
+  assert.equal(c.mac.hardenedRuntime, false);
+  assert.equal(c.mac.notarize, false);
+  assert.equal(c.mac.entitlements, undefined);
+});
+
+test('macOS 설정: Developer ID면 접두어 없는 신원으로 서명, 하드닝 런타임·JIT 권한(Helper 포함)·공증', () => {
+  const signing = macSigningFrom({ env: { SAX_NOTARY_PROFILE: 'sax-notary' }, platform: 'darwin', identities: [DEV_ID] });
+  const c = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing, icon: null, target: { os: 'darwin', cpu: 'arm64' } });
+  assert.equal(c.mac.identity, 'Example Name (ABCDE12345)', 'electron-builder는 "Developer ID Application:" 접두어를 거부한다');
   assert.equal(c.mac.hardenedRuntime, true);
   assert.equal(c.mac.notarize, true);
   assert.equal(c.mac.entitlements, path.join(BUILD, 'entitlements.mac.plist'));
+  assert.equal(c.mac.entitlementsInherit, c.mac.entitlements, '금고·엔진 utilityProcess(Helper)도 같은 권한');
   const ent = fs.readFileSync(c.mac.entitlements, 'utf8');
-  assert.match(ent, /com\.apple\.security\.cs\.allow-jit<\/key>\s*<true\/>/);
-  assert.doesNotMatch(ent, /<key>com\.apple\.security\.cs\.disable-library-validation<\/key>/, '네이티브 모듈은 같은 인증서로 서명된다');
+  const keys = [...ent.matchAll(/<key>([^<]+)<\/key>\s*<true\/>/g)].map((m) => m[1]).sort();
+  assert.deepEqual(keys, ['com.apple.security.cs.allow-jit', 'com.apple.security.cs.allow-unsigned-executable-memory'], '권한은 JIT 둘만(라이브러리 검증 끄기·샌드박스 없음)');
   assert.equal(c.win.signExecutable, false, 'macOS 서명이 Windows 서명을 켜지 않는다');
 });
 
@@ -131,12 +139,12 @@ test('설치본 자기 점검: Developer ID 빌드는 "미서명 빌드" 배지�
   assert.deepEqual(packagedProblems({ ...mac, buildInfo: { ...base, signing: 'notarized' } }), ['fatal:build_info_missing'], '모르는 서명 값은 받지 않는다');
 });
 
-test('패키징 스크립트: macOS --arch(arm64|x64), electron-builder 출력 폴더(mac-arm64|mac), 설치본 옆 .sha256', () => {
+test('패키징 스크립트: 공증 프로필은 이름만 넘기고, dmg 서명·공증·스테이플 뒤에 해시를 잰다, 설치본 옆 .sha256', () => {
   const src = fs.readFileSync(path.join(import.meta.dirname, '../scripts/package-win.mjs'), 'utf8');
-  assert.match(src, /arch: \{ type: 'string' \}/);
-  assert.match(src, /TARGET\.cpu === 'arm64' \? 'mac-arm64' : 'mac'/);
-  assert.match(src, /builder\.Arch\[TARGET\.cpu\]/);
+  assert.match(src, /process\.env\.APPLE_KEYCHAIN_PROFILE = signing\.notaryProfile/);
+  assert.match(src, /'notarytool', 'submit', file, '--keychain-profile', signing\.notaryProfile, '--wait'/);
+  assert.doesNotMatch(src, /--apple-id|--password|APPLE_APP_SPECIFIC_PASSWORD/, '자격 값은 스크립트에 없다');
+  assert.ok(src.indexOf('notarizeDmg(signing)') < src.indexOf('const bytes = fs.readFileSync(exePath)'), '스테이플이 dmg를 바꾸므로 해시는 그 뒤');
   assert.match(src, /`\$\{exePath\}\.sha256`/);
-  const pkg = JSON.parse(fs.readFileSync(path.join(import.meta.dirname, '../apps/desktop/package.json'), 'utf8'));
-  assert.equal(pkg.scripts['package:mac:x64'], 'node ../../scripts/package-win.mjs --mac --arch x64');
+  assert.doesNotMatch(src, /--arch/, 'Intel Mac 빌드 옵션 없음');
 });

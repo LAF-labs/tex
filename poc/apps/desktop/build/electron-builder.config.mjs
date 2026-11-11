@@ -43,27 +43,41 @@ export function signingFrom(env, platform) {
 }
 
 /**
- * macOS Developer ID 서명·공증 환경 변수 이름(값은 CI 시크릿·빌드 Mac 키체인, 저장소에 넣지 않는다). SIGNING-SETUP.md §6과 같다.
- * - identity: 키체인에 든 "Developer ID Application: <이름> (<팀 ID>)" 인증서 이름. electron-builder가 codesign에 넘긴다.
- * - apiKey·apiKeyId·apiIssuer: App Store Connect API 키(.p8 파일 경로·키 ID·발급자 ID). electron-builder notarize가 notarytool에 넘긴다.
+ * macOS Developer ID 서명·공증 입력(값은 저장소·로그에 넣지 않는다). SIGNING-SETUP.md §6과 같다.
+ * - 신원: 빌드 Mac 키체인의 "Developer ID Application: <이름> (<팀 ID>)"(scripts/package-win.mjs가 `security find-identity -v -p codesigning`으로 이름만 읽는다).
+ *   여럿이면 SAX_MAC_IDENTITY(이름·팀 ID 일부)로 고른다.
+ * - 공증: `xcrun notarytool store-credentials <프로필>`로 키체인에 저장해 둔 프로필 이름(SAX_NOTARY_PROFILE). Apple ID·앱 암호·팀 ID는 받지 않는다.
  */
 export const MAC_SIGNING_ENV = {
   identity: 'SAX_MAC_IDENTITY',
-  apiKey: 'APPLE_API_KEY',
-  apiKeyId: 'APPLE_API_KEY_ID',
-  apiIssuer: 'APPLE_API_ISSUER',
+  notaryProfile: 'SAX_NOTARY_PROFILE',
 };
 
+export const DEVELOPER_ID_PREFIX = 'Developer ID Application: ';
+
+/** 키체인 코드 서명 신원 이름(`security find-identity -v -p codesigning`의 따옴표 안). 개인키·인증서 내용은 읽지 않는다. */
+export const parseIdentities = (out) => [...out.matchAll(/^\s*\d+\)\s+[0-9A-F]{40}\s+"([^"]+)"/gm)].map((m) => m[1]);
+
 /**
- * macOS 서명 판정: 값이 모두 있고 macOS 호스트일 때만 Developer ID 서명 + 하드닝 런타임 + 공증. 하나라도 없으면 지금처럼 애드혹('-').
+ * macOS 서명 판정: macOS 호스트, Developer ID Application 신원 정확히 하나, 공증 프로필 이름이 모두 있을 때만
+ * Developer ID 서명 + 하드닝 런타임 + 공증. 하나라도 빠지면 지금처럼 애드혹('-')이고 빌드는 실패하지 않는다(reason으로 알린다).
  * 애드혹 빌드는 지정 요구사항이 cdhash라 빌드마다 키체인 허용 창이 다시 뜨고, 받은 dmg는 Gatekeeper가 막는다(CUSTOMER-DIST §2).
+ * @param {{ env: Record<string, string | undefined>, platform: string, identities: string[] }} o identities: 키체인 신원 이름 전체(접두어 포함)
  */
-export function macSigningFrom(env, platform) {
-  const v = Object.fromEntries(Object.entries(MAC_SIGNING_ENV).map(([k, name]) => [k, env[name] ?? '']));
-  const missing = Object.entries(MAC_SIGNING_ENV).filter(([k]) => !v[k]).map(([, name]) => name);
-  if (missing.length) return { mode: 'unsigned', reason: 'mac_signing_env_missing', missing };
-  if (platform !== 'darwin') return { mode: 'unsigned', reason: 'mac_signing_needs_mac_host', missing: [] };
-  return { mode: 'developer_id', identity: v.identity };
+export function macSigningFrom({ env, platform, identities }) {
+  if (platform !== 'darwin') return { mode: 'unsigned', reason: 'mac_signing_needs_mac_host' };
+  const want = (env[MAC_SIGNING_ENV.identity] ?? '').trim();
+  const ids = [...new Set(identities.filter((n) => n.startsWith(DEVELOPER_ID_PREFIX)))].filter((n) => !want || n.includes(want));
+  if (!ids.length) return { mode: 'unsigned', reason: 'developer_id_missing' };
+  if (ids.length > 1) return { mode: 'unsigned', reason: 'developer_id_ambiguous', candidates: ids.length };
+  const profile = (env[MAC_SIGNING_ENV.notaryProfile] ?? '').trim();
+  if (!profile) return { mode: 'unsigned', reason: 'notary_profile_unset' };
+  // 프로필 이름은 notarytool 인자로만 쓴다: 셸 글자 없이
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(profile)) return { mode: 'unsigned', reason: 'notary_profile_bad_name' };
+  const name = ids[0].slice(DEVELOPER_ID_PREFIX.length);
+  const team = /\(([A-Z0-9]{10})\)$/.exec(name)?.[1] ?? null;
+  // electron-builder는 접두어 없는 이름을 받는다(macCodeSign checkPrefix)
+  return { mode: 'developer_id', identity: name, fullName: ids[0], teamId: team, notaryProfile: profile };
 }
 
 /** 앱 안에 넣지 않는 것(ADR-035 W-7, RETRO B-05): 타입·소스·지도 파일과 다른 OS 네이티브 바이너리. 데모·e2e·실측 파일은 스크립트가 도달성으로 거른다. */
@@ -99,7 +113,7 @@ export const EXCLUDE = [
  * @param {string} o.outDir 산출물 폴더
  * @param {ReturnType<typeof signingFrom> | ReturnType<typeof macSigningFrom>} o.signing
  * @param {string | null} o.icon icon.ico 경로(없으면 Electron 기본 아이콘)
- * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS는 arm64·x64 .dmg(서명 환경이 없으면 애드혹)
+ * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS는 arm64 .dmg(Developer ID가 없으면 애드혹)
  */
 export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpu: 'x64' } }) {
   const signed = signing.mode === 'azure';
@@ -135,21 +149,21 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       loadBrowserProcessSpecificV8Snapshot: false,
       grantFileProtocolExtraPrivileges: false,
     },
-    // macOS: Apple Silicon(arm64)·Intel(x64) 따로 .dmg(유니버설은 네이티브 모듈 합치기가 필요해 쓰지 않는다).
-    // 서명 환경(MAC_SIGNING_ENV)이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
+    // macOS: Apple Silicon(arm64)만(대표 결정 2026-11-11, Intel Mac 미지원).
+    // Developer ID 신원·공증 프로필이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
     mac: {
-      target: [{ target: 'dmg', arch: [target.os === 'darwin' ? target.cpu : 'arm64'] }],
+      target: [{ target: 'dmg', arch: ['arm64'] }],
       // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
       identity: macSigned ? signing.identity : '-',
-      // 공증은 하드닝 런타임을 요구한다. V8 JIT 때문에 entitlements.mac.plist의 allow-jit가 필요하다(Electron 코드 서명 안내).
+      // 공증은 하드닝 런타임을 요구한다. 권한은 entitlements.mac.plist(V8·WebAssembly JIT만). 금고·엔진 utilityProcess(Helper 앱)도 같은 권한을 받는다.
       hardenedRuntime: macSigned,
       entitlements: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
       entitlementsInherit: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
-      // APPLE_API_KEY·APPLE_API_KEY_ID·APPLE_API_ISSUER로 notarytool 제출 → 스테이플
+      // 앱 공증·스테이플: 스크립트가 APPLE_KEYCHAIN_PROFILE(= SAX_NOTARY_PROFILE)을 넘긴다. dmg 서명·공증·스테이플은 스크립트가 따로 한다
       notarize: macSigned,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
-      artifactName: `${identity.installDirName}-\${version}-\${arch}.\${ext}`,
+      artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,
     },
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],
