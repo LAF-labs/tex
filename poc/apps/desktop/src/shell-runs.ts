@@ -88,6 +88,8 @@ export const NOTE: Record<string, string> = {
   // 요청률 정책(D03 §7, 코드는 D16 portal.*·policy.*). 숫자·날짜는 보수 모드(시계 역행)에서 바뀌므로 문구에 넣지 않는다.
   'portal.blocked': '홈택스에서 차단·경고 신호(안내 화면, 요청 거부 응답)가 보여 바로 멈췄어요. 그 뒤로 앱은 홈택스에서 아무 동작도 하지 않았고 아무것도 발급하지 않았어요. 홈택스에 직접 접속해 상태를 확인해 주세요.',
   'portal.blocked_in_doubt': '발급 확인 중에 홈택스에서 차단·경고 신호가 보여 멈췄어요. 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  // 발급 뒤 PDF 보관만 실패(H-01 s32 save_pdf). 발급·승인번호는 그대로다(2026-11-11).
+  'save_pdf.failed': '발급은 완료되었어요. 발급한 세금계산서 PDF는 받지 못했어요. 홈택스 발급목록에서 확인·인쇄할 수 있어요. 다시 발급하지 마세요.',
   'portal.blocked_after_commit': '발급은 확정됐지만 그 뒤 홈택스에서 차단·경고 신호가 보여 멈췄어요. 다음 발급을 이어가기 전에 홈택스에 직접 접속해 상태를 확인해 주세요.',
   'policy.cooldown': '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
   'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
@@ -734,6 +736,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
         if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
       }
       if (e.code === 'portal.blocked_after_commit') r.warnings = [...r.warnings, NOTE['portal.blocked_after_commit']!];
+      if (e.code === 'save_pdf.failed') r.warnings = [...r.warnings, NOTE['save_pdf.failed']!];
       this.emit('doc', doc);
     } else if (e.status === 'stopped' || e.status === 'expired') {
       r.status = 'stopped';
