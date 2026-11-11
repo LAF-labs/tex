@@ -113,7 +113,7 @@ const barLeave = () => barWc().sendInputEvent({ type: 'mouseLeave', x: -5, y: -5
 const gesture = () => S.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 /**
  * [홈택스에서 준비]: main은 2초 안의 실제 입력 뒤에만 받는다(ADR-027 결정 8). 부하가 크면(전체 시험 직후 등) 입력과
- * 클릭 사이가 2초를 넘어 gesture_required로 거부될 수 있다. 그 거부(토스트 "잠시 뒤 다시 눌러 주세요")일 때만 입력을 새로
+ * 클릭 사이가 2초를 넘어 gesture_required로 거부될 수 있다. 그 거부(토스트 "버튼 클릭을 확인하지 못했어요…")일 때만 입력을 새로
  * 주고 다시 누른다(최대 3번). 다른 거부(진행 중 등)는 그대로 둔다: 그 판정을 보는 검사가 있다.
  */
 async function prepare(id: string): Promise<void> {
@@ -122,7 +122,7 @@ async function prepare(id: string): Promise<void> {
     gesture();
     await sleep(30);
     await click(`[data-run="${id}"] [data-act=prepare]`);
-    const rejected = async () => runStatus(id) === 'draft' && (await js<string>(`document.getElementById('toast').textContent || ''`)).includes('잠시 뒤 다시 눌러');
+    const rejected = async () => runStatus(id) === 'draft' && (await js<string>(`document.getElementById('toast').textContent || ''`)).includes('버튼 클릭을 확인하지 못했어요');
     await until('prepare answered', async () => runStatus(id) !== 'draft' || (await rejected()), 3000);
     if (!(await rejected())) return;
     console.log(`  (prepare: gesture_required, retry ${i + 1})`);

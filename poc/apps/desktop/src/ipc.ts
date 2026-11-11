@@ -226,4 +226,6 @@ export type ShellEvent =
   | { type: 'docs-reload' }
   | { type: 'board'; board: unknown }
   | { type: 'onboarding'; onboarding: unknown }
-  | { type: 'account'; account: unknown };
+  | { type: 'account'; account: unknown }
+  /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
+  | { type: 'activated'; x: number; y: number };

@@ -198,11 +198,19 @@ async function main() {
   await press('[data-onb=ok]');
   await until('redo done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
   await say('세금계산서 1000원 인스피릿에 끊자');
-  check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다', await until('ask cp', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어느 거래처에 발급할까요') ?? false`)));
+  // 장부가 비어 있으면 거래처를 묻는 대신 추가부터(F-02): "먼저 거래처를 추가해 주세요" + [거래처 추가]
+  check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다(장부가 비면 [거래처 추가])', await until('ask cp', async () => js<boolean>(`(() => { const a = [...document.querySelectorAll('.sx-thread .sx-app')].pop(); return !!a && (a.textContent.includes('어느 거래처에 발급할까요') || (a.textContent.includes('먼저 거래처를 추가해 주세요') && !!a.querySelector('[data-act=ask-cp-add]'))); })()`)));
   check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
 
   // 저장 품목이 없는 거래처(등록증·직접 입력 모두 품목 칸이 선택): 카드 전에 품목을 묻고, 모델이 답을 세금계산서로 골라도 이어 간다. 준비는 누르지 않는다(홈택스 접속 없음).
-  const saved = await js<{ id?: string }>(`window.sax.call('counterparty.save', { id: null, name: '견본무품목상사', bizNo: '1010111113', rep: '', email: 'noitem@gyeonbon-test.example', item: '' })`);
+  // 되묻기의 [거래처 추가](F-02): 거래처 화면의 추가 폼 → [추가] → 대화로 돌아와 입력창에 그 이름(보내지 않음)
+  await press('[data-act=ask-cp-add]');
+  const formOpen = await until('ask cp form', async () => js<boolean>(`!!document.querySelector('section[data-view=cps]') && !!document.querySelector('[data-panel-cp-edit=new] form')`), 5_000);
+  await js(`(() => { const f = document.querySelector('[data-panel-cp-edit=new] form'); f.querySelector('[name=name]').value = '견본무품목상사'; f.querySelector('[name=bizNo]').value = '101-01-11113'; f.querySelector('[name=email]').value = 'noitem@gyeonbon-test.example'; })()`);
+  await press('[data-panel-cp-edit=new] [data-act=cp-save]');
+  const back = await until('back to chat', async () => (await js<string>(`document.querySelector('#composer')?.value ?? ''`)) === '견본무품목상사', 8_000);
+  check('[거래처 추가] → 거래처 화면의 추가 폼 → [추가] → 대화로 돌아와 입력창에 그 이름(보내지 않음)', formOpen && back && (await runCount()) === 0, { formOpen, composer: await js<string>(`document.querySelector('#composer')?.value ?? ''`) });
+  const saved = (await js<Array<{ id: string; name: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === '견본무품목상사');
   await say('견본무품목상사에 1000원 세금계산서 끊어 줘');
   check('품목 없는 거래처 → 카드 없이 "어떤 품목으로 발급할까요?"', !!saved?.id && (await until('ask item', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어떤 품목으로 발급할까요') ?? false`))) && (await runCount()) === 0);
   await say('컨설팅 용역');

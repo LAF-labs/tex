@@ -113,7 +113,7 @@ export const NOTE: Record<string, string> = {
   bad_run_id: '이 카드를 시작하지 못했어요. 대화에서 다시 요청해 주세요. 아무것도 발급하지 않았어요.',
   forbidden_channel: '허용되지 않은 경로로 들어온 요청이라 시작하지 않았어요. 아무것도 발급하지 않았어요.',
   'ledger.intent_not_new': '같은 발급 요청을 이미 기록해 다시 시작하지 않았어요. 홈택스 발급목록을 확인해 주세요.',
-  'login.not_implemented': '고른 발급 인증으로는 아직 홈택스에 로그인할 수 없어요. 설정에서 다른 발급 인증을 골라 주세요. 아무것도 발급하지 않았어요.',
+  'login.not_implemented': '고른 발급 인증으로는 아직 홈택스에 로그인할 수 없어요. 내 사업장 화면의 발급 인증 [바꾸기]에서 다른 인증을 골라 주세요. 아무것도 발급하지 않았어요.',
   'package.not_loaded': '홈택스 작업 정보를 아직 받지 못해 시작하지 않았어요. 인터넷 연결을 확인하고 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'package.load_failed': '홈택스 작업 정보를 확인하지 못해 시작하지 않았어요. 잠시 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   'policy.portal_mode_denied': '지금은 서버 설정으로 이 작업을 자동으로 할 수 없어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
@@ -128,6 +128,9 @@ export const NOTE: Record<string, string> = {
   'wait.timeout': '홈택스 화면이 제때 뜨지 않아 멈췄어요. 아무것도 발급하지 않았어요. 잠시 뒤 다시 준비해 주세요.',
 };
 /** 표에 없는 코드(새 코드·내부 오류)는 코드를 보이지 않고 이 문구로. 코드는 로그(main.run_end 등)에만 남는다. in_doubt는 늘 표의 문구라 이 문구를 쓰지 않는다. */
+/** 승인 전 핸드오프 끝(end status handoff, 재개 불가)의 다음 할 일. 실제 발급 첫 단계(s0)에서 이 모양으로 끝난 일이 있었다. */
+export const HANDOFF_END_NOTE = '앱이 홈택스에서 이 단계를 이어 가지 못해 멈췄어요. 아무것도 발급하지 않았어요.';
+export const HANDOFF_END_NEXT = '[다시 준비]로 처음부터 다시 하거나, [홈택스에서 직접 발급]으로 옆 패널의 값을 보고 직접 발급할 수 있어요.';
 export const UNKNOWN_STOP_NOTE = '멈췄어요. 아무것도 발급하지 않았어요. 다시 준비해 보고, 같은 일이 반복되면 앱을 다시 시작해 주세요.';
 /** 차단 신호로 끝났는데 발급됐는지 모름(verify 중 신호). */
 const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
@@ -373,8 +376,15 @@ export class ShellRuns extends EventEmitter implements Drafts {
       result: null,
       warnings: [],
     };
+    this.markDup(run);
     this.runs.set(run.id, run);
     return run;
+  }
+
+  /** 초안의 오늘 중복 표시(F-10): 오늘 발급을 마친(또는 발급됐는지 모르는) 같은 거래처·같은 합계 실행이 있는가. 거래처·금액을 고치면 다시 본다. */
+  private markDup(r: RunView): void {
+    const today = dayOffset(0);
+    r.dupToday = [...this.runs.values()].some((x) => x.id !== r.id && (x.status === 'done' || x.inDoubt === true) && x.writeDate === today && x.counterparty.id === r.counterparty.id && x.total === r.total);
   }
 
   updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string }): RunView {
@@ -418,6 +428,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.email = { ...r.email, value: v };
     }
     Object.assign(r, split(r.amount, r.vat));
+    this.markDup(r);
     this.emit('update', r);
     return r;
   }
@@ -445,11 +456,17 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   /** 게이트 없이 끝난 실행이 연달아 GATELESS_STREAK_MAX번이고 마지막 끝에서 PREPARE_PAUSE_MS가 안 지났는가. */
   prepareThrottled(): boolean {
+    return this.prepareWaitMs() > 0;
+  }
+
+  /** 승인 카드 없이 끝난 실행이 연달아 이어져 쉬는 중이면 남은 시간(ms), 아니면 0(F-07: 화면이 기다릴 시간을 말한다). */
+  prepareWaitMs(): number {
     const last = this.gateless.at(-1);
-    if (this.gateless.length < GATELESS_STREAK_MAX || last === undefined) return false;
-    if (this.clock() - last < PREPARE_PAUSE_MS) return true;
+    if (this.gateless.length < GATELESS_STREAK_MAX || last === undefined) return 0;
+    const left = PREPARE_PAUSE_MS - (this.clock() - last);
+    if (left > 0) return left;
     this.gateless = [];
-    return false;
+    return 0;
   }
 
   /** 카드에 문장 하나를 더한다(금고 이벤트 등). runId가 없거나 끝난 실행이면 진행 중인 실행에. 같은 문장은 한 번만. */
@@ -694,6 +711,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.attest = null;
     }
     void this.host.control('run.end', { runId: r.id }).catch(() => {});
+    // 승인했거나 게이트 뒤 단계였는가(engineGone의 unsure와 같은 판단). 핸드오프 끝 문구가 "발급하지 않았어요"를 말해도 되는지 가른다.
+    const pastGate = r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true;
     r.turn = null;
     r.handoff = null;
     r.approvedPending = false;
@@ -704,11 +723,12 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.endCodes.delete(r.id);
     this.src.log?.('main.run_end', { status: e.status, code: (code ?? 'none').slice(0, 80) });
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
-      const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급' };
+      const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
       r.status = 'done';
       // 엔진은 끝 스텝에서 마지막 구간의 done을 따로 보내지 않는다. 확정된 실행에서 진행 중이던 단계는 끝난 것이다.
       r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'done' } : s));
-      r.result = { approvalNo: e.approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true };
+      // 발급 PDF는 아직 이 PC에 보관하지 않는다(F-04): 화면은 [PDF 열기] 대신 홈택스 발급목록 안내. PDF를 보관하게 되면 noFile을 뗀다.
+      r.result = { approvalNo: e.approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true, noFile: doc.noFile === true };
       if (!e.mailConfirmed) {
         this.step(r, 'mail', 'attention', r.email.value ? NOTE['mail.not_confirmed'] : '받는 이메일이 없어 보내지 않았어요');
         if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
@@ -723,6 +743,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.status = 'attention';
       r.stoppedNote = note(code);
       r.inDoubt = e.status === 'in_doubt';
+      // 승인 전 핸드오프로 끝남: "확인 필요"만 남지 않게 무슨 일인지와 다음 할 일(다시 준비 / 홈택스에서 직접)을 말한다. 승인·게이트 뒤면 발급 여부를 단정하지 않는다(엔진 코드 문구 그대로).
+      if (e.status === 'handoff' && !pastGate) {
+        r.handoffEnd = true;
+        r.stoppedNote = `${code && NOTE[code] ? NOTE[code] : HANDOFF_END_NOTE} ${HANDOFF_END_NEXT}`;
+      }
       const now = r.steps.findLastIndex((s) => s.state === 'now');
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };
     }

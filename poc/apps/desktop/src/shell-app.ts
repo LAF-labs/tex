@@ -10,7 +10,7 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, session, shell as desktop } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -382,6 +382,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
+  // 다른 앱에서 돌아온 클릭이 버튼 위였는지 렌더러가 보게 커서 자리만 알린다(F-11). 클릭을 만들거나 실제 입력으로 세지 않는다.
+  win.on('focus', () => {
+    if (win.isDestroyed()) return;
+    const p = screen.getCursorScreenPoint();
+    const c = win.getContentBounds();
+    const x = p.x - c.x;
+    const y = p.y - c.y;
+    if (x >= 0 && y >= 0 && x < c.width && y < c.height) send({ type: 'activated', x, y });
+  });
   /** 지난 발급(시연 씨앗 이력 + 문서함 세금계산서). 원장 발급 이력 질의가 나오면 그쪽으로 바꾼다. */
   const issuedInvoices = (): IssuedInvoice[] => {
     const total = new Map((seed?.history ?? []).filter((x) => x.approvalNo).map((x) => [`d-${x.id}`, x.total]));
@@ -915,7 +924,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const via = 'model';
       // 모름(unknown)이고 되묻던 것에 답하는 문장도 아니면 모델이 짧게 답한다(chat.respond). 고정 문구 "세금계산서나 증명서를 말해 주세요"는 빈 입력에만.
       // 답은 텍스트로만 보이고, 제안 작업은 입력창을 채우는 칩일 뿐이다(실행은 사용자가 보내고 확인 카드를 거친다). 실패는 정규식 대체 없이 오류 문장.
-      if (r.route.outcome === 'unknown' && !answersPending(local, runs)) {
+      if (r.route.outcome === 'unknown' && !answersPending(local, runs, text)) {
         const c = await chatReply.respond(text);
         const sent = sentFromGateway(gwIssuedSince(mark));
         log.event('main.chat', 'reply' in c ? { result: 'ok', kind: c.reply.kind, filtered: c.reply.filtered ?? 'none', suggest: c.reply.suggest.length } : { result: c.error });
@@ -945,9 +954,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
     'run.prepare': async (p) => {
       needGesture(2_000);
-      if (runs.prepareThrottled() || !prepareRate.take(performance.now())) {
-        log.event('main.prepare_throttled');
-        throw new Error('throttled');
+      // 상한 이유와 남은 초를 코드에 붙인다(F-07: "잠시 뒤"만 보이던 것). 화면은 이유별 문장 + N초.
+      const pause = runs.prepareWaitMs();
+      const now = performance.now();
+      if (pause > 0 || !prepareRate.take(now)) {
+        const why = pause > 0 ? 'streak' : 'rate';
+        log.event('main.prepare_throttled', { why });
+        throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
       }
       // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
       await registryFresh();
