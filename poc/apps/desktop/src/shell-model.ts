@@ -66,7 +66,7 @@ export interface Doc {
   issuedOn: string | null;
   expiresOn: string | null;
   source: '앱이 발급' | '직접 발급' | '직접 추가';
-  /** 이 PC에 PDF가 없다(앱이 발급한 세금계산서는 아직 PDF를 보관하지 않는다, F-04). 화면은 [열기]·[다시 발급] 대신 홈택스 발급목록 안내. */
+  /** 이 PC에 PDF가 없다(실행의 메모리 줄: 보관함에 같은 실행의 PDF가 없을 때만 보인다, F-04). 화면은 [열기]·[다시 발급] 대신 홈택스 발급목록 안내. */
   noFile?: boolean;
   purpose?: string;
   /** 실행이 보관한 발급 PDF(엔진 보관함 run_id). 같은 실행의 메모리 줄(d-<runId>)을 대신한다. */
@@ -354,6 +354,8 @@ export interface RunView {
   item: string;
   /** 품목이 거래처 저장 품목에서 온 추정 값인가(문장·되묻기·카드에서 받았으면 false). */
   itemGuessed: boolean;
+  /** 승인·게이트 전에 실패·핸드오프로 끝났다(발급 없음): 카드에 [다시 준비](같은 값의 새 초안) */
+  redo?: boolean;
   /** 승인 전에 엔진이 이어 갈 수 없는 핸드오프로 끝냈다(end status handoff). 카드는 무슨 일인지와 [다시 준비]·[홈택스에서 직접 발급]을 보인다. */
   handoffEnd?: boolean;
   /** 초안만: 오늘 같은 거래처·같은 합계로 이미 발급한 실행이 있다(F-10, 이 앱이 켜진 동안의 발급). 승인 카드의 중복 경고보다 먼저 보인다. */
@@ -363,7 +365,7 @@ export interface RunView {
   steps: Array<{ label: string; state: StepState; note?: string }>;
   turn: { text: string; note: string } | null;
   confirmed: boolean;
-  /** noFile: 발급 PDF가 이 PC에 없다(F-04, Doc.noFile과 같다). */
+  /** noFile: 발급 PDF를 보관하지 못했다(save_pdf.failed, F-04). */
   result: { approvalNo: string; mailTo: string; docId: string; doneAt: string; mailConfirmed: boolean; noFile?: boolean } | null;
   stoppedNote?: string;
   /** 승인 대기 카드의 고정 경고(중복 경고 등). 같은 값이 승인 바에도 있다. */

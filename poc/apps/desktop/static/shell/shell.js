@@ -5,7 +5,7 @@ import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -103,6 +103,8 @@ const act = {
   toast,
   openDoc: (id) => call('docs.open', { id }).catch((e) => toast(docErr(e))),
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
+  // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
+  openRunDoc: (run, reveal = false) => runDoc(run).then((d) => (d ? (reveal ? act.revealDoc(d.id) : act.openDoc(d.id)) : toast(NO_FILE_TEXT))),
   setAuth: async (kind) => {
     try {
       state.boot.profiles = (await call('auth.setDefault', { kind })).profiles;
@@ -195,6 +197,16 @@ const act = {
       putRun(await call('run.stop', { id }));
     } catch (e) {
       toast(human(e, { already_issuing: '이미 발급을 시작해서 멈출 수 없어요' }));
+    }
+  },
+  // [다시 준비]: main이 같은 값의 새 초안을 만든다(발급 전에 멈춘 실행만). 시작은 새 카드의 [홈택스에서 준비]
+  redraft: async (id) => {
+    try {
+      const d = await call('run.redraft', { id });
+      putRun(d);
+      openPanel({ kind: 'run', id: d.id });
+    } catch (e) {
+      toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '다시 준비하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
     }
   },
   again: (run) => {
@@ -551,6 +563,18 @@ function prepareRefusal(c) {
   const m = /^throttled\.(streak|rate):(\d{1,3})$/.exec(c);
   if (m) return m[1] === 'streak' ? `승인 전에 멈춘 실행이 3번 이어져 1분 쉬었다가 시작해요. ${m[2]}초 뒤에 다시 눌러 주세요.` : `[홈택스에서 준비]는 1분에 3번까지 시작해요. ${m[2]}초 뒤에 다시 눌러 주세요.`;
   return c === 'throttled' ? '조금 뒤에 다시 눌러 주세요.' : null;
+}
+
+/** 이 실행이 보관함에 남긴 발급 PDF 줄(#269 runId). 지금 목록에 없으면 한 번 다시 읽는다. */
+async function runDoc(run) {
+  const find = () => state.docs.find((d) => d.runId === run.id);
+  if (find()) return find();
+  try {
+    state.docs = await call('docs.list');
+  } catch {
+    return null;
+  }
+  return find() ?? null;
 }
 
 /** 되묻기의 [거래처 추가](F-02·F-03): 거래처 화면의 추가 폼(이름 채움). 저장하면 대화로 돌아와 그 이름을 채운다. */

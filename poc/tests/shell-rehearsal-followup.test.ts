@@ -67,18 +67,25 @@ describe('F-02·F-03 거래처 없음·장부에 없는 이름', () => {
 });
 
 describe('F-04 발급 PDF가 이 PC에 없다(화면만)', () => {
-  it('발급 끝: 문서함 줄·결과에 noFile, 화면은 [PDF 열기]·[열기]·[다시 발급] 대신 홈택스 발급목록 안내', async () => {
+  it('메모리 줄은 늘 noFile(보관함 PDF가 없을 때만 보인다), 결과 카드는 PDF 보관 실패(save_pdf.failed)일 때만 noFile', async () => {
     const { host, runs } = make([A]);
     const docs: Array<{ noFile?: boolean }> = [];
     runs.on('doc', (d) => docs.push(d));
     const d = runs.createDraft(A, 1000, null);
     await runs.prepare(d.id);
     host.emit('run', { runId: d.id, type: 'end', status: 'success', approvalNo: '20261111-1', mailConfirmed: true });
-    assert.equal(runs.get(d.id)!.result!.noFile, true);
+    assert.equal(runs.get(d.id)!.result!.noFile, false);
     assert.equal(docs[0]!.noFile, true);
+    const e = runs.createDraft(A, 2000, null);
+    await runs.prepare(e.id);
+    host.emit('run', { runId: e.id, type: 'end', status: 'completed_with_issues', code: 'save_pdf.failed', approvalNo: '20261111-2', mailConfirmed: true });
+    assert.equal(runs.get(e.id)!.result!.noFile, true);
+    const s = read('static/shell/shell.js');
+    assert.match(s, /const find = \(\) => state\.docs\.find\(\(d\) => d\.runId === run\.id\);/);
+    assert.match(s, /openRunDoc: \(run, reveal = false\) => runDoc\(run\)\.then\(\(d\) => \(d \? \(reveal \? act\.revealDoc\(d\.id\) : act\.openDoc\(d\.id\)\) : toast\(NO_FILE_TEXT\)\)\),/);
     const v = read('static/shell/shell-views.js');
     assert.match(v, /export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요\.';/);
-    assert.match(v, /r\.noFile \? null : btn\('PDF 열기'/);
+    assert.match(v, /r\.noFile \? null : btn\('PDF 열기', \(\) => act\.openRunDoc\(run\)/);
     assert.match(v, /run\.result\.noFile \? line\(NO_FILE_TEXT, true\)/);
     assert.match(v, /doc\.noFile \? null : btn\('열기'/);
     assert.match(v, /doc\.source === '앱이 발급' && !doc\.noFile \? btn\('다시 발급'/);
@@ -169,7 +176,7 @@ describe('핸드오프로 끝남(end status handoff, 재개 불가)', () => {
     const r = runs.get(d.id)!;
     assert.deepEqual([r.status, r.handoffEnd, r.stoppedNote], ['attention', true, `${HANDOFF_END_NOTE} ${HANDOFF_END_NEXT}`]);
     const v = read('static/shell/shell-views.js');
-    assert.match(v, /btn\('다시 준비', \(\) => act\.again\(run\), 'sx-btn-primary', \{ 'data-act': 'handoff-again' \}\), btn\('홈택스에서 직접 발급', \(\) => act\.open\(run\.id\), '', \{ 'data-act': 'handoff-manual' \}\)/);
+    assert.match(v, /btn\('다시 준비', \(\) => act\.redraft\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'handoff-again' \}\), btn\('홈택스에서 직접 발급', \(\) => act\.open\(run\.id\), '', \{ 'data-act': 'handoff-manual' \}\)/);
   });
   it('알려진 코드면 그 문구 + 다음 할 일', async () => {
     const { host, runs } = make([A]);
@@ -186,5 +193,48 @@ describe('핸드오프로 끝남(end status handoff, 재개 불가)', () => {
     host.emit('run', { runId: d.id, type: 'end', status: 'handoff', code: 'verify.unknown' });
     const r = runs.get(d.id)!;
     assert.ok(!r.handoffEnd && !String(r.stoppedNote).includes(HANDOFF_END_NOTE));
+  });
+});
+
+describe('실행이 실패·핸드오프로 끝났을 때 문구와 [다시 준비](게시본 건조 실행, 부장 2026-11-11)', () => {
+  it('코드별 문구: 로그인 대기·비밀번호 창 시간 초과·문자 입력·화면 모름·Chrome 없음, 모두 다음 할 일과 "아무것도 발급하지 않았어요"', () => {
+    for (const c of ['step.timeout', 'human.ttl_expired', 'portal.captcha', 'step.assert_failed', 'portal.unexpected_page', 'chrome.not_installed']) {
+      assert.match(NOTE[c]!, /\[다시 준비\]/, c);
+      assert.match(NOTE[c]!, /아무것도 발급하지 않았어요/, c);
+    }
+    assert.match(NOTE['step.timeout']!, /홈택스 로그인을 기다리다/);
+    assert.match(NOTE['chrome.not_installed']!, /^Chrome이 설치돼 있어야 해요/);
+  });
+  it('발급 전 실패면 redo, [다시 준비]는 같은 값(거래처·금액·부가세·품목·이메일)의 새 초안, 끝난 실행은 그대로', async () => {
+    const { host, runs } = make([A]);
+    const d = runs.createDraft(A, 1000, 'included', '디자인');
+    runs.updateDraft(d.id, { email: 'other@a.example' });
+    await runs.prepare(d.id);
+    host.emit('run', { runId: d.id, type: 'end', status: 'failed', code: 'step.timeout' });
+    assert.equal(runs.get(d.id)!.redo, true);
+    const n = runs.redraft(d.id);
+    assert.notEqual(n.id, d.id);
+    assert.deepEqual([n.status, n.counterparty.id, n.amount, n.vat, n.vatGuessed, n.item, n.itemGuessed, n.email.value], ['draft', 'cp-a', 1000, 'included', false, '디자인', false, 'other@a.example']);
+    assert.equal(runs.get(d.id)!.status, 'attention');
+  });
+  it('in_doubt·게이트 뒤·초안·완료는 다시 준비하지 않는다', async () => {
+    const { host, runs } = make([A]);
+    const a = runs.createDraft(A, 1000, null);
+    await runs.prepare(a.id);
+    host.emit('run', { runId: a.id, type: 'end', status: 'in_doubt', code: 'verify.unknown' });
+    assert.ok(!runs.get(a.id)!.redo);
+    assert.throws(() => runs.redraft(a.id), /not_redoable/);
+    const b = runs.createDraft(A, 1000, null);
+    assert.throws(() => runs.redraft(b.id), /not_redoable/);
+    await runs.prepare(b.id);
+    host.emit('run', { runId: b.id, type: 'handoff', phase: 'mail' });
+    host.emit('run', { runId: b.id, type: 'end', status: 'failed', code: 'step.timeout' });
+    assert.ok(!runs.get(b.id)!.redo, '게이트 뒤 단계');
+  });
+  it('배선: run.redraft(main) · 카드 [다시 준비](Chrome 확장 멈춤은 [다시 시도])', () => {
+    assert.match(read('src/shell-app.ts'), /'run\.redraft': \(p\) => \{\s*const d = runs\.redraft\(String\(p\.id\)\);/);
+    assert.match(read('src/ipc.ts'), /'run\.redraft': \{ id: ID \},/);
+    assert.match(read('static/shell/shell-views.js'), /run\.redo && !run\.retry\s*\? h\('div', \{ class: 'sx-actions' \}, btn\('다시 준비', \(\) => act\.redraft\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'redo' \}\)\)\s*: null,/);
+    assert.match(read('static/shell/shell.js'), /const d = await call\('run\.redraft', \{ id \}\);/);
   });
 });

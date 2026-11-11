@@ -45,6 +45,8 @@ export const RUN_STATES = ['running', 'waiting_gate', 'waiting_human', 'recoveri
 export type RunState = (typeof RUN_STATES)[number];
 
 /** 모르는 화면(ADR-025 결정 3·5): 일반 실패 코드 대신 보이는 문장. */
+/** 화면을 알아보지 못해 멈춤(게시본 건조 실행 결과, 부장 2026-11-11): 다시 준비하거나 직접 발급. */
+const SCREEN_UNKNOWN_REDO = '홈택스 화면을 알아보지 못했어요. [다시 준비]를 눌러 보거나 홈택스에서 직접 발급해 주세요. 아무것도 발급하지 않았어요.';
 const UNKNOWN_SCREEN = '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.';
 
 /** 엔진 결과 코드 → 사용자 문구. 값은 넣지 않는다. */
@@ -64,7 +66,14 @@ export const NOTE: Record<string, string> = {
   'step.identity_mismatch': '홈택스 화면이 예상과 달라 멈췄어요. 아무것도 발급하지 않았어요.',
   'step.target_not_found': UNKNOWN_SCREEN,
   'checkpoint.expect_failed': UNKNOWN_SCREEN,
-  'portal.unexpected_page': '홈택스가 예상하지 못한 화면으로 보내 멈췄어요. 전용 Chrome 창의 안내를 확인해 주세요. 아무것도 발급하지 않았어요.',
+  'portal.unexpected_page': SCREEN_UNKNOWN_REDO,
+  'step.assert_failed': SCREEN_UNKNOWN_REDO,
+  // 기다리다 시간 초과(대개 홈택스 로그인 대기). 승인 뒤 단계의 시간 초과는 in_doubt로 따로 온다.
+  'step.timeout': '홈택스 로그인을 기다리다 시간이 지났어요. 홈택스 창에서 로그인을 마친 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
+  'step.selector_miss': SCREEN_UNKNOWN_REDO,
+  'human.ttl_expired': '인증서 비밀번호 창이 시간이 지나 닫혔어요. [다시 준비]를 누르면 다시 열어요. 아무것도 발급하지 않았어요.',
+  // Chrome이 없으면 금고가 실행 창을 열지 못한다(엔진 CHROME_NOT_INSTALLED_CODE, customer-dist)
+  'chrome.not_installed': 'Chrome이 설치돼 있어야 해요. Chrome을 설치한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   // 민원증명: 개인사업자(사업자 인증서) 로그인으로 못 여는 화면(납세증명서·소득금액증명 등, 캡처 2026-11-10)
   'portal.personal_login_required': '이 서류는 개인사업자 로그인으로는 뗄 수 없어요. 홈택스에서 로그아웃하고 대표자 개인 인증서로 다시 로그인해 주세요. 아무것도 발급하지 않았어요.',
@@ -94,7 +103,7 @@ export const NOTE: Record<string, string> = {
   'policy.cooldown': '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
   'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
   'portal.extra_auth_repeat': '홈택스 추가 인증이 반복돼 앱이 스스로 멈췄어요(차단 신호는 아니에요). 홈택스에서 직접 인증을 마친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
-  'portal.captcha': '홈택스에 자동입력방지 문자가 떠서 멈췄어요. 아무것도 발급하지 않았어요.',
+  'portal.captcha': '홈택스가 문자 입력(자동입력방지)을 요구했어요. 홈택스 창에서 직접 입력한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
   'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
   // PoC 상한(ADR-025 결정 1). 앱이 집행하는 PoC 값이라 숫자를 문구에 넣는다.
@@ -510,6 +519,20 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return r;
   }
 
+  /**
+   * [다시 준비]: 발급 전에 멈춘 실행과 같은 값(거래처·금액·부가세·품목·받는 이메일)으로 새 초안을 만든다. 실행은 새 초안의 [홈택스에서 준비]로만 시작한다.
+   * 고르지 않았던 부가세·저장 품목에서 온 품목은 추정 그대로 둔다. 거래처가 장부에서 지워졌으면 no_counterparty.
+   */
+  redraft(id: string): RunView {
+    const r = this.runs.get(id);
+    if (!r || r.status !== 'attention' || !r.redo) throw new Error('not_redoable');
+    const cp = this.src.counterparties().find((c) => c.id === r.counterparty.id);
+    if (!cp) throw new Error('no_counterparty');
+    const d = this.createDraft(cp, r.amount, r.vatGuessed ? null : r.vat, r.itemGuessed ? null : r.item);
+    if (emailOk(r.email.value)) d.email = { value: r.email.value, first: false };
+    return d;
+  }
+
   /** [중지]·[취소]: 초안이면 바로, 실행 중이면 엔진에 알린다(커밋 구간이면 엔진이 거부). */
   async stop(id: string): Promise<RunView> {
     const r = this.runs.get(id);
@@ -729,8 +752,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.status = 'done';
       // 엔진은 끝 스텝에서 마지막 구간의 done을 따로 보내지 않는다. 확정된 실행에서 진행 중이던 단계는 끝난 것이다.
       r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'done' } : s));
-      // 발급 PDF는 아직 이 PC에 보관하지 않는다(F-04): 화면은 [PDF 열기] 대신 홈택스 발급목록 안내. PDF를 보관하게 되면 noFile을 뗀다.
-      r.result = { approvalNo: e.approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true, noFile: doc.noFile === true };
+      // 발급 PDF는 엔진이 보관함에 실행 산출물(run_id)로 남긴다(#269). 메모리 줄(d-<runId>)은 그 PDF가 없을 때만 문서함에 보이므로 늘 noFile이다.
+      // 결과 카드는 PDF 보관이 실패했을 때(save_pdf.failed)만 [PDF 열기] 대신 홈택스 발급목록 안내(F-04). 열기는 렌더러가 run_id로 보관함 줄을 찾는다.
+      r.result = { approvalNo: e.approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true, noFile: e.code === 'save_pdf.failed' };
       if (!e.mailConfirmed) {
         this.step(r, 'mail', 'attention', r.email.value ? NOTE['mail.not_confirmed'] : '받는 이메일이 없어 보내지 않았어요');
         if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
@@ -747,6 +771,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.stoppedNote = note(code);
       r.inDoubt = e.status === 'in_doubt';
       // 승인 전 핸드오프로 끝남: "확인 필요"만 남지 않게 무슨 일인지와 다음 할 일(다시 준비 / 홈택스에서 직접)을 말한다. 승인·게이트 뒤면 발급 여부를 단정하지 않는다(엔진 코드 문구 그대로).
+      // 발급 전 단계에서 끝났으면 같은 값으로 다시 준비할 수 있다(in_doubt·게이트 뒤는 아님: 기존 문구·확인 길 그대로)
+      r.redo = !r.inDoubt && !pastGate;
       if (e.status === 'handoff' && !pastGate) {
         r.handoffEnd = true;
         r.stoppedNote = `${code && NOTE[code] ? NOTE[code] : HANDOFF_END_NOTE} ${HANDOFF_END_NEXT}`;

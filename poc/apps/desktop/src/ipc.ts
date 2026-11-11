@@ -86,6 +86,7 @@ export const SHELL_METHODS = {
   'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
   // 초안 카드에서 고치기: 부가세·금액·품목·받는 이메일(품목은 엔진 상한 100자, 넘치면 거부)
+  'run.redraft': { id: ID },
   'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 }, item: { t: 'string', max: 200 }, email: { t: 'string', max: 320 }, counterpartyId: { t: 'string', max: 128 } },
   'run.prepare': { id: ID },
   'run.stop': { id: ID },

@@ -947,6 +947,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (gate) return { ...gate, via, note: to.note, sent };
       return finishReply(interpret(text, vat, profile, runs, to.parsed), via, to.note, sent);
     },
+    // [다시 준비]: 발급 전에 멈춘 실행과 같은 값의 새 초안(시작은 그 카드의 [홈택스에서 준비]로만)
+    'run.redraft': (p) => {
+      const d = runs.redraft(String(p.id));
+      pushBoard();
+      return d;
+    },
     'draft.update': (p) =>
       runs.updateDraft(String(p.id), {
         vat: p.vat === 'separate' || p.vat === 'included' ? p.vat : undefined,

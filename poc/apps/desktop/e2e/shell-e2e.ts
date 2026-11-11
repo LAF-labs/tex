@@ -579,6 +579,14 @@ async function flow(): Promise<void> {
   fx().fixture.knobs.supplier = { bizNo: '1234567891', name: '가나다컴퍼니' };
   check('공급자 불일치: 바를 띄우지 않고 멈춘다', (S.runs.get(idSup)!.stoppedNote ?? '').includes('로그인한 사업자가 이 프로필과 달라서') && barShown === shownBefore && !gates.has(idSup) && fx().fixture.posts() === 1, S.runs.get(idSup)!.stoppedNote);
   await shot('20-supplier-mismatch');
+  // 발급 전에 멈춘 카드의 [다시 준비]: 같은 값의 새 초안(시작은 그 카드의 [홈택스에서 준비]로만), 멈춘 카드는 그대로
+  const runsBeforeRedo = S.runs.list().length;
+  await click(`[data-run="${idSup}"] [data-act=redo]`);
+  const redone = await until('redo draft', () => S.runs.list().length === runsBeforeRedo + 1 && S.runs.list().at(-1)!.status === 'draft', 3000);
+  const nd = S.runs.list().at(-1)!;
+  check('발급 전 멈춤 카드 [다시 준비] → 같은 거래처·금액의 새 초안(실행은 시작하지 않음)', redone && nd.counterparty.name === 'C테크' && nd.amount === 300_000 && S.runs.get(idSup)!.status === 'attention' && fx().fixture.posts() === 1, { status: nd.status, cp: nd.counterparty.name, amount: nd.amount });
+  await click(`[data-run="${nd.id}"] [data-act=cancel]`);
+  await until('redo cancel', () => runStatus(nd.id) === 'stopped', 3000);
 
   // 정부24 목업 2장
   await sendText('주민등록등본 떼 줘');
