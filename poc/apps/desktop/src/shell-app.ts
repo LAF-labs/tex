@@ -729,6 +729,24 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return (await readBizCert({ ...bizCertPorts, pick })) ?? (picked ? 'unreadable' : null);
   };
   let readingCert = false;
+  /**
+   * 이번 품목을 거래처 저장 품목으로 남긴다(08 §144): 저장 품목이 없는 거래처에만, [홈택스에서 준비]로 실행을 시작할 때 한 번.
+   * 저장 품목이 있으면 건드리지 않는다(바꾸기는 거래처 화면). 카드 꼬리에 한 줄 알린다. 실패해도 실행은 그대로 간다.
+   */
+  const keepItem = async (runId: string) => {
+    const r = runs.get(runId);
+    if (!r || r.itemGuessed || !r.item) return;
+    const cp = cps.find((c) => c.id === r.counterparty.id);
+    if (!cp || cp.item) return;
+    try {
+      await cpBook.setFirstItem(cp.id, r.item);
+      await refresh();
+      runs.notice(r.id, `이 품목을 ${cp.name}의 저장 품목으로 남겼어요. 다음부터 먼저 채워요(거래처 화면에서 바꿀 수 있어요).`);
+      log.event('main.item_kept', { result: 'ok' });
+    } catch (e) {
+      log.event('main.item_kept', { result: (e as Error).message === 'bad_item_name' ? 'bad_item_name' : 'failed' });
+    }
+  };
   // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
   // 대화 짧은 응대(엔진 chat.respond, #261): 의도가 unknown이고 되묻던 것에 답하는 문장이 아닐 때만. e2e가 바꿔 끼운다.
@@ -925,6 +943,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         vat: p.vat === 'separate' || p.vat === 'included' ? p.vat : undefined,
         amount: typeof p.amount === 'number' ? p.amount : undefined,
         amountText: typeof p.amountText === 'string' ? p.amountText.slice(0, 100) : undefined,
+        item: typeof p.item === 'string' ? p.item : undefined,
+        email: typeof p.email === 'string' ? p.email : undefined,
+        counterpartyId: typeof p.counterpartyId === 'string' ? p.counterpartyId : undefined,
       }),
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
     'run.prepare': async (p) => {
@@ -935,7 +956,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       }
       // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
       await registryFresh();
-      return runs.prepare(String(p.id));
+      const id = String(p.id);
+      const r = await runs.prepare(id);
+      await keepItem(id);
+      return r;
     },
     'run.stop': (p) => runs.stop(String(p.id)),
     'run.resume': (p) => {

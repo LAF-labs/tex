@@ -270,6 +270,8 @@ export class RunController {
       ...(i.verifyStep ? { verify: this.verifyStep } : {}),
       ...(i.pdf ? { save_pdf: this.savePdfStep } : {}),
     } as Handlers;
+    // [중지]는 스텝 경계에서 집행한다(pending). 오래 기다리는 스텝(로그인 대기 s5 wait text 120초 등)은 폴링 때마다 보고 빠진다.
+    i.env.stopRequested ??= () => this.pending === 'abort';
     const forcedStops = new Map([...(i.interp.forcedStops ?? []), ...CONTROL_STOPS]);
     this.interp = new Interpreter(i.ir, bound, i.env, { ...i.interp, forcedStops }, { beforeStep: this.beforeStep, event: i.stepEvent });
   }
