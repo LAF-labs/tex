@@ -109,6 +109,21 @@
    "landmark": "hometax.certlookup.root",
    "commits": false,
    "lastVerified": "2026-11-10"
+  },
+  "hometax.certlookup.count": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "status",
+     "name": "조회 건수"
+    }
+   ],
+   "role": "status",
+   "namePattern": "^조회 건수$",
+   "frame": "main",
+   "landmark": "hometax.certlookup.root",
+   "commits": false,
+   "lastVerified": "2026-11-10"
   }
  },
  "commitEndpoints": [],

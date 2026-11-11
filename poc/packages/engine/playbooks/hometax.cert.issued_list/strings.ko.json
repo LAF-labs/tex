@@ -1,3 +1,10 @@
 {
- "certlookup.title": "민원신청 처리결과 조회"
+ "certlookup.title": "민원신청 처리결과 조회",
+ "lookup.countPattern": "^총 ?([0-9,]+) ?건$",
+ "lookup.table.rowCss": "[role=\"listitem\"], li",
+ "lookup.table.labelCss": "dt, th, .tit",
+ "lookup.table.valueCss": "dd, td, .txt",
+ "lookup.column.certDoc": "민원명",
+ "lookup.column.approvalNo": "접수번호",
+ "lookup.column.status": "처리상태"
 }

@@ -107,8 +107,11 @@ export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as cons
  * - settlement.store {profileId, itemId, month, bytes, format: xlsx|csv, parsed, displayName?}: parsed는 docparse SettlementResult. 요약(플랫폼·기간·합계)만 남긴다.
  */
 export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
-/** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
-export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
+/**
+ * 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e).
+ * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).
+ */
+export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
 export const GATE_ONLY_METHODS = ['gate.answer', 'answerGate', 'attestNotCommitted'] as const;
 

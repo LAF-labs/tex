@@ -26,7 +26,7 @@ import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
 import { runPermit } from './core/permit.ts';
-import { egressRegistryFetch, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
+import { egressRegistryFetch, PRODUCT_CERT_IDS, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { installedIrSource } from './package-source.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
@@ -41,6 +41,7 @@ import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
 import { RunService, type StartParams } from './runs.ts';
+import type { CertStartParams } from './cert.ts';
 import { closeOnShutdown } from './shutdown.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -150,6 +151,12 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     runs = new RunService({
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
       ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
+      // 민원증명(run.startCert): 받아 둔 서명 설치본을 id별로 같은 방식으로 다시 검증한다. 운영 레지스트리에 게시되기 전에는 package.not_loaded다.
+      ...(ir && registry ? {
+        certSource: (id: string) => PRODUCT_CERT_IDS.includes(id)
+          ? installedIrSource(registry!, { id, portal, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) })()
+          : { ok: false as const, code: 'cert.unknown_doc' },
+      } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
@@ -183,9 +190,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   }
   if (!ALLOWED.has(method)) throw new Error('unknown_method');
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
-  if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
+  if (method === 'run.start' || method === 'run.startCert' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
+    if (method === 'run.startCert') return runs.startCert(params as unknown as CertStartParams);
     return method === 'run.start' ? runs.start(params as unknown as StartParams) : runs.stop(String(params.runId));
   }
   // 실행 중에는 개발 콘솔의 브라우저 명령을 받지 않는다(실행 탭을 옮기거나 닫지 못하게).

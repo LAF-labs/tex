@@ -83,6 +83,19 @@ export class PlaywrightActuator implements Actuator {
     const h = this.i.reader.handle(t.el);
     if (!h) return { ok: false, code: 'step.selector_miss' };
     try {
+      // 라디오 묶음(role radiogroup, 홈택스 민원증명 발급유형·주민번호 공개 여부): 이름이 option인 라디오가 정확히 하나일 때 그것을 고른다.
+      const group = await h.evaluate((el) => el instanceof Element && !(el instanceof HTMLSelectElement) && el.getAttribute('role') === 'radiogroup');
+      if (group) {
+        const ix = await h.evaluate((el, label) => {
+          const name = (r: HTMLInputElement) => (r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+          const hit = [...(el as Element).querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r, i) => (name(r) === label ? i : -1)).filter((i) => i >= 0);
+          return hit.length === 1 ? hit[0]! : -1;
+        }, option.normalize('NFKC').replace(/\s+/g, ' ').trim());
+        const radio = ix < 0 ? undefined : (await h.$$('input[type="radio"]'))[ix];
+        if (!radio) return { ok: false, code: 'step.selector_miss' };
+        await radio.check({ timeout: this.timeoutMs });
+        return OK;
+      }
       // 없는 선택지는 Playwright가 생길 때까지 기다린다. 먼저 정확히 하나인지 본다(없으면 바로 selector_miss).
       const one = await h.evaluate((el, label) => el instanceof HTMLSelectElement && [...el.options].filter((o) => o.label === label).length === 1, option);
       if (!one) return { ok: false, code: 'step.selector_miss' };

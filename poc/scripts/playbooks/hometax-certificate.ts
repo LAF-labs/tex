@@ -125,15 +125,21 @@ function loginEntries(): Record<string, TplEntry> {
   };
 }
 
+/**
+ * 메뉴 링크 이름에 「등록」「신청」「발급」이 들어 있어 커밋 그림자 이름 규칙(DENY_ACTION_NAME)에 걸린다. 화면 이동만 하는 메뉴라 검토 메모로 푼다
+ * (메모가 없으면 실행 때 step.commit_shadow로 누르지 않는다, 가짜 페이지 실행 시험에서 확인)
+ */
+const NAV_REVIEW = { by: 'engine-cert', reason: '상단 메뉴 이동(navigationOnly), 커밋 아님' };
+
 /** 메뉴(조회·이동만) — 민원증명 메뉴는 세 서류가 같다 */
 function menuEntries(doc: CertDoc): Record<string, TplEntry> {
   return {
     'hometax.cert.menu.civil': {
-      entry: { candidates: [role('link', '증명·등록·신청')], role: 'link', namePattern: '^증명·등록·신청$', landmark: 'hometax.page.root', commits: false, navigationOnly: true },
+      entry: { candidates: [role('link', '증명·등록·신청')], role: 'link', namePattern: '^증명·등록·신청$', landmark: 'hometax.page.root', commits: false, navigationOnly: true, reviewNote: NAV_REVIEW },
       capture: '상단 메뉴 「증명·등록·신청」 링크의 접근성 이름(R2 §4)',
     },
     'hometax.cert.menu.issue': {
-      entry: { candidates: [role('link', '민원증명(발급)')], role: 'link', namePattern: '^민원증명\\(발급\\)$', landmark: 'hometax.page.root', commits: false, navigationOnly: true },
+      entry: { candidates: [role('link', '민원증명(발급)')], role: 'link', namePattern: '^민원증명\\(발급\\)$', landmark: 'hometax.page.root', commits: false, navigationOnly: true, reviewNote: NAV_REVIEW },
       capture: '「민원증명(발급)」(또는 「즉시발급 증명」) 하위 메뉴 이름(02 §5.1·R2 §4 표기가 다르다)',
     },
     'hometax.cert.menu.doc': {
@@ -206,12 +212,17 @@ function steps(doc: CertDoc): Step[] {
   const docFill: Step[] = doc.fields.map((f, i) => ({ id: `s16${String.fromCharCode(97 + i)}`, type: 'select', target: `hometax.cert.form.${f.input}`, option: `$inputs.${f.input}` }) as Step);
   const entry = (d: CertDoc): Step[] =>
     d.menuCode
-      ? [{ id: 's10', type: 'checkpoint', name: 'form', expect: { any: [{ exists: FORM }, { exists: ALERT }] }, url: menuUrl(d.menuCode), sessionRequired: true, reentry: 'reload' } as Step]
+      ? ([
+          // 로그인 뒤 화면은 홈이다. 체크포인트 첫 통과는 이동하지 않으므로(조율기 checkpoint) 양식 주소로 먼저 간다(H-04 s10·s11과 같은 모양)
+          { id: 's10', type: 'goto', url: menuUrl(d.menuCode) },
+          { id: 's10a', type: 'checkpoint', name: 'form', expect: { any: [{ exists: FORM }, { exists: ALERT }] }, url: menuUrl(d.menuCode), sessionRequired: true, reentry: 'reload' },
+        ] as Step[])
       : ([
-          { id: 's10', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
-          { id: 's10a', type: 'click', target: 'hometax.cert.menu.civil' },
-          { id: 's10b', type: 'click', target: 'hometax.cert.menu.issue' },
-          { id: 's10c', type: 'click', target: 'hometax.cert.menu.doc' },
+          { id: 's10', type: 'goto', url: 'https://hometax.go.kr/' },
+          { id: 's10a', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
+          { id: 's10b', type: 'click', target: 'hometax.cert.menu.civil' },
+          { id: 's10c', type: 'click', target: 'hometax.cert.menu.issue' },
+          { id: 's10d', type: 'click', target: 'hometax.cert.menu.doc' },
         ] as Step[]);
   // 날짜형 칸(fieldKey …Date)은 V-03j′대로 따로 assert한다(all 안에 넣으면 날짜 대조로 세지 않는다)
   const isDate = (f: DocField) => /Date$/.test(f.fieldKey);
@@ -228,6 +239,7 @@ function steps(doc: CertDoc): Step[] {
     { id: 's5', type: 'wait', for: 'text', value: 'hometax.login.successMarker', timeoutMs: 120000, pace: 'slow' },
     decideLogin('s6', 3, 's90', 'handoff'),
     // 양식 직접 주소를 알면 그 주소가 게이트를 지배하는 체크포인트다(V-03l: url·reload). 모르면(H-09) 홈 체크포인트 → 메뉴 클릭.
+    // 체크포인트 첫 통과는 이동하지 않는다(조율기 checkpoint): 둘 다 goto(s10) 뒤 체크포인트(s10a)다.
     // 개인사업자 로그인으로 못 여는 화면은 알림이 뜬다: 체크포인트는 양식이나 알림 둘 중 하나를 기다리고, 알림이면 s10x에서 멈춘다.
     ...entry(doc),
     { id: 's10x', type: 'assert', cond: { not: { textMatches: { target: ALERT, patternRef: 'cert.block.personalOnly' } } }, code: 'portal.personal_login_required', onFail: { retry: 0, then: 'abort' } },
@@ -270,7 +282,8 @@ function steps(doc: CertDoc): Step[] {
         window: 'today', baseline: 'pre_gate_snapshot', notCommittedPolicy: { minElapsedMs: 60000, lookups: 2 }, bind: { approvalNo: 'issueNo' },
       },
       failSignals: [{ css: '#errorDialog', text: '^(발급|신청)(이|에) 실패했습니다.*$' }],
-      on: { committed: 's32', not_committed: 's10', unknown: 'handoff' },
+      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a: 양식 주소 또는 홈)로 돌아가 다시 채운다
+      on: { committed: 's32', not_committed: 's10a', unknown: 'handoff' },
     },
     // 홈택스 민원증명 PDF 경로는 실측 전이다(R2 §4·R10 §1). 인쇄 경로로 두고 캡처 결과로 정한다
     { id: 's32', type: 'save_pdf', strategy: 'print', docType: doc.docType },

@@ -168,6 +168,21 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 "중복 0건"은 **한 PC 안의 엔진 로직 버그** 범위에서 성립한다. 반영 지연 중의 사용자 증언, 두 PC의 동시 게이트, 전용 Chrome 밖 수동 발급은 경고만 한다(D13 §3, D19 §8). 다른 PC나 전용 Chrome 밖에서 이미 발급된 건은 발급목록에 반영된 뒤 다음 게이트의 B₀로 경고한다(`$dup.portalExisting`, ADR-024).
 
+### 4.2 민원증명 실행(H-03·H-04·H-08·H-09, Phase 1)
+
+홈택스 민원증명은 H-01과 같은 원장·게이트·verify 길을 쓴다. 다른 것은 아래뿐이다.
+
+- **시작**: `run.startCert {runId, playbookId, inputs}`. engine `ir`에서만 돈다. 패키지는 id별 설치본을 실행 시작마다 다시 검증해 쓴다(`installedIrSource`, §3.1).
+- **입력 검사**: 그 서명 패키지의 `playbook.inputs` 선언(필수·enum 값·기본값)으로 한다. 선언에 없는 키는 `cert.input_unknown`, 빠진 필수 칸은 `cert.input_missing`, 선언 밖 값·위험 문자는 `cert.input_invalid`다.
+  - 사업자번호가 없으면 `profile_missing`, 발급 인증(`signMethod`)이 없으면 `profile_sign_missing`이다. 브라우저를 열기 전에 거절한다.
+- **승인 카드** `cert.confirm`(docType `cert`): 4칸은 `certDoc`·`certPurpose`·`certSubmitTo`·`rrnDisclosure`이고 readback으로 고정한 값이다.
+  - 예약 키는 `$dup.businessKey`·`$dup.priorNotCommitted`만 있다. 거래처가 없어 `$first.*`·`$dup.portalExisting`은 없다.
+- **업무 키**: `SHA-256(JCS{kind:"cert", playbookId, bizNo, day(KST), inputs})`. 같은 날 같은 사업자가 같은 서류를 같은 입력으로 다시 떼면 카드가 경고한다(차단 아님).
+- **원장 행**: 주 비가역 스텝은 `s21`이다. `cp_biz_no_hmac`은 신청 사업자번호의 별도 도메인 HMAC(`SAX-ledger-cert`)이라 H-01 `$first.bizNo` 셈에 섞이지 않는다. `recipient_email_hmac`은 없다.
+  - `verify_ref` = 처리결과 조회에서 새로 보인 접수번호다(verify `bind approvalNo → issueNo`). 실행 종료 이벤트의 `approvalNo` 칸에 같은 값이 온다.
+- **발급 확인**: 공유 조회 `hometax.cert.issued_list`로 한다. 처리결과가 카드 목록이라 조회 IR은 행 안의 이름·값 쌍(strings `lookup.table.labelCss`·`valueCss`)과 건수 문구로 읽는다. 카드가 0장이면 건수 0이 부재의 근거다(§5.6).
+- **나머지**: 재시도(`not_committed` → 양식부터 새 시도), in_doubt 승격, 재시작 복구, 정지 하향, 거부 우선 창은 §2~§4와 같다. 메일 확인(`mailConfirmed`)은 없다.
+
 ## 5. 스텝 실행과 커밋 구간
 
 작성일자는 실행 시작 시 유효 시각의 KST 날짜다. H-01은 `s19e readbackEquals{issueDate, $inputs.issueDate}`(`assert.issue_date_mismatch`)로 포털 값과 대조한다(ADR-027, D-20(N-26)).
@@ -418,6 +433,8 @@ interface RunHandle {
 }
 ```
 `HumanAnswer`에는 `secret`이 없다. 비밀은 `VaultClient.typist.*`만.
+
+Phase 1 구현의 실행 명령은 main → 엔진 중계 통로의 `run.start`(H-01)·`run.startCert`(민원증명, §4.2)·`run.stop`·`run.inspect`다. 승인 근거는 두 실행 모두 게이트 전용 포트로만 받는다.
 
 ## 12. 운영 수준(portalMode)과 데몬 권한
 

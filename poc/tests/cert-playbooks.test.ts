@@ -76,8 +76,10 @@ describe('즉시발급 민원증명 패키지: 정적', () => {
       assert.deepEqual((p.playbook.inputs as Record<string, { values?: string[]; default?: string }>).certDoc, { type: 'enum', values: [d.name], default: d.name });
       assert.deepEqual((p.playbook.inputs as Record<string, { default?: string }>).rrnDisclosure!.default, '비공개');
       assert.equal(s('s32').docType, d.docType);
-      // 발급 안 됨이면 홈 체크포인트로 돌아가 다시 채우고 새 승인을 받는다
-      assert.equal((s('s30').on as { not_committed: string }).not_committed, 's10');
+      // 발급 안 됨이면 게이트를 지배하는 체크포인트(s10a)로 돌아가 다시 채우고 새 승인을 받는다
+      assert.equal((s('s30').on as { not_committed: string }).not_committed, 's10a');
+      // 체크포인트 첫 통과는 이동하지 않는다: 로그인 뒤 화면(홈)에서 먼저 주소로 간다
+      assert.deepEqual([s('s10').type, s('s10a').type], ['goto', 'checkpoint']);
     }
   });
 

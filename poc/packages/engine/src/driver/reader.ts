@@ -104,7 +104,17 @@ export class PlaywrightPageReader implements PageReader {
   async value(el: ElementRef): Promise<string> {
     const h = this.handle(el);
     if (!h) return '';
-    return h.evaluate((e) => ('value' in e && typeof (e as { value: unknown }).value === 'string' ? (e as { value: string }).value : '')).catch(() => '');
+    // select: 고른 선택지의 이름(홈택스 select의 value는 코드라 화면·접근성 트리 값과 다르다). 라디오 묶음: 고른 라디오의 이름(없으면 '').
+    // 그 밖: DOM value. 가짜 H-01의 select(value = 이름)는 결과가 같다.
+    return h.evaluate((e) => {
+      if (e instanceof HTMLSelectElement) return e.selectedOptions[0]?.label ?? '';
+      if (!('value' in e) && e instanceof Element && e.getAttribute('role') === 'radiogroup') {
+        const r = e.querySelector<HTMLInputElement>('input[type="radio"]:checked');
+        if (!r) return '';
+        return r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '';
+      }
+      return 'value' in e && typeof (e as { value: unknown }).value === 'string' ? (e as { value: string }).value : '';
+    }).catch(() => '');
   }
 
   async a11yValue(el: ElementRef): Promise<string> {

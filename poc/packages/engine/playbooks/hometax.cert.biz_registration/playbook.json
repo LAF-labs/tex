@@ -143,6 +143,11 @@
   },
   {
    "id": "s10",
+   "type": "goto",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315010800"
+  },
+  {
+   "id": "s10a",
    "type": "checkpoint",
    "name": "form",
    "expect": {
@@ -365,7 +370,7 @@
    ],
    "on": {
     "committed": "s32",
-    "not_committed": "s10",
+    "not_committed": "s10a",
     "unknown": "handoff"
    }
   },

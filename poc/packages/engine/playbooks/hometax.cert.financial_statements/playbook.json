@@ -147,6 +147,11 @@
   },
   {
    "id": "s10",
+   "type": "goto",
+   "url": "https://hometax.go.kr/"
+  },
+  {
+   "id": "s10a",
    "type": "checkpoint",
    "name": "form",
    "expect": {
@@ -157,17 +162,17 @@
    "reentry": "reload"
   },
   {
-   "id": "s10a",
+   "id": "s10b",
    "type": "click",
    "target": "hometax.cert.menu.civil"
   },
   {
-   "id": "s10b",
+   "id": "s10c",
    "type": "click",
    "target": "hometax.cert.menu.issue"
   },
   {
-   "id": "s10c",
+   "id": "s10d",
    "type": "click",
    "target": "hometax.cert.menu.doc"
   },
@@ -391,7 +396,7 @@
    ],
    "on": {
     "committed": "s32",
-    "not_committed": "s10",
+    "not_committed": "s10a",
     "unknown": "handoff"
    }
   },

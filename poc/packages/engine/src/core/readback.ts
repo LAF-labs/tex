@@ -11,8 +11,11 @@ import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts
 const NUMERIC_KEYS = new Set(['supplyAmount', 'taxAmount', 'totalAmount', 'itemCount']);
 const BIZNO_KEYS = new Set(['supplierBizNo', 'counterpartBizNo']);
 const DATE_KEY = /Date$/;
-/** DOM value를 읽는 역할. 그 밖의 역할(표시 요소·라디오 등)은 보이는 텍스트를 읽는다. */
-const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox']);
+/**
+ * DOM value를 읽는 역할(드라이버 value: select는 고른 선택지의 이름, radiogroup은 고른 라디오의 이름). 그 밖의 역할(표시 요소·라디오 하나 등)은 보이는 텍스트를 읽는다.
+ * radiogroup(민원증명 발급유형·주민번호 공개 여부, 홈택스 라디오 묶음)의 보이는 텍스트는 선택지 전부라 값이 아니다.
+ */
+const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox', 'radiogroup']);
 
 type Normalizable = Pick<SelectorEntry, 'fieldKey' | 'inputType'>;
 

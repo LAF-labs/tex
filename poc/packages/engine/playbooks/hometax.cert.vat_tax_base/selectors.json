@@ -140,6 +140,10 @@
    "landmark": "hometax.page.root",
    "commits": false,
    "navigationOnly": true,
+   "reviewNote": {
+    "by": "engine-cert",
+    "reason": "상단 메뉴 이동(navigationOnly), 커밋 아님"
+   },
    "frame": "main",
    "lastVerified": "2026-11-10"
   },
@@ -156,6 +160,10 @@
    "landmark": "hometax.page.root",
    "commits": false,
    "navigationOnly": true,
+   "reviewNote": {
+    "by": "engine-cert",
+    "reason": "상단 메뉴 이동(navigationOnly), 커밋 아님"
+   },
    "frame": "main",
    "lastVerified": "2026-11-10"
   },
