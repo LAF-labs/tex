@@ -32,14 +32,23 @@ export interface VaultPdfInput {
   /** 금고 staging 폴더(paths.staging). */
   staging: string;
   documents: PdfDocuments;
-  /** docparse 추출(main 샌드박스). ocr: true면 OCR로 읽는다. */
-  extract(bytes: Uint8Array, o: { ocr: boolean }): Promise<PdfText>;
+  /** docparse 추출(main 샌드박스). ocr: true면 OCR로 읽는다. artifact가 있으면 쓰지 않는다. */
+  extract?(bytes: Uint8Array, o: { ocr: boolean }): Promise<PdfText>;
+  /**
+   * 실행 산출물로 바로 보관(DocumentService.importRunArtifact): 방금 발급한 서류라 종류를 알고 글자를 읽지 않는다.
+   * 제품 엔진은 docparse를 main에 부를 통로가 없어 이 길을 쓴다(entry.ts). 있으면 extract·documents.import보다 먼저다.
+   */
+  artifact?(bytes: Uint8Array, o: { runId: string; docType: string }): Promise<{ id: string }>;
   /** 금고 PDF 상한과 같다(15 MiB). */
   maxBytes?: number;
+  /** pdf.print 응답 상한(기본 PRINT_TIMEOUT_MS). 넘으면 timeout으로 실패한다(발급 뒤 사후 스텝이 무한정 멈추지 않게). */
+  printTimeoutMs?: number;
   setTimer?: (fn: () => void, ms: number) => () => void;
 }
 
 const MAX_BYTES = 15 * 1024 * 1024;
+/** 금고 Page.printToPDF는 대화상자 없이 끝난다. 이보다 오래 걸리면 기다리지 않는다(늦게 생긴 staging 파일은 금고가 쓸어 낸다). */
+export const PRINT_TIMEOUT_MS = 60_000;
 const REASON = /^[a-z_]{1,40}$/;
 const code = (v: unknown, fallback: string) => (typeof v === 'string' && REASON.test(v) ? v : fallback);
 const defaultTimer = (fn: () => void, ms: number) => {
@@ -57,9 +66,16 @@ export class VaultPdfPort implements PdfPort {
   }
 
   async print(r: { runId: string; stepId: string; landscape?: boolean }): Promise<PdfFileResult> {
-    const res = await this.i.vault.rpc<{ ok?: unknown; fileId?: unknown; reason?: unknown }>('pdf.print', {
+    let cancel = () => {};
+    const timeout = new Promise<'timeout'>((resolve) => (cancel = (this.i.setTimer ?? defaultTimer)(() => resolve('timeout'), this.i.printTimeoutMs ?? PRINT_TIMEOUT_MS)));
+    const call = this.i.vault.rpc<{ ok?: unknown; fileId?: unknown; reason?: unknown }>('pdf.print', {
       runId: r.runId, targetId: this.i.targetId(), ...(r.landscape !== undefined ? { landscape: r.landscape } : {}),
     });
+    const res = await Promise.race([call, timeout]).finally(cancel);
+    if (res === 'timeout') {
+      call.catch(() => {});
+      return { ok: false, reason: 'timeout' };
+    }
     if (res?.ok === true && typeof res.fileId === 'string') return { ok: true, fileId: res.fileId };
     return { ok: false, reason: code(res?.reason, 'print_failed') };
   }
@@ -117,9 +133,12 @@ export class VaultPdfPort implements PdfPort {
         return { ok: false, reason: 'staged_unreadable' };
       }
       const bytes = read.bytes;
-      const text = await this.i.extract(bytes, { ocr: false });
+      if (this.i.artifact) return { ok: true, documentId: (await this.i.artifact(bytes, { runId: r.runId, docType: r.docType })).id };
+      if (!this.i.extract) return { ok: false, reason: 'import_failed' };
+      const extract = this.i.extract.bind(this.i);
+      const text = await extract(bytes, { ocr: false });
       let v = await this.i.documents.import(bytes, text);
-      if ('needsOcr' in v) v = await this.i.documents.import(bytes, await this.i.extract(bytes, { ocr: true }), { altText: text.text, final: true });
+      if ('needsOcr' in v) v = await this.i.documents.import(bytes, await extract(bytes, { ocr: true }), { altText: text.text, final: true });
       if ('needsOcr' in v) return { ok: false, reason: 'import_failed' };
       return { ok: true, documentId: v.id };
     } catch (e) {
