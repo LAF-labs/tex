@@ -3,7 +3,8 @@ import { EventEmitter } from 'node:events';
 import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
 import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
-import { dayOffset, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type RunView, type StepState, type VatMode } from './shell-model.ts';
+import { cleanItem, dayOffset, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
+import { emailOk } from './onboarding.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
 // 실행 단계·승인 대기·발급 확정·승인번호는 엔진 이벤트에서 온다. 게이트 요청은 게이트 포트로 와서 승인 바가 받는다(shell-app).
@@ -107,7 +108,7 @@ export const NOTE: Record<string, string> = {
   profile_missing: '사업자 정보(사업자번호)가 등록되지 않아 시작하지 않았어요. 대화에서 [사업자 등록 마치기]로 등록해 주세요. 아무것도 발급하지 않았어요.',
   counterparty_missing: '거래처 정보를 찾지 못해 시작하지 않았어요. 거래처 화면에서 확인한 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   bad_amount: '금액을 확인하지 못해 시작하지 않았어요. 카드에서 금액을 고친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
-  item_missing: '품목이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  item_missing: '품목이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요. 거래처 화면에서 [저장 품목]을 넣거나, 대화에서 같은 요청을 다시 하면 품목을 물어볼게요.',
   'input.missing': '발급에 필요한 값이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
   busy: '다른 작업이 진행 중이라 시작하지 않았어요. 그 작업이 끝난 뒤 다시 준비해 주세요.',
   already_issuing: '이미 발급을 시작한 건이라 다시 시작하지 않았어요.',
@@ -244,7 +245,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** 게이트 없이 연달아 끝난 실행의 끝 시각(게이트가 뜨면 비운다). */
   private gateless: number[] = [];
   /** 앱이 되물은 것(입력 보완). 대화(세션)마다 하나. */
-  readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null } = { cp: null, asked: null, amount: null };
+  readonly pending: Pending = emptyPending();
 
   constructor(host: RunHost, src: ShellRunsSource, clock: () => number = Date.now) {
     super();
@@ -349,7 +350,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return [...this.runs.values()];
   }
 
-  /** item: 문장에서 뽑은 품목(시연 모델). 없으면 거래처의 지난 품목. */
+  /** item: 문장에서 뽑았거나 되묻기에서 받은 품목. 없으면 거래처의 저장 품목(추정). */
   createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView {
     const s = split(amount, vat ?? 'separate');
     const run: RunView = {
@@ -364,7 +365,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       vat: vat ?? 'separate',
       vatGuessed: vat === null,
       ...s,
-      item: item || cp.item,
+      item: cleanItem(item ?? '') ?? cleanItem(cp.item ?? '') ?? '',
+      itemGuessed: !cleanItem(item ?? ''),
       writeDate: dayOffset(0),
       auth: this.src.auth(),
       steps: STEPS.map((label) => ({ label, state: 'todo' as StepState })),
@@ -377,7 +379,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return run;
   }
 
-  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string }): RunView {
+  updateDraft(id: string, patch: { vat?: VatMode; amount?: number; amountText?: string; item?: string; email?: string; counterpartyId?: string }): RunView {
     if (patch.amountText !== undefined) {
       const t = patch.amountText.trim();
       const v = parseAmount(/^[\d,]+$/.test(t) ? `${t}원` : t);
@@ -385,6 +387,18 @@ export class ShellRuns extends EventEmitter implements Drafts {
       patch = { ...patch, amount: v };
     }
     const r = this.mustDraft(id);
+    // 카드에서 거래처 바꾸기(F-14): 장부의 거래처로만. 받는 이메일은 새 거래처 것, 품목은 저장 품목에서 온 추정이었으면 새 거래처의 저장 품목.
+    // 대화·카드에서 받은 품목은 그대로 둔다. 같은 patch의 item·email이 그 뒤에 덮는다.
+    if (patch.counterpartyId !== undefined && patch.counterpartyId !== r.counterparty.id) {
+      const cp = this.src.counterparties().find((c) => c.id === patch.counterpartyId);
+      if (!cp) throw new Error('no_counterparty');
+      r.counterparty = { id: cp.id, name: cp.name, bizNo: cp.bizNo, first: false };
+      r.email = { value: cp.email, first: false };
+      if (r.itemGuessed || !cleanItem(r.item)) {
+        r.item = cleanItem(cp.item ?? '') ?? '';
+        r.itemGuessed = true;
+      }
+    }
     if (patch.vat) {
       r.vat = patch.vat;
       r.vatGuessed = false;
@@ -392,6 +406,18 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (patch.amount !== undefined) {
       if (!Number.isInteger(patch.amount) || patch.amount <= 0 || patch.amount > 1e12) throw new Error('bad_amount');
       r.amount = patch.amount;
+    }
+    // 카드에서 고친 품목·받는 이메일(08 §2 "값은 카드 필드로 보여 주고 그 자리에서 고친다"). 품목은 비울 수 없다(엔진 item_missing).
+    if (patch.item !== undefined) {
+      const v = cleanItem(patch.item);
+      if (!v) throw new Error('item_required');
+      r.item = v;
+      r.itemGuessed = false;
+    }
+    if (patch.email !== undefined) {
+      const v = patch.email.trim().slice(0, 320);
+      if (!emailOk(v)) throw new Error('bad_email');
+      r.email = { ...r.email, value: v };
     }
     Object.assign(r, split(r.amount, r.vat));
     this.emit('update', r);
@@ -442,6 +468,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** [홈택스에서 준비]: 엔진 run.start. 실행은 한 번에 하나다(08 §5). 엔진이 시작 전에 거부하면 확인 필요로 둔다. */
   async prepare(id: string): Promise<RunView> {
     const r = this.mustDraft(id);
+    // 품목이 비면 엔진이 시작하지 않는다(item_missing). 카드를 끝내지 않고 그대로 두고 품목을 넣게 한다.
+    if (!cleanItem(r.item)) throw new Error('item_required');
     if (this.busy()) throw new Error('busy');
     r.status = 'preparing';
     this.step(r, 'login', 'now');

@@ -33,6 +33,8 @@ export interface StepEnv extends CondEnv {
   defaultTimeoutMs: number;
   /** 요소가 나타나기를 기다리는 간격. */
   pollMs: number;
+  /** [중지]가 들어왔는가(조율기가 채운다). 기다리는 루프(waitTarget·wait text)가 폴링 때마다 보고 run.stopped로 빠진다. */
+  stopRequested?: () => boolean;
 }
 
 export type Handler<T extends StepType> = (s: StepOf<T>, env: StepEnv) => Promise<Outcome>;
@@ -57,6 +59,7 @@ export async function waitTarget(env: StepEnv, key: string, timeoutMs: number, o
   for (;;) {
     const r = await resolveTarget(env.page, env.dict, key);
     if (r.ok || r.code !== 'step.selector_miss' || r.ambiguous) return r;
+    if (env.stopRequested?.()) return { ok: false, code: 'run.stopped' };
     if (env.clock.now() >= deadline) return r;
     await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
   }
@@ -148,6 +151,7 @@ const wait: Handler<'wait'> = async (s, env) => {
       const deadline = env.clock.now() + ms;
       for (;;) {
         if (re.test(normalizeName(await env.page.bodyText()))) return NEXT;
+        if (env.stopRequested?.()) return fail('run.stopped');
         if (env.clock.now() >= deadline) return fail('step.timeout');
         await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
       }

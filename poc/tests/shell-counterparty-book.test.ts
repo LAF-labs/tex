@@ -85,7 +85,7 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     const b = book([{ ...MOCK_CP_CERT }]);
     const r = await b.readCert();
     assert.ok(r.found && /^[0-9a-f-]{36}$/.test(r.hold), '읽기 표(값 없음)');
-    assert.deepEqual({ ...r, hold: undefined }, { found: true, name: '견본상사', bizNo: '3148601237', rep: '이견본', hold: undefined });
+    assert.deepEqual({ ...r, hold: undefined }, { found: true, name: '견본상사', bizNo: '3148601237', rep: '이견본', hold: undefined, item: '사무용품' });
     assert.ok(!JSON.stringify(r).includes('견본구'), '주소는 후보 응답에 없다');
     const saved = await b.save({ id: null, name: r.found ? r.name : '', bizNo: '314-86-01237', rep: '이견본', email: 'a@gyeonbon-test.example' });
     assert.equal(saved.source, 'ocr');
@@ -99,7 +99,7 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
   it('[등록증으로 채우기] 체크섬이 틀린 번호는 비운다(OCR 오인식을 채우지 않는다). 상호·대표자는 그대로', async () => {
     const b = book([{ ...MOCK_CP_CERT, bizNo: '3148601238' }]);
     const r = await b.readCert();
-    assert.deepEqual({ ...r, hold: undefined }, { found: true, name: '견본상사', bizNo: '', rep: '이견본', hold: undefined });
+    assert.deepEqual({ ...r, hold: undefined }, { found: true, name: '견본상사', bizNo: '', rep: '이견본', hold: undefined, item: '사무용품' });
   });
 
   it('번호를 잘못 읽어 비운 칸에 사용자가 번호를 넣어 저장하면, 같은 읽기의 표가 있을 때만 주소를 붙인다(한 번만, 30분 안)', async () => {
