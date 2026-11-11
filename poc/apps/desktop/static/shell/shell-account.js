@@ -28,13 +28,14 @@ const ERR = {
   // 코드 칸: 메뉴로 붙여 넣는 등 main이 입력을 보지 못해 확인하지 못했을 때(코드는 칸에 남는다)
   'account.confirm_click': '[확인]을 눌러 주세요',
   pair_unavailable: '이 빌드에서는 아직 폰을 연결할 수 없어요',
+  run_active: '발급이 진행 중이라 지금은 로그아웃할 수 없어요. 끝난 뒤에 해 주세요.',
   account_required: '먼저 로그인해 주세요',
   busy: '처리 중이에요. 잠시만 기다려 주세요',
 };
 export const accountErrText = (code) => (code ? (ERR[code] ?? (code.startsWith('net.') ? '연결하지 못했어요. 인터넷 연결을 확인해 주세요' : '잠시 뒤에 다시 해 주세요')) : null);
 
 /** 설정 > 기기 연결의 계정 줄. 로그인하면 [폰 연결](main 소유 창 S-03을 연다). */
-export function accountCard(view, onLogin, onPair) {
+export function accountCard(view, onLogin, onPair, onSignOut) {
   const v = view ?? { step: 'unavailable' };
   const body =
     v.step === 'unavailable'
@@ -44,6 +45,7 @@ export function accountCard(view, onLogin, onPair) {
             h('p', { class: 'sx-body-sm', 'data-account-email': '' }, v.email),
             h('p', { class: 'sx-meta', 'data-account-phones': String(v.phones ?? 0) }, v.phones ? `이 PC가 계정에 등록됐어요. 연결된 폰 ${v.phones}대.` : '이 PC가 계정에 등록됐어요. 아직 연결된 폰이 없어요.'),
             h('div', { class: 'sx-actions' }, btn('폰 연결', onPair, 'sx-btn-primary', { 'data-act': 'pair-open' }), h('span', { class: 'sx-meta' }, '새 창에 QR이 떠요. 폰 앱으로 찍고 폰에 보이는 6자리를 PC에 넣어요.')),
+            onSignOut ? h('div', { class: 'sx-actions' }, btn('로그아웃', onSignOut, 'sx-btn-quiet', { 'data-act': 'account-signout' }), h('span', { class: 'sx-meta' }, '로그아웃하면 다시 로그인할 때까지 앱을 쓸 수 없어요.')) : null,
           ]
         : [h('p', { class: 'sx-body-sm is-muted' }, '폰을 연결하려면 먼저 로그인해 주세요. 비밀번호나 메일로 받은 6자리 코드로 들어가요.'), h('div', { class: 'sx-actions' }, btn('로그인', onLogin, 'sx-btn-primary', { 'data-act': 'account-login' }))];
   return h('div', { class: 'sx-card', 'data-account': v.step }, h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '계정')), ...body);

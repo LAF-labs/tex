@@ -61,7 +61,7 @@ export function g24Panel(g, act) {
         true,
       ),
       note('로그인·본인확인·자동입력방지는 정부24 화면에서 직접 해 주세요. 그 칸의 값은 복사 버튼으로 만들지 않아요.'),
-      h('div', { class: 'sx-actions' }, btn('출력·저장했어요', () => act.g24Saved(g.id), 'sx-btn-primary', { 'data-act': 'g24-saved' }), btn('정부24 열기', () => act.toast('목업: 브라우저를 열지 않아요'))),
+      h('div', { class: 'sx-actions' }, btn('출력·저장했어요', () => act.g24Saved(g.id), 'sx-btn-primary', { 'data-act': 'g24-saved' }), btn('정부24 열기', () => act.toast('정부24는 브라우저에서 직접 열어 주세요. 앱에서 여는 기능은 곧 지원해요'))),
       h('div', { class: 'sx-source' }, `작업 시작 ${g.startedAt} · 그 뒤에 생긴 PDF만 후보로 올려요`),
     );
   }
@@ -92,7 +92,7 @@ export function g24Panel(g, act) {
             ]),
             h('div', { class: 'sx-actions' }, btn('문서함에 넣기', () => act.g24Save(g.id), 'sx-btn-primary', { 'data-act': 'g24-save', disabled: g.saving }), btn('다른 파일 고르기', () => act.g24Pick(g.id, null), 'sx-btn-quiet')),
           ]
-        : h('div', { class: 'sx-actions' }, btn('파일 직접 고르기', () => act.toast('목업: 파일 선택 창을 열지 않아요'), 'sx-btn-quiet')),
+        : h('div', { class: 'sx-actions' }, btn('파일 직접 고르기', () => act.toast('파일 직접 고르기는 곧 지원해요'), 'sx-btn-quiet')),
       h('div', { class: 'sx-source' }, '찾는 곳 · 다운로드 폴더, "PDF로 인쇄" 기본 폴더'),
     );
   }

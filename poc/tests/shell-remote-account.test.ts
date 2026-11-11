@@ -312,6 +312,34 @@ describe('데스크톱 계정: 이메일 6자리 → 첫 PC 등록 → 기기 �
     assert.deepEqual([exp.step, exp.error], ['signed_out', 'account.code_expired']);
   });
 
+  it('[로그아웃](설정 > 계정): 신원 파일·기기 토큰을 지우고 로그인 전으로(이메일 칸은 채움), 다시 켜도 로그아웃, 같은 금고로 다시 로그인하면 같은 PC', async () => {
+    const seed = new Uint8Array(32).fill(9);
+    const a = account(softDesktopKeys(seed));
+    await signIn(a);
+    const first = JSON.parse(fs.readFileSync(path.join(dir, 'remote-identity.json'), 'utf8')).deviceId;
+    assert.ok(a.device());
+    const v = await a.signOut();
+    assert.deepEqual([v.step, v.email], ['signed_out', EMAIL]);
+    assert.equal(a.device(), null, '기기 범위 호출이 끊긴다');
+    assert.ok(!fs.existsSync(path.join(dir, 'remote-identity.json')));
+    assert.deepEqual(logs.at(-1), ['main.account_signout', { result: 'ok' }]);
+    assert.equal((await account(softDesktopKeys(seed)).init()).step, 'signed_out', '다시 켜도 로그아웃');
+    s.clock.advance(70 * 60_000);
+    assert.equal((await signIn(account(softDesktopKeys(seed)))).step, 'signed_in');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(dir, 'remote-identity.json'), 'utf8')).deviceId, first);
+  });
+
+  it('[로그아웃] 배선: 실제 입력 3초, 발급 실행 중이면 거부, 폰 연결 창을 닫는다, 렌더러는 설정 > 계정의 [로그아웃] → 로그인 게이트', () => {
+    const read = (f: string) => fs.readFileSync(new URL(`../${f}`, import.meta.url), 'utf8');
+    const src = read('apps/desktop/src/shell-app.ts');
+    assert.match(src, /'account\.signOut': async \(\) => \{\s*needGesture\(3_000\);\s*await accountInit\(\);\s*if \(runs\.anyActive\(\)\) throw new Error\('run_active'\);\s*pairWin\?\.close\(\);\s*pairWin = null;/);
+    const acct = read('apps/desktop/static/shell/shell-account.js');
+    assert.match(acct, /onSignOut \? h\('div', \{ class: 'sx-actions' \}, btn\('로그아웃', onSignOut, 'sx-btn-quiet', \{ 'data-act': 'account-signout' \}\)/);
+    const shell = read('apps/desktop/static/shell/shell.js');
+    assert.match(shell, /accountCard\(state\.account, openLogin, openPair, signOut\)/);
+    assert.match(shell, /state\.account = await call\('account\.signOut', \{\}\);\s*state\.login = null;\s*render\(\);/);
+  });
+
   it('인증서는 만료 14일 전에 AIK로 새로 서명해 파일에 둔다', async () => {
     const keys = softDesktopKeys();
     const a = account(keys);

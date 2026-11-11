@@ -458,6 +458,30 @@ export class DesktopAccount {
     return this.view();
   }
 
+  /**
+   * 이 PC에서 로그아웃(설정 > 계정 [로그아웃]): 신원 파일·받아 둔 코드·기기 토큰(메모리)·비밀번호 만들기 세션을 지운다.
+   * 계정의 기기 등록은 그대로 둔다(같은 금고로 다시 로그인하면 이 PC를 되살린다, #enroll). 이메일 칸은 다시 채운다.
+   */
+  async signOut(): Promise<AccountView> {
+    if (this.#working) throw new Error('busy');
+    const email = this.#id?.accountEmail ?? this.#offer?.email ?? null;
+    const offer = this.#offer;
+    this.#device?.clearToken();
+    this.#device?.clearGatewayToken();
+    this.#device = null;
+    this.#id = null;
+    this.#offer = null;
+    this.#reset = null;
+    this.#error = null;
+    this.#pending = null;
+    if (email) this.#lastEmail = email;
+    if (offer) await this.#o.client?.logout(offer.session).catch(() => {});
+    await this.#pendingWrite;
+    await this.#o.identity.clear();
+    this.#log('main.account_signout', { result: 'ok' });
+    return this.view();
+  }
+
   /** 기기 범위 호출(토큰·DPoP). 등록 전이면 null. */
   device(): DeviceSession | null {
     if (!this.#id || !this.#o.client) return null;
