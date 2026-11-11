@@ -567,8 +567,18 @@ export class RunController {
   /** 첫 통과는 expect 확인. 다시 오면 복귀 절차(D03 §5.5): 토큰 폐기, reuse·reload, sessionRequired면 session 체크포인트로. */
   private readonly checkpointStep: Handler<'checkpoint'> = async (cp) => {
     if (!this.visitedCp.has(cp.id)) {
-      const r = await evalCond(cp.expect, this.i.env);
+      let r = await evalCond(cp.expect, this.i.env);
       if (!r.ok) return fail(r.code);
+      // 실행 첫 스텝이 체크포인트면(H-01 s0) 새 실행 탭은 빈 페이지다(금고가 about:blank로 연다). 첫 통과 때 한 번 cp.url로 간 뒤 다시 본다(D03 §5.5).
+      if (!r.value && cp.url && this.i.ir.steps[0]?.id === cp.id) {
+        try {
+          await this.i.reentry.navigate(cp.url);
+        } catch {
+          return fail('step.assert_failed');
+        }
+        r = await evalCond(cp.expect, this.i.env);
+        if (!r.ok) return fail(r.code);
+      }
       if (!r.value) return fail('step.assert_failed');
       this.visitedCp.add(cp.id);
       this.lastCp = cp.id;
