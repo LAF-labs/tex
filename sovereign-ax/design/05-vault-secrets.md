@@ -239,6 +239,17 @@ interface VaultCrypto {
 - S1b(브라우저 인증서 가져오기)는 인증서 **파일을 업로드 칸에 넣는 동작**이다. 이는 "파일을 연다"가 아니라 사용자의 파일을 포털에 전달하는 것이며, 비밀번호는 여전히 사용자가 입력한다. 사본 처리는 §3.6.
 - 누출 스캐너(D13 §6)는 "`signPri.key` 열기 0회(파일 접근 감사)"를 확인한다.
 
+### 6.1 제품 IR의 공동인증서 비밀번호 차례 (B1·B2, 2026-11-11)
+
+로그인(H-01 s4 `sign cert`)과 발급 서명(s21 `signFlow cert`)의 `human:secret`은 엔진 `CertSecretPort`(packages/engine/src/driver/cert-secret.ts)가 맡는다. 값은 엔진·main에 오지 않는다. 엔진은 끝났는지와 끝 모양(코드)만 안다.
+
+1. **비밀 창(window)**: 인증서 비밀번호 칸이 포털 DOM에 있으면(스텝 target, 없으면 사전에서 `secretKind: cert_password` 항목이 정확히 하나) 실행 탭을 앞으로 가져온 뒤(CDP `Page.bringToFront`, 중계 허용 목록) 금고 `secretWindow.openForHuman`으로 연다. §3.5 규칙 그대로(사람이 전용 Chrome 칸에 직접, 칸을 벗어나 정착하면 닫힘, main [입력 완료]는 control `secretWindow.userDone`). TTL 120초(`maxWaitMs`).
+2. **사람 직접 입력 대기(manual)**: 칸이 사전에 없거나(인증서 창이 별도 프로그램이면 DOM이 아니라 금고 창이 채울 수 없다) 금고가 칸을 찾지 못하면(`not_found` 등) 금고를 부르지 않고(또는 거부 사유를 저널에 남기고) 실행 탭을 앞으로 가져온 뒤 사람이 인증서 창에서 직접 끝내고 앱에서 [다 했어요]를 누를 때까지 기다린다(엔진 `run.secretDone {runId}`). 엔진은 그 창에 아무것도 넣지 않고 화면도 읽지 않는다(아래 3의 안내 확인만). 같은 TTL이다.
+3. **끝 모양**: 입력 뒤 3초 동안 화면에 틀린 비밀번호 안내(패키지 strings `cert.passwordWrong`, 없으면 앱 내장 모양)가 보이면 `sign.password_wrong`. 쉼(Paused)이고 재개하면 마지막 체크포인트부터 다시 그 차례로 와서 창을 다시 연다. 엔진은 다시 치지 않는다. 한 실행에서 3번이면 `sign.password_retry_limit`(창을 더 열지 않는다, 인증서 오류 누적 잠김 회피). TTL은 `human.ttl_expired`(같은 쉼, 재개 = 창 다시 열기). [중지]는 창 닫기를 요청하고 Aborted.
+4. **발급 서명 구간(signFlow)** 안에서는 쉼으로 빠지지 않는다. 비밀번호 차례가 끝나지 않거나 틀렸으면 저널(`signflow.timeout`·`signflow.secret_stopped {code}`)만 남기고 결과 확인(verify)으로 간다. 원장 규칙은 바꾸지 않는다(POST 0번이어도 in_doubt, 실제 actionId 확인 전).
+5. main에는 값 없는 실행 이벤트 `{type:'secret', state:'open'|'closed', stepId, mode:'window'|'manual', ttlMs | why}`가 간다(why: done·ttl·aborted·password_wrong·retry_limit).
+6. 사전 항목(`cert_password` 셀렉터)과 `cert.passwordWrong` 문구는 실제 화면 캡처 뒤 패키지 새 판에 넣는다. 그 전에는 manual 길로 돈다.
+
 ## 7. OS 저장소
 
 | OS | 저장 | 보호 | 한계 |

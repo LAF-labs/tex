@@ -81,8 +81,11 @@ export interface GatePort {
 export interface HumanPort {
   /** 사람 입력 요청(captcha·otp·manual). 값은 answerHuman으로 온다. */
   request(r: { runId: string; stepId: string; reqId: string; kind: 'captcha' | 'otp' | 'manual'; prompt: string; region?: string; ttlMs: number; inputSpec?: { pattern?: string; maxLength?: number } }): void;
-  /** kind=secret·onFail human:secret: 금고 비밀 창(D05 §3.5). 값은 엔진에 오지 않는다. 닫히면 'done', TTL이면 'ttl'. */
-  secret(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number }): Promise<'done' | 'ttl'>;
+  /**
+   * kind=secret·onFail human:secret·sign cert: 금고 비밀 창(D05 §3.5). 값은 엔진에 오지 않는다. 닫히면 'done', TTL이면 'ttl'.
+   * { code }는 사람 차례가 끝났지만 그 결과로 멈춰야 할 때다(틀린 비밀번호 sign.password_wrong 등). TTL과 같은 쉼(재개하면 마지막 체크포인트)이고 사유만 다르다.
+   */
+  secret(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number }): Promise<'done' | 'ttl' | { code: string }>;
   closed(reqId: string, why: 'answered' | 'ttl' | 'aborted'): void;
 }
 
@@ -451,8 +454,8 @@ export class RunController {
           this.abortInTurn(s.at);
           return null;
         }
-        if (r === 'ttl') {
-          this.ttl(s.at);
+        if (r !== 'done') {
+          this.ttl(s.at, r === 'ttl' ? undefined : r.code);
           return null;
         }
         this.fire({ t: 'human_input' }, s.at, null);
@@ -822,7 +825,7 @@ export class RunController {
       if (a === 'human:secret') {
         // 금고 비밀 창이 서명 대화상자에 직접 넣는다(D05 §3.5). 상태 머신 사람 차례가 아니다(구간 안).
         const r = await this.i.human.secret({ runId: this.i.runId, stepId: s.id, ttlMs: left() }).catch(() => 'ttl' as const);
-        if (r !== 'done') return this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+        if (r !== 'done') return this.i.journal(r === 'ttl' ? 'signflow.timeout' : 'signflow.secret_stopped', { stepId: s.id, action: a, ...(r === 'ttl' ? {} : { code: r.code }) });
       } else if (a === 'wait:push') {
         // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다.
         const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : await env.page.waitNavigation(left());
@@ -919,7 +922,8 @@ export class RunController {
   private async secretTurn(at: string, r: { target?: string; prompt?: string; ttlMs: number }): Promise<Outcome> {
     const out = await this.i.human.secret({ runId: this.i.runId, stepId: at, ...r }).catch(() => 'ttl' as const);
     if (this.pending === 'abort') return this.abortInTurn(at);
-    return out === 'ttl' ? this.ttl(at) : this.afterHuman(at);
+    if (out === 'done') return this.afterHuman(at);
+    return this.ttl(at, out === 'ttl' ? undefined : out.code);
   }
 
   private readonly humanStep: Handler<'human'> = async (h) => {
@@ -967,10 +971,10 @@ export class RunController {
     return fail('run.aborted');
   }
 
-  /** 사람 TTL: Paused, 재개하면 마지막 체크포인트부터. */
-  private ttl(at: string): Outcome {
+  /** 사람 TTL: Paused, 재개하면 마지막 체크포인트부터. code는 쉼의 사유(기본 human.ttl_expired, 틀린 비밀번호면 sign.password_wrong 등). */
+  private ttl(at: string, code = 'human.ttl_expired'): Outcome {
     this.resumeAt = this.lastCp ?? at;
-    this.fire({ t: 'human_ttl' }, at, 'human.ttl_expired');
+    this.fire({ t: 'human_ttl' }, at, code);
     return fail('human.ttl_expired');
   }
 

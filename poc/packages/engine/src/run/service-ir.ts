@@ -21,6 +21,8 @@ import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
 import { IrLookupPort } from '../driver/lookup-ir.ts';
+import { CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
+import type { SecretVault } from '../driver/secret.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
 import { PlaywrightScreenSource } from '../driver/screen.ts';
@@ -64,6 +66,11 @@ export interface IrPackage {
   verifyTiming?: { minElapsedMs: number; lookups: number; maxMs: number };
   /** save_pdf 포트(금고 pdf.print·보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
   pdf?: PdfPort;
+  /**
+   * 공동인증서 비밀번호 차례(sign cert·signFlow cert·human kind=secret)의 금고(B1·B2). 있으면 CertSecretPort(금고 비밀 창 또는 사람 직접 입력 대기),
+   * 없으면 사람 비밀 차례는 곧바로 TTL이다(가짜 H-01 경로·시험).
+   */
+  secret?: { vault: SecretVault; targetId(): string };
 }
 
 /** 실행 시작 패키지 공급 결과(RunServiceDeps.irSource). */
@@ -104,6 +111,10 @@ export interface IrRunInput {
   permit?: () => RunPermit;
   /** 스텝 궤적(골든 대조). 값 없이 스텝 id·타입·코드만. */
   trace?: (e: { name: string; stepId: string; type: string; code?: string }) => void;
+  /** 비밀 차례 알림(main: 브라우저 칸에 직접 입력 안내 또는 [다 했어요]). 값 없음. */
+  secretEvent?: (e: SecretTurnEvent) => void;
+  /** 비밀 차례 TTL(기본 120초, 시험용). */
+  secretTtlMs?: number;
 }
 
 export interface IrRunResult {
@@ -199,6 +210,10 @@ export class IrRun {
   private denied: Extract<RunPermit, { ok: false }> | null = null;
   /** 조율기에 downgrade를 건넸다(한 번만, 커밋 구간 배너가 되풀이되지 않게). */
   private downgradeSent = false;
+  /** 비밀 차례 [중지](금고 창 닫기 요청·사람 직접 입력 대기 끝). */
+  private readonly secretAbort = new AbortController();
+  /** 사람 직접 입력 대기 중이면 [다 했어요]로 끝낸다. */
+  private manualDone: (() => void) | null = null;
 
   constructor(i: IrRunInput) {
     this.i = i;
@@ -250,15 +265,26 @@ export class IrRun {
     return r;
   }
 
+  /** 사람 직접 입력 대기(인증서 창이 별도 프로그램 등)의 [다 했어요]. 대기 중이 아니면 false. */
+  secretDone(): boolean {
+    const f = this.manualDone;
+    if (!f) return false;
+    this.manualDone = null;
+    f();
+    return true;
+  }
+
   /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). */
   stop(): void {
     this.stopRequested = true;
+    this.secretAbort.abort();
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
   }
 
   /** 엔진 밖 사유의 정지(금고 누출 의심 등). 무장 전에만. 열린 게이트는 거부로 닫는다(사유 signal). */
   halt(code: string): void {
     if (this.armed) return;
+    this.secretAbort.abort();
     this.denyOpenGate('signal');
     this.enforcer?.haltFor(code);
   }
@@ -331,6 +357,15 @@ export class IrRun {
       verifyRef: (v) => book.ref(v) ?? null,
       journal: i.journal,
     });
+    const sv = i.ir.secret;
+    const secretPort = sv
+      ? new CertSecretPort({
+        vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
+        page: { bringToFront: () => page.bringToFront(), text: () => page.locator('body').innerText({ timeout: 2_000 }) },
+        ...(i.secretEvent ? { event: i.secretEvent } : {}),
+        manualDone: () => new Promise<void>((res) => (this.manualDone = res)),
+      })
+      : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {
@@ -394,11 +429,12 @@ export class IrRun {
         },
       },
       human: {
-        // 가짜 H-01 경로에는 사람 입력 스텝이 없다. 제품 배선(PR-D)에서 main 사람 차례 포트로 바꾼다.
         request: () => {},
-        secret: async () => 'ttl',
+        // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
+        secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         closed: () => {},
       },
+      ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),
       reentry: { navigate: async (u) => void (await act.goto(u)), loggedIn: async () => true },
       verifyStep: async (v) => {
         const j = await judgeVerify(verifyDeps, v);

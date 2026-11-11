@@ -13,6 +13,7 @@ import { SIGNAL_DICT, type SignalDict } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
 import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
+import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 
@@ -35,6 +36,11 @@ export interface StartParams {
 export type RunEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
+  /**
+   * 공동인증서 비밀번호 차례(B1·B2, 값 없음). mode window = 전용 Chrome의 칸에 직접 입력(금고 비밀 창, main [다 했어요]는 금고 secretWindow.userDone),
+   * manual = 인증서 창(별도 프로그램 등)에서 직접 끝낸 뒤 [다 했어요](run.secretDone). closed.why: done·ttl·aborted·password_wrong·retry_limit.
+   */
+  | ({ runId: string; type: 'secret' } & SecretTurnEvent)
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
   | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt };
 
@@ -117,6 +123,8 @@ export interface RunServiceDeps {
   receivedPolicy?: () => Policy | null;
   /** 정지 하향이 postprocess·kill(hardStop)이면 실행이 끝난 뒤 자동화 Chrome을 닫는다(D03 §2 하향 행). */
   closeBrowser?: () => Promise<void>;
+  /** 시험용: 사람 비밀 차례 TTL(기본 120초). */
+  secretTtlMs?: number;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
   trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
 }
@@ -399,6 +407,8 @@ export class RunService extends EventEmitter {
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
       ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
       ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
+      secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
+      ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
     a.ir = run;
     const r = await run.run();
@@ -662,6 +672,13 @@ export class RunService extends EventEmitter {
       this.closeGate(a, 'signal');
       g.reject(end);
     }
+  }
+
+  /** [다 했어요]: 인증서 창에서 직접 끝냈다(사람 직접 입력 대기, secret 이벤트 mode manual). 그 실행이 기다리는 중이 아니면 { done: false }. */
+  secretDone(runId: string): { done: boolean } {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { done: false };
+    return { done: a.ir.secretDone() };
   }
 
   get activeRunId(): string | null {
