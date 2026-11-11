@@ -24,6 +24,8 @@ export interface Profile {
   auth: string;
   /** 상호가 비어(또는 번호로 저장되어) name이 중립 표기("내 사업장")다. 번호를 이름처럼 보이지 않는다. */
   nameMissing?: boolean;
+  /** 저장된 프로필이 없는 자리 표시(제품의 개인 프로필). 화면은 내용 없는 카드를 그리지 않는다. */
+  placeholder?: boolean;
 }
 
 /** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */

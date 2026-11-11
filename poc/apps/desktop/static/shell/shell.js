@@ -55,6 +55,21 @@ function toast(text) {
   toastTimer = setTimeout(() => (t.hidden = true), 2400);
 }
 const errText = (e) => String(e?.message || e).replace(/^Error invoking remote method 'sax': (Error: )?/, '');
+/** 여러 화면이 같이 쓰는 오류 문장. 표에 없는 코드는 화면에 그대로 보이지 않는다(영어 코드 대신 일반 문장). */
+const COMMON_ERR = {
+  gesture_required: '버튼을 직접 눌러 주세요.',
+  account_required: '먼저 로그인해 주세요.',
+  busy: '처리 중이에요. 잠시 뒤에 다시 해 주세요.',
+  throttled: '잠시 뒤 다시 눌러 주세요.',
+  not_found: '찾지 못했어요. 화면을 다시 열어 주세요.',
+  run_active: '발급이 진행 중이라 지금은 할 수 없어요. 끝난 뒤에 해 주세요.',
+};
+const GENERIC_ERR = '처리하지 못했어요. 잠시 뒤 다시 해 주세요.';
+/** 오류 → 사람 말: 그 화면의 표 → 공통 표 → 일반 문장. */
+const human = (e, table = {}) => {
+  const c = errText(e);
+  return table[c] || COMMON_ERR[c] || GENERIC_ERR;
+};
 
 // 보관함(문서함) 오류·확인 필요 이유. 엔진·docparse는 코드만 준다.
 const DOC_ERR = {
@@ -71,7 +86,7 @@ const DOC_ERR = {
   pick_password_tries: '암호가 5번 틀려 이 파일은 닫았어요. 파일을 다시 골라 주세요.',
   gesture_required: '잠시 뒤 다시 눌러 주세요.', throttled: '잠시 뒤 다시 눌러 주세요.',
 };
-const docErr = (e) => DOC_ERR[errText(e)] || errText(e);
+const docErr = (e) => human(e, DOC_ERR);
 const DOC_REASON = {
   doc_type_unknown: '서류 종류를 알아보지 못했어요',
   issued_on_not_found: '발급일을 찾지 못했어요', issued_on_ambiguous: '발급일 후보가 여러 개예요', issued_on_unparseable: '발급일을 읽지 못했어요',
@@ -92,7 +107,7 @@ const act = {
       render();
       toast('기본 인증을 바꿨어요. 다음 발급부터 적용돼요');
     } catch (e) {
-      toast(errText(e));
+      toast(human(e));
     }
   },
   supplier: () => state.boot.profiles.business.name,
@@ -109,14 +124,14 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : c);
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : human(e));
     }
   },
   vat: async (id, vat) => {
     try {
       putRun(await call('draft.update', { id, vat }));
     } catch (e) {
-      toast(errText(e));
+      toast(human(e));
     }
   },
   editAmount: (id) => {
@@ -130,7 +145,7 @@ const act = {
       state.editing = null;
       renderRun(state.runs.get(id));
     } catch (e) {
-      toast(errText(e) === 'bad_amount' ? '금액을 다시 확인해 주세요' : errText(e));
+      toast(human(e, { bad_amount: '금액을 다시 확인해 주세요' }));
     }
   },
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
@@ -140,7 +155,7 @@ const act = {
     try {
       putRun(await call('run.stop', { id }));
     } catch (e) {
-      toast(errText(e) === 'already_issuing' ? '이미 발급을 시작해서 멈출 수 없어요' : errText(e));
+      toast(human(e, { already_issuing: '이미 발급을 시작해서 멈출 수 없어요' }));
     }
   },
   again: (run) => {
@@ -175,7 +190,7 @@ const act = {
       doc = await call('g24.save', { id: g.picked, doc: g.doc });
     } catch (e) {
       g.saving = false;
-      return toast(errText(e));
+      return toast(human(e));
     }
     if (g.stage !== 'pick') return;
     g.stage = 'saved';
@@ -220,7 +235,7 @@ function renderTitlebar() {
       'div',
       { class: 'tb-profile' },
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
-      state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), item('personal', `개인 · ${p.personal.name}`)) : null,
+      state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
     ),
     // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
@@ -525,7 +540,7 @@ async function ask(text, vat) {
   try {
     r = await call('request.send', { text, vat });
   } catch (e) {
-    toast(errText(e));
+    toast(human(e));
     return;
   } finally {
     clearTimeout(waitTimer);
@@ -897,7 +912,7 @@ function cpPanel(c) {
       { class: 'sx-actions' },
       btn('세금계산서 발급', () => fillComposer(`${c.name}에 세금계산서 `), 'sx-btn-primary'),
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
-      btn('상태 다시 확인', () => toast('데모에서는 국세청에 조회하지 않아요'), 'sx-btn-quiet'),
+      btn('상태 다시 확인', () => toast('국세청 상태 다시 확인은 곧 지원해요'), 'sx-btn-quiet'),
     ),
     h('div', { class: 'sx-source' }, '거래처 장부 · 이 PC에만 있어요'),
   );
@@ -911,6 +926,8 @@ function cpEditPanel(c) {
   const demoBook = state.boot.cpBook !== 'local';
   let saving = false;
   let reading = false;
+  /** 이 폼에서 읽은 등록증의 표(main이 든 주소를 이 폼의 저장에만 붙인다). */
+  let certHold = null;
   // [등록증으로 채우기](M4-3 O-05): main이 파일을 고르게 하고 후보만 돌려준다. 값은 입력 칸 value로만 넣는다(HTML로 그리지 않는다).
   const fillFromCert = async () => {
     if (reading) return;
@@ -924,9 +941,10 @@ function cpEditPanel(c) {
       if (r.name) form.elements.name.value = r.name;
       if (r.bizNo) form.elements.bizNo.value = fmtBiz(r.bizNo);
       if (r.rep) form.elements.rep.value = r.rep;
-      toast('등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
+      certHold = r.hold ?? null;
+      toast(r.bizNo ? '등록증에서 읽었어요. 맞는지 보고 추가해 주세요' : '등록증에서 읽었어요. 사업자번호는 읽지 못했으니 직접 넣어 주세요');
     } catch (err) {
-      toast(CP_ERR[errText(err)] ?? errText(err));
+      toast(human(err, CP_ERR));
     } finally {
       reading = false;
     }
@@ -941,13 +959,13 @@ function cpEditPanel(c) {
         saving = true;
         const f = new FormData(form);
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item') });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
           state.cps = r.counterparties;
           render();
           openPanel({ kind: 'cp', id: r.id });
           toast(c ? '저장했어요' : '거래처를 추가했어요');
         } catch (err) {
-          toast(CP_ERR[errText(err)] ?? errText(err));
+          toast(human(err, CP_ERR));
         } finally {
           saving = false;
         }
@@ -1002,7 +1020,9 @@ function bizCard() {
 function bizView() {
   const p = state.boot.profiles;
   const b = p.business;
-  const used = [b, p.personal].filter(Boolean).length;
+  // 저장된 개인 프로필이 없으면(제품) 내용 없는 "개인 · 개인" 카드를 그리지 않는다
+  const personal = p.personal && !p.personal.placeholder ? p.personal : null;
+  const used = [b.bizNo ? b : null, personal].filter(Boolean).length;
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'biz' },
@@ -1011,16 +1031,16 @@ function bizView() {
       { class: 'rs-col' },
       railHead('내 사업장', `프로필 2개 중 ${used}개 사용`),
       bizCard(),
-      p.personal
+      personal
         ? h(
             'article',
-            { class: 'sx-card' },
-            h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `개인 · ${p.personal.name}`)),
+            { class: 'sx-card', 'data-personal-card': '' },
+            h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `개인 · ${personal.name}`)),
             kv(
               [
-                ['이름', p.personal.name],
-                ['이메일', p.personal.email],
-                ['로그인', p.personal.auth],
+                ['이름', personal.name],
+                ['이메일', personal.email],
+                ['로그인', personal.auth],
               ],
               true,
             ),
@@ -1185,12 +1205,23 @@ function loginGate() {
   return state.account?.step !== 'signed_in';
 }
 
+/** 설정 > 계정 [로그아웃]: main이 신원·받아 둔 코드를 지우면 로그인 화면(게이트)이 다시 막는다. */
+async function signOut() {
+  try {
+    state.account = await call('account.signOut', {});
+    state.login = null;
+    render();
+  } catch (err) {
+    toast(accountErrText(errText(err)));
+  }
+}
+
 /** [폰 연결]: main이 따로 창을 연다(QR·6자리는 그 창에만 있다). */
 async function openPair() {
   try {
     await call('pair.open', {});
   } catch (err) {
-    toast(accountErrText(errText(err)) ?? errText(err));
+    toast(accountErrText(errText(err)));
   }
 }
 
@@ -1332,7 +1363,7 @@ function authList() {
 
 /** 설정(캔버스 S-02 · 발급 인증). 이 데모는 보여 주기만 하고 바꾸지 않는다. */
 function settingsView() {
-  const mock = () => toast('목업: 이 데모에서는 설정을 바꾸지 않아요');
+  const mock = () => toast('이 설정은 곧 바꿀 수 있어요');
   const small = (label, quiet) => h('button', { type: 'button', class: `auth-act${quiet ? ' is-quiet' : ''}`, onclick: mock }, label);
   return h(
     'section',
@@ -1348,7 +1379,7 @@ function settingsView() {
       }),
     ),
     state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair))
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
       : h(
       'div',
       { class: 'set-body' },
@@ -1369,13 +1400,13 @@ function settingsView() {
         ),
       ),
       h('div', { class: 'sx-actions' }, btn([icon('plus'), '인증 추가'], mock), h('span', { class: 'sx-meta' }, '사업자 간편인증(다른 은행 앱)·보안카드·공동인증서·금융인증서를 더할 수 있어요')),
-      h('p', { class: 'sx-meta' }, '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 기본 바꾸기는 이 데모 DB에만 반영돼요. 추가·다시 등록·삭제는 목업이에요.'),
+      h('p', { class: 'sx-meta' }, state.boot.sample ? '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 기본 바꾸기는 이 데모 DB에만 반영돼요. 추가·다시 등록·삭제는 목업이에요.' : '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 인증 추가·다시 등록·삭제는 곧 지원해요.'),
       h('div', { class: 'rule' }),
       h(
         'label',
         { class: 'set-check' },
         h('input', { type: 'checkbox', disabled: true }),
-        h('span', { class: 'opt-main' }, h('span', { class: 'set-check-title' }, '발급 전에 Windows Hello로 한 번 더 확인'), h('span', { class: 'sx-meta' }, '[승인하고 발급]을 누른 뒤 지문이나 PIN을 한 번 더 받아요. 기본은 꺼짐이에요. 이 데모에서는 켤 수 없어요.')),
+        h('span', { class: 'opt-main' }, h('span', { class: 'set-check-title' }, '발급 전에 Windows Hello로 한 번 더 확인'), h('span', { class: 'sx-meta' }, '[승인하고 발급]을 누른 뒤 지문이나 PIN을 한 번 더 받아요. 기본은 꺼짐이에요. 아직 켤 수 없어요.')),
       ),
     ),
   );

@@ -53,7 +53,8 @@ export const SHELL_SCHEME = 'sax-shell';
 /** 제품에서 사업장·개인 프로필을 아직 등록하지 않았을 때의 자리(견본 이름을 쓰지 않는다). */
 const NO_BUSINESS: Profile = { kind: 'business', name: '내 사업장', email: '', auth: '' };
 
-const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '' };
+/** 제품에는 아직 개인 프로필 저장이 없다. 자리 표시만(내 사업장은 이 카드를 그리지 않는다). */
+const NO_PERSONAL: Profile = { kind: 'personal', name: '개인', email: '', auth: '', placeholder: true };
 const SHELL_URL = `${SHELL_SCHEME}://shell/shell.html`;
 const PAIR_URL = `${SHELL_SCHEME}://shell/pair.html`;
 
@@ -1063,6 +1064,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'account.back': async () => {
       await accountInit();
       return account.back();
+    },
+    // 설정 > 계정 [로그아웃]: 실제 입력 뒤에만, 발급 실행 중이면 거부. 폰 연결 창을 닫고 신원·받아 둔 코드를 지운 뒤 로그인 화면으로(렌더러 게이트).
+    'account.signOut': async () => {
+      needGesture(3_000);
+      await accountInit();
+      if (runs.anyActive()) throw new Error('run_active');
+      pairWin?.close();
+      pairWin = null;
+      const v = await account.signOut();
+      pushBoard();
+      return v;
     },
     // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
     'pair.open': async () => {
