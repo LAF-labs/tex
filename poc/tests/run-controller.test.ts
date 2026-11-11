@@ -633,6 +633,22 @@ describe('정지·중지·진입 확인(D03 §2 규칙, ADR-023 결정 5·6)', (
     assert.deepEqual([r.state, r.code], ['Aborted', 'run.aborted']);
     assert.deepEqual(h.act.log, ['goto hometax.go.kr']);
   });
+  it('오래 기다리는 스텝(로그인 대기 wait text·wait selector) 중 [중지]는 스텝 끝을 기다리지 않고 다음 폴링에서 Aborted', async () => {
+    const WAIT_TEXT: Step = { id: 's1', type: 'wait', for: 'text', value: 'confirm.issue', timeoutMs: 120_000 };
+    const WAIT_SEL: Step = { id: 's1', type: 'wait', for: 'selector', value: 'f.otp', timeoutMs: 120_000 };
+    for (const w of [WAIT_TEXT, WAIT_SEL]) {
+      const h = mk([w, { id: 's2', type: 'goto', url: 'https://hometax.go.kr/b' }], { els: w === WAIT_SEL ? [] : els() });
+      let polls = 0;
+      const body = h.page.bodyText.bind(h.page);
+      h.page.bodyText = async () => (++polls === 3 && h.c.abort(), body());
+      const query = h.page.query.bind(h.page);
+      h.page.query = async (...a) => (++polls === 3 && h.c.abort(), query(...a));
+      const r = await h.c.start();
+      assert.deepEqual([r.state, r.code], ['Aborted', 'run.aborted'], w.for);
+      assert.ok(h.clock.t < 1000, `${w.for}: ${h.clock.t}ms 기다렸다`);
+      assert.deepEqual(h.rec.navs, []);
+    }
+  });
   it('Paused 재개도 Running 진입 확인: 허용하지 않으면 정지 분기에 머문다. 다른 package_digest면 다시 시작만', async () => {
     const h = mk(GATE_FLOW);
     const p = h.c.start();
