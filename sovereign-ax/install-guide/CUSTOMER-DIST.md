@@ -44,7 +44,7 @@
 ### 1.2 전용 Chrome
 - 후보만 찾는다(`poc/packages/vault/src/constants.ts:5-14`): Windows `%ProgramFiles%`·`%ProgramFiles(x86)%`·`%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`(x86은 실기기 ✅, WIN-REALDEVICE §5), Mac `/Applications/…`와 🔧 `~/Applications/Google Chrome.app/…`(이 PR, 홈은 `os.homedir()`). Edge 등 다른 Chromium은 넣지 않는다(검증 안 됨).
 - 없으면 🔧 금고 `browser.launch`가 `chrome.not_installed`를 던지고(`vault/src/chrome/find.ts` `CHROME_NOT_INSTALLED`, `service.ts:458`), 엔진 `connectRunBrowser`가 `RunEnd('failed', 'chrome.not_installed')`로 바꿔 실행이 그 코드로 끝난다(`engine/src/browser.ts` `CHROME_NOT_INSTALLED_CODE`, 전에는 `engine.error`). **화면 문구("Chrome이 설치돼 있어야 해요…")와 [홈택스에서 준비] 전 사전 점검은 desktop-2 몫**이다. 문구가 붙기 전에는 일반 멈춤 문구가 나온다(`shell-runs.ts` `UNKNOWN_STOP_NOTE`).
-- 전용 프로필은 `%LOCALAPPDATA%\SovereignAX\chrome-profile`. Google 로그인·확장이 감지되면 비밀 창을 열지 않는다(`shell-runs.ts:160·168` 문구).
+- 전용 프로필은 `%LOCALAPPDATA%\SovereignAX\chrome-profile`. Google 로그인·확장이 감지되면 비밀 창을 열지 않는다(`shell-runs.ts:161·169` 문구).
 
 ### 1.3 금고의 비밀 저장 (TPM·DPAPI·네이티브 헬퍼)
 | 비밀 | Windows에서 | 근거 |
@@ -126,7 +126,7 @@
 ## 3. 새 빌드 전달
 
 ### 3.1 이번 주에 쓸 길: 다시 설치
-- 자동 업데이트(`packages/updater`, `apps/desktop/src/update-host.ts`)는 코드가 있지만 **제품 진입점에 연결돼 있지 않다**: `apps/desktop/src/shell.ts:68` `startShell(...)`이 `update`를 넘기지 않고, `shell-app.ts:1219`는 `opts.update`가 있을 때만 업데이터를 띄운다. 켜려면 서명된 `latest.json`(릴리스 키 하드웨어 토큰, SIGNING-SETUP §1), 레지스트리 `/releases/{channel}` 게시, 투명성 로그(팀장 결정 11-05: `requireTransparency` 기본 true → 지금은 모든 업데이트 보류), Windows 코드 서명(`verifyUpdateCodeSignature`)이 필요하다. **이번 주는 켜지 않는다.**
+- 자동 업데이트(`packages/updater`, `apps/desktop/src/update-host.ts`)는 코드가 있지만 **제품 진입점에 연결돼 있지 않다**: `apps/desktop/src/shell.ts:68` `startShell(...)`이 `update`를 넘기지 않고, `shell-app.ts:1243`는 `opts.update`가 있을 때만 업데이터를 띄운다. 켜려면 서명된 `latest.json`(릴리스 키 하드웨어 토큰, SIGNING-SETUP §1), 레지스트리 `/releases/{channel}` 게시, 투명성 로그(팀장 결정 11-05: `requireTransparency` 기본 true → 지금은 모든 업데이트 보류), Windows 코드 서명(`verifyUpdateCodeSignature`)이 필요하다. **이번 주는 켜지 않는다.**
 - 데이터 유지: 앱 자료는 설치 폴더 밖(`%LOCALAPPDATA%\SovereignAX`, `~/Library/Application Support/SovereignAX`)이고 `appId`(`com.laf.sovereignax`)·`productName`·설치 폴더가 고정이다(`app-identity.json`). DB 키는 OS 키체인, 로그인은 `userData/remote-identity.json`, 사업자·거래처·인증 선택은 DB에 있다 → 재설치·덮어 설치로 사라지지 않는다. Windows 제거 뒤 재설치도 남는다(WIN-REALDEVICE §10.2).
 - 고객이 보는 것: Windows는 SmartScreen 한 번 더 → 덮어 설치. Mac은 [대치] → (공증 판) [열기] / (애드혹) [그래도 열기] → (애드혹이거나 공증 판으로 처음 바꿀 때) 키체인 허용 창. 안내서 §8에 화면 순서대로 적었다.
 
