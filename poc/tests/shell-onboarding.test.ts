@@ -190,7 +190,7 @@ describe('동의 화면 4종', () => {
     assert.ok(!/agreeAll|모두 동의|전체 동의/.test(src));
   });
 
-  it('보안카드: ① 동의 → 금고 등록 창 결속(store, 아이디·비밀번호와 보안카드, notice 판) → 금고 동의 레코드. 비밀 값은 상태 기계를 지나지 않는다', async () => {
+  it('보안카드도 다른 인증처럼 바로 ②로: 금고 창을 열지 않고 위임 동의도 남기지 않는다(발급할 때 번호를 직접 넣는다)', async () => {
     const { flow, ports, saved } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -198,51 +198,16 @@ describe('동의 화면 4종', () => {
       { step: 'biz-confirm', choice: 'confirm' },
       { step: 'auth', choice: 'card' },
     ]);
-    assert.equal(flow.state.step, 'delegation');
-    const view = await flow.view();
-    assert.equal(view.consent?.key, 'consent.delegation');
-    await flow.answer({ step: 'delegation', choice: 'agree' });
-    assert.deepEqual(ports.binds, [
-      [
-        { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: CONSENT_NOTICES.delegation.version } },
-        { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: CONSENT_NOTICES.delegation.version } },
-      ],
-    ]);
-    assert.deepEqual(flow.state.registered, { at: flow.state.registered!.at, noticeVersion: 'f06-pre.1', items: 31 });
     assert.equal(flow.state.step, 'model');
+    assert.deepEqual(ports.binds, [], '금고 등록 창을 열지 않는다');
     await walk(flow, [
       { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
       { step: 'tasks', choice: 'later' },
       { step: 'summary', choice: 'ok' },
     ]);
-    assert.equal(saved[0]?.portalLoginId, 'ganada01', '포털 아이디는 비밀 아닌 값으로 프로필에(DB portal_login_id)');
+    assert.equal(flow.state.consents.delegation, undefined, '위임 동의 레코드가 없다');
     assert.equal(saved[0]?.signMethod, 'security_card');
-    assert.ok(!JSON.stringify(flow.state.log).includes('ganada01'), '대화 기록에는 포털 아이디를 넣지 않는다');
-    assert.ok(!JSON.stringify(await flow.view()).includes('ganada01'), '렌더러로 가는 view에도 없다');
-  });
-
-  it('포털 아이디는 이어 하기 저장에 남아, ① 뒤에 껐다 켜도 요약에서 프로필에 쓴다(비밀 아님, #42 계약)', async () => {
-    const a = make();
-    await walk(a.flow, [
-      { step: 'terms', choice: 'agree' },
-      { step: 'welcome', choice: 'upload' },
-      { step: 'biz-confirm', choice: 'confirm' },
-      { step: 'auth', choice: 'card' },
-      { step: 'delegation', choice: 'agree' },
-    ]);
-    const resumed = parseOnbState(JSON.parse(JSON.stringify(a.ports.saved)));
-    assert.ok(resumed);
-    const b = make();
-    const flow = new OnboardingFlow(b.ports, resumed, NOW);
-    assert.equal(flow.state.step, 'model');
-    await walk(flow, [
-      { step: 'model', choice: 'agree' },
-      { step: 'telemetry', choice: 'off' },
-      { step: 'tasks', choice: 'later' },
-      { step: 'summary', choice: 'ok' },
-    ]);
-    assert.equal(b.saved[0]?.portalLoginId, 'ganada01');
   });
 
   it('이어 하기 저장 읽기: 모양이 틀리면 처음부터(null), 모르는 키는 버린다, 예전 저장(포털 아이디 칸 없음)도 받는다', () => {
@@ -273,20 +238,19 @@ describe('동의 화면 4종', () => {
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });
 
-  it('금고 창을 닫으면 ①에 머무르고 안내, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
-    const { flow } = make({ register: 'cancelled' });
-    await walk(flow, [
+  it('예전 이어 하기 저장이 ①에 멈춰 있으면 ① 화면을 그리고, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
+    const a = make();
+    await walk(a.flow, [
       { step: 'terms', choice: 'agree' },
       { step: 'welcome', choice: 'later' },
-      { step: 'auth', choice: 'card' },
-      { step: 'delegation', choice: 'agree' },
     ]);
-    assert.equal(flow.state.step, 'delegation');
-    assert.match(flow.state.notice ?? '', /금고 창을 닫았어요/);
-    assert.equal(flow.state.consents.delegation, undefined);
-    await flow.answer({ step: 'delegation', choice: 'switch' });
-    assert.equal(flow.state.step, 'auth');
-    assert.equal(flow.state.auth, null);
+    const old = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'delegation', auth: 'card' });
+    assert.ok(old);
+    const resumed = new OnboardingFlow(make().ports, old, NOW);
+    assert.equal((await resumed.view()).consent?.key, 'consent.delegation');
+    await resumed.answer({ step: 'delegation', choice: 'switch' });
+    assert.equal(resumed.state.step, 'auth');
+    assert.equal(resumed.state.auth, null);
   });
 
   it('②③④ 동의 레코드: 판·선택·시각, ②는 처리자 표 판(설정 데이터)도. ②는 필수라 거절 답이 없다(사용자 결정 2026-11-10)', async () => {

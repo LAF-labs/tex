@@ -591,11 +591,11 @@ export class OnboardingFlow {
           s.auth = kind;
           this.unskip('auth');
           this.say(AUTH_LABEL[kind]);
-          if (kind === 'card') s.step = 'delegation';
-          else this.afterAuth();
+          this.afterAuth();
         }
         return;
       case 'delegation': {
+        // 예전 이어 하기 저장이 ①에 멈춰 있을 때만 온다(이제 보안카드도 바로 ②로 간다). 그 화면과 [다른 인증으로 바꾸기]가 돌게 남겨 둔다.
         if (a.choice === 'switch') {
           this.say('다른 인증으로 바꿀게요');
           s.auth = null;
