@@ -114,7 +114,7 @@ async function main() {
   const meBefore = await js<number>(`document.querySelectorAll('.sx-me').length`);
   await press('[data-onb=try]');
   await until('done', async () => (await js<boolean>(`!document.querySelector('[data-onb-step]')`)) === true);
-  check('첫 작업 [지금 해 보기] → 입력창에 채우기만(보내지 않음)', (await js<string>(`document.querySelector('#composer').value`)) === '사업자등록증명 떼 줘' && (await js<number>(`document.querySelectorAll('.sx-me').length`)) === meBefore + 1 && S.runs.list().length === 0);
+  check('첫 작업 [지금 해 보기] → 입력창에 채우기만(보내지 않음)', (await js<string>(`document.querySelector('#composer').value`)) === '세금계산서 발급해 줘' && (await js<number>(`document.querySelectorAll('.sx-me').length`)) === meBefore + 1 && S.runs.list().length === 0);
   check('끝나면 판이 보이고 건너뛴 거래처 등록이 "등록 할 일"로 남는다', await until('board setup', async () => js<boolean>(`!document.querySelector('[data-board]').hidden && !!document.querySelector('[data-setup=counterparties]')`)));
   S.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
   await sleep(30);

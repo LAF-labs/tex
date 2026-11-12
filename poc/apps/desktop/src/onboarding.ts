@@ -32,6 +32,9 @@ export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] a
 
 // ---- 동의 화면 4종 ----
 
+/** O-06 [지금 해 보기]가 입력창에 채우는 문장(보내지 않는다). 보내면 거래처·금액·품목을 되묻는다. */
+export const TRY_FIRST_FILL = '세금계산서 발급해 줘';
+
 export const CONSENT_KINDS = ['terms', 'model', 'telemetry', 'delegation'] as const;
 export type ConsentKind = (typeof CONSENT_KINDS)[number];
 
@@ -685,7 +688,8 @@ export class OnboardingFlow {
       case 'first':
         this.say({ try: '지금 해 볼게요', invoice: '세금계산서 1건 발급', later: '나중에 할게요' }[a.choice as 'try' | 'invoice' | 'later']);
         s.step = 'done';
-        return a.choice === 'try' ? '사업자등록증명 떼 줘' : a.choice === 'invoice' ? '세금계산서 ' : undefined;
+        // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13: 민원증명 실행이 들어오기 전에는 "증명서 발급은 곧…"이라 첫 시도가 안 됐다)
+        return a.choice === 'try' ? TRY_FIRST_FILL : a.choice === 'invoice' ? '세금계산서 ' : undefined;
     }
     return;
   }

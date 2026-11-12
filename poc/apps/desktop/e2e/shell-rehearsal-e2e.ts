@@ -322,7 +322,7 @@ async function mainPhase(): Promise<void> {
   await paste('#composer', '세금계산서 발급해 줘');
   await human(0.5);
   await enter();
-  await until('ask cp 0', async () => (await lastApp()).includes('어느 거래처'), 8_000);
+  await until('ask cp 0', async () => /어느 거래처|거래처를 추가/.test(await lastApp()), 8_000);
   const noCpAsk = await lastApp();
   const chips0 = await js<number>(`document.querySelectorAll('#quick [data-fill]').length`);
   repro('F-no-cp-ask: 거래처가 하나도 없는데 "어느 거래처에 발급할까요?"만 묻고 거래처를 추가하라는 말·버튼이 없다', chips0 === 0 && !/추가|등록/.test(noCpAsk), { noCpAsk, chips0 });
@@ -347,6 +347,11 @@ async function mainPhase(): Promise<void> {
   await until('cert filled', async () => (await js<string>(`document.querySelector('[data-panel-cp-edit] [name=name]').value`)) === CERT_CP.name, 8_000);
   const certForm = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('[data-panel-cp-edit] input')].map((i) => [i.name, i.value]))`);
   repro('F-cp-cert-item: 등록증으로 채워도 저장 품목·이메일은 빈 칸(등록증의 종목도 품목 후보로 오지 않는다)', !certForm.item && !certForm.email, certForm);
+  // 종목 후보(F-15)를 지우고 추가한다: 저장 품목 없는 거래처로 F-01 경로(품목 되묻기)를 본다
+  if (certForm.item) {
+    await human(0.5);
+    await js(`(() => { const i = document.querySelector('[data-panel-cp-edit] [name=item]'); i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+  }
   await human(1.5);
   await tap('[data-act=cp-save]');
   check('등록증 거래처 추가(품목 비움)', await until('cp saved', async () => S!.runs.counterparties.some((c) => c.bizNo === CERT_CP.bizNo)), await toast());
@@ -376,11 +381,18 @@ async function mainPhase(): Promise<void> {
   await human();
   const before = await lastRunId();
   await say('55만원');
-  check('금액 → 확인 카드', await until('draft', async () => !!(await lastRunId()) && (await lastRunId()) !== before));
+  // F-01 고친 뒤: 저장 품목이 없으면 카드 전에 품목을 묻는다 → 답하면 그 품목으로 카드
+  const askedItem = await until('ask item', async () => (await lastApp()).includes('어떤 품목으로'), 5_000);
+  if (askedItem) {
+    seen.push({ at: 'ask-item', text: await lastApp() });
+    await human();
+    await say('사무용품');
+  }
+  check('금액 → (품목 되묻기 →) 확인 카드', await until('draft', async () => !!(await lastRunId()) && (await lastRunId()) !== before));
   const idNoItem = (await lastRunId())!;
   const noItemCard = await cardText(idNoItem);
   console.log('  look(card no item):', await look('card-no-item', `[data-run="${idNoItem}"]`));
-  repro('F-item-empty-card: 품목 없는 거래처면 카드 품목이 빈 칸인데 카드에서 품목을 고칠 길이 없다', S!.runs.get(idNoItem)?.item === '' && !/품목 (수정|고치기)/.test(noItemCard), noItemCard.slice(0, 300));
+  repro('F-item-empty-card: 품목 없는 거래처면 카드 품목이 빈 칸인데 카드에서 품목을 고칠 길이 없다', S!.runs.get(idNoItem)?.item === '' && !/품목 (수정|고치기)|품목·이메일 고치기/.test(noItemCard), noItemCard.slice(0, 300));
   // 카드에서 금액 고치기(붙여 넣고 Enter)
   await human();
   await tap(`[data-run="${idNoItem}"] button:not([data-act])`);
@@ -398,6 +410,14 @@ async function mainPhase(): Promise<void> {
   const itemEnd = await cardText(idNoItem);
   console.log('  look(item_missing):', await look('card-item-missing', `[data-run="${idNoItem}"]`));
   repro('F-item-missing-block: 품목 없는 거래처는 [홈택스에서 준비]가 "품목이 비어 있어 시작하지 않았어요"로 끝나고 다음 할 일(거래처에서 품목 넣기)·버튼이 없다', /품목이 비어/.test(itemEnd) && !/거래처|저장 품목/.test(itemEnd.replace(CERT_CP.name, '')), { status: runStatus(idNoItem), text: itemEnd.slice(0, 300), posts: fx!.posts() });
+  // 고친 뒤에는 답한 품목으로 승인 대기까지 간다: 처음 쓴 품목이 저장 품목으로 남았는지 보고 승인 카드 [중지](발급 없음)
+  if (runStatus(idNoItem) === 'waiting') {
+    check('답한 품목으로 승인 대기, 처음 쓴 품목은 그 거래처의 저장 품목으로', await until('item kept', () => S!.runs.counterparties.find((c) => c.bizNo === CERT_CP.bizNo)?.item === '사무용품', 5_000), S!.runs.get(idNoItem)?.notices);
+    await until('armed item', () => armed(), 10_000);
+    await human();
+    barClick('stop');
+    check('승인 카드 [중지] → 발급 없음', await until('stopped item', () => runStatus(idNoItem) === 'stopped' && !S!.bar.snapshot().visible, 10_000) && fx!.posts() === 0, { status: runStatus(idNoItem), posts: fx!.posts() });
+  }
 
   // 거래처에 품목을 넣고 다시
   await human();
@@ -449,10 +469,15 @@ async function mainPhase(): Promise<void> {
     const panel = await js<string>(`document.querySelector('#panel')?.innerText ?? ''`);
     seen.push({ at: 'doc-panel', text: panel });
     await human(0.5);
-    await tap('#panel [data-act=doc-open]');
-    await sleep(800);
-    const openToast = await toast();
-    repro('F-invoice-open: 앱이 발급한 세금계산서 [열기]를 누르면 PDF가 없어 열리지 않는다(발급 PDF 보관 없음)', /없|못/.test(openToast), openToast);
+    // F-04(화면): PDF가 이 PC에 없으면 [열기]를 두지 않고 홈택스 발급목록 안내만 둔다. [열기]가 있으면 눌러 본다.
+    const hasOpen = await js<boolean>(`!!document.querySelector('#panel [data-act=doc-open]')`);
+    let openToast = '';
+    if (hasOpen) {
+      await tap('#panel [data-act=doc-open]');
+      await sleep(800);
+      openToast = await toast();
+    }
+    repro('F-invoice-open: 앱이 발급한 세금계산서 [열기]를 누르면 PDF가 없어 열리지 않는다(발급 PDF 보관 없음)', hasOpen && /없|못/.test(openToast), hasOpen ? openToast : panel.slice(0, 300));
     await human(0.5);
     await js(`[...document.querySelectorAll('#panel button')].find((b) => b.textContent === '메일로 보내기')?.click()`);
     await sleep(300);
@@ -496,7 +521,7 @@ async function mainPhase(): Promise<void> {
   // 방금 막혔던 다른 건을 다시 준비할 수 있다
   await human();
   await tap(`[data-run="${idBusy}"] [data-act=prepare]`);
-  for (let i = 0; i < 7 && runStatus(idBusy) === 'draft' && /잠시 뒤/.test(await toast()); i++) {
+  for (let i = 0; i < 7 && runStatus(idBusy) === 'draft' && /잠시 뒤|초 뒤에 다시/.test(await toast()); i++) {
     // 사람은 "잠시 뒤"를 보고 기다렸다 다시 누른다(10초씩)
     console.log(`  (prepare throttled, wait 10s #${i + 1})`);
     await sleep(10_000);

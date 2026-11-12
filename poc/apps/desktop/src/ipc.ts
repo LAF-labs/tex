@@ -85,7 +85,9 @@ export const SHELL_METHODS = {
   'shell.bootstrap': {},
   'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
-  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
+  // 초안 카드에서 고치기: 부가세·금액·품목·받는 이메일(품목은 엔진 상한 100자, 넘치면 거부)
+  'run.redraft': { id: ID },
+  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 }, item: { t: 'string', max: 200 }, email: { t: 'string', max: 320 }, counterpartyId: { t: 'string', max: 128 } },
   'run.prepare': { id: ID },
   'run.stop': { id: ID },
   // 핸드오프 [다 했어요]·[직접 발급함](D03 §2 HandedOff). 재개·확인으로만 가고 발급하지 않는다(엔진이 원장에 observed_manual을 쓴다).
@@ -225,4 +227,6 @@ export type ShellEvent =
   | { type: 'docs-reload' }
   | { type: 'board'; board: unknown }
   | { type: 'onboarding'; onboarding: unknown }
-  | { type: 'account'; account: unknown };
+  | { type: 'account'; account: unknown }
+  /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
+  | { type: 'activated'; x: number; y: number };
