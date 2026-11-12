@@ -4,4 +4,4 @@ export { ROUTES, routeSpec, branchOf } from './routes.ts';
 export { verdictOf, routeOfRow, API_PLAYBOOK, MANUAL_PLAYBOOK } from './verdict.ts';
 export { IssueLadder, type IssueLadderDeps } from './ladder.ts';
 export { hometaxAutoRung, hometaxManualRung } from './hometax.ts';
-export { apiRung, docKeyOf, FakeIssueApi, type ApiIssueDoc, type ApiIssueResult, type ApiLookupResult, type FakeIssueKnob, type IssueApiAdapter } from './api.ts';
+export { API_LOOKUP_POLICY, apiRung, docKeyOf, FakeIssueApi, type ApiIssueDoc, type ApiLookupPolicy, type ApiIssueResult, type ApiLookupResult, type FakeIssueKnob, type IssueApiAdapter } from './api.ts';

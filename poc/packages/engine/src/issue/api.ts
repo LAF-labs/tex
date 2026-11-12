@@ -52,12 +52,28 @@ function base32(buf: Buffer): string {
   return out;
 }
 
-/** 팝빌 MgtKey(24자, 영문 대문자·숫자). 같은 키·같은 시도 의도면 언제나 같은 번호라 응답이 끊겨도 조회로 결론이 난다. */
-export const docKeyOf = (issueKey: IssueKey, intentId: string): string => 'SAX' + base32(createHash('sha256').update(`${issueKey}\0${intentId}`).digest()).slice(0, 21);
+/**
+ * 팝빌 MgtKey(24자, 영문 대문자·숫자). 발급 키만으로 만든다. 같은 건은 몇 번째 시도든 같은 문서번호라
+ * 원천의 문서번호 중복 거부가 원천 쪽에서도 두 번째 문서를 막고, 끊긴 앞 시도의 문서도 같은 번호로 조회된다.
+ */
+export const docKeyOf = (issueKey: IssueKey): string => 'SAX' + base32(createHash('sha256').update(`SAX-doc\0${issueKey}`).digest()).slice(0, 21);
+
+/**
+ * 호출이 성공으로 끝나지 않았을 때(거절·끊김) "발급 안 됨"으로 닫는 하한. 홈택스 verify(D03 §5.6)와 같은 뜻이다:
+ * 처음 조회부터 minElapsedMs가 지났고, 조회가 lookups번 이상 모두 "없음"이어야 not_committed. 그 전에 끝나면 in_doubt.
+ * 원천이 요청을 받아 늦게 처리하는 경우(타임아웃 뒤 서버 쪽 완료)를 "없음"으로 잘못 닫지 않기 위해서다.
+ */
+export interface ApiLookupPolicy {
+  minElapsedMs: number;
+  lookups: number;
+  intervalMs: number;
+}
+export const API_LOOKUP_POLICY: ApiLookupPolicy = { minElapsedMs: 60_000, lookups: 2, intervalMs: 30_000 };
 
 const safeCode = (c: string): string => (/^[A-Za-z0-9_.:-]{1,40}$/.test(c) ? c : 'invalid');
 
-export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: IssueApiAdapter | null }, deps: { runs: RunService; db: Db }): Rung {
+export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: IssueApiAdapter | null }, deps: { runs: RunService; db: Db; lookup?: ApiLookupPolicy }): Rung {
+  const policy = deps.lookup ?? API_LOOKUP_POLICY;
   const source = adapters.popbill ?? adapters.codef ?? null;
   const repo = new RunRepo(deps.db);
   const gates = new GateRepo(deps.db);
@@ -95,7 +111,7 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
         return { code };
       }
       journal.append(runId, 'ledger.armed', { reqId: consent.reqId });
-      const docKey = docKeyOf(req.issueKey, intentId);
+      const docKey = docKeyOf(req.issueKey);
       const end = (status: string, code: string): AttemptEnd => {
         repo.finish(runId, status);
         journal.append(runId, 'run.ended', { status, code });
@@ -114,8 +130,7 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
           return end('success', 'api.issued');
         }
         journal.append(runId, 'api.issue_failed', { kind: r.t, ...(r.t === 'refused' ? { providerCode: safeCode(r.code) } : {}) });
-        const l = await source.lookup(docKey).catch((): ApiLookupResult => ({ t: 'unknown' }));
-        journal.append(runId, 'api.lookup', { result: l.t });
+        const l = await settleByLookup(source, docKey, policy, (t, n) => journal.append(runId, 'api.lookup', { result: t, n }));
         if (l.t === 'issued') {
           ledger.resolve(intentId, 'api.issue', 'committed', null, l.ref);
           journal.append(runId, 'ledger.committed', { reason: '' });
@@ -139,7 +154,24 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
   };
 }
 
-export type FakeIssueKnob = 'ok' | 'refuse' | 'drop_then_absent' | 'drop_then_issued' | 'drop_unknown';
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 하한을 채울 때까지 조회한다. 있으면 issued, 모름이면 그 자리에서 unknown, 하한을 채운 "없음"만 absent. */
+async function settleByLookup(source: IssueApiAdapter, docKey: string, p: ApiLookupPolicy, seen: (t: string, n: number) => void): Promise<ApiLookupResult> {
+  const t0 = Date.now();
+  let absent = 0;
+  for (let n = 1; ; n++) {
+    const l = await source.lookup(docKey).catch((): ApiLookupResult => ({ t: 'unknown' }));
+    seen(l.t, n);
+    if (l.t === 'issued') return l;
+    if (l.t === 'unknown') return l;
+    absent++;
+    if (absent >= p.lookups && Date.now() - t0 >= p.minElapsedMs) return l;
+    await sleep(p.intervalMs);
+  }
+}
+
+export type FakeIssueKnob = 'ok' | 'refuse' | 'drop_then_absent' | 'drop_then_issued' | 'drop_unknown' | 'drop_then_late';
 
 /** 시험·개발용 원천(네트워크 없음). calls = 발급 호출 수, lookups = 조회 수. */
 export class FakeIssueApi implements IssueApiAdapter {
@@ -147,6 +179,17 @@ export class FakeIssueApi implements IssueApiAdapter {
   knob: FakeIssueKnob;
   calls = 0;
   lookups = 0;
+  /** drop_then_late: 끊긴 뒤 원천에 문서가 보이기까지(ms). */
+  lateMs = 50;
+  /** 원천에 실제로 생긴 문서 수(같은 문서번호는 하나). */
+  get documents(): number {
+    return this.issued.size;
+  }
+
+  /** 시험: 앞 시도의 문서가 원천에 이미 있다(끊긴 뒤 늦게 처리된 경우). */
+  preload(docKey: string, ref: string): void {
+    this.issued.set(docKey, ref);
+  }
   private readonly issued = new Map<string, string>();
   constructor(knob: FakeIssueKnob = 'ok', provider: ApiProvider = 'popbill') {
     this.knob = knob;
@@ -155,8 +198,12 @@ export class FakeIssueApi implements IssueApiAdapter {
 
   async issue(doc: ApiIssueDoc): Promise<ApiIssueResult> {
     this.calls++;
+    // 팝빌 MgtKey처럼 문서번호는 사업자 안에서 한 번만 쓴다(중복이면 거절).
+    if (this.issued.has(doc.docKey)) return { t: 'refused', code: 'fake.duplicate_doc_key' };
     if (this.knob === 'refuse') return { t: 'refused', code: 'fake.refused' };
     if (this.knob === 'ok' || this.knob === 'drop_then_issued') this.issued.set(doc.docKey, `FAKE-NTS-${this.issued.size + 1}`);
+    // 끊긴 뒤 원천이 늦게 처리한다(첫 조회에는 안 보이고 lateMs 뒤 보인다).
+    if (this.knob === 'drop_then_late') setTimeout(() => this.issued.set(doc.docKey, `FAKE-NTS-${this.issued.size + 1}`), this.lateMs);
     if (this.knob === 'ok') return { t: 'issued', ref: this.issued.get(doc.docKey)! };
     throw new Error('fake.dropped');
   }

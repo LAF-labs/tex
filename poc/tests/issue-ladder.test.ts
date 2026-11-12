@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   apiRung, BizVerifier, branchOf, connectRunBrowser, DataService, docKeyOf, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunEnd, RunService, ulid,
-  type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
+  type ApiLookupPolicy, type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
 } from '@sax/engine';
 import { GateRepo, Ledger, LedgerError, openDatabase, RunRepo, type ArmRow, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
@@ -41,6 +41,8 @@ const poll = <T>(pred: () => T | undefined, ms = 60_000): Promise<T> =>
     tick();
   });
 const settle = () => new Promise((r) => setTimeout(r, 300));
+/** 시험용 조회 하한: 두 번 "없음"이면 발급 안 됨(제품 기본은 API_LOOKUP_POLICY 60초·2번). */
+const FAST_LOOKUP: ApiLookupPolicy = { minElapsedMs: 0, lookups: 2, intervalMs: 0 };
 
 describe('발급 키 원장(v9 issue_key, ux_irr_issue_live)', () => {
   let db: Db;
@@ -111,11 +113,11 @@ describe('끝 코드 갈래(branchOf)', () => {
     assert.equal(branchOf('run.handoff_timeout'), 'stop');
   });
 
-  it('문서번호는 영문 대문자·숫자 24자, 같은 키·같은 의도면 같다', () => {
+  it('문서번호는 영문 대문자·숫자 24자, 발급 키만으로 정해진다(같은 건은 몇 번째 시도든 같은 번호)', () => {
     const k = key();
-    assert.match(docKeyOf(k, 'I1'), /^SAX[A-Z2-7]{21}$/);
-    assert.equal(docKeyOf(k, 'I1'), docKeyOf(k, 'I1'));
-    assert.notEqual(docKeyOf(k, 'I1'), docKeyOf(k, 'I2'));
+    assert.match(docKeyOf(k), /^SAX[A-Z2-7]{21}$/);
+    assert.equal(docKeyOf(k), docKeyOf(parseIssueKey(String(k))!));
+    assert.notEqual(docKeyOf(k), docKeyOf(key()));
   });
 });
 
@@ -146,7 +148,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
   /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
-  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge'] } = {}) {
+  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge']; lookup?: ApiLookupPolicy } = {}) {
     const db = await tempDb();
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
@@ -156,7 +158,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
-    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
+    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db, lookup: o.lookup ?? FAST_LOOKUP })], ledger: new Ledger(db), log });
     const events: LadderEvent[] = [];
     ladder.on('state', (e: LadderEvent) => events.push(e));
     const ledger = new Ledger(db);
@@ -381,7 +383,46 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     absent.ladder.consent(b.k, 'granted');
     const ex = await absent.until(b.k, 'exhausted');
     assert.deepEqual(ex.tried.map((t) => [t.route, t.code]), [['hometax.auto', 'chrome.not_installed'], ['hometax.manual', 'issue.manual_declined'], ['api', 'api.not_committed']]);
-    assert.equal(absent.api!.calls, 1);
+    assert.deepEqual([absent.api!.calls, absent.api!.lookups], [1, 2], '"없음"은 하한(2번)을 채워야 발급 안 됨');
+  });
+
+  it('끊긴 뒤 원천이 늦게 처리하면(첫 조회에는 없음) 하한 안의 다음 조회가 찾아 issued. 원천 문서 1건, 같은 키 재요청도 issued', async () => {
+    const api = new FakeIssueApi('drop_then_late');
+    api.lateMs = 50;
+    const w = await world({ api, lookup: { minElapsedMs: 200, lookups: 2, intervalMs: 100 }, page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
+    const { k } = w.request();
+    await passManualThenConsent(w, k);
+    w.ladder.consent(k, 'granted');
+    await w.until(k, 'issued');
+    assert.equal(api.documents, 1);
+    assert.deepEqual(w.request(k).state.s, 'issued');
+    await settle();
+    assert.deepEqual([api.calls, api.documents], [1, 1]);
+  });
+
+  it('하한을 넘겨 늦게 처리된 앞 문서가 있으면(발급 안 됨으로 닫힌 뒤) 다시 요청해도 같은 문서번호라 원천이 거절하고, 조회로 그 문서를 찾아 issued(문서 1건)', async () => {
+    const api = new FakeIssueApi('ok');
+    const w = await world({ api, page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
+    const k = key();
+    api.preload(docKeyOf(k), 'FAKE-NTS-EARLIER');
+    w.request(k);
+    await passManualThenConsent(w, k);
+    w.ladder.consent(k, 'granted');
+    const st = await w.until(k, 'issued');
+    assert.equal(st.ref, 'FAKE-NTS-EARLIER', '거절 뒤에도 조회로 확인한다(거절을 곧바로 발급 안 됨으로 보지 않는다)');
+    assert.deepEqual([api.calls, api.documents], [1, 1]);
+  });
+
+  it('원천이 거절하고 조회도 하한까지 "없음"이면 발급 안 됨(api.refused), 원천 문서 0', async () => {
+    const api = new FakeIssueApi('refuse');
+    const w = await world({ api, page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
+    const { k } = w.request();
+    await passManualThenConsent(w, k);
+    w.ladder.consent(k, 'granted');
+    const ex = await w.until(k, 'exhausted');
+    assert.deepEqual(ex.tried.at(-1), { route: 'api', code: 'api.refused' });
+    assert.deepEqual([api.calls, api.lookups, api.documents], [1, 2, 0]);
+    assert.deepEqual(w.ledger.byIssueKey(k).map((r) => r.state), ['not_committed']);
   });
 
   it('API가 연결되지 않았으면 건너뛰고 exhausted, 마지막에 api.not_connected', async () => {
