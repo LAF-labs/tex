@@ -37,7 +37,9 @@ class FakeVault implements SecretVault {
   }
 }
 
-type Human = (x: { fx: LoginFixture; events: RunEvent[]; resume: () => { ok: boolean }; click: (css: string) => Promise<void> }) => Promise<void> | void;
+type Handoff = { phase: string; code?: string };
+/** 사람 흉내: handoff 이벤트가 올 때마다 한 번 불린다(폴링 시각이 아니라 이벤트로 움직인다, 느린 CI에서도 같은 순서). */
+type Human = (h: Handoff, x: { fx: LoginFixture; resume: () => { ok: boolean }; click: (css: string) => Promise<void>; waitFor: (css: string) => Promise<void> }) => Promise<void>;
 
 async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) {
   const fx = await startLoginFixture({ loggedIn: o.loggedIn });
@@ -48,6 +50,7 @@ async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) 
   const gm: GatePortMessage[] = [];
   const steps: string[] = [];
   const vault = new FakeVault();
+  let gateHook: () => void = () => {};
   try {
     const { pkg } = loadPublishedDryRun(fx.origin);
     const p = fixturePortal(fx.origin);
@@ -67,27 +70,41 @@ async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) 
     const cp = data.counterparties.create({ bizNo: '2148651233', name: 'A상사', email: 'tax@asangsa.example' }).id;
     const runs = new RunService({
       db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: p, log: new FileEventLog(null, 'engine'), page: async () => rb.page,
-      postGate: (m) => gm.push(m), engine: 'ir', irSource: () => ({ ok: true, ir }),
+      postGate: (m) => (gm.push(m), m.t === 'gate.request' && gateHook()), engine: 'ir', irSource: () => ({ ok: true, ir }),
       trace: (_r: string, t: { name: string; stepId: string; code?: string }) => {
         if (t.name === 'step.finished') steps.push(t.code ? `${t.stepId}!${t.code}` : t.stepId);
       },
     } as never);
-    runs.on('event', (e: RunEvent) => events.push(e));
-    const ended = () => events.find((e) => e.type === 'end');
-    runs.start({ runId: 'r1', counterpartyId: cp, supply: 100000, tax: 10000, itemName: '경영 컨설팅' });
-    const t0 = Date.now();
-    let approved = false;
-    const x = { fx, events, resume: () => runs.resume('r1'), click: async (css: string) => void (await rb.page.click(css, { timeout: 2_000 }).catch(() => {})) };
-    while (!ended() && Date.now() - t0 < (o.maxMs ?? 60_000)) {
-      await o.human(x);
+    const x = {
+      fx, resume: () => runs.resume('r1'),
+      click: async (css: string) => void (await rb.page.click(css, { timeout: 10_000 })),
+      waitFor: async (css: string) => void (await rb.page.waitForSelector(css, { timeout: 30_000 })),
+    };
+    const humanErrors: unknown[] = [];
+    let turn: Promise<void> = Promise.resolve();
+    let ended!: () => void;
+    const end = new Promise<void>((r) => (ended = r));
+    runs.on('event', (e: RunEvent) => {
+      events.push(e);
+      if (e.type === 'end') ended();
+      // 사람 차례는 하나씩(앞 차례가 끝난 뒤 다음).
+      if (e.type === 'handoff') turn = turn.then(() => o.human(e as Handoff, x)).catch((err) => void humanErrors.push(err));
+    });
+    // 승인 카드: 오면 바로 승인한다(사람 클릭).
+    const answerGate = () => {
       const g = gm.find((m) => m.t === 'gate.request');
-      if (g && !approved && g.t === 'gate.request') {
-        approved = true;
-        const q = g.req;
-        runs.answer({ v: 2, runId: q.runId, gateStepId: q.gateStepId, reqId: q.reqId, approvalNonce: q.approvalNonce, actionHash: q.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1' });
-      }
-      await sleep(100);
-    }
+      if (!g || g.t !== 'gate.request') return;
+      const q = g.req;
+      runs.answer({ v: 2, runId: q.runId, gateStepId: q.gateStepId, reqId: q.reqId, approvalNonce: q.approvalNonce, actionHash: q.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1' });
+    };
+    gateHook = () => queueMicrotask(answerGate);
+    runs.start({ runId: 'r1', counterpartyId: cp, supply: 100000, tax: 10000, itemName: '경영 컨설팅' });
+    // 느린 Windows CI에서도 넉넉하게(실행 자체가 끝나면 바로 빠진다).
+    let cap: NodeJS.Timeout | undefined;
+    await Promise.race([end, new Promise<void>((r) => (cap = setTimeout(r, o.maxMs ?? 240_000)))]);
+    clearTimeout(cap);
+    await turn;
+    if (humanErrors.length) throw humanErrors[0];
     const journal = runs.inspect('r1').journal;
     try {
       runs.stop('r1');
@@ -95,7 +112,7 @@ async function certRun(o: { loggedIn?: boolean; human: Human; maxMs?: number }) 
       /* 끝남 */
     }
     await rb.browser.close().catch(() => {});
-    return { end: ended() as { status?: string; code?: string } | undefined, events, journal, steps, posts: fx.inner.posts(), signs: fx.state.signs, vault };
+    return { end: events.find((e) => e.type === 'end') as { status?: string; code?: string } | undefined, events, journal, steps, posts: fx.inner.posts(), signs: fx.state.signs, vault };
   } finally {
     db.close();
     await h.close();
@@ -108,25 +125,20 @@ const handoffs = (events: RunEvent[]) => events.filter((e) => e.type === 'handof
 
 describe('게시본 H-01 건조 실행: 공동인증서 사람 차례(B1·B2)', () => {
   it('B1 로그인(s4 sign cert → human:secret): 바로 끝나지 않고 사람 대기(login, human.cert_waiting). 사람이 인증서 창에서 끝내고 [다 했어요]면 체크포인트부터 로그인 확인 → 발급까지', async () => {
-    let resumed = 0;
-    let signed = false;
     const o = await certRun({
-      human: async ({ fx, events, resume, click }) => {
-        const hs = handoffs(events);
-        if (hs.length > resumed && hs.at(-1) === 'login:human.cert_waiting') {
+      human: async (h, { fx, resume, click, waitFor }) => {
+        if (h.phase === 'login' && h.code === 'human.cert_waiting') {
           fx.completeLogin(); // 사람이 홈택스 인증서 창에 직접 비밀번호를 넣었다
-          resumed++;
+          await waitFor('a[href="/logout"]'); // 로그인된 홈 화면을 보고 나서 [다 했어요]
           assert.equal(resume().ok, true);
-        }
-        if (hs.length > resumed && hs.at(-1) === 'sign:sign.waiting' && !signed) {
+        } else if (h.phase === 'sign' && h.code === 'sign.waiting') {
           await click('#btnSign'); // 사람이 서명 창에서 직접 서명했다
-          signed = true;
-          resumed++;
+          for (let i = 0; i < 100 && fx.state.signs === 0; i++) await sleep(100);
           assert.equal(resume().ok, true);
         }
       },
     });
-    const show = `end=${JSON.stringify(o.end)} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
+    const show = `end=${JSON.stringify(o.end)} handoffs=${handoffs(o.events).join(' ')} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
     assert.equal(o.end?.status, 'success', show);
     assert.deepEqual(handoffs(o.events), ['login:human.cert_waiting', 'sign:sign.waiting'], show);
     assert.ok(!o.journal.includes('human.secret_ttl'), '바로 시간 초과로 끝나지 않는다');
@@ -137,20 +149,18 @@ describe('게시본 H-01 건조 실행: 공동인증서 사람 차례(B1·B2)', 
   });
 
   it('B2 발급 서명(s21 signFlow cert human:secret): 바로 verify로 가지 않고 서명 차례(sign.waiting)를 기다린다. [다 했어요] 뒤 verify가 발급을 확인한다', async () => {
-    let signed = false;
     const o = await certRun({
       loggedIn: true,
-      human: async ({ events, resume, click }) => {
-        if (!signed && handoffs(events).includes('sign:sign.waiting')) {
-          signed = true;
-          await click('#btnSign');
-          await sleep(500);
-          assert.equal(resume().ok, true);
-        }
+      human: async (h, { fx, resume, click }) => {
+        if (h.phase !== 'sign') return;
+        await click('#btnSign');
+        for (let i = 0; i < 100 && fx.state.signs === 0; i++) await sleep(100); // 서명이 나간 것을 보고 [다 했어요]
+        assert.equal(resume().ok, true);
       },
     });
-    const show = `end=${JSON.stringify(o.end)} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
+    const show = `end=${JSON.stringify(o.end)} handoffs=${handoffs(o.events).join(' ')} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
     assert.equal(o.end?.status, 'success', show);
+    assert.deepEqual(handoffs(o.events), ['sign:sign.waiting'], show);
     assert.ok(o.journal.includes('sign.turn_opened'), show);
     assert.deepEqual([o.posts, o.signs], [1, 1], show);
   });
