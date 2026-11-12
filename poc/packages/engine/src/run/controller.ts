@@ -10,7 +10,7 @@ import { flatten, type StepInfo } from '../core/cfg.ts';
 import { evalCond } from '../core/conds.ts';
 import { Interpreter, type InterpHooks, type InterpOptions, type RunStop } from '../core/interp.ts';
 import { initialState, transition, type MachineCtx, type RunEvent, type RunState, type RunStateName, type VerifyResult } from '../core/machine.ts';
-import type { ActResult, Clock } from '../core/page.ts';
+import type { ActResult, Clock, Resolved } from '../core/page.ts';
 import { compileRe2 } from '../core/re2.ts';
 import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
@@ -68,6 +68,20 @@ export type HumanAnswer = { reqId: string; value?: string };
 type ReadbackValues = Parameters<typeof buildGateRequest>[0]['readback'];
 /** 승인 뒤 이 시간 안에 온 [중지]가 이긴다(D03 §2 표, 거부 우선 창 2초). H01 RunService DENY_PRIORITY_MS와 같다. */
 export const GATE_DENY_PRIORITY_MS = 2_000;
+/** 서명 차례 상한 기본값(B3, 부장 결정 2026-11-11). 실행 수명 상한이 더 짧으면 signTurnMs가 그 값을 준다. */
+export const SIGN_TURN_MS = 30 * 60_000;
+
+/** 서명 차례가 끝난 까닭. done = 사람이 [다 했어요], clicked = 엔진이 확인 버튼을 (무장 한 번에 한 번) 눌렀다. 어느 쪽이든 그다음은 verify다. */
+export type SignTurnEnd = 'done' | 'clicked' | 'abort' | 'cap';
+
+/**
+ * 서명 차례 포트(B3): 발급 클릭 뒤 서명이 제때 끝나지 않았다. 커밋 구간 안의 사람 대기다(상태 기계는 Running·commit 그대로).
+ * kind push = 간편인증 폰 승인을 기다림, secret = 금고 비밀 창(human.secret)이 TTL로 끝남. 셸은 phase sign 핸드오프로 보인다.
+ */
+export interface SignTurnPort {
+  opened(r: { runId: string; stepId: string; kind: 'push' | 'secret' }): void;
+  closed(r: { runId: string; stepId: string; why: SignTurnEnd }): void;
+}
 
 export type GateCloseReason = 'approved' | 'denied' | 'edit' | 'expired' | 'aborted' | 'stopped';
 
@@ -161,6 +175,10 @@ export interface RunControllerInput {
   onState?: (e: RunStateEvent) => void;
   /** 조율기가 직접 집행하지 않는 효과. */
   onEffect?: (effect: string, at: string | null) => void;
+  /** 서명 차례(B3). 없으면 기다리기만 하고 알리지 않는다. */
+  signTurn?: SignTurnPort;
+  /** 서명 차례 상한(ms). 없으면 SIGN_TURN_MS. IrRun이 실행 수명 상한(2시간)의 남은 시간과 작은 쪽을 준다. */
+  signTurnMs?: () => number;
   /** HandedOff 상한(기본 30분). */
   handoffTimeoutMs?: number;
   /** onFail human:secret 비밀 창 TTL(기본 120초). */
@@ -226,6 +244,10 @@ export class RunController {
   private preGateCp: string | null = null;
   private gateWake: ((w: GateWait) => void) | null = null;
   private humanWait: { reqId: string; step: StepOf<'human'>; wake: (w: HumanWait) => void } | null = null;
+  /** 서명 차례를 깨운다(열려 있을 때만). */
+  private signWake: ((w: Exclude<SignTurnEnd, 'clicked'>) => void) | null = null;
+  /** 이 무장(submit 한 번)에서 서명 확인 버튼을 이미 눌렀다. 한 무장에 최대 한 번(발급 요청이 두 번 나갈 길을 막는다). */
+  private confirmClicked = false;
   private readonly tokensByGate = new Map<string, { token: GateToken; reqId: string }>();
   /** 승인한 게이트의 readback 값(R-G7 재계산 대조). */
   private readonly approvedReadback = new Map<string, ReadonlyMap<string, string>>();
@@ -333,6 +355,8 @@ export class RunController {
   /** 중지. 사람 차례면 곧바로 깨운다. 실행 중이면 다음 스텝 경계, 커밋 구간이면 verify 뒤(machine). */
   abort(): void {
     if (this.gateWake) return this.wakeGate({ kind: 'abort' });
+    // 서명 차례(커밋 구간): 멈추지 않고 verify로 간다(눌렀는지 모른다).
+    if (this.signWake) return this.signWake('abort');
     if (this.humanWait) return this.humanWait.wake({ kind: 'abort' });
     if (RESTING.has(this.name())) {
       this.stopHandoffTimer();
@@ -344,6 +368,23 @@ export class RunController {
       return;
     }
     this.pending = 'abort';
+  }
+
+  /** 끝난 실행 정리(E2): HandedOff 상한 타이머를 끈다. 실행기(IrRun)가 실행을 끝낼 때 부른다. */
+  dispose(): void {
+    this.stopHandoffTimer();
+  }
+
+  /** 서명 차례가 열려 있는가(RunService [중지]·재개가 본다). */
+  get signTurnOpen(): boolean {
+    return this.signWake !== null;
+  }
+
+  /** 서명 차례 [다 했어요]: 사람이 홈택스 창에서 서명을 마쳤다. 엔진은 아무 버튼도 누르지 않고 verify로 간다. 열려 있지 않으면 false. */
+  finishSignTurn(): boolean {
+    if (!this.signWake) return false;
+    this.signWake('done');
+    return true;
   }
 
   /** 정지 하향(ADR-023 결정 5·6). */
@@ -775,6 +816,7 @@ export class RunController {
 
   private async commitSection(s: StepOf<'submit'>, g: string, token: GateToken, approved: ReadonlyMap<string, string>): Promise<Outcome> {
     const env = this.i.env;
+    this.confirmClicked = false;
     // ③ readback 재계산: 승인한 값을 화면에서 다시 읽어 같아야 한다.
     for (const [f, v] of approved) {
       const r = await readField(env.page, env.dict, f).catch(() => null);
@@ -823,12 +865,19 @@ export class RunController {
     for (const a of actions) {
       if (a === 'human:secret') {
         // 금고 비밀 창이 서명 대화상자에 직접 넣는다(D05 §3.5). 상태 머신 사람 차례가 아니다(구간 안).
+        // TTL이면 서명 창을 연 채 verify로 넘기지 않는다: 서명 차례로 사람을 기다린다(B3). 그 뒤 엔진은 버튼을 누르지 않는다.
         const r = await this.i.human.secret({ runId: this.i.runId, stepId: s.id, ttlMs: left() }).catch(() => 'ttl' as const);
-        if (r !== 'done') return this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+        if (r !== 'done') {
+          this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+          return void (await this.signTurnWait(s, f, 'secret'));
+        }
       } else if (a === 'wait:push') {
-        // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다.
+        // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다. maxWaitMs를 넘기면 서명 차례로 더 기다린다(B3).
         const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : await env.page.waitNavigation(left());
-        if (!ok) return this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+        if (!ok) {
+          this.i.journal('signflow.timeout', { stepId: s.id, action: a });
+          return void (await this.signTurnWait(s, f, 'push'));
+        }
       } else {
         // secret_fill:security_card(rowLabel)은 M2-3 나머지. 아직 없으므로 하지 않고 verify로.
         return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
@@ -837,9 +886,64 @@ export class RunController {
     if (!f.confirmTarget) return;
     const t = await waitTarget(env, f.confirmTarget, left(), { allowCommit: true });
     if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
-    this.armedKey = f.confirmTarget;
-    const c = await env.act.click(t.t);
+    await this.clickConfirm(s, f.confirmTarget, t.t);
+  }
+
+  /** 서명 확인 버튼: 한 무장에 최대 한 번. */
+  private async clickConfirm(s: StepOf<'submit'>, key: string, t: Resolved): Promise<void> {
+    if (this.confirmClicked) return this.i.journal('signflow.confirm_once', { stepId: s.id });
+    this.confirmClicked = true;
+    this.armedKey = key;
+    const c = await this.i.env.act.click(t);
     if (!c.ok) this.i.journal('signflow.confirm_failed', { stepId: s.id, code: c.code });
+  }
+
+  /**
+   * 서명 차례(B3, 커밋 구간 안 사람 대기). 끝나면 호출한 쪽이 verify로 간다(결과는 verify가 판정).
+   * - push: 기다리는 동안 확인 버튼이 뜨면 (이 무장에서 아직 안 눌렀을 때만) 한 번 누르고 끝낸다.
+   * - [다 했어요](finishSignTurn)·[중지](abort)·상한(cap): 아무 버튼도 누르지 않고 끝낸다. 무장 토큰은 새로 만들지 않는다.
+   */
+  private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret'): Promise<SignTurnEnd> {
+    const env = this.i.env;
+    let woke: Exclude<SignTurnEnd, 'clicked'> | null = null;
+    let wakeUp: () => void = () => {};
+    const woken = new Promise<void>((r) => (wakeUp = r));
+    const wake = (w: Exclude<SignTurnEnd, 'clicked'>) => {
+      if (woke) return;
+      woke = w;
+      this.signWake = null;
+      wakeUp();
+    };
+    const cancel = this.timers.after(Math.max(0, this.i.signTurnMs?.() ?? SIGN_TURN_MS), () => wake('cap'));
+    this.signWake = wake;
+    this.i.journal('sign.turn_opened', { stepId: s.id, kind });
+    this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind });
+    let clicked = false;
+    try {
+      if (kind === 'push' && f.confirmTarget && !this.confirmClicked) {
+        while (!woke) {
+          const t = await waitTarget(env, f.confirmTarget, 0, { allowCommit: true });
+          if (woke) break;
+          if (t.ok) {
+            // 버튼이 떴다: 이제 깨울 수 없다(누르는 중에 [다 했어요]가 와도 같은 verify로 간다).
+            this.signWake = null;
+            clicked = true;
+            await this.clickConfirm(s, f.confirmTarget, t.t);
+            break;
+          }
+          await Promise.race([env.clock.sleep(env.pollMs), woken]);
+          // 가짜 시계(즉시 끝나는 sleep)에서도 타이머·명령이 끼어들 틈을 준다.
+          await new Promise<void>((r) => setImmediate(r));
+        }
+      } else await woken;
+    } finally {
+      cancel();
+      this.signWake = null;
+    }
+    const why: SignTurnEnd = clicked ? 'clicked' : (woke ?? 'cap');
+    this.i.journal('sign.turn_closed', { stepId: s.id, why });
+    this.i.signTurn?.closed({ runId: this.i.runId, stepId: s.id, why });
+    return why;
   }
 
   /** 진입 뒤 누르기 전에 막혔다: 원장 not_committed(identity_mismatch), HandedOff, 재개는 게이트 앞(재게이트). */

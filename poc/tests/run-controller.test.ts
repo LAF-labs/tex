@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax/db';
-import { CERT_READBACK_KEYS, GATE_DENY_PRIORITY_MS, gateSelfCheck, READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
+import { CERT_READBACK_KEYS, GATE_DENY_PRIORITY_MS, gateSelfCheck, READBACK_KEYS, RunController, SIGN_TURN_MS, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
   type Handlers, type PdfPort, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type TokenDiscardTrigger, type VerifyResult,
@@ -962,7 +962,7 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
     assert.equal(h.c.armedConfirm(), null);
   });
 
-  describe('signFlow(D02 §4.5): 클릭 뒤 무장된 구간 안에서만, 실패·maxWaitMs 초과는 곧바로 verify', () => {
+  describe('signFlow(D02 §4.5): 클릭 뒤 무장된 구간 안에서만. 비밀 창 TTL·maxWaitMs 초과는 서명 차례(B3) 뒤 verify', () => {
     const SF = (method: string, o: Record<string, unknown> = {}): Step => ({ ...SUBMIT, signFlow: { method, steps: { cert: ['human:secret'], simple_auth: ['wait:push'], security_card: ['secret_fill:security_card'] }, confirmTarget: 'f.signOk', maxWaitMs: 120_000, ...o } }) as Step;
     const SIGN_OK: FEl = { id: 'signOk', role: 'button', name: '서명 확인', parent: 'root' };
 
@@ -978,13 +978,17 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.deepEqual(h.rec.armedAtClick, [['f.issue', true], ['f.signOk', true]]);
     });
 
-    it('비밀 창 TTL·확인 버튼 없음은 서명하지 않고 verify로(판정은 verify): 클릭은 발급 버튼 하나', async () => {
+    it('비밀 창 TTL은 서명 차례로 사람을 기다리고, [다 했어요] 뒤 서명하지 않고 verify로(판정은 verify): 클릭은 발급 버튼 하나', async () => {
       const h = mk([CP, GATE, SF('cert'), SV, END], { verifyStep: async () => ({ result: 'unknown' }) });
       h.st.secret = 'ttl';
       const p = h.c.start();
       await h.atGate();
       h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      assert.equal(h.c.state.name, 'Running', '서명 차례는 커밋 구간 안 기다림(상태 전이 없음)');
+      assert.equal(h.c.finishSignTurn(), true);
       assert.equal((await p).state, 'InDoubt');
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'done'));
       assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
       assert.ok(h.rec.journal.some(([t, p]) => t === 'signflow.timeout' && p.action === 'human:secret'));
 
@@ -996,7 +1000,7 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.ok(n.rec.journal.some(([t]) => t === 'signflow.confirm_missing'));
     });
 
-    it('simple_auth wait:push: 확인 버튼이 뜰 때까지(maxWaitMs 안) 기다렸다 누른다. 안 뜨면 verify로', async () => {
+    it('simple_auth wait:push: 확인 버튼이 뜰 때까지(maxWaitMs 안) 기다렸다 누른다. 안 뜨면 서명 차례, 상한이면 verify로', async () => {
       const late = { ...SIGN_OK, appearAt: 5_000 };
       const h = mk([CP, GATE, SF('simple_auth'), SV, END], { els: [...els(), late] });
       const p = h.c.start();
@@ -1010,11 +1014,45 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       const q = never.c.start();
       await never.atGate();
       never.approve();
+      await until(() => never.c.signTurnOpen, '서명 차례');
+      assert.equal(never.timers.fire(SIGN_TURN_MS), 1, '서명 차례 상한 타이머');
       await q;
+      assert.ok(never.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'cap'));
       assert.ok(never.rec.journal.some(([t, p]) => t === 'signflow.timeout' && p.action === 'wait:push'));
       assert.deepEqual(never.rec.armedAtClick, [['f.issue', true]]);
     });
 
+    it('서명 차례(B3): PUSH를 maxWaitMs 뒤에 승인해 확인 버튼이 늦게 뜨면 한 번만 누르고 verify', async () => {
+      const late = { ...SIGN_OK, appearAt: 5_000 };
+      const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { els: [...els(), late] });
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true], ['f.signOk', true]], '확인 버튼은 한 번');
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_opened' && p.kind === 'push'));
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'clicked'));
+      assert.equal(h.c.signTurnOpen, false);
+    });
+    it('서명 차례(B3): [다 했어요]·[중지]는 어떤 버튼도 누르지 않고 verify(무장 토큰을 새로 만들지 않는다, 중지로 끝나지 않는다)', async () => {
+      for (const how of ['done', 'abort'] as const) {
+        const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { verifyStep: async () => ({ result: 'unknown' }) });
+        const p = h.c.start();
+        await h.atGate();
+        h.approve();
+        await until(() => h.c.signTurnOpen, '서명 차례');
+        // 사람이 홈택스 창에서 직접 서명을 마쳤다(그 뒤에 확인 버튼이 남아 있어도 엔진은 누르지 않는다).
+        h.page.els.set(SIGN_OK.id, SIGN_OK);
+        if (how === 'done') h.c.finishSignTurn();
+        else h.c.abort();
+        const r = await p;
+        assert.equal(r.state, 'InDoubt', how);
+        assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]], `${how}: 발급 버튼 하나만`);
+        assert.equal(h.rec.published.length, 1, `${how}: 새 게이트(새 무장) 없음`);
+        assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === how), how);
+        assert.equal(h.c.finishSignTurn(), false, '닫힌 뒤에는 false');
+      }
+    });
     it('security_card(secret_fill)는 아직 없다: 하지 않고 verify로. 모르는 방식도 verify로', async () => {
       const h = mk([CP, GATE, SF('security_card'), SV, END], { els: [...els(), SIGN_OK] });
       const p = h.c.start();
