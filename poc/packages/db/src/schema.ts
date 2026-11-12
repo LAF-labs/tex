@@ -9,6 +9,7 @@
 // v8(ADR-042): 원장 시도 번호. PRIMARY KEY(intent_id, step_id) → (intent_id, step_id, attempt). 이전 행은 attempt=1로 옮긴다.
 //   SQLite는 PK를 바꾸지 못해 표를 새로 만들어 옮긴다(한 트랜잭션, 실패하면 이전 판 그대로 = fail-closed).
 //   불변식 일부를 DB에도 건다: (intent, step)마다 not_committed가 아닌 행은 많아야 하나(ux_irr_live). committed·미종결이 있으면 새 시도가 들어갈 수 없다.
+// v9(D03 §4.2 발급 사다리): 원장 발급 키(issue_key, 발급 단계 행에만). 같은 키에 not_committed가 아닌 행은 경로·의도와 무관하게 하나(ux_irr_issue_live).
 export interface Migration {
   version: number;
   name: string;
@@ -319,6 +320,14 @@ CREATE INDEX ix_irr_cp_hmac ON irreversible_log(cp_biz_no_hmac, state);
 CREATE INDEX ix_irr_email_hmac ON irreversible_log(recipient_email_hmac, state);
 CREATE INDEX ix_irr_run ON irreversible_log(run_id);
 CREATE UNIQUE INDEX ux_irr_live ON irreversible_log(intent_id, step_id) WHERE state <> 'not_committed';
+`,
+  },
+  {
+    version: 9,
+    name: 'ledger_issue_key',
+    sql: `
+ALTER TABLE irreversible_log ADD COLUMN issue_key TEXT;
+CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';
 `,
   },
 ];

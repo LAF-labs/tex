@@ -29,3 +29,4 @@ export * from './driver/index.ts';
 export * from './run/index.ts';
 export * from './gateway-auth.ts';
 export * from './run-history.ts';
+export * from './issue/index.ts';
