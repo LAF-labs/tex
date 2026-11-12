@@ -239,6 +239,19 @@ interface VaultCrypto {
 - S1b(브라우저 인증서 가져오기)는 인증서 **파일을 업로드 칸에 넣는 동작**이다. 이는 "파일을 연다"가 아니라 사용자의 파일을 포털에 전달하는 것이며, 비밀번호는 여전히 사용자가 입력한다. 사본 처리는 §3.6.
 - 누출 스캐너(D13 §6)는 "`signPri.key` 열기 0회(파일 접근 감사)"를 확인한다.
 
+### 6.1 제품 IR의 공동인증서 비밀번호 차례 (B1·B2, 2026-11-11)
+
+로그인(H-01 s4 `sign cert`)과 발급 서명(s21 `signFlow cert`)의 `human:secret`은 엔진 `CertSecretPort`(packages/engine/src/driver/cert-secret.ts)가 맡는다. 값은 엔진·main에 오지 않는다. 엔진은 끝났는지와 끝 모양(코드)만 안다. 기다림은 B3 사람 대기(IrRun 핸드오프·서명 차례, `run.resume`) 위에 있다.
+
+**실화면 사실(2026-11-11 부장 확인, 비밀번호 입력 전)**: 홈택스 인증서 선택창은 DreamSecurity MagicLine4 `iframe#dscert`(부모 `div#dscertContainer` position:fixed·z-index 100010, src `…/MagicLine4XML/ML4Web/Child.html`)다. 페이지 스크립트로 안을 읽을 수 없고(SecurityError), 인증서 목록은 PC의 MagicLine 로컬 프로그램(`https://127.0.0.1:42235/`)에서 온다. 비밀번호 칸은 그 iframe 안의 가상 키보드 칸이다. 금고 비밀 창(main 프레임)이 그 칸을 채울 수 있는지는 실화면 확인 전까지 정하지 않는다.
+
+1. **사람 직접 입력(항상 되는 길)**: 실행 탭을 앞으로 가져온 뒤(CDP `Page.bringToFront`, 중계 허용 목록) 인증서 선택창(`iframe#dscert[src*="/ML4Web/"]`가 보임, iframe 요소만 보고 안은 읽지 않는다)이 떠 있거나, 사전에 `secretKind: cert_password` 칸이 없거나, 금고가 칸을 찾지 못하면 금고 창을 열지 않고 `{ code: 'human.cert_waiting' }`으로 돌려준다. 엔진은 그 창에 아무것도 넣지 않는다.
+   - 로그인: Paused → handoff `{phase:'login', code:'human.cert_waiting'}` → 사람이 인증서 창에서 끝내고 [다 했어요](`run.resume`) → 마지막 체크포인트(s0)부터 → s2 decide가 로그인을 확인한다(아직이면 다시 s4 → 같은 대기).
+   - 발급 서명: 서명 차례 `{phase:'sign', code:'sign.waiting'}` → [다 했어요]·[중지]·상한 모두 엔진은 버튼을 누르지 않고 verify.
+2. **비밀 창(window)**: 칸이 main 프레임 DOM에 있고(스텝 target, 없으면 사전의 `cert_password` 항목이 정확히 하나) 인증서 선택창이 아니면 금고 `secretWindow.openForHuman`으로 연다. §3.5 규칙 그대로(사람이 전용 Chrome 칸에 직접, main [입력 완료]는 control `secretWindow.userDone`). TTL 120초(`maxWaitMs`). 값 없는 실행 이벤트 `{type:'secret', state:'open'|'closed', stepId, ttlMs | why}`(why: done·ttl·aborted·password_wrong·retry_limit).
+3. **끝 모양(창 길)**: 입력 뒤 3초 동안 화면에 틀린 비밀번호 안내(패키지 strings `cert.passwordWrong`, 없으면 앱 내장 모양)가 보이면 `sign.password_wrong`(쉼 → 재개하면 창을 다시 연다, 엔진은 다시 치지 않는다). 한 실행에서 3번이면 `sign.password_retry_limit`(창을 더 열지 않는다, 인증서 오류 누적 잠김 회피). TTL은 `human.ttl_expired`(같은 쉼). [중지]는 창 닫기를 요청한다. 서명 구간 안에서는 어느 끝이든 서명 차례 → verify다. 원장 규칙은 바꾸지 않는다(POST 0번이어도 in_doubt, 실제 actionId 확인 전).
+4. 사전 항목(`cert_password`)과 `cert.passwordWrong` 문구는 실제 화면 캡처로 iframe 밖 칸이 확인될 때만 패키지 새 판에 넣는다. 그 전에는 1의 길로 돈다.
+
 ## 7. OS 저장소
 
 | OS | 저장 | 보호 | 한계 |

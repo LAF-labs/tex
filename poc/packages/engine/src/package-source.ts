@@ -5,6 +5,7 @@ import type { PdfPort } from './core/savepdf.ts';
 import type { Judge } from './l0/judge.ts';
 import type { LookupDef, PortalConfig } from './portal.ts';
 import type { InstalledPackage } from './registry-sync.ts';
+import type { SecretVault } from './driver/secret.ts';
 import type { IrSourceResult } from './run/service-ir.ts';
 
 /**
@@ -26,6 +27,8 @@ export interface InstalledIrSourceOptions {
   pdf?: PdfPort;
   runToken?: RunToken;
   runTokenFor?: (runId: string) => Promise<RunToken>;
+  /** 공동인증서 비밀번호 차례의 금고(B1·B2, IrPackage.secret). 없으면 human:secret이 곧바로 시간 초과다. */
+  secret?: { vault: SecretVault; targetId(): string };
 }
 
 /**
@@ -40,7 +43,7 @@ export function installedIrSource(registry: { loadInstalled(id: string): Install
     if (r.pkg.files.manifest.portal !== o.portal.kind) return { ok: false, code: 'package.portal_mismatch' };
     return {
       ok: true,
-      ir: { pkg: r.pkg, lookupPackages: r.lookups, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}) },
+      ir: { pkg: r.pkg, lookupPackages: r.lookups, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}) },
     };
   };
 }
