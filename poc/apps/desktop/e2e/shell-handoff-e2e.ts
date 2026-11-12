@@ -10,7 +10,7 @@ import { app } from 'electron';
 import { buildGateRequest, type GateRequest } from '@sax/engine/gate';
 import { kstToday } from '../dist/approval-gate.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
-import { HANDOFF_LOGIN, HANDOFF_SIGN, NOTE, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
+import { HANDOFF_LOGIN, NOTE, SIGN_BY_AUTH, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
 registerShellSchemes();
@@ -26,6 +26,7 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 
 let S: Shell;
+let chrome = true;
 const js = <T = unknown>(code: string): Promise<T> => S.win.webContents.executeJavaScript(code) as Promise<T>;
 async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8000): Promise<boolean> {
   const end = Date.now() + ms;
@@ -205,6 +206,16 @@ async function flow(): Promise<void> {
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
+  // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
+  chrome = false;
+  const z = await toDraft('A상사에 11만원 세금계산서');
+  await userClick(`[data-run="${z}"] [data-act=prepare]`);
+  check('Chrome이 없으면 준비하지 않고 초안 카드에 설치 안내(엔진 run.start 없음)', await until('no chrome', async () => js<boolean>(`(() => { const c = document.querySelector('[data-run="${z}"]'); return !!c && !!c.querySelector('[data-no-chrome]') && c.innerText.includes('Chrome을 설치한 뒤') && !!c.querySelector('[data-act=prepare]'); })()`), 3000) && runStatus(z) === 'draft' && !calls.some(([m, r]) => m === 'run.start' && r === z), { st: runStatus(z), calls });
+  await shot('00-no-chrome');
+  await click(`[data-run="${z}"] [data-act=cancel]`);
+  await until('cancelled', () => runStatus(z) !== 'draft', 3000);
+  chrome = true;
+
   // ① 로그인 대기 → [이어서] → 승인 → 서명 대기 → 엔진이 스스로 넘어가 완료
   plans.push({ login: true });
   const a = await toDraft('A상사에 12만원 세금계산서');
@@ -222,10 +233,11 @@ async function flow(): Promise<void> {
   await userClick(`[data-run="${a}"] [data-act=resume]`);
   check('[이어서] → 엔진 run.resume → 준비 중으로 돌아간다', await until('resumed', () => runStatus(a) !== 'turn', 3000) && calls.some(([m, r]) => m === 'run.resume' && r === a), runStatus(a));
   check('로그인 뒤 게이트 → 실제 승인 바로 승인', await approveGate(a), { st: runStatus(a), bar: S.bar.snapshot().visible });
+  check('승인 직후 서명 단계: 서명 차례(handoff) 전에도 카드가 발급 인증별 할 일을 바로 보인다', await until('sign now', async () => (await js<boolean>(`(() => { const c = document.querySelector('[data-run="${a}"]'); return !!c && 'signNow' in c.dataset && c.innerText.includes(${JSON.stringify(SIGN_BY_AUTH['사업자 간편인증']!.now)}); })()`)), 3000), await card(a));
   check('서명 차례: 승인 뒤에도 카드는 끝나지 않고 사람 차례(서명)', await until('sign turn', () => runStatus(a) === 'turn' && S.runs.get(a)?.handoff?.kind === 'sign', 5000), runStatus(a));
   await until('sign card', async () => (await card(a)).handoff === 'sign');
   c = await card(a);
-  check('서명 카드: 실화면 문구 + [다 했어요](보조)·[중지], [직접 발급함] 없음, "다시 발급하지 않아요" 안내', c.text.includes(HANDOFF_SIGN.text) && c.acts.some((b) => b.act === 'resume' && b.label === '다 했어요' && !b.primary) && c.acts.some((b) => b.act === 'stop') && !c.acts.some((b) => b.act === 'manual-done' || b.act === 'prepare') && c.signWait, c);
+  check('서명 카드: 실화면 문구 + [다 했어요](보조)·[중지], [직접 발급함] 없음, "다시 발급하지 않아요" 안내', c.text.includes(SIGN_BY_AUTH[S.runs.get(a)!.auth]!.text) && c.acts.some((b) => b.act === 'resume' && b.label === '다 했어요' && !b.primary) && c.acts.some((b) => b.act === 'stop') && !c.acts.some((b) => b.act === 'manual-done' || b.act === 'prepare') && c.signWait, c);
   check('서명 차례 카드는 끝난 카드처럼 보이지 않는다', !/발급 완료|중지됨|취소|확인 필요/.test(c.chip), c.chip);
   await shot('02-sign-turn');
   await sleep(500);
@@ -260,7 +272,7 @@ async function flow(): Promise<void> {
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false, chromeReady: () => chrome });
     S.win.webContents.setBackgroundThrottling(false);
     S.win.setIgnoreMouseEvents(true);
     await flow();
