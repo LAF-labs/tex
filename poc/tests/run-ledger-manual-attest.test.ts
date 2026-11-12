@@ -34,7 +34,7 @@ after(async () => {
 });
 
 describe('무장 → identity_mismatch → [직접 발급함]', () => {
-  for (const verifyAfterAttest of ['unknown', 'committed'] as const) {
+  for (const verifyAfterAttest of ['unknown', 'committed', 'not_committed'] as const) {
     it(`[직접 발급함] 뒤 verify ${verifyAfterAttest}: 같은 키 원장에 열린/발급 행이 남고 재요청은 새 시도를 만들지 않는다`, async () => {
       root ||= await fsp.mkdtemp(path.join(os.tmpdir(), 'sax-gap-'));
       const db = openDatabase(path.join(root, `${randomBytes(4).toString('hex')}.sqlite`), new Uint8Array(randomBytes(32)));
@@ -76,6 +76,18 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
       // 4) verify 결과 효과(verify 스텝 sv에서): committed면 ledger.committed, unknown이면 in_doubt 쪽
       const t3 = transition(t2.state, { t: 'verify', result: verifyAfterAttest }, { allowed: true, ledger: [ledger.get(INTENT, 's21')!.state] });
       if (t3.ok) for (const e of t3.effects.filter((x) => x.startsWith('ledger.'))) port.ledgerEffect(e, 'sv');
+      if (verifyAfterAttest === 'not_committed') {
+        // 따로 행이 하한을 채운 verify로 not_committed가 됐다. 같은 실행이 게이트로 돌아가 다시 무장하면 판정은 s21 새 시도에 붙어야 한다.
+        assert.ok(t3.ok);
+        assert.equal(ledger.get(INTENT, 's21.manual')?.state, 'not_committed');
+        gates.open('q2', 'r1');
+        gates.decide('q2', 'approved', 'local');
+        assert.deepEqual(port.arm({ stepId: 's21', reqId: 'q2', actionHash: 'ah' }), { ok: true });
+        port.ledgerEffect('ledger.dispatched', 's21');
+        port.ledgerEffect('ledger.committed', 'sv');
+        assert.equal(ledger.get(INTENT, 's21')?.state, 'committed', '두 번째 시도가 발급으로 적힌다');
+        assert.equal(ledger.get(INTENT, 's21')?.verifyRef, 'ref-sv');
+      }
 
       const rows = ledger.byIssueKey(K);
       const states = rows.map((r) => `${r.stepId}:${r.state}`);
@@ -87,6 +99,10 @@ describe('무장 → identity_mismatch → [직접 발급함]', () => {
       const st = ladder.request({ issueKey: K, counterpartyId: 'c', supply: 1, tax: 0, itemName: 'x' });
       const diag = `rows=${JSON.stringify(states)} write_failed=${JSON.stringify(writeFailed)} ladder=${st.s} rungCalls=${calls}`;
       assert.deepEqual(writeFailed, [], diag);
+      if (verifyAfterAttest === 'not_committed') {
+        assert.equal(st.s, 'issued', diag);
+        return;
+      }
       assert.equal(ledger.get(INTENT, 's21')?.state, 'not_committed', `종결은 바꾸지 않는다. ${diag}`);
       assert.equal(ledger.get(INTENT, 's21.manual')?.state, verifyAfterAttest === 'committed' ? 'committed' : 'in_doubt', diag);
       assert.ok(rows.some((r) => r.state !== 'not_committed'), `사람이 발급했다고 했는데 같은 키에 열린/발급 행이 없다. ${diag}`);

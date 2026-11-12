@@ -75,6 +75,8 @@ export class LedgerCommitPort implements CommitPort {
       if (e instanceof TxRefused) return { ok: false, code: e.code };
       return { ok: false, code: e instanceof LedgerError ? e.code : 'ledger.error' };
     }
+    // 새 시도는 X 행 자체다. 앞 [직접 발급함]의 따로 행으로 가던 판정을 여기서 끊는다.
+    this.ledgerStepOf.delete(a.stepId);
     return { ok: true };
   }
 
