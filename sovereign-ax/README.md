@@ -31,6 +31,7 @@
 | [06-feasibility.md](06-feasibility.md) | 개발·사업 가능성 검토, Go 조건과 중단 기준, 미결 항목 결정 |
 | [07-document-catalog.md](07-document-catalog.md) | 사업자 서류 카탈로그: 공고문 36건 수요 집계, 서류별 발급 사실, 상황별 세분화, 플레이북 우선순위 근거 |
 | [08-screen-plan.md](08-screen-plan.md) | 화면·기능 기획: 제품 원칙, 정보 구조, 화면 34개(PC 27·모바일 7), 채팅 온보딩, 작업 상태 흐름, 서류 꾸러미 카드, 예외 상태, Claude Design 전달 사항 |
+| [10-issuance-popbill-fallback.md](10-issuance-popbill-fallback.md) | 발급 폴백 기획 v0.1(제안, 2026-11-12): 홈택스 H-01이 발급 안 됨 확정으로 끝났을 때만 사장님 승인으로 팝빌 API 발급, 같은 의도 원장 묶음, 공동인증서 사전 등록(옵트인), 토큰만 PC에 건네는 구조, 사후 처리·비용·법적 지위·대표 결정 12건 |
 | [design-system/](design-system/README.md) | 디자인 시스템: 색(파랑 한 색 + 황토 주의색, 라이트·다크), 서체, 데이터 위계 D1~D6과 값의 확실성, 컴포넌트 15개 |
 | [outreach/](outreach/README.md) | 대외 문서 초안(D15 F-04): 행안부·국세청 공문, 개인정보위 질의, 법률 질의 6건, 붙임, 설계 대조표. 발송 전 yulmu 확인 |
 | [design/00-overview.md](design/00-overview.md) | **개발 설계서** D00~D19, JSON 스키마 12종(`status`·`revoked_keys`·`data_descriptor` 추가), ADR-001~029(ADR-024는 별도 PR, ADR-030 예약) |
