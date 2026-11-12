@@ -309,8 +309,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         ? opts.bankPick(kind)
         : pickFileBytes([{ name: kind === 'statement' ? '은행 거래내역(엑셀·CSV)' : '홈택스 발급 목록(엑셀)', extensions: ['xlsx', 'xls', 'csv', 'htm', 'html'] }], win),
     readSheet: async (bytes) => {
-      const { ms: _ms, peakMemoryKb: _kb, ...out } = await readSheetInSandbox(bytes);
-      return out;
+      const r = await readSheetInSandbox(bytes);
+      return { format: r.format, encoding: r.encoding, sheets: r.sheets, flags: r.flags };
     },
     log: (n, d) => log.event(n, d),
   });
