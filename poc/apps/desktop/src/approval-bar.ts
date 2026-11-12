@@ -9,6 +9,7 @@ import {
   attestRefusalText,
   attestRows,
   attestText,
+  BAR_AGAIN_TEXT,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
   BAR_CSP,
@@ -457,7 +458,19 @@ export class ApprovalBar extends EventEmitter {
     if (!this.req) return;
     this.gate.reset();
     this.emit('judged', { event: `reset:${why}` });
-    void this.render(this.liveMode(), null);
+    // 활성화 순간 커서가 승인 버튼 위였으면 그 클릭이 창을 가져오는 데 쓰였다(F-11): 한 번 더 누르라고 말한다
+    void this.render(this.liveMode(), why === 'activate' && this.shown && this.pointerOn('approve') ? BAR_AGAIN_TEXT : null);
+  }
+
+  /** 지금 커서가 카드의 그 버튼 위인가(창 활성화 판단용, 승인 판정에는 쓰지 않는다). */
+  private pointerOn(k: 'approve' | 'stop'): boolean {
+    if (this.win.isDestroyed()) return false;
+    const p = screen.getCursorScreenPoint();
+    const c = this.win.getContentBounds();
+    const t = this.targets[k];
+    const x = p.x - c.x - this.bounds.x;
+    const y = p.y - c.y - this.bounds.y;
+    return x >= t.x && x < t.x + t.width && y >= t.y && y < t.y + t.height;
   }
 
   private onMouse(m: Electron.MouseInputEvent): void {

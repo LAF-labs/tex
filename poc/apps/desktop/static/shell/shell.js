@@ -5,7 +5,7 @@ import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -103,6 +103,8 @@ const act = {
   toast,
   openDoc: (id) => call('docs.open', { id }).catch((e) => toast(docErr(e))),
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
+  // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
+  openRunDoc: (run, reveal = false) => runDoc(run).then((d) => (d ? (reveal ? act.revealDoc(d.id) : act.openDoc(d.id)) : toast(NO_FILE_TEXT))),
   setAuth: async (kind) => {
     try {
       state.boot.profiles = (await call('auth.setDefault', { kind })).profiles;
@@ -126,7 +128,7 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'gesture_required' || c === 'throttled' ? '잠시 뒤 다시 눌러 주세요.' : c === 'item_required' ? '품목이 비어 있어요. 카드에서 [품목·이메일 고치기]로 넣고 다시 준비해 주세요.' : human(e));
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드에서 [품목·이메일 고치기]로 넣고 다시 준비해 주세요.' : prepareRefusal(c) ?? human(e));
     }
   },
   vat: async (id, vat) => {
@@ -195,6 +197,16 @@ const act = {
       putRun(await call('run.stop', { id }));
     } catch (e) {
       toast(human(e, { already_issuing: '이미 발급을 시작해서 멈출 수 없어요' }));
+    }
+  },
+  // [다시 준비]: main이 같은 값의 새 초안을 만든다(발급 전에 멈춘 실행만). 시작은 새 카드의 [홈택스에서 준비]
+  redraft: async (id) => {
+    try {
+      const d = await call('run.redraft', { id });
+      putRun(d);
+      openPanel({ kind: 'run', id: d.id });
+    } catch (e) {
+      toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '다시 준비하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
     }
   },
   again: (run) => {
@@ -542,6 +554,35 @@ function sendPrompt(text) {
   send();
 }
 
+/**
+ * [홈택스에서 준비]를 main이 받지 않은 이유(F-07). 결속(버튼 클릭이 실제 입력으로 안 보였다)과 상한(연달아 멈춤·분당 3번)을 나눠 말하고,
+ * 상한은 main이 붙인 남은 초(throttled.streak:42)를 보인다. 모르는 코드는 null(공통 문장).
+ */
+function prepareRefusal(c) {
+  if (c === 'gesture_required') return '버튼 클릭을 확인하지 못했어요. [홈택스에서 준비]를 한 번 더 눌러 주세요.';
+  const m = /^throttled\.(streak|rate):(\d{1,3})$/.exec(c);
+  if (m) return m[1] === 'streak' ? `승인 전에 멈춘 실행이 3번 이어져 1분 쉬었다가 시작해요. ${m[2]}초 뒤에 다시 눌러 주세요.` : `[홈택스에서 준비]는 1분에 3번까지 시작해요. ${m[2]}초 뒤에 다시 눌러 주세요.`;
+  return c === 'throttled' ? '조금 뒤에 다시 눌러 주세요.' : null;
+}
+
+/** 이 실행이 보관함에 남긴 발급 PDF 줄(#269 runId). 지금 목록에 없으면 한 번 다시 읽는다. */
+async function runDoc(run) {
+  const find = () => state.docs.find((d) => d.runId === run.id);
+  if (find()) return find();
+  try {
+    state.docs = await call('docs.list');
+  } catch {
+    return null;
+  }
+  return find() ?? null;
+}
+
+/** 되묻기의 [거래처 추가](F-02·F-03): 거래처 화면의 추가 폼(이름 채움). 저장하면 대화로 돌아와 그 이름을 채운다. */
+async function addCpFromAsk(name) {
+  await go('cps');
+  openPanel({ kind: 'cp-edit', id: null, name: String(name ?? ''), ask: true });
+}
+
 function fillComposer(text) {
   if (state.view !== 'chat') go('chat');
   state.composing = true;
@@ -632,7 +673,10 @@ async function ask(text, vat) {
     renderG24(g);
     openPanel({ kind: 'g24', id });
   } else {
-    appendThread(h('div', { class: 'sx-app' }, r.text));
+    const box = h('div', { class: 'sx-app' }, r.text);
+    // 거래처가 없거나 장부에 없는 이름(F-02·F-03): [거래처 추가]는 거래처 화면의 추가 폼을 그 이름으로 연다. 추가하면 대화로 돌아와 그 이름을 입력창에 채운다(되묻기를 잇는다).
+    if (r.addCp) box.append(h('div', { class: 'sx-actions' }, btn('거래처 추가', () => addCpFromAsk(r.addCp.name), 'sx-btn-primary', { 'data-act': 'ask-cp-add' })));
+    appendThread(box);
     // 되물은 답 후보는 입력창 위 채우기 칩으로 둔다(캔버스 M-01 되묻기).
     state.fill = r.chips?.length ? fillChips(r.chips) : [];
     renderQuick();
@@ -799,7 +843,11 @@ function syncIncident(p) {
   if (next === incidentId) return;
   if (incidentId) void call('incident.close', { id: incidentId }).catch(() => {});
   incidentId = next;
-  if (next) void call('incident.open', { id: next }).catch(() => {});
+  // 열기가 실패하면(실제 입력 없이 열린 패널 → gesture_required) 연 것으로 두지 않는다(F-16): 같은 카드를 다시 누르면 다시 연다
+  if (next)
+    void call('incident.open', { id: next }).catch(() => {
+      if (incidentId === next) incidentId = null;
+    });
 }
 
 function openPanel(p) {
@@ -828,7 +876,7 @@ function renderPanel() {
     const c = state.cps.find((x) => x.id === p.id);
     el.replaceChildren(c ? cpPanel(c) : h('div'));
   } else if (p.kind === 'cp-edit') {
-    el.replaceChildren(cpEditPanel(p.id ? state.cps.find((x) => x.id === p.id) : null));
+    el.replaceChildren(cpEditPanel(p.id ? state.cps.find((x) => x.id === p.id) : null, p.id ? null : { name: p.name ?? '', ask: !!p.ask }));
   } else if (p.kind === 'act') {
     const row = activityRows().find((r) => r.id === p.id);
     el.replaceChildren(row ? activityPanel(row) : h('div'));
@@ -910,6 +958,10 @@ function cpsView() {
     'section',
     { class: 'rail-screen', 'data-view': 'cps' },
     railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })),
+    // 온보딩 O-05에서 [거래처 화면에서 추가]로 왔다(F-12): 다 넣으면 대화로 돌아가 [다 했어요]를 누르게 띠 하나
+    state.onb?.step === 'counterparties'
+      ? h('div', { class: 'sx-note', 'data-onb-band': 'cps' }, h('div', {}, '거래처를 다 넣으면 대화로 돌아가 [다 했어요]를 눌러 주세요.'), btn('대화로 돌아가기', () => go('chat'), 'sx-btn-primary', { 'data-act': 'onb-back' }))
+      : null,
     listTable(
       [['상호'], ['사업자번호'], ['상태'], ['최근 발급'], ['이번 달']],
       state.cps.map((c) =>
@@ -960,7 +1012,8 @@ function cpPanel(c) {
 const CP_ERR = { bad_item_name: '품목 이름을 확인해 주세요', too_many_items: '저장 품목은 20개까지예요', invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
 
 /** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). [저장 품목]은 저장 품목 목록의 첫 품목이다(#144). */
-function cpEditPanel(c) {
+/** add: 새 거래처 폼의 채움(name)과 되묻기에서 왔는지(ask: 저장하면 대화로 돌아가 이름을 채운다). */
+function cpEditPanel(c, add = null) {
   const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
   const demoBook = state.boot.cpBook !== 'local';
   let saving = false;
@@ -1004,6 +1057,14 @@ function cpEditPanel(c) {
         try {
           const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
           state.cps = r.counterparties;
+          const savedName = String(f.get('name') ?? '').trim();
+          if (!c && add?.ask) {
+            // 되묻기에서 왔다: 대화로 돌아가 이 이름을 입력창에 채운다(보내면 되묻기를 잇는다)
+            await go('chat');
+            fillComposer(state.cps.find((x) => x.id === r.id)?.name ?? savedName);
+            toast('거래처를 추가했어요. 보내면 이어서 발급할게요');
+            return;
+          }
           render();
           openPanel({ kind: 'cp', id: r.id });
           toast(c ? '저장했어요' : '거래처를 추가했어요');
@@ -1015,7 +1076,7 @@ function cpEditPanel(c) {
       },
     },
     c ? null : h('div', { class: 'sx-actions' }, btn('등록증으로 채우기', fillFromCert, 'sx-btn-quiet', { 'data-act': 'cp-cert' })),
-    field('상호', 'name', c?.name, { required: true, maxlength: 60 }),
+    field('상호', 'name', c?.name ?? add?.name, { required: true, maxlength: 60 }),
     field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
     field('대표자', 'rep', c?.rep, { maxlength: 30 }),
     field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
@@ -1777,7 +1838,25 @@ function addDoc(doc) {
 
 // ---- main 이벤트 ----
 
+// 창을 앞으로 가져온 클릭(F-11): 내 차례 카드의 버튼 위에서 창이 활성화됐는데 그 버튼 클릭이 오지 않으면(macOS는 첫 클릭을 페이지에 주지 않는다)
+// 그 카드에 "한 번 더 눌러 주세요"를 보인다. 버튼 규칙(실제 입력·결속)은 그대로다.
+let lastPointerDown = { t: 0, el: null };
+document.addEventListener('pointerdown', (e) => (lastPointerDown = { t: performance.now(), el: e.target }), true);
+const AGAIN_TEXT = '창을 앞으로 가져오는 클릭이었어요. 한 번 더 눌러 주세요.';
+function onActivated(x, y) {
+  const b = document.elementFromPoint(x, y)?.closest('button');
+  const card = b?.closest('[data-run]');
+  if (!b || !card || !['turn', 'waiting'].includes(card.dataset.status)) return;
+  const at = performance.now();
+  setTimeout(() => {
+    if (lastPointerDown.t >= at && b.contains(lastPointerDown.el)) return; // 클릭이 왔다
+    if (!b.isConnected || card.querySelector('[data-again]')) return;
+    card.append(h('p', { class: 'sx-meta is-attention', 'data-again': '' }, AGAIN_TEXT));
+  }, 400);
+}
+
 window.sax.onEvent((ev) => {
+  if (ev.type === 'activated') return onActivated(ev.x, ev.y);
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();

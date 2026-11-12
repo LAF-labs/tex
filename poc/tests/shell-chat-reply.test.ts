@@ -87,7 +87,7 @@ describe('배선(main·렌더러)', () => {
   const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
   const send = src.slice(src.indexOf("'request.send': async"), src.indexOf("'draft.update':"));
   it('unknown이고 되묻기 답이 아닐 때만 chat.respond, 실패는 정규식 대체 없이 오류 문장, sent는 그 호출까지 센다', () => {
-    assert.match(send, /if \(r\.route\.outcome === 'unknown' && !answersPending\(local, runs\)\) \{\s*const c = await chatReply\.respond\(text\);\s*const sent = sentFromGateway\(gwIssuedSince\(mark\)\);/);
+    assert.match(send, /if \(r\.route\.outcome === 'unknown' && !answersPending\(local, runs, text\)\) \{\s*const c = await chatReply\.respond\(text\);\s*const sent = sentFromGateway\(gwIssuedSince\(mark\)\);/);
     assert.match(send, /if \('error' in c\) return \{ kind: 'unavailable', \.\.\.CHAT_ERROR_TEXT\[c\.error\], via, note: null, sent \};/);
     assert.match(send, /return \{ kind: 'chat', text: c\.reply\.reply, suggest: suggestChips\(c\.reply\.suggest\), filtered: c\.reply\.filtered, via, note: null, sent \};/);
     const chatPart = send.slice(send.indexOf("r.route.outcome === 'unknown'"), send.indexOf('const to = routed('));

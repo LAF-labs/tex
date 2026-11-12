@@ -37,6 +37,10 @@ interface Scenario {
   /** 최대 기다림(ms). */
   maxMs?: number;
   stopAfterMs?: number;
+  /** 사람 대기 알림(handoff 이벤트)마다 한 번. n = 몇 번째(0부터). */
+  onHandoff?: (h: { phase: string; code?: string }, c: { runs: RunService; fx: LoginFixture; n: number }) => void;
+  /** RunService 시험 옵션(handoffCapMs 등). */
+  deps?: Record<string, unknown>;
 }
 
 interface Outcome {
@@ -44,6 +48,9 @@ interface Outcome {
   journal: string[];
   steps: string[];
   gate: boolean;
+  handoffs: string[];
+  /** 서명 차례가 끝난 까닭(sign.turn_closed why). */
+  turn: string[];
   posts: number;
   signs: number;
   fx: LoginFixture;
@@ -73,7 +80,7 @@ async function dryRun(sc: Scenario): Promise<Outcome> {
     const rb = await connectRunBrowser(h.client);
     const runs = new RunService({
       db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: p, log: new FileEventLog(null, 'engine'), page: async () => rb.page,
-      postGate: (m) => gm.push(m), engine: 'ir', irSource: () => ({ ok: true, ir }),
+      postGate: (m) => gm.push(m), engine: 'ir', irSource: () => ({ ok: true, ir }), ...sc.deps,
       trace: (_r: string, t: { name: string; stepId: string; code?: string }) => {
         if (t.name === 'step.finished') steps.push(t.code ? `${t.stepId}!${t.code}` : t.stepId);
       },
@@ -83,8 +90,11 @@ async function dryRun(sc: Scenario): Promise<Outcome> {
     runs.start({ runId: 'r1', counterpartyId: cp, supply: 100000, tax: 10000, itemName: '경영 컨설팅' });
     const t0 = Date.now();
     let approved = false;
+    let seen = 0;
+    const handoffs = () => events.filter((e): e is Extract<RunEvent, { type: 'handoff' }> => e.type === 'handoff');
     while (!ended() && Date.now() - t0 < (sc.maxMs ?? 40_000)) {
       sc.human?.(fx);
+      for (const e of handoffs().slice(seen)) sc.onHandoff?.(e, { runs, fx, n: seen++ });
       const g = gm.find((m) => m.t === 'gate.request');
       if (g && !approved && sc.approve !== false && g.t === 'gate.request') {
         approved = true;
@@ -101,13 +111,18 @@ async function dryRun(sc: Scenario): Promise<Outcome> {
       await sleep(100);
     }
     const journal = runs.inspect('r1').journal;
+    if (process.env.SAX_DRY_DUMP) for (const r of db.prepare(`SELECT * FROM run_events WHERE run_id = 'r1' ORDER BY seq`).all() as Array<Record<string, unknown>>) console.log('EV', JSON.stringify(r));
+    const turn = (db.prepare(`SELECT payload_json FROM run_events WHERE run_id = 'r1' AND type = 'sign.turn_closed'`).pluck().all() as string[]).map((j) => String(JSON.parse(j).why));
+    const end = ended();
     try {
       runs.stop('r1');
     } catch {
       /* 끝남 */
     }
+    // 끝나지 않았으면(시험 실패) 끝날 때까지 조금 기다려 실행·타이머가 남지 않게 한다.
+    for (let i = 0; i < 100 && !ended(); i++) await sleep(100);
     await rb.browser.close().catch(() => {});
-    return { end: ended(), journal, steps, gate: gm.some((m) => m.t === 'gate.request'), posts: fx.inner.posts(), signs: fx.state.signs, fx };
+    return { end, journal, steps, gate: gm.some((m) => m.t === 'gate.request'), handoffs: handoffs().map((e) => `${e.phase}:${e.code ?? ''}`), turn, posts: fx.inner.posts(), signs: fx.state.signs, fx };
   } finally {
     db.close();
     await h.close();
@@ -116,7 +131,7 @@ async function dryRun(sc: Scenario): Promise<Outcome> {
   }
 }
 
-const show = (o: Outcome) => `end=${JSON.stringify(o.end)} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
+const show = (o: Outcome) => `end=${JSON.stringify(o.end)} turn=${o.turn.join(',')} steps=${o.steps.join(' ')} journal=${o.journal.join(',')}`;
 
 const st = (o: Outcome) => (o.end as { status?: string; code?: string; mailConfirmed?: boolean } | undefined) ?? {};
 const login = (fx: LoginFixture) => void (fx.state.pending && setTimeout(() => fx.completeLogin(), 1000));
@@ -147,10 +162,52 @@ describe('게시본 H-01 건조 실행: 지금 동작(사실 고정)', () => {
   });
 });
 
-// 2026-11-11 건조 실행에서 찾은 막힘. 고치면 본문을 채우고 todo를 뗀다(지금 본문을 돌리면 HandedOff 타이머가 남아 프로세스가 끝나지 않는다).
-describe('게시본 H-01 건조 실행: 고쳐야 할 모습(todo)', () => {
-  // B1·B2(공동인증서 로그인·발급 서명 사람 차례)는 tests/h01-published-dryrun-cert.test.ts.
-  it('B3 로그인 시간 초과(s5 step.timeout)·캡차(s90 portal.captcha)는 이어갈 수 있는 핸드오프다(지금: 실행이 end status=handoff로 끝나고 조율기 30분 타이머가 남는다)', { todo: 'B3' });
+const S5_SHORT: Record<string, StepPatch> = { s5: (s) => void (s.timeoutMs = 1500) };
+// 스키마 하한(10초).
+const PUSH_SHORT: StepPatch = (s) => void ((s.signFlow as { maxWaitMs: number }).maxWaitMs = 10_000);
+const resume = (c: { runs: RunService }) => assert.deepEqual(c.runs.resume('r1'), { ok: true });
+
+describe('게시본 H-01 건조 실행: 사람 대기 재개(B3)', () => {
+  it('로그인 시간 초과(s5 step.timeout) → handoff login → 사람이 로그인을 마치고 [다 했어요] → s0부터 다시 → success', async () => {
+    const o = await dryRun({ signMethod: 'simple_auth', patches: S5_SHORT, onHandoff: (_h, c) => (c.fx.completeLogin(), resume(c)) });
+    assert.equal(st(o).status, 'success', show(o));
+    assert.deepEqual(o.handoffs, ['login:step.timeout']);
+    assert.deepEqual([o.posts, o.signs], [1, 1]);
+    assert.ok(o.journal.includes('run.handoff') && o.journal.includes('run.resumed'));
+  });
+  it('캡차(s90 portal.captcha) → handoff login → 사람이 풀고 로그인 → [다 했어요] → success', async () => {
+    const o = await dryRun({ signMethod: 'simple_auth', captcha: true, onHandoff: (_h, c) => ((c.fx.state.captcha = false), c.fx.completeLogin(), resume(c)) });
+    assert.equal(st(o).status, 'success', show(o));
+    assert.deepEqual(o.handoffs, ['login:portal.captcha']);
+  });
+  it('사람 대기 중 [중지]는 바로 stopped, 아무것도 발급하지 않는다', async () => {
+    const o = await dryRun({ signMethod: 'simple_auth', patches: S5_SHORT, onHandoff: (_h, c) => assert.deepEqual(c.runs.stop('r1'), { stopped: true }) });
+    assert.deepEqual([st(o).status, o.posts], ['stopped', 0], show(o));
+  });
+  it('사람 대기 상한: 답이 없으면 handoff run.handoff_timeout으로 끝난다(시험 상한 2초)', async () => {
+    const o = await dryRun({ signMethod: 'simple_auth', patches: S5_SHORT, deps: { handoffCapMs: 2000 } });
+    assert.deepEqual([st(o).status, st(o).code, o.posts], ['handoff', 'run.handoff_timeout', 0], show(o));
+  });
+  it('서명 차례: PUSH를 maxWaitMs 뒤에 승인하면(서명 창이 늦게 뜸) handoff sign → 엔진이 [서명]을 한 번 누르고 → success, POST 1번', async () => {
+    const o = await dryRun({ signMethod: 'simple_auth', loggedIn: true, patches: { s21: PUSH_SHORT }, human: (fx) => void (fx.state.signDelayMs = 13_000), maxMs: 60_000 });
+    assert.equal(st(o).status, 'success', show(o));
+    assert.deepEqual(o.handoffs, ['sign:sign.waiting']);
+    assert.deepEqual([o.posts, o.signs], [1, 1]);
+  });
+  it('서명 차례 안전: [다 했어요]·[중지]는 버튼을 누르지 않고 verify로만(발급 요청을 엔진이 다시 내보내지 않는다, POST 0번이어도 in_doubt 유지)', async () => {
+    for (const how of ['resume', 'stop'] as const) {
+      const o = await dryRun({
+        signMethod: 'simple_auth', loggedIn: true, patches: { s21: PUSH_SHORT }, human: (fx) => void (fx.state.signDelayMs = 60_000), maxMs: 60_000,
+        onHandoff: (_h, c) => (how === 'resume' ? resume(c) : assert.deepEqual(c.runs.stop('r1'), { stopped: false })),
+      });
+      assert.equal(st(o).status, 'in_doubt', `${how}: ${show(o)}`);
+      assert.deepEqual([o.posts, o.signs], [0, 0], how);
+      assert.ok(o.journal.includes('sign.turn_closed'), how);
+    }
+  });
+});
+
+// 공동인증서 실행(engine-cert, B1·B2): tests/h01-published-dryrun-cert.test.ts(CertSecretPort, 사람이 인증서 창에서 직접 넣는 길).
 });
 
 // 수동 관찰: SAX_DRY=cert-login,captcha,... node --conditions=development --test tests/h01-published-dryrun.test.ts

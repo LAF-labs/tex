@@ -1042,6 +1042,44 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'clicked'));
       assert.equal(h.c.signTurnOpen, false);
     });
+    it('서명 차례(B3): 승인 토큰 기한(Wmax)이 지난 뒤에 뜬 확인 버튼은 엔진이 누르지 않는다(사람이 누르고 [다 했어요])', async () => {
+      const veryLate = { ...SIGN_OK, appearAt: 200_000 };
+      const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { els: [...els(), veryLate], verifyStep: async () => ({ result: 'unknown' }) });
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      for (let i = 0; i < 20_000 && h.clock.t < 100_000 && h.c.signTurnOpen; i++) await new Promise((r) => setImmediate(r));
+      assert.ok(h.clock.t > 90_000, `기한(90초)을 넘기도록 기다렸다: ${h.clock.t}`);
+      h.clock.t = 250_000;
+      for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+      assert.equal(h.c.signTurnOpen, true, '기한 뒤에는 사람을 기다린다');
+      h.c.finishSignTurn();
+      assert.equal((await p).state, 'InDoubt');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+    });
+    it('비밀 창 done 뒤 확인 버튼이 없으면(인증서 창 [확인]이 곧 커밋, 이미 완료 창) 짧게만 찾고 누르지 않고 verify', async () => {
+      const h = mk([CP, GATE, SF('cert'), SV, END]);
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+      assert.ok(h.rec.journal.some(([t]) => t === 'signflow.confirm_missing'));
+      assert.ok(h.clock.sleeps.reduce((a, b) => a + b, 0) <= 5_000, `확인 버튼을 maxWaitMs(120초)까지 기다리지 않는다: ${h.clock.sleeps.reduce((a, b) => a + b, 0)}ms`);
+    });
+    it('서명 차례(B3): 끝 표지(doneTarget, 완료 창)가 보이면 [다 했어요] 없이 버튼을 누르지 않고 verify', async () => {
+      const h = mk([CP, GATE, SF('cert', { doneTarget: 'f.lookup' }), SV, END], { els: els().filter((e) => e.id !== 'lookup') });
+      h.st.secret = 'ttl';
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      h.page.els.set('lookup', els().find((e) => e.id === 'lookup')!);
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'done_seen'));
+    });
     it('서명 차례(B3): [다 했어요]·[중지]는 어떤 버튼도 누르지 않고 verify(무장 토큰을 새로 만들지 않는다, 중지로 끝나지 않는다)', async () => {
       for (const how of ['done', 'abort'] as const) {
         const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { verifyStep: async () => ({ result: 'unknown' }) });

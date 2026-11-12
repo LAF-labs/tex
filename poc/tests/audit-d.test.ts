@@ -418,7 +418,7 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     await runs.prepare(d.run.id);
     host.emit('run', { runId: d.run.id, type: 'end', status: 'failed', code: 'portal.unexpected_page', portalNotice: '<b>세션이\u2028만료</b>되었습니다' + 'x'.repeat(300) });
     const r = runs.get(d.run.id)!;
-    assert.match(r.stoppedNote!, /예상하지 못한 화면으로/);
+    assert.match(r.stoppedNote!, /홈택스 화면을 알아보지 못했어요/);
     assert.equal(r.notices!.length, 1);
     assert.ok(r.notices![0]!.startsWith('홈택스 안내: “<b>세션이 만료</b>되었습니다'), r.notices![0]);
     assert.ok(r.notices![0]!.length <= '홈택스 안내: “”'.length + 200);
