@@ -131,7 +131,7 @@ function mk(steps: Step[], o: Opts = {}) {
   for (const [k, v] of Object.entries(o.readback ?? {})) scope.readback.set(k, v);
   const env = stepEnv({ page, act, clock, dict: DICT, strings: { 'confirm.issue': '^발급하시겠습니까\\?$' }, scope, domains: ['hometax.go.kr'], irreversible: new Set(['s21']), defaultTimeoutMs: 100, pollMs: 50 });
   const timers = new ManualTimers();
-  const st = { ledger: [] as LedgerState[], inDoubt: null as string | null, allowed: true, secret: 'done' as 'done' | 'ttl', lockOk: true, observed: false, loggedIn: [true] as boolean[] };
+  const st = { ledger: [] as LedgerState[], inDoubt: null as string | null, allowed: true, secret: 'done' as 'done' | 'ttl' | { code: string }, lockOk: true, observed: false, loggedIn: [true] as boolean[] };
   const rec = {
     published: [] as GateRequest[], closed: [] as Array<[string, string]>, human: [] as Array<Record<string, unknown>>, humanClosed: [] as Array<[string, string]>,
     secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[],
@@ -437,6 +437,14 @@ describe('사람 차례(D03 §2 WaitingHuman, §8)', () => {
     k.st.secret = 'ttl';
     const r = await k.c.start();
     assert.deepEqual([r.state, r.resumeAt], ['Paused', 's1']);
+  });
+  it('kind=secret: 끝났지만 멈춰야 하면({ code }, 틀린 비밀번호 등) 그 코드로 Paused(재개 = 마지막 체크포인트, 창을 다시 연다)', async () => {
+    const S: Step = { id: 's5', type: 'human', kind: 'secret', prompt: 'p.secret', target: 'f.otp', ttlMs: 60_000 };
+    const h = mk([CP, S, END]);
+    h.st.secret = { code: 'sign.password_wrong' };
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code, r.resumeAt], ['Paused', 'sign.password_wrong', 's1']);
+    assert.deepEqual(h.act.log, [], '엔진은 칸을 채우지 않는다');
   });
   it('사람 차례 중 정지 하향은 차례가 끝난 뒤 정지 분기. 칸은 채우지 않는다', async () => {
     const h = mk([CP, OTP, END]);

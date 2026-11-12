@@ -1,0 +1,21 @@
+# Written by codemap.mjs --workflow: rebuilds the board's code map of LAF-labs/tex on each push to main.
+name: artiboard code map
+on:
+  push:
+    branches: [main]
+# one run at a time and the newest last, so an older push never replaces a newer map
+concurrency: artiboard-codemap
+jobs:
+  codemap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # saved outside the checkout, where the map would count it as an uncommitted change
+      - env:
+          ARTIBOARD_TOKEN: ${{ secrets.ARTIBOARD_TOKEN }}
+        run: |
+          curl -fsSL https://project.laf-co.com/codemap.mjs -o "$RUNNER_TEMP/codemap.mjs"
+          node "$RUNNER_TEMP/codemap.mjs" --site https://project.laf-co.com --project tex --repo LAF-labs/tex --if-changed

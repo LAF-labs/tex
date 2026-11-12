@@ -9,3 +9,4 @@ export * from './lookup.ts';
 export * from './pdf.ts';
 export * from './secret.ts';
 export * from './lookup-ir.ts';
+export * from './cert-secret.ts';

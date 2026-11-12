@@ -33,7 +33,7 @@ export function fixtureFiles(files: PackageFiles, origin: string, teetHost: stri
   return out;
 }
 
-export function loadReal(origin: string, teetHost: string): { pkg: LoadedPackage; lookups: Map<string, LoadedPackage> } {
+export function loadReal(origin: string, teetHost: string, patchIssue?: (files: PackageFiles) => void): { pkg: LoadedPackage; lookups: Map<string, LoadedPackage> } {
   const keys = testKeys();
   const two = keys.pkg.slice(0, 2);
   const ctx = (installedLookups: ReadonlyMap<string, LoadedPackage>): LoaderContext => ({
@@ -47,6 +47,7 @@ export function loadReal(origin: string, teetHost: string): { pkg: LoadedPackage
     lookups.set(id, r.pkg);
   }
   const files = fixtureFiles(loadPkg('hometax.invoice.issue'), origin, teetHost);
+  patchIssue?.(files);
   const r = loadPackage(signPackage(files, two, files.manifest.lookupsUsed.map((l) => lookups.get(l.id)?.manifestDigest ?? '0'.repeat(64))), ctx(lookups));
   if (!r.ok) throw new Error(`발급 패키지: ${r.code} ${JSON.stringify(r.violations)}`);
   return { pkg: r.pkg, lookups };
@@ -73,6 +74,10 @@ export interface Scenario {
   approve?: boolean;
   maxMs?: number;
   verifyMaxMs?: number;
+  /** 공동인증서 비밀번호 금고(IrPackage.secret, engine-cert B1·B2). 없으면 human:secret은 대역(바로 ttl). */
+  secret?: IrPackage['secret'];
+  /** 발급 패키지 파일 고치기(시험이 고른 변형만, 시나리오에 적는다). */
+  patchIssue?: (files: PackageFiles) => void;
 }
 
 export interface Outcome {
@@ -105,11 +110,11 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
   const gm: GatePortMessage[] = [];
   const steps: string[] = [];
   try {
-    const { pkg, lookups } = loadReal(fx.origin, teetHost);
+    const { pkg, lookups } = loadReal(fx.origin, teetHost, sc.patchIssue);
     const base = fixturePortal(fx.origin);
     // 가짜 화면은 로드 뒤 renderDelayMs에 그린다. 조회 팝업 한 번에 1~2초라 verify 상한을 늘린다(fixture 허가 뒤에서만).
     const portal = { ...base, verify: { ...base.verify, maxMs: sc.verifyMaxMs ?? 25_000, intervalMs: 300 } };
-    const ir: IrPackage = { pkg, lookupPackages: lookups, fixtureGrant: fixtureOriginGrant(pkg), verifyTiming: { minElapsedMs: 600, lookups: 2, maxMs: sc.verifyMaxMs ?? 25_000 }, pdf: PDF };
+    const ir: IrPackage = { pkg, lookupPackages: lookups, fixtureGrant: fixtureOriginGrant(pkg), verifyTiming: { minElapsedMs: 600, lookups: 2, maxMs: sc.verifyMaxMs ?? 25_000 }, pdf: PDF, ...(sc.secret ? { secret: sc.secret } : {}) };
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', corpNo: null, repName: '김대표', bizType: null, bizItem: null, address: null, email: null, signMethod: sc.signMethod ?? 'cert' } as never);
     const email = sc.email === undefined ? 'tax@asangsa.example' : sc.email;
