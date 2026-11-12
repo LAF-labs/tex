@@ -188,6 +188,8 @@ const nowStep = (run) => runSteps(run).find((s) => s.state === 'now' || s.state 
 const line = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
 
 /** 초안 카드의 오늘 중복 한 줄(F-10). 승인 카드에서도 엔진 원장으로 다시 경고한다. */
+/** [홈택스에서 준비] 전 Chrome 사전 점검에서 Chrome이 없을 때(초안 카드). 엔진까지 가지 않았으므로 "보내지 않았어요". */
+export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준비할 수 있어요. Chrome을 설치한 뒤 [홈택스에서 준비]를 다시 눌러 주세요. 아직 아무것도 보내지 않았어요.';
 export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
 
 /** 발급 PDF가 이 PC에 없을 때(F-04): 결과 카드·실행 패널·문서함 패널이 같은 문구. */
@@ -258,6 +260,7 @@ export function taskCard(run, act) {
       // 품목은 거래처 저장 품목에서 왔으면 추정, 부가세는 고르지 않았으면 기본값(추정)
       const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
       card.append(
+        run.noChrome ? h('div', { 'data-no-chrome': '' }, note(NO_CHROME_TEXT, true)) : null,
         run.dupToday ? h('div', { 'data-dup-today': '' }, note(DUP_TODAY_TEXT, true)) : null,
         noItem ? note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true) : null,
         h(

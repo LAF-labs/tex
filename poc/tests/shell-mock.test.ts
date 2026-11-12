@@ -467,6 +467,21 @@ describe('셸 목업', () => {
     assert.ok(host.calls.some(([m, p]) => m === 'run.start' && (p as { email: unknown }).email === null), '이메일이 없으면 null(메일 칸은 비운다)');
   });
 
+  it('Chrome 사전 점검: 이 PC에 Chrome이 없으면 [홈택스에서 준비]는 엔진을 부르지 않고 초안 카드에 남는다. 설치하면 다음 준비에서 지운다', async () => {
+    let chrome = false;
+    const host = new FakeHost();
+    const runs = new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증', chromeReady: () => chrome });
+    const a = interpret('A상사에 21만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await assert.rejects(runs.prepare(a.run.id), /chrome\.not_installed/);
+    assert.deepEqual([runs.get(a.run.id)!.status, runs.get(a.run.id)!.noChrome], ['draft', true]);
+    assert.ok(!host.calls.some(([m]) => m === 'run.start' || m === 'run.begin'), '엔진·main 실행 기록을 부르지 않는다');
+    chrome = true;
+    await runs.prepare(a.run.id);
+    assert.deepEqual([runs.get(a.run.id)!.status, runs.get(a.run.id)!.noChrome], ['preparing', false]);
+    assert.ok(host.calls.some(([m]) => m === 'run.start'));
+  });
+
   it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {
     assert.deepEqual(Object.keys(REGATE_NOTE).sort(), ['date_changed', 'paused', 'value_changed']);
     for (const t of Object.values(REGATE_NOTE)) assert.ok(/새로 승인/.test(t) && !/세액 산정|절세|신고 대리|가산세/.test(t), t);
