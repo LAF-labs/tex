@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { acceptPolicy, decodeSxp, loadPackage, type LoadedPackage, type Policy } from '@sax/engine/core';
-import { POC_OVERRIDES, RegistrySync, memoryRegistryStore, trustRootsFromPin, type TrustPin } from '@sax/engine';
+import { RegistrySync, memoryRegistryStore, trustRootsFromPin, type TrustPin } from '@sax/engine';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import { Logger } from '../services/shared/src/index.ts';
 import { RESIGN_TTL, buildRegistryDeploy, logSigningKey, registryRouter, resignAll, MemoryStore, type TrustRoot } from '../services/registry/src/index.ts';
@@ -380,11 +380,10 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
     assert.equal(prod.s3.counts.put, puts);
   });
 
-  it('정책 초안: 엔진 스키마 통과, 홈택스 auto·나머지 postprocess, 홈택스 상한 = ADR-025 PoC 값, 같은 버전에 다른 내용·스키마 위반은 서명 전에 거부', async () => {
+  it('정책 초안: 엔진 스키마 통과, 홈택스 auto·나머지 postprocess, 같은 버전에 다른 내용·스키마 위반은 서명 전에 거부', async () => {
     const draft = JSON.parse(read(POLICY_PATH)) as Policy;
     assert.deepEqual(draft.portalMode, { hometax: 'auto', gov24: 'postprocess', wetax: 'postprocess', sminfo: 'postprocess', insure4: 'postprocess' });
     const L = draft.limits.hometax!;
-    assert.deepEqual([L.runsPerDayPerProfile, L.irreversiblePerDayPerProfile, L.loginsPerDay, draft.cooldown.positiveDetectionsForCooldown], [POC_OVERRIDES.runsPerDayPerProfile, POC_OVERRIDES.irreversiblePerDayPerProfile, POC_OVERRIDES.loginsPerDay, POC_OVERRIDES.positiveDetectionsForCooldown]);
     for (const k of ['monotonic', 'keyEpoch', 'issuedAt', 'expiresAt', 'timestamp', 'signatures']) assert.ok(!(k in draft), k);
     // 스키마 위반(홈택스 동시 실행 2)
     const bad = path.join(dir, 'policy-bad.json');

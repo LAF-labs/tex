@@ -283,13 +283,6 @@ export class Ledger {
     })();
   }
 
-  /** 이 상태들인 원장 행 수(PoC 전체 실발급 상한, ADR-025 결정 1). 날짜·재시작과 무관하다. */
-  countIrreversible(states: readonly LedgerState[]): number {
-    if (!states.length) return 0;
-    const r = this.db.prepare(`SELECT COUNT(*) AS n FROM irreversible_log WHERE state IN (${states.map(() => '?').join(',')})`).get(...states) as Row;
-    return Number(r.n);
-  }
-
   /** 재시작 시 armed·dispatched·observed_manual은 모두 in_doubt로 올린다(D03 §4). */
   promoteInDoubt(): number {
     return this.db.prepare(`UPDATE irreversible_log SET state = 'in_doubt' WHERE state IN ('armed','dispatched','observed_manual')`).run().changes;
