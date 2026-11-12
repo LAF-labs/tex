@@ -287,17 +287,22 @@ export function taskCard(run, act) {
   } else if (st === 'issuing') {
     card.append(line('발급하고 있어요. 홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.', true), now ? h('div', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null);
   } else if (st === 'turn' && run.handoff) {
-    // 핸드오프(D03 HandedOff): 두 버튼 모두 재개·확인으로만 가고 발급하지 않는다. 게이트 뒤면 중지는 없다(엔진이 거부).
-    card.dataset.handoff = '1';
+    // 사람 차례(D03 HandedOff, #278 셸 계약): 실행은 끝나지 않았다. 버튼은 재개·확인·중지로만 가고 발급하지 않는다.
+    // - 로그인: [이어서](재개) · [중지]
+    // - 서명: 완료 창이 보이면 엔진이 스스로 넘어간다. [다 했어요]는 보조, [직접 발급함]은 없다(엔진 sign.turn_resume_only). [중지]는 발급목록 확인 뒤 끝난다.
+    // - 그 밖: [다 했어요] · [직접 발급함] · [중지]
+    const kind = run.handoff.kind ?? 'other';
+    card.dataset.handoff = kind;
     card.append(
       note(run.turn.text, true, run.turn.note),
       h(
         'div',
         { class: 'sx-actions' },
-        btn('다 했어요', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }),
-        btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }),
-        run.handoff.afterGate ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
+        kind === 'login' ? btn('이어서', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }) : btn('다 했어요', () => act.resume(run.id), kind === 'sign' ? '' : 'sx-btn-primary', { 'data-act': 'resume' }),
+        kind === 'other' ? btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }) : null,
+        btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
       ),
+      kind === 'sign' ? h('div', { class: 'sx-meta', 'data-sign-wait': '' }, '서명을 마치면 앱이 발급목록을 확인해요. 그동안 다시 발급하지 않아요.') : null,
     );
   } else if (st === 'turn') {
     card.append(note(run.turn.text, false, run.turn.note, 'phone'));
@@ -432,7 +437,8 @@ export function runPanel(run, act) {
           ? `초안 · ${guessed.length ? `추정 값 ${guessed.length}개 · ` : ''}아직 아무것도 보내지 않았어요`
           : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
   // 작업 패널의 [중지](T-04). 발급 전에만 있다. 승인은 여기에도 없다.
-  const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && run.steps[4].state !== 'done');
+  // 사람 차례면 게이트 뒤(서명 차례)여도 [중지]를 받는다(#278): 서명 차례는 발급목록 확인 뒤 끝난다.
+  const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && (!!run.handoff || run.steps[4].state !== 'done'));
   return h(
     'div',
     { class: 'panel-in', 'data-panel-run': run.id },
