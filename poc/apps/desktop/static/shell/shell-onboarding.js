@@ -1,5 +1,5 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. ①에 동의하면 main이 금고 등록 창(T-06)을 연다.
+// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 발급 인증은 발급할 때 사람이 홈택스 창에서 직접 마친다.
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, kv, note } from './shell-views.js';
 
@@ -18,12 +18,12 @@ const Q = {
   first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
 };
 
-/** O-03 수단마다 앱이 맡는 정도 한 줄(08 §4). */
+/** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
-  ['card', '보안카드', '한 번 등록하면 발급 때마다 앱이 알아서 입력해요.'],
-  ['simple', '사업자 간편인증', '카카오뱅크·IBK·KB 앱에서 발급할 때마다 승인해요.'],
-  ['cert', '공동인증서', '비밀번호는 매번 직접 입력해요. 이 PC에서 찾은 인증서에서 골라요.'],
-  ['fincert', '금융인증서', '6자리 비밀번호를 매번 직접 입력해요.'],
+  ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
+  ['cert', '공동인증서', '발급할 때마다 인증서 비밀번호를 직접 넣어요. 이 PC에서 찾은 인증서에서 골라요.'],
+  ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
@@ -118,7 +118,7 @@ function stepCard(o, act) {
         row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
       );
     case 'summary':
-      return summaryCard(o, reply, act);
+      return summaryCard(o, reply);
     case 'first':
       return h(
         'div',
@@ -269,7 +269,7 @@ function authCard(o, u, reply, act) {
         : p('이 PC에서 공동인증서를 찾지 못했어요. 다른 수단을 고르거나 인증서를 옮긴 뒤 다시 해 주세요.', true),
     );
   const explain = o.explain
-    ? note('보안카드는 한 번 등록하면 앱이 입력해요. 간편인증은 매번 폰 앱에서 승인해요. 공동·금융인증서는 비밀번호를 매번 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요. 공동인증서를 쓰면 따로 등록할 것이 없어요.` : null)
+    ? note('어느 인증이든 발급할 때마다 홈택스 창에서 직접 마쳐요. 간편인증은 휴대폰에서 승인하고, 공동·금융인증서는 인증서 비밀번호를, 보안카드는 보안카드 번호를 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요.` : null)
     : null;
   return h(
     'section',
@@ -299,7 +299,7 @@ function tasksCard(o, u, reply, act) {
   );
 }
 
-function summaryCard(o, reply, act) {
+function summaryCard(o, reply) {
   const b = o.biz;
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
@@ -321,6 +321,6 @@ function summaryCard(o, reply, act) {
       h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
-    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' }), btn('보관 위치 바꾸기', () => act.toast('보관 위치는 설정에서 바꿔요(준비 중)'), 'sx-btn-quiet', { 'data-onb': 'storage' })),
+    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),
   );
 }

@@ -70,11 +70,8 @@ describe('활동 기록 줄 = 실제 송신', () => {
     const shell = src('apps/desktop/static/shell/shell.js');
     const viewsSrc = src('apps/desktop/static/shell/shell-views.js');
     for (const s of [shell, viewsSrc]) assert.doesNotMatch(s, /modelRow\([^)]*interp\)/);
-    // 고정 "보낸 것 없음" 줄은 지난 기록 견본(row.past) 한 곳뿐이다. 이번 실행 줄은 serverRow(sent)로만.
-    assert.equal(viewsSrc.match(/\['우리 서버', '보낸 것 없음'\]/g), null);
-    const fixed = [...shell.matchAll(/\['우리 서버', '보낸 것 없음'\]/g)];
-    assert.equal(fixed.length, 1);
-    assert.ok(shell.lastIndexOf('row.past', fixed[0].index) > shell.lastIndexOf('serverRow(row.g24.sent)', fixed[0].index));
+    // 고정 "보낸 것 없음" 줄은 없다. 이번 실행 줄은 serverRow(sent)로만, 지난 실행(row.past)은 보낸 곳을 남기지 않아 줄을 두지 않는다.
+    for (const s of [shell, viewsSrc]) assert.equal(s.match(/\['우리 서버', '보낸 것 없음'\]/g), null);
     assert.ok(shell.includes('serverRow(r.sent)') && shell.includes('serverRow(row.g24.sent)'));
     assert.doesNotMatch(shell, /interp\) === 'model' \? h\('td', \{\}, 'OpenRouter/);
   });

@@ -27,7 +27,7 @@ describe('퍼징 시드: 표(xlsx·CSV)', () => {
       const bytes = await seed.bytes();
       if ('reject' in seed.expect) {
         const got = await readSheetBytes(bytes).then(() => 'ok', code);
-        // 머리로 거르는 형식(xls·HTML·UTF-16)은 parse 입구에서 unsupported_format
+        // 머리로 거르는 형식(표 없는 HTML·UTF-16)은 parse 입구에서 unsupported_format
         const viaParse = await parse(bytes, 'settlement', hostNoDecode).then(() => 'ok', code);
         assert.ok(seed.expect.reject.includes(got) || seed.expect.reject.includes(viaParse), `${got} / ${viaParse}`);
         assert.notEqual(viaParse, 'ok');

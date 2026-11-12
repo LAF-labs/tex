@@ -114,13 +114,11 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     // 저장된 상태도 다시 읽힌다
     assert.ok(parseOnbState(JSON.parse(JSON.stringify(flow.state))));
   });
-  it('인증만: O-03 → 보안카드면 ① 위임 → 요약으로', async () => {
+  it('인증만: O-03 → 보안카드도 바로 요약으로(① 위임 없음)', async () => {
     const { flow } = await skippedBoth();
     await flow.reopen('auth');
     assert.equal(flow.state.step, 'auth');
     await flow.answer({ step: 'auth', choice: 'card' });
-    assert.equal(flow.state.step, 'delegation');
-    await flow.answer({ step: 'delegation', choice: 'agree' });
     assert.equal(flow.state.step, 'summary');
   });
   it('다시 연 단계에서 또 [나중에]면 끝으로 돌아간다(할 일은 남는다)', async () => {

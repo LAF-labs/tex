@@ -7,6 +7,7 @@
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
 import type { WebFrameMain } from 'electron';
+import { BANK_SHELL_METHODS } from './bank-ipc.ts';
 import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
 
 export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
@@ -122,7 +123,6 @@ export const SHELL_METHODS = {
   },
   // [등록증으로 채우기](M4-3 O-05): 파일 고르기 → 후보(상호·번호·대표자). 인자 없음.
   'counterparty.readCert': {},
-  'auth.setDefault': { kind: { t: 'enum', of: ['simple', 'cert', 'card'], required: true } },
   'g24.candidates': { doc: G24_DOC, startedAt: { t: 'number', required: true } },
   'g24.save': { id: ID, doc: G24_DOC },
   'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },
@@ -152,6 +152,8 @@ export const SHELL_METHODS = {
   'profile.edit': { fields: { t: 'object', required: true, fields: ONB_ANSWER.fields.fields }, confirmUnverified: { t: 'boolean' } },
   // 내 사업장 [파일에서 읽기]: 등록증 파일 고르기 → 칸 후보. 인자 없음.
   'profile.readCert': {},
+  // 받을 돈(09 D-09, bank-ipc.ts). 파일 고르기 둘(bank.pickStatement·pickInvoices)은 실제 입력 뒤에만.
+  ...BANK_SHELL_METHODS,
 } as const satisfies Record<string, MethodSpec>;
 
 export type ShellMethod = keyof typeof SHELL_METHODS;
@@ -162,7 +164,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'run.showBrowser': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'run.showBrowser': 3_000, 'incident.open': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 

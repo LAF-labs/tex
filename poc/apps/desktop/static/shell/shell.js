@@ -4,6 +4,7 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
+import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
@@ -105,15 +106,6 @@ const act = {
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
   // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
   openRunDoc: (run, reveal = false) => runDoc(run).then((d) => (d ? (reveal ? act.revealDoc(d.id) : act.openDoc(d.id)) : toast(NO_FILE_TEXT))),
-  setAuth: async (kind) => {
-    try {
-      state.boot.profiles = (await call('auth.setDefault', { kind })).profiles;
-      render();
-      toast('기본 인증을 바꿨어요. 다음 발급부터 적용돼요');
-    } catch (e) {
-      toast(human(e));
-    }
-  },
   supplier: () => state.boot.profiles.business.name,
   open: (id) => openPanel({ kind: 'run', id }),
   openG24: (id) => openPanel({ kind: 'g24', id }),
@@ -271,6 +263,8 @@ const RAIL = [
   ['chat', '대화', 'chat'],
   ['docs', '문서함', 'docs'],
   ['cps', '거래처', 'cps'],
+  // 받을 돈(09 D-09): 사업자 프로필만
+  ['bank', '받을 돈', 'money', () => state.profile === 'business'],
   ['biz', '내 사업장', 'biz'],
   ['bundle', '세무사 꾸러미', 'bundle'],
   // 급여대장(D-06)은 켠 사장님만 보인다(ADR-034 결정 8, 설정 payroll.enabled 기본 끔). 켜는 곳은 설정(M4-4).
@@ -278,7 +272,7 @@ const RAIL = [
   ['activity', '활동 기록', 'activity'],
 ];
 
-/** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시 · 검색 · 금고·폰 상태. 창 단추는 Windows 창 틀이 그린다. */
+/** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시. 창 단추는 Windows 창 틀이 그린다. */
 function renderTitlebar() {
   const p = state.boot.profiles;
   const cur = p[state.profile];
@@ -300,20 +294,8 @@ function renderTitlebar() {
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
-    h('button', { type: 'button', class: 'sx-search', onclick: openSearch }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, isMac() ? '⌘K' : 'Ctrl K')),
-    h(
-      'div',
-      { class: 'tb-status' },
-      h('span', {}, icon('lock'), '금고 열림'),
-      h('span', {}, icon('phone'), '폰 연결 안 됨'),
-    ),
   );
 }
-
-/** macOS는 ⌘, 그 밖은 Ctrl(검색 단축키 표시·처리가 같은 판정을 쓴다). */
-const isMac = () => state.boot?.platform === 'darwin';
-/** 검색은 아직 없다. 버튼과 단축키(⌘K / Ctrl+K)가 같은 안내를 띄운다. */
-const openSearch = () => toast('검색은 곧 지원해요');
 
 function toggleMenu(open = !state.menu) {
   if (state.menu === open) return;
@@ -1045,6 +1027,8 @@ function cpPanel(c) {
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
       btn('상태 다시 확인', () => toast('국세청 상태 다시 확인은 곧 지원해요'), 'sx-btn-quiet'),
     ),
+    // 받을 돈(09 §3.6): 거래처 계좌(여러 개)·입금자 이름·결제 조건. 사업자 프로필만
+    state.profile === 'business' ? bankUi.cpSection(c) : null,
     h('div', { class: 'sx-source' }, '거래처 장부 · 이 PC에만 있어요'),
   );
 }
@@ -1202,7 +1186,15 @@ function bizView() {
   );
 }
 
-/** 활동 기록 행: 이번 실행(세금계산서·정부24) + 타임라인의 지난 기록. 새것이 위. */
+/** 지난 실행 종류(main run-history.ts PastKind) → 칩 상태와 결과 칸 글자. */
+const PAST = {
+  issued: { status: 'done', result: '완료', hometax: '전자세금계산서 1건 발급 · 발급목록에서 확인' },
+  unsure: { status: 'attention', result: '확인 필요', hometax: '발급됐는지 확인하지 못함' },
+  not_issued: { status: 'stopped', result: '발급 안 함', hometax: '발급하지 않음' },
+  stopped_before_gate: { status: 'stopped', result: '승인 전에 멈춤', hometax: '발급하지 않음(승인 전에 앱이 꺼짐)' },
+};
+
+/** 활동 기록 행: 이번 기동의 실행(세금계산서·정부24)·사업장 수정 + 지난 실행(main이 준 이력). 새것이 위. 같은 실행은 이번 기동 메모리 쪽이 이긴다. */
 function activityRows() {
   const today = `${String(state.today.getMonth() + 1).padStart(2, '0')}-${String(state.today.getDate()).padStart(2, '0')}`;
   const rows = [];
@@ -1221,18 +1213,11 @@ function activityRows() {
     const at = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     rows.push({ id: `edit-${i}`, edit: e, at, what: `내 사업장 수정 · ${e.fields.map((f) => LABEL[f] ?? f).join('·')}`, profile: '사업자', portal: '이 PC', status: 'done', result: '저장함' });
   }
-  // 시연 씨앗이 있으면 지난 발급 이력(최근 순, 상태가 섞여 있다), 없으면 타임라인의 지난 카드
-  if (state.boot.history)
-    return [...rows, ...state.boot.history.map((it) => ({ id: `past-${it.id}`, past: it, at: `${shortDate(it.date)} ${it.time}`, what: `${it.title} · ${it.who}`, profile: '사업자', portal: '홈택스', status: it.status, result: CHIP[it.status][0] }))];
-  let day = null;
-  let time = '';
-  const past = [];
-  for (const it of state.boot.timeline) {
-    if (it.type === 'day') day = it.date;
-    else if (it.type === 'me') time = it.time ?? '';
-    else if (it.type === 'past') past.push({ id: `past-${it.approvalNo}`, past: it, at: `${shortDate(day)} ${time}`.trim(), what: `${it.title} · ${it.who}`, profile: '사업자', portal: '홈택스', status: 'done', result: '완료' });
+  for (const p of state.boot.past ?? []) {
+    if (state.runs.has(p.runId)) continue;
+    rows.push({ id: `past-${p.runId}`, past: p, at: p.day ? `${shortDate(p.day)} ${p.time}` : '시각 모름', what: `세금계산서 · ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
   }
-  return [...rows, ...past.reverse()];
+  return rows;
 }
 
 function activityView() {
@@ -1253,7 +1238,8 @@ function activityView() {
               h('td', {}, r.profile),
               h('td', {}, r.portal),
               h('td', { class: r.status === 'attention' ? 'is-attention' : r.status === 'stopped' ? 'is-muted' : null }, r.result),
-              modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, '안 함'),
+              // 지난 실행은 무엇을 보냈는지 남기지 않았다(모른다). "안 함"으로 단정하지 않는다.
+              modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, r.past ? '—' : '안 함'),
             ),
           ),
         )
@@ -1283,10 +1269,9 @@ function activityPanel(row) {
           ]
         : row.past
         ? [
-            ['홈택스', row.past.status === 'stopped' ? '발급하지 않음(승인 전에 중지)' : '전자세금계산서 1건 발급 · 발급목록에서 확인'],
-            ['메일', row.past.status === 'stopped' ? '보내지 않음' : `${row.past.mail} · 홈택스가 보냄${row.past.status === 'attention' ? ', 메일발송목록에서 확인하지 못함' : ''}`],
-            ['모델', '쓰지 않음'],
-            ['우리 서버', '보낸 것 없음'],
+            // 지난 실행은 메일·모델·우리 서버로 무엇이 갔는지 남기지 않았다. 아는 것만 적는다.
+            ['홈택스', PAST[row.past.kind].hometax],
+            row.past.documentId ? ['보관', '이 PC 문서함'] : null,
           ]
         : [
             // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
@@ -1297,25 +1282,32 @@ function activityPanel(row) {
   return h(
     'div',
     { class: 'panel-in', 'data-panel-act': row.id },
-    panelHead(row.what, chip(row.status)),
+    // 지난 실행은 칩도 표의 결과 칸과 같은 말(승인 전에 멈춤·발급 안 함…)
+    panelHead(row.what, chip(row.status, row.past ? row.result : undefined)),
     kv([
       ['시각', row.at],
       ['프로필', row.profile === '사업자' ? `사업자 · ${state.boot.profiles.business.name}` : `개인 · ${state.boot.profiles.personal.name}`],
       ['포털', row.portal],
-      r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past ? ['승인번호', row.past.approvalNo ?? '—', { mono: true }] : null,
-      row.past ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
+      r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
+      row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
     ]),
     r?.stoppedNote ? note(r.stoppedNote, r.status === 'attention') : null,
-    row.past?.status === 'attention' ? note('홈택스 메일발송목록에서 이 건의 메일을 확인하지 못했어요. 거래처에 받았는지 확인해 주세요.', true) : null,
+    row.past?.note ? note(row.past.note, row.past.kind === 'unsure') : null,
+    row.past?.kind === 'issued'
+      ? row.past.documentId
+        ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(row.past.documentId), '', { 'data-act': 'past-pdf' }))
+        : note(NO_FILE_TEXT)
+      : null,
     h('div', { class: 'sx-panel-sec' }, '어디로 무엇이 갔나요'),
     kv(where, true),
     r ? [h('div', { class: 'sx-panel-sec' }, '실행 단계'), steps(runSteps(r))] : null,
   );
 }
 
-const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터'];
-/** 설정 항목 중 실제로 열리는 것(나머지는 목업). */
-const SETTINGS_TAB = { 0: 'auth', 4: 'devices' };
+const SETTINGS_TABS = [
+  ['auth', '발급 인증'],
+  ['devices', '기기 연결'],
+];
 
 function setTab(tab) {
   state.setTab = tab;
@@ -1485,30 +1477,32 @@ setInterval(() => {
   const sec = Math.max(0, Math.round((at - Date.now()) / 1000));
   el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }, 1000);
-// 프로필 인증 문자열(shell-app SIGN: 사업자 간편인증·공동·금융인증서·보안카드·발급 인증 미설정)을 종류로 묶는다.
-const AUTH_KIND = [
-  ['simple', /^사업자 간편인증/, '발급할 때마다 폰에서 승인해요'],
-  ['card', /^보안카드/, '번호 30개 등록됨 · 앱이 알아서 입력해요 · 홈택스 아이디 로그인'],
-  ['cert', /^(공동|금융|공동·금융)인증서/, '비밀번호는 발급할 때마다 직접 입력해요'],
-];
-const authKind = (name) => AUTH_KIND.find(([, re]) => re.test(name));
+// 프로필 인증 라벨(shell-model SIGN_LABEL)별 발급 때 사람이 하는 일(shell-runs SIGN_BY_AUTH와 같은 사실).
+const AUTH_DESC = {
+  '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
+  '공동·금융인증서': '발급할 때마다 인증서 비밀번호를 직접 넣어요',
+  보안카드: '발급할 때마다 보안카드 번호를 직접 넣어요',
+};
 
-/** 등록한 발급 인증(캔버스 S-02). 기본은 프로필의 인증이고, 나머지 줄은 데모 목업이다(엔진·금고에는 하나만 있다). 미설정이면 기본 줄이 없다. */
-function authList() {
-  const b = state.boot.profiles.business;
-  const main = authKind(b.auth) ? { name: b.auth.replace(/\s*\(([^)]+)\)$/, ' · $1'), kind: authKind(b.auth)[0], main: true } : null;
-  const extra = [
-    { name: '사업자 간편인증 · 카카오뱅크', kind: 'simple' },
-    { name: '보안카드', kind: 'card', reRegister: true },
-    { name: `공동인증서 · ${b.name}`, kind: 'cert' },
-  ].filter((x) => x.kind !== main?.kind);
-  return [main, ...extra].filter(Boolean).map((x) => ({ ...x, desc: AUTH_KIND.find(([k]) => k === x.kind)[2] }));
+/** 발급 인증(캔버스 S-02): 사업자 프로필의 인증 하나. 바꾸기는 내 사업장과 같은 온보딩 다시 열기. */
+function authCard() {
+  const auth = state.boot.profiles.business.auth;
+  const desc = AUTH_DESC[auth];
+  const canChange = state.boot.authReopen;
+  return [
+    h(
+      'div',
+      { class: 'sx-card auth-row', 'data-auth-card': '' },
+      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
+      canChange ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
+    ),
+    // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
+    canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
+  ];
 }
 
-/** 설정(캔버스 S-02 · 발급 인증). 이 데모는 보여 주기만 하고 바꾸지 않는다. */
+/** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
 function settingsView() {
-  const mock = () => toast('이 설정은 곧 바꿀 수 있어요');
-  const small = (label, quiet) => h('button', { type: 'button', class: `auth-act${quiet ? ' is-quiet' : ''}`, onclick: mock }, label);
   return h(
     'section',
     { class: 'rail-screen settings', 'data-view': 'settings' },
@@ -1516,43 +1510,14 @@ function settingsView() {
       'nav',
       { class: 'set-nav', 'aria-label': '설정 항목' },
       h('h1', { class: 'title-screen' }, '설정'),
-      SETTINGS_NAV.map((t, i) => {
-        const tab = SETTINGS_TAB[i];
+      SETTINGS_TABS.map(([tab, label]) => {
         const on = tab === state.setTab;
-        return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab ?? null, onclick: tab ? () => setTab(tab) : mock }, t);
+        return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab, onclick: () => setTab(tab) }, label);
       }),
     ),
     state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
-      : h(
-      'div',
-      { class: 'set-body' },
-      waitingChip(),
-      h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서와 증명서를 발급할 때 쓰는 인증이에요. 여러 개를 등록해 둘 수 있고, 발급에는 기본 인증을 써요.')),
-      h(
-        'div',
-        { class: 'sx-card auth-list', 'data-auth-list': '' },
-        authList().map((a) =>
-          h(
-            'div',
-            { class: 'auth-row', 'data-auth-main': a.main ? '' : null },
-            h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, a.name), h('span', { class: 'sx-meta' }, a.desc)),
-            a.main ? h('span', { class: 'sx-chip is-done' }, '기본') : h('button', { type: 'button', class: 'auth-act', 'data-auth-set': a.kind, onclick: () => act.setAuth(a.kind) }, '기본으로'),
-            a.reRegister ? small('다시 등록', true) : null,
-            small('삭제', true),
-          ),
-        ),
-      ),
-      h('div', { class: 'sx-actions' }, btn([icon('plus'), '인증 추가'], mock), h('span', { class: 'sx-meta' }, '사업자 간편인증(다른 은행 앱)·보안카드·공동인증서·금융인증서를 더할 수 있어요')),
-      h('p', { class: 'sx-meta' }, state.boot.sample ? '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 기본 바꾸기는 이 데모 DB에만 반영돼요. 추가·다시 등록·삭제는 목업이에요.' : '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 인증 추가·다시 등록·삭제는 곧 지원해요.'),
-      h('div', { class: 'rule' }),
-      h(
-        'label',
-        { class: 'set-check' },
-        h('input', { type: 'checkbox', disabled: true }),
-        h('span', { class: 'opt-main' }, h('span', { class: 'set-check-title' }, '발급 전에 Windows Hello로 한 번 더 확인'), h('span', { class: 'sx-meta' }, '[승인하고 발급]을 누른 뒤 지문이나 PIN을 한 번 더 받아요. 기본은 꺼짐이에요. 아직 켤 수 없어요.')),
-      ),
-    ),
+      : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }
 
@@ -1566,7 +1531,9 @@ const laterView = (v) => () => {
   const [title, id, text] = LATER[v];
   return h('section', { class: 'rail-screen', 'data-view': v, 'data-screen': id }, h('div', { class: 'rs-col' }, railHead(title, '준비 중'), h('article', { class: 'sx-card later-card' }, h('p', { class: 'sx-body-sm is-muted' }, text))));
 };
-const VIEWS = { docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
+// 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
+const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null });
+const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
   if (state.view === v && v !== 'docs') return;
@@ -1575,6 +1542,10 @@ async function go(v) {
   const own = { chat: ['run', 'g24'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
   if (v === 'cps') state.cps = await call('counterparties.list');
+  if (v === 'bank') {
+    state.cps = await call('counterparties.list');
+    await bankUi.load();
+  }
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
     const rev = state.docsRev;
@@ -1940,12 +1911,6 @@ window.sax.onEvent((ev) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  // 검색 단축키: macOS ⌘K, 그 밖 Ctrl+K(제목줄 표시와 같다)
-  if ((e.key === 'k' || e.key === 'K') && (isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && state.boot) {
-    e.preventDefault();
-    openSearch();
-    return;
-  }
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
     else cancelPassword();

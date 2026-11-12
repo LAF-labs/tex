@@ -260,8 +260,6 @@ describe('온보딩 상태 맞추기(syncBiz)와 발급 인증 바꾸기(reopen 
     const { ports, flow } = await onboarded(false);
     const saves = ports.profiles.length;
     await flow.reopen('auth');
-    await flow.answer({ step: 'auth', choice: 'card' });
-    await flow.answer({ step: 'delegation', choice: 'switch' });
     await flow.answer({ step: 'auth', choice: 'later' });
     assert.equal(flow.state.step, 'done');
     assert.equal(flow.state.auth, 'simple');

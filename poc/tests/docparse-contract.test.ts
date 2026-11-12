@@ -67,7 +67,8 @@ describe('parse(bytes, kind) 계약', () => {
     const err = (p: Promise<unknown>) => p.then(() => 'ok', (e: DocparseError) => `${e.code}${e.detail ? `:${e.detail}` : ''}`);
     assert.equal(await err(parse(await deliveryXlsx().bytes, 'receipt', host())), 'wrong_kind:xlsx');
     assert.equal(await err(parse(JPEG, 'settlement', host())), 'wrong_kind:jpeg');
-    assert.equal(await err(parse(new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0]), 'settlement', host())), 'unsupported_format:xls_or_encrypted_ooxml');
+    assert.equal(await err(parse(new TextEncoder().encode('<html><body>표 없음</body></html>'), 'settlement', host())), 'unsupported_format:html');
+    assert.equal(await err(parse(new TextEncoder().encode('<table><tr><td>a</td></tr></table>'), 'receipt', host())), 'wrong_kind:html');
     assert.equal(await err(parse(new TextEncoder().encode('메모\n아무것도'), 'settlement', host())), 'format_not_recognized');
   });
 

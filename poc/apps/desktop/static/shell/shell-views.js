@@ -39,6 +39,7 @@ const ICONS = {
   eye: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z'],
   eyeOff: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z', 'M2.5 2.5l11 11'],
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
+  money: [20, 'M2.5 5.5h15v9h-15z', 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M5 8v4M15 8v4'],
   pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
 };
 export function icon(name) {
@@ -97,7 +98,8 @@ export const CHIP = {
   stopped: ['중지됨', 'is-stopped'],
   attention: ['확인 필요', 'is-attention'],
 };
-export const chip = (status) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, CHIP[status][0]);
+/** 상태 칩. label을 주면 색은 상태대로, 글자는 label(지난 실행처럼 표와 같은 말을 써야 할 때). */
+export const chip = (status, label) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, label ?? CHIP[status][0]);
 
 /** 발급 뒤 발급목록을 조회하는 중(발급 · 조회로 확정 묶음의 '발급목록 확인' 단계가 지금). 칩은 '확인 중'이다(08 §11). */
 export const verifying = (run) => run.status === 'issuing' && run.steps[6]?.state === 'now';
