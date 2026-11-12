@@ -87,6 +87,7 @@ async function main() {
   check('② [동의하고 계속] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=agree]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
 
   // O-04·O-05
+  check('③ 사용 기록 카드는 없는 설정을 가리키지 않는다', !(await js<string>(`document.querySelector('[data-consent="consent.telemetry"]').innerText`)).includes('설정에서'));
   await reply('[data-onb=off]', 'tasks');
   await press('[data-task=H-02]');
   check('곧 되는 일(회색 칩)은 고를 수 없고 "지원되면 알려 드릴게요"', await js<boolean>(`document.querySelector('#toast').textContent.includes('지원되면') && document.querySelector('[data-onb=submit]').disabled`));
@@ -96,6 +97,7 @@ async function main() {
 
   // O-06
   check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드 · 금고에 등록함') && t.includes('세금계산서 발급·메일 전송, 사업자등록증명') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
+  check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·보안카드)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'security_card'))));
   // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
   {
@@ -120,6 +122,12 @@ async function main() {
   await sleep(30);
   check('온보딩이 끝난 뒤 답은 받지 않는다(실제 입력이 있어도 onboarding_done)', (await callErr('onboarding.reply', { step: 'first', choice: 'try' })) === 'onboarding_done');
   check('끝까지 비밀 입력 칸 없음', await noPasswordInputs());
+
+  // 설정 > 발급 인증 [바꾸기]는 내 사업장과 같은 온보딩 다시 열기다(onboarding.reopen auth).
+  await press('[data-view=settings]');
+  check('설정 > 발급 인증: 고른 인증 한 줄과 [바꾸기]', await until('settings auth', async () => js<boolean>(`(() => { const c = document.querySelector('[data-auth-card]'); return !!c && c.innerText.includes('보안카드') && !!c.querySelector('[data-act=auth-reopen]'); })()`)));
+  await press('[data-act=auth-reopen]');
+  check('설정 [바꾸기] → 대화로 돌아가 O-03 발급 인증 질문이 다시 열린다', await until('reopen auth', async () => (await js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`)) === 'auth' && (await js<boolean>(`!!document.querySelector('[data-view=chat].is-on')`))));
 
   await fs.mkdir(path.join(OUT, 'm4-2'), { recursive: true });
   await fs.writeFile(path.join(OUT, 'm4-2', 'onboarding-done.png'), (await S.win.webContents.capturePage()).toPNG());
