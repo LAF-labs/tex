@@ -167,6 +167,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
     },
   });
+  // 지난 실행이 고르기 대기·조회 중에 꺼졌으면 CODEF에 남은 계정을 지운다(못 지우면 적힌 채로 다음 연결·최신화·해제 때)
+  if (codef.status().cleanupPending) void codef.sweep().catch(() => undefined);
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');

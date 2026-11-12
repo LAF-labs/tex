@@ -4,8 +4,10 @@
 // (일회성 조회는 빠른조회 상품뿐). 그래서 **조회할 때마다 만들고 → 조회 → 바로 지운다**(임시 connectedId). CODEF에 인증서가 남는 시간은 한 번의 조회 동안뿐이다.
 // - 연결: 금고 창 비밀번호 → 계정 등록 → 보유계좌 → (사장님이 계좌 고름) → 첫 조회 → 계정 삭제. 고르지 않고 10분이 지나거나 취소하면 지운다.
 // - [최신화]: 금고(기억해 둔 비밀번호가 있으면 그것, 없으면 창) → 계정 등록 → 거래내역 → 계정 삭제.
-// - 지우기가 실패하면(네트워크) connectedId를 PC에 적어 두고 다음 조회·[연결 해제] 때 다시 지운다.
+// - 만든 connectedId는 쓰기 전에 PC DB(orphans)에 먼저 적고, 지우면 뺀다. 지우기가 실패하거나 그 사이 앱이 꺼지면 적힌 채로 남아
+//   다음 실행의 sweep·연결·조회·[연결 해제] 때 다시 지운다.
 // - [연결 해제]: 남은 connectedId 삭제 + 기억해 둔 비밀번호 삭제 + 연결 상태 삭제. 가져온 거래 줄은 사장님 데이터라 그대로 둔다.
+//   그날 비밀번호 틀림 상한(하루 3회·은행 잠김)은 풀지 않는다(해제→재연결로 더 보내지 않게).
 // 화면·로그·이벤트에는 계좌번호 끝 4자리·이름·건수만 간다(전체 번호·비밀번호·인증서·토큰·connectedId 없음).
 import type { CodefClient, CodefAccount, CodefTxn } from './client.ts';
 import { CODEF_BANKS, CodefError, isCodefBank, type CodefBankCode, type CodefClientType, type CodefFailure } from './codes.ts';
@@ -174,9 +176,10 @@ export class CodefLink {
   }
 
   status(): Record<string, unknown> {
-    const { link, orphans } = this.o.store.get();
+    const { link } = this.o.store.get();
     const callsLeft = Math.max(0, (this.o.dailyCalls ?? CODEF_DAILY_CALLS) - this.budget().calls);
-    if (!link) return { connected: false, cleanupPending: orphans.length, callsLeft };
+    const cleanupPending = this.stale().length;
+    if (!link) return { connected: false, cleanupPending, callsLeft };
     return {
       connected: true,
       bank: link.bank,
@@ -189,7 +192,7 @@ export class CodefLink {
       connectedAt: link.connectedAt,
       lastSyncAt: link.lastSyncAt,
       lastNew: link.lastNew,
-      cleanupPending: orphans.length,
+      cleanupPending,
       callsLeft,
     };
   }
@@ -224,6 +227,8 @@ export class CodefLink {
     this.emit({ phase: 'connecting' });
     try {
       const id = await this.o.client.createAccount(bank, clientType, { derFile: s.derFile, keyFile: s.keyFile, password: s.password });
+      // 쓰기 전에 PC DB에 먼저 적는다. 지우면 빠지고, 앱이 그 사이 꺼지면 다음 실행의 sweep이 지운다
+      this.save({ orphans: [...this.o.store.get().orphans, { connectedId: id, bank, clientType }] });
       const b = this.budget();
       if (b.pwFails[certId]) {
         delete b.pwFails[certId];
@@ -257,9 +262,21 @@ export class CodefLink {
     this.save({ orphans: [...keep, ...left] });
   }
 
+  private stale(): Orphan[] {
+    return this.o.store.get().orphans.filter((x) => x.connectedId !== this.pending?.connectedId);
+  }
+
   private async releaseOrphans(): Promise<void> {
-    const { orphans } = this.o.store.get();
-    if (orphans.length) await this.release(orphans).catch(() => undefined);
+    const stale = this.stale();
+    if (stale.length) await this.release(stale).catch(() => undefined);
+  }
+
+  /** 앱이 켜질 때: 지난 실행이 남긴 connectedId를 지운다(실패하면 적힌 채로 다음에) */
+  sweep(): Promise<{ cleanupPending: number }> {
+    return this.exclusive(async () => {
+      await this.releaseOrphans();
+      return { cleanupPending: this.stale().length };
+    });
   }
 
   private dropPending(): Pending | null {
@@ -276,8 +293,7 @@ export class CodefLink {
     const clientType: CodefClientType = p.clientType === 'P' ? 'P' : 'B';
     if (!CERT_ID_RE.test(certId) || !isCodefBank(bank)) return Promise.reject(new Error('bad_params'));
     return this.exclusive(async () => {
-      const old = this.dropPending();
-      if (old) await this.release([{ connectedId: old.connectedId, bank: old.bank, clientType: old.clientType }]);
+      this.dropPending();
       await this.releaseOrphans();
       const connectedId = await this.register(certId, bank, clientType, 'ask');
       let accounts: CodefAccount[];
@@ -316,11 +332,11 @@ export class CodefLink {
       const idx = /^a(\d{1,3})$/.exec(String(p.key ?? ''));
       const acct = idx ? pend.accounts[Number(idx[1])] : undefined;
       if (!acct) throw new Error('bad_params');
-      const sink = this.o.sink();
-      if (!sink) throw new CodefError('bank_not_ready');
       this.dropPending();
       const orphan: Orphan = { connectedId: pend.connectedId, bank: pend.bank, clientType: pend.clientType };
       try {
+        const sink = this.o.sink();
+        if (!sink) throw new CodefError('bank_not_ready');
         const alias = typeof p.alias === 'string' && p.alias.trim() ? p.alias.trim().slice(0, 40) : acct.name || null;
         const { accountId, profileId } = await sink.ensureAccount({ bank: CODEF_BANKS[pend.bank], number: acct.number, alias });
         const link: LinkState = {
@@ -412,15 +428,12 @@ export class CodefLink {
   /** [연결 해제] = 남은 CODEF 계정 삭제 + 기억해 둔 비밀번호 삭제 + 연결 상태 삭제 */
   disconnect(): Promise<{ disconnected: boolean; cleanupPending: number }> {
     return this.exclusive(async () => {
-      const p = this.dropPending();
+      this.dropPending();
       const { link, orphans } = this.o.store.get();
-      const all = [...orphans, ...(p ? [{ connectedId: p.connectedId, bank: p.bank, clientType: p.clientType }] : [])];
-      if (all.length) await this.release(all);
+      await this.release(orphans);
       if (link) await this.o.seal.forget(link.certId).catch(() => undefined);
       const left = this.o.store.get().orphans;
-      const b = this.budget();
-      if (link) delete b.pwFails[link.certId];
-      this.save({ link: null, orphans: left, budget: b });
+      this.save({ link: null });
       this.emit({ phase: 'done' });
       return { disconnected: !!link, cleanupPending: left.length };
     });
