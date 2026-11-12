@@ -53,10 +53,10 @@ async function main(): Promise<void> {
   await S.ready;
   await until('boot', async () => js<boolean>(`!!document.querySelector('#titlebar .tb-co')`));
 
-  const boot = (await call<{ history: Array<{ status: string; who: string }> | null; counterparties: unknown[] }>('shell.bootstrap')) as { history: Array<{ status: string; who: string }>; counterparties: unknown[] };
+  const boot = (await call('shell.bootstrap')) as { past: Array<{ kind: string; who: string; note: string | null }>; counterparties: unknown[] };
   check('견본 거래처 9곳(기본 3 + 견본 6)', boot.counterparties.length === 9, boot.counterparties.length);
-  const st = new Set(boot.history?.map((x) => x.status));
-  check('지난 발급 14건, 완료·확인 필요·중지가 섞임', boot.history?.length === 14 && st.has('done') && st.has('attention') && st.has('stopped'), boot.history?.length);
+  const kinds = new Set(boot.past.map((x) => x.kind));
+  check('지난 발급 14건(PastRun), 발급·발급 안 함이 섞이고 메일 미확인 문구가 있다', boot.past.length === 14 && kinds.has('issued') && kinds.has('not_issued') && boot.past.some((x) => x.kind === 'issued' && /메일발송목록/.test(x.note ?? '')), boot.past.length);
   check('제목줄에 견본 데이터 표시', (await js<string>(`document.querySelector('.mock-badge')?.textContent ?? ''`)).includes('견본'));
 
   const listDocs = async () => (await call<ShellDoc[]>('docs.list')) as ShellDoc[];
@@ -87,6 +87,20 @@ async function main(): Promise<void> {
   await call('docs.reveal', { id: invoices[0]!.id });
   desktop.showItemInFolder = reveal;
   check('폴더 열기(Finder에서 보여 주기)', revealed[0] === opened[0], revealed);
+
+  await js(`document.querySelector('#rail [data-view="activity"]').click()`);
+  await until('activity', async () => js<boolean>(`!!document.querySelector('[data-act-row="past-h0"]')`), 5_000);
+  const actRows = await js<number>(`document.querySelectorAll('[data-act-row^="past-"]').length`);
+  await js(`document.querySelector('[data-act-row="past-h0"]').click()`);
+  await until('past panel', async () => js<boolean>(`!!document.querySelector('[data-panel-act="past-h0"]')`), 5_000);
+  const pastPanel = await js<string>(`document.querySelector('[data-panel-act="past-h0"]').innerText`);
+  const opens = opened.length;
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('[data-panel-act="past-h0"] [data-act=past-pdf]')?.click()`);
+  await until('past pdf', async () => opened.length > opens, 3_000);
+  check('활동 기록: 지난 발급 14줄, 지난 발급 패널에 승인번호 [복사]·[PDF 열기](문서함과 같은 길)', actRows === 14 && /20\d{6}-41000012-00000123/.test(pastPanel) && pastPanel.includes('복사') && opened.at(-1) === S!.store.files.get('d-h0'), { actRows, pastPanel, opened });
+  await js(`document.querySelector('#rail [data-view="chat"]').click()`);
 
   const bizNo = syntheticBizNo(777);
   const made = (await call<{ id: string; counterparties: Array<{ id: string; name: string; item: string }> }>('counterparty.save', { name: '견본테스트상회', bizNo, rep: '홍견본', email: 'test@gyeonbon-test.example', item: '시험 품목' })) as { id: string; counterparties: Array<{ id: string; name: string; item: string }> };

@@ -1173,7 +1173,15 @@ function bizView() {
   );
 }
 
-/** 활동 기록 행: 이번 실행(세금계산서·정부24) + 타임라인의 지난 기록. 새것이 위. */
+/** 지난 실행 종류(main run-history.ts PastKind) → 칩 상태와 결과 칸 글자. */
+const PAST = {
+  issued: { status: 'done', result: '완료', hometax: '전자세금계산서 1건 발급 · 발급목록에서 확인' },
+  unsure: { status: 'attention', result: '확인 필요', hometax: '발급됐는지 확인하지 못함' },
+  not_issued: { status: 'stopped', result: '발급 안 함', hometax: '발급하지 않음' },
+  stopped_before_gate: { status: 'stopped', result: '승인 전에 멈춤', hometax: '발급하지 않음(승인 전에 앱이 꺼짐)' },
+};
+
+/** 활동 기록 행: 이번 기동의 실행(세금계산서·정부24)·사업장 수정 + 지난 실행(main이 준 이력). 새것이 위. 같은 실행은 이번 기동 메모리 쪽이 이긴다. */
 function activityRows() {
   const today = `${String(state.today.getMonth() + 1).padStart(2, '0')}-${String(state.today.getDate()).padStart(2, '0')}`;
   const rows = [];
@@ -1192,18 +1200,11 @@ function activityRows() {
     const at = `${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     rows.push({ id: `edit-${i}`, edit: e, at, what: `내 사업장 수정 · ${e.fields.map((f) => LABEL[f] ?? f).join('·')}`, profile: '사업자', portal: '이 PC', status: 'done', result: '저장함' });
   }
-  // 시연 씨앗이 있으면 지난 발급 이력(최근 순, 상태가 섞여 있다), 없으면 타임라인의 지난 카드
-  if (state.boot.history)
-    return [...rows, ...state.boot.history.map((it) => ({ id: `past-${it.id}`, past: it, at: `${shortDate(it.date)} ${it.time}`, what: `${it.title} · ${it.who}`, profile: '사업자', portal: '홈택스', status: it.status, result: CHIP[it.status][0] }))];
-  let day = null;
-  let time = '';
-  const past = [];
-  for (const it of state.boot.timeline) {
-    if (it.type === 'day') day = it.date;
-    else if (it.type === 'me') time = it.time ?? '';
-    else if (it.type === 'past') past.push({ id: `past-${it.approvalNo}`, past: it, at: `${shortDate(day)} ${time}`.trim(), what: `${it.title} · ${it.who}`, profile: '사업자', portal: '홈택스', status: 'done', result: '완료' });
+  for (const p of state.boot.past ?? []) {
+    if (state.runs.has(p.runId)) continue;
+    rows.push({ id: `past-${p.runId}`, past: p, at: `${shortDate(p.day)} ${p.time}`, what: `세금계산서 · ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
   }
-  return [...rows, ...past.reverse()];
+  return rows;
 }
 
 function activityView() {
@@ -1224,7 +1225,8 @@ function activityView() {
               h('td', {}, r.profile),
               h('td', {}, r.portal),
               h('td', { class: r.status === 'attention' ? 'is-attention' : r.status === 'stopped' ? 'is-muted' : null }, r.result),
-              modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, '안 함'),
+              // 지난 실행은 무엇을 보냈는지 남기지 않았다(모른다). "안 함"으로 단정하지 않는다.
+              modelCell(r.run?.sent ?? r.g24?.sent) ? h('td', {}, modelCell(r.run?.sent ?? r.g24?.sent)) : h('td', { class: 'is-muted' }, r.past ? '—' : '안 함'),
             ),
           ),
         )
@@ -1254,10 +1256,9 @@ function activityPanel(row) {
           ]
         : row.past
         ? [
-            ['홈택스', row.past.status === 'stopped' ? '발급하지 않음(승인 전에 중지)' : '전자세금계산서 1건 발급 · 발급목록에서 확인'],
-            ['메일', row.past.status === 'stopped' ? '보내지 않음' : `${row.past.mail} · 홈택스가 보냄${row.past.status === 'attention' ? ', 메일발송목록에서 확인하지 못함' : ''}`],
-            ['모델', '쓰지 않음'],
-            ['우리 서버', '보낸 것 없음'],
+            // 지난 실행은 메일·모델·우리 서버로 무엇이 갔는지 남기지 않았다. 아는 것만 적는다.
+            ['홈택스', PAST[row.past.kind].hometax],
+            row.past.documentId ? ['보관', '이 PC 문서함'] : null,
           ]
         : [
             // 확인 필요는 안 됨·모름·됨(중복 위험)이 섞여 있다. 여기서 단정하지 않고 위 안내(stoppedNote)를 따른다.
@@ -1273,11 +1274,16 @@ function activityPanel(row) {
       ['시각', row.at],
       ['프로필', row.profile === '사업자' ? `사업자 · ${state.boot.profiles.business.name}` : `개인 · ${state.boot.profiles.personal.name}`],
       ['포털', row.portal],
-      r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past ? ['승인번호', row.past.approvalNo ?? '—', { mono: true }] : null,
-      row.past ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
+      r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
+      row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
     ]),
     r?.stoppedNote ? note(r.stoppedNote, r.status === 'attention') : null,
-    row.past?.status === 'attention' ? note('홈택스 메일발송목록에서 이 건의 메일을 확인하지 못했어요. 거래처에 받았는지 확인해 주세요.', true) : null,
+    row.past?.note ? note(row.past.note, row.past.kind === 'unsure') : null,
+    row.past?.kind === 'issued'
+      ? row.past.documentId
+        ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(row.past.documentId), '', { 'data-act': 'past-pdf' }))
+        : note(NO_FILE_TEXT)
+      : null,
     h('div', { class: 'sx-panel-sec' }, '어디로 무엇이 갔나요'),
     kv(where, true),
     r ? [h('div', { class: 'sx-panel-sec' }, '실행 단계'), steps(runSteps(r))] : null,

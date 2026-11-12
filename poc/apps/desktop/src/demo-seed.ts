@@ -11,6 +11,8 @@ import { DEMO_COUNTERPARTIES, DEMO_PROFILE } from './fixture-mode.ts';
 import { hardenSession, hardenWindow } from './harden.ts';
 import { dayOffset, split, ymd, type Doc, type DocStore } from './shell-model.ts';
 import { demoCerts, SAMPLE_MARK } from './synthetic-certs.ts';
+import type { PastRun } from './run-history.ts';
+import { NOTE } from './shell-runs.ts';
 import { importBytes } from './vault-import.ts';
 
 /** fixture 기본 3곳(A상사·B상사·C테크)에 더하는 견본 거래처. */
@@ -23,48 +25,41 @@ export const SEED_COUNTERPARTIES = [
   { name: '견본회계사무소', repName: '김견본', email: 'office@gyeonbon.example', item: '기장 대행' },
 ].map((c, i) => ({ ...c, bizNo: syntheticBizNo(500 + i) }));
 
-export type HistoryStatus = 'done' | 'attention' | 'stopped';
-/** 활동 기록·거래처 이력에 보이는 지난 세금계산서(이 PC에서 한 일). */
-export interface HistoryItem {
-  id: string;
-  date: string;
-  time: string;
-  who: string;
-  title: '세금계산서';
-  supply: number;
-  tax: number;
-  total: number;
-  approvalNo: string | null;
-  mail: string;
-  status: HistoryStatus;
-}
+type SeedStatus = 'done' | 'mail_unconfirmed' | 'stopped';
 
 // [며칠 전, 시각, 거래처, 공급가액, 상태]. 하루 전 B상사 건은 대화 타임라인의 지난 카드(seedTimeline)와 같다.
-const HISTORY: Array<[number, string, string, number, HistoryStatus]> = [
+const HISTORY: Array<[number, string, string, number, SeedStatus]> = [
   [-1, '16:20', 'B상사', 550_000, 'done'],
   [-2, '10:05', '(주)가나다상사', 1_200_000, 'done'],
   [-3, '14:40', 'A상사', 3_000_000, 'done'],
-  [-5, '09:30', '라마바물산', 880_000, 'attention'],
+  [-5, '09:30', '라마바물산', 880_000, 'mail_unconfirmed'],
   [-6, '17:10', 'C테크', 450_000, 'done'],
   [-8, '11:00', '사아자디자인', 2_500_000, 'done'],
   [-9, '15:25', '차카타푸드(주)', 320_000, 'stopped'],
   [-12, '13:15', '파하솔루션', 1_650_000, 'done'],
   [-14, '10:40', 'B상사', 550_000, 'done'],
   [-17, '16:05', '견본회계사무소', 700_000, 'done'],
-  [-20, '09:50', '(주)가나다상사', 980_000, 'attention'],
+  [-20, '09:50', '(주)가나다상사', 980_000, 'mail_unconfirmed'],
   [-23, '14:00', 'A상사', 3_000_000, 'done'],
   [-27, '11:35', '라마바물산', 1_100_000, 'done'],
   [-32, '15:45', 'C테크', 450_000, 'done'],
 ];
 
-export function seedHistory(): HistoryItem[] {
-  const mails = new Map([...DEMO_COUNTERPARTIES, ...SEED_COUNTERPARTIES].map((c) => [c.name, c.email]));
+/** 활동 기록·문서함에 보이는 지난 세금계산서(엔진 실행 이력과 같은 PastRun 모양). 발급 건의 견본 PDF는 문서함 줄 d-<runId>다. */
+export function seedPast(): PastRun[] {
   return HISTORY.map(([d, time, who, supply, status], i) => {
-    const date = dayOffset(d);
+    const day = dayOffset(d);
     const s = split(supply, 'separate');
+    const runId = `h${i}`;
     // 하루 전 B상사 건은 타임라인 지난 카드와 같은 승인번호(seedTimeline)
     const seq = d === -1 ? '00000123' : String(200 + i).padStart(8, '0');
-    return { id: `h${i}`, date, time, who, title: '세금계산서', ...s, approvalNo: status === 'stopped' ? null : `${date.replaceAll('-', '')}-41000012-${seq}`, mail: mails.get(who) ?? '', status };
+    const issued = status !== 'stopped';
+    return {
+      runId, kind: issued ? 'issued' : 'not_issued', who, ...s, day, time,
+      approvalNo: issued ? `${day.replaceAll('-', '')}-41000012-${seq}` : null,
+      documentId: issued ? `d-${runId}` : null,
+      note: status === 'mail_unconfirmed' ? NOTE['mail.not_confirmed']! : status === 'stopped' ? NOTE['gate.stopped']! : null,
+    };
   });
 }
 
@@ -109,7 +104,7 @@ export async function htmlToPdf(html: string): Promise<Uint8Array> {
 }
 
 export interface DemoSeed {
-  history: HistoryItem[];
+  past: PastRun[];
   /** 견본 PDF를 만들고 증명서를 보관함에 넣는다(몇 초). 창을 띄운 뒤 뒤에서 돌린다. */
   fill(): Promise<void>;
   /** 실행이 발급을 마치면 그 발급본 견본 PDF를 만든다. */
@@ -127,11 +122,10 @@ export async function startDemoSeed(host: EngineHost, store: DocStore, root: str
     itemHints[c.bizNo] = c.item;
   }
   const cps = new Map([...DEMO_COUNTERPARTIES, ...SEED_COUNTERPARTIES].map((c) => [c.name, c]));
-  const history = seedHistory();
-  // 지난 발급본(완료·확인 필요)이 문서함 세금계산서가 된다. 증명서 목업(d1·d2)과 예전 계산서 목업(d3·d4)은 견본으로 바꾼다.
-  const invoices: Doc[] = history
-    .filter((h) => h.approvalNo)
-    .map((h) => ({ id: `d-${h.id}`, name: `세금계산서 · ${h.who}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: h.date, expiresOn: null, source: '앱이 발급' }));
+  const past = seedPast();
+  const issued = past.filter((p) => p.kind === 'issued');
+  // 지난 발급본이 문서함 세금계산서가 된다. 증명서 목업(d1·d2)과 예전 계산서 목업(d3·d4)은 견본으로 바꾼다.
+  const invoices: Doc[] = issued.map((p) => ({ id: p.documentId!, name: `세금계산서 · ${p.who}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: p.day, expiresOn: null, source: '앱이 발급' }));
   const kept = store.docs.filter((d) => d.id === 'd5' || d.id === 'd6');
   store.docs.splice(0, store.docs.length, ...invoices, ...kept);
   const dir = path.join(root, 'demo-samples');
@@ -142,16 +136,15 @@ export async function startDemoSeed(host: EngineHost, store: DocStore, root: str
     store.files.set(id, file);
   };
   return {
-    history,
+    past,
     async fill() {
       await fs.mkdir(dir, { recursive: true });
       const me = { name: DEMO_PROFILE.displayName, rep: DEMO_PROFILE.repName, bizNo: DEMO_PROFILE.bizNo };
       const engine = (m: string, p: Record<string, unknown>) => host.rpc(m, p);
       for (const c of demoCerts(ymd(new Date()), me)) await importBytes(await htmlToPdf(c.html), engine);
-      for (const h of history) {
-        if (!h.approvalNo) continue;
-        const c = cps.get(h.who)!;
-        await write(`d-${h.id}`, invoiceHtml({ date: h.date, who: h.who, bizNo: c.bizNo, rep: c.repName, mail: h.mail, item: c.item, supply: h.supply, tax: h.tax, approvalNo: h.approvalNo }));
+      for (const p of issued) {
+        const c = cps.get(p.who!)!;
+        await write(p.documentId!, invoiceHtml({ date: p.day, who: p.who!, bizNo: c.bizNo, rep: c.repName, mail: c.email, item: c.item, supply: p.supply!, tax: p.tax!, approvalNo: p.approvalNo! }));
       }
       for (const d of kept)
         await write(d.id, sampleHtml(d.docName, [['이름', d.profile === 'business' ? `${DEMO_PROFILE.displayName} (${formatBizNo(DEMO_PROFILE.bizNo)})` : DEMO_PROFILE.repName], ['발급일', d.issuedOn ?? '—'], ['유효기간', d.expiresOn ?? '없음']]));
