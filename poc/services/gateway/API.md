@@ -6,7 +6,7 @@
 
 | 서비스 | 공개 경로 |
 |---|---|
-| 게이트웨이(M4-6) | `/v1/run-tokens`, `/v1/decide`, `/v1/respond`, `/v1/biz/status` |
+| 게이트웨이(M4-6) | `/v1/run-tokens`, `/v1/decide`, `/v1/respond`, `/v1/biz/status`, `/v1/codef/token` |
 | 계정(M4-5) | `/v1/auth/*`, `/v1/oauth/*`, `/v1/passkeys*`, `/v1/me`, `/v1/consents`, `/v1/billing/*`, `/v1/devices*`, `/v1/device-tokens`, `/v1/device-list`, `/v1/aik`, `/v1/slots*` |
 | 릴레이(M7-3) | `/v1/mailboxes/*`, `/v1/rooms*` |
 | 푸시(M7-3) | `/v1/push-token`, `/v1/wake` |
@@ -79,6 +79,17 @@
 - 원천 장애는 `503 gateway.upstream_error`.
 - 상태코드(`b_stt_cd` 01 계속·02 휴업·03 폐업·'' 미등록, `tax_type_cd` 과세유형)는 원천 값을 그대로 넘기고 게이트웨이가 해석하지 않는다. 키는 `NTS_BIZ_API_KEY`(ENV.md).
 - 원천 호출 한도(공공데이터포털 15081808 "호출허용건수"): **1회 100건, 1일 100만 건**. 게이트웨이 한도(요청당 10건, 계정당 분당 30회)가 이보다 좁다. 일 한도를 넘기면 원천이 거절하고 게이트웨이는 `503 gateway.upstream_error`를 낸다.
+
+## POST /v1/codef/token (계좌 자동조회 CODEF 접근 토큰, 대표 결정 2026-11-12)
+
+| 요청 | 응답 |
+|---|---|
+| `{}` | `200 {accessToken, expiresAt(ISO), env: "sandbox"\|"demo"\|"prod", publicKey(base64 DER)}` |
+
+- 게이트웨이가 서버 환경 변수의 CODEF 클라이언트 ID·시크릿으로 `https://oauth.codef.io/oauth/token`(client credentials)에서 받은 토큰을 만료 1시간 전까지 메모리에 두고 다시 준다. **시크릿은 PC로 가지 않는다.** 인증서·비밀번호·계좌·거래내역은 PC → CODEF로 바로 가고 이 서버를 지나지 않는다.
+- `publicKey`는 PC가 인증서 비밀번호를 RSA로 감쌀 CODEF 공개키(비밀 아님). `env`는 PC가 부를 CODEF API 주소를 고른다(sandbox `sandbox.codef.io`, demo `development.codef.io`, prod `api.codef.io`).
+- 토큰은 접근 로그·이벤트에 남기지 않고, 이 경로의 접근 로그에는 계정 식별자(`aid`)도 없다. 한도는 기기당 시간당 20회(PC는 만료 전까지 메모리에 두고 다시 쓴다).
+- 기능 꺼짐(`CODEF_ENV` 없음)은 `503 gateway.codef_off`, CODEF 토큰 발급 실패는 `503 gateway.upstream_error`, 본문에 키가 있으면 `400 gateway.param_rejected`.
 
 ## GET /healthz
 
