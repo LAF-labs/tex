@@ -80,13 +80,18 @@ async function main() {
 
   // O-03
   check('[맞아요] → 발급 인증 4종 + 잘 모르겠어요·나중에', (await reply('[data-onb=confirm]', 'auth')) && (await js<number>(`document.querySelectorAll('.onb-auth').length`)) === 4);
+  const appTypes = /알아서|대신 입력|앱이 입력|등록하면/;
+  const auths = await js<Record<string, string>>(`Object.fromEntries([...document.querySelectorAll('.onb-auth')].map((b) => [b.dataset.onb, b.querySelector('.sx-meta').textContent]))`);
+  check('인증 설명은 발급할 때 사람이 하는 일: 보안카드는 번호를 직접 넣는다, 앱이 대신 넣는다는 설명은 없다', auths.card!.includes('발급할 때마다') && auths.card!.includes('보안카드 번호를 직접 넣어요') && Object.values(auths).every((t) => !appTypes.test(t)), auths);
+  await press('[data-onb=unsure]');
+  await until('unsure note', async () => js<boolean>(`!!document.querySelector('[data-onb-step=auth] .sx-note')`));
+  const unsure = await js<string>(`document.querySelector('[data-onb-step=auth] .sx-note')?.textContent ?? ''`);
+  check('[잘 모르겠어요] 설명도 같다: 보안카드 번호는 직접 넣고, 앱이 넣는다는 말이 없다', unsure.includes('보안카드 번호를 직접 넣어요') && !appTypes.test(unsure), unsure);
   await press('[data-onb=cert]');
   check('공동인증서 → 이 PC에서 찾은 인증서 목록, 30일 안 만료 경고', await js<boolean>(`(() => { const l = document.querySelector('[data-onb-certs]'); return !!l && l.querySelectorAll('[data-cert]').length === 2 && l.textContent.includes('30일 안에 만료돼요'); })()`));
-  check('보안카드 → ① 위임 등록 동의 카드(범위 고지·인증서 비밀번호 저장 안 함, 다른 인증 버튼 동등)', (await reply('[data-onb=card]', 'delegation')) && (await js<boolean>(`(() => { const c = document.querySelector('[data-consent="consent.delegation"]'); const t = c.textContent; return t.includes('악성코드로부터는 보호하지 못해요') && t.includes('인증서 비밀번호는 저장하지 않아요') && !!c.querySelector('[data-onb=switch]'); })()`)));
-  check('비밀 입력 칸은 앱 화면에 없다(금고 창에서만, ADR-025·026)', await noPasswordInputs());
 
   // ②③
-  check('① 동의 → 금고 등록(목업) → ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=agree]', 'model')) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
+  check('보안카드 → 금고 위임 단계 없이 바로 ② 모델 국외 이전: 처리자 표는 설정 데이터 그대로', (await reply('[data-onb=card]', 'model')) && !(await js<boolean>(`!!document.querySelector('[data-consent="consent.delegation"]')`)) && (await js<{ v: string; rows: number; first: string }>(`(() => { const t = document.querySelector('[data-processors]'); return { v: t.dataset.processors, rows: t.querySelectorAll('tbody tr').length, first: t.querySelector('tbody td').textContent }; })()`).then((t) => t.v === MOCK_CONSENT_CONFIG.processorsVersion && t.rows === MOCK_CONSENT_CONFIG.processors.length && t.first === MOCK_CONSENT_CONFIG.processors[0]!.name)));
   check('② 모델 동의는 필수: 버튼은 [동의하고 계속] 하나(거절 선택지 없음), main도 거절 답을 받지 않는다(bad_request)', (await js<string[]>(`[...document.querySelector('[data-consent="consent.model"]').querySelectorAll('button')].map((b) => b.textContent)`)).join() === '동의하고 계속' && (await callErr('onboarding.reply', { step: 'model', choice: 'decline' })) === 'bad_request');
   check('② [동의하고 계속] → ③ 사용 기록: 기본 꺼짐([끄고 계속]이 주 버튼)', (await reply('[data-onb=agree]', 'telemetry')) && (await js<boolean>(`document.querySelector('[data-onb=off]').classList.contains('sx-btn-primary')`)));
 
@@ -102,7 +107,7 @@ async function main() {
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 
   // O-06
-  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드 · 금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
+  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
   check('요약 "지금 되는 일"은 세금계산서뿐이고, 하는 일 목록 어디에도 증명서를 떼 준다는 말이 없다', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송' && !scope.join().includes('증명'), scope);
   check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
@@ -114,12 +119,12 @@ async function main() {
     const latest = (kind: string) => host.rpc('consent.latest', { profileId: biz.id, kind }) as Promise<{ choice: string; via: string; noticeVersion: string; processorsVersion: string | null } | null>;
     const [terms, deleg, model, tele, orphan] = await Promise.all([latest('terms'), latest('delegation'), latest('model'), latest('telemetry'), host.rpc('consent.latest', { profileId: null, kind: 'terms' })]);
     check(
-      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·위임은 금고 등록 사실 T-06·모델 동의는 고지 판·처리자 표 판과 함께·사용 기록 끔)',
-      terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg?.via === 'T-06' && model?.choice === 'agreed' && model.noticeVersion === CONSENT_NOTICES.model.version && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
+      '동의 레코드가 DB에 쌓여 프로필로 이어진다(약관 동의·모델 동의는 고지 판·처리자 표 판과 함께·사용 기록 끔). 보안카드여도 위임 동의는 없다',
+      terms?.choice === 'agreed' && terms.noticeVersion === CONSENT_NOTICES.terms.version && deleg === null && model?.choice === 'agreed' && model.noticeVersion === CONSENT_NOTICES.model.version && model.processorsVersion === MOCK_CONSENT_CONFIG.processorsVersion && tele?.choice === 'declined' && orphan === null,
       { terms, deleg, model, tele, orphan },
     );
     const st = (await host.rpc('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null } | null;
-    check('포털 아이디는 프로필 열, 이어 하기는 DB 한 행(앱 폴더 JSON 없음)', biz.portalLoginId === 'ganada01' && st?.step === 'first' && st.profileId === biz.id, { portalLoginId: biz.portalLoginId, st: st && { step: st.step, profileId: st.profileId } });
+    check('이어 하기는 DB 한 행(앱 폴더 JSON 없음)', st?.step === 'first' && st.profileId === biz.id, st && { step: st.step, profileId: st.profileId });
   }
   const first = await js<{ q: string; chips: string[] }>(`({ q: [...document.querySelectorAll('.onb .sx-app')].at(-1).textContent, chips: [...document.querySelectorAll('[data-onb-step=first] button')].map((b) => b.textContent) })`);
   check('첫 작업: 세금계산서 1건을 같이 발급하자고 묻고, 버튼은 [지금 해 보기]·[나중에] 둘', first.q.includes('세금계산서') && !first.q.includes('증명') && first.chips.join() === '지금 해 보기,나중에', first);

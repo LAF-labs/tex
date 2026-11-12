@@ -263,7 +263,15 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
-  return { ...base, ...structuredClone(picked) } as OnbState;
+  const s = { ...base, ...structuredClone(picked) } as OnbState;
+  // 예전 판은 보안카드를 고르면 ① 위임 등록(금고에 넣고 앱이 대신 입력)으로 갔다. 그 약속은 이제 사실이 아니다.
+  // ①에 멈춘 저장은 발급 인증을 다시 묻는다(O-03, 지금 문구). 고른 인증은 비운다.
+  if (s.step === 'delegation' || s.resumeStep === 'delegation') {
+    if (s.step === 'delegation') s.step = 'auth';
+    else s.resumeStep = 'auth';
+    Object.assign(s, { auth: null, certId: null, registered: null, notice: null, explain: false });
+  }
+  return s;
 }
 
 export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null, portalLoginId: null });
@@ -591,11 +599,11 @@ export class OnboardingFlow {
           s.auth = kind;
           this.unskip('auth');
           this.say(AUTH_LABEL[kind]);
-          if (kind === 'card') s.step = 'delegation';
-          else this.afterAuth();
+          this.afterAuth();
         }
         return;
       case 'delegation': {
+        // 예전 이어 하기 저장이 ①에 멈춰 있을 때만 온다(이제 보안카드도 바로 ②로 간다). 그 화면과 [다른 인증으로 바꾸기]가 돌게 남겨 둔다.
         if (a.choice === 'switch') {
           this.say('다른 인증으로 바꿀게요');
           s.auth = null;
