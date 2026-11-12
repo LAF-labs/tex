@@ -12,6 +12,7 @@ import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
 import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
+import type { HumanPort } from './run/controller.ts';
 import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
@@ -37,12 +38,17 @@ export type RunEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
   /**
-   * 공동인증서 비밀번호 차례(B1·B2, 값 없음). mode window = 전용 Chrome의 칸에 직접 입력(금고 비밀 창, main [다 했어요]는 금고 secretWindow.userDone),
-   * manual = 인증서 창(별도 프로그램 등)에서 직접 끝낸 뒤 [다 했어요](run.secretDone). closed.why: done·ttl·aborted·password_wrong·retry_limit.
+   * 공동인증서 비밀번호 금고 비밀 창 차례(B1·B2, 값 없음): 전용 Chrome의 칸에 직접 입력(main [입력 완료]는 금고 secretWindow.userDone). closed.why: done·ttl·aborted·password_wrong·retry_limit.
+   * 홈택스 인증서 선택창(MagicLine iframe)에서 사람이 직접 넣는 길은 이 이벤트가 아니라 handoff(code human.cert_waiting, 서명 차례면 sign.waiting) → run.resume이다.
    */
   | ({ runId: string; type: 'secret' } & SecretTurnEvent)
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
-  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt };
+  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt }
+  /**
+   * 사람 대기(IR, B3): 실행은 끝나지 않았다. [다 했어요] = run.resume, [직접 발급함] = run.manualDone(phase가 sign이 아닌 HandedOff에서만), [중지] = run.stop.
+   * phase sign·code sign.waiting = 발급 클릭 뒤 서명 차례(커밋 구간): 재개·중지·상한 모두 verify로 간다.
+   */
+  | { runId: string; type: 'handoff'; phase: Phase; code?: string };
 
 interface PendingGate {
   req: GateRequest;
@@ -127,6 +133,11 @@ export interface RunServiceDeps {
   secretTtlMs?: number;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
   trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
+  /** IR 사람 대기 상한·실행 수명 상한(ms). 시험용(기본 30분·2시간). */
+  handoffCapMs?: number;
+  lifetimeMs?: number;
+  /** IR 사람 입력 포트(금고 비밀 창). 없으면 대역(engine-cert가 붙인다, B1·B2). */
+  human?: HumanPort;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -292,7 +303,8 @@ export class RunService extends EventEmitter {
       // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
       // H01Runner에는 홈택스 로그인이 없다. IR 패키지(H-01 s0~s6)는 로그인 스텝을 스스로 돈다.
       if (this.d.portal.login && this.engine !== 'ir') throw new RunEnd('failed', 'login.not_implemented');
-      this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
+      // IR은 로그인 스텝(s0~s6)을 스스로 돌고 그 단계 표시도 스스로 낸다.
+      if (this.engine !== 'ir') this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
       if (this.engine === 'ir') {
         a.policy = null;
         result = await this.executeIr(a, page, inputs, profile);
@@ -407,6 +419,10 @@ export class RunService extends EventEmitter {
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
       ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
       ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
+      handoff: (h) => this.ev({ runId: a.runId, type: 'handoff', phase: h.phase as Phase, ...(h.code ? { code: h.code } : {}) }),
+      ...(this.d.human ? { human: this.d.human } : {}),
+      ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
+      ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
       secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
       ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
@@ -602,6 +618,13 @@ export class RunService extends EventEmitter {
   stop(runId: string): { stopped: boolean } {
     const a = this.active;
     if (!a || a.runId !== runId) return { stopped: false };
+    // 사람 대기(IR)는 무장 뒤라도 받는다: 핸드오프면 끝내고(원장이 열려 있으면 in_doubt), 서명 차례면 버튼을 누르지 않고 verify로 간다.
+    if (a.ir?.waiting) {
+      this.journal.append(a.runId, 'run.stop_in_wait', { armed: a.ir.armed });
+      a.stop = !a.ir.armed;
+      a.ir.stop();
+      return { stopped: !a.ir.armed };
+    }
     if (a.armed || a.ir?.armed) throw new RunEnd('failed', 'already_issuing');
     a.stop = true;
     if (a.ir) {
@@ -615,6 +638,24 @@ export class RunService extends EventEmitter {
       g.reject(new RunEnd('stopped', 'gate.stopped'));
     }
     return { stopped: true };
+  }
+
+  /** 사람 대기 [다 했어요](B3, IR). 핸드오프·Paused면 같은 체크포인트부터, 서명 차례면 verify로. */
+  resume(runId: string): { ok: boolean; code?: string } {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
+    const r = a.ir.command('resume');
+    if (r.ok) this.journal.append(a.runId, 'run.resume_requested', {});
+    return r;
+  }
+
+  /** 사람 대기 [직접 발급함](B3, IR HandedOff): 원장 observed_manual → 그 발급의 verify. 앱은 다시 발급하지 않는다. */
+  manualDone(runId: string): { ok: boolean; code?: string } {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
+    const r = a.ir.command('manual');
+    if (r.ok) this.journal.append(a.runId, 'run.manual_done_requested', {});
+    return r;
   }
 
   /**
@@ -672,13 +713,6 @@ export class RunService extends EventEmitter {
       this.closeGate(a, 'signal');
       g.reject(end);
     }
-  }
-
-  /** [다 했어요]: 인증서 창에서 직접 끝냈다(사람 직접 입력 대기, secret 이벤트 mode manual). 그 실행이 기다리는 중이 아니면 { done: false }. */
-  secretDone(runId: string): { done: boolean } {
-    const a = this.active;
-    if (!a || a.runId !== runId || !a.ir) return { done: false };
-    return { done: a.ir.secretDone() };
   }
 
   get activeRunId(): string | null {

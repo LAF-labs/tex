@@ -149,8 +149,7 @@ describe('게시본 H-01 건조 실행: 지금 동작(사실 고정)', () => {
 
 // 2026-11-11 건조 실행에서 찾은 막힘. 고치면 본문을 채우고 todo를 뗀다(지금 본문을 돌리면 HandedOff 타이머가 남아 프로세스가 끝나지 않는다).
 describe('게시본 H-01 건조 실행: 고쳐야 할 모습(todo)', () => {
-  it('B1 공동인증서 로그인(s4 sign cert → human:secret)은 금고 비밀 창 사람 차례를 기다린다(지금: 제품 IR human 포트가 바로 ttl → handoff human.ttl_expired)', { todo: 'B1' });
-  it('B2 공동인증서 발급 서명(s21 signFlow cert human:secret)은 비밀 창을 기다린다(지금: 바로 ttl → POST 0번인데 in_doubt verify.unknown)', { todo: 'B2' });
+  // B1·B2(공동인증서 로그인·발급 서명 사람 차례)는 tests/h01-published-dryrun-cert.test.ts.
   it('B3 로그인 시간 초과(s5 step.timeout)·캡차(s90 portal.captcha)는 이어갈 수 있는 핸드오프다(지금: 실행이 end status=handoff로 끝나고 조율기 30분 타이머가 남는다)', { todo: 'B3' });
 });
 
