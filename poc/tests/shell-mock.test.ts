@@ -426,10 +426,9 @@ describe('셸 목업', () => {
     assert.equal(SIGN_BY_AUTH[SIGN_LABEL.cert]!.text, HANDOFF_SIGN.text, '공동·금융인증서는 부장 문구 그대로');
     const pb = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/playbooks/hometax.invoice.issue/playbook.json'), 'utf8')) as { steps: Array<{ signFlow?: { method?: string; methodTargets?: Record<string, string> } }> };
     const sf = pb.steps.find((x) => x.signFlow)?.signFlow;
-    if (sf?.methodTargets) {
-      assert.equal(sf.method, '$profile.signMethod');
-      assert.deepEqual(Object.keys(sf.methodTargets).sort(), methods);
-    }
+    assert.ok(sf?.methodTargets, '2.2.0은 인증유형을 프로필 값으로 고른다');
+    assert.equal(sf.method, '$profile.signMethod');
+    assert.deepEqual(Object.keys(sf.methodTargets).sort(), methods);
     for (const [label, s] of Object.entries(SIGN_BY_AUTH)) {
       assert.deepEqual(handoffTurn('sign', 'sign.waiting', label), { kind: 'sign', text: s.text, note: HANDOFF_SIGN.note });
       assert.ok(/끝나면 자동으로 이어집니다$/.test(s.text) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);

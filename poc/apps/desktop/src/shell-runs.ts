@@ -43,6 +43,11 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.simple_auth]: { now: '휴대폰에서 간편인증 요청을 승인해 주세요', text: '홈택스 창에서 간편인증을 고르고 휴대폰에서 승인해 주세요. 끝나면 자동으로 이어집니다' },
   [SIGN_LABEL.security_card]: { now: '홈택스 창에서 보안카드 번호를 직접 넣어 주세요', text: '홈택스 창에서 인증 방법을 고르고 보안카드 번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다' },
 };
+/**
+ * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
+ * 그 뒤에야 로그인 차례(handoff)가 오므로, 로그인 단계에 있는 동안 할 일을 바로 보인다(이미 로그인돼 있으면 곧 지나간다).
+ */
+export const LOGIN_NOW = '홈택스 창에 로그인 화면이 보이면 직접 로그인해 주세요. 로그인하면 자동으로 이어집니다';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
@@ -547,7 +552,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
     r.status = 'preparing';
-    this.step(r, 'login', 'now');
+    this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
     this.starting.add(r.id);
     try {
@@ -709,7 +714,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (e.type === 'phase') {
       // 서명 단계: 엔진이 확인 창·인증유형(프로필 발급 인증)을 누르고 나면 사람 몫이다(인증서 비밀번호·간편인증 승인, 2026-11-11 실화면).
       // 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 오므로, 할 일은 서명 단계에 들어설 때 바로 보인다.
-      const n = e.phase === 'sign' && e.state === 'now' ? (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT) : e.code ? NOTE[e.code] : undefined;
+      const n = e.phase === 'sign' && e.state === 'now' ? (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
       // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
       if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;

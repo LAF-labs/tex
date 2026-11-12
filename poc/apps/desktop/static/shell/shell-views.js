@@ -274,9 +274,13 @@ export function taskCard(run, act) {
       );
     }
   } else if (st === 'preparing') {
+    const login = run.steps[0].state === 'now' && run.steps[0].note;
+    if (login) card.dataset.loginNow = '';
     card.append(
       line('홈택스에서 준비하고 있어요. 승인하기 전에는 아무것도 발급하지 않아요.', true),
-      h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }), now ? h('span', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null),
+      // 로그인 단계: 엔진은 로그인 화면을 열고 최대 10분 기다린다(그 뒤에야 로그인 차례 카드). 할 일을 바로 보인다.
+      login ? note(run.steps[0].note, true) : null,
+      h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }), now ? h('span', { class: 'sx-meta' }, now.note && !login ? `${now.label} · ${now.note}` : now.label) : null),
     );
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다.
