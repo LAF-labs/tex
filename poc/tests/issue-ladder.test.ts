@@ -10,7 +10,7 @@ import {
   apiRung, BizVerifier, branchOf, connectRunBrowser, DataService, docKeyOf, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunEnd, RunService, ulid,
   type GatePortMessage, type GateRequest, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
 } from '@sax/engine';
-import { GateRepo, Ledger, LedgerError, openDatabase, RunRepo, type ArmRow, type Db } from '@sax/db';
+import { GateRepo, Ledger, LedgerError, openDatabase, RunJournal, RunRepo, type ArmRow, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
@@ -134,7 +134,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
   /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
-  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page> } = {}) {
+  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; auto?: (runs: RunService, db: Db) => RunService } = {}) {
     const db = await tempDb();
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
@@ -144,7 +144,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
-    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
+    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(o.auto ? o.auto(runs, db) : runs, db), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
     const events: LadderEvent[] = [];
     ladder.on('state', (e: LadderEvent) => events.push(e));
     const ledger = new Ledger(db);
@@ -375,6 +375,27 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     assert.equal((await w.until(k, 'held')).state, 'observed_manual');
     assert.deepEqual(w.ledger.byIssueKey(k).map((r) => [r.stepId, r.state]), [['manual.issue', 'observed_manual']]);
     assert.deepEqual(w.request(k).state, { s: 'held', state: 'observed_manual' });
+    assert.equal(w.api!.calls, 0);
+  });
+
+  it('홈택스 사람 대기에서 [직접 발급함]을 눌렀는데 원장 행이 없으면(IR 무장 전) 직접 발급 행을 남기고 held, API 0', async () => {
+    // IR 조율기는 무장 전 [직접 발급함]의 ledger.observed_manual 효과를 원장 행으로 남기지 못한다. 그 실행 끝을 흉내 낸다.
+    const fakeStart = (runs: RunService, db: Db): RunService => {
+      const j = new RunJournal(db);
+      return Object.assign(Object.create(runs) as RunService, {
+        start: (p: { runId: string }) => {
+          new RunRepo(db).create({ id: p.runId, playbookId: 'H-01', playbookVersion: '1', packageDigest: 'd', profileId: 'p', trigger: 'local', inputsHash: 'i' });
+          j.append(p.runId, 'run.manual_done_requested', {});
+          setTimeout(() => runs.emit('event', { runId: p.runId, type: 'end', status: 'failed', code: 'ledger.write_failed' } satisfies RunEvent), 20);
+          return { runId: p.runId, intentId: 'I' };
+        },
+      });
+    };
+    const w = await world({ auto: fakeStart });
+    const { k } = w.request();
+    assert.equal((await w.until(k, 'held')).state, 'observed_manual');
+    assert.deepEqual(w.ledger.byIssueKey(k).map((r) => [r.stepId, r.state]), [['manual.issue', 'observed_manual']]);
+    assert.ok(!w.seen(k).includes('human') && !w.seen(k).includes('consent'), '직접 칸·동의 카드로 넘어가지 않는다');
     assert.equal(w.api!.calls, 0);
   });
 

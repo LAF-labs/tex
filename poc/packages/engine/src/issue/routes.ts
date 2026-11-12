@@ -87,6 +87,7 @@ const EXACT: Readonly<Record<string, Branch | 'human_wait'>> = {
   'gate.expired': 'stop',
   'issue.consent_declined': 'stop',
   'issue.manual_reported': 'stop',
+  'issue.manual_attested': 'stop',
   // 서버 정지·상한
   'policy.irreversible_per_day': 'stop',
   'policy.poc_irreversible_total': 'stop',
