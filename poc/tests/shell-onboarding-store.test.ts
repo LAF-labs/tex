@@ -26,7 +26,7 @@ const UPTO_DELEGATION: OnbAnswer[] = [
 const TO_SUMMARY: OnbAnswer[] = [
   { step: 'model', choice: 'agree' },
   { step: 'telemetry', choice: 'off' },
-  { step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-02': true } },
+  { step: 'tasks', choice: 'later' },
   { step: 'summary', choice: 'ok' },
 ];
 

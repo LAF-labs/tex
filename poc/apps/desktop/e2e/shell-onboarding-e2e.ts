@@ -66,9 +66,13 @@ async function main() {
   check('실제 입력 없이 온 동의는 받지 않는다(gesture_required, 단계 그대로)', (await callErr('onboarding.reply', { step: 'terms', choice: 'agree' })) === 'gesture_required' && (await step()) === 'terms');
   check('표에 없는 답·지난 단계 답은 거부(bad_request·stale_step)', (await callErr('onboarding.reply', { step: 'terms', choice: 'agreeAll' })) === 'bad_request');
   check('④ 동의 → O-01 환영(칩 셋), 입력창이 열린다', (await reply('[data-onb=agree]', 'welcome')) && !(await js<boolean>(`document.querySelector('#composer').disabled`)));
+  const welcome = await js<string>(`[...document.querySelectorAll('.onb .sx-app')].at(-1).textContent`);
+  check('환영 문구는 세금계산서 발급만 말한다(이 빌드는 증명서를 떼지 못한다)', welcome.includes('세금계산서 발급') && !welcome.includes('증명서'), welcome);
 
   // O-02
   check('[사업자등록증 올리기] → 인식 카드: 상호·진위확인 배지와 출처(국세청 조회)·90일 고지', (await reply('[data-onb=upload]', 'biz-confirm')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=biz-confirm]').textContent; return t.includes('가나다컴퍼니') && t.includes('계속사업자 · 일반과세자') && t.includes('국세청 조회') && t.includes('90일 뒤에'); })()`)));
+  const privacy = await js<string>(`document.querySelector('[data-onb-step=biz-confirm]').textContent`);
+  check('인식 카드 개인정보 줄: 등록증은 이 PC 안에서만 읽고, 진위확인으로 보낸다는 약속은 없다(제품 빌드는 보내지 않는다)', privacy.includes('등록증 파일은 이 PC 안에서만 읽어요') && !privacy.includes('진위확인에 보내요') && !privacy.includes('우리 서버'), privacy);
   await press('[data-onb=edit]');
   await js(`(() => { const i = document.querySelector('[data-onb-step=biz-confirm] input[name=email]'); i.value = 'billing@ganada.example'; })()`);
   await press('[data-onb=save]');
@@ -90,12 +94,16 @@ async function main() {
   await reply('[data-onb=off]', 'tasks');
   await press('[data-task=H-02]');
   check('곧 되는 일(회색 칩)은 고를 수 없고 "지원되면 알려 드릴게요"', await js<boolean>(`document.querySelector('#toast').textContent.includes('지원되면') && document.querySelector('[data-onb=submit]').disabled`));
-  await press('[data-task=H-01]');
   await press('[data-task=H-03]');
+  await press('[data-task=H-04]');
+  check('사업자등록증명·납세증명서도 곧 되는 일(회색 칩): 눌러도 고를 수 없다', await js<boolean>(`['H-03', 'H-04'].every((id) => document.querySelector('[data-task=' + id + ']').classList.contains('is-soon')) && document.querySelector('[data-onb=submit]').disabled`));
+  await press('[data-task=H-01]');
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 
   // O-06
-  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드 · 금고에 등록함') && t.includes('세금계산서 발급·메일 전송, 사업자등록증명') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
+  check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드 · 금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
+  const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
+  check('요약 "지금 되는 일"은 세금계산서뿐이고, 하는 일 목록 어디에도 증명서를 떼 준다는 말이 없다', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송' && !scope.join().includes('증명'), scope);
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·보안카드)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'security_card'))));
   // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
   {
@@ -111,6 +119,8 @@ async function main() {
     const st = (await host.rpc('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null } | null;
     check('포털 아이디는 프로필 열, 이어 하기는 DB 한 행(앱 폴더 JSON 없음)', biz.portalLoginId === 'ganada01' && st?.step === 'first' && st.profileId === biz.id, { portalLoginId: biz.portalLoginId, st: st && { step: st.step, profileId: st.profileId } });
   }
+  const first = await js<{ q: string; chips: string[] }>(`({ q: [...document.querySelectorAll('.onb .sx-app')].at(-1).textContent, chips: [...document.querySelectorAll('[data-onb-step=first] button')].map((b) => b.textContent) })`);
+  check('첫 작업: 세금계산서 1건을 같이 발급하자고 묻고, 버튼은 [지금 해 보기]·[나중에] 둘', first.q.includes('세금계산서') && !first.q.includes('증명') && first.chips.join() === '지금 해 보기,나중에', first);
   const meBefore = await js<number>(`document.querySelectorAll('.sx-me').length`);
   await press('[data-onb=try]');
   await until('done', async () => (await js<boolean>(`!document.querySelector('[data-onb-step]')`)) === true);
