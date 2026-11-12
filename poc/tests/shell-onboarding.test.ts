@@ -238,7 +238,7 @@ describe('동의 화면 4종', () => {
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });
 
-  it('예전 이어 하기 저장이 ①에 멈춰 있으면 ① 화면을 그리고, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
+  it('예전 이어 하기 저장이 ①(위임 등록)에 멈춰 있으면 ①을 다시 그리지 않고 발급 인증을 다시 묻는다(앱이 대신 입력한다는 옛 약속 없음)', async () => {
     const a = make();
     await walk(a.flow, [
       { step: 'terms', choice: 'agree' },
@@ -246,11 +246,19 @@ describe('동의 화면 4종', () => {
     ]);
     const old = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'delegation', auth: 'card' });
     assert.ok(old);
+    assert.equal(old.step, 'auth');
+    assert.equal(old.auth, null, '옛 보안카드 선택은 비운다');
     const resumed = new OnboardingFlow(make().ports, old, NOW);
-    assert.equal((await resumed.view()).consent?.key, 'consent.delegation');
-    await resumed.answer({ step: 'delegation', choice: 'switch' });
-    assert.equal(resumed.state.step, 'auth');
-    assert.equal(resumed.state.auth, null);
+    const v = await resumed.view();
+    assert.equal(v.step, 'auth');
+    assert.equal(v.consent, null, '① 위임 동의 고지를 보이지 않는다');
+    assert.doesNotMatch(JSON.stringify(v), /대신 입력|알아서 입력|금고에 한 번 등록/);
+    await resumed.answer({ step: 'auth', choice: 'card' });
+    assert.equal(resumed.state.step, 'model', '다시 보안카드를 골라도 ①을 거치지 않는다');
+    // ② 다시 묻기(reaskModel)로 ①이 resumeStep에 남은 저장도 같다
+    const parked = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'model', resumeStep: 'delegation', auth: 'card' });
+    assert.equal(parked?.resumeStep, 'auth');
+    assert.equal(parked?.auth, null);
   });
 
   it('②③④ 동의 레코드: 판·선택·시각, ②는 처리자 표 판(설정 데이터)도. ②는 필수라 거절 답이 없다(사용자 결정 2026-11-10)', async () => {

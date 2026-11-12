@@ -100,6 +100,19 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     assert.equal(new ConsentRepo(db).history(p.id).filter((c) => c.kind === 'terms').length, 1, '약관은 한 번만');
   });
 
+  it('옛 판에서 ①(위임 등록)에 멈춘 이어 하기 행은 불러올 때 발급 인증 질문으로 돌아간다', async () => {
+    const a = flowOn(new EngineOnboardingStore(rpc));
+    await walk(a, UPTO_AUTH.slice(0, 3));
+    assert.equal(a.state.step, 'auth');
+    // 옛 빌드가 남긴 행: 보안카드를 골라 ①에서 멈춤
+    await new EngineOnboardingStore(rpc).save({ ...a.state, step: 'delegation', auth: 'card' });
+    const loaded = await new EngineOnboardingStore(rpc).load();
+    assert.equal(loaded?.step, 'auth');
+    assert.equal(loaded?.auth, null);
+    const b = new OnboardingFlow(onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), new EngineOnboardingStore(rpc)), loaded, NOW);
+    assert.equal((await b.view()).consent, null);
+  });
+
   it('프로필이 생긴 뒤 이어 하기를 불러오면 그 뒤 동의는 바로 그 프로필로 쌓인다', async () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
     await walk(a, [...UPTO_AUTH, ...TO_SUMMARY]);
