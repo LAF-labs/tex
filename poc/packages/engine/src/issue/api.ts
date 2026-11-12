@@ -70,10 +70,18 @@ export interface ApiLookupPolicy {
 }
 export const API_LOOKUP_POLICY: ApiLookupPolicy = { minElapsedMs: 60_000, lookups: 2, intervalMs: 30_000 };
 
+/** 조회 하한이 재는 시계. 시험은 가짜 시계로 기본 하한(60초)을 실제로 기다리지 않고 잰다. */
+export interface ApiClock {
+  now(): number;
+  sleep(ms: number): Promise<void>;
+}
+const REAL_CLOCK: ApiClock = { now: () => Date.now(), sleep: (ms) => new Promise((r) => setTimeout(r, ms)) };
+
 const safeCode = (c: string): string => (/^[A-Za-z0-9_.:-]{1,40}$/.test(c) ? c : 'invalid');
 
-export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: IssueApiAdapter | null }, deps: { runs: RunService; db: Db; lookup?: ApiLookupPolicy }): Rung {
+export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: IssueApiAdapter | null }, deps: { runs: RunService; db: Db; lookup?: ApiLookupPolicy; clock?: ApiClock }): Rung {
   const policy = deps.lookup ?? API_LOOKUP_POLICY;
+  const clock = deps.clock ?? REAL_CLOCK;
   const source = adapters.popbill ?? adapters.codef ?? null;
   const repo = new RunRepo(deps.db);
   const gates = new GateRepo(deps.db);
@@ -130,7 +138,7 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
           return end('success', 'api.issued');
         }
         journal.append(runId, 'api.issue_failed', { kind: r.t, ...(r.t === 'refused' ? { providerCode: safeCode(r.code) } : {}) });
-        const l = await settleByLookup(source, docKey, policy, (t, n) => journal.append(runId, 'api.lookup', { result: t, n }));
+        const l = await settleByLookup(source, docKey, policy, clock, (t, n) => journal.append(runId, 'api.lookup', { result: t, n }));
         if (l.t === 'issued') {
           ledger.resolve(intentId, 'api.issue', 'committed', null, l.ref);
           journal.append(runId, 'ledger.committed', { reason: '' });
@@ -154,11 +162,9 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
   };
 }
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
 /** 하한을 채울 때까지 조회한다. 있으면 issued, 모름이면 그 자리에서 unknown, 하한을 채운 "없음"만 absent. */
-async function settleByLookup(source: IssueApiAdapter, docKey: string, p: ApiLookupPolicy, seen: (t: string, n: number) => void): Promise<ApiLookupResult> {
-  const t0 = Date.now();
+async function settleByLookup(source: IssueApiAdapter, docKey: string, p: ApiLookupPolicy, clock: ApiClock, seen: (t: string, n: number) => void): Promise<ApiLookupResult> {
+  const t0 = clock.now();
   let absent = 0;
   for (let n = 1; ; n++) {
     const l = await source.lookup(docKey).catch((): ApiLookupResult => ({ t: 'unknown' }));
@@ -166,8 +172,8 @@ async function settleByLookup(source: IssueApiAdapter, docKey: string, p: ApiLoo
     if (l.t === 'issued') return l;
     if (l.t === 'unknown') return l;
     absent++;
-    if (absent >= p.lookups && Date.now() - t0 >= p.minElapsedMs) return l;
-    await sleep(p.intervalMs);
+    if (absent >= p.lookups && clock.now() - t0 >= p.minElapsedMs) return l;
+    await clock.sleep(p.intervalMs);
   }
 }
 

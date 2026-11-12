@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   apiRung, BizVerifier, branchOf, connectRunBrowser, DataService, docKeyOf, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunEnd, RunService, ulid,
-  type ApiLookupPolicy, type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
+  API_LOOKUP_POLICY, type ApiClock, type ApiLookupPolicy, type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
 } from '@sax/engine';
 import { GateRepo, Ledger, LedgerError, openDatabase, RunRepo, type ArmRow, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
@@ -148,7 +148,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
   /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
-  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge']; lookup?: ApiLookupPolicy } = {}) {
+  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge']; lookup?: ApiLookupPolicy; clock?: ApiClock } = {}) {
     const db = await tempDb();
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
@@ -158,7 +158,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
-    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db, lookup: o.lookup ?? FAST_LOOKUP })], ledger: new Ledger(db), log });
+    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db, lookup: o.lookup ?? FAST_LOOKUP, ...(o.clock ? { clock: o.clock } : {}) })], ledger: new Ledger(db), log });
     const events: LadderEvent[] = [];
     ladder.on('state', (e: LadderEvent) => events.push(e));
     const ledger = new Ledger(db);
@@ -384,6 +384,46 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const ex = await absent.until(b.k, 'exhausted');
     assert.deepEqual(ex.tried.map((t) => [t.route, t.code]), [['hometax.auto', 'chrome.not_installed'], ['hometax.manual', 'issue.manual_declined'], ['api', 'api.not_committed']]);
     assert.deepEqual([absent.api!.calls, absent.api!.lookups], [1, 2], '"없음"은 하한(2번)을 채워야 발급 안 됨');
+  });
+
+  /** 가짜 시계: sleep은 시간을 그만큼 바로 넘긴다. at(ms, fn)은 그 시각을 지날 때 한 번 부른다(원천이 늦게 처리하는 순간). */
+  const fakeClock = () => {
+    const c = { t: 0, sleeps: [] as number[], hooks: [] as Array<{ at: number; fn: () => void }> };
+    const clock: ApiClock = {
+      now: () => c.t,
+      sleep: async (ms) => {
+        c.sleeps.push(ms);
+        c.t += ms;
+        for (const h of c.hooks.splice(0)) if (c.t >= h.at) h.fn(); else c.hooks.push(h);
+      },
+    };
+    return { c, clock, at: (ms: number, fn: () => void) => c.hooks.push({ at: ms, fn }) };
+  };
+
+  it('기본 하한(가짜 시계): 끊긴 뒤 "없음"은 60초가 지나고 조회가 2번 넘어야 not_committed. 0초·1번이나 시간 무시로 바꾸면 실패한다', async () => {
+    assert.deepEqual(API_LOOKUP_POLICY, { minElapsedMs: 60_000, lookups: 2, intervalMs: 30_000 });
+    const f = fakeClock();
+    const w = await world({ api: new FakeIssueApi('drop_then_absent'), lookup: API_LOOKUP_POLICY, clock: f.clock, page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
+    const { k } = w.request();
+    await passManualThenConsent(w, k);
+    w.ladder.consent(k, 'granted');
+    const ex = await w.until(k, 'exhausted');
+    assert.equal(ex.tried.at(-1)?.code, 'api.not_committed');
+    // 0초: 없음(1) → 30초: 없음(2), 아직 60초 전 → 60초: 없음(3) → 닫음.
+    assert.deepEqual([w.api!.calls, w.api!.lookups, f.c.t, f.c.sleeps], [1, 3, 60_000, [30_000, 30_000]]);
+  });
+
+  it('기본 하한(가짜 시계): 끊긴 뒤 45초에 원천에 보이면 60초 하한 안의 조회가 찾아 issued, 문서 1건', async () => {
+    const f = fakeClock();
+    const api = new FakeIssueApi('drop_then_absent');
+    const w = await world({ api, lookup: API_LOOKUP_POLICY, clock: f.clock, page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
+    const { k } = w.request();
+    f.at(45_000, () => api.preload(docKeyOf(k), 'FAKE-NTS-LATE'));
+    await passManualThenConsent(w, k);
+    w.ladder.consent(k, 'granted');
+    const st = await w.until(k, 'issued');
+    assert.equal(st.ref, 'FAKE-NTS-LATE');
+    assert.deepEqual([api.calls, api.lookups, api.documents, f.c.t], [1, 3, 1, 60_000]);
   });
 
   it('끊긴 뒤 원천이 늦게 처리하면(첫 조회에는 없음) 하한 안의 다음 조회가 찾아 issued. 원천 문서 1건, 같은 키 재요청도 issued', async () => {
