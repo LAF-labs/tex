@@ -308,6 +308,11 @@ export type BarMode = 'unarmed' | 'armed' | 'refused';
 export const BAR_MESSAGES = {
   cursor: '마우스 커서가 보이게 한 뒤 눌러 주세요',
 } as const;
+/**
+ * 창을 앞으로 가져온 클릭이 승인 버튼 위였다(F-11): 그 클릭은 창 활성화로 쓰여 승인이 아니다(macOS는 첫 클릭을 페이지에 주지 않고,
+ * 바는 활성화 때 누르던 클릭을 취소한다). 무장·결속 규칙은 그대로이고 문구만 보인다.
+ */
+export const BAR_AGAIN_TEXT = '창을 앞으로 가져오는 클릭이었어요. 한 번 더 눌러 주세요';
 export const ACTION_TEXT = '승인하고 발급';
 export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
 export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';

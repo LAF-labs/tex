@@ -131,7 +131,8 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
 
 describe('멈춤 문구에 내부 코드가 보이지 않는다', () => {
   it('엔진이 던지는 RunEnd 코드는 표에 사람 말로 있고, 모르는 코드는 일반 문구', () => {
-    const engine = ['runs.ts', 'h01/runner.ts', 'policy.ts', 'ir/runner.ts']
+    // browser.ts: 실행 창을 열지 못한 이유(Chrome 없음 chrome.not_installed 등, customer-dist)
+    const engine = ['runs.ts', 'h01/runner.ts', 'policy.ts', 'ir/runner.ts', 'browser.ts']
       .map((f) => new URL(`../packages/engine/src/${f}`, import.meta.url))
       .filter((u) => fs.existsSync(u))
       .map((u) => fs.readFileSync(u, 'utf8'))
