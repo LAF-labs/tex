@@ -297,6 +297,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 저장 품목의 첫 이름(못 읽으면 없음). 거래처 목록 모양은 #141 그대로라 품목은 따로 읽는다(#144).
     const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
+    runs.syncAuth();
   };
   let seed: DemoSeed | null = null;
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
