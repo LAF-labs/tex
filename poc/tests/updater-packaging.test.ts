@@ -148,3 +148,13 @@ test('패키징 스크립트: 공증 프로필은 이름만 넘기고, dmg 서�
   assert.match(src, /`\$\{exePath\}\.sha256`/);
   assert.doesNotMatch(src, /--arch/, 'Intel Mac 빌드 옵션 없음');
 });
+
+test('macOS 신원 고르기: 팀 ID를 하드코딩하지 않고 Developer ID Application 신원의 괄호 값을 쓴다(Apple Development 신원의 괄호 값은 개인 식별자)', () => {
+  const out = `  1) ${'C'.repeat(40)} "Apple Development: yanggyun kim (BKDQVFVVU2)"\n  2) ${'D'.repeat(40)} "Developer ID Application: yanggyun kim (JA55KTZH34)"\n     2 valid identities found\n`;
+  const s = macSigningFrom({ env: { SAX_NOTARY_PROFILE: 'sax-notary' }, platform: 'darwin', identities: parseIdentities(out) });
+  assert.equal(s.mode, 'developer_id');
+  assert.equal(s.identity, 'yanggyun kim (JA55KTZH34)');
+  assert.equal(s.teamId, 'JA55KTZH34');
+  const cfg = fs.readFileSync(path.join(BUILD, 'electron-builder.config.mjs'), 'utf8');
+  assert.doesNotMatch(cfg, /JA55KTZH34|BKDQVFVVU2/, '설정에 팀 ID가 없다');
+});

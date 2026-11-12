@@ -133,7 +133,7 @@
 ### 3.2 절차 (만드는 쪽)
 1. 머지된 main을 분리 체크아웃 → `pnpm install --frozen-lockfile` → `rm -f apps/desktop/tsconfig.tsbuildinfo`(데스크톱 인계 문서와 같다).
 2. `cd apps/desktop`
-   - `SAX_NOTARY_PROFILE=sax-notary SAX_APP_VERSION=<판> pnpm package:mac` — 대표 몫 §4-2가 끝난 Mac. 출력 첫머리 `macOS 서명: Developer ID (BKDQVFVVU2), 공증 프로필 sax-notary`, 끝에 `Developer ID 서명·공증(spctl accepted)`. 끝나지 않았으면 `macOS 서명: 애드혹(<이유>)`.
+   - `SAX_NOTARY_PROFILE=sax-notary SAX_APP_VERSION=<판> pnpm package:mac` — 대표 몫 §4-2가 끝난 Mac. 출력 첫머리 `macOS 서명: Developer ID (JA55KTZH34), 공증 프로필 sax-notary`, 끝에 `Developer ID 서명·공증(spctl accepted)`. 끝나지 않았으면 `macOS 서명: 애드혹(<이유>)`.
    - `SAX_APP_VERSION=<판> pnpm package:win --skip-build`
 3. 산출물 옆에 `<설치본>.sha256`이 생긴다(이 PR). `report.json`의 `installer.sha256`, `buildInfo.commit`·`dirty:false`·`devOnlyIncluded:[]`, Mac은 `mac.spctl`·`mac.dmgNotarization`을 확인한다.
 4. `~/sax-installers/<판>/`에 설치본과 `SHA256SUMS.txt`를 모은다.
@@ -154,7 +154,7 @@
   - 샌드박스 한도(하루 200통·초당 1통)는 PoC에는 충분하다. 고객마다 1~4를 반복한다.
 
 ### 4-2. Apple Developer ID 서명·공증 (이번 주 목표)
-대표는 팀 "yanggyun kim"(팀 ID `BKDQVFVVU2`)의 구성원이고 계정 소유자가 아니다. Xcode > Settings > Accounts > Manage Certificates에서 Developer ID Application을 만들면 "This operation can only be performed by the Account Holder."로 거절된다(2026-11-11). Developer ID 인증서는 계정 소유자만 만들 수 있다. 그래서 아래 길로 간다.
+대표는 팀 "yanggyun kim"(**팀 ID `JA55KTZH34`**)의 구성원이고 계정 소유자가 아니다. 키체인의 `Apple Development: yanggyun kim (BKDQVFVVU2)`의 괄호 값은 개인 식별자이지 팀 ID가 아니다. Developer ID Application 인증서는 2026-11-12에 발급됐다(주체 `Developer ID Application: yanggyun kim (JA55KTZH34)`, 발급자 Developer ID Certification Authority G2, 만료 2027-12-11). Xcode > Settings > Accounts > Manage Certificates에서 Developer ID Application을 만들면 "This operation can only be performed by the Account Holder."로 거절된다(2026-11-11). Developer ID 인증서는 계정 소유자만 만들 수 있다. 그래서 아래 길로 간다.
 
 **(1) 기본: 대표 Mac에서 CSR → 계정 소유자가 발급 → 대표 Mac에 설치** (개인 키는 대표 Mac 밖으로 나가지 않는다)
 1. 대표 Mac에서 **키체인 접근** 앱을 연다(Spotlight ⌘Space → "키체인 접근").
@@ -163,7 +163,7 @@
 4. 그 `.certSigningRequest` 파일을 계정 소유자에게 보낸다(비밀 아님, 메일·메신저 가능).
 5. 계정 소유자가 발급(아래 요청문) → `developerID_application.cer`를 돌려받는다.
 6. 대표 Mac에서 `.cer`를 두 번 눌러 **로그인** 키체인에 넣는다.
-7. 터미널에서 `security find-identity -v -p codesigning` → `"Developer ID Application: yanggyun kim (BKDQVFVVU2)"` 줄이 보이면 끝. 안 보이면 Apple 중간 인증서 "Developer ID - G2"가 없는 것이다: https://www.apple.com/certificateauthority/ 에서 **Developer ID - G2** 인증서를 받아 두 번 눌러 넣고 다시 본다.
+7. 터미널에서 `security find-identity -v -p codesigning` → `"Developer ID Application: yanggyun kim (JA55KTZH34)"` 줄이 보이면 끝. 안 보이면 Apple 중간 인증서 "Developer ID - G2"가 없는 것이다: https://www.apple.com/certificateauthority/ 에서 **Developer ID - G2** 인증서를 받아 두 번 눌러 넣고 다시 본다.
 
 **(2) 차선: 계정 소유자가 자기 Mac에서 만들어 .p12로 넘김** (개인 키가 이동한다)
 - 계정 소유자: Xcode > Settings > Accounts > Manage Certificates > [+] > **Developer ID Application** → 키체인 접근에서 그 인증서(개인 키 포함)를 **내보내기** → `.p12`, 긴 암호.
@@ -174,7 +174,7 @@
   1. https://appleid.apple.com 로그인 → **로그인 및 보안** → **앱 암호** → [+] → 이름 `sax-notary` → 생성된 `xxxx-xxxx-xxxx-xxxx`를 복사(한 번만 보인다).
   2. 대표 Mac 터미널에서 **대표가 직접**:
      ```
-     xcrun notarytool store-credentials sax-notary --apple-id "<대표 Apple ID 이메일>" --team-id BKDQVFVVU2
+     xcrun notarytool store-credentials sax-notary --apple-id "<대표 Apple ID 이메일>" --team-id JA55KTZH34
      ```
      암호를 물으면 1의 앱 암호를 붙여 넣는다(명령줄에 `--password`로 넣지 않는다: 셸 기록에 남는다).
   3. `notarytool`이 바로 Apple에 자격을 확인한다. "Credentials saved to Keychain"이 나오면 끝. 팀 구성원 Apple ID로 공증을 제출하려면 그 팀에서 Developer 이상 역할이 필요한 것으로 알고 있다(확인 필요). 권한 오류면 아래 대안.
@@ -236,7 +236,7 @@
 
 **Developer ID 첫 서명 판(4-2 뒤, 팀장이 대표 Mac에서)**
 - **S-1** 빌드 출력 `Developer ID 서명·공증(spctl accepted)`, `report.json` `mac.source`가 `Notarized Developer ID`.
-- **S-2** `codesign -d -r- /Applications/SovereignAX.app` → `designated => identifier "com.laf.sovereignax" and anchor apple generic and … leaf[subject.OU] = BKDQVFVVU2`.
+- **S-2** `codesign -d -r- /Applications/SovereignAX.app` → `designated => identifier "com.laf.sovereignax" and anchor apple generic and … leaf[subject.OU] = JA55KTZH34`.
 - **S-3** 대표 Mac(애드혹이 만든 항목이 있음)에서 첫 실행 → 허용 창이 항목마다 한 번 → [항상 허용] → `engine.log`에 `engine.db_opened`, `registry.synced`. 금고·DB가 열리면 하드닝 런타임에서 네이티브 모듈이 도는 것이다. 공동인증서 목록·등록증 읽기(OCR)·[홈택스에서 준비](전용 Chrome 기동)까지 한 번씩.
 - **S-4** 같은 팀 ID로 판을 하나 더 올려 [대치] → 허용 창이 **뜨지 않는지**.
 
