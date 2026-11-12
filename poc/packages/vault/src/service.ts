@@ -452,6 +452,8 @@ export class Vault {
         return scanNpki({ roots: this.opts.npki?.roots, fs: this.opts.npki?.fs, log: this.opts.log });
       case 'status':
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
+      case 'browser.focus':
+        return { focused: this.relay ? await this.relay.bringToFront() : false };
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
     throw new Error('not_implemented');

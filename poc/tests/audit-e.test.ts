@@ -8,10 +8,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
-  BizVerifier, DataService, envProblems, failureMatches, FIXTURE_POLICY, fixturePortal, HOMETAX_POLICY, jcs, mailStatusVerdict, pathExpected, pocTotalRefusal, POC_IRREVERSIBLE_TOTAL, POC_OVERRIDES,
+  BizVerifier, DataService, envProblems, failureMatches, FIXTURE_POLICY, fixturePortal, HOMETAX_POLICY, jcs, mailStatusVerdict, pathExpected,
   policyFor, portalProblems, RateGuard, RunEnd, RunPolicy, RunService, sha256hex, SIGNAL_INSPECT_EXPR, type Clock, type PortalConfig, type RatePolicy, type RunEvent,
 } from '@sax/engine';
-import { GateRepo, Ledger, openDatabase, RateRepo, RunJournal, RunRepo, type Db } from '@sax/db';
+import { openDatabase, RateRepo, RunJournal, type Db } from '@sax/db';
 import { Egress, EgressError } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
@@ -52,45 +52,6 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
   };
   const streak = (s: ReturnType<typeof setup>, k: string) => s.repo.count(s.kind, '', k, '-');
 
-  // ---- E1 · N-01 ----
-  it('audit-e: policyFor(hometax) is tightened by POC_OVERRIDES and never loosened', () => {
-    const p = policyFor('hometax');
-    assert.deepEqual(p.limits, { ...HOMETAX_POLICY.limits, runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3 });
-    assert.deepEqual(p.cooldown, { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 });
-    assert.deepEqual([p.pace, p.run], [HOMETAX_POLICY.pace, HOMETAX_POLICY.run]);
-    const all = { ...p.limits, ...p.cooldown } as Record<string, number>;
-    const base = { ...HOMETAX_POLICY.limits, ...HOMETAX_POLICY.cooldown } as Record<string, number>;
-    for (const [k, v] of Object.entries(POC_OVERRIDES)) assert.equal(all[k], Math.min(base[k]!, v), k);
-    for (const k of Object.keys(base)) assert.ok(all[k]! <= base[k]!, `${k}: 느슨해지지 않는다`);
-    assert.ok(Object.isFrozen(p.limits) && Object.isFrozen(p.cooldown));
-    assert.equal(policyFor('fixture'), FIXTURE_POLICY, '가짜 페이지 정책은 그대로');
-  });
-
-  it('audit-e: fourth irreversible start is refused with policy.poc_irreversible_total', () => {
-    const db = freshDb();
-    const l = new Ledger(db);
-    const g = new GateRepo(db);
-    new RunRepo(db).create({ id: 'r', playbookId: 'p', playbookVersion: '1', packageDigest: 'd', profileId: 'x', trigger: 'local', inputsHash: 'i' });
-    const arm = (n: number) => {
-      g.open(`q${n}`, 'r');
-      g.decide(`q${n}`, 'approved', 'local');
-      l.consumeAndArm(`q${n}`, { intentId: `I${n}`, stepId: 's21', runId: 'r', businessKey: `bk${n}`, playbookId: 'p', inputsHash: 'i', packageDigest: 'd', actionHash: 'a', deviceId: 'dv', cpBizNoHmac: 'h', recipientEmailHmac: null });
-    };
-    arm(1);
-    l.resolve('I1', 's21', 'not_committed', 'pre_dispatch_mismatch', null); // 발급 안 됨은 세지 않는다
-    arm(2);
-    l.resolve('I2', 's21', 'committed', null, 'APP-2');
-    arm(3);
-    l.resolve('I3', 's21', 'in_doubt');
-    assert.equal(pocTotalRefusal(l, 'hometax'), null, '2건까지는 시작한다');
-    arm(4); // armed 그대로(재시작 전 진행 중)
-    assert.equal(l.countIrreversible(['committed', 'in_doubt', 'armed', 'dispatched']), POC_IRREVERSIBLE_TOTAL);
-    const r = pocTotalRefusal(l, 'hometax');
-    assert.ok(r instanceof RunEnd);
-    assert.deepEqual([r.status, r.code], ['failed', 'policy.poc_irreversible_total']);
-    assert.equal(pocTotalRefusal(l, 'fixture'), null, '가짜 페이지는 PoC 전체 상한 밖');
-  });
-
   // ---- E2 · N-02 ----
   it('audit-e: failure signal without an anchored text pattern is rejected by portalProblems', () => {
     const css = '#issue-error';
@@ -129,7 +90,10 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.equal(s.g.status('p1').cooldownUntil, null);
     await s.policy().finish();
     assert.equal(streak(s, 'block_streak'), 1);
-    assert.ok(s.g.status('p1').cooldownUntil, 'PoC 빌드는 양성 1회에 24시간 쿨다운');
+    assert.equal(s.g.status('p1').cooldownUntil, null, '양성 1회는 아직 쿨다운이 아니다');
+    await s.policy().finish();
+    assert.equal(streak(s, 'block_streak'), 2);
+    assert.ok(s.g.status('p1').cooldownUntil, '양성 2회에 24시간 쿨다운');
     assert.ok(s.journal.some(([t]) => t === 'cooldown.started'));
     assert.throws(() => s.g.admit('p1', { irreversible: true }), /policy\.cooldown/);
   });
@@ -210,7 +174,7 @@ describe('감사 D 패키지 E(브라우저 없음)', () => {
     assert.deepEqual([second?.status, second?.code], ['failed', 'portal.extra_auth_repeat']);
     assert.deepEqual(s.journal.filter(([t]) => t === 'block.signal').map(([, p]) => p), [{ id: 'extra_auth.repeat' }]);
     // 양성 탐지 1회면 쿨다운인 정책에서는 쿨다운이 사유다
-    const h = setup('hometax', policyFor('hometax'));
+    const h = setup('hometax', { ...HOMETAX_POLICY, cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 } });
     for (let i = 0; i < 2; i++) {
       const page = fakePage();
       const p = h.policy(page);

@@ -3,15 +3,17 @@
 // 정직하게: 앱의 fixture 엔진(H01Runner)은 사람 차례를 내지 않으므로, 이 e2e는 run.* 명령과 실행 이벤트만 #278 계약대로 대본으로 돌린다
 // (main·ShellRuns·렌더러·승인 바는 실제). 실제 엔진(RunService + 게시본 + 가짜 로그인·서명 창 + Chrome)은 tests/shell-handoff-dryrun.test.ts가 본다.
 // 실행: electron apps/desktop/e2e-dist/shell-handoff-e2e.js  (스크린샷: SAX_E2E_OUT, 기본 임시 폴더)
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { app } from 'electron';
 import { buildGateRequest, type GateRequest } from '@sax/engine/gate';
-import { kstToday } from '../dist/approval-gate.js';
+import { irreversibleText, kstToday } from '../dist/approval-gate.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { HANDOFF_LOGIN, NOTE, SIGN_BY_AUTH, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
+import { SIGN_LABEL } from '../dist/shell-model.js';
 
 registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-handoff-e2e-${process.pid}`));
@@ -26,6 +28,10 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 
 let S: Shell;
+let chrome = true;
+const focusCalls: unknown[] = [];
+const headful = process.env.SAX_E2E_HEADFUL === '1' && process.platform === 'darwin';
+const frontApp = () => execFileSync('lsappinfo', ['info', '-only', 'name', execFileSync('lsappinfo', ['front']).toString().trim()]).toString();
 const js = <T = unknown>(code: string): Promise<T> => S.win.webContents.executeJavaScript(code) as Promise<T>;
 async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8000): Promise<boolean> {
   const end = Date.now() + ms;
@@ -199,11 +205,79 @@ async function approveGate(id: string): Promise<boolean> {
   return until('approved', () => S.runs.get(id)?.approvedPending === true || runStatus(id) !== 'waiting', 5000);
 }
 
+/** 지금 대화에 그려진 온보딩 단계(다시 열면 대화 끝에 새 자리가 생긴다). */
+const onbStep = () => js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`);
+/** 마지막 온보딩 자리 안의 버튼을 실제 입력 뒤 누른다(지난 자리에도 같은 data-onb 버튼이 남아 있다). */
+async function pressOnb(sel: string): Promise<void> {
+  gesture();
+  await sleep(30);
+  const ok = await js<boolean>(`(() => { const sec = [...document.querySelectorAll('section.onb')].pop(); const b = sec && [...sec.querySelectorAll(${JSON.stringify(sel)})].pop(); if (!b || b.disabled) return false; b.click(); return true; })()`);
+  if (!ok) throw new Error(`no onb button ${sel}`);
+}
+async function onbReply(sel: string, next: string): Promise<boolean> {
+  await pressOnb(sel);
+  return until(`onb ${next}`, async () => (await onbStep()) === next, 10_000);
+}
+/** 처음 온보딩: 사업자 간편인증으로 끝낸다(제품과 같은 길. 설정 [바꾸기]는 끝낸 온보딩이 있어야 보인다). */
+async function finishOnboarding(): Promise<boolean> {
+  await until('terms', async () => (await onbStep()) === 'terms', 15_000);
+  const ok =
+    (await onbReply('[data-onb=agree]', 'welcome')) &&
+    (await onbReply('[data-onb=upload]', 'biz-confirm')) &&
+    (await onbReply('[data-onb=confirm]', 'auth')) &&
+    (await onbReply('[data-onb=simple]', 'model')) &&
+    (await onbReply('[data-onb=agree]', 'telemetry')) &&
+    (await onbReply('[data-onb=off]', 'tasks'));
+  if (!ok) return false;
+  if (!(await js<boolean>(`document.querySelector('[data-task=H-01]')?.getAttribute('aria-pressed') === 'true'`))) await pressOnb('[data-task=H-01]');
+  if (!((await onbReply('[data-onb=submit]', 'counterparties')) && (await onbReply('[data-onb=later]', 'summary')) && (await onbReply('[data-onb=ok]', 'first')))) return false;
+  await pressOnb('[data-onb=later]');
+  return until('onboarding done', async () => !(await js<boolean>(`!!document.querySelector('[data-onb-step]:not([data-onb-step=done])')`)), 8000);
+}
+/** 설정 > 발급 인증 [바꾸기] → 대화의 O-03 → 고르기 → 요약 [확인했어요]. 제품에서 기본 인증을 바꾸는 유일한 길. */
+async function changeAuthInSettings(kind: 'cert' | 'simple'): Promise<{ note: boolean; atAuth: boolean; atSummary: boolean; ended: boolean }> {
+  await userClick('#rail [data-view=settings]');
+  await until('settings', () => js<boolean>(`!!document.querySelector('[data-act=auth-reopen]')`), 5000);
+  const note = await js<boolean>(`(document.querySelector('[data-auth-note]')?.textContent ?? '').includes('진행 중인 작업은 원래 인증으로 끝내요')`);
+  await shot(`06-settings-auth-before-${kind}`);
+  await userClick('[data-act=auth-reopen]');
+  const atAuth = await until('reopen auth', async () => (await onbStep()) === 'auth', 8000);
+  if (!atAuth) return { note, atAuth, atSummary: false, ended: false };
+  if (kind === 'cert') {
+    await pressOnb('[data-onb=cert]');
+    await until('certs', () => js<boolean>(`!![...document.querySelectorAll('section.onb')].pop()?.querySelector('[data-onb=cert-pick]:not([disabled])')`), 5000);
+    await pressOnb('[data-onb=cert-pick]');
+  } else await pressOnb(`[data-onb=${kind}]`);
+  const atSummary = await until('summary', async () => (await onbStep()) === 'summary', 8000);
+  await pressOnb('[data-onb=ok]');
+  const ended = await until('reopen ended', async () => (await onbStep()) !== 'summary', 8000);
+  return { note, atAuth, atSummary, ended };
+}
+
 async function flow(): Promise<void> {
   await S.ready;
   scriptHost();
+  // [홈택스 창 보기]가 실제 금고 Chrome을 앞으로 올리는지 보려고 fixture 금고에 Chrome을 띄운다(실행과 무관한 빈 탭, 엔진 개발 명령).
+  await S.host.rpc('browser.open', {});
+  const realControl = S.host.control.bind(S.host);
+  S.host.control = (async (m: string, p: Record<string, unknown> = {}) => {
+    const r = await realControl(m, p);
+    if (m === 'browser.focus') focusCalls.push(r);
+    return r;
+  }) as typeof S.host.control;
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
+  check('온보딩을 사업자 간편인증으로 끝낸다', (await finishOnboarding()) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as Array<{ kind: string; signMethod: string | null }>).some((x) => x.kind === 'business' && x.signMethod === 'simple_auth'))));
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
+
+  // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
+  chrome = false;
+  const z = await toDraft('A상사에 11만원 세금계산서');
+  await userClick(`[data-run="${z}"] [data-act=prepare]`);
+  check('Chrome이 없으면 준비하지 않고 초안 카드에 설치 안내(엔진 run.start 없음)', await until('no chrome', async () => js<boolean>(`(() => { const c = document.querySelector('[data-run="${z}"]'); return !!c && !!c.querySelector('[data-no-chrome]') && c.innerText.includes('Chrome을 설치한 뒤') && !!c.querySelector('[data-act=prepare]'); })()`), 3000) && runStatus(z) === 'draft' && !calls.some(([m, r]) => m === 'run.start' && r === z), { st: runStatus(z), calls });
+  await shot('00-no-chrome');
+  await click(`[data-run="${z}"] [data-act=cancel]`);
+  await until('cancelled', () => runStatus(z) !== 'draft', 3000);
+  chrome = true;
 
   // ① 로그인 대기 → [이어서] → 승인 → 서명 대기 → 엔진이 스스로 넘어가 완료
   plans.push({ login: true });
@@ -214,6 +288,23 @@ async function flow(): Promise<void> {
   let c = await card(a);
   check('로그인 카드: "홈택스 창에서 로그인해 주세요" + [이어서](주 버튼)·[중지], [직접 발급함] 없음', c.text.includes(HANDOFF_LOGIN.text) && c.text.includes(HANDOFF_LOGIN.note) && c.acts.some((b) => b.act === 'resume' && b.label === '이어서' && b.primary) && c.acts.some((b) => b.act === 'stop') && !c.acts.some((b) => b.act === 'manual-done'), c);
   check('로그인 차례 카드는 끝난 카드처럼 보이지 않는다(발급 완료·중지됨·확인 필요 칩이 아니다)', !/발급 완료|중지됨|취소|확인 필요/.test(c.chip), c.chip);
+  check('로그인 카드에 [홈택스 창 보기]', c.acts.some((b) => b.act === 'show-browser' && b.label === '홈택스 창 보기'), c.acts);
+  if (headful) {
+    for (let i = 0; i < 5 && !/Finder/.test(frontApp()); i++) {
+      execFileSync('open', ['-a', 'Finder']);
+      await sleep(1500);
+    }
+  }
+  await userClick(`[data-run="${a}"] [data-act=show-browser]`);
+  check('[홈택스 창 보기] → main → 금고 browser.focus → 실행 Chrome 탭을 앞으로(focused)', await until('focused', () => focusCalls.length === 1, 3000) && JSON.stringify(focusCalls[0]) === '{"focused":true}', focusCalls);
+  if (headful) {
+    await sleep(1200);
+    check('(맥, 화면) Chrome 앱이 맨 앞에 온다', /Google Chrome/.test(frontApp()), frontApp());
+    S.win.show();
+    S.win.focus();
+    await sleep(800);
+  }
+  check('[홈택스 창 보기]는 실행 상태를 바꾸지 않는다', runStatus(a) === 'turn' && !calls.some(([m, r]) => m === 'run.resume' && r === a), runStatus(a));
   await shot('01-login-turn');
   await sleep(3300); // 직전 실제 입력([홈택스에서 준비])의 3초 창이 지난 뒤
   await click(`[data-run="${a}"] [data-act=resume]`);
@@ -221,6 +312,9 @@ async function flow(): Promise<void> {
   check('실제 입력 없는 [이어서]는 받지 않는다(엔진에 보내지 않음, 카드 그대로)', runStatus(a) === 'turn' && !calls.some(([m, r]) => m === 'run.resume' && r === a), calls);
   await userClick(`[data-run="${a}"] [data-act=resume]`);
   check('[이어서] → 엔진 run.resume → 준비 중으로 돌아간다', await until('resumed', () => runStatus(a) !== 'turn', 3000) && calls.some(([m, r]) => m === 'run.resume' && r === a), runStatus(a));
+  await until('bar armed a', () => S.bar.snapshot().visible && S.bar.snapshot().armed, 10_000);
+  const irr = S.bar.snapshot().irreversible;
+  check('승인 카드 비가역 줄: "바로 발급"이 아니라 승인 뒤 간편인증을 마쳐야 발급된다고 말한다', irr === irreversibleText(SIGN_LABEL.simple_auth, true) && !/바로 발급/.test(irr), irr);
   check('로그인 뒤 게이트 → 실제 승인 바로 승인', await approveGate(a), { st: runStatus(a), bar: S.bar.snapshot().visible });
   check('승인 직후 서명 단계: 서명 차례(handoff) 전에도 카드가 발급 인증별 할 일을 바로 보인다', await until('sign now', async () => (await js<boolean>(`(() => { const c = document.querySelector('[data-run="${a}"]'); return !!c && 'signNow' in c.dataset && c.innerText.includes(${JSON.stringify(SIGN_BY_AUTH['사업자 간편인증']!.now)}); })()`)), 3000), await card(a));
   check('서명 차례: 승인 뒤에도 카드는 끝나지 않고 사람 차례(서명)', await until('sign turn', () => runStatus(a) === 'turn' && S.runs.get(a)?.handoff?.kind === 'sign', 5000), runStatus(a));
@@ -256,12 +350,33 @@ async function flow(): Promise<void> {
   check('(상한) 로그인 차례', await until('turn d', () => runStatus(d) === 'turn', 5000), runStatus(d));
   check('(상한) run.handoff_timeout → 끝 카드: 30분 문구 + "아무것도 발급하지 않았어요" + [다시 준비]', await until('cap end', async () => runStatus(d) === 'attention' && (await card(d)).text.includes(NOTE['run.handoff_timeout']!) && (await card(d)).text.includes('아무것도 발급하지 않았어요') && (await card(d)).acts.some((x) => x.act === 'handoff-again' && x.label === '다시 준비'), 5000), await card(d));
   await shot('05-cap-end');
+
+  // ④ 초안을 만든 뒤 설정 [바꾸기](온보딩 O-03 다시 열기)로 기본 발급 인증을 바꾸면: 초안 카드·패널, 시작할 때 엔진이 읽는 프로필, 서명 단계 안내가 모두 새 값
+  plans.push({ login: false });
+  const before = S.runs.get(await toDraft('B상사에 44만원 세금계산서'))!;
+  const m = before.id;
+  check('(인증 바꿈) 초안은 지금 기본(사업자 간편인증)', before.auth === SIGN_LABEL.simple_auth, before.auth);
+  const toCert = await changeAuthInSettings('cert');
+  check('(인증 바꿈) 설정에 "진행 중인 작업은 원래 인증으로 끝내요" + [바꾸기] → O-03 → 공동인증서 → 요약 [확인했어요]', toCert.note && toCert.atAuth && toCert.atSummary && toCert.ended, toCert);
+  const profileSign = async () => ((await S.host.rpc('db.query.profiles.list')) as Array<{ kind: string; signMethod: string | null }>).find((x) => x.kind === 'business')?.signMethod;
+  check('(인증 바꿈) 설정 [바꾸기] → 프로필 signMethod cert', await until('profile cert', async () => (await profileSign()) === 'cert', 5000), await profileSign());
+  check('(인증 바꿈) 아직 시작하지 않은 초안은 새 기본을 보인다', await until('draft synced', () => S.runs.get(m)?.auth === SIGN_LABEL.cert, 5000), S.runs.get(m)?.auth);
+  await userClick('#rail [data-view=chat]');
+  await until('chat', () => js<boolean>(`!!document.querySelector('[data-run="${m}"] [data-act=prepare]')`), 5000);
+  await prepare(m);
+  check('(인증 바꿈) 승인 → 서명 단계 안내는 엔진이 누를 인증(공동·금융인증서)과 같다', (await approveGate(m)) && (await until('sign now cert', () => S.runs.get(m)?.steps[5]?.note === SIGN_BY_AUTH[SIGN_LABEL.cert]!.now, 5000)) && (await profileSign()) === 'cert', { note: S.runs.get(m)?.steps[5]?.note, auth: S.runs.get(m)?.auth });
+  await shot('06-auth-changed-sign-now');
+  const toSimple = await changeAuthInSettings('simple');
+  check('(인증 바꿈) 진행 중에 다시 [바꾸기] → 간편인증: 진행 중인 실행은 시작 때 값 그대로(설정 문구 "진행 중인 작업은 원래 인증으로")', toSimple.atSummary && toSimple.ended && await until('profile simple', async () => (await profileSign()) === 'simple_auth', 5000) && S.runs.get(m)?.auth === SIGN_LABEL.cert, S.runs.get(m)?.auth);
+  engineFinishesSign(m);
+  await until('done m', () => runStatus(m) === 'done', 5000);
+  await userClick('#rail [data-view=chat]');
 }
 
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: headful, headful, daemon: false, onboarding: true, chromeReady: () => chrome });
     S.win.webContents.setBackgroundThrottling(false);
     S.win.setIgnoreMouseEvents(true);
     await flow();

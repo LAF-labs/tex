@@ -190,7 +190,7 @@ describe('동의 화면 4종', () => {
     assert.ok(!/agreeAll|모두 동의|전체 동의/.test(src));
   });
 
-  it('보안카드: ① 동의 → 금고 등록 창 결속(store, 아이디·비밀번호와 보안카드, notice 판) → 금고 동의 레코드. 비밀 값은 상태 기계를 지나지 않는다', async () => {
+  it('보안카드도 다른 인증처럼 바로 ②로: 금고 창을 열지 않고 위임 동의도 남기지 않는다(발급할 때 번호를 직접 넣는다)', async () => {
     const { flow, ports, saved } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -198,51 +198,16 @@ describe('동의 화면 4종', () => {
       { step: 'biz-confirm', choice: 'confirm' },
       { step: 'auth', choice: 'card' },
     ]);
-    assert.equal(flow.state.step, 'delegation');
-    const view = await flow.view();
-    assert.equal(view.consent?.key, 'consent.delegation');
-    await flow.answer({ step: 'delegation', choice: 'agree' });
-    assert.deepEqual(ports.binds, [
-      [
-        { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: CONSENT_NOTICES.delegation.version } },
-        { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: CONSENT_NOTICES.delegation.version } },
-      ],
-    ]);
-    assert.deepEqual(flow.state.registered, { at: flow.state.registered!.at, noticeVersion: 'f06-pre.1', items: 31 });
     assert.equal(flow.state.step, 'model');
+    assert.deepEqual(ports.binds, [], '금고 등록 창을 열지 않는다');
     await walk(flow, [
       { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
-      { step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-02': true } },
+      { step: 'tasks', choice: 'later' },
       { step: 'summary', choice: 'ok' },
     ]);
-    assert.equal(saved[0]?.portalLoginId, 'ganada01', '포털 아이디는 비밀 아닌 값으로 프로필에(DB portal_login_id)');
+    assert.equal(flow.state.consents.delegation, undefined, '위임 동의 레코드가 없다');
     assert.equal(saved[0]?.signMethod, 'security_card');
-    assert.ok(!JSON.stringify(flow.state.log).includes('ganada01'), '대화 기록에는 포털 아이디를 넣지 않는다');
-    assert.ok(!JSON.stringify(await flow.view()).includes('ganada01'), '렌더러로 가는 view에도 없다');
-  });
-
-  it('포털 아이디는 이어 하기 저장에 남아, ① 뒤에 껐다 켜도 요약에서 프로필에 쓴다(비밀 아님, #42 계약)', async () => {
-    const a = make();
-    await walk(a.flow, [
-      { step: 'terms', choice: 'agree' },
-      { step: 'welcome', choice: 'upload' },
-      { step: 'biz-confirm', choice: 'confirm' },
-      { step: 'auth', choice: 'card' },
-      { step: 'delegation', choice: 'agree' },
-    ]);
-    const resumed = parseOnbState(JSON.parse(JSON.stringify(a.ports.saved)));
-    assert.ok(resumed);
-    const b = make();
-    const flow = new OnboardingFlow(b.ports, resumed, NOW);
-    assert.equal(flow.state.step, 'model');
-    await walk(flow, [
-      { step: 'model', choice: 'agree' },
-      { step: 'telemetry', choice: 'off' },
-      { step: 'tasks', choice: 'submit', tasks: { 'H-03': true } },
-      { step: 'summary', choice: 'ok' },
-    ]);
-    assert.equal(b.saved[0]?.portalLoginId, 'ganada01');
   });
 
   it('이어 하기 저장 읽기: 모양이 틀리면 처음부터(null), 모르는 키는 버린다, 예전 저장(포털 아이디 칸 없음)도 받는다', () => {
@@ -273,20 +238,27 @@ describe('동의 화면 4종', () => {
     assert.ok(!src.includes('persistOnb') && !/writeFile\([^)]*onb/i.test(src));
   });
 
-  it('금고 창을 닫으면 ①에 머무르고 안내, [다른 인증으로 바꾸기]는 인증 고르기로', async () => {
-    const { flow } = make({ register: 'cancelled' });
-    await walk(flow, [
+  it('예전 이어 하기 저장이 ①(위임 등록)에 멈춰 있으면 ①을 다시 그리지 않고 발급 인증을 다시 묻는다(앱이 대신 입력한다는 옛 약속 없음)', async () => {
+    const a = make();
+    await walk(a.flow, [
       { step: 'terms', choice: 'agree' },
       { step: 'welcome', choice: 'later' },
-      { step: 'auth', choice: 'card' },
-      { step: 'delegation', choice: 'agree' },
     ]);
-    assert.equal(flow.state.step, 'delegation');
-    assert.match(flow.state.notice ?? '', /금고 창을 닫았어요/);
-    assert.equal(flow.state.consents.delegation, undefined);
-    await flow.answer({ step: 'delegation', choice: 'switch' });
-    assert.equal(flow.state.step, 'auth');
-    assert.equal(flow.state.auth, null);
+    const old = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'delegation', auth: 'card' });
+    assert.ok(old);
+    assert.equal(old.step, 'auth');
+    assert.equal(old.auth, null, '옛 보안카드 선택은 비운다');
+    const resumed = new OnboardingFlow(make().ports, old, NOW);
+    const v = await resumed.view();
+    assert.equal(v.step, 'auth');
+    assert.equal(v.consent, null, '① 위임 동의 고지를 보이지 않는다');
+    assert.doesNotMatch(JSON.stringify(v), /대신 입력|알아서 입력|금고에 한 번 등록/);
+    await resumed.answer({ step: 'auth', choice: 'card' });
+    assert.equal(resumed.state.step, 'model', '다시 보안카드를 골라도 ①을 거치지 않는다');
+    // ② 다시 묻기(reaskModel)로 ①이 resumeStep에 남은 저장도 같다
+    const parked = parseOnbState({ ...JSON.parse(JSON.stringify(a.flow.state)), step: 'model', resumeStep: 'delegation', auth: 'card' });
+    assert.equal(parked?.resumeStep, 'auth');
+    assert.equal(parked?.auth, null);
   });
 
   it('②③④ 동의 레코드: 판·선택·시각, ②는 처리자 표 판(설정 데이터)도. ②는 필수라 거절 답이 없다(사용자 결정 2026-11-10)', async () => {
@@ -341,7 +313,7 @@ describe('동의 화면 4종', () => {
 });
 
 describe('요약·첫 작업·이어 하기', () => {
-  it('세금계산서를 고르면 거래처 단계, 나머지는 바로 요약. 곧 되는 일은 고를 수 없다', async () => {
+  it('세금계산서를 고르면 거래처 단계, 나머지는 바로 요약. 곧 되는 일(증명서 포함)은 고를 수 없다', async () => {
     const { flow } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -351,7 +323,10 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'telemetry', choice: 'off' },
     ]);
     assert.equal(await code(flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-02': true } })), 'no_tasks');
+    assert.equal(await code(flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-04': true } })), 'no_tasks', '사업자등록증명·납세증명서는 이 빌드에서 발급하지 못한다');
     await flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-01': true, 'H-04': true } });
+    assert.deepEqual(flow.state.tasks, ['H-01']);
+    assert.equal(flow.state.log.at(-1)?.text, '세금계산서 발급·메일 전송');
     assert.equal(flow.state.step, 'counterparties');
     await flow.answer({ step: 'counterparties', choice: 'later' });
     assert.equal(flow.state.step, 'summary');
@@ -370,6 +345,7 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'summary', choice: 'ok' },
     ]);
     assert.deepEqual(saved, [{ kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', repName: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example', signMethod: 'simple_auth' }]);
+    assert.equal(await code(flow.answer({ step: 'first', choice: 'invoice' as never })), 'bad_choice', '첫 작업 선택지는 [지금 해 보기]·[나중에] 둘');
     const r = await flow.answer({ step: 'first', choice: 'try' });
     assert.equal(r.fill, '세금계산서 발급해 줘', 'F-13: 지금 되는 일(세금계산서)로 채운다');
     assert.ok(flow.done);

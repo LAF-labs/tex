@@ -25,7 +25,7 @@ export const ONB_CHOICES = {
   tasks: ['submit', 'later'],
   counterparties: ['done', 'later'],
   summary: ['ok'],
-  first: ['try', 'invoice', 'later'],
+  first: ['try', 'later'],
 } as const satisfies Record<Exclude<OnbStep, 'done'>, readonly string[]>;
 export type OnbChoice = (typeof ONB_CHOICES)[keyof typeof ONB_CHOICES][number];
 export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] as OnbChoice[];
@@ -77,7 +77,7 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     key: 'consent.telemetry',
     version: V,
     title: '사용 기록 보내기(선택)',
-    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요. 설정에서 언제든 바꿀 수 있어요.'],
+    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요.'],
     draft: DRAFT,
   },
   // ① 보안카드·홈택스 아이디/비밀번호 위임 등록(범위 고지, 인증서 비밀번호는 저장하지 않음, D05 §9)
@@ -194,11 +194,11 @@ export type AuthKind = 'card' | 'simple' | 'cert' | 'fincert';
 export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' | 'cert'> = { card: 'security_card', simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
 export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 
-/** O-04 맡길 업무. now: 이 빌드에서 켠 일(PoC 빌드는 H-01·H-03·H-04, 08 §4). soon은 회색 칩(누르면 "지원되면 알림"). */
+/** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). H-03·H-04는 민원증명 실행이 들어오면 켠다. 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. */
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
   { id: 'H-01', label: '세금계산서 발급·메일 전송', now: true },
-  { id: 'H-03', label: '사업자등록증명', now: true },
-  { id: 'H-04', label: '납세증명서', now: true },
+  { id: 'H-03', label: '사업자등록증명', now: false },
+  { id: 'H-04', label: '납세증명서', now: false },
   { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
   { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
@@ -263,7 +263,15 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
-  return { ...base, ...structuredClone(picked) } as OnbState;
+  const s = { ...base, ...structuredClone(picked) } as OnbState;
+  // 예전 판은 보안카드를 고르면 ① 위임 등록(금고에 넣고 앱이 대신 입력)으로 갔다. 그 약속은 이제 사실이 아니다.
+  // ①에 멈춘 저장은 발급 인증을 다시 묻는다(O-03, 지금 문구). 고른 인증은 비운다.
+  if (s.step === 'delegation' || s.resumeStep === 'delegation') {
+    if (s.step === 'delegation') s.step = 'auth';
+    else s.resumeStep = 'auth';
+    Object.assign(s, { auth: null, certId: null, registered: null, notice: null, explain: false });
+  }
+  return s;
 }
 
 export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null, portalLoginId: null });
@@ -591,11 +599,11 @@ export class OnboardingFlow {
           s.auth = kind;
           this.unskip('auth');
           this.say(AUTH_LABEL[kind]);
-          if (kind === 'card') s.step = 'delegation';
-          else this.afterAuth();
+          this.afterAuth();
         }
         return;
       case 'delegation': {
+        // 예전 이어 하기 저장이 ①에 멈춰 있을 때만 온다(이제 보안카드도 바로 ②로 간다). 그 화면과 [다른 인증으로 바꾸기]가 돌게 남겨 둔다.
         if (a.choice === 'switch') {
           this.say('다른 인증으로 바꿀게요');
           s.auth = null;
@@ -686,10 +694,10 @@ export class OnboardingFlow {
         else s.step = 'first';
         return;
       case 'first':
-        this.say({ try: '지금 해 볼게요', invoice: '세금계산서 1건 발급', later: '나중에 할게요' }[a.choice as 'try' | 'invoice' | 'later']);
+        this.say(a.choice === 'try' ? '지금 해 볼게요' : '나중에 할게요');
         s.step = 'done';
         // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13: 민원증명 실행이 들어오기 전에는 "증명서 발급은 곧…"이라 첫 시도가 안 됐다)
-        return a.choice === 'try' ? TRY_FIRST_FILL : a.choice === 'invoice' ? '세금계산서 ' : undefined;
+        return a.choice === 'try' ? TRY_FIRST_FILL : undefined;
     }
     return;
   }

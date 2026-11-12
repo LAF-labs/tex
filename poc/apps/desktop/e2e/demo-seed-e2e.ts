@@ -1,5 +1,5 @@
 // 시연 씨앗 e2e(pnpm demo의 견본 데이터): 거래처 9곳·지난 발급 14건(상태 섞임), 문서함 견본 증명서 5장이 실제 가져오기 길로 들어감
-// (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 발급 인증 기본 바꾸기, 화면의 추가 폼.
+// (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 화면의 추가 폼.
 // 실행: electron apps/desktop/e2e-dist/demo-seed-e2e.js. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다. fixture 모드라 앱 폴더·키체인을 쓰지 않는다.
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -53,10 +53,10 @@ async function main(): Promise<void> {
   await S.ready;
   await until('boot', async () => js<boolean>(`!!document.querySelector('#titlebar .tb-co')`));
 
-  const boot = (await call<{ history: Array<{ status: string; who: string }> | null; counterparties: unknown[] }>('shell.bootstrap')) as { history: Array<{ status: string; who: string }>; counterparties: unknown[] };
+  const boot = (await call('shell.bootstrap')) as { past: Array<{ kind: string; who: string; note: string | null }>; counterparties: unknown[] };
   check('견본 거래처 9곳(기본 3 + 견본 6)', boot.counterparties.length === 9, boot.counterparties.length);
-  const st = new Set(boot.history?.map((x) => x.status));
-  check('지난 발급 14건, 완료·확인 필요·중지가 섞임', boot.history?.length === 14 && st.has('done') && st.has('attention') && st.has('stopped'), boot.history?.length);
+  const kinds = new Set(boot.past.map((x) => x.kind));
+  check('지난 발급 14건(PastRun), 발급·발급 안 함이 섞이고 메일 미확인 문구가 있다', boot.past.length === 14 && kinds.has('issued') && kinds.has('not_issued') && boot.past.some((x) => x.kind === 'issued' && /메일발송목록/.test(x.note ?? '')), boot.past.length);
   check('제목줄에 견본 데이터 표시', (await js<string>(`document.querySelector('.mock-badge')?.textContent ?? ''`)).includes('견본'));
 
   const listDocs = async () => (await call<ShellDoc[]>('docs.list')) as ShellDoc[];
@@ -88,15 +88,31 @@ async function main(): Promise<void> {
   desktop.showItemInFolder = reveal;
   check('폴더 열기(Finder에서 보여 주기)', revealed[0] === opened[0], revealed);
 
+  await js(`document.querySelector('#rail [data-view="activity"]').click()`);
+  await until('activity', async () => js<boolean>(`!!document.querySelector('[data-act-row="past-h0"]')`), 5_000);
+  const actRows = await js<number>(`document.querySelectorAll('[data-act-row^="past-"]').length`);
+  await js(`document.querySelector('[data-act-row="past-h0"]').click()`);
+  await until('past panel', async () => js<boolean>(`!!document.querySelector('[data-panel-act="past-h0"]')`), 5_000);
+  const pastPanel = await js<string>(`document.querySelector('[data-panel-act="past-h0"]').innerText`);
+  const opens = opened.length;
+  gesture();
+  await sleep(30);
+  await js(`document.querySelector('[data-panel-act="past-h0"] [data-act=past-pdf]')?.click()`);
+  await until('past pdf', async () => opened.length > opens, 3_000);
+  check('활동 기록: 지난 발급 14줄, 지난 발급 패널에 승인번호 [복사]·[PDF 열기](문서함과 같은 길)', actRows === 14 && /20\d{6}-41000012-00000123/.test(pastPanel) && pastPanel.includes('복사') && opened.at(-1) === S!.store.files.get('d-h0'), { actRows, pastPanel, opened });
+  await js(`document.querySelector('#rail [data-view="chat"]').click()`);
+
   const bizNo = syntheticBizNo(777);
   const made = (await call<{ id: string; counterparties: Array<{ id: string; name: string; item: string }> }>('counterparty.save', { name: '견본테스트상회', bizNo, rep: '홍견본', email: 'test@gyeonbon-test.example', item: '시험 품목' })) as { id: string; counterparties: Array<{ id: string; name: string; item: string }> };
   check('거래처 추가(데모 DB)', made.counterparties?.length === 10 && made.counterparties.some((c) => c.id === made.id && c.item === '시험 품목'), made);
   const upd = (await call<{ counterparties: Array<{ id: string; name: string }> }>('counterparty.save', { id: made.id, name: '견본테스트상회(수정)', rep: '홍견본', email: 'test@gyeonbon-test.example', item: '시험 품목' })) as { counterparties: Array<{ id: string; name: string }> };
   check('거래처 수정', upd.counterparties?.find((c) => c.id === made.id)?.name === '견본테스트상회(수정)', upd);
   check('틀린 사업자번호·중복은 거부', (await call('counterparty.save', { name: 'x', bizNo: '1234567890' })) === 'ERR:invalid_biz_no' && (await call('counterparty.save', { name: 'x', bizNo })) === 'ERR:duplicate_biz_no');
-  const auth = (await call<{ profiles: { business: { auth: string } } }>('auth.setDefault', { kind: 'card' })) as { profiles: { business: { auth: string } } };
-  check('발급 인증 기본 바꾸기(데모 DB)', auth.profiles?.business.auth === '보안카드', auth);
-  await call('auth.setDefault', { kind: 'simple' });
+
+  await js(`document.querySelector('#rail [data-view="settings"]').click()`);
+  await until('settings', async () => js<boolean>(`!!document.querySelector('[data-auth-card]')`), 5_000);
+  const settings = await js<{ tabs: string[]; cards: number; inputs: number; text: string }>(`({ tabs: [...document.querySelectorAll('[data-set-tab]')].map((b) => b.textContent), cards: document.querySelectorAll('[data-auth-card]').length, inputs: document.querySelectorAll('section[data-view=settings] input').length, text: document.querySelector('section[data-view=settings]').innerText })`);
+  check('설정: 항목은 발급 인증·기기 연결, 발급 인증은 프로필 인증 한 줄(기본으로·삭제·인증 추가·확인 체크 없음)', settings.tabs.join() === '발급 인증,기기 연결' && settings.cards === 1 && settings.inputs === 0 && settings.text.includes('사업자 간편인증') && !/기본으로|삭제|인증 추가|카카오뱅크/.test(settings.text), settings);
 
   // 화면: 거래처 화면의 [거래처 추가] → 폼 → [추가]
   await js(`document.querySelector('#rail [data-view="cps"], #rail button[aria-label="거래처"]')?.click()`);

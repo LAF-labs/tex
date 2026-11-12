@@ -1,11 +1,11 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. ①에 동의하면 main이 금고 등록 창(T-06)을 연다.
+// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 발급 인증은 발급할 때 사람이 홈택스 창에서 직접 마친다.
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, kv, note } from './shell-views.js';
 
 const Q = {
   terms: '시작하기 전에 약관과 처리방침을 확인해 주세요.',
-  welcome: '세금계산서 발급과 홈택스 증명서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
+  welcome: '세금계산서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
   'biz-number': '사업자번호를 알려 주세요.',
   'biz-confirm': '등록 내용을 확인해 주세요.',
   auth: '세금계산서를 발급할 때 어떤 인증을 쓰세요? 한 번 고르면 모든 발급에 쓰고, 설정에서만 바꿔요.',
@@ -15,23 +15,23 @@ const Q = {
   tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
   summary: '등록을 마쳤어요. 내용을 확인해 주세요.',
-  first: '사업자등록증명을 한 번 떼 볼까요? 돈이 오가지 않아 연습하기 좋아요.',
+  first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
 };
 
-/** O-03 수단마다 앱이 맡는 정도 한 줄(08 §4). */
+/** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
-  ['card', '보안카드', '한 번 등록하면 발급 때마다 앱이 알아서 입력해요.'],
-  ['simple', '사업자 간편인증', '카카오뱅크·IBK·KB 앱에서 발급할 때마다 승인해요.'],
-  ['cert', '공동인증서', '비밀번호는 매번 직접 입력해요. 이 PC에서 찾은 인증서에서 골라요.'],
-  ['fincert', '금융인증서', '6자리 비밀번호를 매번 직접 입력해요.'],
+  ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
+  ['cert', '공동인증서', '발급할 때마다 인증서 비밀번호를 직접 넣어요. 이 PC에서 찾은 인증서에서 골라요.'],
+  ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
-/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). */
-const SCOPE_LINES = [
-  '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명, 납세증명서',
+/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). "지금 되는 일"은 O-04 업무 표(now)에서 만들어 두 화면이 어긋나지 않게 한다. */
+const scopeLines = (catalog) => [
+  `지금 되는 일: ${catalog.filter((t) => t.now).map((t) => t.label).join(', ')}`,
   '정부24 서류는 직접 발급을 안내하고, 저장한 파일만 문서함에 정리해요',
-  '신고와 세금 판단은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요',
+  '신고와 세금 판단은 하지 않아요',
   '홈택스 화면이 달라지거나 값을 확실히 읽지 못하면 발급하지 않고 멈춰요',
 ];
 
@@ -102,7 +102,7 @@ function stepCard(o, act) {
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
-      return card('사업자번호로 등록', notice, p('번호만 국세청 진위확인에 보내요. 나머지는 첫 홈택스 로그인 때 채워요.', true), form);
+      return card('사업자번호로 등록', notice, p('상호 등 나머지는 다음 화면에서 채워요.', true), form);
     }
     case 'biz-confirm':
       return bizCard(o, u, reply, act);
@@ -118,13 +118,12 @@ function stepCard(o, act) {
         row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
       );
     case 'summary':
-      return summaryCard(o, reply, act);
+      return summaryCard(o, reply);
     case 'first':
       return h(
         'div',
         { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
         h('button', { type: 'button', 'data-onb': 'try', onclick: () => reply('try') }, '지금 해 보기'),
-        h('button', { type: 'button', 'data-onb': 'invoice', onclick: () => reply('invoice') }, '세금계산서 1건 발급'),
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
   }
@@ -176,7 +175,7 @@ function bizCard(o, u, reply, act) {
     ['상태', o.check?.label ?? '—', { tag: o.check?.source, state: active ? null : 'attention' }],
   ];
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
-  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요 · 사업자번호만 국세청 진위확인에 보내요(기본: 우리 서버 경유, 설정에서 내 키)', true);
+  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
     const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
     const form = h(
@@ -270,7 +269,7 @@ function authCard(o, u, reply, act) {
         : p('이 PC에서 공동인증서를 찾지 못했어요. 다른 수단을 고르거나 인증서를 옮긴 뒤 다시 해 주세요.', true),
     );
   const explain = o.explain
-    ? note('보안카드는 한 번 등록하면 앱이 입력해요. 간편인증은 매번 폰 앱에서 승인해요. 공동·금융인증서는 비밀번호를 매번 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요. 공동인증서를 쓰면 따로 등록할 것이 없어요.` : null)
+    ? note('어느 인증이든 발급할 때마다 홈택스 창에서 직접 마쳐요. 간편인증은 휴대폰에서 승인하고, 공동·금융인증서는 인증서 비밀번호를, 보안카드는 보안카드 번호를 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요.` : null)
     : null;
   return h(
     'section',
@@ -300,7 +299,7 @@ function tasksCard(o, u, reply, act) {
   );
 }
 
-function summaryCard(o, reply, act) {
+function summaryCard(o, reply) {
   const b = o.biz;
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
@@ -319,9 +318,9 @@ function summaryCard(o, reply, act) {
       'div',
       { class: 'onb-scope', 'data-onb-scope': '' },
       h('div', { class: 'sx-card-hd' }, h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'), h('span', { class: 'sx-meta onb-draft' }, 'F-06 초안 전 문구')),
-      h('ul', { class: 'onb-lines' }, ...SCOPE_LINES.map((l) => h('li', {}, l))),
+      h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
-    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' }), btn('보관 위치 바꾸기', () => act.toast('보관 위치는 설정에서 바꿔요(준비 중)'), 'sx-btn-quiet', { 'data-onb': 'storage' })),
+    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),
   );
 }

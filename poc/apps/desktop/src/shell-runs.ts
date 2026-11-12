@@ -109,6 +109,10 @@ export const NOTE: Record<string, string> = {
   // 기다리다 시간 초과(대개 홈택스 로그인 대기). 승인 뒤 단계의 시간 초과는 in_doubt로 따로 온다.
   'step.timeout': '홈택스 로그인을 기다리다 시간이 지났어요. 홈택스 창에서 로그인을 마친 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'step.selector_miss': SCREEN_UNKNOWN_REDO,
+  // 인증서 비밀번호(금고 비밀 창 길, B1B2 인계 노트). 지금 2.2.0은 홈택스 창이 직접 알리지만, 금고 창 길이 열리면 엔진이 이 코드로 끝낸다.
+  // 승인 뒤라 [다시 준비]가 없고 발급 여부를 단정하지 않는다(발급목록으로 확인).
+  'sign.password_wrong': '인증서 비밀번호가 맞지 않았어요. 발급되지 않았는지 홈택스 발급목록에서 확인해 주세요. 다시 발급하기 전에 꼭 확인해 주세요.',
+  'sign.password_retry_limit': '비밀번호가 여러 번 틀렸어요. 인증서가 잠기지 않게 멈췄어요. 홈택스에서 직접 확인해 주세요.',
   'human.ttl_expired': '인증서 비밀번호 창이 시간이 지나 닫혔어요. [다시 준비]를 누르면 다시 열어요. 아무것도 발급하지 않았어요.',
   // Chrome이 없으면 금고가 실행 창을 열지 못한다(엔진 CHROME_NOT_INSTALLED_CODE, customer-dist)
   // 사람 차례를 30분 넘게 기다림(#278 run.handoff_timeout). 발급 전이면 end()가 "아무것도 발급하지 않았어요"·[다시 준비]를 붙인다.
@@ -148,9 +152,7 @@ export const NOTE: Record<string, string> = {
   'portal.captcha': '홈택스가 문자 입력(자동입력방지)을 요구했어요. 홈택스 창에서 직접 입력한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
   'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
-  // PoC 상한(ADR-025 결정 1). 앱이 집행하는 PoC 값이라 숫자를 문구에 넣는다.
-  'policy.irreversible_per_day': '오늘은 시범 기간 하루 발급 상한(1건)에 닿았어요. 내일 다시 할 수 있어요.',
-  'policy.poc_irreversible_total': '시범 기간 전체 발급 상한(3건)에 닿아 더 발급하지 않아요.',
+  'policy.irreversible_per_day': '오늘 홈택스 발급 건수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요. 내일 다시 할 수 있어요.',
   'policy.runs_per_session': '이번 홈택스 로그인으로 할 수 있는 실행 횟수를 다 써서 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.logins_per_day': '오늘 홈택스 로그인 횟수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요.',
   'policy.actuations_per_run': '한 번의 실행에서 할 수 있는 동작 수를 넘겨 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -282,6 +284,11 @@ const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
 export interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
+  /**
+   * 이 PC에서 실행 Chrome을 찾을 수 있는가(금고와 같은 후보 경로, @sax/vault findInstalledChrome). [홈택스에서 준비] 전에 본다.
+   * 없으면 엔진을 부르지 않고 초안 카드에 안내를 남긴다(엔진까지 가면 chrome.not_installed로 끝나 [다시 준비]가 필요했다). 없으면(시험) 보지 않는다.
+   */
+  chromeReady?(): boolean;
   /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
   log?(name: string, data: Record<string, string>): void;
 }
@@ -551,6 +558,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
     if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
+    // Chrome 사전 점검(#275 후보: /Applications·~/Applications, Windows Program Files·LocalAppData). 없으면 시작하지 않고 카드에 남긴다.
+    const noChrome = !!this.src.chromeReady && !this.src.chromeReady();
+    if (noChrome || r.noChrome) {
+      r.noChrome = noChrome;
+      this.emit('update', r);
+      if (noChrome) throw new Error('chrome.not_installed');
+    }
+    // 발급 인증은 시작하는 순간의 기본값이다. 엔진도 run.start 때 프로필 signMethod를 읽어 그 실행 동안 쓴다(runs.ts start).
+    // 초안을 만든 뒤 설정에서 기본을 바꿨으면 카드 안내도 그 값으로 맞춘다. 시작한 뒤에 바꾼 기본은 이 실행에 닿지 않는다(설정 화면 문구).
+    r.auth = this.src.auth();
     r.status = 'preparing';
     this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
@@ -571,6 +588,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.stopEarly.delete(r.id);
     }
     return r;
+  }
+
+  /** 기본 발급 인증이 바뀌었다(설정·온보딩). 아직 시작하지 않은 초안만 새 값을 보인다. 진행 중인 실행은 시작 때 값 그대로다. */
+  syncAuth(): void {
+    const auth = this.src.auth();
+    for (const r of this.runs.values()) {
+      if (r.status !== 'draft' || r.auth === auth) continue;
+      r.auth = auth;
+      this.emit('update', r);
+    }
   }
 
   /**

@@ -10,9 +10,11 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
+import { findInstalledChrome } from '@sax/vault';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
+import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
@@ -20,7 +22,7 @@ import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
 import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
 import type { AppUpdaterLike } from './update-electron.ts';
-import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox } from './docparse.ts';
+import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox, readSheetInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
@@ -34,6 +36,7 @@ import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
+import { readPastRuns, type PastRun } from './run-history.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
@@ -96,6 +99,7 @@ const FILES: Record<string, string> = {
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
+  '/shell-bank.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
@@ -150,6 +154,8 @@ export interface ShellOptions {
   docs?: DocsProvider;
   /** e2e: [홈택스에서 준비] 분당 상한(기본 3, 사람 속도). 렌더러가 바꿀 수 없다(진입점이 정한다). */
   preparePerMin?: number;
+  /** e2e: Chrome 사전 점검을 바꿔 끼운다. 기본은 금고와 같은 후보 경로(@sax/vault findInstalledChrome)에 Chrome이 있는가. */
+  chromeReady?: () => boolean;
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
   demoModel?: DemoModel | null;
   /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
@@ -173,6 +179,8 @@ export interface ShellOptions {
    * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
    */
   remote?: RemoteWiring;
+  /** 받을 돈 파일 고르기(09). 기본은 메인 창 파일 대화상자. e2e가 가짜 파일로 바꿔 끼운다. */
+  bankPick?: (kind: PickKind) => Promise<Uint8Array | null>;
   /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
   intent?: IntentResolver;
   /** 대화 짧은 응대(chat-reply.ts). 기본은 엔진 `chat.respond`. e2e가 바꿔 끼운다. */
@@ -303,12 +311,27 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 저장 품목의 첫 이름(못 읽으면 없음). 거래처 목록 모양은 #141 그대로라 품목은 따로 읽는다(#144).
     const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
+    runs.syncAuth();
   };
+  // 받을 돈(09 D-09): 파일은 main이 고르고 샌드박스로 읽어 다듬은 줄만 엔진에 보낸다(bank-host.ts).
+  const bank = new BankHost({
+    rpc: (m, p) => host.rpc(m, p ?? {}),
+    profileId: async () => ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((p) => p.kind === 'business')?.id ?? null,
+    pick: (kind) =>
+      opts.bankPick
+        ? opts.bankPick(kind)
+        : pickFileBytes([{ name: kind === 'statement' ? '은행 거래내역(엑셀·CSV)' : '홈택스 발급 목록(엑셀)', extensions: ['xlsx', 'xls', 'csv', 'htm', 'html'] }], win),
+    readSheet: async (bytes) => {
+      const r = await readSheetInSandbox(bytes);
+      return { format: r.format, encoding: r.encoding, sheets: r.sheets, flags: r.flags };
+    },
+    log: (n, d) => log.event(n, d),
+  });
   let seed: DemoSeed | null = null;
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
-  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, log: (n, d) => log.event(n, d) });
+  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady: opts.chromeReady ?? (() => findInstalledChrome() !== null), log: (n, d) => log.event(n, d) });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
   const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), (params, engine) => importPdf(params, engine, win));
@@ -406,7 +429,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   });
   /** 지난 발급(시연 씨앗 이력 + 문서함 세금계산서). 원장 발급 이력 질의가 나오면 그쪽으로 바꾼다. */
   const issuedInvoices = (): IssuedInvoice[] => {
-    const total = new Map((seed?.history ?? []).filter((x) => x.approvalNo).map((x) => [`d-${x.id}`, x.total]));
+    const total = new Map((seed?.past ?? []).flatMap((p) => (p.documentId ? [[p.documentId, p.total]] : [])));
     return store.docs.filter((d) => d.kind === '세금계산서' && d.issuedOn).map((d) => ({ who: d.name.replace(/^세금계산서 · /, ''), date: d.issuedOn!, total: total.get(d.id) ?? null }));
   };
   /** 이번 달 판(M-02, ADR-033). 꾸러미·카드는 아직 견본뿐이라 시연(sample)에서만 칸을 둔다. */
@@ -420,6 +443,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     });
     boardDay = today;
+    const money = profile === 'business' ? await bank.boardCards() : [];
     return buildBoard({
       today,
       reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
@@ -431,6 +455,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
       setup: onboardingTodos(onb?.state ?? null),
+      // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
+      money,
     });
   };
   // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
@@ -571,7 +597,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
   // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
-    void bar.open(req).then(async (o) => {
+    // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
+    void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
         // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
@@ -633,19 +660,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const g24Doc = (v: unknown): G24Doc => {
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
-  };
-  /** 시연 DB 쓰기(발급 인증 기본 바꾸기). fixture 모드가 아니면 거부한다. 거래처 추가·수정은 제품에서도 된다(cpBook). */
-  const demoDb = {
-    async setDefaultAuth(p: Record<string, unknown>) {
-      if (!fixture) throw new Error('unsupported');
-      const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
-      if (!signMethod) throw new Error('bad_request');
-      const cur = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((x) => x.kind === 'business');
-      if (!cur) throw new Error('not_found');
-      await host.rpc('profile.upsert', { ...cur, signMethod });
-      await refresh();
-      return { profiles: profiles() };
-    },
   };
   // 서류 데몬(daemon-host.ts). 알림 객체는 눌리거나 닫힐 때까지 잡아 둔다(가비지 수집되면 click이 오지 않는다).
   let daemon: DaemonHost | null = null;
@@ -905,6 +919,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   const bankAutoH = bankAuto.handlers;
+  /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
+  const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
+
+  /**
+   * [홈택스 창 보기]: 진행 중인 실행의 Chrome 창(금고가 띄운 실행 탭)을 앞으로. 금고가 그 탭에 Page.bringToFront(맥에서 Chrome 앱도 앞으로 온다, 2026-11-12 측정).
+   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수만 browser.focus 하나를 부른다.
+   */
+  const showRunBrowser = async (id: string) => {
+    if (!runs.isActive(id)) throw new Error('not_running');
+    const r = (await host.control('browser.focus')) as { focused?: unknown } | null;
+    if (r?.focused !== true) throw new Error('no_browser');
+    return { focused: true };
+  };
+
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
@@ -947,7 +975,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       loginRequired,
       // 설치본 자기 점검의 warn(미서명 빌드 등). 제품 진입점(shell.ts)이 정한다. 렌더러는 글자만 보인다.
       build: opts.buildBadges ?? [],
-      history: seed?.history ?? null,
+      past: await pastNow(),
       onboarding: await onbView(),
       // 거래처 장부: 시연 DB(fixture, 저장 품목까지) / 이 PC 장부(제품, 품목 열은 아직 없다)
       cpBook: fixture ? 'demo' : 'local',
@@ -1053,6 +1081,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return runs.manualDone(String(p.id));
     },
+    'run.showBrowser': async (p) => {
+      needGesture(3_000);
+      return showRunBrowser(String(p.id));
+    },
     // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
       needGesture(3_000);
@@ -1116,8 +1148,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return cpBook.readCert();
     },
-    // 시연 DB에서만: 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
-    'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
       return cps;
@@ -1217,6 +1247,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { ...r, profiles: profiles(), edits: editLog.list() };
     },
     // 내 사업장 [파일에서 읽기]: 파일 고르기를 여니 실제 클릭 뒤에만. 칸 후보만 돌려준다(저장은 [저장]으로, 같은 검사를 거친다).
+    ...bankShellHandlers(bank, () => pushBoard()),
+    'bank.pickStatement': () => {
+      needGesture(3_000);
+      return bank.pickStatement();
+    },
+    'bank.refresh': (p) => {
+      needGesture(3_000);
+      return bank.call('bank.refresh', { accountId: p.accountId });
+    },
+    'bank.pickInvoices': async () => {
+      needGesture(3_000);
+      const r = await bank.pickInvoices();
+      pushBoard();
+      return r;
+    },
     'profile.readCert': async () => {
       needGesture(3_000);
       await needLogin();
