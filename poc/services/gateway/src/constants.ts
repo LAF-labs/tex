@@ -30,6 +30,8 @@ export const GATEWAY = {
   /** 진위확인 프록시(D09 §4.1): 요청당 ≤ 10건, 계정당 분당 30회 */
   bizPerRequest: 10,
   bizPerMinute: 30,
+  /** CODEF 토큰(계좌 자동조회): 기기당 시간당 20회. PC는 만료 전까지 메모리에 두고 다시 쓰므로 실제로는 하루 몇 번이다 */
+  codefTokenPerDeviceHour: 20,
 } as const;
 
 /** 단가(마이크로 달러 / 100만 토큰). S9 실측·계약 전에는 0이고 ENV(GW_PRICES_JSON)로 넣는다. 토큰 수 계량은 단가와 무관하게 정확하다. */

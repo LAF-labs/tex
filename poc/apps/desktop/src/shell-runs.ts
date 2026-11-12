@@ -32,6 +32,7 @@ export const HANDOFF_HINT = '전용 Chrome 창에서 직접 마치면 [다 했�
 export const HANDOFF_LOGIN = { text: '홈택스 창에서 로그인해 주세요', note: '로그인을 마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' };
 export const HANDOFF_SIGN = { text: '홈택스 창에서 인증 방법을 고르고 인증서 비밀번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다', note: '자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
 export const HANDOFF_SIGN_TTL = { text: HANDOFF_SIGN.text, note: '앱의 비밀번호 창은 시간이 지나 닫혔어요. 홈택스 창에서 직접 넣어 주세요. 자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
+<<<<<<< HEAD
 /**
  * 발급 인증(프로필, 화면 라벨)별 서명 안내(H-01 2.2.0: 엔진이 인증유형 창에서 프로필 값의 항목을 고른다, methodTargets).
  * now: 승인 직후 서명 단계에 들어서면 바로 보이는 할 일(엔진은 끝 표지를 최대 3분 기다린 뒤에야 handoff sign.waiting을 보낸다).
@@ -50,6 +51,8 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
 export const LOGIN_NOW = '홈택스 창에 로그인 화면이 보이면 직접 로그인해 주세요. 로그인하면 자동으로 이어집니다';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
+=======
+>>>>>>> origin/main
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
 const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   // 로그인 단계에서 오면 로그인 차례([이어서])다(엔진은 캡차·추가 인증을 handoff login으로 보낸다)
@@ -59,8 +62,13 @@ const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
 };
 /** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
+<<<<<<< HEAD
 export function handoffTurn(phase: Phase, code: string | undefined, auth?: string): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
   if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
+=======
+export function handoffTurn(phase: Phase, code: string | undefined): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
+  if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN) };
+>>>>>>> origin/main
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
   if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };
   if (phase === 'login') return { kind: 'login', ...HANDOFF_LOGIN };
@@ -712,9 +720,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const r = this.runs.get(e.runId);
     if (!r) return;
     if (e.type === 'phase') {
+<<<<<<< HEAD
       // 서명 단계: 엔진이 확인 창·인증유형(프로필 발급 인증)을 누르고 나면 사람 몫이다(인증서 비밀번호·간편인증 승인, 2026-11-11 실화면).
       // 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 오므로, 할 일은 서명 단계에 들어설 때 바로 보인다.
       const n = e.phase === 'sign' && e.state === 'now' ? (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
+=======
+      // 서명 단계: 엔진이 홈택스 서명 창을 연다(인증서 비밀번호는 사람이 홈택스 창에 직접 넣는다, 2026-11-11 실화면).
+      const n = e.phase === 'sign' && e.state === 'now' ? '홈택스 서명 창을 여는 중' : e.code ? NOTE[e.code] : undefined;
+>>>>>>> origin/main
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
       // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
       if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;
@@ -737,7 +750,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (e.type === 'handoff') {
       if (!PHASES.includes(e.phase) || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
       const i = PHASES.indexOf(e.phase);
+<<<<<<< HEAD
       const t = handoffTurn(e.phase, e.code, r.auth);
+=======
+      const t = handoffTurn(e.phase, e.code);
+>>>>>>> origin/main
       r.status = 'turn';
       r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind };
       r.turn = { text: t.text, note: t.note };

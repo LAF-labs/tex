@@ -9,7 +9,11 @@ import { buildGateRequest, type GateField } from '@sax/engine/gate';
 import { AUTH_SIGN_METHOD } from '../apps/desktop/src/onboarding.ts';
 import { SIGN_LABEL } from '../apps/desktop/src/shell-model.ts';
 import { g24Candidates, interpret, MockStore, parseAmount, split, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
+<<<<<<< HEAD
 import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, SIGN_BY_AUTH, SIGN_NOW_DEFAULT, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
+=======
+import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
+>>>>>>> origin/main
 
 const CPS: Counterparty[] = [
   { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: '', lastIssuedOn: null },
@@ -396,7 +400,11 @@ describe('셸 목업', () => {
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
     r = runs.get(a.run.id)!;
+<<<<<<< HEAD
     assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
+=======
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, HANDOFF_SIGN]);
+>>>>>>> origin/main
     await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
     assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
     // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
@@ -419,6 +427,7 @@ describe('셸 목업', () => {
     assert.match(e.stoppedNote!, /아무것도 발급하지 않았어요/);
   });
 
+<<<<<<< HEAD
   it('H-01 2.2.0 발급 인증: 온보딩 값 → signMethod → 화면 라벨 → 서명 안내가 1:1, 패키지 methodTargets 키와 같다. 서명 단계에 들어서면 바로 할 일', async () => {
     const methods = [...new Set(Object.values(AUTH_SIGN_METHOD))].sort();
     assert.deepEqual(Object.keys(SIGN_LABEL).sort(), methods);
@@ -467,6 +476,8 @@ describe('셸 목업', () => {
     assert.ok(host.calls.some(([m, p]) => m === 'run.start' && (p as { email: unknown }).email === null), '이메일이 없으면 null(메일 칸은 비운다)');
   });
 
+=======
+>>>>>>> origin/main
   it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {
     assert.deepEqual(Object.keys(REGATE_NOTE).sort(), ['date_changed', 'paused', 'value_changed']);
     for (const t of Object.values(REGATE_NOTE)) assert.ok(/새로 승인/.test(t) && !/세액 산정|절세|신고 대리|가산세/.test(t), t);
