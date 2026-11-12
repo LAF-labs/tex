@@ -193,6 +193,14 @@ const act = {
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
   resume: (id) => handoffCall('run.resume', id),
   manualDone: (id) => handoffCall('run.manualDone', id),
+  // [홈택스 창 보기]: 실행 Chrome 창을 앞으로(main → 금고). 발급·재개와 무관하다.
+  showBrowser: async (id) => {
+    try {
+      await call('run.showBrowser', { id });
+    } catch (e) {
+      toast(human(e, { no_browser: '홈택스 창을 찾지 못했어요. 작업 표시줄이나 Dock의 Chrome을 눌러 주세요.', not_running: '이 작업은 지금 진행 중이 아니에요.' }));
+    }
+  },
   stop: async (id) => {
     try {
       putRun(await call('run.stop', { id }));

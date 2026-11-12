@@ -880,6 +880,19 @@ export class Relay {
     return [...this.targets.values()].some((t) => t.win);
   }
 
+  /**
+   * 사람에게 보일 실행 창을 앞으로(main [홈택스 창 보기]). 엔진에 노출된 page 중 가장 늦게 붙은 것(팝업 창이 열렸으면 그 창)에 Page.bringToFront.
+   * 맥에서는 Chrome 앱도 앞으로 온다(Target.activateTarget은 오지 않는다, 2026-11-12 측정). 비밀 입력 창·숨긴 팝업·회수된 타깃은 고르지 않는다.
+   */
+  async bringToFront(): Promise<boolean> {
+    const t = [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
+    if (!t) return false;
+    return this.conn.send('Page.bringToFront', {}, t.vaultSession).then(
+      () => true,
+      () => false,
+    );
+  }
+
   exposedTarget(targetId: string): TargetState | undefined {
     const t = this.targets.get(targetId);
     return t?.exposed ? t : undefined;

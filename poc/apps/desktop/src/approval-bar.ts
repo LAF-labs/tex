@@ -118,6 +118,8 @@ export interface BarSnapshot {
   action: string;
   /** [중지] 자리 글자(증언 카드는 "닫기"). */
   stop: string;
+  /** 카드의 비가역 한 줄(바 페이지는 스크립트가 꺼져 있어 e2e가 이것으로 본다). */
+  irreversible: string;
   /** 두 판정 영역(카드 기준 DIP). */
   targets: CardTargets;
 }
@@ -253,14 +255,14 @@ export class ApprovalBar extends EventEmitter {
   snapshot(): BarSnapshot {
     const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
     const t = this.targets;
-    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.text.action, stop: this.text.stop, targets: { approve: { ...t.approve }, stop: { ...t.stop } } };
+    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.text.action, stop: this.text.stop, irreversible: this.text.irreversible, targets: { approve: { ...t.approve }, stop: { ...t.stop } } };
   }
 
   /**
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
    */
-  open(req: GateRequest): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -275,7 +277,7 @@ export class ApprovalBar extends EventEmitter {
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'));
+    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
     this.height = cardHeight(CARD_ROWS['H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
