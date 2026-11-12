@@ -133,7 +133,8 @@ export class CommitGuard {
       let host: string;
       try {
         const u = new URL(a.pageUrl);
-        host = u.protocol === 'https:' ? u.host : '';
+        // 엔드포인트에 host가 있으면 그 호스트(요청은 페이지와 다른 호스트로 갈 수 있다, 홈택스 teet), 없으면 페이지 호스트.
+        host = u.protocol === 'https:' ? (ep.match.host ?? u.host) : '';
       } catch {
         host = '';
       }

@@ -386,7 +386,7 @@ export class RunService extends EventEmitter {
       runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: a.portal, signals: a.signals, rate: this.rate,
       profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
       ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
-      inputs: { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) },
+      inputs: irInputs(inputs, this.d.data.counterparties.get(inputs.counterpart.id)),
       db: this.d.db, ledger: this.ledger, gates: this.gates,
       history: (rb, card) => {
         // 이 실행기의 입력·원장 행 재료는 세금계산서(H-01)뿐이다. 다른 카드(민원증명 cert.confirm 등)는 게이트를 열지 않는다(gate.unavailable).
@@ -724,4 +724,20 @@ export class RunService extends EventEmitter {
     const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at DESC, attempt DESC LIMIT 1').get(runId) as { state: string } | undefined;
     return { ledger: row?.state ?? null, journal: this.journal.types(runId), policy: this.rate.status(this.d.data.profiles.byKind('business')?.id ?? '') };
   }
+}
+
+/**
+ * IR 실행 입력. 실화면 H-01(hometax.invoice.issue 2.2.0)은 공급받는자 성명·사업장을 직접 넣고(조회로 채워지지 않는다), 이메일은 아이디·도메인 두 칸,
+ * 품목 행의 일(日)은 따로 넣는다. 그래서 거래처의 대표자·주소와 이메일 두 조각, 작성일자의 일을 더 준다(값이 없으면 키를 넣지 않는다).
+ */
+export function irInputs(inputs: RunInputs, cp: { repName?: string | null; address?: string | null } | null | undefined): Record<string, unknown> {
+  const counterpart: Record<string, string> = { ...inputs.counterpart };
+  if (cp?.repName) counterpart.repName = cp.repName;
+  if (cp?.address) counterpart.address = cp.address;
+  const at = inputs.email ? inputs.email.lastIndexOf('@') : -1;
+  return {
+    counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, issueDay: inputs.issueDate.slice(8, 10),
+    ...(inputs.email ? { email: inputs.email } : {}),
+    ...(inputs.email && at > 0 ? { emailLocal: inputs.email.slice(0, at), emailDomain: inputs.email.slice(at + 1) } : {}),
+  };
 }

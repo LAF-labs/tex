@@ -1,6 +1,6 @@
 // 커밋 가드의 요청 분류(D03 §5.4, D02 §2.1 commitEndpoints·knownEndpoints).
 // - 합집합: 같은 포털의 설치된 모든 패키지 commitEndpoints + 적용된 핫픽스 commitEndpointsAdd(추가만).
-// - 분류는 메서드 + 경로(RE2) + 선택적 액션 파라미터. 쿼리에서 먼저 찾고, 없으면 form 본문에서 찾는다.
+// - 분류는 메서드 + (선택적 host) + 경로(RE2) + 선택적 액션 파라미터. 쿼리에서 먼저 찾고, 없으면 form 본문에서 찾는다.
 //   무장된 요청의 본문은 금고가 지워 엔진에 오지 않으므로(R-C1 ⑤), 액션 파라미터를 확인할 수 없으면 커밋으로 본다(보수적).
 // - R-C3: 어디에도 없는 요청은 경로 모양만 남긴다(본문·쿼리 없음, 숫자는 {n}).
 import { compileRe2 } from '../core/re2.ts';
@@ -42,7 +42,7 @@ export function knownUnion(dicts: readonly Pick<SelectorDict, 'knownEndpoints'>[
   return out;
 }
 
-const matchKey = (m: EndpointMatch) => JSON.stringify([m.method, m.pathPattern, m.actionParam?.name ?? null, m.actionParam?.value ?? null]);
+const matchKey = (m: EndpointMatch) => JSON.stringify([m.method, m.host ?? null, m.pathPattern, m.actionParam?.name ?? null, m.actionParam?.value ?? null]);
 const endpointKey = (c: CommitEndpoint) =>
   JSON.stringify([matchKey(c.match), c.effect, c.maxRequests, c.encoding ?? null, c.bodyFieldMap ? Object.entries(c.bodyFieldMap).sort(([a], [b]) => (a < b ? -1 : 1)) : null]);
 
@@ -73,11 +73,16 @@ export class EndpointClassifier {
     const method = r.method.toUpperCase();
     for (let i = 0; i < this.commits.length; i++) {
       const c = this.commits[i]!;
-      if (c.endpoint.match.method === method && c.re.test(u.pathname) && paramMatches(c.endpoint.match, u, r, true)) return { kind: 'commit', index: i, endpoint: c.endpoint };
+      if (c.endpoint.match.method === method && hostMatches(c.endpoint.match, u) && c.re.test(u.pathname) && paramMatches(c.endpoint.match, u, r, true)) return { kind: 'commit', index: i, endpoint: c.endpoint };
     }
-    for (const k of this.known) if (k.m.method === method && k.re.test(u.pathname) && paramMatches(k.m, u, r, false)) return { kind: 'known' };
+    for (const k of this.known) if (k.m.method === method && hostMatches(k.m, u) && k.re.test(u.pathname) && paramMatches(k.m, u, r, false)) return { kind: 'known' };
     return { kind: 'unclassified', pathPattern: pathShape(u.pathname) };
   }
+}
+
+/** host가 있으면 요청 URL host(소문자, 포트 포함)가 정확히 같아야 한다(IR rev v1.3.5). 같은 경로가 여러 호스트에 있을 때(홈택스 wqAction.do) 가른다. */
+function hostMatches(m: EndpointMatch, u: URL): boolean {
+  return m.host === undefined || u.host.toLowerCase() === m.host.toLowerCase();
 }
 
 /**
