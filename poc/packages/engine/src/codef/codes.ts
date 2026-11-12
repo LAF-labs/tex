@@ -57,6 +57,9 @@ export type CodefFailure =
   | 'cancelled'
   | 'cert_missing'
   | 'bank_not_ready'
+  | 'daily_limit'
+  | 'too_soon'
+  | 'password_retry_limit'
   | 'busy';
 
 const MAP: Record<string, CodefFailure> = {

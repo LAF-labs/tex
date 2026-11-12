@@ -135,13 +135,16 @@ function fakeSeal(o: { remember?: boolean; result?: SealResult } = {}): CodefSea
 
 const CERT = '0123456789abcdef';
 
-function setup(o: { remember?: boolean; seal?: CodefSealPort; sink?: boolean } = {}) {
+function setup(o: { remember?: boolean; seal?: CodefSealPort; sink?: boolean; dailyCalls?: number } = {}) {
   const events: CodefEvent[] = [];
+  let clock = Date.parse('2026-11-12T03:00:00Z');
+  /** [최신화] 쿨다운(15분)을 넘기려고 시계를 민다 */
+  const tick = (ms = 20 * 60_000) => void (clock += ms);
   const seal = (o.seal as ReturnType<typeof fakeSeal>) ?? fakeSeal({ remember: o.remember });
   const sink = memoryBankSink();
   const store = memoryCodefStore();
-  const link = new CodefLink({ client: new CodefClient({ egress: egress() }), seal, store, sink: () => (o.sink === false ? null : sink), onEvent: (e) => events.push(e), now: () => new Date('2026-11-12T03:00:00Z') });
-  return { link, seal, sink, store, events };
+  const link = new CodefLink({ client: new CodefClient({ egress: egress() }), seal, store, sink: () => (o.sink === false ? null : sink), onEvent: (e) => events.push(e), now: () => new Date(clock), dailyCalls: o.dailyCalls });
+  return { link, seal, sink, store, events, tick };
 }
 
 beforeEach(() => {
@@ -153,7 +156,7 @@ beforeEach(() => {
 
 describe('CODEF 원천: 연결 → 계좌 고르기 → 최신화', () => {
   it('인증서 하나·비밀번호 한 번으로 보유계좌를 보이고, 고르면 첫 조회 뒤 CODEF 계정을 지운다', async () => {
-    const { link, seal, sink, events, store } = setup();
+    const { link, seal, sink, events, store, tick } = setup();
     const c = await link.connect({ certId: CERT, bank: '0020', clientType: 'B' });
     assert.equal(c.bankName, '우리은행');
     assert.deepEqual(c.accounts.map((a) => [a.last4, a.usable]), [['6789', true], ['8777', false]]);
@@ -183,6 +186,7 @@ describe('CODEF 원천: 연결 → 계좌 고르기 → 최신화', () => {
     assert.ok(events.some((e) => e.phase === 'fetching') && events.at(-1)?.phase === 'done');
 
     // [최신화]: 다시 등록 → 조회 → 삭제. 같은 줄은 다시 들어가지 않는다(줄 열쇠), 새 줄만
+    tick();
     mock.txns.push({ resAccountTrDate: '20261112', resAccountTrTime: '101500', resAccountOut: '0', resAccountIn: '550000', resAfterTranBalance: '5617000', resAccountDesc1: '다라상회', resAccountDesc2: '', resAccountDesc3: '', resAccountDesc4: '' });
     const r2 = await link.refresh();
     assert.equal(r2.rowCount, 3);
@@ -195,9 +199,10 @@ describe('CODEF 원천: 연결 → 계좌 고르기 → 최신화', () => {
   });
 
   it('[이 PC에 기억]을 골랐으면 [최신화]는 창 없이, [연결 해제]는 기억한 비밀번호를 지운다', async () => {
-    const { link, seal } = setup({ remember: true });
+    const { link, seal, tick } = setup({ remember: true });
     const c = await link.connect({ certId: CERT });
     await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    tick();
     await link.refresh();
     assert.equal(seal.asks, 1);
     const d = await link.disconnect();
@@ -252,9 +257,10 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
   }
 
   it('비밀번호가 틀렸고 기억해 둔 것을 썼으면 기억을 지운다', async () => {
-    const { link, seal } = setup({ remember: true });
+    const { link, seal, tick } = setup({ remember: true });
     const c = await link.connect({ certId: CERT });
     await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    tick();
     mock.scenario.createCode = 'CF-12801';
     await assert.rejects(link.refresh(), (e: unknown) => e instanceof CodefError && e.code === 'password_wrong');
     assert.equal(seal.forgets, 1);
@@ -279,6 +285,39 @@ describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
     const c = await s.link.connect({ certId: CERT });
     await assert.rejects(s.link.choose({ sessionId: c.sessionId, key: 'a0' }), (e: unknown) => (e as CodefError).code === 'bank_not_ready');
     await s.link.cancel();
+  });
+});
+
+describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
+  it('[최신화]는 15분 안에 다시 하지 않는다(CODEF를 부르지 않음), 비밀번호 다시 넣기(ask)는 된다', async () => {
+    const { link, tick } = setup();
+    const c = await link.connect({ certId: CERT });
+    await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    const n = mock.calls.length;
+    await assert.rejects(link.refresh(), (e: unknown) => (e as CodefError).code === 'too_soon');
+    assert.equal(mock.calls.length, n);
+    await link.refresh({ ask: true });
+    tick();
+    await link.refresh();
+  });
+
+  it('하루 상한에 닿으면 daily_limit, 이미 만든 connectedId 삭제는 상한과 상관없이 한다', async () => {
+    const { link } = setup({ dailyCalls: 2 });
+    // create(1) + account-list(2) → 3번째(조회 없음)… 보유계좌까지는 되고, 고르기의 거래내역에서 막힌다
+    const c = await link.connect({ certId: CERT });
+    await assert.rejects(link.choose({ sessionId: c.sessionId, key: 'a0' }), (e: unknown) => (e as CodefError).code === 'daily_limit');
+    assert.equal(mock.live.size, 0, '삭제는 상한에 막히지 않는다');
+    assert.equal(link.status().callsLeft, 0);
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'daily_limit');
+  });
+
+  it('같은 인증서 비밀번호가 하루 3번 틀리면 그날은 보내지 않는다, 맞으면 센 것을 지운다', async () => {
+    const { link } = setup();
+    mock.scenario.createCode = 'CF-12801';
+    for (let i = 0; i < 3; i++) await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_wrong');
+    const n = mock.calls.length;
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_retry_limit');
+    assert.equal(mock.calls.length, n, 'CODEF를 부르지 않는다');
   });
 });
 

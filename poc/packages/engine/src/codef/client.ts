@@ -69,6 +69,12 @@ export class CodefClient {
   private readonly egress: Pick<Egress, 'toGateway' | 'toCodef'>;
   private readonly now: () => number;
   private grant: CodefGrant | null = null;
+  /** 호출 전에 부른다(하루 상한, CodefLink가 넣는다). 던지면 보내지 않는다 */
+  private budget: ((path: CodefPath) => void) | null = null;
+
+  setBudget(fn: ((path: CodefPath) => void) | null): void {
+    this.budget = fn;
+  }
 
   constructor(o: { egress: Pick<Egress, 'toGateway' | 'toCodef'>; now?: () => number }) {
     this.egress = o.egress;
@@ -112,6 +118,7 @@ export class CodefClient {
 
   private async once(path: CodefPath, body: Json): Promise<CodefReply> {
     const g = await this.token();
+    this.budget?.(path);
     let res;
     try {
       res = await this.egress.toCodef({ env: g.env, path, body, accessToken: g.accessToken });

@@ -2,7 +2,7 @@
 import type { Db } from '@sax/db';
 import type { VaultClient } from '../vault-client.ts';
 import type { AutoTxnRow } from './rows.ts';
-import type { BankTxnSink, CodefLinkStore, CodefSealPort, LinkState, Orphan, SealResult } from './link.ts';
+import type { BankTxnSink, CodefLinkStore, CodefSealPort, CodefStoreValue, SealResult } from './link.ts';
 
 export * from './client.ts';
 export * from './codes.ts';
@@ -21,8 +21,10 @@ export function settingsCodefStore(db: Db): CodefLinkStore {
       const v = db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(KEY) as string | undefined;
       if (v === undefined) return { link: null, orphans: [] };
       try {
-        const j = JSON.parse(v) as { link?: LinkState | null; orphans?: Orphan[] };
-        return { link: j.link?.v === 1 ? j.link : null, orphans: Array.isArray(j.orphans) ? j.orphans.slice(0, 20) : [] };
+        const j = JSON.parse(v) as Partial<CodefStoreValue>;
+        const b = j.budget;
+        const budget = b && typeof b.day === 'string' && Number.isSafeInteger(b.calls) && b.pwFails && typeof b.pwFails === 'object' ? b : undefined;
+        return { link: j.link?.v === 1 ? j.link : null, orphans: Array.isArray(j.orphans) ? j.orphans.slice(0, 20) : [], ...(budget ? { budget } : {}) };
       } catch {
         return { link: null, orphans: [] };
       }
@@ -34,7 +36,7 @@ export function settingsCodefStore(db: Db): CodefLinkStore {
 }
 
 export function memoryCodefStore(): CodefLinkStore {
-  let v: { link: LinkState | null; orphans: Orphan[] } = { link: null, orphans: [] };
+  let v: CodefStoreValue = { link: null, orphans: [] };
   return { get: () => structuredClone(v), set: (x) => void (v = structuredClone(x)) };
 }
 

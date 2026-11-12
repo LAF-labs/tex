@@ -44,6 +44,9 @@ export function failText(code, bank) {
       cert_missing: '고른 인증서를 이 PC에서 찾지 못했어요. 인증서를 다시 골라 주세요.',
       bank_not_ready: '계좌는 확인했지만 거래내역을 넣을 곳(내 계좌)이 아직 준비되지 않았어요.',
       busy: '이미 진행 중이에요. 잠시만 기다려 주세요.',
+      too_soon: '방금 가져왔어요. 15분쯤 뒤에 다시 [최신화]해 주세요.',
+      daily_limit: '오늘 자동 조회 횟수를 다 썼어요(시험 기간 하루 한도). 내일 다시 하거나 거래내역 파일을 올려 주세요.',
+      password_retry_limit: '오늘 이 인증서 비밀번호가 여러 번 틀렸어요. 인증서가 잠기지 않게 오늘은 멈췄어요. 비밀번호를 확인하고 내일 다시 해 주세요.',
     }[code] || 'CODEF가 요청을 받지 않았어요. 잠시 뒤 다시 하거나 거래내역 파일을 올려 주세요.'
   );
 }
@@ -202,7 +205,7 @@ export function createBankAuto(ctx) {
             'div',
             { class: 'sx-card', 'data-bank-auto': 'connected' },
             h('p', { class: 'sx-body-sm' }, h('span', { class: 'sx-chip is-done' }, '연결됨'), ` ${st.bankName || ''} ···${st.last4 || ''}${st.accountName ? ` · ${st.accountName}` : ''}`),
-            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${st.lastSyncAt ? ` · 새 거래 ${st.lastNew ?? 0}건` : ''}`),
+            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${st.lastSyncAt ? ` · 새 거래 ${st.lastNew ?? 0}건` : ''}${typeof st.callsLeft === 'number' ? ` · 오늘 남은 조회 여유 ${st.callsLeft}회` : ''}`),
             h('div', { class: 'sx-actions' }, btn('최신화', () => refresh(false), 'is-primary', { 'data-bank-refresh': '' }), btn('연결 해제', disconnect, 'is-quiet', { 'data-bank-disconnect': '' }), fileLink()),
             h('p', { class: 'sx-meta' }, '[최신화]마다 금고 창에서 비밀번호를 물어요. 창에서 [이 PC에 기억]을 고르면 다음부터 묻지 않아요.'),
           );

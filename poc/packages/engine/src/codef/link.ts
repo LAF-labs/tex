@@ -56,10 +56,30 @@ export interface Orphan {
   clientType: CodefClientType;
 }
 
-export interface CodefLinkStore {
-  get(): { link: LinkState | null; orphans: Orphan[] };
-  set(v: { link: LinkState | null; orphans: Orphan[] }): void;
+/** 하루 호출 수(KST 날짜)와 인증서별 비밀번호 틀림 수. 데모는 하루 100회라 PC가 아낀다 */
+export interface CodefBudget {
+  day: string;
+  calls: number;
+  pwFails: Record<string, number>;
 }
+
+export interface CodefStoreValue {
+  link: LinkState | null;
+  orphans: Orphan[];
+  budget?: CodefBudget;
+}
+
+export interface CodefLinkStore {
+  get(): CodefStoreValue;
+  set(v: CodefStoreValue): void;
+}
+
+/** 하루 CODEF 호출 상한(데모 하루 100회, 여유 10). 계정 삭제는 막지 않는다(인증서를 CODEF에 남기지 않게) */
+export const CODEF_DAILY_CALLS = 90;
+/** [최신화] 사이 최소 간격(같은 기간 반복 조회 막기) */
+export const CODEF_REFRESH_COOLDOWN_MS = 15 * 60_000;
+/** 같은 인증서 비밀번호가 하루 이만큼 틀리면 그날은 더 보내지 않는다(호출 아낌 + 은행 잠금 전) */
+export const CODEF_PW_FAIL_MAX = 3;
 
 export type CodefPhase = 'password' | 'connecting' | 'accounts' | 'fetching' | 'saving' | 'done' | 'error';
 export interface CodefEvent {
@@ -79,6 +99,8 @@ export interface CodefLinkOptions {
   now?: () => Date;
   /** 고르기를 기다리는 시간(지나면 connectedId를 지운다) */
   pendingTtlMs?: number;
+  /** 하루 호출 상한(기본 CODEF_DAILY_CALLS) */
+  dailyCalls?: number;
 }
 
 /** 화면에 보이는 보유계좌(번호는 끝 4자리만) */
@@ -118,20 +140,41 @@ export class CodefLink {
 
   constructor(o: CodefLinkOptions) {
     this.o = o;
+    // 모든 CODEF 호출을 하루 상한으로 센다. 삭제는 세기만 하고 막지 않는다
+    o.client.setBudget((path) => {
+      const b = this.budget();
+      if (path !== '/v1/account/delete' && b.calls >= (o.dailyCalls ?? CODEF_DAILY_CALLS)) throw new CodefError('daily_limit');
+      this.save({ budget: { ...b, calls: b.calls + 1 } });
+    });
+  }
+
+  private save(patch: Partial<CodefStoreValue>): void {
+    this.o.store.set({ ...this.o.store.get(), ...patch });
+  }
+
+  private budget(): CodefBudget {
+    const b = this.o.store.get().budget;
+    const day = this.today();
+    return b && b.day === day ? { day, calls: b.calls, pwFails: { ...b.pwFails } } : { day, calls: 0, pwFails: {} };
   }
 
   private emit(e: CodefEvent): void {
     this.o.onEvent?.(e);
   }
 
+  private nowMs(): number {
+    return (this.o.now?.() ?? new Date()).getTime();
+  }
+
   private today(): string {
     // 한국 날짜(UTC+9)
-    return ymd(new Date((this.o.now?.() ?? new Date()).getTime() + 9 * 3600_000));
+    return ymd(new Date(this.nowMs() + 9 * 3600_000));
   }
 
   status(): Record<string, unknown> {
     const { link, orphans } = this.o.store.get();
-    if (!link) return { connected: false, cleanupPending: orphans.length };
+    const callsLeft = Math.max(0, (this.o.dailyCalls ?? CODEF_DAILY_CALLS) - this.budget().calls);
+    if (!link) return { connected: false, cleanupPending: orphans.length, callsLeft };
     return {
       connected: true,
       bank: link.bank,
@@ -144,6 +187,7 @@ export class CodefLink {
       lastSyncAt: link.lastSyncAt,
       lastNew: link.lastNew,
       cleanupPending: orphans.length,
+      callsLeft,
     };
   }
 
@@ -164,6 +208,7 @@ export class CodefLink {
 
   /** 금고 창으로 비밀번호를 받아 감싼 로그인 → 계정 등록. 비밀번호가 틀렸으면 기억해 둔 것을 지운다 */
   private async register(certId: string, bank: CodefBankCode, clientType: CodefClientType, mode: 'ask' | 'auto'): Promise<string> {
+    if ((this.budget().pwFails[certId] ?? 0) >= CODEF_PW_FAIL_MAX) throw new CodefError('password_retry_limit');
     const publicKey = await this.o.client.publicKey();
     this.emit({ phase: 'password' });
     const s = await this.o.seal.seal({ certId, publicKey, mode });
@@ -175,9 +220,20 @@ export class CodefLink {
     }
     this.emit({ phase: 'connecting' });
     try {
-      return await this.o.client.createAccount(bank, clientType, { derFile: s.derFile, keyFile: s.keyFile, password: s.password });
+      const id = await this.o.client.createAccount(bank, clientType, { derFile: s.derFile, keyFile: s.keyFile, password: s.password });
+      const b = this.budget();
+      if (b.pwFails[certId]) {
+        delete b.pwFails[certId];
+        this.save({ budget: b });
+      }
+      return id;
     } catch (e) {
-      if (e instanceof CodefError && (e.code === 'password_wrong' || e.code === 'password_locked') && s.remembered) await this.o.seal.forget(certId).catch(() => undefined);
+      if (e instanceof CodefError && (e.code === 'password_wrong' || e.code === 'password_locked')) {
+        if (s.remembered) await this.o.seal.forget(certId).catch(() => undefined);
+        const b = this.budget();
+        b.pwFails[certId] = e.code === 'password_locked' ? CODEF_PW_FAIL_MAX : (b.pwFails[certId] ?? 0) + 1;
+        this.save({ budget: b });
+      }
       throw e;
     }
   }
@@ -195,7 +251,7 @@ export class CodefLink {
     }
     const cur = this.o.store.get();
     const keep = cur.orphans.filter((x) => !items.some((y) => y.connectedId === x.connectedId));
-    this.o.store.set({ link: cur.link, orphans: [...keep, ...left] });
+    this.save({ orphans: [...keep, ...left] });
   }
 
   private async releaseOrphans(): Promise<void> {
@@ -266,9 +322,9 @@ export class CodefLink {
         const { accountId } = await sink.ensureAccount({ bank: CODEF_BANKS[pend.bank], number: acct.number, alias });
         const link: LinkState = {
           v: 1, certId: pend.certId, bank: pend.bank, clientType: pend.clientType, accountId, last4: acct.number.slice(-4), accountName: acct.name,
-          connectedAt: new Date().toISOString(), lastSyncAt: null, lastDay: null, lastNew: 0,
+          connectedAt: new Date(this.nowMs()).toISOString(), lastSyncAt: null, lastDay: null, lastNew: 0,
         };
-        this.o.store.set({ link, orphans: this.o.store.get().orphans });
+        this.save({ link });
         const r = await this.fetchInto(sink, link, pend.connectedId, acct.number);
         return { last4: link.last4, ...r };
       } finally {
@@ -282,6 +338,9 @@ export class CodefLink {
     return this.exclusive(async () => {
       const { link } = this.o.store.get();
       if (!link) throw new CodefError('session_lost');
+      // 같은 기간을 짧은 간격으로 다시 조회하지 않는다(데모 하루 100회). 비밀번호를 다시 넣는 [다시 하기](ask)는 막지 않는다
+      const last = link.lastSyncAt ? Date.parse(link.lastSyncAt) : NaN;
+      if (p.ask !== true && Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon');
       const sink = this.o.sink();
       if (!sink) throw new CodefError('bank_not_ready');
       const number = await sink.accountNumber(link.accountId);
@@ -307,7 +366,7 @@ export class CodefLink {
     const r = await sink.importRows({ accountId: link.accountId, source: 'api', range, rows });
     const lastDay = rows.reduce<string | null>((m, x) => (m === null || x.day > m ? x.day : m), link.lastDay);
     const cur = this.o.store.get();
-    if (cur.link) this.o.store.set({ link: { ...cur.link, lastSyncAt: new Date().toISOString(), lastDay: lastDay && lastDay < to ? lastDay : addDays(to, -1), lastNew: r.newCount }, orphans: cur.orphans });
+    if (cur.link) this.save({ link: { ...cur.link, lastSyncAt: new Date(this.nowMs()).toISOString(), lastDay: lastDay && lastDay < to ? lastDay : addDays(to, -1), lastNew: r.newCount } });
     this.emit({ phase: 'done', newCount: r.newCount });
     return { rowCount: r.rowCount, newCount: r.newCount, from: range.from, to: range.to };
   }
@@ -329,7 +388,9 @@ export class CodefLink {
       if (all.length) await this.release(all);
       if (link) await this.o.seal.forget(link.certId).catch(() => undefined);
       const left = this.o.store.get().orphans;
-      this.o.store.set({ link: null, orphans: left });
+      const b = this.budget();
+      if (link) delete b.pwFails[link.certId];
+      this.save({ link: null, orphans: left, budget: b });
       this.emit({ phase: 'done' });
       return { disconnected: !!link, cleanupPending: left.length };
     });
