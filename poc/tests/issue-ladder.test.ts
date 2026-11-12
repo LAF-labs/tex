@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import {
   apiRung, BizVerifier, branchOf, connectRunBrowser, DataService, docKeyOf, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunEnd, RunService, ulid,
-  type GatePortMessage, type GateRequest, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
+  type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
 } from '@sax/engine';
 import { GateRepo, Ledger, LedgerError, openDatabase, RunJournal, RunRepo, type ArmRow, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
@@ -16,6 +16,8 @@ import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
 import { startH01Fixture, type H01Fixture } from '../apps/desktop/src/h01-fixture.ts';
 import { startHarness, type Harness } from './harness.ts';
+import { fixtureOriginGrant } from '@sax/engine/core';
+import { h01FixtureLookupDefs, loadH01Fixture } from './h01-fixture-package.ts';
 
 const SUPPLIER = { bizNo: '1234567891', name: '가나다컴퍼니' };
 const C = { bizNo: '4182577343', name: 'C테크', email: 'billing@ctech.example' };
@@ -127,6 +129,16 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   let supply = 100_000;
 
   const sharedPage = async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page));
+  /** 제품 실행기(engine 'ir')로 가짜 H-01 패키지를 돌린다(h01-golden.test.ts와 같은 패키지·조회·판정기). */
+  const irPackage = (): IrPackage => {
+    const { pkg } = loadH01Fixture(fx.origin);
+    const p = fixturePortal(fx.origin);
+    return {
+      pkg, lookupDefs: h01FixtureLookupDefs(fx.origin), fixtureGrant: fixtureOriginGrant(pkg),
+      verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: p.verify.maxMs },
+      judge: { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
+    };
+  };
   const approval = (req: GateRequest): LocalApproval => ({
     v: 2, runId: req.runId, gateStepId: req.gateStepId, reqId: req.reqId, approvalNonce: req.approvalNonce, actionHash: req.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1',
   });
@@ -134,13 +146,13 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
   /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
-  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; auto?: (runs: RunService, db: Db) => RunService } = {}) {
+  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; auto?: (runs: RunService, db: Db) => RunService; ir?: boolean } = {}) {
     const db = await tempDb();
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
-    const runs = new RunService({ engine: 'h01', db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
+    const runs = new RunService({ ...(o.ir ? { engine: 'ir' as const, ir: irPackage() } : { engine: 'h01' as const }), db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
@@ -397,6 +409,35 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     assert.deepEqual(w.ledger.byIssueKey(k).map((r) => [r.stepId, r.state]), [['manual.issue', 'observed_manual']]);
     assert.ok(!w.seen(k).includes('human') && !w.seen(k).includes('consent'), '직접 칸·동의 카드로 넘어가지 않는다');
     assert.equal(w.api!.calls, 0);
+  });
+
+  it('제품 실행기(IR): 발급되면 s21 원장 행에 발급 키가 붙고 issued, 메일 등 후속 행에는 붙지 않는다', async () => {
+    const w = await world({ ir: true });
+    const n = gateCount();
+    const { k } = w.request();
+    const req = await gateAfter(n);
+    assert.deepEqual(w.runs.answer(approval(req)), { ok: true });
+    const st = await w.until(k, 'issued');
+    assert.equal(st.route, 'hometax.auto');
+    assert.deepEqual(w.ledger.byIssueKey(k).map((r) => [r.stepId, r.state]), [['s21', 'committed']]);
+    const others = w.db.prepare("SELECT step_id, issue_key FROM irreversible_log WHERE step_id <> 's21'").all() as Array<{ step_id: string; issue_key: string | null }>;
+    assert.ok(others.every((r) => r.issue_key === null), JSON.stringify(others));
+    assert.equal(w.api!.calls, 0);
+  });
+
+  it('제품 실행기(IR): 발급 결과 모름(in_doubt)이면 held, 동의 카드 없음, API 0', async () => {
+    fx.knobs.dropIssue = true;
+    try {
+      const w = await world({ ir: true });
+      const n = gateCount();
+      const { k } = w.request();
+      assert.deepEqual(w.runs.answer(approval(await gateAfter(n))), { ok: true });
+      assert.equal((await w.until(k, 'held')).state, 'in_doubt');
+      assert.ok(!w.seen(k).includes('consent'));
+      assert.equal(w.api!.calls, 0);
+    } finally {
+      fx.knobs.dropIssue = false;
+    }
   });
 
   it('RunService.start: 틀린 발급 키는 issue.bad_key, 같은 키에 미종결·발급됨 행이 있으면 브라우저를 열기 전에 ledger.issue_open·ledger.issue_committed', async () => {
