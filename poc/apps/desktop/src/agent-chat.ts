@@ -1,10 +1,11 @@
 // 대화 에이전트 main 쪽(결정안 agent-chat-design-2026-11-12 §2, PR-3): 사용자 턴 하나의 도구 루프와 값 공간.
-// 카드(초안)·조회 결과와 그 ref, 슬롯 채우기, 진행 표시를 맡는다. 토큰은 모른다(마스킹·역치환은 엔진 chat.step).
+// 카드(초안)·조회 결과와 그 ref, 슬롯 채우기, 진행 표시를 맡는다. 마스킹은 엔진 chat.step이 하고, 토큰의 화면 값은 엔진이 답과 같이 준다(values).
 // - 모델에 돌려주는 도구 결과는 ref·status·fields·needs뿐이다(C-10). 값·행·개수·이름은 화면 쪽 결과(AgentTurnResult)에만 실린다.
 // - 초안 포트에는 준비·발급 메서드가 없다. 어떤 모델 출력으로도 run.prepare가 시작되지 않는다(발급은 카드 버튼 IPC 하나뿐).
 // - 문장·토큰·값을 로그에 남기지 않는다.
-import type { AgentReply, DomainCall, ScreenFrame, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
+import type { AgentReply, DomainCall, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
+import { fillWithJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
 
 type SlotField = NonNullable<ToolOutput['fields']>[number];
@@ -19,6 +20,8 @@ export const SLOT_SUM_FIELDS = ['supply', 'total'] as const;
 /** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count). @sax/model SLOT_PATHS와 같다(시험이 대조). */
 export const SLOT_PATHS: readonly string[] = [...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)), ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`), 'count'];
 export const CHAT_MAP_IDLE_MS = 15 * 60 * 1000;
+/** 엔진 토큰([NAME_1] 등). @sax/redaction TOKEN_RE와 같은 꼴이다. */
+const TOKEN_RE = /\[[A-Z]+_\d+\]/;
 const SLOT_RE = new RegExp(`\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map((x) => x.replace('.', '\\.')).join('|')})\\}`, 'g');
 /** 엔진 화면 프레임 상한(cards maxItems) */
 const FRAME_MAX = 12;
@@ -68,6 +71,10 @@ export interface IssuedRow {
   date: string;
   total: number | null;
 }
+/**
+ * 받을 돈 행. 지금은 발급 행과 같은 꼴이다.
+ * #284(BankHost.receivables())가 들어오면 행에 status 'unpaid'|'unknown'을 붙이고 receivables 포트를 그 포트에 잇는다(입금 대조가 안 된 행을 미수라고 단정하지 않게).
+ */
 export type ReceivableRow = IssuedRow;
 
 export interface AgentCounterparty {
@@ -135,6 +142,15 @@ const supplyOf = (total: number) => split(total, 'included').supply;
 /** 행 금액의 합(공급가는 행마다 나눈 값을 더한다: 표의 행과 같은 값). 금액 모르는 행이 있으면 null. */
 const sumOf = (rows: ReadonlyArray<{ total: number | null }>, field: 'supply' | 'total'): number | null =>
   rows.some((r) => r.total === null) ? null : rows.reduce((a, r) => a + (field === 'total' ? r.total! : supplyOf(r.total!)), 0);
+/**
+ * 표 제목의 건수·합계. 슬롯({r#.count}·{r#.sum.*})과 같은 sumOf로 낸다: 답 문장의 값이 표 제목에 그대로 있다.
+ * 금액 모르는 행이 있으면 아는 행만 더하고 그렇다고 적는다(슬롯 합계는 그때 비어 문장이 표를 보라는 말로 바뀐다).
+ */
+function tally(rows: ReadonlyArray<{ total: number | null }>): string {
+  const known = rows.filter((x) => x.total !== null);
+  const gap = rows.length - known.length;
+  return `${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
+}
 
 /** today(KST YYYY-MM-DD)에서 offset달 옮긴 달의 YYYY-MM */
 export function monthOf(today: string, offset: number): string {
@@ -247,11 +263,7 @@ export class AgentChat {
       case 'sales_summary': {
         const month = monthOf(this.ports.today(), call.monthOffset);
         const rows = newestFirst(this.ports.issued().filter((x) => x.date.startsWith(`${month}-`)));
-        // 표 제목의 합계는 슬롯({r#.sum.*})과 같은 함수로 낸다: 답 문장과 표가 같은 값을 보이게
-        const known = rows.filter((x) => x.total !== null);
-        const gap = rows.length - known.length;
-        const title = `${Number(month.slice(5))}월 발급 ${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
-        return this.remember(s, { kind: 'sales', title, rows });
+        return this.remember(s, { kind: 'sales', title: `${Number(month.slice(5))}월 발급 ${tally(rows)}`, rows });
       }
       case 'invoice_history':
       case 'receivables': {
@@ -261,7 +273,8 @@ export class AgentChat {
         if (!all) return out('not_set_up');
         // 이름만 아는 옛 행(counterpartyId null)은 지금 장부 이름으로 맞춘다.
         const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);
-        const title = call.tool === 'receivables' ? `${cp ? `${cp.name} ` : ''}입금 확인 전 세금계산서` : `${cp ? `${cp.name} ` : ''}발급 기록`;
+        const name = cp ? `${cp.name} ` : '';
+        const title = call.tool === 'receivables' ? `${name}입금 확인 전 ${tally(rows)}` : `${name}발급 기록 ${tally(rows)}`;
         return this.remember(s, { kind: call.tool === 'receivables' ? 'receivables' : 'history', title, rows });
       }
       case 'invoice_draft': {
@@ -346,21 +359,23 @@ export class AgentChat {
     return field === 'total' ? row.total : supplyOf(row.total);
   }
 
-  private fill(s: Session, text: string): string {
+  /** 토큰은 엔진이 준 화면 값으로, 슬롯은 결과 값으로 바꾸고 바꾼 값 바로 뒤 조사를 받침에 맞춘다. */
+  private fill(s: Session, reply: ShownReply): string {
     const today = this.ports.today();
     let missing = false;
-    const filled = text.replace(SLOT_RE, (_m, ref: string, path: string) => {
-      const v = this.slotValue(s, ref, path);
+    const filled = fillWithJosa(reply.text, new RegExp(`${TOKEN_RE.source}|${SLOT_RE.source}`, 'g'), (m) => {
+      if (m[1] === undefined) return reply.values[m[0]] ?? null;
+      const v = this.slotValue(s, m[1], m[2]!);
       if (v === null) {
         missing = true;
         return '';
       }
-      return path === 'count' ? String(v) : typeof v === 'number' ? won(v) : path.endsWith('.date') ? koDate(v, today) : v;
+      return m[2] === 'count' ? String(v) : typeof v === 'number' ? won(v) : m[2]!.endsWith('.date') ? koDate(v, today) : v;
     });
     return missing ? AGENT_SLOT_MISSING_TEXT : filled;
   }
 
-  private shown(s: Session, reply: AgentReply, created: string[]): AgentTurnResult {
+  private shown(s: Session, reply: ShownReply, created: string[]): AgentTurnResult {
     const show: AgentShow[] = [];
     const cards = new Set<string>();
     // 문장 슬롯이 가리키는 결과는 모델이 show에 넣지 않아도 보인다: 답 문장의 값이 늘 같이 보이는 표에 있다.
@@ -376,7 +391,7 @@ export class AgentChat {
     }
     // 이번 턴에 만든 카드는 모델이 show에 넣지 않아도 보인다(카드가 사실이다).
     for (const runId of created) if (!cards.has(runId)) show.push({ type: 'card', runId });
-    return { kind: 'agent', text: reply.filtered ? reply.text : this.fill(s, reply.text), show, ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null, filtered: reply.filtered };
+    return { kind: 'agent', text: reply.filtered ? reply.text : this.fill(s, reply), show, ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null, filtered: reply.filtered };
   }
 
   private chips(ask: AgentAsk): Array<{ label: string; text: string }> {

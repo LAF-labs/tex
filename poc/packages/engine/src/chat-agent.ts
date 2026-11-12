@@ -87,7 +87,7 @@ export type DomainCall =
   | { tool: 'draft_edit'; draft: string; amount: DraftAmount; vat: Vat | null; item: string | null }
   | { tool: 'draft_discard'; draft: string };
 
-/** 화면에 보일 답. text는 거래처 토큰을 지금 장부 이름으로, 다른 토큰을 원값으로 바꾼 것이고 슬롯은 main이 채운다. */
+/** 검사를 마친 답. filtered가 있으면 text는 엔진 고정 문구다. */
 export interface AgentReply {
   kind: AgentReplyKind;
   text: string;
@@ -96,7 +96,12 @@ export interface AgentReply {
   filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number';
 }
 
-export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: AgentReply };
+/**
+ * main에 돌려주는 답. text는 채우기 전 문장(토큰·슬롯 그대로)이고, values는 이 답에 나온 토큰의 화면 값이다
+ * (거래처 토큰은 지금 장부 이름, 다른 토큰은 사장님이 쓴 원값). 토큰·슬롯을 값으로 바꾸고 조사를 맞추는 일은 main 한 곳에서 한다.
+ */
+export type ShownReply = AgentReply & { values: Record<string, string> };
+export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: ShownReply };
 
 /** 대화록 한 턴. agent.text는 채우기 전(토큰·슬롯 그대로) 문장이다. 채운 문장은 이 타입에 들어오지 않는다. agent null은 답 없이 끝난 턴. */
 export interface AgentTurnRecord {
@@ -463,20 +468,22 @@ export class ChatAgent {
     return { kind: k, text, show: refs, ask: a, filtered: null };
   }
 
-  /** 턴을 닫는다: 채우기 전 문장을 대화록에 넣고, 화면용 문장은 토큰을 이름·값으로 바꿔 돌려준다. */
+  /** 턴을 닫는다: 채우기 전 문장을 대화록에 넣고, 이 답에 나온 토큰의 화면 값을 같이 돌려준다. */
   private finish(s: Session, r: AgentReply): StepResult {
     this.record(s, { user: s.turn!.user, agent: { text: r.text, show: r.show } });
     s.turn = null;
-    return { kind: 'reply', reply: { ...r, text: r.filtered ? r.text : this.display(s, r.text) } };
+    return { kind: 'reply', reply: { ...r, values: r.filtered ? {} : this.values(s, r.text) } };
   }
 
-  private display(s: Session, text: string): string {
+  private values(s: Session, text: string): Record<string, string> {
     const cps = new CounterpartyRepo(this.db);
-    return text.replace(TOKEN_RE, (tok) => {
+    const out: Record<string, string> = {};
+    for (const [tok] of text.matchAll(TOKEN_RE)) {
       const rec = s.red.map.recordOf(tok);
       const name = tok.startsWith('[NAME_') && rec?.startsWith('cp:') ? cps.get(rec.slice(3))?.name : undefined;
-      return name ?? s.red.map.valueOf(tok)!;
-    });
+      out[tok] = name ?? s.red.map.valueOf(tok)!;
+    }
+    return out;
   }
 
   private record(s: Session, r: AgentTurnRecord): void {

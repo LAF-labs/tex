@@ -2,7 +2,8 @@
 // 엔진 chat.step은 각본 함수(fakeStep)로 대신한다. 포트는 가짜이고, 목록 밖 이름을 읽으면 적어 둔다(준비·발급 길이 없음을 보인다).
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
-import { CHAT_ADVICE_TEXT, type AgentReply, type DomainCall, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, type DomainCall, type ShownReply, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
+import { finalOf, fixJosa } from '../apps/desktop/src/josa.ts';
 import { SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {
@@ -38,7 +39,7 @@ const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'coun
 const DRAFT_KEYS = ['list', 'setupMissing', 'create', 'update', 'discard'];
 
 type Handler = (p: StepParams) => StepResult;
-const reply = (r: Partial<AgentReply>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, ...r } });
+const reply = (r: Partial<ShownReply>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, values: {}, ...r } });
 const tools = (...calls: DomainCall[]): StepResult => ({ kind: 'tools', calls: calls.map((c, i) => ({ callId: `call-${'abcdefgh'[i]}`, ...c })) });
 const outputs = (p: StepParams): ToolOutput[] => {
   assert.ok('continue' in p, 'continue 호출');
@@ -189,9 +190,10 @@ describe('AgentChat 11턴', () => {
         a,
         'A상사에 세금계산서 끊어줘 110만원',
         () => tools({ tool: 'invoice_draft', counterpartyId: 'cpA', amount: { value: 1_100_000 }, vat: null, item: '컨설팅' }),
-        (p) => reply({ kind: 'did', text: `${cp('cpA')}에 보낼 카드를 만들었어요.`, show: [outputs(p)[0]!.ref!] }),
+        (p) => reply({ kind: 'did', text: '[NAME_1]으로 보낼 카드를 만들었어요.', values: { '[NAME_1]': cp('cpA') }, show: [outputs(p)[0]!.ref!] }),
       ),
     );
+    assert.equal(t2.text, 'A상사로 보낼 카드를 만들었어요.', '토큰은 엔진이 준 값으로, 조사는 받침에 맞춰');
     assert.deepEqual(drafts.creates, [['cpA', 1_100_000, null, '컨설팅']]);
     assert.deepEqual(t2.show, [{ type: 'card', runId: 'run-1' }]);
     assert.equal(outputs(sent.at(-1)!)[0]!.status, 'card_shown');
@@ -264,7 +266,7 @@ describe('AgentChat 11턴', () => {
       {
         type: 'table',
         table: 'history',
-        title: 'A상사 발급 기록',
+        title: 'A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원',
         rows: [
           { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000 },
           { date: '2026-09-03', counterparty: 'A상사', total: 2_200_000 },
@@ -274,7 +276,7 @@ describe('AgentChat 11턴', () => {
 
     const t10 = agent(await say(a, '그때 얼마였어?', () => reply({ text: `그때는 공급가 {${hist}.first.supply}, 합계 {${hist}.first.total}이었어요.` })));
     assert.equal(t10.text, '그때는 공급가 1,000,000원, 합계 1,100,000원이었어요.');
-    assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
+    assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
 
     const t11 = agent(
       await say(
@@ -294,6 +296,87 @@ describe('AgentChat 11턴', () => {
       for (const c of BOOK) assert.ok(!j.includes(c.name), `도구 결과에 거래처 이름이 없다: ${c.name}`);
     }
     assert.deepEqual(strays, []);
+  });
+});
+
+describe('조사 맞추기', () => {
+  it('끝소리: 한글 받침, 숫자는 한국어 읽기, 영문은 모름', () => {
+    assert.deepEqual(['원', '사', '일', '1', '2', '3', '7', 'C', ''].map(finalOf), ['other', 'none', 'rieul', 'rieul', 'none', 'other', 'rieul', null, null]);
+  });
+  it('바꾼 값 바로 뒤의 조사만 받침에 맞춘다', () => {
+    const cases: Array<[string, string, string]> = [
+      ['1,650,000원', '예요.', '이에요.'],
+      ['A상사', '이에요.', '예요.'],
+      ['3', '이에요', '이에요'],
+      ['2', '이에요', '예요'],
+      ['1,100,000원', '였어요.', '이었어요.'],
+      ['A상사', '이었어요.', '였어요.'],
+      ['10월 15일', '으로 바꿨어요', '로 바꿨어요'],
+      ['A상사', '으로', '로'],
+      ['1,000,000원', '로 할게요', '으로 할게요'],
+      ['A상사', '은 ', '는 '],
+      ['C테크놀로지', '이 보냈어요', '가 보냈어요'],
+      ['1,000,000원', '가 맞아요', '이 맞아요'],
+      ['C테크', '을', '를'],
+      ['B상사', '과 A상사', '와 A상사'],
+      ['A상사', '가게', '가게'],
+      ['ABC', '이에요', '이에요'],
+      ['A상사', '에 보낼', '에 보낼'],
+    ];
+    for (const [v, rest, want] of cases) assert.equal(fixJosa(v, rest), want, `${v}+${rest}`);
+  });
+  it('AgentChat: 슬롯 합계와 거래처 토큰 뒤 조사가 값에 맞는다', async () => {
+    const a = chat();
+    const t = agent(
+      await say(
+        a,
+        '지난달 매출 얼마야',
+        () => tools({ tool: 'sales_summary', monthOffset: -1 }),
+        (p) => {
+          const r = outputs(p)[0]!.ref!;
+          return reply({ text: `공급가 합계는 {${r}.sum.supply}예요. [NAME_2]은 이번에 없어요.`, values: { '[NAME_2]': 'C테크' } });
+        },
+      ),
+    );
+    assert.equal(t.text, '공급가 합계는 1,500,000원이에요. C테크는 이번에 없어요.');
+  });
+});
+
+describe('AgentChat 받을 돈·기록 표 제목', () => {
+  it('제목의 건수·합계는 슬롯과 같은 집계이고, 금액 모르는 행은 빼고 적는다', async () => {
+    receivable = [
+      { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-10-15', total: 1_100_000 },
+      { counterpartyId: 'cpB', counterparty: 'B상사', date: '2026-10-20', total: 550_000 },
+    ];
+    const a = chat();
+    const t = agent(
+      await say(
+        a,
+        '아직 못 받은 돈 있어?',
+        () => tools({ tool: 'receivables', counterpartyId: null }),
+        (p) => {
+          const r = outputs(p)[0]!.ref!;
+          return reply({ text: `{${r}.count}건, 합계 {${r}.sum.total}이 아직 입금 확인 전이에요.` });
+        },
+      ),
+    );
+    assert.equal(t.text, '2건, 합계 1,650,000원이 아직 입금 확인 전이에요.');
+    assert.deepEqual(t.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 2건 · 공급가 1,500,000원 · 합계 1,650,000원']);
+
+    receivable = [...receivable, { counterpartyId: null, counterparty: 'C테크', date: '2026-11-02', total: null }];
+    const u = agent(
+      await say(
+        a,
+        '다시 봐 줘',
+        () => tools({ tool: 'receivables', counterpartyId: null }),
+        (p) => {
+          const r = outputs(p)[0]!.ref!;
+          return reply({ text: `합계 {${r}.sum.total}이에요.` });
+        },
+      ),
+    );
+    assert.equal(u.text, AGENT_SLOT_MISSING_TEXT, '금액 모르는 행이 있으면 합계 슬롯은 채우지 않는다');
+    assert.deepEqual(u.show.map((x) => x.type === 'table' && x.title), ['입금 확인 전 3건 · 공급가 1,500,000원 · 합계 1,650,000원(금액 모르는 1건 빼고)']);
   });
 });
 
@@ -391,7 +474,7 @@ describe('AgentChat 화면 결과', () => {
 
   it('되묻기 칩: 거래처는 장부 이름, 부가세는 별도·포함, 카드 고르기는 열린 카드마다', async () => {
     const a = chat();
-    const ask = async (k: NonNullable<AgentReply['ask']>) => agent(await say(a, '음', () => reply({ kind: 'ask', ask: k }))).ask;
+    const ask = async (k: NonNullable<ShownReply['ask']>) => agent(await say(a, '음', () => reply({ kind: 'ask', ask: k }))).ask;
     assert.deepEqual(await ask('counterparty'), { kind: 'counterparty', chips: BOOK.map((c) => ({ label: c.name, text: c.name })) });
     assert.deepEqual(await ask('vat'), { kind: 'vat', chips: [{ label: '별도', text: '부가세 별도로' }, { label: '포함', text: '부가세 포함으로' }] });
     drafts.create('cpA', 1_100_000, null, null);

@@ -45,6 +45,8 @@ const lastOutput = (body: Item): ToolOutput | null => {
 };
 const toks = (t: string, k: string) => [...t.matchAll(new RegExp(`\\[${k}_\\d+\\]`, 'g'))].map((m) => m[0]);
 const responds = () => mock.calls.filter((c) => c.path === '/v1/respond');
+/** main이 화면에서 하는 토큰 바꾸기(조사는 main 시험이 본다) */
+const shownText = (r: { text: string; values: Record<string, string> }) => r.text.replace(/\[[A-Z]+_\d+\]/g, (t) => r.values[t]!);
 const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
 
 /** 모델 각본: 사용자 턴마다 [첫 호출 출력, 도구 결과를 받은 뒤 출력 …]. 함수는 요청 본문을 받는다. */
@@ -152,11 +154,11 @@ describe('chat.step 마스킹 경계(11턴)', () => {
     assert.ok(userText(responds().at(-1)!.body!).startsWith('[앞 대화]\n'));
 
     assert.deepEqual(out[1]!.calls, [{ callId: out[1]!.calls[0]!.callId, tool: 'invoice_draft', counterpartyId: cpId['A상사'], amount: { value: 1_100_000 }, vat: null, item: '컨설팅' }]);
-    assert.equal(out[1]!.reply.text, 'A상사에 보낼 카드를 만들었어요.');
+    assert.equal(shownText(out[1]!.reply), 'A상사에 보낼 카드를 만들었어요.');
     assert.deepEqual(out[2]!.calls.map((c) => c.tool === 'draft_edit' && [c.draft, c.vat]), [['d2', 'separate']]);
     const typo = out[3]!.calls[0]!;
     assert.ok(typo.tool === 'invoice_draft' && typo.counterpartyId === cpId['A상사'] && typo.amount && 'value' in typo.amount && typo.amount.value === 500_000);
-    assert.deepEqual(out[4]!.reply, { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' });
+    assert.deepEqual(out[4]!.reply, { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {} });
     assert.deepEqual(out[5]!.calls.map((c) => c.tool === 'receivables' && c.counterpartyId), [null]);
     assert.deepEqual(out[6]!.calls.map((c) => c.tool === 'draft_discard' && c.draft), ['d3']);
     assert.equal(out[8]!.reply.text, '{r4.first.date}에 마지막으로 발급했어요.');
@@ -239,7 +241,7 @@ describe('chat.step 답 검사', () => {
 
   it('tax_advice·세무 판단 말은 고정 문구, 숫자 식별자·이메일·링크는 고정 안내', async () => {
     const a = agent();
-    assert.deepEqual(await one(a, { kind: 'tax_advice', text: '경비 처리돼요' }), { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' });
+    assert.deepEqual(await one(a, { kind: 'tax_advice', text: '경비 처리돼요' }), { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {} });
     assert.equal((await one(a, { text: '그 비용은 경비로 처리하시면 돼요.' })).filtered, 'advice');
     for (const t of ['사업자번호 214-86-51233로 보낼게요.', 'tax@other.example로 보내 주세요.', 'https://evil.example 에서 확인하세요.', '인증서 비밀번호를 입력하세요.']) {
       const r = await one(a, { text: t });
@@ -281,12 +283,12 @@ describe('chat.step 답 검사', () => {
   it('거래처 토큰은 지금 장부 이름으로 보인다(이름을 바꾸면 바뀐 이름), 대화록에는 토큰 그대로 남는다', async () => {
     const a = agent();
     script((b) => reply({ text: `${toks(nowLine(b), 'NAME')[0]}에 보낼까요?` }));
-    assert.equal((await say(a, new FakePc(), 'C테크 어때?')).reply.text, 'C테크에 보낼까요?');
+    assert.equal(shownText((await say(a, new FakePc(), 'C테크 어때?')).reply), 'C테크에 보낼까요?');
     new CounterpartyRepo(db).update(cpId['C테크']!, { name: 'C테크놀로지' });
     try {
       let tok = '';
       script((b) => ((tok = /앱: (\[NAME_\d+\])에/.exec(userText(b))![1]!), reply({ text: `${tok} 맞아요.` })));
-      assert.equal((await say(a, new FakePc(), '어디라고?')).reply.text, 'C테크놀로지 맞아요.');
+      assert.equal(shownText((await say(a, new FakePc(), '어디라고?')).reply), 'C테크놀로지 맞아요.');
       assert.ok(!responds().some((c) => JSON.stringify(c.body).includes('C테크')));
     } finally {
       new CounterpartyRepo(db).update(cpId['C테크']!, { name: 'C테크' });
