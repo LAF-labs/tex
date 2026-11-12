@@ -201,6 +201,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     return runHistory(history.db, history.cipher, typeof params.limit === 'number' ? params.limit : 50);
   }
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
+  if (method === 'run.resume' || method === 'run.manualDone') {
+    if (!runs) throw new Error('runs_not_ready');
+    return method === 'run.resume' ? runs.resume(String(params.runId)) : runs.manualDone(String(params.runId));
+  }
   if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
