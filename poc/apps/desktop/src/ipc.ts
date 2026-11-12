@@ -119,7 +119,6 @@ export const SHELL_METHODS = {
   },
   // [등록증으로 채우기](M4-3 O-05): 파일 고르기 → 후보(상호·번호·대표자). 인자 없음.
   'counterparty.readCert': {},
-  'auth.setDefault': { kind: { t: 'enum', of: ['simple', 'cert', 'card'], required: true } },
   'g24.candidates': { doc: G24_DOC, startedAt: { t: 'number', required: true } },
   'g24.save': { id: ID, doc: G24_DOC },
   'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },

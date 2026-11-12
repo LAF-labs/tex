@@ -105,15 +105,6 @@ const act = {
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
   // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
   openRunDoc: (run, reveal = false) => runDoc(run).then((d) => (d ? (reveal ? act.revealDoc(d.id) : act.openDoc(d.id)) : toast(NO_FILE_TEXT))),
-  setAuth: async (kind) => {
-    try {
-      state.boot.profiles = (await call('auth.setDefault', { kind })).profiles;
-      render();
-      toast('기본 인증을 바꿨어요. 다음 발급부터 적용돼요');
-    } catch (e) {
-      toast(human(e));
-    }
-  },
   supplier: () => state.boot.profiles.business.name,
   open: (id) => openPanel({ kind: 'run', id }),
   openG24: (id) => openPanel({ kind: 'g24', id }),
@@ -270,7 +261,7 @@ const RAIL = [
   ['activity', '활동 기록', 'activity'],
 ];
 
-/** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시 · 검색 · 금고·폰 상태. 창 단추는 Windows 창 틀이 그린다. */
+/** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시. 창 단추는 Windows 창 틀이 그린다. */
 function renderTitlebar() {
   const p = state.boot.profiles;
   const cur = p[state.profile];
@@ -292,20 +283,8 @@ function renderTitlebar() {
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
-    h('button', { type: 'button', class: 'sx-search', onclick: openSearch }, h('span', {}, '거래처, 서류, 지난 대화 검색'), h('span', { class: 'sx-kbd' }, isMac() ? '⌘K' : 'Ctrl K')),
-    h(
-      'div',
-      { class: 'tb-status' },
-      h('span', {}, icon('lock'), '금고 열림'),
-      h('span', {}, icon('phone'), '폰 연결 안 됨'),
-    ),
   );
 }
-
-/** macOS는 ⌘, 그 밖은 Ctrl(검색 단축키 표시·처리가 같은 판정을 쓴다). */
-const isMac = () => state.boot?.platform === 'darwin';
-/** 검색은 아직 없다. 버튼과 단축키(⌘K / Ctrl+K)가 같은 안내를 띄운다. */
-const openSearch = () => toast('검색은 곧 지원해요');
 
 function toggleMenu(open = !state.menu) {
   if (state.menu === open) return;
@@ -1284,9 +1263,10 @@ function activityPanel(row) {
   );
 }
 
-const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터'];
-/** 설정 항목 중 실제로 열리는 것(나머지는 목업). */
-const SETTINGS_TAB = { 0: 'auth', 4: 'devices' };
+const SETTINGS_TABS = [
+  ['auth', '발급 인증'],
+  ['devices', '기기 연결'],
+];
 
 function setTab(tab) {
   state.setTab = tab;
@@ -1456,30 +1436,27 @@ setInterval(() => {
   const sec = Math.max(0, Math.round((at - Date.now()) / 1000));
   el.textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 }, 1000);
-// 프로필 인증 문자열(shell-app SIGN: 사업자 간편인증·공동·금융인증서·보안카드·발급 인증 미설정)을 종류로 묶는다.
-const AUTH_KIND = [
-  ['simple', /^사업자 간편인증/, '발급할 때마다 폰에서 승인해요'],
-  ['card', /^보안카드/, '번호 30개 등록됨 · 앱이 알아서 입력해요 · 홈택스 아이디 로그인'],
-  ['cert', /^(공동|금융|공동·금융)인증서/, '비밀번호는 발급할 때마다 직접 입력해요'],
-];
-const authKind = (name) => AUTH_KIND.find(([, re]) => re.test(name));
+// 프로필 인증 라벨(shell-model SIGN_LABEL)별 발급 때 사람이 하는 일(shell-runs SIGN_BY_AUTH와 같은 사실).
+const AUTH_DESC = {
+  '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
+  '공동·금융인증서': '발급할 때마다 인증서 비밀번호를 직접 넣어요',
+  보안카드: '발급할 때마다 보안카드 번호를 직접 넣어요',
+};
 
-/** 등록한 발급 인증(캔버스 S-02). 기본은 프로필의 인증이고, 나머지 줄은 데모 목업이다(엔진·금고에는 하나만 있다). 미설정이면 기본 줄이 없다. */
-function authList() {
-  const b = state.boot.profiles.business;
-  const main = authKind(b.auth) ? { name: b.auth.replace(/\s*\(([^)]+)\)$/, ' · $1'), kind: authKind(b.auth)[0], main: true } : null;
-  const extra = [
-    { name: '사업자 간편인증 · 카카오뱅크', kind: 'simple' },
-    { name: '보안카드', kind: 'card', reRegister: true },
-    { name: `공동인증서 · ${b.name}`, kind: 'cert' },
-  ].filter((x) => x.kind !== main?.kind);
-  return [main, ...extra].filter(Boolean).map((x) => ({ ...x, desc: AUTH_KIND.find(([k]) => k === x.kind)[2] }));
+/** 발급 인증(캔버스 S-02): 사업자 프로필의 인증 하나. 바꾸기는 내 사업장과 같은 온보딩 다시 열기. */
+function authCard() {
+  const auth = state.boot.profiles.business.auth;
+  const desc = AUTH_DESC[auth];
+  return h(
+    'div',
+    { class: 'sx-card auth-row', 'data-auth-card': '' },
+    h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
+    state.boot.authReopen ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
+  );
 }
 
-/** 설정(캔버스 S-02 · 발급 인증). 이 데모는 보여 주기만 하고 바꾸지 않는다. */
+/** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
 function settingsView() {
-  const mock = () => toast('이 설정은 곧 바꿀 수 있어요');
-  const small = (label, quiet) => h('button', { type: 'button', class: `auth-act${quiet ? ' is-quiet' : ''}`, onclick: mock }, label);
   return h(
     'section',
     { class: 'rail-screen settings', 'data-view': 'settings' },
@@ -1487,43 +1464,14 @@ function settingsView() {
       'nav',
       { class: 'set-nav', 'aria-label': '설정 항목' },
       h('h1', { class: 'title-screen' }, '설정'),
-      SETTINGS_NAV.map((t, i) => {
-        const tab = SETTINGS_TAB[i];
+      SETTINGS_TABS.map(([tab, label]) => {
         const on = tab === state.setTab;
-        return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab ?? null, onclick: tab ? () => setTab(tab) : mock }, t);
+        return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab, onclick: () => setTab(tab) }, label);
       }),
     ),
     state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
-      : h(
-      'div',
-      { class: 'set-body' },
-      waitingChip(),
-      h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서와 증명서를 발급할 때 쓰는 인증이에요. 여러 개를 등록해 둘 수 있고, 발급에는 기본 인증을 써요.')),
-      h(
-        'div',
-        { class: 'sx-card auth-list', 'data-auth-list': '' },
-        authList().map((a) =>
-          h(
-            'div',
-            { class: 'auth-row', 'data-auth-main': a.main ? '' : null },
-            h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, a.name), h('span', { class: 'sx-meta' }, a.desc)),
-            a.main ? h('span', { class: 'sx-chip is-done' }, '기본') : h('button', { type: 'button', class: 'auth-act', 'data-auth-set': a.kind, onclick: () => act.setAuth(a.kind) }, '기본으로'),
-            a.reRegister ? small('다시 등록', true) : null,
-            small('삭제', true),
-          ),
-        ),
-      ),
-      h('div', { class: 'sx-actions' }, btn([icon('plus'), '인증 추가'], mock), h('span', { class: 'sx-meta' }, '사업자 간편인증(다른 은행 앱)·보안카드·공동인증서·금융인증서를 더할 수 있어요')),
-      h('p', { class: 'sx-meta' }, state.boot.sample ? '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 기본 바꾸기는 이 데모 DB에만 반영돼요. 추가·다시 등록·삭제는 목업이에요.' : '기본을 바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요. 인증 추가·다시 등록·삭제는 곧 지원해요.'),
-      h('div', { class: 'rule' }),
-      h(
-        'label',
-        { class: 'set-check' },
-        h('input', { type: 'checkbox', disabled: true }),
-        h('span', { class: 'opt-main' }, h('span', { class: 'set-check-title' }, '발급 전에 Windows Hello로 한 번 더 확인'), h('span', { class: 'sx-meta' }, '[승인하고 발급]을 누른 뒤 지문이나 PIN을 한 번 더 받아요. 기본은 꺼짐이에요. 아직 켤 수 없어요.')),
-      ),
-    ),
+      : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }
 
@@ -1911,12 +1859,6 @@ window.sax.onEvent((ev) => {
 });
 
 window.addEventListener('keydown', (e) => {
-  // 검색 단축키: macOS ⌘K, 그 밖 Ctrl+K(제목줄 표시와 같다)
-  if ((e.key === 'k' || e.key === 'K') && (isMac() ? e.metaKey && !e.ctrlKey : e.ctrlKey && !e.metaKey) && !e.altKey && state.boot) {
-    e.preventDefault();
-    openSearch();
-    return;
-  }
   if (e.key === 'Escape' && $('#modal').firstChild) {
     if (state.login) closeLogin();
     else cancelPassword();

@@ -1,5 +1,5 @@
 // 시연 씨앗 e2e(pnpm demo의 견본 데이터): 거래처 9곳·지난 발급 14건(상태 섞임), 문서함 견본 증명서 5장이 실제 가져오기 길로 들어감
-// (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 발급 인증 기본 바꾸기, 화면의 추가 폼.
+// (정상·임박·만료·추정·확인 필요), 목업 서류·지난 발급본 견본 PDF 열기, 거래처 추가·수정, 화면의 추가 폼.
 // 실행: electron apps/desktop/e2e-dist/demo-seed-e2e.js. PDF 열기는 OS 뷰어를 띄우지 않게 바꿔 끼운다. fixture 모드라 앱 폴더·키체인을 쓰지 않는다.
 import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
@@ -94,9 +94,11 @@ async function main(): Promise<void> {
   const upd = (await call<{ counterparties: Array<{ id: string; name: string }> }>('counterparty.save', { id: made.id, name: '견본테스트상회(수정)', rep: '홍견본', email: 'test@gyeonbon-test.example', item: '시험 품목' })) as { counterparties: Array<{ id: string; name: string }> };
   check('거래처 수정', upd.counterparties?.find((c) => c.id === made.id)?.name === '견본테스트상회(수정)', upd);
   check('틀린 사업자번호·중복은 거부', (await call('counterparty.save', { name: 'x', bizNo: '1234567890' })) === 'ERR:invalid_biz_no' && (await call('counterparty.save', { name: 'x', bizNo })) === 'ERR:duplicate_biz_no');
-  const auth = (await call<{ profiles: { business: { auth: string } } }>('auth.setDefault', { kind: 'card' })) as { profiles: { business: { auth: string } } };
-  check('발급 인증 기본 바꾸기(데모 DB)', auth.profiles?.business.auth === '보안카드', auth);
-  await call('auth.setDefault', { kind: 'simple' });
+
+  await js(`document.querySelector('#rail [data-view="settings"]').click()`);
+  await until('settings', async () => js<boolean>(`!!document.querySelector('[data-auth-card]')`), 5_000);
+  const settings = await js<{ tabs: string[]; cards: number; inputs: number; text: string }>(`({ tabs: [...document.querySelectorAll('[data-set-tab]')].map((b) => b.textContent), cards: document.querySelectorAll('[data-auth-card]').length, inputs: document.querySelectorAll('section[data-view=settings] input').length, text: document.querySelector('section[data-view=settings]').innerText })`);
+  check('설정: 항목은 발급 인증·기기 연결, 발급 인증은 프로필 인증 한 줄(기본으로·삭제·인증 추가·확인 체크 없음)', settings.tabs.join() === '발급 인증,기기 연결' && settings.cards === 1 && settings.inputs === 0 && settings.text.includes('사업자 간편인증') && !/기본으로|삭제|인증 추가|카카오뱅크/.test(settings.text), settings);
 
   // 화면: 거래처 화면의 [거래처 추가] → 폼 → [추가]
   await js(`document.querySelector('#rail [data-view="cps"], #rail button[aria-label="거래처"]')?.click()`);
