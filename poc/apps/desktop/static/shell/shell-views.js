@@ -95,6 +95,7 @@ export const CHIP = {
   checking: ['확인 중', ''],
   done: ['완료', 'is-done'],
   stopped: ['중지됨', 'is-stopped'],
+  discarded: ['취소함', 'is-stopped'],
   attention: ['확인 필요', 'is-attention'],
 };
 export const chip = (status) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, CHIP[status][0]);
@@ -198,6 +199,14 @@ export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서
 /** 대화 속 작업 카드(TaskCard). 상태가 바뀌면 같은 카드가 바뀐다. 캔버스 M-01·T-02~T-07 카드 순서: 머리 → 금액 → 문장 → 안내 → 버튼 줄. */
 export function taskCard(run, act) {
   const title = `세금계산서 · ${run.counterparty.name}`;
+  // 대화에서 발급 전에 버린 초안(draft_discard): 무엇이었는지만 남기고 버튼은 없다.
+  if (run.discarded)
+    return h(
+      'section',
+      { class: 'sx-card is-discarded', 'data-run': run.id, 'data-status': 'discarded' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip('discarded')),
+      h('p', { class: 'sx-meta' }, '발급 전에 취소한 카드예요. 홈택스에는 아무것도 보내지 않았어요.'),
+    );
   const st = run.status;
   const card = h('section', { class: `sx-card${st === 'turn' || st === 'waiting' ? ' is-turn' : ''}`, 'data-run': run.id, 'data-status': st });
   // DOM append(null)은 "null" 글자를 넣는다(카드에 "null"이 보였다). 카드의 조건부 줄은 h()처럼 null·false를 건너뛴다.

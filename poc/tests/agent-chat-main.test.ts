@@ -421,12 +421,13 @@ describe('AgentChat 초안 도구', () => {
     assert.deepEqual(drafts.creates, []);
     drafts.setupGap = true;
     // 금액·품목이 다 비어 있어도 등록이 빠졌다는 것을 먼저 말한다(묻고 나서 막히지 않게)
-    await say(
+    const r = await say(
       a,
       'C테크에 끊어줘',
       () => tools({ tool: 'invoice_draft', counterpartyId: 'cpC', amount: null, vat: null, item: null }),
       (p) => (assert.deepEqual(outputs(p), [{ ref: null, status: 'setup_missing', fields: null, needs: null }]), reply({ kind: 'cannot' })),
     );
+    assert.equal(r.kind === 'agent' && r.setup, true, '등록이 빠졌던 턴은 화면이 등록 버튼을 둔다');
     assert.deepEqual(drafts.creates, []);
   });
 
@@ -492,7 +493,7 @@ describe('AgentChat 화면 결과', () => {
   it('사업자 프로필이 없으면 엔진을 부르지 않고 고정 안내', async () => {
     profile = null;
     const r = await chat().turn('안녕');
-    assert.deepEqual(r, { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null });
+    assert.deepEqual(r, { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true });
     assert.deepEqual(sent, []);
     assert.deepEqual(phases, []);
   });

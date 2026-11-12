@@ -32,9 +32,12 @@ import { openSecretWindow } from './secret-window.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type SentTo, type VatMode } from './shell-model.ts';
+import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { AgentChat, type AgentPhase } from './agent-chat.ts';
+import { agentPorts } from './agent-wiring.ts';
+import type { StepParams, StepResult } from '@sax/engine';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
 import { readBizCert, type BizCertReadPorts } from './bizcert-read.ts';
@@ -171,6 +174,11 @@ export interface ShellOptions {
   intent?: IntentResolver;
   /** 대화 짧은 응대(chat-reply.ts). 기본은 엔진 `chat.respond`. e2e가 바꿔 끼운다. */
   chat?: ChatResponder;
+  /**
+   * 대화 에이전트의 모델 경계(엔진 `chat.step`, agent-chat.ts). 제품 사업자 대화는 늘 이 길이다.
+   * 시연(fixture)은 이것을 넘긴 e2e만 이 길로 간다(넘기지 않으면 옛 해석 길).
+   */
+  agent?: { step(p: StepParams): Promise<StepResult> };
 }
 
 /** ShellOptions.remote. */
@@ -286,11 +294,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion() });
   made.host = host;
   let business: Profile | null = null;
+  /** 사업자 프로필 DB id(대화 에이전트 세션 기준). 없으면 대화가 등록부터 안내한다. */
+  let businessId: string | null = null;
   let cps: Counterparty[] = [];
   const refresh = async () => {
     const ps = (await host.rpc('db.query.profiles.list')) as DbProfile[];
     const b = ps.find((p) => p.kind === 'business');
     business = b ? profileView(b) : null;
+    businessId = b?.id ?? null;
     // 최근 발급일: 원장(DB)에 없으면 문서함 세금계산서(지난 발급 견본 포함)에서
     const lastDoc = (name: string) => store.docs.filter((d) => d.kind === '세금계산서' && d.name === `세금계산서 · ${name}`).reduce<string | null>((m, d) => (d.issuedOn && (!m || d.issuedOn > m) ? d.issuedOn : m), null);
     const rows = (await host.rpc('db.query.counterparties.list')) as DbCounterparty[];
@@ -758,10 +769,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.item_kept', { result: (e as Error).message === 'bad_item_name' ? 'bad_item_name' : 'failed' });
     }
   };
-  // 대화 의도(M4-3 ③): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
+  // 대화 의도(M4-3 ③, 개인 프로필·시연): 엔진 intent.resolve(L0 → 마스킹 → 게이트웨이). 판정을 못 하면 의도를 대신 고르지 않는다(오프라인 해석 없음, 사용자 결정 2026-11-10).
   const intent: IntentResolver = opts.intent ?? engineIntentResolver((m, p) => host.rpc(m, p));
   // 대화 짧은 응대(엔진 chat.respond, #261): 의도가 unknown이고 되묻던 것에 답하는 문장이 아닐 때만. e2e가 바꿔 끼운다.
   const chatReply: ChatResponder = opts.chat ?? engineChatResponder((m, p) => host.rpc(m, p));
+  // 대화 에이전트(결정안 agent-chat-design-2026-11-12, PR-B): 루프·값 공간은 AgentChat, 모델 경계는 엔진 chat.step.
+  // 이 턴에 만든 초안은 끝나고 해석 출처·송신처를 적는다(활동 기록). 진행 단계는 렌더러에 이벤트로만 알린다.
+  let agentCreated: RunView[] = [];
+  const agent = new AgentChat(
+    agentPorts({
+      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : host.rpc(m, p)),
+      profileId: () => businessId,
+      runs,
+      setupMissing: () => setupMissing(profiles().business).length > 0,
+      onCreated: (run) => agentCreated.push(run),
+      // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
+      pastIssued: () => (seed?.history ?? []).filter((x) => x.approvalNo).map((x) => ({ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.date, total: x.total })),
+      onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
+    }),
+  );
   const finishReply = (reply: ReturnType<typeof interpret>, via: 'model' | 'offline', note: string | null, sent: SentTo[]) => {
     if (reply.kind === 'draft') {
       reply.run.interp = via;
@@ -917,9 +943,34 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         const parsed = model && dev ? dev.mergeParsed(model, local, text) : local;
         return setupGate(parsed) ?? finishReply(interpret(text, vat, profile, runs, parsed), via, null, ask ? ['openrouter_demo'] : []);
       }
+      // 사업자 대화는 대화 에이전트로 간다(제품 전부, 시연은 e2e가 agent를 넘겼을 때만). 개인 프로필은 아래 옛 해석 길(정부24 안내).
+      if (profile === 'business' && (!fixture || opts.agent)) {
+        if (!text.trim()) return { kind: 'say', text: EMPTY_REQUEST_TEXT, via: 'model', note: null, sent: [] };
+        if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
+        const mark = gwSeq;
+        agentCreated = [];
+        const r = await agent.turn(text);
+        const sent = sentFromGateway(gwIssuedSince(mark));
+        for (const run of agentCreated) {
+          run.interp = 'model';
+          run.sent = sent;
+        }
+        if (agentCreated.length) pushBoard();
+        log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
+        if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
+        // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.
+        type Shown = { type: 'card'; run: RunView } | Extract<(typeof r.show)[number], { type: 'table' }>;
+        const show = r.show.flatMap((x): Shown[] => {
+          if (x.type !== 'card') return [x];
+          const run = runs.get(x.runId);
+          return run ? [{ type: 'card', run }] : [];
+        });
+        const missing = r.setup ? setupMissing(profiles().business) : [];
+        return { kind: 'agent', text: r.text, show, ask: r.ask, filtered: r.filtered, setup: missing.map((id) => ({ id, label: SETUP_LABEL[id] })), via: 'model', note: null, sent };
+      }
       // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
       if (fixture && !opts.intent) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
-      if (!text.trim()) return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', via: 'model', note: null, sent: [] };
+      if (!text.trim()) return { kind: 'say', text: EMPTY_REQUEST_TEXT, via: 'model', note: null, sent: [] };
       // 온보딩 ②(모델 처리 동의) 전에는 문장을 모델로 보내지 않는다. "연결 안 됨"이 아니라 동의가 먼저라고 말한다.
       if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
       // 이 해석 동안 main이 내준 게이트웨이 헤더가 곧 우리 서버로 간 것이다(헤더 없이는 엔진이 게이트웨이를 부를 수 없다).
@@ -929,7 +980,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.interpret', { path: r.route ? `engine.${r.route.via}` : `unavailable.${r.fallback ?? 'none'}`, outcome: r.route?.outcome ?? 'unavailable', ms: Math.round(performance.now() - t0) });
       if (!r.route) return { kind: 'unavailable', text: INTENT_UNAVAILABLE_TEXT, retry: true, via: 'model', note: null, sent: sentFromGateway(gwIssuedSince(mark)) };
       const via = 'model';
-      // 모름(unknown)이고 되묻던 것에 답하는 문장도 아니면 모델이 짧게 답한다(chat.respond). 고정 문구 "세금계산서나 증명서를 말해 주세요"는 빈 입력에만.
+      // 모름(unknown)이고 되묻던 것에 답하는 문장도 아니면 모델이 짧게 답한다(chat.respond). 고정 문구(EMPTY_REQUEST_TEXT)는 빈 입력에만.
       // 답은 텍스트로만 보이고, 제안 작업은 입력창을 채우는 칩일 뿐이다(실행은 사용자가 보내고 확인 카드를 거친다). 실패는 정규식 대체 없이 오류 문장.
       if (r.route.outcome === 'unknown' && !answersPending(local, runs, text)) {
         const c = await chatReply.respond(text);

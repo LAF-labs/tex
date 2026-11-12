@@ -90,7 +90,7 @@ export interface AgentChatPorts {
   /** 사업자 프로필 id. null이면 엔진을 부르지 않고 고정 안내를 답한다. */
   profileId(): string | null;
   drafts: AgentDrafts;
-  issued(): IssuedRow[];
+  issued(): IssuedRow[] | Promise<IssuedRow[]>;
   /** null이면 계좌 연결 전(not_set_up) */
   receivables(): Promise<ReceivableRow[] | null>;
   counterparties(): AgentCounterparty[];
@@ -108,7 +108,8 @@ export interface TableRow {
 }
 export type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
 export type AgentTurnResult =
-  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered'] }
+  /** setup: 이 턴에 내 사업장·발급 인증이 빠져 카드를 못 만들었다(화면이 등록 버튼을 둔다). */
+  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true }
   | { kind: 'unavailable'; code: string; text: string; retry: boolean };
 
 interface Result {
@@ -181,11 +182,12 @@ export class AgentChat {
 
   async turn(text: string): Promise<AgentTurnResult> {
     const profileId = this.ports.profileId();
-    if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null };
+    if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true };
     const s = this.open(profileId);
     const created: string[] = [];
     this.ports.onProgress('thinking');
     let phase: AgentPhase = 'thinking';
+    let setup = false;
     try {
       let steps = 0;
       const step = async (p: StepParams) => {
@@ -200,11 +202,14 @@ export class AgentChat {
         const outputs: Array<{ callId: string; output: ToolOutput }> = [];
         for (const { callId, ...call } of r.calls) {
           if (TOOL_PHASE[call.tool] !== phase) this.ports.onProgress((phase = TOOL_PHASE[call.tool]));
-          outputs.push({ callId, output: await this.exec(s, call, created) });
+          const output = await this.exec(s, call, created);
+          if (output.status === 'setup_missing') setup = true;
+          outputs.push({ callId, output });
         }
         r = await step({ continue: { outputs } });
       }
-      return this.shown(s, r.reply, created);
+      const shown = this.shown(s, r.reply, created);
+      return setup && shown.kind === 'agent' ? { ...shown, setup: true } : shown;
     } catch (e) {
       const err = e as { code?: unknown; message?: unknown } | null;
       const code = [err?.code, err?.message].find((c): c is string => typeof c === 'string' && Object.hasOwn(AGENT_ERROR_TEXT, c)) ?? 'chat.unavailable';
@@ -262,14 +267,14 @@ export class AgentChat {
     switch (call.tool) {
       case 'sales_summary': {
         const month = monthOf(this.ports.today(), call.monthOffset);
-        const rows = newestFirst(this.ports.issued().filter((x) => x.date.startsWith(`${month}-`)));
+        const rows = newestFirst((await this.ports.issued()).filter((x) => x.date.startsWith(`${month}-`)));
         return this.remember(s, { kind: 'sales', title: `${Number(month.slice(5))}월 발급 ${tally(rows)}`, rows });
       }
       case 'invoice_history':
       case 'receivables': {
         const cp = cpOf(call.counterpartyId);
         if (cp === undefined) return out('unknown_counterparty');
-        const all = call.tool === 'receivables' ? await this.ports.receivables() : this.ports.issued();
+        const all = call.tool === 'receivables' ? await this.ports.receivables() : await this.ports.issued();
         if (!all) return out('not_set_up');
         // 이름만 아는 옛 행(counterpartyId null)은 지금 장부 이름으로 맞춘다.
         const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);

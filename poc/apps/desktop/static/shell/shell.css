@@ -349,3 +349,11 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .acct-rule.is-ok { color: var(--ink-2); }
 .acct-rule.is-ok .acct-rule-mk { color: var(--accent); }
 .acct-rule.is-bad, .acct-rule.is-bad .acct-rule-mk { color: var(--attention); }
+
+/* 대화 에이전트 결과 표(매출·발급 기록·받을 돈) */
+.sx-agent-table { margin-top: 8px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+.sx-agent-table-title { padding: 8px 12px; font-size: 13px; line-height: 20px; font-weight: 600; color: var(--ink); border-bottom: 1px solid var(--line); }
+.sx-agent-table .list td { padding: 6px 12px; font-size: 13px; }
+.sx-agent-table .list tbody tr { cursor: default; }
+.sx-agent-table > .sx-meta { padding: 6px 12px; margin: 0; }
+.sx-card.is-discarded { opacity: 0.7; }

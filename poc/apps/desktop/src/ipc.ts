@@ -228,5 +228,7 @@ export type ShellEvent =
   | { type: 'board'; board: unknown }
   | { type: 'onboarding'; onboarding: unknown }
   | { type: 'account'; account: unknown }
+  /** 대화 에이전트 진행 단계(생각 중·장부 보는 중·카드 만드는 중). 문장·값은 싣지 않는다. */
+  | { type: 'chat-progress'; phase: 'thinking' | 'reading' | 'drafting' }
   /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
   | { type: 'activated'; x: number; y: number };
