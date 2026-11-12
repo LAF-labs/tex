@@ -208,7 +208,6 @@ describe('게시본 H-01 건조 실행: 사람 대기 재개(B3)', () => {
 });
 
 // 공동인증서 실행(engine-cert, B1·B2): tests/h01-published-dryrun-cert.test.ts(CertSecretPort, 사람이 인증서 창에서 직접 넣는 길).
-});
 
 // 수동 관찰: SAX_DRY=cert-login,captcha,... node --conditions=development --test tests/h01-published-dryrun.test.ts
 const SC: Array<[string, Scenario]> = [
