@@ -371,7 +371,7 @@ describe('요약·첫 작업·이어 하기', () => {
     ]);
     assert.deepEqual(saved, [{ kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', repName: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example', signMethod: 'simple_auth' }]);
     const r = await flow.answer({ step: 'first', choice: 'try' });
-    assert.equal(r.fill, '사업자등록증명 떼 줘');
+    assert.equal(r.fill, '세금계산서 발급해 줘', 'F-13: 지금 되는 일(세금계산서)로 채운다');
     assert.ok(flow.done);
     assert.equal(await code(flow.answer({ step: 'first', choice: 'try' })), 'onboarding_done');
     assert.deepEqual(onboardingTodos(flow.state), [{ id: 'tasks', label: '맡길 업무 고르기', view: 'biz' }]);

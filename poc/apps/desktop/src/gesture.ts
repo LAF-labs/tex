@@ -32,6 +32,12 @@ export class RateWindow {
     this.hits.push(now);
     return true;
   }
+
+  /** 다음 한 번이 허용될 때까지 남은 시간(ms). 지금 되면 0. 세지 않는다. */
+  waitMs(now: number): number {
+    const live = this.hits.filter((t) => now - t < this.windowMs);
+    return live.length < this.max ? 0 : Math.max(0, this.windowMs - (now - live[0]!));
+  }
 }
 
 /**
