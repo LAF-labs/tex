@@ -282,6 +282,11 @@ const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
 export interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
+  /**
+   * 이 PC에서 실행 Chrome을 찾을 수 있는가(금고와 같은 후보 경로, @sax/vault findInstalledChrome). [홈택스에서 준비] 전에 본다.
+   * 없으면 엔진을 부르지 않고 초안 카드에 안내를 남긴다(엔진까지 가면 chrome.not_installed로 끝나 [다시 준비]가 필요했다). 없으면(시험) 보지 않는다.
+   */
+  chromeReady?(): boolean;
   /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
   log?(name: string, data: Record<string, string>): void;
 }
@@ -551,6 +556,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
     if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
+    // Chrome 사전 점검(#275 후보: /Applications·~/Applications, Windows Program Files·LocalAppData). 없으면 시작하지 않고 카드에 남긴다.
+    const noChrome = !!this.src.chromeReady && !this.src.chromeReady();
+    if (noChrome || r.noChrome) {
+      r.noChrome = noChrome;
+      this.emit('update', r);
+      if (noChrome) throw new Error('chrome.not_installed');
+    }
+    // 발급 인증은 시작하는 순간의 기본값이다. 엔진도 run.start 때 프로필 signMethod를 읽어 그 실행 동안 쓴다(runs.ts start).
+    // 초안을 만든 뒤 설정에서 기본을 바꿨으면 카드 안내도 그 값으로 맞춘다. 시작한 뒤에 바꾼 기본은 이 실행에 닿지 않는다(설정 화면 문구).
+    r.auth = this.src.auth();
     r.status = 'preparing';
     this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
@@ -571,6 +586,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.stopEarly.delete(r.id);
     }
     return r;
+  }
+
+  /** 기본 발급 인증이 바뀌었다(설정·온보딩). 아직 시작하지 않은 초안만 새 값을 보인다. 진행 중인 실행은 시작 때 값 그대로다. */
+  syncAuth(): void {
+    const auth = this.src.auth();
+    for (const r of this.runs.values()) {
+      if (r.status !== 'draft' || r.auth === auth) continue;
+      r.auth = auth;
+      this.emit('update', r);
+    }
   }
 
   /**

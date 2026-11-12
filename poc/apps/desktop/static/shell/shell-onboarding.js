@@ -5,7 +5,7 @@ import { btn, fmtBiz, h, kv, note } from './shell-views.js';
 
 const Q = {
   terms: '시작하기 전에 약관과 처리방침을 확인해 주세요.',
-  welcome: '세금계산서 발급과 홈택스 증명서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
+  welcome: '세금계산서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
   'biz-number': '사업자번호를 알려 주세요.',
   'biz-confirm': '등록 내용을 확인해 주세요.',
   auth: '세금계산서를 발급할 때 어떤 인증을 쓰세요? 한 번 고르면 모든 발급에 쓰고, 설정에서만 바꿔요.',
@@ -15,7 +15,7 @@ const Q = {
   tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
   summary: '등록을 마쳤어요. 내용을 확인해 주세요.',
-  first: '사업자등록증명을 한 번 떼 볼까요? 돈이 오가지 않아 연습하기 좋아요.',
+  first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
 };
 
 /** O-03 수단마다 앱이 맡는 정도 한 줄(08 §4). */
@@ -27,11 +27,11 @@ const AUTH = [
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
-/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). */
-const SCOPE_LINES = [
-  '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명, 납세증명서',
+/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). "지금 되는 일"은 O-04 업무 표(now)에서 만들어 두 화면이 어긋나지 않게 한다. */
+const scopeLines = (catalog) => [
+  `지금 되는 일: ${catalog.filter((t) => t.now).map((t) => t.label).join(', ')}`,
   '정부24 서류는 직접 발급을 안내하고, 저장한 파일만 문서함에 정리해요',
-  '신고와 세금 판단은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요',
+  '신고와 세금 판단은 하지 않아요',
   '홈택스 화면이 달라지거나 값을 확실히 읽지 못하면 발급하지 않고 멈춰요',
 ];
 
@@ -102,7 +102,7 @@ function stepCard(o, act) {
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
-      return card('사업자번호로 등록', notice, p('번호만 국세청 진위확인에 보내요. 나머지는 첫 홈택스 로그인 때 채워요.', true), form);
+      return card('사업자번호로 등록', notice, p('상호 등 나머지는 다음 화면에서 채워요.', true), form);
     }
     case 'biz-confirm':
       return bizCard(o, u, reply, act);
@@ -124,7 +124,6 @@ function stepCard(o, act) {
         'div',
         { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
         h('button', { type: 'button', 'data-onb': 'try', onclick: () => reply('try') }, '지금 해 보기'),
-        h('button', { type: 'button', 'data-onb': 'invoice', onclick: () => reply('invoice') }, '세금계산서 1건 발급'),
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
   }
@@ -176,7 +175,7 @@ function bizCard(o, u, reply, act) {
     ['상태', o.check?.label ?? '—', { tag: o.check?.source, state: active ? null : 'attention' }],
   ];
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
-  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요 · 사업자번호만 국세청 진위확인에 보내요(기본: 우리 서버 경유, 설정에서 내 키)', true);
+  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
     const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
     const form = h(
@@ -319,7 +318,7 @@ function summaryCard(o, reply) {
       'div',
       { class: 'onb-scope', 'data-onb-scope': '' },
       h('div', { class: 'sx-card-hd' }, h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'), h('span', { class: 'sx-meta onb-draft' }, 'F-06 초안 전 문구')),
-      h('ul', { class: 'onb-lines' }, ...SCOPE_LINES.map((l) => h('li', {}, l))),
+      h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
     h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),

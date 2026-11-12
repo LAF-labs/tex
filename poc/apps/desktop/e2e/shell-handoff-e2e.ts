@@ -12,6 +12,7 @@ import { kstToday } from '../dist/approval-gate.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
 import { HANDOFF_LOGIN, NOTE, SIGN_BY_AUTH, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
+import { SIGN_LABEL } from '../dist/shell-model.js';
 
 registerShellSchemes();
 app.setPath('userData', path.join(app.getPath('temp'), `sax-shell-handoff-e2e-${process.pid}`));
@@ -26,6 +27,7 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 
 let S: Shell;
+let chrome = true;
 const js = <T = unknown>(code: string): Promise<T> => S.win.webContents.executeJavaScript(code) as Promise<T>;
 async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8000): Promise<boolean> {
   const end = Date.now() + ms;
@@ -205,6 +207,16 @@ async function flow(): Promise<void> {
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
+  // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
+  chrome = false;
+  const z = await toDraft('A상사에 11만원 세금계산서');
+  await userClick(`[data-run="${z}"] [data-act=prepare]`);
+  check('Chrome이 없으면 준비하지 않고 초안 카드에 설치 안내(엔진 run.start 없음)', await until('no chrome', async () => js<boolean>(`(() => { const c = document.querySelector('[data-run="${z}"]'); return !!c && !!c.querySelector('[data-no-chrome]') && c.innerText.includes('Chrome을 설치한 뒤') && !!c.querySelector('[data-act=prepare]'); })()`), 3000) && runStatus(z) === 'draft' && !calls.some(([m, r]) => m === 'run.start' && r === z), { st: runStatus(z), calls });
+  await shot('00-no-chrome');
+  await click(`[data-run="${z}"] [data-act=cancel]`);
+  await until('cancelled', () => runStatus(z) !== 'draft', 3000);
+  chrome = true;
+
   // ① 로그인 대기 → [이어서] → 승인 → 서명 대기 → 엔진이 스스로 넘어가 완료
   plans.push({ login: true });
   const a = await toDraft('A상사에 12만원 세금계산서');
@@ -256,12 +268,36 @@ async function flow(): Promise<void> {
   check('(상한) 로그인 차례', await until('turn d', () => runStatus(d) === 'turn', 5000), runStatus(d));
   check('(상한) run.handoff_timeout → 끝 카드: 30분 문구 + "아무것도 발급하지 않았어요" + [다시 준비]', await until('cap end', async () => runStatus(d) === 'attention' && (await card(d)).text.includes(NOTE['run.handoff_timeout']!) && (await card(d)).text.includes('아무것도 발급하지 않았어요') && (await card(d)).acts.some((x) => x.act === 'handoff-again' && x.label === '다시 준비'), 5000), await card(d));
   await shot('05-cap-end');
+
+  // ④ 초안을 만든 뒤 설정에서 기본 발급 인증을 바꾸면: 초안 카드·패널, 시작할 때 엔진이 읽는 프로필, 서명 단계 안내가 모두 새 값
+  plans.push({ login: false });
+  const before = S.runs.get(await toDraft('B상사에 44만원 세금계산서'))!;
+  const m = before.id;
+  check('(인증 바꿈) 초안은 지금 기본(사업자 간편인증)', before.auth === SIGN_LABEL.simple_auth, before.auth);
+  await userClick('#rail [data-view=settings]');
+  await until('settings', () => js<boolean>(`!!document.querySelector('[data-auth-set="cert"]')`), 5000);
+  await userClick('[data-auth-set="cert"]');
+  const profileSign = async () => ((await S.host.rpc('db.query.profiles.list')) as Array<{ kind: string; signMethod: string | null }>).find((x) => x.kind === 'business')?.signMethod;
+  check('(인증 바꿈) 설정 [기본으로] → 프로필 signMethod cert', await until('profile cert', async () => (await profileSign()) === 'cert', 5000), await profileSign());
+  check('(인증 바꿈) 아직 시작하지 않은 초안은 새 기본을 보인다', await until('draft synced', () => S.runs.get(m)?.auth === SIGN_LABEL.cert, 5000), S.runs.get(m)?.auth);
+  await userClick('#rail [data-view=chat]');
+  await until('chat', () => js<boolean>(`!!document.querySelector('[data-run="${m}"] [data-act=prepare]')`), 5000);
+  await prepare(m);
+  check('(인증 바꿈) 승인 → 서명 단계 안내는 엔진이 누를 인증(공동·금융인증서)과 같다', (await approveGate(m)) && (await until('sign now cert', () => S.runs.get(m)?.steps[5]?.note === SIGN_BY_AUTH[SIGN_LABEL.cert]!.now, 5000)) && (await profileSign()) === 'cert', { note: S.runs.get(m)?.steps[5]?.note, auth: S.runs.get(m)?.auth });
+  await shot('06-auth-changed-sign-now');
+  await userClick('#rail [data-view=settings]');
+  await until('settings', () => js<boolean>(`!!document.querySelector('[data-auth-set="simple"]')`), 5000);
+  await userClick('[data-auth-set="simple"]');
+  check('(인증 바꿈) 진행 중인 실행은 시작 때 값 그대로(설정 문구 "진행 중인 작업은 원래 인증으로")', await until('profile simple', async () => (await profileSign()) === 'simple_auth', 5000) && S.runs.get(m)?.auth === SIGN_LABEL.cert, S.runs.get(m)?.auth);
+  engineFinishesSign(m);
+  await until('done m', () => runStatus(m) === 'done', 5000);
+  await userClick('#rail [data-view=chat]');
 }
 
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false, chromeReady: () => chrome });
     S.win.webContents.setBackgroundThrottling(false);
     S.win.setIgnoreMouseEvents(true);
     await flow();
