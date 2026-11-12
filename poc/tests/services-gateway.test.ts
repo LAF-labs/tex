@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { BundleCatalog, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
+import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
@@ -375,6 +375,28 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     const pii = { ...body, messages: [{ role: 'user', content: [{ type: 'input_text', text: '주민 900101-1234567 이거 뭐야' }] }] };
     assert.equal((await e.call('/v1/respond', pii)).json.error, 'gateway.pii_tripwire');
     assert.equal(e.provider.responds.length, 1);
+  });
+
+  it('chat_agent(대화 에이전트): 도구 6개 strict, 도구 왕복을 replay로 잇고, toolsetDigest는 로컬 정의와 같다', async () => {
+    const rt = await e.runToken(e.pc, { chatSessionId: 'chat-0004-abcd' });
+    const call = { type: 'function_call', call_id: 'call_1', name: 'sales_summary', arguments: '{"month_offset":-1}' };
+    e.provider.respondOutput = [call];
+    const body = { toolset: 'chat_agent', messages: [{ role: 'user', content: [{ type: 'input_text', text: '[지금]\n화면: 열린 카드 없음\n사용자: 지난달 매출 얼마야' }] }], runToken: rt };
+    const r = await e.call('/v1/respond', body);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.toolsetDigest, toolsetDigest(CHAT_AGENT));
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.max_output_tokens, CHAT_AGENT.maxOutputTokens);
+    const tools = sent.tools as Array<{ name: string; strict: boolean }>;
+    assert.deepEqual(tools.map((t) => t.name), CHAT_AGENT_TOOLS.map((t) => t.name));
+    assert.ok(tools.every((t) => t.strict));
+    assert.match(String(sent.prompt_cache_key), /^acct:[0-9a-f]{32}:t:chat_agent$/);
+    assert.doesNotMatch(JSON.stringify((sent.input as unknown[])[0]), /판정기다/);
+    const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"answer","text":"지난달 합계예요.","show":["r1"],"ask":null}' }] }];
+    const turn = await e.call('/v1/respond', { ...body, replay: [tagged, { type: 'function_call_output', call_id: 'call_1', output: '{"ref":"r1","status":"ok","fields":["date","supply","total","counterparty"],"needs":null}' }] });
+    assert.equal(turn.status, 200, turn.text);
+    assert.equal(turn.json.toolsetDigest, toolsetDigest(CHAT_AGENT));
   });
 
   it('query_parse 턴 상한 1: 이전 출력을 재생하면 예산 초과', async () => {
