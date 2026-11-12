@@ -144,7 +144,7 @@ export async function startDemoSeed(host: EngineHost, store: DocStore, root: str
       for (const c of demoCerts(ymd(new Date()), me)) await importBytes(await htmlToPdf(c.html), engine);
       for (const p of issued) {
         const c = cps.get(p.who!)!;
-        await write(p.documentId!, invoiceHtml({ date: p.day, who: p.who!, bizNo: c.bizNo, rep: c.repName, mail: c.email, item: c.item, supply: p.supply!, tax: p.tax!, approvalNo: p.approvalNo! }));
+        await write(p.documentId!, invoiceHtml({ date: p.day!, who: p.who!, bizNo: c.bizNo, rep: c.repName, mail: c.email, item: c.item, supply: p.supply!, tax: p.tax!, approvalNo: p.approvalNo! }));
       }
       for (const d of kept)
         await write(d.id, sampleHtml(d.docName, [['이름', d.profile === 'business' ? `${DEMO_PROFILE.displayName} (${formatBizNo(DEMO_PROFILE.bizNo)})` : DEMO_PROFILE.repName], ['발급일', d.issuedOn ?? '—'], ['유효기간', d.expiresOn ?? '없음']]));

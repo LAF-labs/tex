@@ -1202,7 +1202,7 @@ function activityRows() {
   }
   for (const p of state.boot.past ?? []) {
     if (state.runs.has(p.runId)) continue;
-    rows.push({ id: `past-${p.runId}`, past: p, at: `${shortDate(p.day)} ${p.time}`, what: `세금계산서 · ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
+    rows.push({ id: `past-${p.runId}`, past: p, at: p.day ? `${shortDate(p.day)} ${p.time}` : '시각 모름', what: `세금계산서 · ${p.who ?? '거래처 정보 없음'}`, profile: '사업자', portal: '홈택스', status: PAST[p.kind].status, result: PAST[p.kind].result });
   }
   return rows;
 }
@@ -1269,7 +1269,8 @@ function activityPanel(row) {
   return h(
     'div',
     { class: 'panel-in', 'data-panel-act': row.id },
-    panelHead(row.what, chip(row.status)),
+    // 지난 실행은 칩도 표의 결과 칸과 같은 말(승인 전에 멈춤·발급 안 함…)
+    panelHead(row.what, chip(row.status, row.past ? row.result : undefined)),
     kv([
       ['시각', row.at],
       ['프로필', row.profile === '사업자' ? `사업자 · ${state.boot.profiles.business.name}` : `개인 · ${state.boot.profiles.personal.name}`],

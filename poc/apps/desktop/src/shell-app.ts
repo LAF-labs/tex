@@ -6,7 +6,6 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
-import type { RunHistoryRow } from '@sax/engine';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
@@ -35,7 +34,7 @@ import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type SentTo, type VatMode } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
-import { pastRuns, type PastRun } from './run-history.ts';
+import { readPastRuns, type PastRun } from './run-history.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { bundleCss, tokensCss } from './shell-tokens.ts';
 import { cancelPick, importPdf, pickFileBytes } from './vault-import.ts';
@@ -873,13 +872,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
-  const pastNow = async (): Promise<PastRun[]> => {
-    const rows = await host.rpc('db.query.runs.history', { limit: 50 }).then(
-      (r) => (Array.isArray(r) ? (r as RunHistoryRow[]) : []),
-      (e: Error) => (log.event('main.past_failed', { error: e.message.slice(0, 80) }), []),
-    );
-    return [...pastRuns(rows), ...(seed?.past ?? [])];
-  };
+  const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
 
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({

@@ -594,6 +594,8 @@ async function restartPhase(): Promise<void> {
   const cutButtons = await js<string[]>(`[...document.querySelectorAll('[data-panel-act="past-${prev.waitingRun}"] button')].map((b) => b.textContent)`);
   seen.push({ at: 'restart-cut-panel', text: cutPanel });
   await snap('restart-02-cut-panel');
+  const cutChip = await js<string>(`document.querySelector('[data-panel-act="past-${prev.waitingRun}"] .sx-chip')?.textContent ?? ''`);
+  check('끊긴 실행 패널 칩은 표의 결과와 같은 말("승인 전에 멈춤", "중지됨" 아님)', cutChip === '승인 전에 멈춤', cutChip);
   check('끊긴 실행 패널: "승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요." 다시 준비·승인 버튼 없음', cutPanel.includes('승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.') && !cutButtons.some((b) => /준비|승인|발급/.test(b ?? '')), { cutPanel, cutButtons });
   await tap(`[data-act-row="past-${prev.issuedRun}"]`);
   await sleep(300);
