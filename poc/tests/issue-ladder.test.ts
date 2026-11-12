@@ -130,13 +130,13 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
 
   const sharedPage = async () => (page && !page.isClosed() ? page : (page = (await connectRunBrowser(h.client)).page));
   /** 제품 실행기(engine 'ir')로 가짜 H-01 패키지를 돌린다(h01-golden.test.ts와 같은 패키지·조회·판정기). */
-  const irPackage = (): IrPackage => {
+  const irPackage = (judge?: IrPackage['judge']): IrPackage => {
     const { pkg } = loadH01Fixture(fx.origin);
     const p = fixturePortal(fx.origin);
     return {
       pkg, lookupDefs: h01FixtureLookupDefs(fx.origin), fixtureGrant: fixtureOriginGrant(pkg),
       verifyTiming: { minElapsedMs: p.verify.minElapsedMs, lookups: p.verify.lookups, maxMs: p.verify.maxMs },
-      judge: { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
+      judge: judge ?? { decide: async () => ({ outcome: 'no_visible_error', confidence: 1, raw: {}, usage: { input_tokens: 0, output_tokens: 0 }, refusals: [], rule: 3, provider: 'openai', model: 'fixture', l0Only: true, injectionHit: false, shadow: [] }) as never },
     };
   };
   const approval = (req: GateRequest): LocalApproval => ({
@@ -146,17 +146,17 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
   const gateAfter = (n: number) => poll(() => (gateMsgs.filter((m) => m.t === 'gate.request')[n] as { req: GateRequest } | undefined)?.req);
 
   /** DB 하나에 실행 서비스·사다리 하나. 요청률 카운터·쿨다운이 시험끼리 섞이지 않게 시험마다 새로 만든다. */
-  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; auto?: (runs: RunService, db: Db) => RunService; ir?: boolean } = {}) {
+  async function world(o: { api?: FakeIssueApi | null; page?: () => Promise<Page>; ir?: boolean; judge?: IrPackage['judge'] } = {}) {
     const db = await tempDb();
     dbs.push(db);
     const data = new DataService(db, new BizVerifier(new Egress()));
     data.profiles.upsert({ kind: 'business', displayName: SUPPLIER.name, bizNo: SUPPLIER.bizNo, corpNo: null, repName: '김가나', bizType: null, bizItem: null, address: null, email: null, signMethod: 'simple_auth' });
     const cp = data.counterparties.create({ ...C }).id;
-    const runs = new RunService({ ...(o.ir ? { engine: 'ir' as const, ir: irPackage() } : { engine: 'h01' as const }), db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
+    const runs = new RunService({ ...(o.ir ? { engine: 'ir' as const, ir: irPackage(o.judge) } : { engine: 'h01' as const }), db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal: fixturePortal(fx.origin), log, page: o.page ?? sharedPage, postGate: (m) => gateMsgs.push(m) });
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
-    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(o.auto ? o.auto(runs, db) : runs, db), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
+    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs, db), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
     const events: LadderEvent[] = [];
     ladder.on('state', (e: LadderEvent) => events.push(e));
     const ledger = new Ledger(db);
@@ -405,25 +405,29 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     assert.equal(w.api!.calls, 0);
   });
 
-  it('홈택스 사람 대기에서 [직접 발급함]을 눌렀는데 원장 행이 없으면(IR 무장 전) 직접 발급 행을 남기고 held, API 0', async () => {
-    // IR 조율기는 무장 전 [직접 발급함]의 ledger.observed_manual 효과를 원장 행으로 남기지 못한다. 그 실행 끝을 흉내 낸다.
-    const fakeStart = (runs: RunService, db: Db): RunService => {
-      const j = new RunJournal(db);
-      return Object.assign(Object.create(runs) as RunService, {
-        start: (p: { runId: string }) => {
-          new RunRepo(db).create({ id: p.runId, playbookId: 'H-01', playbookVersion: '1', packageDigest: 'd', profileId: 'p', trigger: 'local', inputsHash: 'i' });
-          j.append(p.runId, 'run.manual_done_requested', {});
-          setTimeout(() => runs.emit('event', { runId: p.runId, type: 'end', status: 'failed', code: 'ledger.write_failed' } satisfies RunEvent), 20);
-          return { runId: p.runId, intentId: 'I' };
-        },
-      });
-    };
-    const w = await world({ auto: fakeStart });
+  it('제품 실행기(IR): 무장 전 사람 대기에서 [직접 발급함]을 누르면 발급 단계(s21) 원장 행에 발급 키를 붙여 남기고 held, API 0', async () => {
+    // 판정기(모델)가 응답하지 않으면 s19 decide.unavailable로 게이트 전 사람 대기다. 사장님이 그 사이 홈택스에서 직접 발급했다고 알린다.
+    const w = await world({ ir: true, judge: { decide: async () => Promise.reject(new Error('gateway down')) } });
+    const posts = fx.posts();
+    const g = gateCount();
     const { k } = w.request();
-    assert.equal((await w.until(k, 'held')).state, 'observed_manual');
-    assert.deepEqual(w.ledger.byIssueKey(k).map((r) => [r.stepId, r.state]), [['manual.issue', 'observed_manual']]);
+    const handoff = await poll(() => w.runEvents.find((e): e is Extract<RunEvent, { type: 'handoff' }> => e.type === 'handoff'));
+    assert.equal(handoff.code, 'decide.unavailable');
+    const runId = handoff.runId;
+    assert.equal(gateCount(), g, '게이트를 열기 전 사람 대기');
+    assert.deepEqual(w.runs.manualDone(runId), { ok: true });
+    const held = await w.until(k, 'held');
+    const rows = w.ledger.byIssueKey(k);
+    assert.deepEqual(rows.map((r) => [r.stepId, r.runId, r.issueKey]), [['s21', runId, k]], '발급 단계 행 하나, 이 실행, 발급 키');
+    assert.equal(held.state, rows[0]!.state);
+    assert.equal(rows[0]!.state, 'in_doubt', '사람이 발급했다고 했고 verify가 결론을 못 냈다(observed_manual → in_doubt)');
+    const journal = w.runs.inspect(runId).journal;
+    assert.ok(journal.indexOf('ledger.observed_manual') >= 0 && journal.indexOf('ledger.observed_manual') < journal.indexOf('ledger.in_doubt'), journal.join(','));
+    assert.ok(!journal.includes('ledger.write_failed') && !journal.includes('ledger.effect_unbound'), journal.join(','));
     assert.ok(!w.seen(k).includes('human') && !w.seen(k).includes('consent'), '직접 칸·동의 카드로 넘어가지 않는다');
     assert.equal(w.api!.calls, 0);
+    assert.equal(fx.posts(), posts, '홈택스에 제출하지 않았다');
+    assert.equal(w.request(k).state.s, 'held', '재요청도 held');
   });
 
   it('제품 실행기(IR): 발급되면 s21 원장 행에 발급 키가 붙고 issued, 메일 등 후속 행에는 붙지 않는다', async () => {
