@@ -556,6 +556,12 @@ async function draftOf(text: string): Promise<string> {
   return (await lastRunId())!;
 }
 
+/** SAX_REH_OUT이 있으면 그 폴더에 지금 창을 PNG로 남긴다(PR 전후 캡처용). */
+async function snap(name: string): Promise<void> {
+  const out = process.env.SAX_REH_OUT;
+  if (out) writeFileSync(path.join(out, `${name}.png`), (await S!.win.webContents.capturePage()).toPNG());
+}
+
 // ---- 2부: 승인 대기에서 끈 앱을 다시 켠다 ----
 async function restartPhase(): Promise<void> {
   const prev = JSON.parse(readFileSync(path.join(ROOT, 'rehearsal-main.json'), 'utf8')) as { waitingRun: string; issuedRun: string; approvalNo: string | null };
@@ -576,6 +582,7 @@ async function restartPhase(): Promise<void> {
   await sleep(500);
   const act = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
   seen.push({ at: 'restart-activity', text: act.slice(0, 1500) });
+  await snap('restart-01-activity');
   const cutRow = await js<string>(`document.querySelector('[data-act-row="past-${prev.waitingRun}"]')?.innerText ?? ''`);
   const issuedRow = await js<string>(`document.querySelector('[data-act-row="past-${prev.issuedRun}"]')?.innerText ?? ''`);
   repro('F-restart-activity: 재시작 뒤 활동 기록에 끊긴 실행(승인 대기 중 종료)이 남지 않는다', !cutRow, act.slice(0, 400));
@@ -586,11 +593,13 @@ async function restartPhase(): Promise<void> {
   const cutPanel = await js<string>(`document.querySelector('[data-panel-act="past-${prev.waitingRun}"]')?.innerText ?? ''`);
   const cutButtons = await js<string[]>(`[...document.querySelectorAll('[data-panel-act="past-${prev.waitingRun}"] button')].map((b) => b.textContent)`);
   seen.push({ at: 'restart-cut-panel', text: cutPanel });
+  await snap('restart-02-cut-panel');
   check('끊긴 실행 패널: "승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요." 다시 준비·승인 버튼 없음', cutPanel.includes('승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.') && !cutButtons.some((b) => /준비|승인|발급/.test(b ?? '')), { cutPanel, cutButtons });
   await tap(`[data-act-row="past-${prev.issuedRun}"]`);
   await sleep(300);
   const issuedPanel = await js<string>(`document.querySelector('[data-panel-act="past-${prev.issuedRun}"]')?.innerText ?? ''`);
   seen.push({ at: 'restart-issued-panel', text: issuedPanel });
+  await snap('restart-03-issued-panel');
   // fixture 실행은 보관함에 발급 PDF를 넣지 않는다(documentId 없음). 그래서 [PDF 열기] 대신 홈택스 발급목록 안내가 보여야 한다.
   check('발급 건 패널: 승인번호 [복사], PDF가 없으면 홈택스 발급목록 안내', !!prev.approvalNo && issuedPanel.includes(prev.approvalNo) && issuedPanel.includes('복사') && issuedPanel.includes('홈택스 발급목록에서 확인할 수 있어요'), { issuedPanel, approvalNo: prev.approvalNo });
   await tap('#rail [data-view=docs]');
