@@ -985,7 +985,7 @@ export class RunController {
           goneAt ??= this.i.clock.now();
           // 완료 때도 서명 창은 접힌다(홈택스 iframe 0x0). 끝 표지가 늦게 그려질 틈을 준다.
           if (this.i.clock.now() - goneAt >= SIGN_CANCEL_GRACE_MS) {
-            this.i.journal('signflow.cancelled', { stepId: s.id });
+            this.i.journal('signflow.window_closed', { stepId: s.id });
             return 'cancelled';
           }
         }
