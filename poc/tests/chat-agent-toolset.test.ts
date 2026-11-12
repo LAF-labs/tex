@@ -17,8 +17,8 @@ const assertStrict = (s: Strict, label: string) => {
 };
 
 describe('chat_agent 툴셋 등록(목록 대조)', () => {
-  it('gateway-request 스키마 두 벌의 toolset 열거가 TOOLSET_IDS와 같다', () => {
-    for (const rel of ['packages/net/schemas/gateway-request.schema.json', 'packages/engine/schemas/gateway-request.schema.json']) assert.deepEqual(schemaEnum(rel), [...TOOLSET_IDS], rel);
+  it('gateway-request 스키마(설계 정본·net·engine 사본)의 toolset 열거가 TOOLSET_IDS와 같다', () => {
+    for (const rel of ['../sovereign-ax/design/schemas/gateway-request.schema.json', 'packages/net/schemas/gateway-request.schema.json', 'packages/engine/schemas/gateway-request.schema.json']) assert.deepEqual(schemaEnum(rel), [...TOOLSET_IDS], rel);
   });
 
   it('게이트웨이 툴셋은 모두 TOOLSET_IDS 안에 있고, chat_agent는 로컬 정의 그대로다', () => {
