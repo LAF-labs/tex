@@ -325,7 +325,7 @@ describe('H-01 게시 도구: 거부(서명 전·서명 뒤·게시 직전)', ()
   };
 
   it('엔진이 받지 않을 패키지는 서명 전에 멈춘다: 번들 다이제스트, 조회 없음, fixture·위택스 포털, 틀린 버전 형식', async () => {
-    await assert.rejects(prep('b', [SOURCES[0]!, SOURCES[1]!, copySrc('bundle', (m) => ((m.bundlesUsed as Array<{ digest: string }>)[0]!.digest = '0'.repeat(64)))]), new RegExp(`publish\\.engine_rejected: hometax\\.invoice\\.issue@${V.issue.replaceAll('.', '\\.')} loader\\.bundle_not_allowed BV-06`));
+    await assert.rejects(prep('b', [SOURCES[0]!, SOURCES[1]!, copySrc('bundle', (m) => (m.bundlesUsed = [{ id: 'screen_state', ver: 2, digest: '0'.repeat(64) }]))]), new RegExp(`publish\\.engine_rejected: hometax\\.invoice\\.issue@${V.issue.replaceAll('.', '\\.')} loader\\.bundle_not_allowed BV-06`));
     await assert.rejects(prep('l', [SOURCES[2]!]), /publish\.lookup_missing/);
     await assert.rejects(prep('f', [copySrc('fixture', (m) => (m.portal = 'fixture'))]), /registry\.portal_blocked/);
     await assert.rejects(prep('w', [copySrc('wetax', (m) => (m.portal = 'wetax'))]), /registry\.portal_blocked/);

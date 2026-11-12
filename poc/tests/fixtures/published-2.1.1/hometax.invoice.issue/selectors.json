@@ -1,0 +1,455 @@
+{
+ "portal": "hometax",
+ "entries": {
+  "hometax.page.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "main",
+     "name": "홈택스"
+    }
+   ],
+   "role": "main",
+   "namePattern": "^홈택스$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.nav.home": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "홈"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^홈$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "navigationOnly": true
+  },
+  "hometax.login.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "로그인"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^로그인$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.login.simpleAuthButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "간편인증"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^간편인증$",
+   "frame": "main",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "로그인 시작 버튼, 커밋 아님"
+   }
+  },
+  "hometax.captcha.image": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "img",
+     "name": "자동입력 방지 문자"
+    }
+   ],
+   "role": "img",
+   "namePattern": "^자동입력 방지 문자$",
+   "frame": "main",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.captcha.input": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "자동입력 방지 문자 입력"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^자동입력 방지 문자 입력$",
+   "frame": "main",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text"
+  },
+  "hometax.captcha.submit": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "확인"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^확인$",
+   "frame": "main",
+   "landmark": "hometax.login.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "캡차 확인, 로그인 구간"
+   }
+  },
+  "hometax.invoice.form.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "form",
+     "name": "전자세금계산서 건별 발급"
+    }
+   ],
+   "role": "form",
+   "namePattern": "^전자세금계산서 건별 발급$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.invoice.form.supplierBizNo": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급자 등록번호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급자 등록번호$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "supplierBizNo"
+  },
+  "hometax.invoice.form.supplierName": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급자 상호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급자 상호$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "supplierName"
+  },
+  "hometax.invoice.form.counterpartBizNo": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급받는자 등록번호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급받는자 등록번호$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "counterpartBizNo"
+  },
+  "hometax.invoice.form.lookupCounterpart": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "확인"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^확인$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "reviewNote": {
+    "by": "reviewer-a",
+    "reason": "거래처 조회, 커밋 엔드포인트 요청 없음(HAR)"
+   }
+  },
+  "hometax.invoice.form.counterpartName": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급받는자 상호"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급받는자 상호$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "counterpartName"
+  },
+  "hometax.invoice.form.counterpartEmail": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급받는자 이메일"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급받는자 이메일$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "email",
+   "fieldKey": "counterpartEmail"
+  },
+  "hometax.invoice.form.item1.name": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "품목"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^품목$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "itemName"
+  },
+  "hometax.invoice.form.itemCount": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "spinbutton",
+     "name": "품목 수"
+    }
+   ],
+   "role": "spinbutton",
+   "namePattern": "^품목 수$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "number",
+   "fieldKey": "itemCount"
+  },
+  "hometax.invoice.form.item1.supply": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "공급가액"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^공급가액$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "number",
+   "fieldKey": "supplyAmount"
+  },
+  "hometax.invoice.form.item1.tax": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "세액"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^세액$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "number",
+   "fieldKey": "taxAmount"
+  },
+  "hometax.invoice.form.totalAmount": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "합계금액"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^합계금액$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "number",
+   "fieldKey": "totalAmount"
+  },
+  "hometax.invoice.form.issueDate": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "작성일자"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^작성일자$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "date",
+   "fieldKey": "issueDate"
+  },
+  "hometax.invoice.form.remark": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "비고"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^비고$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "text",
+   "fieldKey": "remark"
+  },
+  "hometax.invoice.form.receiptType": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "radio",
+     "name": "영수"
+    }
+   ],
+   "role": "radio",
+   "namePattern": "^영수$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-01",
+   "inputType": "radio",
+   "fieldKey": "receiptType",
+   "allowedConstants": [
+    "영수",
+    "청구"
+   ]
+  },
+  "hometax.invoice.form.issueButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "발급하기"
+    },
+    {
+     "kind": "css",
+     "value": "#btnIssue"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^발급하기$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": true,
+   "lastVerified": "2026-11-01",
+   "commitEffect": "issue_document"
+  },
+  "hometax.invoice.sign.root": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "dialog",
+     "name": "전자서명"
+    }
+   ],
+   "role": "dialog",
+   "namePattern": "^전자서명$",
+   "frame": "main",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "lastVerified": "2026-11-01"
+  },
+  "hometax.invoice.sign.confirmButton": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "button",
+     "name": "서명"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^서명$",
+   "frame": "main",
+   "landmark": "hometax.invoice.sign.root",
+   "commits": true,
+   "lastVerified": "2026-11-01",
+   "commitEffect": "issue_document"
+  }
+ },
+ "commitEndpoints": [
+  {
+   "match": {
+    "method": "POST",
+    "pathPattern": "^/wqAction\\.do$",
+    "actionParam": {
+     "name": "actionId",
+     "value": "ATEETBDA001R01"
+    }
+   },
+   "effect": "issue_document",
+   "maxRequests": 1,
+   "encoding": "opaque"
+  }
+ ],
+ "knownEndpoints": [
+  {
+   "method": "GET",
+   "pathPattern": "^/websquare/.*$"
+  },
+  {
+   "method": "POST",
+   "pathPattern": "^/wqAction\\.do$"
+  }
+ ]
+}

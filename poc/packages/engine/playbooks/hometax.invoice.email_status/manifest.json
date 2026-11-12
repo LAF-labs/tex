@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.email_status",
- "version": "1.1.0",
+ "version": "1.2.0",
  "kind": "lookup",
  "portal": "hometax",
  "title": "lookup.title",
@@ -20,7 +20,7 @@
   "selectors": "0000000000000000000000000000000000000000000000000000000000000000",
   "strings": "0000000000000000000000000000000000000000000000000000000000000000"
  },
- "createdAt": "2026-11-01T00:00:00+09:00",
+ "createdAt": "2026-11-12T00:00:00+09:00",
  "signatures": [
   {
    "keyId": "pkg-1",

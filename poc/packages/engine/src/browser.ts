@@ -1,6 +1,7 @@
 import { chromium, type Browser, type Page } from 'playwright-core';
 import type { CdpSessionLike } from './commitguard/cdp.ts';
 import { CdpTap } from './driver/cdp-tap.ts';
+import { RunEnd } from './run-end.ts';
 import type { VaultClient } from './vault-client.ts';
 
 export interface RunBrowser {
@@ -11,9 +12,16 @@ export interface RunBrowser {
   cdp: CdpSessionLike;
 }
 
+/** 실행 끝 코드: 이 PC에 Chrome이 없다(금고 browser.launch 오류 문자열과 같다). */
+export const CHROME_NOT_INSTALLED_CODE = 'chrome.not_installed';
+
 /** 금고가 띄운 Chrome에 금고 중계(MessagePort)로 Playwright를 붙인다(S6b). */
 export async function connectRunBrowser(vault: VaultClient): Promise<RunBrowser> {
-  const { targetId } = await vault.rpc<{ targetId: string; webdriver: boolean }>('browser.launch');
+  const { targetId } = await vault.rpc<{ targetId: string; webdriver: boolean }>('browser.launch').catch((e: unknown) => {
+    // 금고가 Chrome을 못 찾았다(vault chrome/find.ts CHROME_NOT_INSTALLED). 실행은 engine.error가 아니라 이 코드로 끝난다(데스크톱 사람 말 표의 키).
+    if ((e as Error)?.message === `vault: ${CHROME_NOT_INSTALLED_CODE}`) throw new RunEnd('failed', CHROME_NOT_INSTALLED_CODE);
+    throw e;
+  });
   // 공개 타입에는 없지만 1.64 클라이언트가 ConnectionTransport 오버로드를 받는다(S6b 보고서 참조).
   const connect = chromium.connectOverCDP as unknown as (t: unknown, o: Record<string, unknown>) => Promise<Browser>;
   const tap = new CdpTap(vault.cdpTransport());

@@ -1,9 +1,11 @@
 {
  "lookup.title": "조회",
- "lookup.countPattern": "^총 ?([0-9,]+) ?건$",
- "lookup.column.counterpartBizNo": "공급받는자 등록번호",
- "lookup.column.issueDate": "작성일자",
- "lookup.column.supplyAmount": "공급가액",
- "lookup.column.taxAmount": "세액",
- "lookup.column.approvalNo": "승인번호"
+ "lookup.table.colAttr": "data-col_id",
+ "lookup.table.complete": "idle",
+ "lookup.table.pageSize": "10",
+ "lookup.column.counterpartBizNo": "dmnrTxprDscmNo",
+ "lookup.column.issueDate": "wrtDt",
+ "lookup.column.supplyAmount": "sumSplCftStr",
+ "lookup.column.taxAmount": "sumTxamtStr",
+ "lookup.column.approvalNo": "etan"
 }

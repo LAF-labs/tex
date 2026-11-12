@@ -1,0 +1,11 @@
+{
+ "invoice.title": "전자세금계산서 건별 발급",
+ "invoice.confirm": "전자세금계산서를 발급할까요?",
+ "invoice.emailNotConfirmed": "발급은 완료되었습니다. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요",
+ "counterpart.nameRegex": "^[^\\n]{1,60}$",
+ "confirm.issue": "^(전자)?세금계산서를 발급하시겠습니까\\?$",
+ "captcha.prompt": "그림의 문자를 입력해 주세요",
+ "hometax.login.successMarker": "로그아웃",
+ "mail.status.sent": "^(전송|발송)완료$",
+ "mail.status.notSent": "실패|미전송|대기|오류|중$"
+}
