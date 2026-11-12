@@ -21,6 +21,8 @@ import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
 import { IrLookupPort } from '../driver/lookup-ir.ts';
+import { CERT_FRAME_CSS, CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
+import type { SecretVault } from '../driver/secret.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
 import { PlaywrightScreenSource } from '../driver/screen.ts';
@@ -64,6 +66,11 @@ export interface IrPackage {
   verifyTiming?: { minElapsedMs: number; lookups: number; maxMs: number };
   /** save_pdf 포트(금고 pdf.print·보관함). 없으면 save_pdf 스텝은 실행하지 않는다(unhandled). */
   pdf?: PdfPort;
+  /**
+   * 공동인증서 비밀번호 차례(sign cert·signFlow cert·human kind=secret)의 금고(B1·B2). 있으면 CertSecretPort(금고 비밀 창 또는 사람 직접 입력 대기),
+   * 없으면 사람 비밀 차례는 곧바로 TTL이다(가짜 H-01 경로·시험).
+   */
+  secret?: { vault: SecretVault; targetId(): string };
 }
 
 /** 실행 시작 패키지 공급 결과(RunServiceDeps.irSource). */
@@ -118,6 +125,10 @@ export interface IrRunInput {
   handoffCapMs?: number;
   /** 실행 전체 수명 상한(ms, 대기 포함, 기본 2시간). 시험용. */
   lifetimeMs?: number;
+  /** 공동인증서 비밀번호 차례 알림(값 없음, main 안내: mode window = 전용 Chrome 칸에 직접, manual = 홈택스 인증서 창에서 직접 → B3 사람 대기 [다 했어요]). */
+  secretEvent?: (e: SecretTurnEvent) => void;
+  /** 비밀 차례 TTL(기본 120초, 시험용). */
+  secretTtlMs?: number;
 }
 
 /** 사람 대기 한 번의 상한(부장 결정 2026-11-11). */
@@ -224,6 +235,8 @@ export class IrRun {
   private cmdWake: ((c: HandoffCommand) => void) | null = null;
   /** 사람 대기 중인 조율기 상태(manualDone은 HandedOff에서만). */
   private waitingState: RunStateName | null = null;
+  /** 비밀 차례 [중지](금고 창 닫기 요청). */
+  private readonly secretAbort = new AbortController();
 
   constructor(i: IrRunInput) {
     this.i = i;
@@ -275,9 +288,10 @@ export class IrRun {
     return r;
   }
 
-  /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). 사람 대기면 멈춘다. 서명 차례면 verify로 간다(조율기). */
+  /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). 사람 대기면 멈춘다. 서명 차례면 verify로 간다(조율기). 금고 비밀 창이 열려 있으면 닫기를 요청한다. */
   stop(): void {
     this.stopRequested = true;
+    this.secretAbort.abort();
     if (this.cmdWake) return this.cmdWake('stop');
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
   }
@@ -325,6 +339,7 @@ export class IrRun {
   /** 엔진 밖 사유의 정지(금고 누출 의심 등). 무장 전에만. 열린 게이트는 거부로 닫는다(사유 signal). */
   halt(code: string): void {
     if (this.armed) return;
+    this.secretAbort.abort();
     this.denyOpenGate('signal');
     this.enforcer?.haltFor(code);
   }
@@ -397,6 +412,19 @@ export class IrRun {
       verifyRef: (v) => book.ref(v) ?? null,
       journal: i.journal,
     });
+    const sv = i.ir.secret;
+    const secretPort = sv
+      ? new CertSecretPort({
+        vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
+        page: {
+          bringToFront: () => page.bringToFront(),
+          text: () => page.locator('body').innerText({ timeout: 2_000 }),
+          // 인증서 선택창 iframe 요소만 본다(안은 다른 출처라 읽지 않는다).
+          certFrame: () => page.locator(CERT_FRAME_CSS).first().isVisible(),
+        },
+        ...(i.secretEvent ? { event: i.secretEvent } : {}),
+      })
+      : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {
@@ -469,12 +497,14 @@ export class IrRun {
           i.postGate({ t: 'gate.closed', runId: i.runId, reqId, reason });
         },
       },
-      // 사람 입력 포트: 없으면 대역(secret은 바로 ttl → 로그인이면 Paused 사람 대기, 발급 서명이면 서명 차례). engine-cert가 금고 비밀 창을 붙인다.
+      // 사람 입력 포트: 주입(시험) → 금고가 있으면 CertSecretPort(공동인증서 비밀번호 B1·B2) → 대역(secret은 바로 ttl → 로그인이면 Paused 사람 대기, 발급 서명이면 서명 차례).
       human: i.human ?? {
         request: () => {},
-        secret: async () => 'ttl',
+        // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
+        secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         closed: () => {},
       },
+      ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),
       reentry: { navigate: async (u) => void (await act.goto(u)), loggedIn: async () => true },
       verifyStep: async (v) => {
         const j = await judgeVerify(verifyDeps, v);
