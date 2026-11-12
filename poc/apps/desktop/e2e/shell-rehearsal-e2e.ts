@@ -544,7 +544,7 @@ async function mainPhase(): Promise<void> {
   check('[다시 시도] → 초안 카드', await until('retry draft', async () => S!.runs.list().some((r) => r.status === 'draft' && r.counterparty.bizNo === TYPED_CP.bizNo && r.supply === 100_000), 8_000), await lastApp());
 
   // 승인 대기 중에 앱을 끈다(정리 없이): 재시작 단계가 이어서 본다
-  writeFileSync(path.join(ROOT, 'rehearsal-main.json'), JSON.stringify({ waitingRun: idBusy, posts: fx!.posts(), issued: fx!.issued.length, results, repros, seen }, null, 1));
+  writeFileSync(path.join(ROOT, 'rehearsal-main.json'), JSON.stringify({ waitingRun: idBusy, issuedRun: id1, approvalNo: fx!.issued.at(-1)?.approvalNo ?? null, posts: fx!.posts(), issued: fx!.issued.length, results, repros, seen }, null, 1));
   console.log(`main: 승인 대기(${idBusy})에서 앱을 끈다. 다음: SAX_REH_PHASE=restart SAX_REH_ROOT=${ROOT}`);
 }
 
@@ -558,7 +558,7 @@ async function draftOf(text: string): Promise<string> {
 
 // ---- 2부: 승인 대기에서 끈 앱을 다시 켠다 ----
 async function restartPhase(): Promise<void> {
-  const prev = JSON.parse(readFileSync(path.join(ROOT, 'rehearsal-main.json'), 'utf8')) as { waitingRun: string };
+  const prev = JSON.parse(readFileSync(path.join(ROOT, 'rehearsal-main.json'), 'utf8')) as { waitingRun: string; issuedRun: string; approvalNo: string | null };
   await boot(false);
   await sleep(1500);
   const home = await js<string>(`document.querySelector('#app')?.innerText ?? ''`);
@@ -576,7 +576,23 @@ async function restartPhase(): Promise<void> {
   await sleep(500);
   const act = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
   seen.push({ at: 'restart-activity', text: act.slice(0, 1500) });
-  repro('F-restart-activity: 재시작 뒤 활동 기록에 끊긴 실행(승인 대기 중 종료)이 남지 않는다', !/중지|끊|종료|만료/.test(act), act.slice(0, 400));
+  const cutRow = await js<string>(`document.querySelector('[data-act-row="past-${prev.waitingRun}"]')?.innerText ?? ''`);
+  const issuedRow = await js<string>(`document.querySelector('[data-act-row="past-${prev.issuedRun}"]')?.innerText ?? ''`);
+  repro('F-restart-activity: 재시작 뒤 활동 기록에 끊긴 실행(승인 대기 중 종료)이 남지 않는다', !cutRow, act.slice(0, 400));
+  check('재시작 활동 기록: 승인 대기에서 끊긴 실행은 "승인 전에 멈춤", 앞서 발급한 건은 "완료"', cutRow.includes(TYPED_CP.name) && cutRow.includes('승인 전에 멈춤') && issuedRow.includes(CERT_CP.name) && issuedRow.includes('완료'), { cutRow, issuedRow });
+  check('재시작 활동 기록에 내부 코드·빈 값 글자가 없다', (await look('restart-activity', '#center')).length === 0, await look('restart-activity', '#center'));
+  await tap(`[data-act-row="past-${prev.waitingRun}"]`);
+  await sleep(300);
+  const cutPanel = await js<string>(`document.querySelector('[data-panel-act="past-${prev.waitingRun}"]')?.innerText ?? ''`);
+  const cutButtons = await js<string[]>(`[...document.querySelectorAll('[data-panel-act="past-${prev.waitingRun}"] button')].map((b) => b.textContent)`);
+  seen.push({ at: 'restart-cut-panel', text: cutPanel });
+  check('끊긴 실행 패널: "승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요." 다시 준비·승인 버튼 없음', cutPanel.includes('승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.') && !cutButtons.some((b) => /준비|승인|발급/.test(b ?? '')), { cutPanel, cutButtons });
+  await tap(`[data-act-row="past-${prev.issuedRun}"]`);
+  await sleep(300);
+  const issuedPanel = await js<string>(`document.querySelector('[data-panel-act="past-${prev.issuedRun}"]')?.innerText ?? ''`);
+  seen.push({ at: 'restart-issued-panel', text: issuedPanel });
+  // fixture 실행은 보관함에 발급 PDF를 넣지 않는다(documentId 없음). 그래서 [PDF 열기] 대신 홈택스 발급목록 안내가 보여야 한다.
+  check('발급 건 패널: 승인번호 [복사], PDF가 없으면 홈택스 발급목록 안내', !!prev.approvalNo && issuedPanel.includes(prev.approvalNo) && issuedPanel.includes('복사') && issuedPanel.includes('홈택스 발급목록에서 확인할 수 있어요'), { issuedPanel, approvalNo: prev.approvalNo });
   await tap('#rail [data-view=docs]');
   await sleep(500);
   const docs = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
