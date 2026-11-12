@@ -15,7 +15,7 @@ import { compileRe2 } from '../core/re2.ts';
 import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
 import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.ts';
-import type { PlaybookIR, Step, StepOf } from '../core/types.ts';
+import type { PlaybookIR, SignMethod, Step, StepOf } from '../core/types.ts';
 import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudgement } from '../core/verify.ts';
 import { readField } from '../core/readback.ts';
 import { savePdf, type PdfPort } from '../core/savepdf.ts';
@@ -71,6 +71,12 @@ export const GATE_DENY_PRIORITY_MS = 2_000;
 /** 서명 차례 상한 기본값(B3, 부장 결정 2026-11-11). 실행 수명 상한이 더 짧으면 signTurnMs가 그 값을 준다. */
 export const SIGN_TURN_MS = 30 * 60_000;
 
+/** 이동한 뒤 체크포인트 expect가 참이 되기를 기다리는 기본 상한(ms). 홈택스는 로드 뒤 약 5~8초에 화면을 그린다. */
+export const CHECKPOINT_SETTLE_MS = 20_000;
+/** signFlow 방식 선택 항목·서명 화면 표지를 기다리는 상한(ms). 서명 화면은 보통 1초 안에 뜬다. */
+export const SIGN_READY_WAIT_MS = 15_000;
+/** 서명 화면 표지가 사라진 뒤 끝 표지를 더 기다리는 시간(ms). 이 안에 끝 표지가 없으면 [취소]로 본다. */
+export const SIGN_CANCEL_GRACE_MS = 3_000;
 /** 서명 차례가 끝난 까닭. done = 사람이 [다 했어요], clicked = 엔진이 확인 버튼을 (무장 한 번에 한 번) 눌렀다. 어느 쪽이든 그다음은 verify다. */
 export type SignTurnEnd = 'done' | 'clicked' | 'done_seen' | 'abort' | 'cap';
 /** 서명 동작('done'·PUSH 승인) 뒤 확인 버튼을 찾는 짧은 여유. 실화면에서는 인증서 창의 [확인]이 곧 커밋이라 따로 누를 버튼이 없을 수 있다(2026-11-11 실제 발급). */
@@ -250,6 +256,8 @@ export class RunController {
   private signWake: ((w: Exclude<SignTurnEnd, 'clicked'>) => void) | null = null;
   /** 이 무장(submit 한 번)에서 서명 확인 버튼을 이미 눌렀다. 한 무장에 최대 한 번(발급 요청이 두 번 나갈 길을 막는다). */
   private confirmClicked = false;
+  /** 이 무장에서 이미 누른 signFlow 열기·방식 선택 항목(IR rev v1.3.5, 무장 1회당 각 한 번). */
+  private readonly signClicked = new Set<string>();
   /** 이 무장의 승인 토큰 기한(token.exp). 서명 확인 버튼은 이 안에서만 엔진이 누른다(그 뒤는 사람이 누른다). */
   private armedExp = 0;
   /** 이 무장의 verify 기준(발급 클릭 때). 서명 차례가 끝나면 그 시각으로 다시 적어 verify 시간 예산이 서명 대기에 먹히지 않게 한다. */
@@ -629,7 +637,7 @@ export class RunController {
         } catch {
           return fail('step.assert_failed');
         }
-        r = await evalCond(cp.expect, this.i.env);
+        r = await this.expectSettled(cp);
         if (!r.ok) return fail(r.code);
       }
       if (!r.value) return fail('step.assert_failed');
@@ -637,7 +645,7 @@ export class RunController {
       this.lastCp = cp.id;
       return NEXT;
     }
-    const expect = async () => evalCond(cp.expect, this.i.env).then((r) => r.ok && r.value, () => false);
+    const expect = async () => this.expectSettled(cp).then((r) => r.ok && r.value, () => false);
     const outcome = await reenterCheckpoint(cp, { expect, navigate: this.i.reentry.navigate, loggedIn: this.i.reentry.loggedIn }, { discardAll: (t) => this.discard(t) });
     this.i.journal('checkpoint.reentry', { stepId: cp.id, outcome });
     if (outcome === 'resumed') {
@@ -653,6 +661,20 @@ export class RunController {
     }
     return this.handoffWith('portal.unexpected_page');
   };
+
+  /**
+   * 이동한 뒤의 체크포인트 expect: 화면이 로드 뒤 늦게 그려지는 포털(홈택스 WebSquare, 로드 뒤 약 5초)을 위해 참이 될 때까지
+   * cp.timeoutMs(기본 CHECKPOINT_SETTLE_MS) 동안 다시 본다. 평가 오류(모호·동일성)는 기다리지 않고 그대로 돌려준다.
+   */
+  private async expectSettled(cp: StepOf<'checkpoint'>): Promise<{ ok: true; value: boolean } | { ok: false; code: string }> {
+    const env = this.i.env;
+    const deadline = this.i.clock.now() + (cp.timeoutMs ?? CHECKPOINT_SETTLE_MS);
+    for (;;) {
+      const r = await evalCond(cp.expect, env);
+      if (!r.ok || r.value || this.i.clock.now() >= deadline || this.pending === 'abort') return r;
+      await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - this.i.clock.now())));
+    }
+  }
 
   /** 핸드오프로 멈춘다(재개 지점 = 이 스텝). 사유 코드는 D16 기존 코드라 FORCED_STOPS에 넣지 않고 따로 넘긴다. */
   private handoffWith(code: string): Outcome {
@@ -827,6 +849,7 @@ export class RunController {
   private async commitSection(s: StepOf<'submit'>, g: string, token: GateToken, approved: ReadonlyMap<string, string>): Promise<Outcome> {
     const env = this.i.env;
     this.confirmClicked = false;
+    this.signClicked.clear();
     this.armedExp = token.exp;
     // ③ readback 재계산: 승인한 값을 화면에서 다시 읽어 같아야 한다.
     for (const [f, v] of approved) {
@@ -871,9 +894,16 @@ export class RunController {
     const deadline = this.i.clock.now() + f.maxWaitMs;
     const left = () => Math.max(0, deadline - this.i.clock.now());
     const method = f.method === '$profile.signMethod' ? env.scope.profile.signMethod : f.method;
+    // IR rev v1.3.5 앞머리: 열기(openTargets) → 방식 선택(methodTargets) → 서명 화면 표지(readyTarget). 실패하면 verify, 방식을 못 고르면 사람 차례.
+    const head = await this.signOpen(s, f, method, left);
+    if (head === 'verify') return;
+    if (head === 'human') return void (await this.signTurnWait(s, f, 'secret'));
     // steps를 선언했으면 그 방식의 동작이 있어야 한다. 모르는 방식은 서명하지 않고(확인 버튼도 누르지 않고) verify로.
     const actions = typeof method !== 'string' ? null : f.steps ? f.steps[method as keyof typeof f.steps] : [];
     if (!actions) return this.i.journal('signflow.method_unknown', { stepId: s.id });
+    const ready = f.readyTarget ? (await waitTarget(env, f.readyTarget, Math.min(left(), SIGN_READY_WAIT_MS))).ok : false;
+    if (f.readyTarget && !ready) this.i.journal('signflow.ready_missing', { stepId: s.id });
+    let doneSeen = false;
     for (const a of actions) {
       if (a === 'human:secret') {
         // 금고 비밀 창이 서명 대화상자에 직접 넣는다(D05 §3.5). 상태 머신 사람 차례가 아니다(구간 안).
@@ -885,7 +915,7 @@ export class RunController {
         }
       } else if (a === 'wait:push') {
         // 간편인증 PUSH: 사용자가 폰에서 승인하면 확인 버튼이 뜨거나 화면이 넘어간다. maxWaitMs를 넘기면 서명 차례로 더 기다린다(B3).
-        const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : await env.page.waitNavigation(left());
+        const ok = f.confirmTarget ? (await waitTarget(env, f.confirmTarget, left(), { allowCommit: true })).ok : f.doneTarget ? (doneSeen = (await waitTarget(env, f.doneTarget, left())).ok) : await env.page.waitNavigation(left());
         if (!ok) {
           this.i.journal('signflow.timeout', { stepId: s.id, action: a });
           return void (await this.signTurnWait(s, f, 'push'));
@@ -895,11 +925,87 @@ export class RunController {
         return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
       }
     }
-    if (!f.confirmTarget) return;
+    if (!f.confirmTarget) {
+      // 끝 표지(IR rev v1.3.5): 사람이 홈택스 서명 창에 직접 넣는 길이 기본이다. 표지가 보이면 [다 했어요] 없이 verify로 간다.
+      if (f.doneTarget && !doneSeen && (await this.signDoneWait(s, f, ready, left)) === 'timeout') await this.signTurnWait(s, f, 'secret');
+      return;
+    }
     // 서명 동작을 했으면(비밀 창 done·PUSH 승인) 확인 버튼은 짧게만 찾는다. 없으면(이미 완료 창) 누르지 않고 verify.
     const t = await waitTarget(env, f.confirmTarget, actions.length > 0 ? Math.min(left(), CONFIRM_GRACE_MS) : left(), { allowCommit: true });
     if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
     await this.clickConfirm(s, f.confirmTarget, t.t);
+  }
+
+  /**
+   * signFlow 앞머리(IR rev v1.3.5, 팀장 결정 2026-11-12). 항목은 모두 commits:true라 무장된 그 순간에만 누를 수 있다.
+   * - openTargets: 차례로, 무장 1회당 각 한 번(이미 눌렀으면 건너뜀). 못 찾거나 못 누르면 'verify'(submit은 이미 눌렸다).
+   * - methodTargets: 프로필 발급 인증 값의 항목을 한 번. 값이 없거나 그 항목이 안 보이면 추측해서 다른 것을 누르지 않고 'human'(서명 차례).
+   *   홈택스는 이 클릭 때 첫 커밋 요청(ATEETBAA002C04)이 나간다.
+   */
+  private async signOpen(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, method: unknown, left: () => number): Promise<'ok' | 'verify' | 'human'> {
+    for (const k of f.openTargets ?? []) {
+      const r = await this.clickSignOnce(s, k, left());
+      if (r !== 'clicked' && r !== 'already') {
+        this.i.journal('signflow.open_missing', { stepId: s.id, target: k, code: r });
+        return 'verify';
+      }
+    }
+    if (!f.methodTargets) return 'ok';
+    const k = typeof method === 'string' && Object.hasOwn(f.methodTargets, method) ? f.methodTargets[method as SignMethod] : undefined;
+    if (!k) {
+      this.i.journal('signflow.method_choice_missing', { stepId: s.id });
+      return 'human';
+    }
+    const r = await this.clickSignOnce(s, k, Math.min(left(), SIGN_READY_WAIT_MS));
+    if (r === 'clicked' || r === 'already') return 'ok';
+    this.i.journal('signflow.method_choice_missing', { stepId: s.id, target: k, code: r });
+    return 'human';
+  }
+
+  /** signFlow 열기·방식 선택 항목 하나를 이 무장에서 한 번만 누른다. 'clicked'·'already' 또는 실패 코드. */
+  private async clickSignOnce(s: StepOf<'submit'>, key: string, waitMs: number): Promise<string> {
+    if (this.signClicked.has(key)) return 'already';
+    const t = await waitTarget(this.i.env, key, waitMs, { allowCommit: true });
+    if (!t.ok) return t.code;
+    this.signClicked.add(key);
+    this.armedKey = key;
+    const c = await this.i.env.act.click(t.t);
+    if (!c.ok) {
+      this.i.journal('signflow.open_failed', { stepId: s.id, target: key, code: c.code });
+      return c.code;
+    }
+    return 'clicked';
+  }
+
+  /**
+   * 끝 표지(doneTarget)를 기다린다. 'done': 보였다. 'cancelled': 서명 화면 표지(readyTarget)가 보였다가 사라졌는데 끝 표지가 없다
+   * (인증서 창 [취소]·닫기로 본다. 커밋 요청이 일부 나갔을 수 있어 verify가 판정). 'stopped': [중지]. 'timeout': maxWaitMs 안에 아무것도 없음.
+   */
+  private async signDoneWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, readySeen: boolean, left: () => number): Promise<'done' | 'cancelled' | 'stopped' | 'timeout'> {
+    const env = this.i.env;
+    let goneAt: number | null = null;
+    for (;;) {
+      if ((await waitTarget(env, f.doneTarget!, 0)).ok) {
+        this.i.journal('signflow.done_seen', { stepId: s.id });
+        return 'done';
+      }
+      if (env.stopRequested?.() || this.pending === 'abort') return 'stopped';
+      if (readySeen && f.readyTarget) {
+        const up = (await waitTarget(env, f.readyTarget, 0)).ok;
+        if (up) goneAt = null;
+        else {
+          goneAt ??= this.i.clock.now();
+          // 완료 때도 서명 창은 접힌다(홈택스 iframe 0x0). 끝 표지가 늦게 그려질 틈을 준다.
+          if (this.i.clock.now() - goneAt >= SIGN_CANCEL_GRACE_MS) {
+            this.i.journal('signflow.window_closed', { stepId: s.id });
+            return 'cancelled';
+          }
+        }
+      }
+      if (left() <= 0) return 'timeout';
+      await env.clock.sleep(Math.min(env.pollMs, left()));
+      await new Promise<void>((r) => setImmediate(r));
+    }
   }
 
   /** 서명 확인 버튼: 한 무장에 최대 한 번. */
@@ -936,9 +1042,7 @@ export class RunController {
     let clicked = false;
     let doneSeen = false;
     // 끝 표지(sign.waiting 중 주기적으로 본다): 보이면 사람이 [다 했어요]를 누르지 않아도 verify로 간다. 필드가 없으면 지금처럼 명령·상한만 기다린다.
-    // 필드 이름·모양은 h01-package-real이 SignFlow에 더한다(doneTarget = 완료 창 등). 그때 타입으로 맞춘다.
-    const doneKey = (f as { doneTarget?: unknown }).doneTarget;
-    const done = typeof doneKey === 'string' && env.dict.entries[doneKey] ? doneKey : null;
+    const done = f.doneTarget && env.dict.entries[f.doneTarget] ? f.doneTarget : null;
     // 확인 버튼(push)은 승인 토큰 기한 안에서만, 이 무장에서 아직 안 눌렀을 때만 기다려 누른다.
     const confirm = kind === 'push' && f.confirmTarget && !this.confirmClicked ? f.confirmTarget : null;
     try {

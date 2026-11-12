@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
 import { downloadPreferences, EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
-import { findInstalledChrome } from './chrome/find.ts';
+import { CHROME_NOT_INSTALLED, findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfileResidue, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
 import type { KeyStore } from './keystore.ts';
@@ -499,7 +499,7 @@ export class Vault {
   private async startChrome(generation: number): Promise<LaunchResult> {
     const current = (): boolean => generation === this.generation;
     const exe = findInstalledChrome();
-    if (!exe) throw new Error('chrome not installed');
+    if (!exe) throw new Error(CHROME_NOT_INSTALLED);
     const guard = this.opts.dirGuard ?? dirGuard();
     const rootCheck = await guard.checkPrivate(this.opts.paths.root);
     if (!rootCheck.ok) throw new Error(`app root not private: ${rootCheck.problems.join(',')}`);

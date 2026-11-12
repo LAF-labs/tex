@@ -3,7 +3,8 @@
 
 /** 사용자 설치 Chrome 위치(인자로 받지 않는다). */
 export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
-  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
+  // ~/Applications: 관리자 권한 없이 사용자 폴더에 깐 Chrome(고객 PoC, CUSTOMER-DIST §1.2). Edge 등 다른 Chromium은 넣지 않는다(검증 안 됨).
+  darwin: ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '~/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'],
   linux: ['/opt/google/chrome/chrome', '/usr/bin/google-chrome'],
   win32: [
     '%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe',
