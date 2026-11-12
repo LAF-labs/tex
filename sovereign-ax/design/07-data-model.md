@@ -137,7 +137,7 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
 CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);
 CREATE INDEX ix_irr_run ON irreversible_log(run_id);
 CREATE UNIQUE INDEX ux_irr_live ON irreversible_log(intent_id, step_id) WHERE state <> 'not_committed';  -- (intent, step)마다 열린·committed 행은 하나(ADR-042)
-CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';  -- 발급 키마다 열린·committed 행은 경로와 무관하게 하나(D03 §4.2, v9)
+CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';  -- 발급 키마다 열린·committed 행은 경로와 무관하게 하나(D03 §4.2, v10)
 
 CREATE TABLE gate_requests (                 -- 게이트 요청 단일 사용·결정 주체 기록 (B-10·B-33)
   req_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),

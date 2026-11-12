@@ -2,7 +2,7 @@
 // 이미지(옛 경로) {bytes} → {text, confidence}.
 // 이미지 {kind:'image', bytes, mode:'document'|'photo', model} → {text, confidence, lines, width, height, exif}. 머리로 크기를 먼저 보고(폭탄 거부) 디코드한다.
 // 공동인증서 {kind:'certInfo', bytes} → {subject, issuer, notBefore, notAfter}. NPKI signCert.der(공개 인증서)를 엄격한 DER로만 읽는다(@sax/docparse/sandbox x509, #95). 서명 검증 없음, 표시용.
-// 표 {kind:'sheet', bytes} → {format, encoding, sheets, flags}. xlsx·CSV를 @sax/docparse/sandbox 순수 모듈로 읽는다(수식·외부 연결·매크로는 열지 않는다).
+// 표 {kind:'sheet', bytes} → {format, encoding, sheets, flags}. xlsx·xls·HTML 표·CSV를 @sax/docparse/sandbox 순수 모듈로 읽는다(수식·외부 연결·매크로는 열지 않는다).
 // PDF {kind:'pdf', bytes, maxPages, ocrPages, forceOcr, password?} → {text, pages, totalPages, hasTextLayer, scanned, ocrConfidence, timing}.
 //   hasTextLayer: 쓸 만한 텍스트 층이 있다. scanned: 그 층이 보이지 않는 글자(스캐너·복합기 OCR)다. ocrConfidence: text를 여기서 OCR로 읽었으면 신뢰도.
 // pdf.js 워커는 직접 띄워 workerPort로 넘긴다. workerSrc로 두면 워커를 못 띄울 때 메인 스레드로 조용히 넘어간다.

@@ -44,7 +44,7 @@ const settle = () => new Promise((r) => setTimeout(r, 300));
 /** 시험용 조회 하한: 두 번 "없음"이면 발급 안 됨(제품 기본은 API_LOOKUP_POLICY 60초·2번). */
 const FAST_LOOKUP: ApiLookupPolicy = { minElapsedMs: 0, lookups: 2, intervalMs: 0 };
 
-describe('발급 키 원장(v9 issue_key, ux_irr_issue_live)', () => {
+describe('발급 키 원장(v10 issue_key, ux_irr_issue_live)', () => {
   let db: Db;
   before(async () => (db = await tempDb()));
   after(() => db.close());
