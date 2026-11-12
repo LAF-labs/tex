@@ -66,6 +66,12 @@ export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
  */
 export const INTENT_COMMANDS = ['intent.resolve', 'chat.respond'] as const;
 /**
+ * 대화 에이전트 모델 경계(D04 §4 chat_agent, 결정안 agent-chat-design-2026-11-12). main 전용이다(루프·도구 실행은 main AgentChat).
+ * chat.step {start:{text, frame, profileId}} | {continue:{outputs}} → {kind:'tools', calls} | {kind:'reply', reply}. 처리는 ChatAgent(chat-agent.ts).
+ * 오류 bad_text·chat.unavailable·chat.bad_response·chat.bad_tool_output·chat.turn_limit·chat.budget_exceeded·chat.quota_exceeded·chat.input_too_large·chat.secret_rejected.
+ */
+export const CHAT_AGENT_COMMANDS = ['chat.step'] as const;
+/**
  * 세무사 요청 붙여넣기 → 꾸러미 항목 후보(D14 M6-7, ADR-032 결정 8·11). main 전용이다(붙여 넣은 글이 오간다). 규칙 사전만, 모델 없음.
  * 처리는 @sax/bundle BundleService다. 읽기만 하고 DB에 쓰지 않는다. 고른 후보는 bundle.addItem {source:'pasted_request'}로 넣는다.
  */

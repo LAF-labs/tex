@@ -36,8 +36,9 @@ import { PcFileIntake } from '@sax/bundle';
 import { PC_FILE_COMMANDS } from './protocol.ts';
 import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
-import { INTENT_COMMANDS } from './protocol.ts';
+import { CHAT_AGENT_COMMANDS, INTENT_COMMANDS } from './protocol.ts';
 import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
+import { ChatAgent, gatewayChatAgentModel } from './chat-agent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
@@ -62,6 +63,8 @@ let phone: PhoneIntake | null = null;
 let pcFiles: PcFileIntake | null = null;
 /** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main은 연결 안 됨). */
 let intent: IntentResolver | null = null;
+/** 대화 에이전트 모델 경계(chat.step). 모델 경로는 intent와 같은 엔진 Egress 게이트웨이뿐이다. */
+let chatAgent: ChatAgent | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
 /** 레지스트리 동기화(main 전용 질의·명령). 핀 키가 없으면 null(registry.not_pinned). */
@@ -113,6 +116,8 @@ for (const m of [...BUNDLE_PC_READ_QUERIES, ...BUNDLE_PC_COMMANDS]) {
 
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
+const CHAT_AGENT = new Set<string>(CHAT_AGENT_COMMANDS);
+for (const m of CHAT_AGENT) ALLOWED.add(m);
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined, authPort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -145,6 +150,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
+  chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -253,6 +259,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (INTENT.has(method)) {
     if (!intent) throw new Error('db_not_ready');
     return intent.handle(method, params);
+  }
+  if (CHAT_AGENT.has(method)) {
+    if (!chatAgent) throw new Error('db_not_ready');
+    return chatAgent.handle(method, params);
   }
   if (PAYROLL.has(method)) {
     if (!payroll) throw new Error('db_not_ready');
