@@ -1,6 +1,6 @@
 // 운영 정책 집행기(M2-4 B, D03 §5.2·§7·§7.1). GuardedActuator의 ActionPolicy 구현이고, 실행기 beforeStep 지점이다.
 // - 정책: 서명 정책(clampPolicy로 POLICY_FLOOR 클램프한 뒤)에서 포털 하나·프로필(interactive|daemon) 하나의 RatePolicy를 만든다.
-//   포털 limits가 없으면 그 포털은 자동화하지 않는다(fail-closed). PoC 빌드의 홈택스는 PoC 상한으로 더 엄격하게만 덮는다(ADR-025).
+//   포털 limits가 없으면 그 포털은 자동화하지 않는다(fail-closed).
 // - 카운터·쿨다운·시계 가드는 기존 RateGuard(SQLite 영속, KST, 증가 커밋 → 행동, 시계 역행 보수 모드)를 그대로 쓴다.
 // - 실행 하나: 스텝 지연, 분당 네비게이션 자리, 실행당 동작 수·벽시계 상한(커밋 뒤에는 끊지 않는다), 네비게이션 뒤 안정 대기,
 //   결정적 차단 신호 사전(앱 내장 ∪ policy.cooldown.blockSignalsAdd, 정책은 추가만)과 HTTP 403/429 규칙의 걸쇠, 정지 요청.
@@ -10,7 +10,7 @@ import type { ActResult, ActionKind, ActionPolicy, Clock, Policy, Portal } from 
 import { re2Problem } from './core/re2.ts';
 import { HTTP_RULES, matchSignal, type SignalDict, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
 import { RunEnd } from './run-end.ts';
-import { EXTRA_AUTH_FOR_SIGNAL, POC_BUILD, POC_OVERRIDES, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
+import { EXTRA_AUTH_FOR_SIGNAL, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
 
 export type PaceProfile = 'interactive' | 'daemon';
 
@@ -18,24 +18,22 @@ export type PaceProfile = 'interactive' | 'daemon';
  * 서명 정책 → 포털 하나의 RatePolicy. 포털 limits가 없으면 null(그 포털은 자동화하지 않는다).
  * policy는 clampPolicy를 거친 값이어야 한다(하한·상한은 거기서 집행된다).
  */
-export function ratePolicyFrom(policy: Policy, portal: Portal, profile: PaceProfile, poc: boolean = POC_BUILD): RatePolicy | null {
+export function ratePolicyFrom(policy: Policy, portal: Portal, profile: PaceProfile): RatePolicy | null {
   const L = policy.limits[portal];
   if (!L) return null;
   const pace = policy.pace[profile];
-  const pocHometax = poc && portal === 'hometax';
-  const min = (a: number, b: number) => (pocHometax ? Math.min(a, b) : a);
   const r: RatePolicy = {
     pace: { stepDelayMs: [pace.stepDelayMs[0], pace.stepDelayMs[1]], afterNavSettleMs: [pace.afterNavSettleMs[0], pace.afterNavSettleMs[1]], slowFactor: pace.slowFactor },
     limits: {
-      runsPerDayPerProfile: min(L.runsPerDayPerProfile, POC_OVERRIDES.runsPerDayPerProfile),
-      irreversiblePerDayPerProfile: min(L.irreversiblePerDayPerProfile, POC_OVERRIDES.irreversiblePerDayPerProfile),
+      runsPerDayPerProfile: L.runsPerDayPerProfile,
+      irreversiblePerDayPerProfile: L.irreversiblePerDayPerProfile,
       runsPerLoginSession: L.runsPerLoginSession,
       navigationsPerMin: L.navigationsPerMin,
-      loginsPerDay: min(L.loginsPerDay, POC_OVERRIDES.loginsPerDay),
+      loginsPerDay: L.loginsPerDay,
       concurrent: L.concurrent,
     },
     run: { maxActuationsPerRun: policy.run.maxActuationsPerRun, maxWallClockMs: policy.run.maxWallClockMs },
-    cooldown: { onBlockSignalHours: policy.cooldown.onBlockSignalHours, positiveDetectionsForCooldown: min(policy.cooldown.positiveDetectionsForCooldown, POC_OVERRIDES.positiveDetectionsForCooldown) },
+    cooldown: { onBlockSignalHours: policy.cooldown.onBlockSignalHours, positiveDetectionsForCooldown: policy.cooldown.positiveDetectionsForCooldown },
   };
   return Object.freeze(r);
 }

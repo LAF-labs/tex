@@ -1,5 +1,5 @@
 import { performance } from 'node:perf_hooks';
-import { RateRepo, type Db, type Ledger } from '@sax/db';
+import { RateRepo, type Db } from '@sax/db';
 import type { Dialog, Page } from 'playwright-core';
 import type { Policy } from './core/index.ts';
 import { pathExpected, type PortalConfig } from './portal.ts';
@@ -22,10 +22,17 @@ const freeze = <T>(o: T): T => {
   return Object.freeze(o);
 };
 
-/** D03 §7 정책 예시의 interactive 프로필·limits.hometax·run·cooldown 값. */
+/**
+ * D03 §7 정책 예시의 interactive 프로필·run·cooldown 값. 사용량 상한 4개는 사장님이 월말에 하루 몰아 발급해도 닿지 않게 정책 스키마
+ * 최대값까지 올렸다(대표 결정 2026-11-12). 받은 서명 정책과 엄격한 쪽으로 합치므로 이보다 높이면 효과가 없다.
+ * - irreversiblePerDayPerProfile 50: 발급 1건이 실행 1번이고 실행은 하나씩 몇 분 걸린다. 50건이면 한나절이다.
+ * - runsPerDayPerProfile 100: 발급 50건마다 실패·중지 뒤 다시 준비하는 실행 1번씩을 더한 값이다.
+ * - runsPerLoginSession 30: 발급 50건을 로그인 2번에 나눠 끝낸다.
+ * - loginsPerDay 12: 세션이 끊길 때마다 다시 로그인해도 근무 시간 동안 40분에 1번꼴이다.
+ */
 export const HOMETAX_POLICY: RatePolicy = freeze({
   pace: { stepDelayMs: [800, 2500], afterNavSettleMs: [600, 1500], slowFactor: 1.5 },
-  limits: { runsPerDayPerProfile: 40, irreversiblePerDayPerProfile: 30, runsPerLoginSession: 15, navigationsPerMin: 12, loginsPerDay: 6, concurrent: 1 },
+  limits: { runsPerDayPerProfile: 100, irreversiblePerDayPerProfile: 50, runsPerLoginSession: 30, navigationsPerMin: 12, loginsPerDay: 12, concurrent: 1 },
   run: { maxActuationsPerRun: 150, maxWallClockMs: 1_800_000 },
   cooldown: { onBlockSignalHours: 24, positiveDetectionsForCooldown: 2 },
 });
@@ -42,7 +49,7 @@ export const FIXTURE_POLICY: RatePolicy = freeze({
  * "포털 키가 없으면 그 포털은 postprocess").
  */
 export function policyFor(kind: string): RatePolicy {
-  if (kind === 'hometax') return POC_BUILD ? POC_HOMETAX_POLICY : HOMETAX_POLICY;
+  if (kind === 'hometax') return HOMETAX_POLICY;
   if (kind === 'fixture') return FIXTURE_POLICY;
   throw new RunEnd('failed', 'policy.portal_mode_denied');
 }
@@ -86,30 +93,6 @@ export function stricterVerify(a: PortalConfig['verify'], b: Policy['verify'] | 
 export function runPortalConfig(portal: PortalConfig, policy: Policy | null): PortalConfig {
   if (portal.kind !== 'hometax' || !policy) return portal;
   return { ...portal, verify: stricterVerify(portal.verify, policy.verify) };
-}
-
-// PoC 상한(ADR-025 결정 1, PoC-1 위험 수용 기록). 앱이 집행하고 엄격한 쪽으로만 덮는다(Math.min). Phase 1 진입 때 false.
-// 시간대 제한은 앱이 집행하지 않는 사람 규칙이다(위험 수용서).
-export const POC_BUILD = true;
-export const POC_OVERRIDES = { runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3, positiveDetectionsForCooldown: 1 } as const;
-/** PoC 기간 전체 실발급 상한(원장 committed·in_doubt·armed·dispatched 누적, 재시작·날짜 무관). */
-export const POC_IRREVERSIBLE_TOTAL = 3;
-
-const POC_HOMETAX_POLICY: RatePolicy = freeze({
-  ...HOMETAX_POLICY,
-  limits: {
-    ...HOMETAX_POLICY.limits,
-    runsPerDayPerProfile: Math.min(HOMETAX_POLICY.limits.runsPerDayPerProfile, POC_OVERRIDES.runsPerDayPerProfile),
-    irreversiblePerDayPerProfile: Math.min(HOMETAX_POLICY.limits.irreversiblePerDayPerProfile, POC_OVERRIDES.irreversiblePerDayPerProfile),
-    loginsPerDay: Math.min(HOMETAX_POLICY.limits.loginsPerDay, POC_OVERRIDES.loginsPerDay),
-  },
-  cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: Math.min(HOMETAX_POLICY.cooldown.positiveDetectionsForCooldown, POC_OVERRIDES.positiveDetectionsForCooldown) },
-});
-
-/** PoC 전체 실발급 상한에 닿았으면 시작 거부 사유(홈택스만). */
-export function pocTotalRefusal(ledger: Pick<Ledger, 'countIrreversible'>, kind: string): RunEnd | null {
-  if (!POC_BUILD || kind !== 'hometax') return null;
-  return ledger.countIrreversible(['committed', 'in_doubt', 'armed', 'dispatched']) >= POC_IRREVERSIBLE_TOTAL ? new RunEnd('failed', 'policy.poc_irreversible_total') : null;
 }
 
 /** 추가 인증이 이만큼 연속이면 차단 신호(D03 §7 (c)). 로그인 구간의 추가 인증은 세지 않는다. */
