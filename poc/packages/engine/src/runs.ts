@@ -40,7 +40,7 @@ export interface StartParams {
 /** 발급 사다리의 홈택스 밖 칸(API·직접 발급)이 쓰는 초안. start와 같은 검증을 지난다. */
 export type IssueDraft = Omit<StartParams, 'runId' | 'issueKey'> & { issueKey: IssueKey };
 
-/** prepareIssue 결과: 원장 행 재료와, 하루 발급 수 증가와 같은 트랜잭션에서 게이트를 소비하고 무장하는 함수. */
+/** prepareIssue 결과: 원장 행 재료와, 게이트를 소비하고 무장하는 함수(한 트랜잭션, Ledger.consumeAndArm). */
 export interface PreparedIssue {
   row: ArmRow;
   profileId: string;
@@ -323,19 +323,12 @@ export class RunService extends EventEmitter {
 
   /**
    * 발급 사다리의 홈택스 밖 칸(D03 §4.2): start와 같은 초안 검증으로 원장 행 재료를 만든다. 의도는 새로 만든다.
-   * irreversible(API 칸)이면 PoC 전체 상한·하루 발급 상한을 보고, arm이 하루 발급 수 증가와 무장을 한 트랜잭션에서 한다.
-   * 쿨다운·하루 실행 수는 홈택스 요청률이라 보지 않는다(홈택스 차단 신호 뒤에도 API 칸은 열려 있어야 한다).
-   * 직접 발급 칸(irreversible false)은 사장님이 이미 한 일을 적을 뿐이라 상한을 보지 않는다.
+   * 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급)은 보지 않는다. 그 상한은 홈택스 계정이 막히지 않게 하는 장치이고 이 칸들은 홈택스를 건드리지 않는다.
+   * 두 번 발급은 상한이 아니라 원장(발급 키 묶음·in_doubt)이 막는다(부장 결정 2026-11-12).
    */
-  prepareIssue(p: IssueDraft, o: { runId: string; stepId: string; playbookId: string; irreversible: boolean }): PreparedIssue {
+  prepareIssue(p: IssueDraft, o: { runId: string; stepId: string; playbookId: string }): PreparedIssue {
     const { profile, inputs } = this.draft(p);
     this.refuseIssued(p.issueKey);
-    if (o.irreversible) {
-      const total = pocTotalRefusal(this.ledger, this.d.portal.kind);
-      if (total) throw total;
-      const st = this.rate.status(profile.id);
-      if (st.irreversibleToday >= this.rate.cap(this.rate.policy.limits.irreversiblePerDayPerProfile, st.conservative)) throw new RunEnd('failed', 'policy.irreversible_per_day');
-    }
     const inputsHash = sha256hex(jcs(inputs));
     const rb = {
       supplierBizNo: profile.bizNo!, counterpartBizNo: inputs.counterpart.bizNo, supplyAmount: inputs.amounts.supply, taxAmount: inputs.amounts.tax,
@@ -349,10 +342,7 @@ export class RunService extends EventEmitter {
     };
     return {
       row, profileId: profile.id, inputs, supplierBizNo: profile.bizNo!,
-      arm: (reqId) => this.d.db.transaction(() => {
-        if (o.irreversible) this.rate.countCommit(profile.id);
-        this.ledger.consumeAndArm(reqId, row);
-      })(),
+      arm: (reqId) => this.ledger.consumeAndArm(reqId, row),
     };
   }
 

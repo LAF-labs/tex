@@ -65,7 +65,7 @@ function manualRecorder(runs: RunService, db: Db): (req: IssueRequest, code: str
     if (ledger.byIssueKey(req.issueKey).some((r) => r.state !== 'not_committed')) return { code };
     const runId = `issue-${ulid()}`;
     try {
-      const p = runs.prepareIssue(req, { runId, stepId: 'manual.issue', playbookId: MANUAL_PLAYBOOK, irreversible: false });
+      const p = runs.prepareIssue(req, { runId, stepId: 'manual.issue', playbookId: MANUAL_PLAYBOOK });
       repo.create({ id: runId, playbookId: MANUAL_PLAYBOOK, playbookVersion: '1', packageDigest: p.row.packageDigest, profileId: p.profileId, trigger: 'local', inputsHash: p.row.inputsHash });
       journal.append(runId, 'issue.rung', { issueKey: req.issueKey, rung: 'hometax.manual' });
       ledger.observedManual(p.row);

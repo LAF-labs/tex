@@ -73,7 +73,7 @@ export function apiRung(adapters: { popbill?: IssueApiAdapter | null; codef?: Is
       const runId = `issue-${ulid()}`;
       let p;
       try {
-        p = deps.runs.prepareIssue(req, { runId, stepId: 'api.issue', playbookId: API_PLAYBOOK, irreversible: true });
+        p = deps.runs.prepareIssue(req, { runId, stepId: 'api.issue', playbookId: API_PLAYBOOK });
       } catch (e) {
         return { code: errorCode(e) };
       }

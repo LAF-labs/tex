@@ -329,6 +329,21 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     assert.equal(new GateRepo(w.db).state(w.db.prepare('SELECT req_id FROM gate_requests WHERE run_id = ?').pluck().get(apiRow.runId) as string), 'consumed', '동의가 게이트 표에 남고 무장이 소비했다');
   });
 
+  it('홈택스 상한·쿨다운은 API 칸을 막지 않고 세지도 않는다(그 상한은 홈택스 계정 보호, 두 번 발급은 원장이 막는다)', async () => {
+    const w = await world();
+    const kind = fixturePortal(fx.origin).kind;
+    w.db.prepare('INSERT INTO cooldowns (portal, until, reason) VALUES (?, ?, ?)').run(kind, new Date(Date.now() + 3_600_000).toISOString(), 'test');
+    const before = w.runs.inspect('none').policy;
+    const { k } = w.request();
+    const consent = await passManualThenConsent(w, k);
+    assert.equal(consent.card.reasonCode, 'issue.manual_declined');
+    assert.deepEqual(w.runEvents, [], '홈택스 칸은 쿨다운(policy.cooldown)으로 시작하지 못했다');
+    w.ladder.consent(k, 'granted');
+    await w.until(k, 'issued');
+    assert.equal(w.api!.calls, 1);
+    assert.equal(w.runs.inspect('none').policy.irreversibleToday, before.irreversibleToday, 'API 발급은 홈택스 하루 발급 수에 들어가지 않는다');
+  });
+
   it('동의 카드 [그만]이면 stopped(issue.consent_declined), API 0', async () => {
     const w = await world({ page: () => Promise.reject(new RunEnd('failed', 'chrome.not_installed')) });
     const { k } = w.request();
