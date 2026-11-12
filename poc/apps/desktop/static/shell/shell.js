@@ -688,7 +688,18 @@ async function handoffCall(method, id) {
     putRun(await call(method, { id }));
   } catch (e) {
     const c = errText(e);
-    toast(c === 'gesture_required' ? '버튼을 직접 눌러 주세요.' : c === 'not_handed_off' ? '이미 이어서 진행하고 있어요' : '엔진에 알리지 못했어요. 잠시 뒤 다시 눌러 주세요.');
+    // 엔진이 거절한 코드({ok:false, code})는 사람 말로(#278). 서명 차례의 [직접 발급함]은 화면에 없지만 오면 같은 문장.
+    toast(
+      c === 'gesture_required'
+        ? '버튼을 직접 눌러 주세요.'
+        : c === 'not_handed_off'
+          ? '이미 이어서 진행하고 있어요'
+          : c === 'sign.turn_resume_only'
+            ? '서명 차례에는 [다 했어요]만 받아요. 홈택스 창에서 서명을 마쳐 주세요.'
+            : c === 'refused' || /^[a-z_]+\.[a-z_.]+$/.test(c)
+              ? '지금은 이어서 할 수 없어요. 홈택스 창을 확인한 뒤 다시 눌러 주세요.'
+              : '엔진에 알리지 못했어요. 잠시 뒤 다시 눌러 주세요.',
+    );
   }
 }
 

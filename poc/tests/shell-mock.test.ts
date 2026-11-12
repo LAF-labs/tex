@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { describe, it } from 'node:test';
 import { buildGateRequest, type GateField } from '@sax/engine/gate';
 import { g24Candidates, interpret, MockStore, parseAmount, split, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
-import { REGATE_NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
+import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
 
 const CPS: Counterparty[] = [
   { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: '', lastIssuedOn: null },
@@ -17,6 +17,7 @@ const CPS: Counterparty[] = [
 class FakeHost extends EventEmitter {
   readonly calls: Array<[string, unknown]> = [];
   fail: Record<string, string> = {};
+  reply: Record<string, unknown> = {};
   async control(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push([method, params]);
     return {};
@@ -24,7 +25,7 @@ class FakeHost extends EventEmitter {
   async rpc(method: string, params: Record<string, unknown> = {}): Promise<unknown> {
     this.calls.push([method, params]);
     if (this.fail[method]) throw new Error(this.fail[method]);
-    return {};
+    return this.reply[method] ?? {};
   }
 }
 const shellRuns = (host = new FakeHost()) => ({ host, runs: new ShellRuns(host, { counterparties: () => CPS, auth: () => '사업자 간편인증' }) });
@@ -317,7 +318,7 @@ describe('셸 목업', () => {
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'input' });
     let r = runs.get(a.run.id)!;
     assert.equal(r.status, 'turn');
-    assert.deepEqual(r.handoff, { phase: 'input', afterGate: false });
+    assert.deepEqual(r.handoff, { phase: 'input', afterGate: false, kind: 'other' });
     assert.match(r.turn!.text, /^지금 사람이 필요해요 · 이 단계는 직접 해 주세요: 입력$/);
     assert.equal(r.steps[2]!.state, 'attention');
     host.fail['run.resume'] = 'relay_down';
@@ -333,16 +334,12 @@ describe('셸 목업', () => {
     assert.equal(runs.get(a.run.id)!.status, 'preparing', '모르는 실행·단계는 무시');
   });
 
-  it('핸드오프 게이트 뒤: [직접 발급함] → 원장은 엔진이(observed_manual), 카드는 확인 중. 이때 엔진이 끝나면 발급됐는지 모름', async () => {
+  it('핸드오프 게이트 앞 [직접 발급함] → 원장은 엔진이(observed_manual), 카드는 확인 중. 서명 차례에 엔진이 끝나면 발급됐는지 모름', async () => {
     const { host, runs } = shellRuns();
     const a = interpret('A상사에 13만원 세금계산서', null, 'business', runs);
     assert.ok(a.kind === 'draft');
     await runs.prepare(a.run.id);
-    host.emit('gate', gateFor(a.run.id, {}));
-    runs.approved(a.run.id);
-    host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
-    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign' });
-    assert.deepEqual(runs.get(a.run.id)!.handoff, { phase: 'sign', afterGate: true });
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'input', code: 'step.assert_failed' });
     await runs.manualDone(a.run.id);
     const r = runs.get(a.run.id)!;
     assert.equal(r.status, 'issuing');
@@ -357,9 +354,65 @@ describe('셸 목업', () => {
     await r2.prepare(b.run.id);
     h2.emit('gate', gateFor(b.run.id, {}));
     h2.emit('run', { runId: b.run.id, type: 'phase', phase: 'sign', state: 'now' });
-    h2.emit('run', { runId: b.run.id, type: 'handoff', phase: 'sign' });
+    h2.emit('run', { runId: b.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
     h2.emit('exit', 'engine', 1);
     assert.deepEqual([r2.get(b.run.id)!.status, r2.get(b.run.id)!.inDoubt], ['attention', true]);
+  });
+
+  it('사람 차례(#278 셸 계약): 로그인·서명·그 밖 문구, 서명 차례는 [다 했어요]만, 엔진이 거절하면 그대로', async () => {
+    assert.deepEqual(handoffTurn('login', 'step.timeout'), { kind: 'login', ...HANDOFF_LOGIN });
+    assert.deepEqual(handoffTurn('login', undefined), { kind: 'login', ...HANDOFF_LOGIN });
+    assert.equal(handoffTurn('login', 'portal.captcha').kind, 'login');
+    assert.match(handoffTurn('login', 'portal.captcha').text, /자동입력방지/);
+    assert.deepEqual(handoffTurn('sign', 'sign.waiting'), { kind: 'sign', ...HANDOFF_SIGN });
+    assert.deepEqual(handoffTurn('sign', 'human.ttl_expired'), { kind: 'sign', ...HANDOFF_SIGN_TTL });
+    assert.equal(HANDOFF_LOGIN.text, '홈택스 창에서 로그인해 주세요');
+    assert.equal(HANDOFF_SIGN.text, '홈택스 창에서 인증 방법을 고르고 인증서 비밀번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다');
+    assert.equal(handoffTurn('readback', 'portal.unexpected_page').kind, 'other');
+    for (const t of [HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL]) assert.ok(!/세액 산정|절세|신고 대리|가산세/.test(t.text + t.note));
+
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 16만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'login', code: 'step.timeout' });
+    let r = runs.get(a.run.id)!;
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'login', afterGate: false, kind: 'login' }, HANDOFF_LOGIN]);
+    host.reply['run.resume'] = { ok: false, code: 'not_paused' };
+    await assert.rejects(runs.resume(a.run.id), /not_paused/);
+    host.reply['run.resume'] = { ok: false, code: 'Bad Code!' };
+    await assert.rejects(runs.resume(a.run.id), /^Error: refused$/);
+    assert.equal(runs.get(a.run.id)!.status, 'turn', '엔진이 거절하면 그대로');
+    host.reply['run.resume'] = { ok: true };
+    await runs.resume(a.run.id);
+    assert.equal(runs.get(a.run.id)!.status, 'preparing');
+
+    host.emit('gate', gateFor(a.run.id, {}));
+    runs.approved(a.run.id);
+    host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
+    host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
+    r = runs.get(a.run.id)!;
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, HANDOFF_SIGN]);
+    await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
+    assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
+    // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
+    host.reply['run.stop'] = { stopped: false };
+    await runs.stop(a.run.id);
+    r = runs.get(a.run.id)!;
+    assert.deepEqual([r.status, r.handoff, r.steps[5]!.state, r.steps[6]!.state, r.notices?.includes(STOP_AFTER_SIGN_NOTE)], ['issuing', null, 'todo', 'now', true]);
+    await assert.rejects(runs.stop(a.run.id), /already_issuing/);
+
+    // 사람 차례 상한: end status=handoff code=run.handoff_timeout → 끝 카드
+    const t = shellRuns();
+    const b = interpret('B상사에 17만원 세금계산서', null, 'business', t.runs);
+    assert.ok(b.kind === 'draft');
+    await t.runs.prepare(b.run.id);
+    t.host.emit('run', { runId: b.run.id, type: 'handoff', phase: 'login', code: 'step.timeout' });
+    t.host.emit('run', { runId: b.run.id, type: 'end', status: 'handoff', code: 'run.handoff_timeout' });
+    const e = t.runs.get(b.run.id)!;
+    assert.deepEqual([e.status, e.handoffEnd, e.inDoubt, e.handoff ?? null], ['attention', true, false, null]);
+    assert.ok(e.stoppedNote!.startsWith(NOTE['run.handoff_timeout']!));
+    assert.match(e.stoppedNote!, /아무것도 발급하지 않았어요/);
   });
 
   it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {
