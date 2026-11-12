@@ -223,6 +223,17 @@ async function flow(): Promise<void> {
   // ⓪-U6 Chrome 점검을 초안 전으로: 첫 판의 할 일, 첫 발급 요청(초안 카드를 만들지 않는다), 안내의 [다시 확인]
   const setupRow = () => js<string>(`[...document.querySelectorAll('[data-board-setup] [data-setup]')].map((b) => b.dataset.setup + ':' + b.innerText).join('|')`);
   check('(U6) Chrome이 없으면 첫 판의 할 일에 [Chrome 설치하기]', await until('board chrome', async () => (await setupRow()).includes('chrome:Chrome 설치하기'), 10_000), await setupRow());
+  // 증명서는 이 빌드가 떼지 못한다(#291). Chrome이 없어도 설치를 시키지 않고 "곧 할 수 있어요"만 답한다(부장 판정 2026-11-12 재현)
+  const setupsBefore = await js<number>(`document.querySelectorAll('[data-setup-needed]').length`);
+  await js(`(() => { const t = document.querySelector('#composer'); t.value = '사업자등록증명 떼 줘'; t.dispatchEvent(new Event('input')); })()`);
+  await click('.sx-send');
+  const certSaid = await until('cert reply', async () => js<boolean>(`document.querySelector('#thread, body').innerText.includes('증명서 발급은 곧 이 대화에서 할 수 있어요')`), 5000);
+  check(
+    '(U6) Chrome이 없어도 증명서 요청에는 설치를 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291)',
+    certSaid && (await js<number>(`document.querySelectorAll('[data-setup-needed]').length`)) === setupsBefore && !(await js<boolean>(`!!document.querySelector('[data-act=setup-chrome]')`)),
+    { certSaid, setups: await js<number>(`document.querySelectorAll('[data-setup-needed]').length`), setupsBefore },
+  );
+  await shot('00-cert-no-chrome-ask');
   const runsBefore = S.runs.list().length;
   await js(`(() => { const t = document.querySelector('#composer'); t.value = 'A상사에 11만원 세금계산서'; t.dispatchEvent(new Event('input')); })()`);
   await click('.sx-send');

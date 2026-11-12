@@ -53,7 +53,9 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => findInstalledChrome\(\) !== null\);/);
     assert.match(src, /new ShellRuns\(host, \{ [^}]*chromeReady, /);
     assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
-    assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(chromeReady\(\) \? \[\] : \(\['chrome'\] as const\)\)\];/);
+    // 증명서 요청에는 Chrome을 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291). 세금계산서·되묻기 답만.
+    assert.match(src, /const needsChrome = parsed\.intent !== 'cert' && !chromeReady\(\);/);
+    assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\)\];/);
     const check = src.slice(src.indexOf("'chrome.check': async"), src.indexOf("'onboarding.reopen': async"));
     assert.ok(check.includes('const ready = chromeReady();') && check.includes('pushBoard();') && !/host\.|needGesture|openExternal/.test(check), check);
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');

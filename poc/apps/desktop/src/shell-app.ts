@@ -867,8 +867,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const setupGate = (parsed: Parsed) => {
     if (profile !== 'business') return null;
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
-    // Chrome이 없으면 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
-    const missing: SetupItem[] = [...setupMissing(profiles().business), ...(chromeReady() ? [] : (['chrome'] as const))];
+    // Chrome이 없으면 세금계산서 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
+    // 증명서는 이 빌드가 떼지 못하므로(interpret가 "곧 할 수 있어요") 할 수 없는 일 때문에 설치를 시키지 않는다(#291, 부장 판정 2026-11-12).
+    const needsChrome = parsed.intent !== 'cert' && !chromeReady();
+    const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : [])];
     if (!missing.length) return null;
     runs.pending.asked = null;
     return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
