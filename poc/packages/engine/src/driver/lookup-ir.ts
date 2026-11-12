@@ -39,6 +39,30 @@ const ROW_CSS = 'lookup.table.rowCss';
 const CELL_CSS = 'lookup.table.cellCss';
 const DEFAULT_ROW_CSS = 'tr, [role="row"]';
 const DEFAULT_CELL_CSS = ':scope > th, :scope > td, :scope > [role="columnheader"], :scope > [role="rowheader"], :scope > [role="gridcell"], :scope > [role="cell"]';
+/** 열 속성 모드(IR rev v1.3.5): 칸을 머리글 문구 대신 이 속성 값(lookup.column.<열> = 값)으로 찾는다. WebSquare 그리드는 data-col_id. */
+const COL_ATTR = 'lookup.table.colAttr';
+/**
+ * 건수 문구가 없는 화면의 완결 판정(IR rev v1.3.5): 'idle'이면 rows extract 바로 앞 스텝이 wait for:idle(요청 0개 500ms)이어야 하고,
+ * 행 수가 pageSize(한 쪽 행 수) 미만이어야 다 온 것으로 본다(한 쪽이 꽉 차면 다음 쪽이 있을 수 있다).
+ */
+const COMPLETE = 'lookup.table.complete';
+const PAGE_SIZE = 'lookup.table.pageSize';
+
+/** 결과가 다 왔는가: 건수 변수가 있으면 행 수와 같아야 하고, 없으면 'idle' 완결 규칙. 그 밖은 아니다(fail-closed). */
+export function lookupComplete(steps: readonly Step[], strings: Readonly<Record<string, string>>, countVar: string | undefined, rows: number): boolean {
+  if (countVar !== undefined) {
+    const count = Number(countVar.replace(/[^\d]/g, '') || NaN);
+    return Number.isSafeInteger(count) && count === rows;
+  }
+  if (strings[COMPLETE] !== 'idle') return false;
+  const size = Number(strings[PAGE_SIZE]);
+  if (!Number.isSafeInteger(size) || size < 1 || rows >= size) return false;
+  const flat = [...flattenSteps(steps)];
+  const ix = flat.findIndex((x) => x.type === 'extract' && x.name === LOOKUP_ROWS_VAR);
+  const before = ix > 0 ? flat[ix - 1] : undefined;
+  return before?.type === 'wait' && before.for === 'idle';
+}
+
 /** 결과 표 extract 변수 이름과 건수 변수 이름(조회 IR 관례). */
 export const LOOKUP_ROWS_VAR = 'rows';
 export const LOOKUP_COUNT_VAR = 'count';
@@ -146,6 +170,7 @@ export class IrLookupPort implements LookupPort {
       const t = await resolveTarget(reader, files.selectors, tableKey);
       const handle = t.ok ? reader.handle(t.t.el) : null;
       if (!handle) return { ok: false, code: 'lookup.incomplete' };
+      const colAttr = files.strings[COL_ATTR];
       const table = await handle.evaluate(
         (el, css) => {
           const rows = [...(el as Element).querySelectorAll(css.row)];
@@ -157,6 +182,15 @@ export class IrLookupPort implements LookupPort {
           for (const r of rows) {
             const cs = cells(r);
             if (!cs.length) continue;
+            if (css.attr) {
+              // 열 속성 모드(WebSquare 그리드 data-col_id): 머리글은 다른 표에 있다. 행마다 속성이 있는 칸만, 속성 값을 머리글로 쓴다.
+              const named = cs.filter((c) => c.hasAttribute(css.attr!));
+              if (!named.length || named.every(isHead)) continue;
+              header ??= named.map((c) => c.getAttribute(css.attr!) ?? '');
+              const byName = new Map(named.map((c) => [c.getAttribute(css.attr!) ?? '', text(c)]));
+              body.push(header.map((h) => byName.get(h) ?? ''));
+              continue;
+            }
             if (cs.every(isHead)) {
               header ??= cs.map(text);
               continue;
@@ -165,16 +199,16 @@ export class IrLookupPort implements LookupPort {
           }
           return { header, body };
         },
-        { row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS, cell: files.strings[CELL_CSS] ?? DEFAULT_CELL_CSS },
+        { row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS, cell: files.strings[CELL_CSS] ?? (colAttr ? `[${colAttr}]` : DEFAULT_CELL_CSS), attr: colAttr ?? null },
       );
-      const count = Number(scope.vars.get(LOOKUP_COUNT_VAR)?.replace(/[^\d]/g, '') || NaN);
-      if (!Number.isSafeInteger(count) || count !== table.body.length) return { ok: false, code: 'lookup.incomplete' };
-      // 열 이름 → 머리글 위치. 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
+      if (!lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
+      // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
+      // 열 속성 모드에서 행이 0개면 머리글을 읽을 수 없다: 그때는 열이 있다고 본다(빈 결과는 행 수 판정이 이미 받았다).
       const head = (table.header ?? []).map(norm);
       const col = new Map<string, number>();
       for (const [k, v] of Object.entries(files.strings)) {
         if (!k.startsWith(LOOKUP_COLUMN_PREFIX)) continue;
-        const ix = head.indexOf(norm(v));
+        const ix = colAttr && !table.body.length ? 0 : head.indexOf(norm(v));
         if (ix >= 0) col.set(k.slice(LOOKUP_COLUMN_PREFIX.length), ix);
       }
       for (const need of [...Object.keys(req.match), VERIFY_ID_COLUMN]) if (!col.has(need)) return { ok: false, code: 'lookup.columns_missing' };

@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.issue",
- "version": "2.1.1",
+ "version": "2.2.0",
  "kind": "playbook",
  "portal": "hometax",
  "title": "invoice.title",
@@ -16,27 +16,16 @@
   "issue_document",
   "send"
  ],
- "bundlesUsed": [
-  {
-   "id": "screen_state",
-   "ver": 2,
-   "digest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082"
-  },
-  {
-   "id": "form_ready",
-   "ver": 2,
-   "digest": "b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409"
-  }
- ],
+ "bundlesUsed": [],
  "lookupsUsed": [
   {
    "id": "hometax.invoice.lookup",
-   "version": "1.1.0",
+   "version": "1.2.0",
    "digest": "0000000000000000000000000000000000000000000000000000000000000000"
   },
   {
    "id": "hometax.invoice.email_status",
-   "version": "1.1.0",
+   "version": "1.2.0",
    "digest": "0000000000000000000000000000000000000000000000000000000000000000"
   }
  ],
@@ -45,7 +34,7 @@
   "selectors": "0000000000000000000000000000000000000000000000000000000000000000",
   "strings": "0000000000000000000000000000000000000000000000000000000000000000"
  },
- "createdAt": "2026-11-01T00:00:00+09:00",
+ "createdAt": "2026-11-12T00:00:00+09:00",
  "signatures": [
   {
    "keyId": "pkg-1",

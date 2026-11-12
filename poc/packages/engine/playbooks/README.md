@@ -4,9 +4,9 @@
 
 | 폴더 = 패키지 id | 종류 | 버전 |
 |---|---|---|
-| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.1.0 |
-| `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.0.0 |
-| `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.0.0 |
+| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.2.0 |
+| `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.2.0 |
+| `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.2.0 |
 | `hometax.cert.taxpayment` | playbook(H-04 납세증명서(국세) 발급) | 1.0.0 |
 | `hometax.cert.issued_list` | lookup(민원신청 처리결과 조회. 민원증명 공통: H-04 verify, H-03·H-08·H-09도 같이 쓴다) | 1.0.0 |
 | `hometax.cert.biz_registration` | playbook(H-03 사업자등록증명) | 1.0.0 |
@@ -15,7 +15,9 @@
 
 - 파일: `manifest.json`·`playbook.json`·`selectors.json`·`strings.ko.json`.
 - manifest의 `contentDigests`·`lookupsUsed[].digest`·`signatures`는 자리표시다. 게시 도구가 원시 바이트로 채우고 package 키 2개로 서명한다(클라우드 트랙 게시 도구, 서명은 사용자).
-- 홈택스 셀렉터는 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
+- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.2.0·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
+  캡처가 없는 부분(로그인 절차 세부, 보안카드·사업자 간편인증 갈래, 인증서 창 [취소] 뒤 화면, 세션 만료, 접근성 이름 일부)은 가정이고 사람 차례로 둔다. 가정 목록은 PR 본문. 건조 실행: `tests/h01-real-dryrun.test.ts`(가짜 홈택스 `tests/hometax-fake.ts`).
+  민원증명(`hometax.cert.*`) 셀렉터는 아직 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
 - 시험은 이 원본을 골든 패키지로 쓴다(`tests/core-fixtures.ts`). 바꾸면 레지스트리 샘플(`tests/fixtures/registry`)을 다시 만든다.
 - fixture 포털(가짜 페이지) 패키지는 여기 두지 않는다. `tests/`에서만 만든다(ADR-039).
 - `hometax.cert.{biz_registration,vat_tax_base,financial_statements}` 3개는 공유 템플릿 `scripts/playbooks/hometax-certificate.ts`(ADR-018 결정 2: 즉시발급 민원증명 하나)에서 만든다. 발급 확인 조회는 H-04와 같이 쓰는 `hometax.cert.issued_list`(LAF-labs/tex#247)를 참조만 한다. 손으로 고치지 말고 템플릿을 고친 뒤 `node --conditions=development scripts/gen-cert-playbooks.ts`로 다시 만든다(시험 `tests/cert-playbooks.test.ts`가 같은지 본다).

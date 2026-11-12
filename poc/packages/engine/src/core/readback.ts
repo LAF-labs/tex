@@ -69,6 +69,12 @@ export async function readField(page: PageReader, dict: SelectorDict, fieldKey: 
   if (isSecretEntry(entry)) return { ok: false, code: 'step.secret_field' };
   const r = await resolveTarget(page, dict, k);
   if (!r.ok) return { ok: false, code: r.code };
+  if (entry.countOf) {
+    // 개수 칸(IR rev v1.3.5, 미리보기 품목 행 수): 하위에서 countOf에 맞고 글이 빈칸이 아닌 요소 수. 접근성 값 대조는 없다(수는 화면 글이 아니다).
+    let n = 0;
+    for (const el of await page.query({ kind: 'css', value: entry.countOf }, entry.frame, r.t.el)) if (normalizeName(await page.text(el)) !== '') n++;
+    return { ok: true, value: String(n) };
+  }
   const value = normalizeFieldValue(entry, await domValue(page, entry, r.t.el));
   if (normalizeFieldValue(entry, await page.a11yValue(r.t.el)) !== value) return { ok: false, code: 'step.readback_mismatch' };
   for (const dk of displayEntryKeys(dict, fieldKey)) {

@@ -4,7 +4,11 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
-// --mac: macOS arm64 미서명 .dmg(사용자 시험용, 팀장 지시 2026-11-10). 기본 출력 poc/.tmp/package-mac. 배포 판정은 Windows 베타 기준이라 참고만.
+// --mac: macOS arm64 .dmg(팀장 지시 2026-11-10, Intel Mac 미지원 대표 결정 2026-11-11). 기본 출력 poc/.tmp/package-mac.
+//        키체인에 Developer ID Application 신원이 하나 있고 SAX_NOTARY_PROFILE(notarytool 키체인 프로필 이름)이 있으면
+//        앱 서명(하드닝 런타임)·공증·스테이플 → dmg 서명·공증·스테이플 → spctl 확인. 하나라도 없으면 애드혹(SIGNING-SETUP.md §6).
+//        배포 판정은 Windows 베타 기준이라 참고만.
+// 설치본 옆에 <설치본>.sha256(sha256sum 형식 한 줄)을 쓴다. 고객에게 설치본과 함께 준다(sovereign-ax/install-guide/CUSTOMER-DIST.md §3).
 // 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음),
 //       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인을 설정으로 끌 수 있다, 배포 불가)
 import { spawnSync } from 'node:child_process';
@@ -38,6 +42,12 @@ const run = (cmd, argv, cwd = POC) => {
     ? spawnSync([cmd, ...argv].map(quoteWin).join(' '), { cwd, stdio: 'inherit', env: process.env, shell: true })
     : spawnSync(cmd, argv, { cwd, stdio: 'inherit', env: process.env });
   if (r.status !== 0) throw new Error(`${cmd} ${argv.join(' ')} → ${r.status}${r.error ? ` (${r.error.code})` : ''}`);
+};
+/** 출력을 읽는 실행(macOS 서명 도구). 실패하면 던진다. 출력에는 비밀이 없다(신원 이름·제출 ID·상태). */
+const capture = (cmd, argv) => {
+  const r = spawnSync(cmd, argv, { cwd: POC, encoding: 'utf8' });
+  if (r.status !== 0) throw new Error(`${cmd} ${argv[0]} → ${r.status}: ${(r.stderr || r.stdout || '').trim().slice(-400)}`);
+  return r.stdout;
 };
 const git = (...a) => spawnSync('git', a, { cwd: POC, encoding: 'utf8' }).stdout.trim();
 const rel = (p) => path.relative(POC, p);
@@ -79,9 +89,18 @@ async function main() {
   const desktopPkg = JSON.parse(fs.readFileSync(path.join(DESKTOP, 'package.json'), 'utf8'));
   const version = process.env.SAX_APP_VERSION ?? desktopPkg.version;
   if (!semverOk(version)) throw new Error(`앱 버전이 semver(x.y.z)가 아니다: ${version}`);
-  const { makeConfig, signingFrom } = await import('./../apps/desktop/build/electron-builder.config.mjs');
-  // macOS 빌드는 서명하지 않는다(Apple 개발자 서명·공증은 아직 없다)
-  const signing = TARGET.os === 'darwin' ? { mode: 'unsigned', reason: 'mac_signing_unset', missing: [] } : signingFrom(process.env, process.platform);
+  const { makeConfig, signingFrom, macSigningFrom, parseIdentities } = await import('./../apps/desktop/build/electron-builder.config.mjs');
+  // macOS: 키체인 Developer ID 신원 + 공증 프로필이 있으면 서명·공증, 아니면 애드혹
+  const signing =
+    TARGET.os === 'darwin'
+      ? macSigningFrom({ env: process.env, platform: process.platform, identities: process.platform === 'darwin' ? parseIdentities(capture('security', ['find-identity', '-v', '-p', 'codesigning'])) : [] })
+      : signingFrom(process.env, process.platform);
+  if (TARGET.os === 'darwin') {
+    if (signing.mode !== 'developer_id') console.log(`macOS 서명: 애드혹(${signing.reason})`);
+    else console.log(`macOS 서명: Developer ID (${signing.teamId ?? '팀 ID 모름'}), ${signing.notarize ? `공증 프로필 ${signing.notaryProfile}` : `공증 생략(${signing.reason})`}`);
+  }
+  // electron-builder 앱 공증은 이 환경 변수로 키체인 프로필을 쓴다(값이 아니라 프로필 이름)
+  if (signing.mode === 'developer_id' && signing.notarize) process.env.APPLE_KEYCHAIN_PROFILE = signing.notaryProfile;
 
   if (!args['skip-build']) run('pnpm', ['build']);
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -132,6 +151,7 @@ async function main() {
   const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
   const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
   await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
+  const macCheck = signing.mode !== 'developer_id' ? null : signing.notarize ? notarizeDmg(signing) : verifySignedApp(signing);
 
   // 보고서
   const exe = fs.readdirSync(DIST).find((f) => f.endsWith(TARGET.os === 'darwin' ? '.dmg' : '.exe'));
@@ -175,18 +195,59 @@ async function main() {
     fuses: fuseState,
     appDist: { included, removed: removed.sort() },
     readiness,
+    ...(macCheck ? { mac: macCheck } : {}),
   };
   fs.writeFileSync(path.join(OUT, 'report.json'), JSON.stringify(report, null, 2) + '\n');
   fs.writeFileSync(path.join(OUT, 'release-readiness.json'), JSON.stringify(readiness, null, 2) + '\n');
   fs.writeFileSync(path.join(OUT, 'asar-files.txt'), asarFiles.join('\n') + '\n');
+  // 고객 전달용 해시 파일(`shasum -a 256 -c`·PowerShell Get-FileHash로 대조)
+  fs.writeFileSync(`${exePath}.sha256`, `${report.installer.sha256}  ${exe}\n`);
 
   console.log(`\n설치본: ${rel(exePath)} (${mb(bytes.byteLength)})`);
   console.log(`sha256: ${report.installer.sha256}`);
   console.log(`asar: ${mb(report.asar.size)}, 파일 ${report.asar.files}개, 압축 해제 ${mb(report.unpackedSize)}`);
   console.log(`앱 dist: 포함 ${included.length}개, 제외 ${removed.length}개`);
-  if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
-  else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${signing.mode === 'azure' ? '' : '  ← 미서명 빌드'}`);
+  const unsignedNote = signing.mode === 'unsigned' ? '  ← 미서명 빌드' : '';
+  if (TARGET.os === 'darwin') {
+    const how = signing.mode !== 'developer_id' ? '애드혹 서명(Gatekeeper가 막는다)' : signing.notarize ? `Developer ID 서명·공증(spctl ${macCheck?.spctl})` : 'Developer ID 서명만(공증 생략: 이 Mac에서 빌드한 앱은 실행, 내려받은 사본은 Gatekeeper가 막는다)';
+    console.log(`macOS: ${how}`);
+  }
+  if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${unsignedNote}`);
+  else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${unsignedNote}`);
   console.log(`보고서: ${rel(path.join(OUT, 'report.json'))}`);
+}
+
+/** Developer ID 서명만(공증 생략) 빌드의 확인: 서명·봉인, 팀 ID, 하드닝 런타임. 실패하면 던진다. */
+function verifySignedApp(signing) {
+  const app = path.join(DIST, 'mac-arm64', 'SovereignAX.app');
+  capture('codesign', ['--verify', '--deep', '--strict', app]);
+  // codesign -dv는 결과를 stderr에 쓴다
+  const info = spawnSync('codesign', ['-dv', app], { encoding: 'utf8' }).stderr;
+  const team = /TeamIdentifier=(\S+)/.exec(info)?.[1] ?? null;
+  if (signing.teamId && team !== signing.teamId) throw new Error(`앱 팀 ID가 다르다: ${team}`);
+  if (!/flags=0x[0-9a-f]*\(runtime\)/.test(info)) throw new Error('하드닝 런타임 플래그가 없다');
+  return { signing: 'developer_id', teamId: team, notarized: false, reason: signing.reason, codesignVerify: 'ok', hardenedRuntime: true };
+}
+
+/**
+ * Developer ID 빌드의 dmg: 서명(타임스탬프) → notarytool 제출·대기(키체인 프로필) → 스테이플 → 확인.
+ * 앱 자체는 electron-builder가 이미 공증·스테이플했다. 받은 dmg를 열 때도 오프라인으로 공증이 확인되게 dmg에도 붙인다.
+ */
+function notarizeDmg(signing) {
+  const dmg = fs.readdirSync(DIST).find((f) => f.endsWith('.dmg'));
+  if (!dmg) throw new Error('dmg가 없다');
+  const file = path.join(DIST, dmg);
+  const app = path.join(DIST, 'mac-arm64', 'SovereignAX.app');
+  capture('codesign', ['--sign', signing.fullName, '--timestamp', file]);
+  const sub = JSON.parse(capture('xcrun', ['notarytool', 'submit', file, '--keychain-profile', signing.notaryProfile, '--wait', '--output-format', 'json']));
+  if (sub.status !== 'Accepted') throw new Error(`dmg 공증 실패: ${sub.status} (제출 ID ${sub.id}, xcrun notarytool log ${sub.id} --keychain-profile ${signing.notaryProfile})`);
+  capture('xcrun', ['stapler', 'staple', file]);
+  capture('xcrun', ['stapler', 'validate', file]);
+  // spctl은 결과를 stderr에 쓴다
+  const assess = spawnSync('spctl', ['--assess', '--type', 'execute', '-vv', app], { encoding: 'utf8' });
+  const spctl = /accepted/.test(assess.stderr) ? 'accepted' : 'rejected';
+  if (spctl !== 'accepted') throw new Error(`spctl이 앱을 받지 않는다: ${assess.stderr.trim().slice(-300)}`);
+  return { signing: 'developer_id', teamId: signing.teamId, notarized: true, dmgNotarization: sub.id, stapled: true, spctl, source: /source=([^\n]+)/.exec(assess.stderr)?.[1] ?? null };
 }
 
 main().catch((e) => {
