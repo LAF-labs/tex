@@ -105,12 +105,13 @@ export class MockCodefTokenSource implements CodefTokenSource {
 const B64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /**
- * 환경 변수 → 원천. CODEF_ENV가 없으면 null(기능 꺼짐: 엔드포인트는 503 gateway.codef_off, 다른 경로는 그대로 기동한다).
+ * 환경 변수 → 원천. CODEF_ENV가 없으면 demo(CODEF_CLIENT_ID가 있을 때), 둘 다 없으면 null(기능 꺼짐: 엔드포인트는 503 gateway.codef_off, 다른 경로는 그대로 기동한다).
  * 값이 있는데 형식이 틀리면 기동하지 않는다(조용히 꺼지지 않게).
  */
 export function codefFromEnv(env: NodeJS.ProcessEnv, fail: (name: string) => never): CodefTokenSource | null {
-  const e = env.CODEF_ENV;
-  if (e === undefined || e === '') return null;
+  // 기본 환경은 demo(대표 데모 사용신청 2026-11-12: 실제 기관·하루 100회·1개월). 키도 환경도 없으면 꺼짐
+  const e = env.CODEF_ENV || (env.CODEF_CLIENT_ID ? 'demo' : '');
+  if (!e) return null;
   if (e === 'mock') return new MockCodefTokenSource();
   if (!(CODEF_ENVS as readonly string[]).includes(e)) return fail('CODEF_ENV');
   const clientId = env.CODEF_CLIENT_ID;

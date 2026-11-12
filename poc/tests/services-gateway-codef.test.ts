@@ -172,5 +172,8 @@ describe('codefFromEnv', () => {
     assert.ok(ok instanceof CodefOAuth);
     assert.equal(ok.env, 'demo');
     assert.equal(ok.publicKey, FAKE_PUBLIC_KEY);
+    // 기본은 demo(키만 넣으면 데모 호스트)
+    const dflt = codefFromEnv({ CODEF_CLIENT_ID: 'client-id-0001', CODEF_CLIENT_SECRET: 'secret-0001', CODEF_PUBLIC_KEY: FAKE_PUBLIC_KEY }, fail);
+    assert.equal(dflt?.env, 'demo');
   });
 });

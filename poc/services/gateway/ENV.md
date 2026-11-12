@@ -33,7 +33,7 @@
 | `NTS_PROVIDER` | 예 | `odcloud` \| `mock` | 진위확인 원천 |
 | `NTS_BIZ_API_KEY` ⚿ | odcloud | | 공공데이터포털 "국세청_사업자등록정보 진위확인 및 상태조회 서비스"(15081808) 인증키. 쿼리 `serviceKey`로만 보낸다. 로그·저장소·메시지에 두지 않는다 |
 | `NTS_BIZ_API_BASE` | 아니오(`https://api.odcloud.kr/api`) | `https://…` | 원천 주소. 경로는 `{base}/nts-businessman/v1/status` |
-| `CODEF_ENV` | 아니오(없으면 꺼짐) | `sandbox` \| `demo` \| `prod` \| `mock` | 계좌 자동조회 CODEF 환경. 없으면 `/v1/codef/token`이 `503 gateway.codef_off`. 값이 틀리면 기동 거부 |
+| `CODEF_ENV` | 아니오(`CODEF_CLIENT_ID`가 있으면 `demo`, 둘 다 없으면 꺼짐) | `sandbox` \| `demo` \| `prod` \| `mock` | 계좌 자동조회 CODEF 환경. demo = `https://development.codef.io`(데모: 실제 기관, 하루 100회·1개월), prod = `https://api.codef.io`, sandbox = `https://sandbox.codef.io`(고정 응답). 토큰 주소는 셋 다 `https://oauth.codef.io/oauth/token`. 꺼짐이면 `/v1/codef/token`이 `503 gateway.codef_off`. 값이 틀리면 기동 거부 |
 | `CODEF_CLIENT_ID` ⚿ | CODEF_ENV가 mock 밖 | 8~128자 | CODEF 홈페이지 키 관리의 클라이언트 아이디(환경마다 다르다: 데모·정식) |
 | `CODEF_CLIENT_SECRET` ⚿ | CODEF_ENV가 mock 밖 | 8~256자 | CODEF 클라이언트 시크릿. 토큰 발급(Basic 인증)에만 쓰고 PC·로그·응답에 보내지 않는다 |
 | `CODEF_PUBLIC_KEY` | CODEF_ENV가 mock 밖 | base64(DER SPKI, 줄바꿈 무시) | CODEF 홈페이지 키 관리의 RSA 공개키. 비밀은 아니지만 계정마다 다르다. PC가 인증서 비밀번호를 감싸는 데 쓴다 |
