@@ -572,6 +572,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.emit('update', r);
       if (noChrome) throw new Error('chrome.not_installed');
     }
+    // 발급 인증은 시작하는 순간의 기본값이다. 엔진도 run.start 때 프로필 signMethod를 읽어 그 실행 동안 쓴다(runs.ts start).
+    // 초안을 만든 뒤 설정에서 기본을 바꿨으면 카드 안내도 그 값으로 맞춘다. 시작한 뒤에 바꾼 기본은 이 실행에 닿지 않는다(설정 화면 문구).
+    r.auth = this.src.auth();
     r.status = 'preparing';
     this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
@@ -592,6 +595,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.stopEarly.delete(r.id);
     }
     return r;
+  }
+
+  /** 기본 발급 인증이 바뀌었다(설정·온보딩). 아직 시작하지 않은 초안만 새 값을 보인다. 진행 중인 실행은 시작 때 값 그대로다. */
+  syncAuth(): void {
+    const auth = this.src.auth();
+    for (const r of this.runs.values()) {
+      if (r.status !== 'draft' || r.auth === auth) continue;
+      r.auth = auth;
+      this.emit('update', r);
+    }
   }
 
   /**
