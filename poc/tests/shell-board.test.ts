@@ -239,6 +239,7 @@ describe('M4-2 3부: InDoubt·핸드오프 화면(08 §11, D03 HandedOff)', () =
     const body = branch(src, "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
     const acts = [...new Set([...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]))].sort();
     assert.deepEqual(acts, ['manualDone', 'resume', 'stop']);
+    assert.match(body, /showBrowserBtn\(run, act\)/, '사람 차례 카드에는 [홈택스 창 보기]'); 
     assert.match(body, /kind === 'login' \? btn\('이어서'/);
     assert.match(body, /kind === 'other' \? btn\('직접 발급함'/);
     assert.match(body, /btn\('중지', \(\) => act\.stop\(run\.id\)/);

@@ -338,7 +338,20 @@ const title = (name?: string) => (name ? `${DOC_TITLE} · ${name}` : DOC_TITLE);
 export const GATE_TEXT: CardText = { title: DOC_TITLE, chip: '승인 대기', action: ACTION_TEXT, irreversible: IRREVERSIBLE_TEXT, stop: STOP_TEXT };
 export const ATTEST_TEXT: CardText = { title: DOC_TITLE, chip: '확인 필요', action: ATTEST_ACTION_TEXT, irreversible: ATTEST_IRREVERSIBLE_TEXT, stop: ATTEST_STOP_TEXT };
 /** 게이트 카드 글자. name은 검사를 지난 fields의 상호(없으면 서류 종류만), mail은 받는 이메일 유무. */
-export const gateText = (action: string, name?: string, mail = true): CardText => ({ ...GATE_TEXT, title: title(name), action, irreversible: mail ? IRREVERSIBLE_TEXT : IRREVERSIBLE_TEXT_NO_MAIL });
+/**
+ * 승인 뒤 사람 몫(발급 인증 라벨별, shell-model SIGN_LABEL 값). 승인만으로는 발급되지 않는다: 홈택스 창에서 인증을 마쳐야 발급된다(H-01 2.2.0 signFlow).
+ * 한 줄 70칸 이하(대화 열 600px 카드에 들어간다, 더 좁으면 띠로 바뀐다).
+ */
+export const SIGN_AFTER: Readonly<Record<string, string>> = {
+  '공동·금융인증서': '승인 뒤 인증서 비밀번호를 넣으면',
+  '사업자 간편인증': '승인 뒤 휴대폰 간편인증을 마치면',
+  보안카드: '승인 뒤 보안카드 번호를 넣으면',
+};
+export const SIGN_AFTER_DEFAULT = '승인 뒤 홈택스 인증을 마치면';
+export const irreversibleText = (auth: string | undefined, mail: boolean): string =>
+  `${(auth && Object.hasOwn(SIGN_AFTER, auth) ? SIGN_AFTER[auth] : null) ?? SIGN_AFTER_DEFAULT} 발급${mail ? '·메일 전송' : ''}돼요. 되돌릴 수 없어요.`;
+/** 발급 인증을 모르면(시험·옛 호출) 예전 한 줄. 아는 경우 irreversibleText. */
+export const gateText = (action: string, name?: string, mail = true, auth?: string): CardText => ({ ...GATE_TEXT, title: title(name), action, irreversible: auth === undefined ? (mail ? IRREVERSIBLE_TEXT : IRREVERSIBLE_TEXT_NO_MAIL) : irreversibleText(auth, mail) });
 export const attestText = (name?: string): CardText => ({ ...ATTEST_TEXT, title: title(name) });
 /** 민원증명 게이트 카드 글자. 머리 줄은 서류 이름(사업자등록증명 등, 앱 내장)이다 */
 export const certGateText = (docName: string, action: string): CardText => ({ title: docName, chip: '승인 대기', action, irreversible: CERT_IRREVERSIBLE_TEXT, stop: STOP_TEXT });

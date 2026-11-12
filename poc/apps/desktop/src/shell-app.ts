@@ -539,7 +539,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
   // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
-    void bar.open(req).then(async (o) => {
+    // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
+    void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
         // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
@@ -857,6 +858,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
   };
 
+  /**
+   * [홈택스 창 보기]: 진행 중인 실행의 Chrome 창(금고가 띄운 실행 탭)을 앞으로. 금고가 그 탭에 Page.bringToFront(맥에서 Chrome 앱도 앞으로 온다, 2026-11-12 측정).
+   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수만 browser.focus 하나를 부른다.
+   */
+  const showRunBrowser = async (id: string) => {
+    if (!runs.isActive(id)) throw new Error('not_running');
+    const r = (await host.control('browser.focus')) as { focused?: unknown } | null;
+    if (r?.focused !== true) throw new Error('no_browser');
+    return { focused: true };
+  };
+
   const handlers: ShellHandlers = {
     'shell.bootstrap': async () => ({
       board: await bootBoard(),
@@ -978,6 +990,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'run.manualDone': (p) => {
       needGesture(3_000);
       return runs.manualDone(String(p.id));
+    },
+    'run.showBrowser': async (p) => {
+      needGesture(3_000);
+      return showRunBrowser(String(p.id));
     },
     // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
