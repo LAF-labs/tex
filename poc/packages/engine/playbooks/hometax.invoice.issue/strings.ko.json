@@ -1,11 +1,13 @@
 {
  "invoice.title": "전자세금계산서 건별 발급",
  "invoice.confirm": "전자세금계산서를 발급할까요?",
- "invoice.emailNotConfirmed": "발급은 완료되었습니다. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요",
- "counterpart.nameRegex": "^[^\\n]{1,60}$",
- "confirm.issue": "^(전자)?세금계산서를 발급하시겠습니까\\?$",
- "captcha.prompt": "그림의 문자를 입력해 주세요",
+ "invoice.emailNotConfirmed": "발급은 완료되었습니다. 메일 발송은 홈택스 (발송‧수신)내역조회에서 확인해 주세요",
+ "login.loggedIn": "^로그아웃$",
  "hometax.login.successMarker": "로그아웃",
- "mail.status.sent": "^(전송|발송)완료$",
- "mail.status.notSent": "실패|미전송|대기|오류|중$"
+ "form.bizNoInBody": "[0-9]{3}-[0-9]{2}-[0-9]{5}",
+ "form.bizNoShown": "^[0-9]{3}-[0-9]{2}-[0-9]{5}$",
+ "form.amountShown": "^-?[0-9][0-9,]*$",
+ "counterpart.bizNoOk": "^정상적인 사업자번호입니다\\.$",
+ "mail.status.sent": "^성공$",
+ "mail.status.notSent": "^(메일형식오류|메일도메인\\(주소\\)오류|발송보류|메일계정오류\\(휴면계정\\)|수신거부|메일용량부족)$"
 }

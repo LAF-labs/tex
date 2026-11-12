@@ -55,6 +55,7 @@
         "navigationOnly": {"description": "Clicking only navigates/searches (allowed in lookup packages, V-22).", "type": "boolean"},
         "fieldKey": {"type": "string", "pattern": "^([a-z][A-Za-z0-9]*|_ignore)$"},
         "readbackOf": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"},
+        "countOf": {"description": "IR rev v1.3.5: readback value is the number of descendants matching this CSS whose text is not empty (e.g. item rows of a preview grid). Only with a fieldKey.", "type": "string", "minLength": 1, "maxLength": 120},
         "allowedConstants": {"description": "V-21: the only constants fill.value / select.option may use for this target.", "type": "array", "maxItems": 10, "uniqueItems": true, "items": {"type": "string", "maxLength": 40}},
         "reviewNote": {"type": "object", "required": ["by", "reason"], "additionalProperties": false,
           "properties": {"by": {"type": "string", "maxLength": 80}, "reason": {"type": "string", "maxLength": 200}}},
@@ -81,6 +82,7 @@
       "type": "object", "required": ["method", "pathPattern"], "additionalProperties": false,
       "properties": {
         "method": {"enum": ["GET", "POST", "PUT", "DELETE"]},
+        "host": {"description": "IR rev v1.3.5: exact URL host (lowercase, with port if any) the request must go to. Without it any manifest domain matches.", "type": "string", "pattern": "^[a-z0-9.\\-\\[\\]:]+$", "maxLength": 120},
         "pathPattern": {"description": "RE2, matched against URL path only.", "type": "string", "maxLength": 200},
         "actionParam": {"type": "object", "required": ["name", "value"], "additionalProperties": false,
           "properties": {"name": {"type": "string", "maxLength": 80}, "value": {"type": "string", "maxLength": 120}}}

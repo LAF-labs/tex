@@ -77,6 +77,8 @@ export class GuardedActuator implements Actuator {
   private readonly armedConfirm: () => RegExp | null;
   private readonly fixtureGrant: FixtureOriginGrant | null;
   private lastNotice: string | null = null;
+  /** 마지막 동작을 시작한 뒤 뜬 대화상자(wait for:'dialog', IR rev v1.3.5). 동작을 시작할 때마다 비운다. 실행 메모리 전용. */
+  private sinceAction: { kind: DialogKind; notice: string } | null = null;
 
   constructor(i: GuardedActuatorInput) {
     this.driver = i.driver;
@@ -95,10 +97,16 @@ export class GuardedActuator implements Actuator {
     return this.lastNotice;
   }
 
+  /** 마지막 동작을 시작한 뒤 뜬(그리고 정책대로 닫은) 대화상자. 없으면 null. 문구는 NFKC·공백 접기 뒤 200자. */
+  dialogSinceAction(): { kind: DialogKind; notice: string } | null {
+    return this.sinceAction;
+  }
+
   async goto(url: string): Promise<ActResult> {
     const p = await this.policy.beforeAction('navigate');
     if (!p.ok) return p;
     if (navigationUrlProblem(url, this.domains, this.fixtureGrant)) return { ok: false, code: 'step.url_not_allowed' };
+    this.sinceAction = null;
     return this.driver.goto(url);
   }
 
@@ -121,7 +129,9 @@ export class GuardedActuator implements Actuator {
   async press(key: PressStep['key'], t: Resolved | null): Promise<ActResult> {
     if (!t) {
       const p = await this.policy.beforeAction('press');
-      return p.ok ? this.driver.press(key, null) : p;
+      if (!p.ok) return p;
+      this.sinceAction = null;
+      return this.driver.press(key, null);
     }
     return this.act('press', t, () => this.driver.press(key, t));
   }
@@ -149,6 +159,7 @@ export class GuardedActuator implements Actuator {
       return;
     }
     if (decision.notice) this.lastNotice = decision.notice;
+    this.sinceAction = { kind: d.kind, notice: decision.notice };
     await (decision.action === 'accept' ? d.accept() : d.dismiss()).catch(() => {});
     this.events.journal(decision.event.type, decision.event.payload);
   }
@@ -158,6 +169,7 @@ export class GuardedActuator implements Actuator {
     if (!p.ok) return p;
     const g = await this.guard(op, t);
     if (!g.ok) return g;
+    this.sinceAction = null;
     return run();
   }
 

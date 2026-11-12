@@ -71,6 +71,14 @@ export interface SignFlow {
   steps?: Partial<Record<SignMethod, SignFlowAction[]>>;
   rowLabel?: string;
   confirmTarget?: string;
+  /** IR rev v1.3.5: submit 클릭 뒤 차례로 한 번씩 누르는 commits:true 항목(포털 확인 창의 [인증 화면 이동] 등). */
+  openTargets?: string[];
+  /** IR rev v1.3.5: 방식별로 openTargets 뒤 한 번 누르는 commits:true 항목(인증유형 선택). */
+  methodTargets?: Partial<Record<SignMethod, string>>;
+  /** IR rev v1.3.5: 서명 화면이 떴다는 표지(비커밋, 방식 동작 전에 기다린다. 홈택스 iframe#dscert 보임). */
+  readyTarget?: string;
+  /** IR rev v1.3.5: 서명이 끝났다는 표지(비커밋, human:secret 뒤·confirmTarget 없는 wait:push가 기다린다. 발급 완료 창). */
+  doneTarget?: string;
   maxWaitMs: number;
 }
 
@@ -89,7 +97,11 @@ export type ClickStep = StepBase & { type: 'click'; target: string };
 export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' };
 export type SelectStep = StepBase & { type: 'select'; target: string; option: string };
 export type PressStep = StepBase & { type: 'press'; key: 'Enter' | 'Tab' | 'Escape' | 'ArrowDown' | 'ArrowUp'; target?: string };
-export type WaitStep = StepBase & { type: 'wait'; for: 'selector' | 'navigation' | 'text' | 'idle'; value?: string };
+/**
+ * wait. for 'dialog'(IR rev v1.3.5): 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등)를 기다리고, 그 문구가 value(strings 패턴, ^…$)에 맞아야 통과.
+ * 다른 문구면 step.dialog_mismatch(재시도 없이 onFail), 시간 안에 안 뜨면 step.timeout. 대화상자는 엔진 정책대로 이미 닫혔다(alert = 확인).
+ */
+export type WaitStep = StepBase & { type: 'wait'; for: 'selector' | 'navigation' | 'text' | 'idle' | 'dialog'; value?: string };
 export type AssertStep = StepBase & { type: 'assert'; cond: Cond };
 export type ExtractStep = StepBase & { type: 'extract'; name: string; from: From; readback?: boolean };
 export type DecideStep = StepBase & { type: 'decide'; bundle: string; scope: string; on: Record<string, OutcomeTarget> };
@@ -165,6 +177,8 @@ export interface SelectorEntry {
   navigationOnly?: boolean;
   fieldKey?: string;
   readbackOf?: string;
+  /** IR rev v1.3.5: readback 값 = 이 요소 하위에서 이 CSS에 맞고 글이 빈칸이 아닌 요소의 수(품목 행 수 등). fieldKey가 있을 때만. */
+  countOf?: string;
   allowedConstants?: string[];
   reviewNote?: { by: string; reason: string };
   lastVerified: string;
@@ -172,6 +186,8 @@ export interface SelectorEntry {
 
 export interface EndpointMatch {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  /** IR rev v1.3.5: 요청이 가야 하는 URL host(소문자, 포트 포함). 없으면 manifest.domains 어디든. 홈택스 발급 요청은 teet.hometax.go.kr이다. */
+  host?: string;
   pathPattern: string;
   actionParam?: { name: string; value: string };
 }

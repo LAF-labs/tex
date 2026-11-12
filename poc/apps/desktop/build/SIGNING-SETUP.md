@@ -68,3 +68,27 @@ Windows 실기기 확인(보류): 설치 경로 `%LOCALAPPDATA%\Programs\Soverei
 - OV 코드서명 인증서 + 클라우드 HSM 서명(인증서 발급사 원격 서명 서비스). 키는 여전히 외부 단일 키다(ADR-028 결정 4 문구 그대로).
 - EV는 SmartScreen을 우회하지 않는다(D11 §4). 비용만 늘어난다.
 - 어느 쪽이든 `signingFrom`에 서명 방식 하나를 더하는 일이고, `latest.json` 검증 구조는 바뀌지 않는다.
+
+## 6. macOS Developer ID 서명·공증 (고객 PoC, 2026-11-11)
+
+지금 상태(2026-11-12): Developer ID Application 인증서가 발급됐다(주체 `Developer ID Application: yanggyun kim (JA55KTZH34)`, **팀 ID `JA55KTZH34`**, 발급자 Developer ID Certification Authority G2, 만료 2027-12-11). 대표 Mac 키체인에 설치하고 공증 프로필을 저장하기 전까지 `pnpm package:mac`은 **애드혹 서명**(`identity: '-'`)이다. 키체인의 `Apple Development: yanggyun kim (BKDQVFVVU2)` 괄호 값은 개인 식별자이지 팀 ID가 아니며, 빌드는 `Developer ID Application:` 신원만 고른다(팀 ID를 코드에 두지 않는다). 받은 dmg는 Gatekeeper가 막고(공증 없음), 지정 요구사항이 cdhash라 새 판마다 키체인 허용 창이 다시 뜬다. Apple Silicon(arm64)만 빌드한다(Intel Mac 미지원, 대표 결정 2026-11-11).
+
+사람이 할 일: `sovereign-ax/install-guide/CUSTOMER-DIST.md` §4-2(대표는 팀 구성원이라 Developer ID 인증서는 계정 소유자가 CSR로 발급, 공증 자격은 `xcrun notarytool store-credentials <프로필>`을 대표가 직접). 자격 값은 키체인에만 있고 빌드는 **프로필 이름만** 받는다.
+
+빌드:
+```
+SAX_NOTARY_PROFILE=sax-notary SAX_APP_VERSION=<판> pnpm package:mac
+```
+
+| 입력 | 값 |
+|---|---|
+| 키체인 신원 | `security find-identity -v -p codesigning`의 `Developer ID Application: <이름> (<팀 ID>)`. 정확히 하나여야 한다 |
+| `SAX_MAC_IDENTITY`(선택) | 신원이 여럿일 때 이름·팀 ID 일부로 고른다 |
+| `SAX_NOTARY_PROFILE` | notarytool 키체인 프로필 이름(`[A-Za-z0-9_.-]`, 64자 이하) |
+
+- **서명만(공증 생략, 팀장 지시 2026-11-12)**: 신원은 있고 `SAX_NOTARY_PROFILE`이 없으면 `developer_id`로 서명(하드닝 런타임·권한 같음)하고 공증·스테이플·dmg 서명은 건너뛴다. 출력 `macOS 서명: Developer ID (JA55KTZH34), 공증 생략(notarize_skipped)`, `report.json` `mac.notarized:false`·`codesignVerify:ok`·`hardenedRuntime:true`. 이 Mac에서 빌드해 격리 속성이 없는 앱은 그대로 실행되고 새 판에서도 키체인 허용 창이 다시 뜨지 않는다. 내려받은 사본은 공증이 없어 Gatekeeper가 막으므로 고객 배포는 공증 판으로 한다.
+- 셋이 맞으면 `macSigningFrom`이 `developer_id`를 고른다 → 앱 서명(하드닝 런타임, `build/entitlements.mac.plist`: allow-jit·allow-unsigned-executable-memory, Helper 포함) → 앱 공증·스테이플(electron-builder, `APPLE_KEYCHAIN_PROFILE`) → dmg 서명·공증·스테이플(`scripts/package-win.mjs` `notarizeDmg`) → `spctl --assess` accepted 확인 → SHA-256. 신원이 없거나 여럿이면 애드혹이고 이유 코드를 출력한다(`developer_id_missing`·`developer_id_ambiguous`). 프로필 이름이 틀리면(`notary_profile_bad_name`) 공증 없이 서명만 한다.
+- 공증이 거절되면 빌드가 실패하고 제출 ID와 `xcrun notarytool log <ID> --keychain-profile <프로필>`을 띄운다.
+- build-info `signing: developer_id` → 앱의 "미서명 빌드" 배지가 사라진다(`apps/desktop/src/harden.ts`). Windows 배포 판정(`release-readiness.json`)은 바뀌지 않는다.
+- 키체인: 애드혹 판이 만든 항목은 첫 Developer ID 판에서 항목마다 한 번 허용 창이 뜬다(ACL에 옛 cdhash만 있음). 그 뒤 같은 팀 ID 판부터는 뜨지 않는다(CUSTOMER-DIST §2.4).
+- 하드닝 런타임에서 금고·엔진(utilityProcess)·네이티브 모듈(`@napi-rs/keyring`, `better-sqlite3-multiple-ciphers`)·OCR·전용 Chrome 기동이 되는지 첫 서명 판을 Mac에서 띄워 확인한다(CUSTOMER-DIST §5 S-1~S-4). 네이티브 모듈이 열리지 않으면 `disable-library-validation`을 더하기 전에 `.node` 서명 상태(`codesign -dv`)부터 본다.
