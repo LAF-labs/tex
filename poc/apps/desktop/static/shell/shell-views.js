@@ -190,6 +190,8 @@ const line = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' :
 /** 초안 카드의 오늘 중복 한 줄(F-10). 승인 카드에서도 엔진 원장으로 다시 경고한다. */
 /** [홈택스에서 준비] 전 Chrome 사전 점검에서 Chrome이 없을 때(초안 카드). 엔진까지 가지 않았으므로 "보내지 않았어요". */
 export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준비할 수 있어요. Chrome을 설치한 뒤 [홈택스에서 준비]를 다시 눌러 주세요. 아직 아무것도 보내지 않았어요.';
+/** Chrome 설치 안내(U6, 판의 할 일·첫 발급 요청). 주소는 글자로만 둔다(앱이 외부 링크를 열지 않는다). */
+export const CHROME_GUIDE_TEXT = '홈택스 작업은 이 PC의 Chrome 창에서 해요. 다른 브라우저에서 google.com/chrome 을 열어 Chrome을 설치한 뒤 [다시 확인]을 눌러 주세요.';
 export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
 
 /** 발급 PDF가 이 PC에 없을 때(F-04): 결과 카드·실행 패널·문서함 패널이 같은 문구. */
