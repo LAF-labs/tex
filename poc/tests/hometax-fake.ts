@@ -70,6 +70,10 @@ export interface HometaxFake {
     /** 지금 단계(서버가 본 마지막 요청 기준). cert = C04 뒤 인증서 창 차례. */
     stage: 'idle' | 'cert' | 'signed' | 'issued' | 'cancelled';
     invoices: FakeInvoice[];
+    /** 마지막으로 내준 화면과 그 시각. */
+    lastScreen: { screen: string; at: number } | null;
+    /** 인증서 창 차례가 시작된 시각(C04). */
+    certAt: number;
   };
   /** 사람: 로그인을 마쳤다(로그인 화면이 메인으로 넘어간다). */
   login(): void;
@@ -426,7 +430,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [] };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -462,6 +466,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     const u = new URL(req.url ?? '/', 'http://x');
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn);
+      state.lastScreen = { screen, at: Date.now() };
       return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin));
@@ -490,6 +495,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       }
       case 'ATEETBAA002C04':
         state.stage = 'cert';
+        state.certAt = Date.now();
         return { ok: true };
       case 'ATEETBAA002C05': {
         state.stage = 'signed';
