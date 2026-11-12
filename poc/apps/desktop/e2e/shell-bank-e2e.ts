@@ -79,7 +79,7 @@ async function flow() {
   await sleep(30);
   await click('[data-act="bank-invoices"]');
   await click('[data-bank-tab="unpaid"]').catch(() => {});
-  check('발급목록 → 못 받은 돈 2건(기한 지남)', await until('unpaid', async () => (await js<number>(`document.querySelectorAll('[data-bank-row][data-bank-status="unpaid"]').length`)) === 2));
+  check('발급목록만 있고 거래내역이 없으면 2건 모두 "확인 못 함"(못 받음이라고 하지 않는다)', await until('unknown', async () => (await count('[data-bank-row][data-bank-status="unknown"]')) === 2 && (await text('[data-bank-row]')).split('확인 못 함').length === 3), await text('[data-bank-row]'));
 
   // 3) 은행 거래내역(HTML 표 .xls): a에 330만(입금자 처음 보는 이름), b에 110만(상호 그대로), 이자
   queue.push(enc(`<html><head><meta charset="utf-8"></head><body><table><tr><td>계좌번호 : 999-88-7776665</td></tr><tr><th>거래일시</th><th>적요</th><th>기재내용</th><th>찾으신금액</th><th>맡기신금액</th><th>잔액</th></tr>
@@ -92,6 +92,9 @@ async function flow() {
   check('거래내역 미리보기(열 자동 인식, 입금 3줄)', await until('preview', async () => (await text('[data-bank-preview] h2')).includes('입금 3줄')));
   await click('[data-act="bank-commit"]');
   check('넣기 → 확인할 입금 탭', await until('review', async () => (await count('[data-bank-txn]')) >= 3));
+  await click('[data-bank-tab="unpaid"]');
+  check('새 거래내역을 넣으면 "못 받음"으로 바뀐다', await until('unpaid', async () => (await count('[data-bank-row][data-bank-status="unpaid"]')) === 2), await text('[data-bank-row]'));
+  await click('[data-bank-tab="review"]');
 
   // 4) 후보 [맞아요] → 별칭 제안 → [기억하기]
   const candText = await text('[data-bank-txn]');
@@ -111,6 +114,11 @@ async function flow() {
   check('받은 돈 2건', await until('received', async () => (await count('[data-bank-row]')) === 2));
   await js(`[...document.querySelectorAll('[data-bank-row]')].find((e) => e.textContent.includes(${JSON.stringify(b.name)})).click()`);
   await until('detail', async () => (await count('[data-act="bank-detach"]')) === 1);
+  // 1280×860에서 상세를 열어도 목록 칸이 표 높이 그대로다(머리줄만 남지 않는다)
+  S!.win.setContentSize(1280, 860);
+  await sleep(150);
+  const box = await js<{ box: number; table: number }>(`(() => { const b = document.querySelector('[data-view="bank"] .list-box'); return { box: b.getBoundingClientRect().height, table: b.querySelector('table').getBoundingClientRect().height }; })()`);
+  check('상세를 열어도 목록 칸이 접히지 않는다', box.box >= box.table, box);
   await click('[data-act="bank-detach"]');
   await click('[data-bank-tab="unpaid"]');
   check('[떼기] → b 건이 못 받은 돈으로', await until('detached', async () => (await text('[data-bank-row]')).includes(b.name)));
@@ -136,14 +144,14 @@ async function flow() {
   await js(`document.querySelector('[data-cp-row="${a.id}"]').click()`);
   check('거래처 상세: 계좌·입금자 이름 칸, 기억한 별칭', await until('cp bank', async () => (await text('[data-bank-cp]')).includes('김철수')));
 
-  // 8) 대화: 로컬 답(해석기·모델 없음)
+  // 8) 대화: 받을 돈 화면이 대화 문장을 가로채지 않는다(대화는 해석기·모델 길 하나)
   await click('[data-view="chat"]');
   await until('chat', async () => (await count('#composer')) === 1);
-  const n0 = seen.length;
-  await js(`(() => { const t = document.querySelector('#composer'); t.value = '못 받은 돈 있어?'; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
-  check('대화 "못 받은 돈 있어?" → 로컬 답 카드', await until('answer', async () => (await count('[data-bank-answer]')) === 1), await text('.sx-thread .sx-app'));
-  check('받을 돈 질문은 해석기·모델로 가지 않는다', seen.length === n0, seen.slice(n0));
-  check('답: 못 받은 돈 없음', (await text('[data-bank-answer]')).includes('없어요'), await text('[data-bank-answer]'));
+  for (const t of ['세금계산서 보냈어?', '직원 월급 줬어?', '부가세 냈어?', '못 받은 돈 있어?']) {
+    await js(`(() => { const t = document.querySelector('#composer'); t.value = ${JSON.stringify(t)}; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    check(`"${t}"는 해석기로 간다`, await until(`sent ${t}`, async () => seen.includes(t)), seen.slice(-4));
+  }
+  check('대화에 받을 돈 가로채기 카드가 없다', (await count('[data-bank-answer]')) === 0 && !(await text('.sx-thread')).includes('받을 돈 건을 찾지 못했어요'));
 }
 
 app.whenReady().then(async () => {
