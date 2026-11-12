@@ -27,6 +27,13 @@ describe('마스킹 최소판', () => {
     assert.match(apply('330만원', { runId: 'r' }, { needsAmounts: true, frame: 'none' }).redacted, /^330만원$/);
   });
 
+  it('"원" 없이 쓴 만·억 단위 금액도 가리고, 개수·날짜·"만큼"은 그대로 둔다', () => {
+    const one = (s: string) => apply(s, { runId: 'r' }, { frame: 'none' }).redacted;
+    for (const s of ['50만', '110만', '3백만', '2천만', '1,100만', '1.5억', '1억 2천', '1억 2천만원', '50만 3천원']) assert.equal(one(s), '[AMT_1]', s);
+    assert.equal(one('A상쓰에 50만 세계 끊어줘'), 'A상쓰에 [AMT_1] 세계 끊어줘');
+    for (const s of ['3건', '2개', '1장', '2026-11-12', '11월 12일', '50만명', '50만 명', '10만큼', '3년만에', '이만 갈게', '천만에요']) assert.equal(one(s), s, s);
+  });
+
   it('보이지 않는 문자(U+00AD·U+200E·U+034F·U+FE0F)를 끼워도 식별자·구분자를 놓치지 않고 트립와이어도 같은 정규화를 쓴다(N-35)', () => {
     for (const c of ['\u00ad', '\u200e', '\u034f', '\ufe0f']) {
       const hex = `U+${c.codePointAt(0)!.toString(16)}`;
