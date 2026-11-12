@@ -9,7 +9,7 @@ import { after, before, describe, it } from 'node:test';
 import { ColumnCipher, CounterpartyRepo, normalizePayerName, openDatabase, ProfileRepo, RunRepo, syntheticBizNo, type Db } from '@sax/db';
 import { parseBankStatement, parseHometaxIssueList, type Cell } from '@sax/docparse';
 import { readCsv, type SheetOutput } from '@sax/docparse/sandbox';
-import { BankService, dueDate, rowKeys, runMatch, type ReceivableView, type TxnView } from '@sax/engine';
+import { BankService, dueDate, rowKeys, runMatch, sourceRowsToInput, SourceError, type ReceivableView, type RefreshJob, type SourceRow, type TxnSource, type TxnView } from '@sax/engine';
 import { BANK_COMMANDS, BANK_READ_QUERIES, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 
 const sheet = (rows: Cell[][], name = 'Sheet1'): SheetOutput => ({
@@ -326,5 +326,147 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.ok(r.removedAllocs >= 2);
     const o = await call<Overview>('db.query.bank.overview');
     assert.equal(o.received.length, 0);
+  });
+});
+
+describe('거래내역 원천: 파일 | 자동 연결(가짜 원천)', () => {
+  let dir: string;
+  let db: Db;
+  let pid: string;
+  let svc: BankService;
+  let acct: string;
+  const cipher = new ColumnCipher(new Uint8Array(randomBytes(32)));
+  const call = <T>(m: string, p: Record<string, unknown> = {}) => svc.handle(m, { profileId: pid, ...p }) as Promise<T>;
+  const code = (p: Promise<unknown>, c: string) => assert.rejects(p, (e: Error & { code?: string }) => e.code === c, c);
+  const txnCount = () => Number(db.prepare('SELECT count(*) FROM bank_txns WHERE account_id = ?').pluck().get(acct));
+  /** 가짜 원천: 다음 fetch가 돌려줄 행·실패·멈춤을 고른다 */
+  const fake = { rows: [] as SourceRow[], fail: null as string | null, gate: null as Promise<void> | null, calls: [] as Array<{ number: string; from: string; to: string }> };
+  const source: TxnSource = {
+    kind: 'auto',
+    provider: 'fakesrc',
+    async fetch(account, range, { onProgress }) {
+      fake.calls.push({ number: account.number, ...range });
+      onProgress?.({ state: 'requested', jobs: 2 });
+      onProgress?.({ state: 'running', done: 1, jobs: 2 });
+      if (fake.gate) await fake.gate;
+      if (fake.fail) throw new SourceError(fake.fail);
+      return { rows: fake.rows, range };
+    },
+  };
+  const settle = async (): Promise<RefreshJob> => {
+    for (let i = 0; i < 200; i++) {
+      const j = await call<RefreshJob | null>('db.query.bank.refreshStatus', { accountId: acct });
+      if (j && (j.state === 'done' || j.state === 'failed')) return j;
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    throw new Error('refresh did not settle');
+  };
+  type Acct = { id: string; linkState: string; linkProvider: string | null; linkError: string | null; canRefresh: boolean };
+  const account = async () => (await call<Acct[]>('db.query.bank.accounts')).find((a) => a.id === acct)!;
+
+  before(async () => {
+    dir = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'sax-bank-src-'));
+    db = openDatabase(path.join(dir, 'db.sqlite'), new Uint8Array(randomBytes(32)));
+    pid = new ProfileRepo(db).upsert({ kind: 'business', displayName: '하늘상회', bizNo: syntheticBizNo(50), corpNo: null, repName: '김하늘', bizType: null, bizItem: null, address: null, email: null, signMethod: null }).id;
+    svc = new BankService(db, cipher, new Uint8Array(randomBytes(32)), { vaultDir: path.join(dir, 'vault'), now: () => new Date('2026-11-12T01:00:00Z') });
+    await call('bank.consent', { version: '09-v1' });
+    acct = (await call<{ id: string }>('bank.addAccount', { bank: '우리', number: '1002-000-111222' })).id;
+  });
+  after(() => {
+    svc.dispose();
+    db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('원천 행 → 넣기 줄: 입금자는 원천이 아는 칸, 없으면 적요 첫 칸, 입출금이 같이 있으면 두 줄', () => {
+    const out = sourceRowsToInput('fakesrc', [
+      { sourceId: 't1', occurredAt: '2026-11-10 09:30:00', deposit: 5000, withdrawal: 0, balance: 10_000, remarks: [null, ' 김철수 ', '타행'], memo: null },
+      { sourceId: null, occurredAt: '2026-11-10', deposit: 100, withdrawal: 200, balance: null, remarks: ['적요'], memo: '메모', payer: '박영희' },
+      { sourceId: 'bad', occurredAt: '11/10', deposit: 1, withdrawal: 0, balance: null, remarks: [], memo: null },
+    ]);
+    assert.equal(out.length, 3);
+    assert.deepEqual([out[0]!.payer, out[0]!.memo, out[0]!.occurredAt, out[0]!.direction], ['김철수', '타행', '2026-11-10 09:30:00', 'in']);
+    assert.match(String(out[0]!.sourceKey), /^[0-9a-f]{32}:in$/);
+    assert.deepEqual([out[1]!.payer, out[1]!.memo, out[2]!.direction, out[2]!.sourceKey], ['박영희', '적요 메모', 'out', null]);
+  });
+
+  it('연결 상태: 처음은 파일만, 파일만 계좌는 최신화할 수 없고 원천이 꽂히지 않으면 못 쓴다', async () => {
+    let a = await account();
+    assert.deepEqual([a.linkState, a.linkProvider, a.canRefresh], ['file_only', null, false]);
+    await code(call('bank.refresh', { accountId: acct }), 'source.not_linked');
+    await code(call('bank.setLink', { accountId: acct, state: 'auto_connected' }), 'bad_provider');
+    await call('bank.setLink', { accountId: acct, state: 'auto_connected', provider: 'fakesrc' });
+    a = await account();
+    assert.deepEqual([a.linkState, a.canRefresh], ['auto_connected', false]);
+    await code(call('bank.refresh', { accountId: acct }), 'source.not_available');
+    svc.registerSource(source);
+    assert.equal((await account()).canRefresh, true);
+  });
+
+  it('파일로 넣은 줄과 같은 거래는 자동 원천이 다시 넣지 않고, 원천 id가 같은 줄은 두 번 들어가지 않는다', async () => {
+    await call('bank.importTxns', { accountId: acct, rows: [
+      { occurredAt: '2026-11-03', day: '2026-11-03', direction: 'in', amount: 3_300_000, balance: 5_300_000, payer: '김철수', memo: null },
+      { occurredAt: '2026-11-04', day: '2026-11-04', direction: 'out', amount: 12_000, balance: 5_288_000, payer: '편의점', memo: null },
+    ] });
+    fake.rows = [
+      { sourceId: 'x1', occurredAt: '2026-11-03 14:22:10', deposit: 3_300_000, withdrawal: 0, balance: 5_300_000, remarks: ['김철수'], memo: null },
+      { sourceId: 'x2', occurredAt: '2026-11-04 09:00:00', deposit: 0, withdrawal: 12_000, balance: 5_288_000, remarks: ['편의점'], memo: null },
+      { sourceId: 'x3', occurredAt: '2026-11-11 10:00:00', deposit: 770_000, withdrawal: 0, balance: 6_058_000, remarks: ['이에이'], memo: null },
+    ];
+    const started = await call<RefreshJob>('bank.refresh', { accountId: acct });
+    assert.equal(started.state, 'requested');
+    assert.deepEqual(started.range, { from: '2026-11-03', to: '2026-11-12' }, '마지막 거래일 하루 전부터 오늘까지');
+    const j = await settle();
+    assert.equal(j.state, 'done');
+    assert.deepEqual([j.result!.rows, j.result!.newCount, j.result!.duplicateCount], [3, 1, 2]);
+    assert.equal(txnCount(), 3);
+    assert.equal(fake.calls[0]!.number, '1002000111222', '원천은 계좌번호 전체를 받는다');
+    assert.ok(!JSON.stringify(j).includes('1002000111222'), '진행 상태에 계좌번호 없음');
+    // 같은 원천 id를 다시 받아도(시각이 달라도) 한 줄
+    fake.rows = [{ ...fake.rows[2]!, occurredAt: '2026-11-11 10:00:01' }];
+    await call('bank.refresh', { accountId: acct });
+    assert.equal((await settle()).result!.newCount, 0);
+    assert.equal(txnCount(), 3);
+    const imp = db.prepare("SELECT source, provider FROM bank_imports WHERE source = 'auto' LIMIT 1").get() as { source: string; provider: string };
+    assert.deepEqual({ ...imp }, { source: 'auto', provider: 'fakesrc' });
+    // 반대로, 자동으로 받은 줄을 파일로 다시 올려도 두 번 들어가지 않는다
+    const back = await call<{ newCount: number }>('bank.importTxns', { accountId: acct, rows: [{ occurredAt: '2026-11-11', day: '2026-11-11', direction: 'in', amount: 770_000, balance: 6_058_000, payer: '이에이', memo: null }] });
+    assert.equal(back.newCount, 0);
+  });
+
+  it('진행 상태를 낸다, 이미 도는 중이면 같은 진행을 돌려준다', async () => {
+    let open!: () => void;
+    fake.gate = new Promise((r) => (open = r));
+    fake.rows = [];
+    const a = await call<RefreshJob>('bank.refresh', { accountId: acct });
+    await new Promise((r) => setTimeout(r, 5));
+    const mid = await call<RefreshJob>('db.query.bank.refreshStatus', { accountId: acct });
+    assert.deepEqual([mid.state, mid.done, mid.jobs], ['running', 1, 2]);
+    assert.equal((await call<RefreshJob>('bank.refresh', { accountId: acct })).id, a.id);
+    assert.equal(typeof (await call('db.query.bank.overview')), 'object', '수집 중에도 다른 명령은 막히지 않는다');
+    open();
+    fake.gate = null;
+    assert.equal((await settle()).state, 'done');
+  });
+
+  it('원천이 실패해도 이미 들인 줄은 그대로, 계좌는 자동 오류(코드)로 남고 다음 성공에 돌아온다', async () => {
+    const before = txnCount();
+    fake.fail = 'source.cert_expired';
+    await call('bank.refresh', { accountId: acct });
+    const j = await settle();
+    assert.deepEqual([j.state, j.code], ['failed', 'source.cert_expired']);
+    assert.equal(txnCount(), before);
+    let a = await account();
+    assert.deepEqual([a.linkState, a.linkError, a.canRefresh], ['auto_error', 'source.cert_expired', true]);
+    fake.fail = null;
+    fake.rows = [];
+    await call('bank.refresh', { accountId: acct });
+    assert.equal((await settle()).state, 'done');
+    a = await account();
+    assert.deepEqual([a.linkState, a.linkError], ['auto_connected', null]);
+    await call('bank.setLink', { accountId: acct, state: 'file_only' });
+    a = await account();
+    assert.deepEqual([a.linkState, a.linkProvider, a.canRefresh], ['file_only', null, false]);
+    await code(call('bank.refresh', { accountId: acct }), 'source.not_linked');
   });
 });

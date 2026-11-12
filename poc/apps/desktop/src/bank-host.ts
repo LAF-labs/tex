@@ -243,10 +243,10 @@ export function bankQuestion(text: string, today: string): BankQuestion | null {
 export const isPayableQuestion = (text: string) => /(안\s*낸|못\s*낸|낼\s*돈|미지급)/.test(text);
 export const PAYABLE_LATER_TEXT = '아직 받은 세금계산서(매입)는 맞추지 않아요. 지금은 받을 돈(매출)만 볼 수 있어요.';
 
-// ---- 렌더러 처리기(파일 고르기 둘은 shell-app이 needGesture와 함께 둔다) ----
+// ---- 렌더러 처리기(파일 고르기 둘·최신화는 shell-app이 needGesture와 함께 둔다) ----
 
 type BankMethods = typeof BANK_SHELL_METHODS;
-type Handlers = { [M in Exclude<keyof BankMethods, 'bank.pickStatement' | 'bank.pickInvoices'>]: (p: ParamsOf<BankMethods[M]>) => unknown };
+type Handlers = { [M in Exclude<keyof BankMethods, 'bank.pickStatement' | 'bank.pickInvoices' | 'bank.refresh'>]: (p: ParamsOf<BankMethods[M]>) => unknown };
 
 export function bankShellHandlers(b: BankHost, after: () => void): Handlers {
   // 맞춤이 바뀌는 명령 뒤에는 판을 다시 계산한다(못 받은 돈·확인할 입금 카드)
@@ -262,6 +262,11 @@ export function bankShellHandlers(b: BankHost, after: () => void): Handlers {
     'bank.addAccount': (p) => b.call('bank.addAccount', { bank: p.bank, number: p.number, alias: p.alias }),
     'bank.deleteAccount': (p) => changed(b.call('bank.deleteAccount', { id: p.id })),
     'bank.revealAccount': (p) => b.call('bank.revealAccount', { id: p.id }),
+    'bank.refreshStatus': async (p) => {
+      const j = (await b.call('db.query.bank.refreshStatus', { accountId: p.accountId })) as { state?: string } | null;
+      if (j?.state === 'done') after();
+      return j;
+    },
     'bank.previewStatement': (p) => b.previewStatement(p.token, p.columns),
     'bank.commitStatement': (p) => changed(b.commitStatement(p.token, p.accountId, p.columns)),
     'bank.cancelStatement': () => b.cancelStatement(),

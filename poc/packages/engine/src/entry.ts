@@ -154,6 +154,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
+  // 자동 연결 원천(bank/source.ts TxnSource)은 여기서 bank.registerSource(...)로 꽂는다(계좌 link_provider가 고른다).
   bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;

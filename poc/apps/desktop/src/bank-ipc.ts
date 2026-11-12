@@ -17,6 +17,9 @@ export const BANK_SHELL_METHODS = {
   'bank.addAccount': { bank: { t: 'string', max: 40, required: true }, number: { t: 'string', max: 40, required: true }, alias: { t: 'string', max: 60 } },
   'bank.deleteAccount': { id: ID },
   'bank.revealAccount': { id: ID },
+  // 자동 연결 계좌 최신화(원천 → 넣기 → 맞추기). 시작만 하고 돌아온다. 진행은 refreshStatus로 본다
+  'bank.refresh': { accountId: ID },
+  'bank.refreshStatus': { accountId: ID },
   'bank.pickStatement': {},
   'bank.previewStatement': { token: { t: 'string', max: 32, required: true }, columns: COLS },
   'bank.commitStatement': { token: { t: 'string', max: 32, required: true }, accountId: ID, columns: COLS },

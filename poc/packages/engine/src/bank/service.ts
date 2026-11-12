@@ -1,14 +1,15 @@
 // 돈 맞추기 1단계(09): 내 계좌·거래내역 넣기·받을 돈 건(원장 + 홈택스 발급 목록)·맞추기·수동 체크·되돌리기·기록.
 // main 전용 명령이다(계좌번호·입금자명·금액이 오간다, protocol BANK_*). 파일은 main이 docparse 샌드박스에서 읽어 다듬은 줄만 보낸다.
 // 엔진은 원본 파일을 열지 않고 보관함에 그대로 둔다(대표 결정 ⑦, 지울 수 있음). 모델·네트워크를 쓰지 않는다.
-// 거래내역 "원천"은 회차의 source(file | quick | api)다. 빠른조회 IR 패키지·자동 연결은 같은 importTxns로 줄을 넣으면 된다(3단계 자리).
+// 거래내역 "원천"은 회차의 source(file | auto)다. 자동 연결 원천(source.ts TxnSource, 예: CODEF)은 registerSource로 꽂고 bank.refresh가 원천 → 넣기 → 맞추기를 한다.
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   BankRepo, CounterpartyRepo, DocumentRepo, isValidBizNo, normalizePayerName, normalizePayTerms, ProfileRepo, ValidationError,
-  type Alloc, type AllocMethod, type BankTxn, type ColumnCipher, type Db, type PayTerms, type Receivable, type ReceivableEvent, type TxnInput, type TxnSource,
+  type Alloc, type AllocMethod, type BankTxn, type ColumnCipher, type Db, type PayTerms, type Receivable, type ReceivableEvent, type TxnInput,
 } from '@sax/db';
+import { SourceError, type SourceProgress, type SourceRow, type TxnSource } from './source.ts';
 import { addDays, FEE_TOLERANCE, runMatch, type Candidate, type MatchCounterparty, type MatchReceivable, type MatchTxn } from './match.ts';
 
 export class BankError extends Error {
@@ -126,6 +127,38 @@ export interface BankServiceOptions {
   now?: () => Date;
 }
 
+/** 최신화 한 번의 진행(계좌마다 하나). 값(계좌번호·거래)은 담지 않는다 */
+export interface RefreshJob {
+  id: string;
+  accountId: string;
+  state: 'requested' | 'waiting' | 'running' | 'done' | 'failed';
+  done?: number;
+  jobs?: number;
+  range: { from: string; to: string };
+  startedAt: string;
+  finishedAt: string | null;
+  code: string | null;
+  result: { rows: number; newCount: number; duplicateCount: number; match: { auto: number; review: number; unknown: number } } | null;
+}
+
+/** 원천 행 → 넣기 줄. 입금자는 원천이 아는 칸, 없으면 적요 첫 칸. 나머지 적요는 메모로 */
+export function sourceRowsToInput(provider: string, rows: SourceRow[]): Array<Record<string, unknown>> {
+  return rows.flatMap((r) => {
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[ T](\d{2}:\d{2}(?::\d{2})?))?$/.exec(typeof r.occurredAt === 'string' ? r.occurredAt : '');
+    if (!m) return [];
+    const remarks = (Array.isArray(r.remarks) ? r.remarks : []).map((x) => (typeof x === 'string' ? x.trim() : '')).filter(Boolean);
+    const payer = typeof r.payer === 'string' && r.payer.trim() ? r.payer.trim() : (remarks[0] ?? null);
+    const rest = remarks.filter((x) => x !== payer);
+    const memo = [...rest, typeof r.memo === 'string' ? r.memo.trim() : ''].filter(Boolean).join(' ') || null;
+    const base = { day: m[1], occurredAt: m[2] ? `${m[1]} ${m[2]}` : m[1], balance: Number.isSafeInteger(r.balance) ? r.balance : null, payer, memo };
+    const sid = typeof r.sourceId === 'string' && r.sourceId ? createHash('sha256').update(`${provider}|${r.sourceId}`).digest('hex').slice(0, 32) : null;
+    const out: Array<Record<string, unknown>> = [];
+    if (Number.isSafeInteger(r.deposit) && r.deposit > 0) out.push({ ...base, direction: 'in', amount: r.deposit, sourceKey: sid && `${sid}:in` });
+    if (Number.isSafeInteger(r.withdrawal) && r.withdrawal > 0) out.push({ ...base, direction: 'out', amount: r.withdrawal, sourceKey: sid && `${sid}:out` });
+    return out;
+  });
+}
+
 const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
 
 export class BankService {
@@ -134,12 +167,20 @@ export class BankService {
   readonly repo: BankRepo;
   private readonly opts: BankServiceOptions;
   private chain: Promise<unknown> = Promise.resolve();
+  private readonly sources = new Map<string, TxnSource>();
+  private readonly jobs = new Map<string, RefreshJob & { abort: AbortController }>();
 
   constructor(db: Db, cipher: ColumnCipher, hmacKey: Uint8Array, opts: BankServiceOptions) {
     this.db = db;
     this.cipher = cipher;
     this.repo = new BankRepo(db, cipher, hmacKey);
     this.opts = opts;
+  }
+
+  /** 자동 연결 원천을 꽂는다(공급자 이름마다 하나). 계좌의 link_provider가 고른다 */
+  registerSource(src: TxnSource): void {
+    if (src.kind !== 'auto' || !/^[a-z0-9_-]{1,40}$/.test(src.provider)) throw new BankError('bad_provider');
+    this.sources.set(src.provider, src);
   }
 
   private now(): Date {
@@ -153,14 +194,28 @@ export class BankService {
   }
 
   async handle(method: string, p: Params): Promise<unknown> {
-    const run = this.chain.then(() => this.dispatch(method, p ?? {}));
-    this.chain = run.catch(() => {});
+    // 최신화는 원천 수집이 오래 걸릴 수 있어 줄 밖에서 시작만 하고 바로 돌아온다(넣기·맞추기는 다시 줄을 탄다)
+    if (method === 'bank.refresh' || method === 'db.query.bank.refreshStatus') {
+      try {
+        return method === 'bank.refresh' ? this.refresh(p ?? {}) : this.refreshStatus(p ?? {});
+      } catch (e) {
+        if (e instanceof ValidationError) throw new BankError(e.code);
+        throw e;
+      }
+    }
     try {
-      return await run;
+      return await this.serial(() => this.dispatch(method, p ?? {}));
     } catch (e) {
       if (e instanceof ValidationError) throw new BankError(e.code);
       throw e;
     }
+  }
+
+  /** 명령은 한 줄로 차례대로 돈다 */
+  private serial<T>(fn: () => T | Promise<T>): Promise<T> {
+    const run = this.chain.then(fn);
+    this.chain = run.catch(() => {});
+    return run;
   }
 
   private profile(v: unknown): string {
@@ -195,6 +250,8 @@ export class BankService {
         return this.repo.updateAccount(this.ownAccount(p), { alias: p.alias, usage: p.usage, bank: p.bank });
       case 'bank.deleteAccount':
         return this.repo.deleteAccount(this.ownAccount(p));
+      case 'bank.setLink':
+        return this.setLink(p);
       case 'bank.revealAccount':
         return { number: this.repo.revealAccount(this.ownAccount(p)) };
       case 'bank.importTxns':
@@ -354,14 +411,108 @@ export class BankService {
     const last = this.db.prepare('SELECT max(day) FROM bank_txns WHERE account_id = ?').pluck();
     const count = this.db.prepare('SELECT count(*) FROM bank_txns WHERE account_id = ?').pluck();
     const lastImport = this.db.prepare('SELECT created_at FROM bank_imports WHERE account_id = ? ORDER BY created_at DESC LIMIT 1').pluck();
-    return this.repo.accounts(pid).map((a) => ({ ...a, source: 'file' as TxnSource, lastDay: (last.get(a.id) as string | null) ?? null, txnCount: Number(count.get(a.id)), lastImportAt: (lastImport.get(a.id) as string | undefined) ?? null }));
+    return this.repo.accounts(pid).map((a) => ({ ...a, canRefresh: a.linkState !== 'file_only' && !!a.linkProvider && this.sources.has(a.linkProvider), refresh: this.jobView(this.jobs.get(a.id)), lastDay: (last.get(a.id) as string | null) ?? null, txnCount: Number(count.get(a.id)), lastImportAt: (lastImport.get(a.id) as string | undefined) ?? null }));
+  }
+
+  // ---- 원천 연결·최신화 ----
+
+  /** bank.setLink {profileId, accountId, state: file_only|auto_connected|auto_error, provider?, error?} — 자동 연결 세션이 연결·끊기 때 부른다 */
+  private setLink(p: Params) {
+    const id = this.ownAccount(p);
+    const state = p.state === 'file_only' || p.state === 'auto_connected' || p.state === 'auto_error' ? p.state : fail('bad_link_state');
+    if (state === 'file_only') this.jobs.get(id)?.abort.abort();
+    return this.repo.setLink(id, { state, provider: typeof p.provider === 'string' ? p.provider : null, error: typeof p.error === 'string' ? p.error : null }, this.at());
+  }
+
+  private jobView(j: (RefreshJob & { abort: AbortController }) | undefined): RefreshJob | null {
+    if (!j) return null;
+    return { id: j.id, accountId: j.accountId, state: j.state, done: j.done, jobs: j.jobs, range: { ...j.range }, startedAt: j.startedAt, finishedAt: j.finishedAt, code: j.code, result: j.result };
+  }
+
+  /** db.query.bank.refreshStatus {profileId, accountId} → RefreshJob | null */
+  private refreshStatus(p: Params): RefreshJob | null {
+    return this.jobView(this.jobs.get(this.ownAccount(p)));
+  }
+
+  /**
+   * bank.refresh {profileId, accountId, from?, to?} → RefreshJob(시작 상태). 원천 수집 → 넣기(source auto) → 맞추기.
+   * 기간 기본: 마지막 거래일 하루 전(없으면 90일 전) ~ 오늘. 이미 도는 중이면 그 진행을 돌려준다.
+   * 실패하면 이미 들인 줄은 그대로 두고 계좌 연결 상태만 자동 오류(코드)로 바꾼다.
+   */
+  private refresh(p: Params): RefreshJob {
+    const pid = this.profile(p.profileId);
+    const id = this.ownAccount(p);
+    const running = this.jobs.get(id);
+    if (running && running.state !== 'done' && running.state !== 'failed') return this.jobView(running)!;
+    const acct = this.repo.account(id)!;
+    if (acct.linkState === 'file_only' || !acct.linkProvider) return fail('source.not_linked');
+    const src = this.sources.get(acct.linkProvider) ?? fail('source.not_available');
+    const today = this.today();
+    const last = this.db.prepare('SELECT max(day) FROM bank_txns WHERE account_id = ?').pluck().get(id) as string | null;
+    const from = typeof p.from === 'string' && ISO.test(p.from) ? p.from : last ? addDays(last, -1) : addDays(today, -90);
+    const to = typeof p.to === 'string' && ISO.test(p.to) && p.to <= today ? p.to : today;
+    if (from > to) return fail('bad_range');
+    const job: RefreshJob & { abort: AbortController } = {
+      id: randomUUID(), accountId: id, state: 'requested', range: { from, to }, startedAt: this.at(), finishedAt: null, code: null, result: null, abort: new AbortController(),
+    };
+    this.jobs.set(id, job);
+    const first = this.jobView(job)!;
+    void this.runRefresh(pid, acct.id, src, job);
+    return first;
+  }
+
+  private async runRefresh(pid: string, accountId: string, src: TxnSource, job: RefreshJob & { abort: AbortController }) {
+    const finish = (state: 'done' | 'failed', code: string | null) => {
+      job.state = state;
+      job.code = code;
+      job.finishedAt = this.at();
+    };
+    try {
+      const a = this.repo.account(accountId);
+      const number = a ? this.repo.revealAccount(accountId) : null;
+      if (!a || !number) throw new SourceError('source.not_linked');
+      const onProgress = (pr: SourceProgress) => {
+        if (job.state === 'done' || job.state === 'failed') return;
+        if (pr.state === 'requested' || pr.state === 'waiting' || pr.state === 'running') {
+          job.state = pr.state;
+          if ('done' in pr && pr.done !== undefined) job.done = pr.done;
+          if (pr.jobs !== undefined) job.jobs = pr.jobs;
+        }
+      };
+      const got = await src.fetch({ id: a.id, profileId: pid, bank: a.bank, number, last4: a.last4 }, job.range, { onProgress, signal: job.abort.signal });
+      if (job.abort.signal.aborted) throw new SourceError('source.cancelled');
+      const rows = sourceRowsToInput(src.provider, Array.isArray(got?.rows) ? got.rows : []);
+      // 넣기·맞추기는 다른 명령과 같은 줄에서(계좌가 그새 지워졌으면 account_not_found)
+      const result = await this.serial(() => this.importAuto(pid, accountId, src.provider, rows, got?.range ?? job.range));
+      job.result = { rows: rows.length, ...(result as Omit<NonNullable<RefreshJob['result']>, 'rows'>) };
+      finish('done', null);
+    } catch (e) {
+      const code = e instanceof SourceError ? e.code : e instanceof BankError ? e.code : 'source.failed';
+      finish('failed', /^[a-z0-9_.-]{1,80}$/i.test(code) ? code : 'source.failed');
+    }
+    // 연결 상태는 줄에서 바꾼다(그새 계좌가 지워졌거나 연결을 끊었으면 그대로 둔다)
+    await this.serial(() => {
+      const a = this.repo.account(accountId);
+      if (!a || a.linkState === 'file_only') return;
+      this.repo.setLink(accountId, job.code ? { state: 'auto_error', provider: src.provider, error: job.code } : { state: 'auto_connected', provider: src.provider }, this.at());
+    }).catch(() => {});
+  }
+
+  /** 줄 안에서: 자동 원천 행 넣기 + 맞추기 */
+  private importAuto(pid: string, accountId: string, provider: string, raw: Array<Record<string, unknown>>, range: unknown) {
+    if (!this.repo.account(accountId)) return fail('account_not_found');
+    const rows = this.txnRows(raw);
+    if (!rows.length) return { newCount: 0, duplicateCount: 0, match: { auto: 0, review: 0, unknown: 0 } };
+    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'auto', provider, documentId: null, format: { range }, rows }, this.at());
+    const r = this.afterImport(pid, imp, rows.length, newIds);
+    return { newCount: r.newCount, duplicateCount: r.duplicateCount, match: r.match };
   }
 
   // ---- 거래내역 넣기 ----
 
   private txnRows(v: unknown): TxnInput[] {
     if (!Array.isArray(v) || v.length > ROWS_MAX) return fail('bad_rows');
-    const rows = v.map((r): Omit<TxnInput, 'rowKey'> => {
+    const rows = v.map((r): Omit<TxnInput, 'rowKey'> & { sourceKey: string | null } => {
       const o = r as Record<string, unknown>;
       const day = typeof o.day === 'string' && ISO.test(o.day) ? o.day : fail('bad_rows');
       const occurredAt = typeof o.occurredAt === 'string' && o.occurredAt.startsWith(day) && o.occurredAt.length <= 19 ? o.occurredAt : fail('bad_rows');
@@ -369,10 +520,12 @@ export class BankService {
       const amount = Number.isSafeInteger(o.amount) && (o.amount as number) > 0 ? (o.amount as number) : fail('bad_rows');
       const balance = o.balance === null || o.balance === undefined ? null : Number.isSafeInteger(o.balance) ? (o.balance as number) : fail('bad_rows');
       const text = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim().slice(0, 120) : null);
-      return { day, occurredAt, direction, amount, balance, payer: text(o.payer), memo: text(o.memo), counterAccount: typeof o.counterAccount === 'string' ? o.counterAccount.slice(0, 40) : null };
+      const sourceKey = typeof o.sourceKey === 'string' && /^[0-9a-f]{32}:(in|out)$/.test(o.sourceKey) ? o.sourceKey : null;
+      return { day, occurredAt, direction, amount, balance, payer: text(o.payer), memo: text(o.memo), counterAccount: typeof o.counterAccount === 'string' ? o.counterAccount.slice(0, 40) : null, sourceKey };
     });
     const keys = rowKeys(rows);
-    return rows.map((r, i) => ({ ...r, rowKey: keys[i]! }));
+    // 원천 고유 id가 있으면 그것이 줄 열쇠다(같은 거래를 다시 받아도 한 줄)
+    return rows.map(({ sourceKey, ...r }, i) => ({ ...r, rowKey: sourceKey ? createHash('sha256').update(`src|${sourceKey}`).digest('hex').slice(0, 32) : keys[i]! }));
   }
 
   /**
@@ -382,18 +535,21 @@ export class BankService {
   private async importTxns(p: Params) {
     const pid = this.profile(p.profileId);
     const accountId = this.ownAccount({ profileId: pid, id: p.accountId });
-    const source: TxnSource = p.source === 'quick' || p.source === 'api' ? p.source : 'file';
     const rows = this.txnRows(p.rows);
     if (!rows.length) return fail('no_rows');
     const documentId = await this.keepFile(pid, 'bank_statement', p.file);
-    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source, documentId, format: p.mapping, rows }, this.at());
+    const { import: imp, newIds } = this.repo.importTxns({ profileId: pid, accountId, source: 'file', documentId, format: p.mapping, rows }, this.at());
     this.rememberFormat(p.signature, p.mapping);
+    return this.afterImport(pid, imp, rows.length, newIds);
+  }
+
+  private afterImport(pid: string, imp: unknown, total: number, newIds: string[]) {
     const m = this.rematch(pid);
     const fresh = new Set(newIds);
     return {
       import: imp,
       newCount: newIds.length,
-      duplicateCount: rows.length - newIds.length,
+      duplicateCount: total - newIds.length,
       match: { auto: m.autoTxnIds.filter((t) => fresh.has(t)).length, review: m.review.filter((t) => fresh.has(t)).length, unknown: m.unknown.filter((t) => fresh.has(t)).length },
     };
   }
@@ -973,6 +1129,7 @@ export class BankService {
   }
 
   dispose(): void {
+    for (const j of this.jobs.values()) j.abort.abort();
     this.repo.dispose();
   }
 }

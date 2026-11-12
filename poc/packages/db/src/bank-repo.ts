@@ -4,13 +4,16 @@
 // - 입금자명·적요·예금주는 DB 기본 암호화(SQLCipher)만. 화면·대화로 원문을 보내는 것은 엔진 서비스가 정한다.
 // - 입출금 줄은 (계좌, 줄 열쇠)로 한 번만 들어간다(INSERT OR IGNORE). 줄 열쇠는 엔진이 만든다(계좌·일시·방향·금액·잔액·같은 값 순번).
 // - 맞춤은 지우지 않는다: 떼기·되돌리기는 removed_at을 채운다. 기록(receivable_events)은 더하기만 한다.
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import type { ColumnCipher } from './column.ts';
 import type { Db } from './open.ts';
 import { ValidationError } from './repo.ts';
 
 export type BankUsage = 'in' | 'out' | 'both';
-export type TxnSource = 'file' | 'quick' | 'api';
+/** 거래내역 원천: 파일 | 자동 연결(공급자는 bank_imports.provider) */
+export type BankImportSource = 'file' | 'auto';
+/** 계좌의 원천 연결 상태: 파일만 / 자동 연결됨 / 자동 오류 */
+export type BankLinkState = 'file_only' | 'auto_connected' | 'auto_error';
 export type AllocMethod = 'account' | 'cash' | 'other_account' | 'offset' | 'other' | 'fee';
 export type AllocDecider = 'auto' | 'candidate' | 'manual';
 export type AliasSource = 'manual' | 'learned' | 'holder';
@@ -26,6 +29,10 @@ export interface BankAccount {
   last4: string;
   alias: string | null;
   usage: BankUsage;
+  linkState: BankLinkState;
+  linkProvider: string | null;
+  linkError: string | null;
+  linkCheckedAt: string | null;
   createdAt: string;
 }
 
@@ -87,7 +94,8 @@ export interface BankImport {
   id: string;
   profileId: string;
   accountId: string;
-  source: TxnSource;
+  source: BankImportSource;
+  provider: string | null;
   rangeFrom: string | null;
   rangeTo: string | null;
   rowCount: number;
@@ -194,6 +202,8 @@ export function normalizePayerName(raw: string | null | undefined): string {
 }
 
 const last4 = (d: string) => d.slice(-4);
+/** 원천과 상관없는 같은 줄 열쇠(거래일·방향·금액·잔액) */
+const contentKey = (r: Pick<TxnInput, 'day' | 'direction' | 'amount' | 'balance'>) => createHash('sha256').update([r.day, r.direction, r.amount, r.balance ?? ''].join('|')).digest('hex').slice(0, 32);
 const optText = (v: unknown, max: number, code: string): string | null => {
   if (v === undefined || v === null) return null;
   if (typeof v !== 'string' || v.length > max) throw new ValidationError(code);
@@ -210,7 +220,10 @@ type Row = Record<string, unknown>;
 const s = (v: unknown) => (v === null || v === undefined ? null : String(v));
 const n = (v: unknown) => (v === null || v === undefined ? null : Number(v));
 
-const toAccount = (r: Row): BankAccount => ({ id: String(r.id), profileId: String(r.profile_id), bank: String(r.bank), last4: String(r.last4), alias: s(r.alias), usage: r.usage as BankUsage, createdAt: String(r.created_at) });
+const toAccount = (r: Row): BankAccount => ({
+  id: String(r.id), profileId: String(r.profile_id), bank: String(r.bank), last4: String(r.last4), alias: s(r.alias), usage: r.usage as BankUsage,
+  linkState: r.link_state as BankLinkState, linkProvider: s(r.link_provider), linkError: s(r.link_error), linkCheckedAt: s(r.link_checked_at), createdAt: String(r.created_at),
+});
 const toCpAccount = (r: Row): CpBankAccount => ({ id: String(r.id), counterpartyId: String(r.counterparty_id), bank: s(r.bank), last4: String(r.last4), holder: s(r.holder), usage: r.usage as BankUsage, memo: s(r.memo), createdAt: String(r.created_at) });
 const toAlias = (r: Row): PayerAlias => ({ id: String(r.id), counterpartyId: String(r.counterparty_id), nameNorm: String(r.name_norm), nameRaw: String(r.name_raw), source: r.source as AliasSource, createdAt: String(r.created_at) });
 const toTxn = (r: Row): BankTxn => ({
@@ -219,7 +232,7 @@ const toTxn = (r: Row): BankTxn => ({
   payer: s(r.payer), memo: s(r.memo), counterAccountHmac: s(r.counter_account_hmac), counterAccountLast4: s(r.counter_account_last4),
   ignoredAt: s(r.ignored_at), ignoredReason: s(r.ignored_reason), assignedCounterpartyId: s(r.assigned_counterparty_id),
 });
-const toImport = (r: Row): BankImport => ({ id: String(r.id), profileId: String(r.profile_id), accountId: String(r.account_id), source: r.source as TxnSource, rangeFrom: s(r.range_from), rangeTo: s(r.range_to), rowCount: Number(r.row_count), newCount: Number(r.new_count), documentId: s(r.document_id), createdAt: String(r.created_at) });
+const toImport = (r: Row): BankImport => ({ id: String(r.id), profileId: String(r.profile_id), accountId: String(r.account_id), source: r.source as BankImportSource, provider: s(r.provider), rangeFrom: s(r.range_from), rangeTo: s(r.range_to), rowCount: Number(r.row_count), newCount: Number(r.new_count), documentId: s(r.document_id), createdAt: String(r.created_at) });
 const toReceivable = (r: Row): Receivable => ({
   id: String(r.id), profileId: String(r.profile_id), kind: r.kind as 'sale' | 'purchase', approvalNo: s(r.approval_no), runId: s(r.run_id),
   counterpartyId: s(r.counterparty_id), cpBizNo: s(r.cp_biz_no), cpName: s(r.cp_name), cpRep: s(r.cp_rep), item: s(r.item),
@@ -299,6 +312,16 @@ export class BankRepo {
     const bank = patch.bank === undefined ? cur.bank : optText(patch.bank, BANK_MAX, 'bad_bank');
     if (!bank) throw new ValidationError('bad_bank');
     this.db.prepare('UPDATE bank_accounts SET alias = ?, usage = ?, bank = ? WHERE id = ?').run(alias, usage, bank, id);
+    return this.account(id)!;
+  }
+
+  /** 원천 연결 상태(자동 연결 세션이 연결·끊기·오류 때 쓴다). error는 짧은 코드만 */
+  setLink(id: string, link: { state: BankLinkState; provider?: string | null; error?: string | null }, at: string): BankAccount {
+    if (!['file_only', 'auto_connected', 'auto_error'].includes(link.state)) throw new ValidationError('bad_link_state');
+    const provider = link.state === 'file_only' ? null : optText(link.provider ?? this.account(id)?.linkProvider ?? null, 40, 'bad_provider');
+    if (link.state !== 'file_only' && !provider) throw new ValidationError('bad_provider');
+    const error = link.state === 'auto_error' ? (optText(link.error ?? 'source.failed', 80, 'bad_error') ?? 'source.failed') : null;
+    if (this.db.prepare('UPDATE bank_accounts SET link_state = ?, link_provider = ?, link_error = ?, link_checked_at = ? WHERE id = ?').run(link.state, provider, error, at, id).changes === 0) throw new ValidationError('not_found');
     return this.account(id)!;
   }
 
@@ -395,18 +418,25 @@ export class BankRepo {
   // ---- 가져온 회차·입출금 줄 ----
 
   /** 회차 하나와 줄들을 한 트랜잭션으로. 이미 있는 줄 열쇠는 건너뛴다. 새로 들어간 줄 id를 돌려준다 */
-  importTxns(input: { profileId: string; accountId: string; source: TxnSource; documentId: string | null; format: unknown; rows: TxnInput[] }, at: string): { import: BankImport; newIds: string[] } {
+  /**
+   * 다른 원천이 이미 들인 같은 줄은 건너뛴다: 내용 열쇠(거래일·방향·금액·잔액)가 같은 줄이 다른 원천 회차에 이 묶음 안 순번보다 많이 있으면 같은 줄로 본다.
+   * (파일로 넣은 뒤 자동 연결로 같은 기간을 받아도, 그 반대여도 두 번 들어가지 않는다.) 같은 원천 안의 중복은 줄 열쇠가 막는다.
+   */
+  importTxns(input: { profileId: string; accountId: string; source: BankImportSource; provider?: string | null; documentId: string | null; format: unknown; rows: TxnInput[] }, at: string): { import: BankImport; newIds: string[]; crossSkipped: number } {
     return this.db.transaction(() => {
       const acct = this.account(input.accountId);
       if (!acct || acct.profileId !== input.profileId) throw new ValidationError('account_not_found');
       const id = randomUUID();
       const days = input.rows.map((r) => r.day).sort();
       this.db
-        .prepare('INSERT INTO bank_imports (id, profile_id, account_id, source, range_from, range_to, row_count, new_count, document_id, format_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)')
-        .run(id, input.profileId, input.accountId, input.source, days[0] ?? null, days[days.length - 1] ?? null, input.rows.length, input.documentId, input.format === undefined ? null : JSON.stringify(input.format), at);
-      const ins = this.db.prepare(`INSERT OR IGNORE INTO bank_txns (id, profile_id, account_id, import_id, row_key, occurred_at, day, direction, amount, balance, payer, memo, counter_account_hmac, counter_account_last4)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+        .prepare('INSERT INTO bank_imports (id, profile_id, account_id, source, provider, range_from, range_to, row_count, new_count, document_id, format_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)')
+        .run(id, input.profileId, input.accountId, input.source, input.source === 'auto' ? (input.provider ?? null) : null, days[0] ?? null, days[days.length - 1] ?? null, input.rows.length, input.documentId, input.format === undefined ? null : JSON.stringify(input.format), at);
+      const ins = this.db.prepare(`INSERT OR IGNORE INTO bank_txns (id, profile_id, account_id, import_id, row_key, content_key, occurred_at, day, direction, amount, balance, payer, memo, counter_account_hmac, counter_account_last4)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+      const others = this.db.prepare('SELECT count(*) FROM bank_txns t JOIN bank_imports i ON i.id = t.import_id WHERE t.account_id = ? AND t.content_key = ? AND i.source <> ?').pluck();
+      const nth = new Map<string, number>();
       const newIds: string[] = [];
+      let crossSkipped = 0;
       for (const r of input.rows) {
         if (!Number.isSafeInteger(r.amount) || r.amount <= 0 || r.amount > AMOUNT_MAX) throw new ValidationError('bad_amount');
         let ch: string | null = null;
@@ -420,11 +450,18 @@ export class BankRepo {
             // 번호가 아니면(이름 등) 버린다
           }
         }
+        const ck = contentKey(r);
+        const n = nth.get(ck) ?? 0;
+        nth.set(ck, n + 1);
+        if ((others.get(input.accountId, ck, input.source) as number) > n) {
+          crossSkipped++;
+          continue;
+        }
         const tid = randomUUID();
-        if (ins.run(tid, input.profileId, input.accountId, id, r.rowKey, r.occurredAt, r.day, r.direction, r.amount, r.balance, r.payer, r.memo, ch, cl).changes > 0) newIds.push(tid);
+        if (ins.run(tid, input.profileId, input.accountId, id, r.rowKey, ck, r.occurredAt, r.day, r.direction, r.amount, r.balance, r.payer, r.memo, ch, cl).changes > 0) newIds.push(tid);
       }
       this.db.prepare('UPDATE bank_imports SET new_count = ? WHERE id = ?').run(newIds.length, id);
-      return { import: toImport(this.db.prepare('SELECT * FROM bank_imports WHERE id = ?').get(id) as Row), newIds };
+      return { import: toImport(this.db.prepare('SELECT * FROM bank_imports WHERE id = ?').get(id) as Row), newIds, crossSkipped };
     })();
   }
 

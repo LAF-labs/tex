@@ -27,7 +27,20 @@ const ERR = {
   receivable_settled: '그 건은 이미 다 받아서 되돌릴 수 없어요.',
   nothing_to_attach: '붙일 금액이 없어요.',
   account_not_found: '계좌를 골라 주세요.',
+  'source.not_linked': '이 계좌는 자동 연결이 안 돼 있어요. 거래내역 파일을 올려 주세요.',
+  'source.not_available': '자동 연결을 지금 쓸 수 없어요. 거래내역 파일을 올려 주세요.',
 };
+/** 원천 연결 상태(원천 이름은 쓰지 않는다) */
+const LINK_LABEL = { file_only: '파일만', auto_connected: '자동 연결됨', auto_error: '자동 오류' };
+const SOURCE_ERR = {
+  'source.login_failed': '은행 로그인이 안 됐어요. 인증서를 확인해 주세요.',
+  'source.cert_expired': '인증서 기간이 끝났어요. 새 인증서로 다시 연결해 주세요.',
+  'source.needs_user': '은행에서 확인이 필요해요. 다시 연결해 주세요.',
+  'source.rate_limited': '잠시 뒤에 다시 해 주세요.',
+  'source.unsupported_bank': '이 은행은 아직 자동 조회를 못 해요. 파일을 올려 주세요.',
+};
+const sourceErrText = (code) => SOURCE_ERR[code] ?? '최신화하지 못했어요. 이미 넣은 거래내역은 그대로예요. 다시 해 주세요.';
+const REFRESH_STEP = { requested: '요청함', waiting: '은행 응답 기다리는 중', running: '받는 중' };
 
 function statusText(v) {
   if (v.status === 'received') return v.via === 'auto' ? '받음 · 자동' : v.offAccount ? `받음 · 직접(${METHOD_LABEL[v.offAccount]})` : '받음 · 직접';
@@ -52,6 +65,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
     undo: null, // { seq, text, until }
     busy: false,
     invoiceResult: null,
+    refreshing: {}, // 계좌 id → 최신화 진행(엔진 RefreshJob)
   };
   const say = (e) => toast(ERR[errText(e)] ?? '처리하지 못했어요. 다시 해 주세요.');
 
@@ -59,6 +73,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
     s.loading = true;
     try {
       s.data = await call('bank.overview');
+      for (const a of s.data?.accounts ?? []) if (a.refresh && !['done', 'failed'].includes(a.refresh.state) && !s.refreshing[a.id]) watchRefresh(a.id, a.refresh);
       if (s.sel) s.detail = await call('bank.receivable', { id: s.sel }).catch(() => null);
     } catch (e) {
       say(e);
@@ -382,6 +397,41 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
     );
   }
 
+  /** [최신화]: 원천 → 넣기 → 맞추기. 진행을 1.5초마다 본다 */
+  async function startRefresh(id) {
+    if (s.refreshing[id]) return;
+    try {
+      const job = await call('bank.refresh', { accountId: id });
+      watchRefresh(id, job);
+    } catch (e) {
+      say(e);
+    }
+  }
+  function watchRefresh(id, job) {
+    s.refreshing[id] = job;
+    rerender();
+    const tick = async () => {
+      const j = await call('bank.refreshStatus', { accountId: id }).catch(() => null);
+      if (!j || j.state === 'done' || j.state === 'failed') {
+        delete s.refreshing[id];
+        if (j?.state === 'done') toast(j.result?.newCount ? `새 거래 ${j.result.newCount}줄을 넣었어요${j.result.match?.auto ? ` · 자동으로 맞춘 입금 ${j.result.match.auto}건` : ''}` : '새 거래가 없어요');
+        else if (j?.state === 'failed') toast(sourceErrText(j.code));
+        await refresh();
+        return;
+      }
+      s.refreshing[id] = j;
+      rerender();
+      setTimeout(tick, 1500);
+    };
+    setTimeout(tick, 1500);
+  }
+  function linkCell(x) {
+    const job = s.refreshing[x.id];
+    const chip = h('span', { class: `bank-link bank-link-${x.linkState}`, 'data-bank-link': x.linkState, title: x.linkState === 'auto_error' ? sourceErrText(x.linkError) : '' }, LINK_LABEL[x.linkState] ?? '파일만');
+    if (job) return h('td', {}, chip, h('span', { class: 'sx-meta', 'data-bank-refresh-state': job.state }, ` ${REFRESH_STEP[job.state] ?? '받는 중'}${job.jobs ? ` ${job.done ?? 0}/${job.jobs}` : ''}…`));
+    return h('td', {}, chip, x.canRefresh ? btn('최신화', () => startRefresh(x.id), '', { 'data-act': 'bank-refresh' }) : null);
+  }
+
   function accountsTab() {
     const list = s.data?.accounts ?? [];
     const a = s.adding;
@@ -420,7 +470,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
       {},
       list.length
         ? table(
-            [['은행'], ['계좌'], ['이름'], ['거래내역'], ['']],
+            [['은행'], ['계좌'], ['이름'], ['거래내역'], ['연결'], ['']],
             list.map((x) =>
               h(
                 'tr',
@@ -428,7 +478,8 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
                 h('td', {}, x.bank),
                 h('td', { class: 'sx-id', 'data-bank-number': x.id }, `···${x.last4}`),
                 h('td', {}, x.alias ?? '—'),
-                h('td', {}, x.lastDay ? `${x.txnCount}줄 · ${md(x.lastDay)}까지 · 파일` : '아직 없음'),
+                h('td', {}, x.lastDay ? `${x.txnCount}줄 · ${md(x.lastDay)}까지` : '아직 없음'),
+                linkCell(x),
                 h(
                   'td',
                   {},
@@ -449,7 +500,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
           )
         : h('div', { class: 'empty' }, '등록한 계좌가 없어요. 계좌를 추가하면 거래내역 파일을 올릴 수 있어요.'),
       h('div', { class: 'sx-actions' }, form),
-      h('p', { class: 'sx-meta rs-foot' }, '은행 인터넷뱅킹·앱에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 앱은 은행에 접속하지 않아요. 계좌번호는 끝 4자리만 보여요.'),
+      h('p', { class: 'sx-meta rs-foot' }, list.some((x) => x.linkState !== 'file_only') ? '자동 연결된 계좌는 [최신화]로 새 거래를 받아요. 다른 계좌는 은행에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 계좌번호는 끝 4자리만 보여요.' : '은행 인터넷뱅킹·앱에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 파일을 넣을 때 앱은 은행에 접속하지 않아요. 계좌번호는 끝 4자리만 보여요.'),
     );
   }
 

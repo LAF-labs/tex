@@ -359,3 +359,6 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .bank-cands li { border-top: 1px solid var(--line); padding-top: var(--space-2); }
 .bank-cols th select { margin-top: 4px; max-width: 120px; }
 td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
+.bank-link { display: inline-block; padding: 1px 8px; margin-right: var(--space-2); border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface-sunken); color: var(--ink-2); font-size: 12px; }
+.bank-link-auto_connected { border-color: var(--accent); color: var(--accent); background: var(--surface-tint); }
+.bank-link-auto_error { border-color: var(--attention); color: var(--attention); }

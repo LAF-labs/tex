@@ -1190,6 +1190,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return bank.pickStatement();
     },
+    'bank.refresh': (p) => {
+      needGesture(3_000);
+      return bank.call('bank.refresh', { accountId: p.accountId });
+    },
     'bank.pickInvoices': async () => {
       needGesture(3_000);
       const r = await bank.pickInvoices();
