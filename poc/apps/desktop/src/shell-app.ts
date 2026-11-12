@@ -603,19 +603,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (v !== '주민등록표 등본' && v !== '주민등록표 초본') throw new Error('bad_doc');
     return v;
   };
-  /** 시연 DB 쓰기(발급 인증 기본 바꾸기). fixture 모드가 아니면 거부한다. 거래처 추가·수정은 제품에서도 된다(cpBook). */
-  const demoDb = {
-    async setDefaultAuth(p: Record<string, unknown>) {
-      if (!fixture) throw new Error('unsupported');
-      const signMethod = ({ simple: 'simple_auth', cert: 'cert', card: 'security_card' } as const)[String(p.kind) as 'simple' | 'cert' | 'card'];
-      if (!signMethod) throw new Error('bad_request');
-      const cur = ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((x) => x.kind === 'business');
-      if (!cur) throw new Error('not_found');
-      await host.rpc('profile.upsert', { ...cur, signMethod });
-      await refresh();
-      return { profiles: profiles() };
-    },
-  };
   // 서류 데몬(daemon-host.ts). 알림 객체는 눌리거나 닫힐 때까지 잡아 둔다(가비지 수집되면 click이 오지 않는다).
   let daemon: DaemonHost | null = null;
   const liveNotices = new Set<Notification>();
@@ -1071,8 +1058,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return cpBook.readCert();
     },
-    // 시연 DB에서만: 발급 인증 기본 바꾸기. 실제 홈택스 모드에서는 쓰지 않는다(demoDb).
-    'auth.setDefault': (p) => demoDb.setDefaultAuth(p),
     'counterparties.list': async () => {
       await refresh();
       return cps;

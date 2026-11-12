@@ -118,7 +118,7 @@ function stepCard(o, act) {
         row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
       );
     case 'summary':
-      return summaryCard(o, reply, act);
+      return summaryCard(o, reply);
     case 'first':
       return h(
         'div',
@@ -299,7 +299,7 @@ function tasksCard(o, u, reply, act) {
   );
 }
 
-function summaryCard(o, reply, act) {
+function summaryCard(o, reply) {
   const b = o.biz;
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
@@ -321,6 +321,6 @@ function summaryCard(o, reply, act) {
       h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
-    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' }), btn('보관 위치 바꾸기', () => act.toast('보관 위치는 설정에서 바꿔요(준비 중)'), 'sx-btn-quiet', { 'data-onb': 'storage' })),
+    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),
   );
 }
