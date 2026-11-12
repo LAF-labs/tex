@@ -187,11 +187,20 @@ const vatText = (run) => (run.vat === 'separate' ? (run.status === 'draft' && ru
 const nowStep = (run) => runSteps(run).find((s) => s.state === 'now' || s.state === 'attention');
 const line = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
 
+/** 초안 카드의 오늘 중복 한 줄(F-10). 승인 카드에서도 엔진 원장으로 다시 경고한다. */
+export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
+
+/** 발급 PDF가 이 PC에 없을 때(F-04): 결과 카드·실행 패널·문서함 패널이 같은 문구. */
+export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요.';
+
 /** 대화 속 작업 카드(TaskCard). 상태가 바뀌면 같은 카드가 바뀐다. 캔버스 M-01·T-02~T-07 카드 순서: 머리 → 금액 → 문장 → 안내 → 버튼 줄. */
 export function taskCard(run, act) {
   const title = `세금계산서 · ${run.counterparty.name}`;
   const st = run.status;
   const card = h('section', { class: `sx-card${st === 'turn' || st === 'waiting' ? ' is-turn' : ''}`, 'data-run': run.id, 'data-status': st });
+  // DOM append(null)은 "null" 글자를 넣는다(카드에 "null"이 보였다). 카드의 조건부 줄은 h()처럼 null·false를 건너뛴다.
+  const domAppend = card.append.bind(card);
+  card.append = (...kids) => domAppend(...kids.flat().filter((k) => k != null && k !== false));
   card.addEventListener('click', (e) => {
     if (!e.target.closest('button, input, select, dl, .sx-where')) act.open(run.id);
   });
@@ -248,9 +257,9 @@ export function taskCard(run, act) {
     } else {
       // 품목은 거래처 저장 품목에서 왔으면 추정, 부가세는 고르지 않았으면 기본값(추정)
       const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
-      // card.append(null)은 "null" 글자를 넣는다: 안내는 품목이 빌 때만 따로 붙인다
-      if (noItem) card.append(note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true));
       card.append(
+        run.dupToday ? h('div', { 'data-dup-today': '' }, note(DUP_TODAY_TEXT, true)) : null,
+        noItem ? note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true) : null,
         h(
           'div',
           { class: 'sx-actions' },
@@ -319,7 +328,8 @@ export function taskCard(run, act) {
     card.append(
       line(`발급했어요. ${mail}`),
       h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))),
-      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(r.docId), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
+      r.noFile ? line(NO_FILE_TEXT, true) : null,
+      h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
       where,
     );
   } else if (st === 'stopped') {
@@ -335,7 +345,15 @@ export function taskCard(run, act) {
       h('div', { class: 'sx-actions' }, btn('홈택스에서 직접 확인', () => act.open(run.id), 'sx-btn-primary', { 'data-act': 'check-list' })),
     );
   } else if (st === 'attention') {
-    card.append(note(run.stoppedNote || '확인이 필요해요.', true));
+    card.append(
+      note(run.stoppedNote || '확인이 필요해요.', true),
+      // 승인 전 핸드오프 끝: [다시 준비]·[홈택스에서 직접 발급]. 그 밖에 발급 전에 멈췄으면 [다시 준비](새 초안). Chrome 확장 멈춤은 아래 [다시 시도]가 맡는다.
+      run.handoffEnd
+        ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'handoff-again' }), btn('홈택스에서 직접 발급', () => act.open(run.id), '', { 'data-act': 'handoff-manual' }))
+        : run.redo && !run.retry
+          ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'redo' }))
+          : null,
+    );
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
   for (const t of run.notices || []) card.append(note(t, true));
@@ -426,7 +444,7 @@ export function runPanel(run, act) {
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
-    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(run.result.docId), 'sx-btn-primary'), btn('폴더 열기', () => act.revealDoc(run.result.docId))) : null,
+    st === 'done' ? (run.result.noFile ? line(NO_FILE_TEXT, true) : h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary'), btn('폴더 열기', () => act.openRunDoc(run, true)))) : null,
   );
 }
 
@@ -521,9 +539,10 @@ export function docPanel(doc, today, act, review) {
       kv([
         ['표시 이름', doc.name],
         ['프로필', doc.profile === 'business' ? '사업자' : '개인'],
-        ['보관', '이 PC 문서함'],
+        ['보관', doc.noFile ? '홈택스 발급목록' : '이 PC 문서함'],
       ]),
-      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('메일로 보내기는 곧 지원해요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      doc.noFile ? h('p', { class: 'sx-body-sm is-muted', 'data-doc-nofile': '' }, NO_FILE_TEXT) : null,
+      h('div', { class: 'sx-actions' }, doc.noFile ? null : btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('메일로 보내기는 곧 지원해요')), doc.source === '앱이 발급' && !doc.noFile ? btn('다시 발급', () => act.reissue(doc)) : null),
       h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
     ],
   );
