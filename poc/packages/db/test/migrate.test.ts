@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { appliedMigrations, backupName, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, rolledBackCleanly, type Migration } from '@sax/db';
+import { appliedMigrations, backupName, migrationSha256, isEncryptedFile, listBackups, MIGRATIONS, MigrationError, openDatabase, restoreBackup, rolledBackCleanly, type Migration } from '@sax/db';
 
 const dirs: string[] = [];
 const tmp = (): string => {
@@ -20,9 +20,10 @@ const tables = (db: ReturnType<typeof openDatabase>): string[] =>
 
 // D07 §2 요약 DDL의 테이블 전부
 const D07_TABLES = [
-  'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties',
-  'documents', 'employees', 'gate_requests', 'irreversible_log', 'onboarding_state', 'payroll_lines', 'payroll_months', 'playbook_packages', 'policy', 'profiles', 'rate_counters',
-  'rate_tables', 'receipts', 'registry_state', 'remote_cmd_seen', 'remote_devices', 'remote_pair_state', 'run_events', 'runs', 'schedules', 'settings', 'shifts',
+  'bank_accounts', 'bank_imports', 'bank_txns',
+  'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties', 'cp_bank_accounts', 'cp_payer_aliases',
+  'documents', 'employees', 'gate_requests', 'irreversible_log', 'match_rejects', 'onboarding_state', 'payroll_lines', 'payroll_months', 'playbook_packages', 'policy', 'profiles', 'rate_counters',
+  'rate_tables', 'receipts', 'receivable_allocs', 'receivable_events', 'receivables', 'registry_state', 'remote_cmd_seen', 'remote_devices', 'remote_pair_state', 'run_events', 'runs', 'schedules', 'settings', 'shifts',
   'temp_previews', 'usage_local', 'validity_rules',
 ];
 
@@ -145,5 +146,29 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     assert.equal(db.pragma('user_version', { simple: true }), 2);
     db.close();
     assert.throws(() => restoreBackup(file, path.join(path.dirname(file), 'elsewhere.bak')), /db\.migration_invalid/);
+  });
+  it('v1부터 v10까지 한 판씩 같은 파일에 올린다: 앞 판의 sha256은 그대로, v9(돈 맞추기) 뒤 v10이 발급 키를 더하고 옛 원장 행은 키 없이 남는다', () => {
+    const file = tmp();
+    const k = key();
+    // main에 먼저 들어간 v9(bank_match, #284)의 SQL sha256. 배포한 판은 바이트 하나도 바꾸지 않는다.
+    assert.equal(migrationSha256(MIGRATIONS[8]!), '5edef61e8d9494ab2ba3c857a39bec5efe9d725ece0baa4710cebb2f5364bab0');
+    assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key']]);
+    for (let n = 1; n <= MIGRATIONS.length; n++) {
+      const db = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, n) });
+      assert.equal(db.pragma('user_version', { simple: true }), n);
+      assert.deepEqual(appliedMigrations(db).map((m) => [m.version, m.sha256]), MIGRATIONS.slice(0, n).map((m) => [m.version, migrationSha256(m)]));
+      if (n === 9) {
+        db.prepare(`INSERT INTO runs (id, playbook_id, playbook_version, package_digest, profile_id, trigger, inputs_hash, status, started_at) VALUES ('r9', 'H-01', '1', 'd', 'p', 'local', 'i', 'running', '2026-11-12T00:00:00Z')`).run();
+        db.prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, device_id, state, armed_at, cp_biz_no_hmac) VALUES ('i9', 's21', 1, 'r9', 'bk', 'H-01', 'i', 'd', 'a', 'dv', 'committed', '2026-11-12T00:00:00Z', 'h')`).run();
+        assert.ok(!(db.pragma('table_info(irreversible_log)') as Array<{ name: string }>).some((c) => c.name === 'issue_key'));
+      }
+      db.close();
+    }
+    const db = openDatabase(file, k);
+    assert.equal(db.pragma('user_version', { simple: true }), 10);
+    assert.equal(db.prepare(`SELECT state || ':' || ifnull(issue_key, '-') FROM irreversible_log WHERE intent_id = 'i9'`).pluck().get(), 'committed:-');
+    assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_irr_issue_live'`).get());
+    assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bank_accounts'`).get());
+    db.close();
   });
 });

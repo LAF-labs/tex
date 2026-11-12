@@ -1,3 +1,4 @@
+export * from './bank-repo.ts';
 export * from './bizno.ts';
 export * from './bundle-repo.ts';
 export * from './column.ts';

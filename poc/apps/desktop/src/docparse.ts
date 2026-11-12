@@ -14,7 +14,7 @@ export type { PdfExtract };
 // PDF는 pdf.js(6.4.299 고정, CVE-2026-16633 수정판 이상. 6.x에는 eval 경로가 없어 isEvalSupported가 없다)로 읽고,
 // 텍스트 층이 없거나 깨졌으면 같은 창에서 앞쪽을 그려 tesseract로 읽는다(D17 §3).
 // 이 파일은 @sax/docparse의 샌드박스 어댑터다: 창·파티션·상한을 맡고, 입출력 모양은 패키지 schema/sandbox-output.schema.json으로 검증한다.
-// 그림(종이 증빙·폰 사진)과 표(xlsx·CSV)도 같은 창에서 읽는다(M6-4·M6-5). 폰에서 E2EE로 받은 사진(M7-4)은 sandboxHost.image(photo)로 들어온다.
+// 그림(종이 증빙·폰 사진)과 표(xlsx·xls·HTML 표·CSV)도 같은 창에서 읽는다(M6-4·M6-5). 폰에서 E2EE로 받은 사진(M7-4)은 sandboxHost.image(photo)로 들어온다.
 
 export const DOCPARSE_SCHEME = 'sax-docparse';
 const require = createRequire(import.meta.url);
@@ -278,7 +278,7 @@ export async function ocrImageInSandbox(bytes: Uint8Array, opts: ImageOptions): 
   return { ...v, ms, peakMemoryKb };
 }
 
-/** 표 읽기(xlsx·CSV). OCR이 없어 메모리 상한을 낮게 둔다 */
+/** 표 읽기(xlsx·xls·HTML 표·CSV). OCR이 없어 메모리 상한을 낮게 둔다 */
 export async function readSheetInSandbox(bytes: Uint8Array, opts: { timeoutMs?: number; memoryLimitKb?: number } = {}): Promise<SheetOutput & { ms: number; peakMemoryKb: number }> {
   if (bytes.length === 0 || bytes.length > MAX_INPUT) throw new DocparseError('input_size');
   const { out, ms, peakMemoryKb } = await runJob({ kind: 'sheet', bytes: bytes.slice() }, opts.timeoutMs ?? 20_000, opts.memoryLimitKb ?? 900_000);
