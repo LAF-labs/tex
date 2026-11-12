@@ -329,20 +329,27 @@ export class RunService extends EventEmitter {
   prepareIssue(p: IssueDraft, o: { runId: string; stepId: string; playbookId: string }): PreparedIssue {
     const { profile, inputs } = this.draft(p);
     this.refuseIssued(p.issueKey);
-    const inputsHash = sha256hex(jcs(inputs));
+    const row = this.draftRow(profile, inputs, { intentId: ulid(), runId: o.runId, stepId: o.stepId, playbookId: o.playbookId, inputsHash: sha256hex(jcs(inputs)), packageDigest: sha256hex(o.playbookId), issueKey: p.issueKey });
+    return {
+      row, profileId: profile.id, inputs, supplierBizNo: profile.bizNo!,
+      arm: (reqId) => this.ledger.consumeAndArm(reqId, row),
+    };
+  }
+
+  /**
+   * 게이트 readback 없이 초안으로 만드는 원장 행 재료(업무 키·HMAC은 초안 값, actionHash는 플레이북·스텝·입력 해시·발급 키).
+   * 홈택스 밖 칸(prepareIssue)과 IR 무장 전 사람 대기 [직접 발급함]이 쓴다.
+   */
+  private draftRow(profile: Profile, inputs: RunInputs, o: { intentId: string; runId: string; stepId: string; playbookId: string; inputsHash: string; packageDigest: string; issueKey: IssueKey | null }): ArmRow {
     const rb = {
       supplierBizNo: profile.bizNo!, counterpartBizNo: inputs.counterpart.bizNo, supplyAmount: inputs.amounts.supply, taxAmount: inputs.amounts.tax,
       issueDate: inputs.issueDate, itemName: inputs.items[0]!.name,
     } as Readonly<Record<ReadbackKey, string>>;
-    const row: ArmRow = {
-      intentId: ulid(), stepId: o.stepId, runId: o.runId, businessKey: businessKey(rb), playbookId: o.playbookId, inputsHash,
-      packageDigest: sha256hex(o.playbookId), actionHash: sha256hex(jcs({ playbookId: o.playbookId, stepId: o.stepId, inputsHash, issueKey: p.issueKey })),
-      deviceId: this.deviceId, cpBizNoHmac: this.hmac('bizno', inputs.counterpart.bizNo),
-      recipientEmailHmac: inputs.email ? this.hmac('email', canonicalEmail(inputs.email)) : null, issueKey: p.issueKey,
-    };
     return {
-      row, profileId: profile.id, inputs, supplierBizNo: profile.bizNo!,
-      arm: (reqId) => this.ledger.consumeAndArm(reqId, row),
+      intentId: o.intentId, stepId: o.stepId, runId: o.runId, businessKey: businessKey(rb), playbookId: o.playbookId, inputsHash: o.inputsHash,
+      packageDigest: o.packageDigest, actionHash: sha256hex(jcs({ playbookId: o.playbookId, stepId: o.stepId, inputsHash: o.inputsHash, issueKey: o.issueKey })),
+      deviceId: this.deviceId, cpBizNoHmac: this.hmac('bizno', inputs.counterpart.bizNo),
+      recipientEmailHmac: inputs.email ? this.hmac('email', canonicalEmail(inputs.email)) : null, issueKey: o.issueKey,
     };
   }
 
@@ -470,6 +477,7 @@ export class RunService extends EventEmitter {
           }),
         };
       },
+      manualRow: (stepId) => this.draftRow(profile, inputs, { intentId: a.intentId, runId: a.runId, stepId, playbookId, inputsHash: a.inputsHash, packageDigest: a.packageDigest, issueKey: stepId === 's21' ? a.issueKey : null }),
       journal: (type, payload) => {
         this.journal.append(a.runId, type, payload);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).

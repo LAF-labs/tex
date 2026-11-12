@@ -10,7 +10,7 @@ import {
   apiRung, BizVerifier, branchOf, connectRunBrowser, DataService, docKeyOf, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunEnd, RunService, ulid,
   type GatePortMessage, type GateRequest, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type LocalApproval, type RunEvent,
 } from '@sax/engine';
-import { GateRepo, Ledger, LedgerError, openDatabase, RunJournal, RunRepo, type ArmRow, type Db } from '@sax/db';
+import { GateRepo, Ledger, LedgerError, openDatabase, RunRepo, type ArmRow, type Db } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
@@ -156,7 +156,7 @@ describe('발급 사다리(가짜 홈택스 + 가짜 API)', () => {
     const runEvents: RunEvent[] = [];
     runs.on('event', (e: RunEvent) => runEvents.push(e));
     const api = o.api === undefined ? new FakeIssueApi('ok') : o.api;
-    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs, db), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
+    const ladder = new IssueLadder({ rungs: [hometaxAutoRung(runs), hometaxManualRung(runs, db), apiRung(api ? { popbill: api } : {}, { runs, db })], ledger: new Ledger(db), log });
     const events: LadderEvent[] = [];
     ladder.on('state', (e: LadderEvent) => events.push(e));
     const ledger = new Ledger(db);

@@ -8,13 +8,8 @@ import { MANUAL_PLAYBOOK } from './verdict.ts';
 
 export const errorCode = (e: unknown): string => (e instanceof RunEnd || e instanceof LedgerError ? e.code : 'engine.error');
 
-/**
- * H-01 실행 하나를 끝까지 기다린다. 발급 여부는 사다리가 원장으로 본다.
- * 사람 대기에서 [직접 발급함](run.manualDone)을 눌렀는데 이 키의 원장 행이 없으면(IR 조율기의 ledger.observed_manual 효과는
- * 무장 전이라 원장 행을 만들지 못한다) 직접 발급 행을 남긴다. 그러지 않으면 사다리가 "행 없음"으로 보고 다음 길로 갈 수 있다.
- */
-export function hometaxAutoRung(runs: RunService, db: Db): Rung {
-  const manual = manualRecorder(runs, db);
+/** H-01 실행 하나를 끝까지 기다린다. 발급 여부는 사다리가 원장으로 본다(사람 대기 [직접 발급함]도 실행이 s21 행에 남긴다). */
+export function hometaxAutoRung(runs: RunService): Rung {
   return {
     route: routeSpec('hometax.auto'),
     available: () => ({ ok: true }),
@@ -25,7 +20,6 @@ export function hometaxAutoRung(runs: RunService, db: Db): Rung {
           if (e.runId !== runId || e.type !== 'end') return;
           runs.off('event', onEvent);
           const end: AttemptEnd = { ...(e.code ? { code: e.code } : {}), ...(e.stoppedAt ? { stoppedAtStep: e.stoppedAt.stepId } : {}) };
-          if (runs.inspect(runId).journal.includes('run.manual_done_requested')) return resolve(manual(req, 'issue.manual_attested'));
           resolve(end);
         };
         runs.on('event', onEvent);
