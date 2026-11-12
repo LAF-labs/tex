@@ -23,15 +23,13 @@ const DICT: readonly SignalEntry[] = [
 ];
 
 describe('서명 정책 → RatePolicy·신호 사전', () => {
-  it('포털·프로필 값을 그대로 옮기고, PoC 빌드의 홈택스만 PoC 상한으로 더 엄격하게', () => {
-    const full = ratePolicyFrom(POLICY, 'hometax', 'interactive', false)!;
+  it('포털·프로필 값을 그대로 옮긴다', () => {
+    const full = ratePolicyFrom(POLICY, 'hometax', 'interactive')!;
     assert.deepEqual(full.pace, { stepDelayMs: [800, 2500], afterNavSettleMs: [600, 1500], slowFactor: 1.5 });
     assert.deepEqual([full.limits.runsPerDayPerProfile, full.limits.irreversiblePerDayPerProfile, full.limits.loginsPerDay, full.cooldown.positiveDetectionsForCooldown], [40, 30, 6, 2]);
     assert.deepEqual(full.run, { maxActuationsPerRun: 150, maxWallClockMs: 1_800_000 });
-    const poc = ratePolicyFrom(POLICY, 'hometax', 'interactive', true)!;
-    assert.deepEqual([poc.limits.runsPerDayPerProfile, poc.limits.irreversiblePerDayPerProfile, poc.limits.loginsPerDay, poc.cooldown.positiveDetectionsForCooldown], [20, 1, 3, 1]);
-    assert.equal(ratePolicyFrom(POLICY, 'gov24', 'interactive', true)!.limits.runsPerDayPerProfile, 20, 'PoC 덮기는 홈택스만');
-    assert.deepEqual(ratePolicyFrom(POLICY, 'hometax', 'daemon', false)!.pace.stepDelayMs, [1200, 3500]);
+    assert.equal(ratePolicyFrom(POLICY, 'gov24', 'interactive')!.limits.runsPerDayPerProfile, 20);
+    assert.deepEqual(ratePolicyFrom(POLICY, 'hometax', 'daemon')!.pace.stepDelayMs, [1200, 3500]);
     assert.ok(Object.isFrozen(full));
   });
 
@@ -67,14 +65,14 @@ describe('RunEnforcer', () => {
   });
   afterEach(() => db.close());
 
-  const guardOf = (o: { poc?: boolean; patch?: (r: RatePolicy) => RatePolicy } = {}) => {
-    const r = ratePolicyFrom(POLICY, 'hometax', 'interactive', o.poc ?? false)!;
+  const guardOf = (o: { patch?: (r: RatePolicy) => RatePolicy } = {}) => {
+    const r = ratePolicyFrom(POLICY, 'hometax', 'interactive')!;
     return new RateGuard(db, 'hometax', o.patch ? o.patch(structuredClone(r) as RatePolicy) : r, { wall: () => BASE + clock.t + wallSkew, mono: () => clock.t });
   };
-  const make = (o: { guard?: RateGuard; stop?: () => boolean; poc?: boolean } = {}) => {
+  const make = (o: { guard?: RateGuard; stop?: () => boolean } = {}) => {
     const journal: Array<[string, Record<string, unknown>?]> = [];
     const latched: string[] = [];
-    const guard = o.guard ?? guardOf({ poc: o.poc });
+    const guard = o.guard ?? guardOf();
     const e = new RunEnforcer({ guard, clock, mono: () => clock.t, dict: DICT, profileId: 'p1', journal: (t, p) => journal.push([t, p]), stopRequested: o.stop, onLatch: (c) => latched.push(c), random: () => 0.5 });
     return { e, guard, journal, latched };
   };
@@ -136,7 +134,7 @@ describe('RunEnforcer', () => {
     assert.equal(code(await e.beforeAction('click')), 'ok');
   });
 
-  it('차단 신호(문구·URL): 걸쇠 → 그 뒤 모든 동작 거부. 양성 2회면 쿨다운(PoC 홈택스는 1회), 저널에는 id만', async () => {
+  it('차단 신호(문구·URL): 걸쇠 → 그 뒤 모든 동작 거부. 양성 2회면 쿨다운(정책이 1이면 1회), 저널에는 id만', async () => {
     const guard = guardOf();
     const a = make({ guard });
     a.e.observe({ text: '비정상 접근으로 이용이 제한되었습니다. 고객센터…' });
@@ -149,9 +147,9 @@ describe('RunEnforcer', () => {
     b.e.observe({ url: 'https://fixture.test/notice/blocked' });
     assert.equal(b.e.halted, 'policy.cooldown', '두 번째 양성 → 쿨다운');
     assert.equal(guard.status('p1').cooldownUntil !== null, true);
-    const poc = make({ guard: guardOf({ poc: true }) });
-    poc.e.observe({ text: '이용이 제한되었습니다' });
-    assert.equal(poc.e.halted, 'policy.cooldown', 'PoC 홈택스: 양성 1회 쿨다운(ADR-025)');
+    const once = make({ guard: guardOf({ patch: (r) => ({ ...r, cooldown: { ...r.cooldown, positiveDetectionsForCooldown: 1 } }) }) });
+    once.e.observe({ text: '이용이 제한되었습니다' });
+    assert.equal(once.e.halted, 'policy.cooldown', '받은 정책이 양성 1회면 1회에 쿨다운');
   });
 
   it('추가 인증: 로그인 구간 밖에서 실행을 넘어 연속 2회면 차단(portal.extra_auth_repeat), 로그인 구간 안은 세지 않음', async () => {
@@ -219,8 +217,8 @@ describe('RunEnforcer', () => {
     assert.equal(guard.status('p1').unknownScreenStreak, 0);
   });
 
-  it('markCommitted: 하루 비가역 상한(PoC 홈택스 1)을 넘으면 거부', () => {
-    const guard = guardOf({ poc: true });
+  it('markCommitted: 하루 비가역 상한을 넘으면 거부', () => {
+    const guard = guardOf({ patch: (r) => ({ ...r, limits: { ...r.limits, irreversiblePerDayPerProfile: 1 } }) });
     assert.equal(code(make({ guard }).e.markCommitted()), 'ok');
     assert.equal(code(make({ guard }).e.markCommitted()), 'policy.irreversible_per_day');
   });
