@@ -97,7 +97,8 @@ export const CHIP = {
   stopped: ['중지됨', 'is-stopped'],
   attention: ['확인 필요', 'is-attention'],
 };
-export const chip = (status) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, CHIP[status][0]);
+/** 상태 칩. label을 주면 색은 상태대로, 글자는 label(지난 실행처럼 표와 같은 말을 써야 할 때). */
+export const chip = (status, label) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, label ?? CHIP[status][0]);
 
 /** 발급 뒤 발급목록을 조회하는 중(발급 · 조회로 확정 묶음의 '발급목록 확인' 단계가 지금). 칩은 '확인 중'이다(08 §11). */
 export const verifying = (run) => run.status === 'issuing' && run.steps[6]?.state === 'now';

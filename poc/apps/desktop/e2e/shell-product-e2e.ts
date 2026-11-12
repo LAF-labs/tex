@@ -90,11 +90,7 @@ async function main() {
   check('견본 대화 없음(가나다컴퍼니·B상사 없음)', !/가나다컴퍼니|B상사/.test(await js<string>(`document.body.textContent`)));
   check('제목줄에 "null" 같은 빈 값 글자가 없다', !/null|undefined/.test(await js<string>(`document.querySelector('#titlebar').innerText`)), await js<string>(`document.querySelector('#titlebar').innerText`));
   check('창 제목은 "소버린 AX"(PoC 데모 표시 없음)', S!.win.getTitle() === '소버린 AX', S!.win.getTitle());
-  const mac = process.platform === 'darwin';
-  check(`검색 단축키 표시는 ${mac ? '⌘K' : 'Ctrl K'}`, (await js<string>(`document.querySelector('.sx-kbd').textContent`)) === (mac ? '⌘K' : 'Ctrl K'));
-  S!.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
-  S!.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
-  check('검색 단축키를 누르면 같은 안내', await until('search toast', async () => js<boolean>(`!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent === '검색은 곧 지원해요'`), 3_000));
+  check('제목줄에 검색 칸·고정 상태(금고 열림·폰 연결 안 됨)가 없다', await js<boolean>(`!document.querySelector('#titlebar .sx-search') && !/금고 열림|폰 연결 안 됨/.test(document.querySelector('#titlebar').textContent)`));
   check('약관 카드 안내문에 내부 코드(F-06)가 없다', await until('terms text', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); return !!c && c.textContent.includes('곧 여기서 열어 볼 수 있어요') && !/F-06이 확정/.test(c.innerText); })()`)));
   check('약관 카드의 "F-06 초안 전 문구" 배지는 설치본에서 보이지 않는다(문구는 그대로)', await until('terms', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); const d = c?.querySelector('.onb-draft'); return !!c && c.querySelectorAll('li').length > 0 && (!d || getComputedStyle(d).display === 'none'); })()`)));
   check('사업자 프로필이 없으면 온보딩부터', await until('onboarding', async () => js<boolean>(`!!document.querySelector('[data-onboarding]')`)));
