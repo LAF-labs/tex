@@ -236,6 +236,54 @@ describe('CODEF 원천: 연결 → 계좌 고르기 → 최신화', () => {
   });
 });
 
+describe('CODEF 원천: 앱이 꺼져도 CODEF에 계정이 남지 않는다', () => {
+  it('저장소가 아직 없으면(bank_not_ready) 고르기에서 바로 지운다', async () => {
+    const s = setup({ sink: false });
+    const c = await s.link.connect({ certId: CERT });
+    await assert.rejects(s.link.choose({ sessionId: c.sessionId, key: 'a0' }), (e: unknown) => (e as CodefError).code === 'bank_not_ready');
+    assert.equal(mock.live.size, 0, 'CODEF 계정이 남지 않는다');
+    assert.equal(s.link.status().cleanupPending, 0);
+  });
+
+  it('고르기 전에 앱이 꺼지면 다음 실행의 sweep이 지운다', async () => {
+    const s = setup();
+    await s.link.connect({ certId: CERT });
+    assert.equal(mock.live.size, 1);
+    assert.equal(s.link.status().cleanupPending, 0, '고르기 대기 중인 것은 정리 대기로 세지 않는다');
+    const next = new CodefLink({ client: new CodefClient({ egress: egress() }), seal: fakeSeal(), store: s.store, sink: () => s.sink });
+    assert.equal(next.status().cleanupPending, 1, '꺼지기 전 만든 connectedId가 PC DB에 적혀 있다');
+    await next.sweep();
+    assert.equal(mock.live.size, 0);
+    assert.equal(next.status().cleanupPending, 0);
+  });
+
+  it('[최신화] 중에 앱이 꺼져도 다음 실행의 sweep이 지운다', async () => {
+    const s = setup();
+    const c = await s.link.connect({ certId: CERT });
+    await s.link.choose({ sessionId: c.sessionId, key: 'a0' });
+    s.tick();
+    mock.scenario.txnCode = 'CF-12100';
+    mock.scenario.deleteFails = true;
+    await assert.rejects(s.link.refresh());
+    mock.scenario = {};
+    const next = new CodefLink({ client: new CodefClient({ egress: egress() }), seal: fakeSeal(), store: s.store, sink: () => s.sink });
+    await next.sweep();
+    assert.equal(mock.live.size, 0);
+  });
+
+  it('다른 조회가 고르기 대기 중인 connectedId를 지우지 않는다', async () => {
+    const s = setup();
+    const c = await s.link.connect({ certId: CERT });
+    await s.link.choose({ sessionId: c.sessionId, key: 'a0' });
+    s.tick();
+    const c2 = await s.link.connect({ certId: CERT });
+    await s.link.sweep();
+    assert.equal(mock.live.size, 1);
+    await s.link.choose({ sessionId: c2.sessionId, key: 'a0' });
+    assert.equal(mock.live.size, 0);
+  });
+});
+
 describe('CODEF 원천: 오류 갈래(사람 말 코드)', () => {
   const cases: Array<[string, string, 'createCode' | 'createAsErrorList']> = [
     ['CF-12801', 'password_wrong', 'createCode'],
@@ -319,6 +367,31 @@ describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
     const n = mock.calls.length;
     await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_retry_limit');
     assert.equal(mock.calls.length, n, 'CODEF를 부르지 않는다');
+  });
+
+  it('[연결 해제]해도 그날 비밀번호 상한은 그대로다', async () => {
+    const { link, tick } = setup();
+    const c = await link.connect({ certId: CERT });
+    await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    mock.scenario.createCode = 'CF-12801';
+    for (let i = 0; i < 3; i++) {
+      tick();
+      await assert.rejects(link.refresh({ ask: true }), (e: unknown) => (e as CodefError).code === 'password_wrong');
+    }
+    await link.disconnect();
+    const n = mock.calls.length;
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_retry_limit');
+    assert.equal(mock.calls.length, n, '해제 뒤에도 CODEF를 부르지 않는다');
+  });
+
+  it('은행 잠김(CF-12802)도 [연결 해제]로 풀리지 않는다', async () => {
+    const { link } = setup();
+    const c = await link.connect({ certId: CERT });
+    await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    mock.scenario.createCode = 'CF-12802';
+    await assert.rejects(link.refresh({ ask: true }), (e: unknown) => (e as CodefError).code === 'password_locked');
+    await link.disconnect();
+    await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_retry_limit');
   });
 });
 
