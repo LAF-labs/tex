@@ -212,7 +212,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
       h('div', {}, `다음부터 '${o.name}' 입금은 ${o.cpName ?? '이 거래처'}로 볼까요?`),
       btn('기억하기', async () => {
         s.offer = null;
-        await act('bank.addAlias', { counterpartyId: o.counterpartyId, name: o.name });
+        await act('bank.addAlias', { counterpartyId: o.counterpartyId, name: o.name, learned: true });
         toast('기억했어요');
       }, 'sx-btn-primary', { 'data-act': 'bank-alias-remember' }),
       btn('이번만', close, '', { 'data-act': 'bank-alias-once' }),

@@ -40,7 +40,8 @@ export const BANK_SHELL_METHODS = {
   'bank.cpBanking': { counterpartyId: ID },
   'bank.addCpAccount': { counterpartyId: ID, bank: { t: 'string', max: 40 }, number: { t: 'string', max: 40, required: true }, holder: { t: 'string', max: 60 } },
   'bank.deleteCpAccount': { id: ID },
-  'bank.addAlias': { counterpartyId: ID, name: { t: 'string', max: 60, required: true } },
+  // learned: 확인한 입금에서 제안한 이름을 [기억하기]로 남길 때(출처 표시만 다르다)
+  'bank.addAlias': { counterpartyId: ID, name: { t: 'string', max: 60, required: true }, learned: { t: 'boolean' } },
   'bank.deleteAlias': { id: ID },
   'bank.setPayTerms': { counterpartyId: ID, kind: { t: 'enum', of: ['default', 'days', 'next_month_day', 'month_end', 'none'], required: true }, n: { t: 'number' } },
 } as const;

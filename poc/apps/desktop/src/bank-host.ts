@@ -270,7 +270,7 @@ export function bankShellHandlers(b: BankHost, after: () => void): Handlers {
     'bank.cpBanking': (p) => b.call('db.query.bank.counterparty', { counterpartyId: p.counterpartyId }),
     'bank.addCpAccount': (p) => changed(b.call('bank.addCpAccount', { counterpartyId: p.counterpartyId, bank: p.bank, number: p.number, holder: p.holder })),
     'bank.deleteCpAccount': (p) => changed(b.call('bank.deleteCpAccount', { id: p.id })),
-    'bank.addAlias': (p) => changed(b.call('bank.addAlias', { counterpartyId: p.counterpartyId, name: p.name, source: 'manual' })),
+    'bank.addAlias': (p) => changed(b.call('bank.addAlias', { counterpartyId: p.counterpartyId, name: p.name, source: p.learned === true ? 'learned' : 'manual' })),
     'bank.deleteAlias': (p) => changed(b.call('bank.deleteAlias', { id: p.id })),
     'bank.setPayTerms': (p) => {
       const n = typeof p.n === 'number' && Number.isInteger(p.n) ? p.n : 30;

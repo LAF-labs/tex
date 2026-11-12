@@ -153,6 +153,7 @@ async function flow() {
   await until('cps', async () => (await count('[data-cp-row]')) > 0);
   await js(`document.querySelector('[data-cp-row="${a.id}"]').click()`);
   check('거래처 상세: 계좌·입금자 이름 칸, 기억한 별칭', await until('cp bank', async () => (await text('[data-bank-cp]')).includes('김철수')));
+  check('[기억하기]로 남긴 별칭은 "확인에서 배움"으로 보인다', (await text('[data-bank-cp]')).includes('확인에서 배움'), await text('[data-bank-cp]'));
 
   // 8) 대화: 받을 돈 화면이 대화 문장을 가로채지 않는다(대화는 해석기·모델 길 하나)
   await click('[data-view="chat"]');
