@@ -774,7 +774,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       setupMissing: () => setupMissing(profiles().business).length > 0,
       onCreated: (run) => agentCreated.push(run),
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
-      pastIssued: () => (seed?.history ?? []).filter((x) => x.approvalNo).map((x) => ({ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.date, total: x.total })),
+      pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
     }),
   );
