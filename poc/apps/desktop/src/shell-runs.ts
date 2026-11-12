@@ -282,6 +282,11 @@ const attestShapeOk = (req: AttestRequest | null | undefined): boolean => {
 export interface ShellRunsSource {
   counterparties(): Counterparty[];
   auth(): string;
+  /**
+   * 이 PC에서 실행 Chrome을 찾을 수 있는가(금고와 같은 후보 경로, @sax/vault findInstalledChrome). [홈택스에서 준비] 전에 본다.
+   * 없으면 엔진을 부르지 않고 초안 카드에 안내를 남긴다(엔진까지 가면 chrome.not_installed로 끝나 [다시 준비]가 필요했다). 없으면(시험) 보지 않는다.
+   */
+  chromeReady?(): boolean;
   /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
   log?(name: string, data: Record<string, string>): void;
 }
@@ -551,6 +556,13 @@ export class ShellRuns extends EventEmitter implements Drafts {
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
     if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
+    // Chrome 사전 점검(#275 후보: /Applications·~/Applications, Windows Program Files·LocalAppData). 없으면 시작하지 않고 카드에 남긴다.
+    const noChrome = !!this.src.chromeReady && !this.src.chromeReady();
+    if (noChrome || r.noChrome) {
+      r.noChrome = noChrome;
+      this.emit('update', r);
+      if (noChrome) throw new Error('chrome.not_installed');
+    }
     r.status = 'preparing';
     this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
