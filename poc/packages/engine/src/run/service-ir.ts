@@ -33,7 +33,7 @@ import type { LookupDef, PortalConfig } from '../portal.ts';
 import type { RunStatus } from '../run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from '../signals.ts';
 import { readbackCard } from './card.ts';
-import { RunController, type RunOutcome } from './controller.ts';
+import { RunController, type HumanPort, type RunOutcome } from './controller.ts';
 import { bundleInfoFrom, DecideRunner } from './decide.ts';
 import { LedgerCommitPort } from './ledger-port.ts';
 import { BundleCatalog } from '@sax/model';
@@ -104,7 +104,27 @@ export interface IrRunInput {
   permit?: () => RunPermit;
   /** 스텝 궤적(골든 대조). 값 없이 스텝 id·타입·코드만. */
   trace?: (e: { name: string; stepId: string; type: string; code?: string }) => void;
+  /**
+   * 사람 대기 알림(B3): 실행이 끝나지 않고 사람을 기다린다. phase는 진행 표시 단계(login·form·…·sign), code는 까닭.
+   * 서명 차례면 phase 'sign', code 'sign.waiting'. RunService가 RunEvent handoff로 낸다. 재개는 command('resume'|'manual').
+   */
+  handoff?: (h: { phase: string; code?: string; stepId: string | null }) => void;
+  /**
+   * 사람 입력 포트(금고 비밀 창 등). 없으면 지금처럼 대역(secret은 바로 ttl → 사람 대기로 넘어간다).
+   * engine-cert가 금고 비밀 창(D05 §3.5)을 여기 붙인다(B1 로그인 s4, B2 발급 서명 s21 signFlow human:secret).
+   */
+  human?: HumanPort;
+  /** 사람 대기 한 번의 상한(ms, 기본 30분). 시험용. */
+  handoffCapMs?: number;
+  /** 실행 전체 수명 상한(ms, 대기 포함, 기본 2시간). 시험용. */
+  lifetimeMs?: number;
 }
+
+/** 사람 대기 한 번의 상한(부장 결정 2026-11-11). */
+export const HANDOFF_CAP_MS = 30 * 60_000;
+/** 실행 전체 수명 상한(대기 포함). 넘으면 사람 대기 중이면 run.handoff_timeout, 서명 차례면 verify(부장 결정 2026-11-11). */
+export const RUN_LIFETIME_MS = 2 * 60 * 60_000;
+type HandoffCommand = 'resume' | 'manual' | 'stop' | 'cap';
 
 export interface IrRunResult {
   status: RunStatus;
@@ -137,6 +157,7 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
 const PHASE_OF: Readonly<Record<string, string>> = {
+  s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
   s10: 'form', s11: 'form',
   s12: 'input', s13: 'input', s14: 'input', s15: 'input', s16: 'input', s17: 'input', s18: 'input',
   s19: 'readback', s19a: 'readback', s19b: 'readback', s19c: 'readback', s19d: 'readback', s19f: 'readback', s19e: 'readback',
@@ -199,6 +220,10 @@ export class IrRun {
   private denied: Extract<RunPermit, { ok: false }> | null = null;
   /** 조율기에 downgrade를 건넸다(한 번만, 커밋 구간 배너가 되풀이되지 않게). */
   private downgradeSent = false;
+  /** 사람 대기(HandedOff·Paused)에서 명령을 기다리는 중이면 깨우는 함수. */
+  private cmdWake: ((c: HandoffCommand) => void) | null = null;
+  /** 사람 대기 중인 조율기 상태(manualDone은 HandedOff에서만). */
+  private waitingState: RunStateName | null = null;
 
   constructor(i: IrRunInput) {
     this.i = i;
@@ -250,10 +275,51 @@ export class IrRun {
     return r;
   }
 
-  /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). */
+  /** [중지]. 승인 대기 중이면 게이트를 거부로 닫는다(H01과 같이 gate.denied, 사유 stopped). 사람 대기면 멈춘다. 서명 차례면 verify로 간다(조율기). */
   stop(): void {
     this.stopRequested = true;
+    if (this.cmdWake) return this.cmdWake('stop');
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
+  }
+
+  /** 사람을 기다리는 중인가(핸드오프·Paused 대기 또는 서명 차례). RunService가 무장 뒤에도 [중지]를 넘길지 본다. */
+  get waiting(): boolean {
+    return this.cmdWake !== null || (this.controller?.signTurnOpen ?? false);
+  }
+
+  /**
+   * 사람 대기 재개 명령(B3). resume = [다 했어요](같은 체크포인트부터, 원장 미종결이면 verify부터; 서명 차례면 버튼을 누르지 않고 verify),
+   * manual = [직접 발급함](HandedOff에서만: 원장 observed_manual → 그 X의 verify).
+   */
+  command(c: 'resume' | 'manual'): { ok: boolean; code?: string } {
+    if (this.controller?.signTurnOpen) {
+      if (c !== 'resume') return { ok: false, code: 'sign.turn_resume_only' };
+      return this.controller.finishSignTurn() ? { ok: true } : { ok: false, code: 'not_handed_off' };
+    }
+    if (!this.cmdWake) return { ok: false, code: 'not_handed_off' };
+    if (c === 'manual' && this.waitingState !== 'HandedOff') return { ok: false, code: 'not_handed_off' };
+    this.cmdWake(c);
+    return { ok: true };
+  }
+
+  /** 명령·[중지]·상한 중 먼저 오는 것. */
+  private waitCommand(ms: number): Promise<HandoffCommand> {
+    return new Promise((resolve) => {
+      const t = setTimeout(() => wake('cap'), ms);
+      const wake = (c: HandoffCommand) => {
+        clearTimeout(t);
+        this.cmdWake = null;
+        resolve(c);
+      };
+      this.cmdWake = wake;
+      if (this.stopRequested) wake('stop');
+    });
+  }
+
+  /** 재개할 수 있는 멈춤인가. 게이트 만료·정지 하향·걸쇠(차단 신호 등)는 끝낸다(부장 결정 2026-11-11 ①). */
+  private resumable(out: RunOutcome): boolean {
+    if (out.state !== 'HandedOff' && out.state !== 'Paused') return false;
+    return out.code !== 'gate.expired' && !this.denied && !this.halted && !this.stopRequested;
   }
 
   /** 엔진 밖 사유의 정지(금고 누출 의심 등). 무장 전에만. 열린 게이트는 거부로 닫는다(사유 signal). */
@@ -338,8 +404,18 @@ export class IrRun {
       return r ? [r.state] : [];
     };
 
+    const lifetimeEnd = clock.now() + (i.lifetimeMs ?? RUN_LIFETIME_MS);
+    const lifeLeft = () => Math.max(0, lifetimeEnd - clock.now());
+    const capMs = i.handoffCapMs ?? HANDOFF_CAP_MS;
     const c = new RunController({
       runId: i.runId, intentId: i.intentId, packageDigest: i.packageDigest, ir, handlers, env,
+      // 사람 대기 상한은 IrRun이 센다(Paused도 같은 상한). 조율기 자체 HandedOff 타이머는 그 뒤로 미룬다(이기지 않게).
+      handoffTimeoutMs: capMs + 60_000,
+      signTurnMs: () => Math.min(capMs, lifeLeft()),
+      signTurn: {
+        opened: (r) => i.handoff?.({ phase: 'sign', code: 'sign.waiting', stepId: r.stepId }),
+        closed: () => {},
+      },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0 },
       // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
       allowed: () => !this.denial(),
@@ -393,8 +469,8 @@ export class IrRun {
           i.postGate({ t: 'gate.closed', runId: i.runId, reqId, reason });
         },
       },
-      human: {
-        // 가짜 H-01 경로에는 사람 입력 스텝이 없다. 제품 배선(PR-D)에서 main 사람 차례 포트로 바꾼다.
+      // 사람 입력 포트: 없으면 대역(secret은 바로 ttl → 로그인이면 Paused 사람 대기, 발급 서명이면 서명 차례). engine-cert가 금고 비밀 창을 붙인다.
+      human: i.human ?? {
         request: () => {},
         secret: async () => 'ttl',
         closed: () => {},
@@ -431,7 +507,34 @@ export class IrRun {
     let out: RunOutcome;
     try {
       out = await c.start();
+      // 사람 대기(B3): 핸드오프·Paused에서 끝내지 않고 명령을 기다린다. 재개는 조율기 규칙(같은 체크포인트, 토큰 폐기, 원장 미종결이면 verify).
+      while (this.resumable(out)) {
+        const left = Math.min(capMs, lifeLeft());
+        const phase = PHASE_OF[out.at ?? ''] ?? 'login';
+        this.waitingState = out.state;
+        i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '' });
+        i.handoff?.({ phase, ...(out.code ? { code: out.code } : {}), stepId: out.at });
+        enforcer.pauseClock();
+        const cmd = left > 0 ? await this.waitCommand(left) : 'cap';
+        enforcer.resumeClock();
+        this.waitingState = null;
+        if (cmd === 'stop') {
+          c.abort();
+          out = { state: c.state.name, at: out.at, code: 'run.aborted' };
+          break;
+        }
+        if (cmd === 'cap') {
+          // 상한: 멈춘 그대로 끝낸다(status handoff). 원장이 열려 있으면 RunService가 in_doubt로 닫는다.
+          i.journal('run.handoff_timeout', { stepId: out.at ?? '' });
+          out = { ...out, code: 'run.handoff_timeout' };
+          break;
+        }
+        i.journal('run.resumed', { stepId: out.at ?? '', how: cmd });
+        out = cmd === 'manual' ? await c.attestManualCommit() : await c.resume();
+      }
     } finally {
+      // E2: 끝난 실행에 조율기 타이머(HandedOff 상한)가 남지 않게.
+      c.dispose();
       if (phase) i.phase(phase, 'done');
       enforcer.finish({ userStopped: this.stopRequested });
       await this.wiring?.dispose().catch(() => {});
