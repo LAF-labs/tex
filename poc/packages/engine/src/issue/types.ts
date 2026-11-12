@@ -36,6 +36,8 @@ export interface IssueRequest {
   tax: number;
   itemName: string;
   email?: string | null;
+  /** 홈택스 자동 칸의 실행 id(화면이 실행 이벤트를 자기 카드에 맞춘다). 없으면 칸이 만든다. 한 번만 쓴다(재요청이면 새로). */
+  runId?: string;
 }
 
 /** 칸 하나가 끝난 모양. 발급 여부는 담지 않는다(사다리가 원장으로 본다). */
