@@ -59,6 +59,8 @@ export interface Actuator {
   clear(t: Resolved): Promise<ActResult>;
   select(t: Resolved, option: string): Promise<ActResult>;
   press(key: PressStep['key'], t: Resolved | null): Promise<ActResult>;
+  /** 마지막 동작을 시작한 뒤 뜬(정책대로 이미 닫은) 네이티브 대화상자(wait for:'dialog'). GuardedActuator만 구현한다. */
+  dialogSinceAction?(): { kind: string; notice: string } | null;
 }
 
 export interface Clock {
