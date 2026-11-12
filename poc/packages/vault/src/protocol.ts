@@ -31,12 +31,16 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     // 키 연산은 main(control)만 하고, 엔진은 main이 만들어 주는 게이트웨이 범위 헤더만 받는다.
     'getDbKeyOnce',
     'pdf.print', 'download.arm', 'download.disarm',
+    // 계좌 자동조회(CODEF): 고른 인증서 하나 + 금고 창 비밀번호 → CODEF 공개키로 감싼 로그인 묶음. 평문 비밀번호는 엔진에 가지 않는다.
+    'codef.seal', 'codef.cancel', 'codef.forget',
   ],
   control: [
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
+    // CODEF 비밀번호 창이 값 없이 닫혔다(main이 알린다). 기다리던 codef.seal을 cancelled로 끝낸다.
+    'codef.windowClosed',
     // 계정 갱신 토큰(ADR-038 (f) 자동 로그인). main만 읽고 쓴다. 엔진·비밀 입력 창은 계정 자격을 다루지 않는다.
     'account.refresh.read', 'account.refresh.write', 'account.refresh.forget',
     // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))만 부른다. 개인키는 그대로 금고 안이다.
@@ -119,7 +123,33 @@ export type StoreBind = {
   notice: { version: string };
 };
 
-export type SecretInputBind = OneShotBind | StoreBind;
+/**
+ * 계좌 자동조회(CODEF) 인증서 비밀번호 창 결속. 금고가 보낸 `secret.needed{mode:'codef', reqId, scope, remember}`와 같은 reqId만 붙는다.
+ * 창은 secret.provide를 한 번 보낸다(`remember: true`면 사장님이 [이 PC에 기억]을 고른 것). 값은 금고가 CODEF 공개키로 감싸고 지운다.
+ */
+export type CodefBind = { mode: 'codef'; reqId: string; scope: ProfileScope };
+
+export type SecretInputBind = OneShotBind | StoreBind | CodefBind;
+
+/** codef.seal 결속 요청 id(32 hex) */
+export const CODEF_REQ_ID_RE = /^[0-9a-f]{32}$/;
+/** 비밀번호 창을 기다리는 시간 */
+export const CODEF_SEAL_TTL_MS = 180_000;
+
+/**
+ * `codef.seal{certId, publicKey, scope, mode}` (engine). mode: 'ask'면 금고 창을 연다, 'stored'면 기억해 둔 비밀번호만 쓴다(없으면 missing).
+ * publicKey는 게이트웨이가 준 CODEF RSA 공개키(base64 DER SPKI).
+ */
+export interface CodefSealParams {
+  certId: string;
+  publicKey: string;
+  scope: ProfileScope;
+  mode: 'ask' | 'stored' | 'auto';
+}
+/** 성공이면 CODEF 계정 등록 accountList 원소에 그대로 넣을 base64 세 칸. 실패 사유는 값 없이 */
+export type CodefSealResult =
+  | { ok: true; derFile: string; keyFile: string; password: string; remembered: boolean }
+  | { ok: false; reason: 'cancelled' | 'timeout' | 'busy' | 'not_found' | 'no_key' | 'unreadable' | 'bad_public_key' | 'missing' | 'vault_locked' };
 
 /** secret.provide(oneshot) 인자. kind·scope·row는 생략하거나 결속값과 같아야 한다. */
 export interface SecretProvideParams {

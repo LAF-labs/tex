@@ -42,6 +42,7 @@ import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
+import { CODEF_COMMANDS, CodefClient, CodefError, CodefLink, settingsCodefStore, vaultCodefSeal, type BankTxnSink } from './codef/index.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { closeOnShutdown } from './shutdown.ts';
 import { VaultClient } from './vault-client.ts';
@@ -113,6 +114,15 @@ for (const m of [...BUNDLE_PC_READ_QUERIES, ...BUNDLE_PC_COMMANDS]) {
 
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
+// 계좌 자동조회(CODEF, 대표 결정 2026-11-12). 토큰은 게이트웨이, 호출은 Egress.toCodef(PC → CODEF 직결), 비밀번호는 금고 창.
+const CODEF = new Set<string>(CODEF_COMMANDS);
+for (const m of CODEF) ALLOWED.add(m);
+let codef: CodefLink | null = null;
+/**
+ * 돈 맞추기 저장소(bank-mvp)가 합쳐지면 여기서 붙인다: `codefSink = bankRepoSink(bankRepo, () => activeProfileId)`.
+ * 그 전에는 null이라 계좌 고르기·[최신화]가 codef.bank_not_ready로 정직하게 실패한다(연결·보유계좌 보기까지는 된다).
+ */
+const codefSink: BankTxnSink | null = null;
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined, authPort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -145,6 +155,16 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
+  codef = new CodefLink({
+    client: new CodefClient({ egress }),
+    seal: vaultCodefSeal(vault),
+    store: settingsCodefStore(db),
+    sink: () => codefSink,
+    onEvent: (e) => {
+      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
+      parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
+    },
+  });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -247,6 +267,33 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');
     return phone.handle(method, params);
+  }
+  if (CODEF.has(method)) {
+    if (!codef) throw new Error('db_not_ready');
+    const c = codef;
+    // 실패는 던지지 않고 {ok:false, code, cf}로 돌려준다(화면이 사람 말·CODEF 코드를 고른다). 값·원문 메시지는 없다.
+    const run = async (): Promise<object> => {
+      switch (method) {
+        case 'codef.status':
+          return c.status();
+        case 'codef.connect':
+          return c.connect(params);
+        case 'codef.choose':
+          return c.choose(params);
+        case 'codef.refresh':
+          return c.refresh(params);
+        case 'codef.cancel':
+          return c.cancel();
+        default:
+          return c.disconnect();
+      }
+    };
+    try {
+      return { ok: true, ...(await run()) };
+    } catch (e) {
+      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}) };
+      throw e;
+    }
   }
   if (INTENT.has(method)) {
     if (!intent) throw new Error('db_not_ready');

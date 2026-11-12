@@ -105,6 +105,10 @@
       "destination": "/api/sax?__p=/v1/biz/status"
     },
     {
+      "source": "/v1/codef/token",
+      "destination": "/api/sax?__p=/v1/codef/token"
+    },
+    {
       "source": "/v1/mailboxes",
       "destination": "/api/sax?__p=/v1/mailboxes"
     },

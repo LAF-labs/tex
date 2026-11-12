@@ -4,6 +4,7 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
+import { createBankAuto } from './shell-bank-auto.js';
 import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
@@ -1273,14 +1274,17 @@ function activityPanel(row) {
   );
 }
 
-const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터'];
+const SETTINGS_NAV = ['발급 인증', '승인', '서류 보관', '알림', '기기 연결', '내 데이터', '계좌 연결'];
 /** 설정 항목 중 실제로 열리는 것(나머지는 목업). */
-const SETTINGS_TAB = { 0: 'auth', 4: 'devices' };
+const SETTINGS_TAB = { 0: 'auth', 4: 'devices', 6: 'bank' };
+/** 계좌 자동조회(CODEF, shell-bank-auto.js). 내 계좌 화면(bank-mvp)이 생기면 거기서도 같은 view()를 그린다 */
+const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t) });
 
 function setTab(tab) {
   state.setTab = tab;
   render();
   if (tab === 'devices') refreshAccount();
+  if (tab === 'bank') void bankAuto.load();
 }
 
 // ---- 계정 로그인(A-01) ----
@@ -1482,7 +1486,9 @@ function settingsView() {
         return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab ?? null, onclick: tab ? () => setTab(tab) : mock }, t);
       }),
     ),
-    state.setTab === 'devices'
+    state.setTab === 'bank'
+      ? bankAuto.view()
+      : state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
       : h(
       'div',
@@ -1857,6 +1863,7 @@ function onActivated(x, y) {
 
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
+  if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();

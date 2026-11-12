@@ -13,7 +13,10 @@ import type { EngineInit, EnginePortal } from '@sax/engine/protocol';
 import { wrapPort, type EventLog, type PortLike } from '@sax/platform';
 import { childEnv } from './child-env.ts';
 import { authPortResponder, type GwAuthResult } from './gateway-auth.ts';
-import type { SecretInputBind } from './secret-labels.ts';
+import type { SecretInputBind as OneShotInputBind } from './secret-labels.ts';
+import type { CodefNeeded } from './bank-auto.ts';
+/** 1회용 결속 또는 계좌 자동조회 비밀번호 창 결속(금고 protocol SecretInputBind의 main 쪽 부분) */
+type SecretInputBind = OneShotInputBind | CodefNeeded;
 
 const require = createRequire(import.meta.url);
 
@@ -117,6 +120,7 @@ export class EngineHost extends EventEmitter {
         if (m?.t === 'ready') resolve();
         else if (m?.t === 'fatal') reject(new Error(m.code));
         else if (m?.t === 'ev' && m.name === 'run') this.emit('run', m.data);
+        else if (m?.t === 'ev' && m.name === 'codef') this.emit('codef', m.data);
         else this.onReply(m);
       });
     });

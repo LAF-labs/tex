@@ -12,7 +12,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 | 경로(공개 origin `https://tax.laf-co.com`) | 어디서 | 비고 |
 |---|---|---|
 | `/v1/auth/*` `/v1/oauth/*` `/v1/passkeys*` `/v1/me` `/v1/consents` `/v1/billing/*` `/v1/devices*` `/v1/device-tokens` `/v1/device-list` `/v1/acct-claim` `/v1/aik` `/v1/slots*` | Vercel 함수 `api/sax`(계정 라우터) | |
-| `/v1/run-tokens` `/v1/decide` `/v1/respond` `/v1/biz/status` | Vercel 함수 `api/sax`(게이트웨이 라우터) | 최대 60초 |
+| `/v1/run-tokens` `/v1/decide` `/v1/respond` `/v1/biz/status` `/v1/codef/token` | Vercel 함수 `api/sax`(게이트웨이 라우터) | 최대 60초 |
 | `/v1/mailboxes*`(HTTPS 큐만) | Vercel 함수 `api/sax`(릴레이 라우터) | 라이브 WSS 꺼짐(D08 §8 Phase 1) |
 | `/v1/push-token` `/v1/wake` | Vercel 함수 `api/sax`(푸시 라우터) | 푸시 공급사는 모의(Phase 1) |
 | `/v1/rooms`(룸 발급) | Vercel 외부 재작성 → **룸 호스트** `https://rooms.tax.laf-co.com` | |
@@ -52,7 +52,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 | 서비스 | 이름(`<서비스>__` 접두) |
 |---|---|
 | 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, SES를 켤 때만 `ses`, 3절 6번·아래 ⑤), `SES_FROM_ADDRESS`·`SES_ACCESS_KEY_ID` ⚿·`SES_SECRET_ACCESS_KEY` ⚿(`MAIL_PROVIDER=ses`일 때만), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL`, `PASSWORD_PEPPER_KEYS` ⚿(선택, 없으면 비밀번호 로그인만 닫힘, 아래 3절 3.11) |
-| 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE` |
+| 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE`, `CODEF_ENV`(`demo`·`prod`, 없으면 계좌 자동조회 꺼짐), `CODEF_CLIENT_ID` ⚿, `CODEF_CLIENT_SECRET` ⚿, `CODEF_PUBLIC_KEY` |
 | 릴레이 `RELAY__` | `DATABASE_URL` ⚿, `QUEUE_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `RELAY_PUBLIC_ORIGIN` |
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
 | 레지스트리 `REGISTRY__` | `TRUST_ROOT_JSON`(공개 값, 서명 의식 뒤), `REGISTRY_LOG_SIGNING_KEY` ⚿, `REGISTRY_ADMIN_TOKEN` ⚿, `DATABASE_URL` ⚿(`sax_registry`), `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` ⚿, `S3_SECRET_ACCESS_KEY` ⚿. 7절 |

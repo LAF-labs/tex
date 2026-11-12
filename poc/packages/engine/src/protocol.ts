@@ -129,6 +129,7 @@ export interface EngineInit {
 /** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */
 export interface EngineEvent {
   t: 'ev';
-  name: 'run';
+  /** codef: 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */
+  name: 'run' | 'codef';
   data: Record<string, unknown>;
 }

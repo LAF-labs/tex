@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { BundleCatalog } from '@sax/model';
 import { HttpDeviceDirectory, InternalClient, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { gatewayRouter } from './app.ts';
+import { codefFromEnv, type CodefTokenSource } from './codef.ts';
 import { ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
 import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
@@ -86,6 +87,8 @@ export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) =>
 export interface GatewayBuildDeps {
   provider?: ModelProvider;
   nts?: BizStatusSource;
+  /** CODEF 토큰 원천(시험 주입). 없으면 CODEF_ENV로 만든다(없으면 꺼짐) */
+  codef?: CodefTokenSource | null;
   /** 같은 배포 안의 계정 서비스(함수 직접 호출). 없으면 ACCOUNT_INTERNAL_URL로 서명 HTTP */
   directory?: DeviceDirectory;
   suspender?: DeviceSuspender;
@@ -122,7 +125,8 @@ export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: G
     limits: sqlLimits(db, Date.now, key32(env.LIMIT_ID_KEY, 'LIMIT_ID_KEY')),
   });
   const directory = deps.directory ?? new HttpDeviceDirectory(remote());
-  const router = gatewayRouter({ svc, verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)), directory, publicOrigin: env.GATEWAY_PUBLIC_ORIGIN ?? fail('GATEWAY_PUBLIC_ORIGIN') });
+  const codef = deps.codef !== undefined ? deps.codef : codefFromEnv(env, fail);
+  const router = gatewayRouter({ svc, codef, verifier: new TokenVerifier(parseTokenKeys(env.TOKEN_PUBLIC_KEYS)), directory, publicOrigin: env.GATEWAY_PUBLIC_ORIGIN ?? fail('GATEWAY_PUBLIC_ORIGIN') });
   return { db, svc, router, logger, sweep: () => svc.sweep() };
 }
 
