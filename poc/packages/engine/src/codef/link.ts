@@ -7,7 +7,7 @@
 // - 지우기가 실패하면(네트워크) connectedId를 PC에 적어 두고 다음 조회·[연결 해제] 때 다시 지운다.
 // - [연결 해제]: 남은 connectedId 삭제 + 기억해 둔 비밀번호 삭제 + 연결 상태 삭제. 가져온 거래 줄은 사장님 데이터라 그대로 둔다.
 // 화면·로그·이벤트에는 계좌번호 끝 4자리·이름·건수만 간다(전체 번호·비밀번호·인증서·토큰·connectedId 없음).
-import type { CodefClient, CodefAccount } from './client.ts';
+import type { CodefClient, CodefAccount, CodefTxn } from './client.ts';
 import { CODEF_BANKS, CodefError, isCodefBank, type CodefBankCode, type CodefClientType, type CodefFailure } from './codes.ts';
 import { codefRows, type AutoTxnRow } from './rows.ts';
 
@@ -29,7 +29,7 @@ export interface CodefSealPort {
  * - importRows: 줄 열쇠로 한 번만 넣고 새로 들어간 수를 돌려준다
  */
 export interface BankTxnSink {
-  ensureAccount(a: { bank: string; number: string; alias: string | null }): Promise<{ accountId: string }>;
+  ensureAccount(a: { bank: string; number: string; alias: string | null }): Promise<{ accountId: string; profileId?: string }>;
   accountNumber(accountId: string): Promise<string | null>;
   importRows(a: { accountId: string; source: 'api'; range: { from: string; to: string }; rows: AutoTxnRow[] }): Promise<{ rowCount: number; newCount: number }>;
 }
@@ -40,6 +40,8 @@ export interface LinkState {
   bank: CodefBankCode;
   clientType: CodefClientType;
   accountId: string;
+  /** 돈 맞추기 저장소의 프로필 id(bank.setLink·bank.refresh에 쓴다). 저장소가 알려 주지 않으면 null */
+  profileId?: string | null;
   last4: string;
   accountName: string;
   connectedAt: string;
@@ -182,6 +184,7 @@ export class CodefLink {
       last4: link.last4,
       accountName: link.accountName,
       accountId: link.accountId,
+      profileId: link.profileId ?? null,
       certId: link.certId,
       connectedAt: link.connectedAt,
       lastSyncAt: link.lastSyncAt,
@@ -306,7 +309,7 @@ export class CodefLink {
   }
 
   /** 보유계좌에서 하나 고르기 → 내 계좌로 넣고 첫 조회 → connectedId 삭제 → "연결됨" */
-  choose(p: { sessionId?: unknown; key?: unknown; alias?: unknown }): Promise<{ last4: string; rowCount: number; newCount: number; from: string; to: string }> {
+  choose(p: { sessionId?: unknown; key?: unknown; alias?: unknown }): Promise<{ last4: string; accountId: string; profileId: string | null; rowCount: number; newCount: number; from: string; to: string }> {
     return this.exclusive(async () => {
       const pend = this.pending;
       if (!pend || pend.id !== p.sessionId) throw new CodefError('session_lost');
@@ -319,14 +322,14 @@ export class CodefLink {
       const orphan: Orphan = { connectedId: pend.connectedId, bank: pend.bank, clientType: pend.clientType };
       try {
         const alias = typeof p.alias === 'string' && p.alias.trim() ? p.alias.trim().slice(0, 40) : acct.name || null;
-        const { accountId } = await sink.ensureAccount({ bank: CODEF_BANKS[pend.bank], number: acct.number, alias });
+        const { accountId, profileId } = await sink.ensureAccount({ bank: CODEF_BANKS[pend.bank], number: acct.number, alias });
         const link: LinkState = {
-          v: 1, certId: pend.certId, bank: pend.bank, clientType: pend.clientType, accountId, last4: acct.number.slice(-4), accountName: acct.name,
+          v: 1, certId: pend.certId, bank: pend.bank, clientType: pend.clientType, accountId, profileId: profileId ?? null, last4: acct.number.slice(-4), accountName: acct.name,
           connectedAt: new Date(this.nowMs()).toISOString(), lastSyncAt: null, lastDay: null, lastNew: 0,
         };
         this.save({ link });
         const r = await this.fetchInto(sink, link, pend.connectedId, acct.number);
-        return { last4: link.last4, ...r };
+        return { last4: link.last4, accountId, profileId: profileId ?? null, ...r };
       } finally {
         await this.release([orphan]);
       }
@@ -369,6 +372,33 @@ export class CodefLink {
     if (cur.link) this.save({ link: { ...cur.link, lastSyncAt: new Date(this.nowMs()).toISOString(), lastDay: lastDay && lastDay < to ? lastDay : addDays(to, -1), lastNew: r.newCount } });
     this.emit({ phase: 'done', newCount: r.newCount });
     return { rowCount: r.rowCount, newCount: r.newCount, from: range.from, to: range.to };
+  }
+
+  /**
+   * 돈 맞추기 원천(bank/source.ts TxnSource)용: 연결한 계좌 하나의 (기간) 거래를 가져와 CODEF 원문 그대로 돌려준다(저장은 부르는 쪽).
+   * [최신화]와 같은 규칙(15분 간격·하루 상한·비밀번호 상한·조회마다 connectedId 삭제)을 따른다.
+   */
+  fetchForSource(account: { id: string; number: string }, range: { from: string; to: string }, onPhase?: (p: CodefPhase) => void): Promise<{ txns: CodefTxn[]; from: string; to: string }> {
+    return this.exclusive(async () => {
+      const { link } = this.o.store.get();
+      if (!link || link.accountId !== account.id) throw new CodefError('session_lost');
+      const last = link.lastSyncAt ? Date.parse(link.lastSyncAt) : NaN;
+      if (Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon');
+      await this.releaseOrphans();
+      onPhase?.('password');
+      const connectedId = await this.register(link.certId, link.bank, link.clientType, 'auto');
+      try {
+        onPhase?.('fetching');
+        const page = await this.o.client.transactions(connectedId, link.bank, link.clientType, account.number.replace(/\D/g, ''), compact(range.from), compact(range.to));
+        const ymdOf = (d: string) => d.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3');
+        const cur = this.o.store.get();
+        if (cur.link) this.save({ link: { ...cur.link, lastSyncAt: new Date(this.nowMs()).toISOString() } });
+        this.emit({ phase: 'done' });
+        return { txns: page.txns, from: ymdOf(page.startDate), to: ymdOf(page.endDate) };
+      } finally {
+        await this.release([{ connectedId, bank: link.bank, clientType: link.clientType }]);
+      }
+    });
   }
 
   /** [취소]: 기다리던 금고 창을 닫고, 고르기 전 connectedId를 지운다 */

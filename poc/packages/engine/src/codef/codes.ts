@@ -57,6 +57,7 @@ export type CodefFailure =
   | 'cancelled'
   | 'cert_missing'
   | 'bank_not_ready'
+  | 'account_password_required'
   | 'daily_limit'
   | 'too_soon'
   | 'password_retry_limit'
@@ -81,6 +82,9 @@ const MAP: Record<string, CodefFailure> = {
   'CF-04014': 'session_lost',
   'CF-04038': 'session_lost',
   'CF-12100': 'bank_error',
+  // 계좌 비밀번호(개인 API accountPassword)는 보내지 않는다(09 §4.5: 은행이 요구할 때만). 요구하면 이 코드로 사람에게
+  'CF-13031': 'account_password_required',
+  'CF-13032': 'account_password_required',
   'CF-01004': 'bank_busy',
   'CF-01006': 'bank_busy',
   'CF-01007': 'bank_busy',

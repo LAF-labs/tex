@@ -729,7 +729,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
   // 계좌 자동조회 인증서 목록은 온보딩 O-03과 같은 길(금고 npki.list → 샌드박스 certInfo, 시연은 목업)
-  const bankAuto = bankAutoHandlers({ engine: (m, p) => host.rpc(m, p), certs: () => onbExternal.findCerts(), log: (n, d) => log.event(n, d) });
+  const bankAuto = bankAutoHandlers({ engine: (m, p) => host.rpc(m, p), certs: () => onbExternal.findCerts(), preferredCertId: () => onb?.state.certId ?? null, log: (n, d) => log.event(n, d) });
   // 거래처 장부(M4-3 O-05). [등록증으로 채우기]는 같은 등록증 읽기(fixture는 시연 거래처 등록증). 골랐지만 못 읽은 것과 고르지 않은 것을 나눈다.
   const cpBook = new CounterpartyBook(
     (m, p) => host.rpc(m, p),
@@ -910,6 +910,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
     'bankAuto.certs': () => bankAutoH['bankAuto.certs'](),
+    'bankAuto.consent': (p) => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.consent'](p);
+    },
     'bankAuto.connect': async (p) => {
       needGesture(3_000);
       await needLogin();

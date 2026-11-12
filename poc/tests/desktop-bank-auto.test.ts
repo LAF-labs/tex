@@ -1,7 +1,7 @@
 // 계좌 자동조회(CODEF) main 쪽: 비밀번호 창 결속 검사·창 페이지·화면 요청 → 엔진 codef.* (Electron 없이)
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { bankAutoHandlers, codefPageHtml, parseCodefNeeded } from '../apps/desktop/src/bank-auto.ts';
+import { CODEF_CONSENT_VERSION, bankAutoHandlers, codefPageHtml, parseCodefNeeded } from '../apps/desktop/src/bank-auto.ts';
 import { SHELL_METHODS, USER_ACTION_METHODS, parseRendererRequest } from '../apps/desktop/src/ipc.ts';
 
 const REQ = 'a'.repeat(32);
@@ -38,5 +38,32 @@ describe('계좌 자동조회 main', () => {
     await b.handlers['bankAuto.connect']({ certId: '0123456789abcdef', bank: '0020' });
     assert.deepEqual(calls, [['codef.connect', { certId: '0123456789abcdef', bank: '0020', clientType: 'B' }]]);
     assert.equal(b.chosenLabel(), '홍길동 · yessign');
+  });
+
+  it('홈택스 발급 인증서가 맨 앞(표시), 동의는 PC DB에 위탁 동의로 남고, 고르기 뒤 돈 맞추기 연결 상태를 알린다(없는 엔진이면 넘김)', async () => {
+    const calls: Array<[string, Record<string, unknown>]> = [];
+    const certs = [
+      { id: '1111111111111111', owner: '가', usage: 'yessign', expiresOn: '2027-01-01', usable: true },
+      { id: '2222222222222222', owner: '나', usage: 'KICA', expiresOn: '2027-01-01', usable: true },
+    ];
+    const b = bankAutoHandlers({
+      engine: async (m, p) => {
+        calls.push([m, p]);
+        if (m === 'bank.setLink') throw new Error('unknown_method');
+        return m === 'codef.choose' ? { ok: true, accountId: 'acct-1', profileId: 'prof-1' } : { ok: true };
+      },
+      certs: async () => certs,
+      preferredCertId: () => '2222222222222222',
+    });
+    const list = (await b.handlers['bankAuto.certs']()) as { certs: Array<{ id: string; issuance?: boolean }> };
+    assert.deepEqual(list.certs.map((c) => [c.id, !!c.issuance]), [['2222222222222222', true], ['1111111111111111', false]]);
+    assert.deepEqual(await b.handlers['bankAuto.consent']({ version: 'old' }), { ok: false, code: 'consent_stale' });
+    await b.handlers['bankAuto.consent']({ version: CODEF_CONSENT_VERSION });
+    const rec = calls.find(([m]) => m === 'consent.record')![1];
+    assert.equal(rec.kind, 'delegation');
+    assert.equal(rec.noticeKey, 'codef.bank_auto');
+    assert.equal(rec.noticeVersion, CODEF_CONSENT_VERSION);
+    assert.deepEqual(await b.handlers['bankAuto.choose']({ sessionId: 's', key: 'a0' }), { ok: true, accountId: 'acct-1', profileId: 'prof-1' });
+    assert.deepEqual(calls.find(([m]) => m === 'bank.setLink')![1], { profileId: 'prof-1', accountId: 'acct-1', provider: 'codef', state: 'auto_connected' });
   });
 });

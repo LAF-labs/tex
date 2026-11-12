@@ -8,6 +8,7 @@ export * from './client.ts';
 export * from './codes.ts';
 export * from './link.ts';
 export * from './rows.ts';
+export * from './source.ts';
 
 /** 엔진 RPC 이름(main → 엔진). 값(번호·비밀번호)은 오가지 않는다 */
 export const CODEF_COMMANDS = ['codef.status', 'codef.connect', 'codef.choose', 'codef.refresh', 'codef.cancel', 'codef.disconnect'] as const;
@@ -72,8 +73,8 @@ export function bankRepoSink(repo: BankRepoLike, profileId: () => string | null)
       const p = pid();
       const digits = a.number.replace(/\D/g, '');
       // 같은 번호의 내 계좌가 있으면 그것(파일로 먼저 넣었던 계좌). 저장소는 번호를 HMAC으로만 찾는다
-      for (const acc of repo.accounts(p)) if (repo.revealAccount(acc.id)?.replace(/\D/g, '') === digits) return { accountId: acc.id };
-      return { accountId: repo.addAccount({ profileId: p, bank: a.bank, number: digits, alias: a.alias }, new Date().toISOString()).id };
+      for (const acc of repo.accounts(p)) if (repo.revealAccount(acc.id)?.replace(/\D/g, '') === digits) return { accountId: acc.id, profileId: p };
+      return { accountId: repo.addAccount({ profileId: p, bank: a.bank, number: digits, alias: a.alias }, new Date().toISOString()).id, profileId: p };
     },
     async accountNumber(id) {
       return repo.revealAccount(id);

@@ -4,7 +4,8 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { Egress, EgressError, decodeCodefBody, encodeCodefBody } from '../packages/net/src/index.ts';
-import { CodefClient, CodefError, CodefLink, codefRows, memoryBankSink, memoryCodefStore, type CodefEvent, type CodefSealPort, type SealResult } from '../packages/engine/src/codef/index.ts';
+import { CODEF_SOURCE_CODES, CodefClient, CodefError, CodefLink, codefRows, codefTxnSource, memoryBankSink, memoryCodefStore, type CodefEvent, type CodefSealPort, type SealResult } from '../packages/engine/src/codef/index.ts';
+import { SourceError, type SourceProgress } from '../packages/engine/src/bank/source.ts';
 
 const FAKE_ACCOUNT = '1002123456789';
 const FAKE_TOKEN = 'fake-codef-token-0000000001';
@@ -318,6 +319,49 @@ describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
     const n = mock.calls.length;
     await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'password_retry_limit');
     assert.equal(mock.calls.length, n, 'CODEF를 부르지 않는다');
+  });
+});
+
+describe('CODEF 원천 어댑터(bank/source.ts TxnSource)', () => {
+  it('연결한 계좌의 기간을 가져와 SourceRow로(비고1~4 순서, 비고1 = payer, sourceId null), 진행 requested→waiting→running→done, 조회 뒤 connectedId 삭제', async () => {
+    const { link, tick, store } = setup();
+    const c = await link.connect({ certId: CERT });
+    await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    tick();
+    const src = codefTxnSource(link);
+    assert.equal(src.kind, 'auto');
+    assert.equal(src.provider, 'codef');
+    const accountId = store.get().link!.accountId;
+    const prog: SourceProgress[] = [];
+    const r = await src.fetch({ id: accountId, profileId: 'p1', bank: '우리은행', number: FAKE_ACCOUNT, last4: '6789' }, { from: '2026-11-01', to: '2026-11-12' }, { onProgress: (p) => prog.push(p) });
+    assert.deepEqual(prog.map((p) => p.state), ['requested', 'waiting', 'running', 'done']);
+    assert.deepEqual(r.range, { from: '2026-11-01', to: '2026-11-12' });
+    assert.deepEqual(r.rows[0], { sourceId: null, occurredAt: '2026-11-10 09:30:01', deposit: 1100000, withdrawal: 0, balance: 5100000, remarks: ['가나상사', '타행이체', null, null], memo: null, payer: '가나상사' });
+    assert.equal(r.rows[1]!.payer, null);
+    assert.equal(mock.live.size, 0);
+    const tx = mock.calls.filter((x) => x.path.endsWith('/transaction-list')).at(-1)!;
+    assert.deepEqual([tx.body.startDate, tx.body.endDate, tx.body.account], ['20261101', '20261112', FAKE_ACCOUNT]);
+  });
+
+  it('실패는 SourceError(원천 코드), 연결 안 된 계좌는 source.not_linked, 15분 안 다시는 source.rate_limited', async () => {
+    const { link, tick, store } = setup();
+    const src = codefTxnSource(link);
+    const acct = (id: string) => ({ id, profileId: 'p1', bank: '우리은행', number: FAKE_ACCOUNT, last4: '6789' });
+    const range = { from: '2026-11-01', to: '2026-11-12' };
+    await assert.rejects(src.fetch(acct('nope'), range, {}), (e: unknown) => e instanceof SourceError && e.code === 'source.not_linked');
+    const c = await link.connect({ certId: CERT });
+    await link.choose({ sessionId: c.sessionId, key: 'a0' });
+    const id = store.get().link!.accountId;
+    await assert.rejects(src.fetch(acct(id), range, {}), (e: unknown) => (e as SourceError).code === 'source.rate_limited');
+    tick();
+    mock.scenario.createCode = 'CF-12806';
+    const prog: SourceProgress[] = [];
+    await assert.rejects(src.fetch(acct(id), range, { onProgress: (p) => prog.push(p) }), (e: unknown) => (e as SourceError).code === 'source.cert_expired');
+    assert.deepEqual(prog.at(-1), { state: 'failed', code: 'source.cert_expired' });
+    // 표: 모든 실패 갈래에 원천 코드가 있다
+    for (const v of Object.values(CODEF_SOURCE_CODES)) assert.match(v, /^source\.[a-z_]+$/);
+    assert.equal(CODEF_SOURCE_CODES.two_way_required, 'source.needs_user');
+    assert.equal(CODEF_SOURCE_CODES.password_wrong, 'source.login_failed');
   });
 });
 

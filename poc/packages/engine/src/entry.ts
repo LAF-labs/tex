@@ -119,7 +119,9 @@ const CODEF = new Set<string>(CODEF_COMMANDS);
 for (const m of CODEF) ALLOWED.add(m);
 let codef: CodefLink | null = null;
 /**
- * 돈 맞추기 저장소(bank-mvp)가 합쳐지면 여기서 붙인다: `codefSink = bankRepoSink(bankRepo, () => activeProfileId)`.
+ * 돈 맞추기(bank-mvp #284)가 합쳐지면 여기서 붙인다:
+ *   codefSink = bankRepoSink(bankRepo, () => activeProfileId)   // 계좌 고르기·[최신화]가 내 계좌·입출금 줄로 들어간다
+ *   bank.registerSource(codefTxnSource(codef))                   // bank.refresh가 CODEF 원천을 쓴다(bank/source.ts TxnSource)
  * 그 전에는 null이라 계좌 고르기·[최신화]가 codef.bank_not_ready로 정직하게 실패한다(연결·보유계좌 보기까지는 된다).
  */
 const codefSink: BankTxnSink | null = null;

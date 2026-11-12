@@ -38,14 +38,19 @@ export function codefPageHtml(req: CodefNeeded, ctx: { profileName: string; cert
 }
 
 /** 화면에 보이는 인증서 행(이름·용도·만료일만, 경로·주체 전체 없음) */
-export type BankAutoCert = Pick<NpkiCert, 'id' | 'owner' | 'usage' | 'expiresOn' | 'usable'> & { why?: string };
+export type BankAutoCert = Pick<NpkiCert, 'id' | 'owner' | 'usage' | 'expiresOn' | 'usable'> & { why?: string; issuance?: boolean };
 
 export interface BankAutoDeps {
   /** 엔진 RPC(codef.*) */
   engine: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   certs: () => Promise<NpkiCert[]>;
+  /** 홈택스 발급에 쓰는 인증서(온보딩 O-03에서 고른 것). 목록 맨 앞에 보이고 미리 골라 둔다(09 §4.5) */
+  preferredCertId?: () => string | null;
   log?: (name: string, data: Record<string, number | string>) => void;
 }
+
+/** 동의 카드 문구 판(shell-bank-auto.js CONSENT_VERSION과 같다). 문구를 바꾸면 올린다 */
+export const CODEF_CONSENT_VERSION = 'codef-bank-auto-2026-11-12';
 
 const BANKS = ['0020', '0004', '0088', '0081', '0003', '0011'] as const;
 
@@ -54,14 +59,30 @@ export function bankAutoHandlers(d: BankAutoDeps) {
   /** 어느 인증서를 골랐는지(비밀번호 창 문구용, 이름·만료일만) */
   let chosen: BankAutoCert | null = null;
   const eng = (m: string, p: Record<string, unknown> = {}) => d.engine(m, p);
+  /** 돈 맞추기 연결 상태(bank-mvp bank.setLink, main 전용). 아직 없는 엔진이면 조용히 넘긴다 */
+  const setLink = async (st: { profileId?: unknown; accountId?: unknown }, state: 'file_only' | 'auto_connected' | 'auto_error', error?: string) => {
+    if (typeof st.profileId !== 'string' || typeof st.accountId !== 'string') return;
+    await eng('bank.setLink', { profileId: st.profileId, accountId: st.accountId, provider: 'codef', state, ...(error ? { error } : {}) }).catch(() => d.log?.('main.bank_auto_setlink_skipped', {}));
+  };
+  const ordered = async (): Promise<BankAutoCert[]> => {
+    const pref = d.preferredCertId?.() ?? null;
+    const list = (await d.certs()).map((c) => ({ ...c, ...(c.id === pref ? { issuance: true } : {}) }));
+    return [...list.filter((c) => c.issuance), ...list.filter((c) => !c.issuance)];
+  };
   return {
     chosenLabel: (): string | null => (chosen ? `${chosen.owner} · ${chosen.usage}` : null),
     handlers: {
       'bankAuto.status': () => eng('codef.status'),
+      // 동의 카드(09 §4.6·§9.4): 우리 회사 개인정보 수집·이용 동의 + (주)헥토데이터(CODEF) 처리 위탁 안내 + 인증서 보관 고지. 기록은 PC DB에만
+      'bankAuto.consent': async (p: { version: string }) => {
+        if (p.version !== CODEF_CONSENT_VERSION) return { ok: false, code: 'consent_stale' };
+        await eng('consent.record', { profileId: null, kind: 'delegation', noticeKey: 'codef.bank_auto', noticeVersion: CODEF_CONSENT_VERSION, choice: 'agreed', at: new Date().toISOString(), via: 'settings' });
+        return { ok: true };
+      },
       'bankAuto.certs': async () => {
-        const list = await d.certs();
+        const list = await ordered();
         d.log?.('main.bank_auto_certs', { shown: list.length });
-        return { certs: list.map((c) => ({ id: c.id, owner: c.owner, usage: c.usage, expiresOn: c.expiresOn, usable: c.usable, ...(c.why ? { why: c.why } : {}) })) };
+        return { certs: list.map((c) => ({ id: c.id, owner: c.owner, usage: c.usage, expiresOn: c.expiresOn, usable: c.usable, ...(c.why ? { why: c.why } : {}), ...(c.issuance ? { issuance: true } : {}) })) };
       },
       'bankAuto.connect': async (p: { certId: string; bank?: string; clientType?: 'B' | 'P' }) => {
         const list = await d.certs();
@@ -71,10 +92,25 @@ export function bankAutoHandlers(d: BankAutoDeps) {
         const bank = p.bank && (BANKS as readonly string[]).includes(p.bank) ? p.bank : '0020';
         return eng('codef.connect', { certId: c.id, bank, clientType: p.clientType === 'P' ? 'P' : 'B' });
       },
-      'bankAuto.choose': (p: { sessionId: string; key: string; alias?: string }) => eng('codef.choose', p),
-      'bankAuto.refresh': (p: { ask?: boolean }) => eng('codef.refresh', p.ask ? { ask: true } : {}),
+      'bankAuto.choose': async (p: { sessionId: string; key: string; alias?: string }) => {
+        const r = (await eng('codef.choose', p)) as Record<string, unknown>;
+        if (r?.ok) await setLink(r, 'auto_connected');
+        return r;
+      },
+      'bankAuto.refresh': async (p: { ask?: boolean }) => {
+        const r = (await eng('codef.refresh', p.ask ? { ask: true } : {})) as Record<string, unknown>;
+        // 잠깐 막힌 것(too_soon·daily_limit·취소)은 연결 오류로 치지 않는다
+        if (r && !r.ok && !['too_soon', 'daily_limit', 'cancelled', 'busy'].includes(String(r.code))) await setLink((await eng('codef.status')) as Record<string, unknown>, 'auto_error', `codef.${String(r.code)}`);
+        else if (r?.ok) await setLink((await eng('codef.status')) as Record<string, unknown>, 'auto_connected');
+        return r;
+      },
       'bankAuto.cancel': () => eng('codef.cancel'),
-      'bankAuto.disconnect': () => eng('codef.disconnect'),
+      'bankAuto.disconnect': async () => {
+        const st = (await eng('codef.status')) as Record<string, unknown>;
+        const r = (await eng('codef.disconnect')) as Record<string, unknown>;
+        if (r?.ok) await setLink(st, 'file_only');
+        return r;
+      },
     },
   };
 }

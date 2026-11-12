@@ -14,12 +14,22 @@ export const BANKS = [
 ];
 const bankName = (code) => (BANKS.find(([c]) => c === code) || [code, '은행'])[1];
 
-/** 동의 한 화면(그대로 보이는 사실). 09-bank-matching §4.5·§4.6 */
+/** 동의 카드 문구 판(main bank-auto.ts CODEF_CONSENT_VERSION과 같다) */
+export const CONSENT_VERSION = 'codef-bank-auto-2026-11-12';
+
+/** 동의 한 화면(09-bank-matching §4.5·§4.6·§9.4). 사장님이 동의하는 것은 우리 회사의 수집·이용과 위탁이다(CODEF 약관 동의가 아니다) */
 export const CONSENT_LINES = [
-  '고른 공동인증서 파일과 인증서 비밀번호가 CODEF(헥토데이터)로 가요. 비밀번호는 금고가 CODEF 공개키로 감싸서 보내요.',
-  'CODEF가 은행에 로그인해 이 계좌의 보유계좌·입출금 거래내역(날짜·금액·잔액·적요)만 가져와요. 이체·출금은 하지 않아요.',
-  '조회가 끝나면 CODEF에 등록한 로그인 정보를 바로 지워요. 가져온 거래내역은 이 PC에만 저장되고 우리 서버를 거치지 않아요.',
-  '언제든 [연결 해제]로 끊을 수 있어요. 끊으면 CODEF 쪽 로그인 정보와 이 PC에 기억한 비밀번호를 지워요.',
+  '자동 연결은 은행 조회 대행 회사 (주)헥토데이터(CODEF)를 통해 거래내역을 가져와요. 그래서 다른 기능과 달리 PC 밖으로 나가는 정보가 있어요.',
+  '나가는 것: 고른 공동인증서 파일과 인증서 비밀번호, 계좌번호. 이 PC에서 CODEF로 바로 가요(비밀번호는 금고가 CODEF 공개키로 감싸요). 우리 서버는 거치지 않아요.',
+  '가져오는 것: 이 계좌의 보유계좌 목록과 입출금 거래내역(날짜·금액·잔액·적요). 앱은 조회만 하고, 돈을 보내거나 이체하지 않아요.',
+  '가져온 거래내역은 이 PC에만 암호화해 저장해요. AI 모델로는 아무것도 보내지 않아요.',
+  '언제든 [연결 해제]로 그만둘 수 있고, 그러면 파일 올리기로 계속 쓸 수 있어요.',
+];
+/** 체크 세 개(둘은 필수 동의, 하나는 읽음 확인) */
+export const CONSENT_CHECKS = [
+  ['use', '(필수) 은행 자동 연결을 위한 개인정보 수집·이용 동의 — 우리 회사가 계좌번호·공동인증서·인증서 비밀번호·거래내역을 자동 조회와 받을 돈 맞추기에만 써요. 연결을 끊으면 지워요.'],
+  ['entrust', '(필수) 개인정보 처리 위탁 안내 — 계좌 거래내역 조회를 (주)헥토데이터(CODEF)에 맡겨요. CODEF는 받은 정보를 암호화해 처리해요.'],
+  ['keep', '(읽음) 인증서 보관 고지 — 공동인증서는 은행에서 조회 밖의 일도 할 수 있는 접근매체예요. CODEF에는 조회하는 동안만 등록하고 조회가 끝나면 바로 지워요. [이 PC에 기억]을 고르면 인증서 비밀번호가 이 PC 키체인에 남아요.'],
 ];
 
 /** 실패 코드 → 사람 말(엔진 CodefFailure). 표에 없으면 일반 문장 */
@@ -44,6 +54,8 @@ export function failText(code, bank) {
       cert_missing: '고른 인증서를 이 PC에서 찾지 못했어요. 인증서를 다시 골라 주세요.',
       bank_not_ready: '계좌는 확인했지만 거래내역을 넣을 곳(내 계좌)이 아직 준비되지 않았어요.',
       busy: '이미 진행 중이에요. 잠시만 기다려 주세요.',
+      account_password_required: '이 은행은 조회에 계좌 비밀번호가 필요해요. 지금은 자동 연결로 할 수 없어요. 거래내역 파일을 올려 주세요.',
+      consent_stale: '안내 문구가 바뀌었어요. 화면을 닫고 다시 열어 주세요.',
       too_soon: '방금 가져왔어요. 15분쯤 뒤에 다시 [최신화]해 주세요.',
       daily_limit: '오늘 자동 조회 횟수를 다 썼어요(시험 기간 하루 한도). 내일 다시 하거나 거래내역 파일을 올려 주세요.',
       password_retry_limit: '오늘 이 인증서 비밀번호가 여러 번 틀렸어요. 인증서가 잠기지 않게 오늘은 멈췄어요. 비밀번호를 확인하고 내일 다시 해 주세요.',
@@ -66,7 +78,7 @@ const when = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR', { month: 'num
  * @param {{ call: (m: string, p?: object) => Promise<any>, rerender: () => void, toast: (t: string) => void, uploadFile?: () => void }} ctx
  */
 export function createBankAuto(ctx) {
-  const s = { step: 'loading', status: null, certs: [], certId: null, bank: '0020', clientType: 'B', session: null, accounts: [], pick: null, phase: null, error: null, last: null };
+  const s = { step: 'loading', status: null, checks: {}, certs: [], certId: null, bank: '0020', clientType: 'B', session: null, accounts: [], pick: null, phase: null, error: null, last: null };
   const go = (patch) => (Object.assign(s, patch), ctx.rerender());
   const fail = (r) => go({ step: 'error', error: r, phase: null });
   const ask = async (m, p) => {
@@ -81,10 +93,19 @@ export function createBankAuto(ctx) {
     const r = await ask('bankAuto.status');
     go({ status: r.ok ? r : null, step: r.ok && r.connected ? 'connected' : 'idle' });
   }
+  async function agree() {
+    if (!CONSENT_CHECKS.every(([k]) => s.checks[k])) return;
+    const r = await ask('bankAuto.consent', { version: CONSENT_VERSION });
+    if (!r.ok) return fail(r);
+    await toCerts();
+  }
   async function toCerts() {
     go({ step: 'certs', certs: [], error: null });
     const r = await ask('bankAuto.certs');
-    go({ certs: (r && r.certs) || [] });
+    const certs = (r && r.certs) || [];
+    // 홈택스 발급에 쓰는 인증서가 맨 앞에 오고, 쓸 수 있으면 미리 골라 둔다(09 §4.5)
+    const pre = certs.find((c) => c.issuance && c.usable);
+    go({ certs, certId: s.certId || (pre ? pre.id : null) });
   }
   async function connect() {
     if (!s.certId) return;
@@ -135,6 +156,7 @@ export function createBankAuto(ctx) {
         case 'loading':
           return h('p', { class: 'sx-meta' }, '불러오는 중…');
         case 'idle':
+          s.checks = {};
           return h(
             'div',
             { class: 'sx-card', 'data-bank-auto': 'idle' },
@@ -148,8 +170,8 @@ export function createBankAuto(ctx) {
             { class: 'sx-card', 'data-bank-auto': 'consent' },
             h('h3', { class: 'sx-card-title' }, '자동 연결 전에 확인해 주세요'),
             h('ul', { class: 'sx-body-sm' }, CONSENT_LINES.map((t) => h('li', {}, t))),
-            h('p', { class: 'sx-meta' }, '자동 조회는 CODEF(헥토데이터)에 처리를 맡겨요. 맡기고 싶지 않으면 거래내역 파일을 올려 주세요.'),
-            h('div', { class: 'sx-actions' }, btn('동의하고 인증서 고르기', toCerts, 'is-primary', { 'data-bank-consent': '' }), btn('취소', () => load(), 'is-quiet'), fileLink()),
+            CONSENT_CHECKS.map(([k, t]) => h('label', { class: 'set-check' }, h('input', { type: 'checkbox', checked: !!s.checks[k], 'data-bank-check': k, onchange: (e) => go({ checks: { ...s.checks, [k]: e.target.checked } }) }), h('span', { class: 'sx-body-sm' }, t))),
+            h('div', { class: 'sx-actions' }, btn('동의하고 인증서 고르기', agree, 'is-primary', { disabled: !CONSENT_CHECKS.every(([k]) => s.checks[k]), 'data-bank-consent': '' }), btn('파일로만 쓸게요', upload, 'is-quiet'), btn('취소', () => load(), 'is-quiet')),
           );
         case 'certs':
           return h(
@@ -165,7 +187,7 @@ export function createBankAuto(ctx) {
                       'label',
                       { class: 'auth-row' },
                       h('input', { type: 'radio', name: 'bank-cert', value: c.id, disabled: !c.usable, checked: s.certId === c.id, onchange: () => go({ certId: c.id }) }),
-                      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, c.owner), h('span', { class: 'sx-meta' }, `${c.usage} · ${c.expiresOn}까지${c.usable ? '' : c.why === 'expired' ? ' · 만료' : ' · 쓸 수 없음'}`)),
+                      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, c.owner, c.issuance ? h('span', { class: 'sx-chip' }, '홈택스 발급에 쓰는 인증서') : null), h('span', { class: 'sx-meta' }, `${c.usage} · ${c.expiresOn}까지${c.usable ? '' : c.why === 'expired' ? ' · 만료' : ' · 쓸 수 없음'}`)),
                     ),
                   ),
                 )
