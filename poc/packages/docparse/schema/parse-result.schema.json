@@ -24,7 +24,7 @@
       "additionalProperties": false,
       "required": ["format", "textLayer", "ocr", "ocrConfidence", "pages", "image"],
       "properties": {
-        "format": { "enum": ["pdf", "jpeg", "png", "xlsx", "csv"] },
+        "format": { "enum": ["pdf", "jpeg", "png", "xlsx", "csv", "xls", "html"] },
         "textLayer": { "type": ["boolean", "null"] },
         "ocr": { "type": "boolean" },
         "ocrConfidence": { "anyOf": [{ "type": "number", "minimum": 0, "maximum": 100 }, { "type": "null" }] },

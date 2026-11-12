@@ -13,6 +13,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
+import { BankHost, bankQuestion, bankShellHandlers, isPayableQuestion, PAYABLE_LATER_TEXT, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
@@ -20,7 +21,7 @@ import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
 import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
 import type { AppUpdaterLike } from './update-electron.ts';
-import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox } from './docparse.ts';
+import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox, readSheetInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
@@ -95,6 +96,7 @@ const FILES: Record<string, string> = {
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
+  '/shell-bank.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
@@ -164,6 +166,8 @@ export interface ShellOptions {
    * 없으면 화면은 "이 빌드에서는 아직 연결할 수 없어요"로 끝난다. e2e는 가짜 포트를 넘긴다.
    */
   remote?: RemoteWiring;
+  /** 받을 돈 파일 고르기(09). 기본은 메인 창 파일 대화상자. e2e가 가짜 파일로 바꿔 끼운다. */
+  bankPick?: (kind: PickKind) => Promise<Uint8Array | null>;
   /** 대화 의도 해석기(M4-3 ③). 기본은 엔진 `intent.resolve`(intent-route.ts). e2e가 바꿔 끼운다. */
   intent?: IntentResolver;
   /** 대화 짧은 응대(chat-reply.ts). 기본은 엔진 `chat.respond`. e2e가 바꿔 끼운다. */
@@ -296,6 +300,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const firsts = await Promise.all(rows.map((c) => host.rpc('counterparty.getItems', { id: c.id }).then((r) => (Array.isArray(r) ? (r[0] as { name?: string } | undefined)?.name : undefined), () => undefined)));
     cps = rows.map((c, i) => counterpartyView(c, fixture?.itemHints ?? {}, firsts[i])).map((c) => ({ ...c, lastIssuedOn: c.lastIssuedOn ?? lastDoc(c.name) }));
   };
+  // 받을 돈(09 D-09): 파일은 main이 고르고 샌드박스로 읽어 다듬은 줄만 엔진에 보낸다(bank-host.ts).
+  const bank = new BankHost({
+    rpc: (m, p) => host.rpc(m, p ?? {}),
+    profileId: async () => ((await host.rpc('db.query.profiles.list')) as DbProfile[]).find((p) => p.kind === 'business')?.id ?? null,
+    pick: (kind) =>
+      opts.bankPick
+        ? opts.bankPick(kind)
+        : pickFileBytes([{ name: kind === 'statement' ? '은행 거래내역(엑셀·CSV)' : '홈택스 발급 목록(엑셀)', extensions: ['xlsx', 'xls', 'csv', 'htm', 'html'] }], win),
+    readSheet: async (bytes) => {
+      const { ms: _ms, peakMemoryKb: _kb, ...out } = await readSheetInSandbox(bytes);
+      return out;
+    },
+    log: (n, d) => log.event(n, d),
+  });
   let seed: DemoSeed | null = null;
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
@@ -412,6 +430,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw e;
     });
     boardDay = today;
+    const money = profile === 'business' ? await bank.boardCards() : [];
     return buildBoard({
       today,
       reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
@@ -423,6 +442,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
       setup: onboardingTodos(onb?.state ?? null),
+      // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
+      money,
     });
   };
   // 실행·서류가 바뀌면 판을 다시 계산해 보낸다(한 틱에 여러 번 바뀌어도 한 번).
@@ -905,6 +926,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await needLogin();
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
+      // 받을 돈 질문(09 §3.4 대화): 로컬 규칙으로 알아보고 엔진 로컬 조회로 답한다. 모델에 보내지 않는다(문장도 숫자도).
+      if (profile === 'business') {
+        if (isPayableQuestion(text)) return { kind: 'say', text: PAYABLE_LATER_TEXT, via: 'local', note: null, sent: [] };
+        const q = bankQuestion(text, kstToday(Date.now()));
+        if (q) {
+          const a = (await bank.call('db.query.bank.ask', q.kind === 'month' ? { kind: 'month', month: q.month ?? undefined } : q)) as { headline: string; rows: unknown[] };
+          log.event('main.bank_ask', { kind: q.kind, rows: a.rows.length });
+          runs.pending.asked = null;
+          return { kind: 'bank', text: a.headline, rows: a.rows, ask: q.kind, via: 'local', note: null, sent: [] };
+        }
+      }
       const local = parseRegex(text, runs.counterparties);
       if (demo) {
         // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
@@ -1153,6 +1185,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { ...r, profiles: profiles(), edits: editLog.list() };
     },
     // 내 사업장 [파일에서 읽기]: 파일 고르기를 여니 실제 클릭 뒤에만. 칸 후보만 돌려준다(저장은 [저장]으로, 같은 검사를 거친다).
+    ...bankShellHandlers(bank, () => pushBoard()),
+    'bank.pickStatement': () => {
+      needGesture(3_000);
+      return bank.pickStatement();
+    },
+    'bank.pickInvoices': async () => {
+      needGesture(3_000);
+      const r = await bank.pickInvoices();
+      pushBoard();
+      return r;
+    },
     'profile.readCert': async () => {
       needGesture(3_000);
       await needLogin();

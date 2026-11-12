@@ -349,3 +349,13 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .acct-rule.is-ok { color: var(--ink-2); }
 .acct-rule.is-ok .acct-rule-mk { color: var(--accent); }
 .acct-rule.is-bad, .acct-rule.is-bad .acct-rule-mk { color: var(--attention); }
+
+/* 받을 돈(09 D-09, shell-bank.js) */
+.bank-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.bank-form input, .bank-form select { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-md, 6px); background: var(--surface); color: var(--ink); font: inherit; }
+.bank-detail, .bank-review > .sx-card { margin-top: var(--space-3); }
+.bank-allocs, .bank-attach, .bank-events, .bank-cands, .bank-answer-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.bank-allocs li, .bank-attach li, .bank-events li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 13px; }
+.bank-cands li { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.bank-cols th select { margin-top: 4px; max-width: 120px; }
+td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }

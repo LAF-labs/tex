@@ -107,6 +107,18 @@ export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as cons
  * - settlement.store {profileId, itemId, month, bytes, format: xlsx|csv, parsed, displayName?}: parsed는 docparse SettlementResult. 요약(플랫폼·기간·합계)만 남긴다.
  */
 export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
+/**
+ * 돈 맞추기 1단계(09, 은행 거래내역 파일·홈택스 발급 목록·받을 돈). 처리는 엔진 bank/service.ts BankService다.
+ * 계좌번호·입금자명·금액이 오가므로 조회까지 모두 main 전용이다(렌더러에 열지 않는다). 파일은 main이 docparse 샌드박스로 읽어 다듬은 줄만 보낸다.
+ * db.query.bank.ask는 대화 답(로컬 계산). 결과의 modelSafe(건수·합계·가린 거래처)만 모델에 보낼 수 있다.
+ */
+export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.ask'] as const;
+export const BANK_COMMANDS = [
+  'bank.consent', 'bank.addAccount', 'bank.updateAccount', 'bank.deleteAccount', 'bank.revealAccount',
+  'bank.importTxns', 'bank.importInvoices', 'bank.rematch',
+  'bank.accept', 'bank.attach', 'bank.detach', 'bank.reject', 'bank.markReceived', 'bank.closeFee', 'bank.ignoreTxn', 'bank.assignTxn', 'bank.setPromised', 'bank.exclude', 'bank.undo',
+  'bank.addCpAccount', 'bank.deleteCpAccount', 'bank.revealCpAccount', 'bank.addAlias', 'bank.deleteAlias', 'bank.setPayTerms', 'bank.setDefaultTerms',
+] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
 export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect', 'run.resume', 'run.manualDone'] as const;
 /** 실행 이력(재시작 뒤 활동 기록·결과 카드·지난 실행 안내, run-history.ts). main만 부른다. */

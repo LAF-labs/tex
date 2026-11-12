@@ -1,4 +1,4 @@
-// 샌드박스가 main에 돌려주는 표 모양(엑셀·CSV 공통). schema/sandbox-output.schema.json의 sheet 출력과 같다.
+// 샌드박스가 main에 돌려주는 표 모양(xlsx·xls·HTML 표·CSV 공통). schema/sandbox-output.schema.json의 sheet 출력과 같다.
 
 /** 칸 값. 날짜 서식 칸은 'YYYY-MM-DD'(시각이 있으면 'YYYY-MM-DD HH:MM') 문자열로 바꾼다. 수식은 계산하지 않고 파일에 저장된 값만 쓴다. */
 export type Cell = string | number | boolean | null;
@@ -31,8 +31,8 @@ export interface SheetFlags {
 }
 
 export interface SheetOutput {
-  format: 'xlsx' | 'csv';
-  /** CSV를 읽은 글자 인코딩 */
+  format: 'xlsx' | 'csv' | 'xls' | 'html';
+  /** CSV·HTML 표를 읽은 글자 인코딩 */
   encoding: 'utf-8' | 'euc-kr' | null;
   sheets: SheetTable[];
   flags: SheetFlags;

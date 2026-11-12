@@ -29,3 +29,5 @@ export * from './driver/index.ts';
 export * from './run/index.ts';
 export * from './gateway-auth.ts';
 export * from './run-history.ts';
+export { autoOf, candidatesFor, FEE_TOLERANCE, nameSignals, runMatch, type AmountFit, type AutoMatch, type Candidate, type MatchCounterparty, type MatchInput, type MatchReceivable, type MatchResult, type MatchTxn, type NameSignal } from './bank/match.ts';
+export { BankError, BankService, DEFAULT_TERMS, dueDate, maskName, rowKeys, STALE_DAYS, type BankSummary, type ReceivableStatus, type ReceivableView, type TxnView } from './bank/service.ts';

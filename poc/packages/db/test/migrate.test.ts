@@ -20,9 +20,10 @@ const tables = (db: ReturnType<typeof openDatabase>): string[] =>
 
 // D07 §2 요약 DDL의 테이블 전부
 const D07_TABLES = [
-  'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties',
-  'documents', 'employees', 'gate_requests', 'irreversible_log', 'onboarding_state', 'payroll_lines', 'payroll_months', 'playbook_packages', 'policy', 'profiles', 'rate_counters',
-  'rate_tables', 'receipts', 'registry_state', 'remote_cmd_seen', 'remote_devices', 'remote_pair_state', 'run_events', 'runs', 'schedules', 'settings', 'shifts',
+  'bank_accounts', 'bank_imports', 'bank_txns',
+  'bundle_entries', 'bundle_exports', 'bundle_items', 'card_fetches', 'card_txn_memos', 'card_txns', 'cash_sales', 'clock_guard', 'consents', 'cooldowns', 'counterparties', 'cp_bank_accounts', 'cp_payer_aliases',
+  'documents', 'employees', 'gate_requests', 'irreversible_log', 'match_rejects', 'onboarding_state', 'payroll_lines', 'payroll_months', 'playbook_packages', 'policy', 'profiles', 'rate_counters',
+  'rate_tables', 'receipts', 'receivable_allocs', 'receivable_events', 'receivables', 'registry_state', 'remote_cmd_seen', 'remote_devices', 'remote_pair_state', 'run_events', 'runs', 'schedules', 'settings', 'shifts',
   'temp_previews', 'usage_local', 'validity_rules',
 ];
 

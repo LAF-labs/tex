@@ -4,6 +4,7 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
+import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
@@ -263,6 +264,8 @@ const RAIL = [
   ['chat', '대화', 'chat'],
   ['docs', '문서함', 'docs'],
   ['cps', '거래처', 'cps'],
+  // 받을 돈(09 D-09): 사업자 프로필만
+  ['bank', '받을 돈', 'money', () => state.profile === 'business'],
   ['biz', '내 사업장', 'biz'],
   ['bundle', '세무사 꾸러미', 'bundle'],
   // 급여대장(D-06)은 켠 사장님만 보인다(ADR-034 결정 8, 설정 payroll.enabled 기본 끔). 켜는 곳은 설정(M4-4).
@@ -653,6 +656,11 @@ async function ask(text, vat) {
     return;
   }
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
+  // 받을 돈 질문: main이 엔진 로컬 조회로 계산한 답(모델 없음)
+  if (r.kind === 'bank') {
+    appendThread(bankUi.answer(r, () => go('bank')));
+    return;
+  }
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
     if (r.suggest?.length) box.append(h('div', { class: 'sx-actions' }, ...r.suggest.map((c) => btn(c.label, () => fillComposer(c.text), '', { 'data-chat-suggest': c.playbook }))));
@@ -1005,6 +1013,8 @@ function cpPanel(c) {
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
       btn('상태 다시 확인', () => toast('국세청 상태 다시 확인은 곧 지원해요'), 'sx-btn-quiet'),
     ),
+    // 받을 돈(09 §3.6): 거래처 계좌(여러 개)·입금자 이름·결제 조건. 사업자 프로필만
+    state.profile === 'business' ? bankUi.cpSection(c) : null,
     h('div', { class: 'sx-source' }, '거래처 장부 · 이 PC에만 있어요'),
   );
 }
@@ -1526,7 +1536,9 @@ const laterView = (v) => () => {
   const [title, id, text] = LATER[v];
   return h('section', { class: 'rail-screen', 'data-view': v, 'data-screen': id }, h('div', { class: 'rs-col' }, railHead(title, '준비 중'), h('article', { class: 'sx-card later-card' }, h('p', { class: 'sx-body-sm is-muted' }, text))));
 };
-const VIEWS = { docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
+// 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
+const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null });
+const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
   if (state.view === v && v !== 'docs') return;
@@ -1535,6 +1547,10 @@ async function go(v) {
   const own = { chat: ['run', 'g24'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
   if (v === 'cps') state.cps = await call('counterparties.list');
+  if (v === 'bank') {
+    state.cps = await call('counterparties.list');
+    await bankUi.load();
+  }
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
     const rev = state.docsRev;
