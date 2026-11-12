@@ -126,8 +126,15 @@ async function flow() {
   // 1280×860에서 상세를 열어도 목록 칸이 표 높이 그대로다(머리줄만 남지 않는다)
   S!.win.setContentSize(1280, 860);
   await sleep(150);
-  const box = await js<{ box: number; table: number }>(`(() => { const b = document.querySelector('[data-view="bank"] .list-box'); return { box: b.getBoundingClientRect().height, table: b.querySelector('table').getBoundingClientRect().height }; })()`);
-  check('상세를 열어도 목록 칸이 접히지 않는다', box.box >= box.table, box);
+  // 1280×860에서 상세를 열어도 목록의 줄마다 그 줄 가운데 점이 그 줄을 가리킨다(상세 카드가 덮지 않는다)
+  const hits = await js<Array<{ row: string; hit: string | null }>>(`[...document.querySelectorAll('[data-view="bank"] [data-bank-row]')].map((r) => {
+    r.scrollIntoView({ block: 'nearest' });
+    const b = r.getBoundingClientRect();
+    const e = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    const own = e?.closest('[data-bank-row]');
+    return { row: r.dataset.bankRow, hit: own ? own.dataset.bankRow : e?.closest('[data-bank-detail]') ? 'detail' : (e?.tagName ?? null) };
+  })`);
+  check('상세를 열어도 목록 줄이 모두 보인다(줄 가운데 점이 그 줄)', hits.length >= 2 && hits.every((x) => x.hit === x.row), hits);
   await shot('02-detail-1280x860');
   await click('[data-act="bank-detach"]');
   await click('[data-bank-tab="unpaid"]');
