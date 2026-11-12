@@ -25,7 +25,7 @@ export const ONB_CHOICES = {
   tasks: ['submit', 'later'],
   counterparties: ['done', 'later'],
   summary: ['ok'],
-  first: ['try', 'invoice', 'later'],
+  first: ['try', 'later'],
 } as const satisfies Record<Exclude<OnbStep, 'done'>, readonly string[]>;
 export type OnbChoice = (typeof ONB_CHOICES)[keyof typeof ONB_CHOICES][number];
 export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] as OnbChoice[];
@@ -194,11 +194,11 @@ export type AuthKind = 'card' | 'simple' | 'cert' | 'fincert';
 export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' | 'cert'> = { card: 'security_card', simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
 export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 
-/** O-04 맡길 업무. now: 이 빌드에서 켠 일(PoC 빌드는 H-01·H-03·H-04, 08 §4). soon은 회색 칩(누르면 "지원되면 알림"). */
+/** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). H-03·H-04는 민원증명 실행이 들어오면 켠다. 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. */
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
   { id: 'H-01', label: '세금계산서 발급·메일 전송', now: true },
-  { id: 'H-03', label: '사업자등록증명', now: true },
-  { id: 'H-04', label: '납세증명서', now: true },
+  { id: 'H-03', label: '사업자등록증명', now: false },
+  { id: 'H-04', label: '납세증명서', now: false },
   { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
   { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
@@ -686,10 +686,10 @@ export class OnboardingFlow {
         else s.step = 'first';
         return;
       case 'first':
-        this.say({ try: '지금 해 볼게요', invoice: '세금계산서 1건 발급', later: '나중에 할게요' }[a.choice as 'try' | 'invoice' | 'later']);
+        this.say(a.choice === 'try' ? '지금 해 볼게요' : '나중에 할게요');
         s.step = 'done';
         // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13: 민원증명 실행이 들어오기 전에는 "증명서 발급은 곧…"이라 첫 시도가 안 됐다)
-        return a.choice === 'try' ? TRY_FIRST_FILL : a.choice === 'invoice' ? '세금계산서 ' : undefined;
+        return a.choice === 'try' ? TRY_FIRST_FILL : undefined;
     }
     return;
   }
