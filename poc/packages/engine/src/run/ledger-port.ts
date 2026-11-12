@@ -6,6 +6,7 @@
 //   committed의 verify_ref는 VerifyBook.ref(그 verify)다. 값은 저널에 남기지 않는다(⑦).
 //   한 verify를 여러 X가 가리키면(V-04a가 로드 때 거부하는 모양) 판정을 붙이지 않고 열린 행을 in_doubt로 닫는다.
 //   observed_manual(사람 대기 [직접 발급함])은 X에서 온다. 무장 전이라 행이 없으면 manualRow 재료로 넣는다(D03 §4).
+//   X가 이미 not_committed면 Ledger.attestManual이 따로 행 `<X>.manual`에 남기고, 그 뒤 판정은 그 행에 붙인다.
 import { LedgerError, type ArmRow, type Db, type Ledger, type NotCommittedReason } from '@sax/db';
 import type { ArmInput } from '../commitguard/guard.ts';
 import { flatten } from '../core/cfg.ts';
@@ -50,6 +51,8 @@ export class LedgerCommitPort implements CommitPort {
    * 둘 이상이면(검증기를 거치지 않은 IR) 추측하지 않는다: 판정을 붙이지 않고 그 X들의 열린 행을 in_doubt로 닫는다(팀장 결정 2026-11-06).
    */
   private readonly xsOfVerify = new Map<string, string[]>();
+  /** X → 발급 사실이 실제로 남은 원장 단계(X가 이미 not_committed였으면 `<X>.manual`). 그 뒤 verify 판정은 그 행에 붙인다. */
+  private readonly ledgerStepOf = new Map<string, string>();
 
   constructor(i: LedgerPortInput) {
     this.i = i;
@@ -103,17 +106,20 @@ export class LedgerCommitPort implements CommitPort {
       this.closeAmbiguous(xs, kind!);
       return true;
     }
-    const x = xs[0]!;
+    const x0 = xs[0]!;
+    const x = this.ledgerStepOf.get(x0) ?? x0;
     try {
+      let step = x;
       if (kind === 'observed_manual') {
-        const row = this.i.manualRow(x);
+        const row = this.i.manualRow(x0);
         if (!row) throw new LedgerError('ledger.row_missing');
-        this.i.ledger.observedManual(row);
+        step = this.i.ledger.attestManual(row);
+        if (step !== x0) this.ledgerStepOf.set(x0, step);
       } else if (kind === 'dispatched') this.i.ledger.dispatched(this.i.intentId, x);
-      else if (kind === 'committed') this.i.ledger.resolve(this.i.intentId, x, 'committed', null, at && at !== x ? this.i.verifyRef(at) : null);
+      else if (kind === 'committed') this.i.ledger.resolve(this.i.intentId, x, 'committed', null, at && at !== x0 ? this.i.verifyRef(at) : null);
       else if (kind === 'not_committed') this.i.ledger.resolve(this.i.intentId, x, 'not_committed', (arg ?? 'verify') as NotCommittedReason, null);
       else this.i.ledger.resolve(this.i.intentId, x, 'in_doubt');
-      this.i.journal(`ledger.${kind}`, { stepId: x, ...(arg && kind === 'not_committed' ? { reason: arg } : {}) });
+      this.i.journal(`ledger.${kind}`, { stepId: step, ...(arg && kind === 'not_committed' ? { reason: arg } : {}) });
     } catch (e) {
       this.i.journal('ledger.write_failed', { effect: kind!, code: e instanceof LedgerError ? e.code : 'ledger.error' });
     }

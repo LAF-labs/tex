@@ -147,6 +147,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - 행은 입력(`inputs_hash`)·패키지(`package_digest`)·승인 내용(`action_hash`)에 결속된다. 같은 의도의 비가역 둘(주·후속)은 `step_id`로 구분되어 서로 덮어쓰지 않는다.
 - 상태: `armed → dispatched → committed | not_committed | in_doubt`. 그리고 `observed_manual`: 핸드오프·`human(manual)` 중 가드가 관측한 커밋 요청 또는 사용자의 "직접 발급함"(R-C2). `observed_manual`은 verify로 `committed`/`not_committed`가 되거나 `in_doubt`로 남는다.
 - 무장 전(게이트 승인 전) "직접 발급함"도 행을 남긴다: 게이트가 허가한 주 비가역 X가 하나면 그 X 행을 `observed_manual`로 넣는다. 재료는 그 실행의 의도·입력 해시·패키지·초안의 업무 키·HMAC이고 `action_hash`는 플레이북·스텝·입력 해시·발급 키로 만든다(승인 내용이 없다). X가 여럿이면 행 없이 `in_doubt`로 끝낸다(2026-11-12).
+- 그 X가 이미 `not_committed`(예: 무장 뒤 누르기 전 `identity_mismatch`)여도 "직접 발급함"은 남는다. 종결 행은 바꾸지 않고 같은 의도에 따로 행 `<X>.manual`(`observed_manual`, 같은 발급 키)을 넣는다(`Ledger.attestManual`). 그 뒤 verify 판정은 그 행에 붙는다. 같은 발급 키의 열린 행이라 사다리는 멈추고 새 무장은 `ledger_issue_open`이다. 가드 관측(R-C2)도 같다(2026-11-12).
 - 순서: 토큰 소비 + `armed` 기록 커밋 → readback 재계산 → 클릭 → `dispatched` → verify → 종결 상태.
 - 재시작 시 `armed|dispatched|observed_manual`은 모두 `in_doubt`로 승격.
 - **의도 재사용 거부**: 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 원장의 것과 다르면 거부하고 보안 이벤트 `ledger.intent_reuse`를 남긴다.
