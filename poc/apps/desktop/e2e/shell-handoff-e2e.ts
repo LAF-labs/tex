@@ -26,6 +26,7 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 
 let S: Shell;
+let chrome = true;
 const js = <T = unknown>(code: string): Promise<T> => S.win.webContents.executeJavaScript(code) as Promise<T>;
 async function until(what: string, fn: () => boolean | Promise<boolean>, ms = 8000): Promise<boolean> {
   const end = Date.now() + ms;
@@ -205,6 +206,16 @@ async function flow(): Promise<void> {
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
+  // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
+  chrome = false;
+  const z = await toDraft('A상사에 11만원 세금계산서');
+  await userClick(`[data-run="${z}"] [data-act=prepare]`);
+  check('Chrome이 없으면 준비하지 않고 초안 카드에 설치 안내(엔진 run.start 없음)', await until('no chrome', async () => js<boolean>(`(() => { const c = document.querySelector('[data-run="${z}"]'); return !!c && !!c.querySelector('[data-no-chrome]') && c.innerText.includes('Chrome을 설치한 뒤') && !!c.querySelector('[data-act=prepare]'); })()`), 3000) && runStatus(z) === 'draft' && !calls.some(([m, r]) => m === 'run.start' && r === z), { st: runStatus(z), calls });
+  await shot('00-no-chrome');
+  await click(`[data-run="${z}"] [data-act=cancel]`);
+  await until('cancelled', () => runStatus(z) !== 'draft', 3000);
+  chrome = true;
+
   // ① 로그인 대기 → [이어서] → 승인 → 서명 대기 → 엔진이 스스로 넘어가 완료
   plans.push({ login: true });
   const a = await toDraft('A상사에 12만원 세금계산서');
@@ -261,7 +272,7 @@ async function flow(): Promise<void> {
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false, chromeReady: () => chrome });
     S.win.webContents.setBackgroundThrottling(false);
     S.win.setIgnoreMouseEvents(true);
     await flow();

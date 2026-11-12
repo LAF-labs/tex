@@ -366,6 +366,8 @@ export interface RunView {
   handoffEnd?: boolean;
   /** 초안만: 오늘 같은 거래처·같은 합계로 이미 발급한 실행이 있다(F-10, 이 앱이 켜진 동안의 발급). 승인 카드의 중복 경고보다 먼저 보인다. */
   dupToday?: boolean;
+  /** [홈택스에서 준비] 전 점검에서 이 PC에 Chrome이 없었다(초안 카드 안내, 다음 준비 때 다시 본다). */
+  noChrome?: boolean;
   writeDate: string;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;

@@ -213,7 +213,7 @@ describe('동의 화면 4종', () => {
     await walk(flow, [
       { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
-      { step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-02': true } },
+      { step: 'tasks', choice: 'later' },
       { step: 'summary', choice: 'ok' },
     ]);
     assert.equal(saved[0]?.portalLoginId, 'ganada01', '포털 아이디는 비밀 아닌 값으로 프로필에(DB portal_login_id)');
@@ -239,7 +239,7 @@ describe('동의 화면 4종', () => {
     await walk(flow, [
       { step: 'model', choice: 'agree' },
       { step: 'telemetry', choice: 'off' },
-      { step: 'tasks', choice: 'submit', tasks: { 'H-03': true } },
+      { step: 'tasks', choice: 'later' },
       { step: 'summary', choice: 'ok' },
     ]);
     assert.equal(b.saved[0]?.portalLoginId, 'ganada01');
@@ -341,7 +341,7 @@ describe('동의 화면 4종', () => {
 });
 
 describe('요약·첫 작업·이어 하기', () => {
-  it('세금계산서를 고르면 거래처 단계, 나머지는 바로 요약. 곧 되는 일은 고를 수 없다', async () => {
+  it('세금계산서를 고르면 거래처 단계, 나머지는 바로 요약. 곧 되는 일(증명서 포함)은 고를 수 없다', async () => {
     const { flow } = make();
     await walk(flow, [
       { step: 'terms', choice: 'agree' },
@@ -351,7 +351,10 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'telemetry', choice: 'off' },
     ]);
     assert.equal(await code(flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-02': true } })), 'no_tasks');
+    assert.equal(await code(flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-04': true } })), 'no_tasks', '사업자등록증명·납세증명서는 이 빌드에서 발급하지 못한다');
     await flow.answer({ step: 'tasks', choice: 'submit', tasks: { 'H-01': true, 'H-04': true } });
+    assert.deepEqual(flow.state.tasks, ['H-01']);
+    assert.equal(flow.state.log.at(-1)?.text, '세금계산서 발급·메일 전송');
     assert.equal(flow.state.step, 'counterparties');
     await flow.answer({ step: 'counterparties', choice: 'later' });
     assert.equal(flow.state.step, 'summary');
@@ -370,6 +373,7 @@ describe('요약·첫 작업·이어 하기', () => {
       { step: 'summary', choice: 'ok' },
     ]);
     assert.deepEqual(saved, [{ kind: 'business', displayName: '가나다컴퍼니', bizNo: '1234567891', repName: '김가나', bizType: '서비스업', bizItem: '경영 컨설팅', address: '서울특별시 가나구 다라로 12, 3층', email: 'office@ganada.example', signMethod: 'simple_auth' }]);
+    assert.equal(await code(flow.answer({ step: 'first', choice: 'invoice' as never })), 'bad_choice', '첫 작업 선택지는 [지금 해 보기]·[나중에] 둘');
     const r = await flow.answer({ step: 'first', choice: 'try' });
     assert.equal(r.fill, '세금계산서 발급해 줘', 'F-13: 지금 되는 일(세금계산서)로 채운다');
     assert.ok(flow.done);
