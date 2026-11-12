@@ -9,8 +9,8 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { acceptPolicy, decodeSxp, loadPackage, type LoadedPackage, type Policy } from '@sax/engine/core';
-import { RegistrySync, memoryRegistryStore, trustRootsFromPin, type TrustPin } from '@sax/engine';
+import { acceptPolicy, clampPolicy, decodeSxp, loadPackage, type LoadedPackage, type Policy } from '@sax/engine/core';
+import { HOMETAX_POLICY, RegistrySync, memoryRegistryStore, ratePolicyFrom, stricterRate, trustRootsFromPin, type TrustPin } from '@sax/engine';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import { Logger } from '../services/shared/src/index.ts';
 import { RESIGN_TTL, buildRegistryDeploy, logSigningKey, registryRouter, resignAll, MemoryStore, type TrustRoot } from '../services/registry/src/index.ts';
@@ -30,6 +30,8 @@ const srcVersion = (dir: string) => (JSON.parse(fs.readFileSync(path.join(dir, '
 const V = { lookup: srcVersion(SOURCES[0]!), mail: srcVersion(SOURCES[1]!), issue: srcVersion(SOURCES[2]!) };
 /** 정책 초안(팀장 결정 2026-11-09: 홈택스 auto, 요청률 상한은 ADR-025 PoC 값) */
 const POLICY_PATH = path.join(ROOT, 'services/registry/policy/2026.11.json');
+/** 다음 정책(대표 결정 2026-11-12 "우리가 설정한 상한은 웬만해선 닿지 않게"): 사용량 상한만 바꾼다 */
+const POLICY_NEXT_PATH = path.join(ROOT, 'services/registry/policy/2026.11.1.json');
 const TS_SEED = Buffer.alloc(32, SAMPLE_SEEDS.timestamp['timestamp-1']).toString('hex');
 const ADMIN = 'admin-token-for-publish-test-0123456789';
 const PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex');
@@ -595,5 +597,94 @@ describe('H-01 게시 도구: 공개 GET이 CDN 캐시일 때(운영 2026-11-09 
       await prod.close();
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+/** 두 JSON의 값이 다른 잎 경로(정렬) */
+const leafDiff = (a: unknown, b: unknown, at = ''): string[] => {
+  const obj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (obj(a) && obj(b)) return [...new Set([...Object.keys(a), ...Object.keys(b)])].sort().flatMap((k) => leafDiff(a[k], b[k], at ? `${at}.${k}` : k));
+  return JSON.stringify(a) === JSON.stringify(b) ? [] : [at];
+};
+
+describe('정책 2026.11.1: 사용량 상한만 풀고 정책만 게시(대표 결정 2026-11-12)', () => {
+  let prod: Awaited<ReturnType<typeof localProd>>;
+  let dir: string;
+  before(async () => {
+    prod = await localProd();
+    dir = tmp();
+  });
+  after(async () => {
+    await prod.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+  const draftOf = (p: string) => JSON.parse(read(p)) as Policy;
+  /** 받은 정책으로 엔진이 쓰는 홈택스 실효 값(앱 내장 ∧ 받은 정책, RateGuard와 같은 합침) */
+  const effective = (p: Policy) => {
+    const { policy, clamped } = clampPolicy(p);
+    assert.deepEqual(clamped, []);
+    return stricterRate(HOMETAX_POLICY, ratePolicyFrom(policy, 'hometax', 'interactive'));
+  };
+
+  it('2026.11과 다른 곳은 사용량 상한뿐이고, 받으면 홈택스 실효 상한이 앱 내장 값 그대로다', () => {
+    const prev = draftOf(POLICY_PATH);
+    const next = draftOf(POLICY_NEXT_PATH);
+    assert.deepEqual(leafDiff(prev, next), [
+      'cooldown.positiveDetectionsForCooldown',
+      'limits.hometax.irreversiblePerDayPerProfile',
+      'limits.hometax.loginsPerDay',
+      'limits.hometax.runsPerDayPerProfile',
+      'limits.hometax.runsPerLoginSession',
+      'remote.irreversiblePerDay',
+      'version',
+    ]);
+    assert.equal(effective(prev).limits.irreversiblePerDayPerProfile, 1, '2026.11은 앱 내장 값보다 엄격하다');
+    assert.deepEqual(effective(next), HOMETAX_POLICY);
+    assert.equal(next.remote.irreversiblePerDay, 5, '스키마·앱 하한 최대');
+  });
+
+  it('운영처럼 2026.11(monotonic 1)과 인덱스가 있을 때: dry-run은 정책 2건만, 실제 서명은 정책 키 2번, push는 정책 2건만 올리고 인덱스는 그대로', async () => {
+    const base = path.join(dir, 'base');
+    const b: string[] = [];
+    assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', base, '--policy', POLICY_PATH, '--ceiling', 'hometax=auto', ...SOURCES], cliDeps(b)), 0);
+    await runPrinted(b);
+    const ba: string[] = [];
+    assert.equal(await publish(['assemble', '--trust', TRUST_PATH, '--work', base], cliDeps(ba)), 0);
+    await runPrinted(ba);
+    assert.equal(await publish(['push', '--trust', TRUST_PATH, '--work', base], cliDeps([])), 0);
+    const indexBefore = prod.s3.objects.get('registry/stable/index.json')!.body;
+    const prevPolicy = JSON.parse(prod.s3.objects.get('policy/current.json')!.body.toString()) as Policy;
+    const puts = prod.s3.counts.put;
+
+    const dry: string[] = [];
+    assert.equal(await publish(['dry-run', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', path.join(dir, 'dry'), '--policy', POLICY_NEXT_PATH], cliDeps(dry)), 0);
+    assert.equal(prod.s3.counts.put, puts, 'dry-run은 레지스트리에 쓰지 않는다');
+    assert.ok(dry.includes('리허설: 임시 키 서명 2번, 게시 2건(policy/2026.11.1.json, policy/current.json), 되읽기·로그 포함 증명 통과'), dry.join('\n'));
+
+    const work = path.join(dir, 'next');
+    const p: string[] = [];
+    assert.equal(await publish(['prepare', '--registry', prod.origin, '--trust', TRUST_PATH, '--work', work, '--policy', POLICY_NEXT_PATH], cliDeps(p)), 0);
+    const confirm = /^ {2}policy monotonic 2 확인 코드 (\S+)$/.exec(p.find((l) => l.startsWith('  policy monotonic')) ?? '')?.[1];
+    assert.ok(confirm, p.join('\n'));
+    assert.equal(dry.find((l) => l.startsWith('  policy monotonic')), `  policy monotonic 2 확인 코드 ${confirm}`, 'dry-run이 보인 확인 코드 = 실제 준비');
+    const signs = p.filter((l) => l.includes(' sign --kind ')).map((l) => /--kind (\S+) --key-id (\S+)/.exec(l)!.slice(1).join(' '));
+    assert.deepEqual(signs, ['policy policy-1', 'policy policy-2']);
+    assert.equal(await runPrinted(p), 2);
+
+    const u: string[] = [];
+    assert.equal(await publish(['push', '--trust', TRUST_PATH, '--work', work], cliDeps(u)), 0);
+    const record = JSON.parse(read(path.join(work, 'record.json'))) as { published: Array<{ path: string }>; index: { monotonic: number } };
+    assert.deepEqual(record.published.map((x) => x.path), ['policy/2026.11.1.json', 'policy/current.json']);
+    assert.equal(record.index.monotonic, 1);
+    assert.ok(prod.s3.objects.get('registry/stable/index.json')!.body.equals(indexBefore), '인덱스는 다시 서명하지 않는다');
+
+    const ctx = { roots: trustRootsFromPin(TRUST as unknown as TrustPin), revoked: new Set<string>(), hold: false, now: Date.now() };
+    const cur = acceptPolicy(prevPolicy, { ...ctx, current: null });
+    assert.ok(cur.ok);
+    const pol = JSON.parse(prod.s3.objects.get('policy/current.json')!.body.toString()) as Policy;
+    const ap = acceptPolicy(pol, { ...ctx, current: cur.accepted });
+    assert.ok(ap.ok, ap.ok ? '' : ap.code);
+    assert.equal(pol.monotonic, 2);
+    assert.deepEqual(effective(ap.accepted.policy), HOMETAX_POLICY);
   });
 });
