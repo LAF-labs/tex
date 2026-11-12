@@ -207,11 +207,7 @@ describe('게시본 H-01 건조 실행: 사람 대기 재개(B3)', () => {
   });
 });
 
-// 공동인증서 실행(engine-cert, B1·B2): 금고 비밀 창(HumanPort.secret)을 RunServiceDeps.human에 붙이면 본문을 채우고 todo를 뗀다.
-describe('게시본 H-01 건조 실행: 공동인증서 실행(todo, engine-cert)', () => {
-  it('B1 공동인증서 로그인: s4 sign cert → human.secret이 금고 비밀 창을 열고, done이면 s5 → s6 → s10(지금: 대역이 바로 ttl → handoff login human.ttl_expired, [다 했어요]로 재개는 된다)', { todo: 'B1' });
-  it('B2 공동인증서 발급 서명: s21 signFlow human:secret이 비밀 창을 열고, done이면 확인 버튼 한 번 → verify committed(지금: 대역이 바로 ttl → 서명 차례 handoff sign)', { todo: 'B2' });
-});
+// 공동인증서 실행(engine-cert, B1·B2): tests/h01-published-dryrun-cert.test.ts(CertSecretPort, 사람이 인증서 창에서 직접 넣는 길).
 
 // 수동 관찰: SAX_DRY=cert-login,captcha,... node --conditions=development --test tests/h01-published-dryrun.test.ts
 const SC: Array<[string, Scenario]> = [

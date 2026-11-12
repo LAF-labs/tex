@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
 import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
-import { cleanItem, dayOffset, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
+import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
@@ -28,6 +28,44 @@ const isRegate = (x: unknown): x is RegateReason => typeof x === 'string' && Obj
 /** 핸드오프(HandedOff, D03 §2): 앱이 진행하지 못해 사람에게 넘긴 단계. [다 했어요]·[직접 발급함]은 재개·확인으로만 가고 발급하지 않는다. */
 export const HANDOFF_TEXT = '지금 사람이 필요해요';
 export const HANDOFF_HINT = '전용 Chrome 창에서 직접 마치면 [다 했어요], 홈택스에서 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.';
+/** 사람 차례 한 줄(실화면 기준, 부장 2026-11-12). 실행은 끝나지 않았고 30분 안에 마치지 않으면 멈춘다(run.handoff_timeout). */
+export const HANDOFF_LOGIN = { text: '홈택스 창에서 로그인해 주세요', note: '로그인을 마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' };
+export const HANDOFF_SIGN = { text: '홈택스 창에서 인증 방법을 고르고 인증서 비밀번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다', note: '자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
+export const HANDOFF_SIGN_TTL = { text: HANDOFF_SIGN.text, note: '앱의 비밀번호 창은 시간이 지나 닫혔어요. 홈택스 창에서 직접 넣어 주세요. 자동으로 넘어가지 않으면 [다 했어요]를 눌러 주세요.' };
+/**
+ * 발급 인증(프로필, 화면 라벨)별 서명 안내(H-01 2.2.0: 엔진이 인증유형 창에서 프로필 값의 항목을 고른다, methodTargets).
+ * now: 승인 직후 서명 단계에 들어서면 바로 보이는 할 일(엔진은 끝 표지를 최대 3분 기다린 뒤에야 handoff sign.waiting을 보낸다).
+ * turn: 서명 차례 한 줄. 엔진이 항목을 못 골랐으면(값 없음·항목 안 보임) 사람이 고르므로 "고르고"를 넣는다.
+ * 공동·금융인증서는 부장 문구(2026-11-12) 그대로. 모르는 값이면 그 문구.
+ */
+export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
+  [SIGN_LABEL.cert]: { now: '홈택스 창에서 인증서 비밀번호를 직접 넣어 주세요', text: HANDOFF_SIGN.text },
+  [SIGN_LABEL.simple_auth]: { now: '휴대폰에서 간편인증 요청을 승인해 주세요', text: '홈택스 창에서 간편인증을 고르고 휴대폰에서 승인해 주세요. 끝나면 자동으로 이어집니다' },
+  [SIGN_LABEL.security_card]: { now: '홈택스 창에서 보안카드 번호를 직접 넣어 주세요', text: '홈택스 창에서 인증 방법을 고르고 보안카드 번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다' },
+};
+/**
+ * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
+ * 그 뒤에야 로그인 차례(handoff)가 오므로, 로그인 단계에 있는 동안 할 일을 바로 보인다(이미 로그인돼 있으면 곧 지나간다).
+ */
+export const LOGIN_NOW = '홈택스 창에 로그인 화면이 보이면 직접 로그인해 주세요. 로그인하면 자동으로 이어집니다';
+export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
+const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
+/** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
+const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
+  // 로그인 단계에서 오면 로그인 차례([이어서])다(엔진은 캡차·추가 인증을 handoff login으로 보낸다)
+  'portal.captcha': { text: '홈택스 창에서 자동입력방지 문자를 넣고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
+  'portal.mfa_pending': { text: '홈택스 창에서 추가 인증을 마치고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
+  'portal.unexpected_page': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
+  'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
+};
+/** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
+export function handoffTurn(phase: Phase, code: string | undefined, auth?: string): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
+  if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
+  const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
+  if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };
+  if (phase === 'login') return { kind: 'login', ...HANDOFF_LOGIN };
+  return { kind: 'other', text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${STEPS[PHASES.indexOf(phase)]}`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
+}
 
 type EngineEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string; attempt?: number }
@@ -73,6 +111,8 @@ export const NOTE: Record<string, string> = {
   'step.selector_miss': SCREEN_UNKNOWN_REDO,
   'human.ttl_expired': '인증서 비밀번호 창이 시간이 지나 닫혔어요. [다시 준비]를 누르면 다시 열어요. 아무것도 발급하지 않았어요.',
   // Chrome이 없으면 금고가 실행 창을 열지 못한다(엔진 CHROME_NOT_INSTALLED_CODE, customer-dist)
+  // 사람 차례를 30분 넘게 기다림(#278 run.handoff_timeout). 발급 전이면 end()가 "아무것도 발급하지 않았어요"·[다시 준비]를 붙인다.
+  'run.handoff_timeout': '홈택스 창에서 할 일을 30분 동안 기다렸지만 끝나지 않아 멈췄어요.',
   'chrome.not_installed': 'Chrome이 설치돼 있어야 해요. Chrome을 설치한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.unobservable': '홈택스 화면을 확인하지 못해 승인을 열지 않았어요. 아무것도 발급하지 않았어요.',
   // 민원증명: 개인사업자(사업자 인증서) 로그인으로 못 여는 화면(납세증명서·소득금액증명 등, 캡처 2026-11-10)
@@ -141,6 +181,16 @@ export const NOTE: Record<string, string> = {
   'wait.timeout': '홈택스 화면이 제때 뜨지 않아 멈췄어요. 아무것도 발급하지 않았어요. 잠시 뒤 다시 준비해 주세요.',
 };
 /** 표에 없는 코드(새 코드·내부 오류)는 코드를 보이지 않고 이 문구로. 코드는 로그(main.run_end 등)에만 남는다. in_doubt는 늘 표의 문구라 이 문구를 쓰지 않는다. */
+/** 서명 차례에서 [중지]를 눌렀다: 서명이 이미 됐을 수 있어 발급목록을 확인한 뒤 끝낸다. */
+export const STOP_AFTER_SIGN_NOTE = '중지를 받았어요. 서명이 됐는지 홈택스 발급목록에서 확인한 뒤 끝낼게요. 다시 발급하지 마세요.';
+/** 엔진 명령 응답 {ok:false, code}는 거절이다(코드를 그대로 던져 화면이 사람 말로 바꾼다). 응답 모양이 다르면(옛 엔진) 받아들인 것으로 본다. */
+function refused(res: unknown): void {
+  if (res && typeof res === 'object' && (res as { ok?: unknown }).ok === false) {
+    const c = (res as { code?: unknown }).code;
+    throw new Error(typeof c === 'string' && /^[a-z_]+(\.[a-z_]+)*$/.test(c) ? c : 'refused');
+  }
+}
+
 /** 승인 전 핸드오프 끝(end status handoff, 재개 불가)의 다음 할 일. 실제 발급 첫 단계(s0)에서 이 모양으로 끝난 일이 있었다. */
 export const HANDOFF_END_NOTE = '앱이 홈택스에서 이 단계를 이어 가지 못해 멈췄어요. 아무것도 발급하지 않았어요.';
 export const HANDOFF_END_NEXT = '[다시 준비]로 처음부터 다시 하거나, [홈택스에서 직접 발급]으로 옆 패널의 값을 보고 직접 발급할 수 있어요.';
@@ -498,9 +548,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const r = this.mustDraft(id);
     // 품목이 비면 엔진이 시작하지 않는다(item_missing). 카드를 끝내지 않고 그대로 두고 품목을 넣게 한다.
     if (!cleanItem(r.item)) throw new Error('item_required');
+    // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
+    if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
     r.status = 'preparing';
-    this.step(r, 'login', 'now');
+    this.step(r, 'login', 'now', LOGIN_NOW);
     this.emit('update', r);
     this.starting.add(r.id);
     try {
@@ -553,7 +605,15 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.stopEarly.add(id);
       return r;
     }
-    await this.host.rpc('run.stop', { runId: id });
+    const res = (await this.host.rpc('run.stop', { runId: id })) as { stopped?: unknown } | null;
+    // 서명 차례의 [중지]는 바로 끝나지 않는다({stopped:false}): 엔진이 서명됐는지 발급목록으로 확인(verify)한 뒤 end가 온다. 그동안 카드는 확인 중이다.
+    if (r.status === 'turn' && r.handoff?.kind === 'sign' && res?.stopped === false) {
+      r.notices = [...(r.notices ?? []), STOP_AFTER_SIGN_NOTE];
+      this.leaveHandoff(r, 'issuing');
+      this.step(r, 'sign', 'todo');
+      this.step(r, 'verify', 'now');
+      this.emit('update', r);
+    }
     return r;
   }
 
@@ -563,7 +623,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
    */
   async resume(id: string): Promise<RunView> {
     const r = this.handedOff(id);
-    await this.host.rpc('run.resume', { runId: id });
+    refused(await this.host.rpc('run.resume', { runId: id }));
     this.leaveHandoff(r, r.handoff!.afterGate ? 'issuing' : 'preparing');
     return r;
   }
@@ -574,7 +634,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
    */
   async manualDone(id: string): Promise<RunView> {
     const r = this.handedOff(id);
-    await this.host.rpc('run.manualDone', { runId: id });
+    // 서명 차례에는 [직접 발급함]이 없다(엔진 sign.turn_resume_only). 화면도 버튼을 두지 않는다.
+    if (r.handoff!.kind === 'sign') throw new Error('sign.turn_resume_only');
+    refused(await this.host.rpc('run.manualDone', { runId: id }));
     r.confirmed = true;
     for (const p of ['login', 'form', 'input', 'readback', 'gate', 'sign'] as const) if (r.steps[PHASES.indexOf(p)]!.state !== 'done') this.step(r, p, 'done', p === 'sign' ? '직접 발급하셨다고 알려 주셨어요' : undefined);
     this.step(r, 'verify', 'now');
@@ -650,8 +712,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const r = this.runs.get(e.runId);
     if (!r) return;
     if (e.type === 'phase') {
-      // 가짜 페이지는 서명이 없다(signFlow는 PoC-3에서 실제 순서를 본 뒤).
-      const n = e.phase === 'sign' && e.state === 'now' ? '가짜 페이지는 서명 단계가 없어요' : e.code ? NOTE[e.code] : undefined;
+      // 서명 단계: 엔진이 확인 창·인증유형(프로필 발급 인증)을 누르고 나면 사람 몫이다(인증서 비밀번호·간편인증 승인, 2026-11-11 실화면).
+      // 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 오므로, 할 일은 서명 단계에 들어설 때 바로 보인다.
+      const n = e.phase === 'sign' && e.state === 'now' ? (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
       // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
       if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;
@@ -674,10 +737,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (e.type === 'handoff') {
       if (!PHASES.includes(e.phase) || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
       const i = PHASES.indexOf(e.phase);
+      const t = handoffTurn(e.phase, e.code, r.auth);
       r.status = 'turn';
-      r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate') };
-      r.turn = { text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${STEPS[i]}`, note: e.code && NOTE[e.code] ? NOTE[e.code]! : HANDOFF_HINT };
-      this.step(r, e.phase, 'attention', '직접 해 주세요');
+      r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind };
+      r.turn = { text: t.text, note: t.note };
+      this.step(r, e.phase, 'attention', t.kind === 'sign' ? '홈택스 창에서 서명 중' : '직접 해 주세요');
       this.emit('update', r);
       return;
     }
@@ -777,7 +841,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.redo = !r.inDoubt && !pastGate;
       if (e.status === 'handoff' && !pastGate) {
         r.handoffEnd = true;
-        r.stoppedNote = `${code && NOTE[code] ? NOTE[code] : HANDOFF_END_NOTE} ${HANDOFF_END_NEXT}`;
+        const base = code && NOTE[code] ? NOTE[code]! : HANDOFF_END_NOTE;
+        r.stoppedNote = `${base}${/아무것도 발급하지 않았어요/.test(base) ? '' : ' 아무것도 발급하지 않았어요.'} ${HANDOFF_END_NEXT}`;
       }
       const now = r.steps.findLastIndex((s) => s.state === 'now');
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };

@@ -28,6 +28,12 @@ export interface Profile {
   placeholder?: boolean;
 }
 
+/**
+ * 프로필 발급 인증(signMethod) → 화면 라벨. 값은 H-01 2.2.0 signFlow.methodTargets 키와 1:1(홈택스 인증유형 창의 세 항목).
+ * 온보딩의 금융인증서는 공동인증서와 같은 항목(cert)이다(onboarding.ts AUTH_SIGN_METHOD).
+ */
+export const SIGN_LABEL: Readonly<Record<'cert' | 'security_card' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
+
 /** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */
 export const NO_AUTH = '발급 인증 미설정';
 
@@ -390,8 +396,12 @@ export interface RunView {
   verifyAttempt?: number;
   /** 이번 게이트가 다시 게이트인 이유와 그 고정 문구(main의 REGATE_NOTE에서 고른 것). */
   regate?: { reason: 'paused' | 'date_changed' | 'value_changed'; note: string };
-  /** 핸드오프 중(status turn). afterGate면 게이트 뒤 단계에서 넘겨받은 것(중지는 엔진이 거부한다). */
-  handoff?: { phase: string; afterGate: boolean } | null;
+  /** 핸드오프 중(status turn). 실행은 끝나지 않았다. afterGate면 게이트 뒤 단계(서명 포함)에서 넘겨받은 것: [중지]는 받지만 발급목록 확인(verify)을 거쳐 끝난다. */
+  /**
+   * kind: 무엇을 하는 차례인가(#278 셸 계약). login = 홈택스 로그인 대기([이어서]), sign = 인증서 서명 차례(완료 창이 보이면 엔진이 스스로 넘어가 [다 했어요]는 보조,
+   * [직접 발급함] 없음), other = 그 밖의 사람 차례([다 했어요]·[직접 발급함]).
+   */
+  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other' } | null;
   /**
    * InDoubt 증언(ADR-021 결정 5). ready: 엔진이 증언을 받을 수 있다(이 카드를 열면 승인 바 자리에 황토색 바가 뜬다).
    * sent: 보냈고 엔진이 받았다. refused: 엔진이 받지 않았거나 보내지 못했다. 문구는 main의 ATTEST_NOTE에서 고른 것.
