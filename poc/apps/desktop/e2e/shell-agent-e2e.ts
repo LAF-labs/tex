@@ -46,7 +46,7 @@ const step = async (p: StepParams): Promise<StepResult> => {
   return r;
 };
 const tools = (...calls: DomainCall[]): StepResult => ({ kind: 'tools', calls: calls.map((c, i) => ({ callId: `call-${i}`, ...c })) });
-const reply = (r: Partial<Extract<StepResult, { kind: 'reply' }>['reply']>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, values: {}, ...r } });
+const reply = (r: Partial<Extract<StepResult, { kind: 'reply' }>['reply']>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, values: {}, unknownName: null, ...r } });
 const outputs = (p: StepParams): ToolOutput[] => ('continue' in p ? p.continue.outputs.map((o) => o.output) : []);
 const frameCards = (p: StepParams) => ('start' in p ? p.start.frame.cards : []);
 
@@ -146,8 +146,17 @@ async function flow() {
   // 6) 연결 안 됨: 중립 문구와 [다시 시도]. 새 문장을 보내면 앞 [다시 시도]는 꺼진다
   await turn('지난주 발급 보여줘', () => new Error('chat.unavailable'));
   check('연결 안 됨 → [다시 시도]', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 1);
+  const failText = await js<string>(`[...document.querySelectorAll('[data-intent-unavailable] p')].pop().textContent`);
+  check('실패 문구는 원인을 단정하지 않는다(U8-5)', failText === '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.' && !/인터넷|연결/.test(failText), failText);
   await turn('고마워', () => reply({ kind: 'answer', text: '천만에요.' }));
   check('새 문장 뒤 앞 [다시 시도]는 꺼진다', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 0);
+
+  // 7) 장부에 없는 거래처(U8-1): 엔진이 준 이름으로 안내 문장과 [거래처 추가]. 누르면 그 이름이 채워진 추가 폼이 열린다
+  await turn('라온상사에 세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty', unknownName: '라온상사' }));
+  const unk = await js<{ text: string; adds: number } | null>(`(() => { const b = [...document.querySelectorAll('[data-agent-reply]')].pop(); const u = b.querySelector('[data-unknown-name]'); return u ? { text: u.textContent, adds: b.querySelectorAll('[data-act="ask-cp-add"]').length } : null; })()`);
+  check('장부에 없는 이름: 안내 문장(조사 맞춤)과 [거래처 추가] 하나', unk?.text === '라온상사는 장부에 없는 거래처예요.' && unk.adds === 1, unk);
+  await js(`[...document.querySelectorAll('[data-agent-reply]')].pop().querySelector('[data-act="ask-cp-add"]').click()`);
+  check('[거래처 추가] → 그 이름이 채워진 추가 폼', await until('cp form', async () => (await js<string>(`document.querySelector('[data-panel-cp-edit="new"] [name="name"]')?.value ?? ''`)) === '라온상사'));
 
   // 경계: 도구 결과에는 숫자·거래처 이름이 없다(C-10). 어떤 카드도 초안·취소함 밖으로 가지 않았다(발급 준비는 카드 버튼으로만)
   const conts = sent.filter((p) => 'continue' in p).map((p) => JSON.stringify(p).replace(/"(?:ref|callId)":"[^"]*"/g, ''));

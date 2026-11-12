@@ -59,7 +59,7 @@ let BOOK: Cp[] = [];
 const stepSeen: StepParams[] = [];
 let lastResult = '';
 let pending: ((out: { ref: string | null; status: string }) => StepResult) | null = null;
-const R = (r: Partial<Extract<StepResult, { kind: 'reply' }>['reply']>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '', show: [], ask: null, filtered: null, values: {}, ...r } });
+const R = (r: Partial<Extract<StepResult, { kind: 'reply' }>['reply']>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '', show: [], ask: null, filtered: null, values: {}, unknownName: null, ...r } });
 const call = (c: DomainCall): StepResult => ({ kind: 'tools', calls: [{ callId: 'call-1', ...c }] });
 /** 엔진 역치환 흉내: 장부 이름, 한 글자 다른 별칭(정확히 한 거래처일 때만) */
 const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

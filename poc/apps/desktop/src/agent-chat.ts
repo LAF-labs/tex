@@ -5,7 +5,7 @@
 // - 문장·토큰·값을 로그에 남기지 않는다.
 import type { AgentReply, DomainCall, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
-import { fillWithJosa } from './josa.ts';
+import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
 
 type SlotField = NonNullable<ToolOutput['fields']>[number];
@@ -34,11 +34,16 @@ export const AGENT_SETUP_TEXT = '대화를 쓰려면 먼저 내 사업장(사업
 /** 채울 값이 없는 슬롯이 있으면 문장 전체를 이것으로 바꾼다(값을 지어내지 않는다). */
 export const AGENT_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
 
+/** 모델 답을 받지 못했다(U8-5). 원인(인터넷·서버·모델)을 단정하지 않는다. */
+export const AGENT_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
+
 /** chat.* 오류 → 대화 문장과 [다시 시도]. 표에 없는 코드는 chat.unavailable로 접는다. */
 export const AGENT_ERROR_TEXT: Record<string, { text: string; retry: boolean }> = {
   ...CHAT_ERROR_TEXT,
+  'chat.unavailable': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
+  'chat.bad_response': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   'chat.turn_limit': { text: '한 번에 하기 어려워요. 나눠서 말씀해 주세요.', retry: false },
-  'chat.bad_tool_output': CHAT_ERROR_TEXT['chat.unavailable'],
+  'chat.bad_tool_output': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   bad_text: CHAT_ERROR_TEXT['chat.input_too_large'],
 };
 
@@ -109,7 +114,8 @@ export interface TableRow {
 export type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
 export type AgentTurnResult =
   /** setup: 이 턴에 내 사업장·발급 인증이 빠져 카드를 못 만들었다(화면이 등록 버튼을 둔다). */
-  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true }
+  /** unknown: 사장님이 쓴 거래처 이름이 장부에 없다(U8-1). 화면은 text와 그 이름으로 [거래처 추가]를 둔다. */
+  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true; unknown?: { name: string; text: string } }
   | { kind: 'unavailable'; code: string; text: string; retry: boolean };
 
 interface Result {
@@ -396,7 +402,17 @@ export class AgentChat {
     }
     // 이번 턴에 만든 카드는 모델이 show에 넣지 않아도 보인다(카드가 사실이다).
     for (const runId of created) if (!cards.has(runId)) show.push({ type: 'card', runId });
-    return { kind: 'agent', text: reply.filtered ? reply.text : this.fill(s, reply), show, ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null, filtered: reply.filtered };
+    const name = reply.unknownName?.trim();
+    // 장부에 이미 있는 이름이면(모델이 다른 토큰을 썼다) 안내하지 않는다
+    const unknown = name && !this.ports.counterparties().some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 장부에 없는 거래처예요.') : '은(는) 장부에 없는 거래처예요.'}` } : null;
+    return {
+      kind: 'agent',
+      text: reply.filtered ? reply.text : this.fill(s, reply),
+      show,
+      ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null,
+      filtered: reply.filtered,
+      ...(unknown ? { unknown } : {}),
+    };
   }
 
   private chips(ask: AgentAsk): Array<{ label: string; text: string }> {

@@ -100,7 +100,14 @@ export interface AgentReply {
  * main에 돌려주는 답. text는 채우기 전 문장(토큰·슬롯 그대로)이고, values는 이 답에 나온 토큰의 화면 값이다
  * (거래처 토큰은 지금 장부 이름, 다른 토큰은 사장님이 쓴 원값). 토큰·슬롯을 값으로 바꾸고 조사를 맞추는 일은 main 한 곳에서 한다.
  */
-export type ShownReply = AgentReply & { values: Record<string, string> };
+export type ShownReply = AgentReply & {
+  values: Record<string, string>;
+  /**
+   * 이번 턴에 장부의 거래처로 풀리지 않은 이름(U8-1). 사장님이 이번 문장에 쓴 낱말(그 토큰의 원값이나 문장에 글자 그대로 있던 말)일 때만이다.
+   * 모델이 지어낸 이름은 싣지 않는다. 화면은 "장부에 없는 거래처" 안내와 그 이름으로 [거래처 추가]를 둔다. PC 밖으로 나가지 않는다.
+   */
+  unknownName: string | null;
+};
 export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: ShownReply };
 
 /** 대화록 한 턴. agent.text는 채우기 전(토큰·슬롯 그대로) 문장이다. 채운 문장은 이 타입에 들어오지 않는다. agent null은 답 없이 끝난 턴. */
@@ -169,6 +176,20 @@ const validFrame: ValidateFunction = ajv.compile({
 /** 도구마다 결과 ref의 종류(조회 결과 r#, 카드 d#) */
 const REF_KIND: Record<ChatAgentToolName, 'r' | 'd'> = { sales_summary: 'r', invoice_history: 'r', receivables: 'r', invoice_draft: 'd', draft_edit: 'd', draft_discard: 'd' };
 const engineAnswer = (status: 'unknown_counterparty' | 'no_such_draft'): ToolOutput => ({ ref: null, status, fields: null, needs: null });
+/**
+ * 풀리지 않은 거래처 인자가 사장님 이번 문장의 낱말인가: 이번 문장에 있는 토큰이면 그 원값, 토큰 없는 말이면 문장에 글자 그대로 있을 때만.
+ * 다른 레코드에 묶인 토큰(내 사업장 등)은 "장부에 없는 거래처"가 아니라 싣지 않는다.
+ */
+const NAME_MAX = 40;
+function typedName(s: { red: { map: { valueOf(tok: string): string | undefined; recordOf(tok: string): string | undefined } } }, turn: { user: string }, v: unknown): string | null {
+  if (typeof v !== 'string') return null;
+  const t = v.trim();
+  if (/^\[NAME_\d+\]$/.test(t)) {
+    const raw = turn.user.includes(t) && !s.red.map.recordOf(t) ? s.red.map.valueOf(t)?.trim() : undefined;
+    return raw && [...raw].length <= NAME_MAX ? raw : null;
+  }
+  return t && !/[[\]]/.test(t) && [...t].length <= NAME_MAX && turn.user.includes(t) ? t : null;
+}
 const KINDS: ReadonlySet<string> = new Set(AGENT_REPLY_KINDS);
 const ASKS: ReadonlySet<string> = new Set(AGENT_ASKS);
 const SLOT_ANY = new RegExp(slotPattern.source.slice(1, -1), 'g');
@@ -239,6 +260,8 @@ interface Turn {
   replay: RedactedReplayItem[];
   /** main이 실행 중인 도구 호출. answer가 있으면 엔진이 직접 답한 것이다. */
   pending: Array<{ callId: string; tool: ChatAgentToolName; answer: ToolOutput | null }> | null;
+  /** 이번 턴에 풀리지 않은 거래처 이름(사장님 문장에 있던 것만). 첫 하나만 둔다. */
+  unknownName?: string;
 }
 
 type Parsed = DomainCall | ToolOutput;
@@ -390,6 +413,11 @@ export class ChatAgent {
       const id = r.ok ? (r.value as { counterparty: { recordId: string } }).counterparty.recordId : '';
       return id.startsWith('cp:') ? id.slice(3) : null;
     };
+    // 거래처가 풀리지 않으면 엔진이 답한다. 그 인자가 사장님 이번 문장의 낱말이면 화면용 이름으로 남긴다(U8-1).
+    const unknown = (v: unknown): ToolOutput => {
+      turn.unknownName ??= typedName(s, turn, v) ?? undefined;
+      return engineAnswer('unknown_counterparty');
+    };
     const draft = (v: unknown): string | null => (typeof v === 'string' && /^d[1-9]\d{0,5}$/.test(v) && (turn.frameRefs.has(v) || s.refs.has(v)) ? v : null);
     const amount = (v: unknown): DraftAmount => {
       if (v === null) return null;
@@ -415,15 +443,15 @@ export class ChatAgent {
       sales_summary: () => ({ tool: 'sales_summary', monthOffset: Number(a.month_offset) }),
       invoice_history: () => {
         const id = a.counterparty === null ? null : cp(a.counterparty);
-        return a.counterparty !== null && !id ? engineAnswer('unknown_counterparty') : { tool: 'invoice_history', counterpartyId: id };
+        return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'invoice_history', counterpartyId: id };
       },
       receivables: () => {
         const id = a.counterparty === null ? null : cp(a.counterparty);
-        return a.counterparty !== null && !id ? engineAnswer('unknown_counterparty') : { tool: 'receivables', counterpartyId: id };
+        return a.counterparty !== null && !id ? unknown(a.counterparty) : { tool: 'receivables', counterpartyId: id };
       },
       invoice_draft: () => {
         const id = cp(a.counterparty);
-        return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : engineAnswer('unknown_counterparty');
+        return id ? { tool: 'invoice_draft', counterpartyId: id, amount: amount(a.amount), vat: vat(a.vat), item: item(a.item) } : unknown(a.counterparty);
       },
       draft_edit: () => {
         const d = draft(a.draft);
@@ -470,9 +498,10 @@ export class ChatAgent {
 
   /** 턴을 닫는다: 채우기 전 문장을 대화록에 넣고, 이 답에 나온 토큰의 화면 값을 같이 돌려준다. */
   private finish(s: Session, r: AgentReply): StepResult {
+    const unknownName = r.filtered ? null : (s.turn!.unknownName ?? null);
     this.record(s, { user: s.turn!.user, agent: { text: r.text, show: r.show } });
     s.turn = null;
-    return { kind: 'reply', reply: { ...r, values: r.filtered ? {} : this.values(s, r.text) } };
+    return { kind: 'reply', reply: { ...r, values: r.filtered ? {} : this.values(s, r.text), unknownName } };
   }
 
   private values(s: Session, text: string): Record<string, string> {

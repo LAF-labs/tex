@@ -718,10 +718,12 @@ function renderAgent(r) {
   const box = h('div', { class: 'sx-app', 'data-agent-reply': r.filtered ?? '' }, h('p', {}, r.text));
   for (const x of r.show) if (x.type === 'table') box.append(agentTable(x));
   if (r.setup?.length) box.append(h('div', { class: 'sx-actions' }, ...r.setup.map((m, i) => btn(m.label, () => reopenSetup(m.id), i ? '' : 'sx-btn-primary', { 'data-act': `setup-${m.id}` }))));
+  // 사장님이 쓴 거래처 이름이 장부에 없다(U8-1): 그 이름으로 거래처 추가 폼을 연다. 저장하면 대화로 돌아와 그 이름을 입력창에 채운다.
+  if (r.unknown) box.append(h('p', { class: 'sx-meta', 'data-unknown-name': r.unknown.name }, r.unknown.text), h('div', { class: 'sx-actions' }, btn('거래처 추가', () => addCpFromAsk(r.unknown.name), 'sx-btn-primary', { 'data-act': 'ask-cp-add' })));
   if (r.ask) {
     const chips = r.ask.chips.map((c) => btn(c.label, (e) => (e.currentTarget.disabled ? null : sendPrompt(c.text)), '', { 'data-agent-chip': r.ask.kind }));
-    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다
-    if (r.ask.kind === 'counterparty') chips.push(btn('거래처 추가', () => addCpFromAsk(''), 'sx-btn-quiet', { 'data-act': 'ask-cp-add' }));
+    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다(이름을 이미 안내했으면 그쪽 버튼 하나만)
+    if (r.ask.kind === 'counterparty' && !r.unknown) chips.push(btn('거래처 추가', () => addCpFromAsk(''), 'sx-btn-quiet', { 'data-act': 'ask-cp-add' }));
     if (chips.length) box.append(h('div', { class: 'sx-actions' }, ...chips));
   }
   appendThread(box);

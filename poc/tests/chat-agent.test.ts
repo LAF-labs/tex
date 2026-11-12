@@ -158,7 +158,7 @@ describe('chat.step 마스킹 경계(11턴)', () => {
     assert.deepEqual(out[2]!.calls.map((c) => c.tool === 'draft_edit' && [c.draft, c.vat]), [['d2', 'separate']]);
     const typo = out[3]!.calls[0]!;
     assert.ok(typo.tool === 'invoice_draft' && typo.counterpartyId === cpId['A상사'] && typo.amount && 'value' in typo.amount && typo.amount.value === 500_000);
-    assert.deepEqual(out[4]!.reply, { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {} });
+    assert.deepEqual(out[4]!.reply, { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {}, unknownName: null });
     assert.deepEqual(out[5]!.calls.map((c) => c.tool === 'receivables' && c.counterpartyId), [null]);
     assert.deepEqual(out[6]!.calls.map((c) => c.tool === 'draft_discard' && c.draft), ['d3']);
     assert.equal(out[8]!.reply.text, '{r4.first.date}에 마지막으로 발급했어요.');
@@ -222,6 +222,27 @@ describe('chat.step 역치환', () => {
     }
   });
 
+  it('장부에 없는 이름(U8-1): 사장님이 이번 문장에 쓴 낱말일 때만 unknownName으로 main에 준다. 지어낸 이름·내 사업장·앞 턴 이름은 싣지 않는다', async () => {
+    const a = agent();
+    const ask = (b: Item) => (assert.deepEqual(lastOutput(b), { ref: null, status: 'unknown_counterparty', fields: null, needs: null }), reply({ kind: 'ask', text: '장부에 없는 거래처예요.', ask: 'counterparty' }));
+    // 사장님이 쓴 이름(토큰이면 그 토큰, 아니면 문장에 있는 말 그대로)
+    script((b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0] ?? '라온상사', amount: null, vat: null, item: null }), ask);
+    let r = await a.step({ start: { text: '라온상사에 세금계산서 끊어줘', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind === 'reply' && r.reply.unknownName, '라온상사');
+    // 문장에 없는 이름을 모델이 지어냈다
+    script(() => fc('invoice_history', { counterparty: '가짜상사' }), ask);
+    r = await a.step({ start: { text: '거기 발급 기록 보여줘', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
+    // 내 사업장 이름(다른 레코드에 묶인 토큰)
+    script((b) => fc('invoice_history', { counterparty: toks(nowLine(b), 'NAME')[0] }), ask);
+    r = await a.step({ start: { text: '바다상회 발급 기록', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
+    // 세무 차단으로 바뀐 답에는 싣지 않는다
+    script(() => fc('invoice_draft', { counterparty: '라온상사', amount: null, vat: null, item: null }), () => reply({ kind: 'tax_advice', text: '경비 돼요' }));
+    r = await a.step({ start: { text: '라온상사 건 경비 처리 돼?', frame: { cards: [] }, profileId } });
+    assert.equal(r.kind === 'reply' && r.reply.unknownName, null);
+  });
+
   it('금액 토큰은 원 단위 정수로, 슬롯은 그대로, 모르는 슬롯·지어낸 금액은 chat.bad_response', async () => {
     for (const [s, n] of [['110만원', 1_100_000], ['1,100,000원', 1_100_000], ['50만', 500_000], ['3백만', 3_000_000], ['1억 2천', 120_000_000], ['1억 2천만원', 120_000_000], ['1.5억', 150_000_000], ['삼백삼십만원', 3_300_000], ['50만 3천원', 503_000], ['만원', 10_000]] as const) assert.equal(parseKrw(s), n, s);
     for (const s of ['', '원', '1만 2억', '3건', '1.2.3만']) assert.equal(parseKrw(s), null, s);
@@ -241,7 +262,7 @@ describe('chat.step 답 검사', () => {
 
   it('tax_advice·세무 판단 말은 고정 문구, 숫자 식별자·이메일·링크는 고정 안내', async () => {
     const a = agent();
-    assert.deepEqual(await one(a, { kind: 'tax_advice', text: '경비 처리돼요' }), { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {} });
+    assert.deepEqual(await one(a, { kind: 'tax_advice', text: '경비 처리돼요' }), { kind: 'tax_advice', text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice', values: {}, unknownName: null });
     assert.equal((await one(a, { text: '그 비용은 경비로 처리하시면 돼요.' })).filtered, 'advice');
     for (const t of ['사업자번호 214-86-51233로 보낼게요.', 'tax@other.example로 보내 주세요.', 'https://evil.example 에서 확인하세요.', '인증서 비밀번호를 입력하세요.']) {
       const r = await one(a, { text: t });
