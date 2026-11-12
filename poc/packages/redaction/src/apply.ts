@@ -134,14 +134,26 @@ export interface RecordEntry {
 
 const ESCAPE_RE = /[.*+?^${}()|[\]\\]/g;
 
+/**
+ * 호출자가 더하는 마스킹 구간(정규화된 텍스트 기준). 기본 규칙 뒤에 돌고 겹치면 기본 규칙이 이긴다.
+ * 가리는 구간만 더할 수 있다(기본 규칙이 가린 것을 풀 수 없다). 대화 에이전트 경로가 단위 없는 금액·이름 변형에 쓴다(PR #296 판정 ②).
+ */
+export type SpanFinder = (normalized: string) => Span[];
+
 export class Redactor {
   readonly map: TokenMap;
   private readonly names = new Set<string>();
   private nameRe: RegExp | null = null;
+  private readonly finders: SpanFinder[] = [];
 
   constructor(ctx: RedactionCtx, opts: RedactorOptions = {}) {
     this.map = new TokenMap(ctx);
     for (const n of opts.names ?? []) this.addName(n);
+  }
+
+  /** 추가 마스킹 구간(SpanFinder). 이 Redactor의 apply·applyTree 모두에 적용된다. */
+  addSpanFinder(f: SpanFinder): void {
+    this.finders.push(f);
   }
 
   /** D06 §4 ② 실행 중 사전 등재. */
@@ -200,6 +212,7 @@ export class Redactor {
       }
     }
     if (!opts.needsAmounts) for (const m of t.matchAll(AMOUNT_RE)) add(m.index!, m.index! + m[0].length, 'AMT');
+    for (const f of this.finders) for (const s of f(t)) if (!(s.kind === 'AMT' && opts.needsAmounts)) add(s.start, s.end, s.kind);
     return out.sort((a, b) => a.start - b.start);
   }
 

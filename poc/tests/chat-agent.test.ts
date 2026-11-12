@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, ChatAgent, gatewayChatAgentModel, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -378,5 +378,98 @@ describe('protocol·entry 배선', () => {
 
   it('엔진 모듈은 로그를 남기지 않는다', () => {
     assert.doesNotMatch(fs.readFileSync(path.join(root, 'packages/engine/src/chat-agent.ts'), 'utf8'), /\blog\.|console\.|journal\(/);
+  });
+});
+
+// PR #296 독립 판정(mid-verify/pr-296-final.md) 반영: ① 답 숫자 필터 우회, ② 대화 경로 원문 반복 송신, ③ 대화록 12턴 자르기.
+// 이 묶음은 장부에 거래처를 더하므로 파일 맨 끝에 둔다(앞 시험의 토큰 번호를 바꾸지 않게).
+describe('PR #296 판정 반영', () => {
+  before(() => {
+    const repo = new CounterpartyRepo(db);
+    cpId['LAF테크'] = repo.create({ name: 'LAF테크', bizNo: syntheticBizNo(84), repName: '김철수' }).id;
+    cpId['한빛 전자'] = repo.create({ name: '한빛 전자', bizNo: syntheticBizNo(85) }).id;
+  });
+
+  it('① 답 숫자 규칙: 전각·아랍-인도·원문자 숫자, 한글·한자 수, 고유어 건수, 달 이름도 숫자다. 낱말 속 글자는 아니다', () => {
+    for (const t of ['합계는 １，２１０，０００원이에요.', '합계는 ١٢١٠٠٠٠원이에요.', '합계는 ①②③원이에요.', '합계는 백이십일만 원이에요.', '합계는 일백이십일만원이에요.', '합계는 一百二十一万원이에요.', '합계는 百万원이에요.', '모두 두 건이에요.', '모두 열한 건이에요.', '마지막 발급은 시월 십오일이에요.', '오십만으로 만들었어요.', '이백만 원이에요.'])
+      assert.equal(numberShaped(t), true, t);
+    for (const t of ['카드를 만들었어요.', '천천히 확인해 주세요.', '이 건은 발급했어요.', '일정은 잡아 드리지 못해요.', '이번 달 매출이에요.', '한 장 더 만들었어요. 앞 카드와 따로예요.', '사업자 정보를 등록해 주세요.', '오늘 발급했어요.', '만약 다르면 말씀해 주세요.', '지난번과 같은 금액으로 카드를 만들었어요.', '방금 만든 카드를 취소했어요.', '부가세 별도로 확정했어요. 공급가에 세액을 더한 금액으로 바뀌었어요.'])
+      assert.equal(numberShaped(t), false, t);
+  });
+
+  it('① 우회 문장은 chat.step 답에서 filtered number가 되고 문장은 엔진 고정 문구, 표는 그대로', async () => {
+    const a = agent();
+    for (const text of ['합계는 １，２１０，０００원이에요.', '합계는 백이십일만 원이에요.', '합계는 一百二十一万원이에요.', '모두 두 건이에요.', '마지막 발급은 시월 십오일이에요.', '합계는 ①②③원이에요.']) {
+      let ref = '';
+      script(
+        () => fc('sales_summary', { month_offset: -1 }),
+        (b) => ((ref = lastOutput(b)!.ref!), reply({ text, show: [ref] })),
+      );
+      const r = await say(a, new FakePc(), '지난달 매출 얼마야');
+      assert.deepEqual([r.reply.filtered, r.reply.text, r.reply.show], ['number', CHAT_AGENT_NUMBER_TEXT, [ref]], text);
+    }
+  });
+
+  // 판정 ATK-1: 원래 규칙이 놓치던 것이 대화록·도구 왕복으로 매 호출 다시 나갔다. 공격 문장 7개(+같은 갈래)를 세 턴 보내 세 본문 모두에 원문이 없음을 본다.
+  const ATTACKS: Array<[string, string]> = [
+    ['a상사에 끊어줘', 'a상사'],
+    ['A 상사에 끊어줘', 'A 상사'],
+    ['LAF 테크 발급 기록', 'LAF 테크'],
+    ['laf테크 발급 기록', 'laf테크'],
+    ['한빛  전자 발급 기록', '한빛'],
+    ['김 철수 대표한테', '김 철수'],
+    ['a상쓰에 끊어줘', 'a상쓰'],
+    ['A상사에 1100000 끊어줘', '1100000'],
+    ['A상사에 550000', '550000'],
+    ['A상사 공급가 99999', '99999'],
+    ['A상사에 오십만 끊어줘', '오십만'],
+    ['A상사에 이백만', '이백만'],
+    ['사업자 123/45/67890 확인', '67890'],
+    ['사업자 123_45_67890 확인', '67890'],
+  ];
+  for (const [text, raw] of ATTACKS) {
+    it(`② 대화록 재전송에도 원문이 없다: ${text}`, async () => {
+      const a = agent();
+      const pc = new FakePc();
+      const n0 = responds().length;
+      for (const t of [text, '응', '그래']) {
+        script(() => reply({ text: '알겠어요.' }));
+        await say(a, pc, t);
+      }
+      const bodies = responds().slice(n0);
+      assert.equal(bodies.length, 3);
+      for (const b of bodies) assert.ok(!JSON.stringify(b.body).includes(raw), `${raw} 원문이 나갔다: ${userText(b.body!)}`);
+    });
+  }
+
+  it('② 가린 변형도 도구 인자로 풀린다: a상사 → A상사 레코드, 550000·오십만 → 원 단위 금액. 도구 왕복 본문에도 원문이 없다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const n0 = responds().length;
+    for (const [text, cp, amount] of [['a상사에 550000 끊어줘', 'A상사', 550_000], ['LAF 테크에 오십만 끊어줘', 'LAF테크', 500_000]] as const) {
+      script(
+        (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat: null, item: '컨설팅' }),
+        () => reply({ kind: 'did', text: '카드를 만들었어요.' }),
+      );
+      const r = await say(a, pc, text);
+      assert.deepEqual(r.calls.map((c) => c.tool === 'invoice_draft' && [c.counterpartyId, c.amount]), [[cpId[cp], { value: amount }]], text);
+    }
+    for (const b of responds().slice(n0)) for (const raw of ['a상사', '550000', 'LAF 테크', '오십만']) assert.ok(!JSON.stringify(b.body).includes(raw), raw);
+  });
+
+  it(`③ 대화록은 최근 ${CHAT_AGENT_TRANSCRIPT_TURNS}턴만 다시 보낸다(짧은 문장이라 바이트 상한과 상관없이)`, async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const words = ['사과', '배', '감', '귤', '포도', '수박', '참외', '딸기', '복숭아', '자두', '살구', '앵두', '오디', '모과'];
+    for (const w of words) {
+      script(() => reply({ text: '네' }));
+      await say(a, pc, `${w} 이야기`);
+    }
+    const last = userText(responds().at(-1)!.body!);
+    const past = last.split('[지금]')[0]!;
+    assert.equal(past.match(/^사용자: /gm)?.length, CHAT_AGENT_TRANSCRIPT_TURNS);
+    assert.ok(!past.includes('사용자: 사과 이야기'), '13턴 전 문장은 빠진다');
+    assert.ok(past.includes('사용자: 배 이야기') && past.includes('사용자: 오디 이야기'));
+    assert.match(nowLine(responds().at(-1)!.body!), /모과 이야기/);
   });
 });

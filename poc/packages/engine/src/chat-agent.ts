@@ -182,6 +182,45 @@ const BIG: Record<string, number> = { 만: 1e4, 억: 1e8 };
  * 금액 토큰의 원값("110만원", "1,100,000원", "3백만", "1억 2천", "삼백삼십만원")을 원 단위 정수로 읽는다. 읽을 수 없으면 null.
  * 억 뒤에 만 없이 남은 수는 만 단위로 읽는다("1억 2천" = 1억 2천만, 말로 쓰는 금액).
  */
+/** 세션 Redactor별 대화 경로 추가 마스킹 상태(이번 장부 이름 정규식). */
+const CHAT_MASKS = new WeakMap<Redactor, { names: Array<{ re: RegExp }> }>();
+const BARE_AMOUNT = /(?<![\dA-Za-z.,\-/_])(?:\d{1,3}(?:,\d{3})+|\d{5,})(?![\dA-Za-z.,\-/_])/gu;
+/** 기본 규칙이 놓치는 사업자번호 구분자(/·_) */
+const BIZNO_SLASH = /(?<!\d)\d{3}[/_]\d{2}[/_]\d{5}(?!\d)/gu;
+
+/** 대화 경로 추가 마스킹 구간: 장부 이름 변형(NAME), 구분자가 다른 사업자번호(BIZNO), 단위 없는 금액(AMT). 앞이 이긴다. */
+export function chatMaskSpans(t: string, names: ReadonlyArray<{ re: RegExp }>): Array<{ start: number; end: number; kind: 'AMT' | 'NAME' | 'BIZNO' }> {
+  const out: Array<{ start: number; end: number; kind: 'AMT' | 'NAME' | 'BIZNO' }> = [];
+  for (const x of names) for (const m of t.matchAll(x.re)) out.push({ start: m.index!, end: m.index! + m[0].length, kind: 'NAME' });
+  for (const m of t.matchAll(BIZNO_SLASH)) out.push({ start: m.index!, end: m.index! + m[0].length, kind: 'BIZNO' });
+  for (const m of t.matchAll(BARE_AMOUNT)) out.push({ start: m.index!, end: m.index! + m[0].length, kind: 'AMT' });
+  for (const m of t.matchAll(KO_AMOUNT)) out.push({ start: m.index!, end: m.index! + m[0].length, kind: 'AMT' });
+  return out;
+}
+
+// 답 숫자 규칙(PR #296 판정 ①): 슬롯·토큰 밖에 숫자가 있으면 답을 버린다. 숫자는 ASCII만이 아니다.
+const SINO = '영일이삼사오육칠팔구십백천만억';
+/** 수 뒤에 올 수 있는 단위·조사(이 밖의 한글이 붙으면 낱말의 일부다: "천천히", "만들다") */
+const NUM_TAIL = '(?=$|[^가-힣]|(?:원|건|월|일|년|개월|번째|에|에서|으로|로|을|를|이|가|은|는|도|만|짜리|정도|쯤|씩|예요|이에요|였|이었))';
+/** 단위 없는 한글 금액: 백·천·만·억이 든 한글 수 두 자 이상(오십만, 이백만, 삼천). 날짜(십오일)는 금액으로 보지 않는다. */
+const KO_AMOUNT = new RegExp(`(?<![가-힣])(?=[${SINO}]*[백천만억])[${SINO}]{2,}${NUM_TAIL}`, 'gu');
+const NUMBER_SHAPES: RegExp[] = [
+  // 한글 수 두 자 이상이고 십·백·천·만·억이 든 것: 백이십일만, 일백이십일만, 십오일, 오십만
+  new RegExp(`(?<![가-힣])(?=[${SINO}]*[십백천만억])[${SINO}]{2,}${NUM_TAIL}`, 'u'),
+  // 달 이름
+  new RegExp(`(?<![가-힣])(?:시월|유월)${NUM_TAIL}`, 'u'),
+  // 고유어 건수: 두 건, 열한 건
+  /(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열|스무|스물|서른|마흔|쉰)(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉)?\s*건(?!물|강|설|축|너|전)/u,
+  // 한자 수
+  /[〇一二三四五六七八九十百千万萬億兆]/u,
+];
+
+/** 답 문장(슬롯·토큰을 뺀 것)에 수가 있는가: NFKC로 정규화한 뒤 모든 유니코드 숫자(전각·아랍-인도·원문자), 한글·한자 수, 고유어 건수. */
+export function numberShaped(bare: string): boolean {
+  const t = normalizeForRedaction(bare).normalize('NFKC');
+  return /\p{N}/u.test(bare) || /\p{N}/u.test(t) || NUMBER_SHAPES.some((re) => re.test(t));
+}
+
 export function parseKrw(raw: string): number | null {
   const s = normalizeForRedaction(raw)
     .replace(/[\s,원]/g, '')
@@ -464,7 +503,7 @@ export class ChatAgent {
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ');
     if (unsafeText(bare)) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
-    if (/\d/.test(bare)) return { kind: k, text: refs.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: refs, ask: null, filtered: 'number' };
+    if (numberShaped(bare)) return { kind: k, text: refs.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: refs, ask: null, filtered: 'number' };
     return { kind: k, text, show: refs, ask: a, filtered: null };
   }
 
@@ -531,6 +570,42 @@ export class ChatAgent {
    * 두 레코드가 같은 값을 쓰면 그 값은 가리기만 하고 레코드에 묶지 않는다(역치환이 엉뚱한 거래처로 가지 않게).
    * 오타 거래처는 typoAliases로 그 거래처 별칭을 더한다.
    */
+  /**
+   * 대화 경로 추가 마스킹(PR #296 판정 ②). 대화록과 도구 왕복으로 같은 문장이 여러 번 나가므로 기본 규칙이 놓치는 두 가지를 이 경로에서 가린다.
+   * - 단위 없는 금액: 다섯 자리 이상 맨숫자·콤마 숫자(550000, 1,100,000), 백·천·만·억이 든 한글 수(오십만, 이백만).
+   * - 구분자가 / · _ 인 사업자번호(100/64/14392).
+   * - 장부 이름의 대소문자·띄어쓰기 변형(a상사, A 상사, LAF 테크, 한빛  전자, 김 철수). 그 이름의 레코드가 하나면 토큰을 레코드에 묶어 도구 인자로도 풀린다.
+   * 가리는 것만 더한다(SpanFinder는 기본 규칙 뒤에 돌고 겹치면 기본 규칙이 이긴다).
+   */
+  private maskVariants(red: Redactor, text: string, recs: Array<{ recordId: string; names: string[] }>): void {
+    const names = recs.flatMap((r) => r.names.map((n) => ({ recordId: r.recordId, name: normalizeForRedaction(n).replace(/\s+/g, ' ').trim() }))).filter((x) => [...x.name.replace(/\s/g, '')].length >= 2);
+    const loose = (v: string) => v.replace(/\s+/g, '').toLowerCase();
+    const owners = new Map<string, Set<string>>();
+    for (const x of names) (owners.get(loose(x.name)) ?? owners.set(loose(x.name), new Set()).get(loose(x.name))!).add(x.recordId);
+    const res = names.map((x) => ({ ...x, re: new RegExp([...x.name.replace(/\s/g, '')].map((c) => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s*'), 'giu') }));
+    let st = CHAT_MASKS.get(red);
+    if (!st) {
+      const fresh: { names: typeof res } = { names: [] };
+      red.addSpanFinder((t) => chatMaskSpans(t, fresh.names));
+      CHAT_MASKS.set(red, fresh);
+      st = fresh;
+    }
+    st.names = res;
+    // 이번 문장의 변형 낱말을 그 레코드에 묶는다(장부 이름과 공백만 다른 것은 이미 같은 토큰이다)
+    const t = normalizeForRedaction(text);
+    for (const x of res) {
+      for (const m of t.matchAll(x.re)) {
+        const lit = m[0].replace(/\s+/g, ' ').trim();
+        if (lit === x.name || owners.get(loose(x.name))!.size !== 1) continue;
+        try {
+          red.map.bindRecord(red.map.token('NAME', lit), x.recordId);
+        } catch {
+          // 다른 레코드에 이미 묶인 낱말이면 가리기만 한다
+        }
+      }
+    }
+  }
+
   private register(red: Redactor, text: string): void {
     const recs = [
       ...new CounterpartyRepo(this.db).list().map((c) => ({ recordId: `cp:${c.id}`, names: [c.name, ...(c.repName ? [c.repName] : [])], emails: c.email ? [c.email] : [], bizNos: [c.bizNo] })),
@@ -544,7 +619,8 @@ export class ChatAgent {
       for (const n of r.names) if (!sole('n', n)) red.addName(n);
       red.addRecord({ recordId: r.recordId, names: r.names.filter((n) => sole('n', n)), emails: r.emails.filter((e) => sole('e', e)), bizNos: r.bizNos.filter((b) => sole('b', b)) });
     }
-    const known = new Set(recs.flatMap((r) => r.names.map((n) => normalizeForRedaction(n).replace(/\s+/g, ' ').trim())));
+    this.maskVariants(red, text, recs);
+    const known = new Set(recs.flatMap((r) => r.names.map((n) => normalizeForRedaction(n).replace(/\s+/g, ' ').trim().toLowerCase())));
     for (const a of typoAliases(text, recs.filter((r) => r.recordId.startsWith('cp:')).map((r) => ({ recordId: r.recordId, name: r.names[0]! })), known)) {
       try {
         red.addRecord({ recordId: a.recordId, names: [a.alias] });
@@ -556,20 +632,22 @@ export class ChatAgent {
 }
 
 /**
- * 오타 거래처 별칭: 문장 속 낱말 중 거래처 상호(3자 이상)와 길이가 같고 한 글자만 다르며, 이미 있는 이름이 아니고,
+ * 오타 거래처 별칭: 문장 속 낱말 중 거래처 상호(3자 이상)와 길이가 같고 한 글자만 다르며(대소문자는 같은 글자로 본다), 이미 있는 이름(대소문자 무시)이 아니고,
  * 그렇게 가까운 거래처가 정확히 하나인 것. 둘 이상에 가까우면(A상사·B상사 사이의 C상사) 고르지 않는다.
  */
 export function typoAliases(text: string, cps: Array<{ recordId: string; name: string }>, known: ReadonlySet<string>): Array<{ recordId: string; alias: string }> {
   const t = [...normalizeForRedaction(text)];
   const hits = new Map<string, Set<string>>();
+  const knownLow = new Set([...known].map((k) => k.toLowerCase()));
   for (const c of cps) {
-    const n = [...normalizeForRedaction(c.name).trim()];
+    const n = [...normalizeForRedaction(c.name).trim().toLowerCase()];
     if (n.length < 3) continue;
     for (let i = 0; i + n.length <= t.length; i++) {
       const w = t.slice(i, i + n.length);
       if (!w.every((ch) => /[\p{L}\p{N}]/u.test(ch))) continue;
       const word = w.join('');
-      if (known.has(word) || w.filter((ch, k) => ch !== n[k]).length !== 1) continue;
+      const low = word.toLowerCase();
+      if (knownLow.has(low) || [...low].filter((ch, k) => ch !== n[k]).length !== 1) continue;
       (hits.get(word) ?? hits.set(word, new Set()).get(word)!).add(c.recordId);
     }
   }
