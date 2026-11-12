@@ -20,7 +20,7 @@ export function hometaxAutoRung(runs: RunService, db: Db): Rung {
     available: () => ({ ok: true }),
     run: (req) =>
       new Promise<AttemptEnd>((resolve) => {
-        const runId = `issue-${ulid()}`;
+        const runId = req.runId ?? `issue-${ulid()}`;
         const onEvent = (e: RunEvent) => {
           if (e.runId !== runId || e.type !== 'end') return;
           runs.off('event', onEvent);
