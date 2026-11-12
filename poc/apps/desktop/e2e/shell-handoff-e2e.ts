@@ -201,10 +201,60 @@ async function approveGate(id: string): Promise<boolean> {
   return until('approved', () => S.runs.get(id)?.approvedPending === true || runStatus(id) !== 'waiting', 5000);
 }
 
+/** 지금 대화에 그려진 온보딩 단계(다시 열면 대화 끝에 새 자리가 생긴다). */
+const onbStep = () => js<string | null>(`[...document.querySelectorAll('[data-onb-step]')].pop()?.dataset.onbStep ?? null`);
+/** 마지막 온보딩 자리 안의 버튼을 실제 입력 뒤 누른다(지난 자리에도 같은 data-onb 버튼이 남아 있다). */
+async function pressOnb(sel: string): Promise<void> {
+  gesture();
+  await sleep(30);
+  const ok = await js<boolean>(`(() => { const sec = [...document.querySelectorAll('section.onb')].pop(); const b = sec && [...sec.querySelectorAll(${JSON.stringify(sel)})].pop(); if (!b || b.disabled) return false; b.click(); return true; })()`);
+  if (!ok) throw new Error(`no onb button ${sel}`);
+}
+async function onbReply(sel: string, next: string): Promise<boolean> {
+  await pressOnb(sel);
+  return until(`onb ${next}`, async () => (await onbStep()) === next, 10_000);
+}
+/** 처음 온보딩: 사업자 간편인증으로 끝낸다(제품과 같은 길. 설정 [바꾸기]는 끝낸 온보딩이 있어야 보인다). */
+async function finishOnboarding(): Promise<boolean> {
+  await until('terms', async () => (await onbStep()) === 'terms', 15_000);
+  const ok =
+    (await onbReply('[data-onb=agree]', 'welcome')) &&
+    (await onbReply('[data-onb=upload]', 'biz-confirm')) &&
+    (await onbReply('[data-onb=confirm]', 'auth')) &&
+    (await onbReply('[data-onb=simple]', 'model')) &&
+    (await onbReply('[data-onb=agree]', 'telemetry')) &&
+    (await onbReply('[data-onb=off]', 'tasks'));
+  if (!ok) return false;
+  if (!(await js<boolean>(`document.querySelector('[data-task=H-01]')?.getAttribute('aria-pressed') === 'true'`))) await pressOnb('[data-task=H-01]');
+  if (!((await onbReply('[data-onb=submit]', 'counterparties')) && (await onbReply('[data-onb=later]', 'summary')) && (await onbReply('[data-onb=ok]', 'first')))) return false;
+  await pressOnb('[data-onb=later]');
+  return until('onboarding done', async () => !(await js<boolean>(`!!document.querySelector('[data-onb-step]:not([data-onb-step=done])')`)), 8000);
+}
+/** 설정 > 발급 인증 [바꾸기] → 대화의 O-03 → 고르기 → 요약 [확인했어요]. 제품에서 기본 인증을 바꾸는 유일한 길. */
+async function changeAuthInSettings(kind: 'cert' | 'simple'): Promise<{ note: boolean; atAuth: boolean; atSummary: boolean; ended: boolean }> {
+  await userClick('#rail [data-view=settings]');
+  await until('settings', () => js<boolean>(`!!document.querySelector('[data-act=auth-reopen]')`), 5000);
+  const note = await js<boolean>(`(document.querySelector('[data-auth-note]')?.textContent ?? '').includes('진행 중인 작업은 원래 인증으로 끝내요')`);
+  await shot(`06-settings-auth-before-${kind}`);
+  await userClick('[data-act=auth-reopen]');
+  const atAuth = await until('reopen auth', async () => (await onbStep()) === 'auth', 8000);
+  if (!atAuth) return { note, atAuth, atSummary: false, ended: false };
+  if (kind === 'cert') {
+    await pressOnb('[data-onb=cert]');
+    await until('certs', () => js<boolean>(`!![...document.querySelectorAll('section.onb')].pop()?.querySelector('[data-onb=cert-pick]:not([disabled])')`), 5000);
+    await pressOnb('[data-onb=cert-pick]');
+  } else await pressOnb(`[data-onb=${kind}]`);
+  const atSummary = await until('summary', async () => (await onbStep()) === 'summary', 8000);
+  await pressOnb('[data-onb=ok]');
+  const ended = await until('reopen ended', async () => (await onbStep()) !== 'summary', 8000);
+  return { note, atAuth, atSummary, ended };
+}
+
 async function flow(): Promise<void> {
   await S.ready;
   scriptHost();
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
+  check('온보딩을 사업자 간편인증으로 끝낸다', (await finishOnboarding()) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as Array<{ kind: string; signMethod: string | null }>).some((x) => x.kind === 'business' && x.signMethod === 'simple_auth'))));
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
   // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
@@ -269,26 +319,23 @@ async function flow(): Promise<void> {
   check('(상한) run.handoff_timeout → 끝 카드: 30분 문구 + "아무것도 발급하지 않았어요" + [다시 준비]', await until('cap end', async () => runStatus(d) === 'attention' && (await card(d)).text.includes(NOTE['run.handoff_timeout']!) && (await card(d)).text.includes('아무것도 발급하지 않았어요') && (await card(d)).acts.some((x) => x.act === 'handoff-again' && x.label === '다시 준비'), 5000), await card(d));
   await shot('05-cap-end');
 
-  // ④ 초안을 만든 뒤 설정에서 기본 발급 인증을 바꾸면: 초안 카드·패널, 시작할 때 엔진이 읽는 프로필, 서명 단계 안내가 모두 새 값
+  // ④ 초안을 만든 뒤 설정 [바꾸기](온보딩 O-03 다시 열기)로 기본 발급 인증을 바꾸면: 초안 카드·패널, 시작할 때 엔진이 읽는 프로필, 서명 단계 안내가 모두 새 값
   plans.push({ login: false });
   const before = S.runs.get(await toDraft('B상사에 44만원 세금계산서'))!;
   const m = before.id;
   check('(인증 바꿈) 초안은 지금 기본(사업자 간편인증)', before.auth === SIGN_LABEL.simple_auth, before.auth);
-  await userClick('#rail [data-view=settings]');
-  await until('settings', () => js<boolean>(`!!document.querySelector('[data-auth-set="cert"]')`), 5000);
-  await userClick('[data-auth-set="cert"]');
+  const toCert = await changeAuthInSettings('cert');
+  check('(인증 바꿈) 설정에 "진행 중인 작업은 원래 인증으로 끝내요" + [바꾸기] → O-03 → 공동인증서 → 요약 [확인했어요]', toCert.note && toCert.atAuth && toCert.atSummary && toCert.ended, toCert);
   const profileSign = async () => ((await S.host.rpc('db.query.profiles.list')) as Array<{ kind: string; signMethod: string | null }>).find((x) => x.kind === 'business')?.signMethod;
-  check('(인증 바꿈) 설정 [기본으로] → 프로필 signMethod cert', await until('profile cert', async () => (await profileSign()) === 'cert', 5000), await profileSign());
+  check('(인증 바꿈) 설정 [바꾸기] → 프로필 signMethod cert', await until('profile cert', async () => (await profileSign()) === 'cert', 5000), await profileSign());
   check('(인증 바꿈) 아직 시작하지 않은 초안은 새 기본을 보인다', await until('draft synced', () => S.runs.get(m)?.auth === SIGN_LABEL.cert, 5000), S.runs.get(m)?.auth);
   await userClick('#rail [data-view=chat]');
   await until('chat', () => js<boolean>(`!!document.querySelector('[data-run="${m}"] [data-act=prepare]')`), 5000);
   await prepare(m);
   check('(인증 바꿈) 승인 → 서명 단계 안내는 엔진이 누를 인증(공동·금융인증서)과 같다', (await approveGate(m)) && (await until('sign now cert', () => S.runs.get(m)?.steps[5]?.note === SIGN_BY_AUTH[SIGN_LABEL.cert]!.now, 5000)) && (await profileSign()) === 'cert', { note: S.runs.get(m)?.steps[5]?.note, auth: S.runs.get(m)?.auth });
   await shot('06-auth-changed-sign-now');
-  await userClick('#rail [data-view=settings]');
-  await until('settings', () => js<boolean>(`!!document.querySelector('[data-auth-set="simple"]')`), 5000);
-  await userClick('[data-auth-set="simple"]');
-  check('(인증 바꿈) 진행 중인 실행은 시작 때 값 그대로(설정 문구 "진행 중인 작업은 원래 인증으로")', await until('profile simple', async () => (await profileSign()) === 'simple_auth', 5000) && S.runs.get(m)?.auth === SIGN_LABEL.cert, S.runs.get(m)?.auth);
+  const toSimple = await changeAuthInSettings('simple');
+  check('(인증 바꿈) 진행 중에 다시 [바꾸기] → 간편인증: 진행 중인 실행은 시작 때 값 그대로(설정 문구 "진행 중인 작업은 원래 인증으로")', toSimple.atSummary && toSimple.ended && await until('profile simple', async () => (await profileSign()) === 'simple_auth', 5000) && S.runs.get(m)?.auth === SIGN_LABEL.cert, S.runs.get(m)?.auth);
   engineFinishesSign(m);
   await until('done m', () => runStatus(m) === 'done', 5000);
   await userClick('#rail [data-view=chat]');
@@ -297,7 +344,7 @@ async function flow(): Promise<void> {
 app.whenReady().then(async () => {
   await fs.mkdir(OUT, { recursive: true });
   try {
-    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false, chromeReady: () => chrome });
+    S = await startShell({ dev: DEMO_DEV, width: 1280, height: 820, preparePerMin: 100, show: false, daemon: false, onboarding: true, chromeReady: () => chrome });
     S.win.webContents.setBackgroundThrottling(false);
     S.win.setIgnoreMouseEvents(true);
     await flow();

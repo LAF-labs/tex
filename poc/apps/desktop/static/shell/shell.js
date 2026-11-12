@@ -1447,12 +1447,17 @@ const AUTH_DESC = {
 function authCard() {
   const auth = state.boot.profiles.business.auth;
   const desc = AUTH_DESC[auth];
-  return h(
-    'div',
-    { class: 'sx-card auth-row', 'data-auth-card': '' },
-    h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
-    state.boot.authReopen ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
-  );
+  const canChange = state.boot.authReopen;
+  return [
+    h(
+      'div',
+      { class: 'sx-card auth-row', 'data-auth-card': '' },
+      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
+      canChange ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
+    ),
+    // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
+    canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
+  ];
 }
 
 /** 설정(캔버스 S-02): 발급 인증 · 기기 연결. */
