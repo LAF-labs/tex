@@ -18,6 +18,7 @@ import {
   CHAT_REPLY_MAX_CHARS,
   OpenAIResponsesAdapter,
   SLOT_FIELDS,
+  SLOT_MONEY_PATHS,
   gatewayRunToken,
   slotPattern,
   type AgentAsk,
@@ -42,6 +43,11 @@ export const CHAT_AGENT_INPUT_MAX_BYTES = 8192;
 export const CHAT_AGENT_TRANSCRIPT_TURNS = 12;
 /** 답 문장을 쓸 수 없을 때(식별자·링크·비밀 유도 말, 모델 거절)의 고정 안내 */
 export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발급 기록·매출·받을 돈 확인을 도와드려요. 어떤 일을 할까요?';
+/**
+ * 답 문장에 슬롯·토큰 밖의 숫자가 있을 때(모델이 셈하거나 지어낸 값일 수 있다). 문장은 버리고 같이 보일 표·카드는 그대로 둔다.
+ * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
+ */
+export const CHAT_AGENT_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
 const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_exceeded', 'chat.quota_exceeded'];
 /** 게이트웨이 respond 스키마의 replay maxItems */
@@ -87,7 +93,7 @@ export interface AgentReply {
   text: string;
   show: string[];
   ask: AgentAsk | null;
-  filtered: null | 'advice' | 'unsafe' | 'refusal';
+  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number';
 }
 
 export type StepResult = { kind: 'tools'; calls: Array<{ callId: string } & DomainCall> } | { kind: 'reply'; reply: AgentReply };
@@ -385,7 +391,7 @@ export class ChatAgent {
       const t = String(v).trim();
       const slot = slotPattern.exec(t);
       if (slot) {
-        if (!s.refs.has(slot[1]!)) throw new ChatError('chat.bad_response');
+        if (!s.refs.has(slot[1]!) || !SLOT_MONEY_PATHS.includes(slot[2]!)) throw new ChatError('chat.bad_response');
         return { slot: t };
       }
       const n = /^\[AMT_\d+\]$/.test(t) ? parseKrw(s.red.map.valueOf(t) ?? '') : null;
@@ -442,7 +448,8 @@ export class ChatAgent {
     const k = kind as AgentReplyKind;
     const a = ask as AgentAsk | null;
     if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-    const text = o.text.replace(/\s+/g, ' ').trim();
+    // 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
+    const text = o.text.replace(/\s+/g, ' ').trim().replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
     if (!text || [...text].length > CHAT_REPLY_MAX_CHARS) throw bad();
     for (const m of text.matchAll(TOKEN_RE)) if (!s.red.map.has(m[0])) throw bad();
     for (const m of text.matchAll(SLOT_ANY)) if (!s.refs.has(m[1]!)) throw bad();
@@ -450,7 +457,9 @@ export class ChatAgent {
     const refs = [...new Set(show as string[])];
     if (!refs.every((r) => new RegExp(REF).test(r) && (s.refs.has(r) || turn.frameRefs.has(r)))) throw bad();
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-    if (unsafeText(text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' '))) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
+    const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ');
+    if (unsafeText(bare)) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
+    if (/\d/.test(bare)) return { kind: k, text: refs.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: refs, ask: null, filtered: 'number' };
     return { kind: k, text, show: refs, ask: a, filtered: null };
   }
 

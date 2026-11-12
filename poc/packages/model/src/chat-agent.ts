@@ -18,12 +18,27 @@ export const CHAT_AGENT_TOOLS = [
 ] as const satisfies readonly ToolDef[];
 export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
 
-/** 결과 슬롯 `{r<N>.<pos>.<field>}`: 모델은 값을 모른 채 쓰고 main이 로컬 결과에서 채운다. */
+/**
+ * 결과 슬롯: 모델은 값을 모른 채 쓰고 main이 로컬 결과에서 채운다.
+ * - 행 값 `{r<N>.<first|last>.<field>}`: 맨 위·맨 아래 한 행의 값.
+ * - 집계 `{r<N>.sum.<supply|total>}`·`{r<N>.count}`: PC가 계산한 합계·건수. 모델은 산수를 하지 않는다(실제 모델이
+ *   "매출 합계"에 첫 행 합계를 쓴 일이 있다, real-run-2 2026-11-12).
+ */
 export const SLOT_POSITIONS = ['first', 'last'] as const;
 export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty'] as const;
 export type SlotField = (typeof SLOT_FIELDS)[number];
-/** 슬롯 하나 전체에 맞는다. 묶음 1 = 결과 ref(r#), 2 = 위치, 3 = 칸. */
-export const slotPattern = new RegExp(`^\\{(r[1-9]\\d{0,5})\\.(${SLOT_POSITIONS.join('|')})\\.(${SLOT_FIELDS.join('|')})\\}$`);
+/** 합계를 낼 수 있는 칸(돈) */
+export const SLOT_SUM_FIELDS = ['supply', 'total'] as const satisfies readonly SlotField[];
+/** 슬롯 경로 전부(ref 뒤). 슬롯 문법은 이 목록 하나에서 나온다. */
+export const SLOT_PATHS: readonly string[] = [
+  ...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)),
+  ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`),
+  'count',
+];
+/** 금액 인자로 쓸 수 있는 경로(돈인 칸만) */
+export const SLOT_MONEY_PATHS: readonly string[] = SLOT_PATHS.filter((x) => /\.(supply|total)$/.test(x));
+/** 슬롯 하나 전체에 맞는다. 묶음 1 = 결과 ref(r#), 2 = 경로(first.supply·sum.total·count …). */
+export const slotPattern = new RegExp(`^\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map((x) => x.replace('.', '\\.')).join('|')})\\}$`);
 
 export const AGENT_REPLY_KINDS = ['answer', 'did', 'ask', 'cannot', 'tax_advice', 'smalltalk'] as const;
 export const AGENT_ASKS = ['counterparty', 'amount', 'item', 'vat', 'which_card'] as const;

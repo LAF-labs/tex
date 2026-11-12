@@ -15,8 +15,11 @@ export type AgentPhase = 'thinking' | 'reading' | 'drafting';
 // 데스크톱은 @sax/model·@sax/redaction에 의존하지 않아 값을 옮겨 둔다. 시험(agent-chat-main)이 원본과 대조한다.
 export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty'] as const satisfies readonly SlotField[];
 export const SLOT_POSITIONS = ['first', 'last'] as const;
+export const SLOT_SUM_FIELDS = ['supply', 'total'] as const;
+/** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count). @sax/model SLOT_PATHS와 같다(시험이 대조). */
+export const SLOT_PATHS: readonly string[] = [...SLOT_POSITIONS.flatMap((p) => SLOT_FIELDS.map((f) => `${p}.${f}`)), ...SLOT_SUM_FIELDS.map((f) => `sum.${f}`), 'count'];
 export const CHAT_MAP_IDLE_MS = 15 * 60 * 1000;
-const SLOT_RE = new RegExp(`\\{(r[1-9]\\d{0,5})\\.(${SLOT_POSITIONS.join('|')})\\.(${SLOT_FIELDS.join('|')})\\}`, 'g');
+const SLOT_RE = new RegExp(`\\{(r[1-9]\\d{0,5})\\.(${SLOT_PATHS.map((x) => x.replace('.', '\\.')).join('|')})\\}`, 'g');
 /** 엔진 화면 프레임 상한(cards maxItems) */
 const FRAME_MAX = 12;
 /** 한 사용자 턴의 chat.step 호출 상한. 엔진 턴 상한(4)과 따로 둔 이중 방어다. */
@@ -129,6 +132,9 @@ const out = (status: ToolOutput['status'], ref: string | null = null, needs: Too
 const won = (n: number) => `${n.toLocaleString('en-US')}원`;
 const validAmount = (n: number) => Number.isInteger(n) && n > 0 && n <= AMOUNT_MAX;
 const supplyOf = (total: number) => split(total, 'included').supply;
+/** 행 금액의 합(공급가는 행마다 나눈 값을 더한다: 표의 행과 같은 값). 금액 모르는 행이 있으면 null. */
+const sumOf = (rows: ReadonlyArray<{ total: number | null }>, field: 'supply' | 'total'): number | null =>
+  rows.some((r) => r.total === null) ? null : rows.reduce((a, r) => a + (field === 'total' ? r.total! : supplyOf(r.total!)), 0);
 
 /** today(KST YYYY-MM-DD)에서 offset달 옮긴 달의 YYYY-MM */
 export function monthOf(today: string, offset: number): string {
@@ -241,10 +247,10 @@ export class AgentChat {
       case 'sales_summary': {
         const month = monthOf(this.ports.today(), call.monthOffset);
         const rows = newestFirst(this.ports.issued().filter((x) => x.date.startsWith(`${month}-`)));
+        // 표 제목의 합계는 슬롯({r#.sum.*})과 같은 함수로 낸다: 답 문장과 표가 같은 값을 보이게
         const known = rows.filter((x) => x.total !== null);
-        const sum = known.reduce((a, x) => a + x.total!, 0);
         const gap = rows.length - known.length;
-        const title = `${Number(month.slice(5))}월 발급 ${rows.length}건 · 합계 ${won(sum)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
+        const title = `${Number(month.slice(5))}월 발급 ${rows.length}건 · 공급가 ${won(sumOf(known, 'supply')!)} · 합계 ${won(sumOf(known, 'total')!)}${gap ? `(금액 모르는 ${gap}건 빼고)` : ''}`;
         return this.remember(s, { kind: 'sales', title, rows });
       }
       case 'invoice_history':
@@ -319,15 +325,20 @@ export class AgentChat {
     if (a === null) return null;
     if ('value' in a) return validAmount(a.value) ? { value: a.value, vat: null } : null;
     const m = new RegExp(`^${SLOT_RE.source}$`).exec(a.slot);
-    const field = m?.[3];
+    const field = m?.[2]!.split('.')[1];
     if (!m || (field !== 'supply' && field !== 'total')) return null;
-    const v = this.slotValue(s, m[1]!, m[2]!, field);
+    const v = this.slotValue(s, m[1]!, m[2]!);
     return typeof v === 'number' && validAmount(v) ? { value: v, vat: field === 'total' ? 'included' : null } : null;
   }
 
-  private slotValue(s: Session, ref: string, pos: string, field: string): number | string | null {
+  /** 슬롯 경로의 값. 집계(sum)는 금액 모르는 행이 하나라도 있으면 null이다(일부만 더한 값을 합계라고 말하지 않는다). */
+  private slotValue(s: Session, ref: string, path: string): number | string | null {
     const rows = s.results.get(ref)?.rows;
-    const row = pos === 'first' ? rows?.[0] : rows?.at(-1);
+    if (!rows) return null;
+    if (path === 'count') return rows.length;
+    const [pos, field] = path.split('.') as [string, string];
+    if (pos === 'sum') return sumOf(rows, field as 'supply' | 'total');
+    const row = pos === 'first' ? rows[0] : rows.at(-1);
     if (!row) return null;
     if (field === 'date') return row.date;
     if (field === 'counterparty') return row.counterparty;
@@ -338,13 +349,13 @@ export class AgentChat {
   private fill(s: Session, text: string): string {
     const today = this.ports.today();
     let missing = false;
-    const filled = text.replace(SLOT_RE, (_m, ref: string, pos: string, field: string) => {
-      const v = this.slotValue(s, ref, pos, field);
+    const filled = text.replace(SLOT_RE, (_m, ref: string, path: string) => {
+      const v = this.slotValue(s, ref, path);
       if (v === null) {
         missing = true;
         return '';
       }
-      return typeof v === 'number' ? won(v) : field === 'date' ? koDate(v, today) : v;
+      return path === 'count' ? String(v) : typeof v === 'number' ? won(v) : path.endsWith('.date') ? koDate(v, today) : v;
     });
     return missing ? AGENT_SLOT_MISSING_TEXT : filled;
   }
@@ -352,7 +363,9 @@ export class AgentChat {
   private shown(s: Session, reply: AgentReply, created: string[]): AgentTurnResult {
     const show: AgentShow[] = [];
     const cards = new Set<string>();
-    for (const ref of reply.show) {
+    // 문장 슬롯이 가리키는 결과는 모델이 show에 넣지 않아도 보인다: 답 문장의 값이 늘 같이 보이는 표에 있다.
+    const slotRefs = reply.filtered ? [] : [...reply.text.matchAll(SLOT_RE)].map((m) => m[1]!);
+    for (const ref of [...new Set([...reply.show, ...slotRefs])]) {
       const res = s.results.get(ref);
       const runId = s.runOfRef.get(ref);
       if (res) show.push({ type: 'table', table: res.kind, title: res.title, rows: res.rows.map(({ date, counterparty, total }) => ({ date, counterparty, total })) });

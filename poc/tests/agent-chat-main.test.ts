@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { CHAT_ADVICE_TEXT, type AgentReply, type DomainCall, type StepParams, type StepResult, type ToolOutput } from '@sax/engine';
-import { SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
+import { SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_POSITIONS as MODEL_SLOT_POSITIONS } from '@sax/model';
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {
   AGENT_ERROR_TEXT,
@@ -13,6 +13,7 @@ import {
   AgentChat,
   CHAT_MAP_IDLE_MS,
   SLOT_FIELDS,
+  SLOT_PATHS,
   SLOT_POSITIONS,
   type AgentChatPorts,
   type AgentCounterparty,
@@ -139,8 +140,28 @@ async function say(a: AgentChat, text: string, ...steps: Handler[]) {
 }
 const agent = (r: Awaited<ReturnType<AgentChat['turn']>>) => {
   assert.equal(r.kind, 'agent', JSON.stringify(r));
-  return r as Extract<typeof r, { kind: 'agent' }>;
+  const a = r as Extract<typeof r, { kind: 'agent' }>;
+  amountsMatchShown(a);
+  return a;
 };
+const won = (n: number) => `${n.toLocaleString('en-US')}원`;
+/**
+ * 답 문장의 금액은 같이 보이는 표·카드의 값 가운데 하나다(부장 지시 2026-11-12: 숫자가 틀린 답이 가장 나쁜 실패).
+ * 표: 제목의 금액, 행 합계와 그 공급가. 카드: 지금 장부의 카드 금액과 그 공급가·합계.
+ */
+function amountsMatchShown(r: { text: string; show: Array<{ type: 'card'; runId: string } | { type: 'table'; title: string; rows: Array<{ total: number | null }> }> }) {
+  const seen = new Set<string>();
+  for (const x of r.show) {
+    if (x.type === 'table') {
+      for (const m of x.title.matchAll(/[\d,]+원/g)) seen.add(m[0]);
+      for (const row of x.rows) if (row.total !== null) for (const v of [row.total, Math.floor((row.total * 10) / 11)]) seen.add(won(v));
+    } else {
+      const c = drafts.cards.find((d) => d.runId === x.runId);
+      if (c?.amount) for (const v of [c.amount, c.amount + Math.floor(c.amount / 10), Math.floor((c.amount * 10) / 11)]) seen.add(won(v));
+    }
+  }
+  for (const m of r.text.matchAll(/[\d,]+원/g)) assert.ok(seen.has(m[0]), `답 금액 ${m[0]}은 같이 보이는 표·카드에 있다: ${[...seen].join(' ')}`);
+}
 
 describe('AgentChat 11턴', () => {
   it('표·카드·슬롯이 값 공간에서 채워지고, 모델에 가는 도구 결과에는 숫자·이름이 없다', async () => {
@@ -148,13 +169,13 @@ describe('AgentChat 11턴', () => {
     const cp = (id: string) => BOOK.find((c) => c.id === id)!.name;
     let hist = '';
 
-    const t1 = agent(await say(a, '지난달 매출 얼마야', () => tools({ tool: 'sales_summary', monthOffset: -1 }), (p) => reply({ text: '지난달 맨 위 건은 {X.first.total}이에요.'.replace('X', outputs(p)[0]!.ref!), show: [outputs(p)[0]!.ref!] })));
-    assert.equal(t1.text, '지난달 맨 위 건은 550,000원이에요.');
+    const t1 = agent(await say(a, '지난달 매출 얼마야', () => tools({ tool: 'sales_summary', monthOffset: -1 }), (p) => reply({ text: '지난달 매출은 {X.count}건, 공급가 합계 {X.sum.supply}, 합계 {X.sum.total}이에요.'.replaceAll('X', outputs(p)[0]!.ref!), show: [outputs(p)[0]!.ref!] })));
+    assert.equal(t1.text, '지난달 매출은 2건, 공급가 합계 1,500,000원, 합계 1,650,000원이에요.');
     assert.deepEqual(t1.show, [
       {
         type: 'table',
         table: 'sales',
-        title: '10월 발급 2건 · 합계 1,650,000원',
+        title: '10월 발급 2건 · 공급가 1,500,000원 · 합계 1,650,000원',
         rows: [
           { date: '2026-10-20', counterparty: 'B상사', total: 550_000 },
           { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000 },
@@ -253,6 +274,7 @@ describe('AgentChat 11턴', () => {
 
     const t10 = agent(await say(a, '그때 얼마였어?', () => reply({ text: `그때는 공급가 {${hist}.first.supply}, 합계 {${hist}.first.total}이었어요.` })));
     assert.equal(t10.text, '그때는 공급가 1,000,000원, 합계 1,100,000원이었어요.');
+    assert.deepEqual(t10.show.map((x) => x.type === 'table' && x.title), ['A상사 발급 기록'], '슬롯이 가리키는 표는 모델이 show에 넣지 않아도 보인다');
 
     const t11 = agent(
       await say(
@@ -452,6 +474,7 @@ describe('AgentChat 옮겨 둔 상수', () => {
   it('슬롯 칸·위치·쉬는 시간이 @sax/model·@sax/redaction과 같다', () => {
     assert.deepEqual([...SLOT_FIELDS], [...MODEL_SLOT_FIELDS]);
     assert.deepEqual([...SLOT_POSITIONS], [...MODEL_SLOT_POSITIONS]);
+    assert.deepEqual([...SLOT_PATHS], [...MODEL_SLOT_PATHS]);
     assert.equal(CHAT_MAP_IDLE_MS, REDACTION_IDLE_MS);
   });
 });

@@ -51,7 +51,7 @@ describe('chat_agent 머리말', () => {
   const p = toolsetPrefix(CHAT_AGENT);
 
   it('모든 도구 이름·슬롯 위치·슬롯 칸을 적는다', () => {
-    for (const w of [...CHAT_AGENT_TOOLS.map((t) => t.name), ...SLOT_POSITIONS, ...SLOT_FIELDS]) assert.ok(p.includes(w), w);
+    for (const w of [...CHAT_AGENT_TOOLS.map((t) => t.name), ...SLOT_POSITIONS, ...SLOT_FIELDS, 'sum.supply', 'sum.total', 'count']) assert.ok(p.includes(w), w);
   });
 
   it('공통 판정기 머리말이 없고, 세무 판단·데이터 규칙·발급 버튼·슬롯 예시를 적는다', () => {
@@ -69,7 +69,7 @@ describe('chat_agent 머리말', () => {
 
 describe('결과 슬롯 문법', () => {
   it('{r<N>.first|last.<칸>}만 맞는다', () => {
-    for (const ok of ['{r1.first.supply}', '{r12.last.date}', '{r3.first.counterparty}', '{r3.last.total}']) assert.match(ok, slotPattern, ok);
-    for (const bad of ['{r1.middle.supply}', '{d1.first.supply}', '{r1.first.amount}', 'r1.first.supply', '{r0.first.date}', '{r1.first.supply}x', '{ r1.first.supply}']) assert.doesNotMatch(bad, slotPattern, bad);
+    for (const ok of ['{r1.first.supply}', '{r12.last.date}', '{r3.first.counterparty}', '{r3.last.total}', '{r1.sum.supply}', '{r1.sum.total}', '{r4.count}']) assert.match(ok, slotPattern, ok);
+    for (const bad of ['{r1.middle.supply}', '{d1.first.supply}', '{r1.first.amount}', 'r1.first.supply', '{r0.first.date}', '{r1.first.supply}x', '{ r1.first.supply}', '{r1.sum.date}', '{r1.sum.counterparty}', '{r1.count.supply}', '{r1.sum}']) assert.doesNotMatch(bad, slotPattern, bad);
   });
 });

@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, ChatAgent, gatewayChatAgentModel, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, ChatAgent, gatewayChatAgentModel, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -253,6 +253,29 @@ describe('chat.step 답 검사', () => {
       script(() => reply(o));
       await code(a.step({ start: { text: '안녕', frame: { cards: [] }, profileId } }), 'chat.bad_response');
     }
+  });
+
+  it('합계·건수는 집계 슬롯, 슬롯·토큰 밖 숫자가 있으면 문장을 버리고 표는 둔다, 슬롯 안 공백은 붙인다, 금액 인자는 돈 칸 슬롯만', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    script(() => fc('sales_summary', { month_offset: -1 }), (b) => reply({ text: '지난달 매출은 {X.count}건, 합계 { X.sum.total }예요.'.replaceAll('X', lastOutput(b)!.ref!), show: [lastOutput(b)!.ref!] }));
+    const r1 = (await say(a, pc, '지난달 매출 얼마야')).reply;
+    const ref = r1.show[0]!;
+    assert.deepEqual([r1.text, r1.filtered], [`지난달 매출은 {${ref}.count}건, 합계 {${ref}.sum.total}예요.`, null]);
+    // 실제 모델이 첫 행 합계를 매출 합계라고 쓴 일(real-run-2): 숫자를 직접 쓰면 문장을 버리고 표만 남긴다
+    script(() => reply({ text: '합계는 1,210,000원이에요.', show: [ref] }));
+    const r2 = (await say(a, pc, '합계 다시 말해 줘')).reply;
+    assert.deepEqual([r2.text, r2.show, r2.filtered], [CHAT_AGENT_NUMBER_TEXT, [ref], 'number']);
+    script(() => reply({ text: '지난달에 2건이에요.' }));
+    const r3 = (await say(a, pc, '몇 건이야')).reply;
+    assert.deepEqual([r3.text, r3.show, r3.filtered], [CHAT_AGENT_FALLBACK_TEXT, [], 'number']);
+    for (const amount of [`{${ref}.count}`, `{${ref}.first.date}`]) {
+      script(() => fc('invoice_draft', { counterparty: '[NAME_1]', amount, vat: null, item: null }));
+      await code(a.step({ start: { text: 'A상사에 같은 금액으로', frame: pc.frame(), profileId } }), 'chat.bad_response');
+    }
+    script(() => fc('invoice_draft', { counterparty: '[NAME_1]', amount: `{${ref}.sum.supply}`, vat: 'separate', item: '컨설팅' }), () => reply({ kind: 'did', text: '만들었어요.' }));
+    const r4 = await say(a, pc, 'A상사에 지난달 합계만큼');
+    assert.deepEqual(r4.calls.map((c) => c.tool === 'invoice_draft' && c.amount), [{ slot: `{${ref}.sum.supply}` }]);
   });
 
   it('거래처 토큰은 지금 장부 이름으로 보인다(이름을 바꾸면 바뀐 이름), 대화록에는 토큰 그대로 남는다', async () => {
