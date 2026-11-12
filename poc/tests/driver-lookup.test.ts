@@ -53,7 +53,7 @@ describe('PopupLookupPort(조회 팝업, 금고 중계 + Chrome)', () => {
   const setup = (o: { refuse?: string; timeoutMs?: number } = {}) => {
     const clock = new FakeClock();
     const journal: string[] = [];
-    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive', false)!, { wall: () => Date.now(), mono: () => clock.t });
+    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive')!, { wall: () => Date.now(), mono: () => clock.t });
     const enforcer = new RunEnforcer({ guard: rg, clock, mono: () => clock.t, dict: SIGNAL_DICT.fixture, profileId: `p${randomBytes(3).toString('hex')}`, journal: (t) => journal.push(t), random: () => 0 });
     const calls: string[] = [];
     const policy: LookupPolicy = {

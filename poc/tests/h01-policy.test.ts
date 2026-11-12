@@ -150,11 +150,10 @@ describe('H-01 요청률 정책(가짜 페이지, 금고 중계 위 Playwright)'
       const added = await service(FIXTURE_POLICY, undefined, hometaxLike, () => received({ phrases: [FIXTURE_BLOCK_TEXT.replace(/\.$/, '')] }));
       const r1 = added.start();
       const e1 = await endOf(r1);
-      // PoC 홈택스는 양성 1회로 쿨다운한다(POC_OVERRIDES, ADR-025): 차단 신호 → 그 자리에서 쿨다운.
-      assert.deepEqual([e1.status, e1.code], ['failed', 'policy.cooldown']);
+      assert.deepEqual([e1.status, e1.code], ['failed', 'portal.blocked']);
       assert.ok(!opened(r1));
       const j = added.runs.inspect(r1).journal;
-      assert.ok(j.includes('block.signal') && j.includes('cooldown.started'));
+      assert.ok(j.includes('block.signal') && !j.includes('cooldown.started'), '양성 1회는 중단·보고만');
     } finally {
       fx.knobs.block = null;
     }
