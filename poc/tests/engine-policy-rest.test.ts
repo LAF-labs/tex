@@ -113,6 +113,7 @@ describe('captchaRelay: 캡차는 사람에게 넘기기만(절대 규칙, ADR-0
   it('캡차 신호는 두 실행 경로 모두 핸드오프 코드(portal.captcha)다', () => {
     for (const f of ['policy.ts', 'enforcer.ts']) assert.match(fs.readFileSync(path.join(SRC, f), 'utf8'), /captcha: 'portal\.captcha'/, f);
     assert.match(fs.readFileSync(path.join(SRC, 'core/interp.ts'), 'utf8'), /\['portal\.captcha', 'handoff'\]/);
-    assert.match(fs.readFileSync(path.join(SRC, 'run/controller.ts'), 'utf8'), /if \(h\.kind === 'captcha'\) return this\.handoffWith\('portal\.captcha'\);/);
+    // 사람에게 넘기기만 한다(재개 지점만 마지막 체크포인트로 정한다, B3). 값을 받아 채우는 중계는 없다.
+    assert.match(fs.readFileSync(path.join(SRC, 'run/controller.ts'), 'utf8'), /if \(h\.kind === 'captcha'\) \{\s*this\.handoffResumeAt = this\.lastCp;\s*return this\.handoffWith\('portal\.captcha'\);\s*\}/);
   });
 });

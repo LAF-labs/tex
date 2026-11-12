@@ -108,7 +108,7 @@ export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as cons
  */
 export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
 /** 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e). */
-export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect'] as const;
+export const RUN_COMMANDS = ['run.start', 'run.stop', 'run.inspect', 'run.resume', 'run.manualDone'] as const;
 /** 실행 이력(재시작 뒤 활동 기록·결과 카드·지난 실행 안내, run-history.ts). main만 부른다. */
 export const RUN_HISTORY_QUERIES = ['db.query.runs.history'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */

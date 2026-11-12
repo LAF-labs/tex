@@ -134,7 +134,9 @@ export interface RunEnforcerInput {
 export class RunEnforcer implements ActionPolicy {
   private readonly g: RateGuard;
   private readonly i: RunEnforcerInput;
-  private readonly startedAt: number;
+  private startedAt: number;
+  /** 사람 대기(핸드오프·Paused) 동안 벽시계를 멈춘다(부장 결정 2026-11-11, D03 §7). 멈춘 시각. */
+  private pausedAt: number | null = null;
   private readonly forbidden: number[] = [];
   private actuations = 0;
   private committed = false;
@@ -235,6 +237,18 @@ export class RunEnforcer implements ActionPolicy {
 
   leaveLogin(): void {
     this.section = null;
+  }
+
+  /** 사람 대기에 들어간다: run.maxWallClockMs 벽시계를 멈춘다. 실행 전체 수명 상한(2시간)은 IrRun이 따로 센다. */
+  pauseClock(): void {
+    this.pausedAt ??= this.i.mono();
+  }
+
+  /** 사람 대기에서 돌아왔다: 멈춘 시간만큼 벽시계 시작을 늦춘다. */
+  resumeClock(): void {
+    if (this.pausedAt === null) return;
+    this.startedAt += this.i.mono() - this.pausedAt;
+    this.pausedAt = null;
   }
 
   /** 기대한 화면(체크포인트)에 도착했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건. */
