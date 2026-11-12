@@ -105,7 +105,7 @@
   - 서명 팀이 바뀌면(예: 나중에 법인 계정으로 옮김) 지정 요구사항이 바뀌어 다시 한 번 뜬다.
 
 ### 2.5 Developer ID 서명·공증 (🔧 빌드 설정은 이 PR)
-- 판정(`electron-builder.config.mjs` `macSigningFrom`): macOS 호스트 + 키체인의 `Developer ID Application:` 신원이 **정확히 하나**(여럿이면 `SAX_MAC_IDENTITY`로 고름) + `SAX_NOTARY_PROFILE`(notarytool 키체인 프로필 **이름**)이 있으면 `developer_id`. 하나라도 없으면 지금처럼 애드혹이고 빌드는 실패하지 않는다(이유 코드를 출력: `developer_id_missing`·`developer_id_ambiguous`·`notary_profile_unset`). Apple ID·앱 암호·팀 ID 값은 스크립트·레포·로그에 없다.
+- 판정(`electron-builder.config.mjs` `macSigningFrom`): macOS 호스트 + 키체인의 `Developer ID Application:` 신원이 **정확히 하나**(여럿이면 `SAX_MAC_IDENTITY`로 고름) + `SAX_NOTARY_PROFILE`(notarytool 키체인 프로필 **이름**)이 있으면 `developer_id`. 신원은 있는데 프로필이 없으면 **서명만**(하드닝 런타임, 공증·스테이플 생략, 이유 `notarize_skipped`) 한다: 이 Mac에서 빌드한 앱은 그대로 실행되고 지정 요구사항이 팀 ID 기준이라 새 판에서도 키체인 창이 뜨지 않지만, 내려받은 사본은 Gatekeeper가 막는다(고객 배포는 공증 판). 신원이 없거나 여럿이면 애드혹이고 빌드는 실패하지 않는다(이유 코드: `developer_id_missing`·`developer_id_ambiguous`). Apple ID·앱 암호·팀 ID 값은 스크립트·레포·로그에 없다.
 - 신원 찾기: `security find-identity -v -p codesigning`의 이름만 읽는다(`parseIdentities`). `Apple Development:` 신원은 쓰지 않는다(배포 서명이 아님).
 - 빌드 순서(`scripts/package-win.mjs`): 퓨즈·asar 무결성 → 앱 서명(하드닝 런타임, `entitlements.mac.plist`, Helper 포함) → 앱 공증·스테이플(electron-builder, `APPLE_KEYCHAIN_PROFILE`=프로필 이름) → dmg → **dmg 서명(타임스탬프) → `notarytool submit --keychain-profile <프로필> --wait` → `stapler staple`·`validate`** → `spctl --assess` accepted 확인 → 그 뒤에 SHA-256(스테이플이 dmg를 바꾼다). 공증이 거절되면 제출 ID와 `notarytool log` 명령을 띄우고 빌드가 실패한다.
 - build-info `signing: developer_id` → 앱의 "미서명 빌드" 배지가 사라진다(`apps/desktop/src/harden.ts`).

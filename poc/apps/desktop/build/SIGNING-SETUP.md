@@ -86,7 +86,8 @@ SAX_NOTARY_PROFILE=sax-notary SAX_APP_VERSION=<판> pnpm package:mac
 | `SAX_MAC_IDENTITY`(선택) | 신원이 여럿일 때 이름·팀 ID 일부로 고른다 |
 | `SAX_NOTARY_PROFILE` | notarytool 키체인 프로필 이름(`[A-Za-z0-9_.-]`, 64자 이하) |
 
-- 셋이 맞으면 `macSigningFrom`이 `developer_id`를 고른다 → 앱 서명(하드닝 런타임, `build/entitlements.mac.plist`: allow-jit·allow-unsigned-executable-memory, Helper 포함) → 앱 공증·스테이플(electron-builder, `APPLE_KEYCHAIN_PROFILE`) → dmg 서명·공증·스테이플(`scripts/package-win.mjs` `notarizeDmg`) → `spctl --assess` accepted 확인 → SHA-256. 하나라도 없으면 애드혹이고 이유 코드를 출력한다(`developer_id_missing`·`developer_id_ambiguous`·`notary_profile_unset`·`notary_profile_bad_name`).
+- **서명만(공증 생략, 팀장 지시 2026-11-12)**: 신원은 있고 `SAX_NOTARY_PROFILE`이 없으면 `developer_id`로 서명(하드닝 런타임·권한 같음)하고 공증·스테이플·dmg 서명은 건너뛴다. 출력 `macOS 서명: Developer ID (JA55KTZH34), 공증 생략(notarize_skipped)`, `report.json` `mac.notarized:false`·`codesignVerify:ok`·`hardenedRuntime:true`. 이 Mac에서 빌드해 격리 속성이 없는 앱은 그대로 실행되고 새 판에서도 키체인 허용 창이 다시 뜨지 않는다. 내려받은 사본은 공증이 없어 Gatekeeper가 막으므로 고객 배포는 공증 판으로 한다.
+- 셋이 맞으면 `macSigningFrom`이 `developer_id`를 고른다 → 앱 서명(하드닝 런타임, `build/entitlements.mac.plist`: allow-jit·allow-unsigned-executable-memory, Helper 포함) → 앱 공증·스테이플(electron-builder, `APPLE_KEYCHAIN_PROFILE`) → dmg 서명·공증·스테이플(`scripts/package-win.mjs` `notarizeDmg`) → `spctl --assess` accepted 확인 → SHA-256. 신원이 없거나 여럿이면 애드혹이고 이유 코드를 출력한다(`developer_id_missing`·`developer_id_ambiguous`). 프로필 이름이 틀리면(`notary_profile_bad_name`) 공증 없이 서명만 한다.
 - 공증이 거절되면 빌드가 실패하고 제출 ID와 `xcrun notarytool log <ID> --keychain-profile <프로필>`을 띄운다.
 - build-info `signing: developer_id` → 앱의 "미서명 빌드" 배지가 사라진다(`apps/desktop/src/harden.ts`). Windows 배포 판정(`release-readiness.json`)은 바뀌지 않는다.
 - 키체인: 애드혹 판이 만든 항목은 첫 Developer ID 판에서 항목마다 한 번 허용 창이 뜬다(ACL에 옛 cdhash만 있음). 그 뒤 같은 팀 ID 판부터는 뜨지 않는다(CUSTOMER-DIST §2.4).

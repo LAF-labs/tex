@@ -59,8 +59,12 @@ export const DEVELOPER_ID_PREFIX = 'Developer ID Application: ';
 export const parseIdentities = (out) => [...out.matchAll(/^\s*\d+\)\s+[0-9A-F]{40}\s+"([^"]+)"/gm)].map((m) => m[1]);
 
 /**
- * macOS 서명 판정: macOS 호스트, Developer ID Application 신원 정확히 하나, 공증 프로필 이름이 모두 있을 때만
- * Developer ID 서명 + 하드닝 런타임 + 공증. 하나라도 빠지면 지금처럼 애드혹('-')이고 빌드는 실패하지 않는다(reason으로 알린다).
+ * macOS 서명 판정: macOS 호스트에 Developer ID Application 신원이 정확히 하나면 Developer ID 서명 + 하드닝 런타임.
+ * - 공증 프로필 이름도 있으면 공증·스테이플까지(notarize: true).
+ * - 없으면(또는 이름이 틀리면) 서명만 하고 공증·스테이플은 건너뛴다(notarize: false, reason notarize_skipped·notary_profile_bad_name, 팀장 지시 2026-11-12).
+ *   이 Mac에서 빌드해 격리 속성이 없는 앱은 그대로 실행되고, 지정 요구사항이 팀 ID 기준이라 새 판에서도 키체인 허용 창이 다시 뜨지 않는다.
+ *   내려받은 사본은 공증이 없어 Gatekeeper가 막는다(고객 배포는 공증 판).
+ * - 신원이 없거나 여럿이면 애드혹('-')이고 빌드는 실패하지 않는다(reason으로 알린다).
  * 애드혹 빌드는 지정 요구사항이 cdhash라 빌드마다 키체인 허용 창이 다시 뜨고, 받은 dmg는 Gatekeeper가 막는다(CUSTOMER-DIST §2).
  * @param {{ env: Record<string, string | undefined>, platform: string, identities: string[] }} o identities: 키체인 신원 이름 전체(접두어 포함)
  */
@@ -70,14 +74,15 @@ export function macSigningFrom({ env, platform, identities }) {
   const ids = [...new Set(identities.filter((n) => n.startsWith(DEVELOPER_ID_PREFIX)))].filter((n) => !want || n.includes(want));
   if (!ids.length) return { mode: 'unsigned', reason: 'developer_id_missing' };
   if (ids.length > 1) return { mode: 'unsigned', reason: 'developer_id_ambiguous', candidates: ids.length };
-  const profile = (env[MAC_SIGNING_ENV.notaryProfile] ?? '').trim();
-  if (!profile) return { mode: 'unsigned', reason: 'notary_profile_unset' };
-  // 프로필 이름은 notarytool 인자로만 쓴다: 셸 글자 없이
-  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(profile)) return { mode: 'unsigned', reason: 'notary_profile_bad_name' };
   const name = ids[0].slice(DEVELOPER_ID_PREFIX.length);
   const team = /\(([A-Z0-9]{10})\)$/.exec(name)?.[1] ?? null;
   // electron-builder는 접두어 없는 이름을 받는다(macCodeSign checkPrefix)
-  return { mode: 'developer_id', identity: name, fullName: ids[0], teamId: team, notaryProfile: profile };
+  const signed = { mode: 'developer_id', identity: name, fullName: ids[0], teamId: team };
+  const profile = (env[MAC_SIGNING_ENV.notaryProfile] ?? '').trim();
+  if (!profile) return { ...signed, notarize: false, notaryProfile: null, reason: 'notarize_skipped' };
+  // 프로필 이름은 notarytool 인자로만 쓴다: 셸 글자 없이
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(profile)) return { ...signed, notarize: false, notaryProfile: null, reason: 'notary_profile_bad_name' };
+  return { ...signed, notarize: true, notaryProfile: profile };
 }
 
 /** 앱 안에 넣지 않는 것(ADR-035 W-7, RETRO B-05): 타입·소스·지도 파일과 다른 OS 네이티브 바이너리. 데모·e2e·실측 파일은 스크립트가 도달성으로 거른다. */
@@ -160,7 +165,7 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       entitlements: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
       entitlementsInherit: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
       // 앱 공증·스테이플: 스크립트가 APPLE_KEYCHAIN_PROFILE(= SAX_NOTARY_PROFILE)을 넘긴다. dmg 서명·공증·스테이플은 스크립트가 따로 한다
-      notarize: macSigned,
+      notarize: macSigned && signing.notarize === true,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
       artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,

@@ -95,9 +95,12 @@ async function main() {
     TARGET.os === 'darwin'
       ? macSigningFrom({ env: process.env, platform: process.platform, identities: process.platform === 'darwin' ? parseIdentities(capture('security', ['find-identity', '-v', '-p', 'codesigning'])) : [] })
       : signingFrom(process.env, process.platform);
-  if (TARGET.os === 'darwin') console.log(signing.mode === 'developer_id' ? `macOS 서명: Developer ID (${signing.teamId ?? '팀 ID 모름'}), 공증 프로필 ${signing.notaryProfile}` : `macOS 서명: 애드혹(${signing.reason})`);
+  if (TARGET.os === 'darwin') {
+    if (signing.mode !== 'developer_id') console.log(`macOS 서명: 애드혹(${signing.reason})`);
+    else console.log(`macOS 서명: Developer ID (${signing.teamId ?? '팀 ID 모름'}), ${signing.notarize ? `공증 프로필 ${signing.notaryProfile}` : `공증 생략(${signing.reason})`}`);
+  }
   // electron-builder 앱 공증은 이 환경 변수로 키체인 프로필을 쓴다(값이 아니라 프로필 이름)
-  if (signing.mode === 'developer_id') process.env.APPLE_KEYCHAIN_PROFILE = signing.notaryProfile;
+  if (signing.mode === 'developer_id' && signing.notarize) process.env.APPLE_KEYCHAIN_PROFILE = signing.notaryProfile;
 
   if (!args['skip-build']) run('pnpm', ['build']);
   fs.rmSync(OUT, { recursive: true, force: true });
@@ -148,7 +151,7 @@ async function main() {
   const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
   const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
   await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
-  const macCheck = signing.mode === 'developer_id' ? notarizeDmg(signing) : null;
+  const macCheck = signing.mode !== 'developer_id' ? null : signing.notarize ? notarizeDmg(signing) : verifySignedApp(signing);
 
   // 보고서
   const exe = fs.readdirSync(DIST).find((f) => f.endsWith(TARGET.os === 'darwin' ? '.dmg' : '.exe'));
@@ -205,10 +208,25 @@ async function main() {
   console.log(`asar: ${mb(report.asar.size)}, 파일 ${report.asar.files}개, 압축 해제 ${mb(report.unpackedSize)}`);
   console.log(`앱 dist: 포함 ${included.length}개, 제외 ${removed.length}개`);
   const unsignedNote = signing.mode === 'unsigned' ? '  ← 미서명 빌드' : '';
-  if (TARGET.os === 'darwin') console.log(`macOS: ${signing.mode === 'developer_id' ? `Developer ID 서명·공증(spctl ${macCheck?.spctl})` : '애드혹 서명(Gatekeeper가 막는다)'}`);
+  if (TARGET.os === 'darwin') {
+    const how = signing.mode !== 'developer_id' ? '애드혹 서명(Gatekeeper가 막는다)' : signing.notarize ? `Developer ID 서명·공증(spctl ${macCheck?.spctl})` : 'Developer ID 서명만(공증 생략: 이 Mac에서 빌드한 앱은 실행, 내려받은 사본은 Gatekeeper가 막는다)';
+    console.log(`macOS: ${how}`);
+  }
   if (readiness.betaDistributable) console.log(`베타 배포 가능(${identity.channel})${unsignedNote}`);
   else console.log(`베타 배포 불가: ${readiness.blockers.map((b) => b.code).join(', ')}${unsignedNote}`);
   console.log(`보고서: ${rel(path.join(OUT, 'report.json'))}`);
+}
+
+/** Developer ID 서명만(공증 생략) 빌드의 확인: 서명·봉인, 팀 ID, 하드닝 런타임. 실패하면 던진다. */
+function verifySignedApp(signing) {
+  const app = path.join(DIST, 'mac-arm64', 'SovereignAX.app');
+  capture('codesign', ['--verify', '--deep', '--strict', app]);
+  // codesign -dv는 결과를 stderr에 쓴다
+  const info = spawnSync('codesign', ['-dv', app], { encoding: 'utf8' }).stderr;
+  const team = /TeamIdentifier=(\S+)/.exec(info)?.[1] ?? null;
+  if (signing.teamId && team !== signing.teamId) throw new Error(`앱 팀 ID가 다르다: ${team}`);
+  if (!/flags=0x[0-9a-f]*\(runtime\)/.test(info)) throw new Error('하드닝 런타임 플래그가 없다');
+  return { signing: 'developer_id', teamId: team, notarized: false, reason: signing.reason, codesignVerify: 'ok', hardenedRuntime: true };
 }
 
 /**
@@ -229,7 +247,7 @@ function notarizeDmg(signing) {
   const assess = spawnSync('spctl', ['--assess', '--type', 'execute', '-vv', app], { encoding: 'utf8' });
   const spctl = /accepted/.test(assess.stderr) ? 'accepted' : 'rejected';
   if (spctl !== 'accepted') throw new Error(`spctl이 앱을 받지 않는다: ${assess.stderr.trim().slice(-300)}`);
-  return { signing: 'developer_id', teamId: signing.teamId, dmgNotarization: sub.id, stapled: true, spctl, source: /source=([^\n]+)/.exec(assess.stderr)?.[1] ?? null };
+  return { signing: 'developer_id', teamId: signing.teamId, notarized: true, dmgNotarization: sub.id, stapled: true, spctl, source: /source=([^\n]+)/.exec(assess.stderr)?.[1] ?? null };
 }
 
 main().catch((e) => {
