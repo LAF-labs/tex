@@ -327,7 +327,7 @@ describe('증언 경계(소스)', () => {
 
   it('승인 바: 게이트 > 증언. 게이트가 오면 증언 바를 내리고, 증언은 게이트가 떠 있으면 busy. 근거 종류는 바 종류와 같아야 한다', () => {
     const bar = read('apps/desktop/src/approval-bar.ts');
-    const open = between(bar, '  open(req: GateRequest)', '  openAttest(');
+    const open = between(bar, '  open(req: GateRequest, auth?: string)', '  openAttest(');
     assert.ok(open.includes("this.req?.kind === 'gate'") && open.includes("this.finish({ decision: 'closed', reason: 'gate' })"));
     const openAttest = between(bar, '  openAttest(req: AttestRequest)', '  close(reason');
     assert.ok(openAttest.includes("if (this.req) return Promise.resolve({ decision: 'closed', reason: 'busy' })") && openAttest.includes('attestSelfCheck(req)') && openAttest.includes('this.text = attestText('));

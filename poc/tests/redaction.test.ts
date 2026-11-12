@@ -244,3 +244,14 @@ describe('M1-5 대화 세션 토큰 맵·이미지 인터페이스', () => {
   });
 });
 
+
+describe('Redactor.addSpanFinder(대화 경로 추가 마스킹, PR #296 판정 ②)', () => {
+  it('더한 구간을 가리고, 기본 규칙과 겹치면 기본 규칙이 이기며, needsAmounts면 AMT는 더하지 않는다', () => {
+    const r = new Redactor({ runId: 'r' }, { names: ['가나상사'] });
+    r.addSpanFinder((t) => [...t.matchAll(/\d{5,}|가나/g)].map((m) => ({ start: m.index!, end: m.index! + m[0].length, kind: m[0] === '가나' ? ('NAME' as const) : ('AMT' as const) })));
+    assert.equal(r.apply('가나상사에 550000 보내', { frame: 'none' }).redacted, '[NAME_1]에 [AMT_1] 보내');
+    assert.equal(r.apply('550000', { frame: 'none', needsAmounts: true }).redacted, '550000');
+    // 추가 구간은 가리는 것만 한다: 기본 규칙이 가린 전화번호는 그대로 PHONE
+    assert.equal(r.apply('01012345678', { frame: 'none' }).redacted, '[PHONE_1]');
+  });
+});

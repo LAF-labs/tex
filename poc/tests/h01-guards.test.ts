@@ -36,7 +36,7 @@ describe('H-01 승인 경계(ADR-021)', () => {
     const src = read('apps/desktop/src/shell-app.ts');
     assert.equal(count(src, 'answerGate('), 1);
     const onGate = between(src, "runs.on('gate',", 'const g24Doc');
-    assert.ok(onGate.includes('bar.open(req)') && onGate.includes("o.decision === 'approve'") && onGate.includes('host.answerGate(o.approval)'));
+    assert.ok(onGate.includes('bar.open(req, runs.get(runId)?.auth)') && onGate.includes("o.decision === 'approve'") && onGate.includes('host.answerGate(o.approval)'));
     const handlers = between(src, 'const handlers:', "ipcMain.handle('sax'");
     for (const bad of ['answerGate', 'issueLocalApproval', 'verifyLocalApproval', 'approved(', 'abortGate', 'bar.', 'host.rpc', 'host.control', 'gate.answer', 'answerAttest', 'issueLocalAttestation', 'verifyLocalAttestation', 'attestUsed', 'showAttest', 'attest.answer']) assert.ok(!handlers.includes(bad), `렌더러 처리기에 ${bad}`);
     // 증언(ADR-021 결정 5): answerAttest는 증언 바 결과 처리에서 한 번만, 바가 'attest'로 끝났을 때만.
