@@ -34,7 +34,7 @@ const ISSUED: IssuedRow[] = [
   { counterpartyId: null, counterparty: 'C테크', date: '2026-11-02', total: null },
 ];
 const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'counterparties', 'today', 'onProgress', 'now'];
-const DRAFT_KEYS = ['list', 'create', 'update', 'discard'];
+const DRAFT_KEYS = ['list', 'setupMissing', 'create', 'update', 'discard'];
 
 type Handler = (p: StepParams) => StepResult;
 const reply = (r: Partial<AgentReply>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, ...r } });
@@ -53,13 +53,16 @@ class FakeDrafts {
   creates: unknown[][] = [];
   updates: unknown[][] = [];
   discards: string[] = [];
-  setupMissing = false;
+  setupGap = false;
+  setupMissing() {
+    return this.setupGap;
+  }
   list() {
     return this.cards.map((c) => ({ ...c }));
   }
   create(counterpartyId: string, amount: number, vat: DraftCard['vat'], item: string | null) {
     this.creates.push([counterpartyId, amount, vat, item]);
-    if (this.setupMissing) return { setup: true as const };
+    if (this.setupGap) return { setup: true as const };
     const runId = `run-${this.cards.length + 1}`;
     this.cards.push({ runId, counterpartyId, amount, vat, item: item ?? BOOK.find((c) => c.id === counterpartyId)!.item, status: 'draft' });
     return { runId };
@@ -311,14 +314,15 @@ describe('AgentChat 초안 도구', () => {
       (p) => (assert.deepEqual(outputs(p), [{ ref: null, status: 'needs_input', fields: null, needs: ['item'] }]), reply({ kind: 'ask', ask: 'item' })),
     );
     assert.deepEqual(drafts.creates, []);
-    drafts.setupMissing = true;
+    drafts.setupGap = true;
+    // 금액·품목이 다 비어 있어도 등록이 빠졌다는 것을 먼저 말한다(묻고 나서 막히지 않게)
     await say(
       a,
-      'C테크에 30만원',
-      () => tools({ tool: 'invoice_draft', counterpartyId: 'cpC', amount: { value: 300_000 }, vat: null, item: null }),
+      'C테크에 끊어줘',
+      () => tools({ tool: 'invoice_draft', counterpartyId: 'cpC', amount: null, vat: null, item: null }),
       (p) => (assert.deepEqual(outputs(p), [{ ref: null, status: 'setup_missing', fields: null, needs: null }]), reply({ kind: 'cannot' })),
     );
-    assert.deepEqual(drafts.creates, [['cpC', 300_000, null, null]]);
+    assert.deepEqual(drafts.creates, []);
   });
 
   it('합계 슬롯으로 만들면 부가세 포함, 날짜 슬롯이나 모르는 결과 슬롯은 금액으로 쓰지 않는다', async () => {
@@ -338,7 +342,7 @@ describe('AgentChat 초안 도구', () => {
     assert.deepEqual(drafts.creates, [['cpA', 2_200_000, 'included', null]]);
   });
 
-  it('초안 포트에는 목록 네 메서드뿐이고 AgentChat은 그 밖의 포트 이름을 읽지 않는다', async () => {
+  it('초안 포트에는 목록 다섯 메서드뿐이고(준비·발급 없음) AgentChat은 그 밖의 포트 이름을 읽지 않는다', async () => {
     assert.deepEqual(Object.getOwnPropertyNames(FakeDrafts.prototype).filter((k) => k !== 'constructor').sort(), [...DRAFT_KEYS].sort());
     const a = chat();
     await say(

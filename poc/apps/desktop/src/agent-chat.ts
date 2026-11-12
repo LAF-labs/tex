@@ -50,6 +50,8 @@ export interface DraftCard {
 /** shell-runs 위의 좁은 포트. 준비·발급 메서드는 일부러 없다. */
 export interface AgentDrafts {
   list(): DraftCard[];
+  /** 내 사업장·발급 인증이 빠졌는가. 금액·품목을 묻기 전에 본다(물어 놓고 끝에 등록이 빠졌다고 하지 않게). */
+  setupMissing(): boolean;
   /** 내 사업장 등록이 빠졌으면 { setup: true }(초안을 만들지 않는다) */
   create(counterpartyId: string, amount: number, vat: Vat | null, item: string | null): { runId: string } | { setup: true };
   update(runId: string, patch: { amount?: number; vat?: Vat; item?: string }): void;
@@ -259,6 +261,7 @@ export class AgentChat {
       case 'invoice_draft': {
         const cp = cpOf(call.counterpartyId);
         if (!cp) return out('unknown_counterparty');
+        if (this.ports.drafts.setupMissing()) return out('setup_missing');
         const amount = this.amount(s, call.amount);
         const item = call.item === null ? null : cleanItem(call.item);
         // 품목이 문장에도 거래처 저장 품목에도 없으면 만들지 않는다. 빈 품목 초안은 준비에서야 item_missing으로 멈춘다(interpret와 같은 규칙).
