@@ -61,6 +61,8 @@ export const ERROR_STATUS = {
   'gateway.run_token_invalid': 401,
   'gateway.run_budget_exceeded': 429,
   'gateway.device_suspended': 403,
+  /** CODEF 연동이 이 서버에 설정되지 않았다(CODEF_ENV 없음, 계좌 자동조회 꺼짐) */
+  'gateway.codef_off': 503,
   // 레지스트리 게시 관문: 엔진 로더(#52)·SIGNING.md와 같은 코드(받지 않을 문서를 올리지 않는다)
   'registry.issued_in_future': 422,
   'registry.not_found': 404,
