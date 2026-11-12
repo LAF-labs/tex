@@ -284,6 +284,10 @@ export function taskCard(run, act) {
       line('발급목록을 직접 조회해서 발급됐는지 확인하고 있어요. 확인되기 전에는 다시 발급하지 않아요.', true),
       run.verifyAttempt ? h('div', { class: 'sx-meta', 'data-verify-attempt': String(run.verifyAttempt) }, `조회 ${run.verifyAttempt}회째`) : null,
     );
+  } else if (st === 'issuing' && run.steps[5].state === 'now' && run.steps[5].note) {
+    // 승인 뒤 서명 단계: 사람 몫(인증서 비밀번호·간편인증 승인)을 바로 보인다. 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 온다.
+    card.dataset.signNow = '';
+    card.append(note(`${run.steps[5].note}. 끝나면 자동으로 이어집니다`, true, '홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.'));
   } else if (st === 'issuing') {
     card.append(line('발급하고 있어요. 홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.', true), now ? h('div', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null);
   } else if (st === 'turn' && run.handoff) {
