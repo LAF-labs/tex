@@ -14,7 +14,7 @@
 | 1 | 공통 | 로그인 불가 | SES 샌드박스면 인증된 주소 말고는 코드 메일이 안 감(`POST /v1/auth/code` 500) | 대표: 프로덕션 승인, 또는 고객 주소를 SES 인증된 ID로 추가(§4-1) |
 | 2 | 공통 | 로그인 불가 | 회사망 프록시: PC 쪽 송신이 Node `fetch`라 OS 프록시를 따르지 않음(`packages/net/src/egress.ts:239·302·332`) | 이번 주 코드 그대로. 안내서에 "프록시 망에서는 동작하지 않을 수 있음, `tax.laf-co.com`·`rooms.tax.laf-co.com` 443 허용" |
 | 3 | 공통 | 발급 불가 | 실제 홈택스 H-01 미성공 | 다른 세션 진행 중. 안내서에 "첫 발급은 함께" |
-| 4 | 공통 | 발급 불가 | Chrome 미설치면 실행 실패 | 🔧 금고가 고정 코드 `chrome.not_installed`로 끝내고 엔진이 그 코드로 실행을 끝냄, Mac `~/Applications` 후보 추가. 화면 문구·사전 점검은 desktop-2 |
+| 4 | 공통 | 발급 불가 | Chrome 미설치면 실행 실패 | 🔧 금고가 고정 코드 `chrome.not_installed`로 끝내고 엔진이 그 코드로 실행을 끝냄, Mac `~/Applications` 후보 추가. 화면 문구는 #276 |
 | 5 | Mac | 설치 불가 | Intel Mac·macOS 12 이하(`LSMinimumSystemVersion` 13.0, arm64 단일) | 미지원(대표 결정). 안내서 §0에 칩·OS 확인과 Intel에서 보이는 것 |
 | 6 | Mac | 설치 불가(우회 가능) | 애드혹 서명·공증 없음 → Gatekeeper 차단 | 🔧 Developer ID 서명·공증을 키체인 신원 + notarytool 프로필로 켜는 빌드 설정. 대표 몫 §4-2가 끝나기 전엔 안내서 §2-2(나) |
 | 7 | Win | 설치 불가(우회 가능) | 미서명 → SmartScreen 차단. 회사 정책으로 [실행]이 숨겨지면 설치 불가 | 안내서 §1-2([추가 정보] → [실행]) |
@@ -23,7 +23,7 @@
 | 10 | 공통 | 인증서 등록 불가(일부) | 보안카드 등록은 모든 OS에서 막혀 있음 | 공동인증서·간편인증 |
 | 11 | Mac | 불편 | 애드혹 판은 새 판마다 키체인 허용 창(항목마다), 답할 때까지 부팅 멈춤 | 안내서 §2-3. Developer ID 판부터 사라짐(첫 전환 때 한 번) |
 | 12 | 공통 | 불편 | 자동 업데이트 미연결 → 새 판 = 재설치 | §3 |
-| 13 | 공통 | 불편 | 국세청 상태조회가 늘 "조회하지 못했어요" → [맞습니다]로만 진행(`apps/desktop/src/shell-app.ts:679`) | 안내서 §4 |
+| 13 | 공통 | 불편 | 국세청 상태조회가 늘 "조회하지 못했어요" → [맞습니다]로만 진행(`apps/desktop/src/shell-app.ts:688`) | 안내서 §4 |
 | 14 | 공통 | 불편 | 앱 안에서 판을 볼 곳이 없음 | 안내서 §7(OS 앱 목록·정보 가져오기) |
 | 15 | Win | 불편 | 첫 기동 첫 화면 약 22초(저사양 Celeron 실측, WIN-REALDEVICE §10.7) | 안내서에 고지 |
 
@@ -43,8 +43,8 @@
 
 ### 1.2 전용 Chrome
 - 후보만 찾는다(`poc/packages/vault/src/constants.ts:5-14`): Windows `%ProgramFiles%`·`%ProgramFiles(x86)%`·`%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe`(x86은 실기기 ✅, WIN-REALDEVICE §5), Mac `/Applications/…`와 🔧 `~/Applications/Google Chrome.app/…`(이 PR, 홈은 `os.homedir()`). Edge 등 다른 Chromium은 넣지 않는다(검증 안 됨).
-- 없으면 🔧 금고 `browser.launch`가 `chrome.not_installed`를 던지고(`vault/src/chrome/find.ts` `CHROME_NOT_INSTALLED`, `service.ts:458`), 엔진 `connectRunBrowser`가 `RunEnd('failed', 'chrome.not_installed')`로 바꿔 실행이 그 코드로 끝난다(`engine/src/browser.ts` `CHROME_NOT_INSTALLED_CODE`, 전에는 `engine.error`). **화면 문구("Chrome이 설치돼 있어야 해요…")와 [홈택스에서 준비] 전 사전 점검은 desktop-2 몫**이다. 문구가 붙기 전에는 일반 멈춤 문구가 나온다(`shell-runs.ts` `UNKNOWN_STOP_NOTE`).
-- 전용 프로필은 `%LOCALAPPDATA%\SovereignAX\chrome-profile`. Google 로그인·확장이 감지되면 비밀 창을 열지 않는다(`shell-runs.ts:161·169` 문구).
+- 없으면 🔧 금고 `browser.launch`가 `chrome.not_installed`를 던지고(`vault/src/chrome/find.ts` `CHROME_NOT_INSTALLED`, `service.ts:458`), 엔진 `connectRunBrowser`가 `RunEnd('failed', 'chrome.not_installed')`로 바꿔 실행이 그 코드로 끝난다(`engine/src/browser.ts` `CHROME_NOT_INSTALLED_CODE`, 전에는 `engine.error`). 화면 문구는 #276이 붙였다(`apps/desktop/src/shell-runs.ts:76` "Chrome이 설치돼 있어야 해요. Chrome을 설치한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.").
+- 전용 프로필은 `%LOCALAPPDATA%\SovereignAX\chrome-profile`. Google 로그인·확장이 감지되면 비밀 창을 열지 않는다(`shell-runs.ts:173·181` 문구).
 
 ### 1.3 금고의 비밀 저장 (TPM·DPAPI·네이티브 헬퍼)
 | 비밀 | Windows에서 | 근거 |
@@ -54,7 +54,7 @@
 | 보안카드·홈택스 비밀번호 | 슬롯 KEK를 TPM→DPAPI로 래핑해야 하는데 네이티브 헬퍼(S10c)가 없어 `vault.native_helper_missing`으로 저장 거부(실패 닫힘) | `vault/src/keychain/backend.ts:177-191·249`, WIN-REALDEVICE §4 |
 | 계정 갱신 토큰 | 같은 래핑이라 Windows에서 거부되지만 데스크톱이 아직 쓰지 않음. 로그인 유지는 신원 파일(`userData/remote-identity.json`) | `vault/src/keychain/account.ts`, `apps/desktop/src/remote-account.ts` |
 
-화면에서는: 제품 진입점이 보안카드 등록을 **모든 OS에서** "지금은 등록할 수 없음"으로 끝낸다(`apps/desktop/src/shell-app.ts:681` `registerSecrets → unavailable`, 문구 `onboarding.ts:612` "이 빌드에서는 아직 보안카드를 등록할 수 없어요. 다른 인증으로 바꿔 주세요."). 그래서 헬퍼가 없어도 이번 주 흐름(공동인증서·간편인증)은 Windows에서 막히지 않는다.
+화면에서는: 제품 진입점이 보안카드 등록을 **모든 OS에서** "지금은 등록할 수 없음"으로 끝낸다(`apps/desktop/src/shell-app.ts:690` `registerSecrets → unavailable`, 문구 `onboarding.ts:612` "이 빌드에서는 아직 보안카드를 등록할 수 없어요. 다른 인증으로 바꿔 주세요."). 그래서 헬퍼가 없어도 이번 주 흐름(공동인증서·간편인증)은 Windows에서 막히지 않는다.
 
 보안카드 등록(T-06)을 켤 때 Windows에서 필요한 것(나중 판단용):
 - (가) Rust N-API 헬퍼: `CryptProtectData`(DPAPI) + TPM(`MS_PLATFORM_CRYPTO_PROVIDER`). 3 OS CI·prebuild 배포까지 며칠 단위.
@@ -126,7 +126,7 @@
 ## 3. 새 빌드 전달
 
 ### 3.1 이번 주에 쓸 길: 다시 설치
-- 자동 업데이트(`packages/updater`, `apps/desktop/src/update-host.ts`)는 코드가 있지만 **제품 진입점에 연결돼 있지 않다**: `apps/desktop/src/shell.ts:68` `startShell(...)`이 `update`를 넘기지 않고, `shell-app.ts:1243`는 `opts.update`가 있을 때만 업데이터를 띄운다. 켜려면 서명된 `latest.json`(릴리스 키 하드웨어 토큰, SIGNING-SETUP §1), 레지스트리 `/releases/{channel}` 게시, 투명성 로그(팀장 결정 11-05: `requireTransparency` 기본 true → 지금은 모든 업데이트 보류), Windows 코드 서명(`verifyUpdateCodeSignature`)이 필요하다. **이번 주는 켜지 않는다.**
+- 자동 업데이트(`packages/updater`, `apps/desktop/src/update-host.ts`)는 코드가 있지만 **제품 진입점에 연결돼 있지 않다**: `apps/desktop/src/shell.ts:68` `startShell(...)`이 `update`를 넘기지 않고, `shell-app.ts:1262`는 `opts.update`가 있을 때만 업데이터를 띄운다. 켜려면 서명된 `latest.json`(릴리스 키 하드웨어 토큰, SIGNING-SETUP §1), 레지스트리 `/releases/{channel}` 게시, 투명성 로그(팀장 결정 11-05: `requireTransparency` 기본 true → 지금은 모든 업데이트 보류), Windows 코드 서명(`verifyUpdateCodeSignature`)이 필요하다. **이번 주는 켜지 않는다.**
 - 데이터 유지: 앱 자료는 설치 폴더 밖(`%LOCALAPPDATA%\SovereignAX`, `~/Library/Application Support/SovereignAX`)이고 `appId`(`com.laf.sovereignax`)·`productName`·설치 폴더가 고정이다(`app-identity.json`). DB 키는 OS 키체인, 로그인은 `userData/remote-identity.json`, 사업자·거래처·인증 선택은 DB에 있다 → 재설치·덮어 설치로 사라지지 않는다. Windows 제거 뒤 재설치도 남는다(WIN-REALDEVICE §10.2).
 - 고객이 보는 것: Windows는 SmartScreen 한 번 더 → 덮어 설치. Mac은 [대치] → (공증 판) [열기] / (애드혹) [그래도 열기] → (애드혹이거나 공증 판으로 처음 바꿀 때) 키체인 허용 창. 안내서 §8에 화면 순서대로 적었다.
 
@@ -256,4 +256,4 @@
 - `poc/packages/engine/src/browser.ts`: 금고의 `chrome.not_installed`를 `RunEnd('failed', 'chrome.not_installed')`로.
 - 시험: `poc/tests/updater-packaging.test.ts`(macOS 서명 판정·설정·권한·자기 점검·스크립트), `poc/tests/vault-chrome-find.test.ts`(후보·홈 펼치기·코드·엔진 변환).
 
-후속(이 PR 밖): `chrome.not_installed` 화면 문구와 [홈택스에서 준비] 전 Chrome 사전 점검(desktop-2), 앱 안 판 표시, 로그 회전, USB NPKI, 보안카드 Windows 래핑(§1.3), 프록시(고객 망이 필수로 확인되면).
+후속(이 PR 밖): [홈택스에서 준비] 전 Chrome 사전 점검(desktop-2), 앱 안 판 표시, 로그 회전, USB NPKI, 보안카드 Windows 래핑(§1.3), 프록시(고객 망이 필수로 확인되면).
