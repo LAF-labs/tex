@@ -40,7 +40,7 @@ describe('계좌 자동조회 main', () => {
     assert.equal(b.chosenLabel(), '홍길동 · yessign');
   });
 
-  it('홈택스 발급 인증서가 맨 앞(표시), 동의는 PC DB에 위탁 동의로 남고, 고르기 뒤 돈 맞추기 연결 상태를 알린다(없는 엔진이면 넘김)', async () => {
+  it('홈택스 발급 인증서가 맨 앞(표시), 동의는 PC DB에 위탁 동의로 남고, 고르기는 엔진에 그대로(연결 상태는 엔진이 정한다)', async () => {
     const calls: Array<[string, Record<string, unknown>]> = [];
     const certs = [
       { id: '1111111111111111', owner: '가', usage: 'yessign', expiresOn: '2027-01-01', usable: true },
@@ -49,7 +49,6 @@ describe('계좌 자동조회 main', () => {
     const b = bankAutoHandlers({
       engine: async (m, p) => {
         calls.push([m, p]);
-        if (m === 'bank.setLink') throw new Error('unknown_method');
         return m === 'codef.choose' ? { ok: true, accountId: 'acct-1', profileId: 'prof-1' } : { ok: true };
       },
       certs: async () => certs,
@@ -64,6 +63,6 @@ describe('계좌 자동조회 main', () => {
     assert.equal(rec.noticeKey, 'codef.bank_auto');
     assert.equal(rec.noticeVersion, CODEF_CONSENT_VERSION);
     assert.deepEqual(await b.handlers['bankAuto.choose']({ sessionId: 's', key: 'a0' }), { ok: true, accountId: 'acct-1', profileId: 'prof-1' });
-    assert.deepEqual(calls.find(([m]) => m === 'bank.setLink')![1], { profileId: 'prof-1', accountId: 'acct-1', provider: 'codef', state: 'auto_connected' });
+    assert.ok(!calls.some(([m]) => m.startsWith('bank.')), 'main은 돈 맞추기를 직접 부르지 않는다');
   });
 });

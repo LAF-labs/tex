@@ -52,7 +52,8 @@ export function failText(code, bank) {
       signed_out: '먼저 로그인해 주세요.',
       cancelled: '비밀번호 입력을 취소했어요.',
       cert_missing: '고른 인증서를 이 PC에서 찾지 못했어요. 인증서를 다시 골라 주세요.',
-      bank_not_ready: '계좌는 확인했지만 거래내역을 넣을 곳(내 계좌)이 아직 준비되지 않았어요.',
+      bank_not_ready: '사업장 등록이 아직 끝나지 않아 계좌를 이을 곳이 없어요. 처음 설정을 마친 뒤 다시 해 주세요.',
+      bank_consent_required: '받을 돈 화면에서 계좌 기록 동의를 먼저 해 주세요. 동의한 뒤 다시 [자동 연결]을 누르면 돼요.',
       busy: '이미 진행 중이에요. 잠시만 기다려 주세요.',
       account_password_required: '이 은행은 조회에 계좌 비밀번호가 필요해요. 지금은 자동 연결로 할 수 없어요. 거래내역 파일을 올려 주세요.',
       consent_stale: '안내 문구가 바뀌었어요. 화면을 닫고 다시 열어 주세요.',
@@ -68,14 +69,13 @@ const PHASE_TEXT = {
   connecting: 'CODEF로 은행에 연결하는 중이에요.',
   accounts: '보유계좌를 불러오는 중이에요.',
   fetching: '거래내역을 가져오는 중이에요. 은행에 따라 1분쯤 걸려요.',
-  saving: '가져온 거래를 정리하는 중이에요.',
 };
 
 const won = (n) => (typeof n === 'number' ? `${n.toLocaleString('ko-KR')}원` : '');
 const when = (iso) => (iso ? new Date(iso).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '아직 없음');
 
 /**
- * @param {{ call: (m: string, p?: object) => Promise<any>, rerender: () => void, toast: (t: string) => void, uploadFile?: () => void }} ctx
+ * @param {{ call: (m: string, p?: object) => Promise<any>, rerender: () => void, toast: (t: string) => void, uploadFile?: () => void, openBank?: () => void }} ctx
  */
 export function createBankAuto(ctx) {
   const s = { step: 'loading', status: null, checks: {}, certs: [], certId: null, bank: '0020', clientType: 'B', session: null, accounts: [], pick: null, phase: null, error: null, last: null };
@@ -114,22 +114,19 @@ export function createBankAuto(ctx) {
     if (!r.ok) return fail(r);
     go({ step: 'accounts', session: r.sessionId, accounts: r.accounts, pick: (r.accounts.find((a) => a.usable) || {}).key || null, phase: null });
   }
+  // 계좌를 고르면 엔진이 받을 돈 계좌로 잇고 첫 최신화를 시작한다(가져오기·맞추기 진행은 받을 돈 화면)
   async function choose() {
     if (!s.pick) return;
-    go({ step: 'working', phase: 'fetching' });
+    go({ step: 'working', phase: 'connecting' });
     const r = await ask('bankAuto.choose', { sessionId: s.session, key: s.pick });
     if (!r.ok) return fail(r);
-    s.last = r;
     await load();
-    ctx.toast(`연결됐어요. 거래 ${r.newCount}건을 새로 가져왔어요.`);
+    ctx.toast('연결됐어요. 거래내역을 받아 받을 돈과 맞추는 중이에요.');
   }
-  async function refresh(again) {
-    go({ step: 'working', phase: 'password', error: null });
-    const r = await ask('bankAuto.refresh', again ? { ask: true } : {});
+  async function refresh() {
+    const r = await ask('bankAuto.refresh');
     if (!r.ok) return fail(r);
-    s.last = r;
-    await load();
-    ctx.toast(r.newCount ? `새 거래 ${r.newCount}건을 가져왔어요.` : '새 거래가 없어요.');
+    ctx.toast('최신화를 시작했어요. 받을 돈 화면에서 볼 수 있어요.');
   }
   async function cancel() {
     await ask('bankAuto.cancel');
@@ -143,6 +140,7 @@ export function createBankAuto(ctx) {
   }
   const upload = () => (ctx.uploadFile ? ctx.uploadFile() : ctx.toast('내 계좌 화면에서 거래내역 파일을 올려 주세요.'));
   const fileLink = () => btn('거래내역 파일 올리기', upload, 'is-quiet', { 'data-bank-file': '' });
+  const bankLink = () => (ctx.openBank ? btn('받을 돈 보기', ctx.openBank, 'is-quiet', { 'data-bank-open': '' }) : null);
 
   function onEvent(ev) {
     if (!ev || s.step !== 'working') return;
@@ -227,8 +225,8 @@ export function createBankAuto(ctx) {
             'div',
             { class: 'sx-card', 'data-bank-auto': 'connected' },
             h('p', { class: 'sx-body-sm' }, h('span', { class: 'sx-chip is-done' }, '연결됨'), ` ${st.bankName || ''} ···${st.last4 || ''}${st.accountName ? ` · ${st.accountName}` : ''}`),
-            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${st.lastSyncAt ? ` · 새 거래 ${st.lastNew ?? 0}건` : ''}${typeof st.callsLeft === 'number' ? ` · 오늘 남은 조회 여유 ${st.callsLeft}회` : ''}`),
-            h('div', { class: 'sx-actions' }, btn('최신화', () => refresh(false), 'is-primary', { 'data-bank-refresh': '' }), btn('연결 해제', disconnect, 'is-quiet', { 'data-bank-disconnect': '' }), fileLink()),
+            h('p', { class: 'sx-meta' }, `마지막 조회: ${when(st.lastSyncAt)}${typeof st.callsLeft === 'number' ? ` · 오늘 남은 조회 여유 ${st.callsLeft}회` : ''}`),
+            h('div', { class: 'sx-actions' }, btn('최신화', refresh, 'is-primary', { 'data-bank-refresh': '' }), bankLink(), btn('연결 해제', disconnect, 'is-quiet', { 'data-bank-disconnect': '' }), fileLink()),
             h('p', { class: 'sx-meta' }, '[최신화]마다 금고 창에서 비밀번호를 물어요. 창에서 [이 PC에 기억]을 고르면 다음부터 묻지 않아요.'),
           );
         }
@@ -242,7 +240,7 @@ export function createBankAuto(ctx) {
             h(
               'div',
               { class: 'sx-actions' },
-              s.status && s.status.connected ? btn('다시 하기', () => refresh(retryPw), 'is-primary') : btn('다시 하기', retryPw ? connect : toCerts, 'is-primary'),
+              e.code === 'bank_consent_required' ? bankLink() : s.status && s.status.connected ? btn('다시 하기', refresh, 'is-primary') : btn('다시 하기', retryPw ? connect : toCerts, 'is-primary'),
               btn('닫기', () => load(), 'is-quiet'),
               fileLink(),
             ),

@@ -156,7 +156,7 @@ export const SHELL_METHODS = {
   'bankAuto.consent': { version: { t: 'string', max: 64, required: true } },
   'bankAuto.connect': { certId: { t: 'string', max: 64, required: true }, bank: { t: 'enum', of: ['0020', '0004', '0088', '0081', '0003', '0011'] }, clientType: { t: 'enum', of: ['B', 'P'] } },
   'bankAuto.choose': { sessionId: { t: 'string', max: 64, required: true }, key: { t: 'string', max: 8, required: true }, alias: { t: 'string', max: 40 } },
-  'bankAuto.refresh': { ask: { t: 'boolean' } },
+  'bankAuto.refresh': {},
   'bankAuto.cancel': {},
   'bankAuto.disconnect': {},
   // 받을 돈(09 D-09, bank-ipc.ts). 파일 고르기 둘(bank.pickStatement·pickInvoices)은 실제 입력 뒤에만.

@@ -57,6 +57,7 @@ export type CodefFailure =
   | 'cancelled'
   | 'cert_missing'
   | 'bank_not_ready'
+  | 'bank_consent_required'
   | 'account_password_required'
   | 'daily_limit'
   | 'too_soon'

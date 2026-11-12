@@ -23,6 +23,7 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   session_lost: 'source.not_linked',
   no_account: 'source.not_linked',
   bank_not_ready: 'source.not_linked',
+  bank_consent_required: 'source.not_linked',
   daily_limit: 'source.rate_limited',
   too_soon: 'source.rate_limited',
   codef_off: 'source.unavailable',

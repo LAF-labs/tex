@@ -59,11 +59,6 @@ export function bankAutoHandlers(d: BankAutoDeps) {
   /** 어느 인증서를 골랐는지(비밀번호 창 문구용, 이름·만료일만) */
   let chosen: BankAutoCert | null = null;
   const eng = (m: string, p: Record<string, unknown> = {}) => d.engine(m, p);
-  /** 돈 맞추기 연결 상태(bank-mvp bank.setLink, main 전용). 아직 없는 엔진이면 조용히 넘긴다 */
-  const setLink = async (st: { profileId?: unknown; accountId?: unknown }, state: 'file_only' | 'auto_connected' | 'auto_error', error?: string) => {
-    if (typeof st.profileId !== 'string' || typeof st.accountId !== 'string') return;
-    await eng('bank.setLink', { profileId: st.profileId, accountId: st.accountId, provider: 'codef', state, ...(error ? { error } : {}) }).catch(() => d.log?.('main.bank_auto_setlink_skipped', {}));
-  };
   const ordered = async (): Promise<BankAutoCert[]> => {
     const pref = d.preferredCertId?.() ?? null;
     const list = (await d.certs()).map((c) => ({ ...c, ...(c.id === pref ? { issuance: true } : {}) }));
@@ -92,25 +87,11 @@ export function bankAutoHandlers(d: BankAutoDeps) {
         const bank = p.bank && (BANKS as readonly string[]).includes(p.bank) ? p.bank : '0020';
         return eng('codef.connect', { certId: c.id, bank, clientType: p.clientType === 'P' ? 'P' : 'B' });
       },
-      'bankAuto.choose': async (p: { sessionId: string; key: string; alias?: string }) => {
-        const r = (await eng('codef.choose', p)) as Record<string, unknown>;
-        if (r?.ok) await setLink(r, 'auto_connected');
-        return r;
-      },
-      'bankAuto.refresh': async (p: { ask?: boolean }) => {
-        const r = (await eng('codef.refresh', p.ask ? { ask: true } : {})) as Record<string, unknown>;
-        // 잠깐 막힌 것(too_soon·daily_limit·취소)은 연결 오류로 치지 않는다
-        if (r && !r.ok && !['too_soon', 'daily_limit', 'cancelled', 'busy'].includes(String(r.code))) await setLink((await eng('codef.status')) as Record<string, unknown>, 'auto_error', `codef.${String(r.code)}`);
-        else if (r?.ok) await setLink((await eng('codef.status')) as Record<string, unknown>, 'auto_connected');
-        return r;
-      },
+      // 돈 맞추기 계좌 잇기·연결 상태·최신화는 엔진(CodefLink → BankService)이 한다
+      'bankAuto.choose': (p: { sessionId: string; key: string; alias?: string }) => eng('codef.choose', p),
+      'bankAuto.refresh': () => eng('codef.refresh'),
       'bankAuto.cancel': () => eng('codef.cancel'),
-      'bankAuto.disconnect': async () => {
-        const st = (await eng('codef.status')) as Record<string, unknown>;
-        const r = (await eng('codef.disconnect')) as Record<string, unknown>;
-        if (r?.ok) await setLink(st, 'file_only');
-        return r;
-      },
+      'bankAuto.disconnect': () => eng('codef.disconnect'),
     },
   };
 }

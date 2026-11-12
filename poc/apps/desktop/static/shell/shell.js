@@ -1290,7 +1290,7 @@ const SETTINGS_TABS = [
   ['bank', '계좌 연결'],
 ];
 /** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
-const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t) });
+const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
 function setTab(tab) {
   state.setTab = tab;

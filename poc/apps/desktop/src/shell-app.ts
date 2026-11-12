@@ -950,10 +950,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return bankAutoH['bankAuto.choose'](p);
     },
-    'bankAuto.refresh': async (p) => {
+    'bankAuto.refresh': async () => {
       needGesture(3_000);
       await needLogin();
-      return bankAutoH['bankAuto.refresh'](p);
+      return bankAutoH['bankAuto.refresh']();
     },
     'bankAuto.cancel': () => bankAutoH['bankAuto.cancel'](),
     'bankAuto.disconnect': () => {

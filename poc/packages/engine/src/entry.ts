@@ -44,7 +44,7 @@ import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
-import { CODEF_COMMANDS, CodefClient, CodefError, CodefLink, settingsCodefStore, vaultCodefSeal, type BankTxnSink } from './codef/index.ts';
+import { bankServicePort, CODEF_COMMANDS, CodefClient, CodefError, CodefLink, codefTxnSource, settingsCodefStore, vaultCodefSeal } from './codef/index.ts';
 import { RunService, type StartParams } from './runs.ts';
 import { closeOnShutdown } from './shutdown.ts';
 import { VaultClient } from './vault-client.ts';
@@ -125,13 +125,6 @@ for (const m of INTENT) ALLOWED.add(m);
 const CODEF = new Set<string>(CODEF_COMMANDS);
 for (const m of CODEF) ALLOWED.add(m);
 let codef: CodefLink | null = null;
-/**
- * 돈 맞추기(bank-mvp #284)가 합쳐지면 여기서 붙인다:
- *   codefSink = bankRepoSink(bankRepo, () => activeProfileId)   // 계좌 고르기·[최신화]가 내 계좌·입출금 줄로 들어간다
- *   bank.registerSource(codefTxnSource(codef))                   // bank.refresh가 CODEF 원천을 쓴다(bank/source.ts TxnSource)
- * 그 전에는 null이라 계좌 고르기·[최신화]가 codef.bank_not_ready로 정직하게 실패한다(연결·보유계좌 보기까지는 된다).
- */
-const codefSink: BankTxnSink | null = null;
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined, authPort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -166,14 +159,15 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
   bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
-  // 자동 연결 원천(bank/source.ts TxnSource)은 여기서 bank.registerSource(...)로 꽂는다(계좌 link_provider가 고른다).
   bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
+  // 계좌 자동조회(CODEF): 계좌 고르기가 돈 맞추기 계좌로 잇고, bank.refresh가 원천(codefTxnSource)으로 가져와 넣고 맞춘다
+  const codefBank = bankServicePort(bank, db);
   codef = new CodefLink({
     client: new CodefClient({ egress }),
     seal: vaultCodefSeal(vault),
     store: settingsCodefStore(db),
-    sink: () => codefSink,
+    bank: () => codefBank,
     onEvent: (e) => {
       log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
       parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
@@ -181,6 +175,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   });
   // 지난 실행이 고르기 대기·조회 중에 꺼졌으면 CODEF에 남은 계정을 지운다(못 지우면 적힌 채로 다음 연결·최신화·해제 때)
   if (codef.status().cleanupPending) void codef.sweep().catch(() => undefined);
+  bank.registerSource(codefTxnSource(codef));
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -299,7 +294,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
         case 'codef.choose':
           return c.choose(params);
         case 'codef.refresh':
-          return c.refresh(params);
+          return c.refresh();
         case 'codef.cancel':
           return c.cancel();
         default:
