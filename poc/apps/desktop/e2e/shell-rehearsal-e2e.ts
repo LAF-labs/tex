@@ -313,10 +313,10 @@ async function mainPhase(): Promise<void> {
   await tap('[data-onb=ok]');
   await until('first', async () => (await onbStep()) === 'first');
   await human();
-  await tap('[data-onb=invoice]');
+  await tap('[data-onb=try]');
   await until('onb done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
   const filled = await js<string>(`document.querySelector('#composer').value`);
-  check('[세금계산서 1건 발급] → 입력창에 "세금계산서 "가 채워진다(보내지 않음)', filled.startsWith('세금계산서'), filled);
+  check('[지금 해 보기] → 입력창에 "세금계산서 발급해 줘"가 채워진다(보내지 않음)', filled === '세금계산서 발급해 줘', filled);
   // 거래처 없이 발급 요청: 되묻기에 후보가 없고, 장부에 없는 이름으로 답하면?
   await human();
   await paste('#composer', '세금계산서 발급해 줘');

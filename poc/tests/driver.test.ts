@@ -108,7 +108,7 @@ describe('Playwright 드라이버(금고 중계 + Chrome)', () => {
     const clock = new FakeClock();
     const journal: Array<[string, Record<string, unknown> | undefined]> = [];
     const security: string[] = [];
-    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive', false)!, { wall: () => Date.now(), mono: () => clock.t });
+    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive')!, { wall: () => Date.now(), mono: () => clock.t });
     const enforcer = new RunEnforcer({ guard: rg, clock, mono: () => clock.t, dict: SIGNAL_DICT.fixture, profileId: `p${randomBytes(3).toString('hex')}`, journal: (t, p) => journal.push([t, p]), random: () => 0 });
     const reader = new PlaywrightPageReader(run.page);
     const raw = new PlaywrightActuator({ page: run.page, reader, afterNavigation: () => enforcer.settled() });

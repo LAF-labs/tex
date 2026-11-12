@@ -34,6 +34,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   ],
   control: [
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
+    // [홈택스 창 보기](main): 실행 탭을 앞으로. 값을 읽거나 바꾸지 않는다.
+    'browser.focus',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
