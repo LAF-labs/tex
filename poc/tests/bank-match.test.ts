@@ -11,6 +11,7 @@ import { parseBankStatement, parseHometaxIssueList, type Cell } from '@sax/docpa
 import { readCsv, type SheetOutput } from '@sax/docparse/sandbox';
 import { BankService, dueDate, rowKeys, runMatch, sourceRowsToInput, SourceError, type ReceivableView, type RefreshJob, type SourceRow, type TxnSource, type TxnView } from '@sax/engine';
 import { BANK_COMMANDS, BANK_READ_QUERIES, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
+import { BankHost } from '../apps/desktop/src/bank-host.ts';
 
 const sheet = (rows: Cell[][], name = 'Sheet1'): SheetOutput => ({
   format: 'xlsx', encoding: null, sheets: [{ name, hidden: false, rows, hiddenRows: 0 }],
@@ -208,8 +209,9 @@ describe('BankService(엔진, 실제 DB)', () => {
     const o = await call<Overview>('db.query.bank.overview');
     assert.equal(o.unpaid.length, 2);
     assert.equal(o.unpaid.find((v) => v.cpName === '(주)에이상사')!.dueOn, '2026-11-04');
-    assert.equal(o.summary.overdueCount, 2);
-    assert.equal(o.summary.stale, true, '거래내역이 없으면 확인 못 함');
+    assert.equal(o.summary.stale, true);
+    assert.deepEqual(o.unpaid.map((v) => v.status), ['unknown', 'unknown'], '거래내역이 없으면 못 받음이 아니라 확인 못 함');
+    assert.equal(o.summary.overdueCount, 0, '모르는 상태에서 기한 지남이라고 하지 않는다');
   });
 
   it('거래내역 넣기 → 첫 맞춤은 후보 → [맞아요] → 별칭 제안 → 다음 달은 자동, 다시 올려도 같은 결과', async () => {
@@ -289,14 +291,14 @@ describe('BankService(엔진, 실제 DB)', () => {
     assert.ok(!o.review.some((x) => x.id === interest.id));
   });
 
-  it('대화 답은 로컬 계산, 모델에 보낼 요약에는 입금자명·계좌번호·원래 상호가 없다', async () => {
-    const a = await call<{ headline: string; rows: ReceivableView[]; modelSafe: Record<string, unknown> }>('db.query.bank.ask', { kind: 'unpaid' });
-    assert.match(a.headline, /기한 지난 받을 돈은 1건/);
-    const safe = JSON.stringify(a.modelSafe);
-    for (const leak of ['비상사', '김철수', '박비', '987654', '7654']) assert.ok(!safe.includes(leak), leak);
-    assert.deepEqual(a.modelSafe.counterparties, ['비○○']);
-    const c = await call<{ headline: string }>('db.query.bank.ask', { kind: 'counterparty', name: '에이상사' });
-    assert.match(c.headline, /모두 받았어요/);
+  it('대화 도구 receivables: 아직 받지 않은 건만, 금액은 남은 돈, 계좌가 없으면 null(not_set_up)', async () => {
+    const host = (rpc: (m: string, p?: Record<string, unknown>) => Promise<unknown>) =>
+      new BankHost({ rpc, profileId: async () => pid, pick: async () => null, readSheet: async () => { throw new Error('unused'); }, log: () => {} });
+    const rows = await host((m, p) => svc.handle(m, p ?? {})).receivables();
+    const o = await call<Overview>('db.query.bank.overview');
+    assert.deepEqual(rows, o.unpaid.map((v) => ({ counterpartyId: v.counterpartyId, counterparty: v.cpName, date: v.writtenOn, total: v.remaining })));
+    assert.ok(rows!.length >= 1 && rows!.every((r) => r.counterparty !== '(주)에이상사'), '다 받은 건은 없다');
+    assert.equal(await host(async () => ({ accounts: [], unpaid: [] })).receivables(), null);
   });
 
   it('원장(H-01 committed) 건을 받을 돈으로 들이고, 같은 승인번호의 홈택스 건과 하나로 합친다', async () => {

@@ -44,7 +44,7 @@ const REFRESH_STEP = { requested: '요청함', waiting: '은행 응답 기다리
 
 function statusText(v) {
   if (v.status === 'received') return v.via === 'auto' ? '받음 · 자동' : v.offAccount ? `받음 · 직접(${METHOD_LABEL[v.offAccount]})` : '받음 · 직접';
-  return { unpaid: '못 받음', partial: '일부 받음', waiting: '기다리는 중', excluded: '목록에서 뺌' }[v.status];
+  return { unpaid: '못 받음', unknown: '확인 못 함', partial: '일부 받음', waiting: '기다리는 중', excluded: '목록에서 뺌' }[v.status];
 }
 const dueText = (v) => (v.dueIn === null ? '기한 없음' : v.dueIn < 0 ? `${-v.dueIn}일 지남` : v.dueIn === 0 ? '오늘' : `D-${v.dueIn}`);
 
@@ -603,20 +603,5 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
     return box;
   }
 
-  // ---- 대화 답 카드 ----
-
-  function answer(r, goBank) {
-    const rows = r.rows ?? [];
-    return h(
-      'div',
-      { class: 'sx-app', 'data-bank-answer': r.ask },
-      h('p', {}, r.text),
-      rows.length
-        ? h('ul', { class: 'bank-answer-rows' }, ...rows.slice(0, 5).map((v) => h('li', {}, `${v.cpName ?? '거래처'} · ${md(v.writtenOn)} · ${v.status === 'received' ? `${statusText(v)}` : `남은 ${won(v.remaining)} · ${dueText(v)}`}`)))
-        : null,
-      h('div', { class: 'sx-actions' }, btn('받을 돈에서 보기', goBank, '', { 'data-act': 'bank-open' })),
-    );
-  }
-
-  return { load, view, cpSection, answer, openCounterparty, state: s, icon };
+  return { load, view, cpSection, openCounterparty, state: s, icon };
 }

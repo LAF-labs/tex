@@ -110,10 +110,9 @@ export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
 /**
  * 돈 맞추기 1단계(09, 은행 거래내역 파일·홈택스 발급 목록·받을 돈). 처리는 엔진 bank/service.ts BankService다.
  * 계좌번호·입금자명·금액이 오가므로 조회까지 모두 main 전용이다(렌더러에 열지 않는다). 파일은 main이 docparse 샌드박스로 읽어 다듬은 줄만 보낸다.
- * db.query.bank.ask는 대화 답(로컬 계산). 결과의 modelSafe(건수·합계·가린 거래처)만 모델에 보낼 수 있다.
  * bank.refresh는 자동 연결 원천(bank/source.ts)으로 최신화를 시작만 하고 돌아온다. 진행은 db.query.bank.refreshStatus로 본다.
  */
-export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.ask', 'db.query.bank.refreshStatus'] as const;
+export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.refreshStatus'] as const;
 export const BANK_COMMANDS = [
   'bank.consent', 'bank.addAccount', 'bank.updateAccount', 'bank.deleteAccount', 'bank.revealAccount', 'bank.setLink', 'bank.refresh',
   'bank.importTxns', 'bank.importInvoices', 'bank.rematch',

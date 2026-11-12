@@ -63,7 +63,8 @@ export function rowKeys(rows: Array<Pick<TxnInput, 'occurredAt' | 'direction' | 
   });
 }
 
-export type ReceivableStatus = 'unpaid' | 'partial' | 'waiting' | 'received' | 'excluded';
+/** unknown: 거래내역이 없거나 오래돼(STALE_DAYS) 입금을 확인하지 못한 건. 모르는 상태에서 "못 받음"이라고 하지 않는다(09 §7 원칙 6) */
+export type ReceivableStatus = 'unpaid' | 'unknown' | 'partial' | 'waiting' | 'received' | 'excluded';
 
 export interface ReceivableView {
   id: string;
@@ -159,8 +160,6 @@ export function sourceRowsToInput(provider: string, rows: SourceRow[]): Array<Re
   });
 }
 
-const won = (n: number) => `${n.toLocaleString('ko-KR')}원`;
-
 export class BankService {
   private readonly db: Db;
   private readonly cipher: ColumnCipher;
@@ -239,8 +238,6 @@ export class BankService {
         return this.cpBanking(this.str(p.counterpartyId, 'not_found'));
       case 'db.query.bank.format':
         return this.format(this.str(p.signature, 'bad_signature', 400));
-      case 'db.query.bank.ask':
-        return this.ask(this.profile(p.profileId), p);
       case 'bank.consent':
         return this.consent(this.profile(p.profileId), p);
       case 'bank.addAccount':
@@ -716,6 +713,8 @@ export class BankService {
   private views(pid: string): { list: ReceivableView[]; byId: Map<string, ReceivableView> } {
     this.syncLedger(pid);
     const today = this.today();
+    const latestDay = this.repo.latestDay(pid);
+    const stale = !latestDay || latestDay < addDays(today, -STALE_DAYS);
     const def = this.defaultTerms(pid);
     const terms = new Map<string, PayTerms>();
     const allocs = this.repo.liveAllocs(pid);
@@ -728,7 +727,7 @@ export class BankService {
       const remaining = Math.max(0, r.total - received);
       const due = this.dueOf(r, terms, def);
       const waiting = !!r.promisedOn && r.promisedOn >= today;
-      const status: ReceivableStatus = r.excludedAt ? 'excluded' : remaining === 0 ? 'received' : waiting ? 'waiting' : received > 0 ? 'partial' : 'unpaid';
+      const status: ReceivableStatus = r.excludedAt ? 'excluded' : remaining === 0 ? 'received' : waiting ? 'waiting' : received > 0 ? 'partial' : stale ? 'unknown' : 'unpaid';
       const eff = r.promisedOn ?? due;
       const dueIn = eff ? Math.round((Date.parse(`${eff}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`)) / 86_400_000) : null;
       const off = as.find((a) => a.txnId === null && a.method !== 'fee');
@@ -771,7 +770,7 @@ export class BankService {
       if (!t.ignoredAt && un > 0) review.push(v);
       if (recent.length < 200) recent.push(v);
     }
-    const unpaid = list.filter((v) => v.status === 'unpaid' || v.status === 'partial' || v.status === 'waiting').sort((a, b) => (a.dueIn ?? 99999) - (b.dueIn ?? 99999) || (a.writtenOn < b.writtenOn ? -1 : 1));
+    const unpaid = list.filter((v) => v.status === 'unpaid' || v.status === 'unknown' || v.status === 'partial' || v.status === 'waiting').sort((a, b) => (a.dueIn ?? 99999) - (b.dueIn ?? 99999) || (a.writtenOn < b.writtenOn ? -1 : 1));
     const received = list.filter((v) => v.status === 'received').sort((a, b) => (a.writtenOn < b.writtenOn ? 1 : -1));
     const excluded = list.filter((v) => v.status === 'excluded');
     return { consent: this.consentOf(pid), summary: this.summaryOf(pid, list, review), unpaid, received, excluded, review, recent, accounts: this.accounts(pid), defaultTerms: this.defaultTerms(pid) };
@@ -781,7 +780,7 @@ export class BankService {
     const today = this.today();
     const latestDay = this.repo.latestDay(pid);
     const stale = !latestDay || latestDay < addDays(today, -STALE_DAYS);
-    const open = list.filter((v) => v.status === 'unpaid' || v.status === 'partial');
+    const open = list.filter((v) => v.status === 'unpaid' || v.status === 'unknown' || v.status === 'partial');
     const over = open.filter((v) => v.overdue).sort((a, b) => (a.dueIn ?? 0) - (b.dueIn ?? 0));
     const autoCount = this.db.prepare(`SELECT count(*) FROM receivable_allocs WHERE profile_id = ? AND removed_at IS NULL AND decided_by = 'auto'`).pluck().get(pid) as number;
     return {
@@ -1093,49 +1092,8 @@ export class BankService {
     return this.repo.addAlias(cpId, p.name, source, this.at());
   }
 
-  // ---- 대화(로컬 조회) ----
-
-  /**
-   * db.query.bank.ask {profileId, kind: unpaid|month|counterparty, name?, month?}: 대화 답을 로컬에서 계산한다.
-   * 결과는 화면 카드용 값(거래처 이름·금액)과, 모델에 보내도 되는 요약(건수·합계·가린 거래처 표시)을 나눠 돌려준다.
-   */
-  private ask(pid: string, p: Params) {
-    const { list } = this.views(pid);
-    const sum = this.summary(pid);
-    const open = list.filter((v) => v.status === 'unpaid' || v.status === 'partial' || v.status === 'waiting');
-    const kind = p.kind === 'month' || p.kind === 'counterparty' ? p.kind : 'unpaid';
-    let rows: ReceivableView[];
-    let headline: string;
-    if (kind === 'month') {
-      const month = typeof p.month === 'string' && /^\d{4}-\d{2}$/.test(p.month) ? p.month : sum.today.slice(0, 7);
-      rows = open.filter((v) => (v.promisedOn ?? v.dueOn ?? v.writtenOn).startsWith(month) || v.writtenOn.startsWith(month));
-      headline = rows.length ? `${Number(month.slice(5))}월에 받을 돈은 ${rows.length}건 · ${won(rows.reduce((s, v) => s + v.remaining, 0))}이에요.` : `${Number(month.slice(5))}월에 받을 돈은 없어요.`;
-    } else if (kind === 'counterparty') {
-      const q = normalizePayerName(typeof p.name === 'string' ? p.name : '');
-      const hit = list.filter((v) => q.length >= 2 && (normalizePayerName(v.cpName).includes(q) || q.includes(normalizePayerName(v.cpName) || '\u0000')));
-      rows = hit.filter((v) => v.status !== 'excluded').sort((a, b) => (a.writtenOn < b.writtenOn ? 1 : -1)).slice(0, 10);
-      const openHit = rows.filter((v) => v.status !== 'received');
-      headline = !rows.length ? '그 거래처의 받을 돈 건을 찾지 못했어요.' : openHit.length ? `아직 못 받은 건이 ${openHit.length}건 · ${won(openHit.reduce((s, v) => s + v.remaining, 0))} 있어요.` : '모두 받았어요.';
-    } else {
-      rows = open.filter((v) => v.overdue).sort((a, b) => (a.dueIn ?? 0) - (b.dueIn ?? 0));
-      headline = rows.length ? `기한 지난 받을 돈은 ${rows.length}건 · ${won(sum.overdueTotal)}이에요.` : open.length ? `기한 지난 건은 없어요. 기다리는 받을 돈은 ${open.length}건 · ${won(sum.unpaidTotal)}이에요.` : '못 받은 돈이 없어요.';
-    }
-    if (sum.stale) headline += sum.latestDay ? ` 거래내역은 ${sum.latestDay}까지만 반영돼 있어요. 새 거래내역 파일을 올리면 더 정확해요.` : ' 아직 거래내역을 올리지 않아 입금 여부는 확인하지 못했어요.';
-    return {
-      kind, headline, rows: rows.slice(0, 20), summary: sum,
-      // 모델에 보내도 되는 것: 건수·합계·가린 거래처 표시(첫 글자 + ○○)뿐. 입금자명·계좌번호·원래 상호는 없다.
-      modelSafe: { count: rows.length, total: rows.reduce((s, v) => s + v.remaining, 0), counterparties: [...new Set(rows.map((v) => maskName(v.cpName)))].slice(0, 5), stale: sum.stale },
-    };
-  }
-
   dispose(): void {
     for (const j of this.jobs.values()) j.abort.abort();
     this.repo.dispose();
   }
-}
-
-/** 거래처 표시를 가린다: 첫 글자 + ○○(모델·로그용) */
-export function maskName(name: string | null): string {
-  const n = (name ?? '').replace(/\(주\)|㈜|주식회사/g, '').trim();
-  return n ? `${[...n][0]}○○` : '○○';
 }

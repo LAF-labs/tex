@@ -1,7 +1,7 @@
 // 받을 돈 e2e(09 1단계): 내 계좌 등록(동의) → 홈택스 발급목록 파일 → 은행 거래내역 파일(HTML 표 .xls) 미리보기·넣기 → 자동/후보 맞춤 →
 // [맞아요]·별칭 기억 → [떼기]·[되돌리기] → [받았음 표시](현금) → 판 카드 → 대화 "못 받은 돈 있어?"(로컬 답, 해석기·모델을 부르지 않음).
 // 실행: electron apps/desktop/e2e-dist/shell-bank-e2e.js. 시연 fixture(임시 앱 폴더) 위에서 돈다. 파일은 모두 가짜 값으로 만든다(실제 은행·홈택스 접속 없음).
-import { rmSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
 import type { IntentResolver } from '../dist/intent-route.js';
@@ -32,6 +32,14 @@ async function until(what: string, fn: () => Promise<boolean>, ms = 8_000): Prom
   console.log(`  (timeout: ${what})`);
   return false;
 }
+// SAX_E2E_SHOTS=<폴더>를 주면 판정에 쓸 화면을 PNG로 남긴다
+const SHOTS = process.env.SAX_E2E_SHOTS;
+const shot = async (name: string) => {
+  if (!SHOTS) return;
+  mkdirSync(SHOTS, { recursive: true });
+  await sleep(400);
+  writeFileSync(path.join(SHOTS, `${name}.png`), (await S!.win.webContents.capturePage()).toPNG());
+};
 const gesture = () => S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 const click = (sel: string) => js(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(sel)})].find((x) => !x.disabled); if (!e) throw new Error('no ' + ${JSON.stringify(sel)}); e.click(); })()`);
 const text = (sel: string) => js<string>(`[...document.querySelectorAll(${JSON.stringify(sel)})].map((e) => e.textContent).join(' | ')`);
@@ -80,6 +88,7 @@ async function flow() {
   await click('[data-act="bank-invoices"]');
   await click('[data-bank-tab="unpaid"]').catch(() => {});
   check('발급목록만 있고 거래내역이 없으면 2건 모두 "확인 못 함"(못 받음이라고 하지 않는다)', await until('unknown', async () => (await count('[data-bank-row][data-bank-status="unknown"]')) === 2 && (await text('[data-bank-row]')).split('확인 못 함').length === 3), await text('[data-bank-row]'));
+  await shot('01-unknown-status');
 
   // 3) 은행 거래내역(HTML 표 .xls): a에 330만(입금자 처음 보는 이름), b에 110만(상호 그대로), 이자
   queue.push(enc(`<html><head><meta charset="utf-8"></head><body><table><tr><td>계좌번호 : 999-88-7776665</td></tr><tr><th>거래일시</th><th>적요</th><th>기재내용</th><th>찾으신금액</th><th>맡기신금액</th><th>잔액</th></tr>
@@ -119,6 +128,7 @@ async function flow() {
   await sleep(150);
   const box = await js<{ box: number; table: number }>(`(() => { const b = document.querySelector('[data-view="bank"] .list-box'); return { box: b.getBoundingClientRect().height, table: b.querySelector('table').getBoundingClientRect().height }; })()`);
   check('상세를 열어도 목록 칸이 접히지 않는다', box.box >= box.table, box);
+  await shot('02-detail-1280x860');
   await click('[data-act="bank-detach"]');
   await click('[data-bank-tab="unpaid"]');
   check('[떼기] → b 건이 못 받은 돈으로', await until('detached', async () => (await text('[data-bank-row]')).includes(b.name)));
@@ -151,6 +161,7 @@ async function flow() {
     await js(`(() => { const t = document.querySelector('#composer'); t.value = ${JSON.stringify(t)}; t.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     check(`"${t}"는 해석기로 간다`, await until(`sent ${t}`, async () => seen.includes(t)), seen.slice(-4));
   }
+  await shot('03-chat');
   check('대화에 받을 돈 가로채기 카드가 없다', (await count('[data-bank-answer]')) === 0 && !(await text('.sx-thread')).includes('받을 돈 건을 찾지 못했어요'));
 }
 

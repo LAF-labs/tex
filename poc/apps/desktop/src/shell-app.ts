@@ -13,7 +13,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
-import { BankHost, bankQuestion, bankShellHandlers, isPayableQuestion, PAYABLE_LATER_TEXT, type PickKind } from './bank-host.ts';
+import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
@@ -926,17 +926,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await needLogin();
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
-      // 받을 돈 질문(09 §3.4 대화): 로컬 규칙으로 알아보고 엔진 로컬 조회로 답한다. 모델에 보내지 않는다(문장도 숫자도).
-      if (profile === 'business') {
-        if (isPayableQuestion(text)) return { kind: 'say', text: PAYABLE_LATER_TEXT, via: 'local', note: null, sent: [] };
-        const q = bankQuestion(text, kstToday(Date.now()));
-        if (q) {
-          const a = (await bank.call('db.query.bank.ask', q.kind === 'month' ? { kind: 'month', month: q.month ?? undefined } : q)) as { headline: string; rows: unknown[] };
-          log.event('main.bank_ask', { kind: q.kind, rows: a.rows.length });
-          runs.pending.asked = null;
-          return { kind: 'bank', text: a.headline, rows: a.rows, ask: q.kind, via: 'local', note: null, sent: [] };
-        }
-      }
       const local = parseRegex(text, runs.counterparties);
       if (demo) {
         // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.

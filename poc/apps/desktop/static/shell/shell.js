@@ -656,11 +656,6 @@ async function ask(text, vat) {
     return;
   }
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
-  // 받을 돈 질문: main이 엔진 로컬 조회로 계산한 답(모델 없음)
-  if (r.kind === 'bank') {
-    appendThread(bankUi.answer(r, () => go('bank')));
-    return;
-  }
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
     if (r.suggest?.length) box.append(h('div', { class: 'sx-actions' }, ...r.suggest.map((c) => btn(c.label, () => fillComposer(c.text), '', { 'data-chat-suggest': c.playbook }))));
