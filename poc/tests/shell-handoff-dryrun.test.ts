@@ -14,7 +14,7 @@ import { fixtureOriginGrant, type PdfPort } from '@sax/engine/core';
 import { openDatabase } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
-import { HANDOFF_END_NEXT, HANDOFF_LOGIN, HANDOFF_SIGN, NOTE, ShellRuns, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
+import { HANDOFF_END_NEXT, HANDOFF_LOGIN, NOTE, ShellRuns, SIGN_BY_AUTH, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
 import type { Counterparty, RunView } from '../apps/desktop/src/shell-model.ts';
 import { startHarness } from './harness.ts';
 import { h01FixtureLookupDefs } from './h01-fixture-package.ts';
@@ -149,7 +149,7 @@ describe('사람 차례 → 셸 카드(게시본 건조 실행, 실제 엔진)',
       approve(x, d.id);
       // 4) 서명 차례 카드: 실화면 문구, [직접 발급함]은 화면 모델이 거절
       assert.ok(await until(() => r().status === 'turn' && r().handoff?.kind === 'sign', 40_000), `서명 차례가 오지 않음: ${r().status} ${r().handoff?.kind}`);
-      assert.deepEqual([r().handoff?.afterGate, r().turn?.text], [true, HANDOFF_SIGN.text]);
+      assert.deepEqual([r().handoff?.afterGate, r().turn?.text], [true, SIGN_BY_AUTH['사업자 간편인증']!.text]);
       await assert.rejects(x.shell.manualDone(d.id), /sign\.turn_resume_only/);
       // 5) 서명 창이 뜨면 엔진이 스스로 서명하고 발급 완료(사람은 [다 했어요]를 누르지 않았다)
       assert.ok(await until(() => r().status === 'done', 60_000), `발급 완료가 오지 않음: ${r().status} ${r().stoppedNote ?? ''}`);

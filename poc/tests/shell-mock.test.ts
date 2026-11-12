@@ -2,10 +2,14 @@
 // PoC-6 셸 실행(ShellRuns): 실행은 한 번에 하나, 엔진 이벤트 → 카드 상태, 게이트 요청 → 되읽은 값·중복 경고, 끝 코드 문구.
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it } from 'node:test';
 import { buildGateRequest, type GateField } from '@sax/engine/gate';
+import { AUTH_SIGN_METHOD } from '../apps/desktop/src/onboarding.ts';
+import { SIGN_LABEL } from '../apps/desktop/src/shell-model.ts';
 import { g24Candidates, interpret, MockStore, parseAmount, split, type Counterparty } from '../apps/desktop/src/shell-mock.ts';
-import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
+import { HANDOFF_LOGIN, HANDOFF_SIGN, HANDOFF_SIGN_TTL, handoffTurn, NOTE, REGATE_NOTE, ShellRuns, SIGN_BY_AUTH, SIGN_NOW_DEFAULT, STOP_AFTER_SIGN_NOTE } from '../apps/desktop/src/shell-runs.ts';
 
 const CPS: Counterparty[] = [
   { id: 'cp-a', name: 'A상사', bizNo: '2148651233', rep: '이에이', email: 'tax@asangsa.example', item: '경영 컨설팅', status: '계속사업자', checkedOn: '', lastIssuedOn: null },
@@ -392,7 +396,7 @@ describe('셸 목업', () => {
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
     host.emit('run', { runId: a.run.id, type: 'handoff', phase: 'sign', code: 'sign.waiting' });
     r = runs.get(a.run.id)!;
-    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, HANDOFF_SIGN]);
+    assert.deepEqual([r.status, r.handoff, r.turn], ['turn', { phase: 'sign', afterGate: true, kind: 'sign' }, { text: SIGN_BY_AUTH['사업자 간편인증']!.text, note: HANDOFF_SIGN.note }]);
     await assert.rejects(runs.manualDone(a.run.id), /sign\.turn_resume_only/);
     assert.ok(!host.calls.some(([m]) => m === 'run.manualDone'), '서명 차례 [직접 발급함]은 엔진에 보내지도 않는다');
     // 서명 차례 [중지]: {stopped:false} → 확인 중(발급목록), 끝은 엔진 end로
@@ -413,6 +417,54 @@ describe('셸 목업', () => {
     assert.deepEqual([e.status, e.handoffEnd, e.inDoubt, e.handoff ?? null], ['attention', true, false, null]);
     assert.ok(e.stoppedNote!.startsWith(NOTE['run.handoff_timeout']!));
     assert.match(e.stoppedNote!, /아무것도 발급하지 않았어요/);
+  });
+
+  it('H-01 2.2.0 발급 인증: 온보딩 값 → signMethod → 화면 라벨 → 서명 안내가 1:1, 패키지 methodTargets 키와 같다. 서명 단계에 들어서면 바로 할 일', async () => {
+    const methods = [...new Set(Object.values(AUTH_SIGN_METHOD))].sort();
+    assert.deepEqual(Object.keys(SIGN_LABEL).sort(), methods);
+    assert.deepEqual(Object.keys(SIGN_BY_AUTH).sort(), Object.values(SIGN_LABEL).sort());
+    assert.equal(SIGN_BY_AUTH[SIGN_LABEL.cert]!.text, HANDOFF_SIGN.text, '공동·금융인증서는 부장 문구 그대로');
+    const pb = JSON.parse(fs.readFileSync(path.resolve(import.meta.dirname, '../packages/engine/playbooks/hometax.invoice.issue/playbook.json'), 'utf8')) as { steps: Array<{ signFlow?: { method?: string; methodTargets?: Record<string, string> } }> };
+    const sf = pb.steps.find((x) => x.signFlow)?.signFlow;
+    assert.ok(sf?.methodTargets, '2.2.0은 인증유형을 프로필 값으로 고른다');
+    assert.equal(sf.method, '$profile.signMethod');
+    assert.deepEqual(Object.keys(sf.methodTargets).sort(), methods);
+    for (const [label, s] of Object.entries(SIGN_BY_AUTH)) {
+      assert.deepEqual(handoffTurn('sign', 'sign.waiting', label), { kind: 'sign', text: s.text, note: HANDOFF_SIGN.note });
+      assert.ok(/끝나면 자동으로 이어집니다$/.test(s.text) && !/세액 산정|절세|신고 대리|가산세/.test(s.text + s.now), label);
+      const h = new FakeHost();
+      const runs = new ShellRuns(h, { counterparties: () => CPS, auth: () => label });
+      const a = interpret('A상사에 18만원 세금계산서', null, 'business', runs);
+      assert.ok(a.kind === 'draft');
+      await runs.prepare(a.run.id);
+      h.emit('gate', gateFor(a.run.id, {}));
+      runs.approved(a.run.id);
+      h.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
+      const r = runs.get(a.run.id)!;
+      assert.deepEqual([r.status, r.steps[5]!.state, r.steps[5]!.note], ['issuing', 'now', s.now], label);
+    }
+    assert.deepEqual(handoffTurn('sign', 'sign.waiting', '발급 인증 미설정'), { kind: 'sign', ...HANDOFF_SIGN });
+    const h = new FakeHost();
+    const runs = new ShellRuns(h, { counterparties: () => CPS, auth: () => '' });
+    const a = interpret('A상사에 19만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    await runs.prepare(a.run.id);
+    h.emit('gate', gateFor(a.run.id, {}));
+    h.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
+    assert.equal(runs.get(a.run.id)!.steps[5]!.note, SIGN_NOW_DEFAULT);
+  });
+
+  it('받는 이메일 모양이 틀리면 [홈택스에서 준비]는 시작하지 않고 초안 그대로(홈택스 아이디·도메인 두 칸)', async () => {
+    const { host, runs } = shellRuns();
+    const a = interpret('A상사에 20만원 세금계산서', null, 'business', runs);
+    assert.ok(a.kind === 'draft');
+    runs.get(a.run.id)!.email = { value: 'tax at asangsa', first: false };
+    await assert.rejects(runs.prepare(a.run.id), /bad_email/);
+    assert.equal(runs.get(a.run.id)!.status, 'draft');
+    assert.ok(!host.calls.some(([m]) => m === 'run.start'));
+    runs.get(a.run.id)!.email = { value: '', first: false };
+    await runs.prepare(a.run.id);
+    assert.ok(host.calls.some(([m, p]) => m === 'run.start' && (p as { email: unknown }).email === null), '이메일이 없으면 null(메일 칸은 비운다)');
   });
 
   it('다시 게이트 경고: 고정 문구 3종(상수)만, 모르는 이유는 무시', async () => {

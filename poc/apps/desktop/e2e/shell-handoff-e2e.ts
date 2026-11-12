@@ -10,7 +10,7 @@ import { app } from 'electron';
 import { buildGateRequest, type GateRequest } from '@sax/engine/gate';
 import { kstToday } from '../dist/approval-gate.js';
 import { registerShellSchemes, startShell, type Shell } from '../dist/shell-app.js';
-import { HANDOFF_LOGIN, HANDOFF_SIGN, NOTE, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
+import { HANDOFF_LOGIN, NOTE, SIGN_BY_AUTH, STOP_AFTER_SIGN_NOTE } from '../dist/shell-runs.js';
 import { DEMO_DEV } from '../dist/demo-dev.js';
 
 registerShellSchemes();
@@ -222,10 +222,11 @@ async function flow(): Promise<void> {
   await userClick(`[data-run="${a}"] [data-act=resume]`);
   check('[이어서] → 엔진 run.resume → 준비 중으로 돌아간다', await until('resumed', () => runStatus(a) !== 'turn', 3000) && calls.some(([m, r]) => m === 'run.resume' && r === a), runStatus(a));
   check('로그인 뒤 게이트 → 실제 승인 바로 승인', await approveGate(a), { st: runStatus(a), bar: S.bar.snapshot().visible });
+  check('승인 직후 서명 단계: 서명 차례(handoff) 전에도 카드가 발급 인증별 할 일을 바로 보인다', await until('sign now', async () => (await js<boolean>(`(() => { const c = document.querySelector('[data-run="${a}"]'); return !!c && 'signNow' in c.dataset && c.innerText.includes(${JSON.stringify(SIGN_BY_AUTH['사업자 간편인증']!.now)}); })()`)), 3000), await card(a));
   check('서명 차례: 승인 뒤에도 카드는 끝나지 않고 사람 차례(서명)', await until('sign turn', () => runStatus(a) === 'turn' && S.runs.get(a)?.handoff?.kind === 'sign', 5000), runStatus(a));
   await until('sign card', async () => (await card(a)).handoff === 'sign');
   c = await card(a);
-  check('서명 카드: 실화면 문구 + [다 했어요](보조)·[중지], [직접 발급함] 없음, "다시 발급하지 않아요" 안내', c.text.includes(HANDOFF_SIGN.text) && c.acts.some((b) => b.act === 'resume' && b.label === '다 했어요' && !b.primary) && c.acts.some((b) => b.act === 'stop') && !c.acts.some((b) => b.act === 'manual-done' || b.act === 'prepare') && c.signWait, c);
+  check('서명 카드: 실화면 문구 + [다 했어요](보조)·[중지], [직접 발급함] 없음, "다시 발급하지 않아요" 안내', c.text.includes(SIGN_BY_AUTH[S.runs.get(a)!.auth]!.text) && c.acts.some((b) => b.act === 'resume' && b.label === '다 했어요' && !b.primary) && c.acts.some((b) => b.act === 'stop') && !c.acts.some((b) => b.act === 'manual-done' || b.act === 'prepare') && c.signWait, c);
   check('서명 차례 카드는 끝난 카드처럼 보이지 않는다', !/발급 완료|중지됨|취소|확인 필요/.test(c.chip), c.chip);
   await shot('02-sign-turn');
   await sleep(500);
