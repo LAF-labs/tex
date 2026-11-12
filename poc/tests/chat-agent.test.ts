@@ -473,3 +473,144 @@ describe('PR #296 판정 반영', () => {
     assert.match(nowLine(responds().at(-1)!.body!), /모과 이야기/);
   });
 });
+
+// PR #296 r2 판정(mid-verify/pr-296-final-r2.md) 반영: 앞이 같은 두 거래처 오인, 이메일 조각, 띄어 쓰거나 끊어 쓴 금액, 답의 "만 원"·달 이름.
+// 이 묶음도 장부에 거래처를 더하므로 파일 맨 끝에 둔다.
+describe('PR #296 r2 판정 반영', () => {
+  before(() => {
+    cpId['A상사몰'] = new CounterpartyRepo(db).create({ name: 'A상사몰', bizNo: syntheticBizNo(86) }).id;
+  });
+
+  /** 문장 하나를 보내고 모델이 첫 NAME·AMT 토큰으로 카드를 만들게 한다. 풀린 거래처 이름(엔진이 되물으면 null)과 금액. */
+  async function drafted(a: ChatAgent, pc: FakePc, text: string) {
+    script(
+      (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0] ?? '없음', amount: toks(nowLine(b), 'AMT')[0] ?? null, vat: null, item: '컨설팅' }),
+      () => reply({ kind: 'did', text: '카드를 만들었어요.' }),
+    );
+    const r = await say(a, pc, text);
+    const c = r.calls.find((x) => x.tool === 'invoice_draft');
+    return { cp: c && c.tool === 'invoice_draft' ? Object.entries(cpId).find(([, id]) => id === c.counterpartyId)![0] : null, amount: c && c.tool === 'invoice_draft' ? c.amount : null };
+  }
+
+  const PREFIX: Array<[string, string | null]> = [
+    ['A상사에 550000 끊어줘', 'A상사'],
+    ['A상사도 550000 끊어줘', 'A상사'],
+    ['A상사랑 550000 끊어줘', 'A상사'],
+    ['A상사한테 550000 끊어줘', 'A상사'],
+    ['A상사에서 받은 550000 끊어줘', 'A상사'],
+    ['A상사 에 550000 끊어줘', 'A상사'],
+    ['a상사에 550000 끊어줘', 'A상사'],
+    ['A상사몰에 550000 끊어줘', 'A상사몰'],
+    ['a상사몰에 550000 끊어줘', 'A상사몰'],
+    ['A 상사 몰에 550000 끊어줘', 'A상사몰'],
+    ['A상사 몰에 550000 끊어줘', 'A상사몰'],
+    ['A상사  몰에 550000 끊어줘', 'A상사몰'],
+    ['B상사에 550000 끊어줘', 'B상사'],
+    ['A상사물에 550000 끊어줘', null],
+  ];
+  for (const [text, want] of PREFIX) {
+    it(`앞이 같은 거래처(A상사·A상사몰): ${text} → ${want ?? '되묻기'}`, async () => {
+      const got = await drafted(agent(), new FakePc(), text);
+      assert.equal(got.cp, want);
+      if (want) assert.deepEqual(got.amount, { value: 550_000 });
+      const line = nowLine(responds()[0]!.body!);
+      assert.ok(!/상사|몰/.test(line), `거래처 원문이 나갔다: ${line}`);
+    });
+  }
+
+  it('앞이 같은 거래처: 같은 세션에서 차례가 바뀌어도 각자 제 거래처로 풀린다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const got: Array<string | null> = [];
+    for (const text of ['a상사에 550000 끊어줘', 'a상사몰에 550000 끊어줘', 'A상사에 550000 끊어줘', 'A 상사 몰에 550000 끊어줘']) got.push((await drafted(a, pc, text)).cp);
+    assert.deepEqual(got, ['A상사', 'A상사몰', 'A상사', 'A상사몰']);
+  });
+
+  const EMAILS = ['tax at asangsa.example 로 보내', 'tax @ asangsa.example', 'tax (at) asangsa (dot) example', 'asangsa.example 로 보내', 'tax@asangsa,example', 'TAX@asangsa.EXAMPLE 로 보내', 'tax＠asangsa.example'];
+  for (const text of EMAILS) {
+    it(`장부 이메일 조각도 가린다(대화록 재전송 포함): ${text}`, async () => {
+      const a = agent();
+      const pc = new FakePc();
+      for (const t of [text, '응', '그래']) {
+        script(() => reply({ text: '알겠어요.' }));
+        await say(a, pc, t);
+      }
+      for (const b of responds()) {
+        assert.ok(!JSON.stringify(b.body).toLowerCase().includes('asangsa'), userText(b.body!));
+        assert.ok(!/\btax\b/i.test(userText(b.body!)), userText(b.body!));
+      }
+    });
+  }
+
+  const AMOUNTS: Array<[string, string, number]> = [
+    ['A상사에 550 000 끊어줘', '550', 550_000],
+    ['A상사에 550 000원 끊어줘', '550', 550_000],
+    ['A상사에 55 0000 끊어줘', '55', 550_000],
+    ['A상사에 550.000 끊어줘', '550', 550_000],
+    ['A상사에 1 100 000원 끊어줘', '100', 1_100_000],
+    ['A상사에 오십 만 끊어줘', '오십', 500_000],
+    ['A상사에 오 십 만 끊어줘', '십 만', 500_000],
+    ['A상사에 오십 만 원 끊어줘', '오십', 500_000],
+    ['A상사에 백 만 원 끊어줘', '백 만', 1_000_000],
+  ];
+  const D = syntheticBizNo(81).replace(/\D/g, '');
+  const OTHERS: Array<[string, string]> = [
+    ['A상사에 KRW550000 끊어줘', '550'],
+    ['A상사에 550000KRW 끊어줘', '550'],
+    ['A상사에 x550000 끊어줘', '550'],
+    [`사업자 ${D.slice(0, 3)},${D.slice(3, 5)},${D.slice(5)}`, D.slice(0, 3)],
+    [`사업자 ${D.slice(0, 3)} / ${D.slice(3, 5)} / ${D.slice(5)}`, D.slice(0, 3)],
+  ];
+  for (const [text, raw] of OTHERS) {
+    it(`통화 글자가 붙은 금액, 쉼표·띄운 빗금 사업자번호도 가린다: ${text}`, async () => {
+      script(() => reply({ text: '알겠어요.' }));
+      await say(agent(), new FakePc(), text);
+      assert.ok(!userText(responds()[0]!.body!).includes(raw), userText(responds()[0]!.body!));
+    });
+  }
+  for (const [text, raw, value] of AMOUNTS) {
+    it(`띄어 쓰거나 끊어 쓴 금액도 가리고 원 단위로 풀린다: ${text}`, async () => {
+      const a = agent();
+      const pc = new FakePc();
+      assert.deepEqual((await drafted(a, pc, text)).amount, { value });
+      for (const t of ['응', '그래']) {
+        script(() => reply({ text: '알겠어요.' }));
+        await say(a, pc, t);
+      }
+      for (const b of responds()) assert.ok(!userText(b.body!).includes(raw), `${raw} 원문이 나갔다: ${userText(b.body!)}`);
+    });
+  }
+
+  it('지나친 가림을 줄인다: "이만 끝낼게", "천만에요"는 그대로 나가고 "이만 원", "천만에 끊어줘"는 가린다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    for (const t of ['이만 끝낼게', '천만에요', 'A상사에 이만 원', 'A상사에 천만에 끊어줘']) {
+      script(() => reply({ text: '알겠어요.' }));
+      await say(a, pc, t);
+    }
+    const lines = responds().map((b) => nowLine(b.body!));
+    assert.equal(lines[0], '사용자: 이만 끝낼게');
+    assert.equal(lines[1], '사용자: 천만에요');
+    assert.ok(!lines[2]!.includes('이만') && !lines[3]!.includes('천만'), lines.join(' / '));
+  });
+
+  it('답 숫자 규칙: 한 글자 수 + 단위(만 원·천 원·십 원), 띄어 쓴 수(백 만 원·오 십 만), 달 이름(구월·팔월·일월·삼월·오월·십이월)', () => {
+    for (const t of ['합계는 만 원이에요.', '합계는 천 원이에요.', '합계는 천원이에요.', '합계는 백 만 원이에요.', '합계는 십 원이에요.', '합계는 오 십 만이에요.', '합계는 오십 만 원이에요.', '마지막 발급은 구월이에요.', '팔월에 발급했어요.', '일월 발급이에요.', '삼월이에요.', '오월에 만들었어요.', '십이월 발급이에요.'])
+      assert.equal(numberShaped(t), true, t);
+    for (const t of ['이 건은 발급했어요.', '사이에 있는 카드예요.', '일일이 확인할 필요는 없어요.', '만약 다르면 말씀해 주세요.', '카드를 만들었어요.', '천천히 확인해 주세요.', '잔액 이월은 장부에서 봐 주세요.', '월말에 다시 봐 주세요.'])
+      assert.equal(numberShaped(t), false, t);
+  });
+
+  it('답 숫자 규칙: 시월·유월은 따로 본다(N5)', () => {
+    for (const t of ['마지막 발급은 시월이에요.', '유월에 발급했어요.', '시월 십오일이에요.']) assert.equal(numberShaped(t), true, t);
+    for (const t of ['시월드 이야기는 몰라요.', '유월드컵은 몰라요.']) assert.equal(numberShaped(t), false, t);
+  });
+
+  it('parseKrw: 띄어 쓰거나 점으로 끊은 금액', () => {
+    assert.equal(parseKrw('550 000'), 550_000);
+    assert.equal(parseKrw('55 0000'), 550_000);
+    assert.equal(parseKrw('550.000'), 550_000);
+    assert.equal(parseKrw('오 십 만'), 500_000);
+    assert.equal(parseKrw('1.5만'), 15_000);
+  });
+});
