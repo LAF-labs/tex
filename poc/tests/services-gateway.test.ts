@@ -565,6 +565,22 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(providerFromEnv({ GW_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV }).name, 'openrouter');
   });
 
+  it('OpenRouter 응답 본문: 도구가 있으면 parallel_tool_calls를 싣지 않고, 도구가 없으면 false 그대로(운영 조합 404 탐침 2026-11-12)', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_u: string, init: { body: string }) => {
+      sent.push(JSON.parse(init.body) as Record<string, unknown>);
+      return new Response(JSON.stringify({ model: 'm', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OpenRouterProvider({ apiKey: 'k', routing: { zdr: true, dataCollection: 'deny', only: ['azure'] }, fetchFn });
+    const spec = (t: typeof CHAT_AGENT | typeof CHAT_REPLY): RespondSpec => ({ model: 'm', prefix: 'p', effort: t.effort, maxOutputTokens: t.maxOutputTokens, tools: t.tools, output: t.output, input: [], cacheKey: 'c', safetyId: 's' });
+    await p.respond(spec(CHAT_AGENT));
+    await p.respond(spec(CHAT_REPLY));
+    assert.ok(Array.isArray(sent[0]!.tools) && (sent[0]!.tools as unknown[]).length === CHAT_AGENT_TOOLS.length);
+    assert.equal('parallel_tool_calls' in sent[0]!, false, '도구가 있으면 parallel_tool_calls 없음');
+    assert.equal((sent[0]!.provider as { require_parameters: boolean }).require_parameters, true, 'require_parameters는 그대로');
+    assert.equal(sent[1]!.parallel_tool_calls, false, '도구가 없으면 지금처럼 false');
+  });
+
   it('L1 판정은 OpenAI 직결, 응답은 OpenRouter(openai+openrouter): 키·라우팅 중 하나라도 없으면 기동 거부', async () => {
     const both = { GW_PROVIDER: 'openai+openrouter', OPENAI_API_KEY: 'ok', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV };
     assert.equal(providerFromEnv(both).name, 'openai-compat+openrouter');
