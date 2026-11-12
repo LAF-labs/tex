@@ -58,26 +58,26 @@ describe('요청률 정책(D03 §7)', () => {
     return { db, c, g: new RateGuard(db, 'hometax', policy, c.clock), repo: new RateRepo(db) };
   };
 
-  it('내장 정책 값은 §7 예시(interactive·limits.hometax·run·cooldown) 그대로, 가짜 페이지는 지연·분당 네비게이션만 다르다', () => {
+  it('내장 정책 값은 §7 예시(interactive·run·cooldown)에 사용량 상한만 올린 값(대표 결정 2026-11-12), 가짜 페이지는 지연·분당 네비게이션만 다르다', () => {
     assert.deepEqual(HOMETAX_POLICY, {
       pace: { stepDelayMs: [800, 2500], afterNavSettleMs: [600, 1500], slowFactor: 1.5 },
-      limits: { runsPerDayPerProfile: 40, irreversiblePerDayPerProfile: 30, runsPerLoginSession: 15, navigationsPerMin: 12, loginsPerDay: 6, concurrent: 1 },
+      limits: { runsPerDayPerProfile: 100, irreversiblePerDayPerProfile: 50, runsPerLoginSession: 30, navigationsPerMin: 12, loginsPerDay: 12, concurrent: 1 },
       run: { maxActuationsPerRun: 150, maxWallClockMs: 1_800_000 },
       cooldown: { onBlockSignalHours: 24, positiveDetectionsForCooldown: 2 },
     });
     assert.ok(Object.isFrozen(HOMETAX_POLICY.limits) && Object.isFrozen(HOMETAX_POLICY.pace.stepDelayMs));
     assert.deepEqual({ ...FIXTURE_POLICY, pace: HOMETAX_POLICY.pace, limits: { ...FIXTURE_POLICY.limits, navigationsPerMin: 12 } }, HOMETAX_POLICY);
-    // PoC 빌드는 위험 수용서 상한으로 좁힌다(ADR-025). D03 §7 값은 HOMETAX_POLICY에 그대로 남는다.
-    assert.deepEqual(policyFor('hometax'), { ...HOMETAX_POLICY, limits: { ...HOMETAX_POLICY.limits, runsPerDayPerProfile: 20, irreversiblePerDayPerProfile: 1, loginsPerDay: 3 }, cooldown: { ...HOMETAX_POLICY.cooldown, positiveDetectionsForCooldown: 1 } });
+    assert.equal(policyFor('hometax'), HOMETAX_POLICY);
+    assert.equal(policyFor('fixture'), FIXTURE_POLICY);
     for (const kind of ['gov24', 'wetax', 'Hometax', '']) assert.throws(() => policyFor(kind), /policy\.portal_mode_denied/, `${kind}: 내장 정책이 없는 포털은 자동화하지 않는다`);
   });
 
-  it('하루 실행 상한은 KST 날짜 기준: 23:59에 20회(PoC 상한) 차면 거부, 00:00(KST)이면 다시 된다. 증가는 커밋된 뒤 남는다', () => {
+  it('하루 실행 상한은 KST 날짜 기준: 23:59에 100회 차면 거부, 00:00(KST)이면 다시 된다. 증가는 커밋된 뒤 남는다', () => {
     const { g, c, repo } = guard(policyFor('hometax'));
     assert.equal(kstDay(T), '2026-11-02');
-    for (let i = 0; i < 20; i++) g.admit('p1', { irreversible: false });
+    for (let i = 0; i < 100; i++) g.admit('p1', { irreversible: false });
     assert.throws(() => g.admit('p1', { irreversible: false }), /policy\.runs_per_day/);
-    assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 20, '거부된 시도는 세지 않는다');
+    assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 100, '거부된 시도는 세지 않는다');
     g.admit('p2', { irreversible: false }); // 프로필별
     c.tick(10_000); // KST 00:00
     assert.equal(kstDay(c.wall), '2026-11-03');
@@ -85,14 +85,14 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-03'), 1);
   });
 
-  it('하루 비가역 상한: 시작 때 여유를 보고, armed 때 증가한다(PoC 상한 1회 뒤 거부)', () => {
+  it('하루 비가역 상한: 시작 때 여유를 보고, armed 때 증가한다(50회 뒤 거부)', () => {
     const { g, repo } = guard(policyFor('hometax'));
-    g.countCommit('p1');
+    for (let i = 0; i < 50; i++) g.countCommit('p1');
     assert.throws(() => g.countCommit('p1'), /policy\.irreversible_per_day/);
     assert.throws(() => g.admit('p1', { irreversible: true }), /policy\.irreversible_per_day/);
     g.admit('p1', { irreversible: false }); // 조회성 실행은 비가역 여유를 보지 않는다
-    assert.equal(repo.count('hometax', 'p1', 'irreversible_day', '2026-11-02'), 1);
-    assert.equal(repo.sum('hometax', '', 'navigations_min', '2026-11-02T00:00:00', '2026-11-02T23:59:59'), 1, '발급 버튼 클릭은 네비게이션으로도 센다');
+    assert.equal(repo.count('hometax', 'p1', 'irreversible_day', '2026-11-02'), 50);
+    assert.equal(repo.sum('hometax', '', 'navigations_min', '2026-11-02T00:00:00', '2026-11-02T23:59:59'), 50, '발급 버튼 클릭은 네비게이션으로도 센다');
   });
 
   it('분당 네비게이션은 최근 60초 합: 12회 차면 기다리고, 가장 오래된 것이 60초를 벗어나면 다시 된다', () => {
@@ -135,13 +135,13 @@ describe('요청률 정책(D03 §7)', () => {
 
   it('시계 역행: 유효 시각은 뒤로 가지 않아 날짜 버킷·쿨다운이 풀리지 않고, 보수 모드(지연 1.5배, 상한 절반)가 재시작 뒤에도 이어진다', () => {
     const { db, g, c, repo } = guard(HOMETAX_POLICY, T + 20_000); // KST 11-03 00:00:10
-    for (let i = 0; i < 20; i++) g.admit('p1', { irreversible: false });
+    for (let i = 0; i < 50; i++) g.admit('p1', { irreversible: false });
     assert.equal(g.clock().conservative, false);
     c.back(H); // 11-02 23:00:10(KST)로 되돌림
     const k = g.clock();
     assert.equal(k.conservative, true);
     assert.ok(k.now >= T + 20_000, '유효 시각은 마지막으로 본 시각보다 앞이다');
-    assert.throws(() => g.admit('p1', { irreversible: false }), /policy\.runs_per_day/, '상한 40의 절반(20)이고 버킷은 11-03 그대로');
+    assert.throws(() => g.admit('p1', { irreversible: false }), /policy\.runs_per_day/, '상한 100의 절반(50)이고 버킷은 11-03 그대로');
     assert.equal(repo.count('hometax', 'p1', 'runs_day', '2026-11-02'), 0, '전날 버킷이 새로 열리지 않았다');
     assert.equal(g.delay([1_000, 1_000], true), 1_500);
     assert.equal(g.cap(HOMETAX_POLICY.limits.navigationsPerMin, true), 6);
@@ -159,14 +159,14 @@ describe('요청률 정책(D03 §7)', () => {
     assert.equal(caught.now, c.wall, '따라잡은 뒤에는 벽시계 그대로');
   });
 
-  it('로그인 상한(PoC-3 로그인이 부른다): 하루 6회, 세션당 실행 15회, 새 로그인이 세션을 다시 연다', () => {
+  it('로그인 상한(PoC-3 로그인이 부른다): 하루 12회, 세션당 실행 30회, 새 로그인이 세션을 다시 연다', () => {
     const { g } = guard();
-    for (let i = 0; i < 6; i++) {
+    for (let i = 0; i < 12; i++) {
       g.beforeLogin();
       g.loginSucceeded('p1');
     }
     assert.throws(() => g.beforeLogin(), /policy\.logins_per_day/);
-    for (let i = 1; i < 15; i++) g.continueSession('p1'); // 로그인한 실행이 1회째
+    for (let i = 1; i < 30; i++) g.continueSession('p1'); // 로그인한 실행이 1회째
     assert.throws(() => g.continueSession('p1'), /policy\.runs_per_session/);
     g.loginSucceeded('p1');
     g.continueSession('p1');

@@ -10,7 +10,7 @@ import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
-import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
+import { kstDay, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
 import type { HumanPort } from './run/controller.ts';
 import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
@@ -259,8 +259,6 @@ export class RunService extends EventEmitter {
     if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
     // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
     try {
-      const total = pocTotalRefusal(this.ledger, this.d.portal.kind);
-      if (total) throw total;
       this.rate.pinRun();
       this.rate.admit(profile.id, { irreversible: true });
     } catch (e) {
