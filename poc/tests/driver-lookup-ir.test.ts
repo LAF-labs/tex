@@ -114,7 +114,7 @@ describe('IrLookupPort(서명 조회 패키지 IR, 금고 중계 + Chrome)', () 
   function setup(o: { mutate?: (f: PackageFiles) => void } = {}) {
     const clock = new FakeClock();
     const journal: Array<[string, Record<string, string>]> = [];
-    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive', false)!, { wall: () => Date.now(), mono: () => clock.t });
+    const rg = new RateGuard(db, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive')!, { wall: () => Date.now(), mono: () => clock.t });
     const enforcer = new RunEnforcer({ guard: rg, clock, mono: () => clock.t, dict: SIGNAL_DICT.fixture, profileId: `p${randomBytes(3).toString('hex')}`, journal: () => {}, random: () => 0 });
     const packages = new Map([[LOOKUP, testLookup(LOOKUP, origin, o.mutate)], [MAIL, testLookup(MAIL, origin, o.mutate)]]);
     const port = new IrLookupPort({

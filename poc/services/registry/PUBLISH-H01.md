@@ -46,11 +46,20 @@
 원본은 `services/registry/policy/2026.11.json`이다. 서명 대상은 이 파일에 `monotonic`·`keyEpoch`를 붙인 내용이다. 기간과 타임스탬프는 서버가 붙인다.
 
 - `portalMode`: `hometax: auto`, 나머지(`gov24`·`wetax`·`sminfo`·`insure4`)는 `postprocess`다. status 상한과 같다.
-- 홈택스 요청률 상한은 ADR-025의 PoC 값 그대로다(엔진 `POC_OVERRIDES`와 같다).
+- 홈택스 요청률 상한은 ADR-025의 PoC 값이었다.
   - 프로필당 하루 실행 20회, 되돌릴 수 없는 실행 1회, 하루 로그인 3회, 차단 신호 1번이면 쿨다운
   - 그 밖의 값(로그인 세션당 15회, 분당 이동 12회, 로그인 실패 2회, 동시 1)은 정책 예시(SIGNING.md) 그대로다.
 - 이번 게시에 없는 포털(`gov24`·`sminfo`·`insure4`)은 실행 상한이 0이다. 캡차 중계는 모두 `disabled`다. 원격 승인의 하루 되돌릴 수 없는 실행은 1회다.
 - 내용을 바꾸려면 `version`을 올린다(예 `2026.11.1`). 같은 판에 다른 내용은 `publish.policy_version_exists`로 거부된다.
+
+### 정책 2026.11.1
+
+원본은 `services/registry/policy/2026.11.1.json`이다. 대표 결정(2026-11-12) "우리가 설정한 상한은 웬만해선 닿지 않게"에 따라 사용량 상한만 바꿨다.
+
+- 엔진은 받은 정책과 앱 내장 값 가운데 필드마다 엄격한 쪽을 쓴다(`stricterRate`). 그래서 홈택스 상한은 앱 내장 값(`HOMETAX_POLICY`)과 같게 했다. 더 높여도 효과가 없다.
+  - 하루 실행 100회, 하루 발급 50회, 로그인 세션당 30회, 하루 로그인 12회, 양성 탐지 2번이면 쿨다운(24시간). 모두 정책 스키마 최대값이다.
+- 원격 승인의 하루 되돌릴 수 없는 실행은 5회다(스키마·앱 하한 최대). 지금은 제품 코드가 이 값을 쓰지 않는다.
+- 그 밖의 필드(포털 수준·캡차 중계·지연·verify·run·retries·daemon·queue, 분당 이동 12회, 로그인 실패 2회)는 2026.11 그대로다. 시험 `tests/registry-publish.test.ts`가 바뀐 필드 목록을 고정한다.
 
 ## 0. 준비
 
@@ -182,6 +191,17 @@ node --conditions=development services/registry/src/publish/cli.ts push --trust 
 - push는 바뀐 패키지와 인덱스만 올린다.
 - 셀렉터를 고칠 때는 판을 올린다(예 2.1.1). 같은 판에 다른 내용은 `publish.version_exists`로 거부된다.
 - 정책이 그대로면 prepare 화면에 `정책 2026.11 monotonic 1: 레지스트리에 같은 내용이 있다(서명·게시 없음 …)`가 나오고 정책 서명은 없다. 정책을 바꿀 때는 `version`을 올린 새 파일을 `--policy`로 준다(정책 서명 2번 더).
+
+## 정책만 바꿀 때 (Touch ID 2번)
+
+패키지 폴더 없이 `--policy`만 준다. 패키지·인덱스·status·폐기 목록은 건드리지 않는다.
+
+1. dry-run: `dry-run --registry https://tax.laf-co.com --work <새 폴더>-dry --trust services/registry/ceremony/keyepoch-1/trust-root.json --policy services/registry/policy/<ver>.json`
+   - 마지막에 `리허설: 임시 키 서명 2번, 게시 2건(policy/<ver>.json, policy/current.json), …`이 나와야 한다.
+2. prepare: 같은 인자에 `prepare`와 새 작업 폴더. 화면에 `policy monotonic <n> 확인 코드 …`와 `sign --kind policy` 명령 2줄(`policy-1`·`policy-2`)이 나온다. 확인 코드는 dry-run과 같아야 한다.
+3. 서명 2번(Touch ID 2번). 3단계와 같다.
+4. assemble은 하지 않는다. 패키지가 없는 계획에서 push는 인덱스를 보지도 올리지도 않는다.
+5. push. 게시는 `policy/<ver>.json`·`policy/current.json` 2건이다. `record.json`의 `index`는 지금 인덱스 그대로다.
 
 ## 실패하면
 
