@@ -579,4 +579,4 @@ export type VaultEventName =
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
   | 'screen.frame' | 'screen.paused'
   // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
-  | 'browser.closed';
+  | 'browser.closed' | 'browser.launched';

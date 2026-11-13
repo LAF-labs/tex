@@ -11,6 +11,7 @@ import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, SESSION_IDLE_REPORT_MS } from '@sax/vault';
+import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -538,6 +539,49 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const r = secrets.open;
     return r ? secretPageHtml(r, profiles()[r.scope].name) : null;
   };
+  /**
+   * 실행 Chrome은 어떤 경우에도 앱 앞에 오지 않는다(대표 지시 2026-11-14). 앱(비밀번호 창이 열려 있으면 그 창)을 앞으로 둔다.
+   * Chrome이 스스로 앞으로 오는 때(기동·팝업 창·페이지의 창 포커스)는 금고 알림과 아래 앱 비활성 감시로 바로 되돌린다.
+   */
+  let runChromePid = 0;
+  const appToFront = () => {
+    if (win.isDestroyed()) return;
+    app.focus({ steal: true });
+    win.moveTop();
+    (secretWin && !secretWin.isDestroyed() ? secretWin : win).focus();
+  };
+  // 맥: 실행 Chrome이 떠 있는 동안 맨 앞 앱을 0.4초마다 본다. 금고가 띄운 그 Chrome 프로세스가 맨 앞이면(스스로 창을 올림) 앱을 다시 앞으로.
+  // 사람이 다른 앱(자기 Chrome 포함)을 쓰는 것은 건드리지 않는다(프로세스 id로만 가린다).
+  let frontWatch: NodeJS.Timeout | null = null;
+  let frontBusy = false;
+  const frontPid = (cb: (pid: number) => void) =>
+    execFile('lsappinfo', ['front'], { timeout: 1_000 }, (e, asn) => {
+      if (e || !String(asn).trim()) return cb(0);
+      execFile('lsappinfo', ['info', '-only', 'pid', String(asn).trim()], { timeout: 1_000 }, (e2, out) => {
+        const m = !e2 && /"pid"\s*=\s*(\d+)/i.exec(String(out));
+        cb(m ? Number(m[1]) : 0);
+      });
+    });
+  const watchChromeFront = (on: boolean) => {
+    if (process.platform !== 'darwin') return;
+    if (!on) {
+      if (frontWatch) clearInterval(frontWatch);
+      frontWatch = null;
+      return;
+    }
+    if (frontWatch) return;
+    frontWatch = setInterval(() => {
+      if (frontBusy || !runChromePid) return;
+      frontBusy = true;
+      frontPid((pid) => {
+        frontBusy = false;
+        if (pid && pid === runChromePid) {
+          appToFront();
+          log.event('main.chrome_front_refocus', { guard: true });
+        }
+      });
+    }, 400);
+  };
   // main이 닫은 창(실행 끝·종료)은 사용자가 돌아온 것이 아니다: 핸드오프 복귀로 치지 않는다.
   let appClosing: BrowserWindow | null = null;
   // 메인 창이 닫히는 중이면 비밀 창을 새로 열지 않는다(들고 있던 다음 요청 포함).
@@ -569,6 +613,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
     }
     secretWin = w;
+    // 앱 비밀번호 창은 반드시 앞에 보인다(실화면 run-837dad14: 대표에게 안 보였다). 앱을 앞으로, 그 창에 포커스. Chrome은 올리지 않는다.
+    const front = () => {
+      if (w.isDestroyed() || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      if (!win.isVisible()) win.show();
+      app.focus({ steal: true });
+      w.show();
+      w.moveTop();
+      w.focus();
+    };
+    front();
+    w.webContents.once('did-finish-load', front);
+    log.event('main.secret_window_shown', { kind: r.kind });
     // main이 닫은 창(실행 끝·종료)인지는 'close' 때 정한다('closed'보다 먼저 온다).
     let byApp = false;
     w.on('close', () => {
@@ -617,9 +674,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
     }
     // 실행 Chrome이 사람 손으로 닫혔다(탭 전부·프로세스): 패널은 "연결 끊김", 제출 전 실행은 멈추고 [다시 시작]
+    if (name === 'browser.launched') {
+      // Chrome이 막 떴거나 포털 팝업 창이 떠 macOS가 Chrome을 앞으로 올렸다: 앱을 바로 다시 앞으로(창이 늦게 그려지니 2초 동안 몇 번 더).
+      const pid = Number((data as { pid?: unknown } | null)?.pid);
+      if (Number.isSafeInteger(pid) && pid > 0) runChromePid = pid;
+      watchChromeFront(true);
+      appToFront();
+      for (const ms of [250, 600, 1_000, 1_600, 2_400]) setTimeout(appToFront, ms);
+      log.event('main.chrome_front_refocus', { popup: (data as { popup?: unknown } | null)?.popup === true });
+      return;
+    }
     if (name === 'browser.closed') {
       log.event('main.browser_closed', { reason: (data as { reason?: unknown } | null)?.reason === 'chrome' ? 'chrome' : 'tab' });
       if (mirrorRun) send({ type: 'screen', runId: mirrorRun, gone: true });
+      if ((data as { reason?: unknown } | null)?.reason === 'chrome') {
+        runChromePid = 0;
+        watchChromeFront(false);
+      }
       runs.browserClosed();
       return;
     }
@@ -1703,6 +1774,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     updater?.stop();
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();
+    watchChromeFront(false);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
     await host.shutdown().catch(() => {});

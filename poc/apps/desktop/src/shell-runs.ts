@@ -77,6 +77,8 @@ type EngineEvent =
   | { runId: string; type: 'handoff'; phase: Phase; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
   | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }
+  /** 금고 비밀 창 차례(엔진 SecretTurnEvent, 값 없음). 실행은 끝나지 않았다: 앱 비밀번호 창이 뜬다. */
+  | { runId: string; type: 'secret'; state: 'open' | 'closed'; stepId?: string; why?: string }
   /**
    * 실행 상태(엔진 RunEvent, M2-3). end는 종료 상태에서만 오고, InDoubt는 종료가 아니라 state in_doubt로 온다.
    * 증언·조회 뒤 갈래: state running(새 gate.request) | state paused{code:'policy_downgrade'} | end completed_with_issues.
@@ -819,6 +821,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
       this.emit('update', r);
       return;
     }
+    if (e.type === 'secret') {
+      // 인증서 비밀번호 차례: 앱 금고 창이 뜬다(main openSecret). 실행은 계속된다. 지금 단계에 할 일만 적는다.
+      if (e.state !== 'open' || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
+      const now = r.steps.findLastIndex((s) => s.state === 'now');
+      if (now >= 0) r.steps[now] = { ...r.steps[now]!, note: '앱에 뜬 창에 인증서 비밀번호를 넣어 주세요' };
+      this.emit('update', r);
+      return;
+    }
+    // 끝은 end 이벤트로만 안다. 모르는 이벤트(새 종류)로 실행을 끝내지 않는다(실화면 run-837dad14: secret 이벤트로 끝내 비밀번호 창이 닫혔다)
+    if (e.type !== 'end') return this.src.log?.('main.run_event_ignored', { type: String((e as { type?: unknown }).type).slice(0, 40) });
     this.end(r, e);
   }
 

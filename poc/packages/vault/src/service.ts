@@ -526,9 +526,9 @@ export class Vault {
       case 'status':
         return { launched: !!this.chrome, headless: !!this.chrome && this.headlessNow, profileProblems: this.profileProblems };
       case 'browser.focus':
-        // 창 없는 Chrome(시험 옵션)은 앞으로 올릴 창이 없다.
-        if (this.headlessNow) return { focused: false, headless: true };
-        return { focused: this.relay ? await this.relay.bringToFront() : false };
+        // Chrome 창은 어떤 경우에도 앞으로 올리지 않는다(대표 지시 2026-11-14). 사람 차례는 앱 패널 중계 화면에서 한다.
+        this.opts.log.event('vault.browser_focus_refused');
+        return { focused: false };
       case 'screen.start':
         return { started: await this.startMirror() };
       case 'screen.stop':
@@ -545,7 +545,8 @@ export class Vault {
         const bounds = { left: n('x'), top: n('y'), width: n('width'), height: n('height') };
         if (bounds.width < 200 || bounds.height < 200) throw new Error('bad_params');
         if (this.headlessNow) return { placed: false, headless: true };
-        return { placed: this.relay ? await this.relay.placeWindow(bounds, p.front === true) : false };
+        // 자리만 옮긴다. 앞으로 올리지 않는다(front는 무시, 대표 지시 2026-11-14).
+        return { placed: this.relay ? await this.relay.placeWindow(bounds) : false };
       }
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
@@ -730,6 +731,8 @@ export class Vault {
     const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
     this.chrome = chrome;
     this.headlessNow = headless;
+    // 창 있는 Chrome은 막 떴을 때 macOS가 앞으로 올린다. main이 바로 앱을 다시 앞으로 둔다(대표 지시 2026-11-14: Chrome은 앞에 오지 않는다).
+    if (!headless) this.emit(['control'], 'browser.launched', { pid: chrome.proc.pid ?? 0 });
     await this.grantLoopback(chrome);
     chrome.conn.on('close', () => {
       this.opts.log.event('vault.chrome_closed');
@@ -819,6 +822,10 @@ export class Vault {
     this.relay?.commitGuard?.shutdown();
     this.relay = relay;
     // 실행 창(탭)이 사람 손으로 닫혀 보일 page가 하나도 남지 않으면 main에 알린다(Chrome 프로세스는 맥에서 창 없이 남을 수 있다)
+    // 포털 팝업(새 Chrome 창)이 뜨면 Chrome이 앞으로 온다: main이 앱을 다시 앞으로(대표 실화면 2026-11-14, 로그인 창이 앱을 가렸다)
+    relay.onPageOpened = () => {
+      if (this.relay === relay && !this.headlessNow) this.emit(['control'], 'browser.launched', { popup: true });
+    };
     relay.onTargetGone = (t) => {
       if (t.type !== 'page' || !t.exposed || this.relay !== relay || this.closingChrome) return;
       if (!relay.hasExposedPage()) this.browserGone('tab');

@@ -2,7 +2,7 @@
 // 값은 엔진·main에 오지 않는다(ADR-020 결정 2, D05 §3.5). 엔진은 "끝났는지"와 끝 모양(코드)만 안다.
 //
 // 두 가지 길(D05 §6.1):
-// 1. 비밀 창(window): 인증서 비밀번호 칸이 포털 화면(main 프레임 DOM)에 있으면 실행 탭을 앞으로 가져온 뒤 금고 비밀 창으로 연다
+// 1. 비밀 창(window): 인증서 비밀번호 칸이 포털 화면에 있으면 금고 비밀 창으로 연다(Chrome 창은 앞으로 올리지 않는다)
 //    (VaultSecretPort, secretWindow.openForHuman). 칸 찾기: 스텝 target → 없으면 사전에서 secretKind cert_password 항목이 정확히 하나일 때 그것.
 // 2. 사람 직접 입력(manual): 홈택스 인증서 선택창(MagicLine4 iframe#dscert, 다른 출처라 엔진·금고가 안을 못 읽고 못 채운다)이 떠 있거나,
 //    칸이 사전에 없거나, 금고가 칸을 찾지 못하면 곧바로 { code: 'human.cert_waiting' }을 돌려준다. 엔진은 그 창에 아무것도 넣지 않는다.
@@ -38,8 +38,6 @@ export interface CertSecretInput {
   dict: SelectorDict;
   strings: Readonly<Record<string, string>>;
   page: {
-    /** 실행 탭을 앞으로(창 열기 전). 실패해도 계속한다. */
-    bringToFront(): Promise<void>;
     /** 지금 화면 글자(틀린 비밀번호 안내 확인): 본 프레임과 홈택스 인증서 창(iframe#dscert) 안. 저널·로그에 쓰지 않는다. */
     text(): Promise<string>;
     /** 홈택스 인증서 선택창(CERT_FRAME_CSS)이 보이는가. iframe 안은 읽지 않는다. */
@@ -95,7 +93,7 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
       this.i.journal('human.secret_retry_limit', { stepId: r.stepId, wrong: this.wrong });
       return { code: 'sign.password_retry_limit' };
     }
-    await this.i.page.bringToFront().catch(() => {});
+    // 실행 탭·Chrome 창을 앞으로 올리지 않는다(대표 지시 2026-11-14): 비밀번호는 앱 금고 창에서 받고, 사람 차례는 앱 패널에서 한다.
     const manual = (reason: string): SecretOutcome => {
       this.i.journal('human.secret_manual', { stepId: r.stepId, reason });
       return { code: CERT_WAITING };

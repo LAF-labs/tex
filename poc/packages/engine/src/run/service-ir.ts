@@ -484,7 +484,6 @@ export class IrRun {
       ? new CertSecretPort({
         vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
         page: {
-          bringToFront: () => page.bringToFront(),
           // 틀린 비밀번호 안내는 홈택스 인증서 창(iframe#dscert, ML4Web) 안에 뜬다: 본 프레임과 그 창의 글자를 함께 본다
           text: async () => {
             const main = await page.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
