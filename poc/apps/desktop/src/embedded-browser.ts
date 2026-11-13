@@ -25,6 +25,8 @@ interface CdpFrame {
 /** 이보다 오래 답이 없는 보기 명령은 진단으로 남긴다(엔진 동작 제한 10초보다 짧게). */
 const SLOW_CMD_MS = 3000;
 const WATCHED_CMD = /^(Input|DOM)\./;
+/** 앱 안 탭의 JS 대화상자를 CDP(엔진 정책)가 닫지 않으면 이 뒤에 앱이 닫는다(엔진 confirm 판정 대기 25초보다 길게). */
+const DIALOG_FALLBACK_MS = 60_000;
 
 interface Tab {
   view: WebContentsView;
@@ -274,6 +276,7 @@ export class EmbeddedBrowser {
       throw e;
     }
     this.policy(wc);
+    this.quietDialogs(wc);
     // 패널이 접히거나 다른 창에 가려져도 자동화 타이머·그리기가 늦춰지지 않게(옛 Chrome의 --disable-renderer-backgrounding과 같은 뜻)
     wc.setBackgroundThrottling(false);
     wc.debugger.attach('1.3');
@@ -387,6 +390,35 @@ export class EmbeddedBrowser {
   }
 
   /** 보기 이동·새 창·권한 규칙. 셸 하드닝(harden.ts)은 이 파티션의 이동만 막지 않는다(NAV_EXEMPT_SESSIONS). */
+  /**
+   * 앱 안 탭의 JS 대화상자(alert·confirm·prompt)를 앱 창에 네이티브 상자로 띄우지 않는다.
+   * Electron 45 기본 처리기(내부 '-run-dialog')는 owner 창에 showMessageBox를 띄운다. 그런데 금고·엔진의 CDP가
+   * Page.handleJavaScriptDialog로 먼저 닫아도 Electron은 그 상자를 닫지 않아 앱 창에 남는다(예행 run-7ed40be5 "정상적인 사업자번호입니다. [OK]",
+   * 측정: alert 뒤 260×96 창이 남음). Chromium은 DevTools와 대화상자 관리자에 따로 닫기 콜백을 주므로, 여기서는 아무것도 띄우지 않고
+   * CDP(엔진 정책: alert 수락, confirm 판정)가 닫게 둔다. DIALOG_FALLBACK_MS 안에 닫히지 않으면(엔진이 안 붙음) alert는 확인, 나머지는 취소로 닫는다.
+   * 이미 CDP가 닫은 대화상자에 늦게 부른 콜백은 Chromium이 버린다.
+   */
+  private quietDialogs(wc: WebContents): void {
+    const ev = wc as unknown as NodeJS.EventEmitter;
+    ev.removeAllListeners('-run-dialog');
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    ev.on('-run-dialog', (info: { dialogType?: unknown } | null, callback: (ok: boolean, input: string) => void) => {
+      const type = String(info?.dialogType ?? '');
+      this.o.log.event('main.embedded_dialog', { type });
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        callback(type === 'alert', '');
+      }, DIALOG_FALLBACK_MS);
+      timers.add(timer);
+    });
+    const clear = () => {
+      for (const x of timers) clearTimeout(x);
+      timers.clear();
+    };
+    ev.on('-cancel-dialogs', clear);
+    wc.once('destroyed', clear);
+  }
+
   private policy(wc: WebContents): void {
     const guard = (e: { url: string; preventDefault(): void }) => {
       if (BLOCKED_SCHEMES.test(e.url)) {
