@@ -94,7 +94,7 @@ export interface FakeKnobs {
    */
   realLoginNav: boolean;
   /**
-   * 홈택스 시스템 점검(2026-11-14 실화면): 모든 주소가 307로 /info_page.html에 간다. 글은 실제 안내와 같은 꼴
+   * 홈택스 시스템 점검(2026-11-14 실화면): 최상위 문서는 그대로고 WebSquare 화면 XML(/ui/pp/index_pp.xml)만 307로 /info_page.html에 간다. 안내 글은 실제와 같은 꼴
    * "홈택스 시스템 점검 안내 … 중단일시 : <날짜>(요일) 00:00 ~ 06:00".
    */
   maintenance: boolean;
@@ -511,7 +511,16 @@ const CLIENT = String.raw`
     box.querySelector('#' + id + '_wframe_trigger2').onclick = close;
     box.querySelector('#' + id + '_wframe_btnClose').onclick = close;
   }
-  setTimeout(() => { screens[C.screen](); noticeLayer(); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
+  setTimeout(() => {
+    // 점검: 화면 XML이 점검 안내로 넘어가 본문이 안 그려지고 꼬리말만 남는다(실화면).
+    if (C.maintenance) {
+      fetch('/ui/pp/index_pp.xml').catch(() => {});
+      wrap.innerHTML = '<footer id="mf_wfFooter">국세청 · 국세상담센터 126</footer>';
+      proc.style.display = 'none';
+      return;
+    }
+    screens[C.screen](); noticeLayer(); if (!busy) proc.style.display = 'none';
+  }, C.renderDelayMs);
 })();
 `;
 
@@ -621,9 +630,13 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
   let teetOrigin = '';
   const origin = await listen((req, res) => {
     const u = new URL(req.url ?? '/', 'http://x');
-    if (knobs.maintenance && u.pathname === W2) {
-      res.writeHead(307, { location: '/info_page.html' });
-      return res.end();
+    // 점검(2026-11-14 실화면 run-1dcc8294): 최상위 문서는 그대로 오고, WebSquare 화면 XML 요청만 307 → /info_page.html.
+    if (u.pathname === '/ui/pp/index_pp.xml') {
+      if (knobs.maintenance) {
+        res.writeHead(307, { location: '/info_page.html' });
+        return res.end();
+      }
+      return send(res, 200, 'text/xml; charset=utf-8', '<xml/>');
     }
     if (u.pathname === '/info_page.html') {
       return send(res, 200, 'text/html; charset=utf-8', '<!doctype html><html lang="ko"><head><meta charset="utf-8"></head><body><div class="info"><h1>홈택스 시스템 점검 안내</h1><p>홈택스 시스템 점검 작업으로 인하여 아래와 같이 서비스가 중지되오니 시스템 이용에 참고하시기 바랍니다.</p><p>중단일시 : 2026.11.14(토) 00:00 ~ 06:00</p><p>이용에 불편을 드려서 죄송합니다.</p></div></body></html>');
@@ -631,7 +644,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn, knobs.realLoginNav);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels, syncConfirmAlert: knobs.syncConfirmAlert }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, maintenance: knobs.maintenance, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels, syncConfirmAlert: knobs.syncConfirmAlert }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav, knobs.certPwType));
     if (u.pathname === '/_fx/certpw') {

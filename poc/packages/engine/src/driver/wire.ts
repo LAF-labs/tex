@@ -62,6 +62,20 @@ export async function wireRun(i: RunWiringInput): Promise<RunWiring> {
     if (!portal(r.url())) return;
     const req = r.request();
     enforcer.observeStatus(r.status(), req.resourceType() === 'document' && req.frame() === main());
+    // 홈택스 점검(2026-11-14 실화면 run-1dcc8294): 최상위 주소·화면 글은 그대로고, WebSquare 화면 XML 요청만 307로 /info_page.html에 간다.
+    // 그 응답이 오면 주소 신호로 보고, 본문(안내 글)을 글 신호로 넘겨 끝 시각을 읽게 한다. 본문은 저장하지 않는다.
+    if (isInfoPage(r.url())) {
+      // 본문을 먼저 읽어 주소와 같이 넘긴다(주소만 먼저 걸리면 실행이 바로 끝나 끝 시각을 못 싣는다). 본문을 못 읽으면 주소만.
+      const url = r.url();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      // 응답 본문(r.text)은 금고 중계로 오지 않았다(가짜 실측: 끝나지 않음). 같은 출처에서 안내 문서를 한 번 더 받아 읽는다(GET, 점검 안내뿐).
+      const read = page.mainFrame().evaluate(async (u: string) => (await fetch(u, { credentials: 'omit' })).text(), url).catch(() => null);
+      const body = Promise.race([read, new Promise<null>((res) => (timer = setTimeout(() => res(null), INFO_BODY_WAIT_MS)))]);
+      void body.then((h) => {
+        clearTimeout(timer);
+        enforcer.observe(h ? { url, text: htmlText(h) } : { url });
+      });
+    }
   };
   const onDialog = (d: Dialog) => {
     const kind = d.type() as DialogKind;
@@ -102,4 +116,30 @@ export async function wireRun(i: RunWiringInput): Promise<RunWiring> {
       await i.interceptor?.stop();
     },
   };
+}
+
+/** 점검 안내 본문을 기다리는 상한(ms). 못 받으면 주소 신호만 건다(끝 시각 없음). */
+const INFO_BODY_WAIT_MS = 1_500;
+
+/** 포털 점검 안내 문서(/info_page.html)인가(경로만 본다). */
+function isInfoPage(url: string): boolean {
+  try {
+    return new URL(url).pathname === '/info_page.html';
+  } catch {
+    return false;
+  }
+}
+
+/** HTML → 글(스크립트·스타일 빼고 태그 지움, 공백 접기). 신호 사전 대조·점검 끝 시각 읽기에만 쓴다. */
+function htmlText(h: string): string {
+  return h
+    .slice(0, 200_000)
+    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
