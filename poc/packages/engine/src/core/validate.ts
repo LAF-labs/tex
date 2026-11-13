@@ -204,6 +204,13 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       if (!isAnchored(strings[s.value]!)) bad('V-01', 'wait dialog 패턴이 ^…$ 앵커가 아님', s.id);
     }
   }
+  // IR rev v1.3.7: 공지 레이어 닫기는 closeAffordance 항목만(커밋·비밀 아님, 누르면 닫히기만 한다).
+  if (ir.closeLayers && !info.has(ir.closeLayers.until)) bad('V-02', `closeLayers.until ${ir.closeLayers.until}가 스텝에 없음`);
+  for (const k of ir.closeLayers?.targets ?? []) {
+    const e = entry(k);
+    if (!e) bad('V-02', `closeLayers ${k}가 셀렉터 사전에 없음`, undefined, k);
+    else if (!e.closeAffordance || e.commits || isSecretEntry(e)) bad('V-02', 'closeLayers 항목이 closeAffordance가 아니거나 커밋·비밀 항목', undefined, k);
+  }
   // IR rev v1.3.6: 닫을 안내 창 제목 패턴은 RE2이고 ^…$ 앵커(제목 전체에 맞춘다. 다른 창을 닫지 않게).
   for (const k of ir.closeWindows ?? []) {
     if (strings[k] === undefined) bad('V-02', `closeWindows ${k}가 strings에 없음`);

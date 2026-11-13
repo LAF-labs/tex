@@ -1,5 +1,7 @@
 # D02. 플레이북 IR 스펙
 
+> 2026-11-13 부장 지시(H-01 2.3.1, 실화면 첫 실행이 메인 공지 레이어 아래에서 멈춤): IR rev v1.3.7. 최상위 `closeLayers{targets, until}`: 첫 스텝부터 `until` 스텝(또는 첫 게이트) 전까지 스텝마다 `targets`(closeAffordance 항목, 커밋·비밀 아님)를 해석해, 보이고 동일성이 맞고 하나뿐이면 가드된 click으로 누른다. 없거나 틀리거나 여럿이면 건너뛰고 실행을 멈추지 않는다. 정적 규칙: targets는 closeAffordance·비커밋·비밀 아님, until은 있는 스텝(V-02).
+>
 > 2026-11-13 부장 결정(H-01 2.3.0, 대표 지시 "정확하고 프로답게"): IR rev v1.3.6·셀렉터 v1.1.2. ① 셀렉터 `expect.editable`(readonly·disabled 아닌 칸만 받는다), css 후보 `[id$="_접미"]`(로드마다 바뀌는 WebSquare uuid id) ② `wait for:"gone"`(대상이 없거나 안 보이는 상태가 500ms 이어지면 통과, 처리 중 표시 사라짐) ③ 목록 항목 `rows{item,name,selected}`와 스텝 `pick{target, by|use:"selected", remember:"certName", ifNone, then}`(행이 하나면 그 행, 여럿이면 by 값과 이름 칸이 같은 행 하나, 못 고르면 ifNone. 고른 뒤 선택 표지가 그 행이어야 성공. remember는 고른 이름을 프로필 cert_name에 둔다), `signFlow.certPick{target, by}`(못 고르면 서명 차례) ④ 최상위 `closeWindows`(strings ^…$ 제목 패턴, 실행 중 뜬 새 창 가운데 맞는 안내 창만 닫는다). 정적 규칙: pick·certPick 타깃은 rows 항목이고 커밋·비밀 항목이 아니다(V-02), gone 대상은 비밀 칸이 아니다(V-02), closeWindows 패턴은 RE2·앵커(V-01).
 > 2026-11-06 팀장 결정(ADR-039): §2에 manifest `portal: fixture`(엔진 시험 가짜 페이지 패키지 전용)를 두고, §6.1에 V-25(fixture는 `http://127.0.0.1:PORT`·`http://[::1]:PORT`만, 실제 포털과 섞이면 거부)를 더하고 V-06에 그 예외를 적음. 스키마 IR v1.3.5·manifest v1.3.1·셀렉터 v1.1.1(엔진 PR-A).
 > 2026-11-06 팀장 결정: §6.1에 V-04a(비가역 스텝 X마다 자기 verify, `X.verify` 중복이면 로드 거부, V-03c′의 Y→Xc verify 재통과는 허용)를 더함(엔진 PR-B).

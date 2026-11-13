@@ -12,6 +12,7 @@ import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
 import { compileRe2 } from '../core/re2.ts';
 import { newScope } from '../core/scope.ts';
+import { resolveTarget } from '../core/resolve.ts';
 import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/steps.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
@@ -426,6 +427,17 @@ export class IrRun {
     };
     const redactor = new Redactor({ runId: i.runId });
     const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal }), journal: i.journal } : undefined;
+    // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
+    const layers = ir.closeLayers?.targets ?? [];
+    let layersDone = layers.length === 0;
+    const closeLayers = async (): Promise<void> => {
+      for (const k of layers) {
+        const r = await resolveTarget(reader, dict, k).catch(() => null);
+        if (!r?.ok) continue;
+        const c = await act.click(r.t).catch(() => ({ ok: false as const, code: 'step.port_error' }));
+        i.journal('layer.closed', { target: k, ok: c.ok });
+      }
+    };
     const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
     if (i.profileWrite) env.profileWrite = i.profileWrite;
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
@@ -506,6 +518,8 @@ export class IrRun {
       hardStop: () => this.denial()?.hardStop ?? false,
       beforeStep: async (s) => {
         curStep = s.id;
+        if (s.type === 'gate' || s.id === ir.closeLayers?.until) layersDone = true;
+        if (!layersDone) await closeLayers();
         // 스텝 경계: status가 바뀌었으면 조율기가 이 스텝 전에 멈춘다(요청률 지연을 기다리지 않는다).
         if (this.recheck()) return { ok: true };
         const p = PHASE_OF[s.id];

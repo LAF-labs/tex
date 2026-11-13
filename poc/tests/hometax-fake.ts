@@ -70,6 +70,12 @@ export interface FakeKnobs {
    * 커밋 없는 안내 창이다. 열린 창을 닫았는지 state.noticeClosed로 본다.
    */
   certNoticePopup: boolean;
+  /**
+   * 화면을 그릴 때마다(메인·로그인·폼) 공지 레이어가 뜬다(2026-11-13 실화면: "시스템 점검을 위한 서비스 일시 중단 안내", X 닫기).
+   * WebSquare w2window 꼴: 창 X `<창 id>_close`, 본문 [닫기] `<창 id>_wframe_btn_close`(2026-11-10·11 기록의 이름 규칙). 창 id 숫자는 로드마다 바뀐다.
+   * 덮개가 화면 전체의 클릭을 막는다. 닫힌 횟수는 state.layerClosed.
+   */
+  mainNotice: boolean;
 }
 
 export interface HometaxFake {
@@ -92,6 +98,9 @@ export interface HometaxFake {
     /** 안내 팝업을 연 횟수와 닫힌 횟수(창이 닫힌 것을 여는 쪽 화면이 알린다). */
     noticeOpened: number;
     noticeClosed: number;
+    /** 공지 레이어를 띄운 횟수와 닫힌 횟수. */
+    layerShown: number;
+    layerClosed: number;
   };
   /** 사람: 로그인을 마쳤다(로그인 화면이 메인으로 넘어간다). */
   login(): void;
@@ -447,7 +456,23 @@ const CLIENT = String.raw`
     };
   }
 
-  setTimeout(() => { screens[C.screen](); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
+  function noticeLayer() {
+    if (!C.mainNotice || !['main', 'login', 'issue'].includes(C.screen)) return;
+    const id = 'mf_wfHeader_' + uuid() + '_noticePop';
+    const cover = document.createElement('div');
+    cover.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.3)';
+    const box = document.createElement('div');
+    box.id = id; box.className = 'w2window w2popup_window';
+    box.style.cssText = 'position:fixed;top:60px;left:60px;z-index:100001;background:#fff;border:1px solid #333;padding:8px;width:420px';
+    box.innerHTML = '<div class="w2window_header"><span>공지사항</span><a id="' + id + '_close" class="w2window_close" href="#" title="창닫기">창닫기</a></div>' +
+      '<div id="' + id + '_wframe"><p>시스템 점검을 위한 서비스 일시 중단 안내</p><input type="button" id="' + id + '_wframe_btn_close" value="닫기"></div>';
+    document.body.append(cover, box);
+    fetch('/_fx/layer?ev=shown');
+    const close = (e) => { e.preventDefault(); cover.remove(); box.remove(); fetch('/_fx/layer?ev=closed'); };
+    box.querySelector('#' + id + '_close').onclick = close;
+    box.querySelector('#' + id + '_wframe_btn_close').onclick = close;
+  }
+  setTimeout(() => { screens[C.screen](); noticeLayer(); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
 })();
 `;
 
@@ -511,11 +536,11 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
-    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true,
+    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false,
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0 };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -552,7 +577,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs));
     if (u.pathname === '/_fx/certpw') {
@@ -567,6 +592,11 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       state.certUses.push({ mode, how: u.searchParams.get('how') === 'typed' ? 'typed' : 'human', cn });
       if (mode === 'login') state.loggedIn = true;
       return json(res, { ok: true });
+    }
+    if (u.pathname === '/_fx/layer') {
+      if (u.searchParams.get('ev') === 'shown') state.layerShown++;
+      else state.layerClosed++;
+      return json(res, {});
     }
     if (u.pathname === '/_fx/state') return json(res, { loggedIn: state.loggedIn });
     if (u.pathname === '/pp/certNotice.html') {

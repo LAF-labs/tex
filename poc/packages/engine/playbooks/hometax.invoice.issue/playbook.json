@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.3.0",
+ "version": "2.3.1",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -72,13 +72,6 @@
    "reentry": "reload"
   },
   {
-   "id": "s0a",
-   "type": "wait",
-   "for": "gone",
-   "value": "hometax.common.processing",
-   "timeoutMs": 30000
-  },
-  {
    "id": "s2",
    "type": "branch",
    "on": {
@@ -96,13 +89,6 @@
    "id": "s3",
    "type": "goto",
    "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&menuCd=index3"
-  },
-  {
-   "id": "s3a",
-   "type": "wait",
-   "for": "gone",
-   "value": "hometax.common.processing",
-   "timeoutMs": 30000
   },
   {
    "id": "s4",
@@ -664,5 +650,14 @@
  },
  "closeWindows": [
   "login.certNoticeWindow"
- ]
+ ],
+ "closeLayers": {
+  "targets": [
+   "hometax.layer.btnClose",
+   "hometax.layer.closeLink",
+   "hometax.layer.closeButton",
+   "hometax.layer.closeGeneric"
+  ],
+  "until": "s12"
+ }
 }

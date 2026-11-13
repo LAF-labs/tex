@@ -983,6 +983,78 @@
     "by": "h01-package-real",
     "reason": "WebSquare 처리 중 표시(2026-11-11 실화면 #mf_mf_wq_uuid_*_wq_processMsgComp, uuid는 로드마다 바뀐다). wait gone으로 사라짐을 기다린다"
    }
+  },
+  "hometax.layer.btnClose": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_wframe_btn_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^(닫기|창 ?닫기)$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnClose",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.layer.closeLink": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "link",
+   "namePattern": "^.{0,12}$",
+   "frame": "main",
+   "landmark": "hometax.layer.closeLink",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-11"
+  },
+  "hometax.layer.closeButton": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^.{0,12}$",
+   "frame": "main",
+   "landmark": "hometax.layer.closeButton",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-11"
+  },
+  "hometax.layer.closeGeneric": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "generic",
+   "namePattern": "^.{0,12}$",
+   "frame": "main",
+   "landmark": "hometax.layer.closeGeneric",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-11"
   }
  },
  "commitEndpoints": [

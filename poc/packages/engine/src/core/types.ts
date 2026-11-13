@@ -167,6 +167,11 @@ export interface PlaybookIR {
   pacing?: { profile?: 'interactive' | 'daemon' };
   /** IR rev v1.3.6: 실행 중 새 창(팝업)이 뜨면 제목이 이 strings 패턴(^…$)에 맞을 때 닫는다(커밋 없는 안내 창). 다른 창은 두고 저널만. */
   closeWindows?: string[];
+  /**
+   * IR rev v1.3.7: 공지 레이어 닫기. 첫 스텝부터 until 스텝(또는 첫 게이트) 전까지 스텝마다 targets(closeAffordance 항목)를 본다.
+   * 보이고 동일성이 맞고 하나뿐이면 누른다. 없거나 틀리거나 여럿이면 건너뛴다(실행을 멈추지 않는다).
+   */
+  closeLayers?: { targets: string[]; until: string };
 }
 
 // ---- 셀렉터 사전(D02 §2.1) ----
