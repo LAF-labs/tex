@@ -255,3 +255,21 @@ describe('Redactor.addSpanFinder(대화 경로 추가 마스킹, PR #296 판정 
     assert.equal(r.apply('01012345678', { frame: 'none' }).redacted, '[PHONE_1]');
   });
 });
+
+describe('이름 사전 순서(PR #296 r3 판정)', () => {
+  it('공백을 뺀 길이로 긴 이름부터 맞춘다: 띄운 변형 "대 한 상 사"가 "대한상사몰"의 앞 네 자를 먹지 않는다', () => {
+    const r = new Redactor({ runId: 'r' });
+    r.addRecord({ recordId: 'cp:1', names: ['대한상사'] });
+    r.addName('대 한 상 사', { variant: true });
+    r.map.bindRecord(r.map.token('NAME', '대 한 상 사'), 'cp:1');
+    r.addRecord({ recordId: 'cp:2', names: ['대한상사몰'] });
+    r.addRecord({ recordId: 'cp:3', names: ['한빛 전자'] });
+    r.addRecord({ recordId: 'cp:4', names: ['한빛전자몰'] });
+    for (const [text, rec] of [['대한상사몰에', 'cp:2'], ['대 한 상 사에', 'cp:1'], ['한빛전자몰에', 'cp:4'], ['한빛 전자에', 'cp:3']] as const) {
+      const out = r.apply(text, { frame: 'none' }).redacted;
+      const tok = out.match(/\[NAME_\d+\]/)![0];
+      assert.equal(r.map.recordOf(tok), rec, `${text} → ${out}`);
+      assert.equal(out.replace(tok, ''), '에', out);
+    }
+  });
+});

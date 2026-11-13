@@ -143,6 +143,8 @@ export type SpanFinder = (normalized: string) => Span[];
 export class Redactor {
   readonly map: TokenMap;
   private readonly names = new Set<string>();
+  /** 대화 중에 더한 변형 이름(addName variant). 길이가 같으면 장부 이름 뒤에 선다. */
+  private readonly variants = new Set<string>();
   private nameRe: RegExp | null = null;
   private readonly finders: SpanFinder[] = [];
 
@@ -156,13 +158,15 @@ export class Redactor {
     this.finders.push(f);
   }
 
-  /** D06 §4 ② 실행 중 사전 등재. */
-  addName(name: string): void {
+  /** D06 §4 ② 실행 중 사전 등재. variant는 대화 중에 본 장부 이름 변형이다(같은 글자로 장부 이름이 오면 장부 이름이 된다). */
+  addName(name: string, opts: { variant?: boolean } = {}): void {
     const n = normalizeForRedaction(name).replace(/\s+/g, ' ').trim();
-    if ([...n].length >= 2 && !this.names.has(n)) {
+    if ([...n].length < 2) return;
+    if (!this.names.has(n)) {
       this.names.add(n);
+      if (opts.variant) this.variants.add(n);
       this.nameRe = null;
-    }
+    } else if (!opts.variant && this.variants.delete(n)) this.nameRe = null;
   }
 
   /** 레코드 등재: 이름은 사전에, 이메일·사업자번호는 토큰을 미리 만들어 레코드에 묶는다. */
@@ -178,8 +182,12 @@ export class Redactor {
   private dictRe(): RegExp | null {
     if (!this.names.size) return null;
     if (!this.nameRe) {
-      // 긴 이름부터. 사전 이름 사이의 공백 변형(“가나 상사”)도 잡는다.
-      const alts = [...this.names].sort((a, b) => b.length - a.length).map((n) => n.replace(ESCAPE_RE, '\\$&').replace(/ /g, '\\s?'));
+      // 긴 이름부터. 길이는 공백을 뺀 글자 수다(공백은 \s?로 바꿔 매칭하므로 "대 한 상 사"는 4자다. 7자로 세면 "대한상사몰" 앞에 서서 그 앞 네 자를 먹는다).
+      // 길이가 같으면 장부 이름이 대화 중에 더한 변형보다 앞선다. 사전 이름 사이의 공백 변형("가나 상사")도 잡는다.
+      const len = (n: string) => [...n.replace(/ /g, '')].length;
+      const alts = [...this.names]
+        .sort((a, b) => len(b) - len(a) || Number(this.variants.has(a)) - Number(this.variants.has(b)))
+        .map((n) => n.replace(ESCAPE_RE, '\\$&').replace(/ /g, '\\s?'));
       this.nameRe = new RegExp(alts.join('|'), 'gu');
     }
     return this.nameRe;

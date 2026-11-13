@@ -3,18 +3,19 @@
 import { SandboxError, SHEET_LIMITS } from './limits.ts';
 import { emptyFlags, looksLikeFormula, trimRow, type Cell, type SheetOutput } from './sheet.ts';
 
-export function decodeText(bytes: Uint8Array): { text: string; encoding: 'utf-8' | 'euc-kr' } {
+/** prefer: 문서가 밝힌 인코딩(HTML meta charset). 그 인코딩으로 엄격하게 먼저 풀어 보고, 안 되면 UTF-8 → EUC-KR 순 */
+export function decodeText(bytes: Uint8Array, prefer?: 'utf-8' | 'euc-kr'): { text: string; encoding: 'utf-8' | 'euc-kr' } {
   if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return { text: new TextDecoder('utf-8').decode(bytes.subarray(3)), encoding: 'utf-8' };
   if ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff)) throw new SandboxError('text_decode_failed'); // UTF-16은 받지 않는다
-  try {
-    return { text: new TextDecoder('utf-8', { fatal: true }).decode(bytes), encoding: 'utf-8' };
-  } catch {
+  const order: Array<'utf-8' | 'euc-kr'> = prefer === 'euc-kr' ? ['euc-kr', 'utf-8'] : ['utf-8', 'euc-kr'];
+  for (const encoding of order) {
     try {
-      return { text: new TextDecoder('euc-kr', { fatal: true }).decode(bytes), encoding: 'euc-kr' };
+      return { text: new TextDecoder(encoding, { fatal: true }).decode(bytes), encoding };
     } catch {
-      throw new SandboxError('text_decode_failed');
+      // 다음 인코딩
     }
   }
+  throw new SandboxError('text_decode_failed');
 }
 
 /** 첫 줄에서 쉼표와 탭 중 많은 쪽 */

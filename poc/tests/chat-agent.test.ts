@@ -635,3 +635,70 @@ describe('PR #296 r2 판정 반영', () => {
     assert.equal(parseKrw('1.5만'), 15_000);
   });
 });
+
+// PR #296 r3 판정(mid-verify/pr-296-final-r3.md) 반영: 사전은 공백을 뺀 길이로 긴 이름부터 맞춘다. 장부에 없는 긴 이름의 일부는 되묻는다.
+// 이 묶음도 장부에 거래처를 더하므로 파일 맨 끝에 둔다.
+describe('PR #296 r3 판정 반영', () => {
+  before(() => {
+    const repo = new CounterpartyRepo(db);
+    for (const [name, n] of [['대한상사', 87], ['대한상사몰', 88], ['한빛전자', 89], ['한빛전자몰', 90], ['A상사몰코리아', 91]] as const) cpId[name] = repo.create({ name, bizNo: syntheticBizNo(n) }).id;
+  });
+
+  async function drafted(a: ChatAgent, pc: FakePc, text: string): Promise<string | null> {
+    script(
+      (b) => fc('invoice_draft', { counterparty: toks(nowLine(b), 'NAME')[0] ?? '없음', amount: toks(nowLine(b), 'AMT')[0] ?? null, vat: null, item: '컨설팅' }),
+      () => reply({ kind: 'did', text: '카드를 만들었어요.' }),
+    );
+    const c = (await say(a, pc, text)).calls.find((x) => x.tool === 'invoice_draft');
+    return c && c.tool === 'invoice_draft' ? Object.entries(cpId).find(([, id]) => id === c.counterpartyId)![0] : null;
+  }
+  const session = async (texts: string[]) => {
+    const a = agent();
+    const pc = new FakePc();
+    const got: Array<string | null> = [];
+    for (const t of texts) got.push(await drafted(a, pc, t));
+    return got;
+  };
+
+  it('앞 턴에 짧은 이름을 띄어 써도 다음 턴의 정확한 긴 이름은 긴 거래처로 풀린다(재현 l)', async () => {
+    assert.deepEqual(await session(['대 한 상 사에 550000 끊어줘', '대한상사몰에 550000 끊어줘', '대한상사에 550000 끊어줘', '대 한 상 사 몰에 550000 끊어줘']), ['대한상사', '대한상사몰', '대한상사', '대한상사몰']);
+  });
+
+  it('#300 화면 재현: "A 상 사에" 다음 "A상사몰에"는 A상사몰, 장부에 없는 "C테크몰에"는 C테크로 풀지 않고 되묻는다', async () => {
+    assert.deepEqual(await session(['A 상 사에 200000 끊어줘', 'A상사몰에 200000 끊어줘', 'C테크몰에 300000 끊어줘', 'C테크에 300000 끊어줘']), ['A상사', 'A상사몰', null, 'C테크']);
+  });
+
+  it('공백 든 장부 이름(한빛 전자)이 있어도 붙여 쓴 긴 이름은 긴 거래처로 풀린다(재현 m, 새 세션)', async () => {
+    assert.deepEqual(await session(['한빛전자몰에 550000 끊어줘']), ['한빛전자몰']);
+    assert.deepEqual(await session(['한빛전자몰한테 550000 끊어줘']), ['한빛전자몰']);
+  });
+
+  it('띄어 쓴 짧은 이름 뒤에도 긴 이름이 맞게 풀린다(재현 f). 주인이 둘인 이름(한빛전자·한빛 전자)은 되묻는다', async () => {
+    assert.deepEqual(await session(['한 빛 전 자에 550000 끊어줘', '한빛전자몰에 550000 끊어줘']), [null, '한빛전자몰']);
+  });
+
+  it('긴 세션: 앞 턴의 변형들이 뒤 턴의 오타·잘린 이름을 짧은 거래처로 끌고 가지 않는다', async () => {
+    assert.deepEqual(
+      await session(['a 상 사 몰에 550000 끊어줘', 'A 상사에 550000 끊어줘', 'A상사물에 550000 끊어줘', 'A상사몰코리야에 550000 끊어줘', 'A상사몰코에 550000 끊어줘', 'A상사몰에 550000 끊어줘']),
+      ['A상사몰', 'A상사', null, 'A상사몰코리아', null, 'A상사몰'],
+    );
+  });
+
+  it('장부에 없는 긴 이름의 일부("신A상사", 잘린 "A상사몰코리", 띄어 쓴 "B 상사 몰")는 그 거래처로 풀지 않고 되묻는다. 이다 꼴·건·좀 같은 말이 붙은 것은 그대로 푼다', async () => {
+    for (const [text, want] of [
+      ['신A상사에 550000 끊어줘', null],
+      ['A상사몰코리에 550000 끊어줘', null],
+      ['B 상사 몰에 550000 끊어줘', null],
+      ['B 상사 몰 550000 끊어줘', null],
+      ['B 상사 좀 550000 끊어줘', 'B상사'],
+      ['B 상사 건 550000 끊어줘', 'B상사'],
+      ['B 상사 거래로 550000 끊어줘', 'B상사'],
+      ['B상사 에 550000 끊어줘', 'B상사'],
+      ['A상사인데 550000 끊어줘', 'A상사'],
+      ['A상사건 550000 끊어줘', 'A상사'],
+      ['A상사꺼 550000 끊어줘', 'A상사'],
+      ['(주)A상사에 550000 끊어줘', 'A상사'],
+    ] as const)
+      assert.deepEqual(await session([text]), [want], text);
+  });
+});

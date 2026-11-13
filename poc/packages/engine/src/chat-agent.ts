@@ -502,6 +502,7 @@ export class ChatAgent {
     const a = c.arguments as Record<string, unknown>;
     const cp = (v: unknown): string | null => {
       if (typeof v !== 'string') return null;
+      if (gluedName(turn.user, v.trim(), /\s/.test(s.red.map.valueOf(v.trim()) ?? ''))) return null;
       const r = detokenize({ counterparty: v.trim() }, s.red.map, { recordFields: ['counterparty'] });
       const id = r.ok ? (r.value as { counterparty: { recordId: string } }).counterparty.recordId : '';
       return id.startsWith('cp:') ? id.slice(3) : null;
@@ -691,7 +692,7 @@ export class ChatAgent {
         taken.push([start, end]);
         const lit = m[0].replace(/\s+/g, ' ').trim();
         if (lit === x.name) continue;
-        red.addName(lit);
+        red.addName(lit, { variant: true });
         if (owners.get(loose(x.name))!.size !== 1) continue;
         try {
           red.map.bindRecord(red.map.token('NAME', lit), x.recordId);
@@ -720,7 +721,7 @@ export class ChatAgent {
     for (const a of typoAliases(text, recs.filter((r) => r.recordId.startsWith('cp:')).map((r) => ({ recordId: r.recordId, name: r.names[0]! })), known)) {
       try {
         if (a.recordId) red.addRecord({ recordId: a.recordId, names: [a.alias] });
-        else red.addName(a.alias);
+        else red.addName(a.alias, { variant: true });
       } catch {
         // 앞 턴에서 다른 거래처 별칭으로 묶인 낱말이면 그대로 둔다
       }
@@ -728,14 +729,41 @@ export class ChatAgent {
   }
 }
 
-/** 이름 뒤에 붙는 조사(겹쳐 붙기도 한다: 에서는, 한테요). 뒤에 다른 한글이 이어지면 조사가 아니다. */
-const JOSA_AFTER = /^(?:이에요|에서|에게|한테|께서|이랑|으로|부터|까지|하고|처럼|보다|이나|이요|예요|이야|께|에|도|랑|와|과|은|는|이|가|을|를|의|로|만|나|요|야)+(?![가-힣])/u;
+/** 거래처 이름 뒤에 붙어도 이름의 일부가 아닌 말: 조사, 이다 꼴(인데·이고·라고), 건·거·꺼·것·쪽·측·님·서(에서 줄임) */
+const NAME_TAIL = /^(?:입니다|이라고|이니까|이라서|에다가|이에요|에서|에게|인데|이고|이니|이라|라고|이지|이었|에다|보고|더러|인|였|한테|께서|이랑|으로|부터|까지|하고|처럼|보다|이나|이요|예요|이야|께|에|도|랑|와|과|은|는|이|가|을|를|의|로|만|나|요|야|건|거|꺼|것|쪽|측|님|서)*(?![\p{L}\p{N}])/u;
+
+/** 잘린 이름 뒤에 붙는 격조사(끝 글자가 이것이면 오타가 아니라 잘린 이름 + 조사로 본다). 야·요·이처럼 이름 끝 글자로도 흔한 것은 뺀다. */
+const CASE_JOSA = /^(?:에서|에게|한테|께서|이랑|으로|에|께|도|랑|와|과|은|는|을|를|의|로|만)(?![가-힣])/u;
+
+/**
+ * 이번 문장에서 이 이름 토큰이 모두 다른 글자에 붙어 있는가("신[NAME_1]에", "[NAME_1]몰에"). 그러면 장부에 없는 긴 이름의 일부라
+ * 그 거래처로 풀지 않는다(되묻기). 이번 문장에 없는 토큰(앞 턴에서 온 것)은 보지 않는다.
+ */
+export function gluedName(user: string, tok: string, spaced = false): boolean {
+  if (!/^\[NAME_\d+\]$/.test(tok)) return false;
+  let at = user.indexOf(tok);
+  if (at < 0) return false;
+  for (; at >= 0; at = user.indexOf(tok, at + 1)) {
+    const before = user.slice(0, at);
+    const after = user.slice(at + tok.length);
+    if (!/[\p{L}\p{N}]$/u.test(before) && NAME_TAIL.test(after) && !(spaced && trailingSyllable(after))) return false;
+  }
+  return true;
+}
+
+/** 띄어 쓴 이름 뒤에 한 글자 낱말이 이어지는가("A 상사 몰에"): 이름을 띄어 쓰는 사람에게 그 글자는 이름의 끝일 수 있다. 조사·흔한 한 글자 부사는 아니다. */
+const ONE_SYLLABLE_WORDS = new Set([...'좀또꼭더다잘딱막쫌왜총약각첫새앞뒤몇한두세네전분씨및등']);
+function trailingSyllable(after: string): boolean {
+  const m = /^ ([가-힣])/u.exec(after);
+  if (!m || ONE_SYLLABLE_WORDS.has(m[1]!) || NAME_TAIL.exec(after.slice(1))?.[0]) return false;
+  return NAME_TAIL.test(after.slice(2));
+}
 
 /**
  * 오타 거래처 별칭: 문장 속 낱말 중 거래처 상호(3자 이상)와 길이가 같고 한 글자만 다르며(대소문자는 같은 글자로 본다), 이미 있는 이름(대소문자 무시)이 아니고,
  * 그렇게 가까운 거래처가 정확히 하나인 것. 둘 이상에 가까우면(A상사·B상사 사이의 C상사) 고르지 않는다.
- * 장부 이름(공백·대소문자 무시)이 든 낱말은 오타가 아니다. 이름 바로 뒤가 조사면(A상사몰이 있을 때 "A상사에") 정확한 이름이 이기니 별칭을 만들지 않는다.
- * 조사가 아니면("A상사물") 어느 거래처인지 모르니 recordId null로 돌려 가리기만 한다(되묻기로 간다).
+ * 장부 이름(공백·대소문자 무시)이 든 낱말은 오타로 보기 전에 따진다. 이름 바로 뒤가 조사면(A상사몰이 있을 때 "A상사에") 정확한 이름이 이기니 별칭을 만들지 않는다.
+ * 든 이름이 이 거래처 이름의 앞이고 남은 글자가 둘 이상이면 긴 이름의 오타다. 그 밖("A상사물")은 어느 거래처인지 모르니 recordId null로 돌려 가리기만 한다(되묻기).
  */
 export function typoAliases(text: string, cps: Array<{ recordId: string; name: string }>, known: ReadonlySet<string>): Array<{ recordId: string | null; alias: string }> {
   const t = [...normalizeForRedaction(text)];
@@ -754,8 +782,19 @@ export function typoAliases(text: string, cps: Array<{ recordId: string; name: s
       if (knownSet.has(low) || [...low].filter((ch, k) => ch !== n[k]).length !== 1) continue;
       const inner = knownLow.filter((k) => low.includes(k));
       if (inner.length) {
-        const head = inner.find((k) => low.startsWith(k));
-        if (!(head && JOSA_AFTER.test(t.slice(i + [...head].length).join('')))) asks.add(word);
+        // 가장 긴 장부 이름이 앞에 있고 뒤가 조사·이다 꼴이면 그 이름이 이긴다(별칭 아님). 그 이름이 이 거래처 이름의 앞이기도 하고
+        // 남은 글자가 둘 이상이면 긴 이름의 오타다(A상사몰코리야 → A상사몰코리아). 아니면 어느 쪽인지 모르니 되묻는다(A상사물).
+        const head = inner.filter((k) => low.startsWith(k)).sort((x, y) => [...y].length - [...x].length)[0];
+        const len = head ? [...head].length : 0;
+        if (head && NAME_TAIL.test(t.slice(i + len).join(''))) continue;
+        if (!(head && n.join('').startsWith(head) && n.length - len >= 2)) {
+          asks.add(word);
+          continue;
+        }
+      }
+      // 끝 글자만 다르고 거기서 조사가 시작하면 잘린 이름 + 조사다(A상사몰코리에, A상에). 어느 거래처인지 모르니 되묻는다.
+      if (low.at(-1) !== n.at(-1) && CASE_JOSA.test(t.slice(i + n.length - 1).join(''))) {
+        asks.add(word);
         continue;
       }
       (hits.get(word) ?? hits.set(word, new Set()).get(word)!).add(c.recordId);

@@ -37,6 +37,8 @@ import { PC_FILE_COMMANDS } from './protocol.ts';
 import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
 import { CHAT_AGENT_COMMANDS, INTENT_COMMANDS } from './protocol.ts';
+import { BANK_COMMANDS, BANK_READ_QUERIES } from './protocol.ts';
+import { BankService } from './bank/service.ts';
 import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
 import { ChatAgent, gatewayChatAgentModel } from './chat-agent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
@@ -61,6 +63,8 @@ let payroll: BundleService | null = null;
 let phone: PhoneIntake | null = null;
 /** PC 파일 보관(PcFileIntake): 종이 증빙·꾸러미 파일 칸. 보관함 파일과 documents·receipts|bundle_entries 행을 한 번에 쓴다. */
 let pcFiles: PcFileIntake | null = null;
+/** 돈 맞추기(09): 내 계좌·거래내역·받을 돈·맞춤. 컬럼 키·계좌 HMAC 키는 init이 넘긴다. */
+let bank: BankService | null = null;
 /** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main은 연결 안 됨). */
 let intent: IntentResolver | null = null;
 /** 대화 에이전트 모델 경계(chat.step). 모델 경로는 intent와 같은 엔진 Egress 게이트웨이뿐이다. */
@@ -114,6 +118,9 @@ for (const m of [...BUNDLE_PC_READ_QUERIES, ...BUNDLE_PC_COMMANDS]) {
   ALLOWED.add(m);
 }
 
+const BANK = new Set<string>([...BANK_READ_QUERIES, ...BANK_COMMANDS]);
+for (const m of BANK) ALLOWED.add(m);
+
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
 const CHAT_AGENT = new Set<string>(CHAT_AGENT_COMMANDS);
@@ -133,6 +140,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
   // 컬럼 키(주민번호 rrn_enc 등, D07 §2 *_enc)도 DB 키를 지우기 전에 한 번 파생한다. ColumnCipher가 복사해 갖고, 파생 바이트는 바로 지운다.
+  // 계좌번호 찾기용 HMAC 키(09 §9.1, 원장 HMAC과 같은 방식·다른 info). BankRepo가 복사해 갖는다.
+  const bankKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-bank-hmac-v1', 32));
   const columnKey = deriveColumnKey(key);
   const cipher = new ColumnCipher(columnKey);
   columnKey.fill(0);
@@ -149,6 +158,9 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: PRODUCT_PACKAGE_IDS }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
+  bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
+  // 자동 연결 원천(bank/source.ts TxnSource)은 여기서 bank.registerSource(...)로 꽂는다(계좌 link_provider가 고른다).
+  bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
   chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress) });
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
@@ -255,6 +267,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (PHONE.has(method)) {
     if (!phone) throw new Error('db_not_ready');
     return phone.handle(method, params);
+  }
+  if (BANK.has(method)) {
+    if (!bank) throw new Error('db_not_ready');
+    return bank.handle(method, params);
   }
   if (INTENT.has(method)) {
     if (!intent) throw new Error('db_not_ready');

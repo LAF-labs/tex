@@ -98,7 +98,7 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
   });
 
   it('렌더러 정적 파일이 부르는 메서드는 모두 표에 있다', () => {
-    const src = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-biz.js', 'password-rules.js'].map((f) => read(`apps/desktop/static/shell/${f}`)).join('\n');
+    const src = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-biz.js', 'shell-bank.js', 'password-rules.js'].map((f) => read(`apps/desktop/static/shell/${f}`)).join('\n');
     const called = new Set([...src.matchAll(/call\('([a-zA-Z0-9.]+)'/g)].map((m) => m[1]!));
     assert.ok(called.size >= 10, `${called.size}`);
     for (const m of called) assert.ok(Object.hasOwn(SHELL_METHODS, m), m);
