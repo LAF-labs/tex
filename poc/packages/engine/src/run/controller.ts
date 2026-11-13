@@ -166,8 +166,8 @@ export interface RunControllerInput {
   observedManual?: () => boolean;
   /** 체크포인트 복귀 탐침(reenterCheckpoint). */
   reentry: { navigate(url: string): Promise<void>; loggedIn(): Promise<boolean> };
-  /** L1·L2 복구(M2-5). 없거나 false면 핸드오프. */
-  recover?: (stop: Extract<RunStop, { t: 'recover' }>) => Promise<boolean>;
+  /** L1·L2 복구(M2-5)·폴백 사슬(run/fallback.ts). 없거나 false면 핸드오프. true면 그 스텝부터, {from}이면 그 스텝(체크포인트 재진입)부터 다시 돈다. */
+  recover?: (stop: Extract<RunStop, { t: 'recover' }>) => Promise<boolean | { from: string }>;
   /** 주 비가역 X의 verify(조회만, M2-3). 없으면 unknown(InDoubt). */
   verify?: (x: string) => Promise<VerifyResult>;
   /**
@@ -514,7 +514,7 @@ export class RunController {
           return null;
         }
         this.fire({ t: 'recovered' }, s.at, null);
-        return this.name() === 'Running' ? { from: s.at, prev: null } : null;
+        return this.name() === 'Running' ? { from: ok === true ? s.at : ok.from, prev: null } : null;
       }
       case 'human_secret': {
         if (!this.fire({ t: 'human_reached' }, s.at, s.code)) return null;

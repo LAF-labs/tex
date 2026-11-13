@@ -410,7 +410,7 @@ export class RunService extends EventEmitter {
     if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
     this.rate.unpinRun();
     this.runs.finish(a.runId, result.status);
-    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '', ...(result.stoppedAt ? { stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, ...(result.stoppedAt.target ? { target: result.stoppedAt.target } : {}) } : {}) });
+    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '', ...(result.mailConfirmed !== undefined ? { mailConfirmed: result.mailConfirmed } : {}), ...(result.stoppedAt ? { stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, ...(result.stoppedAt.target ? { target: result.stoppedAt.target } : {}) } : {}) });
     // 실기기 디버깅(팀장 지시 2026-11-09): 어느 스텝·셀렉터에서 멈췄는지 엔진 로그 한 줄로 바로 보인다(스텝 id·셀렉터 키·코드만, ⑦).
     if (result.stoppedAt) this.d.log.event('run.stopped_at', { runId: a.runId, status: result.status, code: result.code ?? '', stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, target: result.stoppedAt.target ?? '', playbook: a.playbookId });
     if (result.status === 'success' || result.status === 'completed_with_issues') this.d.data.counterparties.markUsed(inputs.counterpart.id);
@@ -480,6 +480,8 @@ export class RunService extends EventEmitter {
         this.journal.append(a.runId, type, payload);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+        // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
+        if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
       },
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
       postGate: (m) => this.d.postGate(m),

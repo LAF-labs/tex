@@ -12,15 +12,15 @@ const run = (o: Partial<RunView> = {}): RunView =>
   ({ id: 'run-1', status: 'draft', counterparty: { id: 'cpA', name: 'A상사', bizNo: '1234567890', first: false }, amount: 1_000_000, vat: 'separate', vatGuessed: true, item: '컨설팅', itemGuessed: true, ...o }) as RunView;
 
 describe('issuedRows: 원장 이력 → 발급 행', () => {
-  it('승인번호 있는 실행만, 날짜는 끝난 시각의 KST, 합계는 공급가+세액', () => {
+  it('승인번호 있는 실행만, 날짜는 끝난 시각의 KST, 합계는 공급가+세액, 승인번호·문서함 PDF·메일 상태를 싣는다', () => {
     const rows = issuedRows([
-      { approvalNo: '20261031-1', counterpartyId: 'cpA', counterpartyName: 'A상사', supply: 1_000_000, tax: 100_000, startedAt: '2026-10-31T15:00:00Z', finishedAt: '2026-10-31T15:30:00Z' },
+      { approvalNo: '20261031-1', documentId: 'doc-1', mailConfirmed: false, counterpartyId: 'cpA', counterpartyName: 'A상사', supply: 1_000_000, tax: 100_000, startedAt: '2026-10-31T15:00:00Z', finishedAt: '2026-10-31T15:30:00Z' },
       { approvalNo: null, counterpartyId: 'cpB', counterpartyName: 'B상사', supply: 500_000, tax: 50_000, startedAt: '2026-10-20T01:00:00Z', finishedAt: '2026-10-20T01:10:00Z' },
-      { approvalNo: '20261020-2', counterpartyId: null, counterpartyName: null, supply: null, tax: null, startedAt: '2026-10-20T01:00:00Z', finishedAt: null },
+      { approvalNo: '20261020-2', mailConfirmed: true, counterpartyId: null, counterpartyName: null, supply: null, tax: null, startedAt: '2026-10-20T01:00:00Z', finishedAt: null },
     ]);
     assert.deepEqual(rows, [
-      { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-11-01', total: 1_100_000 },
-      { counterpartyId: null, counterparty: '이름 모름', date: '2026-10-20', total: null },
+      { counterpartyId: 'cpA', counterparty: 'A상사', date: '2026-11-01', total: 1_100_000, approvalNo: '20261031-1', documentId: 'doc-1', mail: 'unconfirmed' },
+      { counterpartyId: null, counterparty: '이름 모름', date: '2026-10-20', total: null, approvalNo: '20261020-2', documentId: null, mail: 'sent' },
     ]);
   });
   it('모양이 다르면 빈 목록', () => {
