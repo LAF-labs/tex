@@ -10,6 +10,8 @@ import type { Counterparty, RunView, VatMode } from './shell-model.ts';
 /** 엔진 db.query.runs.history 한 행에서 쓰는 칸(run-history.ts RunHistoryRow) */
 interface HistoryRow {
   approvalNo: string | null;
+  documentId?: string | null;
+  mailConfirmed?: boolean | null;
   counterpartyId: string | null;
   counterpartyName: string | null;
   supply: number | null;
@@ -57,6 +59,9 @@ export function issuedRows(rows: unknown): IssuedRow[] {
         counterparty: typeof r.counterpartyName === 'string' ? r.counterpartyName : '이름 모름',
         date: Number.isFinite(at) ? kstToday(at) : '',
         total: isNum(r.supply) && isNum(r.tax) ? r.supply + r.tax : null,
+        approvalNo: r.approvalNo,
+        documentId: typeof r.documentId === 'string' ? r.documentId : null,
+        mail: r.mailConfirmed === true ? ('sent' as const) : r.mailConfirmed === false ? ('unconfirmed' as const) : null,
       };
     })
     .filter((r) => r.date);

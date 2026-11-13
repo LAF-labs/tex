@@ -69,12 +69,20 @@ export interface AgentDrafts {
   discard(runId: string): void;
 }
 
+/** 메일: sent(받는 사람 발송 확인), unconfirmed(확인 못 함), null(기록 없음·받을 돈 행). */
+export type MailState = 'sent' | 'unconfirmed' | null;
+
 export interface IssuedRow {
   counterpartyId: string | null;
   counterparty: string;
   /** KST YYYY-MM-DD */
   date: string;
   total: number | null;
+  /** 원장(irreversible_log committed)의 승인번호. 화면에만 보이고 모델에는 가지 않는다. */
+  approvalNo?: string | null;
+  /** 문서함 PDF 문서 id([PDF 열기]). */
+  documentId?: string | null;
+  mail?: MailState;
 }
 /**
  * 받을 돈 행. 지금은 발급 행과 같은 꼴이다.
@@ -110,6 +118,9 @@ export interface TableRow {
   date: string;
   counterparty: string;
   total: number | null;
+  approvalNo: string | null;
+  documentId: string | null;
+  mail: MailState;
 }
 export type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
 export type AgentTurnResult =
@@ -121,7 +132,7 @@ export type AgentTurnResult =
 interface Result {
   kind: ResultKind;
   title: string;
-  rows: Array<TableRow & { counterpartyId: string | null }>;
+  rows: IssuedRow[];
 }
 
 /** 대화 세션(엔진 세션과 같은 기준으로 끝난다). ref 번호는 세션이 바뀌어도 이어 간다: 엔진 대화록에 남은 옛 ref가 새 결과를 가리키지 않게. */
@@ -171,6 +182,8 @@ export function koDate(date: string, today: string): string {
   return date.slice(0, 4) === today.slice(0, 4) ? md : `${Number(date.slice(0, 4))}년 ${md}`;
 }
 
+/** 화면 표 한 줄. 승인번호·PDF·메일은 원장·문서함 값이고 화면에만 간다(엔진·모델에는 ref와 슬롯 집계만 간다). */
+const tableRow = (x: IssuedRow): TableRow => ({ date: x.date, counterparty: x.counterparty, total: x.total, approvalNo: x.approvalNo ?? null, documentId: x.documentId ?? null, mail: x.mail ?? null });
 const newestFirst = <T extends { date: string }>(rows: T[]) => [...rows].sort((a, b) => b.date.localeCompare(a.date));
 
 export class AgentChat {
@@ -394,7 +407,7 @@ export class AgentChat {
     for (const ref of [...new Set([...reply.show, ...slotRefs])]) {
       const res = s.results.get(ref);
       const runId = s.runOfRef.get(ref);
-      if (res) show.push({ type: 'table', table: res.kind, title: res.title, rows: res.rows.map(({ date, counterparty, total }) => ({ date, counterparty, total })) });
+      if (res) show.push({ type: 'table', table: res.kind, title: res.title, rows: res.rows.map(tableRow) });
       else if (runId && !cards.has(runId)) {
         cards.add(runId);
         show.push({ type: 'card', runId });
