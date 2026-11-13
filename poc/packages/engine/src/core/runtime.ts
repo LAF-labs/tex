@@ -96,11 +96,14 @@ export type ReentryOutcome = 'resumed' | 'escalate_session' | 'handoff';
 
 /**
  * D03 §5.5 체크포인트 복귀. 복귀는 토큰을 폐기한다(R-G2). reload면 항상 url로 새로 로드한 뒤 expect, reuse(기본)면 현재 탭에서
- * expect → 거짓이면 url로 이동 후 재평가. sessionRequired인데 로그아웃이면 session 체크포인트로 상향(그것도 실패하면 호출자가 핸드오프).
+ * expect → 거짓이면 url로 이동 후 재평가. sessionRequired인데 로그아웃이면 session 체크포인트로 상향. session 체크포인트는 로그아웃이어도
+ * 이어 간다(v1.3.7: 뒤 스텝이 자동 로그인). expect가 거짓이면 호출자가 핸드오프.
  */
 export async function reenterCheckpoint(cp: StepOf<'checkpoint'>, probe: ReentryProbe, tokens: Pick<GateTokens, 'discardAll'>): Promise<ReentryOutcome> {
   tokens.discardAll('checkpoint_return');
-  if (cp.sessionRequired && !(await probe.loggedIn())) return cp.name === 'session' ? 'handoff' : 'escalate_session';
+  // IR rev v1.3.7(부장 2026-11-13): session 체크포인트는 로그아웃이어도 핸드오프하지 않는다. 다시 로드해 expect가 맞으면 이어 가고,
+  // 뒤따르는 스텝(H-01 s2 → s3…)이 자동 로그인을 한다. 다른 체크포인트는 session 체크포인트로 올라간다.
+  if (cp.sessionRequired && cp.name !== 'session' && !(await probe.loggedIn())) return 'escalate_session';
   const mode = cp.reentry ?? 'reuse';
   if (mode === 'reload') {
     if (!cp.url) return 'handoff'; // V-03l이 게이트를 지배하는 체크포인트에는 url을 강제한다

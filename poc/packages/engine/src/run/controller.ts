@@ -23,6 +23,9 @@ import { savePdf, type PdfPort } from '../core/savepdf.ts';
 import { SECURITY_REJECTIONS } from '../core/token.ts';
 import { buildGateRequest, GATE_CARDS, type GateField, type GateRequest } from '../gate.ts';
 
+/** 공동인증서 비밀번호 차례가 이 코드로 끝나면 onFail 체크포인트(간편인증 등 다른 로그인 길)로 갈 수 있다(IR rev v1.3.7). */
+const CERT_PW_FAILED: ReadonlySet<string> = new Set(['sign.password_wrong', 'sign.password_retry_limit']);
+
 /**
  * 조율기가 상태를 이미 바꾼 뒤 실행기를 멈추게 하는 코드. 재시도·onFail을 거치지 않는다.
  * abort 계열은 조율기가 이미 상태를 정했고, handoff 계열은 조율기가 핸드오프 전이를 한다.
@@ -1180,10 +1183,17 @@ export class RunController {
   };
 
   /** 금고 비밀 창 사람 차례(D05 §3.5): 값은 금고가 포털 칸에 직접 넣는다. 엔진은 끝났는지만 안다. */
-  private async secretTurn(at: string, r: { target?: string; prompt?: string; ttlMs: number }): Promise<Outcome> {
+  private async secretTurn(at: string, r: { target?: string; prompt?: string; ttlMs: number }, onFailThen?: string): Promise<Outcome> {
     const out = await this.i.human.secret({ runId: this.i.runId, stepId: at, ...r }).catch(() => 'ttl' as const);
     if (this.pending === 'abort') return this.abortInTurn(at);
     if (out === 'done') return this.afterHuman(at);
+    // IR rev v1.3.7(대표 "공동인증서 아니면 간편인증", 2026-11-13): 틀린 비밀번호로 끝난 차례는 스텝 onFail이 체크포인트(다른 로그인 길)면
+    // 쉬지 않고 그 스텝의 실패로 돌려 onFail로 간다. 금고는 이미 다시 치지 않는다(인증서 잠김 방지).
+    if (out !== 'ttl' && CERT_PW_FAILED.has(out.code) && onFailThen?.startsWith('checkpoint:')) {
+      this.i.journal('human.secret_fallback', { stepId: at, code: out.code });
+      const n = this.afterHuman(at);
+      return n.t === 'fail' ? n : fail(out.code);
+    }
     return this.ttl(at, out === 'ttl' ? undefined : out.code);
   }
 
@@ -1196,7 +1206,7 @@ export class RunController {
       return this.handoffWith('portal.captcha');
     }
     if (!this.fire({ t: 'human_reached' }, h.id, null)) return fail('run.state_stop');
-    if (h.kind === 'secret') return this.secretTurn(h.id, { target: h.target, prompt: h.prompt, ttlMs: h.ttlMs });
+    if (h.kind === 'secret') return this.secretTurn(h.id, { target: h.target, prompt: h.prompt, ttlMs: h.ttlMs }, h.onFail?.then);
     if (h.kind === 'manual') this.i.guardMode?.('observing');
     const reqId = `${this.i.runId}:${h.id}:${this.i.clock.now()}`;
     this.i.human.request({ runId: this.i.runId, stepId: h.id, reqId, kind: h.kind, prompt: h.prompt, region: h.region, ttlMs: h.ttlMs, inputSpec: h.inputSpec });

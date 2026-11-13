@@ -70,6 +70,17 @@ export interface FakeKnobs {
    * 커밋 없는 안내 창이다. 열린 창을 닫았는지 state.noticeClosed로 본다.
    */
   certNoticePopup: boolean;
+  /**
+   * 메인·폼을 그릴 때마다 공지 레이어가 뜬다(2026-11-13 실화면 headless 탐침: 창 `mf_txppWframe_A_<숫자>` w2popup_window,
+   * "시스템 점검을 위한 서비스 일시 중단 안내", [닫기] INPUT 둘 `<창 id>_wframe_trigger2`·`<창 id>_wframe_btnClose`, X 없음).
+   * 머리말 [로그인]으로 연 로그인 화면에는 없었다. 덮개가 화면 전체의 클릭을 막는다(가정). 닫힌 횟수는 state.layerClosed.
+   */
+  mainNotice: boolean;
+  /**
+   * 실화면 로그인 길(2026-11-13 headless 탐침): 직접 주소 `menuCd=index3`은 메인을 그린다(제목 "국세청 홈택스 - 메인").
+   * 로그인 화면은 머리말 [로그인]을 눌러야 그 자리에서 그려진다. false면 옛 가짜처럼 직접 주소가 로그인 화면이다.
+   */
+  realLoginNav: boolean;
 }
 
 export interface HometaxFake {
@@ -92,6 +103,9 @@ export interface HometaxFake {
     /** 안내 팝업을 연 횟수와 닫힌 횟수(창이 닫힌 것을 여는 쪽 화면이 알린다). */
     noticeOpened: number;
     noticeClosed: number;
+    /** 공지 레이어를 띄운 횟수와 닫힌 횟수. */
+    layerShown: number;
+    layerClosed: number;
   };
   /** 사람: 로그인을 마쳤다(로그인 화면이 메인으로 넘어간다). */
   login(): void;
@@ -113,15 +127,15 @@ export function kstToday(now = Date.now()): string {
 type Screen = 'main' | 'login' | 'issue' | 'list' | 'mail';
 
 /** 주소 → 화면. 로그인이 필요한 화면을 로그아웃 상태로 열면 로그인 화면(가정: 실화면 미확인). */
-function screenOf(q: URLSearchParams, loggedIn: boolean): Screen {
+function screenOf(q: URLSearchParams, loggedIn: boolean, realLoginNav = false): Screen {
   const menu = q.get('menuCd');
   const m3 = q.get('tm3lIdx');
   let s: Screen = 'main';
-  if (menu === 'index3') s = 'login';
+  if (menu === 'index3') s = realLoginNav ? 'main' : 'login';
   else if (menu === 'UTEETBAA01' || m3 === '4601010100') s = 'issue';
   else if (menu === 'UTEETBDA01' || m3 === '4609050100') s = 'list';
   else if (menu === 'UTEETBAB16' || m3 === '4601030100') s = 'mail';
-  if (!loggedIn && s !== 'main' && s !== 'login') return 'login';
+  if (!loggedIn && s !== 'main' && s !== 'login') return realLoginNav ? 'main' : 'login';
   return s;
 }
 
@@ -181,7 +195,7 @@ const CLIENT = String.raw`
   function header() {
     return '<header id="mf_wfHeader_hdGroup000"><a id="mf_wfHeader_hdGroup001" title="국세청 홈택스" href="' + menuUrl('') + '">국세청 홈택스 HomeTax</a> ' +
       '<a id="mf_wfHeader_group1502" href="#">회원정보조회</a> ' +
-      '<a id="mf_wfHeader_group1503" href="' + (C.loggedIn ? '#' : menuUrl('&menuCd=index3')) + '" title="' + (C.loggedIn ? '로그아웃' : '로그인') + '">' + (C.loggedIn ? '로그아웃' : '로그인') + '</a></header>';
+      '<a id="mf_wfHeader_group1503" href="' + (C.loggedIn || C.realLoginNav ? '#' : menuUrl('&menuCd=index3')) + '" title="' + (C.loggedIn ? '로그아웃' : '로그인') + '">' + (C.loggedIn ? '로그아웃' : '로그인') + '</a></header>';
   }
 
   const screens = {
@@ -189,6 +203,8 @@ const CLIENT = String.raw`
       if (C.loggedIn && !/menuCd=index4/.test(location.search)) history.replaceState(null, '', menuUrl('&menuCd=index4'));
       document.title = '국세청 홈택스 - 메인';
       wrap.innerHTML = header() + '<div id="mf_txppWframe"><p>국세청 홈택스에 오신 것을 환영합니다.</p></div>';
+      // 실화면: 머리말 [로그인]이 그 자리에서 로그인 화면을 그린다(주소는 index3로 바뀐다).
+      if (C.realLoginNav && !C.loggedIn) $('mf_wfHeader_group1503').onclick = (e) => { e.preventDefault(); C.screen = 'login'; screens.login(); };
     },
     login() {
       if (!/menuCd=index3/.test(location.search)) history.replaceState(null, '', menuUrl('&menuCd=index3'));
@@ -447,7 +463,23 @@ const CLIENT = String.raw`
     };
   }
 
-  setTimeout(() => { screens[C.screen](); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
+  function noticeLayer() {
+    if (!C.mainNotice || !['main', 'issue'].includes(C.screen)) return;
+    const id = 'mf_txppWframe_A_1000000000008' + (10000 + Math.floor(Math.random() * 89999));
+    const cover = document.createElement('div');
+    cover.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.3)';
+    const box = document.createElement('div');
+    box.id = id; box.className = 'w2window w2window_restored w2popup_window dp1 resize pop';
+    box.style.cssText = 'position:fixed;top:60px;left:60px;z-index:100001;background:#fff;border:1px solid #333;padding:8px;width:420px';
+    box.innerHTML = '<div id="' + id + '_wframe_layerPopupContents" class="w2group txt_box"><p>국세청 홈택스 시스템 점검을 위한 서비스 일시 중단 안내</p></div>' +
+      '<input type="button" class="w2trigger" id="' + id + '_wframe_trigger2" value="닫기"> <input type="button" class="w2trigger" id="' + id + '_wframe_btnClose" value="닫기">';
+    document.body.append(cover, box);
+    fetch('/_fx/layer?ev=shown');
+    const close = (e) => { e.preventDefault(); cover.remove(); box.remove(); fetch('/_fx/layer?ev=closed'); };
+    box.querySelector('#' + id + '_wframe_trigger2').onclick = close;
+    box.querySelector('#' + id + '_wframe_btnClose').onclick = close;
+  }
+  setTimeout(() => { screens[C.screen](); noticeLayer(); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
 })();
 `;
 
@@ -456,14 +488,15 @@ const CLIENT = String.raw`
 // - 저장 위치 a#stg_web·a#stg_hdd, 목록 div#dataTable 안 tr#row{N}dataTable(role=row, 0번 행이 골라진 채 시작), td role=gridcell 4열
 // - 비밀번호 input#input_cert_pw(title "인증서 비밀번호 입력"), [확인] button#btn_confirm_iframe, [취소] button#btn_cancel, 경고 #popup_alert·#alert_msg·button#btn_alert_confirm
 // - [확인]: 칸 값이 가짜 비밀번호와 같으면 통과(서버에 기록), 다르면 경고. 사람 흉내(fx.cert())는 칸 값과 상관없이 통과.
-const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
+const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>, browserFirst = false) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
 <style>td.MLjqui-grid-cell-selected{background:#cde}#popup_alert{display:none}</style></head><body>
-<div id="form1"><div id="selectCertContainer"><div id="ML_window"><div id="ML_container">
+<div id="form1"><div id="selectCertContainer"><div id="ML_window" role="dialog"><div id="ML_container">
 <div id="ML_dp_01" class="ML_sub_tit">인증서 저장위치</div>
 <div class="MLstrSlide" id="MLstrSlide"><div class="ML_storage_area"><ul>
-<li class="ML_storage_browser"><a href="#" id="stg_web" class="stg_01" title="브라우저"><span>브라우저</span></a></li>
-<li class="ML_storage_hdd"><a href="#" id="stg_hdd" class="stg_01" title="하드디스크/이동식"><span>하드디스크/이동식</span></a></li>
+<li class="ML_storage_browser on"><a href="#" id="stg_web_kftc" class="stg_01" title="브라우저 선택됨"><span>브라우저</span></a></li>
+<li class="ML_storage_hdd ins"><a href="#" class="stg_01" title="하드디스크/이동식"><span id="MSG_TS703">하드디스크 이동식</span></a></li>
 </ul></div></div>
+<div id="driver_div" class="drive_position pos_03" style="display:none"><ul id="sub_drv_list" class="drive_position_menu wdh_150"><li id="hdd_driver_0"><a href="#" class="wdh_150">HardDisk</a></li><li id="hdd_driver_1"><a href="#" class="wdh_150">Macintosh HD (0)</a></li></ul></div>
 <div id="ML_dp_02" class="ML_sub_tit">사용할 인증서 선택</div>
 <div id="ML_certlist_area" class="ML_cert_list_area"><div id="dataTable" role="grid" align="left"><div role="columnheader">소유자</div><div role="columnheader">용도</div><div role="columnheader">발급자</div><div role="columnheader">만료일</div><table><tbody></tbody></table></div></div>
 <div id="ML_dp_04" class="ML_sub_tit">인증서 비밀번호 입력</div>
@@ -485,12 +518,19 @@ const pick = (n) => {
   document.querySelectorAll('#row' + n + 'dataTable td').forEach((x) => x.classList.add(...SELC));
   sel = n;
 };
-setTimeout(() => {
+// 실화면(2026-11-13 headless 탐침): 새 프로필은 저장 위치가 [브라우저]라 목록이 비어 있다. [하드디스크/이동식] → 드라이브 메뉴 → [HardDisk]를 눌러야 행이 그려진다.
+const BROWSER_FIRST = ${JSON.stringify(browserFirst)} && mode === 'login';
+const empty = () => { document.querySelector('#dataTable tbody').innerHTML = '<tr><td>인증서 정보가 없습니다.</td></tr>'; };
+document.querySelector('li.ML_storage_hdd a').onclick = (e) => { e.preventDefault(); setTimeout(() => { $('driver_div').style.display = 'block'; }, 300); };
+$('hdd_driver_0').querySelector('a').onclick = (e) => { e.preventDefault(); $('driver_div').style.display = 'none'; setTimeout(draw, 300); };
+$('hdd_driver_1').querySelector('a').onclick = (e) => { e.preventDefault(); $('driver_div').style.display = 'none'; empty(); };
+function draw() {
   const tb = document.querySelector('#dataTable tbody');
   tb.innerHTML = CERTS.map((c, n) => '<tr data-key="' + n + '" role="row" id="row' + n + 'dataTable">' + [c.cn, c.policy, '가짜인증', '2027-01-01'].map((v) => '<td role="gridcell" class="MLjqui-cell">' + v + '</td>').join('') + '</tr>').join('');
   tb.querySelectorAll('tr[data-key]').forEach((tr) => tr.addEventListener('mousedown', () => pick(Number(tr.dataset.key))));
   pick(0);
-}, 300);
+}
+setTimeout(() => (BROWSER_FIRST ? empty() : draw()), 300);
 const finish = (how) => fetch(MAIN + '/_fx/certuse?mode=' + mode + '&how=' + how + '&sel=' + sel).then((r) => r.json()).then((r) => {
   if (mode === 'login') parent.postMessage({ ml4: 'login' }, '*');
   else parent.postMessage({ ml4: 'signed', sig: 'FAKE-SIG' }, '*');
@@ -511,11 +551,11 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
-    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true,
+    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false,
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0 };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -550,11 +590,11 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
   const origin = await listen((req, res) => {
     const u = new URL(req.url ?? '/', 'http://x');
     if (u.pathname === W2 && req.method === 'GET') {
-      const screen = screenOf(u.searchParams, state.loggedIn);
+      const screen = screenOf(u.searchParams, state.loggedIn, knobs.realLoginNav);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
     }
-    if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs));
+    if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav));
     if (u.pathname === '/_fx/certpw') {
       // 비밀번호 대조만(값은 기록하지 않는다).
       const ok = u.searchParams.get('pw') === knobs.certPassword;
@@ -567,6 +607,11 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       state.certUses.push({ mode, how: u.searchParams.get('how') === 'typed' ? 'typed' : 'human', cn });
       if (mode === 'login') state.loggedIn = true;
       return json(res, { ok: true });
+    }
+    if (u.pathname === '/_fx/layer') {
+      if (u.searchParams.get('ev') === 'shown') state.layerShown++;
+      else state.layerClosed++;
+      return json(res, {});
     }
     if (u.pathname === '/_fx/state') return json(res, { loggedIn: state.loggedIn });
     if (u.pathname === '/pp/certNotice.html') {

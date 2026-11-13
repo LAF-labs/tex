@@ -770,7 +770,7 @@
      "value": "#ML_window"
     }
    ],
-   "role": "generic",
+   "role": "dialog",
    "namePattern": "^$",
    "frame": "dscert",
    "landmark": "hometax.cert.root",
@@ -824,7 +824,7 @@
      "value": "#ML_window"
     }
    ],
-   "role": "generic",
+   "role": "dialog",
    "namePattern": "^$",
    "frame": "dscert",
    "landmark": "hometax.invoice.sign.root",
@@ -983,6 +983,98 @@
     "by": "h01-package-real",
     "reason": "WebSquare 처리 중 표시(2026-11-11 실화면 #mf_mf_wq_uuid_*_wq_processMsgComp, uuid는 로드마다 바뀐다). wait gone으로 사라짐을 기다린다"
    }
+  },
+  "hometax.layer.btnClose": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_wframe_btnClose\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^닫기$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnClose",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.layer.btnCloseAlt": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_wframe_btn_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^닫기$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnCloseAlt",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.login.simpleTab": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_anchor14"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^개인용 간편인증 ?\\(민간인증서\\)$",
+   "frame": "main",
+   "landmark": "hometax.login.simpleTab",
+   "commits": false,
+   "navigationOnly": true,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.cert.storageHdd": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "하드디스크 이동식"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "link",
+   "namePattern": "^하드디스크 ?이동식$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
+  },
+  "hometax.cert.driveHdd": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "HardDisk"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "link",
+   "namePattern": "^HardDisk$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
   }
  },
  "commitEndpoints": [
