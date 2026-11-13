@@ -8,6 +8,7 @@ import { SLOT_FIELDS as MODEL_SLOT_FIELDS, SLOT_PATHS as MODEL_SLOT_PATHS, SLOT_
 import { CHAT_MAP_IDLE_MS as REDACTION_IDLE_MS } from '@sax/redaction';
 import {
   AGENT_ERROR_TEXT,
+  AGENT_UNAVAILABLE_TEXT,
   AGENT_SETUP_TEXT,
   AGENT_SLOT_MISSING_TEXT,
   AGENT_STEP_MAX,
@@ -39,7 +40,7 @@ const PORT_KEYS = ['step', 'profileId', 'drafts', 'issued', 'receivables', 'coun
 const DRAFT_KEYS = ['list', 'setupMissing', 'create', 'update', 'discard'];
 
 type Handler = (p: StepParams) => StepResult;
-const reply = (r: Partial<ShownReply>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, values: {}, ...r } });
+const reply = (r: Partial<ShownReply>): StepResult => ({ kind: 'reply', reply: { kind: 'answer', text: '확인했어요.', show: [], ask: null, filtered: null, values: {}, unknownName: null, ...r } });
 const tools = (...calls: DomainCall[]): StepResult => ({ kind: 'tools', calls: calls.map((c, i) => ({ callId: `call-${'abcdefgh'[i]}`, ...c })) });
 const outputs = (p: StepParams): ToolOutput[] => {
   assert.ok('continue' in p, 'continue 호출');
@@ -342,6 +343,24 @@ describe('조사 맞추기', () => {
   });
 });
 
+describe('AgentChat 장부에 없는 거래처(U8-1)', () => {
+  it('엔진이 준 이름이 장부에 없으면 안내 문장(조사 맞춤)과 이름을 싣고, 장부에 있는 이름이면 싣지 않는다', async () => {
+    const a = chat();
+    const r1 = agent(await say(a, '라온상사에 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '라온상사' })));
+    assert.deepEqual(r1.unknown, { name: '라온상사', text: '라온상사는 장부에 없는 거래처예요.' });
+    const r2 = agent(await say(a, '가온전자 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '가온전자' })));
+    assert.equal(r2.unknown?.text, '가온전자는 장부에 없는 거래처예요.');
+    const r3 = agent(await say(a, '한빛통신 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: '한빛통신' })));
+    assert.equal(r3.unknown?.text, '한빛통신은 장부에 없는 거래처예요.');
+    const r4 = agent(await say(a, 'ACME 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: 'ACME' })));
+    assert.equal(r4.unknown?.text, 'ACME은(는) 장부에 없는 거래처예요.', '받침을 모르면 은(는)');
+    const r5 = agent(await say(a, 'A상사 건', () => reply({ kind: 'ask', text: '어느 거래처인지 알려 주세요.', ask: 'counterparty', unknownName: 'A상사' })));
+    assert.equal(r5.unknown, undefined, '장부에 있는 이름은 안내하지 않는다');
+    const r6 = agent(await say(a, '안녕', () => reply({ text: '안녕하세요.' })));
+    assert.equal(r6.unknown, undefined);
+  });
+});
+
 describe('AgentChat 받을 돈·기록 표 제목', () => {
   it('제목의 건수·합계는 슬롯과 같은 집계이고, 금액 모르는 행은 빼고 적는다', async () => {
     receivable = [
@@ -421,12 +440,13 @@ describe('AgentChat 초안 도구', () => {
     assert.deepEqual(drafts.creates, []);
     drafts.setupGap = true;
     // 금액·품목이 다 비어 있어도 등록이 빠졌다는 것을 먼저 말한다(묻고 나서 막히지 않게)
-    await say(
+    const r = await say(
       a,
       'C테크에 끊어줘',
       () => tools({ tool: 'invoice_draft', counterpartyId: 'cpC', amount: null, vat: null, item: null }),
       (p) => (assert.deepEqual(outputs(p), [{ ref: null, status: 'setup_missing', fields: null, needs: null }]), reply({ kind: 'cannot' })),
     );
+    assert.equal(r.kind === 'agent' && r.setup, true, '등록이 빠졌던 턴은 화면이 등록 버튼을 둔다');
     assert.deepEqual(drafts.creates, []);
   });
 
@@ -492,7 +512,7 @@ describe('AgentChat 화면 결과', () => {
   it('사업자 프로필이 없으면 엔진을 부르지 않고 고정 안내', async () => {
     profile = null;
     const r = await chat().turn('안녕');
-    assert.deepEqual(r, { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null });
+    assert.deepEqual(r, { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true });
     assert.deepEqual(sent, []);
     assert.deepEqual(phases, []);
   });
@@ -542,6 +562,12 @@ describe('AgentChat 진행 표시·오류', () => {
       assert.deepEqual(r, { kind: 'unavailable', code, text: AGENT_ERROR_TEXT[code]!.text, retry }, code);
     }
     assert.equal(AGENT_ERROR_TEXT['chat.turn_limit']!.text, '한 번에 하기 어려워요. 나눠서 말씀해 주세요.');
+    // 모델 답을 못 받은 경우는 원인을 단정하지 않는다(U8-5): 인터넷·연결 탓 문구가 없다
+    for (const c of ['chat.unavailable', 'chat.bad_response', 'chat.bad_tool_output']) {
+      assert.equal(AGENT_ERROR_TEXT[c]!.text, AGENT_UNAVAILABLE_TEXT, c);
+      assert.equal(AGENT_ERROR_TEXT[c]!.retry, true, c);
+    }
+    assert.ok(!/인터넷|연결/.test(AGENT_UNAVAILABLE_TEXT));
   });
 
   it('엔진이 계속 도구를 불러도 한 턴의 chat.step은 상한까지만', async () => {
