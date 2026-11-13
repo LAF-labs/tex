@@ -40,6 +40,8 @@ export interface StepEnv extends CondEnv {
   profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
   /** wait for:'dialog'가 본 포털 대화상자 문구를 앱 화면(실행 단계)에 글로 보인다(대표 2026-11-13). key는 strings 키, ok는 패턴 일치. 저널·로그에는 넣지 않는다. */
   dialogShown?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
+  /** 진단 저널(값 없음). branch.settled 등. 없으면 남기지 않는다. */
+  journal?: (type: string, payload: Record<string, string | number | boolean>) => void;
 }
 
 export type Handler<T extends StepType> = (s: StepOf<T>, env: StepEnv) => Promise<Outcome>;
@@ -222,7 +224,8 @@ const extract: Handler<'extract'> = async (s, env) => {
 
 /**
  * IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 성공한 같은 결과가 BRANCH_SETTLE_MS 이어질 때 정한다(WebSquare가 머리말을 다시 그린다).
- * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 상한이 되면 마지막 결과로 정한다(실패면 실패).
+ * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 거짓은 페이지 요청이 멎은 뒤 다시 보고 정한다.
+ * 상한이 되면 마지막 결과로 정한다(실패면 실패).
  */
 export const BRANCH_SETTLE_MS = 400;
 export const BRANCH_SETTLE_MAX_MS = 8_000;
@@ -231,21 +234,57 @@ const branch: Handler<'branch'> = async (s, env) => {
   let r = await evalCond(s.on, env);
   if ('textMatches' in s.on) {
     const key = (x: typeof r) => (x.ok ? `v:${x.value}` : `e:${x.code}`);
-    const until = env.clock.now() + BRANCH_SETTLE_MAX_MS;
-    let since = env.clock.now();
-    while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
-      if (env.stopRequested?.()) return fail('run.stopped');
-      await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
-      const n = await evalCond(s.on, env);
-      if (key(n) !== key(r)) {
-        r = n;
-        since = env.clock.now();
+    const t0 = env.clock.now();
+    const until = t0 + BRANCH_SETTLE_MAX_MS;
+    let since = t0;
+    const trace = [`${key(r)}~0`];
+    const settle = async (): Promise<boolean> => {
+      while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
+        if (env.stopRequested?.()) return false;
+        await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
+        const n = await evalCond(s.on, env);
+        if (key(n) !== key(r)) {
+          r = n;
+          since = env.clock.now();
+          trace.push(`${key(r)}~${since - t0}`);
+        }
       }
+      return true;
+    };
+    if (!(await settle())) return fail('run.stopped');
+    // 거짓은 페이지 요청이 멎은 뒤 한 번 더 본다(홈택스 로그인 상태 머리말은 세션 확인이 끝난 뒤에야 "로그아웃"이 된다, 예행 run-1278f5d4·c1d6fe9c).
+    if (r.ok && r.value === false && env.clock.now() < until) {
+      await env.page.waitIdle(Math.max(0, until - env.clock.now())).catch(() => false);
+      const n = await evalCond(s.on, env);
+      since = env.clock.now();
+      trace.push(`idle:${key(n)}~${since - t0}`);
+      r = n;
+      if (!(await settle())) return fail('run.stopped');
     }
+    await settledTrace(s, env, key(r), env.clock.now() - t0, trace);
   }
   if (!r.ok) return fail(r.code);
   return { t: 'jump', to: s.cases[String(r.value)] ?? s.default };
 };
+
+/**
+ * branch.settled 진단(예행 s2·s6): 결과가 바뀐 순서(코드·참거짓·ms)와 끝에 본 대상의 역할·보임.
+ * 글은 navigationOnly 항목(머리말 링크 같은 화면 틀)이고 12자 이하일 때만 남긴다(입력 값·사람 정보가 아님).
+ */
+async function settledTrace(s: StepOf<'branch'>, env: StepEnv, result: string, ms: number, trace: string[]): Promise<void> {
+  if (!env.journal || !('textMatches' in s.on)) return;
+  const target = s.on.textMatches.target;
+  const entry = env.dict.entries[target];
+  const out: Record<string, string | number | boolean> = { stepId: s.id, target, result, ms, trace: trace.slice(0, 12).join('>') };
+  const el = entry ? (await env.page.query(entry.candidates[0]!, entry.frame, null).catch(() => []))[0] : undefined;
+  if (el) {
+    const info = await env.page.info(el).catch(() => null);
+    if (info) Object.assign(out, { role: info.role, visible: info.visible });
+    const text = normalizeName(await env.page.text(el).catch(() => ''));
+    if (entry?.navigationOnly && text.length <= 12) out.text = text;
+  }
+  env.journal('branch.settled', out);
+}
 
 const end: Handler<'end'> = async (s) => ({ t: 'end', status: s.status });
 

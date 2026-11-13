@@ -73,7 +73,13 @@ async function resolveOnce(page: PageReader, dict: SelectorDict, key: string, de
       hits.push({ el, info });
     }
     if (hits.length === 0) continue;
-    if (hits.length > 1) return { ok: false, code: 'step.selector_miss', ambiguous: true };
+    if (hits.length > 1) {
+      // IR rev v1.3.7(부장 2026-11-14): 여럿 가운데 보이는 것이 정확히 하나면 그것(WebSquare가 같은 id로 숨은 사본을 남긴다).
+      // 커밋 항목은 그대로 모호함으로 끝낸다(fail-closed).
+      const shown = hits.filter((h) => h.info.visible);
+      if (entry.commits || shown.length !== 1) return { ok: false, code: 'step.selector_miss', ambiguous: true };
+      hits.splice(0, hits.length, shown[0]!);
+    }
     if (identityProblem(entry, hits[0]!.info)) return { ok: false, code: 'step.identity_mismatch', ...(hits[0]!.info.stale ? { stale: true } : {}) };
     return { ok: true, t: { key, entry, el: hits[0]!.el } };
   }

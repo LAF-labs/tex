@@ -491,6 +491,7 @@ export class IrRun {
     };
     const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
     if (i.profileWrite) env.profileWrite = i.profileWrite;
+    env.journal = i.journal;
     if (i.portalNotice) env.dialogShown = i.portalNotice;
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
     if (i.ir.locate) {
