@@ -4,6 +4,7 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
+import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
 import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
@@ -1286,12 +1287,16 @@ function activityPanel(row) {
 const SETTINGS_TABS = [
   ['auth', '발급 인증'],
   ['devices', '기기 연결'],
+  ['bank', '계좌 연결'],
 ];
+/** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
+const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
 function setTab(tab) {
   state.setTab = tab;
   render();
   if (tab === 'devices') refreshAccount();
+  if (tab === 'bank') void bankAuto.load();
 }
 
 // ---- 계정 로그인(A-01) ----
@@ -1494,7 +1499,9 @@ function settingsView() {
         return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab, onclick: () => setTab(tab) }, label);
       }),
     ),
-    state.setTab === 'devices'
+    state.setTab === 'bank'
+      ? bankAuto.view()
+      : state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
@@ -1847,6 +1854,7 @@ function onActivated(x, y) {
 
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
+  if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();

@@ -3,7 +3,7 @@
 // 응답은 비신뢰 입력이다(C-24): 이 모듈은 JSON 모양만 확인하고, 질문 해시 대조·매핑은 model 계층이 로컬 번들로 한다.
 
 /** 게이트웨이 경로(services/gateway/API.md, D04 §7). 이 밖의 경로는 보내지 않는다. 사용량 조회는 계정 서비스 몫이다. */
-export const GATEWAY_PATHS = { decide: '/v1/decide', respond: '/v1/respond', runTokens: '/v1/run-tokens' } as const;
+export const GATEWAY_PATHS = { decide: '/v1/decide', respond: '/v1/respond', runTokens: '/v1/run-tokens', codefToken: '/v1/codef/token' } as const;
 export type GatewaySurface = keyof typeof GATEWAY_PATHS;
 
 /**
@@ -39,6 +39,7 @@ export type GatewayErrorCode =
   | 'gateway.quota_exceeded'
   | 'gateway.rate_limited'
   | 'gateway.upstream_error'
+  | 'gateway.codef_off'
   | 'gateway.unavailable'
   | 'gateway.timeout'
   | 'gateway.bad_response';
@@ -66,6 +67,7 @@ const BODY_CODES: Record<string, GatewayErrorCode> = {
   'gateway.quota_exceeded': 'gateway.quota_exceeded',
   'policy.rate_limited': 'gateway.rate_limited',
   'gateway.upstream_error': 'gateway.upstream_error',
+  'gateway.codef_off': 'gateway.codef_off',
 };
 
 /** 상태코드·본문 error → 오류 코드. 본문 코드는 알려진 값만 믿고, 모르면 상태코드로 접는다. */

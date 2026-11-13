@@ -163,6 +163,8 @@ export type VaultEvent =
   // 장기 키 연산(D05 §5.1): 연산·용도·건수만(키·입력·출력 없음)
   | 'vault.key_created' | 'vault.crypto_op' | 'vault.crypto_rate_anomaly' | 'vault.crypto_purpose_denied' | 'vault.hpke_open_failed'
   | 'vault.npki_listed'
+  // 계좌 자동조회(CODEF) 로그인 봉인: 결과·사유만(인증서 id·경로·비밀번호·길이 없음)
+  | 'vault.codef_sealed' | 'vault.codef_seal_refused' | 'vault.codef_password_stored' | 'vault.codef_password_forgotten'
   // PDF 저장(save_pdf): 경로·종류·사유·크기만(파일 이름·URL·내용 없음)
   | 'vault.pdf_saved' | 'vault.pdf_refused' | 'vault.download_armed' | 'vault.download_arm_refused' | 'vault.download_unexpected' | 'vault.download_stalled'
   | 'vault.staging_swept'
