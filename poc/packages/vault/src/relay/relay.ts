@@ -263,7 +263,8 @@ export class Relay {
       case 'Target.activateTarget': {
         const t = this.targets.get(String(msg.params?.targetId));
         if (!t?.exposed) return this.reject(msg, { ok: false, reason: 'target_not_exposed' }, 'root');
-        if (method === 'Target.activateTarget' && t.win?.phase === 'active') return this.reject(msg, { ok: false, reason: 'secret_window_active' }, 'root');
+        // 탭 활성화는 Chrome 창을 앱 앞으로 올린다: 어떤 경우에도 하지 않는다(대표 지시 2026-11-14, 사람 차례는 앱 패널에서)
+        if (method === 'Target.activateTarget') return this.reject(msg, { ok: false, reason: t.win?.phase === 'active' ? 'secret_window_active' : 'window_front_refused' }, 'root');
         this.stat(method, 'root', 'forwarded');
         const r = await this.conn.send(method, { targetId: t.targetId }).catch((e: Error) => ({ __error: e.message }));
         this.enqueue(async () => ('__error' in r ? { id, error: { code: -32000, message: String(r.__error) } } : { id, result: r }));
@@ -347,6 +348,8 @@ export class Relay {
         };
         this.targets.set(targetId, t);
         this.byVaultSession.set(t.vaultSession, t);
+        // 새 창·탭(포털 팝업 window.open): Chrome이 그 창을 앞으로 올리며 앱을 가린다. 금고가 main에 알려 앱을 다시 앞으로 둔다.
+        if (t.type === 'page') this.onPageOpened?.(t);
         if (this.creating > 0 && t.type === 'page') this.deferred.push(t);
         else await this.decide(t);
         return;
@@ -854,6 +857,8 @@ export class Relay {
   onWindowActive?: (t: TargetState, active: boolean) => void;
   /** 타깃이 사라졌다(탭·창 닫힘, 금고 감시 세션 분리). 금고가 실행 창이 모두 닫혔는지 본다. */
   onTargetGone?: (t: TargetState) => void;
+  /** 새 page 타깃이 붙었다(첫 탭·팝업 창). Chrome이 창을 앞으로 올리므로 main이 앱을 다시 앞으로 둔다. */
+  onPageOpened?: (t: TargetState) => void;
   /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
   hasExposedPage(): boolean {
     return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);
@@ -918,35 +923,21 @@ export class Relay {
     return [...this.targets.values()].some((t) => t.win);
   }
 
-  /**
-   * 사람에게 보일 실행 창을 앞으로(main [홈택스 창 보기]). 엔진에 노출된 page 중 가장 늦게 붙은 것(팝업 창이 열렸으면 그 창)에 Page.bringToFront.
-   * 맥에서는 Chrome 앱도 앞으로 온다(Target.activateTarget은 오지 않는다, 2026-11-12 측정). 비밀 입력 창·숨긴 팝업·회수된 타깃은 고르지 않는다.
-   */
-  async bringToFront(): Promise<boolean> {
-    const t = this.runWindowTarget();
-    if (!t) return false;
-    return this.conn.send('Page.bringToFront', {}, t.vaultSession).then(
-      () => true,
-      () => false,
-    );
-  }
-
   runWindowTarget(): TargetState | undefined {
     return [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
   }
 
   /**
    * 실행 창을 앱 옆 자리로(main이 정한 화면 좌표, 대표 요청 2026-11-13 "크롬이 앱을 가리지 않게"). 최대화·전체 화면이면 먼저 보통 창으로 돌린다.
-   * front면 앞으로도 올린다(사람 차례·[홈택스 창 보기]). 비밀 입력 창은 고르지 않는다(그 창은 금고가 따로 띄운다).
+   * 앞으로는 올리지 않는다(대표 지시 2026-11-14). 비밀 입력 창은 고르지 않는다(그 창은 금고가 따로 띄운다).
    */
-  async placeWindow(bounds: { left: number; top: number; width: number; height: number }, front: boolean): Promise<boolean> {
+  async placeWindow(bounds: { left: number; top: number; width: number; height: number }): Promise<boolean> {
     const t = this.runWindowTarget();
     if (!t) return false;
     try {
       const { windowId } = await this.conn.send<{ windowId: number }>('Browser.getWindowForTarget', { targetId: t.targetId });
       await this.conn.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
       await this.conn.send('Browser.setWindowBounds', { windowId, bounds });
-      if (front) await this.conn.send('Page.bringToFront', {}, t.vaultSession);
       return true;
     } catch {
       return false;

@@ -1,5 +1,6 @@
-// [홈택스 창 보기](U3): main 제어 포트 browser.focus → 금고가 실행 탭에 Page.bringToFront. 엔진 포트에는 열지 않는다.
-// SAX_FOCUS_HEADFUL=1(맥, 수동): 화면에 Chrome을 띄우고 Finder를 앞으로 둔 뒤 browser.focus로 Chrome 앱이 맨 앞에 오는지 lsappinfo로 본다.
+// browser.focus: Chrome 창은 어떤 경우에도 앞으로 올리지 않는다(대표 지시 2026-11-14). 금고는 늘 focused:false. 엔진 포트에는 열지 않는다.
+// 엔진도 Page.bringToFront·Target.activateTarget으로 올릴 수 없다(금고 중계가 거부).
+// SAX_FOCUS_HEADFUL=1(맥, 수동): 화면에 Chrome을 띄우고 Finder를 앞으로 둔 뒤 browser.focus를 불러도 Finder가 맨 앞에 남는지 lsappinfo로 본다.
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { describe, it } from 'node:test';
@@ -11,7 +12,7 @@ const headful = process.env.SAX_FOCUS_HEADFUL === '1' && process.platform === 'd
 const frontApp = () => execFileSync('lsappinfo', ['info', '-only', 'name', execFileSync('lsappinfo', ['front']).toString().trim()]).toString();
 
 describe('금고 browser.focus', () => {
-  it('Chrome 전에는 focused:false, 실행 탭이 있으면 그 탭을 앞으로. 엔진 포트로는 부를 수 없다', { timeout: 60_000 }, async () => {
+  it('Chrome 전·후 모두 focused:false(앞으로 올리지 않는다), 엔진 포트로는 부를 수 없고 엔진의 Page.bringToFront·Target.activateTarget도 거부', { timeout: 60_000 }, async () => {
     const h = await startHarness({ headful });
     try {
       assert.deepEqual(await h.control.rpc('browser.focus'), { focused: false });
@@ -19,17 +20,17 @@ describe('금고 browser.focus', () => {
       const rb = await connectRunBrowser(h.client);
       await rb.page.goto('about:blank');
       if (headful) {
-        // 막 뜬 Chrome이 잠시 앞으로 다시 올 수 있어, Finder가 맨 앞에 머물 때까지 몇 번 둔다.
         for (let i = 0; i < 5 && !/Finder/.test(frontApp()); i++) {
-          execFileSync('osascript', ['-e', 'tell application "Finder" to activate']); // open -a는 Finder 창이 없으면 새 창을 연다. activate는 앞으로만 올린다
+          execFileSync('osascript', ['-e', 'tell application "Finder" to activate']);
           await sleep(1500);
         }
         assert.match(frontApp(), /Finder/);
       }
-      assert.deepEqual(await h.control.rpc('browser.focus'), { focused: true });
+      assert.deepEqual(await h.control.rpc('browser.focus'), { focused: false });
+      await assert.rejects(rb.page.bringToFront());
       if (headful) {
         await sleep(1200);
-        assert.match(frontApp(), /Google Chrome/, '맥: Chrome 앱이 맨 앞');
+        assert.match(frontApp(), /Finder/, '맥: Chrome이 앞으로 오지 않는다');
       }
       await rb.browser.close().catch(() => {});
     } finally {

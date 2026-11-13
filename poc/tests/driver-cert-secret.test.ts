@@ -40,7 +40,7 @@ const mk = (o: Partial<CertSecretInput> & { screen?: string[]; frame?: boolean }
   const abort = new AbortController();
   const port = new CertSecretPort({
     vault, targetId: () => 'T1', dict: WITH_PW, strings: {}, journal: (t, p) => journal.push([t, p]),
-    page: { bringToFront: async () => void fronts.push(1), text: async () => screen.shift() ?? '', certFrame: async () => o.frame ?? false },
+    page: { text: async () => screen.shift() ?? '', certFrame: async () => o.frame ?? false },
     event: (e) => events.push(e), signal: abort.signal,
     setTimer: (fn) => (timers.push(fn), () => {}), sleep: async () => {}, settleMs: 0, ...o,
   });
@@ -49,12 +49,12 @@ const mk = (o: Partial<CertSecretInput> & { screen?: string[]; frame?: boolean }
 const REQ = { runId: 'r1', stepId: 's4', ttlMs: 120_000 };
 
 describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
-  it('사전의 cert_password 칸으로 금고 비밀 창을 연다(실행 탭을 먼저 앞으로). 닫히면 done, 값은 엔진에 오지 않는다', async () => {
+  it('사전의 cert_password 칸으로 금고 비밀 창을 연다(Chrome 창은 앞으로 올리지 않는다). 닫히면 done, 값은 엔진에 오지 않는다', async () => {
     const h = mk();
     h.vault.onOpen = () => h.vault.close('T1');
     assert.equal(await h.port.secret(REQ), 'done');
     assert.deepEqual(h.vault.calls, [['secretWindow.openForHuman', { runId: 'r1', targetId: 'T1', frame: 'main', element: '#certPw' }]]);
-    assert.equal(h.fronts.length, 1);
+    assert.equal(h.fronts.length, 0, '실행 탭을 앞으로 올리지 않는다');
     assert.deepEqual(h.events, [{ state: 'open', stepId: 's4', ttlMs: 120_000 }, { state: 'closed', stepId: 's4', why: 'done' }]);
     assert.ok(!JSON.stringify(h.journal).includes('value'));
   });
@@ -134,7 +134,7 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     const h = mk({ frame: true });
     assert.deepEqual(await h.port.secret(REQ), { code: CERT_WAITING });
     assert.deepEqual(h.vault.calls, []);
-    assert.equal(h.fronts.length, 1, '실행 탭을 앞으로(앱 창 뒤에 가려지지 않게)');
+    assert.equal(h.fronts.length, 0, 'Chrome 창을 앞으로 올리지 않는다(사람은 앱 패널에서 넣는다)');
     assert.deepEqual(h.journal, [['human.secret_manual', { stepId: 's4', reason: 'cert_frame' }]]);
     assert.deepEqual(h.events, [], '금고 창 안내는 없다(사람 대기는 handoff로 보인다)');
     assert.match(CERT_FRAME_CSS, /dscert/);

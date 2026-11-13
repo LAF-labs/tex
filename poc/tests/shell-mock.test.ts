@@ -147,6 +147,12 @@ describe('셸 목업', () => {
     runs.approved(a.run.id);
     assert.equal(r.approvedPending, true);
     host.emit('run', { runId: a.run.id, type: 'phase', phase: 'sign', state: 'now' });
+    // 금고 비밀 창 차례(엔진 secret 이벤트)는 실행을 끝내지 않는다(실화면 run-837dad14: 이것으로 끝내 앱 비밀번호 창이 닫혔다). 모르는 이벤트도 같다.
+    host.emit('run', { runId: a.run.id, type: 'secret', state: 'open', stepId: 's21', ttlMs: 120_000 });
+    host.emit('run', { runId: a.run.id, type: 'secret', state: 'closed', stepId: 's21', why: 'done' });
+    host.emit('run', { runId: a.run.id, type: 'something_new' });
+    assert.equal(r.status, 'issuing');
+    assert.equal(runs.isActive(a.run.id), true);
     assert.equal(r.status, 'issuing');
     assert.equal(r.approvedPending, false);
     host.emit('run', { runId: a.run.id, type: 'end', status: 'completed_with_issues', code: 'mail.not_confirmed', approvalNo: '20261101-41000012-00000123', mailConfirmed: false });
