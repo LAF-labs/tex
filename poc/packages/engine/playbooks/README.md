@@ -4,7 +4,7 @@
 
 | 폴더 = 패키지 id | 종류 | 버전 |
 |---|---|---|
-| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.2.0 |
+| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.2.1 |
 | `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.2.0 |
 | `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.2.0 |
 | `hometax.cert.taxpayment` | playbook(H-04 납세증명서(국세) 발급) | 1.0.0 |
@@ -15,7 +15,7 @@
 
 - 파일: `manifest.json`·`playbook.json`·`selectors.json`·`strings.ko.json`.
 - manifest의 `contentDigests`·`lookupsUsed[].digest`·`signatures`는 자리표시다. 게시 도구가 원시 바이트로 채우고 package 키 2개로 서명한다(클라우드 트랙 게시 도구, 서명은 사용자).
-- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.2.0·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
+- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.2.1·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
   캡처가 없는 부분(로그인 절차 세부, 보안카드·사업자 간편인증 갈래, 인증서 창 [취소] 뒤 화면, 세션 만료, 접근성 이름 일부)은 가정이고 사람 차례로 둔다. 가정 목록은 PR 본문. 건조 실행: `tests/h01-real-dryrun.test.ts`(가짜 홈택스 `tests/hometax-fake.ts`).
   민원증명(`hometax.cert.*`) 셀렉터는 아직 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
 - 시험은 이 원본을 골든 패키지로 쓴다(`tests/core-fixtures.ts`). 바꾸면 레지스트리 샘플(`tests/fixtures/registry`)을 다시 만든다.
@@ -54,3 +54,4 @@ H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉�
 - 조회 `hometax.cert.issued_list`는 IR 조회 패키지다(H-01 조회와 같은 방식, 서명 대상). 입력 `key`는 민원명이고, 즉시발급 3종도 같은 패키지를 쓴다.
 - 엔진: 게이트 카드는 GATE_CARDS(`cert.confirm` 4칸), 제품이 받는 id는 `registry-sync.ts` PRODUCT_PACKAGE_IDS(H-01·H-03·H-04·H-08·H-09, 조회는 lookupsUsed로 따라온다). RunService(세금계산서 입력·원장 재료)는 아직 `invoice.confirm`만 게이트를 연다(민원증명 실행 입력·원장 재료는 후속).
 
+- 2.2.1(2026-11-13): 실제 0.1.10 실행이 s12 등록번호 칸에서 R-A1 동일성 불일치로 사람 차례가 됐다. 실화면 접근성 이름은 빈 칸이다(reports/raw/poc-3-mac-landmarks.json). title에서 가져온 정확 일치 이름 패턴 3개(등록번호·[확인]·1행 품목)를 빈 이름도 통과하게 풀고 label·role 후보를 더했다. 등록번호 입력 칸에 fieldKey counterpartBizNo를 주어 하이픈을 정규화하고, 미리보기 글은 readbackOf로 바꿨다. recovery.default는 {retry 2}이고, 게이트 뒤·제출·verify·save_pdf·로그인 대기 s5는 retry 0이다. 가짜 홈택스는 실화면처럼 그 칸들의 title을 뺐다.
