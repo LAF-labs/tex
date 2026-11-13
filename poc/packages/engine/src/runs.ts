@@ -480,6 +480,8 @@ export class RunService extends EventEmitter {
         this.journal.append(a.runId, type, payload);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+        // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
+        if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
       },
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
       postGate: (m) => this.d.postGate(m),
