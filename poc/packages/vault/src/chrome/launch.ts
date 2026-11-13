@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable, Writable } from 'node:stream';
 import { findReparsePoint } from '@sax/platform';
-import { CHROME_ARG_ALLOWLIST, CHROME_ENV_ALLOWLIST, CHROME_HEADLESS_ARGS, FORBIDDEN_CHROME_ARGS } from '../constants.ts';
+import { CHROME_APP_START_URL, CHROME_ARG_ALLOWLIST, CHROME_ENV_ALLOWLIST, CHROME_HEADLESS_ARGS, FORBIDDEN_CHROME_ARGS } from '../constants.ts';
 import { PipeConnection } from '../cdp/connection.ts';
 
 export interface LaunchedChrome {
@@ -24,7 +24,7 @@ export function buildChromeArgs(profileDir: string, testArgs: string[] = [], hea
   // --disable-breakpad: 크래시해도 프로필 아래 로컬 덤프(Crashpad)를 만들지 않는다(N-04).
   // --disable-default-apps: 기본 앱이 전용 프로필에 깔려 확장 검사가 비밀 창을 막지 않게 한다(constants.ts CHROME_ARG_ALLOWLIST).
   // 가려진 창·뒤 렌더러·타이머 늦추기를 끈다: 앱이 홈택스 Chrome을 앱 옆·뒤에 두므로(#305) 가려져도 자동화가 느려지지 않게.
-  const fixed = ['--remote-debugging-pipe', `--user-data-dir=${profileDir}`, '--no-first-run', '--disable-breakpad', '--disable-default-apps', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
+  const fixed = ['--remote-debugging-pipe', `--user-data-dir=${profileDir}`, '--no-first-run', '--disable-breakpad', '--disable-default-apps', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling', `--app=${CHROME_APP_START_URL}`, '--no-default-browser-check'];
   // 시험 인자가 이미 정한 플래그(headless·창 크기)는 겹쳐 넣지 않는다.
   const flag = (a: string) => a.split('=')[0];
   if (headless) fixed.push(...CHROME_HEADLESS_ARGS.filter((h) => !testArgs.some((a) => flag(a) === flag(h))));
