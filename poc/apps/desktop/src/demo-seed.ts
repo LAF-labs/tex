@@ -58,6 +58,7 @@ export function seedPast(): PastRun[] {
       runId, kind: issued ? 'issued' : 'not_issued', who, ...s, day, time,
       approvalNo: issued ? `${day.replaceAll('-', '')}-41000012-${seq}` : null,
       documentId: issued ? `d-${runId}` : null,
+      mail: issued ? (status === 'mail_unconfirmed' ? 'unconfirmed' : 'sent') : null,
       note: status === 'mail_unconfirmed' ? NOTE['mail.not_confirmed']! : status === 'stopped' ? NOTE['gate.stopped']! : null,
     };
   });
