@@ -73,8 +73,6 @@ export interface RelayOptions {
   log: EventLog;
   /** 엔진으로 가는 직렬화된 CDP 프레임. */
   toEngine: (raw: string) => void;
-  /** 알려진 값 치환이 적중했다(누출 의심, N-17). 창(타깃의 알려진 값 묶음)마다 1회. */
-  onLeakSuspected?: (hits: number) => void;
 }
 
 /**
@@ -96,8 +94,6 @@ export class Relay {
   /** 타깃별 알려진 값 변형(N-78). 창이 커밋·분리로 끝나면 그 타깃 것을 지운다. */
   private readonly knownVariants = new Map<string, string[]>();
   /** 누출 의심을 이미 알린 타깃(알려진 값 묶음이 지워지면 다시 알린다). */
-  private readonly leakNotified = new Set<string>();
-  private readonly onLeakSuspected?: (hits: number) => void;
   private engineAutoAttach = false;
   private creating = 0;
   private deferred: TargetState[] = [];
@@ -122,7 +118,6 @@ export class Relay {
     this.policy = opts.policy;
     this.log = opts.log;
     this.toEngine = opts.toEngine;
-    this.onLeakSuspected = opts.onLeakSuspected;
     this.conn.on('message', (m: CdpMessage) => this.onChrome(m));
   }
 
@@ -308,7 +303,7 @@ export class Relay {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      this.enqueue(() => this.sanitizeResponse(p, msg));
+      this.enqueue(() => this.sanitizeResponse(p, msg), p.method);
       return;
     }
     if (!msg.sessionId) {
@@ -325,7 +320,7 @@ export class Relay {
       const t = this.targetOfSession(msg.sessionId);
       // 비밀 노드도 함께 떠 둔다(커밋이 secretBackendIds를 비워도 옛 문서 이벤트는 정화한다).
       const at = t ? { ...this.stateOf(t), secretIds: t.secretBackendIds.size ? [...t.secretBackendIds] : undefined } : undefined;
-      this.enqueue(() => this.sanitizeEvent(msg, at));
+      this.enqueue(() => this.sanitizeEvent(msg, at), msg.method);
     }
   }
 
@@ -377,6 +372,7 @@ export class Relay {
         if (t) {
           t.url = String(info.url ?? t.url);
           if (info.openerId) t.openerId = String(info.openerId);
+          if (t.type === 'page') this.onPageUrl?.(t);
         }
         return;
       }
@@ -534,7 +530,12 @@ export class Relay {
     await this.revokeTarget(t, 'vault.origin_left');
   }
 
-  private enqueue(produce: () => Promise<CdpMessage | null>): void {
+  /**
+   * 엔진행 메시지를 줄에 세운다. 나가기 직전 알려진 비밀 값(금고가 넣은 값의 변형)을 지운다.
+   * 지운 것은 유출이 아니다(엔진에 닿지 않았다): 실행을 끊지 않고 어느 CDP 메서드였는지만 남긴다(대표 실화면 run-fb6d0e95,
+   * ML4Web 가상키보드 칸 값이 s4h 대상 찾기 응답에 섞였다). 엔진 밖(로그·보관 폴더)에서 값이 보이면 자기 스캔이 끊는다(SecretOps.selfScan).
+   */
+  private enqueue(produce: () => Promise<CdpMessage | null>, method?: string): void {
     this.outQ = this.outQ.then(async () => {
       let out: CdpMessage | null;
       try {
@@ -547,17 +548,13 @@ export class Relay {
       // 긴 변형부터 지운다(짧은 변형이 긴 변형의 일부를 먼저 깨지 않게). 적중한 타깃마다 한 번 알린다.
       const all = [...this.knownVariants].flatMap(([targetId, variants]) => variants.map((v) => [targetId, v] as const)).sort((a, b) => b[1].length - a[1].length);
       let total = 0;
-      for (const [targetId, v] of all) {
+      for (const [, v] of all) {
         const r = scrubKnownValues(raw, [v]);
         if (!r.hits) continue;
         raw = r.text;
         total += r.hits;
-        if (!this.leakNotified.has(targetId)) {
-          this.leakNotified.add(targetId);
-          this.onLeakSuspected?.(r.hits);
-        }
       }
-      if (total) this.log.event('vault.known_value_scrubbed', { hits: total });
+      if (total) this.log.event('vault.known_value_scrubbed', { hits: total, method: (method ?? out.method ?? 'response').slice(0, 60) });
       this.toEngine(raw);
     });
   }
@@ -867,6 +864,8 @@ export class Relay {
   onTargetGone?: (t: TargetState) => void;
   /** 새 page 타깃이 붙었다(첫 탭·팝업 창). Chrome이 창을 앞으로 올리므로 main이 앱을 다시 앞으로 둔다. */
   onPageOpened?: (t: TargetState) => void;
+  /** page 타깃의 주소가 바뀌었다(팝업 새 창의 첫 주소 포함). 금고 팝업 장치가 닫을 창을 고른다. */
+  onPageUrl?: (t: TargetState) => void;
   /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
   hasExposedPage(): boolean {
     return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);
@@ -889,8 +888,6 @@ export class Relay {
     t.secretBackendIds.clear();
     // 그 창의 알려진 값은 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78). 단 이미 줄에 선 엔진 메시지(커밋 직전의
     // 요청 바디 등)가 나간 뒤에 버린다: 커밋 이벤트는 금고 세션에서 바로 처리되고 엔진 쪽 정리는 줄 뒤에 돌기 때문이다.
-    // 적중 알림은 창마다 한 번이므로 다음 창을 위해 바로 푼다.
-    this.leakNotified.delete(t.targetId);
     const stale = this.knownVariants.get(t.targetId);
     this.enqueue(async () => {
       if (this.knownVariants.get(t.targetId) === stale) this.clearKnownSecrets(t.targetId);
@@ -911,10 +908,8 @@ export class Relay {
   clearKnownSecrets(targetId?: string): void {
     if (targetId === undefined) {
       this.knownVariants.clear();
-      this.leakNotified.clear();
     } else {
       this.knownVariants.delete(targetId);
-      this.leakNotified.delete(targetId);
     }
   }
 

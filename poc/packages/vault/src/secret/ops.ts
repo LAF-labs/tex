@@ -81,10 +81,16 @@ interface Probe {
   len: number;
 }
 
+// 보안키보드형 가림 칸(type=text + -webkit-text-security, 대표 실화면 run-fb6d0e95 가설)은 password로 본다. 보이는 일반 글 칸은 아니다.
 const PROBE_FN = `function () {
   let a = this.ownerDocument.activeElement;
   while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
-  return { type: String(this.type || '').toLowerCase(), active: a === this, connected: this.isConnected, len: typeof this.value === 'string' ? this.value.length : 0 };
+  let type = String(this.type || '').toLowerCase();
+  if (type === 'text') {
+    const v = getComputedStyle(this).getPropertyValue('-webkit-text-security');
+    if (v === 'disc' || v === 'circle' || v === 'square') type = 'password';
+  }
+  return { type, active: a === this, connected: this.isConnected, len: typeof this.value === 'string' ? this.value.length : 0 };
 }`;
 
 interface HumanWatch {

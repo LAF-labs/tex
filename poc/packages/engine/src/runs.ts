@@ -18,6 +18,7 @@ import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
+import { REHEARSAL_DONE, RehearsalReport } from './rehearsal.ts';
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -35,6 +36,11 @@ export interface StartParams {
   email?: string | null;
   /** 발급 키(D03 §4.2 발급 사다리). 있으면 발급 단계(s21) 원장 행에 붙고, 같은 키에 발급됨·미종결 행이 있으면 시작하지 않는다. */
   issueKey?: string;
+  /**
+   * 홈택스 예행(B1): 첫 게이트에 닿으면 게이트 요청을 main에 보내지 않고 스스로 멈춘다(승인 바·토큰 없음, 원장 행 없음).
+   * 실행 이력(runHistory)에서는 뺀다. 렌더러가 켜도 발급 쪽으로는 아무것도 열리지 않는다.
+   */
+  rehearsal?: boolean;
 }
 
 /** 발급 사다리의 홈택스 밖 칸(API·직접 발급)이 쓰는 초안. start와 같은 검증을 지난다. */
@@ -108,6 +114,8 @@ interface ActiveRun {
   portal: PortalConfig;
   /** 이 실행의 신호 사전(runSignals). */
   signals: SignalDict;
+  /** 예행(StartParams.rehearsal)이면 보고서, 아니면 null. */
+  rehearsal: RehearsalReport | null;
 }
 
 export interface RunServiceDeps {
@@ -229,6 +237,9 @@ export class RunService extends EventEmitter {
   }
 
   private ev(e: RunEvent): void {
+    const report = this.active?.runId === e.runId ? this.active.rehearsal : null;
+    if (report && e.type === 'phase') report.phase(e.phase, e.state);
+    if (report && e.type === 'handoff') report.handoff(e.phase, e.code);
     this.emit('event', e);
   }
 
@@ -263,7 +274,7 @@ export class RunService extends EventEmitter {
     // 쿨다운·하루 실행 수·하루 발급 여유(H-01은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
     try {
       this.rate.pinRun();
-      this.rate.admit(profile.id, { irreversible: true });
+      this.rate.admit(profile.id, { irreversible: p.rehearsal !== true });
     } catch (e) {
       if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
       throw e;
@@ -271,6 +282,7 @@ export class RunService extends EventEmitter {
     this.runs.create({ id: p.runId, playbookId, playbookVersion, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
     if (issueKey) this.journal.append(p.runId, 'issue.rung', { issueKey, rung: 'hometax.auto' });
+    if (p.rehearsal === true) this.journal.append(p.runId, 'run.rehearsal');
     // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
     const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
     if (gaps.length) {
@@ -282,7 +294,7 @@ export class RunService extends EventEmitter {
     const portal = runPortalConfig(this.d.portal, startPolicy);
     this.active = {
       runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
-      portal, signals: this.runSignals(p.runId, startPolicy),
+      portal, signals: this.runSignals(p.runId, startPolicy), rehearsal: p.rehearsal === true ? new RehearsalReport() : null,
     };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
@@ -403,6 +415,9 @@ export class RunService extends EventEmitter {
       const code = latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
       result = { ...result, status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? result.approvalNo };
     }
+    // 예행이 게이트에 닿아 스스로 멈췄다(원장 행은 무장에서만 생기므로 없어야 한다. 있으면 위 판정을 그대로 둔다).
+    if (a.rehearsal?.gateStep && !row) result = { status: 'stopped', code: REHEARSAL_DONE };
+    if (a.rehearsal) this.d.log.event('run.rehearsal_report', a.rehearsal.fields(a.runId, { status: result.status, code: result.code, stepId: result.stoppedAt?.stepId }));
     // 정지 하향이 postprocess·kill이면 그 포털의 자동화 Chrome을 닫는다(무장 뒤 미룬 H01 하향도 실행이 끝났으니 닫는다).
     if ((a.downgraded ?? a.ir?.downgraded)?.hardStop) await this.d.closeBrowser?.().catch(() => {});
     this.closeGate(a, 'run_ended');
@@ -488,13 +503,14 @@ export class RunService extends EventEmitter {
       manualRow: (stepId) => this.draftRow(profile, inputs, { intentId: a.intentId, runId: a.runId, stepId, playbookId, inputsHash: a.inputsHash, packageDigest: a.packageDigest, issueKey: stepId === 's21' ? a.issueKey : null }),
       journal: (type, payload) => {
         this.journal.append(a.runId, type, payload);
+        a.rehearsal?.journal(type);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
         // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
         if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
       },
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
-      postGate: (m) => this.d.postGate(m),
+      postGate: (m) => this.gatePort(a, m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
       ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
       ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
@@ -566,7 +582,7 @@ export class RunService extends EventEmitter {
       }, waitMs);
       a.gate = { req, rb, rbHash, deadline: Date.now() + waitMs, timer, resolve, reject, history };
     });
-    this.d.postGate({ t: 'gate.request', req });
+    this.gatePort(a, { t: 'gate.request', req });
     this.ev({ runId: a.runId, type: 'waiting', reqId: req.reqId });
     await decided;
     // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]·차단 신호가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
@@ -633,7 +649,26 @@ export class RunService extends EventEmitter {
     if (!g) return;
     clearTimeout(g.timer);
     a.gate = null;
-    this.d.postGate({ t: 'gate.closed', runId: a.runId, reqId: g.req.reqId, reason });
+    this.gatePort(a, { t: 'gate.closed', runId: a.runId, reqId: g.req.reqId, reason });
+  }
+
+  /**
+   * 게이트 포트로 내보낸다. 예행은 아무것도 보내지 않는다: 게이트 요청이 오면 그 자리를 남기고, 조율기가 승인을 기다리기 시작한 뒤 [중지]처럼 멈춘다.
+   * main이 요청을 받지 못하므로 승인 바도 토큰도 생기지 않는다.
+   */
+  private gatePort(a: ActiveRun, m: GatePortMessage): void {
+    if (!a.rehearsal) return this.d.postGate(m);
+    if (m.t !== 'gate.request' || a.rehearsal.gateStep) return;
+    a.rehearsal.gateStep = m.req.gateStepId;
+    this.journal.append(a.runId, 'rehearsal.gate_reached', { stepId: m.req.gateStepId });
+    setImmediate(() => {
+      if (this.active !== a) return;
+      try {
+        this.stop(a.runId);
+      } catch (e) {
+        this.d.log.event('run.rehearsal_stop_failed', { runId: a.runId, error: e instanceof RunEnd ? e.code : 'error' });
+      }
+    });
   }
 
   /**
@@ -649,6 +684,7 @@ export class RunService extends EventEmitter {
       if (a) this.journal.append(a.runId, 'gate.answer_rejected', { code });
       return { ok: false, code };
     };
+    if (a?.rehearsal) return reject('rehearsal');
     if (a?.ir) return this.answerIr(a, a.ir, ap, reject);
     if (!a || !g) return reject('no_open_gate');
     if (a.stop) return reject('stopped');

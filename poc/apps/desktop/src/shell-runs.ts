@@ -140,6 +140,8 @@ export const NOTE: Record<string, string> = {
   'verify.not_committed': "직전 시도는 '발급 안 됨'으로 판정되었어요. 홈택스 발급목록을 직접 확인한 뒤 다시 준비해 주세요.",
   'verify.unknown': '발급 요청은 보냈지만 발급목록에서 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   in_doubt: '발급 단계에서 멈춰 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
+  // 예행(엔진 REHEARSAL_DONE): 승인 직전까지 가서 엔진이 스스로 멈췄다.
+  'rehearsal.gate_reached': '예행을 마쳤어요. 승인 직전까지 갔고 발급하지 않았어요.',
   'mail.not_confirmed': '발급은 완료되었어요. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요.',
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
@@ -276,6 +278,8 @@ export const ATTEST_NOTE = {
 /** 게이트 없이 끝난 실행이 연달아 이만큼이면 잠시(PREPARE_PAUSE_MS) 준비를 받지 않는다(ADR-027 결정 8). */
 export const GATELESS_STREAK_MAX = 3;
 export const PREPARE_PAUSE_MS = 60_000;
+/** 홈택스 예행의 고정 초안(부장 2026-11-13): 일호유통, 품목 예행, 공급가 1원, 이메일 없음. */
+export const REHEARSAL = { name: '일호유통', bizNo: '6495800524', item: '예행', supply: 1 } as const;
 
 /** 엔진 answer() 거부 중 [중지]·만료가 먼저 게이트를 닫아서 생긴 것(근거 문제 아님). */
 const RACED = new Set(['stopped', 'gate_expired', 'no_open_gate', 'not_open']);
@@ -429,6 +433,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** 지금 들고 있는 실행 전부(만든 순서). 이번 달 판이 읽는다. */
   list(): RunView[] {
     return [...this.runs.values()];
+  }
+
+  /** 예행 초안(REHEARSAL). 이메일 칸은 비운다(자동 발송 없음). */
+  rehearsalDraft(cp: Counterparty): RunView {
+    const d = this.createDraft(cp, REHEARSAL.supply, 'separate', REHEARSAL.item);
+    d.email = { value: '', first: false };
+    d.rehearsal = true;
+    return d;
   }
 
   /** item: 문장에서 뽑았거나 되묻기에서 받은 품목. 없으면 거래처의 저장 품목(추정). */
@@ -626,7 +638,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
         this.end(r, { status: 'stopped', code: 'run.stopped' });
         return r;
       }
-      await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null });
+      await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null, ...(r.rehearsal ? { rehearsal: true } : {}) });
       // 시작하는 동안 온 [중지]를 이제 엔진에 전한다(엔진은 다음 정지 확인에서 멈춘다. 게이트 전이다).
       if (this.stopEarly.has(r.id)) await this.host.rpc('run.stop', { runId: r.id }).catch(() => {});
     } catch (e) {
@@ -893,7 +905,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.turn = null;
     r.handoff = null;
     r.approvedPending = false;
-    if (!r.confirmed) this.gateless.push(this.clock());
+    // 게이트에 닿은 예행은 승인 카드가 뜬 실행처럼 센다(엔진이 게이트 요청을 main에 보내지 않는다).
+    if (r.rehearsal && e.code === 'rehearsal.gate_reached') this.gateless = [];
+    else if (!r.confirmed) this.gateless.push(this.clock());
     if (typeof e.portalNotice === 'string' && e.portalNotice.trim()) r.notices = [...(r.notices ?? []), portalNoticeText(e.portalNotice)];
     // in_doubt는 main이 닫은 이유("아무것도 발급하지 않았어요")로 덮지 않는다. 발급됐는지 모른다는 것이 먼저다.
     const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);

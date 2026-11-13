@@ -1,13 +1,14 @@
 // PoC-9 데모 UI 셸의 main(PoC-6부터 엔진·금고를 띄운다). 승인 바는 main 소유 WebContentsView다(ADR-021).
 // 렌더러는 바 자리를 비우기만 하고 바를 그리거나 숨기지 못한다. 승인 근거는 바 → main → 게이트 포트(엔진)로만 간다.
 // 기본은 fixture 모드(가짜 H-01 페이지, 시험 정책 금고, 임시 앱 폴더). 홈택스 실제 화면은 PoC-3 셀렉터가 들어온 뒤.
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
-import type { Channel } from '@sax/updater';
+import type { Channel, Revocation, TrustRoot } from '@sax/updater';
+import type { Egress } from '@sax/net';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
@@ -23,16 +24,16 @@ import { openExternalKey } from './external-links.ts';
 import { securityBlocks, securityStatus, startSecurityProgram, type SecurityStatus } from './security-programs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
-import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
-import type { AppUpdaterLike } from './update-electron.ts';
+import { startUpdateHost, updatePolicy, type UpdateHost } from './update-host.ts';
+import type { AppUpdaterLike, ProviderBase } from './update-electron.ts';
 import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox, readSheetInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
-import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
-import { openSecretWindow, openVaultInputWindow } from './secret-window.ts';
+import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
+import { openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
 import { EmbeddedBrowser } from './embedded-browser.ts';
@@ -41,7 +42,7 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -224,7 +225,14 @@ export interface RemoteWiring {
 export interface UpdateWiring {
   channel: Channel;
   origin: string;
-  sources: UpdateSources;
+  /** 레지스트리 GET(latest.json·투명성 로그, update-sources.ts). 폐기 목록은 엔진이 받아 둔 것을 쓴다. */
+  egress: Pick<Egress, 'getRegistry' | 'getRegistryBytes'>;
+  /** 핀 키. 없으면 엔진 핀(db.query.registry.pins). 실계정 시험 빌드의 로컬 피드만 넘긴다(shell.ts). */
+  trust?: TrustRoot;
+  /** 실계정 시험 빌드의 로컬 피드(http://127.0.0.1)만 true(update-electron feedUrl). */
+  loopback?: boolean;
+  /** false면 설치 뒤 다시 열지 않는다. 로컬 피드 시험만(update-electron electronInstaller). */
+  relaunch?: boolean;
   testBuild: boolean;
   setting?: { requireTransparency?: unknown } | null;
   updater?: AppUpdaterLike;
@@ -263,8 +271,8 @@ export interface Shell {
   ready: Promise<void>;
   /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
   methods: string[];
-  /** 지금 열린 비밀 입력 창(금고 secret.needed로만 열린다). */
-  secretWindow(): BrowserWindow | null;
+  /** 지금 대화에 떠 있는 비밀 입력 카드(금고 secret.needed로만 뜬다). 값은 없다. */
+  secretAsk(): { reqId: string; kind: string; runId: string } | null;
   close(): Promise<void>;
 }
 
@@ -293,8 +301,6 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 디버그 스위치가 있으면 끝낸다(ADR-021·ADR-025 결정 8, 값싼 차단).
   assertNoDebugSwitches(app);
   serve();
-  // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
   // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다. 견본 저장소는 시연 연결로만 온다.
   const store: DocStore = opts.engine ? emptyDocStore() : opts.dev!.sample.store();
@@ -577,7 +583,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
 
   // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
-  let secretWin: BrowserWindow | null = null;
   secretPage = () => {
     const r = secrets.open;
     return r ? secretPageHtml(r, profiles()[r.scope].name) : null;
@@ -591,7 +596,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (win.isDestroyed()) return;
     app.focus({ steal: true });
     win.moveTop();
-    (secretWin && !secretWin.isDestroyed() ? secretWin : win).focus();
+    win.focus();
   };
   // 맥: 실행 Chrome이 떠 있는 동안 맨 앞 앱을 0.4초마다 본다. 금고가 띄운 그 Chrome 프로세스가 맨 앞이면(스스로 창을 올림) 앱을 다시 앞으로.
   // 사람이 다른 앱(자기 Chrome 포함)을 쓰는 것은 건드리지 않는다(프로세스 id로만 가린다).
@@ -625,62 +630,100 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       });
     }, 400);
   };
-  // main이 닫은 창(실행 끝·종료)은 사용자가 돌아온 것이 아니다: 핸드오프 복귀로 치지 않는다.
-  let appClosing: BrowserWindow | null = null;
   // 메인 창이 닫히는 중이면 비밀 창을 새로 열지 않는다(들고 있던 다음 요청 포함).
   let mainClosing = false;
   win.once('close', () => {
     mainClosing = true;
   });
+  /**
+   * 비밀 입력은 대화 안 카드로 받는다(대표 지시 2026-11-14 "앱 내 채팅으로", 따로 뜨는 금고 창 없음).
+   * 금고 secret.needed → 렌더러에 가려진 입력 카드(secretAsk open) → 사람이 넣으면 secret.answer로 main → 금고 1회용 입력 포트(secret.provide)로만.
+   * 값은 main에서 바이트로 바꿔 넘기고 바로 0으로 덮는다. 로그·대화 기록·모델·렌더러 상태에 남기지 않는다(대화에는 "●●●● 입력함"만).
+   */
+  let secretAsk: { reqId: string; bind: OneShotInputBind } | null = null;
+  const SECRET_LABEL: Record<string, string> = { cert_password: '공동인증서 비밀번호', portal_password: '홈택스 비밀번호', security_card: '보안카드 번호' };
   const closeSecret = () => {
-    if (!secretWin || secretWin.isDestroyed()) return;
-    appClosing = secretWin;
-    secretWin.close();
+    if (!secretAsk) return;
+    send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'closed' });
+    secretAsk = null;
+    secrets.closed(); // main이 닫았다(실행 끝·종료): 든 요청은 버린다
   };
   const openSecret = (data: unknown): void => {
-    // 메인 창부터 본다: 열 수 없는데 조정자에 '열림'을 남기면 이후 비밀 창이 영영 열리지 않는다.
     if (mainClosing || win.isDestroyed()) return log.event('main.secret_needed_ignored');
     const r = secrets.request(data);
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
-    const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
-    let w: BrowserWindow;
-    let port: ReturnType<typeof host.secretInputPort> | null = null;
-    try {
-      port = host.secretInputPort(bind);
-      w = openSecretWindow(win, bind, port, `${SHELL_SCHEME}://shell/secret.html`);
-    } catch (e) {
-      // 열지 못했으면 '열림'을 남기지 않는다(남으면 이후 요청이 줄만 서고 창이 영영 안 열린다). 든 요청도 버린다.
-      // 이미 만든 금고 입력 포트도 닫아 금고 쪽 결속을 끝낸다.
-      port?.close();
-      secrets.closed();
-      return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
-    }
-    secretWin = w;
-    // 앱 비밀번호 창은 반드시 앞에 보인다(실화면 run-837dad14: 대표에게 안 보였다). 앱을 앞으로, 그 창에 포커스. Chrome은 올리지 않는다.
-    const front = () => {
-      if (w.isDestroyed() || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      if (!win.isVisible()) win.show();
-      app.focus({ steal: true });
-      w.show();
-      w.moveTop();
-      w.focus();
-    };
-    front();
-    w.webContents.once('did-finish-load', front);
-    log.event('main.secret_window_shown', { kind: r.kind });
-    // main이 닫은 창(실행 끝·종료)인지는 'close' 때 정한다('closed'보다 먼저 온다).
-    let byApp = false;
-    w.on('close', () => {
-      byApp = appClosing === w;
-      if (byApp) appClosing = null;
+    const bind: OneShotInputBind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
+    secretAsk = { reqId: randomUUID().slice(0, 18), bind };
+    const label = r.kind === 'security_card' && r.row ? `${SECRET_LABEL[r.kind]} ${r.row}번` : (SECRET_LABEL[r.kind] ?? '비밀번호');
+    const note = r.kind === 'cert_password' ? '처음 한 번만 넣으면 이 Mac 금고에 두고 다음부터 묻지 않아요.' : '이번 실행에서 한 번만 쓰고 저장하지 않아요.';
+    send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'open', runId: r.runId, kind: r.kind, label, note });
+    // 앱이 앞에 있어야 카드가 보인다(Chrome은 올리지 않는다)
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
+    app.focus({ steal: true });
+    win.focus();
+    log.event('main.secret_ask_shown', { kind: r.kind });
+  };
+  /** 금고 1회용 입력 포트로 한 번 보낸다(값은 이 함수 밖으로 나가지 않는다). */
+  const vaultSecretSend = (bind: Parameters<typeof host.secretInputPort>[0], method: 'secret.provide' | 'secret.store', params: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
+    new Promise((resolve) => {
+      let port: ReturnType<typeof host.secretInputPort> | null = null;
+      const done = (v: { ok: boolean; error?: string }) => {
+        clearTimeout(timer);
+        try {
+          port?.close();
+        } catch {
+          // 이미 닫힘
+        }
+        resolve(v);
+      };
+      const timer = setTimeout(() => done({ ok: false, error: 'timeout' }), 10_000);
+      try {
+        port = host.secretInputPort(bind);
+        port.on('message', (e: { data: unknown }) => {
+          const d = e.data as { error?: unknown } | null;
+          done(d && typeof d.error === 'string' ? { ok: false, error: d.error.slice(0, 40) } : { ok: true });
+        });
+        port.start();
+        port.postMessage({ t: 'rpc', id: 1, method, params });
+      } catch (e) {
+        done({ ok: false, error: (e as Error).message.slice(0, 40) });
+      }
     });
-    w.on('closed', () => {
-      if (secretWin === w) secretWin = null;
+  /** 설정에서 인증서 비밀번호를 금고에 저장한다(값은 이 함수 밖으로 나가지 않는다). */
+  const saveCertMemory = async (value: unknown): Promise<{ remembered: boolean }> => {
+    if (typeof value !== 'string' || !value) throw new Error('bad_value');
+    const bytes = new TextEncoder().encode(value);
+    const r = await vaultSecretSend({ mode: 'store', kind: 'cert_password', scope: 'business', notice: { version: 'cert-settings-2026-11-14' } }, 'secret.store', { entries: [{ field: 'pw', bytes }] });
+    bytes.fill(0);
+    log.event('main.cert_memory_saved', { ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+    if (!r.ok) throw new Error('vault_refused');
+    return { remembered: true };
+  };
+  /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
+  const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
+    const ask = secretAsk;
+    if (!ask || p.reqId !== ask.reqId) throw new Error('not_requested');
+    if (p.cancel === true) {
+      secretAsk = null;
+      send({ type: 'secretAsk', reqId: ask.reqId, state: 'closed' });
       const next = secrets.closed();
-      // 들고 있던 요청은 사용자가 창을 마쳤을 때만 이어서 연다. main이 닫은 창(실행 끝·종료)이면 버린다.
-      if (next && !byApp) openSecret(next);
-    });
+      log.event('main.secret_ask_cancelled', { kind: ask.bind.kind });
+      if (next) openSecret(next);
+      return { ok: true };
+    }
+    if (typeof p.value !== 'string' || !p.value) throw new Error('bad_value');
+    const bytes = new TextEncoder().encode(p.value);
+    const params: Record<string, unknown> = { kind: ask.bind.kind, scope: ask.bind.scope, bytes, ...(ask.bind.row !== undefined ? { row: ask.bind.row } : {}) };
+    const r = await vaultSecretSend(ask.bind, 'secret.provide', params);
+    bytes.fill(0);
+    log.event('main.secret_ask_answered', { kind: ask.bind.kind, ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+    if (!r.ok) throw new Error('vault_refused');
+    if (secretAsk === ask) secretAsk = null;
+    send({ type: 'secretAsk', reqId: ask.reqId, state: 'done' });
+    const next = secrets.closed();
+    if (next) openSecret(next);
+    return { ok: true };
   };
   // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
   let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
@@ -761,6 +804,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
   // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
+    // 예행은 엔진이 게이트 요청을 보내지 않는다. 그래도 오면 바를 띄우지 않고 멈춘다(토큰 없음).
+    if (runs.get(runId)?.rehearsal) {
+      log.event('main.rehearsal_gate_refused', { runId });
+      return void runs.stop(runId).catch(() => {});
+    }
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
     void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
       if (o.decision === 'approve') {
@@ -966,7 +1014,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const keepItem = async (runId: string) => {
     const r = runs.get(runId);
-    if (!r || r.itemGuessed || !r.item) return;
+    if (!r || r.rehearsal || r.itemGuessed || !r.item) return;
     const cp = cps.find((c) => c.id === r.counterparty.id);
     if (!cp || cp.item) return;
     try {
@@ -1013,7 +1061,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let sendByUser = false;
   /**
    * [홈택스에서 준비] 0클릭(대표 지시 2026-11-13 "두 번째 발급부터 대화 한 문장과 [승인] 1번"). 준비는 홈택스 칸에 넣고 되읽기만 해서 되돌릴 수 있다.
-   * 초안이 다 찼으면(품목이 있으면) 대화 전송에 묶어 바로 시작한다. 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
+   * 초안이 다 찼으면(품목이 있으면, 기본값·저장 품목 포함) 대화 전송에 묶어 바로 시작한다(해석기·대화 에이전트 둘 다). 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
    * 막히면(Chrome 없음·이메일 모양·상한) 초안 카드에 그 이유가 남고 [홈택스에서 준비]로 다시 할 수 있다. 실제 사용자 동작을 묻는 곳은 [승인] 하나다.
    */
   const autoPrepare = (id: string) => {
@@ -1422,6 +1470,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           run.sent = sent;
         }
         if (agentCreated.length) pushBoard();
+        // 기본값(부가세 별도)·저장 품목으로 채운 초안도 바로 준비한다(대표 실사용 2026-11-14 "일호유통에 100원"이 [홈택스에서 준비]를 기다렸다).
+        // 준비는 칸에 넣고 되읽기만 해서 되돌릴 수 있고, 승인 카드에서 다시 본다. 품목이 비면(진짜 빠짐) autoPrepare가 건너뛴다.
+        if (sendByUser) for (const run of agentCreated) autoPrepare(run.id);
         log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
         if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
         // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.
@@ -1516,6 +1567,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 카드를 닫았다. 증언 바를 내린다(증언이 안 될 뿐이라 안전한 실패다).
     'incident.close': (p) => incidents.close(String(p.id)),
     'docs.list': () => listDocs(),
+    'issued.list': () => pastNow(),
     // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
     'docs.import': docsCall(async (p) => {
@@ -1663,6 +1715,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await certMemory.forget('user');
       return { remembered: await certMemory.has() };
     },
+    // 설정 > 발급 인증의 [인증서 비밀번호 저장]: 가려진 칸의 값을 금고로만(저장 결속 secret.store). 처음 로그인에서 틀리면 금고가 지운다.
+    'certMemory.save': async (p) => {
+      needGesture(3_000);
+      return saveCertMemory((p as { value?: unknown }).value);
+    },
+    // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14). 값은 금고 1회용 포트로만.
+    'secret.answer': (p) => {
+      needGesture(3_000);
+      return answerSecret(p as { reqId?: unknown; value?: unknown; cancel?: unknown });
+    },
     // 보안 프로그램(MagicLine4NX) 점검·설치 링크·켜기(B4). 설치는 홈택스 공식 설치 파일을 기본 브라우저로 연다(사람이 설치를 마친다).
     'security.check': async () => {
       const st = securityNow();
@@ -1755,10 +1817,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const startAppUpdater = async (w: UpdateWiring): Promise<UpdateHost | null> => {
     try {
       const { electronInstaller } = await import('./update-electron.ts');
-      const u = w.updater ?? ((await import('electron-updater')).default.autoUpdater as unknown as AppUpdaterLike);
+      const { egressUpdateSources } = await import('./update-sources.ts');
+      const eu = (await import('electron-updater')).default;
+      const u = w.updater ?? (eu.autoUpdater as unknown as AppUpdaterLike);
+      const trust = w.trust ?? ((await host.rpc('db.query.registry.pins', {})) as TrustRoot);
+      const revocation = async (): Promise<Revocation> => {
+        const r = (await host.rpc('db.query.registry.revocation', {})) as { keyIds?: unknown; fresh?: unknown } | null;
+        return { keyIds: new Set(Array.isArray(r?.keyIds) ? r.keyIds.filter((k): k is string => typeof k === 'string') : []), fresh: r?.fresh === true };
+      };
       const h = startUpdateHost({
-        sources: w.sources,
-        installer: electronInstaller(u, { origin: w.origin, channel: w.channel }),
+        sources: egressUpdateSources({ egress: w.egress, trust, revocation }),
+        installer: electronInstaller(u, { origin: w.origin, channel: w.channel, Provider: eu.Provider as unknown as ProviderBase, loopback: w.loopback, relaunch: w.relaunch }),
         channel: w.channel,
         installedVersion: app.getVersion(),
         stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'updater-state.json'),
@@ -1780,7 +1849,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         },
         log: (n, d) => log.event(n, d),
       });
-      void h.check();
+      // 첫 확인은 기동 레지스트리 동기화 뒤에: 엔진이 폐기 목록을 받기 전이면 registry.revocation_stale로 보류되고 다음 확인은 15분 뒤다
+      // (새 설치 격리 프로필 실측 2026-11-13, 동기화가 2초 늦었다). 기동 동기화가 돌고 있으면 그 약속을 같이 기다린다.
+      void registrySync('update').finally(() => void h.check());
       return h;
     } catch (e) {
       log.event('main.update_start_failed', { error: (e as Error).message.slice(0, 80) });
@@ -1857,6 +1928,38 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       })
       .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
+  /**
+   * 도구 > 홈택스 예행(발급 안 함): 고정 초안(REHEARSAL)으로 실행을 시작하고 엔진이 첫 게이트에서 스스로 멈춘다(B1 실화면 예행).
+   * 메인 프로세스 메뉴라 렌더러 제스처 규칙(USER_ACTION_METHODS)을 거치지 않는다. 준비 상한(prepareNow)은 그대로 받는다.
+   * 장부에 일호유통이 없으면 그 번호로 추가한다.
+   */
+  const rehearse = async () => {
+    try {
+      if (runs.anyActive()) throw new Error('busy');
+      const find = () => cps.find((c) => c.bizNo.replace(/\D/g, '') === REHEARSAL.bizNo);
+      if (!find()) {
+        await cpBook.save({ name: REHEARSAL.name, bizNo: REHEARSAL.bizNo });
+        await refresh();
+      }
+      const cp = find();
+      if (!cp) throw new Error('no_counterparty');
+      const d = runs.rehearsalDraft(cp);
+      pushBoard();
+      log.event('main.rehearsal_started', { runId: d.id });
+      await prepareNow(d.id);
+    } catch (e) {
+      log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
+    }
+  };
+  // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { label: '도구', submenu: [{ id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() }] },
+      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+    ]),
+  );
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
@@ -1873,5 +1976,5 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     await host.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
   };
-  return { win, bar, runs, store, host, fixture, ready, methods: Object.keys(handlers), secretWindow: () => secretWin, close };
+  return { win, bar, runs, store, host, fixture, ready, methods: Object.keys(handlers), secretAsk: () => (secretAsk ? { reqId: secretAsk.reqId, kind: secretAsk.bind.kind, runId: secretAsk.bind.runId } : null), close };
 }

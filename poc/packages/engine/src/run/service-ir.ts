@@ -480,6 +480,13 @@ export class IrRun {
       journal: i.journal,
     });
     const sv = i.ir.secret;
+    // 포털 기본 팝업 숨김(H-01 2.3.2 strings popup.*): 금고에 그대로 넘긴다. 금고가 실행 탭 문서마다 숨기고 새 창은 열리자마자 닫는다.
+    const ps = files.strings;
+    if (sv && (ps['popup.hide'] || ps['popup.window.close'])) {
+      void sv.vault
+        .rpc('popups.configure', { hide: ps['popup.hide'] ?? '', idPrefix: ps['popup.hide.idPrefix'] ?? '', cookie: ps['popup.hide.cookie'] ?? '', closeUrl: ps['popup.window.close'] ?? '' })
+        .then((r) => i.journal('popups.configured', { ok: (r as { ok?: unknown } | null)?.ok === true }), () => i.journal('popups.configured', { ok: false }));
+    }
     const secretPort = sv
       ? new CertSecretPort({
         vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
