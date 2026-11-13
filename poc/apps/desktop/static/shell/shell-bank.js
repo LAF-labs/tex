@@ -40,6 +40,13 @@ const SOURCE_ERR = {
   'source.unsupported_bank': '이 은행은 아직 자동 조회를 못 해요. 파일을 올려 주세요.',
 };
 const sourceErrText = (code) => SOURCE_ERR[code] ?? '최신화하지 못했어요. 이미 넣은 거래내역은 그대로예요. 다시 해 주세요.';
+/** 원천의 하루 상한(오류 아님) */
+const DAILY_TEXT = '오늘은 다 가져왔어요. 내일 다시 가져올 수 있어요.';
+/** 방금 가져와서 이번엔 은행에 묻지 않았다(오류 아님). retryAt까지 남은 분 */
+const soonText = (retryAt) => {
+  const min = Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 60_000));
+  return Number.isFinite(min) ? `방금 가져왔어요. ${min}분 뒤에 다시 가져올 수 있어요.` : '방금 가져왔어요. 잠시 뒤에 다시 가져올 수 있어요.';
+};
 const REFRESH_STEP = { requested: '요청함', waiting: '은행 응답 기다리는 중', running: '받는 중' };
 
 function statusText(v) {
@@ -415,7 +422,7 @@ export function createBankScreen({ call, toast, rerender, errText, counterpartie
       if (!j || j.state === 'done' || j.state === 'failed') {
         delete s.refreshing[id];
         if (j?.state === 'done') toast(j.result?.newCount ? `새 거래 ${j.result.newCount}줄을 넣었어요${j.result.match?.auto ? ` · 자동으로 맞춘 입금 ${j.result.match.auto}건` : ''}` : '새 거래가 없어요');
-        else if (j?.state === 'failed') toast(sourceErrText(j.code));
+        else if (j?.state === 'failed') toast(j.code === 'source.too_soon' ? soonText(j.retryAt) : j.code === 'source.daily_limit' ? DAILY_TEXT : sourceErrText(j.code));
         await refresh();
         return;
       }

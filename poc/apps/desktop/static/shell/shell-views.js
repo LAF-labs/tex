@@ -96,6 +96,7 @@ export const CHIP = {
   checking: ['확인 중', ''],
   done: ['완료', 'is-done'],
   stopped: ['중지됨', 'is-stopped'],
+  discarded: ['취소함', 'is-stopped'],
   attention: ['확인 필요', 'is-attention'],
 };
 /** 상태 칩. label을 주면 색은 상태대로, 글자는 label(지난 실행처럼 표와 같은 말을 써야 할 때). */
@@ -205,6 +206,14 @@ const showBrowserBtn = (run, act) => btn('홈택스 창 보기', () => act.showB
 
 export function taskCard(run, act) {
   const title = `세금계산서 · ${run.counterparty.name}`;
+  // 대화에서 발급 전에 버린 초안(draft_discard): 무엇이었는지만 남기고 버튼은 없다.
+  if (run.discarded)
+    return h(
+      'section',
+      { class: 'sx-card is-discarded', 'data-run': run.id, 'data-status': 'discarded' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip('discarded')),
+      h('p', { class: 'sx-meta' }, '발급 전에 취소한 카드예요. 홈택스에는 아무것도 보내지 않았어요.'),
+    );
   const st = run.status;
   const card = h('section', { class: `sx-card${st === 'turn' || st === 'waiting' ? ' is-turn' : ''}`, 'data-run': run.id, 'data-status': st });
   // DOM append(null)은 "null" 글자를 넣는다(카드에 "null"이 보였다). 카드의 조건부 줄은 h()처럼 null·false를 건너뛴다.

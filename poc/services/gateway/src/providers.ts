@@ -90,6 +90,11 @@ export function openAIDecisionsBody(s: DecideSpec): Record<string, unknown> {
   };
 }
 
+/**
+ * 도구가 있는 요청에는 parallel_tool_calls를 싣지 않는다. 운영 조합(OpenRouter, ZDR → azure, require_parameters)에서
+ * 도구 + parallel_tool_calls:false는 받는 엔드포인트가 없어 404였다(탐침 2026-11-12, 노트 agent-chat/real-probe-404.json).
+ * 한 응답에 function_call이 여러 개 오면 PC 루프가 순서대로 실행한다.
+ */
 export function openAIResponsesBody(s: RespondSpec): Record<string, unknown> {
   return {
     model: s.model,
@@ -97,7 +102,7 @@ export function openAIResponsesBody(s: RespondSpec): Record<string, unknown> {
     include: ['reasoning.encrypted_content'],
     reasoning: { effort: s.effort },
     max_output_tokens: s.maxOutputTokens,
-    parallel_tool_calls: false,
+    ...(s.tools.length ? {} : { parallel_tool_calls: false }),
     prompt_cache_options: { mode: 'explicit' },
     prompt_cache_key: s.cacheKey,
     safety_identifier: s.safetyId,

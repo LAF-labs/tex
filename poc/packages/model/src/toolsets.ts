@@ -84,13 +84,11 @@ export const QUERY_PARSE: ToolsetDef = {
 };
 
 /**
- * chat_reply가 제안할 수 있는 작업(이 앱이 지금 할 수 있는 일의 고정 목록). id는 intent_route_v1 playbook 선택지와 같은 어휘다.
+ * chat_reply가 제안할 수 있는 작업(이 앱이 지금 할 수 있는 일의 고정 목록, 증명서 발급은 아직 없어 뺐다 #291). id는 intent_route_v1 playbook 선택지와 같은 어휘다.
  * 머리말(toolsets/chat_reply.ko.txt)의 목록과 출력 스키마 열거가 이 표 하나에서 나온다(시험이 대조한다).
  */
 export const CHAT_CAPABILITIES = [
   { id: 'hometax.invoice.issue', label: '전자세금계산서 발급(홈택스)' },
-  { id: 'hometax.cert.business', label: '사업자등록증명 발급(홈택스)' },
-  { id: 'hometax.cert.taxpayment', label: '납세증명서 발급(홈택스)' },
 ] as const;
 export type ChatCapabilityId = (typeof CHAT_CAPABILITIES)[number]['id'];
 /** 답 문장 상한(글자). 공급사 strict 스키마가 maxLength를 받지 않을 수 있어 스키마에는 넣지 않고 엔진이 검사한다. */
