@@ -85,7 +85,7 @@ say "[②] 서명 → $W/latest.json"
 
 # ③ zip을 버킷 releases/<채널>/에(공개 주소 $ORIGIN/releases/<채널>/<파일>은 Vercel 재작성 → 버킷). 매니페스트보다 먼저 올린다
 if [ "$REFRESH" = 0 ]; then
-  LIMIT=$(supabase db query --linked --workdir "$DEPLOY" "select coalesce(file_size_limit, 0) as l from storage.buckets where id = '$BUCKET'" -o json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=/"l"\s*:\s*"?(\d+)/.exec(s);console.log(m?m[1]:"")})')
+  LIMIT=$(supabase db query --linked --workdir "$DEPLOY" "select coalesce(file_size_limit, 0) as l from storage.buckets where id = '$BUCKET'" --output-format json 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=/"l"\s*:\s*"?(\d+)/.exec(s)??/^\s*\|?\s*(\d+)\s*\|?\s*$/m.exec(s);console.log(m?m[1]:"")})')
   [ -n "$LIMIT" ] || die "버킷 $BUCKET 크기 상한을 읽지 못했다(supabase login·link 확인)"
   if [ "$LIMIT" != 0 ] && [ "$LIMIT" -lt "$ZIP_SIZE" ]; then
     say "    버킷 $BUCKET 파일 크기 상한 ${LIMIT}B < zip ${ZIP_SIZE}B → 512MB로 올린다"
