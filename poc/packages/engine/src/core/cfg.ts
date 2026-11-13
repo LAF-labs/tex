@@ -136,6 +136,12 @@ export function buildCfg(ir: PlaybookIR, opts: { irreversible?: ReadonlySet<stri
         jump(id, s.on.not_committed, 'out', 'verify.not_committed');
         jump(id, s.on.unknown, 'out', 'verify.unknown');
         break;
+      case 'pick':
+        // IR rev v1.3.6: 못 고르면 ifNone, 고르면 then(없으면 다음 원소).
+        if (s.ifNone) jump(id, s.ifNone, 'out', 'pick.ifNone');
+        if (s.then) jump(id, s.then, 'out', 'pick.then');
+        else add(id, fallTarget(id), 'fall');
+        break;
       case 'handoff':
         add(id, hNode(id), 'out');
         if (known(s.resumeAt, id, 'handoff.resumeAt')) add(hNode(id), s.resumeAt, 'resume');

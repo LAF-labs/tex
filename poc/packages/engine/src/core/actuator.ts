@@ -11,7 +11,7 @@
 // 저널·보안 이벤트에는 항목 키와 코드만 남긴다. 값·화면 문구는 남기지 않는다(⑦).
 import { isDenyActionName } from './constants.ts';
 import { decideDialog, type DialogKind } from './dialog.ts';
-import type { ActResult, Actuator, PageReader, Resolved } from './page.ts';
+import type { ActResult, Actuator, ElementRef, PageReader, Resolved } from './page.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
 import { isSecretEntry, type PressStep, type SelectorDict, type SelectorEntry } from './types.ts';
 import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
@@ -124,6 +124,22 @@ export class GuardedActuator implements Actuator {
 
   select(t: Resolved, option: string): Promise<ActResult> {
     return this.act('select', t, () => this.driver.select(t, option));
+  }
+
+  /**
+   * 목록 행 누르기(IR rev v1.3.6 pick): 목록 항목 t를 click과 같은 가드(R-A1·R-A2·그림자)로 다시 확인하고,
+   * row가 지금 그 목록의 행(rows.item)일 때만 그 행을 누른다. 목록 항목이 아니면 step.selector_miss.
+   */
+  pickRow(t: Resolved, row: ElementRef): Promise<ActResult> {
+    return this.act('click', t, async () => {
+      const rows = this.dict.entries[t.key]?.rows;
+      if (!rows) return { ok: false, code: 'step.selector_miss' };
+      const now = await this.reader.query({ kind: 'css', value: rows.item }, this.dict.entries[t.key]!.frame, t.el);
+      let here = false;
+      for (const r of now) if (await this.reader.same(r, row)) here = true;
+      if (!here) return this.refuse('step.identity_mismatch', t.key);
+      return this.driver.click({ ...t, el: row });
+    });
   }
 
   async press(key: PressStep['key'], t: Resolved | null): Promise<ActResult> {

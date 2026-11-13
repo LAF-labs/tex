@@ -11,6 +11,7 @@ import { evalCond } from '../core/conds.ts';
 import { Interpreter, type InterpHooks, type InterpOptions, type RunStop } from '../core/interp.ts';
 import { initialState, transition, type MachineCtx, type RunEvent, type RunState, type RunStateName, type VerifyResult } from '../core/machine.ts';
 import type { ActResult, Clock, Resolved } from '../core/page.ts';
+import { pickRow } from '../core/pick.ts';
 import { compileRe2 } from '../core/re2.ts';
 import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
@@ -913,6 +914,14 @@ export class RunController {
     if (!actions) return this.i.journal('signflow.method_unknown', { stepId: s.id });
     const ready = f.readyTarget ? (await waitTarget(env, f.readyTarget, Math.min(left(), SIGN_READY_WAIT_MS))).ok : false;
     if (f.readyTarget && !ready) this.i.journal('signflow.ready_missing', { stepId: s.id });
+    // IR rev v1.3.6: 인증서 창의 인증서 고르기(하나면 그것, 여럿이면 프로필 이름). 못 고르면 추측하지 않고 서명 차례(사람이 고르고 넣는다).
+    if (f.certPick && method === 'cert') {
+      const p = await pickRow(env, f.certPick.target, { by: f.certPick.by }, Math.min(left(), SIGN_READY_WAIT_MS));
+      if (!p.ok) {
+        this.i.journal('signflow.cert_pick_missing', { stepId: s.id, code: p.code });
+        return void (await this.signTurnWait(s, f, 'secret'));
+      }
+    }
     let doneSeen = false;
     for (const a of actions) {
       if (a === 'human:secret') {

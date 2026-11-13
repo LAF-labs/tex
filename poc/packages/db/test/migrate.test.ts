@@ -152,7 +152,7 @@ describe('스키마 마이그레이션(D07 §7)', () => {
     const k = key();
     // main에 먼저 들어간 v9(bank_match, #284)의 SQL sha256. 배포한 판은 바이트 하나도 바꾸지 않는다.
     assert.equal(migrationSha256(MIGRATIONS[8]!), '5edef61e8d9494ab2ba3c857a39bec5efe9d725ece0baa4710cebb2f5364bab0');
-    assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key']]);
+    assert.deepEqual(MIGRATIONS.slice(8).map((m) => [m.version, m.name]), [[9, 'bank_match'], [10, 'ledger_issue_key'], [11, 'profile_cert_name']]);
     for (let n = 1; n <= MIGRATIONS.length; n++) {
       const db = openDatabase(file, k, { migrations: MIGRATIONS.slice(0, n) });
       assert.equal(db.pragma('user_version', { simple: true }), n);
@@ -165,7 +165,8 @@ describe('스키마 마이그레이션(D07 §7)', () => {
       db.close();
     }
     const db = openDatabase(file, k);
-    assert.equal(db.pragma('user_version', { simple: true }), 10);
+    assert.equal(db.pragma('user_version', { simple: true }), 11);
+    assert.ok((db.pragma('table_info(profiles)') as Array<{ name: string }>).some((c) => c.name === 'cert_name'));
     assert.equal(db.prepare(`SELECT state || ':' || ifnull(issue_key, '-') FROM irreversible_log WHERE intent_id = 'i9'`).pluck().get(), 'committed:-');
     assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='index' AND name='ux_irr_issue_live'`).get());
     assert.ok(db.prepare(`SELECT 1 FROM sqlite_master WHERE type='table' AND name='bank_accounts'`).get());
