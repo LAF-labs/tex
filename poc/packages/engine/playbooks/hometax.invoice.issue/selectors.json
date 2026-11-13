@@ -200,7 +200,7 @@
     }
    ],
    "role": "textbox",
-   "namePattern": "^(공급받는자 이메일 주소)?$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
@@ -260,7 +260,7 @@
     }
    ],
    "role": "textbox",
-   "namePattern": "^(1행 품목)?$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
@@ -280,7 +280,7 @@
     }
    ],
    "role": "textbox",
-   "namePattern": "^$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,

@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.3.4",
+ "version": "2.3.5",
  "portal": "hometax",
  "profileKinds": [
   "business"
