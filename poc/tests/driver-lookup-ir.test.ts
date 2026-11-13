@@ -254,9 +254,9 @@ describe('제품 조회 패키지 원본(게시할 판): IrLookupPort 관례', (
       assert.deepEqual(lookupViolations(f), []);
     });
   }
-  it('H-01 2.3.1의 lookupsUsed는 조회 1.2.0 두 개, verify match 열은 모두 조회 패키지 열이 있다', () => {
+  it('H-01 2.3.2의 lookupsUsed는 조회 1.2.0 두 개, verify match 열은 모두 조회 패키지 열이 있다', () => {
     const g = loadPkg('hometax.invoice.issue');
-    assert.equal(g.manifest.version, '2.3.1');
+    assert.equal(g.manifest.version, '2.3.2');
     assert.deepEqual(g.manifest.lookupsUsed.map((l) => `${l.id}@${l.version}`), [`${LOOKUP}@1.2.0`, `${MAIL}@1.2.0`]);
     const flat: Step[] = [];
     const walk = (ss: readonly Step[]) => {
