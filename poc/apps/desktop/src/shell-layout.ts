@@ -26,13 +26,16 @@ export const SHELL = {
 } as const;
 
 /**
- * 앱 안 브라우저 패널 폭(main이 정한다). want는 사람이 경계를 끌어 고른 폭(없으면 처음 폭), big은 [브라우저] 크게.
- * 대화 열을 덮지 않는다: 대화 열은 적어도 chatMin, 승인 대기 중에는 승인 카드가 띠로 넓어지지 않고 대화 열 안에 들어가는 폭(chatMax + 좌우 여백)을 남긴다.
+ * 앱 안 브라우저 패널 폭(main이 정한다). want는 사람이 경계를 끌어 고른 폭(없으면 처음 폭), big은 [브라우저] 크게. 대화 열은 적어도 chatMin이다.
+ * 승인 대기 중에는 창 폭과 상수만으로 정한다(끌기·크게는 쓰지 않는다): 승인 카드 자리(barBounds)가 이 값을 쓰기 때문이다(ADR-021, 렌더러가 고른 값 없음).
+ * 그 폭은 승인 카드가 띠로 넓어지지 않고 대화 열 안에 들어가게 대화 열에 chatMax + 좌우 여백을 남긴다.
  */
 export function browserPanelWidth(contentWidth: number, want: number | null, big: boolean, barActive: boolean): number {
   const room = contentWidth - SHELL.rail;
-  const max = room - (barActive ? SHELL.chatMax + SHELL.gutter * 2 : SHELL.chatMin);
-  const w = big ? max : (want ?? Math.round(room * SHELL.browserShare));
+  const share = Math.round(room * SHELL.browserShare);
+  if (barActive) return Math.max(0, Math.min(share, room - (SHELL.chatMax + SHELL.gutter * 2)));
+  const max = room - SHELL.chatMin;
+  const w = big ? max : (want ?? share);
   return Math.max(0, Math.round(Math.max(Math.min(w, max), Math.min(SHELL.browserMin, max))));
 }
 

@@ -6,7 +6,7 @@
 import { app, session, WebContentsView, type BaseWindow, type Rectangle, type Session, type WebContents } from 'electron';
 import type { EventLog } from '@sax/platform';
 import { CHROME_APP_START_URL } from '@sax/vault';
-import { NAV_EXEMPT_SESSIONS } from './harden.ts';
+import { assertWebPrefs, NAV_EXEMPT_SESSIONS } from './harden.ts';
 
 /** 쿠키·로컬 저장소가 실행과 앱 재시작 사이에 남는다(Claude 데스크톱 브라우저처럼). 이 보기들만 쓴다. */
 export const EMBEDDED_PARTITION = 'persist:sax-hometax';
@@ -208,10 +208,15 @@ export class EmbeddedBrowser {
   // ───────────────────────── 보기 ─────────────────────────
 
   private async openTab(url: string, adopt?: WebContents, openerId?: string): Promise<Tab> {
-    const view = adopt
-      ? new WebContentsView({ webContents: adopt } as unknown as Electron.WebContentsViewConstructorOptions)
-      : new WebContentsView({ webPreferences: { partition: EMBEDDED_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, spellcheck: false } });
+    // 팝업은 Electron이 연 창(window.open)의 webContents를 그대로 받는다(여는 쪽 설정을 물려받는다). 어느 쪽이든 아래에서 실제 설정을 다시 확인한다.
+    const view = new WebContentsView({ ...(adopt ? { webContents: adopt } : {}), webPreferences: { partition: EMBEDDED_PARTITION, sandbox: true, contextIsolation: true, nodeIntegration: false, webviewTag: false, spellcheck: false } });
     const wc = view.webContents;
+    try {
+      assertWebPrefs(wc);
+    } catch (e) {
+      wc.close();
+      throw e;
+    }
     this.policy(wc);
     // 패널이 접히거나 다른 창에 가려져도 자동화 타이머·그리기가 늦춰지지 않게(옛 Chrome의 --disable-renderer-backgrounding과 같은 뜻)
     wc.setBackgroundThrottling(false);

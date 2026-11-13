@@ -10,7 +10,7 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { findInstalledChrome, SESSION_IDLE_REPORT_MS } from '@sax/vault';
+import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
@@ -476,7 +476,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         onPage: (p) => {
           if (pageNow?.url === p?.url && pageNow?.title === p?.title) return;
           pageNow = p;
-          if (mirrorRun && p?.url) send({ type: 'screen', runId: mirrorRun, url: p.url.slice(0, 200), title: p.title.slice(0, 120) });
+          // 주소창에는 호스트·경로만(검색어·조각은 싣지 않는다, 금고 pageAddress와 같다)
+          const addr = p?.url ? pageAddress(p.url) : '';
+          if (mirrorRun && addr) send({ type: 'screen', runId: mirrorRun, url: addr, title: p!.title.slice(0, 120) });
         },
       })
     : null;

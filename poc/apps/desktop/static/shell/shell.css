@@ -58,7 +58,9 @@ body.browser-live.browser-embedded #panel { display: flex; flex-direction: colum
 body.browser-live.browser-embedded #panel > .bp { flex: 1 1 auto; min-height: 0; }
 /* 화면 칸 왼쪽 6px는 비워 둔다: 실제 보기는 렌더러 위를 덮어 마우스를 가져가므로 경계 손잡이가 그 띠에 있어야 끌 수 있다 */
 body.browser-live.browser-embedded #panel > .bp .run-screen { flex: 1 1 auto; min-height: 0; margin-left: 6px; }
-body.browser-live.browser-embedded #panel > :not(.bp) { flex: 0 1 auto; max-height: 40%; overflow-y: auto; }
+body.browser-live.browser-embedded #panel > :not(.bp) { flex: 0 1 auto; max-height: 30%; overflow-y: auto; }
+/* 사람 차례·[브라우저] 크게: 홈택스 인증서 창(높이 600px 남짓)이 잘리지 않게 작업 카드를 접고 화면 칸이 패널 높이를 다 쓴다(진행은 대화 열 카드에 있다) */
+body.browser-big.browser-embedded #panel > :not(.bp) { display: none; }
 .bp-resize { display: none; }
 body.browser-embedded .bp-resize { display: block; position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: 3; touch-action: none; }
 body.browser-embedded .bp-resize:hover, body.bp-dragging .bp-resize { background: var(--accent, var(--line-strong)); opacity: .5; }
