@@ -31,7 +31,7 @@ const BOX_CLICK_MS = 8_000;
 const BOX_VERIFY_MS = 2_000;
 /**
  * 앞 click 실패(whyOf) 가운데 박스 클릭으로 한 번 더 해 볼 것: 입력을 보내기 전 동작 가능 확인에서 멈춘 것만.
- * not_stable, 또는 timeout_other@(actionability·scroll·retrying). dispatch·after_action·navigation_wait면 입력을 이미 보냈을 수 있어(두 번 누름) 하지 않는다.
+ * not_stable, 또는 timeout_other:(actionability·scroll·retrying). dispatch·after_action·navigation_wait면 입력을 이미 보냈을 수 있어(두 번 누름) 하지 않는다.
  * 가려짐(intercepted)·안 보임·비활성도 아니다.
  */
 function boxEligible(why: string): boolean {
@@ -278,7 +278,8 @@ export function whyOf(e: unknown): string {
   if (/not stable/i.test(m)) return 'not_stable';
   if (/not editable|readonly/i.test(m)) return 'not_editable';
   if (/dialog/i.test(m)) return 'dialog';
-  if (/Timeout/i.test(m)) return `timeout_other@${stageOf(m)}`;
+  // 단계 구분은 ':'(engine.log 가림 규칙이 '@' 낀 값을 이메일로 보고 지운다).
+  if (/Timeout/i.test(m)) return `timeout_other:${stageOf(m)}`;
   return 'other';
 }
 

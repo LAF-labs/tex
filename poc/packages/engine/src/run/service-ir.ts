@@ -689,6 +689,19 @@ export class IrRun {
           const d = await Promise.race([targetDiagnosis(reader, dict, at.target).catch(() => null), new Promise<null>((r) => (timer = setTimeout(() => r(null), 10_000)))]).finally(() => clearTimeout(timer));
           i.diag('run.handoff_target', { stepId: out.at ?? '', code: out.code, target: at.target, read: !!d }, d);
         }
+        // readback은 대상이 칸 여럿이라 위 한 줄이 없다: 해석이 안 되는 칸마다 같은 진단 줄을 남긴다(field = fieldKey, 값 없음).
+        const rbStep = out.at ? flatten(ir.steps).info.get(out.at)?.step : undefined;
+        if (i.diag && rbStep?.type === 'readback' && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
+          for (const f of rbStep.fields) {
+            for (const key of Object.keys(dict.entries).filter((k) => dict.entries[k]!.fieldKey === f || dict.entries[k]!.readbackOf === f)) {
+              const r = await resolveTarget(reader, dict, key).catch(() => null);
+              if (r?.ok) continue;
+              let timer: ReturnType<typeof setTimeout> | undefined;
+              const d = await Promise.race([targetDiagnosis(reader, dict, key).catch(() => null), new Promise<null>((res) => (timer = setTimeout(() => res(null), 10_000)))]).finally(() => clearTimeout(timer));
+              i.diag('run.handoff_target', { stepId: out.at ?? '', code: r?.code ?? 'step.port_error', target: key, field: f, read: !!d }, d);
+            }
+          }
+        }
         i.handoff?.({ phase, ...(out.code ? { code: out.code } : {}), stepId: out.at });
         enforcer.pauseClock();
         const cmd = left > 0 ? await this.waitCommand(left) : 'cap';
