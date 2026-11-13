@@ -19,6 +19,7 @@ const row = (o: Partial<RunHistoryRow> = {}): RunHistoryRow => ({
   finishedAt: '2026-11-11T15:32:00.000Z',
   ledger: 'committed',
   approvalNo: '20261112-41000012-00000123',
+  mailConfirmed: true,
   documentId: 'doc-1',
   gated: true,
   counterpartyId: 'cp-a',

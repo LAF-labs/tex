@@ -24,6 +24,8 @@ export interface RunHistoryRow {
   ledger: string | null;
   /** 발급목록으로 확인한 승인번호(committed). */
   approvalNo: string | null;
+  /** 받는 사람 메일 발송을 확인했는가(run.ended mailConfirmed). 기록이 없는 옛 실행은 null. */
+  mailConfirmed: boolean | null;
   /** 이 실행이 보관한 발급 PDF(보관함 문서 id). */
   documentId: string | null;
   /** 게이트 요청까지 갔다(승인 카드가 떴다). */
@@ -69,11 +71,13 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
   return runs.map((r) => {
     const runId = String(r.id);
     let code: string | null = null;
+    let mailConfirmed: boolean | null = null;
     const p = ended.get(runId);
     if (typeof p === 'string') {
       try {
-        const c = (JSON.parse(p) as { code?: unknown }).code;
-        code = typeof c === 'string' && c ? c : null;
+        const e = JSON.parse(p) as { code?: unknown; mailConfirmed?: unknown };
+        code = typeof e.code === 'string' && e.code ? e.code : null;
+        mailConfirmed = typeof e.mailConfirmed === 'boolean' ? e.mailConfirmed : null;
       } catch {
         code = null;
       }
@@ -91,6 +95,7 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
       finishedAt: r.finished_at ? String(r.finished_at) : null,
       ledger: l?.state ?? null,
       approvalNo: l?.state === 'committed' && l.verify_ref ? l.verify_ref : null,
+      mailConfirmed,
       documentId: typeof d === 'string' ? d : null,
       gated: gated.get(runId) !== undefined,
       counterpartyId: inputs?.counterpartyId ?? null,
