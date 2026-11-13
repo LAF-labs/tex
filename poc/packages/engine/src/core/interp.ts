@@ -49,7 +49,15 @@ export interface InterpOptions {
    * 조율기 recover 훅이 다시 찾기·AI 위치 찾기·체크포인트 재진입을 하고, 다 안 되면 핸드오프한다. 원래 코드(cause)를 받는다.
    */
   escalate?: (s: Step, cause: string) => boolean;
+  /**
+   * [중지] 신호(IrRun.stop). 끊기면 되돌릴 수 있는 화면 스텝(STOPPABLE)의 진행 중 대기와 재시도 지연을 기다리지 않고 run.stopped로 멈춘다.
+   * 없으면 스텝 경계(beforeStep)에서만 멈춘다. 버린 스텝이 뒤늦게 하는 동작은 정책 집행기가 run.stopped로 거부한다(커밋 전).
+   */
+  stop?: AbortSignal;
 }
+
+/** [중지]에 진행 중 대기를 버려도 되는 스텝(화면 대기·입력·읽기). 조율기 스텝(checkpoint·human·gate·decide)과 비가역 스텝은 넣지 않는다. */
+const STOPPABLE = new Set<Step['type']>(['goto', 'click', 'fill', 'select', 'press', 'wait', 'assert', 'extract', 'readback', 'pick'] as Step['type'][]);
 
 export const MAX_STEP_EXECUTIONS = 2_000;
 
@@ -181,7 +189,8 @@ export class Interpreter {
       this.hooks.event?.('step.started', { stepId: s.id, type: s.type, ...(attempt ? { attempt } : {}) });
       let out: Outcome;
       try {
-        out = await h(s as never, this.env);
+        const run = h(s as never, this.env);
+        out = this.opts.stop && STOPPABLE.has(s.type) && !this.env.irreversible.has(s.id) ? await this.untilStop(run, { t: 'fail', code: 'run.stopped' }) : await run;
       } catch {
         // 포트 예외는 값 없이 코드로만 남긴다.
         out = { t: 'fail', code: 'step.port_error' };
@@ -195,13 +204,35 @@ export class Interpreter {
       if (attempt < retries) {
         const delay = retryDelayMs(attempt + 1, this.opts.retries, this.opts.retryFloorMs, (this.opts.random ?? Math.random)());
         this.hooks.event?.('step.retry', { stepId: s.id, type: s.type, attempt: attempt + 1, ...this.codes(s, out.code) });
-        await this.env.clock.sleep(delay);
+        await this.untilStop(this.env.clock.sleep(delay), undefined);
         continue;
       }
       const c = this.codes(s, out.code);
       if (of.then === 'handoff' && this.opts.escalate?.(s, out.code)) return { t: 'recover', at: s.id, code: c.code, cause: out.code };
       return this.onFail(s, of.then, c.code);
     }
+  }
+
+  /** p 또는 [중지] 중 먼저 오는 것. [중지]면 stopped를 돌려주고 p는 버린다(그 뒤 거부·예외는 삼킨다). 신호가 없으면 p 그대로. */
+  private untilStop<T>(p: Promise<T>, stopped: T): Promise<T> {
+    const sig = this.opts.stop;
+    if (!sig) return p;
+    const drop = () => void p.catch(() => {});
+    if (sig.aborted) {
+      drop();
+      return Promise.resolve(stopped);
+    }
+    return new Promise<T>((resolve, reject) => {
+      const on = () => {
+        drop();
+        resolve(stopped);
+      };
+      sig.addEventListener('abort', on, { once: true });
+      p.then(
+        (v) => (sig.removeEventListener('abort', on), resolve(v)),
+        (e: unknown) => (sig.removeEventListener('abort', on), reject(e)),
+      );
+    });
   }
 
   private forced(code: string): 'handoff' | 'abort' | undefined {

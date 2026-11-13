@@ -262,6 +262,8 @@ export class IrRun {
   private waitingState: RunStateName | null = null;
   /** 비밀 차례 [중지](금고 창 닫기 요청). */
   private readonly secretAbort = new AbortController();
+  /** [중지] 전용 신호: 실행기가 진행 중인 화면 대기·재시도 지연을 버리고 멈춘다(core/interp.ts stop). halt(걸쇠)는 쓰지 않는다(걸쇠 코드로 멈춰야 한다). */
+  private readonly stopAbort = new AbortController();
 
   constructor(i: IrRunInput) {
     this.i = i;
@@ -319,6 +321,22 @@ export class IrRun {
     this.secretAbort.abort();
     if (this.cmdWake) return this.cmdWake('stop');
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
+    // 조율기가 중지를 미뤄 둔(pending) 뒤에 끊는다: 실행기가 run.stopped로 멈추면 조율기가 그 중지로 받는다.
+    this.stopAbort.abort();
+  }
+
+  /** p 또는 [중지] 중 먼저 오는 것. [중지]면 v(버린 p의 뒤늦은 동작은 정책 집행기가 run.stopped로 거부한다). */
+  private orStop<T>(p: Promise<T>, v: T): Promise<T> {
+    const sig = this.stopAbort.signal;
+    if (sig.aborted) return (void p.catch(() => {}), Promise.resolve(v));
+    return new Promise<T>((resolve, reject) => {
+      const on = () => (void p.catch(() => {}), resolve(v));
+      sig.addEventListener('abort', on, { once: true });
+      p.then(
+        (x) => (sig.removeEventListener('abort', on), resolve(x)),
+        (e: unknown) => (sig.removeEventListener('abort', on), reject(e)),
+      );
+    });
   }
 
   /**
@@ -551,8 +569,9 @@ export class IrRun {
         opened: (r) => i.handoff?.({ phase: 'sign', code: 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
-      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause) },
-      recover: (stop) => fallback.recover(stop.at, stop.cause ?? stop.code),
+      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
+      // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
+      recover: (stop) => this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false),
       // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
       allowed: () => !this.denial(),
       hardStop: () => this.denial()?.hardStop ?? false,
