@@ -594,6 +594,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   host.on('codef', (data: unknown) => send({ type: 'bankAuto', event: data }));
   host.on('vault-event', (name: string, data: unknown) => {
+    // 진행 화면(B3): 금고가 중계한 실행 탭 화면을 지금 실행 패널로만 보낸다(보기 전용, 저장하지 않는다).
+    if (name === 'screen.frame' || name === 'screen.paused') {
+      if (!mirrorRun) return;
+      const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; paused?: unknown };
+      if (name === 'screen.paused') return send({ type: 'screen', runId: mirrorRun, paused: d.paused === true });
+      if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
+      return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0 });
+    }
     const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
     if (cr) return openCodef(cr);
     if (name === 'secret.needed') return openSecret(data);
@@ -992,6 +1000,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * [홈택스 창 보기]: 진행 중인 실행의 Chrome 창(금고가 띄운 실행 탭)을 앞으로. 금고가 그 탭에 Page.bringToFront(맥에서 Chrome 앱도 앞으로 온다, 2026-11-12 측정).
    * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수만 browser.focus 하나를 부른다.
    */
+  /** 진행 화면을 받는 실행(하나). */
+  let mirrorRun: string | null = null;
   const showRunBrowser = async (id: string) => {
     if (!runs.isActive(id)) throw new Error('not_running');
     if (await placeRunBrowser(true)) return { focused: true };
@@ -1023,6 +1033,26 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log.event('main.chrome_placed', { front, width: at.chrome.width, moved: front && at.app !== appRect });
     return true;
   };
+  /**
+   * 진행 화면(B3, 부장 지시 2026-11-13): 실행 중이면 금고에 실행 탭 화면 중계를 맡긴다(screen.start, 같은 탭이면 그대로).
+   * Chrome이 뜨고 탭이 붙기 전에는 실패하니 실행이 바뀔 때마다, 그리고 1초마다 다시 부른다. 실행이 끝나면 멈춘다.
+   */
+  const mirrorTick = setInterval(() => {
+    const r = mirrorRun ? runs.get(mirrorRun) : undefined;
+    if (r && runs.isActive(r.id) && r.status !== 'draft') void host.control('screen.start').catch(() => {});
+  }, 1_000);
+  mirrorTick.unref();
+  runs.on('update', (r: RunView) => {
+    const live = runs.isActive(r.id) && r.status !== 'draft';
+    if (live && mirrorRun !== r.id) {
+      mirrorRun = r.id;
+      void host.control('screen.start').catch(() => {});
+    } else if (!live && mirrorRun === r.id) {
+      mirrorRun = null;
+      send({ type: 'screen', runId: r.id, ended: true });
+      void host.control('screen.stop').catch(() => {});
+    }
+  });
   /** 실행마다 마지막으로 둔 자리. 같은 차례에 두 번 옮기지 않는다(사람이 창을 옮겼으면 그대로 둔다). */
   const chromeSpot = new Map<string, string>();
   runs.on('update', (r: RunView) => {
