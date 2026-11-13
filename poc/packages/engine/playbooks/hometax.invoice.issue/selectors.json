@@ -96,7 +96,7 @@
     }
    ],
    "role": "textbox",
-   "namePattern": "^(사업자등록번호)?$",
+   "namePattern": "^((사업자)?등록번호)?$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
