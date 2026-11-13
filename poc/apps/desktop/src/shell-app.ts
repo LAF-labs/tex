@@ -36,7 +36,7 @@ import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneSho
 import { openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
-import { EmbeddedBrowser } from './embedded-browser.ts';
+import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
@@ -74,6 +74,8 @@ export function registerShellSchemes(): void {
   // 한 번만 부를 수 있다(ready 전). 문서함 PDF 가져오기가 docparse 샌드박스를 쓰므로 그 스킴도 여기서 등록한다.
   // 공용 하드닝(디버그 스위치·샌드박스·새 창·이동·webview 거부)도 ready 전에 여기서 건다(ADR-025 결정 8).
   hardenApp(app, [`${SHELL_SCHEME}:`, `${APPROVAL_SCHEME}:`, `${DOCPARSE_SCHEME}:`]);
+  // 앱 안 브라우저 자동화는 앱 창이 가려지거나 화면이 잠겨도 멈추지 않아야 한다(예행은 사람이 자리를 비운 채 돈다).
+  keepDrawingWhenHidden(app);
   protocol.registerSchemesAsPrivileged([
     { scheme: SHELL_SCHEME, privileges: { standard: true, secure: true } },
     { scheme: APPROVAL_SCHEME, privileges: { standard: true, secure: true } },

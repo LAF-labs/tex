@@ -59,6 +59,11 @@ export interface FakeKnobs {
   listLagMs: number;
   /** 메일 발송 상태: done = 발송완료/성공, sending = 발송중/(빈칸). */
   mail: 'done' | 'sending';
+  /**
+   * 등록번호 [확인]의 alert를 클릭 처리 안에서 바로(동기) 띄운다(실화면 가설, 0.1.19 예행 s13 step.timeout). 대화상자가 닫힐 때까지
+   * 그 클릭의 CDP Input.dispatchMouseEvent가 돌아오지 않는다. 결과(번호 형식·칸 열기)는 그 뒤 조회로 채운다.
+   */
+  syncConfirmAlert: boolean;
   /** 칸 앞에 표 머리 글을 `<label for>`로 붙인다(접근성 이름이 title이 아니라 label 글이 된다. 2026-11-13 s12 사람 차례 가설). */
   fieldLabels: boolean;
   /** 인증서 창(dscert)의 가짜 인증서 비밀번호(시험 값). 금고가 이 값을 넣고 [확인]하면 로그인·서명이 된다. */
@@ -297,10 +302,11 @@ const CLIENT = String.raw`
     // 등록번호 [확인]: 조회 3개 → 네이티브 alert. 정상이면 번호 형식 바꾸고 공급받는자 칸 편집 가능.
     v('btnDmnrBsnoCnfrTop').addEventListener('click', async () => {
       const d = digits(v('edtDmnrBsnoTop').value);
+      if (C.syncConfirmAlert) alert('정상적인 사업자번호입니다.');
       await act('ATTABZAA001R05', 'UTEETBAA01', { bsno: d });
       await act('ATTABZAA001R01', 'UTEETBAA01', { bsno: d });
       const r = await act('ATEETBAE001R06', 'UTEETBAA01', { bsno: d });
-      alert(r.msg);
+      if (!C.syncConfirmAlert) alert(r.msg);
       if (r.ok) {
         v('edtDmnrBsnoTop').value = bizFmt(d);
         for (const id of ['edtDmnrTnmNmTop', 'edtDmnrRprsFnmTop', 'edtDmnrPfbAdrTop', 'edtDmnrBcNmTop', 'edtDmnrItmNmTop', 'edtDmnrMchrgEmlIdTop', 'edtDmnrMchrgEmlDmanTop', 'edtDmnrSchrgEmlIdTop', 'edtDmnrSchrgEmlDmanTop']) v(id).readOnly = false;
@@ -560,7 +566,7 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 /** 가짜 홈택스 두 호스트(화면·teet)를 띄운다. */
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
-    renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
+    renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false, syncConfirmAlert: false,
     certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false, certPwType: 'password',
     ...o,
   };
@@ -602,7 +608,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn, knobs.realLoginNav);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels, syncConfirmAlert: knobs.syncConfirmAlert }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav, knobs.certPwType));
     if (u.pathname === '/_fx/certpw') {
