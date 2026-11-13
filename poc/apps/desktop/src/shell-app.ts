@@ -37,6 +37,7 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
+import { chromeBeside } from './chrome-layout.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
@@ -962,10 +963,60 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const showRunBrowser = async (id: string) => {
     if (!runs.isActive(id)) throw new Error('not_running');
+    if (await placeRunBrowser(true)) return { focused: true };
     const r = (await host.control('browser.focus')) as { focused?: unknown } | null;
     if (r?.focused !== true) throw new Error('no_browser');
     return { focused: true };
   };
+
+  /**
+   * 홈택스 Chrome 창 자리(대표 요청 2026-11-13: "크롬이 우리 앱을 가리지 않았으면"). chrome-layout.ts가 앱 옆 자리를 정하고 금고가 Browser.setWindowBounds로 옮긴다.
+   * front=false(실행 시작): Chrome은 앱 옆에 두고 앱을 다시 앞으로. 맥에서 Chrome을 띄우면 Chrome이 앞으로 오므로 한 번 되돌린다.
+   * front=true(사람 차례·[홈택스 창 보기]): 앱과 나란히 놓고 Chrome을 앞으로. 이때만 앱 창을 왼쪽으로 옮긴다.
+   */
+  const placeRunBrowser = async (front: boolean): Promise<boolean> => {
+    if (win.isDestroyed()) return false;
+    const appRect = win.getBounds();
+    const work = screen.getDisplayMatching(appRect).workArea;
+    const at = chromeBeside(work, appRect);
+    const r = (await host.control('browser.place', { ...at.chrome, front }).catch(() => null)) as { placed?: unknown } | null;
+    if (r?.placed !== true) return false;
+    if (front) {
+      if (win.isMaximized()) win.unmaximize();
+      if (win.isFullScreen()) win.setFullScreen(false);
+      if (at.app !== appRect) win.setBounds(at.app);
+    } else {
+      if (process.platform === 'darwin') app.focus({ steal: true });
+      win.focus();
+    }
+    log.event('main.chrome_placed', { front, width: at.chrome.width, moved: front && at.app !== appRect });
+    return true;
+  };
+  /** 실행마다 마지막으로 둔 자리. 같은 차례에 두 번 옮기지 않는다(사람이 창을 옮겼으면 그대로 둔다). */
+  const chromeSpot = new Map<string, string>();
+  runs.on('update', (r: RunView) => {
+    if (!runs.isActive(r.id) || r.status === 'draft') {
+      chromeSpot.delete(r.id);
+      return;
+    }
+    // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증·보안카드). 승인 자체는 앱의 승인 바에서 한다.
+    const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && r.steps[5]?.state === 'now' ? 'sign' : null;
+    const want = turn ?? 'back';
+    if (chromeSpot.get(r.id) === want) return;
+    if (want === 'back' && chromeSpot.has(r.id)) return; // 시작 때 한 번만 뒤에 둔다
+    chromeSpot.set(r.id, want);
+    if (turn) {
+      void placeRunBrowser(true);
+      return;
+    }
+    // 시작: Chrome이 뜨고 실행 탭이 붙을 때까지 잠깐 다시 해 본다(엔진이 run.start 뒤에 금고에 기동을 맡긴다).
+    void (async () => {
+      for (let i = 0; i < 40 && chromeSpot.get(r.id) === 'back' && runs.isActive(r.id); i++) {
+        if (await placeRunBrowser(false)) return;
+        await new Promise((res) => setTimeout(res, 500));
+      }
+    })();
+  });
 
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.

@@ -885,12 +885,34 @@ export class Relay {
    * 맥에서는 Chrome 앱도 앞으로 온다(Target.activateTarget은 오지 않는다, 2026-11-12 측정). 비밀 입력 창·숨긴 팝업·회수된 타깃은 고르지 않는다.
    */
   async bringToFront(): Promise<boolean> {
-    const t = [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
+    const t = this.runWindowTarget();
     if (!t) return false;
     return this.conn.send('Page.bringToFront', {}, t.vaultSession).then(
       () => true,
       () => false,
     );
+  }
+
+  private runWindowTarget(): TargetState | undefined {
+    return [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
+  }
+
+  /**
+   * 실행 창을 앱 옆 자리로(main이 정한 화면 좌표, 대표 요청 2026-11-13 "크롬이 앱을 가리지 않게"). 최대화·전체 화면이면 먼저 보통 창으로 돌린다.
+   * front면 앞으로도 올린다(사람 차례·[홈택스 창 보기]). 비밀 입력 창은 고르지 않는다(그 창은 금고가 따로 띄운다).
+   */
+  async placeWindow(bounds: { left: number; top: number; width: number; height: number }, front: boolean): Promise<boolean> {
+    const t = this.runWindowTarget();
+    if (!t) return false;
+    try {
+      const { windowId } = await this.conn.send<{ windowId: number }>('Browser.getWindowForTarget', { targetId: t.targetId });
+      await this.conn.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+      await this.conn.send('Browser.setWindowBounds', { windowId, bounds });
+      if (front) await this.conn.send('Page.bringToFront', {}, t.vaultSession);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   exposedTarget(targetId: string): TargetState | undefined {

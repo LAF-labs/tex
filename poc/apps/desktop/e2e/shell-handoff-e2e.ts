@@ -264,7 +264,7 @@ async function flow(): Promise<void> {
   const realControl = S.host.control.bind(S.host);
   S.host.control = (async (m: string, p: Record<string, unknown> = {}) => {
     const r = await realControl(m, p);
-    if (m === 'browser.focus') focusCalls.push(r);
+    if (m === 'browser.focus' || (m === 'browser.place' && p.front === true)) focusCalls.push(r);
     return r;
   }) as typeof S.host.control;
   await until('composer', () => js<boolean>(`!!document.querySelector('#composer')`), 15_000);
@@ -333,7 +333,8 @@ async function flow(): Promise<void> {
     }
   }
   await userClick(`[data-run="${a}"] [data-act=show-browser]`);
-  check('[홈택스 창 보기] → main → 금고 browser.focus → 실행 Chrome 탭을 앞으로(focused)', await until('focused', () => focusCalls.length === 1, 3000) && JSON.stringify(focusCalls[0]) === '{"focused":true}', focusCalls);
+  // 사람 차례가 오면 main이 먼저 앱과 나란히 앞으로 올린다(browser.place front). [홈택스 창 보기]도 같은 길이다.
+  check('[홈택스 창 보기] → main → 금고 browser.place(front) → 실행 Chrome 창을 앱 옆에 두고 앞으로', await until('focused', () => focusCalls.length >= 1, 3000) && focusCalls.some((x) => JSON.stringify(x) === '{"placed":true}' || JSON.stringify(x) === '{"focused":true}'), focusCalls);
   if (headful) {
     await sleep(1200);
     check('(맥, 화면) Chrome 앱이 맨 앞에 온다', /Google Chrome/.test(frontApp()), frontApp());
