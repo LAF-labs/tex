@@ -29,10 +29,16 @@ export interface PlaywrightActuatorInput {
 const BOX_CLICK_MS = 8_000;
 /** 누른 뒤 대상이 click을 받고 화면이 바뀌기를 기다리는 시간(ms). */
 const BOX_VERIFY_MS = 2_000;
-/** 앞 click 실패 가운데 박스 클릭으로 한 번 더 해 볼 갈래: 입력을 보내기 전 동작 가능 확인에서 멈춘 것. 가려짐·안 보임·비활성은 아니다. */
-const BOX_WHY = new Set(['timeout_other', 'not_stable']);
-/** 이 단계면 Playwright가 입력을 이미 보냈을 수 있다(두 번 누르게 되므로 하지 않는다). */
-const DISPATCHED = new Set(['performing', 'action_done', 'navigations', 'navigated', 'none', 'other']);
+/**
+ * 앞 click 실패(whyOf) 가운데 박스 클릭으로 한 번 더 해 볼 것: 입력을 보내기 전 동작 가능 확인에서 멈춘 것만.
+ * not_stable, 또는 timeout_other@(actionability·scroll·retrying). dispatch·after_action·navigation_wait면 입력을 이미 보냈을 수 있어(두 번 누름) 하지 않는다.
+ * 가려짐(intercepted)·안 보임·비활성도 아니다.
+ */
+function boxEligible(why: string): boolean {
+  if (why === 'not_stable') return true;
+  const [base, stage] = why.split('@');
+  return base === 'timeout_other' && (stage === 'actionability' || stage === 'scroll' || stage === 'retrying');
+}
 
 export class PlaywrightActuator implements Actuator {
   private readonly i: PlaywrightActuatorInput;
@@ -78,8 +84,8 @@ export class PlaywrightActuator implements Actuator {
     const report = (r: ActuatorWhy): void => this.i.onBoxClick?.(r);
     const NO: ActResult = { ok: false, code: 'step.timeout' };
     const h = this.i.reader.handle(t.el);
-    if (!h || !last || last.el !== t.el || !BOX_WHY.has(last.why) || DISPATCHED.has(last.stage)) {
-      report({ ok: false, reason: 'not_eligible', why: last?.why ?? 'none', stage: last?.stage ?? 'none' });
+    if (!h || !last || last.el !== t.el || !boxEligible(last.why)) {
+      report({ ok: false, reason: 'not_eligible', why: last?.why ?? 'none' });
       return NO;
     }
     const t0 = Date.now();
@@ -228,7 +234,7 @@ export class PlaywrightActuator implements Actuator {
   private navs = 0;
   private hooked = false;
   /** 마지막 click 실패(같은 요소일 때만 clickByBox가 쓴다). */
-  private lastClick: { el: unknown; why: string; stage: string } | null = null;
+  private lastClick: { el: unknown; why: string } | null = null;
 
   private navCount(): number {
     if (!this.hooked) {
@@ -243,9 +249,8 @@ export class PlaywrightActuator implements Actuator {
 
   private async fail(op: string, e: unknown, el?: unknown): Promise<ActResult> {
     const why = whyOf(e);
-    const st = stageOf(e);
-    if (op === 'click') this.lastClick = { el, why, stage: String(st.stage) };
-    if (this.i.onError) this.i.onError(op, { why, ...st, ...(await pageState(this.i.page)) });
+    if (op === 'click') this.lastClick = { el, why };
+    if (this.i.onError) this.i.onError(op, { why, ...retryCounts(e), ...(await pageState(this.i.page)) });
     return fail(e);
   }
 
@@ -273,54 +278,44 @@ export function whyOf(e: unknown): string {
   if (/not stable/i.test(m)) return 'not_stable';
   if (/not editable|readonly/i.test(m)) return 'not_editable';
   if (/dialog/i.test(m)) return 'dialog';
-  if (/Timeout/i.test(m)) return 'timeout_other';
+  if (/Timeout/i.test(m)) return `timeout_other@${stageOf(m)}`;
   return 'other';
 }
 
 export type ActuatorWhy = Record<string, string | number | boolean>;
 
-// Playwright 호출 기록 마지막 줄(다시 시도·쉼 줄은 건너뜀) → 단계. 위에서부터 처음 맞는 것(요소 설명·화면 글은 버린다).
-const STAGES: readonly (readonly [RegExp, string])[] = [
-  [/intercepts pointer events/, 'intercepted'],
-  [/receive pointer events|pointer-events/, 'no_pointer_events'],
-  [/element is not stable/, 'not_stable'],
-  [/element is not (visible|enabled|editable)/, 'not_actionable'],
-  [/element is outside of the viewport/, 'outside_viewport'],
-  [/waiting for element to be/, 'wait_actionable'],
-  [/element is (visible|enabled)/, 'actionable'],
-  [/done scrolling/, 'scrolled'],
-  [/scrolling into view/, 'scrolling'],
-  [/performing \w+ action/, 'performing'],
-  [/\w+ action done/, 'action_done'],
-  [/waiting for scheduled navigations/, 'navigations'],
-  [/navigations have finished/, 'navigated'],
-  [/retrying \w+ action/, 'retrying'],
-  [/waiting \d+ms/, 'backoff'],
-  [/attempting \w+ action/, 'attempting'],
+/** Playwright 호출 기록의 마지막 줄 → 멈춘 단계(고정 낱말, 화면 글 없음). 앱 안 보기에서 클릭이 어디서 멈추는지 가른다. why의 @ 뒤에 붙는다. */
+const STAGES: ReadonlyArray<[RegExp, string]> = [
+  [/waiting for scheduled navigations|navigations have finished/i, 'navigation_wait'],
+  [/performing (click|fill|press|tap|dblclick) action/i, 'dispatch'],
+  [/(click|fill|press) action done/i, 'after_action'],
+  [/scrolling into view|done scrolling/i, 'scroll'],
+  [/waiting for element to be visible|element is visible, enabled and stable|waiting for element to be stable/i, 'actionability'],
+  [/retrying (click|fill) action|waiting \d+ms/i, 'retrying'],
+  [/waiting for (locator|selector)|locator resolved/i, 'locate'],
 ];
+function stageOf(m: string): string {
+  const i = m.indexOf('Call log:');
+  const lines = (i >= 0 ? m.slice(i) : m).split('\n').map((l) => l.trim()).filter(Boolean);
+  for (let k = lines.length - 1; k >= 0; k--) for (const [re, s] of STAGES) if (re.test(lines[k]!)) return s;
+  return 'none';
+}
 
-/** 다시 시도·쉼 줄(단계가 아니다). */
-const RETRY_LINE = /^(retrying \w+ action|waiting \d+ms)/;
-
-/** Playwright 실패 글의 호출 기록에서 멈춘 단계, 다시 시도한 횟수, 스크롤 횟수(스크롤 반복)만 뽑는다. */
-export function stageOf(e: unknown): ActuatorWhy {
+/** 호출 기록의 다시 시도 수·스크롤 수(스크롤 반복). Playwright는 같은 줄을 "N × …"로 접는다. */
+export function retryCounts(e: unknown): { retries: number; scrolls: number } {
   const m = String((e as { message?: unknown } | null)?.message ?? '');
   const at = m.indexOf('Call log:');
-  if (at < 0) return { stage: 'none' };
   let retries = 0;
   let scrolls = 0;
-  const lines: string[] = [];
+  if (at < 0) return { retries, scrolls };
   for (const raw of m.slice(at + 9).split('\n')) {
     const x = /^(?:(\d+) × )?(.*)$/.exec(raw.trim().replace(/^-\s*/, ''))!;
     const n = Number(x[1] ?? 1);
     const l = x[2]!.trim();
-    if (l === '') continue;
     if (/^retrying \w+ action/.test(l)) retries += n;
     if (/^scrolling into view/.test(l)) scrolls += n;
-    lines.push(l);
   }
-  const last = lines.findLast((l) => !RETRY_LINE.test(l)) ?? lines.at(-1) ?? '';
-  return { stage: STAGES.find(([re]) => re.test(last))?.[1] ?? 'other', retries, scrolls };
+  return { retries, scrolls };
 }
 
 /** 실패한 그때 페이지가 그리는지(0.5초 rAF 수)·보이는지·포커스. 비밀 창 등으로 금고가 막으면 probe만 남긴다. */
