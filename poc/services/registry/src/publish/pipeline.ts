@@ -189,6 +189,8 @@ export interface Plan {
   keyEpoch: number;
   trustSha256: string;
   rolloutPercent: number;
+  /** 이번에 새로 올리는 패키지 항목의 최소 앱 판(인덱스 항목 minAppVersion). 없으면 넣지 않는다(어느 앱이든 받는다) */
+  minAppVersion?: string;
   /** 준비할 때 본 레지스트리 인덱스(assemble·push가 그사이 바뀌지 않았는지 본다). 바이트가 아니라 내용으로 본다: cron 신선도 재서명은 바이트만 바꾼다(ADR-043) */
   baseIndex: { monotonic: number; contentDigest: string } | null;
   packages: PlanPackage[];
@@ -352,6 +354,8 @@ export interface PrepareOpts {
   trustBytes: Buffer;
   channel: Channel;
   rolloutPercent: number;
+  /** 새로 올리는 패키지의 최소 앱 판(semver). 이미 게시된 항목에는 붙이지 않는다 */
+  minAppVersion?: string;
   /** status 초안 {portalModeCeiling, killPlaybooks}(정책 키 2-of-3으로 서명한다) */
   status?: { portalModeCeiling: Record<string, string>; killPlaybooks: string[] };
   /** 서명 의식에서 루트 2개로 서명한 폐기 목록(신선도 필드는 버리고 서버가 도장을 찍는다) */
@@ -368,11 +372,15 @@ export interface PrepareOpts {
   out: (line: string) => void;
 }
 
+/** 인덱스 항목의 minAppVersion: 이미 게시된 항목은 지금 인덱스의 값을 그대로, 새 항목은 계획의 값 */
+const minAppOf = (v: string | undefined) => (v !== undefined ? { minAppVersion: v } : {});
+
 /** 패키지 묶기 → 서명할 manifest·문서와 확인 코드, 사용자 서명 명령. 레지스트리는 읽기만 한다 */
 export async function prepare(o: PrepareOpts): Promise<Plan> {
   if (o.work.fs.exists(wp(o.work, W.plan))) err('publish.work_exists', o.work.dir);
   if (!(CHANNELS as readonly string[]).includes(o.channel) || o.channel === 'hotfix') err('publish.channel_invalid', o.channel);
   if (!Number.isInteger(o.rolloutPercent) || o.rolloutPercent < 0 || o.rolloutPercent > 100) err('publish.rollout_invalid');
+  if (o.minAppVersion !== undefined && !/^\d+\.\d+\.\d+$/.test(o.minAppVersion)) err('publish.min_app_version_invalid', o.minAppVersion);
   if (!o.sources.length && !o.status && !o.revoked && !o.policy) err('ceremony.usage', '패키지 폴더 또는 --status·--revoked·--policy');
 
   const indexBytes = await o.registry.get(`/registry/${o.channel}/index.json`);
@@ -486,6 +494,7 @@ export async function prepare(o: PrepareOpts): Promise<Plan> {
     keyEpoch: o.trust.keyEpoch,
     trustSha256: sha(o.trustBytes),
     rolloutPercent: o.rolloutPercent,
+    ...(o.minAppVersion !== undefined ? { minAppVersion: o.minAppVersion } : {}),
     baseIndex: index ? { monotonic: index.monotonic, contentDigest: contentDigest(index) } : null,
     packages: built.map((b) => b.pkg),
     docs,
@@ -585,7 +594,7 @@ export async function assemble(o: AssembleOpts): Promise<RegistryIndex> {
     const d = decodeSxp(sxp);
     if (!d.ok || d.sxp.kind !== 'package') return err('sxp.malformed', p.name);
     raws.push({ name: p.name, raw: d.sxp.raw });
-    entries.push({ id: p.id, version: p.version, kind: info.kind, portal: info.portal, sxpDigest: sha(sxp), size: sxp.length, rolloutPercent: plan.rolloutPercent });
+    entries.push({ id: p.id, version: p.version, kind: info.kind, portal: info.portal, sxpDigest: sha(sxp), size: sxp.length, rolloutPercent: plan.rolloutPercent, ...minAppOf(p.published ? current?.entries.find((e) => e.id === p.id && e.version === p.version)?.minAppVersion : plan.minAppVersion) });
   }
   // 실제 서명으로 엔진 로더 전체(서명 2-of-3·번들·조회 다이제스트·정적 검증·승인 바 요약)
   engineLoadAll(raws, o.trust, revoked, o.now);
