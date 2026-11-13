@@ -10,6 +10,24 @@ export interface ElementRef {
   readonly ref: string;
 }
 
+/**
+ * 진단용 요소 모양(값 없음). name은 aria-label·label·title, 단추는 단추 글(input[type=button]의 value 포함)로 어림한 이름이다.
+ * 입력 칸(text 등)의 value는 읽지 않는다. secret: 비밀번호 칸이거나 글자를 가리는 칸(-webkit-text-security).
+ */
+export interface ElementShape {
+  tag: string;
+  id: string | null;
+  role: string | null;
+  name: string;
+  label: string;
+  title: string;
+  type: string | null;
+  readonly: boolean;
+  disabled: boolean;
+  visible: boolean;
+  secret: boolean;
+}
+
 export interface ElementInfo {
   /** 접근성 역할. */
   role: string;
@@ -59,6 +77,12 @@ export interface PageReader {
    * 비밀번호 칸은 넣지 않는다. 구현이 없으면 판정·에이전트를 쓰지 않는다.
    */
   listInteractive?(frame: string): Promise<InteractiveElement[]>;
+  /** 핸드오프 진단(core/diagnose.ts): 요소 하나의 DOM 모양. 입력값은 읽지 않는다. 구현이 없으면 진단을 남기지 않는다. */
+  describe?(el: ElementRef): Promise<ElementShape | null>;
+  /** 핸드오프 진단: within(없으면 프레임 전체) 안의 입력·단추·링크·label 모양, 앞에서부터 max개. 입력값은 읽지 않는다. */
+  describeRegion?(frame: string, within: ElementRef | null, max: number): Promise<ElementShape[]>;
+  /** 핸드오프 진단: 페이지의 프레임 이름(이름 없는 프레임은 빈 문자열). */
+  frameNames?(): string[];
   /** 다음 네비게이션 완료까지 기다린다. 시간 안에 오면 true. */
   waitNavigation(timeoutMs: number): Promise<boolean>;
   /** 네트워크·DOM이 잠잠해질 때까지 기다린다. 시간 안에 오면 true. */

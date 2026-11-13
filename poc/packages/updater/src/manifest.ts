@@ -14,6 +14,7 @@ export type UpdateCode =
   | 'registry.version_rollback'
   | 'registry.revocation_stale'
   | 'registry.head_mismatch'
+  | 'registry.timestamp_invalid'
   | 'update.manifest_invalid'
   | 'update.channel_mismatch'
   | 'update.validity_too_long'
@@ -30,6 +31,7 @@ export const SECURITY_CODES: ReadonlySet<UpdateCode> = new Set<UpdateCode>([
   'registry.issued_in_future',
   'registry.version_rollback',
   'registry.head_mismatch',
+  'registry.timestamp_invalid',
   'update.root_change_unsigned',
   'update.feed_mismatch',
   'update.digest_mismatch',
@@ -55,7 +57,7 @@ export interface Sig {
 }
 
 export interface ReleaseFile {
-  /** 파일 이름만(경로·개행 없음) */
+  /** 파일 이름(피드 기준 주소 {origin}/releases/{channel}/ 아래) 또는 https 절대 주소(Vercel Blob 공개 주소). 서명된 내용이라 주소도 릴리스 키가 정한다 */
   url: string;
   /** sha512 표준 base64(88자) — electron-updater latest.yml과 같은 표기 */
   sha512: string;
@@ -80,21 +82,29 @@ export interface RootChange {
 export interface ReleaseManifest {
   channel: Channel;
   version: string;
+  /** 사람이 서명한 시각(내용) */
   releaseDate: string;
-  expiresAt: string;
   rolloutPercent: number;
   files: ReleaseFile[];
   signature: Sig;
   rootChange?: RootChange;
+  /** 신선도(내용 서명 밖): 레지스트리가 게시 때 붙이고 재서명 cron이 기간이 절반 아래로 남으면 다시 붙인다(인덱스 ADR-043과 같은 구조) */
+  issuedAt: string;
+  expiresAt: string;
+  /** 타임스탬프 키 1개가 JCS({contentDigest, issuedAt, expiresAt})에(verify.ts releaseStampContent) */
+  timestamp: Sig;
 }
 
-const KEYS = new Set(['channel', 'version', 'releaseDate', 'expiresAt', 'rolloutPercent', 'files', 'signature', 'rootChange']);
+const KEYS = new Set(['channel', 'version', 'releaseDate', 'rolloutPercent', 'files', 'signature', 'rootChange', 'issuedAt', 'expiresAt', 'timestamp']);
 const FILE_KEYS = new Set(['url', 'sha512', 'size']);
 const SIG_KEYS = new Set(['keyId', 'alg', 'sig']);
 const ROOT_KEYS = new Set(['keyEpoch', 'changes', 'signatures']);
 
 export const SEMVER_RE = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})$/;
-const URL_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
+/** https 절대 주소: 소문자 호스트, 경로 조각은 비예약 문자만(쿼리·조각·인코딩 없음, YAML·셸에 안전) */
+const ABS_URL_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}(\/[A-Za-z0-9._~-]{1,128}){1,8}$/;
+export const isFileUrl = (u: unknown): u is string => typeof u === 'string' && ((NAME_RE.test(u) && !u.startsWith('.')) || (u.length <= 512 && ABS_URL_RE.test(u)));
 const SHA512_RE = /^[A-Za-z0-9+/]{86}==$/;
 const SIG_RE = /^[A-Za-z0-9_-]{86}$/;
 const KEYID_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -117,22 +127,32 @@ export const isTime = (v: unknown): v is string => typeof v === 'string' && TIME
 /** latest.json 본문(이미 JSON.parse한 값)의 모양 검사. 통과한 값만 verify에 넘긴다. */
 export function parseManifest(v: unknown): ReleaseManifest {
   if (!isObj(v) || !onlyKeys(v, KEYS)) return fail('update.manifest_invalid');
-  const { channel, version, releaseDate, expiresAt, rolloutPercent, files } = v;
+  const { channel, version, releaseDate, issuedAt, expiresAt, rolloutPercent, files } = v;
   if (typeof channel !== 'string' || !(CHANNELS as readonly string[]).includes(channel)) return fail('update.manifest_invalid');
   if (typeof version !== 'string' || !SEMVER_RE.test(version)) return fail('update.manifest_invalid');
-  if (!isTime(releaseDate) || !isTime(expiresAt)) return fail('update.manifest_invalid');
+  if (!isTime(releaseDate) || !isTime(issuedAt) || !isTime(expiresAt)) return fail('update.manifest_invalid');
   if (!Number.isInteger(rolloutPercent) || (rolloutPercent as number) < 0 || (rolloutPercent as number) > 100) return fail('update.manifest_invalid');
   if (!Array.isArray(files) || files.length < 1 || files.length > 8) return fail('update.manifest_invalid');
   const seen = new Set<string>();
   const outFiles: ReleaseFile[] = files.map((f: unknown) => {
     if (!isObj(f) || !onlyKeys(f, FILE_KEYS)) return fail('update.manifest_invalid');
-    if (typeof f.url !== 'string' || !URL_RE.test(f.url) || f.url.startsWith('.') || seen.has(f.url)) return fail('update.manifest_invalid');
+    if (!isFileUrl(f.url) || seen.has(f.url)) return fail('update.manifest_invalid');
     if (typeof f.sha512 !== 'string' || !SHA512_RE.test(f.sha512)) return fail('update.manifest_invalid');
     if (!Number.isSafeInteger(f.size) || (f.size as number) < 1 || (f.size as number) > MAX_FILE_SIZE) return fail('update.manifest_invalid');
     seen.add(f.url);
     return { url: f.url, sha512: f.sha512, size: f.size as number };
   });
-  const out: ReleaseManifest = { channel: channel as Channel, version, releaseDate, expiresAt, rolloutPercent: rolloutPercent as number, files: outFiles, signature: parseSig(v.signature) };
+  const out: ReleaseManifest = {
+    channel: channel as Channel,
+    version,
+    releaseDate,
+    rolloutPercent: rolloutPercent as number,
+    files: outFiles,
+    signature: parseSig(v.signature),
+    issuedAt,
+    expiresAt,
+    timestamp: parseSig(v.timestamp),
+  };
   if (v.rootChange !== undefined) {
     const r = v.rootChange;
     if (!isObj(r) || !onlyKeys(r, ROOT_KEYS)) return fail('update.manifest_invalid');

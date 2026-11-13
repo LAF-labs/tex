@@ -113,6 +113,11 @@ export interface HumanPort {
    */
   secret(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number }): Promise<'done' | 'ttl' | { code: string }>;
   closed(reqId: string, why: 'answered' | 'ttl' | 'aborted'): void;
+  /**
+   * 발급 서명 [확인]을 누른 뒤(금고가 넣은 인증서 비밀번호): 포털이 틀린 비밀번호 안내를 보였는가(인증서 창 iframe 안 포함).
+   * 'wrong'이면 금고가 확인 대기 값을 버리고 기억값을 지웠다(다음 secret은 대화 카드로 다시 묻는다). 'ok'면 이번에 받은 값을 기억한다.
+   */
+  afterSignConfirm?(r: { runId: string; stepId: string }): Promise<'ok' | 'wrong'>;
 }
 
 /** 취소할 수 있는 타이머(게이트 waitMs·사람 TTL·핸드오프 상한). 시험은 손으로 돌리는 것을 넣는다. */
@@ -956,6 +961,32 @@ export class RunController {
     const t = await waitTarget(env, f.confirmTarget, actions.length > 0 ? Math.min(left(), CONFIRM_GRACE_MS) : left(), { allowCommit: true });
     if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
     await this.clickConfirm(s, f.confirmTarget, t.t);
+    if (actions.includes('human:secret')) await this.signWrongRetry(s, f, left);
+  }
+
+  /**
+   * 서명 [확인] 뒤 틀린 비밀번호(인증서 갱신 등으로 기억값이 틀림, 부장 지시 2026-11-14). 같은 값으로 다시 누르지 않는다:
+   * 금고가 기억값을 지우고 대화 카드로 다시 묻고, 새 값이 들어가면 [확인]을 한 번 더 누른다. 포털이 틀림 안내를 보였다는 것이
+   * 앞 클릭이 서명하지 않았다는 근거다. 횟수는 CertSecretPort MAX_WRONG(넘으면 서명 차례로 사람). 발급 여부는 그 뒤 verify(조회)가 정한다.
+   */
+  private async signWrongRetry(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, left: () => number): Promise<void> {
+    const check = this.i.human.afterSignConfirm?.bind(this.i.human);
+    if (!check || !f.confirmTarget) return;
+    for (;;) {
+      if ((await check({ runId: this.i.runId, stepId: s.id }).catch(() => 'ok' as const)) === 'ok') return;
+      this.i.journal('signflow.password_wrong', { stepId: s.id });
+      const r = await this.i.human.secret({ runId: this.i.runId, stepId: s.id, ttlMs: left() }).catch(() => 'ttl' as const);
+      if (r !== 'done') {
+        this.i.journal('signflow.timeout', { stepId: s.id, action: 'human:secret' });
+        return void (await this.signTurnWait(s, f, 'secret'));
+      }
+      const t = await waitTarget(this.i.env, f.confirmTarget, Math.min(left(), CONFIRM_GRACE_MS), { allowCommit: true });
+      if (!t.ok) return this.i.journal('signflow.confirm_missing', { stepId: s.id, code: t.code });
+      // 앞 클릭은 포털이 틀린 비밀번호로 거절했다(서명 없음): 이 무장에서 한 번 더 누를 수 있다
+      this.confirmClicked = false;
+      this.i.journal('signflow.confirm_retry', { stepId: s.id });
+      await this.clickConfirm(s, f.confirmTarget, t.t);
+    }
   }
 
   /**

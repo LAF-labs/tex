@@ -72,15 +72,23 @@ export function countQuorum(content: unknown, sigs: readonly Sig[], role: Role, 
 
 const without = (o: object, keys: readonly string[]): Record<string, unknown> => Object.fromEntries(Object.entries(o).filter(([k]) => !keys.includes(k)));
 
-/** 릴리스 키가 서명하는 바이트: 매니페스트 − signature(API.md, 클라우드 verifyRelease와 같다) */
+/** 서명 바이트에서 빼는 칸: 사람 서명과 서버 신선도(issuedAt·expiresAt·timestamp). 서버가 기간만 다시 붙여도 내용 서명은 그대로다 */
+const RELEASE_FRESHNESS = ['signature', 'issuedAt', 'expiresAt', 'timestamp'];
+
+/** 릴리스 키가 서명하는 바이트: 매니페스트 − 서명·신선도(API.md, services/registry verifyRelease와 같다) */
 export function releaseContent(m: ReleaseManifest): Record<string, unknown> {
-  return without(m, ['signature']);
+  return without(m, RELEASE_FRESHNESS);
 }
 
-/** 루트 키가 서명하는 바이트: 매니페스트 − signature, rootChange − signatures */
+/** 루트 키가 서명하는 바이트: 매니페스트 − 서명·신선도, rootChange − signatures */
 export function rootChangeContent(m: ReleaseManifest): Record<string, unknown> {
-  const rest = without(m, ['signature', 'rootChange']);
+  const rest = without(m, [...RELEASE_FRESHNESS, 'rootChange']);
   return m.rootChange ? { ...rest, rootChange: without(m.rootChange, ['signatures']) } : rest;
+}
+
+/** 타임스탬프 키가 서명하는 내용: {contentDigest = sha256 hex(JCS(releaseContent)), issuedAt, expiresAt}(services/registry releaseStampContent와 같다) */
+export function releaseStampContent(m: ReleaseManifest): Record<string, unknown> {
+  return { contentDigest: createHash('sha256').update(jcs(releaseContent(m)), 'utf8').digest('hex'), issuedAt: m.issuedAt, expiresAt: m.expiresAt };
 }
 
 /** 저장해 두는 "본 것 중 가장 높은 릴리스": 버전과 파일 목록 다이제스트 */
@@ -112,7 +120,7 @@ export interface VerifiedRelease {
 }
 
 /**
- * 릴리스 매니페스트 한 건 검증. 순서: 모양 → 폐기 목록 신선도 → 채널 → 서명(릴리스 키 1 + 뿌리 변경이면 루트 2-of-3) → 시각 → 단조 버전.
+ * 릴리스 매니페스트 한 건 검증. 순서: 모양 → 폐기 목록 신선도 → 채널 → 서명(릴리스 키 1 + 뿌리 변경이면 루트 2-of-3) → 서버 타임스탬프 → 시각 → 단조 버전.
  * 서명을 시각보다 먼저 본다(위조본에 만료·미래 시각 같은 덜 무거운 코드가 붙지 않게).
  */
 export function verifyRelease(input: VerifyInput): VerifiedRelease {
@@ -135,9 +143,15 @@ export function verifyRelease(input: VerifyInput): VerifiedRelease {
       fail('update.root_change_unsigned');
     }
   }
-  const issued = Date.parse(m.releaseDate);
+  // 기간은 서버 타임스탬프 키가 붙인다(게시 때와 재서명 cron). 폐기된 타임스탬프 키는 세지 않는다
+  try {
+    countQuorum(releaseStampContent(m), [m.timestamp], 'timestamp', input.trust, input.revocation.keyIds, 1);
+  } catch {
+    fail('registry.timestamp_invalid');
+  }
+  const issued = Date.parse(m.issuedAt);
   const expires = Date.parse(m.expiresAt);
-  if (issued > input.now + LIMITS.futureSkewMs) fail('registry.issued_in_future');
+  if (Date.parse(m.releaseDate) > input.now + LIMITS.futureSkewMs || issued > input.now + LIMITS.futureSkewMs) fail('registry.issued_in_future');
   if (expires <= issued || expires - issued > LIMITS.maxValidityMs) fail('update.validity_too_long');
   if (expires <= input.now) fail('registry.expired');
   // 단조: 이 채널에서 본 가장 높은 버전보다 낮으면 롤백(동결·되감기 공격). 같은 버전은 신선도 재발행이라 파일이 같을 때만 받는다

@@ -61,8 +61,8 @@ export function signingBytes(kind: DocKind, doc: unknown): Buffer {
     case 'data_descriptor':
     case 'trust_root':
       return canonicalWithout(d, ['signatures']);
-    case 'release':
-      return canonicalWithout(d, ['signature']);
+    case 'release': // 기간·타임스탬프는 게시 관문과 재서명 cron이 붙인다(services/registry verify.ts RELEASE_FRESHNESS)
+      return canonicalWithout(d, ['signature', 'issuedAt', 'expiresAt', 'timestamp']);
     case 'root_change':
       if (!d.rootChange || typeof d.rootChange !== 'object') throw new CeremonyError('ceremony.doc_invalid', 'rootChange 없음');
       return rootChangeContent(d as unknown as ReleaseManifest);

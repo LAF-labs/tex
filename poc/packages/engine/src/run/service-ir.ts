@@ -14,6 +14,7 @@ import { compileRe2 } from '../core/re2.ts';
 import { newScope } from '../core/scope.ts';
 import { resolveTarget } from '../core/resolve.ts';
 import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/steps.ts';
+import { targetDiagnosis } from '../core/diagnose.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
@@ -29,7 +30,7 @@ import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
 import { IrLookupPort } from '../driver/lookup-ir.ts';
-import { CERT_FRAME_CSS, CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
+import { CERT_ALERT_OK_CSS, CERT_FRAME_CSS, CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
 import type { SecretVault } from '../driver/secret.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
@@ -117,6 +118,8 @@ export interface IrRunInput {
   /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
   manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
+  /** 진단 한 줄(engine.log diag, 값 없음·화면 글 가림): 핸드오프 대상의 실제 화면 모양(core/diagnose.ts). 없으면 남기지 않는다. */
+  diag?: (code: string, fields: Record<string, string | number | boolean>, data: unknown) => void;
   phase: (phase: string, state: 'now' | 'done' | 'attention', code?: string) => void;
   postGate: (m: GatePortMessage) => void;
   waiting: (reqId: string) => void;
@@ -499,6 +502,11 @@ export class IrRun {
           },
           // 인증서 선택창 iframe 요소만 본다(안은 다른 출처라 읽지 않는다).
           certFrame: () => page.locator(CERT_FRAME_CSS).first().isVisible(),
+          // 틀린 비밀번호 안내 닫기(인증서 창 경고 [확인], 커밋 아님). 보일 때만 누른다.
+          dismissAlert: async () => {
+            const ok = page.frameLocator(CERT_FRAME_CSS).first().locator(CERT_ALERT_OK_CSS).first();
+            if (await ok.isVisible().catch(() => false)) await ok.click({ timeout: 2_000 }).catch(() => {});
+          },
         },
         ...(i.secretEvent ? { event: i.secretEvent } : {}),
       })
@@ -586,6 +594,7 @@ export class IrRun {
         request: () => {},
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
+        ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
         closed: () => {},
       },
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),
@@ -629,6 +638,12 @@ export class IrRun {
         // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
         i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
+        // 대상을 못 찾았거나(시간 초과 포함) 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
+        if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const d = await Promise.race([targetDiagnosis(reader, dict, at.target).catch(() => null), new Promise<null>((r) => (timer = setTimeout(() => r(null), 10_000)))]).finally(() => clearTimeout(timer));
+          i.diag('run.handoff_target', { stepId: out.at ?? '', code: out.code, target: at.target, read: !!d }, d);
+        }
         i.handoff?.({ phase, ...(out.code ? { code: out.code } : {}), stepId: out.at });
         enforcer.pauseClock();
         const cmd = left > 0 ? await this.waitCommand(left) : 'cap';
