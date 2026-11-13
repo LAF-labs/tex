@@ -492,6 +492,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     : null;
   host.on('browser', (m: unknown) => eb?.feed(m));
   win.once('closed', () => eb?.closeAll('window'));
+  // 진단: macOS는 창이 다른 Space로 가거나 완전히 가려지면 hide, 돌아오면 show를 낸다(Electron 가림 알림). 예행 로그에서 실패 시각과 맞춰 본다.
+  if (eb) {
+    win.on('hide', () => log.event('main.window_hide', { visible: win.isVisible(), minimized: win.isMinimized() }));
+    win.on('show', () => log.event('main.window_show', { visible: win.isVisible(), minimized: win.isMinimized() }));
+  }
   // 다른 앱에서 돌아온 클릭이 버튼 위였는지 렌더러가 보게 커서 자리만 알린다(F-11). 클릭을 만들거나 실제 입력으로 세지 않는다.
   win.on('focus', () => {
     if (win.isDestroyed()) return;

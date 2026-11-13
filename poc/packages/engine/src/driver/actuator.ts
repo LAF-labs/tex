@@ -19,8 +19,8 @@ export interface PlaywrightActuatorInput {
   timeoutMs?: number;
   /** 네비게이션 뒤(집행기 settled). 거부면 그 코드로 실패. */
   afterNavigation?: () => Promise<ActResult>;
-  /** 동작 실패 때 Playwright가 멈춘 까닭의 갈래(값·글 없음). 실행 저널 actuator.why로 남긴다(예행 진단). */
-  onError?: (op: string, why: string) => void;
+  /** 동작 실패 때 Playwright가 멈춘 까닭의 갈래·단계와 그때 페이지 상태(값·글 없음). 실행 저널 actuator.why로 남긴다(예행 진단). */
+  onError?: (op: string, why: ActuatorWhy) => void;
 }
 
 export class PlaywrightActuator implements Actuator {
@@ -125,12 +125,12 @@ export class PlaywrightActuator implements Actuator {
     return this.navs;
   }
 
-  /** 네비게이션이 있었으면 load를 기다리고 settled를 부른다. 잡은 요소는 놓는다(옛 문서의 핸들). */
-  private fail(op: string, e: unknown): ActResult {
-    this.i.onError?.(op, whyOf(e));
+  private async fail(op: string, e: unknown): Promise<ActResult> {
+    if (this.i.onError) this.i.onError(op, { why: whyOf(e), ...stageOf(e), ...(await pageState(this.i.page)) });
     return fail(e);
   }
 
+  /** 네비게이션이 있었으면 load를 기다리고 settled를 부른다. 잡은 요소는 놓는다(옛 문서의 핸들). */
   private async settle(navigated: boolean): Promise<ActResult> {
     if (!navigated) {
       // 클릭 직후 시작하는 네비게이션을 놓치지 않게 잠깐 본다.
@@ -156,6 +156,56 @@ export function whyOf(e: unknown): string {
   if (/dialog/i.test(m)) return 'dialog';
   if (/Timeout/i.test(m)) return 'timeout_other';
   return 'other';
+}
+
+export type ActuatorWhy = Record<string, string | number | boolean>;
+
+// Playwright 호출 기록 마지막 줄 → 단계. 위에서부터 처음 맞는 것(요소 설명·화면 글은 버린다).
+const STAGES: readonly (readonly [RegExp, string])[] = [
+  [/intercepts pointer events/, 'intercepted'],
+  [/element is not stable/, 'not_stable'],
+  [/element is not (visible|enabled|editable)/, 'not_actionable'],
+  [/element is outside of the viewport/, 'outside_viewport'],
+  [/waiting for element to be/, 'wait_actionable'],
+  [/element is (visible|enabled)/, 'actionable'],
+  [/done scrolling/, 'scrolled'],
+  [/scrolling into view/, 'scrolling'],
+  [/performing \w+ action/, 'performing'],
+  [/\w+ action done/, 'action_done'],
+  [/waiting for scheduled navigations/, 'navigations'],
+  [/navigations have finished/, 'navigated'],
+  [/retrying \w+ action/, 'retrying'],
+  [/waiting \d+ms/, 'backoff'],
+  [/attempting \w+ action/, 'attempting'],
+];
+
+/** Playwright 실패 글의 호출 기록에서 멈춘 단계와 다시 시도한 횟수만 뽑는다. */
+export function stageOf(e: unknown): ActuatorWhy {
+  const m = String((e as { message?: unknown } | null)?.message ?? '');
+  const at = m.indexOf('Call log:');
+  if (at < 0) return { stage: 'none' };
+  const lines = m.slice(at + 9).split('\n').map((l) => l.trim().replace(/^-\s*/, '')).filter((l) => l !== '');
+  let retries = 0;
+  for (const l of lines) {
+    const r = /^(?:(\d+) × )?retrying \w+ action/.exec(l);
+    if (r) retries += Number(r[1] ?? 1);
+  }
+  const last = lines.at(-1) ?? '';
+  return { stage: STAGES.find(([re]) => re.test(last))?.[1] ?? 'other', retries };
+}
+
+/** 실패한 그때 페이지가 그리는지(0.5초 rAF 수)·보이는지·포커스. 비밀 창 등으로 금고가 막으면 probe만 남긴다. */
+async function pageState(page: Page): Promise<ActuatorWhy> {
+  const probe = page.evaluate(() => new Promise<ActuatorWhy>((done) => {
+    let raf = 0;
+    const t0 = performance.now();
+    const end = () => done({ raf, vis: document.visibilityState, focus: document.hasFocus() });
+    const tick = () => { raf++; if (performance.now() - t0 < 500) requestAnimationFrame(tick); else end(); };
+    requestAnimationFrame(tick);
+    setTimeout(end, 1000);
+  }));
+  const late = new Promise<ActuatorWhy>((r) => setTimeout(() => r({ probe: 'timeout' }), 2000));
+  return Promise.race([probe, late]).catch(() => ({ probe: 'error' }));
 }
 
 function fail(e: unknown): ActResult {
