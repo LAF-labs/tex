@@ -14,6 +14,7 @@ const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 const $ = (s) => document.querySelector(s);
 
 const state = {
+  screen: null, // 진행 화면(B3): { runId, frame, paused }
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -941,6 +942,29 @@ function openPanel(p) {
   renderPanel();
 }
 
+/**
+ * 진행 화면(B3): main이 보낸 실행 탭 화면을 패널 자리에 그린다. 보기 전용이라 클릭·키 입력을 받지 않는다.
+ * 비밀 창이 열린 동안은 화면 대신 "비밀번호 입력 중"(금고가 중계를 멈춘다). 프레임은 패널을 다시 그리지 않고 그림만 바꾼다.
+ */
+function paintScreen() {
+  const s = state.screen;
+  const box = s ? document.querySelector(`[data-run-screen="${CSS.escape(s.runId)}"]`) : null;
+  if (!box) return;
+  if (s.paused) {
+    box.dataset.state = 'paused';
+    box.replaceChildren(h('p', { class: 'sx-meta' }, '비밀번호 입력 중이라 화면을 잠시 가렸어요'));
+    return;
+  }
+  if (!s.frame) return;
+  let img = box.querySelector('img');
+  if (!img) {
+    img = h('img', { alt: '홈택스 화면(보기 전용)', draggable: 'false' });
+    box.replaceChildren(img, h('p', { class: 'sx-meta run-screen-note' }, '보기 전용이에요. 직접 하려면 [홈택스 창 보기]를 눌러 주세요.'));
+  }
+  box.dataset.state = 'live';
+  img.src = s.frame;
+}
+
 function renderPanel() {
   const el = $('#panel');
   const p = state.panel;
@@ -948,6 +972,7 @@ function renderPanel() {
   if (p.kind === 'run') {
     const run = state.runs.get(p.id);
     el.replaceChildren(run ? runPanel(run, act) : h('div'));
+    paintScreen();
   } else if (p.kind === 'g24') {
     el.replaceChildren(g24Panel(state.g24.get(p.id), act));
   } else if (p.kind === 'doc') {
@@ -1976,6 +2001,16 @@ window.sax.onEvent((ev) => {
       el.dataset.agentProgress = ev.phase;
       if (!el.isConnected) appendThread(el);
     }
+    return;
+  }
+  if (ev.type === 'screen') {
+    if (ev.ended) {
+      if (state.screen?.runId === ev.runId) state.screen = null;
+      return;
+    }
+    const was = state.screen?.runId === ev.runId ? state.screen : { runId: ev.runId, frame: null, paused: false };
+    state.screen = { ...was, ...(ev.frame ? { frame: ev.frame, paused: false } : {}), ...(typeof ev.paused === 'boolean' ? { paused: ev.paused } : {}) };
+    paintScreen();
     return;
   }
   if (ev.type === 'run') {
