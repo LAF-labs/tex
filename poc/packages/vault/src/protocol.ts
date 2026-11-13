@@ -23,6 +23,8 @@ export type OutboundMessage =
 export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   engine: [
     'browser.launch', 'browser.shutdown',
+    // browser.reveal로 금고가 Chrome을 다시 띄운 뒤 엔진이 새 실행 탭에 다시 붙을 때(launch 없이 지금 실행 탭 id만).
+    'browser.current',
     'typist.fill', 'typist.authFailed',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
@@ -42,6 +44,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.place',
     // 진행 화면(B3): 실행 탭 화면을 보기 전용으로 main에 중계한다(초당 3장 남짓). 입력은 받지 않는다. 비밀 창이 열린 동안은 멈춘다.
     'screen.start', 'screen.stop',
+    // 사람이 페이지를 만져야 할 때만(main): 창 없는 Chrome을 같은 전용 프로필의 창 있는 Chrome으로 다시 띄운다(쿠키·주소를 옮긴다).
+    'browser.reveal',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
@@ -570,4 +574,6 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
-  | 'screen.frame' | 'screen.paused';
+  | 'screen.frame' | 'screen.paused'
+  /** 엔진: 금고가 Chrome을 창 있는 것으로 다시 띄웠다(browser.reveal). 앞 Chrome은 cdp_closed로 끝났고 새 실행 탭은 targetId. */
+  | 'browser.relaunched';

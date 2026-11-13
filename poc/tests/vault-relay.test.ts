@@ -47,7 +47,7 @@ describe('vault relay (raw engine)', () => {
   });
 
   it('launch() 인자 없음, 파이프 기동, 포트 미사용, webdriver 자기 점검', async () => {
-    assert.deepEqual(await h.control.rpc('status').then((s) => Object.keys(s as object)), ['launched', 'profileProblems']);
+    assert.deepEqual(await h.control.rpc('status').then((s) => Object.keys(s as object)), ['launched', 'headless', 'profileProblems']);
     const st = await h.client.rpc<{ launched: boolean }>('status').catch((e: Error) => e);
     assert.ok(st instanceof Error, 'control RPC는 엔진 포트에서 거부');
     assert.match(String((st as Error).message), /denied/);
@@ -531,7 +531,7 @@ describe('launch 전 전용 프로필 폴더 확인(D05 §3.1)', () => {
     try {
       await assert.rejects(h.client.rpc('browser.launch'), /chrome profile not private: not_owner/);
       assert.equal(h.vault.chromePid, undefined);
-      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, headless: false, profileProblems: null });
       const ev = profileEvent(h);
       assert.deepEqual([ev?.ok, ev?.reason, ev?.setAside], [false, 'not_owner', undefined], '새 폴더도 맞지 않아 되돌리고 기동하지 않는다');
       assert.deepEqual((await fs.readdir(h.paths.root)).filter((n) => n.includes('.untrusted-')), []);
@@ -564,7 +564,7 @@ describe('launch 동시 호출·중간 실패(PoC-1 §5.1 후속)', () => {
       };
       await assert.rejects(h.client.rpc('browser.launch'), /injected createRunPage failure/);
       assert.equal(h.vault.chromePid, undefined, '띄운 Chrome이 남지 않는다');
-      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, headless: false, profileProblems: null });
       Relay.prototype.createRunPage = original;
       await h.client.rpc('browser.launch');
       assert.ok(h.vault.chromePid, '다시 launch는 already launched로 막히지 않는다');
@@ -626,7 +626,7 @@ describe('launch 동시 호출·중간 실패(PoC-1 §5.1 후속)', () => {
       await h.client.rpc('browser.launch');
       await h.vault.profileChecked();
       await h.client.rpc('browser.shutdown');
-      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null }, '내린 뒤 앞 점검 결과가 남지 않는다');
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, headless: false, profileProblems: null }, '내린 뒤 앞 점검 결과가 남지 않는다');
       await h.client.rpc('browser.launch');
       assert.equal(h.vault.ops?.runTriggers.get('r1'), 'local');
       await h.control.rpc('run.end', { runId: 'r1' });
@@ -685,7 +685,7 @@ describe('launch 동시 호출·중간 실패(PoC-1 §5.1 후속)', () => {
       release();
       await assert.rejects(launching, /launch cancelled/);
       assert.equal(h.vault.chromePid, undefined);
-      assert.deepEqual(await h.control.rpc('status'), { launched: false, profileProblems: null });
+      assert.deepEqual(await h.control.rpc('status'), { launched: false, headless: false, profileProblems: null });
     } finally {
       release();
       await h.close();

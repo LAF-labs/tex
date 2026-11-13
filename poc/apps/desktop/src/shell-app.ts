@@ -1004,6 +1004,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let mirrorRun: string | null = null;
   const showRunBrowser = async (id: string) => {
     if (!runs.isActive(id)) throw new Error('not_running');
+    await revealRunBrowser();
     if (await placeRunBrowser(true)) return { focused: true };
     const r = (await host.control('browser.focus')) as { focused?: unknown } | null;
     if (r?.focused !== true) throw new Error('no_browser');
@@ -1015,6 +1016,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * front=false(실행 시작): Chrome은 앱 옆에 두고 앱을 다시 앞으로. 맥에서 Chrome을 띄우면 Chrome이 앞으로 오므로 한 번 되돌린다.
    * front=true(사람 차례·[홈택스 창 보기]): 앱과 나란히 놓고 Chrome을 앞으로. 이때만 앱 창을 왼쪽으로 옮긴다.
    */
+  /**
+   * 창 없는 Chrome(금고 기본, 부장 지시 2026-11-13 ②)이면 창 있는 Chrome으로 다시 띄운다(금고가 쿠키·주소를 옮긴다). 이미 창이 있으면 아무것도 안 한다.
+   * 사람이 페이지를 만져야 할 때만 부른다: 핸드오프 차례·[홈택스 창 보기]. 서명 차례(인증서 비밀번호는 앱 금고 창, 간편인증은 휴대폰)에는 부르지 않는다.
+   */
+  const revealRunBrowser = async (): Promise<boolean> => {
+    const r = (await host.control('browser.reveal').catch(() => null)) as { revealed?: unknown; reason?: unknown } | null;
+    if (r?.revealed === true) log.event('main.chrome_revealed');
+    return r?.revealed === true;
+  };
   const placeRunBrowser = async (front: boolean): Promise<boolean> => {
     if (win.isDestroyed()) return false;
     const appRect = win.getBounds();
@@ -1067,7 +1077,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (want === 'back' && chromeSpot.has(r.id)) return; // 시작 때 한 번만 뒤에 둔다
     chromeSpot.set(r.id, want);
     if (turn) {
-      void placeRunBrowser(true);
+      // 핸드오프(사람이 페이지를 만진다)만 창을 띄운다. 서명 차례는 창 없이 그대로(창이 있으면 앞으로).
+      void (turn.startsWith('turn:') ? revealRunBrowser() : Promise.resolve(false)).then(() => placeRunBrowser(true));
       return;
     }
     // 시작: Chrome이 뜨고 실행 탭이 붙을 때까지 잠깐 다시 해 본다(엔진이 run.start 뒤에 금고에 기동을 맡긴다).

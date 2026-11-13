@@ -389,8 +389,8 @@ describe('audit-v V5 비밀 입력 포트 결속·TTL·secret.needed', () => {
       const bads = [
         undefined, {}, bind({ runId: 'bad id!' }), bind({ scope: 'p1' as never }),
         bind({ kind: 'security_card', row: 0 }), bind({ kind: 'security_card', row: 36 }), bind({ kind: 'security_card', row: 1.5 }),
-        // 종류별 규칙: 인증서 비밀번호는 1회용 창으로도 받지 않는다, 보안카드는 row 필수, 포털 비밀번호는 row 없음
-        bind({ kind: 'cert_password' }), bind({ kind: 'security_card' }), bind({ row: 3 }),
+        // 종류별 규칙: 인증서 비밀번호는 금고가 부른 1회용 창(창 없는 Chrome)만이고 칸 번호가 없다, 보안카드는 row 필수, 포털 비밀번호는 row 없음
+        bind({ kind: 'cert_password', row: 1 }), bind({ kind: 'security_card' }), bind({ row: 3 }),
       ];
       for (const bad of bads) {
         if (bad) need(b.vault, bad as Record<string, unknown>);
@@ -767,7 +767,8 @@ describe('audit-v V12 DB 키 get/create 분리', () => {
 // ───────────────────────── V13 · N-46 ─────────────────────────
 describe('audit-v V13 비밀 종류↔칸 결박', () => {
   it('audit-v: built-in origins never let the typist enter a certificate password (ADR-020 decision 2)', () => {
-    assert.deepEqual(SECRET_ORIGINS.cert_password, [], '공동·금융인증서 비밀번호는 사용자가 직접 입력');
+    // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 금고가 기억한 인증서 비밀번호를 홈택스 인증서 창(#dscert, 같은 출처)에만 넣는다.
+    assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
     assert.deepEqual(SECRET_ORIGINS.portal_password, ['hometax.go.kr']);
     assert.deepEqual(SECRET_ORIGINS.security_card, ['hometax.go.kr']);
   });

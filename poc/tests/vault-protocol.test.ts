@@ -44,10 +44,11 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
     for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) if (m !== 'account.refresh.read') assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
   });
 
-  it('비밀 종류 표: 저장 가능 종류에 인증서 비밀번호가 없다, 모든 종류에 origin 목록이 있다', () => {
-    assert.ok(!(STORABLE_KINDS as readonly string[]).includes('cert_password'));
+  it('비밀 종류 표: 인증서 비밀번호는 기억(저장 가능)하고 홈택스에만 넣는다, 모든 종류에 origin 목록이 있다', () => {
+    // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 처음 넣은 인증서 비밀번호를 금고가 기억하고 다음부터 넣는다.
+    assert.ok((STORABLE_KINDS as readonly string[]).includes('cert_password'));
     for (const k of SECRET_KINDS) assert.ok(Object.hasOwn(SECRET_ORIGINS, k), k);
-    assert.deepEqual(SECRET_ORIGINS.cert_password, [], '인증서 비밀번호는 타이피스트가 넣지 않는다(ADR-020 결정 2)');
+    assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
     assert.equal(new Set(VD_PURPOSES).size, VD_PURPOSES.length);
   });
 });
