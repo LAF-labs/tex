@@ -151,6 +151,11 @@ export interface RunServiceDeps {
    */
   irSource?: () => IrSourceResult;
   /**
+   * 예행 전용 로컬 패키지(package-source rehearsalIrSource). 예행(StartParams.rehearsal) 실행만 부른다. null이면 irSource를 쓰고,
+   * 로컬 파일이 있는데 받지 못하면 그 코드로 시작하지 않는다(레지스트리 판으로 몰래 바꾸지 않는다).
+   */
+  rehearsalIrSource?: () => IrSourceResult | null;
+  /**
    * 실행 허가(D03 §2 Running 진입 확인·정지 하향, §3.1 status 소비, §12 실효 수준, ADR-023 결정 5·6). 시작 전, 스텝 경계마다,
    * recheckPermit(레지스트리 동기화 뒤)에서 부른다. 제품 entry는 레지스트리 status로 계산한다(core runPermit). 없으면 늘 허가(시험).
    */
@@ -263,7 +268,7 @@ export class RunService extends EventEmitter {
     if (issueKey) this.refuseIssued(issueKey);
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
-    const irPkg = this.engine === 'ir' ? this.packageForRun() : undefined;
+    const irPkg = this.engine === 'ir' ? this.packageForRun(p.rehearsal === true) : undefined;
     const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
     const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
     const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
@@ -298,7 +303,8 @@ export class RunService extends EventEmitter {
     const portal = runPortalConfig(this.d.portal, startPolicy);
     this.active = {
       runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
-      portal, signals: this.runSignals(p.runId, startPolicy), rehearsal: p.rehearsal === true ? new RehearsalReport() : null,
+      portal, signals: this.runSignals(p.runId, startPolicy),
+      rehearsal: p.rehearsal === true ? new RehearsalReport(irPkg?.local ? `local:${playbookVersion}:${irPkg.local.digest.slice(0, 12)}` : `${irPkg ? 'registry' : 'h01'}:${playbookVersion}`) : null,
     };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
@@ -452,9 +458,15 @@ export class RunService extends EventEmitter {
     });
   }
 
-  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
-  private packageForRun(): IrPackage {
+  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → (예행만) 로컬 패키지 → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
+  private packageForRun(rehearsal: boolean): IrPackage {
     if (this.d.ir) return this.d.ir;
+    const local = rehearsal ? (this.d.rehearsalIrSource?.() ?? null) : null;
+    if (local?.ok) return local.ir;
+    if (local) {
+      this.d.log.event('run.rehearsal_package_refused', { code: local.code });
+      throw new RunEnd('failed', local.code);
+    }
     const r = this.d.irSource?.() ?? { ok: false as const, code: 'package.not_loaded' };
     if (r.ok) return r.ir;
     if (r.code === 'package.not_loaded') throw new RunEnd('failed', 'package.not_loaded');
