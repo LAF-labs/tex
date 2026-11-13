@@ -2,6 +2,7 @@
 // 승인 바 판정, 습관 클릭, 중복 경고, 위조 경로, 정부24 목업, 스크린샷. fixture 모드(가짜 H-01 페이지, 임시 앱 폴더, 메모리 키)로 돈다.
 // 바 입력은 main의 sendInputEvent라 판정 로직만 본다(실제 포인터 좌표·OS 입력은 Windows에서). 실행 Chrome은 headless다.
 // 실행: pnpm demo:e2e  (스크린샷·결과: reports/raw/poc-6/shell/)
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, clipboard, nativeImage, nativeTheme } from 'electron';

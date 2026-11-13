@@ -1,6 +1,7 @@
 // 받을 돈 e2e(09 1단계): 내 계좌 등록(동의) → 홈택스 발급목록 파일 → 은행 거래내역 파일(HTML 표 .xls) 미리보기·넣기 → 자동/후보 맞춤 →
 // [맞아요]·별칭 기억 → [떼기]·[되돌리기] → [받았음 표시](현금) → 판 카드 → 대화 "못 받은 돈 있어?"(로컬 답, 해석기·모델을 부르지 않음).
 // 실행: electron apps/desktop/e2e-dist/shell-bank-e2e.js. 시연 fixture(임시 앱 폴더) 위에서 돈다. 파일은 모두 가짜 값으로 만든다(실제 은행·홈택스 접속 없음).
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
