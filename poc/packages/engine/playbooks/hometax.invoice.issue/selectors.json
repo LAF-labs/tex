@@ -770,7 +770,7 @@
      "value": "#ML_window"
     }
    ],
-   "role": "generic",
+   "role": "dialog",
    "namePattern": "^$",
    "frame": "dscert",
    "landmark": "hometax.cert.root",
@@ -824,7 +824,7 @@
      "value": "#ML_window"
     }
    ],
-   "role": "generic",
+   "role": "dialog",
    "namePattern": "^$",
    "frame": "dscert",
    "landmark": "hometax.invoice.sign.root",
@@ -988,6 +988,24 @@
    "candidates": [
     {
      "kind": "css",
+     "value": "[id$=\"_wframe_btnClose\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^닫기$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnClose",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.layer.btnCloseAlt": {
+   "candidates": [
+    {
+     "kind": "css",
      "value": "[id$=\"_wframe_btn_close\"]"
     }
    ],
@@ -995,66 +1013,68 @@
     "visible": true
    },
    "role": "button",
-   "namePattern": "^(닫기|창 ?닫기)$",
+   "namePattern": "^닫기$",
    "frame": "main",
-   "landmark": "hometax.layer.btnClose",
+   "landmark": "hometax.layer.btnCloseAlt",
    "commits": false,
    "closeAffordance": true,
    "lastVerified": "2026-11-10"
   },
-  "hometax.layer.closeLink": {
+  "hometax.login.simpleTab": {
    "candidates": [
     {
      "kind": "css",
-     "value": "[id$=\"_close\"]"
-    }
-   ],
-   "expect": {
-    "visible": true
-   },
-   "role": "link",
-   "namePattern": "^.{0,12}$",
-   "frame": "main",
-   "landmark": "hometax.layer.closeLink",
-   "commits": false,
-   "closeAffordance": true,
-   "lastVerified": "2026-11-11"
-  },
-  "hometax.layer.closeButton": {
-   "candidates": [
-    {
-     "kind": "css",
-     "value": "[id$=\"_close\"]"
+     "value": "#mf_txppWframe_anchor14"
     }
    ],
    "expect": {
     "visible": true
    },
    "role": "button",
-   "namePattern": "^.{0,12}$",
+   "namePattern": "^개인용 간편인증 ?\\(민간인증서\\)$",
    "frame": "main",
-   "landmark": "hometax.layer.closeButton",
+   "landmark": "hometax.login.simpleTab",
    "commits": false,
-   "closeAffordance": true,
-   "lastVerified": "2026-11-11"
+   "navigationOnly": true,
+   "lastVerified": "2026-11-13"
   },
-  "hometax.layer.closeGeneric": {
+  "hometax.cert.storageHdd": {
    "candidates": [
     {
-     "kind": "css",
-     "value": "[id$=\"_close\"]"
+     "kind": "role",
+     "role": "link",
+     "name": "하드디스크 이동식"
     }
    ],
    "expect": {
     "visible": true
    },
-   "role": "generic",
-   "namePattern": "^.{0,12}$",
-   "frame": "main",
-   "landmark": "hometax.layer.closeGeneric",
+   "role": "link",
+   "namePattern": "^하드디스크 ?이동식$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
    "commits": false,
-   "closeAffordance": true,
-   "lastVerified": "2026-11-11"
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
+  },
+  "hometax.cert.driveHdd": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "link",
+     "name": "HardDisk"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "link",
+   "namePattern": "^HardDisk$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
   }
  },
  "commitEndpoints": [

@@ -88,7 +88,10 @@ export async function pickStep(s: StepOf<'pick'>, env: StepEnv): Promise<Outcome
   return s.then ? { t: 'jump', to: s.then } : NEXT;
 }
 
-/** wait for:'gone'(IR rev v1.3.6): 대상이 없거나 안 보이는 상태가 GONE_QUIET_MS 동안 이어지면 통과. 보이거나 모호하면 계속 기다린다. */
+/**
+ * wait for:'gone'(IR rev v1.3.6, v1.3.7에서 바꿈): 보이는 대상이 하나뿐일 때만 기다린다. 없거나 안 보이는 상태가 GONE_QUIET_MS 이어지면 통과.
+ * v1.3.7(부장 2026-11-13): 보이는 것이 여럿이거나 timeoutMs까지 계속 보이면 실패하지 않고 지나간다(처리 표시는 다음 스텝을 막는 조건이 아니다).
+ */
 export async function waitGone(key: string, env: StepEnv, timeoutMs: number): Promise<Outcome> {
   if (!env.dict.entries[key]) return { t: 'fail', code: 'step.selector_miss' };
   const deadline = env.clock.now() + timeoutMs;
@@ -96,11 +99,12 @@ export async function waitGone(key: string, env: StepEnv, timeoutMs: number): Pr
   for (;;) {
     const r = await resolveTarget(env.page, env.dict, key);
     const now = env.clock.now();
-    if (r.ok || r.code !== 'step.selector_miss' || r.ambiguous) since = null;
+    if (!r.ok && r.ambiguous) return NEXT;
+    if (r.ok || r.code !== 'step.selector_miss') since = null;
     else if (since === null) since = now;
     if (since !== null && now - since >= GONE_QUIET_MS) return NEXT;
     if (env.stopRequested?.()) return { t: 'fail', code: 'run.stopped' };
-    if (now >= deadline) return { t: 'fail', code: 'step.timeout' };
+    if (now >= deadline) return NEXT;
     await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - now)));
   }
 }

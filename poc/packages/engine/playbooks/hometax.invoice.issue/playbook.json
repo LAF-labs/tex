@@ -87,8 +87,8 @@
   },
   {
    "id": "s3",
-   "type": "goto",
-   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&menuCd=index3"
+   "type": "click",
+   "target": "hometax.header.loginLink"
   },
   {
    "id": "s4",
@@ -112,7 +112,40 @@
    "type": "wait",
    "for": "selector",
    "value": "hometax.cert.table",
-   "timeoutMs": 30000
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8",
+   "type": "click",
+   "target": "hometax.cert.storageHdd",
+   "onFail": {
+    "retry": 1,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8a",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.driveHdd",
+   "timeoutMs": 15000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8b",
+   "type": "click",
+   "target": "hometax.cert.driveHdd",
+   "onFail": {
+    "retry": 1,
+    "then": "checkpoint:simple_login"
+   }
   },
   {
    "id": "s4d",
@@ -121,7 +154,11 @@
    "by": "$profile.certName",
    "ifNone": "s4e",
    "then": "s4g",
-   "timeoutMs": 30000
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
   },
   {
    "id": "s4e",
@@ -151,7 +188,7 @@
    "ttlMs": 120000,
    "onFail": {
     "retry": 0,
-    "then": "handoff"
+    "then": "checkpoint:simple_login"
    }
   },
   {
@@ -177,6 +214,71 @@
   },
   {
    "id": "s6",
+   "type": "branch",
+   "on": {
+    "textMatches": {
+     "target": "hometax.header.loginLink",
+     "patternRef": "login.loggedIn"
+    }
+   },
+   "cases": {
+    "true": "s10"
+   },
+   "default": "handoff"
+  },
+  {
+   "id": "s7",
+   "type": "checkpoint",
+   "name": "simple_login",
+   "expect": {
+    "exists": "hometax.header.logo"
+   },
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml",
+   "reentry": "reload"
+  },
+  {
+   "id": "s7a",
+   "type": "goto",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml"
+  },
+  {
+   "id": "s7b",
+   "type": "click",
+   "target": "hometax.header.loginLink"
+  },
+  {
+   "id": "s7c",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.login.simpleTab",
+   "timeoutMs": 30000
+  },
+  {
+   "id": "s7d",
+   "type": "click",
+   "target": "hometax.login.simpleTab"
+  },
+  {
+   "id": "s7e",
+   "type": "handoff",
+   "reason": "login.simpleAuth",
+   "resumeAt": "s7f",
+   "code": "login.simple_auth"
+  },
+  {
+   "id": "s7f",
+   "type": "wait",
+   "for": "text",
+   "value": "hometax.login.successMarker",
+   "timeoutMs": 60000,
+   "pace": "slow",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
+   "id": "s7g",
    "type": "branch",
    "on": {
     "textMatches": {
@@ -654,9 +756,7 @@
  "closeLayers": {
   "targets": [
    "hometax.layer.btnClose",
-   "hometax.layer.closeLink",
-   "hometax.layer.closeButton",
-   "hometax.layer.closeGeneric"
+   "hometax.layer.btnCloseAlt"
   ],
   "until": "s12"
  }
