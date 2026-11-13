@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.3.6",
+ "version": "2.3.7",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -216,10 +216,7 @@
    "id": "s6",
    "type": "branch",
    "on": {
-    "textMatches": {
-     "target": "hometax.header.loginLink",
-     "patternRef": "login.loggedIn"
-    }
+    "exists": "hometax.header.logo"
    },
    "cases": {
     "true": "s10"
@@ -281,10 +278,7 @@
    "id": "s7g",
    "type": "branch",
    "on": {
-    "textMatches": {
-     "target": "hometax.header.loginLink",
-     "patternRef": "login.loggedIn"
-    }
+    "exists": "hometax.header.logo"
    },
    "cases": {
     "true": "s10"
