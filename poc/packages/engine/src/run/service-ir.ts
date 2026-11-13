@@ -632,8 +632,8 @@ export class IrRun {
         // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
         i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
-        // 대상을 못 찾았거나 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
-        if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss')) {
+        // 대상을 못 찾았거나(시간 초과 포함) 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
+        if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
           let timer: ReturnType<typeof setTimeout> | undefined;
           const d = await Promise.race([targetDiagnosis(reader, dict, at.target).catch(() => null), new Promise<null>((r) => (timer = setTimeout(() => r(null), 10_000)))]).finally(() => clearTimeout(timer));
           i.diag('run.handoff_target', { stepId: out.at ?? '', code: out.code, target: at.target, read: !!d }, d);

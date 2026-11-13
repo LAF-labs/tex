@@ -28,9 +28,12 @@ export interface TargetDiagnosis {
   expect: string;
   frames: string[];
   landmark: { key: string; ok: boolean; code: string | null } | null;
+  /** 랜드마크 사슬(대상 바로 위부터 루트까지): 항목마다 해석 결과와 그 요소의 tag·id·aria 역할·이름(R-A1이 본 것). */
+  landmarkChain: Array<{ key: string; ok: boolean; code: string | null; candidate: string; tag: string | null; id: string | null; aria: { role: string; name: string } | null; namePattern: string; role: string }>;
   candidates: Array<{
     candidate: string;
-    hits: Array<Shape & { aria: { role: string; name: string }; identity: 'ok' | 'role' | 'name' }>;
+    /** editable: 입력할 수 있는가(readonly·disabled 아님, R-A1 expect.editable과 같은 판정). */
+    hits: Array<Shape & { aria: { role: string; name: string }; identity: 'ok' | 'role' | 'name'; editable: boolean | null }>;
     /** 랜드마크 밖(프레임 전체)에서 맞은 수. 랜드마크 안에서 0일 때만 센다. */
     outsideLandmark: number | null;
   }>;
@@ -49,6 +52,25 @@ export async function targetDiagnosis(page: PageReader, dict: SelectorDict, key:
     landmark = { key: entry.landmark, ok: lm.ok, code: lm.ok ? null : lm.code };
     within = lm.ok ? lm.t.el : null;
   }
+  // 랜드마크 사슬: 각 항목을 따로 해석해 어느 고리에서 끊겼는지와 그 요소가 무엇인지 본다
+  const landmarkChain: TargetDiagnosis['landmarkChain'] = [];
+  for (let k = entry.landmark, seen = new Set<string>([key]); !seen.has(k) && landmarkChain.length < 6; ) {
+    seen.add(k);
+    const e = dict.entries[k];
+    if (!e) {
+      landmarkChain.push({ key: k, ok: false, code: 'no_entry', candidate: '', tag: null, id: null, aria: null, namePattern: '', role: '' });
+      break;
+    }
+    const r = await resolveTarget(page, dict, k);
+    const shape = r.ok ? await page.describe(r.t.el) : null;
+    const info = r.ok ? await page.info(r.t.el) : null;
+    landmarkChain.push({
+      key: k, ok: r.ok, code: r.ok ? null : r.code, candidate: e.candidates[0] ? candidateText(e.candidates[0]) : '',
+      tag: shape?.tag ?? null, id: shape?.id ?? null, aria: info ? { role: info.role, name: maskScreenText(info.name) } : null, namePattern: e.namePattern, role: e.role,
+    });
+    if (e.landmark === k) break;
+    k = e.landmark;
+  }
   const candidates: TargetDiagnosis['candidates'] = [];
   for (const c of entry.candidates.slice(0, 8)) {
     const els = await page.query(c, entry.frame, within);
@@ -57,7 +79,7 @@ export async function targetDiagnosis(page: PageReader, dict: SelectorDict, key:
       const shape = await page.describe(el);
       if (!shape || shape.secret) continue;
       const info = await page.info(el);
-      hits.push({ ...masked(shape), aria: { role: info.role, name: maskScreenText(info.name) }, identity: identityProblem(entry, info) ?? 'ok' });
+      hits.push({ ...masked(shape), aria: { role: info.role, name: maskScreenText(info.name) }, identity: identityProblem(entry, info) ?? 'ok', editable: info.editable ?? null });
     }
     const outsideLandmark = within && !els.length ? (await page.query(c, entry.frame, null)).length : null;
     candidates.push({ candidate: candidateText(c), hits, outsideLandmark });
@@ -67,7 +89,7 @@ export async function targetDiagnosis(page: PageReader, dict: SelectorDict, key:
     key, frame: entry.frame, role: entry.role, namePattern: entry.namePattern,
     expect: Object.entries(entry.expect ?? {}).filter(([, v]) => v).map(([k]) => k).join(','),
     frames: page.frameNames?.() ?? [],
-    landmark, candidates,
+    landmark, landmarkChain, candidates,
     region: all.filter((x) => !x.secret).map(masked),
     regionSecretDropped: all.filter((x) => x.secret).length,
   };
