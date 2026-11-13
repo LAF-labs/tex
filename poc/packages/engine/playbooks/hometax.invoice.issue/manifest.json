@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.issue",
- "version": "2.2.1",
+ "version": "2.2.2",
  "kind": "playbook",
  "portal": "hometax",
  "title": "invoice.title",

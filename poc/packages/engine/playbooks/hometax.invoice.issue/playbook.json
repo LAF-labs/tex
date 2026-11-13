@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.2.1",
+ "version": "2.2.2",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -98,11 +98,49 @@
    "timeoutMs": 30000
   },
   {
+   "id": "s4a",
+   "type": "click",
+   "target": "hometax.login.certTab"
+  },
+  {
+   "id": "s4b",
+   "type": "click",
+   "target": "hometax.login.certOpen"
+  },
+  {
+   "id": "s4c",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.firstRow",
+   "timeoutMs": 30000
+  },
+  {
+   "id": "s4e",
+   "type": "human",
+   "kind": "secret",
+   "target": "hometax.cert.password",
+   "prompt": "cert.passwordPrompt",
+   "ttlMs": 120000,
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
+   "id": "s4f",
+   "type": "click",
+   "target": "hometax.cert.loginConfirm",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
    "id": "s5",
    "type": "wait",
    "for": "text",
    "value": "hometax.login.successMarker",
-   "timeoutMs": 600000,
+   "timeoutMs": 60000,
    "pace": "slow",
    "onFail": {
     "retry": 0,
@@ -417,15 +455,18 @@
      "simple_auth": "hometax.invoice.auth.simpleAuth"
     },
     "steps": {
-     "cert": [],
+     "cert": [
+      "human:secret"
+     ],
      "security_card": [],
      "simple_auth": [
       "wait:push"
      ]
     },
-    "readyTarget": "hometax.invoice.sign.window",
+    "readyTarget": "hometax.invoice.sign.firstRow",
     "doneTarget": "hometax.invoice.done.root",
-    "maxWaitMs": 180000
+    "maxWaitMs": 180000,
+    "confirmTarget": "hometax.invoice.sign.confirm"
    },
    "onFail": {
     "retry": 0,

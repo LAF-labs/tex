@@ -711,6 +711,141 @@
    "expect": {
     "visible": true
    }
+  },
+  "hometax.login.certOpen": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_anchor22"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.login.certOpen",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true,
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "로그인 화면 [공동·금융인증서](실화면 2026-11-11 id). 누르면 인증서 선택창 iframe#dscert가 뜬다. 커밋 아님"
+   }
+  },
+  "hometax.cert.root": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#ML_window"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.cert.firstRow": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#row0dataTable"
+    }
+   ],
+   "role": "row",
+   "namePattern": "^.{0,200}$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.cert.password": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#input_cert_pw"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "iframe#dscert",
+   "landmark": "hometax.cert.password",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "inputType": "password",
+   "secretKind": "cert_password",
+   "secretPurpose": "sign",
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "인증서 비밀번호 칸. 금고만 채운다(frame = iframe 선택자, 금고가 하위 프레임에서 찾는다). 로그인 s4e와 발급 서명 s21이 같은 칸을 쓴다"
+   }
+  },
+  "hometax.cert.loginConfirm": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#btn_confirm_iframe"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^(확인)?$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "inputType": "button",
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "로그인 인증서 [확인]. 로그인일 뿐 발급 요청이 아니다(커밋 아님). 발급 서명 때 같은 단추는 hometax.invoice.sign.confirm(커밋)"
+   }
+  },
+  "hometax.invoice.sign.root": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#ML_window"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "frame": "dscert",
+   "landmark": "hometax.invoice.sign.root",
+   "commits": false,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.invoice.sign.confirm": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#btn_confirm_iframe"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^(확인)?$",
+   "frame": "dscert",
+   "landmark": "hometax.invoice.sign.root",
+   "commits": true,
+   "lastVerified": "2026-11-13",
+   "inputType": "button",
+   "commitEffect": "issue_document"
+  },
+  "hometax.invoice.sign.firstRow": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#row0dataTable"
+    }
+   ],
+   "role": "row",
+   "namePattern": "^.{0,200}$",
+   "frame": "dscert",
+   "landmark": "hometax.invoice.sign.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "서명 화면 준비 표지: 인증서 창 안 목록 첫 행(창 문서가 다 뜬 뒤에 금고 창을 연다)"
+   }
   }
  },
  "commitEndpoints": [

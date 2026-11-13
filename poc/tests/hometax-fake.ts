@@ -11,7 +11,7 @@
 // - 공급가액은 blur 뒤에야 쉼표·세액·합계가 계산된다.
 // - [발급미리보기] → 같은 문서 안 창 #…isnPreviewPopup(값은 span 글) → [발급하기] → 확인 창 #…UTEETZZA89 → [확인(인증 화면 이동)] →
 //   인증유형 창 #…UTEETZZA08(li 3개, 안의 button id는 매번 바뀌는 wq_uuid_NNNN) → 공동∙금융 인증: C04 요청 뒤 화면 전체를 덮는 iframe#dscert
-//   (sandbox라 페이지에서 안을 못 읽는다) → 인증서 [확인] → C05 → C08 → 완료 창 #…isnCmplPopup(승인번호 8-8-8). iframe은 src를 둔 채 0x0으로 접힌다.
+//   (같은 출처 iframe, 비밀번호 칸 #input_cert_pw) → 인증서 [확인] → C05 → C08 → 완료 창 #…isnCmplPopup(승인번호 8-8-8). iframe은 src를 둔 채 0x0으로 접힌다.
 // - 요청은 다른 호스트(teetOrigin, 실제 teet.hometax.go.kr의 대역)로 wqAction.do?actionId=…&screenId=… XHR(POST, 가정)을 실제 순서대로 낸다.
 // - 발급 목록조회(tm3lIdx=4609050100): [조회](~trigger50)를 눌러야 그리드(td data-col_id)에 행이 나온다. 메일 내역(4601030100): [조회](~trigger45).
 //
@@ -165,7 +165,7 @@ const CLIENT = String.raw`
     const box = $('dscertContainer');
     const f = $('dscert');
     box.style.cssText = 'display:block;position:fixed;z-index:100010;top:0;left:0;width:100%;height:100%';
-    f.setAttribute('sandbox', 'allow-scripts allow-forms');
+    f.removeAttribute('sandbox'); // 실화면처럼 같은 출처 iframe(금고가 같은 프로세스 하위 프레임으로 닿는다)
     f.style.cssText = 'width:100%;height:100%;border:0;background:#fff';
     f.src = '/MagicLine4XML/ML4Web/Child.html?lgUrl=' + location.host + '&mode=' + mode + '&random=' + Math.random().toString(36).slice(2);
   }
@@ -359,7 +359,7 @@ const CLIENT = String.raw`
       const box = $('dscertContainer');
       const f = $('dscert');
       box.style.cssText = 'display:block;position:fixed;z-index:100010;top:0;left:0;width:100%;height:100%';
-      f.setAttribute('sandbox', 'allow-scripts allow-forms');
+      f.removeAttribute('sandbox'); // 실화면처럼 같은 출처 iframe(금고가 같은 프로세스 하위 프레임으로 닿는다)
       f.style.cssText = 'width:100%;height:100%;border:0;background:#fff';
       f.src = '/MagicLine4XML/ML4Web/Child.html?lgUrl=' + location.host + '&mode=sign&random=' + Math.random().toString(36).slice(2);
     }
@@ -435,7 +435,7 @@ const CLIENT = String.raw`
 `;
 
 // 인증서 창(MagicLine4 ML4Web 흉내, 2026-11-13 공개 정적 파일 UI/ML4Web_Main.html·ML4Web_Draw.js·MLjquidatatable.js에서 읽은 id·구조).
-// 부모가 sandbox로 열어 페이지 스크립트가 안을 못 읽는다(실화면도 못 읽는다). 엔진·금고는 CDP 프레임으로 본다.
+// 실화면처럼 같은 출처 iframe(hometax.go.kr/MagicLine4XML)이다. 엔진은 CDP 프레임(이름 dscert)으로 보고, 금고는 iframe#dscert의 하위 프레임에서 비밀번호 칸을 찾는다.
 // - 저장 위치 a#stg_web·a#stg_hdd, 목록 div#dataTable 안 tr#row{N}dataTable(role=row, 0번 행이 골라진 채 시작), td role=gridcell 4열
 // - 비밀번호 input#input_cert_pw(title "인증서 비밀번호 입력"), [확인] button#btn_confirm_iframe, [취소] button#btn_cancel, 경고 #popup_alert·#alert_msg·button#btn_alert_confirm
 // - [확인]: 칸 값이 가짜 비밀번호와 같으면 통과(서버에 기록), 다르면 경고. 사람 흉내(fx.cert())는 칸 값과 상관없이 통과.
