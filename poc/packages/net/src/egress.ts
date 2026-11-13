@@ -81,6 +81,10 @@ export function registryTargetAllowed(target: string): boolean {
 }
 
 /** 게이트웨이 경로 설정. 번들 허용 목록은 앱 내장본(BYOK와 같은 목록), 인증은 금고 DPoP 서명기. */
+/** 느린 툴셋(추론 모델 판정·에이전트)과 그 응답 대기. 게이트웨이 함수 상한 60초(vercel.json api/sax)보다 짧게. */
+const SLOW_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent']);
+export const SLOW_TOOLSET_TIMEOUT_MS = 55_000;
+
 export interface GatewayConfig {
   auth: GatewayAuth;
   bundles: readonly BundleAllowEntry[];
@@ -232,22 +236,24 @@ export class Egress {
     if (req.surface === 'codefToken' && (typeof req.body !== 'object' || req.body === null || Object.keys(req.body).length !== 0)) throw new EgressError('path_not_allowed');
     const body = JSON.stringify(req.body);
     const bodySha256 = sha256(body);
+    // 판정·에이전트(page_judge·browser_agent)는 추론 모델이라 느리다: 게이트웨이 함수 상한(60초) 안에서 더 기다린다.
+    const timeoutMs = req.surface === 'respond' && SLOW_TOOLSETS.has(req.body.toolset) ? Math.max(gw.timeoutMs ?? 0, SLOW_TOOLSET_TIMEOUT_MS) : gw.timeoutMs;
     try {
-      return await this.gatewayOnce(gw, path, body, bodySha256);
+      return await this.gatewayOnce(gw, path, body, bodySha256, timeoutMs);
     } catch (e) {
       // 401이면 기기 토큰을 버리게 하고 한 번만 다시 보낸다(ADR-040 결정 5). DPoP 증명은 요청마다 새로 받는다.
       // 403(정지·범위 거부)·그 밖의 오류는 다시 보내지 않는다. 인증 실패는 실행 토큰 예산을 쓰지 않는다(게이트웨이가 인증 뒤에 센다).
       if (!(e instanceof GatewayError) || e.code !== 'gateway.unauthorized' || !gw.auth.invalidate) throw e;
       gw.auth.invalidate();
-      return await this.gatewayOnce(gw, path, body, bodySha256);
+      return await this.gatewayOnce(gw, path, body, bodySha256, timeoutMs);
     }
   }
 
-  private async gatewayOnce(gw: GatewayConfig, path: string, body: string, bodySha256: string): Promise<unknown> {
+  private async gatewayOnce(gw: GatewayConfig, path: string, body: string, bodySha256: string, timeoutMs = gw.timeoutMs): Promise<unknown> {
     const auth = await gw.auth.headers({ method: 'POST', url: GATEWAY_ORIGIN + path, bodySha256 });
     const origin = this.opts.testOrigins?.gateway ?? GATEWAY_ORIGIN;
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), gw.timeoutMs ?? 20_000);
+    const timer = setTimeout(() => ctl.abort(), timeoutMs ?? 20_000);
     const started = performance.now();
     try {
       const res = await fetch(origin + path, {

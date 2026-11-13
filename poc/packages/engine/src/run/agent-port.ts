@@ -4,7 +4,7 @@
 // - 출력은 스키마 검사(어댑터) 뒤 여기서 다시 좁힌다: 번호는 목록 안, 키는 준 목록 안, 값토큰은 준 목록 안. 아니면 받지 않는다(null).
 import { BROWSER_AGENT, PAGE_JUDGE, type AgentActionName, type JudgePrescription, type RedactedText, type RespondResult, type RunToken, type ToolsetDef } from '@sax/model';
 import type { Redactor } from '@sax/redaction';
-import type { LocateResponder } from './locate-port.ts';
+import { budgetSpent, type LocateResponder, type RunAiBudget } from './locate-port.ts';
 
 export interface ScreenItem {
   n: number;
@@ -64,6 +64,8 @@ export interface AgentPortInput {
   redactor: Pick<Redactor, 'apply' | 'map'>;
   runToken: () => Promise<RunToken>;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
+  /** 실행당 예산 다 씀 표시(locate-port RunAiBudget, 판정·에이전트 공용). 다 썼으면 부르지 않는다. */
+  budget?: RunAiBudget;
 }
 
 const line = (x: ScreenItem) => `${x.n}. ${x.role} "${x.name}"${x.id ? ` #${x.id}` : ''}${[x.filled ? 'filled' : '', x.enabled ? '' : 'disabled'].filter(Boolean).map((s) => `(${s})`).join('')}`;
@@ -73,6 +75,10 @@ const screenPart = (items: ScreenItem[]): Part => ({ text: items.map(line).join(
 
 /** 판정·에이전트 공통: 가려서 한 번 부르고 구조화 출력을 돌려준다. 실패면 null(저널에 원인 코드만). */
 async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Part[], tag: Record<string, string | number | boolean>): Promise<unknown> {
+  if (i.budget?.spent) {
+    i.journal(`${t.id}.unavailable`, { ...tag, cause: 'budget_spent' });
+    return null;
+  }
   let content: Array<{ type: 'input_text'; text: RedactedText }>;
   try {
     content = parts.map((p) => ({ type: 'input_text' as const, text: i.redactor.apply(p.text, { frame: p.data ? 'screen' : 'none' }).redacted }));
@@ -95,6 +101,7 @@ async function callOnce(i: AgentPortInput, t: ToolsetDef, parts: Part[], tag: Re
     return null;
   }
   if (r.status !== 'completed' || r.toolCalls.length) {
+    if (i.budget && budgetSpent(r.reason)) i.budget.spent = true;
     i.journal(`${t.id}.unavailable`, { ...tag, cause: r.reason ?? r.status });
     return null;
   }
@@ -109,7 +116,14 @@ export class GatewayJudgeModel implements JudgeModel {
 
   async judge(req: JudgeRequest): Promise<Judgement | null> {
     const parts: Part[] = [
-      { text: ['[예상 밖 화면 판정] 첫 승인 앞 구간이다. 처방 하나를 고른다.', `step ${req.stepId} · ${req.step} · cause ${req.cause}`, `fix_field에 쓸 수 있는 대상 키: ${req.fields.join(', ') || '(없음)'}`].join('\n') },
+      {
+        text: [
+          '[예상 밖 화면 판정] 첫 승인 앞 구간이다. 처방 하나를 고른다.',
+          `step ${req.stepId} · ${req.step} · cause ${req.cause}`,
+          ...(req.cause === 'step.timeout' && /^(click|fill|select) /.test(req.step) ? ['대상 요소는 찾았다. 그 요소에 대한 동작이 시간 안에 끝나지 않았다(덮은 팝업·처리 중 표시·비활성일 수 있다). fix_field는 소용없다.'] : []),
+          `fix_field에 쓸 수 있는 대상 키: ${req.fields.join(', ') || '(없음)'}`,
+        ].join('\n'),
+      },
       ...(req.dialog ? [{ text: `떠 있는 JS 대화상자(${req.dialog.kind}) 문구:` }, { text: req.dialog.message, data: true as const }] : [{ text: 'JS 대화상자: 없음' }]),
       ...(req.lastNotice ? [{ text: '최근 닫힌 대화상자 문구:' }, { text: req.lastNotice, data: true as const }] : []),
       { text: '화면 상호작용 요소(번호. 역할 "이름" #id(상태)). 값은 없다.' },

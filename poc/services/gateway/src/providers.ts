@@ -30,6 +30,8 @@ export interface RespondSpec {
    * 기본 모델이 요청마다 뒤쪽 공급사가 바뀌는 라우터라 고정·ZDR이 걸리면 막힌다(대표 2026-11-13). 대화·선택자 수리 등 다른 툴셋은 그대로 고정한다.
    */
   unpinned?: true;
+  /** 상류 대기(ms). 없으면 공급사 기본(30초). 판정·에이전트는 함수 상한 안에서 한 번만 길게 기다린다. */
+  timeoutMs?: number;
 }
 
 export interface ProviderUsage {
@@ -126,7 +128,7 @@ export class OpenAICompatProvider implements ModelProvider {
     this.o = { baseUrl: o.baseUrl.replace(/\/$/, ''), apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch };
   }
 
-  private async post(path: string, body: unknown): Promise<Record<string, unknown>> {
+  private async post(path: string, body: unknown, timeoutMs = this.o.timeoutMs): Promise<Record<string, unknown>> {
     let res: Response;
     try {
       res = await this.o.fetchFn(this.o.baseUrl + path, {
@@ -134,7 +136,7 @@ export class OpenAICompatProvider implements ModelProvider {
         headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.timeout(this.o.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new ProviderError('retryable');
@@ -154,7 +156,7 @@ export class OpenAICompatProvider implements ModelProvider {
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {
-    const d = await this.post('/v1/responses', openAIResponsesBody(s));
+    const d = await this.post('/v1/responses', openAIResponsesBody(s), s.timeoutMs);
     return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
   }
 }
@@ -247,7 +249,7 @@ export class OpenRouterProvider implements ModelProvider {
         headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.timeout(this.o.timeoutMs),
+        signal: AbortSignal.timeout(s.timeoutMs ?? this.o.timeoutMs),
       });
     } catch {
       throw new ProviderError('retryable');

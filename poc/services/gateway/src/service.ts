@@ -225,13 +225,13 @@ export class GatewayService {
     }
   }
 
-  private async withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  private async withRetry<T>(fn: () => Promise<T>, retries: number = GATEWAY.providerRetries): Promise<T> {
     const sleep = this.d.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
     for (let i = 0; ; i++) {
       try {
         return await fn();
       } catch (e) {
-        if (!(e instanceof ProviderError) || !e.retryable || i >= GATEWAY.providerRetries) fail('gateway.upstream_error');
+        if (!(e instanceof ProviderError) || !e.retryable || i >= retries) fail('gateway.upstream_error');
         await sleep(GATEWAY.backoffBaseMs * 2 ** i + Math.floor(Math.random() * GATEWAY.backoffBaseMs));
       }
     }
@@ -383,8 +383,10 @@ export class GatewayService {
     const started = this.now();
     let res;
     try {
+      // 판정·에이전트(추론 모델)는 함수 상한(60초) 안에서 한 번만 50초 기다린다(30초 × 재시도 3번은 상한을 넘겨 클라이언트에 시간 초과로 보였다).
       res = await this.withRetry(() =>
         this.d.provider.respond({
+          ...(agent ? { timeoutMs: GATEWAY.agentUpstreamTimeoutMs } : {}),
           model: agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
           prefix: toolsetPrefix(t!),
           effort: t!.effort,
@@ -396,6 +398,7 @@ export class GatewayService {
           safetyId: this.safetyId(who.acc),
           ...(agent ? { unpinned: true as const } : {}),
         }),
+      agent ? 0 : GATEWAY.providerRetries,
       );
     } catch (e) {
       await this.meter(who, t!.id, null, 'upstream_error', this.now() - started, 'respond');
