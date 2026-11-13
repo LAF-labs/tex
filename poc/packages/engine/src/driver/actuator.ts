@@ -154,8 +154,25 @@ export function whyOf(e: unknown): string {
   if (/not stable/i.test(m)) return 'not_stable';
   if (/not editable|readonly/i.test(m)) return 'not_editable';
   if (/dialog/i.test(m)) return 'dialog';
-  if (/Timeout/i.test(m)) return 'timeout_other';
+  if (/Timeout/i.test(m)) return `timeout_other@${stageOf(m)}`;
   return 'other';
+}
+
+/** Playwright 호출 기록의 마지막 줄 → 멈춘 단계(고정 낱말, 화면 글 없음). 앱 안 보기에서 클릭이 어디서 멈추는지 가른다. */
+const STAGES: ReadonlyArray<[RegExp, string]> = [
+  [/waiting for scheduled navigations|navigations have finished/i, 'navigation_wait'],
+  [/performing (click|fill|press|tap|dblclick) action/i, 'dispatch'],
+  [/(click|fill|press) action done/i, 'after_action'],
+  [/scrolling into view|done scrolling/i, 'scroll'],
+  [/waiting for element to be visible|element is visible, enabled and stable|waiting for element to be stable/i, 'actionability'],
+  [/retrying (click|fill) action|waiting \d+ms/i, 'retrying'],
+  [/waiting for (locator|selector)|locator resolved/i, 'locate'],
+];
+function stageOf(m: string): string {
+  const i = m.indexOf('Call log:');
+  const lines = (i >= 0 ? m.slice(i) : m).split('\n').map((l) => l.trim()).filter(Boolean);
+  for (let k = lines.length - 1; k >= 0; k--) for (const [re, s] of STAGES) if (re.test(lines[k]!)) return s;
+  return 'none';
 }
 
 function fail(e: unknown): ActResult {
