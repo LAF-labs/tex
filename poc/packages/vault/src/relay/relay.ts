@@ -1,6 +1,6 @@
 import type { EventLog } from '@sax/platform';
 import { ACTIVE_WINDOW_DROP_EVENTS, RELAY_DROPPED_EVENTS } from '../constants.ts';
-import type { CdpMessage, PipeConnection } from '../cdp/connection.ts';
+import type { CdpConnection, CdpMessage } from '../cdp/connection.ts';
 import type { CommitGuard } from './commit-guard.ts';
 import { checkSessionCommand, urlAllowed, type RelayPolicy, type Verdict } from './policy.ts';
 import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAuthHeaders, stripMessageHeaders, stripRequestBody, type SecretNodes } from './sanitize.ts';
@@ -68,7 +68,7 @@ interface PendingEngineRequest {
 }
 
 export interface RelayOptions {
-  conn: PipeConnection;
+  conn: CdpConnection;
   policy: RelayPolicy;
   log: EventLog;
   /** 엔진으로 가는 직렬화된 CDP 프레임. */
@@ -84,7 +84,7 @@ export interface RelayOptions {
  * - 엔진행 메시지는 한 줄 큐로 순서를 지키며 정리한 뒤 보낸다.
  */
 export class Relay {
-  private readonly conn: PipeConnection;
+  private readonly conn: CdpConnection;
   private readonly policy: RelayPolicy;
   private readonly log: EventLog;
   private readonly toEngine: (raw: string) => void;
@@ -397,8 +397,16 @@ export class Relay {
     if (t.type === 'page' && opener?.exposed) {
       // fail-closed: 부착 정보의 url·시간 경과로는 노출하지 않는다. 빈 URL은 "모름"이다.
       t.pendingPopup = true;
+      const wasPaused = t.paused;
       await this.conn.send('Page.enable', {}, t.vaultSession).catch(() => {});
       await this.resume(t);
+      // 앱 안 브라우저는 새 창을 멈춰 세우지 못한다(waitForDebuggerOnStart 없음): 붙기 전에 이미 커밋된 문서는 frameNavigated가 다시 오지 않으니
+      // 지금 문서를 같은 규칙(getFrameTree 재확인)으로 판정한다. 아직 커밋 전이면 다음 frameNavigated에서 판정한다.
+      if (!wasPaused) {
+        const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession).catch(() => null);
+        const url = String(tree?.frameTree.frame.url ?? '');
+        if (url && url !== 'about:blank') await this.confirmPopup(t, url);
+      }
       return;
     }
     if (t.type === 'page') this.log.event('vault.user_tab_hidden', { target: t.targetId.slice(0, 8) });
@@ -889,7 +897,10 @@ export class Relay {
       if (!this.hasOpenWindow()) this.clearKnownSecrets();
       return null;
     });
-    if (wasActive) for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+    if (wasActive) {
+      for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+      this.onWindowActive?.(t, false);
+    }
   }
 
   addKnownSecret(targetId: string, variants: string[]): void {

@@ -112,6 +112,9 @@ export const SHELL_METHODS = {
     text: { t: 'string', max: 2000 },
     modifiers: { t: 'number' },
   },
+  // 앱 안 브라우저(embedded-browser.ts): 패널 화면 칸 자리(창 콘텐츠 DIP, none이면 숨김)와 경계 끌기 폭. main이 패널 영역·범위로 자른다.
+  'browser.slot': { none: { t: 'boolean' }, x: { t: 'number' }, y: { t: 'number' }, width: { t: 'number' }, height: { t: 'number' } },
+  'browser.resize': { width: { t: 'number', required: true } },
   // Chrome 설치 안내의 [다시 확인](U6): 설치돼 있는지 다시 보고 판을 새로 보낸다. 읽기만 한다.
   'chrome.check': {},
   // 보안 프로그램(MagicLine4NX) 점검·설치 파일 열기·켜기(B4). 설치·켜기는 실제 입력 뒤에만.
@@ -261,9 +264,9 @@ export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> 
 /** 렌더러에 보내는 이벤트 전부. 카드 내용·좌표·승인 근거는 보내지 않는다(자리 비우기용 띠 여부·높이만, ADR-021 결정 7). */
 export type ShellEvent =
   // 진행 화면(B3): 실행 탭 화면 한 장(jpeg data URL, 보기 전용) · 비밀 창 동안 멈춤 · 실행 끝
-  | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; url?: string; paused?: boolean; ended?: boolean; gone?: boolean }
+  | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; url?: string; title?: string; paused?: boolean; ended?: boolean; gone?: boolean }
   /** [브라우저] 토글 상태: 실행 Chrome이 패널 자리에 앞으로 와 있나, 실행 Chrome이 있나. */
-  | { type: 'browser'; shown: boolean; available: boolean; focus?: boolean }
+  | { type: 'browser'; shown: boolean; available: boolean; focus?: boolean; embedded?: boolean; width?: number }
   | { type: 'bar'; active: true; band: boolean; height: number }
   | { type: 'bar'; active: false; reason: string }
   | { type: 'bar-layout'; band: boolean; height: number }

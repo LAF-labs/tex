@@ -2,11 +2,12 @@
 // - engine: CDP 프레임(cdp)과 RPC(typist·secretWindow·browser·commitGuard·pdf·download·getDbKeyOnce). 장기 키 연산(crypto.*)은 없다(아래 RPC_BY_PORT 주석)
 // - control(main): 실행 트리거 통지, 사용자 "입력 완료", Windows 세션 상태, 저장된 비밀 목록·삭제, 계정 갱신 토큰, 상태
 // - secretInput(금고 직결 입력 창): 한 번 쓰는 비밀 제공(oneshot) 또는 등록 창(T-06)의 저장(store). main은 이 포트의 내용을 보지 않는다.
+// - browser(main): 앱 안 브라우저(WebContentsView)의 브라우저 수준 CDP. 붙어 있으면 금고는 설치 Chrome을 띄우지 않고 이 연결에 중계를 붙인다.
 //
 // 이 파일이 금고 IPC 계약의 정본이다. 바꾸면 PR 본문과 팀장 보고에 적는다(D05 §3.8, ADR-005 v3·020·025·026·029).
 import { createHash } from 'node:crypto';
 
-export type PortKind = 'engine' | 'control' | 'secretInput';
+export type PortKind = 'engine' | 'control' | 'secretInput' | 'browser';
 
 export type InboundMessage =
   | { t: 'cdp'; m: string }
@@ -56,6 +57,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
   ],
   secretInput: ['secret.provide', 'secret.store'],
+  // browser(main의 앱 안 브라우저): RPC 없이 CDP 프레임({t:'cdp'})과 닫힘({t:'cdp_closed'})만 오간다. 금고가 브라우저 수준 CDP의 유일한 사용자다.
+  browser: [],
 };
 
 // ───────────────────────── 비밀 종류·범위 ─────────────────────────
@@ -579,4 +582,6 @@ export type VaultEventName =
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
   | 'screen.frame' | 'screen.paused'
   // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
-  | 'browser.closed' | 'browser.launched';
+  | 'browser.closed' | 'browser.launched'
+  // 앱 안 브라우저: 금고가 비밀 칸에 넣는 동안 main이 보기의 사람 입력을 막는다(blocked true → false).
+  | 'browser.blocked';

@@ -34,7 +34,8 @@ import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.t
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
 import { openSecretWindow, openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
-import { barBounds, SHELL } from './shell-layout.ts';
+import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
+import { EmbeddedBrowser } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
@@ -162,6 +163,11 @@ export interface ShellOptions {
   preparePerMin?: number;
   /** e2e: Chrome 사전 점검을 바꿔 끼운다. 기본은 금고와 같은 후보 경로(@sax/vault findInstalledChrome)에 Chrome이 있는가. */
   chromeReady?: () => boolean;
+  /**
+   * 옛 길: 실행 브라우저로 설치 Chrome을 띄운다(앱 뒤에 두고 패널에 중계). 기본은 앱 안 브라우저(embedded-browser.ts, 대표 지시 2026-11-13
+   * "크롬 탭이 아예 열리지 않게"). 앱 안 브라우저가 고객 PC에서 막히면 되돌릴 수 있게 한 판 동안 남긴다.
+   */
+  externalChrome?: boolean;
   /** e2e·첫 실행 따라가기: 보안 프로그램 점검·설치 링크 열기·켜기를 바꿔 끼운다. 기본은 이 PC의 MagicLine4NX(security-programs.ts)와 기본 브라우저. */
   security?: { status(): SecurityStatus; install?(key: string): Promise<void>; start?(): boolean };
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
@@ -314,7 +320,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const sample = dev?.sample ?? null;
   const root = fixture?.root ?? opts.engine?.root;
   const log = new FileEventLog(appPaths(root ?? defaultAppRoot()).logs, 'main');
-  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion() });
+  const embedded = opts.externalChrome !== true;
+  const host = new EngineHost({ vault: fixture ? fixture.vault : 'process', root, portal: fixture?.portal ?? opts.engine!.portal, log, appVersion: app.getVersion(), embeddedBrowser: embedded });
   made.host = host;
   let business: Profile | null = null;
   /** 사업자 프로필 DB id(대화 에이전트 세션 기준). 없으면 대화가 등록부터 안내한다. */
@@ -352,7 +359,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const profiles = () =>
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
   // Chrome이 있어야 홈택스 작업을 한다. 판의 할 일·첫 발급 요청(U6)과 [홈택스에서 준비](#288)가 같은 점검을 쓴다.
-  const chromeReady = opts.chromeReady ?? (() => findInstalledChrome() !== null);
+  // 앱 안 브라우저면 설치 Chrome이 필요 없다(설치 안내 단계도 없다).
+  const chromeReady = opts.chromeReady ?? (() => embedded || findInstalledChrome() !== null);
   const securityNow = opts.security ? () => opts.security!.status() : () => securityStatus();
   /** 공동인증서로 발급하는 사업자인데 MagicLine4NX가 없거나 꺼져 있다(홈택스가 설치 안내로 멈출 자리, B4). */
   const securityMissing = () => profile === 'business' && profiles().business.auth === SIGN_LABEL.cert && securityBlocks(securityNow());
@@ -443,10 +451,37 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!typing.within(performance.now(), ms)) throw new Error('gesture_required');
   };
 
-  const bar = new ApprovalBar(win, key, barBounds, { log });
+  /**
+   * 앱 안 브라우저 패널 폭(실행 중일 때, main 상태). 사람이 경계를 끌어 고른 폭(browserWant)과 [브라우저] 크게(browserShown)로 정하고,
+   * 승인 대기 중에는 승인 카드가 대화 열 안에 들어가게 줄인다. 승인 카드 자리(barBounds)도 이 값을 쓴다(렌더러가 보고한 값이 아니다, ADR-021).
+   */
+  let browserAvailable = false;
+  let browserShown = false;
+  let browserWant: number | null = null;
+  const panelNow = (): number => {
+    if (!embedded || !browserAvailable || win.isDestroyed()) return SHELL.panel;
+    return browserPanelWidth(win.getContentSize()[0]!, browserWant, browserShown, bar.active);
+  };
+  const bar: ApprovalBar = new ApprovalBar(win, key, (w, h, wide, height) => barBounds(w, h, wide, height, panelNow()), { log });
   const send = (ev: ShellEvent) => {
     if (!win.isDestroyed()) wc.send(IPC.event, ev);
   };
+  /** 실행 화면 주소(패널 주소창·탭 이름). 금고 중계 프레임이 아니라 보기의 실제 주소다. */
+  let pageNow: { url: string; title: string } | null = null;
+  const eb = embedded
+    ? new EmbeddedBrowser({
+        win,
+        post: (m) => host.browserPost(m),
+        log,
+        onPage: (p) => {
+          if (pageNow?.url === p?.url && pageNow?.title === p?.title) return;
+          pageNow = p;
+          if (mirrorRun && p?.url) send({ type: 'screen', runId: mirrorRun, url: p.url.slice(0, 200), title: p.title.slice(0, 120) });
+        },
+      })
+    : null;
+  host.on('browser', (m: unknown) => eb?.feed(m));
+  win.once('closed', () => eb?.closeAll('window'));
   // 다른 앱에서 돌아온 클릭이 버튼 위였는지 렌더러가 보게 커서 자리만 알린다(F-11). 클릭을 만들거나 실제 입력으로 세지 않는다.
   win.on('focus', () => {
     if (win.isDestroyed()) return;
@@ -515,9 +550,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   }, 60_000);
   boardDayTimer.unref();
   // 렌더러에는 바 자리를 비울지와 띠 여부만 알린다(배치용). 바 내용·좌표는 보내지 않는다.
-  bar.on('shown', (e: { band: boolean; height: number }) => send({ type: 'bar', active: true, band: e.band, height: e.height }));
+  bar.on('shown', (e: { band: boolean; height: number }) => {
+    send({ type: 'bar', active: true, band: e.band, height: e.height });
+    if (embedded && browserAvailable) sendBrowserState(); // 승인 카드가 대화 열 안에 들어가게 줄인 패널 폭
+  });
   bar.on('layout', (e: { band: boolean; height: number }) => send({ type: 'bar-layout', band: e.band, height: e.height }));
-  bar.on('hidden', (reason: string) => send({ type: 'bar', active: false, reason }));
+  bar.on('hidden', (reason: string) => {
+    send({ type: 'bar', active: false, reason });
+    if (embedded && browserAvailable) sendBrowserState();
+  });
   runs.on('update', (run) => {
     send({ type: 'run', run });
     pushBoard();
@@ -672,6 +713,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (name === 'screen.paused') return send({ type: 'screen', runId: mirrorRun, paused: d.paused === true });
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
       return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
+    }
+    // 앱 안 브라우저: 금고가 비밀 칸에 넣는 동안 보기의 사람 입력을 막고 패널에 "비밀번호 입력 중"
+    if (name === 'browser.blocked') {
+      const on = (data as { blocked?: unknown } | null)?.blocked === true;
+      eb?.setBlocked(on);
+      if (mirrorRun) send({ type: 'screen', runId: mirrorRun, paused: on });
+      return;
     }
     // 실행 Chrome이 사람 손으로 닫혔다(탭 전부·프로세스): 패널은 "연결 끊김", 제출 전 실행은 멈추고 [다시 시작]
     if (name === 'browser.launched') {
@@ -1105,13 +1153,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * [브라우저] 토글은 패널 크게/작게다(크게: 대화 열을 줄인다). 사람 차례가 되면 크게 하고 입력 포커스를 준다.
    * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수들만 browser.place·screen.input을 부른다.
    */
-  let browserShown = false;
-  let browserAvailable = false;
   /** 실행 Chrome 창 크기(고정). 앱 창 뒤 왼쪽 위에 둔다. 페이지 레이아웃이 패널 크기에 따라 바뀌지 않게 한다. */
   const CHROME_BEHIND = { width: 1280, height: 900 };
-  const sendBrowserState = (focus = false) => send({ type: 'browser', shown: browserShown, available: browserAvailable, ...(focus ? { focus: true } : {}) });
-  /** Chrome을 앱 창 뒤 자리로(고정 크기). 앱을 앞으로 둔다. */
+  function sendBrowserState(focus = false) {
+    send({ type: 'browser', shown: browserShown, available: browserAvailable, ...(embedded ? { embedded: true, width: panelNow() } : {}), ...(focus ? { focus: true } : {}) });
+  }
+  /** Chrome을 앱 창 뒤 자리로(고정 크기). 앱을 앞으로 둔다. 앱 안 브라우저는 옮길 창이 없다. */
   const placeBehind = async (): Promise<boolean> => {
+    if (embedded) {
+      browserAvailable = true;
+      return true;
+    }
     if (win.isDestroyed()) return false;
     const c = win.getContentBounds();
     const r = (await host.control('browser.place', { x: c.x, y: c.y, ...CHROME_BEHIND, front: false }).catch(() => null)) as { placed?: unknown } | null;
@@ -1128,10 +1180,41 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (browserShown === big && !focus) return;
     browserShown = big;
     sendBrowserState(focus);
+    if (embedded) bar.layoutChanged();
+    // 앱 안 브라우저: 사람 차례면 그 보기에 키보드 포커스(사람이 바로 친다)
+    if (focus) eb?.focus();
   };
-  /** 패널 안 브라우저 조작 하나를 금고에 넘긴다(메인 창에서 1초 안에 본 실제 입력이 있을 때만). */
+  /** 앱 안 브라우저 패널 경계를 끌었다(렌더러가 고른 폭). main이 범위 안으로 줄여 정하고 다시 알린다. */
+  const resizeBrowser = (width: number) => {
+    if (!embedded || !browserAvailable) return { width: panelNow() };
+    browserWant = Math.round(width);
+    browserShown = false;
+    sendBrowserState();
+    bar.layoutChanged();
+    return { width: panelNow() };
+  };
+  /**
+   * 앱 안 브라우저 보기 자리(렌더러 패널의 화면 칸, 창 콘텐츠 DIP). main은 그 칸을 패널 영역(창 오른쪽 panelNow() 폭, 제목줄 아래) 안으로
+   * 잘라서 쓴다: 렌더러가 보기를 대화 열이나 승인 카드 위로 옮기지 못한다(카드는 늘 보기 위에 있다).
+   */
+  const placeBrowser = (r: { x: number; y: number; width: number; height: number } | null) => {
+    if (!eb) return {};
+    if (!r || !browserAvailable || win.isDestroyed()) return eb.setSlot(null), {};
+    const [cw, ch] = win.getContentSize() as [number, number];
+    const left = cw - panelNow();
+    const x = Math.max(left, Math.round(r.x));
+    const y = Math.max(SHELL.titlebar, Math.round(r.y));
+    const right = Math.min(cw, Math.round(r.x + r.width));
+    const bottom = Math.min(ch, Math.round(r.y + r.height));
+    eb.setSlot(right - x >= 80 && bottom - y >= 80 ? { x, y, width: right - x, height: bottom - y } : null);
+    return {};
+  };
+  win.on('resize', () => {
+    if (embedded && browserAvailable) sendBrowserState();
+  });
+  /** 패널 안 브라우저 조작 하나를 금고에 넘긴다(메인 창에서 1초 안에 본 실제 입력이 있을 때만). 앱 안 브라우저는 사람이 보기를 직접 누른다. */
   const panelBrowserInput = async (p: Record<string, unknown>) => {
-    if (!mirrorRun) return { ok: false };
+    if (!mirrorRun || embedded) return { ok: false };
     if (!panelInput.within(performance.now(), 1_000)) throw new Error('gesture_required');
     const r = (await host.control('screen.input', p).catch(() => null)) as { ok?: unknown } | null;
     return { ok: r?.ok === true };
@@ -1160,7 +1243,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 앱 창을 옮기거나 크기를 바꾸면 Chrome도 뒤 자리로(드러나지 않게). 연속 이벤트는 잠깐 모아서 한 번.
   let followTimer: NodeJS.Timeout | null = null;
   const follow = () => {
-    if (!browserAvailable || !mirrorRun) return;
+    if (!browserAvailable || !mirrorRun || embedded) return;
     if (followTimer) clearTimeout(followTimer);
     followTimer = setTimeout(() => {
       followTimer = null;
@@ -1174,6 +1257,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    * Chrome이 뜨고 탭이 붙기 전에는 실패하니 실행이 바뀔 때마다, 그리고 1초마다 다시 부른다. 실행이 끝나면 멈춘다.
    */
   const mirrorTick = setInterval(() => {
+    if (embedded) return; // 앱 안 브라우저: 패널이 그 보기 자체라 중계하지 않는다
     const r = mirrorRun ? runs.get(mirrorRun) : undefined;
     if (r && runs.isActive(r.id) && r.status !== 'draft') void host.control('screen.start').catch(() => {});
   }, 1_000);
@@ -1185,14 +1269,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 실행이 시작되면 렌더러가 패널을 브라우저 폭으로 넓히고 주소 줄을 단다(Chrome이 뜨기 전에 자리가 정해지게).
       browserAvailable = true;
       sendBrowserState();
-      void host.control('screen.start').catch(() => {});
+      if (embedded) bar.layoutChanged();
+      else void host.control('screen.start').catch(() => {});
     } else if (!live && mirrorRun === r.id) {
       mirrorRun = null;
       browserAvailable = false;
       browserShown = false;
       sendBrowserState();
       send({ type: 'screen', runId: r.id, ended: true });
-      void host.control('screen.stop').catch(() => {});
+      if (embedded) {
+        eb?.setSlot(null);
+        bar.layoutChanged();
+      } else void host.control('screen.stop').catch(() => {});
     }
   });
   /** 실행마다 마지막 자리(뒤·사람 차례). 같은 차례에 두 번 앞으로 올리지 않는다(사람이 [브라우저]로 뒤로 보냈으면 그대로 둔다). */
@@ -1415,6 +1503,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     // 패널 안 브라우저 조작: 메인 창에서 방금(1초) 본 실제 마우스·키 입력이 있을 때만. 중계 중인 실행 탭에만 들어간다(금고가 비밀 창 동안 거부).
     'browser.input': (p) => panelBrowserInput(p as Record<string, unknown>),
+    // 앱 안 브라우저: 패널 화면 칸 자리(보기를 그 위에 둔다, main이 패널 영역으로 자른다)·경계 끌기 폭. 값·페이지는 건드리지 않는다.
+    'browser.slot': (p) => placeBrowser(p.none === true ? null : { x: Number(p.x), y: Number(p.y), width: Number(p.width), height: Number(p.height) }),
+    'browser.resize': (p) => resizeBrowser(Number(p.width)),
     // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
       needGesture(3_000);

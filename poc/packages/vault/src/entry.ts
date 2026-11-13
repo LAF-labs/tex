@@ -1,4 +1,4 @@
-// 금고 utilityProcess 진입점. main이 첫 메시지로 engine·control 포트를, 이후 비밀 입력 창마다 secretInput 포트(+ 결속 bind, I-1)를 넘긴다.
+// 금고 utilityProcess 진입점. main이 첫 메시지로 engine·control·browser 포트를, 이후 비밀 입력 창마다 secretInput 포트(+ 결속 bind, I-1)를 넘긴다.
 // 송신 모듈 차단을 가장 먼저 건다(N-32).
 import { netDenyInstalled } from './net-deny.ts';
 import type { MessagePortMain } from 'electron';
@@ -29,7 +29,7 @@ parentPort.on('message', (e) => {
   const kinds = data?.ports ?? [];
   kinds.forEach((kind, i) => {
     const p = e.ports[i];
-    if (p && (kind === 'engine' || kind === 'control' || kind === 'secretInput')) vault.attachPort(kind, wrapPort(p, 'electron'), kind === 'secretInput' ? data.bind : undefined);
+    if (p && (kind === 'engine' || kind === 'control' || kind === 'secretInput' || kind === 'browser')) vault.attachPort(kind, wrapPort(p, 'electron'), kind === 'secretInput' ? data.bind : undefined);
   });
 });
 

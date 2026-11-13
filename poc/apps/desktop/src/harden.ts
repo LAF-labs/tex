@@ -84,6 +84,12 @@ export function assertNoDebugSwitches(app: Pick<App, 'commandLine' | 'exit'>): v
  * ready 전에 부른다: 디버그 스위치 검사, 모든 렌더러 샌드박스, 모든 webContents의 새 창·이동·webview 거부.
  * allowSchemes는 리디렉트를 허용할 앱 스킴(예: 'sax-shell:'). 렌더러가 시작한 이동(will-navigate)은 모두 막는다.
  */
+/**
+ * 셸 하드닝의 이동 막기에서 빼는 세션: 앱 안 브라우저(embedded-browser.ts) 파티션뿐이다. 그 보기는 홈택스 페이지라 링크·폼 이동·리디렉트가
+ * 있어야 하고, 이동 규칙(앱 스킴·로컬 파일 막기)과 출처 검사는 그 파일과 금고 중계가 따로 건다. 새 창·webview 막기는 그대로다.
+ */
+export const NAV_EXEMPT_SESSIONS = new WeakSet<Session>();
+
 export function hardenApp(app: App, allowSchemes: readonly string[]): void {
   assertNoDebugSwitches(app);
   // --no-sandbox(root 컨테이너 개발 환경)에서는 enableSandbox가 자식 프로세스를 FATAL로 끝낸다(Electron 45 실측).
@@ -91,13 +97,16 @@ export function hardenApp(app: App, allowSchemes: readonly string[]): void {
   if (!app.commandLine.hasSwitch('no-sandbox')) app.enableSandbox();
   app.on('web-contents-created', (_e, wc: WebContents) => {
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    wc.on('will-navigate', (ev) => ev.preventDefault());
+    const exempt = () => NAV_EXEMPT_SESSIONS.has(wc.session);
+    wc.on('will-navigate', (ev) => {
+      if (!exempt()) ev.preventDefault();
+    });
     // 하위 프레임 이동도 막는다(will-navigate는 최상위 프레임만). loadURL 같은 main의 이동에는 오지 않는다.
     wc.on('will-frame-navigate', (ev) => {
-      if (!ev.isMainFrame) ev.preventDefault();
+      if (!ev.isMainFrame && !exempt()) ev.preventDefault();
     });
     wc.on('will-redirect', (ev) => {
-      if (!allowSchemes.some((s) => ev.url.startsWith(s))) ev.preventDefault();
+      if (!allowSchemes.some((s) => ev.url.startsWith(s)) && !exempt()) ev.preventDefault();
     });
     wc.on('will-attach-webview', (ev) => ev.preventDefault());
   });

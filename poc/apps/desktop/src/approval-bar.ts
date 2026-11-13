@@ -242,6 +242,11 @@ export class ApprovalBar extends EventEmitter {
     return this.shown;
   }
 
+  /** 게이트·증언 요청을 받아 띄우는 중이거나 떠 있다(자리 계산이 이미 이 요청 기준이다). */
+  get active(): boolean {
+    return this.req !== null;
+  }
+
   /** 지금 열린 게이트(또는 증언)의 실행 ID. */
   get runId(): string | null {
     return this.req?.runId ?? null;
@@ -402,6 +407,11 @@ export class ApprovalBar extends EventEmitter {
   private decide(w: number, h: number): Rect & { band?: boolean } {
     const b = this.place(w, h, false, this.height);
     return this.req && overflowLine(this.lines ?? [], b.width, this.text) ? this.place(w, h, true, this.height) : b;
+  }
+
+  /** 자리를 정하는 main 상태(앱 안 브라우저 패널 폭)가 바뀌었다. 창 크기 변경과 같이 다시 둔다(옮겨졌으면 대기 시간을 처음부터). */
+  layoutChanged(): void {
+    this.relayout();
   }
 
   private relayout(reset = true): void {

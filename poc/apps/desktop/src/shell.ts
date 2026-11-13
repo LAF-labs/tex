@@ -65,7 +65,8 @@ void app.whenReady().then(async () => {
   if (refused) return;
   try {
     // 계정 로그인·폰 연결: 클라우드 포트(egress) + 금고 키. 운영 목적지만, 개발 스택은 설치본이 아닐 때 SAX_CLOUD_DEV로만(remote-wiring.ts)
-    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges, remote: productRemote({ isPackaged: app.isPackaged, env: process.env }) });
+    // 기본은 앱 안 브라우저다. SAX_EXTERNAL_CHROME=1이면 옛 길(설치 Chrome을 앱 뒤에 두고 패널에 중계)로 되돌린다(고객 PC에서 막힐 때만).
+    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges, remote: productRemote({ isPackaged: app.isPackaged, env: process.env }), externalChrome: process.env.SAX_EXTERNAL_CHROME === '1' });
     await shell.ready;
   } catch (e) {
     console.error('shell start failed:', (e as Error).message);

@@ -23,7 +23,7 @@ const require = createRequire(import.meta.url);
 /** main 프로세스 안에서 도는 금고(시험 정책·메모리 키, fixture 시연·e2e 전용). 앱 금고 entry는 설정을 받지 않는다. */
 export interface InlineVault {
   /** secretInput 포트는 결속값(I-1)과 함께 붙인다. 금고는 그 값으로 한 번만 받는다. */
-  attachPort(kind: 'engine' | 'control' | 'secretInput', port: PortLike, bind?: SecretInputBind): void;
+  attachPort(kind: 'engine' | 'control' | 'secretInput' | 'browser', port: PortLike, bind?: SecretInputBind): void;
   shutdown(): Promise<void>;
 }
 
@@ -39,6 +39,11 @@ export interface EngineHostOptions {
    * 없으면 minAppVersion이 있는 패키지는 받지도 돌리지도 않는다(엔진 fail-closed).
    */
   appVersion?: string;
+  /**
+   * 앱 안 브라우저(embedded-browser.ts): 금고에 'browser' 포트를 준다. 금고는 설치 Chrome을 띄우지 않고 main이 흉내 내는
+   * 브라우저 수준 CDP에 중계를 붙인다. 포트 메시지는 'browser' 이벤트로 나가고 browserPost로 들어간다. false면 옛 길(설치 Chrome).
+   */
+  embeddedBrowser?: boolean;
 }
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void };
@@ -57,7 +62,7 @@ export type AttestWithdrawn = { runId: string; attestReqId: string; reason: Atte
 /**
  * 이벤트: 'run'(엔진 실행 이벤트 data) · 'gate'(GateRequest) · 'gate-closed'({runId, reqId, reason})
  * · 'attest'(AttestRequest) · 'attest-withdrawn'(AttestWithdrawn) · 'exit'(who, code)
- * · 'vault-event'(name, data: 금고 control 포트의 {t:'ev'}, I-2). 끝난 뒤의 호출은 바로 실패한다.
+ * · 'vault-event'(name, data: 금고 control 포트의 {t:'ev'}, I-2) · 'browser'(금고 'browser' 포트 메시지). 끝난 뒤의 호출은 바로 실패한다.
  */
 export class EngineHost extends EventEmitter {
   readonly ready: Promise<void>;
@@ -67,6 +72,7 @@ export class EngineHost extends EventEmitter {
   private readonly controlPort: MessagePortMain;
   private readonly gatePort: MessagePortMain;
   private readonly authPort: MessagePortMain;
+  private readonly browserPort: MessagePortMain | null;
   private gatewayAuth: ((m: unknown) => Promise<GwAuthResult | null>) | null = null;
   private readonly pending = new Map<number, Pending>();
   private readonly answers = new Map<string, (r: GateAnswerResult) => void>();
@@ -105,14 +111,20 @@ export class EngineHost extends EventEmitter {
     );
     this.authPort.on('message', (e) => void onAuth(e.data));
     this.authPort.start();
+    const br = opts.embeddedBrowser ? new MessageChannelMain() : null;
+    this.browserPort = br?.port2 ?? null;
+    this.browserPort?.on('message', (e) => this.emit('browser', e.data));
+    this.browserPort?.start();
     if (opts.vault === 'process') {
       this.vaultProc = utilityProcess.fork(require.resolve('@sax/vault/entry'), [], { serviceName: 'sax-vault', stdio: 'ignore', env: childEnv(), execArgv: [] });
-      this.vaultProc.postMessage({ ports: ['engine', 'control'] }, [relay.port1, ctl.port1]);
+      if (br) this.vaultProc.postMessage({ ports: ['engine', 'control', 'browser'] }, [relay.port1, ctl.port1, br.port1]);
+      else this.vaultProc.postMessage({ ports: ['engine', 'control'] }, [relay.port1, ctl.port1]);
       this.vaultProc.on('exit', (c) => this.exited('vault', c));
     } else {
       this.vaultProc = null;
       opts.vault.attachPort('engine', wrapPort(relay.port1, 'electron'));
       opts.vault.attachPort('control', wrapPort(ctl.port1, 'electron'));
+      if (br) opts.vault.attachPort('browser', wrapPort(br.port1, 'electron'));
     }
     this.ready = new Promise((resolve, reject) => {
       this.failReady = reject;
@@ -233,6 +245,11 @@ export class EngineHost extends EventEmitter {
     if (this.vaultProc) this.vaultProc.postMessage({ ports: ['secretInput'], bind }, [ch.port1]);
     else (this.opts.vault as InlineVault).attachPort('secretInput', wrapPort(ch.port1, 'electron'), bind);
     return ch.port2;
+  }
+
+  /** 앱 안 브라우저 → 금고('browser' 포트, CDP 프레임·닫힘). */
+  browserPost(m: unknown): void {
+    if (!this.dead) this.browserPort?.postMessage(m);
   }
 
   /** 엔진(과 금고)을 끝내고 엔진이 실제로 끝날 때까지(최대 3초) 기다린다. 그 뒤에야 앱 폴더를 지워도 DB·WAL이 열려 있지 않다. */
