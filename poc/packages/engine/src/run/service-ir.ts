@@ -485,7 +485,12 @@ export class IrRun {
         vault: sv.vault, targetId: sv.targetId, dict, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal,
         page: {
           bringToFront: () => page.bringToFront(),
-          text: () => page.locator('body').innerText({ timeout: 2_000 }),
+          // 틀린 비밀번호 안내는 홈택스 인증서 창(iframe#dscert, ML4Web) 안에 뜬다: 본 프레임과 그 창의 글자를 함께 본다
+          text: async () => {
+            const main = await page.locator('body').innerText({ timeout: 2_000 }).catch(() => '');
+            const cert = await page.frameLocator(CERT_FRAME_CSS).first().locator('body').innerText({ timeout: 1_000 }).catch(() => '');
+            return cert ? `${main}\n${cert}` : main;
+          },
           // 인증서 선택창 iframe 요소만 본다(안은 다른 출처라 읽지 않는다).
           certFrame: () => page.locator(CERT_FRAME_CSS).first().isVisible(),
         },
@@ -535,7 +540,7 @@ export class IrRun {
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
         // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
-        if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code);
+        if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code, d.stepId);
       },
       clock, gates: i.gates, tokens: new GateTokens(i.runId), ledgerStates,
       card: (g) => {

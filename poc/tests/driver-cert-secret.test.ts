@@ -78,6 +78,19 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     await bad.port.stepFinished('wait', true); // H-01 s5 시간 초과(틀린 비밀번호 포함)
     assert.deepEqual(bad.vault.calls.at(-1), ['typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
 
+    // 금고가 넣은 뒤 [확인] 클릭 스텝 다음에 틀림 안내가 뜨면(인증서 창 iframe 안 글자 포함) 그때 알린다
+    const screen: string[] = [];
+    const click = mk({ screen });
+    click.vault.onOpen = () => click.vault.close('T1');
+    assert.equal(await click.port.secret(REQ), 'done');
+    screen.push('인증서 암호가 올바르지 않습니다.');
+    await click.port.stepFinished('click', false, 's4h');
+    assert.deepEqual(click.vault.calls.at(-1), ['typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
+    assert.ok(click.journal.some(([t, p]) => t === 'human.secret_password_wrong' && (p as Json).stepId === 's4h'));
+    const after = click.vault.calls.length;
+    await click.port.stepFinished('wait', true); // 그 뒤 s5 시간 초과는 다시 알리지 않는다
+    assert.equal(click.vault.calls.length, after);
+
     // 사이에 다른 스텝이 실패하면(비밀번호 탓 아님) 알리지 않는다
     const other = mk();
     other.vault.onOpen = () => other.vault.close('T1');
