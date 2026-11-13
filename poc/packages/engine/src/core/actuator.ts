@@ -124,6 +124,13 @@ export class GuardedActuator implements Actuator {
     return this.act('click', t, () => this.driver.click(t));
   }
 
+  /** 되돌릴 수 있는 click의 두 번째 시도(Actuator.clickByBox). click과 같은 정책·가드(R-A1 동일성·R-A2·그림자)를 다시 지나고, commits 항목은 하지 않는다. */
+  clickByBox(t: Resolved): Promise<ActResult> {
+    const byBox = this.driver.clickByBox?.bind(this.driver);
+    if (!byBox || this.dict.entries[t.key]?.commits) return Promise.resolve({ ok: false, code: 'step.timeout' });
+    return this.act('click', t, () => byBox(t));
+  }
+
   fill(t: Resolved, value: string, o: { keyEvents: boolean }): Promise<ActResult> {
     return this.act('fill', t, () => this.driver.fill(t, value, o));
   }

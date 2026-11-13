@@ -22,6 +22,10 @@ interface CdpFrame {
   sessionId?: string;
 }
 
+/** 이보다 오래 답이 없는 보기 명령은 진단으로 남긴다(엔진 동작 제한 10초보다 짧게). */
+const SLOW_CMD_MS = 3000;
+const WATCHED_CMD = /^(Input|DOM)\./;
+
 interface Tab {
   view: WebContentsView;
   wc: WebContents;
@@ -147,9 +151,31 @@ export class EmbeddedBrowser {
     if (msg.sessionId) {
       const t = this.bySession.get(msg.sessionId);
       if (!t || t.gone) return done(Promise.reject(new Error(`No session with given id`)));
-      return done(this.session(t, msg.sessionId, msg.method, msg.params ?? {}) ?? (t.wc.debugger.sendCommand(msg.method, msg.params ?? {}, msg.sessionId) as Promise<Json>));
+      return done(this.watch(t, msg.method, this.session(t, msg.sessionId, msg.method, msg.params ?? {}) ?? (t.wc.debugger.sendCommand(msg.method, msg.params ?? {}, msg.sessionId) as Promise<Json>)));
     }
     done(this.root(msg.method, msg.params ?? {}));
+  }
+
+  /**
+   * 보기 명령이 SLOW_CMD_MS 넘게 답이 없으면 명령 이름과 그때 창·보기 상태를 남기고, 끝내 답이 오면 걸린 시간을 남긴다(값 없음).
+   * 예행 run-309c3eeb(앱 창이 다른 Space): Playwright 클릭이 10초 넘게 멈췄는데 어느 명령에서인지 몰랐다.
+   */
+  private watch(t: Tab, method: string, p: Promise<Json>): Promise<Json> {
+    // 페이지 안 기다림(Runtime.callFunctionOn awaitPromise 등)은 원래 길다. 입력·DOM 명령만 본다.
+    if (!WATCHED_CMD.test(method)) return p;
+    const t0 = Date.now();
+    let slow = false;
+    const timer = setTimeout(() => {
+      slow = true;
+      const w = this.o.win;
+      this.o.log.event('main.embedded_cmd_slow', { method, top: this.top() === t, view: t.view.getVisible(), win: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized() });
+    }, SLOW_CMD_MS);
+    const end = () => {
+      clearTimeout(timer);
+      if (slow) this.o.log.event('main.embedded_cmd_done', { method, ms: Date.now() - t0 });
+    };
+    p.then(end, end);
+    return p;
   }
 
   /** 브라우저 수준 명령. 금고 중계(relay.ts·service.ts·pdf/save.ts)가 쓰는 것만 흉내 낸다. */

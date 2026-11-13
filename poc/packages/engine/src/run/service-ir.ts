@@ -435,7 +435,7 @@ export class IrRun {
       },
     });
     this.enforcer = enforcer;
-    const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, why }) });
+    const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }), onBoxClick: (r) => i.journal('actuator.box_click', { stepId: curStep ?? '', ...r }) });
     // 예상 밖 화면 판정(아래에서 만든다). 대화상자 훅과 스텝 경계가 먼저 생겨 이 자리에 둔다.
     let pageJudge: PageJudge | null = null;
     let curStep: string | null = null;
