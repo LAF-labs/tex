@@ -1,5 +1,6 @@
 // 셸 온보딩 e2e(M4-2, 08 §4 O-01~O-06·동의 4종): 실제 렌더러·preload·main 처리기로 온보딩을 끝까지 간다(fixture 모드, 목업 어댑터).
 // 실행: electron apps/desktop/e2e-dist/shell-onboarding-e2e.js → reports/raw/m4-2-onboarding.json. 앱 폴더·키체인을 쓰지 않는다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { rmSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';

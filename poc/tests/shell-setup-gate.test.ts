@@ -41,7 +41,27 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(setupText('invoice', ['biz']), /^세금계산서를 발급하려면 먼저 사업자 정보\(사업자번호\)를 등록해 주세요/);
     assert.match(setupText('invoice', ['biz', 'auth']), /사업자 정보와 발급 인증/);
     assert.match(setupText('cert', ['auth']), /^증명서를 떼려면 .*인증/);
-    assert.deepEqual(SETUP_LABEL, { biz: '사업자 등록 마치기', auth: '발급 인증 고르기' });
+    assert.deepEqual(SETUP_LABEL, { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기' });
+  });
+  it('Chrome(U6): 빠지면 그것만 말하거나 뒤에 한 문장을 붙인다', () => {
+    assert.equal(setupText('invoice', ['chrome']), '세금계산서를 발급하려면 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.');
+    assert.equal(setupText('invoice', ['biz', 'chrome']), '세금계산서를 발급하려면 먼저 사업자 정보(사업자번호)를 등록해 주세요. Chrome도 설치해 주세요.');
+    assert.match(setupText('cert', ['auth', 'chrome']), /^증명서를 떼려면 .*인증.*Chrome도 설치해 주세요\.$/);
+  });
+  it('Chrome(U6) 배선: 판의 할 일·첫 발급 요청·[홈택스에서 준비]가 같은 점검, [다시 확인]은 chrome.check(읽기만, 판을 새로)', () => {
+    const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
+    assert.match(src, /const chromeReady = opts\.chromeReady \?\? \(\(\) => findInstalledChrome\(\) !== null\);/);
+    assert.match(src, /new ShellRuns\(host, \{ [^}]*chromeReady, /);
+    assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
+    // 증명서 요청에는 Chrome을 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291). 세금계산서·되묻기 답만.
+    assert.match(src, /const needsChrome = parsed\.intent !== 'cert' && !chromeReady\(\);/);
+    assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\)\];/);
+    const check = src.slice(src.indexOf("'chrome.check': async"), src.indexOf("'onboarding.reopen': async"));
+    assert.ok(check.includes('const ready = chromeReady();') && check.includes('pushBoard();') && !/host\.|needGesture|openExternal/.test(check), check);
+    const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
+    assert.match(shell, /if \(item === 'chrome'\) return chromeGuide\(\);/);
+    assert.match(shell, /const r = await call\('chrome\.check'\);/);
+    assert.ok(!/openExternal|window\.open|href:/.test(shell.slice(shell.indexOf('function chromeGuide'), shell.indexOf('async function reopenSetup'))));
   });
   it('배선: 세 경로(제품·시연 모델·시연 정규식) 모두 카드(interpret) 전에 setupGate, 렌더러는 kind setup → [사업자 등록 마치기] → onboarding.reopen', () => {
     const src = fs.readFileSync(new URL('../apps/desktop/src/shell-app.ts', import.meta.url), 'utf8');
@@ -52,7 +72,7 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
     assert.match(shell, /if \(r\.kind === 'setup'\) \{/);
     assert.match(shell, /const r = await call\('onboarding\.reopen', \{ item \}\);/);
-    assert.match(shell, /x\.id === 'biz' \|\| x\.id === 'auth' \? reopenSetup\(x\.id\) : go\(x\.view\)/);
+    assert.match(shell, /x\.id === 'biz' \|\| x\.id === 'auth' \|\| x\.id === 'chrome' \? reopenSetup\(x\.id\) : go\(x\.view\)/);
   });
   it('[홈택스에서 준비]만 실행을 시작한다(카드를 만들 때 run.prepare를 부르지 않는다, 실제 입력 2초)', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
