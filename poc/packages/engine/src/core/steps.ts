@@ -224,7 +224,8 @@ const extract: Handler<'extract'> = async (s, env) => {
 
 /**
  * IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 성공한 같은 결과가 BRANCH_SETTLE_MS 이어질 때 정한다(WebSquare가 머리말을 다시 그린다).
- * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 상한이 되면 마지막 결과로 정한다(실패면 실패).
+ * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 거짓은 페이지 요청이 멎은 뒤 다시 보고 정한다.
+ * 상한이 되면 마지막 결과로 정한다(실패면 실패).
  */
 export const BRANCH_SETTLE_MS = 400;
 export const BRANCH_SETTLE_MAX_MS = 8_000;
@@ -237,15 +238,28 @@ const branch: Handler<'branch'> = async (s, env) => {
     const until = t0 + BRANCH_SETTLE_MAX_MS;
     let since = t0;
     const trace = [`${key(r)}~0`];
-    while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
-      if (env.stopRequested?.()) return fail('run.stopped');
-      await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
-      const n = await evalCond(s.on, env);
-      if (key(n) !== key(r)) {
-        r = n;
-        since = env.clock.now();
-        trace.push(`${key(r)}~${since - t0}`);
+    const settle = async (): Promise<boolean> => {
+      while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
+        if (env.stopRequested?.()) return false;
+        await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
+        const n = await evalCond(s.on, env);
+        if (key(n) !== key(r)) {
+          r = n;
+          since = env.clock.now();
+          trace.push(`${key(r)}~${since - t0}`);
+        }
       }
+      return true;
+    };
+    if (!(await settle())) return fail('run.stopped');
+    // 거짓은 페이지 요청이 멎은 뒤 한 번 더 본다(홈택스 로그인 상태 머리말은 세션 확인이 끝난 뒤에야 "로그아웃"이 된다, 예행 run-1278f5d4·c1d6fe9c).
+    if (r.ok && r.value === false && env.clock.now() < until) {
+      await env.page.waitIdle(Math.max(0, until - env.clock.now())).catch(() => false);
+      const n = await evalCond(s.on, env);
+      since = env.clock.now();
+      trace.push(`idle:${key(n)}~${since - t0}`);
+      r = n;
+      if (!(await settle())) return fail('run.stopped');
     }
     await settledTrace(s, env, key(r), env.clock.now() - t0, trace);
   }

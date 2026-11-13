@@ -221,6 +221,9 @@ const CLIENT = String.raw`
       if (C.realLoginNav && !C.loggedIn) wrap.insertAdjacentHTML('beforeend', '<div style="display:none"><a id="mf_wfHeader_group1503" href="javascript:void(0);" title="로그아웃">로그아웃</a></div>');
       if (C.realLoginNav && C.loggedIn) {
         for (const id of ['mf_wfHeader_group1502', 'mf_wfHeader_group1503']) $(id).style.display = 'none';
+        // 실화면(예행 run-1278f5d4·c1d6fe9c): 로드·로그인 직후 숨은 머리말 글은 한동안 "로그인"이고, 세션 확인 요청이 끝난 뒤 "로그아웃"이 된다.
+        $('mf_wfHeader_group1503').textContent = '로그인';
+        fetch('/_fx/slow?ms=1500').then(() => { $('mf_wfHeader_group1503').textContent = '로그아웃'; });
         $('mf_txppWframe').insertAdjacentHTML('beforeend', '<div id="mf_txppWframe_userBox"><span>가나다컴퍼니님</span> <a href="#" id="mf_txppWframe_userLogout">로그아웃</a></div>');
       }
       // 실화면: 머리말 [로그인]이 그 자리에서 로그인 화면을 그린다(주소는 index3로 바뀐다).
@@ -631,6 +634,11 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       state.certUses.push({ mode, how: u.searchParams.get('how') === 'typed' ? 'typed' : 'human', cn });
       if (mode === 'login') state.loggedIn = true;
       return json(res, { ok: true });
+    }
+    if (u.pathname === '/_fx/slow') {
+      const ms = Math.min(5000, Number(u.searchParams.get('ms') ?? 0) || 0);
+      setTimeout(() => json(res, {}), ms);
+      return;
     }
     if (u.pathname === '/_fx/layer') {
       if (u.searchParams.get('ev') === 'shown') state.layerShown++;
