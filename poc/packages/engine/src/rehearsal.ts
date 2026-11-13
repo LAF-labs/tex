@@ -21,6 +21,8 @@ export const REHEARSAL_DONE = 'rehearsal.gate_reached';
 export class RehearsalReport {
   private readonly t0: number;
   private readonly clock: () => number;
+  /** 쓴 패키지 출처: registry:<판> · local:<판>:<manifest 다이제스트 앞 12자> · h01:<판>(가짜 포털 TS 플레이북). */
+  private readonly pkg: string;
   private readonly phaseMs = new Map<string, number>();
   private open: { phase: string; at: number } | null = null;
   private last = '';
@@ -29,7 +31,8 @@ export class RehearsalReport {
   /** 닿은 게이트 스텝 id. 닿지 않았으면 null. */
   gateStep: string | null = null;
 
-  constructor(clock: () => number = Date.now) {
+  constructor(pkg: string, clock: () => number = Date.now) {
+    this.pkg = pkg;
     this.clock = clock;
     this.t0 = clock();
   }
@@ -55,6 +58,7 @@ export class RehearsalReport {
     const f: LogFields = {
       runId,
       result: this.gateStep ? 'gate_reached' : end.status,
+      package: this.pkg,
       end: (end.code ?? '').slice(0, 80),
       total_ms: this.clock() - this.t0,
       last_phase: this.last,

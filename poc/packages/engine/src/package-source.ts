@@ -1,5 +1,14 @@
 // 실행 시작 패키지 공급(PR-D2 앞부분, D03 §3.1): RegistrySync가 받아 둔 설치본을 실행을 시작할 때마다 loadPackage로 다시 검증해
 // RunService의 IrPackage로 만든다. 네트워크는 쓰지 않는다(받기는 RegistrySync.sync). 로그에는 코드만 남긴다.
+import { generateKeyPairSync, sign as edSign, type KeyObject } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { BUNDLE_ALLOWLIST } from '@sax/model';
+import { canonicalWithout, sha256Hex } from './core/canon.ts';
+import { loadPackage } from './core/loader.ts';
+import type { TrustRoots } from './core/registry.ts';
+import type { Manifest, PackageFiles, SelectorDict } from './core/types.ts';
+import { appBundleOutcomes } from './registry-sync.ts';
 import type { LocateResponder } from './run/locate-port.ts';
 import type { RunToken } from '@sax/model';
 import type { PdfPort } from './core/savepdf.ts';
@@ -47,6 +56,79 @@ export function installedIrSource(registry: { loadInstalled(id: string): Install
     return {
       ok: true,
       ir: { pkg: r.pkg, lookupPackages: r.lookups, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}), ...(o.locate ? { locate: o.locate } : {}) },
+    };
+  };
+}
+
+/** 예행 로컬 패키지 폴더(앱 데이터 아래). 패키지마다 <id>/manifest.json·playbook.json·selectors.json·strings.ko.json. */
+export const REHEARSAL_PACKAGES_DIR = 'rehearsal-packages';
+
+const readJson = (f: string): unknown => JSON.parse(fs.readFileSync(f, 'utf8'));
+const jsonKey = (x: unknown) => JSON.stringify(x);
+
+/**
+ * 로컬 패키지가 같은 id의 서명 설치본보다 약하지 않은가(예행 전용, 패키지와 무관한 앱 쪽 하한).
+ * 비가역 판정(commits)·커밋 엔드포인트·허용 도메인은 패키지가 정하므로, 서명본이 비가역이라 한 것을 로컬이 풀지 못하게 한다.
+ * 비가역 항목의 후보(셀렉터)를 다른 키에 새로 담아도 비가역이어야 한다. 틀리면 이유 코드.
+ */
+function weakerThanSigned(local: PackageFiles, signed: PackageFiles): string | null {
+  if (local.manifest.id !== signed.manifest.id || local.manifest.portal !== signed.manifest.portal) return 'id_or_portal';
+  if (local.manifest.domains.some((d) => !signed.manifest.domains.includes(d))) return 'domains';
+  const sd: SelectorDict = signed.selectors;
+  const ld: SelectorDict = local.selectors;
+  const commitCandidates = new Set(Object.values(sd.entries).filter((e) => e.commits).flatMap((e) => e.candidates.map(jsonKey)));
+  for (const [k, e] of Object.entries(sd.entries)) if (e.commits && ld.entries[k]?.commits !== true) return 'commits_dropped';
+  for (const [k, e] of Object.entries(ld.entries)) {
+    if (e.commits) continue;
+    // 서명본에 이미 있던 같은 키·같은 후보 겹침(검토를 거친 것)은 그대로 받는다. 새로 생긴 겹침만 막는다.
+    const had = new Set((sd.entries[k] && !sd.entries[k].commits ? sd.entries[k].candidates : []).map(jsonKey));
+    if (e.candidates.some((c) => commitCandidates.has(jsonKey(c)) && !had.has(jsonKey(c)))) return 'commit_target_unflagged';
+  }
+  const localEndpoints = new Set(ld.commitEndpoints.map(jsonKey));
+  if (sd.commitEndpoints.some((ce) => !localEndpoints.has(jsonKey(ce)))) return 'commit_endpoint_dropped';
+  return null;
+}
+
+/**
+ * 예행 전용 패키지 공급(부장 2026-11-13: 고칠 때마다 게시 서명 없이 실화면 예행). <dir>/<id>/에 파일이 없으면 null(레지스트리 판을 쓴다).
+ * 서명 대신 같은 로더(loadPackage)를 그대로 지난다: 실행마다 만든 버리는 키 둘로 서명해 그 키만 믿는 문맥으로 로드한다(구조·V 규칙·번들 허용 목록·승인 요약 표).
+ * 조회 하위 패키지는 서명 설치본을 쓰고(판이 같아야 한다), 서명 설치본보다 약하면(weakerThanSigned) 받지 않는다.
+ * RunService는 예행(StartParams.rehearsal)일 때만 이것을 부른다. 결과 IrPackage.local이 있으면 그 실행은 금고 비밀번호를 첫 입력 스텝 전에만 쓴다(IrRun).
+ */
+export function rehearsalIrSource(registry: { loadInstalled(id: string): InstalledPackage }, o: InstalledIrSourceOptions & { dir: string }): () => IrSourceResult | null {
+  return () => {
+    const dir = path.join(o.dir, o.id);
+    if (!fs.existsSync(path.join(dir, 'manifest.json'))) return null;
+    const base = registry.loadInstalled(o.id);
+    if (!base.ok) return { ok: false, code: 'rehearsal.no_signed_baseline' };
+    let files: PackageFiles;
+    try {
+      const strings = fs.existsSync(path.join(dir, 'strings.ko.json')) ? 'strings.ko.json' : 'strings.json';
+      files = { manifest: readJson(path.join(dir, 'manifest.json')) as Manifest, playbook: readJson(path.join(dir, 'playbook.json')) as never, selectors: readJson(path.join(dir, 'selectors.json')) as never, strings: readJson(path.join(dir, strings)) as never };
+    } catch {
+      return { ok: false, code: 'rehearsal.package_unreadable' };
+    }
+    const weaker = files.manifest?.domains && files.selectors?.entries ? weakerThanSigned(files, base.pkg.files) : 'shape';
+    if (weaker) return { ok: false, code: `rehearsal.weaker_than_signed.${weaker}` };
+    const lookupDigests: string[] = [];
+    for (const l of files.manifest.lookupsUsed) {
+      const got = base.lookups.get(l.id);
+      if (!got || got.files.manifest.version !== l.version) return { ok: false, code: 'rehearsal.lookup_mismatch' };
+      lookupDigests.push(got.manifestDigest);
+    }
+    const keys = [0, 1].map((n) => ({ keyId: `rehearsal-${n}`, ...generateKeyPairSync('ed25519') }));
+    const bytes = (x: unknown) => Buffer.from(JSON.stringify(x), 'utf8');
+    const raw = { playbook: bytes(files.playbook), selectors: bytes(files.selectors), strings: bytes(files.strings) };
+    const m: Manifest = { ...files.manifest, contentDigests: { playbook: sha256Hex(raw.playbook), selectors: sha256Hex(raw.selectors), strings: sha256Hex(raw.strings) }, lookupsUsed: files.manifest.lookupsUsed.map((l, i) => ({ ...l, digest: lookupDigests[i]! })) };
+    const signed = canonicalWithout(m, ['signatures']);
+    m.signatures = keys.map((k) => ({ keyId: k.keyId, alg: 'ed25519' as const, sig: edSign(null, signed, k.privateKey).toString('base64url') }));
+    const only = (ks: typeof keys): ReadonlyMap<string, KeyObject> => new Map(ks.map((k) => [k.keyId, k.publicKey]));
+    const roots: TrustRoots = { keyEpoch: 0, rootKeys: new Map(), packageKeys: only(keys), policyKeys: new Map(), emergencyKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey }, timestampKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey } };
+    const r = loadPackage({ manifest: bytes(m), ...raw }, { roots, revoked: new Set(), bundleAllowlist: BUNDLE_ALLOWLIST, bundles: appBundleOutcomes(), installedLookups: base.lookups, storedVersion: null, installedDigest: null, hold: false, policyFresh: true, now: Date.now() });
+    if (!r.ok) return { ok: false, code: r.code };
+    return {
+      ok: true,
+      ir: { pkg: r.pkg, lookupPackages: base.lookups, local: { digest: r.pkg.manifestDigest }, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}), ...(o.locate ? { locate: o.locate } : {}) },
     };
   };
 }

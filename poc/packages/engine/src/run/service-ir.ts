@@ -53,6 +53,8 @@ import type { RunPermit } from '../core/permit.ts';
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
   pkg: LoadedPackage;
+  /** 서명 없는 예행 로컬 패키지(rehearsalIrSource). 있으면 금고 인증서 비밀번호는 첫 입력(fill) 스텝 전에만 쓴다(로그인만, 서명 창에는 넣지 않는다). */
+  local?: { digest: string };
   /**
    * verify.lookup.playbook → 서명 조회 패키지(IrLookupPort, 제품). 있으면 조회는 그 패키지 IR을 팝업에서 돌린다(팀장 결정 2026-11-09 (가)).
    * 조회 셀렉터·열 이름이 서명 패키지에 있으니 실기기에서 틀리면 다시 게시해 고친다.
@@ -233,6 +235,8 @@ export class IrRun {
   private wiring: RunWiring | null = null;
   private history: GateHistory | null = null;
   private stopRequested = false;
+  /** 입력(fill) 스텝을 시작했다. 로컬 예행 패키지는 이 뒤로 비밀번호를 쓰지 못한다. */
+  private formStarted = false;
   private mail: boolean | undefined;
   /** verify를 한 번이라도 판정했다(H01처럼 그 뒤 종료에는 mailConfirmed를 붙인다). */
   private verified = false;
@@ -312,6 +316,23 @@ export class IrRun {
     this.secretAbort.abort();
     if (this.cmdWake) return this.cmdWake('stop');
     if (!this.denyOpenGate('stopped')) this.controller?.abort();
+  }
+
+  /**
+   * 서명 없는 로컬 예행 패키지: 입력 스텝을 시작한 뒤의 비밀번호 차례는 금고에 넘기지 않는다(패키지가 비가역 표시를 틀려도 서명 창에 비밀번호가 들어가지 않게).
+   * 로그인(s4)은 입력 전이라 그대로 된다. 서명 패키지는 그대로 둔다.
+   */
+  private localGuard(h: HumanPort): HumanPort {
+    if (!this.i.ir.local) return h;
+    return {
+      request: (r) => h.request(r),
+      secret: (r) => {
+        if (!this.formStarted) return h.secret(r);
+        this.i.journal('rehearsal.secret_refused', { stepId: r.stepId });
+        return Promise.resolve({ code: 'rehearsal.secret_after_form' });
+      },
+      closed: (reqId, why) => h.closed(reqId, why),
+    };
   }
 
   /** 사람을 기다리는 중인가(핸드오프·Paused 대기 또는 서명 차례). RunService가 무장 뒤에도 [중지]를 넘길지 본다. */
@@ -543,6 +564,7 @@ export class IrRun {
         return enforcer.beforeStep();
       },
       stepEvent: (name, d) => {
+        if (name === 'step.started' && d.type === 'fill') this.formStarted = true;
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
         // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
@@ -582,12 +604,12 @@ export class IrRun {
         },
       },
       // 사람 입력 포트: 주입(시험) → 금고가 있으면 CertSecretPort(공동인증서 비밀번호 B1·B2) → 대역(secret은 바로 ttl → 로그인이면 Paused 사람 대기, 발급 서명이면 서명 차례).
-      human: i.human ?? {
+      human: this.localGuard(i.human ?? {
         request: () => {},
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         closed: () => {},
-      },
+      }),
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),
       reentry: { navigate: async (u) => void (await act.goto(u)), loggedIn: async () => true },
       verifyStep: async (v) => {
