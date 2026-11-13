@@ -6,7 +6,10 @@
 # 실행(서명 의식 키체인이 있는 대표 Mac): bash poc/scripts/publish-update.sh ~/sax-publish/mac-<판>/out [--rollout 100]
 # 처음 한 번은 Blob 저장소(sax-releases, 공개)를 만들어 프로젝트 tex의 development 환경에 잇는다. 쓰기 토큰은 그 환경에서 한 줄만 꺼내
 # 작업 폴더 .env.local(0600)에 두고 끝나면 지운다. 운영자 토큰은 화면에 안 보이게 묻고 node 자식 환경으로만 넘긴다.
+# 묶음 실행(~/sax-publish/ceremony.sh)은 SAX_ADMIN_TOKEN 환경 변수로 넘긴다. 받자마자 셸 변수로 옮기고 환경에서 지워 vercel 등 자식에 가지 않게 한다.
 set -euo pipefail
+TOKEN=${SAX_ADMIN_TOKEN:-}
+unset SAX_ADMIN_TOKEN
 
 OUT=${1:-}
 shift || true
@@ -99,8 +102,10 @@ $CLI check --kind release --trust "$TRUST" --revoked "$W/revoked_keys.json" "$W/
 say "[②] 서명 → $W/latest.json"
 
 # ③ 게시 관문 PUT: 서버가 서명·단조 버전을 다시 보고, 기간·타임스탬프를 붙이고, 투명성 로그에 먼저 기록한다
-read -rsp "운영자 토큰(REGISTRY__REGISTRY_ADMIN_TOKEN 값, 화면에 안 보임): " TOKEN
-printf '\n'
+if [ -z "$TOKEN" ]; then
+  read -rsp "운영자 토큰(REGISTRY__REGISTRY_ADMIN_TOKEN 값, 화면에 안 보임): " TOKEN
+  printf '\n'
+fi
 SAX_ADMIN_TOKEN=$TOKEN node -e '
 const [origin, channel, file] = process.argv.slice(1);
 const body = require("fs").readFileSync(file);
