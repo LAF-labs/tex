@@ -100,7 +100,7 @@ export function runSignalDict(i: RunSignalInput): () => readonly SignalEntry[] {
 }
 
 /** 차단이 아닌 신호의 종료 코드(D16 portal.*). 이 코드들은 실행기 FORCED_STOPS에서 핸드오프다. */
-const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
+const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { maintenance: 'portal.maintenance', extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
 
 const OK: ActResult = { ok: true };
 const no = (code: string): ActResult => ({ ok: false, code });
@@ -141,6 +141,8 @@ export class RunEnforcer implements ActionPolicy {
   private arrived = false;
   private section: 'login' | null = null;
   private latch: { code: string; kind: SignalKind } | null = null;
+  /** 점검 끝 시각(ISO, 안내 글에서 읽음). */
+  private until: string | null = null;
   private finished = false;
 
   constructor(i: RunEnforcerInput) {
@@ -152,6 +154,11 @@ export class RunEnforcer implements ActionPolicy {
   /** 걸쇠에 걸린 종료 코드(없으면 null). */
   get halted(): string | null {
     return this.latch?.code ?? null;
+  }
+
+  /** 포털 점검이면 안내에서 읽은 끝 시각(ISO). */
+  get maintenanceUntil(): string | null {
+    return this.latch?.kind === 'maintenance' ? this.until : null;
   }
 
   get actuationCount(): number {
@@ -318,6 +325,11 @@ export class RunEnforcer implements ActionPolicy {
   /** 첫 신호만 센다. 차단은 먼저 걸린 다른 신호(추가 인증·캡차·대기열)를 덮는다. 카운터를 못 남겨도 걸쇠가 먼저다. */
   private onHit(h: SignalHit): void {
     const cur = this.latch;
+    // 점검: 주소로 먼저 걸리고 글은 뒤에 온다. 끝 시각은 글에서만 읽으므로 나중 신호로 채운다.
+    if (cur?.kind === 'maintenance' && h.kind === 'maintenance' && h.until && !this.until) {
+      this.until = h.until;
+      this.i.journal('portal.maintenance', { id: h.id, until: h.until });
+    }
     if (this.finished || (cur && (cur.kind === 'block' || h.kind !== 'block'))) return;
     let kind = h.kind;
     let code: string;
@@ -333,6 +345,10 @@ export class RunEnforcer implements ActionPolicy {
         code = cooled ? 'policy.cooldown' : repeat ? 'portal.extra_auth_repeat' : 'portal.blocked';
       } else {
         if (kind === 'captcha') this.g.captcha();
+        if (kind === 'maintenance') {
+          if (h.until) this.until = h.until;
+          this.i.journal('portal.maintenance', { id: h.id, ...(h.until ? { until: h.until } : {}) });
+        }
         this.i.journal('portal.signal', { kind, id: h.id });
         code = HANDOFF[kind];
       }

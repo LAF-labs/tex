@@ -22,7 +22,7 @@ import { parseIssueKey, type IssueKey } from './issue/types.ts';
 import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport } from './rehearsal.ts';
 
 /** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
-const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.(why|box_click)$|^branch\.settled$/;
+const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.(why|box_click)$|^branch\.settled$|^portal\.maintenance$/;
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -71,7 +71,7 @@ export type RunEvent =
   /** 포털 대화상자 문구(예: 등록번호 [확인] → "정상적인 사업자번호입니다."). 앱 실행 단계에 글로만 보인다. key는 strings 키, ok는 기대 문구와 맞음. 로그에는 넣지 않는다. */
   | { runId: string; type: 'notice'; stepId: string; key: string; text: string; ok: boolean }
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
-  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt }
+  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt; maintenanceUntil?: string }
   /**
    * 사람 대기(IR, B3): 실행은 끝나지 않았다. [다 했어요] = run.resume, [직접 발급함] = run.manualDone(phase가 sign이 아닌 HandedOff에서만), [중지] = run.stop.
    * phase sign·code sign.waiting = 발급 클릭 뒤 서명 차례(커밋 구간): 재개·중지·상한 모두 verify로 간다.
@@ -384,7 +384,7 @@ export class RunService extends EventEmitter {
   }
 
   private async execute(a: ActiveRun, inputs: RunInputs, profile: Profile): Promise<void> {
-    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt };
+    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt; maintenanceUntil?: string };
     let thrown: unknown;
     try {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
@@ -487,7 +487,7 @@ export class RunService extends EventEmitter {
   }
 
   /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
-  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt }> {
+  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt; maintenanceUntil?: string }> {
     const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
@@ -559,7 +559,7 @@ export class RunService extends EventEmitter {
     a.ir = run;
     const r = await run.run();
     a.armed = run.armed;
-    return { status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
+    return { status: r.status, ...(r.maintenanceUntil ? { maintenanceUntil: r.maintenanceUntil } : {}), ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
   }
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
