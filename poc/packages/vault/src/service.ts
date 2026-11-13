@@ -9,11 +9,12 @@ import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
 import {
   PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, isTypistKind, SECURITY_CARD_ROWS, STORABLE_KINDS,
-  SESSION_EVENTS, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
+  SESSION_EVENTS, CODEF_REQ_ID_RE, type CodefSealParams, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
-import { scanNpki, type NpkiFs, type NpkiRoot } from './npki-scan.ts';
+import { readNpkiLoginPair, scanNpki, type NpkiFs, type NpkiRoot } from './npki-scan.ts';
+import { CodefSealer } from './codef-seal.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
 import { PdfSaver, sweepStagingDir } from './pdf/save.ts';
 import { Relay } from './relay/relay.ts';
@@ -58,6 +59,11 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
     if (!notice || typeof notice.version !== 'string' || !NOTICE_VERSION_RE.test(notice.version)) return null;
     if (x.runId !== undefined || x.row !== undefined) return null;
     return { mode: 'store', kind: x.kind as StorableKind, scope: x.scope, notice: { version: notice.version } };
+  }
+  if (x.mode === 'codef') {
+    // 계좌 자동조회 인증서 비밀번호 창(codef-seal.ts). 금고가 연 요청 id만.
+    if (typeof x.reqId !== 'string' || !CODEF_REQ_ID_RE.test(x.reqId) || x.kind !== undefined || x.runId !== undefined || x.row !== undefined) return null;
+    return { mode: 'codef', reqId: x.reqId, scope: x.scope };
   }
   if (x.mode !== undefined && x.mode !== 'oneshot') return null;
   if (typeof x.runId !== 'string' || !RUN_ID_RE.test(x.runId)) return null;
@@ -130,12 +136,21 @@ export class Vault {
   readonly human: HumanSecretVault;
   /** 장기 키 연산(D05 §5.1). Chrome과 무관하게 산다. */
   readonly crypto: VaultCrypto;
+  /** 계좌 자동조회(CODEF) 로그인 봉인. Chrome과 무관하게 산다. */
+  readonly codef: CodefSealer;
 
   constructor(opts: VaultOptions) {
     this.opts = opts;
     this.policy = opts.policy ?? defaultRelayPolicy(SECRET_ORIGINS, TYPIST_KEY_DELAY_MS, TYPIST_INPUT_MODE);
     this.crypto = new VaultCrypto({ keyStore: opts.keyStore, log: opts.log });
     this.human = opts.human ?? new HumanSecretVault({ backend: { items: new MemoryItemStore(), wrapper: new MemoryWrapper(), hello: new UnavailableHello() }, log: opts.log });
+    this.codef = new CodefSealer({
+      log: opts.log,
+      store: this.human.codef,
+      readPair: (certId) => readNpkiLoginPair(certId, { roots: this.opts.npki?.roots, fs: this.opts.npki?.fs }),
+      askWindow: (data) => this.emit(['control'], 'secret.needed', data),
+      ttlMs: opts.secretTtlMs,
+    });
     // 잠기면 KEK는 HumanSecretVault가 지운다. main에는 상태만 알린다.
     const wipe = this.human.lock.onLock;
     this.human.lock.onLock = (reason) => {
@@ -160,7 +175,11 @@ export class Vault {
         return;
       }
       // 1회용 입력 창은 금고가 secret.needed로 부른 것만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
-      if (b.mode !== 'store' && !this.hasNeed(b)) {
+      if (b.mode === 'codef' && !this.codef.hasPending(b.reqId, b.scope)) {
+        this.opts.log.event('vault.secret_input_unrequested', { kind: 'codef' });
+        return;
+      }
+      if (b.mode !== 'store' && b.mode !== 'codef' && !this.hasNeed(b)) {
         this.opts.log.event('vault.secret_input_unrequested', { kind: b.kind });
         return;
       }
@@ -254,6 +273,19 @@ export class Vault {
           this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
         },
       );
+      return;
+    }
+    if (bind.mode === 'codef') {
+      try {
+        if (!bytes) throw new Error('bytes required');
+        if (p.scope !== undefined && p.scope !== bind.scope) throw new Error('bind_mismatch');
+        // 값의 주인은 sealer다(감싼 뒤 지운다). 실패하면 sealer가 지운다.
+        this.codef.provide(bind.reqId, bytes, p.remember === true);
+        this.post(port, { t: 'rpc', id: msg.id, result: {} });
+      } catch (e) {
+        bytes?.fill(0);
+        this.post(port, { t: 'rpc', id: msg.id, error: (e as Error).message.slice(0, 80) });
+      }
       return;
     }
     try {
@@ -404,6 +436,18 @@ export class Vault {
         return this.human.account.write(p.token as string);
       case 'account.refresh.forget':
         return { removed: await this.human.account.forget() };
+      case 'codef.seal':
+        return this.codef.seal(p as unknown as CodefSealParams);
+      case 'codef.cancel':
+        this.codef.cancel();
+        return {};
+      case 'codef.windowClosed':
+        this.codef.cancel(typeof p.reqId === 'string' ? p.reqId : '');
+        return {};
+      case 'codef.forget': {
+        if (!isProfileScope(p.scope) || typeof p.certId !== 'string') throw new Error('bad_params');
+        return { removed: await this.codef.forget(p.scope, p.certId) };
+      }
       case 'npki.list':
         return scanNpki({ roots: this.opts.npki?.roots, fs: this.opts.npki?.fs, log: this.opts.log });
       case 'status':

@@ -11,6 +11,7 @@ import {
 } from '../protocol.ts';
 import { ITEM_MAX_BYTES, open, seal, type HelloPrompt, type KeychainBackend } from './backend.ts';
 import { AccountRefreshStore } from './account.ts';
+import { CodefPasswordStore } from './codef.ts';
 import { SessionLock, type SessionLockOptions } from './session.ts';
 
 /** 칸 하나의 평문 상한(보안카드 2~4자리, 포털 비밀번호). 넘으면 거부한다. */
@@ -64,6 +65,8 @@ export class HumanSecretVault {
   private readonly readyP: Promise<void>;
   /** 계정 갱신 토큰(ADR-038 (f)). 같은 키체인·같은 잠금을 쓰지만 사이트 비밀 슬롯·색인과는 따로다. */
   readonly account: AccountRefreshStore;
+  /** 계좌 자동조회 인증서 비밀번호 기억(사장님이 고른 때만, codef.seal만 읽는다) */
+  readonly codef: CodefPasswordStore;
 
   constructor(opts: HumanVaultOptions) {
     this.b = opts.backend;
@@ -82,6 +85,7 @@ export class HumanSecretVault {
       },
     ).finally(() => this.lock.release());
     this.account = new AccountRefreshStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
+    this.codef = new CodefPasswordStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
   }
 
   /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */
