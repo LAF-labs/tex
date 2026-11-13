@@ -15,7 +15,8 @@ export type RunStop =
   /** resumeAt: 사용자가 재개하면 이어서 돌 스텝(비가역 스텝의 실패면 그 verify, D03 §2). */
   | { t: 'handoff'; at: string; resumeAt: string; code: string | null }
   /** 복구 계층(L1·L2, M2-5)이 받는다. 성공하면 실패한 그 스텝부터 다시. */
-  | { t: 'recover'; at: string; code: string }
+  /** cause: 스텝 code로 바뀌기 전의 원래 실패 코드(폴백 사슬이 본다). */
+  | { t: 'recover'; at: string; code: string; cause?: string }
   /** 금고 비밀 창(D05 §3.5). 닫힌 뒤 next부터. */
   | { t: 'human_secret'; at: string; next: string; code: string }
   /** 이 실행기에 핸들러가 없는 스텝(M2-2·M2-3이 붙인다). 그 스텝은 실행하지 않았다. */
@@ -43,6 +44,11 @@ export interface InterpOptions {
   maxStepExecutions?: number;
   /** FORCED_STOPS에 더할 코드(실행 조율기가 스스로 상태를 바꾼 멈춤: 게이트 거부·TTL 등). */
   forcedStops?: ReadonlyMap<string, 'handoff' | 'abort'>;
+  /**
+   * 폴백 사슬(run/fallback.ts): 재시도를 다 쓰고 onFail이 handoff인 실패를 사람에게 넘기기 전에 recover 멈춤으로 바꿀지.
+   * 조율기 recover 훅이 다시 찾기·AI 위치 찾기·체크포인트 재진입을 하고, 다 안 되면 핸드오프한다. 원래 코드(cause)를 받는다.
+   */
+  escalate?: (s: Step, cause: string) => boolean;
 }
 
 export const MAX_STEP_EXECUTIONS = 2_000;
@@ -191,7 +197,9 @@ export class Interpreter {
         await this.env.clock.sleep(delay);
         continue;
       }
-      return this.onFail(s, of.then, this.codes(s, out.code).code);
+      const c = this.codes(s, out.code);
+      if (of.then === 'handoff' && this.opts.escalate?.(s, out.code)) return { t: 'recover', at: s.id, code: c.code, cause: out.code };
+      return this.onFail(s, of.then, c.code);
     }
   }
 

@@ -12,7 +12,6 @@ import { resolveTarget } from './resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from './scope.ts';
 import { isSecretEntry, type EndStep, type SelectorDict, type SelectorEntry, type Step, type StepOf, type StepType, type Strings } from './types.ts';
 import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
-import { locatable, locateTarget, type LocateEnv } from './locate.ts';
 
 export type Outcome =
   | { t: 'next' }
@@ -36,8 +35,6 @@ export interface StepEnv extends CondEnv {
   pollMs: number;
   /** [중지]가 들어왔는가(조율기가 채운다). 기다리는 루프(waitTarget·wait text)가 폴링 때마다 보고 run.stopped로 빠진다. */
   stopRequested?: () => boolean;
-  /** AI 위치 찾기(core/locate.ts). 있으면 fill·click·select가 사전 후보로 못 찾았을 때 사람에게 넘기기 전에 쓴다. dict는 실행 사본이어야 한다. */
-  locate?: LocateEnv;
 }
 
 export type Handler<T extends StepType> = (s: StepOf<T>, env: StepEnv) => Promise<Outcome>;
@@ -68,17 +65,6 @@ export async function waitTarget(env: StepEnv, key: string, timeoutMs: number, o
   }
 }
 
-/**
- * 대상 해석 + AI 위치 찾기 폴백. 사전 후보로 못 찾았고(step.selector_miss) 쓸 수 있는 항목이면 모델 제안을 검사해 받는다.
- * calls는 이 스텝의 모델 호출 수(되읽기가 틀려 다시 찾을 때 같이 센다). located는 폴백으로 찾았는가.
- */
-async function targetOrLocate(s: Step & { target: string }, env: StepEnv, purpose: 'fill' | 'click' | 'select', calls: { n: number }, exclude: string[] = []): Promise<TargetResult & { located?: boolean }> {
-  const t = await waitTarget(env, s.target, timeoutOf(s, env));
-  if (t.ok || t.code !== 'step.selector_miss' || !env.locate || !locatable(env.dict.entries[s.target], s.id, env.irreversible)) return t;
-  const r = await locateTarget({ page: env.page, dict: env.dict, loc: env.locate, stepId: s.id, key: s.target, purpose, calls, exclude });
-  return r ? { ok: true, t: r, located: true } : t;
-}
-
 /** fill.value·select.option: 참조면 읽고, 상수면 타깃의 allowedConstants 안에서만(V-21). */
 function valueOf(raw: string, entry: SelectorEntry, scope: RunScope): { ok: true; value: string | null } | { ok: false; code: string } {
   if (!isRef(raw)) return entry.allowedConstants?.includes(raw) ? { ok: true, value: raw } : { ok: false, code: 'step.constant_not_allowed' };
@@ -104,62 +90,33 @@ const goto: Handler<'goto'> = async (s, env) => {
 const click: Handler<'click'> = async (s, env) => {
   const g = guardIrreversible(s, env);
   if (g) return g;
-  const t = await targetOrLocate(s, env, 'click', { n: 0 });
+  const t = await waitTarget(env, s.target, timeoutOf(s, env));
   return t.ok ? act(env.act.click(t.t)) : fail(t.code);
 };
 
 const fill: Handler<'fill'> = async (s, env) => {
-  const calls = { n: 0 };
-  const tried: string[] = [];
-  for (;;) {
-    const o = await fillOnce(s, env, calls, tried);
-    // AI 위치 찾기로 찾은 칸의 되읽기가 틀리면 그 선택자를 빼고 한 번 더 찾는다(모델 호출은 스텝당 2번까지).
-    if (o.retry && calls.n < 2) {
-      env.locate?.journal('locate.readback_mismatch', { stepId: s.id, key: s.target, selector: o.retry });
-      tried.push(o.retry);
-      continue;
-    }
-    return o.out;
-  }
-};
-
-async function fillOnce(s: StepOf<'fill'>, env: StepEnv, calls: { n: number }, tried: string[]): Promise<{ out: Outcome; retry?: string }> {
-  const out = (o: Outcome) => ({ out: o });
-  const t = await targetOrLocate(s, env, 'fill', calls, tried);
-  if (!t.ok) return out(fail(t.code));
+  const t = await waitTarget(env, s.target, timeoutOf(s, env));
+  if (!t.ok) return fail(t.code);
   const v = valueOf(s.value, t.t.entry, env.scope);
-  if (!v.ok) return out(fail(v.code));
-  // 폴백으로 찾은 선택자(실행 사본 사전의 첫 후보). 되읽기가 틀리면 원래 후보로 되돌리고 다시 찾는다.
-  const located = t.located ? env.dict.entries[s.target]!.candidates[0]! : null;
-  const undo = () => {
-    if (!located) return undefined;
-    const e = env.dict.entries[s.target]!;
-    env.dict.entries[s.target] = { ...e, candidates: e.candidates.slice(1) };
-    return located.kind === 'role' ? `role=${located.role}[name="${located.name}"]` : located.kind === 'css' ? located.value : `label=${located.value}`;
-  };
+  if (!v.ok) return fail(v.code);
   if (v.value === null) {
     // 선택 입력이 비었다. clear면 칸을 비운다(포털 자동 채움 제거, B-05). 그 밖에는 실패(기본 fail).
-    if (s.ifAbsent !== 'clear' || !s.value.startsWith('$inputs.')) return out(fail(s.value.startsWith('$inputs.') ? 'step.input_absent' : 'step.ref_unresolved'));
+    if (s.ifAbsent !== 'clear' || !s.value.startsWith('$inputs.')) return fail(s.value.startsWith('$inputs.') ? 'step.input_absent' : 'step.ref_unresolved');
     const r = await env.act.clear(t.t);
-    if (!r.ok) return out(fail(r.code));
-    if ((await env.page.value(t.t.el)).trim() === '') return out(NEXT);
-    return { out: fail('step.readback_mismatch'), retry: undo() };
+    if (!r.ok) return fail(r.code);
+    return (await env.page.value(t.t.el)).trim() === '' ? NEXT : fail('step.readback_mismatch');
   }
   const r = await env.act.fill(t.t, v.value, { keyEvents: s.keyEvents === true });
-  if (!r.ok) return out(fail(r.code));
+  if (!r.ok) return fail(r.code);
   // 입력 뒤 DOM 값을 되읽어 같은지 확인한다(D02 §4 fill). 값은 남기지 않는다.
   const back = await env.page.value(t.t.el);
-  if (normalizeFieldValue(t.t.entry, back) === normalizeFieldValue(t.t.entry, v.value)) {
-    if (located) env.locate?.journal('locate.verified', { stepId: s.id, key: s.target });
-    return out(NEXT);
-  }
-  return { out: fail('step.readback_mismatch'), retry: undo() };
-}
+  return normalizeFieldValue(t.t.entry, back) === normalizeFieldValue(t.t.entry, v.value) ? NEXT : fail('step.readback_mismatch');
+};
 
 const select: Handler<'select'> = async (s, env) => {
   const g = guardIrreversible(s, env);
   if (g) return g;
-  const t = await targetOrLocate(s, env, 'select', { n: 0 });
+  const t = await waitTarget(env, s.target, timeoutOf(s, env));
   if (!t.ok) return fail(t.code);
   const v = valueOf(s.option, t.t.entry, env.scope);
   if (!v.ok) return fail(v.code);
@@ -288,7 +245,6 @@ export interface StepEnvInput {
   defaultTimeoutMs?: number;
   pollMs?: number;
   pre?: CondEnv['pre'];
-  locate?: LocateEnv;
 }
 
 /** 스텝에 timeoutMs가 없을 때의 기본값과 대기 간격. */
