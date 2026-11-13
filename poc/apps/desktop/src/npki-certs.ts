@@ -1,6 +1,7 @@
 // 온보딩 O-03 공동인증서 목록(D05 §6 (1)~(3), ADR-014 결정 1, D17 §3). 금고 control `npki.list`(#93)가 열거만 하고,
 // 공개 인증서(signCert.der) 해석은 docparse 샌드박스 `certInfo`(#95)가 한다. main은 결과를 스키마로 검증해 표시 행으로만 바꾼다.
 // - 경로(dir·certFile)·주체 전체(subject)는 렌더러·로그·텔레메트리·모델로 보내지 않는다. 렌더러에는 id·소유자 이름·발급자·만료일만 간다.
+// - CN 전체는 names(main 안의 표)에만 담는다. 온보딩에서 고른 인증서의 CN이 프로필 cert_name(DB)으로 간다.
 // - 개인키 파일이 없는 인증서(hasKey=false)·만료된 인증서는 보이되 고를 수 없다.
 // - 로그에는 개수만 남긴다(값 없음).
 import type { CertInfo } from '@sax/docparse';
@@ -95,7 +96,7 @@ const certIssuer = (issuer: string, ca: string): string => (rdnValue(issuer, 'O'
  * 금고 열거 → 샌드박스 해석 → 표시 행. today(YYYY-MM-DD)보다 이전에 만료된 인증서는 고를 수 없다.
  * 금고가 실패하면 빈 목록(온보딩은 "찾지 못했어요"로 이어 간다).
  */
-export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoReader, opts: { today: string; log?: NpkiLog }): Promise<NpkiCert[]> {
+export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoReader, opts: { today: string; log?: NpkiLog; names?: Map<string, string> }): Promise<NpkiCert[]> {
   const r = await control('npki.list', {});
   const { ok, bad } = entries(r);
   const out: NpkiCert[] = [];
@@ -115,6 +116,8 @@ export async function listNpkiCerts(control: VaultControl, readInfo: CertInfoRea
       continue;
     }
     const why = !e.hasKey ? 'no_key' : expiresOn < opts.today ? 'expired' : undefined;
+    // 홈택스 인증서 창 목록의 소유자 칸 글(CN 전체). main 안에서만 들고, 고른 인증서의 것만 프로필 cert_name에 쓴다(H-01 2.3.0이 이 이름으로 행을 고른다)
+    opts.names?.set(e.id, rdnValue(info.subject, 'CN').trim().slice(0, 100));
     out.push({ id: e.id, owner, usage: certIssuer(info.issuer, e.ca), expiresOn, usable: !why, ...(why ? { why } : {}) });
   }
   opts.log?.('main.npki_shown', { listed: ok.length + bad, shown: out.length, unusable: out.filter((c) => !c.usable).length, invalid: invalid + bad });

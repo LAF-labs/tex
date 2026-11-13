@@ -9,21 +9,21 @@ export const COMMANDS = [
   'document.import', 'document.update', 'document.file',
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
-  'profile.setPortalLoginId',
+  'profile.setPortalLoginId', 'profile.setCertName',
   'counterparty.setItems', 'counterparty.getItems',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
  * - bizcert.parse·document.import: main이 docparse 결과를 붙여 부른다(렌더러가 텍스트·바이트를 지어 보낼 수 없다).
  * - document.file: 보관함 파일 경로를 돌려준다(main이 기본 뷰어로 열 때만, 렌더러에는 경로를 주지 않는다).
- * - consent.*·onboarding.*·profile.setPortalLoginId: 온보딩 저장소(db #53). 동의 기록·이어 하기 상태·금고 등록 결과의 포털 로그인 ID는
+ * - consent.*·onboarding.*·profile.setPortalLoginId·profile.setCertName: 온보딩 저장소(db #53). 동의 기록·이어 하기 상태·금고 등록 결과의 포털 로그인 ID는
  *   main의 온보딩 흐름만 쓴다(렌더러가 동의 시각·출처를 지어 보낼 수 없다).
  */
 export const MAIN_ONLY: readonly (typeof COMMANDS)[number][] = [
   'bizcert.parse', 'document.import', 'document.file',
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
-  'profile.setPortalLoginId',
+  'profile.setPortalLoginId', 'profile.setCertName',
 ];
 /**
  * 급여대장·세무사 꾸러미·S-06 조회와 명령(팀장 결정 2026-11-06, ADR-031·032·034). 처리는 @sax/bundle BundleService(엔진 프로세스)다.

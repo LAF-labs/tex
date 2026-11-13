@@ -604,3 +604,48 @@ function docPreview() {
     ),
   );
 }
+
+/**
+ * 홈택스 공동인증서 프로그램(MagicLine4NX) 안내 한 화면(B4). st: main security.check 결과, ops: { install, start, check }(각각 main 호출 → 새 상태).
+ * 없음이면 [설치 파일 받기](홈택스 공식 파일을 기본 브라우저로), 꺼짐이면 [켜기], 둘 다 [다시 확인]. 괜찮아지면 onOk를 부르고 사라진다.
+ */
+export function securityBox(st, ops, onOk) {
+  const box = h('div', { class: 'sx-note is-attention onb-security', 'data-security': st.state });
+  const draw = (s) => {
+    box.dataset.security = s.state;
+    box.replaceChildren();
+    if (s.state !== 'missing' && s.state !== 'stopped') {
+      box.remove();
+      onOk?.(s);
+      return;
+    }
+    const missing = s.state === 'missing';
+    const run = (fn) => async () => {
+      try {
+        const r = await fn();
+        if (r && r.state) draw(r);
+      } catch {
+        /* 버튼만 다시 누르게 둔다 */
+      }
+    };
+    box.append(
+      icon('info'),
+      h(
+        'div',
+        {},
+        h('b', {}, missing ? '홈택스 공동인증서 프로그램이 이 PC에 없어요' : '홈택스 공동인증서 프로그램이 꺼져 있어요'),
+        h('p', { class: 'sx-body-sm' }, missing ? `홈택스에서 공동인증서로 로그인·서명하려면 ${s.name}이 있어야 해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.` : `${s.name}을 켜야 홈택스가 이 PC의 인증서를 읽어요.`),
+        missing && s.installUrl ? h('div', { class: 'sx-meta' }, s.installUrl) : null,
+        h(
+          'div',
+          { class: 'sx-actions' },
+          missing && s.installUrl ? btn('설치 파일 받기', run(async () => (await ops.install(), null)), 'sx-btn-primary', { 'data-act': 'security-install' }) : null,
+          !missing && s.canStart ? btn('켜기', run(ops.start), 'sx-btn-primary', { 'data-act': 'security-start' }) : null,
+          btn('다시 확인', run(ops.check), '', { 'data-act': 'security-check' }),
+        ),
+      ),
+    );
+  };
+  draw(st);
+  return box;
+}

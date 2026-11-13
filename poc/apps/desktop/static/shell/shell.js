@@ -7,7 +7,7 @@ import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -422,6 +422,10 @@ const onbAct = {
   go: (v) => go(v),
   toast,
   rerender: () => renderOnboarding(),
+  // securityOps는 아래에서 정의된다(모듈 평가 순서): 쓸 때 읽는다
+  get security() {
+    return securityOps;
+  },
 };
 /** 온보딩 영역을 지금 상태로 다시 그린다. 약관(④) 동의 전에는 입력창을 막는다(main도 onboarding_terms로 거부한다). */
 function renderOnboarding() {
@@ -460,8 +464,31 @@ function chromeGuide() {
   appendThread(box);
 }
 
+/** 보안 프로그램(MagicLine4NX) 점검·설치·켜기를 main에 묻는다(B4). 온보딩 [홈택스 인증서] 카드와 대화 안내가 같이 쓴다. */
+const securityOps = {
+  check: () => call('security.check'),
+  install: () => call('security.install'),
+  start: () => call('security.start'),
+};
+/** 보안 프로그램 안내(B4): 대화에 한 번만 둔다. 괜찮아지면 사라지고 알린다. */
+async function securityGuide() {
+  if (state.view !== 'chat') go('chat');
+  chat.thread.querySelector('[data-security-guide]')?.remove();
+  let st;
+  try {
+    st = await call('security.check');
+  } catch {
+    return toast('다시 해 주세요');
+  }
+  if (st.state !== 'missing' && st.state !== 'stopped') return toast('보안 프로그램이 준비돼 있어요');
+  const wrap = h('div', { class: 'sx-app', 'data-security-guide': '' });
+  wrap.append(securityBox(st, securityOps, () => (wrap.remove(), toast('보안 프로그램이 준비됐어요. 이제 발급을 요청할 수 있어요.'))));
+  appendThread(wrap);
+}
+
 async function reopenSetup(item) {
   if (item === 'chrome') return chromeGuide();
+  if (item === 'security') return securityGuide();
   try {
     const r = await call('onboarding.reopen', { item });
     state.onb = r.onboarding;
@@ -849,7 +876,7 @@ function renderToday() {
   const items = b ? b.cards.flatMap((c) => c.items) : [];
   const setup = b?.setup ?? [];
   const setupRow = setup.length
-    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' || x.id === 'chrome' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
+    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' || x.id === 'chrome' || x.id === 'security' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
     : null;
   const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
   const counts = b

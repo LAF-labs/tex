@@ -1,14 +1,14 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
 // - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 발급 인증은 발급할 때 사람이 홈택스 창에서 직접 마친다.
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
-import { btn, fmtBiz, h, kv, note } from './shell-views.js';
+import { btn, fmtBiz, h, kv, note, securityBox } from './shell-views.js';
 
 const Q = {
-  terms: '시작하기 전에 약관과 처리방침을 확인해 주세요.',
+  terms: '시작하기 전에 약관과 AI 모델 이용을 확인해 주세요.',
   welcome: '세금계산서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
-  'biz-number': '사업자번호를 알려 주세요.',
+  'biz-number': '상호와 사업자번호를 알려 주세요.',
   'biz-confirm': '등록 내용을 확인해 주세요.',
-  auth: '세금계산서를 발급할 때 어떤 인증을 쓰세요? 한 번 고르면 모든 발급에 쓰고, 설정에서만 바꿔요.',
+  auth: '홈택스에 로그인하고 세금계산서에 서명할 공동인증서를 골라 주세요. 비밀번호는 첫 발급 때 금고 창에서 한 번만 받아요.',
   delegation: '보안카드를 쓰려면 먼저 이 PC 금고에 등록해야 해요.',
   model: '대화는 AI 모델로 해석해요. 아래 내용을 확인하고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주시겠어요? 안 보내도 돼요.',
@@ -22,7 +22,7 @@ const Q = {
 const AUTH = [
   ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
   ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
-  ['cert', '공동인증서', '발급할 때마다 인증서 비밀번호를 직접 넣어요. 이 PC에서 찾은 인증서에서 골라요.'],
+  ['cert', '공동인증서', '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면, 다음부터는 앱이 넣어요.'],
   ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
@@ -95,14 +95,16 @@ function stepCard(o, act) {
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
     case 'biz-number': {
+      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호' });
       const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호' });
       const form = h(
         'form',
-        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), reply('submit', { fields: { bizNo: input.value } })) },
+        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), reply('submit', { fields: { name: name.value, bizNo: input.value } })) },
+        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
-      return card('사업자번호로 등록', notice, p('상호 등 나머지는 다음 화면에서 채워요.', true), form);
+      return card('사업자번호로 등록', notice, p('대표자·주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
     }
     case 'biz-confirm':
       return bizCard(o, u, reply, act);
@@ -142,7 +144,7 @@ function consentCard(o, reply) {
     delegation: [btn('동의하고 금고 창 열기', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' }), btn('다른 인증으로 바꾸기', () => reply('switch'), '', { 'data-onb': 'switch' })],
   }[o.step];
   const table =
-    o.step === 'model' && o.config
+    (o.step === 'model' || o.step === 'terms') && o.config
       ? h(
           'table',
           { class: 'onb-table', 'data-processors': o.config.processorsVersion },
@@ -231,54 +233,66 @@ function bizCard(o, u, reply, act) {
   );
 }
 
+/**
+ * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 먼저 보이고 하나 고르면 끝(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
+ * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·간편인증·금융인증서)은 [다른 방법]에 접어 둔다.
+ */
 function authCard(o, u, reply, act) {
   const today = new Date();
   const soon = (c) => (new Date(`${c.expiresOn}T00:00:00`) - today) / 86_400_000 <= 30;
-  const opts = AUTH.map(([k, label, line]) =>
+  const usable = (c) => c.usable !== false;
+  if (!u.certId) u.certId = o.certs.find(usable)?.id ?? null;
+  const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
+  const certRow = (c) =>
     h(
       'button',
-      { type: 'button', class: `sx-opt onb-auth${k === 'cert' && u.showCerts ? ' is-on' : ''}`, 'data-onb': k, 'aria-pressed': String(k === 'cert' && u.showCerts), onclick: () => (k === 'cert' ? ((u.certId = u.certId ?? o.certs.find((c) => c.usable !== false)?.id ?? null), (u.showCerts = true), act.rerender()) : reply(k)) },
+      { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
       h('span', { class: 'sx-radio' }),
-      h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line)),
-    ),
-  );
-  const usable = (c) => c.usable !== false;
-  const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
-  const certs =
-    u.showCerts &&
-    h(
-      'div',
-      { class: 'onb-certs', 'data-onb-certs': '' },
-      o.certs.length
-        ? [
-            ...o.certs.map((c) =>
-              h(
-                'button',
-                { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
-                h('span', { class: 'sx-radio' }),
-                h(
-                  'span',
-                  { class: 'onb-auth-main' },
-                  h('b', {}, `${c.owner} · ${c.usage}`),
-                  h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
-                ),
-              ),
-            ),
-            h('div', { class: 'sx-actions' }, btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId })),
-          ]
-        : p('이 PC에서 공동인증서를 찾지 못했어요. 다른 수단을 고르거나 인증서를 옮긴 뒤 다시 해 주세요.', true),
+      h(
+        'span',
+        { class: 'onb-auth-main' },
+        h('b', {}, `${c.owner} · ${c.usage}`),
+        h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
+      ),
     );
-  const explain = o.explain
-    ? note('어느 인증이든 발급할 때마다 홈택스 창에서 직접 마쳐요. 간편인증은 휴대폰에서 승인하고, 공동·금융인증서는 인증서 비밀번호를, 보안카드는 보안카드 번호를 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요.` : null)
+  const any = o.certs.some(usable);
+  const certs = h(
+    'div',
+    { class: 'onb-certs', 'data-onb-certs': '' },
+    ...(o.certs.length ? o.certs.map(certRow) : [note('이 PC에서 공동인증서를 찾지 못했어요. 인증서를 이 PC로 옮긴 뒤 다시 열거나, [다른 방법]으로 발급할 수 있어요.', true)]),
+  );
+  const other = u.showCerts
+    ? h(
+        'div',
+        { class: 'onb-opts', 'data-onb-other': '' },
+        ...AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
+          h('button', { type: 'button', class: 'sx-opt onb-auth', 'data-onb': k, onclick: () => reply(k) }, h('span', { class: 'sx-radio' }), h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line))),
+        ),
+      )
     : null;
+  // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다
+  const sec = h('div', { 'data-onb-security': '' });
+  if (act.security)
+    act.security
+      .check()
+      .then((st) => {
+        if (st.state === 'missing' || st.state === 'stopped') sec.append(securityBox(st, act.security, () => act.toast('보안 프로그램이 준비됐어요')));
+      })
+      .catch(() => {});
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '발급 인증')),
-    explain,
-    h('div', { class: 'onb-opts' }, ...opts),
-    certs || null,
-    h('div', { class: 'sx-actions' }, btn('잘 모르겠어요', () => reply('unsure'), '', { 'data-onb': 'unsure', disabled: o.explain }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
+    sec,
+    certs,
+    h(
+      'div',
+      { class: 'sx-actions' },
+      any ? btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId }) : null,
+      btn(u.showCerts ? '다른 방법 접기' : '다른 방법', () => ((u.showCerts = !u.showCerts), act.rerender()), any ? '' : 'sx-btn-primary', { 'data-onb': 'other' }),
+      btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
+    ),
+    other,
   );
 }
 
