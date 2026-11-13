@@ -107,7 +107,7 @@ export const PORTAL_LOGIN_ID_MAX = 64;
  * 1회용 비밀 입력 결속(I-1, N-44). main이 secretInput 포트를 넘길 때 함께 준다.
  * 금고는 이 포트에서 이 값으로 secret.provide를 한 번만 받는다. 결속이 없거나 틀리면 포트를 붙이지 않는다.
  * `mode`가 없으면 oneshot이다(PoC 호환).
- * - kind는 TYPIST_KINDS만(인증서 비밀번호 없음). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
+ * - kind는 TYPIST_KINDS와, 금고가 부른 cert_password(row 없음, 앱 입력 창). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
  * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope, row?}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
  *   요청은 SECRET_TTL_MS 동안 살아 있고, 값을 받거나 run.end면 지운다. 요청 없는 결속은 `vault.secret_input_unrequested`.
  */

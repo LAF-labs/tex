@@ -21,6 +21,13 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 .tb-co { font-weight: 600; color: var(--ink); background: transparent; border: 0; padding: 4px 8px; border-radius: var(--radius-md); display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; line-height: 20px; }
 .tb-co:hover, .tb-co[aria-expanded=true] { background: var(--surface-sunken); }
 .tb-co svg { width: 10px; height: 10px; }
+.tb-browser { margin-left: auto; order: 99; -webkit-app-region: no-drag; color: var(--ink); background: transparent; border: 1px solid var(--line); padding: 3px 10px; border-radius: var(--radius-md); cursor: pointer; font-size: 13px; line-height: 20px; }
+.tb-browser:hover:not(:disabled), .tb-browser[aria-pressed=true] { background: var(--surface-sunken); }
+.tb-browser[aria-pressed=true] { border-color: var(--accent, var(--ink)); }
+.tb-browser:disabled { opacity: .45; cursor: default; }
+/* [브라우저] 자리: 실행 중이면 패널을 홈택스가 넓은 배치로 뜨는 폭(720px)까지 넓힌다. Chrome은 주소 줄 아래 패널에 정확히 겹친다. */
+body.browser-live .frame { grid-template-columns: var(--l-rail) minmax(0, 1fr) max(var(--l-panel), 720px); }
+.browser-addr { position: sticky; top: 0; z-index: 2; height: 32px; box-sizing: border-box; padding: 6px 12px; font-size: 12px; line-height: 20px; color: var(--ink-3); background: var(--surface-sunken); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono, ui-monospace, monospace); user-select: text; }
 .menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 240px; padding: 6px; display: grid; gap: 2px; background: var(--surface-overlay); border-radius: var(--radius-lg); box-shadow: var(--shadow-overlay); }
 .menu-label { font-size: 12px; line-height: 16px; color: var(--ink-3); padding: 6px 8px 4px; }
 .menu-item { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 6px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink); font-size: 14px; text-align: left; cursor: pointer; }

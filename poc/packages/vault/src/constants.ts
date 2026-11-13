@@ -23,7 +23,29 @@ export const CHROME_ARG_ALLOWLIST = [
   '--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps',
   // 홈택스 Chrome이 앱 뒤에 가려져도(#305) 렌더러·타이머를 늦추지 않는다(부장 지시 2026-11-13).
   '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+  // 창 없는 Chrome(대표 요청 2026-11-13 "크롬이 아예 안 뜨게"). 진행은 앱 패널 중계(B3)로 본다. 사람이 페이지를 만져야 할 때만 창 있는 Chrome으로 다시 띄운다.
+  '--headless', '--window-size',
+  // 실행 창을 앱 모드로(탭줄·주소창 없음, 대표 지시 2026-11-13 "앱 안 브라우저처럼"). 시작 문서는 CHROME_APP_START_URL 고정. 기본 브라우저 확인 안내 끔.
+  '--app', '--no-default-browser-check',
 ] as const;
+/**
+ * 앱 모드 창의 시작 문서. 금고가 이 창(탭줄·주소창 없음)을 실행 탭으로 쓴다(relay createRunPage). 페이지는 최상위 data: 문서를 열 수 없으니
+ * 금고가 연 것이 아닌 data: 창이 실행 탭으로 잡힐 일은 없다. 제목은 창 제목줄에 잠깐 보인다.
+ */
+export const CHROME_APP_START_URL = 'data:text/html;charset=utf-8,%3Ctitle%3E%ED%99%88%ED%83%9D%EC%8A%A4%3C%2Ftitle%3E';
+/**
+ * 창 없는 Chrome 인자(설치된 Chrome의 new headless, 같은 전용 프로필). 창 크기를 정하지 않으면 800x600이라 홈택스가 좁은 화면 배치로 뜬다
+ * (셀렉터 사전·캡처는 데스크톱 폭 기준, 2026-11-13 측정). 중계 화면도 이 크기다.
+ */
+export const CHROME_HEADLESS_ARGS = ['--headless=new', '--window-size=1400,1000'] as const;
+/**
+ * 이 PC의 보안 프로그램(공동인증서 MagicLine4NX, 127.0.0.1)에 닿아도 되는 출처. 실행 때 금고가 Chrome에 이 출처만 loopback 권한을 준다.
+ * headless에는 Chrome 허용 말풍선을 띄울 곳이 없어 거부되고 홈택스가 "보안프로그램 설치"를 띄운다(측정 2026-11-13, Chrome 157).
+ * 창 있는 Chrome에서도 같은 말풍선을 사람이 누르지 않게 미리 준다. 이름은 Chrome 157의 PermissionDescriptor(loopback-network),
+ * 옛 Chrome은 local-network-access 하나였다.
+ */
+export const LOOPBACK_ORIGINS = ['https://hometax.go.kr'] as const;
+export const LOOPBACK_PERMISSION_NAMES = ['loopback-network', 'local-network-access'] as const;
 export const FORBIDDEN_CHROME_ARGS = ['--remote-debugging-port', '--remote-allow-origins', '--no-sandbox', '--disable-extensions'];
 
 /** Chrome 자식 프로세스 환경 변수 화이트리스트(디버그·로깅·프록시 변수 제거). */
@@ -176,6 +198,17 @@ export type VaultEvent =
   | 'vault.account_refresh_stored' | 'vault.account_refresh_forgotten' | 'vault.account_refresh_write_failed' | 'vault.account_refresh_corrupt';
 
 /** 전용 프로필 Preferences 필수 값(D05 §3.6). */
+/**
+ * Chrome 자체 안내를 끈다(대표 지시 2026-11-13: 앱 안 브라우저처럼). 동기화 로그인 안내, 기본 브라우저 확인, 번역 말풍선 같은 것이다.
+ * 기록만 하고 비밀 창 개시 조건(verifyProfileSettings)에는 넣지 않는다. Chrome이 판에 따라 값을 고쳐 써도 발급이 멈추지 않게.
+ */
+export const QUIET_PREFERENCES: Array<[string, unknown]> = [
+  ['signin.allowed', false],
+  ['browser.check_default_browser', false],
+  ['translate.enabled', false],
+  ['browser.show_home_button', false],
+  ['search.suggest_enabled', false],
+];
 export const REQUIRED_PREFERENCES: Array<[string, unknown]> = [
   ['credentials_enable_service', false],
   ['profile.password_manager_enabled', false],

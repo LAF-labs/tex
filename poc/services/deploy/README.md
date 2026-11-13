@@ -52,7 +52,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 | 서비스 | 이름(`<서비스>__` 접두) |
 |---|---|
 | 계정 `ACCOUNT__` | `DATABASE_URL` ⚿, `TOKEN_SIGNING_SEED` ⚿, `TOKEN_KID`, `CODE_MAC_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `ACCT_CLAIM_SIGNING_KEY` ⚿(`TOKEN_SIGNING_SEED`와 다른 값, 아래 3절 3.10), `ACCOUNT_PUBLIC_ORIGIN`, `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINS`, `BILLING_RETURN_URL`, `PG_PROVIDER`(`mock`), `MOCK_PG_SECRET` ⚿, `MAIL_PROVIDER`(`mock`, SES를 켤 때만 `ses`, 3절 6번·아래 ⑤), `SES_FROM_ADDRESS`·`SES_ACCESS_KEY_ID` ⚿·`SES_SECRET_ACCESS_KEY` ⚿(`MAIL_PROVIDER=ses`일 때만), `STOP_HOOK_URLS`, `RELAY_INTERNAL_URL`, `PASSWORD_PEPPER_KEYS` ⚿(선택, 없으면 비밀번호 로그인만 닫힘, 아래 3절 3.11) |
-| 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE`, `CODEF_ENV`(`demo`·`prod`, 없으면 계좌 자동조회 꺼짐), `CODEF_CLIENT_ID` ⚿, `CODEF_CLIENT_SECRET` ⚿, `CODEF_PUBLIC_KEY` |
+| 게이트웨이 `GATEWAY__` | `DATABASE_URL` ⚿, `GATEWAY_PUBLIC_ORIGIN`, `RUN_TOKEN_SEED` ⚿, `LIMIT_ID_KEY` ⚿, `CACHE_KEY_SECRET` ⚿, `SAFETY_ID_KEY` ⚿, `REPLAY_TAG_KEY` ⚿, `RUN_SCOPE_KEY` ⚿, `GW_PROVIDER`(`openai+openrouter`), `OPENAI_API_KEY` ⚿, `OPENROUTER_API_KEY` ⚿, `OPENROUTER_ZDR`, `OPENROUTER_DATA_COLLECTION`, `OPENROUTER_PROVIDERS`, `MODEL_DECIDE`, `MODEL_RESPOND`, `MODEL_AGENT`(선택), `GW_MONTHLY_TOKENS`, `GW_PRICES_JSON`, `NTS_PROVIDER`(`odcloud`), `NTS_BIZ_API_KEY` ⚿, `NTS_BIZ_API_BASE`, `CODEF_ENV`(`demo`·`prod`, 없으면 계좌 자동조회 꺼짐), `CODEF_CLIENT_ID` ⚿, `CODEF_CLIENT_SECRET` ⚿, `CODEF_PUBLIC_KEY` |
 | 릴레이 `RELAY__` | `DATABASE_URL` ⚿, `QUEUE_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `RELAY_PUBLIC_ORIGIN` |
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
 | 레지스트리 `REGISTRY__` | `TRUST_ROOT_JSON`(공개 값, 서명 의식 뒤), `REGISTRY_LOG_SIGNING_KEY` ⚿, `REGISTRY_ADMIN_TOKEN` ⚿, `DATABASE_URL` ⚿(`sax_registry`), `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` ⚿, `S3_SECRET_ACCESS_KEY` ⚿. 7절 |
@@ -124,6 +124,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
   - `2026110601…`: 레지스트리 투명성 로그(`20261106010000_sax_roles_registry.sql` + `20261106010100_sax_registry.sql`). 운영에 적용됨(#161).
   - `2026110602…`: 계정 마이그레이션 002(ADR-038 비밀번호·갱신 토큰, `20261106020100_sax_account.sql`). 역할 파일 없음(역할은 그대로). 기존 세션은 옮겨진다(만료 시각 유지). 운영에 적용됨(#180).
   - `2026110700…`: 계정 마이그레이션 003(알림 메일 발송 큐 `notice_outbox`, `20261107000100_sax_account.sql`). 역할 파일 없음. 새 표 하나와 색인뿐이라 기존 행은 바뀌지 않는다. **코드보다 먼저 적용한다**(새 코드는 잠금 때 이 표에 쓴다).
+  - `2026111300…`: 게이트웨이 마이그레이션 002(`run_scopes.agent_calls`, `20261113000100_sax_gateway.sql`). 역할 파일 없음. 열 하나를 기본값 0으로 더할 뿐이라 기존 행은 그대로다. **게이트웨이 코드보다 먼저 적용한다**(새 코드는 예산 확인 때 이 열을 읽는다).
 - **증분 내보내기**: 적용된 단계의 파일은 바꾸지 않는다(Supabase는 파일 이름으로 적용 여부를 기억한다). 시험이 적용된 단계 파일의 SHA-256을 고정한다. 새 서비스나 새 마이그레이션은 `SUPABASE_PHASES`(`services/shared/src/supabase.ts`)에 새 단계로 더한다.
 
 ```bash

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { REQUIRED_LOCAL_STATE, REQUIRED_PREFERENCES } from '../constants.ts';
+import { REQUIRED_LOCAL_STATE, QUIET_PREFERENCES, REQUIRED_PREFERENCES } from '../constants.ts';
 
 type Json = Record<string, unknown>;
 
@@ -38,7 +38,7 @@ const localStateFile = (dir: string) => path.join(dir, 'Local State');
 export async function writeProfileSettings(profileDir: string, extra: Array<[string, unknown]> = []): Promise<void> {
   await fs.mkdir(path.join(profileDir, 'Default'), { recursive: true, mode: 0o700 });
   const prefs = await readJson(prefsFile(profileDir));
-  for (const [k, v] of [...REQUIRED_PREFERENCES, ...extra]) setPath(prefs, k, v);
+  for (const [k, v] of [...REQUIRED_PREFERENCES, ...QUIET_PREFERENCES, ...extra]) setPath(prefs, k, v);
   await fs.writeFile(prefsFile(profileDir), JSON.stringify(prefs), { mode: 0o600 });
   const ls = await readJson(localStateFile(profileDir));
   for (const [k, v] of REQUIRED_LOCAL_STATE) setPath(ls, k, v);

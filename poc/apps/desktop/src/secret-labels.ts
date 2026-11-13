@@ -99,7 +99,7 @@ export function secretPageHtml(req: SecretInputBind, profileName: string): strin
 <body data-kind="${req.kind}" data-scope="${req.scope}"${req.row ? ` data-row="${req.row}"` : ''}>
 <p class="ctx">${esc(`세금계산서 발급 · 홈택스 · ${profileName}`)}</p>
 <form id="f">${head}<input id="v" type="password" autocomplete="off" spellcheck="false" autofocus><button>금고에 넘기기</button></form>
-<p class="note">이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.</p>
+<p class="note">${esc(req.kind === 'cert_password' ? '이 창의 입력은 금고로 바로 가요. 이 PC 금고에 기억해 두고 다음 발급부터는 묻지 않아요.' : '이 창의 입력은 금고로 바로 가요. 저장하지 않고 이번 실행에서 한 번만 써요.')}</p>
 <p class="note">${esc(SECRET_FIXED_NOTE)}</p>
 <p id="msg" role="status"></p><script src="secret.js"></script></body></html>`;
 }

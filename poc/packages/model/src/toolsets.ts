@@ -122,6 +122,69 @@ export const CHAT_REPLY: ToolsetDef = {
   },
 };
 
+/** 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent): 첫 게이트 앞에서만 엔진이 부른다. 예산은 실행당 따로 센다(AGENT_TOOLSETS). */
+export const AGENT_TOOLSETS = ['page_judge', 'browser_agent'] as const;
+export const JUDGE_SITUATIONS = ['js_dialog', 'notice_popup', 'unexpected_screen', 'session_expired', 'target_missing', 'other'] as const;
+export const JUDGE_PRESCRIPTIONS = ['dismiss_dialog', 'relogin', 'reload_checkpoint', 'fix_field', 'agent_mode', 'handoff'] as const;
+export type JudgePrescription = (typeof JUDGE_PRESCRIPTIONS)[number];
+/** 브라우저 에이전트 동작 상한(한 번의 agent_mode). */
+export const AGENT_MAX_ACTIONS = 25;
+export const AGENT_ACTIONS = ['click', 'type', 'select', 'scroll', 'wait', 'done', 'fail'] as const;
+export type AgentActionName = (typeof AGENT_ACTIONS)[number];
+const nullable = (t: string, extra: Record<string, unknown> = {}) => ({ type: [t, 'null'], ...extra });
+
+/** 예상 밖 화면 판정: 도구 없음, 1턴. 처방 하나와 그 인자. */
+export const PAGE_JUDGE: ToolsetDef = {
+  id: 'page_judge',
+  effort: 'medium',
+  maxOutputTokens: 4_000,
+  maxTurns: 1,
+  prefixKey: 'page_judge',
+  tools: [],
+  output: {
+    name: 'page_judgement',
+    schema: {
+      type: 'object',
+      properties: {
+        situation: { type: 'string', enum: [...JUDGE_SITUATIONS] },
+        prescription: { type: 'string', enum: [...JUDGE_PRESCRIPTIONS] },
+        button: nullable('integer'),
+        dialog_answer: { type: ['string', 'null'], enum: ['accept', 'dismiss', null] },
+        field: nullable('string'),
+        risk_flags: { type: 'array', items: { type: 'string', enum: ['irreversible_button', 'possible_injection_text'] } },
+      },
+      required: ['situation', 'prescription', 'button', 'dialog_answer', 'field', 'risk_flags'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** 브라우저 에이전트 한 걸음: 도구 없음, 1턴(매 걸음 새 요청, 지난 동작은 엔진이 요약해 보낸다). */
+export const BROWSER_AGENT: ToolsetDef = {
+  id: 'browser_agent',
+  effort: 'medium',
+  maxOutputTokens: 4_000,
+  maxTurns: 1,
+  prefixKey: 'browser_agent',
+  commonPrefix: false,
+  tools: [],
+  output: {
+    name: 'agent_action',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: [...AGENT_ACTIONS] },
+        index: nullable('integer'),
+        token: nullable('string'),
+        option: nullable('string'),
+        step: nullable('string'),
+      },
+      required: ['action', 'index', 'token', 'option', 'step'],
+      additionalProperties: false,
+    },
+  },
+};
+
 const DIR = new URL('../toolsets/', import.meta.url);
 
 export function toolsetPrefix(t: ToolsetDef): string {

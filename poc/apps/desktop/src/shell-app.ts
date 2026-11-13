@@ -10,7 +10,7 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { findInstalledChrome } from '@sax/vault';
+import { findInstalledChrome, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -37,7 +37,6 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { chromeBeside } from './chrome-layout.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
@@ -601,10 +600,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 진행 화면(B3): 금고가 중계한 실행 탭 화면을 지금 실행 패널로만 보낸다(보기 전용, 저장하지 않는다).
     if (name === 'screen.frame' || name === 'screen.paused') {
       if (!mirrorRun) return;
-      const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; paused?: unknown };
+      const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; url?: unknown; paused?: unknown };
       if (name === 'screen.paused') return send({ type: 'screen', runId: mirrorRun, paused: d.paused === true });
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
-      return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0 });
+      return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
     }
     const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
     if (cr) return openCodef(cr);
@@ -1000,12 +999,53 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
 
-  /**
-   * [홈택스 창 보기]: 진행 중인 실행의 Chrome 창(금고가 띄운 실행 탭)을 앞으로. 금고가 그 탭에 Page.bringToFront(맥에서 Chrome 앱도 앞으로 온다, 2026-11-12 측정).
-   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수만 browser.focus 하나를 부른다.
-   */
   /** 진행 화면을 받는 실행(하나). */
   let mirrorRun: string | null = null;
+
+  /**
+   * 실행 Chrome 자리(대표 지시 2026-11-13 "claude desktop처럼 버튼을 누르면 브라우저가 보이게"). Chrome은 창 있는 그대로 띄우고,
+   * 평소에는 앱 창 바로 뒤 브라우저 패널(#panel) 자리에 둔다(진행은 #312 중계로 패널에 보인다. 가려져도 프레임이 온다, 최소화하지 않는다).
+   * [브라우저] 토글·[홈택스 창 보기]·사람 차례에는 같은 자리에 앞으로 올려 앱 안에 브라우저가 열린 것처럼 보이게 한다(그대로 클릭·입력).
+   * 다시 누르거나 앱의 다른 곳을 누르면 앱이 앞으로 온다(Chrome은 뒤 그 자리). 앱 창을 옮기거나 크기를 바꾸면 Chrome이 따라간다.
+   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수들만 browser.place를 부른다.
+   */
+  let browserShown = false;
+  let browserAvailable = false;
+  /** 앱이 포커스를 받아 Chrome이 뒤로 간 시각(토글 클릭이 그 포커스와 겹치면 다시 띄우지 않는다). */
+  let appFocusedAt = 0;
+  const sendBrowserState = () => send({ type: 'browser', shown: browserShown, available: browserAvailable });
+  /**
+   * 브라우저 자리의 화면 좌표: 패널(#panel)에서 위 주소 줄(#browser-addr)을 뺀 나머지. 패널 바깥으로 넘치지 않는다.
+   * 폭은 렌더러가 실행 중 패널을 넓혀 맞춘다(shell.css body.browser-live, 720px). 주소 줄이 아직 없으면 패널 전체.
+   */
+  const panelRect = async (): Promise<{ x: number; y: number; width: number; height: number } | null> => {
+    if (win.isDestroyed()) return null;
+    const c = win.getContentBounds();
+    const r = (await win.webContents.executeJavaScript(`(() => { const e = document.querySelector('#panel'); if (!e) return null; const b = e.getBoundingClientRect(); const a = document.getElementById('browser-addr'); const top = a ? Math.max(b.top, a.getBoundingClientRect().bottom) : b.top; return b.width > 0 && b.bottom - top > 0 ? { x: b.left, y: top, w: b.width, h: b.bottom - top } : null; })()`).catch(() => null)) as { x: number; y: number; w: number; h: number } | null;
+    if (!r) return null;
+    const x = Math.round(c.x + r.x);
+    const y = Math.round(c.y + r.y);
+    return { x, y, width: Math.round(c.x + r.x + r.w) - x, height: Math.max(200, Math.round(c.y + r.y + r.h) - y) };
+  };
+  /** Chrome을 패널 자리로. front면 앞으로(앱 안 브라우저처럼), 아니면 그 자리 뒤에 두고 앱을 앞으로(appFront일 때만). */
+  const placeRunBrowser = async (front: boolean, appFront = true): Promise<boolean> => {
+    const at = await panelRect();
+    if (!at) return false;
+    const r = (await host.control('browser.place', { ...at, front }).catch(() => null)) as { placed?: unknown } | null;
+    if (r?.placed !== true) return false;
+    browserAvailable = true;
+    if (!front && appFront) {
+      if (process.platform === 'darwin') app.focus({ steal: true });
+      win.moveTop();
+      win.focus();
+    }
+    if (browserShown !== front || !front) {
+      browserShown = front;
+      sendBrowserState();
+    }
+    log.event('main.chrome_placed', { front, width: at.width });
+    return true;
+  };
   const showRunBrowser = async (id: string) => {
     if (!runs.isActive(id)) throw new Error('not_running');
     if (await placeRunBrowser(true)) return { focused: true };
@@ -1013,30 +1053,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (r?.focused !== true) throw new Error('no_browser');
     return { focused: true };
   };
-
-  /**
-   * 홈택스 Chrome 창 자리(대표 요청 2026-11-13: "크롬이 우리 앱을 가리지 않았으면"). chrome-layout.ts가 앱 옆 자리를 정하고 금고가 Browser.setWindowBounds로 옮긴다.
-   * front=false(실행 시작): Chrome은 앱 옆에 두고 앱을 다시 앞으로. 맥에서 Chrome을 띄우면 Chrome이 앞으로 오므로 한 번 되돌린다.
-   * front=true(사람 차례·[홈택스 창 보기]): 앱과 나란히 놓고 Chrome을 앞으로. 이때만 앱 창을 왼쪽으로 옮긴다.
-   */
-  const placeRunBrowser = async (front: boolean): Promise<boolean> => {
-    if (win.isDestroyed()) return false;
-    const appRect = win.getBounds();
-    const work = screen.getDisplayMatching(appRect).workArea;
-    const at = chromeBeside(work, appRect);
-    const r = (await host.control('browser.place', { ...at.chrome, front }).catch(() => null)) as { placed?: unknown } | null;
-    if (r?.placed !== true) return false;
-    if (front) {
-      if (win.isMaximized()) win.unmaximize();
-      if (win.isFullScreen()) win.setFullScreen(false);
-      if (at.app !== appRect) win.setBounds(at.app);
-    } else {
-      if (process.platform === 'darwin') app.focus({ steal: true });
-      win.focus();
-    }
-    log.event('main.chrome_placed', { front, width: at.chrome.width, moved: front && at.app !== appRect });
-    return true;
+  const toggleBrowser = async (show: boolean) => {
+    // 앱을 누른 그 클릭이 토글이었다(포커스가 먼저 와서 이미 뒤로 갔다): 다시 띄우지 않는다.
+    if (show && Date.now() - appFocusedAt < 400) return { shown: false };
+    if (show) return { shown: await placeRunBrowser(true) };
+    await placeRunBrowser(false);
+    return { shown: false };
   };
+  win.on('focus', () => {
+    if (!browserShown) return;
+    appFocusedAt = Date.now();
+    browserShown = false;
+    sendBrowserState();
+  });
+  // 앱 창을 옮기거나 크기를 바꾸면 Chrome도 같은 패널 자리로(앞에 있으면 앞 그대로). 연속 이벤트는 잠깐 모아서 한 번.
+  let followTimer: NodeJS.Timeout | null = null;
+  const follow = () => {
+    if (!browserAvailable || !mirrorRun) return;
+    if (followTimer) clearTimeout(followTimer);
+    followTimer = setTimeout(() => {
+      followTimer = null;
+      void placeRunBrowser(browserShown, false);
+    }, 120);
+  };
+  win.on('move', follow);
+  win.on('resize', follow);
   /**
    * 진행 화면(B3, 부장 지시 2026-11-13): 실행 중이면 금고에 실행 탭 화면 중계를 맡긴다(screen.start, 같은 탭이면 그대로).
    * Chrome이 뜨고 탭이 붙기 전에는 실패하니 실행이 바뀔 때마다, 그리고 1초마다 다시 부른다. 실행이 끝나면 멈춘다.
@@ -1050,14 +1091,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const live = runs.isActive(r.id) && r.status !== 'draft';
     if (live && mirrorRun !== r.id) {
       mirrorRun = r.id;
+      // 실행이 시작되면 렌더러가 패널을 브라우저 폭으로 넓히고 주소 줄을 단다(Chrome이 뜨기 전에 자리가 정해지게).
+      browserAvailable = true;
+      sendBrowserState();
       void host.control('screen.start').catch(() => {});
     } else if (!live && mirrorRun === r.id) {
       mirrorRun = null;
+      browserAvailable = false;
+      browserShown = false;
+      sendBrowserState();
       send({ type: 'screen', runId: r.id, ended: true });
       void host.control('screen.stop').catch(() => {});
     }
   });
-  /** 실행마다 마지막으로 둔 자리. 같은 차례에 두 번 옮기지 않는다(사람이 창을 옮겼으면 그대로 둔다). */
+  /** 실행마다 마지막 자리(뒤·사람 차례). 같은 차례에 두 번 앞으로 올리지 않는다(사람이 [브라우저]로 뒤로 보냈으면 그대로 둔다). */
   const chromeSpot = new Map<string, string>();
   runs.on('update', (r: RunView) => {
     if (!runs.isActive(r.id) || r.status === 'draft') {
@@ -1071,6 +1118,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (want === 'back' && chromeSpot.has(r.id)) return; // 시작 때 한 번만 뒤에 둔다
     chromeSpot.set(r.id, want);
     if (turn) {
+      // 사람 차례에는 브라우저를 자동으로 보여 준다(패널 자리에 앞으로).
       void placeRunBrowser(true);
       return;
     }
@@ -1265,6 +1313,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'run.showBrowser': async (p) => {
       needGesture(3_000);
       return showRunBrowser(String(p.id));
+    },
+    'browser.toggle': async (p) => {
+      needGesture(3_000);
+      return toggleBrowser(p.show === true);
     },
     // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
@@ -1516,9 +1568,24 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return null;
     }
   };
+  // 금고 잠금은 사람 세션을 따른다(ADR-026 결정 3). utilityProcess에는 powerMonitor가 없어 main이 유휴 시간·잠금 이벤트를 넘긴다.
+  // 넘기지 않으면 금고가 idle_unknown으로 닫혀 기억한 인증서 비밀번호를 저장도 사용도 못 한다(2026-11-13 발견, #308 기억이 제품에서 동작하지 않던 원인).
+  const reportIdle = () => void host.control('session.idle', { idleSec: powerMonitor.getSystemIdleTime() }).catch(() => {});
+  const idleTimer = setInterval(reportIdle, SESSION_IDLE_REPORT_MS);
+  idleTimer.unref();
+  const SESSION_KINDS = ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const;
+  const onSession = SESSION_KINDS.map((kind) => {
+    const fn = () => {
+      void host.control('session.event', { kind }).catch(() => {});
+      if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
+    };
+    powerMonitor.on(kind as 'resume', fn);
+    return { kind, fn };
+  });
   const ready = (async () => {
     try {
       await host.ready;
+      reportIdle();
     } catch (e) {
       // 금고 키 유실·환경 변수 변조 등은 사실 문장으로 알리고 열지 않는다(복구 화면은 Phase 1).
       const text = fatalText((e as Error).message);
@@ -1576,6 +1643,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     clearInterval(registryTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
+    clearInterval(idleTimer);
+    for (const { kind, fn } of onSession) powerMonitor.removeListener(kind as 'resume', fn);
     updater?.stop();
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();

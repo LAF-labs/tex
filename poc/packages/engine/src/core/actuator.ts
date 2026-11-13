@@ -54,7 +54,15 @@ export interface GuardedActuatorInput {
   armedConfirm?: () => RegExp | null;
   /** fixture 패키지 실행일 때만(loader.fixtureOriginGrant). 제품 dist에서는 발급되지 않고, 넘겨도 인정하지 않는다(ADR-039). */
   fixtureGrant?: FixtureOriginGrant | null;
+  /**
+   * 무장 밖 JS confirm을 정책이 dismiss로 정했을 때 묻는 판정(run/judge.ts onDialog, 첫 게이트 앞만). 'accept'면 수락한다(세션 연장 등).
+   * 판정 쪽이 되돌릴 수 없는 문구는 늘 dismiss로 돌려준다. 늦으면(DIALOG_JUDGE_MS) 정책대로 dismiss.
+   */
+  dialogJudge?: (kind: DialogKind, notice: string) => Promise<'accept' | 'dismiss' | null>;
 }
+
+/** 대화상자가 떠 있는 동안 페이지가 멈추므로 판정은 짧게 기다린다. */
+const DIALOG_JUDGE_MS = 25_000;
 
 type Op = 'click' | 'fill' | 'clear' | 'select' | 'press' | 'secret_window';
 
@@ -76,6 +84,7 @@ export class GuardedActuator implements Actuator {
   private readonly commitArmed: (key: string) => boolean;
   private readonly armedConfirm: () => RegExp | null;
   private readonly fixtureGrant: FixtureOriginGrant | null;
+  private readonly dialogJudge: GuardedActuatorInput['dialogJudge'] | null;
   private lastNotice: string | null = null;
   /** 마지막 동작을 시작한 뒤 뜬 대화상자(wait for:'dialog', IR rev v1.3.5). 동작을 시작할 때마다 비운다. 실행 메모리 전용. */
   private sinceAction: { kind: DialogKind; notice: string } | null = null;
@@ -90,6 +99,7 @@ export class GuardedActuator implements Actuator {
     this.commitArmed = i.commitArmed ?? (() => false);
     this.armedConfirm = i.armedConfirm ?? (() => null);
     this.fixtureGrant = i.fixtureGrant ?? null;
+    this.dialogJudge = i.dialogJudge ?? null;
   }
 
   /** 실행이 닫은 포털 대화상자의 마지막 문구(실행 메모리 전용, 카드의 '홈택스 안내'). */
@@ -176,6 +186,16 @@ export class GuardedActuator implements Actuator {
     }
     if (decision.notice) this.lastNotice = decision.notice;
     this.sinceAction = { kind: d.kind, notice: decision.notice };
+    if (decision.action === 'dismiss' && d.kind === 'confirm' && this.dialogJudge) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<null>((r) => (timer = setTimeout(() => r(null), DIALOG_JUDGE_MS)));
+      const a = await Promise.race([this.dialogJudge(d.kind, decision.notice).catch(() => null), late]).finally(() => clearTimeout(timer));
+      if (a === 'accept') {
+        await d.accept().catch(() => {});
+        this.events.journal('dialog.judge_accepted', { kind: d.kind });
+        return;
+      }
+    }
     await (decision.action === 'accept' ? d.accept() : d.dismiss()).catch(() => {});
     this.events.journal(decision.event.type, decision.event.payload);
   }

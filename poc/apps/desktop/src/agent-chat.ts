@@ -14,7 +14,7 @@ export type AgentAsk = NonNullable<AgentReply['ask']>;
 export type AgentPhase = 'thinking' | 'reading' | 'drafting';
 
 // 데스크톱은 @sax/model·@sax/redaction에 의존하지 않아 값을 옮겨 둔다. 시험(agent-chat-main)이 원본과 대조한다.
-export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty'] as const satisfies readonly SlotField[];
+export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty', 'approvalNo'] as const satisfies readonly SlotField[];
 export const SLOT_POSITIONS = ['first', 'last'] as const;
 export const SLOT_SUM_FIELDS = ['supply', 'total'] as const;
 /** 슬롯 경로: 행 값(first·last × 칸), 집계(sum.supply·sum.total·count). @sax/model SLOT_PATHS와 같다(시험이 대조). */
@@ -379,6 +379,8 @@ export class AgentChat {
     if (!row) return null;
     if (field === 'date') return row.date;
     if (field === 'counterparty') return row.counterparty;
+    // 승인번호는 원장 committed 값만(없으면 채우지 않는다: 지어내지 않는다)
+    if (field === 'approvalNo') return row.approvalNo ?? null;
     if (row.total === null) return null;
     return field === 'total' ? row.total : supplyOf(row.total);
   }
