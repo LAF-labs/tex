@@ -689,7 +689,16 @@ export class IrRun {
         this.waitingState = out.state;
         // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
-        i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
+        // 그 순간 화면이 어디였는지(주소의 호스트·경로만, 쿼리 없음)와 문서 제목(40자). 예행이 핸드오프에서 바로 끝나 화면이 남지 않는다(run-f7e098f2).
+        const where = await (async (): Promise<Record<string, string>> => {
+          try {
+            const u = new URL(page.url());
+            return { where: `${u.host}${u.pathname}`.slice(0, 80), title: (await page.title().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 40) };
+          } catch {
+            return {};
+          }
+        })();
+        i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}), ...where });
         // 대상을 못 찾았거나(시간 초과 포함) 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
         if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
           let timer: ReturnType<typeof setTimeout> | undefined;
