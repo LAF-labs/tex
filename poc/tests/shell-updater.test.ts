@@ -350,6 +350,7 @@ describe('update-electron: electron-updater 어댑터', () => {
       allowDowngrade: true,
       allowPrerelease: true,
       disableDifferentialDownload: false,
+      autoRunAppAfterInstall: false,
       setFeedURL: (o) => void calls.push(['feed', o]),
       checkForUpdates: async () => ({ updateInfo: { version: '1.2.0', files: [] }, isUpdateAvailable: true }),
       downloadUpdate: async () => ['/p/a.exe'],
@@ -374,7 +375,10 @@ describe('update-electron: electron-updater 어댑터', () => {
   it('자동 받기·종료 시 설치·다운그레이드·사전 릴리스·차등 받기를 끄고, 검증한 매니페스트만 공급자로 넘긴다', async () => {
     const { u, calls } = fake();
     const ins = electronInstaller(u, { origin: 'https://registry.example.test', channel: 'beta', Provider: Base });
-    assert.deepEqual([u.autoDownload, u.autoInstallOnAppQuit, u.allowDowngrade, u.allowPrerelease, u.disableDifferentialDownload], [false, false, false, false, true]);
+    assert.deepEqual([u.autoDownload, u.autoInstallOnAppQuit, u.allowDowngrade, u.allowPrerelease, u.disableDifferentialDownload, u.autoRunAppAfterInstall], [false, false, false, false, true, true]);
+    const local = fake().u;
+    electronInstaller(local, { origin: 'http://127.0.0.1:8082', channel: 'beta', Provider: Base, loopback: true, relaunch: false });
+    assert.equal(local.autoRunAppAfterInstall, false);
     const cfg = (calls[0] as [string, Record<string, unknown>])[1];
     assert.equal(cfg.provider, 'custom');
     assert.equal(cfg.url, 'https://registry.example.test/releases/beta/');

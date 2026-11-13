@@ -65,6 +65,7 @@ export interface AppUpdaterLike {
   allowDowngrade: boolean;
   allowPrerelease: boolean;
   disableDifferentialDownload: boolean;
+  autoRunAppAfterInstall: boolean;
   setFeedURL(o: VerifiedFeedConfig & { updateProvider: unknown }): void;
   checkForUpdates(): Promise<{ updateInfo: FeedInfo; isUpdateAvailable?: boolean } | null>;
   downloadUpdate(): Promise<string[]>;
@@ -82,12 +83,17 @@ export function feedUrl(origin: string, channel: Channel, o: { loopback?: boolea
   return `${u.origin}/releases/${channel}/`;
 }
 
-export function electronInstaller(u: AppUpdaterLike, o: { origin: string; channel: Channel; Provider: ProviderBase; loopback?: boolean }): UpdateInstaller {
+/**
+ * relaunch: false면 설치 뒤 다시 열지 않고 끝낸다(로컬 피드 시험만). mac의 ShipIt은 로그인 세션 환경(실제 HOME)으로 다시 열어
+ * 시험 앱이 격리 프로필을 벗어나기 때문이다. 설치는 그대로 앱이 끝날 때 ShipIt이 한다.
+ */
+export function electronInstaller(u: AppUpdaterLike, o: { origin: string; channel: Channel; Provider: ProviderBase; loopback?: boolean; relaunch?: boolean }): UpdateInstaller {
   u.autoDownload = false;
   u.autoInstallOnAppQuit = false;
   u.allowDowngrade = false;
   u.allowPrerelease = false;
   u.disableDifferentialDownload = true;
+  u.autoRunAppAfterInstall = o.relaunch !== false;
   let next: VerifiedUpdateInfo | null = null;
   u.setFeedURL({ provider: 'custom', updateProvider: verifiedFeed(o.Provider), url: feedUrl(o.origin, o.channel, { loopback: o.loopback }), info: () => next });
   return {

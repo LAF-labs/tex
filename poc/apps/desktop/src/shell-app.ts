@@ -225,6 +225,8 @@ export interface UpdateWiring {
   trust?: TrustRoot;
   /** 실계정 시험 빌드의 로컬 피드(http://127.0.0.1)만 true(update-electron feedUrl). */
   loopback?: boolean;
+  /** false면 설치 뒤 다시 열지 않는다. 로컬 피드 시험만(update-electron electronInstaller). */
+  relaunch?: boolean;
   testBuild: boolean;
   setting?: { requireTransparency?: unknown } | null;
   updater?: AppUpdaterLike;
@@ -1678,7 +1680,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       };
       const h = startUpdateHost({
         sources: egressUpdateSources({ egress: w.egress, trust, revocation }),
-        installer: electronInstaller(u, { origin: w.origin, channel: w.channel, Provider: eu.Provider as unknown as ProviderBase, loopback: w.loopback }),
+        installer: electronInstaller(u, { origin: w.origin, channel: w.channel, Provider: eu.Provider as unknown as ProviderBase, loopback: w.loopback, relaunch: w.relaunch }),
         channel: w.channel,
         installedVersion: app.getVersion(),
         stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'updater-state.json'),
