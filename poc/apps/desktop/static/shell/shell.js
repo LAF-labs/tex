@@ -4,9 +4,10 @@ import { g24Card, g24Panel } from './shell-g24.js';
 import { onboardingView } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
+import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -433,7 +434,28 @@ const onbActive = () => !!state.onb && state.onb.step !== 'done';
  * 건너뛴 사업자(O-02)·인증(O-03)을 다시 연다([사업자 등록 마치기]·[발급 인증 고르기], 판의 "등록 할 일"). 그 단계만 대화로 묻는다.
  * 지난 온보딩 자리는 기록으로 남기고, 새 자리를 대화 끝에 둔다(다시 연 뒤의 답만 그린다, OnbView.redoFrom).
  */
+/** Chrome 설치 안내(U6): 대화에 한 번만 두고, [다시 확인]은 main이 설치 여부를 다시 본다(판도 새로 온다). */
+function chromeGuide() {
+  if (state.view !== 'chat') go('chat');
+  chat.thread.querySelector('[data-chrome-guide]')?.remove();
+  const box = h('div', { class: 'sx-app', 'data-chrome-guide': '' }, h('p', {}, CHROME_GUIDE_TEXT));
+  const check = async () => {
+    try {
+      const r = await call('chrome.check');
+      if (r.ready) {
+        box.remove();
+        toast('Chrome을 찾았어요. 이제 발급을 요청할 수 있어요.');
+      } else toast('아직 Chrome을 찾지 못했어요. 설치를 마친 뒤 다시 눌러 주세요.');
+    } catch {
+      toast('다시 해 주세요');
+    }
+  };
+  box.append(h('div', { class: 'sx-actions' }, btn('다시 확인', check, 'sx-btn-primary', { 'data-act': 'chrome-check' })));
+  appendThread(box);
+}
+
 async function reopenSetup(item) {
+  if (item === 'chrome') return chromeGuide();
   try {
     const r = await call('onboarding.reopen', { item });
     state.onb = r.onboarding;
@@ -748,7 +770,7 @@ function renderToday() {
   const items = b ? b.cards.flatMap((c) => c.items) : [];
   const setup = b?.setup ?? [];
   const setupRow = setup.length
-    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
+    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' || x.id === 'chrome' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
     : null;
   const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
   const counts = b
@@ -1286,12 +1308,16 @@ function activityPanel(row) {
 const SETTINGS_TABS = [
   ['auth', '발급 인증'],
   ['devices', '기기 연결'],
+  ['bank', '계좌 연결'],
 ];
+/** 계좌 자동조회(CODEF, shell-bank-auto.js). 연결한 계좌는 받을 돈 화면에서 [최신화]한다 */
+const bankAuto = createBankAuto({ call, rerender: () => render(), toast: (t) => toast(t), uploadFile: () => void go('bank'), openBank: () => void go('bank') });
 
 function setTab(tab) {
   state.setTab = tab;
   render();
   if (tab === 'devices') refreshAccount();
+  if (tab === 'bank') void bankAuto.load();
 }
 
 // ---- 계정 로그인(A-01) ----
@@ -1494,7 +1520,9 @@ function settingsView() {
         return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab, onclick: () => setTab(tab) }, label);
       }),
     ),
-    state.setTab === 'devices'
+    state.setTab === 'bank'
+      ? bankAuto.view()
+      : state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
@@ -1847,6 +1875,7 @@ function onActivated(x, y) {
 
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
+  if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();

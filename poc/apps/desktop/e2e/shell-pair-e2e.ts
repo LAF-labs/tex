@@ -2,6 +2,7 @@
 // 폰의 6자리를 그 창에 넣는다 → 폰이 계정 서비스 서명 acctClaim을 검증한다. 계정·릴레이는 메모리 가짜, 금고 키는 소프트 키.
 // QR은 실제 인코더(qrcode-generator)로 main이 만든 이미지다. 폰 대신 창에 그려진 <img>를 캔버스로 읽어 jsQR(개발용)로 푼다.
 // 실행: electron apps/desktop/e2e-dist/shell-pair-e2e.js. 앱 폴더·키체인·네트워크를 쓰지 않는다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { createRequire } from 'node:module';

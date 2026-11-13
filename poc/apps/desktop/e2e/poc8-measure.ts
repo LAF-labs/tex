@@ -11,6 +11,7 @@
 //
 // labels.json: [{ "file": "a.pdf", "docType": "national_tax_cert" | "biz_registration_cert" | "other",
 //                 "issuedOn": "YYYY-MM-DD" | null, "validUntil": "YYYY-MM-DD" | null, "docNo"?: "XXXX-XXX-XXXX-XXX", "bizNo"?: "숫자 10자리" }]
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
