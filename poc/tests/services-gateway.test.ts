@@ -646,6 +646,12 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.ok(events.includes('upstream_provider_mismatch'));
     reply = { ...reply, provider: 'OpenAI' };
     assert.equal((await p.respond(SPEC)).status, 'completed');
+    // 판정·에이전트(unpinned)는 provider 필드 없이 보내고, 응답 공급자를 고정 목록과 대조하지 않는다(라우터 모델)
+    reply = { ...reply, provider: 'SomeOther' };
+    assert.equal((await p.respond({ ...SPEC, unpinned: true })).status, 'completed');
+    assert.equal(sent.at(-1)!.body.provider, undefined);
+    assert.equal(sent.at(-1)!.body.unpinned, undefined);
+    assert.equal(events.at(-1), 'upstream_unpinned');
     // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
     status = 404;
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);

@@ -4,9 +4,12 @@
 // - frame은 'main'이면 주 프레임, 아니면 그 이름의 프레임(없으면 빈 결과).
 // - 후보: role → getByRole(name 정확히), css → locator, label → getByLabel(정확히). within이 있으면 그 요소의 하위만.
 import type { ElementHandle, Frame, Locator, Page, Request } from 'playwright-core';
-import type { ElementInfo, ElementRef, PageReader } from '../core/page.ts';
+import { INTERACTIVE_ROLES, type ElementInfo, type ElementRef, type InteractiveElement, type PageReader } from '../core/page.ts';
 import type { Candidate } from '../core/types.ts';
 import { ariaValue } from './aria-tree.ts';
+
+/** 판정·에이전트 목록 상한(요청 크기). */
+const INTERACTIVE_MAX = 150;
 
 /** waitIdle: 요청이 없어야 하는 시간(ms). */
 export const IDLE_QUIET_MS = 500;
@@ -161,6 +164,19 @@ export class PlaywrightPageReader implements PageReader {
       const el = { ref };
       const info = await this.info(el);
       out.push({ el, name: info.name, id: meta.id, visible: info.visible, enabled: info.enabled });
+    }
+    return out;
+  }
+
+  async listInteractive(frame: string): Promise<InteractiveElement[]> {
+    const out: InteractiveElement[] = [];
+    for (const role of INTERACTIVE_ROLES) {
+      for (const x of await this.listRole(frame, role)) {
+        if (!x.visible || out.length >= INTERACTIVE_MAX) continue;
+        const h = this.handle(x.el);
+        const filled = role === 'textbox' || role === 'combobox' ? await h?.evaluate((e) => String((e as HTMLInputElement).value ?? '').trim().length > 0).catch(() => false) : false;
+        out.push({ el: x.el, role, name: x.name, id: x.id, enabled: x.enabled, filled: filled === true });
+      }
     }
     return out;
   }

@@ -25,6 +25,11 @@ export interface RespondSpec {
   input: unknown[];
   cacheKey: string;
   safetyId: string;
+  /**
+   * 공급자 고정을 하지 않는다(OpenRouter provider 필드 없음). 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent)만 쓴다:
+   * 기본 모델이 요청마다 뒤쪽 공급사가 바뀌는 라우터라 고정·ZDR이 걸리면 막힌다(대표 2026-11-13). 대화·선택자 수리 등 다른 툴셋은 그대로 고정한다.
+   */
+  unpinned?: true;
 }
 
 export interface ProviderUsage {
@@ -234,7 +239,7 @@ export class OpenRouterProvider implements ModelProvider {
       this.o.onEvent('upstream_routing_refused');
       throw new ProviderError('fatal');
     }
-    const body = { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
+    const body = s.unpinned ? openAIResponsesBody(s) : { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
     let res: Response;
     try {
       res = await this.o.fetchFn(`${this.o.baseUrl}/v1/responses`, {
@@ -248,7 +253,7 @@ export class OpenRouterProvider implements ModelProvider {
       throw new ProviderError('retryable');
     }
     // 적용 사실만 남긴다(설정이 실린 요청을 보냈다). 값·본문·공급자 이름은 로그에 없다
-    this.o.onEvent('upstream_zdr_pinned');
+    this.o.onEvent(s.unpinned ? 'upstream_unpinned' : 'upstream_zdr_pinned');
     // 고정 공급자를 쓸 수 없으면 OpenRouter가 404를 준다. 대체 공급자로 넘어가지 않으므로 재시도하지 않는다
     if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
     if (res.status !== 200) throw new ProviderError('fatal');
@@ -259,7 +264,7 @@ export class OpenRouterProvider implements ModelProvider {
       throw new ProviderError('fatal');
     }
     // 응답이 공급자를 밝히면 고정 목록 안인지 확인한다(아니면 결과를 쓰지 않는다)
-    if (typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
+    if (!s.unpinned && typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
       this.o.onEvent('upstream_provider_mismatch');
       throw new ProviderError('fatal');
     }

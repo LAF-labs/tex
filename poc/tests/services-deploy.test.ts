@@ -477,8 +477,8 @@ describe('Supabase 마이그레이션 내보내기', () => {
     // 새 단계는 뒤에 붙는다(이름 순서 = 적용 순서)
     const names = [...out.keys()];
     assert.deepEqual(names, [...names].sort());
-    assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql', '20261107000100_sax_account.sql']);
-    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => `${s.name}:${s.versions.from}-${s.versions.to}`)), [['account:1-1', 'gateway:1-1', 'relay:1-1', 'push:1-1'], ['registry:1-1'], ['account:2-2'], ['account:3-3']]);
+    assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql', '20261107000100_sax_account.sql', '20261113000100_sax_gateway.sql']);
+    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => `${s.name}:${s.versions.from}-${s.versions.to}`)), [['account:1-1', 'gateway:1-1', 'relay:1-1', 'push:1-1'], ['registry:1-1'], ['account:2-2'], ['account:3-3'], ['gateway:2-2']]);
   });
 
   it('비밀번호·키 같은 값은 생성 SQL에 없다', () => {
