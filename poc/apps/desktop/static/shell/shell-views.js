@@ -518,6 +518,7 @@ export function browserPane(run, url, big, act) {
   return h(
     'section',
     { class: 'bp', 'data-browser-pane': run.id, 'aria-label': '앱 안 브라우저' },
+    act.browserDrag ? h('div', { class: 'bp-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': '브라우저 폭 조절', title: '끌어서 폭 조절', onpointerdown: act.browserDrag }) : null,
     h(
       'div',
       { class: 'bp-chrome' },

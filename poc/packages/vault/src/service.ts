@@ -3,7 +3,8 @@ import path from 'node:path';
 import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
 import { downloadPreferences, EXTENSION_ALLOWLIST, LOOPBACK_ORIGINS, LOOPBACK_PERMISSION_NAMES, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
 import { CHROME_NOT_INSTALLED, findInstalledChrome } from './chrome/find.ts';
-import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
+import { PortConnection, type CdpConnection } from './cdp/connection.ts';
+import { launchChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfileResidue, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
 import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
@@ -165,12 +166,23 @@ export interface LaunchResult {
   webdriver: boolean;
 }
 
+/** 실행 브라우저: 설치 Chrome(파이프) 또는 앱 안 브라우저(main이 'browser' 포트로 준다). */
+interface RunBrowser {
+  conn: CdpConnection;
+  close(): Promise<void>;
+  embedded: boolean;
+  pid?: number;
+}
+
 /** 금고(TB-1). Chrome 파이프 단독 소유자이며 엔진에는 허용 목록 중계만 준다(ADR-005 v3). */
 export class Vault {
   private readonly opts: VaultOptions;
   private pdf: PdfSaver | null = null;
   private readonly policy: RelayPolicy;
-  private chrome: LaunchedChrome | null = null;
+  private chrome: RunBrowser | null = null;
+  /** main의 앱 안 브라우저 포트('browser'). 붙어 있으면 설치 Chrome 대신 이것을 쓴다. */
+  private browserPort: PortLike | null = null;
+  private embedded: PortConnection | null = null;
   private launching = false;
   /** 지금 Chrome이 창 없이 떴나(시험·옵션만, 앱은 창 있는 Chrome). */
   private headlessNow = false;
@@ -243,6 +255,12 @@ export class Vault {
       }
       const state = { used: false };
       port.onMessage((raw) => this.onSecretInput(port, b, state, raw as InboundMessage));
+      return;
+    }
+    if (kind === 'browser') {
+      // 포트는 한 번만 듣고 지금 연결에만 넘긴다(다시 띄우면 새 연결, 옛 중계는 새 브라우저 프레임을 받지 않는다).
+      this.browserPort = port;
+      port.onMessage((raw) => this.embedded?.feed(raw));
       return;
     }
     if (kind === 'engine') this.enginePort = port;
@@ -719,7 +737,7 @@ export class Vault {
     this.launching = true;
     this.profileProblems = null; // 이 기동의 프로필 점검 전까지 비밀 창을 열지 않는다(D05 §3.6)
     try {
-      return await this.startChrome(this.generation);
+      return await (this.browserPort ? this.startEmbedded(this.generation, this.browserPort) : this.startChrome(this.generation));
     } finally {
       this.launching = false;
     }
@@ -744,14 +762,39 @@ export class Vault {
     await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
     const headless = this.opts.headless === true;
-    const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
+    const launched = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
+    const chrome: RunBrowser = { conn: launched.conn, close: () => launched.close(), embedded: false, pid: launched.proc.pid };
     this.chrome = chrome;
     this.headlessNow = headless;
     // 창 있는 Chrome은 막 떴을 때 macOS가 앞으로 올린다. main이 바로 앱을 다시 앞으로 둔다(대표 지시 2026-11-14: Chrome은 앞에 오지 않는다).
-    if (!headless) this.emit(['control'], 'browser.launched', { pid: chrome.proc.pid ?? 0 });
-    await this.grantLoopback(chrome);
+    if (!headless) this.emit(['control'], 'browser.launched', { pid: launched.proc.pid ?? 0 });
+    await this.grantLoopback(chrome.conn);
+    return this.connectRelay(generation, chrome, () => void this.checkProfile(profileDir, generation));
+  }
+
+  /**
+   * 앱 안 브라우저(대표 지시 2026-11-13 "크롬 탭이 아예 열리지 않게 앱 내에서 처리해"): main이 패널 자리에 WebContentsView를 열고
+   * 그 webContents.debugger로 브라우저 수준 CDP를 흉내 내 'browser' 포트로 준다. 중계 규칙(노출·비밀 창·출처 검사)은 Chrome과 같다.
+   * Chrome 프로필이 없으니 프로필 점검(확장·Google 로그인·다운로드 설정)은 문제 없음이다. 보안 프로그램 권한은 같은 Browser.setPermission으로 준다.
+   */
+  private async startEmbedded(generation: number, port: PortLike): Promise<LaunchResult> {
+    await this.sweepStaging('launch');
+    if (generation !== this.generation) throw new Error('launch cancelled');
+    const conn = new PortConnection((m) => port.postMessage(m));
+    this.embedded = conn;
+    const browser: RunBrowser = { conn, close: async () => conn.close(), embedded: true };
+    this.chrome = browser;
+    this.headlessNow = false;
+    this.profileProblems = [];
+    await this.grantLoopback(conn);
+    return this.connectRelay(generation, browser, () => {});
+  }
+
+  /** 띄운 브라우저에 중계를 붙인다. 닫힘을 main·엔진에 알리고, 상한(LAUNCH_TIMEOUT_MS)을 넘거나 실패하면 내린다. */
+  private async connectRelay(generation: number, chrome: RunBrowser, onAttached: () => void): Promise<LaunchResult> {
+    const current = (): boolean => generation === this.generation;
     chrome.conn.on('close', () => {
-      this.opts.log.event('vault.chrome_closed');
+      this.opts.log.event(chrome.embedded ? 'vault.embedded_closed' : 'vault.chrome_closed');
       // main에 바로 알린다(대표 실화면 2026-11-13: Chrome을 닫았는데 앱은 몰랐다). 내리기(shutdown)로 닫힌 것은 알리지 않는다.
       if (this.chrome === chrome && !this.closingChrome) this.browserGone('chrome');
       // 엔진 transport도 닫는다. 알리지 않으면 Playwright는 끊긴 줄 모르고 닫힌 Chrome의 페이지를 쓴다. 다음 Chrome이 이미 떴으면 보내지 않는다.
@@ -767,7 +810,7 @@ export class Vault {
       if (!current()) throw new Error('launch cancelled'); // 띄우는 동안 온 내리기는 아직 이 Chrome을 몰랐다
       const result = await this.attachRelay(chrome.conn);
       if (!current()) throw new Error('launch cancelled');
-      void this.checkProfile(profileDir, generation);
+      onAttached();
       return result;
     } catch (e) {
       clearTimeout(timer);
@@ -787,12 +830,12 @@ export class Vault {
    * 인증서 목록은 local-network-access가 있어야 보인다, 2026-11-13). 못 주면 기동은 그대로 하고 기록만 남긴다
    * (홈택스가 "보안프로그램 설치"를 띄우면 사람 차례로 넘어간다).
    */
-  private async grantLoopback(chrome: LaunchedChrome): Promise<void> {
+  private async grantLoopback(conn: CdpConnection): Promise<void> {
     for (const origin of LOOPBACK_ORIGINS) {
       const granted: string[] = [];
       for (const name of LOOPBACK_PERMISSION_NAMES) {
         try {
-          await chrome.conn.send('Browser.setPermission', { permission: { name }, setting: 'granted', origin });
+          await conn.send('Browser.setPermission', { permission: { name }, setting: 'granted', origin });
           granted.push(name);
         } catch {
           // 이 Chrome에 없는 이름이다. 다음 이름
@@ -819,7 +862,7 @@ export class Vault {
     else if (residue < 0) this.opts.log.event('vault.chrome_residue_link');
   }
 
-  private async attachRelay(conn: LaunchedChrome['conn']): Promise<LaunchResult> {
+  private async attachRelay(conn: CdpConnection): Promise<LaunchResult> {
     // 내린 뒤의 옛 중계·비밀 동작 이벤트는 다음 Chrome의 포트로 보내지 않는다.
     const emit = (to: ReadonlyArray<'engine' | 'control'>, name: VaultEventName, data: Record<string, unknown>) => {
       if (this.relay !== relay) return;
@@ -840,13 +883,29 @@ export class Vault {
     // 포털 팝업(새 Chrome 창)이 뜨면 Chrome이 앞으로 온다: main이 앱을 다시 앞으로(대표 실화면 2026-11-14, 로그인 창이 앱을 가렸다)
     relay.onPageOpened = (t) => {
       if (this.relay !== relay) return;
-      if (!this.headlessNow) this.emit(['control'], 'browser.launched', { popup: true });
+      if (!this.headlessNow && !this.chrome?.embedded) this.emit(['control'], 'browser.launched', { popup: true });
       void this.applyPopups(t);
     };
     relay.onPageUrl = (t) => {
       if (this.relay === relay) this.closePopupWindow(t);
     };
+    // 앱 안 브라우저: 금고가 칸에 넣는 동안(typist) 사람이 보기를 눌러 포커스를 빼앗지 않게 main이 보기 입력을 막는다(옛 중계 화면 입력 거부와 같은 뜻).
+    const typing = new Set<string>();
+    const typingChanged = (had: boolean) => {
+      if (had !== typing.size > 0) emit(['control'], 'browser.blocked', { blocked: typing.size > 0 });
+    };
+    if (this.chrome?.embedded) {
+      relay.onWindowActive = (t, active) => {
+        const had = typing.size > 0;
+        if (active && t.win?.kind === 'typist') typing.add(t.targetId);
+        if (!active) typing.delete(t.targetId);
+        typingChanged(had);
+      };
+    }
     relay.onTargetGone = (t) => {
+      const had = typing.size > 0;
+      typing.delete(t.targetId);
+      typingChanged(had);
       if (t.type !== 'page' || !t.exposed || this.relay !== relay || this.closingChrome) return;
       if (!relay.hasExposedPage()) this.browserGone('tab');
     };
@@ -929,6 +988,7 @@ export class Vault {
   /** 창을 열 때마다 프로필 파일을 다시 읽는다(N-18). 기동 뒤 첫 점검 전이면 profile_not_checked. */
   private async profileBlocker(): Promise<string | null> {
     if (this.profileProblems === null) return 'profile_not_checked';
+    if (this.chrome?.embedded) return null; // 앱 안 브라우저: Chrome 프로필(확장·Google 로그인·설정 파일)이 없다
     return (await this.readProfileProblems(this.opts.paths.chromeProfile))[0] ?? null;
   }
 
@@ -960,7 +1020,7 @@ export class Vault {
 
   /** 진단·테스트용(포트 미개방 확인). */
   get chromePid(): number | undefined {
-    return this.chrome?.proc.pid;
+    return this.chrome?.pid;
   }
 
   /**
@@ -1120,8 +1180,9 @@ export class Vault {
     relay?.commitGuard?.shutdown();
     relay?.clearKnownSecrets();
     await chrome?.close();
+    if (this.embedded?.isClosed) this.embedded = null;
     if (chrome) {
-      await this.removeDumps(this.opts.paths.chromeProfile);
+      if (!chrome.embedded) await this.removeDumps(this.opts.paths.chromeProfile);
       // Chrome이 끝난 뒤라 잠금이 풀려 있다. 받는 중에 내린 다운로드의 중간 파일을 남기지 않는다.
       await this.sweepStaging('shutdown');
     }
