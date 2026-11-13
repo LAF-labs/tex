@@ -1,6 +1,7 @@
 // 게이트웨이 HTTP. 데스크톱 기기 범위 토큰(gateway 범위) + DPoP만 받는다. 계정 세션 토큰은 거부(규칙: X-Device-Id는 토큰에서 유도, N-41).
 import { DailySalt, DeviceAuth, Router, fail, json, validator, type Ctx, type DeviceDirectory, type TokenVerifier } from '@sax/svc-shared';
 import { CodefUnavailable, type CodefTokenSource } from './codef.ts';
+import { AGENT_TOOLSETS } from '@sax/model';
 import { GATEWAY } from './constants.ts';
 import type { GatewayService } from './service.ts';
 
@@ -73,7 +74,9 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     '/v1/respond',
     async (ctx) => {
       const c = await device(ctx);
-      await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
+      const toolset = (ctx.body as { toolset?: unknown } | null)?.toolset;
+      if ((AGENT_TOOLSETS as readonly unknown[]).includes(toolset)) await limit('agent', c.acc, GATEWAY.agentPerMinute, MIN);
+      else await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
       return json(200, await svc.respond(c, ctx.body));
     },
     { maxBodyBytes: 1024 * 1024 },

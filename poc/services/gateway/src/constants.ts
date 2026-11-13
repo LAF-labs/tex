@@ -8,12 +8,16 @@ export const GATEWAY = {
   /** 실행 밖 대화 범위(chatSessionId)의 예산(D04 §1 "자기 예산"). 제안값, D04 확정 필요 */
   l1PerChat: 12,
   l2PerChat: 20,
+  /** 실행당 예상 밖 화면 판정·브라우저 에이전트 호출(page_judge·browser_agent, 에이전트 25걸음 + 판정). packages/net AGENT_CALLS_PER_RUN과 같다 */
+  agentPerRun: 32,
   runTokenTtlMs: 2 * MS.H,
   /** runToken 발급 한도(범위 ID를 바꿔 예산을 늘리는 것을 늦춘다) */
   runTokensPerDeviceHour: 120,
   /** 분당 요청 한도(계정 단위, D09 §3) */
   l1PerMinute: 60,
   l2PerMinute: 10,
+  /** 판정·에이전트 분당 한도(계정 단위). 에이전트는 걸음마다 부른다 */
+  agentPerMinute: 40,
   /** 월 토큰 한도(입력+출력). 100%에서 L2 중단, 200%(하드 상한)에서 안전 판정 번들만 */
   monthlyTokensDefault: 3_000_000,
   hardCapMultiplier: 2,

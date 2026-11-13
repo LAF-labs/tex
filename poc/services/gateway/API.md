@@ -60,15 +60,19 @@
 |---|---|
 | `{toolset, messages(role=user, input_text만), replay?, runToken}` | `200 {model, status, output:[{item, tag}], usage:{input_tokens, output_tokens}, toolsetDigest}` |
 
-- 툴셋: `selector_repair`, `query_parse`, `chat_reply`, `chat_agent`(정의 `packages/model/src/toolsets.ts`·`chat-agent.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
+- 툴셋: `selector_repair`, `query_parse`, `chat_reply`, `chat_agent`, `page_judge`, `browser_agent`(정의 `packages/model/src/toolsets.ts`·`chat-agent.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
 - `chat_reply`(대화 짧은 응대, 2026-11-10): 도구 없음·1턴·`max_output_tokens` 1000·effort low, 공통 판정기 머리말 없이 `toolsets/chat_reply.ko.txt`만. 대화 범위(`chatSessionId`) runToken으로 부르고 범위당 새 L2 예산(`l2PerChat`)을 쓴다. 출력 `{kind, reply, suggest[]}`의 길이·세무 문장 차단은 엔진이 한다(게이트웨이는 본문을 보지 않는다).
 - `chat_agent`(대화 에이전트, 2026-11-12): 도구 6개(`sales_summary`·`invoice_history`·`receivables`·`invoice_draft`·`draft_edit`·`draft_discard`, 발급·전송 도구 없음)·4턴·`max_output_tokens` 4000·effort low, 공통 판정기 머리말 없이 `toolsets/chat_agent.ko.txt`만. `chat_reply`와 같은 대화 범위 예산을 쓴다. 사용자 턴마다 새 L2, 그 턴의 도구 왕복은 replay. 도구 결과·답 검사는 엔진 `chat.step`이 한다.
+- `page_judge`(예상 밖 화면 판정, 2026-11-13): 도구 없음·1턴·effort medium, 공통 판정기 머리말 + `toolsets/page_judge.ko.txt`. 출력 `{situation, prescription(dismiss_dialog·relogin·reload_checkpoint·fix_field·agent_mode·handoff), button, dialog_answer, field, risk_flags}`.
+  엔진 폴백 사슬이 실패했거나 예상 밖 상태(JS confirm·공지 레이어·다른 화면·세션 만료)일 때 첫 게이트 앞 스텝에서만 부른다. 처방 실행과 가드는 엔진(`run/judge.ts`)이 한다.
+- `browser_agent`(브라우저 에이전트, 2026-11-13): 도구 없음·1턴·effort medium, 머리말 `toolsets/browser_agent.ko.txt`만. 출력 `{action(click·type·select·scroll·wait·done·fail), index, token, option, step}`. 엔진이 동작마다 한 번 부르고(실행당 최대 25동작) 지난 동작은 글로 싣는다(replay 없음). 값은 `{{inputs.…}}` 값토큰만 오간다.
+- 두 툴셋은 **응답 모델과 따로** `MODEL_AGENT`(기본 `anthropic/claude-fable-5.2`)로 부르고, 예산도 따로다: 실행 범위 runToken만, 실행당 `agentPerRun` 32회(`run_scopes.agent_calls`, 마이그레이션 002), 계정당 분당 40회. L2 예산(`l2PerRun`)을 쓰지 않는다.
 - `effort`·`max_output_tokens`·도구 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의로 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·도구·`store`를 보내면 `400`(Phase 1 `GW_ALLOW_IMAGES=false`). replay 항목 안의 이미지도 `400`.
 - `tag = HMAC-SHA256(gw_key, accountId ‖ 0 ‖ deviceId ‖ 0 ‖ runToken ‖ 0 ‖ 정규 JSON(item))` hex. replay는 이 태그가 맞는 항목과, 그 항목 중 `function_call`의 `call_id`에 답하는 `function_call_output`만 받는다. 태그는 runToken에 묶여 다른 실행에서 재사용할 수 없다.
 - `selector_repair`의 `scopeId`는 게이트웨이 정의에서 형식 제한(`^[A-Za-z0-9_.-]{1,64}$`)이다. 요청 스키마에 `scopeIds`가 없어서다. 엔진은 로컬 툴셋 정의(열거)로 도구 호출을 다시 검증한다.
 - `toolsetDigest = sha256(정규 JSON({prefix, tools, output, effort, maxOutputTokens}))`.
 
-오류는 decide와 같고, 더해 월 토큰 100%부터 `429 gateway.quota_exceeded`(L2 중단), 툴셋 턴 상한 도달 `429 gateway.run_budget_exceeded`, 계정당 분당 10회.
+오류는 decide와 같고, 더해 월 토큰 100%부터 `429 gateway.quota_exceeded`(L2 중단), 툴셋 턴 상한 도달 `429 gateway.run_budget_exceeded`, 계정당 분당 10회(`page_judge`·`browser_agent`는 따로 분당 40회).
 
 ## POST /v1/biz/status (사업자등록 진위확인 프록시, D09 §4.1)
 

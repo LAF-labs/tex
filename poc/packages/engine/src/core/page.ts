@@ -19,6 +19,19 @@ export interface ElementInfo {
   enabled: boolean;
 }
 
+/** 판정·에이전트가 보는 상호작용 역할. */
+export const INTERACTIVE_ROLES = ['textbox', 'combobox', 'checkbox', 'radio', 'button', 'link', 'tab'] as const;
+
+export interface InteractiveElement {
+  el: ElementRef;
+  role: string;
+  name: string;
+  id: string | null;
+  enabled: boolean;
+  /** 입력 칸에 값이 있는가(값은 읽지 않는다). 입력 칸이 아니면 false. */
+  filled: boolean;
+}
+
 export interface PageReader {
   url(): string;
   /** frame 안(within이 있으면 그 요소의 하위)에서 후보에 맞는 요소 전부. */
@@ -39,6 +52,11 @@ export interface PageReader {
    * 구현이 없으면 AI 위치 찾기를 쓰지 않는다.
    */
   listRole?(frame: string, role: string): Promise<Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }>>;
+  /**
+   * 판정·브라우저 에이전트용: 프레임의 상호작용 요소(INTERACTIVE_ROLES) 중 보이는 것. 값은 읽지 않고 입력 칸이 채워졌는지(filled)만 본다.
+   * 비밀번호 칸은 넣지 않는다. 구현이 없으면 판정·에이전트를 쓰지 않는다.
+   */
+  listInteractive?(frame: string): Promise<InteractiveElement[]>;
   /** 다음 네비게이션 완료까지 기다린다. 시간 안에 오면 true. */
   waitNavigation(timeoutMs: number): Promise<boolean>;
   /** 네트워크·DOM이 잠잠해질 때까지 기다린다. 시간 안에 오면 true. */

@@ -15,6 +15,9 @@ import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/st
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
+import { GatewayAgentModel, GatewayJudgeModel } from './agent-port.ts';
+import { BrowserAgent } from './browser-agent.ts';
+import { PageJudge } from './judge.ts';
 import { GateTokens, wmaxMs } from '../core/token.ts';
 import type { RunStateName } from '../core/machine.ts';
 import type { PlaybookIR, Step } from '../core/types.ts';
@@ -77,6 +80,7 @@ export interface IrPackage {
   /**
    * AI 위치 찾기(core/locate.ts) 모델 길(제품: 게이트웨이 selector_repair). 폴백 사슬(core/fallback.ts) 3단계다. 없으면 그 단계만 건너뛴다.
    * 실행 토큰은 decide와 같은 것(runTokenFor)을 쓴다.
+   * 같은 길로 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent)도 부른다(run/judge.ts, run/browser-agent.ts). 폴백 사슬 5단계다.
    */
   locate?: LocateResponder;
 }
@@ -386,10 +390,14 @@ export class IrRun {
     });
     this.enforcer = enforcer;
     const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled() });
+    // 예상 밖 화면 판정(아래에서 만든다). 대화상자 훅과 스텝 경계가 먼저 생겨 이 자리에 둔다.
+    let pageJudge: PageJudge | null = null;
+    let curStep: string | null = null;
     const act = new GuardedActuator({
       driver: raw, reader, dict, domains, policy: enforcer,
       events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
       commitArmed: (k) => this.controller?.commitArmed(k) ?? false, armedConfirm: () => this.controller?.armedConfirm() ?? null, fixtureGrant: i.ir.fixtureGrant ?? null,
+      dialogJudge: (kind, notice) => pageJudge?.onDialog(kind, notice) ?? Promise.resolve(null),
     });
     this.actuator = act;
     this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains });
@@ -408,7 +416,16 @@ export class IrRun {
     const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal }), journal: i.journal } : undefined;
     const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
-    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), journal: i.journal });
+    if (i.ir.locate) {
+      const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal };
+      const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
+      const agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port) });
+      pageJudge = new PageJudge({
+        ...screen, ir, irreversible: analysis.irreversible, model: new GatewayJudgeModel(port), agent, ...(locate ? { locate } : {}),
+        lastNotice: () => act.notice, currentStep: () => curStep,
+      });
+    }
+    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), journal: i.journal });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
@@ -475,6 +492,7 @@ export class IrRun {
       allowed: () => !this.denial(),
       hardStop: () => this.denial()?.hardStop ?? false,
       beforeStep: async (s) => {
+        curStep = s.id;
         // 스텝 경계: status가 바뀌었으면 조율기가 이 스텝 전에 멈춘다(요청률 지연을 기다리지 않는다).
         if (this.recheck()) return { ok: true };
         const p = PHASE_OF[s.id];

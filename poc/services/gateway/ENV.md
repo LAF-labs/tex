@@ -27,6 +27,7 @@
 | `PROVIDER_BASE_URL` | openai-compat | `https://…` | 공급사 주소 |
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
+| `MODEL_AGENT` | 아니오(`anthropic/claude-fable-5.2`) | OpenRouter 모델 ID | 예상 밖 화면 판정·브라우저 에이전트(`page_judge`·`browser_agent`) 모델. 도구 호출·구조화 출력이 되는 가장 강한 모델을 둔다. 기본값을 쓰면 `OPENROUTER_PROVIDERS`에 `anthropic`이 있어야 한다 |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
 | `GW_ALLOW_IMAGES` | 아니오 | `false`만 | Phase 1 이미지 입력 없음(B-18). 다른 값이면 기동 거부 |

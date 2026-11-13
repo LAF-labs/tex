@@ -307,7 +307,7 @@ describe('egress BYOK 로컬 검사 4종(D04 §8)', () => {
     fresh();
     for (let i = 0; i < 4; i++) turn(); // L2 2 × (3 − 1) = 4턴을 첫 세션이 다 씀
     fresh(); // 두 번째 새 L2는 호출 예산(2)으로만 판단
-    assert.deepEqual(g.usage(runToken), { l1: 0, l2Calls: 2, l2Turns: 4 });
+    assert.deepEqual(g.usage(runToken), { l1: 0, l2Calls: 2, l2Turns: 4, agent: 0 });
     assert.throws(turn, { code: 'budget_exceeded' });
     assert.throws(fresh, { code: 'budget_exceeded' });
   });
@@ -355,7 +355,7 @@ describe('Responses(Terra) 어댑터: store:false 2턴 재생', () => {
       assert.equal((t2.output as { outcome: string }).outcome, 'repaired');
       const input2 = mock.calls.at(-1)!.body.input as Array<{ type?: string; encrypted_content?: string }>;
       assert.ok(input2.some((i) => i.type === 'reasoning' && i.encrypted_content === 'gAAAA-mock-1'));
-      assert.deepEqual(egress.guard!.usage(runToken), { l1: 0, l2Calls: 1, l2Turns: 1 });
+      assert.deepEqual(egress.guard!.usage(runToken), { l1: 0, l2Calls: 1, l2Turns: 1, agent: 0 });
       const forged = { kind: 'model_output' as const, item: { item: { type: 'function_call', name: 'propose_selectors' }, tag: 'f'.repeat(64) } as never };
       const t3 = await responder.respond(ts, { toolset: 'selector_repair', messages: [msg], replay: [forged], runToken });
       assert.deepEqual([t3.status, t3.reason], ['incomplete', 'replay_tag_mismatch']);

@@ -13,7 +13,7 @@
 | usage_monthly | account_id, month, input_tokens, output_tokens, cost_micro_usd | 계정, 토큰 수 — (1) 결제 레코드 `{account, month, tokens, cost}` |
 | call_records | call_id, account_id, device_id, at, surface, input_tokens, output_tokens | 계정, `X-Device-Id`, 번들·툴셋 ID, 토큰 수, 시각 — (3) 호출 단위 계정 연결 35일 |
 | ops_stats | day, surface, outcome, n, latency_ms_sum | 번들·툴셋 ID, 지연 — (2) 운영 통계(계정·기기 없음) |
-| run_scopes | scope_hash, kind, l1, l2_calls, l2_turns, expires_at | **D09 추가 필요**: 실행 예산 카운터(범위는 HMAC, runId 원문 없음, 2시간) |
+| run_scopes | scope_hash, kind, l1, l2_calls, l2_turns, agent_calls(002), expires_at | **D09 추가 필요**: 실행 예산 카운터(범위는 HMAC, runId 원문 없음, 2시간) |
 | lim_salts | label, day, salt | 한도 키 솔트(KST 당일 행만, 다음 날 삭제). 공용 마이그레이션 `shared/migrations` |
 | lim_windows | k, start_ms, n, expires_at | 한도 창(키는 HMAC만: IP·이메일은 당일 솔트, 계정·기기 ID는 서버 비밀. 창이 끝나면 sweep 삭제) |
 | int_nonces | nonce, expires_at | 내부 호출 서명의 1회용 무작위 값(요청 내용·출처 없음). 서명 시각 + 60초 뒤 삭제 |

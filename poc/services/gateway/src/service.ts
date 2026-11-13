@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { CHAT_AGENT, CHAT_REPLY, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { AGENT_TOOLSETS, BROWSER_AGENT, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -48,7 +48,12 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  * summarize·intent_fill은 packages/model에 정의가 없어 아직 받지 않는다(400).
  * chat_reply(대화 짧은 응대, 팀장 지시 2026-11-10)는 도구 없이 1턴이고 대화 범위(chatSessionId) 예산 l2PerChat을 쓴다.
  * chat_agent(대화 에이전트, 2026-11-12)는 도구 6개·4턴이고 같은 대화 범위 예산을 쓴다. 발급·전송 도구는 없다.
+ * page_judge·browser_agent(예상 밖 화면 판정·브라우저 에이전트, 2026-11-13)는 도구 없이 1턴이고 실행 범위의 따로 된 예산(agentPerRun)과
+ * 따로 된 모델(models.agent)을 쓴다. 엔진은 첫 게이트 앞에서만 부른다.
  */
+/** 판정·에이전트 기본 모델: OpenRouter에서 도구 호출·구조화 출력을 받는 가장 강한 모델(2026-11-13 목록). OPENROUTER_PROVIDERS에 anthropic이 있어야 한다. */
+export const DEFAULT_AGENT_MODEL = 'anthropic/claude-fable-5.2';
+
 export function gatewayToolsets(): Map<string, ToolsetDef> {
   const sr = selectorRepair(['x']);
   for (const t of sr.tools) {
@@ -60,6 +65,8 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
     [QUERY_PARSE.id, QUERY_PARSE],
     [CHAT_REPLY.id, CHAT_REPLY],
     [CHAT_AGENT.id, CHAT_AGENT],
+    [PAGE_JUDGE.id, PAGE_JUDGE],
+    [BROWSER_AGENT.id, BROWSER_AGENT],
   ]);
 }
 
@@ -105,7 +112,8 @@ export interface GatewayDeps {
   tagKey: Buffer;
   /** 실행 범위 해시 키 */
   scopeKey: Buffer;
-  models: { decide: string; respond: string };
+  /** agent: 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent) 모델. 없으면 DEFAULT_AGENT_MODEL. */
+  models: { decide: string; respond: string; agent?: string };
   monthlyTokens?: number;
   prices?: Prices;
   nts: BizStatusSource;
@@ -251,10 +259,16 @@ export class GatewayService {
   }
 
   /** 예산 1회 소비(트랜잭션). 공급사 호출 전에 소비한다(실패해도 되돌리지 않는다: 재시도 폭주 방지). */
-  private async consume(sh: string, k: 'run' | 'chat', what: 'l1' | 'l2_new' | 'l2_turn', maxTurns: number): Promise<void> {
+  private async consume(sh: string, k: 'run' | 'chat', what: 'l1' | 'l2_new' | 'l2_turn' | 'agent', maxTurns: number): Promise<void> {
     await this.d.db.tx(async (q) => {
-      const r = await q.one<{ l1: number; l2_calls: number; l2_turns: number; expires_at: number }>(`SELECT l1, l2_calls, l2_turns, expires_at FROM run_scopes WHERE scope_hash = $1${q.forUpdate}`, [sh]);
+      const r = await q.one<{ l1: number; l2_calls: number; l2_turns: number; agent_calls: number; expires_at: number }>(`SELECT l1, l2_calls, l2_turns, agent_calls, expires_at FROM run_scopes WHERE scope_hash = $1${q.forUpdate}`, [sh]);
       if (!r) fail('gateway.run_token_invalid');
+      if (what === 'agent') {
+        // 판정·에이전트는 실행 범위에서만, 따로 센다(대화 범위로는 부를 수 없다)
+        if (k !== 'run' || r!.agent_calls >= GATEWAY.agentPerRun) fail('gateway.run_budget_exceeded');
+        await q.run('UPDATE run_scopes SET agent_calls = agent_calls + 1 WHERE scope_hash = $1', [sh]);
+        return;
+      }
       const l1Max = k === 'run' ? GATEWAY.l1PerRun : GATEWAY.l1PerChat;
       const l2Max = k === 'run' ? GATEWAY.l2PerRun : GATEWAY.l2PerChat;
       if (what === 'l1') {
@@ -363,14 +377,15 @@ export class GatewayService {
     }
     // 월 100%에서 L2 중단(D04 §6)
     if ((await this.tokensThisMonth(who.acc)) >= (this.d.monthlyTokens ?? GATEWAY.monthlyTokensDefault)) fail('gateway.quota_exceeded');
-    await this.consume(rt.sh, rt.k, replay.length ? 'l2_turn' : 'l2_new', t!.maxTurns);
+    const agent = (AGENT_TOOLSETS as readonly string[]).includes(t!.id);
+    await this.consume(rt.sh, rt.k, agent ? 'agent' : replay.length ? 'l2_turn' : 'l2_new', t!.maxTurns);
     const input: unknown[] = [...b.messages, ...replay.map((r) => ('item' in r ? r.item : { type: 'function_call_output', call_id: r.call_id, output: r.output }))];
     const started = this.now();
     let res;
     try {
       res = await this.withRetry(() =>
         this.d.provider.respond({
-          model: this.d.models.respond,
+          model: agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
           prefix: toolsetPrefix(t!),
           effort: t!.effort,
           maxOutputTokens: t!.maxOutputTokens,
