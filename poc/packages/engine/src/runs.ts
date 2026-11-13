@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type Db, type Profile } from '@sax/db';
+import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type Profile } from '@sax/db';
 import type { EventLog } from '@sax/platform';
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
@@ -17,6 +17,7 @@ import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
+import { parseIssueKey, type IssueKey } from './issue/types.ts';
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -32,6 +33,21 @@ export interface StartParams {
   itemName: string;
   /** 없으면 거래처 이메일. 빈 문자열이면 이메일 칸을 비운다(자동 발송 없음). */
   email?: string | null;
+  /** 발급 키(D03 §4.2 발급 사다리). 있으면 발급 단계(s21) 원장 행에 붙고, 같은 키에 발급됨·미종결 행이 있으면 시작하지 않는다. */
+  issueKey?: string;
+}
+
+/** 발급 사다리의 홈택스 밖 칸(API·직접 발급)이 쓰는 초안. start와 같은 검증을 지난다. */
+export type IssueDraft = Omit<StartParams, 'runId' | 'issueKey'> & { issueKey: IssueKey };
+
+/** prepareIssue 결과: 원장 행 재료와, 게이트를 소비하고 무장하는 함수(한 트랜잭션, Ledger.consumeAndArm). */
+export interface PreparedIssue {
+  row: ArmRow;
+  profileId: string;
+  /** 검증을 지난 초안 값(API 원천에 보낼 문서 재료). 원장·저널에는 넣지 않는다. */
+  inputs: RunInputs;
+  supplierBizNo: string;
+  arm(reqId: string): void;
 }
 
 export type RunEvent =
@@ -80,6 +96,8 @@ interface ActiveRun {
   policy: RunPolicy | null;
   /** IR 경로(engine 'ir')의 실행. H01 경로면 null. */
   ir: IrRun | null;
+  /** 발급 키(발급 단계 s21 행에만 붙는다). */
+  issueKey: IssueKey | null;
   /** 이 실행이 시작할 때 고른 패키지(engine 'ir'). 실행 중에 설치본이 바뀌어도 이 실행은 이것으로 끝난다. */
   pkg: IrPackage | null;
   /** 허가(permit)를 묻는 플레이북 id(IR은 패키지 manifest id, H01은 H01.id). */
@@ -224,25 +242,10 @@ export class RunService extends EventEmitter {
       throw new RunEnd('failed', 'selector_placeholder');
     }
     if (typeof p.runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.runId)) throw new RunEnd('failed', 'bad_run_id');
-    const profile = this.d.data.profiles.byKind('business');
-    if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
-    const cp = this.d.data.counterparties.get(String(p.counterpartyId));
-    if (!cp) throw new RunEnd('failed', 'counterparty_missing');
-    const amt = (n: unknown) => (Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 1e15 ? (n as number) : null);
-    const supply = amt(p.supply);
-    const tax = amt(p.tax);
-    if (supply === null || tax === null || supply === 0) throw new RunEnd('failed', 'bad_amount');
-    const itemName = String(p.itemName ?? '').trim().slice(0, 100);
-    if (!itemName) throw new RunEnd('failed', 'item_missing');
-    const email = p.email === undefined ? cp.email : p.email ? String(p.email).trim() : null;
-    const inputs: RunInputs = {
-      counterpart: { id: cp.id, bizNo: cp.bizNo, name: cp.name },
-      amounts: { supply: String(supply), tax: String(tax), total: String(supply + tax) },
-      items: [{ name: itemName }],
-      // 작성일자는 KST 날짜다(OS 시간대와 무관, 요청률 정책의 유효 시각). s19e가 화면 값과 대조한다.
-      issueDate: kstDay(this.rate.clock().now),
-      email,
-    };
+    const issueKey = p.issueKey === undefined ? null : parseIssueKey(p.issueKey);
+    if (p.issueKey !== undefined && !issueKey) throw new RunEnd('failed', 'issue.bad_key');
+    const { profile, inputs } = this.draft(p);
+    if (issueKey) this.refuseIssued(issueKey);
     const intentId = ulid();
     const inputsHash = sha256hex(jcs(inputs));
     const irPkg = this.engine === 'ir' ? this.packageForRun() : undefined;
@@ -267,6 +270,7 @@ export class RunService extends EventEmitter {
     }
     this.runs.create({ id: p.runId, playbookId, playbookVersion, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
     this.journal.append(p.runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
+    if (issueKey) this.journal.append(p.runId, 'issue.rung', { issueKey, rung: 'hometax.auto' });
     // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
     const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
     if (gaps.length) {
@@ -277,11 +281,74 @@ export class RunService extends EventEmitter {
     const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
     const portal = runPortalConfig(this.d.portal, startPolicy);
     this.active = {
-      runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null, playbookId, downgraded: null,
+      runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
       portal, signals: this.runSignals(p.runId, startPolicy),
     };
     void this.execute(this.active, inputs, profile);
     return { runId: p.runId, intentId };
+  }
+
+  /** 초안 검증(start·prepareIssue 공통): 사업자 프로필·거래처·금액·품목. 틀리면 RunEnd. */
+  private draft(p: Omit<StartParams, 'runId' | 'issueKey'>): { profile: Profile; inputs: RunInputs } {
+    const profile = this.d.data.profiles.byKind('business');
+    if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
+    const cp = this.d.data.counterparties.get(String(p.counterpartyId));
+    if (!cp) throw new RunEnd('failed', 'counterparty_missing');
+    const amt = (n: unknown) => (Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 1e15 ? (n as number) : null);
+    const supply = amt(p.supply);
+    const tax = amt(p.tax);
+    if (supply === null || tax === null || supply === 0) throw new RunEnd('failed', 'bad_amount');
+    const itemName = String(p.itemName ?? '').trim().slice(0, 100);
+    if (!itemName) throw new RunEnd('failed', 'item_missing');
+    const email = p.email === undefined ? cp.email : p.email ? String(p.email).trim() : null;
+    const inputs: RunInputs = {
+      counterpart: { id: cp.id, bizNo: cp.bizNo, name: cp.name },
+      amounts: { supply: String(supply), tax: String(tax), total: String(supply + tax) },
+      items: [{ name: itemName }],
+      // 작성일자는 KST 날짜다(OS 시간대와 무관, 요청률 정책의 유효 시각). s19e가 화면 값과 대조한다.
+      issueDate: kstDay(this.rate.clock().now),
+      email,
+    };
+    return { profile, inputs };
+  }
+
+  /** 같은 발급 키에 발급됨·미종결 행이 있으면 새 시도를 만들지 않는다(무장 트랜잭션이 다시 본다). */
+  private refuseIssued(issueKey: IssueKey): void {
+    const rows = this.ledger.byIssueKey(issueKey);
+    if (rows.some((r) => r.state === 'committed')) throw new RunEnd('failed', 'ledger.issue_committed');
+    if (rows.some((r) => r.state !== 'not_committed')) throw new RunEnd('failed', 'ledger.issue_open');
+  }
+
+  /**
+   * 발급 사다리의 홈택스 밖 칸(D03 §4.2): start와 같은 초안 검증으로 원장 행 재료를 만든다. 의도는 새로 만든다.
+   * 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급)은 보지 않는다. 그 상한은 홈택스 계정이 막히지 않게 하는 장치이고 이 칸들은 홈택스를 건드리지 않는다.
+   * 두 번 발급은 상한이 아니라 원장(발급 키 묶음·in_doubt)이 막는다(부장 결정 2026-11-12).
+   */
+  prepareIssue(p: IssueDraft, o: { runId: string; stepId: string; playbookId: string }): PreparedIssue {
+    const { profile, inputs } = this.draft(p);
+    this.refuseIssued(p.issueKey);
+    const row = this.draftRow(profile, inputs, { intentId: ulid(), runId: o.runId, stepId: o.stepId, playbookId: o.playbookId, inputsHash: sha256hex(jcs(inputs)), packageDigest: sha256hex(o.playbookId), issueKey: p.issueKey });
+    return {
+      row, profileId: profile.id, inputs, supplierBizNo: profile.bizNo!,
+      arm: (reqId) => this.ledger.consumeAndArm(reqId, row),
+    };
+  }
+
+  /**
+   * 게이트 readback 없이 초안으로 만드는 원장 행 재료(업무 키·HMAC은 초안 값, actionHash는 플레이북·스텝·입력 해시·발급 키).
+   * 홈택스 밖 칸(prepareIssue)과 IR 무장 전 사람 대기 [직접 발급함]이 쓴다.
+   */
+  private draftRow(profile: Profile, inputs: RunInputs, o: { intentId: string; runId: string; stepId: string; playbookId: string; inputsHash: string; packageDigest: string; issueKey: IssueKey | null }): ArmRow {
+    const rb = {
+      supplierBizNo: profile.bizNo!, counterpartBizNo: inputs.counterpart.bizNo, supplyAmount: inputs.amounts.supply, taxAmount: inputs.amounts.tax,
+      issueDate: inputs.issueDate, itemName: inputs.items[0]!.name,
+    } as Readonly<Record<ReadbackKey, string>>;
+    return {
+      intentId: o.intentId, stepId: o.stepId, runId: o.runId, businessKey: businessKey(rb), playbookId: o.playbookId, inputsHash: o.inputsHash,
+      packageDigest: o.packageDigest, actionHash: sha256hex(jcs({ playbookId: o.playbookId, stepId: o.stepId, inputsHash: o.inputsHash, issueKey: o.issueKey })),
+      deviceId: this.deviceId, cpBizNoHmac: this.hmac('bizno', inputs.counterpart.bizNo),
+      recipientEmailHmac: inputs.email ? this.hmac('email', canonicalEmail(inputs.email)) : null, issueKey: o.issueKey,
+    };
   }
 
   private async execute(a: ActiveRun, inputs: RunInputs, profile: Profile): Promise<void> {
@@ -404,9 +471,11 @@ export class RunService extends EventEmitter {
           row: (x) => ({
             intentId: a.intentId, stepId: x.stepId, runId: a.runId, businessKey: history.businessKey, playbookId, inputsHash: a.inputsHash,
             packageDigest: a.packageDigest, actionHash: x.actionHash, deviceId: this.deviceId, cpBizNoHmac: history.cpBizNoHmac, recipientEmailHmac: history.recipientEmailHmac,
+            issueKey: x.stepId === 's21' ? a.issueKey : null,
           }),
         };
       },
+      manualRow: (stepId) => this.draftRow(profile, inputs, { intentId: a.intentId, runId: a.runId, stepId, playbookId, inputsHash: a.inputsHash, packageDigest: a.packageDigest, issueKey: stepId === 's21' ? a.issueKey : null }),
       journal: (type, payload) => {
         this.journal.append(a.runId, type, payload);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
@@ -526,6 +595,7 @@ export class RunService extends EventEmitter {
         this.ledger.consumeAndArm(p.req.reqId, {
           intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: p.history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
           packageDigest: a.packageDigest, actionHash: p.req.actionHash, deviceId: this.deviceId, cpBizNoHmac: p.history.cpBizNoHmac, recipientEmailHmac: p.history.recipientEmailHmac,
+          issueKey: a.issueKey,
         });
       })();
     } catch (e) {

@@ -13,6 +13,7 @@
 //   계좌번호는 컬럼 키로 한 번 더 감싼 칸(*_enc) + 찾기용 HMAC(*_hmac) + 끝 4자리만 평문. 입금자명·적요는 DB 기본 암호화(09 §9.1).
 //   입출금 줄은 (계좌, 줄 열쇠)로 한 번만 들어간다(같은 파일을 다시 올려도 같은 결과). 원천(file·auto)과 자동 연결 공급자는 회차에 둔다.
 //   자동 원천 줄은 원천 고유 id로 줄 열쇠를 만들고, 다른 원천이 이미 들인 같은 줄(내용 열쇠: 거래일·방향·금액·잔액)은 건너뛴다. 계좌에 원천 연결 상태(파일만·자동 연결됨·자동 오류).
+// v10(D03 §4.2 발급 사다리): 원장 발급 키(issue_key, 발급 단계 행에만). 같은 키에 not_committed가 아닌 행은 경로·의도와 무관하게 하나(ux_irr_issue_live).
 export interface Migration {
   version: number;
   name: string;
@@ -410,6 +411,14 @@ CREATE TABLE receivable_events (
   at TEXT NOT NULL, actor TEXT CHECK(actor IN ('auto','user','rematch')) NOT NULL, action TEXT NOT NULL, reason TEXT, undo_of INTEGER
 );
 CREATE INDEX ix_recv_events ON receivable_events(receivable_id, seq);
+`,
+  },
+  {
+    version: 10,
+    name: 'ledger_issue_key',
+    sql: `
+ALTER TABLE irreversible_log ADD COLUMN issue_key TEXT;
+CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';
 `,
   },
 ];

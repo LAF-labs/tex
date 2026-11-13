@@ -134,7 +134,7 @@ function mk(steps: Step[], o: Opts = {}) {
   const st = { ledger: [] as LedgerState[], inDoubt: null as string | null, allowed: true, secret: 'done' as 'done' | 'ttl' | { code: string }, lockOk: true, observed: false, loggedIn: [true] as boolean[] };
   const rec = {
     published: [] as GateRequest[], closed: [] as Array<[string, string]>, human: [] as Array<Record<string, unknown>>, humanClosed: [] as Array<[string, string]>,
-    secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[],
+    secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[], effectsAt: [] as Array<[string, string | null]>,
     guard: [] as string[], locks: [] as boolean[], navs: [] as string[], commit: [] as string[], verifies: [] as string[], judged: [] as string[],
     /** 클릭마다 그 순간 commitArmed였는가. */
     armedAtClick: [] as Array<[string, boolean]>,
@@ -180,7 +180,7 @@ function mk(steps: Step[], o: Opts = {}) {
     preGate: o.preGate,
     journal: (t, p) => rec.journal.push([t, p ?? {}]),
     onState: (e) => rec.states.push(e),
-    onEffect: (e) => rec.effects.push(e),
+    onEffect: (e, at) => (rec.effects.push(e), rec.effectsAt.push([e, at])),
   });
   const names = () => rec.states.map((e) => e.state);
   const gate = () => rec.published.at(-1)!;
@@ -555,6 +555,21 @@ describe('핸드오프·재개(D03 §2 HandedOff, R-C2)', () => {
     assert.equal(r.state, 'Completed');
     assert.ok(h.rec.effects.includes('ledger.observed_manual'));
     assert.deepEqual(h.rec.verifies, ['s21']);
+  });
+  it('"직접 발급함"은 원장 행이 아직 없어도(무장 전) 게이트가 허가한 X에 observed_manual을 적고 그 X를 verify한다', async () => {
+    const h = await handedOffAtX(async () => 'committed');
+    assert.equal(h.st.inDoubt, null);
+    assert.equal((await h.c.attestManualCommit()).state, 'Completed');
+    assert.deepEqual(h.rec.effectsAt.filter(([e]) => e === 'ledger.observed_manual'), [['ledger.observed_manual', 's21']]);
+    assert.deepEqual(h.rec.verifies, ['s21']);
+  });
+  it('"직접 발급함" 때 Running 진입이 막히면(정지 하향) 원장이 비어 있어도 InDoubt(사람이 발급했다고 했다)', async () => {
+    const h = await handedOffAtX(async () => 'committed');
+    h.st.allowed = false;
+    const r = await h.c.attestManualCommit();
+    assert.equal(r.state, 'InDoubt');
+    assert.deepEqual(h.rec.effectsAt.filter(([e]) => e === 'ledger.observed_manual'), [['ledger.observed_manual', 's21']]);
+    assert.deepEqual(h.rec.verifies, [], '진입이 막히면 verify하지 않는다');
   });
   it('recover 멈춤: 복구(M2-5)가 성공하면 실패한 스텝부터 다시, 실패하면 HandedOff', async () => {
     const REC: Step = { id: 's2', type: 'click', target: 'f.lookup', timeoutMs: 10, onFail: { then: 'recover' } };

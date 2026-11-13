@@ -151,11 +151,12 @@ describe('원장 시도 번호(ADR-042)', () => {
     const db = openDatabase(file, k);
     assert.equal(db.pragma('user_version', { simple: true }), MIGRATIONS.length);
     const after = db.prepare('SELECT * FROM irreversible_log ORDER BY intent_id, step_id').all() as Array<Record<string, unknown>>;
-    assert.deepEqual(after.map(({ attempt, ...r }) => (assert.equal(attempt, 1), r)), before);
+    // 뒤 판(v10 발급 키)이 더한 열은 옛 행에서 비어 있다.
+    assert.deepEqual(after.map(({ attempt, issue_key, ...r }) => (assert.equal(attempt, 1), assert.equal(issue_key, null), r)), before);
     const pk = (db.prepare('PRAGMA table_info(irreversible_log)').all() as Array<{ name: string; pk: number }>).filter((c) => c.pk).sort((a, b) => a.pk - b.pk).map((c) => c.name);
     assert.deepEqual(pk, ['intent_id', 'step_id', 'attempt']);
     const idx = (db.prepare(`SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='irreversible_log' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all() as Array<{ name: string }>).map((r) => r.name);
-    assert.deepEqual(idx, ['ix_irr_business', 'ix_irr_cp_hmac', 'ix_irr_email_hmac', 'ix_irr_run', 'ux_irr_live']);
+    assert.deepEqual(idx, ['ix_irr_business', 'ix_irr_cp_hmac', 'ix_irr_email_hmac', 'ix_irr_run', 'ux_irr_issue_live', 'ux_irr_live']);
     // 옮긴 뒤의 원장 의미도 같다: committed는 영원히, in_doubt는 미종결, not_committed는 다음 시도 가능
     const l = new Ledger(db);
     assert.deepEqual(l.checkIntent('i-a', 's21', 'H-01', 'ih'), { kind: 'committed', runId: 'run-a' });

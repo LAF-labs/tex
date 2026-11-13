@@ -454,6 +454,16 @@ export class Vault {
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
       case 'browser.focus':
         return { focused: this.relay ? await this.relay.bringToFront() : false };
+      case 'browser.place': {
+        const n = (k: string) => {
+          const v = p[k];
+          if (typeof v !== 'number' || !Number.isInteger(v) || Math.abs(v) > 100_000) throw new Error('bad_params');
+          return v;
+        };
+        const bounds = { left: n('x'), top: n('y'), width: n('width'), height: n('height') };
+        if (bounds.width < 200 || bounds.height < 200) throw new Error('bad_params');
+        return { placed: this.relay ? await this.relay.placeWindow(bounds, p.front === true) : false };
+      }
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
     throw new Error('not_implemented');
@@ -595,6 +605,16 @@ export class Vault {
       emit,
       usedSlots: this.usedSlots,
       stored: (kind, scope, row) => this.readStored(kind, scope, row),
+      // 인증서 비밀번호 기억(대표 지시 2026-11-13). 데스크톱은 run.begin에 프로필을 주지 않으니 사업자로 본다(Phase 1).
+      certMemory: {
+        scopeOf: (runId) => this.runProfiles.get(runId) ?? 'business',
+        read: (scope) => this.readStored('cert_password', scope),
+        save: async (scope, bytes) => {
+          if (!isProfileScope(scope)) return false;
+          await this.human.store('cert_password', scope, [{ field: 'pw', bytes }], { version: 'cert-memory-2026-11-13' });
+          return true;
+        },
+      },
     });
     for (const [k, v] of this.pendingTriggers) this.ops.runTriggers.set(k, v);
     this.pendingTriggers.clear();

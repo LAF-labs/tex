@@ -21,7 +21,8 @@ export interface LaunchSpec {
 export function buildChromeArgs(profileDir: string, testArgs: string[] = []): string[] {
   // --disable-breakpad: 크래시해도 프로필 아래 로컬 덤프(Crashpad)를 만들지 않는다(N-04).
   // --disable-default-apps: 기본 앱이 전용 프로필에 깔려 확장 검사가 비밀 창을 막지 않게 한다(constants.ts CHROME_ARG_ALLOWLIST).
-  const fixed = ['--remote-debugging-pipe', `--user-data-dir=${profileDir}`, '--no-first-run', '--disable-breakpad', '--disable-default-apps'];
+  // 가려진 창·뒤 렌더러·타이머 늦추기를 끈다: 앱이 홈택스 Chrome을 앱 옆·뒤에 두므로(#305) 가려져도 자동화가 느려지지 않게.
+  const fixed = ['--remote-debugging-pipe', `--user-data-dir=${profileDir}`, '--no-first-run', '--disable-breakpad', '--disable-default-apps', '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
   const args = [...fixed, ...testArgs];
   for (const a of args) {
     if (FORBIDDEN_CHROME_ARGS.some((f) => a === f || a.startsWith(f + '='))) throw new Error(`forbidden chrome arg: ${a.split('=')[0]}`);

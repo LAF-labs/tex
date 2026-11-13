@@ -23,9 +23,12 @@ export interface ArmRow {
   deviceId: string;
   cpBizNoHmac: string;
   recipientEmailHmac: string | null;
+  /** 발급 키(D03 §4.2). 발급 단계 행(H-01 s21, API api.issue, 직접 발급 manual.issue)에만. 후속 단계는 null. */
+  issueKey?: string | null;
 }
 
 export interface LedgerRow extends ArmRow {
+  issueKey: string | null;
   /** 같은 (intent_id, step_id)의 시도 번호(1부터, ADR-042). 앞선 시도가 모두 not_committed일 때만 다음 번호가 생긴다. */
   attempt: number;
   state: LedgerState;
@@ -73,6 +76,7 @@ const toLedger = (r: Row): LedgerRow => ({
   deviceId: String(r.device_id),
   cpBizNoHmac: String(r.cp_biz_no_hmac),
   recipientEmailHmac: (r.recipient_email_hmac as string) ?? null,
+  issueKey: (r.issue_key as string) ?? null,
   state: r.state as LedgerState,
   reason: (r.reason as string) ?? null,
   armedAt: String(r.armed_at),
@@ -174,6 +178,22 @@ export class Ledger {
     return rows.find((r) => r.state !== 'not_committed')?.state ?? null;
   }
 
+  /** 같은 발급 키의 행(경로·의도 무관, armed_at 순). 발급 사다리가 칸이 끝날 때마다 이것으로 판정한다(D03 §4.2). */
+  byIssueKey(issueKey: string): LedgerRow[] {
+    return this.db.prepare('SELECT * FROM irreversible_log WHERE issue_key = ? ORDER BY armed_at, rowid').all(issueKey).map((r) => toLedger(r as Row));
+  }
+
+  /**
+   * 발급 키 묶음 검사(D03 §4.2): 같은 키의 다른 (intent, step) 행이 committed면 ledger_issue_committed, 미종결이면 ledger_issue_open.
+   * 같은 (intent, step)의 자기 시도는 기존 규칙(blockingAttempt)이 본다. ux_irr_issue_live 색인이 뒷받침한다.
+   */
+  private checkIssueKey(a: ArmRow): void {
+    if (!a.issueKey) return;
+    const others = this.byIssueKey(a.issueKey).filter((r) => r.intentId !== a.intentId || r.stepId !== a.stepId);
+    if (others.some((r) => r.state === 'committed')) throw new LedgerError('ledger_issue_committed');
+    if (others.some((r) => r.state !== 'not_committed')) throw new LedgerError('ledger_issue_open');
+  }
+
   /** 같은 의도로 들어온 새 실행의 판정(D03 §4). */
   checkIntent(intentId: string, stepId: string, playbookId: string, inputsHash: string): IntentCheck {
     const rows = this.db.prepare('SELECT * FROM irreversible_log WHERE intent_id = ?').all(intentId).map((r) => toLedger(r as Row));
@@ -205,6 +225,7 @@ export class Ledger {
    * - 하나라도 committed면 ledger_committed(영원히 새 시도 없음),
    * - 종결되지 않은 행(armed·dispatched·in_doubt·observed_manual)이 있으면 ledger_<그 상태>,
    * - 플레이북·입력 해시가 다르면 ledger_intent_mismatch(같은 의도의 재게이트만 새 시도다, D07 B-10)
+   * - 발급 키가 같은 다른 행이 committed·미종결이면 ledger_issue_committed·ledger_issue_open(D03 §4.2)
    * 로 던지고 아무것도 쓰지 않는다. 모두 not_committed이면 다음 번호로 armed를 넣는다. 앞선 not_committed 행은 그대로 둔다
    * (사유·verify_ref는 감사 근거이고, 업무 키의 "직전 시도 발급 안 됨" 경고가 그 행에서 나온다).
    */
@@ -216,10 +237,11 @@ export class Ledger {
       const block = this.blockingAttempt(prev);
       if (block) throw new LedgerError(`ledger_${block}`);
       if (prev.some((r) => r.playbookId !== a.playbookId || r.inputsHash !== a.inputsHash)) throw new LedgerError('ledger_intent_mismatch');
+      this.checkIssueKey(a);
       this.db
-        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-          VALUES (@intentId, @stepId, @attempt, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
-        .run({ ...a, attempt: prev.length + 1, armedAt: now() });
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac, issue_key)
+          VALUES (@intentId, @stepId, @attempt, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
+        .run({ ...a, issueKey: a.issueKey ?? null, attempt: prev.length + 1, armedAt: now() });
     })();
   }
 
@@ -252,17 +274,40 @@ export class Ledger {
   observedManual(a: ArmRow): void {
     this.db.transaction(() => {
       const prev = this.get(a.intentId, a.stepId);
+      this.checkIssueKey(a);
       if (!prev) {
         this.db
-          .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-            VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'observed_manual', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
-          .run({ ...a, armedAt: now() });
+          .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac, issue_key)
+            VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'observed_manual', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
+          .run({ ...a, issueKey: a.issueKey ?? null, armedAt: now() });
         return;
       }
       // 관측은 새 시도를 만들지 않는다(새 시도는 토큰 소비로만, ADR-042 결정 2). 마지막 시도가 종결이면 그대로 던진다.
       if (prev.state === 'committed' || prev.state === 'not_committed') throw new LedgerError(`ledger_${prev.state}`);
       if (prev.state === 'observed_manual') return;
       this.db.prepare(`UPDATE irreversible_log SET state = 'observed_manual' WHERE intent_id = ? AND step_id = ? AND attempt = ?`).run(a.intentId, a.stepId, prev.attempt);
+    })();
+  }
+
+  /**
+   * 사람이 "직접 발급함"·가드 관측으로 발급 사실을 알렸다. 원장 상태와 관계없이 그 사실을 남기고, 사실이 남은 (intent, step)을 돌려준다.
+   * - 그 (intent, step)이 committed면 이미 발급으로 적혀 있어 쓰지 않는다.
+   * - 마지막 시도가 not_committed면 종결은 바꾸지 않는다(ADR-042, resolve 규칙). 대신 같은 의도에 따로 행
+   *   `<step>.manual`(observed_manual, 같은 발급 키)을 넣는다. 발급 키 묶음이 그 열린 행을 보고 새 시도를 막는다.
+   * - 그 밖(행 없음·armed·dispatched·in_doubt·observed_manual)은 observedManual 그대로다.
+   */
+  attestManual(a: ArmRow): string {
+    return this.db.transaction(() => {
+      const prev = this.get(a.intentId, a.stepId);
+      if (prev?.state === 'committed') return a.stepId;
+      if (prev?.state !== 'not_committed') {
+        this.observedManual(a);
+        return a.stepId;
+      }
+      const side = { ...a, stepId: `${a.stepId}.manual` };
+      if (this.get(side.intentId, side.stepId)?.state === 'committed') return side.stepId;
+      this.observedManual(side);
+      return side.stepId;
     })();
   }
 
@@ -277,9 +322,9 @@ export class Ledger {
       const prev = this.get(a.intentId, a.stepId);
       if (prev) throw new LedgerError(`ledger_${prev.state}`);
       this.db
-        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac)
-          VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac)`)
-        .run({ ...a, armedAt: now() });
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac, issue_key)
+          VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
+        .run({ ...a, issueKey: a.issueKey ?? null, armedAt: now() });
     })();
   }
 

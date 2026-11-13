@@ -105,6 +105,8 @@ export interface IrRunInput {
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
   history: (rb: Readonly<Record<string, string>>, card: string) => GateHistory | null;
+  /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
+  manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
   phase: (phase: string, state: 'now' | 'done' | 'attention', code?: string) => void;
   postGate: (m: GatePortMessage) => void;
@@ -174,7 +176,7 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 }
 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
-const PHASE_OF: Readonly<Record<string, string>> = {
+export const PHASE_OF: Readonly<Record<string, string>> = {
   s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
   s10: 'form', s11: 'form',
   s12: 'input', s13: 'input', s14: 'input', s15: 'input', s16: 'input', s17: 'input', s18: 'input',
@@ -426,6 +428,7 @@ export class IrRun {
     const commit = new LedgerCommitPort({
       db: i.db, ledger: i.ledger, intentId: i.intentId, ir, dict,
       row: (x) => this.history?.row(x) ?? null,
+      manualRow: i.manualRow,
       inTx: () => enforcer.markCommitted(),
       pageUrl: () => page.url(),
       verifyRef: (v) => book.ref(v) ?? null,

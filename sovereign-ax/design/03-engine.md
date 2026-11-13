@@ -146,6 +146,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 - 행은 입력(`inputs_hash`)·패키지(`package_digest`)·승인 내용(`action_hash`)에 결속된다. 같은 의도의 비가역 둘(주·후속)은 `step_id`로 구분되어 서로 덮어쓰지 않는다.
 - 상태: `armed → dispatched → committed | not_committed | in_doubt`. 그리고 `observed_manual`: 핸드오프·`human(manual)` 중 가드가 관측한 커밋 요청 또는 사용자의 "직접 발급함"(R-C2). `observed_manual`은 verify로 `committed`/`not_committed`가 되거나 `in_doubt`로 남는다.
+- 무장 전(게이트 승인 전) "직접 발급함"도 행을 남긴다: 게이트가 허가한 주 비가역 X가 하나면 그 X 행을 `observed_manual`로 넣는다. 재료는 그 실행의 의도·입력 해시·패키지·초안의 업무 키·HMAC이고 `action_hash`는 플레이북·스텝·입력 해시·발급 키로 만든다(승인 내용이 없다). X가 여럿이면 행 없이 `in_doubt`로 끝낸다(2026-11-12).
+- 그 X가 이미 `not_committed`(예: 무장 뒤 누르기 전 `identity_mismatch`)여도 "직접 발급함"은 남는다. 종결 행은 바꾸지 않고 같은 의도에 따로 행 `<X>.manual`(`observed_manual`, 같은 발급 키)을 넣는다(`Ledger.attestManual`). 그 뒤 verify 판정은 그 행에 붙는다. 같은 발급 키의 열린 행이라 사다리는 멈추고 새 무장은 `ledger_issue_open`이다. 가드 관측(R-C2)도 같다(2026-11-12).
 - 순서: 토큰 소비 + `armed` 기록 커밋 → readback 재계산 → 클릭 → `dispatched` → verify → 종결 상태.
 - 재시작 시 `armed|dispatched|observed_manual`은 모두 `in_doubt`로 승격.
 - **의도 재사용 거부**: 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 원장의 것과 다르면 거부하고 보안 이벤트 `ledger.intent_reuse`를 남긴다.
@@ -174,6 +176,27 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 | 핸드오프 중, 사용자가 전용 Chrome 밖에서 발급 | 기록 없음 | 재개 시 `resumeAt` | 가드가 볼 수 없음 | **있음**(배너 문구만) |
 
 "중복 0건"은 **한 PC 안의 엔진 로직 버그** 범위에서 성립한다. 반영 지연 중의 사용자 증언, 두 PC의 동시 게이트, 전용 Chrome 밖 수동 발급은 경고만 한다(D13 §3, D19 §8). 다른 PC나 전용 Chrome 밖에서 이미 발급된 건은 발급목록에 반영된 뒤 다음 게이트의 B₀로 경고한다(`$dup.portalExisting`, ADR-024).
+
+### 4.2 발급 사다리 (세금계산서, 대표 지시 2026-11-12)
+
+대표 지시: 발급은 가장 빠르고 싼 길부터, 마지막에 연결된 API로. 엔진 `issue/`가 한 발급 키(issueKey)에 대해 경로 표의 칸을 차례로 돈다. 칸마다 실행은 따로 의도를 만든다(§4 규칙 그대로).
+
+| 순서 | 경로 | 비용 | 사장님이 할 일 | 필요한 연결 |
+|---|---|---|---|---|
+| 1 | `hometax.auto` (H-01 패키지) | 0원 | 로그인·서명 차례, 승인 카드 | Chrome·패키지 |
+| 2 | `hometax.manual` | 0원 | 홈택스에서 직접 발급, [발급했어요]/[못 해요] | 없음 |
+| 3 | `api.popbill` | 건당 요금 | 동의 카드 | 팝빌 파트너 키, 사장님 팝빌 가입·인증서 등록 |
+| 4 | `api.codef` (팝빌 제휴 상품) | 건당 요금(미확인) | 동의 카드 | CODEF 발행 상품, 팝빌 가입·인증서 등록 |
+
+- **판정은 원장으로 한다.** 칸이 끝나면 같은 발급 키의 원장 행을 읽는다. committed면 끝(발급됨). 미종결(armed·dispatched·in_doubt·observed_manual)이면 멈춘다: 발급목록 대조(verify 재시도)나 사장님 증언으로 종결되기 전에는 다음 칸으로 가지 않는다. 행이 없거나 모두 not_committed일 때만 끝 코드로 갈래를 나눈다.
+- 갈래(앱 내장 표 하나): 홈택스 쪽 문제(로그인·인증·화면 불일치·차단·캡차·Chrome 없음·verify not_committed)는 다음 칸, 내용 오류(`assert.*`·금액·거래처)·사장님 [중지]·승인 만료·하루 상한·서버 정지·발급 화면 이후 사람 대기 시간 초과는 멈춤. 모르는 코드는 멈춤.
+- **유료 칸 전 동의 카드**: 경로 이름, 건당 요금과 근거, 앞 칸이 끝난 이유, "아무것도 발급되지 않았어요(원장 확인)". 동의는 그 키·그 칸에 한 번이고 게이트 표에 approved로 남아 원장 무장이 소비한다. 홈택스 승인 근거는 다시 쓰지 않는다.
+- **발급 키 불변식**: `irreversible_log.issue_key`(발급 단계 행에만)와 부분 유일 색인 `ux_irr_issue_live`(D07). 같은 키에 committed·미종결 행은 경로와 무관하게 하나다. 무장 트랜잭션이 먼저 검사하고(`ledger_issue_committed`·`ledger_issue_open`) 색인이 뒷받침한다.
+- API 칸: 무장 → 호출 한 번 → 성공이면 committed(승인번호). 오류·끊김이면 다시 부르지 않고 문서번호로 조회한다. 있음 = committed, 없음 확인 = not_committed, 모름 = in_doubt. 팝빌 문서번호(MgtKey)는 발급 키만으로 만든다(같은 건은 몇 번째 시도든 같은 번호, 원천의 중복 거부가 두 번째 문서를 막는다). "없음 확인"은 홈택스 verify처럼 하한(첫 조회부터 60초, 조회 2번 모두 없음)을 채워야 하고, 그 전에 끝나면 in_doubt다. 거절 응답 뒤에도 조회로 확인한다. CODEF 발행 상품은 우리가 넣는 문서번호가 없어 목록 대조에 기댄다.
+- 같은 키 재요청: 진행 중이면 그 상태, committed면 발급됨, 미종결이면 멈춤을 돌려주고 새 시도를 만들지 않는다.
+- 홈택스 자동 칸의 사람 대기 [직접 발급함]은 무장 전이어도 실행이 발급 단계(s21) 행에 발급 키를 붙여 `observed_manual`로 남긴다(§4). 사다리는 그 행으로 멈춘다.
+- 실제 API 호출 코드는 연결 원천(키·회원 등록)이 있을 때만 켠다. 없으면 그 칸은 `api.not_connected`로 건너뛴다.
+- API 칸은 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급, §7)을 보지도 세지도 않는다. 그 상한은 홈택스 계정 보호 장치이고, 두 번 발급은 발급 키 원장이 막는다(부장 결정 2026-11-12).
 
 ## 5. 스텝 실행과 커밋 구간
 

@@ -38,6 +38,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
     // [홈택스 창 보기](main): 실행 탭을 앞으로. 값을 읽거나 바꾸지 않는다.
     'browser.focus',
+    // 홈택스 창 자리(main): 실행 창을 앱 옆에 둔다. front면 앞으로도. 창 크기·위치만 바꾸고 페이지는 건드리지 않는다.
+    'browser.place',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
@@ -62,7 +64,8 @@ export type SecretKind = (typeof SECRET_KINDS)[number];
  * - portal_password: 칸 `portal/<scope>/pw` 하나(D05 §2, ADR-035). 포털 아이디는 비밀이 아니라 저장하지 않는다(DB `profiles.portal_login_id`, 엔진 fill)
  * - security_card: 칸 `securitycard/<scope>/<row>`(row 1~35)
  */
-export const STORABLE_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
+// 인증서 비밀번호도 기억한다(대표 지시 2026-11-13, ADR-020 결정 2 고침): 처음 금고 비밀 창에 넣은 값을 저장하고 다음부터 금고가 칸에 넣는다.
+export const STORABLE_KINDS = ['portal_password', 'security_card', 'cert_password'] as const satisfies readonly SecretKind[];
 
 /**
  * 타이피스트가 넣는 종류(D05 §2 표·§4, ADR-020 결정 2, ADR-025 결정 10). 공동·금융인증서 비밀번호는 사용자가 전용 Chrome의

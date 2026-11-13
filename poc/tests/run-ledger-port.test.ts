@@ -64,6 +64,7 @@ describe('LedgerCommitPort(원장·가드 포트, D03 §3 R-G7)', () => {
     const port = new LedgerCommitPort({
       db, ledger, intentId: INTENT, ir: IR, dict: DICT,
       row: (x) => ROW({ stepId: x.stepId, actionHash: x.actionHash }),
+      manualRow: () => null,
       guard: { arm: async (a) => (armed.push(a), { ok: true }), disarm: async () => void disarmed++ },
       pageUrl: () => 'https://hometax.go.kr/form',
       verifyRef: (v) => `ref-${v}`,
@@ -186,10 +187,28 @@ describe('LedgerCommitPort(원장·가드 포트, D03 §3 R-G7)', () => {
     assert.equal(ledger.get(INTENT, 's21')?.state, 'in_doubt', 'not_committed로도 적지 않는다');
   });
 
+  it('ledgerEffect observed_manual(사람 대기 [직접 발급함]): 무장 전이면 manualRow로 그 X 행을 observed_manual로 넣고, 무장 뒤면 그 행을 바꾼다. 재료가 없으면 write_failed', () => {
+    const { port, journal } = mk({ manualRow: (x) => (x === 's21' ? ROW({ stepId: x, actionHash: 'manual', issueKey: 'K1' }) : null) });
+    assert.equal(port.ledgerEffect('ledger.observed_manual', 's21'), true);
+    const pre = ledger.get(INTENT, 's21');
+    assert.deepEqual([pre?.state, pre?.attempt, pre?.issueKey, pre?.actionHash], ['observed_manual', 1, 'K1', 'manual']);
+
+    const req = approved();
+    assert.deepEqual(port.arm({ stepId: 's25', reqId: req, actionHash: 'ah' }), { ok: true });
+    const armed = mk({ manualRow: (x) => ROW({ stepId: x, actionHash: 'manual' }) });
+    assert.equal(armed.port.ledgerEffect('ledger.observed_manual', 's25'), true);
+    assert.deepEqual([ledger.get(INTENT, 's25')?.state, ledger.get(INTENT, 's25')?.actionHash], ['observed_manual', 'ah'], '무장한 행을 바꾼다(새 시도 없음)');
+
+    const none = mk();
+    assert.equal(none.port.ledgerEffect('ledger.observed_manual', 's21b'), true);
+    assert.deepEqual(none.journal, [['ledger.write_failed', { effect: 'observed_manual', code: 'ledger.row_missing' }]]);
+    assert.equal(ledger.get(INTENT, 's21b'), null);
+    assert.deepEqual(journal, [['ledger.observed_manual', { stepId: 's21' }]]);
+  });
+
   it('ledgerEffect: 원장 효과가 아니면 false, 자리 없으면 effect_unbound, 원장 거부는 write_failed(던지지 않음)', () => {
     const { port, journal } = mk();
     assert.equal(port.ledgerEffect('input.unlock', 's21'), false);
-    assert.equal(port.ledgerEffect('ledger.observed_manual', 's21'), false);
     assert.equal(port.ledgerEffect('ledger.dispatched', null), true);
     assert.equal(port.ledgerEffect('ledger.dispatched', 's21'), true, '행이 없다');
     assert.deepEqual(journal, [['ledger.effect_unbound', { effect: 'dispatched' }], ['ledger.write_failed', { effect: 'dispatched', code: 'ledger_not_armed' }]]);

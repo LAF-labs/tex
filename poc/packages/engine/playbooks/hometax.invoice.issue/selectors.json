@@ -93,15 +93,29 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_edtDmnrBsnoTop"
+    },
+    {
+     "kind": "label",
+     "value": "사업자등록번호"
+    },
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "사업자등록번호"
+    },
+    {
+     "kind": "label",
+     "value": "등록번호"
     }
    ],
    "role": "textbox",
-   "namePattern": "^사업자등록번호$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
-   "inputType": "text"
+   "lastVerified": "2026-11-13",
+   "inputType": "text",
+   "fieldKey": "counterpartBizNo"
   },
   "hometax.invoice.form.bizNoConfirm": {
    "candidates": [
@@ -111,11 +125,11 @@
     }
    ],
    "role": "button",
-   "namePattern": "^확인$",
+   "namePattern": "^(확인)?$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
+   "lastVerified": "2026-11-13",
    "inputType": "button",
    "reviewNote": {
     "by": "h01-package-real",
@@ -217,14 +231,23 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTop"
+    },
+    {
+     "kind": "label",
+     "value": "1행 품목"
+    },
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "1행 품목"
     }
    ],
    "role": "textbox",
-   "namePattern": "^1행 품목$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
+   "lastVerified": "2026-11-13",
    "inputType": "text"
   },
   "hometax.invoice.form.item1.supply": {
@@ -369,8 +392,8 @@
    "landmark": "hometax.invoice.preview.root",
    "commits": false,
    "lastVerified": "2026-11-11",
-   "fieldKey": "counterpartBizNo",
-   "inputType": "text"
+   "inputType": "text",
+   "readbackOf": "counterpartBizNo"
   },
   "hometax.invoice.preview.counterpartName": {
    "candidates": [

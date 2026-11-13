@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.2.0",
+ "version": "2.2.1",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -53,6 +53,12 @@
    "inputVerified": "counterpart"
   }
  ],
+ "recovery": {
+  "default": {
+   "retry": 2,
+   "then": "handoff"
+  }
+ },
  "steps": [
   {
    "id": "s0",
@@ -97,7 +103,11 @@
    "for": "text",
    "value": "hometax.login.successMarker",
    "timeoutMs": 600000,
-   "pace": "slow"
+   "pace": "slow",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
   },
   {
    "id": "s6",
@@ -447,13 +457,21 @@
     "committed": "s32",
     "not_committed": "s11",
     "unknown": "handoff"
+   },
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
    }
   },
   {
    "id": "s32",
    "type": "save_pdf",
    "strategy": "print",
-   "docType": "tax_invoice"
+   "docType": "tax_invoice",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
   },
   {
    "id": "s32b",
@@ -491,6 +509,10 @@
     "committed": "s34",
     "not_committed": "s35",
     "unknown": "s35"
+   },
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
    }
   },
   {
