@@ -141,7 +141,8 @@
    "id": "s4e",
    "type": "handoff",
    "reason": "cert.pickOne",
-   "resumeAt": "s4f"
+   "resumeAt": "s4f",
+   "code": "cert.pick_needed"
   },
   {
    "id": "s4f",
