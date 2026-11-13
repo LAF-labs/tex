@@ -15,6 +15,7 @@ const $ = (s) => document.querySelector(s);
 
 const state = {
   screen: null, // 진행 화면(B3): { runId, frame, paused }
+  browser: { shown: false, available: false }, // [브라우저] 토글: 실행 Chrome이 패널 자리에 앞으로 와 있나(main이 알린다)
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -294,6 +295,8 @@ function renderTitlebar() {
       h('button', { type: 'button', class: 'tb-co', 'aria-haspopup': 'menu', 'aria-expanded': String(state.menu), onclick: () => toggleMenu() }, cur.name, icon('chevron')),
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
     ),
+    // [브라우저](claude desktop처럼): 실행 Chrome을 이 앱 브라우저 패널 자리에 앞으로 올린다. 다시 누르면 앱이 앞으로. 실행 Chrome이 없으면 누를 수 없다.
+    h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), disabled: !state.browser.available, title: state.browser.available ? '홈택스 브라우저 보기·숨기기' : '진행 중인 홈택스 작업이 없어요', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '브라우저'),
     // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
@@ -975,7 +978,7 @@ function paintScreen() {
   let img = box.querySelector('img');
   if (!img) {
     img = h('img', { alt: '홈택스 화면(보기 전용)', draggable: 'false' });
-    box.replaceChildren(img, h('p', { class: 'sx-meta run-screen-note' }, '보기 전용이에요. 직접 하려면 [홈택스 창 보기]를 눌러 주세요.'));
+    box.replaceChildren(img, h('p', { class: 'sx-meta run-screen-note' }, '보기 전용이에요. 위의 [브라우저]를 누르면 이 자리에서 직접 할 수 있어요.'));
   }
   box.dataset.state = 'live';
   img.src = s.frame;
@@ -2017,6 +2020,11 @@ window.sax.onEvent((ev) => {
       el.dataset.agentProgress = ev.phase;
       if (!el.isConnected) appendThread(el);
     }
+    return;
+  }
+  if (ev.type === 'browser') {
+    state.browser = { shown: ev.shown === true, available: ev.available === true };
+    renderTitlebar();
     return;
   }
   if (ev.type === 'screen') {

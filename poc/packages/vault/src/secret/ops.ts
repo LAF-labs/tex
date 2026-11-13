@@ -126,8 +126,8 @@ export interface SecretOpsOptions {
     save(scope: string, bytes: Uint8Array): Promise<boolean>;
   };
   /**
-   * 창 없는 Chrome인가(부장 지시 2026-11-13 ②). 그렇다면 사람이 Chrome 칸에 칠 수 없으니, 기억값이 없을 때 인증서 비밀번호를
-   * 앱의 금고 직결 입력 창(secret.needed → secretInput 포트 → secret.provide)으로 받아 금고가 그 칸에 넣고 기억한다.
+   * 기억값이 없을 때 인증서 비밀번호를 앱의 금고 직결 입력 창(secret.needed → secretInput 포트 → secret.provide)으로 받아
+   * 금고가 그 칸에 넣고 기억한다(부장 지시 2026-11-13 (b)). Chrome은 앱 뒤에 있어 사람이 그 칸을 찾지 않아도 된다.
    */
   askApp?: () => boolean;
 }
@@ -440,7 +440,7 @@ export class SecretOps {
         }
       }
       if (this.opts.askApp?.()) {
-        // 창 없는 Chrome: 칸은 금고가 잡아 두고(활성 창, 엔진 CDP·화면 중계 멈춤) 값은 앱 입력 창에서 받는다.
+        // 칸은 금고가 잡아 두고(활성 창, 엔진 CDP·화면 중계 멈춤) 값은 앱 입력 창에서 받는다.
         const askScope = scope ?? 'business';
         this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
         this.appAsk.set(t.targetId, { runId: req.runId, scope: askScope, objectId: el.objectId });

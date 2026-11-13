@@ -23,8 +23,6 @@ export type OutboundMessage =
 export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   engine: [
     'browser.launch', 'browser.shutdown',
-    // browser.show로 금고가 Chrome을 다시 띄운 뒤 엔진이 새 실행 탭에 다시 붙을 때(launch 없이 지금 실행 탭 id만).
-    'browser.current',
     'typist.fill', 'typist.authFailed',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
@@ -44,8 +42,6 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.place',
     // 진행 화면(B3): 실행 탭 화면을 보기 전용으로 main에 중계한다(초당 3장 남짓). 입력은 받지 않는다. 비밀 창이 열린 동안은 멈춘다.
     'screen.start', 'screen.stop',
-    // 사람이 페이지를 만져야 할 때만(main): 창 없는 Chrome을 같은 전용 프로필의 창 있는 Chrome으로 다시 띄운다(쿠키·주소를 옮긴다).
-    'browser.show',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
@@ -111,7 +107,7 @@ export const PORTAL_LOGIN_ID_MAX = 64;
  * 1회용 비밀 입력 결속(I-1, N-44). main이 secretInput 포트를 넘길 때 함께 준다.
  * 금고는 이 포트에서 이 값으로 secret.provide를 한 번만 받는다. 결속이 없거나 틀리면 포트를 붙이지 않는다.
  * `mode`가 없으면 oneshot이다(PoC 호환).
- * - kind는 TYPIST_KINDS와, 창 없는 Chrome일 때 금고가 부른 cert_password(row 없음). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
+ * - kind는 TYPIST_KINDS와, 금고가 부른 cert_password(row 없음, 앱 입력 창). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
  * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope, row?}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
  *   요청은 SECRET_TTL_MS 동안 살아 있고, 값을 받거나 run.end면 지운다. 요청 없는 결속은 `vault.secret_input_unrequested`.
  */
@@ -574,6 +570,4 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
-  | 'screen.frame' | 'screen.paused'
-  /** 엔진: 금고가 Chrome을 창 있는 것으로 다시 띄웠다(browser.show). 앞 Chrome은 cdp_closed로 끝났고 새 실행 탭은 targetId. */
-  | 'browser.relaunched';
+  | 'screen.frame' | 'screen.paused';

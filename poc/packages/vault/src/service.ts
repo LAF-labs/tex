@@ -70,7 +70,7 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   }
   if (x.mode !== undefined && x.mode !== 'oneshot') return null;
   if (typeof x.runId !== 'string' || !RUN_ID_RE.test(x.runId)) return null;
-  // 1회용 입력 창은 타이피스트가 넣는 종류와, 창 없는 Chrome의 인증서 비밀번호(금고가 칸을 잡고 앱 창으로 받는다, 부장 지시 2026-11-13 ②).
+  // 1회용 입력 창은 타이피스트가 넣는 종류와, 인증서 비밀번호(금고가 칸을 잡고 앱 창으로 받는다, 부장 지시 2026-11-13 (b)).
   // 어느 쪽이든 금고가 먼저 secret.needed로 부른 결속만 붙는다(attachPort의 hasNeed).
   if (!(isTypistKind(x.kind) || x.kind === 'cert_password') || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
   if (x.kind === 'cert_password' && x.row !== undefined) return null;
@@ -90,10 +90,15 @@ export interface VaultOptions {
   /** 테스트 전용 Chrome 인자(헤드리스 등). */
   testChromeArgs?: string[];
   /**
-   * 창 없는 Chrome으로 띄운다(기본 true, 대표 요청 2026-11-13). 진행은 앱 패널 중계(screen.start)로 보고,
-   * 사람이 페이지를 만져야 할 때만 browser.show로 창 있는 Chrome으로 다시 띄운다. 창을 보며 하는 시험만 false.
+   * 창 없는 Chrome으로 띄운다(시험·측정 전용, 기본 false). 앱은 창 있는 Chrome을 앱 창 뒤 브라우저 패널 자리에 두고
+   * [브라우저] 토글로 앞으로 올린다(대표 지시 2026-11-13 "claude desktop처럼 버튼을 누르면 브라우저가 보이게").
    */
   headless?: boolean;
+  /**
+   * 기억값이 없는 첫 인증서 비밀번호를 앱 금고 입력 창(secret.needed → secretInput 포트)으로 받는다(기본 true, 부장 지시 2026-11-13 (b)).
+   * false면 옛 길: 사람이 Chrome의 그 칸에 직접 친다(그 길을 보는 시험만).
+   */
+  certFromApp?: boolean;
   /** 테스트에서 비공개 루트 확인을 건너뛰지 않도록 기본은 OS 구현. */
   dirGuard?: DirGuard;
   /** 테스트 전용. 기본은 LAUNCH_TIMEOUT_MS. */
@@ -128,10 +133,8 @@ export class Vault {
   private readonly policy: RelayPolicy;
   private chrome: LaunchedChrome | null = null;
   private launching = false;
-  /** 지금 Chrome이 창 없이 떴나. browser.show 뒤에는 이 기동 동안 창 있는 Chrome이다. */
+  /** 지금 Chrome이 창 없이 떴나(시험·옵션만, 앱은 창 있는 Chrome). */
   private headlessNow = false;
-  /** 다음 기동만 창 있는 Chrome으로(browser.show). 기동하면 지운다. */
-  private windowedNext = false;
   /** shutdown마다 늘린다. 기동 중에 내리기가 오면 기동이 자기 세대가 지난 것을 보고 그만둔다. */
   private generation = 0;
   relay: Relay | null = null;
@@ -311,7 +314,7 @@ export class Vault {
       const ops = this.requireOps();
       ops.secrets.provide(bind, bytes);
       this.needs.delete(needKey(bind));
-      // 창 없는 Chrome의 인증서 비밀번호: 기다리던 칸에 금고가 바로 넣는다(SecretOps.appProvided).
+      // 인증서 비밀번호(앱 입력 창): 기다리던 칸에 금고가 바로 넣는다(SecretOps.appProvided).
       if (bind.kind === 'cert_password') void ops.appProvided(bind);
       this.post(port, { t: 'rpc', id: msg.id, result: {} });
     } catch (e) {
@@ -470,16 +473,9 @@ export class Vault {
       case 'status':
         return { launched: !!this.chrome, headless: !!this.chrome && this.headlessNow, profileProblems: this.profileProblems };
       case 'browser.focus':
-        // 창 없는 Chrome은 앞으로 올릴 창이 없다(main은 browser.show로 창 있는 Chrome을 띄운다).
+        // 창 없는 Chrome(시험 옵션)은 앞으로 올릴 창이 없다.
         if (this.headlessNow) return { focused: false, headless: true };
         return { focused: this.relay ? await this.relay.bringToFront() : false };
-      case 'browser.show':
-        return this.showWindowed();
-      case 'browser.current': {
-        const t = this.relay?.runWindowTarget();
-        if (!this.chrome || !t) throw new Error('not_launched');
-        return { targetId: t.targetId };
-      }
       case 'screen.start':
         return { started: await this.startMirror() };
       case 'screen.stop':
@@ -499,39 +495,6 @@ export class Vault {
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
     throw new Error('not_implemented');
-  }
-
-  /**
-   * 창 없는 Chrome → 창 있는 Chrome(부장 지시 2026-11-13 ②(d)). 사람이 페이지를 직접 만져야 할 때만 main이 부른다.
-   * 실행 탭 주소와 쿠키(로그인 세션 포함)를 금고 안에서만 옮기고, 같은 전용 프로필로 다시 띄워 그 주소를 연다. 쿠키 값은 로그에 남기지 않는다.
-   * 비밀 창이 열린 동안·기동 중·이미 창이 있으면 하지 않는다. 엔진에는 앞 Chrome이 cdp_closed로, 새 탭이 browser.relaunched로 간다.
-   */
-  private async showWindowed(): Promise<{ windowed: boolean; targetId?: string; reason?: string }> {
-    const chrome = this.chrome;
-    const relay = this.relay;
-    if (!chrome || !relay || this.launching) return { windowed: false, reason: 'not_launched' };
-    if (!this.headlessNow) return { windowed: false, reason: 'has_window' };
-    if ([...relay.targets.values()].some((x) => x.win?.phase === 'active')) return { windowed: false, reason: 'secret_window' };
-    const t = relay.runWindowTarget();
-    if (!t) return { windowed: false, reason: 'no_run_page' };
-    const href = await relay
-      .send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression: 'location.href', returnByValue: true }, t.vaultSession)
-      .then((r) => (typeof r.result.value === 'string' && /^https?:/.test(r.result.value) ? r.result.value : null), () => null);
-    const { cookies } = await chrome.conn.send<{ cookies: Array<Record<string, unknown>> }>('Storage.getCookies', {}).catch(() => ({ cookies: [] }));
-    this.windowedNext = true;
-    await this.shutdown();
-    const r = await this.launch();
-    const next = this.chrome as LaunchedChrome | null;
-    if (next && cookies.length) {
-      const keep = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'sameSite', 'priority', 'sourceScheme', 'sourcePort', 'partitionKey'];
-      const params = cookies.map((c) => ({ ...Object.fromEntries(keep.filter((k) => c[k] !== undefined).map((k) => [k, c[k]])), ...(c.session === true || typeof c.expires !== 'number' || c.expires < 0 ? {} : { expires: c.expires }) }));
-      await next.conn.send('Storage.setCookies', { cookies: params }).catch(() => this.opts.log.event('vault.windowed_cookies_failed', { count: params.length }));
-    }
-    const nt = this.relay?.targets.get(r.targetId);
-    if (href && nt) await this.relay!.send('Page.navigate', { url: href }, nt.vaultSession).catch(() => {});
-    this.opts.log.event('vault.windowed', { cookies: cookies.length, url: !!href });
-    this.emit(['engine'], 'browser.relaunched', { targetId: r.targetId });
-    return { windowed: true, targetId: r.targetId };
   }
 
   /** 진행 화면 중계 상태(B3). 실행 탭 하나만, 보기 전용. */
@@ -640,8 +603,7 @@ export class Vault {
     await this.sweepStaging('launch');
     await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
-    const headless = (this.opts.headless ?? true) && !this.windowedNext;
-    this.windowedNext = false;
+    const headless = this.opts.headless === true;
     const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
     this.chrome = chrome;
     this.headlessNow = headless;
@@ -745,7 +707,7 @@ export class Vault {
       emit,
       usedSlots: this.usedSlots,
       stored: (kind, scope, row) => this.readStored(kind, scope, row),
-      askApp: () => this.headlessNow,
+      askApp: () => this.opts.certFromApp !== false,
       // 인증서 비밀번호 기억(대표 지시 2026-11-13). 데스크톱은 run.begin에 프로필을 주지 않으니 사업자로 본다(Phase 1).
       certMemory: {
         scopeOf: (runId) => this.runProfiles.get(runId) ?? 'business',

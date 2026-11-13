@@ -35,14 +35,14 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function startHarness(opts: { policy?: RelayPolicy; headful?: boolean; vaultHeadless?: boolean; dirGuard?: DirGuard; launchTimeoutMs?: number; secretTtlMs?: number; human?: HumanSecretVault; pdf?: { maxBytes?: number; armTtlMs?: number } } = {}): Promise<Harness> {
+export async function startHarness(opts: { policy?: RelayPolicy; headful?: boolean; appCert?: boolean; dirGuard?: DirGuard; launchTimeoutMs?: number; secretTtlMs?: number; human?: HumanSecretVault; pdf?: { maxBytes?: number; armTtlMs?: number } } = {}): Promise<Harness> {
   const base = await fs.realpath(os.tmpdir());
   const root = await fs.mkdtemp(path.join(base, 'sax-poc-'));
   const { paths } = await prepareLayout(root);
   const log = new FileEventLog(paths.logs, 'vault');
   const capture = new LeakCapture();
-  // 시험 Chrome은 TEST_CHROME_ARGS로 창이 없지만 금고는 창 있는 Chrome으로 다룬다(사람이 Chrome 칸에 치는 시험들). vaultHeadless만 앱 기본(창 없음)처럼.
-  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS, headless: opts.vaultHeadless === true, dirGuard: opts.dirGuard, launchTimeoutMs: opts.launchTimeoutMs, secretTtlMs: opts.secretTtlMs, human: opts.human, pdf: opts.pdf });
+  // 시험은 사람이 Chrome 칸에 직접 치는 옛 길을 본다. appCert만 앱 기본(첫 인증서 비밀번호를 앱 금고 창으로)처럼.
+  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS, certFromApp: opts.appCert === true, dirGuard: opts.dirGuard, launchTimeoutMs: opts.launchTimeoutMs, secretTtlMs: opts.secretTtlMs, human: opts.human, pdf: opts.pdf });
   const ch = new MessageChannel();
   // 엔진 포트 IPC 캡처: 금고 쪽에서 양방향을 기록한다(엔진이 받은 CDP 이벤트 스트림 포함).
   vault.attachPort('engine', tapPort(wrapPort(ch.port1, 'node'), (dir, m) => capture.add(`ipc.engine.${dir}`, m)));
