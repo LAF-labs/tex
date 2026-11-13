@@ -11,7 +11,8 @@ export const STORED_DOC_TYPE: Record<Exclude<DocKind, 'certificate'>, 'paper_rec
   insurance_notice: 'insurance_notice',
 };
 
-const EXT: Record<InputFormat, string> = { pdf: 'pdf', jpeg: 'jpg', png: 'png', xlsx: 'xlsx', csv: 'csv' };
+// HTML 표는 사장님이 받은 확장자(.xls) 그대로 보관한다(브라우저가 아니라 엑셀이 연다)
+const EXT: Record<InputFormat, string> = { pdf: 'pdf', jpeg: 'jpg', png: 'png', xlsx: 'xlsx', csv: 'csv', xls: 'xls', html: 'xls' };
 
 /** Crockford base32(헷갈리는 I·L·O·U 없음) */
 const B32 = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';

