@@ -95,6 +95,8 @@ export const SHELL_METHODS = {
   'run.resume': { id: ID },
   'run.manualDone': { id: ID },
   'run.showBrowser': { id: ID },
+  // [브라우저] 토글(대표 지시 2026-11-13 "claude desktop처럼"): show면 실행 Chrome을 앱 브라우저 패널 자리에 맞춰 앞으로, 아니면 앱을 앞으로.
+  'browser.toggle': { show: { t: 'boolean', required: true } },
   // Chrome 설치 안내의 [다시 확인](U6): 설치돼 있는지 다시 보고 판을 새로 보낸다. 읽기만 한다.
   'chrome.check': {},
   // 기억한 인증서 비밀번호(대표 지시 2026-11-13): 있는지만 보고, 설정의 [지우기]로 지운다. 값은 오가지 않는다.
@@ -176,7 +178,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -238,6 +240,8 @@ export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> 
 export type ShellEvent =
   // 진행 화면(B3): 실행 탭 화면 한 장(jpeg data URL, 보기 전용) · 비밀 창 동안 멈춤 · 실행 끝
   | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; paused?: boolean; ended?: boolean }
+  /** [브라우저] 토글 상태: 실행 Chrome이 패널 자리에 앞으로 와 있나, 실행 Chrome이 있나. */
+  | { type: 'browser'; shown: boolean; available: boolean }
   | { type: 'bar'; active: true; band: boolean; height: number }
   | { type: 'bar'; active: false; reason: string }
   | { type: 'bar-layout'; band: boolean; height: number }
