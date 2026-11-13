@@ -115,6 +115,12 @@ export interface Actuator {
    * GuardedActuator는 목록 항목을 R-A1로 다시 확인하고 row가 지금 그 목록의 행인지 본 뒤 원시 click을 부른다.
    */
   pickRow?(t: Resolved, row: ElementRef): Promise<ActResult>;
+  /**
+   * 되돌릴 수 있는 click 스텝 전용 두 번째 시도(IR click 핸들러만 부른다: 비가역 스텝·commits 항목·제출·서명은 쓰지 않는다).
+   * 바로 앞 click(t)이 입력을 보내기 전 동작 가능 확인에서 시간 초과로 끝났을 때, 요소 박스 가운데에 CDP 마우스 click을 한 번 더 한다.
+   * 그 점 맨 위가 대상이어야 누르고, 누른 뒤 대상이 click을 받고 화면이 바뀌어야 성공이다. 아니면 앞 실패 코드(step.timeout).
+   */
+  clickByBox?(t: Resolved): Promise<ActResult>;
   /** 마지막 동작을 시작한 뒤 뜬(정책대로 이미 닫은) 네이티브 대화상자(wait for:'dialog'). GuardedActuator만 구현한다. */
   dialogSinceAction?(): { kind: string; notice: string } | null;
 }

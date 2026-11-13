@@ -94,7 +94,11 @@ const click: Handler<'click'> = async (s, env) => {
   const g = guardIrreversible(s, env);
   if (g) return g;
   const t = await waitTarget(env, s.target, timeoutOf(s, env));
-  return t.ok ? act(env.act.click(t.t)) : fail(t.code);
+  if (!t.ok) return fail(t.code);
+  const r = await env.act.click(t.t);
+  // 되돌릴 수 있는 클릭(비가역 스텝·commits 항목은 위에서 걸렀다)이 시간 초과로 끝나면 한 번 더 요소 박스 클릭(조건은 clickByBox가 본다).
+  if (!r.ok && r.code === 'step.timeout' && env.act.clickByBox) return act(env.act.clickByBox(t.t));
+  return r.ok ? NEXT : fail(r.code);
 };
 
 const fill: Handler<'fill'> = async (s, env) => {
