@@ -1,6 +1,6 @@
 // 셀렉터 사전 항목 해석(D02 §2.1)과 R-A1 동일성 검사(D03 §5.2).
 // - 랜드마크 항목을 먼저 해석해 그 하위에서만 찾는다(frame·landmark 범위). 루트 항목은 landmark가 자기 자신이다.
-// - 후보를 순서대로 시도한다. 한 후보에 expect(보임·활성)를 만족하는 요소가 정확히 1개일 때만 받는다. 2개 이상이면 다음 후보로
+// - 후보를 순서대로 시도한다. 한 후보에 expect(보임·활성·입력 가능)를 만족하는 요소가 정확히 1개일 때만 받는다. 2개 이상이면 다음 후보로
 //   넘어가지 않고 실패한다(fail-closed: 첫 후보가 모호하면 다른 후보가 맞혀도 그것이 의도한 요소라는 보장이 없다).
 // - 받은 요소의 실제 역할·접근성 이름(NFKC·제로폭 제거·공백 접기 뒤)이 사전의 role·namePattern과 맞지 않으면 step.identity_mismatch.
 import { normalizeName } from './constants.ts';
@@ -54,6 +54,7 @@ export async function resolveTarget(page: PageReader, dict: SelectorDict, key: s
       const info = await page.info(el);
       if (entry.expect?.visible && !info.visible) continue;
       if (entry.expect?.enabled && !info.enabled) continue;
+      if (entry.expect?.editable && info.editable !== true) continue;
       hits.push({ el, info });
     }
     if (hits.length === 0) continue;

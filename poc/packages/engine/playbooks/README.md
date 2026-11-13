@@ -4,7 +4,7 @@
 
 | 폴더 = 패키지 id | 종류 | 버전 |
 |---|---|---|
-| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.2.2 |
+| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.3.0 |
 | `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.2.0 |
 | `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.2.0 |
 | `hometax.cert.taxpayment` | playbook(H-04 납세증명서(국세) 발급) | 1.0.0 |
@@ -15,7 +15,7 @@
 
 - 파일: `manifest.json`·`playbook.json`·`selectors.json`·`strings.ko.json`.
 - manifest의 `contentDigests`·`lookupsUsed[].digest`·`signatures`는 자리표시다. 게시 도구가 원시 바이트로 채우고 package 키 2개로 서명한다(클라우드 트랙 게시 도구, 서명은 사용자).
-- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.2.2·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
+- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.3.0·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
   캡처가 없는 부분(로그인 절차 세부, 보안카드·사업자 간편인증 갈래, 인증서 창 [취소] 뒤 화면, 세션 만료, 접근성 이름 일부)은 가정이고 사람 차례로 둔다. 가정 목록은 PR 본문. 건조 실행: `tests/h01-real-dryrun.test.ts`(가짜 홈택스 `tests/hometax-fake.ts`).
   민원증명(`hometax.cert.*`) 셀렉터는 아직 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
 - 시험은 이 원본을 골든 패키지로 쓴다(`tests/core-fixtures.ts`). 바꾸면 레지스트리 샘플(`tests/fixtures/registry`)을 다시 만든다.
@@ -56,3 +56,4 @@ H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉�
 
 - 2.2.1(2026-11-13): 실제 0.1.10 실행이 s12 등록번호 칸에서 R-A1 동일성 불일치로 사람 차례가 됐다. 실화면 접근성 이름은 빈 칸이다(reports/raw/poc-3-mac-landmarks.json). title에서 가져온 정확 일치 이름 패턴 3개(등록번호·[확인]·1행 품목)를 빈 이름도 통과하게 풀고 label·role 후보를 더했다. 등록번호 입력 칸에 fieldKey counterpartBizNo를 주어 하이픈을 정규화하고, 미리보기 글은 readbackOf로 바꿨다. recovery.default는 {retry 2}이고, 게이트 뒤·제출·verify·save_pdf·로그인 대기 s5는 retry 0이다. 가짜 홈택스는 실화면처럼 그 칸들의 title을 뺐다.
 - 2.2.2(2026-11-13, 앱 0.1.11 이상, 게시 minAppVersion 0.1.11): 로그인 s4~s5를 사람 600초 대기에서 공동인증서 로그인으로 바꿨다. 인증서 탭 → [공동·금융인증서] → 인증서 창(iframe#dscert) 목록 첫 행 → 금고 비밀번호(human kind secret, 칸 hometax.cert.password는 frame `iframe#dscert`) → [확인] → "로그아웃" 대기. 발급 서명 signFlow.steps.cert는 human:secret과 confirmTarget(인증서 [확인], 커밋)이고, readyTarget은 인증서 창 안 첫 행이다(창 문서가 다 뜬 뒤에 금고 창을 연다). 인증서 창 id는 공개 정적 파일(UI/ML4Web_Main.html 등)에서 읽었다. 인증서는 MagicLine이 처음 골라 둔 행(0번)을 쓴다. 이름으로 고르기는 아직 없다.
+- 2.3.0(2026-11-13, IR rev v1.3.6, 앱 0.1.12 이상, 게시 minAppVersion 0.1.12. 2.2.2는 게시하지 않았다): 대표 지시 "정확하고 프로답게". 공급받는자·품목·비고 칸은 실기록 id + 영역 landmark + 실기록 이름(빈 이름만 허용) + expect visible·enabled·editable. 처리 중 표시(`[id$="_wq_processMsgComp"]`)는 `wait gone`으로 기다린다(s0a·s3a·s11a·s13b·s18b, 고정 지연 없음). 인증서는 이름으로 고른다: 로그인 s4d `pick`(하나면 그것, 여럿이면 프로필 cert_name과 같은 행), 못 고르면 s4e 핸드오프 → 사람이 한 번 누르고 [다 했어요] → s4f `pick use:selected remember:certName`(이름을 프로필에 저장). 발급 서명은 `signFlow.certPick`(같은 규칙, 못 고르면 서명 차례), readyTarget은 인증서 목록(0번 행 고정 없음). [공동·금융인증서]가 여는 안내 새 창("크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업")은 `closeWindows`로 닫는다. 공지 레이어·세션 연장은 엔진 AI 판정 몫.

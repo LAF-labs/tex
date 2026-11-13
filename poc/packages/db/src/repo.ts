@@ -20,12 +20,14 @@ export interface Profile {
   keepSession: boolean;
   /** 홈택스 아이디 로그인(보안카드 경로)의 아이디. 비밀이 아니라 프로필 정보다(팀장 결정 2026-11-05). 비밀번호·보안카드는 금고만 */
   portalLoginId: string | null;
+  /** 홈택스 인증서 창에서 고를 인증서 이름(인증서 소유자 글, 공개 정보). 실행이 사람이 고른 행에서 저장한다(H-01 2.3.0). 비밀 아님 */
+  certName: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 /** portalLoginId를 빼면(undefined) 저장된 값을 그대로 둔다(금고 등록 결과로 따로 들어온다) */
-export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession' | 'portalLoginId'> & { keepSession?: boolean; portalLoginId?: string | null };
+export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession' | 'portalLoginId' | 'certName'> & { keepSession?: boolean; portalLoginId?: string | null };
 
 export interface Counterparty {
   id: string;
@@ -84,6 +86,7 @@ const toProfile = (r: Row): Profile => ({
   signMethod: (r.sign_method as SignMethod) ?? null,
   keepSession: r.keep_session === 1,
   portalLoginId: (r.portal_login_id as string) ?? null,
+  certName: (r.cert_name as string) ?? null,
   createdAt: String(r.created_at),
   updatedAt: String(r.updated_at),
 });
@@ -208,6 +211,14 @@ export class ProfileRepo {
   setPortalLoginId(id: string, loginId: string | null): Profile {
     const v = loginId === null ? null : normalizeLoginId(loginId);
     const n = this.db.prepare('UPDATE profiles SET portal_login_id = ?, updated_at = ? WHERE id = ?').run(v, now(), id).changes;
+    if (!n) throw new ValidationError('profile_not_found');
+    return this.get(id)!;
+  }
+
+  /** 인증서 이름만 바꾼다(실행의 pick.remember, 지우기는 null). NFKC·공백 접기, 100자까지. 없는 프로필은 profile_not_found */
+  setCertName(id: string, name: string | null): Profile {
+    const v = name === null ? null : name.normalize('NFKC').replace(/\s+/g, ' ').trim().slice(0, 100) || null;
+    const n = this.db.prepare('UPDATE profiles SET cert_name = ?, updated_at = ? WHERE id = ?').run(v, now(), id).changes;
     if (!n) throw new ValidationError('profile_not_found');
     return this.get(id)!;
   }

@@ -12,6 +12,7 @@ import { resolveTarget } from './resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from './scope.ts';
 import { isSecretEntry, type EndStep, type SelectorDict, type SelectorEntry, type Step, type StepOf, type StepType, type Strings } from './types.ts';
 import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
+import { pickStep, waitGone } from './pick.ts';
 
 export type Outcome =
   | { t: 'next' }
@@ -35,6 +36,8 @@ export interface StepEnv extends CondEnv {
   pollMs: number;
   /** [중지]가 들어왔는가(조율기가 채운다). 기다리는 루프(waitTarget·wait text)가 폴링 때마다 보고 run.stopped로 빠진다. */
   stopRequested?: () => boolean;
+  /** pick.remember(IR rev v1.3.6): 고른 행 이름을 프로필 칸에 저장한다(값은 저널·로그에 없다). 없으면 이번 실행 범위에만 둔다. */
+  profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
 }
 
 export type Handler<T extends StepType> = (s: StepOf<T>, env: StepEnv) => Promise<Outcome>;
@@ -156,6 +159,8 @@ const wait: Handler<'wait'> = async (s, env) => {
         await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
       }
     }
+    case 'gone':
+      return s.value ? waitGone(s.value, env, ms) : fail('step.selector_miss');
     case 'dialog': {
       // 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등, 엔진 정책이 이미 닫았다)의 문구를 판정한다(홈택스 등록번호 [확인] → alert).
       // 다른 문구면 기다리지 않고 실패한다(재시도해도 같은 대화상자는 다시 오지 않는다). 문구는 남기지 않는다(⑦).
@@ -230,7 +235,7 @@ const readback: Handler<'readback'> = async (s, env) => {
 };
 
 /** M2-1 핸들러 묶음 + readback(M2-3). decide·gate·human·checkpoint는 실행 조율기(run/)가 더한다. */
-export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end, readback };
+export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end, readback, pick: pickStep };
 
 export interface StepEnvInput {
   page: PageReader;
