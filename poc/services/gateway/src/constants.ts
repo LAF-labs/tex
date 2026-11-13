@@ -10,6 +10,8 @@ export const GATEWAY = {
   l2PerChat: 20,
   /** 실행당 예상 밖 화면 판정·브라우저 에이전트 호출(page_judge·browser_agent, 에이전트 25걸음 + 판정). packages/net AGENT_CALLS_PER_RUN과 같다 */
   agentPerRun: 32,
+  /** 판정·에이전트 상류 대기(ms, 재시도 없음). 함수 상한 60초(vercel.json api/sax)보다 짧게. */
+  agentUpstreamTimeoutMs: 50_000,
   runTokenTtlMs: 2 * MS.H,
   /** runToken 발급 한도(범위 ID를 바꿔 예산을 늘리는 것을 늦춘다) */
   runTokensPerDeviceHour: 120,

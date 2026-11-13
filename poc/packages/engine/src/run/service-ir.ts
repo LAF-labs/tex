@@ -468,7 +468,11 @@ export class IrRun {
       return tokenP;
     };
     const redactor = new Redactor({ runId: i.runId });
-    const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal }), journal: i.journal } : undefined;
+    // 실행당 예산: 게이트웨이가 다 썼다고(run_budget_exceeded) 하면 그 뒤로는 부르지 않는다(헛된 429 호출을 줄인다).
+    // 위치 찾기(L2, 실행당 2번)와 판정·에이전트(agentPerRun)는 게이트웨이가 따로 세므로 표시도 따로 둔다.
+    const locateBudget = { spent: false };
+    const pageAiBudget = { spent: false };
+    const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget }), journal: i.journal } : undefined;
     // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
     let layersDone = layers.length === 0;
@@ -484,7 +488,7 @@ export class IrRun {
     if (i.profileWrite) env.profileWrite = i.profileWrite;
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
     if (i.ir.locate) {
-      const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal };
+      const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };
       const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
       const agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port) });
       pageJudge = new PageJudge({

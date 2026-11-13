@@ -34,7 +34,16 @@ export interface GatewayLocateInput {
   redactor: Pick<Redactor, 'apply' | 'map'>;
   runToken: () => Promise<RunToken>;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
+  /** 실행당 예산 다 씀 표시. 게이트웨이가 run_budget_exceeded를 주면 참이 되고, 그 뒤로는 부르지 않는다. */
+  budget?: RunAiBudget;
 }
+
+/** 실행당 예산 다 씀 표시(실행마다, 위치 찾기 하나·판정과 에이전트 하나). */
+export interface RunAiBudget {
+  spent: boolean;
+}
+/** 응답 사유가 실행 예산 소진인가(게이트웨이 429 gateway.run_budget_exceeded, 어댑터 사유 'gateway:run_budget_exceeded'). */
+export const budgetSpent = (reason: string | undefined): boolean => !!reason && /run_budget_exceeded|budget_exceeded/.test(reason);
 
 export class GatewayLocateModel implements LocateModel {
   private readonly i: GatewayLocateInput;
@@ -73,6 +82,10 @@ export class GatewayLocateModel implements LocateModel {
       this.i.journal('locate.unavailable', { stepId: req.stepId, cause: 'redaction' });
       return null;
     }
+    if (this.i.budget?.spent) {
+      this.i.journal('locate.unavailable', { stepId: req.stepId, cause: 'budget_spent' });
+      return null;
+    }
     const t = locateToolset();
     const replay: RedactedReplayItem[] = [];
     let token: RunToken;
@@ -91,6 +104,7 @@ export class GatewayLocateModel implements LocateModel {
         return null;
       }
       if (r.status !== 'completed') {
+        if (this.i.budget && budgetSpent(r.reason)) this.i.budget.spent = true;
         this.i.journal('locate.unavailable', { stepId: req.stepId, cause: r.reason ?? r.status });
         return null;
       }
