@@ -68,6 +68,10 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
   private readonly i: CertSecretInput;
   private readonly vaultPort: VaultSecretPort;
   private wrong = 0;
+  /** 금고가 비밀번호를 넣고 창을 닫은 뒤 로그인 확인을 기다리는 중(실행 id). 다음 기다림(wait) 스텝 결과로 금고에 알린다. */
+  private confirming: string | null = null;
+  /** 이 실행에서 로그인 확인을 이미 알렸다. 그 뒤(발급 서명)의 비밀번호 차례는 다시 재지 않는다: 같은 인증서 비밀번호이고, 서명 뒤 다른 실패로 맞는 기억값을 지우지 않게. */
+  private checked = false;
 
   constructor(i: CertSecretInput) {
     this.i = i;
@@ -112,14 +116,39 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
       if (!(await this.passwordWrong())) break;
       this.wrong++;
       this.i.journal('human.secret_password_wrong', { stepId: r.stepId, wrong: this.wrong });
-      await this.i.vault.rpc('typist.authFailed', { kind: 'cert_password', scope: this.i.scope ?? 'business' }).catch(() => {});
+      await this.i.vault.rpc('typist.authFailed', { runId: r.runId, kind: 'cert_password', scope: this.i.scope ?? 'business' }).catch(() => {});
       if (attempt === 0 && this.wrong < MAX_WRONG && !this.i.signal?.aborted) continue;
       const limit = this.wrong >= MAX_WRONG;
       this.i.event?.({ state: 'closed', stepId: r.stepId, why: limit ? 'retry_limit' : 'password_wrong' });
       return { code: limit ? 'sign.password_retry_limit' : 'sign.password_wrong' };
     }
     this.i.event?.({ state: 'closed', stepId: r.stepId, why: 'done' });
+    if (!this.checked) this.confirming = r.runId;
     return 'done';
+  }
+
+  /**
+   * 스텝이 끝날 때(service-ir stepEvent). 비밀번호를 넣은 뒤 첫 기다림(wait) 스텝이 통과하면 로그인 확인(typist.authOk → 금고가 그때 기억),
+   * 실패하면(H-01 s5 시간 초과 = 틀린 비밀번호 포함) typist.authFailed(금고가 확인 대기 값을 버리고 기억값도 지운다, 연속 오류 잠금 방지).
+   * 그 사이 다른 스텝이 실패하면(로그인 [확인] 못 누름 등) 비밀번호 탓이 아니니 알리지 않고 그만 기다린다(금고는 실행 끝에 버린다).
+   */
+  async stepFinished(type: string, failed: boolean): Promise<void> {
+    const runId = this.confirming;
+    if (!runId) return;
+    if (type !== 'wait') {
+      if (failed) this.confirming = null;
+      return;
+    }
+    this.confirming = null;
+    this.checked = true;
+    const scope = this.i.scope ?? 'business';
+    if (failed) {
+      this.i.journal('human.secret_login_unconfirmed', {});
+      await this.i.vault.rpc('typist.authFailed', { runId, kind: 'cert_password', scope }).catch(() => {});
+      return;
+    }
+    this.i.journal('human.secret_login_confirmed', {});
+    await this.i.vault.rpc('typist.authOk', { runId, kind: 'cert_password', scope }).catch(() => {});
   }
 
   /** 입력 뒤 settleMs 동안 화면에 틀린 비밀번호 안내가 보이는가(포털 패턴 strings cert.passwordWrong, 없으면 내장 모양). */

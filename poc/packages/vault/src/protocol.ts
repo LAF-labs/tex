@@ -23,7 +23,8 @@ export type OutboundMessage =
 export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   engine: [
     'browser.launch', 'browser.shutdown',
-    'typist.fill', 'typist.authFailed',
+    // typist.authOk: 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다(그때만 금고가 그 값을 기억한다, 부장 지시 2026-11-13)
+    'typist.fill', 'typist.authFailed', 'typist.authOk',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
     // crypto.*(Sd·Vd·AIK·Qd 연산)는 엔진 포트에 열지 않는다(팀장 결정 2026-11-06, 게이트웨이 인증 설계 ADR-040 예정).
@@ -356,7 +357,11 @@ export interface FillRequest {
   rowLabel?: string;
 }
 
-/** typist.authFailed 인자: 포털의 명시적 인증 실패(auth_failed) 1회 뒤 그 kind·scope를 suspect로(ADR-026 결정 7). */
+/**
+ * typist.authFailed 인자: 포털의 명시적 인증 실패(auth_failed) 1회 뒤 그 kind·scope를 suspect로(ADR-026 결정 7).
+ * 인증서 비밀번호(cert_password)는 suspect가 아니라 기억값을 지우고, 이 실행에서 확인을 기다리던 값도 버린다(연속 오류 잠금 방지).
+ * typist.authOk도 같은 인자: 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 통과) → 기다리던 값을 그때 기억한다.
+ */
 export interface AuthFailedParams {
   runId: string;
   kind: StorableKind;

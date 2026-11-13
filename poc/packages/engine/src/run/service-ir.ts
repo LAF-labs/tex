@@ -534,6 +534,8 @@ export class IrRun {
       stepEvent: (name, d) => {
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
+        // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
+        if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code);
       },
       clock, gates: i.gates, tokens: new GateTokens(i.runId), ledgerStates,
       card: (g) => {

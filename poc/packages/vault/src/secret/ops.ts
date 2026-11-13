@@ -89,6 +89,7 @@ const PROBE_FN = `function () {
 
 interface HumanWatch {
   objectId: string;
+  runId: string;
   /** 인증서 비밀번호 기억(certMemory)에 쓸 프로필. 없으면 저장하지 않는다. */
   scope?: string;
   timer: NodeJS.Timeout;
@@ -118,12 +119,13 @@ export interface SecretOpsOptions {
   /**
    * 인증서 비밀번호 기억(대표 지시 2026-11-13). 비밀 창(openForHuman)은 인증서 비밀번호 칸에만 열린다.
    * 저장값이 있으면 사람 창 대신 금고가 그 칸에 넣고 창을 닫는다(엔진에는 'done'). 없으면 사람이 넣은 값을 창이 닫힐 때 저장한다.
-   * 틀리면 main이 secret.forget으로 지운다(연속 오류 잠금 방지).
+   * 사람이 넣은 값은 바로 저장하지 않고 hold로 금고 메모리에만 둔다: 엔진이 로그인 확인(typist.authOk)을 알려야 저장하고,
+   * 틀림(typist.authFailed)이면 버리고 기억값도 지운다(틀린 비밀번호를 기억해 다음에 또 넣는 일, 연속 오류 잠금 방지, 부장 지시 2026-11-13).
    */
   certMemory?: {
     scopeOf(runId: string): string | undefined;
     read(scope: string): Promise<StoredRead>;
-    save(scope: string, bytes: Uint8Array): Promise<boolean>;
+    hold(runId: string, scope: string, bytes: Uint8Array): void;
   };
   /**
    * 기억값이 없을 때 인증서 비밀번호를 앱의 금고 직결 입력 창(secret.needed → secretInput 포트 → secret.provide)으로 받아
@@ -451,6 +453,7 @@ export class SecretOps {
       this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
       const watch: HumanWatch = {
         objectId: el.objectId,
+        runId: req.runId,
         timer: setInterval(() => void this.tickHuman(t), 250),
         ...(scope ? { scope } : {}),
       };
@@ -519,11 +522,8 @@ export class SecretOps {
         if (r.result.value) {
           this.relay.addKnownSecret(t.targetId, knownValueVariants(r.result.value));
           this.selfScan(r.result.value);
-          // 처음 넣은 인증서 비밀번호를 기억한다(대표 지시 2026-11-13). 따로 묻지 않는다. 값은 로그에 남기지 않는다.
-          if (this.opts.certMemory && w.scope) {
-            const saved = await this.opts.certMemory.save(w.scope, new TextEncoder().encode(r.result.value)).catch(() => false);
-            this.log.event('secret.remembered', { kind: 'cert_password', ok: saved });
-          }
+          // 처음 넣은 인증서 비밀번호는 로그인 확인 뒤에 기억한다(hold → typist.authOk). 따로 묻지 않는다. 값은 로그에 남기지 않는다.
+          if (this.opts.certMemory && w.scope) this.opts.certMemory.hold(w.runId, w.scope, new TextEncoder().encode(r.result.value));
         }
       } catch {
         // 노드가 이미 분리됨
@@ -534,8 +534,8 @@ export class SecretOps {
   }
 
   /**
-   * 앱 입력 창이 인증서 비밀번호를 넘겼다(service가 secret.provide 직후 부른다). 기다리던 칸에 넣고, 넣었으면 기억하고, 창을 닫는다.
-   * 칸이 사라졌거나 넣지 못했으면 기억하지 않고 창만 닫는다(엔진은 로그인 결과로 판단한다). 값은 로그·이벤트에 싣지 않는다.
+   * 앱 입력 창이 인증서 비밀번호를 넘겼다(service가 secret.provide 직후 부른다). 기다리던 칸에 넣고, 넣었으면 확인 대기로 두고, 창을 닫는다.
+   * 칸이 사라졌거나 넣지 못했으면 두지 않고 창만 닫는다(엔진은 로그인 결과로 판단한다). 값은 로그·이벤트에 싣지 않는다.
    */
   async appProvided(bind: { runId: string; kind: string; scope: string }): Promise<void> {
     if (bind.kind !== 'cert_password') return;
@@ -555,10 +555,8 @@ export class SecretOps {
     this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
     const typed = await this.typeInto(t, ask.objectId, text);
     this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
-    if (typed.ok && this.opts.certMemory) {
-      const saved = await this.opts.certMemory.save(ask.scope, new TextEncoder().encode(text)).catch(() => false);
-      this.log.event('secret.remembered', { kind: 'cert_password', ok: saved });
-    }
+    // 기억은 로그인 확인 뒤(typist.authOk). 지금은 금고 메모리에만 둔다.
+    if (typed.ok && this.opts.certMemory) this.opts.certMemory.hold(bind.runId, ask.scope, new TextEncoder().encode(text));
     this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
     this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, fromApp: true });
     this.selfScan(text);
