@@ -18,6 +18,12 @@ const TYPES = new Set(['fill', 'click', 'select', 'wait']);
 const TARGET_CODES = new Set(['step.selector_miss', 'step.identity_mismatch', 'step.timeout']);
 /** 폴백 사슬을 탈 실패(그 밖의 코드는 같은 동작을 다시 해도 같은 결과라 바로 사람에게). */
 const CHAIN_CODES = new Set([...TARGET_CODES, 'step.readback_mismatch']);
+/**
+ * 대상은 찾았는데 동작이 시간 안에 안 끝난 실패(누름·입력·선택의 step.timeout: 덮은 레이어·처리 중 표시·읽기 전용 등).
+ * 다시 찾기·AI 위치 찾기는 같은 요소를 다시 낼 뿐이라(2026-11-13 실화면 예행: s13 [확인]에 패키지와 같은 선택자를 받고 실행 예산만 씀) 건너뛰고
+ * 판정(덮은 것 닫기 등)·체크포인트로 간다. wait의 timeout은 대상을 못 찾은 것이라 그대로 다시 찾는다.
+ */
+const ACTIONABILITY = (s: Step, cause: string) => cause === 'step.timeout' && (s.type === 'click' || s.type === 'fill' || s.type === 'select');
 
 /** 예상 밖 화면 판정(run/judge.ts PageJudge). */
 export interface StuckJudge {
@@ -112,7 +118,9 @@ export class FallbackChain {
         this.d.journal('fallback.dropped', { stepId, key, selector: st.added, code: cause });
         st.added = null;
       }
-      if (!st.refind) {
+      if (ACTIONABILITY(s, cause)) {
+        this.d.journal('fallback.skip_locate', { stepId, key, code: cause });
+      } else if (!st.refind) {
         st.refind = true;
         st.tried.push('refind');
         const r = await refindWithoutCss(this.d.page, this.d.dict, key, st.rejected);
@@ -123,7 +131,7 @@ export class FallbackChain {
         }
       }
       const purpose = s.type === 'wait' ? null : (s.type as 'fill' | 'click' | 'select');
-      if (this.d.locate && purpose && st.calls.n < 2) {
+      if (this.d.locate && purpose && st.calls.n < 2 && !ACTIONABILITY(s, cause)) {
         st.tried.push('locate');
         const r = await locateTarget({ page: this.d.page, dict: this.d.dict, loc: this.d.locate, stepId, key, purpose, rejected: st.rejected, calls: st.calls });
         if (r) {

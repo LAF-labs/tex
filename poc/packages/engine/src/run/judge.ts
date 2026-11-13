@@ -94,6 +94,8 @@ export class PageJudge {
         return this.done(stepId, j.prescription, cp ? 'ok' : 'no_checkpoint', cp ? { from: cp } : false);
       }
       case 'fix_field': {
+        // 누름·입력·선택이 시간 초과면 대상은 이미 찾았다: 위치 찾기는 같은 요소를 다시 낼 뿐이다(실행 예산만 쓴다).
+        if (cause === 'step.timeout' && (s.type === 'click' || s.type === 'fill' || s.type === 'select')) return this.done(stepId, j.prescription, 'found_not_actionable', false);
         const key = j.field!;
         const e = this.d.dict.entries[key];
         if (!this.d.locate || !e) return this.done(stepId, j.prescription, 'no_locate', false);

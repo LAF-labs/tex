@@ -32,6 +32,15 @@ interface Tab {
   gone: boolean;
 }
 
+/**
+ * 페이지 배치 폭(CSS px). 옛 실행 Chrome 창(1280×900)과 같게 둔다: 홈택스는 좁은 폭에서 배치가 바뀐다(로그인 상자가 배너 아래로,
+ * 머리말이 스크롤로 사라짐, 실화면 예행 run-7045a9c0 s2·run-4683a296 s13). H-01 패키지는 넓은 배치에서 맞췄다.
+ * 패널이 더 좁으면 브라우저 확대·축소(setZoomFactor)로 줄여 그린다. CDP 클릭은 축소에서도 CSS 좌표 그대로 맞는다(측정, 기기 크기 흉내는 빗나감).
+ */
+const PAGE_WIDTH = 1280;
+/** 패널에 한 번도 놓이지 않은 보기의 크기(숨김). 0×0이면 페이지가 그 크기로 배치돼 자동화가 깨진다. */
+const HIDDEN_BOUNDS: Rectangle = { x: 0, y: 0, width: PAGE_WIDTH, height: 900 };
+
 /** 이 보기 안에서 열면 안 되는 주소(앱 스킴·로컬 파일·브라우저 내부 화면). */
 const BLOCKED_SCHEMES = /^(file|chrome|chrome-extension|devtools|view-source|sax-[a-z]+):/i;
 
@@ -74,6 +83,8 @@ export class EmbeddedBrowser {
   /** Page.printToPDF(ReturnAsStream) 결과를 IO.read로 내주는 동안 들고 있는 PDF. */
   private readonly pdfStreams = new Map<string, { buf: Buffer; pos: number }>();
   private slot: Rectangle | null = null;
+  /** 마지막으로 놓인 자리. 패널이 접혀 숨길 때도 이 크기·배율을 그대로 둔다(숨김 중에 배치가 바뀌지 않게). */
+  private placed: Rectangle = HIDDEN_BOUNDS;
   private blocked = false;
   private connected = false;
 
@@ -349,6 +360,8 @@ export class EmbeddedBrowser {
     wc.on('will-frame-navigate', guard);
     wc.on('will-redirect', guard);
     wc.on('will-attach-webview', (e) => e.preventDefault());
+    // 확대·축소는 호스트마다다(홈택스 ↔ teet 등 다른 호스트로 가면 1로 돌아간다): 문서가 바뀔 때마다 지금 배율을 다시 건다.
+    wc.on('did-navigate', () => wc.setZoomFactor(this.zoom()));
     wc.on('before-input-event', (e) => {
       if (this.blocked) e.preventDefault();
     });
@@ -427,11 +440,19 @@ export class EmbeddedBrowser {
     this.layout();
   }
 
+  /** 패널 폭에 PAGE_WIDTH CSS px가 들어가는 배율(넓으면 1). */
+  private zoom(): number {
+    return Math.min(1, this.placed.width / PAGE_WIDTH);
+  }
+
   private layout(): void {
     const top = this.top();
+    if (this.slot) this.placed = this.slot;
+    const zoom = this.zoom();
     for (const t of this.order) {
       const show = t === top && this.slot !== null;
-      if (show) t.view.setBounds(this.slot!);
+      t.view.setBounds(this.placed);
+      if (Math.abs(t.wc.getZoomFactor() - zoom) > 0.001) t.wc.setZoomFactor(zoom);
       t.view.setVisible(show);
     }
     if (top) this.o.onPage?.({ url: top.wc.getURL(), title: top.wc.getTitle() });
