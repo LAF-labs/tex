@@ -31,6 +31,8 @@ const state = {
   vat: null,
   fill: [], // 에이전트가 되물을 때 입력창 위에 띄우는 채우기 칩 { label, text, cp }
   composing: false, // 입력창에서 타이핑·클릭을 시작했다(칩을 숨긴다). 보내면 풀린다
+  agentAsk: false, // 대화 에이전트가 되묻는 중(답 상자의 칩으로 답한다). 빠른 실행 칩을 숨긴다
+  waitEl: null, // 답을 기다리는 줄(진행 단계 이벤트가 글자를 바꾼다)
   barActive: false,
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
   boardOpen: true, // 판 펼침(접으면 한 줄 요약)
@@ -340,7 +342,7 @@ function buildChat() {
   chat.today = h('section', { class: 'col sx-board', 'aria-label': '이번 달 판', 'data-board': '' });
   chat.handoff = h('div', { class: 'col sx-handoff', role: 'status', 'data-handoff-band': '', hidden: '' });
   chat.quick = h('div', { class: 'sx-quick', id: 'quick' });
-  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서나 증명서를 말해 주세요', 'aria-label': '입력창', id: 'composer' });
+  chat.input = h('textarea', { rows: '1', placeholder: '세금계산서 발급이나 지난 발급·매출을 말해 주세요', 'aria-label': '입력창', id: 'composer' });
   chat.input.addEventListener('input', () => {
     state.composing = true;
     autoGrow();
@@ -424,7 +426,7 @@ function renderOnboarding() {
   old.replaceWith(onboardingView(state.onb, onbAct));
   const locked = !state.onb.consents.terms;
   chat.input.disabled = locked;
-  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서나 증명서를 말해 주세요';
+  chat.input.placeholder = locked ? '약관에 동의하면 입력할 수 있어요' : '세금계산서 발급이나 지난 발급·매출을 말해 주세요';
   renderQuick();
   scrollToEnd();
 }
@@ -545,7 +547,7 @@ function renderQuick() {
     chat.quick.replaceChildren(h('span', { class: 'sx-meta quick-label' }, '부가세'), t('separate', '별도'), t('included', '포함'), h('span', { class: 'sx-meta' }, state.vat ? '' : '고르지 않으면 별도로 계산해요'));
   } else if (!text.trim()) {
     state.vat = null;
-    if (state.composing) {
+    if (state.composing || state.agentAsk) {
       chat.quick.replaceChildren();
     } else if (state.fill.length) {
       // 되묻기: 최근 보낸 곳. 점선·연필로 바로 보내는 칩과 구분한다.
@@ -614,6 +616,9 @@ async function send() {
   state.vat = null;
   state.fill = [];
   state.composing = false;
+  state.agentAsk = false;
+  // 새 문장을 보냈으면 앞 답의 [다시 시도]·되묻기 칩은 지난 것이다(눌러도 앞 문장을 다시 보내지 않게)
+  for (const b of chat.thread.querySelectorAll('[data-act="intent-retry"], [data-agent-chip]')) b.disabled = true;
   autoGrow();
   renderQuick();
   appendThread(h('div', { class: 'sx-me' }, text));
@@ -627,8 +632,9 @@ async function send() {
 async function ask(text, vat) {
   let r;
   state.sending = true;
-  const waitEl = h('div', { class: 'sx-app sx-meta' }, '요청을 읽고 있어요…');
-  const waitTimer = setTimeout(() => appendThread(waitEl), 300);
+  const waitEl = h('div', { class: 'sx-app sx-meta', 'data-agent-progress': 'thinking' }, PROGRESS_TEXT.thinking);
+  state.waitEl = waitEl;
+  const waitTimer = setTimeout(() => waitEl.isConnected || appendThread(waitEl), 300);
   try {
     r = await call('request.send', { text, vat });
   } catch (e) {
@@ -637,6 +643,7 @@ async function ask(text, vat) {
   } finally {
     clearTimeout(waitTimer);
     waitEl.remove();
+    state.waitEl = null;
     state.sending = false;
   }
   if (r.kind === 'unavailable') {
@@ -664,6 +671,7 @@ async function ask(text, vat) {
     appendThread(box);
     return;
   }
+  if (r.kind === 'agent') return renderAgent(r);
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
@@ -693,6 +701,49 @@ async function ask(text, vat) {
     state.fill = r.chips?.length ? fillChips(r.chips) : [];
     renderQuick();
   }
+}
+
+/** 대화 에이전트 진행 단계 글자(main 'chat-progress' 이벤트). 값·문장은 오지 않는다. */
+const PROGRESS_TEXT = { thinking: '요청을 읽고 있어요…', reading: '장부를 보고 있어요…', drafting: '카드를 만들고 있어요…' };
+const AGENT_TABLE_ROWS = 10;
+
+/** 결과 표(매출·발급 기록·받을 돈): 제목에 건수·합계(main이 슬롯과 같은 집계로 낸 것), 행은 최근부터 10개. 글자는 텍스트 노드로만. */
+function agentTable(t) {
+  const md = (d) => `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일`;
+  const rows = t.rows.slice(0, AGENT_TABLE_ROWS);
+  return h(
+    'div',
+    { class: 'sx-agent-table', 'data-agent-table': t.table },
+    h('div', { class: 'sx-agent-table-title' }, t.title),
+    rows.length
+      ? h('table', { class: 'list' }, h('tbody', {}, ...rows.map((x) => h('tr', {}, h('td', { class: 'num-l' }, md(x.date)), h('td', { class: 'name' }, x.counterparty), h('td', { class: x.total === null ? 'num is-none' : 'num' }, x.total === null ? '금액 모름' : `${num(x.total)}원`)))))
+      : h('p', { class: 'sx-meta' }, '해당하는 건이 없어요.'),
+    t.rows.length > rows.length ? h('p', { class: 'sx-meta' }, `외 ${t.rows.length - rows.length}건`) : null,
+  );
+}
+
+/**
+ * 대화 에이전트 답(main AgentChat): 문장, 결과 표, 카드, 되묻기 칩. 문장·표 글자는 텍스트 노드로만 그린다.
+ * 되묻기 칩은 누르면 그 문장을 바로 보낸다. 카드는 지금 실행 값이고 발급은 카드의 [홈택스에서 준비]와 승인 카드로만 한다.
+ */
+function renderAgent(r) {
+  const box = h('div', { class: 'sx-app', 'data-agent-reply': r.filtered ?? '' }, h('p', {}, r.text));
+  for (const x of r.show) if (x.type === 'table') box.append(agentTable(x));
+  if (r.setup?.length) box.append(h('div', { class: 'sx-actions' }, ...r.setup.map((m, i) => btn(m.label, () => reopenSetup(m.id), i ? '' : 'sx-btn-primary', { 'data-act': `setup-${m.id}` }))));
+  // 사장님이 쓴 거래처 이름이 장부에 없다(U8-1): 그 이름으로 거래처 추가 폼을 연다. 저장하면 대화로 돌아와 그 이름을 입력창에 채운다.
+  if (r.unknown) box.append(h('p', { class: 'sx-meta', 'data-unknown-name': r.unknown.name }, r.unknown.text), h('div', { class: 'sx-actions' }, btn('거래처 추가', () => addCpFromAsk(r.unknown.name), 'sx-btn-primary', { 'data-act': 'ask-cp-add' })));
+  if (r.ask) {
+    const chips = r.ask.chips.map((c) => btn(c.label, (e) => (e.currentTarget.disabled ? null : sendPrompt(c.text)), '', { 'data-agent-chip': r.ask.kind }));
+    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다(이름을 이미 안내했으면 그쪽 버튼 하나만)
+    if (r.ask.kind === 'counterparty' && !r.unknown) chips.push(btn('거래처 추가', () => addCpFromAsk(''), 'sx-btn-quiet', { 'data-act': 'ask-cp-add' }));
+    if (chips.length) box.append(h('div', { class: 'sx-actions' }, ...chips));
+  }
+  appendThread(box);
+  state.agentAsk = !!r.ask;
+  const cards = r.show.filter((x) => x.type === 'card');
+  for (const c of cards) putRun(c.run);
+  if (cards.length) openPanel({ kind: 'run', id: cards.at(-1).run.id });
+  renderQuick();
 }
 
 async function handoffCall(method, id) {
@@ -731,6 +782,14 @@ function renderHandoff() {
 }
 
 function putRun(run) {
+  if (run.discarded) {
+    renderRun(run);
+    state.runs.delete(run.id);
+    if (state.panel?.kind === 'run' && state.panel.id === run.id) openPanel(null);
+    renderQuick();
+    renderToday();
+    return;
+  }
   state.runs.set(run.id, run);
   renderRun(run);
   renderHandoff();
@@ -1879,6 +1938,15 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'account') {
     state.account = ev.account;
     if (state.view === 'settings' || loginGate()) render();
+    return;
+  }
+  if (ev.type === 'chat-progress') {
+    const el = state.waitEl;
+    if (el && Object.hasOwn(PROGRESS_TEXT, ev.phase)) {
+      el.textContent = PROGRESS_TEXT[ev.phase];
+      el.dataset.agentProgress = ev.phase;
+      if (!el.isConnected) appendThread(el);
+    }
     return;
   }
   if (ev.type === 'run') {

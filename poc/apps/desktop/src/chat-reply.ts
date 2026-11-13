@@ -5,11 +5,9 @@
 // - 정규식 대체는 없다(사용자 결정 2026-11-10 "오프라인 해석은 없다").
 import { INTENT_UNAVAILABLE_TEXT } from './intent-route.ts';
 
-/** 엔진 계약의 제안 작업 3종(CHAT_CAPABILITIES)과 칩. text는 빠른 실행(QUICK)과 같은 시작 문장이다. */
+/** 엔진 계약의 제안 작업(CHAT_CAPABILITIES)과 칩. text는 빠른 실행(QUICK)과 같은 시작 문장이다. 증명서는 지금 못 하는 일이라 칩이 없다(#291). */
 export const CHAT_SUGGEST_CHIPS = {
   'hometax.invoice.issue': { label: '세금계산서 발급', text: '세금계산서 ' },
-  'hometax.cert.business': { label: '사업자등록증명', text: '사업자등록증명 떼 줘' },
-  'hometax.cert.taxpayment': { label: '납세증명서', text: '납세증명서 떼 줘' },
 } as const;
 export type ChatSuggestion = keyof typeof CHAT_SUGGEST_CHIPS;
 
@@ -30,7 +28,7 @@ export const CHAT_ERROR_TEXT = {
   'chat.unavailable': { text: INTENT_UNAVAILABLE_TEXT, retry: true },
   'chat.bad_response': { text: INTENT_UNAVAILABLE_TEXT, retry: true },
   'chat.budget_exceeded': { text: '대화가 많이 이어졌어요. 잠시 뒤에 다시 말해 주세요.', retry: true },
-  'chat.quota_exceeded': { text: '이번 달 대화 한도를 다 썼어요. 세금계산서·증명서 발급은 빠른 실행으로 할 수 있어요.', retry: false },
+  'chat.quota_exceeded': { text: '이번 달 대화 한도를 다 썼어요. 세금계산서 발급은 빠른 실행으로 할 수 있어요.', retry: false },
   'chat.input_too_large': { text: '문장이 너무 길어요. 짧게 나눠서 다시 말해 주세요.', retry: false },
   'chat.secret_rejected': { text: '비밀번호 같은 비밀 값은 대화창에 입력하지 마세요. 이 문장은 보내지 않았어요.', retry: false },
 } as const;

@@ -211,7 +211,7 @@ const intent: IntentResolver = {
     return /계산서/.test(t) ? { route: { outcome: 'route', playbook: 'hometax.invoice.issue', adviceMentioned: false, via: 'model' }, fallback: null } : { route: { outcome: 'unknown', via: 'model' }, fallback: null };
   },
 };
-const chat: ChatResponder = { respond: async () => (offline ? { error: 'chat.unavailable' } : { reply: { reply: '세금계산서나 증명서를 말해 주세요.', suggest: [], filtered: null } }) } as ChatResponder;
+const chat: ChatResponder = { respond: async () => (offline ? { error: 'chat.unavailable' } : { reply: { reply: '세금계산서 발급을 도와드릴 수 있어요.', suggest: [], filtered: null } }) } as ChatResponder;
 
 // ---- 승인 카드(main 소유 뷰) 입력 ----
 const barWc = () => S!.bar.view.webContents;

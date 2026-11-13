@@ -284,11 +284,14 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 }
 
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
+/** 빈 요청·모르는 요청의 기본 안내. 증명서는 지금 이 앱이 못 하는 일이라 약속하지 않는다(#291 온보딩과 같은 원칙). */
+export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
+
 export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;
   const asked = pending.asked;
   pending.asked = null;
-  if (parsed.intent === 'filing') return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
+  if (parsed.intent === 'filing') return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 세금계산서 발급과 지난 발급 확인은 도와드릴 수 있어요.' };
   if (parsed.intent === 'resident_copy' || parsed.intent === 'resident_abstract') return { kind: 'g24', doc: parsed.intent === 'resident_abstract' ? '주민등록표 초본' : '주민등록표 등본' };
   const named = runs.counterparties.filter((c) => parsed.counterparties.includes(c.name));
   // 거래처 이름이 둘 이상이면("A상사 말고 C테크로") 고르지 않고 되묻는다.
@@ -330,8 +333,8 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
     Object.assign(pending, emptyPending());
     return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? vatSaid, item) };
   }
-  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
-  return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', chips: QUICK.filter((q) => !q.soon) };
+  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 아직 이 앱에서 하지 못해요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
+  return { kind: 'say', text: EMPTY_REQUEST_TEXT, chips: QUICK.filter((q) => !q.soon) };
 }
 
 // ---- 실행 화면 모델 ----
@@ -371,6 +374,8 @@ export interface RunView {
   itemGuessed: boolean;
   /** 승인·게이트 전에 실패·핸드오프로 끝났다(발급 없음): 카드에 [다시 준비](같은 값의 새 초안) */
   redo?: boolean;
+  /** 대화에서 발급 전에 버린 초안(draft_discard). 카드는 "취소함"만 보이고 버튼이 없다. */
+  discarded?: boolean;
   /** 승인 전에 엔진이 이어 갈 수 없는 핸드오프로 끝냈다(end status handoff). 카드는 무슨 일인지와 [다시 준비]·[홈택스에서 직접 발급]을 보인다. */
   handoffEnd?: boolean;
   /** 초안만: 오늘 같은 거래처·같은 합계로 이미 발급한 실행이 있다(F-10, 이 앱이 켜진 동안의 발급). 승인 카드의 중복 경고보다 먼저 보인다. */

@@ -5,7 +5,7 @@
 // - 문장·토큰·값을 로그에 남기지 않는다.
 import type { AgentReply, DomainCall, ScreenFrame, ShownReply, StepParams, StepResult, ToolOutput, Vat } from '@sax/engine';
 import { CHAT_ERROR_TEXT } from './chat-reply.ts';
-import { fillWithJosa } from './josa.ts';
+import { fillWithJosa, finalOf, fixJosa } from './josa.ts';
 import { cleanItem, split } from './shell-model.ts';
 
 type SlotField = NonNullable<ToolOutput['fields']>[number];
@@ -34,11 +34,16 @@ export const AGENT_SETUP_TEXT = '대화를 쓰려면 먼저 내 사업장(사업
 /** 채울 값이 없는 슬롯이 있으면 문장 전체를 이것으로 바꾼다(값을 지어내지 않는다). */
 export const AGENT_SLOT_MISSING_TEXT = '같이 보이는 표에서 값을 확인해 주세요.';
 
+/** 모델 답을 받지 못했다(U8-5). 원인(인터넷·서버·모델)을 단정하지 않는다. */
+export const AGENT_UNAVAILABLE_TEXT = '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.';
+
 /** chat.* 오류 → 대화 문장과 [다시 시도]. 표에 없는 코드는 chat.unavailable로 접는다. */
 export const AGENT_ERROR_TEXT: Record<string, { text: string; retry: boolean }> = {
   ...CHAT_ERROR_TEXT,
+  'chat.unavailable': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
+  'chat.bad_response': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   'chat.turn_limit': { text: '한 번에 하기 어려워요. 나눠서 말씀해 주세요.', retry: false },
-  'chat.bad_tool_output': CHAT_ERROR_TEXT['chat.unavailable'],
+  'chat.bad_tool_output': { text: AGENT_UNAVAILABLE_TEXT, retry: true },
   bad_text: CHAT_ERROR_TEXT['chat.input_too_large'],
 };
 
@@ -90,7 +95,7 @@ export interface AgentChatPorts {
   /** 사업자 프로필 id. null이면 엔진을 부르지 않고 고정 안내를 답한다. */
   profileId(): string | null;
   drafts: AgentDrafts;
-  issued(): IssuedRow[];
+  issued(): IssuedRow[] | Promise<IssuedRow[]>;
   /** null이면 계좌 연결 전(not_set_up) */
   receivables(): Promise<ReceivableRow[] | null>;
   counterparties(): AgentCounterparty[];
@@ -108,7 +113,9 @@ export interface TableRow {
 }
 export type AgentShow = { type: 'card'; runId: string } | { type: 'table'; table: ResultKind; title: string; rows: TableRow[] };
 export type AgentTurnResult =
-  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered'] }
+  /** setup: 이 턴에 내 사업장·발급 인증이 빠져 카드를 못 만들었다(화면이 등록 버튼을 둔다). */
+  /** unknown: 사장님이 쓴 거래처 이름이 장부에 없다(U8-1). 화면은 text와 그 이름으로 [거래처 추가]를 둔다. */
+  | { kind: 'agent'; text: string; show: AgentShow[]; ask: null | { kind: AgentAsk; chips: Array<{ label: string; text: string }> }; filtered: AgentReply['filtered']; setup?: true; unknown?: { name: string; text: string } }
   | { kind: 'unavailable'; code: string; text: string; retry: boolean };
 
 interface Result {
@@ -181,11 +188,12 @@ export class AgentChat {
 
   async turn(text: string): Promise<AgentTurnResult> {
     const profileId = this.ports.profileId();
-    if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null };
+    if (!profileId) return { kind: 'agent', text: AGENT_SETUP_TEXT, show: [], ask: null, filtered: null, setup: true };
     const s = this.open(profileId);
     const created: string[] = [];
     this.ports.onProgress('thinking');
     let phase: AgentPhase = 'thinking';
+    let setup = false;
     try {
       let steps = 0;
       const step = async (p: StepParams) => {
@@ -200,11 +208,14 @@ export class AgentChat {
         const outputs: Array<{ callId: string; output: ToolOutput }> = [];
         for (const { callId, ...call } of r.calls) {
           if (TOOL_PHASE[call.tool] !== phase) this.ports.onProgress((phase = TOOL_PHASE[call.tool]));
-          outputs.push({ callId, output: await this.exec(s, call, created) });
+          const output = await this.exec(s, call, created);
+          if (output.status === 'setup_missing') setup = true;
+          outputs.push({ callId, output });
         }
         r = await step({ continue: { outputs } });
       }
-      return this.shown(s, r.reply, created);
+      const shown = this.shown(s, r.reply, created);
+      return setup && shown.kind === 'agent' ? { ...shown, setup: true } : shown;
     } catch (e) {
       const err = e as { code?: unknown; message?: unknown } | null;
       const code = [err?.code, err?.message].find((c): c is string => typeof c === 'string' && Object.hasOwn(AGENT_ERROR_TEXT, c)) ?? 'chat.unavailable';
@@ -262,14 +273,14 @@ export class AgentChat {
     switch (call.tool) {
       case 'sales_summary': {
         const month = monthOf(this.ports.today(), call.monthOffset);
-        const rows = newestFirst(this.ports.issued().filter((x) => x.date.startsWith(`${month}-`)));
+        const rows = newestFirst((await this.ports.issued()).filter((x) => x.date.startsWith(`${month}-`)));
         return this.remember(s, { kind: 'sales', title: `${Number(month.slice(5))}월 발급 ${tally(rows)}`, rows });
       }
       case 'invoice_history':
       case 'receivables': {
         const cp = cpOf(call.counterpartyId);
         if (cp === undefined) return out('unknown_counterparty');
-        const all = call.tool === 'receivables' ? await this.ports.receivables() : this.ports.issued();
+        const all = call.tool === 'receivables' ? await this.ports.receivables() : await this.ports.issued();
         if (!all) return out('not_set_up');
         // 이름만 아는 옛 행(counterpartyId null)은 지금 장부 이름으로 맞춘다.
         const rows = newestFirst(cp ? all.filter((x) => x.counterpartyId === cp.id || (x.counterpartyId === null && x.counterparty === cp.name)) : all);
@@ -391,7 +402,17 @@ export class AgentChat {
     }
     // 이번 턴에 만든 카드는 모델이 show에 넣지 않아도 보인다(카드가 사실이다).
     for (const runId of created) if (!cards.has(runId)) show.push({ type: 'card', runId });
-    return { kind: 'agent', text: reply.filtered ? reply.text : this.fill(s, reply), show, ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null, filtered: reply.filtered };
+    const name = reply.unknownName?.trim();
+    // 장부에 이미 있는 이름이면(모델이 다른 토큰을 썼다) 안내하지 않는다
+    const unknown = name && !this.ports.counterparties().some((c) => c.name === name) ? { name, text: `${name}${finalOf(name) ? fixJosa(name, '은 장부에 없는 거래처예요.') : '은(는) 장부에 없는 거래처예요.'}` } : null;
+    return {
+      kind: 'agent',
+      text: reply.filtered ? reply.text : this.fill(s, reply),
+      show,
+      ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null,
+      filtered: reply.filtered,
+      ...(unknown ? { unknown } : {}),
+    };
   }
 
   private chips(ask: AgentAsk): Array<{ label: string; text: string }> {

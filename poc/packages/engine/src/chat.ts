@@ -11,7 +11,7 @@ import { EMAIL_RE, TOKEN_RE, normalizeForRedaction, numericSpans } from '@sax/re
 /** D04 §3 고정 문구(세무 판단 거절). 데스크톱 화면 문구와 같다. */
 export const CHAT_ADVICE_TEXT = '세무 판단은 하지 않아요. 세무 대리인과 상담해 주세요.';
 /** 답 문장을 쓸 수 없을 때(식별자·링크·토큰이 섞임, 모델 거절)의 고정 안내 */
-export const CHAT_FALLBACK_TEXT = '이 앱은 홈택스 전자세금계산서 발급과 사업자등록증명·납세증명서 발급을 도와드려요. 어떤 일을 할까요?';
+export const CHAT_FALLBACK_TEXT = '이 앱은 홈택스 전자세금계산서 발급을 도와드려요. 어떤 일을 할까요?';
 /** 마스킹 뒤 입력 상한(바이트). intent_route_v1 maxInputBytes와 같다. 넘으면 잘라 보내지 않고 거부한다. */
 export const CHAT_INPUT_MAX_BYTES = 2048;
 
