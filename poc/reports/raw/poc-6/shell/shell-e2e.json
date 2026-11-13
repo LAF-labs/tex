@@ -8,9 +8,9 @@
       "name": "사업자 프로필·거래처는 DB(엔진 db.query.*)에서 온다",
       "ok": true,
       "detail": [
-        "a70b594d-371f-42f5-8db9-d1607a16fecd",
-        "57214bbc-10f4-4815-b48d-b06f21f51d69",
-        "e147f1c9-9181-4f1a-9c87-29ed87bbd44d"
+        "ea9dfd57-ae20-4830-a287-bb64867b0c96",
+        "64320886-492e-4bc6-b088-9cac73e407dc",
+        "99eab971-baf3-45f7-b19d-f8000da4aee2"
       ]
     },
     {
@@ -43,7 +43,7 @@
     {
       "name": "초안 카드: 고르지 않으면 부가세 별도(3,300,000 + 330,000 = 3,630,000원)",
       "ok": true,
-      "detail": "세금계산서 · A상사작성 중3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도로 계산했어요홈택스에서 준비부가세 포함하기금액 수정취소추정 값 2개 · 부가세, 품목 · 아직 아무것도 보내"
+      "detail": "세금계산서 · A상사작성 중3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도로 계산했어요품목 · 경영 컨설팅 (저장 품목) · 받는 이메일 · tax@asangsa.example홈택스"
     },
     {
       "name": "초안 카드에 승인 버튼이 없다(ADR-021)",
@@ -112,7 +112,7 @@
         },
         {
           "fieldKey": "issueDate",
-          "value": "2026-11-05"
+          "value": "2026-11-12"
         },
         {
           "fieldKey": "remark",
@@ -137,16 +137,85 @@
       "ok": true
     },
     {
-      "name": "작성일자 = KST 오늘이면 바 합계 줄에 작성일 조각이 없다(가짜 H-01도 KST)",
+      "name": "승인 카드 줄 = 합계(공급가액·세액)·공급받는자·품목·작성일자·받는 이메일, 값은 게이트 요청 fields 그대로",
+      "ok": true,
+      "detail": [
+        {
+          "label": "합계",
+          "amount": true,
+          "pieces": [
+            {
+              "text": "3,630,000원"
+            },
+            {
+              "text": "공급가액 3,300,000원 · 세액 330,000원"
+            }
+          ]
+        },
+        {
+          "label": "공급받는자",
+          "pieces": [
+            {
+              "text": "A상사",
+              "shrink": true
+            },
+            {
+              "text": " · 214-86-51233"
+            }
+          ],
+          "flag": "처음 거래"
+        },
+        {
+          "label": "품목",
+          "pieces": [
+            {
+              "text": "경영 컨설팅",
+              "shrink": true
+            }
+          ]
+        },
+        {
+          "label": "작성일자",
+          "pieces": [
+            {
+              "text": "2026-11-12"
+            }
+          ]
+        },
+        {
+          "label": "받는 이메일",
+          "pieces": [
+            {
+              "text": "tax",
+              "shrink": true
+            },
+            {
+              "text": "@asangsa.example"
+            }
+          ],
+          "flag": "처음 보내는 주소"
+        }
+      ]
+    },
+    {
+      "name": "작성일자 = KST 오늘이면 \"오늘 아님\" 표시가 없다(가짜 H-01도 KST)",
       "ok": true,
       "detail": {
-        "issueDate": "2026-11-05",
-        "firstTotal": "3,630,000원 · 세액 330,000원"
+        "issueDate": "2026-11-12",
+        "dateRow": {
+          "label": "작성일자",
+          "pieces": [
+            {
+              "text": "2026-11-12"
+            }
+          ]
+        }
       }
     },
     {
-      "name": "카드·패널은 엔진이 되읽은 값으로 바뀐다(홈택스 확정)",
-      "ok": true
+      "name": "대화의 작성 카드는 \"작성 완료\" 한 줄(서류·거래처·합계)로 접히고 되읽은 값 전체·승인·[중지] 버튼을 그리지 않는다(결정 7)",
+      "ok": true,
+      "detail": "작성 완료세금계산서 · A상사 · 3,630,000원승인 대기"
     },
     {
       "name": "승인 대기에 바가 뜬다(main이 창 크기로 정한 자리)",
@@ -154,64 +223,99 @@
       "detail": {
         "snap": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         },
         "exp": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90,
+          "height": 300,
           "band": false
         }
       }
     },
     {
-      "name": "바는 처음에 무장 전(흐림)이다",
+      "name": "카드는 뜰 때부터 무장됨이다(무장 지연 없음, 첫 페이지가 무장됨)",
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-6e16ab12",
-        "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-        "mode": "unarmed",
+        "kind": "gate",
+        "runId": "run-ce0fa2ea",
+        "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+        "mode": "armed",
         "msg": null,
         "committed": {
-          "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-          "mode": "unarmed"
+          "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+          "mode": "armed"
         },
         "bounds": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         },
         "band": false,
-        "armed": false,
+        "armed": true,
         "refusal": null,
-        "action": "승인하고 발급"
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 400,
+            "height": 44
+          },
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
+        }
       }
     },
     {
-      "name": "무장 전 클릭은 거부하고 \"잠시 뒤 다시 눌러 주세요\"",
+      "name": "카드 높이는 main이 H-01 줄 수로 정하고, [중지](왼쪽 112)와 [승인하고 발급]은 앱 상수 간격 48로 떨어져 있다",
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-6e16ab12",
-        "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-        "mode": "unarmed",
-        "msg": "잠시 뒤 다시 눌러 주세요",
-        "committed": null,
+        "kind": "gate",
+        "runId": "run-ce0fa2ea",
+        "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+        "mode": "armed",
+        "msg": null,
+        "committed": {
+          "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+          "mode": "armed"
+        },
         "bounds": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         },
         "band": false,
-        "armed": false,
+        "armed": true,
         "refusal": null,
-        "action": "승인하고 발급"
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 400,
+            "height": 44
+          },
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
+        }
       }
     },
     {
@@ -219,7 +323,7 @@
       "ok": true,
       "detail": {
         "slot": {
-          "top": 608,
+          "top": 398,
           "bottom": 710,
           "colLeft": 200,
           "colWidth": 600,
@@ -227,9 +331,9 @@
         },
         "bar": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         }
       }
     },
@@ -238,7 +342,7 @@
       "ok": true,
       "detail": {
         "slot": {
-          "top": 608,
+          "top": 398,
           "bottom": 710,
           "colLeft": 200,
           "colWidth": 600,
@@ -246,9 +350,9 @@
         },
         "bar": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         }
       }
     },
@@ -261,7 +365,55 @@
       }
     },
     {
-      "name": "Enter·Space(바·입력창 모두)로는 승인되지 않는다",
+      "name": "키(카드의 Tab·Alt+Y·글자·화살표, 입력창 Enter)로는 승인되지 않는다",
+      "ok": true
+    },
+    {
+      "name": "렌더러가 카드 자리에 그린 가짜 [승인하고 발급]·그 자리로 간 메인 창 입력은 승인이 아니다(바 그대로, 발급 POST 없음)",
+      "ok": true,
+      "detail": {
+        "forgedClicks": 1,
+        "snap": {
+          "visible": true,
+          "kind": "gate",
+          "runId": "run-ce0fa2ea",
+          "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+          "mode": "armed",
+          "msg": null,
+          "committed": {
+            "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+            "mode": "armed"
+          },
+          "bounds": {
+            "x": 200,
+            "y": 398,
+            "width": 600,
+            "height": 300
+          },
+          "band": false,
+          "armed": true,
+          "refusal": null,
+          "action": "승인하고 발급",
+          "stop": "중지",
+          "targets": {
+            "approve": {
+              "x": 180,
+              "y": 240,
+              "width": 400,
+              "height": 44
+            },
+            "stop": {
+              "x": 20,
+              "y": 240,
+              "width": 112,
+              "height": 44
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "카드 안 [승인하고 발급] 밖(값 줄·비가역 줄·버튼 사이 간격) 클릭은 승인도 중지도 아니다",
       "ok": true
     },
     {
@@ -300,11 +452,14 @@
         "shell.bootstrap": "ok",
         "profile.set": "ok",
         "request.send": "ok",
+        "run.redraft": "not_redoable",
         "draft.update": "not_draft",
         "run.prepare": "not_draft",
         "run.stop": "no_run",
         "run.resume": "not_handed_off",
         "run.manualDone": "not_handed_off",
+        "incident.open": "not_in_doubt",
+        "incident.close": "ok",
         "docs.list": "ok",
         "docs.import": "bad_request",
         "docs.importCancel": "bad_request",
@@ -312,11 +467,26 @@
         "docs.open": "not_found",
         "docs.reveal": "not_found",
         "counterparty.save": "not_found",
+        "counterparty.readCert": "ok",
         "auth.setDefault": "bad_request",
         "counterparties.list": "ok",
         "g24.candidates": "ok",
         "g24.save": "bad_candidate",
+        "account.view": "ok",
+        "account.sendCode": "bad_request",
+        "account.verify": "bad_request",
+        "account.password": "bad_request",
+        "account.setPassword": "bad_request",
+        "account.skipPassword": "ok",
+        "account.startReset": "bad_request",
+        "account.finishReset": "bad_request",
+        "account.back": "ok",
+        "account.signOut": "run_active",
+        "pair.open": "account_required",
         "onboarding.reply": "bad_request",
+        "onboarding.reopen": "bad_request",
+        "profile.edit": "bad_request",
+        "profile.readCert": "ok",
         "clipboard.copy": "ok"
       }
     },
@@ -356,54 +526,52 @@
       "ok": true
     },
     {
-      "name": "습관 클릭: 바에 들어와 150ms 안에 누르면 거부(\"마우스를 조금 움직인 뒤\")",
-      "ok": true,
-      "detail": {
-        "visible": true,
-        "runId": "run-6e16ab12",
-        "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-        "mode": "armed",
-        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
-        "committed": {
-          "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-          "mode": "armed"
-        },
-        "bounds": {
-          "x": 200,
-          "y": 608,
-          "width": 600,
-          "height": 90
-        },
-        "band": false,
-        "armed": true,
-        "refusal": null,
-        "action": "승인하고 발급"
-      }
+      "name": "누른 채 바를 나갔다 들어와 뗀 클릭은 승인이 아니다",
+      "ok": true
     },
     {
       "name": "문서함으로 가도 바는 같은 자리에 남는다",
       "ok": true
     },
     {
-      "name": "창 크기를 바꾸면 다시 배치하고 다시 무장한다",
+      "name": "창 크기를 바꾸면 다시 배치하고 누르던 클릭은 취소한다(카드는 무장됨 그대로)",
       "ok": true,
       "detail": {
         "visible": true,
-        "runId": "run-6e16ab12",
-        "reqId": "3b57b9eb-5b0b-4011-a43d-0902e01efc3d",
-        "mode": "unarmed",
+        "kind": "gate",
+        "runId": "run-ce0fa2ea",
+        "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+        "mode": "armed",
         "msg": null,
-        "committed": null,
+        "committed": {
+          "reqId": "13c44a5b-50e2-4370-930a-91d58d0a5960",
+          "mode": "armed"
+        },
         "bounds": {
           "x": 120,
-          "y": 548,
+          "y": 338,
           "width": 600,
-          "height": 90
+          "height": 300
         },
         "band": false,
-        "armed": false,
+        "armed": true,
         "refusal": null,
-        "action": "승인하고 발급"
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 400,
+            "height": 44
+          },
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
+        }
       }
     },
     {
@@ -432,9 +600,9 @@
       "name": "결과 카드: 가짜 페이지가 발급한 승인번호·메일 전송 확인",
       "ok": true,
       "detail": {
-        "doneText": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261105-41000012-00000123복사PDF 열기지난번과 같게어디로 무엇이 갔나요홈택스전자세금계산서 1건 발급 · ",
+        "doneText": "세금계산서 · A상사완료3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도발급했어요. A상사 메일로 보낸 것도 확인했어요.승인번호20261112-41000012-00000123복사PDF 열기지난번과 같게어디로 무엇이 갔나요홈택스전자세금계산서 1건 발급 · ",
         "issued": {
-          "approvalNo": "20261105-41000012-00000123",
+          "approvalNo": "20261112-41000012-00000123",
           "supplierBizNo": "1234567891",
           "counterpartBizNo": "2148651233",
           "counterpartName": "A상사",
@@ -442,7 +610,7 @@
           "itemName": "경영 컨설팅",
           "supplyAmount": "3300000",
           "taxAmount": "330000",
-          "issueDate": "2026-11-05"
+          "issueDate": "2026-11-12"
         }
       }
     },
@@ -478,7 +646,7 @@
       "name": "가짜 페이지에 들어간 값 = 승인 바에 보인 값",
       "ok": true,
       "detail": {
-        "approvalNo": "20261105-41000012-00000123",
+        "approvalNo": "20261112-41000012-00000123",
         "supplierBizNo": "1234567891",
         "counterpartBizNo": "2148651233",
         "counterpartName": "A상사",
@@ -486,7 +654,7 @@
         "itemName": "경영 컨설팅",
         "supplyAmount": "3300000",
         "taxAmount": "330000",
-        "issueDate": "2026-11-05"
+        "issueDate": "2026-11-12"
       }
     },
     {
@@ -512,7 +680,7 @@
       "detail": 847000
     },
     {
-      "name": "같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 바는 주의 색 \"이미 발급됨\"·\"한 번 더 발급\"",
+      "name": "같은 건 발급 확정: $dup.businessKey가 fields(cardHash)에 들어가고 카드는 주의 색 \"이미 발급됨\"·\"한 번 더 발급\"",
       "ok": true,
       "detail": {
         "fields": [
@@ -558,7 +726,7 @@
           ],
           [
             "issueDate",
-            "2026-11-05"
+            "2026-11-12"
           ],
           [
             "remark",
@@ -585,84 +753,52 @@
       }
     },
     {
-      "name": "승인 대기 카드에도 고정 경고·같은 동작 글자가 붙는다",
+      "name": "중복 경고는 main 카드에만: 접힌 대화 카드는 값·경고를 그리지 않는다",
       "ok": true,
-      "detail": "세금계산서 · A상사승인 대기3,630,000원공급가 3,300,000 + 세액 330,000 · 부가세 별도홈택스에 입력한 값을 다시 읽어 확인했어요. 초안과 같아요. 발급하면 A상사 메일로 전송되고 되돌릴 수 없어요.null이 거래와 같은 건이 이미 발급돼 있어요(승인번호 있음). 한 번 더 발급하면 같은 계산서가 2건이 돼요.아래 [그래도 한 번 더 발급]에서 값을 한 번 더 확인하고 눌러 주세요중지"
-    },
-    {
-      "name": "다음 게이트: 입력창에서 바로 올라온 클릭은 머무름으로 거부(앞 게이트 추적 상태를 안 믿음)",
-      "ok": true,
-      "detail": {
-        "visible": true,
-        "runId": "run-daa53cb4",
-        "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-        "mode": "armed",
-        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
-        "committed": {
-          "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-          "mode": "armed"
-        },
-        "bounds": {
-          "x": 200,
-          "y": 608,
-          "width": 600,
-          "height": 90
-        },
-        "band": false,
-        "armed": true,
-        "refusal": null,
-        "action": "승인하고 발급"
-      }
+      "detail": "작성 완료세금계산서 · A상사 · 3,630,000원승인 대기"
     },
     {
       "name": "승인 대기 중에는 다른 건을 준비할 수 없고 바는 그대로다",
       "ok": true
     },
     {
-      "name": "창 blur → 무장 전 페이지, 핸드오프 아닌 활성화 → 다시 무장 지연",
+      "name": "창 blur → 활성화: 카드는 무장됨 그대로, 활성화 사이에 걸친 클릭은 승인이 아니다",
       "ok": true,
       "detail": {
-        "blurred": {
-          "visible": true,
-          "runId": "run-daa53cb4",
-          "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-          "mode": "unarmed",
-          "msg": null,
-          "committed": {
-            "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-            "mode": "unarmed"
-          },
-          "bounds": {
-            "x": 200,
-            "y": 608,
-            "width": 600,
-            "height": 90
-          },
-          "band": false,
-          "armed": true,
-          "refusal": null,
-          "action": "승인하고 발급"
+        "visible": true,
+        "kind": "gate",
+        "runId": "run-c01cc41e",
+        "reqId": "0fce6797-56f1-419a-978a-9f062e51afb1",
+        "mode": "armed",
+        "msg": null,
+        "committed": {
+          "reqId": "0fce6797-56f1-419a-978a-9f062e51afb1",
+          "mode": "armed"
         },
-        "refocused": {
-          "visible": true,
-          "runId": "run-daa53cb4",
-          "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-          "mode": "unarmed",
-          "msg": null,
-          "committed": {
-            "reqId": "a5cc7dd7-d85a-4a9c-90ab-3fa016a8908c",
-            "mode": "unarmed"
+        "bounds": {
+          "x": 200,
+          "y": 398,
+          "width": 600,
+          "height": 300
+        },
+        "band": false,
+        "armed": true,
+        "refusal": null,
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 400,
+            "height": 44
           },
-          "bounds": {
-            "x": 200,
-            "y": 608,
-            "width": 600,
-            "height": 90
-          },
-          "band": false,
-          "armed": false,
-          "refusal": null,
-          "action": "승인하고 발급"
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
         }
       }
     },
@@ -724,12 +860,35 @@
       "ok": true
     },
     {
-      "name": "승인 대기에서 [중지] → 바가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)",
+      "name": "확장 감지 거절: 진행 중 카드는 고정 문장만(ID·개수 없음), 발급 없이 끝나면 [다시 시도] → 같은 요청을 입력창에 채우기만(새 실행·발급 없음)",
+      "ok": true,
+      "detail": {
+        "extLive": {
+          "text": true,
+          "btn": 0
+        },
+        "retryBtn": 1,
+        "retryFilled": "B상사에 550,000원 세금계산서 끊고 메일 보내 줘",
+        "runs": [
+          5,
+          5
+        ]
+      }
+    },
+    {
+      "name": "승인 대기에서 카드 [중지](무장 전에도) → 카드가 내려가고 발급하지 않는다(원장 행 없음, 발급 POST 없음)",
       "ok": true
     },
     {
       "name": "처음 거래·처음 보내는 주소 표시는 엔진 원장 판정(fields)에서 나온다",
       "ok": true
+    },
+    {
+      "name": "카드 포커스에서 Enter = [중지](승인 아님): 실행 중지, 발급 POST·원장 행 없음, 포커스는 대화 화면으로",
+      "ok": true,
+      "detail": {
+        "status": "stopped"
+      }
     },
     {
       "name": "승인 뒤 화면 값이 바뀌면 누르지 않고 확인 필요(not_committed, 발급 POST 없음)",
@@ -764,6 +923,15 @@
       "detail": "홈택스에 로그인한 사업자가 이 프로필과 달라서 멈췄어요. 아무것도 발급하지 않았어요."
     },
     {
+      "name": "발급 전 멈춤 카드 [다시 준비] → 같은 거래처·금액의 새 초안(실행은 시작하지 않음)",
+      "ok": true,
+      "detail": {
+        "status": "draft",
+        "cp": "C테크",
+        "amount": 300000
+      }
+    },
+    {
       "name": "정부24 목업 1: 직접 발급 안내(단계·복사 값)",
       "ok": true
     },
@@ -771,10 +939,10 @@
       "name": "정부24 후보 파일은 작업 시작 뒤에 생긴 것만",
       "ok": true,
       "detail": {
-        "start": "18:37",
+        "start": "14:05",
         "at": [
-          "18:37",
-          "18:37"
+          "14:05",
+          "14:05"
         ]
       }
     },
@@ -791,6 +959,7 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "kind": "gate",
         "runId": "e2e-wide",
         "reqId": "wide-1",
         "mode": "armed",
@@ -801,18 +970,33 @@
         },
         "bounds": {
           "x": 60,
-          "y": 608,
+          "y": 398,
           "width": 1220,
-          "height": 90
+          "height": 300
         },
         "band": true,
         "armed": true,
         "refusal": null,
-        "action": "승인하고 발급"
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 1020,
+            "height": 44
+          },
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
+        }
       }
     },
     {
-      "name": "작성일자가 KST 오늘과 다르면 합계 줄 끝에 줄이지 않는 \" · 작성일 2026-11-01\"",
+      "name": "작성일자가 KST 오늘과 다르면 작성일자 줄에 \"오늘 아님\"",
       "ok": true
     },
     {
@@ -824,6 +1008,7 @@
       "ok": true,
       "detail": {
         "visible": true,
+        "kind": "gate",
         "runId": "e2e-wide",
         "reqId": "wide-5",
         "mode": "refused",
@@ -834,43 +1019,33 @@
         },
         "bounds": {
           "x": 200,
-          "y": 608,
+          "y": 398,
           "width": 600,
-          "height": 90
+          "height": 300
         },
         "band": false,
         "armed": false,
         "refusal": "값 대조가 맞지 않아 승인할 수 없어요",
-        "action": "승인하고 발급"
+        "action": "승인하고 발급",
+        "stop": "중지",
+        "targets": {
+          "approve": {
+            "x": 180,
+            "y": 240,
+            "width": 400,
+            "height": 44
+          },
+          "stop": {
+            "x": 20,
+            "y": 240,
+            "width": 112,
+            "height": 44
+          }
+        }
       }
     },
     {
-      "name": "커서가 자리를 옮긴 뒤 바로 누른 클릭은 거부(가린 창이 사라지는 순간)",
-      "ok": true,
-      "detail": {
-        "visible": true,
-        "runId": "e2e-wide",
-        "reqId": "wide-3",
-        "mode": "armed",
-        "msg": "마우스를 조금 움직인 뒤 눌러 주세요",
-        "committed": {
-          "reqId": "wide-3",
-          "mode": "armed"
-        },
-        "bounds": {
-          "x": 60,
-          "y": 608,
-          "width": 1220,
-          "height": 90
-        },
-        "band": true,
-        "armed": true,
-        "refusal": null,
-        "action": "승인하고 발급"
-      }
-    },
-    {
-      "name": "멈춘 커서 아래 뜬 바는 움직이지 않고 눌러도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)",
+      "name": "카드가 뜬 직후 클릭도 승인된다(LocalApproval v2: reqId·approvalNonce·presence)",
       "ok": true,
       "detail": {
         "o": {
@@ -880,27 +1055,27 @@
             "runId": "e2e-wide",
             "gateStepId": "s20",
             "reqId": "wide-4",
-            "approvalNonce": "D1sTD1tBE4dv3QpCI7QuZg",
+            "approvalNonce": "Y1qPLhxRjKkl8bpEWpdvOg",
             "actionHash": "a30e495a4476588c417dc6092dbc3d886674f95e5f3a2c7988394434839074be",
-            "exp": 1793871563685,
+            "exp": 1794460025172,
             "presence": "click",
-            "mac": "fV3rIc1BwmGFJo8vsp83sxAmZNhcok-SS06oDfumJh4"
+            "mac": "B9mgA4z8VFzLNl6sxzKI3AM8o7tcUoScWpr-ogw3ggY"
           }
         },
         "judged": [
           {
-            "event": "rearm:shown"
+            "event": "reset:shown"
           },
           {
             "event": "mouseDown",
-            "x": 610,
-            "y": 45,
+            "x": 690,
+            "y": 262,
             "result": null
           },
           {
             "event": "mouseUp",
-            "x": 610,
-            "y": 45,
+            "x": 690,
+            "y": 262,
             "result": {
               "kind": "approve"
             }
@@ -908,37 +1083,37 @@
         ],
         "snap": {
           "visible": false,
+          "kind": null,
           "runId": null,
           "reqId": null,
-          "mode": "unarmed",
+          "mode": "armed",
           "msg": null,
           "committed": null,
           "bounds": {
             "x": 60,
-            "y": 608,
+            "y": 398,
             "width": 1220,
-            "height": 90
+            "height": 300
           },
           "band": true,
           "armed": false,
           "refusal": null,
-          "action": "승인하고 발급"
-        },
-        "cursor": {
-          "x": -9999,
-          "y": -9999
-        },
-        "cb": {
-          "x": 320,
-          "y": 162,
-          "width": 1280,
-          "height": 820
-        },
-        "cbBefore": {
-          "x": 320,
-          "y": 162,
-          "width": 1280,
-          "height": 820
+          "action": "승인하고 발급",
+          "stop": "중지",
+          "targets": {
+            "approve": {
+              "x": 180,
+              "y": 240,
+              "width": 1020,
+              "height": 44
+            },
+            "stop": {
+              "x": 20,
+              "y": 240,
+              "width": 112,
+              "height": 44
+            }
+          }
         }
       }
     },
@@ -948,12 +1123,12 @@
       "detail": {
         "reqs": [
           {
-            "at": 1793871443726,
+            "at": 1794459905222,
             "method": "GET",
             "path": "/invoice/issue"
           },
           {
-            "at": 1793871443727,
+            "at": 1794459905227,
             "method": "GET",
             "path": "/notice/blocked"
           }
@@ -1007,8 +1182,125 @@
       "ok": true
     },
     {
-      "name": "[홈택스에서 직접 확인] → 패널에 찾을 건(작성일자·공급받는자·사업자번호·합계)과 복사, \"없음\" 확인은 승인 바 자리에서만",
+      "name": "[홈택스에서 직접 확인] → 패널에 찾을 건(작성일자·공급받는자·사업자번호·합계)과 복사, \"없음\" 확인은 황토색 확인 카드(main)에서만",
       "ok": true
+    },
+    {
+      "name": "증언 요청은 무장만 한다: 카드를 실제로 열기 전에는 바가 뜨지 않는다(패널이 열려 있어도 실제 입력 없이 연 것)",
+      "ok": true
+    },
+    {
+      "name": "카드를 열면 승인 카드 자리에 같은 틀의 황토색 증언 카드: 그 요청, 동작 글자 \"홈택스 발급목록에 없음을 확인했어요\"·[닫기], 무장 거부 없음",
+      "ok": true,
+      "detail": {
+        "aSnap": {
+          "visible": true,
+          "kind": "attest",
+          "runId": "run-037a3a96",
+          "reqId": "a590aad3-30b5-4fea-bd53-0ad0c4d0e7f7",
+          "mode": "armed",
+          "msg": null,
+          "committed": {
+            "reqId": "a590aad3-30b5-4fea-bd53-0ad0c4d0e7f7",
+            "mode": "armed"
+          },
+          "bounds": {
+            "x": 200,
+            "y": 442,
+            "width": 600,
+            "height": 256
+          },
+          "band": false,
+          "armed": true,
+          "refusal": null,
+          "action": "홈택스 발급목록에 없음을 확인했어요",
+          "stop": "닫기",
+          "targets": {
+            "approve": {
+              "x": 180,
+              "y": 196,
+              "width": 400,
+              "height": 44
+            },
+            "stop": {
+              "x": 20,
+              "y": 196,
+              "width": 112,
+              "height": 44
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "카드(안내)를 닫으면 증언 바가 내려간다(증언이 안 될 뿐인 안전한 실패)",
+      "ok": true
+    },
+    {
+      "name": "증언 카드의 [닫기](main이 관찰한 클릭)는 증언 없이 내린다(요청은 그대로 남아 다시 열 수 있다)",
+      "ok": true
+    },
+    {
+      "name": "증언 바 클릭 → main이 LocalAttestation을 게이트 포트로 보내고 엔진 판정(attest.no_request)을 카드에 보인다. 바는 내려가고 원장은 그대로 in_doubt",
+      "ok": true,
+      "detail": {
+        "attest": {
+          "state": "refused",
+          "note": "이 건의 확인 요청이 끝났거나 바뀌어서 받지 않았어요. 아무것도 기록하지 않았어요."
+        },
+        "ledgerBefore": "in_doubt",
+        "ledgerAfter": "in_doubt"
+      }
+    },
+    {
+      "name": "품목 없는 거래처: 카드 전에 \"어떤 품목으로 발급할까요?\"",
+      "ok": true,
+      "detail": {
+        "made": true,
+        "last": "C테크에 어떤 품목으로 발급할까요? 예: 컨설팅 용역"
+      }
+    },
+    {
+      "name": "답한 품목으로 카드(품목·받는 이메일이 카드에 보인다, 빈 값 글자 없음)",
+      "ok": true
+    },
+    {
+      "name": "카드에서 품목·이메일을 고치면 카드 값이 바뀐다",
+      "ok": true
+    },
+    {
+      "name": "[홈택스에서 준비] → 고친 품목으로 승인 대기까지(엔진이 품목을 받았다), 처음 쓴 품목은 저장 품목으로 남고 카드가 알린다",
+      "ok": true,
+      "detail": {
+        "status": "waiting",
+        "cpsNow": {
+          "id": "99eab971-baf3-45f7-b19d-f8000da4aee2",
+          "name": "C테크",
+          "bizNo": "4182577343",
+          "rep": "최다라",
+          "email": "noitem@gyeonbon-test.example",
+          "item": "디자인 용역",
+          "status": "확인 전",
+          "checkedOn": "",
+          "lastIssuedOn": null
+        },
+        "notices": [
+          "이 품목을 C테크의 저장 품목으로 남겼어요. 다음부터 먼저 채워요(거래처 화면에서 바꿀 수 있어요)."
+        ]
+      }
+    },
+    {
+      "name": "확인 카드 [거래처 바꾸기]: 장부의 다른 거래처만 고를 수 있고, 고르면 카드 제목·받는 이메일·저장 품목이 그 거래처 것(금액 그대로)",
+      "ok": true,
+      "detail": {
+        "opts": [
+          "A상사",
+          "C테크"
+        ],
+        "cp": "C테크",
+        "email": "noitem@gyeonbon-test.example",
+        "item": "디자인 용역"
+      }
     },
     {
       "name": "엔진이 승인 대기 중에 끝나면 바가 내려가고 \"발급 없음\"으로 끝나며, 이후 호출은 바로 실패한다",
@@ -1028,12 +1320,12 @@
       ],
       "bar": {
         "x": 200,
-        "y": 608,
+        "y": 398,
         "width": 600,
-        "height": 90
+        "height": 300
       },
       "slot": {
-        "top": 608,
+        "top": 398,
         "bottom": 710,
         "colLeft": 200,
         "colWidth": 600,
@@ -1044,7 +1336,7 @@
     "panelClosedOffset": 0,
     "panelClosedOffsets": {
       "everyMs": 50,
-      "from": 1793871418766,
+      "from": 1794459885207,
       "offsets": [
         0,
         0,

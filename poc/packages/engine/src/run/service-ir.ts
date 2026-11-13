@@ -167,7 +167,7 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 }
 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
-const PHASE_OF: Readonly<Record<string, string>> = {
+export const PHASE_OF: Readonly<Record<string, string>> = {
   s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
   s10: 'form', s11: 'form',
   s12: 'input', s13: 'input', s14: 'input', s15: 'input', s16: 'input', s17: 'input', s18: 'input',

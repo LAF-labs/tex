@@ -8,10 +8,10 @@ import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { BizVerifier, connectRunBrowser, DataService, fixturePortal, RunService, type GatePortMessage, type IrPackage, type RunEvent } from '@sax/engine';
+import { apiRung, BizVerifier, connectRunBrowser, DataService, FakeIssueApi, fixturePortal, hometaxAutoRung, hometaxManualRung, IssueLadder, parseIssueKey, RunService, ulid, type GatePortMessage, type IrPackage, type IssueKey, type LadderEvent, type LadderState, type RunEvent } from '@sax/engine';
 import { FIXTURE_PORTAL, fixtureOriginGrant, loadPackage, type LoadedPackage, type LoaderContext, type PackageFiles, type PdfPort } from '@sax/engine/core';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
-import { openDatabase } from '@sax/db';
+import { Ledger, openDatabase, type LedgerRow } from '@sax/db';
 import { Egress } from '@sax/net';
 import { FileEventLog } from '@sax/platform';
 import { bundleOutcomes, loadPkg, signPackage, testKeys } from './core-fixtures.ts';
@@ -78,6 +78,33 @@ export interface Scenario {
   secret?: IrPackage['secret'];
   /** 발급 패키지 파일 고치기(시험이 고른 변형만, 시나리오에 적는다). */
   patchIssue?: (files: PackageFiles) => void;
+  /** 발급 사다리로 돌린다(D03 §4.2): 첫 칸이 이 실행(runId r1)이고, 직접 칸·동의 카드 답은 여기서 준다. */
+  ladder?: LadderScenario;
+  /** 실행 Chrome을 주는 함수를 바꾼다(Chrome 없음 갈래). */
+  page?: (real: () => Promise<import('playwright-core').Page>) => () => Promise<import('playwright-core').Page>;
+  /** 사람 대기 상한(ms, RunServiceDeps.handoffCapMs). 로그인을 끝내 하지 않는 갈래. */
+  handoffCapMs?: number;
+}
+
+export interface LadderScenario {
+  /** 직접 칸 답. 없으면 직접 칸에 닿았을 때 그대로 멈춘다(시험 실패). */
+  manual?: 'issued' | 'cannot';
+  /** API 원천(없으면 연결 안 됨). */
+  api?: FakeIssueApi;
+  consent?: 'granted' | 'declined';
+  /** 끝난 뒤 같은 발급 키로 한 번 더 요청한다(그 답을 again에 담는다). */
+  again?: boolean;
+}
+
+export interface LadderOutcome {
+  issueKey: IssueKey;
+  state: LadderState | null;
+  /** 지나간 상태 이름 순서. */
+  seen: string[];
+  rows: LedgerRow[];
+  again?: LadderState;
+  /** 다시 요청한 뒤 teet 요청 수(늘지 않아야 한다). */
+  actionsAfterAgain?: number;
 }
 
 export interface Outcome {
@@ -88,6 +115,7 @@ export interface Outcome {
   fx: HometaxFake;
   /** teet로 간 actionId 순서(permission.do는 perm:<screenId>). */
   actions: string[];
+  ladder?: LadderOutcome;
 }
 
 export const defaultHuman = (fx: HometaxFake) => {
@@ -120,16 +148,26 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
     const email = sc.email === undefined ? 'tax@asangsa.example' : sc.email;
     const cp = data.counterparties.create({ bizNo: sc.bizNo ?? '2148651233', name: '에이상사', repName: '이대표', address: '부산광역시 가짜구 1', ...(email ? { email } : {}) }).id;
     const rb = await connectRunBrowser(h.client);
+    const realPage = async () => rb.page;
     const runs = new RunService({
-      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log: new FileEventLog(null, 'engine'), page: async () => rb.page,
-      postGate: (m: GatePortMessage) => gm.push(m), engine: 'ir', irSource: () => ({ ok: true, ir }),
+      db, data, ledgerKey: new Uint8Array(randomBytes(32)), portal, log: new FileEventLog(null, 'engine'), page: sc.page ? sc.page(realPage) : realPage,
+      postGate: (m: GatePortMessage) => gm.push(m), engine: 'ir', irSource: () => ({ ok: true, ir }), ...(sc.handoffCapMs !== undefined ? { handoffCapMs: sc.handoffCapMs } : {}),
       trace: (_r: string, t: { name: string; stepId: string; code?: string }) => {
         if (t.name === 'step.finished') steps.push(t.code ? `${t.stepId}!${t.code}` : t.stepId);
       },
     } as never);
     runs.on('event', (e: RunEvent) => events.push(e));
-    const ended = () => events.find((e) => e.type === 'end');
-    runs.start({ runId: 'r1', counterpartyId: cp, supply: sc.supply ?? 1000, tax: Math.floor((sc.supply ?? 1000) / 10), itemName: '테스트', ...(email === null ? { email: null } : {}) } as never);
+    const draft = { counterpartyId: cp, supply: sc.supply ?? 1000, tax: Math.floor((sc.supply ?? 1000) / 10), itemName: '테스트', ...(email === null ? { email: null } : {}) };
+    const lc = sc.ladder;
+    const issueKey = parseIssueKey(ulid())!;
+    const ledger = new Ledger(db);
+    const ladder = lc ? new IssueLadder({ rungs: [hometaxAutoRung(runs, db), hometaxManualRung(runs, db), apiRung(lc.api ? { popbill: lc.api } : {}, { runs, db })], ledger, log: new FileEventLog(null, 'engine') }) : null;
+    const seen: string[] = [];
+    ladder?.on('state', (e: LadderEvent) => seen.push(e.state.s));
+    const settledStates = new Set(['issued', 'held', 'stopped', 'exhausted']);
+    const ended = () => (ladder ? (settledStates.has(ladder.state(issueKey)?.s ?? '') ? true : undefined) : events.find((e) => e.type === 'end'));
+    if (ladder) ladder.request({ issueKey, runId: 'r1', ...draft });
+    else runs.start({ runId: 'r1', ...draft } as never);
     const t0 = Date.now();
     let approved = false;
     const human = sc.human ?? defaultHuman;
@@ -141,16 +179,28 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
         const q = g.req;
         runs.answer({ v: 2, runId: q.runId, gateStepId: q.gateStepId, reqId: q.reqId, approvalNonce: q.approvalNonce, actionHash: q.actionHash, exp: Date.now() + 120_000, presence: 'click', mac: 'not-verified-in-phase1' });
       }
+      const ls = ladder?.state(issueKey);
+      if (ls?.s === 'human' && lc?.manual) ladder!.human(issueKey, lc.manual);
+      if (ls?.s === 'consent' && lc?.consent) ladder!.consent(issueKey, lc.consent);
       await sleep(100);
     }
     const journal = runs.inspect('r1').journal;
+    let lo: LadderOutcome | undefined;
+    if (ladder) {
+      lo = { issueKey, state: ladder.state(issueKey), seen, rows: ledger.byIssueKey(issueKey) };
+      if (lc?.again) {
+        lo.again = ladder.request({ issueKey, ...draft });
+        await sleep(1500);
+        lo.actionsAfterAgain = fx.requests().length;
+      }
+    }
     try {
       runs.stop('r1');
     } catch {
       /* 끝남 */
     }
     await rb.browser.close().catch(() => {});
-    return { end: ended() as Outcome['end'], journal, steps, gate: gm.some((m) => m.t === 'gate.request'), fx, actions: fx.requests().map((r) => r.actionId ?? `perm:${r.screenId}`) };
+    return { end: events.find((e) => e.type === 'end') as Outcome['end'], journal, steps, ...(lo ? { ladder: lo } : {}), gate: gm.some((m) => m.t === 'gate.request'), fx, actions: fx.requests().map((r) => r.actionId ?? `perm:${r.screenId}`) };
   } finally {
     db.close();
     await h.close();
