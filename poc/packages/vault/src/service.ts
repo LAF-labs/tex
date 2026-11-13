@@ -833,7 +833,6 @@ export class Vault {
       toEngine: (raw) => {
         if (this.relay === relay) this.enginePort?.postMessage({ t: 'cdp', m: raw } satisfies OutboundMessage);
       },
-      onLeakSuspected: (hits) => emit(['engine', 'control'], 'secret_window.leak_suspected', { hits }),
     });
     this.relay?.commitGuard?.shutdown();
     this.relay = relay;

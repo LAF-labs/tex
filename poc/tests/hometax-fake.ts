@@ -63,6 +63,11 @@ export interface FakeKnobs {
   fieldLabels: boolean;
   /** 인증서 창(dscert)의 가짜 인증서 비밀번호(시험 값). 금고가 이 값을 넣고 [확인]하면 로그인·서명이 된다. */
   certPassword: string;
+  /**
+   * 비밀번호 칸 모양. password(기본) 또는 보안키보드형 text 가림 칸(-webkit-text-security, 대표 실화면 run-fb6d0e95 가설:
+   * 값이 AX·DOM·Runtime 읽기에 그대로 보인다).
+   */
+  certPwType: 'password' | 'masked_text';
   /** 인증서 목록(소유자명 Cn·용도). 0번 행이 처음에 골라져 있다(jqx DataTable selectRow 0). */
   certs: Array<{ cn: string; policy: string }>;
   /**
@@ -488,7 +493,7 @@ const CLIENT = String.raw`
 // - 저장 위치 a#stg_web·a#stg_hdd, 목록 div#dataTable 안 tr#row{N}dataTable(role=row, 0번 행이 골라진 채 시작), td role=gridcell 4열
 // - 비밀번호 input#input_cert_pw(title "인증서 비밀번호 입력"), [확인] button#btn_confirm_iframe, [취소] button#btn_cancel, 경고 #popup_alert·#alert_msg·button#btn_alert_confirm
 // - [확인]: 칸 값이 가짜 비밀번호와 같으면 통과(서버에 기록), 다르면 경고. 사람 흉내(fx.cert())는 칸 값과 상관없이 통과.
-const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>, browserFirst = false) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
+const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>, browserFirst = false, pwType: 'password' | 'masked_text' = 'password') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
 <style>td.MLjqui-grid-cell-selected{background:#cde}#popup_alert{display:none}</style></head><body>
 <div id="form1"><div id="selectCertContainer"><div id="ML_window" role="dialog"><div id="ML_container">
 <div id="ML_dp_01" class="ML_sub_tit">인증서 저장위치</div>
@@ -500,7 +505,7 @@ const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>, brows
 <div id="ML_dp_02" class="ML_sub_tit">사용할 인증서 선택</div>
 <div id="ML_certlist_area" class="ML_cert_list_area"><div id="dataTable" role="grid" align="left"><div role="columnheader">소유자</div><div role="columnheader">용도</div><div role="columnheader">발급자</div><div role="columnheader">만료일</div><table><tbody></tbody></table></div></div>
 <div id="ML_dp_04" class="ML_sub_tit">인증서 비밀번호 입력</div>
-<div id="ML_status_area" class="ML_status_area"><input type="password" id="input_cert_pw" name="input_cert_pw" class="passwd_input" title="인증서 비밀번호 입력" placeholder="비밀번호를 입력하시오." autocomplete="off" value=""></div>
+<div id="ML_status_area" class="ML_status_area"><input type="${pwType === 'masked_text' ? 'text' : 'password'}" id="input_cert_pw" name="input_cert_pw" class="passwd_input"${pwType === 'masked_text' ? ' style="-webkit-text-security:disc" data-tk-kbdType="qwerty"' : ''} title="인증서 비밀번호 입력" placeholder="비밀번호를 입력하시오." autocomplete="off" value=""></div>
 <button type="button" id="btn_confirm_iframe">확인</button> <button type="button" id="btn_cancel">취소</button> <button type="button" id="btn_viewCert">인증서 보기</button>
 </div></div></div></div>
 <div id="popup_alert" class="ML_container_dialog"><div id="alert_msg" class="ML_pw_dialog_txt"></div><button type="button" id="btn_alert_confirm">확인</button></div>
@@ -551,7 +556,7 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
-    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false,
+    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false, certPwType: 'password',
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
@@ -594,7 +599,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       state.lastScreen = { screen, at: Date.now() };
       return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, mainNotice: knobs.mainNotice, realLoginNav: knobs.realLoginNav, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
     }
-    if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav));
+    if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav, knobs.certPwType));
     if (u.pathname === '/_fx/certpw') {
       // 비밀번호 대조만(값은 기록하지 않는다).
       const ok = u.searchParams.get('pw') === knobs.certPassword;
