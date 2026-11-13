@@ -372,7 +372,7 @@ export class CodefLink {
     const { link } = this.o.store.get();
     if (!link) throw new CodefError('session_lost');
     const last = link.lastSyncAt ? Date.parse(link.lastSyncAt) : NaN;
-    if (Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon');
+    if (Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon', null, new Date(last + CODEF_REFRESH_COOLDOWN_MS).toISOString());
     if (this.budget().calls >= (this.o.dailyCalls ?? CODEF_DAILY_CALLS)) throw new CodefError('daily_limit');
     const bank = this.o.bank();
     if (!bank) throw new CodefError('bank_not_ready');
@@ -389,13 +389,15 @@ export class CodefLink {
       const { link } = this.o.store.get();
       if (!link || link.accountId !== account.id) throw new CodefError('session_lost');
       const last = link.lastSyncAt ? Date.parse(link.lastSyncAt) : NaN;
-      if (Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon');
+      if (Number.isFinite(last) && this.nowMs() - last < CODEF_REFRESH_COOLDOWN_MS) throw new CodefError('too_soon', null, new Date(last + CODEF_REFRESH_COOLDOWN_MS).toISOString());
       // 남은 것부터 지운다(기다리는 connectedId는 빼고). 그다음 연결 때 만든 것이 있으면 그것으로 조회한다
       await this.releaseOrphans();
       const warm = this.pending?.kind === 'warm' && this.pending.accountId === account.id ? this.dropPending() : null;
       let connectedId: string;
       if (warm) connectedId = warm.connectedId;
       else {
+        // 오늘 상한이면 비밀번호를 묻기 전에 멈춘다
+        if (this.budget().calls >= (this.o.dailyCalls ?? CODEF_DAILY_CALLS)) throw new CodefError('daily_limit');
         onPhase?.('password');
         connectedId = await this.register(link.certId, link.bank, link.clientType, 'auto');
       }

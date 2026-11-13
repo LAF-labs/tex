@@ -434,7 +434,7 @@ describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
     const { link, tick, accountId } = await connected();
     const n = mock.calls.length;
     await assert.rejects(link.refresh(), (e: unknown) => (e as CodefError).code === 'too_soon');
-    await assert.rejects(fetchOf(link, accountId), sourceCode('source.rate_limited'));
+    await assert.rejects(fetchOf(link, accountId), sourceCode('source.too_soon'));
     assert.equal(mock.calls.length, n);
     tick();
     await fetchOf(link, accountId);
@@ -444,7 +444,7 @@ describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
     const { link, settle, call } = await setup({ dailyCalls: 2 });
     const c = await link.connect({ certId: CERT });
     const r = await link.choose({ sessionId: c.sessionId, key: 'a0' });
-    assert.equal((await settle(r.accountId)).code, 'source.rate_limited', '등록·보유계좌 2회 뒤 거래내역에서 막힌다');
+    assert.equal((await settle(r.accountId)).code, 'source.daily_limit', '등록·보유계좌 2회 뒤 거래내역에서 막힌다');
     assert.equal(mock.live.size, 0, '삭제는 상한에 막히지 않는다');
     assert.equal(link.status().callsLeft, 0);
     await assert.rejects(link.connect({ certId: CERT }), (e: unknown) => (e as CodefError).code === 'daily_limit');

@@ -506,6 +506,15 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return r;
   }
 
+  /** 대화 에이전트의 draft_discard: 발급 전 초안만 버린다. 카드는 "취소함"으로 한 번 그리고 목록에서 뺀다(판·프레임에 남지 않게). */
+  discardDraft(id: string): RunView {
+    const r = this.mustDraft(id);
+    this.runs.delete(id);
+    const shown = { ...r, discarded: true };
+    this.emit('update', shown);
+    return shown;
+  }
+
   private mustDraft(id: string): RunView {
     const r = this.runs.get(id);
     if (!r || r.status !== 'draft') throw new Error('not_draft');

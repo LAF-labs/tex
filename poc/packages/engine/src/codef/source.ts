@@ -24,8 +24,8 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   no_account: 'source.not_linked',
   bank_not_ready: 'source.not_linked',
   bank_consent_required: 'source.not_linked',
-  daily_limit: 'source.rate_limited',
-  too_soon: 'source.rate_limited',
+  daily_limit: 'source.daily_limit',
+  too_soon: 'source.too_soon',
   codef_off: 'source.unavailable',
   unavailable: 'source.unavailable',
   signed_out: 'source.unavailable',
@@ -78,7 +78,7 @@ export function codefTxnSource(link: CodefLink): TxnSource {
       } catch (e) {
         const code = e instanceof CodefError ? CODEF_SOURCE_CODES[e.code] : 'source.unavailable';
         prog({ state: 'failed', code });
-        throw new SourceError(code);
+        throw new SourceError(code, e instanceof CodefError ? e.retryAt : null);
       }
     },
   };

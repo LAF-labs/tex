@@ -3,7 +3,7 @@
 import { createHash } from 'node:crypto';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { BundleCatalog, CHAT_REPLY, QUERY_PARSE, questionsDigest, toolsetDigest } from '@sax/model';
+import { BundleCatalog, CHAT_AGENT, CHAT_REPLY, QUERY_PARSE, questionsDigest, toolsetDigest } from '@sax/model';
 
 export interface GatewayMockCall {
   method: string;
@@ -27,6 +27,8 @@ export interface GatewayMockOptions {
   respondOutput?: Array<Record<string, unknown>>;
   /** respond 응답 status(기본 completed) */
   respondStatus?: string;
+  /** 요청 본문마다 output을 만든다(respondOutput보다 우선). 태그는 실제 게이트웨이처럼 64자 hex라 replay로 다시 보낼 수 있다. */
+  respondScript?: (body: Record<string, unknown>) => Array<Record<string, unknown>>;
 }
 
 export interface GatewayMock {
@@ -71,12 +73,14 @@ export async function startGatewayMock(opts: GatewayMockOptions = {}): Promise<G
         return send(200, { id: 'dec_mock', model: 'gpt-6-luna-2026-10-22', answers, usage: { input_tokens: 1200, output_tokens: 0 }, questionsDigest: qd });
       }
       if (path === '/v1/respond') {
-        const output = state.opts.respondOutput ?? [
+        const script = state.opts.respondScript;
+        const output = script?.(body ?? {}) ?? state.opts.respondOutput ?? [
           { type: 'reasoning', id: 'rs_1', encrypted_content: 'enc' },
           { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: JSON.stringify({ query_kind: 'documents_expiring', doc_type: null, from: null, to: null }) }] },
         ];
-        const td = state.opts.tamperToolset ? 'f'.repeat(64) : toolsetDigest(body?.toolset === CHAT_REPLY.id ? CHAT_REPLY : QUERY_PARSE);
-        return send(200, { model: 'gpt-6.1-terra', status: state.opts.respondStatus ?? 'completed', output: output.map((item, i) => ({ item, tag: `gwtag${i}` })), usage: { input_tokens: 300, output_tokens: 40, input_tokens_details: { cached_tokens: 256, cache_write_tokens: 0 } }, toolsetDigest: td });
+        const td = state.opts.tamperToolset ? 'f'.repeat(64) : toolsetDigest([CHAT_REPLY, CHAT_AGENT].find((t) => t.id === body?.toolset) ?? QUERY_PARSE);
+        const tag = (item: unknown, i: number) => (script ? createHash('sha256').update(`${i}:${JSON.stringify(item)}`).digest('hex') : `gwtag${i}`);
+        return send(200, { model: 'gpt-6.1-terra', status: state.opts.respondStatus ?? 'completed', output: output.map((item, i) => ({ item, tag: tag(item, i) })), usage: { input_tokens: 300, output_tokens: 40, input_tokens_details: { cached_tokens: 256, cache_write_tokens: 0 } }, toolsetDigest: td });
       }
       if (path === '/v1/run-tokens') {
         const keys = Object.keys(body ?? {});

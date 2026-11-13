@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { BundleCatalog, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
+import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
@@ -377,6 +377,28 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.equal(e.provider.responds.length, 1);
   });
 
+  it('chat_agent(대화 에이전트): 도구 6개 strict, 도구 왕복을 replay로 잇고, toolsetDigest는 로컬 정의와 같다', async () => {
+    const rt = await e.runToken(e.pc, { chatSessionId: 'chat-0004-abcd' });
+    const call = { type: 'function_call', call_id: 'call_1', name: 'sales_summary', arguments: '{"month_offset":-1}' };
+    e.provider.respondOutput = [call];
+    const body = { toolset: 'chat_agent', messages: [{ role: 'user', content: [{ type: 'input_text', text: '[지금]\n화면: 열린 카드 없음\n사용자: 지난달 매출 얼마야' }] }], runToken: rt };
+    const r = await e.call('/v1/respond', body);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.toolsetDigest, toolsetDigest(CHAT_AGENT));
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.max_output_tokens, CHAT_AGENT.maxOutputTokens);
+    const tools = sent.tools as Array<{ name: string; strict: boolean }>;
+    assert.deepEqual(tools.map((t) => t.name), CHAT_AGENT_TOOLS.map((t) => t.name));
+    assert.ok(tools.every((t) => t.strict));
+    assert.match(String(sent.prompt_cache_key), /^acct:[0-9a-f]{32}:t:chat_agent$/);
+    assert.doesNotMatch(JSON.stringify((sent.input as unknown[])[0]), /판정기다/);
+    const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"answer","text":"지난달 합계예요.","show":["r1"],"ask":null}' }] }];
+    const turn = await e.call('/v1/respond', { ...body, replay: [tagged, { type: 'function_call_output', call_id: 'call_1', output: '{"ref":"r1","status":"ok","fields":["date","supply","total","counterparty"],"needs":null}' }] });
+    assert.equal(turn.status, 200, turn.text);
+    assert.equal(turn.json.toolsetDigest, toolsetDigest(CHAT_AGENT));
+  });
+
   it('query_parse 턴 상한 1: 이전 출력을 재생하면 예산 초과', async () => {
     const rt = await e.runToken(e.pc, { chatSessionId: 'chat-0002-abcd' });
     const r = await e.call('/v1/respond', respondBody(rt));
@@ -541,6 +563,22 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: null }), /config_OPENROUTER_ROUTING/);
     assert.throws(() => new OpenRouterProvider({ apiKey: 'k', routing: { zdr: true, dataCollection: 'deny', only: [] } }), /config_OPENROUTER_ROUTING/);
     assert.equal(providerFromEnv({ GW_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'k', ...ROUTING_ENV }).name, 'openrouter');
+  });
+
+  it('OpenRouter 응답 본문: 도구가 있으면 parallel_tool_calls를 싣지 않고, 도구가 없으면 false 그대로(운영 조합 404 탐침 2026-11-12)', async () => {
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchFn = (async (_u: string, init: { body: string }) => {
+      sent.push(JSON.parse(init.body) as Record<string, unknown>);
+      return new Response(JSON.stringify({ model: 'm', status: 'completed', output: [], usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const p = new OpenRouterProvider({ apiKey: 'k', routing: { zdr: true, dataCollection: 'deny', only: ['azure'] }, fetchFn });
+    const spec = (t: typeof CHAT_AGENT | typeof CHAT_REPLY): RespondSpec => ({ model: 'm', prefix: 'p', effort: t.effort, maxOutputTokens: t.maxOutputTokens, tools: t.tools, output: t.output, input: [], cacheKey: 'c', safetyId: 's' });
+    await p.respond(spec(CHAT_AGENT));
+    await p.respond(spec(CHAT_REPLY));
+    assert.ok(Array.isArray(sent[0]!.tools) && (sent[0]!.tools as unknown[]).length === CHAT_AGENT_TOOLS.length);
+    assert.equal('parallel_tool_calls' in sent[0]!, false, '도구가 있으면 parallel_tool_calls 없음');
+    assert.equal((sent[0]!.provider as { require_parameters: boolean }).require_parameters, true, 'require_parameters는 그대로');
+    assert.equal(sent[1]!.parallel_tool_calls, false, '도구가 없으면 지금처럼 false');
   });
 
   it('L1 판정은 OpenAI 직결, 응답은 OpenRouter(openai+openrouter): 키·라우팅 중 하나라도 없으면 기동 거부', async () => {
