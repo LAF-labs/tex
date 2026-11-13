@@ -58,7 +58,7 @@ export interface Board {
 export interface BoardSetup {
   id: string;
   label: string;
-  view: 'biz' | 'cps' | 'chrome';
+  view: 'biz' | 'cps' | 'chrome' | 'security';
 }
 
 /** 지난 발급 한 건(원장·발급 이력·문서함 세금계산서에서). */

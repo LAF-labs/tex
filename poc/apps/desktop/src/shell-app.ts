@@ -18,6 +18,8 @@ import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
+import { openExternalKey } from './external-links.ts';
+import { securityBlocks, securityStatus, startSecurityProgram, type SecurityStatus } from './security-programs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
 import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
@@ -159,6 +161,8 @@ export interface ShellOptions {
   preparePerMin?: number;
   /** e2e: Chrome 사전 점검을 바꿔 끼운다. 기본은 금고와 같은 후보 경로(@sax/vault findInstalledChrome)에 Chrome이 있는가. */
   chromeReady?: () => boolean;
+  /** e2e·첫 실행 따라가기: 보안 프로그램 점검·설치 링크 열기·켜기를 바꿔 끼운다. 기본은 이 PC의 MagicLine4NX(security-programs.ts)와 기본 브라우저. */
+  security?: { status(): SecurityStatus; install?(key: string): Promise<void>; start?(): boolean };
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
   demoModel?: DemoModel | null;
   /** 시연 씨앗(견본 거래처·발급 이력·문서함 PDF, demo-seed.ts). fixture 모드만. e2e는 끈다. */
@@ -348,6 +352,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
   // Chrome이 있어야 홈택스 작업을 한다. 판의 할 일·첫 발급 요청(U6)과 [홈택스에서 준비](#288)가 같은 점검을 쓴다.
   const chromeReady = opts.chromeReady ?? (() => findInstalledChrome() !== null);
+  const securityNow = opts.security ? () => opts.security!.status() : () => securityStatus();
+  /** 공동인증서로 발급하는 사업자인데 MagicLine4NX가 없거나 꺼져 있다(홈택스가 설치 안내로 멈출 자리, B4). */
+  const securityMissing = () => profile === 'business' && profiles().business.auth === SIGN_LABEL.cert && securityBlocks(securityNow());
   const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady, log: (n, d) => log.event(n, d) });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
@@ -471,7 +478,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       bundle: sample ? sample.bundle(today) : null,
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
-      setup: [...onboardingTodos(onb?.state ?? null), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : [])],
+      setup: [...onboardingTodos(onb?.state ?? null), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
       // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
       money,
     });
@@ -753,6 +760,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     parse: (text) => host.rpc('bizcert.parse', { text }),
     log: (n, d) => log.event(n, d),
   };
+  /** 인증서 id → CN(main 안에서만, 렌더러·로그로 보내지 않는다). */
+  const certNames = new Map<string, string>();
   const onbExternal: OnboardingExternal = fixture
     ? sample!.onboarding()
     : {
@@ -763,7 +772,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         // 금고 등록 창(T-06)이 main에 아직 없다. 견본 등록 대신 "지금은 등록할 수 없음"으로 끝내 다른 인증으로 바꾸게 한다.
         registerSecrets: async () => ({ ok: false, reason: 'unavailable' }),
         consentConfig: async () => structuredClone(CONSENT_CONFIG),
-        findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
+        findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d), names: certNames }),
+        // 고른 인증서의 CN. 이번 기동에 목록을 본 적이 없으면(이어 하기) 한 번 다시 연다
+        certName: async (id) => {
+          if (!certNames.has(id)) await onbExternal.findCerts();
+          return certNames.get(id) || null;
+        },
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
   // 계좌 자동조회 인증서 목록은 온보딩 O-03과 같은 길(금고 npki.list → 샌드박스 certInfo, 시연은 목업)
@@ -989,7 +1003,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // Chrome이 없으면 세금계산서 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
     // 증명서는 이 빌드가 떼지 못하므로(interpret가 "곧 할 수 있어요") 할 수 없는 일 때문에 설치를 시키지 않는다(#291, 부장 판정 2026-11-12).
     const needsChrome = parsed.intent !== 'cert' && !chromeReady();
-    const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : [])];
+    const needsSecurity = parsed.intent !== 'cert' && securityMissing();
+    const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : []), ...(needsSecurity ? (['security'] as const) : [])];
     if (!missing.length) return null;
     runs.pending.asked = null;
     return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
@@ -1246,7 +1261,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           const run = runs.get(x.runId);
           return run ? [{ type: 'card', run }] : [];
         });
-        const missing: SetupItem[] = r.setup ? [...setupMissing(profiles().business), ...(chromeReady() ? [] : (['chrome'] as const))] : [];
+        const missing: SetupItem[] = r.setup ? [...setupMissing(profiles().business), ...(chromeReady() ? [] : (['chrome'] as const)), ...(securityMissing() ? (['security'] as const) : [])] : [];
         return { kind: 'agent', text: r.text, show, ask: r.ask, filtered: r.filtered, setup: missing.map((id) => ({ id, label: SETUP_LABEL[id] })), unknown: r.unknown ?? null, via: 'model', note: null, sent };
       }
       // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
@@ -1466,6 +1481,29 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       await certMemory.forget('user');
       return { remembered: await certMemory.has() };
+    },
+    // 보안 프로그램(MagicLine4NX) 점검·설치 링크·켜기(B4). 설치는 홈택스 공식 설치 파일을 기본 브라우저로 연다(사람이 설치를 마친다).
+    'security.check': async () => {
+      const st = securityNow();
+      pushBoard();
+      return st;
+    },
+    'security.install': async () => {
+      needGesture(3_000);
+      const st = securityNow();
+      if (!st.installKey) throw new Error('no_installer');
+      await (opts.security?.install ?? openExternalKey)(st.installKey);
+      log.event('main.security_install_open', { platform: process.platform === 'darwin' ? 1 : 0 });
+      return { opened: true };
+    },
+    'security.start': async () => {
+      needGesture(3_000);
+      const ok = opts.security?.start ? opts.security.start() : startSecurityProgram();
+      // 켜는 데 잠시 걸린다
+      for (let i = 0; i < 20 && ok && securityBlocks(securityNow()); i++) await new Promise((r) => setTimeout(r, 250));
+      const st = securityNow();
+      pushBoard();
+      return st;
     },
     'chrome.check': async () => {
       const ready = chromeReady();

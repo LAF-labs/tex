@@ -41,7 +41,7 @@ export const NO_AUTH = '발급 인증 미설정';
 export function setupMissing(b: Profile): Array<'biz' | 'auth'> {
   return [...(!b.bizNo ? (['biz'] as const) : []), ...(!b.auth || b.auth === NO_AUTH ? (['auth'] as const) : [])];
 }
-export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기' } as const;
+export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기', security: '보안 프로그램 설치하기' } as const;
 export type SetupItem = keyof typeof SETUP_LABEL;
 /** 빠진 등록 안내(무엇이 빠졌는지 말한다). Chrome은 등록이 아니라 설치라 따로 한 문장. */
 export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<SetupItem>): string {
@@ -55,8 +55,10 @@ export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<Setup
         : missing.includes('auth')
           ? `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`
           : null;
-  if (!chrome) return head!;
-  return head ? `${head} Chrome도 설치해 주세요.` : `${what} 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.`;
+  // 보안 프로그램(MagicLine4NX)은 홈택스가 설치 안내로 멈추기 전에 앱이 먼저 말한다(B4, security-programs.ts)
+  const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
+  if (!chrome) return head ? `${head}${sec ? ` ${sec}` : ''}` : `${what} 먼저 홈택스 공동인증서 프로그램(MagicLine4NX)을 설치하거나 켜 주세요.`;
+  return head ? `${head} Chrome도 설치해 주세요.${sec ? ` ${sec}` : ''}` : `${what} 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.${sec ? ` ${sec}` : ''}`;
 }
 
 export interface Counterparty {

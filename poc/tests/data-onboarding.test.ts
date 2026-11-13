@@ -11,7 +11,7 @@ import { BizVerifier, DataService } from '@sax/engine';
 import { COMMANDS, MAIN_ONLY } from '@sax/engine/protocol';
 import { Egress } from '@sax/net';
 
-const ONBOARDING_CMDS = ['consent.record', 'consent.latest', 'consent.attach', 'onboarding.load', 'onboarding.save', 'onboarding.clear', 'profile.setPortalLoginId'] as const;
+const ONBOARDING_CMDS = ['consent.record', 'consent.latest', 'consent.attach', 'onboarding.load', 'onboarding.save', 'onboarding.clear', 'profile.setPortalLoginId', 'profile.setCertName'] as const;
 const AT = '2026-11-06T01:00:00.000Z';
 const terms = (o: Record<string, unknown> = {}) => ({ profileId: null, kind: 'terms', noticeVersion: '2026-11', choice: 'agreed', at: AT, via: 'onboarding', ...o });
 
@@ -103,5 +103,10 @@ describe('data-service 온보딩 명령', () => {
     assert.equal(await code('profile.setPortalLoginId', { id: p.id, loginId: 12 }), 'bad_login_id');
     assert.equal(await code('profile.setPortalLoginId', { id: p.id }), 'bad_login_id', '빠진 loginId는 지움이 아니다');
     assert.equal(await code('profile.setPortalLoginId', { id: 'nope', loginId: 'x' }), 'profile_not_found');
+    // [홈택스 인증서]에서 고른 인증서 이름(CN, 공개 정보, B4): 공백 접기, 지우기는 null, 문자열 아닌 값 거부
+    assert.equal((await call<Profile>('profile.setCertName', { id: p.id, name: ' 가나다컴퍼니()0001234567891 ' })).certName, '가나다컴퍼니()0001234567891');
+    assert.equal((await call<Profile>('profile.setCertName', { id: p.id, name: null })).certName, null);
+    assert.equal(await code('profile.setCertName', { id: p.id, name: 3 }), 'bad_cert_name');
+    assert.equal(await code('profile.setCertName', { id: 'nope', name: 'x' }), 'profile_not_found');
   });
 });

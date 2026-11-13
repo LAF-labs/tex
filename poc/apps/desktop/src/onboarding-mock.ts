@@ -50,6 +50,10 @@ export class MockOnboardingPorts implements OnboardingPorts {
       { id: 'npki-2', owner: '김가나', usage: '개인 은행·보험용', expiresOn: dayOffset(12), usable: true },
     ];
   }
+  /** 목업 인증서의 CN(가짜 홈택스 인증서 창의 소유자 칸과 같은 모양, h01-fixture). */
+  async certName(certId: string) {
+    return ({ 'npki-1': '가나다컴퍼니()0001234567891', 'npki-2': '김가나()0009876543210' } as Record<string, string>)[certId] ?? null;
+  }
   async registerSecrets(binds: StoreBindRequest[]) {
     this.binds.push(binds);
     if (this.o.register === 'cancelled') return { ok: false as const, reason: 'cancelled' };

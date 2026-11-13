@@ -369,3 +369,4 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .run-screen .sx-meta { margin: 10px 12px; text-align: center; }
 .run-screen .run-screen-note { margin: 6px 12px 8px; font-size: 12px; }
 .run-screen[data-state='paused'] { background: var(--surface-2, rgba(127,127,127,.08)); }
+.onb-card [data-onb-security]:empty { display: none; }

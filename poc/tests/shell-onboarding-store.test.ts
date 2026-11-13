@@ -20,14 +20,9 @@ const UPTO_AUTH: OnbAnswer[] = [
   { step: 'terms', choice: 'agree' },
   { step: 'welcome', choice: 'upload' },
   { step: 'biz-confirm', choice: 'confirm' },
-  { step: 'auth', choice: 'card' },
 ];
-const TO_SUMMARY: OnbAnswer[] = [
-  { step: 'model', choice: 'agree' },
-  { step: 'telemetry', choice: 'off' },
-  { step: 'tasks', choice: 'later' },
-  { step: 'summary', choice: 'ok' },
-];
+// [홈택스 인증서]에서 이 PC 인증서를 고르면 바로 마친다(B4: 모델 고지는 약관 화면, 텔레메트리·업무·요약 화면 없음)
+const TO_SUMMARY: OnbAnswer[] = [{ step: 'auth', choice: 'cert', certId: 'npki-1' }];
 
 describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
   let root: string;
@@ -60,19 +55,22 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     for (const m of ONB_STORE_METHODS) assert.ok(m === 'profile.upsert' || (MAIN_ONLY as readonly string[]).includes(m), m);
   });
 
-  it('끝까지: 동의 3행(약관·모델·텔레메트리)이 프로필에 이어지고(보안카드도 위임 없음), 이어 하기는 한 행', async () => {
+  it('끝까지: 동의 2행(약관·모델, 한 화면)이 프로필에 이어지고, 고른 인증서 이름(CN)이 profiles.cert_name에, 이어 하기는 한 행', async () => {
     const flow = flowOn(new EngineOnboardingStore(rpc));
     await walk(flow, UPTO_AUTH);
     const consents = new ConsentRepo(db);
-    // 프로필 전: 약관은 profile_id NULL로 쌓인다.
-    assert.deepEqual(consents.history(null).map((c) => [c.kind, c.via]), [['terms', 'onboarding']]);
+    // 프로필 전: 약관·모델은 profile_id NULL로 쌓인다.
+    assert.deepEqual(consents.history(null).map((c) => [c.kind, c.via]), [['terms', 'onboarding'], ['model', 'onboarding']]);
     await walk(flow, TO_SUMMARY);
     assert.equal(flow.state.step, 'first');
-    const p = ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
-    assert.equal(p.signMethod, 'security_card');
+    const list = async () => ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
+    const p = await list();
+    assert.equal(p.signMethod, 'cert');
+    assert.equal(p.certName, '가나다컴퍼니()0001234567891', 'H-01 2.3.0이 인증서 창 행을 이 이름으로 고른다');
+    assert.ok(calls.includes('profile.setCertName') && (MAIN_ONLY as readonly string[]).includes('profile.setCertName'));
     assert.equal(consents.history(null).length, 0, '프로필을 저장하면 앞의 동의가 그 프로필로 이어진다');
     const rows = consents.history(p.id);
-    assert.deepEqual(rows.map((c) => [c.kind, c.choice]), [['terms', 'agreed'], ['model', 'agreed'], ['telemetry', 'declined']]);
+    assert.deepEqual(rows.map((c) => [c.kind, c.choice]), [['terms', 'agreed'], ['model', 'agreed']]);
     const model = rows.find((c) => c.kind === 'model')!;
     assert.equal(model.processorsVersion, MOCK_CONSENT_CONFIG.processorsVersion);
     assert.equal(model.noticeVersion, CONSENT_NOTICES.model.version);
@@ -83,20 +81,25 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     assert.equal(st.profileId, p.id);
     // 값 없음: 동의 행·이어 하기 행 어디에도 비밀이 없다(목업 금고는 값을 돌려주지 않는다).
     assert.ok(!calls.includes('consent.latest') && !calls.some((m) => m.startsWith('secret')));
+    // 다른 인증으로 바꾸면 인증서 이름을 지운다(옛 이름으로 고르지 않게)
+    await flow.answer({ step: 'first', choice: 'later' });
+    await flow.reopen('auth');
+    await flow.answer({ step: 'auth', choice: 'card' });
+    assert.deepEqual([(await list()).signMethod, (await list()).certName], ['security_card', null]);
   });
 
   it('이어 하기: 껐다 켜면(새 저장소) 멈춘 질문부터, 앞의 동의는 다시 묻지 않는다', async () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
     await walk(a, UPTO_AUTH);
-    assert.equal(a.state.step, 'model');
+    assert.equal(a.state.step, 'auth');
     const store = new EngineOnboardingStore(rpc);
     const saved = await store.load();
-    assert.equal(saved?.step, 'model');
-    assert.equal(saved?.consents.terms?.choice, 'agreed');
+    assert.equal(saved?.step, 'auth');
+    assert.deepEqual([saved?.consents.terms?.choice, saved?.consents.model?.choice], ['agreed', 'agreed']);
     const b = new OnboardingFlow(onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), store), saved, NOW);
     await walk(b, TO_SUMMARY);
     const p = ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
-    assert.equal(p.signMethod, 'security_card');
+    assert.deepEqual([p.signMethod, p.certName], ['cert', '가나다컴퍼니()0001234567891'], '이어 하기 뒤에도 CN을 찾는다');
     assert.equal(new ConsentRepo(db).history(p.id).filter((c) => c.kind === 'terms').length, 1, '약관은 한 번만');
   });
 

@@ -21,10 +21,6 @@ async function skippedBoth() {
     { step: 'terms', choice: 'agree' },
     { step: 'welcome', choice: 'later' },
     { step: 'auth', choice: 'later' },
-    { step: 'model', choice: 'agree' },
-    { step: 'telemetry', choice: 'off' },
-    { step: 'tasks', choice: 'later' },
-    { step: 'summary', choice: 'ok' },
     { step: 'first', choice: 'later' },
   ]);
   return { ports, flow };
@@ -41,7 +37,10 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(setupText('invoice', ['biz']), /^세금계산서를 발급하려면 먼저 사업자 정보\(사업자번호\)를 등록해 주세요/);
     assert.match(setupText('invoice', ['biz', 'auth']), /사업자 정보와 발급 인증/);
     assert.match(setupText('cert', ['auth']), /^증명서를 떼려면 .*인증/);
-    assert.deepEqual(SETUP_LABEL, { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기' });
+    assert.deepEqual(SETUP_LABEL, { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기', security: '보안 프로그램 설치하기' });
+    // 보안 프로그램(B4): 홈택스가 설치 안내로 멈추기 전에 앱이 말한다
+    assert.equal(setupText('invoice', ['security']), '세금계산서를 발급하려면 먼저 홈택스 공동인증서 프로그램(MagicLine4NX)을 설치하거나 켜 주세요.');
+    assert.match(setupText('invoice', ['chrome', 'security']), /Chrome을 설치해 주세요\..*MagicLine4NX\)도 켜 주세요\.$/);
   });
   it('Chrome(U6): 빠지면 그것만 말하거나 뒤에 한 문장을 붙인다', () => {
     assert.equal(setupText('invoice', ['chrome']), '세금계산서를 발급하려면 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.');
@@ -55,7 +54,10 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     assert.match(src, /profile === 'business' && !chromeReady\(\) \? \[\{ id: 'chrome', label: SETUP_LABEL\.chrome, view: 'chrome' as const \}\]/);
     // 증명서 요청에는 Chrome을 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291). 세금계산서·되묻기 답만.
     assert.match(src, /const needsChrome = parsed\.intent !== 'cert' && !chromeReady\(\);/);
-    assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\)\];/);
+    assert.match(src, /const missing: SetupItem\[\] = \[\.\.\.setupMissing\(profiles\(\)\.business\), \.\.\.\(needsChrome \? \(\['chrome'\] as const\) : \[\]\), \.\.\.\(needsSecurity \? \(\['security'\] as const\) : \[\]\)\];/);
+    // 보안 프로그램(B4): 공동인증서 사업자만, 판의 할 일·첫 발급 요청이 같은 점검
+    assert.match(src, /const securityMissing = \(\) => profile === 'business' && profiles\(\)\.business\.auth === SIGN_LABEL\.cert && securityBlocks\(securityNow\(\)\);/);
+    assert.match(src, /const needsSecurity = parsed\.intent !== 'cert' && securityMissing\(\);/);
     const check = src.slice(src.indexOf("'chrome.check': async"), src.indexOf("'onboarding.reopen': async"));
     assert.ok(check.includes('const ready = chromeReady();') && check.includes('pushBoard();') && !/host\.|needGesture|openExternal/.test(check), check);
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
@@ -72,7 +74,8 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
     assert.match(shell, /if \(r\.kind === 'setup'\) \{/);
     assert.match(shell, /const r = await call\('onboarding\.reopen', \{ item \}\);/);
-    assert.match(shell, /x\.id === 'biz' \|\| x\.id === 'auth' \|\| x\.id === 'chrome' \? reopenSetup\(x\.id\) : go\(x\.view\)/);
+    assert.match(shell, /x\.id === 'biz' \|\| x\.id === 'auth' \|\| x\.id === 'chrome' \|\| x\.id === 'security' \? reopenSetup\(x\.id\) : go\(x\.view\)/);
+    assert.match(shell, /if \(item === 'security'\) return securityGuide\(\);/);
   });
   it('[홈택스에서 준비]만 실행을 시작한다(카드를 만들 때 run.prepare를 부르지 않는다, 실제 입력 2초)', () => {
     const shell = fs.readFileSync(new URL('../apps/desktop/static/shell/shell.js', import.meta.url), 'utf8');
@@ -86,10 +89,10 @@ describe('카드 전 검사: 무엇이 빠졌는지', () => {
 });
 
 describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
-  it('사업자: O-01부터 묻고, 인증도 빠졌으면 인증, 동의는 다시 묻지 않고, 요약(프로필 저장) 뒤 첫 작업 제안 없이 끝', async () => {
+  it('사업자: O-01부터 묻고, 인증도 빠졌으면 인증, 동의는 다시 묻지 않고, 프로필을 저장하고 첫 작업 제안 없이 끝', async () => {
     const { ports, flow } = await skippedBoth();
     assert.deepEqual(flow.missing(), ['biz', 'auth']);
-    assert.deepEqual(onboardingTodos(flow.state).map((t) => t.id), ['biz', 'auth', 'tasks']);
+    assert.deepEqual(onboardingTodos(flow.state).map((t) => t.id), ['biz', 'auth']);
     const consents = ports.consents.length;
     const logLen = flow.state.log.length;
     await flow.reopen('biz');
@@ -102,24 +105,22 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     ]);
     assert.equal(flow.state.step, 'auth', '인증도 빠졌으면 인증');
     await flow.answer({ step: 'auth', choice: 'simple' });
-    assert.equal(flow.state.step, 'summary', '②③은 다시 묻지 않는다');
-    await flow.answer({ step: 'summary', choice: 'ok' });
-    assert.equal(flow.state.step, 'done');
+    assert.equal(flow.state.step, 'done', '동의·요약을 다시 묻지 않는다');
     assert.equal(flow.state.redo, null);
     assert.deepEqual(flow.missing(), []);
     assert.equal(ports.consents.length, consents, '동의 기록이 늘지 않는다');
     assert.equal(ports.profiles.at(-1)?.signMethod, 'simple_auth');
     assert.ok(ports.profiles.at(-1)?.bizNo);
-    assert.deepEqual(onboardingTodos(flow.state).map((t) => t.id), ['tasks']);
+    assert.deepEqual(onboardingTodos(flow.state).map((t) => t.id), []);
     // 저장된 상태도 다시 읽힌다
     assert.ok(parseOnbState(JSON.parse(JSON.stringify(flow.state))));
   });
-  it('인증만: O-03 → 보안카드도 바로 요약으로(① 위임 없음)', async () => {
+  it('인증만: O-03 → 보안카드도 바로 끝(① 위임 없음)', async () => {
     const { flow } = await skippedBoth();
     await flow.reopen('auth');
     assert.equal(flow.state.step, 'auth');
     await flow.answer({ step: 'auth', choice: 'card' });
-    assert.equal(flow.state.step, 'summary');
+    assert.equal(flow.state.step, 'done');
   });
   it('다시 연 단계에서 또 [나중에]면 끝으로 돌아간다(할 일은 남는다)', async () => {
     const { flow } = await skippedBoth();
@@ -138,8 +139,8 @@ describe('건너뛴 사업자·인증 다시 열기(reopen)', () => {
     const { flow: f2 } = await skippedBoth();
     await f2.reopen('auth');
     await f2.answer({ step: 'auth', choice: 'simple' });
-    // biz는 아직 건너뜀 → summary(프로필 저장 없음) → done
-    await f2.answer({ step: 'summary', choice: 'ok' });
+    // biz는 아직 건너뜀 → 프로필 저장 없이 done
+    assert.equal(f2.state.step, 'done');
     // 이미 고른 인증은 바꾸려고 다시 열 수 있다(내 사업장 [바꾸기], tests/shell-profile-edit.test.ts). 사업자는 빠졌을 때만.
     assert.deepEqual((await f2.reopen('auth')).state.redoPrev, { auth: 'simple', certId: null });
     assert.equal(parseOnbState({ ...f2.state, redo: 'x' }), null);

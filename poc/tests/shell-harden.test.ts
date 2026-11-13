@@ -282,11 +282,13 @@ describe('D11 §4 IPC: 수신부 검사, 최상위 프레임, 사용자 동작 �
 });
 
 describe('D11 §4 shell.openExternal: main만, URL이 아니라 키만', () => {
-  it('데스크톱 제품 소스·렌더러에 openExternal이 없다(외부 URL을 여는 길이 아직 없다)', () => {
-    for (const f of productFiles) assert.ok(!read(`${SRC}/${f}`).includes('openExternal'), f);
+  it('openExternal은 external-links.ts 한 곳만 부른다(렌더러는 키만, B4 보안 프로그램 설치 파일)', () => {
+    for (const f of productFiles) if (f !== 'external-links.ts') assert.ok(!read(`${SRC}/${f}`).includes('openExternal('), f);
     for (const f of staticJs) assert.ok(!read(`apps/desktop/static/${f}`).includes('openExternal'), f);
+    const src = read(`${SRC}/external-links.ts`);
+    assert.match(src, /u\.protocol !== 'https:' \|\| u\.username \|\| u\.password \|\| u\.port \|\| !ALLOWED_SITES\.includes\(host\)/);
+    assert.match(src, /shell\.openExternal\(externalUrl\(key\)\)/);
   });
-  it.todo('외부 URL 열기(정부24 후처리 안내 등)가 생기면 portalId 키 → https·userinfo 없음·포트 없음·내장 eTLD+1 허용 목록 검사 함수로 — 그 화면(D17 후처리)과 함께');
 });
 
 describe('D11 §4 경로: 앱 준비 전 setPath, 사용자 전용 루트', () => {
