@@ -166,7 +166,7 @@ export class SecretOps {
   }
 
   private async resolve(t: TargetState, frame: string, selector: string): Promise<{ objectId: string; backendNodeId: number; frameId: string; frameUrl: string } | null> {
-    const frameId = frame === 'main' ? t.mainFrameId : frame;
+    const frameId = frame === 'main' ? t.mainFrameId : /^[0-9A-F]{16,64}$/i.test(frame) ? frame : await this.childFrame(t, frame);
     if (!frameId) return null;
     const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: '__sax_vault' }, t.vaultSession);
     const ev = await this.relay.send<{ result: Json }>('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(selector)})`, contextId: executionContextId }, t.vaultSession);
@@ -175,6 +175,20 @@ export class SecretOps {
     const { node } = await this.relay.send<{ node: Json }>('DOM.describeNode', { objectId }, t.vaultSession);
     const { frameTree } = await this.relay.send<{ frameTree: Json }>('Page.getFrameTree', {}, t.vaultSession);
     return { objectId, backendNodeId: Number(node.backendNodeId), frameId, frameUrl: findFrameUrl(frameTree, frameId) ?? '' };
+  }
+
+  /**
+   * 사전의 frame이 iframe 선택자일 때(홈택스 인증서 창 iframe#dscert, 같은 출처 MagicLine4Web): 본 프레임에서 그 iframe을 찾아 하위 프레임 id를 얻는다.
+   * 같은 프로세스 iframe만 이 세션에서 닿는다. 못 찾으면 null(엔진은 사람 직접 입력으로 간다).
+   */
+  private async childFrame(t: TargetState, frameSelector: string): Promise<string | null> {
+    if (!t.mainFrameId) return null;
+    const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId: t.mainFrameId, worldName: '__sax_vault' }, t.vaultSession);
+    const ev = await this.relay.send<{ result: Json }>('Runtime.evaluate', { expression: `document.querySelector(${JSON.stringify(frameSelector)})`, contextId: executionContextId }, t.vaultSession);
+    const objectId = ev.result.objectId as string | undefined;
+    if (!objectId) return null;
+    const { node } = await this.relay.send<{ node: Json }>('DOM.describeNode', { objectId }, t.vaultSession);
+    return typeof node.frameId === 'string' ? node.frameId : null;
   }
 
   /**

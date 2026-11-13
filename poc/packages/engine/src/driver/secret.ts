@@ -57,7 +57,8 @@ export class VaultSecretPort implements Pick<HumanPort, 'secret'> {
     };
     const e = r.target ? this.i.dict.entries[r.target] : undefined;
     if (!e) return refuse('no_target');
-    if (e.frame !== 'main') return refuse('frame_unsupported');
+    // frame: 'main' 또는 iframe 선택자(홈택스 인증서 창 iframe#dscert). 금고가 그 iframe의 하위 프레임에서 칸을 찾는다(같은 출처일 때만).
+    if (!e.frame) return refuse('frame_unsupported');
     const css = e.candidates.find((c) => c.kind === 'css');
     if (!css || css.kind !== 'css') return refuse('no_css_candidate');
     const targetId = this.i.targetId();
@@ -68,7 +69,7 @@ export class VaultSecretPort implements Pick<HumanPort, 'secret'> {
       if (d.targetId === targetId) resolveClosed();
     });
     try {
-      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: 'main', element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
+      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: e.frame, element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
       if (open?.ok !== true) return refuse(typeof open?.reason === 'string' ? open.reason : 'other');
       this.i.journal('human.secret_opened', { stepId: r.stepId });
       this.i.announce?.({ runId: r.runId, stepId: r.stepId, ...(r.prompt !== undefined ? { prompt: r.prompt } : {}), ttlMs: r.ttlMs });
