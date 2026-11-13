@@ -91,7 +91,7 @@ export interface VaultOptions {
   testChromeArgs?: string[];
   /**
    * 창 없는 Chrome으로 띄운다(기본 true, 대표 요청 2026-11-13). 진행은 앱 패널 중계(screen.start)로 보고,
-   * 사람이 페이지를 만져야 할 때만 browser.reveal로 창 있는 Chrome으로 다시 띄운다. 창을 보며 하는 시험만 false.
+   * 사람이 페이지를 만져야 할 때만 browser.show로 창 있는 Chrome으로 다시 띄운다. 창을 보며 하는 시험만 false.
    */
   headless?: boolean;
   /** 테스트에서 비공개 루트 확인을 건너뛰지 않도록 기본은 OS 구현. */
@@ -128,10 +128,10 @@ export class Vault {
   private readonly policy: RelayPolicy;
   private chrome: LaunchedChrome | null = null;
   private launching = false;
-  /** 지금 Chrome이 창 없이 떴나. browser.reveal 뒤에는 이 기동 동안 창 있는 Chrome이다. */
+  /** 지금 Chrome이 창 없이 떴나. browser.show 뒤에는 이 기동 동안 창 있는 Chrome이다. */
   private headlessNow = false;
-  /** 다음 기동만 창 있는 Chrome으로(browser.reveal). 기동하면 지운다. */
-  private revealNext = false;
+  /** 다음 기동만 창 있는 Chrome으로(browser.show). 기동하면 지운다. */
+  private windowedNext = false;
   /** shutdown마다 늘린다. 기동 중에 내리기가 오면 기동이 자기 세대가 지난 것을 보고 그만둔다. */
   private generation = 0;
   relay: Relay | null = null;
@@ -470,11 +470,11 @@ export class Vault {
       case 'status':
         return { launched: !!this.chrome, headless: !!this.chrome && this.headlessNow, profileProblems: this.profileProblems };
       case 'browser.focus':
-        // 창 없는 Chrome은 앞으로 올릴 창이 없다(main은 browser.reveal로 창 있는 Chrome을 띄운다).
+        // 창 없는 Chrome은 앞으로 올릴 창이 없다(main은 browser.show로 창 있는 Chrome을 띄운다).
         if (this.headlessNow) return { focused: false, headless: true };
         return { focused: this.relay ? await this.relay.bringToFront() : false };
-      case 'browser.reveal':
-        return this.reveal();
+      case 'browser.show':
+        return this.showWindowed();
       case 'browser.current': {
         const t = this.relay?.runWindowTarget();
         if (!this.chrome || !t) throw new Error('not_launched');
@@ -506,32 +506,32 @@ export class Vault {
    * 실행 탭 주소와 쿠키(로그인 세션 포함)를 금고 안에서만 옮기고, 같은 전용 프로필로 다시 띄워 그 주소를 연다. 쿠키 값은 로그에 남기지 않는다.
    * 비밀 창이 열린 동안·기동 중·이미 창이 있으면 하지 않는다. 엔진에는 앞 Chrome이 cdp_closed로, 새 탭이 browser.relaunched로 간다.
    */
-  private async reveal(): Promise<{ revealed: boolean; targetId?: string; reason?: string }> {
+  private async showWindowed(): Promise<{ windowed: boolean; targetId?: string; reason?: string }> {
     const chrome = this.chrome;
     const relay = this.relay;
-    if (!chrome || !relay || this.launching) return { revealed: false, reason: 'not_launched' };
-    if (!this.headlessNow) return { revealed: false, reason: 'has_window' };
-    if ([...relay.targets.values()].some((x) => x.win?.phase === 'active')) return { revealed: false, reason: 'secret_window' };
+    if (!chrome || !relay || this.launching) return { windowed: false, reason: 'not_launched' };
+    if (!this.headlessNow) return { windowed: false, reason: 'has_window' };
+    if ([...relay.targets.values()].some((x) => x.win?.phase === 'active')) return { windowed: false, reason: 'secret_window' };
     const t = relay.runWindowTarget();
-    if (!t) return { revealed: false, reason: 'no_run_page' };
+    if (!t) return { windowed: false, reason: 'no_run_page' };
     const href = await relay
       .send<{ result: { value?: unknown } }>('Runtime.evaluate', { expression: 'location.href', returnByValue: true }, t.vaultSession)
       .then((r) => (typeof r.result.value === 'string' && /^https?:/.test(r.result.value) ? r.result.value : null), () => null);
     const { cookies } = await chrome.conn.send<{ cookies: Array<Record<string, unknown>> }>('Storage.getCookies', {}).catch(() => ({ cookies: [] }));
-    this.revealNext = true;
+    this.windowedNext = true;
     await this.shutdown();
     const r = await this.launch();
     const next = this.chrome as LaunchedChrome | null;
     if (next && cookies.length) {
       const keep = ['name', 'value', 'domain', 'path', 'secure', 'httpOnly', 'sameSite', 'priority', 'sourceScheme', 'sourcePort', 'partitionKey'];
       const params = cookies.map((c) => ({ ...Object.fromEntries(keep.filter((k) => c[k] !== undefined).map((k) => [k, c[k]])), ...(c.session === true || typeof c.expires !== 'number' || c.expires < 0 ? {} : { expires: c.expires }) }));
-      await next.conn.send('Storage.setCookies', { cookies: params }).catch(() => this.opts.log.event('vault.reveal_cookies_failed', { count: params.length }));
+      await next.conn.send('Storage.setCookies', { cookies: params }).catch(() => this.opts.log.event('vault.windowed_cookies_failed', { count: params.length }));
     }
     const nt = this.relay?.targets.get(r.targetId);
     if (href && nt) await this.relay!.send('Page.navigate', { url: href }, nt.vaultSession).catch(() => {});
-    this.opts.log.event('vault.revealed', { cookies: cookies.length, url: !!href });
+    this.opts.log.event('vault.windowed', { cookies: cookies.length, url: !!href });
     this.emit(['engine'], 'browser.relaunched', { targetId: r.targetId });
-    return { revealed: true, targetId: r.targetId };
+    return { windowed: true, targetId: r.targetId };
   }
 
   /** 진행 화면 중계 상태(B3). 실행 탭 하나만, 보기 전용. */
@@ -640,8 +640,8 @@ export class Vault {
     await this.sweepStaging('launch');
     await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
-    const headless = (this.opts.headless ?? true) && !this.revealNext;
-    this.revealNext = false;
+    const headless = (this.opts.headless ?? true) && !this.windowedNext;
+    this.windowedNext = false;
     const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
     this.chrome = chrome;
     this.headlessNow = headless;
