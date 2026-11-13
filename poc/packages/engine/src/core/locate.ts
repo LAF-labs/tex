@@ -181,7 +181,8 @@ export async function locateTarget(
     // sameName: 목록에서 사전 요소와 같은 이름 수(1이어야 모델에게 그 번호를 알려 확인시킨다)
     o.loc.journal('locate.asked', { stepId: o.stepId, key: o.key, call: calls.n, listed: listed.length, proposed: cands?.length ?? 0, mismatch: mism !== null, sameName: same.length, foundN: found?.n ?? 0 });
     if (!cands) {
-      result('model_unavailable');
+      // not_found·응답 없음·가림 실패 모두(어느 쪽인지는 locate.answer·locate.unavailable 줄)
+      result('model_gave_none');
       return null;
     }
     for (const c of cands) {
