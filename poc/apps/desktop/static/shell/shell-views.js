@@ -404,7 +404,14 @@ export function taskCard(run, act) {
     card.append(
       note(run.stoppedNote || '확인이 필요해요.', true),
       // 승인 전 핸드오프 끝: [다시 준비]·[홈택스에서 직접 발급]. 그 밖에 발급 전에 멈췄으면 [다시 준비](새 초안). Chrome 확장 멈춤은 아래 [다시 시도]가 맡는다.
-      run.handoffEnd
+      // 홈택스 점검(portal.maintenance): 끝 시각을 알면 main이 자동으로 다시 시작한다(버튼 없음). 모르면 [다시 시작]. 다시 시작했으면 버튼 없음.
+      run.maintenance
+        ? run.maintenance.restartedAs
+          ? line('같은 내용으로 다시 시작했어요. 아래 새 카드에서 이어져요.', true)
+          : run.maintenance.until
+            ? h('div', { class: 'sx-meta', 'data-maintenance': 'auto' }, `${run.maintenance.until} 지나면 자동으로 다시 시작해요`)
+            : h('div', { class: 'sx-actions', 'data-maintenance': 'manual' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'maintenance-restart' }))
+        : run.handoffEnd
         ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'handoff-again' }), btn('홈택스에서 직접 발급', () => act.open(run.id), '', { 'data-act': 'handoff-manual' }))
         : run.redo && !run.retry
           ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'redo' }))
