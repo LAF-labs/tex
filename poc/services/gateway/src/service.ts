@@ -51,8 +51,8 @@ export function loadRequestValidators(): { decide: ValidateFunction; respond: Va
  * page_judge·browser_agent(예상 밖 화면 판정·브라우저 에이전트, 2026-11-13)는 도구 없이 1턴이고 실행 범위의 따로 된 예산(agentPerRun)과
  * 따로 된 모델(models.agent)을 쓴다. 엔진은 첫 게이트 앞에서만 부른다.
  */
-/** 판정·에이전트 기본 모델: OpenRouter에서 도구 호출·구조화 출력을 받는 가장 강한 모델(2026-11-13 목록). OPENROUTER_PROVIDERS에 anthropic이 있어야 한다. */
-export const DEFAULT_AGENT_MODEL = 'anthropic/claude-fable-5.2';
+/** 판정·에이전트 기본 모델: OpenRouter 라우터 typesafe/jev-router(요청마다 모델·추론 강도를 고른다, tools·structured_outputs, 2026-11-13 목록). 공급자 고정 없이 부른다(RespondSpec.unpinned). */
+export const DEFAULT_AGENT_MODEL = 'typesafe/jev-router';
 
 export function gatewayToolsets(): Map<string, ToolsetDef> {
   const sr = selectorRepair(['x']);
@@ -394,6 +394,7 @@ export class GatewayService {
           input,
           cacheKey: this.cacheKey(who.acc, 't', t!.id),
           safetyId: this.safetyId(who.acc),
+          ...(agent ? { unpinned: true as const } : {}),
         }),
       );
     } catch (e) {
