@@ -25,6 +25,8 @@ interface CdpFrame {
 /** 이보다 오래 답이 없는 보기 명령은 진단으로 남긴다(엔진 동작 제한 10초보다 짧게). */
 const SLOW_CMD_MS = 3000;
 const WATCHED_CMD = /^(Input|DOM)\./;
+/** 앱 안 탭의 JS 대화상자를 CDP(엔진 정책)가 닫지 않으면 이 뒤에 앱이 닫는다(엔진 confirm 판정 대기 25초보다 길게). */
+const DIALOG_FALLBACK_MS = 60_000;
 
 interface Tab {
   view: WebContentsView;
@@ -118,6 +120,8 @@ export class EmbeddedBrowser {
         this.o.log.event('main.embedded_download_refused');
       }
     });
+    // 패널에 없는 보기는 창 오른쪽 아래 구석에 걸쳐 둔다(park). 창 크기가 바뀌면 다시 건다.
+    o.win.on('resize', () => this.place());
   }
 
   private allowed(permission: string, url: string): boolean {
@@ -168,7 +172,7 @@ export class EmbeddedBrowser {
     const timer = setTimeout(() => {
       slow = true;
       const w = this.o.win;
-      this.o.log.event('main.embedded_cmd_slow', { method, top: this.top() === t, view: t.view.getVisible(), win: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized() });
+      this.o.log.event('main.embedded_cmd_slow', { method, top: this.top() === t, shown: this.shown(t), win: w.isVisible(), focused: w.isFocused(), minimized: w.isMinimized() });
     }, SLOW_CMD_MS);
     const end = () => {
       clearTimeout(timer);
@@ -272,6 +276,7 @@ export class EmbeddedBrowser {
       throw e;
     }
     this.policy(wc);
+    this.quietDialogs(wc);
     // 패널이 접히거나 다른 창에 가려져도 자동화 타이머·그리기가 늦춰지지 않게(옛 Chrome의 --disable-renderer-backgrounding과 같은 뜻)
     wc.setBackgroundThrottling(false);
     wc.debugger.attach('1.3');
@@ -385,6 +390,35 @@ export class EmbeddedBrowser {
   }
 
   /** 보기 이동·새 창·권한 규칙. 셸 하드닝(harden.ts)은 이 파티션의 이동만 막지 않는다(NAV_EXEMPT_SESSIONS). */
+  /**
+   * 앱 안 탭의 JS 대화상자(alert·confirm·prompt)를 앱 창에 네이티브 상자로 띄우지 않는다.
+   * Electron 45 기본 처리기(내부 '-run-dialog')는 owner 창에 showMessageBox를 띄운다. 그런데 금고·엔진의 CDP가
+   * Page.handleJavaScriptDialog로 먼저 닫아도 Electron은 그 상자를 닫지 않아 앱 창에 남는다(예행 run-7ed40be5 "정상적인 사업자번호입니다. [OK]",
+   * 측정: alert 뒤 260×96 창이 남음). Chromium은 DevTools와 대화상자 관리자에 따로 닫기 콜백을 주므로, 여기서는 아무것도 띄우지 않고
+   * CDP(엔진 정책: alert 수락, confirm 판정)가 닫게 둔다. DIALOG_FALLBACK_MS 안에 닫히지 않으면(엔진이 안 붙음) alert는 확인, 나머지는 취소로 닫는다.
+   * 이미 CDP가 닫은 대화상자에 늦게 부른 콜백은 Chromium이 버린다.
+   */
+  private quietDialogs(wc: WebContents): void {
+    const ev = wc as unknown as NodeJS.EventEmitter;
+    ev.removeAllListeners('-run-dialog');
+    const timers = new Set<ReturnType<typeof setTimeout>>();
+    ev.on('-run-dialog', (info: { dialogType?: unknown } | null, callback: (ok: boolean, input: string) => void) => {
+      const type = String(info?.dialogType ?? '');
+      this.o.log.event('main.embedded_dialog', { type });
+      const timer = setTimeout(() => {
+        timers.delete(timer);
+        callback(type === 'alert', '');
+      }, DIALOG_FALLBACK_MS);
+      timers.add(timer);
+    });
+    const clear = () => {
+      for (const x of timers) clearTimeout(x);
+      timers.clear();
+    };
+    ev.on('-cancel-dialogs', clear);
+    wc.once('destroyed', clear);
+  }
+
   private policy(wc: WebContents): void {
     const guard = (e: { url: string; preventDefault(): void }) => {
       if (BLOCKED_SCHEMES.test(e.url)) {
@@ -470,7 +504,7 @@ export class EmbeddedBrowser {
 
   // ───────────────────────── 패널 자리 ─────────────────────────
 
-  /** 패널의 화면 자리(창 콘텐츠 기준 DIP). null이면 보기를 숨긴다(자동화는 계속 돈다). */
+  /** 패널의 화면 자리(창 콘텐츠 기준 DIP). null이면 보기를 패널에서 빼 구석에 걸쳐 둔다(자동화는 계속 돈다, place 참고). */
   setSlot(r: Rectangle | null): void {
     this.slot = r;
     this.layout();
@@ -482,16 +516,34 @@ export class EmbeddedBrowser {
   }
 
   private layout(): void {
+    this.place();
     const top = this.top();
+    if (top) this.o.onPage?.({ url: top.wc.getURL(), title: top.wc.getTitle() });
+  }
+
+  /** 패널에 보이는 보기인가(맨 위 탭이고 패널 자리가 있다). */
+  private shown(t: Tab): boolean {
+    return t === this.top() && this.slot !== null;
+  }
+
+  /**
+   * 보기 자리. 패널에 보이는 탭은 패널 자리에 둔다. 나머지는 숨기지 않고 같은 크기·배율로 창 콘텐츠 오른쪽 아래 구석에
+   * 1px만 걸쳐 둔다(park). setVisible(false)나 창 밖으로 내보내면 viz가 그려지지 않는 보기의 BeginFrame을 초당 1번으로 줄여
+   * (undrawn frame 제한) rAF가 멈추고, Playwright 클릭이 동작 가능 확인에서 시간 초과로 끝난다(0.1.21 예행 run-e675cd05: 창이 보이고
+   * 포커스여도 클릭마다 raf 0). 1px이라도 그려지면 제한이 없다(측정 rAF 121). 걸친 1px은 창의 둥근 모서리 안이라 보이지 않는다.
+   * 탭마다 구석 칸을 하나씩 왼쪽으로 옮긴다: 먼저 연 탭이 위(addChildView 0 = 맨 아래에 새 탭)라 k번째 탭의 왼쪽 끝 칸은 더 새 탭에 덮이지 않는다.
+   */
+  private place(): void {
+    if (this.o.win.isDestroyed()) return;
     if (this.slot) this.placed = this.slot;
     const zoom = this.zoom();
-    for (const t of this.order) {
-      const show = t === top && this.slot !== null;
-      t.view.setBounds(this.placed);
+    const [cw, ch] = this.o.win.getContentSize() as [number, number];
+    this.order.forEach((t, k) => {
+      if (t.gone) return;
+      t.view.setBounds(this.shown(t) ? this.placed : { x: Math.max(0, cw - 1 - k), y: Math.max(0, ch - 1), width: this.placed.width, height: this.placed.height });
       if (Math.abs(t.wc.getZoomFactor() - zoom) > 0.001) t.wc.setZoomFactor(zoom);
-      t.view.setVisible(show);
-    }
-    if (top) this.o.onPage?.({ url: top.wc.getURL(), title: top.wc.getTitle() });
+      t.view.setVisible(true);
+    });
   }
 
   /** 금고가 비밀 칸에 넣는 동안 사람 입력(키·마우스)을 막는다. */

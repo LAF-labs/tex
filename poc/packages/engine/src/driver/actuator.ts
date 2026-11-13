@@ -36,8 +36,8 @@ const BOX_VERIFY_MS = 2_000;
  */
 function boxEligible(why: string): boolean {
   if (why === 'not_stable') return true;
-  const [base, stage] = why.split('@');
-  return base === 'timeout_other' && (stage === 'actionability' || stage === 'scroll' || stage === 'retrying');
+  // 구분자(@ 등)가 바뀌어도 같은 뜻으로 읽는다.
+  return /^timeout_other\W(actionability|scroll|retrying)$/.test(why);
 }
 
 export class PlaywrightActuator implements Actuator {
