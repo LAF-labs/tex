@@ -23,7 +23,7 @@ import { BrowserAgent } from './browser-agent.ts';
 import { PageJudge } from './judge.ts';
 import { GateTokens, wmaxMs } from '../core/token.ts';
 import type { RunStateName } from '../core/machine.ts';
-import type { PlaybookIR, Step } from '../core/types.ts';
+import type { PlaybookIR, Step, StepOf } from '../core/types.ts';
 import { semanticViolations } from '../core/validate.ts';
 import { flatten } from '../core/cfg.ts';
 import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/verify.ts';
@@ -185,7 +185,10 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
   if (!stepId) return undefined;
   const s = flatten(ir.steps).info.get(stepId)?.step as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
   if (!s) return { stepId, type: 'unknown' };
-  const target = typeof s.target === 'string' ? s.target : s.type === 'wait' && s.for === 'selector' && typeof s.value === 'string' ? s.value : undefined;
+  // branch는 조건이 보는 요소를 대상으로 친다(IR rev v1.3.7: s2 머리말 불일치 진단 줄이 남게).
+  const on = s.type === 'branch' ? (s as StepOf<'branch'>).on : undefined;
+  const condTarget = on && 'textMatches' in on ? on.textMatches.target : on && 'exists' in on ? on.exists : undefined;
+  const target = typeof s.target === 'string' ? s.target : s.type === 'wait' && s.for === 'selector' && typeof s.value === 'string' ? s.value : condTarget;
   return { stepId, type: s.type, ...(target ? { target } : {}) };
 }
 

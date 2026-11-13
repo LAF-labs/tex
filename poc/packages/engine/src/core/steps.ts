@@ -214,9 +214,12 @@ const extract: Handler<'extract'> = async (s, env) => {
   return NEXT;
 };
 
-/** IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 같은 결과가 이만큼 이어질 때 정한다(WebSquare가 머리말을 다시 그린다). 상한까지만 본다. */
+/**
+ * IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 성공한 같은 결과가 BRANCH_SETTLE_MS 이어질 때 정한다(WebSquare가 머리말을 다시 그린다).
+ * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 상한이 되면 마지막 결과로 정한다(실패면 실패).
+ */
 export const BRANCH_SETTLE_MS = 400;
-export const BRANCH_SETTLE_MAX_MS = 3_000;
+export const BRANCH_SETTLE_MAX_MS = 8_000;
 
 const branch: Handler<'branch'> = async (s, env) => {
   let r = await evalCond(s.on, env);
@@ -224,7 +227,7 @@ const branch: Handler<'branch'> = async (s, env) => {
     const key = (x: typeof r) => (x.ok ? `v:${x.value}` : `e:${x.code}`);
     const until = env.clock.now() + BRANCH_SETTLE_MAX_MS;
     let since = env.clock.now();
-    while (env.clock.now() - since < BRANCH_SETTLE_MS && env.clock.now() < until) {
+    while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
       if (env.stopRequested?.()) return fail('run.stopped');
       await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
       const n = await evalCond(s.on, env);
