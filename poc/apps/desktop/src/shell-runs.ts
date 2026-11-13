@@ -54,6 +54,8 @@ const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUT
 const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   // 로그인 단계에서 오면 로그인 차례([이어서])다(엔진은 캡차·추가 인증을 handoff login으로 보낸다)
   'portal.captcha': { text: '홈택스 창에서 자동입력방지 문자를 넣고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
+  // H-01 2.3.0 s4e: 인증서가 여럿인데 프로필 이름(cert_name)으로 못 골랐다. 사람이 한 번 누르면 엔진이 그 이름을 기억한다(패키지 strings cert.pickOne)
+  'cert.pick_needed': { text: '홈택스 창의 인증서 목록에서 쓸 인증서를 한 번 눌러 주세요', note: '고른 뒤 [이어서]를 눌러 주세요. 비밀번호는 앱이 넣어요. 다음부터는 이 인증서를 자동으로 골라요.' },
   'portal.mfa_pending': { text: '홈택스 창에서 추가 인증을 마치고 로그인해 주세요', note: '마치면 [이어서]를 눌러 주세요. 30분 안에 마치지 않으면 멈춰요.' },
   'portal.unexpected_page': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },

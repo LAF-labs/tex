@@ -368,6 +368,10 @@ describe('셸 목업', () => {
     assert.deepEqual(handoffTurn('login', undefined), { kind: 'login', ...HANDOFF_LOGIN });
     assert.equal(handoffTurn('login', 'portal.captcha').kind, 'login');
     assert.match(handoffTurn('login', 'portal.captcha').text, /자동입력방지/);
+    // H-01 2.3.0 s4e: 인증서가 여럿인데 이름으로 못 골랐다 → 사람이 한 번 고르고 [이어서](엔진이 이름을 기억한다)
+    assert.equal(handoffTurn('login', 'cert.pick_needed').kind, 'login');
+    assert.match(handoffTurn('login', 'cert.pick_needed').text, /인증서 목록에서 쓸 인증서를 한 번/);
+    assert.match(handoffTurn('login', 'cert.pick_needed').note, /\[이어서\].*다음부터는 이 인증서를 자동으로/);
     assert.deepEqual(handoffTurn('sign', 'sign.waiting'), { kind: 'sign', ...HANDOFF_SIGN });
     assert.deepEqual(handoffTurn('sign', 'human.ttl_expired'), { kind: 'sign', ...HANDOFF_SIGN_TTL });
     assert.equal(HANDOFF_LOGIN.text, '홈택스 창에서 로그인해 주세요');
