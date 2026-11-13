@@ -217,6 +217,8 @@ const CLIENT = String.raw`
       wrap.innerHTML = header() + '<div id="mf_txppWframe"><p>국세청 홈택스에 오신 것을 환영합니다.</p></div>';
       // 실화면(2026-11-13 예행 run-b9aa50fb, 1280 배치): 로그인 상태 메인에서는 머리말 링크(로그아웃·회원정보조회·인증센터)가 숨어 있고,
       // "로그아웃" 글은 다른 보이는 자리(가정: 첫 화면 사용자 상자)에 있다(s5 로그인 글 기다림이 실화면에서 통과).
+      // 부장 가설(2026-11-14): 같은 id의 숨은 사본이 옛 글을 들고 남아 있다. 보이는 머리말이 있는 로그아웃 메인에 숨은 "로그아웃" 사본을 뒤에 둔다.
+      if (C.realLoginNav && !C.loggedIn) wrap.insertAdjacentHTML('beforeend', '<div style="display:none"><a id="mf_wfHeader_group1503" href="javascript:void(0);" title="로그아웃">로그아웃</a></div>');
       if (C.realLoginNav && C.loggedIn) {
         for (const id of ['mf_wfHeader_group1502', 'mf_wfHeader_group1503']) $(id).style.display = 'none';
         $('mf_txppWframe').insertAdjacentHTML('beforeend', '<div id="mf_txppWframe_userBox"><span>가나다컴퍼니님</span> <a href="#" id="mf_txppWframe_userLogout">로그아웃</a></div>');
