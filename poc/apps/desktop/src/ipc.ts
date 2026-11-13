@@ -239,7 +239,7 @@ export async function dispatchShell(frame: Pick<WebFrameMain, 'url' | 'parent'> 
 /** 렌더러에 보내는 이벤트 전부. 카드 내용·좌표·승인 근거는 보내지 않는다(자리 비우기용 띠 여부·높이만, ADR-021 결정 7). */
 export type ShellEvent =
   // 진행 화면(B3): 실행 탭 화면 한 장(jpeg data URL, 보기 전용) · 비밀 창 동안 멈춤 · 실행 끝
-  | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; paused?: boolean; ended?: boolean }
+  | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; url?: string; paused?: boolean; ended?: boolean }
   /** [브라우저] 토글 상태: 실행 Chrome이 패널 자리에 앞으로 와 있나, 실행 Chrome이 있나. */
   | { type: 'browser'; shown: boolean; available: boolean }
   | { type: 'bar'; active: true; band: boolean; height: number }
