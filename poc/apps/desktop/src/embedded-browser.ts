@@ -4,7 +4,7 @@
 // webContents.debugger(Electron 45 실측: 같은 페이지에 Target.attachToTarget으로 독립 세션을 여러 개 연다)로 넘긴다.
 // 금고 중계(노출·비밀 창·출처 검사)는 Chrome 때와 같은 코드다. 이 파일은 프레임을 나르고, 보기를 만들고 없애고, 패널 자리에 둔다.
 import { randomUUID } from 'node:crypto';
-import { app, session, WebContentsView, type BaseWindow, type Rectangle, type Session, type WebContents } from 'electron';
+import { app, session, WebContentsView, type App, type BaseWindow, type Rectangle, type Session, type WebContents } from 'electron';
 import type { EventLog } from '@sax/platform';
 import { CHROME_APP_START_URL } from '@sax/vault';
 import { assertWebPrefs, NAV_EXEMPT_SESSIONS } from './harden.ts';
@@ -55,6 +55,16 @@ export function chromeLikeUserAgent(fallback = app.userAgentFallback, chromeVers
     .filter((t) => !/^[A-Za-z][\w.-]*\/[\w.-]+$/.test(t) || /^(Mozilla|AppleWebKit|Chrome|Safari)\//.test(t))
     .join(' ')
     .replace(/Chrome\/[\d.]+/, `Chrome/${major}.0.0.0`);
+}
+
+/**
+ * 창이 가려지거나 최소화되거나 화면이 잠겨도 앱 안 보기가 계속 그린다(옛 실행 Chrome 인자 --disable-backgrounding-occluded-windows·
+ * --disable-renderer-backgrounding·--disable-background-timer-throttling과 같다, vault chrome/launch.ts). 끄면 그동안 보기의
+ * requestAnimationFrame이 0번이라(측정, 화면 잠김·최소화·가려짐) Playwright 클릭이 "안정" 확인에서 멈춘다(0.1.19 예행 s13·s3 step.timeout).
+ * app ready 전에 부른다.
+ */
+export function keepDrawingWhenHidden(a: App = app): void {
+  for (const s of ['disable-backgrounding-occluded-windows', 'disable-renderer-backgrounding', 'disable-background-timer-throttling']) a.commandLine.appendSwitch(s);
 }
 
 export interface EmbeddedBrowserOptions {
