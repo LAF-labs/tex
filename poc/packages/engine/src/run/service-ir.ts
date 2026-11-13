@@ -12,6 +12,8 @@ import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
 import { newScope } from '../core/scope.ts';
 import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/steps.ts';
+import { runLocalDict } from '../core/locate.ts';
+import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
 import { GateTokens, wmaxMs } from '../core/token.ts';
 import type { RunStateName } from '../core/machine.ts';
 import type { PlaybookIR, Step } from '../core/types.ts';
@@ -71,6 +73,11 @@ export interface IrPackage {
    * 없으면 사람 비밀 차례는 곧바로 TTL이다(가짜 H-01 경로·시험).
    */
   secret?: { vault: SecretVault; targetId(): string };
+  /**
+   * AI 위치 찾기(core/locate.ts) 모델 길(제품: 게이트웨이 selector_repair). 있으면 fill·click·select가 사전 후보로 못 찾았을 때 사람에게 넘기기 전에 쓴다.
+   * 실행 토큰은 decide와 같은 것(runTokenFor)을 쓴다.
+   */
+  locate?: LocateResponder;
 }
 
 /** 실행 시작 패키지 공급 결과(RunServiceDeps.irSource). */
@@ -356,7 +363,8 @@ export class IrRun {
     const i = this.i;
     const { pkg } = i.ir;
     const files = pkg.files;
-    const dict = pkg.selectors;
+    // 실행 사본 사전: AI 위치 찾기로 찾은 선택자를 이 실행 동안만 그 항목 첫 후보로 둔다(서명 패키지 원본은 그대로).
+    const dict = runLocalDict(pkg.selectors);
     const domains = files.manifest.domains;
     const clock = i.clock ?? systemClock;
     const ir = runCopy(files.playbook, i.gateWaitMs, isFixtureGrant(i.ir.fixtureGrant) ? i.ir.verifyTiming : undefined);
@@ -384,7 +392,18 @@ export class IrRun {
     this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains });
 
     const scope = newScope({ inputs: i.inputs, profile: { bizNo: i.profile.bizNo, ...(i.profile.signMethod ? { signMethod: i.profile.signMethod } : {}) }, intentId: i.intentId });
-    const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
+    // 모델 실행 토큰은 실행마다 한 번 받아 decide와 AI 위치 찾기가 같이 쓴다(L1·L2 예산이 한 토큰에 묶인다).
+    let tokenP: Promise<RunToken> | null = null;
+    const runToken = (): Promise<RunToken> => {
+      tokenP ??= (i.ir.runTokenFor ? i.ir.runTokenFor(i.runId) : Promise.resolve(i.ir.runToken ?? (i.runId as RunToken))).catch((e: unknown) => {
+        tokenP = null;
+        throw e;
+      });
+      return tokenP;
+    };
+    const redactor = new Redactor({ runId: i.runId });
+    const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal }), journal: i.journal } : undefined;
+    const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible, ...(locate ? { locate } : {}) });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
@@ -400,8 +419,8 @@ export class IrRun {
     };
     const decide = i.ir.judge
       ? new DecideRunner({
-        screen: new PlaywrightScreenSource({ page, reader, dict }), redactor: new Redactor({ runId: i.runId }), judge: i.ir.judge,
-        runToken: i.ir.runTokenFor ? () => i.ir.runTokenFor!(i.runId) : (i.ir.runToken ?? (i.runId as RunToken)), bundle: bundleInfoFrom(BundleCatalog.load()), journal: i.journal,
+        screen: new PlaywrightScreenSource({ page, reader, dict }), redactor, judge: i.ir.judge,
+        runToken, bundle: bundleInfoFrom(BundleCatalog.load()), journal: i.journal,
       })
       : null;
     const commit = new LedgerCommitPort({
