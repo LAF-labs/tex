@@ -96,6 +96,7 @@ export const NOTE: Record<string, string> = {
   // 엔진 상태 paused(D03 §2). 정지 하향이면 이 포털 자동 실행이 멈춘 것이다. 이어 하려면 새로 승인해야 한다(REGATE_NOTE.paused).
   policy_downgrade: '앱이 홈택스 자동 실행을 멈춰서 이 건도 여기서 멈췄어요. 이어서 하려면 새로 승인해야 해요.',
   'run.paused': '이 건을 멈췄어요. 이어서 하려면 새로 승인해야 해요.',
+  'browser.closed': '브라우저가 닫혔어요. 아무것도 발급하지 않았어요. [다시 시작]을 누르면 같은 내용으로 다시 준비해요.',
   'login.session_assumed': '가짜 페이지라 로그인을 건너뛰었어요',
   'run.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
   'gate.stopped': '발급 전에 멈췄어요. 홈택스에는 아무것도 발급되지 않았어요.',
@@ -554,6 +555,35 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** 카드에 문장 하나를 더한다(금고 이벤트 등). runId가 없거나 끝난 실행이면 진행 중인 실행에. 같은 문장은 한 번만. */
+  /**
+   * 실행 Chrome이 사람 손으로 닫혔다(금고 browser.closed: 탭 전부 또는 프로세스, 대표 실화면 2026-11-13).
+   * 제출 전(준비·사람 차례·승인 대기)이면 엔진에 멈춤을 보내고 끝 문구를 "브라우저가 닫혔어요 [다시 시작]"으로 정한다.
+   * 승인 뒤(발급 중)면 멈추지 않는다: 발급됐는지 엔진 확인이 먼저다(안내만 붙인다). 엔진 끝이 먼저 왔으면(같은 순간) 그 카드를 고쳐 쓴다.
+   */
+  browserClosed(): void {
+    const now = this.clock();
+    this.goneAt = now;
+    for (const r of this.runs.values()) {
+      const pastGate = r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true;
+      if (['preparing', 'turn', 'waiting'].includes(r.status) && !pastGate) {
+        r.browserClosed = true;
+        this.endCodes.set(r.id, 'browser.closed');
+        void this.stop(r.id).catch(() => {});
+      } else if (r.status === 'issuing' || (pastGate && this.isActive(r.id))) {
+        r.notices = [...(r.notices ?? []), '브라우저가 닫혔어요. 발급됐는지 확인하고 있어요.'];
+        this.emit('update', r);
+      } else if ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt && r.redo && r.endedAt !== undefined && now - r.endedAt < 10_000) this.markClosed(r);
+    }
+  }
+  private goneAt = Number.NEGATIVE_INFINITY;
+  private markClosed(r: RunView): void {
+    r.browserClosed = true;
+    r.status = 'stopped';
+    r.stoppedNote = NOTE['browser.closed'];
+    r.redo = true;
+    this.emit('update', r);
+  }
+
   notice(runId: string | undefined, text: string, retry?: 'extension'): void {
     const own = runId ? this.runs.get(runId) : undefined;
     const active = [...this.runs.values()].find((x) => this.isActive(x.id));
@@ -620,7 +650,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
    */
   redraft(id: string): RunView {
     const r = this.runs.get(id);
-    if (!r || r.status !== 'attention' || !r.redo) throw new Error('not_redoable');
+    // 확인 필요로 끝난 발급 전 실행, 또는 브라우저가 닫혀 멈춘 발급 전 실행([다시 시작])
+    if (!r || !r.redo || !(r.status === 'attention' || (r.status === 'stopped' && r.browserClosed))) throw new Error('not_redoable');
     const cp = this.src.counterparties().find((c) => c.id === r.counterparty.id);
     if (!cp) throw new Error('no_counterparty');
     const d = this.createDraft(cp, r.amount, r.vatGuessed ? null : r.vat, r.itemGuessed ? null : r.item);
@@ -889,6 +920,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };
     }
     r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'todo', note: undefined } : s));
+    r.endedAt = this.clock();
+    // 브라우저가 닫혀 끝난 제출 전 실행(멈춤·연결 끊김 실패 어느 쪽이든): 같은 문구와 [다시 시작]
+    if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) return this.markClosed(r);
     this.emit('update', r);
   }
 

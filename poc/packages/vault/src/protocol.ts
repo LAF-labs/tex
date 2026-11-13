@@ -40,8 +40,10 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.focus',
     // 홈택스 창 자리(main): 실행 창을 앱 옆에 둔다. front면 앞으로도. 창 크기·위치만 바꾸고 페이지는 건드리지 않는다.
     'browser.place',
-    // 진행 화면(B3): 실행 탭 화면을 보기 전용으로 main에 중계한다(초당 3장 남짓). 입력은 받지 않는다. 비밀 창이 열린 동안은 멈춘다.
-    'screen.start', 'screen.stop',
+    // 진행 화면(B3): 실행 탭 화면을 main에 중계한다(가만히 있으면 초당 3장 남짓, 조작 중 10장 안팎). 비밀 창이 열린 동안은 멈춘다.
+    // screen.input(대표 지시 2026-11-13 "인앱 브라우저에서 조작"): 사람이 앱 패널에서 한 마우스·키·글자를 그 탭에 CDP Input으로 넣는다.
+    // 중계 중인 탭에만, 비밀 창이 열린 동안은 거부한다(ACTIVE_WINDOW_DENY_PREFIXES Input.과 같은 뜻). 값을 읽어 돌려주지 않는다.
+    'screen.start', 'screen.stop', 'screen.input',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
@@ -570,4 +572,6 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
-  | 'screen.frame' | 'screen.paused';
+  | 'screen.frame' | 'screen.paused'
+  // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
+  | 'browser.closed';

@@ -364,6 +364,7 @@ export class Relay {
         if (vt) {
           this.byVaultSession.delete(sid);
           this.targets.delete(vt.targetId);
+          this.onTargetGone?.(vt);
         }
         return;
       }
@@ -851,6 +852,12 @@ export class Relay {
   onScreencastFrame?: (t: TargetState, p: Json) => void;
   /** 비밀 창이 열리고 닫힐 때(중계 멈춤·다시). */
   onWindowActive?: (t: TargetState, active: boolean) => void;
+  /** 타깃이 사라졌다(탭·창 닫힘, 금고 감시 세션 분리). 금고가 실행 창이 모두 닫혔는지 본다. */
+  onTargetGone?: (t: TargetState) => void;
+  /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
+  hasExposedPage(): boolean {
+    return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);
+  }
 
   /** 활성 창 → 오염 상태(D05 §3.5 ②). */
   deactivateWindow(t: TargetState): void {
