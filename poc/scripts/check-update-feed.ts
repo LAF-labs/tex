@@ -25,9 +25,11 @@ if (local && (!/^http:\/\/127\.0\.0\.1:[0-9]{1,5}$/.test(a.feed!) || !a.trust)) 
 const ORIGIN = local ? a.feed! : REGISTRY_ORIGIN;
 const trust: TrustRoot = local ? (JSON.parse(fs.readFileSync(a.trust!, 'utf8')) as TrustRoot) : REGISTRY_TRUST_PIN;
 const egress = new Egress({ env: process.env, ...(local ? { testOrigins: { registry: ORIGIN } } : {}) });
-// 앱은 엔진이 루트 서명까지 검증해 받아 둔 폐기 목록을 쓴다. 여기서는 공개 목록의 keyIds와 만료만 본다(점검용).
+// 앱은 엔진이 운영 레지스트리에서 루트 서명까지 검증해 받아 둔 폐기 목록을 쓴다(로컬 피드 시험도 같다).
+// 여기서는 운영 공개 목록의 keyIds와 만료만 본다(점검용).
+const prod = local ? new Egress({ env: process.env }) : egress;
 const revocation = async (): Promise<Revocation> => {
-  const r = await egress.getRegistry('/registry/revoked_keys.json');
+  const r = await prod.getRegistry('/registry/revoked_keys.json');
   const doc = r.json as { revoked?: Array<{ keyId?: unknown }>; expiresAt?: unknown } | null;
   const ids = (doc?.revoked ?? []).map((x) => x.keyId).filter((k): k is string => typeof k === 'string');
   return { keyIds: new Set(ids), fresh: typeof doc?.expiresAt === 'string' && Date.parse(doc.expiresAt) > Date.now() };
