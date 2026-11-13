@@ -60,6 +60,7 @@ export class GatewayLocateModel implements LocateModel {
       '[AI 위치 찾기] 사전 선택자로 찾지 못한 요소를 같은 화면 프레임에서 고른다.',
       `step ${req.stepId} · purpose ${req.purpose} · role ${req.role} · namePattern(RE2) ${req.namePattern} · target ${req.describe}`,
       req.rejected.length ? `이미 써 보고 맞지 않은 선택자: ${req.rejected.join(', ')}` : '',
+      req.found ? `사전 선택자가 찾은 요소는 ${req.found}번이다. 역할은 맞고 접근성 이름만 namePattern과 다르다. 그 요소가 대상이 맞으면 그것을 candidates 맨 앞에 낸다. 아니면 맞는 요소를 낸다.` : '',
       '같은 역할 요소 목록(번호. 역할 "접근성 이름" #DOM id). 입력값은 없다.',
     ].filter(Boolean).join('\n');
     const tail = '가장 맞는 요소 하나를 candidates 맨 앞에 낸다. id가 있으면 kind css, value "#id". 없으면 kind role, value 역할, name 접근성 이름. 확신이 없으면 not_found.';
