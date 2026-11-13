@@ -210,8 +210,26 @@ const extract: Handler<'extract'> = async (s, env) => {
   return NEXT;
 };
 
+/** IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 같은 결과가 이만큼 이어질 때 정한다(WebSquare가 머리말을 다시 그린다). 상한까지만 본다. */
+export const BRANCH_SETTLE_MS = 400;
+export const BRANCH_SETTLE_MAX_MS = 3_000;
+
 const branch: Handler<'branch'> = async (s, env) => {
-  const r = await evalCond(s.on, env);
+  let r = await evalCond(s.on, env);
+  if ('textMatches' in s.on) {
+    const key = (x: typeof r) => (x.ok ? `v:${x.value}` : `e:${x.code}`);
+    const until = env.clock.now() + BRANCH_SETTLE_MAX_MS;
+    let since = env.clock.now();
+    while (env.clock.now() - since < BRANCH_SETTLE_MS && env.clock.now() < until) {
+      if (env.stopRequested?.()) return fail('run.stopped');
+      await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
+      const n = await evalCond(s.on, env);
+      if (key(n) !== key(r)) {
+        r = n;
+        since = env.clock.now();
+      }
+    }
+  }
   if (!r.ok) return fail(r.code);
   return { t: 'jump', to: s.cases[String(r.value)] ?? s.default };
 };

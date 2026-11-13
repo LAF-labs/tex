@@ -37,6 +37,8 @@ export interface ElementInfo {
   enabled: boolean;
   /** 입력할 수 있는가(readonly·disabled 아님, IR rev v1.3.6 expect.editable). 구현이 모르면 없다(그러면 editable 항목은 받지 않는다). */
   editable?: boolean;
+  /** IR rev v1.3.7: 찾은 뒤 그 자리 요소가 바뀌었다(WebSquare가 다시 그림). 역할·이름을 믿을 수 없어 해석기가 다시 본다. */
+  stale?: boolean;
 }
 
 /** 판정·에이전트가 보는 상호작용 역할. */
