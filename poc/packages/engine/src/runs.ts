@@ -22,7 +22,7 @@ import { parseIssueKey, type IssueKey } from './issue/types.ts';
 import { REHEARSAL_DONE, RehearsalReport } from './rehearsal.ts';
 
 /** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
-const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$/;
+const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.why$/;
 
 type Denied = Extract<RunPermit, { ok: false }>;
 

@@ -19,6 +19,8 @@ export interface PlaywrightActuatorInput {
   timeoutMs?: number;
   /** 네비게이션 뒤(집행기 settled). 거부면 그 코드로 실패. */
   afterNavigation?: () => Promise<ActResult>;
+  /** 동작 실패 때 Playwright가 멈춘 까닭의 갈래(값·글 없음). 실행 저널 actuator.why로 남긴다(예행 진단). */
+  onError?: (op: string, why: string) => void;
 }
 
 export class PlaywrightActuator implements Actuator {
@@ -34,7 +36,7 @@ export class PlaywrightActuator implements Actuator {
     try {
       await this.i.page.goto(url, { waitUntil: 'load', timeout: this.timeoutMs });
     } catch (e) {
-      return fail(e);
+      return this.fail('goto', e);
     }
     return this.settle(true);
   }
@@ -46,7 +48,7 @@ export class PlaywrightActuator implements Actuator {
     try {
       await h.click({ timeout: this.timeoutMs });
     } catch (e) {
-      return fail(e);
+      return this.fail('click', e);
     }
     return this.settle(this.navCount() !== before);
   }
@@ -63,7 +65,7 @@ export class PlaywrightActuator implements Actuator {
         await h.type(value, { delay: KEY_INTERVAL_MS, timeout: this.timeoutMs + value.length * KEY_INTERVAL_MS });
       }
     } catch (e) {
-      return fail(e);
+      return this.fail('fill', e);
     }
     return OK;
   }
@@ -74,7 +76,7 @@ export class PlaywrightActuator implements Actuator {
     try {
       await h.fill('', { timeout: this.timeoutMs });
     } catch (e) {
-      return fail(e);
+      return this.fail('clear', e);
     }
     return OK;
   }
@@ -89,7 +91,7 @@ export class PlaywrightActuator implements Actuator {
       const got = await h.selectOption({ label: option }, { timeout: this.timeoutMs });
       if (got.length !== 1) return { ok: false, code: 'step.selector_miss' };
     } catch (e) {
-      return fail(e);
+      return this.fail('select', e);
     }
     return OK;
   }
@@ -104,7 +106,7 @@ export class PlaywrightActuator implements Actuator {
         await h.press(k, { timeout: this.timeoutMs });
       } else await this.i.page.keyboard.press(k);
     } catch (e) {
-      return fail(e);
+      return this.fail('press', e);
     }
     return this.settle(this.navCount() !== before);
   }
@@ -124,6 +126,11 @@ export class PlaywrightActuator implements Actuator {
   }
 
   /** 네비게이션이 있었으면 load를 기다리고 settled를 부른다. 잡은 요소는 놓는다(옛 문서의 핸들). */
+  private fail(op: string, e: unknown): ActResult {
+    this.i.onError?.(op, whyOf(e));
+    return fail(e);
+  }
+
   private async settle(navigated: boolean): Promise<ActResult> {
     if (!navigated) {
       // 클릭 직후 시작하는 네비게이션을 놓치지 않게 잠깐 본다.
@@ -134,6 +141,21 @@ export class PlaywrightActuator implements Actuator {
     await this.i.reader.release();
     return this.i.afterNavigation ? this.i.afterNavigation() : OK;
   }
+}
+
+/** Playwright 실패 글(호출 기록 포함)에서 멈춘 까닭의 갈래만 뽑는다. 값·화면 글은 내보내지 않는다. */
+export function whyOf(e: unknown): string {
+  const m = String((e as { message?: unknown } | null)?.message ?? '');
+  if (/not attached to the DOM|detached/i.test(m)) return 'not_attached';
+  if (/intercepts pointer events/i.test(m)) return 'intercepted';
+  if (/outside of the viewport/i.test(m)) return 'outside_viewport';
+  if (/element is not visible|not visible/i.test(m)) return 'not_visible';
+  if (/not enabled|disabled/i.test(m)) return 'not_enabled';
+  if (/not stable/i.test(m)) return 'not_stable';
+  if (/not editable|readonly/i.test(m)) return 'not_editable';
+  if (/dialog/i.test(m)) return 'dialog';
+  if (/Timeout/i.test(m)) return 'timeout_other';
+  return 'other';
 }
 
 function fail(e: unknown): ActResult {
