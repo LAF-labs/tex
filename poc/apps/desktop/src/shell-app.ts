@@ -1953,12 +1953,26 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
+  /** 도구 > 예행 중지: 진행 중인 예행 실행만 [중지]와 같은 길로 멈춘다(창이 다른 Space에 있어도 메뉴로 부를 수 있다). 예행이 아닌 실행은 건드리지 않는다. */
+  const stopRehearsals = () => {
+    for (const r of runs.list()) {
+      if (!r.rehearsal || !runs.isActive(r.id)) continue;
+      log.event('main.rehearsal_stop', { runId: r.id });
+      void runs.stop(r.id).catch((e: Error) => log.event('main.rehearsal_stop_failed', { error: e.message.slice(0, 60) }));
+    }
+  };
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
       { role: 'appMenu' },
       { role: 'editMenu' },
-      { label: '도구', submenu: [{ id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() }] },
+      {
+        label: '도구',
+        submenu: [
+          { id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() },
+          { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
+        ],
+      },
       { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
     ]),
   );

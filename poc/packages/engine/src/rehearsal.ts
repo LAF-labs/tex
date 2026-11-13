@@ -17,6 +17,8 @@ const COUNTED: Readonly<Record<string, string>> = {
 
 /** 게이트에 닿아 엔진이 스스로 멈춘 예행의 끝 코드(셸은 이 코드로 "예행 마침" 문구를 보인다). */
 export const REHEARSAL_DONE = 'rehearsal.gate_reached';
+/** 사람 차례가 나서 엔진이 바로 멈춘 예행의 끝 코드(예행 실패). 예행은 사람을 기다리지 않는다. */
+export const REHEARSAL_HANDOFF = 'rehearsal.handoff';
 
 export class RehearsalReport {
   private readonly t0: number;
@@ -48,6 +50,10 @@ export class RehearsalReport {
     this.handoffs.push(code ?? phase);
   }
 
+  get handedOff(): boolean {
+    return this.handoffs.length > 0;
+  }
+
   journal(type: string): void {
     const k = COUNTED[type];
     if (k) this.counts.set(k, (this.counts.get(k) ?? 0) + 1);
@@ -57,7 +63,7 @@ export class RehearsalReport {
     this.close(this.clock());
     const f: LogFields = {
       runId,
-      result: this.gateStep ? 'gate_reached' : end.status,
+      result: this.gateStep ? 'gate_reached' : this.handedOff ? 'handoff' : end.status,
       package: this.pkg,
       end: (end.code ?? '').slice(0, 80),
       total_ms: this.clock() - this.t0,
