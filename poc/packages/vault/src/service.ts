@@ -71,8 +71,8 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   const x = b as Record<string, unknown>;
   if (!isProfileScope(x.scope)) return null;
   if (x.mode === 'store') {
-    // 등록 창(T-06)은 보안카드·포털 비밀번호만. 인증서 비밀번호는 등록 창이 아니라 처음 쓸 때 금고가 기억한다(대표 지시 2026-11-13, ADR-020 결정 2 갱신).
-    if (typeof x.kind !== 'string' || x.kind === 'cert_password' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
+    // 등록(T-06): 보안카드·포털 비밀번호, 그리고 설정 > 발급 인증의 인증서 비밀번호 저장(대표 지시 2026-11-14). 인증서 비밀번호는 처음 쓸 때도 금고가 기억한다.
+    if (typeof x.kind !== 'string' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
     const notice = x.notice as Record<string, unknown> | undefined;
     if (!notice || typeof notice.version !== 'string' || !NOTICE_VERSION_RE.test(notice.version)) return null;
     if (x.runId !== undefined || x.row !== undefined) return null;
