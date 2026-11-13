@@ -185,10 +185,13 @@ const CLIENT = String.raw`
   function issueScreen() {
     history.replaceState(null, '', menuUrl('&menuCd=UTEETBAA01'));
     document.title = '국세청 홈택스 - 계산서ㆍ영수증ㆍ카드 > 전자(세금)계산서 발급 > 전자(세금)계산서 건별발급';
-    const ro = (id, title) => '<input type="text" id="' + P + id + '" title="' + title + '" readonly>';
+    // 실화면 접근성 이름이 빈 칸(reports/raw/poc-3-mac-landmarks.json invoice.issue): title·값 글을 붙이지 않는다.
+    const NONAME = new Set(['edtDmnrBsnoTop', 'btnDmnrBsnoCnfrTop', 'edtSplrTnmNmTop', 'edtSplrEmlIdTop', 'edtDmnrTnmNmTop', 'genEtxivLsatTop_0_edtLsatNmTop', 'genEtxivLsatTop_0_edtLsatSplCftTop', 'genEtxivLsatTop_0_edtLsatTxamtTop', 'edtRmrkCntnTop']);
+    const ttl = (id, title) => (NONAME.has(id) ? '' : ' title="' + title + '"');
+    const ro = (id, title) => '<input type="text" id="' + P + id + '"' + ttl(id, title) + ' readonly>';
     const LBL = { edtDmnrBsnoTop: '등록번호', genEtxivLsatTop_0_edtLsatNmTop: '품목' };
-    const tx = (id, title, v) => (C.fieldLabels && LBL[id] ? '<label for="' + P + id + '">' + LBL[id] + '</label>' : '') + '<input type="text" id="' + P + id + '" title="' + title + '"' + (v ? ' value="' + v + '"' : '') + '>';
-    const btn = (id, v) => '<input type="button" id="' + P + id + '" value="' + v + '">';
+    const tx = (id, title, v) => (C.fieldLabels && LBL[id] ? '<label for="' + P + id + '">' + LBL[id] + '</label>' : '') + '<input type="text" id="' + P + id + '"' + ttl(id, title) + (v ? ' value="' + v + '"' : '') + '>';
+    const btn = (id, v) => '<input type="button" id="' + P + id + '" value="' + (NONAME.has(id) ? '' : v) + '">';
     let rows = '';
     for (let n = 0; n < 4; n++) {
       const g = 'genEtxivLsatTop_' + n + '_';

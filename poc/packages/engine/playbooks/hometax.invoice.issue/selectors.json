@@ -114,7 +114,8 @@
    "landmark": "hometax.invoice.form.root",
    "commits": false,
    "lastVerified": "2026-11-13",
-   "inputType": "text"
+   "inputType": "text",
+   "fieldKey": "counterpartBizNo"
   },
   "hometax.invoice.form.bizNoConfirm": {
    "candidates": [
@@ -124,11 +125,11 @@
     }
    ],
    "role": "button",
-   "namePattern": "^확인$",
+   "namePattern": "^(확인)?$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
+   "lastVerified": "2026-11-13",
    "inputType": "button",
    "reviewNote": {
     "by": "h01-package-real",
@@ -391,8 +392,8 @@
    "landmark": "hometax.invoice.preview.root",
    "commits": false,
    "lastVerified": "2026-11-11",
-   "fieldKey": "counterpartBizNo",
-   "inputType": "text"
+   "inputType": "text",
+   "readbackOf": "counterpartBizNo"
   },
   "hometax.invoice.preview.counterpartName": {
    "candidates": [
