@@ -138,6 +138,22 @@ export class Relay {
 
   /** 이번 실행을 위한 page 타깃을 금고가 만든다(엔진의 Target.createTarget은 거부). */
   async createRunPage(): Promise<string> {
+    // 앱 모드 창(launch의 --app 시작 문서)을 실행 탭으로 쓴다: 탭줄·주소창이 없다. Target.createTarget은 일반 창을 새로 연다.
+    // 시작 문서는 about:blank로 바꾼 뒤 노출한다(전처럼 빈 실행 탭에서 시작). 없으면(옛 경로·headless) 새로 만든다.
+    for (let i = 0; i < 50 && !this.appStartTarget(); i++) await sleep(20);
+    const app = this.appStartTarget();
+    if (app) {
+      await this.conn.send('Page.navigate', { url: 'about:blank' }, app.vaultSession).catch(() => {});
+      for (let i = 0; i < 50; i++) {
+        const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, app.vaultSession).catch(() => null);
+        if (tree && tree.frameTree.frame.url === 'about:blank') break;
+        await sleep(20);
+      }
+      app.url = 'about:blank';
+      await this.expose(app);
+      this.log.event('vault.run_page_app_window');
+      return app.targetId;
+    }
     this.creating++;
     let targetId: string;
     try {
@@ -154,6 +170,11 @@ export class Relay {
     await this.expose(t);
     for (const d of queued) if (d !== t) await this.decide(d);
     return targetId;
+  }
+
+  /** 금고가 --app으로 연 시작 창(노출 전). 페이지는 최상위 data: 문서를 열 수 없으니 이 꼴의 창은 금고 기동이 연 것뿐이다. */
+  private appStartTarget(): TargetState | undefined {
+    return [...this.targets.values()].find((t) => t.type === 'page' && !t.exposed && !t.revoked && !t.openerId && t.url.startsWith('data:text/html'));
   }
 
   // ───────────────────────── 엔진 → Chrome ─────────────────────────
