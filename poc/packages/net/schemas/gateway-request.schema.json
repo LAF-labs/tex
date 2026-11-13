@@ -64,7 +64,9 @@
             "intent_fill",
             "query_parse",
             "chat_reply",
-            "chat_agent"
+            "chat_agent",
+            "page_judge",
+            "browser_agent"
           ]
         },
         "messages": {

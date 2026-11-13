@@ -24,6 +24,7 @@ export const GATEWAY_VISIBILITY: Record<string, Record<string, string>> = {
     l1: 'D09 §1.1 보충: 실행당 L1 사용 수',
     l2_calls: 'D09 §1.1 보충: 실행당 L2 사용 수',
     l2_turns: 'D09 §1.1 보충: 실행당 L2 턴 수',
+    agent_calls: '실행당 판정·브라우저 에이전트 호출 수(page_judge·browser_agent)',
     expires_at: 'D09 §1.1 보충: 실행 예산 만료(2시간)',
   },
 };

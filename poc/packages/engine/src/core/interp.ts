@@ -166,7 +166,8 @@ export class Interpreter {
 
   /** 스텝 하나(재시도 포함)를 실행하고 다음 스텝 id 또는 멈춤을 돌려준다. */
   private async exec(s: Step, prev: string | null): Promise<string | RunStop> {
-    if (s.type === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.resumeAt, code: null };
+    // handoff 스텝의 code(있으면)는 사람에게 넘긴 까닭이다(앱이 안내 문구를 고른다, 예: cert.pick_needed).
+    if (s.type === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.resumeAt, code: s.code ?? null };
     if (s.type === 'repeat') return this.repeat(s, prev);
     const h = this.handlers[s.type] as Handler<typeof s.type> | undefined;
     if (!h) return { t: 'unhandled', at: s.id, type: s.type };

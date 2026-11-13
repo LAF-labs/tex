@@ -25,7 +25,8 @@ export type ChatAgentToolName = (typeof CHAT_AGENT_TOOLS)[number]['name'];
  *   "매출 합계"에 첫 행 합계를 쓴 일이 있다, real-run-2 2026-11-12).
  */
 export const SLOT_POSITIONS = ['first', 'last'] as const;
-export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty'] as const;
+/** approvalNo: 국세청 승인번호(원장 committed). 값은 main이 채우고 모델에는 가지 않는다. */
+export const SLOT_FIELDS = ['date', 'supply', 'total', 'counterparty', 'approvalNo'] as const;
 export type SlotField = (typeof SLOT_FIELDS)[number];
 /** 합계를 낼 수 있는 칸(돈) */
 export const SLOT_SUM_FIELDS = ['supply', 'total'] as const satisfies readonly SlotField[];

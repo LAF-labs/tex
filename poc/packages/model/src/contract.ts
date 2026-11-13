@@ -100,7 +100,7 @@ export interface DecideResult {
 }
 
 /** /v1/respond 툴셋 id 표. gateway-request 스키마 두 벌의 toolset 열거와 같아야 한다(tests/chat-agent-toolset.test.ts가 대조). */
-export const TOOLSET_IDS = ['selector_repair', 'summarize', 'intent_fill', 'query_parse', 'chat_reply', 'chat_agent'] as const;
+export const TOOLSET_IDS = ['selector_repair', 'summarize', 'intent_fill', 'query_parse', 'chat_reply', 'chat_agent', 'page_judge', 'browser_agent'] as const;
 export type Toolset = (typeof TOOLSET_IDS)[number];
 
 export interface RedactedMessage {

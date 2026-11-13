@@ -32,7 +32,7 @@ describe('H-01 실화면 패키지: 가짜 홈택스 건조 실행', () => {
   it('이미 로그인: s2에서 s10. 화면이 5초 늦게 그려져도(실화면 5~8초) 기다린다', async () => {
     const o = await realDryRun({ loggedIn: true, knobs: { renderDelayMs: 5000 }, maxMs: 150_000 });
     assert.equal(o.end?.status, 'success', show(o));
-    assert.deepEqual(o.steps.slice(0, 3), ['s0', 's2', 's10']);
+    assert.deepEqual(o.steps.slice(0, 4), ['s0', 's0a', 's2', 's10']);
   });
 
   it('비정상 사업자번호: [확인] alert 문구가 "정상적인…"이 아니면 게이트 전에 failed counterpart.bizno_rejected(커밋 요청 0)', async () => {

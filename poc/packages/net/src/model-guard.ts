@@ -21,7 +21,7 @@ export interface GatewayDecideBody {
 }
 
 export interface GatewayRespondBody {
-  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent';
+  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent';
   messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: RedactedText }> }>;
   replay?: Array<{ item: object; tag: string } | { type: 'function_call_output'; call_id: string; output: RedactedText }>;
   runToken: string;
@@ -63,7 +63,7 @@ export interface ModelGuardConfig {
   /** 앱 바이너리에 내장된 목록(BV-06). 앱 업데이트로만 바뀐다. */
   bundles: readonly BundleAllowEntry[];
   /** D04 §6: L1 ≤ 12, L2 ≤ 2 */
-  budget?: { l1: number; l2: number };
+  budget?: { l1: number; l2: number; agent?: number };
   /** 보안 거부(SECURITY_GUARD_CODES)마다 코드만 알린다. 본문·식별자 없음. */
   onSecurity?: (code: GuardCode, surface: 'decide' | 'respond') => void;
 }
@@ -76,7 +76,14 @@ export interface L2Usage {
   l1: number;
   l2Calls: number;
   l2Turns: number;
+  /** 예상 밖 화면 판정·브라우저 에이전트 호출 수(page_judge·browser_agent, 실행당 따로 센다). */
+  agent: number;
 }
+
+/** 판정·에이전트 툴셋(게이트웨이 GATEWAY.agentPerRun과 같은 예산). */
+const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent']);
+/** 실행당 판정·에이전트 호출 상한(에이전트 25걸음 + 판정 몇 번). */
+export const AGENT_CALLS_PER_RUN = 32;
 
 // gateway-request.schema.json 규칙 (6): 주민번호·사업자번호·카드·계좌(+법인번호). 마스킹을 통과한 텍스트에 다시 돌린다.
 // 규칙 원천은 @sax/redaction entities.ts 하나다(트립와이어가 잡는 것은 마스킹이 먼저 잡는다). 한글 숫자 사본도 본다.
@@ -110,7 +117,7 @@ function hasImage(v: unknown): boolean {
 
 export class ModelGuard {
   private readonly allow: Map<string, BundleAllowEntry>;
-  private readonly budget: { l1: number; l2: number };
+  private readonly budget: { l1: number; l2: number; agent: number };
   /** 예산은 범위 키(run:/chat:)에 묶는다. 토큰을 새로 받아도 같은 범위면 같은 예산이다. */
   private readonly used = new Map<string, L2Usage>();
   private readonly tokens = new Map<string, { scope: string; expiresAt: number }>();
@@ -123,7 +130,7 @@ export class ModelGuard {
 
   constructor(cfg: ModelGuardConfig, now: () => number = Date.now) {
     this.allow = new Map(cfg.bundles.map((b) => [`${b.id}@${b.digest}`, b]));
-    this.budget = cfg.budget ?? { l1: 12, l2: 2 };
+    this.budget = { l1: cfg.budget?.l1 ?? 12, l2: cfg.budget?.l2 ?? 2, agent: cfg.budget?.agent ?? AGENT_CALLS_PER_RUN };
     this.now = now;
     this.onSecurity = cfg.onSecurity;
   }
@@ -197,8 +204,11 @@ export class ModelGuard {
     else this.inspect('respond', body as GatewayRespondBody, providerBody);
     const scope = this.scopeOf(body.runToken);
     if (!scope) this.fail('run_token_unknown');
-    const u = this.used.get(scope) ?? { l1: 0, l2Calls: 0, l2Turns: 0 };
-    if (surface === 'decide') {
+    const u = this.used.get(scope) ?? { l1: 0, l2Calls: 0, l2Turns: 0, agent: 0 };
+    if (surface === 'respond' && AGENT_TOOLSETS.has((body as GatewayRespondBody).toolset)) {
+      if (u.agent >= this.budget.agent) this.fail('budget_exceeded');
+      u.agent++;
+    } else if (surface === 'decide') {
       if (u.l1 >= this.budget.l1) this.fail('budget_exceeded');
       u.l1++;
     } else if (!(body as GatewayRespondBody).replay?.length) {
@@ -215,6 +225,6 @@ export class ModelGuard {
 
   usage(runToken: string): L2Usage {
     const scope = this.tokens.get(runToken)?.scope;
-    return { ...((scope && this.used.get(scope)) || { l1: 0, l2Calls: 0, l2Turns: 0 }) };
+    return { ...((scope && this.used.get(scope)) || { l1: 0, l2Calls: 0, l2Turns: 0, agent: 0 }) };
   }
 }
