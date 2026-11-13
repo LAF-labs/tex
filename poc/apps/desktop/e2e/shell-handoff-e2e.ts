@@ -29,7 +29,8 @@ const check = (name: string, ok: boolean, detail?: unknown) => {
 };
 
 let S: Shell;
-let chrome = true;
+// Chrome 없이 시작한다(U6: 첫 판부터 할 일에 [Chrome 설치하기]). ⓪에서 설치한 것으로 바꾼다.
+let chrome = false;
 const focusCalls: unknown[] = [];
 const headful = process.env.SAX_E2E_HEADFUL === '1' && process.platform === 'darwin';
 const frontApp = () => execFileSync('lsappinfo', ['info', '-only', 'name', execFileSync('lsappinfo', ['front']).toString().trim()]).toString();
@@ -270,9 +271,44 @@ async function flow(): Promise<void> {
   check('온보딩을 사업자 간편인증으로 끝낸다', (await finishOnboarding()) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as Array<{ kind: string; signMethod: string | null }>).some((x) => x.kind === 'business' && x.signMethod === 'simple_auth'))));
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
-  // ⓪ Chrome 사전 점검: 없으면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
-  chrome = false;
+  // ⓪-U6 Chrome 점검을 초안 전으로: 첫 판의 할 일, 첫 발급 요청(초안 카드를 만들지 않는다), 안내의 [다시 확인]
+  const setupRow = () => js<string>(`[...document.querySelectorAll('[data-board-setup] [data-setup]')].map((b) => b.dataset.setup + ':' + b.innerText).join('|')`);
+  check('(U6) Chrome이 없으면 첫 판의 할 일에 [Chrome 설치하기]', await until('board chrome', async () => (await setupRow()).includes('chrome:Chrome 설치하기'), 10_000), await setupRow());
+  // 증명서는 이 빌드가 떼지 못한다(#291). Chrome이 없어도 설치를 시키지 않고 "곧 할 수 있어요"만 답한다(부장 판정 2026-11-12 재현)
+  const setupsBefore = await js<number>(`document.querySelectorAll('[data-setup-needed]').length`);
+  await js(`(() => { const t = document.querySelector('#composer'); t.value = '사업자등록증명 떼 줘'; t.dispatchEvent(new Event('input')); })()`);
+  await click('.sx-send');
+  const certSaid = await until('cert reply', async () => js<boolean>(`document.querySelector('#thread, body').innerText.includes('증명서 발급은 곧 이 대화에서 할 수 있어요')`), 5000);
+  check(
+    '(U6) Chrome이 없어도 증명서 요청에는 설치를 요구하지 않는다(이 빌드는 증명서를 못 뗀다, #291)',
+    certSaid && (await js<number>(`document.querySelectorAll('[data-setup-needed]').length`)) === setupsBefore && !(await js<boolean>(`!!document.querySelector('[data-act=setup-chrome]')`)),
+    { certSaid, setups: await js<number>(`document.querySelectorAll('[data-setup-needed]').length`), setupsBefore },
+  );
+  await shot('00-cert-no-chrome-ask');
+  const runsBefore = S.runs.list().length;
+  await js(`(() => { const t = document.querySelector('#composer'); t.value = 'A상사에 11만원 세금계산서'; t.dispatchEvent(new Event('input')); })()`);
+  await click('.sx-send');
+  const setupReply = () => js<string>(`(() => { const b = [...document.querySelectorAll('[data-setup-needed]')].pop(); return b ? b.dataset.setupNeeded + '|' + b.innerText : ''; })()`);
+  check(
+    '(U6) Chrome이 없으면 첫 발급 요청에 초안 카드 대신 설치 안내와 [Chrome 설치하기](실행 없음)',
+    (await until('setup chrome', async () => (await setupReply()).startsWith('chrome|'), 5000)) && (await setupReply()).includes('Chrome을 설치해 주세요') && S.runs.list().length === runsBefore && !calls.some(([m]) => m === 'run.start'),
+    { reply: await setupReply(), runs: S.runs.list().length },
+  );
+  await userClick('[data-setup-needed] [data-act=setup-chrome]');
+  const guide = () => js<string>(`document.querySelector('[data-chrome-guide]')?.innerText ?? ''`);
+  check('(U6) [Chrome 설치하기] → 설치 안내(주소는 글자로만, 외부 링크 없음)', (await until('guide', async () => (await guide()).includes('google.com/chrome'), 3000)) && !(await js<boolean>(`!!document.querySelector('[data-chrome-guide] a')`)), await guide());
+  await shot('00a-chrome-guide');
+  await userClick('[data-chrome-guide] [data-act=chrome-check]');
+  await sleep(400);
+  check('(U6) 아직 없으면 [다시 확인] 뒤에도 안내가 남고 할 일도 남는다', (await guide()) !== '' && (await setupRow()).includes('chrome:'), { guide: await guide(), row: await setupRow() });
+  chrome = true;
+  await userClick('[data-chrome-guide] [data-act=chrome-check]');
+  check('(U6) 설치한 뒤 [다시 확인] → 안내가 닫히고 판의 할 일에서 빠진다', (await until('guide gone', async () => (await guide()) === '', 3000)) && (await until('row gone', async () => !(await setupRow()).includes('chrome:'), 5000)), { guide: await guide(), row: await setupRow() });
+  await shot('00b-chrome-found');
+
+  // ⓪ #288 마지막 자리: 초안을 만든 뒤 Chrome이 지워지면 [홈택스에서 준비]가 엔진을 부르지 않고 초안 카드에 안내. 설치하면 그대로 준비
   const z = await toDraft('A상사에 11만원 세금계산서');
+  chrome = false;
   await userClick(`[data-run="${z}"] [data-act=prepare]`);
   check('Chrome이 없으면 준비하지 않고 초안 카드에 설치 안내(엔진 run.start 없음)', await until('no chrome', async () => js<boolean>(`(() => { const c = document.querySelector('[data-run="${z}"]'); return !!c && !!c.querySelector('[data-no-chrome]') && c.innerText.includes('Chrome을 설치한 뒤') && !!c.querySelector('[data-act=prepare]'); })()`), 3000) && runStatus(z) === 'draft' && !calls.some(([m, r]) => m === 'run.start' && r === z), { st: runStatus(z), calls });
   await shot('00-no-chrome');
