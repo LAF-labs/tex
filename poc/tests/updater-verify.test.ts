@@ -39,6 +39,8 @@ const TRUST: TrustRoot = {
   keys: {
     root: { 'root-1': pubB64(0x11), 'root-2': pubB64(0x12), 'root-3': pubB64(0x13) },
     release: { 'release-1': pubB64(0x61) },
+    // 기간 도장은 레지스트리 타임스탬프 키(샘플 timestamp-1 = 0x51)
+    timestamp: { 'timestamp-1': pubB64(0x51) },
     // 다른 역할 키로 서명하면 세지 않아야 한다(package-1 = 0x21)
     package: { 'package-1': pubB64(0x21) },
   },
@@ -48,19 +50,29 @@ const NOW = Date.parse('2026-11-05T06:00:00Z');
 const INSTALLER = Buffer.from('MZ fake installer bytes for test');
 const sha512 = (b: Uint8Array) => createHash('sha512').update(b).digest('base64');
 
-type Unsigned = Omit<ReleaseManifest, 'signature'>;
+type Unsigned = Omit<ReleaseManifest, 'signature' | 'timestamp'>;
 function unsigned(over: Partial<Unsigned> = {}): Unsigned {
   return {
     channel: 'stable',
     version: '1.2.0',
     releaseDate: '2026-11-05T00:00:00.000Z',
+    issuedAt: '2026-11-05T00:00:00.000Z',
     expiresAt: '2026-11-12T00:00:00.000Z',
     rolloutPercent: 100,
     files: [{ url: 'SovereignAX-Setup-1.2.0.exe', sha512: sha512(INSTALLER), size: INSTALLER.byteLength }],
     ...over,
   };
 }
-const signRelease = (u: Unsigned, byte = SEEDS['release-1'], keyId = 'release-1'): ReleaseManifest => ({ ...u, signature: sigOf(byte, keyId, u) });
+/** 사람(release 키)은 기간 칸을 뺀 내용에, 서버(timestamp 키)는 {contentDigest, issuedAt, expiresAt}에 서명한다 */
+const stamp = (m: Omit<ReleaseManifest, 'timestamp'>, issuedAt = m.issuedAt, expiresAt = m.expiresAt): ReleaseManifest => {
+  const { signature: _s, issuedAt: _i, expiresAt: _e, ...content } = m;
+  const contentDigest = createHash('sha256').update(jcs(content)).digest('hex');
+  return { ...m, issuedAt, expiresAt, timestamp: sigOf(0x51, 'timestamp-1', { contentDigest, issuedAt, expiresAt }) };
+};
+const signRelease = (u: Unsigned, byte = SEEDS['release-1'], keyId = 'release-1'): ReleaseManifest => {
+  const { issuedAt: _i, expiresAt: _e, ...content } = u;
+  return stamp({ ...u, signature: sigOf(byte, keyId, content) });
+};
 /** JSON 왕복(네트워크에서 받은 값처럼) */
 const wire = (m: unknown): unknown => JSON.parse(JSON.stringify(m));
 const base = (doc: unknown, over: Record<string, unknown> = {}) => ({ doc: wire(doc), channel: 'stable' as const, trust: TRUST, revocation: FRESH, highestSeen: null, now: NOW, ...over });
@@ -211,7 +223,7 @@ test('electron-updater 피드 대조: 검증한 매니페스트와 다른 latest
 test('뿌리 변경 릴리스(ADR-028 결정 3)는 루트 2-of-3이 있어야 한다', () => {
   const withRoot = (signers: Array<keyof typeof SEEDS>, keyEpoch = 2, changes: Array<'keyEpoch' | 'allowlist' | 'ceiling'> = ['keyEpoch']) => {
     const u = unsigned({ rootChange: { keyEpoch, changes, signatures: [] } });
-    const rootContent = rootChangeContent({ ...u, signature: { keyId: 'x', alg: 'ed25519', sig: '' } });
+    const rootContent = rootChangeContent({ ...u, signature: { keyId: 'x', alg: 'ed25519', sig: '' }, timestamp: { keyId: 'x', alg: 'ed25519', sig: '' } });
     const sigs = signers.map((k) => sigOf(SEEDS[k], k, rootContent));
     return signRelease({ ...u, rootChange: { keyEpoch, changes, signatures: sigs } });
   };
@@ -230,6 +242,22 @@ test('뿌리 변경 릴리스(ADR-028 결정 3)는 루트 2-of-3이 있어야 �
   const m = withRoot(['root-1', 'root-2']);
   assert.equal(codeOf(() => verifyRelease(base({ ...m, rolloutPercent: 50 }))), 'registry.signature_insufficient');
   assert.notEqual(jcs(releaseContent(m)), jcs(rootChangeContent(m)));
+});
+
+test('기간은 서버 도장: 기간만 다시 찍어도 사람 서명은 그대로, 도장 위조·폐기된 타임스탬프 키는 거부(부장 결정 2026-11-13)', () => {
+  const doc = signRelease(unsigned());
+  const later = stamp(doc, '2026-11-11T00:00:00.000Z', '2026-11-18T00:00:00.000Z');
+  assert.equal(verifyRelease(base(later, { now: Date.parse('2026-11-15T00:00:00Z') })).releaseKeyId, 'release-1');
+  assert.equal(codeOf(() => verifyRelease(base({ ...doc, expiresAt: '2026-11-13T00:00:00.000Z' }))), 'registry.timestamp_invalid');
+  assert.equal(codeOf(() => verifyRelease(base(doc, { revocation: { keyIds: new Set(['timestamp-1']), fresh: true } }))), 'registry.timestamp_invalid');
+  const d = decideUpdate({ ...base({ ...doc, expiresAt: '2026-11-13T00:00:00.000Z' }), installedVersion: '1.1.0', state: INITIAL_STATE, deviceId: 'd', transparency: 'verified' });
+  assert.deepEqual([d.action, d.action === 'hold' && d.security], ['hold', true]);
+  // Blob 공개 주소(https 절대 주소)는 받고, http·쿼리·인코딩은 거부한다
+  const blob = 'https://abc123.public.blob.vercel-storage.com/releases/stable/SovereignAX-1.2.0-arm64.zip';
+  assert.equal(verifyRelease(base(signRelease(unsigned({ files: [{ url: blob, sha512: sha512(INSTALLER), size: INSTALLER.byteLength }] })))).manifest.files[0]!.url, blob);
+  for (const url of ['http://abc123.public.blob.vercel-storage.com/a.zip', `${blob}?x=1`, 'https://abc123.public.blob.vercel-storage.com/a%20b.zip', 'https://x/a.zip']) {
+    assert.equal(codeOf(() => parseManifest(wire(signRelease(unsigned({ files: [{ url, sha512: sha512(INSTALLER), size: 1 }] }))))), 'update.manifest_invalid', url);
+  }
 });
 
 test('폐기 목록 신선도를 잃으면 새 릴리스를 받지 않는다(D09 §8.4)', () => {

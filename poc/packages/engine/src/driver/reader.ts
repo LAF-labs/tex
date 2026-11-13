@@ -4,9 +4,33 @@
 // - frame은 'main'이면 주 프레임, 아니면 그 이름의 프레임(없으면 빈 결과).
 // - 후보: role → getByRole(name 정확히), css → locator, label → getByLabel(정확히). within이 있으면 그 요소의 하위만.
 import type { ElementHandle, Frame, Locator, Page, Request } from 'playwright-core';
-import { INTERACTIVE_ROLES, type ElementInfo, type ElementRef, type InteractiveElement, type PageReader } from '../core/page.ts';
+import { INTERACTIVE_ROLES, type ElementInfo, type ElementRef, type ElementShape, type InteractiveElement, type PageReader } from '../core/page.ts';
 import type { Candidate } from '../core/types.ts';
 import { ariaValue } from './aria-tree.ts';
+
+/** 진단 영역에서 모으는 요소(입력·단추·링크·label·역할 있는 것). */
+const REGION_SEL = 'input,select,textarea,button,a[href],label,[role=button],[role=textbox],[role=combobox],[role=checkbox],[role=radio],[role=link],[role=dialog]';
+
+/** 브라우저 안에서 도는 요소 모양 함수(값은 읽지 않는다: 입력 칸 value 없음, 단추 글만). */
+function SHAPE_OF(n: Element): ElementShape {
+  const e = n as HTMLInputElement;
+  const tag = n.tagName.toLowerCase();
+  const type = n.getAttribute('type');
+  const style = getComputedStyle(n) as CSSStyleDeclaration & { webkitTextSecurity?: string };
+  const secret = (tag === 'input' && (type ?? '').toLowerCase() === 'password') || (!!style.webkitTextSecurity && style.webkitTextSecurity !== 'none');
+  const labels = 'labels' in e && e.labels ? [...e.labels].map((l) => (l.textContent ?? '').trim()).join(' ') : '';
+  const isButton = tag === 'button' || (tag === 'input' && /^(button|submit|reset)$/i.test(type ?? '')) || n.getAttribute('role') === 'button' || tag === 'a' || tag === 'label';
+  const caption = isButton ? (tag === 'input' ? e.value : (n.textContent ?? '')).trim() : '';
+  const rect = n.getBoundingClientRect();
+  const visible = rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+  const sp = (x: string) => x.replace(/\s+/g, ' ').slice(0, 80);
+  return {
+    tag, id: n.id || null, role: n.getAttribute('role'),
+    name: secret ? '' : sp(n.getAttribute('aria-label') ?? (labels || caption)),
+    label: secret ? '' : sp(labels), title: sp(n.getAttribute('title') ?? ''), type,
+    readonly: !!e.readOnly || n.getAttribute('aria-readonly') === 'true', disabled: !!e.disabled || n.getAttribute('aria-disabled') === 'true', visible, secret,
+  };
+}
 
 /** 판정·에이전트 목록 상한(요청 크기). */
 const INTERACTIVE_MAX = 150;
@@ -180,6 +204,33 @@ export class PlaywrightPageReader implements PageReader {
       }
     }
     return out;
+  }
+
+  async describe(el: ElementRef): Promise<ElementShape | null> {
+    const h = this.held.get(el.ref);
+    if (!h) return null;
+    return h.handle.evaluate(SHAPE_OF).catch(() => null);
+  }
+
+  async describeRegion(frame: string, within: ElementRef | null, max: number): Promise<ElementShape[]> {
+    const f = this.frame(frame);
+    const scope = within ? this.handle(within) : null;
+    if (!f || (within && !scope)) return [];
+    // 요소마다 CDP 함수 호출(페이지 eval을 쓰지 않아 사이트 CSP와 무관하다)
+    const hs = await (scope ? scope.$$(REGION_SEL) : f.$$(REGION_SEL)).catch(() => []);
+    const out: ElementShape[] = [];
+    for (const [i, h] of hs.entries()) {
+      if (i < max) {
+        const x = await h.evaluate(SHAPE_OF).catch(() => null);
+        if (x) out.push(x);
+      }
+      await h.dispose().catch(() => {});
+    }
+    return out;
+  }
+
+  frameNames(): string[] {
+    return this.page.frames().map((x) => x.name());
   }
 
   async bodyText(): Promise<string> {

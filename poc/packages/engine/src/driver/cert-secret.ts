@@ -26,6 +26,8 @@ export type SecretOutcome = 'done' | 'ttl' | { code: string };
 export const CERT_WAITING = 'human.cert_waiting';
 /** 홈택스 인증서 선택창(DreamSecurity MagicLine4, 2026-11-11 실화면): 다른 출처 iframe. 떠 있으면 금고 창으로 채울 수 없다. */
 export const CERT_FRAME_CSS = 'iframe#dscert[src*="/ML4Web/"]';
+/** 인증서 창(ML4Web) 경고 창의 [확인](실화면 정적 사본 ML4Web_Main·Popup과 가짜가 같은 id). 틀린 비밀번호 안내를 닫는다. */
+export const CERT_ALERT_OK_CSS = '#btn_alert_confirm';
 
 /** main에 알리는 금고 비밀 창 차례(값 없음, "홈택스 창의 칸에 직접 입력" 안내). 사람 직접 입력은 이 이벤트가 아니라 B3 handoff로 보인다. */
 export type SecretTurnEvent =
@@ -42,6 +44,8 @@ export interface CertSecretInput {
     text(): Promise<string>;
     /** 홈택스 인증서 선택창(CERT_FRAME_CSS)이 보이는가. iframe 안은 읽지 않는다. */
     certFrame(): Promise<boolean>;
+    /** 인증서 창의 경고(틀린 비밀번호 안내)를 [확인]으로 닫는다. 없으면 아무것도 하지 않는다. 남은 안내가 다음 입력·[확인]을 가리거나 다시 틀림으로 읽히지 않게. */
+    dismissAlert?(): Promise<void>;
   };
   journal(type: string, payload?: Record<string, string | number | boolean>): void;
   event?(e: SecretTurnEvent): void;
@@ -70,6 +74,8 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
   private confirming: string | null = null;
   /** 이 실행에서 로그인 확인을 이미 알렸다. 그 뒤(발급 서명)의 비밀번호 차례는 다시 재지 않는다: 같은 인증서 비밀번호이고, 서명 뒤 다른 실패로 맞는 기억값을 지우지 않게. */
   private checked = false;
+  /** 틀림을 본 뒤 다시 받은 값이 있다(다음 서명 확인이 통과하면 기억한다). */
+  private signRetried = false;
 
   constructor(i: CertSecretInput) {
     this.i = i;
@@ -152,13 +158,32 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
     await this.i.vault.rpc('typist.authOk', { runId, kind: 'cert_password', scope }).catch(() => {});
   }
 
+  /**
+   * 발급 서명 [확인] 뒤(controller signWrongRetry): 틀린 비밀번호 안내가 보이면 금고에 알리고(기억값 지움) 'wrong',
+   * 아니면 'ok'이고 이번에 대화 카드로 받은 값이 있으면 그때 기억한다(typist.authOk, 받은 값이 없으면 금고가 할 일이 없다).
+   */
+  async afterSignConfirm(r: { runId: string; stepId: string }): Promise<'ok' | 'wrong'> {
+    if (await this.passwordWrong()) {
+      await this.markWrong(r.runId, r.stepId);
+      return 'wrong';
+    }
+    if (this.signRetried) {
+      this.signRetried = false;
+      await this.i.vault.rpc('typist.authOk', { runId: r.runId, kind: 'cert_password', scope: this.i.scope ?? 'business' }).catch(() => {});
+      this.i.journal('human.secret_sign_confirmed', { stepId: r.stepId });
+    }
+    return 'ok';
+  }
+
   /** 틀린 비밀번호를 봤다: 세고, 금고에 알리고(typist.authFailed → 확인 대기 값 버림·기억값 삭제), 이 실행의 로그인 확인을 끝낸다. */
   private async markWrong(runId: string, stepId: string): Promise<void> {
     this.wrong++;
+    this.signRetried = true;
     this.confirming = null;
     this.checked = true;
     this.i.journal('human.secret_password_wrong', { stepId, wrong: this.wrong });
     await this.i.vault.rpc('typist.authFailed', { runId, kind: 'cert_password', scope: this.i.scope ?? 'business' }).catch(() => {});
+    await this.i.page.dismissAlert?.().catch(() => {});
   }
 
   /** 입력 뒤 settleMs 동안 화면에 틀린 비밀번호 안내가 보이는가(포털 패턴 strings cert.passwordWrong, 없으면 내장 모양). */

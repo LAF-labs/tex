@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type Profile } from '@sax/db';
-import type { EventLog } from '@sax/platform';
+import type { DiagValue, EventLog } from '@sax/platform';
+
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
 import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval, type ReadbackKey } from './gate.ts';
@@ -19,6 +20,9 @@ import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
 import { REHEARSAL_DONE, RehearsalReport } from './rehearsal.ts';
+
+/** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
+const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$/;
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -520,7 +524,13 @@ export class RunService extends EventEmitter {
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
         // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
         if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
+        // AI 단계 결과(위치 찾기·폴백·판정·에이전트, 값 없음): 선택자·이름 규칙 글이 ID 꼴이 아니어서 diag 줄로 남긴다(로그 쪽이 다시 거른다).
+        if (payload && AI_LOG.test(type)) {
+          if (this.d.log.diag) this.d.log.diag(type, { runId: a.runId }, payload);
+          else this.d.log.event(type, { runId: a.runId, ...payload });
+        }
       },
+      diag: (code, fields, data) => this.d.log.diag?.(code, { runId: a.runId, playbook: a.playbookId, ...fields }, data as DiagValue),
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
       postGate: (m) => this.gatePort(a, m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
