@@ -1,6 +1,7 @@
 // 대화 의도 e2e(M4-3 ③, intent-route.ts): 입력창 → main → 해석기(엔진 intent.resolve 대역) → 확인 카드(초안)·되묻기·고정 문구.
 // 엔진 판정 결과마다(작업 고름·세무 질문 섞임·세무 상담 거절·모름·아직 대화에서 열지 않는 작업) 화면을 보고, 엔진에 명령이 없을 때 오프라인 정규식으로 가는지 본다.
 // 실행: electron apps/desktop/e2e-dist/shell-intent-e2e.js. 시연 fixture(가짜 홈택스) 위에서 돈다. 실행(발급 준비)은 누르지 않는다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
