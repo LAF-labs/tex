@@ -753,7 +753,8 @@ export class IrRun {
     if (halted && status !== 'success' && status !== 'completed_with_issues' && status !== 'in_doubt') {
       // 걸쇠(차단 신호·누출 의심)가 사유다. 그 뒤에 난 실패(바뀐 화면) 코드보다 앞선다.
       code = halted;
-      status = halted === 'portal.maintenance' ? 'stopped' : halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
+      // 점검은 사람 차례가 아니다(핸드오프 아님). 앱(#363)은 failed·code portal.maintenance·maintenanceUntil을 읽는다.
+      status = halted === 'portal.maintenance' ? 'failed' : halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
     }
     const until = halted === 'portal.maintenance' ? this.enforcer?.maintenanceUntil : null;
     // 정지 하향으로 쉬었거나(Paused → handoff) 확정 뒤 멈췄으면(CompletedWithIssues) 사유는 하향 코드다. InDoubt는 그 코드를 둔다.
