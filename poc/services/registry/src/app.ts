@@ -4,7 +4,7 @@ import type { KeyObject } from 'node:crypto';
 import { canonicalizable } from '@sax/engine/core';
 import { Router, fail, fromB64, json, safeEqual, sha256hex, type Ctx, type Reply } from '@sax/svc-shared';
 import type { LogKind, TransparencyLog } from './log.ts';
-import { RESIGN_TTL, restamp } from './resign.ts';
+import { RESIGN_TTL, restamp, restampRelease } from './resign.ts';
 import type { Store } from './store.ts';
 import {
   CHANNELS,
@@ -271,7 +271,12 @@ export function registryRouter(o: RegistryAppOpts): Router {
     admin(ctx);
     return serial(async () => {
       const channel = channelOf(ctx.params.channel!);
-      const doc = ctx.body as ReleaseManifest;
+      const body = ctx.body as ReleaseManifest;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) fail('registry.schema_invalid');
+      // 사람은 내용(판·파일·주소)에만 서명해 올린다. 기간·타임스탬프가 없으면 여기서 붙이고, 그 뒤 재서명 cron이 이어 붙인다(resign.ts)
+      const stamp = body.timestamp === undefined && o.stamper !== undefined && canonicalizable(body);
+      if (stamp) o.onEvent?.('registry.stamped_on_publish');
+      const doc = stamp ? restampRelease(body, RESIGN_TTL.release, o.now(), o.stamper!) : body;
       const [revoked, stored] = [await revokedSet(), await readJson<ReleaseManifest>(`releases/${channel}/latest.json`)];
       checked((v) => verifyRelease(doc, channel, o.trust, revoked, stored, o.now(), v));
       // yml을 먼저 쓰고 json을 마지막에 쓴다: json이 "게시됨"의 기준이라, 중간에 실패하면 같은 버전으로 다시 올릴 수 있다
