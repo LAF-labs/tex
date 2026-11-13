@@ -131,11 +131,13 @@ CREATE TABLE irreversible_log (              -- 아이덴포턴시 원장 (D03 �
   cp_biz_no_hmac TEXT,                       -- 공급받는자 사업자번호 HMAC(ledgerHmacKey = 엔진이 DB 키에서 HKDF로 파생). 처음 거래 판정은 state='committed' 행만 센다(ADR-021)
   recipient_email_hmac TEXT,                 -- 받는 이메일 HMAC(같은 키, 소문자 + 도메인 punycode로 정규화). 처음 보내는 주소 판정(ADR-021)
   attempt INTEGER NOT NULL CHECK(attempt >= 1),  -- 같은 (intent_id, step_id)의 시도 번호(ADR-042). 앞선 시도가 모두 not_committed일 때만 다음 번호(재게이트)
+  issue_key TEXT,                            -- 발급 키(D03 §4.2 발급 사다리). 사장님이 초안을 확정할 때 한 번 만든 ULID. 발급 단계 행(H-01 s21, API api.issue)에만, 후속 단계는 NULL
   PRIMARY KEY(intent_id, step_id, attempt)
 );
 CREATE INDEX ix_irr_business ON irreversible_log(business_key, state);
 CREATE INDEX ix_irr_run ON irreversible_log(run_id);
 CREATE UNIQUE INDEX ux_irr_live ON irreversible_log(intent_id, step_id) WHERE state <> 'not_committed';  -- (intent, step)마다 열린·committed 행은 하나(ADR-042)
+CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';  -- 발급 키마다 열린·committed 행은 경로와 무관하게 하나(D03 §4.2, v10)
 
 CREATE TABLE gate_requests (                 -- 게이트 요청 단일 사용·결정 주체 기록 (B-10·B-33)
   req_id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id),

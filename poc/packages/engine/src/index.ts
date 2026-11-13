@@ -30,6 +30,7 @@ export * from './driver/index.ts';
 export * from './run/index.ts';
 export * from './gateway-auth.ts';
 export * from './run-history.ts';
+export * from './issue/index.ts';
 export { autoOf, candidatesFor, FEE_TOLERANCE, nameSignals, runMatch, type AmountFit, type AutoMatch, type Candidate, type MatchCounterparty, type MatchInput, type MatchReceivable, type MatchResult, type MatchTxn, type NameSignal } from './bank/match.ts';
 export { BankError, BankService, DEFAULT_TERMS, dueDate, rowKeys, sourceRowsToInput, STALE_DAYS, type BankSummary, type ReceivableStatus, type ReceivableView, type RefreshJob, type TxnView } from './bank/service.ts';
 export { SourceError, type SourceAccount, type SourceFetchResult, type SourceLinkState, type SourceProgress, type SourceRange, type SourceRow, type TxnSource, type TxnSourceKind } from './bank/source.ts';
