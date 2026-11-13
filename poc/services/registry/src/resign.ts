@@ -1,5 +1,6 @@
 // 타임스탬프 자동 재서명(정리 cron, 팀장 결정 2026-11-06, D09 §8.2 "타임스탬프 역할 = 온라인 키").
-// - 대상: 폐기 목록(24시간), status(48시간), 정책 current·{ver}(48시간), 채널 인덱스(48시간, ADR-043), 투명성 로그 트리 헤드.
+// - 대상: 폐기 목록(24시간), status(48시간), 정책 current·{ver}(48시간), 채널 인덱스(48시간, ADR-043), 채널 릴리스 매니페스트(7일), 투명성 로그 트리 헤드.
+//   릴리스는 판·파일·주소를 사람(release 키)이 서명하고 기간만 서버가 붙인다(부장 결정 2026-11-13: 13일마다 Touch ID를 받지 않는다).
 // - 내용은 바꾸지 않는다. 바뀌는 것은 신선도 필드(issuedAt·expiresAt·timestamp)뿐이다. 내용 서명(루트·정책·긴급·패키지 키)은 신선도 필드를
 //   서명 바이트에서 빼므로 그대로 유효하다(SIGNING.md §2·§4). 내용이 바뀌는 서명은 사람이 서명 의식(#149)으로 한다.
 // - 서명 입력은 엔진 timestampBody(JCS({contentDigest, monotonic, issuedAt, expiresAt}))이고, 게시 전에 게시 관문과 같은 검증
@@ -11,12 +12,28 @@ import { timestampBody } from '@sax/engine/core';
 import { sha256hex } from '@sax/svc-shared';
 import type { LogKind, TransparencyLog } from './log.ts';
 import type { Store } from './store.ts';
-import { CHANNELS, contentDigest, verifyIndex, verifyPolicy, verifyRevoked, verifyStatus, type Channel, type RegistryIndex, type RegistryStatus, type RevokedKeys, type SignedPolicy, type TrustRoot } from './verify.ts';
+import {
+  CHANNELS,
+  contentDigest,
+  releaseStampContent,
+  verifyIndex,
+  verifyPolicy,
+  verifyRelease,
+  verifyRevoked,
+  verifyStatus,
+  type Channel,
+  type RegistryIndex,
+  type RegistryStatus,
+  type ReleaseManifest,
+  type RevokedKeys,
+  type SignedPolicy,
+  type TrustRoot,
+} from './verify.ts';
 
 const H = 3600_000;
 
 /** 재서명 뒤 유효 기간(팀장 결정: 폐기 목록 24시간, status·정책 48시간, 인덱스 48시간 ADR-043). 남은 기간이 절반 아래로 떨어지면 다시 서명한다 */
-export const RESIGN_TTL = { revoked_keys: 24 * H, status: 48 * H, policy: 48 * H, index: 48 * H } as const;
+export const RESIGN_TTL = { revoked_keys: 24 * H, status: 48 * H, policy: 48 * H, index: 48 * H, release: 7 * 24 * H } as const;
 /** 헤드 timestamp가 이보다 오래되면 같은 트리에 다시 서명한다(cron 매시) */
 export const HEAD_MAX_AGE_MS = 30 * 60_000;
 
@@ -27,6 +44,8 @@ export interface ResignReport {
   policy: ResignOutcome;
   /** 채널마다(ADR-043). 인덱스가 없는 채널은 missing */
   index: Record<Channel, ResignOutcome>;
+  /** 채널 릴리스 매니페스트마다. 게시한 판이 없는 채널은 missing */
+  release: Record<Channel, ResignOutcome>;
   head: 'resigned' | 'fresh';
 }
 
@@ -51,6 +70,12 @@ export function restamp<T extends Freshness>(doc: T, ttlMs: number, now: number,
   const digest = contentDigest(doc);
   const sig = sign(null, timestampBody(digest, { monotonic: doc.monotonic, issuedAt, expiresAt }), signer.key).toString('base64url');
   return { ...doc, issuedAt, expiresAt, timestamp: { keyId: signer.keyId, alg: 'ed25519', sig } };
+}
+
+/** 릴리스: 같은 내용(판·파일·주소·사람 서명)에 새 issuedAt·expiresAt·timestamp(releaseStampContent) */
+export function restampRelease(doc: ReleaseManifest, ttlMs: number, now: number, signer: ResignDeps['signer']): ReleaseManifest {
+  const fresh = { ...doc, issuedAt: iso(now), expiresAt: iso(now + ttlMs) };
+  return { ...fresh, timestamp: { keyId: signer.keyId, alg: 'ed25519', sig: sign(null, releaseStampContent(fresh), signer.key).toString('base64url') } };
 }
 
 const parse = <T>(b: Buffer | null): T | null => {
@@ -155,7 +180,21 @@ export async function resignAll(d: ResignDeps): Promise<ResignReport> {
     });
   }
 
+  const release = {} as Record<Channel, ResignOutcome>;
+  for (const channel of CHANNELS) {
+    release[channel] = await one('release', async () => {
+      const key = `releases/${channel}/latest.json`;
+      const before = await d.store.get(key);
+      const cur = parse<ReleaseManifest>(before);
+      if (!cur || !before) return 'missing';
+      if (!due(cur as unknown as Freshness, RESIGN_TTL.release)) return 'fresh';
+      const next = restampRelease(cur, RESIGN_TTL.release, now, d.signer);
+      verifyRelease(next, channel, d.trust, await revokedSet(), cur, now);
+      return publish('release', [{ key, before }], next);
+    });
+  }
+
   const head = (await d.log.refreshHead(HEAD_MAX_AGE_MS)) ? 'resigned' : 'fresh';
   if (head === 'resigned') d.onEvent?.('registry.resigned_head');
-  return { revoked_keys, status, policy, index, head };
+  return { revoked_keys, status, policy, index, release, head };
 }

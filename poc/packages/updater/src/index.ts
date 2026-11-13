@@ -21,6 +21,7 @@ export {
   countQuorum,
   filesDigest,
   releaseContent,
+  releaseStampContent,
   rootChangeContent,
   verifyRelease,
   type Revocation,

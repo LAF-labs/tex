@@ -42,7 +42,9 @@ import {
   leafHashOf,
   logSigningKey,
   parseTrustRoot,
+  RESIGN_TTL,
   registryRouter,
+  resignAll,
   rolloutBucket,
   rootOf,
   startRegistry,
@@ -90,6 +92,13 @@ function sampleTrust(): { ring: Ring; trust: TrustRoot } {
 const sigOf = (content: unknown, k: Key): Sig => ({ keyId: k.keyId, alg: 'ed25519', sig: sign(null, Buffer.from(jcs(content)), k.priv).toString('base64url') });
 const iso = (ms: number) => new Date(ms).toISOString().replace('.000Z', 'Z');
 const FRESH = ['signatures', 'issuedAt', 'expiresAt', 'timestamp'];
+/** 릴리스 기간 도장(게시 관문·재서명 cron과 같은 내용): 타임스탬프 키가 {contentDigest(매니페스트 − 서명·기간), issuedAt, expiresAt}에 */
+function stampRelease<T extends object>(m: T, at: number, ttl: number, k: Key): T & { issuedAt: string; expiresAt: string; timestamp: Sig } {
+  const issuedAt = iso(at);
+  const expiresAt = iso(at + ttl);
+  const contentDigest = sha256Hex(Buffer.from(jcs(without(m as Record<string, unknown>, ['signature', 'issuedAt', 'expiresAt', 'timestamp']))));
+  return { ...m, issuedAt, expiresAt, timestamp: sigOf({ contentDigest, issuedAt, expiresAt }, k) };
+}
 
 interface Env {
   clock: Clock;
@@ -109,7 +118,7 @@ interface Env {
 /** 투명성 로그 헤드 서명 키 = 샘플 타임스탬프 역할 키(시드 0x51, registry-samples.ts) */
 const TS_SEED = '51'.repeat(32);
 
-async function start(o: { store?: Store; db?: Sql } = {}): Promise<Env> {
+async function start(o: { store?: Store; db?: Sql; stamper?: boolean } = {}): Promise<Env> {
   const clock = new Clock(SAMPLE_NOW);
   const { ring, trust } = sampleTrust();
   const store = (o.store ?? new MemoryStore()) as MemoryStore;
@@ -117,7 +126,7 @@ async function start(o: { store?: Store; db?: Sql } = {}): Promise<Env> {
   const events: string[] = [];
   const db = o.db ?? openSqlite();
   const log = await TransparencyLog.open({ db, signer: logSigningKey(TS_SEED, trust), now: clock.now });
-  const server = createServer(registryRouter({ store, trust, adminToken: 'admin-test-token', now: clock.now, onEvent: (x) => events.push(x), log }), { logger: new Logger('registry', (l) => logs.push(l), clock.now) });
+  const server = createServer(registryRouter({ store, trust, adminToken: 'admin-test-token', now: clock.now, onEvent: (x) => events.push(x), log, ...(o.stamper ? { stamper: logSigningKey(TS_SEED, trust) } : {}) }), { logger: new Logger('registry', (l) => logs.push(l), clock.now) });
   const req = client(await listen(server));
   const put = (p: string, body: unknown) => req('PUT', p, { headers: { authorization: 'Admin admin-test-token' }, body });
   return { clock, ring, trust, store, server, req, logs, events, log, db, put, stage: (file, bytes) => put(`/admin/v1/packages/${file}`, { data: (bytes ?? sample(`packages/${file}`)).toString('base64') }) };
@@ -544,8 +553,8 @@ describe('M4-7 레지스트리: 앱 업데이트 경로(latest.json 서명 → l
   const sha512 = () => createHash('sha512').update(randomBytes(32)).digest('base64');
   const release = (e: Env, version: string, o: { ttl?: number; role?: Role; files?: unknown[] } = {}) => {
     const now = e.clock.now();
-    const doc = { channel: 'stable', version, releaseDate: iso(now), expiresAt: iso(now + (o.ttl ?? 7 * D)), rolloutPercent: 10, files: o.files ?? [{ url: `tex-Setup-${version}.exe`, sha512: sha512(), size: 123_456 }] };
-    return { ...doc, signature: sigOf(doc, e.ring[o.role ?? 'release'][0]!) };
+    const doc = { channel: 'stable', version, releaseDate: iso(now), rolloutPercent: 10, files: o.files ?? [{ url: `tex-Setup-${version}.exe`, sha512: sha512(), size: 123_456 }] };
+    return stampRelease({ ...doc, signature: sigOf(doc, e.ring[o.role ?? 'release'][0]!) }, now, o.ttl ?? 7 * D, e.ring.timestamp[0]!);
   };
 
   it('릴리스 키 서명·만료 ≤ 14일·다운그레이드 금지, latest.yml은 검증된 매니페스트에서만 만든다', async () => {
@@ -567,9 +576,9 @@ describe('M4-7 레지스트리: 앱 업데이트 경로(latest.json 서명 → l
     const now = e.clock.now();
     const files = [{ url: 'tex-Setup-1.4.0.exe', sha512: sha512(), size: 123_456 }];
     const rooted = (rc: { keyEpoch: number; changes: string[] }, roots: number[] = [0, 1], version = '1.4.0', f = files) => {
-      const base = { channel: 'stable', version, releaseDate: iso(now), expiresAt: iso(now + 7 * D), rolloutPercent: 10, files: f };
+      const base = { channel: 'stable', version, releaseDate: iso(now), rolloutPercent: 10, files: f };
       const doc = { ...base, rootChange: { ...rc, signatures: roots.map((i) => sigOf({ ...base, rootChange: rc }, e.ring.root[i]!)) } };
-      return { ...doc, signature: sigOf(doc, e.ring.release[0]!) };
+      return stampRelease({ ...doc, signature: sigOf(doc, e.ring.release[0]!) }, now, 7 * D, e.ring.timestamp[0]!);
     };
     const put = (doc: unknown) => e.put('/admin/v1/releases/stable', doc);
     assert.equal((await put(rooted({ keyEpoch: 1, changes: ['allowlist'] }, [0]))).json.error, 'registry.signature_insufficient');
@@ -589,6 +598,31 @@ describe('M4-7 레지스트리: 앱 업데이트 경로(latest.json 서명 → l
     assert.equal((await put(release(e, '1.4.0', { files }))).status, 200);
     assert.equal((await put(release(e, '1.4.0'))).json.error, 'registry.version_rollback');
   });
+
+  it('사람은 내용(판·파일·Blob 주소)에만 서명해 올리고 기간은 서버가 붙인다, cron은 기간만 다시 붙인다(부장 결정 2026-11-13)', async () => {
+    const s = await start({ stamper: true });
+    try {
+      const now = s.clock.now();
+      const url = 'https://abc123.public.blob.vercel-storage.com/releases/stable/SovereignAX-1.5.0-arm64.zip';
+      const doc = { channel: 'stable', version: '1.5.0', releaseDate: iso(now), rolloutPercent: 100, files: [{ url, sha512: sha512(), size: 123_456 }] };
+      assert.equal((await s.put('/admin/v1/releases/stable', { ...doc, signature: sigOf(doc, s.ring.release[0]!) })).status, 200);
+      assert.ok(s.events.includes('registry.stamped_on_publish'));
+      const pub = (await s.req('GET', '/releases/stable/latest.json')).json as Record<string, unknown>;
+      assert.equal(Date.parse(pub.expiresAt as string) - Date.parse(pub.issuedAt as string), RESIGN_TTL.release);
+      const rv = { keyIds: new Set<string>(), fresh: true };
+      assert.equal(updaterVerify({ doc: pub, channel: 'stable', trust: s.trust, revocation: rv, highestSeen: null, now }).manifest.files[0]!.url, url);
+      const later = now + 4 * D;
+      const rr = await resignAll({ store: s.store, trust: s.trust, log: s.log, signer: logSigningKey(TS_SEED, s.trust), now: () => later });
+      assert.equal(rr.release.stable, 'resigned');
+      const re = (await s.req('GET', '/releases/stable/latest.json')).json as Record<string, unknown>;
+      assert.deepEqual(re.signature, pub.signature, '사람 서명은 그대로');
+      assert.equal(re.issuedAt, iso(later));
+      assert.ok(updaterVerify({ doc: re, channel: 'stable', trust: s.trust, revocation: rv, highestSeen: null, now: later }));
+      assert.equal((await s.put('/admin/v1/releases/stable', { ...re, expiresAt: iso(later + 8 * D) })).json.error, 'registry.timestamp_invalid');
+    } finally {
+      s.server.close();
+    }
+  });
 });
 
 describe('M4-7 레지스트리: 게시 원자성·재시도', () => {
@@ -598,8 +632,8 @@ describe('M4-7 레지스트리: 게시 원자성·재시도', () => {
     const flaky: Store = { get: (k) => inner.get(k), put: async (k, b) => (k.endsWith('latest.json') && failJson-- > 0 ? Promise.reject(new Error('disk')) : inner.put(k, b)) };
     const e = await start({ store: flaky });
     const now = e.clock.now();
-    const doc = { channel: 'stable', version: '2.0.0', releaseDate: iso(now), expiresAt: iso(now + D), rolloutPercent: 1, files: [{ url: 'tex-Setup-2.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 9 }] };
-    const r = { ...doc, signature: sigOf(doc, e.ring.release[0]!) };
+    const doc = { channel: 'stable', version: '2.0.0', releaseDate: iso(now), rolloutPercent: 1, files: [{ url: 'tex-Setup-2.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 9 }] };
+    const r = stampRelease({ ...doc, signature: sigOf(doc, e.ring.release[0]!) }, now, D, e.ring.timestamp[0]!);
     assert.equal((await e.put('/admin/v1/releases/stable', r)).status, 500);
     assert.equal((await e.req('GET', '/releases/stable/latest.json')).status, 404);
     assert.equal((await e.put('/admin/v1/releases/stable', r)).status, 200);

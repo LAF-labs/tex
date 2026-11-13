@@ -51,7 +51,7 @@ const now = Date.now();
 const d = decideUpdate({ doc, channel, trust: reg.trust, revocation: reg.revocation, installedVersion: a.installed!, state: INITIAL_STATE, deviceId: 'check-update-feed', transparency, now });
 const left = (Date.parse(doc.expiresAt) - now) / 864e5;
 line('판', `${doc.version} (${channel}, rollout ${doc.rolloutPercent}%)`);
-line('기간', `${doc.releaseDate} ~ ${doc.expiresAt} (남은 ${left.toFixed(1)}일${left < 3 ? ', 곧 만료: publish-update.sh --refresh' : ''})`);
+line('기간', `서명 ${doc.releaseDate}, 서버 도장 ${doc.issuedAt} ~ ${doc.expiresAt} (남은 ${left.toFixed(1)}일${left < 3 ? ', 재서명 cron(api/registry-cron)을 확인' : ''})`);
 line('서명', `${doc.signature?.keyId ?? '-'}, 폐기 목록 ${reg.revocation.fresh ? '신선' : '낡음'}`);
 line('투명성', transparency);
 line('판정', d.action === 'hold' ? `보류 ${d.code}${d.security ? ' (보안 이벤트)' : ''}` : d.action === 'none' ? `받을 것 없음 ${d.reason}` : `받음 ${d.file.url}`);
@@ -62,10 +62,10 @@ if (a.expect && doc.version !== a.expect) {
 }
 
 for (const f of doc.files) {
-  const url = `${ORIGIN}/releases/${channel}/${f.url}`;
+  const url = new URL(f.url, `${ORIGIN}/releases/${channel}/`).href;
   const head = await fetch(url, { method: 'HEAD', redirect: 'error' }).catch(() => null);
   const size = Number(head?.headers.get('content-length') ?? NaN);
-  line('파일', `${f.url} ${head?.status ?? '연결 실패'} ${Number.isFinite(size) ? `${size}B` : '크기 없음'}${size === f.size ? '' : ` (매니페스트 ${f.size}B)`}`);
+  line('파일', `${url} ${head?.status ?? '연결 실패'} ${Number.isFinite(size) ? `${size}B` : '크기 없음'}${size === f.size ? '' : ` (매니페스트 ${f.size}B)`}`);
   if (head?.status !== 200 || size !== f.size) ok = false;
   if (a.download && head?.status === 200) {
     const t = Date.now();

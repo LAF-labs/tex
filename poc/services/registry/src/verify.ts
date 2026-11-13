@@ -435,13 +435,18 @@ export const inRollout = (e: Pick<IndexEntry, 'id' | 'rolloutPercent'>, deviceId
 export interface ReleaseManifest {
   channel: Channel;
   version: string;
+  /** 사람이 서명한 시각(내용) */
   releaseDate: string;
-  expiresAt: string;
   rolloutPercent: number;
+  /** url: 파일 이름(/releases/{channel}/ 아래) 또는 https 절대 주소(Vercel Blob 공개 주소) */
   files: Array<{ url: string; sha512: string; size: number }>;
   signature: Sig;
   /** 뿌리 변경 릴리스(ADR-028 결정 3, @sax/updater #76 제안): 루트 2-of-3 서명 */
   rootChange?: RootChange;
+  /** 신선도(내용 서명 밖, 인덱스 ADR-043과 같은 구조): 게시 관문이 붙이고 재서명 cron이 기간만 다시 붙인다 */
+  issuedAt: string;
+  expiresAt: string;
+  timestamp: Sig;
 }
 
 export const ROOT_CHANGES = ['keyEpoch', 'allowlist', 'ceiling'] as const;
@@ -452,12 +457,22 @@ export interface RootChange {
   signatures: Sig[];
 }
 
-const RELEASE_KEYS = new Set(['channel', 'version', 'releaseDate', 'expiresAt', 'rolloutPercent', 'files', 'signature', 'rootChange']);
+const RELEASE_KEYS = new Set(['channel', 'version', 'releaseDate', 'rolloutPercent', 'files', 'signature', 'rootChange', 'issuedAt', 'expiresAt', 'timestamp']);
+/** 릴리스 키·루트 키 서명 바이트에서 빼는 칸(@sax/updater RELEASE_FRESHNESS와 같다) */
+const RELEASE_FRESHNESS = ['signature', 'issuedAt', 'expiresAt', 'timestamp'];
+const FILE_NAME_RE = /^[A-Za-z0-9._-]{1,128}$/;
+const FILE_ABS_URL_RE = /^https:\/\/[a-z0-9-]{1,63}(\.[a-z0-9-]{1,63}){1,8}(\/[A-Za-z0-9._~-]{1,128}){1,8}$/;
+const fileUrlOk = (u: unknown): boolean => typeof u === 'string' && ((FILE_NAME_RE.test(u) && !u.startsWith('.')) || (u.length <= 512 && FILE_ABS_URL_RE.test(u)));
+
+/** 타임스탬프 키가 서명하는 내용: {contentDigest = sha256 hex(JCS(매니페스트 − 서명·신선도)), issuedAt, expiresAt}(@sax/updater releaseStampContent와 같다) */
+export function releaseStampContent(m: ReleaseManifest): Buffer {
+  return Buffer.from(canonicalJson({ contentDigest: sha256Hex(canonicalWithout(m, RELEASE_FRESHNESS)), issuedAt: m.issuedAt, expiresAt: m.expiresAt }), 'utf8');
+}
 const ROOT_CHANGE_KEYS = new Set(['keyEpoch', 'changes', 'signatures']);
 
 /** 루트 키가 서명하는 내용: JCS(매니페스트 − signature, rootChange − signatures). 릴리스 키는 루트 서명까지 포함한 매니페스트 − signature에 서명한다(@sax/updater rootChangeContent와 같다) */
 export function rootChangeContent(m: ReleaseManifest): Buffer {
-  const rest = without(m as unknown as Record<string, unknown>, ['signature', 'rootChange']);
+  const rest = without(m as unknown as Record<string, unknown>, [...RELEASE_FRESHNESS, 'rootChange']);
   return Buffer.from(canonicalJson(m.rootChange ? { ...rest, rootChange: without(m.rootChange as unknown as Record<string, unknown>, ['signatures']) } : rest), 'utf8');
 }
 
@@ -486,21 +501,30 @@ export const semverGt = (a: string, b: string): boolean => {
 };
 
 /**
- * 릴리스 매니페스트: CI 밖 하드웨어 1인 키(release) 서명, 만료 ≤ 14일, 다운그레이드 금지(저장값보다 큰 version만).
- * 클라이언트 main은 이 검증과 투명성 로그·미러 확인 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
+ * 릴리스 매니페스트: CI 밖 하드웨어 1인 키(release)가 내용(판·파일·해시·주소)에 서명, 타임스탬프 키가 기간(≤ 14일)에 서명,
+ * 다운그레이드 금지(저장값보다 큰 version만). opts.content는 서버 도장 전 초안(서명 의식 check)이라 내용 서명만 본다.
+ * 클라이언트 main은 이 검증과 투명성 로그 확인 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
  */
-export function verifyRelease(doc: ReleaseManifest, channel: Channel, trust: TrustRoot, revoked: ReadonlySet<string>, stored: ReleaseManifest | null, now: number, v: Verdict = { events: [] }): Verdict {
+export function verifyRelease(doc: ReleaseManifest, channel: Channel, trust: TrustRoot, revoked: ReadonlySet<string>, stored: ReleaseManifest | null, now: number, v: Verdict = { events: [] }, opts: { content?: boolean } = {}): Verdict {
   if (!doc || typeof doc !== 'object' || Object.keys(doc).some((k) => !RELEASE_KEYS.has(k)) || doc.channel !== channel || !Array.isArray(doc.files) || doc.files.length < 1 || doc.files.length > 8 || !canonicalizable(doc)) fail('registry.schema_invalid');
   for (const f of doc.files) {
-    if (!f || !/^[A-Za-z0-9._-]{1,128}$/.test(f.url) || !/^[A-Za-z0-9+/]{86}==$/.test(f.sha512) || !Number.isSafeInteger(f.size) || f.size < 1) fail('registry.schema_invalid');
+    if (!f || !fileUrlOk(f.url) || !/^[A-Za-z0-9+/]{86}==$/.test(f.sha512) || !Number.isSafeInteger(f.size) || f.size < 1) fail('registry.schema_invalid');
   }
+  if (new Set(doc.files.map((f) => f.url)).size !== doc.files.length) fail('registry.schema_invalid');
   if (!Number.isInteger(doc.rolloutPercent) || doc.rolloutPercent < 0 || doc.rolloutPercent > 100) fail('registry.schema_invalid');
   semver(doc.version);
-  quorum(canonicalWithout(doc, ['signature']), [doc.signature], 'release', trust, revoked, 1, v);
+  quorum(canonicalWithout(doc, RELEASE_FRESHNESS), [doc.signature], 'release', trust, revoked, 1, v);
   if (doc.rootChange !== undefined) verifyRootChange(doc, trust, revoked, v);
   // 같은 버전은 신선도 재발행(파일 목록이 같을 때만, @sax/updater와 같은 규칙), 낮은 버전은 롤백
   if (stored && !semverGt(doc.version, stored.version) && !(doc.version === stored.version && canonicalJson(doc.files) === canonicalJson(stored.files))) fail('registry.version_rollback');
-  checkWindow(doc.releaseDate, doc.expiresAt, LIMITS.releaseMaxValidityMs, now, REGISTRY_WINDOW('registry.release_validity_too_long'));
+  const signedAt = typeof doc.releaseDate === 'string' ? Date.parse(doc.releaseDate) : NaN;
+  if (!Number.isFinite(signedAt)) fail('registry.schema_invalid');
+  if (signedAt > now + LIMITS.futureSkewMs) fail('registry.issued_in_future');
+  if (!opts.content) {
+    const ts = doc.timestamp;
+    if (!ts || typeof ts !== 'object' || ts.alg !== 'ed25519' || revoked.has(ts.keyId) || countSignatures(releaseStampContent(doc), [ts], 'timestamp', trust, new Set()).valid.length !== 1) fail('registry.timestamp_invalid');
+    checkWindow(doc.issuedAt, doc.expiresAt, LIMITS.releaseMaxValidityMs, now, REGISTRY_WINDOW('registry.release_validity_too_long'));
+  }
   return v;
 }
 

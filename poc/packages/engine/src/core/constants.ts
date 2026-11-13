@@ -78,3 +78,8 @@ export function denyKey(s: string): string {
 }
 
 export const isDenyActionName = (name: string): boolean => DENY_ACTION_NAME.test(denyKey(name));
+
+/** 진단 로그의 화면 글 가림(core/diagnose.ts·locate.result): 숫자는 모두 #(금액·번호), 이메일은 [EMAIL], 80자. */
+export function maskScreenText(s: string): string {
+  return s.replace(/[^\s@]+@[^\s@]+/g, '[EMAIL]').replace(/\d+/g, '#').slice(0, 80);
+}

@@ -6,17 +6,18 @@
 
 ## 검증 규칙(`verifyRelease`)
 
-순서: 모양 → 폐기 목록 신선도 → 채널 → 서명 → 시각 → 단조 버전. 하나라도 실패하면 던진다(fail-closed).
+순서: 모양 → 폐기 목록 신선도 → 채널 → 서명 → 서버 타임스탬프 → 시각 → 단조 버전. 하나라도 실패하면 던진다(fail-closed).
 
 | 규칙 | 실패 코드 |
 |---|---|
-| 모양: 알려진 필드만, `version` = `x.y.z`, 파일 1~8개(`url` 파일 이름만·중복 없음, sha512 base64 88자, 1B~1GiB), `rolloutPercent` 0~100, 시각 ISO UTC | `update.manifest_invalid` |
+| 모양: 알려진 필드만, `version` = `x.y.z`, 파일 1~8개(`url` 파일 이름 또는 https 절대 주소·중복 없음, sha512 base64 88자, 1B~1GiB), `rolloutPercent` 0~100, 시각 ISO UTC | `update.manifest_invalid` |
 | 엔진이 받아 둔 폐기 목록이 24시간 안이다(D09 §8.4: 새 로드 보류) | `registry.revocation_stale` |
 | 매니페스트 `channel` = 구독 채널 | `update.channel_mismatch` |
-| 릴리스 키 1개(핀 `release` 역할) 서명, 내용 = 매니페스트 − `signature` | `registry.signature_insufficient` / `registry.key_revoked` |
-| 뿌리 변경 릴리스(`rootChange` 있음)는 루트 2-of-3, 내용 = 매니페스트 − `signature`, `rootChange` − `signatures`. `keyEpoch` 변경이면 새 세대 > 지금, 아니면 = 지금 | `update.root_change_unsigned` / `registry.key_revoked` |
-| `releaseDate` ≤ 지금 + 5분 | `registry.issued_in_future` |
-| `expiresAt` − `releaseDate` ≤ 14일, `expiresAt` > `releaseDate` | `update.validity_too_long` |
+| 릴리스 키 1개(핀 `release` 역할) 서명, 내용 = 매니페스트 − `signature`·`issuedAt`·`expiresAt`·`timestamp` | `registry.signature_insufficient` / `registry.key_revoked` |
+| 뿌리 변경 릴리스(`rootChange` 있음)는 루트 2-of-3, 내용 = 매니페스트 − 서명·기간 칸, `rootChange` − `signatures`. `keyEpoch` 변경이면 새 세대 > 지금, 아니면 = 지금 | `update.root_change_unsigned` / `registry.key_revoked` |
+| 서버 타임스탬프: 핀 `timestamp` 키(폐기 안 됨) 1개가 JCS({contentDigest = sha256 hex(내용), issuedAt, expiresAt})에 서명 | `registry.timestamp_invalid`(보안 이벤트) |
+| `releaseDate`·`issuedAt` ≤ 지금 + 5분 | `registry.issued_in_future` |
+| `expiresAt` − `issuedAt` ≤ 14일, `expiresAt` > `issuedAt` | `update.validity_too_long` |
 | `expiresAt` > 지금 | `registry.expired` |
 | 이 채널에서 본 최고 버전보다 낮지 않다. 같은 버전이면 파일 목록 다이제스트가 같다(신선도 재발행만) | `registry.version_rollback` |
 
