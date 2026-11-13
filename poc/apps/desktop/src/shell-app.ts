@@ -372,7 +372,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const securityNow = opts.security ? () => opts.security!.status() : () => securityStatus();
   /** 공동인증서로 발급하는 사업자인데 MagicLine4NX가 없거나 꺼져 있다(홈택스가 설치 안내로 멈출 자리, B4). */
   const securityMissing = () => profile === 'business' && profiles().business.auth === SIGN_LABEL.cert && securityBlocks(securityNow());
-  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady, log: (n, d) => log.event(n, d) });
+  // prepare: 점검 끝 자동 재시작도 [홈택스에서 준비]와 같은 상한·레지스트리 재조회를 거친다(prepareNow는 아래에서 정의, 부를 때 읽는다)
+  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady, log: (n, d) => log.event(n, d), prepare: (id: string): Promise<unknown> => prepareNow(id) });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
   const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), (params, engine) => importPdf(params, engine, win));

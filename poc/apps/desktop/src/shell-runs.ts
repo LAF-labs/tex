@@ -76,7 +76,8 @@ type EngineEvent =
   | { runId: string; type: 'regate'; reason: RegateReason }
   | { runId: string; type: 'handoff'; phase: Phase; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
-  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }
+  /** maintenanceUntil(until): portal.maintenance의 점검 끝 시각(ISO 또는 KST 'HH:MM'). 모르면 없다. */
+  | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; maintenanceUntil?: string; until?: string }
   /** 금고 비밀 창 차례(엔진 SecretTurnEvent, 값 없음). 실행은 끝나지 않았다: 앱 비밀번호 창이 뜬다. */
   | { runId: string; type: 'secret'; state: 'open' | 'closed'; stepId?: string; why?: string }
   /** 포털 대화상자 문구(엔진 wait for:'dialog'). key는 패키지 strings 키, ok는 기대 문구와 맞음. 화면에 글로만 보인다. */
@@ -162,6 +163,8 @@ export const NOTE: Record<string, string> = {
   'policy.cooldown': '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.',
   'portal.mfa_pending': '홈택스가 추가 인증을 요구해 멈췄어요. 아무것도 발급하지 않았어요. 홈택스에서 직접 인증한 뒤 다시 준비해 주세요.',
   'portal.extra_auth_repeat': '홈택스 추가 인증이 반복돼 앱이 스스로 멈췄어요(차단 신호는 아니에요). 홈택스에서 직접 인증을 마친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
+  // 홈택스 시스템 점검(h01 엔진 portal.maintenance). 끝 시각을 알면 end()가 maintenanceNote로 바꾼다.
+  'portal.maintenance': '홈택스가 점검 중이에요. 점검이 끝나면 [다시 시작]을 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.captcha': '홈택스가 문자 입력(자동입력방지)을 요구했어요. 홈택스 창에서 직접 입력한 뒤 [다시 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.',
   'portal.busy': '홈택스 접속 대기열이 떠서 멈췄어요. 아무것도 발급하지 않았어요. 혼잡이 풀린 뒤 다시 준비해 주세요.',
   'policy.runs_per_day': '오늘 홈택스 실행 횟수 상한에 닿아 시작하지 않았어요.',
@@ -266,6 +269,11 @@ export function fatalText(code: string): string | null {
 /** 포털 대화상자 확인 줄의 앞말(패키지 strings 키 → 사용자 말). 모르는 키는 '홈택스 안내'. */
 const NOTICE_LABEL: Record<string, string> = { 'counterpart.bizNoOk': '사업자번호 확인' };
 const cleanNotice = (s: string) => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+/** 점검 정지 카드 글(팝업 아님). */
+const maintenanceNote = (hm: string) => `홈택스가 점검 중이에요(~${hm}). 끝나면 자동으로 다시 할게요. 아무것도 발급하지 않았어요.`;
+const MAINTENANCE_UNKNOWN_NOTE = NOTE['portal.maintenance']!;
+const MAINTENANCE_RESTARTED_NOTE = '홈택스 점검이 끝나 같은 내용으로 다시 시작했어요.';
+const MAINTENANCE_RESTART_FAILED_NOTE = '홈택스 점검이 끝났지만 바로 시작하지 못했어요. [홈택스에서 준비]를 눌러 주세요.';
 const portalNoticeText = (s: string) => `홈택스 안내: “${s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').trim().slice(0, 200)}”`;
 
 /**
@@ -312,7 +320,38 @@ export interface ShellRunsSource {
   chromeReady?(): boolean;
   /** 실행이 끝난 상태·코드(화면에는 코드를 보이지 않는다). 값·거래처는 넣지 않는다. */
   log?(name: string, data: Record<string, string>): void;
+  /** 점검 끝 자동 재시작이 새 초안을 시작하는 길([홈택스에서 준비]와 같은 상한·레지스트리 재조회). 없으면 prepare 그대로(시험). */
+  prepare?(id: string): Promise<unknown>;
 }
+
+/** 홈택스 시스템 점검 정지(엔진 portal.maintenance, H-01 2026-11-14 실화면 00:00~06:00). 사람 차례로 넘기지 않는다. */
+export const MAINTENANCE_CODE = 'portal.maintenance';
+/** 끝 시각 뒤 이만큼 더 기다렸다가 다시 시작한다(점검 해제 직후 화면이 늦게 바뀐다). */
+const MAINTENANCE_GRACE_MS = 2 * 60_000;
+/** 다른 실행이 진행 중이면 이 간격으로 다시 본다. */
+const MAINTENANCE_BUSY_RETRY_MS = 60_000;
+/** 이보다 먼 끝 시각은 믿지 않는다(모름으로 보고 [다시 시작]). */
+const MAINTENANCE_MAX_MS = 12 * 3_600_000;
+const KST_MS = 9 * 3_600_000;
+
+/** 엔진이 준 점검 끝 시각(ISO 또는 KST 'HH:MM')을 시각(ms)으로. 모르면·이상하면 null. */
+export function maintenanceUntil(v: unknown, now: number): number | null {
+  if (typeof v !== 'string' || !v.trim()) return null;
+  let at: number;
+  const hm = /^(\d{1,2}):(\d{2})$/.exec(v.trim());
+  if (hm) {
+    const h = Number(hm[1]);
+    const m = Number(hm[2]);
+    if (h > 24 || m > 59) return null;
+    // 오늘(KST) 그 시각, 이미 지났으면 다음 날
+    const day = Math.floor((now + KST_MS) / 86_400_000) * 86_400_000 - KST_MS;
+    at = day + (h * 60 + m) * 60_000;
+    if (at <= now) at += 86_400_000;
+  } else at = Date.parse(v);
+  if (!Number.isFinite(at) || at - now > MAINTENANCE_MAX_MS || now - at > MAINTENANCE_MAX_MS) return null;
+  return at;
+}
+const kstHm = (at: number) => new Date(at + KST_MS).toISOString().slice(11, 16);
 
 /**
  * 이벤트: 'update'(RunView) · 'gate'(runId, GateRequest) · 'gate-closed'(runId, reqId, reason) · 'doc'(Doc)
@@ -679,7 +718,62 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!cp) throw new Error('no_counterparty');
     const d = this.createDraft(cp, r.amount, r.vatGuessed ? null : r.vat, r.itemGuessed ? null : r.item);
     if (emailOk(r.email.value)) d.email = { value: r.email.value, first: false };
+    // 점검으로 멈춘 실행은 한 번만 다시 시작한다(사람이 먼저 눌렀으면 자동 재시작을 하지 않는다)
+    if (r.maintenance) {
+      r.maintenance.restartedAs = d.id;
+      this.clearMaintenanceTimer(r.id);
+      this.emit('update', r);
+    }
     return d;
+  }
+
+  private readonly maintTimers = new Map<string, NodeJS.Timeout>();
+  private clearMaintenanceTimer(id: string): void {
+    clearTimeout(this.maintTimers.get(id));
+    this.maintTimers.delete(id);
+  }
+  private maintenanceAfter(id: string, ms: number): void {
+    this.clearMaintenanceTimer(id);
+    const t = setTimeout(() => void this.maintenanceRestart(id), Math.max(0, ms));
+    t.unref?.();
+    this.maintTimers.set(id, t);
+  }
+
+  /** 홈택스 점검으로 멈춤: 팝업·사람 차례 없이 카드 글로. 끝 시각을 알면 그 뒤 같은 값으로 자동 재시작, 모르면 [다시 시작]. */
+  private maintenanceEnd(r: RunView, untilRaw: string | undefined): void {
+    const at = maintenanceUntil(untilRaw, this.clock());
+    r.maintenance = { until: at === null ? null : kstHm(at) };
+    r.stoppedNote = at === null ? MAINTENANCE_UNKNOWN_NOTE : maintenanceNote(kstHm(at));
+    if (at !== null) this.maintenanceAfter(r.id, at - this.clock() + MAINTENANCE_GRACE_MS);
+    this.src.log?.('main.maintenance_end', { until: at === null ? 'unknown' : 'known' });
+  }
+
+  /** 점검 끝 시각이 지났다: 같은 값의 새 초안을 만들어 바로 시작한다. 다른 실행이 진행 중이면 1분 뒤 다시 본다. */
+  private async maintenanceRestart(id: string): Promise<void> {
+    this.maintTimers.delete(id);
+    const r = this.runs.get(id);
+    if (!r?.maintenance || r.maintenance.restartedAs || r.status !== 'attention') return;
+    if (this.busy()) return this.maintenanceAfter(id, MAINTENANCE_BUSY_RETRY_MS);
+    let d: RunView | null = null;
+    try {
+      d = this.redraft(id);
+      d.notices = [MAINTENANCE_RESTARTED_NOTE];
+      this.emit('update', d);
+      this.src.log?.('main.maintenance_restart', {});
+      await (this.src.prepare ? this.src.prepare(d.id) : this.prepare(d.id));
+    } catch (err) {
+      // 시작하지 못했다(상한·Chrome 없음·거래처 없음 등): 멈춘 카드에 [다시 시작]을 되살린다
+      const why = (err as Error).message ?? '';
+      if (d && d.status === 'draft') {
+        d.notices = [MAINTENANCE_RESTART_FAILED_NOTE];
+        this.emit('update', d);
+      } else if (!d) {
+        r.maintenance = { until: null };
+        r.stoppedNote = MAINTENANCE_UNKNOWN_NOTE;
+        this.emit('update', r);
+      }
+      this.src.log?.('main.maintenance_restart_failed', { why: why.slice(0, 60) });
+    }
   }
 
   /** [중지]·[취소]: 초안이면 바로, 실행 중이면 엔진에 알린다(커밋 구간이면 엔진이 거부). */
@@ -908,7 +1002,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.emit('update', r);
   }
 
-  private end(r: RunView, e: { status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }): void {
+  private end(r: RunView, e: { status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; maintenanceUntil?: string; until?: string }): void {
     // InDoubt·멈춤(state)은 확인 필요로 보이지만 끝난 것이 아니다. 그 뒤의 end(completed_with_issues 등)는 받는다.
     const live = this.liveInDoubt.delete(r.id) || this.paused.delete(r.id);
     if (!live && ['draft', 'done', 'stopped', 'attention'].includes(r.status)) return;
@@ -956,7 +1050,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
       // 승인 전 핸드오프로 끝남: "확인 필요"만 남지 않게 무슨 일인지와 다음 할 일(다시 준비 / 홈택스에서 직접)을 말한다. 승인·게이트 뒤면 발급 여부를 단정하지 않는다(엔진 코드 문구 그대로).
       // 발급 전 단계에서 끝났으면 같은 값으로 다시 준비할 수 있다(in_doubt·게이트 뒤는 아님: 기존 문구·확인 길 그대로)
       r.redo = !r.inDoubt && !pastGate;
-      if (e.status === 'handoff' && !pastGate) {
+      if (code === MAINTENANCE_CODE && !r.inDoubt && !pastGate) this.maintenanceEnd(r, e.maintenanceUntil ?? e.until);
+      else if (e.status === 'handoff' && !pastGate) {
         r.handoffEnd = true;
         const base = code && NOTE[code] ? NOTE[code]! : HANDOFF_END_NOTE;
         r.stoppedNote = `${base}${/아무것도 발급하지 않았어요/.test(base) ? '' : ' 아무것도 발급하지 않았어요.'} ${HANDOFF_END_NEXT}`;

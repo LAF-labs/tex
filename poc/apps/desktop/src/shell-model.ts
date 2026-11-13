@@ -384,6 +384,8 @@ export interface RunView {
   discarded?: boolean;
   /** 승인 전에 엔진이 이어 갈 수 없는 핸드오프로 끝냈다(end status handoff). 카드는 무슨 일인지와 [다시 준비]·[홈택스에서 직접 발급]을 보인다. */
   handoffEnd?: boolean;
+  /** 홈택스 점검으로 멈춤(portal.maintenance). until: 끝 시각 KST 'HH:MM'(모르면 null → [다시 시작]). restartedAs: 다시 시작한 새 초안. */
+  maintenance?: { until: string | null; restartedAs?: string };
   /** 초안만: 오늘 같은 거래처·같은 합계로 이미 발급한 실행이 있다(F-10, 이 앱이 켜진 동안의 발급). 승인 카드의 중복 경고보다 먼저 보인다. */
   dupToday?: boolean;
   /** [홈택스에서 준비] 전 점검에서 이 PC에 Chrome이 없었다(초안 카드 안내, 다음 준비 때 다시 본다). */
