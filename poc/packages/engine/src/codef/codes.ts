@@ -105,9 +105,12 @@ export class CodefError extends Error {
   readonly code: CodefFailure;
   /** CODEF 결과 코드(CF-xxxxx). 화면 보조 표시·지원 문의용. 값·원문 메시지는 담지 않는다 */
   readonly cf: string | null;
-  constructor(code: CodefFailure, cf: string | null = null) {
+  /** too_soon: 다시 할 수 있는 시각(ISO) */
+  readonly retryAt: string | null;
+  constructor(code: CodefFailure, cf: string | null = null, retryAt: string | null = null) {
     super(`codef.${code}`);
     this.code = code;
     this.cf = cf && /^CF-\d{5}$/.test(cf) ? cf : null;
+    this.retryAt = retryAt;
   }
 }

@@ -125,6 +125,10 @@ export function createBankAuto(ctx) {
   }
   async function refresh() {
     const r = await ask('bankAuto.refresh');
+    if (!r.ok && r.code === 'too_soon' && r.retryAt) {
+      const min = Math.max(1, Math.ceil((Date.parse(r.retryAt) - Date.now()) / 60_000));
+      return ctx.toast(`방금 가져왔어요. ${min}분 뒤에 다시 가져올 수 있어요.`);
+    }
     if (!r.ok) return fail(r);
     ctx.toast('최신화를 시작했어요. 받을 돈 화면에서 볼 수 있어요.');
   }

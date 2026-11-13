@@ -304,7 +304,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     try {
       return { ok: true, ...(await run()) };
     } catch (e) {
-      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}) };
+      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}) };
       throw e;
     }
   }
