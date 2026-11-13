@@ -708,16 +708,32 @@ async function ask(text, vat) {
 const PROGRESS_TEXT = { thinking: '요청을 읽고 있어요…', reading: '장부를 보고 있어요…', drafting: '카드를 만들고 있어요…' };
 const AGENT_TABLE_ROWS = 10;
 
+const MAIL_TEXT = { sent: '메일 보냄', unconfirmed: '메일 확인 못 함' };
+
+/** 발급 행 끝 두 칸: 원장 승인번호와 메일 상태(두 줄), 문서함 PDF. 없는 것은 비운다. */
+function agentIssued(x) {
+  return [
+    h(
+      'td',
+      { class: 'sx-meta' },
+      x.approvalNo ? h('div', { 'data-approval': '' }, `승인 ${x.approvalNo}`) : null,
+      x.mail ? h('div', { 'data-mail': x.mail }, MAIL_TEXT[x.mail]) : null,
+    ),
+    h('td', {}, x.documentId ? btn('PDF', () => act.openDoc(x.documentId), '', { 'data-act': 'agent-pdf' }) : null),
+  ];
+}
+
 /** 결과 표(매출·발급 기록·받을 돈): 제목에 건수·합계(main이 슬롯과 같은 집계로 낸 것), 행은 최근부터 10개. 글자는 텍스트 노드로만. */
 function agentTable(t) {
   const md = (d) => `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일`;
   const rows = t.rows.slice(0, AGENT_TABLE_ROWS);
+  const issued = t.table !== 'receivables';
   return h(
     'div',
     { class: 'sx-agent-table', 'data-agent-table': t.table },
     h('div', { class: 'sx-agent-table-title' }, t.title),
     rows.length
-      ? h('table', { class: 'list' }, h('tbody', {}, ...rows.map((x) => h('tr', {}, h('td', { class: 'num-l' }, md(x.date)), h('td', { class: 'name' }, x.counterparty), h('td', { class: x.total === null ? 'num is-none' : 'num' }, x.total === null ? '금액 모름' : `${num(x.total)}원`)))))
+      ? h('table', { class: 'list' }, h('tbody', {}, ...rows.map((x) => h('tr', {}, h('td', { class: 'num-l' }, md(x.date)), h('td', { class: 'name' }, x.counterparty), h('td', { class: x.total === null ? 'num is-none' : 'num' }, x.total === null ? '금액 모름' : `${num(x.total)}원`), ...(issued ? agentIssued(x) : [])))))
       : h('p', { class: 'sx-meta' }, '해당하는 건이 없어요.'),
     t.rows.length > rows.length ? h('p', { class: 'sx-meta' }, `외 ${t.rows.length - rows.length}건`) : null,
   );

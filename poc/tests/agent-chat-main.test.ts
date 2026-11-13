@@ -179,8 +179,8 @@ describe('AgentChat 11턴', () => {
         table: 'sales',
         title: '10월 발급 2건 · 공급가 1,500,000원 · 합계 1,650,000원',
         rows: [
-          { date: '2026-10-20', counterparty: 'B상사', total: 550_000 },
-          { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000 },
+          { date: '2026-10-20', counterparty: 'B상사', total: 550_000, approvalNo: null, documentId: null, mail: null },
+          { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000, approvalNo: null, documentId: null, mail: null },
         ],
       },
     ]);
@@ -269,8 +269,8 @@ describe('AgentChat 11턴', () => {
         table: 'history',
         title: 'A상사 발급 기록 2건 · 공급가 3,000,000원 · 합계 3,300,000원',
         rows: [
-          { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000 },
-          { date: '2026-09-03', counterparty: 'A상사', total: 2_200_000 },
+          { date: '2026-10-15', counterparty: 'A상사', total: 1_100_000, approvalNo: null, documentId: null, mail: null },
+          { date: '2026-09-03', counterparty: 'A상사', total: 2_200_000, approvalNo: null, documentId: null, mail: null },
         ],
       },
     ]);

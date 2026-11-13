@@ -193,7 +193,11 @@ export interface ShellOptions {
    * 대화 에이전트의 모델 경계(엔진 `chat.step`, agent-chat.ts). 제품 사업자 대화는 늘 이 길이다.
    * 시연(fixture)은 이것을 넘긴 e2e만 이 길로 간다(넘기지 않으면 옛 해석 길).
    */
-  agent?: { step(p: StepParams): Promise<StepResult> };
+  agent?: {
+    step(p: StepParams): Promise<StepResult>;
+    /** 확인용: 대화 에이전트가 읽는 원장 발급 이력(db.query.runs.history) 자리. 없으면 엔진에 묻는다. */
+    history?(p: Record<string, unknown>): Promise<unknown>;
+  };
 }
 
 /** ShellOptions.remote. */
@@ -838,7 +842,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let agentCreated: RunView[] = [];
   const agent = new AgentChat(
     agentPorts({
-      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : host.rpc(m, p)),
+      rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : m === 'db.query.runs.history' && opts.agent?.history ? opts.agent.history(p) : host.rpc(m, p)),
       profileId: () => businessId,
       runs,
       // 사업자 등록·발급 인증, 그리고 Chrome(U6, #301). 빠졌으면 초안 카드를 만들지 않고 할 일을 보인다(옛 길 setupGate와 같은 규칙).
@@ -847,7 +851,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
       receivables: () => bank.receivables(),
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
-      pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total }] : [])),
+      pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total, approvalNo: x.approvalNo, documentId: x.documentId, mail: null }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
     }),
   );
