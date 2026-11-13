@@ -49,6 +49,8 @@ export interface CertSecretInput {
   event?(e: SecretTurnEvent): void;
   /** [중지]. */
   signal?: AbortSignal;
+  /** 기억한 인증서 비밀번호의 프로필(금고 slot). 없으면 business(Phase 1 데스크톱). */
+  scope?: string;
   setTimer?: (fn: () => void, ms: number) => () => void;
   sleep?: (ms: number) => Promise<void>;
   /** 입력 뒤 틀린 비밀번호 안내를 기다리는 시간(기본 3초). */
@@ -94,18 +96,24 @@ export class CertSecretPort implements Pick<HumanPort, 'secret'> {
       this.i.journal('human.secret_manual', { stepId: r.stepId, reason });
       return { code: CERT_WAITING };
     };
-    if (await this.i.page.certFrame().catch(() => false)) return manual('cert_frame');
     const key = this.targetKey(r.target);
     if (!key) return manual('no_field');
-    const out = await this.vaultPort.open({ ...r, target: key, ...(this.i.signal ? { signal: this.i.signal } : {}) });
-    if (typeof out !== 'string') return manual(out.refused);
-    if (out !== 'done') {
-      this.i.event?.({ state: 'closed', stepId: r.stepId, why: out });
-      return 'ttl';
-    }
-    if (await this.passwordWrong()) {
+    // 홈택스 인증서 창(iframe#dscert)이 떠 있어도, 사전 칸이 그 iframe을 가리키면(frame = iframe 선택자) 금고가 그 칸을 맡는다(대표 지시 2026-11-13).
+    // 금고는 기억한 비밀번호가 있으면 사람 창 없이 넣고, 없으면 사람이 넣은 값을 기억한다. 칸이 본 프레임에 있다고 적힌 옛 패키지면 예전처럼 사람 직접 입력.
+    if (this.i.dict.entries[key]?.frame === 'main' && (await this.i.page.certFrame().catch(() => false))) return manual('cert_frame');
+    // 틀림 안내를 보면 기억한 값을 다시 쓰지 않게 금고에 알리고(typist.authFailed → suspect), 같은 실행 안에서 한 번만 다시 받는다.
+    for (let attempt = 0; ; attempt++) {
+      const out = await this.vaultPort.open({ ...r, target: key, ...(this.i.signal ? { signal: this.i.signal } : {}) });
+      if (typeof out !== 'string') return manual(out.refused);
+      if (out !== 'done') {
+        this.i.event?.({ state: 'closed', stepId: r.stepId, why: out });
+        return 'ttl';
+      }
+      if (!(await this.passwordWrong())) break;
       this.wrong++;
       this.i.journal('human.secret_password_wrong', { stepId: r.stepId, wrong: this.wrong });
+      await this.i.vault.rpc('typist.authFailed', { kind: 'cert_password', scope: this.i.scope ?? 'business' }).catch(() => {});
+      if (attempt === 0 && this.wrong < MAX_WRONG && !this.i.signal?.aborted) continue;
       const limit = this.wrong >= MAX_WRONG;
       this.i.event?.({ state: 'closed', stepId: r.stepId, why: limit ? 'retry_limit' : 'password_wrong' });
       return { code: limit ? 'sign.password_retry_limit' : 'sign.password_wrong' };

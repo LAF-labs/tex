@@ -19,7 +19,11 @@ export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
  */
 // --disable-default-apps: Chrome 기본 앱(Web Store 결제 구성요소 nmmhkkegccagdldgiimedpiccmgmieda 등)이 전용 프로필에 깔리지 않게 한다.
 // 깔리면 확장 검사(extension_not_allowed, 실패 닫힘)가 비밀 창을 막아 발급이 멈춘다. 확장을 줄이는 쪽이라 보안을 약하게 하지 않는다(D05 §3.1, 팀장 결정 2026-11-06).
-export const CHROME_ARG_ALLOWLIST = ['--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps'] as const;
+export const CHROME_ARG_ALLOWLIST = [
+  '--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps',
+  // 홈택스 Chrome이 앱 뒤에 가려져도(#305) 렌더러·타이머를 늦추지 않는다(부장 지시 2026-11-13).
+  '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+] as const;
 export const FORBIDDEN_CHROME_ARGS = ['--remote-debugging-port', '--remote-allow-origins', '--no-sandbox', '--disable-extensions'];
 
 /** Chrome 자식 프로세스 환경 변수 화이트리스트(디버그·로깅·프록시 변수 제거). */

@@ -479,7 +479,8 @@ export class Relay {
         if (t.pendingPopup) void this.confirmPopup(t, t.url);
         else if ((t.exposed || t.exposing) && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
-      if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
+      // 본 프레임 커밋은 하위 프레임(홈택스 인증서 창 iframe#dscert)의 창도 끝낸다: 문서가 바뀌면 그 iframe도 사라진다(frameDetached가 늘 오지는 않는다).
+      if (t.win && (frame.id === t.win.frameId || !frame.parentId)) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameStartedNavigating') {
       // 커밋 전에 막는다: 메인 프레임이 허용 밖으로 이동을 시작하면 노출 타깃은 엔진 세션을 분리하고,
       // 보류 팝업은 영구 거부한다(서버 리디렉션으로 허용 host에 커밋돼도 노출하지 않는다).
