@@ -38,6 +38,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
     // [홈택스 창 보기](main): 실행 탭을 앞으로. 값을 읽거나 바꾸지 않는다.
     'browser.focus',
+    // 홈택스 창 자리(main): 실행 창을 앱 옆에 둔다. front면 앞으로도. 창 크기·위치만 바꾸고 페이지는 건드리지 않는다.
+    'browser.place',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',

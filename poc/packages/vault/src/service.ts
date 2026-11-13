@@ -454,6 +454,16 @@ export class Vault {
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
       case 'browser.focus':
         return { focused: this.relay ? await this.relay.bringToFront() : false };
+      case 'browser.place': {
+        const n = (k: string) => {
+          const v = p[k];
+          if (typeof v !== 'number' || !Number.isInteger(v) || Math.abs(v) > 100_000) throw new Error('bad_params');
+          return v;
+        };
+        const bounds = { left: n('x'), top: n('y'), width: n('width'), height: n('height') };
+        if (bounds.width < 200 || bounds.height < 200) throw new Error('bad_params');
+        return { placed: this.relay ? await this.relay.placeWindow(bounds, p.front === true) : false };
+      }
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
     throw new Error('not_implemented');
