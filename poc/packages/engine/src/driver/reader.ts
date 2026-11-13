@@ -139,6 +139,32 @@ export class PlaywrightPageReader implements PageReader {
     return h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => null);
   }
 
+  async listRole(frame: string, role: string): Promise<Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }>> {
+    const f = this.frame(frame);
+    if (!f) return [];
+    // 이름과 상관없이 그 역할 전부(query(role)는 이름 정확 일치라 쓰지 않는다). 너무 많으면 앞 200개만.
+    const loc = f.getByRole(role as Parameters<Frame['getByRole']>[0]);
+    const n = await loc.count().catch(() => 0);
+    const out: Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }> = [];
+    for (let i = 0; i < Math.min(n, 200); i++) {
+      const nth = loc.nth(i);
+      const h = await nth.elementHandle({ timeout: this.timeoutMs }).catch(() => null);
+      if (!h) continue;
+      // 비밀번호 칸은 목록에 넣지 않는다(이름도 보내지 않는다).
+      const meta = await h.evaluate((e) => ({ id: (e as Element).id || null, password: (e as HTMLInputElement).type === 'password' })).catch(() => null);
+      if (!meta || meta.password) {
+        await h.dispose().catch(() => {});
+        continue;
+      }
+      const ref = `e${this.next++}`;
+      this.held.set(ref, { handle: h, loc: nth });
+      const el = { ref };
+      const info = await this.info(el);
+      out.push({ el, name: info.name, id: meta.id, visible: info.visible, enabled: info.enabled });
+    }
+    return out;
+  }
+
   async bodyText(): Promise<string> {
     return this.page.mainFrame().locator('body').innerText({ timeout: this.timeoutMs }).catch(() => '');
   }
