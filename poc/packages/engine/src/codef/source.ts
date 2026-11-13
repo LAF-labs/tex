@@ -24,7 +24,7 @@ export const CODEF_SOURCE_CODES: Record<CodefFailure, string> = {
   no_account: 'source.not_linked',
   bank_not_ready: 'source.not_linked',
   bank_consent_required: 'source.not_linked',
-  daily_limit: 'source.rate_limited',
+  daily_limit: 'source.daily_limit',
   too_soon: 'source.too_soon',
   codef_off: 'source.unavailable',
   unavailable: 'source.unavailable',
