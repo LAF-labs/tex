@@ -3,6 +3,7 @@
 // 금고는 이 보기를 설치 Chrome처럼 다룬다: main이 'browser' 포트 위에서 브라우저 수준 CDP를 흉내 내고, 각 보기의
 // webContents.debugger(Electron 45 실측: 같은 페이지에 Target.attachToTarget으로 독립 세션을 여러 개 연다)로 넘긴다.
 // 금고 중계(노출·비밀 창·출처 검사)는 Chrome 때와 같은 코드다. 이 파일은 프레임을 나르고, 보기를 만들고 없애고, 패널 자리에 둔다.
+import { randomUUID } from 'node:crypto';
 import { app, session, WebContentsView, type BaseWindow, type Rectangle, type Session, type WebContents } from 'electron';
 import type { EventLog } from '@sax/platform';
 import { CHROME_APP_START_URL } from '@sax/vault';
@@ -68,6 +69,10 @@ export class EmbeddedBrowser {
   private downloadHost: Tab | null = null;
   /** 금고가 Browser.setPermission으로 준 권한(출처 → 이름). 이것만 허용한다. */
   private readonly granted = new Map<string, Set<string>>();
+  /** 보기마다 금고·엔진이 attachToTarget으로 연 페이지 세션(자식 iframe·워커 세션이 아닌 것). */
+  private readonly topSessions = new Set<string>();
+  /** Page.printToPDF(ReturnAsStream) 결과를 IO.read로 내주는 동안 들고 있는 PDF. */
+  private readonly pdfStreams = new Map<string, { buf: Buffer; pos: number }>();
   private slot: Rectangle | null = null;
   private blocked = false;
   private connected = false;
@@ -121,7 +126,7 @@ export class EmbeddedBrowser {
     if (msg.sessionId) {
       const t = this.bySession.get(msg.sessionId);
       if (!t || t.gone) return done(Promise.reject(new Error(`No session with given id`)));
-      return done(t.wc.debugger.sendCommand(msg.method, msg.params ?? {}, msg.sessionId) as Promise<Json>);
+      return done(this.session(t, msg.sessionId, msg.method, msg.params ?? {}) ?? (t.wc.debugger.sendCommand(msg.method, msg.params ?? {}, msg.sessionId) as Promise<Json>));
     }
     done(this.root(msg.method, msg.params ?? {}));
   }
@@ -149,6 +154,7 @@ export class EmbeddedBrowser {
         if (!t || t.gone) throw new Error('No target with given id found');
         const r = (await t.wc.debugger.sendCommand('Target.attachToTarget', { targetId: t.targetId, flatten: true })) as { sessionId: string };
         this.own(t, r.sessionId);
+        this.topSessions.add(r.sessionId);
         return r;
       }
       case 'Target.detachFromTarget': {
@@ -156,6 +162,7 @@ export class EmbeddedBrowser {
         const t = this.bySession.get(sid);
         if (!t) throw new Error('No session with given id');
         this.bySession.delete(sid);
+        this.topSessions.delete(sid);
         t.sessions.delete(sid);
         if (!t.gone) await t.wc.debugger.sendCommand('Target.detachFromTarget', { sessionId: sid }).catch(() => {});
         this.toVault({ method: 'Target.detachedFromTarget', params: { sessionId: sid, targetId: t.targetId } });
@@ -247,7 +254,43 @@ export class EmbeddedBrowser {
     if (t.gone || [...this.bySession.values()].includes(t)) return;
     const { sessionId } = (await t.wc.debugger.sendCommand('Target.attachToTarget', { targetId: t.targetId, flatten: true })) as { sessionId: string };
     this.own(t, sessionId);
+    this.topSessions.add(sessionId);
     this.toVault({ method: 'Target.attachedToTarget', params: { sessionId, targetInfo: { ...(await this.info(t)), attached: true }, waitingForDebugger: false } });
+  }
+
+  /**
+   * 세션 명령 중 Electron DevTools에 없는 것: Page.printToPDF(실측 "wasn't found"). 금고 PDF 저장(pdf/save.ts printStream)이 이 보기를
+   * 인쇄할 때 보기의 webContents.printToPDF로 대신하고, ReturnAsStream이면 IO.read·IO.close도 여기서 낸다. 그 밖은 null(그대로 넘긴다).
+   * 엔진의 Page.printToPDF·IO는 금고 중계가 막으므로 여기 오는 것은 금고 자신의 요청이다.
+   */
+  private session(t: Tab, sid: string, method: string, p: Json): Promise<Json> | null {
+    if (method === 'Page.printToPDF') {
+      if (!this.topSessions.has(sid)) return Promise.reject(new Error("'Page.printToPDF' wasn't found"));
+      return (async () => {
+        const buf = await t.wc.printToPDF({
+          landscape: p.landscape === true,
+          printBackground: p.printBackground === true,
+          preferCSSPageSize: p.preferCSSPageSize === true,
+          ...(typeof p.scale === 'number' ? { scale: p.scale } : {}),
+          ...(typeof p.pageRanges === 'string' && p.pageRanges ? { pageRanges: p.pageRanges } : {}),
+        });
+        if (p.transferMode !== 'ReturnAsStream') return { data: buf.toString('base64') };
+        const handle = `embedded-pdf-${randomUUID()}`;
+        this.pdfStreams.set(handle, { buf, pos: 0 });
+        return { stream: handle };
+      })();
+    }
+    const handle = String(p.handle ?? '');
+    const st = this.pdfStreams.get(handle);
+    if (!st || (method !== 'IO.read' && method !== 'IO.close')) return null;
+    if (method === 'IO.close') {
+      this.pdfStreams.delete(handle);
+      return Promise.resolve({});
+    }
+    const size = Math.max(1, Math.min(Number(p.size) || 65_536, 1 << 20));
+    const chunk = st.buf.subarray(st.pos, st.pos + size);
+    st.pos += chunk.length;
+    return Promise.resolve({ data: chunk.toString('base64'), base64Encoded: true, eof: st.pos >= st.buf.length });
   }
 
   private async info(t: Tab): Promise<Json> {
@@ -339,6 +382,7 @@ export class EmbeddedBrowser {
     this.order = this.order.filter((x) => x !== t);
     for (const sid of t.sessions) {
       this.bySession.delete(sid);
+      this.topSessions.delete(sid);
       if (this.connected) this.toVault({ method: 'Target.detachedFromTarget', params: { sessionId: sid, targetId: t.targetId } });
     }
     t.sessions.clear();
@@ -369,6 +413,7 @@ export class EmbeddedBrowser {
     this.downloadHost = null;
     this.downloadBehavior = null;
     this.granted.clear();
+    this.pdfStreams.clear();
     this.setBlocked(false);
     if (why === 'window' && wasConnected) this.o.post({ t: 'cdp_closed' });
     this.o.onPage?.(null);

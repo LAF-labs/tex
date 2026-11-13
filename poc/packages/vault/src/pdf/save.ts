@@ -84,6 +84,8 @@ export interface PdfSaverOptions {
   send: <T = Json>(method: string, params: Json, sessionId?: string) => Promise<T>;
   /** 엔진에 노출된 타깃만. */
   exposed: (targetId: string) => TargetState | undefined;
+  /** 오염 창(값을 넣은 칸이 문서에 남음)을 칸 값을 비워 끝낸다(SecretOps.scrubTainted). 끝냈으면 true. */
+  scrub?: (t: TargetState) => Promise<boolean>;
   emit: (name: 'download.completed' | 'download.failed', data: Record<string, unknown>) => void;
   /** 시험 전용. 기본 PDF_MAX_BYTES. */
   maxBytes?: number;
@@ -158,6 +160,8 @@ export class PdfSaver {
     const t = this.o.exposed(p.targetId);
     if (!t) return this.refuse('target_not_exposed');
     // 비밀 창이 열려 있거나(활성) 값이 남아 있을 수 있는(오염) 타깃은 찍지 않는다(D05 §3.5 ①: 화면 캡처 거부와 같은 규칙).
+    // 오염이면 먼저 그 칸 값을 비워 창을 끝낸다(서명 뒤 인증서 창은 숨기만 하고 값을 남긴다). 비우지 못하면 그대로 거부다.
+    if (t.win?.phase === 'tainted') await this.o.scrub?.(t);
     if (t.win) return this.refuse('secret_window_open');
     if (this.printing) return this.refuse('busy');
     this.printing = true;
