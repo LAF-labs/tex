@@ -605,6 +605,16 @@ export class Vault {
       emit,
       usedSlots: this.usedSlots,
       stored: (kind, scope, row) => this.readStored(kind, scope, row),
+      // 인증서 비밀번호 기억(대표 지시 2026-11-13). 데스크톱은 run.begin에 프로필을 주지 않으니 사업자로 본다(Phase 1).
+      certMemory: {
+        scopeOf: (runId) => this.runProfiles.get(runId) ?? 'business',
+        read: (scope) => this.readStored('cert_password', scope),
+        save: async (scope, bytes) => {
+          if (!isProfileScope(scope)) return false;
+          await this.human.store('cert_password', scope, [{ field: 'pw', bytes }], { version: 'cert-memory-2026-11-13' });
+          return true;
+        },
+      },
     });
     for (const [k, v] of this.pendingTriggers) this.ops.runTriggers.set(k, v);
     this.pendingTriggers.clear();

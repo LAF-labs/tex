@@ -1049,6 +1049,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     })();
   });
 
+  /**
+   * 기억한 인증서 비밀번호(대표 지시 2026-11-13). 금고가 처음 넣은 값을 저장하고 다음부터 넣는다(vault SecretOps.certMemory).
+   * 홈택스가 비밀번호가 틀렸다고 하면 바로 지운다(다시 넣어 인증서가 잠기지 않게). 설정에는 [지우기] 하나만 둔다. 값은 main에 오지 않는다.
+   */
+  const CERT_SLOT = { kind: 'cert_password', scope: 'business' } as const;
+  const certMemory = {
+    has: async () => (await host.control('secret.has', CERT_SLOT).catch(() => false)) === true,
+    forget: async (why: string) => {
+      const r = await host.control('secret.forget', CERT_SLOT).catch(() => false);
+      log.event('main.cert_memory_forget', { why, removed: r === true });
+    },
+  };
+  host.on('run', (e: { type?: string; code?: string }) => {
+    if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
+  });
+
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
@@ -1358,6 +1374,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
       if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
+    },
+    'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    'certMemory.forget': async () => {
+      needGesture(3_000);
+      await certMemory.forget('user');
+      return { remembered: await certMemory.has() };
     },
     'chrome.check': async () => {
       const ready = chromeReady();
