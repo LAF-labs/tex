@@ -8,6 +8,7 @@ export * from './bundle/allowlist.ts';
 export * from './normalize.ts';
 export * from './profiles.ts';
 export * from './toolsets.ts';
+export * from './chat-agent.ts';
 export * from './layer.ts';
 export * from './adapters/types.ts';
 export * from './adapters/retry.ts';

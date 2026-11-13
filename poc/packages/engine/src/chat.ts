@@ -26,7 +26,20 @@ export interface ChatReply {
   filtered: null | 'advice' | 'unsafe' | 'refusal';
 }
 
-export type ChatErrorCode = 'chat.unavailable' | 'chat.bad_response' | 'chat.budget_exceeded' | 'chat.quota_exceeded' | 'chat.input_too_large' | 'chat.secret_rejected';
+/**
+ * chat.turn_limit·chat.bad_tool_output·bad_text는 대화 에이전트(chat.step, chat-agent.ts)만 쓴다.
+ * turn_limit: 한 사용자 턴에서 툴셋 턴 상한까지 도구를 부름. bad_tool_output: main이 준 도구 결과·화면 프레임이 열거형 계약 밖(C-10 구조 검사).
+ */
+export type ChatErrorCode =
+  | 'chat.unavailable'
+  | 'chat.bad_response'
+  | 'chat.budget_exceeded'
+  | 'chat.quota_exceeded'
+  | 'chat.input_too_large'
+  | 'chat.secret_rejected'
+  | 'chat.turn_limit'
+  | 'chat.bad_tool_output'
+  | 'bad_text';
 
 /**
  * 대화창 비밀 DLP(D04 §4 B-15, 최소판): "비밀번호는 abcd1234"처럼 비밀 값을 적은 문장은 모델로 보내지 않는다(chat.secret_rejected,
@@ -66,9 +79,13 @@ export function chatAdviceMentioned(text: string): boolean {
  * 비밀 입력 유도 말(비밀번호·인증서·보안카드·입력하세요). 우리 앱의 말로 보이게 사용자를 사회공학하는 경로를 막는다.
  */
 function unsafeReply(text: string): boolean {
+  return new RegExp(TOKEN_RE.source).test(normalizeForRedaction(text)) || unsafeText(text);
+}
+
+/** unsafeReply에서 토큰 검사만 뺀 것. 대화 에이전트는 토큰을 이름으로 바꿔 보이므로 채우기 전 문장(토큰·슬롯을 지운 것)에 이것을 돌린다. */
+export function unsafeText(text: string): boolean {
   const n = normalizeForRedaction(text);
   if (/비밀번호|비번|패스워드|암호|인증서|보안카드|입력하세요|OTP/i.test(n.replace(/\s+/g, ''))) return true;
-  if (new RegExp(TOKEN_RE.source).test(n)) return true;
   if (numericSpans(n).length) return true;
   if (new RegExp(EMAIL_RE.source, 'u').test(n)) return true;
   return /https?:|www\.|\.(com|kr|net|org|io)\b/i.test(n);
@@ -86,7 +103,7 @@ export class ChatError extends Error {
 }
 
 /** 어댑터 실패 이유 → 오류 코드. 응답 모양 문제는 bad_response, 예산·월 한도는 따로, 나머지는 경로 실패다. */
-function errorOf(reason: string | undefined): ChatErrorCode {
+export function errorOf(reason: string | undefined): ChatErrorCode {
   if (reason === 'gateway:run_budget_exceeded' || reason === 'turn_limit') return 'chat.budget_exceeded';
   if (reason === 'gateway:quota_exceeded') return 'chat.quota_exceeded';
   if (reason && ['output_schema_mismatch', 'toolset_digest_mismatch', 'unexpected_item', 'tool_call_rejected', 'gateway:bad_response', 'toolset_mismatch'].includes(reason)) return 'chat.bad_response';

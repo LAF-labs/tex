@@ -63,7 +63,8 @@
             "summarize",
             "intent_fill",
             "query_parse",
-            "chat_reply"
+            "chat_reply",
+            "chat_agent"
           ]
         },
         "messages": {
