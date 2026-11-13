@@ -7,7 +7,8 @@ import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
-import type { Channel } from '@sax/updater';
+import type { Channel, Revocation, TrustRoot } from '@sax/updater';
+import type { Egress } from '@sax/net';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, SESSION_IDLE_REPORT_MS } from '@sax/vault';
@@ -23,8 +24,8 @@ import { openExternalKey } from './external-links.ts';
 import { securityBlocks, securityStatus, startSecurityProgram, type SecurityStatus } from './security-programs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
-import { startUpdateHost, updatePolicy, type UpdateHost, type UpdateSources } from './update-host.ts';
-import type { AppUpdaterLike } from './update-electron.ts';
+import { startUpdateHost, updatePolicy, type UpdateHost } from './update-host.ts';
+import type { AppUpdaterLike, ProviderBase } from './update-electron.ts';
 import { certInfoInSandbox, DOCPARSE_SCHEME, ocrImageInSandbox, parsePdfInSandbox, readSheetInSandbox } from './docparse.ts';
 import { EngineHost } from './engine-host.ts';
 import type { FixtureMode } from './fixture-mode.ts';
@@ -218,7 +219,12 @@ export interface RemoteWiring {
 export interface UpdateWiring {
   channel: Channel;
   origin: string;
-  sources: UpdateSources;
+  /** 레지스트리 GET(latest.json·투명성 로그, update-sources.ts). 폐기 목록은 엔진이 받아 둔 것을 쓴다. */
+  egress: Pick<Egress, 'getRegistry' | 'getRegistryBytes'>;
+  /** 핀 키. 없으면 엔진 핀(db.query.registry.pins). 실계정 시험 빌드의 로컬 피드만 넘긴다(shell.ts). */
+  trust?: TrustRoot;
+  /** 실계정 시험 빌드의 로컬 피드(http://127.0.0.1)만 true(update-electron feedUrl). */
+  loopback?: boolean;
   testBuild: boolean;
   setting?: { requireTransparency?: unknown } | null;
   updater?: AppUpdaterLike;
@@ -1662,10 +1668,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const startAppUpdater = async (w: UpdateWiring): Promise<UpdateHost | null> => {
     try {
       const { electronInstaller } = await import('./update-electron.ts');
-      const u = w.updater ?? ((await import('electron-updater')).default.autoUpdater as unknown as AppUpdaterLike);
+      const { egressUpdateSources } = await import('./update-sources.ts');
+      const eu = (await import('electron-updater')).default;
+      const u = w.updater ?? (eu.autoUpdater as unknown as AppUpdaterLike);
+      const trust = w.trust ?? ((await host.rpc('db.query.registry.pins', {})) as TrustRoot);
+      const revocation = async (): Promise<Revocation> => {
+        const r = (await host.rpc('db.query.registry.revocation', {})) as { keyIds?: unknown; fresh?: unknown } | null;
+        return { keyIds: new Set(Array.isArray(r?.keyIds) ? r.keyIds.filter((k): k is string => typeof k === 'string') : []), fresh: r?.fresh === true };
+      };
       const h = startUpdateHost({
-        sources: w.sources,
-        installer: electronInstaller(u, { origin: w.origin, channel: w.channel }),
+        sources: egressUpdateSources({ egress: w.egress, trust, revocation }),
+        installer: electronInstaller(u, { origin: w.origin, channel: w.channel, Provider: eu.Provider as unknown as ProviderBase, loopback: w.loopback }),
         channel: w.channel,
         installedVersion: app.getVersion(),
         stateFile: path.join(appPaths(root ?? defaultAppRoot()).userData, 'updater-state.json'),
