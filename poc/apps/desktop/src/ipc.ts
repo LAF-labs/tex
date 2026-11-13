@@ -132,6 +132,8 @@ export const SHELL_METHODS = {
   'incident.open': { id: ID },
   'incident.close': { id: ID },
   'docs.list': {},
+  // 발급한 세금계산서(B5 문서함): 원장·실행 이력(db.query.runs.history)을 지금 읽어 한 줄씩. 읽기만 한다.
+  'issued.list': {},
   // 열기 암호 길이 판정(password_too_long)은 가져오기 쪽이 한다. 여기 상한은 그보다 넉넉하다.
   'docs.import': { pick: { t: 'boolean' }, pickId: { t: 'string', max: 128 }, password: { t: 'string', max: 4096 } },
   // 렌더러는 늘 열기 암호를 묻던 pickId를 보낸다. 빈 호출은 받지 않는다.

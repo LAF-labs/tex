@@ -21,6 +21,8 @@ export interface PastRun {
   approvalNo: string | null;
   /** 보관함 문서 id([PDF 열기]). */
   documentId: string | null;
+  /** 발급된 건의 받는 사람 메일: 보냄 확인·확인 못 함. 발급 안 된 건·기록 없는 옛 실행은 null(B5 문서함). */
+  mail: 'sent' | 'unconfirmed' | null;
   /** 사용자 문구. 없으면 null. */
   note: string | null;
 }
@@ -70,6 +72,7 @@ export function pastRun(row: RunHistoryRow): PastRun {
     time: kst?.slice(11, 16) ?? null,
     approvalNo: kind === 'issued' ? row.approvalNo : null,
     documentId: kind === 'issued' ? row.documentId : null,
+    mail: kind === 'issued' ? (row.mailConfirmed === true ? 'sent' : row.mailConfirmed === false ? 'unconfirmed' : null) : null,
     note,
   };
 }

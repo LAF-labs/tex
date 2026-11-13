@@ -1234,6 +1234,37 @@ const DOC_FILTERS = [
   ['soon', '만료 임박'],
 ];
 
+/** 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 나머지는 상태 글자. */
+const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'], not_issued: ['발급 안 됨', 'is-muted'], stopped_before_gate: ['승인 전 멈춤', 'is-muted'] };
+/** 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF], 실패·확인 중은 상태로. */
+function issuedSection() {
+  const rows = state.issued ?? [];
+  if (!rows.length) return null;
+  const done = rows.filter((x) => x.kind === 'issued').length;
+  const unsure = rows.filter((x) => x.kind === 'unsure').length;
+  return h(
+    'div',
+    { class: 'issued-sec', 'data-issued': '' },
+    h('div', { class: 'issued-hd' }, h('h2', { class: 'issued-title' }, '발급한 세금계산서'), h('span', { class: 'sx-meta' }, [`발급 ${done}건`, unsure ? `확인 필요 ${unsure}건` : null].filter(Boolean).join(' · '))),
+    listTable(
+      [['날짜'], ['거래처'], ['금액', 'num'], ['승인번호'], ['메일'], ['']],
+      rows.map((x) => {
+        const [label, cls] = ISSUED_STATE[x.kind] ?? ISSUED_STATE.unsure;
+        return h(
+          'tr',
+          { 'data-issued-row': x.runId, 'data-kind': x.kind, title: x.note || null },
+          h('td', {}, x.day ?? '—', x.time ? h('span', { class: 'sx-meta doc-ago' }, x.time) : null),
+          h('td', { class: x.who ? 'name' : 'name is-none' }, x.who ?? '—'),
+          h('td', { class: x.total != null ? 'num' : 'num is-none' }, x.total != null ? `${num(x.total)}원` : '—'),
+          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
+          x.kind === 'issued' ? h('td', { class: x.mail ? null : 'is-none' }, x.mail ? MAIL_TEXT[x.mail] : '—') : null,
+          h('td', {}, x.documentId ? btn('PDF', () => act.openDoc(x.documentId), '', { 'data-act': 'issued-pdf' }) : null),
+        );
+      }),
+    ),
+  );
+}
+
 function docsView() {
   const f = state.docFilter;
   const n7 = (d) => {
@@ -1253,6 +1284,7 @@ function docsView() {
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
     railHead('문서함', meta, btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
+    f === 'all' || f === 'tax' ? issuedSection() : null,
     h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
     listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
@@ -1937,6 +1969,13 @@ async function go(v) {
   }
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
+    // 발급한 세금계산서(B5): 원장·실행 이력을 지금 읽는다(main issued.list)
+    call('issued.list')
+      .then((rows) => {
+        state.issued = Array.isArray(rows) ? rows : [];
+        if (state.view === 'docs') render();
+      })
+      .catch(() => {});
     const rev = state.docsRev;
     call('docs.list')
       .then((docs) => {
