@@ -4,6 +4,7 @@
 // 마스킹을 거치지 않은 텍스트(발급 영수증 없음)·식별자 모양·이미지는 보안 이벤트(코드만)를 남기고 차단한다(D06 §4).
 import { createHash, randomUUID } from 'node:crypto';
 import { GATEWAY_ORIGIN, GATEWAY_PATHS, GatewayError, gatewayErrorOf, type EgressSecurityEvent, type GatewayAuth } from './gateway.ts';
+import { CODEF_MAX_BODY, CODEF_MAX_BYTES, CODEF_ORIGINS, CODEF_TIMEOUT_MS, CODEF_TOKEN_RE, decodeCodefBody, encodeCodefBody, isCodefEnv, isCodefPath, type CodefEnv, type CodefPath } from './codef.ts';
 import { CLOUD_MAX_BODY, CLOUD_MAX_BYTES, cloudHeaders, cloudRequestCheck, cloudSocketCheck, type CloudMethod } from './cloud.ts';
 import { ModelGuard, type BundleAllowEntry, type GatewayDecideBody, type GatewayRespondBody, type GuardCode, type ModelGuardConfig } from './model-guard.ts';
 
@@ -90,12 +91,24 @@ export interface GatewayConfig {
 export type GatewayCall =
   | { surface: 'decide'; body: GatewayDecideBody }
   | { surface: 'respond'; body: GatewayRespondBody }
-  | { surface: 'runTokens'; body: { runId: string } | { chatSessionId: string } };
+  | { surface: 'runTokens'; body: { runId: string } | { chatSessionId: string } }
+  /** 계좌 자동조회 CODEF 접근 토큰(본문 없음 `{}`). 응답 {accessToken, expiresAt, env, publicKey} */
+  | { surface: 'codefToken'; body: Record<string, never> };
+
+/** toCodef() 요청. 토큰은 게이트웨이 /v1/codef/token에서 받은 것, env도 그 응답의 값이다 */
+export interface CodefRequest {
+  env: CodefEnv;
+  path: CodefPath;
+  body: object;
+  accessToken: string;
+}
 
 export interface EgressOptions {
   /** 테스트 전용: 목적지 origin을 로컬 모의 서버로 바꾼다. 앱 진입점은 쓰지 않는다. */
   testOrigins?: Partial<Record<string, string>>;
   timeoutMs?: number;
+  /** 시험 전용: CODEF 시간 상한(기본 CODEF_TIMEOUT_MS) */
+  codefTimeoutMs?: number;
   /** 모델 송신 검사 설정(BYOK). 없으면 toModel()은 항상 거부한다. */
   modelGuard?: ModelGuardConfig;
   /** 게이트웨이 경로 설정. 없으면 toGateway()는 항상 거부한다. */
@@ -216,6 +229,7 @@ export class Egress {
       const id = Object.keys(scope).length === 1 ? (scope.runId ?? scope.chatSessionId) : undefined;
       if (typeof id !== 'string' || !/^[A-Za-z0-9_.-]{8,64}$/.test(id)) throw new EgressError('path_not_allowed');
     }
+    if (req.surface === 'codefToken' && (typeof req.body !== 'object' || req.body === null || Object.keys(req.body).length !== 0)) throw new EgressError('path_not_allowed');
     const body = JSON.stringify(req.body);
     const bodySha256 = sha256(body);
     try {
@@ -467,6 +481,49 @@ export class Egress {
     this.audit.push({ dest: 'cloud.ws', path: check.route, status: 101 });
     // Node(undici)·Electron main의 WebSocket은 두 번째 인자 {headers}를 받는다(브라우저 표준 밖 확장)
     return new WebSocket(target, (Object.keys(h).length ? { headers: h } : undefined) as never);
+  }
+
+  /**
+   * CODEF 송신의 유일한 입구(계좌 자동조회). origin은 env마다 고정(CODEF_ORIGINS), 경로는 CODEF_PATHS만, 헤더는 Bearer 토큰과 내용 형식뿐이다.
+   * 본문은 URL 인코딩한 JSON으로 보내고 응답도 URL 인코딩을 풀어 JSON으로 돌려준다(비신뢰 값 그대로, 해석은 엔진 codef 모듈).
+   * 감사 기록은 목적지·경로·상태만(본문·토큰 없음).
+   */
+  async toCodef(req: CodefRequest): Promise<EgressResponse> {
+    if (!isCodefEnv(req.env)) throw new EgressError('destination_not_allowed');
+    if (!isCodefPath(req.path)) throw new EgressError('path_not_allowed');
+    if (typeof req.accessToken !== 'string' || !CODEF_TOKEN_RE.test(req.accessToken)) throw new EgressError('header_not_allowed');
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) throw new EgressError('path_not_allowed');
+    const body = encodeCodefBody(req.body);
+    if (Buffer.byteLength(body) > CODEF_MAX_BODY) throw new EgressError('path_not_allowed');
+    if (this.envTampered.length) throw new EgressError('egress_env_tampered');
+    const origin = this.opts.testOrigins?.codef ?? CODEF_ORIGINS[req.env];
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), this.opts.codefTimeoutMs ?? CODEF_TIMEOUT_MS);
+    try {
+      const res = await fetch(origin + req.path, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json', authorization: `Bearer ${req.accessToken}` },
+        body,
+        signal: ctl.signal,
+        redirect: 'error',
+      });
+      this.audit.push({ dest: 'codef', path: req.path, status: res.status });
+      if (Number(res.headers.get('content-length') ?? '0') > CODEF_MAX_BYTES) {
+        await res.body?.cancel();
+        throw new EgressError('bad_response', res.status);
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > CODEF_MAX_BYTES) throw new EgressError('bad_response', res.status);
+      const json = decodeCodefBody(buf.toString('utf8'));
+      if (json === null && res.ok) throw new EgressError('bad_response', res.status);
+      return { status: res.status, json };
+    } catch (e) {
+      if (e instanceof EgressError) throw e;
+      this.audit.push({ dest: 'codef', path: req.path, status: 'error' });
+      throw new EgressError((e as Error).name === 'AbortError' ? 'timeout' : 'network');
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async postJson(dest: DestinationName, path: string, body: unknown, headers: Record<string, string> = {}): Promise<EgressResponse> {
