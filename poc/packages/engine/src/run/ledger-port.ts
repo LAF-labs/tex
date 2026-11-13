@@ -5,6 +5,8 @@
 // - ledgerEffect: 상태 머신 효과 ledger.*를 원장 쓰기로 옮긴다. at이 verify 스텝이면 그 verify를 가리키는 X의 행이다.
 //   committed의 verify_ref는 VerifyBook.ref(그 verify)다. 값은 저널에 남기지 않는다(⑦).
 //   한 verify를 여러 X가 가리키면(V-04a가 로드 때 거부하는 모양) 판정을 붙이지 않고 열린 행을 in_doubt로 닫는다.
+//   observed_manual(사람 대기 [직접 발급함])은 X에서 온다. 무장 전이라 행이 없으면 manualRow 재료로 넣는다(D03 §4).
+//   X가 이미 not_committed면 Ledger.attestManual이 따로 행 `<X>.manual`에 남기고, 그 뒤 판정은 그 행에 붙인다.
 import { LedgerError, type ArmRow, type Db, type Ledger, type NotCommittedReason } from '@sax/db';
 import type { ArmInput } from '../commitguard/guard.ts';
 import { flatten } from '../core/cfg.ts';
@@ -21,6 +23,8 @@ export interface LedgerPortInput {
   dict: SelectorDict;
   /** X의 armed 행 재료(게이트 요청 actionHash·업무 키·HMAC 등). 없으면 arm 거부. */
   row(x: { stepId: string; reqId: string; actionHash: string }): ArmRow | null;
+  /** [직접 발급함]의 X 행 재료(게이트 actionHash 없이 실행 초안으로). 없으면 ledger.row_missing. */
+  manualRow(stepId: string): ArmRow | null;
   /** armed와 같은 트랜잭션 안에서(RunEnforcer.markCommitted: 하루 비가역 수). 거부면 그 코드로 롤백. */
   inTx?: () => ActResult;
   guard?: { arm(a: ArmInput): Promise<ActResult>; disarm(): Promise<void> };
@@ -47,6 +51,8 @@ export class LedgerCommitPort implements CommitPort {
    * 둘 이상이면(검증기를 거치지 않은 IR) 추측하지 않는다: 판정을 붙이지 않고 그 X들의 열린 행을 in_doubt로 닫는다(팀장 결정 2026-11-06).
    */
   private readonly xsOfVerify = new Map<string, string[]>();
+  /** X → 발급 사실이 실제로 남은 원장 단계(X가 이미 not_committed였으면 `<X>.manual`). 그 뒤 verify 판정은 그 행에 붙인다. */
+  private readonly ledgerStepOf = new Map<string, string>();
 
   constructor(i: LedgerPortInput) {
     this.i = i;
@@ -69,6 +75,8 @@ export class LedgerCommitPort implements CommitPort {
       if (e instanceof TxRefused) return { ok: false, code: e.code };
       return { ok: false, code: e instanceof LedgerError ? e.code : 'ledger.error' };
     }
+    // 새 시도는 X 행 자체다. 앞 [직접 발급함]의 따로 행으로 가던 판정을 여기서 끊는다.
+    this.ledgerStepOf.delete(a.stepId);
     return { ok: true };
   }
 
@@ -85,10 +93,10 @@ export class LedgerCommitPort implements CommitPort {
 
   /**
    * 상태 머신 효과 ledger.*를 원장에 쓴다(RunController onEffect). 원장 효과가 아니면 false.
-   * ledger.dispatched는 X에서, committed·not_committed{verify}·in_doubt는 verify(또는 X)에서 온다.
+   * ledger.dispatched·observed_manual은 X에서, committed·not_committed{verify}·in_doubt는 verify(또는 X)에서 온다.
    */
   ledgerEffect(effect: string, at: string | null): boolean {
-    const m = /^ledger\.(dispatched|committed|not_committed|in_doubt)(?:\{([a-z_]+)\})?$/.exec(effect);
+    const m = /^ledger\.(dispatched|committed|not_committed|in_doubt|observed_manual)(?:\{([a-z_]+)\})?$/.exec(effect);
     if (!m) return false;
     const [, kind, arg] = m;
     const xs = at ? (this.xsOfVerify.get(at) ?? [at]) : [];
@@ -100,13 +108,20 @@ export class LedgerCommitPort implements CommitPort {
       this.closeAmbiguous(xs, kind!);
       return true;
     }
-    const x = xs[0]!;
+    const x0 = xs[0]!;
+    const x = this.ledgerStepOf.get(x0) ?? x0;
     try {
-      if (kind === 'dispatched') this.i.ledger.dispatched(this.i.intentId, x);
-      else if (kind === 'committed') this.i.ledger.resolve(this.i.intentId, x, 'committed', null, at && at !== x ? this.i.verifyRef(at) : null);
+      let step = x;
+      if (kind === 'observed_manual') {
+        const row = this.i.manualRow(x0);
+        if (!row) throw new LedgerError('ledger.row_missing');
+        step = this.i.ledger.attestManual(row);
+        if (step !== x0) this.ledgerStepOf.set(x0, step);
+      } else if (kind === 'dispatched') this.i.ledger.dispatched(this.i.intentId, x);
+      else if (kind === 'committed') this.i.ledger.resolve(this.i.intentId, x, 'committed', null, at && at !== x0 ? this.i.verifyRef(at) : null);
       else if (kind === 'not_committed') this.i.ledger.resolve(this.i.intentId, x, 'not_committed', (arg ?? 'verify') as NotCommittedReason, null);
       else this.i.ledger.resolve(this.i.intentId, x, 'in_doubt');
-      this.i.journal(`ledger.${kind}`, { stepId: x, ...(arg && kind === 'not_committed' ? { reason: arg } : {}) });
+      this.i.journal(`ledger.${kind}`, { stepId: step, ...(arg && kind === 'not_committed' ? { reason: arg } : {}) });
     } catch (e) {
       this.i.journal('ledger.write_failed', { effect: kind!, code: e instanceof LedgerError ? e.code : 'ledger.error' });
     }

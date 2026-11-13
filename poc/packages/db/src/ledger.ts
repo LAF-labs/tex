@@ -290,6 +290,28 @@ export class Ledger {
   }
 
   /**
+   * 사람이 "직접 발급함"·가드 관측으로 발급 사실을 알렸다. 원장 상태와 관계없이 그 사실을 남기고, 사실이 남은 (intent, step)을 돌려준다.
+   * - 그 (intent, step)이 committed면 이미 발급으로 적혀 있어 쓰지 않는다.
+   * - 마지막 시도가 not_committed면 종결은 바꾸지 않는다(ADR-042, resolve 규칙). 대신 같은 의도에 따로 행
+   *   `<step>.manual`(observed_manual, 같은 발급 키)을 넣는다. 발급 키 묶음이 그 열린 행을 보고 새 시도를 막는다.
+   * - 그 밖(행 없음·armed·dispatched·in_doubt·observed_manual)은 observedManual 그대로다.
+   */
+  attestManual(a: ArmRow): string {
+    return this.db.transaction(() => {
+      const prev = this.get(a.intentId, a.stepId);
+      if (prev?.state === 'committed') return a.stepId;
+      if (prev?.state !== 'not_committed') {
+        this.observedManual(a);
+        return a.stepId;
+      }
+      const side = { ...a, stepId: `${a.stepId}.manual` };
+      if (this.get(side.intentId, side.stepId)?.state === 'committed') return side.stepId;
+      this.observedManual(side);
+      return side.stepId;
+    })();
+  }
+
+  /**
    * 확정된 주 단계(committed)에 딸린 후속 단계를 armed로 넣는다(게이트를 소비하지 않는다). 한 트랜잭션:
    * 주 단계가 committed가 아니면(없어도) ledger_primary_not_committed, 후속 행이 이미 있으면 ledger_<state>.
    */
