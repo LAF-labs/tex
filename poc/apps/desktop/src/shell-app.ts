@@ -1702,7 +1702,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         },
         log: (n, d) => log.event(n, d),
       });
-      void h.check();
+      // 첫 확인은 기동 레지스트리 동기화 뒤에: 엔진이 폐기 목록을 받기 전이면 registry.revocation_stale로 보류되고 다음 확인은 15분 뒤다
+      // (새 설치 격리 프로필 실측 2026-11-13, 동기화가 2초 늦었다). 기동 동기화가 돌고 있으면 그 약속을 같이 기다린다.
+      void registrySync('update').finally(() => void h.check());
       return h;
     } catch (e) {
       log.event('main.update_start_failed', { error: (e as Error).message.slice(0, 80) });
