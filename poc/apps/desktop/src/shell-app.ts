@@ -29,7 +29,8 @@ import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.t
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
-import { openSecretWindow } from './secret-window.ts';
+import { openSecretWindow, openVaultInputWindow } from './secret-window.ts';
+import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
@@ -106,10 +107,14 @@ const FILES: Record<string, string> = {
   '/pair.css': 'text/css',
   '/secret.js': 'text/javascript',
   '/secret.css': 'text/css',
+  '/codef-secret.js': 'text/javascript',
+  '/shell-bank-auto.js': 'text/javascript',
 };
 
 /** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
 let secretPage: () => string | null = () => null;
+/** 지금 열린 계좌 자동조회 인증서 비밀번호 창의 페이지(bank-auto.ts). 없으면 null(404). */
+let codefPage: () => string | null = () => null;
 
 function serve(): void {
   protocol.handle(SHELL_SCHEME, async (req) => {
@@ -118,6 +123,10 @@ function serve(): void {
     if (p === '/tokens.css') return new Response(tokensCss(), { headers: appHeaders('text/css') });
     if (p === '/secret.html') {
       const html = secretPage();
+      return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
+    }
+    if (p === '/codef-secret.html') {
+      const html = codefPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
     }
     if (p === '/bundle.css') return new Response(bundleCss(), { headers: appHeaders('text/css') });
@@ -547,7 +556,34 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (next && !byApp) openSecret(next);
     });
   };
+  // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
+  let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
+  codefPage = () => (codefWin ? codefPageHtml(codefWin.req, { profileName: profiles()[codefWin.req.scope].name, certLabel: bankAuto.chosenLabel() }) : null);
+  const openCodef = (req: CodefNeeded): void => {
+    if (mainClosing || win.isDestroyed() || codefWin) {
+      void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
+      return log.event('main.codef_window_ignored');
+    }
+    let port: ReturnType<typeof host.secretInputPort> | null = null;
+    try {
+      port = host.secretInputPort(req);
+      const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/codef-secret.html`, CODEF_WINDOW_TITLE, 340);
+      codefWin = { win: w, req };
+      w.on('closed', () => {
+        if (codefWin?.win === w) codefWin = null;
+        // 값을 넘겼으면 금고는 이미 요청을 끝냈다(같은 reqId 취소는 할 일이 없다)
+        void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
+      });
+    } catch (e) {
+      port?.close();
+      void host.control('codef.windowClosed', { reqId: req.reqId }).catch(() => {});
+      log.event('main.codef_window_failed', { error: (e as Error).message.slice(0, 120) });
+    }
+  };
+  host.on('codef', (data: unknown) => send({ type: 'bankAuto', event: data }));
   host.on('vault-event', (name: string, data: unknown) => {
+    const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
+    if (cr) return openCodef(cr);
     if (name === 'secret.needed') return openSecret(data);
     const n = vaultNotice(name, data);
     if (n) runs.notice(n.runId, n.text, n.retry);
@@ -707,6 +743,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         findCerts: () => listNpkiCerts((m, p) => host.control(m, p), (der) => certInfoInSandbox(der), { today: kstToday(Date.now()), log: (n, d) => log.event(n, d) }),
       };
   const onbPorts = onboardingPorts(onbExternal, onbStore, refresh);
+  // 계좌 자동조회 인증서 목록은 온보딩 O-03과 같은 길(금고 npki.list → 샌드박스 certInfo, 시연은 목업)
+  const bankAuto = bankAutoHandlers({ engine: (m, p) => host.rpc(m, p), certs: () => onbExternal.findCerts(), preferredCertId: () => onb?.state.certId ?? null, log: (n, d) => log.event(n, d) });
   // 거래처 장부(M4-3 O-05). [등록증으로 채우기]는 같은 등록증 읽기(fixture는 시연 거래처 등록증). 골랐지만 못 읽은 것과 고르지 않은 것을 나눈다.
   const cpBook = new CounterpartyBook(
     (m, p) => host.rpc(m, p),
@@ -885,6 +923,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
   };
 
+  const bankAutoH = bankAuto.handlers;
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
 
@@ -900,6 +939,32 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
 
   const handlers: ShellHandlers = {
+    // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
+    'bankAuto.status': () => bankAutoH['bankAuto.status'](),
+    'bankAuto.certs': () => bankAutoH['bankAuto.certs'](),
+    'bankAuto.consent': (p) => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.consent'](p);
+    },
+    'bankAuto.connect': async (p) => {
+      needGesture(3_000);
+      await needLogin();
+      return bankAutoH['bankAuto.connect'](p);
+    },
+    'bankAuto.choose': (p) => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.choose'](p);
+    },
+    'bankAuto.refresh': async () => {
+      needGesture(3_000);
+      await needLogin();
+      return bankAutoH['bankAuto.refresh']();
+    },
+    'bankAuto.cancel': () => bankAutoH['bankAuto.cancel'](),
+    'bankAuto.disconnect': () => {
+      needGesture(3_000);
+      return bankAutoH['bankAuto.disconnect']();
+    },
     'shell.bootstrap': async () => ({
       board: await bootBoard(),
       layout: SHELL,

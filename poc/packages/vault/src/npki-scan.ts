@@ -10,6 +10,8 @@ import { NPKI_CERT_MAX_BYTES, type NpkiCertEntry, type NpkiListResult, type Npki
 //   (1) NPKI 디렉터리 열거
 //   (2) signCert.der(공개 인증서) 바이트만 읽는다. 파싱하지 않는다(docparse 샌드박스 certInfo, ADR-014·D17 §3)
 //   (3) signPri.key는 이름으로 있는지만 본다. 열지도 stat하지도 않는다
+//       예외 하나(계좌 자동조회 CODEF, 대표 결정 2026-11-12): readNpkiLoginPair가 사장님이 고른 인증서 하나의 signCert.der·signPri.key를
+//       연결·[최신화] 순간에만 읽는다. 부르는 곳은 codef-seal.ts뿐이고(사람이 금고 창에 비밀번호를 넣은 뒤), 다른 인증서는 열지 않는다.
 //   (4) 감시하지 않는다(부를 때 한 번 읽는다)
 //   (5) 경로·파일명·CA 이름은 로그에 남기지 않는다(개수만)
 // LocalLow는 낮은 무결성 프로세스도 쓸 수 있는 위치라 내용과 구조를 비신뢰로 다룬다.
@@ -138,6 +140,27 @@ export async function scanNpki(o: NpkiScanOptions = {}): Promise<NpkiListResult>
   return { certs, skipped };
 }
 
+export type NpkiPairRead = { ok: true; der: Uint8Array; key: Uint8Array } | { ok: false; reason: 'not_found' | 'no_key' | NpkiSkip };
+
+/**
+ * 고른 인증서 하나(id = scanNpki의 id)의 signCert.der와 signPri.key를 읽는다(D05 §6 (3)의 CODEF 예외). 열거·링크·바꿔치기·크기 검사는
+ * scanNpki·readCert와 같다. 다른 인증서 폴더의 개인키는 열지 않는다. 로그에는 결과만 남긴다(경로·id 없음).
+ */
+export async function readNpkiLoginPair(certId: string, o: NpkiScanOptions = {}): Promise<NpkiPairRead> {
+  if (!/^[0-9a-f]{16}$/.test(certId)) return { ok: false, reason: 'not_found' };
+  const fs = o.fs ?? nodeNpkiFs;
+  const listed = await scanNpki({ roots: o.roots, fs });
+  const hit = listed.certs.find((c) => c.id === certId);
+  if (!hit) return { ok: false, reason: 'not_found' };
+  if (!hit.hasKey) return { ok: false, reason: 'no_key' };
+  const files = await dirEntries(fs, hit.dir);
+  const keyEnt = files?.find((f) => KEY_NAME.test(f.name));
+  if (!keyEnt) return { ok: false, reason: 'no_key' };
+  const key = await readCert(fs, path.join(hit.dir, keyEnt.name), keyEnt);
+  if (typeof key === 'string') return { ok: false, reason: key };
+  return { ok: true, der: hit.certDer, key };
+}
+
 async function isRealDir(fs: NpkiFs, p: string): Promise<boolean> {
   try {
     const st = await fs.lstat(p);
@@ -167,7 +190,7 @@ async function dirs(fs: NpkiFs, p: string, skip: (w: NpkiSkip) => void): Promise
   return out.sort();
 }
 
-/** signCert.der만 연다. 링크·특수 파일·바꿔치기·하드링크·크기 초과는 읽지 않는다. */
+/** signCert.der를 연다(CODEF 예외에서는 고른 인증서의 signPri.key도). 링크·특수 파일·바꿔치기·하드링크·크기 초과는 읽지 않는다. */
 async function readCert(fs: NpkiFs, file: string, ent: Dirent): Promise<Uint8Array | NpkiSkip> {
   if (ent.isSymbolicLink()) return 'symlink';
   if (!ent.isFile()) return 'not_file';
