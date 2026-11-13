@@ -42,6 +42,11 @@ const uiFor = (step) => {
   return ui;
 };
 
+/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안 빨간 글로 둔다(대표 2026-11-13). 부른 쪽이 다시 그린다. */
+export function showOnbError(step, text) {
+  uiFor(step).error = text;
+}
+
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
 const draftTag = (n) => (n?.draft ? h('span', { class: 'sx-meta onb-draft', 'data-draft': n.key }, n.draft) : null);
 
@@ -66,10 +71,18 @@ export function onboardingView(o, act) {
 }
 
 function stepCard(o, act) {
+  const el = stepBody(o, act);
+  const u = uiFor(o.step);
+  if (u.error) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
+  return el;
+}
+
+function stepBody(o, act) {
   const u = uiFor(o.step);
   const reply = async (choice, extra = {}) => {
     if (u.busy) return false;
     u.busy = true;
+    u.error = null;
     try {
       return await act.reply(o.step, choice, extra);
     } finally {
@@ -95,11 +108,12 @@ function stepCard(o, act) {
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
     case 'biz-number': {
-      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호' });
-      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호' });
+      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다
+      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호', value: u.vals?.name ?? '' });
+      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호', value: u.vals?.bizNo ?? '' });
       const form = h(
         'form',
-        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), reply('submit', { fields: { name: name.value, bizNo: input.value } })) },
+        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
@@ -179,7 +193,8 @@ function bizCard(o, u, reply, act) {
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
   const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
-    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
+    // 거부되어 다시 그릴 때는 고치던 값(u.fields)을 그대로 둔다
+    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: u.fields?.[name] ?? value ?? '', autocomplete: 'off', ...attrs }));
     const form = h(
       'form',
       {
@@ -190,6 +205,7 @@ function bizCard(o, u, reply, act) {
           const fields = Object.fromEntries(['name', 'bizNo', 'rep', 'bizType', 'bizItem', 'address', 'email'].map((k) => [k, String(f.get(k) ?? '')]));
           // 저장한 내용으로 다시 그릴 때 읽기 모양이 되게 먼저 내린다. 거부되면(번호 틀림 등) 고치던 칸으로 돌아간다.
           u.editing = false;
+          u.fields = fields;
           if (!(await reply('edit', { fields }))) {
             u.editing = true;
             act.rerender();
@@ -203,7 +219,7 @@ function bizCard(o, u, reply, act) {
       field('종목', 'bizItem', b.bizItem, { maxlength: 100 }),
       field('사업장 주소', 'address', b.address, { maxlength: 200 }),
       field('사업자 이메일', 'email', b.email, { type: 'email', maxlength: 320 }),
-      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
+      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
     );
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);
   }

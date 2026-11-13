@@ -1,7 +1,7 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
-import { onboardingView } from './shell-onboarding.js';
+import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
@@ -479,7 +479,9 @@ const onbAct = {
       if (loginGate()) renderModal();
       return true;
     } catch (e) {
-      toast(ONB_ERR[errText(e)] ?? '다시 해 주세요');
+      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안 빨간 글(대표 2026-11-13)
+      showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요');
+      renderOnboarding();
       return false;
     }
   },
@@ -1443,6 +1445,14 @@ function cpEditPanel(c, add = null) {
   let reading = false;
   /** 이 폼에서 읽은 등록증의 표(main이 든 주소를 이 폼의 저장에만 붙인다). */
   let certHold = null;
+  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 틀림은 빨간 글. 칸을 고치면 내린다.
+  const msg = h('p', { class: 'form-msg', role: 'status', 'data-cp-msg': '', hidden: true });
+  const say = (text, bad) => {
+    msg.textContent = text;
+    msg.className = `form-msg${bad ? ' is-bad' : ''}`;
+    msg.dataset.cpMsg = bad ? 'bad' : 'ok';
+    msg.hidden = false;
+  };
   // [등록증으로 채우기](M4-3 O-05): main이 파일을 고르게 하고 후보만 돌려준다. 값은 입력 칸 value로만 넣는다(HTML로 그리지 않는다).
   const fillFromCert = async () => {
     if (reading) return;
@@ -1450,7 +1460,7 @@ function cpEditPanel(c, add = null) {
     try {
       const r = await call('counterparty.readCert', {});
       if (!r.found) {
-        if (r.reason === 'unreadable') toast('등록증을 읽지 못했어요. 번호로 입력해 주세요');
+        if (r.reason === 'unreadable') say('등록증을 읽지 못했어요. 번호로 입력해 주세요', true);
         return;
       }
       if (r.name) form.elements.name.value = r.name;
@@ -1461,9 +1471,9 @@ function cpEditPanel(c, add = null) {
       const itemIn = form.elements.namedItem('item');
       const itemFilled = !!r.item && !!itemIn && !String(itemIn.value).trim();
       if (itemFilled) itemIn.value = r.item;
-      toast(!r.bizNo ? '등록증에서 읽었어요. 사업자번호는 읽지 못했으니 직접 넣어 주세요' : itemFilled ? '등록증에서 읽었어요. 저장 품목은 등록증의 종목이에요. 발급할 품목과 다르면 고친 뒤 추가해 주세요' : '등록증에서 읽었어요. 맞는지 보고 추가해 주세요');
+      say(!r.bizNo ? '등록증에서 읽었어요. 사업자번호는 읽지 못했으니 직접 넣어 주세요' : itemFilled ? '등록증에서 읽었어요. 저장 품목은 등록증의 종목이에요. 발급할 품목과 다르면 고친 뒤 추가해 주세요' : '등록증에서 읽었어요. 맞는지 보고 추가해 주세요', !r.bizNo);
     } catch (err) {
-      toast(human(err, CP_ERR));
+      say(human(err, CP_ERR), true);
     } finally {
       reading = false;
     }
@@ -1472,6 +1482,7 @@ function cpEditPanel(c, add = null) {
     'form',
     {
       class: 'cp-form',
+      oninput: () => (msg.hidden = true),
       onsubmit: async (e) => {
         e.preventDefault();
         if (saving) return;
@@ -1492,7 +1503,7 @@ function cpEditPanel(c, add = null) {
           openPanel({ kind: 'cp', id: r.id });
           toast(c ? '저장했어요' : '거래처를 추가했어요');
         } catch (err) {
-          toast(human(err, CP_ERR));
+          say(human(err, CP_ERR), true);
         } finally {
           saving = false;
         }
@@ -1504,6 +1515,7 @@ function cpEditPanel(c, add = null) {
     field('대표자', 'rep', c?.rep, { maxlength: 30 }),
     field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
     field('저장 품목', 'item', c?.item, { maxlength: 40, placeholder: '자주 쓰는 품목(발급 때 후보로 채워요)' }),
+    msg,
     h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
   );
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));

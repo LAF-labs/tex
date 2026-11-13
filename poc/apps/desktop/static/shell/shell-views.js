@@ -143,7 +143,20 @@ export function steps(list) {
   return h(
     'ol',
     { class: 'sx-steps' },
-    list.map((s) => h('li', { class: s.state === 'todo' ? null : `is-${s.state}` }, h('span', {}, s.label, s.note ? h('small', {}, s.note) : null))),
+    list.map((s) =>
+      h(
+        'li',
+        { class: s.state === 'todo' ? null : `is-${s.state}` },
+        h(
+          'span',
+          {},
+          s.label,
+          s.note ? h('small', {}, s.note) : null,
+          // 포털 대화상자 확인 결과(사업자번호 [확인] 등): 팝업 대신 이 단계 아래 한 줄 글. 기대와 다르면 빨간 글.
+          ...(s.checks ?? []).map((c) => h('small', { class: `sx-step-check ${c.ok ? 'is-ok' : 'is-bad'}`, 'data-portal-check': c.ok ? 'ok' : 'bad' }, c.text)),
+        ),
+      ),
+    ),
   );
 }
 
@@ -162,6 +175,11 @@ const STEP_GROUPS = [
 const ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 export function runSteps(run) {
   const groups = STEP_GROUPS.map(([label, idx]) => {
+    const g = group(label, idx);
+    const checks = (run.portalChecks ?? []).filter((c) => idx.includes(c.step));
+    return checks.length ? { ...g, checks } : g;
+  });
+  function group(label, idx) {
     const xs = idx.map((i) => run.steps[i]).filter(Boolean);
     const pick = (st) => xs.find((s) => s.state === st);
     const att = pick('attention');
@@ -171,7 +189,7 @@ export function runSteps(run) {
     if (xs.length && xs.every((s) => s.state === 'done')) return { label, state: 'done', note: xs.map((s) => s.note).filter(Boolean)[0] };
     if (xs.some((s) => s.state === 'done') && ACTIVE.includes(run.status)) return { label, state: 'now' };
     return { label, state: 'todo' };
-  });
+  }
   // 단계 사이에서 멈춘 확인 필요(진행 중 단계가 없던 때)는 끝나지 않은 첫 묶음에 표시한다. 안 하면 멈춘 곳이 안 보인다.
   if (run.status === 'attention' && !groups.some((g) => g.state === 'attention')) {
     const at = groups.find((g) => g.state !== 'done');

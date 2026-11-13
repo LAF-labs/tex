@@ -68,6 +68,8 @@ export type RunEvent =
    * 홈택스 인증서 선택창(MagicLine iframe)에서 사람이 직접 넣는 길은 이 이벤트가 아니라 handoff(code human.cert_waiting, 서명 차례면 sign.waiting) → run.resume이다.
    */
   | ({ runId: string; type: 'secret' } & SecretTurnEvent)
+  /** 포털 대화상자 문구(예: 등록번호 [확인] → "정상적인 사업자번호입니다."). 앱 실행 단계에 글로만 보인다. key는 strings 키, ok는 기대 문구와 맞음. 로그에는 넣지 않는다. */
+  | { runId: string; type: 'notice'; stepId: string; key: string; text: string; ok: boolean }
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
   | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt }
   /**
@@ -545,6 +547,7 @@ export class RunService extends EventEmitter {
       ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
       ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
       secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
+      portalNotice: (n) => this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok }),
       ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
     a.ir = run;

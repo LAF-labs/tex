@@ -404,6 +404,8 @@ export interface RunView {
   action?: string;
   /** 카드 꼬리 문장(포털 안내 문구·금고 알림). 텍스트로만 그린다. */
   notices?: string[];
+  /** 실행 중 포털 대화상자 확인 결과(예: "사업자번호 확인: 정상적인 사업자번호입니다."). step은 엔진 단계 번호, ok가 아니면 빨간 글. 실행 단계 목록 안에 글로만 그린다(대표 2026-11-13, 팝업 없음). */
+  portalChecks?: Array<{ step: number; text: string; ok: boolean }>;
   /** 다시 해도 되는 멈춤이었다(금고가 Chrome 확장을 보고 비밀 창을 거절). 발급 없이 끝난 카드에 [다시 시도]를 둔다. */
   retry?: 'extension';
   /** 홈택스에서 되읽은 값이 초안과 다르다. */

@@ -428,3 +428,11 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .issued-state.is-muted { color: var(--ink-3); }
 .issued-note { display: block; }
 .issued-more { display: flex; justify-content: center; }
+
+/* 사업자 확인 결과는 팝업·토스트 대신 그 화면 안 글로(대표 2026-11-13). 정상은 차분한 글, 아니면 빨간 글. 디자인 토큰에 빨강이 없어 여기서만 둔다. */
+:root { --sx-bad: #B42318; }
+@media (prefers-color-scheme: dark) { :root { --sx-bad: #F97066; } }
+.sx-steps small.sx-step-check { color: var(--ink-2); }
+.sx-steps small.sx-step-check.is-bad, .form-msg.is-bad { color: var(--sx-bad); font-weight: 500; }
+.form-msg { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.form-msg[hidden] { display: none; }
