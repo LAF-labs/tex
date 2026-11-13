@@ -150,6 +150,8 @@ export interface IrRunInput {
   lifetimeMs?: number;
   /** 공동인증서 비밀번호 차례 알림(값 없음, main 안내: mode window = 전용 Chrome 칸에 직접, manual = 홈택스 인증서 창에서 직접 → B3 사람 대기 [다 했어요]). */
   secretEvent?: (e: SecretTurnEvent) => void;
+  /** 포털 대화상자 문구(wait for:'dialog')를 앱 실행 단계에 글로 보인다. 저널·로그에는 넣지 않는다. */
+  portalNotice?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
   /** 비밀 차례 TTL(기본 120초, 시험용). */
   secretTtlMs?: number;
 }
@@ -486,6 +488,7 @@ export class IrRun {
     };
     const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
     if (i.profileWrite) env.profileWrite = i.profileWrite;
+    if (i.portalNotice) env.dialogShown = i.portalNotice;
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
     if (i.ir.locate) {
       const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };

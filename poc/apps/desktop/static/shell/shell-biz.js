@@ -39,7 +39,7 @@ export function bizEditStart(b) {
 }
 
 /**
- * ctx: { b, edit, runActive, authReopen, call, toast, rerender, onEdit, onCancel, onSaved(r), reopenAuth, onRegister }
+ * ctx: { b, edit, runActive, authReopen, call, rerender, onEdit, onCancel, onSaved(r), reopenAuth, onRegister }
  * edit가 있으면 폼, 없으면 보기 카드.
  */
 export function bizProfileCard(ctx) {
@@ -73,6 +73,7 @@ function viewCard(ctx) {
 
 function editCard(ctx) {
   const e = ctx.edit;
+  const msgEl = e.msg ? h('p', { class: `form-msg${e.msg.bad ? ' is-bad' : ''}`, role: 'status', 'data-biz-msg': e.msg.bad ? 'bad' : 'ok' }, e.msg.text) : null;
   const noteEl = h('p', { class: 'sx-meta', 'data-bizno-note': '', hidden: !e.origNo || digits(e.values.bizNo) === e.origNo }, BIZ_NO_CHANGE_NOTE);
   const input = (label, name, attrs) =>
     h(
@@ -88,6 +89,11 @@ function editCard(ctx) {
         ...attrs,
         oninput: (ev) => {
           e.values[name] = ev.target.value;
+          // 칸을 고치면 지난 결과 글은 내린다(다시 그리지 않아 입력 칸 초점이 그대로다)
+          if (e.msg) {
+            e.msg = null;
+            msgEl?.remove();
+          }
           if (name === 'bizNo') {
             noteEl.hidden = !e.origNo || digits(e.values.bizNo) === e.origNo;
             // 번호를 고치면 지난 "조회하지 못함" 확인은 쓰지 않는다
@@ -99,9 +105,15 @@ function editCard(ctx) {
         },
       }),
     );
+  // 저장·등록증 읽기 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 틀림은 빨간 글.
+  const say = (text, bad) => {
+    e.msg = { text, bad };
+    ctx.rerender();
+  };
   const save = async (confirmUnverified) => {
     if (e.busy || ctx.runActive) return;
     e.busy = true;
+    e.msg = null;
     try {
       const r = await ctx.call('profile.edit', { fields: { ...e.values }, ...(confirmUnverified ? { confirmUnverified: true } : {}) });
       if (!r.ok) {
@@ -112,7 +124,7 @@ function editCard(ctx) {
       ctx.onSaved(r);
     } catch (err) {
       const c = String(err?.message ?? err);
-      ctx.toast(BIZ_EDIT_ERR[c] ?? '저장하지 못했어요. 다시 해 주세요.');
+      say(BIZ_EDIT_ERR[c] ?? '저장하지 못했어요. 다시 해 주세요.', true);
     } finally {
       e.busy = false;
     }
@@ -123,7 +135,7 @@ function editCard(ctx) {
     try {
       const r = await ctx.call('profile.readCert', {});
       if (!r.found) {
-        if (r.reason === 'unreadable') ctx.toast('등록증을 읽지 못했어요. 칸에 직접 입력해 주세요.');
+        if (r.reason === 'unreadable') say('등록증을 읽지 못했어요. 칸에 직접 입력해 주세요.', true);
         return;
       }
       for (const [, k] of FIELDS) {
@@ -131,11 +143,10 @@ function editCard(ctx) {
         if (typeof v === 'string' && v) e.values[k] = k === 'bizNo' ? fmtBiz(digits(v)) : v;
       }
       e.confirm = null;
-      ctx.rerender();
-      ctx.toast('등록증에서 읽었어요. 맞는지 보고 저장해 주세요.');
+      say('등록증에서 읽었어요. 맞는지 보고 저장해 주세요.', false);
     } catch (err) {
       const c = String(err?.message ?? err);
-      ctx.toast(BIZ_EDIT_ERR[c] ?? '등록증을 읽지 못했어요. 다시 해 주세요.');
+      say(BIZ_EDIT_ERR[c] ?? '등록증을 읽지 못했어요. 다시 해 주세요.', true);
     } finally {
       e.busy = false;
     }
@@ -153,6 +164,7 @@ function editCard(ctx) {
     h('div', { class: 'sx-actions' }, btn('파일에서 읽기', readCert, 'sx-btn-quiet', { 'data-act': 'biz-cert' })),
     FIELDS.map(([label, name, attrs]) => input(label, name, attrs)),
     noteEl,
+    msgEl,
     ctx.runActive ? note(BIZ_RUN_ACTIVE_NOTE, true) : null,
     e.confirm
       ? h(

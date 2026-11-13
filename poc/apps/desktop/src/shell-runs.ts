@@ -79,6 +79,8 @@ type EngineEvent =
   | { runId: string; type: 'end'; status: string; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string }
   /** 금고 비밀 창 차례(엔진 SecretTurnEvent, 값 없음). 실행은 끝나지 않았다: 앱 비밀번호 창이 뜬다. */
   | { runId: string; type: 'secret'; state: 'open' | 'closed'; stepId?: string; why?: string }
+  /** 포털 대화상자 문구(엔진 wait for:'dialog'). key는 패키지 strings 키, ok는 기대 문구와 맞음. 화면에 글로만 보인다. */
+  | { runId: string; type: 'notice'; stepId?: string; key?: string; text?: string; ok?: boolean }
   /**
    * 실행 상태(엔진 RunEvent, M2-3). end는 종료 상태에서만 오고, InDoubt는 종료가 아니라 state in_doubt로 온다.
    * 증언·조회 뒤 갈래: state running(새 gate.request) | state paused{code:'policy_downgrade'} | end completed_with_issues.
@@ -261,6 +263,9 @@ export function fatalText(code: string): string | null {
 }
 
 /** 포털이 한 말(ADR-025 결정 5): 텍스트만, 200자. 제어문자는 뺀다. 렌더러는 텍스트 노드로만 넣는다. */
+/** 포털 대화상자 확인 줄의 앞말(패키지 strings 키 → 사용자 말). 모르는 키는 '홈택스 안내'. */
+const NOTICE_LABEL: Record<string, string> = { 'counterpart.bizNoOk': '사업자번호 확인' };
+const cleanNotice = (s: string) => s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
 const portalNoticeText = (s: string) => `홈택스 안내: “${s.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, ' ').trim().slice(0, 200)}”`;
 
 /**
@@ -840,6 +845,16 @@ export class ShellRuns extends EventEmitter implements Drafts {
       if (e.state !== 'open' || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
       const now = r.steps.findLastIndex((s) => s.state === 'now');
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, note: '앱에 뜬 창에 인증서 비밀번호를 넣어 주세요' };
+      this.emit('update', r);
+      return;
+    }
+    if (e.type === 'notice') {
+      // 포털 대화상자(사업자번호 [확인]의 alert 등)는 팝업 없이 지금 단계 아래 한 줄 글로 보인다. 기대와 다르면 빨간 글(ok false).
+      const text = typeof e.text === 'string' ? cleanNotice(e.text) : '';
+      if (!text || !['preparing', 'turn', 'waiting', 'issuing'].includes(r.status)) return;
+      const now = r.steps.findLastIndex((s) => s.state === 'now');
+      const line = { step: now >= 0 ? now : PHASES.indexOf('input'), text: `${NOTICE_LABEL[e.key ?? ''] ?? '홈택스 안내'}: ${text}`, ok: e.ok === true };
+      r.portalChecks = [...(r.portalChecks ?? []).filter((c) => c.text !== line.text), line];
       this.emit('update', r);
       return;
     }
