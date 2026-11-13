@@ -83,6 +83,8 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.mfa_pending', 'handoff'],
   ['portal.captcha', 'handoff'],
   ['portal.busy', 'handoff'],
+  // 포털 점검(IR rev v1.3.7): 폴백·판정·재시도·사람 차례 없이 바로 멈춘다(끝 시각은 걸쇠가 안다).
+  ['portal.maintenance', 'abort'],
   // 커밋 가드(D03 §5.4, D16): 무장 없는 커밋 요청·잡지 못한 커밋 요청·무장 거부는 중단, 본문 불일치는 핸드오프
   ['commit_guard.blocked_request', 'abort'],
   ['commit_guard.unintercepted', 'abort'],

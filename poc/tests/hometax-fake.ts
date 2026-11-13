@@ -93,6 +93,11 @@ export interface FakeKnobs {
    * 로그인 화면은 머리말 [로그인]을 눌러야 그 자리에서 그려진다. false면 옛 가짜처럼 직접 주소가 로그인 화면이다.
    */
   realLoginNav: boolean;
+  /**
+   * 홈택스 시스템 점검(2026-11-14 실화면): 모든 주소가 307로 /info_page.html에 간다. 글은 실제 안내와 같은 꼴
+   * "홈택스 시스템 점검 안내 … 중단일시 : <날짜>(요일) 00:00 ~ 06:00".
+   */
+  maintenance: boolean;
 }
 
 export interface HometaxFake {
@@ -578,7 +583,7 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false, syncConfirmAlert: false,
-    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false, certPwType: 'password',
+    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true, mainNotice: false, realLoginNav: false, maintenance: false, certPwType: 'password',
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
@@ -616,6 +621,13 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
   let teetOrigin = '';
   const origin = await listen((req, res) => {
     const u = new URL(req.url ?? '/', 'http://x');
+    if (knobs.maintenance && u.pathname === W2) {
+      res.writeHead(307, { location: '/info_page.html' });
+      return res.end();
+    }
+    if (u.pathname === '/info_page.html') {
+      return send(res, 200, 'text/html; charset=utf-8', '<!doctype html><html lang="ko"><head><meta charset="utf-8"></head><body><div class="info"><h1>홈택스 시스템 점검 안내</h1><p>홈택스 시스템 점검 작업으로 인하여 아래와 같이 서비스가 중지되오니 시스템 이용에 참고하시기 바랍니다.</p><p>중단일시 : 2026.11.14(토) 00:00 ~ 06:00</p><p>이용에 불편을 드려서 죄송합니다.</p></div></body></html>');
+    }
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn, knobs.realLoginNav);
       state.lastScreen = { screen, at: Date.now() };

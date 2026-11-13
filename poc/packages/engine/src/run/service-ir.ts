@@ -165,6 +165,8 @@ type HandoffCommand = 'resume' | 'manual' | 'stop' | 'cap';
 export interface IrRunResult {
   status: RunStatus;
   code?: string;
+  /** 포털 점검으로 멈췄으면 안내에서 읽은 끝 시각(ISO +09:00). 앱이 "언제 다시" 문구에 쓴다. */
+  maintenanceUntil?: string;
   approvalNo?: string;
   mailConfirmed?: boolean;
   /** 조율기 마지막 상태(골든 대조). */
@@ -751,8 +753,10 @@ export class IrRun {
     if (halted && status !== 'success' && status !== 'completed_with_issues' && status !== 'in_doubt') {
       // 걸쇠(차단 신호·누출 의심)가 사유다. 그 뒤에 난 실패(바뀐 화면) 코드보다 앞선다.
       code = halted;
-      status = halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
+      // 점검은 사람 차례가 아니다(핸드오프 아님). 앱(#363)은 failed·code portal.maintenance·maintenanceUntil을 읽는다.
+      status = halted === 'portal.maintenance' ? 'failed' : halted.startsWith('portal.') && halted !== 'portal.blocked' ? 'handoff' : 'failed';
     }
+    const until = halted === 'portal.maintenance' ? this.enforcer?.maintenanceUntil : null;
     // 정지 하향으로 쉬었거나(Paused → handoff) 확정 뒤 멈췄으면(CompletedWithIssues) 사유는 하향 코드다. InDoubt는 그 코드를 둔다.
     if (this.denied && (status === 'handoff' || status === 'completed_with_issues') && (!code || code === 'run.state_stop')) code = this.denied.code;
     if (status === 'completed_with_issues' && this.mail === false && !code) code = 'mail.not_confirmed';
@@ -763,6 +767,7 @@ export class IrRun {
       ...(stoppedAt ? { stoppedAt } : {}),
       ...(approvalNo ? { approvalNo } : {}),
       ...(this.verified ? { mailConfirmed: this.mail ?? false } : {}),
+      ...(until ? { maintenanceUntil: until } : {}),
     };
   }
 }

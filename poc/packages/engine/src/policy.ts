@@ -329,7 +329,7 @@ export interface RunPolicyOptions {
 }
 
 /** 차단이 아닌 신호의 종료 코드(D16 portal.*). 추가 인증은 D16 mfa_pending, 대기열 busy는 D16에 없어 더했다. */
-const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
+const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { maintenance: 'portal.maintenance', extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
 
 /**
  * 실행 하나의 집행(D03 §5.2 Actuator의 policy): 스텝 지연·안정 대기, 실행당 동작 수·벽시계, 분당 네비게이션,
