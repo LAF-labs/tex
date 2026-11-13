@@ -5,7 +5,7 @@
 //   통과한 선택자는 이번 실행 동안 그 항목의 첫 후보로 남는다(같은 실행의 다음 스텝·GuardedActuator의 R-A1 재확인도 그것을 본다).
 // - 모델 호출은 스텝당 최대 2번이다(게이트웨이 실행당 L2 예산 2와 같다).
 import type { ElementRef, PageReader, Resolved } from './page.ts';
-import { normalizeName } from './constants.ts';
+import { maskScreenText, normalizeName } from './constants.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
 import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts';
 
@@ -153,10 +153,14 @@ export async function locateTarget(
   if (!entry || !o.page.listRole) return null;
   const { calls, rejected } = o;
   const mism = await nameMismatched(o.page, o.dict, o.key);
+  // 결과 한 줄(engine.log): 고른 선택자 또는 고르지 못한 이유. mismatchName은 사전 요소의 실제 접근성 이름(숫자 가림).
+  const result = (why: string, extra: Record<string, string | number | boolean> = {}) =>
+    o.loc.journal('locate.result', { stepId: o.stepId, key: o.key, result: why, calls: calls.n, rejected: rejected.length, mismatch: mism !== null, ...(mism !== null ? { mismatchName: maskScreenText(mism) } : {}), ...extra });
   while (calls.n < LOCATE_MAX_CALLS) {
     const listed = (await o.page.listRole(entry.frame, entry.role)).filter((x) => (!entry.expect?.visible || x.visible) && (!entry.expect?.enabled || x.enabled));
     if (!listed.length) {
       o.loc.journal('locate.none', { stepId: o.stepId, key: o.key });
+      result('no_elements_of_role', { role: entry.role });
       return null;
     }
     calls.n++;
@@ -174,8 +178,12 @@ export async function locateTarget(
     } catch {
       cands = null;
     }
-    o.loc.journal('locate.asked', { stepId: o.stepId, key: o.key, call: calls.n, listed: listed.length, proposed: cands?.length ?? 0 });
-    if (!cands) return null;
+    // sameName: 목록에서 사전 요소와 같은 이름 수(1이어야 모델에게 그 번호를 알려 확인시킨다)
+    o.loc.journal('locate.asked', { stepId: o.stepId, key: o.key, call: calls.n, listed: listed.length, proposed: cands?.length ?? 0, mismatch: mism !== null, sameName: same.length, foundN: found?.n ?? 0 });
+    if (!cands) {
+      result('model_unavailable');
+      return null;
+    }
     for (const c of cands) {
       const cand: Cand = c.kind === 'role' ? { kind: 'role', role: c.value, name: c.name } : c.kind === 'css' ? { kind: 'css', value: c.value } : { kind: 'label', value: c.value };
       const sel = candidateText(cand);
@@ -185,11 +193,13 @@ export async function locateTarget(
       const r = await tryCandidate(o.page, o.dict, o.key, cand, confirms ? `^${reEscape(mism!)}$` : undefined);
       if (r.ok) {
         o.loc.journal(confirms ? 'locate.identity_confirmed' : 'locate.found', { stepId: o.stepId, key: o.key, call: calls.n, selector: sel });
+        result(confirms ? 'identity_confirmed' : 'found', { selector: sel });
         return { t: r.t, selector: sel };
       }
       rejected.push(sel);
       o.loc.journal('locate.rejected', { stepId: o.stepId, key: o.key, call: calls.n, selector: sel, code: r.code });
     }
   }
+  result('calls_exhausted');
   return null;
 }
