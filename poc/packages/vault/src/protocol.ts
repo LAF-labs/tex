@@ -572,4 +572,6 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
   | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
-  | 'screen.frame' | 'screen.paused';
+  | 'screen.frame' | 'screen.paused'
+  // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
+  | 'browser.closed';

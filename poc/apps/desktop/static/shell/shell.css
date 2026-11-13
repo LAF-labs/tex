@@ -29,7 +29,28 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 body.browser-live .frame { grid-template-columns: var(--l-rail) minmax(0, 1fr) max(var(--l-panel), 720px); }
 /* 패널 크게(사람 차례·[브라우저]): 대화 열을 줄이고 브라우저 패널을 키운다 */
 body.browser-big .frame { grid-template-columns: var(--l-rail) minmax(320px, 1fr) minmax(0, 2.2fr); }
-.browser-addr { position: sticky; top: 0; z-index: 2; height: 32px; box-sizing: border-box; padding: 6px 12px; font-size: 12px; line-height: 20px; color: var(--ink-3); background: var(--surface-sunken); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono, ui-monospace, monospace); user-select: text; }
+/* 앱 안 브라우저(Claude 데스크톱 브라우저 창 모양): 탭 줄 · 주소창은 패널 맨 위에 붙고, 화면은 가장자리까지 채운다 */
+.bp { display: flex; flex-direction: column; background: var(--surface); border-bottom: 1px solid var(--line); }
+.bp-chrome { background: var(--surface); }
+.bp-tabs { display: flex; align-items: flex-end; gap: 4px; height: 38px; padding: 0 6px 0 8px; box-sizing: border-box; background: var(--surface-sunken); border-bottom: 1px solid var(--line); }
+.bp-tab { position: relative; top: 1px; display: flex; align-items: center; gap: 8px; min-width: 140px; max-width: 260px; height: 30px; padding: 0 14px 0 12px; box-sizing: border-box; border: 1px solid var(--line); border-bottom-color: var(--surface); border-radius: 8px 8px 0 0; background: var(--surface); color: var(--ink); font-size: 12px; line-height: 16px; }
+.bp-tab-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bp-fav { display: grid; place-items: center; flex: none; color: var(--ink-3); }
+.bp-fav svg { width: 14px; height: 14px; }
+.bp-icon { margin-left: auto; align-self: center; width: 28px; height: 28px; flex: none; border: 0; background: none; color: var(--ink-3); border-radius: var(--radius-sm); display: grid; place-items: center; cursor: pointer; }
+.bp-icon svg { width: 15px; height: 15px; }
+.bp-icon:hover { background: var(--surface); color: var(--ink); }
+.bp-bar { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 10px; box-sizing: border-box; border-bottom: 1px solid var(--line); }
+.bp-url { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 12px; box-sizing: border-box; border-radius: var(--radius-full); background: var(--surface-sunken); font-size: 12.5px; line-height: 16px; white-space: nowrap; overflow: hidden; user-select: text; }
+.bp-url svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
+.bp-host { color: var(--ink); flex: none; }
+.bp-path { margin-left: -6px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; }
+.bp-state { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.bp-state::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong, currentColor); }
+.bp-state[data-bp-state='live']::before { background: var(--ok, #2f9e6a); }
+.bp-state[data-bp-state='gone']::before { background: var(--danger, #d0453b); }
+.bp-state[data-bp-state='paused']::before { background: var(--warn, #d39b22); }
+.bp .run-screen { margin: 0; border: 0; border-radius: 0; min-height: 260px; background: var(--canvas); }
 .menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 240px; padding: 6px; display: grid; gap: 2px; background: var(--surface-overlay); border-radius: var(--radius-lg); box-shadow: var(--shadow-overlay); }
 .menu-label { font-size: 12px; line-height: 16px; color: var(--ink-3); padding: 6px 8px 4px; }
 .menu-item { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 10px 0 6px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--ink); font-size: 14px; text-align: left; cursor: pointer; }
@@ -373,6 +394,5 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 /* 한글 IME 조합을 받는 보이지 않는 칸(화면 위 왼쪽 위, 글자는 조합이 끝나면 페이지로 간다) */
 .run-screen-input { position: absolute; left: 8px; top: 8px; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none; }
 .run-screen .sx-meta { margin: 10px 12px; text-align: center; }
-.run-screen .run-screen-note { margin: 6px 12px 8px; font-size: 12px; }
-.run-screen[data-state='paused'] { background: var(--surface-2, rgba(127,127,127,.08)); }
+.run-screen[data-state='paused'], .run-screen[data-state='gone'] { background: var(--surface-2, rgba(127,127,127,.08)); }
 .onb-card [data-onb-security]:empty { display: none; }

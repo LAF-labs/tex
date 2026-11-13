@@ -705,6 +705,8 @@ export class Vault {
     await this.grantLoopback(chrome);
     chrome.conn.on('close', () => {
       this.opts.log.event('vault.chrome_closed');
+      // main에 바로 알린다(대표 실화면 2026-11-13: Chrome을 닫았는데 앱은 몰랐다). 내리기(shutdown)로 닫힌 것은 알리지 않는다.
+      if (this.chrome === chrome && !this.closingChrome) this.browserGone('chrome');
       // 엔진 transport도 닫는다. 알리지 않으면 Playwright는 끊긴 줄 모르고 닫힌 Chrome의 페이지를 쓴다. 다음 Chrome이 이미 떴으면 보내지 않는다.
       if (this.enginePort && (this.chrome === chrome || this.chrome === null)) this.post(this.enginePort, { t: 'cdp_closed' });
     });
@@ -788,6 +790,11 @@ export class Vault {
     });
     this.relay?.commitGuard?.shutdown();
     this.relay = relay;
+    // 실행 창(탭)이 사람 손으로 닫혀 보일 page가 하나도 남지 않으면 main에 알린다(Chrome 프로세스는 맥에서 창 없이 남을 수 있다)
+    relay.onTargetGone = (t) => {
+      if (t.type !== 'page' || !t.exposed || this.relay !== relay || this.closingChrome) return;
+      if (!relay.hasExposedPage()) this.browserGone('tab');
+    };
     relay.commitGuard = new CommitGuard({
       log: this.opts.log,
       allowedHosts: this.policy.allowedHosts,
@@ -945,7 +952,34 @@ export class Vault {
     }
   }
 
+  /** 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스). 중계를 멈추고 main에 browser.closed를 한 번 알린다. */
+  private browserGone(reason: 'tab' | 'chrome'): void {
+    const gen = this.generation;
+    if (this.goneNotified === gen) return;
+    this.goneNotified = gen;
+    this.opts.log.event('vault.browser_gone', { reason });
+    const m = this.mirror;
+    this.mirror = null;
+    if (m && this.relay) {
+      this.relay.onScreencastFrame = undefined;
+      this.relay.onWindowActive = undefined;
+    }
+    this.emit(['control'], 'browser.closed', { reason });
+  }
+  private goneNotified = -1;
+  /** 금고가 스스로 Chrome을 내리는 중(사람이 닫은 것이 아니다). */
+  private closingChrome = false;
+
   async shutdown(): Promise<void> {
+    this.closingChrome = true;
+    try {
+      await this.shutdownInner();
+    } finally {
+      this.closingChrome = false;
+    }
+  }
+
+  private async shutdownInner(): Promise<void> {
     this.generation++;
     this.profileProblems = null;
     // 닫기를 기다리기 전에 떼어 낸다. 닫는 동안 온 run.begin·secret.provide가 버려질 ops에 들어가지 않게.

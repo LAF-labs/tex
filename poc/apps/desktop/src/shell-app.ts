@@ -616,6 +616,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
       return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
     }
+    // 실행 Chrome이 사람 손으로 닫혔다(탭 전부·프로세스): 패널은 "연결 끊김", 제출 전 실행은 멈추고 [다시 시작]
+    if (name === 'browser.closed') {
+      log.event('main.browser_closed', { reason: (data as { reason?: unknown } | null)?.reason === 'chrome' ? 'chrome' : 'tab' });
+      if (mirrorRun) send({ type: 'screen', runId: mirrorRun, gone: true });
+      runs.browserClosed();
+      return;
+    }
     const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
     if (cr) return openCodef(cr);
     if (name === 'secret.needed') return openSecret(data);
