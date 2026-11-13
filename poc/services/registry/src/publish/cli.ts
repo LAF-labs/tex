@@ -148,7 +148,9 @@ export async function main(argv: readonly string[], deps: PublishCliDeps = defau
     const policy = policyFile ? readJson<Record<string, unknown>>(policyFile) : undefined;
     if (policy !== undefined && (!policy || typeof policy !== 'object' || Array.isArray(policy))) throw new CeremonyError('ceremony.file_invalid', policyFile);
     const rollout = one('rollout', false);
-    return { status, revoked, policy, channel: (one('channel', false) || 'stable') as Channel, rolloutPercent: rollout ? Number(rollout) : 100 };
+    // --min-app-version 0.1.11: 이번에 새로 올리는 패키지 항목에만 minAppVersion(그보다 낮은 앱은 받지 않는다)
+    const minApp = one('min-app-version', false);
+    return { status, revoked, policy, channel: (one('channel', false) || 'stable') as Channel, rolloutPercent: rollout ? Number(rollout) : 100, ...(minApp ? { minAppVersion: minApp } : {}) };
   };
 
   switch (cmd) {
