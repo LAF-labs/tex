@@ -881,7 +881,7 @@ export class Relay {
   }
 
   /** 문서 커밋·노드 분리: 창 종료(활성이었다면 닫힘 알림도 보낸다). */
-  endWindow(t: TargetState, _why: 'commit' | 'detached'): void {
+  endWindow(t: TargetState, _why: 'commit' | 'detached' | 'scrubbed'): void {
     if (!t.win) return;
     const wasActive = t.win.phase === 'active';
     t.win = undefined;

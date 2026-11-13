@@ -948,6 +948,7 @@ export class Vault {
       log: this.opts.log,
       send: (m, params, sid) => relay.send(m, params, sid),
       exposed: (id) => relay.exposedTarget(id),
+      scrub: (t) => this.ops?.scrubTainted(t) ?? Promise.resolve(false),
       emit: (name, data) => emit(['engine'], name, data),
       maxBytes: this.opts.pdf?.maxBytes,
       armTtlMs: this.opts.pdf?.armTtlMs,

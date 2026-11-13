@@ -592,6 +592,29 @@ export class SecretOps {
     return { ok: true };
   }
 
+  /**
+   * 오염 창 지우기: 값을 넣은 칸의 문서가 그대로라(홈택스 인증서 창 iframe#dscert는 서명 뒤 숨기만 하고 값을 남긴다, 실측 2026-11-13)
+   * 창이 오염인 채로 남으면 금고 자신의 인쇄(pdf.print)가 막힌다. 그 칸 값을 비우고 비었는지 확인한 뒤에만 창을 끝낸다.
+   * 활성 창(입력 중)은 건드리지 않는다. 칸을 못 찾으면(노드가 사라짐) 남은 값이 없는 것이다. 값은 읽지 않고 길이만 본다.
+   */
+  async scrubTainted(t: TargetState): Promise<boolean> {
+    if (!t.win) return true;
+    if (t.win.phase !== 'tainted') return false;
+    for (const backendNodeId of t.secretBackendIds) {
+      const r = await this.relay.send<{ object: { objectId?: string } }>('DOM.resolveNode', { backendNodeId }, t.vaultSession).catch(() => null);
+      const objectId = r?.object.objectId;
+      if (!objectId) continue;
+      const left = await this.relay
+        .send<{ result: { value?: unknown } }>('Runtime.callFunctionOn', { objectId, functionDeclaration: 'function(){if(typeof this.value!=="string")return 0;this.value="";return this.value.length}', returnByValue: true }, t.vaultSession)
+        .catch(() => null);
+      if (left?.result.value !== 0) return false;
+    }
+    if (t.win?.phase !== 'tainted') return false;
+    this.relay.endWindow(t, 'scrubbed');
+    this.log.event('vault.secret_window_scrubbed', { target: t.targetId.slice(0, 8) });
+    return true;
+  }
+
   shutdown(): void {
     for (const id of [...this.human.keys()]) this.stopHuman(id);
     this.appAsk.clear();
