@@ -48,3 +48,4 @@ export {
   type UpdaterState,
 } from './decide.ts';
 export { checkBytes, matchFeed, verifyDownloadedFile, type FeedInfo } from './download.ts';
+export { checkReleaseLogged, type LoggedRelease, type LogReader } from './transparency.ts';

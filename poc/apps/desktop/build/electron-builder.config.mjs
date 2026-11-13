@@ -157,7 +157,11 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
     // macOS: Apple Silicon(arm64)만(대표 결정 2026-11-11, Intel Mac 미지원).
     // Developer ID 신원·공증 프로필이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
     mac: {
-      target: [{ target: 'dmg', arch: ['arm64'] }],
+      // dmg는 처음 설치용, zip은 자동 업데이트용(electron-updater MacUpdater·Squirrel.Mac은 zip만 받는다)
+      target: [
+        { target: 'dmg', arch: ['arm64'] },
+        { target: 'zip', arch: ['arm64'] },
+      ],
       // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
       identity: macSigned ? signing.identity : '-',
       // 공증은 하드닝 런타임을 요구한다. 권한은 entitlements.mac.plist(V8·WebAssembly JIT만). 금고·엔진 utilityProcess(Helper 앱)도 같은 권한을 받는다.
@@ -201,9 +205,9 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       unicode: true,
       warningsAsErrors: true,
     },
-    // latest.yml은 레지스트리가 서명된 latest.json에서만 만든다(services/registry API.md). 여기서 게시하지 않는다
-    publish: null,
-    // 빌드 뒤 latest.yml을 만들지 않게(게시 설정 없음과 함께)
+    // 앱 안 app-update.yml(electron-updater 받기 폴더 이름·Windows 서명 주체)을 만들려고 둔다. 주소는 앱이 setFeedURL로 덮고,
+    // 받을 파일은 서명된 latest.json에서만 고른다(update-electron.ts). 빌드는 게시하지 않고(publish: 'never'), dist의 latest*.yml은 쓰지 않는다
+    publish: { provider: 'generic', url: 'https://tax.laf-co.com/releases/stable/' },
     generateUpdatesFilesForAllChannels: false,
     detectUpdateChannel: false,
   };

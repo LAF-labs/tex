@@ -1,5 +1,5 @@
 // 앱 업데이트 배선(D14 M4-9, ADR-028 결정 1~3, D11 §4 자동 업데이트 행). packages/updater README "배선 순서" 1~5단계를 main에서 돈다.
-// - 신뢰 판단은 @sax/updater만 한다: latest.json 서명·만료·채널·단조 버전(decideUpdate) → electron-updater가 읽은 latest.yml 대조(matchFeed)
+// - 신뢰 판단은 @sax/updater만 한다: latest.json 서명·만료·채널·단조 버전(decideUpdate) → 검증한 값만 electron-updater에 넘기고 대조(matchFeed)
 //   → 받은 설치본 sha512 재확인(verifyDownloadedFile) → 설치 관문(installGate). electron-updater는 받기·설치만 한다.
 // - 원천(latest.json·폐기 목록·핀 키·투명성 확인)은 포트다. 어느 하나라도 못 받으면 보류(설치본 유지)이고 상태를 바꾸지 않는다(fail-closed).
 // - 투명성 확인(requireTransparency)은 제품에서 늘 켠다. 실계정 시험 빌드에서만 설정으로 끌 수 있다(팀장 결정 11-05, updatePolicy).
@@ -16,7 +16,6 @@ import {
   installGate,
   matchFeed,
   needsStaleNotice,
-  parseManifest,
   SECURITY_CODES,
   verifyDownloadedFile,
   type Channel,
@@ -24,7 +23,6 @@ import {
   type FeedInfo,
   type InstallContext,
   type ReleaseFile,
-  type ReleaseManifest,
   type Revocation,
   type Transparency,
   type TrustRoot,
@@ -38,18 +36,18 @@ export type UpdateLog = (name: string, data?: Record<string, string | number | b
 
 /** 판정 원천. 모두 던지면 보류다(설치본 유지). */
 export interface UpdateSources {
-  /** 레지스트리 GET /releases/{channel}/latest.json을 JSON.parse한 값(egress). */
-  latest(channel: Channel): Promise<unknown>;
+  /** 레지스트리 GET /releases/{channel}/latest.json 바이트 그대로(egress). 투명성 로그는 이 바이트의 sha256을 기록한다. */
+  latest(channel: Channel): Promise<Uint8Array>;
   /** 앱에 내장된 핀 키 + 엔진이 수용한 폐기 목록(keyIds·24시간 신선도). */
   registry(): Promise<{ trust: TrustRoot; revocation: Revocation }>;
-  /** 검증을 통과한 매니페스트의 투명성 로그 포함 증명·미러 헤드 확인(ADR-028 결정 2). */
-  transparency(m: ReleaseManifest): Promise<Transparency>;
+  /** 받은 latest.json 바이트가 서명된 로그 헤드에 포함됐는지(ADR-028 결정 2, update-sources.ts). */
+  transparency(bytes: Uint8Array, channel: Channel): Promise<Transparency>;
 }
 
 /** 설치기(electron-updater 어댑터, update-electron.ts). */
 export interface UpdateInstaller {
-  /** latest.yml을 읽은 값. 새 버전이 없다고 하면 null. */
-  check(): Promise<FeedInfo | null>;
+  /** 검증한 릴리스를 electron-updater에 넘겨 읽힌 값. 새 버전이 없다고 하면 null. */
+  check(release: VerifiedRelease): Promise<FeedInfo | null>;
   /** 받은 파일 경로들. */
   download(): Promise<string[]>;
   /** 받은 파일을 지운다(검증 실패). 못 지워도 던지지 않는다. */
@@ -239,12 +237,12 @@ export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
   const download = async (release: VerifiedRelease, want: ReleaseFile): Promise<CheckOutcome> => {
     let info: FeedInfo | null;
     try {
-      info = await o.installer.check();
+      info = await o.installer.check(release);
     } catch {
       log('main.update_check', { result: 'feed_failed' });
       return { result: 'feed_failed' };
     }
-    // electron-updater가 읽은 latest.yml이 검증한 매니페스트와 다르면 받지 않는다(보안 이벤트)
+    // electron-updater가 받을 값이 검증한 매니페스트와 다르면 받지 않는다(보안 이벤트)
     if (!info || !matchFeed(release, info).ok) {
       log('main.update_held', { code: 'update.feed_mismatch', security: true });
       return { result: 'feed_mismatch' };
@@ -271,18 +269,25 @@ export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
 
   const checkOnce = async (): Promise<CheckOutcome> => {
     if (pending) return { result: 'downloaded', installed: tryInstall() };
-    let doc: unknown;
+    let bytes: Uint8Array;
     let reg: { trust: TrustRoot; revocation: Revocation };
     try {
-      [doc, reg] = await Promise.all([o.sources.latest(o.channel), o.sources.registry()]);
+      [bytes, reg] = await Promise.all([o.sources.latest(o.channel), o.sources.registry()]);
     } catch {
       log('main.update_check', { result: 'source_failed' });
       return { result: 'source_failed' };
     }
+    let doc: unknown;
+    try {
+      doc = JSON.parse(Buffer.from(bytes).toString('utf8'));
+    } catch {
+      // 모양 오류로 판정한다(update.manifest_invalid)
+      doc = undefined;
+    }
     // 투명성 확인은 검증을 통과한 더 높은 버전에만 묻는다: 먼저 미확인으로 판정해 보고, 그 이유로 보류일 때만 확인한다.
     let d = await decide(doc, reg, 'unverified');
     if (d.action === 'hold' && d.code === 'update.transparency_unverified') {
-      const t: Transparency = await o.sources.transparency(parseManifest(doc)).catch(() => 'unverified' as const);
+      const t: Transparency = await o.sources.transparency(bytes, o.channel).catch(() => 'unverified' as const);
       if (t !== 'unverified') d = await decide(doc, reg, t);
     }
     saveState(d.state);

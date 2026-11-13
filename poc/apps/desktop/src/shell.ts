@@ -4,10 +4,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { appPaths, defaultAppRoot, FileEventLog, prepareLayout, type PreparedLayout } from '@sax/platform';
+import { Egress, REGISTRY_ORIGIN } from '@sax/net';
+import type { TrustRoot } from '@sax/updater';
 import { app, dialog } from 'electron';
-import { BUILD_WARN_TEXT, packagedProblems } from './harden.ts';
+import { BUILD_WARN_TEXT, isBuildInfo, isTestBuild, packagedProblems } from './harden.ts';
 import { productRemote } from './remote-wiring.ts';
-import { registerShellSchemes, startShell, type Shell } from './shell-app.ts';
+import { registerShellSchemes, startShell, type Shell, type UpdateWiring } from './shell-app.ts';
 
 registerShellSchemes();
 // app.exit가 바로 끝나지 않는 Electron이어도 확인 안 된 앱 폴더로 엔진·금고를 띄우지 않는다.
@@ -27,6 +29,25 @@ if (problems.some((p) => p.startsWith('fatal:'))) {
   app.exit(1);
 }
 const buildBadges = problems.filter((p) => p.startsWith('warn:')).map((p) => BUILD_WARN_TEXT[p.slice(5)] ?? p.slice(5));
+// 앱 업데이트(M4-9): 설치본만, 운영 레지스트리의 build-info 채널. 실계정 시험 빌드만 로컬 피드(SAX_UPDATE_FEED=http://127.0.0.1:<포트>)와
+// 그 피드의 핀 키 파일(SAX_UPDATE_TRUST)을 받는다. 제품 빌드는 두 값을 읽지 않는다. 값이 틀리면 업데이트를 켜지 않는다.
+// 로컬 피드 시험은 설치 뒤 다시 열지 않는다(다시 연 앱은 격리 HOME을 잃는다, update-electron electronInstaller).
+const updateWiring = (): UpdateWiring | undefined => {
+  if (!app.isPackaged) return undefined;
+  const info = readBuildInfo();
+  const testBuild = isTestBuild(info);
+  const channel = isBuildInfo(info) ? info.channel : 'stable';
+  const feed = testBuild ? process.env.SAX_UPDATE_FEED : undefined;
+  if (!feed) return { channel, origin: REGISTRY_ORIGIN, egress: new Egress({ env: process.env }), testBuild };
+  if (!/^http:\/\/127\.0\.0\.1:[0-9]{1,5}$/.test(feed)) return undefined;
+  let trust: TrustRoot;
+  try {
+    trust = JSON.parse(fs.readFileSync(process.env.SAX_UPDATE_TRUST ?? '', 'utf8')) as TrustRoot;
+  } catch {
+    return undefined;
+  }
+  return { channel, origin: feed, egress: new Egress({ env: process.env, testOrigins: { registry: feed } }), trust, loopback: true, relaunch: false, testBuild };
+};
 // 앱 폴더를 확인·복구한 뒤에만 Electron에 넘긴다. Electron은 넘겨받은 폴더에 ready 무렵부터 쓰므로, 그 자리의 링크를 치우기 전에 넘기면 루트 밖에 쓴다.
 // ESM 진입점의 최상위 await가 끝날 때까지 ready가 오지 않는다(Electron 45 실측). 사용자 전용 권한을 못 걸면 열지 않는다.
 const root = defaultAppRoot();
@@ -65,7 +86,7 @@ void app.whenReady().then(async () => {
   if (refused) return;
   try {
     // 계정 로그인·폰 연결: 클라우드 포트(egress) + 금고 키. 운영 목적지만, 개발 스택은 설치본이 아닐 때 SAX_CLOUD_DEV로만(remote-wiring.ts)
-    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges, remote: productRemote({ isPackaged: app.isPackaged, env: process.env }) });
+    shell = await startShell({ engine: { portal: { kind: 'hometax' } }, buildBadges, remote: productRemote({ isPackaged: app.isPackaged, env: process.env }), update: updateWiring() });
     await shell.ready;
   } catch (e) {
     console.error('shell start failed:', (e as Error).message);

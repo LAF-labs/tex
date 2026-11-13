@@ -4,13 +4,13 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
-// --mac: macOS arm64 .dmg(팀장 지시 2026-11-10, Intel Mac 미지원 대표 결정 2026-11-11). 기본 출력 poc/.tmp/package-mac.
+// --mac: macOS arm64 .dmg(처음 설치)와 .zip(자동 업데이트)(팀장 지시 2026-11-10, Intel Mac 미지원 대표 결정 2026-11-11). 기본 출력 poc/.tmp/package-mac.
 //        키체인에 Developer ID Application 신원이 하나 있고 SAX_NOTARY_PROFILE(notarytool 키체인 프로필 이름)이 있으면
 //        앱 서명(하드닝 런타임)·공증·스테이플 → dmg 서명·공증·스테이플 → spctl 확인. 하나라도 없으면 애드혹(SIGNING-SETUP.md §6).
 //        배포 판정은 Windows 베타 기준이라 참고만.
 // 설치본 옆에 <설치본>.sha256(sha256sum 형식 한 줄)을 쓴다. 고객에게 설치본과 함께 준다(sovereign-ax/install-guide/CUSTOMER-DIST.md §3).
 // 인자: --out <폴더>(기본 poc/.tmp/package-win), --skip-build, --entry dist/shell.js(app-identity.json 값을 덮음),
-//       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인을 설정으로 끌 수 있다, 배포 불가)
+//       --test-build(실계정 시험 빌드: build-info testBuild=true, 업데이트 투명성 확인 끄기·로컬 피드 SAX_UPDATE_FEED를 받는다, 배포 불가)
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
@@ -149,7 +149,7 @@ async function main() {
   // 스테이지에는 devDependency electron이 없다: 데스크톱 패키지에 설치된 정확한 버전을 넘긴다(Electron zip은 electron-builder가 받아 sha256을 확인한다)
   const electronVersion = JSON.parse(fs.readFileSync(require.resolve('electron/package.json'), 'utf8')).version;
   const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
-  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget('dmg', builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
+  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget(['dmg', 'zip'], builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
   await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
   const macCheck = signing.mode !== 'developer_id' ? null : signing.notarize ? notarizeDmg(signing) : verifySignedApp(signing);
 
@@ -186,9 +186,14 @@ async function main() {
   if (fuseBad.length) throw new Error(`퓨즈가 D11 §4와 다르다: ${fuseBad.join(', ')}`);
   // 판정은 scripts/release-readiness.mjs(채널별 판정표 시험: tests/release-readiness.test.ts, SIGNING-SETUP.md §4)
   const readiness = judgeReadiness({ channel: identity.channel, signing, publisherName: identity.publisherName, devOnly, outside, testBuild: buildInfo.testBuild, winReport: readWinReport() });
+  // 자동 업데이트 파일(릴리스 매니페스트 files[0]): mac은 zip, Windows는 설치본 그대로
+  const updFile = TARGET.os === 'darwin' ? fs.readdirSync(DIST).find((f) => f.endsWith('.zip')) : exe;
+  if (!updFile) throw new Error('업데이트 zip이 없다');
+  const updBytes = updFile === exe ? bytes : fs.readFileSync(path.join(DIST, updFile));
   const report = {
     buildInfo,
     installer: { file: exe, size: bytes.byteLength, sha512: createHash('sha512').update(bytes).digest('base64'), sha256: createHash('sha256').update(bytes).digest('hex') },
+    update: { file: updFile, size: updBytes.byteLength, sha512: createHash('sha512').update(updBytes).digest('base64') },
     unpackedSize: sizeOf(unpacked),
     asar: { size: fs.statSync(asarPath).size, files: asarFiles.length, byTop: Object.fromEntries(Object.entries(asarTop).sort((a, b) => b[1] - a[1])) },
     asarUnpacked: unpackedFiles,
@@ -204,6 +209,7 @@ async function main() {
   fs.writeFileSync(`${exePath}.sha256`, `${report.installer.sha256}  ${exe}\n`);
 
   console.log(`\n설치본: ${rel(exePath)} (${mb(bytes.byteLength)})`);
+  if (updFile !== exe) console.log(`업데이트 파일: ${rel(path.join(DIST, updFile))} (${mb(updBytes.byteLength)})`);
   console.log(`sha256: ${report.installer.sha256}`);
   console.log(`asar: ${mb(report.asar.size)}, 파일 ${report.asar.files}개, 압축 해제 ${mb(report.unpackedSize)}`);
   console.log(`앱 dist: 포함 ${included.length}개, 제외 ${removed.length}개`);
