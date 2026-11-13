@@ -34,6 +34,11 @@ export interface PageReader {
   a11yValue(el: ElementRef): Promise<string>;
   /** 주 프레임의 보이는 텍스트. */
   bodyText(): Promise<string>;
+  /**
+   * frame 안의 이 역할 요소 전부: 접근성 이름·DOM id·보임·활성만(AI 위치 찾기, core/locate.ts). 입력값은 읽지 않는다. 비밀번호 칸은 뺀다.
+   * 구현이 없으면 AI 위치 찾기를 쓰지 않는다.
+   */
+  listRole?(frame: string, role: string): Promise<Array<{ el: ElementRef; name: string; id: string | null; visible: boolean; enabled: boolean }>>;
   /** 다음 네비게이션 완료까지 기다린다. 시간 안에 오면 true. */
   waitNavigation(timeoutMs: number): Promise<boolean>;
   /** 네트워크·DOM이 잠잠해질 때까지 기다린다. 시간 안에 오면 true. */

@@ -1,5 +1,6 @@
 // 실행 시작 패키지 공급(PR-D2 앞부분, D03 §3.1): RegistrySync가 받아 둔 설치본을 실행을 시작할 때마다 loadPackage로 다시 검증해
 // RunService의 IrPackage로 만든다. 네트워크는 쓰지 않는다(받기는 RegistrySync.sync). 로그에는 코드만 남긴다.
+import type { LocateResponder } from './run/locate-port.ts';
 import type { RunToken } from '@sax/model';
 import type { PdfPort } from './core/savepdf.ts';
 import type { Judge } from './l0/judge.ts';
@@ -29,6 +30,8 @@ export interface InstalledIrSourceOptions {
   runTokenFor?: (runId: string) => Promise<RunToken>;
   /** 공동인증서 비밀번호 차례의 금고(B1·B2, IrPackage.secret). 없으면 human:secret이 곧바로 시간 초과다. */
   secret?: { vault: SecretVault; targetId(): string };
+  /** AI 위치 찾기 모델 길(IrPackage.locate, 게이트웨이 selector_repair). */
+  locate?: LocateResponder;
 }
 
 /**
@@ -43,7 +46,7 @@ export function installedIrSource(registry: { loadInstalled(id: string): Install
     if (r.pkg.files.manifest.portal !== o.portal.kind) return { ok: false, code: 'package.portal_mismatch' };
     return {
       ok: true,
-      ir: { pkg: r.pkg, lookupPackages: r.lookups, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}) },
+      ir: { pkg: r.pkg, lookupPackages: r.lookups, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}), ...(o.locate ? { locate: o.locate } : {}) },
     };
   };
 }
