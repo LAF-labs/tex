@@ -59,6 +59,8 @@ export interface FakeKnobs {
   listLagMs: number;
   /** 메일 발송 상태: done = 발송완료/성공, sending = 발송중/(빈칸). */
   mail: 'done' | 'sending';
+  /** 칸 앞에 표 머리 글을 `<label for>`로 붙인다(접근성 이름이 title이 아니라 label 글이 된다. 2026-11-13 s12 사람 차례 가설). */
+  fieldLabels: boolean;
 }
 
 export interface HometaxFake {
@@ -183,9 +185,13 @@ const CLIENT = String.raw`
   function issueScreen() {
     history.replaceState(null, '', menuUrl('&menuCd=UTEETBAA01'));
     document.title = '국세청 홈택스 - 계산서ㆍ영수증ㆍ카드 > 전자(세금)계산서 발급 > 전자(세금)계산서 건별발급';
-    const ro = (id, title) => '<input type="text" id="' + P + id + '" title="' + title + '" readonly>';
-    const tx = (id, title, v) => '<input type="text" id="' + P + id + '" title="' + title + '"' + (v ? ' value="' + v + '"' : '') + '>';
-    const btn = (id, v) => '<input type="button" id="' + P + id + '" value="' + v + '">';
+    // 실화면 접근성 이름이 빈 칸(reports/raw/poc-3-mac-landmarks.json invoice.issue): title·값 글을 붙이지 않는다.
+    const NONAME = new Set(['edtDmnrBsnoTop', 'btnDmnrBsnoCnfrTop', 'edtSplrTnmNmTop', 'edtSplrEmlIdTop', 'edtDmnrTnmNmTop', 'genEtxivLsatTop_0_edtLsatNmTop', 'genEtxivLsatTop_0_edtLsatSplCftTop', 'genEtxivLsatTop_0_edtLsatTxamtTop', 'edtRmrkCntnTop']);
+    const ttl = (id, title) => (NONAME.has(id) ? '' : ' title="' + title + '"');
+    const ro = (id, title) => '<input type="text" id="' + P + id + '"' + ttl(id, title) + ' readonly>';
+    const LBL = { edtDmnrBsnoTop: '등록번호', genEtxivLsatTop_0_edtLsatNmTop: '품목' };
+    const tx = (id, title, v) => (C.fieldLabels && LBL[id] ? '<label for="' + P + id + '">' + LBL[id] + '</label>' : '') + '<input type="text" id="' + P + id + '"' + ttl(id, title) + (v ? ' value="' + v + '"' : '') + '>';
+    const btn = (id, v) => '<input type="button" id="' + P + id + '" value="' + (NONAME.has(id) ? '' : v) + '">';
     let rows = '';
     for (let n = 0; n < 4; n++) {
       const g = 'genEtxivLsatTop_' + n + '_';
@@ -426,7 +432,7 @@ const t = setInterval(() => fetch(${JSON.stringify(main)} + '/_fx/cert').then((r
 /** 가짜 홈택스 두 호스트(화면·teet)를 띄운다. */
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
-    renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done',
+    renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
@@ -467,7 +473,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin));
     if (u.pathname === '/_fx/state') return json(res, { loggedIn: state.loggedIn });

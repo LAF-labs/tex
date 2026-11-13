@@ -1,6 +1,6 @@
 {
  "id": "hometax.invoice.issue",
- "version": "2.2.0",
+ "version": "2.2.1",
  "kind": "playbook",
  "portal": "hometax",
  "title": "invoice.title",
@@ -34,7 +34,7 @@
   "selectors": "0000000000000000000000000000000000000000000000000000000000000000",
   "strings": "0000000000000000000000000000000000000000000000000000000000000000"
  },
- "createdAt": "2026-11-12T00:00:00+09:00",
+ "createdAt": "2026-11-13T00:00:00+09:00",
  "signatures": [
   {
    "keyId": "pkg-1",
