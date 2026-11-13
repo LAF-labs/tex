@@ -34,7 +34,7 @@ import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, 
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
+import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -342,7 +342,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 제품은 견본 사업장(가나다컴퍼니)을 보이지 않는다. 등록 전이면 빈 자리 이름만(온보딩이 채운다).
   const profiles = () =>
     sample ? { business: business ?? sample.profiles.business, personal: sample.profiles.personal } : { business: business ?? NO_BUSINESS, personal: NO_PERSONAL };
-  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady: opts.chromeReady ?? (() => findInstalledChrome() !== null), log: (n, d) => log.event(n, d) });
+  // Chrome이 있어야 홈택스 작업을 한다. 판의 할 일·첫 발급 요청(U6)과 [홈택스에서 준비](#288)가 같은 점검을 쓴다.
+  const chromeReady = opts.chromeReady ?? (() => findInstalledChrome() !== null);
+  const runs = new ShellRuns(host, { counterparties: () => cps, auth: () => profiles().business.auth, chromeReady, log: (n, d) => log.event(n, d) });
   let profile: Profile['kind'] = 'business';
   // 파일 대화상자는 메인 창을 부모로 띄운다(win은 아래에서 만든다).
   const docs = opts.docs ?? engineDocsProvider((m, p) => host.rpc(m, p), (params, engine) => importPdf(params, engine, win));
@@ -465,7 +467,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       bundle: sample ? sample.bundle(today) : null,
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
-      setup: onboardingTodos(onb?.state ?? null),
+      setup: [...onboardingTodos(onb?.state ?? null), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : [])],
       // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
       money,
     });
@@ -830,7 +832,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       rpc: (m, p) => (m === 'chat.step' && opts.agent ? opts.agent.step(p as unknown as StepParams) : host.rpc(m, p)),
       profileId: () => businessId,
       runs,
-      setupMissing: () => setupMissing(profiles().business).length > 0,
+      // 사업자 등록·발급 인증, 그리고 Chrome(U6, #301). 빠졌으면 초안 카드를 만들지 않고 할 일을 보인다(옛 길 setupGate와 같은 규칙).
+      setupMissing: () => setupMissing(profiles().business).length > 0 || !chromeReady(),
       onCreated: (run) => agentCreated.push(run),
       // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
       receivables: () => bank.receivables(),
@@ -940,7 +943,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const setupGate = (parsed: Parsed) => {
     if (profile !== 'business') return null;
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
-    const missing = setupMissing(profiles().business);
+    // Chrome이 없으면 세금계산서 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
+    // 증명서는 이 빌드가 떼지 못하므로(interpret가 "곧 할 수 있어요") 할 수 없는 일 때문에 설치를 시키지 않는다(#291, 부장 판정 2026-11-12).
+    const needsChrome = parsed.intent !== 'cert' && !chromeReady();
+    const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : [])];
     if (!missing.length) return null;
     runs.pending.asked = null;
     return { kind: 'setup' as const, text: setupText(parsed.intent === 'cert' ? 'cert' : 'invoice', missing), missing: missing.map((id) => ({ id, label: SETUP_LABEL[id] })) };
@@ -1059,7 +1065,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           const run = runs.get(x.runId);
           return run ? [{ type: 'card', run }] : [];
         });
-        const missing = r.setup ? setupMissing(profiles().business) : [];
+        const missing: SetupItem[] = r.setup ? [...setupMissing(profiles().business), ...(chromeReady() ? [] : (['chrome'] as const))] : [];
         return { kind: 'agent', text: r.text, show, ask: r.ask, filtered: r.filtered, setup: missing.map((id) => ({ id, label: SETUP_LABEL[id] })), unknown: r.unknown ?? null, via: 'model', note: null, sent };
       }
       // 시연(fixture)·e2e는 게이트웨이가 없다. 해석기를 바꿔 끼우지 않았으면 로컬 정규식으로 돈다(시연 전용, 제품에는 없는 길).
@@ -1282,6 +1288,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
       if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
+    },
+    'chrome.check': async () => {
+      const ready = chromeReady();
+      pushBoard();
+      return { ready };
     },
     'onboarding.reopen': async (p) => {
       needGesture(3_000);

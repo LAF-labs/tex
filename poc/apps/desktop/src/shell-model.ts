@@ -41,13 +41,22 @@ export const NO_AUTH = '발급 인증 미설정';
 export function setupMissing(b: Profile): Array<'biz' | 'auth'> {
   return [...(!b.bizNo ? (['biz'] as const) : []), ...(!b.auth || b.auth === NO_AUTH ? (['auth'] as const) : [])];
 }
-export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기' } as const;
-/** 빠진 등록 안내(무엇이 빠졌는지 말한다). */
-export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<'biz' | 'auth'>): string {
+export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기' } as const;
+export type SetupItem = keyof typeof SETUP_LABEL;
+/** 빠진 등록 안내(무엇이 빠졌는지 말한다). Chrome은 등록이 아니라 설치라 따로 한 문장. */
+export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<SetupItem>): string {
   const what = work === 'invoice' ? '세금계산서를 발급하려면' : '증명서를 떼려면';
-  if (missing.includes('biz') && missing.includes('auth')) return `${what} 먼저 사업자 정보와 발급 인증을 등록해 주세요. 지금은 둘 다 비어 있어요.`;
-  if (missing.includes('biz')) return `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`;
-  return `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`;
+  const chrome = missing.includes('chrome');
+  const head =
+    missing.includes('biz') && missing.includes('auth')
+      ? `${what} 먼저 사업자 정보와 발급 인증을 등록해 주세요. 지금은 둘 다 비어 있어요.`
+      : missing.includes('biz')
+        ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
+        : missing.includes('auth')
+          ? `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`
+          : null;
+  if (!chrome) return head!;
+  return head ? `${head} Chrome도 설치해 주세요.` : `${what} 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.`;
 }
 
 export interface Counterparty {
