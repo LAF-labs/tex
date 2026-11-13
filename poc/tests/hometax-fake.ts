@@ -215,6 +215,12 @@ const CLIENT = String.raw`
       if (C.loggedIn && !/menuCd=index4/.test(location.search)) history.replaceState(null, '', menuUrl('&menuCd=index4'));
       document.title = '국세청 홈택스 - 메인';
       wrap.innerHTML = header() + '<div id="mf_txppWframe"><p>국세청 홈택스에 오신 것을 환영합니다.</p></div>';
+      // 실화면(2026-11-13 예행 run-b9aa50fb, 1280 배치): 로그인 상태 메인에서는 머리말 링크(로그아웃·회원정보조회·인증센터)가 숨어 있고,
+      // "로그아웃" 글은 다른 보이는 자리(가정: 첫 화면 사용자 상자)에 있다(s5 로그인 글 기다림이 실화면에서 통과).
+      if (C.realLoginNav && C.loggedIn) {
+        for (const id of ['mf_wfHeader_group1502', 'mf_wfHeader_group1503']) $(id).style.display = 'none';
+        $('mf_txppWframe').insertAdjacentHTML('beforeend', '<div id="mf_txppWframe_userBox"><span>가나다컴퍼니님</span> <a href="#" id="mf_txppWframe_userLogout">로그아웃</a></div>');
+      }
       // 실화면: 머리말 [로그인]이 그 자리에서 로그인 화면을 그린다(주소는 index3로 바뀐다).
       // 실화면(2026-11-13 탐침): 로그아웃이어도 로고가 보인 순간 머리말 링크는 "로그아웃"이고, 약 0.2초 뒤 요소가 "로그인"으로 다시 그려진다.
       if (C.realLoginNav && !C.loggedIn) {
