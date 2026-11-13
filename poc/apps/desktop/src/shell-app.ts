@@ -1,7 +1,7 @@
 // PoC-9 데모 UI 셸의 main(PoC-6부터 엔진·금고를 띄운다). 승인 바는 main 소유 WebContentsView다(ADR-021).
 // 렌더러는 바 자리를 비우기만 하고 바를 그리거나 숨기지 못한다. 승인 근거는 바 → main → 게이트 포트(엔진)로만 간다.
 // 기본은 fixture 모드(가짜 H-01 페이지, 시험 정책 금고, 임시 앱 폴더). 홈택스 실제 화면은 PoC-3 셀렉터가 들어온 뒤.
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -31,8 +31,8 @@ import type { FixtureMode } from './fixture-mode.ts';
 import { GestureClock, isGestureKey, isTypingKey, RateWindow } from './gesture.ts';
 import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWindow, PAIR_CSP, SECRET_CSP } from './harden.ts';
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
-import { secretPageHtml, SecretWindowCoordinator } from './secret-labels.ts';
-import { openSecretWindow, openVaultInputWindow } from './secret-window.ts';
+import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
+import { openVaultInputWindow } from './secret-window.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, SHELL } from './shell-layout.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
@@ -257,8 +257,8 @@ export interface Shell {
   ready: Promise<void>;
   /** 렌더러가 부를 수 있는 메서드 전부(e2e가 승인 경로가 없는지 훑는다). */
   methods: string[];
-  /** 지금 열린 비밀 입력 창(금고 secret.needed로만 열린다). */
-  secretWindow(): BrowserWindow | null;
+  /** 지금 대화에 떠 있는 비밀 입력 카드(금고 secret.needed로만 뜬다). 값은 없다. */
+  secretAsk(): { reqId: string; kind: string; runId: string } | null;
   close(): Promise<void>;
 }
 
@@ -534,7 +534,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
 
   // 금고가 부르는 비밀 입력 창(ADR-025 결정 10). 열린 창은 하나, 활성 실행의 요청만, 라벨은 main 내장 표.
   const secrets = new SecretWindowCoordinator((runId) => runs.isActive(runId));
-  let secretWin: BrowserWindow | null = null;
   secretPage = () => {
     const r = secrets.open;
     return r ? secretPageHtml(r, profiles()[r.scope].name) : null;
@@ -548,7 +547,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (win.isDestroyed()) return;
     app.focus({ steal: true });
     win.moveTop();
-    (secretWin && !secretWin.isDestroyed() ? secretWin : win).focus();
+    win.focus();
   };
   // 맥: 실행 Chrome이 떠 있는 동안 맨 앞 앱을 0.4초마다 본다. 금고가 띄운 그 Chrome 프로세스가 맨 앞이면(스스로 창을 올림) 앱을 다시 앞으로.
   // 사람이 다른 앱(자기 Chrome 포함)을 쓰는 것은 건드리지 않는다(프로세스 id로만 가린다).
@@ -582,62 +581,100 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       });
     }, 400);
   };
-  // main이 닫은 창(실행 끝·종료)은 사용자가 돌아온 것이 아니다: 핸드오프 복귀로 치지 않는다.
-  let appClosing: BrowserWindow | null = null;
   // 메인 창이 닫히는 중이면 비밀 창을 새로 열지 않는다(들고 있던 다음 요청 포함).
   let mainClosing = false;
   win.once('close', () => {
     mainClosing = true;
   });
+  /**
+   * 비밀 입력은 대화 안 카드로 받는다(대표 지시 2026-11-14 "앱 내 채팅으로", 따로 뜨는 금고 창 없음).
+   * 금고 secret.needed → 렌더러에 가려진 입력 카드(secretAsk open) → 사람이 넣으면 secret.answer로 main → 금고 1회용 입력 포트(secret.provide)로만.
+   * 값은 main에서 바이트로 바꿔 넘기고 바로 0으로 덮는다. 로그·대화 기록·모델·렌더러 상태에 남기지 않는다(대화에는 "●●●● 입력함"만).
+   */
+  let secretAsk: { reqId: string; bind: OneShotInputBind } | null = null;
+  const SECRET_LABEL: Record<string, string> = { cert_password: '공동인증서 비밀번호', portal_password: '홈택스 비밀번호', security_card: '보안카드 번호' };
   const closeSecret = () => {
-    if (!secretWin || secretWin.isDestroyed()) return;
-    appClosing = secretWin;
-    secretWin.close();
+    if (!secretAsk) return;
+    send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'closed' });
+    secretAsk = null;
+    secrets.closed(); // main이 닫았다(실행 끝·종료): 든 요청은 버린다
   };
   const openSecret = (data: unknown): void => {
-    // 메인 창부터 본다: 열 수 없는데 조정자에 '열림'을 남기면 이후 비밀 창이 영영 열리지 않는다.
     if (mainClosing || win.isDestroyed()) return log.event('main.secret_needed_ignored');
     const r = secrets.request(data);
     if (!r) return log.event(secrets.open ? 'main.secret_needed_queued' : 'main.secret_needed_ignored');
-    const bind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
-    let w: BrowserWindow;
-    let port: ReturnType<typeof host.secretInputPort> | null = null;
-    try {
-      port = host.secretInputPort(bind);
-      w = openSecretWindow(win, bind, port, `${SHELL_SCHEME}://shell/secret.html`);
-    } catch (e) {
-      // 열지 못했으면 '열림'을 남기지 않는다(남으면 이후 요청이 줄만 서고 창이 영영 안 열린다). 든 요청도 버린다.
-      // 이미 만든 금고 입력 포트도 닫아 금고 쪽 결속을 끝낸다.
-      port?.close();
-      secrets.closed();
-      return log.event('main.secret_open_failed', { error: (e as Error).message.slice(0, 120) });
-    }
-    secretWin = w;
-    // 앱 비밀번호 창은 반드시 앞에 보인다(실화면 run-837dad14: 대표에게 안 보였다). 앱을 앞으로, 그 창에 포커스. Chrome은 올리지 않는다.
-    const front = () => {
-      if (w.isDestroyed() || win.isDestroyed()) return;
-      if (win.isMinimized()) win.restore();
-      if (!win.isVisible()) win.show();
-      app.focus({ steal: true });
-      w.show();
-      w.moveTop();
-      w.focus();
-    };
-    front();
-    w.webContents.once('did-finish-load', front);
-    log.event('main.secret_window_shown', { kind: r.kind });
-    // main이 닫은 창(실행 끝·종료)인지는 'close' 때 정한다('closed'보다 먼저 온다).
-    let byApp = false;
-    w.on('close', () => {
-      byApp = appClosing === w;
-      if (byApp) appClosing = null;
+    const bind: OneShotInputBind = { runId: r.runId, kind: r.kind, scope: r.scope, ...(r.row !== undefined ? { row: r.row } : {}) };
+    secretAsk = { reqId: randomUUID().slice(0, 18), bind };
+    const label = r.kind === 'security_card' && r.row ? `${SECRET_LABEL[r.kind]} ${r.row}번` : (SECRET_LABEL[r.kind] ?? '비밀번호');
+    const note = r.kind === 'cert_password' ? '처음 한 번만 넣으면 이 Mac 금고에 두고 다음부터 묻지 않아요.' : '이번 실행에서 한 번만 쓰고 저장하지 않아요.';
+    send({ type: 'secretAsk', reqId: secretAsk.reqId, state: 'open', runId: r.runId, kind: r.kind, label, note });
+    // 앱이 앞에 있어야 카드가 보인다(Chrome은 올리지 않는다)
+    if (win.isMinimized()) win.restore();
+    if (!win.isVisible()) win.show();
+    app.focus({ steal: true });
+    win.focus();
+    log.event('main.secret_ask_shown', { kind: r.kind });
+  };
+  /** 금고 1회용 입력 포트로 한 번 보낸다(값은 이 함수 밖으로 나가지 않는다). */
+  const vaultSecretSend = (bind: Parameters<typeof host.secretInputPort>[0], method: 'secret.provide' | 'secret.store', params: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
+    new Promise((resolve) => {
+      let port: ReturnType<typeof host.secretInputPort> | null = null;
+      const done = (v: { ok: boolean; error?: string }) => {
+        clearTimeout(timer);
+        try {
+          port?.close();
+        } catch {
+          // 이미 닫힘
+        }
+        resolve(v);
+      };
+      const timer = setTimeout(() => done({ ok: false, error: 'timeout' }), 10_000);
+      try {
+        port = host.secretInputPort(bind);
+        port.on('message', (e: { data: unknown }) => {
+          const d = e.data as { error?: unknown } | null;
+          done(d && typeof d.error === 'string' ? { ok: false, error: d.error.slice(0, 40) } : { ok: true });
+        });
+        port.start();
+        port.postMessage({ t: 'rpc', id: 1, method, params });
+      } catch (e) {
+        done({ ok: false, error: (e as Error).message.slice(0, 40) });
+      }
     });
-    w.on('closed', () => {
-      if (secretWin === w) secretWin = null;
+  /** 설정에서 인증서 비밀번호를 금고에 저장한다(값은 이 함수 밖으로 나가지 않는다). */
+  const saveCertMemory = async (value: unknown): Promise<{ remembered: boolean }> => {
+    if (typeof value !== 'string' || !value) throw new Error('bad_value');
+    const bytes = new TextEncoder().encode(value);
+    const r = await vaultSecretSend({ mode: 'store', kind: 'cert_password', scope: 'business', notice: { version: 'cert-settings-2026-11-14' } }, 'secret.store', { entries: [{ field: 'pw', bytes }] });
+    bytes.fill(0);
+    log.event('main.cert_memory_saved', { ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+    if (!r.ok) throw new Error('vault_refused');
+    return { remembered: true };
+  };
+  /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
+  const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
+    const ask = secretAsk;
+    if (!ask || p.reqId !== ask.reqId) throw new Error('not_requested');
+    if (p.cancel === true) {
+      secretAsk = null;
+      send({ type: 'secretAsk', reqId: ask.reqId, state: 'closed' });
       const next = secrets.closed();
-      // 들고 있던 요청은 사용자가 창을 마쳤을 때만 이어서 연다. main이 닫은 창(실행 끝·종료)이면 버린다.
-      if (next && !byApp) openSecret(next);
-    });
+      log.event('main.secret_ask_cancelled', { kind: ask.bind.kind });
+      if (next) openSecret(next);
+      return { ok: true };
+    }
+    if (typeof p.value !== 'string' || !p.value) throw new Error('bad_value');
+    const bytes = new TextEncoder().encode(p.value);
+    const params: Record<string, unknown> = { kind: ask.bind.kind, scope: ask.bind.scope, bytes, ...(ask.bind.row !== undefined ? { row: ask.bind.row } : {}) };
+    const r = await vaultSecretSend(ask.bind, 'secret.provide', params);
+    bytes.fill(0);
+    log.event('main.secret_ask_answered', { kind: ask.bind.kind, ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+    if (!r.ok) throw new Error('vault_refused');
+    if (secretAsk === ask) secretAsk = null;
+    send({ type: 'secretAsk', reqId: ask.reqId, state: 'done' });
+    const next = secrets.closed();
+    if (next) openSecret(next);
+    return { ok: true };
   };
   // 계좌 자동조회 인증서 비밀번호 창(금고 codef.seal이 부른다). 하나만. 값 없이 닫히면 금고에 알려 기다림을 끝낸다.
   let codefWin: { win: BrowserWindow; req: CodefNeeded } | null = null;
@@ -1570,6 +1607,16 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       await certMemory.forget('user');
       return { remembered: await certMemory.has() };
     },
+    // 설정 > 발급 인증의 [인증서 비밀번호 저장]: 가려진 칸의 값을 금고로만(저장 결속 secret.store). 처음 로그인에서 틀리면 금고가 지운다.
+    'certMemory.save': async (p) => {
+      needGesture(3_000);
+      return saveCertMemory((p as { value?: unknown }).value);
+    },
+    // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14). 값은 금고 1회용 포트로만.
+    'secret.answer': (p) => {
+      needGesture(3_000);
+      return answerSecret(p as { reqId?: unknown; value?: unknown; cancel?: unknown });
+    },
     // 보안 프로그램(MagicLine4NX) 점검·설치 링크·켜기(B4). 설치는 홈택스 공식 설치 파일을 기본 브라우저로 연다(사람이 설치를 마친다).
     'security.check': async () => {
       const st = securityNow();
@@ -1780,5 +1827,5 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     await host.shutdown().catch(() => {});
     await fixture?.close().catch(() => {});
   };
-  return { win, bar, runs, store, host, fixture, ready, methods: Object.keys(handlers), secretWindow: () => secretWin, close };
+  return { win, bar, runs, store, host, fixture, ready, methods: Object.keys(handlers), secretAsk: () => (secretAsk ? { reqId: secretAsk.reqId, kind: secretAsk.bind.kind, runId: secretAsk.bind.runId } : null), close };
 }
