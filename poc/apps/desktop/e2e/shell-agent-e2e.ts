@@ -158,7 +158,7 @@ async function flow() {
   check('새 문장 뒤 앞 [다시 시도]는 꺼진다', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 0);
 
   // 6b) 받을 돈(#284): 계좌가 없으면 not_set_up, 계좌를 더하면 받을 돈 조회가 답한다("계좌 연결이 아직"이 아니다)
-  let recv: string[] = [];
+  const recv: string[] = [];
   const recvTurn = (text: string) =>
     turn(
       text,
