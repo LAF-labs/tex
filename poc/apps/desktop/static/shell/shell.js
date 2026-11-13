@@ -15,7 +15,8 @@ const $ = (s) => document.querySelector(s);
 
 const state = {
   screen: null, // 진행 화면(B3): { runId, frame, paused }
-  browser: { shown: false, available: false }, // [브라우저] 토글: 실행 Chrome이 패널 자리에 앞으로 와 있나(main이 알린다)
+  // [브라우저] 토글·앱 안 브라우저(main이 알린다). embedded면 패널 화면 칸 위에 main이 실제 브라우저 보기를 두고, 패널 폭(width)도 main이 정한다.
+  browser: { shown: false, available: false, embedded: false, width: 0 },
   boot: null,
   today: new Date(),
   view: 'chat',
@@ -105,10 +106,61 @@ const DOC_REASON = {
   subject_mismatch: '내 사업장과 사업자번호가 달라요', subject_unverified: '사업자번호를 읽지 못했어요',
 };
 
+/**
+ * 앱 안 브라우저 보기 자리(Claude 데스크톱 브라우저 패널처럼): 패널의 화면 칸 자리를 main에 알린다. main이 그 칸 위에 실제 브라우저 보기를 둔다
+ * (패널 영역 밖으로는 못 옮긴다). 칸이 없거나(다른 패널·패널 닫힘) 대화상자가 떠 있거나 경계를 끄는 중이면 숨긴다(보기가 그 위를 덮지 않게).
+ */
+let slotSent = '';
+let slotDrag = false;
+function slotTick() {
+  requestAnimationFrame(slotTick);
+  if (!state.browser.embedded) return;
+  const box = state.browser.available && !slotDrag && !document.querySelector('.modal') ? document.querySelector('.bp .run-screen') : null;
+  const r = box?.getBoundingClientRect();
+  const p = r && r.width > 0 && r.height > 0 ? { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) } : { none: true };
+  const key = JSON.stringify(p);
+  if (key === slotSent) return;
+  slotSent = key;
+  void call('browser.slot', p).catch(() => {});
+}
+requestAnimationFrame(slotTick);
+
 const act = {
   toast,
   // 앱 안 브라우저 크게/작게(제목줄 [브라우저]와 같다)
   browserSize: (big) => void call('browser.toggle', { show: big }).catch(() => {}),
+  // 앱 안 브라우저 패널 왼쪽 경계 끌기: 원하는 폭을 main에 보낸다(main이 대화 열 최소 폭 안에서 정해 다시 알린다). 끄는 동안 보기는 숨긴다.
+  browserDrag: (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    slotDrag = true;
+    document.body.classList.add('bp-dragging');
+    let want = null;
+    let queued = false;
+    const flush = () => {
+      queued = false;
+      if (want !== null) void call('browser.resize', { width: want }).catch(() => {});
+    };
+    const move = (ev) => {
+      want = Math.round(window.innerWidth - ev.clientX);
+      if (!queued) {
+        queued = true;
+        requestAnimationFrame(flush);
+      }
+    };
+    const up = () => {
+      el.removeEventListener('pointermove', move);
+      el.removeEventListener('pointerup', up);
+      el.removeEventListener('pointercancel', up);
+      slotDrag = false;
+      document.body.classList.remove('bp-dragging');
+    };
+    el.addEventListener('pointermove', move);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+  },
   openDoc: (id) => call('docs.open', { id }).catch((e) => toast(docErr(e))),
   revealDoc: (id) => call('docs.reveal', { id }).catch((e) => toast(docErr(e))),
   // 결과 카드·실행 패널의 [PDF 열기]·[폴더 열기]: 엔진이 보관한 이 실행의 PDF(runId) 줄을 연다. 없으면 홈택스 발급목록 안내(F-04).
@@ -1158,7 +1210,13 @@ function paintScreen() {
   };
   if (s.gone) mark('gone', '연결 끊김');
   else if (s.paused) mark('paused', '비밀번호 입력 중');
-  else if (s.frame) mark('live', '직접 조작');
+  else if (s.frame || (state.browser.embedded && s.url)) mark('live', '직접 조작');
+  // 앱 안 브라우저: 이 칸 위에 main이 실제 보기를 둔다. 그림·입력 중계가 없다(사람이 보기를 직접 누른다).
+  if (state.browser.embedded) {
+    box.dataset.state = s.gone ? 'gone' : s.paused ? 'paused' : 'live';
+    if (s.gone) box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김 · 브라우저가 닫혔어요'));
+    return;
+  }
   if (s.gone) {
     box.dataset.state = 'gone';
     box.replaceChildren(h('p', { class: 'sx-meta' }, '연결 끊김 · 브라우저가 닫혔어요'));
@@ -2319,7 +2377,9 @@ window.sax.onEvent((ev) => {
   }
   if (ev.type === 'browser') {
     const wasLive = state.browser.available;
-    state.browser = { shown: ev.shown === true, available: ev.available === true };
+    state.browser = { shown: ev.shown === true, available: ev.available === true, embedded: ev.embedded === true, width: Number(ev.width) || 0 };
+    document.body.classList.toggle('browser-embedded', state.browser.embedded);
+    if (state.browser.embedded && state.browser.width > 0) document.documentElement.style.setProperty('--l-browser', `${state.browser.width}px`);
     // 실행 중이면 패널을 넓히고(browser-live), [브라우저]로 크게 하면 대화 열을 줄여 패널을 더 키운다(browser-big)
     document.body.classList.toggle('browser-live', state.browser.available);
     document.body.classList.toggle('browser-big', state.browser.available && state.browser.shown);

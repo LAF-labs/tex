@@ -22,6 +22,7 @@ import {
   type SummaryLine,
 } from '../apps/desktop/src/approval-gate.ts';
 import { SHELL_METHODS, USER_ACTION_METHODS } from '../apps/desktop/src/ipc.ts';
+import { barBounds, browserPanelWidth, SHELL } from '../apps/desktop/src/shell-layout.ts';
 
 const root = path.join(import.meta.dirname, '..');
 const read = (p: string) => readFileSync(path.join(root, p), 'utf8');
@@ -131,7 +132,16 @@ describe('음성 ②: 렌더러는 승인 카드를 흉내 내거나 겹쳐 승�
     for (const m of bar.matchAll(/this\.targets = ([^;]+);/g)) assert.match(m[1]!, /^cardTargets\(/, m[0]);
     assert.ok(!/ipcMain|webContents\.on\('ipc-message/.test(bar), '카드 쪽에 렌더러 메시지 수신이 없다');
     const layout = read('apps/desktop/src/shell-layout.ts');
-    assert.match(layout, /export function barBounds\(contentWidth: number, contentHeight: number, wide = false, height: number = SHELL\.barHeight\)/);
+    assert.match(layout, /export function barBounds\(contentWidth: number, contentHeight: number, wide = false, height: number = SHELL\.barHeight, panel: number = SHELL\.panel\)/);
+    // 앱 안 브라우저 패널 폭(panel)은 승인 대기 중 창 폭과 상수만으로 정한다: 렌더러가 고른 폭(끌기)·크게는 카드 자리에 닿지 않는다
+    for (const w of [900, 1280, 1440, 1920]) {
+      const fixed = browserPanelWidth(w, null, false, true);
+      assert.equal(browserPanelWidth(w, 5000, true, true), fixed, `${w}`);
+      assert.equal(browserPanelWidth(w, 10, false, true), fixed, `${w}`);
+      assert.equal(barBounds(w, 900, false, SHELL.barHeight, fixed).band, w - SHELL.rail - fixed < SHELL.chatMax + SHELL.gutter * 2 && w - SHELL.rail - fixed - SHELL.gutter * 2 < SHELL.barMinWidth, `${w}`);
+    }
+    assert.match(read('apps/desktop/src/shell-app.ts'), /new ApprovalBar\(win, key, \(w, h, wide, height\) => barBounds\(w, h, wide, height, panelNow\(\)\)/);
+    assert.match(read('apps/desktop/src/shell-app.ts'), /browserPanelWidth\(win\.getContentSize\(\)\[0\]!, browserWant, browserShown, bar\.active\)/);
   });
 
   it('카드는 뜰 때 메인 창 contentView의 맨 위 자식이 된 뒤에 보인다(렌더러가 그 위에 그릴 수 없다). 스크립트 없는 정적 페이지', () => {

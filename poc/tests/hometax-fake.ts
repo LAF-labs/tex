@@ -78,7 +78,7 @@ export interface FakeKnobs {
   /**
    * 메인·폼을 그릴 때마다 공지 레이어가 뜬다(2026-11-13 실화면 headless 탐침: 창 `mf_txppWframe_A_<숫자>` w2popup_window,
    * "시스템 점검을 위한 서비스 일시 중단 안내", [닫기] INPUT 둘 `<창 id>_wframe_trigger2`·`<창 id>_wframe_btnClose`, X 없음).
-   * 머리말 [로그인]으로 연 로그인 화면에는 없었다. 덮개가 화면 전체의 클릭을 막는다(가정). 닫힌 횟수는 state.layerClosed.
+   * 머리말 [로그인]으로 연 로그인 화면에는 없었다. 실화면처럼 덮개(모달 마스크)는 없다(2026-11-13 탐침). 닫힌 횟수는 state.layerClosed.
    */
   mainNotice: boolean;
   /**
@@ -471,16 +471,14 @@ const CLIENT = String.raw`
   function noticeLayer() {
     if (!C.mainNotice || !['main', 'issue'].includes(C.screen)) return;
     const id = 'mf_txppWframe_A_1000000000008' + (10000 + Math.floor(Math.random() * 89999));
-    const cover = document.createElement('div');
-    cover.style.cssText = 'position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,.3)';
     const box = document.createElement('div');
     box.id = id; box.className = 'w2window w2window_restored w2popup_window dp1 resize pop';
     box.style.cssText = 'position:fixed;top:60px;left:60px;z-index:100001;background:#fff;border:1px solid #333;padding:8px;width:420px';
     box.innerHTML = '<div id="' + id + '_wframe_layerPopupContents" class="w2group txt_box"><p>국세청 홈택스 시스템 점검을 위한 서비스 일시 중단 안내</p></div>' +
       '<input type="button" class="w2trigger" id="' + id + '_wframe_trigger2" value="닫기"> <input type="button" class="w2trigger" id="' + id + '_wframe_btnClose" value="닫기">';
-    document.body.append(cover, box);
+    document.body.append(box);
     fetch('/_fx/layer?ev=shown');
-    const close = (e) => { e.preventDefault(); cover.remove(); box.remove(); fetch('/_fx/layer?ev=closed'); };
+    const close = (e) => { e.preventDefault(); box.remove(); fetch('/_fx/layer?ev=closed'); };
     box.querySelector('#' + id + '_wframe_trigger2').onclick = close;
     box.querySelector('#' + id + '_wframe_btnClose').onclick = close;
   }

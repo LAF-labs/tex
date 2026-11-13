@@ -342,7 +342,13 @@ describe('D11 §4 승인 바(ADR-021)', () => {
   it('메인 창: webviewTag:false·disableDialogs:true, 제품 소스에 sendInputEvent·debugger 없음(e2e만)', () => {
     const shell = read(`${SRC}/shell-app.ts`);
     assert.ok(shell.includes('webviewTag: false') && shell.includes('disableDialogs: true'));
-    for (const f of productFiles) assert.ok(!/sendInputEvent|\.debugger\b/.test(read(`${SRC}/${f}`)), f);
+    // 앱 안 브라우저(embedded-browser.ts)만 webContents.debugger를 쓴다: 그 파일이 만든 홈택스 보기(영구 파티션)의 webContents에만 붙는다.
+    // 메인 창·승인 바·비밀 창에는 닿지 않는다(그 창들의 실제 입력 감시는 그대로 사람 입력만 센다).
+    for (const f of productFiles) if (f !== 'embedded-browser.ts') assert.ok(!/sendInputEvent|\.debugger\b/.test(read(`${SRC}/${f}`)), f);
+    const eb = read(`${SRC}/embedded-browser.ts`).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.ok(!/sendInputEvent|win\.webContents|BrowserWindow/.test(eb), 'embedded-browser.ts는 창 webContents·입력 합성을 쓰지 않는다');
+    for (const m of eb.matchAll(/(\S+)\.debugger\b/g)) assert.match(m[1]!, /^(\(?t|wc|host|this\.downloadHost)\b|\.wc$/, m[0]);
+    assert.match(eb, /new WebContentsView\(\{ \.\.\.\(adopt \? \{ webContents: adopt \} : \{\}\), webPreferences: \{ partition: EMBEDDED_PARTITION, sandbox: true/);
   });
 });
 
