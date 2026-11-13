@@ -14,6 +14,7 @@ import { compileRe2 } from '../core/re2.ts';
 import { newScope } from '../core/scope.ts';
 import { resolveTarget } from '../core/resolve.ts';
 import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/steps.ts';
+import { targetDiagnosis } from '../core/diagnose.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
@@ -117,6 +118,8 @@ export interface IrRunInput {
   /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
   manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
+  /** 진단 한 줄(engine.log diag, 값 없음·화면 글 가림): 핸드오프 대상의 실제 화면 모양(core/diagnose.ts). 없으면 남기지 않는다. */
+  diag?: (code: string, fields: Record<string, string | number | boolean>, data: unknown) => void;
   phase: (phase: string, state: 'now' | 'done' | 'attention', code?: string) => void;
   postGate: (m: GatePortMessage) => void;
   waiting: (reqId: string) => void;
@@ -629,6 +632,12 @@ export class IrRun {
         // 사람에게 넘긴 이유를 엔진 로그에도 남긴다(runs.ts가 run.handoff를 engine.log로 옮긴다): 코드·대상 셀렉터 키·거친 폴백 단계. 값·화면 글 없음.
         const at = stoppedAtOf(ir, out.at ?? null);
         i.journal('run.handoff', { stepId: out.at ?? '', state: out.state, code: out.code ?? '', ...(at?.target ? { target: at.target } : {}), ...(out.at ? { fallback: fallback.tried(out.at) } : {}) });
+        // 대상을 못 찾았거나(시간 초과 포함) 이름·역할이 달라 넘겼으면 그 대상의 실제 화면 모양을 남긴다(값 없음, 10초 안에 못 읽으면 건너뜀).
+        if (i.diag && at?.target && (out.code === 'step.identity_mismatch' || out.code === 'step.selector_miss' || out.code === 'step.timeout')) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const d = await Promise.race([targetDiagnosis(reader, dict, at.target).catch(() => null), new Promise<null>((r) => (timer = setTimeout(() => r(null), 10_000)))]).finally(() => clearTimeout(timer));
+          i.diag('run.handoff_target', { stepId: out.at ?? '', code: out.code, target: at.target, read: !!d }, d);
+        }
         i.handoff?.({ phase, ...(out.code ? { code: out.code } : {}), stepId: out.at });
         enforcer.pauseClock();
         const cmd = left > 0 ? await this.waitCommand(left) : 'cap';
