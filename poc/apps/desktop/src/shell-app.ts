@@ -848,8 +848,39 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       reply.run.interp = via;
       reply.run.sent = sent;
       pushBoard(); // 초안은 update 이벤트 없이 생긴다
+      if (sendByUser) autoPrepare(reply.run.id);
     }
     return { ...reply, via, note, sent };
+  };
+  /** 이번 request.send가 실제 사용자 전송(클릭·Enter, 2초 안)인가. 0클릭 준비는 이 전송에 묶는다. */
+  let sendByUser = false;
+  /**
+   * [홈택스에서 준비] 0클릭(대표 지시 2026-11-13 "두 번째 발급부터 대화 한 문장과 [승인] 1번"). 준비는 홈택스 칸에 넣고 되읽기만 해서 되돌릴 수 있다.
+   * 초안이 다 찼으면(품목이 있으면) 대화 전송에 묶어 바로 시작한다. 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
+   * 막히면(Chrome 없음·이메일 모양·상한) 초안 카드에 그 이유가 남고 [홈택스에서 준비]로 다시 할 수 있다. 실제 사용자 동작을 묻는 곳은 [승인] 하나다.
+   */
+  const autoPrepare = (id: string) => {
+    const r = runs.get(id);
+    if (!r || r.status !== 'draft' || !String(r.item ?? '').trim()) return;
+    setImmediate(() => {
+      log.event('main.prepare_auto', {});
+      prepareNow(id).catch((e: Error) => log.event('main.prepare_auto_failed', { code: e.message.slice(0, 60) }));
+    });
+  };
+  const prepareNow = async (id: string) => {
+    // 상한 이유와 남은 초를 코드에 붙인다(F-07: "잠시 뒤"만 보이던 것). 화면은 이유별 문장 + N초.
+    const pause = runs.prepareWaitMs();
+    const now = performance.now();
+    if (pause > 0 || !prepareRate.take(now)) {
+      const why = pause > 0 ? 'streak' : 'rate';
+      log.event('main.prepare_throttled', { why });
+      throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
+    }
+    // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
+    await registryFresh();
+    const r = await runs.prepare(id);
+    await keepItem(id);
+    return r;
   };
   // 계정 로그인(A-01)·첫 PC 등록(remote-account.ts). 금고 키는 처음 쓸 때 한 번 읽는다(금고가 먼저 떠 있어야 한다).
   let remoteKeys: Promise<DesktopKeys> | null = null;
@@ -1018,6 +1049,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     })();
   });
 
+  /**
+   * 기억한 인증서 비밀번호(대표 지시 2026-11-13). 금고가 처음 넣은 값을 저장하고 다음부터 넣는다(vault SecretOps.certMemory).
+   * 홈택스가 비밀번호가 틀렸다고 하면 바로 지운다(다시 넣어 인증서가 잠기지 않게). 설정에는 [지우기] 하나만 둔다. 값은 main에 오지 않는다.
+   */
+  const CERT_SLOT = { kind: 'cert_password', scope: 'business' } as const;
+  const certMemory = {
+    has: async () => (await host.control('secret.has', CERT_SLOT).catch(() => false)) === true,
+    forget: async (why: string) => {
+      const r = await host.control('secret.forget', CERT_SLOT).catch(() => false);
+      log.event('main.cert_memory_forget', { why, removed: r === true });
+    },
+  };
+  host.on('run', (e: { type?: string; code?: string }) => {
+    if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
+  });
+
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
     'bankAuto.status': () => bankAutoH['bankAuto.status'](),
@@ -1077,6 +1124,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // kind 'unavailable'(연결 안 됨 + [다시 시도])을 돌려준다. 되묻던 것(pending)도 그대로 둔다(사용자 결정 2026-11-10 "오프라인 해석은 없다").
     // 인자(거래처·금액·부가세)는 로컬 파서가 뽑는다(D01 §5.1). 시연(fixture)은 시연 모델(4초 상한) → 실패하면 정규식(e2e가 기댄다).
     'request.send': async (p) => {
+      sendByUser = gesture.within(performance.now(), 2_000);
       const vat = p.vat === 'separate' || p.vat === 'included' ? (p.vat as VatMode) : null;
       if (!termsOk()) throw new Error('onboarding_terms');
       await needLogin();
@@ -1169,20 +1217,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 실행 시작은 2초 안의 실제 입력이 있어야 하고, 사람 속도(분당 3회)·게이트 없이 끝난 연속 3회에서 멈춘다.
     'run.prepare': async (p) => {
       needGesture(2_000);
-      // 상한 이유와 남은 초를 코드에 붙인다(F-07: "잠시 뒤"만 보이던 것). 화면은 이유별 문장 + N초.
-      const pause = runs.prepareWaitMs();
-      const now = performance.now();
-      if (pause > 0 || !prepareRate.take(now)) {
-        const why = pause > 0 ? 'streak' : 'rate';
-        log.event('main.prepare_throttled', { why });
-        throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
-      }
-      // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
-      await registryFresh();
-      const id = String(p.id);
-      const r = await runs.prepare(id);
-      await keepItem(id);
-      return r;
+      return prepareNow(String(p.id));
     },
     'run.stop': (p) => runs.stop(String(p.id)),
     'run.resume': (p) => {
@@ -1339,6 +1374,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const r = await onb.answer({ step: p.step, choice: p.choice, fields: p.fields, certId: p.certId, tasks: p.tasks } as Parameters<OnboardingFlow['answer']>[0]);
       if (onb.done) pushBoard(); // 건너뛴 항목이 판의 할 일로
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
+    },
+    'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    'certMemory.forget': async () => {
+      needGesture(3_000);
+      await certMemory.forget('user');
+      return { remembered: await certMemory.has() };
     },
     'chrome.check': async () => {
       const ready = chromeReady();

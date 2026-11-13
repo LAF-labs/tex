@@ -19,7 +19,11 @@ export const CHROME_CANDIDATES: Partial<Record<NodeJS.Platform, string[]>> = {
  */
 // --disable-default-apps: Chrome 기본 앱(Web Store 결제 구성요소 nmmhkkegccagdldgiimedpiccmgmieda 등)이 전용 프로필에 깔리지 않게 한다.
 // 깔리면 확장 검사(extension_not_allowed, 실패 닫힘)가 비밀 창을 막아 발급이 멈춘다. 확장을 줄이는 쪽이라 보안을 약하게 하지 않는다(D05 §3.1, 팀장 결정 2026-11-06).
-export const CHROME_ARG_ALLOWLIST = ['--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps'] as const;
+export const CHROME_ARG_ALLOWLIST = [
+  '--remote-debugging-pipe', '--user-data-dir', '--no-first-run', '--disable-breakpad', '--disable-default-apps',
+  // 홈택스 Chrome이 앱 뒤에 가려져도(#305) 렌더러·타이머를 늦추지 않는다(부장 지시 2026-11-13).
+  '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
+] as const;
 export const FORBIDDEN_CHROME_ARGS = ['--remote-debugging-port', '--remote-allow-origins', '--no-sandbox', '--disable-extensions'];
 
 /** Chrome 자식 프로세스 환경 변수 화이트리스트(디버그·로깅·프록시 변수 제거). */
@@ -37,11 +41,11 @@ export const CHROME_ENV_ALLOWLIST = [
 export const PORTAL_ETLD1 = ['hometax.go.kr'];
 
 /**
- * 비밀 종류별 origin 허용 목록(D05 §3.7). 공동·금융인증서 비밀번호는 사용자가 브라우저에 직접 넣고 타이피스트는
- * 넣지 않는다(ADR-020 결정 2, D05 §2): 실 포털 origin이 없으니 타이피스트·비밀 창이 열리지 않는다. 시험 구성은 따로 준다.
+ * 비밀 종류별 origin 허용 목록(D05 §3.7). 공동·금융인증서 비밀번호는 홈택스에서 금고 비밀 창으로 받고, 처음 넣은 값을 기억해
+ * 다음부터 금고가 넣는다(대표 지시 2026-11-13, ADR-020 결정 2 고침). 시험 구성은 따로 준다.
  */
 export const SECRET_ORIGINS: Record<string, string[]> = {
-  cert_password: [],
+  cert_password: ['hometax.go.kr'],
   portal_password: ['hometax.go.kr'],
   security_card: ['hometax.go.kr'],
 };
