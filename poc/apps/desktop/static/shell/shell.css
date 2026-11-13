@@ -413,3 +413,4 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .issued-state.is-attention { color: var(--attention); }
 .issued-state.is-muted { color: var(--ink-3); }
 .issued-note { display: block; }
+.issued-more { display: flex; justify-content: center; }

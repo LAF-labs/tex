@@ -1000,7 +1000,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let sendByUser = false;
   /**
    * [홈택스에서 준비] 0클릭(대표 지시 2026-11-13 "두 번째 발급부터 대화 한 문장과 [승인] 1번"). 준비는 홈택스 칸에 넣고 되읽기만 해서 되돌릴 수 있다.
-   * 초안이 다 찼으면(품목이 있으면) 대화 전송에 묶어 바로 시작한다. 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
+   * 초안이 다 찼으면(품목이 있으면, 기본값·저장 품목 포함) 대화 전송에 묶어 바로 시작한다(해석기·대화 에이전트 둘 다). 초안 카드가 먼저 그려지게 답을 보낸 뒤에 시작한다.
    * 막히면(Chrome 없음·이메일 모양·상한) 초안 카드에 그 이유가 남고 [홈택스에서 준비]로 다시 할 수 있다. 실제 사용자 동작을 묻는 곳은 [승인] 하나다.
    */
   const autoPrepare = (id: string) => {
@@ -1369,6 +1369,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           run.sent = sent;
         }
         if (agentCreated.length) pushBoard();
+        // 기본값(부가세 별도)·저장 품목으로 채운 초안도 바로 준비한다(대표 실사용 2026-11-14 "일호유통에 100원"이 [홈택스에서 준비]를 기다렸다).
+        // 준비는 칸에 넣고 되읽기만 해서 되돌릴 수 있고, 승인 카드에서 다시 본다. 품목이 비면(진짜 빠짐) autoPrepare가 건너뛴다.
+        if (sendByUser) for (const run of agentCreated) autoPrepare(run.id);
         log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
         if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
         // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.

@@ -424,7 +424,9 @@ export class AgentChat {
       kind: 'agent',
       text: reply.filtered ? reply.text : this.fill(s, reply),
       show,
-      ask: reply.ask ? { kind: reply.ask, chips: this.chips(reply.ask) } : null,
+      // 이번 턴에 초안을 만들었으면 부가세는 묻지 않는다: 기본값(별도)으로 바로 준비하고 승인 카드에서 다시 본다(대표 실사용 2026-11-14).
+      // 진짜 빠진 값(금액·거래처)만 묻는다.
+      ask: reply.ask && !(reply.ask === 'vat' && created.length > 0) ? { kind: reply.ask, chips: this.chips(reply.ask) } : null,
       filtered: reply.filtered,
       ...(unknown ? { unknown } : {}),
     };

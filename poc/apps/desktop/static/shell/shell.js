@@ -1235,13 +1235,16 @@ const DOC_FILTERS = [
 ];
 
 /** 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 나머지는 상태 글자. */
+const ISSUED_SHOWN = 10;
 const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'], not_issued: ['발급 안 됨', 'is-muted'], stopped_before_gate: ['승인 전 멈춤', 'is-muted'] };
 /** 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF], 실패·확인 중은 상태로. */
 function issuedSection() {
-  const rows = state.issued ?? [];
-  if (!rows.length) return null;
-  const done = rows.filter((x) => x.kind === 'issued').length;
-  const unsure = rows.filter((x) => x.kind === 'unsure').length;
+  const all = state.issued ?? [];
+  if (!all.length) return null;
+  // 최근 10건, 나머지는 [모두 보기](부장 지시 2026-11-14)
+  const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
+  const done = all.filter((x) => x.kind === 'issued').length;
+  const unsure = all.filter((x) => x.kind === 'unsure').length;
   return h(
     'div',
     { class: 'issued-sec', 'data-issued': '' },
@@ -1262,6 +1265,9 @@ function issuedSection() {
         );
       }),
     ),
+    all.length > ISSUED_SHOWN
+      ? h('div', { class: 'issued-more' }, btn(state.issuedAll ? '최근 10건만 보기' : `모두 보기 (${all.length}건)`, () => ((state.issuedAll = !state.issuedAll), render()), '', { 'data-act': 'issued-all' }))
+      : null,
   );
 }
 
