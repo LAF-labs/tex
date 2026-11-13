@@ -76,6 +76,12 @@ async function flow() {
   // 진행 단계 줄의 글자 변화를 적는다
   await js(`(() => { window.__phases = []; new MutationObserver(() => { const e = document.querySelector('[data-agent-progress]'); if (e && window.__phases.at(-1) !== e.dataset.agentProgress) window.__phases.push(e.dataset.agentProgress); }).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-agent-progress'] }); })()`);
 
+  // 0) 카드가 없는 첫 화면: 빠른 실행 칩이 있고([주민등록등본 떼 줘] 포함), 되묻는 동안에는 숨는다(M1. 카드가 있으면 cardWork가 먼저 숨겨서 따로 본다)
+  const quick0 = await js<string[]>(`[...document.querySelectorAll('#quick [data-prompt]')].map((b) => b.dataset.prompt)`);
+  check('첫 화면: 빠른 실행 칩이 있고 등본 칩도 있다', quick0.length > 0 && quick0.includes('주민등록등본 떼 줘'), quick0);
+  await turn('세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty' }));
+  check('카드 없이 되묻는 동안 빠른 실행 칩이 숨는다(M1)', (await cards()).length === 0 && (await js<number>(`document.querySelector('#quick').children.length`)) === 0, await js<number>(`document.querySelector('#quick').children.length`));
+
   // 1) 지난달 매출: 표 제목에 건수·합계, 문장 슬롯은 같은 집계, 조사는 받침에 맞춘다
   let ref = '';
   await turn(
@@ -129,7 +135,7 @@ async function flow() {
   check('되묻기: 빠른 실행 칩이 숨는다', (await js<number>(`document.querySelector('#quick').children.length`)) === 0);
   plan = [() => reply({ kind: 'cannot', text: '알겠어요.' })];
   const r0 = await agentReplies();
-  await js(`[...document.querySelectorAll('[data-agent-chip]')].find((c) => c.textContent === ${JSON.stringify(cp.name)}).click()`);
+  await js(`[...[...document.querySelectorAll('[data-agent-reply]')].pop().querySelectorAll('[data-agent-chip]')].find((c) => c.textContent === ${JSON.stringify(cp.name)}).click()`);
   check('칩을 누르면 그 이름을 바로 보낸다', (await until('chip send', async () => (await agentReplies()) > r0)) && (await js<string>(`[...document.querySelectorAll('.sx-me')].pop().textContent`)) === cp.name);
   check('보낸 뒤 앞 되묻기 칩은 꺼진다', (await js<boolean[]>(`[...document.querySelectorAll('[data-agent-chip]')].map((c) => c.disabled)`)).every(Boolean));
 
@@ -150,6 +156,27 @@ async function flow() {
   check('실패 문구는 원인을 단정하지 않는다(U8-5)', failText === '지금 답을 받지 못했어요. 잠시 뒤 다시 시도해 주세요.' && !/인터넷|연결/.test(failText), failText);
   await turn('고마워', () => reply({ kind: 'answer', text: '천만에요.' }));
   check('새 문장 뒤 앞 [다시 시도]는 꺼진다', (await js<number>(`document.querySelectorAll('[data-act="intent-retry"]:not([disabled])').length`)) === 0);
+
+  // 6b) 받을 돈(#284): 계좌가 없으면 not_set_up, 계좌를 더하면 받을 돈 조회가 답한다("계좌 연결이 아직"이 아니다)
+  let recv: string[] = [];
+  const recvTurn = (text: string) =>
+    turn(
+      text,
+      () => tools({ tool: 'receivables', counterpartyId: null }),
+      (p) => {
+        recv.push(outputs(p)[0]!.status);
+        return reply({ text: '확인했어요.' });
+      },
+    );
+  await recvTurn('받을 돈 있어?');
+  await js(`(async () => { await window.sax.call('bank.consent', {}); await window.sax.call('bank.addAccount', { bank: '견본은행', number: '110-000-000001', alias: '시험 계좌' }); })()`);
+  await recvTurn('받을 돈 다시 봐줘');
+  check('받을 돈: 계좌 전 not_set_up, 계좌 뒤에는 조회 결과(ok·empty)', recv[0] === 'not_set_up' && (recv[1] === 'ok' || recv[1] === 'empty'), recv);
+
+  // 6c) 등본·초본은 사업자 대화에서도 정부24 직접 발급 안내로 간다(대화 에이전트로 보내지 않는다, #300 판정 ①)
+  const n24 = sent.length;
+  await send('주민등록등본 떼 줘');
+  check('등본 요청 → 정부24 안내 패널, chat.step 부르지 않음', (await until('g24 panel', async () => (await js<number>(`document.querySelectorAll('[data-g24-panel]').length`)) > 0)) && sent.length === n24, sent.length - n24);
 
   // 7) 장부에 없는 거래처(U8-1): 엔진이 준 이름으로 안내 문장과 [거래처 추가]. 누르면 그 이름이 채워진 추가 폼이 열린다
   await turn('라온상사에 세금계산서 끊어줘', () => reply({ kind: 'ask', text: '어느 거래처에 보낼까요?', ask: 'counterparty', unknownName: '라온상사' }));

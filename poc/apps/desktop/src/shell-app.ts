@@ -794,6 +794,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       runs,
       setupMissing: () => setupMissing(profiles().business).length > 0,
       onCreated: (run) => agentCreated.push(run),
+      // 받을 돈(#284): 계좌가 하나도 없으면 null(not_set_up). 계좌·거래내역이 있으면 못 받은 건을 준다.
+      receivables: () => bank.receivables(),
       // 시연: 씨앗 이력(승인번호 있는 것)도 지난 발급이다. 제품은 원장만.
       pastIssued: () => (seed?.past ?? []).flatMap((x) => (x.kind === 'issued' && x.approvalNo && x.who && x.day ? [{ counterpartyId: cps.find((c) => c.name === x.who)?.id ?? null, counterparty: x.who, date: x.day, total: x.total }] : [])),
       onProgress: (phase: AgentPhase) => send({ type: 'chat-progress', phase }),
@@ -969,7 +971,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         return setupGate(parsed) ?? finishReply(interpret(text, vat, profile, runs, parsed), via, null, ask ? ['openrouter_demo'] : []);
       }
       // 사업자 대화는 대화 에이전트로 간다(제품 전부, 시연은 e2e가 agent를 넘겼을 때만). 개인 프로필은 아래 옛 해석 길(정부24 안내).
-      if (profile === 'business' && (!fixture || opts.agent)) {
+      // 등본·초본(정부24 직접 발급 안내)은 사업자도 옛 길로 간다. 첫 화면 칩 [주민등록등본 떼 줘]가 안내를 잃지 않게(#300 판정).
+      const g24Ask = local.intent === 'resident_copy' || local.intent === 'resident_abstract';
+      if (profile === 'business' && (!fixture || opts.agent) && !g24Ask) {
         if (!text.trim()) return { kind: 'say', text: EMPTY_REQUEST_TEXT, via: 'model', note: null, sent: [] };
         if (!modelOk()) return { kind: 'say', text: MODEL_CONSENT_FIRST_TEXT, via: 'model', note: null, sent: [] };
         const mark = gwSeq;
