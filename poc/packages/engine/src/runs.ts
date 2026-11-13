@@ -19,7 +19,7 @@ import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
-import { REHEARSAL_DONE, RehearsalReport } from './rehearsal.ts';
+import { REHEARSAL_DONE, REHEARSAL_HANDOFF, RehearsalReport } from './rehearsal.ts';
 
 /** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
 const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.why$/;
@@ -248,7 +248,10 @@ export class RunService extends EventEmitter {
   private ev(e: RunEvent): void {
     const report = this.active?.runId === e.runId ? this.active.rehearsal : null;
     if (report && e.type === 'phase') report.phase(e.phase, e.state);
-    if (report && e.type === 'handoff') report.handoff(e.phase, e.code);
+    if (report && e.type === 'handoff') {
+      report.handoff(e.phase, e.code);
+      this.stopSoon(this.active!, 'rehearsal.handoff_stop');
+    }
     this.emit('event', e);
   }
 
@@ -427,6 +430,7 @@ export class RunService extends EventEmitter {
     }
     // 예행이 게이트에 닿아 스스로 멈췄다(원장 행은 무장에서만 생기므로 없어야 한다. 있으면 위 판정을 그대로 둔다).
     if (a.rehearsal?.gateStep && !row) result = { status: 'stopped', code: REHEARSAL_DONE };
+    else if (a.rehearsal?.handedOff && !row) result = { ...result, status: 'stopped', code: REHEARSAL_HANDOFF };
     if (a.rehearsal) this.d.log.event('run.rehearsal_report', a.rehearsal.fields(a.runId, { status: result.status, code: result.code, stepId: result.stoppedAt?.stepId }));
     // 정지 하향이 postprocess·kill이면 그 포털의 자동화 Chrome을 닫는다(무장 뒤 미룬 H01 하향도 실행이 끝났으니 닫는다).
     if ((a.downgraded ?? a.ir?.downgraded)?.hardStop) await this.d.closeBrowser?.().catch(() => {});
@@ -683,6 +687,12 @@ export class RunService extends EventEmitter {
     if (m.t !== 'gate.request' || a.rehearsal.gateStep) return;
     a.rehearsal.gateStep = m.req.gateStepId;
     this.journal.append(a.runId, 'rehearsal.gate_reached', { stepId: m.req.gateStepId });
+    this.stopSoon(a, null);
+  }
+
+  /** 예행을 [중지]처럼 멈춘다. 지금 하던 일(게이트·사람 대기 등록)이 끝난 뒤에 부른다. journalType이 있으면 저널에 남긴다. */
+  private stopSoon(a: ActiveRun, journalType: string | null): void {
+    if (journalType) this.journal.append(a.runId, journalType);
     setImmediate(() => {
       if (this.active !== a) return;
       try {

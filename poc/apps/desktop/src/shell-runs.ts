@@ -142,6 +142,8 @@ export const NOTE: Record<string, string> = {
   in_doubt: '발급 단계에서 멈춰 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 직접 확인해 주세요. 다시 실행하면 중복 발급될 수 있어요.',
   // 예행(엔진 REHEARSAL_DONE): 승인 직전까지 가서 엔진이 스스로 멈췄다.
   'rehearsal.gate_reached': '예행을 마쳤어요. 승인 직전까지 갔고 발급하지 않았어요.',
+  // 예행(엔진 REHEARSAL_HANDOFF): 사람 차례가 나서 바로 멈췄다(예행 실패, 이유는 engine.log run.rehearsal_report).
+  'rehearsal.handoff': '예행이 사람이 필요한 단계에서 멈췄어요. 발급하지 않았어요.',
   'mail.not_confirmed': '발급은 완료되었어요. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요.',
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',
