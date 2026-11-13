@@ -40,7 +40,7 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -287,8 +287,6 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   // CDP로 넣은 마우스 이벤트도 before-mouse-event를 일으키므로 디버그 스위치가 있으면 끝낸다(ADR-021·ADR-025 결정 8, 값싼 차단).
   assertNoDebugSwitches(app);
   serve();
-  // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
-  Menu.setApplicationMenu(Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] }]));
   const key = new Uint8Array(randomBytes(32));
   // 제품(엔진 모드)은 견본 서류를 보이지 않는다. 문서함은 엔진 보관함(PoC-8)만이다. 견본 저장소는 시연 연결로만 온다.
   const store: DocStore = opts.engine ? emptyDocStore() : opts.dev!.sample.store();
@@ -748,6 +746,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 게이트 요청(엔진 → 게이트 포트 → main). main이 fields로 해시를 다시 계산해 맞을 때만 바를 무장한다(approval-bar).
   // 승인 근거는 바가 관찰한 클릭으로 main이 발급하고, 게이트 포트로만 엔진에 보낸다. 렌더러에는 이 경로가 없다.
   runs.on('gate', (runId: string, req) => {
+    // 예행은 엔진이 게이트 요청을 보내지 않는다. 그래도 오면 바를 띄우지 않고 멈춘다(토큰 없음).
+    if (runs.get(runId)?.rehearsal) {
+      log.event('main.rehearsal_gate_refused', { runId });
+      return void runs.stop(runId).catch(() => {});
+    }
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
     void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
       if (o.decision === 'approve') {
@@ -953,7 +956,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const keepItem = async (runId: string) => {
     const r = runs.get(runId);
-    if (!r || r.itemGuessed || !r.item) return;
+    if (!r || r.rehearsal || r.itemGuessed || !r.item) return;
     const cp = cps.find((c) => c.id === r.counterparty.id);
     if (!cp || cp.item) return;
     try {
@@ -1815,6 +1818,38 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       })
       .catch((e) => log.event('main.seed_failed', { error: (e as Error).message.slice(0, 120) }));
   })();
+  /**
+   * 도구 > 홈택스 예행(발급 안 함): 고정 초안(REHEARSAL)으로 실행을 시작하고 엔진이 첫 게이트에서 스스로 멈춘다(B1 실화면 예행).
+   * 메인 프로세스 메뉴라 렌더러 제스처 규칙(USER_ACTION_METHODS)을 거치지 않는다. 준비 상한(prepareNow)은 그대로 받는다.
+   * 장부에 일호유통이 없으면 그 번호로 추가한다.
+   */
+  const rehearse = async () => {
+    try {
+      if (runs.anyActive()) throw new Error('busy');
+      const find = () => cps.find((c) => c.bizNo.replace(/\D/g, '') === REHEARSAL.bizNo);
+      if (!find()) {
+        await cpBook.save({ name: REHEARSAL.name, bizNo: REHEARSAL.bizNo });
+        await refresh();
+      }
+      const cp = find();
+      if (!cp) throw new Error('no_counterparty');
+      const d = runs.rehearsalDraft(cp);
+      pushBoard();
+      log.event('main.rehearsal_started', { runId: d.id });
+      await prepareNow(d.id);
+    } catch (e) {
+      log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
+    }
+  };
+  // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      { role: 'appMenu' },
+      { role: 'editMenu' },
+      { label: '도구', submenu: [{ id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() }] },
+      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+    ]),
+  );
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);

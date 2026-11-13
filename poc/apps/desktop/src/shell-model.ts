@@ -388,6 +388,8 @@ export interface RunView {
   dupToday?: boolean;
   /** [홈택스에서 준비] 전 점검에서 이 PC에 Chrome이 없었다(초안 카드 안내, 다음 준비 때 다시 본다). */
   noChrome?: boolean;
+  /** 홈택스 예행(메뉴 도구 > 홈택스 예행): 엔진이 첫 게이트에서 스스로 멈춘다. 승인 바를 띄우지 않는다. */
+  rehearsal?: boolean;
   writeDate: string;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;

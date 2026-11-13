@@ -59,10 +59,12 @@ function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): 
 
 export const RUN_HISTORY_MAX = 200;
 
-/** 최근 실행부터 limit건(기본 50, 상한 200). */
+/** 최근 실행부터 limit건(기본 50, 상한 200). 예행(run.rehearsal)은 발급 이력이 아니라서 뺀다. */
 export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): RunHistoryRow[] {
   const n = Math.max(1, Math.min(RUN_HISTORY_MAX, Number.isInteger(limit) ? limit : 50));
-  const runs = db.prepare('SELECT id, playbook_id, status, started_at, finished_at, inputs_json_enc FROM runs ORDER BY started_at DESC, rowid DESC LIMIT ?').all(n) as Array<Record<string, unknown>>;
+  const runs = db
+    .prepare(`SELECT id, playbook_id, status, started_at, finished_at, inputs_json_enc FROM runs WHERE id NOT IN (SELECT run_id FROM run_events WHERE type = 'run.rehearsal') ORDER BY started_at DESC, rowid DESC LIMIT ?`)
+    .all(n) as Array<Record<string, unknown>>;
   const ended = db.prepare(`SELECT payload_json FROM run_events WHERE run_id = ? AND type = 'run.ended' ORDER BY seq DESC LIMIT 1`).pluck();
   const gated = db.prepare(`SELECT 1 FROM run_events WHERE run_id = ? AND type = 'gate.requested' LIMIT 1`).pluck();
   const ledger = db.prepare('SELECT state, verify_ref FROM irreversible_log WHERE run_id = ? ORDER BY armed_at DESC, attempt DESC, rowid DESC LIMIT 1');
