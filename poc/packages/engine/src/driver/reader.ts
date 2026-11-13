@@ -122,7 +122,7 @@ export class PlaywrightPageReader implements PageReader {
     const [visible, enabled, editable] = await Promise.all([h.handle.isVisible().catch(() => false), h.handle.isEnabled().catch(() => false), h.handle.isEditable().catch(() => false)]);
     // locator.nth(i)가 아직 같은 요소일 때만 그 aria 스냅숏을 믿는다.
     const same = await h.loc.evaluate((a, b) => a === b, h.handle).catch(() => false);
-    if (!same) return { role: '', name: '', visible, enabled, editable };
+    if (!same) return { role: '', name: '', visible, enabled, editable, stale: true };
     // 역할 없는 div·span(WebSquare 창·표시 글)은 aria 스냅숏이 자기 줄 없이 자식으로 펼쳐지거나(div) 비어 있다(빈 span).
     // 그 첫 줄을 자기 역할로 읽으면 R-A1이 엉뚱한 역할로 맞거나 틀린다. 그래서 그런 요소는 ARIA 명세대로 'generic'(이름 없음)으로 본다.
     if (await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role'); }).catch(() => false)) return { role: 'generic', name: '', visible, enabled, editable };

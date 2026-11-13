@@ -211,7 +211,12 @@ const CLIENT = String.raw`
       document.title = '국세청 홈택스 - 메인';
       wrap.innerHTML = header() + '<div id="mf_txppWframe"><p>국세청 홈택스에 오신 것을 환영합니다.</p></div>';
       // 실화면: 머리말 [로그인]이 그 자리에서 로그인 화면을 그린다(주소는 index3로 바뀐다).
-      if (C.realLoginNav && !C.loggedIn) $('mf_wfHeader_group1503').onclick = (e) => { e.preventDefault(); C.screen = 'login'; screens.login(); };
+      // 실화면(2026-11-13 탐침): 로그아웃이어도 로고가 보인 순간 머리말 링크는 "로그아웃"이고, 약 0.2초 뒤 요소가 "로그인"으로 다시 그려진다.
+      if (C.realLoginNav && !C.loggedIn) {
+        const bind = () => { $('mf_wfHeader_group1503').onclick = (e) => { e.preventDefault(); C.screen = 'login'; screens.login(); }; };
+        $('mf_wfHeader_group1503').outerHTML = '<a id="mf_wfHeader_group1503" href="#" title="로그아웃">로그아웃</a>';
+        setTimeout(() => { $('mf_wfHeader_group1503').outerHTML = '<a id="mf_wfHeader_group1503" href="#" title="로그인">로그인</a>'; bind(); }, 250);
+      }
     },
     login() {
       if (!/menuCd=index3/.test(location.search)) history.replaceState(null, '', menuUrl('&menuCd=index3'));
