@@ -194,9 +194,10 @@ export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatal
  * 실행(IR decide 스텝)용 판정기와 실행마다 받는 게이트웨이 run 토큰(PR-D2). Egress에 게이트웨이 설정이 없으면 null이다.
  * 그때 IR decide 스텝은 decide.unavailable로 멈춘다(모델 없이 화면을 판정하지 않는다).
  */
-export function gatewayRunJudge(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): { judge: Judge; runTokenFor: (runId: string) => Promise<RunToken> } | null {
+export function gatewayRunJudge(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): { judge: Judge; runTokenFor: (runId: string) => Promise<RunToken>; locate: OpenAIResponsesAdapter } | null {
   if (!egress.gatewayGuard) return null;
   const catalog = opts.catalog ?? BundleCatalog.load();
   const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress }) });
-  return { judge: new Judge(layer, opts.promoted ?? loadPromotions()), runTokenFor: (runId) => gatewayRunToken(egress, { runId }) };
+  // AI 위치 찾기(core/locate.ts): 같은 게이트웨이의 /v1/respond 툴셋 selector_repair. 같은 실행 토큰(L2 예산 2)을 쓴다.
+  return { judge: new Judge(layer, opts.promoted ?? loadPromotions()), runTokenFor: (runId) => gatewayRunToken(egress, { runId }), locate: new OpenAIResponsesAdapter({ transport: 'gateway', egress }) };
 }

@@ -355,3 +355,10 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .bank-link { display: inline-block; padding: 1px 8px; margin-right: var(--space-2); border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface-sunken); color: var(--ink-2); font-size: 12px; }
 .bank-link-auto_connected { border-color: var(--accent); color: var(--accent); background: var(--surface-tint); }
 .bank-link-auto_error { border-color: var(--attention); color: var(--attention); }
+
+/* 진행 화면(B3): 실행 중 홈택스 화면, 보기 전용 */
+.run-screen { margin: 12px 0 4px; border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 10px; overflow: hidden; min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.run-screen img { display: block; width: 100%; height: auto; max-height: 420px; object-fit: cover; object-position: top; pointer-events: none; user-select: none; }
+.run-screen .sx-meta { margin: 10px 12px; text-align: center; }
+.run-screen .run-screen-note { margin: 6px 12px 8px; font-size: 12px; }
+.run-screen[data-state='paused'] { background: var(--surface-2, rgba(127,127,127,.08)); }

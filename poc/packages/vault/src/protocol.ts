@@ -40,6 +40,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.focus',
     // 홈택스 창 자리(main): 실행 창을 앱 옆에 둔다. front면 앞으로도. 창 크기·위치만 바꾸고 페이지는 건드리지 않는다.
     'browser.place',
+    // 진행 화면(B3): 실행 탭 화면을 보기 전용으로 main에 중계한다(초당 3장 남짓). 입력은 받지 않는다. 비밀 창이 열린 동안은 멈춘다.
+    'screen.start', 'screen.stop',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
@@ -567,4 +569,5 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
  */
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
-  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed';
+  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
+  | 'screen.frame' | 'screen.paused';

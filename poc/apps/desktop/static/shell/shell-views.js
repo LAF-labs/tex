@@ -475,6 +475,8 @@ export function runPanel(run, act) {
     st === 'attention' && run.inDoubt ? checkListGuide(run, act) : null,
     kv(rows),
     h('div', { class: 'sx-source' }, source),
+    // 진행 화면(B3): 실행 중 홈택스 화면을 보기 전용으로(금고 중계). 내용은 shell.js paintScreen이 채운다.
+    ['preparing', 'turn', 'waiting', 'issuing'].includes(st) ? h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 불러오는 중이에요')) : null,
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,

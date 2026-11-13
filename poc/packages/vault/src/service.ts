@@ -22,6 +22,9 @@ import { SecretOps, type StoredRead } from './secret/ops.ts';
 import { HumanSecretVault } from './keychain/human.ts';
 import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/backend.ts';
 
+/** 진행 화면 중계 간격(초당 3장 남짓, 부장 지시 2~4장). */
+const MIRROR_FRAME_MS = 300;
+
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NOTICE_VERSION_RE = /^[A-Za-z0-9._-]{1,32}$/;
 
@@ -454,6 +457,11 @@ export class Vault {
         return { launched: !!this.chrome, profileProblems: this.profileProblems };
       case 'browser.focus':
         return { focused: this.relay ? await this.relay.bringToFront() : false };
+      case 'screen.start':
+        return { started: await this.startMirror() };
+      case 'screen.stop':
+        await this.stopMirror();
+        return {};
       case 'browser.place': {
         const n = (k: string) => {
           const v = p[k];
@@ -467,6 +475,56 @@ export class Vault {
     }
     // RPC_BY_PORT에 있으나 아직 구현하지 않은 메서드(M1-3 진행 중). 거부한다.
     throw new Error('not_implemented');
+  }
+
+  /** 진행 화면 중계 상태(B3). 실행 탭 하나만, 보기 전용. */
+  private mirror: { targetId: string; session: string; last: number; paused: boolean } | null = null;
+
+  /**
+   * 실행 탭 화면을 main에 중계한다(Page.startScreencast, 금고 감시 세션). 엔진은 이 프레임을 받지 않는다.
+   * 비밀 창이 열린 동안은 프레임을 보내지 않고 screen.paused만 보낸다(ACTIVE_WINDOW_DENY_PREFIXES의 Page.startScreencast 규칙과 같은 뜻).
+   * 같은 탭이면 그대로 둔다(main이 실행이 바뀔 때마다 불러도 된다). 팝업 창이 실행 탭이 되면 그쪽으로 옮긴다.
+   */
+  private async startMirror(): Promise<boolean> {
+    const relay = this.relay;
+    const t = relay?.runWindowTarget();
+    if (!relay || !t) return false;
+    if (this.mirror?.targetId === t.targetId) return true;
+    await this.stopMirror();
+    const m = { targetId: t.targetId, session: t.vaultSession, last: 0, paused: !!(t.win && t.win.phase === 'active') };
+    this.mirror = m;
+    relay.onWindowActive = (w, active) => {
+      if (this.mirror !== m || w.targetId !== m.targetId || m.paused === active) return;
+      m.paused = active;
+      this.emit(['control'], 'screen.paused', { paused: active });
+    };
+    relay.onScreencastFrame = (w, p) => {
+      if (w.targetId !== m.targetId) return;
+      void relay.send('Page.screencastFrameAck', { sessionId: p.sessionId }, m.session).catch(() => {});
+      if (this.mirror !== m || m.paused || (w.win && w.win.phase === 'active')) return;
+      const now = Date.now();
+      if (now - m.last < MIRROR_FRAME_MS) return;
+      m.last = now;
+      const meta = (p.metadata ?? {}) as Record<string, unknown>;
+      this.emit(['control'], 'screen.frame', { data: String(p.data ?? ''), w: Number(meta.deviceWidth) || 0, h: Number(meta.deviceHeight) || 0 });
+    };
+    try {
+      await relay.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 960, maxHeight: 1200, everyNthFrame: 1 }, m.session);
+    } catch {
+      this.mirror = null;
+      return false;
+    }
+    if (m.paused) this.emit(['control'], 'screen.paused', { paused: true });
+    return true;
+  }
+
+  private async stopMirror(): Promise<void> {
+    const m = this.mirror;
+    this.mirror = null;
+    if (!m || !this.relay) return;
+    this.relay.onScreencastFrame = undefined;
+    this.relay.onWindowActive = undefined;
+    await this.relay.send('Page.stopScreencast', {}, m.session).catch(() => {});
   }
 
   private setTrigger(runId: string, trigger: RunTrigger): void {
