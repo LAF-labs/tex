@@ -417,13 +417,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const gesture = new GestureClock();
   // 코드 칸 입력(이메일 6자리 확인만): 실제 입력 + 메인 창의 아무 키 입력(숫자·붙여 넣기). 이것도 main이 직접 본 입력이다.
   const typing = new GestureClock();
+  /** 패널 브라우저 조작: main이 메인 창에서 본 아무 마우스·키 입력(이동·휠 포함) 시각. browser.input은 이것이 1초 안에 있을 때만 넘긴다. */
+  const panelInput = new GestureClock();
   wc.on('before-mouse-event', (_e, m) => {
+    panelInput.note(performance.now());
     if (m.type === 'mouseUp') {
       gesture.note(performance.now());
       typing.note(performance.now());
     }
   });
   wc.on('before-input-event', (_e, i) => {
+    if (i.type === 'keyDown' || i.type === 'keyUp') panelInput.note(performance.now());
     if (isGestureKey(i)) gesture.note(performance.now());
     if (isTypingKey(i)) typing.note(performance.now());
   });
@@ -611,6 +615,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (name === 'screen.paused') return send({ type: 'screen', runId: mirrorRun, paused: d.paused === true });
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
       return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
+    }
+    // 실행 Chrome이 사람 손으로 닫혔다(탭 전부·프로세스): 패널은 "연결 끊김", 제출 전 실행은 멈추고 [다시 시작]
+    if (name === 'browser.closed') {
+      log.event('main.browser_closed', { reason: (data as { reason?: unknown } | null)?.reason === 'chrome' ? 'chrome' : 'tab' });
+      if (mirrorRun) send({ type: 'screen', runId: mirrorRun, gone: true });
+      runs.browserClosed();
+      return;
     }
     const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
     if (cr) return openCodef(cr);
@@ -1018,77 +1029,71 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   let mirrorRun: string | null = null;
 
   /**
-   * 실행 Chrome 자리(대표 지시 2026-11-13 "claude desktop처럼 버튼을 누르면 브라우저가 보이게"). Chrome은 창 있는 그대로 띄우고,
-   * 평소에는 앱 창 바로 뒤 브라우저 패널(#panel) 자리에 둔다(진행은 #312 중계로 패널에 보인다. 가려져도 프레임이 온다, 최소화하지 않는다).
-   * [브라우저] 토글·[홈택스 창 보기]·사람 차례에는 같은 자리에 앞으로 올려 앱 안에 브라우저가 열린 것처럼 보이게 한다(그대로 클릭·입력).
-   * 다시 누르거나 앱의 다른 곳을 누르면 앱이 앞으로 온다(Chrome은 뒤 그 자리). 앱 창을 옮기거나 크기를 바꾸면 Chrome이 따라간다.
-   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수들만 browser.place를 부른다.
+   * 앱 안 브라우저(대표 지시 2026-11-13 "인앱브라우저에서 조작해야지 그냥 새로 창 띄워서 가린다고?"). 실행 Chrome은 늘 앱 창 뒤에 고정 크기로 둔다
+   * (앞으로 올리지 않는다, 가려져도 중계 프레임이 온다). 사람은 패널의 중계 화면을 직접 누르고 친다(browser.input → 금고 screen.input → CDP Input).
+   * [브라우저] 토글은 패널 크게/작게다(크게: 대화 열을 줄인다). 사람 차례가 되면 크게 하고 입력 포커스를 준다.
+   * 렌더러 처리기는 금고 제어 포트에 직접 닿지 않는다(h01-guards). 이 함수들만 browser.place·screen.input을 부른다.
    */
   let browserShown = false;
   let browserAvailable = false;
-  /** 앱이 포커스를 받아 Chrome이 뒤로 간 시각(토글 클릭이 그 포커스와 겹치면 다시 띄우지 않는다). */
-  let appFocusedAt = 0;
-  const sendBrowserState = () => send({ type: 'browser', shown: browserShown, available: browserAvailable });
-  /**
-   * 브라우저 자리의 화면 좌표: 패널(#panel)에서 위 주소 줄(#browser-addr)을 뺀 나머지. 패널 바깥으로 넘치지 않는다.
-   * 폭은 렌더러가 실행 중 패널을 넓혀 맞춘다(shell.css body.browser-live, 720px). 주소 줄이 아직 없으면 패널 전체.
-   */
-  const panelRect = async (): Promise<{ x: number; y: number; width: number; height: number } | null> => {
-    if (win.isDestroyed()) return null;
+  /** 실행 Chrome 창 크기(고정). 앱 창 뒤 왼쪽 위에 둔다. 페이지 레이아웃이 패널 크기에 따라 바뀌지 않게 한다. */
+  const CHROME_BEHIND = { width: 1280, height: 900 };
+  const sendBrowserState = (focus = false) => send({ type: 'browser', shown: browserShown, available: browserAvailable, ...(focus ? { focus: true } : {}) });
+  /** Chrome을 앱 창 뒤 자리로(고정 크기). 앱을 앞으로 둔다. */
+  const placeBehind = async (): Promise<boolean> => {
+    if (win.isDestroyed()) return false;
     const c = win.getContentBounds();
-    const r = (await win.webContents.executeJavaScript(`(() => { const e = document.querySelector('#panel'); if (!e) return null; const b = e.getBoundingClientRect(); const a = document.getElementById('browser-addr'); const top = a ? Math.max(b.top, a.getBoundingClientRect().bottom) : b.top; return b.width > 0 && b.bottom - top > 0 ? { x: b.left, y: top, w: b.width, h: b.bottom - top } : null; })()`).catch(() => null)) as { x: number; y: number; w: number; h: number } | null;
-    if (!r) return null;
-    const x = Math.round(c.x + r.x);
-    const y = Math.round(c.y + r.y);
-    return { x, y, width: Math.round(c.x + r.x + r.w) - x, height: Math.max(200, Math.round(c.y + r.y + r.h) - y) };
-  };
-  /** Chrome을 패널 자리로. front면 앞으로(앱 안 브라우저처럼), 아니면 그 자리 뒤에 두고 앱을 앞으로(appFront일 때만). */
-  const placeRunBrowser = async (front: boolean, appFront = true): Promise<boolean> => {
-    const at = await panelRect();
-    if (!at) return false;
-    const r = (await host.control('browser.place', { ...at, front }).catch(() => null)) as { placed?: unknown } | null;
+    const r = (await host.control('browser.place', { x: c.x, y: c.y, ...CHROME_BEHIND, front: false }).catch(() => null)) as { placed?: unknown } | null;
     if (r?.placed !== true) return false;
     browserAvailable = true;
-    if (!front && appFront) {
-      if (process.platform === 'darwin') app.focus({ steal: true });
-      win.moveTop();
-      win.focus();
-    }
-    if (browserShown !== front || !front) {
-      browserShown = front;
-      sendBrowserState();
-    }
-    log.event('main.chrome_placed', { front, width: at.width });
+    if (process.platform === 'darwin') app.focus({ steal: true });
+    win.moveTop();
+    win.focus();
+    log.event('main.chrome_placed', { front: false, width: CHROME_BEHIND.width });
     return true;
+  };
+  /** 패널 크게/작게. focus면 렌더러가 중계 화면에 입력 포커스를 준다. */
+  const setPanelBig = (big: boolean, focus = false) => {
+    if (browserShown === big && !focus) return;
+    browserShown = big;
+    sendBrowserState(focus);
+  };
+  /** 패널 안 브라우저 조작 하나를 금고에 넘긴다(메인 창에서 1초 안에 본 실제 입력이 있을 때만). */
+  const panelBrowserInput = async (p: Record<string, unknown>) => {
+    if (!mirrorRun) return { ok: false };
+    if (!panelInput.within(performance.now(), 1_000)) throw new Error('gesture_required');
+    const r = (await host.control('screen.input', p).catch(() => null)) as { ok?: unknown } | null;
+    return { ok: r?.ok === true };
+  };
+  /** 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기. */
+  const businessRow = async () => ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
+  const certNameStatus = async () => {
+    const name = (await businessRow())?.certName ?? null;
+    return { set: !!name, owner: name ? name.replace(/\(\)[0-9A-Za-z]*$/, '').trim().slice(0, 60) : null };
+  };
+  const clearCertName = async () => {
+    const p = await businessRow();
+    if (p?.certName) await host.rpc('profile.setCertName', { id: p.id, name: null });
+    log.event('main.cert_name_cleared', { had: p?.certName ? 1 : 0 });
+    return { set: false, owner: null };
   };
   const showRunBrowser = async (id: string) => {
     if (!runs.isActive(id)) throw new Error('not_running');
-    if (await placeRunBrowser(true)) return { focused: true };
-    const r = (await host.control('browser.focus')) as { focused?: unknown } | null;
-    if (r?.focused !== true) throw new Error('no_browser');
+    setPanelBig(true, true);
     return { focused: true };
   };
   const toggleBrowser = async (show: boolean) => {
-    // 앱을 누른 그 클릭이 토글이었다(포커스가 먼저 와서 이미 뒤로 갔다): 다시 띄우지 않는다.
-    if (show && Date.now() - appFocusedAt < 400) return { shown: false };
-    if (show) return { shown: await placeRunBrowser(true) };
-    await placeRunBrowser(false);
-    return { shown: false };
+    setPanelBig(show, show);
+    return { shown: show };
   };
-  win.on('focus', () => {
-    if (!browserShown) return;
-    appFocusedAt = Date.now();
-    browserShown = false;
-    sendBrowserState();
-  });
-  // 앱 창을 옮기거나 크기를 바꾸면 Chrome도 같은 패널 자리로(앞에 있으면 앞 그대로). 연속 이벤트는 잠깐 모아서 한 번.
+  // 앱 창을 옮기거나 크기를 바꾸면 Chrome도 뒤 자리로(드러나지 않게). 연속 이벤트는 잠깐 모아서 한 번.
   let followTimer: NodeJS.Timeout | null = null;
   const follow = () => {
     if (!browserAvailable || !mirrorRun) return;
     if (followTimer) clearTimeout(followTimer);
     followTimer = setTimeout(() => {
       followTimer = null;
-      void placeRunBrowser(browserShown, false);
+      void placeBehind();
     }, 120);
   };
   win.on('move', follow);
@@ -1133,14 +1138,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (want === 'back' && chromeSpot.has(r.id)) return; // 시작 때 한 번만 뒤에 둔다
     chromeSpot.set(r.id, want);
     if (turn) {
-      // 사람 차례에는 브라우저를 자동으로 보여 준다(패널 자리에 앞으로).
-      void placeRunBrowser(true);
+      // 사람 차례: 패널을 크게 하고 중계 화면에 입력 포커스(Chrome은 앞으로 올리지 않는다)
+      setPanelBig(true, true);
       return;
     }
     // 시작: Chrome이 뜨고 실행 탭이 붙을 때까지 잠깐 다시 해 본다(엔진이 run.start 뒤에 금고에 기동을 맡긴다).
     void (async () => {
       for (let i = 0; i < 40 && chromeSpot.get(r.id) === 'back' && runs.isActive(r.id); i++) {
-        if (await placeRunBrowser(false)) return;
+        if (await placeBehind()) return;
         await new Promise((res) => setTimeout(res, 500));
       }
     })();
@@ -1333,6 +1338,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return toggleBrowser(p.show === true);
     },
+    // 패널 안 브라우저 조작: 메인 창에서 방금(1초) 본 실제 마우스·키 입력이 있을 때만. 중계 중인 실행 탭에만 들어간다(금고가 비밀 창 동안 거부).
+    'browser.input': (p) => panelBrowserInput(p as Record<string, unknown>),
     // InDoubt 카드를 열었다(실제 입력 3초 안). 증언 요청이 무장돼 있으면 main이 바를 띄운다. 돌려주는 것은 무장됐는지뿐이다.
     'incident.open': (p) => {
       needGesture(3_000);
@@ -1478,17 +1485,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
-    'certName.status': async () => {
-      const p = ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
-      const name = p?.certName ?? null;
-      return { set: !!name, owner: name ? name.replace(/\(\)[0-9A-Za-z]*$/, '').trim().slice(0, 60) : null };
-    },
+    'certName.status': () => certNameStatus(),
     'certName.clear': async () => {
       needGesture(3_000);
-      const p = ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
-      if (p?.certName) await host.rpc('profile.setCertName', { id: p.id, name: null });
-      log.event('main.cert_name_cleared', { had: p?.certName ? 1 : 0 });
-      return { set: false, owner: null };
+      return clearCertName();
     },
     'certMemory.forget': async () => {
       needGesture(3_000);

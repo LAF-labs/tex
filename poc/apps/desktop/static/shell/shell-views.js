@@ -41,6 +41,9 @@ const ICONS = {
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
   money: [20, 'M2.5 5.5h15v9h-15z', 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M5 8v4M15 8v4'],
   pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
+  globe: [16, 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z', 'M2 8h12', 'M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14C6.3 12.4 5.5 10.4 5.5 8S6.3 3.6 8 2z'],
+  expand: [16, 'M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9'],
+  shrink: [16, 'M13 7H9V3M9 7l4.5-4.5M3 9h4v4M7 9l-4.5 4.5'],
 };
 export function icon(name) {
   const [box, ...paths] = ICONS[name];
@@ -367,6 +370,8 @@ export function taskCard(run, act) {
     );
   } else if (st === 'stopped') {
     card.append(line(run.stoppedNote || '중지했어요.', true));
+    // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
+    if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
   } else if (st === 'attention' && run.inDoubt) {
     // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳만 연다.
     card.dataset.inDoubt = '1';
@@ -475,12 +480,61 @@ export function runPanel(run, act) {
     st === 'attention' && run.inDoubt ? checkListGuide(run, act) : null,
     kv(rows),
     h('div', { class: 'sx-source' }, source),
-    // 진행 화면(B3): 실행 중 홈택스 화면을 보기 전용으로(금고 중계). 내용은 shell.js paintScreen이 채운다.
-    ['preparing', 'turn', 'waiting', 'issuing'].includes(st) ? h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 불러오는 중이에요')) : null,
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
     st === 'done' ? (run.result.noFile ? line(NO_FILE_TEXT, true) : h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary'), btn('폴더 열기', () => act.openRunDoc(run, true)))) : null,
+  );
+}
+
+/** 실행 중 홈택스 화면을 보이는 상태(B3). */
+export const BROWSER_STATUSES = ['preparing', 'turn', 'waiting', 'issuing'];
+// 금고가 보내는 주소는 "호스트/경로"(scheme·쿼리 없음, vault pageAddress). 홈택스 허용 목록은 https만 쓰고 시험 페이지만 http다.
+const parseUrl = (url) => {
+  const i = url.indexOf('/');
+  const host = i < 0 ? url : url.slice(0, i);
+  const rest = i < 0 ? '' : url.slice(i);
+  return { secure: !!host && !/^(127\.0\.0\.1|localhost)(:|$)/.test(host), host, rest: rest === '/' ? '' : rest };
+};
+/** 탭 제목: 홈택스는 이름으로, 시험 페이지는 시험이라고. */
+export function browserTabTitle(url) {
+  const { host } = parseUrl(url ?? '');
+  if (/(^|\.)hometax\.go\.kr$/.test(host)) return '국세청 홈택스';
+  if (/^(127\.0\.0\.1|localhost)(:|$)/.test(host)) return '홈택스(시험 페이지)';
+  return host || '홈택스';
+}
+/** 주소창 내용(읽기 전용): 자물쇠 · 호스트 · 나머지 경로. */
+export function browserUrlParts(url) {
+  const u = parseUrl(url ?? '');
+  if (!u.host) return [h('span', { class: 'bp-host' }, '홈택스')];
+  return [u.secure ? icon('lock') : null, h('span', { class: 'bp-host' }, u.host), u.rest ? h('span', { class: 'bp-path' }, u.rest) : null];
+}
+/**
+ * 앱 안 브라우저(Claude 데스크톱 브라우저 창 모양, 대표 2026-11-13): 탭 줄 · 주소창 · 가장자리까지 채운 화면.
+ * 화면은 금고 중계 그림이고 직접 눌러·쳐서 조작한다(shell.js wireScreen). 내용은 paintScreen이 채운다.
+ */
+export function browserPane(run, url, big, act) {
+  if (!BROWSER_STATUSES.includes(run.status)) return null;
+  return h(
+    'section',
+    { class: 'bp', 'data-browser-pane': run.id, 'aria-label': '앱 안 브라우저' },
+    h(
+      'div',
+      { class: 'bp-chrome' },
+      h(
+        'div',
+        { class: 'bp-tabs' },
+        h('div', { class: 'bp-tab', title: url || '' }, h('span', { class: 'bp-fav' }, icon('globe')), h('span', { class: 'bp-tab-title', id: 'browser-tab-title' }, browserTabTitle(url))),
+        h('button', { type: 'button', class: 'bp-icon', 'data-act': 'browser-size', 'aria-pressed': String(big), title: big ? '브라우저 작게' : '브라우저 크게', 'aria-label': big ? '브라우저 작게' : '브라우저 크게', onclick: () => act.browserSize(!big) }, icon(big ? 'shrink' : 'expand')),
+      ),
+      h(
+        'div',
+        { class: 'bp-bar' },
+        h('div', { class: 'bp-url', id: 'browser-addr', role: 'status', 'aria-label': '홈택스 주소(읽기 전용)', title: url || '' }, ...browserUrlParts(url)),
+        h('span', { class: 'bp-state', 'data-bp-state': 'loading', title: '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱 금고 창에서 받아요.' }, '불러오는 중'),
+      ),
+    ),
+    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 불러오는 중이에요')),
   );
 }
 

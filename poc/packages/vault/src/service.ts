@@ -24,6 +24,21 @@ import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/bac
 
 /** 진행 화면 중계 간격(초당 3장 남짓, 부장 지시 2~4장). */
 const MIRROR_FRAME_MS = 300;
+/** 조작 중(마지막 입력 뒤 3초)에는 초당 10장 안팎으로 올린다. */
+const MIRROR_FAST_FRAME_MS = 90;
+const MIRROR_FAST_HOLD_MS = 3_000;
+/** 패널 입력 한 번에 넣는 글자 상한(붙여넣기 포함). */
+const SCREEN_TEXT_MAX = 2_000;
+/** 패널에서 넣을 수 있는 특수 키(키 이름 → code·가상 키 코드). 글자는 insertText로만 간다. */
+const SCREEN_KEYS: Record<string, [string, number]> = {
+  Enter: ['Enter', 13], Backspace: ['Backspace', 8], Tab: ['Tab', 9], Escape: ['Escape', 27], Delete: ['Delete', 46],
+  ArrowLeft: ['ArrowLeft', 37], ArrowUp: ['ArrowUp', 38], ArrowRight: ['ArrowRight', 39], ArrowDown: ['ArrowDown', 40],
+  Home: ['Home', 36], End: ['End', 35], PageUp: ['PageUp', 33], PageDown: ['PageDown', 34], ' ': ['Space', 32],
+};
+/** 수정 키 비트(CDP Input): Alt 1, Ctrl 2, Meta 4, Shift 8. */
+const SCREEN_MOD_MAX = 15;
+/** 바로 가기(수정 키 + 글자)로 받는 편집 명령. 그 밖의 수정 키 조합은 버린다(브라우저 단축키로 새 창·탭을 열지 않게). */
+const SCREEN_COMMANDS: Record<string, string> = { a: 'selectAll', z: 'undo', x: 'cut', c: 'copy' };
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NOTICE_VERSION_RE = /^[A-Za-z0-9._-]{1,32}$/;
@@ -491,6 +506,8 @@ export class Vault {
       case 'screen.stop':
         await this.stopMirror();
         return {};
+      case 'screen.input':
+        return { ok: await this.screenInput(p) };
       case 'browser.place': {
         const n = (k: string) => {
           const v = p[k];
@@ -507,8 +524,74 @@ export class Vault {
     throw new Error('not_implemented');
   }
 
-  /** 진행 화면 중계 상태(B3). 실행 탭 하나만, 보기 전용. */
-  private mirror: { targetId: string; session: string; last: number; paused: boolean } | null = null;
+  /** 진행 화면 중계 상태(B3). 실행 탭 하나만. meta: 마지막 프레임의 보이는 영역(CSS px), fastUntil: 조작 중 빠른 프레임 끝. */
+  private mirror: { targetId: string; session: string; last: number; paused: boolean; meta: { w: number; h: number }; fastUntil: number; buttons: number } | null = null;
+
+  /**
+   * 앱 패널에서 사람이 한 조작을 중계 중인 탭에 넣는다(대표 지시 2026-11-13). 좌표는 프레임 기준 0~1(렌더러가 패널 축소·여백을 뺀 값)이고
+   * 여기서 마지막 프레임의 보이는 영역(CSS px)에 곱한다. 비밀 창이 열렸거나 오염된 동안·중계가 멈춘 동안은 false.
+   */
+  private async screenInput(p: Record<string, unknown>): Promise<boolean> {
+    const m = this.mirror;
+    const relay = this.relay;
+    if (!m || !relay || m.paused) return false;
+    const t = relay.targets.get(m.targetId);
+    if (!t || t.revoked || t.win) return false;
+    const num = (k: string, lo: number, hi: number) => {
+      const v = p[k];
+      if (typeof v !== 'number' || !Number.isFinite(v) || v < lo || v > hi) throw new Error('bad_params');
+      return v;
+    };
+    const mods = p.modifiers === undefined ? 0 : num('modifiers', 0, SCREEN_MOD_MAX) | 0;
+    const send = (method: string, params: Record<string, unknown>) => relay.send(method, params as never, m.session);
+    m.fastUntil = Date.now() + MIRROR_FAST_HOLD_MS;
+    switch (p.kind) {
+      case 'mouse': {
+        const type = p.type;
+        if (type !== 'mousePressed' && type !== 'mouseReleased' && type !== 'mouseMoved') throw new Error('bad_params');
+        const x = num('x', 0, 1) * m.meta.w;
+        const y = num('y', 0, 1) * m.meta.h;
+        const button = type === 'mouseMoved' ? (m.buttons & 1 ? 'left' : 'none') : p.button === 'right' ? 'right' : 'left';
+        const clickCount = type === 'mouseMoved' ? 0 : Math.min(3, Math.max(1, num('clickCount', 1, 3) | 0));
+        if (type === 'mousePressed') m.buttons |= button === 'left' ? 1 : 2;
+        if (type === 'mouseReleased') m.buttons &= button === 'left' ? ~1 : ~2;
+        await send('Input.dispatchMouseEvent', { type, x, y, button, buttons: m.buttons, clickCount, modifiers: mods });
+        return true;
+      }
+      case 'wheel': {
+        const x = num('x', 0, 1) * m.meta.w;
+        const y = num('y', 0, 1) * m.meta.h;
+        await send('Input.dispatchMouseEvent', { type: 'mouseWheel', x, y, deltaX: num('dx', -5000, 5000), deltaY: num('dy', -5000, 5000), modifiers: mods });
+        return true;
+      }
+      case 'key': {
+        const key = typeof p.key === 'string' ? p.key : '';
+        const cmd = (mods & 6) && key.length === 1 ? SCREEN_COMMANDS[key.toLowerCase()] : undefined;
+        if (cmd) {
+          await send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key, modifiers: mods, commands: [cmd] });
+          await send('Input.dispatchKeyEvent', { type: 'keyUp', key, modifiers: mods });
+          return true;
+        }
+        const k = Object.hasOwn(SCREEN_KEYS, key) ? SCREEN_KEYS[key]! : null;
+        if (!k) throw new Error('bad_params');
+        const base = { key, code: k[0], windowsVirtualKeyCode: k[1], nativeVirtualKeyCode: k[1], modifiers: mods };
+        // Enter·Space는 글자도 만든다(폼 제출·버튼 누름이 페이지 쪽 keypress로 일어나게)
+        const text = key === 'Enter' ? '\r' : key === ' ' ? ' ' : undefined;
+        await send('Input.dispatchKeyEvent', { type: text ? 'keyDown' : 'rawKeyDown', ...base, ...(text ? { text, unmodifiedText: text } : {}) });
+        await send('Input.dispatchKeyEvent', { type: 'keyUp', ...base });
+        return true;
+      }
+      case 'text': {
+        const text = p.text;
+        // 한글 IME는 조합이 끝난 값만 온다. 제어 문자는 버린다(줄바꿈·탭은 칸에 따라 다르니 키로 보낸다)
+        if (typeof text !== 'string' || !text || text.length > SCREEN_TEXT_MAX) throw new Error('bad_params');
+        const clean = [...text].filter((ch) => ch.charCodeAt(0) >= 0x20 && ch.charCodeAt(0) !== 0x7f).join('');
+        if (clean) await send('Input.insertText', { text: clean });
+        return true;
+      }
+    }
+    throw new Error('bad_params');
+  }
 
   /**
    * 실행 탭 화면을 main에 중계한다(Page.startScreencast, 금고 감시 세션). 엔진은 이 프레임을 받지 않는다.
@@ -521,7 +604,7 @@ export class Vault {
     if (!relay || !t) return false;
     if (this.mirror?.targetId === t.targetId) return true;
     await this.stopMirror();
-    const m = { targetId: t.targetId, session: t.vaultSession, last: 0, paused: !!(t.win && t.win.phase === 'active') };
+    const m = { targetId: t.targetId, session: t.vaultSession, last: 0, paused: !!(t.win && t.win.phase === 'active'), meta: { w: 0, h: 0 }, fastUntil: 0, buttons: 0 };
     this.mirror = m;
     relay.onWindowActive = (w, active) => {
       if (this.mirror !== m || w.targetId !== m.targetId || m.paused === active) return;
@@ -533,13 +616,15 @@ export class Vault {
       void relay.send('Page.screencastFrameAck', { sessionId: p.sessionId }, m.session).catch(() => {});
       if (this.mirror !== m || m.paused || (w.win && w.win.phase === 'active')) return;
       const now = Date.now();
-      if (now - m.last < MIRROR_FRAME_MS) return;
-      m.last = now;
       const meta = (p.metadata ?? {}) as Record<string, unknown>;
+      // 입력 좌표 환산에 쓰는 보이는 영역(CSS px)은 버리는 프레임에서도 새로 둔다
+      if (Number(meta.deviceWidth) > 0 && Number(meta.deviceHeight) > 0) m.meta = { w: Number(meta.deviceWidth), h: Number(meta.deviceHeight) };
+      if (now - m.last < (now < m.fastUntil ? MIRROR_FAST_FRAME_MS : MIRROR_FRAME_MS)) return;
+      m.last = now;
       this.emit(['control'], 'screen.frame', { data: String(p.data ?? ''), w: Number(meta.deviceWidth) || 0, h: Number(meta.deviceHeight) || 0, url: pageAddress(w.url) });
     };
     try {
-      await relay.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 960, maxHeight: 1200, everyNthFrame: 1 }, m.session);
+      await relay.send('Page.startScreencast', { format: 'jpeg', quality: 70, maxWidth: 1400, maxHeight: 1400, everyNthFrame: 1 }, m.session);
     } catch {
       this.mirror = null;
       return false;
@@ -620,6 +705,8 @@ export class Vault {
     await this.grantLoopback(chrome);
     chrome.conn.on('close', () => {
       this.opts.log.event('vault.chrome_closed');
+      // main에 바로 알린다(대표 실화면 2026-11-13: Chrome을 닫았는데 앱은 몰랐다). 내리기(shutdown)로 닫힌 것은 알리지 않는다.
+      if (this.chrome === chrome && !this.closingChrome) this.browserGone('chrome');
       // 엔진 transport도 닫는다. 알리지 않으면 Playwright는 끊긴 줄 모르고 닫힌 Chrome의 페이지를 쓴다. 다음 Chrome이 이미 떴으면 보내지 않는다.
       if (this.enginePort && (this.chrome === chrome || this.chrome === null)) this.post(this.enginePort, { t: 'cdp_closed' });
     });
@@ -703,6 +790,11 @@ export class Vault {
     });
     this.relay?.commitGuard?.shutdown();
     this.relay = relay;
+    // 실행 창(탭)이 사람 손으로 닫혀 보일 page가 하나도 남지 않으면 main에 알린다(Chrome 프로세스는 맥에서 창 없이 남을 수 있다)
+    relay.onTargetGone = (t) => {
+      if (t.type !== 'page' || !t.exposed || this.relay !== relay || this.closingChrome) return;
+      if (!relay.hasExposedPage()) this.browserGone('tab');
+    };
     relay.commitGuard = new CommitGuard({
       log: this.opts.log,
       allowedHosts: this.policy.allowedHosts,
@@ -860,7 +952,34 @@ export class Vault {
     }
   }
 
+  /** 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스). 중계를 멈추고 main에 browser.closed를 한 번 알린다. */
+  private browserGone(reason: 'tab' | 'chrome'): void {
+    const gen = this.generation;
+    if (this.goneNotified === gen) return;
+    this.goneNotified = gen;
+    this.opts.log.event('vault.browser_gone', { reason });
+    const m = this.mirror;
+    this.mirror = null;
+    if (m && this.relay) {
+      this.relay.onScreencastFrame = undefined;
+      this.relay.onWindowActive = undefined;
+    }
+    this.emit(['control'], 'browser.closed', { reason });
+  }
+  private goneNotified = -1;
+  /** 금고가 스스로 Chrome을 내리는 중(사람이 닫은 것이 아니다). */
+  private closingChrome = false;
+
   async shutdown(): Promise<void> {
+    this.closingChrome = true;
+    try {
+      await this.shutdownInner();
+    } finally {
+      this.closingChrome = false;
+    }
+  }
+
+  private async shutdownInner(): Promise<void> {
     this.generation++;
     this.profileProblems = null;
     // 닫기를 기다리기 전에 떼어 낸다. 닫는 동안 온 run.begin·secret.provide가 버려질 ops에 들어가지 않게.
