@@ -1,6 +1,7 @@
 // Electron e2e: docparse 샌드박스 OCR·공동인증서 certInfo. 앱 폴더·키체인을 쓰지 않는다.
 // 승인 바(ADR-021) e2e는 shell-e2e.ts(PoC-9)로 옮겼다.
 // 실행: electron apps/desktop/e2e-dist/ocr-e2e.js (옛 src/e2e.ts, 개발 콘솔 삭제 W-1 때 옮겼다)
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, protocol, session } from 'electron';

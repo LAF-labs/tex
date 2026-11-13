@@ -21,7 +21,7 @@ describe('금고 browser.focus', () => {
       if (headful) {
         // 막 뜬 Chrome이 잠시 앞으로 다시 올 수 있어, Finder가 맨 앞에 머물 때까지 몇 번 둔다.
         for (let i = 0; i < 5 && !/Finder/.test(frontApp()); i++) {
-          execFileSync('open', ['-a', 'Finder']);
+          execFileSync('osascript', ['-e', 'tell application "Finder" to activate']); // open -a는 Finder 창이 없으면 새 창을 연다. activate는 앞으로만 올린다
           await sleep(1500);
         }
         assert.match(frontApp(), /Finder/);

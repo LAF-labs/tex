@@ -7,6 +7,7 @@
 // 실행: electron apps/desktop/e2e-dist/shell-rehearsal-e2e.js
 //   SAX_REH_PHASE=main(기본): 온보딩 → 거래처 → 되묻기 → 카드 → 실행 → 승인 → 발급 → 보관함 → 틀리기 → 승인 대기에서 앱을 끈다(정리 없이 끝)
 //   SAX_REH_PHASE=restart SAX_REH_ROOT=<main이 찍은 루트>: 같은 루트로 다시 켜서 재시작 뒤 상태를 본다(끝나면 루트를 지운다)
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';

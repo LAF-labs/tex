@@ -3,6 +3,7 @@
 // 정직하게: 앱의 fixture 엔진(H01Runner)은 사람 차례를 내지 않으므로, 이 e2e는 run.* 명령과 실행 이벤트만 #278 계약대로 대본으로 돌린다
 // (main·ShellRuns·렌더러·승인 바는 실제). 실제 엔진(RunService + 게시본 + 가짜 로그인·서명 창 + Chrome)은 tests/shell-handoff-dryrun.test.ts가 본다.
 // 실행: electron apps/desktop/e2e-dist/shell-handoff-e2e.js  (스크린샷: SAX_E2E_OUT, 기본 임시 폴더)
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -291,7 +292,7 @@ async function flow(): Promise<void> {
   check('로그인 카드에 [홈택스 창 보기]', c.acts.some((b) => b.act === 'show-browser' && b.label === '홈택스 창 보기'), c.acts);
   if (headful) {
     for (let i = 0; i < 5 && !/Finder/.test(frontApp()); i++) {
-      execFileSync('open', ['-a', 'Finder']);
+      execFileSync('osascript', ['-e', 'tell application "Finder" to activate']); // open -a는 Finder 창이 없으면 새 창을 연다. activate는 앞으로만 올린다
       await sleep(1500);
     }
   }
