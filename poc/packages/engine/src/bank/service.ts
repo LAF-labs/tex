@@ -493,8 +493,8 @@ export class BankService {
     // 연결 상태는 줄에서 바꾼다(그새 계좌가 지워졌거나 연결을 끊었으면 그대로 둔다)
     await this.serial(() => {
       const a = this.repo.account(accountId);
-      // 방금 가져와서 이번엔 부르지 않은 것(too_soon)은 연결 상태를 그대로 둔다
-      if (!a || a.linkState === 'file_only' || job.code === 'source.too_soon') return;
+      // 방금 가져왔거나(too_soon) 오늘 상한(daily_limit)이라 이번엔 부르지 않은 것은 연결 상태를 그대로 둔다
+      if (!a || a.linkState === 'file_only' || job.code === 'source.too_soon' || job.code === 'source.daily_limit') return;
       this.repo.setLink(accountId, job.code ? { state: 'auto_error', provider: src.provider, error: job.code } : { state: 'auto_connected', provider: src.provider }, this.at());
     }).catch(() => {});
   }

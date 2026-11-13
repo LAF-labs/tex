@@ -396,6 +396,8 @@ export class CodefLink {
       let connectedId: string;
       if (warm) connectedId = warm.connectedId;
       else {
+        // 오늘 상한이면 비밀번호를 묻기 전에 멈춘다
+        if (this.budget().calls >= (this.o.dailyCalls ?? CODEF_DAILY_CALLS)) throw new CodefError('daily_limit');
         onPhase?.('password');
         connectedId = await this.register(link.certId, link.bank, link.clientType, 'auto');
       }
