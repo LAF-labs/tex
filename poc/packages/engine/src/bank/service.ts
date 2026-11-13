@@ -139,6 +139,8 @@ export interface RefreshJob {
   startedAt: string;
   finishedAt: string | null;
   code: string | null;
+  /** source.too_soon이면 다시 가져올 수 있는 시각(ISO) */
+  retryAt?: string | null;
   result: { rows: number; newCount: number; duplicateCount: number; match: { auto: number; review: number; unknown: number } } | null;
 }
 
@@ -423,7 +425,7 @@ export class BankService {
 
   private jobView(j: (RefreshJob & { abort: AbortController }) | undefined): RefreshJob | null {
     if (!j) return null;
-    return { id: j.id, accountId: j.accountId, state: j.state, done: j.done, jobs: j.jobs, range: { ...j.range }, startedAt: j.startedAt, finishedAt: j.finishedAt, code: j.code, result: j.result };
+    return { id: j.id, accountId: j.accountId, state: j.state, done: j.done, jobs: j.jobs, range: { ...j.range }, startedAt: j.startedAt, finishedAt: j.finishedAt, code: j.code, retryAt: j.retryAt ?? null, result: j.result };
   }
 
   /** db.query.bank.refreshStatus {profileId, accountId} → RefreshJob | null */
@@ -485,12 +487,14 @@ export class BankService {
       finish('done', null);
     } catch (e) {
       const code = e instanceof SourceError ? e.code : e instanceof BankError ? e.code : 'source.failed';
+      if (e instanceof SourceError && e.retryAt) job.retryAt = e.retryAt;
       finish('failed', /^[a-z0-9_.-]{1,80}$/i.test(code) ? code : 'source.failed');
     }
     // 연결 상태는 줄에서 바꾼다(그새 계좌가 지워졌거나 연결을 끊었으면 그대로 둔다)
     await this.serial(() => {
       const a = this.repo.account(accountId);
-      if (!a || a.linkState === 'file_only') return;
+      // 방금 가져와서 이번엔 부르지 않은 것(too_soon)은 연결 상태를 그대로 둔다
+      if (!a || a.linkState === 'file_only' || job.code === 'source.too_soon') return;
       this.repo.setLink(accountId, job.code ? { state: 'auto_error', provider: src.provider, error: job.code } : { state: 'auto_connected', provider: src.provider }, this.at());
     }).catch(() => {});
   }

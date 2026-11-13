@@ -64,11 +64,16 @@ export interface TxnSource {
   fetch(account: SourceAccount, range: SourceRange, opts: { onProgress?: (p: SourceProgress) => void; signal?: AbortSignal }): Promise<SourceFetchResult>;
 }
 
-/** 원천 실패. code는 짧은 코드(예: source.not_linked, source.login_failed, source.cert_expired, source.unsupported_bank, source.rate_limited, source.needs_user). 메시지에 값을 넣지 않는다 */
+/**
+ * 원천 실패. code는 짧은 코드(예: source.not_linked, source.login_failed, source.cert_expired, source.unsupported_bank, source.rate_limited, source.needs_user). 메시지에 값을 넣지 않는다.
+ * source.too_soon은 실패가 아니라 "방금 가져왔다"이다: 원천을 부르지 않았고, retryAt(ISO) 뒤에 다시 가져올 수 있다. 연결 상태를 오류로 바꾸지 않는다.
+ */
 export class SourceError extends Error {
   readonly code: string;
-  constructor(code: string) {
+  readonly retryAt: string | null;
+  constructor(code: string, retryAt: string | null = null) {
     super(code);
     this.code = code;
+    this.retryAt = retryAt;
   }
 }

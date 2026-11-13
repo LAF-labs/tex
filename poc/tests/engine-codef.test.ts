@@ -434,7 +434,7 @@ describe('CODEF 원천: 호출 아끼기(데모 하루 100회)', () => {
     const { link, tick, accountId } = await connected();
     const n = mock.calls.length;
     await assert.rejects(link.refresh(), (e: unknown) => (e as CodefError).code === 'too_soon');
-    await assert.rejects(fetchOf(link, accountId), sourceCode('source.rate_limited'));
+    await assert.rejects(fetchOf(link, accountId), sourceCode('source.too_soon'));
     assert.equal(mock.calls.length, n);
     tick();
     await fetchOf(link, accountId);
