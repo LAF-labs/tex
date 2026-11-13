@@ -1477,6 +1477,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
+    'certName.status': async () => {
+      const p = ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
+      const name = p?.certName ?? null;
+      return { set: !!name, owner: name ? name.replace(/\(\)[0-9A-Za-z]*$/, '').trim().slice(0, 60) : null };
+    },
+    'certName.clear': async () => {
+      needGesture(3_000);
+      const p = ((await host.rpc('db.query.profiles.list', {})) as DbProfile[]).find((x) => x.kind === 'business');
+      if (p?.certName) await host.rpc('profile.setCertName', { id: p.id, name: null });
+      log.event('main.cert_name_cleared', { had: p?.certName ? 1 : 0 });
+      return { set: false, owner: null };
+    },
     'certMemory.forget': async () => {
       needGesture(3_000);
       await certMemory.forget('user');

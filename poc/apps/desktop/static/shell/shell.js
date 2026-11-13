@@ -1451,12 +1451,27 @@ async function loadCertMemory() {
   } catch {
     state.certMemory = false;
   }
+  try {
+    state.certName = await call('certName.status', {});
+  } catch {
+    state.certName = null;
+  }
   if (state.view === 'settings') render();
 }
 async function forgetCertMemory() {
   try {
     state.certMemory = (await call('certMemory.forget', {})).remembered === true;
     toast('기억한 인증서 비밀번호를 지웠어요. 다음 발급 때 한 번 다시 넣어 주세요.');
+  } catch {
+    toast('다시 해 주세요');
+  }
+  render();
+}
+
+async function clearCertName() {
+  try {
+    state.certName = await call('certName.clear', {});
+    toast('기억한 인증서를 지웠어요. 다음 발급 때 홈택스 인증서 창에서 한 번 골라 주세요.');
   } catch {
     toast('다시 해 주세요');
   }
@@ -1636,7 +1651,7 @@ setInterval(() => {
 // 프로필 인증 라벨(shell-model SIGN_LABEL)별 발급 때 사람이 하는 일(shell-runs SIGN_BY_AUTH와 같은 사실).
 const AUTH_DESC = {
   '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
-  '공동·금융인증서': '발급할 때마다 인증서 비밀번호를 직접 넣어요',
+  '공동·금융인증서': '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
   보안카드: '발급할 때마다 보안카드 번호를 직접 넣어요',
 };
 
@@ -1652,6 +1667,15 @@ function authCard() {
       h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, desc ? auth : '발급 인증을 아직 고르지 않았어요'), desc ? h('span', { class: 'sx-meta' }, desc) : null),
       canChange ? btn(desc ? '바꾸기' : '고르기', () => reopenSetup('auth'), '', { 'data-act': 'auth-reopen' }) : null,
     ),
+    // 기억한 홈택스 인증서(H-01 2.3.0이 이 이름으로 인증서 창의 행을 고른다). [지우기]면 다음 발급 때 사람이 한 번 고르고 다시 기억한다
+    state.certName?.set
+      ? h(
+          'div',
+          { class: 'sx-card auth-row', 'data-cert-name': '' },
+          h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, `홈택스 인증서 · ${state.certName.owner}`), h('span', { class: 'sx-meta' }, '홈택스 인증서 창에서 이 인증서를 자동으로 골라요.')),
+          btn('지우기', clearCertName, '', { 'data-act': 'cert-name-clear' }),
+        )
+      : null,
     // 기억한 인증서 비밀번호(대표 지시 2026-11-13): 처음 넣은 값을 금고가 기억하고 다음부터 넣는다. [지우기] 하나만.
     state.certMemory === true
       ? h(
