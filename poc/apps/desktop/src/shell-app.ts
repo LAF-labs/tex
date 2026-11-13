@@ -1135,7 +1135,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && r.steps[5]?.state === 'now' ? 'sign' : null;
     const want = turn ?? 'back';
     if (chromeSpot.get(r.id) === want) return;
-    if (want === 'back' && chromeSpot.has(r.id)) return; // 시작 때 한 번만 뒤에 둔다
+    // 시작 때 한 번만 뒤에 둔다. 사람 차례가 끝났으면 'away'로 바꿔 다음 차례(같은 단계의 다른 핸드오프)에도 패널을 크게 한다
+    if (want === 'back' && chromeSpot.has(r.id)) {
+      if (chromeSpot.get(r.id) !== 'back') chromeSpot.set(r.id, 'away');
+      return;
+    }
     chromeSpot.set(r.id, want);
     if (turn) {
       // 사람 차례: 패널을 크게 하고 중계 화면에 입력 포커스(Chrome은 앞으로 올리지 않는다)

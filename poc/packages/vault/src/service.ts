@@ -173,6 +173,8 @@ export class Vault {
   private readonly needs = new Map<string, number>();
   /** run별 활성 프로필(Q-2). run.begin에서 고정하고 run.end까지 바꾸지 않는다. */
   private readonly runProfiles = new Map<string, ProfileScope>();
+  /** 넣었지만 로그인 확인 전인 인증서 비밀번호(실행별, 메모리만). authOk면 저장, authFailed·run.end면 지운다. */
+  private readonly pendingCert = new Map<string, { scope: string; bytes: Uint8Array }>();
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
   private readonly usedSlots = new Set<string>();
   readonly human: HumanSecretVault;
@@ -429,6 +431,8 @@ export class Vault {
         this.ops?.runTriggers.delete(runId);
         this.pendingTriggers.delete(runId);
         this.runProfiles.delete(runId);
+        // 로그인 확인을 못 받은 인증서 비밀번호는 기억하지 않는다
+        if (this.dropPendingCert(runId)) this.opts.log.event('vault.cert_password_unconfirmed');
         for (const k of [...this.needs.keys()]) if (k.startsWith(runId + '|')) this.needs.delete(k);
         this.ops?.secrets.clearRun(runId);
         this.relay?.commitGuard?.clearRun(runId);
@@ -439,10 +443,34 @@ export class Vault {
         this.human.lock.runEnded();
         return {};
       }
+      case 'typist.authOk': {
+        // 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다 → 기다리던 값을 그때 기억한다. 엔진이 거짓으로 보내도 할 수 있는 일은
+        // 사람이 이 실행에서 넣은 값을 저장하는 것뿐이다(값은 금고 밖으로 나가지 않는다).
+        if (p.kind !== 'cert_password' || !isProfileScope(p.scope)) throw new Error('bad_params');
+        const held = this.pendingCert.get(String(p.runId));
+        if (!held || held.scope !== p.scope) return { saved: false };
+        this.pendingCert.delete(String(p.runId));
+        const saved = await this.human
+          .store('cert_password', p.scope, [{ field: 'pw', bytes: held.bytes }], { version: 'cert-memory-2026-11-13' })
+          .then(() => true, () => false)
+          .finally(() => held.bytes.fill(0));
+        this.opts.log.event('secret.remembered', { kind: 'cert_password', ok: saved });
+        return { saved };
+      }
       case 'typist.authFailed': {
         // 포털의 명시적 인증 실패 1회 → suspect(ADR-026 결정 7). 엔진이 거짓으로 보내도 할 수 있는 일은 입력 정지뿐이다.
         const kind = String(p.kind);
         if (!(STORABLE_KINDS as readonly string[]).includes(kind) || !isProfileScope(p.scope)) throw new Error('bad_params');
+        if (kind === 'cert_password') {
+          // 인증서 비밀번호는 틀린 값을 다시 넣지 않게 확인 대기 값을 버리고 기억값도 지운다(연속 오류 잠금 방지, 부장 지시 2026-11-13).
+          // 다음 차례에는 금고 입력 창으로 다시 받는다.
+          if (typeof p.runId === 'string') this.dropPendingCert(p.runId);
+          for (const [r, v] of [...this.pendingCert]) if (v.scope === p.scope) this.dropPendingCert(r);
+          const had = await this.human.forget('cert_password', p.scope, 'replace');
+          this.opts.log.event('vault.cert_password_forgotten', { had: had ? 1 : 0 });
+          this.emit(['control'], 'secret.suspect', { kind, scope: p.scope });
+          return {};
+        }
         if (await this.human.markSuspect(kind as StorableKind, p.scope)) this.emit(['control'], 'secret.suspect', { kind, scope: p.scope });
         return {};
       }
@@ -736,22 +764,22 @@ export class Vault {
 
   /**
    * 홈택스 출처에만 이 PC 보안 프로그램(127.0.0.1) 접근 권한을 준다(LOOPBACK_ORIGINS). 다른 출처에는 주지 않는다.
-   * Chrome 판마다 권한 이름이 달라 앞에서부터 처음 받아들여진 이름 하나만 쓴다. 못 주면 기동은 그대로 하고 기록만 남긴다
+   * Chrome 판마다 권한 이름이 달라(loopback-network·local-network-access) 받아들여지는 이름은 모두 준다(H-01 2.3.1 실화면: 하드디스크
+   * 인증서 목록은 local-network-access가 있어야 보인다, 2026-11-13). 못 주면 기동은 그대로 하고 기록만 남긴다
    * (홈택스가 "보안프로그램 설치"를 띄우면 사람 차례로 넘어간다).
    */
   private async grantLoopback(chrome: LaunchedChrome): Promise<void> {
     for (const origin of LOOPBACK_ORIGINS) {
-      let granted: string | null = null;
+      const granted: string[] = [];
       for (const name of LOOPBACK_PERMISSION_NAMES) {
         try {
           await chrome.conn.send('Browser.setPermission', { permission: { name }, setting: 'granted', origin });
-          granted = name;
-          break;
+          granted.push(name);
         } catch {
           // 이 Chrome에 없는 이름이다. 다음 이름
         }
       }
-      this.opts.log.event(granted ? 'vault.loopback_granted' : 'vault.loopback_grant_failed', { origin, ...(granted ? { name: granted } : {}) });
+      this.opts.log.event(granted.length ? 'vault.loopback_granted' : 'vault.loopback_grant_failed', { origin, ...(granted.length ? { name: granted.join(',') } : {}) });
     }
   }
 
@@ -814,10 +842,11 @@ export class Vault {
       certMemory: {
         scopeOf: (runId) => this.runProfiles.get(runId) ?? 'business',
         read: (scope) => this.readStored('cert_password', scope),
-        save: async (scope, bytes) => {
-          if (!isProfileScope(scope)) return false;
-          await this.human.store('cert_password', scope, [{ field: 'pw', bytes }], { version: 'cert-memory-2026-11-13' });
-          return true;
+        // 로그인 확인(typist.authOk) 전까지 메모리에만. 같은 실행의 새 값이 앞 값을 바꾼다.
+        hold: (runId, scope, bytes) => {
+          this.dropPendingCert(runId);
+          this.pendingCert.set(runId, { scope, bytes });
+          this.opts.log.event('vault.cert_password_held');
         },
       },
     });
@@ -953,6 +982,14 @@ export class Vault {
   }
 
   /** 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스). 중계를 멈추고 main에 browser.closed를 한 번 알린다. */
+  private dropPendingCert(runId: string): boolean {
+    const v = this.pendingCert.get(runId);
+    if (!v) return false;
+    v.bytes.fill(0);
+    this.pendingCert.delete(runId);
+    return true;
+  }
+
   private browserGone(reason: 'tab' | 'chrome'): void {
     const gen = this.generation;
     if (this.goneNotified === gen) return;
@@ -980,6 +1017,7 @@ export class Vault {
   }
 
   private async shutdownInner(): Promise<void> {
+    for (const r of [...this.pendingCert.keys()]) this.dropPendingCert(r);
     this.generation++;
     this.profileProblems = null;
     // 닫기를 기다리기 전에 떼어 낸다. 닫는 동안 온 run.begin·secret.provide가 버려질 ops에 들어가지 않게.

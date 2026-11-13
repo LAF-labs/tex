@@ -59,6 +59,34 @@ describe('CertSecretPort(공동인증서 비밀번호, B1·B2)', () => {
     assert.ok(!JSON.stringify(h.journal).includes('value'));
   });
 
+  it('넣은 뒤 첫 기다림 스텝이 통과하면 typist.authOk(금고가 그때 기억), 실패하면 typist.authFailed(버리고 지움). 서명 차례는 다시 재지 않는다', async () => {
+    const ok = mk();
+    ok.vault.onOpen = () => ok.vault.close('T1');
+    assert.equal(await ok.port.secret(REQ), 'done');
+    await ok.port.stepFinished('click', false); // 로그인 [확인]은 상관없다
+    await ok.port.stepFinished('wait', false);
+    assert.deepEqual(ok.vault.calls.at(-1), ['typist.authOk', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
+    // 발급 서명의 비밀번호 차례 뒤 기다림이 실패해도 맞는 기억값을 지우지 않는다
+    assert.equal(await ok.port.secret({ ...REQ, stepId: 's21' }), 'done');
+    const n = ok.vault.calls.length;
+    await ok.port.stepFinished('wait', true);
+    assert.equal(ok.vault.calls.length, n);
+
+    const bad = mk();
+    bad.vault.onOpen = () => bad.vault.close('T1');
+    assert.equal(await bad.port.secret(REQ), 'done');
+    await bad.port.stepFinished('wait', true); // H-01 s5 시간 초과(틀린 비밀번호 포함)
+    assert.deepEqual(bad.vault.calls.at(-1), ['typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }]);
+
+    // 사이에 다른 스텝이 실패하면(비밀번호 탓 아님) 알리지 않는다
+    const other = mk();
+    other.vault.onOpen = () => other.vault.close('T1');
+    assert.equal(await other.port.secret(REQ), 'done');
+    await other.port.stepFinished('click', true);
+    await other.port.stepFinished('wait', true);
+    assert.ok(!other.vault.calls.some(([m]) => m.startsWith('typist.auth')));
+  });
+
   it('스텝 target이 있으면 그 칸을 쓴다', async () => {
     const h = mk();
     h.vault.onOpen = () => h.vault.close('T1');
