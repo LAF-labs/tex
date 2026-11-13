@@ -19,7 +19,7 @@ import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
-import { REHEARSAL_DONE, REHEARSAL_HANDOFF, RehearsalReport } from './rehearsal.ts';
+import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport } from './rehearsal.ts';
 
 /** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
 const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.(why|box_click)$|^branch\.settled$/;
@@ -122,6 +122,8 @@ interface ActiveRun {
   signals: SignalDict;
   /** 예행(StartParams.rehearsal)이면 보고서, 아니면 null. */
   rehearsal: RehearsalReport | null;
+  /** 이 실행의 페이지(예행 handoff 화면 기록용). 받기 전에는 null. */
+  page: Page | null;
 }
 
 export interface RunServiceDeps {
@@ -157,6 +159,8 @@ export interface RunServiceDeps {
    * 로컬 파일이 있는데 받지 못하면 그 코드로 시작하지 않는다(레지스트리 판으로 몰래 바꾸지 않는다).
    */
   rehearsalIrSource?: () => IrSourceResult | null;
+  /** 예행 handoff 화면 기록 폴더(앱 데이터 아래, rehearsalSnap). 없으면 기록하지 않는다. */
+  rehearsalSnapDir?: string;
   /**
    * 실행 허가(D03 §2 Running 진입 확인·정지 하향, §3.1 status 소비, §12 실효 수준, ADR-023 결정 5·6). 시작 전, 스텝 경계마다,
    * recheckPermit(레지스트리 동기화 뒤)에서 부른다. 제품 entry는 레지스트리 status로 계산한다(core runPermit). 없으면 늘 허가(시험).
@@ -252,7 +256,7 @@ export class RunService extends EventEmitter {
     if (report && e.type === 'phase') report.phase(e.phase, e.state);
     if (report && e.type === 'handoff') {
       report.handoff(e.phase, e.code);
-      this.stopSoon(this.active!, 'rehearsal.handoff_stop');
+      void this.snapThenStop(this.active!, { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
     }
     this.emit('event', e);
   }
@@ -309,6 +313,7 @@ export class RunService extends EventEmitter {
     this.active = {
       runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
       portal, signals: this.runSignals(p.runId, startPolicy),
+      page: null,
       rehearsal: p.rehearsal === true ? new RehearsalReport(irPkg?.local ? `local:${playbookVersion}:${irPkg.local.digest.slice(0, 12)}` : `${irPkg ? 'registry' : 'h01'}:${playbookVersion}`) : null,
     };
     void this.execute(this.active, inputs, profile);
@@ -385,6 +390,7 @@ export class RunService extends EventEmitter {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
+      a.page = page;
       if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, a.portal, {
         profileId: profile.id,
         signals: a.signals,
@@ -691,6 +697,17 @@ export class RunService extends EventEmitter {
     a.rehearsal.gateStep = m.req.gateStepId;
     this.journal.append(a.runId, 'rehearsal.gate_reached', { stepId: m.req.gateStepId });
     this.stopSoon(a, null);
+  }
+
+  /** 예행 handoff: 그 화면을 로컬에 한 번 기록하고(최대 6초) 멈춘다. 기록이 실패해도 멈춘다. */
+  private async snapThenStop(a: ActiveRun, at: { phase: string; code?: string }): Promise<void> {
+    const dir = this.d.rehearsalSnapDir;
+    if (dir && a.page && a.rehearsal && !a.rehearsal.snapped) {
+      a.rehearsal.snapped = true;
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([rehearsalSnap(a.page, dir, a.runId, at).catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, 6_000)))]).finally(() => clearTimeout(timer));
+    }
+    this.stopSoon(a, 'rehearsal.handoff_stop');
   }
 
   /** 예행을 [중지]처럼 멈춘다. 지금 하던 일(게이트·사람 대기 등록)이 끝난 뒤에 부른다. journalType이 있으면 저널에 남긴다. */

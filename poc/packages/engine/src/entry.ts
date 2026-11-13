@@ -204,6 +204,7 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
       ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
       // 예행 전용 로컬 패키지(<앱 데이터>/rehearsal-packages/<id>/, scripts/rehearsal-package.mjs가 넣는다). RunService가 예행 실행에만 부른다.
+      rehearsalSnapDir: path.join(paths.root, 'rehearsal-snaps'),
       ...(ir && registry ? { rehearsalIrSource: rehearsalIrSource(registry, { id: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.

@@ -1,6 +1,9 @@
 // 홈택스 예행(B1 "실화면 예행 10회 연속", 부장 2026-11-13): 첫 게이트에서 멈추는 실행의 보고서 한 줄.
 // 엔진 로그 run.rehearsal_report에 단계별 시간, 폴백·판정 사용 수, 핸드오프 이유, 마지막 단계를 코드와 숫자로만 남긴다(값 없음).
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import type { LogFields } from '@sax/platform';
+import type { Page } from 'playwright-core';
 
 /** 저널 이벤트 → 보고서 칸. 표에 없는 이벤트는 세지 않는다. */
 const COUNTED: Readonly<Record<string, string>> = {
@@ -32,6 +35,8 @@ export class RehearsalReport {
   private readonly handoffs: string[] = [];
   /** 닿은 게이트 스텝 id. 닿지 않았으면 null. */
   gateStep: string | null = null;
+  /** handoff 순간 화면 기록을 시작했다(실행마다 한 번). */
+  snapped = false;
 
   constructor(pkg: string, clock: () => number = Date.now) {
     this.pkg = pkg;
@@ -82,4 +87,27 @@ export class RehearsalReport {
     this.phaseMs.set(this.open.phase, (this.phaseMs.get(this.open.phase) ?? 0) + now - this.open.at);
     this.open = null;
   }
+}
+
+/** 화면 기록에 남기는 쿼리 키(메뉴·화면 위치만). 그 밖의 키는 값이 개인값일 수 있어 버린다. */
+const SNAP_QUERY_KEYS = new Set(['w2xPath', 'tmIdx', 'tm2lIdx', 'tm3lIdx', 'menuCd', 'screenId']);
+
+/**
+ * 예행 handoff 순간의 화면 기록(부장 2026-11-14): <dir>/snap-<runId>.png(화면 한 장)과 .json(origin·경로·허용 쿼리·문서 제목·단계).
+ * 앱 데이터 아래 로컬 파일에만 둔다(0600). 엔진 로그·게이트웨이로는 보내지 않는다. 금고가 캡처를 막으면(비밀 창 뒤) 화면 없이 .json만 남긴다.
+ */
+export async function rehearsalSnap(page: Page, dir: string, runId: string, at: { phase: string; code?: string }): Promise<void> {
+  const u = new URL(page.url());
+  const query = Object.fromEntries([...u.searchParams].filter(([k]) => SNAP_QUERY_KEYS.has(k)));
+  const title = (await page.title().catch(() => '')).slice(0, 120);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  let shot = false;
+  try {
+    await fs.writeFile(path.join(dir, `snap-${runId}.png`), await page.screenshot({ type: 'png', timeout: 4_000 }), { mode: 0o600 });
+    shot = true;
+  } catch {
+    // 금고가 캡처를 거부했거나 시간이 지났다(.json의 shot false)
+  }
+  const meta = { runId, phase: at.phase, code: at.code ?? '', origin: u.origin, path: u.pathname, query, title, shot, at: new Date().toISOString() };
+  await fs.writeFile(path.join(dir, `snap-${runId}.json`), JSON.stringify(meta, null, 1), { mode: 0o600 });
 }
