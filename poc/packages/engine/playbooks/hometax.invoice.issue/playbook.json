@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.2.0",
+ "version": "2.2.1",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -144,7 +144,11 @@
    "type": "fill",
    "target": "hometax.invoice.form.counterpartBizNo",
    "value": "$inputs.counterpart.bizNo",
-   "keyEvents": true
+   "keyEvents": true,
+   "onFail": {
+    "retry": 1,
+    "then": "handoff"
+   }
   },
   {
    "id": "s13",
@@ -168,7 +172,11 @@
    "type": "fill",
    "target": "hometax.invoice.form.counterpartName",
    "value": "$inputs.counterpart.name",
-   "keyEvents": true
+   "keyEvents": true,
+   "onFail": {
+    "retry": 1,
+    "then": "handoff"
+   }
   },
   {
    "id": "s14a",
@@ -207,21 +215,33 @@
    "type": "fill",
    "target": "hometax.invoice.form.item1.day",
    "value": "$inputs.issueDay",
-   "keyEvents": true
+   "keyEvents": true,
+   "onFail": {
+    "retry": 1,
+    "then": "handoff"
+   }
   },
   {
    "id": "s16a",
    "type": "fill",
    "target": "hometax.invoice.form.item1.name",
    "value": "$inputs.items[0].name",
-   "keyEvents": true
+   "keyEvents": true,
+   "onFail": {
+    "retry": 1,
+    "then": "handoff"
+   }
   },
   {
    "id": "s17",
    "type": "fill",
    "target": "hometax.invoice.form.item1.supply",
    "value": "$inputs.amounts.supply",
-   "keyEvents": true
+   "keyEvents": true,
+   "onFail": {
+    "retry": 1,
+    "then": "handoff"
+   }
   },
   {
    "id": "s17a",

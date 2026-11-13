@@ -93,14 +93,27 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_edtDmnrBsnoTop"
+    },
+    {
+     "kind": "label",
+     "value": "사업자등록번호"
+    },
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "사업자등록번호"
+    },
+    {
+     "kind": "label",
+     "value": "등록번호"
     }
    ],
    "role": "textbox",
-   "namePattern": "^사업자등록번호$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
+   "lastVerified": "2026-11-13",
    "inputType": "text"
   },
   "hometax.invoice.form.bizNoConfirm": {
@@ -217,14 +230,23 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_genEtxivLsatTop_0_edtLsatNmTop"
+    },
+    {
+     "kind": "label",
+     "value": "1행 품목"
+    },
+    {
+     "kind": "role",
+     "role": "textbox",
+     "name": "1행 품목"
     }
    ],
    "role": "textbox",
-   "namePattern": "^1행 품목$",
+   "namePattern": "^.{0,60}$",
    "frame": "main",
    "landmark": "hometax.invoice.form.root",
    "commits": false,
-   "lastVerified": "2026-11-11",
+   "lastVerified": "2026-11-13",
    "inputType": "text"
   },
   "hometax.invoice.form.item1.supply": {
