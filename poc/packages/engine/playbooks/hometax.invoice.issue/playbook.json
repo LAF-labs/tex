@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.2.2",
+ "version": "2.3.0",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -72,6 +72,13 @@
    "reentry": "reload"
   },
   {
+   "id": "s0a",
+   "type": "wait",
+   "for": "gone",
+   "value": "hometax.common.processing",
+   "timeoutMs": 30000
+  },
+  {
    "id": "s2",
    "type": "branch",
    "on": {
@@ -89,6 +96,13 @@
    "id": "s3",
    "type": "goto",
    "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&menuCd=index3"
+  },
+  {
+   "id": "s3a",
+   "type": "wait",
+   "for": "gone",
+   "value": "hometax.common.processing",
+   "timeoutMs": 30000
   },
   {
    "id": "s4",
@@ -111,28 +125,38 @@
    "id": "s4c",
    "type": "wait",
    "for": "selector",
-   "value": "hometax.cert.firstRow",
+   "value": "hometax.cert.table",
    "timeoutMs": 30000
   },
   {
    "id": "s4d",
-   "type": "branch",
-   "on": {
-    "exists": "hometax.cert.secondRow"
-   },
-   "cases": {
-    "true": "s4e"
-   },
-   "default": "s4f"
+   "type": "pick",
+   "target": "hometax.cert.table",
+   "by": "$profile.certName",
+   "ifNone": "s4e",
+   "then": "s4g",
+   "timeoutMs": 30000
   },
   {
    "id": "s4e",
    "type": "handoff",
-   "reason": "cert.manyCerts",
+   "reason": "cert.pickOne",
    "resumeAt": "s4f"
   },
   {
    "id": "s4f",
+   "type": "pick",
+   "target": "hometax.cert.table",
+   "use": "selected",
+   "remember": "certName",
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
+   "id": "s4g",
    "type": "human",
    "kind": "secret",
    "target": "hometax.cert.password",
@@ -144,7 +168,7 @@
    }
   },
   {
-   "id": "s4g",
+   "id": "s4h",
    "type": "click",
    "target": "hometax.cert.loginConfirm",
    "onFail": {
@@ -207,7 +231,9 @@
   {
    "id": "s11a",
    "type": "wait",
-   "for": "idle"
+   "for": "gone",
+   "value": "hometax.common.processing",
+   "timeoutMs": 30000
   },
   {
    "id": "s12",
@@ -236,7 +262,9 @@
   {
    "id": "s13b",
    "type": "wait",
-   "for": "idle"
+   "for": "gone",
+   "value": "hometax.common.processing",
+   "timeoutMs": 30000
   },
   {
    "id": "s14",
@@ -337,6 +365,13 @@
    "type": "wait",
    "for": "selector",
    "value": "hometax.invoice.preview.root",
+   "timeoutMs": 15000
+  },
+  {
+   "id": "s18b",
+   "type": "wait",
+   "for": "gone",
+   "value": "hometax.common.processing",
    "timeoutMs": 15000
   },
   {
@@ -506,10 +541,14 @@
       "wait:push"
      ]
     },
-    "readyTarget": "hometax.invoice.sign.firstRow",
+    "readyTarget": "hometax.invoice.sign.certTable",
     "doneTarget": "hometax.invoice.done.root",
     "maxWaitMs": 180000,
-    "confirmTarget": "hometax.invoice.sign.confirm"
+    "confirmTarget": "hometax.invoice.sign.confirm",
+    "certPick": {
+     "target": "hometax.invoice.sign.certTable",
+     "by": "$profile.certName"
+    }
    },
    "onFail": {
     "retry": 0,
@@ -621,5 +660,8 @@
  ],
  "pacing": {
   "profile": "interactive"
- }
+ },
+ "closeWindows": [
+  "login.certNoticeWindow"
+ ]
 }

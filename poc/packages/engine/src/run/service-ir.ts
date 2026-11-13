@@ -10,6 +10,7 @@ import type { Page } from 'playwright-core';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
+import { compileRe2 } from '../core/re2.ts';
 import { newScope } from '../core/scope.ts';
 import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/steps.ts';
 import { FallbackChain } from '../core/fallback.ts';
@@ -98,7 +99,9 @@ export interface IrRunInput {
   ir: IrPackage;
   portal: PortalConfig;
   rate: RateGuard;
-  profile: { id: string; bizNo: string; signMethod: string | null };
+  profile: { id: string; bizNo: string; signMethod: string | null; certName?: string | null };
+  /** pick.remember(IR rev v1.3.6): 고른 인증서 이름을 프로필에 저장한다. 없으면 이번 실행 범위에만 둔다. */
+  profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
   /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
@@ -392,9 +395,18 @@ export class IrRun {
       commitArmed: (k) => this.controller?.commitArmed(k) ?? false, armedConfirm: () => this.controller?.armedConfirm() ?? null, fixtureGrant: i.ir.fixtureGrant ?? null,
     });
     this.actuator = act;
-    this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains });
+    // IR rev v1.3.6: 패키지가 닫으라고 적은 안내 창(제목 패턴)만 닫는다. 로더(V-01)가 패턴을 이미 확인했다.
+    const closeWindows = (ir.closeWindows ?? []).flatMap((k) => {
+      try {
+        return [compileRe2(files.strings[k]!)];
+      } catch {
+        return [];
+      }
+    });
+    this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains, ...(closeWindows.length ? { closeWindows, journal: i.journal } : {}) });
 
-    const scope = newScope({ inputs: i.inputs, profile: { bizNo: i.profile.bizNo, ...(i.profile.signMethod ? { signMethod: i.profile.signMethod } : {}) }, intentId: i.intentId });
+    const p = i.profile;
+    const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, ...(p.signMethod ? { signMethod: p.signMethod } : {}), ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
     // 모델 실행 토큰은 실행마다 한 번 받아 decide와 AI 위치 찾기가 같이 쓴다(L1·L2 예산이 한 토큰에 묶인다).
     let tokenP: Promise<RunToken> | null = null;
     const runToken = (): Promise<RunToken> => {
@@ -407,6 +419,7 @@ export class IrRun {
     const redactor = new Redactor({ runId: i.runId });
     const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal }), journal: i.journal } : undefined;
     const env = stepEnv({ page: reader, act, clock, dict, strings: files.strings, scope, domains, fixtureGrant: i.ir.fixtureGrant ?? null, irreversible: analysis.irreversible });
+    if (i.profileWrite) env.profileWrite = i.profileWrite;
     // 폴백 사슬: 재시도 뒤 → role·이름 다시 찾기 → AI 위치 찾기 → 체크포인트 재진입 → 사람. 되돌릴 수 있는 스텝만(core/fallback.ts).
     const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), journal: i.journal });
     const book = new VerifyBook();

@@ -86,13 +86,13 @@ export function stepConds(s: Step): Cond[] {
 }
 
 /** 스텝이 셀렉터 사전에서 읽거나 누르는 모든 타깃(V-02·V-20·핫픽스 적격 계산). */
-export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'from' | 'scope' | 'cond' | 'region' | 'rowLabel' | 'confirmTarget' | 'openTarget' | 'methodTarget' | 'readyTarget' | 'doneTarget' | 'wait' }> {
+export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'from' | 'scope' | 'cond' | 'region' | 'rowLabel' | 'confirmTarget' | 'openTarget' | 'methodTarget' | 'readyTarget' | 'doneTarget' | 'certPick' | 'wait' }> {
   const out: ReturnType<typeof stepTargets> = [];
   if ('target' in s && typeof s.target === 'string') out.push({ ref: s.target, role: 'target' });
   if (s.type === 'extract' || s.type === 'capture') out.push({ ref: fromTarget(s.from), role: 'from' });
   if (s.type === 'decide' && s.scope !== 'root') out.push({ ref: s.scope, role: 'scope' });
   if (s.type === 'human' && s.region) out.push({ ref: s.region, role: 'region' });
-  if (s.type === 'wait' && s.for === 'selector' && s.value) out.push({ ref: s.value, role: 'wait' });
+  if (s.type === 'wait' && (s.for === 'selector' || s.for === 'gone') && s.value) out.push({ ref: s.value, role: 'wait' });
   if (s.type === 'submit' && s.signFlow?.rowLabel) out.push({ ref: s.signFlow.rowLabel, role: 'rowLabel' });
   if (s.type === 'submit' && s.signFlow?.confirmTarget) out.push({ ref: s.signFlow.confirmTarget, role: 'confirmTarget' });
   if (s.type === 'submit' && s.signFlow) {
@@ -100,6 +100,7 @@ export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'fro
     for (const t of Object.values(s.signFlow.methodTargets ?? {})) if (t) out.push({ ref: t, role: 'methodTarget' });
     if (s.signFlow.readyTarget) out.push({ ref: s.signFlow.readyTarget, role: 'readyTarget' });
     if (s.signFlow.doneTarget) out.push({ ref: s.signFlow.doneTarget, role: 'doneTarget' });
+    if (s.signFlow.certPick) out.push({ ref: s.signFlow.certPick.target, role: 'certPick' });
   }
   for (const c of stepConds(s)) for (const t of condTargets(c)) out.push({ ref: t, role: 'cond' });
   return out;
@@ -203,6 +204,14 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       if (!isAnchored(strings[s.value]!)) bad('V-01', 'wait dialog 패턴이 ^…$ 앵커가 아님', s.id);
     }
   }
+  // IR rev v1.3.6: 닫을 안내 창 제목 패턴은 RE2이고 ^…$ 앵커(제목 전체에 맞춘다. 다른 창을 닫지 않게).
+  for (const k of ir.closeWindows ?? []) {
+    if (strings[k] === undefined) bad('V-02', `closeWindows ${k}가 strings에 없음`);
+    else {
+      re('V-01', strings[k], `strings ${k}(closeWindows)`);
+      if (!isAnchored(strings[k]!)) bad('V-01', 'closeWindows 패턴이 ^…$ 앵커가 아님');
+    }
+  }
   for (const c of [...(ir.preconditions ?? []), ...ir.postconditions]) walkCond(c, (x) => 'textMatches' in x && patternRefs.add(x.textMatches.patternRef));
   for (const k of patternRefs) {
     if (strings[k] === undefined) bad('V-01', `patternRef ${k}가 strings에 없음`);
@@ -259,6 +268,14 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       }
       if (sf?.methodTargets && sf.method !== '$profile.signMethod' && !sf.methodTargets[sf.method]) bad('V-02', 'signFlow.methodTargets에 그 방식 항목이 없음', s.id);
     }
+    // IR rev v1.3.6: 목록 고르기는 rows 항목만, 사라짐 기다리기는 비밀 아닌 항목만. 둘 다 커밋·비밀 항목이 아니다.
+    const picks = [...(s.type === 'pick' ? [s.target] : []), ...(s.type === 'submit' && s.signFlow?.certPick ? [s.signFlow.certPick.target] : [])];
+    for (const t of picks) {
+      const te = entry(t);
+      if (te && !te.rows) bad('V-02', 'pick·certPick 타깃이 rows 항목이 아님', s.id, t);
+      if (te && (te.commits || isSecretEntry(te))) bad('V-02', 'pick·certPick 타깃이 커밋·비밀 항목', s.id, t);
+    }
+    if (s.type === 'wait' && s.for === 'gone' && s.value && isSecretEntry(entry(s.value))) bad('V-02', 'wait gone 대상이 비밀 칸', s.id, s.value);
     if (s.type === 'readback') for (const f of s.fields) if (!fieldKeyEntries.has(f)) bad('V-02', `readback 필드 ${f}의 fieldKey 항목이 사전에 없음`, s.id);
     if (s.type === 'assert') walkCond(s.cond, (x) => 'fieldsFilled' in x && x.fieldsFilled.fields.forEach((f) => !fieldKeyEntries.has(f) && bad('V-02', `fieldsFilled ${f}의 항목이 없음`, s.id)));
   }

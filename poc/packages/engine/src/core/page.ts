@@ -17,6 +17,8 @@ export interface ElementInfo {
   name: string;
   visible: boolean;
   enabled: boolean;
+  /** 입력할 수 있는가(readonly·disabled 아님, IR rev v1.3.6 expect.editable). 구현이 모르면 없다(그러면 editable 항목은 받지 않는다). */
+  editable?: boolean;
 }
 
 export interface PageReader {
@@ -64,6 +66,11 @@ export interface Actuator {
   clear(t: Resolved): Promise<ActResult>;
   select(t: Resolved, option: string): Promise<ActResult>;
   press(key: PressStep['key'], t: Resolved | null): Promise<ActResult>;
+  /**
+   * 목록 항목(rows, IR rev v1.3.6 pick)의 행 하나를 누른다. t는 목록 항목, row는 그 하위 행(PageReader.query로 잡은 것).
+   * GuardedActuator는 목록 항목을 R-A1로 다시 확인하고 row가 지금 그 목록의 행인지 본 뒤 원시 click을 부른다.
+   */
+  pickRow?(t: Resolved, row: ElementRef): Promise<ActResult>;
   /** 마지막 동작을 시작한 뒤 뜬(정책대로 이미 닫은) 네이티브 대화상자(wait for:'dialog'). GuardedActuator만 구현한다. */
   dialogSinceAction?(): { kind: string; notice: string } | null;
 }

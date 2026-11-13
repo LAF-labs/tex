@@ -65,6 +65,11 @@ export interface FakeKnobs {
   certPassword: string;
   /** 인증서 목록(소유자명 Cn·용도). 0번 행이 처음에 골라져 있다(jqx DataTable selectRow 0). */
   certs: Array<{ cn: string; policy: string }>;
+  /**
+   * [공동·금융인증서]를 누르면 새 창(안내 팝업)이 뜬다(2026-11-11 실화면: 제목 "크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업").
+   * 커밋 없는 안내 창이다. 열린 창을 닫았는지 state.noticeClosed로 본다.
+   */
+  certNoticePopup: boolean;
 }
 
 export interface HometaxFake {
@@ -84,6 +89,9 @@ export interface HometaxFake {
     certUses: Array<{ mode: 'login' | 'sign'; how: 'typed' | 'human'; cn: string }>;
     /** 틀린 비밀번호로 [확인]한 횟수. */
     wrongPw: number;
+    /** 안내 팝업을 연 횟수와 닫힌 횟수(창이 닫힌 것을 여는 쪽 화면이 알린다). */
+    noticeOpened: number;
+    noticeClosed: number;
   };
   /** 사람: 로그인을 마쳤다(로그인 화면이 메인으로 넘어간다). */
   login(): void;
@@ -126,7 +134,7 @@ body{font-family:sans-serif;margin:0}.w2window{position:absolute;top:40px;left:4
 #dscertContainer{display:none}.proc{display:none;position:fixed;top:45%;left:45%}
 </style></head><body>
 <div id="mf_wrap"></div>
-<div id="mf_mf_wq_uuid_281_wq_processMsgComp" class="proc">처리중입니다</div>
+<div id="mf_mf_wq_uuid_${cfg.uuid}_wq_processMsgComp" class="proc" style="display:block">처리중입니다</div>
 <div id="dscertContainer"><iframe id="dscert" src="about:blank" title="" style="width:0;height:0;border:0"></iframe></div>
 <div id="csContainer"><iframe id="startCs" src="about:blank" style="width:0;height:0;border:0"></iframe></div>
 <iframe id="mf_txppIframe" src="about:blank" style="width:0;height:0;border:0"></iframe>
@@ -140,7 +148,8 @@ const CLIENT = String.raw`
   const P = 'mf_txppWframe_';
   const $ = (id) => document.getElementById(id);
   const wrap = $('mf_wrap');
-  const proc = $('mf_mf_wq_uuid_281_wq_processMsgComp');
+  // 처리 중 표시: id 가운데 uuid가 로드마다 바뀐다(실화면 #mf_mf_wq_uuid_*_wq_processMsgComp). 첫 화면을 그리는 동안에도 보인다.
+  const proc = document.querySelector('[id$="_wq_processMsgComp"]');
   let busy = 0;
   const uuid = () => 'wq_uuid_' + (1000 + Math.floor(Math.random() * 9000));
   function call(path, body) {
@@ -191,7 +200,15 @@ const CLIENT = String.raw`
         '<a id="' + P + 'anchor22" role="button" href="#" title="공동·금융인증서 새창열림">공동·금융인증서</a> <a id="' + P + 'anchor50" role="button" href="#">사업자용 간편인증(민간인증서)</a></div>';
       // [공동·금융인증서] → 인증서 창(dscert, 로그인 모드). 비밀번호가 맞으면 서버가 로그인 상태가 되고 메인으로 넘어간다.
       // 사람이 다른 길로 로그인을 마쳐도(시험: fx.login()) 메인으로 넘어간다. 공동인증서 로그인 실화면은 캡처 전이라 창 모양은 발급 서명 창과 같다고 둔다(가정).
-      $(P + 'anchor22').onclick = (e) => { e.preventDefault(); openCertWin('login'); };
+      $(P + 'anchor22').onclick = (e) => {
+        e.preventDefault();
+        // 실화면: 새 창(안내 팝업)도 같이 뜬다. 닫히면 서버에 알린다(시험이 닫혔는지 본다).
+        if (C.notice) {
+          const w = window.open('/pp/certNotice.html', 'certNotice', 'width=520,height=420');
+          if (w) { const t = setInterval(() => { if (w.closed) { clearInterval(t); fetch('/_fx/noticeclosed'); } }, 200); }
+        }
+        openCertWin('login');
+      };
       window.addEventListener('message', (e) => {
         if (e.source !== $('dscert').contentWindow || !e.data || e.data.ml4 !== 'login') return;
         $('dscert').style.cssText = 'width:0;height:0;border:0'; $('dscertContainer').style.cssText = 'display:none';
@@ -430,7 +447,7 @@ const CLIENT = String.raw`
     };
   }
 
-  setTimeout(() => screens[C.screen](), C.renderDelayMs);
+  setTimeout(() => { screens[C.screen](); if (!busy) proc.style.display = 'none'; }, C.renderDelayMs);
 })();
 `;
 
@@ -440,7 +457,7 @@ const CLIENT = String.raw`
 // - 비밀번호 input#input_cert_pw(title "인증서 비밀번호 입력"), [확인] button#btn_confirm_iframe, [취소] button#btn_cancel, 경고 #popup_alert·#alert_msg·button#btn_alert_confirm
 // - [확인]: 칸 값이 가짜 비밀번호와 같으면 통과(서버에 기록), 다르면 경고. 사람 흉내(fx.cert())는 칸 값과 상관없이 통과.
 const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>인증서 선택창</title>
-<style>tr.sel{background:#cde}#popup_alert{display:none}</style></head><body>
+<style>td.MLjqui-grid-cell-selected{background:#cde}#popup_alert{display:none}</style></head><body>
 <div id="form1"><div id="selectCertContainer"><div id="ML_window"><div id="ML_container">
 <div id="ML_dp_01" class="ML_sub_tit">인증서 저장위치</div>
 <div class="MLstrSlide" id="MLstrSlide"><div class="ML_storage_area"><ul>
@@ -448,9 +465,7 @@ const CHILD = (main: string, certs: Array<{ cn: string; policy: string }>) => `<
 <li class="ML_storage_hdd"><a href="#" id="stg_hdd" class="stg_01" title="하드디스크/이동식"><span>하드디스크/이동식</span></a></li>
 </ul></div></div>
 <div id="ML_dp_02" class="ML_sub_tit">사용할 인증서 선택</div>
-<div id="ML_certlist_area" class="ML_cert_list_area"><div id="dataTable"><table><thead><tr role="row"><th role="columnheader">구분</th><th role="columnheader">사용자</th><th role="columnheader">만료일</th><th role="columnheader">발급자</th></tr></thead><tbody>
-${certs.map((c, n) => `<tr data-key="${n}" role="row" id="row${n}dataTable"${n === 0 ? ' class="sel" aria-selected="true"' : ' aria-selected="false"'}><td role="gridcell">${c.cn}</td><td role="gridcell">${c.policy}</td><td role="gridcell">가짜인증</td><td role="gridcell">2027-01-01</td></tr>`).join('')}
-</tbody></table></div></div>
+<div id="ML_certlist_area" class="ML_cert_list_area"><div id="dataTable" role="grid" align="left"><div role="columnheader">소유자</div><div role="columnheader">용도</div><div role="columnheader">발급자</div><div role="columnheader">만료일</div><table><tbody></tbody></table></div></div>
 <div id="ML_dp_04" class="ML_sub_tit">인증서 비밀번호 입력</div>
 <div id="ML_status_area" class="ML_status_area"><input type="password" id="input_cert_pw" name="input_cert_pw" class="passwd_input" title="인증서 비밀번호 입력" placeholder="비밀번호를 입력하시오." autocomplete="off" value=""></div>
 <button type="button" id="btn_confirm_iframe">확인</button> <button type="button" id="btn_cancel">취소</button> <button type="button" id="btn_viewCert">인증서 보기</button>
@@ -461,10 +476,21 @@ const MAIN = ${JSON.stringify(main)};
 const mode = new URLSearchParams(location.search).get('mode') || 'sign';
 const $ = (id) => document.getElementById(id);
 let sel = 0;
-document.querySelectorAll('#dataTable tbody tr').forEach((tr) => tr.onclick = () => {
-  document.querySelectorAll('#dataTable tbody tr').forEach((x) => { x.classList.remove('sel'); x.setAttribute('aria-selected', 'false'); });
-  tr.classList.add('sel'); tr.setAttribute('aria-selected', 'true'); sel = Number(tr.dataset.key);
-});
+// jqx DataTable(MLjquidatatable.js): 행 tr[data-key][role=row]#row{N}dataTable, 칸 td[role=gridcell].MLjqui-cell. 고른 행의 칸에 MLjqui-grid-cell-selected(+테마)가 붙는다.
+// 저장 위치를 읽은 뒤 행을 그리고 0번 행을 고른다(실화면은 비동기). 행을 누르면(mousedown) 그 행이 골라진다.
+const CERTS = ${JSON.stringify(certs)};
+const SELC = ['MLjqui-grid-cell-selected', 'MLjqui-grid-cell-selected-DSdatatable', 'MLjqui-tb-fill-state-pressed'];
+const pick = (n) => {
+  document.querySelectorAll('#dataTable tr[data-key] td').forEach((x) => x.classList.remove(...SELC));
+  document.querySelectorAll('#row' + n + 'dataTable td').forEach((x) => x.classList.add(...SELC));
+  sel = n;
+};
+setTimeout(() => {
+  const tb = document.querySelector('#dataTable tbody');
+  tb.innerHTML = CERTS.map((c, n) => '<tr data-key="' + n + '" role="row" id="row' + n + 'dataTable">' + [c.cn, c.policy, '가짜인증', '2027-01-01'].map((v) => '<td role="gridcell" class="MLjqui-cell">' + v + '</td>').join('') + '</tr>').join('');
+  tb.querySelectorAll('tr[data-key]').forEach((tr) => tr.addEventListener('mousedown', () => pick(Number(tr.dataset.key))));
+  pick(0);
+}, 300);
 const finish = (how) => fetch(MAIN + '/_fx/certuse?mode=' + mode + '&how=' + how + '&sel=' + sel).then((r) => r.json()).then((r) => {
   if (mode === 'login') parent.postMessage({ ml4: 'login' }, '*');
   else parent.postMessage({ ml4: 'signed', sig: 'FAKE-SIG' }, '*');
@@ -485,11 +511,11 @@ const t = setInterval(() => fetch(MAIN + '/_fx/cert').then((r) => r.json()).then
 export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: boolean; supplier?: Partial<typeof SUPPLIER> } = {}): Promise<HometaxFake> {
   const knobs: FakeKnobs = {
     renderDelayMs: 1500, xhrDelayMs: 120, registry: { '2148651233': '정상적인 사업자번호입니다.' }, tamperPreview: false, hangC05: false, listLagMs: 0, mail: 'done', fieldLabels: false,
-    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }],
+    certPassword: 'fake-cert-pw-0000', certs: [{ cn: '가나다컴퍼니()0001234567891', policy: '사업자범용' }], certNoticePopup: true,
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0 };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -526,7 +552,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === W2 && req.method === 'GET') {
       const screen = screenOf(u.searchParams, state.loggedIn);
       state.lastScreen = { screen, at: Date.now() };
-      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
+      return send(res, 200, 'text/html; charset=utf-8', page({ screen, teet: teetOrigin, uuid: 100 + Math.floor(Math.random() * 900), notice: knobs.certNoticePopup, renderDelayMs: knobs.renderDelayMs, formInitMs: Math.min(800, knobs.renderDelayMs), today: kstToday(), loggedIn: state.loggedIn, tamperPreview: knobs.tamperPreview, fieldLabels: knobs.fieldLabels }));
     }
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs));
     if (u.pathname === '/_fx/certpw') {
@@ -543,6 +569,14 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
       return json(res, { ok: true });
     }
     if (u.pathname === '/_fx/state') return json(res, { loggedIn: state.loggedIn });
+    if (u.pathname === '/pp/certNotice.html') {
+      state.noticeOpened++;
+      return send(res, 200, 'text/html; charset=utf-8', '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업</title></head><body><p>크롬(구글), 엣지(마이크로소프트) 보안정책 업데이트로 인해 하드디스크(이동식디스크) 공동인증서 이용 시 아래와 같이 사이트 권한 추가 설정이 필요합니다.</p><button type="button" onclick="window.close()">닫기</button></body></html>');
+    }
+    if (u.pathname === '/_fx/noticeclosed') {
+      state.noticeClosed++;
+      return json(res, { ok: true });
+    }
     if (u.pathname === '/_fx/cert') {
       const a = state.stage === 'cert' ? certAction : null;
       if (a) certAction = null;

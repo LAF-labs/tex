@@ -421,4 +421,12 @@ ALTER TABLE irreversible_log ADD COLUMN issue_key TEXT;
 CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue_key IS NOT NULL AND state <> 'not_committed';
 `,
   },
+  {
+    // 홈택스 인증서 창에서 고를 인증서 이름(공개 정보, 인증서 소유자 글). 사람이 한 번 고르면 실행이 저장하고 다음부터 이 이름으로 고른다(H-01 2.3.0).
+    version: 11,
+    name: 'profile_cert_name',
+    sql: `
+ALTER TABLE profiles ADD COLUMN cert_name TEXT;
+`,
+  },
 ];

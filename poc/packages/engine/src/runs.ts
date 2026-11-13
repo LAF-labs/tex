@@ -449,7 +449,17 @@ export class RunService extends EventEmitter {
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
       runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: a.portal, signals: a.signals, rate: this.rate,
-      profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
+      profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null, certName: profile.certName ?? null },
+      // 사람이 고른 인증서 이름(pick.remember)을 프로필에 둔다. 값은 저널·로그에 없다.
+      profileWrite: async (field, value) => {
+        if (field !== 'certName') return false;
+        try {
+          this.d.data.profiles.setCertName(profile.id, value);
+          return true;
+        } catch {
+          return false;
+        }
+      },
       ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
       inputs: irInputs(inputs, this.d.data.counterparties.get(inputs.counterpart.id)),
       db: this.d.db, ledger: this.ledger, gates: this.gates,
