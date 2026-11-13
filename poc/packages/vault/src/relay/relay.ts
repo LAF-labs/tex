@@ -377,6 +377,7 @@ export class Relay {
         if (t) {
           t.url = String(info.url ?? t.url);
           if (info.openerId) t.openerId = String(info.openerId);
+          if (t.type === 'page') this.onPageUrl?.(t);
         }
         return;
       }
@@ -859,6 +860,8 @@ export class Relay {
   onTargetGone?: (t: TargetState) => void;
   /** 새 page 타깃이 붙었다(첫 탭·팝업 창). Chrome이 창을 앞으로 올리므로 main이 앱을 다시 앞으로 둔다. */
   onPageOpened?: (t: TargetState) => void;
+  /** page 타깃의 주소가 바뀌었다(팝업 새 창의 첫 주소 포함). 금고 팝업 장치가 닫을 창을 고른다. */
+  onPageUrl?: (t: TargetState) => void;
   /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
   hasExposedPage(): boolean {
     return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);

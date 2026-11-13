@@ -17,7 +17,7 @@ import { readNpkiLoginPair, scanNpki, type NpkiFs, type NpkiRoot } from './npki-
 import { CodefSealer } from './codef-seal.ts';
 import { CommitGuard } from './relay/commit-guard.ts';
 import { PdfSaver, sweepStagingDir } from './pdf/save.ts';
-import { Relay } from './relay/relay.ts';
+import { Relay, type TargetState } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
 import { HumanSecretVault } from './keychain/human.ts';
 import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/backend.ts';
@@ -71,8 +71,8 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   const x = b as Record<string, unknown>;
   if (!isProfileScope(x.scope)) return null;
   if (x.mode === 'store') {
-    // 등록 창(T-06)은 보안카드·포털 비밀번호만. 인증서 비밀번호는 등록 창이 아니라 처음 쓸 때 금고가 기억한다(대표 지시 2026-11-13, ADR-020 결정 2 갱신).
-    if (typeof x.kind !== 'string' || x.kind === 'cert_password' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
+    // 등록(T-06): 보안카드·포털 비밀번호, 그리고 설정 > 발급 인증의 인증서 비밀번호 저장(대표 지시 2026-11-14). 인증서 비밀번호는 처음 쓸 때도 금고가 기억한다.
+    if (typeof x.kind !== 'string' || !(STORABLE_KINDS as readonly string[]).includes(x.kind)) return null;
     const notice = x.notice as Record<string, unknown> | undefined;
     if (!notice || typeof notice.version !== 'string' || !NOTICE_VERSION_RE.test(notice.version)) return null;
     if (x.runId !== undefined || x.row !== undefined) return null;
@@ -141,6 +141,20 @@ export function pageAddress(url: string): string {
   } catch {
     return '';
   }
+}
+
+/** 포털 기본 팝업 숨김 스크립트(문서마다 한 번). 값은 JSON으로만 싣는다. */
+export function popupScript(hide: string, idPrefix: string, cookie: string): string {
+  return `(() => { try {
+  if (window.__saxPopups) return; window.__saxPopups = 1;
+  const HIDE = ${JSON.stringify(hide)}, PRE = ${JSON.stringify(idPrefix)}, COOKIE = ${JSON.stringify(cookie)};
+  const css = HIDE + '{display:none!important;visibility:hidden!important}';
+  const add = () => { const r = document.head || document.documentElement; if (!r) return false; const s = document.createElement('style'); s.textContent = css; r.appendChild(s); return true; };
+  const seen = new Set();
+  const mark = () => { if (!COOKIE) return; for (const e of document.querySelectorAll(HIDE)) { const id = e.id || ''; if (!id || seen.has(id) || (PRE && !id.startsWith(PRE))) continue; seen.add(id); const key = id.slice(PRE.length); if (!/^[A-Za-z0-9_-]{1,60}$/.test(key)) continue; document.cookie = COOKIE.split('{key}').join(key); } };
+  const start = () => { add(); mark(); new MutationObserver(mark).observe(document.documentElement, { childList: true, subtree: true }); };
+  if (document.documentElement) start(); else document.addEventListener('DOMContentLoaded', start, { once: true });
+} catch (e) {} })();`;
 }
 
 /** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
@@ -443,6 +457,8 @@ export class Vault {
         this.human.lock.runEnded();
         return {};
       }
+      case 'popups.configure':
+        return { ok: this.configurePopups(p) };
       case 'typist.authOk': {
         // 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다 → 기다리던 값을 그때 기억한다. 엔진이 거짓으로 보내도 할 수 있는 일은
         // 사람이 이 실행에서 넣은 값을 저장하는 것뿐이다(값은 금고 밖으로 나가지 않는다).
@@ -823,8 +839,13 @@ export class Vault {
     this.relay = relay;
     // 실행 창(탭)이 사람 손으로 닫혀 보일 page가 하나도 남지 않으면 main에 알린다(Chrome 프로세스는 맥에서 창 없이 남을 수 있다)
     // 포털 팝업(새 Chrome 창)이 뜨면 Chrome이 앞으로 온다: main이 앱을 다시 앞으로(대표 실화면 2026-11-14, 로그인 창이 앱을 가렸다)
-    relay.onPageOpened = () => {
-      if (this.relay === relay && !this.headlessNow) this.emit(['control'], 'browser.launched', { popup: true });
+    relay.onPageOpened = (t) => {
+      if (this.relay !== relay) return;
+      if (!this.headlessNow) this.emit(['control'], 'browser.launched', { popup: true });
+      void this.applyPopups(t);
+    };
+    relay.onPageUrl = (t) => {
+      if (this.relay === relay) this.closePopupWindow(t);
     };
     relay.onTargetGone = (t) => {
       if (t.type !== 'page' || !t.exposed || this.relay !== relay || this.closingChrome) return;
@@ -989,6 +1010,66 @@ export class Vault {
   }
 
   /** 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스). 중계를 멈추고 main에 browser.closed를 한 번 알린다. */
+  /**
+   * 포털 기본 팝업 숨김(대표 지시 2026-11-14 "불필요한 홈택스 팝업은 아예 안 뜨게"). 목록은 패키지 strings에서 엔진이 넘긴다(H-01 2.3.2 popup.*).
+   * - popup.hide: 실행 탭 문서마다 그 선택자를 CSS로 숨긴다. 숨긴 창마다 "오늘 하루 보지 않기" 쿠키(popup.hide.cookie, {key} = id에서 idPrefix를 뺀 값)를 심는다.
+   * - popup.window.close: 그 주소로 열린 새 창은 열리자마자 닫는다.
+   * 값은 길이·글자를 좁게 검사한다(선택자에 중괄호·꺾쇠 없음). 숨김은 보이는 것만 바꾼다: 엔진 closeLayers는 보이지 않는 창을 건너뛴다.
+   */
+  private popupCfg: { hide: string; idPrefix: string; cookie: string; closeUrl: RegExp | null } | null = null;
+  private readonly popupScripted = new Set<string>();
+
+  configurePopups(p: Record<string, unknown>): boolean {
+    const str = (k: string, max: number) => (typeof p[k] === 'string' && (p[k] as string).length <= max ? (p[k] as string) : '');
+    const hide = str('hide', 500);
+    const idPrefix = str('idPrefix', 60);
+    const cookie = str('cookie', 300);
+    const close = str('closeUrl', 300);
+    if (hide && /[{}<>\\]/.test(hide)) return false;
+    if (idPrefix && !/^[A-Za-z0-9_-]+$/.test(idPrefix)) return false;
+    if (cookie && (/[\r\n<>]/.test(cookie) || !cookie.includes('{key}'))) return false;
+    let closeUrl: RegExp | null = null;
+    if (close) {
+      try {
+        closeUrl = new RegExp(close);
+      } catch {
+        return false;
+      }
+    }
+    if (!hide && !closeUrl) {
+      this.popupCfg = null;
+      return true;
+    }
+    this.popupCfg = { hide, idPrefix, cookie, closeUrl };
+    this.popupScripted.clear();
+    this.opts.log.event('vault.popups_configured', { hide: hide ? 1 : 0, cookie: cookie ? 1 : 0, close: closeUrl ? 1 : 0 });
+    for (const t of this.relay?.targets.values() ?? []) {
+      if (t.type !== 'page') continue;
+      void this.applyPopups(t);
+      this.closePopupWindow(t);
+    }
+    return true;
+  }
+
+  private async applyPopups(t: TargetState): Promise<void> {
+    const c = this.popupCfg;
+    const relay = this.relay;
+    if (!c || !c.hide || !relay || t.type !== 'page' || this.popupScripted.has(t.targetId)) return;
+    this.popupScripted.add(t.targetId);
+    const source = popupScript(c.hide, c.idPrefix, c.cookie);
+    await relay.send('Page.addScriptToEvaluateOnNewDocument', { source }, t.vaultSession).catch(() => {});
+    await relay.send('Runtime.evaluate', { expression: source }, t.vaultSession).catch(() => {});
+  }
+
+  private closePopupWindow(t: TargetState): void {
+    const re = this.popupCfg?.closeUrl;
+    if (!re || t.type !== 'page' || !t.url || !re.test(t.url) || !this.chrome) return;
+    void this.chrome.conn.send('Target.closeTarget', { targetId: t.targetId }).then(
+      () => this.opts.log.event('vault.popup_window_closed'),
+      () => {},
+    );
+  }
+
   private dropPendingCert(runId: string): boolean {
     const v = this.pendingCert.get(runId);
     if (!v) return false;
