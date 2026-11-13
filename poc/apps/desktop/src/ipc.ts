@@ -97,6 +97,21 @@ export const SHELL_METHODS = {
   'run.showBrowser': { id: ID },
   // [브라우저] 토글(대표 지시 2026-11-13 "claude desktop처럼"): show면 실행 Chrome을 앱 브라우저 패널 자리에 맞춰 앞으로, 아니면 앱을 앞으로.
   'browser.toggle': { show: { t: 'boolean', required: true } },
+  // 앱 패널 안 브라우저 조작(대표 지시 2026-11-13 "인앱 브라우저에서 조작"): 패널 위 마우스·키·글자. 좌표는 프레임 기준 0~1.
+  // main은 메인 창에서 방금 본 실제 입력(마우스·키)이 있을 때만 금고 screen.input으로 넘긴다.
+  'browser.input': {
+    kind: { t: 'enum', of: ['mouse', 'wheel', 'key', 'text'], required: true },
+    type: { t: 'enum', of: ['mousePressed', 'mouseReleased', 'mouseMoved'] },
+    x: { t: 'number' },
+    y: { t: 'number' },
+    button: { t: 'enum', of: ['left', 'right'] },
+    clickCount: { t: 'number' },
+    dx: { t: 'number' },
+    dy: { t: 'number' },
+    key: { t: 'string', max: 16 },
+    text: { t: 'string', max: 2000 },
+    modifiers: { t: 'number' },
+  },
   // Chrome 설치 안내의 [다시 확인](U6): 설치돼 있는지 다시 보고 판을 새로 보낸다. 읽기만 한다.
   'chrome.check': {},
   // 보안 프로그램(MagicLine4NX) 점검·설치 파일 열기·켜기(B4). 설치·켜기는 실제 입력 뒤에만.
@@ -248,7 +263,7 @@ export type ShellEvent =
   // 진행 화면(B3): 실행 탭 화면 한 장(jpeg data URL, 보기 전용) · 비밀 창 동안 멈춤 · 실행 끝
   | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; url?: string; paused?: boolean; ended?: boolean }
   /** [브라우저] 토글 상태: 실행 Chrome이 패널 자리에 앞으로 와 있나, 실행 Chrome이 있나. */
-  | { type: 'browser'; shown: boolean; available: boolean }
+  | { type: 'browser'; shown: boolean; available: boolean; focus?: boolean }
   | { type: 'bar'; active: true; band: boolean; height: number }
   | { type: 'bar'; active: false; reason: string }
   | { type: 'bar-layout'; band: boolean; height: number }

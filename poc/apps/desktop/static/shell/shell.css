@@ -27,6 +27,8 @@ body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden;
 .tb-browser:disabled { opacity: .45; cursor: default; }
 /* [브라우저] 자리: 실행 중이면 패널을 홈택스가 넓은 배치로 뜨는 폭(720px)까지 넓힌다. Chrome은 주소 줄 아래 패널에 정확히 겹친다. */
 body.browser-live .frame { grid-template-columns: var(--l-rail) minmax(0, 1fr) max(var(--l-panel), 720px); }
+/* 패널 크게(사람 차례·[브라우저]): 대화 열을 줄이고 브라우저 패널을 키운다 */
+body.browser-big .frame { grid-template-columns: var(--l-rail) minmax(320px, 1fr) minmax(0, 2.2fr); }
 .browser-addr { position: sticky; top: 0; z-index: 2; height: 32px; box-sizing: border-box; padding: 6px 12px; font-size: 12px; line-height: 20px; color: var(--ink-3); background: var(--surface-sunken); border-bottom: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-mono, ui-monospace, monospace); user-select: text; }
 .menu { position: absolute; top: calc(100% + 6px); left: 0; min-width: 240px; padding: 6px; display: grid; gap: 2px; background: var(--surface-overlay); border-radius: var(--radius-lg); box-shadow: var(--shadow-overlay); }
 .menu-label { font-size: 12px; line-height: 16px; color: var(--ink-3); padding: 6px 8px 4px; }
@@ -365,7 +367,11 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 
 /* 진행 화면(B3): 실행 중 홈택스 화면, 보기 전용 */
 .run-screen { margin: 12px 0 4px; border: 1px solid var(--line, rgba(127,127,127,.25)); border-radius: 10px; overflow: hidden; min-height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.run-screen img { display: block; width: 100%; height: auto; max-height: 420px; object-fit: cover; object-position: top; pointer-events: none; user-select: none; }
+.run-screen { position: relative; }
+.run-screen img { display: block; width: 100%; height: auto; cursor: default; user-select: none; -webkit-user-drag: none; }
+.run-screen.is-focused { outline: 2px solid var(--accent, var(--ink)); outline-offset: -2px; }
+/* 한글 IME 조합을 받는 보이지 않는 칸(화면 위 왼쪽 위, 글자는 조합이 끝나면 페이지로 간다) */
+.run-screen-input { position: absolute; left: 8px; top: 8px; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; resize: none; pointer-events: none; }
 .run-screen .sx-meta { margin: 10px 12px; text-align: center; }
 .run-screen .run-screen-note { margin: 6px 12px 8px; font-size: 12px; }
 .run-screen[data-state='paused'] { background: var(--surface-2, rgba(127,127,127,.08)); }

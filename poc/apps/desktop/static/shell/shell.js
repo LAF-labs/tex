@@ -296,7 +296,7 @@ function renderTitlebar() {
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
     ),
     // [브라우저](claude desktop처럼): 실행 Chrome을 이 앱 브라우저 패널 자리에 앞으로 올린다. 다시 누르면 앱이 앞으로. 실행 Chrome이 없으면 누를 수 없다.
-    h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), disabled: !state.browser.available, title: state.browser.available ? '홈택스 브라우저 보기·숨기기' : '진행 중인 홈택스 작업이 없어요', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '브라우저'),
+    h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), disabled: !state.browser.available, title: state.browser.available ? (state.browser.shown ? '브라우저 패널 작게' : '브라우저 패널 크게') : '진행 중인 홈택스 작업이 없어요', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '브라우저'),
     // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
@@ -988,9 +988,93 @@ function openPanel(p) {
   renderPanel();
 }
 
+/** CDP 수정 키 비트(Alt 1, Ctrl 2, Meta 4, Shift 8). */
+const modBits = (e) => (e.altKey ? 1 : 0) | (e.ctrlKey ? 2 : 0) | (e.metaKey ? 4 : 0) | (e.shiftKey ? 8 : 0);
+/** 패널에서 그대로 넘기는 특수 키(금고 SCREEN_KEYS와 같은 이름). 글자는 insertText로 간다. */
+const SCREEN_KEYS = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']);
+const SCREEN_CMD_KEYS = new Set(['a', 'z', 'x', 'c']);
+const screenInput = (p) => call('browser.input', p).catch(() => {});
+
 /**
- * 진행 화면(B3): main이 보낸 실행 탭 화면을 패널 자리에 그린다. 보기 전용이라 클릭·키 입력을 받지 않는다.
- * 비밀 창이 열린 동안은 화면 대신 "비밀번호 입력 중"(금고가 중계를 멈춘다). 프레임은 패널을 다시 그리지 않고 그림만 바꾼다.
+ * 앱 안 브라우저 조작(대표 지시 2026-11-13 "인앱브라우저에서 조작"): 중계 화면 위 마우스·휠은 프레임 기준 0~1 좌표로, 특수 키는 키로,
+ * 글자는 한글 조합이 끝난 값만(insertText), 붙여넣기는 글자로 보낸다. 받는 칸은 화면 위의 보이지 않는 입력 칸(IME 조합용)이다.
+ */
+function wireScreen(box, img, input) {
+  const at = (e) => {
+    const b = img.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - b.left) / b.width)), y: Math.min(1, Math.max(0, (e.clientY - b.top) / b.height)) };
+  };
+  let lastMove = 0;
+  img.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    input.focus({ preventScroll: true });
+    void screenInput({ kind: 'mouse', type: 'mousePressed', ...at(e), button: e.button === 2 ? 'right' : 'left', clickCount: Math.min(3, Math.max(1, e.detail || 1)), modifiers: modBits(e) });
+  });
+  img.addEventListener('mouseup', (e) => {
+    e.preventDefault();
+    void screenInput({ kind: 'mouse', type: 'mouseReleased', ...at(e), button: e.button === 2 ? 'right' : 'left', clickCount: Math.min(3, Math.max(1, e.detail || 1)), modifiers: modBits(e) });
+  });
+  img.addEventListener('mousemove', (e) => {
+    const now = performance.now();
+    if (now - lastMove < 50) return;
+    lastMove = now;
+    void screenInput({ kind: 'mouse', type: 'mouseMoved', ...at(e), modifiers: modBits(e) });
+  });
+  img.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 800 : 1;
+    void screenInput({ kind: 'wheel', ...at(e), dx: Math.max(-5000, Math.min(5000, e.deltaX * k)), dy: Math.max(-5000, Math.min(5000, e.deltaY * k)), modifiers: modBits(e) });
+  }, { passive: false });
+  img.addEventListener('contextmenu', (e) => e.preventDefault());
+  const flush = () => {
+    const v = input.value;
+    input.value = '';
+    if (v) void screenInput({ kind: 'text', text: v.slice(0, 2000) });
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229) return;
+    const mods = modBits(e);
+    if ((e.metaKey || e.ctrlKey) && !e.altKey) {
+      // ⌘V·Ctrl+V는 paste 이벤트로, 편집 명령(전체 선택·되돌리기·잘라내기·복사)만 넘긴다
+      if (SCREEN_CMD_KEYS.has(e.key.toLowerCase())) {
+        e.preventDefault();
+        void screenInput({ kind: 'key', key: e.key.toLowerCase(), modifiers: mods });
+      }
+      return;
+    }
+    if (SCREEN_KEYS.has(e.key)) {
+      e.preventDefault();
+      flush();
+      void screenInput({ kind: 'key', key: e.key, modifiers: mods });
+    }
+  });
+  input.addEventListener('input', (e) => {
+    if (!e.isComposing) flush();
+  });
+  input.addEventListener('compositionend', () => flush());
+  input.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const t = e.clipboardData?.getData('text/plain') ?? '';
+    if (t) void screenInput({ kind: 'text', text: t.slice(0, 2000) });
+  });
+  box.addEventListener('focusin', () => box.classList.add('is-focused'));
+  box.addEventListener('focusout', () => box.classList.remove('is-focused'));
+}
+/** 사람 차례(main browser focus): 실행 패널을 열고 중계 화면에 입력 포커스. */
+function focusScreen() {
+  const s = state.screen;
+  if (!s) return;
+  if (state.panel?.kind !== 'run' || state.panel.id !== s.runId) openPanel({ kind: 'run', id: s.runId });
+  requestAnimationFrame(() => {
+    const box = document.querySelector(`[data-run-screen="${CSS.escape(s.runId)}"]`);
+    box?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    box?.querySelector('.run-screen-input')?.focus({ preventScroll: true });
+  });
+}
+
+/**
+ * 진행 화면(B3): main이 보낸 실행 탭 화면을 패널 자리에 그린다. 화면을 직접 눌러 조작한다(wireScreen).
+ * 비밀 창이 열린 동안은 화면 대신 "비밀번호 입력 중"(금고가 중계·입력을 멈춘다). 프레임은 패널을 다시 그리지 않고 그림만 바꾼다.
  */
 function paintScreen() {
   const s = state.screen;
@@ -1004,8 +1088,10 @@ function paintScreen() {
   if (!s.frame) return;
   let img = box.querySelector('img');
   if (!img) {
-    img = h('img', { alt: '홈택스 화면(보기 전용)', draggable: 'false' });
-    box.replaceChildren(img, h('p', { class: 'sx-meta run-screen-note' }, '보기 전용이에요. 위의 [브라우저]를 누르면 이 자리에서 직접 할 수 있어요.'));
+    img = h('img', { alt: '홈택스 화면', draggable: 'false' });
+    const input = h('textarea', { class: 'run-screen-input', 'aria-label': '홈택스 화면에 입력', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', rows: 1 });
+    box.replaceChildren(img, input, h('p', { class: 'sx-meta run-screen-note' }, '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱 금고 창에서 받아요.'));
+    wireScreen(box, img, input);
   }
   box.dataset.state = 'live';
   img.src = s.frame;
@@ -2078,10 +2164,12 @@ window.sax.onEvent((ev) => {
   if (ev.type === 'browser') {
     const wasLive = state.browser.available;
     state.browser = { shown: ev.shown === true, available: ev.available === true };
-    // 실행 중이면 패널을 넓힌다(Chrome이 패널 밖으로 넘치지 않게, shell.css body.browser-live).
+    // 실행 중이면 패널을 넓히고(browser-live), [브라우저]로 크게 하면 대화 열을 줄여 패널을 더 키운다(browser-big)
     document.body.classList.toggle('browser-live', state.browser.available);
+    document.body.classList.toggle('browser-big', state.browser.available && state.browser.shown);
     renderTitlebar();
     if (wasLive !== state.browser.available) renderPanel();
+    if (ev.focus) focusScreen();
     return;
   }
   if (ev.type === 'screen') {
