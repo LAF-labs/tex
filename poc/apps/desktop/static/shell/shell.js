@@ -990,7 +990,9 @@ function renderPanel() {
   if (!p) return el.replaceChildren();
   if (p.kind === 'run') {
     const run = state.runs.get(p.id);
-    el.replaceChildren(run ? runPanel(run, act) : h('div'));
+    // [브라우저] 자리(실행 중일 때): 패널 위 읽기 전용 주소 한 줄. Chrome은 이 줄 바로 아래부터 패널 끝까지 정확히 겹친다(main placeRunBrowser).
+    const addr = state.browser.available ? h('div', { id: 'browser-addr', class: 'browser-addr', role: 'status', 'aria-label': '홈택스 주소(읽기 전용)' }, state.screen?.url || '홈택스') : null;
+    el.replaceChildren(...(addr ? [addr] : []), run ? runPanel(run, act) : h('div'));
     paintScreen();
   } else if (p.kind === 'g24') {
     el.replaceChildren(g24Panel(state.g24.get(p.id), act));
@@ -2023,8 +2025,12 @@ window.sax.onEvent((ev) => {
     return;
   }
   if (ev.type === 'browser') {
+    const wasLive = state.browser.available;
     state.browser = { shown: ev.shown === true, available: ev.available === true };
+    // 실행 중이면 패널을 넓힌다(Chrome이 패널 밖으로 넘치지 않게, shell.css body.browser-live).
+    document.body.classList.toggle('browser-live', state.browser.available);
     renderTitlebar();
+    if (wasLive !== state.browser.available) renderPanel();
     return;
   }
   if (ev.type === 'screen') {
@@ -2033,7 +2039,9 @@ window.sax.onEvent((ev) => {
       return;
     }
     const was = state.screen?.runId === ev.runId ? state.screen : { runId: ev.runId, frame: null, paused: false };
-    state.screen = { ...was, ...(ev.frame ? { frame: ev.frame, paused: false } : {}), ...(typeof ev.paused === 'boolean' ? { paused: ev.paused } : {}) };
+    state.screen = { ...was, ...(ev.frame ? { frame: ev.frame, paused: false } : {}), ...(typeof ev.paused === 'boolean' ? { paused: ev.paused } : {}), ...(typeof ev.url === 'string' && ev.url ? { url: ev.url } : {}) };
+    const addr = document.getElementById('browser-addr');
+    if (addr && state.screen.url && addr.textContent !== state.screen.url) addr.textContent = state.screen.url;
     paintScreen();
     return;
   }

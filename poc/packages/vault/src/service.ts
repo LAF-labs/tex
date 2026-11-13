@@ -118,6 +118,16 @@ export interface VaultOptions {
   pdf?: { maxBytes?: number; armTtlMs?: number };
 }
 
+/** 앱 패널 위 읽기 전용 주소 한 줄: 출처와 경로만(검색어·조각은 싣지 않는다). http(s)가 아니면 빈 글. */
+export function pageAddress(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' || u.protocol === 'http:' ? `${u.host}${u.pathname}`.slice(0, 200) : '';
+  } catch {
+    return '';
+  }
+}
+
 /** Chrome을 띄운 뒤 붙기까지의 상한. 응답 없는 Chrome(멈춘 파이프)에 붙는 중이면 끝나지 않으므로, 넘으면 내리고 실패한다. 보통 2초 안쪽이다. */
 export const LAUNCH_TIMEOUT_MS = 30_000;
 
@@ -526,7 +536,7 @@ export class Vault {
       if (now - m.last < MIRROR_FRAME_MS) return;
       m.last = now;
       const meta = (p.metadata ?? {}) as Record<string, unknown>;
-      this.emit(['control'], 'screen.frame', { data: String(p.data ?? ''), w: Number(meta.deviceWidth) || 0, h: Number(meta.deviceHeight) || 0 });
+      this.emit(['control'], 'screen.frame', { data: String(p.data ?? ''), w: Number(meta.deviceWidth) || 0, h: Number(meta.deviceHeight) || 0, url: pageAddress(w.url) });
     };
     try {
       await relay.send('Page.startScreencast', { format: 'jpeg', quality: 60, maxWidth: 960, maxHeight: 1200, everyNthFrame: 1 }, m.session);

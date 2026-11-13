@@ -37,7 +37,6 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { CHROME_MIN_WIDTH } from './chrome-layout.ts';
 import { fatalText, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
@@ -601,10 +600,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 진행 화면(B3): 금고가 중계한 실행 탭 화면을 지금 실행 패널로만 보낸다(보기 전용, 저장하지 않는다).
     if (name === 'screen.frame' || name === 'screen.paused') {
       if (!mirrorRun) return;
-      const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; paused?: unknown };
+      const d = (data ?? {}) as { data?: unknown; w?: unknown; h?: unknown; url?: unknown; paused?: unknown };
       if (name === 'screen.paused') return send({ type: 'screen', runId: mirrorRun, paused: d.paused === true });
       if (typeof d.data !== 'string' || d.data.length > 2_000_000) return;
-      return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0 });
+      return send({ type: 'screen', runId: mirrorRun, frame: `data:image/jpeg;base64,${d.data}`, w: Number(d.w) || 0, h: Number(d.h) || 0, url: typeof d.url === 'string' ? d.url.slice(0, 200) : '' });
     }
     const cr = name === 'secret.needed' ? parseCodefNeeded(data) : null;
     if (cr) return openCodef(cr);
@@ -1015,15 +1014,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   /** 앱이 포커스를 받아 Chrome이 뒤로 간 시각(토글 클릭이 그 포커스와 겹치면 다시 띄우지 않는다). */
   let appFocusedAt = 0;
   const sendBrowserState = () => send({ type: 'browser', shown: browserShown, available: browserAvailable });
-  /** 브라우저 패널(#panel)의 화면 좌표. 홈택스가 좁은 배치로 바뀌지 않게 폭은 CHROME_MIN_WIDTH 이상(모자라면 왼쪽으로 넓힌다). */
+  /**
+   * 브라우저 자리의 화면 좌표: 패널(#panel)에서 위 주소 줄(#browser-addr)을 뺀 나머지. 패널 바깥으로 넘치지 않는다.
+   * 폭은 렌더러가 실행 중 패널을 넓혀 맞춘다(shell.css body.browser-live, 720px). 주소 줄이 아직 없으면 패널 전체.
+   */
   const panelRect = async (): Promise<{ x: number; y: number; width: number; height: number } | null> => {
     if (win.isDestroyed()) return null;
     const c = win.getContentBounds();
-    const r = (await win.webContents.executeJavaScript(`(() => { const e = document.querySelector('#panel'); if (!e) return null; const b = e.getBoundingClientRect(); return b.width > 0 && b.height > 0 ? { x: b.left, y: b.top, w: b.width, h: b.height } : null; })()`).catch(() => null)) as { x: number; y: number; w: number; h: number } | null;
-    const p = r ?? { x: Math.floor(c.width / 2), y: 0, w: Math.ceil(c.width / 2), h: c.height };
-    const width = Math.min(c.width, Math.max(Math.round(p.w), CHROME_MIN_WIDTH));
-    const right = Math.round(p.x + p.w);
-    return { x: c.x + Math.max(0, right - width), y: c.y + Math.round(p.y), width, height: Math.max(200, Math.round(p.h)) };
+    const r = (await win.webContents.executeJavaScript(`(() => { const e = document.querySelector('#panel'); if (!e) return null; const b = e.getBoundingClientRect(); const a = document.getElementById('browser-addr'); const top = a ? Math.max(b.top, a.getBoundingClientRect().bottom) : b.top; return b.width > 0 && b.bottom - top > 0 ? { x: b.left, y: top, w: b.width, h: b.bottom - top } : null; })()`).catch(() => null)) as { x: number; y: number; w: number; h: number } | null;
+    if (!r) return null;
+    const x = Math.round(c.x + r.x);
+    const y = Math.round(c.y + r.y);
+    return { x, y, width: Math.round(c.x + r.x + r.w) - x, height: Math.max(200, Math.round(c.y + r.y + r.h) - y) };
   };
   /** Chrome을 패널 자리로. front면 앞으로(앱 안 브라우저처럼), 아니면 그 자리 뒤에 두고 앱을 앞으로(appFront일 때만). */
   const placeRunBrowser = async (front: boolean, appFront = true): Promise<boolean> => {
@@ -1089,6 +1091,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const live = runs.isActive(r.id) && r.status !== 'draft';
     if (live && mirrorRun !== r.id) {
       mirrorRun = r.id;
+      // 실행이 시작되면 렌더러가 패널을 브라우저 폭으로 넓히고 주소 줄을 단다(Chrome이 뜨기 전에 자리가 정해지게).
+      browserAvailable = true;
+      sendBrowserState();
       void host.control('screen.start').catch(() => {});
     } else if (!live && mirrorRun === r.id) {
       mirrorRun = null;
