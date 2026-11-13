@@ -115,7 +115,24 @@
    "timeoutMs": 30000
   },
   {
+   "id": "s4d",
+   "type": "branch",
+   "on": {
+    "exists": "hometax.cert.secondRow"
+   },
+   "cases": {
+    "true": "s4e"
+   },
+   "default": "s4f"
+  },
+  {
    "id": "s4e",
+   "type": "handoff",
+   "reason": "cert.manyCerts",
+   "resumeAt": "s4f"
+  },
+  {
+   "id": "s4f",
    "type": "human",
    "kind": "secret",
    "target": "hometax.cert.password",
@@ -127,7 +144,7 @@
    }
   },
   {
-   "id": "s4f",
+   "id": "s4g",
    "type": "click",
    "target": "hometax.cert.loginConfirm",
    "onFail": {
@@ -188,6 +205,11 @@
    "reentry": "reload"
   },
   {
+   "id": "s11a",
+   "type": "wait",
+   "for": "idle"
+  },
+  {
    "id": "s12",
    "type": "fill",
    "target": "hometax.invoice.form.counterpartBizNo",
@@ -210,6 +232,11 @@
     "retry": 0,
     "then": "abort"
    }
+  },
+  {
+   "id": "s13b",
+   "type": "wait",
+   "for": "idle"
   },
   {
    "id": "s14",
@@ -328,7 +355,9 @@
     "totalAmount",
     "issueDate",
     "remark",
-    "receiptType"
+    "receiptType",
+    "counterpartRepName",
+    "counterpartAddress"
    ]
   },
   {
@@ -403,6 +432,20 @@
       "readbackEquals": {
        "fieldKey": "counterpartEmail",
        "ref": "$inputs.email",
+       "ifAbsent": "empty"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "counterpartRepName",
+       "ref": "$inputs.counterpart.repName",
+       "ifAbsent": "empty"
+      }
+     },
+     {
+      "readbackEquals": {
+       "fieldKey": "counterpartAddress",
+       "ref": "$inputs.counterpart.address",
        "ifAbsent": "empty"
       }
      }

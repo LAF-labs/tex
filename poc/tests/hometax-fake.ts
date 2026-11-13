@@ -228,7 +228,7 @@ const CLIENT = String.raw`
       tx('edtSplrEmlIdTop', '이메일 아이디') + '@' + tx('edtSplrEmlDmanTop', '이메일 도메인') + '</td></tr></table>' +
       '<table id="' + P + 'grpDmnr1000Top"><caption>전자세금계산서 공급받는자 정보</caption><tr><td>' + tx('edtDmnrBsnoTop', '사업자등록번호') + btn('btnDmnrBsnoCnfrTop', '확인') + btn('btnDmnrClplcInqrTop', '거래처 조회') +
       '</td></tr><tr><td>' + ro('edtDmnrTnmNmTop', '상호') + ro('edtDmnrRprsFnmTop', '성명') + ro('edtDmnrPfbAdrTop', '사업장') + ro('edtDmnrBcNmTop', '업태') + ro('edtDmnrItmNmTop', '종목') +
-      ro('edtDmnrMchrgEmlIdTop', '주담당 이메일 아이디') + '@' + ro('edtDmnrMchrgEmlDmanTop', '주담당 이메일 도메인') + '<select id="' + P + 'cmbDmnrMchrgEmlDmanCtlTop" title="이메일 도메인 선택"><option>직접입력</option></select>' +
+      ro('edtDmnrMchrgEmlIdTop', '공급받는자 이메일 주소') + '@' + ro('edtDmnrMchrgEmlDmanTop', '주담당 이메일 도메인') + '<select id="' + P + 'cmbDmnrMchrgEmlDmanCtlTop" title="이메일 도메인 선택"><option>직접입력</option></select>' +
       ro('edtDmnrSchrgEmlIdTop', '부담당 이메일 아이디') + '@' + ro('edtDmnrSchrgEmlDmanTop', '부담당 이메일 도메인') + '</td></tr></table>' +
       '<table id="' + P + 'group2342"><caption>전자세금계산서 날짜, 비고</caption><tr><td><input type="text" id="' + P + 'calWrtDtTop_input" title="날짜 입력" value="' + C.today + '"> ' + tx('edtRmrkCntnTop', '비고') + '</td></tr></table>' +
       '<div>합계금액 <span id="' + P + 'edtTotaAmtTop"></span> 공급가액 <span id="' + P + 'edtSumSplCftTop"></span> 세액 <span id="' + P + 'edtSumTxamtTop"></span></div>' +
