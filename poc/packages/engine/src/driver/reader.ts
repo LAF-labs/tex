@@ -127,7 +127,11 @@ export class PlaywrightPageReader implements PageReader {
     // 그 첫 줄을 자기 역할로 읽으면 R-A1이 엉뚱한 역할로 맞거나 틀린다. 그래서 그런 요소는 ARIA 명세대로 'generic'(이름 없음)으로 본다.
     if (await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role'); }).catch(() => false)) return { role: 'generic', name: '', visible, enabled, editable };
     const snap = await h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => '');
-    return { ...ariaHead(snap), visible, enabled, editable };
+    const head = ariaHead(snap);
+    // 숨은 요소는 aria 스냅숏에 없다(역할 빈칸). 그러면 DOM에서 암묵 역할·이름을 읽는다(IR rev v1.3.7: 홈택스 1280 배치의 로그인 상태
+    // 머리말 "로그아웃" 링크가 숨어 있다, 예행 run-b9aa50fb s2). 보이는 요소는 지금처럼 접근성 트리만 믿는다.
+    if (!visible && !head.role) return { ...(await h.handle.evaluate(hiddenIdentity).catch(() => ({ role: '', name: '' }))), visible, enabled, editable };
+    return { ...head, visible, enabled, editable };
   }
 
   async same(a: ElementRef, b: ElementRef): Promise<boolean> {
@@ -139,7 +143,13 @@ export class PlaywrightPageReader implements PageReader {
 
   async text(el: ElementRef): Promise<string> {
     const h = this.handle(el);
-    return h ? h.innerText().catch(() => '') : '';
+    if (!h) return '';
+    // 숨은 요소의 innerText는 빈칸일 수 있다(visibility). 그런 요소만 textContent(공백 접기)를 쓴다.
+    return h.evaluate((n) => {
+      const e = n as HTMLElement;
+      const shown = e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+      return shown ? e.innerText : (e.textContent ?? '').replace(/\s+/g, ' ').trim();
+    }).catch(() => '');
   }
 
   async value(el: ElementRef): Promise<string> {
@@ -268,4 +278,26 @@ export class PlaywrightPageReader implements PageReader {
     if (name === 'main') return this.page.mainFrame();
     return this.page.frame({ name }) ?? null;
   }
+}
+
+/** 숨은 요소의 암묵 역할·이름(접근성 트리에 없을 때만). 링크·단추·입력 칸만 역할을 준다. 그 밖에는 빈 역할이라 동일성이 그대로 거부한다. */
+function hiddenIdentity(n: Node): { role: string; name: string } {
+  // 페이지 안에서 돈다(Playwright가 이 함수만 보낸다): 바깥 이름을 쓰지 않는다.
+  const e = n as Element;
+  const tag = e.tagName;
+  const type = (e.getAttribute('type') ?? '').toLowerCase();
+  const explicit = e.getAttribute('role');
+  const isButtonInput = tag === 'INPUT' && ['button', 'submit', 'reset'].includes(type);
+  const role =
+    explicit ??
+    (tag === 'A' && e.hasAttribute('href')
+      ? 'link'
+      : tag === 'BUTTON' || isButtonInput
+        ? 'button'
+        : tag === 'TEXTAREA' || (tag === 'INPUT' && ['', 'text', 'email', 'tel', 'number', 'search'].includes(type))
+          ? 'textbox'
+          : '');
+  const text = isButtonInput ? (e as HTMLInputElement).value : tag === 'INPUT' || tag === 'TEXTAREA' ? '' : (e.textContent ?? '');
+  const name = (e.getAttribute('aria-label') || text || e.getAttribute('title') || '').replace(/\s+/g, ' ').trim();
+  return { role, name };
 }
