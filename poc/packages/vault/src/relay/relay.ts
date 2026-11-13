@@ -491,6 +491,8 @@ export class Relay {
       }
     } else if (msg.method === 'Page.frameDetached') {
       if (t.win && p.frameId === t.win.frameId) this.endWindow(t, 'detached');
+    } else if (msg.method === 'Page.screencastFrame') {
+      this.onScreencastFrame?.(t, p);
     }
   }
 
@@ -821,13 +823,20 @@ export class Relay {
   openWindow(t: TargetState, kind: SecretWindow['kind'], frameId: string, backendNodeId: number): void {
     t.win = { phase: 'active', kind, frameId };
     t.secretBackendIds.add(backendNodeId);
+    this.onWindowActive?.(t, true);
   }
+
+  /** 화면 중계(B3 진행 화면): 금고 감시 세션의 Page.screencastFrame. 금고가 받아 main에 넘긴다(엔진에는 가지 않는다). */
+  onScreencastFrame?: (t: TargetState, p: Json) => void;
+  /** 비밀 창이 열리고 닫힐 때(중계 멈춤·다시). */
+  onWindowActive?: (t: TargetState, active: boolean) => void;
 
   /** 활성 창 → 오염 상태(D05 §3.5 ②). */
   deactivateWindow(t: TargetState): void {
     if (t.win?.phase === 'active') {
       t.win.phase = 'tainted';
       for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+      this.onWindowActive?.(t, false);
     }
   }
 
@@ -894,7 +903,7 @@ export class Relay {
     );
   }
 
-  private runWindowTarget(): TargetState | undefined {
+  runWindowTarget(): TargetState | undefined {
     return [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
   }
 
