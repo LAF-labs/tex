@@ -89,6 +89,8 @@ const PROBE_FN = `function () {
 
 interface HumanWatch {
   objectId: string;
+  /** 인증서 비밀번호 기억(certMemory)에 쓸 프로필. 없으면 저장하지 않는다. */
+  scope?: string;
   timer: NodeJS.Timeout;
   /** blur + 값 있음을 처음 본 시각(N-47). 길이·포커스가 바뀌면 다시 센다. */
   idleSince?: number;
@@ -113,6 +115,16 @@ export interface SecretOpsOptions {
   stored?: (kind: string, scope: string, row?: number) => Promise<StoredRead>;
   /** 시험만 주입한다(사람 창 정착 판정 시계). 기본 Date.now. */
   now?: () => number;
+  /**
+   * 인증서 비밀번호 기억(대표 지시 2026-11-13). 비밀 창(openForHuman)은 인증서 비밀번호 칸에만 열린다.
+   * 저장값이 있으면 사람 창 대신 금고가 그 칸에 넣고 창을 닫는다(엔진에는 'done'). 없으면 사람이 넣은 값을 창이 닫힐 때 저장한다.
+   * 틀리면 main이 secret.forget으로 지운다(연속 오류 잠금 방지).
+   */
+  certMemory?: {
+    scopeOf(runId: string): string | undefined;
+    read(scope: string): Promise<StoredRead>;
+    save(scope: string, bytes: Uint8Array): Promise<boolean>;
+  };
 }
 
 export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
@@ -310,6 +322,39 @@ export class SecretOps {
     return ok ? { ok } : { ok, reason };
   }
 
+  /** 기억한 인증서 비밀번호를 칸에 넣는다(타이피스트와 같은 방식: 한 글자씩, 칸이 바뀌면 멈춤, 끝에 길이 확인). */
+  private async typeInto(t: TargetState, objectId: string, text: string): Promise<{ ok: boolean }> {
+    const keyEvents = this.policy.typistInput === 'keyEvents';
+    let ok = true;
+    try {
+      if (!keyEvents) await this.relay.send('Input.setIgnoreInputEvents', { ignore: true }, t.vaultSession);
+      await this.relay.send('Runtime.callFunctionOn', { objectId, functionDeclaration: 'function(){this.focus();this.value=""}' }, t.vaultSession);
+      for (const ch of text) {
+        const p = await this.probe(t, objectId);
+        if (!p || p.type !== 'password' || !p.connected) {
+          ok = false;
+          break;
+        }
+        if (keyEvents) {
+          await this.relay.send('Input.dispatchKeyEvent', { type: 'keyDown', key: ch, text: ch, unmodifiedText: ch }, t.vaultSession);
+          await this.relay.send('Input.dispatchKeyEvent', { type: 'keyUp', key: ch }, t.vaultSession);
+        } else {
+          await this.relay.send('Input.insertText', { text: ch }, t.vaultSession);
+        }
+        if (this.policy.keyDelayMs > 0) await sleep(this.policy.keyDelayMs);
+      }
+      if (ok) {
+        const p = await this.probe(t, objectId);
+        ok = !!p && p.len === [...text].length;
+      }
+    } catch {
+      ok = false;
+    } finally {
+      if (!keyEvents) await this.relay.send('Input.setIgnoreInputEvents', { ignore: false }, t.vaultSession).catch(() => {});
+    }
+    return { ok };
+  }
+
   /**
    * 비밀 사용 직후 그 값으로 logs·staging을 훑어 건수만 남긴다(N-17, PoC 빌드). 짧은 값(보안카드 칸)은 정상 글자와 겹쳐 건너뛴다.
    * 기다림은 SELF_SCAN_TIMEOUT_MS까지. 넘으면 결과를 버리고 vault.leak_scan_skipped.
@@ -355,10 +400,29 @@ export class SecretOps {
       if (!el) return { ok: false, reason: 'not_found' };
       const hosts = Object.values(this.policy.secretHosts).flat();
       if (!hostAllowed(hostOf(el.frameUrl), hosts)) return { ok: false, reason: 'origin_not_allowed' };
+      const mem = this.opts.certMemory;
+      const scope = mem?.scopeOf(req.runId);
+      if (mem && scope) {
+        const r = await mem.read(scope).catch(() => null);
+        if (r?.ok) {
+          const text = new TextDecoder().decode(r.bytes);
+          r.bytes.fill(0);
+          this.relay.openWindow(t, 'typist', el.frameId, el.backendNodeId);
+          this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
+          const typed = await this.typeInto(t, el.objectId, text);
+          this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
+          this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
+          this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, remembered: true });
+          this.selfScan(text);
+          if (typed.ok) return { ok: true };
+          // 넣지 못했으면(칸이 바뀜 등) 사람 창으로 다시 연다
+        }
+      }
       this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
       const watch: HumanWatch = {
         objectId: el.objectId,
         timer: setInterval(() => void this.tickHuman(t), 250),
+        ...(scope ? { scope } : {}),
       };
       this.human.set(t.targetId, watch);
       return { ok: true };
@@ -424,6 +488,11 @@ export class SecretOps {
         if (r.result.value) {
           this.relay.addKnownSecret(t.targetId, knownValueVariants(r.result.value));
           this.selfScan(r.result.value);
+          // 처음 넣은 인증서 비밀번호를 기억한다(대표 지시 2026-11-13). 따로 묻지 않는다. 값은 로그에 남기지 않는다.
+          if (this.opts.certMemory && w.scope) {
+            const saved = await this.opts.certMemory.save(w.scope, new TextEncoder().encode(r.result.value)).catch(() => false);
+            this.log.event('secret.remembered', { kind: 'cert_password', ok: saved });
+          }
         }
       } catch {
         // 노드가 이미 분리됨

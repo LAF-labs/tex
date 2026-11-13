@@ -97,6 +97,9 @@ export const SHELL_METHODS = {
   'run.showBrowser': { id: ID },
   // Chrome 설치 안내의 [다시 확인](U6): 설치돼 있는지 다시 보고 판을 새로 보낸다. 읽기만 한다.
   'chrome.check': {},
+  // 기억한 인증서 비밀번호(대표 지시 2026-11-13): 있는지만 보고, 설정의 [지우기]로 지운다. 값은 오가지 않는다.
+  'certMemory.status': {},
+  'certMemory.forget': {},
   // InDoubt 카드(직접 확인 안내)를 열고 닫음. main은 이것으로 증언 바를 띄우고 내린다(ADR-021 결정 5). 증언 자체는 바 클릭으로만 받는다.
   'incident.open': { id: ID },
   'incident.close': { id: ID },
