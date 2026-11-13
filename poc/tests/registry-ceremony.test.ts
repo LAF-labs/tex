@@ -125,9 +125,10 @@ describe('단독 모드 의식: 키 → 핀 → 루트 2-of-3 → 운영 문서'
     ix = attachTimestamp('index', ix, await c.sign('index', ix, 'timestamp-1', 'timestamp'), c.trust);
     assert.doesNotThrow(() => verifyIndex(ix as never, 'stable', tr, new Set(), null, NOW));
     assert.equal(acceptIndex(ix as never, { roots, revoked: new Set(), current: null, now: NOW }).ok, true);
-    let rel: Record<string, unknown> = { channel: 'stable', version: '1.0.0', releaseDate: ISO(0), expiresAt: ISO(7 * 24), rolloutPercent: 100, files: [{ url: 'SovereignAX-Setup-1.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 1 }], signature: TS };
+    // 릴리스: 사람은 내용(판·파일·주소)에만, 기간·타임스탬프는 게시 관문이 붙인다
+    let rel: Record<string, unknown> = { channel: 'stable', version: '1.0.0', releaseDate: ISO(0), rolloutPercent: 100, files: [{ url: 'SovereignAX-Setup-1.0.0.exe', sha512: createHash('sha512').update('x').digest('base64'), size: 1 }], signature: TS };
     rel = collectSignatures('release', rel, [await c.sign('release', rel, 'release-1')], c.trust).doc;
-    assert.doesNotThrow(() => verifyRelease(rel as never, 'stable', tr, new Set(), null, NOW));
+    assert.doesNotThrow(() => verifyRelease(rel as never, 'stable', tr, new Set(), null, NOW, undefined, { content: true }));
     let em: Record<string, unknown> = { ...structuredClone(st), monotonic: 2, portalModeCeiling: { hometax: 'assisted' }, signatures: [], timestamp: TS };
     const er = collectSignatures('status', em, [await c.sign('status', em, 'emergency-1')], c.trust);
     assert.equal(er.role, 'emergency');

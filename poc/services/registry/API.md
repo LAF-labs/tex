@@ -22,7 +22,7 @@
 | 정책 `policy/{ver}.json`·`current.json` | JCS(policy − `signatures`·`issuedAt`·`expiresAt`·`timestamp`) | 정책 키 2-of-3 또는 긴급 키 1 | `timestamp` ≤ 72시간 | `policy.validity_too_long` |
 | status `registry/status.json` | 위와 같은 규칙 | 정책 키 2-of-3 또는 긴급 키 1 | `timestamp` ≤ 48시간 | `registry.status_validity_too_long` |
 | 폐기 목록 `registry/revoked_keys.json` | 위와 같은 규칙 | 루트 키 2-of-3 | `timestamp` ≤ 24시간 | `registry.revoked_validity_too_long` |
-| 릴리스 `releases/{channel}/latest.json` | JCS(manifest − `signature`) | 릴리스 키 1 | 문서 안 ≤ 14일 | `registry.release_validity_too_long` |
+| 릴리스 `releases/{channel}/latest.json` | JCS(manifest − `signature`·`issuedAt`·`expiresAt`·`timestamp`) | 릴리스 키 1 | 타임스탬프 키가 JCS({contentDigest, issuedAt, expiresAt})에, ≤ 14일(서버가 붙이고 재서명 cron이 7일로 이어 감) | `registry.release_validity_too_long` |
 | 릴리스 `rootChange`(선택) | JCS(manifest − `signature`, `rootChange` − `signatures`) | 루트 2-of-3 | 위와 같음 | `registry.signature_insufficient`·`registry.key_epoch_mismatch` |
 
 채널: `stable`·`beta`·`hotfix`. 다른 이름은 `registry.not_found`.
@@ -58,7 +58,7 @@
 | `PUT /admin/v1/policy` | 서명된 정책 | `200 {"monotonic","emergency"}` | `{ver}.json`이 이미 있으면 같은 `monotonic`(신선도 재서명)만(`registry.version_rollback`) |
 | `PUT /admin/v1/status` | status | `200 {"monotonic","emergency"}` | 긴급 키 단독본은 아래 "엄격하게 보수적"만 |
 | `PUT /admin/v1/revoked-keys` | 폐기 목록 | `200 {"monotonic"}` | 이전 목록의 키가 빠지면 `registry.revoked_shrunk`(폐기는 되돌릴 수 없다) |
-| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트 | `200 {"version"}` | 저장된 version보다 커야 함. 같은 version은 `files`가 같을 때만(신선도 재발행), 그 밖은 `registry.version_rollback`. `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
+| `PUT /admin/v1/releases/{channel}` | 릴리스 매니페스트(`timestamp` 없이 올리면 서버가 `issuedAt`·`expiresAt`(7일)·`timestamp`를 붙인다) | `200 {"version"}` | 저장된 version보다 커야 함. 같은 version은 `files`가 같을 때만(신선도 재발행), 그 밖은 `registry.version_rollback`. `latest.yml`을 먼저, `latest.json`을 마지막에 쓴다(json이 게시 기준이라 중간 실패 뒤 같은 버전 재시도 가능) |
 
 **첫 게시 도장**(CEREMONY.md §5·§6 "타임스탬프는 서버가 붙인다", 팀장 지시 2026-11-09):
 - 정책·status·폐기 목록·인덱스(ADR-043)를 `timestamp` 필드 **없이** 올리면, 서버가 타임스탬프 역할 온라인 키(`REGISTRY_LOG_SIGNING_KEY`, 기동 때 핀과 대조)로 `issuedAt`(지금)·`expiresAt`·`timestamp`를 붙인다. 유효 기간은 재서명 cron과 같다(폐기 목록 24시간, status·정책·인덱스 48시간, `restamp`).
@@ -122,14 +122,18 @@
 ### 릴리스 매니페스트 → latest.yml
 
 ```json
-{ "channel": "stable", "version": "1.2.0", "releaseDate": "…", "expiresAt": "…", "rolloutPercent": 10,
-  "files": [ { "url": "tex-Setup-1.2.0.exe", "sha512": "<base64 88자>", "size": 123456 } ],
-  "signature": { "keyId": "release-1", "alg": "ed25519", "sig": "…" } }
+{ "channel": "beta", "version": "1.2.0", "releaseDate": "…", "rolloutPercent": 10,
+  "files": [ { "url": "https://<store>.public.blob.vercel-storage.com/releases/beta/SovereignAX-1.2.0-arm64.zip", "sha512": "<base64 88자>", "size": 123456 } ],
+  "signature": { "keyId": "release-1", "alg": "ed25519", "sig": "…" },
+  "issuedAt": "…", "expiresAt": "…", "timestamp": { "keyId": "timestamp-1", "alg": "ed25519", "sig": "…" } }
 ```
+
+- 기간(부장 결정 2026-11-13, 인덱스 ADR-043과 같은 구조): 사람(release 키)은 판·파일·주소·`releaseDate`에만 서명한다. `issuedAt`·`expiresAt`·`timestamp`는 게시 관문이 처음 붙이고(7일), 재서명 cron이 남은 기간이 절반 아래면 같은 내용에 다시 붙인다(`resignAll` 결과 `release: {stable, beta, hotfix}`). 판마다 Touch ID 1번이고 그 뒤 사람 손이 없다.
+- 설치본 파일은 Vercel Blob 공개 주소에 둔다(155MB가 Storage 버킷·함수 상한을 넘는다). 주소도 서명된 내용이고 클라이언트가 sha512로 바이트를 확인하므로 공개여도 된다.
 
 선택 필드 `rootChange: {keyEpoch, changes, signatures}`(뿌리 변경 릴리스, ADR-028 결정 3, [`@sax/updater`](../../packages/updater/src/manifest.ts)와 같은 모양): `changes`는 `keyEpoch`·`allowlist`·`ceiling` 중 중복 없이 1개 이상, `changes`에 `keyEpoch`가 있으면 `keyEpoch`가 지금 핀보다 커야 하고 없으면 같아야 한다. 루트 키가 먼저 서명하고, 릴리스 키는 루트 서명까지 포함한 매니페스트에 서명한다. 게시본은 시험에서 `@sax/updater` `verifyRelease`가 그대로 받는다.
 
-`files` 1~8개, `url`은 `^[A-Za-z0-9._-]{1,128}$`(경로·개행 없음, YAML 주입 없음). `latest.yml`은 이 매니페스트에서 `version`·`files`·`path`·`sha512`·`releaseDate`만 옮긴다. 클라이언트 main은 `latest.json` 서명·만료·다운그레이드를 직접 검증한 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
+`files` 1~8개, `url`은 파일 이름 `^[A-Za-z0-9._-]{1,128}$`(`/releases/{channel}/` 아래) 또는 https 절대 주소(소문자 호스트, 경로 조각은 비예약 문자만, 쿼리·인코딩 없음, 512자 이하). 둘 다 YAML 주입이 없다. `latest.yml`은 이 매니페스트에서 `version`·`files`·`path`·`sha512`·`releaseDate`만 옮긴다. 클라이언트 main은 `latest.json` 서명·만료·다운그레이드를 직접 검증한 뒤에만 electron-updater에 sha512를 넘긴다(ADR-028).
 
 ## 투명성 로그(RFC 9162, D09 §8.3, ADR-028, 팀장 결정 2026-11-06)
 

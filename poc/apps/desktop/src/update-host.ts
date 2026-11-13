@@ -185,9 +185,10 @@ export class UpdaterStateFile {
 
 const DAY_MS = 24 * 3600_000;
 
-/** 받은 파일 가운데 설치본(files[0].url과 이름이 같은 것). 없으면 첫 파일(어차피 sha512 재확인에서 걸린다). */
+/** 받은 파일 가운데 설치본(files[0] 주소의 마지막 이름과 같은 것, electron-updater가 그 이름으로 저장한다). 없으면 첫 파일(어차피 sha512 재확인에서 걸린다). */
 export function pickInstaller(files: readonly string[], want: ReleaseFile): string | null {
-  return files.find((f) => path.basename(f) === want.url) ?? files[0] ?? null;
+  const name = want.url.startsWith('https://') ? path.posix.basename(new URL(want.url).pathname) : want.url;
+  return files.find((f) => path.basename(f) === name) ?? files[0] ?? null;
 }
 
 export function startUpdateHost(o: UpdateHostOptions): UpdateHost {
