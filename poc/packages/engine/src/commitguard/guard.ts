@@ -32,7 +32,7 @@ export interface CommitGuardInput {
   /** manifest.domains. */
   domains: readonly string[];
   vault: VaultCommitPort;
-  ledger: Pick<Ledger, 'resolve' | 'observedManual'>;
+  ledger: Pick<Ledger, 'resolve' | 'attestManual' | 'get'>;
   /** R-C2: 지금 의도의 커밋 스텝 행(게이트가 아는 것). 없으면 null. */
   manualRow: () => ArmRow | null;
   now: () => number;
@@ -247,9 +247,9 @@ export class CommitGuard {
       return;
     }
     try {
-      this.i.ledger.observedManual(row);
-      this.i.ledger.resolve(row.intentId, row.stepId, 'in_doubt');
-      this.i.journal('ledger.observed_manual', { effect, bound: true, intentId: row.intentId, stepId: row.stepId, state: 'in_doubt' });
+      const step = this.i.ledger.attestManual(row);
+      if (this.i.ledger.get(row.intentId, step)?.state !== 'committed') this.i.ledger.resolve(row.intentId, step, 'in_doubt');
+      this.i.journal('ledger.observed_manual', { effect, bound: true, intentId: row.intentId, stepId: step, state: 'in_doubt' });
     } catch (e) {
       this.i.journal('ledger.observed_manual', { effect, bound: true, intentId: row.intentId, stepId: row.stepId, code: (e as { code?: string }).code ?? 'error' });
     }

@@ -245,6 +245,8 @@ export class RunController {
   /** 게이트 → 주 비가역 X, X → 게이트. */
   private readonly primaryOf = new Map<string, string>();
   private readonly gateOf = new Map<string, string>();
+  /** 게이트가 허가하는 주 비가역 X가 하나뿐이면 그 id. 둘 이상이면 null: 원장 행이 없을 때 [직접 발급함]이 어느 X인지 모른다. */
+  private readonly soleX: string | null;
   /** 문서 순서로 게이트 바로 앞의 체크포인트(정적, 재시작·핸드오프 뒤 되감기). */
   private readonly staticPreGate = new Map<string, string>();
   private readonly visitedCp = new Set<string>();
@@ -299,6 +301,8 @@ export class RunController {
         if (cp) this.staticPreGate.set(id, cp);
       }
     }
+    const xs = new Set(this.primaryOf.values());
+    this.soleX = xs.size === 1 ? [...xs][0]! : null;
     // 비가역 스텝은 언제나 조율기 것이다(넘겨받은 핸들러로 덮을 수 없다). human_commit·send_email은 아직 없어 실행하지 않는다.
     // sign도 조율기 것이다: 커밋 구간을 알아야 거부할 수 있다.
     const bound = {
@@ -431,7 +435,7 @@ export class RunController {
       const unresolved = this.i.ledgerStates().some((s) => s === 'in_doubt' || s === 'observed_manual') || !!this.i.observedManual?.();
       this.fire({ t: 'handoff_resume', ledgerInDoubt: unresolved }, null, null);
       if (this.name() !== 'Running') return this.result(null, null);
-      if (this.st.reverify) return this.reverify();
+      if (this.st.reverify) return this.reverify(this.i.inDoubtStep?.() ?? null);
       return this.loop(this.resumeAt, null);
     }
     if (n === 'Paused' || n === 'Interrupted') {
@@ -445,13 +449,17 @@ export class RunController {
     return this.result(null, 'engine.illegal_transition');
   }
 
-  /** "직접 발급함"(HandedOff): 원장 observed_manual(onEffect가 기록) → 그 X의 verify. */
+  /**
+   * "직접 발급함"(HandedOff): 원장 observed_manual(onEffect가 그 X에 기록) → 그 X의 verify.
+   * 무장 전이면 원장 행이 없으니 X는 게이트가 허가한 주 비가역 하나다. 그것도 모르면 X 없이(행 없음) verify unknown → InDoubt.
+   */
   async attestManualCommit(): Promise<RunOutcome> {
     if (this.name() !== 'HandedOff') return this.result(null, 'engine.illegal_transition');
     this.leaveHandoff();
-    this.fire({ t: 'attest_manual_commit' }, null, null);
+    const x = this.i.inDoubtStep?.() ?? this.soleX;
+    this.fire({ t: 'attest_manual_commit' }, x, null);
     if (this.name() !== 'Running' || !this.st.reverify) return this.result(null, null);
-    return this.reverify();
+    return this.reverify(x);
   }
 
   // ---------------- 실행 루프 ----------------
@@ -597,8 +605,7 @@ export class RunController {
   }
 
   /** 핸드오프 재개·"직접 발급함" 뒤 그 X의 verify(조회만). committed → X 다음(사후 스텝), not_committed → 게이트 앞. */
-  private async reverify(): Promise<RunOutcome> {
-    const x = this.i.inDoubtStep?.() ?? null;
+  private async reverify(x: string | null): Promise<RunOutcome> {
     const r: VerifyResult = x && this.i.verify ? await this.i.verify(x).catch(() => 'unknown' as const) : 'unknown';
     this.i.journal('verify.after_handoff', { ...(x ? { stepId: x } : {}), result: r });
     this.fire({ t: 'verify', result: r }, x, r === 'unknown' ? 'verify.unknown' : null);
@@ -1268,6 +1275,8 @@ export class RunController {
    */
   private ctx(ev?: RunEvent): MachineCtx {
     let ledger = this.i.ledgerStates();
+    // [직접 발급함]은 이 전이의 효과로 observed_manual을 적는다. 정지 분기가 그 행을 보아야 Paused(재게이트)로 가지 않는다.
+    if (ev?.t === 'attest_manual_commit') ledger = [...ledger, 'observed_manual'];
     const result = ev?.t === 'verify' || ev?.t === 'indoubt_resolved' ? ev.result : 'unknown';
     if (result !== 'unknown') {
       const x = ledger.findIndex((s) => UNRESOLVED_LEDGER.has(s));

@@ -146,6 +146,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 - 행은 입력(`inputs_hash`)·패키지(`package_digest`)·승인 내용(`action_hash`)에 결속된다. 같은 의도의 비가역 둘(주·후속)은 `step_id`로 구분되어 서로 덮어쓰지 않는다.
 - 상태: `armed → dispatched → committed | not_committed | in_doubt`. 그리고 `observed_manual`: 핸드오프·`human(manual)` 중 가드가 관측한 커밋 요청 또는 사용자의 "직접 발급함"(R-C2). `observed_manual`은 verify로 `committed`/`not_committed`가 되거나 `in_doubt`로 남는다.
+- 무장 전(게이트 승인 전) "직접 발급함"도 행을 남긴다: 게이트가 허가한 주 비가역 X가 하나면 그 X 행을 `observed_manual`로 넣는다. 재료는 그 실행의 의도·입력 해시·패키지·초안의 업무 키·HMAC이고 `action_hash`는 플레이북·스텝·입력 해시·발급 키로 만든다(승인 내용이 없다). X가 여럿이면 행 없이 `in_doubt`로 끝낸다(2026-11-12).
+- 그 X가 이미 `not_committed`(예: 무장 뒤 누르기 전 `identity_mismatch`)여도 "직접 발급함"은 남는다. 종결 행은 바꾸지 않고 같은 의도에 따로 행 `<X>.manual`(`observed_manual`, 같은 발급 키)을 넣는다(`Ledger.attestManual`). 그 뒤 verify 판정은 그 행에 붙는다. 같은 발급 키의 열린 행이라 사다리는 멈추고 새 무장은 `ledger_issue_open`이다. 가드 관측(R-C2)도 같다(2026-11-12).
 - 순서: 토큰 소비 + `armed` 기록 커밋 → readback 재계산 → 클릭 → `dispatched` → verify → 종결 상태.
 - 재시작 시 `armed|dispatched|observed_manual`은 모두 `in_doubt`로 승격.
 - **의도 재사용 거부**: 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 원장의 것과 다르면 거부하고 보안 이벤트 `ledger.intent_reuse`를 남긴다.
@@ -192,6 +194,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 - **발급 키 불변식**: `irreversible_log.issue_key`(발급 단계 행에만)와 부분 유일 색인 `ux_irr_issue_live`(D07). 같은 키에 committed·미종결 행은 경로와 무관하게 하나다. 무장 트랜잭션이 먼저 검사하고(`ledger_issue_committed`·`ledger_issue_open`) 색인이 뒷받침한다.
 - API 칸: 무장 → 호출 한 번 → 성공이면 committed(승인번호). 오류·끊김이면 다시 부르지 않고 문서번호로 조회한다. 있음 = committed, 없음 확인 = not_committed, 모름 = in_doubt. 팝빌 문서번호(MgtKey)는 발급 키만으로 만든다(같은 건은 몇 번째 시도든 같은 번호, 원천의 중복 거부가 두 번째 문서를 막는다). "없음 확인"은 홈택스 verify처럼 하한(첫 조회부터 60초, 조회 2번 모두 없음)을 채워야 하고, 그 전에 끝나면 in_doubt다. 거절 응답 뒤에도 조회로 확인한다. CODEF 발행 상품은 우리가 넣는 문서번호가 없어 목록 대조에 기댄다.
 - 같은 키 재요청: 진행 중이면 그 상태, committed면 발급됨, 미종결이면 멈춤을 돌려주고 새 시도를 만들지 않는다.
+- 홈택스 자동 칸의 사람 대기 [직접 발급함]은 무장 전이어도 실행이 발급 단계(s21) 행에 발급 키를 붙여 `observed_manual`로 남긴다(§4). 사다리는 그 행으로 멈춘다.
 - 실제 API 호출 코드는 연결 원천(키·회원 등록)이 있을 때만 켠다. 없으면 그 칸은 `api.not_connected`로 건너뛴다.
 - API 칸은 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급, §7)을 보지도 세지도 않는다. 그 상한은 홈택스 계정 보호 장치이고, 두 번 발급은 발급 키 원장이 막는다(부장 결정 2026-11-12).
 

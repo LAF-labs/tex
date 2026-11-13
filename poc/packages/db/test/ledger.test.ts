@@ -74,6 +74,31 @@ describe('원장 후속 API', () => {
     assert.equal(l.get('m-new', 'issue')!.state, 'committed');
   });
 
+  it('attestManual: 종결은 바꾸지 않는다. not_committed 뒤면 따로 행 <step>.manual(같은 발급 키)에 남기고 그 키의 새 무장을 막는다', () => {
+    const l = new Ledger(db);
+    const run = newRun();
+    const key = '01KAZZATTEST0000000000000A';
+    const a = (id: string): ArmRow => ({ ...arm(run, id), issueKey: key });
+    assert.equal(l.attestManual(arm(run, 'am-new')), 'issue', '행 없음: 그 자리에 observed_manual');
+    assert.equal(l.get('am-new', 'issue')!.state, 'observed_manual');
+    gateArm(arm(run, 'am-done'));
+    l.resolve('am-done', 'issue', 'committed');
+    assert.equal(l.attestManual(arm(run, 'am-done')), 'issue', 'committed: 쓰지 않는다');
+    assert.equal(l.get('am-done', 'issue')!.state, 'committed');
+    gateArm(a('am-not'));
+    l.resolve('am-not', 'issue', 'not_committed', 'identity_mismatch');
+    assert.equal(l.attestManual(a('am-not')), 'issue.manual');
+    assert.equal(l.attestManual(a('am-not')), 'issue.manual', '두 번 불러도 같은 행');
+    assert.equal(l.get('am-not', 'issue')!.state, 'not_committed', '종결은 그대로(ADR-042)');
+    assert.deepEqual(l.byIssueKey(key).map((r) => `${r.stepId}:${r.state}`).sort(), ['issue.manual:observed_manual', 'issue:not_committed']);
+    const g = new GateRepo(db);
+    g.open('am-q2', run);
+    g.decide('am-q2', 'approved', 'user');
+    assert.throws(() => l.consumeAndArm('am-q2', a('am-next')), code('ledger_issue_open'), '같은 발급 키의 새 시도는 열린 따로 행이 막는다');
+    l.resolve('am-not', 'issue.manual', 'committed', null, 'verify-ref');
+    assert.equal(l.attestManual(a('am-not')), 'issue.manual', '따로 행이 committed면 쓰지 않는다');
+  });
+
   it('armFollowUp: 주 단계가 committed일 때만, 게이트 없이 armed. 이미 있으면 던진다', () => {
     const l = new Ledger(db);
     const run = newRun();
