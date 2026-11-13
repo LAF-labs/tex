@@ -45,7 +45,8 @@ export async function startFixtureMode(opts: { headful?: boolean } = {}): Promis
       keyDelayMs: 5,
       typistInput: 'insertText',
     },
-    testChromeArgs: opts.headful ? ['--use-mock-keychain'] : ['--headless=new', '--use-mock-keychain'],
+    testChromeArgs: ['--use-mock-keychain'],
+    headless: !opts.headful,
   });
   const fixture = await startH01Fixture({
     registry: Object.fromEntries(DEMO_COUNTERPARTIES.map((c) => [c.bizNo, c.name])),

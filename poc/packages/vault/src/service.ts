@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { dirGuard, preparePrivateDir, type AppPaths, type DirGuard, type EventLog } from '@sax/platform';
-import { downloadPreferences, EXTENSION_ALLOWLIST, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
+import { downloadPreferences, EXTENSION_ALLOWLIST, LOOPBACK_ORIGINS, LOOPBACK_PERMISSION_NAMES, SECRET_ORIGINS, SECRET_TTL_MS, TYPIST_INPUT_MODE, TYPIST_KEY_DELAY_MS, VAULT_SELF_SCAN } from './constants.ts';
 import { CHROME_NOT_INSTALLED, findInstalledChrome } from './chrome/find.ts';
 import { launchChrome, type LaunchedChrome } from './chrome/launch.ts';
 import { hasGoogleSignin, listInstalledExtensions, removeCrashDumps, removeProfileResidue, verifyProfileSettings, writeProfileSettings } from './chrome/profile.ts';
@@ -70,8 +70,10 @@ export function parseSecretInputBind(b: unknown): SecretInputBind | null {
   }
   if (x.mode !== undefined && x.mode !== 'oneshot') return null;
   if (typeof x.runId !== 'string' || !RUN_ID_RE.test(x.runId)) return null;
-  // 1회용 입력 창은 타이피스트가 넣는 종류만(인증서 비밀번호는 사용자가 포털 칸에 직접, ADR-020 결정 2·ADR-025 결정 10).
-  if (!isTypistKind(x.kind) || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
+  // 1회용 입력 창은 타이피스트가 넣는 종류와, 창 없는 Chrome의 인증서 비밀번호(금고가 칸을 잡고 앱 창으로 받는다, 부장 지시 2026-11-13 ②).
+  // 어느 쪽이든 금고가 먼저 secret.needed로 부른 결속만 붙는다(attachPort의 hasNeed).
+  if (!(isTypistKind(x.kind) || x.kind === 'cert_password') || !Object.hasOwn(SECRET_ORIGINS, x.kind)) return null;
+  if (x.kind === 'cert_password' && x.row !== undefined) return null;
   // 보안카드는 칸 하나씩(row 필수), 포털 비밀번호는 칸 번호가 없다(D05 §4).
   if (x.kind === 'security_card' ? !isRow(x.row) : x.row !== undefined) return null;
   const out: OneShotBind = { runId: x.runId, kind: x.kind as SecretKind, scope: x.scope };
@@ -87,6 +89,11 @@ export interface VaultOptions {
   policy?: RelayPolicy;
   /** 테스트 전용 Chrome 인자(헤드리스 등). */
   testChromeArgs?: string[];
+  /**
+   * 창 없는 Chrome으로 띄운다(기본 true, 대표 요청 2026-11-13). 진행은 앱 패널 중계(screen.start)로 보고,
+   * 사람이 페이지를 만져야 할 때만 browser.reveal로 창 있는 Chrome으로 다시 띄운다. 창을 보며 하는 시험만 false.
+   */
+  headless?: boolean;
   /** 테스트에서 비공개 루트 확인을 건너뛰지 않도록 기본은 OS 구현. */
   dirGuard?: DirGuard;
   /** 테스트 전용. 기본은 LAUNCH_TIMEOUT_MS. */
@@ -121,6 +128,10 @@ export class Vault {
   private readonly policy: RelayPolicy;
   private chrome: LaunchedChrome | null = null;
   private launching = false;
+  /** 지금 Chrome이 창 없이 떴나. browser.reveal 뒤에는 이 기동 동안 창 있는 Chrome이다. */
+  private headlessNow = false;
+  /** 다음 기동만 창 있는 Chrome으로(browser.reveal). 기동하면 지운다. */
+  private revealNext = false;
   /** shutdown마다 늘린다. 기동 중에 내리기가 오면 기동이 자기 세대가 지난 것을 보고 그만둔다. */
   private generation = 0;
   relay: Relay | null = null;
@@ -297,8 +308,11 @@ export class Vault {
       if (!same('kind') || !same('scope') || !same('row')) throw new Error('bind_mismatch');
       // 포트를 붙인 뒤 요청이 만료·소비됐으면(같은 요청에 창이 둘 등) 받지 않는다.
       if (!this.hasNeed(bind)) throw new Error('not_requested');
-      this.requireOps().secrets.provide(bind, bytes);
+      const ops = this.requireOps();
+      ops.secrets.provide(bind, bytes);
       this.needs.delete(needKey(bind));
+      // 창 없는 Chrome의 인증서 비밀번호: 기다리던 칸에 금고가 바로 넣는다(SecretOps.appProvided).
+      if (bind.kind === 'cert_password') void ops.appProvided(bind);
       this.post(port, { t: 'rpc', id: msg.id, result: {} });
     } catch (e) {
       bytes?.fill(0);
@@ -454,8 +468,10 @@ export class Vault {
       case 'npki.list':
         return scanNpki({ roots: this.opts.npki?.roots, fs: this.opts.npki?.fs, log: this.opts.log });
       case 'status':
-        return { launched: !!this.chrome, profileProblems: this.profileProblems };
+        return { launched: !!this.chrome, headless: !!this.chrome && this.headlessNow, profileProblems: this.profileProblems };
       case 'browser.focus':
+        // 창 없는 Chrome은 앞으로 올릴 창이 없다(main은 browser.reveal로 창 있는 Chrome을 띄운다).
+        if (this.headlessNow) return { focused: false, headless: true };
         return { focused: this.relay ? await this.relay.bringToFront() : false };
       case 'screen.start':
         return { started: await this.startMirror() };
@@ -470,6 +486,7 @@ export class Vault {
         };
         const bounds = { left: n('x'), top: n('y'), width: n('width'), height: n('height') };
         if (bounds.width < 200 || bounds.height < 200) throw new Error('bad_params');
+        if (this.headlessNow) return { placed: false, headless: true };
         return { placed: this.relay ? await this.relay.placeWindow(bounds, p.front === true) : false };
       }
     }
@@ -583,8 +600,12 @@ export class Vault {
     await this.sweepStaging('launch');
     await writeProfileSettings(profileDir, downloadPreferences(this.opts.paths.staging));
     if (!current()) throw new Error('launch cancelled'); // 준비 중에 내리기가 왔으면 띄우지 않는다
-    const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs });
+    const headless = (this.opts.headless ?? true) && !this.revealNext;
+    this.revealNext = false;
+    const chrome = await launchChrome({ executable: exe, profileDir, testArgs: this.opts.testChromeArgs, headless });
     this.chrome = chrome;
+    this.headlessNow = headless;
+    await this.grantLoopback(chrome);
     chrome.conn.on('close', () => {
       this.opts.log.event('vault.chrome_closed');
       // 엔진 transport도 닫는다. 알리지 않으면 Playwright는 끊긴 줄 모르고 닫힌 Chrome의 페이지를 쓴다. 다음 Chrome이 이미 떴으면 보내지 않는다.
@@ -611,6 +632,27 @@ export class Vault {
       throw cause;
     } finally {
       clearTimeout(timer);
+    }
+  }
+
+  /**
+   * 홈택스 출처에만 이 PC 보안 프로그램(127.0.0.1) 접근 권한을 준다(LOOPBACK_ORIGINS). 다른 출처에는 주지 않는다.
+   * Chrome 판마다 권한 이름이 달라 앞에서부터 처음 받아들여진 이름 하나만 쓴다. 못 주면 기동은 그대로 하고 기록만 남긴다
+   * (홈택스가 "보안프로그램 설치"를 띄우면 사람 차례로 넘어간다).
+   */
+  private async grantLoopback(chrome: LaunchedChrome): Promise<void> {
+    for (const origin of LOOPBACK_ORIGINS) {
+      let granted: string | null = null;
+      for (const name of LOOPBACK_PERMISSION_NAMES) {
+        try {
+          await chrome.conn.send('Browser.setPermission', { permission: { name }, setting: 'granted', origin });
+          granted = name;
+          break;
+        } catch {
+          // 이 Chrome에 없는 이름이다. 다음 이름
+        }
+      }
+      this.opts.log.event(granted ? 'vault.loopback_granted' : 'vault.loopback_grant_failed', { origin, ...(granted ? { name: granted } : {}) });
     }
   }
 
@@ -663,6 +705,7 @@ export class Vault {
       emit,
       usedSlots: this.usedSlots,
       stored: (kind, scope, row) => this.readStored(kind, scope, row),
+      askApp: () => this.headlessNow,
       // 인증서 비밀번호 기억(대표 지시 2026-11-13). 데스크톱은 run.begin에 프로필을 주지 않으니 사업자로 본다(Phase 1).
       certMemory: {
         scopeOf: (runId) => this.runProfiles.get(runId) ?? 'business',

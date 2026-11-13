@@ -41,7 +41,7 @@ export async function startHarness(opts: { policy?: RelayPolicy; headful?: boole
   const { paths } = await prepareLayout(root);
   const log = new FileEventLog(paths.logs, 'vault');
   const capture = new LeakCapture();
-  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS, dirGuard: opts.dirGuard, launchTimeoutMs: opts.launchTimeoutMs, secretTtlMs: opts.secretTtlMs, human: opts.human, pdf: opts.pdf });
+  const vault = new Vault({ paths, log, keyStore: new MemoryKeyStore(), policy: opts.policy ?? testPolicy(), testChromeArgs: opts.headful ? ['--use-mock-keychain'] : TEST_CHROME_ARGS, headless: !opts.headful, dirGuard: opts.dirGuard, launchTimeoutMs: opts.launchTimeoutMs, secretTtlMs: opts.secretTtlMs, human: opts.human, pdf: opts.pdf });
   const ch = new MessageChannel();
   // 엔진 포트 IPC 캡처: 금고 쪽에서 양방향을 기록한다(엔진이 받은 CDP 이벤트 스트림 포함).
   vault.attachPort('engine', tapPort(wrapPort(ch.port1, 'node'), (dir, m) => capture.add(`ipc.engine.${dir}`, m)));

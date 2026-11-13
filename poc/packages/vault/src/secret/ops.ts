@@ -125,6 +125,11 @@ export interface SecretOpsOptions {
     read(scope: string): Promise<StoredRead>;
     save(scope: string, bytes: Uint8Array): Promise<boolean>;
   };
+  /**
+   * 창 없는 Chrome인가(부장 지시 2026-11-13 ②). 그렇다면 사람이 Chrome 칸에 칠 수 없으니, 기억값이 없을 때 인증서 비밀번호를
+   * 앱의 금고 직결 입력 창(secret.needed → secretInput 포트 → secret.provide)으로 받아 금고가 그 칸에 넣고 기억한다.
+   */
+  askApp?: () => boolean;
 }
 
 export type StoredRead = { ok: true; bytes: Uint8Array } | { ok: false; reason: 'vault_locked' | 'secret_missing' | 'credential_suspect' | 'corrupt' | 'kek_unavailable' };
@@ -143,6 +148,8 @@ export class SecretOps {
   /** main이 알려 준 실행 트리거(엔진의 주장으로 받지 않는다). */
   readonly runTriggers = new Map<string, 'local' | 'remote' | 'daemon'>();
   private readonly human = new Map<string, HumanWatch>();
+  /** 앱 입력 창을 기다리는 인증서 비밀번호 칸(targetId별). 값이 오면 금고가 이 칸에 넣고 창을 닫는다. */
+  private readonly appAsk = new Map<string, { runId: string; scope: string; objectId: string }>();
   /** 창 개시 진행 중인 타깃(await 사이 이중 개시 차단, N-43). */
   private readonly opening = new Set<string>();
   readonly usedSlots: Set<string>;
@@ -432,6 +439,15 @@ export class SecretOps {
           // 넣지 못했으면(칸이 바뀜 등) 사람 창으로 다시 연다
         }
       }
+      if (this.opts.askApp?.()) {
+        // 창 없는 Chrome: 칸은 금고가 잡아 두고(활성 창, 엔진 CDP·화면 중계 멈춤) 값은 앱 입력 창에서 받는다.
+        const askScope = scope ?? 'business';
+        this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
+        this.appAsk.set(t.targetId, { runId: req.runId, scope: askScope, objectId: el.objectId });
+        this.emit(['control'], 'secret.needed', { runId: req.runId, targetId: t.targetId, kind: 'cert_password', scope: askScope });
+        this.log.event('vault.cert_password_asked_app');
+        return { ok: true };
+      }
       this.relay.openWindow(t, 'human', el.frameId, el.backendNodeId);
       const watch: HumanWatch = {
         objectId: el.objectId,
@@ -486,6 +502,7 @@ export class SecretOps {
   }
 
   private stopHuman(targetId: string): void {
+    this.appAsk.delete(targetId);
     const w = this.human.get(targetId);
     if (w) clearInterval(w.timer);
     this.human.delete(targetId);
@@ -516,6 +533,37 @@ export class SecretOps {
     this.log.event('secret.used', { kind, viaTypist: false });
   }
 
+  /**
+   * 앱 입력 창이 인증서 비밀번호를 넘겼다(service가 secret.provide 직후 부른다). 기다리던 칸에 넣고, 넣었으면 기억하고, 창을 닫는다.
+   * 칸이 사라졌거나 넣지 못했으면 기억하지 않고 창만 닫는다(엔진은 로그인 결과로 판단한다). 값은 로그·이벤트에 싣지 않는다.
+   */
+  async appProvided(bind: { runId: string; kind: string; scope: string }): Promise<void> {
+    if (bind.kind !== 'cert_password') return;
+    const entry = [...this.appAsk].find(([, a]) => a.runId === bind.runId && a.scope === bind.scope);
+    if (!entry) return;
+    const [targetId, ask] = entry;
+    this.appAsk.delete(targetId);
+    const bytes = this.secrets.take(bind.runId, 'cert_password', bind.scope);
+    const t = this.relay.targets.get(targetId);
+    if (!bytes) return;
+    const text = new TextDecoder().decode(bytes);
+    bytes.fill(0);
+    if (!t || t.win?.phase !== 'active') {
+      this.log.event('vault.cert_password_app_late');
+      return;
+    }
+    this.relay.addKnownSecret(t.targetId, knownValuePrefixVariants(text));
+    const typed = await this.typeInto(t, ask.objectId, text);
+    this.relay.addKnownSecret(t.targetId, knownValueVariants(text));
+    if (typed.ok && this.opts.certMemory) {
+      const saved = await this.opts.certMemory.save(ask.scope, new TextEncoder().encode(text)).catch(() => false);
+      this.log.event('secret.remembered', { kind: 'cert_password', ok: saved });
+    }
+    this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
+    this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, fromApp: true });
+    this.selfScan(text);
+  }
+
   /** 사용자가 "입력 완료"를 눌렀다(main 승인 창이나 금고 UI에서 온 신호만, 엔진 신호 아님). */
   async userDone(targetId: string): Promise<void> {
     const t = this.relay.exposedTarget(targetId);
@@ -542,6 +590,7 @@ export class SecretOps {
 
   shutdown(): void {
     for (const id of [...this.human.keys()]) this.stopHuman(id);
+    this.appAsk.clear();
     this.secrets.clear();
   }
 }

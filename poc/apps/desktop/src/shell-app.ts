@@ -10,7 +10,7 @@ import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel } from '@sax/updater';
 import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
-import { findInstalledChrome } from '@sax/vault';
+import { findInstalledChrome, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -1512,9 +1512,24 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return null;
     }
   };
+  // 금고 잠금은 사람 세션을 따른다(ADR-026 결정 3). utilityProcess에는 powerMonitor가 없어 main이 유휴 시간·잠금 이벤트를 넘긴다.
+  // 넘기지 않으면 금고가 idle_unknown으로 닫혀 기억한 인증서 비밀번호를 저장도 사용도 못 한다(2026-11-13 발견, #308 기억이 제품에서 동작하지 않던 원인).
+  const reportIdle = () => void host.control('session.idle', { idleSec: powerMonitor.getSystemIdleTime() }).catch(() => {});
+  const idleTimer = setInterval(reportIdle, SESSION_IDLE_REPORT_MS);
+  idleTimer.unref();
+  const SESSION_KINDS = ['lock-screen', 'unlock-screen', 'suspend', 'resume'] as const;
+  const onSession = SESSION_KINDS.map((kind) => {
+    const fn = () => {
+      void host.control('session.event', { kind }).catch(() => {});
+      if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
+    };
+    powerMonitor.on(kind as 'resume', fn);
+    return { kind, fn };
+  });
   const ready = (async () => {
     try {
       await host.ready;
+      reportIdle();
     } catch (e) {
       // 금고 키 유실·환경 변수 변조 등은 사실 문장으로 알리고 열지 않는다(복구 화면은 Phase 1).
       const text = fatalText((e as Error).message);
@@ -1572,6 +1587,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     clearInterval(registryTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
+    clearInterval(idleTimer);
+    for (const { kind, fn } of onSession) powerMonitor.removeListener(kind as 'resume', fn);
     updater?.stop();
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();
