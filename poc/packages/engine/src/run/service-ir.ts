@@ -29,7 +29,7 @@ import { judgeVerify, takeBaseline, VerifyBook, type VerifyDeps } from '../core/
 import { GuardedActuator } from '../core/actuator.ts';
 import { PlaywrightActuator } from '../driver/actuator.ts';
 import { IrLookupPort } from '../driver/lookup-ir.ts';
-import { CERT_FRAME_CSS, CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
+import { CERT_ALERT_OK_CSS, CERT_FRAME_CSS, CertSecretPort, type SecretTurnEvent } from '../driver/cert-secret.ts';
 import type { SecretVault } from '../driver/secret.ts';
 import { PopupLookupPort } from '../driver/lookup.ts';
 import { PlaywrightPageReader } from '../driver/reader.ts';
@@ -499,6 +499,11 @@ export class IrRun {
           },
           // 인증서 선택창 iframe 요소만 본다(안은 다른 출처라 읽지 않는다).
           certFrame: () => page.locator(CERT_FRAME_CSS).first().isVisible(),
+          // 틀린 비밀번호 안내 닫기(인증서 창 경고 [확인], 커밋 아님). 보일 때만 누른다.
+          dismissAlert: async () => {
+            const ok = page.frameLocator(CERT_FRAME_CSS).first().locator(CERT_ALERT_OK_CSS).first();
+            if (await ok.isVisible().catch(() => false)) await ok.click({ timeout: 2_000 }).catch(() => {});
+          },
         },
         ...(i.secretEvent ? { event: i.secretEvent } : {}),
       })
@@ -586,6 +591,7 @@ export class IrRun {
         request: () => {},
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
+        ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
         closed: () => {},
       },
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),

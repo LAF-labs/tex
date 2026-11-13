@@ -419,7 +419,8 @@ export class SecretOps {
 
   async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' | 'denied' }> {
     const t = this.relay.exposedTarget(req.targetId);
-    if (!t || t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'not_found' };
+    // 같은 문서에서 다시 묻기(서명 [확인] 뒤 틀린 비밀번호 → 대화 카드, 2026-11-14): 오염 상태(tainted)는 받는다. 지금 입력 중인 창(active)만 막는다.
+    if (!t || t.win?.phase === 'active' || this.opening.has(t.targetId)) return { ok: false, reason: 'not_found' };
     if (!this.triggerAllowed(req.runId)) return { ok: false, reason: 'denied' };
     this.opening.add(t.targetId);
     try {

@@ -63,6 +63,8 @@ export interface FakeKnobs {
   fieldLabels: boolean;
   /** 인증서 창(dscert)의 가짜 인증서 비밀번호(시험 값). 금고가 이 값을 넣고 [확인]하면 로그인·서명이 된다. */
   certPassword: string;
+  /** 발급 서명 때만 다른 비밀번호(인증서 갱신으로 기억값이 서명에서 틀린 경우). 없으면 certPassword. */
+  signPassword?: string;
   /**
    * 비밀번호 칸 모양. password(기본) 또는 보안키보드형 text 가림 칸(-webkit-text-security, 대표 실화면 run-fb6d0e95 가설:
    * 값이 AX·DOM·Runtime 읽기에 그대로 보인다).
@@ -538,7 +540,7 @@ const finish = (how) => fetch(MAIN + '/_fx/certuse?mode=' + mode + '&how=' + how
   if (mode === 'login') parent.postMessage({ ml4: 'login' }, '*');
   else parent.postMessage({ ml4: 'signed', sig: 'FAKE-SIG' }, '*');
 });
-$('btn_confirm_iframe').onclick = () => fetch(MAIN + '/_fx/certpw?pw=' + encodeURIComponent($('input_cert_pw').value)).then((r) => r.json()).then((r) => {
+$('btn_confirm_iframe').onclick = () => fetch(MAIN + '/_fx/certpw?mode=' + mode + '&pw=' + encodeURIComponent($('input_cert_pw').value)).then((r) => r.json()).then((r) => {
   if (r.ok) return finish('typed');
   $('alert_msg').textContent = '인증서 암호가 올바르지 않습니다.'; $('popup_alert').style.display = 'block'; $('input_cert_pw').value = '';
 });
@@ -600,7 +602,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === '/MagicLine4XML/ML4Web/Child.html') return send(res, 200, 'text/html; charset=utf-8', CHILD(origin, knobs.certs, knobs.realLoginNav, knobs.certPwType));
     if (u.pathname === '/_fx/certpw') {
       // 비밀번호 대조만(값은 기록하지 않는다).
-      const ok = u.searchParams.get('pw') === knobs.certPassword;
+      const ok = u.searchParams.get('pw') === (u.searchParams.get('mode') === 'sign' && knobs.signPassword ? knobs.signPassword : knobs.certPassword);
       if (!ok) state.wrongPw++;
       return json(res, { ok });
     }
