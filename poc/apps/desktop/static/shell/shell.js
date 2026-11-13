@@ -534,6 +534,62 @@ function timelineItem(it) {
   return h('div');
 }
 
+/**
+ * 대화 안 비밀 입력 카드(대표 지시 2026-11-14 "공동인증서 비밀번호는 앱 내 채팅으로"). 금고가 물을 때만 main이 띄운다.
+ * 값은 가려진 칸에서 바로 main(secret.answer) → 금고로만 간다. 칸은 보내자마자 비우고, 상태·대화 기록·모델에는 넣지 않는다.
+ * 대화에는 "●●●● 입력함"만 남는다.
+ */
+function onSecretAsk(ev) {
+  const card = () => document.querySelector(`[data-secret-ask="${CSS.escape(ev.reqId)}"]`);
+  if (ev.state !== 'open') {
+    const c = card();
+    if (c && c.querySelector('form')) c.replaceChildren(h('p', { class: 'sx-meta' }, ev.state === 'done' ? `${c.dataset.label || '비밀번호'} ●●●● 입력함` : '입력 요청이 끝났어요'));
+    return;
+  }
+  if (card()) return;
+  if (state.view !== 'chat') void go('chat');
+  const input = h('input', { type: 'password', class: 'sx-input secret-ask-input', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', 'aria-label': ev.label || '비밀번호' });
+  const msg = h('p', { class: 'sx-meta secret-ask-msg', role: 'status' });
+  const send = h('button', { type: 'submit', class: 'sx-btn sx-btn-primary' }, '넘기기');
+  const cancel = h('button', { type: 'button', class: 'sx-btn', 'data-act': 'secret-cancel' }, '취소');
+  const form = h('form', { class: 'secret-ask-form', autocomplete: 'off' }, input, send, cancel);
+  const box = h(
+    'div',
+    { class: 'sx-app secret-ask', 'data-secret-ask': ev.reqId, 'data-label': ev.label || '비밀번호' },
+    h('p', { class: 'secret-ask-q' }, ev.kind === 'cert_password' ? '공동인증서 비밀번호를 입력해 주세요' : `${ev.label || '비밀번호'}를 입력해 주세요`),
+    h('p', { class: 'sx-meta' }, ev.note || ''),
+    form,
+    msg,
+  );
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const value = input.value;
+    input.value = '';
+    if (!value) return input.focus();
+    send.disabled = cancel.disabled = input.disabled = true;
+    msg.textContent = '금고에 넘기는 중이에요';
+    call('secret.answer', { reqId: ev.reqId, value }).then(
+      () => box.replaceChildren(h('p', { class: 'sx-meta' }, `${ev.label || '비밀번호'} ●●●● 입력함`)),
+      () => {
+        send.disabled = cancel.disabled = input.disabled = false;
+        msg.textContent = '금고가 받지 않았어요. 다시 넣어 주세요.';
+        input.focus();
+      },
+    );
+  });
+  cancel.addEventListener('click', () => {
+    input.value = '';
+    void call('secret.answer', { reqId: ev.reqId, cancel: true }).catch(() => {});
+    box.replaceChildren(h('p', { class: 'sx-meta' }, '입력하지 않았어요'));
+  });
+  appendThread(box, false);
+  // 카드 머리(물음)부터 보이게: 승인 바 자리를 비운 좁은 대화 열에서도 물음이 가려지지 않는다
+  requestAnimationFrame(() => {
+    box.scrollIntoView({ block: 'start' });
+    input.focus({ preventScroll: true });
+  });
+}
+
 function appendThread(el, scroll = true) {
   chat.thread.append(el);
   if (scroll) scrollToEnd();
@@ -1178,6 +1234,43 @@ const DOC_FILTERS = [
   ['soon', '만료 임박'],
 ];
 
+/** 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 나머지는 상태 글자. */
+const ISSUED_SHOWN = 10;
+const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'], not_issued: ['발급 안 됨', 'is-muted'], stopped_before_gate: ['승인 전 멈춤', 'is-muted'] };
+/** 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF], 실패·확인 중은 상태로. */
+function issuedSection() {
+  const all = state.issued ?? [];
+  if (!all.length) return null;
+  // 최근 10건, 나머지는 [모두 보기](부장 지시 2026-11-14)
+  const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
+  const done = all.filter((x) => x.kind === 'issued').length;
+  const unsure = all.filter((x) => x.kind === 'unsure').length;
+  return h(
+    'div',
+    { class: 'issued-sec', 'data-issued': '' },
+    h('div', { class: 'issued-hd' }, h('h2', { class: 'issued-title' }, '발급한 세금계산서'), h('span', { class: 'sx-meta' }, [`발급 ${done}건`, unsure ? `확인 필요 ${unsure}건` : null].filter(Boolean).join(' · '))),
+    listTable(
+      [['날짜'], ['거래처'], ['금액', 'num'], ['승인번호'], ['메일'], ['']],
+      rows.map((x) => {
+        const [label, cls] = ISSUED_STATE[x.kind] ?? ISSUED_STATE.unsure;
+        return h(
+          'tr',
+          { 'data-issued-row': x.runId, 'data-kind': x.kind, title: x.note || null },
+          h('td', {}, x.day ?? '—', x.time ? h('span', { class: 'sx-meta doc-ago' }, x.time) : null),
+          h('td', { class: x.who ? 'name' : 'name is-none' }, x.who ?? '—'),
+          h('td', { class: x.total != null ? 'num' : 'num is-none' }, x.total != null ? `${num(x.total)}원` : '—'),
+          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
+          x.kind === 'issued' ? h('td', { class: x.mail ? null : 'is-none' }, x.mail ? MAIL_TEXT[x.mail] : '—') : null,
+          h('td', {}, x.documentId ? btn('PDF', () => act.openDoc(x.documentId), '', { 'data-act': 'issued-pdf' }) : null),
+        );
+      }),
+    ),
+    all.length > ISSUED_SHOWN
+      ? h('div', { class: 'issued-more' }, btn(state.issuedAll ? '최근 10건만 보기' : `모두 보기 (${all.length}건)`, () => ((state.issuedAll = !state.issuedAll), render()), '', { 'data-act': 'issued-all' }))
+      : null,
+  );
+}
+
 function docsView() {
   const f = state.docFilter;
   const n7 = (d) => {
@@ -1197,6 +1290,7 @@ function docsView() {
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
     railHead('문서함', meta, btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
+    f === 'all' || f === 'tax' ? issuedSection() : null,
     h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
     listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
@@ -1572,6 +1666,31 @@ async function loadCertMemory() {
   }
   if (state.view === 'settings') render();
 }
+/** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
+function certMemorySaveRow() {
+  const input = h('input', { type: 'password', class: 'sx-input secret-ask-input', autocomplete: 'off', spellcheck: 'false', 'aria-label': '공동인증서 비밀번호', placeholder: '공동인증서 비밀번호' });
+  const save = h('button', { type: 'submit', class: 'sx-btn' }, '저장');
+  const form = h('form', { class: 'secret-ask-form', autocomplete: 'off', 'data-cert-memory-save': '' }, input, save);
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const value = input.value;
+    input.value = '';
+    if (!value) return;
+    save.disabled = input.disabled = true;
+    try {
+      state.certMemory = (await call('certMemory.save', { value })).remembered === true;
+      toast('인증서 비밀번호를 이 Mac 금고에 저장했어요. 다음 발급부터 앱이 넣어요.');
+    } catch {
+      toast('저장하지 못했어요. 다시 해 주세요');
+    }
+    render();
+  });
+  return h(
+    'div',
+    { class: 'sx-card auth-row', 'data-cert-memory': '' },
+    h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '인증서 비밀번호 저장'), h('span', { class: 'sx-meta' }, '이 Mac 금고에만 두고 발급할 때 앱이 넣어요. 홈택스가 틀렸다고 하면 지워요.'), form),
+  );
+}
 async function forgetCertMemory() {
   try {
     state.certMemory = (await call('certMemory.forget', {})).remembered === true;
@@ -1798,7 +1917,9 @@ function authCard() {
           h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '인증서 비밀번호 기억함'), h('span', { class: 'sx-meta' }, '처음 넣은 비밀번호를 이 PC 금고에 두고 다음 발급부터 자동으로 넣어요.')),
           btn('지우기', forgetCertMemory, '', { 'data-act': 'cert-memory-forget' }),
         )
-      : null,
+      : state.certMemory === false
+        ? certMemorySaveRow()
+        : null,
     // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
     canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
   ];
@@ -1854,6 +1975,13 @@ async function go(v) {
   }
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
+    // 발급한 세금계산서(B5): 원장·실행 이력을 지금 읽는다(main issued.list)
+    call('issued.list')
+      .then((rows) => {
+        state.issued = Array.isArray(rows) ? rows : [];
+        if (state.view === 'docs') render();
+      })
+      .catch(() => {});
     const rev = state.docsRev;
     call('docs.list')
       .then((docs) => {
@@ -2211,6 +2339,7 @@ window.sax.onEvent((ev) => {
     if (ev.focus) focusScreen();
     return;
   }
+  if (ev.type === 'secretAsk') return onSecretAsk(ev);
   if (ev.type === 'screen') {
     if (ev.ended) {
       if (state.screen?.runId === ev.runId) state.screen = null;

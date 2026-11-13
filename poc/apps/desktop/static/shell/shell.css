@@ -396,3 +396,21 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .run-screen .sx-meta { margin: 10px 12px; text-align: center; }
 .run-screen[data-state='paused'], .run-screen[data-state='gone'] { background: var(--surface-2, rgba(127,127,127,.08)); }
 .onb-card [data-onb-security]:empty { display: none; }
+
+/* 대화 비밀 입력 카드(대표 지시 2026-11-14): 가려진 칸 하나와 [넘기기]·[취소] */
+.secret-ask { display: grid; gap: 6px; }
+.secret-ask-q { margin: 0; font-weight: 600; }
+.secret-ask-form { display: flex; gap: 8px; align-items: center; margin-top: 4px; }
+.secret-ask-input { flex: 1; min-width: 0; height: 36px; padding: 0 12px; border: 1px solid var(--line-strong, var(--line)); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font: inherit; letter-spacing: 0.1em; }
+.secret-ask-input:focus { outline: 2px solid var(--accent, var(--ink)); outline-offset: 0; }
+.secret-ask-msg:empty { display: none; }
+
+/* 문서함 맨 위 발급한 세금계산서(B5) */
+.issued-sec { display: grid; gap: var(--space-2); margin-bottom: var(--space-4); }
+.issued-hd { display: flex; align-items: baseline; gap: var(--space-3); }
+.issued-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--ink); }
+.issued-state { font-weight: 600; margin-right: var(--space-2); }
+.issued-state.is-attention { color: var(--attention); }
+.issued-state.is-muted { color: var(--ink-3); }
+.issued-note { display: block; }
+.issued-more { display: flex; justify-content: center; }

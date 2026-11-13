@@ -25,6 +25,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.launch', 'browser.shutdown',
     // typist.authOk: 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다(그때만 금고가 그 값을 기억한다, 부장 지시 2026-11-13)
     'typist.fill', 'typist.authFailed', 'typist.authOk',
+    // popups.configure: 포털 기본 팝업 숨김(패키지 strings popup.*, 대표 지시 2026-11-14). 숨김 CSS·쿠키·닫을 창 주소만 받는다
+    'popups.configure',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
     // crypto.*(Sd·Vd·AIK·Qd 연산)는 엔진 포트에 열지 않는다(팀장 결정 2026-11-06, 게이트웨이 인증 설계 ADR-040 예정).
