@@ -5,7 +5,7 @@
 // - commits:true 항목·비가역 스텝은 여기서 실행하지 않는다(커밋 구간은 M2-3 submit만, step.irreversible_unguarded).
 // - 저널·로그에 화면 텍스트·입력 값을 남기지 않는다(⑦). 결과에는 코드만 있다.
 import { evalCond, stringPattern, type CondEnv } from './conds.ts';
-import { normalizeFieldValue, readField } from './readback.ts';
+import { normalizeFieldValue, readField, type FieldRead } from './readback.ts';
 import { normalizeName } from './constants.ts';
 import type { Actuator, Clock, PageReader, Resolved } from './page.ts';
 import { resolveTarget } from './resolve.ts';
@@ -112,6 +112,7 @@ const fill: Handler<'fill'> = async (s, env) => {
   if (!v.ok) return fail(v.code);
   if (v.value === null) {
     // 선택 입력이 비었다. clear면 칸을 비운다(포털 자동 채움 제거, B-05). 그 밖에는 실패(기본 fail).
+    if (s.ifAbsent === 'keep' && s.value.startsWith('$inputs.')) return NEXT;
     if (s.ifAbsent !== 'clear' || !s.value.startsWith('$inputs.')) return fail(s.value.startsWith('$inputs.') ? 'step.input_absent' : 'step.ref_unresolved');
     const r = await env.act.clear(t.t);
     if (!r.ok) return fail(r.code);
@@ -293,12 +294,16 @@ const end: Handler<'end'> = async (s) => ({ t: 'end', status: s.status });
  * 하나라도 실패하면 이 스텝의 값을 하나도 남기지 않는다(뒤 assert·게이트 카드가 반쯤 읽은 값을 쓰지 않게).
  */
 const readback: Handler<'readback'> = async (s, env) => {
-  for (const f of s.fields) env.scope.readback.delete(f);
+  for (const f of [...s.fields, ...(s.optional ?? [])]) env.scope.readback.delete(f);
   const got: Array<[string, string]> = [];
   for (const f of s.fields) {
     const r = await readField(env.page, env.dict, f);
     if (!r.ok) return fail(r.code);
     got.push([f, r.value]);
+  }
+  for (const f of s.optional ?? []) {
+    const r = await readField(env.page, env.dict, f).catch((): FieldRead => ({ ok: false, code: 'step.readback_error' }));
+    if (r.ok) got.push([f, r.value]);
   }
   for (const [f, v] of got) env.scope.readback.set(f, v);
   return NEXT;

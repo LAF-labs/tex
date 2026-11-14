@@ -29,8 +29,11 @@ export type Cond =
   | { artifact: string }
   /** readback 값 산술(D02 §8 s19d): parts의 합 = total. 둘 다 readback fieldKey이고 화면을 다시 읽지 않는다(IR rev v1.3.2). */
   | { sumEquals: { parts: string[]; total: string } }
-  /** ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류. */
-  | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' } }
+  /**
+   * ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류.
+   * 'skip'(IR rev v1.3.8): 선택 입력이 비었으면 대조하지 않는다(참, fill ifAbsent:'keep'의 짝: 포털이 채운 값을 둔다).
+   */
+  | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' | 'skip' } }
   /** 되읽은 값이 비었는가(IR rev v1.3.3). 플레이북에 그 입력이 없을 때 칸이 비었음을 확인한다(V-03m). */
   | { readbackEmpty: string }
   | { fieldsFilled: { fields: string[] } }
@@ -102,7 +105,8 @@ interface StepBase {
 
 export type GotoStep = StepBase & { type: 'goto'; url: string };
 export type ClickStep = StepBase & { type: 'click'; target: string };
-export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' };
+/** ifAbsent 'keep'(IR rev v1.3.8): 선택 입력이 비었으면 칸을 건드리지 않는다(포털이 채운 값, 예: 등록번호 [확인] 뒤 대표자 성명). */
+export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' | 'keep' };
 export type SelectStep = StepBase & { type: 'select'; target: string; option: string };
 export type PressStep = StepBase & { type: 'press'; key: 'Enter' | 'Tab' | 'Escape' | 'ArrowDown' | 'ArrowUp'; target?: string };
 /**
@@ -122,7 +126,8 @@ export type AssertStep = StepBase & { type: 'assert'; cond: Cond };
 export type ExtractStep = StepBase & { type: 'extract'; name: string; from: From; readback?: boolean };
 export type DecideStep = StepBase & { type: 'decide'; bundle: string; scope: string; on: Record<string, OutcomeTarget> };
 export type CheckpointStep = StepBase & { type: 'checkpoint'; name: string; expect: Cond; url?: string; sessionRequired?: boolean; reentry?: 'reuse' | 'reload' };
-export type ReadbackStep = StepBase & { type: 'readback'; fields: string[] };
+/** optional(IR rev v1.3.8): fields 뒤에 되읽되 못 읽으면 $readback에 넣지 않고 넘어간다(실패 없음, 대조 없음). */
+export type ReadbackStep = StepBase & { type: 'readback'; fields: string[]; optional?: string[] };
 export type GateStep = StepBase & { type: 'gate'; card: string; authorizes: string[]; waitMs?: number };
 export type HumanStep = StepBase & { type: 'human'; kind: 'captcha' | 'otp' | 'secret' | 'manual'; prompt: string; region?: string; target?: string; inputSpec?: { pattern?: string; maxLength?: number }; ttlMs: number };
 export type HumanCommitStep = StepBase & { type: 'human_commit'; prompt: string; intent: '$intent.id'; verify: string; followUpOf?: string };

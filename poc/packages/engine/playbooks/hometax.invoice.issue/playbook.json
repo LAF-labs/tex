@@ -362,7 +362,7 @@
    "target": "hometax.invoice.form.counterpartRepName",
    "value": "$inputs.counterpart.repName",
    "keyEvents": true,
-   "ifAbsent": "clear"
+   "ifAbsent": "keep"
   },
   {
    "id": "s14b",
@@ -476,6 +476,14 @@
     "receiptType",
     "counterpartRepName",
     "counterpartAddress"
+   ],
+   "optional": [
+    "supplierRepName",
+    "supplierAddress",
+    "supplierBizType",
+    "supplierBizItem",
+    "supplierEmailId",
+    "supplierEmailDomain"
    ]
   },
   {
@@ -557,7 +565,7 @@
       "readbackEquals": {
        "fieldKey": "counterpartRepName",
        "ref": "$inputs.counterpart.repName",
-       "ifAbsent": "empty"
+       "ifAbsent": "skip"
       }
      },
      {
