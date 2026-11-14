@@ -18,7 +18,8 @@ export const LOOKUP_PRODUCT_ID = 'hometax.cert.issued_list';
 /** fixture 변형 id(hometax. → fixture.). */
 export const fixtureCertId = (id: string) => id.replace(/^hometax\./, 'fixture.');
 
-const LOGIN_STEPS = new Set(['s0', 's1', 's2', 's3', 's4', 's5', 's6', 's90', 's91', 's92', 's93']);
+// 로그인 구간: 예전 템플릿(s0~s6·캡차 s90~s93)과 H-01 원본에서 가져온 구간(s0~s7g) 모두
+const LOGIN_STEPS = new Set(['s0', 's1', 's2', 's3', 's4', 's4a', 's4b', 's4c', 's4d', 's4e', 's4f', 's4g', 's4h', 's5', 's6', 's7', 's7a', 's7b', 's7c', 's7d', 's7e', 's7f', 's7g', 's8', 's8a', 's8b', 's90', 's91', 's92', 's93']);
 
 /** 제품 원본 → fixture 변형(서명 전). */
 export function certFixtureFiles(productId: string, origin: string): PackageFiles {
@@ -32,6 +33,9 @@ export function certFixtureFiles(productId: string, origin: string): PackageFile
   const lookup = f.manifest.kind === 'lookup';
   if (!lookup) {
     f.playbook.steps = f.playbook.steps.filter((s) => !LOGIN_STEPS.has(s.id));
+    // 홈택스 공지 레이어·안내 창 닫기는 로그인 구간 몫이다(가짜 페이지에는 없다)
+    delete (f.playbook as { closeLayers?: unknown }).closeLayers;
+    delete (f.playbook as { closeWindows?: unknown }).closeWindows;
     // screen_state는 로그인·캡차 decide(s2·s6·s93)만 쓴다
     f.manifest.bundlesUsed = f.manifest.bundlesUsed.filter((b) => b.id !== 'screen_state');
     // 로그인 전제(signMethod)는 엔진 startCert가 프로필로 본다. 패키지 전제 식은 그대로 둔다

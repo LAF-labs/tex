@@ -74,7 +74,7 @@ const select = (id: string | null, label: string, name: string, options: readonl
 const radios = (id: string, label: string, name: string, options: readonly string[], checked: string) =>
   `<div id="${id}" role="radiogroup" aria-label="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
 const shown = (label: string, value: string, id?: string) => `<label>${esc(label)} <input type="text" readonly ${id ? `id="${id}" ` : ''}aria-label="${esc(label)}" value="${esc(value)}"></label>`;
-const page = (body: string) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><main aria-label="홈택스"><a href="/">홈</a>${body}</main></body></html>`;
+const page = (body: string) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
 
 const ALERT = '<div role="dialog" aria-label="알림" class="w2window w2popup_window msg">레이어 팝업 레이어팝업시작 알림 해당 화면은 개인사업자는 이용할 수 없습니다. 레이어팝업끝</div>';
 
