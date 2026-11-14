@@ -245,7 +245,7 @@ function steps(doc: CertDoc): Step[] {
           { id: 's10a', type: 'checkpoint', name: 'form', expect: { any: [{ exists: FORM }, { exists: ALERT }] }, url: menuUrl(d.menuCode), sessionRequired: true, reentry: 'reload' },
         ] as Step[])
       : ([
-          { id: 's10', type: 'goto', url: 'https://hometax.go.kr/' },
+          { id: 's10', type: 'goto', url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml' },
           { id: 's10a', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.header.logo' }, url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml', sessionRequired: true, reentry: 'reload' },
           { id: 's10b', type: 'click', target: 'hometax.cert.menu.civil' },
           { id: 's10c', type: 'click', target: 'hometax.cert.menu.issue' },
