@@ -987,9 +987,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
   registryTimer.unref();
   // 홈택스 로그인 유지: 앱이 켜져 있는 동안 홈택스 자동 로그아웃(24분 안내·30분 로그아웃)보다 먼저 [연장하기]와 같은 일을 한다.
-  // 엔진이 화면을 움직이는 동안(준비·발급 중)은 건드리지 않는다. 승인·사람 차례를 기다리는 동안은 한다.
+  // 엔진이 화면을 움직이는 동안(준비·발급 중), 승인을 보낸 뒤(거부 우선 창), 게이트 뒤 사람 차례(서명)는 건드리지 않는다.
+  // 승인 대기·게이트 앞 사람 차례(로그인 등)는 한다.
   const keepHometax = async (why: string) => {
-    if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing')) return;
+    if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true)) return;
     const result = await eb.keepSession().catch(() => 'error');
     if (result !== 'none') log.event('main.hometax_keepalive', { why, result });
   };
