@@ -42,7 +42,8 @@ export const HANDOFF_SIGN_TTL = { text: HANDOFF_SIGN.text, note: '앱의 비밀�
 export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.cert]: { now: '홈택스 창에서 인증서 비밀번호를 직접 넣어 주세요', text: HANDOFF_SIGN.text },
   [SIGN_LABEL.simple_auth]: { now: '휴대폰에서 간편인증 요청을 승인해 주세요', text: '홈택스 창에서 간편인증을 고르고 휴대폰에서 승인해 주세요. 끝나면 자동으로 이어집니다' },
-  [SIGN_LABEL.security_card]: { now: '홈택스 창에서 보안카드 번호를 직접 넣어 주세요', text: '홈택스 창에서 인증 방법을 고르고 보안카드 번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다' },
+  // 보안카드(대표 지시 2026-11-14): 등록한 카드면 금고가 홈택스 보안카드 창에 번호를 넣는다. 차례가 오면 앱이 못 넣었거나 홈택스가 틀렸다고 한 것이다(다시 치지 않는다).
+  [SIGN_LABEL.security_card]: { now: '앱이 홈택스 보안카드 창에 번호를 넣고 있어요', text: '보안카드 번호를 앱이 넣지 못했어요. 홈택스 창에서 보안카드 번호를 직접 넣어 주세요. 홈택스가 틀렸다고 했으면 설정에서 카드를 다시 등록해 주세요' },
 };
 /**
  * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
@@ -64,7 +65,15 @@ const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
 };
 /** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
+/** 보안카드 서명 차례의 까닭(엔진 sign.card_*). 홈택스가 틀렸다고 했거나 금고에 그 사실을 남기지 못했으면 다시 등록하게 한다. */
+const SIGN_CARD: Readonly<Record<string, { text: string; note: string }>> = {
+  'sign.card_wrong': { text: '보안카드 번호가 맞지 않다고 홈택스가 알렸어요. 보안카드를 다시 등록해 주세요', note: '같은 번호를 다시 넣지 않았어요(5번 틀리면 카드가 폐기돼요). 이번 서명은 홈택스 창에서 직접 마쳐 주세요. 설정 › 발급 인증에서 보안카드를 다시 등록할 수 있어요.' },
+  'sign.card_locked': { text: '홈택스가 보안카드를 쓸 수 없다고 알렸어요', note: '보안카드가 폐기됐거나 정보가 없어요. 가까운 세무서에서 보안카드를 다시 받거나 공동인증서로 바꿔 주세요. 발급 여부는 홈택스 발급목록에서 확인해 주세요.' },
+  'sign.card_credential_suspect': { text: '보안카드를 다시 등록해 주세요', note: '지난번에 홈택스가 번호가 틀렸다고 해서 앱이 보안카드 번호를 넣지 않았어요. 설정 › 발급 인증에서 보안카드를 다시 등록해 주세요. 이번 서명은 홈택스 창에서 직접 마쳐 주세요.' },
+  'sign.card_suspect_unsaved': { text: '보안카드를 다시 등록해 주세요', note: '홈택스가 번호가 틀렸다고 했는데 그 사실을 금고에 남기지 못했어요. 같은 번호를 다시 넣지 않게 설정 › 발급 인증에서 보안카드를 다시 등록해 주세요. 이번 서명은 홈택스 창에서 직접 마쳐 주세요.' },
+};
 export function handoffTurn(phase: Phase, code: string | undefined, auth?: string): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
+  if (phase === 'sign' && code && Object.hasOwn(SIGN_CARD, code)) return { kind: 'sign', ...SIGN_CARD[code]! };
   if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
   if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };

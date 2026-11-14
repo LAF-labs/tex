@@ -15,7 +15,7 @@
 | 2 | 공통 | 로그인 불가 | 회사망 프록시: PC 쪽 송신이 Node `fetch`라 OS 프록시를 따르지 않음(`packages/net/src/egress.ts:239·302·332`) | 이번 주 코드 그대로. 안내서에 "프록시 망에서는 동작하지 않을 수 있음, `tax.laf-co.com`·`rooms.tax.laf-co.com` 443 허용" |
 | 3 | 공통 | 발급 불가 | 실제 홈택스 H-01 미성공 | 다른 세션 진행 중. 안내서에 "첫 발급은 함께" |
 | 4 | 공통 | 발급 불가 | Chrome 미설치면 실행 실패 | 🔧 금고가 고정 코드 `chrome.not_installed`로 끝내고 엔진이 그 코드로 실행을 끝냄, Mac `~/Applications` 후보 추가. 화면 문구는 #276 |
-| 5 | Mac | 설치 불가 | Intel Mac·macOS 12 이하(`LSMinimumSystemVersion` 13.0, arm64 단일) | 미지원(대표 결정). 안내서 §0에 칩·OS 확인과 Intel에서 보이는 것 |
+| 5 | Mac | 설치 불가 | macOS 12 이하(`LSMinimumSystemVersion` 13.0). Intel Mac은 universal 판부터 지원 | 안내서 §0에 OS 확인 |
 | 6 | Mac | 설치 불가(우회 가능) | 애드혹 서명·공증 없음 → Gatekeeper 차단 | 🔧 Developer ID 서명·공증을 키체인 신원 + notarytool 프로필로 켜는 빌드 설정. 대표 몫 §4-2가 끝나기 전엔 안내서 §2-2(나) |
 | 7 | Win | 설치 불가(우회 가능) | 미서명 → SmartScreen 차단. 회사 정책으로 [실행]이 숨겨지면 설치 불가 | 안내서 §1-2([추가 정보] → [실행]) |
 | 8 | 공통 | 발급 불가 | 첫 실행은 인터넷 필수(레지스트리 동기화 전엔 플레이북 없음, `engine/src/registry-sync.ts:511`) | 안내서 §0 |
@@ -92,8 +92,8 @@
 - 공증 판은 "인터넷에서 다운로드한 앱입니다. 열겠습니까?" [열기] 한 번이다.
 
 ### 2.3 Intel Mac
-- 지원하지 않는다(대표 결정 2026-11-11). 빌드는 arm64 하나다. Intel Mac에서 열면 macOS가 "이 Mac에서 지원되지 않아 열 수 없다"는 취지의 창을 띄운다(문구 ⏳). 안내서 §0에서 칩을 먼저 확인하게 했다.
-- 참고: x64 dmg는 `pnpm deploy --cpu=x64`로 이미 빌드되는 것을 이 세션에서 한 번 확인했다(Rosetta 기동까지). 나중에 지원하게 되면 옵션 하나로 된다.
+- 지원한다(부장 지시 2026-11-14, 팀원 Mac 칩을 몰라서). 빌드는 universal 하나다(`SovereignAX-<판>-universal.dmg`·`.zip`). 네이티브 모듈은 칩별 두 벌(better-sqlite3 `darwin-arm64`·`darwin-x64`, `@napi-rs/keyring-darwin-*`)이 같이 들어간다.
+- 확인: 0.1.99 예행 판을 `arch -x86_64`(Rosetta)로 띄워 금고·DB·레지스트리 동기화까지 갔다(팀원 설치 노트 team-install.md).
 
 ### 2.4 키체인 허용 창
 - 앱이 쓰는 키체인 서비스 `SovereignAX`: 기동 때 금고가 `db-key`를 읽고(`keystore.ts`), `settings/strict`는 있으면 읽는다(`human.ts` 생성자). 보안카드 등록이 막혀 있어 `wrapkey/dev`·`kek/*`·`securitycard/*`는 만들어지지 않는다. Electron 쿠키 암호화(퓨즈 `enableCookieEncryption`)용 "SovereignAX Safe Storage" 항목도 있을 수 있다. 항목을 읽는 것은 금고·엔진 utilityProcess(Helper 앱)다.

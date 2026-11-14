@@ -13,6 +13,7 @@ export * from './relay/policy.ts';
 export * from './relay/relay.ts';
 export * from './relay/sanitize.ts';
 export * from './secret/ops.ts';
+export * from './secret/card-scan.ts';
 export * from './keychain/backend.ts';
 export * from './keychain/account.ts';
 export * from './keychain/human.ts';

@@ -4,7 +4,7 @@
 // 순서: tsc 빌드 → pnpm deploy(잠금 파일 고정, win32-x64 선택 의존성, 평평한 node_modules) → 앱 dist를 진입점 도달성으로 줄이기 →
 // build-info.json → electron-builder(퓨즈 → asar 무결성 → 서명) → 보고서(크기·해시·포함 파일)와 배포 가능 판정(release-readiness.json).
 //
-// --mac: macOS arm64 .dmg(처음 설치)와 .zip(자동 업데이트)(팀장 지시 2026-11-10, Intel Mac 미지원 대표 결정 2026-11-11). 기본 출력 poc/.tmp/package-mac.
+// --mac: macOS universal(Apple Silicon·Intel 한 파일) .dmg(처음 설치)와 .zip(자동 업데이트)(팀장 지시 2026-11-10, 팀원 Mac 칩을 몰라 universal 부장 지시 2026-11-14). 기본 출력 poc/.tmp/package-mac.
 //        키체인에 Developer ID Application 신원이 하나 있고 SAX_NOTARY_PROFILE(notarytool 키체인 프로필 이름)이 있으면
 //        앱 서명(하드닝 런타임)·공증·스테이플 → dmg 서명·공증·스테이플 → spctl 확인. 하나라도 없으면 애드혹(SIGNING-SETUP.md §6).
 //        배포 판정은 Windows 베타 기준이라 참고만.
@@ -25,10 +25,11 @@ const BUILD = path.join(DESKTOP, 'build');
 
 const { values: args } = parseArgs({ options: { out: { type: 'string' }, 'skip-build': { type: 'boolean' }, entry: { type: 'string' }, 'test-build': { type: 'boolean' }, mac: { type: 'boolean' } } });
 /** 대상 OS·CPU(pnpm deploy 선택 의존성·네이티브 미리 빌드·electron-builder 대상) */
-const TARGET = args.mac ? { os: 'darwin', cpu: 'arm64', name: 'mac' } : { os: 'win32', cpu: 'x64', name: 'win' };
+const TARGET = args.mac ? { os: 'darwin', cpus: ['arm64', 'x64'], arch: 'universal', name: 'mac' } : { os: 'win32', cpus: ['x64'], arch: 'x64', name: 'win' };
 const OUT = path.resolve(args.out ?? path.join(POC, `.tmp/package-${TARGET.name}`));
 const STAGE = path.join(OUT, 'stage');
 const DIST = path.join(OUT, 'dist');
+const MAC_APP_DIR = `mac-${TARGET.arch}`;
 
 /** 앱에 들어가면 베타 배포를 막는 파일(ADR-035 W-7, RETRO B-05): 데모·e2e·실측·가짜 포털·목업. 도달하지 않으면 지운다. */
 const DEV_ONLY_RE = /(^|[-/])(demo|e2e|measure|fixture|smoke|synthetic|mock)([-.]|$)|poc\d+-measure/;
@@ -106,7 +107,7 @@ async function main() {
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(OUT, { recursive: true });
   // 잠금 파일 그대로, 운영 의존성만, win32-x64 선택 의존성(@napi-rs/keyring 등), 설치 스크립트 없이(네이티브는 미리 빌드)
-  run('pnpm', ['--filter', '@sax/desktop', 'deploy', '--prod', `--os=${TARGET.os}`, `--cpu=${TARGET.cpu}`, '--ignore-scripts', '--config.node-linker=hoisted', STAGE]);
+  run('pnpm', ['--filter', '@sax/desktop', 'deploy', '--prod', `--os=${TARGET.os}`, ...TARGET.cpus.map((c) => `--cpu=${c}`), '--ignore-scripts', '--config.node-linker=hoisted', STAGE]);
 
   // 앱 dist를 진입점에서 닿는 파일로 줄인다
   const stageDist = path.join(STAGE, 'dist');
@@ -149,7 +150,7 @@ async function main() {
   // 스테이지에는 devDependency electron이 없다: 데스크톱 패키지에 설치된 정확한 버전을 넘긴다(Electron zip은 electron-builder가 받아 sha256을 확인한다)
   const electronVersion = JSON.parse(fs.readFileSync(require.resolve('electron/package.json'), 'utf8')).version;
   const config = { ...makeConfig({ identity, version, buildDir: BUILD, outDir: DIST, signing, icon, target: TARGET }), electronVersion };
-  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget(['dmg', 'zip'], builder.Arch.arm64) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
+  const targets = TARGET.os === 'darwin' ? builder.Platform.MAC.createTarget(['dmg', 'zip'], builder.Arch.universal) : builder.Platform.WINDOWS.createTarget('nsis', builder.Arch.x64);
   await builder.build({ projectDir: STAGE, targets, config, publish: 'never' });
   const macCheck = signing.mode !== 'developer_id' ? null : signing.notarize ? notarizeDmg(signing) : verifySignedApp(signing);
 
@@ -158,7 +159,7 @@ async function main() {
   if (!exe) throw new Error(`설치본(${TARGET.os === 'darwin' ? '.dmg' : '.exe'})이 없다`);
   const exePath = path.join(DIST, exe);
   const bytes = fs.readFileSync(exePath);
-  const unpacked = TARGET.os === 'darwin' ? path.join(DIST, 'mac-arm64', `${identity.productName}.app`) : path.join(DIST, 'win-unpacked');
+  const unpacked = TARGET.os === 'darwin' ? path.join(DIST, MAC_APP_DIR, `${identity.productName}.app`) : path.join(DIST, 'win-unpacked');
   const resources = TARGET.os === 'darwin' ? path.join(unpacked, 'Contents/Resources') : path.join(unpacked, 'resources');
   const asarPath = path.join(resources, 'app.asar');
   const libRequire = createRequire(createRequire(require.resolve('electron-builder')).resolve('app-builder-lib'));
@@ -225,7 +226,7 @@ async function main() {
 
 /** Developer ID 서명만(공증 생략) 빌드의 확인: 서명·봉인, 팀 ID, 하드닝 런타임. 실패하면 던진다. */
 function verifySignedApp(signing) {
-  const app = path.join(DIST, 'mac-arm64', 'SovereignAX.app');
+  const app = path.join(DIST, MAC_APP_DIR, 'SovereignAX.app');
   capture('codesign', ['--verify', '--deep', '--strict', app]);
   // codesign -dv는 결과를 stderr에 쓴다
   const info = spawnSync('codesign', ['-dv', app], { encoding: 'utf8' }).stderr;
@@ -243,7 +244,7 @@ function notarizeDmg(signing) {
   const dmg = fs.readdirSync(DIST).find((f) => f.endsWith('.dmg'));
   if (!dmg) throw new Error('dmg가 없다');
   const file = path.join(DIST, dmg);
-  const app = path.join(DIST, 'mac-arm64', 'SovereignAX.app');
+  const app = path.join(DIST, MAC_APP_DIR, 'SovereignAX.app');
   capture('codesign', ['--sign', signing.fullName, '--timestamp', file]);
   const sub = JSON.parse(capture('xcrun', ['notarytool', 'submit', file, '--keychain-profile', signing.notaryProfile, '--wait', '--output-format', 'json']));
   if (sub.status !== 'Accepted') throw new Error(`dmg 공증 실패: ${sub.status} (제출 ID ${sub.id}, xcrun notarytool log ${sub.id} --keychain-profile ${signing.notaryProfile})`);

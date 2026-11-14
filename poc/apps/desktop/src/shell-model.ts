@@ -53,7 +53,7 @@ export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<Setup
       : missing.includes('biz')
         ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
         : missing.includes('auth')
-          ? `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`
+          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서·보안카드·간편인증)을 골라 주세요.`
           : null;
   // 보안 프로그램(MagicLine4NX)은 홈택스가 설치 안내로 멈추기 전에 앱이 먼저 말한다(B4, security-programs.ts)
   const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
