@@ -1294,13 +1294,18 @@ const DOC_FILTERS = [
   ['soon', '만료 임박'],
 ];
 
-/** 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 나머지는 상태 글자. */
+/** 문서함에 보이는 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 확인 필요는 상태 글자. */
 const ISSUED_SHOWN = 10;
-const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'], not_issued: ['발급 안 됨', 'is-muted'], stopped_before_gate: ['승인 전 멈춤', 'is-muted'] };
-/** 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF], 실패·확인 중은 상태로. */
+const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'] };
+/**
+ * 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF].
+ * 발급 안 된 시도는 활동 기록에만 둔다(접힌 한 줄). 발급됐는지 모르는 건(확인 필요)은 다시 발급하지 않게 여기 남긴다.
+ */
 function issuedSection() {
-  const all = state.issued ?? [];
-  if (!all.length) return null;
+  const all = (state.issued ?? []).filter((x) => x.kind === 'issued' || x.kind === 'unsure');
+  const tried = (state.issued?.length ?? 0) - all.length;
+  const triedLine = tried ? h('div', { class: 'issued-tried', 'data-issued-tried': String(tried) }, btn(`발급 안 된 시도 ${tried}건 · 활동 기록에서 보기`, () => go('activity'), 'sx-btn-quiet', { 'data-act': 'issued-tried' })) : null;
+  if (!all.length) return triedLine;
   // 최근 10건, 나머지는 [모두 보기](부장 지시 2026-11-14)
   const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
   const done = all.filter((x) => x.kind === 'issued').length;
@@ -1319,7 +1324,7 @@ function issuedSection() {
           h('td', {}, x.day ?? '—', x.time ? h('span', { class: 'sx-meta doc-ago' }, x.time) : null),
           h('td', { class: x.who ? 'name' : 'name is-none' }, x.who ?? '—'),
           h('td', { class: x.total != null ? 'num' : 'num is-none' }, x.total != null ? `${num(x.total)}원` : '—'),
-          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
+          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2', class: 'issued-why' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
           x.kind === 'issued' ? h('td', { class: x.mail ? null : 'is-none' }, x.mail ? MAIL_TEXT[x.mail] : '—') : null,
           h('td', {}, x.documentId ? btn('PDF', () => act.openDoc(x.documentId), '', { 'data-act': 'issued-pdf' }) : null),
         );
@@ -1328,6 +1333,7 @@ function issuedSection() {
     all.length > ISSUED_SHOWN
       ? h('div', { class: 'issued-more' }, btn(state.issuedAll ? '최근 10건만 보기' : `모두 보기 (${all.length}건)`, () => ((state.issuedAll = !state.issuedAll), render()), '', { 'data-act': 'issued-all' }))
       : null,
+    triedLine,
   );
 }
 
@@ -1399,7 +1405,7 @@ function cpsView() {
         ),
       ),
     ),
-    h('p', { class: 'sx-meta rs-foot' }, '휴·폐업 상태는 발급 직전에 국세청에서 다시 확인해요.'),
+    h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.'),
   );
 }
 
@@ -1415,7 +1421,7 @@ function cpPanel(c) {
       ['대표자', c.rep],
       ['받는 이메일', c.email],
       ['저장 품목', c.item],
-      ['상태 확인', c.checkedOn || '—', c.checkedOn ? { tag: '국세청' } : {}],
+      ['상태 확인', c.checkedOn || '—', c.checkedOn ? { tag: '홈택스' } : {}],
     ]),
     h('div', { class: 'sx-panel-sec' }, '세금계산서 발급 이력'),
     history.length
@@ -1426,7 +1432,6 @@ function cpPanel(c) {
       { class: 'sx-actions' },
       btn('세금계산서 발급', () => fillComposer(`${c.name}에 세금계산서 `), 'sx-btn-primary'),
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
-      btn('상태 다시 확인', () => toast('국세청 상태 다시 확인은 곧 지원해요'), 'sx-btn-quiet'),
     ),
     // 받을 돈(09 §3.6): 거래처 계좌(여러 개)·입금자 이름·결제 조건. 사업자 프로필만
     state.profile === 'business' ? bankUi.cpSection(c) : null,
@@ -2038,6 +2043,7 @@ async function go(v) {
   const own = { chat: ['run', 'g24'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
   if (v === 'cps') state.cps = await call('counterparties.list');
+  if (v === 'biz') state.boot.profiles = await call('profiles.list');
   if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
   if (v === 'bank') {
     state.cps = await call('counterparties.list');

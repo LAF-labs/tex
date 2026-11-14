@@ -146,6 +146,8 @@ export const SHELL_METHODS = {
   // 같은 파일을 파일 관리자에서 보여 준다(결과 카드 [폴더 열기], #32).
   'docs.reveal': { id: ID },
   'counterparties.list': {},
+  // 내 사업장 화면을 열 때 장부를 다시 읽는다(실행이 홈택스 화면에서 채운 칸).
+  'profiles.list': {},
   // 거래처 추가·수정(#32, M4-3). id가 null이면 새 거래처. 폼 값은 FormData.get이라 null일 수 있다. 발급 인증 기본 바꾸기는 시연 DB에서만(fixture).
   'counterparty.save': {
     id: { t: 'string', max: 128, nullable: true },

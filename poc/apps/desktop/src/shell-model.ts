@@ -24,6 +24,8 @@ export interface Profile {
   auth: string;
   /** 상호가 비어(또는 번호로 저장되어) name이 중립 표기("내 사업장")다. 번호를 이름처럼 보이지 않는다. */
   nameMissing?: boolean;
+  /** 홈택스 화면에서 채운 뒤 그대로인 칸(내 사업장에 "홈택스에서 가져옴"). */
+  fromHometax?: Array<'name' | 'rep' | 'bizType' | 'bizItem' | 'address' | 'email'>;
   /** 저장된 프로필이 없는 자리 표시(제품의 개인 프로필). 화면은 내용 없는 카드를 그리지 않는다. */
   placeholder?: boolean;
 }
