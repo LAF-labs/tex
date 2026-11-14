@@ -568,7 +568,24 @@ export class IrRun {
       })
       : null;
     // 보안카드 서명 창(대표 지시 2026-11-14): 금고가 요청 칸을 읽고 친다. 엔진은 창을 찾고 [확인하기]와 끝 알림만 본다.
-    const cardPort = sv ? new CardSecretPort({ vault: sv.vault, targetId: sv.targetId, page, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal }) : null;
+    const cardPort = sv
+      ? new CardSecretPort({
+        vault: sv.vault, targetId: sv.targetId, page, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal, dict,
+        // 보안카드 창도 실행 탭과 같은 GuardedActuator 규칙(무장 판정·R-A1·정책)으로 누른다
+        actuatorFor: (w) => {
+          const r = new PlaywrightPageReader(w);
+          const d = new PlaywrightActuator({ page: w, reader: r, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }) });
+          return {
+            reader: r,
+            act: new GuardedActuator({
+              driver: d, reader: r, dict, domains, policy: enforcer,
+              events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+              commitArmed: (k) => this.controller?.commitArmed(k) ?? false, armedConfirm: () => null, fixtureGrant: i.ir.fixtureGrant ?? null,
+            }),
+          };
+        },
+      })
+      : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {

@@ -129,46 +129,42 @@ function tokens(o: OcrObservation): Token[] {
 const isRow = (n: number): boolean => Number.isInteger(n) && n >= SECURITY_CARD_ROWS.min && n <= SECURITY_CARD_ROWS.max;
 
 /**
- * Vision 관측에서 칸 번호(1~2자리, 1~35) 바로 오른쪽 같은 줄의 4자리를 짝짓는다. 칸 번호가 이렇게 10개 미만이면 카드가 아니다.
- * 칸 수는 31번 이상이 보이면 35, 아니면 30. 그 범위에서 못 찾은 칸·의심 칸은 unsure.
+ * Vision 관측에서 칸 번호(1~2자리, 1~35)와 그 바로 오른쪽 4자리를 짝짓는다. 줄 전체를 묶지 않고 짝마다 높이를 본다(기울어진 사진에서
+ * 줄이 섞이지 않게): 칸 번호와 높이 차이가 글자 높이의 0.6배 안이고 오른쪽에서 가장 가까운 덩어리. 사이에 다른 칸 번호가 있으면 짝이 없다.
+ * 칸 번호가 10개 미만이면 카드가 아니다. 31~35번 가운데 4자리와 짝지어진 칸이 3개 이상이면 35칸(날짜 숫자 하나로 35칸이 되지 않게).
  */
 export function parseCard(obs: OcrObservation[]): CardScan | null {
-  const all = obs.flatMap(tokens).sort((a, b) => a.cy - b.cy);
-  // 줄 묶기: 중심 높이 차이가 글자 높이의 절반 안이면 같은 줄
-  const lines: Token[][] = [];
-  for (const t of all) {
-    const line = lines.find((l) => Math.abs(l[0]!.cy - t.cy) < Math.min(l[0]!.h, t.h) * 0.5);
-    if (line) line.push(t);
-    else lines.push([t]);
-  }
-  const seen = new Map<number, Array<{ v: string; doubt: boolean }>>();
-  const add = (row: number, v: string, doubt: boolean) => seen.set(row, [...(seen.get(row) ?? []), { v, doubt }]);
+  const all = obs.flatMap(tokens);
+  const seen = new Map<number, Array<{ v: string; doubt: boolean; tok?: Token }>>();
+  const add = (row: number, v: string, doubt: boolean, tok?: Token) => seen.set(row, [...(seen.get(row) ?? []), { v, doubt, ...(tok ? { tok } : {}) }]);
+  const sameRow = (a: Token, b: Token) => Math.abs(a.cy - b.cy) < Math.max(a.h, b.h) * 0.6;
+  const isIndex = (t: Token) => t.d.length <= 2 && isRow(Number(t.d));
   let indices = 0;
-  for (const line of lines) {
-    line.sort((a, b) => a.cx - b.cx);
-    for (let i = 0; i < line.length; i++) {
-      const k = line[i]!;
-      // 칸 번호와 값이 붙어 읽힌 경우("017387"): 앞 2자리를 칸 번호로 보고 그 칸은 다시 묻는다
-      if (k.d.length === 6 && isRow(Number(k.d.slice(0, 2)))) {
-        indices++;
-        add(Number(k.d.slice(0, 2)), k.d.slice(2), true);
-        continue;
-      }
-      if (k.d.length > 2 || !isRow(Number(k.d))) continue;
+  for (const k of all) {
+    // 칸 번호와 값이 붙어 읽힌 경우("017387"): 앞 2자리를 칸 번호로 보고 그 칸은 다시 묻는다
+    if (k.d.length === 6 && isRow(Number(k.d.slice(0, 2)))) {
       indices++;
-      const v = line[i + 1];
-      const row = Number(k.d);
-      if (!v || v.d.length <= 2) {
-        add(row, '', true);
-        continue;
-      }
-      i++;
-      const doubt = k.fuzzy || v.fuzzy || k.disputed || v.disputed || Math.min(k.conf, v.conf) < MIN_CONFIDENCE || v.d.length !== 4;
-      add(row, v.d.length === 4 ? v.d : '', doubt);
+      add(Number(k.d.slice(0, 2)), k.d.slice(2), true);
+      continue;
     }
+    if (!isIndex(k)) continue;
+    indices++;
+    const right = all.filter((t) => t !== k && t.cx > k.cx && sameRow(k, t)).sort((a, b) => a.cx - b.cx);
+    const v = right[0];
+    if (!v || v.d.length <= 2) {
+      add(Number(k.d), '', true);
+      continue;
+    }
+    const doubt = k.fuzzy || v.fuzzy || k.disputed || v.disputed || Math.min(k.conf, v.conf) < MIN_CONFIDENCE || v.d.length !== 4;
+    add(Number(k.d), v.d.length === 4 ? v.d : '', doubt, v);
   }
   if (indices < 10) return null;
-  const size: 30 | 35 = [...seen.keys()].some((r) => r > 30) ? 35 : 30;
+  // 같은 값 덩어리를 두 칸 번호가 함께 차지하면 둘 다 다시 묻는다
+  const owners = new Map<Token, number[]>();
+  for (const [r, xs] of seen) for (const x of xs) if (x.tok) owners.set(x.tok, [...(owners.get(x.tok) ?? []), r]);
+  for (const rs of owners.values()) if (rs.length > 1) for (const r of rs) for (const x of seen.get(r)!) x.doubt = true;
+  const paired = (r: number) => (seen.get(r) ?? []).some((x) => /^\d{4}$/.test(x.v));
+  const size: 30 | 35 = [31, 32, 33, 34, 35].filter(paired).length >= 3 ? 35 : 30;
   const rows = new Map<number, string>();
   const unsure: number[] = [];
   for (let r = 1; r <= size; r++) {

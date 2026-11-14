@@ -587,7 +587,12 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
       if (isSecretEntry(entry(f.rowFrom))) bad('V-02', 'card 요청 글자가 비밀 칸', s.id, f.rowFrom);
     }
     const ce = entry(card.confirmTarget);
-    if (ce && !ce.commits && s.type === 'submit') bad('V-02', 'card.confirmTarget이 commits:true가 아님', s.id, card.confirmTarget);
+    if (ce && s.type === 'submit') {
+      // 발급 서명 [확인하기]는 공동인증서 confirmTarget과 같은 규칙: commits:true, submit 타깃과 같은 commitEffect
+      const se = entry(s.target);
+      if (!ce.commits) bad('V-02', 'card.confirmTarget이 commits:true가 아님', s.id, card.confirmTarget);
+      else if (se && ce.commitEffect !== se.commitEffect) bad('V-02', 'card.confirmTarget의 commitEffect가 submit 타깃과 다름', s.id, card.confirmTarget);
+    }
   }
 
   // ---- V-10 ----

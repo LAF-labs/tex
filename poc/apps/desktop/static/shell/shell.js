@@ -466,19 +466,23 @@ const ONB_ERR = {
   gesture_required: '버튼을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
 };
+/** main이 돌려준 온보딩 답(onboarding.reply·card.register)을 화면에 반영한다. */
+function applyOnb(r) {
+  if (r.onboarding !== undefined) state.onb = r.onboarding;
+  if (r.profiles) state.boot.profiles = r.profiles;
+  renderOnboarding();
+  renderTitlebar();
+  renderToday();
+  if (r.fill) fillComposer(r.fill);
+  // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
+  if (loginGate()) renderModal();
+}
 const onbAct = {
   call,
+  applied: (r) => applyOnb(r),
   reply: async (step, choice, extra = {}) => {
     try {
-      const r = await call('onboarding.reply', { step, choice, ...extra });
-      state.onb = r.onboarding;
-      if (r.profiles) state.boot.profiles = r.profiles;
-      renderOnboarding();
-      renderTitlebar();
-      renderToday();
-      if (r.fill) fillComposer(r.fill);
-      // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
-      if (loginGate()) renderModal();
+      applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
       return true;
     } catch (e) {
       // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안 빨간 글(대표 2026-11-13)
@@ -1757,10 +1761,10 @@ function cardRow() {
   }
   cardEl ??= cardRegister({
     call,
-    onStored: (n) => {
+    onStored: (r) => {
       state.card = { stored: true, redo: false };
       cardEl = null;
-      toast(`보안카드 ${n}칸을 이 PC 금고에 등록했어요. 다음 발급부터 앱이 번호를 넣어요.`);
+      toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요. 다음 발급부터 앱이 번호를 넣어요.`);
       render();
     },
   });
@@ -1768,8 +1772,9 @@ function cardRow() {
 }
 async function forgetCard() {
   try {
-    state.card = { stored: (await call('card.forget', {})).stored === true, redo: false };
-    toast('보안카드를 금고에서 지웠어요');
+    const stored = (await call('card.forget', {})).stored === true;
+    state.card = { stored, redo: false };
+    toast(stored ? '지우지 못했어요. 다시 해 주세요' : '보안카드를 금고에서 지웠어요');
   } catch {
     toast('지우지 못했어요. 다시 해 주세요');
   }

@@ -46,6 +46,8 @@ const SCREEN_COMMANDS: Record<string, string> = { a: 'selectAll', z: 'undo', x: 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 /** 보안카드 사진 인식 뒤 애매한 칸을 기다리는 초안의 수명. */
 const CARD_DRAFT_TTL_MS = 10 * 60_000;
+/** 보안카드 등록 창 포트 하나가 받는 사진·칸 답 횟수. */
+const CARD_PORT_TRIES = 8;
 interface CardDraft {
   scope: ProfileScope;
   size: 30 | 35;
@@ -265,7 +267,7 @@ export class Vault {
         this.opts.log.event('vault.secret_input_unrequested', { kind: b.kind });
         return;
       }
-      const state = { used: false };
+      const state: { used: boolean; cardTries?: number; cardBusy?: boolean } = { used: false };
       port.onMessage((raw) => this.onSecretInput(port, b, state, raw as InboundMessage));
       return;
     }
@@ -321,7 +323,7 @@ export class Vault {
   }
 
   /** 결속된 포트는 secret.provide를 한 번만 받는다. 그 뒤 메시지는 거부하고 실린 값은 0으로 덮는다. */
-  private onSecretInput(port: PortLike, bind: SecretInputBind, state: { used: boolean }, msg: InboundMessage): void {
+  private onSecretInput(port: PortLike, bind: SecretInputBind, state: { used: boolean; cardTries?: number; cardBusy?: boolean }, msg: InboundMessage): void {
     if (msg?.t !== 'rpc') return;
     const p = msg.params ?? {};
     const bytes = p.bytes instanceof Uint8Array ? p.bytes : null;
@@ -330,6 +332,33 @@ export class Vault {
       bytes?.fill(0);
       for (const b of entryBytes) b?.fill(0);
     };
+    // 보안카드 등록 창(금고 직결, 부장 판정 2026-11-14): 한 포트로 사진 → 애매한 칸을 이어 받는다. 저장을 마치면 그 포트는 끝난다.
+    // 사진을 다시 넣는 일(못 읽음)까지 포트당 CARD_PORT_TRIES번.
+    if (bind.mode === 'store' && bind.kind === 'security_card' && msg.method === 'secret.store' && (p.image instanceof Uint8Array || typeof p.draftId === 'string')) {
+      const image = p.image instanceof Uint8Array ? p.image : null;
+      if (state.used || state.cardBusy || (state.cardTries = (state.cardTries ?? 0) + 1) > CARD_PORT_TRIES) {
+        wipe();
+        image?.fill(0);
+        this.post(port, { t: 'rpc', id: msg.id, error: 'denied' });
+        return;
+      }
+      state.cardBusy = true;
+      void this.cardStore(bind, p, entryBytes).then(
+        (result) => {
+          if ('consent' in result) {
+            state.used = true;
+            // main에는 저장했다는 것과 칸 수만(값·칸 번호 없음)
+            this.emit(['control'], 'secret.stored', { kind: 'security_card', scope: bind.scope, items: result.consent.items });
+          }
+          this.post(port, { t: 'rpc', id: msg.id, result });
+        },
+        (e: Error) => {
+          wipe();
+          this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
+        },
+      ).finally(() => (state.cardBusy = false));
+      return;
+    }
     // 결속 모드가 메서드를 정한다: oneshot은 secret.provide, store(T-06)는 secret.store. 한 포트에서 한 번만.
     const expected = bind.mode === 'store' ? 'secret.store' : 'secret.provide';
     if (msg.method !== expected || state.used) {
@@ -339,16 +368,6 @@ export class Vault {
       return;
     }
     state.used = true;
-    if (bind.mode === 'store' && bind.kind === 'security_card' && (p.image instanceof Uint8Array || typeof p.draftId === 'string')) {
-      void this.cardStore(bind, p, entryBytes).then(
-        (result) => this.post(port, { t: 'rpc', id: msg.id, result }),
-        (e: Error) => {
-          wipe();
-          this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
-        },
-      );
-      return;
-    }
     if (bind.mode === 'store') {
       const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
       const parsed = entries.map((e, i) => ({ row: e?.row as number | undefined, field: e?.field as PortalField | undefined, bytes: entryBytes[i] ?? new Uint8Array() }));

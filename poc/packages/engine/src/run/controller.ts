@@ -17,6 +17,7 @@ import { decideGate, reenterCheckpoint } from '../core/runtime.ts';
 import { waitTarget, type Handler, type Handlers, type Outcome, type StepEnv } from '../core/steps.ts';
 import type { GateToken, GateTokens, TokenDiscardTrigger } from '../core/token.ts';
 import type { PlaybookIR, SignFlow, SignMethod, Step, StepOf } from '../core/types.ts';
+import type { CardPress } from '../driver/card-secret.ts';
 import { failSignalKeys, verifyOfIrreversible, type VerifyBook, type VerifyJudgement } from '../core/verify.ts';
 import { readField } from '../core/readback.ts';
 import { savePdf, type PdfPort } from '../core/savepdf.ts';
@@ -123,7 +124,7 @@ export interface HumanPort {
    * 'done'은 포털이 성공 알림을 보였다. { code }면 사람 차례로 넘긴다(틀림 sign.card_wrong은 같은 값으로 다시 치지 않는다, 카드 5회 오류 폐기).
    * 셀렉터는 css 후보 원문, window는 새 창 주소 정규식 원문이다. 칸 번호·값은 엔진에 오지 않는다.
    */
-  card?(r: { runId: string; stepId: string; ttlMs: number; window: string; fields: Array<{ element: string; label: string }>; confirm: string }): Promise<'done' | { code: string }>;
+  card?(r: { runId: string; stepId: string; ttlMs: number; window: string; fields: Array<{ element: string; label: string }>; confirmKey: string; press: CardPress }): Promise<'done' | { code: string }>;
 }
 
 /** 취소할 수 있는 타이머(게이트 waitMs·사람 TTL·핸드오프 상한). 시험은 손으로 돌리는 것을 넣는다. */
@@ -766,7 +767,9 @@ export class RunController {
         }
         this.fire({ t: 'gate_approved' }, g.id, null);
         this.tokensByGate.set(g.id, { token: d.token, reqId: req.reqId });
-        this.approvedReadback.set(g.id, new Map(this.i.env.scope.readback));
+        // 선택 readback 칸(IR rev v1.3.8 optional)은 커밋 직전 다시 읽어 맞추는 대상이 아니다(못 읽어도 되는 칸이라 대조하지 않는다)
+        const optional = new Set(this.i.ir.steps.flatMap((x) => (x.type === 'readback' ? (x.optional ?? []) : [])));
+        this.approvedReadback.set(g.id, new Map([...this.i.env.scope.readback].filter(([k]) => !optional.has(k))));
         done('approved');
         return NEXT;
       }
@@ -958,7 +961,7 @@ export class RunController {
         }
       } else {
         // 보안카드 창 정의·포트가 없으면(옛 패키지) 예전처럼 치지 않고 verify로. 치려다 못 했거나 틀렸으면 서명 차례(사람), 다시 치지 않는다.
-        const r = await this.cardFill(s.id, f.card, left());
+        const r = await this.cardFill(s.id, f.card, left(), true);
         if (r === 'unsupported') return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
         if (r !== 'done') {
           this.i.journal('signflow.card_failed', { stepId: s.id, action: a, code: r.code });
@@ -982,7 +985,7 @@ export class RunController {
    * 보안카드 칸 채우기(signFlow·sign 공통): 패키지의 보안카드 창 정의를 css 원문으로 풀어 HumanPort.card에 넘긴다.
    * 정의·포트·css 후보가 없으면 'unsupported'(엔진이 아무것도 치지 않는다).
    */
-  private async cardFill(stepId: string, def: SignFlow['card'] | undefined, ttlMs: number): Promise<'done' | 'unsupported' | { code: string }> {
+  private async cardFill(stepId: string, def: SignFlow['card'] | undefined, ttlMs: number, inCommit: boolean): Promise<'done' | 'unsupported' | { code: string }> {
     const env = this.i.env;
     const css = (k: string): string | null => {
       const c = env.dict.entries[k]?.candidates.find((x) => x.kind === 'css');
@@ -990,10 +993,27 @@ export class RunController {
     };
     const win = def ? env.strings[def.window] : undefined;
     const fields = def?.fields.map((x) => ({ element: css(x.target), label: css(x.rowFrom) })) ?? [];
-    const confirm = def ? css(def.confirmTarget) : null;
-    if (!this.i.human.card || !win || !confirm || !fields.length || fields.some((x) => !x.element || !x.label)) return 'unsupported';
+    if (!this.i.human.card || !def || !win || !env.dict.entries[def.confirmTarget] || !fields.length || fields.some((x) => !x.element || !x.label)) return 'unsupported';
+    const key = def.confirmTarget;
+    // [확인하기]: 커밋 구간(발급 서명)이면 공동인증서 [확인]과 같은 규칙(이 무장에서 한 번, 승인 토큰 기한 안, armedKey로 GuardedActuator가 허락).
+    const press: CardPress = async (click) => {
+      if (!inCommit) return (await click()).ok ? 'clicked' : 'failed';
+      if (this.confirmClicked) {
+        this.i.journal('signflow.confirm_once', { stepId });
+        return 'once';
+      }
+      if (this.i.clock.now() > this.armedExp) {
+        this.i.journal('signflow.confirm_expired', { stepId });
+        return 'expired';
+      }
+      this.confirmClicked = true;
+      this.armedKey = key;
+      const c = await click();
+      if (!c.ok) this.i.journal('signflow.confirm_failed', { stepId, code: c.code });
+      return c.ok ? 'clicked' : 'failed';
+    };
     return this.i.human
-      .card({ runId: this.i.runId, stepId, ttlMs, window: win, fields: fields as Array<{ element: string; label: string }>, confirm })
+      .card({ runId: this.i.runId, stepId, ttlMs, window: win, fields: fields as Array<{ element: string; label: string }>, confirmKey: key, press })
       .catch(() => ({ code: 'sign.card_port_error' }));
   }
 
@@ -1240,7 +1260,7 @@ export class RunController {
     }
     if (need === 'secret_fill:security_card') {
       // 로그인 보안카드(구간 밖): 금고가 창의 두 칸을 채우고 [확인]까지. 정의가 없거나 끝이 성공이 아니면 재시도 없이 핸드오프(같은 값을 다시 치지 않는다).
-      const r = await this.cardFill(s.id, s.card, this.i.secretTtlMs ?? 120_000);
+      const r = await this.cardFill(s.id, s.card, this.i.secretTtlMs ?? 120_000, false);
       if (r === 'done') return NEXT;
       this.i.journal(r === 'unsupported' ? 'sign.unsupported' : 'sign.card_failed', { stepId: s.id, ...(r === 'unsupported' ? { action: need } : { code: r.code }) });
       return fail(r === 'unsupported' ? 'sign.unsupported' : r.code);

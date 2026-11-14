@@ -1,5 +1,5 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호)은 여기서 받지 않는다. 보안카드는 사진만 받아 금고로 넘긴다(shell-card.js, 값은 렌더러에 오지 않는다).
+// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 보안카드는 금고 직결 등록 창이 받는다(shell-card.js → main → card-secret.js).
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, kv, note, securityBox } from './shell-views.js';
 import { cardRegister } from './shell-card.js';
@@ -294,9 +294,11 @@ function authCard(o, u, reply, act) {
         u.cardReg
           ? (u.cardEl ??= cardRegister({
               call: act.call,
-              onStored: (n) => {
-                act.toast(`보안카드 ${n}칸을 이 PC 금고에 등록했어요`);
-                reply('card');
+              onboarding: true,
+              // 저장 뒤 main이 인증을 보안카드로 정하고 온보딩 화면을 돌려준다(렌더러가 다시 답하지 않는다)
+              onStored: (r) => {
+                act.toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요`);
+                act.applied(r);
               },
               skip: () => reply('card'),
             }))
