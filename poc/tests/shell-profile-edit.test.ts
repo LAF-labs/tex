@@ -7,7 +7,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { openDatabase, ProfileRepo, type Db, type Profile as DbProfile } from '@sax/db';
+import { isValidBizNo, openDatabase, ProfileRepo, syntheticBizNo, type Db, type Profile as DbProfile } from '@sax/db';
 import { MockOnboardingPorts } from '../apps/desktop/src/onboarding-mock.ts';
 import { BIZ_FIELD_MAX, OnboardingFlow, parseOnbState, type BizCheck, type BizFields, type OnbAnswer, type OnbProfile } from '../apps/desktop/src/onboarding.ts';
 import { BIZ_FIELD_LABEL, BIZ_NO_CHANGE_NOTE, bizFieldsOf, changedKeys, cleanBizEdit, nameMissing, PROFILE_EDIT_LOG_MAX, ProfileEditLog, ProfileEditor, type BizFieldKey } from '../apps/desktop/src/profile-edit.ts';
@@ -285,8 +285,16 @@ describe('배선(main·IPC·렌더러)', () => {
   });
   it('렌더러: 상한·번호 안내가 main과 같다, 값은 입력 칸 value로만, [발급 인증 바꾸기]는 onboarding.reopen auth', async () => {
     const biz = read('apps/desktop/static/shell/shell-biz.js');
-    const max = JSON.parse(biz.match(/export const BIZ_EDIT_MAX = (\{[^}]+\});/)![1]!.replace(/(\w+):/g, '"$1":'));
-    assert.deepEqual(max, BIZ_FIELD_MAX);
+    // 칸 상한·번호 검사는 공통 칸(fields.js) 한 곳이다. 렌더러는 main보다 길게 받지 않고(번호는 000-00-00000 12자), 검증 숫자 식은 DB와 같다.
+    assert.match(biz, /from '\.\/fields\.js'/);
+    const fields = (await import('../apps/desktop/static/shell/fields.js')) as unknown as { LIMITS: Record<string, number>; bizNoOk: (d: string) => boolean };
+    for (const [k, n] of Object.entries(BIZ_FIELD_MAX)) assert.ok(fields.LIMITS[k]! <= n, `${k}: ${fields.LIMITS[k]} <= ${n}`);
+    for (let seed = 0; seed < 200; seed++) {
+      const ok = syntheticBizNo(seed);
+      const bad = ok.slice(0, 9) + String((Number(ok[9]) + 1) % 10);
+      assert.ok(fields.bizNoOk(ok), ok);
+      assert.equal(fields.bizNoOk(bad), isValidBizNo(bad), bad);
+    }
     assert.ok(biz.includes(`export const BIZ_NO_CHANGE_NOTE = '${BIZ_NO_CHANGE_NOTE}';`));
     assert.doesNotMatch(biz, /innerHTML/);
     assert.match(biz, /ctx\.call\('profile\.edit', \{ fields: \{ \.\.\.e\.values \}, \.\.\.\(confirmUnverified \? \{ confirmUnverified: true \} : \{\}\) \}\)/);

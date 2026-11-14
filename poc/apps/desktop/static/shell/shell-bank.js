@@ -3,6 +3,7 @@
 // 모든 고치기는 한 번 누르면 되고, 10초 동안 [되돌리기]가 뜬다(그 뒤에도 건 상세 기록에서 되돌린다, 09 §7.5).
 // 결과·오류는 토스트 대신 이 화면 안 글로 남긴다(대표 2026-11-13). 한 덩어리에 주요 단추는 하나, 줄마다 붙는 단추는 조용한 단추다(v2.0).
 import { btn, h, icon, kv, note, num } from './shell-views.js';
+import { accountInput, amountInput, amountOf, checkFields, dateInput, field, keys, LIMITS, selectInput, textInput } from './fields.js';
 
 const won = (n) => `${num(n)}원`;
 const md = (iso) => (iso ? `${Number(iso.slice(5, 7))}월 ${Number(iso.slice(8, 10))}일` : '—');
@@ -28,6 +29,10 @@ const ERR = {
   receivable_settled: '그 건은 이미 다 받아서 되돌릴 수 없어요.',
   nothing_to_attach: '붙일 금액이 없어요.',
   account_not_found: '계좌를 골라 주세요.',
+  bad_amount: '받은 금액을 확인해 주세요. 남은 돈보다 많을 수 없어요.',
+  bad_date: '날짜를 다시 골라 주세요.',
+  bad_alias: '이름을 두 글자 이상 넣어 주세요.',
+  bad_holder: '예금주 이름을 확인해 주세요.',
   'source.not_linked': '이 계좌는 자동 연결이 안 돼 있어요. 거래내역 파일을 올려 주세요.',
   'source.not_available': '자동 연결을 지금 쓸 수 없어요. 거래내역 파일을 올려 주세요.',
 };
@@ -56,20 +61,8 @@ function statusText(v) {
 }
 const dueText = (v) => (v.dueIn === null ? '기한 없음' : v.dueIn < 0 ? `${-v.dueIn}일 지남` : v.dueIn === 0 ? '오늘' : `D-${v.dueIn}`);
 
-/** 폼 키: 글자 칸의 Enter = 저장, 어디서든 Escape = 그만두기. 한글 조합 중에는 무시한다(단추 위 Enter는 그 단추 몫) */
-const keys = (submit, cancel) => (e) => {
-  if (e.isComposing || e.keyCode === 229) return;
-  const t = e.target;
-  if (e.key === 'Enter' && submit && t.tagName === 'INPUT' && t.type !== 'checkbox') {
-    e.preventDefault();
-    submit();
-  } else if (e.key === 'Escape' && cancel) {
-    e.preventDefault();
-    cancel();
-  }
-};
-/** 보이는 라벨 + 칸 */
-const field = (label, input) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), input);
+/** main이 거절한 까닭이 칸 하나의 것이면 그 칸(data-field) 아래에 쓴다. 나머지는 폼 끝 한 줄. */
+const ERR_FIELD = { bad_amount: 'amount', bad_date: 'on', bad_account_number: 'number', duplicate_account: 'number', bad_bank: 'bank', bad_alias: 'alias', bad_holder: 'holder' };
 /** 화면 안 알림 한 줄(되돌리기 띠와 같은 모양): 아이콘 · 글(+ 작은 글) · 단추 0~2개. bad = 확인 필요 */
 const bar = (text, { bad = false, extra = null, action = null, ic = null, attrs = {} } = {}) =>
   h('div', { class: `sx-note${bad ? ' is-attention' : ''}`, role: bad ? 'alert' : 'status', ...attrs }, icon(ic ?? (bad ? 'warn' : 'info')), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null), action);
@@ -100,9 +93,11 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
   const say = (e) => toast(ERR[errText(e)] ?? '처리하지 못했어요. 다시 해 주세요.');
   const errMsg = (e) => ERR[errText(e)] ?? '처리하지 못했어요. 다시 해 주세요.';
   const tell = (text, o = {}) => (s.notice = { text, ...o });
-  /** 실패는 그 폼 안(where) 또는 화면 위 알림 한 줄로 */
-  const fail = (e, where) => (where ? (s.formErr = { where, text: errMsg(e) }) : tell(errMsg(e), { bad: true }));
-  const formMsg = (where) => (s.formErr?.where === where ? h('p', { class: 'form-msg is-bad', role: 'alert' }, s.formErr.text) : null);
+  /** 실패는 그 폼 안(where)의 그 칸 아래, 칸을 모르면 폼 끝 한 줄, 폼이 없으면 화면 위 알림 한 줄로 */
+  const fail = (e, where) => (where ? (s.formErr = { where, text: errMsg(e), field: ERR_FIELD[errText(e)] ?? null }) : tell(errMsg(e), { bad: true }));
+  const formMsg = (where) => (s.formErr?.where === where && !s.formErr.field ? h('p', { class: 'form-msg is-bad', role: 'alert' }, s.formErr.text) : null);
+  /** 그 폼 그 칸의 까닭(field의 error) */
+  const errAt = (where, f) => (s.formErr?.where === where && s.formErr.field === f ? s.formErr.text : null);
 
   /** 다시 그리면 DOM을 새로 만든다. 입력 중이던 칸(data-field)의 포커스와 커서를 지킨다([최신화] 진행이 1.5초마다 다시 그려도 칸에서 튕기지 않게) */
   const rerender = () => {
@@ -354,22 +349,23 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const formActs = (label, submit, attrs = {}) => h('div', { class: 'sx-actions' }, btn(label, submit, 'sx-btn-primary', attrs), btn('그만두기', close, 'sx-btn-quiet'));
     let formEl = null;
     if (form?.kind === 'received') {
-      const submit = done(() => act('bank.markReceived', { receivableId: v.id, method: form.method, amount: form.amount, on: form.on }, '받았음으로 표시했어요', 'form'));
+      // 칸 검사(금액 0·빈 값, 덜 넣은 날짜)를 먼저 하고, 맞으면 main에 보낸다
+      const submit = done(() => checkFields(formEl) && act('bank.markReceived', { receivableId: v.id, method: form.method, amount: form.amount, on: form.on }, '받았음으로 표시했어요', 'form'));
       formEl = h(
         'div',
         { class: 'cp-form', 'data-bank-form': 'received', onkeydown: keys(submit, close) },
-        field('받은 방법', h('select', { class: 'doc-in', 'data-field': 'method', onchange: (e) => (form.method = e.target.value) }, ...['cash', 'other_account', 'offset', 'other', 'account'].map((m) => h('option', { value: m, selected: form.method === m }, METHOD_LABEL[m])))),
-        field('받은 금액(원)', h('input', { class: 'doc-in', type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', 'data-field': 'amount', value: String(form.amount), oninput: (e) => (form.amount = Number(e.target.value.replace(/\D/g, ''))) })),
-        field('받은 날', h('input', { class: 'doc-in', type: 'date', 'data-field': 'on', value: form.on, oninput: (e) => (form.on = e.target.value) })),
+        field({ label: '받은 방법', input: selectInput(['cash', 'other_account', 'offset', 'other', 'account'].map((m) => [m, METHOD_LABEL[m]]), { value: form.method, compact: true, 'data-field': 'method', onchange: (e) => (form.method = e.target.value) }) }),
+        field({ label: '받은 금액(원)', error: errAt('form', 'amount'), input: amountInput({ value: form.amount, compact: true, 'data-field': 'amount', oninput: (e) => (form.amount = amountOf(e.target)) }) }),
+        field({ label: '받은 날', error: errAt('form', 'on'), input: dateInput({ value: form.on, required: true, compact: true, 'data-field': 'on', oninput: (e) => (form.on = e.target.value) }) }),
         formMsg('form'),
         formActs('받았음으로 표시', submit, { 'data-act': 'bank-mark-save' }),
       );
     } else if (form?.kind === 'promise') {
-      const submit = done(() => act('bank.setPromised', { receivableId: v.id, on: form.on }, '기다리는 중으로 바꿨어요', 'form'));
+      const submit = done(() => checkFields(formEl) && act('bank.setPromised', { receivableId: v.id, on: form.on }, '기다리는 중으로 바꿨어요', 'form'));
       formEl = h(
         'div',
         { class: 'cp-form', 'data-bank-form': 'promise', onkeydown: keys(submit, close) },
-        field('받기로 약속한 날', h('input', { class: 'doc-in', type: 'date', 'data-field': 'promise-on', value: form.on, oninput: (e) => (form.on = e.target.value) })),
+        field({ label: '받기로 약속한 날', error: errAt('form', 'on'), input: dateInput({ value: form.on, required: true, compact: true, 'data-field': 'promise-on', oninput: (e) => (form.on = e.target.value) }) }),
         formMsg('form'),
         formActs('기다리는 중으로', submit),
       );
@@ -378,7 +374,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       formEl = h(
         'div',
         { class: 'cp-form', 'data-bank-form': 'exclude', onkeydown: keys(submit, close) },
-        field('빼는 까닭', h('select', { class: 'doc-in', 'data-field': 'reason', onchange: (e) => (form.reason = e.target.value) }, ...['받지 않기로 함', '거래 취소', '기타'].map((r) => h('option', { value: r, selected: form.reason === r }, r)))),
+        field({ label: '빼는 까닭', input: selectInput(['받지 않기로 함', '거래 취소', '기타'].map((r) => [r, r]), { value: form.reason, compact: true, 'data-field': 'reason', onchange: (e) => (form.reason = e.target.value) }) }),
         formMsg('form'),
         formActs('목록에서 빼기', submit),
         h('p', { class: 'sx-meta' }, '세무 처리(대손 등)는 앱이 판단하지 않아요. 세무사와 상의하세요.'),
@@ -490,7 +486,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
             ? h(
                 'div',
                 { class: 'cp-form', 'data-bank-assign': t.id, onkeydown: keys(null, cancel) },
-                field('거래처', h('select', { class: 'doc-in', 'data-field': 'cp', onchange: (e) => (g.cp = e.target.value) }, ...cps.map((c) => h('option', { value: c.id, selected: g.cp === c.id }, c.name)))),
+                field({ label: '거래처', input: selectInput(cps.map((c) => [c.id, c.name]), { value: g.cp, compact: true, 'data-field': 'cp', onchange: (e) => (g.cp = e.target.value) }) }),
                 t.payer ? h('label', { class: 'auth-row' }, h('input', { type: 'checkbox', 'data-field': 'remember', checked: g.remember, onchange: (e) => (g.remember = e.target.checked) }), h('span', { class: 'sx-body-sm' }, `다음부터 '${t.payer}' 입금은 이 거래처로`)) : null,
                 h('div', { class: 'sx-actions' }, btn('이 거래처 입금으로', save, 'sx-btn-primary', { 'data-act': 'bank-assign-save' }), btn('그만두기', cancel, 'sx-btn-quiet')),
               )
@@ -565,6 +561,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const consent = s.data?.consent;
     const cancel = () => ((s.adding = null), (s.formErr = null), rerender());
     const save = async () => {
+      if (!checkFields(form)) return;
       const r = await act('bank.addAccount', { bank: a.bank, number: a.number, alias: a.alias || undefined }, undefined, 'account');
       if (r) {
         s.adding = null;
@@ -598,9 +595,9 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         : h(
             'div',
             { class: 'cp-form', 'data-bank-account-form': '', onkeydown: keys(save, cancel) },
-            field('은행', h('select', { class: 'doc-in', 'data-field': 'bank', onchange: (e) => (a.bank = e.target.value) }, ...BANKS.map((b) => h('option', { value: b, selected: a.bank === b }, b)))),
-            field('계좌번호', h('input', { class: 'doc-in', type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', 'data-field': 'number', value: a.number, oninput: (e) => (a.number = e.target.value) })),
-            field('부르는 이름(선택)', h('input', { class: 'doc-in', type: 'text', autocomplete: 'off', spellcheck: 'false', maxlength: 40, placeholder: '예: 주거래 국민', 'data-field': 'alias', value: a.alias, oninput: (e) => (a.alias = e.target.value) })),
+            field({ label: '은행', error: errAt('account', 'bank'), input: selectInput(BANKS.map((b) => [b, b]), { value: a.bank, 'data-field': 'bank', onchange: (e) => (a.bank = e.target.value) }) }),
+            field({ label: '계좌번호', error: errAt('account', 'number'), input: accountInput({ value: a.number, 'data-field': 'number', oninput: (e) => (a.number = e.target.value) }) }),
+            field({ label: '부르는 이름(선택)', error: errAt('account', 'alias'), input: textInput({ value: a.alias, max: LIMITS.accountAlias, spellcheck: 'false', placeholder: '예: 주거래 국민', 'data-field': 'alias', oninput: (e) => (a.alias = e.target.value) }) }),
             formMsg('account'),
             h('div', { class: 'sx-actions' }, btn('저장', save, 'sx-btn-primary', { 'data-act': 'bank-account-save' }), btn('그만두기', cancel, 'sx-btn-quiet')),
           );
@@ -701,7 +698,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       { class: 'sx-card', 'data-bank-preview': '', onkeydown: keys(null, cancel) },
       h('h2', { class: 'board-card-title' }, p.ok ? `${p.bankHint ?? ''} 거래내역 · ${p.period.from ? `${md(p.period.from)}~${md(p.period.to)}` : ''} · 입금 ${p.totals.inCount}줄 · 출금 ${p.totals.outCount}줄` : '열을 알아보지 못했어요. 각 열이 무엇인지 골라 주세요.'),
       p.skipped ? h('p', { class: 'sx-meta' }, `날짜·금액을 읽지 못해 뺀 줄 ${p.skipped}줄`) : null,
-      field('어느 계좌의 거래내역인가요?', h('select', { class: 'doc-in', 'data-field': 'account', onchange: (e) => (s.previewAccount = e.target.value) }, ...accounts.map((a) => h('option', { value: a.id, selected: s.previewAccount === a.id }, `${a.bank} ···${a.last4}${a.alias ? ` ${a.alias}` : ''}`)))),
+      field({ label: '어느 계좌의 거래내역인가요?', input: selectInput(accounts.map((a) => [a.id, `${a.bank} ···${a.last4}${a.alias ? ` ${a.alias}` : ''}`]), { value: s.previewAccount, compact: true, 'data-field': 'account', onchange: (e) => (s.previewAccount = e.target.value) }) }),
       p.accountLast4 && !accounts.some((a) => a.last4 === p.accountLast4) ? note(`파일의 계좌 끝자리(···${p.accountLast4})와 같은 등록 계좌가 없어요. 맞는 계좌인지 확인해 주세요.`, true) : null,
       h(
         'div',
@@ -757,72 +754,72 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const box = h('div', { class: 'bank-cp', 'data-bank-cp': c.id }, h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'));
     // 상세 패널은 보는 자리다. 더하는 폼은 [계좌 더하기]·[입금자 이름 더하기]를 눌렀을 때만 연다(빈 폼을 늘 펼쳐 두지 않는다, v2.0).
     let adding = null; // 'account' | 'alias' | null
-    let formErr = '';
+    // 거절되어 다시 그려도 넣던 값이 남게 둔다(저장하거나 닫으면 비운다). formErr: { text, field }
+    let vals = {};
+    let formErr = null;
     const draw = (info) => {
       const accounts = info?.accounts ?? [];
       const aliases = info?.aliases ?? [];
       const terms = info?.terms;
-      const termsSel = h('select', { class: 'doc-in', 'data-field': 'terms', 'aria-label': '받기로 한 날' }, ...[['default', '기본값(작성일 + 30일)'], ['days:60', '작성일 + 60일'], ['days:15', '작성일 + 15일'], ['next_month_day:10', '다음 달 10일'], ['month_end', '다음 달 말일'], ['none', '기한 없음']].map(([v, l]) => h('option', { value: v, selected: (terms ? (terms.kind === 'days' ? `days:${terms.n}` : terms.kind === 'next_month_day' ? `next_month_day:${terms.d}` : terms.kind) : 'default') === v }, l)));
+      const termsKey = terms ? (terms.kind === 'days' ? `days:${terms.n}` : terms.kind === 'next_month_day' ? `next_month_day:${terms.d}` : terms.kind) : 'default';
+      const termsSel = selectInput(
+        [['default', '기본값(작성일 + 30일)'], ['days:60', '작성일 + 60일'], ['days:15', '작성일 + 15일'], ['next_month_day:10', '다음 달 10일'], ['month_end', '다음 달 말일'], ['none', '기한 없음']],
+        { value: termsKey, compact: true, 'data-field': 'terms', 'aria-label': '받기로 한 날' },
+      );
       termsSel.addEventListener('change', async () => {
         const [kind, n] = termsSel.value.split(':');
         await call('bank.setPayTerms', { counterpartyId: c.id, kind, n: n ? Number(n) : undefined }).catch(say);
         toast('결제 조건을 바꿨어요');
       });
-      const field = (label, input) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), input);
-      const close = () => ((adding = null), (formErr = ''), draw(cpCache.get(c.id)));
-      const keys = (submit) => (e) => {
-        if (e.isComposing) return;
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          submit();
-        }
-        if (e.key === 'Escape') close();
+      const close = () => ((adding = null), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
+      const errAt = (f) => (formErr?.field === f ? formErr.text : null);
+      const fail = (e, fallback) => {
+        const code = errText(e);
+        formErr = { text: ERR[code] ?? fallback, field: ERR_FIELD[code] ?? null };
       };
+      const formLine = () => (formErr && !formErr.field ? h('p', { class: 'form-msg is-bad', role: 'alert' }, formErr.text) : null);
+      const saved = () => ((adding = null), (formErr = null), (vals = {}), reload());
       let form = null;
       if (adding === 'account') {
-        const bankSel = h('select', { class: 'doc-in', name: 'bank' }, ...BANKS.map((b) => h('option', { value: b }, b)));
-        const num_ = h('input', { class: 'doc-in', type: 'text', inputmode: 'numeric', autocomplete: 'off', spellcheck: 'false', maxlength: 20, name: 'account', 'data-field': 'cp-number' });
-        const holder = h('input', { class: 'doc-in', type: 'text', autocomplete: 'off', maxlength: 40, name: 'holder', 'data-field': 'cp-holder' });
+        const bankSel = selectInput(BANKS.map((b) => [b, b]), { value: vals.bank, name: 'bank', compact: true, 'data-field': 'cp-bank', onchange: (e) => (vals.bank = e.target.value) });
+        const num_ = accountInput({ value: vals.number, name: 'account', compact: true, 'data-field': 'cp-number', oninput: (e) => (vals.number = e.target.value) });
+        const holder = textInput({ value: vals.holder, max: LIMITS.holder, name: 'holder', compact: true, 'data-field': 'cp-holder', oninput: (e) => (vals.holder = e.target.value) });
         const submit = async () => {
-          const r = await call('bank.addCpAccount', { counterpartyId: c.id, bank: bankSel.value, number: num_.value, holder: holder.value || undefined }).catch((e) => ((formErr = ERR[errText(e)] ?? '저장하지 못했어요. 계좌번호를 확인해 주세요.'), null));
+          if (!checkFields([num_, holder])) return;
+          const r = await call('bank.addCpAccount', { counterpartyId: c.id, bank: bankSel.value, number: num_.value, holder: holder.value || undefined }).catch((e) => (fail(e, '저장하지 못했어요. 계좌번호를 확인해 주세요.'), null));
           if (!r) return draw(cpCache.get(c.id));
           toast(r.holderOffer ? `저장했어요. 예금주 '${r.holderOffer}' 이름으로 온 입금도 이 거래처로 봐요.` : '저장했어요. 이 PC에만 저장돼요.');
-          adding = null;
-          formErr = '';
-          reload();
+          saved();
         };
-        for (const i of [num_, holder]) i.addEventListener('keydown', keys(submit));
         form = h(
           'div',
-          { class: 'cp-form', 'data-bank-cp-form': 'account' },
-          field('은행', bankSel),
-          field('계좌번호', num_),
-          field('예금주(선택)', holder),
-          formErr ? h('p', { class: 'form-msg is-bad', role: 'alert' }, formErr) : null,
+          { class: 'cp-form', 'data-bank-cp-form': 'account', onkeydown: keys(submit, close) },
+          field({ label: '은행', input: bankSel, error: errAt('bank') }),
+          field({ label: '계좌번호', input: num_, error: errAt('number') }),
+          field({ label: '예금주(선택)', input: holder, error: errAt('holder') }),
+          formLine(),
           h('div', { class: 'sx-actions' }, btn('저장', submit, 'sx-btn-primary', { 'data-act': 'bank-cp-account-add' }), btn('그만두기', close, 'sx-btn-quiet')),
           h('p', { class: 'sx-meta' }, '거래처 계좌번호와 예금주는 입금을 알아보는 데만 써요. 이 PC에만 저장돼요.'),
         );
-        setTimeout(() => num_.focus(), 0);
+        setTimeout(() => (errAt('holder') ? holder : num_).focus(), 0);
       } else if (adding === 'alias') {
-        const alias = h('input', { class: 'doc-in', type: 'text', autocomplete: 'off', maxlength: 40, name: 'alias', 'data-field': 'cp-alias' });
+        const alias = textInput({ value: vals.alias, max: LIMITS.payer, required: '입금자 이름을 넣어 주세요.', name: 'alias', compact: true, 'data-field': 'cp-alias', oninput: (e) => (vals.alias = e.target.value) });
         const submit = async () => {
-          const ok = await call('bank.addAlias', { counterpartyId: c.id, name: alias.value }).then(() => true, (e) => ((formErr = ERR[errText(e)] ?? '저장하지 못했어요. 이름을 확인해 주세요.'), false));
+          if (!checkFields([alias])) return;
+          const ok = await call('bank.addAlias', { counterpartyId: c.id, name: alias.value }).then(() => true, (e) => (fail(e, '저장하지 못했어요. 이름을 확인해 주세요.'), false));
           if (!ok) return draw(cpCache.get(c.id));
-          adding = null;
-          formErr = '';
-          reload();
+          saved();
         };
-        alias.addEventListener('keydown', keys(submit));
         form = h(
           'div',
-          { class: 'cp-form', 'data-bank-cp-form': 'alias' },
-          field('통장에 찍히는 입금자 이름', alias),
-          formErr ? h('p', { class: 'form-msg is-bad', role: 'alert' }, formErr) : null,
+          { class: 'cp-form', 'data-bank-cp-form': 'alias', onkeydown: keys(submit, close) },
+          field({ label: '통장에 찍히는 입금자 이름', input: alias, error: errAt('alias') }),
+          formLine(),
           h('div', { class: 'sx-actions' }, btn('저장', submit, 'sx-btn-primary', { 'data-act': 'bank-cp-alias-add' }), btn('그만두기', close, 'sx-btn-quiet')),
         );
         setTimeout(() => alias.focus(), 0);
       }
-      const open = (k) => () => ((adding = k), (formErr = ''), draw(cpCache.get(c.id)));
+      const open = (k) => () => ((adding = k), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
       box.replaceChildren(
         h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'),
         ...accounts.map((a) => h('div', { class: 'hist-row', 'data-bank-cp-account': a.id }, h('span', {}, `${a.bank ?? ''} ···${a.last4}`), h('span', { class: 'hist-what' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),

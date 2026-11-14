@@ -108,6 +108,7 @@ const FILES: Record<string, string> = {
   '/shell.css': 'text/css',
   '/shell.js': 'text/javascript',
   '/shell-views.js': 'text/javascript',
+  '/fields.js': 'text/javascript',
   '/shell-g24.js': 'text/javascript',
   '/shell-onboarding.js': 'text/javascript',
   '/shell-account.js': 'text/javascript',

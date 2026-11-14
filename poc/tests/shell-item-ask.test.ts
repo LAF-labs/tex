@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import { describe, it } from 'node:test';
 import { answersPending, ASK_ITEM_TEXT, cleanItem, extractItem, interpret, parseRegex, type Counterparty } from '../apps/desktop/src/shell-model.ts';
 import { NOTE, ShellRuns } from '../apps/desktop/src/shell-runs.ts';
-import { certItem } from '../apps/desktop/src/counterparty-book.ts';
+import { certItem, CP_FIELD_MAX } from '../apps/desktop/src/counterparty-book.ts';
 
 const cp = (o: Partial<Counterparty>): Counterparty => ({ id: 'cp-x', name: '일호유통', bizNo: '2148651233', rep: '', email: 'tax@ilho.example', item: '', status: '계속사업자', checkedOn: '', lastIssuedOn: null, ...o });
 const NO_ITEM = cp({});
@@ -159,7 +159,7 @@ describe('등록증 종목 → 저장 품목 후보(F-15)', () => {
     assert.equal(certItem('  경영   컨설팅 '), '경영 컨설팅');
     assert.equal(certItem('도매/소매'), '도매');
     assert.equal(certItem(''), '');
-    assert.equal(certItem('가'.repeat(60)).length, 40);
+    assert.equal(certItem('가'.repeat(CP_FIELD_MAX.item + 20)).length, CP_FIELD_MAX.item);
   });
 });
 
