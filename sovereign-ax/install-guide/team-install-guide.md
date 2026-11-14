@@ -8,7 +8,7 @@
 - **본인 이메일**: 로그인 코드가 이 주소로 옵니다. **대표 이메일로 로그인하지 마세요.** 계정 하나는 PC 한 대에만 연결됩니다.
 
 ## 2. 받기
-https://tax.laf-co.com/download 를 엽니다. `SovereignAX-<판>-universal.dmg`(약 250MB)가 내려받아집니다. 이 주소는 늘 최신 판을 줍니다.
+https://tax.laf-co.com/download 를 열고 [Mac용 내려받기]를 누릅니다. `SovereignAX-<판>-universal.dmg`(약 265MB)가 내려받아집니다. 바로 받는 주소는 https://tax.laf-co.com/download/mac 이고, 늘 최신 판을 줍니다.
 
 ## 3. 설치
 1. 받은 `.dmg`를 두 번 누릅니다. **SovereignAX**를 옆의 **Applications** 폴더로 끌어 놓습니다.
