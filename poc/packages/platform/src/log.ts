@@ -25,6 +25,8 @@ const DIAG_KEY = /^[A-Za-z0-9_]{1,40}$/;
 const DIAG_IDENT_KEYS = new Set(['id', 'candidate', 'selector', 'namePattern', 'key', 'target', 'stepId', 'checkpoint']);
 /** 진단 문자열 거르기(로그 쪽 마지막 그물). ident면 숫자는 두고 나머지만 거른다. */
 export function diagText(s: string, ident = false): string {
+  // 제어 문자를 지우는 것이 목적이다
+  // eslint-disable-next-line no-control-regex
   const t = s.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/[^\s@"'<>]+@[^\s@"'<>]+/g, '[EMAIL]');
   return (ident ? t : t.replace(/\d{4,}/g, '#')).slice(0, 120);
 }
