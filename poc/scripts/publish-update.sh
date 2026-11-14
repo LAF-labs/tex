@@ -54,7 +54,7 @@ ZIP=$OUT/dist/$ZIP_NAME
 [ "$(openssl dgst -sha512 -binary "$ZIP" | base64)" = "$ZIP_SHA512" ] || die "zip sha512가 report.json과 다르다"
 CUR=$(curl -fsS "$ORIGIN/releases/$CHANNEL/latest.json" 2>/dev/null | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).version)}catch{console.log("")}})' || true)
 if [ -n "$CUR" ]; then
-  node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number));const d=a[0]-b[0]||a[1]-b[1]||a[2]-b[2];process.exit(d>0?0:1)' "$VERSION" "$CUR" || die "운영 피드에 이미 $CUR가 있다. 더 높은 판만 올린다(내리기는 앞으로 가는 새 판으로)"
+  node -e 'const [a,b]=process.argv.slice(1).map(v=>v.split(".").map(Number));const d=a[0]-b[0]||a[1]-b[1]||a[2]-b[2];process.exit(d>0?0:1)' "$VERSION" "$CUR" || die "운영 피드에 이미 ${CUR}가 있다. 더 높은 판만 올린다(내리기는 앞으로 가는 새 판으로)"
 fi
 W=$(dirname "$OUT")/release-$(date -u +%Y%m%dT%H%M%SZ)
 mkdir -p "$W/blob/.vercel"
@@ -66,7 +66,7 @@ say "[⓪] $VERSION(채널 $CHANNEL, 지금 피드 ${CUR:-없음}) zip $ZIP_NAME
 cd "$W/blob"
 vercel whoami >/dev/null 2>&1 || die "vercel 로그인이 필요하다(vercel login)"
 if vercel blob list-stores 2>&1 | grep -q 'No blob stores connected'; then
-  say "    Blob 저장소 $STORE를 만들어 프로젝트 tex(development)에 잇는다(처음 한 번)"
+  say "    Blob 저장소 ${STORE}를 만들어 프로젝트 tex(development)에 잇는다(처음 한 번)"
   vercel blob create-store "$STORE" --access public --region icn1 --environment development --yes >/dev/null 2>&1 \
     || vercel blob create-store "$STORE" --access public --environment development --yes >/dev/null \
     || die "Blob 저장소를 만들지 못했다"
@@ -128,7 +128,7 @@ say "[③] 게시함(기간은 서버 도장, 재서명 cron이 이어 간다)"
 # ④ 설치된 앱과 같은 코드로 확인(CDN 캐시 60초라 몇 번 기다린다). --download로 zip 바이트까지 본다
 for i in 1 2 3 4 5 6; do
   if node --conditions=development scripts/check-update-feed.ts --channel "$CHANNEL" --expect "$VERSION" --download | tee "$W/check.txt"; then
-    say "[④] 확인 끝: 설치된 앱은 다음 확인(기동·15분마다)에 $VERSION을 받는다. 기록 $W/check.txt"
+    say "[④] 확인 끝: 설치된 앱은 다음 확인(기동·15분마다)에 ${VERSION}을 받는다. 기록 $W/check.txt"
     [ "$CHANNEL" = beta ] && say "    처음 설치 링크: $ORIGIN/download → $(curl -sS -o /dev/null -w '%{http_code} %{redirect_url}' "$ORIGIN/download")"
     exit 0
   fi
