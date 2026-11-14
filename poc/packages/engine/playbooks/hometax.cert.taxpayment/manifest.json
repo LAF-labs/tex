@@ -17,11 +17,6 @@
  ],
  "bundlesUsed": [
   {
-   "id": "screen_state",
-   "ver": 2,
-   "digest": "2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082"
-  },
-  {
    "id": "form_ready",
    "ver": 2,
    "digest": "b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409"

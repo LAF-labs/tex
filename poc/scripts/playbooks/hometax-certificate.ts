@@ -359,6 +359,31 @@ export function certPackage(doc: CertDoc): PackageFiles {
   } as unknown as PackageFiles;
 }
 
+/** 예전 로그인 구간(decide 번들·캡차)과 H-01 로그인 구간의 스텝 id. withH01Login이 지우고 다시 넣는다(여러 번 돌려도 같다). */
+const LOGIN_IDS = new Set(['s1', 's90', 's91', 's92', 's93', ...H01_LOGIN_STEPS]);
+const OLD_LOGIN_KEYS = ['hometax.nav.home', 'hometax.login.root', 'hometax.login.startButton', 'hometax.login.simpleAuthButton', 'hometax.captcha.image', 'hometax.captcha.input', 'hometax.captcha.submit'];
+
+/**
+ * 템플릿 밖 패키지(H-04 납세증명서, 손으로 쓴 원본)의 로그인 구간을 H-01 원본으로 바꾼다. 양식·verify·PDF 스텝은 그대로 둔다.
+ * 로그인 뒤 다음 스텝은 s10이어야 한다. screen_state 번들(로그인 decide)은 뺀다.
+ */
+export function withH01Login(f: PackageFiles): PackageFiles {
+  const h = h01Login();
+  const pb = f.playbook as unknown as { steps: Step[]; closeWindows?: string[]; closeLayers?: unknown };
+  if (!pb.steps.some((s) => s.id === 's10')) throw new Error(`${f.manifest.id}: 로그인 뒤 s10이 없다`);
+  pb.steps = [...h.steps, ...pb.steps.filter((s) => !LOGIN_IDS.has(s.id))];
+  pb.closeWindows = h.closeWindows;
+  pb.closeLayers = { targets: h.closeLayers.targets, until: 's12' };
+  const sel = f.selectors as unknown as { entries: Record<string, SelectorEntry> };
+  for (const k of OLD_LOGIN_KEYS) delete sel.entries[k];
+  sel.entries = { ...h.entries, ...sel.entries, 'hometax.page.root': { ...pageEntries()['hometax.page.root']!.entry, candidates: pageEntries()['hometax.page.root']!.entry.candidates!, frame: 'main', lastVerified: VERIFIED } as SelectorEntry };
+  const st = f.strings as Record<string, string>;
+  delete st['captcha.prompt'];
+  Object.assign(st, h.strings);
+  f.manifest.bundlesUsed = f.manifest.bundlesUsed.filter((b) => b.id !== 'screen_state' && (b.id !== 'form_ready' || pb.steps.some((s) => s.type === 'decide')));
+  return f;
+}
+
 /** 캡처할 화면 목록(사용자에게 요청) */
 export function captureList(): string {
   const rows: string[] = [];
