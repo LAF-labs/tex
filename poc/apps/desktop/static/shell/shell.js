@@ -1521,14 +1521,12 @@ function cpEditPanel(c, add = null) {
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
 }
 
-const RUN_ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 /** 내 사업장 사업자 카드(shell-biz.js): 보기 / [수정] 폼. 편집 중 값은 state.bizEdit에 둔다(다시 그려도 남는다). */
 function bizCard() {
   const b = state.boot.profiles.business;
   return bizProfileCard({
     b,
     edit: state.bizEdit,
-    runActive: [...state.runs.values()].some((r) => RUN_ACTIVE.includes(r.status)),
     authReopen: !!state.boot.authReopen,
     call,
     toast,

@@ -900,6 +900,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
   // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
   const REGISTRY_EVERY_MS = 15 * 60_000;
+  /** 홈택스 안내 창(24분)보다 넉넉히 앞. 홈택스 [연장하기] 한 번과 같은 요청이다. */
+  const HOMETAX_KEEPALIVE_MS = 10 * 60_000;
   let registryAt = 0;
   let registryInflight: Promise<void> | null = null;
   const registrySync = (why: string): Promise<void> => {
@@ -924,7 +926,17 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
   registryTimer.unref();
+  // 홈택스 로그인 유지: 앱이 켜져 있는 동안 홈택스 자동 로그아웃(24분 안내·30분 로그아웃)보다 먼저 [연장하기]와 같은 일을 한다.
+  // 엔진이 화면을 움직이는 동안(준비·발급 중)은 건드리지 않는다. 승인·사람 차례를 기다리는 동안은 한다.
+  const keepHometax = async (why: string) => {
+    if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing')) return;
+    const result = await eb.keepSession().catch(() => 'error');
+    if (result !== 'none') log.event('main.hometax_keepalive', { why, result });
+  };
+  const keepTimer = setInterval(() => void keepHometax('timer'), HOMETAX_KEEPALIVE_MS);
+  keepTimer.unref();
   const onResume = () => {
+    void keepHometax('resume');
     void registrySync('resume');
     daemon?.requestReload();
     void updater?.check();
@@ -991,7 +1003,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     list: async () => (await host.rpc('db.query.profiles.list')) as DbProfile[],
     upsert: async (row) => (await host.rpc('profile.upsert', row)) as DbProfile,
     checkBizNo: (n) => onbExternal.checkBizNo(n),
-    runActive: () => runs.anyActive(),
     saved: async (biz, changed) => {
       try {
         if (onb?.done) await onb.syncBiz(biz);
@@ -1985,6 +1996,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
+    clearInterval(keepTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     clearInterval(idleTimer);

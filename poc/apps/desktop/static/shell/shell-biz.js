@@ -10,13 +10,11 @@ export const BIZ_EDIT_MAX = { name: 100, bizNo: 20, rep: 100, bizType: 100, bizI
 /** main profile-edit.ts BIZ_NO_CHANGE_NOTE와 같은 문장. */
 export const BIZ_NO_CHANGE_NOTE = '사업자번호를 바꾸면 홈택스에 로그인한 사업자와 달라질 수 있어요. 다르면 발급 때 멈추고 알려 드려요.';
 export const BIZ_NAME_MISSING_NOTE = '상호가 비어 있어요. [수정]에서 상호를 넣어 주세요.';
-export const BIZ_RUN_ACTIVE_NOTE = '발급이 진행 중이라 지금은 저장할 수 없어요. 끝난 뒤에 고쳐 주세요.';
 export const BIZ_EDIT_ERR = {
   name_required: '상호를 입력해 주세요.',
   bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
   bad_email: '이메일 주소 모양이 맞지 않아요. 다시 확인해 주세요.',
   biz_inactive: '국세청 조회에서 휴업·폐업으로 나와요. 이 번호로는 저장할 수 없어요.',
-  run_active: BIZ_RUN_ACTIVE_NOTE,
   onboarding_open: '시작 설정을 먼저 마쳐 주세요.',
   gesture_required: '[저장]을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
@@ -39,7 +37,7 @@ export function bizEditStart(b) {
 }
 
 /**
- * ctx: { b, edit, runActive, authReopen, call, rerender, onEdit, onCancel, onSaved(r), reopenAuth, onRegister }
+ * ctx: { b, edit, authReopen, call, rerender, onEdit, onCancel, onSaved(r), reopenAuth, onRegister }
  * edit가 있으면 폼, 없으면 보기 카드.
  */
 export function bizProfileCard(ctx) {
@@ -111,7 +109,7 @@ function editCard(ctx) {
     ctx.rerender();
   };
   const save = async (confirmUnverified) => {
-    if (e.busy || ctx.runActive) return;
+    if (e.busy) return;
     e.busy = true;
     e.msg = null;
     try {
@@ -165,15 +163,14 @@ function editCard(ctx) {
     FIELDS.map(([label, name, attrs]) => input(label, name, attrs)),
     noteEl,
     msgEl,
-    ctx.runActive ? note(BIZ_RUN_ACTIVE_NOTE, true) : null,
     e.confirm
       ? h(
           'div',
           { 'data-biz-confirm': e.confirm.status },
           note('국세청에서 이 사업자번호를 조회하지 못했어요. 번호가 맞으면 [맞습니다]를 눌러 저장해 주세요.', true, e.confirm.label),
-          h('div', { class: 'sx-actions' }, btn('맞습니다', () => save(true), 'sx-btn-primary', { 'data-act': 'biz-confirm-unverified', disabled: ctx.runActive }), btn('다시 조회', () => save(false), 'sx-btn-quiet', { 'data-act': 'biz-recheck', disabled: ctx.runActive })),
+          h('div', { class: 'sx-actions' }, btn('맞습니다', () => save(true), 'sx-btn-primary', { 'data-act': 'biz-confirm-unverified' }), btn('다시 조회', () => save(false), 'sx-btn-quiet', { 'data-act': 'biz-recheck' })),
         )
-      : h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'biz-save', disabled: ctx.runActive }, '저장'), btn('취소', ctx.onCancel, 'sx-btn-quiet', { 'data-act': 'biz-cancel' })),
+      : h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'biz-save' }, '저장'), btn('취소', ctx.onCancel, 'sx-btn-quiet', { 'data-act': 'biz-cancel' })),
   );
   return h('article', { class: 'sx-card', 'data-biz-card': 'edit' }, h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, ctx.edit.origNo ? '사업자 정보 수정' : '사업자 정보 등록')), form, e.confirm ? h('div', { class: 'sx-actions' }, btn('취소', ctx.onCancel, 'sx-btn-quiet', { 'data-act': 'biz-cancel' })) : null);
 }
