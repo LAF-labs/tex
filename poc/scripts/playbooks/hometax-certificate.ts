@@ -6,19 +6,54 @@
 //
 // 셀렉터 id·선택지는 2026-11-10 실기기 캡처(로그인 뒤 양식 화면, 개인사업자 사업자 인증서 로그인, 값은 넣지 않음)로 채웠다. 제출 뒤 화면(확인창·actionId·열람·PDF)과
 // H-09 화면은 아직 못 봤다. 모르는 것은 capture에 적어 실기기 캡처로 채운다. capture가 있는 항목 목록은 CAPTURE-hometax-cert.md로 같이 만든다.
-// 홈택스 로그인 구간(s0~s6·s90~s93)과 그 셀렉터는 H-01과 같다(같은 포털·같은 화면).
+// 홈택스 로그인 구간(s0~s7g)과 그 셀렉터·글은 H-01 원본에서 가져온다(h01Login).
+import fs from 'node:fs';
+import path from 'node:path';
 import type { PackageFiles, SelectorEntry, Step } from '@sax/engine/core';
+
+/**
+ * 홈택스 로그인 구간은 H-01 발급 패키지(hometax.invoice.issue) 원본에서 그대로 가져온다: 같은 포털·같은 화면이고, 실화면 예행을 통과한 판이다(2.3.7).
+ * s0~s7g 스텝, 그 스텝과 closeLayers가 쓰는 셀렉터(랜드마크까지), 로그인 글·팝업 숨김 글, closeWindows. H-01 파일은 읽기만 한다.
+ * 로그인 스텝이 로그인 뒤 가는 곳은 s10(양식 열기)이다. H-01과 민원증명 모두 s10이 로그인 다음 스텝이다.
+ */
+const H01_DIR = path.resolve(import.meta.dirname, '../../packages/engine/playbooks/hometax.invoice.issue');
+const H01_LOGIN_STEPS = ['s0', 's2', 's3', 's4', 's4a', 's4b', 's4c', 's8', 's8a', 's8b', 's4d', 's4e', 's4f', 's4g', 's4h', 's5', 's6', 's7', 's7a', 's7b', 's7c', 's7d', 's7e', 's7f', 's7g'];
+const H01_LOGIN_STRINGS = ['login.loggedIn', 'hometax.login.successMarker', 'cert.passwordPrompt', 'cert.pickOne', 'login.certNoticeWindow', 'login.simpleAuth', 'popup.hide', 'popup.hide.idPrefix', 'popup.hide.cookie', 'popup.window.close'];
+interface H01Login { steps: Step[]; entries: Record<string, SelectorEntry>; strings: Record<string, string>; closeWindows: string[]; closeLayers: { targets: string[]; until: string } }
+let h01Cache: H01Login | null = null;
+export function h01Login(): H01Login {
+  if (h01Cache) return h01Cache;
+  const read = (f: string) => JSON.parse(fs.readFileSync(path.join(H01_DIR, f), 'utf8'));
+  const pb = read('playbook.json') as { steps: Step[]; closeWindows: string[]; closeLayers: { targets: string[]; until: string } };
+  const sel = read('selectors.json') as { entries: Record<string, SelectorEntry> };
+  const st = read('strings.ko.json') as Record<string, string>;
+  const steps = H01_LOGIN_STEPS.map((id) => {
+    const x = pb.steps.find((y) => y.id === id);
+    if (!x) throw new Error(`H-01에 로그인 스텝이 없다: ${id}`);
+    return x;
+  });
+  const keys = new Set<string>();
+  const walk = (x: unknown): void => {
+    if (Array.isArray(x)) x.forEach(walk);
+    else if (x && typeof x === 'object') Object.values(x).forEach(walk);
+    else if (typeof x === 'string' && Object.hasOwn(sel.entries, x)) keys.add(x);
+  };
+  walk(steps);
+  walk(pb.closeLayers.targets);
+  for (const k of [...keys]) for (let l = sel.entries[k]!.landmark; l && !keys.has(l); l = sel.entries[l]?.landmark) keys.add(l);
+  const strings = Object.fromEntries(H01_LOGIN_STRINGS.map((k) => {
+    if (!Object.hasOwn(st, k)) throw new Error(`H-01에 로그인 글이 없다: ${k}`);
+    return [k, st[k]!];
+  }));
+  h01Cache = { steps, entries: Object.fromEntries([...keys].sort().map((k) => [k, sel.entries[k]!])), strings, closeWindows: pb.closeWindows, closeLayers: pb.closeLayers };
+  return h01Cache;
+}
 
 export const CERT_VERSION = '1.0.0';
 /** 발급 확인 조회 패키지. H-04(금고 세션, LAF-labs/tex#247)와 같이 쓰는 IR 조회 패키지이고, 여기서는 참조만 한다(팀장 결정 2026-11-09) */
 export const LOOKUP_ID = 'hometax.cert.issued_list';
 const VERIFIED = '2026-11-10';
 const ZERO = '0'.repeat(64);
-/** H-01과 같은 앱 내장 번들 다이제스트(screen_state v2, form_ready v2) */
-const BUNDLES = [
-  { id: 'screen_state', ver: 2, digest: '2f9a3c129c007ec2876398998b77d75b9be52c5e60e49f03eab40a7c780cd082' },
-  { id: 'form_ready', ver: 2, digest: 'b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409' },
-];
 const SIGS = [
   { keyId: 'pkg-1', alg: 'ed25519', sig: 'A'.repeat(86) },
   { keyId: 'pkg-2', alg: 'ed25519', sig: 'B'.repeat(86) },
@@ -109,19 +144,10 @@ export const CERT_DOCS: readonly CertDoc[] = [
 const role = (r: string, name: string) => ({ kind: 'role' as const, role: r, name });
 const lit = (s: string) => `^${s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`;
 
-/** H-01 로그인 구간 셀렉터(같은 홈택스 화면) */
-function loginEntries(): Record<string, TplEntry> {
+/** 페이지 틀(H-01과 같은 #mf_wrap). 로그인 구간 셀렉터는 h01Login().entries다 */
+function pageEntries(): Record<string, TplEntry> {
   return {
-    'hometax.page.root': { entry: { candidates: [role('main', '홈택스')], role: 'main', namePattern: '^홈택스$', landmark: 'hometax.page.root', commits: false } },
-    'hometax.nav.home': { entry: { candidates: [role('link', '홈')], role: 'link', namePattern: '^홈$', landmark: 'hometax.page.root', commits: false, navigationOnly: true } },
-    'hometax.login.root': { entry: { candidates: [role('form', '로그인')], role: 'form', namePattern: '^로그인$', landmark: 'hometax.page.root', commits: false } },
-    'hometax.login.simpleAuthButton': {
-      entry: { candidates: [role('button', '간편인증')], role: 'button', namePattern: '^간편인증$', landmark: 'hometax.login.root', commits: false, reviewNote: { by: 'reviewer-a', reason: '로그인 시작 버튼, 커밋 아님' } },
-      capture: '민원증명 발급에 쓰는 로그인 수단: 공동·금융인증서 버튼 이름(사업자용 간편인증으로 발급되는지 S16, ADR-018 결정 10)',
-    },
-    'hometax.captcha.image': { entry: { candidates: [role('img', '자동입력 방지 문자')], role: 'img', namePattern: '^자동입력 방지 문자$', landmark: 'hometax.login.root', commits: false } },
-    'hometax.captcha.input': { entry: { candidates: [role('textbox', '자동입력 방지 문자 입력')], role: 'textbox', namePattern: '^자동입력 방지 문자 입력$', landmark: 'hometax.login.root', commits: false, inputType: 'text' } },
-    'hometax.captcha.submit': { entry: { candidates: [role('button', '확인')], role: 'button', namePattern: '^확인$', landmark: 'hometax.login.root', commits: false, reviewNote: { by: 'reviewer-a', reason: '캡차 확인, 로그인 구간' } } },
+    'hometax.page.root': { entry: { candidates: [{ kind: 'css', value: '#mf_wrap' }], role: 'generic', namePattern: '^$', landmark: 'hometax.page.root', commits: false } },
   };
 }
 
@@ -201,14 +227,15 @@ const dict = (entries: Record<string, TplEntry>, commit: boolean) => ({
   portal: 'hometax',
   // 발급 요청의 actionId는 아직 모른다(HAR 캡처). 알기 전에는 commitEndpoints가 비어 커밋 가드가 이 요청을 '분류 안 됨'으로만 기록한다(R-C3)
   commitEndpoints: [] as unknown[],
-  knownEndpoints: commit ? [{ method: 'GET', pathPattern: '^/websquare/.*$' }, { method: 'POST', pathPattern: '^/wqAction\\.do$' }] : [],
-  entries: Object.fromEntries(Object.entries(entries).map(([k, v]) => [k, { ...v.entry, candidates: v.entry.candidates ?? [], frame: 'main', lastVerified: VERIFIED }])),
+  knownEndpoints: commit ? [{ method: 'GET', pathPattern: '^/websquare/.*$' }, { method: 'GET', pathPattern: '^/MagicLine4XML/.*$' }, { method: 'POST', pathPattern: '^/wqAction\\.do$' }, { method: 'POST', pathPattern: '^/permission\\.do$' }] : [],
+  entries: {
+    ...h01Login().entries,
+    ...Object.fromEntries(Object.entries(entries).map(([k, v]) => [k, { ...v.entry, candidates: v.entry.candidates ?? [], frame: 'main', lastVerified: VERIFIED }])),
+  },
 });
 
 /** 공유 흐름(서류별 칸 채우기·대조만 다르다) */
 function steps(doc: CertDoc): Step[] {
-  const decideLogin = (id: string, max: number, captcha: string, login: string): Step =>
-    ({ id, type: 'decide', bundle: 'screen_state_v2', scope: 'root', loopGuard: { max }, on: { logged_in: 's10', login_required: login, captcha, mfa_pending: 's5', error: 'handoff', unknown: 'handoff' } }) as Step;
   const docFill: Step[] = doc.fields.map((f, i) => ({ id: `s16${String.fromCharCode(97 + i)}`, type: 'select', target: `hometax.cert.form.${f.input}`, option: `$inputs.${f.input}` }) as Step);
   const entry = (d: CertDoc): Step[] =>
     d.menuCode
@@ -219,7 +246,7 @@ function steps(doc: CertDoc): Step[] {
         ] as Step[])
       : ([
           { id: 's10', type: 'goto', url: 'https://hometax.go.kr/' },
-          { id: 's10a', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
+          { id: 's10a', type: 'checkpoint', name: 'form', expect: { exists: 'hometax.header.logo' }, url: 'https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml', sessionRequired: true, reentry: 'reload' },
           { id: 's10b', type: 'click', target: 'hometax.cert.menu.civil' },
           { id: 's10c', type: 'click', target: 'hometax.cert.menu.issue' },
           { id: 's10d', type: 'click', target: 'hometax.cert.menu.doc' },
@@ -231,13 +258,7 @@ function steps(doc: CertDoc): Step[] {
     id: `s18${String.fromCharCode(97 + i)}`, type: 'assert', cond: { readbackEquals: { fieldKey: f.fieldKey, ref: `$inputs.${f.input}` } }, code: 'assert.input_mismatch', onFail: { retry: 0, then: 'abort' },
   }) as Step);
   return [
-    { id: 's0', type: 'checkpoint', name: 'session', expect: { exists: 'hometax.nav.home' }, url: 'https://hometax.go.kr/', sessionRequired: true, reentry: 'reload' },
-    { id: 's1', type: 'goto', url: 'https://hometax.go.kr/' },
-    decideLogin('s2', 3, 's90', 's3'),
-    { id: 's3', type: 'click', target: 'hometax.login.simpleAuthButton' },
-    { id: 's4', type: 'sign', method: '$profile.signMethod', then: ['human:secret'] },
-    { id: 's5', type: 'wait', for: 'text', value: 'hometax.login.successMarker', timeoutMs: 120000, pace: 'slow' },
-    decideLogin('s6', 3, 's90', 'handoff'),
+    ...h01Login().steps,
     // 양식 직접 주소를 알면 그 주소가 게이트를 지배하는 체크포인트다(V-03l: url·reload). 모르면(H-09) 홈 체크포인트 → 메뉴 클릭.
     // 체크포인트 첫 통과는 이동하지 않는다(조율기 checkpoint): 둘 다 goto(s10) 뒤 체크포인트(s10a)다.
     // 개인사업자 로그인으로 못 여는 화면은 알림이 뜬다: 체크포인트는 양식이나 알림 둘 중 하나를 기다리고, 알림이면 s10x에서 멈춘다.
@@ -252,7 +273,6 @@ function steps(doc: CertDoc): Step[] {
     { id: 's15', type: 'select', target: 'hometax.cert.form.receiveMethod', option: RECEIVE },
     { id: 's15b', type: 'select', target: 'hometax.cert.form.copies', option: COPIES },
     ...docFill,
-    { id: 's19', type: 'decide', bundle: 'form_ready_v2', scope: FORM, on: { no_visible_error: 's19a', validation_error: 'handoff', unknown: 'handoff' } },
     { id: 's19a', type: 'assert', cond: { fieldsFilled: { fields: ['certDoc', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', 'receiveMethod', 'copies', ...doc.fields.map((f) => f.fieldKey)] } }, code: 'assert.fields_missing' },
     { id: 's19b', type: 'readback', fields: ['certDoc', 'supplierBizNo', 'supplierName', 'certLanguage', 'certPurpose', 'certSubmitTo', 'rrnDisclosure', 'receiveMethod', 'copies', ...doc.fields.map((f) => f.fieldKey)] },
     // 신청인이 내 사업자인지(다른 사업장 증명을 떼지 않게)
@@ -288,10 +308,6 @@ function steps(doc: CertDoc): Step[] {
     // 홈택스 민원증명 PDF 경로는 실측 전이다(R2 §4·R10 §1). 인쇄 경로로 두고 캡처 결과로 정한다
     { id: 's32', type: 'save_pdf', strategy: 'print', docType: doc.docType },
     { id: 's34', type: 'end', status: 'success' },
-    { id: 's90', type: 'human', kind: 'captcha', region: 'hometax.captcha.image', prompt: 'captcha.prompt', ttlMs: 90000 },
-    { id: 's91', type: 'fill', target: 'hometax.captcha.input', value: '$human.s90' },
-    { id: 's92', type: 'click', target: 'hometax.captcha.submit' },
-    decideLogin('s93', 2, 'handoff', 's3'),
   ] as Step[];
 }
 
@@ -312,8 +328,7 @@ function inputs(doc: CertDoc): Record<string, unknown> {
 const strings = (doc: CertDoc): Record<string, string> => ({
   'cert.title': doc.title,
   'cert.confirm': doc.confirm,
-  'captcha.prompt': '그림의 문자를 입력해 주세요',
-  'hometax.login.successMarker': '로그아웃',
+  ...h01Login().strings,
   // 개인사업자(사업자 인증서) 로그인으로 못 여는 화면의 알림(캡처 2026-11-10). 알림 글 전체에 이 문장이 들어 있으면 멈춘다
   'cert.block.personalOnly': '^.*해당 화면은 개인사업자는 이용할 수 없습니다\\..*$',
 });
@@ -327,15 +342,17 @@ function manifest(id: string, kind: 'playbook' | 'lookup', title: string, lookup
 
 /** 서류 하나의 발급 패키지(서명 전 원본) */
 export function certPackage(doc: CertDoc): PackageFiles {
-  const entries = { ...loginEntries(), ...menuEntries(doc), ...formEntries(doc) };
+  const entries = { ...pageEntries(), ...menuEntries(doc), ...formEntries(doc) };
   return {
-    manifest: manifest(doc.id, 'playbook', 'cert.title', [{ id: LOOKUP_ID, version: CERT_VERSION, digest: ZERO }], BUNDLES, ['issue_document']),
+    manifest: manifest(doc.id, 'playbook', 'cert.title', [{ id: LOOKUP_ID, version: CERT_VERSION, digest: ZERO }], [], ['issue_document']),
     playbook: {
       ir: 2, id: doc.id, version: CERT_VERSION, portal: 'hometax', profileKinds: ['business'], effects: ['issue_document'], inputs: inputs(doc),
       preconditions: [{ profileHas: 'signMethod' }, { profileHas: 'bizNo' }],
       steps: steps(doc),
       postconditions: [{ varSet: 'issueNo' }, { artifact: 'pdf' }],
       pacing: { profile: 'interactive' },
+      closeWindows: h01Login().closeWindows,
+      closeLayers: { targets: h01Login().closeLayers.targets, until: 's12' },
     },
     selectors: dict(entries, true),
     strings: strings(doc),
@@ -355,7 +372,7 @@ export function captureList(): string {
       rows.push(`| ${pkg} | \`${k}\` | ${v.capture} |`);
     }
   };
-  for (const d of CERT_DOCS) add(d.code, { ...loginEntries(), ...menuEntries(d), ...formEntries(d) });
+  for (const d of CERT_DOCS) add(d.code, { ...menuEntries(d), ...formEntries(d) });
   return [
     '# 홈택스 즉시발급 민원증명(H-03·H-08·H-09) 실기기 캡처 목록',
     '',

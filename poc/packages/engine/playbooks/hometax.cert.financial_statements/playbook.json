@@ -79,71 +79,225 @@
    "type": "checkpoint",
    "name": "session",
    "expect": {
-    "exists": "hometax.nav.home"
+    "exists": "hometax.header.logo"
    },
-   "url": "https://hometax.go.kr/",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml",
    "sessionRequired": true,
    "reentry": "reload"
   },
   {
-   "id": "s1",
-   "type": "goto",
-   "url": "https://hometax.go.kr/"
-  },
-  {
    "id": "s2",
-   "type": "decide",
-   "bundle": "screen_state_v2",
-   "scope": "root",
-   "loopGuard": {
-    "max": 3
-   },
+   "type": "branch",
    "on": {
-    "logged_in": "s10",
-    "login_required": "s3",
-    "captcha": "s90",
-    "mfa_pending": "s5",
-    "error": "handoff",
-    "unknown": "handoff"
-   }
+    "textMatches": {
+     "target": "hometax.header.loginLink",
+     "patternRef": "login.loggedIn"
+    }
+   },
+   "cases": {
+    "true": "s10"
+   },
+   "default": "s3"
   },
   {
    "id": "s3",
    "type": "click",
-   "target": "hometax.login.simpleAuthButton"
+   "target": "hometax.header.loginLink"
   },
   {
    "id": "s4",
-   "type": "sign",
-   "method": "$profile.signMethod",
-   "then": [
-    "human:secret"
-   ]
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.login.certTab",
+   "timeoutMs": 30000
+  },
+  {
+   "id": "s4a",
+   "type": "click",
+   "target": "hometax.login.certTab"
+  },
+  {
+   "id": "s4b",
+   "type": "click",
+   "target": "hometax.login.certOpen"
+  },
+  {
+   "id": "s4c",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.table",
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8",
+   "type": "click",
+   "target": "hometax.cert.storageHdd",
+   "onFail": {
+    "retry": 1,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8a",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.cert.driveHdd",
+   "timeoutMs": 15000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s8b",
+   "type": "click",
+   "target": "hometax.cert.driveHdd",
+   "onFail": {
+    "retry": 1,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s4d",
+   "type": "pick",
+   "target": "hometax.cert.table",
+   "by": "$profile.certName",
+   "ifNone": "s4e",
+   "then": "s4g",
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s4e",
+   "type": "handoff",
+   "reason": "cert.pickOne",
+   "resumeAt": "s4f",
+   "code": "cert.pick_needed"
+  },
+  {
+   "id": "s4f",
+   "type": "pick",
+   "target": "hometax.cert.table",
+   "use": "selected",
+   "remember": "certName",
+   "timeoutMs": 30000,
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
+   "id": "s4g",
+   "type": "human",
+   "kind": "secret",
+   "target": "hometax.cert.password",
+   "prompt": "cert.passwordPrompt",
+   "ttlMs": 120000,
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
+  },
+  {
+   "id": "s4h",
+   "type": "click",
+   "target": "hometax.cert.loginConfirm",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
   },
   {
    "id": "s5",
    "type": "wait",
    "for": "text",
    "value": "hometax.login.successMarker",
-   "timeoutMs": 120000,
-   "pace": "slow"
+   "timeoutMs": 60000,
+   "pace": "slow",
+   "onFail": {
+    "retry": 0,
+    "then": "checkpoint:simple_login"
+   }
   },
   {
    "id": "s6",
-   "type": "decide",
-   "bundle": "screen_state_v2",
-   "scope": "root",
-   "loopGuard": {
-    "max": 3
-   },
+   "type": "branch",
    "on": {
-    "logged_in": "s10",
-    "login_required": "handoff",
-    "captcha": "s90",
-    "mfa_pending": "s5",
-    "error": "handoff",
-    "unknown": "handoff"
+    "exists": "hometax.header.logo"
+   },
+   "cases": {
+    "true": "s10"
+   },
+   "default": "handoff"
+  },
+  {
+   "id": "s7",
+   "type": "checkpoint",
+   "name": "simple_login",
+   "expect": {
+    "exists": "hometax.header.logo"
+   },
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml",
+   "reentry": "reload"
+  },
+  {
+   "id": "s7a",
+   "type": "goto",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml"
+  },
+  {
+   "id": "s7b",
+   "type": "click",
+   "target": "hometax.header.loginLink"
+  },
+  {
+   "id": "s7c",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.login.simpleTab",
+   "timeoutMs": 30000
+  },
+  {
+   "id": "s7d",
+   "type": "click",
+   "target": "hometax.login.simpleTab"
+  },
+  {
+   "id": "s7e",
+   "type": "handoff",
+   "reason": "login.simpleAuth",
+   "resumeAt": "s7f",
+   "code": "login.simple_auth"
+  },
+  {
+   "id": "s7f",
+   "type": "wait",
+   "for": "text",
+   "value": "hometax.login.successMarker",
+   "timeoutMs": 60000,
+   "pace": "slow",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
    }
+  },
+  {
+   "id": "s7g",
+   "type": "branch",
+   "on": {
+    "exists": "hometax.header.logo"
+   },
+   "cases": {
+    "true": "s10"
+   },
+   "default": "handoff"
   },
   {
    "id": "s10",
@@ -155,9 +309,9 @@
    "type": "checkpoint",
    "name": "form",
    "expect": {
-    "exists": "hometax.nav.home"
+    "exists": "hometax.header.logo"
    },
-   "url": "https://hometax.go.kr/",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml",
    "sessionRequired": true,
    "reentry": "reload"
   },
@@ -240,17 +394,6 @@
    "type": "select",
    "target": "hometax.cert.form.fiscalYear",
    "option": "$inputs.fiscalYear"
-  },
-  {
-   "id": "s19",
-   "type": "decide",
-   "bundle": "form_ready_v2",
-   "scope": "hometax.cert.form.root",
-   "on": {
-    "no_visible_error": "s19a",
-    "validation_error": "handoff",
-    "unknown": "handoff"
-   }
   },
   {
    "id": "s19a",
@@ -410,42 +553,6 @@
    "id": "s34",
    "type": "end",
    "status": "success"
-  },
-  {
-   "id": "s90",
-   "type": "human",
-   "kind": "captcha",
-   "region": "hometax.captcha.image",
-   "prompt": "captcha.prompt",
-   "ttlMs": 90000
-  },
-  {
-   "id": "s91",
-   "type": "fill",
-   "target": "hometax.captcha.input",
-   "value": "$human.s90"
-  },
-  {
-   "id": "s92",
-   "type": "click",
-   "target": "hometax.captcha.submit"
-  },
-  {
-   "id": "s93",
-   "type": "decide",
-   "bundle": "screen_state_v2",
-   "scope": "root",
-   "loopGuard": {
-    "max": 2
-   },
-   "on": {
-    "logged_in": "s10",
-    "login_required": "s3",
-    "captcha": "handoff",
-    "mfa_pending": "s5",
-    "error": "handoff",
-    "unknown": "handoff"
-   }
   }
  ],
  "postconditions": [
@@ -458,5 +565,15 @@
  ],
  "pacing": {
   "profile": "interactive"
+ },
+ "closeWindows": [
+  "login.certNoticeWindow"
+ ],
+ "closeLayers": {
+  "targets": [
+   "hometax.layer.btnClose",
+   "hometax.layer.btnCloseAlt"
+  ],
+  "until": "s12"
  }
 }

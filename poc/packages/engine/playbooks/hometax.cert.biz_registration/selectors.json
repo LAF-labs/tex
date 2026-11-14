@@ -7,123 +7,266 @@
    "pathPattern": "^/websquare/.*$"
   },
   {
+   "method": "GET",
+   "pathPattern": "^/MagicLine4XML/.*$"
+  },
+  {
    "method": "POST",
    "pathPattern": "^/wqAction\\.do$"
+  },
+  {
+   "method": "POST",
+   "pathPattern": "^/permission\\.do$"
   }
  ],
  "entries": {
-  "hometax.page.root": {
-   "candidates": [
-    {
-     "kind": "role",
-     "role": "main",
-     "name": "홈택스"
-    }
-   ],
-   "role": "main",
-   "namePattern": "^홈택스$",
-   "landmark": "hometax.page.root",
-   "commits": false,
-   "frame": "main",
-   "lastVerified": "2026-11-10"
-  },
-  "hometax.nav.home": {
+  "hometax.cert.driveHdd": {
    "candidates": [
     {
      "kind": "role",
      "role": "link",
-     "name": "홈"
+     "name": "HardDisk"
     }
    ],
+   "expect": {
+    "visible": true
+   },
    "role": "link",
-   "namePattern": "^홈$",
-   "landmark": "hometax.page.root",
+   "namePattern": "^HardDisk$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
    "commits": false,
-   "navigationOnly": true,
-   "frame": "main",
-   "lastVerified": "2026-11-10"
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
   },
-  "hometax.login.root": {
+  "hometax.cert.loginConfirm": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "form",
-     "name": "로그인"
-    }
-   ],
-   "role": "form",
-   "namePattern": "^로그인$",
-   "landmark": "hometax.page.root",
-   "commits": false,
-   "frame": "main",
-   "lastVerified": "2026-11-10"
-  },
-  "hometax.login.simpleAuthButton": {
-   "candidates": [
-    {
-     "kind": "role",
-     "role": "button",
-     "name": "간편인증"
+     "kind": "css",
+     "value": "#btn_confirm_iframe"
     }
    ],
    "role": "button",
-   "namePattern": "^간편인증$",
-   "landmark": "hometax.login.root",
+   "namePattern": "^(확인)?$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
    "commits": false,
+   "lastVerified": "2026-11-13",
+   "inputType": "button",
    "reviewNote": {
-    "by": "reviewer-a",
-    "reason": "로그인 시작 버튼, 커밋 아님"
-   },
-   "frame": "main",
-   "lastVerified": "2026-11-10"
+    "by": "h01-package-real",
+    "reason": "로그인 인증서 [확인]. 로그인일 뿐 발급 요청이 아니다(커밋 아님). 발급 서명 때 같은 단추는 hometax.invoice.sign.confirm(커밋)"
+   }
   },
-  "hometax.captcha.image": {
+  "hometax.cert.password": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "img",
-     "name": "자동입력 방지 문자"
-    }
-   ],
-   "role": "img",
-   "namePattern": "^자동입력 방지 문자$",
-   "landmark": "hometax.login.root",
-   "commits": false,
-   "frame": "main",
-   "lastVerified": "2026-11-10"
-  },
-  "hometax.captcha.input": {
-   "candidates": [
-    {
-     "kind": "role",
-     "role": "textbox",
-     "name": "자동입력 방지 문자 입력"
+     "kind": "css",
+     "value": "#input_cert_pw"
     }
    ],
    "role": "textbox",
-   "namePattern": "^자동입력 방지 문자 입력$",
-   "landmark": "hometax.login.root",
+   "namePattern": "^.{0,60}$",
+   "frame": "iframe#dscert",
+   "landmark": "hometax.cert.password",
    "commits": false,
-   "inputType": "text",
-   "frame": "main",
-   "lastVerified": "2026-11-10"
+   "lastVerified": "2026-11-13",
+   "inputType": "password",
+   "secretKind": "cert_password",
+   "secretPurpose": "sign",
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "인증서 비밀번호 칸. 금고만 채운다(frame = iframe 선택자, 금고가 하위 프레임에서 찾는다). 로그인 s4f와 발급 서명 s21이 같은 칸을 쓴다"
+   }
   },
-  "hometax.captcha.submit": {
+  "hometax.cert.root": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#ML_window"
+    }
+   ],
+   "role": "dialog",
+   "namePattern": "^$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.cert.storageHdd": {
    "candidates": [
     {
      "kind": "role",
-     "role": "button",
-     "name": "확인"
+     "role": "link",
+     "name": "하드디스크 이동식"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "link",
+   "namePattern": "^하드디스크 ?이동식$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true
+  },
+  "hometax.cert.table": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#dataTable"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "grid",
+   "namePattern": "^$",
+   "frame": "dscert",
+   "landmark": "hometax.cert.root",
+   "commits": false,
+   "rows": {
+    "item": "tr[role=\"row\"][data-key]",
+    "name": "td[role=\"gridcell\"]:first-child",
+    "selected": "tr[role=\"row\"][data-key]:has(> td.MLjqui-grid-cell-selected)"
+   },
+   "lastVerified": "2026-11-13",
+   "reviewNote": {
+    "by": "h01-package-real",
+    "reason": "로그인 인증서 창의 인증서 목록(ML4Web jqx DataTable div#dataTable role=grid, 2026-11-13 공개 정적 파일). 행 tr[data-key], 첫 칸이 소유자, 고른 행 칸에 MLjqui-grid-cell-selected"
+   }
+  },
+  "hometax.header.loginLink": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_wfHeader_group1503"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^(로그인|로그아웃)$",
+   "frame": "main",
+   "landmark": "hometax.header.loginLink",
+   "commits": false,
+   "lastVerified": "2026-11-11",
+   "navigationOnly": true
+  },
+  "hometax.header.logo": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_wfHeader_hdGroup001"
+    }
+   ],
+   "role": "link",
+   "namePattern": "^국세청 홈택스.{0,20}$",
+   "frame": "main",
+   "landmark": "hometax.header.logo",
+   "commits": false,
+   "lastVerified": "2026-11-11",
+   "navigationOnly": true
+  },
+  "hometax.layer.btnClose": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_wframe_btnClose\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^닫기$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnClose",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.layer.btnCloseAlt": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "[id$=\"_wframe_btn_close\"]"
+    }
+   ],
+   "expect": {
+    "visible": true
+   },
+   "role": "button",
+   "namePattern": "^닫기$",
+   "frame": "main",
+   "landmark": "hometax.layer.btnCloseAlt",
+   "commits": false,
+   "closeAffordance": true,
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.login.certOpen": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_anchor22"
     }
    ],
    "role": "button",
-   "namePattern": "^확인$",
-   "landmark": "hometax.login.root",
+   "namePattern": "^공동[·∙ㆍ]금융 ?인증서$",
+   "frame": "main",
+   "landmark": "hometax.login.certOpen",
    "commits": false,
+   "lastVerified": "2026-11-13",
+   "navigationOnly": true,
    "reviewNote": {
-    "by": "reviewer-a",
-    "reason": "캡차 확인, 로그인 구간"
+    "by": "h01-package-real",
+    "reason": "로그인 화면 [공동·금융인증서](실화면 2026-11-11 id). 누르면 인증서 선택창 iframe#dscert가 뜬다. 커밋 아님"
+   }
+  },
+  "hometax.login.certTab": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_anchor13"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^공동[·∙ㆍ]금융 ?인증$",
+   "frame": "main",
+   "landmark": "hometax.login.certTab",
+   "commits": false,
+   "lastVerified": "2026-11-11",
+   "navigationOnly": true
+  },
+  "hometax.login.simpleTab": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_anchor14"
+    }
+   ],
+   "expect": {
+    "visible": true
    },
+   "role": "button",
+   "namePattern": "^개인용 간편인증 ?\\(민간인증서\\)$",
+   "frame": "main",
+   "landmark": "hometax.login.simpleTab",
+   "commits": false,
+   "navigationOnly": true,
+   "lastVerified": "2026-11-13"
+  },
+  "hometax.page.root": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_wrap"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.page.root",
+   "commits": false,
    "frame": "main",
    "lastVerified": "2026-11-10"
   },

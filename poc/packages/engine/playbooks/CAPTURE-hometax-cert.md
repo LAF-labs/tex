@@ -14,7 +14,6 @@
 
 | 서류 | 셀렉터 | 캡처할 것 |
 |---|---|---|
-| H-03 | `hometax.login.simpleAuthButton` | 민원증명 발급에 쓰는 로그인 수단: 공동·금융인증서 버튼 이름(사업자용 간편인증으로 발급되는지 S16, ADR-018 결정 10) |
 | H-03 | `hometax.cert.menu.civil` | 상단 메뉴 「증명·등록·신청」 링크의 접근성 이름(R2 §4) |
 | H-03 | `hometax.cert.menu.issue` | 「민원증명(발급)」(또는 「즉시발급 증명」) 하위 메뉴 이름(02 §5.1·R2 §4 표기가 다르다) |
 | H-03 | `hometax.cert.form.root` | 본문 틀 #mf_txppWframe의 역할(form인지)과 접근성 이름(양식 제목) |

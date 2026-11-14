@@ -213,6 +213,12 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       // 예행 전용 로컬 패키지(<앱 데이터>/rehearsal-packages/<id>/, scripts/rehearsal-package.mjs가 넣는다). RunService가 예행 실행에만 부른다.
       rehearsalSnapDir: path.join(paths.root, 'rehearsal-snaps'),
       ...(ir && registry ? { rehearsalIrSource: rehearsalIrSource(registry, { id: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
+      // 민원증명 예행: 같은 로컬 폴더. 게시 전 판은 서명 H-01 설치본의 도메인 안에서만 받는다(unsignedBaseline).
+      ...(ir && registry ? {
+        certRehearsalSource: (id: string) => PRODUCT_CERT_IDS.includes(id)
+          ? rehearsalIrSource(registry!, { id, unsignedBaseline: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) })()
+          : null,
+      } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
