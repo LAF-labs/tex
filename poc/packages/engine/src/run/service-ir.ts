@@ -7,8 +7,6 @@ import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import type { Page } from 'playwright-core';
-/** 프로필에 발급 인증이 없으면 공동인증서로 서명한다(대표 지시 2026-11-14: 서비스 기본 발급 인증은 공동인증서). */
-const DEFAULT_SIGN_METHOD = 'cert';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
@@ -52,6 +50,9 @@ import { LedgerCommitPort } from './ledger-port.ts';
 import { BundleCatalog } from '@sax/model';
 import type { ArmRow } from '@sax/db';
 import type { RunPermit } from '../core/permit.ts';
+
+/** 프로필에 발급 인증이 없으면 공동인증서로 서명한다(대표 지시 2026-11-14: 서비스 기본 발급 인증은 공동인증서). */
+const DEFAULT_SIGN_METHOD = 'cert';
 
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
