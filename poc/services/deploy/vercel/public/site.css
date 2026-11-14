@@ -154,3 +154,15 @@ section.band .sub { margin-top: 10px; color: var(--ink-2); max-width: 40em; }
 .doc p + p, .doc ol + p, .doc ul + p { margin-top: 10px; }
 .doc kbd { font-family: inherit; font-weight: 600; }
 @media (max-width: 640px) { .doc section { padding: 18px; } }
+
+/* /guide */
+.toc { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; }
+.toc a { font-size: 14px; text-decoration: none; color: var(--ink-2); border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 4px 12px; }
+.toc a:hover { color: var(--ink); border-color: var(--line-strong); }
+.doc section { scroll-margin-top: 16px; }
+.doc code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; background: var(--surface-tint); border-radius: 4px; padding: 1px 5px; overflow-wrap: anywhere; }
+.doc a { color: var(--accent); }
+.faq { margin: 0; display: grid; gap: 4px; }
+.faq dt { font-weight: 600; padding-top: 12px; border-top: 1px solid var(--line); }
+.faq dt:first-child { border-top: 0; padding-top: 0; }
+.faq dd { margin: 0 0 4px; color: var(--ink-2); }

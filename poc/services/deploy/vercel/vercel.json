@@ -133,6 +133,10 @@
       "destination": "/download/index.html"
     },
     {
+      "source": "/guide",
+      "destination": "/guide/index.html"
+    },
+    {
       "source": "/download/mac",
       "destination": "/api/registry?__p=/download/mac"
     },
