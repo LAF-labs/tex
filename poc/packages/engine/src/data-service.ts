@@ -9,6 +9,9 @@ export { COMMANDS, READ_QUERIES };
 
 type Params = Record<string, unknown>;
 
+const RESUME_KEY = 'shell.run_resume';
+const RESUME_MAX_CHARS = 64 * 1024;
+
 export type DataMethod = (typeof READ_QUERIES)[number] | (typeof COMMANDS)[number];
 
 export class DataError extends Error {
@@ -64,6 +67,7 @@ export class DataService {
   readonly consents: ConsentRepo;
   readonly onboarding: OnboardingRepo;
   private readonly verifier: BizVerifier;
+  private readonly db: Db;
 
   /** vaultDir: 보관함 폴더(기본은 앱 루트의 vault, 처음 쓸 때 정한다). now: 만료 계산 기준 시각(시험용). */
   constructor(db: Db, verifier: BizVerifier, opts: { vaultDir?: string; now?: () => Date } = {}) {
@@ -73,6 +77,7 @@ export class DataService {
     this.consents = new ConsentRepo(db);
     this.onboarding = new OnboardingRepo(db);
     this.verifier = verifier;
+    this.db = db;
   }
 
   async handle(method: string, p: Params): Promise<unknown> {
@@ -141,6 +146,18 @@ export class DataService {
         return this.consents.latest(nullableId(p.profileId), str(p.kind, 'bad_consent_kind') as ConsentKind);
       case 'consent.attach':
         return this.consents.attachToProfile(id(p.profileId));
+      // 셸 이어 하기(run-resume.ts): 한 값만 둔다. take는 읽고 지운다. 모양은 셸이 검사한다(여기서는 크기만).
+      case 'resume.save': {
+        if (p.value === null) return void this.db.prepare('DELETE FROM settings WHERE key = ?').run(RESUME_KEY);
+        if (typeof p.value !== 'string' || p.value.length > RESUME_MAX_CHARS) throw new DataError('bad_resume');
+        return void this.db.prepare('INSERT INTO settings(key, value_json) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(RESUME_KEY, p.value);
+      }
+      case 'resume.take':
+        return this.db.transaction(() => {
+          const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(RESUME_KEY) as string | undefined;
+          this.db.prepare('DELETE FROM settings WHERE key = ?').run(RESUME_KEY);
+          return v ?? null;
+        })();
       case 'onboarding.load':
         return this.onboarding.load(profileKind(p.profileKind));
       case 'onboarding.save':

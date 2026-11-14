@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
-import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
+import { attestSelfCheck, gateSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
+import { actionText, ISSUED_OR_UNKNOWN, kstToday, summarize } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
 import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
@@ -356,18 +356,31 @@ const kstHm = (at: number) => new Date(at + KST_MS).toISOString().slice(11, 16);
 
 /** 묶음 승인은 처음 승인한 때부터 이만큼만 뒤 건에 쓴다(그 뒤 건은 승인 카드를 다시 띄운다). */
 export const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
-/** 묶음에서 이 코드로 끝나면 남은 건을 시작하지 않는다(차단·정책 신호, 엔진·금고·패키지 문제). 사람이 멈춘 것(stopped)도 그렇다. */
-const BATCH_HALT = /^(portal\.blocked|policy\.|vault\.|engine\.|package\.|ir\.|profile_missing)/;
-export const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 눌러 주세요. 아무것도 발급하지 않았어요.';
+/**
+ * 이 코드로 끝나면 남은 건을 시작하지 않는다(묶음)·다시 시작하지 않는다(깨어남): 차단·정책·점검 신호, 엔진·금고·패키지·원장·토큰 문제,
+ * 발급 여부 모름(in_doubt·verify.unknown). 사람이 멈춘 것(stopped)과 발급 여부를 모르는 끝(inDoubt)도 그렇다.
+ */
+export const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing)/;
+/** 바쁨(다른 실행 진행 중)이면 이 간격으로 이만큼 다시 본다. 그래도 바쁘면 묶음을 세운다. */
+const BATCH_BUSY_RETRY_MS = 15_000;
+const BATCH_BUSY_TRIES = 8;
+export const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 누르면 승인 카드를 다시 띄워요. 아무것도 발급하지 않았어요.';
 export const BATCH_AUTO_NOTE = '묶음 승인으로 이어서 발급해요. 2초 안에 [중지]하면 발급하지 않아요';
-export const BATCH_REASK_NOTE = '홈택스 값이 처음 승인 때와 달라 이 건만 다시 승인해 주세요';
+export const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
+export const BATCH_HALTED_NOTE = '묶음을 멈췄어요. 남은 건은 [홈택스에서 준비]를 누르면 승인 카드에서 한 건씩 승인해요. 아무것도 발급하지 않았어요.';
+/** 승인 바를 띄울 때 찍은 묶음(바의 2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다. */
+export interface BatchOffer {
+  batchId: string;
+  count: number;
+  /** 2~N건(묶은 순서): 상호·합계. 바에 그대로 보인다. */
+  lines: Array<{ name: string; total: number }>;
+  keys: Map<string, string>;
+}
 interface Batch {
   id: string;
   runIds: string[];
-  /** 처음 승인 카드의 클릭. keys: 아직 게이트 전인 건의 runId → 그때 카드에 보인 값(gateKey 모양). 한 번 쓰면 지운다. */
+  /** 처음 승인 카드의 클릭. keys: 아직 게이트 전인 건의 runId → 바를 띄울 때 카드 값(gateKey 모양). 한 번 쓰면 지운다. */
   approval: { at: number; keys: Map<string, string> } | null;
-  /** 시작하지 못해 건너뛴 초안(다음 건으로 넘어간다). */
-  skipped: Set<string>;
 }
 export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
@@ -687,7 +700,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const rs = ids.map((id) => this.runs.get(id)).filter((r): r is RunView => !!r && r.status === 'draft' && !r.batch && !r.rehearsal);
     if (rs.length < 2) return null;
     const id = `batch-${randomUUID().slice(0, 8)}`;
-    this.batches.set(id, { id, runIds: rs.map((r) => r.id), approval: null, skipped: new Set() });
+    this.batches.set(id, { id, runIds: rs.map((r) => r.id), approval: null });
     rs.forEach((r, index) => {
       r.batch = { id, index, count: rs.length };
       this.emit('update', r);
@@ -705,30 +718,54 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return (this.batches.get(batchId)?.runIds ?? []).map((id) => this.runs.get(id)).filter((r): r is RunView => !!r);
   }
 
-  /** 이 게이트의 승인 카드가 함께 승인할 건수(이 건 + 아직 시작하지 않은 건). 묶음 승인 전이고 둘 이상일 때만, 아니면 0. */
-  batchCountAt(runId: string): number {
-    const b = this.batchFor(runId);
-    if (!b || b.approval) return 0;
-    const n = 1 + this.batchRuns(b.id).filter((x) => x.id !== runId && x.status === 'draft' && !b.skipped.has(x.id)).length;
-    return n > 1 ? n : 0;
+  /** 묶음에서 차례를 기다리는 초안(건너뛰지 않은 것). */
+  private batchQueued(b: Batch, except?: string): RunView[] {
+    return this.batchRuns(b.id).filter((x) => x.id !== except && x.status === 'draft' && !x.batch?.skipped);
   }
 
-  /** 승인 바 클릭을 받아 근거를 보내기 직전. 묶음의 첫 승인이면 남은 초안의 지금 카드 값을 묶음 승인으로 기록한다. */
-  batchApproved(runId: string): void {
+  /** 묶음 차례가 남았는가(앞 건이 진행 중이거나 묶음 승인으로 기다리는 초안). 끝 알림·이어 하기가 쓴다. */
+  batchOpen(batchId: string): boolean {
+    const b = this.batches.get(batchId);
+    return !!b && this.batchRuns(batchId).some((x) => this.isActive(x.id) || (!!b.approval && b.approval.keys.has(x.id) && x.status === 'draft'));
+  }
+
+  /** 묶음 승인으로 차례를 기다리는 초안인가(이어 하기가 남긴다). 멈춘 묶음·건너뛴 초안·승인 전 묶음은 아니다. */
+  batchWaiting(r: RunView): boolean {
+    const b = r.batch && this.batches.get(r.batch.id);
+    return !!b && r.status === 'draft' && !r.batch!.skipped && !r.batch!.halted && (b.approval?.keys.has(r.id) === true || this.batchRuns(b.id).some((x) => this.isActive(x.id)));
+  }
+
+  /** 이 게이트의 승인 카드에 올릴 묶음(이 건 + 아직 시작하지 않은 건). 묶음 승인 전이고 둘 이상일 때만, 아니면 null. 바를 띄울 때 부른다. */
+  batchOffer(runId: string): BatchOffer | null {
     const b = this.batchFor(runId);
-    if (!b || b.approval) return;
-    const rest = this.batchRuns(b.id).filter((x) => x.id !== runId && x.status === 'draft' && !b.skipped.has(x.id));
-    b.approval = { at: this.clock(), keys: new Map(rest.map((x) => [x.id, draftKey(x)])) };
-    for (const x of this.batchRuns(b.id)) {
-      x.batch = { ...x.batch!, approved: true };
-      this.emit('update', x);
-    }
-    this.src.log?.('main.batch_approved', { count: String(rest.length + 1) });
+    if (!b || b.approval) return null;
+    const rest = this.batchQueued(b, runId);
+    if (!rest.length) return null;
+    return { batchId: b.id, count: rest.length + 1, lines: rest.map((x) => ({ name: x.counterparty.name, total: x.total })), keys: new Map(rest.map((x) => [x.id, draftKey(x)])) };
   }
 
   /**
-   * 묶음 승인으로 이 게이트를 바 없이 이어 가도 되는가. 홈택스 되읽기 값이 승인 때 카드 값과 같고, 중복 표시가 없고,
-   * 승인한 지 BATCH_APPROVAL_MAX_MS 안일 때만. 한 번 묻으면 지운다(아니면 이 건은 승인 카드를 띄운다).
+   * 승인 바가 묶음 글자로 그린 카드에서 클릭을 받았다(근거를 보내기 직전). 바를 띄울 때 찍은 초안과 지금 초안이 같을 때만 묶음 승인으로 기록한다.
+   * 달라졌으면(그 사이 초안을 고쳤다) 묶음 승인 없이 이 건만 간다. 남은 건은 저마다 승인 카드를 띄운다.
+   */
+  batchApproved(runId: string, offer: BatchOffer): boolean {
+    const b = this.batchFor(runId);
+    if (!b || b.approval || b.id !== offer.batchId) return false;
+    const now = new Map(this.batchQueued(b, runId).map((x) => [x.id, draftKey(x)]));
+    const same = now.size === offer.keys.size && [...offer.keys].every(([id, k]) => now.get(id) === k);
+    this.src.log?.('main.batch_approved', { count: String(offer.count), same: same ? 'yes' : 'no' });
+    if (!same) return false;
+    b.approval = { at: this.clock(), keys: new Map(offer.keys) };
+    for (const x of this.batchRuns(b.id)) {
+      x.batch = { ...x.batch!, approved: true, halted: false };
+      this.emit('update', x);
+    }
+    return true;
+  }
+
+  /**
+   * 묶음 승인으로 이 게이트를 바 없이 이어 가도 되는가. 바와 같은 검사(gateSelfCheck·summarize)를 지나고, 홈택스 되읽기 값이 승인 때 카드 값과 같고,
+   * 중복·처음 거래·처음 보내는 주소 표시가 없고, 승인한 지 BATCH_APPROVAL_MAX_MS 안일 때만. 한 번 물으면 지운다(아니면 이 건은 승인 카드를 띄운다).
    */
   batchAutoApprove(runId: string, req: GateRequest): boolean {
     const b = this.batchFor(runId);
@@ -736,7 +773,20 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!b?.approval || key === undefined) return false;
     b.approval.keys.delete(runId);
     const f = new Map<string, string>(req.fields.map((x) => [x.fieldKey, x.value]));
-    const ok = this.clock() - b.approval.at <= BATCH_APPROVAL_MAX_MS && ![...f.keys()].some((k) => k.startsWith('$dup.')) && gateKey(f) === key;
+    const shape = (() => {
+      try {
+        return req.v === 2 && Array.isArray(req.fields) && gateSelfCheck(req) === null && Array.isArray(summarize(req, kstToday(this.clock())));
+      } catch {
+        return false;
+      }
+    })();
+    const ok =
+      shape &&
+      this.clock() - b.approval.at <= BATCH_APPROVAL_MAX_MS &&
+      ![...f.keys()].some((k) => k.startsWith('$dup.')) &&
+      f.get('$first.bizNo') !== 'true' &&
+      f.get('$first.email') !== 'true' &&
+      gateKey(f) === key;
     if (!ok) {
       const r = this.runs.get(runId)!;
       this.step(r, 'gate', 'now', BATCH_REASK_NOTE);
@@ -746,38 +796,53 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return ok;
   }
 
-  /** 묶음 건 하나가 끝났다. 사람이 멈췄거나(stopped) 차단·정책·엔진 신호면 남은 건을 두고, 아니면 다음 초안을 시작한다. */
+  /** 묶음을 세운다: 묶음 승인을 버리고(남은 초안은 저마다 승인 카드) 카드에 멈춤 문구를 둔다. */
+  private batchHalt(b: Batch, why: string): void {
+    b.approval = null;
+    for (const x of this.batchRuns(b.id)) {
+      x.batch = { ...x.batch!, approved: false, halted: true };
+      this.emit('update', x);
+    }
+    this.src.log?.('main.batch_halt', { code: why.slice(0, 60) });
+  }
+
+  /** 묶음 건 하나가 끝났다. 사람이 멈췄거나 발급 여부를 모르거나 RUN_HALT 신호면 묶음을 세우고, 아니면 다음 초안을 시작한다. */
   private batchAfter(r: RunView, code: string | undefined): void {
     const b = this.batchFor(r.id);
     if (!b) return;
-    if (r.status === 'stopped' || BATCH_HALT.test(code ?? '')) {
-      this.src.log?.('main.batch_halt', { code: (code ?? r.status).slice(0, 60) });
-      return;
-    }
+    if (r.status === 'stopped' || r.inDoubt || RUN_HALT.test(code ?? '')) return this.batchHalt(b, code ?? r.status);
+    // 세운 묶음은 사람이 한 건씩 한다(다시 묶음 승인을 받으면 halted가 풀린다)
+    if (r.batch?.halted || !this.batchQueued(b).length) return;
     setImmediate(() => void this.batchNext(b.id));
   }
 
-  /** 묶음의 다음 초안을 [홈택스에서 준비]와 같은 길로 시작한다. 상한에 걸리면 그 초만큼 기다렸다가, 시작할 수 없는 건은 건너뛴다. */
+  /**
+   * 묶음의 다음 초안을 [홈택스에서 준비]와 같은 길로 시작한다. 상한(throttled)이면 그 초만큼, 바쁨이면 BATCH_BUSY_RETRY_MS 뒤 다시 본다.
+   * 다른 길로 이미 시작된 건(not_draft)은 그대로 둔다. 시작할 수 없는 건은 건너뛰고 묶음 승인에서 뺀다(다시 준비하면 승인 카드).
+   */
   private async batchNext(batchId: string, tries = 0): Promise<void> {
     const b = this.batches.get(batchId);
-    const next = b && this.batchRuns(batchId).find((x) => x.status === 'draft' && !b.skipped.has(x.id));
-    if (!b || !next || this.busy()) return;
+    const next = b && this.batchQueued(b)[0];
+    if (!b || !next) return;
+    const later = (ms: number) => {
+      const t = setTimeout(() => void this.batchNext(batchId, tries + 1), ms);
+      t.unref?.();
+    };
+    if (this.busy()) return tries < BATCH_BUSY_TRIES ? later(BATCH_BUSY_RETRY_MS) : this.batchHalt(b, 'busy');
     try {
       await (this.src.prepare ? this.src.prepare(next.id) : this.prepare(next.id));
     } catch (e) {
       const why = (e as Error).message ?? '';
       const wait = /^throttled\.[a-z]+:(\d+)$/.exec(why);
-      if (wait && tries < 10) {
-        const t = setTimeout(() => void this.batchNext(batchId, tries + 1), Number(wait[1]) * 1000 + 500);
-        t.unref?.();
-        return;
-      }
-      if (why === 'busy') return;
-      b.skipped.add(next.id);
+      if (wait) return tries < BATCH_BUSY_TRIES ? later(Number(wait[1]) * 1000 + 500) : this.batchHalt(b, 'throttled');
+      if (why === 'busy') return tries < BATCH_BUSY_TRIES ? later(BATCH_BUSY_RETRY_MS) : this.batchHalt(b, 'busy');
+      if (why === 'not_draft' || this.runs.get(next.id)?.status !== 'draft') return;
+      b.approval?.keys.delete(next.id);
+      next.batch = { ...next.batch!, skipped: true };
       next.notices = [...(next.notices ?? []).filter((x) => x !== BATCH_SKIPPED_NOTE), BATCH_SKIPPED_NOTE];
       this.emit('update', next);
       this.src.log?.('main.batch_skip', { why: why.slice(0, 60) });
-      return this.batchNext(batchId);
+      return this.batchNext(batchId, tries);
     }
   }
 
@@ -811,8 +876,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
   }
 
   /** 깨어난 직후 승인 전 단계에서 멈춘 실행(묶음 밖, 다시 준비할 수 있는 것)을 같은 값으로 한 번 다시 시작한다. */
-  private wakeAfter(r: RunView): void {
-    if (this.clock() - this.wokeAt > WAKE_RESUME_MS || r.batch || r.rehearsal || r.maintenance || r.status !== 'attention' || !r.redo || r.inDoubt || r.notices?.includes(WAKE_RESUMED_NOTE)) return;
+  private wakeAfter(r: RunView, code: string | undefined): void {
+    if (this.clock() - this.wokeAt > WAKE_RESUME_MS || r.batch || r.rehearsal || r.maintenance || r.status !== 'attention' || !r.redo || r.inDoubt || RUN_HALT.test(code ?? '') || r.notices?.includes(WAKE_RESUMED_NOTE)) return;
     setImmediate(() => {
       let d: RunView;
       try {
@@ -1237,7 +1302,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) this.markClosed(r);
     else this.emit('update', r);
     this.batchAfter(r, code);
-    this.wakeAfter(r);
+    this.wakeAfter(r, code);
   }
 
   /** 게이트 요청: 카드·패널은 엔진이 되읽은 값(같은 fields)으로 바꿔 그린다. 바는 shell-app이 띄운다. */

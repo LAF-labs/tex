@@ -291,4 +291,6 @@ export type ShellEvent =
   /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
   | { type: 'activated'; x: number; y: number }
   /** macOS 알림을 눌렀다: 그 작업 카드로 간다(렌더러 boardGo와 같은 길). */
-  | { type: 'open'; to: 'run'; id: string };
+  | { type: 'open'; to: 'run'; id: string }
+  /** main이 대화에 남기는 앱 한 줄(이어 하기 안내 등). 텍스트로만 그린다. */
+  | { type: 'say'; text: string };

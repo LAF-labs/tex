@@ -42,7 +42,7 @@ import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder 
 import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { pendingWork, RunResumeFile } from './run-resume.ts';
+import { pendingWork, RunResumeStore } from './run-resume.ts';
 import { BATCH_AUTO_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
@@ -821,6 +821,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
     const sendApproval = async (approval: LocalApproval, note?: string) => {
       runs.approved(runId, note);
+      // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
+      await saveResume().catch(() => {});
       const r = await host.answerGate(approval);
       if (!r.ok) log.event('main.gate_answer_not_ok', { code: r.code ?? '', verdict: r.verdict });
       await runs.onAnswer(runId, r);
@@ -828,13 +830,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     // 여러 건 묶음의 뒤 건: 처음 승인 카드의 클릭(main 관찰)을 이 게이트에 쓴다. 되읽기 값이 그때 카드 값과 같을 때만(batchAutoApprove).
     if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);
     const gr = runs.get(runId);
-    const many = runs.batchCountAt(runId);
-    if (gr) runNotify('gate', runId, '승인이 필요해요', many > 1 ? `세금계산서 ${many}건 · ${gr.counterparty.name} 외 ${many - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
+    // 묶음은 바를 띄울 때 찍는다(2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다(batchApproved).
+    const offer = runs.batchOffer(runId);
+    if (gr) runNotify('gate', runId, '승인이 필요해요', offer ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
-    void bar.open(req, gr?.auth, many).then(async (o) => {
+    void bar.open(req, gr?.auth, offer).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
-        runs.batchApproved(runId);
+        // 바가 묶음 글자로 그린 카드의 클릭일 때만 묶음 승인이다(중복 경고 카드 등은 이 건만).
+        if (offer && o.batch === offer.count) runs.batchApproved(runId, offer);
         await sendApproval(o.approval);
       } else if (o.reason === 'stopped') {
         // 카드의 [중지](main이 관찰한 클릭·키). 렌더러 [중지]와 같은 경로로 실행을 멈춘다(안전한 실패).
@@ -922,19 +926,40 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.run_notify_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
-  // 이어 하기(run-resume.ts): 커밋 전 일을 바뀔 때마다 동기로 남긴다. 다음 기동에 렌더러가 뜬 뒤 같은 값으로 다시 시작한다.
-  const resumeFile = new RunResumeFile(appPaths(root ?? defaultAppRoot()).userData);
-  runs.on('update', () => resumeFile.save(pendingWork(runs.list(), (id) => cps.find((c) => c.id === id)?.email), Date.now()));
+  // 이어 하기(run-resume.ts): 커밋 전 일을 바뀔 때마다 엔진 암호화 DB에 남긴다. 다음 기동에 렌더러가 뜬 뒤 같은 값으로 다시 시작한다.
+  const resumeStore = new RunResumeStore({ save: (value) => host.rpc('resume.save', { value }), take: () => host.rpc('resume.take', {}) });
+  const resumeWork = () =>
+    pendingWork(
+      runs.list(),
+      (r) => runs.batchWaiting(r),
+      (id) => cps.find((c) => c.id === id)?.email,
+    );
+  /** 지금 일을 DB에 닿게 한다(승인 근거를 보내기 전에 기다린다: 그 건이 다시 시작할 일로 남지 않게). */
+  const saveResume = () => resumeStore.save(resumeWork(), Date.now());
+  runs.on('update', () => void saveResume());
   let restored = false;
-  const restoreRuns = () => {
+  const restoreRuns = async () => {
     if (restored) return;
     restored = true;
     // 앞 프로세스가 남긴 것만 다시 세운다. 이 프로세스의 실행(렌더러가 뜨자마자 시작한 것)이 쓴 줄은 그 실행이 아직 있다.
-    const items = resumeFile.take(Date.now()).filter((it) => !runs.get(it.from));
-    if (!items.length) return resumeFile.save(pendingWork(runs.list(), (id) => cps.find((c) => c.id === id)?.email), Date.now());
+    const work = await resumeStore.take(Date.now());
+    const items = work.items.filter((it) => !runs.get(it.from));
+    const approved = work.approved.filter((a) => !runs.get(a.from));
+    void saveResume();
+    // 승인을 보낸 뒤 꺼진 건: 다시 하지 않고 안내만(발급됐는지는 발급목록·run.reverify로 확인한다)
+    for (const a of approved) send({ type: 'say', text: `앞에서 승인한 ${a.name} ${wonText(a.total)} 건은 앱이 꺼져 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 확인해 주세요. 다시 발급하지 마세요.` });
+    if (approved.length) log.event('main.resume_approved_notice', { count: approved.length });
+    if (!items.length) return;
     const first = runs.restore(items);
     pushBoard();
-    if (first) prepareNow(first.id).catch((e: Error) => log.event('main.restore_prepare_failed', { code: e.message.slice(0, 60) }));
+    // 시작은 약관·온보딩을 마쳤고 로그인돼 있을 때만. 아니면 초안만 세워 둔다([홈택스에서 준비]).
+    if (!first || (onb && !onb.done)) return;
+    try {
+      await needLogin();
+    } catch {
+      return log.event('main.restore_prepare_skipped', { why: 'login' });
+    }
+    prepareNow(first.id).catch((e: Error) => log.event('main.restore_prepare_failed', { code: e.message.slice(0, 60) }));
   };
   const wonText = (n: number) => `${Number(n).toLocaleString('ko-KR')}원`;
   const runLast = new Map<string, string>();
@@ -947,9 +972,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!['done', 'attention', 'stopped'].includes(r.status) || !prev || prev === 'draft') return;
     if (r.batch) {
       const all = runs.batchRuns(r.batch.id);
-      if (all.some((x) => runs.isActive(x.id) || (x.status === 'draft' && x.batch?.approved))) return;
+      if (runs.batchOpen(r.batch.id)) return;
       const done = all.filter((x) => x.status === 'done').length;
-      return runNotify('end', r.batch.index === 0 ? r.id : all[0]!.id, done === all.length ? `${all.length}건 모두 발급했어요` : `${all.length}건 중 ${done}건 발급했어요`, all.map((x) => `${x.counterparty.name} ${x.status === 'done' ? '발급' : '멈춤'}`).join(' · '));
+      return runNotify('end', all[0]!.id, done === all.length ? `${all.length}건 모두 발급했어요` : `${all.length}건 중 ${done}건 발급했어요`, all.map((x) => `${x.counterparty.name} ${x.status === 'done' ? '발급' : x.status === 'draft' ? '남음' : '멈춤'}`).join(' · '));
     }
     if (r.rehearsal) return runNotify('end', r.id, '예행을 마쳤어요', '승인 직전까지 갔고 발급하지 않았어요');
     if (r.status === 'done') return runNotify('end', r.id, '발급했어요', `${what}${r.result?.approvalNo ? ` · 승인번호 ${r.result.approvalNo}` : ''}`);
@@ -1487,7 +1512,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return bankAutoH['bankAuto.disconnect']();
     },
-    'shell.bootstrap': async () => (setTimeout(restoreRuns, 1_000).unref(), {
+    'shell.bootstrap': async () => (setTimeout(() => void restoreRuns(), 1_000).unref(), {
       board: await bootBoard(),
       layout: SHELL,
       profiles: profiles(),

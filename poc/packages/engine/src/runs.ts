@@ -747,7 +747,7 @@ export class RunService extends EventEmitter {
     const now = Date.now();
     if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
     if (now > g.deadline) return reject('gate_expired');
-    if (!PRESENCE_OK.has(String(ap.presence))) return reject('presence_unsupported');
+    if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && g.req.docType !== 'H-01')) return reject('presence_unsupported');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
     if (!this.gates.decide(g.req.reqId, 'approved', 'local')) return reject('not_open');
     this.journal.append(a.runId, 'gate.approved', { reqId: g.req.reqId, presence: String(ap.presence) });
@@ -769,7 +769,8 @@ export class RunService extends EventEmitter {
     const now = Date.now();
     if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
     if (now > run.gateDeadline) return reject('gate_expired');
-    if (!PRESENCE_OK.has(String(ap.presence))) return reject('presence_unsupported');
+    // click+batch(여러 건 묶음의 뒤 건)는 세금계산서(H-01) 게이트에서만 받는다.
+    if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && req.docType !== 'H-01')) return reject('presence_unsupported');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
     const r = run.approve(req.reqId, req.actionHash);
     if (r.ok) this.journal.append(a.runId, 'gate.presence', { reqId: req.reqId, presence: String(ap.presence) });

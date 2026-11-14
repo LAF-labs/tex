@@ -461,6 +461,7 @@ export function batchCard(runs, act) {
   const total = runs.reduce((n, r) => n + (r.discarded ? 0 : Number(r.total) || 0), 0);
   const focus = runs.find(live) ?? runs.find((r) => r.status === 'draft' && !r.discarded) ?? null;
   const approved = runs.some((r) => r.batch?.approved);
+  const halted = runs.some((r) => r.batch?.halted);
   const ended = !focus;
   const rows = runs.map((r) =>
     h(
@@ -474,7 +475,9 @@ export function batchCard(runs, act) {
   );
   const lead = ended
     ? `${runs.length}건 중 ${done}건 발급했어요.`
-    : approved
+    : halted
+      ? `${runs.length}건 중 ${done}건 발급하고 묶음을 멈췄어요. 남은 건은 [홈택스에서 준비]를 누르면 승인 카드에서 한 건씩 승인해요.`
+      : approved
       ? '한 번 승인으로 차례로 발급하고 있어요. 홈택스 값이 승인 때와 다르면 그 건만 다시 물어요.'
       : `모두 합계 ${num(total)}원. 첫 승인 카드에서 한 번 승인하면 나머지는 차례로 발급해요.`;
   const extra = runs.filter((r) => r !== focus && !r.discarded && (r.status === 'attention' || (r.status === 'stopped' && (r.redo || r.browserClosed))));

@@ -2383,6 +2383,7 @@ function onActivated(x, y) {
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
   if (ev.type === 'open' && ev.to === 'run' && typeof ev.id === 'string') return void boardGo({ to: 'run', id: ev.id });
+  if (ev.type === 'say' && typeof ev.text === 'string') return void appendThread(h('div', { class: 'sx-app' }, ev.text.slice(0, 300)));
   if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
@@ -2446,7 +2447,7 @@ window.sax.onEvent((ev) => {
     putRun(ev.run);
     if (prev?.status !== 'waiting' && ev.run.status === 'waiting' && state.view === 'chat') openPanel({ kind: 'run', id: ev.run.id });
     // 여러 건 묶음은 마지막 건이 끝날 때 한 번만(남은 건이 진행 중이거나 승인받은 초안이면 아직이다)
-    const batchOpen = ev.run.batch && [...state.runs.values()].some((x) => x.batch?.id === ev.run.batch.id && (['preparing', 'turn', 'waiting', 'issuing'].includes(x.status) || (x.status === 'draft' && x.batch.approved)));
+    const batchOpen = ev.run.batch && [...state.runs.values()].some((x) => x.batch?.id === ev.run.batch.id && (['preparing', 'turn', 'waiting', 'issuing'].includes(x.status) || (x.status === 'draft' && x.batch.approved && !x.batch.skipped && !x.batch.halted)));
     if (prev?.status !== 'done' && ev.run.status === 'done' && !batchOpen) appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
   } else if (ev.type === 'bar') {
     // 승인 카드 자리 비우기: 카드 위치·높이는 main이 정하고(ADR-021 결정 7), 렌더러는 그 높이만큼 자리를 비울 뿐이다.
