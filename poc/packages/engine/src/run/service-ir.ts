@@ -7,6 +7,7 @@ import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import type { Page } from 'playwright-core';
+import { CardSecretPort } from '../driver/card-secret.ts';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
@@ -563,6 +564,8 @@ export class IrRun {
         ...(i.secretEvent ? { event: i.secretEvent } : {}),
       })
       : null;
+    // 보안카드 서명 창(대표 지시 2026-11-14): 금고가 요청 칸을 읽고 친다. 엔진은 창을 찾고 [확인하기]와 끝 알림만 본다.
+    const cardPort = sv ? new CardSecretPort({ vault: sv.vault, targetId: sv.targetId, page, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal }) : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {
@@ -649,6 +652,7 @@ export class IrRun {
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
+        ...(cardPort ? { card: (r: Parameters<CardSecretPort['card']>[0]) => cardPort.card(r) } : {}),
         closed: () => {},
       }),
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),

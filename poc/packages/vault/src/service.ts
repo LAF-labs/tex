@@ -10,7 +10,7 @@ import type { KeyStore } from './keystore.ts';
 import type { PortLike } from '@sax/platform';
 import {
   PORTAL_LOGIN_ID_MAX, RPC_BY_PORT, RUN_TRIGGERS, isProfileScope, isTypistKind, SECURITY_CARD_ROWS, STORABLE_KINDS,
-  SESSION_EVENTS, CODEF_REQ_ID_RE, type CodefSealParams, type InboundMessage, type ProfileScope, type SecretStoreResult, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
+  SESSION_EVENTS, CODEF_REQ_ID_RE, type CodefSealParams, type InboundMessage, type ProfileScope, type SecretStoreResult, type SecretStoreReply, type OneShotBind, type PortalField, type SessionEventKind, type OutboundMessage, type PortKind, type RunTrigger, type SecretInputBind, type SecretKind, type StorableKind, type VaultEventName,
 } from './protocol.ts';
 import { defaultRelayPolicy, type RelayPolicy } from './relay/policy.ts';
 import { VaultCrypto } from './crypto/ops.ts';
@@ -20,6 +20,8 @@ import { CommitGuard } from './relay/commit-guard.ts';
 import { PdfSaver, sweepStagingDir } from './pdf/save.ts';
 import { Relay, type TargetState } from './relay/relay.ts';
 import { SecretOps, type StoredRead } from './secret/ops.ts';
+import { scanCardImage } from './secret/card-scan.ts';
+import { randomUUID } from 'node:crypto';
 import { HumanSecretVault } from './keychain/human.ts';
 import { MemoryItemStore, MemoryWrapper, UnavailableHello } from './keychain/backend.ts';
 
@@ -42,6 +44,15 @@ const SCREEN_MOD_MAX = 15;
 const SCREEN_COMMANDS: Record<string, string> = { a: 'selectAll', z: 'undo', x: 'cut', c: 'copy' };
 
 const RUN_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+/** 보안카드 사진 인식 뒤 애매한 칸을 기다리는 초안의 수명. */
+const CARD_DRAFT_TTL_MS = 10 * 60_000;
+interface CardDraft {
+  scope: ProfileScope;
+  size: 30 | 35;
+  rows: Map<number, Uint8Array>;
+  ask: number[];
+  timer: NodeJS.Timeout | undefined;
+}
 const NOTICE_VERSION_RE = /^[A-Za-z0-9._-]{1,32}$/;
 
 /**
@@ -201,6 +212,7 @@ export class Vault {
   private readonly runProfiles = new Map<string, ProfileScope>();
   /** 넣었지만 로그인 확인 전인 인증서 비밀번호(실행별, 메모리만). authOk면 저장, authFailed·run.end면 지운다. */
   private readonly pendingCert = new Map<string, { scope: string; bytes: Uint8Array }>();
+  private readonly cardDrafts = new Map<string, CardDraft>();
   /** 실행당 종류별 1회 기록(N-46). Chrome을 다시 띄워도 남는다(엔진이 재기동으로 지우지 못하게). */
   private readonly usedSlots = new Set<string>();
   readonly human: HumanSecretVault;
@@ -327,6 +339,16 @@ export class Vault {
       return;
     }
     state.used = true;
+    if (bind.mode === 'store' && bind.kind === 'security_card' && (p.image instanceof Uint8Array || typeof p.draftId === 'string')) {
+      void this.cardStore(bind, p, entryBytes).then(
+        (result) => this.post(port, { t: 'rpc', id: msg.id, result }),
+        (e: Error) => {
+          wipe();
+          this.post(port, { t: 'rpc', id: msg.id, error: e.message.slice(0, 80) });
+        },
+      );
+      return;
+    }
     if (bind.mode === 'store') {
       const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
       const parsed = entries.map((e, i) => ({ row: e?.row as number | undefined, field: e?.field as PortalField | undefined, bytes: entryBytes[i] ?? new Uint8Array() }));
@@ -401,6 +423,69 @@ export class Vault {
     }
   }
 
+  /**
+   * 보안카드 등록(대표 지시 2026-11-14): 사진이면 금고 안에서 인식하고, 애매한 칸이 남으면 초안으로 들고 그 칸 번호만 돌려준다.
+   * draftId면 사람이 다시 넣은 칸(4자리)을 합친다. 칸이 다 차면 한 번에 저장한다(슬롯 통째 교체, human.store).
+   * 칸 값은 이 프로세스 밖으로 나가지 않는다. 사진·초안 바이트는 쓰고 나면 0으로 덮는다.
+   */
+  private async cardStore(bind: Extract<SecretInputBind, { mode: 'store' }>, p: Record<string, unknown>, entryBytes: Array<Uint8Array | null>): Promise<SecretStoreReply> {
+    let id: string;
+    let draft: CardDraft;
+    if (p.image instanceof Uint8Array) {
+      const image = p.image;
+      const r = await scanCardImage(image, { tmpRoot: this.opts.paths.staging }).finally(() => image.fill(0));
+      if ('error' in r) {
+        this.opts.log.event('vault.card_scan_failed', { error: r.error });
+        throw new Error(`card.${r.error}`);
+      }
+      this.opts.log.event('vault.card_scanned', { size: r.size, unsure: r.unsure.length });
+      id = randomUUID();
+      const enc = new TextEncoder();
+      draft = { scope: bind.scope, size: r.size, rows: new Map([...r.rows].map(([k, v]) => [k, enc.encode(v)])), ask: r.unsure, timer: undefined };
+      r.rows.clear();
+    } else {
+      id = String(p.draftId);
+      const d = this.cardDrafts.get(id);
+      if (!d || d.scope !== bind.scope) {
+        for (const b of entryBytes) b?.fill(0);
+        throw new Error('card.draft_expired');
+      }
+      draft = d;
+      const entries = Array.isArray(p.entries) ? (p.entries as Array<Record<string, unknown>>) : [];
+      const dec = new TextDecoder();
+      entries.forEach((e, i) => {
+        const b = entryBytes[i];
+        const row = e?.row as number;
+        if (b && draft.ask.includes(row) && /^\d{4}$/.test(dec.decode(b))) {
+          draft.rows.get(row)?.fill(0);
+          draft.rows.set(row, b.slice());
+          draft.ask = draft.ask.filter((x) => x !== row);
+        }
+        b?.fill(0);
+      });
+    }
+    if (draft.timer) clearTimeout(draft.timer);
+    this.cardDrafts.delete(id);
+    if (draft.ask.length) {
+      draft.timer = setTimeout(() => this.dropCardDraft(id), CARD_DRAFT_TTL_MS);
+      draft.timer.unref?.();
+      this.cardDrafts.set(id, draft);
+      return { pending: { draftId: id, ask: [...draft.ask], size: draft.size } };
+    }
+    const cells = [...draft.rows].sort((a, b) => a[0] - b[0]).map(([row, bytes]) => ({ row, bytes }));
+    draft.rows.clear();
+    const consent = await this.human.store('security_card', bind.scope, cells, bind.notice);
+    return { handle: { kind: 'security_card', scope: bind.scope }, tier: consent.tier, consent };
+  }
+
+  private dropCardDraft(id: string): void {
+    const d = this.cardDrafts.get(id);
+    if (!d) return;
+    if (d.timer) clearTimeout(d.timer);
+    for (const b of d.rows.values()) b.fill(0);
+    this.cardDrafts.delete(id);
+  }
+
   private async dispatch(method: string, p: Record<string, unknown>): Promise<unknown> {
     switch (method) {
       case 'browser.launch':
@@ -416,6 +501,15 @@ export class Vault {
           return { ok: false, reason: 'denied' };
         }
         return this.requireOps().fill(p as never);
+      }
+      case 'typist.fillCard': {
+        const pinned = this.runProfiles.get(String(p.runId));
+        if (pinned !== undefined && p.scope !== pinned) {
+          this.opts.log.event('vault.profile_mismatch', { runId: String(p.runId).slice(0, 64) });
+          return { ok: false, reason: 'denied' };
+        }
+        if (!isProfileScope(p.scope)) return { ok: false, reason: 'denied' };
+        return this.requireOps().fillCard(p as never);
       }
       case 'secretWindow.openForHuman':
         return this.requireOps().openForHuman(p as never);

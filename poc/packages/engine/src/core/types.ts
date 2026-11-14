@@ -81,6 +81,12 @@ export interface SignFlow {
   doneTarget?: string;
   /** IR rev v1.3.6: 서명 화면이 뜬 뒤 방식 동작 전에 고르는 목록 항목(rows 항목, 인증서 창). 행이 하나면 그것, 여럿이면 by 값과 이름 칸이 같은 행. 못 고르면 서명 차례(사람). */
   certPick?: { target: string; by: string };
+  /**
+   * IR rev v1.3.8(대표 지시 2026-11-14): 보안카드 서명 창. 방식 선택 뒤 실행 탭이 새 창(window: strings 키, 주소 정규식)을 연다.
+   * fields마다 target(type=password 칸)과 rowFrom(요청 글자 "[N]번 … 앞/뒤 2자리")을 금고가 읽고 친다. 그 창의 confirmTarget(commits:true)을
+   * 엔진이 누르고, 창의 알림 글(strings card.ok·card.wrong·card.locked)로 끝을 판정한다. secret_fill:security_card가 이것을 쓴다.
+   */
+  card?: { window: string; fields: Array<{ target: string; rowFrom: string }>; confirmTarget: string };
   maxWaitMs: number;
 }
 
@@ -121,7 +127,7 @@ export type GateStep = StepBase & { type: 'gate'; card: string; authorizes: stri
 export type HumanStep = StepBase & { type: 'human'; kind: 'captcha' | 'otp' | 'secret' | 'manual'; prompt: string; region?: string; target?: string; inputSpec?: { pattern?: string; maxLength?: number }; ttlMs: number };
 export type HumanCommitStep = StepBase & { type: 'human_commit'; prompt: string; intent: '$intent.id'; verify: string; followUpOf?: string };
 export type SecretFillStep = StepBase & { type: 'secret_fill'; target: string; secret: SecretKind; rowFrom?: string };
-export type SignStep = StepBase & { type: 'sign'; method: SignMethod | '$profile.signMethod'; then?: Array<'human:secret' | 'secret_fill:security_card'> };
+export type SignStep = StepBase & { type: 'sign'; method: SignMethod | '$profile.signMethod'; then?: Array<'human:secret' | 'secret_fill:security_card'>; card?: SignFlow['card'] };
 export type SubmitStep = StepBase & { type: 'submit'; target: string; intent: '$intent.id'; verify: string; expectConfirm?: string; signFlow?: SignFlow };
 export type VerifyStep = StepBase & { type: 'verify'; lookup: Lookup; failSignals?: FailSignal[]; on: { committed: OutcomeTarget; not_committed: OutcomeTarget; unknown: OutcomeTarget } };
 export type CaptureStep = StepBase & { type: 'capture'; name: string; from: From };

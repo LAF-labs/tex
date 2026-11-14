@@ -119,6 +119,7 @@ const FILES: Record<string, string> = {
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
   '/shell-bank-auto.js': 'text/javascript',
+  '/shell-card.js': 'text/javascript',
 };
 
 /** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
@@ -673,10 +674,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log.event('main.secret_ask_shown', { kind: r.kind });
   };
   /** 금고 1회용 입력 포트로 한 번 보낸다(값은 이 함수 밖으로 나가지 않는다). */
-  const vaultSecretSend = (bind: Parameters<typeof host.secretInputPort>[0], method: 'secret.provide' | 'secret.store', params: Record<string, unknown>): Promise<{ ok: boolean; error?: string }> =>
+  const vaultSecretSend = (bind: Parameters<typeof host.secretInputPort>[0], method: 'secret.provide' | 'secret.store', params: Record<string, unknown>, timeoutMs = 10_000): Promise<{ ok: boolean; error?: string; result?: unknown }> =>
     new Promise((resolve) => {
       let port: ReturnType<typeof host.secretInputPort> | null = null;
-      const done = (v: { ok: boolean; error?: string }) => {
+      const done = (v: { ok: boolean; error?: string; result?: unknown }) => {
         clearTimeout(timer);
         try {
           port?.close();
@@ -685,12 +686,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         }
         resolve(v);
       };
-      const timer = setTimeout(() => done({ ok: false, error: 'timeout' }), 10_000);
+      const timer = setTimeout(() => done({ ok: false, error: 'timeout' }), timeoutMs);
       try {
         port = host.secretInputPort(bind);
         port.on('message', (e: { data: unknown }) => {
-          const d = e.data as { error?: unknown } | null;
-          done(d && typeof d.error === 'string' ? { ok: false, error: d.error.slice(0, 40) } : { ok: true });
+          const d = e.data as { error?: unknown; result?: unknown } | null;
+          done(d && typeof d.error === 'string' ? { ok: false, error: d.error.slice(0, 40) } : { ok: true, result: d?.result });
         });
         port.start();
         port.postMessage({ t: 'rpc', id: 1, method, params });
@@ -707,6 +708,39 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log.event('main.cert_memory_saved', { ok: r.ok, ...(r.error ? { error: r.error } : {}) });
     if (!r.ok) throw new Error('vault_refused');
     return { remembered: true };
+  };
+  /**
+   * 보안카드 등록(대표 지시 2026-11-14): 카드 사진을 금고로 넘기고(금고가 OS 텍스트 인식), 애매한 칸만 다시 받는다.
+   * 사진·칸 값은 이 함수 밖으로 나가지 않고 보낸 뒤 0으로 덮는다. 렌더러에는 칸 번호·저장 칸 수만 돌려준다.
+   */
+  const CARD_BIND = { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'card-scan-2026-11-14' } } as const;
+  const cardReply = (r: { ok: boolean; error?: string; result?: unknown }, what: string) => {
+    log.event('main.card_store', { what, ok: r.ok, ...(r.error ? { error: r.error } : {}) });
+    if (!r.ok) throw new Error(r.error?.startsWith('card.') ? r.error : 'vault_refused');
+    const x = r.result as { pending?: { draftId?: unknown; ask?: unknown; size?: unknown }; consent?: { items?: unknown } } | undefined;
+    if (x?.pending && typeof x.pending.draftId === 'string' && Array.isArray(x.pending.ask)) {
+      return { draftId: x.pending.draftId, ask: x.pending.ask.filter((n): n is number => Number.isInteger(n)), size: x.pending.size === 35 ? 35 : 30 };
+    }
+    return { stored: typeof x?.consent?.items === 'number' ? x.consent.items : 0 };
+  };
+  const cardScan = async (image: unknown) => {
+    if (!(image instanceof Uint8Array) || image.length === 0 || image.length > 20 * 1024 * 1024) throw new Error('bad_image');
+    const bytes = new Uint8Array(image);
+    image.fill(0);
+    const r = await vaultSecretSend(CARD_BIND, 'secret.store', { image: bytes, entries: [] }, 40_000);
+    bytes.fill(0);
+    return cardReply(r, 'scan');
+  };
+  const cardAnswer = async (p: { draftId?: unknown; cells?: unknown }) => {
+    if (typeof p.draftId !== 'string' || !p.cells || typeof p.cells !== 'object') throw new Error('bad_params');
+    const enc = new TextEncoder();
+    const entries = Object.entries(p.cells as Record<string, unknown>).map(([row, value]) => {
+      if (typeof value !== 'string' || !/^\d{4}$/.test(value)) throw new Error('bad_cell');
+      return { row: Number(row), bytes: enc.encode(value) };
+    });
+    const r = await vaultSecretSend(CARD_BIND, 'secret.store', { draftId: p.draftId, entries });
+    for (const e of entries) e.bytes.fill(0);
+    return cardReply(r, 'answer');
   };
   /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
   const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
@@ -1712,6 +1746,22 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
+    'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
+    'card.scan': async (p) => {
+      // 파일 고르기 창·끌어 놓기 동안은 앱 창에 입력이 없다: 등록을 연 클릭부터 5분 안이면 받는다(바뀌는 것은 이 PC 보안카드 슬롯뿐)
+      needGesture(300_000);
+      return cardScan((p as { image?: unknown }).image);
+    },
+    'card.answer': async (p) => {
+      needGesture(3_000);
+      return cardAnswer(p as { draftId?: unknown; cells?: unknown });
+    },
+    'card.forget': async () => {
+      needGesture(3_000);
+      await host.control('secret.forget', { kind: 'security_card', scope: 'business' }).catch(() => false);
+      return { stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true };
+    },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
     'certName.clear': async () => {

@@ -86,7 +86,7 @@ export function stepConds(s: Step): Cond[] {
 }
 
 /** 스텝이 셀렉터 사전에서 읽거나 누르는 모든 타깃(V-02·V-20·핫픽스 적격 계산). */
-export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'from' | 'scope' | 'cond' | 'region' | 'rowLabel' | 'confirmTarget' | 'openTarget' | 'methodTarget' | 'readyTarget' | 'doneTarget' | 'certPick' | 'wait' }> {
+export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'from' | 'scope' | 'cond' | 'region' | 'rowLabel' | 'confirmTarget' | 'openTarget' | 'methodTarget' | 'readyTarget' | 'doneTarget' | 'certPick' | 'wait' | 'cardField' | 'cardRow' | 'cardConfirm' }> {
   const out: ReturnType<typeof stepTargets> = [];
   if ('target' in s && typeof s.target === 'string') out.push({ ref: s.target, role: 'target' });
   if (s.type === 'extract' || s.type === 'capture') out.push({ ref: fromTarget(s.from), role: 'from' });
@@ -101,6 +101,11 @@ export function stepTargets(s: Step): Array<{ ref: string; role: 'target' | 'fro
     if (s.signFlow.readyTarget) out.push({ ref: s.signFlow.readyTarget, role: 'readyTarget' });
     if (s.signFlow.doneTarget) out.push({ ref: s.signFlow.doneTarget, role: 'doneTarget' });
     if (s.signFlow.certPick) out.push({ ref: s.signFlow.certPick.target, role: 'certPick' });
+  }
+  const card = s.type === 'submit' ? s.signFlow?.card : s.type === 'sign' ? s.card : undefined;
+  if (card) {
+    for (const f of card.fields) out.push({ ref: f.target, role: 'cardField' }, { ref: f.rowFrom, role: 'cardRow' });
+    out.push({ ref: card.confirmTarget, role: 'cardConfirm' });
   }
   for (const c of stepConds(s)) for (const t of condTargets(c)) out.push({ ref: t, role: 'cond' });
   return out;
@@ -569,7 +574,21 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   }
 
   // ---- V-08 ----
-  for (const s of steps) if (s.type === 'submit' && s.signFlow && Object.values(s.signFlow.steps ?? {}).some((a) => a?.includes('secret_fill:security_card')) && !s.signFlow.rowLabel) bad('V-08', 'signFlow 보안카드에 rowLabel 없음', s.id);
+  // IR rev v1.3.8: 보안카드는 card 정의(새 창의 칸·요청 글자·[확인])가 있어야 한다. 옛 rowLabel만으로는 칠 수 없다.
+  for (const s of steps) if (s.type === 'submit' && s.signFlow && Object.values(s.signFlow.steps ?? {}).some((a) => a?.includes('secret_fill:security_card')) && !s.signFlow.card) bad('V-08', 'signFlow 보안카드에 card 정의 없음', s.id);
+  for (const s of steps) if (s.type === 'sign' && (s.then ?? []).includes('secret_fill:security_card') && !s.card) bad('V-08', 'sign 보안카드에 card 정의 없음', s.id);
+  for (const s of steps) {
+    const card = s.type === 'submit' ? s.signFlow?.card : s.type === 'sign' ? s.card : undefined;
+    if (!card) continue;
+    if (!strings[card.window]) bad('V-08', `card.window 문자열 ${card.window} 없음`, s.id);
+    for (const f of card.fields) {
+      const fe = entry(f.target);
+      if (fe && (fe.secretKind !== 'security_card' || fe.secretPurpose !== 'sign')) bad('V-02', 'card 칸이 보안카드 서명 칸(secretKind security_card, secretPurpose sign)이 아님', s.id, f.target);
+      if (isSecretEntry(entry(f.rowFrom))) bad('V-02', 'card 요청 글자가 비밀 칸', s.id, f.rowFrom);
+    }
+    const ce = entry(card.confirmTarget);
+    if (ce && !ce.commits && s.type === 'submit') bad('V-02', 'card.confirmTarget이 commits:true가 아님', s.id, card.confirmTarget);
+  }
 
   // ---- V-10 ----
   const humans = new Map(steps.filter((s): s is StepOf<'human'> => s.type === 'human').map((s) => [s.id, s]));
@@ -650,7 +669,7 @@ export function semanticViolations(pkg: PackageFiles, opts: ValidateOptions = {}
   for (const s of steps) {
     for (const t of stepTargets(s)) {
       if (!secretIds.has(t.ref)) continue;
-      const allowed = t.role === 'target' && (s.type === 'secret_fill' || (s.type === 'human' && s.kind === 'secret'));
+      const allowed = (t.role === 'target' && (s.type === 'secret_fill' || (s.type === 'human' && s.kind === 'secret'))) || t.role === 'cardField';
       if (!allowed) bad('V-20', `비밀 칸을 ${s.type}.${t.role}로 참조`, s.id, t.ref);
     }
     if (s.type === 'decide') {

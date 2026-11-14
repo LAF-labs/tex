@@ -41,7 +41,8 @@ export const HANDOFF_SIGN_TTL = { text: HANDOFF_SIGN.text, note: '앱의 비밀�
 export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.cert]: { now: '홈택스 창에서 인증서 비밀번호를 직접 넣어 주세요', text: HANDOFF_SIGN.text },
   [SIGN_LABEL.simple_auth]: { now: '휴대폰에서 간편인증 요청을 승인해 주세요', text: '홈택스 창에서 간편인증을 고르고 휴대폰에서 승인해 주세요. 끝나면 자동으로 이어집니다' },
-  [SIGN_LABEL.security_card]: { now: '홈택스 창에서 보안카드 번호를 직접 넣어 주세요', text: '홈택스 창에서 인증 방법을 고르고 보안카드 번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다' },
+  // 보안카드(대표 지시 2026-11-14): 등록한 카드면 금고가 홈택스 보안카드 창에 번호를 넣는다. 차례가 오면 앱이 못 넣었거나 홈택스가 틀렸다고 한 것이다(다시 치지 않는다).
+  [SIGN_LABEL.security_card]: { now: '앱이 홈택스 보안카드 창에 번호를 넣고 있어요', text: '보안카드 번호를 앱이 넣지 못했어요. 홈택스 창에서 보안카드 번호를 직접 넣어 주세요. 홈택스가 틀렸다고 했으면 설정에서 카드를 다시 등록해 주세요' },
 };
 /**
  * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.

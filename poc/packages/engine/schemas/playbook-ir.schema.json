@@ -36,6 +36,9 @@
     "closeLayers": {"description": "IR rev v1.3.7: notice layers the engine closes before login. Before each step, from the first step until `until` (or the first gate, whichever comes first), the engine clicks each `targets` closeAffordance entry that resolves (visible, identity matches, unique). A miss, a mismatch or an ambiguous match is skipped and never fails the run.", "type": "object", "required": ["targets", "until"], "additionalProperties": false, "properties": {"targets": {"type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/targetRef"}}, "until": {"$ref": "#/$defs/stepRef"}}}
   },
   "$defs": {
+    "cardDef": {"description": "IR rev v1.3.8: security card window. window is a strings key holding the URL regex of the popup the run tab opens; each field is a password entry (secretKind security_card, secretPurpose sign) and the non-secret entry showing '[N]번 ... 앞/뒤 2자리'. The vault reads the ask and types; the engine clicks confirmTarget in that window and reads the outcome alert (strings card.ok/card.wrong/card.locked).",
+      "type": "object", "required": ["window", "fields", "confirmTarget"], "additionalProperties": false,
+      "properties": {"window": {"$ref": "#/$defs/stringsKey"}, "fields": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "object", "required": ["target", "rowFrom"], "additionalProperties": false, "properties": {"target": {"$ref": "#/$defs/targetRef"}, "rowFrom": {"$ref": "#/$defs/targetRef"}}}}, "confirmTarget": {"$ref": "#/$defs/targetRef"}}},
     "stepRef": {"type": "string", "pattern": "^s[0-9]{1,3}[a-z]?$"},
     "cpName": {"type": "string", "pattern": "^[a-z_][a-z0-9_]*$"},
     "stringsKey": {"type": "string", "pattern": "^[a-z][A-Za-z0-9_.]*$"},
@@ -121,6 +124,7 @@
         "methodTargets": {"description": "IR rev v1.3.5: per sign method, the commits:true entry clicked once after openTargets (e.g. the portal's auth-type choice).", "type": "object", "propertyNames": {"enum": ["cert", "simple_auth", "security_card"]}, "additionalProperties": {"$ref": "#/$defs/targetRef"}},
         "readyTarget": {"description": "IR rev v1.3.5: non-commit entry that shows the signing UI is up (waited before the method's actions).", "$ref": "#/$defs/targetRef"},
         "doneTarget": {"description": "IR rev v1.3.5: non-commit entry that shows signing finished (waited after human:secret, and by wait:push when there is no confirmTarget).", "$ref": "#/$defs/targetRef"},
+        "card": {"$ref": "#/$defs/cardDef"},
         "certPick": {"description": "IR rev v1.3.6: after readyTarget, pick a row of this rows entry (single row, or the row whose name cell equals `by`). No pick means the person picks (sign turn).", "type": "object", "required": ["target", "by"], "additionalProperties": false,
           "properties": {"target": {"$ref": "#/$defs/targetRef"}, "by": {"$ref": "#/$defs/valueRef"}}},
         "maxWaitMs": {"type": "integer", "minimum": 10000, "maximum": 180000}
@@ -162,7 +166,7 @@
         {"properties": {"type": {"const": "human_commit"}, "prompt": {"$ref": "#/$defs/stringsKey"}, "intent": {"const": "$intent.id"}, "verify": {"$ref": "#/$defs/stepRef"}, "followUpOf": {"$ref": "#/$defs/stepRef"}, "onFail": {"$ref": "#/$defs/irreversibleOnFail"}}, "required": ["prompt", "intent", "verify"]},
         {"properties": {"type": {"const": "secret_fill"}, "target": {"$ref": "#/$defs/targetRef"}, "secret": {"enum": ["cert_password", "portal_password", "security_card"]}, "rowFrom": {"type": "string", "pattern": "^\\$vars\\.[A-Za-z0-9_]+$"}}, "required": ["target", "secret"],
          "allOf": [{"if": {"properties": {"secret": {"const": "security_card"}}}, "then": {"required": ["rowFrom"]}}]},
-        {"properties": {"type": {"const": "sign"}, "method": {"anyOf": [{"enum": ["cert", "simple_auth", "security_card"]}, {"const": "$profile.signMethod"}]}, "then": {"type": "array", "items": {"enum": ["human:secret", "secret_fill:security_card"]}}}, "required": ["method"]},
+        {"properties": {"type": {"const": "sign"}, "method": {"anyOf": [{"enum": ["cert", "simple_auth", "security_card"]}, {"const": "$profile.signMethod"}]}, "then": {"type": "array", "items": {"enum": ["human:secret", "secret_fill:security_card"]}}, "card": {"$ref": "#/$defs/cardDef"}}, "required": ["method"]},
         {"properties": {"type": {"const": "submit"}, "target": {"$ref": "#/$defs/targetRef"}, "intent": {"const": "$intent.id"}, "verify": {"$ref": "#/$defs/stepRef"}, "expectConfirm": {"$ref": "#/$defs/stringsKey"}, "signFlow": {"$ref": "#/$defs/signFlow"}, "onFail": {"$ref": "#/$defs/irreversibleOnFail"}}, "required": ["target", "intent", "verify"]},
         {"properties": {"type": {"const": "verify"}, "lookup": {"$ref": "#/$defs/lookup"}, "failSignals": {"$ref": "#/$defs/failSignals"}, "on": {"type": "object", "required": ["committed", "not_committed", "unknown"], "additionalProperties": false, "properties": {"committed": {"$ref": "#/$defs/outcomeTarget"}, "not_committed": {"$ref": "#/$defs/outcomeTarget"}, "unknown": {"$ref": "#/$defs/outcomeTarget"}}}}, "required": ["lookup", "on"]},
         {"properties": {"type": {"const": "capture"}, "name": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}, "from": {"$ref": "#/$defs/from"}}, "required": ["name", "from"]},

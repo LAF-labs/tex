@@ -1114,7 +1114,7 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
         assert.equal(h.c.finishSignTurn(), false, '닫힌 뒤에는 false');
       }
     });
-    it('security_card(secret_fill)는 아직 없다: 하지 않고 verify로. 모르는 방식도 verify로', async () => {
+    it('security_card(secret_fill)에 보안카드 창 정의(card)가 없으면 치지 않고 verify로. 모르는 방식도 verify로', async () => {
       const h = mk([CP, GATE, SF('security_card'), SV, END], { els: [...els(), SIGN_OK] });
       const p = h.c.start();
       await h.atGate();
@@ -1159,7 +1159,7 @@ describe('sign(M2-3, D02 §4): 로그인 등 커밋 구간 밖 포털 서명 흐
     assert.ok(!h.names().includes('WaitingHuman'));
   });
 
-  it('그 방식의 동작이 then[]에 없음(sign.no_path)·보안카드(아직 없음, sign.unsupported)·모르는 방식(sign.method_unknown) → 재시도 없이 핸드오프, 비밀 창 없음', async () => {
+  it('그 방식의 동작이 then[]에 없음(sign.no_path)·보안카드(card 정의 없음, sign.unsupported)·모르는 방식(sign.method_unknown) → 재시도 없이 핸드오프, 비밀 창 없음', async () => {
     for (const [m, then, code] of [['cert', [], 'sign.no_path'], ['security_card', ['secret_fill:security_card'], 'sign.unsupported'], ['security_card', ['human:secret'], 'sign.no_path'], ['otp_app', ['human:secret'], 'sign.method_unknown']] as const) {
       const h = mk([CP, SIGN({ then }), END]);
       profile(h, m);

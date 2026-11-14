@@ -40,7 +40,8 @@ export type FieldSpec =
   | ({ t: 'number' } & (Opt | Req))
   | ({ t: 'boolean' } & (Opt | Req))
   | ({ t: 'enum'; of: readonly string[]; nullable?: boolean } & (Opt | Req))
-  | ({ t: 'object'; fields: Readonly<Record<string, FieldSpec>> } & (Opt | Req));
+  | ({ t: 'object'; fields: Readonly<Record<string, FieldSpec>> } & (Opt | Req))
+  | ({ t: 'bytes'; max: number } & (Opt | Req));
 export type MethodSpec = Readonly<Record<string, FieldSpec>>;
 
 type Nul<F> = F extends { nullable: true } ? null : never;
@@ -54,7 +55,9 @@ type ValueOf<F> = F extends { t: 'string' }
         ? E | Nul<F>
         : F extends { t: 'object'; fields: infer O }
           ? ParamsOf<O>
-          : never;
+          : F extends { t: 'bytes' }
+            ? Uint8Array
+            : never;
 type RequiredKeys<S> = { [K in keyof S]: S[K] extends { required: true } ? K : never }[keyof S];
 type Simplify<T> = { [K in keyof T]: T[K] };
 /** 표의 필드 정의에서 처리기 인자 형을 만든다(required가 아닌 필드는 없을 수 있다). */
@@ -126,6 +129,11 @@ export const SHELL_METHODS = {
   'certMemory.forget': {},
   // 설정에서 인증서 비밀번호 저장(가려진 칸, 금고로만). 값은 로그·상태에 남기지 않는다.
   'certMemory.save': { value: { t: 'string', max: 256, required: true } },
+  // 보안카드 등록(대표 지시 2026-11-14): 카드 사진 바이트는 금고로만(금고가 OS 텍스트 인식), 애매한 칸(칸 번호 → 4자리)만 다시 받는다. 실제 입력 뒤에만.
+  'card.status': {},
+  'card.scan': { image: { t: 'bytes', max: 20 * 1024 * 1024, required: true } },
+  'card.answer': { draftId: { t: 'string', max: 64, required: true }, cells: { t: 'object', required: true, fields: Object.fromEntries(Array.from({ length: 35 }, (_, i) => [String(i + 1), { t: 'string', max: 4 }])) as Record<string, { t: 'string'; max: 4 }> } },
+  'card.forget': {},
   // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14): 값 또는 취소. main이 금고 1회용 포트로만 넘긴다.
   'secret.answer': { reqId: { t: 'string', max: 40, required: true }, value: { t: 'string', max: 256 }, cancel: { t: 'boolean' } },
   // 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기(B4, H-01 2.3.0). 지우기는 실제 입력 뒤에만.
@@ -226,6 +234,8 @@ function checkField(f: FieldSpec, v: unknown): boolean {
       return typeof v === 'string' && f.of.includes(v);
     case 'object':
       return isPlain(v) && checkParams(f.fields, v);
+    case 'bytes':
+      return v instanceof Uint8Array && v.length > 0 && v.length <= f.max;
   }
 }
 
