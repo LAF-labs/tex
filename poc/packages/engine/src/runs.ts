@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type Profile } from '@sax/db';
+import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type PortalProfileKey, type Profile } from '@sax/db';
 import type { DiagValue, EventLog } from '@sax/platform';
 
 import type { Page } from 'playwright-core';
@@ -200,7 +200,7 @@ const W_MAX_MS = 60_000;
 const GATE_STEP = 's20';
 /** 승인 뒤 이 시간 동안은 거부([중지])가 이긴다(D03 §2 전이표 "거부 우선 창 2초"). */
 export const DENY_PRIORITY_MS = 2_000;
-const PRESENCE_OK = new Set(['click']); // Hello는 PoC 범위 밖(ADR-021)
+const PRESENCE_OK = new Set(['click', 'click+batch']); // Hello는 PoC 범위 밖(ADR-021). click+batch는 묶음 뒤 건(gate.ts Presence)
 
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 export function ulid(now = Date.now()): string {
@@ -603,6 +603,8 @@ export class RunService extends EventEmitter {
         a.rehearsal?.journal(type);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+        // 선택 readback이 읽은 칸 이름·글자 수(값 없음, H-01 2.3.8 s19b 공급자 칸)
+        if (type === 'readback.optional' && payload) this.d.log.event('run.readback_optional', { runId: a.runId, ...payload });
         // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
         if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
         // AI 단계 결과(위치 찾기·폴백·판정·에이전트, 값 없음): 선택자·이름 규칙 글이 ID 꼴이 아니어서 diag 줄로 남긴다(로그 쪽이 다시 거른다).
@@ -622,7 +624,16 @@ export class RunService extends EventEmitter {
       ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
       ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
       secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
-      portalNotice: (n) => this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok }),
+      portalNotice: (n) => {
+        if (inputs && n.ok && n.key === BIZNO_OK_KEY) this.fromPortal(a.runId, 'counterparty.verified', () => (this.d.data.counterparties.setVerification(inputs.counterpart.id, BIZNO_OK_STATUS), ['verifiedStatus']));
+        this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok });
+      },
+      readbackFixed: (rb, card) => {
+        if (card !== 'invoice.confirm' || !inputs) return;
+        const f = portalFill(rb);
+        this.fromPortal(a.runId, 'profile.filled_from_portal', () => this.d.data.profiles.fillFromPortal(profile.id, f.profile));
+        this.fromPortal(a.runId, 'counterparty.filled_from_portal', () => this.d.data.counterparties.fillFromPortal(inputs.counterpart.id, f.counterparty));
+      },
       ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
     a.ir = run;
@@ -667,6 +678,16 @@ export class RunService extends EventEmitter {
     if (r.code === 'package.not_loaded' || r.code === 'cert.unknown_doc') throw new RunEnd('failed', 'package.not_loaded');
     this.d.log.event('run.package_refused', { code: r.code, playbook: playbookId });
     throw new RunEnd('failed', 'package.load_failed');
+  }
+
+  /** 홈택스 화면에서 알게 된 값을 장부에 쓴다. 실패해도 실행은 그대로 간다. 저널에는 칸 이름만 남긴다. */
+  private fromPortal(runId: string, type: string, write: () => readonly string[]): void {
+    try {
+      const keys = write();
+      if (keys.length) this.journal.append(runId, type, { fields: keys.join(',') });
+    } catch (e) {
+      this.d.log.event('run.portal_fill_failed', { runId, type, err: (e as Error)?.message?.slice(0, 40) ?? 'unknown' });
+    }
   }
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
@@ -854,7 +875,7 @@ export class RunService extends EventEmitter {
     const now = Date.now();
     if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
     if (now > g.deadline) return reject('gate_expired');
-    if (!PRESENCE_OK.has(String(ap.presence))) return reject('presence_unsupported');
+    if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && g.req.docType !== 'H-01')) return reject('presence_unsupported');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
     if (!this.gates.decide(g.req.reqId, 'approved', 'local')) return reject('not_open');
     this.journal.append(a.runId, 'gate.approved', { reqId: g.req.reqId, presence: String(ap.presence) });
@@ -876,9 +897,11 @@ export class RunService extends EventEmitter {
     const now = Date.now();
     if (typeof ap.exp !== 'number' || ap.exp < now || ap.exp > now + LOCAL_APPROVAL_TTL_MS + 5_000) return reject('expired');
     if (now > run.gateDeadline) return reject('gate_expired');
-    if (!PRESENCE_OK.has(String(ap.presence))) return reject('presence_unsupported');
+    // click+batch(여러 건 묶음의 뒤 건)는 세금계산서(H-01) 게이트에서만 받는다.
+    if (!PRESENCE_OK.has(String(ap.presence)) || (ap.presence === 'click+batch' && req.docType !== 'H-01')) return reject('presence_unsupported');
     if (typeof ap.mac !== 'string' || !ap.mac) return reject('no_mac');
     const r = run.approve(req.reqId, req.actionHash);
+    if (r.ok) this.journal.append(a.runId, 'gate.presence', { reqId: req.reqId, presence: String(ap.presence) });
     return r.ok ? { ok: true } : reject('not_open');
   }
 
@@ -1020,5 +1043,20 @@ export function irInputs(inputs: RunInputs, cp: { repName?: string | null; addre
     counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, issueDay: inputs.issueDate.slice(8, 10),
     ...(inputs.email ? { email: inputs.email } : {}),
     ...(inputs.email && at > 0 ? { emailLocal: inputs.email.slice(0, at), emailDomain: inputs.email.slice(at + 1) } : {}),
+  };
+}
+
+/** H-01 s13a: 홈택스 [확인]이 "정상적인 사업자번호입니다."를 보였다(패키지 strings 키). */
+const BIZNO_OK_KEY = 'counterpart.bizNoOk';
+const BIZNO_OK_STATUS = '정상';
+
+/** readback 값 → 비어 있으면 채울 프로필(공급자)·거래처 칸. 패키지가 읽지 않은 칸은 빈 값이라 채우지 않는다. */
+export function portalFill(rb: ReadonlyMap<string, string>): { profile: Partial<Record<PortalProfileKey, string>>; counterparty: { repName?: string; address?: string } } {
+  const g = (k: string) => rb.get(k) ?? '';
+  const id = g('supplierEmailId');
+  const dom = g('supplierEmailDomain');
+  return {
+    profile: { displayName: g('supplierName'), repName: g('supplierRepName'), bizType: g('supplierBizType'), bizItem: g('supplierBizItem'), address: g('supplierAddress'), email: g('supplierEmail') || (id && dom ? `${id}@${dom}` : '') },
+    counterparty: { repName: g('counterpartRepName'), address: g('counterpartAddress') },
   };
 }

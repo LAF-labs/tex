@@ -1,13 +1,15 @@
 // PoC-9 데모 셸 렌더러: 메인 대화(단일 세션) · 작업 패널 · 문서함 · 거래처 · 정부24 목업.
 // 승인 카드는 main이 대화 열 하단(입력창 위)에 따로 그린다. 렌더러는 main이 알린 높이만큼 그 자리를 비우기만 한다(ADR-021 결정 7).
 import { g24Card, g24Panel } from './shell-g24.js';
+import { cardRegister } from './shell-card.js';
 import { onboardingView, showOnbError } from './shell-onboarding.js';
 import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
+import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -469,18 +471,23 @@ const ONB_ERR = {
   gesture_required: '버튼을 직접 눌러 주세요.',
   account_required: '먼저 로그인해 주세요.',
 };
+/** main이 돌려준 온보딩 답(onboarding.reply·card.register)을 화면에 반영한다. */
+function applyOnb(r) {
+  if (r.onboarding !== undefined) state.onb = r.onboarding;
+  if (r.profiles) state.boot.profiles = r.profiles;
+  renderOnboarding();
+  renderTitlebar();
+  renderToday();
+  if (r.fill) fillComposer(r.fill);
+  // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
+  if (loginGate()) renderModal();
+}
 const onbAct = {
+  call,
+  applied: (r) => applyOnb(r),
   reply: async (step, choice, extra = {}) => {
     try {
-      const r = await call('onboarding.reply', { step, choice, ...extra });
-      state.onb = r.onboarding;
-      if (r.profiles) state.boot.profiles = r.profiles;
-      renderOnboarding();
-      renderTitlebar();
-      renderToday();
-      if (r.fill) fillComposer(r.fill);
-      // 약관에 동의하면 로그인 화면(loginGate)이 먼저다
-      if (loginGate()) renderModal();
+      applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
       return true;
     } catch (e) {
       // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안 빨간 글(대표 2026-11-13)
@@ -829,6 +836,11 @@ async function ask(text, vat) {
     return;
   }
   if (r.kind === 'agent') return renderAgent(r);
+  // 세무사 꾸러미 요청: main이 그 달 꾸러미를 만들었다. 카드의 [꾸러미 열기]는 같은 달 꾸러미 화면으로 간다.
+  if (r.kind === 'pack') {
+    appendThread(h('div', { class: 'sx-app', 'data-pack-reply': r.pack.month }, h('p', {}, `${r.pack.label} 세무사 꾸러미를 만들었어요.`), packUi.chatCard(r.pack, (m) => (packUi.select(m), go('bundle')))));
+    return;
+  }
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
@@ -973,7 +985,19 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const el = taskCard(run, { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps });
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps };
+  // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
+  if (run.batch) {
+    const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
+    const all = [...mates, run].sort((a, b) => a.batch.index - b.batch.index);
+    const el = batchCard(all, cardAct);
+    const old = chat.thread.querySelector(`[data-batch="${run.batch.id}"]`) ?? chat.thread.querySelector(`[data-run="${run.id}"]`);
+    if (old) old.replaceWith(el);
+    else appendThread(el);
+    if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+    return;
+  }
+  const el = taskCard(run, cardAct);
   const old = chat.thread.querySelector(`[data-run="${run.id}"]`);
   if (old) old.replaceWith(el);
   else appendThread(el);
@@ -1073,7 +1097,7 @@ async function boardGo(t) {
   if (t.to === 'run') {
     if (state.view !== 'chat') await go('chat');
     openPanel({ kind: 'run', id: t.id });
-    document.querySelector(`[data-run="${CSS.escape(t.id)}"]`)?.scrollIntoView({ block: 'center' });
+    (document.querySelector(`[data-run="${CSS.escape(t.id)}"]`) ?? document.querySelector(`[data-batch-row="${CSS.escape(t.id)}"]`))?.scrollIntoView({ block: 'center' });
   } else if (t.to === 'doc') {
     state.docFilter = 'all';
     await go('docs');
@@ -1299,13 +1323,18 @@ const DOC_FILTERS = [
   ['soon', '만료 임박'],
 ];
 
-/** 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 나머지는 상태 글자. */
+/** 문서함에 보이는 발급 기록 상태(원장 기준, run-history.ts PastKind). 발급된 건은 승인번호·메일·[PDF], 확인 필요는 상태 글자. */
 const ISSUED_SHOWN = 10;
-const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'], not_issued: ['발급 안 됨', 'is-muted'], stopped_before_gate: ['승인 전 멈춤', 'is-muted'] };
-/** 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF], 실패·확인 중은 상태로. */
+const ISSUED_STATE = { issued: ['발급됨', ''], unsure: ['확인 필요', 'is-attention'] };
+/**
+ * 문서함 맨 위: 발급한 세금계산서 한 줄씩(B5). 날짜 · 거래처 · 금액 · 승인번호 · 메일 · [PDF].
+ * 발급 안 된 시도는 활동 기록에만 둔다(접힌 한 줄). 발급됐는지 모르는 건(확인 필요)은 다시 발급하지 않게 여기 남긴다.
+ */
 function issuedSection() {
-  const all = state.issued ?? [];
-  if (!all.length) return null;
+  const all = (state.issued ?? []).filter((x) => x.kind === 'issued' || x.kind === 'unsure');
+  const tried = (state.issued?.length ?? 0) - all.length;
+  const triedLine = tried ? h('div', { class: 'issued-tried', 'data-issued-tried': String(tried) }, btn(`발급 안 된 시도 ${tried}건 · 활동 기록에서 보기`, () => go('activity'), 'sx-btn-quiet', { 'data-act': 'issued-tried' })) : null;
+  if (!all.length) return triedLine;
   // 최근 10건, 나머지는 [모두 보기](부장 지시 2026-11-14)
   const rows = state.issuedAll ? all : all.slice(0, ISSUED_SHOWN);
   const done = all.filter((x) => x.kind === 'issued').length;
@@ -1324,7 +1353,7 @@ function issuedSection() {
           h('td', {}, x.day ?? '—', x.time ? h('span', { class: 'sx-meta doc-ago' }, x.time) : null),
           h('td', { class: x.who ? 'name' : 'name is-none' }, x.who ?? '—'),
           h('td', { class: x.total != null ? 'num' : 'num is-none' }, x.total != null ? `${num(x.total)}원` : '—'),
-          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
+          x.kind === 'issued' ? h('td', { class: x.approvalNo ? 'sx-id' : 'is-none' }, x.approvalNo ?? '—') : h('td', { colspan: '2', class: 'issued-why' }, h('span', { class: `issued-state ${cls}` }, label), x.note ? h('span', { class: 'sx-meta issued-note' }, x.note) : null),
           x.kind === 'issued' ? h('td', { class: x.mail ? null : 'is-none' }, x.mail ? MAIL_TEXT[x.mail] : '—') : null,
           h('td', {}, x.documentId ? btn('PDF', () => act.openDoc(x.documentId), '', { 'data-act': 'issued-pdf' }) : null),
         );
@@ -1333,6 +1362,7 @@ function issuedSection() {
     all.length > ISSUED_SHOWN
       ? h('div', { class: 'issued-more' }, btn(state.issuedAll ? '최근 10건만 보기' : `모두 보기 (${all.length}건)`, () => ((state.issuedAll = !state.issuedAll), render()), '', { 'data-act': 'issued-all' }))
       : null,
+    triedLine,
   );
 }
 
@@ -1404,7 +1434,7 @@ function cpsView() {
         ),
       ),
     ),
-    h('p', { class: 'sx-meta rs-foot' }, '휴·폐업 상태는 발급 직전에 국세청에서 다시 확인해요.'),
+    h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.'),
   );
 }
 
@@ -1420,7 +1450,7 @@ function cpPanel(c) {
       ['대표자', c.rep],
       ['받는 이메일', c.email],
       ['저장 품목', c.item],
-      ['상태 확인', c.checkedOn || '—', c.checkedOn ? { tag: '국세청' } : {}],
+      ['상태 확인', c.checkedOn || '—', c.checkedOn ? { tag: '홈택스' } : {}],
     ]),
     h('div', { class: 'sx-panel-sec' }, '세금계산서 발급 이력'),
     history.length
@@ -1431,7 +1461,6 @@ function cpPanel(c) {
       { class: 'sx-actions' },
       btn('세금계산서 발급', () => fillComposer(`${c.name}에 세금계산서 `), 'sx-btn-primary'),
       btn('수정', () => openPanel({ kind: 'cp-edit', id: c.id }), '', { 'data-act': 'cp-edit' }),
-      btn('상태 다시 확인', () => toast('국세청 상태 다시 확인은 곧 지원해요'), 'sx-btn-quiet'),
     ),
     // 받을 돈(09 §3.6): 거래처 계좌(여러 개)·입금자 이름·결제 조건. 사업자 프로필만
     state.profile === 'business' ? bankUi.cpSection(c) : null,
@@ -1526,14 +1555,12 @@ function cpEditPanel(c, add = null) {
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
 }
 
-const RUN_ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 /** 내 사업장 사업자 카드(shell-biz.js): 보기 / [수정] 폼. 편집 중 값은 state.bizEdit에 둔다(다시 그려도 남는다). */
 function bizCard() {
   const b = state.boot.profiles.business;
   return bizProfileCard({
     b,
     edit: state.bizEdit,
-    runActive: [...state.runs.values()].some((r) => RUN_ACTIVE.includes(r.status)),
     authReopen: !!state.boot.authReopen,
     call,
     toast,
@@ -1740,7 +1767,45 @@ async function loadCertMemory() {
   } catch {
     state.certName = null;
   }
+  try {
+    state.card = { stored: (await call('card.status', {})).stored === true, redo: false };
+  } catch {
+    state.card = null;
+  }
   if (state.view === 'settings') render();
+}
+/** 설정 > 발급 인증의 보안카드 줄. 등록 카드는 다시 그려도 같은 요소를 쓴다(읽는 중·다시 물을 칸 상태 유지). */
+let cardEl = null;
+function cardRow() {
+  if (state.card.stored && !state.card.redo) {
+    return h(
+      'div',
+      { class: 'sx-card auth-row', 'data-card-stored': '' },
+      h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '보안카드 등록함'), h('span', { class: 'sx-meta' }, '발급할 때 홈택스 보안카드 창에 앱이 번호를 넣어요. 홈택스가 틀렸다고 하면 다시 넣지 않고 멈춰요.')),
+      btn('다시 등록', () => ((state.card.redo = true), (cardEl = null), render()), '', { 'data-act': 'card-redo' }),
+      btn('지우기', forgetCard, '', { 'data-act': 'card-forget' }),
+    );
+  }
+  cardEl ??= cardRegister({
+    call,
+    onStored: (r) => {
+      state.card = { stored: true, redo: false };
+      cardEl = null;
+      toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요. 다음 발급부터 앱이 번호를 넣어요.`);
+      render();
+    },
+  });
+  return h('div', { class: 'sx-card auth-row', 'data-card-register': '' }, h('span', { class: 'opt-main' }, h('span', { class: 'auth-name' }, '보안카드 등록'), cardEl));
+}
+async function forgetCard() {
+  try {
+    const stored = (await call('card.forget', {})).stored === true;
+    state.card = { stored, redo: false };
+    toast(stored ? '지우지 못했어요. 다시 해 주세요' : '보안카드를 금고에서 지웠어요');
+  } catch {
+    toast('지우지 못했어요. 다시 해 주세요');
+  }
+  render();
 }
 /** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
 function certMemorySaveRow() {
@@ -1960,8 +2025,8 @@ setInterval(() => {
 // 프로필 인증 라벨(shell-model SIGN_LABEL)별 발급 때 사람이 하는 일(shell-runs SIGN_BY_AUTH와 같은 사실).
 const AUTH_DESC = {
   '사업자 간편인증': '발급할 때마다 휴대폰에서 승인해요',
-  '공동·금융인증서': '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
-  보안카드: '발급할 때마다 보안카드 번호를 직접 넣어요',
+  '공동·금융인증서': '홈택스 로그인에 쓰는 그 인증서예요. 첫 발급 때 비밀번호를 한 번 넣으면 다음부터는 앱이 넣어요',
+  보안카드: '카드 사진을 한 번 넣으면 발급할 때 앱이 번호를 넣어요',
 };
 
 /** 발급 인증(캔버스 S-02): 사업자 프로필의 인증 하나. 바꾸기는 내 사업장과 같은 온보딩 다시 열기. */
@@ -1996,6 +2061,8 @@ function authCard() {
       : state.certMemory === false
         ? certMemorySaveRow()
         : null,
+    // 보안카드(대표 지시 2026-11-14): 카드 사진을 넣으면 금고가 읽어 저장한다. 등록했으면 [다시 등록]·[지우기].
+    auth === '보안카드' && state.card ? cardRow() : null,
     // 진행 중 실행은 시작 때 인증 그대로 끝난다(#295 결정, 엔진 run.start 스냅숏).
     canChange && desc ? h('p', { class: 'sx-meta', 'data-auth-note': '' }, '바꾸면 다음 발급부터 적용돼요. 진행 중인 작업은 원래 인증으로 끝내요.') : null,
   ];
@@ -2023,9 +2090,8 @@ function settingsView() {
   );
 }
 
-/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-05 세무사 꾸러미 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
+/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
 const LATER = {
-  bundle: ['세무사 꾸러미', 'D-05', '이번 달 항목과 빠진 것, 미리보기·보내기가 여기에 들어와요.'],
   card: ['사업용 카드 내역', 'D-04', '홈택스 사업용 카드 사용내역과 [최신화]가 여기에 들어와요.'],
   payroll: ['급여대장', 'D-06', '직원 목록과 이번 달 급여대장이 여기에 들어와요.'],
 };
@@ -2035,7 +2101,9 @@ const laterView = (v) => () => {
 };
 // 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
 const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null });
-const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
+// 세무사 꾸러미 화면(shell-pack.js). 열면 고른 달 꾸러미를 main이 로컬 폴더·zip으로 만든다.
+const packUi = createPackScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bundle' && render(), errText: (e) => errText(e), today: () => localDate(state.today), railHead, listTable });
+const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: () => packUi.view(), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
   if (state.view === v && v !== 'docs') return;
@@ -2044,11 +2112,13 @@ async function go(v) {
   const own = { chat: ['run', 'g24'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
   if (v === 'cps') state.cps = await call('counterparties.list');
+  if (v === 'biz') state.boot.profiles = await call('profiles.list');
   if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
   if (v === 'bank') {
     state.cps = await call('counterparties.list');
     await bankUi.load();
   }
+  if (v === 'bundle') void packUi.load();
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
     // 발급한 세금계산서(B5): 원장·실행 이력을 지금 읽는다(main issued.list)
@@ -2378,6 +2448,8 @@ function onActivated(x, y) {
 
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
+  if (ev.type === 'open' && ev.to === 'run' && typeof ev.id === 'string') return void boardGo({ to: 'run', id: ev.id });
+  if (ev.type === 'say' && typeof ev.text === 'string') return void appendThread(h('div', { class: 'sx-app' }, ev.text.slice(0, 300)));
   if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
@@ -2440,7 +2512,9 @@ window.sax.onEvent((ev) => {
     const prev = state.runs.get(ev.run.id);
     putRun(ev.run);
     if (prev?.status !== 'waiting' && ev.run.status === 'waiting' && state.view === 'chat') openPanel({ kind: 'run', id: ev.run.id });
-    if (prev?.status !== 'done' && ev.run.status === 'done') appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
+    // 여러 건 묶음은 마지막 건이 끝날 때 한 번만(남은 건이 진행 중이거나 승인받은 초안이면 아직이다)
+    const batchOpen = ev.run.batch && [...state.runs.values()].some((x) => x.batch?.id === ev.run.batch.id && (['preparing', 'turn', 'waiting', 'issuing'].includes(x.status) || (x.status === 'draft' && x.batch.approved && !x.batch.skipped && !x.batch.halted)));
+    if (prev?.status !== 'done' && ev.run.status === 'done' && !batchOpen) appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
   } else if (ev.type === 'bar') {
     // 승인 카드 자리 비우기: 카드 위치·높이는 main이 정하고(ADR-021 결정 7), 렌더러는 그 높이만큼 자리를 비울 뿐이다.
     state.barActive = ev.active;

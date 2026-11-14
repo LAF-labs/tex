@@ -16,7 +16,7 @@ import { authPortResponder, type GwAuthResult } from './gateway-auth.ts';
 import type { SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import type { CodefNeeded } from './bank-auto.ts';
 /** 1회용 결속 또는 계좌 자동조회 비밀번호 창 결속(금고 protocol SecretInputBind의 main 쪽 부분) */
-type SecretInputBind = OneShotInputBind | CodefNeeded | { mode: 'store'; kind: 'cert_password'; scope: 'business' | 'personal'; notice: { version: string } };
+type SecretInputBind = OneShotInputBind | CodefNeeded | { mode: 'store'; kind: 'cert_password' | 'security_card'; scope: 'business' | 'personal'; notice: { version: string } };
 
 const require = createRequire(import.meta.url);
 

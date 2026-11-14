@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # macOS 고객 배포판(B6): main 커밋 → 빌드 → 공증(앱·dmg) → 스테이플 → Gatekeeper 확인까지 한 번에. 게시는 하지 않는다(publish-update.sh).
 # 실행(대표 Mac): bash poc/scripts/release-mac.sh <판 x.y.z> [main 커밋, 기본 origin/main]
+# 예행(공증 자격 없이): bash poc/scripts/release-mac.sh <판> <커밋> --sign-only. 공증·스테이플만 빼고 서명·dmg·zip·report·확인까지 돈다.
+#   커밋은 origin/main 밖이어도 되고, 작업 폴더는 SAX_RELEASE_WORK(기본 ~/sax-publish/mac-<판>-sign-only)다. 결과는 배포하지 않는다.
 # 전제(처음 한 번):
 #   - 키체인에 "Developer ID Application: … (JA55KTZH34)" 신원이 하나 있다.
 #   - notarytool 키체인 프로필 sax-notary가 있다. 없으면 이 스크립트가 store-credentials 명령 두 가지를 보여 주고 멈춘다.
@@ -8,6 +10,10 @@
 # 다른 Mac에서 열리는지는 내려받은 사본처럼 격리 속성(quarantine)을 붙인 사본으로 spctl이 판정한다(시스템 설정은 바꾸지 않는다).
 set -euo pipefail
 
+SIGN_ONLY=0
+ARGS=()
+for a in "$@"; do [ "$a" = --sign-only ] && SIGN_ONLY=1 || ARGS+=("$a"); done
+set -- "${ARGS[@]+"${ARGS[@]}"}"
 VERSION=${1:-}
 REF=${2:-origin/main}
 PROFILE=${SAX_NOTARY_PROFILE:-sax-notary}
@@ -15,6 +21,7 @@ TEAM=JA55KTZH34
 [[ $VERSION =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] || { echo "사용법: bash poc/scripts/release-mac.sh <판 x.y.z> [main 커밋]" >&2; exit 2; }
 REPO=$(cd "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)/.." && pwd)
 WORK=$HOME/sax-publish/mac-$VERSION
+[ $SIGN_ONLY = 1 ] && WORK=${SAX_RELEASE_WORK:-$WORK-sign-only}
 OUT=$WORK/out
 say() { printf '%s\n' "$*"; }
 die() { printf '멈춤: %s\n' "$*" >&2; exit 1; }
@@ -22,7 +29,10 @@ die() { printf '멈춤: %s\n' "$*" >&2; exit 1; }
 # ⓪ 서명 신원·공증 자격(값은 보지 않는다, 이름·성공 여부만)
 n=$(security find-identity -v -p codesigning | grep -c "\"Developer ID Application: .*($TEAM)\"" || true)
 [ "$n" = 1 ] || die "키체인에 Developer ID Application ($TEAM) 신원이 ${n}개다(1개여야 한다)"
-if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
+if [ $SIGN_ONLY = 1 ]; then
+  PROFILE=
+  say "[⓪] 서명 신원 1개(팀 $TEAM), 예행: 공증·스테이플 건너뜀"
+elif ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; then
   cat >&2 <<EOF
 멈춤: 공증 자격(키체인 프로필 $PROFILE)이 없거나 맞지 않는다. 아래 둘 중 하나를 터미널에서 한 번 실행한다(비밀값은 프롬프트로만 넣는다).
 
@@ -35,13 +45,14 @@ if ! xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1; the
   확인: xcrun notarytool history --keychain-profile $PROFILE  (목록이 나오면 된다. 비어 있어도 된다)
 EOF
   exit 2
+else
+  say "[⓪] 서명 신원 1개(팀 $TEAM), 공증 프로필 $PROFILE 확인"
 fi
-say "[⓪] 서명 신원 1개(팀 $TEAM), 공증 프로필 $PROFILE 확인"
 
 # ① 원본: origin/main 안의 커밋을 분리 체크아웃으로(빌드가 dirty:false가 되게)
 git -C "$REPO" fetch -q origin main
 SHA=$(git -C "$REPO" rev-parse --verify "$REF^{commit}") || die "커밋을 찾지 못했다: $REF"
-git -C "$REPO" merge-base --is-ancestor "$SHA" origin/main || die "${SHA:0:8}은 origin/main에 없는 커밋이다"
+[ $SIGN_ONLY = 1 ] || git -C "$REPO" merge-base --is-ancestor "$SHA" origin/main || die "${SHA:0:8}은 origin/main에 없는 커밋이다"
 SRC=$WORK/src
 if [ -d "$SRC" ]; then
   [ "$(git -C "$SRC" rev-parse HEAD)" = "$SHA" ] || die "$SRC가 다른 커밋이다. 폴더를 지우거나(git -C $REPO worktree remove $SRC) 판을 올린다"
@@ -67,19 +78,23 @@ V=$OUT/verify.txt
 log() { printf '%s\n' "$*" | tee -a "$V"; }
 node -e '
 const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-const b = r.buildInfo, m = r.mac ?? {};
+const b = r.buildInfo, m = r.mac ?? {}, signOnly = process.argv[4] === "1";
 const bad = [];
 if (b.version !== process.argv[2]) bad.push("version");
 if (b.dirty !== false) bad.push("dirty");
 if (b.testBuild !== false) bad.push("testBuild");
 if (b.devOnlyIncluded.length) bad.push("devOnlyIncluded");
 if (b.signing !== "developer_id" || m.teamId !== process.argv[3]) bad.push("signing");
-if (m.notarized !== true || m.stapled !== true || m.spctl !== "accepted") bad.push("notarization");
+if (signOnly ? m.codesignVerify !== "ok" || m.hardenedRuntime !== true : m.notarized !== true || m.stapled !== true || m.spctl !== "accepted") bad.push("notarization");
 if (bad.length) { console.error("report.json 확인 실패: " + bad.join(", ")); process.exit(1); }
-console.log(`report.json: ${b.version} ${b.commit.slice(0, 8)} dirty=false testBuild=false 공증 ${m.dmgNotarization} spctl ${m.spctl} (${m.source})`);
-' "$OUT/report.json" "$VERSION" "$TEAM" | tee -a "$V"
-xcrun stapler validate "$DMG" >/dev/null && log "dmg 스테이플: 있음"
-spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | tee -a "$V" | grep -q accepted || die "spctl이 dmg를 받지 않는다(verify.txt)"
+console.log(`report.json: ${b.version} ${b.commit.slice(0, 8)} dirty=false testBuild=false ` + (signOnly ? `서명만(codesign ${m.codesignVerify}, 하드닝 런타임)` : `공증 ${m.dmgNotarization} spctl ${m.spctl} (${m.source})`));
+' "$OUT/report.json" "$VERSION" "$TEAM" "$SIGN_ONLY" | tee -a "$V"
+if [ $SIGN_ONLY = 0 ]; then
+  xcrun stapler validate "$DMG" >/dev/null && log "dmg 스테이플: 있음"
+  spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | tee -a "$V" | grep -q accepted || die "spctl이 dmg를 받지 않는다(verify.txt)"
+else
+  log "dmg: 예행이라 서명·공증·스테이플 없음(공증 판에서 package-win.mjs notarizeDmg가 한다)"
+fi
 T=$(mktemp -d "${TMPDIR:-/tmp}/sax-release-check.XXXXXX")
 trap 'hdiutil detach "$T/mnt" >/dev/null 2>&1 || true; rm -rf "$T"' EXIT
 mkdir -p "$T/mnt" "$T/from-dmg" "$T/from-zip"
@@ -91,14 +106,23 @@ Q="0083;$(printf '%x' "$(date +%s)");Safari;"
 for from in from-dmg from-zip; do
   app=$T/$from/SovereignAX.app
   xattr -w com.apple.quarantine "$Q" "$app"
-  xcrun stapler validate "$app" >/dev/null || die "$from 앱에 공증 티켓이 없다"
+  archs=$(lipo -archs "$app/Contents/MacOS/SovereignAX")
+  [[ " $archs " == *" x86_64 "* && " $archs " == *" arm64 "* ]] || die "$from 앱이 universal이 아니다($archs)"
+  codesign --verify --deep --strict "$app" || die "$from 앱 서명 확인 실패"
   team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
   [ "$team" = "$TEAM" ] || die "$from 앱 팀 ID가 $team이다"
   a=$(spctl --assess --type execute -vv "$app" 2>&1 || true)
   printf '%s\n' "$a" >> "$V"
+  if [ $SIGN_ONLY = 1 ]; then
+    grep -q 'source=Unnotarized Developer ID' <<<"$a" || die "$from 앱 spctl이 'Unnotarized Developer ID'가 아니다(verify.txt)"
+    log "$from 앱(격리 속성 사본): $archs, 서명 확인 통과, 팀 $TEAM, spctl rejected(Unnotarized Developer ID: 공증만 남음)"
+    continue
+  fi
+  xcrun stapler validate "$app" >/dev/null || die "$from 앱에 공증 티켓이 없다"
   grep -q 'accepted' <<<"$a" && grep -q 'source=Notarized Developer ID' <<<"$a" || die "$from 앱(격리 속성 사본)을 Gatekeeper가 받지 않는다(verify.txt)"
-  log "$from 앱(격리 속성 사본): 스테이플 있음, 팀 $TEAM, spctl accepted(Notarized Developer ID)"
+  log "$from 앱(격리 속성 사본): $archs, 스테이플 있음, 팀 $TEAM, spctl accepted(Notarized Developer ID)"
 done
+[ $SIGN_ONLY = 1 ] && { say ""; say "예행 끝(공증 없음, 배포 불가): $DMG, 확인 기록 $V"; exit 0; }
 
 say ""
 say "끝. 다른 Mac에서 열리는 공증 판이다."

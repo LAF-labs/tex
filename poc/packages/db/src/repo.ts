@@ -24,10 +24,24 @@ export interface Profile {
   certName: string | null;
   createdAt: string;
   updatedAt: string;
+  /** 홈택스 화면에서 채운 칸 중 값이 그대로인 칸(fillFromPortal). 사용자가 고치면 빠진다. */
+  fromPortal: PortalProfileKey[];
+}
+
+/** 홈택스 화면(공급자 칸)에서 비어 있을 때만 채우는 프로필 칸. */
+export const PORTAL_PROFILE_MAX = { displayName: 100, repName: 100, bizType: 100, bizItem: 100, address: 200, email: 320 } as const;
+export type PortalProfileKey = keyof typeof PORTAL_PROFILE_MAX;
+const PORTAL_PROFILE_COL: Record<PortalProfileKey, string> = { displayName: 'display_name', repName: 'rep_name', bizType: 'biz_type', bizItem: 'biz_item', address: 'address', email: 'email' };
+const portalMarksKey = (profileId: string) => `profile.portal_filled.${profileId}`;
+
+/** 상호가 비었거나 사업자번호를 이름으로 저장한 프로필(0.1.6: O-02가 상호 없이 확정되면 displayName = 번호였다). */
+export function nameMissing(p: Pick<Profile, 'displayName' | 'bizNo'>): boolean {
+  const n = p.displayName.trim();
+  return !n || (!!p.bizNo && !/[^0-9\s-]/.test(n) && n.replace(/[^0-9]/g, '') === p.bizNo);
 }
 
 /** portalLoginId를 빼면(undefined) 저장된 값을 그대로 둔다(금고 등록 결과로 따로 들어온다) */
-export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession' | 'portalLoginId' | 'certName'> & { keepSession?: boolean; portalLoginId?: string | null };
+export type ProfileInput = Omit<Profile, 'id' | 'createdAt' | 'updatedAt' | 'keepSession' | 'portalLoginId' | 'certName' | 'fromPortal'> & { keepSession?: boolean; portalLoginId?: string | null };
 
 export interface Counterparty {
   id: string;
@@ -72,7 +86,7 @@ export class ValidationError extends Error {
 const now = () => new Date().toISOString();
 type Row = Record<string, unknown>;
 
-const toProfile = (r: Row): Profile => ({
+const toProfile = (r: Row): Omit<Profile, 'fromPortal'> => ({
   id: String(r.id),
   kind: r.kind as ProfileKind,
   displayName: String(r.display_name),
@@ -155,17 +169,61 @@ export class ProfileRepo {
   }
 
   list(): Profile[] {
-    return this.db.prepare('SELECT * FROM profiles ORDER BY kind').all().map((r) => toProfile(r as Row));
+    return this.db.prepare('SELECT * FROM profiles ORDER BY kind').all().map((r) => this.withMarks(r as Row));
   }
 
   get(id: string): Profile | null {
     const r = this.db.prepare('SELECT * FROM profiles WHERE id = ?').get(id);
-    return r ? toProfile(r as Row) : null;
+    return r ? this.withMarks(r as Row) : null;
   }
 
   byKind(kind: ProfileKind): Profile | null {
     const r = this.db.prepare('SELECT * FROM profiles WHERE kind = ?').get(kind);
-    return r ? toProfile(r as Row) : null;
+    return r ? this.withMarks(r as Row) : null;
+  }
+
+  private marks(id: string): Partial<Record<PortalProfileKey, string>> {
+    const v = this.db.prepare('SELECT value_json FROM settings WHERE key = ?').pluck().get(portalMarksKey(id)) as string | undefined;
+    try {
+      return v ? (JSON.parse(v) as Partial<Record<PortalProfileKey, string>>) : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private withMarks(r: Row): Profile {
+    const p = toProfile(r);
+    const m = this.marks(p.id);
+    return { ...p, fromPortal: (Object.keys(PORTAL_PROFILE_COL) as PortalProfileKey[]).filter((k) => m[k] !== undefined && m[k] === p[k]) };
+  }
+
+  /**
+   * 홈택스 화면의 공급자 값으로 비어 있는 칸만 채운다(상호는 nameMissing일 때). 있는 값은 건드리지 않는다.
+   * 채운 칸은 settings에 값과 함께 적어 두고, 값이 그대로인 동안만 fromPortal로 보인다. 채운 칸 키를 돌려준다.
+   */
+  fillFromPortal(id: string, values: Partial<Record<PortalProfileKey, string>>): PortalProfileKey[] {
+    return this.db.transaction(() => {
+      const cur = this.get(id);
+      if (!cur) throw new ValidationError('profile_not_found');
+      const filled: PortalProfileKey[] = [];
+      for (const k of Object.keys(PORTAL_PROFILE_COL) as PortalProfileKey[]) {
+        const v = values[k]?.replace(/\s+/g, ' ').trim().slice(0, PORTAL_PROFILE_MAX[k]);
+        if (!v) continue;
+        const empty = k === 'displayName' ? nameMissing(cur) : !cur[k]?.trim();
+        if (!empty || (k === 'email' && !EMAIL.test(v))) continue;
+        this.db.prepare(`UPDATE profiles SET ${PORTAL_PROFILE_COL[k]} = ?, updated_at = ? WHERE id = ?`).run(v, now(), id);
+        filled.push(k);
+      }
+      if (filled.length) {
+        const m = this.marks(id);
+        const next = this.get(id)!;
+        for (const k of filled) m[k] = next[k] as string;
+        this.db
+          .prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json')
+          .run(portalMarksKey(id), JSON.stringify(m));
+      }
+      return filled;
+    })();
   }
 
   /** 종류별 1개: 같은 종류가 있으면 갱신, 없으면 만든다. */
@@ -191,7 +249,8 @@ export class ProfileRepo {
       biz_item: input.bizItem ?? null,
       address: input.address ?? null,
       email: input.email ?? null,
-      sign_method: input.signMethod ?? null,
+      // 고르지 않았으면 공동인증서(대표 지시 2026-11-14: 서비스 기본 발급 인증). 간편인증은 사용자가 고를 때만.
+      sign_method: input.signMethod ?? existing?.signMethod ?? 'cert',
       keep_session: input.keepSession ? 1 : 0,
       portal_login_id: input.portalLoginId === undefined ? (existing?.portalLoginId ?? null) : input.portalLoginId === null ? null : normalizeLoginId(input.portalLoginId),
       created_at: existing?.createdAt ?? t,
@@ -281,6 +340,20 @@ export class CounterpartyRepo {
       .prepare(`UPDATE counterparties SET name=?, rep_name=?, address=?, email=?, verified_at=?, verified_status=? WHERE id=?`)
       .run(next.name, next.repName ?? null, next.address ?? null, next.email ?? null, changed ? null : cur.verifiedAt, changed ? null : cur.verifiedStatus, id);
     return this.get(id)!;
+  }
+
+  /** 홈택스 화면 값으로 비어 있는 대표자·주소만 채운다. 홈택스가 보인 값이라 진위확인 결과는 그대로 둔다. */
+  fillFromPortal(id: string, values: { repName?: string; address?: string }): Array<'repName' | 'address'> {
+    const cur = this.get(id);
+    if (!cur) throw new ValidationError('not_found');
+    const filled: Array<'repName' | 'address'> = [];
+    for (const [k, col, max] of [['repName', 'rep_name', 100], ['address', 'address', 200]] as const) {
+      const v = values[k]?.replace(/\s+/g, ' ').trim().slice(0, max);
+      if (!v || cur[k]?.trim()) continue;
+      this.db.prepare(`UPDATE counterparties SET ${col} = ? WHERE id = ?`).run(v, id);
+      filled.push(k);
+    }
+    return filled;
   }
 
   setVerification(id: string, status: string, at: string = now()): Counterparty {

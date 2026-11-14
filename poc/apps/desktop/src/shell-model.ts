@@ -26,6 +26,8 @@ export interface Profile {
   auth: string;
   /** 상호가 비어(또는 번호로 저장되어) name이 중립 표기("내 사업장")다. 번호를 이름처럼 보이지 않는다. */
   nameMissing?: boolean;
+  /** 홈택스 화면에서 채운 뒤 그대로인 칸(내 사업장에 "홈택스에서 가져옴"). */
+  fromHometax?: Array<'name' | 'rep' | 'bizType' | 'bizItem' | 'address' | 'email'>;
   /** 저장된 프로필이 없는 자리 표시(제품의 개인 프로필). 화면은 내용 없는 카드를 그리지 않는다. */
   placeholder?: boolean;
 }
@@ -55,7 +57,7 @@ export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<Setup
       : missing.includes('biz')
         ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
         : missing.includes('auth')
-          ? `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`
+          ? `${what} 먼저 발급할 때 쓸 인증(공동인증서·보안카드·간편인증)을 골라 주세요.`
           : null;
   // 보안 프로그램(MagicLine4NX)은 홈택스가 설치 안내로 멈추기 전에 앱이 먼저 말한다(B4, security-programs.ts)
   const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
@@ -426,6 +428,14 @@ export interface RunViewBase {
   noChrome?: boolean;
   /** 홈택스 예행(메뉴 도구 > 홈택스 예행): 엔진이 첫 게이트에서 스스로 멈춘다. 승인 바를 띄우지 않는다. */
   rehearsal?: boolean;
+  /**
+   * 여러 건 한 번에(한 카드, [승인] 한 번). index는 0부터, count는 묶음 건수. 실행은 엔진에서 한 건씩 차례로 돈다.
+   * approved: 묶음 승인을 받았다(처음 승인 카드의 클릭). 뒤 건은 홈택스 되읽기 값이 그때 본 값과 같을 때만 바 없이 이어 간다.
+   * halted: 묶음을 세웠다(남은 건은 한 건씩 승인 카드). skipped: 이 건은 시작하지 못해 건너뛰었다.
+   */
+  batch?: { id: string; index: number; count: number; approved?: boolean; halted?: boolean; skipped?: boolean };
+  /** 앱이 다시 켜지거나 맥이 깨어난 뒤 같은 값으로 다시 시작한 실행(앞 실행 id). 카드에 "이어서 해요" 한 줄. */
+  resumedFrom?: string;
   writeDate: string;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;

@@ -1043,6 +1043,226 @@
    "commits": false,
    "lastVerified": "2026-11-13",
    "navigationOnly": true
+  },
+  "hometax.invoice.card.front": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#inputCardNo1"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.card.front",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "inputType": "password",
+   "secretKind": "security_card",
+   "secretPurpose": "sign",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "보안카드 창 첫 칸(앞 2자리, type=password maxlength 2). 금고만 채운다. 실화면 미확인: 홈택스 정적 /ui/pp/a/b/UTXPPABA08.xml(2026-11-14 GET)과 가짜 홈택스로만 맞췄다. 대표의 다음 실제 발급 때 확인"
+   }
+  },
+  "hometax.invoice.card.frontAsk": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#txtSecCardNo1"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.card.frontAsk",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "첫 칸 요청 글자 \"[N]번 보안카드번호 앞 2자리\"(N 1~30, 창이 열린 뒤 채워진다). 실화면 미확인: 홈택스 정적 /ui/pp/a/b/UTXPPABA08.xml(2026-11-14 GET)과 가짜 홈택스로만 맞췄다. 대표의 다음 실제 발급 때 확인"
+   }
+  },
+  "hometax.invoice.card.back": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#inputCardNo2"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.card.back",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "inputType": "password",
+   "secretKind": "security_card",
+   "secretPurpose": "sign",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "보안카드 창 둘째 칸(뒤 2자리). 금고만 채운다. 실화면 미확인: 홈택스 정적 /ui/pp/a/b/UTXPPABA08.xml(2026-11-14 GET)과 가짜 홈택스로만 맞췄다. 대표의 다음 실제 발급 때 확인"
+   }
+  },
+  "hometax.invoice.card.backAsk": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#txtSecCardNo2"
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.card.backAsk",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "둘째 칸 요청 글자 \"[M]번 보안카드번호 뒤 2자리\". 실화면 미확인: 홈택스 정적 /ui/pp/a/b/UTXPPABA08.xml(2026-11-14 GET)과 가짜 홈택스로만 맞췄다. 대표의 다음 실제 발급 때 확인"
+   }
+  },
+  "hometax.invoice.card.confirm": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#btnCfrm"
+    }
+   ],
+   "role": "button",
+   "namePattern": "^확인하기$",
+   "frame": "main",
+   "landmark": "hometax.invoice.card.confirm",
+   "commits": true,
+   "lastVerified": "2026-11-14",
+   "inputType": "button",
+   "commitEffect": "issue_document",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "보안카드 창 [확인하기]. 엔진이 그 창에서 누른다(무장 구간 안). 실화면 미확인: 홈택스 정적 /ui/pp/a/b/UTXPPABA08.xml(2026-11-14 GET)과 가짜 홈택스로만 맞췄다. 대표의 다음 실제 발급 때 확인"
+   }
+  },
+  "hometax.invoice.form.supplierRepName": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrRprsFnmTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierRepName",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
+  },
+  "hometax.invoice.form.supplierAddress": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrPfbAdrTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierAddress",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
+  },
+  "hometax.invoice.form.supplierBizType": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrBcNmTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierBizType",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
+  },
+  "hometax.invoice.form.supplierBizItem": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrItmNmTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierBizItem",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
+  },
+  "hometax.invoice.form.supplierEmailId": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrEmlIdTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierEmailId",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
+  },
+  "hometax.invoice.form.supplierEmailDomain": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_edtSplrEmlDmanTop"
+    }
+   ],
+   "role": "textbox",
+   "namePattern": "^.{0,60}$",
+   "frame": "main",
+   "landmark": "hometax.invoice.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14",
+   "fieldKey": "supplierEmailDomain",
+   "inputType": "text",
+   "reviewNote": {
+    "by": "sign-security-card",
+    "reason": "발급 폼 공급자 칸(홈택스가 로그인 사업자로 채움). s19b 선택 readback만(대조 없음, records-autofill 요청). id는 실화면 사본 judge-agent/request-browser_agent-LAYOUT.json(2026-11-13)에서 확인"
+   }
   }
  },
  "commitEndpoints": [
