@@ -438,3 +438,17 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .sx-steps small.sx-step-check.is-bad, .form-msg.is-bad { color: var(--sx-bad); font-weight: 500; }
 .form-msg { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); }
 .form-msg[hidden] { display: none; }
+
+/* 보안카드 등록(대표 지시 2026-11-14): 사진 끌어 놓기 칸, 애매한 칸만 4자리 다시 받기 */
+.card-reg { display: grid; gap: var(--space-2); margin-top: var(--space-2); width: 100%; }
+.card-drop { display: grid; gap: var(--space-1); justify-items: start; padding: var(--space-3); border: 1.5px dashed var(--line-strong, var(--line)); border-radius: var(--radius-md); background: var(--surface-sunken); }
+.card-drop.is-over { border-color: var(--accent, var(--ink)); background: var(--surface); }
+.card-drop.is-busy { opacity: 0.7; }
+.card-ask { display: grid; gap: var(--space-2); }
+.card-ask-grid { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.card-ask-row { display: flex; align-items: center; gap: 6px; }
+.card-ask-no { font-weight: 600; color: var(--ink-2); }
+.card-ask-input { width: 84px; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong, var(--line)); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); font: inherit; letter-spacing: 0.2em; }
+.card-ask-input:focus { outline: 2px solid var(--accent, var(--ink)); outline-offset: 0; }
+.onb-opts .card-reg { padding: 0 var(--space-1); }
+[data-card-register] .opt-main { width: 100%; }

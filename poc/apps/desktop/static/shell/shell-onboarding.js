@@ -1,7 +1,8 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 발급 인증은 발급할 때 사람이 홈택스 창에서 직접 마친다.
+// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 보안카드는 금고 직결 등록 창이 받는다(shell-card.js → main → card-secret.js).
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, kv, note, securityBox } from './shell-views.js';
+import { cardRegister } from './shell-card.js';
 
 const Q = {
   terms: '시작하기 전에 약관과 AI 모델 이용을 확인해 주세요.',
@@ -20,10 +21,10 @@ const Q = {
 
 /** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
-  ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
-  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
-  ['cert', '공동인증서', '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면, 다음부터는 앱이 넣어요.'],
+  ['cert', '공동인증서', '홈택스 로그인에 쓰는 그 인증서예요. 비밀번호를 처음 한 번 넣으면 다음부터는 앱이 넣어요.'],
+  ['card', '보안카드', '카드 사진을 한 번 넣으면 발급할 때 앱이 번호를 넣어요.'],
   ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
@@ -251,7 +252,7 @@ function bizCard(o, u, reply, act) {
 
 /**
  * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 먼저 보이고 하나 고르면 끝(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
- * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·간편인증·금융인증서)은 [다른 방법]에 접어 둔다.
+ * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·금융인증서·간편인증)은 [다른 방법]에 접어 둔다. 간편인증은 맨 뒤다(대표 지시 2026-11-14).
  */
 function authCard(o, u, reply, act) {
   const today = new Date();
@@ -282,8 +283,26 @@ function authCard(o, u, reply, act) {
         'div',
         { class: 'onb-opts', 'data-onb-other': '' },
         ...AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
-          h('button', { type: 'button', class: 'sx-opt onb-auth', 'data-onb': k, onclick: () => reply(k) }, h('span', { class: 'sx-radio' }), h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line))),
+          h(
+            'button',
+            { type: 'button', class: `sx-opt onb-auth${k === 'card' && u.cardReg ? ' is-on' : ''}`, 'data-onb': k, onclick: () => (k === 'card' ? ((u.cardReg = !u.cardReg), act.rerender()) : reply(k)) },
+            h('span', { class: 'sx-radio' }),
+            h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line)),
+          ),
         ),
+        // 보안카드: 고르면 그 자리에서 카드 사진을 받는다. 저장되면 보안카드로 정한다(따로 확인 없음)
+        u.cardReg
+          ? (u.cardEl ??= cardRegister({
+              call: act.call,
+              onboarding: true,
+              // 저장 뒤 main이 인증을 보안카드로 정하고 온보딩 화면을 돌려준다(렌더러가 다시 답하지 않는다)
+              onStored: (r) => {
+                act.toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요`);
+                act.applied(r);
+              },
+              skip: () => reply('card'),
+            }))
+          : null,
       )
     : null;
   // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다
@@ -299,6 +318,7 @@ function authCard(o, u, reply, act) {
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
+    p('홈택스 로그인에 이미 쓰는 공동인증서로 발급 서명도 해요. 휴대폰 승인이 필요 없어요.', true),
     sec,
     certs,
     h(

@@ -534,6 +534,8 @@ export class RunService extends EventEmitter {
         a.rehearsal?.journal(type);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+        // 선택 readback이 읽은 칸 이름·글자 수(값 없음, H-01 2.3.8 s19b 공급자 칸)
+        if (type === 'readback.optional' && payload) this.d.log.event('run.readback_optional', { runId: a.runId, ...payload });
         // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
         if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
         // AI 단계 결과(위치 찾기·폴백·판정·에이전트, 값 없음): 선택자·이름 규칙 글이 ID 꼴이 아니어서 diag 줄로 남긴다(로그 쪽이 다시 거른다).

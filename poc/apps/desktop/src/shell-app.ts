@@ -34,12 +34,13 @@ import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWind
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
+import { CARD_WINDOW_TITLE, cardSecretPageHtml } from './secret-labels.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
 import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
+import { answersPending, emptyDocStore, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
@@ -119,6 +120,8 @@ const FILES: Record<string, string> = {
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
   '/shell-bank-auto.js': 'text/javascript',
+  '/shell-card.js': 'text/javascript',
+  '/card-secret.js': 'text/javascript',
 };
 
 /** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
@@ -135,6 +138,7 @@ function serve(): void {
       const html = secretPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
     }
+    if (p === '/card-secret.html') return new Response(cardSecretPageHtml(), { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) });
     if (p === '/codef-secret.html') {
       const html = codefPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
@@ -282,10 +286,11 @@ export interface Shell {
 /** DB 프로필 칸 → 내 사업장 화면 칸 이름(shell-biz.js FIELDS). */
 const SHELL_BIZ_KEY: Record<PortalProfileKey, NonNullable<Profile['fromHometax']>[number]> = { displayName: 'name', repName: 'rep', bizType: 'bizType', bizItem: 'bizItem', address: 'address', email: 'email' };
 
+/** 발급 인증이 비어 있는 옛 프로필도 공동인증서로 보인다(엔진도 그 값으로 서명한다, 대표 지시 2026-11-14). */
 function profileView(p: DbProfile): Profile {
   const unnamed = p.kind === 'business' && nameMissing(p);
   const fromHometax = p.fromPortal.map((k) => SHELL_BIZ_KEY[k]);
-  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: (p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : null) ?? NO_AUTH };
+  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : SIGN_LABEL.cert };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -718,6 +723,70 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     log.event('main.cert_memory_saved', { ok: r.ok, ...(r.error ? { error: r.error } : {}) });
     if (!r.ok) throw new Error('vault_refused');
     return { remembered: true };
+  };
+  /**
+   * 보안카드 등록 창(부장 판정 2026-11-14: 사진·칸 값은 main·셸 렌더러를 지나지 않는다). 금고 직결 입력 창(preload-secret, D05 §3.8)을 열고
+   * 그 창이 금고 store 결속 포트로 사진과 애매한 칸을 바로 보낸다. main은 금고 control 알림(secret.stored: 칸 수만)과 창 닫힘만 안다.
+   */
+  const CARD_BIND = { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'card-scan-2026-11-14' } } as const;
+  let cardWin: { win: BrowserWindow; stored: number } | null = null;
+  /** 마지막 보안카드 저장 알림(창이 닫힌 뒤 늦게 와도 반영한다). */
+  let cardStoredAt: { at: number; items: number } | null = null;
+  const openCardWindow = (): Promise<number> =>
+    new Promise((resolve) => {
+      if (cardWin && !cardWin.win.isDestroyed()) {
+        cardWin.win.focus();
+        return resolve(-1);
+      }
+      let port: ReturnType<typeof host.secretInputPort> | null = null;
+      try {
+        port = host.secretInputPort(CARD_BIND);
+        const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/card-secret.html`, CARD_WINDOW_TITLE, 520);
+        const me = { win: w, stored: 0 };
+        const openedAt = Date.now();
+        cardWin = me;
+        w.on('closed', () => {
+          if (cardWin === me) cardWin = null;
+          // 금고 알림이 창 닫힘보다 늦게 올 수 있다: 잠깐 더 기다려 이 창이 열린 뒤의 저장이면 반영한다
+          const settle = (left: number) => {
+            const late = cardStoredAt && cardStoredAt.at >= openedAt ? cardStoredAt.items : 0;
+            const n = me.stored || late;
+            if (n > 0 || left <= 0) {
+              log.event('main.card_window_closed', { stored: n, late: !me.stored && n > 0 });
+              return resolve(n);
+            }
+            setTimeout(() => settle(left - 250), 250);
+          };
+          settle(3_000);
+        });
+      } catch (e) {
+        port?.close();
+        log.event('main.card_window_failed', { error: (e as Error).message.slice(0, 120) });
+        resolve(0);
+      }
+    });
+  host.on('vault-event', (name: string, data: unknown) => {
+    if (name !== 'secret.stored') return;
+    const d = (data ?? {}) as { kind?: unknown; items?: unknown };
+    if (d.kind !== 'security_card') return;
+    const items = typeof d.items === 'number' ? d.items : 0;
+    cardStoredAt = { at: Date.now(), items };
+    if (!cardWin) return;
+    cardWin.stored = items;
+    // 창이 "등록했어요"를 잠깐 보인 뒤 스스로 닫는다. 닫지 못했으면 main이 닫는다
+    const w = cardWin.win;
+    setTimeout(() => (w.isDestroyed() ? undefined : w.close()), 2_000);
+  });
+  /** 등록 창을 열고 닫힐 때까지 기다린다. 온보딩에서 열었으면 저장된 뒤 main이 발급 인증을 보안카드로 정한다(렌더러 제스처를 다시 요구하지 않는다). */
+  const cardRegister = async (p: { onboarding?: boolean }) => {
+    const stored = await openCardWindow();
+    if (stored === -1) return { stored: 0, busy: true };
+    if (stored > 0 && p.onboarding && onb && !onb.done) {
+      await onb.answer({ step: 'auth', choice: 'card' } as Parameters<OnboardingFlow['answer']>[0]).catch((e: Error) => log.event('main.card_onboarding_failed', { error: e.message.slice(0, 80) }));
+      if (onb.done) pushBoard();
+      return { stored, onboarding: await onbView(), profiles: profiles() };
+    }
+    return { stored };
   };
   /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
   const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
@@ -1727,6 +1796,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
+    'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
+    'card.register': async (p) => {
+      needGesture(3_000);
+      // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
+      if ((p as { onboarding?: boolean }).onboarding) await needLogin();
+      return cardRegister(p as { onboarding?: boolean });
+    },
+    'card.forget': async () => {
+      needGesture(3_000);
+      // 지우지 못했으면 실패로 돌려준다(성공처럼 보이지 않게)
+      const r = await host.control('secret.forget', { kind: 'security_card', scope: 'business' }).then(() => true, () => false);
+      if (!r) throw new Error('card_forget_failed');
+      return { stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true };
+    },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
     'certName.clear': async () => {

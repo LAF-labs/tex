@@ -105,7 +105,7 @@ export class ProfileEditor {
         bizItem: next.bizItem || null,
         address: next.address || null,
         email: next.email || null,
-        signMethod: cur?.signMethod ?? null,
+        signMethod: cur?.signMethod ?? 'cert',
         keepSession: cur?.keepSession ?? false,
       });
       this.unverified = null;

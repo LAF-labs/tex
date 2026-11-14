@@ -17,5 +17,9 @@
  "popup.hide": "div[id^=\"mf_txppWframe_A_\"].w2popup_window.pop",
  "popup.hide.idPrefix": "mf_txppWframe_",
  "popup.hide.cookie": "https://hometax.go.kr?openPopCheck{key}={key}; path=/; max-age=86400",
- "popup.window.close": "^https://hometax\\.go\\.kr/websquare/popup\\.html\\?.*UTXPPABC14"
+ "popup.window.close": "^https://hometax\\.go\\.kr/websquare/popup\\.html\\?.*UTXPPABC14",
+ "card.window": "/websquare/popup\\.html\\?.*UTXPPABA08",
+ "card.ok": "인증에\\s*성공",
+ "card.wrong": "인증에\\s*실패",
+ "card.locked": "폐기되었|폐지\\s*처리|보안카드\\s*정보가\\s*없"
 }
