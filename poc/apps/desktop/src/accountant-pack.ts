@@ -107,7 +107,7 @@ export function packAsk(text: string, today: string): PackMonth | null {
   return last;
 }
 
-const SAFE = (s: string) => s.replace(/[\\/:*?"<>|\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || '이름 없음';
+const SAFE = (s: string) => s.replace(/[\\/:*?"<>|\p{Cc}]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || '이름 없음';
 const ymd = (d: string | null) => (d ? d.replaceAll('-', '') : '날짜모름');
 const MAIL_KO = { sent: '보냄', unconfirmed: '확인 못 함' } as const;
 const KIND_KO: Record<PastRun['kind'], string> = { issued: '발급됨', unsure: '확인 필요', not_issued: '발급 안 됨', stopped_before_gate: '승인 전 멈춤' };
