@@ -97,7 +97,7 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .sx-rail button b { position: absolute; top: 7px; right: 12px; width: 6px; height: 6px; border-radius: 50%; background: var(--attention); }
 
 /* 대화 열: 대화 폭은 chat-max에서 멈추고 남는 폭은 작업 패널이 쓴다. main의 바 폭 계산과 같은 식이다. */
-.chat { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+.chat { position: relative; height: 100%; display: flex; flex-direction: column; min-height: 0; }
 /* 폭은 #center 폭으로 렌더러가 정한 --col-w(스크롤 막대와 무관하게 안팎이 같은 폭). */
 .col { width: var(--col-w, min(var(--l-chat-max), calc(100% - 2 * var(--l-gutter)))); margin-left: auto; margin-right: auto; box-sizing: border-box; }
 .thread-scroll { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable both-edges; -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px); mask-image: linear-gradient(to bottom, transparent 0, #000 20px); }
@@ -343,10 +343,12 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .cp-field .doc-in { width: 100%; }
 .cp-field .doc-in:disabled { color: var(--ink-3); background: var(--surface-tint); box-shadow: none; }
 
-/* 핸드오프 띠: 사람이 필요한 실행. 황토 한 줄, 승인 버튼 없음. */
-.sx-handoff { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-2); padding: 6px 6px 6px 14px; border-radius: var(--radius-full); background: var(--attention-soft); color: var(--ink); font-size: 13px; line-height: 20px; }
+/* 핸드오프 띠(v2.0 H3): 사람이 필요한 실행의 카드가 화면 밖일 때만 대화 열 위에 뜨는 한 줄(차례 안내 줄, accent-soft). 승인 버튼 없음.
+   떠 있어서 자리를 차지하지 않는다(보였다 숨어도 대화가 밀리지 않아, 카드가 보이는지 판정이 흔들리지 않는다). */
+.sx-handoff { position: absolute; z-index: 2; top: var(--space-2); left: 0; right: 0; display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); height: 36px; padding: 0 2px 0 14px; border-radius: var(--radius-full); background: var(--accent-soft); color: var(--ink); font-size: 13px; line-height: 20px; box-shadow: var(--shadow-overlay); }
 .sx-handoff[hidden] { display: none; }
-.sx-handoff-text { font-weight: 500; }
+.sx-handoff-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.sx-handoff .sx-btn { flex: none; }
 /* 승인 대기 중 접힌 작성 카드(ADR-021 결정 7, ApprovalCard): 체크 + "작성 완료" + 서류·거래처·합계 한 줄. */
 .sx-card-title.sx-folded { display: inline-flex; align-items: center; gap: 6px; flex: none; }
 .sx-card-title.sx-folded svg { width: 14px; height: 14px; color: var(--accent); }
@@ -496,6 +498,11 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .sx-batch-amt { font-variant-numeric: tabular-nums; }
 .sx-batch-no { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .sx-batch > .sx-card { margin-top: 8px; box-shadow: none; background: var(--canvas); }
+/* 진행 중인 건·사람이 볼 건은 제 줄 자리에 실행 카드(같은 건을 줄과 카드로 두 번 그리지 않는다). 차례·확인 필요 안쪽 선은 그대로 둔다. */
+.sx-batch-list li.is-card { display: block; padding: 0; background: none; cursor: default; }
+.sx-batch-list .sx-card { padding: 8px 10px; gap: var(--space-2); border-radius: var(--radius-md); background: var(--canvas); }
+.sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):not(.sx-btn-approve) { background: var(--surface-tint); }
+.sx-batch-list .sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):not(.sx-btn-approve):hover { background: var(--surface-sunken); }
 
 /* 보안카드 등록: 사진 끌어 놓기 칸, 애매한 칸만 4자리 다시 받기 */
 .card-reg { display: grid; gap: var(--space-2); margin-top: var(--space-2); width: 100%; }
