@@ -2,11 +2,12 @@
 // - engine: CDP 프레임(cdp)과 RPC(typist·secretWindow·browser·commitGuard·pdf·download·getDbKeyOnce). 장기 키 연산(crypto.*)은 없다(아래 RPC_BY_PORT 주석)
 // - control(main): 실행 트리거 통지, 사용자 "입력 완료", Windows 세션 상태, 저장된 비밀 목록·삭제, 계정 갱신 토큰, 상태
 // - secretInput(금고 직결 입력 창): 한 번 쓰는 비밀 제공(oneshot) 또는 등록 창(T-06)의 저장(store). main은 이 포트의 내용을 보지 않는다.
+// - browser(main): 앱 안 브라우저(WebContentsView)의 브라우저 수준 CDP. 붙어 있으면 금고는 설치 Chrome을 띄우지 않고 이 연결에 중계를 붙인다.
 //
 // 이 파일이 금고 IPC 계약의 정본이다. 바꾸면 PR 본문과 팀장 보고에 적는다(D05 §3.8, ADR-005 v3·020·025·026·029).
 import { createHash } from 'node:crypto';
 
-export type PortKind = 'engine' | 'control' | 'secretInput';
+export type PortKind = 'engine' | 'control' | 'secretInput' | 'browser';
 
 export type InboundMessage =
   | { t: 'cdp'; m: string }
@@ -23,7 +24,10 @@ export type OutboundMessage =
 export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
   engine: [
     'browser.launch', 'browser.shutdown',
-    'typist.fill', 'typist.authFailed',
+    // typist.authOk: 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다(그때만 금고가 그 값을 기억한다, 부장 지시 2026-11-13)
+    'typist.fill', 'typist.authFailed', 'typist.authOk',
+    // popups.configure: 포털 기본 팝업 숨김(패키지 strings popup.*, 대표 지시 2026-11-14). 숨김 CSS·쿠키·닫을 창 주소만 받는다
+    'popups.configure',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
     'commitGuard.arm', 'commitGuard.disarm',
     // crypto.*(Sd·Vd·AIK·Qd 연산)는 엔진 포트에 열지 않는다(팀장 결정 2026-11-06, 게이트웨이 인증 설계 ADR-040 예정).
@@ -31,18 +35,32 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     // 키 연산은 main(control)만 하고, 엔진은 main이 만들어 주는 게이트웨이 범위 헤더만 받는다.
     'getDbKeyOnce',
     'pdf.print', 'download.arm', 'download.disarm',
+    // 계좌 자동조회(CODEF): 고른 인증서 하나 + 금고 창 비밀번호 → CODEF 공개키로 감싼 로그인 묶음. 평문 비밀번호는 엔진에 가지 않는다.
+    'codef.seal', 'codef.cancel', 'codef.forget',
   ],
   control: [
     'run.begin', 'run.end', 'secretWindow.userDone', 'status',
+    // [홈택스 창 보기](main): 실행 탭을 앞으로. 값을 읽거나 바꾸지 않는다.
+    'browser.focus',
+    // 홈택스 창 자리(main): 실행 창을 앱 옆에 둔다. front면 앞으로도. 창 크기·위치만 바꾸고 페이지는 건드리지 않는다.
+    'browser.place',
+    // 진행 화면(B3): 실행 탭 화면을 main에 중계한다(가만히 있으면 초당 3장 남짓, 조작 중 10장 안팎). 비밀 창이 열린 동안은 멈춘다.
+    // screen.input(대표 지시 2026-11-13 "인앱 브라우저에서 조작"): 사람이 앱 패널에서 한 마우스·키·글자를 그 탭에 CDP Input으로 넣는다.
+    // 중계 중인 탭에만, 비밀 창이 열린 동안은 거부한다(ACTIVE_WINDOW_DENY_PREFIXES Input.과 같은 뜻). 값을 읽어 돌려주지 않는다.
+    'screen.start', 'screen.stop', 'screen.input',
     'session.event', 'session.idle', 'vault.unlock', 'vault.setStrict',
     'secret.list', 'secret.has', 'secret.forget',
     'npki.list',
+    // CODEF 비밀번호 창이 값 없이 닫혔다(main이 알린다). 기다리던 codef.seal을 cancelled로 끝낸다.
+    'codef.windowClosed',
     // 계정 갱신 토큰(ADR-038 (f) 자동 로그인). main만 읽고 쓴다. 엔진·비밀 입력 창은 계정 자격을 다루지 않는다.
     'account.refresh.read', 'account.refresh.write', 'account.refresh.forget',
     // 장기 키 연산: main의 계정·기기·페어링(D08 §4.2, remote-ports.ts VaultKeysFactory, 팀장 결정 2026-11-06 (가))만 부른다. 개인키는 그대로 금고 안이다.
     'crypto.publicKeys', 'crypto.noiseDH', 'crypto.signVd', 'crypto.signAik', 'crypto.hpkeOpen',
   ],
   secretInput: ['secret.provide', 'secret.store'],
+  // browser(main의 앱 안 브라우저): RPC 없이 CDP 프레임({t:'cdp'})과 닫힘({t:'cdp_closed'})만 오간다. 금고가 브라우저 수준 CDP의 유일한 사용자다.
+  browser: [],
 };
 
 // ───────────────────────── 비밀 종류·범위 ─────────────────────────
@@ -56,7 +74,8 @@ export type SecretKind = (typeof SECRET_KINDS)[number];
  * - portal_password: 칸 `portal/<scope>/pw` 하나(D05 §2, ADR-035). 포털 아이디는 비밀이 아니라 저장하지 않는다(DB `profiles.portal_login_id`, 엔진 fill)
  * - security_card: 칸 `securitycard/<scope>/<row>`(row 1~35)
  */
-export const STORABLE_KINDS = ['portal_password', 'security_card'] as const satisfies readonly SecretKind[];
+// 인증서 비밀번호도 기억한다(대표 지시 2026-11-13, ADR-020 결정 2 고침): 처음 금고 비밀 창에 넣은 값을 저장하고 다음부터 금고가 칸에 넣는다.
+export const STORABLE_KINDS = ['portal_password', 'security_card', 'cert_password'] as const satisfies readonly SecretKind[];
 
 /**
  * 타이피스트가 넣는 종류(D05 §2 표·§4, ADR-020 결정 2, ADR-025 결정 10). 공동·금융인증서 비밀번호는 사용자가 전용 Chrome의
@@ -96,7 +115,7 @@ export const PORTAL_LOGIN_ID_MAX = 64;
  * 1회용 비밀 입력 결속(I-1, N-44). main이 secretInput 포트를 넘길 때 함께 준다.
  * 금고는 이 포트에서 이 값으로 secret.provide를 한 번만 받는다. 결속이 없거나 틀리면 포트를 붙이지 않는다.
  * `mode`가 없으면 oneshot이다(PoC 호환).
- * - kind는 TYPIST_KINDS만(인증서 비밀번호 없음). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
+ * - kind는 TYPIST_KINDS와, 금고가 부른 cert_password(row 없음, 앱 입력 창). 보안카드는 row 필수, 포털 비밀번호는 row 없음.
  * - 금고가 먼저 보낸 `secret.needed{runId, kind, scope, row?}`와 같은 결속만 붙인다(비밀 창은 금고가 부른다, ADR-025 결정 10).
  *   요청은 SECRET_TTL_MS 동안 살아 있고, 값을 받거나 run.end면 지운다. 요청 없는 결속은 `vault.secret_input_unrequested`.
  */
@@ -119,7 +138,33 @@ export type StoreBind = {
   notice: { version: string };
 };
 
-export type SecretInputBind = OneShotBind | StoreBind;
+/**
+ * 계좌 자동조회(CODEF) 인증서 비밀번호 창 결속. 금고가 보낸 `secret.needed{mode:'codef', reqId, scope, remember}`와 같은 reqId만 붙는다.
+ * 창은 secret.provide를 한 번 보낸다(`remember: true`면 사장님이 [이 PC에 기억]을 고른 것). 값은 금고가 CODEF 공개키로 감싸고 지운다.
+ */
+export type CodefBind = { mode: 'codef'; reqId: string; scope: ProfileScope };
+
+export type SecretInputBind = OneShotBind | StoreBind | CodefBind;
+
+/** codef.seal 결속 요청 id(32 hex) */
+export const CODEF_REQ_ID_RE = /^[0-9a-f]{32}$/;
+/** 비밀번호 창을 기다리는 시간 */
+export const CODEF_SEAL_TTL_MS = 180_000;
+
+/**
+ * `codef.seal{certId, publicKey, scope, mode}` (engine). mode: 'ask'면 금고 창을 연다, 'stored'면 기억해 둔 비밀번호만 쓴다(없으면 missing).
+ * publicKey는 게이트웨이가 준 CODEF RSA 공개키(base64 DER SPKI).
+ */
+export interface CodefSealParams {
+  certId: string;
+  publicKey: string;
+  scope: ProfileScope;
+  mode: 'ask' | 'stored' | 'auto';
+}
+/** 성공이면 CODEF 계정 등록 accountList 원소에 그대로 넣을 base64 세 칸. 실패 사유는 값 없이 */
+export type CodefSealResult =
+  | { ok: true; derFile: string; keyFile: string; password: string; remembered: boolean }
+  | { ok: false; reason: 'cancelled' | 'timeout' | 'busy' | 'not_found' | 'no_key' | 'unreadable' | 'bad_public_key' | 'missing' | 'vault_locked' };
 
 /** secret.provide(oneshot) 인자. kind·scope·row는 생략하거나 결속값과 같아야 한다. */
 export interface SecretProvideParams {
@@ -317,7 +362,11 @@ export interface FillRequest {
   rowLabel?: string;
 }
 
-/** typist.authFailed 인자: 포털의 명시적 인증 실패(auth_failed) 1회 뒤 그 kind·scope를 suspect로(ADR-026 결정 7). */
+/**
+ * typist.authFailed 인자: 포털의 명시적 인증 실패(auth_failed) 1회 뒤 그 kind·scope를 suspect로(ADR-026 결정 7).
+ * 인증서 비밀번호(cert_password)는 suspect가 아니라 기억값을 지우고, 이 실행에서 확인을 기다리던 값도 버린다(연속 오류 잠금 방지).
+ * typist.authOk도 같은 인자: 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 통과) → 기다리던 값을 그때 기억한다.
+ */
 export interface AuthFailedParams {
   runId: string;
   kind: StorableKind;
@@ -532,4 +581,9 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
  */
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
-  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed';
+  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
+  | 'screen.frame' | 'screen.paused'
+  // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
+  | 'browser.closed' | 'browser.launched'
+  // 앱 안 브라우저: 금고가 비밀 칸에 넣는 동안 main이 보기의 사람 입력을 막는다(blocked true → false).
+  | 'browser.blocked';

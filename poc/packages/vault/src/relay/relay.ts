@@ -1,6 +1,6 @@
 import type { EventLog } from '@sax/platform';
 import { ACTIVE_WINDOW_DROP_EVENTS, RELAY_DROPPED_EVENTS } from '../constants.ts';
-import type { CdpMessage, PipeConnection } from '../cdp/connection.ts';
+import type { CdpConnection, CdpMessage } from '../cdp/connection.ts';
 import type { CommitGuard } from './commit-guard.ts';
 import { checkSessionCommand, urlAllowed, type RelayPolicy, type Verdict } from './policy.ts';
 import { scrubAxNodes, scrubDomNode, scrubDomSnapshot, scrubKnownValues, stripAuthHeaders, stripMessageHeaders, stripRequestBody, type SecretNodes } from './sanitize.ts';
@@ -68,13 +68,11 @@ interface PendingEngineRequest {
 }
 
 export interface RelayOptions {
-  conn: PipeConnection;
+  conn: CdpConnection;
   policy: RelayPolicy;
   log: EventLog;
   /** 엔진으로 가는 직렬화된 CDP 프레임. */
   toEngine: (raw: string) => void;
-  /** 알려진 값 치환이 적중했다(누출 의심, N-17). 창(타깃의 알려진 값 묶음)마다 1회. */
-  onLeakSuspected?: (hits: number) => void;
 }
 
 /**
@@ -84,7 +82,7 @@ export interface RelayOptions {
  * - 엔진행 메시지는 한 줄 큐로 순서를 지키며 정리한 뒤 보낸다.
  */
 export class Relay {
-  private readonly conn: PipeConnection;
+  private readonly conn: CdpConnection;
   private readonly policy: RelayPolicy;
   private readonly log: EventLog;
   private readonly toEngine: (raw: string) => void;
@@ -96,8 +94,6 @@ export class Relay {
   /** 타깃별 알려진 값 변형(N-78). 창이 커밋·분리로 끝나면 그 타깃 것을 지운다. */
   private readonly knownVariants = new Map<string, string[]>();
   /** 누출 의심을 이미 알린 타깃(알려진 값 묶음이 지워지면 다시 알린다). */
-  private readonly leakNotified = new Set<string>();
-  private readonly onLeakSuspected?: (hits: number) => void;
   private engineAutoAttach = false;
   private creating = 0;
   private deferred: TargetState[] = [];
@@ -122,7 +118,6 @@ export class Relay {
     this.policy = opts.policy;
     this.log = opts.log;
     this.toEngine = opts.toEngine;
-    this.onLeakSuspected = opts.onLeakSuspected;
     this.conn.on('message', (m: CdpMessage) => this.onChrome(m));
   }
 
@@ -138,6 +133,22 @@ export class Relay {
 
   /** 이번 실행을 위한 page 타깃을 금고가 만든다(엔진의 Target.createTarget은 거부). */
   async createRunPage(): Promise<string> {
+    // 앱 모드 창(launch의 --app 시작 문서)을 실행 탭으로 쓴다: 탭줄·주소창이 없다. Target.createTarget은 일반 창을 새로 연다.
+    // 시작 문서는 about:blank로 바꾼 뒤 노출한다(전처럼 빈 실행 탭에서 시작). 없으면(옛 경로·headless) 새로 만든다.
+    for (let i = 0; i < 50 && !this.appStartTarget(); i++) await sleep(20);
+    const app = this.appStartTarget();
+    if (app) {
+      await this.conn.send('Page.navigate', { url: 'about:blank' }, app.vaultSession).catch(() => {});
+      for (let i = 0; i < 50; i++) {
+        const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, app.vaultSession).catch(() => null);
+        if (tree && tree.frameTree.frame.url === 'about:blank') break;
+        await sleep(20);
+      }
+      app.url = 'about:blank';
+      await this.expose(app);
+      this.log.event('vault.run_page_app_window');
+      return app.targetId;
+    }
     this.creating++;
     let targetId: string;
     try {
@@ -154,6 +165,11 @@ export class Relay {
     await this.expose(t);
     for (const d of queued) if (d !== t) await this.decide(d);
     return targetId;
+  }
+
+  /** 금고가 --app으로 연 시작 창(노출 전). 페이지는 최상위 data: 문서를 열 수 없으니 이 꼴의 창은 금고 기동이 연 것뿐이다. */
+  private appStartTarget(): TargetState | undefined {
+    return [...this.targets.values()].find((t) => t.type === 'page' && !t.exposed && !t.revoked && !t.openerId && t.url.startsWith('data:text/html'));
   }
 
   // ───────────────────────── 엔진 → Chrome ─────────────────────────
@@ -242,7 +258,8 @@ export class Relay {
       case 'Target.activateTarget': {
         const t = this.targets.get(String(msg.params?.targetId));
         if (!t?.exposed) return this.reject(msg, { ok: false, reason: 'target_not_exposed' }, 'root');
-        if (method === 'Target.activateTarget' && t.win?.phase === 'active') return this.reject(msg, { ok: false, reason: 'secret_window_active' }, 'root');
+        // 탭 활성화는 Chrome 창을 앱 앞으로 올린다: 어떤 경우에도 하지 않는다(대표 지시 2026-11-14, 사람 차례는 앱 패널에서)
+        if (method === 'Target.activateTarget') return this.reject(msg, { ok: false, reason: t.win?.phase === 'active' ? 'secret_window_active' : 'window_front_refused' }, 'root');
         this.stat(method, 'root', 'forwarded');
         const r = await this.conn.send(method, { targetId: t.targetId }).catch((e: Error) => ({ __error: e.message }));
         this.enqueue(async () => ('__error' in r ? { id, error: { code: -32000, message: String(r.__error) } } : { id, result: r }));
@@ -286,7 +303,7 @@ export class Relay {
       const p = this.pending.get(msg.id);
       if (!p) return;
       this.pending.delete(msg.id);
-      this.enqueue(() => this.sanitizeResponse(p, msg));
+      this.enqueue(() => this.sanitizeResponse(p, msg), p.method);
       return;
     }
     if (!msg.sessionId) {
@@ -303,7 +320,7 @@ export class Relay {
       const t = this.targetOfSession(msg.sessionId);
       // 비밀 노드도 함께 떠 둔다(커밋이 secretBackendIds를 비워도 옛 문서 이벤트는 정화한다).
       const at = t ? { ...this.stateOf(t), secretIds: t.secretBackendIds.size ? [...t.secretBackendIds] : undefined } : undefined;
-      this.enqueue(() => this.sanitizeEvent(msg, at));
+      this.enqueue(() => this.sanitizeEvent(msg, at), msg.method);
     }
   }
 
@@ -326,6 +343,8 @@ export class Relay {
         };
         this.targets.set(targetId, t);
         this.byVaultSession.set(t.vaultSession, t);
+        // 새 창·탭(포털 팝업 window.open): Chrome이 그 창을 앞으로 올리며 앱을 가린다. 금고가 main에 알려 앱을 다시 앞으로 둔다.
+        if (t.type === 'page') this.onPageOpened?.(t);
         if (this.creating > 0 && t.type === 'page') this.deferred.push(t);
         else await this.decide(t);
         return;
@@ -343,6 +362,7 @@ export class Relay {
         if (vt) {
           this.byVaultSession.delete(sid);
           this.targets.delete(vt.targetId);
+          this.onTargetGone?.(vt);
         }
         return;
       }
@@ -352,6 +372,7 @@ export class Relay {
         if (t) {
           t.url = String(info.url ?? t.url);
           if (info.openerId) t.openerId = String(info.openerId);
+          if (t.type === 'page') this.onPageUrl?.(t);
         }
         return;
       }
@@ -372,8 +393,16 @@ export class Relay {
     if (t.type === 'page' && opener?.exposed) {
       // fail-closed: 부착 정보의 url·시간 경과로는 노출하지 않는다. 빈 URL은 "모름"이다.
       t.pendingPopup = true;
+      const wasPaused = t.paused;
       await this.conn.send('Page.enable', {}, t.vaultSession).catch(() => {});
       await this.resume(t);
+      // 앱 안 브라우저는 새 창을 멈춰 세우지 못한다(waitForDebuggerOnStart 없음): 붙기 전에 이미 커밋된 문서는 frameNavigated가 다시 오지 않으니
+      // 지금 문서를 같은 규칙(getFrameTree 재확인)으로 판정한다. 아직 커밋 전이면 다음 frameNavigated에서 판정한다.
+      if (!wasPaused) {
+        const tree = await this.conn.send<{ frameTree: { frame: Json } }>('Page.getFrameTree', {}, t.vaultSession).catch(() => null);
+        const url = String(tree?.frameTree.frame.url ?? '');
+        if (url && url !== 'about:blank') await this.confirmPopup(t, url);
+      }
       return;
     }
     if (t.type === 'page') this.log.event('vault.user_tab_hidden', { target: t.targetId.slice(0, 8) });
@@ -479,7 +508,8 @@ export class Relay {
         if (t.pendingPopup) void this.confirmPopup(t, t.url);
         else if ((t.exposed || t.exposing) && !urlAllowed(t.url, this.policy.allowedHosts)) void this.originLeft(t);
       }
-      if (t.win && frame.id === t.win.frameId) this.endWindow(t, 'commit');
+      // 본 프레임 커밋은 하위 프레임(홈택스 인증서 창 iframe#dscert)의 창도 끝낸다: 문서가 바뀌면 그 iframe도 사라진다(frameDetached가 늘 오지는 않는다).
+      if (t.win && (frame.id === t.win.frameId || !frame.parentId)) this.endWindow(t, 'commit');
     } else if (msg.method === 'Page.frameStartedNavigating') {
       // 커밋 전에 막는다: 메인 프레임이 허용 밖으로 이동을 시작하면 노출 타깃은 엔진 세션을 분리하고,
       // 보류 팝업은 영구 거부한다(서버 리디렉션으로 허용 host에 커밋돼도 노출하지 않는다).
@@ -490,6 +520,8 @@ export class Relay {
       }
     } else if (msg.method === 'Page.frameDetached') {
       if (t.win && p.frameId === t.win.frameId) this.endWindow(t, 'detached');
+    } else if (msg.method === 'Page.screencastFrame') {
+      this.onScreencastFrame?.(t, p);
     }
   }
 
@@ -498,7 +530,12 @@ export class Relay {
     await this.revokeTarget(t, 'vault.origin_left');
   }
 
-  private enqueue(produce: () => Promise<CdpMessage | null>): void {
+  /**
+   * 엔진행 메시지를 줄에 세운다. 나가기 직전 알려진 비밀 값(금고가 넣은 값의 변형)을 지운다.
+   * 지운 것은 유출이 아니다(엔진에 닿지 않았다): 실행을 끊지 않고 어느 CDP 메서드였는지만 남긴다(대표 실화면 run-fb6d0e95,
+   * ML4Web 가상키보드 칸 값이 s4h 대상 찾기 응답에 섞였다). 엔진 밖(로그·보관 폴더)에서 값이 보이면 자기 스캔이 끊는다(SecretOps.selfScan).
+   */
+  private enqueue(produce: () => Promise<CdpMessage | null>, method?: string): void {
     this.outQ = this.outQ.then(async () => {
       let out: CdpMessage | null;
       try {
@@ -511,17 +548,13 @@ export class Relay {
       // 긴 변형부터 지운다(짧은 변형이 긴 변형의 일부를 먼저 깨지 않게). 적중한 타깃마다 한 번 알린다.
       const all = [...this.knownVariants].flatMap(([targetId, variants]) => variants.map((v) => [targetId, v] as const)).sort((a, b) => b[1].length - a[1].length);
       let total = 0;
-      for (const [targetId, v] of all) {
+      for (const [, v] of all) {
         const r = scrubKnownValues(raw, [v]);
         if (!r.hits) continue;
         raw = r.text;
         total += r.hits;
-        if (!this.leakNotified.has(targetId)) {
-          this.leakNotified.add(targetId);
-          this.onLeakSuspected?.(r.hits);
-        }
       }
-      if (total) this.log.event('vault.known_value_scrubbed', { hits: total });
+      if (total) this.log.event('vault.known_value_scrubbed', { hits: total, method: (method ?? out.method ?? 'response').slice(0, 60) });
       this.toEngine(raw);
     });
   }
@@ -820,6 +853,22 @@ export class Relay {
   openWindow(t: TargetState, kind: SecretWindow['kind'], frameId: string, backendNodeId: number): void {
     t.win = { phase: 'active', kind, frameId };
     t.secretBackendIds.add(backendNodeId);
+    this.onWindowActive?.(t, true);
+  }
+
+  /** 화면 중계(B3 진행 화면): 금고 감시 세션의 Page.screencastFrame. 금고가 받아 main에 넘긴다(엔진에는 가지 않는다). */
+  onScreencastFrame?: (t: TargetState, p: Json) => void;
+  /** 비밀 창이 열리고 닫힐 때(중계 멈춤·다시). */
+  onWindowActive?: (t: TargetState, active: boolean) => void;
+  /** 타깃이 사라졌다(탭·창 닫힘, 금고 감시 세션 분리). 금고가 실행 창이 모두 닫혔는지 본다. */
+  onTargetGone?: (t: TargetState) => void;
+  /** 새 page 타깃이 붙었다(첫 탭·팝업 창). Chrome이 창을 앞으로 올리므로 main이 앱을 다시 앞으로 둔다. */
+  onPageOpened?: (t: TargetState) => void;
+  /** page 타깃의 주소가 바뀌었다(팝업 새 창의 첫 주소 포함). 금고 팝업 장치가 닫을 창을 고른다. */
+  onPageUrl?: (t: TargetState) => void;
+  /** 사람에게 보일 실행 page가 하나라도 남았는가(엔진에 노출된 page, 회수·비밀 창 포함). */
+  hasExposedPage(): boolean {
+    return [...this.targets.values()].some((x) => x.type === 'page' && x.exposed && !x.revoked);
   }
 
   /** 활성 창 → 오염 상태(D05 §3.5 ②). */
@@ -827,26 +876,28 @@ export class Relay {
     if (t.win?.phase === 'active') {
       t.win.phase = 'tainted';
       for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+      this.onWindowActive?.(t, false);
     }
   }
 
   /** 문서 커밋·노드 분리: 창 종료(활성이었다면 닫힘 알림도 보낸다). */
-  endWindow(t: TargetState, _why: 'commit' | 'detached'): void {
+  endWindow(t: TargetState, _why: 'commit' | 'detached' | 'scrubbed'): void {
     if (!t.win) return;
     const wasActive = t.win.phase === 'active';
     t.win = undefined;
     t.secretBackendIds.clear();
     // 그 창의 알려진 값은 버린다. 열린 창이 하나도 없으면 전부 버린다(N-78). 단 이미 줄에 선 엔진 메시지(커밋 직전의
     // 요청 바디 등)가 나간 뒤에 버린다: 커밋 이벤트는 금고 세션에서 바로 처리되고 엔진 쪽 정리는 줄 뒤에 돌기 때문이다.
-    // 적중 알림은 창마다 한 번이므로 다음 창을 위해 바로 푼다.
-    this.leakNotified.delete(t.targetId);
     const stale = this.knownVariants.get(t.targetId);
     this.enqueue(async () => {
       if (this.knownVariants.get(t.targetId) === stale) this.clearKnownSecrets(t.targetId);
       if (!this.hasOpenWindow()) this.clearKnownSecrets();
       return null;
     });
-    if (wasActive) for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+    if (wasActive) {
+      for (const fn of this.onSecretWindowClosed) fn(t.targetId);
+      this.onWindowActive?.(t, false);
+    }
   }
 
   addKnownSecret(targetId: string, variants: string[]): void {
@@ -857,10 +908,8 @@ export class Relay {
   clearKnownSecrets(targetId?: string): void {
     if (targetId === undefined) {
       this.knownVariants.clear();
-      this.leakNotified.clear();
     } else {
       this.knownVariants.delete(targetId);
-      this.leakNotified.delete(targetId);
     }
   }
 
@@ -878,6 +927,27 @@ export class Relay {
   /** 열린(활성·오염) 창이 있는 타깃이 있는가. */
   hasOpenWindow(): boolean {
     return [...this.targets.values()].some((t) => t.win);
+  }
+
+  runWindowTarget(): TargetState | undefined {
+    return [...this.targets.values()].filter((x) => x.type === 'page' && x.exposed && !x.revoked && !x.win && !x.pendingPopup).pop();
+  }
+
+  /**
+   * 실행 창을 앱 옆 자리로(main이 정한 화면 좌표, 대표 요청 2026-11-13 "크롬이 앱을 가리지 않게"). 최대화·전체 화면이면 먼저 보통 창으로 돌린다.
+   * 앞으로는 올리지 않는다(대표 지시 2026-11-14). 비밀 입력 창은 고르지 않는다(그 창은 금고가 따로 띄운다).
+   */
+  async placeWindow(bounds: { left: number; top: number; width: number; height: number }): Promise<boolean> {
+    const t = this.runWindowTarget();
+    if (!t) return false;
+    try {
+      const { windowId } = await this.conn.send<{ windowId: number }>('Browser.getWindowForTarget', { targetId: t.targetId });
+      await this.conn.send('Browser.setWindowBounds', { windowId, bounds: { windowState: 'normal' } });
+      await this.conn.send('Browser.setWindowBounds', { windowId, bounds });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   exposedTarget(targetId: string): TargetState | undefined {

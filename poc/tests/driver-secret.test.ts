@@ -12,6 +12,7 @@ const DICT: SelectorDict = {
     'f.pw': entry({ candidates: [{ kind: 'role', role: 'textbox', name: '비밀번호' }, { kind: 'css', value: '#pw' }], secretKind: 'cert_password' } as Partial<SelectorEntry>),
     'f.roleOnly': entry({}),
     'f.inFrame': entry({ frame: 'iframe#cert', candidates: [{ kind: 'css', value: '#pw' }] }),
+    'f.noFrame': entry({ frame: '', candidates: [{ kind: 'css', value: '#pw' }] }),
   },
 };
 
@@ -62,6 +63,13 @@ describe('VaultSecretPort(금고 비밀 창, D05 §3.5)', () => {
     assert.equal(vault.ls.size, 0);
   });
 
+  it('하위 프레임 칸(frame = iframe 선택자, 홈택스 iframe#dscert)은 그 선택자를 금고에 넘겨 창을 연다', async () => {
+    const { port, vault } = mk();
+    vault.onOpen = () => vault.close('T1');
+    assert.equal(await port.secret({ ...REQ, target: 'f.inFrame' }), 'done');
+    assert.deepEqual(vault.calls, [['secretWindow.openForHuman', { runId: 'r1', targetId: 'T1', frame: 'iframe#cert', element: '#pw' }]]);
+  });
+
   it('TTL이면 requestClose를 부르고 ttl(금고가 거부해도 ttl)', async () => {
     const { port, vault, timers, journal } = mk();
     vault.answers['secretWindow.requestClose'] = { ok: false };
@@ -73,9 +81,9 @@ describe('VaultSecretPort(금고 비밀 창, D05 §3.5)', () => {
     assert.deepEqual(journal.at(-1), ['human.secret_ttl', { stepId: 's4' }]);
   });
 
-  it('열지 못하면(타깃 없음·css 후보 없음·하위 프레임·금고 거부·RPC 오류) 사유를 남기고 ttl, 금고를 부르지 않거나 한 번만', async () => {
+  it('열지 못하면(타깃 없음·css 후보 없음·프레임 없음·금고 거부·RPC 오류) 사유를 남기고 ttl, 금고를 부르지 않거나 한 번만', async () => {
     for (const [req, reason, opened] of [
-      [{ ...REQ, target: undefined }, 'no_target', false], [{ ...REQ, target: 'f.roleOnly' }, 'no_css_candidate', false], [{ ...REQ, target: 'f.inFrame' }, 'frame_unsupported', false],
+      [{ ...REQ, target: undefined }, 'no_target', false], [{ ...REQ, target: 'f.roleOnly' }, 'no_css_candidate', false], [{ ...REQ, target: 'f.noFrame' }, 'frame_unsupported', false],
     ] as const) {
       const { port, vault, journal, events } = mk();
       assert.equal(await port.secret(req), 'ttl');

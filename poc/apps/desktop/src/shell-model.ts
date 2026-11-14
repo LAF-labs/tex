@@ -28,6 +28,12 @@ export interface Profile {
   placeholder?: boolean;
 }
 
+/**
+ * 프로필 발급 인증(signMethod) → 화면 라벨. 값은 H-01 2.2.0 signFlow.methodTargets 키와 1:1(홈택스 인증유형 창의 세 항목).
+ * 온보딩의 금융인증서는 공동인증서와 같은 항목(cert)이다(onboarding.ts AUTH_SIGN_METHOD).
+ */
+export const SIGN_LABEL: Readonly<Record<'cert' | 'security_card' | 'simple_auth', string>> = { simple_auth: '사업자 간편인증', cert: '공동·금융인증서', security_card: '보안카드' };
+
 /** 발급 인증을 고르지 않은 프로필의 표시(내 사업장 화면). */
 export const NO_AUTH = '발급 인증 미설정';
 
@@ -35,13 +41,24 @@ export const NO_AUTH = '발급 인증 미설정';
 export function setupMissing(b: Profile): Array<'biz' | 'auth'> {
   return [...(!b.bizNo ? (['biz'] as const) : []), ...(!b.auth || b.auth === NO_AUTH ? (['auth'] as const) : [])];
 }
-export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기' } as const;
-/** 빠진 등록 안내(무엇이 빠졌는지 말한다). */
-export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<'biz' | 'auth'>): string {
+export const SETUP_LABEL = { biz: '사업자 등록 마치기', auth: '발급 인증 고르기', chrome: 'Chrome 설치하기', security: '보안 프로그램 설치하기' } as const;
+export type SetupItem = keyof typeof SETUP_LABEL;
+/** 빠진 등록 안내(무엇이 빠졌는지 말한다). Chrome은 등록이 아니라 설치라 따로 한 문장. */
+export function setupText(work: 'invoice' | 'cert', missing: ReadonlyArray<SetupItem>): string {
   const what = work === 'invoice' ? '세금계산서를 발급하려면' : '증명서를 떼려면';
-  if (missing.includes('biz') && missing.includes('auth')) return `${what} 먼저 사업자 정보와 발급 인증을 등록해 주세요. 지금은 둘 다 비어 있어요.`;
-  if (missing.includes('biz')) return `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`;
-  return `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`;
+  const chrome = missing.includes('chrome');
+  const head =
+    missing.includes('biz') && missing.includes('auth')
+      ? `${what} 먼저 사업자 정보와 발급 인증을 등록해 주세요. 지금은 둘 다 비어 있어요.`
+      : missing.includes('biz')
+        ? `${what} 먼저 사업자 정보(사업자번호)를 등록해 주세요.`
+        : missing.includes('auth')
+          ? `${what} 먼저 발급할 때 쓸 인증(보안카드·간편인증·인증서)을 골라 주세요.`
+          : null;
+  // 보안 프로그램(MagicLine4NX)은 홈택스가 설치 안내로 멈추기 전에 앱이 먼저 말한다(B4, security-programs.ts)
+  const sec = missing.includes('security') ? '홈택스 공동인증서 프로그램(MagicLine4NX)도 켜 주세요.' : '';
+  if (!chrome) return head ? `${head}${sec ? ` ${sec}` : ''}` : `${what} 먼저 홈택스 공동인증서 프로그램(MagicLine4NX)을 설치하거나 켜 주세요.`;
+  return head ? `${head} Chrome도 설치해 주세요.${sec ? ` ${sec}` : ''}` : `${what} 먼저 이 PC에 Chrome을 설치해 주세요. 홈택스 작업은 Chrome 창에서 해요.${sec ? ` ${sec}` : ''}`;
 }
 
 export interface Counterparty {
@@ -66,6 +83,8 @@ export interface Doc {
   issuedOn: string | null;
   expiresOn: string | null;
   source: '앱이 발급' | '직접 발급' | '직접 추가';
+  /** 이 PC에 PDF가 없다(실행의 메모리 줄: 보관함에 같은 실행의 PDF가 없을 때만 보인다, F-04). 화면은 [열기]·[다시 발급] 대신 홈택스 발급목록 안내. */
+  noFile?: boolean;
   purpose?: string;
   /** 실행이 보관한 발급 PDF(엔진 보관함 run_id). 같은 실행의 메모리 줄(d-<runId>)을 대신한다. */
   runId?: string;
@@ -145,14 +164,61 @@ export function split(amount: number, vat: VatMode) {
 
 export type Reply =
   | { kind: 'draft'; run: RunView }
-  | { kind: 'say'; text: string; chips?: Array<{ label: string; text: string }>; fill?: string }
+  /** addCp: [거래처 추가] 버튼(거래처 화면의 추가 폼, name을 채워 연다). 거래처가 없거나(F-02) 장부에 없는 이름으로 답했을 때(F-03). */
+  | { kind: 'say'; text: string; chips?: Array<{ label: string; text: string }>; fill?: string; addCp?: { name: string } }
   | { kind: 'g24'; doc: G24Doc };
 
 export type G24Doc = '주민등록표 등본' | '주민등록표 초본';
 
+/** 되묻기 상태: 무엇을 물었는지와 그 전 문장들에서 받아 둔 값(거래처·금액·품목·부가세). */
+export interface Pending {
+  cp: Counterparty | null;
+  asked: 'amount' | 'counterparty' | 'item' | null;
+  amount: number | null;
+  item: string | null;
+  vat: VatMode | null;
+}
+export const emptyPending = (): Pending => ({ cp: null, asked: null, amount: null, item: null, vat: null });
+
+/** 품목 칸 상한(엔진 run.start가 100자에서 자른다). */
+export const ITEM_MAX = 100;
+/** 품목을 물을 때(엔진은 품목이 비면 시작하지 않는다, item_missing). */
+export const ASK_ITEM_TEXT = (cp: string) => `${cp}에 어떤 품목으로 발급할까요? 예: 컨설팅 용역`;
+/** 품목으로 보지 않는 낱말(요청 동사·세금계산서·부가세·때·취소 등). 조사를 뗀 뒤에도 본다. */
+const ITEM_STOP = /^(?:전자)?(?:세금)?계산서|^발급|^발행|^작성|^끊|^보내|^메일|^이메일|^해(?:\s?줘|주세요|요|라|줄래|주라|줘요)?$|^해줘|^줘|^주세요|^부탁|^좀$|^부가세|^vat$|^포함|^별도|^공급가|^합계|^금액|^이번|^이달|^오늘|^어제|^내일|^지난번|^같게|^같은|^그대로|^건$|^원$|^취소|^그만|^아니|^됐어|^몰라|^네$|^응$|^예$/i;
+const PARTICLE = /(?:으로|로|에게|한테|에서|에|을|를|은|는|이|가|의|도|만|과|와|짜리)$/;
+/** 품목 값 정리: 제어 문자·꺾쇠 빼고, 공백 하나로, 상한까지. 글자가 없으면 null. */
+export function cleanItem(s: string): string | null {
+  const v = s
+    .replace(/[\p{Cc}<>]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, ITEM_MAX)
+    .trim();
+  return /[가-힣A-Za-z]/.test(v) ? v : null;
+}
+/**
+ * 문장에서 품목 후보를 뽑는다("일호유통에 컨설팅 1000원" → 컨설팅, 되묻기에 "컨설팅 용역으로 해 줘" → 컨설팅 용역).
+ * 거래처 이름·금액·요청 낱말·조사를 빼고 남은 낱말이다. 후보는 카드에 추정이 아닌 값으로 보이고 그 자리에서 고칠 수 있다.
+ */
+export function extractItem(text: string, cpName: string | null): string | null {
+  let s = cpName ? text.replace(cpName, ' ') : text;
+  const said = /품목(?:은|는|을|를)?\s*[:：]?\s*(.+)$/.exec(s);
+  if (said) s = said[1]!;
+  s = s.replace(/\d[\d,.\s억천백십만]*원?/g, ' ').replace(/[,.!?~"'“”‘’()[\]]/g, ' ');
+  const keep: string[] = [];
+  for (const tok of s.split(/\s+/)) {
+    if (!tok) continue;
+    const w = tok.replace(PARTICLE, '');
+    if (!w || ITEM_STOP.test(tok) || ITEM_STOP.test(w)) continue;
+    keep.push(w);
+  }
+  return keep.length ? cleanItem(keep.join(' ')) : null;
+}
+
 /** 요청 해석이 초안을 만드는 곳(shell-runs). 되묻기 상태는 대화(세션)마다 하나다. */
 export interface Drafts {
-  readonly pending: { cp: Counterparty | null; asked: 'amount' | 'counterparty' | null; amount: number | null };
+  readonly pending: Pending;
   readonly counterparties: Counterparty[];
   createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView;
 }
@@ -185,49 +251,92 @@ export function parseRegex(text: string, counterparties: Counterparty[]): Parsed
     // 거래처 이름 속 숫자는 금액으로 보지 않는다. 이름이 하나일 때만 뺀다(둘 이상이면 어차피 되묻는다).
     amount: parseAmount(named.length === 1 ? t.replace(named[0]!.name, ' ') : t),
     vat: /(부가세|VAT)\s*포함/i.test(t) ? 'included' : /(부가세|VAT)\s*별도/i.test(t) ? 'separate' : null,
-    item: null,
+    // 품목: 세금계산서 문장은 거래처가 하나일 때만(모르는 이름이 품목으로 들어가지 않게), 그 밖의 짧은 답은 되묻기("어떤 품목으로…")의 답 후보
+    item: intent === 'invoice' ? (named.length === 1 ? extractItem(t, named[0]!.name) : null) : intent === 'other' && named.length <= 1 ? extractItem(t, named[0]?.name ?? null) : null,
   };
 }
+
+/** 거래처를 물었는데 장부에 없는 이름으로 답할 때 그 이름(F-03). 조사·"요"·"로 해 줘"를 뗀 짧은 낱말만. 아니면 null. */
+const CP_ANSWER_TAIL = /\s*(?:(?:으로|로|에게|한테|에)\s*(?:해\s?(?:줘|주세요|요)|발급해\s?(?:줘|주세요)|끊어\s?(?:줘|주세요))|에게|한테|에|이요|이에요|예요|입니다|요)$/;
+export const CP_NAME_MAX = 60;
+export function cpNameFromAnswer(text: string): string | null {
+  const t = text
+    .trim()
+    .replace(/[.!?~。]+$/, '')
+    .replace(CP_ANSWER_TAIL, '')
+    .trim();
+  if (!t || t.length > CP_NAME_MAX || t.split(/\s+/).length > 3) return null;
+  if (!/[가-힣A-Za-z]/.test(t) || /\d{3,}|계산서|증명|등본|초본|[<>]/.test(t) || ITEM_STOP.test(t)) return null;
+  return t;
+}
+/** 거래처가 하나도 없을 때(F-02). */
+export const NO_CP_TEXT = '먼저 거래처를 추가해 주세요. 거래처를 넣으면 이어서 발급할게요.';
+export const UNKNOWN_CP_TEXT = (name: string) => `${name}은(는) 장부에 없는 거래처예요. 거래처를 추가하면 이어서 발급할게요.`;
 
 /**
  * 되묻던 것(거래처·금액)에 이 문장이 답하는가(interpret의 세금계산서 이어 가기와 같은 조건). 모델이 unknown이라도 이어 가기는 interpret가 맡고
  * 대화 응대(chat.respond)로 보내지 않는다("인스피릿", "50만원" 같은 짧은 답).
  */
-export function answersPending(parsed: Parsed, runs: Drafts): boolean {
+export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boolean {
   const asked = runs.pending.asked;
   const named = runs.counterparties.filter((c) => parsed.counterparties.includes(c.name));
-  return (asked === 'amount' && parsed.amount !== null) || (asked === 'counterparty' && named.length === 1);
+  // 장부에 없는 이름으로 답해도 되묻기의 답이다(F-03: 일반 응대로 가지 않고 "장부에 없는 거래처예요" + [거래처 추가])
+  const unknownCp = asked === 'counterparty' && named.length === 0 && parsed.amount === null && text !== undefined && cpNameFromAnswer(text) !== null;
+  return (asked === 'amount' && parsed.amount !== null) || (asked === 'counterparty' && named.length === 1) || (asked === 'item' && parsed.item !== null) || unknownCp;
 }
 
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
+/** 빈 요청·모르는 요청의 기본 안내. 증명서는 지금 이 앱이 못 하는 일이라 약속하지 않는다(#291 온보딩과 같은 원칙). */
+export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
+
 export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;
   const asked = pending.asked;
   pending.asked = null;
-  if (parsed.intent === 'filing') return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요.' };
+  if (parsed.intent === 'filing') return { kind: 'say', text: '신고와 세액 계산은 하지 않아요. 세금계산서 발급과 지난 발급 확인은 도와드릴 수 있어요.' };
   if (parsed.intent === 'resident_copy' || parsed.intent === 'resident_abstract') return { kind: 'g24', doc: parsed.intent === 'resident_abstract' ? '주민등록표 초본' : '주민등록표 등본' };
   const named = runs.counterparties.filter((c) => parsed.counterparties.includes(c.name));
   // 거래처 이름이 둘 이상이면("A상사 말고 C테크로") 고르지 않고 되묻는다.
   const cpNamed = named.length === 1 ? named[0]! : null;
   const amountNamed = parsed.amount;
-  const invoice = parsed.intent === 'invoice' || (asked === 'amount' && amountNamed !== null) || (asked === 'counterparty' && cpNamed !== null);
+  // 거래처를 묻는 중 장부에 없는 이름(F-03): 되묻기를 끊지 않고 추가하게 한다. 받아 둔 금액·품목·부가세는 그대로 두고 다시 거래처를 기다린다.
+  if (asked === 'counterparty' && named.length === 0 && amountNamed === null && parsed.intent === 'other' && profile === 'business') {
+    const name = cpNameFromAnswer(text);
+    if (name) {
+      pending.asked = 'counterparty';
+      return { kind: 'say', text: UNKNOWN_CP_TEXT(name), chips: runs.counterparties.map((c) => ({ label: c.name, text: c.name })), addCp: { name } };
+    }
+  }
+  const invoice = parsed.intent === 'invoice' || (asked === 'amount' && amountNamed !== null) || (asked === 'counterparty' && cpNamed !== null) || (asked === 'item' && parsed.item !== null);
   if (invoice) {
     if (profile !== 'business') return { kind: 'say', text: '세금계산서는 사업자 프로필로 발급해요. 위에서 사업자로 바꿔 주세요.' };
-    const cp = cpNamed ?? (asked === 'amount' ? pending.cp : null);
-    const amount = amountNamed ?? (asked === 'counterparty' ? pending.amount : null);
+    // 되묻던 중이면 그 전 문장들의 값(거래처·금액·품목·부가세)을 이어 쓴다. 거래처나 금액을 새로 말한 세금계산서 문장이면 새로 시작한다
+    // (모델이 "컨설팅 용역" 같은 답을 세금계산서로 골라도 답으로 이어 간다).
+    const cont = asked !== null && !(parsed.intent === 'invoice' && (named.length > 0 || amountNamed !== null));
+    const cp = cpNamed ?? (cont && (asked === 'amount' || asked === 'item') ? pending.cp : null);
+    const amount = amountNamed ?? (cont && (asked === 'counterparty' || asked === 'item') ? pending.amount : null);
+    const item = parsed.item ?? (cont ? pending.item : null);
+    const vatSaid = parsed.vat ?? (cont ? pending.vat : null);
     if (!cp) {
-      Object.assign(pending, { cp: null, asked: 'counterparty', amount });
+      Object.assign(pending, { cp: null, asked: 'counterparty', amount, item, vat: vatSaid });
+      // 장부가 비었으면 고를 칩이 없다(F-02, 온보딩 O-05를 [나중에]로 넘긴 사용자): 추가부터
+      if (!runs.counterparties.length) return { kind: 'say', text: NO_CP_TEXT, addCp: { name: '' } };
       return { kind: 'say', text: '어느 거래처에 발급할까요?', chips: (named.length > 1 ? named : runs.counterparties).map((c) => ({ label: c.name, text: c.name })) };
     }
     if (!amount) {
-      Object.assign(pending, { cp, asked: 'amount', amount: null });
+      Object.assign(pending, { cp, asked: 'amount', amount: null, item, vat: vatSaid });
       return { kind: 'say', text: `${cp.name}에 얼마를 발급할까요? 예: 330만원` };
     }
-    Object.assign(pending, { cp: null, asked: null, amount: null });
-    return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? parsed.vat, parsed.item) };
+    // 품목: 문장에 없고 거래처 저장 품목도 없으면 카드 전에 묻는다(빈 칸 카드가 실행에서야 item_missing으로 멈추지 않게, 08 §5 "빠진 값만 묻는다")
+    if (!item && !cleanItem(cp.item ?? '')) {
+      Object.assign(pending, { cp, asked: 'item', amount, item: null, vat: vatSaid });
+      return { kind: 'say', text: ASK_ITEM_TEXT(cp.name) };
+    }
+    Object.assign(pending, emptyPending());
+    return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? vatSaid, item) };
   }
-  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 곧 이 대화에서 할 수 있어요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
-  return { kind: 'say', text: '세금계산서나 증명서를 말해 주세요.', chips: QUICK.filter((q) => !q.soon) };
+  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 아직 이 앱에서 하지 못해요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
+  return { kind: 'say', text: EMPTY_REQUEST_TEXT, chips: QUICK.filter((q) => !q.soon) };
 }
 
 // ---- 실행 화면 모델 ----
@@ -263,12 +372,33 @@ export interface RunView {
   tax: number;
   total: number;
   item: string;
+  /** 품목이 거래처 저장 품목에서 온 추정 값인가(문장·되묻기·카드에서 받았으면 false). */
+  itemGuessed: boolean;
+  /** 승인·게이트 전에 실패·핸드오프로 끝났다(발급 없음): 카드에 [다시 준비](같은 값의 새 초안) */
+  redo?: boolean;
+  /** 실행 Chrome(탭·프로세스)이 제출 전에 닫혀 멈췄다. 카드가 "브라우저가 닫혔어요 [다시 시작]"을 보인다. */
+  browserClosed?: boolean;
+  /** 끝난 시각(main 시계, 브라우저 닫힘과 엔진 끝이 같은 순간에 오는 경우를 맞춘다). 렌더러는 쓰지 않는다. */
+  endedAt?: number;
+  /** 대화에서 발급 전에 버린 초안(draft_discard). 카드는 "취소함"만 보이고 버튼이 없다. */
+  discarded?: boolean;
+  /** 승인 전에 엔진이 이어 갈 수 없는 핸드오프로 끝냈다(end status handoff). 카드는 무슨 일인지와 [다시 준비]·[홈택스에서 직접 발급]을 보인다. */
+  handoffEnd?: boolean;
+  /** 홈택스 점검으로 멈춤(portal.maintenance). until: 끝 시각 KST 'HH:MM'(모르면 null → [다시 시작]). restartedAs: 다시 시작한 새 초안. */
+  maintenance?: { until: string | null; restartedAs?: string };
+  /** 초안만: 오늘 같은 거래처·같은 합계로 이미 발급한 실행이 있다(F-10, 이 앱이 켜진 동안의 발급). 승인 카드의 중복 경고보다 먼저 보인다. */
+  dupToday?: boolean;
+  /** [홈택스에서 준비] 전 점검에서 이 PC에 Chrome이 없었다(초안 카드 안내, 다음 준비 때 다시 본다). */
+  noChrome?: boolean;
+  /** 홈택스 예행(메뉴 도구 > 홈택스 예행): 엔진이 첫 게이트에서 스스로 멈춘다. 승인 바를 띄우지 않는다. */
+  rehearsal?: boolean;
   writeDate: string;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;
   turn: { text: string; note: string } | null;
   confirmed: boolean;
-  result: { approvalNo: string; mailTo: string; docId: string; doneAt: string; mailConfirmed: boolean } | null;
+  /** noFile: 발급 PDF를 보관하지 못했다(save_pdf.failed, F-04). */
+  result: { approvalNo: string; mailTo: string; docId: string; doneAt: string; mailConfirmed: boolean; noFile?: boolean } | null;
   stoppedNote?: string;
   /** 승인 대기 카드의 고정 경고(중복 경고 등). 같은 값이 승인 바에도 있다. */
   warnings: string[];
@@ -276,6 +406,8 @@ export interface RunView {
   action?: string;
   /** 카드 꼬리 문장(포털 안내 문구·금고 알림). 텍스트로만 그린다. */
   notices?: string[];
+  /** 실행 중 포털 대화상자 확인 결과(예: "사업자번호 확인: 정상적인 사업자번호입니다."). step은 엔진 단계 번호, ok가 아니면 빨간 글. 실행 단계 목록 안에 글로만 그린다(대표 2026-11-13, 팝업 없음). */
+  portalChecks?: Array<{ step: number; text: string; ok: boolean }>;
   /** 다시 해도 되는 멈춤이었다(금고가 Chrome 확장을 보고 비밀 창을 거절). 발급 없이 끝난 카드에 [다시 시도]를 둔다. */
   retry?: 'extension';
   /** 홈택스에서 되읽은 값이 초안과 다르다. */
@@ -292,8 +424,12 @@ export interface RunView {
   verifyAttempt?: number;
   /** 이번 게이트가 다시 게이트인 이유와 그 고정 문구(main의 REGATE_NOTE에서 고른 것). */
   regate?: { reason: 'paused' | 'date_changed' | 'value_changed'; note: string };
-  /** 핸드오프 중(status turn). afterGate면 게이트 뒤 단계에서 넘겨받은 것(중지는 엔진이 거부한다). */
-  handoff?: { phase: string; afterGate: boolean } | null;
+  /** 핸드오프 중(status turn). 실행은 끝나지 않았다. afterGate면 게이트 뒤 단계(서명 포함)에서 넘겨받은 것: [중지]는 받지만 발급목록 확인(verify)을 거쳐 끝난다. */
+  /**
+   * kind: 무엇을 하는 차례인가(#278 셸 계약). login = 홈택스 로그인 대기([이어서]), sign = 인증서 서명 차례(완료 창이 보이면 엔진이 스스로 넘어가 [다 했어요]는 보조,
+   * [직접 발급함] 없음), other = 그 밖의 사람 차례([다 했어요]·[직접 발급함]).
+   */
+  handoff?: { phase: string; afterGate: boolean; kind?: 'login' | 'sign' | 'other' } | null;
   /**
    * InDoubt 증언(ADR-021 결정 5). ready: 엔진이 증언을 받을 수 있다(이 카드를 열면 승인 바 자리에 황토색 바가 뜬다).
    * sent: 보냈고 엔진이 받았다. refused: 엔진이 받지 않았거나 보내지 못했다. 문구는 main의 ATTEST_NOTE에서 고른 것.

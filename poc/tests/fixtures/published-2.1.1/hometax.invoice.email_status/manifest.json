@@ -1,0 +1,36 @@
+{
+ "id": "hometax.invoice.email_status",
+ "version": "1.1.0",
+ "kind": "lookup",
+ "portal": "hometax",
+ "title": "lookup.title",
+ "profileKinds": [
+  "business"
+ ],
+ "engineRange": ">=1.0.0 <2.0.0",
+ "domains": [
+  "hometax.go.kr",
+  "*.hometax.go.kr"
+ ],
+ "effects": [],
+ "bundlesUsed": [],
+ "lookupsUsed": [],
+ "contentDigests": {
+  "playbook": "0000000000000000000000000000000000000000000000000000000000000000",
+  "selectors": "0000000000000000000000000000000000000000000000000000000000000000",
+  "strings": "0000000000000000000000000000000000000000000000000000000000000000"
+ },
+ "createdAt": "2026-11-01T00:00:00+09:00",
+ "signatures": [
+  {
+   "keyId": "pkg-1",
+   "alg": "ed25519",
+   "sig": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+  },
+  {
+   "keyId": "pkg-2",
+   "alg": "ed25519",
+   "sig": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"
+  }
+ ]
+}

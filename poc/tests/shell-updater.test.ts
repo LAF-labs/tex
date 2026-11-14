@@ -6,14 +6,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
-import { jcs, type FeedInfo, type ReleaseManifest, type Revocation, type Transparency, type TrustRoot } from '../packages/updater/src/index.ts';
+import { jcs, type FeedInfo, type ReleaseManifest, type Revocation, type Transparency, type TrustRoot, type VerifiedRelease } from '../packages/updater/src/index.ts';
 import { electronInstaller, feedUrl, type AppUpdaterLike } from '../apps/desktop/src/update-electron.ts';
 import { pickInstaller, startUpdateHost, updatePolicy, UpdaterStateFile, type UpdateHostOptions, type UpdateInstaller } from '../apps/desktop/src/update-host.ts';
 
 const PKCS8_ED25519 = Buffer.from('302e020100300506032b657004220420', 'hex');
 const seedKey = (byte: number) => createPrivateKey({ key: Buffer.concat([PKCS8_ED25519, Buffer.alloc(32, byte)]), format: 'der', type: 'pkcs8' });
 const pubB64 = (byte: number) => (createPublicKey(seedKey(byte)).export({ format: 'der', type: 'spki' }) as Buffer).subarray(12).toString('base64');
-const TRUST: TrustRoot = { keyEpoch: 1, keys: { release: { 'release-1': pubB64(0x61) } } };
+const TRUST: TrustRoot = { keyEpoch: 1, keys: { release: { 'release-1': pubB64(0x61) }, timestamp: { 'timestamp-1': pubB64(0x51) } } };
 const FRESH: Revocation = { keyIds: new Set(), fresh: true };
 const NOW = Date.parse('2026-11-06T06:00:00Z');
 const DAY = 24 * 3600_000;
@@ -21,16 +21,19 @@ const sha512 = (b: Uint8Array) => createHash('sha512').update(b).digest('base64'
 const INSTALLER = Buffer.from('MZ fake installer bytes for shell-updater test');
 
 function manifest(version = '1.2.0', over: Partial<ReleaseManifest> = {}, signer = 0x61): ReleaseManifest {
+  const { issuedAt = '2026-11-05T00:00:00.000Z', expiresAt = '2026-11-12T00:00:00.000Z', ...rest } = over;
   const u = {
     channel: 'stable' as const,
     version,
     releaseDate: '2026-11-05T00:00:00.000Z',
-    expiresAt: '2026-11-12T00:00:00.000Z',
     rolloutPercent: 100,
     files: [{ url: `SovereignAX-Setup-${version}.exe`, sha512: sha512(INSTALLER), size: INSTALLER.byteLength }],
-    ...over,
+    ...rest,
   };
-  return { ...u, signature: { keyId: 'release-1', alg: 'ed25519', sig: sign(null, Buffer.from(jcs(u), 'utf8'), seedKey(signer)).toString('base64url') } } as ReleaseManifest;
+  const ed = (content: unknown, seed: number) => sign(null, Buffer.from(jcs(content), 'utf8'), seedKey(seed)).toString('base64url');
+  // 기간은 레지스트리 타임스탬프 키(0x51)가 {contentDigest, issuedAt, expiresAt}에 서명한다
+  const stampContent = { contentDigest: createHash('sha256').update(jcs(u)).digest('hex'), issuedAt, expiresAt };
+  return { ...u, signature: { keyId: 'release-1', alg: 'ed25519', sig: ed(u, signer) }, issuedAt, expiresAt, timestamp: { keyId: 'timestamp-1', alg: 'ed25519', sig: ed(stampContent, 0x51) } } as ReleaseManifest;
 }
 const feedOf = (m: ReleaseManifest): FeedInfo => ({ version: m.version, files: m.files.map((f) => ({ url: f.url, sha512: f.sha512, size: f.size })), path: m.files[0]!.url, sha512: m.files[0]!.sha512 });
 
@@ -91,7 +94,7 @@ function rig(over: Partial<UpdateHostOptions> = {}, stateDir = dir()): Rig {
       latest: async (ch) => {
         calls.push(`latest:${ch}`);
         if (st.latestFails) throw new Error('net');
-        return JSON.parse(JSON.stringify(st.doc));
+        return Buffer.from(JSON.stringify(st.doc));
       },
       registry: async () => {
         if (st.registryFails) throw new Error('engine');
@@ -278,7 +281,7 @@ describe('update-host: 배선 순서 1~5', () => {
     assert.equal(r.stale, 2);
     // 확인에 성공하면(최신) 다시 조용하다
     r.now.t += 2 * DAY;
-    const fresh = manifest('1.2.0', { releaseDate: new Date(r.now.t - DAY).toISOString(), expiresAt: new Date(r.now.t + DAY).toISOString() });
+    const fresh = manifest('1.2.0', { issuedAt: new Date(r.now.t - DAY).toISOString(), expiresAt: new Date(r.now.t + DAY).toISOString() });
     const r2 = rig({ installedVersion: '1.2.0', now: () => r.now.t, stateFile: r.opts.stateFile });
     r2.set({ doc: fresh });
     assert.deepEqual(await startUpdateHost(r2.opts).check(), { result: 'none', reason: 'up_to_date' });
@@ -349,6 +352,8 @@ describe('update-electron: electron-updater 어댑터', () => {
       autoInstallOnAppQuit: true,
       allowDowngrade: true,
       allowPrerelease: true,
+      disableDifferentialDownload: false,
+      autoRunAppAfterInstall: false,
       setFeedURL: (o) => void calls.push(['feed', o]),
       checkForUpdates: async () => ({ updateInfo: { version: '1.2.0', files: [] }, isUpdateAvailable: true }),
       downloadUpdate: async () => ['/p/a.exe'],
@@ -357,12 +362,38 @@ describe('update-electron: electron-updater 어댑터', () => {
     return { u, calls };
   };
 
-  it('자동 받기·종료 시 설치·다운그레이드·사전 릴리스를 끄고 레지스트리 generic 피드를 건다', async () => {
+  class Base {
+    readonly runtime: unknown;
+    constructor(runtime: unknown) {
+      this.runtime = runtime;
+    }
+  }
+  const verified = (m: ReleaseManifest): VerifiedRelease => ({ manifest: m, releaseKeyId: 'release-1', rootKeyIds: [] });
+  type Feed = { getLatestVersion(): Promise<FeedInfo>; resolveFiles(i: FeedInfo): Array<{ url: URL; info: unknown }> };
+  const feedOfCall = (calls: unknown[]) => {
+    const o = (calls[0] as [string, { updateProvider: new (cfg: unknown, u: unknown, r: unknown) => Feed }])[1];
+    return new o.updateProvider(o, null, {});
+  };
+
+  it('자동 받기·종료 시 설치·다운그레이드·사전 릴리스·차등 받기를 끄고, 검증한 매니페스트만 공급자로 넘긴다', async () => {
     const { u, calls } = fake();
-    const ins = electronInstaller(u, { origin: 'https://registry.example.test', channel: 'beta' });
-    assert.deepEqual([u.autoDownload, u.autoInstallOnAppQuit, u.allowDowngrade, u.allowPrerelease], [false, false, false, false]);
-    assert.deepEqual(calls[0], ['feed', { provider: 'generic', url: 'https://registry.example.test/releases/beta/', channel: 'latest' }]);
-    assert.deepEqual(await ins.check(), { version: '1.2.0', files: [] });
+    const ins = electronInstaller(u, { origin: 'https://registry.example.test', channel: 'beta', Provider: Base });
+    assert.deepEqual([u.autoDownload, u.autoInstallOnAppQuit, u.allowDowngrade, u.allowPrerelease, u.disableDifferentialDownload, u.autoRunAppAfterInstall], [false, false, false, false, true, true]);
+    const local = fake().u;
+    electronInstaller(local, { origin: 'http://127.0.0.1:8082', channel: 'beta', Provider: Base, loopback: true, relaunch: false });
+    assert.equal(local.autoRunAppAfterInstall, false);
+    const cfg = (calls[0] as [string, Record<string, unknown>])[1];
+    assert.equal(cfg.provider, 'custom');
+    assert.equal(cfg.url, 'https://registry.example.test/releases/beta/');
+    const feed = feedOfCall(calls);
+    await assert.rejects(feed.getLatestVersion(), /update.no_verified_release/);
+    const m = manifest('1.2.0');
+    assert.deepEqual(await ins.check(verified(m)), { version: '1.2.0', files: [] });
+    assert.deepEqual(await feed.getLatestVersion(), { ...feedOf(m), releaseDate: m.releaseDate });
+    assert.deepEqual(
+      feed.resolveFiles(await feed.getLatestVersion()).map((f) => f.url.href),
+      [`https://registry.example.test/releases/beta/${m.files[0]!.url}`],
+    );
     assert.deepEqual(await ins.download(), ['/p/a.exe']);
     ins.install();
     assert.deepEqual(calls[1], ['quit', true, true]);
@@ -371,21 +402,25 @@ describe('update-electron: electron-updater 어댑터', () => {
   it('새 버전이 없다는 응답은 null', async () => {
     const { u } = fake();
     u.checkForUpdates = async () => ({ updateInfo: { version: '1.1.0', files: [] }, isUpdateAvailable: false });
-    assert.equal(await electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable' }).check(), null);
+    assert.equal(await electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable', Provider: Base }).check(verified(manifest())), null);
     u.checkForUpdates = async () => null;
-    assert.equal(await electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable' }).check(), null);
+    assert.equal(await electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable', Provider: Base }).check(verified(manifest())), null);
   });
 
-  it('피드 origin은 https·경로 없음만', () => {
+  it('피드 origin은 https·경로 없음만, 시험 빌드 loopback만 http://127.0.0.1', () => {
     assert.equal(feedUrl('https://r.example.test', 'stable'), 'https://r.example.test/releases/stable/');
-    for (const bad of ['http://r.example.test', 'https://r.example.test/x', 'https://r.example.test/?a=1', 'https://u:p@r.example.test', 'file:///etc']) {
+    for (const bad of ['http://r.example.test', 'http://127.0.0.1:8082', 'https://r.example.test/x', 'https://r.example.test/?a=1', 'https://u:p@r.example.test', 'file:///etc']) {
       assert.throws(() => feedUrl(bad, 'stable'), /update.feed_origin_invalid/, bad);
+    }
+    assert.equal(feedUrl('http://127.0.0.1:8082', 'stable', { loopback: true }), 'http://127.0.0.1:8082/releases/stable/');
+    for (const bad of ['http://localhost:8082', 'http://10.0.0.1:8082', 'http://127.0.0.1:8082/x']) {
+      assert.throws(() => feedUrl(bad, 'stable', { loopback: true }), /update.feed_origin_invalid/, bad);
     }
   });
 
   it('discard는 파일이 없어도 던지지 않는다', async () => {
     const { u } = fake();
-    const ins = electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable' });
+    const ins = electronInstaller(u, { origin: 'https://r.example.test', channel: 'stable', Provider: Base });
     const f = path.join(dir(), 'gone.exe');
     fs.writeFileSync(f, 'x');
     await ins.discard(f);
@@ -412,7 +447,10 @@ describe('셸 배선(소스 검사)', () => {
       assert.doesNotMatch(s, /from 'electron'|from 'electron-updater'|from 'node:(net|http|https|tls)'|fetch\(/, f);
     }
   });
-  it('제품 진입점은 아직 원천을 넘기지 않는다(레지스트리 egress·엔진 폐기 목록·투명성 로그 전)', () => {
-    assert.doesNotMatch(src('shell.ts'), /update:/);
+  it('제품 진입점은 업데이트를 넘기고, 로컬 피드는 실계정 시험 빌드만 읽는다', () => {
+    const s = src('shell.ts');
+    assert.match(s, /update: updateWiring\(\)/);
+    assert.match(s, /const feed = testBuild \? process\.env\.SAX_UPDATE_FEED : undefined;/);
+    assert.match(s, /if \(!feed\) return \{ channel, origin: REGISTRY_ORIGIN, egress: new Egress\(\{ env: process\.env \}\), testBuild \};/);
   });
 });

@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { CounterpartyRepo, ProfileRepo, type Db } from '@sax/db';
 import { BundleCatalog, CHAT_REPLY, DefaultModelLayer, GatewayDecideAdapter, OpenAIResponsesAdapter, ThresholdProfiles, gatewayRunToken, type DecideResult, type RunToken } from '@sax/model';
 import type { Egress } from '@sax/net';
-import { Redactor } from '@sax/redaction';
+import { CHAT_MAP_IDLE_MS, Redactor } from '@sax/redaction';
 import { Judge } from './l0/judge.ts';
 import { loadPromotions } from './l0/promotion.ts';
 import { CHAT_INPUT_MAX_BYTES, ChatError, chatRespond, chatSecretShaped, type ChatModel, type ChatReply } from './chat.ts';
@@ -18,8 +18,6 @@ import { CHAT_INPUT_MAX_BYTES, ChatError, chatRespond, chatSecretShaped, type Ch
 export const INTENT_BUNDLE = 'intent_route_v1';
 /** 입력창 문장 상한(계약 ≤ 2000자) */
 export const INTENT_TEXT_MAX = 2000;
-/** 대화 세션(마스킹·실행 토큰 범위)은 15분 쉬면 새로 연다(D06 §8 RedactorSessions와 같은 기준) */
-const SESSION_IDLE_MS = 15 * 60 * 1000;
 /** 세무 질문 판정 문턱(번들 매핑 refuse_advice와 같은 값, D04 §3) */
 const ADVICE_GTE = 0.75;
 /** 불확실(판정은 됐지만 고를 수 없음)로 보는 이유. 나머지 unknown 이유는 경로 실패라 decide.unavailable이다 */
@@ -156,7 +154,8 @@ export class IntentResolver {
 
   private chatSession() {
     const t = this.now();
-    if (!this.session || t - this.session.lastAt > SESSION_IDLE_MS) this.session = { id: `chat_${randomUUID()}`, lastAt: t, token: null };
+    // 대화 세션(마스킹·실행 토큰 범위)은 대화 토큰 맵과 같은 기준(CHAT_MAP_IDLE_MS)으로 쉬면 새로 연다.
+    if (!this.session || t - this.session.lastAt > CHAT_MAP_IDLE_MS) this.session = { id: `chat_${randomUUID()}`, lastAt: t, token: null };
     this.session.lastAt = t;
     return this.session;
   }
@@ -195,9 +194,10 @@ export function gatewayIntentModel(egress: Egress, opts: { catalog?: BundleCatal
  * 실행(IR decide 스텝)용 판정기와 실행마다 받는 게이트웨이 run 토큰(PR-D2). Egress에 게이트웨이 설정이 없으면 null이다.
  * 그때 IR decide 스텝은 decide.unavailable로 멈춘다(모델 없이 화면을 판정하지 않는다).
  */
-export function gatewayRunJudge(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): { judge: Judge; runTokenFor: (runId: string) => Promise<RunToken> } | null {
+export function gatewayRunJudge(egress: Egress, opts: { catalog?: BundleCatalog; profiles?: ThresholdProfiles; promoted?: Set<string> } = {}): { judge: Judge; runTokenFor: (runId: string) => Promise<RunToken>; locate: OpenAIResponsesAdapter } | null {
   if (!egress.gatewayGuard) return null;
   const catalog = opts.catalog ?? BundleCatalog.load();
   const layer = new DefaultModelLayer({ catalog, profiles: opts.profiles ?? ThresholdProfiles.load(), decider: new GatewayDecideAdapter({ egress }) });
-  return { judge: new Judge(layer, opts.promoted ?? loadPromotions()), runTokenFor: (runId) => gatewayRunToken(egress, { runId }) };
+  // AI 위치 찾기(core/locate.ts): 같은 게이트웨이의 /v1/respond 툴셋 selector_repair. 같은 실행 토큰(L2 예산 2)을 쓴다.
+  return { judge: new Judge(layer, opts.promoted ?? loadPromotions()), runTokenFor: (runId) => gatewayRunToken(egress, { runId }), locate: new OpenAIResponsesAdapter({ transport: 'gateway', egress }) };
 }

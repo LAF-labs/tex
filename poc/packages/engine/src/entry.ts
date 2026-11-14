@@ -27,7 +27,7 @@ import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
 import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_CERT_IDS, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
-import { installedIrSource } from './package-source.ts';
+import { installedIrSource, REHEARSAL_PACKAGES_DIR, rehearsalIrSource } from './package-source.ts';
 import { VaultPdfPort } from './driver/pdf.ts';
 import { recordCertInputs, recordRunInputs, runHistory } from './run-history.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
@@ -36,12 +36,16 @@ import { PcFileIntake } from '@sax/bundle';
 import { PC_FILE_COMMANDS } from './protocol.ts';
 import { SETTLEMENT_COMMANDS } from './protocol.ts';
 import { DAEMON_READ_QUERIES } from './protocol.ts';
-import { INTENT_COMMANDS } from './protocol.ts';
+import { CHAT_AGENT_COMMANDS, INTENT_COMMANDS } from './protocol.ts';
+import { BANK_COMMANDS, BANK_READ_QUERIES } from './protocol.ts';
+import { BankService } from './bank/service.ts';
 import { gatewayIntentModel, gatewayRunJudge, IntentResolver } from './intent.ts';
+import { ChatAgent, gatewayChatAgentModel } from './chat-agent.ts';
 import { BUNDLE_REQUEST_COMMANDS } from './protocol.ts';
 import { CARD_COMMANDS, CARD_READ_QUERIES } from './protocol.ts';
 import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './protocol.ts';
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
+import { bankServicePort, CODEF_COMMANDS, CodefClient, CodefError, CodefLink, codefTxnSource, settingsCodefStore, vaultCodefSeal } from './codef/index.ts';
 import { RunService, type StartParams } from './runs.ts';
 import type { CertStartParams } from './cert.ts';
 import { closeOnShutdown } from './shutdown.ts';
@@ -61,8 +65,12 @@ let payroll: BundleService | null = null;
 let phone: PhoneIntake | null = null;
 /** PC 파일 보관(PcFileIntake): 종이 증빙·꾸러미 파일 칸. 보관함 파일과 documents·receipts|bundle_entries 행을 한 번에 쓴다. */
 let pcFiles: PcFileIntake | null = null;
+/** 돈 맞추기(09): 내 계좌·거래내역·받을 돈·맞춤. 컬럼 키·계좌 HMAC 키는 init이 넘긴다. */
+let bank: BankService | null = null;
 /** 대화 의도 판정(intent.resolve). 모델 경로는 엔진 Egress 게이트웨이뿐이고, 없으면 decide.unavailable(main은 연결 안 됨). */
 let intent: IntentResolver | null = null;
+/** 대화 에이전트 모델 경계(chat.step). 모델 경로는 intent와 같은 엔진 Egress 게이트웨이뿐이다. */
+let chatAgent: ChatAgent | null = null;
 let browser: RunBrowserSlot | null = null;
 let runs: RunService | null = null;
 /** 레지스트리 동기화(main 전용 질의·명령). 핀 키가 없으면 null(registry.not_pinned). */
@@ -112,8 +120,17 @@ for (const m of [...BUNDLE_PC_READ_QUERIES, ...BUNDLE_PC_COMMANDS]) {
   ALLOWED.add(m);
 }
 
+const BANK = new Set<string>([...BANK_READ_QUERIES, ...BANK_COMMANDS]);
+for (const m of BANK) ALLOWED.add(m);
+
 const INTENT = new Set<string>(INTENT_COMMANDS);
 for (const m of INTENT) ALLOWED.add(m);
+const CHAT_AGENT = new Set<string>(CHAT_AGENT_COMMANDS);
+for (const m of CHAT_AGENT) ALLOWED.add(m);
+// 계좌 자동조회(CODEF, 대표 결정 2026-11-12). 토큰은 게이트웨이, 호출은 Egress.toCodef(PC → CODEF 직결), 비밀번호는 금고 창.
+const CODEF = new Set<string>(CODEF_COMMANDS);
+for (const m of CODEF) ALLOWED.add(m);
+let codef: CodefLink | null = null;
 
 async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: MessagePortMain | undefined, authPort: MessagePortMain | undefined): Promise<void> {
   const paths = appPaths(msg.root ?? defaultAppRoot());
@@ -129,6 +146,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   // 원장 HMAC 키는 DB 키에서 HKDF로 파생한다(ADR-021). DB 키는 지금처럼 바로 지운다.
   const ledgerKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-ledger-hmac-v1', 32));
   // 컬럼 키(주민번호 rrn_enc 등, D07 §2 *_enc)도 DB 키를 지우기 전에 한 번 파생한다. ColumnCipher가 복사해 갖고, 파생 바이트는 바로 지운다.
+  // 계좌번호 찾기용 HMAC 키(09 §9.1, 원장 HMAC과 같은 방식·다른 info). BankRepo가 복사해 갖는다.
+  const bankKey = new Uint8Array(hkdfSync('sha256', key, new Uint8Array(0), 'SAX-bank-hmac-v1', 32));
   const columnKey = deriveColumnKey(key);
   const cipher = new ColumnCipher(columnKey);
   columnKey.fill(0);
@@ -145,7 +164,25 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
   if (REGISTRY_TRUST_PIN) registry = new RegistrySync({ trust: REGISTRY_TRUST_PIN, fetch: egressRegistryFetch(egress), store: settingsRegistryStore(db), packages: { ids: PRODUCT_PACKAGE_IDS }, sinks: [rateTableSink(db)], log, appVersion: typeof msg.appVersion === 'string' ? msg.appVersion : null });
   phone = new PhoneIntake(db, { vaultDir: paths.vault });
   pcFiles = new PcFileIntake(db, { vaultDir: paths.vault });
+  bank = new BankService(db, cipher, bankKey, { vaultDir: paths.vault });
+  bankKey.fill(0);
   intent = new IntentResolver(db, { model: gatewayIntentModel(egress) });
+  chatAgent = new ChatAgent(db, { model: gatewayChatAgentModel(egress) });
+  // 계좌 자동조회(CODEF): 계좌 고르기가 돈 맞추기 계좌로 잇고, bank.refresh가 원천(codefTxnSource)으로 가져와 넣고 맞춘다
+  const codefBank = bankServicePort(bank, db);
+  codef = new CodefLink({
+    client: new CodefClient({ egress }),
+    seal: vaultCodefSeal(vault),
+    store: settingsCodefStore(db),
+    bank: () => codefBank,
+    onEvent: (e) => {
+      log.event('engine.codef', { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
+      parentPort.postMessage({ t: 'ev', name: 'codef', data: { ...e } });
+    },
+  });
+  // 지난 실행이 고르기 대기·조회 중에 꺼졌으면 CODEF에 남은 계정을 지운다(못 지우면 적힌 채로 다음 연결·최신화·해제 때)
+  if (codef.status().cleanupPending) void codef.sweep().catch(() => undefined);
+  bank.registerSource(codefTxnSource(codef));
   const portal = msg.portal.kind === 'fixture' ? fixturePortal(msg.portal.origin) : HOMETAX_PORTAL;
   if (gatePort) {
     const gate: PortLike = wrapPort(gatePort, 'electron');
@@ -162,15 +199,20 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       documents: data.documents,
       artifact: (bytes, o) => data!.documents.importRunArtifact(bytes, o),
     });
+    // 공동인증서 비밀번호(B1 로그인 s4·B2 발급 서명 s21): 금고 비밀 창(전용 Chrome 칸에 사람이 직접) 또는 사람 직접 입력 대기. 값은 엔진에 오지 않는다.
+    const secret = { vault, targetId: () => slot.current?.targetId ?? '' };
     runs = new RunService({
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
-      ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, pdf, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) }) } : {}),
+      ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
       // 민원증명(run.startCert): 받아 둔 서명 설치본을 id별로 같은 방식으로 다시 검증한다(PDF 포트도 H-01과 같다). 운영 레지스트리에 게시되기 전에는 package.not_loaded다.
       ...(ir && registry ? {
         certSource: (id: string) => PRODUCT_CERT_IDS.includes(id)
-          ? installedIrSource(registry!, { id, portal, pdf, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor } : {}) })()
+          ? installedIrSource(registry!, { id, portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) })()
           : { ok: false as const, code: 'cert.unknown_doc' },
       } : {}),
+      // 예행 전용 로컬 패키지(<앱 데이터>/rehearsal-packages/<id>/, scripts/rehearsal-package.mjs가 넣는다). RunService가 예행 실행에만 부른다.
+      rehearsalSnapDir: path.join(paths.root, 'rehearsal-snaps'),
+      ...(ir && registry ? { rehearsalIrSource: rehearsalIrSource(registry, { id: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
@@ -208,6 +250,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     return runHistory(history.db, history.cipher, typeof params.limit === 'number' ? params.limit : 50);
   }
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
+  if (method === 'run.resume' || method === 'run.manualDone') {
+    if (!runs) throw new Error('runs_not_ready');
+    return method === 'run.resume' ? runs.resume(String(params.runId)) : runs.manualDone(String(params.runId));
+  }
   if (method === 'run.start' || method === 'run.startCert' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
@@ -262,9 +308,44 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     if (!phone) throw new Error('db_not_ready');
     return phone.handle(method, params);
   }
+  if (CODEF.has(method)) {
+    if (!codef) throw new Error('db_not_ready');
+    const c = codef;
+    // 실패는 던지지 않고 {ok:false, code, cf}로 돌려준다(화면이 사람 말·CODEF 코드를 고른다). 값·원문 메시지는 없다.
+    const run = async (): Promise<object> => {
+      switch (method) {
+        case 'codef.status':
+          return c.status();
+        case 'codef.connect':
+          return c.connect(params);
+        case 'codef.choose':
+          return c.choose(params);
+        case 'codef.refresh':
+          return c.refresh();
+        case 'codef.cancel':
+          return c.cancel();
+        default:
+          return c.disconnect();
+      }
+    };
+    try {
+      return { ok: true, ...(await run()) };
+    } catch (e) {
+      if (e instanceof CodefError) return { ok: false, code: e.code, ...(e.cf ? { cf: e.cf } : {}), ...(e.retryAt ? { retryAt: e.retryAt } : {}) };
+      throw e;
+    }
+  }
+  if (BANK.has(method)) {
+    if (!bank) throw new Error('db_not_ready');
+    return bank.handle(method, params);
+  }
   if (INTENT.has(method)) {
     if (!intent) throw new Error('db_not_ready');
     return intent.handle(method, params);
+  }
+  if (CHAT_AGENT.has(method)) {
+    if (!chatAgent) throw new Error('db_not_ready');
+    return chatAgent.handle(method, params);
   }
   if (PAYROLL.has(method)) {
     if (!payroll) throw new Error('db_not_ready');

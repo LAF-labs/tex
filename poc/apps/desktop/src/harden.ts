@@ -84,6 +84,12 @@ export function assertNoDebugSwitches(app: Pick<App, 'commandLine' | 'exit'>): v
  * ready 전에 부른다: 디버그 스위치 검사, 모든 렌더러 샌드박스, 모든 webContents의 새 창·이동·webview 거부.
  * allowSchemes는 리디렉트를 허용할 앱 스킴(예: 'sax-shell:'). 렌더러가 시작한 이동(will-navigate)은 모두 막는다.
  */
+/**
+ * 셸 하드닝의 이동 막기에서 빼는 세션: 앱 안 브라우저(embedded-browser.ts) 파티션뿐이다. 그 보기는 홈택스 페이지라 링크·폼 이동·리디렉트가
+ * 있어야 하고, 이동 규칙(앱 스킴·로컬 파일 막기)과 출처 검사는 그 파일과 금고 중계가 따로 건다. 새 창·webview 막기는 그대로다.
+ */
+export const NAV_EXEMPT_SESSIONS = new WeakSet<Session>();
+
 export function hardenApp(app: App, allowSchemes: readonly string[]): void {
   assertNoDebugSwitches(app);
   // --no-sandbox(root 컨테이너 개발 환경)에서는 enableSandbox가 자식 프로세스를 FATAL로 끝낸다(Electron 45 실측).
@@ -91,13 +97,16 @@ export function hardenApp(app: App, allowSchemes: readonly string[]): void {
   if (!app.commandLine.hasSwitch('no-sandbox')) app.enableSandbox();
   app.on('web-contents-created', (_e, wc: WebContents) => {
     wc.setWindowOpenHandler(() => ({ action: 'deny' }));
-    wc.on('will-navigate', (ev) => ev.preventDefault());
+    const exempt = () => NAV_EXEMPT_SESSIONS.has(wc.session);
+    wc.on('will-navigate', (ev) => {
+      if (!exempt()) ev.preventDefault();
+    });
     // 하위 프레임 이동도 막는다(will-navigate는 최상위 프레임만). loadURL 같은 main의 이동에는 오지 않는다.
     wc.on('will-frame-navigate', (ev) => {
-      if (!ev.isMainFrame) ev.preventDefault();
+      if (!ev.isMainFrame && !exempt()) ev.preventDefault();
     });
     wc.on('will-redirect', (ev) => {
-      if (!allowSchemes.some((s) => ev.url.startsWith(s))) ev.preventDefault();
+      if (!allowSchemes.some((s) => ev.url.startsWith(s)) && !exempt()) ev.preventDefault();
     });
     wc.on('will-attach-webview', (ev) => ev.preventDefault());
   });
@@ -132,7 +141,8 @@ export interface BuildInfo {
   productName: string;
   version: string;
   channel: 'stable' | 'beta';
-  signing: 'azure' | 'unsigned';
+  /** azure: Windows Artifact Signing, developer_id: macOS Developer ID 서명·공증, unsigned: 미서명·애드혹. */
+  signing: 'azure' | 'developer_id' | 'unsigned';
   commit: string;
   devOnlyIncluded: string[];
   /**
@@ -151,7 +161,7 @@ export function isBuildInfo(x: unknown): x is BuildInfo {
     !!b.productName &&
     typeof b.version === 'string' &&
     (b.channel === 'stable' || b.channel === 'beta') &&
-    (b.signing === 'azure' || b.signing === 'unsigned') &&
+    (b.signing === 'azure' || b.signing === 'developer_id' || b.signing === 'unsigned') &&
     typeof b.commit === 'string' &&
     Array.isArray(b.devOnlyIncluded) &&
     b.devOnlyIncluded.every((f) => typeof f === 'string') &&
@@ -176,7 +186,7 @@ export const BUILD_WARN_TEXT: Record<string, string> = {
  * - fatal:install_in_data_root execPath가 데이터 루트(%LOCALAPPDATA%\SovereignAX) 아래다(D07 §1.1 DACL 루트와 섞임)
  * - fatal:build_info_missing   build-info.json이 없거나 모양이 틀리다
  * - warn:install_unexpected    %LOCALAPPDATA%\Programs\<productName> 밖(사용자 /D 설치·복사본)
- * - warn:unsigned_build        signing !== 'azure'(Azure 서명이 아니다. 배포 가능 여부는 채널별로 release-readiness betaDistributable이 정한다: beta는 미서명 허용, SIGNING-SETUP.md §4)
+ * - warn:unsigned_build        signing === 'unsigned'(Azure·Developer ID 서명이 아니다. 배포 가능 여부는 채널별로 release-readiness betaDistributable이 정한다: beta는 미서명 허용, SIGNING-SETUP.md §4)
  * - warn:dev_code_included     devOnlyIncluded가 비어 있지 않다
  * - warn:test_build            testBuild가 true다(실계정 시험 빌드, 배포본이 아니다)
  * Windows 경로는 대소문자를 가리지 않는다. 데이터 루트 이름은 productName이 아니라 고정 'SovereignAX'다(@sax/platform 데이터 루트).
@@ -200,7 +210,7 @@ export function packagedProblems(o: { isPackaged: boolean; appPath: string; exec
   const info = isBuildInfo(o.buildInfo) ? o.buildInfo : null;
   if (!info) out.push('fatal:build_info_missing');
   if (info && o.localAppData && !under(o.execPath, p.join(o.localAppData, 'Programs', info.productName))) out.push('warn:install_unexpected');
-  if (info && info.signing !== 'azure') out.push('warn:unsigned_build');
+  if (info && info.signing === 'unsigned') out.push('warn:unsigned_build');
   if (info && info.devOnlyIncluded.length) out.push('warn:dev_code_included');
   if (info?.testBuild === true) out.push('warn:test_build');
   return out;

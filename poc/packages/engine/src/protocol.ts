@@ -9,21 +9,21 @@ export const COMMANDS = [
   'document.import', 'document.update', 'document.file',
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
-  'profile.setPortalLoginId',
+  'profile.setPortalLoginId', 'profile.setCertName',
   'counterparty.setItems', 'counterparty.getItems',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
  * - bizcert.parse·document.import: main이 docparse 결과를 붙여 부른다(렌더러가 텍스트·바이트를 지어 보낼 수 없다).
  * - document.file: 보관함 파일 경로를 돌려준다(main이 기본 뷰어로 열 때만, 렌더러에는 경로를 주지 않는다).
- * - consent.*·onboarding.*·profile.setPortalLoginId: 온보딩 저장소(db #53). 동의 기록·이어 하기 상태·금고 등록 결과의 포털 로그인 ID는
+ * - consent.*·onboarding.*·profile.setPortalLoginId·profile.setCertName: 온보딩 저장소(db #53). 동의 기록·이어 하기 상태·금고 등록 결과의 포털 로그인 ID는
  *   main의 온보딩 흐름만 쓴다(렌더러가 동의 시각·출처를 지어 보낼 수 없다).
  */
 export const MAIN_ONLY: readonly (typeof COMMANDS)[number][] = [
   'bizcert.parse', 'document.import', 'document.file',
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
-  'profile.setPortalLoginId',
+  'profile.setPortalLoginId', 'profile.setCertName',
 ];
 /**
  * 급여대장·세무사 꾸러미·S-06 조회와 명령(팀장 결정 2026-11-06, ADR-031·032·034). 처리는 @sax/bundle BundleService(엔진 프로세스)다.
@@ -65,6 +65,12 @@ export const DAEMON_READ_QUERIES = ['daemon.snapshot'] as const;
  * 오류 bad_text·chat.unavailable·chat.bad_response·chat.budget_exceeded·chat.quota_exceeded·chat.input_too_large·chat.secret_rejected. 오프라인 대체 없음.
  */
 export const INTENT_COMMANDS = ['intent.resolve', 'chat.respond'] as const;
+/**
+ * 대화 에이전트 모델 경계(D04 §4 chat_agent, 결정안 agent-chat-design-2026-11-12). main 전용이다(루프·도구 실행은 main AgentChat).
+ * chat.step {start:{text, frame, profileId}} | {continue:{outputs}} → {kind:'tools', calls} | {kind:'reply', reply}. 처리는 ChatAgent(chat-agent.ts).
+ * 오류 bad_text·chat.unavailable·chat.bad_response·chat.bad_tool_output·chat.turn_limit·chat.budget_exceeded·chat.quota_exceeded·chat.input_too_large·chat.secret_rejected.
+ */
+export const CHAT_AGENT_COMMANDS = ['chat.step'] as const;
 /**
  * 세무사 요청 붙여넣기 → 꾸러미 항목 후보(D14 M6-7, ADR-032 결정 8·11). main 전용이다(붙여 넣은 글이 오간다). 규칙 사전만, 모델 없음.
  * 처리는 @sax/bundle BundleService다. 읽기만 하고 DB에 쓰지 않는다. 고른 후보는 bundle.addItem {source:'pasted_request'}로 넣는다.
@@ -108,10 +114,22 @@ export const PC_FILE_COMMANDS = ['receipt.pcStore', 'bundle.attachFile'] as cons
  */
 export const SETTLEMENT_COMMANDS = ['settlement.store'] as const;
 /**
+ * 돈 맞추기 1단계(09, 은행 거래내역 파일·홈택스 발급 목록·받을 돈). 처리는 엔진 bank/service.ts BankService다.
+ * 계좌번호·입금자명·금액이 오가므로 조회까지 모두 main 전용이다(렌더러에 열지 않는다). 파일은 main이 docparse 샌드박스로 읽어 다듬은 줄만 보낸다.
+ * bank.refresh는 자동 연결 원천(bank/source.ts)으로 최신화를 시작만 하고 돌아온다. 진행은 db.query.bank.refreshStatus로 본다.
+ */
+export const BANK_READ_QUERIES = ['db.query.bank.accounts', 'db.query.bank.overview', 'db.query.bank.summary', 'db.query.bank.receivable', 'db.query.bank.counterparty', 'db.query.bank.format', 'db.query.bank.refreshStatus'] as const;
+export const BANK_COMMANDS = [
+  'bank.consent', 'bank.addAccount', 'bank.updateAccount', 'bank.deleteAccount', 'bank.revealAccount', 'bank.setLink', 'bank.refresh',
+  'bank.importTxns', 'bank.importInvoices', 'bank.rematch',
+  'bank.accept', 'bank.attach', 'bank.detach', 'bank.reject', 'bank.markReceived', 'bank.closeFee', 'bank.ignoreTxn', 'bank.assignTxn', 'bank.setPromised', 'bank.exclude', 'bank.undo',
+  'bank.addCpAccount', 'bank.deleteCpAccount', 'bank.revealCpAccount', 'bank.addAlias', 'bank.deleteAlias', 'bank.setPayTerms', 'bank.setDefaultTerms',
+] as const;
+/**
  * 실행 명령(main → 엔진 중계 통로). 승인·증언은 여기 없다. 게이트 전용 포트로만 다닌다(ADR-021, D01 §2.1). run.inspect는 값 없는 원장 상태·저널 종류(e2e).
  * run.start = H-01 세금계산서, run.startCert {runId, playbookId, inputs} = 홈택스 민원증명(cert.ts CertStartParams, 승인 카드 cert.confirm).
  */
-export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect'] as const;
+export const RUN_COMMANDS = ['run.start', 'run.startCert', 'run.stop', 'run.inspect', 'run.resume', 'run.manualDone'] as const;
 /** 실행 이력(재시작 뒤 활동 기록·결과 카드·지난 실행 안내, run-history.ts). main만 부른다. */
 export const RUN_HISTORY_QUERIES = ['db.query.runs.history'] as const;
 /** 중계 통로로 오면 거부하고 보안 이벤트(security.gate_answer_from_relay)를 남기는 이름. */
@@ -132,6 +150,7 @@ export interface EngineInit {
 /** 엔진 → main 푸시(중계 통로). 실행 단계·종료. 게이트 요청은 여기로 오지 않는다. */
 export interface EngineEvent {
   t: 'ev';
-  name: 'run';
+  /** codef: 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */
+  name: 'run' | 'codef';
   data: Record<string, unknown>;
 }

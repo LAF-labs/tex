@@ -1,6 +1,7 @@
 // 대화 의도 e2e(M4-3 ③, intent-route.ts): 입력창 → main → 해석기(엔진 intent.resolve 대역) → 확인 카드(초안)·되묻기·고정 문구.
 // 엔진 판정 결과마다(작업 고름·세무 질문 섞임·세무 상담 거절·모름·아직 대화에서 열지 않는 작업) 화면을 보고, 엔진에 명령이 없을 때 오프라인 정규식으로 가는지 본다.
 // 실행: electron apps/desktop/e2e-dist/shell-intent-e2e.js. 시연 fixture(가짜 홈택스) 위에서 돈다. 실행(발급 준비)은 누르지 않는다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { rmSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';
@@ -100,13 +101,14 @@ async function flow() {
 
   // 5) 모름 → 모델이 짧게 답한다(chat.respond). 답은 글자로만, 제안 작업은 입력창을 채우는 칩
   answer = () => ({ outcome: 'unknown', via: 'model' });
-  chatAnswer = () => ({ reply: '<b>날씨</b>는 알려 드리지 못해요. 세금계산서 발급이나 증명서를 도와드릴 수 있어요.', kind: 'out_of_scope', suggest: ['hometax.invoice.issue', 'hometax.cert.taxpayment'], filtered: null });
+  chatAnswer = () => ({ reply: '<b>날씨</b>는 알려 드리지 못해요. 세금계산서 발급을 도와드릴 수 있어요.', kind: 'out_of_scope', suggest: ['hometax.invoice.issue'], filtered: null });
   n0 = await runs();
   await send('오늘 날씨 어때');
   const lastReply = () => js<{ text: string; html: boolean; chips: string[]; filtered: string | null } | null>(`(() => { const b = [...document.querySelectorAll('[data-chat-reply]')].pop(); return b ? { text: b.querySelector('p').textContent, html: !!b.querySelector('p b'), chips: [...b.querySelectorAll('[data-chat-suggest]')].map((c) => c.dataset.chatSuggest + ':' + c.textContent), filtered: b.dataset.chatReply } : null; })()`);
   check('모름 → chat.respond에 문장 그대로, 답은 텍스트 노드(태그 해석 없음)', (await until('chat reply', async () => !!(await lastReply()))) && chatSeen.at(-1) === '오늘 날씨 어때' && (await lastReply())!.text.startsWith('<b>날씨</b>') && !(await lastReply())!.html);
-  check('제안 칩 2개(세금계산서 발급·납세증명서), 카드는 생기지 않는다', JSON.stringify((await lastReply())!.chips) === JSON.stringify(['hometax.invoice.issue:세금계산서 발급', 'hometax.cert.taxpayment:납세증명서']) && (await runs()) === n0);
-  check('고정 문구 "세금계산서나 증명서를 말해 주세요"가 기본 답이 아니다', !(await lastApp()).includes('세금계산서나 증명서를 말해 주세요'));
+  // 증명서는 지금 못 하는 일이라 제안 칩이 없다(#291과 같은 원칙)
+  check('제안 칩 1개(세금계산서 발급), 카드는 생기지 않는다', JSON.stringify((await lastReply())!.chips) === JSON.stringify(['hometax.invoice.issue:세금계산서 발급']) && (await runs()) === n0);
+  check('고정 문구(빈 요청 안내)가 기본 답이 아니다', !(await lastApp()).includes('세금계산서 발급이나 지난 발급·매출을 말해 주세요'));
   await js(`[...document.querySelectorAll('[data-chat-suggest="hometax.invoice.issue"]')].pop().click()`);
   check('칩을 누르면 입력창에 시작 문장만 채운다(보내지 않음, 실행 없음)', (await js<string>(`document.querySelector('#composer').value`)) === '세금계산서 ' && (await runs()) === n0);
   await js(`(() => { const t = document.querySelector('#composer'); t.value = ''; t.dispatchEvent(new Event('input')); })()`);
@@ -131,7 +133,13 @@ async function flow() {
     const got = (await until(`chat ${code}`, async () => (await unavailable()) === u0 + 1)) && (await js<{ t: string; r: boolean }>(`(() => { const b = [...document.querySelectorAll('[data-intent-unavailable]')].pop(); return { t: b.textContent, r: !!b.querySelector('[data-act=intent-retry]') }; })()`));
     check(`${code} → "${words}"${retry ? ' + [다시 시도]' : ', 다시 시도 없음'}, 카드 없음`, !!got && got.t.includes(words) && got.r === retry && (await runs()) === n0, got);
   }
-  // [다시 시도]가 대화 응대도 다시 부른다
+  // 새 문장을 보낸 뒤에는 앞 답의 [다시 시도]가 꺼진다(눌러도 지난 문장을 다시 보내지 않게, 대화 에이전트 PR-B)
+  check('새 문장 뒤 앞 [다시 시도]는 모두 꺼진다', (await js<number>(`document.querySelectorAll('[data-act=intent-retry]:not([disabled])').length`)) === 0);
+  // [다시 시도]가 대화 응대도 다시 부른다(가장 최근 답의 버튼)
+  chatAnswer = () => new Error('chat.budget_exceeded');
+  const u9 = await unavailable();
+  await send('잡담 chat.budget_exceeded');
+  await until('budget again', async () => (await unavailable()) === u9 + 1);
   const c0 = chatSeen.length;
   chatAnswer = () => ({ reply: '네, 다시 말씀해 주세요.', kind: 'clarify', suggest: [], filtered: null });
   await js(`[...document.querySelectorAll('[data-act=intent-retry]')].pop().click()`);

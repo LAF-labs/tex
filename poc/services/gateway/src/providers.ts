@@ -25,6 +25,13 @@ export interface RespondSpec {
   input: unknown[];
   cacheKey: string;
   safetyId: string;
+  /**
+   * 공급자 고정을 하지 않는다(OpenRouter provider 필드 없음). 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent)만 쓴다:
+   * 기본 모델이 요청마다 뒤쪽 공급사가 바뀌는 라우터라 고정·ZDR이 걸리면 막힌다(대표 2026-11-13). 대화·선택자 수리 등 다른 툴셋은 그대로 고정한다.
+   */
+  unpinned?: true;
+  /** 상류 대기(ms). 없으면 공급사 기본(30초). 판정·에이전트는 함수 상한 안에서 한 번만 길게 기다린다. */
+  timeoutMs?: number;
 }
 
 export interface ProviderUsage {
@@ -90,6 +97,11 @@ export function openAIDecisionsBody(s: DecideSpec): Record<string, unknown> {
   };
 }
 
+/**
+ * 도구가 있는 요청에는 parallel_tool_calls를 싣지 않는다. 운영 조합(OpenRouter, ZDR → azure, require_parameters)에서
+ * 도구 + parallel_tool_calls:false는 받는 엔드포인트가 없어 404였다(탐침 2026-11-12, 노트 agent-chat/real-probe-404.json).
+ * 한 응답에 function_call이 여러 개 오면 PC 루프가 순서대로 실행한다.
+ */
 export function openAIResponsesBody(s: RespondSpec): Record<string, unknown> {
   return {
     model: s.model,
@@ -97,7 +109,7 @@ export function openAIResponsesBody(s: RespondSpec): Record<string, unknown> {
     include: ['reasoning.encrypted_content'],
     reasoning: { effort: s.effort },
     max_output_tokens: s.maxOutputTokens,
-    parallel_tool_calls: false,
+    ...(s.tools.length ? {} : { parallel_tool_calls: false }),
     prompt_cache_options: { mode: 'explicit' },
     prompt_cache_key: s.cacheKey,
     safety_identifier: s.safetyId,
@@ -116,7 +128,7 @@ export class OpenAICompatProvider implements ModelProvider {
     this.o = { baseUrl: o.baseUrl.replace(/\/$/, ''), apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch };
   }
 
-  private async post(path: string, body: unknown): Promise<Record<string, unknown>> {
+  private async post(path: string, body: unknown, timeoutMs = this.o.timeoutMs): Promise<Record<string, unknown>> {
     let res: Response;
     try {
       res = await this.o.fetchFn(this.o.baseUrl + path, {
@@ -124,7 +136,7 @@ export class OpenAICompatProvider implements ModelProvider {
         headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.timeout(this.o.timeoutMs),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch {
       throw new ProviderError('retryable');
@@ -144,7 +156,7 @@ export class OpenAICompatProvider implements ModelProvider {
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {
-    const d = await this.post('/v1/responses', openAIResponsesBody(s));
+    const d = await this.post('/v1/responses', openAIResponsesBody(s), s.timeoutMs);
     return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
   }
 }
@@ -229,7 +241,7 @@ export class OpenRouterProvider implements ModelProvider {
       this.o.onEvent('upstream_routing_refused');
       throw new ProviderError('fatal');
     }
-    const body = { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
+    const body = s.unpinned ? openAIResponsesBody(s) : { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
     let res: Response;
     try {
       res = await this.o.fetchFn(`${this.o.baseUrl}/v1/responses`, {
@@ -237,13 +249,13 @@ export class OpenRouterProvider implements ModelProvider {
         headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify(body),
         redirect: 'error',
-        signal: AbortSignal.timeout(this.o.timeoutMs),
+        signal: AbortSignal.timeout(s.timeoutMs ?? this.o.timeoutMs),
       });
     } catch {
       throw new ProviderError('retryable');
     }
     // 적용 사실만 남긴다(설정이 실린 요청을 보냈다). 값·본문·공급자 이름은 로그에 없다
-    this.o.onEvent('upstream_zdr_pinned');
+    this.o.onEvent(s.unpinned ? 'upstream_unpinned' : 'upstream_zdr_pinned');
     // 고정 공급자를 쓸 수 없으면 OpenRouter가 404를 준다. 대체 공급자로 넘어가지 않으므로 재시도하지 않는다
     if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
     if (res.status !== 200) throw new ProviderError('fatal');
@@ -254,7 +266,7 @@ export class OpenRouterProvider implements ModelProvider {
       throw new ProviderError('fatal');
     }
     // 응답이 공급자를 밝히면 고정 목록 안인지 확인한다(아니면 결과를 쓰지 않는다)
-    if (typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
+    if (!s.unpinned && typeof d.provider === 'string' && !this.routing.only.some((x) => x.toLowerCase() === String(d.provider).toLowerCase())) {
       this.o.onEvent('upstream_provider_mismatch');
       throw new ProviderError('fatal');
     }

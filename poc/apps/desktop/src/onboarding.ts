@@ -1,6 +1,9 @@
 // 온보딩(08 §4 O-01~O-06, D14 M4-2)과 동의 화면 4종(D15 F-06, 팀장 승인 2026-11-05). Electron 없이 도는 상태 기계다.
 // - 온보딩은 메인 대화의 첫 부분이다. 한 번에 하나씩 묻고, 사용자는 카드의 칩·버튼을 누른다(08 §4 공통 규칙).
-// - 동의는 화면마다 명시 클릭이다. 묶음 동의 버튼은 없다. 문구는 전부 "F-06 초안 전" 자리표시이고 키에 판을 붙인다(F-06이 오면 문구만 바꾼다).
+// - 첫 실행은 짧게(B4, 대표 지시 2026-11-13 "승인·동의 단계를 늘리지 않는다"): 약관과 모델 처리 고지를 한 화면 한 클릭으로 받고(동의 레코드는 둘 다 남긴다),
+//   사용 기록(기본 꺼짐)·맡길 업무(지금 되는 일은 세금계산서뿐)·거래처·요약 확인 화면은 묻지 않는다. 인증 단계는 "홈택스 인증서"(이 PC 인증서 고르기)다.
+//   옛 이어 하기 저장이 없어진 화면(telemetry·tasks·counterparties)에 멈춰 있으면 요약으로 옮긴다.
+// - 문구는 전부 "F-06 초안 전" 자리표시이고 키에 판을 붙인다(F-06이 오면 문구만 바꾼다).
 // - 비밀(홈택스 비밀번호·보안카드)은 여기를 지나지 않는다. ①은 금고 등록 창(T-06)을 여는 결속값(notice 판)만 만들고, 값은 금고 창에서 금고로 직접 간다(ADR-025·026).
 // - 사업자번호는 DB와 같은 체크섬으로 본다(@sax/db isValidBizNo, profile.upsert가 같은 규칙으로 거부한다).
 // - 바깥 일(등록증 읽기·진위확인·인증서 찾기·금고 등록·동의 기록·프로필 저장·이어 하기 저장)은 OnboardingPorts 뒤에 둔다. 지금은 목업 어댑터(onboarding-mock.ts).
@@ -25,12 +28,15 @@ export const ONB_CHOICES = {
   tasks: ['submit', 'later'],
   counterparties: ['done', 'later'],
   summary: ['ok'],
-  first: ['try', 'invoice', 'later'],
+  first: ['try', 'later'],
 } as const satisfies Record<Exclude<OnbStep, 'done'>, readonly string[]>;
 export type OnbChoice = (typeof ONB_CHOICES)[keyof typeof ONB_CHOICES][number];
 export const ONB_ALL_CHOICES = [...new Set(Object.values(ONB_CHOICES).flat())] as OnbChoice[];
 
 // ---- 동의 화면 4종 ----
+
+/** O-06 [지금 해 보기]가 입력창에 채우는 문장(보내지 않는다). 보내면 거래처·금액·품목을 되묻는다. */
+export const TRY_FIRST_FILL = '세금계산서 발급해 줘';
 
 export const CONSENT_KINDS = ['terms', 'model', 'telemetry', 'delegation'] as const;
 export type ConsentKind = (typeof CONSENT_KINDS)[number];
@@ -53,9 +59,14 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
   terms: {
     kind: 'terms',
     key: 'consent.terms',
-    version: V,
-    title: '이용약관과 개인정보 처리방침',
-    lines: ['계정 하나에 사업자 프로필 1곳과 개인 프로필 1곳까지 쓸 수 있어요.', '다른 사람의 사업자를 대신 맡아 쓰는 것은 허용하지 않아요.', '맡기는 곳과 국외로 가는 정보는 처리방침 표에 모두 적어 두었어요.', '동의해야 앱을 쓸 수 있어요.'],
+    // 모델 처리 고지(②)와 한 화면이 되며 판을 올렸다(B4). ②의 동의 레코드는 ② 판으로 따로 남는다.
+    version: 'f06-pre.2',
+    title: '이용약관·개인정보 처리방침·AI 모델 이용',
+    lines: [
+      '계정 하나에 사업자 프로필 1곳과 개인 프로필 1곳까지 쓸 수 있어요. 다른 사람의 사업자를 대신 맡아 쓰는 것은 허용하지 않아요.',
+      '대화는 AI 모델로 해석해요. 이름·번호를 가린 문장만 아래 곳으로 보내고, 비밀번호·보안카드 번호는 보내지 않아요.',
+      '사용 기록은 보내지 않아요.',
+    ],
     draft: DRAFT,
   },
   // ② 모델 국외 이전(처리자 표는 설정 데이터 ConsentConfig.processors에서 온다. 모델 상류가 바뀔 수 있어 고정하지 않는다)
@@ -74,7 +85,7 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     key: 'consent.telemetry',
     version: V,
     title: '사용 기록 보내기(선택)',
-    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요. 설정에서 언제든 바꿀 수 있어요.'],
+    lines: ['오류 종류와 단계별 걸린 시간만 보내요. 서류·금액·거래처·사업자번호는 보내지 않아요.', '기본은 꺼져 있어요.'],
     draft: DRAFT,
   },
   // ① 보안카드·홈택스 아이디/비밀번호 위임 등록(범위 고지, 인증서 비밀번호는 저장하지 않음, D05 §9)
@@ -191,11 +202,11 @@ export type AuthKind = 'card' | 'simple' | 'cert' | 'fincert';
 export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' | 'cert'> = { card: 'security_card', simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
 export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 
-/** O-04 맡길 업무. now: 이 빌드에서 켠 일(PoC 빌드는 H-01·H-03·H-04, 08 §4). soon은 회색 칩(누르면 "지원되면 알림"). */
+/** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). H-03·H-04는 민원증명 실행이 들어오면 켠다. 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. */
 export const ONB_TASKS: ReadonlyArray<{ id: string; label: string; now: boolean }> = [
   { id: 'H-01', label: '세금계산서 발급·메일 전송', now: true },
-  { id: 'H-03', label: '사업자등록증명', now: true },
-  { id: 'H-04', label: '납세증명서', now: true },
+  { id: 'H-03', label: '사업자등록증명', now: false },
+  { id: 'H-04', label: '납세증명서', now: false },
   { id: 'H-02', label: '발급한 세금계산서 조회·PDF 보관', now: false },
   { id: 'H-10', label: '사실증명', now: false },
   { id: 'G-01', label: '주민등록 등·초본(직접 발급 안내)', now: false },
@@ -260,7 +271,19 @@ export function parseOnbState(x: unknown): OnbState | null {
   if (o.resumeStep !== undefined && o.resumeStep !== null && !(typeof o.resumeStep === 'string' && (ONB_STEPS as readonly string[]).includes(o.resumeStep))) return null;
   const base = initialOnbState();
   const picked = Object.fromEntries(Object.keys(base).filter((k) => Object.hasOwn(o, k)).map((k) => [k, o[k]]));
-  return { ...base, ...structuredClone(picked) } as OnbState;
+  const s = { ...base, ...structuredClone(picked) } as OnbState;
+  // 예전 판은 보안카드를 고르면 ① 위임 등록(금고에 넣고 앱이 대신 입력)으로 갔다. 그 약속은 이제 사실이 아니다.
+  // ①에 멈춘 저장은 발급 인증을 다시 묻는다(O-03, 지금 문구). 고른 인증은 비운다.
+  // 없어진 화면(B4)에 멈춘 저장은 요약에서 마친다
+  const GONE: readonly OnbStep[] = ['telemetry', 'tasks', 'counterparties'];
+  if (GONE.includes(s.step)) s.step = 'summary';
+  if (s.resumeStep && GONE.includes(s.resumeStep)) s.resumeStep = 'summary';
+  if (s.step === 'delegation' || s.resumeStep === 'delegation') {
+    if (s.step === 'delegation') s.step = 'auth';
+    else s.resumeStep = 'auth';
+    Object.assign(s, { auth: null, certId: null, registered: null, notice: null, explain: false });
+  }
+  return s;
 }
 
 export const initialOnbState = (): OnbState => ({ step: 'terms', biz: null, check: null, notice: null, auth: null, certId: null, certs: [], explain: false, registered: null, consents: {}, tasks: [], skipped: [], log: [], resumeStep: null, redo: null, redoFrom: null, redoPrev: null, portalLoginId: null });
@@ -276,6 +299,8 @@ export interface OnbProfile {
   address: string | null;
   email: string | null;
   signMethod: 'security_card' | 'simple_auth' | 'cert' | null;
+  /** [홈택스 인증서]에서 고른 인증서(금고 열거 id). 저장소가 main 안의 표로 CN을 찾아 프로필 cert_name에 쓴다(H-01 2.3.0이 이 이름으로 고른다). */
+  certId: string | null;
   /** ①에서 금고가 돌려준 포털 아이디(비밀 아님, DB profiles.portal_login_id, 금고 프로토콜 v1). */
   portalLoginId?: string;
 }
@@ -402,7 +427,7 @@ export class OnboardingFlow {
     const kind = CONSENT_STEP[this.s.step] ?? null;
     const st: Partial<OnbState> = this.state;
     delete st.portalLoginId; // 포털 아이디는 렌더러로 보내지 않는다
-    return { ...(st as Omit<OnbState, 'portalLoginId'>), consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
+    return { ...(st as Omit<OnbState, 'portalLoginId'>), consent: kind ? CONSENT_NOTICES[kind] : null, config: this.s.step === 'model' || this.s.step === 'terms' ? await this.ports.consentConfig() : null, tasksCatalog: ONB_TASKS };
   }
 
   /** 답 하나를 처리한다. 지금 단계가 아닌 답은 stale_step(두 번 누름·지난 카드), 표에 없는 답은 bad_choice. 한 번에 하나만. */
@@ -454,12 +479,43 @@ export class OnboardingFlow {
     if (s.auth && !s.skipped.includes('auth')) s.step = 'summary';
     else await this.toAuth();
   }
-  /** 인증을 골랐다(또는 건너뛰었다). 처음이면 ②, 다시 여는 중이면 요약(프로필 저장)으로. */
-  private afterAuth(skipped = false) {
+  /**
+   * 인증을 골랐다(또는 건너뛰었다). 처음이면 바로 마친다(프로필 저장 → 첫 발급 제안). 모델 동의가 없는 옛 저장이면 ②를 먼저 묻는다.
+   * 다시 여는 중이면 프로필을 저장하고 끝낸다(건너뛰었으면 그대로 끝낸다).
+   */
+  private async afterAuth(skipped = false) {
     const s = this.s;
-    if (!s.redo) s.step = 'model';
-    else if (skipped && s.redo === 'auth') this.endRedo();
-    else s.step = 'summary';
+    if (s.redo && skipped && s.redo === 'auth') return this.endRedo();
+    if (!s.redo && s.consents.model?.choice !== 'agreed') {
+      s.step = 'model';
+      return;
+    }
+    await this.finish();
+  }
+  /** 마치기(요약 확인 화면 없이): 사업자 프로필을 저장하고 첫 발급 제안으로(다시 연 것이면 끝). 맡길 업무는 지금 되는 일(세금계산서)이다. */
+  private async finish() {
+    const s = this.s;
+    if (!s.tasks.length && !s.skipped.includes('tasks')) s.tasks = ONB_TASKS.filter((t) => t.now).map((t) => t.id);
+    await this.saveProfile();
+    if (s.redo) this.endRedo();
+    else s.step = 'first';
+  }
+  private async saveProfile() {
+    const s = this.s;
+    if (!s.biz || s.skipped.includes('biz')) return;
+    await this.ports.saveProfile({
+      kind: 'business',
+      displayName: s.biz.name || s.biz.bizNo,
+      bizNo: s.biz.bizNo,
+      repName: s.biz.rep || null,
+      bizType: s.biz.bizType || null,
+      bizItem: s.biz.bizItem || null,
+      address: s.biz.address || null,
+      email: s.biz.email || null,
+      signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : null,
+      certId: s.auth === 'cert' ? s.certId : null,
+      ...(s.portalLoginId ? { portalLoginId: s.portalLoginId } : {}),
+    });
   }
   private endRedo() {
     this.s.step = 'done';
@@ -471,11 +527,15 @@ export class OnboardingFlow {
     const s = this.s;
     s.notice = null;
     switch (s.step) {
-      case 'terms':
+      case 'terms': {
+        // 약관과 모델 처리 고지는 한 화면 한 클릭이다(B4). 레코드는 각 고지의 키·판으로 따로 남긴다.
         await this.consent('terms', 'agreed');
-        this.say('동의했어요');
+        const cfg = await this.ports.consentConfig();
+        await this.consent('model', 'agreed', cfg.processorsVersion);
+        this.say('동의하고 시작할게요');
         s.step = 'welcome';
         return;
+      }
       case 'welcome':
         if (a.choice === 'later') {
           this.say('나중에 할게요');
@@ -507,8 +567,10 @@ export class OnboardingFlow {
         {
           const no = onlyDigits(clip(a.fields?.bizNo, BIZ_FIELD_MAX.bizNo));
           if (!isValidBizNo(no)) throw new Error('bad_biz_no');
-          this.say(`${no.slice(0, 3)}-${no.slice(3, 5)}-${no.slice(5)}`);
-          await this.setBiz({ ...EMPTY_BIZ, bizNo: no });
+          // 상호도 같은 화면에서 받는다(B4: 번호만 받으면 다음 화면에서 [고칠게요]로 상호를 다시 채워야 했다)
+          const name = clip(a.fields?.name, BIZ_FIELD_MAX.name);
+          this.say(`${name ? `${name} · ` : ''}${no.slice(0, 3)}-${no.slice(3, 5)}-${no.slice(5)}`);
+          await this.setBiz({ ...EMPTY_BIZ, name, bizNo: no });
         }
         return;
       case 'biz-confirm':
@@ -575,7 +637,7 @@ export class OnboardingFlow {
           }
           this.say('나중에 할게요');
           this.skip('auth');
-          this.afterAuth(true);
+          await this.afterAuth(true);
           return;
         }
         if (a.choice === 'cert') {
@@ -587,12 +649,12 @@ export class OnboardingFlow {
           const kind = a.choice as AuthKind;
           s.auth = kind;
           this.unskip('auth');
-          this.say(AUTH_LABEL[kind]);
-          if (kind === 'card') s.step = 'delegation';
-          else this.afterAuth();
+          this.say(kind === 'cert' ? `${AUTH_LABEL[kind]} · ${s.certs.find((x) => x.id === s.certId)?.owner ?? ''}` : AUTH_LABEL[kind]);
+          await this.afterAuth();
         }
         return;
       case 'delegation': {
+        // 예전 이어 하기 저장이 ①에 멈춰 있을 때만 온다(이제 보안카드도 바로 ②로 간다). 그 화면과 [다른 인증으로 바꾸기]가 돌게 남겨 둔다.
         if (a.choice === 'switch') {
           this.say('다른 인증으로 바꿀게요');
           s.auth = null;
@@ -619,15 +681,17 @@ export class OnboardingFlow {
         s.consents.delegation = { version, choice: 'agreed', at };
         if (r.portalLoginId) s.portalLoginId = r.portalLoginId;
         this.say('동의하고 금고에 등록했어요');
-        this.afterAuth();
+        await this.afterAuth();
         return;
       }
       case 'model': {
         const cfg = await this.ports.consentConfig();
         await this.consent('model', 'agreed', cfg.processorsVersion);
         this.say('동의해요');
-        s.step = s.resumeStep ?? 'telemetry';
-        s.resumeStep = null;
+        if (s.resumeStep) {
+          s.step = s.resumeStep;
+          s.resumeStep = null;
+        } else await this.finish();
         return;
       }
       case 'telemetry':
@@ -663,29 +727,18 @@ export class OnboardingFlow {
         s.step = 'summary';
         return;
       case 'summary':
-        if (s.biz && !s.skipped.includes('biz')) {
-          await this.ports.saveProfile({
-            kind: 'business',
-            displayName: s.biz.name || s.biz.bizNo,
-            bizNo: s.biz.bizNo,
-            repName: s.biz.rep || null,
-            bizType: s.biz.bizType || null,
-            bizItem: s.biz.bizItem || null,
-            address: s.biz.address || null,
-            email: s.biz.email || null,
-            signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : null,
-            ...(s.portalLoginId ? { portalLoginId: s.portalLoginId } : {}),
-          });
-        }
+        // 옛 이어 하기 저장만 여기 온다(새 흐름은 요약 확인 없이 finish)
+        await this.saveProfile();
         this.say('확인했어요');
         // 다시 연 것이면 첫 작업 제안 없이 끝낸다(이미 쓰던 사용자)
         if (s.redo) this.endRedo();
         else s.step = 'first';
         return;
       case 'first':
-        this.say({ try: '지금 해 볼게요', invoice: '세금계산서 1건 발급', later: '나중에 할게요' }[a.choice as 'try' | 'invoice' | 'later']);
+        this.say(a.choice === 'try' ? '지금 해 볼게요' : '나중에 할게요');
         s.step = 'done';
-        return a.choice === 'try' ? '사업자등록증명 떼 줘' : a.choice === 'invoice' ? '세금계산서 ' : undefined;
+        // [지금 해 보기]는 지금 되는 일(세금계산서)로 채운다(F-13: 민원증명 실행이 들어오기 전에는 "증명서 발급은 곧…"이라 첫 시도가 안 됐다)
+        return a.choice === 'try' ? TRY_FIRST_FILL : undefined;
     }
     return;
   }

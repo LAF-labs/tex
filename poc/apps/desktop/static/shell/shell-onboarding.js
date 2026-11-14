@@ -1,37 +1,37 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
-// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. ①에 동의하면 main이 금고 등록 창(T-06)을 연다.
+// - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 발급 인증은 발급할 때 사람이 홈택스 창에서 직접 마친다.
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
-import { btn, fmtBiz, h, kv, note } from './shell-views.js';
+import { btn, fmtBiz, h, kv, note, securityBox } from './shell-views.js';
 
 const Q = {
-  terms: '시작하기 전에 약관과 처리방침을 확인해 주세요.',
-  welcome: '세금계산서 발급과 홈택스 증명서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
-  'biz-number': '사업자번호를 알려 주세요.',
+  terms: '시작하기 전에 약관과 AI 모델 이용을 확인해 주세요.',
+  welcome: '세금계산서 발급을 대신 해 드려요. 먼저 사업자를 등록할게요.',
+  'biz-number': '상호와 사업자번호를 알려 주세요.',
   'biz-confirm': '등록 내용을 확인해 주세요.',
-  auth: '세금계산서를 발급할 때 어떤 인증을 쓰세요? 한 번 고르면 모든 발급에 쓰고, 설정에서만 바꿔요.',
+  auth: '홈택스에 로그인하고 세금계산서에 서명할 공동인증서를 골라 주세요. 비밀번호는 첫 발급 때 금고 창에서 한 번만 받아요.',
   delegation: '보안카드를 쓰려면 먼저 이 PC 금고에 등록해야 해요.',
   model: '대화는 AI 모델로 해석해요. 아래 내용을 확인하고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주시겠어요? 안 보내도 돼요.',
   tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
   summary: '등록을 마쳤어요. 내용을 확인해 주세요.',
-  first: '사업자등록증명을 한 번 떼 볼까요? 돈이 오가지 않아 연습하기 좋아요.',
+  first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
 };
 
-/** O-03 수단마다 앱이 맡는 정도 한 줄(08 §4). */
+/** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
-  ['card', '보안카드', '한 번 등록하면 발급 때마다 앱이 알아서 입력해요.'],
-  ['simple', '사업자 간편인증', '카카오뱅크·IBK·KB 앱에서 발급할 때마다 승인해요.'],
-  ['cert', '공동인증서', '비밀번호는 매번 직접 입력해요. 이 PC에서 찾은 인증서에서 골라요.'],
-  ['fincert', '금융인증서', '6자리 비밀번호를 매번 직접 입력해요.'],
+  ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
+  ['cert', '공동인증서', '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면, 다음부터는 앱이 넣어요.'],
+  ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
-/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). */
-const SCOPE_LINES = [
-  '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명, 납세증명서',
+/** O-06 축소 범위·운영 수준 고지(F-06 자리표시). "지금 되는 일"은 O-04 업무 표(now)에서 만들어 두 화면이 어긋나지 않게 한다. */
+const scopeLines = (catalog) => [
+  `지금 되는 일: ${catalog.filter((t) => t.now).map((t) => t.label).join(', ')}`,
   '정부24 서류는 직접 발급을 안내하고, 저장한 파일만 문서함에 정리해요',
-  '신고와 세금 판단은 하지 않아요. 신고에 필요한 증명서는 뗄 수 있어요',
+  '신고와 세금 판단은 하지 않아요',
   '홈택스 화면이 달라지거나 값을 확실히 읽지 못하면 발급하지 않고 멈춰요',
 ];
 
@@ -41,6 +41,11 @@ const uiFor = (step) => {
   if (ui.step !== step) ui = { step, editing: false, certId: null, showCerts: false, tasks: {}, busy: false };
   return ui;
 };
+
+/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안 빨간 글로 둔다(대표 2026-11-13). 부른 쪽이 다시 그린다. */
+export function showOnbError(step, text) {
+  uiFor(step).error = text;
+}
 
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
 const draftTag = (n) => (n?.draft ? h('span', { class: 'sx-meta onb-draft', 'data-draft': n.key }, n.draft) : null);
@@ -66,10 +71,18 @@ export function onboardingView(o, act) {
 }
 
 function stepCard(o, act) {
+  const el = stepBody(o, act);
+  const u = uiFor(o.step);
+  if (u.error) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
+  return el;
+}
+
+function stepBody(o, act) {
   const u = uiFor(o.step);
   const reply = async (choice, extra = {}) => {
     if (u.busy) return false;
     u.busy = true;
+    u.error = null;
     try {
       return await act.reply(o.step, choice, extra);
     } finally {
@@ -95,14 +108,17 @@ function stepCard(o, act) {
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
     case 'biz-number': {
-      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호' });
+      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다
+      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호', value: u.vals?.name ?? '' });
+      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호', value: u.vals?.bizNo ?? '' });
       const form = h(
         'form',
-        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), reply('submit', { fields: { bizNo: input.value } })) },
+        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
+        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
-      return card('사업자번호로 등록', notice, p('번호만 국세청 진위확인에 보내요. 나머지는 첫 홈택스 로그인 때 채워요.', true), form);
+      return card('사업자번호로 등록', notice, p('대표자·주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
     }
     case 'biz-confirm':
       return bizCard(o, u, reply, act);
@@ -118,13 +134,12 @@ function stepCard(o, act) {
         row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
       );
     case 'summary':
-      return summaryCard(o, reply, act);
+      return summaryCard(o, reply);
     case 'first':
       return h(
         'div',
         { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
         h('button', { type: 'button', 'data-onb': 'try', onclick: () => reply('try') }, '지금 해 보기'),
-        h('button', { type: 'button', 'data-onb': 'invoice', onclick: () => reply('invoice') }, '세금계산서 1건 발급'),
         h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
       );
   }
@@ -143,7 +158,7 @@ function consentCard(o, reply) {
     delegation: [btn('동의하고 금고 창 열기', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' }), btn('다른 인증으로 바꾸기', () => reply('switch'), '', { 'data-onb': 'switch' })],
   }[o.step];
   const table =
-    o.step === 'model' && o.config
+    (o.step === 'model' || o.step === 'terms') && o.config
       ? h(
           'table',
           { class: 'onb-table', 'data-processors': o.config.processorsVersion },
@@ -176,9 +191,10 @@ function bizCard(o, u, reply, act) {
     ['상태', o.check?.label ?? '—', { tag: o.check?.source, state: active ? null : 'attention' }],
   ];
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
-  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요 · 사업자번호만 국세청 진위확인에 보내요(기본: 우리 서버 경유, 설정에서 내 키)', true);
+  const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
-    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
+    // 거부되어 다시 그릴 때는 고치던 값(u.fields)을 그대로 둔다
+    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: u.fields?.[name] ?? value ?? '', autocomplete: 'off', ...attrs }));
     const form = h(
       'form',
       {
@@ -189,6 +205,7 @@ function bizCard(o, u, reply, act) {
           const fields = Object.fromEntries(['name', 'bizNo', 'rep', 'bizType', 'bizItem', 'address', 'email'].map((k) => [k, String(f.get(k) ?? '')]));
           // 저장한 내용으로 다시 그릴 때 읽기 모양이 되게 먼저 내린다. 거부되면(번호 틀림 등) 고치던 칸으로 돌아간다.
           u.editing = false;
+          u.fields = fields;
           if (!(await reply('edit', { fields }))) {
             u.editing = true;
             act.rerender();
@@ -202,7 +219,7 @@ function bizCard(o, u, reply, act) {
       field('종목', 'bizItem', b.bizItem, { maxlength: 100 }),
       field('사업장 주소', 'address', b.address, { maxlength: 200 }),
       field('사업자 이메일', 'email', b.email, { type: 'email', maxlength: 320 }),
-      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
+      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
     );
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);
   }
@@ -232,54 +249,66 @@ function bizCard(o, u, reply, act) {
   );
 }
 
+/**
+ * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 먼저 보이고 하나 고르면 끝(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
+ * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·간편인증·금융인증서)은 [다른 방법]에 접어 둔다.
+ */
 function authCard(o, u, reply, act) {
   const today = new Date();
   const soon = (c) => (new Date(`${c.expiresOn}T00:00:00`) - today) / 86_400_000 <= 30;
-  const opts = AUTH.map(([k, label, line]) =>
+  const usable = (c) => c.usable !== false;
+  if (!u.certId) u.certId = o.certs.find(usable)?.id ?? null;
+  const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
+  const certRow = (c) =>
     h(
       'button',
-      { type: 'button', class: `sx-opt onb-auth${k === 'cert' && u.showCerts ? ' is-on' : ''}`, 'data-onb': k, 'aria-pressed': String(k === 'cert' && u.showCerts), onclick: () => (k === 'cert' ? ((u.certId = u.certId ?? o.certs.find((c) => c.usable !== false)?.id ?? null), (u.showCerts = true), act.rerender()) : reply(k)) },
+      { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
       h('span', { class: 'sx-radio' }),
-      h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line)),
-    ),
-  );
-  const usable = (c) => c.usable !== false;
-  const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
-  const certs =
-    u.showCerts &&
-    h(
-      'div',
-      { class: 'onb-certs', 'data-onb-certs': '' },
-      o.certs.length
-        ? [
-            ...o.certs.map((c) =>
-              h(
-                'button',
-                { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
-                h('span', { class: 'sx-radio' }),
-                h(
-                  'span',
-                  { class: 'onb-auth-main' },
-                  h('b', {}, `${c.owner} · ${c.usage}`),
-                  h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
-                ),
-              ),
-            ),
-            h('div', { class: 'sx-actions' }, btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId })),
-          ]
-        : p('이 PC에서 공동인증서를 찾지 못했어요. 다른 수단을 고르거나 인증서를 옮긴 뒤 다시 해 주세요.', true),
+      h(
+        'span',
+        { class: 'onb-auth-main' },
+        h('b', {}, `${c.owner} · ${c.usage}`),
+        h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
+      ),
     );
-  const explain = o.explain
-    ? note('보안카드는 한 번 등록하면 앱이 입력해요. 간편인증은 매번 폰 앱에서 승인해요. 공동·금융인증서는 비밀번호를 매번 직접 넣어요.', false, o.certs.length ? `이 PC에서 공동인증서 ${o.certs.length}개를 찾았어요. 공동인증서를 쓰면 따로 등록할 것이 없어요.` : null)
+  const any = o.certs.some(usable);
+  const certs = h(
+    'div',
+    { class: 'onb-certs', 'data-onb-certs': '' },
+    ...(o.certs.length ? o.certs.map(certRow) : [note('이 PC에서 공동인증서를 찾지 못했어요. 인증서를 이 PC로 옮긴 뒤 다시 열거나, [다른 방법]으로 발급할 수 있어요.', true)]),
+  );
+  const other = u.showCerts
+    ? h(
+        'div',
+        { class: 'onb-opts', 'data-onb-other': '' },
+        ...AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
+          h('button', { type: 'button', class: 'sx-opt onb-auth', 'data-onb': k, onclick: () => reply(k) }, h('span', { class: 'sx-radio' }), h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line))),
+        ),
+      )
     : null;
+  // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다
+  const sec = h('div', { 'data-onb-security': '' });
+  if (act.security)
+    act.security
+      .check()
+      .then((st) => {
+        if (st.state === 'missing' || st.state === 'stopped') sec.append(securityBox(st, act.security, () => act.toast('보안 프로그램이 준비됐어요')));
+      })
+      .catch(() => {});
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '발급 인증')),
-    explain,
-    h('div', { class: 'onb-opts' }, ...opts),
-    certs || null,
-    h('div', { class: 'sx-actions' }, btn('잘 모르겠어요', () => reply('unsure'), '', { 'data-onb': 'unsure', disabled: o.explain }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
+    sec,
+    certs,
+    h(
+      'div',
+      { class: 'sx-actions' },
+      any ? btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId }) : null,
+      btn(u.showCerts ? '다른 방법 접기' : '다른 방법', () => ((u.showCerts = !u.showCerts), act.rerender()), any ? '' : 'sx-btn-primary', { 'data-onb': 'other' }),
+      btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
+    ),
+    other,
   );
 }
 
@@ -300,7 +329,7 @@ function tasksCard(o, u, reply, act) {
   );
 }
 
-function summaryCard(o, reply, act) {
+function summaryCard(o, reply) {
   const b = o.biz;
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
@@ -319,9 +348,9 @@ function summaryCard(o, reply, act) {
       'div',
       { class: 'onb-scope', 'data-onb-scope': '' },
       h('div', { class: 'sx-card-hd' }, h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'), h('span', { class: 'sx-meta onb-draft' }, 'F-06 초안 전 문구')),
-      h('ul', { class: 'onb-lines' }, ...SCOPE_LINES.map((l) => h('li', {}, l))),
+      h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
-    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' }), btn('보관 위치 바꾸기', () => act.toast('보관 위치는 설정에서 바꿔요(준비 중)'), 'sx-btn-quiet', { 'data-onb': 'storage' })),
+    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),
   );
 }

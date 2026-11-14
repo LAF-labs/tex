@@ -1,14 +1,28 @@
-// 제품 H-01 원본(packages/engine/playbooks: H-01 v2.1 + 조회 패키지 2개, 서명 전)을 읽는 도우미. 반례는 이것을 복제해 한 군데만 바꾼다.
+// H-01 골든(게시본 2.1.1 고정 사본 + 조회 2개, 서명 전)과 제품 원본을 읽는 도우미. 반례는 이것을 복제해 한 군데만 바꾼다.
 import { generateKeyPairSync, sign as edSign, type KeyObject } from 'node:crypto';
 import fs from 'node:fs';
 import { BundleCatalog } from '@sax/model';
 import { canonicalWithout, contentBytes, manifestDigest, sha256Hex, timestampBody, type BundleOutcomes, type PackageFiles, type RawPackage, type TrustRoots } from '@sax/engine/core';
 
 const DIR = new URL('../packages/engine/playbooks/', import.meta.url);
-const read = (p: string) => JSON.parse(fs.readFileSync(new URL(p, DIR), 'utf8')) as never;
+/**
+ * 게시본 H-01 2.1.1 묶음(2026-11-11까지의 제품 원본, 자리표시 셀렉터) 고정 사본. 엔진 규칙·조율기·가짜 H-01 페이지 시험의 골든이다.
+ * 제품 원본은 2026-11-12 실화면 판(2.2.0)으로 바뀌었고, 그 판은 tests/h01-real-dryrun.test.ts(가짜 홈택스)가 본다.
+ */
+const GOLDEN = new URL('./fixtures/published-2.1.1/', import.meta.url);
+const readIn = (base: URL, p: string) => JSON.parse(fs.readFileSync(new URL(p, base), 'utf8')) as never;
+const filesIn = (base: URL, dir: string): PackageFiles => ({
+  manifest: readIn(base, `${dir}/manifest.json`), playbook: readIn(base, `${dir}/playbook.json`), selectors: readIn(base, `${dir}/selectors.json`), strings: readIn(base, `${dir}/strings.ko.json`),
+});
 
+/** 제품 원본(packages/engine/playbooks)의 한 패키지. */
 export function loadPkg(dir: string): PackageFiles {
-  return { manifest: read(`${dir}/manifest.json`), playbook: read(`${dir}/playbook.json`), selectors: read(`${dir}/selectors.json`), strings: read(`${dir}/strings.ko.json`) };
+  return filesIn(DIR, dir);
+}
+
+/** H-01 3종은 게시본 2.1.1 고정 사본(판 그대로), 그 밖(민원증명 등)은 제품 원본. */
+export function golden(dir: string): PackageFiles {
+  return dir.startsWith('hometax.invoice.') ? filesIn(GOLDEN, dir) : filesIn(DIR, dir);
 }
 
 /**
@@ -23,9 +37,9 @@ function pinned(f: PackageFiles): PackageFiles {
   return f;
 }
 
-export const h01 = (): PackageFiles => pinned(structuredClone(loadPkg('hometax.invoice.issue')));
+export const h01 = (): PackageFiles => pinned(golden('hometax.invoice.issue'));
 export const lookups = (): Map<string, PackageFiles> =>
-  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, pinned(structuredClone(loadPkg(id)))]));
+  new Map(['hometax.invoice.lookup', 'hometax.invoice.email_status'].map((id) => [id, pinned(golden(id))]));
 
 export function bundleOutcomes(): Map<string, BundleOutcomes> {
   return new Map(BundleCatalog.load().list().map((b) => [b.wireId, { outcomes: b.def.outcomes.map((o) => o.name), reserved: b.def.reservedOutcomes }]));

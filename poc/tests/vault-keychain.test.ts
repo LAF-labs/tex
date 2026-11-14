@@ -180,12 +180,14 @@ describe('사람 비밀 저장소(HumanSecretVault)', () => {
       // 포털 아이디는 비밀이 아니라 금고에 칸이 없다(D05 §2·§4, ADR-035).
       () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }], { version: 'v1' }),
       () => v.store('portal_password', 'business', [{ field: 'id' as never, bytes: enc('me') }, { field: 'pw', bytes: enc('x') }], { version: 'v1' }),
-      () => v.store('cert_password' as never, 'business', [{ field: 'pw', bytes: enc('x') }], { version: 'v1' }),
+      // 인증서 비밀번호는 칸 하나(pw)만(처음 쓸 때 금고가 기억, 대표 지시 2026-11-13)
+      () => v.store('cert_password', 'business', [{ row: 1, bytes: enc('x') }], { version: 'v1' }),
       () => v.store('portal_password', '../x', [{ field: 'pw', bytes: enc('x') }], { version: 'v1' }),
     ];
     for (const f of bad) await assert.rejects(f());
     assert.equal(itemName('portal_password', 'business', { field: 'pw' }), 'portal/business/pw');
     assert.equal(slotName('security_card', 'personal'), 'securitycard/personal');
+    assert.equal(slotName('cert_password', 'business'), 'cert/business');
   });
 
   it('다른 기기(다른 래핑 키)에서는 같은 저장소 사본을 열 수 없다', async () => {
@@ -546,7 +548,9 @@ describe('금고 포트 연결: 등록 창 저장·control 세션 추종·인증
     const got = h.control.once('secret.suspect');
     assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'security_card', scope: 'business' }), {});
     assert.deepEqual(await got, { kind: 'security_card', scope: 'business' });
-    await assert.rejects(h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }), /bad_params/);
+    // 인증서 비밀번호 틀림도 같은 길(기억값을 suspect로, cert-secret.ts 재입력 1번)
+    assert.deepEqual(await h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'cert_password', scope: 'business' }), {});
+    await assert.rejects(h.client.rpc('typist.authFailed', { runId: 'r1', kind: 'other', scope: 'business' }), /bad_params/);
     assert.equal(await h.control.rpc('secret.forget', { kind: 'security_card', scope: 'business' }), true);
     assert.deepEqual(await h.control.rpc('secret.list'), []);
   });

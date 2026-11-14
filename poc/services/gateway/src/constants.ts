@@ -8,12 +8,18 @@ export const GATEWAY = {
   /** 실행 밖 대화 범위(chatSessionId)의 예산(D04 §1 "자기 예산"). 제안값, D04 확정 필요 */
   l1PerChat: 12,
   l2PerChat: 20,
+  /** 실행당 예상 밖 화면 판정·브라우저 에이전트 호출(page_judge·browser_agent, 에이전트 25걸음 + 판정). packages/net AGENT_CALLS_PER_RUN과 같다 */
+  agentPerRun: 32,
+  /** 판정·에이전트 상류 대기(ms, 재시도 없음). 함수 상한 60초(vercel.json api/sax)보다 짧게. */
+  agentUpstreamTimeoutMs: 50_000,
   runTokenTtlMs: 2 * MS.H,
   /** runToken 발급 한도(범위 ID를 바꿔 예산을 늘리는 것을 늦춘다) */
   runTokensPerDeviceHour: 120,
   /** 분당 요청 한도(계정 단위, D09 §3) */
   l1PerMinute: 60,
   l2PerMinute: 10,
+  /** 판정·에이전트 분당 한도(계정 단위). 에이전트는 걸음마다 부른다 */
+  agentPerMinute: 40,
   /** 월 토큰 한도(입력+출력). 100%에서 L2 중단, 200%(하드 상한)에서 안전 판정 번들만 */
   monthlyTokensDefault: 3_000_000,
   hardCapMultiplier: 2,
@@ -30,6 +36,8 @@ export const GATEWAY = {
   /** 진위확인 프록시(D09 §4.1): 요청당 ≤ 10건, 계정당 분당 30회 */
   bizPerRequest: 10,
   bizPerMinute: 30,
+  /** CODEF 토큰(계좌 자동조회): 기기당 시간당 20회. PC는 만료 전까지 메모리에 두고 다시 쓰므로 실제로는 하루 몇 번이다 */
+  codefTokenPerDeviceHour: 20,
 } as const;
 
 /** 단가(마이크로 달러 / 100만 토큰). S9 실측·계약 전에는 0이고 ENV(GW_PRICES_JSON)로 넣는다. 토큰 수 계량은 단가와 무관하게 정확하다. */

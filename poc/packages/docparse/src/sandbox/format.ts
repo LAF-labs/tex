@@ -2,12 +2,21 @@
 import { IMAGE_LIMITS, SandboxError } from './limits.ts';
 import { isZip } from './zip.ts';
 
-export type InputFormat = 'pdf' | 'jpeg' | 'png' | 'xlsx' | 'csv';
+export type InputFormat = 'pdf' | 'jpeg' | 'png' | 'xlsx' | 'csv' | 'xls' | 'html';
 /** 알아보지만 받지 않는 형식(사장님에게 다른 형식으로 저장해 달라고 안내한다) */
-export type RejectedFormat = 'xls_or_encrypted_ooxml' | 'heic' | 'webp' | 'gif' | 'tiff' | 'bmp' | 'html' | 'zip_other' | 'unknown';
+export type RejectedFormat = 'heic' | 'webp' | 'gif' | 'tiff' | 'bmp' | 'html' | 'zip_other' | 'unknown';
 
 const starts = (b: Uint8Array, sig: number[], at = 0) => sig.every((v, i) => b[at + i] === v);
 const ascii = (b: Uint8Array, from: number, to: number) => String.fromCharCode(...b.subarray(from, Math.min(to, b.length)));
+/** 앞 limit 바이트 안에 ASCII 글자(소문자로 준다)가 대소문자 무시로 있는가 */
+function hasAsciiCI(b: Uint8Array, needle: string, limit: number): boolean {
+  const n = Math.min(b.length, limit) - needle.length;
+  outer: for (let i = 0; i <= n; i++) {
+    for (let k = 0; k < needle.length; k++) if ((b[i + k]! | 0x20) !== needle.charCodeAt(k)) continue outer;
+    return true;
+  }
+  return false;
+}
 
 export function sniffFormat(b: Uint8Array): { format: InputFormat } | { rejected: RejectedFormat } {
   if (b.length === 0) return { rejected: 'unknown' };
@@ -15,7 +24,8 @@ export function sniffFormat(b: Uint8Array): { format: InputFormat } | { rejected
   if (ascii(b, 0, 1024).includes('%PDF-')) return { format: 'pdf' };
   if (starts(b, [0xff, 0xd8, 0xff])) return { format: 'jpeg' };
   if (starts(b, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return { format: 'png' };
-  if (starts(b, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) return { rejected: 'xls_or_encrypted_ooxml' };
+  // OLE 복합 문서: .xls(BIFF8) 또는 암호 건 xlsx. 어느 쪽인지는 readXls가 스트림을 보고 정한다(암호 → password_required, xls 아님 → unsupported_format)
+  if (starts(b, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) return { format: 'xls' };
   if (isZip(b)) return ascii(b, 30, 30 + 64).startsWith('[Content_Types].xml') || ascii(b, 0, 4096).includes('xl/') ? { format: 'xlsx' } : { rejected: 'zip_other' };
   if (ascii(b, 4, 12) === 'ftypheic' || ascii(b, 4, 12) === 'ftypheix' || ascii(b, 4, 12) === 'ftypmif1') return { rejected: 'heic' };
   if (ascii(b, 0, 4) === 'RIFF' && ascii(b, 8, 12) === 'WEBP') return { rejected: 'webp' };
@@ -23,7 +33,8 @@ export function sniffFormat(b: Uint8Array): { format: InputFormat } | { rejected
   if (starts(b, [0x49, 0x49, 0x2a, 0x00]) || starts(b, [0x4d, 0x4d, 0x00, 0x2a])) return { rejected: 'tiff' };
   if (ascii(b, 0, 2) === 'BM') return { rejected: 'bmp' };
   const head = ascii(b, 0, 512).replace(/^\uFEFF|^\xEF\xBB\xBF/, '').trimStart().toLowerCase();
-  if (head.startsWith('<')) return { rejected: 'html' }; // 국내 사이트의 "엑셀 내려받기"가 HTML 표인 경우(후속: 표 읽기)
+  // 국내 사이트의 "엑셀 내려받기"가 확장자만 .xls인 HTML 표인 경우. 표가 없는 HTML은 받지 않는다
+  if (head.startsWith('<')) return hasAsciiCI(b, '<table', 64 * 1024) ? { format: 'html' } : { rejected: 'html' };
   // 남은 것은 글자 파일이라면 CSV로 본다. NUL이 있으면 이진 파일이다.
   if (b.subarray(0, 4096).includes(0)) return { rejected: 'unknown' };
   return { format: 'csv' };

@@ -15,8 +15,8 @@ import { conf } from './util.ts';
 export const ACCEPTS: Record<DocKind, readonly InputFormat[]> = {
   certificate: ['pdf', 'jpeg', 'png'],
   receipt: ['jpeg', 'png', 'pdf'],
-  settlement: ['xlsx', 'csv'],
-  insurance_notice: ['xlsx', 'csv'],
+  settlement: ['xlsx', 'xls', 'html', 'csv'],
+  insurance_notice: ['xlsx', 'xls', 'html', 'csv'],
 };
 
 const LOW_OCR = 60;

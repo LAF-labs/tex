@@ -34,7 +34,7 @@ const EXPECTED_ALLOWED: Record<string, string[]> = {
   Page: [
     'enable', 'disable', 'getFrameTree', 'setLifecycleEventsEnabled', 'addScriptToEvaluateOnNewDocument', 'removeScriptToEvaluateOnNewDocument',
     'createIsolatedWorld', 'navigate', 'reload', 'stopLoading', 'getNavigationHistory', 'navigateToHistoryEntry', 'getLayoutMetrics', 'setFontFamilies',
-    'captureScreenshot', 'startScreencast', 'stopScreencast', 'screencastFrameAck', 'handleJavaScriptDialog', 'bringToFront', 'close', 'getResourceTree',
+    'captureScreenshot', 'startScreencast', 'stopScreencast', 'screencastFrameAck', 'handleJavaScriptDialog', 'close', 'getResourceTree',
   ],
   Runtime: ['enable', 'disable', 'evaluate', 'callFunctionOn', 'getProperties', 'releaseObject', 'releaseObjectGroup', 'runIfWaitingForDebugger', 'awaitPromise', 'discardConsoleEntries'],
   DOM: [

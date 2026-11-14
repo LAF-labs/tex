@@ -4,9 +4,9 @@
 
 | 폴더 = 패키지 id | 종류 | 버전 |
 |---|---|---|
-| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.1.0 |
-| `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.0.0 |
-| `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.0.0 |
+| `hometax.invoice.issue` | playbook(H-01 전자세금계산서 발급) | 2.3.3 |
+| `hometax.invoice.lookup` | lookup(발급 목록 조회) | 1.2.0 |
+| `hometax.invoice.email_status` | lookup(메일 발송 상태) | 1.2.0 |
 | `hometax.cert.taxpayment` | playbook(H-04 납세증명서(국세) 발급) | 1.0.0 |
 | `hometax.cert.issued_list` | lookup(민원신청 처리결과 조회. 민원증명 공통: H-04 verify, H-03·H-08·H-09도 같이 쓴다) | 1.0.0 |
 | `hometax.cert.biz_registration` | playbook(H-03 사업자등록증명) | 1.0.0 |
@@ -15,7 +15,9 @@
 
 - 파일: `manifest.json`·`playbook.json`·`selectors.json`·`strings.ko.json`.
 - manifest의 `contentDigests`·`lookupsUsed[].digest`·`signatures`는 자리표시다. 게시 도구가 원시 바이트로 채우고 package 키 2개로 서명한다(클라우드 트랙 게시 도구, 서명은 사용자).
-- 홈택스 셀렉터는 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
+- 홈택스 셀렉터: H-01 3종(`hometax.invoice.*` 2.3.0·1.2.0)은 2026-11-11 실제 발급 1건 캡처(부장 세션, 레포 밖 기록)에 맞춰 다시 썼다. 실제 id(`mf_txppWframe_…`)·직접 주소·창 순서·요청(actionId)·그리드 `data-col_id`.
+  캡처가 없는 부분(로그인 절차 세부, 보안카드·사업자 간편인증 갈래, 인증서 창 [취소] 뒤 화면, 세션 만료, 접근성 이름 일부)은 가정이고 사람 차례로 둔다. 가정 목록은 PR 본문. 건조 실행: `tests/h01-real-dryrun.test.ts`(가짜 홈택스 `tests/hometax-fake.ts`).
+  민원증명(`hometax.cert.*`) 셀렉터는 아직 실제 화면과 대조하지 않았다(PoC-3 뒤, ADR-025 PoC 상한).
 - 시험은 이 원본을 골든 패키지로 쓴다(`tests/core-fixtures.ts`). 바꾸면 레지스트리 샘플(`tests/fixtures/registry`)을 다시 만든다.
 - fixture 포털(가짜 페이지) 패키지는 여기 두지 않는다. `tests/`에서만 만든다(ADR-039).
 - `hometax.cert.{biz_registration,vat_tax_base,financial_statements}` 3개는 공유 템플릿 `scripts/playbooks/hometax-certificate.ts`(ADR-018 결정 2: 즉시발급 민원증명 하나)에서 만든다. 발급 확인 조회는 H-04와 같이 쓰는 `hometax.cert.issued_list`(LAF-labs/tex#247)를 참조만 한다. 손으로 고치지 말고 템플릿을 고친 뒤 `node --conditions=development scripts/gen-cert-playbooks.ts`로 다시 만든다(시험 `tests/cert-playbooks.test.ts`가 같은지 본다).
@@ -52,3 +54,9 @@ H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉�
 - 조회 `hometax.cert.issued_list`는 IR 조회 패키지다(H-01 조회와 같은 방식, 서명 대상). 입력 `certDoc`은 민원명이고(verify match 키와 같은 이름, IR 조회 관례), 건수 `hometax.certlookup.count`·카드 목록 이름·값 쌍(strings `lookup.table.labelCss`·`valueCss`)은 캡처 전 자리표시이고, 즉시발급 3종도 같은 패키지를 쓴다.
 - 엔진: 게이트 카드는 GATE_CARDS(`cert.confirm` 4칸), 제품이 받는 id는 `registry-sync.ts` PRODUCT_PACKAGE_IDS(H-01·H-03·H-04·H-08·H-09, 조회는 lookupsUsed로 따라온다). RunService(세금계산서 입력·원장 재료)는 아직 `invoice.confirm`만 게이트를 연다(민원증명 실행 입력·원장 재료는 후속).
 
+- 2.2.1(2026-11-13): 실제 0.1.10 실행이 s12 등록번호 칸에서 R-A1 동일성 불일치로 사람 차례가 됐다. 실화면 접근성 이름은 빈 칸이다(reports/raw/poc-3-mac-landmarks.json). title에서 가져온 정확 일치 이름 패턴 3개(등록번호·[확인]·1행 품목)를 빈 이름도 통과하게 풀고 label·role 후보를 더했다. 등록번호 입력 칸에 fieldKey counterpartBizNo를 주어 하이픈을 정규화하고, 미리보기 글은 readbackOf로 바꿨다. recovery.default는 {retry 2}이고, 게이트 뒤·제출·verify·save_pdf·로그인 대기 s5는 retry 0이다. 가짜 홈택스는 실화면처럼 그 칸들의 title을 뺐다.
+- 2.2.2(2026-11-13, 앱 0.1.11 이상, 게시 minAppVersion 0.1.11): 로그인 s4~s5를 사람 600초 대기에서 공동인증서 로그인으로 바꿨다. 인증서 탭 → [공동·금융인증서] → 인증서 창(iframe#dscert) 목록 첫 행 → 금고 비밀번호(human kind secret, 칸 hometax.cert.password는 frame `iframe#dscert`) → [확인] → "로그아웃" 대기. 발급 서명 signFlow.steps.cert는 human:secret과 confirmTarget(인증서 [확인], 커밋)이고, readyTarget은 인증서 창 안 첫 행이다(창 문서가 다 뜬 뒤에 금고 창을 연다). 인증서 창 id는 공개 정적 파일(UI/ML4Web_Main.html 등)에서 읽었다. 인증서는 MagicLine이 처음 골라 둔 행(0번)을 쓴다. 이름으로 고르기는 아직 없다.
+- 2.3.0(2026-11-13, IR rev v1.3.6, 앱 0.1.12 이상, 게시 minAppVersion 0.1.12. 2.2.2는 게시하지 않았다): 대표 지시 "정확하고 프로답게". 공급받는자·품목·비고 칸은 실기록 id + 영역 landmark + 실기록 이름(빈 이름만 허용) + expect visible·enabled·editable. 처리 중 표시(`[id$="_wq_processMsgComp"]`)는 `wait gone`으로 기다린다(s0a·s3a·s11a·s13b·s18b, 고정 지연 없음). 인증서는 이름으로 고른다: 로그인 s4d `pick`(하나면 그것, 여럿이면 프로필 cert_name과 같은 행), 못 고르면 s4e 핸드오프 → 사람이 한 번 누르고 [다 했어요] → s4f `pick use:selected remember:certName`(이름을 프로필에 저장). 발급 서명은 `signFlow.certPick`(같은 규칙, 못 고르면 서명 차례), readyTarget은 인증서 목록(0번 행 고정 없음). [공동·금융인증서]가 여는 안내 새 창("크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업")은 `closeWindows`로 닫는다. 공지 레이어·세션 연장은 엔진 AI 판정 몫.
+- 2.3.1(2026-11-13, IR rev v1.3.7, 앱 0.1.13 이상, 게시 minAppVersion 0.1.13. 0.1.12 엔진 스키마는 최상위 closeLayers를 거부한다): 실화면 첫 실행(0.1.12 + 2.3.0)이 메인에서 멈췄다. 같은 날 실제 hometax.go.kr 로그인 전 구간을 headless 스크래치 프로필로 돌려(로그인·입력 없음) 고쳤다. ① 직접 주소 `menuCd=index3`은 실화면에서 메인을 그린다 → s3을 머리말 [로그인] 클릭으로(2.3.0 멈춤의 직접 원인). ② 메인 공지 레이어(`mf_txppWframe_A_<숫자>` w2popup_window, [닫기] `_wframe_btnClose`) → `closeLayers{targets, until:"s12"}`. ③ 인증서 창 `#ML_window`의 실제 역할은 dialog(로그인 [확인]·발급 서명 [확인]의 landmark) → cert.root·invoice.sign.root 역할 고침. ④ 새 프로필의 인증서 창은 [브라우저] 저장 위치라 목록이 비어 있다 → s8 [하드디스크/이동식] → s8a·s8b 드라이브 [HardDisk]. ⑤ 공동인증서 로그인이 안 되면(창·목록 안 뜸 s4c·s8~s8b, 인증서 없음 s4d, 비밀번호 틀림·로그인 글 안 보임 s4g·s5) `checkpoint:simple_login`(s7~s7g): 메인 → [로그인] → [개인용 간편인증] → 핸드오프 login.simple_auth(휴대폰 확인만 사람) → 로그인 확인. ⑥ 로그인 전 처리 표시 기다림(s0a·s3a) 삭제, `wait gone`은 여럿이거나 계속 보이면 지나간다. ⑦ session 체크포인트 재진입은 로그아웃이어도 핸드오프하지 않는다(s2→s3 자동 로그인).
+- 2.3.2(2026-11-13, 앱 0.1.13 이상, 게시 minAppVersion 0.1.13): 대표 지시 "불필요한 홈택스 기본 팝업은 바로 닫거나 아예 안 뜨게". 금고 일반 장치(desktop-2)가 읽는 strings 넷: `popup.hide`(새 문서마다 display:none, 메인 공지 `div[id^="mf_txppWframe_A_"].w2popup_window.pop`만), `popup.hide.idPrefix`·`popup.hide.cookie`(숨긴 공지마다 "오늘 하루 보지 않기"와 같은 쿠키 `https://hometax.go.kr?openPopCheck<A_공지번호>`, 24시간), `popup.window.close`(공동인증서 안내 새 창 UTXPPABC14를 주소로 즉시 닫음). 알림(.msg)·미리보기·발급 확인·인증유형·발급 완료·#dscert는 숨기지 않는다. 실측: 실제 hometax.go.kr 공개 화면 headless 스크래치 프로필. `cert.pickOne` 글의 [다 했어요]를 앱 버튼 이름 [이어서]로.
+- 2.3.3(2026-11-13): 실화면 예행 run-ff36aa3e(0.1.17, 2.3.2)가 s12 [등록번호]에서 step.identity_mismatch로 멈췄다. 2.3.0에서 넣은 영역 landmark(`counterpartArea` #grpDmnr1000Top table·caption, `itemArea` #grpLsat2002Top)는 실화면 접근성 트리로 확인한 적이 없었다(실화면은 공급자·공급받는자가 한 표에 나란히). 공급받는자 칸 7개·품목 칸 3개의 landmark를 실화면에서 통과한(s11) `form.root`로 바꾸고 두 영역 항목을 뺐다. 칸 자체는 고유 id·역할·이름(실기록 빈 이름)·editable 그대로.

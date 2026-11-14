@@ -44,10 +44,11 @@ describe('금고 IPC 계약: 포트별 RPC', () => {
     for (const ms of Object.values(RPC_BY_PORT)) for (const m of ms) if (m !== 'account.refresh.read') assert.doesNotMatch(m, /private|export|getKey|reveal|read(Secret)?$/i);
   });
 
-  it('비밀 종류 표: 저장 가능 종류에 인증서 비밀번호가 없다, 모든 종류에 origin 목록이 있다', () => {
-    assert.ok(!(STORABLE_KINDS as readonly string[]).includes('cert_password'));
+  it('비밀 종류 표: 인증서 비밀번호는 기억(저장 가능)하고 홈택스에만 넣는다, 모든 종류에 origin 목록이 있다', () => {
+    // 대표 지시 2026-11-13(ADR-020 결정 2 갱신): 처음 넣은 인증서 비밀번호를 금고가 기억하고 다음부터 넣는다.
+    assert.ok((STORABLE_KINDS as readonly string[]).includes('cert_password'));
     for (const k of SECRET_KINDS) assert.ok(Object.hasOwn(SECRET_ORIGINS, k), k);
-    assert.deepEqual(SECRET_ORIGINS.cert_password, [], '인증서 비밀번호는 타이피스트가 넣지 않는다(ADR-020 결정 2)');
+    assert.deepEqual(SECRET_ORIGINS.cert_password, ['hometax.go.kr']);
     assert.equal(new Set(VD_PURPOSES).size, VD_PURPOSES.length);
   });
 });
@@ -73,7 +74,8 @@ describe('secretInput 결속 검사', () => {
     });
     const base = { mode: 'store', kind: 'portal_password', scope: 'business', notice: { version: 't06-v1' } };
     for (const bad of [
-      { ...base, kind: 'cert_password' }, { ...base, notice: undefined }, { ...base, notice: { version: '' } }, { ...base, notice: { version: 'a b' } },
+      // cert_password 저장 결속은 받는다(설정 > 발급 인증 저장, 대표 지시 2026-11-14). 저장 못 하는 종류는 아니다.
+      { ...base, kind: 'not_a_kind' }, { ...base, notice: undefined }, { ...base, notice: { version: '' } }, { ...base, notice: { version: 'a b' } },
       { ...base, runId: 'r1' }, { ...base, row: 1 }, { ...base, scope: '../x' },
     ]) assert.equal(parseSecretInputBind(bad), null, JSON.stringify(bad));
   });
@@ -104,8 +106,16 @@ describe('secretInput 포트: 결속 모드가 메서드를 정한다', () => {
 
   it('결속 없는·잘못된 store 결속 포트는 붙이지 않는다(vault.secret_input_unbound)', async () => {
     const before = h.log.lines.filter((l) => l.includes('vault.secret_input_unbound')).length;
-    h.secretPort({ mode: 'store', kind: 'cert_password', scope: 'business', notice: { version: 'v1' } } as never);
-    assert.equal(h.log.lines.filter((l) => l.includes('vault.secret_input_unbound')).length, before + 1);
+    // 실행 id가 붙은 store 결속(1회용과 섞임)·저장 못 하는 종류는 붙이지 않는다
+    h.secretPort({ mode: 'store', kind: 'cert_password', scope: 'business', runId: 'r1', notice: { version: 'v1' } } as never);
+    h.secretPort({ mode: 'store', kind: 'not_a_kind', scope: 'business', notice: { version: 'v1' } } as never);
+    assert.equal(h.log.lines.filter((l) => l.includes('vault.secret_input_unbound')).length, before + 2);
+  });
+
+  it('설정 > 발급 인증의 인증서 비밀번호 저장은 store 결속(cert_password)으로 받는다(대표 지시 2026-11-14)', () => {
+    assert.deepEqual(parseSecretInputBind({ mode: 'store', kind: 'cert_password', scope: 'business', notice: { version: 'cert-settings-2026-11-14' } }), {
+      mode: 'store', kind: 'cert_password', scope: 'business', notice: { version: 'cert-settings-2026-11-14' },
+    });
   });
 
   it('엔진 포트는 control·secretInput 메서드를 부를 수 없다', async () => {

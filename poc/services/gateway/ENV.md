@@ -27,13 +27,18 @@
 | `PROVIDER_BASE_URL` | openai-compat | `https://…` | 공급사 주소 |
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
+| `MODEL_AGENT` | 아니오(`typesafe/jev-router`) | OpenRouter 모델 ID | 예상 밖 화면 판정·브라우저 에이전트(`page_judge`·`browser_agent`) 모델. 기본은 요청마다 모델·추론 강도를 고르는 라우터다. **이 두 툴셋 호출에는 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS`를 적용하지 않는다**(provider 필드 없이 보낸다, 대표 2026-11-13: 라우터 뒤쪽 공급사가 요청마다 달라 고정하면 막힌다). 보내는 글은 지금처럼 가린 요소 목록·대화상자 문구뿐이다. 다른 툴셋은 그대로 고정한다 |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
 | `GW_ALLOW_IMAGES` | 아니오 | `false`만 | Phase 1 이미지 입력 없음(B-18). 다른 값이면 기동 거부 |
 | `NTS_PROVIDER` | 예 | `odcloud` \| `mock` | 진위확인 원천 |
 | `NTS_BIZ_API_KEY` ⚿ | odcloud | | 공공데이터포털 "국세청_사업자등록정보 진위확인 및 상태조회 서비스"(15081808) 인증키. 쿼리 `serviceKey`로만 보낸다. 로그·저장소·메시지에 두지 않는다 |
 | `NTS_BIZ_API_BASE` | 아니오(`https://api.odcloud.kr/api`) | `https://…` | 원천 주소. 경로는 `{base}/nts-businessman/v1/status` |
+| `CODEF_ENV` | 아니오(`CODEF_CLIENT_ID`가 있으면 `demo`, 둘 다 없으면 꺼짐) | `sandbox` \| `demo` \| `prod` \| `mock` | 계좌 자동조회 CODEF 환경. demo = `https://development.codef.io`(데모: 실제 기관, 하루 100회·1개월), prod = `https://api.codef.io`, sandbox = `https://sandbox.codef.io`(고정 응답). 토큰 주소는 셋 다 `https://oauth.codef.io/oauth/token`. 꺼짐이면 `/v1/codef/token`이 `503 gateway.codef_off`. 값이 틀리면 기동 거부 |
+| `CODEF_CLIENT_ID` ⚿ | CODEF_ENV가 mock 밖 | 8~128자 | CODEF 홈페이지 키 관리의 클라이언트 아이디(환경마다 다르다: 데모·정식) |
+| `CODEF_CLIENT_SECRET` ⚿ | CODEF_ENV가 mock 밖 | 8~256자 | CODEF 클라이언트 시크릿. 토큰 발급(Basic 인증)에만 쓰고 PC·로그·응답에 보내지 않는다 |
+| `CODEF_PUBLIC_KEY` | CODEF_ENV가 mock 밖 | base64(DER SPKI, 줄바꿈 무시) | CODEF 홈페이지 키 관리의 RSA 공개키. 비밀은 아니지만 계정마다 다르다. PC가 인증서 비밀번호를 감싸는 데 쓴다 |
 | `TRUST_PROXY` | 아니오 | `1` | 앞단 프록시 신뢰 |
 | `PORT` / `HOST` | 아니오(`8081` / `0.0.0.0`) | | |
 
-OpenRouter 라우팅 설정은 코드 상수가 아니다. 위 세 값은 운영 환경 설정에서만 오고, 게이트웨이는 요청마다 `provider:{zdr:true, data_collection:"deny", only:[…], allow_fallbacks:false, require_parameters:true}`를 실은 뒤 이벤트 `upstream_zdr_pinned`(개수만, 값·내용 없음)를 남긴다. 응답이 고정 목록 밖 공급자를 밝히면 결과를 버린다(`upstream_provider_mismatch`). OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없다. `openrouter` 단독이면 `/v1/decide`는 상류를 부르지 않고 `503 gateway.upstream_error`를 낸다. 운영은 `openai+openrouter`로 판정만 OpenAI `/v1/decisions`에 직결한다(D04 확률·임계값 계약 유지, 팀장 결정 2026-11-05).
+OpenRouter 라우팅 설정은 코드 상수가 아니다. 위 세 값은 운영 환경 설정에서만 오고, 게이트웨이는 요청마다 `provider:{zdr:true, data_collection:"deny", only:[…], allow_fallbacks:false, require_parameters:true}`를 실은 뒤 이벤트 `upstream_zdr_pinned`(개수만, 값·내용 없음)를 남긴다. 응답이 고정 목록 밖 공급자를 밝히면 결과를 버린다(`upstream_provider_mismatch`). 예외: `page_judge`·`browser_agent`(`MODEL_AGENT`) 호출은 provider 필드 없이 보내고 이벤트 `upstream_unpinned`를 남긴다(위 `MODEL_AGENT` 줄). OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없다. `openrouter` 단독이면 `/v1/decide`는 상류를 부르지 않고 `503 gateway.upstream_error`를 낸다. 운영은 `openai+openrouter`로 판정만 OpenAI `/v1/decisions`에 직결한다(D04 확률·임계값 계약 유지, 팀장 결정 2026-11-05).

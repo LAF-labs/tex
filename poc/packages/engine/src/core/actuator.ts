@@ -11,7 +11,7 @@
 // 저널·보안 이벤트에는 항목 키와 코드만 남긴다. 값·화면 문구는 남기지 않는다(⑦).
 import { isDenyActionName } from './constants.ts';
 import { decideDialog, type DialogKind } from './dialog.ts';
-import type { ActResult, Actuator, PageReader, Resolved } from './page.ts';
+import type { ActResult, Actuator, ElementRef, PageReader, Resolved } from './page.ts';
 import { nameMatches, resolveTarget } from './resolve.ts';
 import { isSecretEntry, type PressStep, type SelectorDict, type SelectorEntry } from './types.ts';
 import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
@@ -54,7 +54,15 @@ export interface GuardedActuatorInput {
   armedConfirm?: () => RegExp | null;
   /** fixture 패키지 실행일 때만(loader.fixtureOriginGrant). 제품 dist에서는 발급되지 않고, 넘겨도 인정하지 않는다(ADR-039). */
   fixtureGrant?: FixtureOriginGrant | null;
+  /**
+   * 무장 밖 JS confirm을 정책이 dismiss로 정했을 때 묻는 판정(run/judge.ts onDialog, 첫 게이트 앞만). 'accept'면 수락한다(세션 연장 등).
+   * 판정 쪽이 되돌릴 수 없는 문구는 늘 dismiss로 돌려준다. 늦으면(DIALOG_JUDGE_MS) 정책대로 dismiss.
+   */
+  dialogJudge?: (kind: DialogKind, notice: string) => Promise<'accept' | 'dismiss' | null>;
 }
+
+/** 대화상자가 떠 있는 동안 페이지가 멈추므로 판정은 짧게 기다린다. */
+const DIALOG_JUDGE_MS = 25_000;
 
 type Op = 'click' | 'fill' | 'clear' | 'select' | 'press' | 'secret_window';
 
@@ -76,7 +84,10 @@ export class GuardedActuator implements Actuator {
   private readonly commitArmed: (key: string) => boolean;
   private readonly armedConfirm: () => RegExp | null;
   private readonly fixtureGrant: FixtureOriginGrant | null;
+  private readonly dialogJudge: GuardedActuatorInput['dialogJudge'] | null;
   private lastNotice: string | null = null;
+  /** 마지막 동작을 시작한 뒤 뜬 대화상자(wait for:'dialog', IR rev v1.3.5). 동작을 시작할 때마다 비운다. 실행 메모리 전용. */
+  private sinceAction: { kind: DialogKind; notice: string } | null = null;
 
   constructor(i: GuardedActuatorInput) {
     this.driver = i.driver;
@@ -88,6 +99,7 @@ export class GuardedActuator implements Actuator {
     this.commitArmed = i.commitArmed ?? (() => false);
     this.armedConfirm = i.armedConfirm ?? (() => null);
     this.fixtureGrant = i.fixtureGrant ?? null;
+    this.dialogJudge = i.dialogJudge ?? null;
   }
 
   /** 실행이 닫은 포털 대화상자의 마지막 문구(실행 메모리 전용, 카드의 '홈택스 안내'). */
@@ -95,15 +107,28 @@ export class GuardedActuator implements Actuator {
     return this.lastNotice;
   }
 
+  /** 마지막 동작을 시작한 뒤 뜬(그리고 정책대로 닫은) 대화상자. 없으면 null. 문구는 NFKC·공백 접기 뒤 200자. */
+  dialogSinceAction(): { kind: DialogKind; notice: string } | null {
+    return this.sinceAction;
+  }
+
   async goto(url: string): Promise<ActResult> {
     const p = await this.policy.beforeAction('navigate');
     if (!p.ok) return p;
     if (navigationUrlProblem(url, this.domains, this.fixtureGrant)) return { ok: false, code: 'step.url_not_allowed' };
+    this.sinceAction = null;
     return this.driver.goto(url);
   }
 
   click(t: Resolved): Promise<ActResult> {
     return this.act('click', t, () => this.driver.click(t));
+  }
+
+  /** 되돌릴 수 있는 click의 두 번째 시도(Actuator.clickByBox). click과 같은 정책·가드(R-A1 동일성·R-A2·그림자)를 다시 지나고, commits 항목은 하지 않는다. */
+  clickByBox(t: Resolved): Promise<ActResult> {
+    const byBox = this.driver.clickByBox?.bind(this.driver);
+    if (!byBox || this.dict.entries[t.key]?.commits) return Promise.resolve({ ok: false, code: 'step.timeout' });
+    return this.act('click', t, () => byBox(t));
   }
 
   fill(t: Resolved, value: string, o: { keyEvents: boolean }): Promise<ActResult> {
@@ -118,10 +143,28 @@ export class GuardedActuator implements Actuator {
     return this.act('select', t, () => this.driver.select(t, option));
   }
 
+  /**
+   * 목록 행 누르기(IR rev v1.3.6 pick): 목록 항목 t를 click과 같은 가드(R-A1·R-A2·그림자)로 다시 확인하고,
+   * row가 지금 그 목록의 행(rows.item)일 때만 그 행을 누른다. 목록 항목이 아니면 step.selector_miss.
+   */
+  pickRow(t: Resolved, row: ElementRef): Promise<ActResult> {
+    return this.act('click', t, async () => {
+      const rows = this.dict.entries[t.key]?.rows;
+      if (!rows) return { ok: false, code: 'step.selector_miss' };
+      const now = await this.reader.query({ kind: 'css', value: rows.item }, this.dict.entries[t.key]!.frame, t.el);
+      let here = false;
+      for (const r of now) if (await this.reader.same(r, row)) here = true;
+      if (!here) return this.refuse('step.identity_mismatch', t.key);
+      return this.driver.click({ ...t, el: row });
+    });
+  }
+
   async press(key: PressStep['key'], t: Resolved | null): Promise<ActResult> {
     if (!t) {
       const p = await this.policy.beforeAction('press');
-      return p.ok ? this.driver.press(key, null) : p;
+      if (!p.ok) return p;
+      this.sinceAction = null;
+      return this.driver.press(key, null);
     }
     return this.act('press', t, () => this.driver.press(key, t));
   }
@@ -149,6 +192,17 @@ export class GuardedActuator implements Actuator {
       return;
     }
     if (decision.notice) this.lastNotice = decision.notice;
+    this.sinceAction = { kind: d.kind, notice: decision.notice };
+    if (decision.action === 'dismiss' && d.kind === 'confirm' && this.dialogJudge) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<null>((r) => (timer = setTimeout(() => r(null), DIALOG_JUDGE_MS)));
+      const a = await Promise.race([this.dialogJudge(d.kind, decision.notice).catch(() => null), late]).finally(() => clearTimeout(timer));
+      if (a === 'accept') {
+        await d.accept().catch(() => {});
+        this.events.journal('dialog.judge_accepted', { kind: d.kind });
+        return;
+      }
+    }
     await (decision.action === 'accept' ? d.accept() : d.dismiss()).catch(() => {});
     this.events.journal(decision.event.type, decision.event.payload);
   }
@@ -158,6 +212,7 @@ export class GuardedActuator implements Actuator {
     if (!p.ok) return p;
     const g = await this.guard(op, t);
     if (!g.ok) return g;
+    this.sinceAction = null;
     return run();
   }
 

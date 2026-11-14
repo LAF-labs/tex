@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import { GateRepo, openDatabase, RunRepo, type Db, type LedgerState } from '@sax/db';
-import { CERT_READBACK_KEYS, GATE_DENY_PRIORITY_MS, gateSelfCheck, READBACK_KEYS, RunController, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
+import { CERT_READBACK_KEYS, GATE_DENY_PRIORITY_MS, gateSelfCheck, READBACK_KEYS, RunController, SIGN_TURN_MS, type CommitPort, type GateRequest, type RunControllerInput, type RunStateEvent, type Timers } from '@sax/engine';
 import {
   BASIC_HANDLERS, GateTokens, newScope, stepEnv,
   type Handlers, type PdfPort, type PlaybookIR, type SelectorDict, type SelectorEntry, type Step, type StepOf, type TokenDiscardTrigger, type VerifyResult,
@@ -131,10 +131,10 @@ function mk(steps: Step[], o: Opts = {}) {
   for (const [k, v] of Object.entries(o.readback ?? {})) scope.readback.set(k, v);
   const env = stepEnv({ page, act, clock, dict: DICT, strings: { 'confirm.issue': '^발급하시겠습니까\\?$' }, scope, domains: ['hometax.go.kr'], irreversible: new Set(['s21']), defaultTimeoutMs: 100, pollMs: 50 });
   const timers = new ManualTimers();
-  const st = { ledger: [] as LedgerState[], inDoubt: null as string | null, allowed: true, secret: 'done' as 'done' | 'ttl', lockOk: true, observed: false, loggedIn: [true] as boolean[] };
+  const st = { ledger: [] as LedgerState[], inDoubt: null as string | null, allowed: true, secret: 'done' as 'done' | 'ttl' | { code: string }, lockOk: true, observed: false, loggedIn: [true] as boolean[] };
   const rec = {
     published: [] as GateRequest[], closed: [] as Array<[string, string]>, human: [] as Array<Record<string, unknown>>, humanClosed: [] as Array<[string, string]>,
-    secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[],
+    secret: [] as Array<Record<string, unknown>>, states: [] as RunStateEvent[], journal: [] as Array<[string, Record<string, unknown>]>, effects: [] as string[], effectsAt: [] as Array<[string, string | null]>,
     guard: [] as string[], locks: [] as boolean[], navs: [] as string[], commit: [] as string[], verifies: [] as string[], judged: [] as string[],
     /** 클릭마다 그 순간 commitArmed였는가. */
     armedAtClick: [] as Array<[string, boolean]>,
@@ -180,7 +180,7 @@ function mk(steps: Step[], o: Opts = {}) {
     preGate: o.preGate,
     journal: (t, p) => rec.journal.push([t, p ?? {}]),
     onState: (e) => rec.states.push(e),
-    onEffect: (e) => rec.effects.push(e),
+    onEffect: (e, at) => (rec.effects.push(e), rec.effectsAt.push([e, at])),
   });
   const names = () => rec.states.map((e) => e.state);
   const gate = () => rec.published.at(-1)!;
@@ -438,6 +438,14 @@ describe('사람 차례(D03 §2 WaitingHuman, §8)', () => {
     const r = await k.c.start();
     assert.deepEqual([r.state, r.resumeAt], ['Paused', 's1']);
   });
+  it('kind=secret: 끝났지만 멈춰야 하면({ code }, 틀린 비밀번호 등) 그 코드로 Paused(재개 = 마지막 체크포인트, 창을 다시 연다)', async () => {
+    const S: Step = { id: 's5', type: 'human', kind: 'secret', prompt: 'p.secret', target: 'f.otp', ttlMs: 60_000 };
+    const h = mk([CP, S, END]);
+    h.st.secret = { code: 'sign.password_wrong' };
+    const r = await h.c.start();
+    assert.deepEqual([r.state, r.code, r.resumeAt], ['Paused', 'sign.password_wrong', 's1']);
+    assert.deepEqual(h.act.log, [], '엔진은 칸을 채우지 않는다');
+  });
   it('사람 차례 중 정지 하향은 차례가 끝난 뒤 정지 분기. 칸은 채우지 않는다', async () => {
     const h = mk([CP, OTP, END]);
     const p = h.c.start();
@@ -548,6 +556,21 @@ describe('핸드오프·재개(D03 §2 HandedOff, R-C2)', () => {
     assert.ok(h.rec.effects.includes('ledger.observed_manual'));
     assert.deepEqual(h.rec.verifies, ['s21']);
   });
+  it('"직접 발급함"은 원장 행이 아직 없어도(무장 전) 게이트가 허가한 X에 observed_manual을 적고 그 X를 verify한다', async () => {
+    const h = await handedOffAtX(async () => 'committed');
+    assert.equal(h.st.inDoubt, null);
+    assert.equal((await h.c.attestManualCommit()).state, 'Completed');
+    assert.deepEqual(h.rec.effectsAt.filter(([e]) => e === 'ledger.observed_manual'), [['ledger.observed_manual', 's21']]);
+    assert.deepEqual(h.rec.verifies, ['s21']);
+  });
+  it('"직접 발급함" 때 Running 진입이 막히면(정지 하향) 원장이 비어 있어도 InDoubt(사람이 발급했다고 했다)', async () => {
+    const h = await handedOffAtX(async () => 'committed');
+    h.st.allowed = false;
+    const r = await h.c.attestManualCommit();
+    assert.equal(r.state, 'InDoubt');
+    assert.deepEqual(h.rec.effectsAt.filter(([e]) => e === 'ledger.observed_manual'), [['ledger.observed_manual', 's21']]);
+    assert.deepEqual(h.rec.verifies, [], '진입이 막히면 verify하지 않는다');
+  });
   it('recover 멈춤: 복구(M2-5)가 성공하면 실패한 스텝부터 다시, 실패하면 HandedOff', async () => {
     const REC: Step = { id: 's2', type: 'click', target: 'f.lookup', timeoutMs: 10, onFail: { then: 'recover' } };
     let calls = 0;
@@ -632,6 +655,22 @@ describe('정지·중지·진입 확인(D03 §2 규칙, ADR-023 결정 5·6)', (
     const r = await h.c.start();
     assert.deepEqual([r.state, r.code], ['Aborted', 'run.aborted']);
     assert.deepEqual(h.act.log, ['goto hometax.go.kr']);
+  });
+  it('오래 기다리는 스텝(로그인 대기 wait text·wait selector) 중 [중지]는 스텝 끝을 기다리지 않고 다음 폴링에서 Aborted', async () => {
+    const WAIT_TEXT: Step = { id: 's1', type: 'wait', for: 'text', value: 'confirm.issue', timeoutMs: 120_000 };
+    const WAIT_SEL: Step = { id: 's1', type: 'wait', for: 'selector', value: 'f.otp', timeoutMs: 120_000 };
+    for (const w of [WAIT_TEXT, WAIT_SEL]) {
+      const h = mk([w, { id: 's2', type: 'goto', url: 'https://hometax.go.kr/b' }], { els: w === WAIT_SEL ? [] : els() });
+      let polls = 0;
+      const body = h.page.bodyText.bind(h.page);
+      h.page.bodyText = async () => (++polls === 3 && h.c.abort(), body());
+      const query = h.page.query.bind(h.page);
+      h.page.query = async (...a) => (++polls === 3 && h.c.abort(), query(...a));
+      const r = await h.c.start();
+      assert.deepEqual([r.state, r.code], ['Aborted', 'run.aborted'], w.for);
+      assert.ok(h.clock.t < 1000, `${w.for}: ${h.clock.t}ms 기다렸다`);
+      assert.deepEqual(h.rec.navs, []);
+    }
   });
   it('Paused 재개도 Running 진입 확인: 허용하지 않으면 정지 분기에 머문다. 다른 package_digest면 다시 시작만', async () => {
     const h = mk(GATE_FLOW);
@@ -946,7 +985,7 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
     assert.equal(h.c.armedConfirm(), null);
   });
 
-  describe('signFlow(D02 §4.5): 클릭 뒤 무장된 구간 안에서만, 실패·maxWaitMs 초과는 곧바로 verify', () => {
+  describe('signFlow(D02 §4.5): 클릭 뒤 무장된 구간 안에서만. 비밀 창 TTL·maxWaitMs 초과는 서명 차례(B3) 뒤 verify', () => {
     const SF = (method: string, o: Record<string, unknown> = {}): Step => ({ ...SUBMIT, signFlow: { method, steps: { cert: ['human:secret'], simple_auth: ['wait:push'], security_card: ['secret_fill:security_card'] }, confirmTarget: 'f.signOk', maxWaitMs: 120_000, ...o } }) as Step;
     const SIGN_OK: FEl = { id: 'signOk', role: 'button', name: '서명 확인', parent: 'root' };
 
@@ -962,13 +1001,17 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.deepEqual(h.rec.armedAtClick, [['f.issue', true], ['f.signOk', true]]);
     });
 
-    it('비밀 창 TTL·확인 버튼 없음은 서명하지 않고 verify로(판정은 verify): 클릭은 발급 버튼 하나', async () => {
+    it('비밀 창 TTL은 서명 차례로 사람을 기다리고, [다 했어요] 뒤 서명하지 않고 verify로(판정은 verify): 클릭은 발급 버튼 하나', async () => {
       const h = mk([CP, GATE, SF('cert'), SV, END], { verifyStep: async () => ({ result: 'unknown' }) });
       h.st.secret = 'ttl';
       const p = h.c.start();
       await h.atGate();
       h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      assert.equal(h.c.state.name, 'Running', '서명 차례는 커밋 구간 안 기다림(상태 전이 없음)');
+      assert.equal(h.c.finishSignTurn(), true);
       assert.equal((await p).state, 'InDoubt');
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'done'));
       assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
       assert.ok(h.rec.journal.some(([t, p]) => t === 'signflow.timeout' && p.action === 'human:secret'));
 
@@ -980,7 +1023,7 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       assert.ok(n.rec.journal.some(([t]) => t === 'signflow.confirm_missing'));
     });
 
-    it('simple_auth wait:push: 확인 버튼이 뜰 때까지(maxWaitMs 안) 기다렸다 누른다. 안 뜨면 verify로', async () => {
+    it('simple_auth wait:push: 확인 버튼이 뜰 때까지(maxWaitMs 안) 기다렸다 누른다. 안 뜨면 서명 차례, 상한이면 verify로', async () => {
       const late = { ...SIGN_OK, appearAt: 5_000 };
       const h = mk([CP, GATE, SF('simple_auth'), SV, END], { els: [...els(), late] });
       const p = h.c.start();
@@ -994,11 +1037,83 @@ describe('submit(M2-3, D03 §3 R-G7·§5.3, D02 §4·§4.5): 게이트 토큰·�
       const q = never.c.start();
       await never.atGate();
       never.approve();
+      await until(() => never.c.signTurnOpen, '서명 차례');
+      assert.equal(never.timers.fire(SIGN_TURN_MS), 1, '서명 차례 상한 타이머');
       await q;
+      assert.ok(never.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'cap'));
       assert.ok(never.rec.journal.some(([t, p]) => t === 'signflow.timeout' && p.action === 'wait:push'));
       assert.deepEqual(never.rec.armedAtClick, [['f.issue', true]]);
     });
 
+    it('서명 차례(B3): PUSH를 maxWaitMs 뒤에 승인해 확인 버튼이 늦게 뜨면 한 번만 누르고 verify', async () => {
+      const late = { ...SIGN_OK, appearAt: 5_000 };
+      const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { els: [...els(), late] });
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true], ['f.signOk', true]], '확인 버튼은 한 번');
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_opened' && p.kind === 'push'));
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'clicked'));
+      assert.equal(h.c.signTurnOpen, false);
+    });
+    it('서명 차례(B3): 승인 토큰 기한(Wmax)이 지난 뒤에 뜬 확인 버튼은 엔진이 누르지 않는다(사람이 누르고 [다 했어요])', async () => {
+      const veryLate = { ...SIGN_OK, appearAt: 200_000 };
+      const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { els: [...els(), veryLate], verifyStep: async () => ({ result: 'unknown' }) });
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      for (let i = 0; i < 20_000 && h.clock.t < 100_000 && h.c.signTurnOpen; i++) await new Promise((r) => setImmediate(r));
+      assert.ok(h.clock.t > 90_000, `기한(90초)을 넘기도록 기다렸다: ${h.clock.t}`);
+      h.clock.t = 250_000;
+      for (let i = 0; i < 10; i++) await new Promise((r) => setImmediate(r));
+      assert.equal(h.c.signTurnOpen, true, '기한 뒤에는 사람을 기다린다');
+      h.c.finishSignTurn();
+      assert.equal((await p).state, 'InDoubt');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+    });
+    it('비밀 창 done 뒤 확인 버튼이 없으면(인증서 창 [확인]이 곧 커밋, 이미 완료 창) 짧게만 찾고 누르지 않고 verify', async () => {
+      const h = mk([CP, GATE, SF('cert'), SV, END]);
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+      assert.ok(h.rec.journal.some(([t]) => t === 'signflow.confirm_missing'));
+      assert.ok(h.clock.sleeps.reduce((a, b) => a + b, 0) <= 5_000, `확인 버튼을 maxWaitMs(120초)까지 기다리지 않는다: ${h.clock.sleeps.reduce((a, b) => a + b, 0)}ms`);
+    });
+    it('서명 차례(B3): 끝 표지(doneTarget, 완료 창)가 보이면 [다 했어요] 없이 버튼을 누르지 않고 verify', async () => {
+      const h = mk([CP, GATE, SF('cert', { doneTarget: 'f.lookup' }), SV, END], { els: els().filter((e) => e.id !== 'lookup') });
+      h.st.secret = 'ttl';
+      const p = h.c.start();
+      await h.atGate();
+      h.approve();
+      await until(() => h.c.signTurnOpen, '서명 차례');
+      h.page.els.set('lookup', els().find((e) => e.id === 'lookup')!);
+      assert.equal((await p).state, 'Completed');
+      assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]]);
+      assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === 'done_seen'));
+    });
+    it('서명 차례(B3): [다 했어요]·[중지]는 어떤 버튼도 누르지 않고 verify(무장 토큰을 새로 만들지 않는다, 중지로 끝나지 않는다)', async () => {
+      for (const how of ['done', 'abort'] as const) {
+        const h = mk([CP, GATE, SF('simple_auth', { maxWaitMs: 1_000 }), SV, END], { verifyStep: async () => ({ result: 'unknown' }) });
+        const p = h.c.start();
+        await h.atGate();
+        h.approve();
+        await until(() => h.c.signTurnOpen, '서명 차례');
+        // 사람이 홈택스 창에서 직접 서명을 마쳤다(그 뒤에 확인 버튼이 남아 있어도 엔진은 누르지 않는다).
+        h.page.els.set(SIGN_OK.id, SIGN_OK);
+        if (how === 'done') h.c.finishSignTurn();
+        else h.c.abort();
+        const r = await p;
+        assert.equal(r.state, 'InDoubt', how);
+        assert.deepEqual(h.rec.armedAtClick, [['f.issue', true]], `${how}: 발급 버튼 하나만`);
+        assert.equal(h.rec.published.length, 1, `${how}: 새 게이트(새 무장) 없음`);
+        assert.ok(h.rec.journal.some(([t, p]) => t === 'sign.turn_closed' && p.why === how), how);
+        assert.equal(h.c.finishSignTurn(), false, '닫힌 뒤에는 false');
+      }
+    });
     it('security_card(secret_fill)는 아직 없다: 하지 않고 verify로. 모르는 방식도 verify로', async () => {
       const h = mk([CP, GATE, SF('security_card'), SV, END], { els: [...els(), SIGN_OK] });
       const p = h.c.start();

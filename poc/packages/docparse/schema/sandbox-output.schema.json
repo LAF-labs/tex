@@ -80,7 +80,7 @@
       "additionalProperties": false,
       "required": ["format", "encoding", "sheets", "flags"],
       "properties": {
-        "format": { "enum": ["xlsx", "csv"] },
+        "format": { "enum": ["xlsx", "csv", "xls", "html"] },
         "encoding": { "enum": ["utf-8", "euc-kr", null] },
         "sheets": {
           "type": "array",

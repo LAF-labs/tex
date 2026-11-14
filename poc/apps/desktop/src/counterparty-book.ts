@@ -19,12 +19,23 @@ export const CP_CERT_HOLD_MS = 30 * 60_000;
 
 /** 등록증 읽기 결과: 후보, 'unreadable'(골랐지만 못 읽음), null(고르지 않음). */
 export type CpCertRead = BizFields | 'unreadable' | null;
-/** hold: 이 읽기의 표(폼이 저장 때 돌려준다, 값 없음). */
-export type CpCertReply = { found: true; name: string; bizNo: string; rep: string; hold: string } | { found: false; reason: 'cancelled' | 'unreadable' };
+/** hold: 이 읽기의 표(폼이 저장 때 돌려준다, 값 없음). item: 등록증 종목(저장 품목 후보, F-15). */
+export type CpCertReply = { found: true; name: string; bizNo: string; rep: string; hold: string; item: string } | { found: false; reason: 'cancelled' | 'unreadable' };
 
 type Rpc = (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
 const text = (v: unknown, n: number) => String(v ?? '').trim().slice(0, n);
+/**
+ * 등록증의 종목 → 저장 품목 후보(F-15). 등록증에는 품목 칸이 없어 거래처를 등록증으로 넣으면 첫 발급이 품목 없이 멈췄다.
+ * 종목이 여러 개면("소프트웨어 개발, 컨설팅") 첫 것만. 폼 칸에 채울 뿐이고 사용자가 보고 고친 뒤 [추가]해야 남는다.
+ */
+export const certItem = (s: string): string =>
+  String(s ?? '')
+    .split(/[,，、/·\n]/)[0]!
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, CP_FIELD_MAX.item)
+    .trim();
 
 export class CounterpartyBook {
   private hold: { id: string; bizNo: string; address: string; at: number } | null = null;
@@ -51,7 +62,7 @@ export class CounterpartyBook {
       }
       this.hold = { id: randomUUID(), bizNo: f.bizNo, address: f.address, at: this.now() };
       // 사업자번호는 체크섬이 맞을 때만 채운다. 거래처 폼에는 온보딩의 [고칠게요] 안내가 없어서, OCR이 한 자리 잘못 읽은 번호를 채우면 사용자가 못 알아챈다
-      return { found: true, name: f.name.slice(0, CP_FIELD_MAX.name), bizNo: isValidBizNo(f.bizNo) ? f.bizNo : '', rep: f.rep.slice(0, CP_FIELD_MAX.rep), hold: this.hold.id };
+      return { found: true, name: f.name.slice(0, CP_FIELD_MAX.name), bizNo: isValidBizNo(f.bizNo) ? f.bizNo : '', rep: f.rep.slice(0, CP_FIELD_MAX.rep), hold: this.hold.id, item: certItem(f.bizItem) };
     } finally {
       this.reading = false;
     }

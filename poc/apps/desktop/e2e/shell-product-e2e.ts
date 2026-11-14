@@ -9,6 +9,7 @@
 // 홈택스·정부24에는 접속하지 않는다(실행 시작 전에서 멈춘다). 비밀을 저장하지 않는다.
 // 키체인: 금고는 기존 db-key를 읽기만 한다(없으면 새로 만들지만, 이미 DB가 있는 앱 폴더의 키를 덮지 않는다, 금고 N-30). 임시 앱 폴더는 끝나면 지운다.
 // 실행: electron apps/desktop/e2e-dist/shell-product-e2e.js → 요약을 표준 출력에.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -90,11 +91,7 @@ async function main() {
   check('견본 대화 없음(가나다컴퍼니·B상사 없음)', !/가나다컴퍼니|B상사/.test(await js<string>(`document.body.textContent`)));
   check('제목줄에 "null" 같은 빈 값 글자가 없다', !/null|undefined/.test(await js<string>(`document.querySelector('#titlebar').innerText`)), await js<string>(`document.querySelector('#titlebar').innerText`));
   check('창 제목은 "소버린 AX"(PoC 데모 표시 없음)', S!.win.getTitle() === '소버린 AX', S!.win.getTitle());
-  const mac = process.platform === 'darwin';
-  check(`검색 단축키 표시는 ${mac ? '⌘K' : 'Ctrl K'}`, (await js<string>(`document.querySelector('.sx-kbd').textContent`)) === (mac ? '⌘K' : 'Ctrl K'));
-  S!.win.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
-  S!.win.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'K', modifiers: [mac ? 'meta' : 'control'] });
-  check('검색 단축키를 누르면 같은 안내', await until('search toast', async () => js<boolean>(`!document.querySelector('#toast').hidden && document.querySelector('#toast').textContent === '검색은 곧 지원해요'`), 3_000));
+  check('제목줄에 검색 칸·고정 상태(금고 열림·폰 연결 안 됨)가 없다', await js<boolean>(`!document.querySelector('#titlebar .sx-search') && !/금고 열림|폰 연결 안 됨/.test(document.querySelector('#titlebar').textContent)`));
   check('약관 카드 안내문에 내부 코드(F-06)가 없다', await until('terms text', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); return !!c && c.textContent.includes('곧 여기서 열어 볼 수 있어요') && !/F-06이 확정/.test(c.innerText); })()`)));
   check('약관 카드의 "F-06 초안 전 문구" 배지는 설치본에서 보이지 않는다(문구는 그대로)', await until('terms', async () => js<boolean>(`(() => { const c = document.querySelector('[data-consent]'); const d = c?.querySelector('.onb-draft'); return !!c && c.querySelectorAll('li').length > 0 && (!d || getComputedStyle(d).display === 'none'); })()`)));
   check('사업자 프로필이 없으면 온보딩부터', await until('onboarding', async () => js<boolean>(`!!document.querySelector('[data-onboarding]')`)));
@@ -198,8 +195,25 @@ async function main() {
   await press('[data-onb=ok]');
   await until('redo done', async () => js<boolean>(`!document.querySelector('[data-onb-step]')`));
   await say('세금계산서 1000원 인스피릿에 끊자');
-  check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다', await until('ask cp', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어느 거래처에 발급할까요') ?? false`)));
+  // 장부가 비어 있으면 거래처를 묻는 대신 추가부터(F-02): "먼저 거래처를 추가해 주세요" + [거래처 추가]
+  check('등록을 마치면 같은 요청이 검사를 지나 다음 질문(거래처)으로 간다(장부가 비면 [거래처 추가])', await until('ask cp', async () => js<boolean>(`(() => { const a = [...document.querySelectorAll('.sx-thread .sx-app')].pop(); return !!a && (a.textContent.includes('어느 거래처에 발급할까요') || (a.textContent.includes('먼저 거래처를 추가해 주세요') && !!a.querySelector('[data-act=ask-cp-add]'))); })()`)));
   check('그 사이 실행은 시작되지 않았다(카드는 [홈택스에서 준비]를 눌러야 시작)', (await runCount()) === 0 && !/main\.run_end/.test(mainLog()));
+
+  // 저장 품목이 없는 거래처(등록증·직접 입력 모두 품목 칸이 선택): 카드 전에 품목을 묻고, 모델이 답을 세금계산서로 골라도 이어 간다. 준비는 누르지 않는다(홈택스 접속 없음).
+  // 되묻기의 [거래처 추가](F-02): 거래처 화면의 추가 폼 → [추가] → 대화로 돌아와 입력창에 그 이름(보내지 않음)
+  await press('[data-act=ask-cp-add]');
+  const formOpen = await until('ask cp form', async () => js<boolean>(`!!document.querySelector('section[data-view=cps]') && !!document.querySelector('[data-panel-cp-edit=new] form')`), 5_000);
+  await js(`(() => { const f = document.querySelector('[data-panel-cp-edit=new] form'); f.querySelector('[name=name]').value = '견본무품목상사'; f.querySelector('[name=bizNo]').value = '101-01-11113'; f.querySelector('[name=email]').value = 'noitem@gyeonbon-test.example'; })()`);
+  await press('[data-panel-cp-edit=new] [data-act=cp-save]');
+  const back = await until('back to chat', async () => (await js<string>(`document.querySelector('#composer')?.value ?? ''`)) === '견본무품목상사', 8_000);
+  check('[거래처 추가] → 거래처 화면의 추가 폼 → [추가] → 대화로 돌아와 입력창에 그 이름(보내지 않음)', formOpen && back && (await runCount()) === 0, { formOpen, composer: await js<string>(`document.querySelector('#composer')?.value ?? ''`) });
+  const saved = (await js<Array<{ id: string; name: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === '견본무품목상사');
+  await say('견본무품목상사에 1000원 세금계산서 끊어 줘');
+  check('품목 없는 거래처 → 카드 없이 "어떤 품목으로 발급할까요?"', !!saved?.id && (await until('ask item', async () => js<boolean>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent.includes('어떤 품목으로 발급할까요') ?? false`))) && (await runCount()) === 0);
+  await say('컨설팅 용역');
+  check('답 → 그 품목의 카드, [홈택스에서 준비]가 켜져 있다', await until('item card', async () => js<boolean>(`(() => { const c = [...document.querySelectorAll('[data-run]')].pop(); return !!c && c.querySelector('[data-draft-item]')?.dataset.draftItem === '컨설팅 용역' && !c.querySelector('[data-act=prepare]').disabled; })()`)));
+  await js(`[...document.querySelectorAll('[data-run]')].pop().querySelector('[data-act=cancel]').click()`);
+  await until('cancel', async () => js<boolean>(`[...document.querySelectorAll('[data-run]')].pop()?.dataset.status === 'stopped'`), 5_000);
 
   // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
   const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;

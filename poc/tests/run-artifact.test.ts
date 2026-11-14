@@ -245,6 +245,14 @@ describe('IR 실행 + save_pdf 포트(가짜 H-01 페이지)', () => {
     assert.equal(done.documentId, data.documents.list().find((d) => d.docType === 'tax_invoice')!.id);
     assert.equal(by.get('nopdf-1')!.code, 'engine.unhandled_step');
     assert.equal(rows[0]!.runId, 'cut-1', '최근 실행부터');
+    // 셸의 지난 실행 보기(U5): 같은 DB를 새 서비스로 다시 읽은 이력이 활동 기록 줄이 된다(시험 패키지는 fixture.invoice.issue라 pastRun을 바로 부른다)
+    const { pastRun } = await import('../apps/desktop/src/run-history.ts');
+    const issued = pastRun(done);
+    assert.deepEqual({ kind: issued.kind, approvalNo: issued.approvalNo, documentId: issued.documentId, who: issued.who }, { kind: 'issued', approvalNo: done.approvalNo, documentId: done.documentId, who: 'A상사' });
+    assert.ok(issued.approvalNo && issued.documentId, '발급 건은 승인번호·PDF로 다시 연다');
+    const stopped = pastRun(cut);
+    assert.deepEqual({ kind: stopped.kind, total: stopped.total, approvalNo: stopped.approvalNo }, { kind: 'stopped_before_gate', total: 330_000, approvalNo: null });
+    assert.equal(stopped.note, '승인 전에 앱이 꺼져 멈췄어요. 아무것도 발급하지 않았어요.');
     // 다른 키로는 입력 요약을 읽지 않는다(값 없이 상태만)
     const other = runHistory(db, new ColumnCipher(new Uint8Array(randomBytes(32)))).find((r) => r.runId === 'cut-1')!;
     assert.equal(other.counterpartyName, null);

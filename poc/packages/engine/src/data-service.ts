@@ -150,6 +150,10 @@ export class DataService {
       case 'profile.setPortalLoginId':
         if (p.loginId !== null && typeof p.loginId !== 'string') throw new DataError('bad_login_id');
         return this.profiles.setPortalLoginId(id(p.id), p.loginId);
+      case 'profile.setCertName':
+        // 온보딩 [홈택스 인증서]에서 고른 인증서 이름(CN, 공개 정보). H-01 2.3.0이 이 이름으로 인증서 창의 행을 고른다
+        if (p.name !== null && typeof p.name !== 'string') throw new DataError('bad_cert_name');
+        return this.profiles.setCertName(id(p.id), p.name);
     }
     throw new DataError('unknown_method');
   }

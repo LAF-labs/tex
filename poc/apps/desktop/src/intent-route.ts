@@ -72,7 +72,7 @@ export function routed(r: IntentRoute, local: Parsed): Routed {
   if (p === 'gov24.resident.copy') return { parsed: { ...local, intent: local.intent === 'resident_abstract' ? 'resident_abstract' : 'resident_copy' }, note };
   if (CERT.includes(p)) return { parsed: { ...local, intent: 'cert' }, note };
   const soon = SOON[p];
-  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급과 증명서 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
+  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
 }
 
 export interface IntentResolver {

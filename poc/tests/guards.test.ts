@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { ESLint } from 'eslint';
-import { buildChromeArgs, chromeEnv } from '@sax/vault';
+import { buildChromeArgs, CHROME_APP_START_URL, chromeEnv } from '@sax/vault';
 import { buildGateRequest, gateSelfCheck, type GateField } from '@sax/engine/gate';
 import { ACTION_TEXT, ACTION_TEXT_DUP, ACTION_TEXT_DUP_COMMITTED, actionText, BAR_PALETTE_DEFAULT, BarGate, barCss, buildCardHtml, CARD, CARD_ROWS, cardHeight, cardTargets, gateText, inBox, IRREVERSIBLE_TEXT, IRREVERSIBLE_TEXT_NO_MAIL, issueLocalApproval, KEYBOARD_APPROVAL, overflowLine, STOP_KEYS, summarize, verifyLocalApproval, type SummaryLine } from '../apps/desktop/src/approval-gate.ts';
 import { barBounds, SHELL } from '../apps/desktop/src/shell-layout.ts';
@@ -67,10 +67,15 @@ describe('정적·구성 경계', () => {
   });
 
   it('Chrome 인자: 허용 목록(고정 인자) + 금지 인자 거부, 환경 변수 화이트리스트', () => {
-    // 고정 인자 3개 뒤에는 금고가 더하는 --disable-breakpad(V1)·--disable-default-apps(기본 앱 차단)만 붙는다.
+    // 고정 인자 3개 뒤에는 금고가 더하는 --disable-breakpad(V1)·--disable-default-apps(기본 앱 차단)·가려진 창 늦추기 끄기 3개(#309)만 붙는다.
     const args = buildChromeArgs('/p');
     assert.deepEqual(args.slice(0, 3), ['--remote-debugging-pipe', '--user-data-dir=/p', '--no-first-run']);
-    assert.deepEqual(args.slice(3), ['--disable-breakpad', '--disable-default-apps']);
+    const slow = ['--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling'];
+    // 실행 창은 앱 모드(탭줄·주소창 없음, 시작 문서 고정) + 기본 브라우저 확인 안내 끔(대표 지시 2026-11-13).
+    assert.deepEqual(args.slice(3), ['--disable-breakpad', '--disable-default-apps', ...slow, `--app=${CHROME_APP_START_URL}`, '--no-default-browser-check']);
+    // 창 없는 Chrome(앱 기본): new headless + 데스크톱 폭 창 크기. 시험 인자가 정한 플래그는 겹쳐 넣지 않는다.
+    assert.deepEqual(buildChromeArgs('/p', [], true).slice(10), ['--headless=new', '--window-size=1400,1000']);
+    assert.deepEqual(buildChromeArgs('/p', ['--headless=new'], true).slice(10), ['--window-size=1400,1000', '--headless=new']);
     for (const bad of ['--remote-debugging-port=0', '--remote-allow-origins=*', '--no-sandbox', '--disable-extensions']) assert.throws(() => buildChromeArgs('/p', [bad]));
     const env = chromeEnv({ HOME: '/h', PATH: '/bin', HTTPS_PROXY: 'http://evil', CHROME_LOG_FILE: '/tmp/x', ELECTRON_RUN_AS_NODE: '1', NODE_OPTIONS: '--inspect' });
     assert.deepEqual(Object.keys(env).sort(), ['HOME', 'PATH']);

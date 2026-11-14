@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/playbook-ir.schema.json",
-  "title": "Sovereign AX Playbook IR v2 (rev v1.3.4)",
-  "description": "v1.3.5 (ADR-039: portal \"fixture\" for the engine test fake page only; goto/checkpoint url may be http://127.0.0.1:PORT or http://[::1]:PORT, allowed only when portal is fixture and rejected by static rule V-25, the product loader and the registry). v1.3.4 (M2-3: verify lookup.rowVerdict {column, sent, notSent} strings patterns, row status verdict for post-commit side-effect checks; lookup.maxMs for baseline=none only; static rule V-03n). v1.3.3 (M2-3 B: readbackEquals.ifAbsent \"empty\", readbackEmpty cond, static rule V-03m). v1.3.2 (M2-3: sumEquals {parts, total} = readback fieldKeys, no screen re-read; was {names, target}). v1.3.1 (M1-4: step `code`, verify `failSignals` for V-03j''). v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
+  "title": "Sovereign AX Playbook IR v2 (rev v1.3.7)",
+  "description": "v1.3.7 (H-01 2.3.1: top-level closeLayers {targets, until}: closeAffordance entries clicked when they resolve, before each step up to `until` or the first gate; wait for \"gone\" passes when several targets are visible or the timeout ends; a session checkpoint re-entry continues when logged out (the following steps log in); a human:secret turn that ends with a wrong certificate password follows the step's onFail checkpoint). v1.3.6 (H-01 2.3.0: wait for \"gone\" (target absent or hidden, held for a short quiet window); step `pick` over a rows entry (single row, or the row whose name cell equals `by`; `use: selected` takes the row a person chose and `remember` stores its name in the profile); signFlow.certPick; top-level closeWindows (strings title patterns of notice popups the engine closes); selectors expect.editable and rows). v1.3.5 (ADR-039: portal \"fixture\" for the engine test fake page only; goto/checkpoint url may be http://127.0.0.1:PORT or http://[::1]:PORT, allowed only when portal is fixture and rejected by static rule V-25, the product loader and the registry). v1.3.4 (M2-3: verify lookup.rowVerdict {column, sent, notSent} strings patterns, row status verdict for post-commit side-effect checks; lookup.maxMs for baseline=none only; static rule V-03n). v1.3.3 (M2-3 B: readbackEquals.ifAbsent \"empty\", readbackEmpty cond, static rule V-03m). v1.3.2 (M2-3: sumEquals {parts, total} = readback fieldKeys, no screen re-read; was {names, target}). v1.3.1 (M1-4: step `code`, verify `failSignals` for V-03j''). v1.3 (AUDIT-A/B/C). Schema validity is necessary, not sufficient: static rules V-02..V-24 incl. V-03a..V-03l and V-03c' (design/02-playbook-dsl.md §6) and selector CI SV-01..SV-06 run after this. All regexes reachable from IR/strings/selectors are compiled with RE2; non-compiling patterns reject the package (V-01, B-35).",
   "type": "object",
   "required": ["ir", "id", "version", "portal", "profileKinds", "effects", "inputs", "steps", "postconditions"],
   "additionalProperties": false,
@@ -31,7 +31,9 @@
     "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}},
     "postconditions": {"type": "array", "items": {"$ref": "#/$defs/cond"}},
     "recovery": {"type": "object", "additionalProperties": false, "properties": {"default": {"$ref": "#/$defs/onFail"}}},
-    "pacing": {"type": "object", "additionalProperties": false, "properties": {"profile": {"enum": ["interactive", "daemon"]}}}
+    "pacing": {"type": "object", "additionalProperties": false, "properties": {"profile": {"enum": ["interactive", "daemon"]}}},
+    "closeWindows": {"description": "IR rev v1.3.6: strings keys (anchored ^...$ title patterns). A new window (popup) opened during the run whose title matches one is closed by the engine; other windows are left alone.", "type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/stringsKey"}},
+    "closeLayers": {"description": "IR rev v1.3.7: notice layers the engine closes before login. Before each step, from the first step until `until` (or the first gate, whichever comes first), the engine clicks each `targets` closeAffordance entry that resolves (visible, identity matches, unique). A miss, a mismatch or an ambiguous match is skipped and never fails the run.", "type": "object", "required": ["targets", "until"], "additionalProperties": false, "properties": {"targets": {"type": "array", "minItems": 1, "maxItems": 5, "uniqueItems": true, "items": {"$ref": "#/$defs/targetRef"}}, "until": {"$ref": "#/$defs/stepRef"}}}
   },
   "$defs": {
     "stepRef": {"type": "string", "pattern": "^s[0-9]{1,3}[a-z]?$"},
@@ -115,6 +117,12 @@
         "steps": {"type": "object", "propertyNames": {"enum": ["cert", "simple_auth", "security_card"]}, "additionalProperties": {"type": "array", "maxItems": 3, "items": {"enum": ["human:secret", "secret_fill:security_card", "wait:push"]}}},
         "rowLabel": {"$ref": "#/$defs/targetRef"},
         "confirmTarget": {"$ref": "#/$defs/targetRef"},
+        "openTargets": {"description": "IR rev v1.3.5: commits:true entries (same commitEffect as the submit target) clicked once each, in order, right after the submit click (e.g. a portal confirm window's proceed button).", "type": "array", "minItems": 1, "maxItems": 3, "items": {"$ref": "#/$defs/targetRef"}},
+        "methodTargets": {"description": "IR rev v1.3.5: per sign method, the commits:true entry clicked once after openTargets (e.g. the portal's auth-type choice).", "type": "object", "propertyNames": {"enum": ["cert", "simple_auth", "security_card"]}, "additionalProperties": {"$ref": "#/$defs/targetRef"}},
+        "readyTarget": {"description": "IR rev v1.3.5: non-commit entry that shows the signing UI is up (waited before the method's actions).", "$ref": "#/$defs/targetRef"},
+        "doneTarget": {"description": "IR rev v1.3.5: non-commit entry that shows signing finished (waited after human:secret, and by wait:push when there is no confirmTarget).", "$ref": "#/$defs/targetRef"},
+        "certPick": {"description": "IR rev v1.3.6: after readyTarget, pick a row of this rows entry (single row, or the row whose name cell equals `by`). No pick means the person picks (sign turn).", "type": "object", "required": ["target", "by"], "additionalProperties": false,
+          "properties": {"target": {"$ref": "#/$defs/targetRef"}, "by": {"$ref": "#/$defs/valueRef"}}},
         "maxWaitMs": {"type": "integer", "minimum": 10000, "maximum": 180000}
       }
     },
@@ -141,8 +149,8 @@
         {"properties": {"type": {"const": "select"}, "target": {"$ref": "#/$defs/targetRef"}, "option": {"$ref": "#/$defs/valueRef"}}, "required": ["target", "option"]},
         {"properties": {"type": {"const": "press"}, "key": {"enum": ["Enter", "Tab", "Escape", "ArrowDown", "ArrowUp"]}, "target": {"$ref": "#/$defs/targetRef"}}, "required": ["key"],
          "allOf": [{"if": {"properties": {"key": {"const": "Enter"}}}, "then": {"required": ["target"]}}]},
-        {"properties": {"type": {"const": "wait"}, "for": {"enum": ["selector", "navigation", "text", "idle"]}, "value": {"anyOf": [{"$ref": "#/$defs/targetRef"}, {"$ref": "#/$defs/stringsKey"}]}}, "required": ["for"],
-         "allOf": [{"if": {"properties": {"for": {"enum": ["selector", "text"]}}}, "then": {"required": ["value"]}}, {"if": {"properties": {"for": {"enum": ["navigation", "idle"]}}}, "then": {"not": {"required": ["value"]}}}]},
+        {"properties": {"type": {"const": "wait"}, "for": {"enum": ["selector", "navigation", "text", "idle", "dialog", "gone"]}, "value": {"anyOf": [{"$ref": "#/$defs/targetRef"}, {"$ref": "#/$defs/stringsKey"}]}}, "required": ["for"],
+         "allOf": [{"if": {"properties": {"for": {"enum": ["selector", "text", "dialog", "gone"]}}}, "then": {"required": ["value"]}}, {"if": {"properties": {"for": {"enum": ["navigation", "idle"]}}}, "then": {"not": {"required": ["value"]}}}]},
         {"properties": {"type": {"const": "assert"}, "cond": {"$ref": "#/$defs/cond"}}, "required": ["cond"]},
         {"properties": {"type": {"const": "extract"}, "name": {"type": "string", "pattern": "^[a-z][A-Za-z0-9]*$"}, "from": {"$ref": "#/$defs/from"}, "readback": {"type": "boolean"}}, "required": ["name", "from"]},
         {"properties": {"type": {"const": "decide"}, "bundle": {"type": "string", "pattern": "^[a-z_]+_v\\d+$"}, "scope": {"$ref": "#/$defs/scopeRef"}, "on": {"type": "object", "required": ["unknown"], "propertyNames": {"pattern": "^[a-z_]+$"}, "additionalProperties": {"$ref": "#/$defs/outcomeTarget"}}}, "required": ["bundle", "scope", "on"]},
@@ -163,6 +171,8 @@
         {"properties": {"type": {"const": "branch"}, "on": {"$ref": "#/$defs/cond"}, "cases": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/stepRef"}}, "default": {"$ref": "#/$defs/outcomeTarget"}}, "required": ["on", "cases", "default"]},
         {"properties": {"type": {"const": "repeat"}, "max": {"type": "integer", "minimum": 1, "maximum": 20}, "until": {"$ref": "#/$defs/cond"}, "steps": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/step"}}}, "required": ["max", "until", "steps"]},
         {"properties": {"type": {"const": "handoff"}, "reason": {"$ref": "#/$defs/stringsKey"}, "resumeAt": {"$ref": "#/$defs/stepRef"}}, "required": ["reason", "resumeAt"]},
+        {"properties": {"type": {"const": "pick"}, "target": {"$ref": "#/$defs/targetRef"}, "by": {"$ref": "#/$defs/valueRef"}, "use": {"const": "selected"}, "remember": {"enum": ["certName"]}, "ifNone": {"$ref": "#/$defs/outcomeTarget"}, "then": {"$ref": "#/$defs/stepRef"}}, "required": ["target"],
+         "allOf": [{"if": {"required": ["use"]}, "then": {"not": {"anyOf": [{"required": ["by"]}, {"required": ["ifNone"]}]}}}]},
         {"properties": {"type": {"const": "end"}, "status": {"enum": ["success", "completed_with_issues", "failed"]}}, "required": ["status"]}
       ]
     }

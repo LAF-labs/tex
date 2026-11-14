@@ -40,14 +40,25 @@ export class VaultSecretPort implements Pick<HumanPort, 'secret'> {
   }
 
   async secret(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number }): Promise<'done' | 'ttl'> {
-    const refuse = (reason: string): 'ttl' => {
-      this.i.journal('human.secret_refused', { stepId: r.stepId, reason: REASON.test(reason) ? reason : 'other' });
+    const out = await this.open(r);
+    return out === 'done' ? 'done' : 'ttl';
+  }
+
+  /**
+   * secret과 같지만 창을 열지 못한 사유를 돌려준다(CertSecretPort가 사람 직접 입력 대기로 바꿀지 정한다).
+   * signal이 끊기면(사용자 [중지]) 창 닫기를 요청하고 'aborted'다.
+   */
+  async open(r: { runId: string; stepId: string; target?: string; prompt?: string; ttlMs: number; signal?: AbortSignal }): Promise<'done' | 'ttl' | 'aborted' | { refused: string }> {
+    const refuse = (reason: string): { refused: string } => {
+      const why = REASON.test(reason) ? reason : 'other';
+      this.i.journal('human.secret_refused', { stepId: r.stepId, reason: why });
       this.i.closed?.({ runId: r.runId, stepId: r.stepId, why: 'refused' });
-      return 'ttl';
+      return { refused: why };
     };
     const e = r.target ? this.i.dict.entries[r.target] : undefined;
     if (!e) return refuse('no_target');
-    if (e.frame !== 'main') return refuse('frame_unsupported');
+    // frame: 'main' 또는 iframe 선택자(홈택스 인증서 창 iframe#dscert). 금고가 그 iframe의 하위 프레임에서 칸을 찾는다(같은 출처일 때만).
+    if (!e.frame) return refuse('frame_unsupported');
     const css = e.candidates.find((c) => c.kind === 'css');
     if (!css || css.kind !== 'css') return refuse('no_css_candidate');
     const targetId = this.i.targetId();
@@ -58,17 +69,24 @@ export class VaultSecretPort implements Pick<HumanPort, 'secret'> {
       if (d.targetId === targetId) resolveClosed();
     });
     try {
-      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: 'main', element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
+      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: e.frame, element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
       if (open?.ok !== true) return refuse(typeof open?.reason === 'string' ? open.reason : 'other');
       this.i.journal('human.secret_opened', { stepId: r.stepId });
       this.i.announce?.({ runId: r.runId, stepId: r.stepId, ...(r.prompt !== undefined ? { prompt: r.prompt } : {}), ttlMs: r.ttlMs });
       let cancel = () => {};
       const ttl = new Promise<'ttl'>((res) => (cancel = (this.i.setTimer ?? defaultTimer)(() => res('ttl'), r.ttlMs)));
-      const out = await Promise.race([closed, ttl]);
+      let onAbort = () => {};
+      const aborted = new Promise<'aborted'>((res) => {
+        onAbort = () => res('aborted');
+        if (r.signal?.aborted) onAbort();
+        else r.signal?.addEventListener('abort', onAbort, { once: true });
+      });
+      const out = await Promise.race([closed, ttl, aborted]);
       cancel();
-      if (out === 'ttl') await this.i.vault.rpc('secretWindow.requestClose', { runId: r.runId, targetId }).catch(() => {});
-      this.i.journal(out === 'done' ? 'human.secret_done' : 'human.secret_ttl', { stepId: r.stepId });
-      this.i.closed?.({ runId: r.runId, stepId: r.stepId, why: out });
+      r.signal?.removeEventListener('abort', onAbort);
+      if (out !== 'done') await this.i.vault.rpc('secretWindow.requestClose', { runId: r.runId, targetId }).catch(() => {});
+      this.i.journal(out === 'done' ? 'human.secret_done' : out === 'ttl' ? 'human.secret_ttl' : 'human.secret_aborted', { stepId: r.stepId });
+      this.i.closed?.({ runId: r.runId, stepId: r.stepId, why: out === 'aborted' ? 'ttl' : out });
       return out;
     } finally {
       off();

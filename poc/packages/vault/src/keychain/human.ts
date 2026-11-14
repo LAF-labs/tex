@@ -2,7 +2,7 @@
 // - 칸 단위 항목: securitycard/<scope>/<row>, portal/<scope>/pw(포털 아이디는 비밀이 아니라 두지 않는다, D05 §2·ADR-035). 각 항목은 슬롯 KEK로 AES-256-GCM(AAD = 항목 이름).
 // - 슬롯 KEK(32B 무작위)는 기기 결박 래핑(kek/<slot>/device: TPM → DPAPI)과, Hello가 있으면 Hello 사본(kek/<slot>/hello)으로 둔다.
 // - 발급 1회에 요청된 칸만 복호한다. 금고가 잠기면 메모리의 슬롯 KEK를 지운다.
-// - 인증서 비밀번호는 저장 기능이 없다. 이 모듈은 STORABLE_KINDS 밖을 받지 않는다.
+// - 인증서 비밀번호: cert/<scope>/pw(대표 지시 2026-11-13, ADR-020 결정 2 고침). 이 모듈은 STORABLE_KINDS 밖을 받지 않는다.
 import { randomBytes } from 'node:crypto';
 import type { EventLog } from '@sax/platform';
 import {
@@ -11,6 +11,7 @@ import {
 } from '../protocol.ts';
 import { ITEM_MAX_BYTES, open, seal, type HelloPrompt, type KeychainBackend } from './backend.ts';
 import { AccountRefreshStore } from './account.ts';
+import { CodefPasswordStore } from './codef.ts';
 import { SessionLock, type SessionLockOptions } from './session.ts';
 
 /** 칸 하나의 평문 상한(보안카드 2~4자리, 포털 비밀번호). 넘으면 거부한다. */
@@ -20,7 +21,7 @@ const INDEX_ITEM = 'index/human';
 /** 엄격 모드 설정(값 없음, 1바이트). 기기 결박 사본을 지운 상태가 재시작 뒤에도 이어지게 키체인에 둔다. */
 const STRICT_ITEM = 'settings/strict';
 
-export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'security_card' ? 'securitycard' : 'portal'}/${scope}`;
+export const slotName = (kind: StorableKind, scope: ProfileScope): string => `${kind === 'security_card' ? 'securitycard' : kind === 'cert_password' ? 'cert' : 'portal'}/${scope}`;
 
 export function itemName(kind: StorableKind, scope: ProfileScope, cell: { row?: number; field?: PortalField }): string {
   if (kind === 'security_card') {
@@ -64,6 +65,8 @@ export class HumanSecretVault {
   private readonly readyP: Promise<void>;
   /** 계정 갱신 토큰(ADR-038 (f)). 같은 키체인·같은 잠금을 쓰지만 사이트 비밀 슬롯·색인과는 따로다. */
   readonly account: AccountRefreshStore;
+  /** 계좌 자동조회 인증서 비밀번호 기억(사장님이 고른 때만, codef.seal만 읽는다) */
+  readonly codef: CodefPasswordStore;
 
   constructor(opts: HumanVaultOptions) {
     this.b = opts.backend;
@@ -82,6 +85,7 @@ export class HumanSecretVault {
       },
     ).finally(() => this.lock.release());
     this.account = new AccountRefreshStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
+    this.codef = new CodefPasswordStore({ backend: this.b, lock: this.lock, ready: () => this.readyP, log: this.log });
   }
 
   /** 모든 공개 비동기 연산 앞에서 기다린다(엄격 모드 설정을 읽은 뒤에 판정). */

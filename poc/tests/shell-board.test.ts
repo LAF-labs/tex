@@ -234,10 +234,18 @@ describe('M4-2 3부: InDoubt·핸드오프 화면(08 §11, D03 HandedOff)', () =
     }
   });
 
-  it('핸드오프 카드의 버튼은 재개·직접 발급함·중지뿐이고, 렌더러 띠에는 승인 버튼이 없다', () => {
-    const body = branch(views(), "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
-    const acts = [...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]).sort();
+  it('핸드오프 카드의 버튼은 재개·직접 발급함·중지뿐이고(로그인 [이어서], 서명 [다 했어요]·[중지], [직접 발급함]은 그 밖만), 렌더러 띠에는 승인 버튼이 없다', () => {
+    const src = views();
+    const body = branch(src, "} else if (st === 'turn' && run.handoff) {", "} else if (st === 'turn') {");
+    const acts = [...new Set([...body.matchAll(/act\.([a-zA-Z]+)\(/g)].map((m) => m[1]))].sort();
     assert.deepEqual(acts, ['manualDone', 'resume', 'stop']);
+    assert.match(body, /showBrowserBtn\(run, act\)/, '사람 차례 카드에는 [홈택스 창 보기]'); 
+    assert.match(body, /kind === 'login' \? btn\('이어서'/);
+    assert.match(body, /kind === 'other' \? btn\('직접 발급함'/);
+    assert.match(body, /btn\('중지', \(\) => act\.stop\(run\.id\)/);
+    assert.ok(!/act\.(prepare|again|reissue)|sx-btn-approve/.test(body), '사람 차례 카드는 다시 발급하지 않는다');
+    // 사람 차례 동안 패널에도 [중지]가 있다(서명 차례 포함: 엔진이 발급목록 확인 뒤 끝낸다)
+    assert.match(src, /st === 'turn' && \(!!run\.handoff \|\|/);
     const shell = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell.js'), 'utf8');
     const band = branch(shell, 'function renderHandoff() {', '\n}\n');
     assert.ok(!/call\(|승인|approv/.test(band), '띠는 카드·패널로 가는 것만');

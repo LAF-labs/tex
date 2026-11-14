@@ -7,6 +7,7 @@
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
 import type { WebFrameMain } from 'electron';
+import { BANK_SHELL_METHODS } from './bank-ipc.ts';
 import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
 
 export type { GatePortMessage, GateRequest, LocalApproval } from '@sax/engine/gate';
@@ -85,16 +86,57 @@ export const SHELL_METHODS = {
   'shell.bootstrap': {},
   'profile.set': { kind: { t: 'enum', of: ['business', 'personal'] satisfies ProfileScope[], required: true } },
   'request.send': { text: { t: 'string', max: 10_000, required: true }, vat: { t: 'enum', of: ['separate', 'included'], nullable: true } },
-  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 } },
+  // 초안 카드에서 고치기: 부가세·금액·품목·받는 이메일(품목은 엔진 상한 100자, 넘치면 거부)
+  'run.redraft': { id: ID },
+  'draft.update': { id: ID, vat: { t: 'enum', of: ['separate', 'included'] }, amount: { t: 'number' }, amountText: { t: 'string', max: 200 }, item: { t: 'string', max: 200 }, email: { t: 'string', max: 320 }, counterpartyId: { t: 'string', max: 128 } },
   'run.prepare': { id: ID },
   'run.stop': { id: ID },
   // 핸드오프 [다 했어요]·[직접 발급함](D03 §2 HandedOff). 재개·확인으로만 가고 발급하지 않는다(엔진이 원장에 observed_manual을 쓴다).
   'run.resume': { id: ID },
   'run.manualDone': { id: ID },
+  'run.showBrowser': { id: ID },
+  // [브라우저] 토글(대표 지시 2026-11-13 "claude desktop처럼"): show면 실행 Chrome을 앱 브라우저 패널 자리에 맞춰 앞으로, 아니면 앱을 앞으로.
+  'browser.toggle': { show: { t: 'boolean', required: true } },
+  // 앱 패널 안 브라우저 조작(대표 지시 2026-11-13 "인앱 브라우저에서 조작"): 패널 위 마우스·키·글자. 좌표는 프레임 기준 0~1.
+  // main은 메인 창에서 방금 본 실제 입력(마우스·키)이 있을 때만 금고 screen.input으로 넘긴다.
+  'browser.input': {
+    kind: { t: 'enum', of: ['mouse', 'wheel', 'key', 'text'], required: true },
+    type: { t: 'enum', of: ['mousePressed', 'mouseReleased', 'mouseMoved'] },
+    x: { t: 'number' },
+    y: { t: 'number' },
+    button: { t: 'enum', of: ['left', 'right'] },
+    clickCount: { t: 'number' },
+    dx: { t: 'number' },
+    dy: { t: 'number' },
+    key: { t: 'string', max: 16 },
+    text: { t: 'string', max: 2000 },
+    modifiers: { t: 'number' },
+  },
+  // 앱 안 브라우저(embedded-browser.ts): 패널 화면 칸 자리(창 콘텐츠 DIP, none이면 숨김)와 경계 끌기 폭. main이 패널 영역·범위로 자른다.
+  'browser.slot': { none: { t: 'boolean' }, x: { t: 'number' }, y: { t: 'number' }, width: { t: 'number' }, height: { t: 'number' } },
+  'browser.resize': { width: { t: 'number', required: true } },
+  // Chrome 설치 안내의 [다시 확인](U6): 설치돼 있는지 다시 보고 판을 새로 보낸다. 읽기만 한다.
+  'chrome.check': {},
+  // 보안 프로그램(MagicLine4NX) 점검·설치 파일 열기·켜기(B4). 설치·켜기는 실제 입력 뒤에만.
+  'security.check': {},
+  'security.install': {},
+  'security.start': {},
+  // 기억한 인증서 비밀번호(대표 지시 2026-11-13): 있는지만 보고, 설정의 [지우기]로 지운다. 값은 오가지 않는다.
+  'certMemory.status': {},
+  'certMemory.forget': {},
+  // 설정에서 인증서 비밀번호 저장(가려진 칸, 금고로만). 값은 로그·상태에 남기지 않는다.
+  'certMemory.save': { value: { t: 'string', max: 256, required: true } },
+  // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14): 값 또는 취소. main이 금고 1회용 포트로만 넘긴다.
+  'secret.answer': { reqId: { t: 'string', max: 40, required: true }, value: { t: 'string', max: 256 }, cancel: { t: 'boolean' } },
+  // 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기(B4, H-01 2.3.0). 지우기는 실제 입력 뒤에만.
+  'certName.status': {},
+  'certName.clear': {},
   // InDoubt 카드(직접 확인 안내)를 열고 닫음. main은 이것으로 증언 바를 띄우고 내린다(ADR-021 결정 5). 증언 자체는 바 클릭으로만 받는다.
   'incident.open': { id: ID },
   'incident.close': { id: ID },
   'docs.list': {},
+  // 발급한 세금계산서(B5 문서함): 원장·실행 이력(db.query.runs.history)을 지금 읽어 한 줄씩. 읽기만 한다.
+  'issued.list': {},
   // 열기 암호 길이 판정(password_too_long)은 가져오기 쪽이 한다. 여기 상한은 그보다 넉넉하다.
   'docs.import': { pick: { t: 'boolean' }, pickId: { t: 'string', max: 128 }, password: { t: 'string', max: 4096 } },
   // 렌더러는 늘 열기 암호를 묻던 pickId를 보낸다. 빈 호출은 받지 않는다.
@@ -117,7 +159,6 @@ export const SHELL_METHODS = {
   },
   // [등록증으로 채우기](M4-3 O-05): 파일 고르기 → 후보(상호·번호·대표자). 인자 없음.
   'counterparty.readCert': {},
-  'auth.setDefault': { kind: { t: 'enum', of: ['simple', 'cert', 'card'], required: true } },
   'g24.candidates': { doc: G24_DOC, startedAt: { t: 'number', required: true } },
   'g24.save': { id: ID, doc: G24_DOC },
   'clipboard.copy': { text: { t: 'string', max: 2000, required: true } },
@@ -147,6 +188,17 @@ export const SHELL_METHODS = {
   'profile.edit': { fields: { t: 'object', required: true, fields: ONB_ANSWER.fields.fields }, confirmUnverified: { t: 'boolean' } },
   // 내 사업장 [파일에서 읽기]: 등록증 파일 고르기 → 칸 후보. 인자 없음.
   'profile.readCert': {},
+  // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 비밀번호·계좌번호는 이 길로 오지 않는다(비밀번호는 금고 창, 계좌는 끝 4자리·고르기 열쇠만).
+  'bankAuto.status': {},
+  'bankAuto.certs': {},
+  'bankAuto.consent': { version: { t: 'string', max: 64, required: true } },
+  'bankAuto.connect': { certId: { t: 'string', max: 64, required: true }, bank: { t: 'enum', of: ['0020', '0004', '0088', '0081', '0003', '0011'] }, clientType: { t: 'enum', of: ['B', 'P'] } },
+  'bankAuto.choose': { sessionId: { t: 'string', max: 64, required: true }, key: { t: 'string', max: 8, required: true }, alias: { t: 'string', max: 40 } },
+  'bankAuto.refresh': {},
+  'bankAuto.cancel': {},
+  'bankAuto.disconnect': {},
+  // 받을 돈(09 D-09, bank-ipc.ts). 파일 고르기 둘(bank.pickStatement·pickInvoices)은 실제 입력 뒤에만.
+  ...BANK_SHELL_METHODS,
 } as const satisfies Record<string, MethodSpec>;
 
 export type ShellMethod = keyof typeof SHELL_METHODS;
@@ -157,7 +209,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -221,8 +273,20 @@ export type ShellEvent =
   | { type: 'bar'; active: false; reason: string }
   | { type: 'bar-layout'; band: boolean; height: number }
   | { type: 'run'; run: unknown }
+  /** 대화 비밀 입력 카드(값 없음): open이면 카드를 띄우고, done·closed면 카드를 닫는다. */
+  | { type: 'secretAsk'; reqId: string; state: 'open' | 'done' | 'closed'; runId?: string; kind?: string; label?: string; note?: string }
+  // 진행 화면(B3): 실행 탭 화면 한 장(jpeg data URL, 보기 전용, 옛 Chrome 길) · 주소·제목 · 비밀 창 동안 멈춤 · 실행 끝
+  | { type: 'screen'; runId: string; frame?: string; w?: number; h?: number; url?: string; title?: string; paused?: boolean; ended?: boolean; gone?: boolean }
+  /** [브라우저] 토글 상태: 패널 크게, 실행 브라우저가 있나. 앱 안 브라우저면 embedded와 main이 정한 패널 폭. */
+  | { type: 'browser'; shown: boolean; available: boolean; focus?: boolean; embedded?: boolean; width?: number }
   | { type: 'doc'; doc: unknown }
   | { type: 'docs-reload' }
   | { type: 'board'; board: unknown }
   | { type: 'onboarding'; onboarding: unknown }
-  | { type: 'account'; account: unknown };
+  | { type: 'account'; account: unknown }
+  /** 대화 에이전트 진행 단계(생각 중·장부 보는 중·카드 만드는 중). 문장·값은 싣지 않는다. */
+  | { type: 'chat-progress'; phase: 'thinking' | 'reading' | 'drafting' }
+  /** 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */
+  | { type: 'bankAuto'; event: unknown }
+  /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
+  | { type: 'activated'; x: number; y: number };

@@ -40,8 +40,8 @@ function hostWith(device: GatewayDevice | null, now = () => 1_000_000) {
 }
 
 describe('게이트웨이 인증 호스트: 허용 목록', () => {
-  it('POST + 세 경로만 헤더를 받는다. 답은 {t, id, headers:{authorization, dpop}} 그대로', async () => {
-    assert.deepEqual([...GATEWAY_AUTH_HTU].sort(), ['https://tax.laf-co.com/v1/decide', 'https://tax.laf-co.com/v1/respond', 'https://tax.laf-co.com/v1/run-tokens']);
+  it('POST + 네 경로만 헤더를 받는다(계좌 자동조회 CODEF 토큰 포함). 답은 {t, id, headers:{authorization, dpop}} 그대로', async () => {
+    assert.deepEqual([...GATEWAY_AUTH_HTU].sort(), ['https://tax.laf-co.com/v1/codef/token', 'https://tax.laf-co.com/v1/decide', 'https://tax.laf-co.com/v1/respond', 'https://tax.laf-co.com/v1/run-tokens']);
     const f = fakeDevice();
     const { h } = hostWith(f.d);
     let id = 1;

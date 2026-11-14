@@ -71,6 +71,16 @@ export interface SignFlow {
   steps?: Partial<Record<SignMethod, SignFlowAction[]>>;
   rowLabel?: string;
   confirmTarget?: string;
+  /** IR rev v1.3.5: submit 클릭 뒤 차례로 한 번씩 누르는 commits:true 항목(포털 확인 창의 [인증 화면 이동] 등). */
+  openTargets?: string[];
+  /** IR rev v1.3.5: 방식별로 openTargets 뒤 한 번 누르는 commits:true 항목(인증유형 선택). */
+  methodTargets?: Partial<Record<SignMethod, string>>;
+  /** IR rev v1.3.5: 서명 화면이 떴다는 표지(비커밋, 방식 동작 전에 기다린다. 홈택스 iframe#dscert 보임). */
+  readyTarget?: string;
+  /** IR rev v1.3.5: 서명이 끝났다는 표지(비커밋, human:secret 뒤·confirmTarget 없는 wait:push가 기다린다. 발급 완료 창). */
+  doneTarget?: string;
+  /** IR rev v1.3.6: 서명 화면이 뜬 뒤 방식 동작 전에 고르는 목록 항목(rows 항목, 인증서 창). 행이 하나면 그것, 여럿이면 by 값과 이름 칸이 같은 행. 못 고르면 서명 차례(사람). */
+  certPick?: { target: string; by: string };
   maxWaitMs: number;
 }
 
@@ -89,7 +99,19 @@ export type ClickStep = StepBase & { type: 'click'; target: string };
 export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' };
 export type SelectStep = StepBase & { type: 'select'; target: string; option: string };
 export type PressStep = StepBase & { type: 'press'; key: 'Enter' | 'Tab' | 'Escape' | 'ArrowDown' | 'ArrowUp'; target?: string };
-export type WaitStep = StepBase & { type: 'wait'; for: 'selector' | 'navigation' | 'text' | 'idle'; value?: string };
+/**
+ * wait. for 'dialog'(IR rev v1.3.5): 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등)를 기다리고, 그 문구가 value(strings 패턴, ^…$)에 맞아야 통과.
+ * 다른 문구면 step.dialog_mismatch(재시도 없이 onFail), 시간 안에 안 뜨면 step.timeout. 대화상자는 엔진 정책대로 이미 닫혔다(alert = 확인).
+ */
+export type WaitStep = StepBase & { type: 'wait'; for: 'selector' | 'navigation' | 'text' | 'idle' | 'dialog' | 'gone'; value?: string };
+/**
+ * pick(IR rev v1.3.6): rows 항목(목록) 안에서 행 하나를 고른다(홈택스 인증서 창의 인증서 목록).
+ * - use 'selected': 지금 선택된 행(사람이 고른 행). 정확히 하나여야 한다.
+ * - 그 밖: 행이 하나면 그 행, 여럿이면 by 값(정규화)과 이름 칸 글이 같은 행이 정확히 하나일 때. 못 고르면 ifNone으로 간다(없으면 pick.none 실패).
+ * 고른 행이 선택돼 있지 않으면 누르고, 선택 표지(rows.selected)가 그 행으로 바뀌는지 확인한다(사후 조건).
+ * remember: 고른 행의 이름을 프로필 칸에 저장한다(다음 실행의 by). 성공하면 then(있으면)으로, 없으면 다음 스텝.
+ */
+export type PickStep = StepBase & { type: 'pick'; target: string; by?: string; use?: 'selected'; remember?: 'certName'; ifNone?: OutcomeTarget; then?: string };
 export type AssertStep = StepBase & { type: 'assert'; cond: Cond };
 export type ExtractStep = StepBase & { type: 'extract'; name: string; from: From; readback?: boolean };
 export type DecideStep = StepBase & { type: 'decide'; bundle: string; scope: string; on: Record<string, OutcomeTarget> };
@@ -113,13 +135,13 @@ export type EndStep = StepBase & { type: 'end'; status: 'success' | 'completed_w
 export type Step =
   | GotoStep | ClickStep | FillStep | SelectStep | PressStep | WaitStep | AssertStep | ExtractStep | DecideStep | CheckpointStep
   | ReadbackStep | GateStep | HumanStep | HumanCommitStep | SecretFillStep | SignStep | SubmitStep | VerifyStep | CaptureStep
-  | SavePdfStep | SendEmailStep | BranchStep | RepeatStep | HandoffStep | EndStep;
+  | SavePdfStep | SendEmailStep | BranchStep | RepeatStep | HandoffStep | EndStep | PickStep;
 export type StepType = Step['type'];
 export type StepOf<T extends StepType> = Extract<Step, { type: T }>;
 
 export const STEP_TYPES = [
   'goto', 'click', 'fill', 'select', 'press', 'wait', 'assert', 'extract', 'decide', 'checkpoint', 'readback', 'gate', 'human',
-  'human_commit', 'secret_fill', 'sign', 'submit', 'verify', 'capture', 'save_pdf', 'send_email', 'branch', 'repeat', 'handoff', 'end',
+  'human_commit', 'secret_fill', 'sign', 'submit', 'verify', 'capture', 'save_pdf', 'send_email', 'branch', 'repeat', 'handoff', 'end', 'pick',
 ] as const satisfies readonly StepType[];
 
 export interface InputDecl {
@@ -143,6 +165,13 @@ export interface PlaybookIR {
   postconditions: Cond[];
   recovery?: { default?: OnFail };
   pacing?: { profile?: 'interactive' | 'daemon' };
+  /** IR rev v1.3.6: 실행 중 새 창(팝업)이 뜨면 제목이 이 strings 패턴(^…$)에 맞을 때 닫는다(커밋 없는 안내 창). 다른 창은 두고 저널만. */
+  closeWindows?: string[];
+  /**
+   * IR rev v1.3.7: 공지 레이어 닫기. 첫 스텝부터 until 스텝(또는 첫 게이트) 전까지 스텝마다 targets(closeAffordance 항목)를 본다.
+   * 보이고 동일성이 맞고 하나뿐이면 누른다. 없거나 틀리거나 여럿이면 건너뛴다(실행을 멈추지 않는다).
+   */
+  closeLayers?: { targets: string[]; until: string };
 }
 
 // ---- 셀렉터 사전(D02 §2.1) ----
@@ -151,7 +180,8 @@ export type Candidate = { kind: 'role'; role: string; name: string } | { kind: '
 
 export interface SelectorEntry {
   candidates: Candidate[];
-  expect?: { visible?: boolean; enabled?: boolean };
+  /** editable(IR rev v1.3.6): 입력할 수 있는(readonly·disabled 아닌) 요소만 받는다. 아니면 없는 것으로 본다. */
+  expect?: { visible?: boolean; enabled?: boolean; editable?: boolean };
   role: string;
   namePattern: string;
   frame: string;
@@ -165,6 +195,13 @@ export interface SelectorEntry {
   navigationOnly?: boolean;
   fieldKey?: string;
   readbackOf?: string;
+  /** IR rev v1.3.5: readback 값 = 이 요소 하위에서 이 CSS에 맞고 글이 빈칸이 아닌 요소의 수(품목 행 수 등). fieldKey가 있을 때만. */
+  countOf?: string;
+  /**
+   * IR rev v1.3.6: 이 요소는 목록이다(pick·signFlow.certPick). item = 행(하위 CSS), name = 행 안 이름 칸(행 하위 CSS),
+   * selected = 선택된 행(이 요소 하위 CSS, 정확히 하나). 값은 저널·로그에 남기지 않는다.
+   */
+  rows?: { item: string; name: string; selected: string };
   allowedConstants?: string[];
   reviewNote?: { by: string; reason: string };
   lastVerified: string;
@@ -172,6 +209,8 @@ export interface SelectorEntry {
 
 export interface EndpointMatch {
   method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  /** IR rev v1.3.5: 요청이 가야 하는 URL host(소문자, 포트 포함). 없으면 manifest.domains 어디든. 홈택스 발급 요청은 teet.hometax.go.kr이다. */
+  host?: string;
   pathPattern: string;
   actionParam?: { name: string; value: string };
 }

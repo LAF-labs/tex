@@ -6,7 +6,8 @@ import { normalizeForDetection } from '@sax/redaction';
 // reports/PoC-10.md) 비워 두고 PoC-3 실측에서 채운다. 페이지 문구는 저장·기록하지 않고 맞은 항목 id만 넘긴다.
 
 /** busy는 혼잡 대기열(차단 아님): 실행만 멈추고 쿨다운·연속 횟수에 넣지 않는다. */
-export type SignalKind = 'block' | 'extra_auth' | 'captcha' | 'busy';
+/** maintenance는 포털 점검(IR rev v1.3.7): 차단이 아니다. 실행만 즉시 멈추고 쿨다운·연속 횟수에 넣지 않는다. */
+export type SignalKind = 'block' | 'maintenance' | 'extra_auth' | 'captcha' | 'busy';
 
 export interface SignalEntry {
   id: string;
@@ -22,14 +23,19 @@ export interface SignalEntry {
 export interface SignalHit {
   kind: SignalKind;
   id: string;
+  /** maintenance: 안내 글에서 읽은 중단 끝 시각(ISO, +09:00). 못 읽으면 없다. */
+  until?: string;
 }
 
 const NETFUNNEL = 'hometax.go.kr/js/comm/netfunnel/netfunnel.js(NetFunnel 1.6.11) 대기 팝업 문구, 2026-11-02 원문 대조';
 const FIXTURE = '가짜 H-01 페이지(apps/desktop/src/h01-fixture.ts)';
+const MAINT = 'hometax.go.kr 점검 중 모든 주소가 307 → /info_page.html "홈택스 시스템 점검 안내 … 중단일시 : 2026.11.14(토) 00:00 ~ 06:00", 2026-11-14 GET 원문';
 
 export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> = {
   hometax: [
     // block·extra_auth·captcha: 근거 있는 문구·URL 없음(TODO(PoC-3) 실측). 응답 상태는 HTTP_RULES가 본다.
+    { id: 'hometax.maintenance.url', kind: 'maintenance', url: '^https://(?:www\\.)?hometax\\.go\\.kr/info_page\\.html(?:[?#]|$)', source: MAINT },
+    { id: 'hometax.maintenance.text', kind: 'maintenance', text: '홈택스 시스템 점검 안내', source: MAINT },
     { id: 'hometax.netfunnel.wait', kind: 'busy', text: '접속대기 중입니다', source: NETFUNNEL },
     { id: 'hometax.netfunnel.retry', kind: 'busy', text: '재접속하시면 대기시간이 더 길어집니다', source: NETFUNNEL },
   ],
@@ -38,6 +44,8 @@ export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> 
     { id: 'fixture.block.text', kind: 'block', text: '비정상적인 접근이 감지되어 이용이 제한되었습니다', source: FIXTURE },
     { id: 'fixture.extra_auth', kind: 'extra_auth', url: '/auth/extra(?:[?#]|$)', source: FIXTURE },
     { id: 'fixture.captcha', kind: 'captcha', url: '/auth/captcha(?:[?#]|$)', source: FIXTURE },
+    { id: 'fixture.maintenance.url', kind: 'maintenance', url: '/info_page\\.html(?:[?#]|$)', source: FIXTURE },
+    { id: 'fixture.maintenance.text', kind: 'maintenance', text: '홈택스 시스템 점검 안내', source: MAINT },
   ],
 };
 
@@ -49,7 +57,7 @@ export const SIGNAL_DICT: Record<'hometax' | 'fixture', readonly SignalEntry[]> 
  */
 export const HTTP_RULES = { forbiddenBurst: { count: 3, windowMs: 60_000 } } as const;
 
-const ORDER: readonly SignalKind[] = ['block', 'extra_auth', 'captcha', 'busy'];
+const ORDER: readonly SignalKind[] = ['block', 'maintenance', 'extra_auth', 'captcha', 'busy'];
 const squash = (s: string) => normalizeForDetection(s).replace(/\s+/g, '');
 
 /**
@@ -77,7 +85,29 @@ export function matchSignal(source: SignalDict, where: { url?: string; text?: st
     const hit = (e.url !== undefined && where.url !== undefined && new RegExp(e.url).test(where.url)) || (e.text !== undefined && text !== '' && text.includes(squash(e.text)));
     if (hit && (!best || ORDER.indexOf(e.kind) < ORDER.indexOf(best.kind))) best = e;
   }
-  return best && { kind: best.kind, id: best.id };
+  if (!best) return null;
+  const until = best.kind === 'maintenance' && where.text ? maintenanceUntil(where.text) : null;
+  return { kind: best.kind, id: best.id, ...(until ? { until } : {}) };
+}
+
+/**
+ * 점검 안내의 중단 끝 시각(KST)을 ISO(+09:00)로. "중단일시 : 2026.11.14(토) 00:00 ~ 06:00" 또는 끝에 날짜가 있는 꼴.
+ * 끝 시각이 시작보다 이르고 끝 날짜가 없으면 다음 날로 본다. 못 읽으면 null(추측하지 않는다).
+ */
+export function maintenanceUntil(text: string): string | null {
+  const s = text.replace(/\s+/g, ' ');
+  const d = '(\\d{4})[.\\-/] ?(\\d{1,2})[.\\-/] ?(\\d{1,2})\\.?(?: ?\\([^)]{1,3}\\))?';
+  const m = new RegExp(`중단 ?일시 ?:? ?${d} ?(\\d{1,2}):(\\d{2}) ?[~∼-] ?(?:${d} ?)?(\\d{1,2}):(\\d{2})`).exec(s);
+  if (!m) return null;
+  const n = m.map((x) => (x === undefined ? undefined : Number(x)));
+  const [y, mo, da, sh, sm] = [n[1]!, n[2]!, n[3]!, n[4]!, n[5]!];
+  const [ey, emo, eda, eh, em] = [n[6] ?? y, n[7] ?? mo, n[8] ?? da, n[9]!, n[10]!];
+  let end = Date.UTC(ey, emo - 1, eda, eh - 9, em);
+  if (n[6] === undefined && eh * 60 + em <= sh * 60 + sm) end += 86_400_000;
+  if (!Number.isFinite(end)) return null;
+  const k = new Date(end + 9 * 3_600_000);
+  const p = (v: number) => String(v).padStart(2, '0');
+  return `${k.getUTCFullYear()}-${p(k.getUTCMonth() + 1)}-${p(k.getUTCDate())}T${p(k.getUTCHours())}:${p(k.getUTCMinutes())}:00+09:00`;
 }
 
 export interface WatchOptions {

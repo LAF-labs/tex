@@ -98,14 +98,26 @@ describe('렌더러 요청 표(SHELL_METHODS)', () => {
   });
 
   it('렌더러 정적 파일이 부르는 메서드는 모두 표에 있다', () => {
-    const src = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-biz.js', 'password-rules.js'].map((f) => read(`apps/desktop/static/shell/${f}`)).join('\n');
+    const src = ['shell.js', 'shell-views.js', 'shell-g24.js', 'shell-onboarding.js', 'shell-account.js', 'shell-biz.js', 'shell-bank.js', 'password-rules.js'].map((f) => read(`apps/desktop/static/shell/${f}`)).join('\n');
     const called = new Set([...src.matchAll(/call\('([a-zA-Z0-9.]+)'/g)].map((m) => m[1]!));
     assert.ok(called.size >= 10, `${called.size}`);
     for (const m of called) assert.ok(Object.hasOwn(SHELL_METHODS, m), m);
   });
 
   it('표에는 승인·게이트·바 경로가 없다(ADR-021)', () => {
-    for (const m of Object.keys(SHELL_METHODS)) assert.ok(!/approv|gate|bar\.|answer|attest|secret|vault\./i.test(m), m);
+    // 대화 비밀 입력 카드의 답(secret.answer, 대표 지시 2026-11-14 "앱 내 채팅으로")만 예외다. 승인·증언 경로가 아니라 금고 1회용 입력이다.
+    const CHAT_SECRET = new Set(['secret.answer']);
+    for (const m of Object.keys(SHELL_METHODS)) if (!CHAT_SECRET.has(m)) assert.ok(!/approv|gate|bar\.|answer|attest|secret|vault\./i.test(m), m);
+  });
+
+  it('대화 비밀 입력(secret.answer)·설정 인증서 비밀번호 저장(certMemory.save)은 실제 사용자 입력 뒤에만, 답은 지금 열린 금고 요청에만', () => {
+    assert.equal(USER_ACTION_METHODS['secret.answer'], 3_000);
+    assert.equal(USER_ACTION_METHODS['certMemory.save'], 3_000);
+    const src = read('apps/desktop/src/shell-app.ts');
+    // 답은 main이 띄운 카드의 reqId와 같을 때만 금고로(다르면 not_requested). 금고는 secret.needed로 부른 결속만 받는다(hasNeed).
+    const answer = src.slice(src.indexOf('const answerSecret = async'), src.indexOf('const answerSecret = async') + 1600);
+    assert.match(answer, /if \(!ask \|\| p\.reqId !== ask\.reqId\) throw new Error\('not_requested'\)/);
+    assert.match(answer, /vaultSecretSend\(ask\.bind, 'secret\.provide'/);
   });
 
   it('사용자 동작 명령은 처리기가 그 시간으로 needGesture를 부른다(ADR-027 결정 8)', () => {

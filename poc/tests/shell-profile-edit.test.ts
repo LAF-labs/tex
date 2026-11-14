@@ -216,10 +216,6 @@ async function onboarded(skipBiz: boolean) {
     { step: 'terms', choice: 'agree' },
     ...(skipBiz ? [{ step: 'welcome', choice: 'later' } as OnbAnswer] : [{ step: 'welcome', choice: 'upload' } as OnbAnswer, { step: 'biz-confirm', choice: 'confirm' } as OnbAnswer]),
     { step: 'auth', choice: 'simple' },
-    { step: 'model', choice: 'agree' },
-    { step: 'telemetry', choice: 'off' },
-    { step: 'tasks', choice: 'later' },
-    { step: 'summary', choice: 'ok' },
     { step: 'first', choice: 'later' },
   ]);
   return { ports, flow };
@@ -237,7 +233,7 @@ describe('온보딩 상태 맞추기(syncBiz)와 발급 인증 바꾸기(reopen 
     await assert.rejects(fresh.syncBiz(edited), /onboarding_open/);
     await assert.rejects(flow.syncBiz({ ...edited, bizNo: '1234567890' }), /bad_biz_no/);
   });
-  it('이미 고른 인증도 바꾸려고 다시 열 수 있다: 다른 인증 → 요약이 고친 칸으로 저장(예전 칸으로 덮어쓰지 않는다)', async () => {
+  it('이미 고른 인증도 바꾸려고 다시 열 수 있다: 다른 인증 → 고친 칸으로 저장(예전 칸으로 덮어쓰지 않는다)', async () => {
     const { ports, flow } = await onboarded(false);
     await flow.syncBiz(edited);
     const consents = ports.consents.length;
@@ -245,11 +241,9 @@ describe('온보딩 상태 맞추기(syncBiz)와 발급 인증 바꾸기(reopen 
     assert.equal(flow.state.step, 'auth');
     assert.deepEqual(flow.state.redoPrev, { auth: 'simple', certId: null });
     await flow.answer({ step: 'auth', choice: 'cert', certId: 'npki-1' });
-    assert.equal(flow.state.step, 'summary');
-    await flow.answer({ step: 'summary', choice: 'ok' });
-    assert.equal(flow.state.step, 'done');
+    assert.equal(flow.state.step, 'done', '요약 확인 없이 저장하고 끝(B4)');
     const p = ports.profiles.at(-1)!;
-    assert.equal(p.signMethod, 'cert');
+    assert.deepEqual([p.signMethod, p.certId], ['cert', 'npki-1']);
     assert.equal(p.bizNo, NO_B);
     assert.equal(p.displayName, '고친상사');
     assert.equal(p.repName, '박다라');
@@ -260,8 +254,6 @@ describe('온보딩 상태 맞추기(syncBiz)와 발급 인증 바꾸기(reopen 
     const { ports, flow } = await onboarded(false);
     const saves = ports.profiles.length;
     await flow.reopen('auth');
-    await flow.answer({ step: 'auth', choice: 'card' });
-    await flow.answer({ step: 'delegation', choice: 'switch' });
     await flow.answer({ step: 'auth', choice: 'later' });
     assert.equal(flow.state.step, 'done');
     assert.equal(flow.state.auth, 'simple');

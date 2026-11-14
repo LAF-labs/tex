@@ -56,6 +56,13 @@ IR 로드·검증, **패키지 로더(서명·핫픽스·정책·레지스트리
 | (아무 상태) | abort() | Aborted (커밋 구간이면 verify 후, 상한 120초 초과 시 InDoubt) | 간편인증 PUSH가 떠 있으면 "홈택스 앱 요청을 거절하세요" 안내 |
 | (비종료 상태) | 프로세스 재시작 | Interrupted | 저널로 복원. 원장 `armed\|dispatched\|observed_manual` 행은 `in_doubt`로 승격 → InDoubt |
 
+- **IR 실행기의 사람 대기(Phase 1, 2026-11-11 B3)**: HandedOff·Paused에 들어가도 실행을 끝내지 않고 사람의 명령을 기다린다(`run.resume` = 위 "사용자 재개", `run.manualDone` = "직접 발급함", `run.stop`). 대기 한 번의 상한은 30분, 실행 전체 수명(대기 포함)은 2시간이다. 상한에 닿으면 위의 30분 → Paused 전이보다 먼저 `handoff`(`run.handoff_timeout`)로 끝난다. 이 상한을 정하는 정책 필드는 아직 없다(생기면 더 엄격한 쪽을 쓴다). 게이트 만료(`gate.expired`)·정지 하향·차단 걸쇠는 대상이 아니다(지금처럼 끝). 캡차 `human` 핸드오프의 재개 지점은 마지막 체크포인트다(사람이 브라우저에서 풀고 로그인까지 마쳤는지 화면을 다시 본다). 대기 중 앱이 꺼지면 기존대로 `interrupted`이고, 원장이 열려 있으면 `in_doubt`로 승격한다.
+- **서명 차례(커밋 구간 안 사람 대기, B3)**: `signFlow`의 `wait:push`가 `maxWaitMs`를 넘기거나 `human:secret`이 TTL로 끝나면 곧바로 verify로 가지 않고 사람을 기다린다. 상태는 Running(commit) 그대로다.
+  - 간편인증(push)이면 확인 버튼(`confirmTarget`)이 뜰 때 **무장 한 번에 한 번만, 승인 토큰 `exp` 안에서만** 엔진이 누른다.
+  - `run.resume`([다 했어요])·`run.stop`·상한(30분과 실행 수명 중 짧은 쪽)이면 **어떤 버튼도 누르지 않고** verify로 간다. 무장 토큰은 새로 만들지 않는다. 서명을 못 마쳤으면 사람이 홈택스 창에서 [서명]까지 누른 뒤 [다 했어요]를 누른다.
+  - verify의 대기·부재 판정 기준 시각은 서명 차례가 끝난 때로 미룬다.
+  - 엔진이 발급 요청을 몇 번 보냈는지 셀 네트워크 커밋 가드가 제품 IR 경로에 아직 없다. 그래서 POST 0번이어도 `not_committed`로 보지 않고 verify 결과(`unknown`이면 `in_doubt`)를 따른다.
+
 규칙:
 - `WaitingGate → Running`은 승인 이벤트로만. 전이표에 다른 길이 없다.
 - **정지 분기**(ADR-023 결정 6): 정지 하향이나 아래 Running 진입 확인으로 실행을 멈출 때 갈 곳은 그 실행의 원장 행(그 실행의 모든 의도·스텝) 상태로 정한다. 위에서부터 처음 맞는 것을 고른다. 발급이 확정된 실행이 재개 가능한 상태로 남지 않게 하려는 규칙이다.
@@ -139,6 +146,8 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 - 행은 입력(`inputs_hash`)·패키지(`package_digest`)·승인 내용(`action_hash`)에 결속된다. 같은 의도의 비가역 둘(주·후속)은 `step_id`로 구분되어 서로 덮어쓰지 않는다.
 - 상태: `armed → dispatched → committed | not_committed | in_doubt`. 그리고 `observed_manual`: 핸드오프·`human(manual)` 중 가드가 관측한 커밋 요청 또는 사용자의 "직접 발급함"(R-C2). `observed_manual`은 verify로 `committed`/`not_committed`가 되거나 `in_doubt`로 남는다.
+- 무장 전(게이트 승인 전) "직접 발급함"도 행을 남긴다: 게이트가 허가한 주 비가역 X가 하나면 그 X 행을 `observed_manual`로 넣는다. 재료는 그 실행의 의도·입력 해시·패키지·초안의 업무 키·HMAC이고 `action_hash`는 플레이북·스텝·입력 해시·발급 키로 만든다(승인 내용이 없다). X가 여럿이면 행 없이 `in_doubt`로 끝낸다(2026-11-12).
+- 그 X가 이미 `not_committed`(예: 무장 뒤 누르기 전 `identity_mismatch`)여도 "직접 발급함"은 남는다. 종결 행은 바꾸지 않고 같은 의도에 따로 행 `<X>.manual`(`observed_manual`, 같은 발급 키)을 넣는다(`Ledger.attestManual`). 그 뒤 verify 판정은 그 행에 붙는다. 같은 발급 키의 열린 행이라 사다리는 멈추고 새 무장은 `ledger_issue_open`이다. 가드 관측(R-C2)도 같다(2026-11-12).
 - 순서: 토큰 소비 + `armed` 기록 커밋 → readback 재계산 → 클릭 → `dispatched` → verify → 종결 상태.
 - 재시작 시 `armed|dispatched|observed_manual`은 모두 `in_doubt`로 승격.
 - **의도 재사용 거부**: 같은 `intent_id`로 들어온 새 실행의 `inputs_hash`나 `playbook_id`가 원장의 것과 다르면 거부하고 보안 이벤트 `ledger.intent_reuse`를 남긴다.
@@ -168,7 +177,7 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
 
 "중복 0건"은 **한 PC 안의 엔진 로직 버그** 범위에서 성립한다. 반영 지연 중의 사용자 증언, 두 PC의 동시 게이트, 전용 Chrome 밖 수동 발급은 경고만 한다(D13 §3, D19 §8). 다른 PC나 전용 Chrome 밖에서 이미 발급된 건은 발급목록에 반영된 뒤 다음 게이트의 B₀로 경고한다(`$dup.portalExisting`, ADR-024).
 
-### 4.2 민원증명 실행(H-03·H-04·H-08·H-09, Phase 1)
+### 4.3 민원증명 실행(H-03·H-04·H-08·H-09, Phase 1)
 
 홈택스 민원증명은 H-01과 같은 원장·게이트·verify 길을 쓴다. 다른 것은 아래뿐이다.
 
@@ -182,6 +191,26 @@ token = HMAC(runKey, CBOR{runId, gateStepId, actionHash, exp, nonce})
   - `verify_ref` = 처리결과 조회에서 새로 보인 접수번호다(verify `bind approvalNo → issueNo`). 실행 종료 이벤트의 `approvalNo` 칸에 같은 값이 온다.
 - **발급 확인**: 공유 조회 `hometax.cert.issued_list`로 한다. 처리결과가 카드 목록이라 조회 IR은 행 안의 이름·값 쌍(strings `lookup.table.labelCss`·`valueCss`)과 건수 문구로 읽는다. 카드가 0장이면 건수 0이 부재의 근거다(§5.6).
 - **나머지**: 재시도(`not_committed` → 양식부터 새 시도), in_doubt 승격, 재시작 복구, 정지 하향, 거부 우선 창은 §2~§4와 같다. 메일 확인(`mailConfirmed`)은 없다.
+### 4.2 발급 사다리 (세금계산서, 대표 지시 2026-11-12)
+
+대표 지시: 발급은 가장 빠르고 싼 길부터, 마지막에 연결된 API로. 엔진 `issue/`가 한 발급 키(issueKey)에 대해 경로 표의 칸을 차례로 돈다. 칸마다 실행은 따로 의도를 만든다(§4 규칙 그대로).
+
+| 순서 | 경로 | 비용 | 사장님이 할 일 | 필요한 연결 |
+|---|---|---|---|---|
+| 1 | `hometax.auto` (H-01 패키지) | 0원 | 로그인·서명 차례, 승인 카드 | Chrome·패키지 |
+| 2 | `hometax.manual` | 0원 | 홈택스에서 직접 발급, [발급했어요]/[못 해요] | 없음 |
+| 3 | `api.popbill` | 건당 요금 | 동의 카드 | 팝빌 파트너 키, 사장님 팝빌 가입·인증서 등록 |
+| 4 | `api.codef` (팝빌 제휴 상품) | 건당 요금(미확인) | 동의 카드 | CODEF 발행 상품, 팝빌 가입·인증서 등록 |
+
+- **판정은 원장으로 한다.** 칸이 끝나면 같은 발급 키의 원장 행을 읽는다. committed면 끝(발급됨). 미종결(armed·dispatched·in_doubt·observed_manual)이면 멈춘다: 발급목록 대조(verify 재시도)나 사장님 증언으로 종결되기 전에는 다음 칸으로 가지 않는다. 행이 없거나 모두 not_committed일 때만 끝 코드로 갈래를 나눈다.
+- 갈래(앱 내장 표 하나): 홈택스 쪽 문제(로그인·인증·화면 불일치·차단·캡차·Chrome 없음·verify not_committed)는 다음 칸, 내용 오류(`assert.*`·금액·거래처)·사장님 [중지]·승인 만료·하루 상한·서버 정지·발급 화면 이후 사람 대기 시간 초과는 멈춤. 모르는 코드는 멈춤.
+- **유료 칸 전 동의 카드**: 경로 이름, 건당 요금과 근거, 앞 칸이 끝난 이유, "아무것도 발급되지 않았어요(원장 확인)". 동의는 그 키·그 칸에 한 번이고 게이트 표에 approved로 남아 원장 무장이 소비한다. 홈택스 승인 근거는 다시 쓰지 않는다.
+- **발급 키 불변식**: `irreversible_log.issue_key`(발급 단계 행에만)와 부분 유일 색인 `ux_irr_issue_live`(D07). 같은 키에 committed·미종결 행은 경로와 무관하게 하나다. 무장 트랜잭션이 먼저 검사하고(`ledger_issue_committed`·`ledger_issue_open`) 색인이 뒷받침한다.
+- API 칸: 무장 → 호출 한 번 → 성공이면 committed(승인번호). 오류·끊김이면 다시 부르지 않고 문서번호로 조회한다. 있음 = committed, 없음 확인 = not_committed, 모름 = in_doubt. 팝빌 문서번호(MgtKey)는 발급 키만으로 만든다(같은 건은 몇 번째 시도든 같은 번호, 원천의 중복 거부가 두 번째 문서를 막는다). "없음 확인"은 홈택스 verify처럼 하한(첫 조회부터 60초, 조회 2번 모두 없음)을 채워야 하고, 그 전에 끝나면 in_doubt다. 거절 응답 뒤에도 조회로 확인한다. CODEF 발행 상품은 우리가 넣는 문서번호가 없어 목록 대조에 기댄다.
+- 같은 키 재요청: 진행 중이면 그 상태, committed면 발급됨, 미종결이면 멈춤을 돌려주고 새 시도를 만들지 않는다.
+- 홈택스 자동 칸의 사람 대기 [직접 발급함]은 무장 전이어도 실행이 발급 단계(s21) 행에 발급 키를 붙여 `observed_manual`로 남긴다(§4). 사다리는 그 행으로 멈춘다.
+- 실제 API 호출 코드는 연결 원천(키·회원 등록)이 있을 때만 켠다. 없으면 그 칸은 `api.not_connected`로 건너뛴다.
+- API 칸은 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급, §7)을 보지도 세지도 않는다. 그 상한은 홈택스 계정 보호 장치이고, 두 번 발급은 발급 키 원장이 막는다(부장 결정 2026-11-12).
 
 ## 5. 스텝 실행과 커밋 구간
 
@@ -308,6 +337,8 @@ L2 동일성 검사(모두 통과해야 적용): (1) strict 1개 일치 (2) 같�
 - 입력: 기본 `fill()`(즉시). 키 이벤트가 필요한 칸만 **고정 간격 150ms**. 비밀 창 안의 간격은 금고가 집행한다(§5.2, A-26). 타이핑 모사·지터는 쓰지 않는다. 스텝 간 지연 범위는 요청률 제한이지 행동 모사가 아니며, 문서·UI에서 '사람 수준'이라는 표현을 쓰지 않는다('요청률 상한').
 - 캡차 중계: `policy.captchaRelay[portal]`이 허용이고 `CAPTCHA_RELAY_CEILING`이 허용할 때만 폰으로 보낸다(정부24는 허락 회신 전 비활성이고 공문에 중계 방식을 명시한다). 캡차는 사람이 푼다(ADR-004).
 - 텔레메트리 옵트아웃 사용자의 운영 알림은 로컬 알림으로 대체.
+- 사람 대기(IR 핸드오프·Paused·서명 차례) 동안에는 `run.maxWallClockMs` 벽시계를 멈춘다(2026-11-11 B3). 실제 로그인·서명이 2분을 쉽게 넘기 때문이다. 좀비 실행은 엔진 고정 상한이 막는다: 대기 한 번 30분, 실행 전체 수명(대기 포함) 2시간. 넘으면 사람 대기 중이면 `run.handoff_timeout`, 서명 차례면 verify로 끝난다. 이 상한을 정하는 정책 필드는 아직 없다(생기면 더 엄격한 쪽을 쓴다).
+- 실화면 관찰(2026-11-11 실제 발급 1건, 규칙은 바꾸지 않음): 홈택스 발급 흐름은 [발급미리보기] → [발급하기] → 확인 창 → 인증유형 선택 → 인증서 창(`iframe#dscert`, 화면 전체, 안을 못 읽음) → 완료 창이다. 발급 요청은 `teet.hometax.go.kr`로 간다. 첫 C 계열 요청 `ATEETBAA002C04`는 인증유형을 고른 직후, 인증서 창이 뜨기 전에 나간다. 그래서 서명 차례(사람 대기)에 들어간 때에는 이미 C04가 나간 뒤다. 서명 차례의 재개·중지·상한이 버튼 없이 verify로 끝나고 확인 못 하면 `in_doubt`로 두는 지금 규칙이 이 관찰과 맞는다. 인증서 창의 [확인]이 곧 커밋이라, `signFlow`에서 따로 누를 확인 버튼이 없을 수 있다(없으면 누르지 않고 verify).
 
 우리가 하지 않는 것(정책 파일에 필드 자체가 없음): UA 변경, 지문 조작, `navigator.webdriver` 조작, 헤드리스, 프록시 로테이션, 타이핑 모사, 캡차 자동 입력.
 
@@ -435,7 +466,7 @@ interface RunHandle {
 ```
 `HumanAnswer`에는 `secret`이 없다. 비밀은 `VaultClient.typist.*`만.
 
-Phase 1 구현의 실행 명령은 main → 엔진 중계 통로의 `run.start`(H-01)·`run.startCert`(민원증명, §4.2)·`run.stop`·`run.inspect`다. 승인 근거는 두 실행 모두 게이트 전용 포트로만 받는다.
+Phase 1 구현의 실행 명령은 main → 엔진 중계 통로의 `run.start`(H-01)·`run.startCert`(민원증명, §4.3)·`run.stop`·`run.inspect`다. 승인 근거는 두 실행 모두 게이트 전용 포트로만 받는다.
 
 ## 12. 운영 수준(portalMode)과 데몬 권한
 

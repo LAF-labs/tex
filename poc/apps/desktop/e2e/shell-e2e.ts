@@ -2,9 +2,10 @@
 // 승인 바 판정, 습관 클릭, 중복 경고, 위조 경로, 정부24 목업, 스크린샷. fixture 모드(가짜 H-01 페이지, 임시 앱 폴더, 메모리 키)로 돈다.
 // 바 입력은 main의 sendInputEvent라 판정 로직만 본다(실제 포인터 좌표·OS 입력은 Windows에서). 실행 Chrome은 headless다.
 // 실행: pnpm demo:e2e  (스크린샷·결과: reports/raw/poc-6/shell/)
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { app, clipboard, nativeImage, nativeTheme } from 'electron';
+import { app, clipboard, MessageChannelMain, nativeImage, nativeTheme } from 'electron';
 import { buildAttestRequest, buildGateRequest, gateSelfCheck, type GateRequest } from '@sax/engine/gate';
 import { ACTION_TEXT, ATTEST_ACTION_TEXT, ATTEST_STOP_TEXT, cardTargets, kstToday, summarize, type SummaryLine } from '../dist/approval-gate.js';
 import { lastWebPrefs, webPrefsProblems } from '../dist/harden.js';
@@ -113,7 +114,7 @@ const barLeave = () => barWc().sendInputEvent({ type: 'mouseLeave', x: -5, y: -5
 const gesture = () => S.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
 /**
  * [홈택스에서 준비]: main은 2초 안의 실제 입력 뒤에만 받는다(ADR-027 결정 8). 부하가 크면(전체 시험 직후 등) 입력과
- * 클릭 사이가 2초를 넘어 gesture_required로 거부될 수 있다. 그 거부(토스트 "잠시 뒤 다시 눌러 주세요")일 때만 입력을 새로
+ * 클릭 사이가 2초를 넘어 gesture_required로 거부될 수 있다. 그 거부(토스트 "버튼 클릭을 확인하지 못했어요…")일 때만 입력을 새로
  * 주고 다시 누른다(최대 3번). 다른 거부(진행 중 등)는 그대로 둔다: 그 판정을 보는 검사가 있다.
  */
 async function prepare(id: string): Promise<void> {
@@ -122,7 +123,7 @@ async function prepare(id: string): Promise<void> {
     gesture();
     await sleep(30);
     await click(`[data-run="${id}"] [data-act=prepare]`);
-    const rejected = async () => runStatus(id) === 'draft' && (await js<string>(`document.getElementById('toast').textContent || ''`)).includes('잠시 뒤 다시 눌러');
+    const rejected = async () => runStatus(id) === 'draft' && (await js<string>(`document.getElementById('toast').textContent || ''`)).includes('버튼 클릭을 확인하지 못했어요');
     await until('prepare answered', async () => runStatus(id) !== 'draft' || (await rejected()), 3000);
     if (!(await rejected())) return;
     console.log(`  (prepare: gesture_required, retry ${i + 1})`);
@@ -468,71 +469,87 @@ async function flow(): Promise<void> {
   await sleep(80);
   const refocused = S.bar.snapshot();
   check('창 blur → 활성화: 카드는 무장됨 그대로, 활성화 사이에 걸친 클릭은 승인이 아니다', runStatus(id2) === 'waiting' && refocused.mode === 'armed' && refocused.armed && refocused.committed?.mode === 'armed', refocused);
-  // 금고가 부르는 비밀 창(ADR-025 결정 10): 활성 실행의 요청만, OS 제목줄 "금고 · …"의 메인 창 모달 하나, 문구는 main 표.
+  // 금고가 부르는 비밀 입력(대표 지시 2026-11-14): 따로 뜨는 창 없이 대화 안 가려진 카드. 활성 실행의 요청만, 하나씩, 값은 금고 1회용 포트로만.
+  const winCount = () => S.win.getChildWindows().length;
+  const winClick = async (sel: string) => {
+    const r = await js<{ x: number; y: number } | null>(`(() => { const e = document.querySelector(${JSON.stringify(sel)}); if (!e) return null; e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return { x: Math.round(b.left + b.width / 2), y: Math.round(b.top + b.height / 2) }; })()`);
+    if (!r) return false;
+    S.win.webContents.sendInputEvent({ type: 'mouseDown', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+    S.win.webContents.sendInputEvent({ type: 'mouseUp', x: r.x, y: r.y, button: 'left', clickCount: 1 });
+    await sleep(80);
+    return true;
+  };
+  const cardOf = (reqId: string) => js<{ text: string; type: string | null; value: string | null } | null>(`(() => { const c = document.querySelector('[data-secret-ask="${reqId}"]'); if (!c) return null; const i = c.querySelector('input'); return { text: c.innerText, type: i ? i.type : null, value: i ? i.value : null }; })()`);
+  const childBefore = winCount();
   S.host.emit('vault-event', 'secret.needed', { runId: 'run-nope', targetId: 'T0', kind: 'portal_password', scope: 'business' });
   await sleep(100);
-  const noWin = S.secretWindow() === null;
+  const noAsk = S.secretAsk() === null;
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T1', kind: 'portal_password', scope: 'business' });
-  await until('secret window', () => !!S.secretWindow() && !S.secretWindow()!.webContents.isLoading(), 5000);
-  const sw = S.secretWindow();
+  await until('secret ask', () => !!S.secretAsk(), 5000);
+  const a1 = S.secretAsk()!;
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T2', kind: 'security_card', scope: 'business', row: 7 });
-  await sleep(100);
-  const swText = sw ? await sw.webContents.executeJavaScript('document.body.innerText').catch(() => '') : '';
-  check('비밀 창: 활성 실행의 secret.needed만, 제목줄 "금고 · 홈택스 비밀번호", 메인 창 모달 하나, 첫 줄·고정 문구는 main 표', noWin && !!sw && sw.getTitle() === '금고 · 홈택스 비밀번호' && sw.isModal() && sw.getParentWindow() === S.win && S.secretWindow() === sw && swText.includes('세금계산서 발급 · 홈택스 · 가나다컴퍼니') && swText.includes('앱은 대화창 안에서 비밀번호·카드 번호를 묻지 않아요'), { noWin, title: sw?.getTitle(), swText });
-  if (sw) await fs.writeFile(path.join(OUT, '18b-secret-window.png'), (await capture(sw.webContents)).toPNG());
-  const pwReveal = sw ? await sw.webContents.executeJavaScript(`!!document.getElementById('reveal')`).catch(() => null) : null;
-  sw?.close();
-  // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 창이 닫히면 이어서 연다.
-  await until('queued secret window', () => !!S.secretWindow() && S.secretWindow() !== sw && !S.secretWindow()!.webContents.isLoading(), 5000);
-  const sw2 = S.secretWindow();
-  check('비밀 창이 열려 있을 때 온 요청은 창이 닫힌 뒤 이어서 연다(제목 "금고 · 보안카드 번호")', !!sw2 && sw2.getTitle() === '금고 · 보안카드 번호' && sw2.isModal(), sw2?.getTitle());
-  // SecretField: 보안카드 번호는 기본으로 가리고 보기 버튼 하나로 보인다(30초 뒤 다시 가림은 secret.js 타이머). 비밀번호 창에는 보기 버튼이 없다.
-  const reveal = sw2
-    ? await sw2.webContents
-        .executeJavaScript(
-          `(() => { const b = document.getElementById('reveal'), v = document.getElementById('v'); if (!b) return null; const before = [v.type, b.getAttribute('aria-pressed')]; b.click(); const on = [v.type, b.getAttribute('aria-pressed'), document.getElementById('reveal-note').textContent, b.textContent]; b.click(); return { before, on, after: [v.type, b.getAttribute('aria-pressed'), b.textContent] }; })()`,
-        )
-        .catch(() => null)
-    : null;
-  check(
-    '비밀 창 보안카드 칸: 기본은 가림, [번호 보기]로 보이고 "30초 뒤 다시 가려요", 다시 누르면 가림. 비밀번호 창에는 보기 버튼 없음',
-    pwReveal === false &&
-      reveal?.before.join() === 'password,false' &&
-      reveal.on[0] === 'text' && reveal.on[1] === 'true' && reveal.on[2] === '30초 뒤 다시 가려요' && reveal.on[3] === '번호 가리기' &&
-      reveal.after.join() === 'password,false,번호 보기',
-    { pwReveal, reveal },
-  );
-  sw2?.close();
-  await until('secret closed', () => S.secretWindow() === null, 3000);
-  // 창을 열다 실패해도 '열림'이 남지 않는다: 다음 요청은 정상으로 열린다.
-  const realPort = S.host.secretInputPort.bind(S.host);
-  S.host.secretInputPort = () => {
-    throw new Error('e2e: port failed');
-  };
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T5', kind: 'portal_password', scope: 'business' });
   await sleep(200);
-  const failedNoWin = S.secretWindow() === null;
+  const c1 = await cardOf(a1.reqId);
+  check('비밀 입력: 활성 실행 요청만, 대화 안 카드 하나(가려진 칸), 따로 뜨는 창 없음', noAsk && a1.kind === 'portal_password' && c1?.type === 'password' && c1.text.includes('홈택스 비밀번호를 입력해 주세요') && winCount() === childBefore && S.secretAsk()!.reqId === a1.reqId, { noAsk, a1, c1, childBefore, after: winCount() });
+  await fs.writeFile(path.join(OUT, '18b-secret-card.png'), (await capture(S.win.webContents)).toPNG());
+  // 값은 금고 1회용 포트로만: 시험 포트가 받는다(종류·길이만 본다). 카드에는 "●●●● 입력함"만 남고 칸은 비어 있다.
+  const realPort = S.host.secretInputPort.bind(S.host);
+  const got: Array<{ method: string; kind: unknown; len: number }> = [];
+  S.host.secretInputPort = (() => {
+    const ch = new MessageChannelMain();
+    ch.port1.on('message', (e: { data: { id: number; method: string; params: { kind?: unknown; bytes?: Uint8Array } } }) => {
+      got.push({ method: e.data.method, kind: e.data.params?.kind, len: e.data.params?.bytes?.length ?? 0 });
+      ch.port1.postMessage({ t: 'rpc', id: e.data.id, result: {} });
+    });
+    ch.port1.start();
+    return ch.port2;
+  }) as typeof S.host.secretInputPort;
+  await js(`document.querySelector('[data-secret-ask="${a1.reqId}"] input').focus()`);
+  S.win.webContents.insertText('e2e-portal-pw');
+  await winClick(`[data-secret-ask="${a1.reqId}"] button[type=submit]`);
+  await until('secret answered', () => got.length === 1 && S.secretAsk()?.reqId !== a1.reqId, 5000).catch(() => {});
+  const c1done = await cardOf(a1.reqId);
+  check('비밀 입력 답: 금고 포트로 secret.provide 한 번(값은 포트로만), 카드는 "●●●● 입력함"', got.length === 1 && got[0]!.method === 'secret.provide' && got[0]!.kind === 'portal_password' && got[0]!.len === 13 && !!c1done && c1done.text.includes('●●●● 입력함') && c1done.type === null, { got, c1done });
+  // 열려 있을 때 온 요청(보안카드 7번 칸)은 버리지 않고 앞 카드가 끝나면 이어서 묻는다.
+  await until('queued secret ask', () => S.secretAsk()?.kind === 'security_card', 5000).catch(() => {});
+  const a2 = S.secretAsk();
+  const c2 = a2 ? await cardOf(a2.reqId) : null;
+  check('앞 카드가 끝나면 들고 있던 요청(보안카드 7번 칸)을 이어서 묻는다', !!a2 && a2.kind === 'security_card' && !!c2 && c2.text.includes('보안카드 번호 7번') && c2.type === 'password', { a2, c2 });
+  // 금고가 받지 않으면 카드가 남아 다시 넣게 한다
+  S.host.secretInputPort = (() => {
+    const ch = new MessageChannelMain();
+    ch.port1.on('message', (e: { data: { id: number } }) => ch.port1.postMessage({ t: 'rpc', id: e.data.id, error: 'not_requested' }));
+    ch.port1.start();
+    return ch.port2;
+  }) as typeof S.host.secretInputPort;
+  if (a2) {
+    await js(`document.querySelector('[data-secret-ask="${a2.reqId}"] input').focus()`);
+    S.win.webContents.insertText('1234');
+    await winClick(`[data-secret-ask="${a2.reqId}"] button[type=submit]`);
+    await sleep(400);
+  }
+  const c2err = a2 ? await cardOf(a2.reqId) : null;
+  check('금고가 받지 않으면 카드가 남고 "다시 넣어 주세요", 칸은 비어 있다', !!c2err && c2err.text.includes('금고가 받지 않았어요') && c2err.type === 'password' && c2err.value === '' && S.secretAsk()?.reqId === a2?.reqId, c2err);
   S.host.secretInputPort = realPort;
-  S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T6', kind: 'portal_password', scope: 'business' });
-  await until('secret window after failure', () => !!S.secretWindow(), 5000).catch(() => {});
-  const reopened = !!S.secretWindow();
-  check('비밀 창을 열다 실패해도 다음 요청은 정상으로 연다(조정자에 열림이 남지 않음)', failedNoWin && reopened, { failedNoWin, reopened });
-  S.secretWindow()?.close();
-  await until('secret closed after failure test', () => S.secretWindow() === null, 3000);
+  if (a2) await winClick(`[data-secret-ask="${a2.reqId}"] [data-act=secret-cancel]`);
+  await until('secret ask cancelled', () => S.secretAsk() === null, 3000).catch(() => {});
+  check('[취소]하면 카드가 닫히고 금고에 값을 보내지 않는다', S.secretAsk() === null && got.length === 1);
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'google_signin_detected' });
-  check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretWindow() === null, S.runs.get(id2)!.notices);
-  // 실행이 끝나 main이 창을 닫으면 들고 있던 요청은 다시 열지 않는다(종료를 막거나 창 없이 '열림'이 남지 않게).
+  check('비밀 창 거부(Google 로그인)는 진행 중 카드에 사실 문장으로', (S.runs.get(id2)!.notices ?? []).some((t) => t.includes('Google 계정이 로그인돼 있어')) && S.secretAsk() === null, S.runs.get(id2)!.notices);
+  // 실행이 끝나 main이 카드를 닫으면 들고 있던 요청은 다시 묻지 않는다.
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T3', kind: 'portal_password', scope: 'business' });
-  await until('secret window 3', () => !!S.secretWindow(), 5000);
+  await until('secret ask 3', () => !!S.secretAsk(), 5000);
+  const a3 = S.secretAsk()!;
   S.host.emit('vault-event', 'secret.needed', { runId: id2, targetId: 'T4', kind: 'security_card', scope: 'business', row: 9 });
   // 확장 감지 거절: 진행 중에는 문장만, 발급 없이 끝나면 [다시 시도](입력창 채우기만)
   S.host.emit('vault-event', 'secret_window.refused', { reason: 'extension_not_allowed', count: 1 });
   await sleep(300);
   const extLive = await js<{ text: boolean; btn: number }>(`(() => { const c = document.querySelector('[data-run="${id2}"]'); return { text: c.textContent.includes('Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.'), btn: c.querySelectorAll('[data-act="retry"]').length }; })()`);
   await stopRun(id2);
-  await until('secret closed by run end', () => S.secretWindow() === null, 3000);
+  await until('secret ask closed by run end', () => S.secretAsk() === null, 3000);
   await sleep(500);
-  check('실행이 끝나 main이 비밀 창을 닫으면 대기 요청은 다시 열지 않는다', S.secretWindow() === null);
+  const c3 = await cardOf(a3.reqId);
+  check('실행이 끝나 main이 카드를 닫으면 대기 요청은 다시 묻지 않는다', S.secretAsk() === null && !!c3 && c3.text.includes('입력 요청이 끝났어요') && c3.type === null, c3);
   const runsBeforeRetry = S.runs.list().length;
   const retryBtn = await js<number>(`document.querySelectorAll('[data-run="${id2}"] [data-act="retry"]').length`);
   await js(`document.querySelector('[data-run="${id2}"] [data-act="retry"]')?.click()`);
@@ -579,6 +596,14 @@ async function flow(): Promise<void> {
   fx().fixture.knobs.supplier = { bizNo: '1234567891', name: '가나다컴퍼니' };
   check('공급자 불일치: 바를 띄우지 않고 멈춘다', (S.runs.get(idSup)!.stoppedNote ?? '').includes('로그인한 사업자가 이 프로필과 달라서') && barShown === shownBefore && !gates.has(idSup) && fx().fixture.posts() === 1, S.runs.get(idSup)!.stoppedNote);
   await shot('20-supplier-mismatch');
+  // 발급 전에 멈춘 카드의 [다시 준비]: 같은 값의 새 초안(시작은 그 카드의 [홈택스에서 준비]로만), 멈춘 카드는 그대로
+  const runsBeforeRedo = S.runs.list().length;
+  await click(`[data-run="${idSup}"] [data-act=redo]`);
+  const redone = await until('redo draft', () => S.runs.list().length === runsBeforeRedo + 1 && S.runs.list().at(-1)!.status === 'draft', 3000);
+  const nd = S.runs.list().at(-1)!;
+  check('발급 전 멈춤 카드 [다시 준비] → 같은 거래처·금액의 새 초안(실행은 시작하지 않음)', redone && nd.counterparty.name === 'C테크' && nd.amount === 300_000 && S.runs.get(idSup)!.status === 'attention' && fx().fixture.posts() === 1, { status: nd.status, cp: nd.counterparty.name, amount: nd.amount });
+  await click(`[data-run="${nd.id}"] [data-act=cancel]`);
+  await until('redo cancel', () => runStatus(nd.id) === 'stopped', 3000);
 
   // 정부24 목업 2장
   await sendText('주민등록등본 떼 줘');
@@ -752,6 +777,46 @@ async function flow(): Promise<void> {
     { attest: S.runs.get(idDoubt)!.attest, ledgerBefore, ledgerAfter },
   );
   await click('#panel .panel-x');
+
+  // 저장 품목이 없는 거래처(리허설 발견 2026-11-11: 빈 품목 카드가 실행에서야 item_missing으로 멈췄다): 카드 전에 품목을 묻고 →
+  // 답 → 카드에 품목 → 카드에서 품목·이메일을 고치고 → [홈택스에서 준비]가 그 품목으로 승인 대기까지 → 처음 쓴 품목은 저장 품목으로. 발급은 하지 않는다([중지]).
+  {
+    // 가짜 홈택스가 아는 거래처(C테크)의 저장 품목·시연 품목을 비워 "품목 없는 거래처"로 만든다(이 뒤의 검사는 C테크를 쓰지 않는다)
+    const ctech = (await js<Array<{ id: string; name: string; rep: string; email: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === 'C테크')!;
+    await js(`window.sax.call('counterparty.save', ${JSON.stringify({ id: ctech.id, name: 'C테크', rep: ctech.rep, email: 'noitem@gyeonbon-test.example', item: '' })})`);
+    await S.host.rpc('counterparty.setItems', { id: ctech.id, items: [] });
+    const made = (await js<Array<{ id: string; item: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.id === ctech.id && c.item === '');
+    const lastApp = () => js<string>(`[...document.querySelectorAll('.sx-thread .sx-app')].pop()?.textContent ?? ''`);
+    const runsBefore = await js<number>(`document.querySelectorAll('[data-run]').length`);
+    await sendText('C테크에 1,230원 세금계산서 끊어 줘');
+    check('품목 없는 거래처: 카드 전에 "어떤 품목으로 발급할까요?"', !!made?.id && (await until('ask item', async () => (await lastApp()).includes('어떤 품목으로 발급할까요'), 5000)) && (await js<number>(`document.querySelectorAll('[data-run]').length`)) === runsBefore, { made: !!made, last: await lastApp() });
+    const idItem = await toDraft('컨설팅 용역');
+    check('답한 품목으로 카드(품목·받는 이메일이 카드에 보인다, 빈 값 글자 없음)', !/\bnull\b|undefined/.test(await js<string>(`document.querySelector('[data-run="${idItem}"]')?.innerText ?? ''`)) && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '컨설팅 용역' && (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-email]')?.dataset.draftEmail ?? ''`)) === 'noitem@gyeonbon-test.example');
+    await click(`[data-run="${idItem}"] [data-act=fields-edit]`);
+    await until('fields form', async () => js<boolean>(`!!document.querySelector('[data-run="${idItem}"] [data-draft-edit] [name=item]')`), 3000);
+    await js(`(() => { const c = document.querySelector('[data-run="${idItem}"]'); c.querySelector('[name=item]').value = '디자인 용역'; c.querySelector('[name=email]').value = 'design@gyeonbon-test.example'; })()`);
+    await click(`[data-run="${idItem}"] [data-act=fields-save]`);
+    check('카드에서 품목·이메일을 고치면 카드 값이 바뀐다', await until('fields saved', async () => (await js<string>(`document.querySelector('[data-run="${idItem}"] [data-draft-item]')?.dataset.draftItem ?? ''`)) === '디자인 용역', 3000) && S.runs.get(idItem)!.email.value === 'design@gyeonbon-test.example');
+    await prepare(idItem);
+    await until('waiting item', () => runStatus(idItem) === 'waiting', 15_000);
+    const cpsNow = (await js<Array<{ name: string; item: string }>>(`window.sax.call('counterparties.list', {})`)).find((c) => c.name === 'C테크');
+    check('[홈택스에서 준비] → 고친 품목으로 승인 대기까지(엔진이 품목을 받았다), 처음 쓴 품목은 저장 품목으로 남고 카드가 알린다', runStatus(idItem) === 'waiting' && S.runs.get(idItem)!.item === '디자인 용역' && cpsNow?.item === '디자인 용역' && (S.runs.get(idItem)!.notices ?? []).some((t) => t.includes('저장 품목으로 남겼어요')), { status: runStatus(idItem), note: S.runs.get(idItem)!.stoppedNote, cpsNow, notices: S.runs.get(idItem)!.notices });
+    await stopRun(idItem);
+    await until('item run stopped', () => runStatus(idItem) === 'stopped' && !S.bar.snapshot().visible, 20_000);
+
+    // 카드에서 거래처 바꾸기(F-14): [취소] 뒤 다시 말하지 않고 장부에서 고른다. 받는 이메일·저장 품목(추정)은 새 거래처의 장부 값(앞 카드에서 고친 이메일은 그 카드에만).
+    const idCp = await toDraft('B상사에 4,560원 세금계산서');
+    await click(`[data-run="${idCp}"] [data-act=draft-cp]`);
+    await until('cp select', async () => js<boolean>(`!!document.querySelector('[data-run="${idCp}"] [data-draft-cp] select')`), 3000);
+    const opts = await js<string[]>(`[...document.querySelectorAll('[data-run="${idCp}"] [data-draft-cp] option')].map((o) => o.textContent)`);
+    await js(`(() => { const s = document.querySelector('[data-run="${idCp}"] [data-draft-cp] select'); s.value = ${JSON.stringify(ctech.id)}; })()`);
+    await click(`[data-run="${idCp}"] [data-act=draft-cp-save]`);
+    const switched = await until('cp switched', async () => (await js<string>(`document.querySelector('[data-run="${idCp}"] .sx-card-title')?.textContent ?? ''`)).includes('C테크'), 3000);
+    const rCp = S.runs.get(idCp)!;
+    check('확인 카드 [거래처 바꾸기]: 장부의 다른 거래처만 고를 수 있고, 고르면 카드 제목·받는 이메일·저장 품목이 그 거래처 것(금액 그대로)', switched && !opts.includes('B상사') && opts.includes('C테크') && rCp.counterparty.id === ctech.id && rCp.email.value === 'noitem@gyeonbon-test.example' && rCp.item === '디자인 용역' && rCp.itemGuessed && rCp.amount === 4560, { opts, cp: rCp.counterparty.name, email: rCp.email.value, item: rCp.item });
+    await click(`[data-run="${idCp}"] [data-act=cancel]`);
+    await until('cp draft cancelled', () => runStatus(idCp) === 'stopped', 3000);
+  }
 
   // 엔진 프로세스가 승인 대기 중에 끝남: 바가 내려가고 카드는 "승인 전에 끝났어요"(발급 없음), 이후 호출은 기다리지 않고 실패.
   const postsExit = fx().fixture.posts();

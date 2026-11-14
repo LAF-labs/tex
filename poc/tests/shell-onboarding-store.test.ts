@@ -1,5 +1,5 @@
 // 온보딩 저장소 어댑터(onboarding-store.ts): 상태 기계(OnboardingFlow)를 실제 엔진 data-service(#91)·암호화 DB(#53)에 붙여 돌린다. Electron 없이.
-// 동의 레코드는 쌓이고(프로필 전 NULL → 프로필에 잇기), 이어 하기는 DB 한 행, 포털 아이디는 profiles.portal_login_id.
+// 동의 레코드는 쌓이고(프로필 전 NULL → 프로필에 잇기), 이어 하기는 DB 한 행.
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
@@ -16,19 +16,13 @@ import { EngineOnboardingStore, ONB_STORE_METHODS, onboardingPorts } from '../ap
 import { CONSENT_NOTICES, OnboardingFlow, type OnbAnswer } from '../apps/desktop/src/onboarding.ts';
 
 const NOW = () => new Date('2026-11-06T01:00:00Z');
-const UPTO_DELEGATION: OnbAnswer[] = [
+const UPTO_AUTH: OnbAnswer[] = [
   { step: 'terms', choice: 'agree' },
   { step: 'welcome', choice: 'upload' },
   { step: 'biz-confirm', choice: 'confirm' },
-  { step: 'auth', choice: 'card' },
-  { step: 'delegation', choice: 'agree' },
 ];
-const TO_SUMMARY: OnbAnswer[] = [
-  { step: 'model', choice: 'agree' },
-  { step: 'telemetry', choice: 'off' },
-  { step: 'tasks', choice: 'submit', tasks: { 'H-03': true, 'H-02': true } },
-  { step: 'summary', choice: 'ok' },
-];
+// [홈택스 인증서]에서 이 PC 인증서를 고르면 바로 마친다(B4: 모델 고지는 약관 화면, 텔레메트리·업무·요약 화면 없음)
+const TO_SUMMARY: OnbAnswer[] = [{ step: 'auth', choice: 'cert', certId: 'npki-1' }];
 
 describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
   let root: string;
@@ -61,52 +55,70 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     for (const m of ONB_STORE_METHODS) assert.ok(m === 'profile.upsert' || (MAIN_ONLY as readonly string[]).includes(m), m);
   });
 
-  it('끝까지: 동의 5행(약관·위임 2·모델·텔레메트리)이 프로필에 이어지고, 포털 아이디는 프로필 열, 이어 하기는 한 행', async () => {
+  it('끝까지: 동의 2행(약관·모델, 한 화면)이 프로필에 이어지고, 고른 인증서 이름(CN)이 profiles.cert_name에, 이어 하기는 한 행', async () => {
     const flow = flowOn(new EngineOnboardingStore(rpc));
-    await walk(flow, UPTO_DELEGATION);
+    await walk(flow, UPTO_AUTH);
     const consents = new ConsentRepo(db);
-    // 프로필 전: 약관·위임은 profile_id NULL로 쌓인다.
-    assert.deepEqual(consents.history(null).map((c) => [c.kind, c.via]), [['terms', 'onboarding'], ['delegation', 'T-06'], ['delegation', 'T-06']]);
+    // 프로필 전: 약관·모델은 profile_id NULL로 쌓인다.
+    assert.deepEqual(consents.history(null).map((c) => [c.kind, c.via]), [['terms', 'onboarding'], ['model', 'onboarding']]);
     await walk(flow, TO_SUMMARY);
     assert.equal(flow.state.step, 'first');
-    const p = ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
-    assert.equal(p.portalLoginId, 'ganada01', '금고 등록 결과의 포털 아이디(비밀 아님)');
-    assert.equal(p.signMethod, 'security_card');
+    const list = async () => ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
+    const p = await list();
+    assert.equal(p.signMethod, 'cert');
+    assert.equal(p.certName, '가나다컴퍼니()0001234567891', 'H-01 2.3.0이 인증서 창 행을 이 이름으로 고른다');
+    assert.ok(calls.includes('profile.setCertName') && (MAIN_ONLY as readonly string[]).includes('profile.setCertName'));
     assert.equal(consents.history(null).length, 0, '프로필을 저장하면 앞의 동의가 그 프로필로 이어진다');
     const rows = consents.history(p.id);
-    assert.deepEqual(rows.map((c) => [c.kind, c.choice]), [['terms', 'agreed'], ['delegation', 'agreed'], ['delegation', 'agreed'], ['model', 'agreed'], ['telemetry', 'declined']]);
+    assert.deepEqual(rows.map((c) => [c.kind, c.choice]), [['terms', 'agreed'], ['model', 'agreed']]);
     const model = rows.find((c) => c.kind === 'model')!;
     assert.equal(model.processorsVersion, MOCK_CONSENT_CONFIG.processorsVersion);
     assert.equal(model.noticeVersion, CONSENT_NOTICES.model.version);
     assert.equal(rows.find((c) => c.kind === 'terms')!.noticeKey, CONSENT_NOTICES.terms.key);
-    assert.equal(rows.find((c) => c.kind === 'delegation')!.noticeVersion, CONSENT_NOTICES.delegation.version);
     // 이어 하기 행: 마지막 단계와 프로필.
     const st = (await svc.handle('onboarding.load', { profileKind: 'business' })) as { step: string; profileId: string | null };
     assert.equal(st.step, 'first');
     assert.equal(st.profileId, p.id);
     // 값 없음: 동의 행·이어 하기 행 어디에도 비밀이 없다(목업 금고는 값을 돌려주지 않는다).
     assert.ok(!calls.includes('consent.latest') && !calls.some((m) => m.startsWith('secret')));
+    // 다른 인증으로 바꾸면 인증서 이름을 지운다(옛 이름으로 고르지 않게)
+    await flow.answer({ step: 'first', choice: 'later' });
+    await flow.reopen('auth');
+    await flow.answer({ step: 'auth', choice: 'card' });
+    assert.deepEqual([(await list()).signMethod, (await list()).certName], ['security_card', null]);
   });
 
   it('이어 하기: 껐다 켜면(새 저장소) 멈춘 질문부터, 앞의 동의는 다시 묻지 않는다', async () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
-    await walk(a, UPTO_DELEGATION);
-    assert.equal(a.state.step, 'model');
+    await walk(a, UPTO_AUTH);
+    assert.equal(a.state.step, 'auth');
     const store = new EngineOnboardingStore(rpc);
     const saved = await store.load();
-    assert.equal(saved?.step, 'model');
-    assert.equal(saved?.consents.terms?.choice, 'agreed');
-    assert.equal(saved?.portalLoginId, 'ganada01', '포털 아이디는 이어 하기에 남아 요약에서 프로필에 쓴다');
+    assert.equal(saved?.step, 'auth');
+    assert.deepEqual([saved?.consents.terms?.choice, saved?.consents.model?.choice], ['agreed', 'agreed']);
     const b = new OnboardingFlow(onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), store), saved, NOW);
     await walk(b, TO_SUMMARY);
     const p = ((await svc.handle('db.query.profiles.list', {})) as Profile[]).find((x) => x.kind === 'business')!;
-    assert.equal(p.portalLoginId, 'ganada01');
+    assert.deepEqual([p.signMethod, p.certName], ['cert', '가나다컴퍼니()0001234567891'], '이어 하기 뒤에도 CN을 찾는다');
     assert.equal(new ConsentRepo(db).history(p.id).filter((c) => c.kind === 'terms').length, 1, '약관은 한 번만');
+  });
+
+  it('옛 판에서 ①(위임 등록)에 멈춘 이어 하기 행은 불러올 때 발급 인증 질문으로 돌아간다', async () => {
+    const a = flowOn(new EngineOnboardingStore(rpc));
+    await walk(a, UPTO_AUTH.slice(0, 3));
+    assert.equal(a.state.step, 'auth');
+    // 옛 빌드가 남긴 행: 보안카드를 골라 ①에서 멈춤
+    await new EngineOnboardingStore(rpc).save({ ...a.state, step: 'delegation', auth: 'card' });
+    const loaded = await new EngineOnboardingStore(rpc).load();
+    assert.equal(loaded?.step, 'auth');
+    assert.equal(loaded?.auth, null);
+    const b = new OnboardingFlow(onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {} }), new EngineOnboardingStore(rpc)), loaded, NOW);
+    assert.equal((await b.view()).consent, null);
   });
 
   it('프로필이 생긴 뒤 이어 하기를 불러오면 그 뒤 동의는 바로 그 프로필로 쌓인다', async () => {
     const a = flowOn(new EngineOnboardingStore(rpc));
-    await walk(a, [...UPTO_DELEGATION, ...TO_SUMMARY]);
+    await walk(a, [...UPTO_AUTH, ...TO_SUMMARY]);
     const store = new EngineOnboardingStore(rpc);
     await store.load();
     await store.recordConsent({ v: 1, kind: 'telemetry', noticeKey: CONSENT_NOTICES.telemetry.key, noticeVersion: CONSENT_NOTICES.telemetry.version, choice: 'agreed', at: '2026-11-06T02:00:00.000Z', via: 'onboarding' });
@@ -115,17 +127,9 @@ describe('온보딩 저장소: 엔진 명령으로 DB에', () => {
     assert.equal(new ConsentRepo(db).history(null).length, 0);
   });
 
-  it('금고 창을 닫으면 위임 동의는 남지 않는다', async () => {
-    const store = new EngineOnboardingStore(rpc);
-    const flow = new OnboardingFlow(onboardingPorts(new MockOnboardingPorts({ saveProfile: async () => {}, register: 'cancelled' }), store), null, NOW);
-    await walk(flow, UPTO_DELEGATION);
-    assert.equal(flow.state.step, 'delegation');
-    assert.deepEqual(new ConsentRepo(db).history(null).map((c) => c.kind), ['terms']);
-  });
-
   it('옛 이어 하기 파일(M4-2 목업 JSON)은 한 번 옮기고 지운다. 모양이 틀리면 지우고 처음부터, 없으면 null', async () => {
     const a = flowOn(new EngineOnboardingStore(() => Promise.resolve(null)));
-    await walk(a, UPTO_DELEGATION.slice(0, 2));
+    await walk(a, UPTO_AUTH.slice(0, 2));
     const file = path.join(root, `legacy-${randomBytes(3).toString('hex')}.json`);
     await fsp.writeFile(file, JSON.stringify(a.state));
     const store = new EngineOnboardingStore(rpc);

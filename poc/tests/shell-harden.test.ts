@@ -282,11 +282,13 @@ describe('D11 §4 IPC: 수신부 검사, 최상위 프레임, 사용자 동작 �
 });
 
 describe('D11 §4 shell.openExternal: main만, URL이 아니라 키만', () => {
-  it('데스크톱 제품 소스·렌더러에 openExternal이 없다(외부 URL을 여는 길이 아직 없다)', () => {
-    for (const f of productFiles) assert.ok(!read(`${SRC}/${f}`).includes('openExternal'), f);
+  it('openExternal은 external-links.ts 한 곳만 부른다(렌더러는 키만, B4 보안 프로그램 설치 파일)', () => {
+    for (const f of productFiles) if (f !== 'external-links.ts') assert.ok(!read(`${SRC}/${f}`).includes('openExternal('), f);
     for (const f of staticJs) assert.ok(!read(`apps/desktop/static/${f}`).includes('openExternal'), f);
+    const src = read(`${SRC}/external-links.ts`);
+    assert.match(src, /u\.protocol !== 'https:' \|\| u\.username \|\| u\.password \|\| u\.port \|\| !ALLOWED_SITES\.includes\(host\)/);
+    assert.match(src, /shell\.openExternal\(externalUrl\(key\)\)/);
   });
-  it.todo('외부 URL 열기(정부24 후처리 안내 등)가 생기면 portalId 키 → https·userinfo 없음·포트 없음·내장 eTLD+1 허용 목록 검사 함수로 — 그 화면(D17 후처리)과 함께');
 });
 
 describe('D11 §4 경로: 앱 준비 전 setPath, 사용자 전용 루트', () => {
@@ -340,7 +342,13 @@ describe('D11 §4 승인 바(ADR-021)', () => {
   it('메인 창: webviewTag:false·disableDialogs:true, 제품 소스에 sendInputEvent·debugger 없음(e2e만)', () => {
     const shell = read(`${SRC}/shell-app.ts`);
     assert.ok(shell.includes('webviewTag: false') && shell.includes('disableDialogs: true'));
-    for (const f of productFiles) assert.ok(!/sendInputEvent|\.debugger\b/.test(read(`${SRC}/${f}`)), f);
+    // 앱 안 브라우저(embedded-browser.ts)만 webContents.debugger를 쓴다: 그 파일이 만든 홈택스 보기(영구 파티션)의 webContents에만 붙는다.
+    // 메인 창·승인 바·비밀 창에는 닿지 않는다(그 창들의 실제 입력 감시는 그대로 사람 입력만 센다).
+    for (const f of productFiles) if (f !== 'embedded-browser.ts') assert.ok(!/sendInputEvent|\.debugger\b/.test(read(`${SRC}/${f}`)), f);
+    const eb = read(`${SRC}/embedded-browser.ts`).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+    assert.ok(!/sendInputEvent|win\.webContents|BrowserWindow/.test(eb), 'embedded-browser.ts는 창 webContents·입력 합성을 쓰지 않는다');
+    for (const m of eb.matchAll(/(\S+)\.debugger\b/g)) assert.match(m[1]!, /^(\(?t|wc|host|this\.downloadHost)\b|\.wc$/, m[0]);
+    assert.match(eb, /new WebContentsView\(\{ \.\.\.\(adopt \? \{ webContents: adopt \} : \{\}\), webPreferences: \{ partition: EMBEDDED_PARTITION, sandbox: true/);
   });
 });
 

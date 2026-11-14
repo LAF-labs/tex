@@ -1,0 +1,77 @@
+{
+ "ir": 2,
+ "id": "hometax.invoice.email_status",
+ "version": "1.1.0",
+ "portal": "hometax",
+ "profileKinds": [
+  "business"
+ ],
+ "effects": [],
+ "inputs": {
+  "approvalNo": {
+   "type": "string",
+   "required": true
+  },
+  "window": {
+   "type": "string",
+   "required": false
+  }
+ },
+ "steps": [
+  {
+   "id": "s0",
+   "type": "goto",
+   "url": "https://hometax.go.kr/invoice/mail"
+  },
+  {
+   "id": "s1",
+   "type": "wait",
+   "for": "selector",
+   "value": "hometax.lookup.root"
+  },
+  {
+   "id": "s2",
+   "type": "fill",
+   "target": "hometax.lookup.searchKey",
+   "value": "$inputs.approvalNo"
+  },
+  {
+   "id": "s3",
+   "type": "select",
+   "target": "hometax.lookup.period",
+   "option": "1일"
+  },
+  {
+   "id": "s4",
+   "type": "click",
+   "target": "hometax.lookup.searchButton"
+  },
+  {
+   "id": "s5",
+   "type": "extract",
+   "name": "rows",
+   "from": {
+    "a11y": {
+     "target": "hometax.lookup.rows"
+    }
+   }
+  },
+  {
+   "id": "s5b",
+   "type": "extract",
+   "name": "count",
+   "from": {
+    "regex": {
+     "target": "hometax.lookup.count",
+     "patternRef": "lookup.countPattern"
+    }
+   }
+  },
+  {
+   "id": "s6",
+   "type": "end",
+   "status": "success"
+  }
+ ],
+ "postconditions": []
+}

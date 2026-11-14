@@ -9,6 +9,7 @@ import {
   attestRefusalText,
   attestRows,
   attestText,
+  BAR_AGAIN_TEXT,
   BAR_MESSAGES,
   BAR_PALETTE_DEFAULT,
   BAR_CSP,
@@ -117,6 +118,8 @@ export interface BarSnapshot {
   action: string;
   /** [중지] 자리 글자(증언 카드는 "닫기"). */
   stop: string;
+  /** 카드의 비가역 한 줄(바 페이지는 스크립트가 꺼져 있어 e2e가 이것으로 본다). */
+  irreversible: string;
   /** 두 판정 영역(카드 기준 DIP). */
   targets: CardTargets;
 }
@@ -239,6 +242,11 @@ export class ApprovalBar extends EventEmitter {
     return this.shown;
   }
 
+  /** 게이트·증언 요청을 받아 띄우는 중이거나 떠 있다(자리 계산이 이미 이 요청 기준이다). */
+  get active(): boolean {
+    return this.req !== null;
+  }
+
   /** 지금 열린 게이트(또는 증언)의 실행 ID. */
   get runId(): string | null {
     return this.req?.runId ?? null;
@@ -252,14 +260,14 @@ export class ApprovalBar extends EventEmitter {
   snapshot(): BarSnapshot {
     const c = this.committed && this.committed.id === this.pageId ? { reqId: this.committed.reqId, mode: this.committed.mode } : null;
     const t = this.targets;
-    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.text.action, stop: this.text.stop, targets: { approve: { ...t.approve }, stop: { ...t.stop } } };
+    return { visible: this.shown, kind: this.kind, runId: this.runId, reqId: this.req?.id ?? null, mode: this.mode, msg: this.msg, committed: c, bounds: { ...this.bounds }, band: this.band, armed: this.armedNow(), refusal: this.refusal, action: this.text.action, stop: this.text.stop, irreversible: this.text.irreversible, targets: { approve: { ...t.approve }, stop: { ...t.stop } } };
   }
 
   /**
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
    */
-  open(req: GateRequest): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -274,7 +282,7 @@ export class ApprovalBar extends EventEmitter {
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'));
+    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
     this.height = cardHeight(CARD_ROWS['H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
@@ -401,6 +409,11 @@ export class ApprovalBar extends EventEmitter {
     return this.req && overflowLine(this.lines ?? [], b.width, this.text) ? this.place(w, h, true, this.height) : b;
   }
 
+  /** 자리를 정하는 main 상태(앱 안 브라우저 패널 폭)가 바뀌었다. 창 크기 변경과 같이 다시 둔다(옮겨졌으면 대기 시간을 처음부터). */
+  layoutChanged(): void {
+    this.relayout();
+  }
+
   private relayout(reset = true): void {
     if (this.win.isDestroyed()) return;
     const [w, h] = this.win.getContentSize() as [number, number];
@@ -457,7 +470,19 @@ export class ApprovalBar extends EventEmitter {
     if (!this.req) return;
     this.gate.reset();
     this.emit('judged', { event: `reset:${why}` });
-    void this.render(this.liveMode(), null);
+    // 활성화 순간 커서가 승인 버튼 위였으면 그 클릭이 창을 가져오는 데 쓰였다(F-11): 한 번 더 누르라고 말한다
+    void this.render(this.liveMode(), why === 'activate' && this.shown && this.pointerOn('approve') ? BAR_AGAIN_TEXT : null);
+  }
+
+  /** 지금 커서가 카드의 그 버튼 위인가(창 활성화 판단용, 승인 판정에는 쓰지 않는다). */
+  private pointerOn(k: 'approve' | 'stop'): boolean {
+    if (this.win.isDestroyed()) return false;
+    const p = screen.getCursorScreenPoint();
+    const c = this.win.getContentBounds();
+    const t = this.targets[k];
+    const x = p.x - c.x - this.bounds.x;
+    const y = p.y - c.y - this.bounds.y;
+    return x >= t.x && x < t.x + t.width && y >= t.y && y < t.y + t.height;
   }
 
   private onMouse(m: Electron.MouseInputEvent): void {

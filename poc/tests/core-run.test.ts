@@ -228,9 +228,9 @@ describe('체크포인트 복귀 (D03 §5.5, R-G2)', () => {
     const c = probe({ expect: [false, false] });
     assert.equal(await reenterCheckpoint(cp({ reentry: 'reuse', sessionRequired: false }), c.p, tokens()), 'handoff');
   });
-  it('sessionRequired인데 로그아웃: session 체크포인트로 상향, session 자신이면 핸드오프', async () => {
+  it('sessionRequired인데 로그아웃: session 체크포인트로 상향, session 자신이면 다시 로드해 이어 감', async () => {
     assert.equal(await reenterCheckpoint(cp(), probe({ loggedIn: false }).p, tokens()), 'escalate_session');
-    assert.equal(await reenterCheckpoint(cp({ name: 'session' }), probe({ loggedIn: false }).p, tokens()), 'handoff');
+    assert.equal(await reenterCheckpoint(cp({ name: 'session' }), probe({ loggedIn: false }).p, tokens()), 'resumed', 'v1.3.7: session 체크포인트는 로그아웃이어도 다시 로드해 이어 간다(뒤 스텝이 자동 로그인)');
   });
   it('reload인데 expect가 거짓이면 핸드오프', async () => assert.equal(await reenterCheckpoint(cp(), probe({ expect: [false] }).p, tokens()), 'handoff'));
 });

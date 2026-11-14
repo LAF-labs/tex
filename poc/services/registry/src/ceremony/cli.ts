@@ -249,7 +249,8 @@ export async function main(argv: readonly string[], deps: CliDeps = defaultDeps)
         else if (kind === 'policy') verifyPolicy(doc as never, trust, revoked, null, now);
         // 서버가 도장을 찍기 전 인덱스 초안(timestamp 없음)은 내용 서명·모양만 본다(ADR-043)
         else if (kind === 'index') verifyIndex(doc as never, channel, trust, revoked, null, now, undefined, { content: doc.timestamp === undefined });
-        else if (kind === 'release') verifyRelease(doc as never, channel, trust, revoked, null, now);
+        // 서버 도장 전 초안(timestamp 없음)은 내용 서명·모양만 본다(인덱스와 같다)
+        else if (kind === 'release') verifyRelease(doc as never, channel, trust, revoked, null, now, undefined, { content: doc.timestamp === undefined });
         else {
           const sigs = kind === 'root_change' ? (doc.rootChange as { signatures?: unknown } | undefined)?.signatures : doc.signatures;
           const role = SIGNER_ROLES[kind][0]!;

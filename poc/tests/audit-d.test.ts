@@ -391,11 +391,11 @@ describe('audit-d: D12 암호 PDF 재시도 상한(N-31)', () => {
 
 describe('audit-d: D13 셸 문구·이벤트 연결', () => {
   it('NOTE has a sentence for every I-6 code (and 쿨다운 문구에 "두 번 연속" 없음)', () => {
-    for (const c of ['policy.poc_irreversible_total', 'portal.unexpected_page', 'portal.extra_auth_repeat', 'portal.unobservable', 'vault.leak_suspected', 'assert.issue_date_mismatch', 'step.target_not_found', 'checkpoint.expect_failed', 'policy.irreversible_per_day']) {
+    for (const c of ['portal.unexpected_page', 'portal.extra_auth_repeat', 'portal.unobservable', 'vault.leak_suspected', 'assert.issue_date_mismatch', 'step.target_not_found', 'checkpoint.expect_failed', 'policy.irreversible_per_day']) {
       assert.ok(NOTE[c] && /[요다]\.?$/.test(NOTE[c]!), c);
     }
     assert.equal(NOTE['policy.cooldown'], '홈택스 차단·경고 신호가 보여 24시간 동안 홈택스 실행을 쉬어요. 아무것도 발급하지 않았어요.');
-    assert.equal(NOTE['policy.irreversible_per_day'], '오늘은 시범 기간 하루 발급 상한(1건)에 닿았어요. 내일 다시 할 수 있어요.');
+    assert.equal(NOTE['policy.irreversible_per_day'], '오늘 홈택스 발급 건수 상한에 닿아 멈췄어요. 아무것도 발급하지 않았어요. 내일 다시 할 수 있어요.');
     assert.equal(NOTE['step.target_not_found'], '예상한 홈택스 화면이 아니에요. 전용 Chrome 창에 뜬 안내를 확인해 주세요. 아무것도 발급하지 않았어요.');
   });
 
@@ -418,7 +418,7 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     await runs.prepare(d.run.id);
     host.emit('run', { runId: d.run.id, type: 'end', status: 'failed', code: 'portal.unexpected_page', portalNotice: '<b>세션이\u2028만료</b>되었습니다' + 'x'.repeat(300) });
     const r = runs.get(d.run.id)!;
-    assert.match(r.stoppedNote!, /예상하지 못한 화면으로/);
+    assert.match(r.stoppedNote!, /홈택스 화면을 알아보지 못했어요/);
     assert.equal(r.notices!.length, 1);
     assert.ok(r.notices![0]!.startsWith('홈택스 안내: “<b>세션이 만료</b>되었습니다'), r.notices![0]);
     assert.ok(r.notices![0]!.length <= '홈택스 안내: “”'.length + 200);

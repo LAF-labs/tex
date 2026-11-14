@@ -80,9 +80,9 @@ describe('chat_reply 툴셋 정의', () => {
 
 describe('chat.respond 경로(마스킹 → /v1/respond → 검증)', () => {
   it('정상 답: 문장·종류·제안을 돌려준다. 실행 토큰은 intent.resolve와 같은 대화 세션 범위 하나', async () => {
-    mock.opts = { respondOutput: reply({ kind: 'clarify', reply: '세금계산서를 발급할까요, 증명서를 뗄까요?', suggest: ['hometax.invoice.issue', 'hometax.cert.business', 'hometax.invoice.issue'] }) };
+    mock.opts = { respondOutput: reply({ kind: 'clarify', reply: '세금계산서를 발급할까요?', suggest: ['hometax.invoice.issue', 'hometax.invoice.issue'] }) };
     const r = resolver();
-    assert.deepEqual(await chat(r, '그거 좀 해 줘'), { reply: '세금계산서를 발급할까요, 증명서를 뗄까요?', kind: 'clarify', suggest: ['hometax.invoice.issue', 'hometax.cert.business'], filtered: null });
+    assert.deepEqual(await chat(r, '그거 좀 해 줘'), { reply: '세금계산서를 발급할까요?', kind: 'clarify', suggest: ['hometax.invoice.issue'], filtered: null });
     mock.opts = { answers: { playbook: 'none_of_these', mentions_tax_advice: 0.02 } };
     await r.handle('intent.resolve', { text: '안녕' });
     assert.equal(tokens().length, 1);
@@ -141,7 +141,9 @@ describe('chat.respond 경로(마스킹 → /v1/respond → 검증)', () => {
     for (const o of [
       reply({ kind: 'joke' }),
       reply({ suggest: ['hometax.invoice.amend'] }),
-      reply({ suggest: ['hometax.invoice.issue', 'hometax.cert.business', 'hometax.cert.taxpayment', 'hometax.invoice.issue'] }),
+      reply({ suggest: ['hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue', 'hometax.invoice.issue'] }),
+      // 증명서는 지금 못 하는 일이라 제안 목록에 없다(#291)
+      reply({ suggest: ['hometax.cert.business'] }),
       out({ kind: 'help', reply: '네', suggest: [], extra: 1 }),
       out({ kind: 'help', reply: '네' }),
       out('not json'),

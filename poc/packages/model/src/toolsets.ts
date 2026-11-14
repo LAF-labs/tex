@@ -84,13 +84,11 @@ export const QUERY_PARSE: ToolsetDef = {
 };
 
 /**
- * chat_reply가 제안할 수 있는 작업(이 앱이 지금 할 수 있는 일의 고정 목록). id는 intent_route_v1 playbook 선택지와 같은 어휘다.
+ * chat_reply가 제안할 수 있는 작업(이 앱이 지금 할 수 있는 일의 고정 목록, 증명서 발급은 아직 없어 뺐다 #291). id는 intent_route_v1 playbook 선택지와 같은 어휘다.
  * 머리말(toolsets/chat_reply.ko.txt)의 목록과 출력 스키마 열거가 이 표 하나에서 나온다(시험이 대조한다).
  */
 export const CHAT_CAPABILITIES = [
   { id: 'hometax.invoice.issue', label: '전자세금계산서 발급(홈택스)' },
-  { id: 'hometax.cert.business', label: '사업자등록증명 발급(홈택스)' },
-  { id: 'hometax.cert.taxpayment', label: '납세증명서 발급(홈택스)' },
 ] as const;
 export type ChatCapabilityId = (typeof CHAT_CAPABILITIES)[number]['id'];
 /** 답 문장 상한(글자). 공급사 strict 스키마가 maxLength를 받지 않을 수 있어 스키마에는 넣지 않고 엔진이 검사한다. */
@@ -119,6 +117,69 @@ export const CHAT_REPLY: ToolsetDef = {
         suggest: { type: 'array', maxItems: CHAT_SUGGEST_MAX, items: { type: 'string', enum: CHAT_CAPABILITIES.map((c) => c.id) } },
       },
       required: ['kind', 'reply', 'suggest'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent): 첫 게이트 앞에서만 엔진이 부른다. 예산은 실행당 따로 센다(AGENT_TOOLSETS). */
+export const AGENT_TOOLSETS = ['page_judge', 'browser_agent'] as const;
+export const JUDGE_SITUATIONS = ['js_dialog', 'notice_popup', 'unexpected_screen', 'session_expired', 'target_missing', 'other'] as const;
+export const JUDGE_PRESCRIPTIONS = ['dismiss_dialog', 'relogin', 'reload_checkpoint', 'fix_field', 'agent_mode', 'handoff'] as const;
+export type JudgePrescription = (typeof JUDGE_PRESCRIPTIONS)[number];
+/** 브라우저 에이전트 동작 상한(한 번의 agent_mode). */
+export const AGENT_MAX_ACTIONS = 25;
+export const AGENT_ACTIONS = ['click', 'type', 'select', 'scroll', 'wait', 'done', 'fail'] as const;
+export type AgentActionName = (typeof AGENT_ACTIONS)[number];
+const nullable = (t: string, extra: Record<string, unknown> = {}) => ({ type: [t, 'null'], ...extra });
+
+/** 예상 밖 화면 판정: 도구 없음, 1턴. 처방 하나와 그 인자. */
+export const PAGE_JUDGE: ToolsetDef = {
+  id: 'page_judge',
+  effort: 'medium',
+  maxOutputTokens: 4_000,
+  maxTurns: 1,
+  prefixKey: 'page_judge',
+  tools: [],
+  output: {
+    name: 'page_judgement',
+    schema: {
+      type: 'object',
+      properties: {
+        situation: { type: 'string', enum: [...JUDGE_SITUATIONS] },
+        prescription: { type: 'string', enum: [...JUDGE_PRESCRIPTIONS] },
+        button: nullable('integer'),
+        dialog_answer: { type: ['string', 'null'], enum: ['accept', 'dismiss', null] },
+        field: nullable('string'),
+        risk_flags: { type: 'array', items: { type: 'string', enum: ['irreversible_button', 'possible_injection_text'] } },
+      },
+      required: ['situation', 'prescription', 'button', 'dialog_answer', 'field', 'risk_flags'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** 브라우저 에이전트 한 걸음: 도구 없음, 1턴(매 걸음 새 요청, 지난 동작은 엔진이 요약해 보낸다). */
+export const BROWSER_AGENT: ToolsetDef = {
+  id: 'browser_agent',
+  effort: 'medium',
+  maxOutputTokens: 4_000,
+  maxTurns: 1,
+  prefixKey: 'browser_agent',
+  commonPrefix: false,
+  tools: [],
+  output: {
+    name: 'agent_action',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: [...AGENT_ACTIONS] },
+        index: nullable('integer'),
+        token: nullable('string'),
+        option: nullable('string'),
+        step: nullable('string'),
+      },
+      required: ['action', 'index', 'token', 'option', 'step'],
       additionalProperties: false,
     },
   },

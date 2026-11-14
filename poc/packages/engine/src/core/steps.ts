@@ -12,6 +12,7 @@ import { resolveTarget } from './resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from './scope.ts';
 import { isSecretEntry, type EndStep, type SelectorDict, type SelectorEntry, type Step, type StepOf, type StepType, type Strings } from './types.ts';
 import { navigationUrlProblem, type FixtureOriginGrant } from './loader.ts';
+import { pickStep, waitGone } from './pick.ts';
 
 export type Outcome =
   | { t: 'next' }
@@ -33,6 +34,14 @@ export interface StepEnv extends CondEnv {
   defaultTimeoutMs: number;
   /** 요소가 나타나기를 기다리는 간격. */
   pollMs: number;
+  /** [중지]가 들어왔는가(조율기가 채운다). 기다리는 루프(waitTarget·wait text)가 폴링 때마다 보고 run.stopped로 빠진다. */
+  stopRequested?: () => boolean;
+  /** pick.remember(IR rev v1.3.6): 고른 행 이름을 프로필 칸에 저장한다(값은 저널·로그에 없다). 없으면 이번 실행 범위에만 둔다. */
+  profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
+  /** wait for:'dialog'가 본 포털 대화상자 문구를 앱 화면(실행 단계)에 글로 보인다(대표 2026-11-13). key는 strings 키, ok는 패턴 일치. 저널·로그에는 넣지 않는다. */
+  dialogShown?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
+  /** 진단 저널(값 없음). branch.settled 등. 없으면 남기지 않는다. */
+  journal?: (type: string, payload: Record<string, string | number | boolean>) => void;
 }
 
 export type Handler<T extends StepType> = (s: StepOf<T>, env: StepEnv) => Promise<Outcome>;
@@ -57,6 +66,7 @@ export async function waitTarget(env: StepEnv, key: string, timeoutMs: number, o
   for (;;) {
     const r = await resolveTarget(env.page, env.dict, key);
     if (r.ok || r.code !== 'step.selector_miss' || r.ambiguous) return r;
+    if (env.stopRequested?.()) return { ok: false, code: 'run.stopped' };
     if (env.clock.now() >= deadline) return r;
     await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
   }
@@ -88,7 +98,11 @@ const click: Handler<'click'> = async (s, env) => {
   const g = guardIrreversible(s, env);
   if (g) return g;
   const t = await waitTarget(env, s.target, timeoutOf(s, env));
-  return t.ok ? act(env.act.click(t.t)) : fail(t.code);
+  if (!t.ok) return fail(t.code);
+  const r = await env.act.click(t.t);
+  // 되돌릴 수 있는 클릭(비가역 스텝·commits 항목은 위에서 걸렀다)이 시간 초과로 끝나면 한 번 더 요소 박스 클릭(조건은 clickByBox가 본다).
+  if (!r.ok && r.code === 'step.timeout' && env.act.clickByBox) return act(env.act.clickByBox(t.t));
+  return r.ok ? NEXT : fail(r.code);
 };
 
 const fill: Handler<'fill'> = async (s, env) => {
@@ -148,6 +162,27 @@ const wait: Handler<'wait'> = async (s, env) => {
       const deadline = env.clock.now() + ms;
       for (;;) {
         if (re.test(normalizeName(await env.page.bodyText()))) return NEXT;
+        if (env.stopRequested?.()) return fail('run.stopped');
+        if (env.clock.now() >= deadline) return fail('step.timeout');
+        await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
+      }
+    }
+    case 'gone':
+      return s.value ? waitGone(s.value, env, ms) : fail('step.selector_miss');
+    case 'dialog': {
+      // 마지막 동작 뒤 뜬 네이티브 대화상자(alert 등, 엔진 정책이 이미 닫았다)의 문구를 판정한다(홈택스 등록번호 [확인] → alert).
+      // 다른 문구면 기다리지 않고 실패한다(재시도해도 같은 대화상자는 다시 오지 않는다). 문구는 저널에 남기지 않고 앱 화면에만 글로 보인다(⑦, dialogShown).
+      const re = s.value ? stringPattern(env.strings, s.value) : null;
+      if (!re || !env.act.dialogSinceAction) return fail('step.cond_unsupported');
+      const deadline = env.clock.now() + ms;
+      for (;;) {
+        const d = env.act.dialogSinceAction();
+        if (d) {
+          const ok = re.test(normalizeName(d.notice));
+          env.dialogShown?.({ stepId: s.id, key: s.value!, text: d.notice, ok });
+          return ok ? NEXT : fail('step.dialog_mismatch');
+        }
+        if (env.stopRequested?.()) return fail('run.stopped');
         if (env.clock.now() >= deadline) return fail('step.timeout');
         await env.clock.sleep(Math.min(env.pollMs, Math.max(0, deadline - env.clock.now())));
       }
@@ -187,11 +222,69 @@ const extract: Handler<'extract'> = async (s, env) => {
   return NEXT;
 };
 
+/**
+ * IR rev v1.3.7(부장 2026-11-13): 화면 글로 가르는 branch는 성공한 같은 결과가 BRANCH_SETTLE_MS 이어질 때 정한다(WebSquare가 머리말을 다시 그린다).
+ * 해석 실패(동일성·없음)는 다시 그리는 중으로 보고 BRANCH_SETTLE_MAX_MS까지 계속 본다. 거짓은 페이지 요청이 멎은 뒤 다시 보고 정한다.
+ * 상한이 되면 마지막 결과로 정한다(실패면 실패).
+ */
+export const BRANCH_SETTLE_MS = 400;
+export const BRANCH_SETTLE_MAX_MS = 8_000;
+
 const branch: Handler<'branch'> = async (s, env) => {
-  const r = await evalCond(s.on, env);
+  let r = await evalCond(s.on, env);
+  if ('textMatches' in s.on) {
+    const key = (x: typeof r) => (x.ok ? `v:${x.value}` : `e:${x.code}`);
+    const t0 = env.clock.now();
+    const until = t0 + BRANCH_SETTLE_MAX_MS;
+    let since = t0;
+    const trace = [`${key(r)}~0`];
+    const settle = async (): Promise<boolean> => {
+      while ((!r.ok || env.clock.now() - since < BRANCH_SETTLE_MS) && env.clock.now() < until) {
+        if (env.stopRequested?.()) return false;
+        await env.clock.sleep(Math.max(20, Math.min(env.pollMs, 100)));
+        const n = await evalCond(s.on, env);
+        if (key(n) !== key(r)) {
+          r = n;
+          since = env.clock.now();
+          trace.push(`${key(r)}~${since - t0}`);
+        }
+      }
+      return true;
+    };
+    if (!(await settle())) return fail('run.stopped');
+    // 거짓은 페이지 요청이 멎은 뒤 한 번 더 본다(홈택스 로그인 상태 머리말은 세션 확인이 끝난 뒤에야 "로그아웃"이 된다, 예행 run-1278f5d4·c1d6fe9c).
+    if (r.ok && r.value === false && env.clock.now() < until) {
+      await env.page.waitIdle(Math.max(0, until - env.clock.now())).catch(() => false);
+      const n = await evalCond(s.on, env);
+      since = env.clock.now();
+      trace.push(`idle:${key(n)}~${since - t0}`);
+      r = n;
+      if (!(await settle())) return fail('run.stopped');
+    }
+    await settledTrace(s, env, key(r), env.clock.now() - t0, trace);
+  }
   if (!r.ok) return fail(r.code);
   return { t: 'jump', to: s.cases[String(r.value)] ?? s.default };
 };
+
+/**
+ * branch.settled 진단(예행 s2·s6): 결과가 바뀐 순서(코드·참거짓·ms)와 끝에 본 대상의 역할·보임.
+ * 글은 navigationOnly 항목(머리말 링크 같은 화면 틀)이고 12자 이하일 때만 남긴다(입력 값·사람 정보가 아님).
+ */
+async function settledTrace(s: StepOf<'branch'>, env: StepEnv, result: string, ms: number, trace: string[]): Promise<void> {
+  if (!env.journal || !('textMatches' in s.on)) return;
+  const target = s.on.textMatches.target;
+  const entry = env.dict.entries[target];
+  const out: Record<string, string | number | boolean> = { stepId: s.id, target, result, ms, trace: trace.slice(0, 12).join('>') };
+  const el = entry ? (await env.page.query(entry.candidates[0]!, entry.frame, null).catch(() => []))[0] : undefined;
+  if (el) {
+    const info = await env.page.info(el).catch(() => null);
+    if (info) Object.assign(out, { role: info.role, visible: info.visible });
+    const text = normalizeName(await env.page.text(el).catch(() => ''));
+    if (entry?.navigationOnly && text.length <= 12) out.text = text;
+  }
+  env.journal('branch.settled', out);
+}
 
 const end: Handler<'end'> = async (s) => ({ t: 'end', status: s.status });
 
@@ -212,7 +305,7 @@ const readback: Handler<'readback'> = async (s, env) => {
 };
 
 /** M2-1 핸들러 묶음 + readback(M2-3). decide·gate·human·checkpoint는 실행 조율기(run/)가 더한다. */
-export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end, readback };
+export const BASIC_HANDLERS: Handlers = { goto, click, fill, select, press, wait, assert, extract, branch, end, readback, pick: pickStep };
 
 export interface StepEnvInput {
   page: PageReader;

@@ -1,5 +1,7 @@
 // 게이트웨이 HTTP. 데스크톱 기기 범위 토큰(gateway 범위) + DPoP만 받는다. 계정 세션 토큰은 거부(규칙: X-Device-Id는 토큰에서 유도, N-41).
 import { DailySalt, DeviceAuth, Router, fail, json, validator, type Ctx, type DeviceDirectory, type TokenVerifier } from '@sax/svc-shared';
+import { CodefUnavailable, type CodefTokenSource } from './codef.ts';
+import { AGENT_TOOLSETS } from '@sax/model';
 import { GATEWAY } from './constants.ts';
 import type { GatewayService } from './service.ts';
 
@@ -20,6 +22,7 @@ const V = {
     { type: 'object', additionalProperties: false, required: ['b_no'], properties: { b_no: { type: 'array', minItems: 1, maxItems: GATEWAY.bizPerRequest, items: { type: 'string', pattern: '^[0-9]{10}$' } } } },
     'gateway.param_rejected',
   ),
+  codefToken: validator<Record<string, never>>({ type: 'object', additionalProperties: false, properties: {} }, 'gateway.param_rejected'),
 };
 
 export interface GatewayAppOpts {
@@ -27,6 +30,8 @@ export interface GatewayAppOpts {
   verifier: TokenVerifier;
   directory: DeviceDirectory;
   publicOrigin: string;
+  /** CODEF 토큰 원천(계좌 자동조회). 없으면 /v1/codef/token은 503 gateway.codef_off */
+  codef?: CodefTokenSource | null;
 }
 
 export function gatewayRouter(o: GatewayAppOpts): Router {
@@ -69,7 +74,9 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     '/v1/respond',
     async (ctx) => {
       const c = await device(ctx);
-      await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
+      const toolset = (ctx.body as { toolset?: unknown } | null)?.toolset;
+      if ((AGENT_TOOLSETS as readonly unknown[]).includes(toolset)) await limit('agent', c.acc, GATEWAY.agentPerMinute, MIN);
+      else await limit('l2', c.acc, GATEWAY.l2PerMinute, MIN);
       return json(200, await svc.respond(c, ctx.body));
     },
     { maxBodyBytes: 1024 * 1024 },
@@ -79,6 +86,22 @@ export function gatewayRouter(o: GatewayAppOpts): Router {
     const b = V.biz(ctx.body);
     await limit('biz', c.acc, GATEWAY.bizPerMinute, MIN);
     return json(200, await svc.bizStatus(b.b_no));
+  });
+  // CODEF 접근 토큰(계좌 자동조회, 대표 결정 2026-11-12). 시크릿은 서버에만 있고 PC에는 토큰·만료·환경·공개키만 간다.
+  // 계정 식별자도 접근 로그에 남기지 않는다(진위확인과 같다). 토큰은 응답 본문에만 있고 로그·이벤트에 쓰지 않는다.
+  r.add('POST', '/v1/codef/token', async (ctx) => {
+    const c = await device(ctx, false);
+    V.codefToken(ctx.body ?? {});
+    if (!o.codef) fail('gateway.codef_off');
+    await limit('codef', c.dev, GATEWAY.codefTokenPerDeviceHour, 60 * MIN);
+    let t;
+    try {
+      t = await o.codef.token();
+    } catch (e) {
+      if (e instanceof CodefUnavailable) fail('gateway.upstream_error');
+      throw e;
+    }
+    return json(200, { accessToken: t.accessToken, expiresAt: new Date(t.expiresAt).toISOString(), env: o.codef.env, publicKey: o.codef.publicKey });
   });
   r.add('GET', '/healthz', () => json(200, { ok: true }));
   return r;

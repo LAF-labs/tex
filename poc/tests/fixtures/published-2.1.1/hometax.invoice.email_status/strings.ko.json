@@ -1,0 +1,6 @@
+{
+ "lookup.title": "조회",
+ "lookup.countPattern": "^총 ?([0-9,]+) ?건$",
+ "lookup.column.approvalNo": "승인번호",
+ "lookup.column.status": "전송상태"
+}

@@ -24,6 +24,8 @@ export interface RunHistoryRow {
   ledger: string | null;
   /** 발급목록으로 확인한 승인번호(committed). */
   approvalNo: string | null;
+  /** 받는 사람 메일 발송을 확인했는가(run.ended mailConfirmed). 기록이 없는 옛 실행은 null. */
+  mailConfirmed: boolean | null;
   /** 이 실행이 보관한 발급 PDF(보관함 문서 id). */
   documentId: string | null;
   /** 게이트 요청까지 갔다(승인 카드가 떴다). */
@@ -82,10 +84,12 @@ function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): 
 
 export const RUN_HISTORY_MAX = 200;
 
-/** 최근 실행부터 limit건(기본 50, 상한 200). */
+/** 최근 실행부터 limit건(기본 50, 상한 200). 예행(run.rehearsal)은 발급 이력이 아니라서 뺀다. */
 export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): RunHistoryRow[] {
   const n = Math.max(1, Math.min(RUN_HISTORY_MAX, Number.isInteger(limit) ? limit : 50));
-  const runs = db.prepare('SELECT id, playbook_id, status, started_at, finished_at, inputs_json_enc FROM runs ORDER BY started_at DESC, rowid DESC LIMIT ?').all(n) as Array<Record<string, unknown>>;
+  const runs = db
+    .prepare(`SELECT id, playbook_id, status, started_at, finished_at, inputs_json_enc FROM runs WHERE id NOT IN (SELECT run_id FROM run_events WHERE type = 'run.rehearsal') ORDER BY started_at DESC, rowid DESC LIMIT ?`)
+    .all(n) as Array<Record<string, unknown>>;
   const ended = db.prepare(`SELECT payload_json FROM run_events WHERE run_id = ? AND type = 'run.ended' ORDER BY seq DESC LIMIT 1`).pluck();
   const gated = db.prepare(`SELECT 1 FROM run_events WHERE run_id = ? AND type = 'gate.requested' LIMIT 1`).pluck();
   const ledger = db.prepare('SELECT state, verify_ref FROM irreversible_log WHERE run_id = ? ORDER BY armed_at DESC, attempt DESC, rowid DESC LIMIT 1');
@@ -94,11 +98,13 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
   return runs.map((r) => {
     const runId = String(r.id);
     let code: string | null = null;
+    let mailConfirmed: boolean | null = null;
     const p = ended.get(runId);
     if (typeof p === 'string') {
       try {
-        const c = (JSON.parse(p) as { code?: unknown }).code;
-        code = typeof c === 'string' && c ? c : null;
+        const e = JSON.parse(p) as { code?: unknown; mailConfirmed?: unknown };
+        code = typeof e.code === 'string' && e.code ? e.code : null;
+        mailConfirmed = typeof e.mailConfirmed === 'boolean' ? e.mailConfirmed : null;
       } catch {
         code = null;
       }
@@ -117,6 +123,7 @@ export function runHistory(db: Db, cipher: ColumnCipher | null, limit = 50): Run
       finishedAt: r.finished_at ? String(r.finished_at) : null,
       ledger: l?.state ?? null,
       approvalNo: l?.state === 'committed' && l.verify_ref ? l.verify_ref : null,
+      mailConfirmed,
       documentId: typeof d === 'string' ? d : null,
       gated: gated.get(runId) !== undefined,
       counterpartyId: inputs?.counterpartyId ?? null,

@@ -5,7 +5,8 @@
 // 판에 날짜를 보이지 않고 정렬에만 쓴다(showDue:false).
 // Electron 없이 시험한다(tests/shell-board.test.ts).
 
-export type BoardKind = 'invoice' | 'receipt' | 'accountant' | 'expiring';
+/** 'unpaid'·'deposits'는 받을 돈 카드(09 §3.4, 대표 결정 ⑤). main이 판 뒤에 붙인다(bank-host.ts bankBoardCards). */
+export type BoardKind = 'invoice' | 'receipt' | 'accountant' | 'expiring' | 'unpaid' | 'deposits';
 /** 판 카드 4종의 이름과 같은 기한일 때의 순서. */
 export const BOARD_KINDS: ReadonlyArray<{ kind: BoardKind; title: string }> = [
   { kind: 'invoice', title: '발급할 세금계산서' },
@@ -19,7 +20,7 @@ export type BoardTarget =
   | { to: 'run'; id: string }
   | { to: 'doc'; id: string }
   | { to: 'compose'; text: string }
-  | { to: 'view'; view: 'docs' | 'cps' | 'bundle' | 'card' | 'payroll'; filter?: string };
+  | { to: 'view'; view: 'docs' | 'cps' | 'bundle' | 'card' | 'payroll' | 'bank'; filter?: string };
 
 export interface BoardItem {
   id: string;
@@ -57,7 +58,7 @@ export interface Board {
 export interface BoardSetup {
   id: string;
   label: string;
-  view: 'biz' | 'cps';
+  view: 'biz' | 'cps' | 'chrome' | 'security';
 }
 
 /** 지난 발급 한 건(원장·발급 이력·문서함 세금계산서에서). */
@@ -103,6 +104,8 @@ export interface BoardInput {
   setup?: BoardSetup[];
   /** 사업용 카드 내역(D-04) 기능이 있는 빌드인지. 거짓이면 [최신화] 칸을 두지 않는다(제품 첫 설치본, 팀장 2026-11-09). 기본 참. */
   cardEnabled?: boolean;
+  /** 받을 돈 카드("못 받은 돈"·"확인할 입금", bank-host.ts bankBoardCards). 판 카드 4종 뒤에 붙인다. */
+  money?: BoardCard[];
 }
 
 export const EXPIRING_WITHIN_DAYS = 30;
@@ -215,7 +218,7 @@ export function buildBoard(input: BoardInput): Board {
 
   return {
     month,
-    cards,
+    cards: [...cards, ...(input.money ?? [])],
     setup: (input.setup ?? []).map((x) => ({ ...x })),
     // 머리 건수는 카드에 실제로 놓인 줄에서 센다(카드에 없는 건을 세거나, 카드의 확인 필요를 빠뜨리지 않게).
     counts: {

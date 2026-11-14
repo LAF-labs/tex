@@ -15,7 +15,8 @@ export type RunStop =
   /** resumeAt: 사용자가 재개하면 이어서 돌 스텝(비가역 스텝의 실패면 그 verify, D03 §2). */
   | { t: 'handoff'; at: string; resumeAt: string; code: string | null }
   /** 복구 계층(L1·L2, M2-5)이 받는다. 성공하면 실패한 그 스텝부터 다시. */
-  | { t: 'recover'; at: string; code: string }
+  /** cause: 스텝 code로 바뀌기 전의 원래 실패 코드(폴백 사슬이 본다). */
+  | { t: 'recover'; at: string; code: string; cause?: string }
   /** 금고 비밀 창(D05 §3.5). 닫힌 뒤 next부터. */
   | { t: 'human_secret'; at: string; next: string; code: string }
   /** 이 실행기에 핸들러가 없는 스텝(M2-2·M2-3이 붙인다). 그 스텝은 실행하지 않았다. */
@@ -43,7 +44,20 @@ export interface InterpOptions {
   maxStepExecutions?: number;
   /** FORCED_STOPS에 더할 코드(실행 조율기가 스스로 상태를 바꾼 멈춤: 게이트 거부·TTL 등). */
   forcedStops?: ReadonlyMap<string, 'handoff' | 'abort'>;
+  /**
+   * 폴백 사슬(run/fallback.ts): 재시도를 다 쓰고 onFail이 handoff인 실패를 사람에게 넘기기 전에 recover 멈춤으로 바꿀지.
+   * 조율기 recover 훅이 다시 찾기·AI 위치 찾기·체크포인트 재진입을 하고, 다 안 되면 핸드오프한다. 원래 코드(cause)를 받는다.
+   */
+  escalate?: (s: Step, cause: string) => boolean;
+  /**
+   * [중지] 신호(IrRun.stop). 끊기면 되돌릴 수 있는 화면 스텝(STOPPABLE)의 진행 중 대기와 재시도 지연을 기다리지 않고 run.stopped로 멈춘다.
+   * 없으면 스텝 경계(beforeStep)에서만 멈춘다. 버린 스텝이 뒤늦게 하는 동작은 정책 집행기가 run.stopped로 거부한다(커밋 전).
+   */
+  stop?: AbortSignal;
 }
+
+/** [중지]에 진행 중 대기를 버려도 되는 스텝(화면 대기·입력·읽기). 조율기 스텝(checkpoint·human·gate·decide)과 비가역 스텝은 넣지 않는다. */
+const STOPPABLE = new Set<Step['type']>(['goto', 'click', 'fill', 'select', 'press', 'wait', 'assert', 'extract', 'readback', 'pick'] as Step['type'][]);
 
 export const MAX_STEP_EXECUTIONS = 2_000;
 
@@ -69,6 +83,8 @@ export const FORCED_STOPS: ReadonlyMap<string, 'handoff' | 'abort'> = new Map([
   ['portal.mfa_pending', 'handoff'],
   ['portal.captcha', 'handoff'],
   ['portal.busy', 'handoff'],
+  // 포털 점검(IR rev v1.3.7): 폴백·판정·재시도·사람 차례 없이 바로 멈춘다(끝 시각은 걸쇠가 안다).
+  ['portal.maintenance', 'abort'],
   // 커밋 가드(D03 §5.4, D16): 무장 없는 커밋 요청·잡지 못한 커밋 요청·무장 거부는 중단, 본문 불일치는 핸드오프
   ['commit_guard.blocked_request', 'abort'],
   ['commit_guard.unintercepted', 'abort'],
@@ -160,7 +176,8 @@ export class Interpreter {
 
   /** 스텝 하나(재시도 포함)를 실행하고 다음 스텝 id 또는 멈춤을 돌려준다. */
   private async exec(s: Step, prev: string | null): Promise<string | RunStop> {
-    if (s.type === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.resumeAt, code: null };
+    // handoff 스텝의 code(있으면)는 사람에게 넘긴 까닭이다(앱이 안내 문구를 고른다, 예: cert.pick_needed).
+    if (s.type === 'handoff') return { t: 'handoff', at: s.id, resumeAt: s.resumeAt, code: s.code ?? null };
     if (s.type === 'repeat') return this.repeat(s, prev);
     const h = this.handlers[s.type] as Handler<typeof s.type> | undefined;
     if (!h) return { t: 'unhandled', at: s.id, type: s.type };
@@ -174,7 +191,8 @@ export class Interpreter {
       this.hooks.event?.('step.started', { stepId: s.id, type: s.type, ...(attempt ? { attempt } : {}) });
       let out: Outcome;
       try {
-        out = await h(s as never, this.env);
+        const run = h(s as never, this.env);
+        out = this.opts.stop && STOPPABLE.has(s.type) && !this.env.irreversible.has(s.id) ? await this.untilStop(run, { t: 'fail', code: 'run.stopped' }) : await run;
       } catch {
         // 포트 예외는 값 없이 코드로만 남긴다.
         out = { t: 'fail', code: 'step.port_error' };
@@ -188,11 +206,35 @@ export class Interpreter {
       if (attempt < retries) {
         const delay = retryDelayMs(attempt + 1, this.opts.retries, this.opts.retryFloorMs, (this.opts.random ?? Math.random)());
         this.hooks.event?.('step.retry', { stepId: s.id, type: s.type, attempt: attempt + 1, ...this.codes(s, out.code) });
-        await this.env.clock.sleep(delay);
+        await this.untilStop(this.env.clock.sleep(delay), undefined);
         continue;
       }
-      return this.onFail(s, of.then, this.codes(s, out.code).code);
+      const c = this.codes(s, out.code);
+      if (of.then === 'handoff' && this.opts.escalate?.(s, out.code)) return { t: 'recover', at: s.id, code: c.code, cause: out.code };
+      return this.onFail(s, of.then, c.code);
     }
+  }
+
+  /** p 또는 [중지] 중 먼저 오는 것. [중지]면 stopped를 돌려주고 p는 버린다(그 뒤 거부·예외는 삼킨다). 신호가 없으면 p 그대로. */
+  private untilStop<T>(p: Promise<T>, stopped: T): Promise<T> {
+    const sig = this.opts.stop;
+    if (!sig) return p;
+    const drop = () => void p.catch(() => {});
+    if (sig.aborted) {
+      drop();
+      return Promise.resolve(stopped);
+    }
+    return new Promise<T>((resolve, reject) => {
+      const on = () => {
+        drop();
+        resolve(stopped);
+      };
+      sig.addEventListener('abort', on, { once: true });
+      p.then(
+        (v) => (sig.removeEventListener('abort', on), resolve(v)),
+        (e: unknown) => (sig.removeEventListener('abort', on), reject(e)),
+      );
+    });
   }
 
   private forced(code: string): 'handoff' | 'abort' | undefined {

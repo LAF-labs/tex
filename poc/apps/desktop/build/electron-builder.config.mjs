@@ -42,6 +42,49 @@ export function signingFrom(env, platform) {
   };
 }
 
+/**
+ * macOS Developer ID 서명·공증 입력(값은 저장소·로그에 넣지 않는다). SIGNING-SETUP.md §6과 같다.
+ * - 신원: 빌드 Mac 키체인의 "Developer ID Application: <이름> (<팀 ID>)"(scripts/package-win.mjs가 `security find-identity -v -p codesigning`으로 이름만 읽는다).
+ *   여럿이면 SAX_MAC_IDENTITY(이름·팀 ID 일부)로 고른다.
+ * - 공증: `xcrun notarytool store-credentials <프로필>`로 키체인에 저장해 둔 프로필 이름(SAX_NOTARY_PROFILE). Apple ID·앱 암호·팀 ID는 받지 않는다.
+ */
+export const MAC_SIGNING_ENV = {
+  identity: 'SAX_MAC_IDENTITY',
+  notaryProfile: 'SAX_NOTARY_PROFILE',
+};
+
+export const DEVELOPER_ID_PREFIX = 'Developer ID Application: ';
+
+/** 키체인 코드 서명 신원 이름(`security find-identity -v -p codesigning`의 따옴표 안). 개인키·인증서 내용은 읽지 않는다. */
+export const parseIdentities = (out) => [...out.matchAll(/^\s*\d+\)\s+[0-9A-F]{40}\s+"([^"]+)"/gm)].map((m) => m[1]);
+
+/**
+ * macOS 서명 판정: macOS 호스트에 Developer ID Application 신원이 정확히 하나면 Developer ID 서명 + 하드닝 런타임.
+ * - 공증 프로필 이름도 있으면 공증·스테이플까지(notarize: true).
+ * - 없으면(또는 이름이 틀리면) 서명만 하고 공증·스테이플은 건너뛴다(notarize: false, reason notarize_skipped·notary_profile_bad_name, 팀장 지시 2026-11-12).
+ *   이 Mac에서 빌드해 격리 속성이 없는 앱은 그대로 실행되고, 지정 요구사항이 팀 ID 기준이라 새 판에서도 키체인 허용 창이 다시 뜨지 않는다.
+ *   내려받은 사본은 공증이 없어 Gatekeeper가 막는다(고객 배포는 공증 판).
+ * - 신원이 없거나 여럿이면 애드혹('-')이고 빌드는 실패하지 않는다(reason으로 알린다).
+ * 애드혹 빌드는 지정 요구사항이 cdhash라 빌드마다 키체인 허용 창이 다시 뜨고, 받은 dmg는 Gatekeeper가 막는다(CUSTOMER-DIST §2).
+ * @param {{ env: Record<string, string | undefined>, platform: string, identities: string[] }} o identities: 키체인 신원 이름 전체(접두어 포함)
+ */
+export function macSigningFrom({ env, platform, identities }) {
+  if (platform !== 'darwin') return { mode: 'unsigned', reason: 'mac_signing_needs_mac_host' };
+  const want = (env[MAC_SIGNING_ENV.identity] ?? '').trim();
+  const ids = [...new Set(identities.filter((n) => n.startsWith(DEVELOPER_ID_PREFIX)))].filter((n) => !want || n.includes(want));
+  if (!ids.length) return { mode: 'unsigned', reason: 'developer_id_missing' };
+  if (ids.length > 1) return { mode: 'unsigned', reason: 'developer_id_ambiguous', candidates: ids.length };
+  const name = ids[0].slice(DEVELOPER_ID_PREFIX.length);
+  const team = /\(([A-Z0-9]{10})\)$/.exec(name)?.[1] ?? null;
+  // electron-builder는 접두어 없는 이름을 받는다(macCodeSign checkPrefix)
+  const signed = { mode: 'developer_id', identity: name, fullName: ids[0], teamId: team };
+  const profile = (env[MAC_SIGNING_ENV.notaryProfile] ?? '').trim();
+  if (!profile) return { ...signed, notarize: false, notaryProfile: null, reason: 'notarize_skipped' };
+  // 프로필 이름은 notarytool 인자로만 쓴다: 셸 글자 없이
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(profile)) return { ...signed, notarize: false, notaryProfile: null, reason: 'notary_profile_bad_name' };
+  return { ...signed, notarize: true, notaryProfile: profile };
+}
+
 /** 앱 안에 넣지 않는 것(ADR-035 W-7, RETRO B-05): 타입·소스·지도 파일과 다른 OS 네이티브 바이너리. 데모·e2e·실측 파일은 스크립트가 도달성으로 거른다. */
 export const EXCLUDE = [
   '!**/*.ts',
@@ -73,12 +116,13 @@ export const EXCLUDE = [
  * @param {string} o.version 앱 버전(semver)
  * @param {string} o.buildDir apps/desktop/build 절대 경로
  * @param {string} o.outDir 산출물 폴더
- * @param {ReturnType<typeof signingFrom>} o.signing
+ * @param {ReturnType<typeof signingFrom> | ReturnType<typeof macSigningFrom>} o.signing
  * @param {string | null} o.icon icon.ico 경로(없으면 Electron 기본 아이콘)
- * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS arm64는 미서명 .dmg(사용자 시험용)
+ * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS는 arm64 .dmg(Developer ID가 없으면 애드혹)
  */
 export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpu: 'x64' } }) {
   const signed = signing.mode === 'azure';
+  const macSigned = signing.mode === 'developer_id';
   const prebuild = `${target.os}-${target.cpu}.node`;
   return {
     appId: identity.appId,
@@ -110,12 +154,22 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       loadBrowserProcessSpecificV8Snapshot: false,
       grantFileProtocolExtraPrivileges: false,
     },
-    // macOS(arm64) 시험 빌드: 서명·공증 없음. 받은 .dmg는 격리 속성 때문에 처음 열 때 [열기]를 한 번 더 눌러야 한다.
+    // macOS: Apple Silicon(arm64)만(대표 결정 2026-11-11, Intel Mac 미지원).
+    // Developer ID 신원·공증 프로필이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
     mac: {
-      target: [{ target: 'dmg', arch: ['arm64'] }],
+      // dmg는 처음 설치용, zip은 자동 업데이트용(electron-updater MacUpdater·Squirrel.Mac은 zip만 받는다)
+      target: [
+        { target: 'dmg', arch: ['arm64'] },
+        { target: 'zip', arch: ['arm64'] },
+      ],
       // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
-      identity: '-',
-      hardenedRuntime: false,
+      identity: macSigned ? signing.identity : '-',
+      // 공증은 하드닝 런타임을 요구한다. 권한은 entitlements.mac.plist(V8·WebAssembly JIT만). 금고·엔진 utilityProcess(Helper 앱)도 같은 권한을 받는다.
+      hardenedRuntime: macSigned,
+      entitlements: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
+      entitlementsInherit: macSigned ? path.join(buildDir, 'entitlements.mac.plist') : undefined,
+      // 앱 공증·스테이플: 스크립트가 APPLE_KEYCHAIN_PROFILE(= SAX_NOTARY_PROFILE)을 넘긴다. dmg 서명·공증·스테이플은 스크립트가 따로 한다
+      notarize: macSigned && signing.notarize === true,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
       artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,
@@ -151,9 +205,9 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       unicode: true,
       warningsAsErrors: true,
     },
-    // latest.yml은 레지스트리가 서명된 latest.json에서만 만든다(services/registry API.md). 여기서 게시하지 않는다
-    publish: null,
-    // 빌드 뒤 latest.yml을 만들지 않게(게시 설정 없음과 함께)
+    // 앱 안 app-update.yml(electron-updater 받기 폴더 이름·Windows 서명 주체)을 만들려고 둔다. 주소는 앱이 setFeedURL로 덮고,
+    // 받을 파일은 서명된 latest.json에서만 고른다(update-electron.ts). 빌드는 게시하지 않고(publish: 'never'), dist의 latest*.yml은 쓰지 않는다
+    publish: { provider: 'generic', url: 'https://tax.laf-co.com/releases/stable/' },
     generateUpdatesFilesForAllChannels: false,
     detectUpdateChannel: false,
   };

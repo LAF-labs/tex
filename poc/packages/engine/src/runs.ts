@@ -1,7 +1,8 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type Db, type Profile } from '@sax/db';
-import type { EventLog } from '@sax/platform';
+import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type Profile } from '@sax/db';
+import type { DiagValue, EventLog } from '@sax/platform';
+
 import type { Page } from 'playwright-core';
 import type { DataService } from './data-service.ts';
 import { buildGateRequest, cbor, jcs, LOCAL_APPROVAL_TTL_MS, sha256hex, type GateField, type GatePortMessage, type GateRequest, type LocalApproval, type ReadbackKey } from './gate.ts';
@@ -10,12 +11,19 @@ import { portalProblems, type PortalConfig } from './portal.ts';
 import { H01Runner, type Readback, type RunInputs } from './h01/runner.ts';
 import { RunEnd, type RunStatus } from './run-end.ts';
 import { SIGNAL_DICT, type SignalDict } from './signals.ts';
-import { kstDay, pocTotalRefusal, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
+import { kstDay, policyFor, RateGuard, RunPolicy, runPortalConfig, type Clock, type PolicyStatus, type RatePolicy } from './policy.ts';
 import { IrRun, type GateHistory, type IrPackage, type IrSourceResult, type StoppedAt } from './run/service-ir.ts';
-import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
 import { CERT_CARD, certBusinessKey, certInputs, type CertStartParams } from './cert.ts';
+import type { HumanPort } from './run/controller.ts';
+import { ratePolicyFrom, runSignalDict } from './enforcer.ts';
+import type { SecretTurnEvent } from './driver/cert-secret.ts';
 import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
+import { parseIssueKey, type IssueKey } from './issue/types.ts';
+import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport } from './rehearsal.ts';
+
+/** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
+const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.(why|box_click)$|^branch\.settled$|^portal\.maintenance$/;
 
 type Denied = Extract<RunPermit, { ok: false }>;
 
@@ -31,13 +39,45 @@ export interface StartParams {
   itemName: string;
   /** 없으면 거래처 이메일. 빈 문자열이면 이메일 칸을 비운다(자동 발송 없음). */
   email?: string | null;
+  /** 발급 키(D03 §4.2 발급 사다리). 있으면 발급 단계(s21) 원장 행에 붙고, 같은 키에 발급됨·미종결 행이 있으면 시작하지 않는다. */
+  issueKey?: string;
+  /**
+   * 홈택스 예행(B1): 첫 게이트에 닿으면 게이트 요청을 main에 보내지 않고 스스로 멈춘다(승인 바·토큰 없음, 원장 행 없음).
+   * 실행 이력(runHistory)에서는 뺀다. 렌더러가 켜도 발급 쪽으로는 아무것도 열리지 않는다.
+   */
+  rehearsal?: boolean;
+}
+
+/** 발급 사다리의 홈택스 밖 칸(API·직접 발급)이 쓰는 초안. start와 같은 검증을 지난다. */
+export type IssueDraft = Omit<StartParams, 'runId' | 'issueKey'> & { issueKey: IssueKey };
+
+/** prepareIssue 결과: 원장 행 재료와, 게이트를 소비하고 무장하는 함수(한 트랜잭션, Ledger.consumeAndArm). */
+export interface PreparedIssue {
+  row: ArmRow;
+  profileId: string;
+  /** 검증을 지난 초안 값(API 원천에 보낼 문서 재료). 원장·저널에는 넣지 않는다. */
+  inputs: RunInputs;
+  supplierBizNo: string;
+  arm(reqId: string): void;
 }
 
 export type RunEvent =
   | { runId: string; type: 'phase'; phase: Phase; state: 'now' | 'done' | 'attention'; code?: string }
   | { runId: string; type: 'waiting'; reqId: string }
+  /**
+   * 공동인증서 비밀번호 금고 비밀 창 차례(B1·B2, 값 없음): 전용 Chrome의 칸에 직접 입력(main [입력 완료]는 금고 secretWindow.userDone). closed.why: done·ttl·aborted·password_wrong·retry_limit.
+   * 홈택스 인증서 선택창(MagicLine iframe)에서 사람이 직접 넣는 길은 이 이벤트가 아니라 handoff(code human.cert_waiting, 서명 차례면 sign.waiting) → run.resume이다.
+   */
+  | ({ runId: string; type: 'secret' } & SecretTurnEvent)
+  /** 포털 대화상자 문구(예: 등록번호 [확인] → "정상적인 사업자번호입니다."). 앱 실행 단계에 글로만 보인다. key는 strings 키, ok는 기대 문구와 맞음. 로그에는 넣지 않는다. */
+  | { runId: string; type: 'notice'; stepId: string; key: string; text: string; ok: boolean }
   /** portalNotice: 실행이 닫은 마지막 포털 대화상자 문구(≤200자, 텍스트로만 보인다). 실패·핸드오프·모름 종료에만 싣는다(I-6). */
-  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt };
+  | { runId: string; type: 'end'; status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; portalNotice?: string; stoppedAt?: StoppedAt; maintenanceUntil?: string }
+  /**
+   * 사람 대기(IR, B3): 실행은 끝나지 않았다. [다 했어요] = run.resume, [직접 발급함] = run.manualDone(phase가 sign이 아닌 HandedOff에서만), [중지] = run.stop.
+   * phase sign·code sign.waiting = 발급 클릭 뒤 서명 차례(커밋 구간): 재개·중지·상한 모두 verify로 간다.
+   */
+  | { runId: string; type: 'handoff'; phase: Phase; code?: string };
 
 interface PendingGate {
   req: GateRequest;
@@ -69,6 +109,8 @@ interface ActiveRun {
   policy: RunPolicy | null;
   /** IR 경로(engine 'ir')의 실행. H01 경로면 null. */
   ir: IrRun | null;
+  /** 발급 키(발급 단계 s21 행에만 붙는다). */
+  issueKey: IssueKey | null;
   /** 이 실행이 시작할 때 고른 패키지(engine 'ir'). 실행 중에 설치본이 바뀌어도 이 실행은 이것으로 끝난다. */
   pkg: IrPackage | null;
   /** 허가(permit)를 묻는 플레이북 id(IR은 패키지 manifest id, H01은 H01.id). */
@@ -79,6 +121,10 @@ interface ActiveRun {
   portal: PortalConfig;
   /** 이 실행의 신호 사전(runSignals). */
   signals: SignalDict;
+  /** 예행(StartParams.rehearsal)이면 보고서, 아니면 null. */
+  rehearsal: RehearsalReport | null;
+  /** 이 실행의 페이지(예행 handoff 화면 기록용). 받기 전에는 null. */
+  page: Page | null;
   /** 실행 종류: invoice = H-01(run.start), cert = 홈택스 민원증명(run.startCert, IR 경로만). */
   kind: 'invoice' | 'cert';
   /** 민원증명 실행의 검사한 입력과 업무 키(kind cert일 때만). */
@@ -114,10 +160,19 @@ export interface RunServiceDeps {
    */
   irSource?: () => IrSourceResult;
   /**
+   * 예행 전용 로컬 패키지(package-source rehearsalIrSource). 예행(StartParams.rehearsal) 실행만 부른다. null이면 irSource를 쓰고,
+   * 로컬 파일이 있는데 받지 못하면 그 코드로 시작하지 않는다(레지스트리 판으로 몰래 바꾸지 않는다).
+   */
+  rehearsalIrSource?: () => IrSourceResult | null;
+  /** 예행 handoff 화면 기록 폴더(앱 데이터 아래, rehearsalSnap). 없으면 기록하지 않는다. */
+  rehearsalSnapDir?: string;
+  /**
    * 민원증명 실행 시작 패키지 공급(run.startCert, engine 'ir'만): 플레이북 id → 설치본(installedIrSource와 같은 재검증).
    * 제품이 받지 않는 id면 { ok: false, code: 'cert.unknown_doc' }. 없으면 민원증명 시작은 package.not_loaded다.
    */
   certSource?: (playbookId: string) => IrSourceResult;
+  /** 민원증명 예행 전용 로컬 패키지(rehearsalIrSource와 같은 규칙). 예행 실행만 부른다. null이면 certSource를 쓴다. */
+  certRehearsalSource?: (playbookId: string) => IrSourceResult | null;
   /**
    * 실행 허가(D03 §2 Running 진입 확인·정지 하향, §3.1 status 소비, §12 실효 수준, ADR-023 결정 5·6). 시작 전, 스텝 경계마다,
    * recheckPermit(레지스트리 동기화 뒤)에서 부른다. 제품 entry는 레지스트리 status로 계산한다(core runPermit). 없으면 늘 허가(시험).
@@ -127,8 +182,15 @@ export interface RunServiceDeps {
   receivedPolicy?: () => Policy | null;
   /** 정지 하향이 postprocess·kill(hardStop)이면 실행이 끝난 뒤 자동화 Chrome을 닫는다(D03 §2 하향 행). */
   closeBrowser?: () => Promise<void>;
+  /** 시험용: 사람 비밀 차례 TTL(기본 120초). */
+  secretTtlMs?: number;
   /** 시험용(골든 대조): 스텝 궤적. 값 없이 스텝 id·타입·코드만. H01은 step.started만 낸다. */
   trace?: (runId: string, e: { name: string; stepId: string; type: string; code?: string }) => void;
+  /** IR 사람 대기 상한·실행 수명 상한(ms). 시험용(기본 30분·2시간). */
+  handoffCapMs?: number;
+  lifetimeMs?: number;
+  /** IR 사람 입력 포트(금고 비밀 창). 없으면 대역(engine-cert가 붙인다, B1·B2). */
+  human?: HumanPort;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -203,6 +265,12 @@ export class RunService extends EventEmitter {
   }
 
   private ev(e: RunEvent): void {
+    const report = this.active?.runId === e.runId ? this.active.rehearsal : null;
+    if (report && e.type === 'phase') report.phase(e.phase, e.state);
+    if (report && e.type === 'handoff') {
+      report.handoff(e.phase, e.code);
+      void this.snapThenStop(this.active!, { phase: e.phase, ...(e.code ? { code: e.code } : {}) });
+    }
     this.emit('event', e);
   }
 
@@ -216,6 +284,108 @@ export class RunService extends EventEmitter {
       throw new RunEnd('failed', 'selector_placeholder');
     }
     if (typeof p.runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.runId)) throw new RunEnd('failed', 'bad_run_id');
+    const issueKey = p.issueKey === undefined ? null : parseIssueKey(p.issueKey);
+    if (p.issueKey !== undefined && !issueKey) throw new RunEnd('failed', 'issue.bad_key');
+    const { profile, inputs } = this.draft(p);
+    if (issueKey) this.refuseIssued(issueKey);
+    const intentId = ulid();
+    const inputsHash = sha256hex(jcs(inputs));
+    const irPkg = this.engine === 'ir' ? this.packageForRun(p.rehearsal === true) : undefined;
+    const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
+    const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
+    const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
+    const a = this.launch({ runId: p.runId, intentId, inputsHash, irPkg, playbookId, playbookVersion, digest, profile, issueKey, rehearsal: p.rehearsal === true, kind: 'invoice', cert: null });
+    void this.execute(a, inputs, profile);
+    return { runId: p.runId, intentId };
+  }
+
+  /**
+   * 민원증명(H-03·H-04·H-08·H-09) 실행 시작(run.startCert). engine 'ir'에서만 돈다. 검사에 실패하면 브라우저를 열기 전에 던진다.
+   * 입력은 그 서명 패키지의 playbook.inputs 선언으로 검사한다(cert.ts certInputs). 사업자번호나 발급 인증이 없으면 profile_missing이다.
+   * 거절 코드는 데스크톱 멈춤 문구 표(shell-runs NOTE)에 있는 것을 쓴다: 받을 수 없는 서류·실행 방식은 package.not_loaded(이 서류의 작업 정보가 없다).
+   * 그 뒤(허가·원장 의도·요청률·게이트·원장 행·예행)는 H-01과 같은 길(launch)이다. 승인 카드는 cert.confirm(docType cert)이다.
+   */
+  startCert(p: CertStartParams): { runId: string; intentId: string } {
+    if (this.active) throw new RunEnd('failed', 'busy');
+    if (this.engine !== 'ir') throw new RunEnd('failed', 'package.not_loaded');
+    if (portalProblems(this.d.portal).includes('verify_below_floor')) {
+      this.d.log.event('run.portal_not_ready', { kind: this.d.portal.kind, problems: 1 });
+      throw new RunEnd('failed', 'selector_placeholder');
+    }
+    if (typeof p?.runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.runId)) throw new RunEnd('failed', 'bad_run_id');
+    if (typeof p.playbookId !== 'string' || !/^[a-z0-9_.]{1,80}$/.test(p.playbookId)) throw new RunEnd('failed', 'package.not_loaded');
+    const profile = this.d.data.profiles.byKind('business');
+    if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
+    if (!profile.signMethod) throw new RunEnd('failed', 'profile_missing');
+    const rehearsal = p.rehearsal === true;
+    const irPkg = this.certPackageFor(p.playbookId, rehearsal);
+    const files = irPkg.pkg.files;
+    // 민원증명 승인 카드가 있는 플레이북만(H-01 등 다른 패키지를 이 길로 돌리지 않는다).
+    if (files.manifest.id !== p.playbookId || !files.playbook.steps.some((s) => s.type === 'gate' && s.card === CERT_CARD)) throw new RunEnd('failed', 'package.not_loaded');
+    const checked = certInputs(files.playbook.inputs, p.inputs);
+    if (!checked.ok) {
+      this.d.log.event('run.cert_input_refused', { playbook: p.playbookId, code: checked.code, field: checked.field });
+      throw new RunEnd('failed', checked.code);
+    }
+    const inputs = checked.inputs;
+    const intentId = ulid();
+    const inputsHash = sha256hex(jcs({ playbookId: p.playbookId, inputs }));
+    const businessKey = certBusinessKey({ playbookId: p.playbookId, bizNo: profile.bizNo, day: kstDay(this.rate.clock().now), inputs });
+    const a = this.launch({
+      runId: p.runId, intentId, inputsHash, irPkg, playbookId: files.manifest.id, playbookVersion: files.manifest.version, digest: irPkg.pkg.manifestDigest, profile,
+      issueKey: null, rehearsal, kind: 'cert', cert: { inputs, businessKey },
+    });
+    void this.execute(a, null, profile);
+    return { runId: p.runId, intentId };
+  }
+
+  /** run.start·run.startCert 공통 뒷부분: 서버 긴급 정지 → 원장 의도 → 요청률 → 실행 행·저널 → ActiveRun. 던지면 아무 실행도 없다. */
+  private launch(o: {
+    runId: string; intentId: string; inputsHash: string; irPkg: IrPackage | undefined; playbookId: string; playbookVersion: string; digest: string; profile: Profile;
+    issueKey: IssueKey | null; rehearsal: boolean; kind: ActiveRun['kind']; cert: ActiveRun['cert'];
+  }): ActiveRun {
+    const { runId, intentId, inputsHash, irPkg, playbookId, playbookVersion, digest, profile, issueKey, rehearsal } = o;
+    // 서버 긴급 정지(status kill·상한): 브라우저를 열기 전, 요청률 카운터를 쓰기 전에 거부한다.
+    const pm = this.d.permit?.(playbookId);
+    if (pm && !pm.ok) {
+      this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: pm.code });
+      throw new RunEnd('failed', pm.code);
+    }
+    const check = this.ledger.checkIntent(intentId, 's21', playbookId, inputsHash);
+    if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
+    // 쿨다운·하루 실행 수·하루 발급 여유(H-01·민원증명은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
+    try {
+      this.rate.pinRun();
+      this.rate.admit(profile.id, { irreversible: !rehearsal });
+    } catch (e) {
+      if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
+      throw e;
+    }
+    this.runs.create({ id: runId, playbookId, playbookVersion, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
+    this.journal.append(runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
+    if (issueKey) this.journal.append(runId, 'issue.rung', { issueKey, rung: 'hometax.auto' });
+    if (rehearsal) this.journal.append(runId, 'run.rehearsal');
+    // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
+    const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
+    if (gaps.length) {
+      this.journal.append(runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
+      this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
+    }
+    // 받은 서명 정책은 홈택스에만 쓴다(fixture는 내장 시험 값). 이 값이 실행 시작 때의 정책이다(RateGuard.pinRun과 같은 때).
+    const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
+    const portal = runPortalConfig(this.d.portal, startPolicy);
+    this.active = {
+      runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
+      portal, signals: this.runSignals(runId, startPolicy),
+      page: null,
+      rehearsal: rehearsal ? new RehearsalReport(irPkg?.local ? `local:${playbookVersion}:${irPkg.local.digest.slice(0, 12)}` : `${irPkg ? 'registry' : 'h01'}:${playbookVersion}`) : null,
+      kind: o.kind, cert: o.cert,
+    };
+    return this.active;
+  }
+
+  /** 초안 검증(start·prepareIssue 공통): 사업자 프로필·거래처·금액·품목. 틀리면 RunEnd. */
+  private draft(p: Omit<StartParams, 'runId' | 'issueKey'>): { profile: Profile; inputs: RunInputs } {
     const profile = this.d.data.profiles.byKind('business');
     if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
     const cp = this.d.data.counterparties.get(String(p.counterpartyId));
@@ -235,106 +405,57 @@ export class RunService extends EventEmitter {
       issueDate: kstDay(this.rate.clock().now),
       email,
     };
-    const intentId = ulid();
-    const inputsHash = sha256hex(jcs(inputs));
-    const irPkg = this.engine === 'ir' ? this.packageForRun() : undefined;
-    const playbookId = irPkg?.pkg.files.manifest.id ?? H01.id;
-    const playbookVersion = irPkg?.pkg.files.manifest.version ?? H01.version;
-    const digest = irPkg ? irPkg.pkg.manifestDigest : packageDigest(this.d.portal, profile.updatedAt);
-    const a = this.launch({ runId: p.runId, intentId, inputsHash, irPkg, playbookId, playbookVersion, digest, profile, kind: 'invoice', cert: null });
-    void this.execute(a, inputs, profile);
-    return { runId: p.runId, intentId };
+    return { profile, inputs };
+  }
+
+  /** 같은 발급 키에 발급됨·미종결 행이 있으면 새 시도를 만들지 않는다(무장 트랜잭션이 다시 본다). */
+  private refuseIssued(issueKey: IssueKey): void {
+    const rows = this.ledger.byIssueKey(issueKey);
+    if (rows.some((r) => r.state === 'committed')) throw new RunEnd('failed', 'ledger.issue_committed');
+    if (rows.some((r) => r.state !== 'not_committed')) throw new RunEnd('failed', 'ledger.issue_open');
   }
 
   /**
-   * 민원증명(H-03·H-04·H-08·H-09) 실행 시작(run.startCert). engine 'ir'에서만 돈다. 검사에 실패하면 브라우저를 열기 전에 던진다.
-   * 입력은 그 서명 패키지의 playbook.inputs 선언으로 검사한다(cert.ts certInputs). 사업자번호나 발급 인증이 없으면 profile_missing이다.
-   * 거절 코드는 데스크톱 멈춤 문구 표(shell-runs NOTE)에 있는 것을 쓴다: 받을 수 없는 서류·실행 방식은 package.not_loaded(이 서류의 작업 정보가 없다).
-   * 그 뒤(허가·원장 의도·요청률·게이트·원장 행)는 H-01과 같은 길이다. 승인 카드는 cert.confirm(docType cert)이다.
+   * 발급 사다리의 홈택스 밖 칸(D03 §4.2): start와 같은 초안 검증으로 원장 행 재료를 만든다. 의도는 새로 만든다.
+   * 홈택스 요청률·상한(쿨다운·하루 실행·하루 발급)은 보지 않는다. 그 상한은 홈택스 계정이 막히지 않게 하는 장치이고 이 칸들은 홈택스를 건드리지 않는다.
+   * 두 번 발급은 상한이 아니라 원장(발급 키 묶음·in_doubt)이 막는다(부장 결정 2026-11-12).
    */
-  startCert(p: CertStartParams): { runId: string; intentId: string } {
-    if (this.active) throw new RunEnd('failed', 'busy');
-    if (this.engine !== 'ir') throw new RunEnd('failed', 'package.not_loaded');
-    if (portalProblems(this.d.portal).includes('verify_below_floor')) {
-      this.d.log.event('run.portal_not_ready', { kind: this.d.portal.kind, problems: 1 });
-      throw new RunEnd('failed', 'selector_placeholder');
-    }
-    if (typeof p?.runId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(p.runId)) throw new RunEnd('failed', 'bad_run_id');
-    if (typeof p.playbookId !== 'string' || !/^[a-z0-9_.]{1,80}$/.test(p.playbookId)) throw new RunEnd('failed', 'package.not_loaded');
-    const profile = this.d.data.profiles.byKind('business');
-    if (!profile?.bizNo) throw new RunEnd('failed', 'profile_missing');
-    if (!profile.signMethod) throw new RunEnd('failed', 'profile_missing');
-    const irPkg = this.certPackageFor(p.playbookId);
-    const files = irPkg.pkg.files;
-    // 민원증명 승인 카드가 있는 플레이북만(H-01 등 다른 패키지를 이 길로 돌리지 않는다).
-    if (files.manifest.id !== p.playbookId || !files.playbook.steps.some((s) => s.type === 'gate' && s.card === CERT_CARD)) throw new RunEnd('failed', 'package.not_loaded');
-    const checked = certInputs(files.playbook.inputs, p.inputs);
-    if (!checked.ok) {
-      this.d.log.event('run.cert_input_refused', { playbook: p.playbookId, code: checked.code, field: checked.field });
-      throw new RunEnd('failed', checked.code);
-    }
-    const inputs = checked.inputs;
-    const intentId = ulid();
-    const inputsHash = sha256hex(jcs({ playbookId: p.playbookId, inputs }));
-    const businessKey = certBusinessKey({ playbookId: p.playbookId, bizNo: profile.bizNo, day: kstDay(this.rate.clock().now), inputs });
-    const a = this.launch({
-      runId: p.runId, intentId, inputsHash, irPkg, playbookId: files.manifest.id, playbookVersion: files.manifest.version, digest: irPkg.pkg.manifestDigest, profile,
-      kind: 'cert', cert: { inputs, businessKey },
-    });
-    void this.execute(a, null, profile);
-    return { runId: p.runId, intentId };
+  prepareIssue(p: IssueDraft, o: { runId: string; stepId: string; playbookId: string }): PreparedIssue {
+    const { profile, inputs } = this.draft(p);
+    this.refuseIssued(p.issueKey);
+    const row = this.draftRow(profile, inputs, { intentId: ulid(), runId: o.runId, stepId: o.stepId, playbookId: o.playbookId, inputsHash: sha256hex(jcs(inputs)), packageDigest: sha256hex(o.playbookId), issueKey: p.issueKey });
+    return {
+      row, profileId: profile.id, inputs, supplierBizNo: profile.bizNo!,
+      arm: (reqId) => this.ledger.consumeAndArm(reqId, row),
+    };
   }
 
-  /** run.start·run.startCert 공통 뒷부분: 서버 긴급 정지 → 원장 의도 → 요청률 → 실행 행·저널 → ActiveRun. 던지면 아무 실행도 없다. */
-  private launch(o: {
-    runId: string; intentId: string; inputsHash: string; irPkg: IrPackage | undefined; playbookId: string; playbookVersion: string; digest: string; profile: Profile;
-    kind: ActiveRun['kind']; cert: ActiveRun['cert'];
-  }): ActiveRun {
-    const { runId, intentId, inputsHash, irPkg, playbookId, playbookVersion, digest, profile } = o;
-    // 서버 긴급 정지(status kill·상한): 브라우저를 열기 전, 요청률 카운터를 쓰기 전에 거부한다.
-    const pm = this.d.permit?.(playbookId);
-    if (pm && !pm.ok) {
-      this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: pm.code });
-      throw new RunEnd('failed', pm.code);
-    }
-    const check = this.ledger.checkIntent(intentId, 's21', playbookId, inputsHash);
-    if (check.kind !== 'new') throw new RunEnd('failed', 'ledger.intent_not_new');
-    // 쿨다운·하루 실행 수·하루 발급 여유(H-01·민원증명은 비가역). 통과하면 증가를 커밋한 뒤 실행을 만든다.
-    try {
-      const total = pocTotalRefusal(this.ledger, this.d.portal.kind);
-      if (total) throw total;
-      this.rate.pinRun();
-      this.rate.admit(profile.id, { irreversible: true });
-    } catch (e) {
-      if (e instanceof RunEnd) this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: e.code });
-      throw e;
-    }
-    this.runs.create({ id: runId, playbookId, playbookVersion, packageDigest: digest, profileId: profile.id, trigger: 'local', inputsHash });
-    this.journal.append(runId, 'run.started', { intentId, portal: this.d.portal.kind, conservative: this.rate.clock().conservative });
-    // 차단·추가 인증·캡차 사전이 빈 포털: 시작은 막지 않고(공개 근거가 없다) 남긴다. 모르는 화면 누적이 대신 멈춘다.
-    const gaps = (['block', 'extra_auth', 'captcha'] as const).filter((k) => !SIGNAL_DICT[this.d.portal.kind].some((e) => e.kind === k));
-    if (gaps.length) {
-      this.journal.append(runId, 'run.signal_dict_empty', { kinds: gaps.join(',') });
-      this.d.log.event('run.signal_dict_empty', { kind: this.d.portal.kind, kinds: gaps.join(',') });
-    }
-    // 받은 서명 정책은 홈택스에만 쓴다(fixture는 내장 시험 값). 이 값이 실행 시작 때의 정책이다(RateGuard.pinRun과 같은 때).
-    const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
-    const portal = runPortalConfig(this.d.portal, startPolicy);
-    this.active = {
-      runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, pkg: irPkg ?? null, playbookId, downgraded: null,
-      portal, signals: this.runSignals(runId, startPolicy), kind: o.kind, cert: o.cert,
+  /**
+   * 게이트 readback 없이 초안으로 만드는 원장 행 재료(업무 키·HMAC은 초안 값, actionHash는 플레이북·스텝·입력 해시·발급 키).
+   * 홈택스 밖 칸(prepareIssue)과 IR 무장 전 사람 대기 [직접 발급함]이 쓴다.
+   */
+  private draftRow(profile: Profile, inputs: RunInputs, o: { intentId: string; runId: string; stepId: string; playbookId: string; inputsHash: string; packageDigest: string; issueKey: IssueKey | null }): ArmRow {
+    const rb = {
+      supplierBizNo: profile.bizNo!, counterpartBizNo: inputs.counterpart.bizNo, supplyAmount: inputs.amounts.supply, taxAmount: inputs.amounts.tax,
+      issueDate: inputs.issueDate, itemName: inputs.items[0]!.name,
+    } as Readonly<Record<ReadbackKey, string>>;
+    return {
+      intentId: o.intentId, stepId: o.stepId, runId: o.runId, businessKey: businessKey(rb), playbookId: o.playbookId, inputsHash: o.inputsHash,
+      packageDigest: o.packageDigest, actionHash: sha256hex(jcs({ playbookId: o.playbookId, stepId: o.stepId, inputsHash: o.inputsHash, issueKey: o.issueKey })),
+      deviceId: this.deviceId, cpBizNoHmac: this.hmac('bizno', inputs.counterpart.bizNo),
+      recipientEmailHmac: inputs.email ? this.hmac('email', canonicalEmail(inputs.email)) : null, issueKey: o.issueKey,
     };
-    return this.active;
   }
 
   /** inputs: H-01 입력(kind invoice). 민원증명(kind cert)은 null이고 입력은 a.cert에 있다. */
   private async execute(a: ActiveRun, inputs: RunInputs | null, profile: Profile): Promise<void> {
-    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt };
+    let result: { status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt; maintenanceUntil?: string };
     let thrown: unknown;
     try {
       this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'now' });
       // 요청률 정책·차단 신호 감시는 로그인보다 먼저 붙인다(로그인 구간이 캡차·추가 인증·대기열이 잘 뜨는 곳이다).
       const page = await this.d.page();
+      a.page = page;
       if (this.engine !== 'ir') a.policy = new RunPolicy(page, this.rate, a.portal, {
         profileId: profile.id,
         signals: a.signals,
@@ -345,7 +466,8 @@ export class RunService extends EventEmitter {
       // 로그인: 가짜 페이지는 세션이 있다고 본다. 홈택스 로그인(s0~s6)은 PoC-3 뒤(RateGuard.beforeLogin·loginSucceeded·continueSession을 부른다).
       // H01Runner에는 홈택스 로그인이 없다. IR 패키지(H-01 s0~s6)는 로그인 스텝을 스스로 돈다.
       if (this.d.portal.login && this.engine !== 'ir') throw new RunEnd('failed', 'login.not_implemented');
-      this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
+      // IR은 로그인 스텝(s0~s6)을 스스로 돌고 그 단계 표시도 스스로 낸다.
+      if (this.engine !== 'ir') this.ev({ runId: a.runId, type: 'phase', phase: 'login', state: 'done', code: 'login.session_assumed' });
       if (this.engine === 'ir') {
         a.policy = null;
         result = await this.executeIr(a, page, inputs, profile);
@@ -379,6 +501,10 @@ export class RunService extends EventEmitter {
       const code = latched?.status === 'failed' ? 'portal.blocked_after_commit' : 'post_commit.error';
       result = { ...result, status: 'completed_with_issues', code, approvalNo: row.verifyRef ?? result.approvalNo };
     }
+    // 예행이 게이트에 닿아 스스로 멈췄다(원장 행은 무장에서만 생기므로 없어야 한다. 있으면 위 판정을 그대로 둔다).
+    if (a.rehearsal?.gateStep && !row) result = { status: 'stopped', code: REHEARSAL_DONE };
+    else if (a.rehearsal?.handedOff && !row) result = { ...result, status: 'stopped', code: REHEARSAL_HANDOFF };
+    if (a.rehearsal) this.d.log.event('run.rehearsal_report', a.rehearsal.fields(a.runId, { status: result.status, code: result.code, stepId: result.stoppedAt?.stepId }));
     // 정지 하향이 postprocess·kill이면 그 포털의 자동화 Chrome을 닫는다(무장 뒤 미룬 H01 하향도 실행이 끝났으니 닫는다).
     if ((a.downgraded ?? a.ir?.downgraded)?.hardStop) await this.d.closeBrowser?.().catch(() => {});
     this.closeGate(a, 'run_ended');
@@ -386,7 +512,7 @@ export class RunService extends EventEmitter {
     if (a.token && !a.armed && this.gates.withdraw(a.token.reqId, 'run_ended')) this.journal.append(a.runId, 'gate.withdrawn', { reqId: a.token.reqId });
     this.rate.unpinRun();
     this.runs.finish(a.runId, result.status);
-    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '', ...(result.stoppedAt ? { stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, ...(result.stoppedAt.target ? { target: result.stoppedAt.target } : {}) } : {}) });
+    this.journal.append(a.runId, 'run.ended', { status: result.status, code: result.code ?? '', ...(result.mailConfirmed !== undefined ? { mailConfirmed: result.mailConfirmed } : {}), ...(result.stoppedAt ? { stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, ...(result.stoppedAt.target ? { target: result.stoppedAt.target } : {}) } : {}) });
     // 실기기 디버깅(팀장 지시 2026-11-09): 어느 스텝·셀렉터에서 멈췄는지 엔진 로그 한 줄로 바로 보인다(스텝 id·셀렉터 키·코드만, ⑦).
     if (result.stoppedAt) this.d.log.event('run.stopped_at', { runId: a.runId, status: result.status, code: result.code ?? '', stepId: result.stoppedAt.stepId, stepType: result.stoppedAt.type, target: result.stoppedAt.target ?? '', playbook: a.playbookId });
     if (inputs && (result.status === 'success' || result.status === 'completed_with_issues')) this.d.data.counterparties.markUsed(inputs.counterpart.id);
@@ -409,9 +535,15 @@ export class RunService extends EventEmitter {
     });
   }
 
-  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
-  private packageForRun(): IrPackage {
+  /** engine 'ir'의 시작 패키지: 고정 패키지(ir) → (예행만) 로컬 패키지 → 공급(irSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
+  private packageForRun(rehearsal: boolean): IrPackage {
     if (this.d.ir) return this.d.ir;
+    const local = rehearsal ? (this.d.rehearsalIrSource?.() ?? null) : null;
+    if (local?.ok) return local.ir;
+    if (local) {
+      this.d.log.event('run.rehearsal_package_refused', { code: local.code });
+      throw new RunEnd('failed', local.code);
+    }
     const r = this.d.irSource?.() ?? { ok: false as const, code: 'package.not_loaded' };
     if (r.ok) return r.ir;
     if (r.code === 'package.not_loaded') throw new RunEnd('failed', 'package.not_loaded');
@@ -420,21 +552,31 @@ export class RunService extends EventEmitter {
   }
 
   /** IR 경로(engine 'ir'): 같은 게이트 예약 키·원장 행 재료·저널로 RunController를 돌린다. */
-  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs | null, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt }> {
+  private async executeIr(a: ActiveRun, page: Page, inputs: RunInputs | null, profile: Profile): Promise<{ status: RunStatus; code?: string; approvalNo?: string; mailConfirmed?: boolean; stoppedAt?: StoppedAt; maintenanceUntil?: string }> {
     const ir = a.pkg!;
     const playbookId = ir.pkg.files.manifest.id;
     const run = new IrRun({
       runId: a.runId, intentId: a.intentId, packageDigest: a.packageDigest, page, ir, portal: a.portal, signals: a.signals, rate: this.rate,
-      profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null },
+      profile: { id: profile.id, bizNo: profile.bizNo!, signMethod: profile.signMethod ?? null, certName: profile.certName ?? null },
+      // 사람이 고른 인증서 이름(pick.remember)을 프로필에 둔다. 값은 저널·로그에 없다.
+      profileWrite: async (field, value) => {
+        if (field !== 'certName') return false;
+        try {
+          this.d.data.profiles.setCertName(profile.id, value);
+          return true;
+        } catch {
+          return false;
+        }
+      },
       ...(this.d.permit ? { permit: () => this.d.permit!(playbookId) } : {}),
       kind: a.kind,
-      inputs: inputs ? { counterpart: inputs.counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, ...(inputs.email ? { email: inputs.email } : {}) } : { ...a.cert!.inputs },
+      inputs: inputs ? irInputs(inputs, this.d.data.counterparties.get(inputs.counterpart.id)) : { ...a.cert!.inputs },
       db: this.d.db, ledger: this.ledger, gates: this.gates,
       history: (rb, card) => {
         // 원장 행 재료는 실행 종류의 카드만 만든다: run.start = 세금계산서(invoice.confirm), run.startCert = 민원증명(cert.confirm).
         // 실행 종류와 다른 카드는 게이트를 열지 않는다(gate.unavailable).
         if (a.kind === 'cert') return card === CERT_CARD ? this.certHistory(a, profile, playbookId) : null;
-        if (card !== 'invoice.confirm') return null;
+        if (card !== 'invoice.confirm' || !inputs) return null;
         const h01 = rb as Readonly<Record<ReadbackKey, string>>;
         const history = {
           cpBizNoHmac: this.hmac('bizno', h01.counterpartBizNo),
@@ -450,24 +592,43 @@ export class RunService extends EventEmitter {
           row: (x) => ({
             intentId: a.intentId, stepId: x.stepId, runId: a.runId, businessKey: history.businessKey, playbookId, inputsHash: a.inputsHash,
             packageDigest: a.packageDigest, actionHash: x.actionHash, deviceId: this.deviceId, cpBizNoHmac: history.cpBizNoHmac, recipientEmailHmac: history.recipientEmailHmac,
+            issueKey: x.stepId === 's21' ? a.issueKey : null,
           }),
         };
       },
+      // 민원증명은 [직접 발급함]이 없다(원장 행 재료가 세금계산서 초안 모양이다).
+      manualRow: (stepId) => !inputs ? null : this.draftRow(profile, inputs, { intentId: a.intentId, runId: a.runId, stepId, playbookId, inputsHash: a.inputsHash, packageDigest: a.packageDigest, issueKey: stepId === 's21' ? a.issueKey : null }),
       journal: (type, payload) => {
         this.journal.append(a.runId, type, payload);
+        a.rehearsal?.journal(type);
         // 실기기 디버깅: 조회 패키지가 멈춘 스텝·셀렉터 키도 엔진 로그 한 줄로(스텝 id·셀렉터 키·코드만, ⑦).
         if (type === 'lookup.step_failed' && payload) this.d.log.event('run.lookup_failed', { runId: a.runId, ...payload });
+        // 사람에게 넘길 때 이유 코드·대상 셀렉터 키·거친 폴백 단계(값 없음).
+        if (type === 'run.handoff' && payload) this.d.log.event('run.handoff', { runId: a.runId, playbook: a.playbookId, ...payload });
+        // AI 단계 결과(위치 찾기·폴백·판정·에이전트, 값 없음): 선택자·이름 규칙 글이 ID 꼴이 아니어서 diag 줄로 남긴다(로그 쪽이 다시 거른다).
+        if (payload && AI_LOG.test(type)) {
+          if (this.d.log.diag) this.d.log.diag(type, { runId: a.runId }, payload);
+          else this.d.log.event(type, { runId: a.runId, ...payload });
+        }
       },
+      diag: (code, fields, data) => this.d.log.diag?.(code, { runId: a.runId, playbook: a.playbookId, ...fields }, data as DiagValue),
       phase: (phase, state, code) => this.ev({ runId: a.runId, type: 'phase', phase: phase as Phase, state, ...(code ? { code } : {}) }),
-      postGate: (m) => this.d.postGate(m),
+      postGate: (m) => this.gatePort(a, m),
       waiting: (reqId) => this.ev({ runId: a.runId, type: 'waiting', reqId }),
       ...(this.d.gateWaitMs !== undefined ? { gateWaitMs: this.d.gateWaitMs } : {}),
       ...(this.d.trace ? { trace: (e) => this.d.trace!(a.runId, e) } : {}),
+      handoff: (h) => this.ev({ runId: a.runId, type: 'handoff', phase: h.phase as Phase, ...(h.code ? { code: h.code } : {}) }),
+      ...(this.d.human ? { human: this.d.human } : {}),
+      ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
+      ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
+      secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
+      portalNotice: (n) => this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok }),
+      ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
     a.ir = run;
     const r = await run.run();
     a.armed = run.armed;
-    return { status: r.status, ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
+    return { status: r.status, ...(r.maintenanceUntil ? { maintenanceUntil: r.maintenanceUntil } : {}), ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
   }
 
   /**
@@ -485,14 +646,20 @@ export class RunService extends EventEmitter {
       reserved,
       row: (x) => ({
         intentId: a.intentId, stepId: x.stepId, runId: a.runId, businessKey: cert.businessKey, playbookId, inputsHash: a.inputsHash,
-        packageDigest: a.packageDigest, actionHash: x.actionHash, deviceId: this.deviceId, cpBizNoHmac, recipientEmailHmac: null,
+        packageDigest: a.packageDigest, actionHash: x.actionHash, deviceId: this.deviceId, cpBizNoHmac, recipientEmailHmac: null, issueKey: null,
       }),
     };
   }
 
-  /** 민원증명 시작 패키지: 고정 패키지(ir, 시험) → 공급(certSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
-  private certPackageFor(playbookId: string): IrPackage {
+  /** 민원증명 시작 패키지: 고정 패키지(ir, 시험) → (예행만) 로컬 패키지 → 공급(certSource). 없거나 검증에 실패하면 브라우저를 열기 전에 던진다. */
+  private certPackageFor(playbookId: string, rehearsal: boolean): IrPackage {
     if (this.d.ir && this.d.ir.pkg.files.manifest.id === playbookId) return this.d.ir;
+    const local = rehearsal ? (this.d.certRehearsalSource?.(playbookId) ?? null) : null;
+    if (local?.ok) return local.ir;
+    if (local) {
+      this.d.log.event('run.rehearsal_package_refused', { code: local.code, playbook: playbookId });
+      throw new RunEnd('failed', local.code);
+    }
     const r = this.d.certSource?.(playbookId) ?? { ok: false as const, code: 'package.not_loaded' };
     if (r.ok) return r.ir;
     // 제품이 받지 않는 서류 id(cert.unknown_doc)도 사람에게는 "이 서류의 작업 정보가 없다"와 같다. 로그에는 코드를 남긴다.
@@ -557,7 +724,7 @@ export class RunService extends EventEmitter {
       }, waitMs);
       a.gate = { req, rb, rbHash, deadline: Date.now() + waitMs, timer, resolve, reject, history };
     });
-    this.d.postGate({ t: 'gate.request', req });
+    this.gatePort(a, { t: 'gate.request', req });
     this.ev({ runId: a.runId, type: 'waiting', reqId: req.reqId });
     await decided;
     // 거부 우선 창: 승인 뒤 2초 안에 온 [중지]·차단 신호가 이긴다. 그 뒤에 토큰을 발급한다(D03 §2·§3).
@@ -598,6 +765,7 @@ export class RunService extends EventEmitter {
         this.ledger.consumeAndArm(p.req.reqId, {
           intentId: a.intentId, stepId: 's21', runId: a.runId, businessKey: p.history.businessKey, playbookId: H01.id, inputsHash: a.inputsHash,
           packageDigest: a.packageDigest, actionHash: p.req.actionHash, deviceId: this.deviceId, cpBizNoHmac: p.history.cpBizNoHmac, recipientEmailHmac: p.history.recipientEmailHmac,
+          issueKey: a.issueKey,
         });
       })();
     } catch (e) {
@@ -623,7 +791,43 @@ export class RunService extends EventEmitter {
     if (!g) return;
     clearTimeout(g.timer);
     a.gate = null;
-    this.d.postGate({ t: 'gate.closed', runId: a.runId, reqId: g.req.reqId, reason });
+    this.gatePort(a, { t: 'gate.closed', runId: a.runId, reqId: g.req.reqId, reason });
+  }
+
+  /**
+   * 게이트 포트로 내보낸다. 예행은 아무것도 보내지 않는다: 게이트 요청이 오면 그 자리를 남기고, 조율기가 승인을 기다리기 시작한 뒤 [중지]처럼 멈춘다.
+   * main이 요청을 받지 못하므로 승인 바도 토큰도 생기지 않는다.
+   */
+  private gatePort(a: ActiveRun, m: GatePortMessage): void {
+    if (!a.rehearsal) return this.d.postGate(m);
+    if (m.t !== 'gate.request' || a.rehearsal.gateStep) return;
+    a.rehearsal.gateStep = m.req.gateStepId;
+    this.journal.append(a.runId, 'rehearsal.gate_reached', { stepId: m.req.gateStepId });
+    this.stopSoon(a, null);
+  }
+
+  /** 예행 handoff: 그 화면을 로컬에 한 번 기록하고(최대 6초) 멈춘다. 기록이 실패해도 멈춘다. */
+  private async snapThenStop(a: ActiveRun, at: { phase: string; code?: string }): Promise<void> {
+    const dir = this.d.rehearsalSnapDir;
+    if (dir && a.page && a.rehearsal && !a.rehearsal.snapped) {
+      a.rehearsal.snapped = true;
+      let timer: NodeJS.Timeout | undefined;
+      await Promise.race([rehearsalSnap(a.page, dir, a.runId, at).catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, 6_000)))]).finally(() => clearTimeout(timer));
+    }
+    this.stopSoon(a, 'rehearsal.handoff_stop');
+  }
+
+  /** 예행을 [중지]처럼 멈춘다. 지금 하던 일(게이트·사람 대기 등록)이 끝난 뒤에 부른다. journalType이 있으면 저널에 남긴다. */
+  private stopSoon(a: ActiveRun, journalType: string | null): void {
+    if (journalType) this.journal.append(a.runId, journalType);
+    setImmediate(() => {
+      if (this.active !== a) return;
+      try {
+        this.stop(a.runId);
+      } catch (e) {
+        this.d.log.event('run.rehearsal_stop_failed', { runId: a.runId, error: e instanceof RunEnd ? e.code : 'error' });
+      }
+    });
   }
 
   /**
@@ -639,6 +843,7 @@ export class RunService extends EventEmitter {
       if (a) this.journal.append(a.runId, 'gate.answer_rejected', { code });
       return { ok: false, code };
     };
+    if (a?.rehearsal) return reject('rehearsal');
     if (a?.ir) return this.answerIr(a, a.ir, ap, reject);
     if (!a || !g) return reject('no_open_gate');
     if (a.stop) return reject('stopped');
@@ -688,6 +893,13 @@ export class RunService extends EventEmitter {
   stop(runId: string): { stopped: boolean } {
     const a = this.active;
     if (!a || a.runId !== runId) return { stopped: false };
+    // 사람 대기(IR)는 무장 뒤라도 받는다: 핸드오프면 끝내고(원장이 열려 있으면 in_doubt), 서명 차례면 버튼을 누르지 않고 verify로 간다.
+    if (a.ir?.waiting) {
+      this.journal.append(a.runId, 'run.stop_in_wait', { armed: a.ir.armed });
+      a.stop = !a.ir.armed;
+      a.ir.stop();
+      return { stopped: !a.ir.armed };
+    }
     if (a.armed || a.ir?.armed) throw new RunEnd('failed', 'already_issuing');
     a.stop = true;
     if (a.ir) {
@@ -701,6 +913,24 @@ export class RunService extends EventEmitter {
       g.reject(new RunEnd('stopped', 'gate.stopped'));
     }
     return { stopped: true };
+  }
+
+  /** 사람 대기 [다 했어요](B3, IR). 핸드오프·Paused면 같은 체크포인트부터, 서명 차례면 verify로. */
+  resume(runId: string): { ok: boolean; code?: string } {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
+    const r = a.ir.command('resume');
+    if (r.ok) this.journal.append(a.runId, 'run.resume_requested', {});
+    return r;
+  }
+
+  /** 사람 대기 [직접 발급함](B3, IR HandedOff): 원장 observed_manual → 그 발급의 verify. 앱은 다시 발급하지 않는다. */
+  manualDone(runId: string): { ok: boolean; code?: string } {
+    const a = this.active;
+    if (!a || a.runId !== runId || !a.ir) return { ok: false, code: 'not_handed_off' };
+    const r = a.ir.command('manual');
+    if (r.ok) this.journal.append(a.runId, 'run.manual_done_requested', {});
+    return r;
   }
 
   /**
@@ -775,4 +1005,20 @@ export class RunService extends EventEmitter {
     const row = this.d.db.prepare('SELECT state FROM irreversible_log WHERE run_id = ? ORDER BY armed_at DESC, attempt DESC LIMIT 1').get(runId) as { state: string } | undefined;
     return { ledger: row?.state ?? null, journal: this.journal.types(runId), policy: this.rate.status(this.d.data.profiles.byKind('business')?.id ?? '') };
   }
+}
+
+/**
+ * IR 실행 입력. 실화면 H-01(hometax.invoice.issue 2.2.0)은 공급받는자 성명·사업장을 직접 넣고(조회로 채워지지 않는다), 이메일은 아이디·도메인 두 칸,
+ * 품목 행의 일(日)은 따로 넣는다. 그래서 거래처의 대표자·주소와 이메일 두 조각, 작성일자의 일을 더 준다(값이 없으면 키를 넣지 않는다).
+ */
+export function irInputs(inputs: RunInputs, cp: { repName?: string | null; address?: string | null } | null | undefined): Record<string, unknown> {
+  const counterpart: Record<string, string> = { ...inputs.counterpart };
+  if (cp?.repName) counterpart.repName = cp.repName;
+  if (cp?.address) counterpart.address = cp.address;
+  const at = inputs.email ? inputs.email.lastIndexOf('@') : -1;
+  return {
+    counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, issueDay: inputs.issueDate.slice(8, 10),
+    ...(inputs.email ? { email: inputs.email } : {}),
+    ...(inputs.email && at > 0 ? { emailLocal: inputs.email.slice(0, at), emailDomain: inputs.email.slice(at + 1) } : {}),
+  };
 }

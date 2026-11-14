@@ -39,7 +39,11 @@ const ICONS = {
   eye: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z'],
   eyeOff: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z', 'M2.5 2.5l11 11'],
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
+  money: [20, 'M2.5 5.5h15v9h-15z', 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M5 8v4M15 8v4'],
   pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
+  globe: [16, 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z', 'M2 8h12', 'M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14C6.3 12.4 5.5 10.4 5.5 8S6.3 3.6 8 2z'],
+  expand: [16, 'M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9'],
+  shrink: [16, 'M13 7H9V3M9 7l4.5-4.5M3 9h4v4M7 9l-4.5 4.5'],
 };
 export function icon(name) {
   const [box, ...paths] = ICONS[name];
@@ -95,9 +99,11 @@ export const CHIP = {
   checking: ['확인 중', ''],
   done: ['완료', 'is-done'],
   stopped: ['중지됨', 'is-stopped'],
+  discarded: ['취소함', 'is-stopped'],
   attention: ['확인 필요', 'is-attention'],
 };
-export const chip = (status) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, CHIP[status][0]);
+/** 상태 칩. label을 주면 색은 상태대로, 글자는 label(지난 실행처럼 표와 같은 말을 써야 할 때). */
+export const chip = (status, label) => h('span', { class: `sx-chip ${CHIP[status][1]}` }, label ?? CHIP[status][0]);
 
 /** 발급 뒤 발급목록을 조회하는 중(발급 · 조회로 확정 묶음의 '발급목록 확인' 단계가 지금). 칩은 '확인 중'이다(08 §11). */
 export const verifying = (run) => run.status === 'issuing' && run.steps[6]?.state === 'now';
@@ -137,7 +143,20 @@ export function steps(list) {
   return h(
     'ol',
     { class: 'sx-steps' },
-    list.map((s) => h('li', { class: s.state === 'todo' ? null : `is-${s.state}` }, h('span', {}, s.label, s.note ? h('small', {}, s.note) : null))),
+    list.map((s) =>
+      h(
+        'li',
+        { class: s.state === 'todo' ? null : `is-${s.state}` },
+        h(
+          'span',
+          {},
+          s.label,
+          s.note ? h('small', {}, s.note) : null,
+          // 포털 대화상자 확인 결과(사업자번호 [확인] 등): 팝업 대신 이 단계 아래 한 줄 글. 기대와 다르면 빨간 글.
+          ...(s.checks ?? []).map((c) => h('small', { class: `sx-step-check ${c.ok ? 'is-ok' : 'is-bad'}`, 'data-portal-check': c.ok ? 'ok' : 'bad' }, c.text)),
+        ),
+      ),
+    ),
   );
 }
 
@@ -156,6 +175,11 @@ const STEP_GROUPS = [
 const ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 export function runSteps(run) {
   const groups = STEP_GROUPS.map(([label, idx]) => {
+    const g = group(label, idx);
+    const checks = (run.portalChecks ?? []).filter((c) => idx.includes(c.step));
+    return checks.length ? { ...g, checks } : g;
+  });
+  function group(label, idx) {
     const xs = idx.map((i) => run.steps[i]).filter(Boolean);
     const pick = (st) => xs.find((s) => s.state === st);
     const att = pick('attention');
@@ -165,7 +189,7 @@ export function runSteps(run) {
     if (xs.length && xs.every((s) => s.state === 'done')) return { label, state: 'done', note: xs.map((s) => s.note).filter(Boolean)[0] };
     if (xs.some((s) => s.state === 'done') && ACTIVE.includes(run.status)) return { label, state: 'now' };
     return { label, state: 'todo' };
-  });
+  }
   // 단계 사이에서 멈춘 확인 필요(진행 중 단계가 없던 때)는 끝나지 않은 첫 묶음에 표시한다. 안 하면 멈춘 곳이 안 보인다.
   if (run.status === 'attention' && !groups.some((g) => g.state === 'attention')) {
     const at = groups.find((g) => g.state !== 'done');
@@ -187,13 +211,37 @@ const vatText = (run) => (run.vat === 'separate' ? (run.status === 'draft' && ru
 const nowStep = (run) => runSteps(run).find((s) => s.state === 'now' || s.state === 'attention');
 const line = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
 
+/** 초안 카드의 오늘 중복 한 줄(F-10). 승인 카드에서도 엔진 원장으로 다시 경고한다. */
+/** [홈택스에서 준비] 전 Chrome 사전 점검에서 Chrome이 없을 때(초안 카드). 엔진까지 가지 않았으므로 "보내지 않았어요". */
+export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준비할 수 있어요. Chrome을 설치한 뒤 [홈택스에서 준비]를 다시 눌러 주세요. 아직 아무것도 보내지 않았어요.';
+/** Chrome 설치 안내(U6, 판의 할 일·첫 발급 요청). 주소는 글자로만 둔다(앱이 외부 링크를 열지 않는다). */
+export const CHROME_GUIDE_TEXT = '홈택스 작업은 이 PC의 Chrome 창에서 해요. 다른 브라우저에서 google.com/chrome 을 열어 Chrome을 설치한 뒤 [다시 확인]을 눌러 주세요.';
+export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
+
+/** 발급 PDF가 이 PC에 없을 때(F-04): 결과 카드·실행 패널·문서함 패널이 같은 문구. */
+export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요.';
+
 /** 대화 속 작업 카드(TaskCard). 상태가 바뀌면 같은 카드가 바뀐다. 캔버스 M-01·T-02~T-07 카드 순서: 머리 → 금액 → 문장 → 안내 → 버튼 줄. */
+/** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. */
+const showBrowserBtn = (run, act) => btn('홈택스 창 보기', () => act.showBrowser(run.id), '', { 'data-act': 'show-browser' });
+
 export function taskCard(run, act) {
   const title = `세금계산서 · ${run.counterparty.name}`;
+  // 대화에서 발급 전에 버린 초안(draft_discard): 무엇이었는지만 남기고 버튼은 없다.
+  if (run.discarded)
+    return h(
+      'section',
+      { class: 'sx-card is-discarded', 'data-run': run.id, 'data-status': 'discarded' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip('discarded')),
+      h('p', { class: 'sx-meta' }, '발급 전에 취소한 카드예요. 홈택스에는 아무것도 보내지 않았어요.'),
+    );
   const st = run.status;
   const card = h('section', { class: `sx-card${st === 'turn' || st === 'waiting' ? ' is-turn' : ''}`, 'data-run': run.id, 'data-status': st });
+  // DOM append(null)은 "null" 글자를 넣는다(카드에 "null"이 보였다). 카드의 조건부 줄은 h()처럼 null·false를 건너뛴다.
+  const domAppend = card.append.bind(card);
+  card.append = (...kids) => domAppend(...kids.flat().filter((k) => k != null && k !== false));
   card.addEventListener('click', (e) => {
-    if (!e.target.closest('button, input, dl, .sx-where')) act.open(run.id);
+    if (!e.target.closest('button, input, select, dl, .sx-where')) act.open(run.id);
   });
   const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(shownStatus(run)));
   // 내 차례·확인 필요는 합계만(사람이 할 일이 먼저 보이게), 나머지는 분해까지.
@@ -201,7 +249,42 @@ export function taskCard(run, act) {
   const now = nowStep(run);
 
   if (st === 'draft') {
-    if (act.editing === run.id) {
+    const noItem = !String(run.item ?? '').trim();
+    // 품목·받는 이메일은 카드에서 보이고 그 자리에서 고친다(08 §2). 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
+    card.append(
+      h(
+        'div',
+        { class: 'sx-meta', 'data-draft-fields': '' },
+        h('span', { 'data-draft-item': run.item ?? '' }, `품목 · ${noItem ? '비어 있음' : run.item}${!noItem && run.itemGuessed ? ' (저장 품목)' : ''}`),
+        ' · ',
+        h('span', { 'data-draft-email': run.email.value ?? '' }, `받는 이메일 · ${run.email.value || '없음(메일은 보내지 않아요)'}`),
+      ),
+    );
+    if (act.editingFields === run.id) {
+      const item = h('input', { class: 'doc-in', name: 'item', value: run.item ?? '', maxlength: 100, autocomplete: 'off', 'aria-label': '품목', placeholder: '예: 컨설팅 용역' });
+      const email = h('input', { class: 'doc-in', name: 'email', type: 'email', value: run.email.value ?? '', maxlength: 320, autocomplete: 'off', 'aria-label': '받는 이메일' });
+      const save = () => act.saveFields(run.id, item.value, email.value);
+      for (const i of [item, email])
+        i.addEventListener('keydown', (e) => {
+          if (e.key === 'Enter' && !e.isComposing) save();
+          if (e.key === 'Escape') act.editFields(null);
+        });
+      card.append(
+        h('div', { class: 'cp-form', 'data-draft-edit': '' }, h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '품목'), item), h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '받는 이메일(비우면 메일을 보내지 않아요)'), email)),
+        h('div', { class: 'sx-actions' }, btn('바꾸기', save, 'sx-btn-primary', { 'data-act': 'fields-save' }), btn('그만두기', () => act.editFields(null), 'sx-btn-quiet', { 'data-act': 'fields-cancel' })),
+      );
+      setTimeout(() => item.focus(), 0);
+    } else if (act.editingCp === run.id) {
+      // 거래처 바꾸기(F-14): 장부의 거래처에서 고른다. [취소] 뒤 다시 말하지 않아도 된다.
+      const others = (act.counterparties ?? []).filter((c) => c.id !== run.counterparty.id);
+      const sel = h('select', { class: 'doc-in', name: 'counterparty', 'aria-label': '거래처' }, ...others.map((c) => h('option', { value: c.id }, c.name)));
+      card.append(
+        others.length
+          ? h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '거래처'), sel, btn('바꾸기', () => act.saveCp(run.id, sel.value), 'sx-btn-primary', { 'data-act': 'draft-cp-save' }), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' }))
+          : h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '장부에 다른 거래처가 없어요. 거래처 화면에서 추가할 수 있어요.'), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' })),
+      );
+      setTimeout(() => sel.focus(), 0);
+    } else if (act.editing === run.id) {
       const input = h('input', { class: 'sx-amount-edit', type: 'text', inputmode: 'numeric', value: num(run.amount), 'aria-label': '금액' });
       const save = () => act.saveAmount(run.id, input.value);
       input.addEventListener('keydown', (e) => {
@@ -211,24 +294,33 @@ export function taskCard(run, act) {
       card.append(h('div', { class: 'sx-actions' }, h('span', { class: 'sx-meta' }, run.vat === 'separate' ? '공급가액' : '합계'), input, btn('바꾸기', save, 'sx-btn-primary'), btn('그만두기', () => act.editAmount(null), 'sx-btn-quiet')));
       setTimeout(() => input.focus(), 0);
     } else {
-      // 품목은 거래처 저장 품목(추정), 부가세는 고르지 않았으면 기본값(추정)
-      const guessed = [run.vatGuessed ? '부가세' : null, '품목'].filter(Boolean);
+      // 품목은 거래처 저장 품목에서 왔으면 추정, 부가세는 고르지 않았으면 기본값(추정)
+      const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
       card.append(
+        run.noChrome ? h('div', { 'data-no-chrome': '' }, note(NO_CHROME_TEXT, true)) : null,
+        run.dupToday ? h('div', { 'data-dup-today': '' }, note(DUP_TODAY_TEXT, true)) : null,
+        noItem ? note('품목이 비어 있어요. [품목·이메일 고치기]로 넣은 뒤 준비해 주세요.', true) : null,
         h(
           'div',
           { class: 'sx-actions' },
-          btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare' }),
+          btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem }),
           run.vat === 'separate' ? btn('부가세 포함하기', () => act.vat(run.id, 'included'), '', { 'data-act': 'vat' }) : btn('부가세 별도로 하기', () => act.vat(run.id, 'separate'), '', { 'data-act': 'vat' }),
           btn('금액 수정', () => act.editAmount(run.id)),
+          btn('품목·이메일 고치기', () => act.editFields(run.id), noItem ? 'sx-btn-primary' : '', { 'data-act': 'fields-edit' }),
+          btn('거래처 바꾸기', () => act.editCp(run.id), '', { 'data-act': 'draft-cp' }),
           btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
         ),
-        h('div', { class: 'sx-meta' }, `추정 값 ${guessed.length}개 · ${guessed.join(', ')} · 아직 아무것도 보내지 않았어요`),
+        h('div', { class: 'sx-meta' }, guessed.length ? `추정 값 ${guessed.length}개 · ${guessed.join(', ')} · 아직 아무것도 보내지 않았어요` : '아직 아무것도 보내지 않았어요'),
       );
     }
   } else if (st === 'preparing') {
+    const login = run.steps[0].state === 'now' && run.steps[0].note;
+    if (login) card.dataset.loginNow = '';
     card.append(
       line('홈택스에서 준비하고 있어요. 승인하기 전에는 아무것도 발급하지 않아요.', true),
-      h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }), now ? h('span', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null),
+      // 로그인 단계: 엔진은 로그인 화면을 열고 최대 10분 기다린다(그 뒤에야 로그인 차례 카드). 할 일을 바로 보인다.
+      login ? note(run.steps[0].note, true) : null,
+      h('div', { class: 'sx-actions' }, login ? showBrowserBtn(run, act) : null, btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }), now ? h('span', { class: 'sx-meta' }, now.note && !login ? `${now.label} · ${now.note}` : now.label) : null),
     );
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다.
@@ -236,20 +328,30 @@ export function taskCard(run, act) {
       line('발급목록을 직접 조회해서 발급됐는지 확인하고 있어요. 확인되기 전에는 다시 발급하지 않아요.', true),
       run.verifyAttempt ? h('div', { class: 'sx-meta', 'data-verify-attempt': String(run.verifyAttempt) }, `조회 ${run.verifyAttempt}회째`) : null,
     );
+  } else if (st === 'issuing' && run.steps[5].state === 'now' && run.steps[5].note) {
+    // 승인 뒤 서명 단계: 사람 몫(인증서 비밀번호·간편인증 승인)을 바로 보인다. 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 온다.
+    card.dataset.signNow = '';
+    card.append(note(`${run.steps[5].note}. 끝나면 자동으로 이어집니다`, true, '홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.'), h('div', { class: 'sx-actions' }, showBrowserBtn(run, act)));
   } else if (st === 'issuing') {
     card.append(line('발급하고 있어요. 홈택스 발급목록에서 확인할 때까지 다시 발급하지 않아요.', true), now ? h('div', { class: 'sx-meta' }, now.note ? `${now.label} · ${now.note}` : now.label) : null);
   } else if (st === 'turn' && run.handoff) {
-    // 핸드오프(D03 HandedOff): 두 버튼 모두 재개·확인으로만 가고 발급하지 않는다. 게이트 뒤면 중지는 없다(엔진이 거부).
-    card.dataset.handoff = '1';
+    // 사람 차례(D03 HandedOff, #278 셸 계약): 실행은 끝나지 않았다. 버튼은 재개·확인·중지로만 가고 발급하지 않는다.
+    // - 로그인: [이어서](재개) · [중지]
+    // - 서명: 완료 창이 보이면 엔진이 스스로 넘어간다. [다 했어요]는 보조, [직접 발급함]은 없다(엔진 sign.turn_resume_only). [중지]는 발급목록 확인 뒤 끝난다.
+    // - 그 밖: [다 했어요] · [직접 발급함] · [중지]
+    const kind = run.handoff.kind ?? 'other';
+    card.dataset.handoff = kind;
     card.append(
       note(run.turn.text, true, run.turn.note),
       h(
         'div',
         { class: 'sx-actions' },
-        btn('다 했어요', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }),
-        btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }),
-        run.handoff.afterGate ? null : btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
+        kind === 'login' ? btn('이어서', () => act.resume(run.id), 'sx-btn-primary', { 'data-act': 'resume' }) : btn('다 했어요', () => act.resume(run.id), kind === 'sign' ? '' : 'sx-btn-primary', { 'data-act': 'resume' }),
+        kind === 'other' ? btn('직접 발급함', () => act.manualDone(run.id), '', { 'data-act': 'manual-done' }) : null,
+        showBrowserBtn(run, act),
+        btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' }),
       ),
+      kind === 'sign' ? h('div', { class: 'sx-meta', 'data-sign-wait': '' }, '서명을 마치면 앱이 발급목록을 확인해요. 그동안 다시 발급하지 않아요.') : null,
     );
   } else if (st === 'turn') {
     card.append(note(run.turn.text, false, run.turn.note, 'phone'));
@@ -280,11 +382,14 @@ export function taskCard(run, act) {
     card.append(
       line(`발급했어요. ${mail}`),
       h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))),
-      h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(r.docId), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
+      r.noFile ? line(NO_FILE_TEXT, true) : null,
+      h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
       where,
     );
   } else if (st === 'stopped') {
     card.append(line(run.stoppedNote || '중지했어요.', true));
+    // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
+    if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
   } else if (st === 'attention' && run.inDoubt) {
     // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳만 연다.
     card.dataset.inDoubt = '1';
@@ -296,7 +401,22 @@ export function taskCard(run, act) {
       h('div', { class: 'sx-actions' }, btn('홈택스에서 직접 확인', () => act.open(run.id), 'sx-btn-primary', { 'data-act': 'check-list' })),
     );
   } else if (st === 'attention') {
-    card.append(note(run.stoppedNote || '확인이 필요해요.', true));
+    card.append(
+      note(run.stoppedNote || '확인이 필요해요.', true),
+      // 승인 전 핸드오프 끝: [다시 준비]·[홈택스에서 직접 발급]. 그 밖에 발급 전에 멈췄으면 [다시 준비](새 초안). Chrome 확장 멈춤은 아래 [다시 시도]가 맡는다.
+      // 홈택스 점검(portal.maintenance): 끝 시각을 알면 main이 자동으로 다시 시작한다(버튼 없음). 모르면 [다시 시작]. 다시 시작했으면 버튼 없음.
+      run.maintenance
+        ? run.maintenance.restartedAs
+          ? line('같은 내용으로 다시 시작했어요. 아래 새 카드에서 이어져요.', true)
+          : run.maintenance.until
+            ? h('div', { class: 'sx-meta', 'data-maintenance': 'auto' }, `${run.maintenance.until} 지나면 자동으로 다시 시작해요`)
+            : h('div', { class: 'sx-actions', 'data-maintenance': 'manual' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'maintenance-restart' }))
+        : run.handoffEnd
+        ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'handoff-again' }), btn('홈택스에서 직접 발급', () => act.open(run.id), '', { 'data-act': 'handoff-manual' }))
+        : run.redo && !run.retry
+          ? h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'redo' }))
+          : null,
+    );
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
   for (const t of run.notices || []) card.append(note(t, true));
@@ -352,7 +472,7 @@ export function runPanel(run, act) {
   const confirmed = run.confirmed;
   const tag = confirmed ? { state: 'verified', tag: '홈택스 확정' } : {};
   const r = run.result;
-  const guessed = [run.vatGuessed ? '부가세' : null, '품목'].filter(Boolean);
+  const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
   const rows = [
     st === 'done' && r ? ['승인번호', r.approvalNo, { mono: true }] : null,
     ['공급자', act.supplier()],
@@ -361,7 +481,7 @@ export function runPanel(run, act) {
     st === 'draft' ? ['부가세', run.vat === 'separate' ? '별도' : '포함', run.vatGuessed ? { state: 'inferred', tag: '기본값' } : {}] : null,
     ['공급가', won(run.supply), tag],
     ['세액', won(run.tax), confirmed ? tag : run.vatGuessed ? { state: 'inferred', tag: '추정' } : {}],
-    ['품목', run.item, confirmed ? tag : { state: 'inferred', tag: '추정' }],
+    ['품목', run.item || null, confirmed ? tag : run.itemGuessed ? { state: 'inferred', tag: '저장 품목' } : {}],
     ['작성일자', run.writeDate, tag],
     ['받는 이메일', run.email.value, { ...(st === 'done' && r?.mailConfirmed ? { state: 'verified', tag: '전송 확인' } : tag), flag: run.email.first ? '처음 보내는 주소' : null }],
     ['발급 인증', run.auth, { tag: '설정에서 변경' }],
@@ -372,10 +492,11 @@ export function runPanel(run, act) {
       : confirmed
         ? `홈택스에서 다시 읽음 · ${run.createdAt} 요청`
         : st === 'draft'
-          ? `초안 · 추정 값 ${guessed.length}개 · 아직 아무것도 보내지 않았어요`
+          ? `초안 · ${guessed.length ? `추정 값 ${guessed.length}개 · ` : ''}아직 아무것도 보내지 않았어요`
           : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
   // 작업 패널의 [중지](T-04). 발급 전에만 있다. 승인은 여기에도 없다.
-  const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && run.steps[4].state !== 'done');
+  // 사람 차례면 게이트 뒤(서명 차례)여도 [중지]를 받는다(#278): 서명 차례는 발급목록 확인 뒤 끝난다.
+  const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && (!!run.handoff || run.steps[4].state !== 'done'));
   return h(
     'div',
     { class: 'panel-in', 'data-panel-run': run.id },
@@ -387,7 +508,59 @@ export function runPanel(run, act) {
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
-    st === 'done' ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(run.result.docId), 'sx-btn-primary'), btn('폴더 열기', () => act.revealDoc(run.result.docId))) : null,
+    st === 'done' ? (run.result.noFile ? line(NO_FILE_TEXT, true) : h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary'), btn('폴더 열기', () => act.openRunDoc(run, true)))) : null,
+  );
+}
+
+/** 실행 중 홈택스 화면을 보이는 상태(B3). */
+export const BROWSER_STATUSES = ['preparing', 'turn', 'waiting', 'issuing'];
+// 금고가 보내는 주소는 "호스트/경로"(scheme·쿼리 없음, vault pageAddress). 홈택스 허용 목록은 https만 쓰고 시험 페이지만 http다.
+const parseUrl = (url) => {
+  const i = url.indexOf('/');
+  const host = i < 0 ? url : url.slice(0, i);
+  const rest = i < 0 ? '' : url.slice(i);
+  return { secure: !!host && !/^(127\.0\.0\.1|localhost)(:|$)/.test(host), host, rest: rest === '/' ? '' : rest };
+};
+/** 탭 제목: 홈택스는 이름으로, 시험 페이지는 시험이라고. */
+export function browserTabTitle(url) {
+  const { host } = parseUrl(url ?? '');
+  if (/(^|\.)hometax\.go\.kr$/.test(host)) return '국세청 홈택스';
+  if (/^(127\.0\.0\.1|localhost)(:|$)/.test(host)) return '홈택스(시험 페이지)';
+  return host || '홈택스';
+}
+/** 주소창 내용(읽기 전용): 자물쇠 · 호스트 · 나머지 경로. */
+export function browserUrlParts(url) {
+  const u = parseUrl(url ?? '');
+  if (!u.host) return [h('span', { class: 'bp-host' }, '홈택스')];
+  return [u.secure ? icon('lock') : null, h('span', { class: 'bp-host' }, u.host), u.rest ? h('span', { class: 'bp-path' }, u.rest) : null];
+}
+/**
+ * 앱 안 브라우저(Claude 데스크톱 브라우저 창 모양, 대표 2026-11-13): 탭 줄 · 주소창 · 가장자리까지 채운 화면.
+ * 화면은 금고 중계 그림이고 직접 눌러·쳐서 조작한다(shell.js wireScreen). 내용은 paintScreen이 채운다.
+ */
+export function browserPane(run, url, big, act) {
+  if (!BROWSER_STATUSES.includes(run.status)) return null;
+  return h(
+    'section',
+    { class: 'bp', 'data-browser-pane': run.id, 'aria-label': '앱 안 브라우저' },
+    act.browserDrag ? h('div', { class: 'bp-resize', role: 'separator', 'aria-orientation': 'vertical', 'aria-label': '브라우저 폭 조절', title: '끌어서 폭 조절', onpointerdown: act.browserDrag }) : null,
+    h(
+      'div',
+      { class: 'bp-chrome' },
+      h(
+        'div',
+        { class: 'bp-tabs' },
+        h('div', { class: 'bp-tab', title: url || '' }, h('span', { class: 'bp-fav' }, icon('globe')), h('span', { class: 'bp-tab-title', id: 'browser-tab-title' }, browserTabTitle(url))),
+        h('button', { type: 'button', class: 'bp-icon', 'data-act': 'browser-size', 'aria-pressed': String(big), title: big ? '브라우저 작게' : '브라우저 크게', 'aria-label': big ? '브라우저 작게' : '브라우저 크게', onclick: () => act.browserSize(!big) }, icon(big ? 'shrink' : 'expand')),
+      ),
+      h(
+        'div',
+        { class: 'bp-bar' },
+        h('div', { class: 'bp-url', id: 'browser-addr', role: 'status', 'aria-label': '홈택스 주소(읽기 전용)', title: url || '' }, ...browserUrlParts(url)),
+        h('span', { class: 'bp-state', 'data-bp-state': 'loading', title: '이 화면을 직접 눌러 조작할 수 있어요. 인증서 비밀번호는 앱 금고 창에서 받아요.' }, '불러오는 중'),
+      ),
+    ),
+    h('div', { class: 'run-screen', 'data-run-screen': run.id }, h('p', { class: 'sx-meta' }, '홈택스 화면을 불러오는 중이에요')),
   );
 }
 
@@ -482,9 +655,10 @@ export function docPanel(doc, today, act, review) {
       kv([
         ['표시 이름', doc.name],
         ['프로필', doc.profile === 'business' ? '사업자' : '개인'],
-        ['보관', '이 PC 문서함'],
+        ['보관', doc.noFile ? '홈택스 발급목록' : '이 PC 문서함'],
       ]),
-      h('div', { class: 'sx-actions' }, btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('메일로 보내기는 곧 지원해요')), doc.source === '앱이 발급' ? btn('다시 발급', () => act.reissue(doc)) : null),
+      doc.noFile ? h('p', { class: 'sx-body-sm is-muted', 'data-doc-nofile': '' }, NO_FILE_TEXT) : null,
+      h('div', { class: 'sx-actions' }, doc.noFile ? null : btn('열기', () => act.openDoc(doc.id), 'sx-btn-primary', { 'data-act': 'doc-open' }), btn('메일로 보내기', () => act.toast('메일로 보내기는 곧 지원해요')), doc.source === '앱이 발급' && !doc.noFile ? btn('다시 발급', () => act.reissue(doc)) : null),
       h('div', { class: 'sx-source' }, `${doc.source}${doc.issuedOn ? ` · ${doc.issuedOn}` : ''} · 파일명에는 거래처·승인번호를 넣지 않아요`),
     ],
   );
@@ -509,4 +683,49 @@ function docPreview() {
       h('div', { class: 'pv-stamp' }),
     ),
   );
+}
+
+/**
+ * 홈택스 공동인증서 프로그램(MagicLine4NX) 안내 한 화면(B4). st: main security.check 결과, ops: { install, start, check }(각각 main 호출 → 새 상태).
+ * 없음이면 [설치 파일 받기](홈택스 공식 파일을 기본 브라우저로), 꺼짐이면 [켜기], 둘 다 [다시 확인]. 괜찮아지면 onOk를 부르고 사라진다.
+ */
+export function securityBox(st, ops, onOk) {
+  const box = h('div', { class: 'sx-note is-attention onb-security', 'data-security': st.state });
+  const draw = (s) => {
+    box.dataset.security = s.state;
+    box.replaceChildren();
+    if (s.state !== 'missing' && s.state !== 'stopped') {
+      box.remove();
+      onOk?.(s);
+      return;
+    }
+    const missing = s.state === 'missing';
+    const run = (fn) => async () => {
+      try {
+        const r = await fn();
+        if (r && r.state) draw(r);
+      } catch {
+        /* 버튼만 다시 누르게 둔다 */
+      }
+    };
+    box.append(
+      icon('info'),
+      h(
+        'div',
+        {},
+        h('b', {}, missing ? '홈택스 공동인증서 프로그램이 이 PC에 없어요' : '홈택스 공동인증서 프로그램이 꺼져 있어요'),
+        h('p', { class: 'sx-body-sm' }, missing ? `홈택스에서 공동인증서로 로그인·서명하려면 ${s.name}이 있어야 해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.` : `${s.name}을 켜야 홈택스가 이 PC의 인증서를 읽어요.`),
+        missing && s.installUrl ? h('div', { class: 'sx-meta' }, s.installUrl) : null,
+        h(
+          'div',
+          { class: 'sx-actions' },
+          missing && s.installUrl ? btn('설치 파일 받기', run(async () => (await ops.install(), null)), 'sx-btn-primary', { 'data-act': 'security-install' }) : null,
+          !missing && s.canStart ? btn('켜기', run(ops.start), 'sx-btn-primary', { 'data-act': 'security-start' }) : null,
+          btn('다시 확인', run(ops.check), '', { 'data-act': 'security-check' }),
+        ),
+      ),
+    );
+  };
+  draw(st);
+  return box;
 }

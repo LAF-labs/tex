@@ -16,6 +16,8 @@ export interface CertStartParams {
   /** 플레이북 id(hometax.cert.biz_registration·taxpayment·vat_tax_base·financial_statements). */
   playbookId: string;
   inputs?: Record<string, unknown>;
+  /** 홈택스 예행(StartParams.rehearsal와 같다): 승인 카드 자리에 닿으면 스스로 멈춘다. 발급(s21)은 일어나지 않는다. */
+  rehearsal?: boolean;
 }
 
 /** 입력 거절 코드(RunEnd failed). */

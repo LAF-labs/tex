@@ -1,6 +1,6 @@
 // 운영 정책 집행기(M2-4 B, D03 §5.2·§7·§7.1). GuardedActuator의 ActionPolicy 구현이고, 실행기 beforeStep 지점이다.
 // - 정책: 서명 정책(clampPolicy로 POLICY_FLOOR 클램프한 뒤)에서 포털 하나·프로필(interactive|daemon) 하나의 RatePolicy를 만든다.
-//   포털 limits가 없으면 그 포털은 자동화하지 않는다(fail-closed). PoC 빌드의 홈택스는 PoC 상한으로 더 엄격하게만 덮는다(ADR-025).
+//   포털 limits가 없으면 그 포털은 자동화하지 않는다(fail-closed).
 // - 카운터·쿨다운·시계 가드는 기존 RateGuard(SQLite 영속, KST, 증가 커밋 → 행동, 시계 역행 보수 모드)를 그대로 쓴다.
 // - 실행 하나: 스텝 지연, 분당 네비게이션 자리, 실행당 동작 수·벽시계 상한(커밋 뒤에는 끊지 않는다), 네비게이션 뒤 안정 대기,
 //   결정적 차단 신호 사전(앱 내장 ∪ policy.cooldown.blockSignalsAdd, 정책은 추가만)과 HTTP 403/429 규칙의 걸쇠, 정지 요청.
@@ -10,7 +10,7 @@ import type { ActResult, ActionKind, ActionPolicy, Clock, Policy, Portal } from 
 import { re2Problem } from './core/re2.ts';
 import { HTTP_RULES, matchSignal, type SignalDict, type SignalEntry, type SignalHit, type SignalKind } from './signals.ts';
 import { RunEnd } from './run-end.ts';
-import { EXTRA_AUTH_FOR_SIGNAL, POC_BUILD, POC_OVERRIDES, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
+import { EXTRA_AUTH_FOR_SIGNAL, RateGuard, UNKNOWN_SCREEN_POSITIVE, type RatePolicy } from './policy.ts';
 
 export type PaceProfile = 'interactive' | 'daemon';
 
@@ -18,24 +18,22 @@ export type PaceProfile = 'interactive' | 'daemon';
  * 서명 정책 → 포털 하나의 RatePolicy. 포털 limits가 없으면 null(그 포털은 자동화하지 않는다).
  * policy는 clampPolicy를 거친 값이어야 한다(하한·상한은 거기서 집행된다).
  */
-export function ratePolicyFrom(policy: Policy, portal: Portal, profile: PaceProfile, poc: boolean = POC_BUILD): RatePolicy | null {
+export function ratePolicyFrom(policy: Policy, portal: Portal, profile: PaceProfile): RatePolicy | null {
   const L = policy.limits[portal];
   if (!L) return null;
   const pace = policy.pace[profile];
-  const pocHometax = poc && portal === 'hometax';
-  const min = (a: number, b: number) => (pocHometax ? Math.min(a, b) : a);
   const r: RatePolicy = {
     pace: { stepDelayMs: [pace.stepDelayMs[0], pace.stepDelayMs[1]], afterNavSettleMs: [pace.afterNavSettleMs[0], pace.afterNavSettleMs[1]], slowFactor: pace.slowFactor },
     limits: {
-      runsPerDayPerProfile: min(L.runsPerDayPerProfile, POC_OVERRIDES.runsPerDayPerProfile),
-      irreversiblePerDayPerProfile: min(L.irreversiblePerDayPerProfile, POC_OVERRIDES.irreversiblePerDayPerProfile),
+      runsPerDayPerProfile: L.runsPerDayPerProfile,
+      irreversiblePerDayPerProfile: L.irreversiblePerDayPerProfile,
       runsPerLoginSession: L.runsPerLoginSession,
       navigationsPerMin: L.navigationsPerMin,
-      loginsPerDay: min(L.loginsPerDay, POC_OVERRIDES.loginsPerDay),
+      loginsPerDay: L.loginsPerDay,
       concurrent: L.concurrent,
     },
     run: { maxActuationsPerRun: policy.run.maxActuationsPerRun, maxWallClockMs: policy.run.maxWallClockMs },
-    cooldown: { onBlockSignalHours: policy.cooldown.onBlockSignalHours, positiveDetectionsForCooldown: min(policy.cooldown.positiveDetectionsForCooldown, POC_OVERRIDES.positiveDetectionsForCooldown) },
+    cooldown: { onBlockSignalHours: policy.cooldown.onBlockSignalHours, positiveDetectionsForCooldown: policy.cooldown.positiveDetectionsForCooldown },
   };
   return Object.freeze(r);
 }
@@ -102,7 +100,7 @@ export function runSignalDict(i: RunSignalInput): () => readonly SignalEntry[] {
 }
 
 /** 차단이 아닌 신호의 종료 코드(D16 portal.*). 이 코드들은 실행기 FORCED_STOPS에서 핸드오프다. */
-const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
+const HANDOFF: Record<Exclude<SignalKind, 'block'>, string> = { maintenance: 'portal.maintenance', extra_auth: 'portal.mfa_pending', captcha: 'portal.captcha', busy: 'portal.busy' };
 
 const OK: ActResult = { ok: true };
 const no = (code: string): ActResult => ({ ok: false, code });
@@ -134,13 +132,17 @@ export interface RunEnforcerInput {
 export class RunEnforcer implements ActionPolicy {
   private readonly g: RateGuard;
   private readonly i: RunEnforcerInput;
-  private readonly startedAt: number;
+  private startedAt: number;
+  /** 사람 대기(핸드오프·Paused) 동안 벽시계를 멈춘다(부장 결정 2026-11-11, D03 §7). 멈춘 시각. */
+  private pausedAt: number | null = null;
   private readonly forbidden: number[] = [];
   private actuations = 0;
   private committed = false;
   private arrived = false;
   private section: 'login' | null = null;
   private latch: { code: string; kind: SignalKind } | null = null;
+  /** 점검 끝 시각(ISO, 안내 글에서 읽음). */
+  private until: string | null = null;
   private finished = false;
 
   constructor(i: RunEnforcerInput) {
@@ -152,6 +154,11 @@ export class RunEnforcer implements ActionPolicy {
   /** 걸쇠에 걸린 종료 코드(없으면 null). */
   get halted(): string | null {
     return this.latch?.code ?? null;
+  }
+
+  /** 포털 점검이면 안내에서 읽은 끝 시각(ISO). */
+  get maintenanceUntil(): string | null {
+    return this.latch?.kind === 'maintenance' ? this.until : null;
   }
 
   get actuationCount(): number {
@@ -237,6 +244,18 @@ export class RunEnforcer implements ActionPolicy {
     this.section = null;
   }
 
+  /** 사람 대기에 들어간다: run.maxWallClockMs 벽시계를 멈춘다. 실행 전체 수명 상한(2시간)은 IrRun이 따로 센다. */
+  pauseClock(): void {
+    this.pausedAt ??= this.i.mono();
+  }
+
+  /** 사람 대기에서 돌아왔다: 멈춘 시간만큼 벽시계 시작을 늦춘다. */
+  resumeClock(): void {
+    if (this.pausedAt === null) return;
+    this.startedAt += this.i.mono() - this.pausedAt;
+    this.pausedAt = null;
+  }
+
   /** 기대한 화면(체크포인트)에 도착했다. 차단 신호 연속을 끊는 '깨끗한 실행'의 조건. */
   reached(): void {
     this.arrived = true;
@@ -306,6 +325,11 @@ export class RunEnforcer implements ActionPolicy {
   /** 첫 신호만 센다. 차단은 먼저 걸린 다른 신호(추가 인증·캡차·대기열)를 덮는다. 카운터를 못 남겨도 걸쇠가 먼저다. */
   private onHit(h: SignalHit): void {
     const cur = this.latch;
+    // 점검: 주소로 먼저 걸리고 글은 뒤에 온다. 끝 시각은 글에서만 읽으므로 나중 신호로 채운다.
+    if (cur?.kind === 'maintenance' && h.kind === 'maintenance' && h.until && !this.until) {
+      this.until = h.until;
+      this.i.journal('portal.maintenance', { id: h.id, until: h.until });
+    }
     if (this.finished || (cur && (cur.kind === 'block' || h.kind !== 'block'))) return;
     let kind = h.kind;
     let code: string;
@@ -321,6 +345,10 @@ export class RunEnforcer implements ActionPolicy {
         code = cooled ? 'policy.cooldown' : repeat ? 'portal.extra_auth_repeat' : 'portal.blocked';
       } else {
         if (kind === 'captcha') this.g.captcha();
+        if (kind === 'maintenance') {
+          if (h.until) this.until = h.until;
+          this.i.journal('portal.maintenance', { id: h.id, ...(h.until ? { until: h.until } : {}) });
+        }
         this.i.journal('portal.signal', { kind, id: h.id });
         code = HANDOFF[kind];
       }

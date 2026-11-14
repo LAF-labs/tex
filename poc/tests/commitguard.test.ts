@@ -369,7 +369,7 @@ describe('가드 정지 → 집행기 걸쇠 → 실행기', () => {
     try {
       const clock = new FakeClock();
       const POLICY = clampPolicy(structuredClone(POLICY_EXAMPLE) as unknown as Policy).policy;
-      const rg = new RateGuard(d, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive', false)!, { wall: () => Date.parse('2026-11-06T01:00:00Z') + clock.t, mono: () => clock.t });
+      const rg = new RateGuard(d, 'hometax', ratePolicyFrom(POLICY, 'hometax', 'interactive')!, { wall: () => Date.parse('2026-11-06T01:00:00Z') + clock.t, mono: () => clock.t });
       const latched: string[] = [];
       const e = new RunEnforcer({ guard: rg, clock, mono: () => clock.t, dict: [{ id: 't.block', kind: 'block', text: '이용이 제한되었습니다', source: '시험' }], profileId: 'p1', journal: () => {}, onLatch: (c) => latched.push(c), random: () => 0.5 });
       e.haltFor('security.commit_payload_mismatch');
