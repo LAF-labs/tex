@@ -173,10 +173,10 @@ describe('공동인증서 목록: 금고 열거 → 샌드박스 해석 → 표�
     assert.equal(logs[0]?.invalid, 1);
   });
 
-  it('렌더러: 고를 수 없는 인증서는 disabled·이유 글자, 기본 선택은 고를 수 있는 첫 인증서. 글자는 textContent로만', () => {
+  it('렌더러: 고를 수 없는 인증서는 disabled·이유 글자, 맨 위 줄은 고를 수 있는 인증서. 글자는 textContent로만', () => {
     const src = fs.readFileSync(path.resolve(import.meta.dirname, '../apps/desktop/static/shell/shell-onboarding.js'), 'utf8');
     assert.match(src, /disabled: !usable\(c\)/);
-    assert.match(src, /o\.certs\.find\(\(c\) => c\.usable !== false\)\?\.id/);
+    assert.match(src, /\[\.\.\.o\.certs\]\s*\.sort\(\(a, b\) => usable\(b\) - usable\(a\)\)/);
     assert.ok(src.includes("no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요'"));
     assert.ok(!src.includes('innerHTML'));
   });

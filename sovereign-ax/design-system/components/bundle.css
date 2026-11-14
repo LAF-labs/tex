@@ -1,55 +1,53 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Serif+KR:wght@600;700&display=swap");
-
-/* v1.2(2026-11-02) "더 조용하고, 더 적게, 더 분명하게". 토큰은 CSS 변수(--<토큰 이름>)로 읽는다.
+/* v2.0(2026-11-14) Muse 기준 "선 대신 면, 큰 글씨 대신 색 농도". 토큰은 CSS 변수(--<토큰 이름>)로 읽는다.
+   크기는 14(본문·값)·13(보조)·12(라벨·출처) 세 단계다. 중요한 값은 크게 쓰지 않고 ink와 600 굵기로만 올린다.
+   면은 canvas(바탕)와 surface-tint(카드·말풍선·입력창·보조 버튼) 둘로 나눈다. 테두리는 포커스와 내 차례 표시에만 쓴다.
    움직임 토큰의 원본은 tokens.json `motion`이다. 렌더러가 그 묶음을 아직 CSS 변수로 옮기지 않아 여기 사본을 둔다(값을 바꾸면 둘 다 고친다). */
-:root { --motion-fast: 120ms; --motion-base: 160ms; --motion-slow: 220ms; --motion-pulse: 2400ms; --ease-out: cubic-bezier(0.2, 0, 0, 1); --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); }
+:root { --motion-fast: 120ms; --motion-base: 160ms; --motion-slow: 220ms; --motion-pulse: 2400ms; --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1); }
 @media (prefers-reduced-motion: reduce) { :root { --motion-fast: 0ms; --motion-base: 0ms; --motion-slow: 0ms; --motion-pulse: 0ms; } }
 
-body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 24px; word-break: keep-all; -webkit-font-smoothing: antialiased; }
+body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 22px; word-break: keep-all; -webkit-font-smoothing: antialiased; }
 :focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .figure-lg, .figure, .value { font-variant-numeric: tabular-nums; }
 .sx-stage { padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
 .sx-row { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 .sx-meta, .sx-source { font-size: 12px; line-height: 16px; color: var(--ink-3); }
 
-/* Scroll: 스크롤바는 평소 투명. 마우스가 스크롤 영역 위에 있거나 스크롤하는 동안(is-scrolling)만 얇게 보인다. 터치 기기는 OS 표시를 그대로 쓴다.
-   좌우 스크롤은 만들지 않는다(넘치는 줄은 줄바꿈). 앱이 스크롤 뒤 0.8초 동안 is-scrolling을 붙인다. */
+/* Scroll: 스크롤바는 평소 투명. 마우스가 스크롤 영역 위에 있거나 스크롤하는 동안(is-scrolling)만 얇게 보인다. 좌우 스크롤은 만들지 않는다. */
 @media (hover: hover) and (pointer: fine) {
   * { scrollbar-width: thin; scrollbar-color: transparent transparent; }
   *:hover, .is-scrolling { scrollbar-color: var(--line-strong) transparent; }
 }
 
-/* Button: 주요(ink 채움) > 보조(line-strong 테두리) > 조용한(테두리 없음). 파랑 채움은 비가역 승인에만. */
-.sx-btn { font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; height: var(--control-height); padding: 0 12px; border-radius: var(--radius-md); border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
-.sx-btn:hover { background: var(--surface-tint); }
-.sx-btn:active { background: var(--surface-sunken); }
-.sx-btn-primary { background: var(--ink); border-color: var(--ink); color: var(--on-ink); font-weight: 600; }
-.sx-btn-primary:hover, .sx-btn-primary:active { background: var(--ink-2); border-color: var(--ink-2); }
-.sx-btn-approve { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
-.sx-btn-approve:hover, .sx-btn-approve:active { background: var(--accent-strong); border-color: var(--accent-strong); }
-.sx-btn-quiet { background: transparent; border-color: transparent; color: var(--ink-2); }
+/* Button: 알약. 주요(ink 채움) > 보조(surface-tint 채움) > 조용한(글자만). 파랑 채움은 비가역 승인에만. 누르면 0.97로 줄어든다. */
+.sx-btn { font: inherit; font-size: 13px; line-height: 20px; font-weight: 500; height: var(--control-height); padding: 0 14px; border-radius: var(--radius-full); border: 0; background: var(--surface-tint); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.sx-btn:hover { background: var(--surface-sunken); }
+.sx-btn:active { transform: scale(0.97); }
+.sx-btn-primary { background: var(--ink); color: var(--on-ink); }
+.sx-btn-primary:hover { background: var(--ink-2); }
+.sx-btn-approve { background: var(--accent); color: var(--on-accent); font-weight: 600; }
+.sx-btn-approve:hover { background: var(--accent-strong); }
+.sx-btn-quiet { background: transparent; color: var(--ink-2); padding: 0 10px; }
 .sx-btn-quiet:hover { background: var(--surface-tint); color: var(--ink); }
-.sx-btn-lg { height: var(--control-height-lg); padding: 0 16px; font-size: 14px; }
-.sx-btn:disabled, .sx-btn:disabled:hover { background: var(--surface); border-color: var(--line); color: var(--ink-4); cursor: default; }
-.sx-btn-quiet:disabled { border-color: transparent; }
+.sx-btn-lg { height: var(--control-height-lg); padding: 0 18px; font-size: 14px; }
+.sx-btn:disabled, .sx-btn:disabled:hover { background: var(--surface-tint); color: var(--ink-4); cursor: default; transform: none; }
+.sx-btn-quiet:disabled, .sx-btn-quiet:disabled:hover { background: transparent; }
 
-/* StatusChip: 무채 칩은 테두리 없이 surface-tint, 색은 accent·attention뿐. 완료는 체크, 실패는 ink 테두리. */
-.sx-chip { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--radius-full); border: 1px solid transparent; background: var(--surface-tint); color: var(--ink-2); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; transition: background-color var(--motion-base) var(--ease-in-out), color var(--motion-base) var(--ease-in-out), border-color var(--motion-base) var(--ease-in-out); }
+/* StatusChip: 바탕·테두리 없는 점 + 글자. 색은 accent(내 차례·승인 대기)·attention(확인 필요)뿐. 완료는 체크. */
+.sx-chip { display: inline-flex; align-items: center; gap: 6px; height: 20px; padding: 0; background: none; border: 0; color: var(--ink-3); font-size: 12px; line-height: 16px; font-weight: 500; white-space: nowrap; transition: color var(--motion-base) var(--ease-in-out); }
 .sx-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex: none; }
-.sx-chip.is-turn { background: var(--accent-soft); color: var(--accent); }
-.sx-chip.is-waiting { background: transparent; border-color: var(--accent); color: var(--accent); }
-.sx-chip.is-attention { background: var(--attention-soft); color: var(--attention); }
-.sx-chip.is-done { background: transparent; border-color: var(--line); color: var(--ink); }
+.sx-chip.is-turn, .sx-chip.is-waiting { color: var(--accent); }
+.sx-chip.is-attention { color: var(--attention); }
+.sx-chip.is-done { color: var(--ink-2); }
 .sx-chip.is-done::before { width: 8px; height: 4px; border-radius: 0; background: none; border-left: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-2px) rotate(-45deg); }
-.sx-chip.is-stopped { background: transparent; border-color: var(--line); color: var(--ink-3); }
+.sx-chip.is-stopped { color: var(--ink-3); }
 .sx-chip.is-stopped::before { border-radius: 1px; }
-.sx-chip.is-fail { background: transparent; border-color: var(--ink); color: var(--ink); }
+.sx-chip.is-fail { color: var(--ink); }
 .sx-chip.is-fail::before { width: 2px; height: 9px; border-radius: 1px; }
 
-/* KeyValue: D5 라벨 + D3 값, 값의 확실성 */
-.sx-kv { display: grid; grid-template-columns: var(--field-label-width) minmax(0, 1fr); gap: 6px var(--space-3); margin: 0; }
-.sx-kv dt { font-size: 12px; line-height: 20px; font-weight: 500; color: var(--ink-3); }
-.sx-kv dd { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink); font-variant-numeric: tabular-nums; display: flex; justify-content: flex-end; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+/* KeyValue: 라벨(13 ink-3) + 값(14 ink). 값은 왼쪽 정렬(좁은 패널에서 긴 상호가 오른쪽에 붙어 여러 줄로 깨지지 않게, 숫자는 고정폭이라 자리가 맞는다). 확실성은 밑줄 모양으로만. */
+.sx-kv { display: grid; grid-template-columns: var(--field-label-width) minmax(0, 1fr); gap: 4px var(--space-3); margin: 0; }
+.sx-kv dt { font-size: 13px; line-height: 22px; font-weight: 400; color: var(--ink-3); }
+.sx-kv dd { margin: 0; font-size: 14px; line-height: 22px; color: var(--ink); font-variant-numeric: tabular-nums; display: flex; justify-content: flex-start; align-items: baseline; flex-wrap: wrap; gap: 2px 8px; text-align: left; min-width: 0; overflow-wrap: anywhere; }
 .sx-kv.is-start dd { justify-content: flex-start; text-align: left; }
 .sx-kv dd.is-total .sx-val { font-weight: 600; }
 .sx-tag { font-size: 12px; line-height: 16px; font-weight: 400; color: var(--ink-3); }
@@ -59,132 +57,184 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-was { font-size: 12px; line-height: 16px; color: var(--ink-3); text-decoration: line-through; }
 .is-empty .sx-val { color: var(--ink-4); }
 
-/* Amount: D1 */
-.sx-amount { display: grid; gap: var(--space-0); }
-.sx-amount-total { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.015em; font-variant-numeric: tabular-nums; color: var(--ink); }
-.sx-unit { font-size: 16px; font-weight: 500; letter-spacing: 0; color: var(--ink-2); margin-left: var(--space-0); }
+/* Amount: 크게 쓰지 않는다. 합계는 본문 크기 600, 단위·내역은 ink-2. */
+.sx-amount { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
+.sx-amount-total { font-size: 14px; line-height: 22px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink); }
+.sx-unit { font-size: 14px; font-weight: 400; color: var(--ink-2); margin-left: 1px; }
 .sx-amount-split { font-size: 13px; line-height: 20px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
 
-/* Identifier: D4. 복사 버튼은 작은 보조 버튼(line 테두리). */
+/* Identifier: 고정폭 13 ink-2. 복사는 글자 버튼. */
 .sx-id { font-family: var(--font-mono); font-size: 13px; line-height: 20px; color: var(--ink-2); }
-.sx-copy { font: inherit; font-size: 12px; line-height: 16px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
-.sx-copy:hover { background: var(--surface-tint); border-color: var(--line-strong); color: var(--ink); }
+.sx-copy { font: inherit; font-size: 12px; line-height: 16px; height: 28px; padding: 0 10px; border-radius: var(--radius-full); border: 0; background: transparent; color: var(--ink-3); cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-copy:hover { background: var(--surface-tint); color: var(--ink); }
 
-/* Card: 선으로 구분, 그림자 없음. 내 차례·승인 대기만 파랑 테두리. */
-.sx-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-3); min-width: 0; }
-.sx-card.is-turn { border-color: var(--accent); }
-.sx-card.is-attention { border-color: var(--attention); }
-.sx-card-hd { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); }
-.sx-card-title { font-size: 15px; line-height: 22px; font-weight: 600; }
-.sx-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--ink); font-size: 13px; line-height: 20px; }
+/* Card: 테두리 없는 채움 면(surface-tint). 내 차례·확인 필요만 1px 안쪽 선. */
+.sx-card { background: var(--surface-tint); border: 0; border-radius: var(--radius-lg); padding: var(--space-4); display: grid; gap: var(--space-3); min-width: 0; }
+.sx-card.is-turn { box-shadow: inset 0 0 0 1px var(--accent); }
+.sx-card.is-attention { box-shadow: inset 0 0 0 1px var(--attention); }
+.sx-card-hd { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); min-height: 22px; }
+.sx-card-title { font-size: 14px; line-height: 22px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+/* 실행 중 카드(v2.0 H3): 머리 한 줄 = 제목 · 지금 단계(13 ink-2, 넘치면 말줄임) · 칩 · 조용한 [중지]. 사람 차례·확인 필요만 할 일 한 줄 + 주요 단추 하나. 금액·단계·값은 패널에만. */
+.sx-run-hd { justify-content: flex-start; }
+.sx-run-hd .sx-card-title { flex: 0 1 auto; }
+.sx-card-now { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.sx-run-hd .sx-chip { flex: none; }
+.sx-run-hd .sx-btn { flex: none; margin: -5px -6px -5px -4px; }
+.sx-todo { display: grid; gap: 2px; min-width: 0; }
+.sx-todo p { margin: 0; font-size: 14px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+.sx-todo p.sx-meta { font-size: 13px; line-height: 20px; color: var(--ink-2); }
+.sx-note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font-size: 13px; line-height: 20px; }
 .sx-note svg { flex: none; width: 16px; height: 16px; margin-top: 2px; color: var(--accent); }
 .sx-note.is-attention { background: var(--attention-soft); }
 .sx-note.is-attention svg { color: var(--attention); }
-.sx-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+.sx-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* 카드 안: 보조 버튼은 바탕색(canvas) 알약으로 카드 면 위에 보이게, 조용한 버튼의 hover도 canvas. */
+.sx-card .sx-actions { gap: 4px; }
+.sx-card .sx-actions .sx-btn { padding: 0 12px; }
+.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet) { background: var(--canvas); }
+.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):hover { background: var(--surface-sunken); }
+.sx-card .sx-btn-quiet:hover { background: var(--canvas); }
+.sx-card .sx-btn:disabled, .sx-card .sx-btn:disabled:hover { background: transparent; }
 
-/* ChoiceCard */
-.sx-opt { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--line); background: var(--surface); color: var(--ink-2); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
-.sx-opt:hover { background: var(--surface-tint); border-color: var(--line-strong); }
-.sx-opt.is-on { border-color: var(--ink); color: var(--ink); }
+/* ChoiceCard: 채움 선택지. 고른 것은 ink 안쪽 선. */
+.sx-opt { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-md); border: 0; background: var(--surface-tint); color: var(--ink-2); font-size: 14px; line-height: 20px; font-variant-numeric: tabular-nums; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
+.sx-card .sx-opt { background: var(--canvas); }
+.sx-opt:hover { background: var(--surface-sunken); }
+.sx-opt.is-on { box-shadow: inset 0 0 0 1.5px var(--ink); color: var(--ink); }
 .sx-radio { width: 14px; height: 14px; border-radius: 50%; border: 1.5px solid var(--line-strong); flex: none; box-sizing: border-box; }
 .sx-opt.is-on .sx-radio { border: 4.5px solid var(--ink); }
 
-/* StepList: 진행 중은 현재 점이 숨 쉬듯 흐려졌다 돌아온다(회전 없음). 동작 줄이기면 멈춘다. */
-.sx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-0); font-size: 13px; line-height: 20px; }
-.sx-steps li { display: grid; grid-template-columns: 20px minmax(0, 1fr); gap: var(--space-2); padding: 6px 0; color: var(--ink-3); }
-.sx-steps li::before { content: ""; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--line-strong); margin-top: 4px; justify-self: center; box-sizing: border-box; }
+/* StepList: 작은 점 + 글자. 진행 중은 accent 점이 숨 쉬듯 흐려졌다 돌아온다. */
+.sx-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0; font-size: 13px; line-height: 20px; }
+.sx-steps li { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-2); padding: 5px 0; color: var(--ink-3); }
+.sx-steps li::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--line-strong); opacity: .5; margin-top: 7px; justify-self: center; }
 .sx-steps li.is-done { color: var(--ink-2); }
-.sx-steps li.is-done::before { background: var(--ink-2); border-color: var(--ink-2); }
+.sx-steps li.is-done::before { background: var(--ink-2); opacity: 1; }
 .sx-steps li.is-now { color: var(--ink); font-weight: 600; }
-.sx-steps li.is-now::before { border: 3.5px solid var(--accent); animation: sx-pulse var(--motion-pulse) var(--ease-in-out) infinite; }
+.sx-steps li.is-now::before { background: var(--accent); opacity: 1; animation: sx-pulse var(--motion-pulse) var(--ease-in-out) infinite; }
 .sx-steps li.is-attention { color: var(--ink); font-weight: 600; }
-.sx-steps li.is-attention::before { border: 3.5px solid var(--attention); }
+.sx-steps li.is-attention::before { background: var(--attention); opacity: 1; }
 .sx-steps small { display: block; font-size: 12px; line-height: 16px; font-weight: 400; color: var(--ink-2); }
-@keyframes sx-pulse { 50% { opacity: 0.45; } }
+@keyframes sx-pulse { 50% { opacity: 0.35; } }
 @media (prefers-reduced-motion: reduce) { .sx-steps li.is-now::before { animation: none; } }
 
-/* DocumentCard */
+/* DocumentCard: 종류(12) · 이름(14/600) · 칸 셋. 도장·서체 꾸밈 없음. */
 .sx-doc { position: relative; overflow: hidden; }
 .sx-doc-kind { font-size: 12px; line-height: 16px; color: var(--ink-3); }
-.sx-doc-name { font-family: var(--font-serif); font-size: 19px; line-height: 26px; font-weight: 700; letter-spacing: -0.01em; }
-.sx-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.sx-cells > div { padding: 8px 10px; display: grid; gap: var(--space-0); border-right: 1px solid var(--line); min-width: 0; }
-.sx-cells > div:last-child { border-right: 0; }
-.sx-cells .label { color: var(--ink-3); }
+.sx-doc-name { font-size: 14px; line-height: 22px; font-weight: 600; }
+.sx-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
+.sx-cells > div { display: grid; gap: 2px; min-width: 0; font-size: 13px; line-height: 20px; }
+.sx-cells .label { color: var(--ink-3); font-size: 12px; line-height: 16px; }
 .sx-cells .is-attention { color: var(--attention); font-weight: 600; }
-.sx-seal { position: absolute; right: var(--space-4); top: var(--space-4); width: 56px; height: 56px; border-radius: 50%; border: 2px solid var(--accent); color: var(--accent); display: grid; place-items: center; transform: rotate(-8deg); font-family: var(--font-serif); font-size: 14px; line-height: 16px; font-weight: 700; box-sizing: border-box; }
-.sx-seal::after { content: ""; position: absolute; inset: 3px; border-radius: 50%; border: 1px solid var(--accent); }
+.sx-seal { display: none; }
 
-/* Message: 사용자 말은 surface-overlay 말풍선(테두리·그림자 없음), 앱의 말은 말풍선 없는 글. */
-.sx-thread { display: grid; gap: var(--space-4); max-width: var(--chat-max); }
-.sx-day { display: flex; align-items: center; gap: 10px; font-size: 12px; line-height: 16px; color: var(--ink-3); }
-.sx-day::before, .sx-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
-.sx-me { justify-self: end; max-width: 80%; background: var(--surface-overlay); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); padding: 8px 14px; font-size: 15px; line-height: 24px; }
-.sx-app { font-size: 15px; line-height: 24px; color: var(--ink); }
-.sx-origin { display: block; font-size: 12px; line-height: 16px; color: var(--ink-3); margin-top: var(--space-0); text-align: right; }
+/* Message: 사용자 말은 surface-tint 말풍선, 앱의 말은 말풍선 없는 글. 날짜는 선 없이 가운데 12. */
+.sx-thread { display: grid; gap: var(--space-5); max-width: var(--chat-max); }
+.sx-day { text-align: center; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-me { justify-self: end; max-width: 80%; overflow-wrap: anywhere; background: var(--surface-tint); border-radius: var(--radius-xl); padding: 8px 14px; font-size: 14px; line-height: 22px; }
+.sx-app { font-size: 14px; line-height: 22px; color: var(--ink); }
+.sx-origin { display: block; font-size: 12px; line-height: 16px; color: var(--ink-3); margin-top: 2px; text-align: right; }
 .sx-app .sx-origin { text-align: left; }
 
-/* Composer: 입력창만 바탕에서 살짝 뜬다(shadow-raised). 빠른 실행 칩은 line 테두리의 작은 칩. */
+/* Composer: 채움 입력창(테두리·그림자 없음). 빠른 실행 칩은 채움 알약. */
 .sx-composer { display: grid; gap: var(--space-2); max-width: var(--chat-max); }
 .sx-quick { display: flex; gap: 6px; flex-wrap: wrap; }
-.sx-quick button { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height-sm); padding: 0 12px; border-radius: var(--radius-full); border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out); }
-.sx-quick button:hover { background: var(--surface-tint); border-color: var(--line-strong); }
-.sx-input { min-height: 46px; border: 1px solid var(--line-strong); border-radius: var(--radius-xl); background: var(--surface); box-shadow: var(--shadow-raised); display: flex; align-items: center; gap: 10px; padding: 0 8px 0 14px; color: var(--ink-3); font-size: 15px; transition: border-color var(--motion-fast) var(--ease-out); }
-.sx-input:focus-within { border-color: var(--ink-2); }
-.sx-send { margin-left: auto; width: 30px; height: 30px; border-radius: var(--radius-full); background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; flex: none; transition: background-color var(--motion-fast) var(--ease-out); }
+.sx-quick button { font: inherit; font-size: 13px; line-height: 20px; height: 32px; padding: 0 12px; border-radius: var(--radius-full); border: 0; background: var(--surface-tint); color: var(--ink-2); cursor: pointer; white-space: nowrap; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.sx-quick button:hover { background: var(--surface-sunken); color: var(--ink); }
+.sx-quick button:active { transform: scale(0.97); }
+.sx-input { min-height: 48px; border: 0; border-radius: 24px; background: var(--surface-tint); display: flex; align-items: center; gap: 8px; padding: 0 8px 0 14px; color: var(--ink-3); font-size: 14px; transition: background-color var(--motion-fast) var(--ease-out); }
+.sx-send { margin-left: auto; width: 32px; height: 32px; border-radius: var(--radius-full); background: var(--ink); color: var(--on-ink); display: grid; place-items: center; border: 0; flex: none; transition: background-color var(--motion-fast) var(--ease-out), transform var(--motion-base) var(--ease-out); }
 .sx-send:hover { background: var(--ink-2); }
+.sx-send:active { transform: scale(0.94); }
 
-/* SecretField: 보안카드 번호처럼 가려 두는 값 */
+/* ReplyOptions(답 후보, Muse식): 앱 말 아래 전폭 줄. 점선 = 아직 고를 수 있음, 실선 + 체크 = 고른 답, 흐림 = 고르지 않은 답.
+   선택지가 무엇이든 같은 모양이다(확인, 하나 고르기, 되묻기). 폼이나 단추 묶음 대신 쓴다. */
+.sx-replies { display: grid; gap: 6px; margin-top: 10px; max-width: 440px; }
+.sx-reply { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 40px; padding: 8px 14px; box-sizing: border-box; border: 1px dashed var(--line-strong); border-radius: 12px; background: transparent; color: var(--ink); font: inherit; font-size: 14px; line-height: 20px; text-align: left; cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), border-color var(--motion-fast) var(--ease-out), opacity var(--motion-base) var(--ease-out), transform var(--motion-base) var(--ease-out); }
+.sx-reply:hover:not(:disabled) { background: var(--surface-tint); border-style: solid; }
+.sx-reply:active:not(:disabled) { transform: scale(0.99); }
+.sx-reply.is-picked { border: 1.5px solid var(--ink); cursor: default; }
+.sx-reply:disabled:not(.is-picked) { opacity: .4; cursor: default; }
+.sx-reply svg { width: 14px; height: 14px; flex: none; }
+
+/* SecretField: 보안카드 번호처럼 가려 두는 값. 채움 칸, 포커스만 선. */
 .sx-secret { display: grid; gap: var(--space-2); }
 .sx-secret-hd { display: flex; align-items: center; gap: var(--space-2); }
 .sx-secret-hd > :first-child { margin-right: auto; }
-.sx-reveal { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height); padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
-.sx-reveal:hover { background: var(--surface-tint); color: var(--ink); }
+.sx-reveal { font: inherit; font-size: 13px; line-height: 20px; height: var(--control-height); padding: 0 12px; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: var(--radius-full); background: var(--surface-tint); color: var(--ink-2); cursor: pointer; white-space: nowrap; }
+.sx-reveal:hover { background: var(--surface-sunken); color: var(--ink); }
 .sx-reveal svg { width: 16px; height: 16px; flex: none; }
 .sx-secret-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px var(--space-2); }
 .sx-secret-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .sx-secret-cell span { font-family: var(--font-mono); font-size: 12px; line-height: 16px; color: var(--ink-3); }
-.sx-secret-cell input { height: 36px; width: 100%; box-sizing: border-box; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface); color: var(--ink); padding: 0 10px; font-family: var(--font-mono); font-size: 15px; letter-spacing: 0.18em; }
-.sx-secret-cell input:focus, .sx-secret-cell.is-now input { outline: none; border: 2px solid var(--focus-ring); padding: 0 9px; }
-.sx-secret-cell.is-attention input { border: 2px solid var(--attention); padding: 0 9px; }
+.sx-secret-cell input { height: 40px; width: 100%; box-sizing: border-box; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--surface-tint); color: var(--ink); padding: 0 10px; font-family: var(--font-mono); font-size: 14px; letter-spacing: 0.18em; }
+.sx-secret-cell input:focus, .sx-secret-cell.is-now input { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.sx-secret-cell.is-attention input { box-shadow: inset 0 0 0 2px var(--attention); }
+
+/* Field: 보이는 라벨 위, 칸, 그 아래 도움말·오류 줄(앱 static/shell/fields.js). 같은 뜻의 값은 같은 칸으로 받는다.
+   칸은 canvas 채움 + 1px 안쪽 선(빈 칸도 보이게), 포커스는 2px focus-ring, 오류는 2px attention. 오류 색은 attention 하나다.
+   높이는 두 단계: 기본 40(폼·비밀값), is-compact 32(카드·패널 안). 글자는 14 하나. 금액은 오른쪽 정렬·고정폭 숫자. */
+.sx-field { display: grid; gap: 4px; min-width: 0; }
+.sx-field-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); }
+.sx-field-help, .sx-field-error { margin: 0; font-size: 12px; line-height: 16px; }
+.sx-field-help { color: var(--ink-3); }
+.sx-field-error { color: var(--attention); font-weight: 500; }
+.sx-field-error[hidden] { display: none; }
+.sx-field-row { display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
+.sx-field-row > .sx-field-input, .sx-field-row > .sx-field-box { flex: 1; }
+.sx-field-input { box-sizing: border-box; width: 100%; min-width: 0; height: var(--control-height-lg); margin: 0; padding: 0 12px; border: 0; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line-strong); background: var(--canvas); color: var(--ink); font: inherit; font-size: 14px; line-height: 20px; }
+.sx-field-input.is-compact { height: var(--control-height); padding: 0 10px; }
+.sx-field-input::placeholder { color: var(--ink-3); }
+.sx-field-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.sx-field-input[aria-invalid='true'] { box-shadow: inset 0 0 0 2px var(--attention); }
+.sx-field-input:disabled { color: var(--ink-3); background: var(--surface-tint); box-shadow: none; }
+.sx-field-input.is-amount { text-align: right; }
+.sx-field-input.is-amount, .sx-field-input.is-num { font-variant-numeric: tabular-nums; }
+.sx-field-input.is-secret { letter-spacing: 0.1em; padding-right: 40px; }
+.sx-field-input.is-secret.is-compact { padding-right: 34px; }
+.sx-field-box { position: relative; display: block; min-width: 0; }
+.sx-field-eye { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ink-3); cursor: pointer; }
+.sx-field-eye:hover { background: var(--surface-tint); color: var(--ink); }
+.sx-field-eye svg { width: 16px; height: 16px; }
+.is-compact + .sx-field-eye { width: 28px; height: 28px; right: 2px; }
 
 /* ApprovalWindow(폐지, ADR-020·021): 이전 설계의 기록. 시스템 서체, 그림·스크립트 없음 */
-.sx-approve { width: 440px; max-width: 100%; background: var(--surface-overlay); color: var(--ink); border: 1px solid var(--line-strong); border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay); font-family: var(--font-system); overflow: hidden; }
-.sx-approve-bar { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: var(--surface-sunken); font-size: 12px; color: var(--ink-2); }
-.sx-approve-band { height: 4px; background: var(--accent); }
+.sx-approve { width: 440px; max-width: 100%; background: var(--surface-overlay); color: var(--ink); border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay); font-family: var(--font-system); overflow: hidden; }
+.sx-approve-bar { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: var(--surface-tint); font-size: 12px; color: var(--ink-2); }
+.sx-approve-band { height: 3px; background: var(--accent); }
 .sx-approve-in { padding: 20px 22px 18px; display: grid; gap: 14px; }
-.sx-approve-q { margin: 0; font-size: 18px; line-height: 26px; font-weight: 700; }
-.sx-approve-src { font-size: 12px; line-height: 18px; color: var(--ink-3); }
-.sx-approve table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; border: 1px solid var(--line); }
-.sx-approve td { padding: 7px 10px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
-.sx-approve td:first-child { width: 104px; color: var(--ink-3); background: var(--surface-sunken); font-size: 13px; }
-.sx-approve tr.is-total td:last-child { font-weight: 700; font-size: 16px; }
+.sx-approve-q { margin: 0; font-size: 14px; line-height: 22px; font-weight: 600; }
+.sx-approve-src { font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.sx-approve table { width: 100%; border-collapse: collapse; font-size: 14px; line-height: 22px; }
+.sx-approve td { padding: 6px 0; font-variant-numeric: tabular-nums; }
+.sx-approve td:first-child { width: 104px; color: var(--ink-3); font-size: 13px; }
+.sx-approve tr.is-total td:last-child { font-weight: 600; }
 .sx-approve-effect { font-size: 14px; line-height: 22px; }
 .sx-approve-acts { display: flex; justify-content: flex-end; gap: var(--space-2); }
 .sx-approve-acts .sx-btn { font-family: var(--font-system); }
-.sx-approve-foot { font-size: 12px; line-height: 18px; color: var(--ink-3); border-top: 1px solid var(--line); padding-top: 10px; }
+.sx-approve-foot { font-size: 12px; line-height: 16px; color: var(--ink-3); padding-top: 10px; }
 
-/* MainScreen: PC 메인 3단. 제목줄·레일·패널은 surface, 구분은 line 하나. */
-.sx-frame { width: 1040px; height: 640px; display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); grid-template-rows: var(--titlebar-height) minmax(0, 1fr); background: var(--canvas); border: 1px solid var(--line-strong); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; }
-.sx-titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-4); padding: 0 12px 0 var(--space-4); background: var(--surface); border-bottom: 1px solid var(--line); font-size: 13px; line-height: 20px; }
+/* MainScreen: 선 없는 3단. 제목줄·레일·패널 모두 canvas 위, 구분은 여백과 채움으로. */
+.sx-frame { width: 1040px; height: 640px; display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr) var(--panel-width); grid-template-rows: var(--titlebar-height) minmax(0, 1fr); background: var(--canvas); border-radius: var(--radius-lg); overflow: hidden; font-size: 14px; box-shadow: var(--shadow-overlay); }
+.sx-titlebar { grid-column: 1 / -1; display: flex; align-items: center; gap: var(--space-3); padding: 0 12px 0 var(--space-4); background: var(--canvas); font-size: 13px; line-height: 20px; }
 .sx-titlebar .co { font-weight: 600; }
-.sx-search { margin-left: auto; width: 260px; height: var(--control-height-sm); border: 0; border-radius: var(--radius-md); background: var(--surface-tint); display: flex; align-items: center; justify-content: space-between; padding: 0 10px; color: var(--ink-3); }
-.sx-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 16px; border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; color: var(--ink-3); background: var(--surface); }
+.sx-search { margin-left: auto; width: 260px; height: var(--control-height-sm); border: 0; border-radius: var(--radius-full); background: var(--surface-tint); display: flex; align-items: center; justify-content: space-between; padding: 0 12px; color: var(--ink-3); }
+.sx-kbd { font-family: var(--font-mono); font-size: 12px; line-height: 16px; border-radius: 4px; padding: 0 5px; color: var(--ink-3); background: var(--canvas); }
 .sx-tstatus { margin-left: auto; display: flex; gap: 14px; color: var(--ink-2); }
-.sx-rail { background: var(--surface); border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: var(--space-2) 0; gap: var(--space-1); }
-.sx-rail span { width: 44px; height: 44px; border-radius: var(--radius-md); display: grid; place-items: center; color: var(--ink-3); position: relative; }
+.sx-rail { background: var(--canvas); display: flex; flex-direction: column; align-items: center; padding: var(--space-2) 0; gap: var(--space-1); }
+.sx-rail span { width: 40px; height: 40px; border-radius: var(--radius-full); display: grid; place-items: center; color: var(--ink-3); position: relative; }
 .sx-rail span.is-on { background: var(--surface-tint); color: var(--ink); }
 .sx-rail svg { width: 20px; height: 20px; }
-.sx-rail b { position: absolute; top: 5px; right: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--attention-soft); color: var(--attention); font-size: 12px; line-height: 16px; font-weight: 600; text-align: center; }
+.sx-rail b { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; padding: 0; border-radius: 50%; background: var(--attention); font-size: 0; }
 .sx-rail i { flex: 1; }
 .sx-chatcol { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; }
 .sx-chatcol > * { width: 100%; max-width: var(--chat-max); justify-self: center; }
 /* 오늘 요약: 상자가 아니라 한 줄. 숫자는 ink, 내 차례만 accent, 만료 임박만 attention. */
-.sx-today { margin-top: var(--space-3); height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: var(--space-4); padding: 0 var(--space-1); font-size: 13px; color: var(--ink-3); border-bottom: 1px solid var(--line); }
-.sx-today b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: var(--space-0); }
+.sx-today { margin-top: var(--space-3); height: 32px; box-sizing: border-box; display: flex; align-items: center; gap: var(--space-4); padding: 0 var(--space-1); font-size: 13px; color: var(--ink-3); }
+.sx-today b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; margin-left: 2px; }
 .sx-today .is-turn b { color: var(--accent); }
 .sx-today .is-attention b { color: var(--attention); }
 .sx-chatcol .sx-thread { padding: var(--space-4) 0; overflow: hidden; align-content: start; }
 .sx-chatcol .sx-composer { padding: 0 0 var(--space-4); }
-.sx-panel { background: var(--surface); border-left: 1px solid var(--line); padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
+.sx-panel { background: var(--canvas); padding: var(--space-4); display: grid; gap: var(--space-3); align-content: start; }
 .sx-panel-sec { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); padding-top: var(--space-1); }

@@ -179,8 +179,8 @@ async function flow(): Promise<void> {
   await shot('01-home');
   check('대기 화면: 많이 쓴 요청 칩 2개(누르면 바로 보냄)', (await js<number>(`document.querySelectorAll('#quick [data-prompt]').length`)) === 2);
 
-  // 이번 달 판(08 M-02, ADR-033): main이 계산한 카드(기한 순)를 대화 열 위에 그린다. 판에는 승인 버튼이 없다.
-  const board = await js<{ title: string; cards: string[]; approve: boolean }>(`(() => { const b = document.querySelector('[data-board]'); return { title: b.querySelector('.board-title')?.textContent ?? '', cards: [...b.querySelectorAll('[data-board-card]')].map((c) => c.dataset.boardCard), approve: [...b.querySelectorAll('button')].some((x) => /승인|발급하기/.test(x.textContent)) }; })()`);
+  // 이번 달 할 일(08 M-02, ADR-033, v2.0): 대화 열 맨 위 한 줄을 누르면 작업 패널에 카드(기한 순)가 열린다. 승인 버튼은 없다.
+  const board = await js<{ title: string; cards: string[]; approve: boolean }>(`(() => { document.querySelector('[data-act=board-toggle][aria-expanded=false]')?.click(); const b = document.querySelector('[data-board-panel]'); return { title: document.querySelector('[data-board] .board-title')?.textContent ?? '', cards: [...b.querySelectorAll('[data-board-card]')].map((c) => c.dataset.boardCard), approve: [...b.querySelectorAll('button')].some((x) => /승인|발급하기/.test(x.textContent)) }; })()`);
   check('홈 = 이번 달 판: "N월 할 일", 카드는 4종 안에서만, 승인 버튼 없음', /^\d+월 할 일$/.test(board.title) && board.cards.length > 0 && board.cards.every((k) => ['invoice', 'receipt', 'accountant', 'expiring'].includes(k)) && !board.approve, board);
   if (await js<boolean>(`!!document.querySelector('[data-board-item^="cp:"]')`)) {
     const threadLen = await js<number>(`document.querySelector('.sx-thread').childElementCount`);

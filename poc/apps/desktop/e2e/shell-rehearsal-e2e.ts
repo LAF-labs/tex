@@ -333,7 +333,7 @@ async function mainPhase(): Promise<void> {
   const unknownCp = await lastApp();
   repro('F-unknown-cp-answer: 장부에 없는 거래처 이름으로 답하면 되묻기가 끊기고 일반 응대로 간다(거래처를 추가하라는 안내 없음)', !/추가|등록|장부에 없/.test(unknownCp), unknownCp);
   seen.push({ at: 'unknown-cp', text: unknownCp });
-  const todo = await js<string>(`document.querySelector('[data-board]')?.innerText ?? ''`);
+  const todo = await js<string>(`(() => { document.querySelector('[data-act=board-toggle][aria-expanded=false]')?.click(); return document.querySelector('[data-board-panel]')?.innerText ?? ''; })()`);
   seen.push({ at: 'board-after-onb', text: todo });
 
   // 거래처 화면: 등록증으로 채우기(품목 없음) + 직접 입력(마지막 칸 Enter)
@@ -486,7 +486,8 @@ async function mainPhase(): Promise<void> {
     repro('F-mock-text: 보관함 [메일로 보내기]가 설치본에서 "목업: 메일을 보내지 않아요"를 보인다(개발 용어)', /목업/.test(mailToast), mailToast);
   }
   await human(0.5);
-  await tap('#rail [data-view=activity]');
+  await tap('#rail [data-view=docs]');
+  await tap('[data-act=go-activity]');
   await sleep(500);
   const actText = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
   seen.push({ at: 'activity', text: actText.slice(0, 1500) });
@@ -579,7 +580,8 @@ async function restartPhase(): Promise<void> {
   check('엔진: 끊긴 승인 대기는 발급되지 않은 채(원장 committed 아님)', ins.ledger !== 'committed', ins);
   console.log('  engine inspect(waiting run):', JSON.stringify({ ledger: ins.ledger, journal: ins.journal?.slice(-6), error: ins.error }));
   await human(0.5);
-  await tap('#rail [data-view=activity]');
+  await tap('#rail [data-view=docs]');
+  await tap('[data-act=go-activity]');
   await sleep(500);
   const act = await js<string>(`document.querySelector('#center')?.innerText ?? ''`);
   seen.push({ at: 'restart-activity', text: act.slice(0, 1500) });

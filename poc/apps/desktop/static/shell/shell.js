@@ -9,7 +9,8 @@ import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
-import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
+import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -40,7 +41,6 @@ const state = {
   waitEl: null, // 답을 기다리는 줄(진행 단계 이벤트가 글자를 바꾼다)
   barActive: false,
   board: null, // 이번 달 판(main이 계산, board.ts). 판에는 승인 버튼이 없다(ADR-021·033)
-  boardOpen: true, // 판 펼침(접으면 한 줄 요약)
   boardExpanded: new Set(), // "n건 더 보기"로 펼친 카드 종류
   onb: null, // 온보딩(main OnbView). null이면 이미 등록을 마친 사용자
   docFilter: 'all',
@@ -50,7 +50,7 @@ const state = {
   docDraft: null, // 문서 패널 확인 구역에서 입력 중인 값 { id, seen, createdAt, docType, issuedOn, expiresOn, noExpiry }
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
-  setTab: 'auth', // 설정 화면에서 고른 항목: 'auth'(발급 인증) | 'devices'(기기 연결)
+  setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결)
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
 };
@@ -85,7 +85,7 @@ const human = (e, table = {}) => {
 // 보관함(문서함) 오류·확인 필요 이유. 엔진·docparse는 코드만 준다.
 const DOC_ERR = {
   profile_required: '내 사업장을 먼저 등록해 주세요', not_pdf: 'PDF 파일이 아니에요', input_size: '파일이 비었거나 15MB를 넘어요', read_failed: '파일을 읽지 못했어요',
-  invalid_pdf: 'PDF를 열 수 없어요(손상)', timeout: '읽는 데 너무 오래 걸려 멈췄어요', memory_limit: '파일이 너무 커서 멈췄어요', session_failed: '격리된 창을 준비하지 못했어요. 다시 해 주세요',
+  invalid_pdf: 'PDF를 열 수 없어요(손상)', timeout: '읽는 데 너무 오래 걸려 멈췄어요', memory_limit: '파일이 너무 커서 멈췄어요', session_failed: 'PDF를 여는 데 실패했어요. 다시 해 주세요',
   pick_expired: '파일을 다시 골라 주세요', password_too_long: '암호가 너무 길어요', schema: '읽은 결과를 확인하지 못했어요',
   issued_in_future: '발급일이 오늘보다 뒤예요', expires_before_issued: '만료일이 발급일보다 앞이에요', expires_after_legal_max: '납세증명서 유효기간은 발급일부터 30일을 넘을 수 없어요',
   invalid_issued_on: '발급일 형식이 아니에요', invalid_expires_on: '만료일 형식이 아니에요', not_found: '보관함에 없는 서류예요',
@@ -98,6 +98,7 @@ const DOC_ERR = {
   gesture_required: '잠시 뒤 다시 눌러 주세요.', throttled: '잠시 뒤 다시 눌러 주세요.',
 };
 const docErr = (e) => human(e, DOC_ERR);
+const DOC_ERR_FIELD = { issued_in_future: 'issuedOn', invalid_issued_on: 'issuedOn', expires_before_issued: 'expiresOn', expires_after_legal_max: 'expiresOn', invalid_expires_on: 'expiresOn', invalid_doc_type: 'docType' };
 const DOC_REASON = {
   doc_type_unknown: '서류 종류를 알아보지 못했어요',
   issued_on_not_found: '발급일을 찾지 못했어요', issued_on_ambiguous: '발급일 후보가 여러 개예요', issued_on_unparseable: '발급일을 읽지 못했어요',
@@ -126,6 +127,13 @@ function slotTick() {
   void call('browser.slot', p).catch(() => {});
 }
 requestAnimationFrame(slotTick);
+
+/** 작성 카드에서 고친 값이 거절되면 토스트 대신 그 카드 안, 고치던 칸(field) 아래에 이유를 남긴다(칸은 열린 채, 넣던 값 vals도 그대로). */
+function draftError(id, msg, field = null, vals = null) {
+  state.draftErr = { id, msg, field, vals };
+  const r = state.runs.get(id);
+  if (r) renderRun(r);
+}
 
 const act = {
   toast,
@@ -171,6 +179,7 @@ const act = {
   open: (id) => openPanel({ kind: 'run', id }),
   openG24: (id) => openPanel({ kind: 'g24', id }),
   closePanel: () => openPanel(null),
+  importDoc: (o) => importDoc(o),
   copy: async (text) => {
     await call('clipboard.copy', { text });
     toast('복사했어요');
@@ -181,7 +190,7 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드에서 [품목·이메일 고치기]로 넣고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드에서 [품목·이메일 고치기]로 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드의 품목을 눌러 넣고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드의 받는 이메일을 눌러 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
     }
   },
   vat: async (id, vat) => {
@@ -192,20 +201,24 @@ const act = {
     }
   },
   editAmount: (id) => {
+    state.draftErr = null;
     state.editing = id;
     state.editingFields = null;
     state.editingCp = null;
     for (const r of state.runs.values()) renderRun(r);
   },
   // 초안 카드의 [품목·이메일 고치기]: 칸을 열고, [바꾸기]면 main이 검사해 카드 값을 바꾼다(다시 [홈택스에서 준비]로 확인)
-  editFields: (id) => {
+  editFields: (id, focus = 'item') => {
+    state.draftErr = null;
     state.editingFields = id;
+    state.editingFocus = focus;
     state.editing = null;
     state.editingCp = null;
     for (const r of state.runs.values()) renderRun(r);
   },
   // 초안 카드의 [거래처 바꾸기](F-14): 장부에서 고르면 main이 받는 이메일·추정 품목을 그 거래처 것으로 바꾼다.
   editCp: (id) => {
+    state.draftErr = null;
     state.editingCp = id;
     state.editing = null;
     state.editingFields = null;
@@ -215,21 +228,21 @@ const act = {
     try {
       putRun(await call('draft.update', { id, counterpartyId: String(counterpartyId) }));
       state.editingCp = null;
+      state.draftErr = null;
       renderRun(state.runs.get(id));
-      toast('거래처를 바꿨어요');
     } catch (e) {
-      toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요');
+      draftError(id, errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요', 'counterparty');
     }
   },
   saveFields: async (id, item, email) => {
     try {
       putRun(await call('draft.update', { id, item: String(item), email: String(email) }));
       state.editingFields = null;
+      state.draftErr = null;
       renderRun(state.runs.get(id));
-      toast('카드 값을 바꿨어요');
     } catch (e) {
       const c = errText(e);
-      toast(c === 'item_required' ? '품목을 넣어 주세요. 예: 컨설팅 용역' : c === 'bad_email' ? '이메일 주소 모양이 맞지 않아요' : '바꾸지 못했어요. 다시 해 주세요');
+      draftError(id, c === 'item_required' ? '품목을 넣어 주세요. 예: 컨설팅 용역' : c === 'bad_email' ? '이메일 주소 모양이 맞지 않아요' : '바꾸지 못했어요. 다시 해 주세요', c === 'item_required' ? 'item' : c === 'bad_email' ? 'email' : null, { item: String(item), email: String(email) });
     }
   },
   saveAmount: async (id, text) => {
@@ -237,9 +250,10 @@ const act = {
       // 금액 해석은 main이 요청 문장과 같은 규칙으로 한다("1억 2천만원"도 그대로 넣을 수 있다).
       putRun(await call('draft.update', { id, amountText: String(text) }));
       state.editing = null;
+      state.draftErr = null;
       renderRun(state.runs.get(id));
     } catch (e) {
-      toast(human(e, { bad_amount: '금액을 다시 확인해 주세요' }));
+      draftError(id, human(e, { bad_amount: '금액을 다시 확인해 주세요. 예: 330만원, 3,300,000' }), 'amount', { amount: String(text) });
     }
   },
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
@@ -275,7 +289,6 @@ const act = {
     try {
       const d = await call('run.redraft', { id });
       putRun(d);
-      openPanel({ kind: 'run', id: d.id });
     } catch (e) {
       toast(errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '다시 준비하지 못했어요. 같은 요청을 대화에 다시 말해 주세요');
     }
@@ -330,18 +343,22 @@ const act = {
 
 // ---- 틀: 제목줄·레일 ----
 
+/** 레일 아이콘 아래 짧은 이름(12px, 레일 폭 60 안). */
+const RAIL_SHORT = { chat: '대화', docs: '문서함', cps: '거래처', bank: '받을 돈', biz: '사업장', bundle: '꾸러미', payroll: '급여', activity: '기록', settings: '설정' };
+
+// 레일은 자주 가는 곳만(v2.0, 9곳 → 5곳). 세무사 꾸러미·활동 기록은 문서함 안, 내 사업장은 설정 안에 둔다(PARENT).
 const RAIL = [
   ['chat', '대화', 'chat'],
   ['docs', '문서함', 'docs'],
   ['cps', '거래처', 'cps'],
   // 받을 돈(09 D-09): 사업자 프로필만
   ['bank', '받을 돈', 'money', () => state.profile === 'business'],
-  ['biz', '내 사업장', 'biz'],
-  ['bundle', '세무사 꾸러미', 'bundle'],
   // 급여대장(D-06)은 켠 사장님만 보인다(ADR-034 결정 8, 설정 payroll.enabled 기본 끔). 켜는 곳은 설정(M4-4).
   ['payroll', '급여대장', 'payroll', () => !!state.boot?.payrollEnabled],
-  ['activity', '활동 기록', 'activity'],
 ];
+/** 레일에 없는 화면이 속한 곳: 그 화면을 보는 동안 레일은 부모를 고른 것으로 보이고, 머리에 [← 부모]가 있다. */
+const PARENT = { bundle: 'docs', activity: 'docs' };
+const PARENT_LABEL = { docs: '문서함', settings: '설정' };
 
 /** 제목줄(캔버스 M-01): 프로필(상호 ▾, 사업자/개인 전환 메뉴) · 데모 표시. 창 단추는 Windows 창 틀이 그린다. */
 function renderTitlebar() {
@@ -355,6 +372,7 @@ function renderTitlebar() {
       h('span', {}, label),
     );
   $('#titlebar').replaceChildren(
+    ...[
     h(
       'div',
       { class: 'tb-profile' },
@@ -362,11 +380,13 @@ function renderTitlebar() {
       state.menu ? h('div', { class: 'menu', role: 'menu', 'aria-label': '프로필' }, h('div', { class: 'menu-label' }, '새 요청에 쓸 프로필'), item('business', `사업자 · ${p.business.name}`), p.personal && !p.personal.placeholder ? item('personal', `개인 · ${p.personal.name}`) : null) : null,
     ),
     // [브라우저](claude desktop처럼): 실행 Chrome을 이 앱 브라우저 패널 자리에 앞으로 올린다. 다시 누르면 앱이 앞으로. 실행 Chrome이 없으면 누를 수 없다.
-    h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), disabled: !state.browser.available, title: state.browser.available ? (state.browser.shown ? '브라우저 패널 작게' : '브라우저 패널 크게') : '진행 중인 홈택스 작업이 없어요', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '브라우저'),
+    // 진행 중인 홈택스 작업이 없으면 누를 수 없는 단추를 늘 보이지 않는다(v2.0): 실행 중일 때만 나타난다.
+    state.browser.available ? h('button', { type: 'button', class: 'tb-browser', 'data-act': 'browser-toggle', 'aria-pressed': String(state.browser.shown), title: state.browser.shown ? '브라우저 패널 작게' : '브라우저 패널 크게', onclick: () => void call('browser.toggle', { show: !state.browser.shown }).catch(() => {}) }, '홈택스 화면') : null,
     // 견본 표시는 시연(fixture)에서만. 제품은 main이 sample: false를 보낸다. replaceChildren은 null을 글자로 넣으므로 펼쳐 넣는다.
     ...(state.boot?.sample === false ? [] : [h('span', { class: 'mock-badge' }, '견본 데이터 · PoC 데모')]),
     // 설치본 자기 점검 warn(미서명 빌드 등, main이 고른 고정 문구).
     ...(state.boot?.build ?? []).map((t) => h('span', { class: 'mock-badge', 'data-build-badge': '' }, t)),
+    ].filter(Boolean),
   );
 }
 
@@ -391,7 +411,15 @@ function renderRail() {
     const n = dday(d.expiresOn, state.today);
     return n !== null && n <= 7;
   }).length;
-  const item = ([v, label, ic]) => h('button', { type: 'button', class: state.view === v ? 'is-on' : null, title: label, 'aria-label': label, 'data-view': v, onclick: () => go(v) }, icon(ic), v === 'docs' && soon ? h('b', {}, String(soon)) : null);
+  // 아이콘만으로는 어디로 가는지 알 수 없다(길 찾기). 레일 폭(60)에 맞는 짧은 이름을 아이콘 아래에 둔다. 전체 이름은 aria-label·title.
+  const item = ([v, label, ic]) =>
+    h(
+      'button',
+      { type: 'button', class: state.view === v || PARENT[state.view] === v ? 'is-on' : null, title: label, 'aria-label': v === 'docs' && soon ? `${label}, 만료 임박 ${soon}개` : label, 'aria-current': state.view === v ? 'page' : null, 'data-view': v, onclick: () => go(v) },
+      icon(ic),
+      h('span', { class: 'rail-label', 'aria-hidden': 'true' }, RAIL_SHORT[v] ?? label),
+      v === 'docs' && soon ? h('b', { 'aria-hidden': 'true' }) : null,
+    );
   $('#rail').replaceChildren(...RAIL.filter((r) => !r[3] || r[3]()).map(item), h('i'), item(['settings', '설정', 'settings']));
 }
 
@@ -435,6 +463,8 @@ function buildChat() {
   const sendBtn = h('button', { type: 'button', class: 'sx-send', 'aria-label': '보내기', onclick: send }, icon('send'));
   // 입력창 [+]: 문서함의 PDF 가져오기와 같은 동작(파일 끌어 놓기 자리).
   const attach = h('button', { type: 'button', class: 'sx-attach', 'aria-label': 'PDF 가져오기', title: 'PDF 가져오기', onclick: () => importDoc({ pick: true }) }, icon('plus'));
+  // 입력창 알약(48px) 어디를 눌러도 글자 칸(22px)으로 간다. 단추([+]·보내기)는 제 일을 한다.
+  const inputBox = h('div', { class: 'sx-input', onpointerdown: (e) => { if (!e.target.closest('button, textarea')) { e.preventDefault(); chat.input.focus(); } } }, attach, chat.input, sendBtn);
   chat.root = h(
     'section',
     { class: 'chat', 'data-view': 'chat' },
@@ -443,7 +473,7 @@ function buildChat() {
     chat.scroll,
     h('div', { class: 'quick-zone col' }, chat.quick),
     h('div', { class: 'bar-slot', 'aria-hidden': 'true' }),
-    h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, h('div', { class: 'sx-input' }, attach, chat.input, sendBtn))),
+    h('div', { class: 'composer-zone' }, h('div', { class: 'col sx-composer' }, inputBox)),
   );
   // 온보딩 중이면 대화의 첫 부분이 온보딩이다(08 §4). 끝난 사용자는 지난 타임라인을 그린다.
   if (state.onb) {
@@ -486,8 +516,8 @@ const onbAct = {
       applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
       return true;
     } catch (e) {
-      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안 빨간 글(대표 2026-11-13)
-      showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요');
+      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안, 칸 하나의 것이면 그 칸 아래(대표 2026-11-13)
+      showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요', errText(e));
       renderOnboarding();
       return false;
     }
@@ -701,11 +731,8 @@ function renderQuick() {
   // 온보딩 중에는 빠른 실행 칩을 두지 않는다(맡긴 업무를 고른 뒤에 생긴다, 08 §4 O-06). 카드의 칩만 누른다.
   if (onbActive()) return chat.quick.replaceChildren();
   const text = chat.input.value;
-  if (/계산서/.test(text)) {
-    // T-01: 보내기 전 부가세 [별도] [포함]. 고르지 않으면 별도로 계산한다.
-    const t = (mode, label) => h('button', { type: 'button', class: state.vat === mode ? 'is-on' : null, 'aria-pressed': String(state.vat === mode), 'data-vat': mode, onclick: () => ((state.vat = state.vat === mode ? null : mode), renderQuick()) }, label);
-    chat.quick.replaceChildren(h('span', { class: 'sx-meta quick-label' }, '부가세'), t('separate', '별도'), t('included', '포함'), h('span', { class: 'sx-meta' }, state.vat ? '' : '고르지 않으면 별도로 계산해요'));
-  } else if (!text.trim()) {
+  // 입력 중에는 칩을 두지 않는다. 부가세는 작성 카드의 [별도|포함] 한 곳에서만 고른다(v2.0: 보내기 전 토글과 겹쳤다). 기본은 별도.
+  if (!text.trim()) {
     state.vat = null;
     if (state.composing || state.agentAsk) {
       chat.quick.replaceChildren();
@@ -847,16 +874,15 @@ async function ask(text, vat) {
   // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
   if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
+    // 작성 카드는 대화에 있다. 같은 내용을 패널에 또 열지 않는다(v2.0). 패널은 카드를 누르거나 실행이 시작되면 열린다.
     putRun(r.run);
-    openPanel({ kind: 'run', id: r.run.id });
   } else if (r.kind === 'g24') {
     const id = `g24-${Date.now()}`;
     const now = new Date();
     const g = { id, doc: r.doc, stage: 'guide', startedMs: now.getTime(), startedAt: now.toTimeString().slice(0, 5), today: localDate(now), candidates: [], picked: null, saving: false, interp: r.via, sent: r.sent };
     state.g24.set(id, g);
-    appendThread(h('div', { class: 'sx-app' }, `${r.doc}은 정부24 서류라 직접 발급해 주셔야 해요. 단계와 넣을 값을 옆에 정리했어요.`));
+    appendThread(h('div', { class: 'sx-app' }, `${r.doc}은 정부24 서류라 직접 발급해 주셔야 해요. 받은 PDF를 문서함에 넣으면 보관해 드려요.`));
     renderG24(g);
-    openPanel({ kind: 'g24', id });
   } else {
     const box = h('div', { class: 'sx-app' }, r.text);
     // 거래처가 없거나 장부에 없는 이름(F-02·F-03): [거래처 추가]는 거래처 화면의 추가 폼을 그 이름으로 연다. 추가하면 대화로 돌아와 그 이름을 입력창에 채운다(되묻기를 잇는다).
@@ -910,20 +936,20 @@ function agentTable(t) {
 function renderAgent(r) {
   const box = h('div', { class: 'sx-app', 'data-agent-reply': r.filtered ?? '' }, h('p', {}, r.text));
   for (const x of r.show) if (x.type === 'table') box.append(agentTable(x));
-  if (r.setup?.length) box.append(h('div', { class: 'sx-actions' }, ...r.setup.map((m, i) => btn(m.label, () => reopenSetup(m.id), i ? '' : 'sx-btn-primary', { 'data-act': `setup-${m.id}` }))));
+  if (r.setup?.length) box.append(replyOptions(r.setup.map((m) => ({ label: m.label, onPick: () => reopenSetup(m.id), act: `setup-${m.id}`, lock: false }))));
   // 사장님이 쓴 거래처 이름이 장부에 없다(U8-1): 그 이름으로 거래처 추가 폼을 연다. 저장하면 대화로 돌아와 그 이름을 입력창에 채운다.
-  if (r.unknown) box.append(h('p', { class: 'sx-meta', 'data-unknown-name': r.unknown.name }, r.unknown.text), h('div', { class: 'sx-actions' }, btn('거래처 추가', () => addCpFromAsk(r.unknown.name), 'sx-btn-primary', { 'data-act': 'ask-cp-add' })));
+  if (r.unknown) box.append(h('p', { class: 'sx-meta', 'data-unknown-name': r.unknown.name }, r.unknown.text), replyOptions([{ label: `${r.unknown.name}을(를) 거래처로 추가`, onPick: () => addCpFromAsk(r.unknown.name), act: 'ask-cp-add', lock: false }]));
   if (r.ask) {
-    const chips = r.ask.chips.map((c) => btn(c.label, (e) => (e.currentTarget.disabled ? null : sendPrompt(c.text)), '', { 'data-agent-chip': r.ask.kind }));
-    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다(이름을 이미 안내했으면 그쪽 버튼 하나만)
-    if (r.ask.kind === 'counterparty' && !r.unknown) chips.push(btn('거래처 추가', () => addCpFromAsk(''), 'sx-btn-quiet', { 'data-act': 'ask-cp-add' }));
-    if (chips.length) box.append(h('div', { class: 'sx-actions' }, ...chips));
+    // 되묻기의 답은 말풍선 아래 답 후보 줄로(누르면 그 말을 내 말로 보낸다). 다른 답이면 입력창에 쓰면 된다.
+    const opts = r.ask.chips.map((c) => ({ label: c.label, onPick: () => sendPrompt(c.text), attrs: { 'data-agent-chip': r.ask.kind } }));
+    // 거래처를 물을 때는 장부에 없는 이름일 수 있다: [거래처 추가]는 거래처 화면의 추가 폼을 연다(이름을 이미 안내했으면 그쪽 줄 하나만)
+    if (r.ask.kind === 'counterparty' && !r.unknown) opts.push({ label: '새 거래처 추가', onPick: () => addCpFromAsk(''), act: 'ask-cp-add', lock: false });
+    if (opts.length) box.append(replyOptions(opts));
   }
   appendThread(box);
   state.agentAsk = !!r.ask;
   const cards = r.show.filter((x) => x.type === 'card');
   for (const c of cards) putRun(c.run);
-  if (cards.length) openPanel({ kind: 'run', id: cards.at(-1).run.id });
   renderQuick();
 }
 
@@ -942,24 +968,41 @@ async function handoffCall(method, id) {
             ? '서명 차례에는 [다 했어요]만 받아요. 홈택스 창에서 서명을 마쳐 주세요.'
             : c === 'refused' || /^[a-z_]+\.[a-z_.]+$/.test(c)
               ? '지금은 이어서 할 수 없어요. 홈택스 창을 확인한 뒤 다시 눌러 주세요.'
-              : '엔진에 알리지 못했어요. 잠시 뒤 다시 눌러 주세요.',
+              : '앱이 바빠서 받지 못했어요. 잠시 뒤 다시 눌러 주세요.',
     );
   }
 }
 
-/** 핸드오프 띠(D01 실행 뷰): 사람이 필요한 실행이 있으면 대화 열 위에 한 줄. 누르면 그 카드와 패널로 간다. 승인 버튼은 없다. */
+/**
+ * 핸드오프 띠(D01 실행 뷰, v2.0 구조 감사 H3): 사람이 필요한 실행의 카드가 대화 화면 밖에 있을 때만 대화 열 위에 한 줄.
+ * 카드가 보이면 숨긴다(카드가 같은 할 일과 단추를 보인다). 누르면 그 카드로 스크롤할 뿐이다. 승인 버튼은 없다.
+ */
+let handoffSeen = null;
 function renderHandoff() {
   if (!chat.handoff) return;
+  handoffSeen?.disconnect();
+  handoffSeen = null;
   const r = [...state.runs.values()].find((x) => x.status === 'turn' && x.handoff);
-  chat.handoff.hidden = !r;
-  if (!r) return chat.handoff.replaceChildren();
+  const cardOf = () => (r ? chat.thread.querySelector(`[data-run="${CSS.escape(r.id)}"]`) : null);
+  const el = cardOf();
+  // 같은 카드를 다시 보는 경우에는 띠를 먼저 숨기지 않는다(한 프레임 깜박임·화면 읽기 프로그램의 다시 읽기 방지).
+  if (!el || chat.handoff.dataset.card !== r.id) chat.handoff.hidden = true;
+  chat.handoff.dataset.card = r?.id ?? '';
+  if (!el) return chat.handoff.replaceChildren();
   chat.handoff.replaceChildren(
     h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · 세금계산서 · ${r.counterparty.name}`),
-    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => {
-      openPanel({ kind: 'run', id: r.id });
-      chat.thread.querySelector(`[data-run="${r.id}"]`)?.scrollIntoView({ block: 'center' });
-    } }, '카드로 가기'),
+    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
   );
+  // 카드의 절반 이상이 대화 스크롤 안에 보이면 띠를 숨긴다. 카드가 다시 그려져 바뀌었으면(다른 카드 편집 등) 새 카드를 본다.
+  handoffSeen = new IntersectionObserver(
+    (entries) => {
+      const e = entries[entries.length - 1];
+      if (cardOf() !== e.target) return void queueMicrotask(renderHandoff);
+      chat.handoff.hidden = e.intersectionRatio >= 0.5;
+    },
+    { root: chat.scroll, threshold: [0, 0.5, 1] },
+  );
+  handoffSeen.observe(el);
 }
 
 function putRun(run) {
@@ -980,7 +1023,7 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps };
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingFocus: state.editingFocus, draftErr: state.draftErr, editingCp: state.editingCp, counterparties: state.cps };
   // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
   if (run.batch) {
     const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
@@ -997,6 +1040,8 @@ function renderRun(run) {
   if (old) old.replaceWith(el);
   else appendThread(el);
   if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+  // 카드만 다시 그려도 띠가 새 카드를 본다(화면 밖 옛 카드에 관찰자가 남아 띠가 카드와 함께 보이던 것).
+  renderHandoff();
 }
 
 function renderG24(g) {
@@ -1010,7 +1055,8 @@ function renderG24(g) {
 }
 
 /**
- * 이번 달 판(08 M-02, ADR-033): main이 계산한 카드 4종(기한 순)을 그린다. 대화 열 맨 위에 두고 접을 수 있다.
+ * 이번 달 할 일(08 M-02, ADR-033): 대화 열 맨 위에는 한 줄 요약만 둔다(대화를 가리지 않는다, v2.0 2026-11-14).
+ * 줄을 누르면 작업 패널에 main이 계산한 카드 4종(기한 순) 목록이 열린다(boardPanel).
  * 판 항목에는 승인 버튼이 없다. 누르면 그 작업 카드·서류·화면으로 옮기거나 입력창에 요청을 채울 뿐이다(보내기는 사람이 한다).
  */
 function renderToday() {
@@ -1021,10 +1067,6 @@ function renderToday() {
   const b = state.board;
   const items = b ? b.cards.flatMap((c) => c.items) : [];
   const setup = b?.setup ?? [];
-  const setupRow = setup.length
-    ? h('div', { class: 'board-setup', 'data-board-setup': '' }, h('span', { class: 'sx-meta' }, '등록 할 일'), ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' || x.id === 'chrome' || x.id === 'security' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
-    : null;
-  const month = b ? `${Number(b.month.slice(5, 7))}월` : '이번 달';
   const counts = b
     ? [
         ['확인 필요', b.counts.attention, 'is-attention'],
@@ -1032,18 +1074,37 @@ function renderToday() {
         ['만료 임박', b.counts.expiringSoon, 'is-attention'],
       ].filter(([, n]) => n > 0)
     : [];
-  const toggle = h('button', { type: 'button', class: 'board-toggle', 'aria-expanded': String(state.boardOpen), 'data-act': 'board-toggle', onclick: () => ((state.boardOpen = !state.boardOpen), renderToday()) }, state.boardOpen ? '접기' : '펼치기', h('span', { class: `board-chev${state.boardOpen ? ' is-open' : ''}` }, icon('chevron')));
-  const head = h(
-    'div',
-    { class: 'board-hd' },
-    h('h2', { class: 'board-title' }, `${month} 할 일`),
-    h('span', { class: 'sx-meta' }, items.length ? `${items.length}건 · 기한 순` : '챙길 일이 없어요'),
-    ...counts.map(([label, n, cls]) => h('span', { class: `board-count ${cls}`.trim() }, h('b', {}, String(n)), ' ', label)),
-    items.length ? toggle : null,
+  const open = state.panel?.kind === 'board';
+  chat.today.replaceChildren(
+    h(
+      'button',
+      { type: 'button', class: 'board-line', 'aria-expanded': String(open), 'data-act': 'board-toggle', onclick: () => openPanel(state.panel?.kind === 'board' ? null : { kind: 'board' }) },
+      h('span', { class: 'board-title' }, `${boardMonth()} 할 일`),
+      h('span', { class: 'board-count' }, items.length ? h('b', {}, String(items.length)) : '챙길 일이 없어요'),
+      ...counts.map(([label, n, cls]) => h('span', { class: `board-count ${cls}`.trim() }, `${label} `, h('b', {}, String(n)))),
+      setup.length ? h('span', { class: 'board-count' }, `등록 할 일 `, h('b', {}, String(setup.length))) : null,
+      h('span', { class: 'board-go', 'aria-hidden': 'true' }, icon('chevron')),
+    ),
   );
-  chat.today.classList.toggle('is-closed', !state.boardOpen || !items.length);
-  if (!state.boardOpen || !items.length) return chat.today.replaceChildren(head, ...(state.boardOpen && setupRow ? [setupRow] : []));
-  chat.today.replaceChildren(head, ...(setupRow ? [setupRow] : []), h('div', { class: 'board-cards' }, ...b.cards.map(boardCard)));
+  if (open) renderPanel();
+}
+
+const boardMonth = () => (state.board ? `${Number(state.board.month.slice(5, 7))}월` : '이번 달');
+
+/** 작업 패널의 할 일 목록: 등록 할 일 줄 + 항목이 있는 카드만(상자 없이 묶음 제목과 줄). */
+function boardPanel() {
+  const b = state.board;
+  const setup = b?.setup ?? [];
+  const cards = (b?.cards ?? []).filter((c) => c.items.length);
+  return h(
+    'div',
+    { class: 'panel-in', 'data-board-panel': '' },
+    panelHead(`${boardMonth()} 할 일`),
+    setup.length
+      ? h('div', { class: 'board-setup', 'data-board-setup': '' }, ...setup.map((x) => h('button', { type: 'button', class: 'board-setup-item', 'data-setup': x.id, onclick: () => (x.id === 'biz' || x.id === 'auth' || x.id === 'chrome' || x.id === 'security' ? reopenSetup(x.id) : go(x.view)) }, x.label)))
+      : null,
+    cards.length ? h('div', { class: 'board-cards' }, ...cards.map(boardCard)) : h('p', { class: 'board-empty' }, '챙길 일이 없어요'),
+  );
 }
 
 /** 판 카드 하나(제목 + 항목 줄). 한 카드에 세 줄까지, 넘치면 "n건 더 보기"로 그 자리에서 펼친다(줄마다 갈 곳이 달라 다른 화면으로 보내지 않는다). */
@@ -1131,6 +1192,7 @@ function openPanel(p) {
   if (!(p?.kind === 'doc' && p.id === state.docDraft?.id)) state.docDraft = null;
   state.panel = p;
   $('#app').classList.toggle('panel-closed', !p);
+  chat.today?.querySelector('.board-line')?.setAttribute('aria-expanded', String(p?.kind === 'board'));
   renderPanel();
 }
 
@@ -1286,6 +1348,8 @@ function renderPanel() {
     el.replaceChildren(c ? cpPanel(c) : h('div'));
   } else if (p.kind === 'cp-edit') {
     el.replaceChildren(cpEditPanel(p.id ? state.cps.find((x) => x.id === p.id) : null, p.id ? null : { name: p.name ?? '', ask: !!p.ask }));
+  } else if (p.kind === 'board') {
+    el.replaceChildren(boardPanel());
   } else if (p.kind === 'act') {
     const row = activityRows().find((r) => r.id === p.id);
     el.replaceChildren(row ? activityPanel(row) : h('div'));
@@ -1301,7 +1365,15 @@ const waitingChip = () => {
 const panelHead = (title, ...extra) => h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), ...extra, h('button', { type: 'button', class: 'panel-x', 'aria-label': '패널 닫기', onclick: act.closePanel }, icon('close')));
 
 /** 레일 화면 머리(캔버스 D-01·D-02): 제목 · 건수 · 오른쪽 버튼, 승인 대기 중이면 대화로 가는 줄. */
-const railHead = (title, meta, ...right) => h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, title), meta ? h('span', { class: 'sx-meta' }, meta) : null, h('div', { class: 'rs-right' }, waitingChip(), ...right));
+const railHead = (title, meta, ...right) =>
+  h(
+    'div',
+    { class: 'rs-head' },
+    PARENT[state.view] ? h('button', { type: 'button', class: 'rs-back', 'data-act': 'back', 'aria-label': `${PARENT_LABEL[PARENT[state.view]]}로 돌아가기`, onclick: () => go(PARENT[state.view]) }, icon('chevronLeft'), PARENT_LABEL[PARENT[state.view]]) : null,
+    h('h1', { class: 'title-screen' }, title),
+    meta ? h('span', { class: 'sx-meta' }, meta) : null,
+    h('div', { class: 'rs-right' }, waitingChip(), ...right),
+  );
 
 /** 목록 표: 테두리 상자 안 표(좌우로 밀지 않고 좁으면 값을 줄바꿈). cols = [이름, 'num'이면 오른쪽 정렬]. */
 const listTable = (cols, rows) =>
@@ -1367,8 +1439,11 @@ function docsView() {
     const n = dday(d.expiresOn, state.today);
     return n !== null && n <= 7;
   };
+  // 앱이 발급한 세금계산서는 위의 발급 기록(원장)에 한 번만 보인다(서류 표에 같은 건이 두 번 나오던 것, v2.0).
+  const withIssued = f === 'all' || f === 'tax';
   const list = state.docs
     .filter((d) => f === 'all' || (f === 'tax' && d.kind === '세금계산서') || (f === 'cert' && d.kind !== '세금계산서') || (f === 'soon' && n7(d)))
+    .filter((d) => !(withIssued && d.kind === '세금계산서' && d.source === '앱이 발급'))
     .map((d) => ({ d, n: dday(d.expiresOn, state.today) }))
     // 확인 필요는 맨 위, 다음 만료 7일 이내, 나머지는 최근 발급순(발급일이 비면 맨 뒤).
     .sort((a, b) => Number(!!b.d.vault?.needsUser) - Number(!!a.d.vault?.needsUser) || Number(b.n !== null && b.n <= 7) - Number(a.n !== null && a.n <= 7) || (b.d.issuedOn ?? '').localeCompare(a.d.issuedOn ?? ''));
@@ -1379,10 +1454,11 @@ function docsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
-    railHead('문서함', meta, btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
-    f === 'all' || f === 'tax' ? issuedSection() : null,
+    railHead('문서함', meta, btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' }), btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
+    // 거르기는 화면 전체에 걸리므로 맨 위에 둔다(전에는 발급 표 아래에 있어 그 표에는 안 걸리는 것처럼 보였다).
     h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
-    listTable(
+    withIssued ? issuedSection() : null,
+    list.length || !withIssued ? listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
       list.map(({ d }) =>
         h(
@@ -1396,9 +1472,8 @@ function docsView() {
           h('td', { class: 'sx-meta' }, d.source),
         ),
       ),
-    ),
-    list.length ? null : h('div', { class: 'empty' }, '조건에 맞는 서류가 없어요.'),
-    h('p', { class: 'sx-meta rs-foot' }, '확인할 서류와 만료 7일 이내 서류가 맨 위에 오고, 나머지는 최근 발급순이에요. 디스크의 파일명에는 거래처·승인번호를 넣지 않아요.'),
+    ) : null,
+    list.length || (withIssued && (state.issued ?? []).length) ? null : h('div', { class: 'empty' }, '조건에 맞는 서류가 없어요.'),
   );
 }
 
@@ -1464,17 +1539,25 @@ function cpPanel(c) {
 }
 
 const CP_ERR = { bad_item_name: '품목 이름을 확인해 주세요', too_many_items: '저장 품목은 20개까지예요', invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
+/** main이 거절한 까닭이 칸 하나의 것이면 그 칸 아래에 쓴다(나머지는 폼 끝 한 줄). */
+const CP_ERR_FIELD = { invalid_biz_no: 'bizNo', duplicate_biz_no: 'bizNo', name_required: 'name', invalid_email: 'email', bad_item_name: 'item', too_many_items: 'item' };
 
 /** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). [저장 품목]은 저장 품목 목록의 첫 품목이다(#144). */
 /** add: 새 거래처 폼의 채움(name)과 되묻기에서 왔는지(ask: 저장하면 대화로 돌아가 이름을 채운다). */
 function cpEditPanel(c, add = null) {
-  const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
-  const demoBook = state.boot.cpBook !== 'local';
+  const inputs = {
+    name: textInput({ name: 'name', value: c?.name ?? add?.name, max: LIMITS.name, required: '상호를 넣어 주세요.', compact: true }),
+    bizNo: bizNoInput({ name: 'bizNo', value: c?.bizNo, required: !c, disabled: !!c, compact: true }),
+    rep: textInput({ name: 'rep', value: c?.rep, max: LIMITS.rep, compact: true }),
+    email: emailInput({ name: 'email', value: c?.email, compact: true }),
+    item: textInput({ name: 'item', value: c?.item, max: LIMITS.item, placeholder: '예: 컨설팅 용역', compact: true }),
+  };
+  const cancel = () => openPanel(c ? { kind: 'cp', id: c.id } : null);
   let saving = false;
   let reading = false;
   /** 이 폼에서 읽은 등록증의 표(main이 든 주소를 이 폼의 저장에만 붙인다). */
   let certHold = null;
-  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 틀림은 빨간 글. 칸을 고치면 내린다.
+  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 칸 하나의 틀림은 그 칸 아래. 칸을 고치면 내린다.
   const msg = h('p', { class: 'form-msg', role: 'status', 'data-cp-msg': '', hidden: true });
   const say = (text, bad) => {
     msg.textContent = text;
@@ -1500,6 +1583,7 @@ function cpEditPanel(c, add = null) {
       const itemIn = form.elements.namedItem('item');
       const itemFilled = !!r.item && !!itemIn && !String(itemIn.value).trim();
       if (itemFilled) itemIn.value = r.item;
+      for (const i of Object.values(inputs)) fieldError(i, null);
       say(!r.bizNo ? '등록증에서 읽었어요. 사업자번호는 읽지 못했으니 직접 넣어 주세요' : itemFilled ? '등록증에서 읽었어요. 저장 품목은 등록증의 종목이에요. 발급할 품목과 다르면 고친 뒤 추가해 주세요' : '등록증에서 읽었어요. 맞는지 보고 추가해 주세요', !r.bizNo);
     } catch (err) {
       say(human(err, CP_ERR), true);
@@ -1511,14 +1595,18 @@ function cpEditPanel(c, add = null) {
     'form',
     {
       class: 'cp-form',
+      novalidate: true,
       oninput: () => (msg.hidden = true),
+      onkeydown: keys(() => form.requestSubmit(), cancel),
       onsubmit: async (e) => {
         e.preventDefault();
-        if (saving) return;
+        if (saving || !checkFields(form)) return;
         saving = true;
         const f = new FormData(form);
+        // 사업자번호는 숫자 10자리로 보낸다(main이 숫자만 남겨 검증한다). 수정 폼은 칸이 꺼져 있어 보내지 않는다(null).
+        const no = f.get('bizNo');
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: no === null ? null : bizDigits(no), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
           state.cps = r.counterparties;
           const savedName = String(f.get('name') ?? '').trim();
           if (!c && add?.ask) {
@@ -1532,22 +1620,24 @@ function cpEditPanel(c, add = null) {
           openPanel({ kind: 'cp', id: r.id });
           toast(c ? '저장했어요' : '거래처를 추가했어요');
         } catch (err) {
-          say(human(err, CP_ERR), true);
+          const at = inputs[CP_ERR_FIELD[errText(err)]];
+          if (at && !at.disabled) fieldError(at, human(err, CP_ERR));
+          else say(human(err, CP_ERR), true);
         } finally {
           saving = false;
         }
       },
     },
     c ? null : h('div', { class: 'sx-actions' }, btn('등록증으로 채우기', fillFromCert, 'sx-btn-quiet', { 'data-act': 'cp-cert' })),
-    field('상호', 'name', c?.name ?? add?.name, { required: true, maxlength: 60 }),
-    field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
-    field('대표자', 'rep', c?.rep, { maxlength: 30 }),
-    field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
-    field('저장 품목', 'item', c?.item, { maxlength: 40, placeholder: '자주 쓰는 품목(발급 때 후보로 채워요)' }),
+    field({ label: '상호', input: inputs.name }),
+    field({ label: '사업자번호', input: inputs.bizNo, help: c ? '추가한 뒤에는 바꿀 수 없어요' : null }),
+    field({ label: '대표자', input: inputs.rep }),
+    field({ label: '받는 이메일', input: inputs.email }),
+    field({ label: '저장 품목', input: inputs.item, help: '발급할 때 품목 후보로 채워요' }),
     msg,
-    h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
+    h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', cancel, 'sx-btn-quiet')),
   );
-  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, demoBook ? '이 PC 거래처 장부(데모 DB)에만 저장해요' : '이 PC 거래처 장부에만 저장해요'));
+  return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, '이 PC 거래처 장부에만 저장해요'));
 }
 
 /** 내 사업장 사업자 카드(shell-biz.js): 보기 / [수정] 폼. 편집 중 값은 state.bizEdit에 둔다(다시 그려도 남는다). */
@@ -1583,19 +1673,26 @@ function bizCard() {
 }
 
 /** 내 사업장(캔버스 D-03): 사업자 프로필(보기·[수정]) · 개인 프로필 · 맡긴 업무. */
+/** 설정 안의 내 사업장: 내 사업장 화면의 본문 열을 설정 본문 자리에 둔다(화면 머리는 설정 항목 제목으로). */
+function bizBody() {
+  const col = bizView().querySelector('.rs-col');
+  col.classList.add('set-body');
+  col.querySelector('.rs-head')?.remove();
+  col.prepend(h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '내 사업장'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서의 공급자 정보예요. 홈택스 발급 화면에서 채워요.')));
+  return col;
+}
+
 function bizView() {
   const p = state.boot.profiles;
-  const b = p.business;
   // 저장된 개인 프로필이 없으면(제품) 내용 없는 "개인 · 개인" 카드를 그리지 않는다
   const personal = p.personal && !p.personal.placeholder ? p.personal : null;
-  const used = [b.bizNo ? b : null, personal].filter(Boolean).length;
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'biz' },
     h(
       'div',
       { class: 'rs-col' },
-      railHead('내 사업장', `프로필 2개 중 ${used}개 사용`),
+      railHead('내 사업장', null),
       bizCard(),
       personal
         ? h(
@@ -1617,7 +1714,7 @@ function bizView() {
         'section',
         { class: 'rs-sec', 'aria-labelledby': 'biz-tasks' },
         h('h2', { class: 'sx-panel-sec', id: 'biz-tasks' }, '맡긴 업무'),
-        h('div', { class: 'sx-quick' }, state.boot.quick.map((q) => h('button', { type: 'button', class: q.soon ? 'is-soon' : null, onclick: () => (q.soon ? toast(`${q.label}은 곧 지원돼요`) : fillComposer(q.text)) }, q.label, q.soon ? ' · 곧 지원' : ''))),
+        h('div', { class: 'sx-quick' }, state.boot.quick.filter((q) => !q.soon).map((q) => h('button', { type: 'button', onclick: () => fillComposer(q.text) }, q.label))),
         h('p', { class: 'sx-meta' }, '입력창 위 빠른 실행에 이 순서로 보여요.'),
       ),
     ),
@@ -1666,7 +1763,7 @@ function activityView() {
     railHead('활동 기록', '이 PC에만 남아요 · 비밀값은 남기지 않아요'),
     rows.length
       ? listTable(
-          [['시각'], ['작업'], ['프로필'], ['포털'], ['결과'], ['모델']],
+          [['시각'], ['작업'], ['프로필'], ['포털'], ['결과'], ['AI']],
           rows.map((r) =>
             h(
               'tr',
@@ -1682,7 +1779,6 @@ function activityView() {
           ),
         )
       : h('div', { class: 'empty' }, '아직 기록이 없어요.'),
-    h('p', { class: 'sx-meta rs-foot' }, '결과 카드의 "어디로 무엇이 갔나요"는 이 기록을 카드 안에서 펼친 것이에요.'),
   );
 }
 
@@ -1702,7 +1798,7 @@ function activityPanel(row) {
         ? [
             // 상태조회(checkBizNo)는 제품에서 아직 보내지 않는다(조회 못 함 → [맞습니다]). 프록시가 붙으면 여기도 바꾼다.
             ['저장', `이 PC 내 사업장 정보 · 고친 칸 ${row.edit.fields.length}개(값은 기록하지 않아요)`],
-            ['모델', '쓰지 않음'],
+            ['AI', '쓰지 않음'],
             serverRow([]),
           ]
         : row.past
@@ -1743,6 +1839,7 @@ function activityPanel(row) {
 }
 
 const SETTINGS_TABS = [
+  ['biz', '내 사업장'],
   ['auth', '발급 인증'],
   ['devices', '기기 연결'],
   ['bank', '계좌 연결'],
@@ -1803,20 +1900,22 @@ async function forgetCard() {
 }
 /** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
 function certMemorySaveRow() {
-  const input = h('input', { type: 'password', class: 'sx-input secret-ask-input', autocomplete: 'off', spellcheck: 'false', 'aria-label': '공동인증서 비밀번호', placeholder: '공동인증서 비밀번호' });
-  const save = h('button', { type: 'submit', class: 'sx-btn' }, '저장');
-  const form = h('form', { class: 'secret-ask-form', autocomplete: 'off', 'data-cert-memory-save': '' }, input, save);
+  const input = secretInput({ label: '공동인증서 비밀번호', oninput: () => (state.certMemoryErr = null) });
+  const save = h('button', { type: 'submit', class: 'sx-btn sx-btn-lg' }, '저장');
+  const form = h('form', { class: 'cert-memory-form', autocomplete: 'off', novalidate: true, 'data-cert-memory-save': '' }, field({ label: '공동인증서 비밀번호', input, after: save, error: state.certMemoryErr }));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const value = input.value;
     input.value = '';
-    if (!value) return;
+    if (!value) return fieldError(input, '공동인증서 비밀번호를 넣어 주세요.');
     save.disabled = input.disabled = true;
+    state.certMemoryErr = null;
     try {
       state.certMemory = (await call('certMemory.save', { value })).remembered === true;
       toast('인증서 비밀번호를 이 Mac 금고에 저장했어요. 다음 발급부터 앱이 넣어요.');
     } catch {
-      toast('저장하지 못했어요. 다시 해 주세요');
+      // 실패는 칸 아래에 남긴다(다시 그려도 보이게 글만 state에, 값은 두지 않는다)
+      state.certMemoryErr = '저장하지 못했어요. 다시 넣어 주세요.';
     }
     render();
   });
@@ -2076,7 +2175,9 @@ function settingsView() {
         return h('button', { type: 'button', class: on ? 'is-on' : null, 'aria-current': on ? 'page' : null, 'data-set-tab': tab, onclick: () => setTab(tab) }, label);
       }),
     ),
-    state.setTab === 'bank'
+    state.setTab === 'biz'
+      ? bizBody()
+      : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
       ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut))
@@ -2094,24 +2195,34 @@ const laterView = (v) => () => {
   return h('section', { class: 'rail-screen', 'data-view': v, 'data-screen': id }, h('div', { class: 'rs-col' }, railHead(title, '준비 중'), h('article', { class: 'sx-card later-card' }, h('p', { class: 'sx-body-sm is-muted' }, text))));
 };
 // 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
-const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null });
+const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null, railHead: (...a) => railHead(...a) });
 // 세무사 꾸러미 화면(shell-pack.js). 열면 고른 달 꾸러미를 main이 로컬 폴더·zip으로 만든다.
 const packUi = createPackScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bundle' && render(), errText: (e) => errText(e), today: () => localDate(state.today), railHead, listTable });
 const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: () => packUi.view(), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
-  if (state.view === v && v !== 'docs') return;
+  // 내 사업장은 설정의 첫 항목이다(v2.0). 예전 길(go('biz'): 할 일·온보딩)은 그 자리로 간다.
+  if (v === 'biz') {
+    state.setTab = 'biz';
+    v = 'settings';
+    state.boot.profiles = await call('profiles.list').catch(() => state.boot.profiles);
+  }
+  if (state.view === v && v !== 'docs' && v !== 'settings') return;
   state.view = v;
   // 패널은 그 화면의 것만 남긴다(대화: 작업, 문서함: 서류, 거래처: 거래처, 활동 기록: 기록).
-  const own = { chat: ['run', 'g24'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
+  const own = { chat: ['run', 'g24', 'board'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
-  if (v === 'cps') state.cps = await call('counterparties.list');
-  if (v === 'biz') state.boot.profiles = await call('profiles.list');
-  if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
-  if (v === 'bank') {
-    state.cps = await call('counterparties.list');
-    await bankUi.load();
+  // 불러오기가 실패해도 화면은 그린다(전에는 render 전에 던져서 그 화면에 갇혔다: 다시 눌러도 state.view === v라 돌아갔다).
+  try {
+    if (v === 'cps') state.cps = await call('counterparties.list');
+    if (v === 'bank') {
+      state.cps = await call('counterparties.list');
+      await bankUi.load();
+    }
+  } catch (e) {
+    toast(human(e));
   }
+  if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
   if (v === 'bundle') void packUi.load();
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
@@ -2145,7 +2256,14 @@ function render() {
   if (state.view === 'chat') {
     if (center.firstChild !== chat.root) center.replaceChildren(chat.root);
     scrollToEnd();
-  } else center.replaceChildren(VIEWS[state.view]());
+  } else {
+    // 같은 화면을 다시 그릴 때는 스크롤 자리를 지킨다(행을 누르거나 [최신화] 진행으로 다시 그려도 맨 위로 튀지 않게).
+    const prev = center.firstElementChild;
+    const keep = prev && prev.dataset?.view === state.view ? prev.scrollTop : 0;
+    const el = VIEWS[state.view]();
+    center.replaceChildren(el);
+    if (keep) el.scrollTop = keep;
+  }
   renderPanel();
   renderModal();
 }
@@ -2222,8 +2340,13 @@ function cancelPassword() {
   $('[data-act=doc-import]')?.focus();
 }
 
-async function importDoc(params) {
+async function importDoc(input) {
   if (state.docBusy) return;
+  // 정부24 카드의 [PDF 가져오기]로 연 가져오기만 그 카드의 답이다(g24 id). 문서함·입력창 [+]의 가져오기는 정부24 카드를 끝내지 않는다.
+  // g24는 main에 보내지 않는다. 암호를 다시 넣는 두 번째 호출까지 state.g24Import로 이어 간다.
+  const { g24: g24Id, ...params } = input;
+  if (g24Id) state.g24Import = g24Id;
+  else if (params.pick) state.g24Import = null;
   // 암호를 묻던 파일을 두고 새 파일을 고르면, 묻던 파일은 그만둔다(main이 들고 있는 바이트를 버린다)
   if (params.pick && state.docImport) cancelPassword();
   state.docBusy = true;
@@ -2241,6 +2364,12 @@ async function importDoc(params) {
     if (params.password) state.docLocked.add(d.id);
     state.docsRev++;
     state.docs = [d, ...state.docs.filter((x) => x.id !== d.id)];
+    const g24 = state.g24Import ? state.g24.get(state.g24Import) : null;
+    state.g24Import = null;
+    if (g24 && g24.stage === 'pick') {
+      g24.stage = 'saved';
+      renderG24(g24);
+    }
     const msg = r.document?.duplicate ? '이미 보관함에 있는 파일이에요' : d.vault?.needsUser ? '보관함에 넣었어요. 확인할 칸이 있어요' : '보관함에 넣었어요';
     // 읽는 동안 다른 화면으로 갔으면 끌고 오지 않는다(승인 대기 중인 작업 패널을 바꾸지 않게)
     if (state.view === 'docs') {
@@ -2275,7 +2404,10 @@ async function updateDoc(id, patch, seen) {
     if (state.docDraft?.id === id) state.docDraft = null;
     toast(d.vault?.needsUser ? `저장했어요. ${d.vault.reasons.includes('expiry_recomputed') ? '다시 계산한 만료일을' : '남은 칸을'} 확인해 주세요` : '확인했어요');
   } catch (e) {
-    toast(docErr(e));
+    // 칸 하나의 까닭(날짜 앞뒤·형식·종류)은 그 칸 아래에, 나머지는 토스트
+    const at = DOC_ERR_FIELD[errText(e)];
+    if (at && state.docDraft?.id === id) state.docDraft.err = { field: at, text: docErr(e) };
+    else toast(docErr(e));
     // 다른 곳에서 바뀐 서류: 지금 값을 다시 읽어 보여 주고 입력은 버린다(본 값이 아닌 값으로 확인하지 않게)
     // 목록을 받은 뒤에 입력을 버린다(그 전에 다시 그리면 옛 값으로 입력을 다시 만들게 된다). 다시 읽는 동안은 docUpdating이라 확인을 받지 않는다.
     if (errText(e) === 'stale') {
@@ -2318,26 +2450,26 @@ function docReview(doc) {
   const canClear = draft.docType !== 'national_tax_cert';
   const noExpiryOn = draft.noExpiry && canClear;
   const src = { text: '텍스트에서 읽음', ocr: '그림에서 읽음(OCR)', scan: '스캔 글자 층에서 읽음' }[v.textSource];
-  const typeSel = h(
-    'select',
-    { class: 'doc-in', 'aria-label': '종류', 'data-field': 'docType' },
-    [['national_tax_cert', '납세증명서(국세)'], ['biz_registration_cert', '사업자등록증명'], ['other', '그 밖의 서류']].map(([val, label]) => h('option', { value: val, selected: val === draft.docType }, label)),
+  const errFor = (f) => (draft.err?.field === f ? draft.err.text : null);
+  const typeSel = selectInput(
+    [['national_tax_cert', '납세증명서(국세)'], ['biz_registration_cert', '사업자등록증명'], ['other', '그 밖의 서류']],
+    { value: draft.docType, compact: true, 'data-field': 'docType' },
   );
   typeSel.addEventListener('change', () => {
     draft.docType = typeSel.value;
+    draft.err = null;
     if (draft.docType === 'national_tax_cert') draft.noExpiry = false; // 납세증명서는 만료일을 없앨 수 없다
     render();
   });
-  const issued = h('input', { type: 'date', class: 'doc-in', 'aria-label': '발급일', 'data-field': 'issuedOn' });
-  issued.value = draft.issuedOn;
-  issued.addEventListener('input', () => (draft.issuedOn = issued.value));
-  const expires = h('input', { type: 'date', class: 'doc-in', 'aria-label': '만료일', 'data-field': 'expiresOn', disabled: noExpiryOn });
-  expires.value = draft.expiresOn;
-  expires.addEventListener('input', () => (draft.expiresOn = expires.value));
+  const issued = dateInput({ value: draft.issuedOn, compact: true, 'data-field': 'issuedOn' });
+  issued.addEventListener('input', () => ((draft.issuedOn = issued.value), (draft.err = null)));
+  const expires = dateInput({ value: draft.expiresOn, compact: true, 'data-field': 'expiresOn', disabled: noExpiryOn });
+  expires.addEventListener('input', () => ((draft.expiresOn = expires.value), (draft.err = null)));
   // 사업자등록증명·그 밖의 서류는 법정 유효기간이 없어 사용자가 만료일을 없앨 수 있다(납세증명서는 엔진이 확인 필요로 남긴다)
   const noExpiry = canClear ? h('input', { type: 'checkbox', checked: noExpiryOn, 'data-field': 'noExpiry' }) : null;
   noExpiry?.addEventListener('change', () => {
     draft.noExpiry = noExpiry.checked;
+    draft.err = null;
     render();
   });
   const hints = [
@@ -2347,9 +2479,12 @@ function docReview(doc) {
   const held = () => Date.now() - draft.createdAt < DOC_CONFIRM_HOLD_MS;
   const save = () => {
     if (state.docUpdating || held()) return;
-    if (issued.validity.badInput || expires.validity.badInput) return toast('날짜를 끝까지 넣어 주세요');
-    if (!draft.issuedOn && doc.issuedOn) return toast('발급일을 넣어 주세요');
-    if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return toast(canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요" : '만료일을 넣어 주세요');
+    // 고칠 칸 아래에 까닭을 쓴다(토스트 대신)
+    if (issued.validity.badInput) return fieldError(issued, '날짜를 끝까지 넣어 주세요.');
+    if (expires.validity.badInput) return fieldError(expires, '날짜를 끝까지 넣어 주세요.');
+    if (!draft.issuedOn && doc.issuedOn) return fieldError(issued, '발급일을 넣어 주세요.');
+    if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return fieldError(expires, canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요." : '만료일을 넣어 주세요.');
+    draft.err = null;
     const patch = {};
     if (draft.docType !== draft.seen.docType) patch.docType = draft.docType;
     if (draft.issuedOn && draft.issuedOn !== draft.seen.issuedOn) patch.issuedOn = draft.issuedOn;
@@ -2379,9 +2514,9 @@ function docReview(doc) {
     h(
       'div',
       { class: 'doc-form' },
-      h('label', {}, h('span', { class: 'sx-meta' }, '종류'), typeSel),
-      h('label', {}, h('span', { class: 'sx-meta' }, '발급일'), issued),
-      h('label', {}, h('span', { class: 'sx-meta' }, '만료일'), expires),
+      field({ label: '종류', input: typeSel, error: errFor('docType') }),
+      field({ label: '발급일', input: issued, error: errFor('issuedOn') }),
+      field({ label: '만료일', input: expires, error: errFor('expiresOn') }),
       noExpiry ? h('label', { class: 'doc-check' }, noExpiry, h('span', { class: 'sx-meta' }, '만료일 없음(제출처가 요구하지 않음)')) : null,
     ),
     hints.length
