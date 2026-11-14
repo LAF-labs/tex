@@ -13,16 +13,16 @@
   "certDoc": {
    "type": "enum",
    "values": [
-    "표준재무제표증명"
+    "표준재무제표증명(개인/법인)"
    ],
-   "default": "표준재무제표증명"
+   "default": "표준재무제표증명(개인/법인)"
   },
   "certLanguage": {
    "type": "enum",
    "values": [
-    "한글"
+    "한글증명"
    ],
-   "default": "한글"
+   "default": "한글증명"
   },
   "purpose": {
    "type": "enum",
@@ -395,9 +395,15 @@
   },
   {
    "id": "s16a",
-   "type": "select",
+   "type": "fill",
    "target": "hometax.cert.form.fiscalYear",
-   "option": "$inputs.fiscalYear"
+   "value": "$inputs.fiscalYear"
+  },
+  {
+   "id": "s16b",
+   "type": "select",
+   "target": "hometax.cert.form.openDate",
+   "option": "*only"
   },
   {
    "id": "s19a",

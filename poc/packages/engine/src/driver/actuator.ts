@@ -208,7 +208,8 @@ export class PlaywrightActuator implements Actuator {
     if (!h) return { ok: false, code: 'step.selector_miss' };
     try {
       // 라디오 묶음(role radiogroup, 홈택스 민원증명 발급유형·주민번호 공개 여부): 이름이 option인 라디오가 정확히 하나일 때 그것을 고른다.
-      const group = await h.evaluate((el) => el instanceof Element && !(el instanceof HTMLSelectElement) && el.getAttribute('role') === 'radiogroup');
+      // 역할 없는 div 안 라디오(홈택스 실화면 run-3f242cd5)도 묶음으로 본다
+      const group = await h.evaluate((el) => el instanceof Element && !(el instanceof HTMLSelectElement) && (el.getAttribute('role') === 'radiogroup' || !!el.querySelector('input[type="radio"]')));
       if (group) {
         const ix = await h.evaluate((el, label) => {
           const name = (r: HTMLInputElement) => (r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();

@@ -22,13 +22,13 @@ export const CERT_DOC_NAME: Readonly<Record<Doc, string>> = {
   'H-03': '사업자등록증명',
   'H-04': '납세증명서',
   'H-08': '부가가치세 과세표준증명',
-  'H-09': '표준재무제표증명',
+  'H-09': '표준재무제표증명(개인/법인)',
 };
 const FORM_TITLE: Readonly<Record<Doc, string>> = {
   'H-03': '사업자등록증명 발급 신청',
   'H-04': '납세증명서(국세완납증명) 신청',
   'H-08': '부가가치세 과세표준증명원 접수',
-  'H-09': '표준재무제표증명',
+  'H-09': '표준재무제표증명(개인/법인) 신청',
 };
 
 export interface CertRecord {
@@ -70,11 +70,13 @@ const fmtBiz = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
 /** select: value는 코드, 이름은 선택지. 첫 선택지는 「선택」(값 없음). */
 const select = (id: string | null, label: string, name: string, options: readonly string[], extra = '') =>
   `<label${id ? ` for="${id}"` : ''}>${esc(label)}</label><select ${id ? `id="${id}" ` : ''}name="${name}" aria-label="${esc(label)}" ${extra}><option value="">선택</option>${options.map((o, i) => `<option value="${String(i + 1).padStart(2, '0')}">${esc(o)}</option>`).join('')}</select>`;
-/** 라디오 묶음(role radiogroup). 처음 고른 것이 checked다. */
+/** 라디오 묶음: 실화면처럼 역할 없는 div 안 라디오(라디오마다 aria-label). 처음 고른 것이 checked다. */
 const radios = (id: string, label: string, name: string, options: readonly string[], checked: string) =>
-  `<div id="${id}" role="radiogroup" aria-label="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
+  `<div id="${id}" title="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}" aria-label="${esc(o)}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
+/** 표시 글(실화면 「기본 인적 사항」의 p, 역할 없음) */
+const disp = (id: string, value: string) => `<p id="${id}">${esc(value)}</p>`;
 const shown = (label: string, value: string, id?: string) => `<label>${esc(label)} <input type="text" readonly ${id ? `id="${id}" ` : ''}aria-label="${esc(label)}" value="${esc(value)}"></label>`;
-const page = (body: string) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><a id="mf_wfHeader_hdGroup001" href="/">국세청 홈택스</a><main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
+const page = (body: string, crumb = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><a id="mf_wfHeader_hdGroup001" href="/">국세청 홈택스</a>${crumb ? `<span id="mf_wfHeader_spn_third">${esc(crumb)}</span>` : ''}<main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
 
 const ALERT = '<div role="dialog" aria-label="알림" class="w2window w2popup_window msg">레이어 팝업 레이어팝업시작 알림 해당 화면은 개인사업자는 이용할 수 없습니다. 레이어팝업끝</div>';
 
@@ -94,26 +96,31 @@ function certForm(doc: Doc, k: CertKnobs): string {
   const extra: string[] = [];
   if (doc === 'H-08') {
     extra.push(
-      select('mf_txppWframe_sbx_txnrmStrtYear', '과세기간', 'startYear', YEARS),
+      select('mf_txppWframe_sbx_txnrmStrtYear', '과세기간 시작년도', 'startYear', YEARS),
       select('mf_txppWframe_sbx_strtHt', '과세기간 시작년도 분기', 'startHalf', ['1기', '2기']),
       select('mf_txppWframe_sbx_txnrmEndYear', '과세기간 종료년도', 'endYear', YEARS),
       select('mf_txppWframe_sbx_endHt', '과세기간 종료년도 분기', 'endHalf', ['1기', '2기']),
       select('mf_txppWframe_sbx_bmanOfbDt', '발급희망개업일자', 'openDate', ['2020-03-02']),
     );
   }
-  if (doc === 'H-09') extra.push(select(null, '귀속연도', 'fiscalYear', ['2025', '2024', '2023']));
-  const submit = doc === 'H-03' ? '<button type="submit" id="mf_txppWframe_btn_wrtCmpl">작성완료</button>' : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
+  if (doc === 'H-09') {
+    extra.push(
+      `<label for="mf_txppWframe_ibx_txyr">과세년도</label><input type="text" id="mf_txppWframe_ibx_txyr" name="fiscalYear" aria-label="과세년도">`,
+      select('mf_txppWframe_selectbox1', '개업일자', 'openDate', ['2020-03-02']),
+    );
+  }
+  const submit = doc === 'H-03' || doc === 'H-09' ? '<button type="submit" id="mf_txppWframe_btn_wrtCmpl">작성완료</button>' : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
   // 수량은 수령방법을 고른 뒤에 켜진다(캡처)
   // 실화면처럼 본문 틀 #mf_txppWframe(역할 없음) 안에 양식 제목 h2(2026-11-14 예행 run-e838a762)
   return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="${doc}">
-    ${shown('민원명', docName)}${shown('사업자등록번호', fmtBiz(k.supplier.bizNo))}${shown('상호', k.supplier.name)}
-    ${radios('mf_txppWframe_rad_englCvaAplnYn', '발급유형', 'lang', ['한글', '영문증명'], '한글')}
+    ${disp('mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscBsno', fmtBiz(k.supplier.bizNo))}${disp('mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscTnm', k.supplier.name)}
+    ${radios('mf_txppWframe_rad_englCvaAplnYn', '발급유형', 'lang', ['한글증명', '영문증명'], '한글증명')}
     ${select('mf_txppWframe_sbx_cvaDcumUseUsgCd', '사용용도', 'purpose', PURPOSES)}
     ${select('mf_txppWframe_sbx_cvaDcumSbmsOrgnClCd', '제출처', 'submitTo', SUBMIT_TO)}
     ${radios('mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn', '주민등록번호 공개여부', 'rrn', ['공개', '비공개'], '')}
     ${select('mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptMthd', '수령방법', 'receive', ['인터넷발급(프린터출력)', '우편'], 'onchange="document.getElementById(\'mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty\').disabled = !this.value"')}
     ${select('mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty', '발급희망수량', 'copies', ['1매', '2매'], 'disabled')}
-    ${extra.join('')}${submit}</form></div>`);
+    ${extra.join('')}${submit}</form></div>`, docName);
 }
 
 function home(): string {

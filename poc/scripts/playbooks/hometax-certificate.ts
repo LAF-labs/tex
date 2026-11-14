@@ -112,7 +112,6 @@ export interface CertDoc {
   formCapture?: string;
 }
 
-const YEARS = '2026~1997 선택(캡처)';
 const HALF = ['1기', '2기'];
 
 export const CERT_DOCS: readonly CertDoc[] = [
@@ -127,7 +126,7 @@ export const CERT_DOCS: readonly CertDoc[] = [
     menuCode: '4315010500', formTitle: '부가가치세 과세표준증명원 접수', submit: { name: '신청하기', css: '#mf_txppWframe_btn_apln' },
     // 과세기간은 시작·종료 연도와 1기·2기(간이과세자 2013년 이후분은 1기). 발급희망개업일자는 필수이고 선택지는 개업일 하나다
     fields: [
-      { input: 'periodStartYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodStartYear', label: '과세기간', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmStrtYear', capture: `시작 연도 접근성 이름(라벨 「과세기간」이 시작 연도에 붙어 있다), 값 ${YEARS}` },
+      { input: 'periodStartYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodStartYear', label: '과세기간 시작년도', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmStrtYear' },
       { input: 'periodStartHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodStartHalf', label: '과세기간 시작년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_strtHt' },
       { input: 'periodEndYear', inputDef: { type: 'string', required: true }, fieldKey: 'taxPeriodEndYear', label: '과세기간 종료년도', role: 'combobox', css: '#mf_txppWframe_sbx_txnrmEndYear' },
       { input: 'periodEndHalf', inputDef: { type: 'enum', required: true, values: HALF }, fieldKey: 'taxPeriodEndHalf', label: '과세기간 종료년도 분기', role: 'combobox', css: '#mf_txppWframe_sbx_endHt' },
@@ -136,14 +135,14 @@ export const CERT_DOCS: readonly CertDoc[] = [
     ],
   },
   {
-    code: 'H-09', id: 'hometax.cert.financial_statements', docType: 'financial_statements_cert', name: '표준재무제표증명',
+    code: 'H-09', id: 'hometax.cert.financial_statements', docType: 'financial_statements_cert', name: '표준재무제표증명(개인/법인)',
     title: '표준재무제표증명 발급', confirm: '표준재무제표증명을 발급할까요?',
+    // 실화면(2026-11-14 run-16bf7b5d): 과세년도는 글 칸, 소득구분 라디오는 기본(사업소득) 그대로, 개업일자 select는 과세년도를 넣은 뒤 채워지는 것으로 짐작
     fields: [
-      { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '귀속연도', role: 'combobox', capture: '귀속연도(또는 사업연도) 칸의 id·이름·값 형식. 신고가 전산에 반영되지 않은 해는 목록에 없을 수 있음(R10)' },
+      { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '과세년도', role: 'textbox', css: '#mf_txppWframe_ibx_txyr' },
+      { input: 'openDate', inputDef: { type: 'string' }, fieldKey: 'bizOpenDate', label: '개업일자', role: 'combobox', css: '#mf_txppWframe_selectbox1', screenOnly: true },
     ],
-    menuCode: '4315011800', formTitle: '표준재무제표증명', submit: { name: '신청하기', css: null },
-    menuCapture: '표준재무제표증명 메뉴 코드(tm3lIdx). 2026-11-10 캡처에는 없다(소득금액증명 4315011000은 개인사업자 로그인에서 막혔다)',
-    formCapture: '표준재무제표증명 양식 제목·제출 버튼(작성완료·신청하기)·개인사업자 로그인에서 막히는지',
+    menuCode: '4315011800', formTitle: '표준재무제표증명(개인/법인) 신청', submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
   },
 ];
 
@@ -198,24 +197,29 @@ function formEntries(doc: CertDoc): Record<string, TplEntry> {
     entry: { candidates: [...(css ? [{ kind: 'css' as const, value: css }] : []), role(r, name)], role: r, namePattern: lit(name), landmark: FORM, commits: false, fieldKey, ...(inputType ? { inputType } : {}), ...extra },
     ...(capture ? { capture } : {}),
   });
+  // 표시 글 요소의 역할: p는 paragraph, span·div는 generic(실화면 요소 목록의 태그)
+  const shown = (css: string, fieldKey: string, landmark: string, role = 'generic'): TplEntry => ({ entry: { candidates: [{ kind: 'css', value: css }], role, namePattern: '^$', landmark, commits: false, fieldKey, inputType: 'text' } });
+  const radios = (css: string, fieldKey: string, extra: Partial<SelectorEntry> = {}): TplEntry => ({ entry: { candidates: [{ kind: 'css', value: css }], role: 'generic', namePattern: '^$', landmark: FORM, commits: false, fieldKey, inputType: 'radio', ...extra } });
   const out: Record<string, TplEntry> = {
     // 본문 틀은 H-01과 같은 #mf_txppWframe(역할 없음, 2026-11-14 실화면 예행 run-e838a762)
     [FORM]: { entry: { candidates: [{ kind: 'css', value: '#mf_txppWframe' }], role: 'generic', namePattern: '^$', landmark: 'hometax.page.root', commits: false } },
     // 양식 제목(h2, id는 wq_uuid라 고정 아님). 서류 이름으로 시작해야 고른 서류의 양식이다(실화면 「사업자등록증명 발급 신청」)
     [TITLE]: { entry: { candidates: [role('heading', doc.formTitle)], role: 'heading', namePattern: lit(doc.formTitle), landmark: FORM, commits: false } },
     // 서류·신청인은 입력 칸이 아니라 화면 표시다(신청인 사업자번호는 로그인에서 온다)
-    'hometax.cert.form.docName': box('민원명', 'textbox', 'certDoc', 'text', null, '양식 제목(서류 이름)을 읽을 요소. 제목 요소 id는 wq_uuid라 고정이 아니다 → 역할·이름 확인'),
-    'hometax.cert.form.applicantBizNo': box('사업자등록번호', 'textbox', 'supplierBizNo', 'text', null, '「기본 인적 사항」에 보이는 신청인 사업자번호 요소(입력 칸이 아님)의 id·역할'),
-    'hometax.cert.form.applicantName': box('상호', 'textbox', 'supplierName', 'text', null, '「기본 인적 사항」의 상호 요소의 id·역할'),
-    'hometax.cert.form.language': box('발급유형', 'radiogroup', 'certLanguage', 'radio', '#mf_txppWframe_rad_englCvaAplnYn', '라디오 묶음 요소(_input_0 한글, _input_1 영문증명)의 역할·이름', { allowedConstants: ['한글'] }),
+    // 화면 표시 칸(2026-11-14 실화면 run-3f242cd5 요소 목록). 민원명은 머리말 경로의 마지막 칸, 신청인은 「기본 인적 사항」의 표시 글
+    'hometax.cert.form.docName': shown('#mf_wfHeader_spn_third', 'certDoc', 'hometax.cert.form.docName'),
+    'hometax.cert.form.applicantBizNo': shown('#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscBsno', 'supplierBizNo', FORM, 'paragraph'),
+    'hometax.cert.form.applicantName': shown('#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscTnm', 'supplierName', FORM, 'paragraph'),
+    // 라디오 묶음은 역할 없는 div 안 라디오다(실화면). inputType radio로 고른 라디오 이름을 읽고 고른다
+    'hometax.cert.form.language': radios('#mf_txppWframe_rad_englCvaAplnYn', 'certLanguage', { allowedConstants: ['한글증명'] }),
     'hometax.cert.form.purpose': box('사용용도', 'combobox', 'certPurpose', 'select', '#mf_txppWframe_sbx_cvaDcumUseUsgCd', undefined),
     'hometax.cert.form.submitTo': box('제출처', 'combobox', 'certSubmitTo', 'select', '#mf_txppWframe_sbx_cvaDcumSbmsOrgnClCd', undefined),
-    'hometax.cert.form.rrnDisclosure': box('주민등록번호 공개여부', 'radiogroup', 'rrnDisclosure', 'radio', '#mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn', '라디오 묶음 요소(_input_0 공개, _input_1 비공개)의 역할·이름'),
+    'hometax.cert.form.rrnDisclosure': radios('#mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn', 'rrnDisclosure'),
     'hometax.cert.form.receiveMethod': box('수령방법', 'combobox', 'receiveMethod', 'select', '#mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptMthd', undefined, { allowedConstants: [RECEIVE] }),
     'hometax.cert.form.copies': box('발급희망수량', 'combobox', 'copies', 'select', '#mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty', undefined, { allowedConstants: [COPIES] }),
   };
   // 화면이 정한 값(screenOnly)은 대조하지 않는다: fieldKey '_ignore'(V-03j 예외). 선택지가 정확히 하나일 때만 고르므로 다른 값이 들어갈 길이 없다
-  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.label, f.role, f.screenOnly ? '_ignore' : f.fieldKey, 'select', f.css ?? null, f.capture, f.screenOnly ? { allowedConstants: [SELECT_ONLY], reviewNote: { by: 'cert-docs', reason: `${f.label}: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)` } } : {});
+  for (const f of doc.fields) out[`hometax.cert.form.${f.input}`] = box(f.label, f.role, f.screenOnly ? '_ignore' : f.fieldKey, f.role === 'textbox' ? 'text' : 'select', f.css ?? null, f.capture, f.screenOnly ? { allowedConstants: [SELECT_ONLY], reviewNote: { by: 'cert-docs', reason: `${f.label}: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)` } } : {});
   out['hometax.cert.form.issueButton'] = {
     entry: {
       candidates: [...(doc.submit.css ? [{ kind: 'css' as const, value: doc.submit.css }] : []), role('button', doc.submit.name)], expect: { visible: true, enabled: true },
@@ -244,7 +248,9 @@ const dict = (entries: Record<string, TplEntry>, commit: boolean) => ({
 
 /** 공유 흐름(서류별 칸 채우기·대조만 다르다) */
 function steps(doc: CertDoc): Step[] {
-  const docFill: Step[] = doc.fields.map((f, i) => ({ id: `s16${String.fromCharCode(97 + i)}`, type: 'select', target: `hometax.cert.form.${f.input}`, option: f.screenOnly ? SELECT_ONLY : `$inputs.${f.input}` }) as Step);
+  const docFill: Step[] = doc.fields.map((f, i) => (f.role === 'textbox'
+    ? { id: `s16${String.fromCharCode(97 + i)}`, type: 'fill', target: `hometax.cert.form.${f.input}`, value: `$inputs.${f.input}` }
+    : { id: `s16${String.fromCharCode(97 + i)}`, type: 'select', target: `hometax.cert.form.${f.input}`, option: f.screenOnly ? SELECT_ONLY : `$inputs.${f.input}` }) as Step);
   const asked = doc.fields.filter((f) => !f.screenOnly);
   const entry = (d: CertDoc): Step[] =>
     d.menuCode
@@ -327,7 +333,7 @@ function inputs(doc: CertDoc): Record<string, unknown> {
     // 서류 이름은 패키지마다 하나로 고정이다(readback 대조용, 사용자가 바꾸지 않는다)
     certDoc: { type: 'enum', values: [doc.name], default: doc.name },
     // 발급유형은 한글만(영문증명은 다른 서류로 본다)
-    certLanguage: { type: 'enum', values: ['한글'], default: '한글' },
+    certLanguage: { type: 'enum', values: ['한글증명'], default: '한글증명' },
     purpose: { type: 'enum', required: true, values: PURPOSES },
     submitTo: { type: 'enum', required: true, values: SUBMIT_TO },
     // 주민번호는 기본으로 가린다(최소 노출, 02 §5.2-1과 같은 원칙)

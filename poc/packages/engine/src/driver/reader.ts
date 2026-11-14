@@ -159,7 +159,7 @@ export class PlaywrightPageReader implements PageReader {
     // 그 밖: DOM value. 가짜 H-01의 select(value = 이름)는 결과가 같다.
     return h.evaluate((e) => {
       if (e instanceof HTMLSelectElement) return e.selectedOptions[0]?.label ?? '';
-      if (!('value' in e) && e instanceof Element && e.getAttribute('role') === 'radiogroup') {
+      if (!('value' in e) && e instanceof Element && (e.getAttribute('role') === 'radiogroup' || !!e.querySelector('input[type="radio"]'))) {
         const r = e.querySelector<HTMLInputElement>('input[type="radio"]:checked');
         if (!r) return '';
         return r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '';
@@ -173,7 +173,10 @@ export class PlaywrightPageReader implements PageReader {
     if (!h) return '';
     const snap = await h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => '');
     // 역할 없는 div·span(generic)은 접근성 트리에서 글 노드(`- text: 1,000`)로 펼쳐진다: 그 글을 값으로 본다(표시 글 readback, 미리보기 창). 빈 span은 ''.
-    if (await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role'); }).catch(() => false)) return snap ? ariaValue(snap, 'text') : '';
+    const plain = await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role') ? (e.querySelector('input[type="radio"]') ? 'radios' : 'text') : null; }).catch(() => null);
+    // 역할 없는 라디오 묶음(div 안 라디오)은 고른 라디오의 이름이 값이다
+    if (plain === 'radios') return snap ? ariaValue(snap, 'radiogroup') : '';
+    if (plain === 'text') return snap ? ariaValue(snap, 'text') : '';
     return ariaValue(snap, ariaHead(snap).role);
   }
 

@@ -315,11 +315,11 @@
     {
      "kind": "role",
      "role": "link",
-     "name": "표준재무제표증명"
+     "name": "표준재무제표증명(개인/법인)"
     }
    ],
    "role": "link",
-   "namePattern": "^표준재무제표증명$",
+   "namePattern": "^표준재무제표증명\\(개인/법인\\)$",
    "landmark": "hometax.page.root",
    "commits": false,
    "navigationOnly": true,
@@ -345,11 +345,11 @@
     {
      "kind": "role",
      "role": "heading",
-     "name": "표준재무제표증명"
+     "name": "표준재무제표증명(개인/법인) 신청"
     }
    ],
    "role": "heading",
-   "namePattern": "^표준재무제표증명$",
+   "namePattern": "^표준재무제표증명\\(개인/법인\\) 신청$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "frame": "main",
@@ -358,14 +358,13 @@
   "hometax.cert.form.docName": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "textbox",
-     "name": "민원명"
+     "kind": "css",
+     "value": "#mf_wfHeader_spn_third"
     }
    ],
-   "role": "textbox",
-   "namePattern": "^민원명$",
-   "landmark": "hometax.cert.form.root",
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.cert.form.docName",
    "commits": false,
    "fieldKey": "certDoc",
    "inputType": "text",
@@ -375,13 +374,12 @@
   "hometax.cert.form.applicantBizNo": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "textbox",
-     "name": "사업자등록번호"
+     "kind": "css",
+     "value": "#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscBsno"
     }
    ],
-   "role": "textbox",
-   "namePattern": "^사업자등록번호$",
+   "role": "paragraph",
+   "namePattern": "^$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "supplierBizNo",
@@ -392,13 +390,12 @@
   "hometax.cert.form.applicantName": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "textbox",
-     "name": "상호"
+     "kind": "css",
+     "value": "#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscTnm"
     }
    ],
-   "role": "textbox",
-   "namePattern": "^상호$",
+   "role": "paragraph",
+   "namePattern": "^$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "supplierName",
@@ -411,21 +408,16 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_rad_englCvaAplnYn"
-    },
-    {
-     "kind": "role",
-     "role": "radiogroup",
-     "name": "발급유형"
     }
    ],
-   "role": "radiogroup",
-   "namePattern": "^발급유형$",
+   "role": "generic",
+   "namePattern": "^$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "certLanguage",
    "inputType": "radio",
    "allowedConstants": [
-    "한글"
+    "한글증명"
    ],
    "frame": "main",
    "lastVerified": "2026-11-10"
@@ -477,15 +469,10 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn"
-    },
-    {
-     "kind": "role",
-     "role": "radiogroup",
-     "name": "주민등록번호 공개여부"
     }
    ],
-   "role": "radiogroup",
-   "namePattern": "^주민등록번호 공개여부$",
+   "role": "generic",
+   "namePattern": "^$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "rrnDisclosure",
@@ -544,26 +531,62 @@
   "hometax.cert.form.fiscalYear": {
    "candidates": [
     {
+     "kind": "css",
+     "value": "#mf_txppWframe_ibx_txyr"
+    },
+    {
      "kind": "role",
-     "role": "combobox",
-     "name": "귀속연도"
+     "role": "textbox",
+     "name": "과세년도"
     }
    ],
-   "role": "combobox",
-   "namePattern": "^귀속연도$",
+   "role": "textbox",
+   "namePattern": "^과세년도$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "fiscalYear",
+   "inputType": "text",
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.cert.form.openDate": {
+   "candidates": [
+    {
+     "kind": "css",
+     "value": "#mf_txppWframe_selectbox1"
+    },
+    {
+     "kind": "role",
+     "role": "combobox",
+     "name": "개업일자"
+    }
+   ],
+   "role": "combobox",
+   "namePattern": "^개업일자$",
+   "landmark": "hometax.cert.form.root",
+   "commits": false,
+   "fieldKey": "_ignore",
    "inputType": "select",
+   "allowedConstants": [
+    "*only"
+   ],
+   "reviewNote": {
+    "by": "cert-docs",
+    "reason": "개업일자: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)"
+   },
    "frame": "main",
    "lastVerified": "2026-11-10"
   },
   "hometax.cert.form.issueButton": {
    "candidates": [
     {
+     "kind": "css",
+     "value": "#mf_txppWframe_btn_wrtCmpl"
+    },
+    {
      "kind": "role",
      "role": "button",
-     "name": "신청하기"
+     "name": "작성완료"
     }
    ],
    "expect": {
@@ -571,7 +594,7 @@
     "enabled": true
    },
    "role": "button",
-   "namePattern": "^신청하기$",
+   "namePattern": "^작성완료$",
    "landmark": "hometax.cert.form.root",
    "commits": true,
    "commitEffect": "issue_document",

@@ -20,9 +20,9 @@
   "certLanguage": {
    "type": "enum",
    "values": [
-    "한글"
+    "한글증명"
    ],
-   "default": "한글"
+   "default": "한글증명"
   },
   "purpose": {
    "type": "enum",
