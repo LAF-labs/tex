@@ -7,6 +7,7 @@ import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import type { Page } from 'playwright-core';
+import { CardSecretPort } from '../driver/card-secret.ts';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
@@ -566,6 +567,25 @@ export class IrRun {
         ...(i.secretEvent ? { event: i.secretEvent } : {}),
       })
       : null;
+    // 보안카드 서명 창(대표 지시 2026-11-14): 금고가 요청 칸을 읽고 친다. 엔진은 창을 찾고 [확인하기]와 끝 알림만 본다.
+    const cardPort = sv
+      ? new CardSecretPort({
+        vault: sv.vault, targetId: sv.targetId, page, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal, dict,
+        // 보안카드 창도 실행 탭과 같은 GuardedActuator 규칙(무장 판정·R-A1·정책)으로 누른다
+        actuatorFor: (w) => {
+          const r = new PlaywrightPageReader(w);
+          const d = new PlaywrightActuator({ page: w, reader: r, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }) });
+          return {
+            reader: r,
+            act: new GuardedActuator({
+              driver: d, reader: r, dict, domains, policy: enforcer,
+              events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+              commitArmed: (k) => this.controller?.commitArmed(k) ?? false, armedConfirm: () => null, fixtureGrant: i.ir.fixtureGrant ?? null,
+            }),
+          };
+        },
+      })
+      : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {
@@ -582,7 +602,8 @@ export class IrRun {
       handoffTimeoutMs: capMs + 60_000,
       signTurnMs: () => Math.min(capMs, lifeLeft()),
       signTurn: {
-        opened: (r) => i.handoff?.({ phase: 'sign', code: 'sign.waiting', stepId: r.stepId }),
+        // 보안카드 차례면 그 까닭(sign.card_*)을 앱에 보인다(틀림·폐기·기록 실패면 다시 등록 안내)
+        opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
@@ -652,6 +673,7 @@ export class IrRun {
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
+        ...(cardPort ? { card: (r: Parameters<CardSecretPort['card']>[0]) => cardPort.card(r) } : {}),
         closed: () => {},
       }),
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),

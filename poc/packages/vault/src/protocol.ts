@@ -26,6 +26,8 @@ export const RPC_BY_PORT: Record<PortKind, readonly string[]> = {
     'browser.launch', 'browser.shutdown',
     // typist.authOk: 인증서 비밀번호를 넣은 뒤 로그인이 확인됐다(그때만 금고가 그 값을 기억한다, 부장 지시 2026-11-13)
     'typist.fill', 'typist.authFailed', 'typist.authOk',
+    // typist.fillCard: 발급 서명 보안카드 창의 두 칸(금고가 요청 칸 번호를 읽고 저장값을 친다, 대표 지시 2026-11-14)
+    'typist.fillCard',
     // popups.configure: 포털 기본 팝업 숨김(패키지 strings popup.*, 대표 지시 2026-11-14). 숨김 CSS·쿠키·닫을 창 주소만 받는다
     'popups.configure',
     'secretWindow.openForHuman', 'secretWindow.requestClose',
@@ -182,7 +184,23 @@ export interface SecretProvideParams {
 export interface SecretStoreParams {
   entries: Array<{ row?: number; field?: PortalField; bytes: Uint8Array }>;
   portalLoginId?: string;
+  /**
+   * 보안카드 결속만: 카드 사진 바이트. 금고가 OS 텍스트 인식으로 칸을 읽는다(entries 없이). 애매한 칸이 있으면 저장하지 않고
+   * `{ pending }`을 돌려준다. 그다음 결속에 `draftId`와 그 칸들의 entries(4자리)를 보내면 합쳐서 한 번에 저장한다.
+   */
+  image?: Uint8Array;
+  draftId?: string;
 }
+
+/** 보안카드 사진 인식 뒤 다시 물을 칸(값 없음, 칸 번호만). draftId는 금고 메모리의 초안(10분). */
+export interface CardScanPending {
+  draftId: string;
+  ask: number[];
+  size: 30 | 35;
+}
+
+/** secret.store 답: 저장했으면 SecretStoreResult, 보안카드 사진에서 애매한 칸이 남았으면 pending. */
+export type SecretStoreReply = SecretStoreResult | { pending: CardScanPending };
 
 /** secret.store 결과. 비밀 값·길이 없음. `portalLoginId`는 인자로 받은 비밀 아닌 아이디를 돌려준 것. */
 export interface SecretStoreResult {
@@ -360,6 +378,22 @@ export interface FillRequest {
    * 읽어 숫자가 하나만 있고 secret.row와 같을 때만 넣는다(D05 §4 2). "앞 2자리" 같은 다른 숫자가 함께 있으면 읽지 못한 것으로 본다.
    */
   rowLabel?: string;
+}
+
+/** typist.fillCard 실패 사유. window_missing: 보안카드 창이 아직 없다. already_used: 이 실행에서 그 칸을 이미 쳤다(틀림 뒤 다시 치지 않는다). */
+export type CardFillReason = 'denied' | 'not_found' | 'window_missing' | 'origin_not_allowed' | 'not_secret_slot' | 'row_mismatch' | 'already_used' | 'secret_missing' | 'vault_locked' | 'credential_suspect' | 'blocked_by_module' | 'secret_window_refused';
+
+/**
+ * typist.fillCard 인자(대표 지시 2026-11-14). 실행 탭(targetId)이 연 새 창 가운데 주소가 window(정규식 원문)에 맞는 것에서,
+ * fields마다 label 글자("[N]번 … 앞/뒤 2자리")를 금고가 읽어 저장된 N번 칸의 앞·뒤 2자리를 element(type=password)에 친다.
+ */
+export interface CardFillRequest {
+  runId: string;
+  targetId: string;
+  window: string;
+  fields: Array<{ element: string; label: string }>;
+  scope: ProfileScope;
+  startGate?: boolean;
 }
 
 /**
@@ -581,7 +615,7 @@ export const DOWNLOAD_ARM_TTL_MS = 60_000;
  */
 export type VaultEventName =
   | 'secret.needed' | 'secret.expired' | 'secret_window.refused' | 'secret_window.leak_suspected'
-  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'download.completed' | 'download.failed'
+  | 'commit.body_compared' | 'vault.state' | 'secret.suspect' | 'secret.stored' | 'download.completed' | 'download.failed'
   | 'screen.frame' | 'screen.paused'
   // 실행 Chrome이 사람 손으로 닫혔다(탭 전부 또는 프로세스, reason tab|chrome). main이 제출 전 실행을 멈춘다.
   | 'browser.closed' | 'browser.launched'

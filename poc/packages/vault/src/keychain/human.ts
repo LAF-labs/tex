@@ -392,8 +392,14 @@ export class HumanSecretVault {
     const idx = await this.index();
     const info = idx.get(slotName(kind, scope));
     if (!info || info.suspect) return false;
+    // 키체인에 저장한 뒤에야 suspect다(첫 저장이 실패하면 메모리에만 남아 재시도가 성공처럼 끝나고, 재시작하면 같은 값을 다시 친다)
     info.suspect = true;
-    await this.saveIndex(idx);
+    try {
+      await this.saveIndex(idx);
+    } catch (e) {
+      info.suspect = false;
+      throw e;
+    }
     this.log.event('vault.credential_suspect', { kind });
     return true;
   }

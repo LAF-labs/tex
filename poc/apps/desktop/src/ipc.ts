@@ -126,6 +126,10 @@ export const SHELL_METHODS = {
   'certMemory.forget': {},
   // 설정에서 인증서 비밀번호 저장(가려진 칸, 금고로만). 값은 로그·상태에 남기지 않는다.
   'certMemory.save': { value: { t: 'string', max: 256, required: true } },
+  // 보안카드 등록(부장 판정 2026-11-14): 금고 직결 등록 창을 연다. 사진·칸 값은 이 길로 오지 않는다(창 → 금고 포트). onboarding이면 저장 뒤 main이 인증을 정한다. 실제 입력 뒤에만.
+  'card.status': {},
+  'card.register': { onboarding: { t: 'boolean' } },
+  'card.forget': {},
   // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14): 값 또는 취소. main이 금고 1회용 포트로만 넘긴다.
   'secret.answer': { reqId: { t: 'string', max: 40, required: true }, value: { t: 'string', max: 256 }, cancel: { t: 'boolean' } },
   // 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기(B4, H-01 2.3.0). 지우기는 실제 입력 뒤에만.

@@ -1,7 +1,8 @@
 import type { EventLog } from '@sax/platform';
 import { HUMAN_SETTLE_MS, SECRET_TTL_MS, SELF_SCAN_TIMEOUT_MS } from '../constants.ts';
 import { scanDir } from '../leak/scanner.ts';
-import { isTypistKind, SECURITY_CARD_ROWS, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
+import { isTypistKind, SECURITY_CARD_ROWS, type CardFillReason, type CardFillRequest, type FillReason, type FillRequest, type OneShotBind, type VaultEventName } from '../protocol.ts';
+import { parseCardAsk } from './card-scan.ts';
 import { hostAllowed, type RelayPolicy } from '../relay/policy.ts';
 import type { Relay, TargetState } from '../relay/relay.ts';
 import { KNOWN_VALUE_MIN_LEN, knownValuePrefixVariants, knownValueVariants } from '../relay/sanitize.ts';
@@ -349,6 +350,88 @@ export class SecretOps {
     this.log.event('secret.used', { kind: req.secret.kind, viaTypist: true, ok });
     this.selfScan(text);
     return ok ? { ok } : { ok, reason };
+  }
+
+  /**
+   * 발급 서명의 보안카드 창(홈택스 UTXPPABA08: 실행 탭이 window.open으로 연 새 창, 대표 지시 2026-11-14).
+   * 금고가 그 창의 요청 글자("[7]번 보안카드번호 앞 2자리")를 자기 세션으로 읽고, 저장된 그 칸 4자리의 앞·뒤 2자리를 칸에 친다.
+   * 엔진은 칸 번호도 값도 모른다(끝났는지와 사유 코드만). 한 실행에서 같은 칸은 한 번만 친다: 틀림 뒤 같은 값으로 다시 치지 않는다(카드 5회 오류 폐기).
+   */
+  async fillCard(req: CardFillRequest): Promise<{ ok: boolean; reason?: CardFillReason }> {
+    const opener = this.relay.exposedTarget(String(req.targetId));
+    if (!opener) return { ok: false, reason: 'not_found' };
+    if (!this.fillTriggerAllowed({ runId: req.runId, startGate: req.startGate } as FillRequest)) return { ok: false, reason: 'denied' };
+    const fields = Array.isArray(req.fields) ? req.fields.filter((f) => typeof f?.element === 'string' && typeof f?.label === 'string' && f.element.length <= ROW_LABEL_MAX && f.label.length <= ROW_LABEL_MAX) : [];
+    if (!fields.length || fields.length !== req.fields.length || fields.length > 3 || typeof req.window !== 'string' || req.window.length > 200) return { ok: false, reason: 'denied' };
+    let re: RegExp;
+    try {
+      re = new RegExp(req.window);
+    } catch {
+      return { ok: false, reason: 'denied' };
+    }
+    const t = [...this.relay.targets.values()].find((x) => x.type === 'page' && x.exposed && !x.revoked && x.openerId === opener.targetId && re.test(x.url));
+    if (!t) return { ok: false, reason: 'window_missing' };
+    if (!hostAllowed(hostOf(t.url), this.policy.secretHosts.security_card ?? [])) return { ok: false, reason: 'origin_not_allowed' };
+    if (t.win || this.opening.has(t.targetId)) return { ok: false, reason: 'denied' };
+    this.opening.add(t.targetId);
+    try {
+      const blocker = await this.openBlocker();
+      if (blocker) return this.refuse(blocker);
+      // 먼저 칸·요청 글자를 모두 읽는다. 하나라도 못 읽으면 아무것도 치지 않는다.
+      const plan: Array<{ objectId: string; backendNodeId: number; frameId: string; row: number; half: 'front' | 'back' }> = [];
+      for (const f of fields) {
+        const el = await this.resolve(t, 'main', f.element).catch(() => null);
+        if (!el) return { ok: false, reason: 'not_found' };
+        const p0 = await this.probe(t, el.objectId);
+        if (!p0 || p0.type !== 'password') return { ok: false, reason: 'not_secret_slot' };
+        const ask = parseCardAsk(await this.readText(t, el.frameId, f.label).catch(() => null));
+        if (!ask) {
+          this.log.event('vault.card_ask_unreadable', {});
+          return { ok: false, reason: 'row_mismatch' };
+        }
+        if (this.usedSlots.has(slotKey(req.runId, 'security_card', ask.row))) return { ok: false, reason: 'already_used' };
+        plan.push({ objectId: el.objectId, backendNodeId: el.backendNodeId, frameId: el.frameId, row: ask.row, half: ask.half });
+      }
+      const values: string[] = [];
+      try {
+        for (const x of plan) {
+          const r = this.opts.stored ? await this.opts.stored('security_card', req.scope, x.row) : ({ ok: false, reason: 'secret_missing' } as const);
+          if (!r.ok) return { ok: false, reason: r.reason === 'vault_locked' || r.reason === 'credential_suspect' ? r.reason : 'secret_missing' };
+          const cell = new TextDecoder().decode(r.bytes);
+          r.bytes.fill(0);
+          if (!/^\d{4}$/.test(cell)) return { ok: false, reason: 'secret_missing' };
+          values.push(x.half === 'front' ? cell.slice(0, 2) : cell.slice(2, 4));
+        }
+        for (const x of plan) this.usedSlots.add(slotKey(req.runId, 'security_card', x.row));
+        let ok = true;
+        for (let i = 0; i < plan.length && ok; i++) {
+          const x = plan[i]!;
+          this.relay.openWindow(t, 'typist', x.frameId, x.backendNodeId);
+          try {
+            ok = (await this.typeInto(t, x.objectId, values[i]!)).ok;
+          } finally {
+            this.relay.deactivateWindow(t);
+          }
+        }
+        this.log.event('secret.used', { kind: 'security_card', viaTypist: true, ok, cells: plan.length });
+        return ok ? { ok } : { ok, reason: 'blocked_by_module' };
+      } finally {
+        values.fill('');
+      }
+    } finally {
+      this.opening.delete(t.targetId);
+    }
+  }
+
+  /** 요소 글자(비밀 아님: 보안카드 요청 칸 번호 글자)를 금고 격리 월드에서 읽는다. */
+  private async readText(t: TargetState, frameId: string, selector: string): Promise<string | null> {
+    const { executionContextId } = await this.relay.send<{ executionContextId: number }>('Page.createIsolatedWorld', { frameId, worldName: '__sax_vault' }, t.vaultSession);
+    const r = await this.relay.send<{ result: { value?: unknown } }>('Runtime.evaluate', {
+      expression: `(() => { const e = document.querySelector(${JSON.stringify(selector)}); return e ? String(e.textContent ?? '') : null; })()`,
+      contextId: executionContextId,
+      returnByValue: true,
+    }, t.vaultSession);
+    return typeof r.result.value === 'string' ? r.result.value : null;
   }
 
   /** 기억한 인증서 비밀번호를 칸에 넣는다(타이피스트와 같은 방식: 한 글자씩, 칸이 바뀌면 멈춤, 끝에 길이 확인). */

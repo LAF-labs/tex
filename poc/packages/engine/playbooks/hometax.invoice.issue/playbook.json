@@ -1,7 +1,7 @@
 {
  "ir": 2,
  "id": "hometax.invoice.issue",
- "version": "2.3.7",
+ "version": "2.3.8",
  "portal": "hometax",
  "profileKinds": [
   "business"
@@ -362,7 +362,7 @@
    "target": "hometax.invoice.form.counterpartRepName",
    "value": "$inputs.counterpart.repName",
    "keyEvents": true,
-   "ifAbsent": "clear"
+   "ifAbsent": "keep"
   },
   {
    "id": "s14b",
@@ -476,6 +476,14 @@
     "receiptType",
     "counterpartRepName",
     "counterpartAddress"
+   ],
+   "optional": [
+    "supplierRepName",
+    "supplierAddress",
+    "supplierBizType",
+    "supplierBizItem",
+    "supplierEmailId",
+    "supplierEmailDomain"
    ]
   },
   {
@@ -557,7 +565,7 @@
       "readbackEquals": {
        "fieldKey": "counterpartRepName",
        "ref": "$inputs.counterpart.repName",
-       "ifAbsent": "empty"
+       "ifAbsent": "skip"
       }
      },
      {
@@ -619,7 +627,9 @@
      "cert": [
       "human:secret"
      ],
-     "security_card": [],
+     "security_card": [
+      "secret_fill:security_card"
+     ],
      "simple_auth": [
       "wait:push"
      ]
@@ -631,6 +641,20 @@
     "certPick": {
      "target": "hometax.invoice.sign.certTable",
      "by": "$profile.certName"
+    },
+    "card": {
+     "window": "card.window",
+     "fields": [
+      {
+       "target": "hometax.invoice.card.front",
+       "rowFrom": "hometax.invoice.card.frontAsk"
+      },
+      {
+       "target": "hometax.invoice.card.back",
+       "rowFrom": "hometax.invoice.card.backAsk"
+      }
+     ],
+     "confirmTarget": "hometax.invoice.card.confirm"
     }
    },
    "onFail": {

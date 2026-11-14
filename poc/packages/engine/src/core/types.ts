@@ -29,8 +29,11 @@ export type Cond =
   | { artifact: string }
   /** readback 값 산술(D02 §8 s19d): parts의 합 = total. 둘 다 readback fieldKey이고 화면을 다시 읽지 않는다(IR rev v1.3.2). */
   | { sumEquals: { parts: string[]; total: string } }
-  /** ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류. */
-  | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' } }
+  /**
+   * ifAbsent 'empty'(IR rev v1.3.3): 선택 입력이 비었으면 되읽은 값도 비어야 참(fill ifAbsent:'clear'의 짝). 없으면 참조가 비면 오류.
+   * 'skip'(IR rev v1.3.8): 선택 입력이 비었으면 대조하지 않는다(참, fill ifAbsent:'keep'의 짝: 포털이 채운 값을 둔다).
+   */
+  | { readbackEquals: { fieldKey: string; ref: string; ifAbsent?: 'empty' | 'skip' } }
   /** 되읽은 값이 비었는가(IR rev v1.3.3). 플레이북에 그 입력이 없을 때 칸이 비었음을 확인한다(V-03m). */
   | { readbackEmpty: string }
   | { fieldsFilled: { fields: string[] } }
@@ -81,6 +84,12 @@ export interface SignFlow {
   doneTarget?: string;
   /** IR rev v1.3.6: 서명 화면이 뜬 뒤 방식 동작 전에 고르는 목록 항목(rows 항목, 인증서 창). 행이 하나면 그것, 여럿이면 by 값과 이름 칸이 같은 행. 못 고르면 서명 차례(사람). */
   certPick?: { target: string; by: string };
+  /**
+   * IR rev v1.3.8(대표 지시 2026-11-14): 보안카드 서명 창. 방식 선택 뒤 실행 탭이 새 창(window: strings 키, 주소 정규식)을 연다.
+   * fields마다 target(type=password 칸)과 rowFrom(요청 글자 "[N]번 … 앞/뒤 2자리")을 금고가 읽고 친다. 그 창의 confirmTarget(commits:true)을
+   * 엔진이 누르고, 창의 알림 글(strings card.ok·card.wrong·card.locked)로 끝을 판정한다. secret_fill:security_card가 이것을 쓴다.
+   */
+  card?: { window: string; fields: Array<{ target: string; rowFrom: string }>; confirmTarget: string };
   maxWaitMs: number;
 }
 
@@ -96,7 +105,8 @@ interface StepBase {
 
 export type GotoStep = StepBase & { type: 'goto'; url: string };
 export type ClickStep = StepBase & { type: 'click'; target: string };
-export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' };
+/** ifAbsent 'keep'(IR rev v1.3.8): 선택 입력이 비었으면 칸을 건드리지 않는다(포털이 채운 값, 예: 등록번호 [확인] 뒤 대표자 성명). */
+export type FillStep = StepBase & { type: 'fill'; target: string; value: string; keyEvents?: boolean; ifAbsent?: 'fail' | 'clear' | 'keep' };
 export type SelectStep = StepBase & { type: 'select'; target: string; option: string };
 export type PressStep = StepBase & { type: 'press'; key: 'Enter' | 'Tab' | 'Escape' | 'ArrowDown' | 'ArrowUp'; target?: string };
 /**
@@ -116,12 +126,13 @@ export type AssertStep = StepBase & { type: 'assert'; cond: Cond };
 export type ExtractStep = StepBase & { type: 'extract'; name: string; from: From; readback?: boolean };
 export type DecideStep = StepBase & { type: 'decide'; bundle: string; scope: string; on: Record<string, OutcomeTarget> };
 export type CheckpointStep = StepBase & { type: 'checkpoint'; name: string; expect: Cond; url?: string; sessionRequired?: boolean; reentry?: 'reuse' | 'reload' };
-export type ReadbackStep = StepBase & { type: 'readback'; fields: string[] };
+/** optional(IR rev v1.3.8): fields 뒤에 되읽되 못 읽으면 $readback에 넣지 않고 넘어간다(실패 없음, 대조 없음). */
+export type ReadbackStep = StepBase & { type: 'readback'; fields: string[]; optional?: string[] };
 export type GateStep = StepBase & { type: 'gate'; card: string; authorizes: string[]; waitMs?: number };
 export type HumanStep = StepBase & { type: 'human'; kind: 'captcha' | 'otp' | 'secret' | 'manual'; prompt: string; region?: string; target?: string; inputSpec?: { pattern?: string; maxLength?: number }; ttlMs: number };
 export type HumanCommitStep = StepBase & { type: 'human_commit'; prompt: string; intent: '$intent.id'; verify: string; followUpOf?: string };
 export type SecretFillStep = StepBase & { type: 'secret_fill'; target: string; secret: SecretKind; rowFrom?: string };
-export type SignStep = StepBase & { type: 'sign'; method: SignMethod | '$profile.signMethod'; then?: Array<'human:secret' | 'secret_fill:security_card'> };
+export type SignStep = StepBase & { type: 'sign'; method: SignMethod | '$profile.signMethod'; then?: Array<'human:secret' | 'secret_fill:security_card'>; card?: SignFlow['card'] };
 export type SubmitStep = StepBase & { type: 'submit'; target: string; intent: '$intent.id'; verify: string; expectConfirm?: string; signFlow?: SignFlow };
 export type VerifyStep = StepBase & { type: 'verify'; lookup: Lookup; failSignals?: FailSignal[]; on: { committed: OutcomeTarget; not_committed: OutcomeTarget; unknown: OutcomeTarget } };
 export type CaptureStep = StepBase & { type: 'capture'; name: string; from: From };
