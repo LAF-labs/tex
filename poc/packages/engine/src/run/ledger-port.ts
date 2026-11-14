@@ -32,6 +32,8 @@ export interface LedgerPortInput {
   pageUrl(): string;
   /** verify 스텝 → 그 판정의 verify_ref(VerifyBook.ref). */
   verifyRef(verifyStepId: string): string | null;
+  /** verify 스텝 → 게이트 전 기준선 B₀(VerifyBook.baseline). armed 행에 함께 적는다(run.reverify가 뺀다). 없으면 null로 적는다. */
+  baseline?(verifyStepId: string): ReadonlySet<string> | undefined;
   journal(type: string, payload?: Record<string, string | number | boolean>): void;
 }
 
@@ -51,6 +53,7 @@ export class LedgerCommitPort implements CommitPort {
    * 둘 이상이면(검증기를 거치지 않은 IR) 추측하지 않는다: 판정을 붙이지 않고 그 X들의 열린 행을 in_doubt로 닫는다(팀장 결정 2026-11-06).
    */
   private readonly xsOfVerify = new Map<string, string[]>();
+  private readonly verifyOf = new Map<string, string>();
   /** X → 발급 사실이 실제로 남은 원장 단계(X가 이미 not_committed였으면 `<X>.manual`). 그 뒤 verify 판정은 그 행에 붙인다. */
   private readonly ledgerStepOf = new Map<string, string>();
 
@@ -58,13 +61,19 @@ export class LedgerCommitPort implements CommitPort {
     this.i = i;
     for (const [id, { step }] of flatten(i.ir.steps).info) {
       if (step.type === 'submit') this.targetOf.set(id, step.target);
-      if (step.type === 'submit' || step.type === 'send_email') this.xsOfVerify.set(step.verify, [...(this.xsOfVerify.get(step.verify) ?? []), id]);
+      if (step.type === 'submit' || step.type === 'send_email') {
+        this.xsOfVerify.set(step.verify, [...(this.xsOfVerify.get(step.verify) ?? []), id]);
+        this.verifyOf.set(id, step.verify);
+      }
     }
   }
 
   arm(a: { stepId: string; reqId: string; actionHash: string }): ActResult {
-    const row = this.i.row(a);
-    if (!row || row.intentId !== this.i.intentId || row.stepId !== a.stepId || row.actionHash !== a.actionHash) return { ok: false, code: 'ledger.row_missing' };
+    const draft = this.i.row(a);
+    if (!draft || draft.intentId !== this.i.intentId || draft.stepId !== a.stepId || draft.actionHash !== a.actionHash) return { ok: false, code: 'ledger.row_missing' };
+    const v = this.verifyOf.get(a.stepId);
+    const b0 = v ? this.i.baseline?.(v) : undefined;
+    const row: ArmRow = { ...draft, baselineRefs: b0 ? [...b0] : null };
     try {
       this.i.db.transaction(() => {
         const c = this.i.inTx?.() ?? { ok: true };

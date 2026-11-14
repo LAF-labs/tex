@@ -894,9 +894,10 @@ export class RunService extends EventEmitter {
   /**
    * run.reverify: 재시작 뒤 in_doubt 행을 발급목록 조회로 확정한다(run/reverify.ts). 실행 중이거나 이미 조회 중이면 busy.
    * 이미 열린 실행 탭만 쓴다(브라우저를 띄우지 않는다). 요청률은 비가역이 아닌 실행처럼 입장한다(쿨다운·하루 실행 수).
+   * 허가(kill·운영 수준·정책 만료)는 run.start와 같다. exclude는 방금 끝난 실행이다(조회하지 않는다).
    */
-  async reverify(): Promise<ReverifyResult> {
-    const none = { checked: 0, committed: 0, notCommitted: 0, unknown: 0 };
+  async reverify(exclude: string | null = null): Promise<ReverifyResult> {
+    const none = { checked: 0, committed: 0, unknown: 0, skipped: 0 };
     if (this.active || this.reverifying) return { ok: false, code: 'busy', ...none };
     if (this.engine !== 'ir') return { ok: false, code: 'reverify.unsupported', ...none };
     const page = this.d.currentPage?.() ?? null;
@@ -907,11 +908,14 @@ export class RunService extends EventEmitter {
     try {
       const ir = this.packageForRun(false);
       const pm = this.d.permit?.(ir.pkg.files.manifest.id);
-      if (pm && !pm.ok && pm.code === 'policy.playbook_killed') return { ok: false, code: pm.code, ...none };
+      if (pm && !pm.ok) {
+        this.d.log.event('run.policy_refused', { kind: this.d.portal.kind, code: pm.code });
+        return { ok: false, code: pm.code, ...none };
+      }
       const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
       return await reverifyInDoubt({
         page, ir, portal: runPortalConfig(this.d.portal, startPolicy), ledger: this.ledger, journal: this.journal, rate: this.rate,
-        signals: this.runSignals(() => false, startPolicy), profileId: profile.id, log: this.d.log, now: this.rate.clock().now,
+        signals: this.runSignals(() => false, startPolicy), profileId: profile.id, log: this.d.log, now: this.rate.clock().now, exclude,
         inputsOf: (runId) => this.d.runInputs?.(runId) ?? null,
         counterpartyBizNo: (id) => this.d.data.counterparties.get(id)?.bizNo ?? null,
         bizNoHmac: (bizNo) => this.hmac('bizno', bizNo),

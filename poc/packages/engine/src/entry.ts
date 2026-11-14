@@ -247,7 +247,7 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
   if (method === 'run.reverify') {
     if (!runs) throw new Error('runs_not_ready');
-    return runs.reverify();
+    return runs.reverify(typeof params.exclude === 'string' ? params.exclude : null);
   }
   if (method === 'run.resume' || method === 'run.manualDone') {
     if (!runs) throw new Error('runs_not_ready');
