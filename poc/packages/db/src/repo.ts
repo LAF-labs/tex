@@ -191,7 +191,8 @@ export class ProfileRepo {
       biz_item: input.bizItem ?? null,
       address: input.address ?? null,
       email: input.email ?? null,
-      sign_method: input.signMethod ?? null,
+      // 고르지 않았으면 공동인증서(대표 지시 2026-11-14: 서비스 기본 발급 인증). 간편인증은 사용자가 고를 때만.
+      sign_method: input.signMethod ?? existing?.signMethod ?? 'cert',
       keep_session: input.keepSession ? 1 : 0,
       portal_login_id: input.portalLoginId === undefined ? (existing?.portalLoginId ?? null) : input.portalLoginId === null ? null : normalizeLoginId(input.portalLoginId),
       created_at: existing?.createdAt ?? t,

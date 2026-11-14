@@ -20,10 +20,10 @@ const Q = {
 
 /** O-03 수단마다 발급할 때 사람이 하는 일 한 줄(H-01 2.2.0 서명 단계, shell-runs.ts SIGN_BY_AUTH). */
 const AUTH = [
+  ['cert', '공동인증서', '홈택스 로그인에 쓰는 그 인증서예요. 비밀번호를 처음 한 번 넣으면 다음부터는 앱이 넣어요.'],
   ['card', '보안카드', '발급할 때마다 보안카드 번호를 직접 넣어요.'],
-  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
-  ['cert', '공동인증서', '첫 발급 때 금고 창에서 비밀번호를 한 번 넣으면, 다음부터는 앱이 넣어요.'],
   ['fincert', '금융인증서', '발급할 때마다 6자리 인증서 비밀번호를 직접 넣어요.'],
+  ['simple', '사업자 간편인증', '발급할 때마다 휴대폰(카카오뱅크·IBK·KB 앱)에서 승인해요.'],
 ];
 const AUTH_LABEL = Object.fromEntries(AUTH.map(([k, l]) => [k, l]));
 
@@ -251,7 +251,7 @@ function bizCard(o, u, reply, act) {
 
 /**
  * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 먼저 보이고 하나 고르면 끝(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
- * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·간편인증·금융인증서)은 [다른 방법]에 접어 둔다.
+ * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·금융인증서·간편인증)은 [다른 방법]에 접어 둔다. 간편인증은 맨 뒤다(대표 지시 2026-11-14).
  */
 function authCard(o, u, reply, act) {
   const today = new Date();
@@ -299,6 +299,7 @@ function authCard(o, u, reply, act) {
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
+    p('홈택스 로그인에 이미 쓰는 공동인증서로 발급 서명도 해요. 휴대폰 승인이 필요 없어요.', true),
     sec,
     certs,
     h(
