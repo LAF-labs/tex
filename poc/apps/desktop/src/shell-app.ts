@@ -16,6 +16,7 @@ import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
+import { CERT_DOCS, certInputsFor, type CertDocDef } from './cert-docs.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -543,7 +544,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       today,
       reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
       issued: issuedInvoices(),
-      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
+      // 판의 실행 칸은 "발급할 세금계산서"다. 민원증명 실행은 넣지 않는다(결과는 문서함 증명서로 간다).
+      runs: runs.list().flatMap((r) => (r.cert ? [] : [{ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true }])),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       // 세무사 꾸러미(D-05)·사업용 카드(D-04)는 아직 목업 어댑터다. 제품은 칸을 두지 않는다.
       bundle: sample ? sample.bundle(today) : null,
@@ -604,7 +606,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('doc', (doc) => {
     store.docs.unshift(doc);
     const run = runs.get(doc.id.slice(2));
-    if (seed && run) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
+    if (seed && run && !run.cert) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
     send({ type: 'doc', doc });
     pushBoard();
     void refresh().catch(() => {});
@@ -921,7 +923,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const manyShown = !!offer && actionText(req) === ACTION_TEXT;
     if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
-    void bar.open(req, gr?.auth, offer).then(async (o) => {
+    void bar.open(req, gr?.auth, offer, runs.get(runId)?.cert?.name).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
         // 바가 묶음 글자로 그린 카드의 클릭일 때만 묶음 승인이다(중복 경고 카드 등은 이 건만).
@@ -1258,7 +1260,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const autoPrepare = (id: string) => {
     const r = runs.get(id);
-    if (!r || r.status !== 'draft' || !String(r.item ?? '').trim()) return;
+    if (!r || r.status !== 'draft' || (!r.cert && !String(r.item ?? '').trim())) return;
     setImmediate(() => {
       log.event('main.prepare_auto', {});
       prepareNow(id).catch((e: Error) => log.event('main.prepare_auto_failed', { code: e.message.slice(0, 60) }));
@@ -1383,10 +1385,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const setupGate = (parsed: Parsed) => {
     if (profile !== 'business') return null;
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
-    // Chrome이 없으면 세금계산서 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
-    // 증명서는 이 빌드가 떼지 못하므로(interpret가 "곧 할 수 있어요") 할 수 없는 일 때문에 설치를 시키지 않는다(#291, 부장 판정 2026-11-12).
-    const needsChrome = parsed.intent !== 'cert' && !chromeReady();
-    const needsSecurity = parsed.intent !== 'cert' && securityMissing();
+    // Chrome이 없으면 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
+    // 민원증명도 같은 홈택스 로그인(전용 Chrome·공동인증서 프로그램)을 쓴다. 떼지 않는 증명서(cert 없음)는 설치를 시키지 않는다.
+    const needsHometax = parsed.intent !== 'cert' || !!parsed.cert;
+    const needsChrome = needsHometax && !chromeReady();
+    const needsSecurity = needsHometax && securityMissing();
     const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : []), ...(needsSecurity ? (['security'] as const) : [])];
     if (!missing.length) return null;
     runs.pending.asked = null;
@@ -1590,7 +1593,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return;
     }
     // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증·보안카드). 승인 자체는 앱의 승인 바에서 한다.
-    const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && r.steps[5]?.state === 'now' ? 'sign' : null;
+    const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && !r.cert && r.steps[5]?.state === 'now' ? 'sign' : null;
     const want = turn ?? 'back';
     if (chromeSpot.get(r.id) === want) return;
     // 시작 때 한 번만 뒤에 둔다. 사람 차례가 끝났으면 'away'로 바꿔 다음 차례(같은 단계의 다른 핸드오프)에도 패널을 크게 한다
@@ -1665,7 +1668,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       docs: await listDocs(),
       // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
       timeline: sample ? sample.timeline() : [],
-      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
+      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.cert || q.soon),
       sample: !!sample,
       platform: process.platform,
       loginRequired,
@@ -1695,6 +1698,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
+      // 민원증명(cert-docs 표의 이름)은 이 PC의 규칙으로 바로 고른다(모델·게이트웨이를 거치지 않는다). 대화 에이전트 도구에는 증명서가 없다.
+      // 기본 용도·제출처로 초안을 만들고, 사용자 전송이면 바로 시작한다(finishReply → autoPrepare). 사람이 누르는 것은 승인 카드의 [승인]뿐이다.
+      if (profile === 'business' && local.cert) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
       // 세무사 꾸러미 요청(엔진 L0 규칙 bundle.monthly와 같은 꼴)은 모델 없이 꾸러미 카드로 답한다. 그 달 꾸러미를 바로 만든다(로컬 파일만, 보내는 곳 없음).
       const packFor = profile === 'business' ? packAsk(text, kstToday(Date.now())) : null;
       if (packFor) return { kind: 'pack', pack: await pack.make(packFor), via: 'l0', note: null, sent: [] };
@@ -2254,6 +2260,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       void runs.stop(r.id).catch((e: Error) => log.event('main.rehearsal_stop_failed', { error: e.message.slice(0, 60) }));
     }
   };
+  /**
+   * 도구 > 민원증명 예행(발급 안 함): 기본 용도·제출처로 민원증명 초안을 만들어 예행으로 시작한다(run.startCert {rehearsal: true}).
+   * 엔진이 승인 카드 자리(s20)에서 스스로 멈추고 발급(s21)은 없다. 세금계산서 예행과 같이 실행 카드·[중지]·준비 상한을 그대로 쓴다.
+   */
+  const certRehearse = async (doc: CertDocDef) => {
+    try {
+      if (runs.anyActive()) throw new Error('busy');
+      const d = runs.createCertDraft(doc.code, certInputsFor(doc, '', kstToday(Date.now())), { rehearsal: true });
+      pushBoard();
+      log.event('main.rehearsal_started', { runId: d.id, playbook: doc.playbookId });
+      await prepareNow(d.id);
+    } catch (e) {
+      log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
+    }
+  };
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -2263,6 +2284,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         label: '도구',
         submenu: [
           { id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() },
+          { label: '민원증명 예행(발급 안 함)', submenu: CERT_DOCS.map((d) => ({ id: `certRehearsal.${d.code}`, label: d.label, click: () => void certRehearse(d) })) },
           { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
         ],
       },

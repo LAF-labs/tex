@@ -23,9 +23,9 @@ export type Importer = (params: Record<string, unknown>, engine: EngineCall) => 
 
 /** 엔진 보관함 항목 → 셸 서류. 보관함 서류는 vault 칸(만료일 출처·확인 필요·후보)을 가진다. */
 export function toShellDoc(v: DocumentView): Doc {
-  // 앱이 실행에서 보관한 발급 결과(save_pdf, tax_invoice): 확인할 칸이 없어 vault 칸을 두지 않는다(문서함은 앱 발급 서류로 그린다).
-  if (v.docType === 'tax_invoice')
-    return { id: v.id, name: v.displayName, kind: '세금계산서', docName: v.displayName, profile: 'business', issuedOn: v.issuedOn, expiresOn: null, source: '앱이 발급', ...(v.runId ? { runId: v.runId } : {}) };
+  // 앱이 실행에서 보관한 발급 결과(save_pdf: 세금계산서·민원증명 4종): 확인할 칸이 없어 vault 칸을 두지 않는다(문서함은 앱 발급 서류로 그린다).
+  if (v.runId)
+    return { id: v.id, name: v.displayName, kind: v.docType === 'tax_invoice' ? '세금계산서' : '증명서', docName: v.displayName, profile: 'business', issuedOn: v.issuedOn, expiresOn: v.expiresOn, source: '앱이 발급', runId: v.runId };
   return {
     id: v.id,
     name: v.displayName,
@@ -41,7 +41,8 @@ export function toShellDoc(v: DocumentView): Doc {
       needsUser: v.needsUser,
       reasons: v.reasons,
       suggested: v.suggested,
-      docType: v.docType,
+      // 엔진 값을 그대로 넘긴다(확인 화면의 seen 대조). 앱 발급 서류는 위에서 run_id로 갈렸다.
+      docType: v.docType as NonNullable<Doc['vault']>['docType'],
       textSource: v.textSource,
       docNo: v.docNo,
       issuer: v.issuer,

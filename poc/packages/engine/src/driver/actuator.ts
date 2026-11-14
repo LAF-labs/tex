@@ -9,6 +9,8 @@ import type { PressStep } from '../core/types.ts';
 import type { PlaywrightPageReader } from './reader.ts';
 
 const OK: ActResult = { ok: true };
+/** select 상수: 자리표시를 뺀 선택지가 하나뿐이면 그것을 고른다(타깃 allowedConstants에 있어야 한다, V-21). */
+export const SELECT_ONLY = '*only';
 /** 키 입력 간격(ms). 고정값: 사람 흉내(무작위 지연)가 아니라 포털 이벤트 처리 여유다(탐지 회피 아님). */
 export const KEY_INTERVAL_MS = 30;
 
@@ -205,6 +207,31 @@ export class PlaywrightActuator implements Actuator {
     const h = this.i.reader.handle(t.el);
     if (!h) return { ok: false, code: 'step.selector_miss' };
     try {
+      // 라디오 묶음(role radiogroup, 홈택스 민원증명 발급유형·주민번호 공개 여부): 이름이 option인 라디오가 정확히 하나일 때 그것을 고른다.
+      // 역할 없는 div 안 라디오(홈택스 실화면 run-3f242cd5)도 묶음으로 본다
+      const group = await h.evaluate((el) => el instanceof Element && !(el instanceof HTMLSelectElement) && (el.getAttribute('role') === 'radiogroup' || !!el.querySelector('input[type="radio"]')));
+      if (group) {
+        const ix = await h.evaluate((el, label) => {
+          const name = (r: HTMLInputElement) => (r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+          const hit = [...(el as Element).querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r, i) => (name(r) === label ? i : -1)).filter((i) => i >= 0);
+          return hit.length === 1 ? hit[0]! : -1;
+        }, option.normalize('NFKC').replace(/\s+/g, ' ').trim());
+        const radio = ix < 0 ? undefined : (await h.$$('input[type="radio"]'))[ix];
+        if (!radio) return { ok: false, code: 'step.selector_miss' };
+        await radio.check({ timeout: this.timeoutMs });
+        return OK;
+      }
+      // SELECT_ONLY: 자리표시("-선택-"·빈 값)를 뺀 선택지가 정확히 하나일 때만 그것(홈택스 발급희망개업일자처럼 화면이 정한 값). 둘 이상이면 사람이 고른다.
+      if (option === SELECT_ONLY) {
+        const ix = await h.evaluate((el) => {
+          if (!(el instanceof HTMLSelectElement)) return -1;
+          const real = [...el.options].map((o, i) => ({ o, i })).filter(({ o }) => o.value !== '' && !/^\s*-?\s*선택\s*-?\s*$/.test(o.label));
+          return real.length === 1 ? real[0]!.i : -1;
+        });
+        if (ix < 0) return { ok: false, code: 'step.selector_miss' };
+        const got = await h.selectOption({ index: ix }, { timeout: this.timeoutMs });
+        return got.length === 1 ? OK : { ok: false, code: 'step.selector_miss' };
+      }
       // 없는 선택지는 Playwright가 생길 때까지 기다린다. 먼저 정확히 하나인지 본다(없으면 바로 selector_miss).
       const one = await h.evaluate((el, label) => el instanceof HTMLSelectElement && [...el.options].filter((o) => o.label === label).length === 1, option);
       if (!one) return { ok: false, code: 'step.selector_miss' };

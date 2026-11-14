@@ -344,6 +344,8 @@ export const PRODUCT_PACKAGES = {
   h08: 'hometax.cert.vat_tax_base',
   h09: 'hometax.cert.financial_statements',
 } as const;
+/** 민원증명 플레이북 id(run.startCert가 받는 것). */
+export const PRODUCT_CERT_IDS: readonly string[] = [PRODUCT_PACKAGES.h03, PRODUCT_PACKAGES.h04, PRODUCT_PACKAGES.h08, PRODUCT_PACKAGES.h09];
 /** RegistrySync packages.ids(제품). */
 export const PRODUCT_PACKAGE_IDS: readonly string[] = Object.values(PRODUCT_PACKAGES);
 

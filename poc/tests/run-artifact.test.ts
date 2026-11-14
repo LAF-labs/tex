@@ -73,7 +73,7 @@ describe('DocumentService.importRunArtifact(실행 산출물)', () => {
     const v = data.documents.list()[0]!;
     assert.throws(() => data.documents.update(v.id, { issuedOn: '2026-01-01' }, { docType: v.docType, issuedOn: v.issuedOn, expiresOn: v.expiresOn }), (e: unknown) => e instanceof ValidationError && e.code === 'app_document');
     const code = (p: Promise<unknown>) => p.then(() => 'ok', (e: ValidationError) => e.code);
-    assert.equal(await code(data.documents.importRunArtifact(PDF, { runId: 'run-2', docType: 'national_tax_cert' })), 'invalid_doc_type');
+    assert.equal(await code(data.documents.importRunArtifact(PDF, { runId: 'run-2', docType: 'other' })), 'invalid_doc_type');
     assert.equal(await code(data.documents.importRunArtifact(new TextEncoder().encode('not a pdf'), { runId: 'run-2', docType: 'tax_invoice' })), 'not_pdf');
     assert.equal(await code(data.documents.importRunArtifact(PDF, { runId: '', docType: 'tax_invoice' })), 'bad_run');
     db.close();

@@ -51,7 +51,7 @@ H-04 패키지(`hometax.cert.taxpayment`·`hometax.cert.issued_list`)의 셀렉�
 - 로그인·비밀: 인증서 비밀번호는 사용자가 전용 Chrome의 인증서 창에 직접 넣는다(`sign` → `human:secret`, 금고 비밀 창 (b), ADR-020 결정 2). 보안카드는 전자(세금)계산서 발급 전용이라 H-04에 없다(02 §5.1).
 - 개인 프로필(02 §10 "개인/사업자")은 v1.0.0에 없다. 신청인 대조가 `$profile.bizNo`라 business만 받는다(V-12). 대표자 개인 로그인 양식에 사업자번호 칸이 없으면(주민번호로 신청) 이 대조와 프로필 종류를 다시 정한다(CAP-4 뒤).
 - 승인 카드는 민원증명 공통 `cert.confirm`이고 요약 칸은 `certDoc`·`certPurpose`·`certSubmitTo`·`rrnDisclosure`다(팀장 결정 2026-11-09). 요약 표(`APPROVAL_SUMMARIES`)·`FIELD_KEYS` 항목은 데이터 세션 PR이 넣는다.
-- 조회 `hometax.cert.issued_list`는 IR 조회 패키지다(H-01 조회와 같은 방식, 서명 대상). 입력 `key`는 민원명이고, 즉시발급 3종도 같은 패키지를 쓴다.
+- 조회 `hometax.cert.issued_list`는 IR 조회 패키지다(H-01 조회와 같은 방식, 서명 대상). 입력 `certDoc`은 민원명이고(verify match 키와 같은 이름, IR 조회 관례), 건수 `hometax.certlookup.count`·카드 목록 이름·값 쌍(strings `lookup.table.labelCss`·`valueCss`)은 캡처 전 자리표시이고, 즉시발급 3종도 같은 패키지를 쓴다.
 - 엔진: 게이트 카드는 GATE_CARDS(`cert.confirm` 4칸), 제품이 받는 id는 `registry-sync.ts` PRODUCT_PACKAGE_IDS(H-01·H-03·H-04·H-08·H-09, 조회는 lookupsUsed로 따라온다). RunService(세금계산서 입력·원장 재료)는 아직 `invoice.confirm`만 게이트를 연다(민원증명 실행 입력·원장 재료는 후속).
 
 - 2.2.1(2026-11-13): 실제 0.1.10 실행이 s12 등록번호 칸에서 R-A1 동일성 불일치로 사람 차례가 됐다. 실화면 접근성 이름은 빈 칸이다(reports/raw/poc-3-mac-landmarks.json). title에서 가져온 정확 일치 이름 패턴 3개(등록번호·[확인]·1행 품목)를 빈 이름도 통과하게 풀고 label·role 후보를 더했다. 등록번호 입력 칸에 fieldKey counterpartBizNo를 주어 하이픈을 정규화하고, 미리보기 글은 readbackOf로 바꿨다. recovery.default는 {retry 2}이고, 게이트 뒤·제출·verify·save_pdf·로그인 대기 s5는 retry 0이다. 가짜 홈택스는 실화면처럼 그 칸들의 title을 뺐다.

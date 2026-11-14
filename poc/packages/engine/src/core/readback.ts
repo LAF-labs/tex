@@ -11,8 +11,11 @@ import { isSecretEntry, type SelectorDict, type SelectorEntry } from './types.ts
 const NUMERIC_KEYS = new Set(['supplyAmount', 'taxAmount', 'totalAmount', 'itemCount']);
 const BIZNO_KEYS = new Set(['supplierBizNo', 'counterpartBizNo']);
 const DATE_KEY = /Date$/;
-/** DOM value를 읽는 역할. 그 밖의 역할(표시 요소·라디오 등)은 보이는 텍스트를 읽는다. */
-const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox']);
+/**
+ * DOM value를 읽는 역할(드라이버 value: select는 고른 선택지의 이름, radiogroup은 고른 라디오의 이름). 그 밖의 역할(표시 요소·라디오 하나 등)은 보이는 텍스트를 읽는다.
+ * radiogroup(민원증명 발급유형·주민번호 공개 여부, 홈택스 라디오 묶음)의 보이는 텍스트는 선택지 전부라 값이 아니다.
+ */
+const INPUT_ROLES = new Set(['textbox', 'spinbutton', 'combobox', 'searchbox', 'radiogroup']);
 
 type Normalizable = Pick<SelectorEntry, 'fieldKey' | 'inputType'>;
 
@@ -56,7 +59,8 @@ export function displayEntryKeys(dict: SelectorDict, fieldKey: string): string[]
 
 /** 요소의 화면 값: 입력 역할이면 DOM value, 아니면 보이는 텍스트. */
 export async function domValue(page: PageReader, entry: SelectorEntry, el: ElementRef): Promise<string> {
-  return INPUT_ROLES.has(entry.role) ? page.value(el) : page.text(el);
+  // 역할 없는 라디오 묶음(홈택스 민원증명 발급유형: div 안 라디오, inputType radio)도 고른 라디오 이름을 읽는다(2026-11-14 실화면 run-3f242cd5)
+  return INPUT_ROLES.has(entry.role) || entry.inputType === 'radio' ? page.value(el) : page.text(el);
 }
 
 export type FieldRead = { ok: true; value: string } | { ok: false; code: string };

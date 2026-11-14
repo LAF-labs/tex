@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { BUNDLE_ALLOWLIST } from '@sax/model';
 import { canonicalWithout, sha256Hex } from './core/canon.ts';
-import { loadPackage } from './core/loader.ts';
+import { loadPackage, type LoadedPackage } from './core/loader.ts';
 import type { TrustRoots } from './core/registry.ts';
 import type { Manifest, PackageFiles, SelectorDict } from './core/types.ts';
 import { appBundleOutcomes } from './registry-sync.ts';
@@ -95,40 +95,79 @@ function weakerThanSigned(local: PackageFiles, signed: PackageFiles): string | n
  * 조회 하위 패키지는 서명 설치본을 쓰고(판이 같아야 한다), 서명 설치본보다 약하면(weakerThanSigned) 받지 않는다.
  * RunService는 예행(StartParams.rehearsal)일 때만 이것을 부른다. 결과 IrPackage.local이 있으면 그 실행은 금고 비밀번호를 첫 입력 스텝 전에만 쓴다(IrRun).
  */
-export function rehearsalIrSource(registry: { loadInstalled(id: string): InstalledPackage }, o: InstalledIrSourceOptions & { dir: string }): () => IrSourceResult | null {
+export function rehearsalIrSource(
+  registry: { loadInstalled(id: string): InstalledPackage },
+  o: InstalledIrSourceOptions & { dir: string; unsignedBaseline?: string },
+): () => IrSourceResult | null {
   return () => {
-    const dir = path.join(o.dir, o.id);
-    if (!fs.existsSync(path.join(dir, 'manifest.json'))) return null;
+    const files = readLocal(o.dir, o.id);
+    if (files === null) return null;
+    if (files === 'unreadable') return { ok: false, code: 'rehearsal.package_unreadable' };
     const base = registry.loadInstalled(o.id);
-    if (!base.ok) return { ok: false, code: 'rehearsal.no_signed_baseline' };
-    let files: PackageFiles;
-    try {
-      const strings = fs.existsSync(path.join(dir, 'strings.ko.json')) ? 'strings.ko.json' : 'strings.json';
-      files = { manifest: readJson(path.join(dir, 'manifest.json')) as Manifest, playbook: readJson(path.join(dir, 'playbook.json')) as never, selectors: readJson(path.join(dir, 'selectors.json')) as never, strings: readJson(path.join(dir, strings)) as never };
-    } catch {
-      return { ok: false, code: 'rehearsal.package_unreadable' };
+    let lookups: ReadonlyMap<string, LoadedPackage>;
+    if (base.ok) {
+      const weaker = files.manifest?.domains && files.selectors?.entries ? weakerThanSigned(files, base.pkg.files) : 'shape';
+      if (weaker) return { ok: false, code: `rehearsal.weaker_than_signed.${weaker}` };
+      lookups = base.lookups;
+    } else {
+      // 아직 게시한 적 없는 패키지(민원증명): 같은 포털 서명 설치본(unsignedBaseline, H-01)의 도메인 안에서만 받는다. 예행은 승인 카드 자리에서 멈추므로 비가역 스텝까지 가지 않는다.
+      const anchor = o.unsignedBaseline ? registry.loadInstalled(o.unsignedBaseline) : null;
+      if (!anchor?.ok) return { ok: false, code: 'rehearsal.no_signed_baseline' };
+      if (!files.manifest?.domains || !files.selectors?.entries) return { ok: false, code: 'rehearsal.weaker_than_signed.shape' };
+      if (files.manifest.portal !== anchor.pkg.files.manifest.portal) return { ok: false, code: 'rehearsal.weaker_than_signed.id_or_portal' };
+      if (files.manifest.domains.some((d) => !anchor.pkg.files.manifest.domains.includes(d))) return { ok: false, code: 'rehearsal.weaker_than_signed.domains' };
+      const local = new Map<string, LoadedPackage>();
+      for (const l of files.manifest.lookupsUsed) {
+        const lf = readLocal(o.dir, l.id);
+        if (!lf || lf === 'unreadable' || lf.manifest.portal !== files.manifest.portal || lf.manifest.domains.some((d) => !anchor.pkg.files.manifest.domains.includes(d))) return { ok: false, code: 'rehearsal.lookup_mismatch' };
+        const r = loadEphemeral(lf, new Map());
+        if (!r.ok) return { ok: false, code: r.code };
+        local.set(l.id, r.pkg);
+      }
+      lookups = local;
     }
-    const weaker = files.manifest?.domains && files.selectors?.entries ? weakerThanSigned(files, base.pkg.files) : 'shape';
-    if (weaker) return { ok: false, code: `rehearsal.weaker_than_signed.${weaker}` };
-    const lookupDigests: string[] = [];
     for (const l of files.manifest.lookupsUsed) {
-      const got = base.lookups.get(l.id);
+      const got = lookups.get(l.id);
       if (!got || got.files.manifest.version !== l.version) return { ok: false, code: 'rehearsal.lookup_mismatch' };
-      lookupDigests.push(got.manifestDigest);
     }
-    const keys = [0, 1].map((n) => ({ keyId: `rehearsal-${n}`, ...generateKeyPairSync('ed25519') }));
-    const bytes = (x: unknown) => Buffer.from(JSON.stringify(x), 'utf8');
-    const raw = { playbook: bytes(files.playbook), selectors: bytes(files.selectors), strings: bytes(files.strings) };
-    const m: Manifest = { ...files.manifest, contentDigests: { playbook: sha256Hex(raw.playbook), selectors: sha256Hex(raw.selectors), strings: sha256Hex(raw.strings) }, lookupsUsed: files.manifest.lookupsUsed.map((l, i) => ({ ...l, digest: lookupDigests[i]! })) };
-    const signed = canonicalWithout(m, ['signatures']);
-    m.signatures = keys.map((k) => ({ keyId: k.keyId, alg: 'ed25519' as const, sig: edSign(null, signed, k.privateKey).toString('base64url') }));
-    const only = (ks: typeof keys): ReadonlyMap<string, KeyObject> => new Map(ks.map((k) => [k.keyId, k.publicKey]));
-    const roots: TrustRoots = { keyEpoch: 0, rootKeys: new Map(), packageKeys: only(keys), policyKeys: new Map(), emergencyKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey }, timestampKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey } };
-    const r = loadPackage({ manifest: bytes(m), ...raw }, { roots, revoked: new Set(), bundleAllowlist: BUNDLE_ALLOWLIST, bundles: appBundleOutcomes(), installedLookups: base.lookups, storedVersion: null, installedDigest: null, hold: false, policyFresh: true, now: Date.now() });
+    const r = loadEphemeral(files, lookups);
     if (!r.ok) return { ok: false, code: r.code };
     return {
       ok: true,
-      ir: { pkg: r.pkg, lookupPackages: base.lookups, local: { digest: r.pkg.manifestDigest }, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}), ...(o.locate ? { locate: o.locate } : {}) },
+      ir: { pkg: r.pkg, lookupPackages: lookups, local: { digest: r.pkg.manifestDigest }, ...(o.judge ? { judge: o.judge } : {}), ...(o.pdf ? { pdf: o.pdf } : {}), ...(o.runToken ? { runToken: o.runToken } : {}), ...(o.runTokenFor ? { runTokenFor: o.runTokenFor } : {}), ...(o.secret ? { secret: o.secret } : {}), ...(o.locate ? { locate: o.locate } : {}) },
     };
   };
+}
+
+/** <dir>/<id>/의 패키지 파일. 없으면 null, 읽지 못하면 'unreadable'. */
+function readLocal(dir: string, id: string): PackageFiles | 'unreadable' | null {
+  const d = path.join(dir, id);
+  if (!fs.existsSync(path.join(d, 'manifest.json'))) return null;
+  try {
+    const strings = fs.existsSync(path.join(d, 'strings.ko.json')) ? 'strings.ko.json' : 'strings.json';
+    return { manifest: readJson(path.join(d, 'manifest.json')) as Manifest, playbook: readJson(path.join(d, 'playbook.json')) as never, selectors: readJson(path.join(d, 'selectors.json')) as never, strings: readJson(path.join(d, strings)) as never };
+  } catch {
+    return 'unreadable';
+  }
+}
+
+/**
+ * 서명 대신 같은 로더(loadPackage)를 그대로 지난다: 부를 때마다 만든 버리는 키 둘로 서명해 그 키만 믿는 문맥으로 로드한다(구조·V 규칙·번들 허용 목록·승인 요약 표).
+ * 조회 다이제스트는 넘긴 조회 설치본에서 채운다.
+ */
+function loadEphemeral(files: PackageFiles, lookups: ReadonlyMap<string, LoadedPackage>): { ok: true; pkg: LoadedPackage } | { ok: false; code: string } {
+  const keys = [0, 1].map((n) => ({ keyId: `rehearsal-${n}`, ...generateKeyPairSync('ed25519') }));
+  const bytes = (x: unknown) => Buffer.from(JSON.stringify(x), 'utf8');
+  const raw = { playbook: bytes(files.playbook), selectors: bytes(files.selectors), strings: bytes(files.strings) };
+  const m: Manifest = {
+    ...files.manifest,
+    contentDigests: { playbook: sha256Hex(raw.playbook), selectors: sha256Hex(raw.selectors), strings: sha256Hex(raw.strings) },
+    lookupsUsed: files.manifest.lookupsUsed.map((l) => ({ ...l, digest: lookups.get(l.id)?.manifestDigest ?? l.digest })),
+  };
+  const signed = canonicalWithout(m, ['signatures']);
+  m.signatures = keys.map((k) => ({ keyId: k.keyId, alg: 'ed25519' as const, sig: edSign(null, signed, k.privateKey).toString('base64url') }));
+  const only = (ks: typeof keys): ReadonlyMap<string, KeyObject> => new Map(ks.map((k) => [k.keyId, k.publicKey]));
+  const roots: TrustRoots = { keyEpoch: 0, rootKeys: new Map(), packageKeys: only(keys), policyKeys: new Map(), emergencyKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey }, timestampKey: { keyId: keys[0]!.keyId, key: keys[0]!.publicKey } };
+  const r = loadPackage({ manifest: bytes(m), ...raw }, { roots, revoked: new Set(), bundleAllowlist: BUNDLE_ALLOWLIST, bundles: appBundleOutcomes(), installedLookups: lookups, storedVersion: null, installedDigest: null, hold: false, policyFresh: true, now: Date.now() });
+  return r.ok ? { ok: true, pkg: r.pkg } : { ok: false, code: r.code };
 }

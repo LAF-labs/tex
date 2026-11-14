@@ -21,6 +21,7 @@ import {
   CARD_ROWS,
   cardHeight,
   cardTargets,
+  certGateText,
   GATE_TEXT,
   gateText,
   issueLocalApproval,
@@ -30,6 +31,7 @@ import {
   REFUSAL_TEXT,
   refusalText,
   summarize,
+  summarizeCert,
   STOP_KEYS,
   summarizeAttest,
   type AttestRequest,
@@ -275,8 +277,9 @@ export class ApprovalBar extends EventEmitter {
   /**
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
+   * 민원증명(docType cert)은 서류 4칸 카드다. 머리 줄 서류 이름(certName)은 main의 앱 내장 표(cert-docs)에서 온다.
    */
-  open(req: GateRequest, auth?: string, batch?: BarBatch | null): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string, batch?: BarBatch | null, certName?: string): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -287,17 +290,18 @@ export class ApprovalBar extends EventEmitter {
     } catch {
       // 모양이 다르면 field_key로 둔다
     }
-    const summary = bad ? null : summarize(req, kstToday(Date.now()));
+    const cert = req.docType === 'cert';
+    const summary = bad ? null : cert ? summarizeCert(req) : summarize(req, kstToday(Date.now()));
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
     // 여러 건 묶음의 첫 승인: 무장할 수 있고 중복 경고가 없을 때만 묶음 글자(N건)와 2~N건 줄을 그린다. 그때만 이 클릭이 묶음 전체의 승인이다.
     const action = bad ? ACTION_TEXT : actionText(req);
-    const many = !!batch && batch.count > 1 && batch.lines.length === batch.count - 1 && action === ACTION_TEXT && !!f;
+    const many = !cert && !!batch && batch.count > 1 && batch.lines.length === batch.count - 1 && action === ACTION_TEXT && !!f;
     this.batchShown = many ? batch.count : 0;
     if (many) this.lines.push(...batch.lines.map((l, i) => ({ label: `${i + 2}번째`, pieces: [{ text: l.name, shrink: true }, { text: ` · ${Number(l.total).toLocaleString('en-US')}원` }] })));
-    this.text = gateText(many ? batchActionText(batch.count) : action, many ? `${f.get('counterpartName') ?? ''} 외 ${batch.count - 1}건` : f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
-    this.height = cardHeight(CARD_ROWS['H-01'] + (many ? batch.count - 1 : 0));
+    this.text = cert ? certGateText(certName ?? '증명서', action) : gateText(many ? batchActionText(batch.count) : action, many ? `${f.get('counterpartName') ?? ''} 외 ${batch.count - 1}건` : f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
+    this.height = cert ? cardHeight(CARD_ROWS.cert) : cardHeight(CARD_ROWS['H-01'] + (many ? batch.count - 1 : 0));
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
       this.req = { kind: 'gate', id: req.reqId, runId: req.runId, gate: req, done };

@@ -115,6 +115,10 @@ export function ariaValue(snapshot: string, role: string): string {
     return t;
   };
   const lines = snapshot.split('\n');
+  if (role === 'radiogroup') {
+    const sel = lines.map((l) => /^\s*- radio "((?:[^"\\]|\\.)*)".*\[checked\]/.exec(l)).find(Boolean);
+    return sel ? (JSON.parse(`"${sel[1]}"`) as string) : '';
+  }
   if (role === 'combobox') {
     const sel = lines.map((l) => /^\s*- option "((?:[^"\\]|\\.)*)".*\[selected\]/.exec(l)).find(Boolean);
     return sel ? (JSON.parse(`"${sel[1]}"`) as string) : '';

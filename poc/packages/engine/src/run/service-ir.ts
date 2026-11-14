@@ -114,6 +114,8 @@ export interface IrRunInput {
   profile: { id: string; bizNo: string; signMethod: string | null; certName?: string | null };
   /** pick.remember(IR rev v1.3.6): 고른 인증서 이름을 프로필에 저장한다. 없으면 이번 실행 범위에만 둔다. */
   profileWrite?: (field: 'certName', value: string) => Promise<boolean>;
+  /** 실행 종류(없으면 invoice = H-01). cert = 홈택스 민원증명: 진행 단계는 스텝 종류로 정하고(certPhases), 메일 확인(mailConfirmed)은 내지 않는다. */
+  kind?: 'invoice' | 'cert';
   /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
@@ -210,6 +212,35 @@ export const PHASE_OF: Readonly<Record<string, string>> = {
   s19: 'readback', s19a: 'readback', s19b: 'readback', s19c: 'readback', s19d: 'readback', s19f: 'readback', s19e: 'readback',
   s20: 'gate', s21: 'sign', s30: 'verify', s32: 'verify', s32b: 'verify', s33: 'mail', s34: 'mail', s35: 'mail',
 };
+
+/**
+ * 민원증명 IR 스텝 → 진행 표시 단계(H-01과 같은 단계 이름). 스텝 id가 서류마다 달라(H-04 s10 goto·s11 checkpoint, H-09 메뉴 클릭) 종류와 순서로 정한다.
+ * 양식 진입(s10)부터 첫 end까지: 입력 칸 전 = form, select·fill = input, 그 뒤 게이트 전 = readback, gate, submit = sign, 그 뒤(verify·출력·PDF) = verify.
+ * 로그인 구간(s0~s6)과 캡차(s90~)는 단계를 내지 않는다(H-01 IR과 같음).
+ */
+export function certPhases(ir: PlaybookIR): Record<string, string> {
+  const out: Record<string, string> = {};
+  let started = false;
+  let input = false;
+  let committed = false;
+  for (const s of ir.steps) {
+    if (s.id === 's10') started = true;
+    if (!started) continue;
+    if (s.type === 'end') break;
+    let p: string;
+    if (s.type === 'gate') p = 'gate';
+    else if (s.type === 'submit') {
+      p = 'sign';
+      committed = true;
+    } else if (committed) p = 'verify';
+    else if (s.type === 'select' || s.type === 'fill') {
+      p = 'input';
+      input = true;
+    } else p = input ? 'readback' : 'form';
+    out[s.id] = p;
+  }
+  return out;
+}
 
 const STATUS_OF: Partial<Record<RunStateName, RunStatus>> = {
   Completed: 'success', CompletedWithIssues: 'completed_with_issues', Failed: 'failed', HandedOff: 'handoff', InDoubt: 'in_doubt', Paused: 'handoff', Interrupted: 'failed',
@@ -591,6 +622,8 @@ export class IrRun {
       : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
+    const kind = i.kind ?? 'invoice';
+    const phaseOf: Readonly<Record<string, string>> = kind === 'cert' ? certPhases(ir) : PHASE_OF;
     const ledgerStates = (): LedgerState[] => {
       const r = i.ledger.get(i.intentId, 's21');
       return r ? [r.state] : [];
@@ -621,7 +654,7 @@ export class IrRun {
         if (!layersDone) await closeLayers();
         // 스텝 경계: status가 바뀌었으면 조율기가 이 스텝 전에 멈춘다(요청률 지연을 기다리지 않는다).
         if (this.recheck()) return { ok: true };
-        const p = PHASE_OF[s.id];
+        const p = phaseOf[s.id];
         if (p && p !== phase) {
           if (phase) i.phase(phase, 'done');
           phase = p;
@@ -685,7 +718,7 @@ export class IrRun {
       verifyStep: async (v) => {
         const j = await judgeVerify(verifyDeps, v);
         this.verified = true;
-        if (v.id === 's33') this.mail = j.result === 'committed';
+        if (kind === 'invoice' && v.id === 's33') this.mail = j.result === 'committed';
         return j;
       },
       commit,
@@ -767,10 +800,11 @@ export class IrRun {
       await this.wiring?.dispose().catch(() => {});
       await reader.release().catch(() => {});
     }
-    return this.result(out, scope.vars.get('approvalNo'), ir);
+    // 민원증명 verify는 접수·발급 번호를 issueNo로 묶는다(bind approvalNo → issueNo). 바깥 모양은 H-01과 같은 approvalNo 칸이다.
+    return this.result(out, kind === 'cert' ? scope.vars.get('issueNo') : scope.vars.get('approvalNo'), ir, kind);
   }
 
-  private result(out: RunOutcome, approvalNo: string | undefined, ir: PlaybookIR): IrRunResult {
+  private result(out: RunOutcome, approvalNo: string | undefined, ir: PlaybookIR, kind: 'invoice' | 'cert'): IrRunResult {
     const halted = this.halted;
     let status = out.state === 'Aborted' ? abortedStatus(out.code) : (STATUS_OF[out.state] ?? 'failed');
     let code = out.code ?? undefined;
@@ -795,7 +829,7 @@ export class IrRun {
       ...(code ? { code } : {}),
       ...(stoppedAt ? { stoppedAt } : {}),
       ...(approvalNo ? { approvalNo } : {}),
-      ...(this.verified ? { mailConfirmed: this.mail ?? false } : {}),
+      ...(this.verified && kind === 'invoice' ? { mailConfirmed: this.mail ?? false } : {}),
       ...(until ? { maintenanceUntil: until } : {}),
     };
   }

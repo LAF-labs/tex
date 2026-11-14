@@ -5,10 +5,12 @@
 import type { StepParams, StepResult } from '@sax/engine';
 import { kstToday } from './approval-gate.ts';
 import type { AgentChatPorts, AgentPhase, DraftCard, IssuedRow, ReceivableRow } from './agent-chat.ts';
+import { INVOICE_PLAYBOOK } from './run-history.ts';
 import type { Counterparty, RunView, VatMode } from './shell-model.ts';
 
 /** 엔진 db.query.runs.history 한 행에서 쓰는 칸(run-history.ts RunHistoryRow) */
 interface HistoryRow {
+  playbookId: string;
   approvalNo: string | null;
   documentId?: string | null;
   mailConfirmed?: boolean | null;
@@ -47,11 +49,11 @@ export interface AgentWiring {
 
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
-/** 원장 이력 → 발급 행. 승인번호가 있는(발급이 확정된) 실행만. 날짜는 끝난 시각의 KST 날짜. */
+/** 원장 이력 → 발급 행. 승인번호가 있는(발급이 확정된) 세금계산서 실행만(민원증명의 접수번호는 발급 기록이 아니다). 날짜는 끝난 시각의 KST 날짜. */
 export function issuedRows(rows: unknown): IssuedRow[] {
   if (!Array.isArray(rows)) return [];
   return (rows as HistoryRow[])
-    .filter((r) => r && typeof r.approvalNo === 'string' && r.approvalNo)
+    .filter((r) => r && r.playbookId === INVOICE_PLAYBOOK && typeof r.approvalNo === 'string' && r.approvalNo)
     .map((r) => {
       const at = Date.parse(r.finishedAt ?? r.startedAt);
       return {
@@ -76,7 +78,7 @@ export function agentPorts(w: AgentWiring): AgentChatPorts {
     step: (p: StepParams) => w.rpc('chat.step', p as unknown as Record<string, unknown>) as Promise<StepResult>,
     profileId: () => w.profileId(),
     drafts: {
-      list: () => w.runs.list().filter((r) => r.status === 'draft').map(draftCard),
+      list: () => w.runs.list().filter((r) => r.status === 'draft' && !r.cert).map(draftCard),
       setupMissing: () => w.setupMissing(),
       create: (counterpartyId, amount, vat, item) => {
         if (w.setupMissing()) return { setup: true };

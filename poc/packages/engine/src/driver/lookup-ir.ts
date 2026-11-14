@@ -37,6 +37,13 @@ const LOOKUP_HANDLERS: Handlers = Object.fromEntries(LOOKUP_STEP_TYPES.map((t) =
 export const LOOKUP_COLUMN_PREFIX = 'lookup.column.';
 const ROW_CSS = 'lookup.table.rowCss';
 const CELL_CSS = 'lookup.table.cellCss';
+/**
+ * 카드 목록(머리글 행 없음, 홈택스 민원신청 처리결과): 행마다 이름·값 쌍이 있다. 둘 다 있으면 이 모양으로 읽는다.
+ * 행 안의 이름 요소(labelCss)와 값 요소(valueCss)는 같은 수이고, 모든 행의 이름 차례가 같아야 한다(아니면 lookup.incomplete).
+ * 머리글은 첫 행의 이름이다. 행이 0개면 열을 볼 수 없으니 건수 문구(count = 0)가 결과가 다 왔다는 근거다.
+ */
+const LABEL_CSS = 'lookup.table.labelCss';
+const VALUE_CSS = 'lookup.table.valueCss';
 const DEFAULT_ROW_CSS = 'tr, [role="row"]';
 const DEFAULT_CELL_CSS = ':scope > th, :scope > td, :scope > [role="columnheader"], :scope > [role="rowheader"], :scope > [role="gridcell"], :scope > [role="cell"]';
 /** 열 속성 모드(IR rev v1.3.5): 칸을 머리글 문구 대신 이 속성 값(lookup.column.<열> = 값)으로 찾는다. WebSquare 그리드는 data-col_id. */
@@ -170,6 +177,7 @@ export class IrLookupPort implements LookupPort {
       const t = await resolveTarget(reader, files.selectors, tableKey);
       const handle = t.ok ? reader.handle(t.t.el) : null;
       if (!handle) return { ok: false, code: 'lookup.incomplete' };
+      const labelled = !!(files.strings[LABEL_CSS] && files.strings[VALUE_CSS]);
       const colAttr = files.strings[COL_ATTR];
       const table = await handle.evaluate(
         (el, css) => {
@@ -179,6 +187,17 @@ export class IrLookupPort implements LookupPort {
           const text = (c: Element) => (c as HTMLElement).innerText ?? c.textContent ?? '';
           let header: string[] | null = null;
           const body: string[][] = [];
+          if (css.label && css.value) {
+            for (const r of rows) {
+              const ls = [...r.querySelectorAll(css.label)].map(text);
+              const vs = [...r.querySelectorAll(css.value)].map(text);
+              if (!ls.length || ls.length !== vs.length) return { header, body, bad: true };
+              header ??= ls;
+              if (ls.join('\u0000') !== header.join('\u0000')) return { header, body, bad: true };
+              body.push(vs);
+            }
+            return { header, body, bad: false };
+          }
           for (const r of rows) {
             const cs = cells(r);
             if (!cs.length) continue;
@@ -197,11 +216,19 @@ export class IrLookupPort implements LookupPort {
             }
             body.push(cs.map(text));
           }
-          return { header, body };
+          return { header, body, bad: false };
         },
-        { row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS, cell: files.strings[CELL_CSS] ?? (colAttr ? `[${colAttr}]` : DEFAULT_CELL_CSS), attr: colAttr ?? null },
+        {
+          row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS,
+          cell: files.strings[CELL_CSS] ?? (colAttr ? `[${colAttr}]` : DEFAULT_CELL_CSS),
+          attr: colAttr ?? null,
+          label: labelled ? files.strings[LABEL_CSS]! : '',
+          value: labelled ? files.strings[VALUE_CSS]! : '',
+        },
       );
-      if (!lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
+      if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
+      // 카드 목록이 비었으면(건수 0과 같음) 열을 볼 수 없다. 머리글 표는 빈 표도 머리글이 있으니 아래 열 검사를 그대로 한다.
+      if (labelled && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
       // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
       // 열 속성 모드에서 행이 0개면 머리글을 읽을 수 없다: 그때는 열이 있다고 본다(빈 결과는 행 수 판정이 이미 받았다).
       const head = (table.header ?? []).map(norm);

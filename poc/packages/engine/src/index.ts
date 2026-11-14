@@ -19,6 +19,7 @@ export * from './portal.ts';
 export * from './run-end.ts';
 export * from './h01/runner.ts';
 export * from './runs.ts';
+export * from './cert.ts';
 export * from './signals.ts';
 export * from './policy.ts';
 export * from './enforcer.ts';

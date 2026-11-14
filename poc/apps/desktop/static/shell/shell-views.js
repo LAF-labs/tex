@@ -172,9 +172,17 @@ const STEP_GROUPS = [
   ['발급 · 조회로 확정', [5, 6]],
   ['메일 전송 확인', [7]],
 ];
+/** 민원증명 단계 묶음(엔진 단계 7개, 메일 없음, shell-runs STEP_LABELS.cert). */
+const CERT_STEP_GROUPS = [
+  ['홈택스 로그인', [0]],
+  ['민원 신청 화면 열기', [1]],
+  ['신청 값 입력과 되읽기', [2, 3]],
+  ['승인하고 발급', [4]],
+  ['발급 · 발급 내역으로 확정', [5, 6]],
+];
 const ACTIVE = ['preparing', 'turn', 'waiting', 'issuing'];
 export function runSteps(run) {
-  const groups = STEP_GROUPS.map(([label, idx]) => {
+  const groups = (run.cert ? CERT_STEP_GROUPS : STEP_GROUPS).map(([label, idx]) => {
     const g = group(label, idx);
     const checks = (run.portalChecks ?? []).filter((c) => idx.includes(c.step));
     return checks.length ? { ...g, checks } : g;
@@ -220,13 +228,19 @@ export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으�
 
 /** 발급 PDF가 이 PC에 없을 때(F-04): 결과 카드·실행 패널·문서함 패널이 같은 문구. */
 export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요.';
+const CERT_NO_FILE_TEXT = '증명서 PDF는 홈택스 민원증명 발급 내역에서 다시 출력할 수 있어요.';
+
+/** 카드·패널·띠의 실행 이름: 세금계산서는 "세금계산서 · 거래처", 민원증명은 서류 이름(main cert-docs 표). */
+export const runTitle = (run) => (run.cert ? run.cert.name : `세금계산서 · ${run.counterparty.name}`);
+/** 민원증명 신청 값 한 줄(금액 칸 자리). 승인 카드가 뜨면 엔진이 되읽은 값이다. */
+const certLine = (run) => h('div', { class: 'sx-meta', 'data-cert-inputs': '' }, `사용 용도 ${run.cert.inputs.purpose ?? ''} · 제출처 ${run.cert.inputs.submitTo ?? ''}`);
 
 /** 대화 속 작업 카드(TaskCard). 상태가 바뀌면 같은 카드가 바뀐다. 캔버스 M-01·T-02~T-07 카드 순서: 머리 → 금액 → 문장 → 안내 → 버튼 줄. */
 /** [홈택스 창 보기]: 사람이 할 일이 홈택스 창에 있을 때(로그인·서명·사람 차례). 실행 Chrome 창을 앞으로 올리기만 한다. */
 const showBrowserBtn = (run, act) => btn('홈택스 창 보기', () => act.showBrowser(run.id), '', { 'data-act': 'show-browser' });
 
 export function taskCard(run, act) {
-  const title = `세금계산서 · ${run.counterparty.name}`;
+  const title = runTitle(run);
   // 대화에서 발급 전에 버린 초안(draft_discard): 무엇이었는지만 남기고 버튼은 없다.
   if (run.discarded)
     return h(
@@ -245,10 +259,17 @@ export function taskCard(run, act) {
   });
   const hd = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), chip(shownStatus(run)));
   // 내 차례·확인 필요는 합계만(사람이 할 일이 먼저 보이게), 나머지는 분해까지.
-  card.append(hd, amount(run.total, run.supply, run.tax, vatText(run), !['turn', 'attention'].includes(st)));
+  card.append(hd, run.cert ? certLine(run) : amount(run.total, run.supply, run.tax, vatText(run), !['turn', 'attention'].includes(st)));
   const now = nowStep(run);
 
-  if (st === 'draft') {
+  if (st === 'draft' && run.cert) {
+    // 민원증명 초안: 고칠 칸이 없다(대화 전송이면 main이 바로 시작한다). 시작하지 못했으면(다른 작업 중 등) 여기서 다시 시작한다.
+    card.append(
+      run.noChrome ? h('div', { 'data-no-chrome': '' }, note(NO_CHROME_TEXT, true)) : null,
+      h('div', { class: 'sx-actions' }, btn('홈택스에서 떼기', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare' }), btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' })),
+      h('div', { class: 'sx-meta' }, '아직 아무것도 보내지 않았어요'),
+    );
+  } else if (st === 'draft') {
     const noItem = !String(run.item ?? '').trim();
     // 품목·받는 이메일은 카드에서 보이고 그 자리에서 고친다(08 §2). 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
     card.append(
@@ -365,14 +386,14 @@ export function taskCard(run, act) {
     card.append(
       ...[
         // 디자인 시스템 ApprovalCard: 체크 + "작성 완료" + 서류·거래처·합계 한 줄(초안의 값). 안내 문장은 두지 않는다(값이 바로 아래 카드에 있다).
-        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title sx-folded' }, icon('check'), '작성 완료'), h('span', { class: 'sx-meta sx-folded-line' }, `세금계산서 · ${run.counterparty.name} · ${won(run.total)}`), chip(shownStatus(run))),
+        h('div', { class: 'sx-card-hd', 'data-folded': '' }, h('div', { class: 'sx-card-title sx-folded' }, icon('check'), '작성 완료'), h('span', { class: 'sx-meta sx-folded-line' }, run.cert ? `${run.cert.name} · ${run.cert.inputs.purpose ?? ''}` : `세금계산서 · ${run.counterparty.name} · ${won(run.total)}`), chip(shownStatus(run))),
         run.regate ? tagged(note(run.regate.note, true), 'regate', run.regate.reason) : null,
         run.approvedPending ? h('div', { class: 'sx-actions' }, note('승인했어요. 2초 안에 [중지]하면 발급하지 않아요'), btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' })) : null,
       ].filter(Boolean),
     );
   } else if (st === 'done') {
     const r = run.result;
-    const mail = r.mailConfirmed ? `${run.counterparty.name} 메일로 보낸 것도 확인했어요.` : r.mailTo ? '메일 발송은 홈택스 메일발송목록에서 확인해 주세요.' : '받는 이메일이 없어 메일은 보내지 않았어요.';
+    const mail = run.cert ? '문서함 증명서에 넣었어요.' : r.mailConfirmed ? `${run.counterparty.name} 메일로 보낸 것도 확인했어요.` : r.mailTo ? '메일 발송은 홈택스 메일발송목록에서 확인해 주세요.' : '받는 이메일이 없어 메일은 보내지 않았어요.';
     const where = whereItWent(run);
     where.hidden = true;
     const toggle = btn('어디로 무엇이 갔나요', () => {
@@ -381,9 +402,9 @@ export function taskCard(run, act) {
     }, 'sx-btn-quiet', { 'aria-expanded': 'false' });
     card.append(
       line(`발급했어요. ${mail}`),
-      h('dl', { class: 'sx-kv is-start' }, h('dt', {}, '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))),
-      r.noFile ? line(NO_FILE_TEXT, true) : null,
-      h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn('지난번과 같게', () => act.again(run)), toggle),
+      r.approvalNo ? h('dl', { class: 'sx-kv is-start' }, h('dt', {}, run.cert ? '접수번호' : '승인번호'), h('dd', {}, h('span', { class: 'sx-id', 'data-approval-no': '' }, r.approvalNo), h('button', { type: 'button', class: 'sx-copy', onclick: () => act.copy(r.approvalNo) }, '복사'))) : null,
+      r.noFile ? line(run.cert ? CERT_NO_FILE_TEXT : NO_FILE_TEXT, true) : null,
+      h('div', { class: 'sx-actions' }, r.noFile ? null : btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary', { 'data-act': 'result-open' }), btn(run.cert ? '한 번 더 떼기' : '지난번과 같게', () => act.again(run), '', { 'data-act': 'again' }), toggle),
       where,
     );
   } else if (st === 'stopped') {
@@ -493,6 +514,7 @@ export function batchCard(runs, act) {
 }
 
 export function whereRows(run) {
+  if (run.cert) return [['홈택스', `${run.cert.name} 1건 발급`], ['보관', '이 PC 문서함 · 증명서'], modelRow(run.sent), serverRow(run.sent)];
   return [
     ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인'],
     ['메일', run.result.mailTo ? `${run.result.mailTo} · 홈택스가 보냄, ${run.result.mailConfirmed ? '메일발송목록에서 확인' : '메일발송목록에서 확인하지 못함'}` : '보내지 않음'],
@@ -514,19 +536,28 @@ export function runPanel(run, act) {
   const tag = confirmed ? { state: 'verified', tag: '홈택스 확정' } : {};
   const r = run.result;
   const guessed = [run.vatGuessed ? '부가세' : null, run.itemGuessed ? '품목' : null].filter(Boolean);
-  const rows = [
-    st === 'done' && r ? ['승인번호', r.approvalNo, { mono: true }] : null,
-    ['공급자', act.supplier()],
-    ['공급받는자', run.counterparty.name, { ...tag, flag: run.counterparty.first ? '처음 거래' : null }],
-    ['사업자번호', fmtBiz(run.counterparty.bizNo), { ...tag, mono: true }],
-    st === 'draft' ? ['부가세', run.vat === 'separate' ? '별도' : '포함', run.vatGuessed ? { state: 'inferred', tag: '기본값' } : {}] : null,
-    ['공급가', won(run.supply), tag],
-    ['세액', won(run.tax), confirmed ? tag : run.vatGuessed ? { state: 'inferred', tag: '추정' } : {}],
-    ['품목', run.item || null, confirmed ? tag : run.itemGuessed ? { state: 'inferred', tag: '저장 품목' } : {}],
-    ['작성일자', run.writeDate, tag],
-    ['받는 이메일', run.email.value, { ...(st === 'done' && r?.mailConfirmed ? { state: 'verified', tag: '전송 확인' } : tag), flag: run.email.first ? '처음 보내는 주소' : null }],
-    ['발급 인증', run.auth, { tag: '설정에서 변경' }],
-  ];
+  const rows = run.cert
+    ? [
+        st === 'done' && r?.approvalNo ? ['접수번호', r.approvalNo, { mono: true }] : null,
+        ['신청 사업자', act.supplier()],
+        ['서류', run.cert.name],
+        ['사용 용도', run.cert.inputs.purpose, tag],
+        ['제출처', run.cert.inputs.submitTo, tag],
+        ['발급 인증', run.auth, { tag: '설정에서 변경' }],
+      ]
+    : [
+        st === 'done' && r ? ['승인번호', r.approvalNo, { mono: true }] : null,
+        ['공급자', act.supplier()],
+        ['공급받는자', run.counterparty.name, { ...tag, flag: run.counterparty.first ? '처음 거래' : null }],
+        ['사업자번호', fmtBiz(run.counterparty.bizNo), { ...tag, mono: true }],
+        st === 'draft' ? ['부가세', run.vat === 'separate' ? '별도' : '포함', run.vatGuessed ? { state: 'inferred', tag: '기본값' } : {}] : null,
+        ['공급가', won(run.supply), tag],
+        ['세액', won(run.tax), confirmed ? tag : run.vatGuessed ? { state: 'inferred', tag: '추정' } : {}],
+        ['품목', run.item || null, confirmed ? tag : run.itemGuessed ? { state: 'inferred', tag: '저장 품목' } : {}],
+        ['작성일자', run.writeDate, tag],
+        ['받는 이메일', run.email.value, { ...(st === 'done' && r?.mailConfirmed ? { state: 'verified', tag: '전송 확인' } : tag), flag: run.email.first ? '처음 보내는 주소' : null }],
+        ['발급 인증', run.auth, { tag: '설정에서 변경' }],
+      ];
   const source =
     st === 'done' && r
       ? `홈택스 발급목록에서 확인 · ${r.doneAt}`
@@ -534,22 +565,24 @@ export function runPanel(run, act) {
         ? `홈택스에서 다시 읽음 · ${run.createdAt} 요청`
         : st === 'draft'
           ? `초안 · ${guessed.length ? `추정 값 ${guessed.length}개 · ` : ''}아직 아무것도 보내지 않았어요`
-          : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
+          : run.cert
+            ? `요청 문장과 기본 용도·제출처로 채움 · ${run.createdAt}`
+            : `요청 문장과 거래처 장부에서 채움 · ${run.createdAt}`;
   // 작업 패널의 [중지](T-04). 발급 전에만 있다. 승인은 여기에도 없다.
   // 사람 차례면 게이트 뒤(서명 차례)여도 [중지]를 받는다(#278): 서명 차례는 발급목록 확인 뒤 끝난다.
   const canStop = st === 'preparing' || st === 'waiting' || (st === 'turn' && (!!run.handoff || run.steps[4].state !== 'done'));
   return h(
     'div',
     { class: 'panel-in', 'data-panel-run': run.id },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 · ${run.counterparty.name}`), chip(shownStatus(run)), panelX(act)),
-    amount(run.total, run.supply, run.tax, vatText(run)),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, runTitle(run)), chip(shownStatus(run)), panelX(act)),
+    run.cert ? null : amount(run.total, run.supply, run.tax, vatText(run)),
     st === 'attention' && run.inDoubt ? checkListGuide(run, act) : null,
     kv(rows),
     h('div', { class: 'sx-source' }, source),
     h('div', { class: 'sx-panel-sec' }, '실행 단계'),
     steps(runSteps(run)),
     canStop ? h('div', { class: 'sx-actions' }, btn('중지', () => act.stop(run.id), '', { 'data-act': 'panel-stop' })) : null,
-    st === 'done' ? (run.result.noFile ? line(NO_FILE_TEXT, true) : h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary'), btn('폴더 열기', () => act.openRunDoc(run, true)))) : null,
+    st === 'done' ? (run.result.noFile ? line(run.cert ? CERT_NO_FILE_TEXT : NO_FILE_TEXT, true) : h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openRunDoc(run), 'sx-btn-primary'), btn('폴더 열기', () => act.openRunDoc(run, true)))) : null,
   );
 }
 
@@ -616,12 +649,20 @@ function checkListGuide(run, act) {
     { class: 'sx-check', 'data-check-list': run.id },
     h('div', { class: 'sx-panel-sec' }, '홈택스에서 직접 확인'),
     note('홈택스 발급목록에서 아래 건을 찾아 주세요. 목록에 있으면 발급된 것이니 다시 발급하지 마세요.', true),
-    kv([
-      ['작성일자', run.writeDate, { copy: c(run.writeDate) }],
-      ['공급받는자', run.counterparty.name, { copy: c(run.counterparty.name) }],
-      ['사업자번호', fmtBiz(run.counterparty.bizNo), { mono: true, copy: c(fmtBiz(run.counterparty.bizNo)) }],
-      ['합계', won(run.total), { copy: c(String(run.total)) }],
-    ]),
+    kv(
+      run.cert
+        ? [
+            ['발급일', run.writeDate, { copy: c(run.writeDate) }],
+            ['서류', run.cert.name, { copy: c(run.cert.name) }],
+            ['사용 용도', run.cert.inputs.purpose],
+          ]
+        : [
+            ['작성일자', run.writeDate, { copy: c(run.writeDate) }],
+            ['공급받는자', run.counterparty.name, { copy: c(run.counterparty.name) }],
+            ['사업자번호', fmtBiz(run.counterparty.bizNo), { mono: true, copy: c(fmtBiz(run.counterparty.bizNo)) }],
+            ['합계', won(run.total), { copy: c(String(run.total)) }],
+          ],
+    ),
     h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 대화 아래에 뜨는 황토색 확인 카드로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
     run.attest?.note ? note(run.attest.note, run.attest.state !== 'sent') : null,
   );

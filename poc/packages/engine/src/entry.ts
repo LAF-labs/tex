@@ -26,10 +26,10 @@ import { REGISTRY_COMMANDS, REGISTRY_READ_QUERIES } from './protocol.ts';
 import { REGISTRY_TRUST_PIN } from './registry-pin.ts';
 import { rateTableSink } from './registry-sinks.ts';
 import { runPermit } from './core/permit.ts';
-import { egressRegistryFetch, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
+import { egressRegistryFetch, PRODUCT_CERT_IDS, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { installedIrSource, REHEARSAL_PACKAGES_DIR, rehearsalIrSource } from './package-source.ts';
 import { VaultPdfPort } from './driver/pdf.ts';
-import { recordRunInputs, runHistory, runInputsOf } from './run-history.ts';
+import { recordCertInputs, recordRunInputs, runHistory, runInputsOf } from './run-history.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
@@ -47,6 +47,7 @@ import { PAYROLL_EMPLOYEE_COMMANDS, PAYROLL_EMPLOYEE_READ_QUERIES } from './prot
 import { BUNDLE_PC_COMMANDS, BUNDLE_PC_READ_QUERIES } from './protocol.ts';
 import { bankServicePort, CODEF_COMMANDS, CodefClient, CodefError, CodefLink, codefTxnSource, settingsCodefStore, vaultCodefSeal } from './codef/index.ts';
 import { RunService, type StartParams } from './runs.ts';
+import type { CertStartParams } from './cert.ts';
 import { closeOnShutdown } from './shutdown.ts';
 import { VaultClient } from './vault-client.ts';
 
@@ -203,9 +204,21 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
     runs = new RunService({
       db, data, ledgerKey, portal, engine: ir ? 'ir' : 'h01',
       ...(ir && registry ? { irSource: installedIrSource(registry, { id: PRODUCT_PACKAGES.h01, portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
+      // 민원증명(run.startCert): 받아 둔 서명 설치본을 id별로 같은 방식으로 다시 검증한다(PDF 포트도 H-01과 같다). 운영 레지스트리에 게시되기 전에는 package.not_loaded다.
+      ...(ir && registry ? {
+        certSource: (id: string) => PRODUCT_CERT_IDS.includes(id)
+          ? installedIrSource(registry!, { id, portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) })()
+          : { ok: false as const, code: 'cert.unknown_doc' },
+      } : {}),
       // 예행 전용 로컬 패키지(<앱 데이터>/rehearsal-packages/<id>/, scripts/rehearsal-package.mjs가 넣는다). RunService가 예행 실행에만 부른다.
       rehearsalSnapDir: path.join(paths.root, 'rehearsal-snaps'),
       ...(ir && registry ? { rehearsalIrSource: rehearsalIrSource(registry, { id: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) }) } : {}),
+      // 민원증명 예행: 같은 로컬 폴더. 게시 전 판은 서명 H-01 설치본의 도메인 안에서만 받는다(unsignedBaseline).
+      ...(ir && registry ? {
+        certRehearsalSource: (id: string) => PRODUCT_CERT_IDS.includes(id)
+          ? rehearsalIrSource(registry!, { id, unsignedBaseline: PRODUCT_PACKAGES.h01, dir: path.join(paths.root, REHEARSAL_PACKAGES_DIR), portal, pdf, secret, ...(runJudge ? { judge: runJudge.judge, runTokenFor: runJudge.runTokenFor, locate: runJudge.locate } : {}) })()
+          : null,
+      } : {}),
       page: async () => (await slot.open()).page, log, postGate: (m) => gate.postMessage(m),
       // 실행 허가(팀장 결정 2026-11-09 ④⑤, D03 §3.1·§7.1·§12): status killPlaybooks·portalModeCeiling ∧ 서명 정책 portalMode·만료 규칙.
       // 홈택스는 정책이 없거나(핀 없음 포함) 만료 뒤 168시간이 지나면 postprocess(fail-closed): 정책 게시 전에는 H-01을 자동으로 돌리지 않는다.
@@ -253,10 +266,21 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     if (!runs) throw new Error('runs_not_ready');
     return method === 'run.resume' ? runs.resume(String(params.runId)) : runs.manualDone(String(params.runId));
   }
-  if (method === 'run.start' || method === 'run.stop' || method === 'run.inspect') {
+  if (method === 'run.start' || method === 'run.startCert' || method === 'run.stop' || method === 'run.inspect') {
     if (!runs) throw new Error('runs_not_ready');
     if (method === 'run.inspect') return runs.inspect(String(params.runId));
     if (method === 'run.stop') return runs.stop(String(params.runId));
+    if (method === 'run.startCert') {
+      const started = runs.startCert(params as unknown as CertStartParams);
+      // 민원증명 입력 요약(서류·용도·제출처·주민번호 공개 선택값 등 검사한 선택값만, 컬럼 키로 봉인). H-01 요약과 같은 자리·같은 방식이다.
+      try {
+        const inputs = runs.certInputsOf(started.runId);
+        if (history && inputs) recordCertInputs(history.db, history.cipher, started.runId, inputs);
+      } catch {
+        log.event('engine.run_inputs_not_recorded');
+      }
+      return started;
+    }
     const started = runs.start(params as unknown as StartParams);
     // 재시작 뒤 결과 카드·지난 실행 안내용 입력 요약(거래처 id·금액, 컬럼 키로 봉인). 실행 동작과 무관하다(쓰지 못해도 실행은 그대로).
     try {
