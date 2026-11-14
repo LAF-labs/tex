@@ -8,8 +8,9 @@ export type LedgerState = 'armed' | 'dispatched' | 'committed' | 'not_committed'
 /**
  * signal: 무장 뒤 클릭 직전에 차단 신호가 걸려 누르지 않았다(D03 §7).
  * attested: 증언 바에서 사람이 "실행되지 않았다"고 증언했다(ADR-021 결정 5, 저널 gate.attested).
+ * reverify: 재시작 뒤 새 프로세스가 발급목록 조회로 in_doubt를 확정했다(run.reverify). committed·not_committed 둘 다 이 사유다.
  */
-export type NotCommittedReason = 'pre_dispatch_mismatch' | 'identity_mismatch' | 'payload_mismatch' | 'signal' | 'verify' | 'attested';
+export type NotCommittedReason = 'pre_dispatch_mismatch' | 'identity_mismatch' | 'payload_mismatch' | 'signal' | 'verify' | 'attested' | 'reverify';
 
 export interface ArmRow {
   intentId: string;
@@ -326,6 +327,16 @@ export class Ledger {
           VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
         .run({ ...a, issueKey: a.issueKey ?? null, armedAt: now() });
     })();
+  }
+
+  /** 재확인 후보(run.reverify): 그 플레이북의 in_doubt 행 가운데 sinceIso 뒤에 무장한 것(최근 순). */
+  inDoubt(playbookId: string, sinceIso: string): LedgerRow[] {
+    return this.db.prepare(`SELECT * FROM irreversible_log WHERE state = 'in_doubt' AND playbook_id = ? AND armed_at >= ? ORDER BY armed_at DESC, rowid DESC`).all(playbookId, sinceIso).map((r) => toLedger(r as Row));
+  }
+
+  /** 이 PC에서 committed로 확정된 승인번호(verify_ref) 전부. 다른 행이 이미 가진 번호는 재확인이 다시 묶지 않는다. */
+  committedRefs(): Set<string> {
+    return new Set(this.db.prepare(`SELECT verify_ref FROM irreversible_log WHERE state = 'committed' AND verify_ref IS NOT NULL`).pluck().all() as string[]);
   }
 
   /** 재시작 시 armed·dispatched·observed_manual은 모두 in_doubt로 올린다(D03 §4). */

@@ -29,7 +29,7 @@ export interface LookupRequest {
   /** match를 해석한 값(fieldKey → 값). 조회 하위 플레이북의 검색 조건. */
   match: Readonly<Record<string, string>>;
   window: Lookup['window'];
-  purpose: 'baseline' | 'verify';
+  purpose: 'baseline' | 'verify' | 'reverify';
 }
 
 export type LookupResult = { ok: true; rows: readonly LookupRow[] } | { ok: false; code: string };
@@ -256,6 +256,43 @@ export async function judgeVerify(d: VerifyDeps, s: StepOf<'verify'>): Promise<V
     }
     await d.clock.sleep(wait);
     wait = Math.min(wait * 2, iv.capMs);
+  }
+  return { result: 'unknown' };
+}
+
+export interface ReverifyDeps {
+  lookup: LookupPort;
+  clock: Clock;
+  dict: SelectorDict;
+  strings: Strings;
+  /** 조회 횟수 상한(정책 verify.lookups)과 그 사이 간격(정책 verify.intervalMs). */
+  lookups: number;
+  intervalMs: number;
+}
+
+export type ReverifyJudgement = VerifyJudgement | { result: 'failed'; code: string };
+
+/**
+ * 재시작 뒤 재확인(run.reverify). 기준선 B₀가 메모리에서 사라졌으므로 judgeVerify를 쓰지 않는다.
+ * want = 그 실행 입력에서 되살린 match 값, taken = 이 PC의 다른 committed 행이 이미 가진 승인번호.
+ * - match에 맞는 행에서 taken을 뺀 것이 정확히 1건: rowVerdict가 있으면 not_sent → not_committed, sent → committed. rowVerdict가 없으면 committed.
+ * - 2건 이상은 어느 건인지 모른다(unknown). 0건은 부재 증거가 아니다(목록 기간 밖·반영 지연, 다시 보고 상한에서 unknown).
+ * - 조회 실패는 failed(그 코드). 부른 쪽이 이번 호출을 멈추고 원장을 바꾸지 않는다.
+ */
+export async function judgeReverify(d: ReverifyDeps, s: StepOf<'verify'>, want: Readonly<Record<string, string>>, taken: ReadonlySet<string>): Promise<ReverifyJudgement> {
+  for (let i = 0; i < d.lookups; i++) {
+    if (i) await d.clock.sleep(d.intervalMs);
+    const r = await d.lookup.run({ stepId: s.id, playbook: s.lookup.playbook, match: want, window: s.lookup.window, purpose: 'reverify' }).catch((): LookupResult => ({ ok: false, code: 'verify.lookup_failed' }));
+    if (!r.ok) return { result: 'failed', code: r.code };
+    const rows = matchingRows(d.dict, r.rows, want);
+    const fresh = [...rows.keys()].filter((n) => !taken.has(n));
+    if (fresh.length > 1) return { result: 'unknown' };
+    if (fresh.length === 0) continue;
+    const ref = fresh[0]!;
+    const rv = s.lookup.rowVerdict;
+    const verdict = rv ? rowVerdictOf(d.strings, rv, rows.get(ref) ?? []) : 'sent';
+    if (verdict === 'not_sent') return { result: 'not_committed' };
+    if (verdict === 'sent') return { result: 'committed', ref };
   }
   return { result: 'unknown' };
 }

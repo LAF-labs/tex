@@ -20,6 +20,8 @@ import type { RunPermit } from './core/permit.ts';
 import type { Policy } from './core/types.ts';
 import { parseIssueKey, type IssueKey } from './issue/types.ts';
 import { REHEARSAL_DONE, REHEARSAL_HANDOFF, rehearsalSnap, RehearsalReport } from './rehearsal.ts';
+import { reverifyInDoubt, type ReverifyResult } from './run/reverify.ts';
+import type { RunInputsSummary } from './run-history.ts';
 
 /** engine.log로 옮기는 AI 단계 저널(걸음마다의 agent.action은 빼고 agent.end에 걸음 수와 끝 사유). */
 const AI_LOG = /^(locate|fallback|judge)\.|^agent\.(start|end|no_plan)$|^(page_judge|browser_agent)\.unavailable$|^actuator\.(why|box_click)$|^branch\.settled$|^portal\.maintenance$/;
@@ -179,6 +181,10 @@ export interface RunServiceDeps {
   lifetimeMs?: number;
   /** IR 사람 입력 포트(금고 비밀 창). 없으면 대역(engine-cert가 붙인다, B1·B2). */
   human?: HumanPort;
+  /** 이미 열린 실행 탭(run.reverify). 브라우저를 새로 띄우지 않는다. 없거나 null이면 재확인하지 않는다. */
+  currentPage?: () => Page | null;
+  /** 실행 입력 요약과 시작 시각(run-history runInputsOf, 컬럼 키로 연다). 없으면 재확인할 행이 없다. */
+  runInputs?: (runId: string) => (RunInputsSummary & { startedAt: string }) | null;
 }
 
 /** policy.run.commitWindowMs 기본값(D03 §3). */
@@ -213,6 +219,8 @@ export class RunService extends EventEmitter {
   private readonly rate: RateGuard;
   private readonly deviceId: string;
   private active: ActiveRun | null = null;
+  /** run.reverify가 조회하는 중. 그동안 실행을 시작하지 않는다(같은 탭·같은 요청률 칸). */
+  private reverifying = false;
 
   /** 실행기(기본 'ir', RunServiceDeps.engine). */
   private readonly engine: 'h01' | 'ir';
@@ -263,7 +271,7 @@ export class RunService extends EventEmitter {
 
   /** [홈택스에서 준비]. 실행은 한 번에 하나다. 검증에 실패하면 브라우저를 열기 전에 던진다. */
   start(p: StartParams): { runId: string; intentId: string } {
-    if (this.active) throw new RunEnd('failed', 'busy');
+    if (this.active || this.reverifying) throw new RunEnd('failed', 'busy');
     // H01Runner는 포털 설정의 셀렉터·화면 경로·조회 표를 쓴다. IR 실행은 셀렉터·화면을 서명 패키지에서 받으므로 verify 하한만 본다.
     const problems = this.engine === 'ir' ? portalProblems(this.d.portal).filter((x) => x === 'verify_below_floor') : portalProblems(this.d.portal);
     if (problems.length) {
@@ -312,7 +320,7 @@ export class RunService extends EventEmitter {
     const portal = runPortalConfig(this.d.portal, startPolicy);
     this.active = {
       runId: p.runId, intentId, inputsHash, packageDigest: digest, stop: false, halt: null, armed: false, gate: null, token: null, pendingArm: null, policy: null, ir: null, issueKey, pkg: irPkg ?? null, playbookId, downgraded: null,
-      portal, signals: this.runSignals(p.runId, startPolicy),
+      portal, signals: this.runSignals(() => this.ledger.statesByRun(p.runId).some((st) => st === 'armed' || st === 'dispatched'), startPolicy),
       page: null,
       rehearsal: p.rehearsal === true ? new RehearsalReport(irPkg?.local ? `local:${playbookVersion}:${irPkg.local.digest.slice(0, 12)}` : `${irPkg ? 'registry' : 'h01'}:${playbookVersion}`) : null,
     };
@@ -458,14 +466,14 @@ export class RunService extends EventEmitter {
     this.ev({ runId: a.runId, type: 'end', ...result, ...(showNotice ? { portalNotice: notice } : {}) });
   }
 
-  /** 이 실행의 차단 신호 사전(runSignalDict). 받은 정책은 홈택스만 쓴다. 커밋 구간 = 이 실행의 원장 행이 armed·dispatched. */
-  private runSignals(runId: string, startPolicy: Policy | null): SignalDict {
+  /** 차단 신호 사전(runSignalDict). 받은 정책은 홈택스만 쓴다. 커밋 구간(inCommit)에는 시작 때 사전을 쓴다. */
+  private runSignals(inCommit: () => boolean, startPolicy: Policy | null): SignalDict {
     const builtIn = SIGNAL_DICT[this.d.portal.kind];
     const received = this.d.receivedPolicy;
     if (this.d.portal.kind !== 'hometax' || !received) return builtIn;
     return runSignalDict({
       builtIn, atStart: startPolicy?.cooldown.blockSignalsAdd, current: () => received()?.cooldown.blockSignalsAdd,
-      inCommit: () => this.ledger.statesByRun(runId).some((st) => st === 'armed' || st === 'dispatched'),
+      inCommit,
       onDropped: (where) => this.d.log.event('policy.block_signal_dropped', { where }),
     });
   }
@@ -880,6 +888,45 @@ export class RunService extends EventEmitter {
       if (this.gates.decide(g.req.reqId, 'denied', 'policy')) this.journal.append(a.runId, 'gate.denied', { reqId: g.req.reqId, by: 'policy' });
       this.closeGate(a, 'signal');
       g.reject(end);
+    }
+  }
+
+  /**
+   * run.reverify: 재시작 뒤 in_doubt 행을 발급목록 조회로 확정한다(run/reverify.ts). 실행 중이거나 이미 조회 중이면 busy.
+   * 이미 열린 실행 탭만 쓴다(브라우저를 띄우지 않는다). 요청률은 비가역이 아닌 실행처럼 입장한다(쿨다운·하루 실행 수).
+   */
+  async reverify(): Promise<ReverifyResult> {
+    const none = { checked: 0, committed: 0, notCommitted: 0, unknown: 0 };
+    if (this.active || this.reverifying) return { ok: false, code: 'busy', ...none };
+    if (this.engine !== 'ir') return { ok: false, code: 'reverify.unsupported', ...none };
+    const page = this.d.currentPage?.() ?? null;
+    const profile = this.d.data.profiles.byKind('business');
+    if (!page || page.isClosed()) return { ok: false, code: 'reverify.no_browser', ...none };
+    if (!profile) return { ok: false, code: 'profile_missing', ...none };
+    this.reverifying = true;
+    try {
+      const ir = this.packageForRun(false);
+      const pm = this.d.permit?.(ir.pkg.files.manifest.id);
+      if (pm && !pm.ok && pm.code === 'policy.playbook_killed') return { ok: false, code: pm.code, ...none };
+      const startPolicy = this.d.portal.kind === 'hometax' ? (this.d.receivedPolicy?.() ?? null) : null;
+      return await reverifyInDoubt({
+        page, ir, portal: runPortalConfig(this.d.portal, startPolicy), ledger: this.ledger, journal: this.journal, rate: this.rate,
+        signals: this.runSignals(() => false, startPolicy), profileId: profile.id, log: this.d.log, now: this.rate.clock().now,
+        inputsOf: (runId) => this.d.runInputs?.(runId) ?? null,
+        counterpartyBizNo: (id) => this.d.data.counterparties.get(id)?.bizNo ?? null,
+        bizNoHmac: (bizNo) => this.hmac('bizno', bizNo),
+        admit: () => {
+          this.rate.pinRun();
+          this.rate.admit(profile.id, { irreversible: false });
+        },
+      });
+    } catch (e) {
+      if (e instanceof RunEnd) return { ok: false, code: e.code, ...none };
+      this.d.log.event('run.reverify_error', { err: (e as Error)?.name ?? 'unknown' });
+      return { ok: false, code: 'engine.error', ...none };
+    } finally {
+      this.rate.unpinRun();
+      this.reverifying = false;
     }
   }
 
