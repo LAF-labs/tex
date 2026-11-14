@@ -144,22 +144,20 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .onb-table th, .onb-table td { text-align: left; padding: 6px 0; overflow-wrap: anywhere; }
 .onb-table td { border-top: 1px solid var(--line); }
 .onb-table th { color: var(--ink-3); font-weight: 400; font-size: 12px; }
-.onb-opts, .onb-certs { display: grid; gap: 6px; margin: var(--space-2) 0; }
-.onb-auth { width: 100%; text-align: left; font: inherit; cursor: pointer; }
-.onb-auth-main { display: grid; gap: 0; min-width: 0; }
-.onb-auth-main b { color: var(--ink); font-weight: 500; }
-.onb-certs .sx-opt { width: 100%; text-align: left; font: inherit; cursor: pointer; }
 .sx-meta.is-attention { color: var(--attention); }
-.onb-tasks { display: flex; flex-wrap: wrap; gap: 6px; margin: var(--space-2) 0; }
+/* 답 후보 줄(bundle.css .sx-reply)이 카드 안에 있을 때: 카드 폭을 다 쓰고, hover 면은 카드 면 위에서 보이게 canvas다. */
+.sx-card .sx-replies { max-width: none; margin-top: 0; }
+.sx-card .sx-reply:hover:not(:disabled) { background: var(--canvas); }
+/* 굳지 않는 줄: 여러 개 고르기(맡길 업무)에서 켠 줄은 실선 + 체크, 폼·목록을 펼친 줄은 실선이다. 다시 누를 수 있다. */
+.sx-reply[aria-pressed='true'] { border: 1.5px solid var(--ink); }
+.sx-reply[aria-expanded='true'] { border-style: solid; }
 .onb-scope { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
 .onb-sub { font-size: 13px; font-weight: 500; color: var(--ink-2); }
 
 .quick-zone { flex: none; padding-bottom: var(--space-2); }
 .quick-zone:empty, .sx-quick:empty { display: none; }
-.sx-quick button.is-on { background: var(--ink); color: var(--on-ink); }
 .quick-label { margin-right: 2px; }
 .sx-quick .sx-meta { align-self: center; }
-.sx-quick button.is-soon { color: var(--ink-4); background: transparent; }
 .sx-quick button.is-prompt, .sx-quick button.is-fill { display: inline-flex; align-items: center; gap: 6px; }
 .sx-quick button.is-fill { background: transparent; box-shadow: inset 0 0 0 1px var(--line); color: var(--ink-2); }
 .sx-quick button svg { width: 12px; height: 12px; flex: none; color: var(--ink-3); }
@@ -508,5 +506,4 @@ section[data-view="bundle"] .rs-col { max-width: 920px; }
 .card-ask-no { font-weight: 600; color: var(--ink-2); }
 .card-ask-input { width: 84px; height: 40px; padding: 0 10px; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; letter-spacing: 0.2em; }
 .card-ask-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
-.onb-opts .card-reg { padding: 0 var(--space-1); }
 [data-card-register] .opt-main { width: 100%; }

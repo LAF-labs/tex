@@ -12,7 +12,7 @@ const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-to
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
 const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE } = await import(`${DESK}/dist/shell-runs.js`);
-const { OnboardingFlow } = await import(`${DESK}/dist/onboarding.js`);
+const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
 const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
@@ -31,7 +31,7 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '', onb: null };
+const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false };
 const store = new MockStore();
 const vaultDoc = {
   id: 'v1', name: '납세증명서(국세)', kind: '직접 추가', docName: '납세증명서(국세)', profile: 'business', issuedOn: dayOffset(-2), expiresOn: dayOffset(28), source: '직접 추가',
@@ -74,16 +74,23 @@ const handlers = {
   'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
+    if (S.onbDelay) await sleep(S.onbDelay);
     const r = await S.onb.answer(p);
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
   'counterparties.list': () => cps,
   'docs.list': () => (S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
-  'g24.candidates': () => [
-    { id: 'f1', name: `주민등록표등본_${dayOffset(0).replaceAll('-', '')}.pdf`, size: '182KB', at: '10:26' },
-    { id: 'f2', name: 'print_0001.pdf', size: '96KB', at: '10:23' },
-  ],
+  'g24.candidates': () =>
+    S.g24Empty
+      ? []
+      : [
+          { id: 'f1', name: `주민등록표등본_${dayOffset(0).replaceAll('-', '')}.pdf`, size: '182KB', at: '10:26' },
+          { id: 'f2', name: 'print_0001.pdf', size: '96KB', at: '10:23' },
+        ],
+  // 제품의 정부24: 후보 없이 [PDF 가져오기](= docs.import, 파일 대화상자는 건너뛴다)
+  'docs.import': () => ({ doc: { id: 'g24-doc', name: '주민등록표 등본', kind: '직접 추가', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 추가' }, document: { duplicate: false } }),
+  'security.check': () => ({ state: 'ok' }),
 };
 ipcMain.handle('sax', async (_e, { method, params }) => {
   const f = handlers[method];
@@ -213,35 +220,46 @@ const scenes = {
     await js(win, `document.querySelector('[data-board-item^="cp:"]').click()`);
     await shot(win, '20-board-compose');
   },
-  // 온보딩(08 §4 O-01~O-06·동의 4종). 장면을 여는 동안 S.onb가 있다(아래 order 루프).
+  // 온보딩(08 §4): 약관 → 사업자 → 인증서 → 첫 발급. 답은 답 후보 줄이다(v2.0). 장면을 여는 동안 S.onb가 있다(아래 order 루프).
   async onboarding(win) {
     const press = async (sel) => {
-      await js(win, `document.querySelector(${JSON.stringify(sel)}).click()`);
+      await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
       await sleep(150);
     };
     await shot(win, '21-onb-terms');
     await press('[data-onb=agree]');
+    await shot(win, '22-onb-welcome');
     await press('[data-onb=upload]');
-    await shot(win, '22-onb-biz');
+    await shot(win, '23-onb-biz');
     await press('[data-onb=confirm]');
-    await press('[data-onb=cert]');
-    await shot(win, '23-onb-auth');
+    await shot(win, '24-onb-auth');
+    await press('[data-onb=other]');
     await press('[data-onb=card]');
-    await shot(win, '24-onb-delegation');
-    await press('[data-onb=agree]');
-    await shot(win, '25-onb-model');
-    await press('[data-onb=agree]');
-    await shot(win, '26-onb-telemetry');
-    await press('[data-onb=off]');
-    await press('[data-task=H-01]');
-    await press('[data-task=H-03]');
-    await shot(win, '27-onb-tasks');
-    await press('[data-onb=submit]');
-    await press('[data-onb=later]');
-    await shot(win, '28-onb-summary');
-    await press('[data-onb=ok]');
+    await shot(win, '25-onb-auth-other');
+    // 고른 줄이 굳는 순간(main 답을 기다리는 동안): 실선 + 체크, 나머지는 흐림
+    S.onbDelay = 1200;
+    await js(win, `document.querySelector('[data-cert=npki-1]').click()`);
+    await shot(win, '26-onb-auth-picked');
+    await sleep(1200);
+    S.onbDelay = 0;
+    await shot(win, '27-onb-first');
     await press('[data-onb=try]');
-    await shot(win, '29-onb-done');
+    await shot(win, '28-onb-done');
+  },
+  // 옛 이어 하기 저장에만 남은 화면(맡길 업무·거래처·요약). 여러 개 고르기는 줄 + [다음]이다.
+  async onbOld(win) {
+    const press = async (sel) => {
+      await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
+      await sleep(150);
+    };
+    await shot(win, '29-onb-tasks');
+    await press('[data-task=H-01]');
+    await shot(win, '30-onb-tasks-off');
+    await press('[data-task=H-01]');
+    await press('[data-onb=submit]');
+    await shot(win, '31-onb-cps');
+    await press('[data-onb=later]');
+    await shot(win, '32-onb-summary');
   },
   async biz(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await sleep(100); await js(win, `document.querySelector('[data-set-tab=biz]').click()`); await shot(win, '15-biz'); },
   async settings(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await shot(win, '16-settings'); },
@@ -257,13 +275,30 @@ const scenes = {
     await js(win, `document.querySelector('[data-candidate=f1]').click()`);
     await shot(win, '18-g24-pick');
   },
+  // 제품: 후보가 없어 [PDF 가져오기] 하나. 가져오기가 끝나면 기다리던 정부24 카드가 끝난 상태가 된다.
+  async g24Import(win) {
+    S.g24Empty = true;
+    await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '주민등록등본 떼 줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
+    await sleep(300);
+    await js(win, `document.querySelector('[data-g24] .sx-btn-primary')?.click()`);
+    await sleep(200);
+    await js(win, `document.querySelector('[data-act=g24-saved]').click()`);
+    await sleep(200);
+    await shot(win, '18b-g24-import');
+    await js(win, `document.querySelector('[data-act=g24-import]').click()`);
+    await sleep(300);
+    await shot(win, '18c-g24-imported');
+    S.g24Empty = false;
+  },
 };
 
-const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'onboarding'];
+const order = ['home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld'];
+const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;
-    S.onb = k === 'onboarding' ? new OnboardingFlow(new MockOnboardingPorts({ saveProfile: async () => {} })) : null;
+    const ports = () => new MockOnboardingPorts({ saveProfile: async () => {} });
+    S.onb = k === 'onboarding' ? new OnboardingFlow(ports()) : k === 'onbOld' ? new OnboardingFlow(ports(), { ...initialOnbState(), step: 'tasks', consents: { terms: agreed, model: agreed } }) : null;
     const win = await open(theme);
     try {
       await scenes[k](win);

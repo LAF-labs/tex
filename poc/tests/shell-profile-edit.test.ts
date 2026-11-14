@@ -103,8 +103,8 @@ describe('상호가 비었거나 번호로 저장된 프로필(0.1.6 실사용: 
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /state\.bizEdit = null;\s*\/\/ [^\n]*\n\s*render\(\);\s*renderTitlebar\(\);\s*renderToday\(\);/);
     const onb = read('apps/desktop/static/shell/shell-onboarding.js');
-    assert.match(onb, /active && named \? btn\('맞아요'/);
-    assert.match(onb, /unknown && named \? btn\('맞습니다'/);
+    assert.match(onb, /active && named \? answer\('맞아요', 'confirm'\)/);
+    assert.match(onb, /unknown && named \? \{ \.\.\.answer\('맞습니다', 'confirm_unverified'\)/);
   });
 });
 

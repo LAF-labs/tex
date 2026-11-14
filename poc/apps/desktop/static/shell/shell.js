@@ -2320,6 +2320,12 @@ async function importDoc(params) {
     if (params.password) state.docLocked.add(d.id);
     state.docsRev++;
     state.docs = [d, ...state.docs.filter((x) => x.id !== d.id)];
+    // 정부24 안내가 받은 PDF를 기다리면(pick) 이 가져오기가 그 답이다. 정부24 패널·입력창 [+]·문서함의 가져오기가 모두 이 길이라 어느 것인지 가리지 않고, 기다리는 가장 최근 실행 하나를 마친다.
+    const g24 = [...state.g24.values()].reverse().find((g) => g.stage === 'pick');
+    if (g24) {
+      g24.stage = 'saved';
+      renderG24(g24);
+    }
     const msg = r.document?.duplicate ? '이미 보관함에 있는 파일이에요' : d.vault?.needsUser ? '보관함에 넣었어요. 확인할 칸이 있어요' : '보관함에 넣었어요';
     // 읽는 동안 다른 화면으로 갔으면 끌고 오지 않는다(승인 대기 중인 작업 패널을 바꾸지 않게)
     if (state.view === 'docs') {
