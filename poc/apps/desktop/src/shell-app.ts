@@ -529,7 +529,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       today,
       reminderDay: sample?.settings.reminderDay ?? REMINDER_DAY_DEFAULT,
       issued: issuedInvoices(),
-      runs: runs.list().map((r) => ({ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true })),
+      // 판의 실행 칸은 "발급할 세금계산서"다. 민원증명 실행은 넣지 않는다(결과는 문서함 증명서로 간다).
+      runs: runs.list().flatMap((r) => (r.cert ? [] : [{ id: r.id, status: r.status, who: r.counterparty.name, inDoubt: r.inDoubt === true }])),
       docs: docsNow.map((d) => ({ id: d.id, name: d.name, expiresOn: d.expiresOn, needsUser: !!d.vault?.needsUser })),
       // 세무사 꾸러미(D-05)·사업용 카드(D-04)는 아직 목업 어댑터다. 제품은 칸을 두지 않는다.
       bundle: sample ? sample.bundle(today) : null,
@@ -583,7 +584,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   runs.on('doc', (doc) => {
     store.docs.unshift(doc);
     const run = runs.get(doc.id.slice(2));
-    if (seed && run) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
+    if (seed && run && !run.cert) void seed.issued(doc, run).catch((e) => log.event('main.seed_issued_failed', { error: (e as Error).message.slice(0, 120) }));
     send({ type: 'doc', doc });
     pushBoard();
     void refresh().catch(() => {});
@@ -819,7 +820,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return void runs.stop(runId).catch(() => {});
     }
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
-    void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
+    void bar.open(req, runs.get(runId)?.auth, runs.get(runId)?.cert?.name).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
         // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
@@ -1075,7 +1076,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const autoPrepare = (id: string) => {
     const r = runs.get(id);
-    if (!r || r.status !== 'draft' || !String(r.item ?? '').trim()) return;
+    if (!r || r.status !== 'draft' || (!r.cert && !String(r.item ?? '').trim())) return;
     setImmediate(() => {
       log.event('main.prepare_auto', {});
       prepareNow(id).catch((e: Error) => log.event('main.prepare_auto_failed', { code: e.message.slice(0, 60) }));
@@ -1189,10 +1190,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const setupGate = (parsed: Parsed) => {
     if (profile !== 'business') return null;
     if (!(parsed.intent === 'invoice' || parsed.intent === 'cert' || answersPending(parsed, runs))) return null;
-    // Chrome이 없으면 세금계산서 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
-    // 증명서는 이 빌드가 떼지 못하므로(interpret가 "곧 할 수 있어요") 할 수 없는 일 때문에 설치를 시키지 않는다(#291, 부장 판정 2026-11-12).
-    const needsChrome = parsed.intent !== 'cert' && !chromeReady();
-    const needsSecurity = parsed.intent !== 'cert' && securityMissing();
+    // Chrome이 없으면 초안 카드를 만들기 전에 말한다(U6). [홈택스에서 준비]의 점검(#288)은 그 뒤에 지워진 경우를 막는 마지막 자리로 남는다.
+    // 민원증명도 같은 홈택스 로그인(전용 Chrome·공동인증서 프로그램)을 쓴다. 떼지 않는 증명서(cert 없음)는 설치를 시키지 않는다.
+    const needsHometax = parsed.intent !== 'cert' || !!parsed.cert;
+    const needsChrome = needsHometax && !chromeReady();
+    const needsSecurity = needsHometax && securityMissing();
     const missing: SetupItem[] = [...setupMissing(profiles().business), ...(needsChrome ? (['chrome'] as const) : []), ...(needsSecurity ? (['security'] as const) : [])];
     if (!missing.length) return null;
     runs.pending.asked = null;
@@ -1350,7 +1352,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return;
     }
     // 사람 차례: 핸드오프(로그인·서명·기타) 또는 승인 뒤 서명 단계(인증서 비밀번호·간편인증·보안카드). 승인 자체는 앱의 승인 바에서 한다.
-    const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && r.steps[5]?.state === 'now' ? 'sign' : null;
+    const turn = r.status === 'turn' ? `turn:${r.handoff?.phase ?? ''}` : r.status === 'issuing' && !r.cert && r.steps[5]?.state === 'now' ? 'sign' : null;
     const want = turn ?? 'back';
     if (chromeSpot.get(r.id) === want) return;
     // 시작 때 한 번만 뒤에 둔다. 사람 차례가 끝났으면 'away'로 바꿔 다음 차례(같은 단계의 다른 핸드오프)에도 패널을 크게 한다
@@ -1425,7 +1427,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       docs: await listDocs(),
       // 견본 대화·견본 표시는 시연(fixture)만. 제품은 빈 대화에서 시작하고 빠른 실행은 세금계산서만(정부24 안내는 견본 후보라 뺀다).
       timeline: sample ? sample.timeline() : [],
-      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.soon),
+      quick: sample ? sample.quick : QUICK.filter((q) => q.label === '세금계산서 발급' || q.cert || q.soon),
       sample: !!sample,
       platform: process.platform,
       loginRequired,
@@ -1455,6 +1457,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
+      // 민원증명(cert-docs 표의 이름)은 이 PC의 규칙으로 바로 고른다(모델·게이트웨이를 거치지 않는다). 대화 에이전트 도구에는 증명서가 없다.
+      // 기본 용도·제출처로 초안을 만들고, 사용자 전송이면 바로 시작한다(finishReply → autoPrepare). 사람이 누르는 것은 승인 카드의 [승인]뿐이다.
+      if (profile === 'business' && local.cert) return setupGate(local) ?? finishReply(interpret(text, vat, profile, runs, local), 'offline', null, []);
       if (demo) {
         // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
         const ask = modelOk() && !!text.trim();

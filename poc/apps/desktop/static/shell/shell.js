@@ -7,7 +7,7 @@ import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -270,6 +270,8 @@ const act = {
   },
   // [다시 준비]: main이 같은 값의 새 초안을 만든다(발급 전에 멈춘 실행만). 시작은 새 카드의 [홈택스에서 준비]
   redraft: async (id) => {
+    // 민원증명은 고칠 칸이 없어 [다시 준비]가 곧 다시 떼기다
+    if (state.runs.get(id)?.cert) return act.restart(id);
     try {
       const d = await call('run.redraft', { id });
       putRun(d);
@@ -279,6 +281,8 @@ const act = {
     }
   },
   again: (run) => {
+    // 민원증명: 같은 서류·신청 값으로 바로 다시 뗀다(새 카드, 승인 카드는 다시 뜬다)
+    if (run.cert) return act.restart(run.id);
     state.vat = run.vat; // 지난번 부가세 방식도 그대로
     fillComposer(`${run.counterparty.name}에 ${num(run.amount)}원 세금계산서 끊고 메일 보내 줘`);
   },
@@ -835,6 +839,7 @@ async function ask(text, vat) {
   // 세무 질문이 섞인 요청: 작업은 하고 고정 문구만 보인다(D04 §3). 문구는 main이 정한 고정 값이다.
   if (r.note) appendThread(h('div', { class: 'sx-app sx-meta', 'data-advice-note': '' }, r.note));
   if (r.kind === 'draft') {
+    if (r.text) appendThread(h('div', { class: 'sx-app', 'data-cert-reply': r.run.cert?.code ?? '' }, r.text));
     putRun(r.run);
     openPanel({ kind: 'run', id: r.run.id });
   } else if (r.kind === 'g24') {
@@ -942,7 +947,7 @@ function renderHandoff() {
   chat.handoff.hidden = !r;
   if (!r) return chat.handoff.replaceChildren();
   chat.handoff.replaceChildren(
-    h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · 세금계산서 · ${r.counterparty.name}`),
+    h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · ${runTitle(r)}`),
     h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => {
       openPanel({ kind: 'run', id: r.id });
       chat.thread.querySelector(`[data-run="${r.id}"]`)?.scrollIntoView({ block: 'center' });
@@ -1271,7 +1276,7 @@ function renderPanel() {
 /** 레일 화면 머리의 "승인 대기" 줄. 바 바로 옆에 렌더러 버튼을 두지 않으려고 화면 위쪽에 둔다. */
 const waitingChip = () => {
   const r = [...state.runs.values()].find((x) => x.status === 'waiting');
-  return h('button', { type: 'button', class: 'sx-btn sx-btn-quiet rs-waiting', onclick: () => go('chat') }, r ? `세금계산서 · ${r.counterparty.name} 승인 대기 · 대화로 가기` : '승인 대기 · 대화로 가기');
+  return h('button', { type: 'button', class: 'sx-btn sx-btn-quiet rs-waiting', onclick: () => go('chat') }, r ? `${runTitle(r)} 승인 대기 · 대화로 가기` : '승인 대기 · 대화로 가기');
 };
 
 const panelHead = (title, ...extra) => h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title), ...extra, h('button', { type: 'button', class: 'panel-x', 'aria-label': '패널 닫기', onclick: act.closePanel }, icon('close')));
@@ -1590,7 +1595,8 @@ function bizView() {
         'section',
         { class: 'rs-sec', 'aria-labelledby': 'biz-tasks' },
         h('h2', { class: 'sx-panel-sec', id: 'biz-tasks' }, '맡긴 업무'),
-        h('div', { class: 'sx-quick' }, state.boot.quick.map((q) => h('button', { type: 'button', class: q.soon ? 'is-soon' : null, onclick: () => (q.soon ? toast(`${q.label}은 곧 지원돼요`) : fillComposer(q.text)) }, q.label, q.soon ? ' · 곧 지원' : ''))),
+        // 민원증명 버튼은 그 요청을 바로 보낸다(기본 용도·제출처로 시작, 사람은 승인 카드의 [승인]만). 세금계산서는 입력창을 채운다(거래처·금액을 말해야 한다).
+        h('div', { class: 'sx-quick' }, state.boot.quick.map((q) => h('button', { type: 'button', class: q.soon ? 'is-soon' : null, 'data-quick-cert': q.cert ?? null, onclick: () => (q.soon ? toast(`${q.label}은 곧 지원돼요`) : q.cert ? sendPrompt(q.text) : fillComposer(q.text)) }, q.label, q.soon ? ' · 곧 지원' : ''))),
         h('p', { class: 'sx-meta' }, '입력창 위 빠른 실행에 이 순서로 보여요.'),
       ),
     ),
@@ -1611,7 +1617,7 @@ function activityRows() {
   const rows = [];
   for (const r of [...state.runs.values()].reverse()) {
     if (r.status === 'draft') continue;
-    rows.push({ id: r.id, run: r, at: `${today} ${r.result?.doneAt ?? r.createdAt}`, what: `세금계산서 · ${r.counterparty.name}`, profile: '사업자', portal: '홈택스', status: r.status, result: CHIP[r.status][0] });
+    rows.push({ id: r.id, run: r, at: `${today} ${r.result?.doneAt ?? r.createdAt}`, what: runTitle(r), profile: '사업자', portal: '홈택스', status: r.status, result: CHIP[r.status][0] });
   }
   for (const g of [...state.g24.values()].reverse()) {
     const result = { guide: '내 차례', pick: '내 차례', saved: '문서함에 넣음', stopped: '그만둠' }[g.stage];

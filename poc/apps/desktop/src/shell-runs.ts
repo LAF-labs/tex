@@ -3,15 +3,21 @@ import { EventEmitter } from 'node:events';
 import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
 import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
+import { certDocByCode, type CertCode } from './cert-docs.ts';
 import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
 // 실행 단계·승인 대기·발급 확정·승인번호는 엔진 이벤트에서 온다. 게이트 요청은 게이트 포트로 와서 승인 바가 받는다(shell-app).
 
-const STEPS = ['홈택스 로그인', '건별발급 화면', '입력', '되읽기', '승인', '전자서명', '발급목록 확인', '메일 전송 확인'];
 const PHASES = ['login', 'form', 'input', 'readback', 'gate', 'sign', 'verify', 'mail'] as const;
 type Phase = (typeof PHASES)[number];
+/** 서류별 단계 이름(엔진 단계 순서 PHASES). 민원증명은 메일 단계가 없고, 승인 뒤가 서명이 아니라 발급(제출)이다. */
+const STEP_LABELS: Readonly<Record<RunView['doc'], readonly string[]>> = {
+  'H-01': ['홈택스 로그인', '건별발급 화면', '입력', '되읽기', '승인', '전자서명', '발급목록 확인', '메일 전송 확인'],
+  cert: ['홈택스 로그인', '민원 신청 화면', '입력', '되읽기', '승인', '발급', '발급 확인'],
+};
+const stepsOf = (doc: RunView['doc']) => STEP_LABELS[doc].map((label) => ({ label, state: 'todo' as StepState }));
 
 /**
  * 다시 게이트 경고(고정 문구 3종, M4-2 3부 팀장 조건). 엔진이 새 게이트를 열기 전에 이유를 준다(regate 이벤트, 엔진 계약 요청 중).
@@ -63,12 +69,12 @@ const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
 };
 /** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
-export function handoffTurn(phase: Phase, code: string | undefined, auth?: string): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
+export function handoffTurn(phase: Phase, code: string | undefined, auth?: string, labels: readonly string[] = STEP_LABELS['H-01']): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
   if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
   if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };
   if (phase === 'login') return { kind: 'login', ...HANDOFF_LOGIN };
-  return { kind: 'other', text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${STEPS[PHASES.indexOf(phase)]}`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
+  return { kind: 'other', text: `${HANDOFF_TEXT} · 이 단계는 직접 해 주세요: ${labels[PHASES.indexOf(phase)] ?? ''}`, note: code && NOTE[code] && !/아무것도 발급하지 않았어요/.test(NOTE[code]!) ? NOTE[code]! : HANDOFF_HINT };
 }
 
 type EngineEvent =
@@ -179,6 +185,10 @@ export const NOTE: Record<string, string> = {
   bad_amount: '금액을 확인하지 못해 시작하지 않았어요. 카드에서 금액을 고친 뒤 다시 준비해 주세요. 아무것도 발급하지 않았어요.',
   item_missing: '품목이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요. 거래처 화면에서 [저장 품목]을 넣거나, 대화에서 같은 요청을 다시 하면 품목을 물어볼게요.',
   'input.missing': '발급에 필요한 값이 비어 있어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
+  // 민원증명 신청 값 검사(엔진 cert.ts certInputs): 앱의 신청 값이 받은 작업 정보(패키지 선언)와 맞지 않는다. 사용자가 고칠 것은 없다.
+  'cert.input_invalid': '증명서 신청 값(용도·제출처)이 홈택스 작업 정보의 선택지와 맞지 않아 시작하지 않았어요. 앱을 업데이트한 뒤 다시 해 주세요. 아무것도 발급하지 않았어요.',
+  'cert.input_unknown': '홈택스 작업 정보가 받지 않는 신청 값이 있어 시작하지 않았어요. 앱을 업데이트한 뒤 다시 해 주세요. 아무것도 발급하지 않았어요.',
+  'cert.unknown_doc': '이 증명서를 떼는 홈택스 작업 정보가 없어 시작하지 않았어요. 아무것도 발급하지 않았어요.',
   busy: '다른 작업이 진행 중이라 시작하지 않았어요. 그 작업이 끝난 뒤 다시 준비해 주세요.',
   already_issuing: '이미 발급을 시작한 건이라 다시 시작하지 않았어요.',
   bad_run_id: '이 카드를 시작하지 못했어요. 대화에서 다시 요청해 주세요. 아무것도 발급하지 않았어요.',
@@ -220,7 +230,12 @@ export const UNKNOWN_STOP_NOTE = '멈췄어요. 아무것도 발급하지 않았
 const BLOCK_CODES = new Set(['portal.blocked', 'policy.cooldown']);
 /** in_doubt(발급됐는지 모름)는 코드와 관계없이 중복 위험을 알린다. 코드별 문구는 이 목록만. */
 const IN_DOUBT_NOTE = new Set(['verify.unknown', 'engine.exit']);
-const note = (code?: string) => (code && NOTE[code]) || UNKNOWN_STOP_NOTE;
+/** 민원증명 실행에서만 다른 문구(세금계산서·메일·인터넷 연결 안내가 맞지 않는 것). */
+const CERT_NOTE: Record<string, string> = {
+  'package.not_loaded': '이 증명서를 떼는 홈택스 작업 정보가 아직 이 PC에 없어 시작하지 않았어요. 앱을 업데이트하면 뗄 수 있어요. 아무것도 발급하지 않았어요.',
+  'save_pdf.failed': '발급은 완료되었어요. 증명서 PDF는 받지 못했어요. 홈택스 민원증명 발급 내역에서 다시 출력할 수 있어요.',
+};
+const note = (code?: string, r?: RunView) => (code && ((r?.cert && CERT_NOTE[code]) || NOTE[code])) || UNKNOWN_STOP_NOTE;
 
 /** 중복 카드 문장(ADR-027 UX). 발급 확정 / 발급 여부 모름 / 이전 시도 미발급. */
 export const DUP_NOTE = {
@@ -231,16 +246,23 @@ export const DUP_NOTE = {
 } as const;
 
 /** 승인 대기 카드에 붙는 중복 경고(D02 §7). 해당하는 것을 모두 둔다(발급 확정 → 모름 → 직전 미발급). 바에는 가장 위험한 하나가 표시된다. */
-function dupWarnings(req: GateRequest): string[] {
+function dupWarnings(req: GateRequest, text: Record<keyof typeof DUP_NOTE, string> = DUP_NOTE): string[] {
   const f = new Map<string, string>(req.fields.map((x) => [x.fieldKey, x.value]));
   const states = (f.get('$dup.businessKey') ?? '').split(',');
   const out: string[] = [];
-  if (states.includes('committed')) out.push(DUP_NOTE.committed);
-  if (states.some((s) => s !== 'committed' && ISSUED_OR_UNKNOWN.includes(s))) out.push(DUP_NOTE.unknown);
-  if (f.get('$dup.priorNotCommitted') === 'true') out.push(DUP_NOTE.notCommitted);
-  if (!out.length && f.has('$dup.businessKey')) out.push(DUP_NOTE.other);
+  if (states.includes('committed')) out.push(text.committed);
+  if (states.some((s) => s !== 'committed' && ISSUED_OR_UNKNOWN.includes(s))) out.push(text.unknown);
+  if (f.get('$dup.priorNotCommitted') === 'true') out.push(text.notCommitted);
+  if (!out.length && f.has('$dup.businessKey')) out.push(text.other);
   return out;
 }
+/** 민원증명 중복 문장(업무 키: 같은 날·같은 서류·같은 신청 값, 엔진 certBusinessKey). */
+export const CERT_DUP_NOTE: Record<keyof typeof DUP_NOTE, string> = {
+  committed: '오늘 같은 서류를 같은 용도로 이미 뗐어요. 한 번 더 떼면 같은 증명서가 하나 더 생겨요.',
+  unknown: '오늘 같은 서류가 발급됐는지 아직 확인하지 못했어요. 홈택스 민원증명 발급 내역을 먼저 확인해 주세요.',
+  notCommitted: '이전 시도는 발급되지 않았어요.',
+  other: '오늘 같은 서류를 같은 용도로 뗀 기록이 있어요.',
+};
 
 /** 금고가 전용 Chrome에서 확장을 보고 비밀 창을 거절했다(extension_not_allowed). 확장 ID·개수·경로는 화면에 두지 않는다(금고 로그에만). */
 export const EXTENSION_REFUSED_TEXT = 'Chrome 확장이 감지돼 안전을 위해 멈췄어요. 다시 시도해 주세요.';
@@ -495,6 +517,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const run: RunView = {
       id: `run-${randomUUID().slice(0, 8)}`,
       doc: 'H-01',
+      cert: null,
       status: 'draft',
       createdAt: hm(),
       // 처음 거래·처음 보내는 주소는 게이트 때 엔진이 원장으로 판정한다(초안에서는 모름).
@@ -508,7 +531,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       itemGuessed: !cleanItem(item ?? ''),
       writeDate: dayOffset(0),
       auth: this.src.auth(),
-      steps: STEPS.map((label) => ({ label, state: 'todo' as StepState })),
+      steps: stepsOf('H-01'),
       turn: null,
       confirmed: false,
       result: null,
@@ -517,6 +540,47 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.markDup(run);
     this.runs.set(run.id, run);
     return run;
+  }
+
+  /**
+   * 민원증명 초안(cert-docs 표의 서류, run.startCert inputs 그대로). 고칠 칸은 없다: 신청 값은 승인 카드에서 보고, 다르면 [중지] 뒤 다시 말한다.
+   * 거래처·금액·품목·이메일 칸은 빈 값이다. 시작은 prepare다(같은 Chrome 점검·[중지] 처리·한 번에 하나).
+   */
+  createCertDraft(code: CertCode, inputs: Record<string, string>, o: { rehearsal?: boolean } = {}): RunView {
+    const def = certDocByCode(code);
+    if (!def) throw new Error('cert.unknown_doc');
+    const run: RunView = {
+      id: `run-${randomUUID().slice(0, 8)}`,
+      doc: 'cert',
+      cert: { code: def.code, playbookId: def.playbookId, name: def.name, docType: def.docType, inputs: { ...inputs } },
+      status: 'draft',
+      createdAt: hm(),
+      counterparty: { id: '', name: '', bizNo: '', first: false },
+      email: { value: '', first: false },
+      amount: 0,
+      vat: 'separate',
+      vatGuessed: false,
+      supply: 0,
+      tax: 0,
+      total: 0,
+      item: '',
+      itemGuessed: false,
+      writeDate: dayOffset(0),
+      auth: this.src.auth(),
+      steps: stepsOf('cert'),
+      turn: null,
+      confirmed: false,
+      result: null,
+      warnings: [],
+      ...(o.rehearsal ? { rehearsal: true } : {}),
+    };
+    this.runs.set(run.id, run);
+    return run;
+  }
+
+  /** 민원증명을 바로 시작한다(초안 + prepare). 예행은 {rehearsal: true}: 엔진이 승인 카드 자리에서 스스로 멈춘다. 실행 상한은 부르는 쪽(shell-app prepareNow)이 본다. */
+  startCert(code: CertCode, inputs: Record<string, string>, o: { rehearsal?: boolean } = {}): Promise<RunView> {
+    return this.prepare(this.createCertDraft(code, inputs, o).id);
   }
 
   /** 초안의 오늘 중복 표시(F-10): 오늘 발급을 마친(또는 발급됐는지 모르는) 같은 거래처·같은 합계 실행이 있는가. 거래처·금액을 고치면 다시 본다. */
@@ -533,6 +597,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       patch = { ...patch, amount: v };
     }
     const r = this.mustDraft(id);
+    if (r.cert) throw new Error('not_draft');
     // 카드에서 거래처 바꾸기(F-14): 장부의 거래처로만. 받는 이메일은 새 거래처 것, 품목은 저장 품목에서 온 추정이었으면 새 거래처의 저장 품목.
     // 대화·카드에서 받은 품목은 그대로 둔다. 같은 patch의 item·email이 그 뒤에 덮는다.
     if (patch.counterpartyId !== undefined && patch.counterpartyId !== r.counterparty.id) {
@@ -660,9 +725,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
   async prepare(id: string): Promise<RunView> {
     const r = this.mustDraft(id);
     // 품목이 비면 엔진이 시작하지 않는다(item_missing). 카드를 끝내지 않고 그대로 두고 품목을 넣게 한다.
-    if (!cleanItem(r.item)) throw new Error('item_required');
+    if (!r.cert && !cleanItem(r.item)) throw new Error('item_required');
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
-    if (!emailOk(r.email.value)) throw new Error('bad_email');
+    if (!r.cert && !emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');
     // Chrome 사전 점검(#275 후보: /Applications·~/Applications, Windows Program Files·LocalAppData). 없으면 시작하지 않고 카드에 남긴다.
     const noChrome = !!this.src.chromeReady && !this.src.chromeReady();
@@ -684,7 +749,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
         this.end(r, { status: 'stopped', code: 'run.stopped' });
         return r;
       }
-      await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null, ...(r.rehearsal ? { rehearsal: true } : {}) });
+      const rehearsal = r.rehearsal ? { rehearsal: true } : {};
+      if (r.cert) await this.host.rpc('run.startCert', { runId: r.id, playbookId: r.cert.playbookId, inputs: r.cert.inputs, ...rehearsal });
+      else await this.host.rpc('run.start', { runId: r.id, counterpartyId: r.counterparty.id, supply: r.supply, tax: r.tax, itemName: r.item, email: r.email.value || null, ...rehearsal });
       // 시작하는 동안 온 [중지]를 이제 엔진에 전한다(엔진은 다음 정지 확인에서 멈춘다. 게이트 전이다).
       if (this.stopEarly.has(r.id)) await this.host.rpc('run.stop', { runId: r.id }).catch(() => {});
     } catch (e) {
@@ -712,13 +779,19 @@ export class ShellRuns extends EventEmitter implements Drafts {
    */
   redraft(id: string): RunView {
     const r = this.runs.get(id);
+    // 민원증명은 같은 서류·신청 값으로 다시 뗀다([한 번 더 떼기]·[다시 준비]·[다시 시작]). 발급됐는지 모르는 실행만 뺀다. 같은 날 두 번째 발급은 승인 카드의 중복 경고가 알린다.
+    if (r?.cert && (r.status === 'done' || ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt))) return this.markRestarted(r, this.createCertDraft(r.cert.code, r.cert.inputs));
     // 확인 필요로 끝난 발급 전 실행, 또는 브라우저가 닫혀 멈춘 발급 전 실행([다시 시작])
     if (!r || !r.redo || !(r.status === 'attention' || (r.status === 'stopped' && r.browserClosed))) throw new Error('not_redoable');
     const cp = this.src.counterparties().find((c) => c.id === r.counterparty.id);
     if (!cp) throw new Error('no_counterparty');
     const d = this.createDraft(cp, r.amount, r.vatGuessed ? null : r.vat, r.itemGuessed ? null : r.item);
     if (emailOk(r.email.value)) d.email = { value: r.email.value, first: false };
-    // 점검으로 멈춘 실행은 한 번만 다시 시작한다(사람이 먼저 눌렀으면 자동 재시작을 하지 않는다)
+    return this.markRestarted(r, d);
+  }
+
+  /** 점검으로 멈춘 실행은 한 번만 다시 시작한다(사람이 먼저 눌렀으면 자동 재시작을 하지 않는다). */
+  private markRestarted(r: RunView, d: RunView): RunView {
     if (r.maintenance) {
       r.maintenance.restartedAs = d.id;
       this.clearMaintenanceTimer(r.id);
@@ -894,7 +967,9 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   private step(r: RunView, phase: Phase, state: StepState, noteText?: string): void {
     const i = PHASES.indexOf(phase);
-    r.steps[i] = { label: STEPS[i]!, state, note: noteText };
+    const label = STEP_LABELS[r.doc][i];
+    // 그 서류에 없는 단계(민원증명의 메일)는 그리지 않는다
+    if (label !== undefined) r.steps[i] = { label, state, note: noteText };
   }
 
   private onEngine(e: EngineEvent): void {
@@ -903,7 +978,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (e.type === 'phase') {
       // 서명 단계: 엔진이 확인 창·인증유형(프로필 발급 인증)을 누르고 나면 사람 몫이다(인증서 비밀번호·간편인증 승인, 2026-11-11 실화면).
       // 엔진의 서명 차례(handoff)는 끝 표지를 기다린 뒤에야 오므로, 할 일은 서명 단계에 들어설 때 바로 보인다.
-      const n = e.phase === 'sign' && e.state === 'now' ? (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
+      // 민원증명의 승인 뒤 단계는 사람 몫이 없는 제출(s21)이라 인증 안내를 붙이지 않는다.
+      const n = e.phase === 'sign' && e.state === 'now' ? (r.cert ? undefined : (signFor(r.auth)?.now ?? SIGN_NOW_DEFAULT)) : e.phase === 'login' && e.state === 'now' ? LOGIN_NOW : e.code ? NOTE[e.code] : undefined;
       this.step(r, e.phase, e.state === 'attention' ? 'attention' : e.state, n);
       // 발급목록 조회 횟수(08 §11 "확인 중 · 조회 n회째"). 엔진이 attempt를 보낼 때만.
       if (e.phase === 'verify' && Number.isSafeInteger(e.attempt) && e.attempt! > 0) r.verifyAttempt = e.attempt;
@@ -926,7 +1002,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (e.type === 'handoff') {
       if (!PHASES.includes(e.phase) || !['preparing', 'turn', 'issuing'].includes(r.status)) return;
       const i = PHASES.indexOf(e.phase);
-      const t = handoffTurn(e.phase, e.code, r.auth);
+      const t = handoffTurn(e.phase, e.code, r.auth, STEP_LABELS[r.doc]);
       r.status = 'turn';
       r.handoff = { phase: e.phase, afterGate: i > PHASES.indexOf('gate'), kind: t.kind };
       r.turn = { text: t.text, note: t.note };
@@ -976,7 +1052,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.handoff = null;
       r.inDoubt = true;
       r.status = 'attention';
-      r.stoppedNote = note(IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt');
+      r.stoppedNote = note(IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt', r);
       const now = r.steps.findLastIndex((s) => s.state === 'now');
       if (now >= 0) r.steps[now] = { ...r.steps[now]!, state: 'attention' };
     } else if (e.state === 'running') {
@@ -997,7 +1073,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
       r.inDoubt = false;
       r.turn = null;
       r.status = 'attention';
-      r.stoppedNote = note(e.code ?? 'run.paused');
+      r.stoppedNote = note(e.code ?? 'run.paused', r);
     } else return;
     this.emit('update', r);
   }
@@ -1024,28 +1100,31 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const code = e.status === 'in_doubt' ? (IN_DOUBT_NOTE.has(e.code ?? '') ? e.code : BLOCK_CODES.has(e.code ?? '') ? 'portal.blocked_in_doubt' : 'in_doubt') : (this.endCodes.get(r.id) ?? e.code);
     this.endCodes.delete(r.id);
     this.src.log?.('main.run_end', { status: e.status, code: (code ?? 'none').slice(0, 80) });
-    if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
-      const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
+    // 민원증명의 approvalNo는 접수번호다. 엔진이 번호를 읽지 못했어도 발급(success)이면 끝난 것이다.
+    if ((e.status === 'success' || e.status === 'completed_with_issues') && (e.approvalNo || r.cert)) {
+      const doc: Doc = r.cert
+        ? { id: `d-${r.id}`, name: r.cert.name, kind: '증명서', docName: r.cert.name, profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true, purpose: r.cert.inputs.purpose }
+        : { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
       r.status = 'done';
       // 엔진은 끝 스텝에서 마지막 구간의 done을 따로 보내지 않는다. 확정된 실행에서 진행 중이던 단계는 끝난 것이다.
       r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'done' } : s));
       // 발급 PDF는 엔진이 보관함에 실행 산출물(run_id)로 남긴다(#269). 메모리 줄(d-<runId>)은 그 PDF가 없을 때만 문서함에 보이므로 늘 noFile이다.
       // 결과 카드는 PDF 보관이 실패했을 때(save_pdf.failed)만 [PDF 열기] 대신 홈택스 발급목록 안내(F-04). 열기는 렌더러가 run_id로 보관함 줄을 찾는다.
-      r.result = { approvalNo: e.approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true, noFile: e.code === 'save_pdf.failed' };
-      if (!e.mailConfirmed) {
+      r.result = { approvalNo: e.approvalNo ?? '', mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: e.mailConfirmed === true, noFile: e.code === 'save_pdf.failed' };
+      if (!r.cert && !e.mailConfirmed) {
         this.step(r, 'mail', 'attention', r.email.value ? NOTE['mail.not_confirmed'] : '받는 이메일이 없어 보내지 않았어요');
         if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
       }
       if (e.code === 'portal.blocked_after_commit') r.warnings = [...r.warnings, NOTE['portal.blocked_after_commit']!];
-      if (e.code === 'save_pdf.failed') r.warnings = [...r.warnings, NOTE['save_pdf.failed']!];
+      if (e.code === 'save_pdf.failed') r.warnings = [...r.warnings, note('save_pdf.failed', r)];
       this.emit('doc', doc);
     } else if (e.status === 'stopped' || e.status === 'expired') {
       r.status = 'stopped';
-      r.stoppedNote = note(code);
+      r.stoppedNote = note(code, r);
     } else {
       // 실패·in_doubt는 사용자가 볼 일이 있다(확인 필요). 지금 단계를 표시하고 이유를 보인다.
       r.status = 'attention';
-      r.stoppedNote = note(code);
+      r.stoppedNote = note(code, r);
       r.inDoubt = e.status === 'in_doubt';
       // 승인 전 핸드오프로 끝남: "확인 필요"만 남지 않게 무슨 일인지와 다음 할 일(다시 준비 / 홈택스에서 직접)을 말한다. 승인·게이트 뒤면 발급 여부를 단정하지 않는다(엔진 코드 문구 그대로).
       // 발급 전 단계에서 끝났으면 같은 값으로 다시 준비할 수 있다(in_doubt·게이트 뒤는 아님: 기존 문구·확인 길 그대로)
@@ -1071,6 +1150,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const r = this.runs.get(req.runId);
     if (!r || !['preparing', 'turn'].includes(r.status)) return;
     const f = new Map(req.fields.map((x) => [x.fieldKey, x.value]));
+    if (r.cert) {
+      // 민원증명: 엔진이 되읽은 용도·제출처(승인 카드 4칸과 같은 fields)를 카드·패널에 보인다. 세금계산서 칸은 건드리지 않는다.
+      const before = `${r.cert.inputs.purpose}|${r.cert.inputs.submitTo}`;
+      r.cert = { ...r.cert, inputs: { ...r.cert.inputs, purpose: f.get('certPurpose') ?? '', submitTo: f.get('certSubmitTo') ?? '' } };
+      r.readbackDiffers = before !== `${r.cert.inputs.purpose}|${r.cert.inputs.submitTo}`;
+      r.warnings = dupWarnings(req, CERT_DUP_NOTE);
+      return this.gateOpened(r, req);
+    }
     const num = (k: string) => Number(f.get(k as never) ?? NaN);
     const before = { name: r.counterparty.name, bizNo: r.counterparty.bizNo, email: r.email.value, supply: r.supply, tax: r.tax, item: r.item };
     r.counterparty = { ...r.counterparty, name: f.get('counterpartName') ?? '', bizNo: f.get('counterpartBizNo') ?? '', first: f.get('$first.bizNo') === 'true' };
@@ -1080,10 +1167,14 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.total = num('totalAmount');
     r.item = f.get('itemName') ?? '';
     r.writeDate = f.get('issueDate') ?? r.writeDate;
-    r.confirmed = true;
     const after = { name: r.counterparty.name, bizNo: r.counterparty.bizNo, email: r.email.value, supply: r.supply, tax: r.tax, item: r.item };
     r.readbackDiffers = JSON.stringify(before) !== JSON.stringify(after);
     r.warnings = dupWarnings(req);
+    this.gateOpened(r, req);
+  }
+
+  private gateOpened(r: RunView, req: GateRequest): void {
+    r.confirmed = true;
     r.action = actionText(req);
     this.gateless = [];
     r.status = 'waiting';

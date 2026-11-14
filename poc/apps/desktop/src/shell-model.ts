@@ -1,6 +1,8 @@
 // 셸 화면 모델과 요청 해석(정규식, 모델 호출 없음). 제품 진입점이 쓰는 부분이다(ADR-035 W-7).
 // 견본 데이터(견본 사업장·서류·대화·꾸러미·정부24 후보)는 shell-mock.ts에 있고 시연 연결(ShellDev, demo-dev.ts)로만 들어온다.
 // 실행 단계·게이트 요청·발급 확정·처음 거래 판정은 엔진(H-01 플레이북·원장)에서 온다(shell-runs.ts). 사업자 프로필·거래처는 DB에서 읽는다.
+import { kstToday } from './approval-gate.ts';
+import { CERT_DOCS, certDocByCode, certDocOf, certInputsFor, type CertCode } from './cert-docs.ts';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 export const ymd = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -102,12 +104,11 @@ export interface Doc {
   };
 }
 
-/** 빠른 실행 칩. soon은 이 데모에서 아직 보여 주지 않는 일(회색 "곧 지원" 칩, 08 §4). */
-export const QUICK: Array<{ label: string; text: string; soon?: boolean }> = [
+/** 빠른 실행 칩. soon은 이 데모에서 아직 보여 주지 않는 일(회색 "곧 지원" 칩, 08 §4). cert는 누르면 그 문장을 바로 보내 민원증명을 시작하는 칩(맡긴 업무). */
+export const QUICK: Array<{ label: string; text: string; soon?: boolean; cert?: CertCode }> = [
   { label: '세금계산서 발급', text: '세금계산서 ' },
   { label: '주민등록등본(직접 발급)', text: '주민등록등본 떼 줘' },
-  { label: '사업자등록증명', text: '사업자등록증명 떼 줘', soon: true },
-  { label: '납세증명서', text: '납세증명서 떼 줘', soon: true },
+  ...CERT_DOCS.map((d) => ({ label: d.label, text: `${d.name} 떼 줘`, cert: d.code })),
 ];
 
 // ---- 요청 해석(정규식. SAX_DEMO_MODEL=openrouter 시연에서는 모델이 먼저 뽑고 실패하면 이쪽, demo-model.ts) ----
@@ -163,7 +164,8 @@ export function split(amount: number, vat: VatMode) {
 }
 
 export type Reply =
-  | { kind: 'draft'; run: RunView }
+  /** text: 카드 앞 한 줄(민원증명: 무엇을 어떤 값으로 떼는지). */
+  | { kind: 'draft'; run: RunView; text?: string }
   /** addCp: [거래처 추가] 버튼(거래처 화면의 추가 폼, name을 채워 연다). 거래처가 없거나(F-02) 장부에 없는 이름으로 답했을 때(F-03). */
   | { kind: 'say'; text: string; chips?: Array<{ label: string; text: string }>; fill?: string; addCp?: { name: string } }
   | { kind: 'g24'; doc: G24Doc };
@@ -221,6 +223,8 @@ export interface Drafts {
   readonly pending: Pending;
   readonly counterparties: Counterparty[];
   createDraft(cp: Counterparty, amount: number, vat: VatMode | null, item?: string | null): RunView;
+  /** 민원증명 초안(cert-docs 표의 서류, 신청 값). 대화 전송에 묶여 바로 시작한다(shell-app autoPrepare). */
+  createCertDraft(code: CertCode, inputs: Record<string, string>): RunView;
 }
 
 /** 문장에서 뽑은 요청 구조. 정규식(parseRegex)이나 시연 모델(demo-model.ts)이 만들고, interpret가 되묻기·초안으로 바꾼다. */
@@ -231,22 +235,27 @@ export interface Parsed {
   amount: number | null;
   vat: VatMode | null;
   item: string | null;
+  /** intent cert일 때 이 앱이 떼는 민원증명(cert-docs 표). 표에 없는 증명서(지방세 납세증명 등)는 null. */
+  cert?: CertCode | null;
 }
 
 export function parseRegex(text: string, counterparties: Counterparty[]): Parsed {
   const t = text.trim();
   const named = counterparties.filter((c) => t.includes(c.name));
-  const intent: Parsed['intent'] = /신고|세액\s*계산/.test(t)
-    ? 'filing'
-    : /등본|초본|정부24/.test(t)
-      ? /초본/.test(t) ? 'resident_abstract' : 'resident_copy'
-      : /계산서/.test(t)
-        ? 'invoice'
-        : /사업자등록증명|납세증명/.test(t)
-          ? 'cert'
+  const certDoc = certDocOf(t);
+  // 민원증명 이름이 먼저다("부가세 신고용 과세표준증명"은 신고가 아니라 증명서 요청이다).
+  const intent: Parsed['intent'] = certDoc
+    ? 'cert'
+    : /신고|세액\s*계산/.test(t)
+      ? 'filing'
+      : /등본|초본|정부24/.test(t)
+        ? /초본/.test(t) ? 'resident_abstract' : 'resident_copy'
+        : /계산서/.test(t)
+          ? 'invoice'
           : 'other';
   return {
     intent,
+    cert: certDoc?.code ?? null,
     counterparties: named.map((c) => c.name),
     // 거래처 이름 속 숫자는 금액으로 보지 않는다. 이름이 하나일 때만 뺀다(둘 이상이면 어차피 되묻는다).
     amount: parseAmount(named.length === 1 ? t.replace(named[0]!.name, ' ') : t),
@@ -286,8 +295,12 @@ export function answersPending(parsed: Parsed, runs: Drafts, text?: string): boo
 }
 
 /** parsed가 없으면 정규식으로 뽑는다. 화면의 부가세 선택(vat)이 문장보다 먼저다. */
-/** 빈 요청·모르는 요청의 기본 안내. 증명서는 지금 이 앱이 못 하는 일이라 약속하지 않는다(#291 온보딩과 같은 원칙). */
+/** 빈 요청·모르는 요청의 기본 안내. */
 export const EMPTY_REQUEST_TEXT = '세금계산서 발급이나 지난 발급·매출을 말해 주세요.';
+/** 이 앱이 떼지 않는 증명서(지방세 납세증명·4대보험 등). 떼는 것만 말한다. */
+export const CERT_OTHER_TEXT = `그 증명서는 이 앱에서 떼지 못해요. ${CERT_DOCS.map((d) => d.name).join('·')}은 바로 뗄 수 있어요.`;
+/** 받침에 맞춘 목적격 조사(을/를). */
+const objectJosa = (w: string) => ((w.charCodeAt(w.length - 1) - 0xac00) % 28 > 0 ? '을' : '를');
 
 export function interpret(text: string, vat: VatMode | null, profile: Profile['kind'], runs: Drafts, parsed: Parsed = parseRegex(text, runs.counterparties)): Reply {
   const pending = runs.pending;
@@ -335,7 +348,13 @@ export function interpret(text: string, vat: VatMode | null, profile: Profile['k
     Object.assign(pending, emptyPending());
     return { kind: 'draft', run: runs.createDraft(cp, amount, vat ?? vatSaid, item) };
   }
-  if (parsed.intent === 'cert') return { kind: 'say', text: '증명서 발급은 아직 이 앱에서 하지 못해요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.' };
+  if (parsed.intent === 'cert') {
+    const doc = parsed.cert ? certDocByCode(parsed.cert) : null;
+    if (!doc) return { kind: 'say', text: CERT_OTHER_TEXT };
+    if (profile !== 'business') return { kind: 'say', text: '증명서는 사업자 프로필로 떼요. 위에서 사업자로 바꿔 주세요.' };
+    const inputs = certInputsFor(doc, text, kstToday(Date.now()));
+    return { kind: 'draft', run: runs.createCertDraft(doc.code, inputs), text: `${doc.name}${objectJosa(doc.name)} 홈택스에서 떼요. 사용 용도 ${inputs.purpose} · 제출처 ${inputs.submitTo}.` };
+  }
   return { kind: 'say', text: EMPTY_REQUEST_TEXT, chips: QUICK.filter((q) => !q.soon) };
 }
 
@@ -358,9 +377,24 @@ export function sentFromGateway(paths: readonly string[]): SentTo[] {
   return (['gateway.run_tokens', 'gateway.decide', 'gateway.respond'] as const).filter((x) => got.has(x));
 }
 
-export interface RunView {
+/** 민원증명 실행의 서류와 신청 값(cert-docs.ts 표의 한 줄, run.startCert inputs 그대로). */
+export interface CertRun {
+  code: CertCode;
+  playbookId: string;
+  name: string;
+  docType: string;
+  inputs: Record<string, string>;
+}
+
+/**
+ * 실행 화면 모델. doc가 'cert'면 cert에 서류·신청 값이 있고, 거래처·금액·품목·이메일 칸은 빈 값이다(화면은 cert를 그린다).
+ * doc와 cert는 함께 정해진다(RunKind). 세금계산서는 cert가 null이다.
+ */
+export type RunView = RunViewBase & RunKind;
+export type RunKind = { doc: 'H-01'; cert: null } | { doc: 'cert'; cert: CertRun };
+
+export interface RunViewBase {
   id: string;
-  doc: 'H-01';
   status: RunStatus;
   createdAt: string;
   counterparty: { id: string; name: string; bizNo: string; first: boolean };

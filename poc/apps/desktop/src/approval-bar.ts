@@ -20,6 +20,7 @@ import {
   CARD_ROWS,
   cardHeight,
   cardTargets,
+  certGateText,
   GATE_TEXT,
   gateText,
   issueLocalApproval,
@@ -29,6 +30,7 @@ import {
   REFUSAL_TEXT,
   refusalText,
   summarize,
+  summarizeCert,
   STOP_KEYS,
   summarizeAttest,
   type AttestRequest,
@@ -266,8 +268,9 @@ export class ApprovalBar extends EventEmitter {
   /**
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
+   * 민원증명(docType cert)은 서류 4칸 카드다. 머리 줄 서류 이름(certName)은 main의 앱 내장 표(cert-docs)에서 온다.
    */
-  open(req: GateRequest, auth?: string): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string, certName?: string): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -278,12 +281,14 @@ export class ApprovalBar extends EventEmitter {
     } catch {
       // 모양이 다르면 field_key로 둔다
     }
-    const summary = bad ? null : summarize(req, kstToday(Date.now()));
+    const cert = req.docType === 'cert';
+    const summary = bad ? null : cert ? summarizeCert(req) : summarize(req, kstToday(Date.now()));
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
-    this.height = cardHeight(CARD_ROWS['H-01']);
+    const action = bad ? ACTION_TEXT : actionText(req);
+    this.text = cert ? certGateText(certName ?? '증명서', action) : gateText(action, f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
+    this.height = cardHeight(CARD_ROWS[cert ? 'cert' : 'H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
       this.req = { kind: 'gate', id: req.reqId, runId: req.runId, gate: req, done };
