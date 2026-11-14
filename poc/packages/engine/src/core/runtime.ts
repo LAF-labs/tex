@@ -74,7 +74,7 @@ export interface RestartReport {
 
 /**
  * 기동 시 복원(D03 §2 '프로세스 재시작', D-45): 저널 재생이 아니라 테이블 상태 승격이다. 원장을 먼저 올려
- * 미종결 비가역이 재개 가능한 상태로 남지 않게 한 뒤 게이트·실행을 닫는다. 앱 기동 시 1회 run.reverify는 실행기가 이어서 한다.
+ * 미종결 비가역이 재개 가능한 상태로 남지 않게 한 뒤 게이트·실행을 닫는다. 그 in_doubt를 발급목록 조회로 확정하는 것은 run.reverify(run/reverify.ts)다. 데스크톱이 기동 뒤·실행 끝 뒤에 부른다.
  */
 export function recoverAfterRestart(db: { ledger: Pick<Ledger, 'promoteInDoubt'>; gates: Pick<GateRepo, 'expireOpen'>; runs: Pick<RunRepo, 'interruptRunning'> }): RestartReport {
   const promotedInDoubt = db.ledger.promoteInDoubt();

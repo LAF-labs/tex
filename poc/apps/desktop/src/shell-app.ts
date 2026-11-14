@@ -332,6 +332,9 @@ export async function startShell(opts: ShellOptions = {}): Promise<Shell> {
   }
 }
 
+/** [홈택스에서 준비]가 지난 실행 재확인(run.reverify)을 기다리는 동안 카드에 띄우는 한 줄. */
+const REVERIFY_WAIT_NOTE = '지난 발급을 홈택스 목록에서 확인하고 있어요. 끝나면 바로 시작해요.';
+
 function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Array, store: DocStore, made: { host?: EngineHost }): Shell {
   // 공급사 직결(D04 예외)은 fixture 시연에만. 실제 홈택스 모드에서는 넘겨받아도 쓰지 않는다.
   const demo = fixture ? (opts.demoModel ?? null) : null;
@@ -1270,8 +1273,19 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.prepare_throttled', { why });
       throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
     }
+    // 지난 실행 재확인(run.reverify) 중이면 끝날 때까지 기다린다(엔진은 그동안 실행을 시작하지 않는다, 한 호출 상한 60초). 기다리는 동안 카드에 한 줄.
+    const waitReverify = async () => {
+      while (reverifying) {
+        runs.notice(id, REVERIFY_WAIT_NOTE);
+        await reverifying;
+        runs.dropNotice(id, REVERIFY_WAIT_NOTE);
+      }
+    };
+    await waitReverify();
     // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
     await registryFresh();
+    // 레지스트리를 기다리는 동안 실행 끝 타이머가 재확인을 시작했을 수 있다(그러면 run.start가 busy). 한 번 더 기다리고, 그 뒤로는 기다림 없이 바로 시작한다.
+    await waitReverify();
     const r = await runs.prepare(id);
     await keepItem(id);
     return r;
@@ -1401,6 +1415,33 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!(await fs.stat(f).then((x) => x.isFile(), () => false))) throw new Error('pack_missing');
     return f;
   };
+
+  /**
+   * 발급됐는지 모르는 지난 실행(원장 in_doubt)을 엔진 run.reverify로 발급목록에서 확인한다. 실행이 끝난 뒤(3초) 부른다.
+   * 엔진은 이미 열린 실행 탭으로만 조회하고, 그 탭은 실행이 연다. 그래서 기동 직후가 아니라 이 앱에서 탭이 처음 열린 실행이 끝난 뒤가 첫 확인이다.
+   * 방금 끝난 실행은 빼고 본다(그 실행은 300초 판정을 이미 받았다). 같은 행은 엔진이 하루 한 번만 조회한다.
+   * 실행 중이면 부르지 않고, 확인하는 동안 [홈택스에서 준비]는 카드에 한 줄을 띄우고 끝날 때까지 기다린다(prepareNow). 발급을 찾으면 활동 기록·판·카드·문서함을 다시 그린다.
+   */
+  let reverifying: Promise<void> | null = null;
+  const reverify = (exclude: string | null) => {
+    if (reverifying || runs.anyActive()) return;
+    reverifying = (async () => {
+      const read = () => readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d));
+      if (!(await read()).some((p) => p.kind === 'unsure' && p.runId !== exclude)) return;
+      const r = (await host.rpc('run.reverify', exclude ? { exclude } : {})) as { ok?: boolean; code?: string; checked?: number; committed?: number; unknown?: number; skipped?: number };
+      log.event('main.reverify', { ok: r?.ok === true, code: r?.code ?? '', checked: r?.checked ?? 0, committed: r?.committed ?? 0, unknown: r?.unknown ?? 0, skipped: r?.skipped ?? 0 });
+      if (!r?.committed) return;
+      const past = await pastNow();
+      for (const p of past) if (p.kind === 'issued' && p.approvalNo) runs.reverified(p.runId, p.approvalNo);
+      send({ type: 'past', past });
+      pushBoard();
+    })()
+      .catch((e: Error) => log.event('main.reverify_failed', { error: e.message.slice(0, 60) }))
+      .finally(() => (reverifying = null));
+  };
+  host.on('run', (e: { type?: string; runId?: string }) => {
+    if (e.type === 'end') setTimeout(() => reverify(typeof e.runId === 'string' ? e.runId : null), 3_000);
+  });
 
   /** 진행 화면을 받는 실행(하나). */
   let mirrorRun: string | null = null;

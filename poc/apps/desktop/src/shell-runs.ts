@@ -363,6 +363,9 @@ export function maintenanceUntil(v: unknown, now: number): number | null {
 }
 const kstHm = (at: number) => new Date(at + KST_MS).toISOString().slice(11, 16);
 
+/** 발급 완료 실행의 문서함 줄(d-<runId>). PDF는 엔진이 보관함에 따로 남긴다. */
+const issuedDoc = (r: RunView): Doc => ({ id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true });
+
 /** 묶음 승인은 처음 승인한 때부터 이만큼만 뒤 건에 쓴다(그 뒤 건은 승인 카드를 다시 띄운다). */
 export const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
 /**
@@ -707,6 +710,13 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!r) return;
     r.notices = [...(r.notices ?? []).filter((t) => t !== text), text];
     if (retry) r.retry = retry;
+    this.emit('update', r);
+  }
+
+  dropNotice(runId: string, text: string): void {
+    const r = this.runs.get(runId);
+    if (!r?.notices?.includes(text)) return;
+    r.notices = r.notices.filter((t) => t !== text);
     this.emit('update', r);
   }
 
@@ -1286,7 +1296,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.endCodes.delete(r.id);
     this.src.log?.('main.run_end', { status: e.status, code: (code ?? 'none').slice(0, 80) });
     if ((e.status === 'success' || e.status === 'completed_with_issues') && e.approvalNo) {
-      const doc: Doc = { id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true };
+      const doc = issuedDoc(r);
       r.status = 'done';
       // 엔진은 끝 스텝에서 마지막 구간의 done을 따로 보내지 않는다. 확정된 실행에서 진행 중이던 단계는 끝난 것이다.
       r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'done' } : s));
@@ -1327,6 +1337,25 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.batchAfter(r, code);
     this.emit('update', r);
     this.wakeAfter(r, code);
+  }
+
+  /**
+   * 엔진 run.reverify가 홈택스 발급목록에서 이 실행의 발급을 찾았다(원장 committed, 승인번호). 끝난 확인 필요(in_doubt) 카드만 발급 완료로 바꾼다.
+   * 받는 사람 메일 발송은 확인하지 않았다(이메일이 있으면 그 경고). PDF는 보관하지 않았다. 문서함 줄은 end의 발급 완료와 같다.
+   */
+  reverified(runId: string, approvalNo: string): void {
+    const r = this.runs.get(runId);
+    if (!r || !r.inDoubt || r.status !== 'attention' || this.liveInDoubt.has(r.id)) return;
+    r.inDoubt = false;
+    r.attest = null;
+    r.status = 'done';
+    r.stoppedNote = undefined;
+    r.steps = r.steps.map((s) => (s.state === 'attention' ? { ...s, state: 'done', note: undefined } : s));
+    const doc = issuedDoc(r);
+    r.result = { approvalNo, mailTo: r.email.value, docId: doc.id, doneAt: hm(), mailConfirmed: false, noFile: true };
+    if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
+    this.emit('doc', doc);
+    this.emit('update', r);
   }
 
   /** 게이트 요청: 카드·패널은 엔진이 되읽은 값(같은 fields)으로 바꿔 그린다. 바는 shell-app이 띄운다. */

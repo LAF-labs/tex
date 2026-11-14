@@ -10,6 +10,8 @@ export type LedgerState = 'armed' | 'dispatched' | 'committed' | 'not_committed'
  * attested: 증언 바에서 사람이 "실행되지 않았다"고 증언했다(ADR-021 결정 5, 저널 gate.attested).
  */
 export type NotCommittedReason = 'pre_dispatch_mismatch' | 'identity_mismatch' | 'payload_mismatch' | 'signal' | 'verify' | 'attested';
+/** committed의 사유. 실행 중 verify 판정은 사유가 없다(null). reverify: 재시작 뒤 새 프로세스가 발급목록 조회로 in_doubt를 committed로 확정했다(run.reverify). */
+export type CommittedReason = 'reverify';
 
 export interface ArmRow {
   intentId: string;
@@ -25,10 +27,15 @@ export interface ArmRow {
   recipientEmailHmac: string | null;
   /** 발급 키(D03 §4.2). 발급 단계 행(H-01 s21, API api.issue, 직접 발급 manual.issue)에만. 후속 단계는 null. */
   issueKey?: string | null;
+  /** 게이트 전 기준선 B₀(그 verify의 같은 조회에서 match에 맞은 승인번호). run.reverify가 이것을 빼고 센다. 기준선을 뜨지 않는 단계는 null. */
+  baselineRefs?: readonly string[] | null;
 }
 
 export interface LedgerRow extends ArmRow {
   issueKey: string | null;
+  baselineRefs: readonly string[] | null;
+  /** run.reverify가 이 행을 마지막으로 조회한 날(KST YYYY-MM-DD). */
+  reverifyDay: string | null;
   /** 같은 (intent_id, step_id)의 시도 번호(1부터, ADR-042). 앞선 시도가 모두 not_committed일 때만 다음 번호가 생긴다. */
   attempt: number;
   state: LedgerState;
@@ -63,6 +70,16 @@ export interface History {
 const now = () => new Date().toISOString();
 type Row = Record<string, unknown>;
 
+const refsOf = (v: unknown): string[] | null => {
+  if (typeof v !== 'string') return null;
+  try {
+    const a: unknown = JSON.parse(v);
+    return Array.isArray(a) && a.every((x) => typeof x === 'string') ? a : null;
+  } catch {
+    return null;
+  }
+};
+
 const toLedger = (r: Row): LedgerRow => ({
   intentId: String(r.intent_id),
   stepId: String(r.step_id),
@@ -77,6 +94,8 @@ const toLedger = (r: Row): LedgerRow => ({
   cpBizNoHmac: String(r.cp_biz_no_hmac),
   recipientEmailHmac: (r.recipient_email_hmac as string) ?? null,
   issueKey: (r.issue_key as string) ?? null,
+  baselineRefs: refsOf(r.baseline_refs),
+  reverifyDay: (r.reverify_day as string) ?? null,
   state: r.state as LedgerState,
   reason: (r.reason as string) ?? null,
   armedAt: String(r.armed_at),
@@ -239,9 +258,9 @@ export class Ledger {
       if (prev.some((r) => r.playbookId !== a.playbookId || r.inputsHash !== a.inputsHash)) throw new LedgerError('ledger_intent_mismatch');
       this.checkIssueKey(a);
       this.db
-        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac, issue_key)
-          VALUES (@intentId, @stepId, @attempt, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
-        .run({ ...a, issueKey: a.issueKey ?? null, attempt: prev.length + 1, armedAt: now() });
+        .prepare(`INSERT INTO irreversible_log (intent_id, step_id, attempt, run_id, business_key, playbook_id, inputs_hash, package_digest, action_hash, state, armed_at, device_id, cp_biz_no_hmac, recipient_email_hmac, issue_key, baseline_refs)
+          VALUES (@intentId, @stepId, @attempt, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey, @baselineRefs)`)
+        .run({ ...a, issueKey: a.issueKey ?? null, baselineRefs: a.baselineRefs ? JSON.stringify([...a.baselineRefs]) : null, attempt: prev.length + 1, armedAt: now() });
     })();
   }
 
@@ -254,7 +273,7 @@ export class Ledger {
    * 종결(또는 in_doubt). armed·dispatched·in_doubt·observed_manual에서만 바뀐다. committed·not_committed는 다시 바뀌지 않는다.
    * 열린 행은 (intent, step)마다 많아야 하나라서(ux_irr_live) 상태 조건만으로 그 시도 하나를 고른다.
    */
-  resolve(intentId: string, stepId: string, state: 'committed' | 'not_committed' | 'in_doubt', reason: NotCommittedReason | null = null, verifyRef: string | null = null): void {
+  resolve(intentId: string, stepId: string, state: 'committed' | 'not_committed' | 'in_doubt', reason: CommittedReason | NotCommittedReason | null = null, verifyRef: string | null = null): void {
     const n = this.db
       .prepare(`UPDATE irreversible_log SET state = ?, reason = ?, verify_ref = ?, resolved_at = ? WHERE intent_id = ? AND step_id = ? AND state IN ('armed','dispatched','in_doubt','observed_manual')`)
       .run(state, reason, verifyRef, state === 'in_doubt' ? null : now(), intentId, stepId).changes;
@@ -326,6 +345,36 @@ export class Ledger {
           VALUES (@intentId, @stepId, 1, @runId, @businessKey, @playbookId, @inputsHash, @packageDigest, @actionHash, 'armed', @armedAt, @deviceId, @cpBizNoHmac, @recipientEmailHmac, @issueKey)`)
         .run({ ...a, issueKey: a.issueKey ?? null, armedAt: now() });
     })();
+  }
+
+  /** 재확인 후보(run.reverify): 그 플레이북의 in_doubt 행 가운데 sinceIso 뒤에 무장했고 그날(day) 아직 조회하지 않은 것(최근 순). */
+  inDoubt(playbookId: string, sinceIso: string, day: string): LedgerRow[] {
+    return this.db
+      .prepare(`SELECT * FROM irreversible_log WHERE state = 'in_doubt' AND playbook_id = ? AND armed_at >= ? AND (reverify_day IS NULL OR reverify_day <> ?) ORDER BY armed_at DESC, rowid DESC`)
+      .all(playbookId, sinceIso, day)
+      .map((r) => toLedger(r as Row));
+  }
+
+  /**
+   * 같은 공급받는자(HMAC)로 sinceIso 뒤에 무장·관측한 다른 행 가운데 승인번호(verify_ref)가 없는 것이 있는가. 상태·플레이북을 가리지 않는다.
+   * 있으면 발급목록의 새 건이 어느 시도의 것인지 모른다(run.reverify가 조회하지 않는다).
+   */
+  unboundSibling(row: Pick<LedgerRow, 'intentId' | 'stepId' | 'attempt' | 'cpBizNoHmac'>, sinceIso: string): boolean {
+    return (
+      this.db
+        .prepare(`SELECT 1 FROM irreversible_log WHERE cp_biz_no_hmac = ? AND armed_at >= ? AND verify_ref IS NULL AND NOT (intent_id = ? AND step_id = ? AND attempt = ?) LIMIT 1`)
+        .get(row.cpBizNoHmac, sinceIso, row.intentId, row.stepId, row.attempt) !== undefined
+    );
+  }
+
+  /** run.reverify가 이 행을 그날 조회한다(조회 전에 적는다, 하루 한 번). */
+  markReverified(row: Pick<LedgerRow, 'intentId' | 'stepId' | 'attempt'>, day: string): void {
+    this.db.prepare(`UPDATE irreversible_log SET reverify_day = ? WHERE intent_id = ? AND step_id = ? AND attempt = ?`).run(day, row.intentId, row.stepId, row.attempt);
+  }
+
+  /** 이 PC에서 committed로 확정된 승인번호(verify_ref) 전부. 다른 행이 이미 가진 번호는 재확인이 다시 묶지 않는다. */
+  committedRefs(): Set<string> {
+    return new Set(this.db.prepare(`SELECT verify_ref FROM irreversible_log WHERE state = 'committed' AND verify_ref IS NOT NULL`).pluck().all() as string[]);
   }
 
   /** 재시작 시 armed·dispatched·observed_manual은 모두 in_doubt로 올린다(D03 §4). */

@@ -538,6 +538,7 @@ export class IrRun {
       inTx: () => enforcer.markCommitted(),
       pageUrl: () => page.url(),
       verifyRef: (v) => book.ref(v) ?? null,
+      baseline: (v) => book.baseline(v),
       journal: i.journal,
     });
     const sv = i.ir.secret;
