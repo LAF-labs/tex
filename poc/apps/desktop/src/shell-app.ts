@@ -719,6 +719,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
    */
   const CARD_BIND = { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'card-scan-2026-11-14' } } as const;
   let cardWin: { win: BrowserWindow; stored: number } | null = null;
+  /** 마지막 보안카드 저장 알림(창이 닫힌 뒤 늦게 와도 반영한다). */
+  let cardStoredAt: { at: number; items: number } | null = null;
   const openCardWindow = (): Promise<number> =>
     new Promise((resolve) => {
       if (cardWin && !cardWin.win.isDestroyed()) {
@@ -730,11 +732,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         port = host.secretInputPort(CARD_BIND);
         const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/card-secret.html`, CARD_WINDOW_TITLE, 520);
         const me = { win: w, stored: 0 };
+        const openedAt = Date.now();
         cardWin = me;
         w.on('closed', () => {
           if (cardWin === me) cardWin = null;
-          log.event('main.card_window_closed', { stored: me.stored });
-          resolve(me.stored);
+          // 금고 알림이 창 닫힘보다 늦게 올 수 있다: 잠깐 더 기다려 이 창이 열린 뒤의 저장이면 반영한다
+          const settle = (left: number) => {
+            const late = cardStoredAt && cardStoredAt.at >= openedAt ? cardStoredAt.items : 0;
+            const n = me.stored || late;
+            if (n > 0 || left <= 0) {
+              log.event('main.card_window_closed', { stored: n, late: !me.stored && n > 0 });
+              return resolve(n);
+            }
+            setTimeout(() => settle(left - 250), 250);
+          };
+          settle(3_000);
         });
       } catch (e) {
         port?.close();
@@ -745,8 +757,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.on('vault-event', (name: string, data: unknown) => {
     if (name !== 'secret.stored') return;
     const d = (data ?? {}) as { kind?: unknown; items?: unknown };
-    if (d.kind !== 'security_card' || !cardWin) return;
-    cardWin.stored = typeof d.items === 'number' ? d.items : 0;
+    if (d.kind !== 'security_card') return;
+    const items = typeof d.items === 'number' ? d.items : 0;
+    cardStoredAt = { at: Date.now(), items };
+    if (!cardWin) return;
+    cardWin.stored = items;
     // 창이 "등록했어요"를 잠깐 보인 뒤 스스로 닫는다. 닫지 못했으면 main이 닫는다
     const w = cardWin.win;
     setTimeout(() => (w.isDestroyed() ? undefined : w.close()), 2_000);
@@ -1770,6 +1785,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
     'card.register': async (p) => {
       needGesture(3_000);
+      // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
+      if ((p as { onboarding?: boolean }).onboarding) await needLogin();
       return cardRegister(p as { onboarding?: boolean });
     },
     'card.forget': async () => {

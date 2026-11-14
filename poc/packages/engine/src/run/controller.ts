@@ -92,7 +92,8 @@ export const CONFIRM_GRACE_MS = 2_000;
  * kind push = 간편인증 폰 승인을 기다림, secret = 금고 비밀 창(human.secret)이 TTL로 끝남. 셸은 phase sign 핸드오프로 보인다.
  */
 export interface SignTurnPort {
-  opened(r: { runId: string; stepId: string; kind: 'push' | 'secret' }): void;
+  /** code: 서명 차례가 된 까닭(보안카드 sign.card_*). 없으면 일반 서명 차례. */
+  opened(r: { runId: string; stepId: string; kind: 'push' | 'secret'; code?: string }): void;
   closed(r: { runId: string; stepId: string; why: SignTurnEnd }): void;
 }
 
@@ -965,7 +966,7 @@ export class RunController {
         if (r === 'unsupported') return this.i.journal('signflow.unsupported', { stepId: s.id, action: a });
         if (r !== 'done') {
           this.i.journal('signflow.card_failed', { stepId: s.id, action: a, code: r.code });
-          return void (await this.signTurnWait(s, f, 'secret'));
+          return void (await this.signTurnWait(s, f, 'secret', r.code));
         }
       }
     }
@@ -1130,7 +1131,7 @@ export class RunController {
    * - push: 기다리는 동안 확인 버튼이 뜨면 (이 무장에서 아직 안 눌렀을 때만) 한 번 누르고 끝낸다.
    * - [다 했어요](finishSignTurn)·[중지](abort)·상한(cap): 아무 버튼도 누르지 않고 끝낸다. 무장 토큰은 새로 만들지 않는다.
    */
-  private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret'): Promise<SignTurnEnd> {
+  private async signTurnWait(s: StepOf<'submit'>, f: NonNullable<StepOf<'submit'>['signFlow']>, kind: 'push' | 'secret', code?: string): Promise<SignTurnEnd> {
     const env = this.i.env;
     let woke: Exclude<SignTurnEnd, 'clicked'> | null = null;
     let wakeUp: () => void = () => {};
@@ -1144,7 +1145,7 @@ export class RunController {
     const cancel = this.timers.after(Math.max(0, this.i.signTurnMs?.() ?? SIGN_TURN_MS), () => wake('cap'));
     this.signWake = wake;
     this.i.journal('sign.turn_opened', { stepId: s.id, kind });
-    this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind });
+    this.i.signTurn?.opened({ runId: this.i.runId, stepId: s.id, kind, ...(code ? { code } : {}) });
     let clicked = false;
     let doneSeen = false;
     // 끝 표지(sign.waiting 중 주기적으로 본다): 보이면 사람이 [다 했어요]를 누르지 않아도 verify로 간다. 필드가 없으면 지금처럼 명령·상한만 기다린다.

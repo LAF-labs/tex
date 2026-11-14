@@ -25,6 +25,8 @@ export interface CardSecretInput {
 }
 
 const OUTCOME_WAIT_MS = 15_000;
+/** [확인하기] 클릭이 예외로 끝났을 때 창의 알림을 기다리는 시간. */
+const CLICK_FAIL_WAIT_MS = 5_000;
 const ASK_WAIT_MS = 15_000;
 /** 포털이 strings를 주지 않을 때의 내장 판정(UTXPPABA08 MTXPP0155·0156·0153·0073). */
 const DEFAULTS = { ok: '인증에\\s*성공', wrong: '인증에\\s*실패', locked: '폐기되었|폐지\\s*처리|보안카드\\s*정보가\\s*없' } as const;
@@ -147,7 +149,16 @@ export class CardSecretPort {
         return { code: 'sign.card_confirm_missing' };
       }
       const pressed = await r.press(() => ga.act.click(t.t));
-      if (pressed !== 'clicked') return { code: `sign.card_confirm_${pressed}` };
+      // 누르지 않았으면(기한·한 번) 그대로 끝. 누르다 실패했으면(클릭 예외) 창이 이미 알림을 띄우고 닫혔을 수 있으니 결과를 잠깐 기다려 본다
+      if (pressed === 'expired' || pressed === 'once') return { code: `sign.card_confirm_${pressed}` };
+      if (pressed === 'failed') {
+        await Promise.race([outcomeP, sleep(Math.min(CLICK_FAIL_WAIT_MS, Math.max(0, until - Date.now())))]);
+        const ok = seen.slice(before).some((m) => this.outcome(m) === 'ok');
+        const bad = badSeen();
+        this.i.journal('signflow.card_outcome', { stepId: r.stepId, outcome: ok ? 'ok' : (bad ?? 'none'), after: 'click_failed' });
+        if (bad) return await failed(bad);
+        return ok ? 'done' : { code: 'sign.card_confirm_failed' };
+      }
       await Promise.race([outcomeP, sleep(Math.min(OUTCOME_WAIT_MS, Math.max(0, until - Date.now())))]);
       const msg = seen.slice(before).find((m) => this.outcome(m) !== null);
       const end = msg ? this.outcome(msg) : badSeen();

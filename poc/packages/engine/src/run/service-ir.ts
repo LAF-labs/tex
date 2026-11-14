@@ -602,7 +602,8 @@ export class IrRun {
       handoffTimeoutMs: capMs + 60_000,
       signTurnMs: () => Math.min(capMs, lifeLeft()),
       signTurn: {
-        opened: (r) => i.handoff?.({ phase: 'sign', code: 'sign.waiting', stepId: r.stepId }),
+        // 보안카드 차례면 그 까닭(sign.card_*)을 앱에 보인다(틀림·폐기·기록 실패면 다시 등록 안내)
+        opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
