@@ -273,7 +273,7 @@ function fold(card, run, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
   card.replaceChildren(
-    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, step), chip(shownStatus(run)), stop),
+    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · ${step}`), chip(shownStatus(run)), stop),
   );
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });

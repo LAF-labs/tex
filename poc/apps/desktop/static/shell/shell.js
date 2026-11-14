@@ -983,7 +983,9 @@ function renderHandoff() {
   const r = [...state.runs.values()].find((x) => x.status === 'turn' && x.handoff);
   const cardOf = () => (r ? chat.thread.querySelector(`[data-run="${CSS.escape(r.id)}"]`) : null);
   const el = cardOf();
-  chat.handoff.hidden = true;
+  // 같은 카드를 다시 보는 경우에는 띠를 먼저 숨기지 않는다(한 프레임 깜박임·화면 읽기 프로그램의 다시 읽기 방지).
+  if (!el || chat.handoff.dataset.card !== r.id) chat.handoff.hidden = true;
+  chat.handoff.dataset.card = r?.id ?? '';
   if (!el) return chat.handoff.replaceChildren();
   chat.handoff.replaceChildren(
     h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · 세금계산서 · ${r.counterparty.name}`),
@@ -991,7 +993,8 @@ function renderHandoff() {
   );
   // 카드의 절반 이상이 대화 스크롤 안에 보이면 띠를 숨긴다. 카드가 다시 그려져 바뀌었으면(다른 카드 편집 등) 새 카드를 본다.
   handoffSeen = new IntersectionObserver(
-    ([e]) => {
+    (entries) => {
+      const e = entries[entries.length - 1];
       if (cardOf() !== e.target) return void queueMicrotask(renderHandoff);
       chat.handoff.hidden = e.intersectionRatio >= 0.5;
     },
@@ -1035,6 +1038,8 @@ function renderRun(run) {
   if (old) old.replaceWith(el);
   else appendThread(el);
   if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+  // 카드만 다시 그려도 띠가 새 카드를 본다(화면 밖 옛 카드에 관찰자가 남아 띠가 카드와 함께 보이던 것).
+  renderHandoff();
 }
 
 function renderG24(g) {

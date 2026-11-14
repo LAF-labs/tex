@@ -91,8 +91,8 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 /* 카드 안: 보조 버튼은 바탕색(canvas) 알약으로 카드 면 위에 보이게, 조용한 버튼의 hover도 canvas. */
 .sx-card .sx-actions { gap: 4px; }
 .sx-card .sx-actions .sx-btn { padding: 0 12px; }
-.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):not(.sx-btn-approve) { background: var(--canvas); }
-.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):not(.sx-btn-approve):hover { background: var(--surface-sunken); }
+.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet) { background: var(--canvas); }
+.sx-card .sx-btn:not(.sx-btn-primary):not(.sx-btn-quiet):hover { background: var(--surface-sunken); }
 .sx-card .sx-btn-quiet:hover { background: var(--canvas); }
 .sx-card .sx-btn:disabled, .sx-card .sx-btn:disabled:hover { background: transparent; }
 
