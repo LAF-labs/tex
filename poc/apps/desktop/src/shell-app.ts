@@ -1974,29 +1974,20 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     }
   };
   /**
-   * 도구 > 민원증명 예행(발급 안 함): 기본 용도·제출처로 run.startCert {rehearsal: true}. 엔진이 승인 카드 자리(s20)에서 스스로 멈추고 발급(s21)은 없다.
-   * 실행 카드 없이 엔진만 돈다. 결과는 engine.log run.rehearsal_report, 사람 차례에서 멈추면 rehearsal-snaps에 화면·요소 목록이 남는다.
+   * 도구 > 민원증명 예행(발급 안 함): 기본 용도·제출처로 민원증명 초안을 만들어 예행으로 시작한다(run.startCert {rehearsal: true}).
+   * 엔진이 승인 카드 자리(s20)에서 스스로 멈추고 발급(s21)은 없다. 세금계산서 예행과 같이 실행 카드·[중지]·준비 상한을 그대로 쓴다.
    */
-  let certRehearsal: string | null = null;
   const certRehearse = async (doc: CertDocDef) => {
-    const runId = `run-${randomUUID().slice(0, 8)}`;
     try {
-      if (runs.anyActive() || certRehearsal) throw new Error('busy');
-      certRehearsal = runId;
-      log.event('main.cert_rehearsal_started', { runId, playbook: doc.playbookId });
-      await host.control('run.begin', { runId, trigger: 'local' });
-      await host.rpc('run.startCert', { runId, playbookId: doc.playbookId, inputs: certInputsFor(doc, '', kstToday(Date.now())), rehearsal: true });
+      if (runs.anyActive()) throw new Error('busy');
+      const d = runs.createCertDraft(doc.code, certInputsFor(doc, '', kstToday(Date.now())), { rehearsal: true });
+      pushBoard();
+      log.event('main.rehearsal_started', { runId: d.id, playbook: doc.playbookId });
+      await prepareNow(d.id);
     } catch (e) {
-      if (certRehearsal === runId) certRehearsal = null;
       log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
     }
   };
-  host.on('run', (ev: { runId?: string; type?: string; status?: string; code?: string }) => {
-    if (!certRehearsal || ev?.runId !== certRehearsal || ev.type !== 'end') return;
-    log.event('main.cert_rehearsal_end', { runId: ev.runId, status: ev.status ?? '', code: ev.code ?? '' });
-    void host.control('run.end', { runId: ev.runId }).catch(() => {});
-    certRehearsal = null;
-  });
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -2007,12 +1998,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         submenu: [
           { id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() },
           { label: '민원증명 예행(발급 안 함)', submenu: CERT_DOCS.map((d) => ({ id: `certRehearsal.${d.code}`, label: d.label, click: () => void certRehearse(d) })) },
-          {
-            id: 'rehearsalStop', label: '예행 중지', click: () => {
-              stopRehearsals();
-              if (certRehearsal) void host.rpc('run.stop', { runId: certRehearsal }).catch(() => {});
-            },
-          },
+          { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
         ],
       },
       { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
