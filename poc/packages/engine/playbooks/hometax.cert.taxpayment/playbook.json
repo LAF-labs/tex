@@ -311,6 +311,18 @@
    "value": "hometax.cert.taxpayment.form.root"
   },
   {
+   "id": "s11t",
+   "type": "assert",
+   "cond": {
+    "exists": "hometax.cert.taxpayment.form.title"
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
    "id": "s12",
    "type": "select",
    "target": "hometax.cert.taxpayment.form.purpose",
@@ -327,17 +339,6 @@
    "type": "select",
    "target": "hometax.cert.taxpayment.form.residentNoDisclosure",
    "option": "공개안함"
-  },
-  {
-   "id": "s19",
-   "type": "decide",
-   "bundle": "form_ready_v2",
-   "scope": "hometax.cert.taxpayment.form.root",
-   "on": {
-    "no_visible_error": "s19a",
-    "validation_error": "handoff",
-    "unknown": "handoff"
-   }
   },
   {
    "id": "s19a",

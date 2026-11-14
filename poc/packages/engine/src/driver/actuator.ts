@@ -9,6 +9,8 @@ import type { PressStep } from '../core/types.ts';
 import type { PlaywrightPageReader } from './reader.ts';
 
 const OK: ActResult = { ok: true };
+/** select 상수: 자리표시를 뺀 선택지가 하나뿐이면 그것을 고른다(타깃 allowedConstants에 있어야 한다, V-21). */
+export const SELECT_ONLY = '*only';
 /** 키 입력 간격(ms). 고정값: 사람 흉내(무작위 지연)가 아니라 포털 이벤트 처리 여유다(탐지 회피 아님). */
 export const KEY_INTERVAL_MS = 30;
 
@@ -217,6 +219,17 @@ export class PlaywrightActuator implements Actuator {
         if (!radio) return { ok: false, code: 'step.selector_miss' };
         await radio.check({ timeout: this.timeoutMs });
         return OK;
+      }
+      // SELECT_ONLY: 자리표시("-선택-"·빈 값)를 뺀 선택지가 정확히 하나일 때만 그것(홈택스 발급희망개업일자처럼 화면이 정한 값). 둘 이상이면 사람이 고른다.
+      if (option === SELECT_ONLY) {
+        const ix = await h.evaluate((el) => {
+          if (!(el instanceof HTMLSelectElement)) return -1;
+          const real = [...el.options].map((o, i) => ({ o, i })).filter(({ o }) => o.value !== '' && !/^\s*-?\s*선택\s*-?\s*$/.test(o.label));
+          return real.length === 1 ? real[0]!.i : -1;
+        });
+        if (ix < 0) return { ok: false, code: 'step.selector_miss' };
+        const got = await h.selectOption({ index: ix }, { timeout: this.timeoutMs });
+        return got.length === 1 ? OK : { ok: false, code: 'step.selector_miss' };
       }
       // 없는 선택지는 Playwright가 생길 때까지 기다린다. 먼저 정확히 하나인지 본다(없으면 바로 selector_miss).
       const one = await h.evaluate((el, label) => el instanceof HTMLSelectElement && [...el.options].filter((o) => o.label === label).length === 1, option);

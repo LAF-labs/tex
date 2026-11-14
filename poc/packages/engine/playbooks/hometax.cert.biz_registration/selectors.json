@@ -331,16 +331,26 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe"
-    },
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.cert.form.title": {
+   "candidates": [
     {
      "kind": "role",
-     "role": "form",
+     "role": "heading",
      "name": "사업자등록증명 발급 신청"
     }
    ],
-   "role": "form",
+   "role": "heading",
    "namePattern": "^사업자등록증명 발급 신청$",
-   "landmark": "hometax.page.root",
+   "landmark": "hometax.cert.form.root",
    "commits": false,
    "frame": "main",
    "lastVerified": "2026-11-10"

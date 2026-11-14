@@ -254,13 +254,12 @@
   "hometax.cert.taxpayment.form.root": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "form",
-     "name": "납세증명서(국세완납증명) 신청"
+     "kind": "css",
+     "value": "#mf_txppWframe"
     }
    ],
-   "role": "form",
-   "namePattern": "^납세증명서\\(국세완납증명\\) 신청$",
+   "role": "generic",
+   "namePattern": "^$",
    "frame": "main",
    "landmark": "hometax.page.root",
    "commits": false,
@@ -463,6 +462,21 @@
    "landmark": "hometax.page.root",
    "commits": false,
    "lastVerified": "2026-11-09"
+  },
+  "hometax.cert.taxpayment.form.title": {
+   "candidates": [
+    {
+     "kind": "role",
+     "role": "heading",
+     "name": "납세증명서(국세완납증명) 신청"
+    }
+   ],
+   "role": "heading",
+   "namePattern": "^납세증명서\\(국세완납증명\\) 신청$",
+   "frame": "main",
+   "landmark": "hometax.cert.taxpayment.form.root",
+   "commits": false,
+   "lastVerified": "2026-11-14"
   }
  },
  "commitEndpoints": [],

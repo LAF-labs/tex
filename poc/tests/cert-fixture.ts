@@ -12,7 +12,7 @@ export const CERT_MENU = {
   '4315010800': 'H-03',
   '4315010300': 'H-04',
   '4315010500': 'H-08',
-  '4315019900': 'H-09',
+  '4315011800': 'H-09',
 } as const;
 type Doc = (typeof CERT_MENU)[keyof typeof CERT_MENU];
 const LOOKUP_MENU = '4315050000';
@@ -84,12 +84,12 @@ function certForm(doc: Doc, k: CertKnobs): string {
   const docName = CERT_DOC_NAME[doc];
   if (doc === 'H-04') {
     // 납세증명서 양식: 제품 패키지가 역할·이름만 쓴다(캡처 전)
-    return page(`<form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="H-04">
+    return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="H-04">
       ${shown('사업자등록번호', fmtBiz(k.supplier.bizNo))}${shown('민원명', docName)}${shown('상호', k.supplier.name)}
       ${select(null, '사용용도', 'purpose', H04_PURPOSES)}${select(null, '제출처', 'submitTo', H04_SUBMIT_TO)}
       <label>주민등록번호 공개여부 <select name="rrn" aria-label="주민등록번호 공개여부"><option value="N">공개안함</option><option value="Y">공개</option></select></label>
       <label>발급부수 <input type="number" name="copies" aria-label="발급부수" value="1"></label>
-      <button type="submit">신청하기</button></form>`);
+      <button type="submit">신청하기</button></form></div>`);
   }
   const extra: string[] = [];
   if (doc === 'H-08') {
@@ -104,7 +104,8 @@ function certForm(doc: Doc, k: CertKnobs): string {
   if (doc === 'H-09') extra.push(select(null, '귀속연도', 'fiscalYear', ['2025', '2024', '2023']));
   const submit = doc === 'H-03' ? '<button type="submit" id="mf_txppWframe_btn_wrtCmpl">작성완료</button>' : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
   // 수량은 수령방법을 고른 뒤에 켜진다(캡처)
-  return page(`<form id="mf_txppWframe" aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="${doc}">
+  // 실화면처럼 본문 틀 #mf_txppWframe(역할 없음) 안에 양식 제목 h2(2026-11-14 예행 run-e838a762)
+  return page(`<div id="mf_txppWframe"><h2>${esc(title)}</h2><form aria-label="${esc(title)}" method="post" action="/cert/issue"><input type="hidden" name="doc" value="${doc}">
     ${shown('민원명', docName)}${shown('사업자등록번호', fmtBiz(k.supplier.bizNo))}${shown('상호', k.supplier.name)}
     ${radios('mf_txppWframe_rad_englCvaAplnYn', '발급유형', 'lang', ['한글', '영문증명'], '한글')}
     ${select('mf_txppWframe_sbx_cvaDcumUseUsgCd', '사용용도', 'purpose', PURPOSES)}
@@ -112,12 +113,12 @@ function certForm(doc: Doc, k: CertKnobs): string {
     ${radios('mf_txppWframe_pfm_UTECAAA0Z002_rad_cvaAplnRecptResNoOpYn', '주민등록번호 공개여부', 'rrn', ['공개', '비공개'], '')}
     ${select('mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptMthd', '수령방법', 'receive', ['인터넷발급(프린터출력)', '우편'], 'onchange="document.getElementById(\'mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty\').disabled = !this.value"')}
     ${select('mf_txppWframe_pfm_UTECAAA0Z002_sbx_cvaAplnRecptIsnHopeQty', '발급희망수량', 'copies', ['1매', '2매'], 'disabled')}
-    ${extra.join('')}${submit}</form>`);
+    ${extra.join('')}${submit}</form></div>`);
 }
 
 function home(): string {
   return page(`<nav><span role="link" tabindex="0">증명·등록·신청</span> <span role="link" tabindex="0">민원증명(발급)</span>
-    <a href="/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315019900">${CERT_DOC_NAME['H-09']}</a></nav>`);
+    <a href="/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315011800">${CERT_DOC_NAME['H-09']}</a></nav>`);
 }
 
 function lookupPage(records: readonly CertRecord[]): string {

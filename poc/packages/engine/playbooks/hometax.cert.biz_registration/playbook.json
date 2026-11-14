@@ -342,6 +342,18 @@
    "value": "hometax.cert.form.root"
   },
   {
+   "id": "s11t",
+   "type": "assert",
+   "cond": {
+    "exists": "hometax.cert.form.title"
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
    "id": "s12",
    "type": "select",
    "target": "hometax.cert.form.language",

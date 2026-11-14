@@ -302,33 +302,25 @@
   {
    "id": "s10",
    "type": "goto",
-   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml"
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315011800"
   },
   {
    "id": "s10a",
    "type": "checkpoint",
    "name": "form",
    "expect": {
-    "exists": "hometax.header.logo"
+    "any": [
+     {
+      "exists": "hometax.cert.form.root"
+     },
+     {
+      "exists": "hometax.cert.alert"
+     }
+    ]
    },
-   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml",
+   "url": "https://hometax.go.kr/websquare/websquare.html?w2xPath=/ui/pp/index_pp.xml&tmIdx=43&tm2lIdx=4315010000&tm3lIdx=4315011800",
    "sessionRequired": true,
    "reentry": "reload"
-  },
-  {
-   "id": "s10b",
-   "type": "click",
-   "target": "hometax.cert.menu.civil"
-  },
-  {
-   "id": "s10c",
-   "type": "click",
-   "target": "hometax.cert.menu.issue"
-  },
-  {
-   "id": "s10d",
-   "type": "click",
-   "target": "hometax.cert.menu.doc"
   },
   {
    "id": "s10x",
@@ -352,6 +344,18 @@
    "type": "wait",
    "for": "selector",
    "value": "hometax.cert.form.root"
+  },
+  {
+   "id": "s11t",
+   "type": "assert",
+   "cond": {
+    "exists": "hometax.cert.form.title"
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
   },
   {
    "id": "s12",

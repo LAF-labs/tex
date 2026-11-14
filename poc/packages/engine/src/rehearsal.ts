@@ -126,7 +126,17 @@ const DOM_INVENTORY = (): unknown => {
     }
     out.push(x);
   }
-  return { url: location.pathname + location.search.replace(/([?&](?!w2xPath|tmIdx|tm2lIdx|tm3lIdx|menuCd)[^=&]+)=[^&]*/g, '$1=_'), items: out };
+  // id가 있고 자기 글(바로 아래 글 마디)이 있는 보이는 요소: 화면에 값만 보이는 칸(신청인 사업자번호·상호, 경로 표시)을 읽을 자리를 찾는다.
+  const leaves: unknown[] = [];
+  for (const e of document.querySelectorAll('[id]')) {
+    if (leaves.length >= 400) break;
+    if (e.matches(sel) || !vis(e)) continue;
+    const own = [...e.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent ?? '').join(' ');
+    if (!t(own)) continue;
+    leaves.push({ tag: e.tagName.toLowerCase(), id: e.id, cls: t(e.getAttribute('class'), 50) || undefined, role: e.getAttribute('role') || undefined, text: t(own, 60) });
+  }
+  return {
+    leaves, url: location.pathname + location.search.replace(/([?&](?!w2xPath|tmIdx|tm2lIdx|tm3lIdx|menuCd)[^=&]+)=[^&]*/g, '$1=_'), items: out };
 };
 
 /** 화면 기록에 남기는 쿼리 키(메뉴·화면 위치만). 그 밖의 키는 값이 개인값일 수 있어 버린다. */

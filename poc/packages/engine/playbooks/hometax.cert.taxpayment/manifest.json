@@ -15,13 +15,7 @@
  "effects": [
   "issue_document"
  ],
- "bundlesUsed": [
-  {
-   "id": "form_ready",
-   "ver": 2,
-   "digest": "b35492acfdd4fe4dbaee0971f1183adfe4511abba57cb4f18ffa5f944a923409"
-  }
- ],
+ "bundlesUsed": [],
  "lookupsUsed": [
   {
    "id": "hometax.cert.issued_list",

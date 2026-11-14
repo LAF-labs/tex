@@ -331,16 +331,26 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe"
-    },
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.cert.form.title": {
+   "candidates": [
     {
      "kind": "role",
-     "role": "form",
+     "role": "heading",
      "name": "부가가치세 과세표준증명원 접수"
     }
    ],
-   "role": "form",
+   "role": "heading",
    "namePattern": "^부가가치세 과세표준증명원 접수$",
-   "landmark": "hometax.page.root",
+   "landmark": "hometax.cert.form.root",
    "commits": false,
    "frame": "main",
    "lastVerified": "2026-11-10"
@@ -631,8 +641,15 @@
    "namePattern": "^발급희망개업일자$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
-   "fieldKey": "bizOpenDate",
+   "fieldKey": "_ignore",
    "inputType": "select",
+   "allowedConstants": [
+    "*only"
+   ],
+   "reviewNote": {
+    "by": "cert-docs",
+    "reason": "발급희망개업일자: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)"
+   },
    "frame": "main",
    "lastVerified": "2026-11-10"
   },

@@ -331,16 +331,26 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe"
-    },
+    }
+   ],
+   "role": "generic",
+   "namePattern": "^$",
+   "landmark": "hometax.page.root",
+   "commits": false,
+   "frame": "main",
+   "lastVerified": "2026-11-10"
+  },
+  "hometax.cert.form.title": {
+   "candidates": [
     {
      "kind": "role",
-     "role": "form",
+     "role": "heading",
      "name": "표준재무제표증명"
     }
    ],
-   "role": "form",
+   "role": "heading",
    "namePattern": "^표준재무제표증명$",
-   "landmark": "hometax.page.root",
+   "landmark": "hometax.cert.form.root",
    "commits": false,
    "frame": "main",
    "lastVerified": "2026-11-10"

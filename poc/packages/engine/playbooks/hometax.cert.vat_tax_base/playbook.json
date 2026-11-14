@@ -83,10 +83,6 @@
     "1기",
     "2기"
    ]
-  },
-  "openDate": {
-   "type": "string",
-   "required": true
   }
  },
  "preconditions": [
@@ -370,6 +366,18 @@
    "value": "hometax.cert.form.root"
   },
   {
+   "id": "s11t",
+   "type": "assert",
+   "cond": {
+    "exists": "hometax.cert.form.title"
+   },
+   "code": "assert.input_mismatch",
+   "onFail": {
+    "retry": 0,
+    "then": "handoff"
+   }
+  },
+  {
    "id": "s12",
    "type": "select",
    "target": "hometax.cert.form.language",
@@ -433,7 +441,7 @@
    "id": "s16e",
    "type": "select",
    "target": "hometax.cert.form.openDate",
-   "option": "$inputs.openDate"
+   "option": "*only"
   },
   {
    "id": "s19a",
@@ -450,8 +458,7 @@
       "taxPeriodStartYear",
       "taxPeriodStartHalf",
       "taxPeriodEndYear",
-      "taxPeriodEndHalf",
-      "bizOpenDate"
+      "taxPeriodEndHalf"
      ]
     }
    },
@@ -473,8 +480,7 @@
     "taxPeriodStartYear",
     "taxPeriodStartHalf",
     "taxPeriodEndYear",
-    "taxPeriodEndHalf",
-    "bizOpenDate"
+    "taxPeriodEndHalf"
    ]
   },
   {
@@ -557,21 +563,6 @@
       }
      }
     ]
-   }
-  },
-  {
-   "id": "s18a",
-   "type": "assert",
-   "cond": {
-    "readbackEquals": {
-     "fieldKey": "bizOpenDate",
-     "ref": "$inputs.openDate"
-    }
-   },
-   "code": "assert.input_mismatch",
-   "onFail": {
-    "retry": 0,
-    "then": "abort"
    }
   },
   {

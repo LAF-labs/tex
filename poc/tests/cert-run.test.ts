@@ -28,7 +28,7 @@ const ID = (c: CertCode) => fixtureCertId(CERT_PRODUCT_IDS[c]);
 const INPUTS: Readonly<Record<CertCode, Record<string, string>>> = {
   'H-03': { purpose: '금융기관제출용', submitTo: '금융기관', rrnDisclosure: '비공개' },
   'H-04': { purpose: '금융기관 제출', submitTo: '금융기관' },
-  'H-08': { purpose: '대출용', submitTo: '금융기관', periodStartYear: '2025', periodStartHalf: '1기', periodEndYear: '2025', periodEndHalf: '2기', openDate: '2020-03-02' },
+  'H-08': { purpose: '대출용', submitTo: '금융기관', periodStartYear: '2025', periodStartHalf: '1기', periodEndYear: '2025', periodEndHalf: '2기' },
   'H-09': { purpose: '입찰, 계약용', submitTo: '관공서', fiscalYear: '2024' },
 };
 /** 승인 카드 4칸(certDoc·certPurpose·certSubmitTo·rrnDisclosure)에 기대하는 값. */
