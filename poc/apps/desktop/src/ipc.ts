@@ -290,6 +290,8 @@ export type ShellEvent =
   | { type: 'browser'; shown: boolean; available: boolean; focus?: boolean; embedded?: boolean; width?: number }
   | { type: 'doc'; doc: unknown }
   | { type: 'docs-reload' }
+  /** 지난 실행(활동 기록)을 다시 읽었다(run.reverify가 원장을 바꿈). */
+  | { type: 'past'; past: unknown[] }
   | { type: 'board'; board: unknown }
   | { type: 'onboarding'; onboarding: unknown }
   | { type: 'account'; account: unknown }

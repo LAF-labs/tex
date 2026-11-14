@@ -429,4 +429,14 @@ CREATE UNIQUE INDEX ux_irr_issue_live ON irreversible_log(issue_key) WHERE issue
 ALTER TABLE profiles ADD COLUMN cert_name TEXT;
 `,
   },
+  {
+    // run.reverify(재시작 뒤 in_doubt 확정): 무장할 때의 기준선 B₀(게이트 전 같은 조회의 승인번호 JSON 배열)와 마지막으로 조회한 날(KST).
+    // B₀가 없는 행은 재확인하지 않는다. 같은 행은 하루에 한 번만 조회한다.
+    version: 12,
+    name: 'ledger_reverify',
+    sql: `
+ALTER TABLE irreversible_log ADD COLUMN baseline_refs TEXT;
+ALTER TABLE irreversible_log ADD COLUMN reverify_day TEXT;
+`,
+  },
 ];

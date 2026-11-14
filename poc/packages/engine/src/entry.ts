@@ -29,7 +29,7 @@ import { runPermit } from './core/permit.ts';
 import { egressRegistryFetch, PRODUCT_CERT_IDS, PRODUCT_PACKAGE_IDS, PRODUCT_PACKAGES, RegistrySync, settingsRegistryStore } from './registry-sync.ts';
 import { installedIrSource, REHEARSAL_PACKAGES_DIR, rehearsalIrSource } from './package-source.ts';
 import { VaultPdfPort } from './driver/pdf.ts';
-import { recordCertInputs, recordRunInputs, runHistory } from './run-history.ts';
+import { recordCertInputs, recordRunInputs, runHistory, runInputsOf } from './run-history.ts';
 import { PHONE_COMMANDS } from './protocol.ts';
 import { PhoneIntake } from '@sax/bundle';
 import { PcFileIntake } from '@sax/bundle';
@@ -225,6 +225,8 @@ async function init(msg: EngineInit, vaultPort: MessagePortMain, gatePort: Messa
       // fixture 개발 포털은 status 상한·kill만 따르고 정책은 보지 않는다(실제 포털 접속이 없다).
       permit: (id) => runPermit(registry?.status() ?? null, 'hometax', id, portal.kind === 'hometax' ? (registry?.policy() ?? { freshness: 'none', policy: null }) : undefined),
       closeBrowser: () => slot.close(),
+      currentPage: () => slot.current?.page ?? null,
+      runInputs: (runId) => runInputsOf(db, cipher, runId),
       // 요청률은 받은 서명 정책과 내장 값 중 더 엄격한 쪽만(팀장 결정 2026-11-09 ③, D03 §7). 정책이 없으면 내장 값.
       receivedPolicy: () => registry?.policy().policy ?? null,
     });
@@ -256,6 +258,10 @@ async function handle(method: string, params: Record<string, unknown>): Promise<
     return runHistory(history.db, history.cipher, typeof params.limit === 'number' ? params.limit : 50);
   }
   if (method === 'engine.status') return { db: !!data, browser: !!browser?.current, runs: !!runs, activeRun: runs?.activeRunId ?? null };
+  if (method === 'run.reverify') {
+    if (!runs) throw new Error('runs_not_ready');
+    return runs.reverify(typeof params.exclude === 'string' ? params.exclude : null);
+  }
   if (method === 'run.resume' || method === 'run.manualDone') {
     if (!runs) throw new Error('runs_not_ready');
     return method === 'run.resume' ? runs.resume(String(params.runId)) : runs.manualDone(String(params.runId));

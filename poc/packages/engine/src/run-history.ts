@@ -82,6 +82,14 @@ function openInputs(cipher: ColumnCipher | null, runId: string, blob: unknown): 
   }
 }
 
+/** 한 실행의 입력 요약과 시작 시각(run.reverify가 조회 match를 되살린다). 행이 없거나 열지 못하면 null. */
+export function runInputsOf(db: Db, cipher: ColumnCipher, runId: string): (RunInputsSummary & { startedAt: string }) | null {
+  const r = db.prepare('SELECT started_at, inputs_json_enc FROM runs WHERE id = ?').get(runId) as { started_at: string; inputs_json_enc: unknown } | undefined;
+  const s = r ? openInputs(cipher, runId, r.inputs_json_enc) : null;
+  // 세금계산서 입력만 되살린다(민원증명 in_doubt는 발급목록 재조회 대상이 아니다)
+  return s?.kind === 'invoice' && r ? { ...s.s, startedAt: String(r.started_at) } : null;
+}
+
 export const RUN_HISTORY_MAX = 200;
 
 /** 최근 실행부터 limit건(기본 50, 상한 200). 예행(run.rehearsal)은 발급 이력이 아니라서 뺀다. */
