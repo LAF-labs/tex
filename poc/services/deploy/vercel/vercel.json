@@ -129,6 +129,10 @@
       "destination": "https://rooms.tax.laf-co.com/v1/rooms"
     },
     {
+      "source": "/download",
+      "destination": "/api/registry?__p=/download"
+    },
+    {
       "source": "/registry/log/:path*",
       "destination": "/api/registry?__p=/registry/log/:path*"
     },

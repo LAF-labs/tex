@@ -93,7 +93,7 @@ if [ $SIGN_ONLY = 0 ]; then
   xcrun stapler validate "$DMG" >/dev/null && log "dmg 스테이플: 있음"
   spctl --assess --type open --context context:primary-signature -vv "$DMG" 2>&1 | tee -a "$V" | grep -q accepted || die "spctl이 dmg를 받지 않는다(verify.txt)"
 else
-  codesign --verify --strict "$DMG" 2>&1 | tee -a "$V"
+  log "dmg: 예행이라 서명·공증·스테이플 없음(공증 판에서 package-win.mjs notarizeDmg가 한다)"
 fi
 T=$(mktemp -d "${TMPDIR:-/tmp}/sax-release-check.XXXXXX")
 trap 'hdiutil detach "$T/mnt" >/dev/null 2>&1 || true; rm -rf "$T"' EXIT
