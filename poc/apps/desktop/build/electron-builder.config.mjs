@@ -118,12 +118,12 @@ export const EXCLUDE = [
  * @param {string} o.outDir 산출물 폴더
  * @param {ReturnType<typeof signingFrom> | ReturnType<typeof macSigningFrom>} o.signing
  * @param {string | null} o.icon icon.ico 경로(없으면 Electron 기본 아이콘)
- * @param {{ os: string, cpu: string }} [o.target] 대상(기본 Windows x64). macOS는 arm64 .dmg(Developer ID가 없으면 애드혹)
+ * @param {{ os: string, cpus: string[], arch: string }} [o.target] 대상(기본 Windows x64). macOS는 universal .dmg(Developer ID가 없으면 애드혹)
  */
-export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpu: 'x64' } }) {
+export function makeConfig({ identity, version, buildDir, outDir, signing, icon, target = { os: 'win32', cpus: ['x64'], arch: 'x64' } }) {
   const signed = signing.mode === 'azure';
   const macSigned = signing.mode === 'developer_id';
-  const prebuild = `${target.os}-${target.cpu}.node`;
+  const prebuild = target.cpus.map((c) => `${target.os}-${c}.node`).join('|');
   return {
     appId: identity.appId,
     productName: identity.productName,
@@ -154,13 +154,13 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       loadBrowserProcessSpecificV8Snapshot: false,
       grantFileProtocolExtraPrivileges: false,
     },
-    // macOS: Apple Silicon(arm64)만(대표 결정 2026-11-11, Intel Mac 미지원).
+    // macOS: universal(Apple Silicon·Intel 한 앱, 부장 지시 2026-11-14). x64·arm64를 따로 패킹해 @electron/universal이 합친다.
     // Developer ID 신원·공증 프로필이 없으면 애드혹: 받은 .dmg는 Gatekeeper가 막아 고객이 [그래도 열기]를 눌러야 한다(sovereign-ax/install-guide).
     mac: {
       // dmg는 처음 설치용, zip은 자동 업데이트용(electron-updater MacUpdater·Squirrel.Mac은 zip만 받는다)
       target: [
-        { target: 'dmg', arch: ['arm64'] },
-        { target: 'zip', arch: ['arm64'] },
+        { target: 'dmg', arch: [target.arch] },
+        { target: 'zip', arch: [target.arch] },
       ],
       // 애드혹 서명('-'): Apple Silicon은 서명이 깨진 실행 파일을 띄우자마자 죽인다(퓨즈·asar 무결성을 쓴 뒤 서명이 맞지 않으면 exit 137).
       identity: macSigned ? signing.identity : '-',
@@ -172,7 +172,9 @@ export function makeConfig({ identity, version, buildDir, outDir, signing, icon,
       notarize: macSigned && signing.notarize === true,
       gatekeeperAssess: false,
       category: 'public.app-category.business',
-      artifactName: `${identity.installDirName}-\${version}-arm64.\${ext}`,
+      artifactName: `${identity.installDirName}-\${version}-${target.arch}.\${ext}`,
+      // 네이티브 .node는 칩마다 다른 패키지(better-sqlite3 prebuilds/darwin-*.node, @napi-rs/keyring-darwin-*)라 두 패킹에 똑같이 들어간다. lipo로 합치지 않고 그대로 둔다
+      x64ArchFiles: 'Contents/Resources/app.asar.unpacked/**/*.node',
     },
     win: {
       target: [{ target: 'nsis', arch: ['x64'] }],

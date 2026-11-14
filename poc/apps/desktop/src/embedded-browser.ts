@@ -441,6 +441,14 @@ export class EmbeddedBrowser {
     wc.setWindowOpenHandler(({ url }) => {
       // 포털 팝업(window.open): 같은 파티션의 숨은 보기로 열고 금고에 새 타깃으로 알린다(금고가 허용 출처만 엔진에 노출한다).
       if (!/^(https?:|about:blank)/i.test(url)) return { action: 'deny' };
+      // 홈택스 자동 로그아웃 안내 창(5분 남음): 띄우지 않고 그 창의 [연장하기]와 같은 일을 여는 쪽 페이지에서 한다.
+      if (SESSION_OUT_POPUP.test(url)) {
+        void wc
+          .executeJavaScript(HOMETAX_EXTEND_JS, true)
+          .then((r: unknown) => this.o.log.event('main.hometax_session_popup', { result: String(r).slice(0, 20) }))
+          .catch(() => this.o.log.event('main.hometax_session_popup', { result: 'error' }));
+        return { action: 'deny' };
+      }
       const opener = [...this.tabs.values()].find((x) => x.wc === wc);
       return {
         action: 'allow',
@@ -559,4 +567,34 @@ export class EmbeddedBrowser {
   get hasPage(): boolean {
     return this.order.length > 0;
   }
+
+  /**
+   * 홈택스 로그인 유지. 열린 홈택스 탭마다 홈택스 자동 로그아웃 창의 [연장하기]와 같은 일을 한다(서버 더미 요청 + 타이머 재시작).
+   * 로그인 전 페이지(홈택스가 타이머를 켜지 않았다)는 건드리지 않는다. 탭이 하나라도 연장하면 'extended'.
+   */
+  async keepSession(): Promise<'extended' | 'idle' | 'none'> {
+    const tabs = this.order.filter((t) => !t.gone && /^https:\/\/([a-z0-9-]+\.)*hometax\.go\.kr\//i.test(t.wc.getURL()));
+    if (!tabs.length) return 'none';
+    const out = await Promise.all(tabs.map((t) => t.wc.executeJavaScript(HOMETAX_EXTEND_JS, true).catch(() => 'error')));
+    return out.includes('extended') ? 'extended' : 'idle';
+  }
 }
+
+/** 홈택스 자동 로그아웃 안내 창(UTXPPABB27, 홈택스 sessionTimer가 24분 뒤 연다). */
+const SESSION_OUT_POPUP = /UTXPPABB27/;
+
+/**
+ * 홈택스 [연장하기](UTXPPABB27 btnXtn_onClick, 2026-11-14 실화면 소스)와 같은 일: 간편사업자 화면이면 fn_smpcSessionXtn, 아니면
+ * $c.pp.sessionXtn(시스템별 /jsp/dummy.jsp 요청) 뒤 sessionTimer로 24분 안내·30분 로그아웃 타이머를 다시 건다.
+ * 홈택스는 로그인했을 때만 타이머를 켠다(sessiontimerEndFnc). 안내 창이 깔아 둔 가림막(errLayer1·2)만 걷고 다른 모달은 그대로 둔다.
+ */
+const HOMETAX_EXTEND_JS = `(() => { try {
+  const w = window;
+  if (typeof w.sessionTimer !== 'function' || !w.$c || !w.$c.pp || typeof w.$c.pp.sessionXtn !== 'function') return 'no_timer';
+  if (w.sessiontimerEndFnc == null) return 'idle';
+  if (String(w.top.location.href).indexOf('UTXPPADA01') > -1 && typeof w.top.fn_smpcSessionXtn === 'function') w.top.fn_smpcSessionXtn();
+  else w.$c.pp.sessionXtn(w.$p);
+  for (const id of ['errLayer1', 'errLayer2']) { const el = document.getElementById(id); if (el) el.remove(); }
+  w.sessionTimer('Y');
+  return 'extended';
+} catch (e) { return 'error'; } })()`;

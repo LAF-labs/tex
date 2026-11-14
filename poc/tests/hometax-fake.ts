@@ -75,6 +75,8 @@ export interface FakeKnobs {
    * 값이 AX·DOM·Runtime 읽기에 그대로 보인다).
    */
   certPwType: 'password' | 'masked_text';
+  /** 보안카드 칸 값(칸 번호 → 4자리, 가짜). 보안카드 창이 이 값과 대조한다. */
+  secCard?: Record<string, string>;
   /** 인증서 목록(소유자명 Cn·용도). 0번 행이 처음에 골라져 있다(jqx DataTable selectRow 0). */
   certs: Array<{ cn: string; policy: string }>;
   /**
@@ -117,6 +119,9 @@ export interface HometaxFake {
     certUses: Array<{ mode: 'login' | 'sign'; how: 'typed' | 'human'; cn: string }>;
     /** 틀린 비밀번호로 [확인]한 횟수. */
     wrongPw: number;
+    /** 보안카드 창 [확인하기] 횟수와 틀린 횟수. */
+    secCardTries: number;
+    secCardErr: number;
     /** 안내 팝업을 연 횟수와 닫힌 횟수(창이 닫힌 것을 여는 쪽 화면이 알린다). */
     noticeOpened: number;
     noticeClosed: number;
@@ -134,6 +139,40 @@ export interface HometaxFake {
 }
 
 const W2 = '/websquare/websquare.html';
+/**
+ * 홈택스 보안카드 창(실화면 정적 /ui/pp/a/b/UTXPPABA08.xml, 2026-11-14 GET을 줄인 것). id·요청 글자·알림 문구가 실화면과 같다.
+ * 요청 번호는 창이 열린 뒤 1~30에서 둘(서로 다름)을 고른다. 알림 뒤 opener.fn_callbackCertPopup(결과)를 부르고 창을 닫는다.
+ */
+const SECCARD = `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body>
+<div id="group187" class="pop_wrap"><h2 id="lblPopTitle">전자세금계산서 발급용 보안카드 인증</h2><p>발급받은 보안카드 번호를 입력하세요.</p>
+<table id="group200"><caption>보안카드 일련번호 입력</caption>
+<tr><th><label id="txtSecCardNo1" for="inputCardNo1"><span>[00]</span>번 보안카드번호 앞 2자리</label></th><td><input id="inputCardNo1" type="password" maxlength="2" minlength="2" autocomplete="new-password"> **</td></tr>
+<tr><th><label id="txtSecCardNo2" for="inputCardNo2"><span>[00]</span>번 보안카드번호 뒤 2자리</label></th><td>** <input id="inputCardNo2" type="password" maxlength="2" minlength="2" autocomplete="new-password"></td></tr></table>
+<div id="group193"><button type="button" id="btnCfrm">확인하기</button> <button type="button" id="btnCncl">취소</button></div></div>
+<script>
+const g = [];
+setTimeout(() => {
+  g[0] = Math.floor(Math.random() * 30 + 1); g[1] = Math.floor(Math.random() * 30 + 1);
+  while (g[0] === g[1]) g[1] = Math.floor(Math.random() * 30 + 1);
+  document.getElementById('txtSecCardNo1').innerHTML = '<span>[' + g[0] + ']</span>번 보안카드번호 앞 2자리';
+  document.getElementById('txtSecCardNo2').innerHTML = '<span>[' + g[1] + ']</span>번 보안카드번호 뒤 2자리';
+}, 400);
+const done = (code) => { try { window.opener && window.opener.fn_callbackCertPopup(code); } catch (e) {} window.close(); };
+document.getElementById('inputCardNo2').addEventListener('keydown', (e) => { if (e.keyCode === 13) document.getElementById('btnCfrm').click(); });
+document.getElementById('btnCncl').onclick = () => { if (confirm('보안카드인증을 취소하시겠습니까?')) window.close(); };
+document.getElementById('btnCfrm').onclick = async () => {
+  const v1 = document.getElementById('inputCardNo1').value, v2 = document.getElementById('inputCardNo2').value;
+  if (v1.length < 2) return alert('올바른 [ $1 ]번 보안카드번호 앞 2자리를 입력하세요.');
+  if (v2.length < 2) return alert('올바른 [ $1 ]번 보안카드번호 뒤 2자리를 입력하세요.');
+  const r = await (await fetch('/_fx/seccard?' + new URLSearchParams({ n1: g[0], v1, n2: g[1], v2 }))).json();
+  let code = '';
+  if (r.code === 'ITICMZ0001') { alert('인증에 성공하였습니다.'); code = '01'; }
+  else if (r.code === 'ETICMZ0003') { alert('인증에 실패하였습니다.\\n인증번호 5회 오류 시 보안카드가 폐기됩니다.\\n현재 ' + (r.errCount + 1) + ' 번 오류가 발생하였습니다.'); document.getElementById('inputCardNo1').value = ''; document.getElementById('inputCardNo2').value = ''; }
+  else { alert('인증번호 5회 오류로 보안카드가 폐기되었습니다.\\n가까운 세무서를 방문하여 보안카드를 발급받으시기 바랍니다.'); code = '02'; }
+  done(code);
+};
+</script></body></html>`;
+
 const pad = (n: number, w = 2) => String(n).padStart(w, '0');
 /** KST 오늘(YYYY-MM-DD). */
 export function kstToday(now = Date.now()): string {
@@ -418,8 +457,15 @@ const CLIENT = String.raw`
         await act('ATEETBAA002C04', 'UTEETBAA01', { dmnrNo: digits(doc.dmnrNo) });
         openCert();
       };
-      // 보안카드·사업자 간편인증 갈래는 캡처 전이다(가정): C04 뒤 아무 창도 띄우지 않는다.
-      for (const g of ['group5321197', 'group111']) $(Q + g).querySelector('button').onclick = async () => { w.remove(); await act('ATEETBAA002C04', 'UTEETBAA01', {}); };
+      // 보안카드: 실화면 정적 UTXPPABA08(2026-11-14 GET)처럼 새 창(window.open)으로 두 칸을 묻는다. 성공이면 창이 opener.fn_callbackCertPopup('01')을 부른다.
+      $(Q + 'group5321197').querySelector('button').onclick = async () => {
+        w.remove();
+        await act('ATEETBAA002C04', 'UTEETBAA01', { dmnrNo: digits(doc.dmnrNo) });
+        window.fn_callbackCertPopup = (code) => { if (code === '01') void finishSigned('seccard'); };
+        window.open('/websquare/popup.html?w2xPath=/ui/pp/a/b/UTXPPABA08.xml&popupID=mf_txppWframe_UTXPPABA08', 'UTXPPABA08', 'width=543,height=458');
+      };
+      // 사업자 간편인증 갈래는 캡처 전이다(가정): C04 뒤 아무 창도 띄우지 않는다.
+      $(Q + 'group111').querySelector('button').onclick = async () => { w.remove(); await act('ATEETBAA002C04', 'UTEETBAA01', {}); };
     }
 
     function openCert() {
@@ -441,7 +487,10 @@ const CLIENT = String.raw`
       if (e.data.ml4 === 'cancel') return foldCert(false);
       if (e.data.ml4 !== 'signed') return;
       foldCert(true);
-      const r = await act('ATEETBAA002C05', 'UTEETBAA01', { ...doc, dmnrNo: digits(doc.dmnrNo), sig: e.data.sig });
+      await finishSigned(e.data.sig);
+    });
+    async function finishSigned(sig) {
+      const r = await act('ATEETBAA002C05', 'UTEETBAA01', { ...doc, dmnrNo: digits(doc.dmnrNo), sig });
       if (!r.etan) return;
       await act('ATEETBAA002C08', 'UTEETBAA01', { etan: r.etan });
       await perm('UTEETZZA87');
@@ -453,7 +502,7 @@ const CLIENT = String.raw`
         '<p id="' + Q + 'txtMsg4">발급한 전자세금계산서가 ' + (doc.splrEml || '') + ', ' + (doc.dmnrEml || '') + '로 발송되었습니다.</p>' +
         '<input type="button" id="' + Q + 'trigger201" value="목록조회"> <input type="button" id="' + Q + 'btnClose" value="상세(팝업)"> <input type="button" id="' + Q + 'btnClose1" value="상세(화면)"> <input type="button" id="' + Q + 'trigger20" value="계속발급"> <input type="button" id="' + Q + 'trigger15" value="닫기"></div>';
       document.body.append(w);
-    });
+    }
   }
 
   // ---------------- 그리드(목록·메일) ----------------
@@ -587,7 +636,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, secCardTries: 0, secCardErr: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -661,6 +710,16 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     if (u.pathname === '/pp/certNotice.html') {
       state.noticeOpened++;
       return send(res, 200, 'text/html; charset=utf-8', '<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>크롬,엣지 이용자에 대한 공동인증서 로그인 시 팝업</title></head><body><p>크롬(구글), 엣지(마이크로소프트) 보안정책 업데이트로 인해 하드디스크(이동식디스크) 공동인증서 이용 시 아래와 같이 사이트 권한 추가 설정이 필요합니다.</p><button type="button" onclick="window.close()">닫기</button></body></html>');
+    }
+    if (u.pathname === '/websquare/popup.html' && (u.searchParams.get('w2xPath') ?? '').includes('UTXPPABA08')) return send(res, 200, 'text/html; charset=utf-8', SECCARD);
+    if (u.pathname === '/_fx/seccard') {
+      // 칸 대조만(값은 기록하지 않는다). 5회 틀리면 폐기(실화면 MTXPP0153).
+      const card = knobs.secCard ?? {};
+      const n1 = u.searchParams.get('n1') ?? '', n2 = u.searchParams.get('n2') ?? '';
+      const ok = (card[n1] ?? '').slice(0, 2) === u.searchParams.get('v1') && (card[n2] ?? '').slice(2, 4) === u.searchParams.get('v2');
+      state.secCardTries++;
+      if (!ok) state.secCardErr++;
+      return json(res, { code: ok ? 'ITICMZ0001' : state.secCardErr >= 5 ? 'ETICMZ0004' : 'ETICMZ0003', errCount: state.secCardErr - (ok ? 0 : 1) });
     }
     if (u.pathname === '/_fx/noticeclosed') {
       state.noticeClosed++;

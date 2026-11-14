@@ -87,7 +87,7 @@ export async function evalCond(c: Cond, env: CondEnv): Promise<CondResult> {
     const got = env.scope.readback.get(fieldKey);
     const want = readRef(env.scope, ref);
     if (got === undefined) return { ok: false, code: 'step.ref_unresolved' };
-    if (isAbsent(want)) return ifAbsent === 'empty' ? bool(got === '') : { ok: false, code: 'step.ref_unresolved' };
+    if (isAbsent(want)) return ifAbsent === 'empty' ? bool(got === '') : ifAbsent === 'skip' ? bool(true) : { ok: false, code: 'step.ref_unresolved' };
     const w = scalar(want);
     if (w === null) return { ok: false, code: 'step.ref_unresolved' };
     return bool(normalizeFor(env.dict, fieldKey, w) === got);

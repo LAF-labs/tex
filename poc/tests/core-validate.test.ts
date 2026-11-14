@@ -256,7 +256,7 @@ describe('V-04~V-24', () => {
   it('V-07 예약 결과를 on에 둠', () => expectRule('V-07', (_p, s) => ((s('s2').on as Record<string, string>).blocked = 'abort')));
   it('V-07 카탈로그에 없는 번들', () => expectRule('V-07', (_p, s) => (s('s19').bundle = 'form_ready_v9')));
   it('V-07b unknown이 대기 루프가 아닌 스텝', () => expectRule('V-07b', (_p, s) => ((s('s2').on as Record<string, string>).unknown = 's3')));
-  it('V-08 signFlow 보안카드에 rowLabel 없음', () => expectRule('V-08', (_p, s) => (((s('s21').signFlow as { steps: Record<string, string[]> }).steps).security_card = ['secret_fill:security_card'])));
+  it('V-08 signFlow 보안카드에 card 정의 없음', () => expectRule('V-08', (_p, s) => (((s('s21').signFlow as { steps: Record<string, string[]> }).steps).security_card = ['secret_fill:security_card'])));
   it('V-09 pace는 normal·slow만(스키마)', () => expectRule('V-01', (_p, s) => (s('s1').pace = 'fast')));
   it('V-16 send_email.to 상수는 스키마에서 거부', () =>
     expectRule('V-01', (p, s, steps) => {
