@@ -438,6 +438,13 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .sx-steps small.sx-step-check.is-bad, .form-msg.is-bad { color: var(--sx-bad); font-weight: 500; }
 .form-msg { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); }
 .form-msg[hidden] { display: none; }
+/* 세무사 꾸러미(shell-pack.js) */
+.pack-card { display: grid; gap: var(--space-3); padding: var(--space-4); }
+.pack-gaps { display: grid; gap: var(--space-2); }
+.pack-files { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 13px; }
+.pack-list summary { cursor: pointer; }
+section[data-view="bundle"] .rs-col { max-width: 920px; }
+[data-pack-invoices] td:not(.name), [data-pack-invoices] th { white-space: nowrap; }
 
 /* 보안카드 등록(대표 지시 2026-11-14): 사진 끌어 놓기 칸, 애매한 칸만 4자리 다시 받기 */
 .card-reg { display: grid; gap: var(--space-2); margin-top: var(--space-2); width: 100%; }

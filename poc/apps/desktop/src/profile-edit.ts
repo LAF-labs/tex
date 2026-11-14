@@ -51,8 +51,6 @@ export interface ProfileEditPorts {
   upsert(row: Record<string, unknown>): Promise<DbProfile>;
   /** 국세청 상태조회(온보딩 checkBizNo와 같은 포트). */
   checkBizNo(bizNo: string): Promise<BizCheck>;
-  /** 발급 실행이 진행 중인가. */
-  runActive(): boolean;
   /** 저장한 뒤(온보딩 상태 맞추기·기록·화면 새로 고침). */
   saved(biz: BizFields, changed: BizFieldKey[]): Promise<void>;
 }
@@ -74,7 +72,6 @@ export class ProfileEditor {
   }
 
   async save(input: Partial<Record<BizFieldKey, unknown>>, confirmUnverified = false): Promise<BizEditResult> {
-    if (this.ports.runActive()) throw new Error('run_active');
     if (this.busy) throw new Error('busy');
     this.busy = true;
     try {
@@ -93,8 +90,6 @@ export class ProfileEditor {
           if (check.status !== 'active') throw new Error('biz_inactive');
         }
       }
-      // 실행이 조회 중에 시작됐을 수 있다
-      if (this.ports.runActive()) throw new Error('run_active');
       await this.ports.upsert({
         kind: 'business',
         displayName: next.name,

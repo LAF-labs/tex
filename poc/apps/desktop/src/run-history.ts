@@ -94,9 +94,9 @@ export function pastRuns(rows: readonly RunHistoryRow[], onBad: (runId: unknown)
  * 기동 때 지난 실행을 읽는다(엔진 db.query.runs.history, main 전용, 최근 50건). 무엇이 틀려도 던지지 않는다:
  * 이력을 못 읽으면(db_not_ready 등) 빈 목록, 망가진 줄은 그 줄만 빼고 기록한다(값 없이 사유만).
  */
-export async function readPastRuns(rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>, logEvent: (name: string, data: LogFields) => void): Promise<PastRun[]> {
+export async function readPastRuns(rpc: (method: string, params: Record<string, unknown>) => Promise<unknown>, logEvent: (name: string, data: LogFields) => void, limit = 50): Promise<PastRun[]> {
   try {
-    const r = await rpc('db.query.runs.history', { limit: 50 });
+    const r = await rpc('db.query.runs.history', { limit });
     return pastRuns(Array.isArray(r) ? (r as RunHistoryRow[]) : [], () => logEvent('main.past_row_skipped', {}));
   } catch (e) {
     logEvent('main.past_failed', { error: String((e as Error)?.message ?? e).slice(0, 80) });

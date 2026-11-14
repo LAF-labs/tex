@@ -33,7 +33,7 @@ const UNKNOWN: BizCheck = { status: 'unknown', label: '조회하지 못했어요
 const CLOSED: BizCheck = { status: 'closed', label: '폐업자', taxType: null, source: '국세청 조회' };
 
 /** 실제 DB(@sax/db ProfileRepo) 위의 편집기. */
-function setup(o: { check?: BizCheck | (() => Promise<BizCheck>); active?: () => boolean; seed?: boolean } = {}) {
+function setup(o: { check?: BizCheck | (() => Promise<BizCheck>); seed?: boolean } = {}) {
   const db = openDatabase(path.join(tmp(), 'db.sqlite'), new Uint8Array(randomBytes(32)));
   dbs.push(db);
   const repo = new ProfileRepo(db);
@@ -52,7 +52,6 @@ function setup(o: { check?: BizCheck | (() => Promise<BizCheck>); active?: () =>
       const c = o.check ?? ACTIVE;
       return typeof c === 'function' ? c() : c;
     },
-    runActive: o.active ?? (() => false),
     saved: async (biz, changed) => void saved.push({ biz, changed }),
   });
   const cur = () => repo.list().find((p) => p.kind === 'business') as DbProfile;
@@ -164,16 +163,6 @@ describe('ProfileEditor: 실제 DB upsert', () => {
     await assert.rejects(t2.editor.save({ bizNo: NO_B }), /biz_inactive/);
     assert.equal(t2.cur().bizNo, NO_A);
   });
-  it('실행 중이면 저장하지 않는다(조회 사이에 시작돼도)', async () => {
-    let active = true;
-    const t = setup({ active: () => active });
-    await assert.rejects(t.editor.save({ rep: '박' }), /run_active/);
-    active = false;
-    let n = 0;
-    const t2 = setup({ active: () => n++ > 0, check: ACTIVE });
-    await assert.rejects(t2.editor.save({ bizNo: NO_B }), /run_active/);
-    assert.equal(t2.cur().bizNo, NO_A);
-  });
   it('프로필이 없으면(온보딩 기록 없는 옛 설치·건너뜀) 새로 만들고 번호를 조회한다', async () => {
     const t = setup({ seed: false, check: ACTIVE });
     assert.deepEqual(await t.editor.current(), bizFieldsOf(null));
@@ -279,7 +268,6 @@ describe('배선(main·IPC·렌더러)', () => {
     assert.match(src, /'profile\.edit': async \(p\) => \{\s*needGesture\(3_000\);\s*await needLogin\(\);\s*if \(onb && !onb\.done\) throw new Error\('onboarding_open'\);/);
     assert.match(src, /'profile\.readCert': async \(\) => \{\s*needGesture\(3_000\);\s*await needLogin\(\);/);
     assert.match(src, /log\.event\('main\.profile_edit', \{ fields: changed\.join\('\.'\) \|\| 'none' \}\);/);
-    assert.match(src, /runActive: \(\) => runs\.anyActive\(\),/);
     assert.match(src, /checkBizNo: \(n\) => onbExternal\.checkBizNo\(n\),/);
     assert.match(src, /if \(onb\?\.done\) await onb\.syncBiz\(biz\);/);
     // 엔진 계약은 그대로(profile.upsert), 새 엔진 명령 없음

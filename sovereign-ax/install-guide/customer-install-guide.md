@@ -9,7 +9,7 @@
 | 확인할 것 | 필요한 것 |
 |---|---|
 | Windows PC | **Windows 10(22H2) 또는 Windows 11, 64비트** |
-| Mac | **Apple 칩(M1~M4) Mac, macOS 13(Ventura) 이상**. 사과 메뉴 → [이 Mac에 관하여]에서 "칩: Apple M…"이면 됩니다. "프로세서: Intel"인 Mac은 지원하지 않습니다(열면 "이 Mac에서 지원되지 않는다"는 창이 뜨고 열리지 않습니다) |
+| Mac | **macOS 13(Ventura) 이상**. Apple 칩(M1~M4)과 Intel Mac 모두 됩니다(한 파일에 둘 다 들어 있습니다) |
 | **Google Chrome 먼저 설치** | 앱이 홈택스 일을 할 때 Chrome을 따로 하나 띄워서 씁니다. Chrome이 없으면 발급을 시작할 수 없습니다. https://www.google.com/chrome 에서 설치해 주세요. Mac은 **응용 프로그램** 폴더(또는 내 홈의 응용 프로그램 폴더)에 있어야 합니다 |
 | 인터넷 | 처음 켤 때와 로그인할 때 인터넷이 필요합니다. **회사 보안망(프록시)을 쓰는 PC에서는 동작하지 않을 수 있어요.** 회사 전산 담당자께 `tax.laf-co.com`, `rooms.tax.laf-co.com`(443 포트) 허용을 부탁해 주시고, 미리 저희에게도 알려 주세요 |
 | 이메일 | 로그인할 때 이 주소로 6자리 코드가 옵니다. **PoC 담당자에게 미리 알려 주신 이메일**을 써 주세요 |
@@ -53,7 +53,7 @@
 ## 2. Mac에 설치하기
 
 ### 2-1. 내려받기·옮기기
-1. 담당자가 드린 링크에서 `SovereignAX-<판>-arm64.dmg`(약 160MB)를 받습니다.
+1. 담당자가 드린 링크에서 `SovereignAX-<판>-universal.dmg`(약 250MB)를 받습니다.
 2. 받은 `.dmg`를 두 번 누르면 창이 열립니다. **SovereignAX** 아이콘을 옆의 **Applications(응용 프로그램)** 폴더로 끌어 놓습니다.
 3. 창을 닫고, Finder 왼쪽의 디스크 옆 꺼내기(⏏)를 누릅니다.
 
@@ -143,7 +143,7 @@ Get-FileHash $HOME\Downloads\SovereignAX-Setup-<판>.exe -Algorithm SHA256
 ```
 **Mac**: 응용 프로그램 → 유틸리티 → 터미널을 열고
 ```
-shasum -a 256 ~/Downloads/SovereignAX-<판>-arm64.dmg
+shasum -a 256 ~/Downloads/SovereignAX-<판>-universal.dmg
 ```
 (대문자·소문자 차이는 상관없습니다.)
 

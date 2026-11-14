@@ -13,7 +13,8 @@ import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClie
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
@@ -111,6 +112,7 @@ const FILES: Record<string, string> = {
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
   '/shell-bank.js': 'text/javascript',
+  '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
@@ -980,6 +982,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
   // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
   const REGISTRY_EVERY_MS = 15 * 60_000;
+  /** 홈택스 안내 창(24분)보다 넉넉히 앞. 홈택스 [연장하기] 한 번과 같은 요청이다. */
+  const HOMETAX_KEEPALIVE_MS = 10 * 60_000;
   let registryAt = 0;
   let registryInflight: Promise<void> | null = null;
   const registrySync = (why: string): Promise<void> => {
@@ -1004,7 +1008,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
   registryTimer.unref();
+  // 홈택스 로그인 유지: 앱이 켜져 있는 동안 홈택스 자동 로그아웃(24분 안내·30분 로그아웃)보다 먼저 [연장하기]와 같은 일을 한다.
+  // 엔진이 화면을 움직이는 동안(준비·발급 중), 승인을 보낸 뒤(거부 우선 창), 게이트 뒤 사람 차례(서명)는 건드리지 않는다.
+  // 승인 대기·게이트 앞 사람 차례(로그인 등)는 한다.
+  const keepHometax = async (why: string) => {
+    if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true)) return;
+    const result = await eb.keepSession().catch(() => 'error');
+    if (result !== 'none') log.event('main.hometax_keepalive', { why, result });
+  };
+  const keepTimer = setInterval(() => void keepHometax('timer'), HOMETAX_KEEPALIVE_MS);
+  keepTimer.unref();
   const onResume = () => {
+    void keepHometax('resume');
     void registrySync('resume');
     daemon?.requestReload();
     void updater?.check();
@@ -1071,7 +1086,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     list: async () => (await host.rpc('db.query.profiles.list')) as DbProfile[],
     upsert: async (row) => (await host.rpc('profile.upsert', row)) as DbProfile,
     checkBizNo: (n) => onbExternal.checkBizNo(n),
-    runActive: () => runs.anyActive(),
     saved: async (biz, changed) => {
       try {
         if (onb?.done) await onb.syncBiz(biz);
@@ -1281,6 +1295,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const bankAutoH = bankAuto.handlers;
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
+  // 세무사 꾸러미(accountant-pack.ts): 한 달 발급 목록·PDF·증명서·받을 돈을 앱 데이터 폴더 아래 폴더와 zip으로. 로컬 파일만 쓴다.
+  const pack = new AccountantPack({
+    past: async () => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d), 200)), ...(seed?.past ?? [])],
+    docs: () => listDocs(),
+    docFile,
+    receivables: () => bank.receivables(),
+    businessName: () => (businessId || sample ? profiles().business.name || null : null),
+    outRoot: path.join(appPaths(root ?? defaultAppRoot()).userData, '세무사 꾸러미'),
+  });
+  const packMonth = (m: unknown) => {
+    if (!isPackMonth(m)) throw new Error('bad_request');
+    return m;
+  };
+  /** 만든 꾸러미 zip. 아직 안 만들었으면 pack_missing(화면이 다시 만든다) */
+  const packZip = async (m: unknown) => {
+    const f = pack.zipPath(packMonth(m));
+    if (!(await fs.stat(f).then((x) => x.isFile(), () => false))) throw new Error('pack_missing');
+    return f;
+  };
 
   /** 진행 화면을 받는 실행(하나). */
   let mirrorRun: string | null = null;
@@ -1534,6 +1567,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
+      // 세무사 꾸러미 요청(엔진 L0 규칙 bundle.monthly와 같은 꼴)은 모델 없이 꾸러미 카드로 답한다. 그 달 꾸러미를 바로 만든다(로컬 파일만, 보내는 곳 없음).
+      const packFor = profile === 'business' ? packAsk(text, kstToday(Date.now())) : null;
+      if (packFor) return { kind: 'pack', pack: await pack.make(packFor), via: 'l0', note: null, sent: [] };
       if (demo) {
         // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
         const ask = modelOk() && !!text.trim();
@@ -1656,6 +1692,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'incident.close': (p) => incidents.close(String(p.id)),
     'docs.list': () => listDocs(),
     'issued.list': () => pastNow(),
+    'pack.make': (p) => pack.make(packMonth(p.month)),
+    'pack.reveal': async (p) => {
+      needGesture(3_000);
+      desktop.showItemInFolder(await packZip(p.month));
+      return {};
+    },
+    // [보내기]: macOS 공유 시트(메일·메시지·AirDrop)에 zip을 건넨다. 보내는 것은 사용자다. 공유 시트가 없는 OS는 Finder(탐색기)에서 보여 준다.
+    'pack.share': async (p) => {
+      needGesture(3_000);
+      const file = await packZip(p.month);
+      if (process.platform !== 'darwin') {
+        desktop.showItemInFolder(file);
+        return { via: 'folder' };
+      }
+      new ShareMenu({ filePaths: [file] }).popup({ window: win });
+      return { via: 'share' };
+    },
     // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
     'docs.import': docsCall(async (p) => {
@@ -2084,6 +2137,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
+    clearInterval(keepTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     clearInterval(idleTimer);
