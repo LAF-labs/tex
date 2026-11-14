@@ -2301,8 +2301,13 @@ function cancelPassword() {
   $('[data-act=doc-import]')?.focus();
 }
 
-async function importDoc(params) {
+async function importDoc(input) {
   if (state.docBusy) return;
+  // 정부24 카드의 [PDF 가져오기]로 연 가져오기만 그 카드의 답이다(g24 id). 문서함·입력창 [+]의 가져오기는 정부24 카드를 끝내지 않는다.
+  // g24는 main에 보내지 않는다. 암호를 다시 넣는 두 번째 호출까지 state.g24Import로 이어 간다.
+  const { g24: g24Id, ...params } = input;
+  if (g24Id) state.g24Import = g24Id;
+  else if (params.pick) state.g24Import = null;
   // 암호를 묻던 파일을 두고 새 파일을 고르면, 묻던 파일은 그만둔다(main이 들고 있는 바이트를 버린다)
   if (params.pick && state.docImport) cancelPassword();
   state.docBusy = true;
@@ -2320,9 +2325,9 @@ async function importDoc(params) {
     if (params.password) state.docLocked.add(d.id);
     state.docsRev++;
     state.docs = [d, ...state.docs.filter((x) => x.id !== d.id)];
-    // 정부24 안내가 받은 PDF를 기다리면(pick) 이 가져오기가 그 답이다. 정부24 패널·입력창 [+]·문서함의 가져오기가 모두 이 길이라 어느 것인지 가리지 않고, 기다리는 가장 최근 실행 하나를 마친다.
-    const g24 = [...state.g24.values()].reverse().find((g) => g.stage === 'pick');
-    if (g24) {
+    const g24 = state.g24Import ? state.g24.get(state.g24Import) : null;
+    state.g24Import = null;
+    if (g24 && g24.stage === 'pick') {
       g24.stage = 'saved';
       renderG24(g24);
     }

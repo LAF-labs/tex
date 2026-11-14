@@ -7,7 +7,7 @@ const LINE = '정부24에서 직접 발급해 주세요. 받은 PDF를 문서함
 const SAMPLE_ADDRESS = '서울특별시 가나구 다라로 12, 3층';
 const sample = () => document.body.dataset.sample === 'true';
 // 입력창 [+]와 같은 가져오기(shell.js importDoc). 이 패널은 대화 화면에서만 열리므로 그 단추가 늘 있다.
-const importPdf = (act) => (act?.importDoc ? act.importDoc({ pick: true }) : document.querySelector('.sx-attach')?.click());
+const importPdf = (act, id) => act.importDoc({ pick: true, g24: id });
 
 const open = (g) => g.stage === 'guide' || g.stage === 'pick';
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
@@ -50,7 +50,7 @@ export function g24Panel(g, act) {
     );
   if (g.stage === 'pick') {
     // 제품은 후보를 찾지 않는다(main g24.candidates가 빈 목록). 빈 목록 대신 PDF 가져오기 하나만 둔다.
-    if (!g.candidates.length) return panel('pick', p(LINE), row(btn('PDF 가져오기', () => importPdf(act), 'sx-btn-primary', { 'data-act': 'g24-import' })));
+    if (!g.candidates.length) return panel('pick', p(LINE), row(btn('PDF 가져오기', () => importPdf(act, g.id), 'sx-btn-primary', { 'data-act': 'g24-import' })));
     const opts = g.candidates.map((c) =>
       h(
         'button',
