@@ -301,10 +301,15 @@ const readback: Handler<'readback'> = async (s, env) => {
     if (!r.ok) return fail(r.code);
     got.push([f, r.value]);
   }
+  const opt: Array<[string, number]> = [];
   for (const f of s.optional ?? []) {
     const r = await readField(env.page, env.dict, f).catch((): FieldRead => ({ ok: false, code: 'step.readback_error' }));
-    if (r.ok) got.push([f, r.value]);
+    if (!r.ok) continue;
+    got.push([f, r.value]);
+    opt.push([f, r.value.length]);
   }
+  // 선택 칸은 무엇을 읽었는지만(칸 이름·글자 수, 값 없음) 남긴다: 실화면 예행에서 셀렉터가 맞는지 본다
+  if (s.optional?.length) env.journal?.('readback.optional', { stepId: s.id, read: opt.map(([f]) => f).join(','), lens: opt.map(([, n]) => n).join(','), missed: s.optional.length - opt.length });
   for (const [f, v] of got) env.scope.readback.set(f, v);
   return NEXT;
 };
