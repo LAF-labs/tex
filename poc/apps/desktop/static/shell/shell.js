@@ -2452,6 +2452,10 @@ window.sax.onEvent((ev) => {
   } else if (ev.type === 'board') {
     state.board = ev.board;
     renderToday();
+  } else if (ev.type === 'past') {
+    // 지난 실행을 다시 읽었다(발급됐는지 모르던 실행을 발급목록으로 확인함). 활동 기록을 그 목록으로 그린다.
+    if (state.boot) state.boot.past = ev.past;
+    if (state.view !== 'chat') render();
   } else if (ev.type === 'docs-reload') {
     // 시연 씨앗이 보관함에 견본 서류를 다 넣었다. 문서함·거래처(최근 발급)를 다시 읽는다.
     const rev = ++state.docsRev;

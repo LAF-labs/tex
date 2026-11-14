@@ -1066,6 +1066,23 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.emit('update', r);
   }
 
+  /**
+   * 엔진 run.reverify가 홈택스 발급목록에서 이 실행의 발급을 찾았다(원장 committed, 승인번호). 끝난 확인 필요(in_doubt) 카드만 발급 완료로 바꾼다.
+   * 받는 사람 메일 발송은 확인하지 않았다(이메일이 있으면 그 경고). PDF는 보관하지 않았다.
+   */
+  reverified(runId: string, approvalNo: string): void {
+    const r = this.runs.get(runId);
+    if (!r || !r.inDoubt || r.status !== 'attention' || this.liveInDoubt.has(r.id)) return;
+    r.inDoubt = false;
+    r.attest = null;
+    r.status = 'done';
+    r.stoppedNote = undefined;
+    r.steps = r.steps.map((s) => (s.state === 'attention' ? { ...s, state: 'done', note: undefined } : s));
+    r.result = { approvalNo, mailTo: r.email.value, docId: `d-${r.id}`, doneAt: hm(), mailConfirmed: false, noFile: true };
+    if (r.email.value) r.warnings = [NOTE['mail.not_confirmed']!];
+    this.emit('update', r);
+  }
+
   /** 게이트 요청: 카드·패널은 엔진이 되읽은 값(같은 fields)으로 바꿔 그린다. 바는 shell-app이 띄운다. */
   private onGate(req: GateRequest): void {
     const r = this.runs.get(req.runId);

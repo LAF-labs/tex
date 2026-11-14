@@ -1089,6 +1089,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.prepare_throttled', { why });
       throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
     }
+    // 지난 실행 재확인(run.reverify) 중이면 끝날 때까지 기다린다(엔진은 그동안 실행을 시작하지 않는다).
+    await reverifying;
     // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
     await registryFresh();
     const r = await runs.prepare(id);
@@ -1201,6 +1203,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const bankAutoH = bankAuto.handlers;
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
+
+  /**
+   * 발급됐는지 모르는 지난 실행(원장 in_doubt)을 엔진 run.reverify로 발급목록에서 확인한다. 기동 뒤와 실행이 끝난 뒤(앱 안 브라우저가 로그인된 때) 부른다.
+   * 실행 중이면 부르지 않고, 확인하는 동안 [홈택스에서 준비]는 끝날 때까지 기다린다(prepareNow). 바뀐 것이 있으면 활동 기록·판·카드를 다시 그린다.
+   */
+  let reverifying: Promise<void> | null = null;
+  const reverify = (why: 'boot' | 'run_end') => {
+    if (reverifying || runs.anyActive()) return;
+    reverifying = (async () => {
+      const read = () => readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d));
+      if (!(await read()).some((p) => p.kind === 'unsure')) return;
+      const r = (await host.rpc('run.reverify', {})) as { ok?: boolean; code?: string; committed?: number; notCommitted?: number; unknown?: number };
+      log.event('main.reverify', { why, ok: r?.ok === true, code: r?.code ?? '', committed: r?.committed ?? 0, notCommitted: r?.notCommitted ?? 0, unknown: r?.unknown ?? 0 });
+      if (!r?.committed && !r?.notCommitted) return;
+      const past = await pastNow();
+      for (const p of past) if (p.kind === 'issued' && p.approvalNo) runs.reverified(p.runId, p.approvalNo);
+      send({ type: 'past', past });
+      pushBoard();
+    })()
+      .catch((e: Error) => log.event('main.reverify_failed', { error: e.message.slice(0, 60) }))
+      .finally(() => (reverifying = null));
+  };
+  host.on('run', (e: { type?: string }) => {
+    if (e.type === 'end') setTimeout(() => reverify('run_end'), 3_000);
+  });
 
   /** 진행 화면을 받는 실행(하나). */
   let mirrorRun: string | null = null;
@@ -1907,6 +1934,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       } else if (!business) onb = new OnboardingFlow(onbPorts);
     }
     await win.loadURL(SHELL_URL);
+    reverify('boot');
     // 서류 데몬(D10 notify, M4-8): 제품만. 시연·e2e(fixture)는 이 PC에 OS 알림을 띄우지 않는다.
     if (!fixture && opts.daemon !== false) {
       daemon = startDaemonHost({
