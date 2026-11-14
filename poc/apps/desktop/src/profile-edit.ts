@@ -6,7 +6,7 @@
 // - 실행 중이면 저장하지 않는다(발급 중 공급자 정보가 바뀌지 않게). 고친 기록(ProfileEditLog)에는 어느 칸을 고쳤는지만 남긴다(값 없음).
 import fs from 'node:fs';
 import path from 'node:path';
-import { isValidBizNo, type Profile as DbProfile } from '@sax/db';
+import { isValidBizNo, nameMissing, type Profile as DbProfile } from '@sax/db';
 import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, emailOk, type BizCheck, type BizFields } from './onboarding.ts';
 
 export type BizFieldKey = (typeof BIZ_FIELD_KEYS)[number];
@@ -18,14 +18,7 @@ export const BIZ_NO_CHANGE_NOTE = '사업자번호를 바꾸면 홈택스에 로
 const onlyDigits = (s: string) => s.replace(/[^0-9]/g, '');
 const clip = (s: unknown, n: number) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 
-/**
- * 상호가 비었거나 사업자번호를 이름으로 저장한 프로필인가(0.1.6: O-02가 상호 없이 확정되면 displayName = 번호였다).
- * 화면은 번호를 이름처럼 보이지 않고 중립 표기("내 사업장")를 쓰고, 고치기 폼의 상호 칸은 비워 둔다.
- */
-export function nameMissing(p: Pick<DbProfile, 'displayName' | 'bizNo'>): boolean {
-  const n = p.displayName.trim();
-  return !n || (!!p.bizNo && !/[^0-9\s-]/.test(n) && n.replace(/[^0-9]/g, '') === p.bizNo);
-}
+export { nameMissing };
 
 /** DB 프로필 → 화면 칸. 없으면 빈 칸. 번호로 저장된 상호는 빈 칸(채우라고 묻는다). */
 export function bizFieldsOf(p: DbProfile | undefined | null): BizFields {
@@ -58,8 +51,6 @@ export interface ProfileEditPorts {
   upsert(row: Record<string, unknown>): Promise<DbProfile>;
   /** 국세청 상태조회(온보딩 checkBizNo와 같은 포트). */
   checkBizNo(bizNo: string): Promise<BizCheck>;
-  /** 발급 실행이 진행 중인가. */
-  runActive(): boolean;
   /** 저장한 뒤(온보딩 상태 맞추기·기록·화면 새로 고침). */
   saved(biz: BizFields, changed: BizFieldKey[]): Promise<void>;
 }
@@ -81,7 +72,6 @@ export class ProfileEditor {
   }
 
   async save(input: Partial<Record<BizFieldKey, unknown>>, confirmUnverified = false): Promise<BizEditResult> {
-    if (this.ports.runActive()) throw new Error('run_active');
     if (this.busy) throw new Error('busy');
     this.busy = true;
     try {
@@ -100,8 +90,6 @@ export class ProfileEditor {
           if (check.status !== 'active') throw new Error('biz_inactive');
         }
       }
-      // 실행이 조회 중에 시작됐을 수 있다
-      if (this.ports.runActive()) throw new Error('run_active');
       await this.ports.upsert({
         kind: 'business',
         displayName: next.name,
@@ -112,7 +100,7 @@ export class ProfileEditor {
         bizItem: next.bizItem || null,
         address: next.address || null,
         email: next.email || null,
-        signMethod: cur?.signMethod ?? null,
+        signMethod: cur?.signMethod ?? 'cert',
         keepSession: cur?.keepSession ?? false,
       });
       this.unverified = null;

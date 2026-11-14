@@ -153,10 +153,11 @@ export async function reverifyInDoubt(i: ReverifyInput): Promise<ReverifyResult>
   const taken = i.ledger.committedRefs();
   for (const { row, want, b0 } of batch) {
     if (systemClock.now() >= deadline) return done('reverify.time_cap');
-    i.ledger.markReverified(row, today);
     n.checked++;
     const j = await judgeReverify(deps, want.step, want.match, new Set([...b0, ...taken]));
+    // 조회가 실패하면(팝업·점검·차단) 오늘 본 것으로 적지 않는다: 다음 실행 끝에 다시 본다. 판정이 나왔을 때만 하루 한 번 표시.
     if (j.result === 'failed') return done(enforcer.halted ?? 'reverify.lookup_failed', { lookup: j.code });
+    i.ledger.markReverified(row, today);
     if (j.result === 'unknown') continue;
     try {
       i.ledger.resolve(row.intentId, row.stepId, 'committed', 'reverify', j.ref);

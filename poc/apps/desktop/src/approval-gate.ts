@@ -40,6 +40,8 @@ export const REFUSAL_TEXT = {
   missing: (l: string) => `${l} 값이 없어 승인할 수 없어요`,
   unsafe: (l: string) => `${l} 칸에 쓸 수 없는 문자가 있어요. 그 칸을 고쳐 주세요`,
   overflow: (l: string) => `창을 넓혀 주세요 · ${l}`,
+  /** 카드 위가 창 위로 넘친다(큰 묶음·낮은 창). 다 보이지 않는 카드는 무장하지 않는다. */
+  tall: () => '창을 높여 주세요 · 승인 카드가 다 보이지 않아요',
   hash: () => '값 대조가 맞지 않아 승인할 수 없어요',
   duplicate: () => '같은 항목이 두 번 들어 있어 승인할 수 없어요',
 };
@@ -314,6 +316,8 @@ export const BAR_MESSAGES = {
  */
 export const BAR_AGAIN_TEXT = '창을 앞으로 가져오는 클릭이었어요. 한 번 더 눌러 주세요';
 export const ACTION_TEXT = '승인하고 발급';
+/** 여러 건 묶음의 첫 승인 카드 동작 글자. 뒤 건은 홈택스 되읽기 값이 카드 값과 같을 때만 바 없이 이어 간다(shell-runs batchAutoApprove). */
+export const batchActionText = (n: number) => `${n}건 차례로 승인하고 발급`;
 export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
 export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
 /** 비가역 한 줄(서류 종류별 앱 고정 문구, 패키지 문자열 아님). 받는 이메일 유무로 둘 중 하나다. */

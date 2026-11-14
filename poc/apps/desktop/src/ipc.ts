@@ -7,6 +7,7 @@
 // JSON Schema 정본(design/schemas/ipc/renderer-request.schema.json)이 나오기 전의 "수신부 열거형·필수 필드 검사"다(D-48(N-77)).
 // Electron 값은 타입으로만 받는다(node --test로 시험, tests/shell-ipc.test.ts).
 import type { WebFrameMain } from 'electron';
+import { PACK_SHELL_METHODS } from './accountant-pack.ts';
 import { BANK_SHELL_METHODS } from './bank-ipc.ts';
 import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, ONB_ALL_CHOICES, ONB_STEPS, ONB_TASKS } from './onboarding.ts';
 
@@ -126,6 +127,10 @@ export const SHELL_METHODS = {
   'certMemory.forget': {},
   // 설정에서 인증서 비밀번호 저장(가려진 칸, 금고로만). 값은 로그·상태에 남기지 않는다.
   'certMemory.save': { value: { t: 'string', max: 256, required: true } },
+  // 보안카드 등록(부장 판정 2026-11-14): 금고 직결 등록 창을 연다. 사진·칸 값은 이 길로 오지 않는다(창 → 금고 포트). onboarding이면 저장 뒤 main이 인증을 정한다. 실제 입력 뒤에만.
+  'card.status': {},
+  'card.register': { onboarding: { t: 'boolean' } },
+  'card.forget': {},
   // 대화 비밀 입력 카드의 답(대표 지시 2026-11-14): 값 또는 취소. main이 금고 1회용 포트로만 넘긴다.
   'secret.answer': { reqId: { t: 'string', max: 40, required: true }, value: { t: 'string', max: 256 }, cancel: { t: 'boolean' } },
   // 기억한 홈택스 인증서 이름(profiles.cert_name): 보기(이름 부분만)·지우기(B4, H-01 2.3.0). 지우기는 실제 입력 뒤에만.
@@ -146,6 +151,8 @@ export const SHELL_METHODS = {
   // 같은 파일을 파일 관리자에서 보여 준다(결과 카드 [폴더 열기], #32).
   'docs.reveal': { id: ID },
   'counterparties.list': {},
+  // 내 사업장 화면을 열 때 장부를 다시 읽는다(실행이 홈택스 화면에서 채운 칸).
+  'profiles.list': {},
   // 거래처 추가·수정(#32, M4-3). id가 null이면 새 거래처. 폼 값은 FormData.get이라 null일 수 있다. 발급 인증 기본 바꾸기는 시연 DB에서만(fixture).
   'counterparty.save': {
     id: { t: 'string', max: 128, nullable: true },
@@ -199,6 +206,8 @@ export const SHELL_METHODS = {
   'bankAuto.disconnect': {},
   // 받을 돈(09 D-09, bank-ipc.ts). 파일 고르기 둘(bank.pickStatement·pickInvoices)은 실제 입력 뒤에만.
   ...BANK_SHELL_METHODS,
+  // 세무사 꾸러미(accountant-pack.ts): 만들기(로컬 폴더·zip), Finder에서 보기, 공유 시트. 보기·공유는 실제 입력 뒤에만.
+  ...PACK_SHELL_METHODS,
 } as const satisfies Record<string, MethodSpec>;
 
 export type ShellMethod = keyof typeof SHELL_METHODS;
@@ -209,7 +218,7 @@ export type ShellHandlers = { [M in ShellMethod]: (p: ParamsOf<(typeof SHELL_MET
  * 렌더러 발 사용자 동작 명령(D11 §4 IPC 행, ADR-027 결정 8): main이 메인 창에서 직접 본 실제 입력 뒤 ms 안에만 받는다.
  * 처리기가 needGesture(ms)를 부른다(docs.import는 파일 고르기를 열 때만). tests/shell-harden.test.ts가 처리기 소스와 맞춰 본다.
  */
-export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000 };
+export const USER_ACTION_METHODS: Readonly<Partial<Record<ShellMethod, number>>> = { 'run.prepare': 2_000, 'docs.import': 3_000, 'docs.open': 3_000, 'docs.reveal': 3_000, 'onboarding.reply': 3_000, 'onboarding.reopen': 3_000, 'profile.edit': 3_000, 'profile.readCert': 3_000, 'counterparty.readCert': 3_000, 'account.sendCode': 3_000, 'account.verify': 3_000, 'account.password': 3_000, 'account.setPassword': 3_000, 'account.startReset': 3_000, 'account.finishReset': 3_000, 'account.signOut': 3_000, 'pair.open': 3_000, 'run.resume': 3_000, 'run.manualDone': 3_000, 'incident.open': 3_000, 'bankAuto.consent': 3_000, 'bankAuto.connect': 3_000, 'bankAuto.choose': 3_000, 'bankAuto.refresh': 3_000, 'bankAuto.disconnect': 3_000, 'run.showBrowser': 3_000, 'browser.toggle': 3_000, 'certName.clear': 3_000, 'certMemory.save': 3_000, 'secret.answer': 3_000, 'security.install': 3_000, 'security.start': 3_000, 'bank.pickStatement': 3_000, 'bank.pickInvoices': 3_000, 'bank.refresh': 3_000, 'pack.reveal': 3_000, 'pack.share': 3_000 };
 
 const isPlain = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
@@ -291,4 +300,8 @@ export type ShellEvent =
   /** 계좌 자동조회 진행(phase·실패 코드·새 줄 수만) */
   | { type: 'bankAuto'; event: unknown }
   /** 창이 앞으로 왔고 그때 커서가 창 안이었다(창 내용 좌표). 렌더러는 그 자리 버튼의 클릭이 오지 않으면 "한 번 더 눌러 주세요"(F-11). */
-  | { type: 'activated'; x: number; y: number };
+  | { type: 'activated'; x: number; y: number }
+  /** macOS 알림을 눌렀다: 그 작업 카드로 간다(렌더러 boardGo와 같은 길). */
+  | { type: 'open'; to: 'run'; id: string }
+  /** main이 대화에 남기는 앱 한 줄(이어 하기 안내 등). 텍스트로만 그린다. */
+  | { type: 'say'; text: string };

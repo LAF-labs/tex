@@ -103,3 +103,22 @@ export function secretPageHtml(req: SecretInputBind, profileName: string): strin
 <p class="note">${esc(SECRET_FIXED_NOTE)}</p>
 <p id="msg" role="status"></p><script src="secret.js"></script></body></html>`;
 }
+
+/** 보안카드 등록 창 OS 제목줄(main 내장 문구). */
+export const CARD_WINDOW_TITLE = '금고 · 보안카드 등록';
+
+/**
+ * 보안카드 등록 창 페이지(부장 판정 2026-11-14). 사진과 애매한 칸 값은 이 창에서 금고 포트로만 간다(card-secret.js). main은 내용을 보지 않는다.
+ * 고정 글만 싣는다(사람·카드 값 없음).
+ */
+export function cardSecretPageHtml(): string {
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<link rel="stylesheet" href="tokens.css"><link rel="stylesheet" href="bundle.css"><link rel="stylesheet" href="secret.css"><title>${esc(CARD_WINDOW_TITLE)}</title></head>
+<body>
+<p class="ctx">보안카드 등록</p>
+<div id="drop" class="card-drop"><b>보안카드 뒷면 사진을 여기에 끌어 놓으세요</b><span class="note">사진이나 스크린숏 모두 돼요. 이 PC 금고 안에서만 읽고 번호는 금고에만 둬요. 사진은 남기지 않아요.</span><button type="button" id="pick">사진 고르기</button><input id="file" type="file" accept="image/*"></div>
+<form id="ask" hidden autocomplete="off"><p id="ask-q"></p><div class="grid" id="cells"></div><button>금고에 넘기기</button></form>
+<p class="note">${esc(SECRET_FIXED_NOTE)}</p>
+<p id="msg" role="status"></p><script src="card-secret.js"></script></body></html>`;
+}

@@ -5,6 +5,7 @@ import { attestSelfCheck, gateSelfCheck } from '@sax/engine/gate';
 import type { EventLog } from '@sax/platform';
 import {
   ACTION_TEXT,
+  batchActionText,
   actionText,
   attestRefusalText,
   attestRows,
@@ -88,7 +89,13 @@ function barSession(): Session {
 /** 카드 자리 계산. wide면 레일 오른쪽부터 창 끝까지의 띠(값이 대화 열 폭에 안 들어갈 때). height는 main이 줄 수로 정한 카드 높이. */
 export type Placer = (contentWidth: number, contentHeight: number, wide: boolean, height: number) => Rect & { band?: boolean };
 
-export type BarOutcome = { decision: 'approve'; approval: LocalApproval } | { decision: 'closed'; reason: string };
+/** batch: 이 클릭을 받은 카드가 묶음 글자(N건·2~N건 줄)로 그려졌으면 그 건수, 아니면 0. 묶음 승인은 이것이 참일 때만 기록한다. */
+export type BarOutcome = { decision: 'approve'; approval: LocalApproval; batch: number } | { decision: 'closed'; reason: string };
+/** 승인 카드에 같이 올릴 묶음(main ShellRuns.batchOffer): 건수와 2~N건의 상호·합계. */
+export interface BarBatch {
+  count: number;
+  lines: ReadonlyArray<{ name: string; total: number }>;
+}
 export type AttestOutcome = { decision: 'attest'; attestation: LocalAttestation } | { decision: 'closed'; reason: string };
 
 /**
@@ -145,6 +152,8 @@ export class ApprovalBar extends EventEmitter {
   private text: CardText = GATE_TEXT;
   /** 줄 수로 정한 카드 높이(게이트마다 한 번). */
   private height = cardHeight(CARD_ROWS['H-01']);
+  /** 지금 승인 카드가 묶음 글자로 그려진 건수(아니면 0). */
+  private batchShown = 0;
   private targets: CardTargets = cardTargets(0, 0);
   private baseRefusal: string | null = null;
   private refusal: string | null = null;
@@ -267,7 +276,7 @@ export class ApprovalBar extends EventEmitter {
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
    */
-  open(req: GateRequest, auth?: string): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string, batch?: BarBatch | null): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -282,8 +291,13 @@ export class ApprovalBar extends EventEmitter {
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
-    this.height = cardHeight(CARD_ROWS['H-01']);
+    // 여러 건 묶음의 첫 승인: 무장할 수 있고 중복 경고가 없을 때만 묶음 글자(N건)와 2~N건 줄을 그린다. 그때만 이 클릭이 묶음 전체의 승인이다.
+    const action = bad ? ACTION_TEXT : actionText(req);
+    const many = !!batch && batch.count > 1 && batch.lines.length === batch.count - 1 && action === ACTION_TEXT && !!f;
+    this.batchShown = many ? batch.count : 0;
+    if (many) this.lines.push(...batch.lines.map((l, i) => ({ label: `${i + 2}번째`, pieces: [{ text: l.name, shrink: true }, { text: ` · ${Number(l.total).toLocaleString('en-US')}원` }] })));
+    this.text = gateText(many ? batchActionText(batch.count) : action, many ? `${f.get('counterpartName') ?? ''} 외 ${batch.count - 1}건` : f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
+    this.height = cardHeight(CARD_ROWS['H-01'] + (many ? batch.count - 1 : 0));
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {
       this.req = { kind: 'gate', id: req.reqId, runId: req.runId, gate: req, done };
@@ -363,6 +377,7 @@ export class ApprovalBar extends EventEmitter {
     if (!item) return;
     this.req = null;
     this.lines = null;
+    this.batchShown = 0;
     this.refusal = null;
     this.baseRefusal = null;
     this.msg = null;
@@ -398,7 +413,7 @@ export class ApprovalBar extends EventEmitter {
   private approve(): void {
     const req = this.req;
     if (!req) return;
-    if (req.kind === 'gate') this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req.gate, 'click') });
+    if (req.kind === 'gate') this.finish({ decision: 'approve', approval: issueLocalApproval(this.key, req.gate, 'click'), batch: this.batchShown });
     else this.finish({ decision: 'attest', attestation: issueLocalAttestation(this.key, req.attest) });
     if (!this.win.isDestroyed()) this.win.webContents.focus();
   }
@@ -453,7 +468,8 @@ export class ApprovalBar extends EventEmitter {
   private updateRefusal(): void {
     if (!this.lines) return;
     const over = this.baseRefusal ? null : overflowLine(this.lines, this.bounds.width, this.text);
-    this.refusal = this.baseRefusal ?? (over ? REFUSAL_TEXT.overflow(over) : null);
+    // 카드 위(머리 줄·금액)가 창 내용 위로 넘치면 무장하지 않는다(큰 묶음은 줄이 늘어난다)
+    this.refusal = this.baseRefusal ?? (over ? REFUSAL_TEXT.overflow(over) : this.bounds.y < 0 ? REFUSAL_TEXT.tall() : null);
   }
 
   private armedNow(): boolean {

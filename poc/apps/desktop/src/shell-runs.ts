@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { attestSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
-import { actionText, ISSUED_OR_UNKNOWN } from './approval-gate.ts';
+import { attestSelfCheck, gateSelfCheck, type AttestRequest, type GateRequest } from '@sax/engine/gate';
+import { actionText, ISSUED_OR_UNKNOWN, kstToday, summarize } from './approval-gate.ts';
 import type { AttestAnswerResult, AttestWithdrawn, EngineHost, GateAnswerResult } from './engine-host.ts';
 import { cleanItem, dayOffset, SIGN_LABEL, emptyPending, hm, parseAmount, split, type Counterparty, type Doc, type Drafts, type Pending, type RunView, type StepState, type VatMode } from './shell-model.ts';
 import { emailOk } from './onboarding.ts';
+import type { ResumeItem } from './run-resume.ts';
 
 // 셸의 발급 실행(PoC-6). 초안은 main이 만들고(요청 해석은 아직 정규식 목업), [홈택스에서 준비]부터는 엔진이 H-01 플레이북을 돈다.
 // 실행 단계·승인 대기·발급 확정·승인번호는 엔진 이벤트에서 온다. 게이트 요청은 게이트 포트로 와서 승인 바가 받는다(shell-app).
@@ -41,7 +42,8 @@ export const HANDOFF_SIGN_TTL = { text: HANDOFF_SIGN.text, note: '앱의 비밀�
 export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.cert]: { now: '홈택스 창에서 인증서 비밀번호를 직접 넣어 주세요', text: HANDOFF_SIGN.text },
   [SIGN_LABEL.simple_auth]: { now: '휴대폰에서 간편인증 요청을 승인해 주세요', text: '홈택스 창에서 간편인증을 고르고 휴대폰에서 승인해 주세요. 끝나면 자동으로 이어집니다' },
-  [SIGN_LABEL.security_card]: { now: '홈택스 창에서 보안카드 번호를 직접 넣어 주세요', text: '홈택스 창에서 인증 방법을 고르고 보안카드 번호를 직접 넣어 주세요. 끝나면 자동으로 이어집니다' },
+  // 보안카드(대표 지시 2026-11-14): 등록한 카드면 금고가 홈택스 보안카드 창에 번호를 넣는다. 차례가 오면 앱이 못 넣었거나 홈택스가 틀렸다고 한 것이다(다시 치지 않는다).
+  [SIGN_LABEL.security_card]: { now: '앱이 홈택스 보안카드 창에 번호를 넣고 있어요', text: '보안카드 번호를 앱이 넣지 못했어요. 홈택스 창에서 보안카드 번호를 직접 넣어 주세요. 홈택스가 틀렸다고 했으면 설정에서 카드를 다시 등록해 주세요' },
 };
 /**
  * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
@@ -63,7 +65,15 @@ const HANDOFF_BY_CODE: Record<string, { text: string; note: string }> = {
   'step.assert_failed': { text: '홈택스 창의 화면을 확인해 주세요', note: '앱이 이 화면을 알아보지 못했어요. 홈택스 창에서 이 단계를 마친 뒤 [다 했어요], 직접 발급하셨다면 [직접 발급함]을 눌러 주세요.' },
 };
 /** 사람 차례의 종류와 한 줄(phase·code). 로그인 차례는 로그인 단계에서 온 것(시간 초과 포함), 서명 차례는 sign 단계(sign.waiting·비밀 창 TTL). */
+/** 보안카드 서명 차례의 까닭(엔진 sign.card_*). 홈택스가 틀렸다고 했거나 금고에 그 사실을 남기지 못했으면 다시 등록하게 한다. */
+const SIGN_CARD: Readonly<Record<string, { text: string; note: string }>> = {
+  'sign.card_wrong': { text: '보안카드 번호가 맞지 않다고 홈택스가 알렸어요. 보안카드를 다시 등록해 주세요', note: '같은 번호를 다시 넣지 않았어요(5번 틀리면 카드가 폐기돼요). 이번 서명은 홈택스 창에서 직접 마쳐 주세요. 설정 › 발급 인증에서 보안카드를 다시 등록할 수 있어요.' },
+  'sign.card_locked': { text: '홈택스가 보안카드를 쓸 수 없다고 알렸어요', note: '보안카드가 폐기됐거나 정보가 없어요. 가까운 세무서에서 보안카드를 다시 받거나 공동인증서로 바꿔 주세요. 발급 여부는 홈택스 발급목록에서 확인해 주세요.' },
+  'sign.card_credential_suspect': { text: '보안카드를 다시 등록해 주세요', note: '지난번에 홈택스가 번호가 틀렸다고 해서 앱이 보안카드 번호를 넣지 않았어요. 설정 › 발급 인증에서 보안카드를 다시 등록해 주세요. 이번 서명은 홈택스 창에서 직접 마쳐 주세요.' },
+  'sign.card_suspect_unsaved': { text: '보안카드를 다시 등록해 주세요', note: '홈택스가 번호가 틀렸다고 했는데 그 사실을 금고에 남기지 못했어요. 같은 번호를 다시 넣지 않게 설정 › 발급 인증에서 보안카드를 다시 등록해 주세요. 이번 서명은 홈택스 창에서 직접 마쳐 주세요.' },
+};
 export function handoffTurn(phase: Phase, code: string | undefined, auth?: string): { kind: 'login' | 'sign' | 'other'; text: string; note: string } {
+  if (phase === 'sign' && code && Object.hasOwn(SIGN_CARD, code)) return { kind: 'sign', ...SIGN_CARD[code]! };
   if (phase === 'sign') return { kind: 'sign', ...(code === 'human.ttl_expired' ? HANDOFF_SIGN_TTL : HANDOFF_SIGN), ...(signFor(auth) ? { text: signFor(auth)!.text } : {}) };
   const byCode = code ? HANDOFF_BY_CODE[code] : undefined;
   if (byCode) return { kind: phase === 'login' ? 'login' : 'other', ...byCode };
@@ -356,6 +366,47 @@ const kstHm = (at: number) => new Date(at + KST_MS).toISOString().slice(11, 16);
 /** 발급 완료 실행의 문서함 줄(d-<runId>). PDF는 엔진이 보관함에 따로 남긴다. */
 const issuedDoc = (r: RunView): Doc => ({ id: `d-${r.id}`, name: `세금계산서 · ${r.counterparty.name}`, kind: '세금계산서', docName: '전자세금계산서', profile: 'business', issuedOn: dayOffset(0), expiresOn: null, source: '앱이 발급', noFile: true });
 
+/** 묶음 승인은 처음 승인한 때부터 이만큼만 뒤 건에 쓴다(그 뒤 건은 승인 카드를 다시 띄운다). */
+export const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
+/**
+ * 이 코드로 끝나면 남은 건을 시작하지 않는다(묶음)·다시 시작하지 않는다(깨어남): 차단·정책·점검 신호, 엔진·금고·패키지·원장·토큰 문제,
+ * 발급 여부 모름(in_doubt·verify.unknown). 사람이 멈춘 것(stopped)과 발급 여부를 모르는 끝(inDoubt)도 그렇다.
+ */
+export const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing|busy$)/;
+/** 한 묶음의 최대 건수. 승인 카드가 건마다 한 줄씩 길어져 작은 창에서도 다 보이는 수다. 넘는 초안은 묶지 않는다. */
+export const BATCH_MAX = 5;
+/** 바쁨(다른 실행 진행 중)이면 이 간격으로 이만큼 다시 본다. 그래도 바쁘면 묶음을 세운다. */
+const BATCH_BUSY_RETRY_MS = 15_000;
+const BATCH_BUSY_TRIES = 8;
+export const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었어요. 값을 고친 뒤 [홈택스에서 준비]를 누르면 승인 카드를 다시 띄워요. 아무것도 발급하지 않았어요.';
+export const BATCH_AUTO_NOTE = '묶음 승인으로 이어서 발급해요. 2초 안에 [중지]하면 발급하지 않아요';
+export const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
+export const BATCH_HALTED_NOTE = '묶음을 멈췄어요. 남은 건은 [홈택스에서 준비]를 누르면 승인 카드에서 한 건씩 승인해요. 아무것도 발급하지 않았어요.';
+export const BATCH_CHANGED_NOTE = '승인 카드를 띄운 뒤 묶음 값이 바뀌어 묶음 승인으로 받지 않았어요. 남은 건은 하나씩 승인해 주세요.';
+/** 승인 바를 띄울 때 찍은 묶음(바의 2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다. */
+export interface BatchOffer {
+  batchId: string;
+  count: number;
+  /** 2~N건(묶은 순서): 상호·합계. 바에 그대로 보인다. */
+  lines: Array<{ name: string; total: number }>;
+  keys: Map<string, string>;
+}
+interface Batch {
+  id: string;
+  runIds: string[];
+  /** 처음 승인 카드의 클릭. keys: 아직 게이트 전인 건의 runId → 바를 띄울 때 카드 값(gateKey 모양). 한 번 쓰면 지운다. */
+  approval: { at: number; keys: Map<string, string> } | null;
+  /** 세운 묶음: 남은 건은 사람이 [홈택스에서 준비]로 한 건씩(묶음 카드 없이) 한다. */
+  halted: boolean;
+}
+export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
+export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
+/** 맥이 깨어난 뒤 이 안에 승인 전 단계에서 멈춘 실행은 같은 값으로 한 번 다시 시작한다. */
+const WAKE_RESUME_MS = 5 * 60_000;
+/** 승인 대조 값(공급받는자 번호·공급가액·세액·합계·품목·받는 이메일·작성일자). 초안은 카드 값, 게이트는 홈택스 되읽기 값. */
+const draftKey = (r: RunView) => JSON.stringify([r.counterparty.bizNo, String(r.supply), String(r.tax), String(r.total), r.item, r.email.value, r.writeDate]);
+const gateKey = (f: Map<string, string>) => JSON.stringify([f.get('counterpartBizNo'), f.get('supplyAmount'), f.get('taxAmount'), f.get('totalAmount'), f.get('itemName'), f.get('counterpartEmail') ?? '', f.get('issueDate')]);
+
 /**
  * 이벤트: 'update'(RunView) · 'gate'(runId, GateRequest) · 'gate-closed'(runId, reqId, reason) · 'doc'(Doc)
  * · 'attest-ready'(runId) · 'attest-withdrawn'(runId, attestReqId, reason).
@@ -637,16 +688,19 @@ export class ShellRuns extends EventEmitter implements Drafts {
       } else if (r.status === 'issuing' || (pastGate && this.isActive(r.id))) {
         r.notices = [...(r.notices ?? []), '브라우저가 닫혔어요. 발급됐는지 확인하고 있어요.'];
         this.emit('update', r);
-      } else if ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt && r.redo && r.endedAt !== undefined && now - r.endedAt < 10_000) this.markClosed(r);
+      } else if ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt && r.redo && r.endedAt !== undefined && now - r.endedAt < 10_000) {
+        this.markClosed(r);
+        this.emit('update', r);
+      }
     }
   }
   private goneAt = Number.NEGATIVE_INFINITY;
+  /** 브라우저가 닫혀 멈춘 제출 전 실행의 끝 모양(부른 쪽이 update를 낸다). */
   private markClosed(r: RunView): void {
     r.browserClosed = true;
     r.status = 'stopped';
     r.stoppedNote = NOTE['browser.closed'];
     r.redo = true;
-    this.emit('update', r);
   }
 
   notice(runId: string | undefined, text: string, retry?: 'extension'): void {
@@ -664,6 +718,213 @@ export class ShellRuns extends EventEmitter implements Drafts {
     if (!r?.notices?.includes(text)) return;
     r.notices = r.notices.filter((t) => t !== text);
     this.emit('update', r);
+  }
+
+  private readonly batches = new Map<string, Batch>();
+
+  /** 한 요청에서 만든 초안 둘 이상을 한 카드로 묶는다. 실행은 한 건씩 차례로 돌고, 승인은 처음 승인 카드 한 번이다. */
+  makeBatch(ids: string[]): string | null {
+    const rs = ids
+      .map((id) => this.runs.get(id))
+      .filter((r): r is RunView => !!r && r.status === 'draft' && !r.batch && !r.rehearsal)
+      .slice(0, BATCH_MAX);
+    if (rs.length < 2) return null;
+    const id = `batch-${randomUUID().slice(0, 8)}`;
+    this.batches.set(id, { id, runIds: rs.map((r) => r.id), approval: null, halted: false });
+    rs.forEach((r, index) => {
+      r.batch = { id, index, count: rs.length };
+      this.emit('update', r);
+    });
+    return id;
+  }
+
+  private batchFor(runId: string): Batch | undefined {
+    const b = this.runs.get(runId)?.batch;
+    return b ? this.batches.get(b.id) : undefined;
+  }
+
+  /** 묶음의 건들(묶은 순서). 버린 초안은 빠진다. */
+  batchRuns(batchId: string): RunView[] {
+    return (this.batches.get(batchId)?.runIds ?? []).map((id) => this.runs.get(id)).filter((r): r is RunView => !!r);
+  }
+
+  /** 묶음에서 차례를 기다리는 초안(건너뛰지 않은 것). */
+  private batchQueued(b: Batch, except?: string): RunView[] {
+    return this.batchRuns(b.id).filter((x) => x.id !== except && x.status === 'draft' && !x.batch?.skipped);
+  }
+
+  /** 묶음 차례가 남았는가(앞 건이 진행 중이거나, 세우지 않은 묶음에 차례를 기다리는 초안이 있다). 끝 알림이 쓴다. */
+  batchOpen(batchId: string): boolean {
+    const b = this.batches.get(batchId);
+    return !!b && (this.batchRuns(batchId).some((x) => this.isActive(x.id)) || (!b.halted && this.batchQueued(b).length > 0));
+  }
+
+  /** 묶음 승인으로 차례를 기다리는 초안인가(이어 하기가 남긴다). 멈춘 묶음·건너뛴 초안·승인 전 묶음은 아니다. */
+  batchWaiting(r: RunView): boolean {
+    const b = r.batch && this.batches.get(r.batch.id);
+    return !!b && r.status === 'draft' && !r.batch!.skipped && !r.batch!.halted && (b.approval?.keys.has(r.id) === true || this.batchRuns(b.id).some((x) => this.isActive(x.id)));
+  }
+
+  /** 이 게이트의 승인 카드에 올릴 묶음(이 건 + 아직 시작하지 않은 건). 묶음 승인 전이고 둘 이상일 때만, 아니면 null. 바를 띄울 때 부른다. */
+  batchOffer(runId: string): BatchOffer | null {
+    const b = this.batchFor(runId);
+    if (!b || b.approval || b.halted) return null;
+    const rest = this.batchQueued(b, runId);
+    if (!rest.length) return null;
+    return { batchId: b.id, count: rest.length + 1, lines: rest.map((x) => ({ name: x.counterparty.name, total: x.total })), keys: new Map(rest.map((x) => [x.id, draftKey(x)])) };
+  }
+
+  /**
+   * 승인 바가 묶음 글자로 그린 카드에서 클릭을 받았다(근거를 보내기 직전). 바를 띄울 때 찍은 초안과 지금 초안이 같을 때만 묶음 승인으로 기록한다.
+   * 달라졌으면(그 사이 초안을 고쳤다) 묶음 승인 없이 이 건만 간다. 남은 건은 저마다 승인 카드를 띄운다.
+   */
+  batchApproved(runId: string, offer: BatchOffer): boolean {
+    const b = this.batchFor(runId);
+    if (!b || b.approval || b.id !== offer.batchId) return false;
+    const now = new Map(this.batchQueued(b, runId).map((x) => [x.id, draftKey(x)]));
+    const same = now.size === offer.keys.size && [...offer.keys].every(([id, k]) => now.get(id) === k);
+    this.src.log?.('main.batch_approved', { count: String(offer.count), same: same ? 'yes' : 'no' });
+    if (!same) return false;
+    b.approval = { at: this.clock(), keys: new Map(offer.keys) };
+    b.halted = false;
+    for (const x of this.batchRuns(b.id)) {
+      x.batch = { ...x.batch!, approved: true, halted: false };
+      this.emit('update', x);
+    }
+    return true;
+  }
+
+  /**
+   * 묶음 승인으로 이 게이트를 바 없이 이어 가도 되는가. 바와 같은 검사(gateSelfCheck·summarize)를 지나고, 홈택스 되읽기 값이 승인 때 카드 값과 같고,
+   * 중복·처음 거래·처음 보내는 주소 표시가 없고, 승인한 지 BATCH_APPROVAL_MAX_MS 안일 때만. 한 번 물으면 지운다(아니면 이 건은 승인 카드를 띄운다).
+   */
+  batchAutoApprove(runId: string, req: GateRequest): boolean {
+    const b = this.batchFor(runId);
+    const key = b?.approval?.keys.get(runId);
+    if (!b?.approval || key === undefined) return false;
+    b.approval.keys.delete(runId);
+    const f = new Map<string, string>(req.fields.map((x) => [x.fieldKey, x.value]));
+    const shape = (() => {
+      try {
+        return req.v === 2 && Array.isArray(req.fields) && gateSelfCheck(req) === null && Array.isArray(summarize(req, kstToday(this.clock())));
+      } catch {
+        return false;
+      }
+    })();
+    const ok =
+      shape &&
+      this.clock() - b.approval.at <= BATCH_APPROVAL_MAX_MS &&
+      ![...f.keys()].some((k) => k.startsWith('$dup.')) &&
+      f.get('$first.bizNo') !== 'true' &&
+      f.get('$first.email') !== 'true' &&
+      gateKey(f) === key;
+    if (!ok) {
+      const r = this.runs.get(runId)!;
+      this.step(r, 'gate', 'now', BATCH_REASK_NOTE);
+      this.emit('update', r);
+    }
+    this.src.log?.('main.batch_gate', { auto: ok ? 'yes' : 'no' });
+    return ok;
+  }
+
+  /** 묶음을 세운다: 묶음 승인을 버리고(남은 초안은 저마다 승인 카드) 카드에 멈춤 문구를 둔다. */
+  private batchHalt(b: Batch, why: string): void {
+    b.approval = null;
+    b.halted = true;
+    for (const x of this.batchRuns(b.id)) {
+      x.batch = { ...x.batch!, approved: false, halted: true };
+      this.emit('update', x);
+    }
+    this.src.log?.('main.batch_halt', { code: why.slice(0, 60) });
+  }
+
+  /**
+   * 묶음 건 하나가 끝났다(end가 카드 update를 내기 전에 부른다: 묶음이 서면 그 update가 끝 알림이 된다).
+   * 사람이 멈췄거나 발급 여부를 모르거나 RUN_HALT 신호면 묶음을 세우고, 아니면 다음 초안을 시작한다. 세운 묶음은 사람이 한 건씩 한다.
+   */
+  private batchAfter(r: RunView, code: string | undefined): void {
+    const b = this.batchFor(r.id);
+    if (!b || b.halted) return;
+    if (r.status === 'stopped' || r.inDoubt || RUN_HALT.test(code ?? '')) return this.batchHalt(b, code ?? r.status);
+    if (!this.batchQueued(b).length) return;
+    setImmediate(() => void this.batchNext(b.id));
+  }
+
+  /**
+   * 묶음의 다음 초안을 [홈택스에서 준비]와 같은 길로 시작한다. 상한(throttled)이면 그 초만큼, 바쁨이면 BATCH_BUSY_RETRY_MS 뒤 다시 본다.
+   * 다른 길로 이미 시작된 건(not_draft)은 그대로 둔다. 시작할 수 없는 건은 건너뛰고 묶음 승인에서 뺀다(다시 준비하면 승인 카드).
+   */
+  private async batchNext(batchId: string, tries = 0): Promise<void> {
+    const b = this.batches.get(batchId);
+    const next = b && !b.halted && this.batchQueued(b)[0];
+    if (!b || !next) return;
+    const later = (ms: number) => {
+      const t = setTimeout(() => void this.batchNext(batchId, tries + 1), ms);
+      t.unref?.();
+    };
+    if (this.busy()) return tries < BATCH_BUSY_TRIES ? later(BATCH_BUSY_RETRY_MS) : this.batchHalt(b, 'busy');
+    try {
+      await (this.src.prepare ? this.src.prepare(next.id) : this.prepare(next.id));
+    } catch (e) {
+      const why = (e as Error).message ?? '';
+      const wait = /^throttled\.[a-z]+:(\d+)$/.exec(why);
+      if (wait) return tries < BATCH_BUSY_TRIES ? later(Number(wait[1]) * 1000 + 500) : this.batchHalt(b, 'throttled');
+      if (why === 'busy') return tries < BATCH_BUSY_TRIES ? later(BATCH_BUSY_RETRY_MS) : this.batchHalt(b, 'busy');
+      if (why === 'not_draft' || this.runs.get(next.id)?.status !== 'draft') return;
+      b.approval?.keys.delete(next.id);
+      next.batch = { ...next.batch!, skipped: true };
+      next.notices = [...(next.notices ?? []).filter((x) => x !== BATCH_SKIPPED_NOTE), BATCH_SKIPPED_NOTE];
+      this.emit('update', next);
+      this.src.log?.('main.batch_skip', { why: why.slice(0, 60) });
+      return this.batchNext(batchId, tries);
+    }
+  }
+
+  /**
+   * 앱이 다시 켜졌다(run-resume.ts가 남긴 커밋 전 일). 같은 값의 초안을 만들고 묶음은 다시 묶는다. 승인은 새로 받는다(앞 승인은 쓰지 않는다).
+   * 시작할 첫 초안을 돌려준다(시작은 shell-app이 [홈택스에서 준비]와 같은 길로). 거래처가 장부에서 지워졌으면 그 건은 뺀다.
+   */
+  restore(items: ResumeItem[]): RunView | null {
+    const made: Array<{ d: RunView; it: ResumeItem }> = [];
+    for (const it of items) {
+      const cp = this.src.counterparties().find((c) => c.id === it.counterpartyId);
+      if (!cp) continue;
+      const d = this.createDraft(cp, it.amount, it.vat, it.item);
+      if (it.email !== undefined && emailOk(it.email)) d.email = { value: it.email, first: false };
+      d.resumedFrom = it.from;
+      d.notices = [RESUMED_NOTE];
+      made.push({ d, it });
+    }
+    const groups = new Map<string, RunView[]>();
+    for (const { d, it } of [...made].sort((a, b) => (a.it.index ?? 0) - (b.it.index ?? 0))) if (it.batch) groups.set(it.batch, [...(groups.get(it.batch) ?? []), d]);
+    for (const g of groups.values()) this.makeBatch(g.map((d) => d.id));
+    for (const { d } of made) this.emit('update', d);
+    this.src.log?.('main.run_restored', { count: String(made.length), dropped: String(items.length - made.length) });
+    return made.find(({ d }) => !d.batch || d.batch.index === 0)?.d ?? null;
+  }
+
+  private wokeAt = Number.NEGATIVE_INFINITY;
+  /** 맥이 깨어났다(powerMonitor resume). */
+  woke(): void {
+    this.wokeAt = this.clock();
+  }
+
+  /** 깨어난 직후 승인 전 단계에서 멈춘 실행(묶음 밖, 다시 준비할 수 있는 것)을 같은 값으로 한 번 다시 시작한다. */
+  private wakeAfter(r: RunView, code: string | undefined): void {
+    if (this.clock() - this.wokeAt > WAKE_RESUME_MS || r.batch || r.rehearsal || r.maintenance || r.status !== 'attention' || !r.redo || r.inDoubt || RUN_HALT.test(code ?? '') || r.notices?.includes(WAKE_RESUMED_NOTE)) return;
+    setImmediate(() => {
+      let d: RunView;
+      try {
+        d = this.redraft(r.id);
+      } catch {
+        return;
+      }
+      d.resumedFrom = r.id;
+      d.notices = [WAKE_RESUMED_NOTE];
+      this.emit('update', d);
+      this.src.log?.('main.wake_restart', {});
+      void (this.src.prepare ? this.src.prepare(d.id) : this.prepare(d.id)).catch((e: Error) => this.src.log?.('main.wake_restart_failed', { why: e.message.slice(0, 60) }));
+    });
   }
 
   /** [홈택스에서 준비]: 엔진 run.start. 실행은 한 번에 하나다(08 §5). 엔진이 시작 전에 거부하면 확인 필요로 둔다. */
@@ -863,11 +1124,11 @@ export class ShellRuns extends EventEmitter implements Drafts {
    * 승인 바에서 승인했다(근거를 게이트 포트로 보내기 직전에 부른다). 거부 우선 창(2초) 동안은 [중지]가 이긴다.
    * 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽으로 다룬다(engineGone).
    */
-  approved(runId: string): void {
+  approved(runId: string, noteText = '승인했어요. 2초 안에 [중지]하면 발급하지 않아요'): void {
     const r = this.runs.get(runId);
     if (!r || r.status !== 'waiting') return;
     r.approvedPending = true;
-    this.step(r, 'gate', 'now', '승인했어요. 2초 안에 [중지]하면 발급하지 않아요');
+    this.step(r, 'gate', 'now', noteText);
     this.emit('update', r);
   }
 
@@ -1072,8 +1333,10 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.steps = r.steps.map((s) => (s.state === 'now' ? { ...s, state: 'todo', note: undefined } : s));
     r.endedAt = this.clock();
     // 브라우저가 닫혀 끝난 제출 전 실행(멈춤·연결 끊김 실패 어느 쪽이든): 같은 문구와 [다시 시작]
-    if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) return this.markClosed(r);
+    if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) this.markClosed(r);
+    this.batchAfter(r, code);
     this.emit('update', r);
+    this.wakeAfter(r, code);
   }
 
   /**

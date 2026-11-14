@@ -7,6 +7,7 @@ import type { Db, GateRepo, Ledger, LedgerState } from '@sax/db';
 import type { RunToken } from '@sax/model';
 import { Redactor } from '@sax/redaction';
 import type { Page } from 'playwright-core';
+import { CardSecretPort } from '../driver/card-secret.ts';
 import { isFixtureGrant, type FixtureOriginGrant, type LoadedPackage } from '../core/loader.ts';
 import { systemClock, type ActResult, type Clock } from '../core/page.ts';
 import type { PdfPort } from '../core/savepdf.ts';
@@ -50,6 +51,9 @@ import { LedgerCommitPort } from './ledger-port.ts';
 import { BundleCatalog } from '@sax/model';
 import type { ArmRow } from '@sax/db';
 import type { RunPermit } from '../core/permit.ts';
+
+/** 프로필에 발급 인증이 없으면 공동인증서로 서명한다(대표 지시 2026-11-14: 서비스 기본 발급 인증은 공동인증서). */
+const DEFAULT_SIGN_METHOD = 'cert';
 
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
@@ -117,6 +121,8 @@ export interface IrRunInput {
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
   history: (rb: Readonly<Record<string, string>>, card: string) => GateHistory | null;
+  /** 게이트 앞 readback이 대조를 다 통과한 뒤 한 번: 카드 칸 밖의 readback 값까지(공급자·거래처 칸 자동 채움). 실행 흐름은 바꾸지 않는다. */
+  readbackFixed?: (values: ReadonlyMap<string, string>, card: string) => void;
   /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
   manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
@@ -464,7 +470,7 @@ export class IrRun {
     this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains, ...(closeWindows.length ? { closeWindows, journal: i.journal } : {}) });
 
     const p = i.profile;
-    const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, ...(p.signMethod ? { signMethod: p.signMethod } : {}), ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
+    const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, signMethod: p.signMethod ?? DEFAULT_SIGN_METHOD, ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
     // 모델 실행 토큰은 실행마다 한 번 받아 decide와 AI 위치 찾기가 같이 쓴다(L1·L2 예산이 한 토큰에 묶인다).
     let tokenP: Promise<RunToken> | null = null;
     const runToken = (): Promise<RunToken> => {
@@ -564,6 +570,25 @@ export class IrRun {
         ...(i.secretEvent ? { event: i.secretEvent } : {}),
       })
       : null;
+    // 보안카드 서명 창(대표 지시 2026-11-14): 금고가 요청 칸을 읽고 친다. 엔진은 창을 찾고 [확인하기]와 끝 알림만 본다.
+    const cardPort = sv
+      ? new CardSecretPort({
+        vault: sv.vault, targetId: sv.targetId, page, strings: files.strings, journal: i.journal, signal: this.secretAbort.signal, dict,
+        // 보안카드 창도 실행 탭과 같은 GuardedActuator 규칙(무장 판정·R-A1·정책)으로 누른다
+        actuatorFor: (w) => {
+          const r = new PlaywrightPageReader(w);
+          const d = new PlaywrightActuator({ page: w, reader: r, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }) });
+          return {
+            reader: r,
+            act: new GuardedActuator({
+              driver: d, reader: r, dict, domains, policy: enforcer,
+              events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+              commitArmed: (k) => this.controller?.commitArmed(k) ?? false, armedConfirm: () => null, fixtureGrant: i.ir.fixtureGrant ?? null,
+            }),
+          };
+        },
+      })
+      : null;
     const handlers: Handlers = { ...BASIC_HANDLERS, decide: decide ? decide.handler : async (): Promise<Outcome> => ({ t: 'fail', code: 'decide.unavailable' }) };
     let phase: string | null = null;
     const ledgerStates = (): LedgerState[] => {
@@ -580,7 +605,8 @@ export class IrRun {
       handoffTimeoutMs: capMs + 60_000,
       signTurnMs: () => Math.min(capMs, lifeLeft()),
       signTurn: {
-        opened: (r) => i.handoff?.({ phase: 'sign', code: 'sign.waiting', stepId: r.stepId }),
+        // 보안카드 차례면 그 까닭(sign.card_*)을 앱에 보인다(틀림·폐기·기록 실패면 다시 등록 안내)
+        opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
       interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
@@ -618,6 +644,7 @@ export class IrRun {
         const h = i.history(rb, g.card);
         if (!h) return null;
         this.history = h;
+        i.readbackFixed?.(scope.readback, g.card);
         return { readback: rb, reserved: h.reserved };
       },
       preGate: async (g): Promise<ActResult> => {
@@ -650,6 +677,7 @@ export class IrRun {
         // 공동인증서 비밀번호(B1 로그인·B2 발급 서명): 금고 비밀 창 또는 사람 직접 입력 대기(CertSecretPort). 금고가 없으면(시험·가짜 H-01) 곧바로 TTL.
         secret: secretPort ? (r) => secretPort.secret(r) : async () => 'ttl',
         ...(secretPort ? { afterSignConfirm: (r: { runId: string; stepId: string }) => secretPort.afterSignConfirm(r) } : {}),
+        ...(cardPort ? { card: (r: Parameters<CardSecretPort['card']>[0]) => cardPort.card(r) } : {}),
         closed: () => {},
       }),
       ...(i.secretTtlMs !== undefined ? { secretTtlMs: i.secretTtlMs } : {}),

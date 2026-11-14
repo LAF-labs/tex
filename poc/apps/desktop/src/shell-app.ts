@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
+import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
@@ -13,8 +13,9 @@ import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClie
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
-import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
+import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -34,15 +35,17 @@ import { appHeaders, assertNoDebugSwitches, hardenApp, hardenSession, hardenWind
 import { dispatchShell, IPC, type ShellEvent, type ShellHandlers } from './ipc.ts';
 import { secretPageHtml, SecretWindowCoordinator, type SecretInputBind as OneShotInputBind } from './secret-labels.ts';
 import { openVaultInputWindow } from './secret-window.ts';
+import { CARD_WINDOW_TITLE, cardSecretPageHtml } from './secret-labels.ts';
 import { bankAutoHandlers, CODEF_WINDOW_TITLE, codefPageHtml, parseCodefNeeded, type CodefNeeded } from './bank-auto.ts';
 import { barBounds, browserPanelWidth, SHELL } from './shell-layout.ts';
 import { EmbeddedBrowser, keepDrawingWhenHidden } from './embedded-browser.ts';
 import { engineIntentResolver, INTENT_UNAVAILABLE_TEXT, MODEL_CONSENT_FIRST_TEXT, routed, type IntentResolver } from './intent-route.ts';
 import { CHAT_ERROR_TEXT, engineChatResponder, suggestChips, type ChatResponder } from './chat-reply.ts';
-import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
+import { answersPending, emptyDocStore, SETUP_LABEL, setupMissing, setupText, type SetupItem, SIGN_LABEL, interpret, parseRegex, QUICK, REMINDER_DAY_DEFAULT, sentFromGateway, type Counterparty, type DocStore, type G24Doc, type Parsed, type Profile, type RunView, type SentTo, type VatMode, EMPTY_REQUEST_TEXT } from './shell-model.ts';
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
-import { fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { pendingWork, RunResumeStore } from './run-resume.ts';
+import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -110,6 +113,7 @@ const FILES: Record<string, string> = {
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
   '/shell-bank.js': 'text/javascript',
+  '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
   '/pair.html': 'text/html; charset=utf-8',
@@ -119,6 +123,8 @@ const FILES: Record<string, string> = {
   '/secret.css': 'text/css',
   '/codef-secret.js': 'text/javascript',
   '/shell-bank-auto.js': 'text/javascript',
+  '/shell-card.js': 'text/javascript',
+  '/card-secret.js': 'text/javascript',
 };
 
 /** 지금 열린 비밀 창의 페이지(main이 만든다). 열린 창이 없으면 null(404). */
@@ -135,6 +141,7 @@ function serve(): void {
       const html = secretPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
     }
+    if (p === '/card-secret.html') return new Response(cardSecretPageHtml(), { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) });
     if (p === '/codef-secret.html') {
       const html = codefPage();
       return html ? new Response(html, { headers: appHeaders('text/html; charset=utf-8', SECRET_CSP) }) : new Response('', { status: 404 });
@@ -279,9 +286,14 @@ export interface Shell {
 }
 
 
+/** DB 프로필 칸 → 내 사업장 화면 칸 이름(shell-biz.js FIELDS). */
+const SHELL_BIZ_KEY: Record<PortalProfileKey, NonNullable<Profile['fromHometax']>[number]> = { displayName: 'name', repName: 'rep', bizType: 'bizType', bizItem: 'bizItem', address: 'address', email: 'email' };
+
+/** 발급 인증이 비어 있는 옛 프로필도 공동인증서로 보인다(엔진도 그 값으로 서명한다, 대표 지시 2026-11-14). */
 function profileView(p: DbProfile): Profile {
   const unnamed = p.kind === 'business' && nameMissing(p);
-  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: (p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : null) ?? NO_AUTH };
+  const fromHometax = p.fromPortal.map((k) => SHELL_BIZ_KEY[k]);
+  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : SIGN_LABEL.cert };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -537,7 +549,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       bundle: sample ? sample.bundle(today) : null,
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
-      setup: [...onboardingTodos(onb?.state ?? null), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
+      // 건너뛴 거래처 등록은 거래처가 생기면 할 일이 아니다(발급 실행·거래처 화면 어느 쪽으로 넣었든)
+      setup: [...onboardingTodos(onb?.state ?? null).filter((t) => t.id !== 'counterparties' || !cps.length), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
       // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
       money,
     });
@@ -578,8 +591,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     send({ type: 'bar', active: false, reason });
     if (embedded && browserAvailable) sendBrowserState();
   });
+  // 홈택스 화면에서 알게 된 값(거래처 확인·공급자 칸)은 승인 카드가 뜰 때와 실행이 끝날 때 장부에 있다. 그때 다시 읽는다.
+  const settled = new Map<string, string>();
   runs.on('update', (run) => {
     send({ type: 'run', run });
+    if (['waiting', 'done', 'stopped', 'attention'].includes(run.status) && settled.get(run.id) !== run.status) {
+      settled.set(run.id, run.status);
+      void refresh().then(pushBoard, () => {});
+    }
     pushBoard();
   });
   runs.on('doc', (doc) => {
@@ -711,6 +730,70 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (!r.ok) throw new Error('vault_refused');
     return { remembered: true };
   };
+  /**
+   * 보안카드 등록 창(부장 판정 2026-11-14: 사진·칸 값은 main·셸 렌더러를 지나지 않는다). 금고 직결 입력 창(preload-secret, D05 §3.8)을 열고
+   * 그 창이 금고 store 결속 포트로 사진과 애매한 칸을 바로 보낸다. main은 금고 control 알림(secret.stored: 칸 수만)과 창 닫힘만 안다.
+   */
+  const CARD_BIND = { mode: 'store', kind: 'security_card', scope: 'business', notice: { version: 'card-scan-2026-11-14' } } as const;
+  let cardWin: { win: BrowserWindow; stored: number } | null = null;
+  /** 마지막 보안카드 저장 알림(창이 닫힌 뒤 늦게 와도 반영한다). */
+  let cardStoredAt: { at: number; items: number } | null = null;
+  const openCardWindow = (): Promise<number> =>
+    new Promise((resolve) => {
+      if (cardWin && !cardWin.win.isDestroyed()) {
+        cardWin.win.focus();
+        return resolve(-1);
+      }
+      let port: ReturnType<typeof host.secretInputPort> | null = null;
+      try {
+        port = host.secretInputPort(CARD_BIND);
+        const w = openVaultInputWindow(win, port, `${SHELL_SCHEME}://shell/card-secret.html`, CARD_WINDOW_TITLE, 520);
+        const me = { win: w, stored: 0 };
+        const openedAt = Date.now();
+        cardWin = me;
+        w.on('closed', () => {
+          if (cardWin === me) cardWin = null;
+          // 금고 알림이 창 닫힘보다 늦게 올 수 있다: 잠깐 더 기다려 이 창이 열린 뒤의 저장이면 반영한다
+          const settle = (left: number) => {
+            const late = cardStoredAt && cardStoredAt.at >= openedAt ? cardStoredAt.items : 0;
+            const n = me.stored || late;
+            if (n > 0 || left <= 0) {
+              log.event('main.card_window_closed', { stored: n, late: !me.stored && n > 0 });
+              return resolve(n);
+            }
+            setTimeout(() => settle(left - 250), 250);
+          };
+          settle(3_000);
+        });
+      } catch (e) {
+        port?.close();
+        log.event('main.card_window_failed', { error: (e as Error).message.slice(0, 120) });
+        resolve(0);
+      }
+    });
+  host.on('vault-event', (name: string, data: unknown) => {
+    if (name !== 'secret.stored') return;
+    const d = (data ?? {}) as { kind?: unknown; items?: unknown };
+    if (d.kind !== 'security_card') return;
+    const items = typeof d.items === 'number' ? d.items : 0;
+    cardStoredAt = { at: Date.now(), items };
+    if (!cardWin) return;
+    cardWin.stored = items;
+    // 창이 "등록했어요"를 잠깐 보인 뒤 스스로 닫는다. 닫지 못했으면 main이 닫는다
+    const w = cardWin.win;
+    setTimeout(() => (w.isDestroyed() ? undefined : w.close()), 2_000);
+  });
+  /** 등록 창을 열고 닫힐 때까지 기다린다. 온보딩에서 열었으면 저장된 뒤 main이 발급 인증을 보안카드로 정한다(렌더러 제스처를 다시 요구하지 않는다). */
+  const cardRegister = async (p: { onboarding?: boolean }) => {
+    const stored = await openCardWindow();
+    if (stored === -1) return { stored: 0, busy: true };
+    if (stored > 0 && p.onboarding && onb && !onb.done) {
+      await onb.answer({ step: 'auth', choice: 'card' } as Parameters<OnboardingFlow['answer']>[0]).catch((e: Error) => log.event('main.card_onboarding_failed', { error: e.message.slice(0, 80) }));
+      if (onb.done) pushBoard();
+      return { stored, onboarding: await onbView(), profiles: profiles() };
+    }
+    return { stored };
+  };
   /** 대화 카드의 답(secret.answer). 넣었으면 금고로, 취소면 카드만 닫는다(금고 칸은 실행 TTL까지 기다린다). */
   const answerSecret = async (p: { reqId?: unknown; value?: unknown; cancel?: unknown }): Promise<{ ok: true }> => {
     const ask = secretAsk;
@@ -820,15 +903,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       log.event('main.rehearsal_gate_refused', { runId });
       return void runs.stop(runId).catch(() => {});
     }
+    // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
+    const sendApproval = async (approval: LocalApproval, note?: string) => {
+      runs.approved(runId, note);
+      // 이 건이 "다시 시작할 일"에서 빠진 것이 DB에 닿은 뒤 보낸다(보낸 뒤 꺼지면 다시 시작하지 않고 안내만).
+      await saveResume().catch(() => {});
+      const r = await host.answerGate(approval);
+      if (!r.ok) log.event('main.gate_answer_not_ok', { code: r.code ?? '', verdict: r.verdict });
+      await runs.onAnswer(runId, r);
+    };
+    // 여러 건 묶음의 뒤 건: 처음 승인 카드의 클릭(main 관찰)을 이 게이트에 쓴다. 되읽기 값이 그때 카드 값과 같을 때만(batchAutoApprove).
+    if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);
+    const gr = runs.get(runId);
+    // 묶음은 바를 띄울 때 찍는다(2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다(batchApproved).
+    const offer = runs.batchOffer(runId);
+    // 알림 글은 바가 그릴 글과 같게: 중복 경고 카드는 묶음 글자가 아니다(approval-bar open과 같은 조건)
+    const manyShown = !!offer && actionText(req) === ACTION_TEXT;
+    if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
-    void bar.open(req, runs.get(runId)?.auth).then(async (o) => {
+    void bar.open(req, gr?.auth, offer).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
-        // 보내기 전에 표시한다. 보낸 뒤 엔진이 끝나면 발급됐는지 모르는 쪽(in_doubt)으로 다룬다.
-        runs.approved(runId);
-        const r = await host.answerGate(o.approval);
-        if (!r.ok) log.event('main.gate_answer_not_ok', { code: r.code ?? '', verdict: r.verdict });
-        await runs.onAnswer(runId, r);
+        // 바가 묶음 글자로 그린 카드의 클릭일 때만 묶음 승인이다(중복 경고 카드 등은 이 건만).
+        if (offer && o.batch === offer.count && !runs.batchApproved(runId, offer)) send({ type: 'say', text: BATCH_CHANGED_NOTE });
+        await sendApproval(o.approval);
       } else if (o.reason === 'stopped') {
         // 카드의 [중지](main이 관찰한 클릭·키). 렌더러 [중지]와 같은 경로로 실행을 멈춘다(안전한 실패).
         await runs.stop(runId).catch((e: Error) => log.event('main.card_stop_failed', { error: e.message.slice(0, 80) }));
@@ -898,11 +996,84 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     n.on('close', () => liveNotices.delete(n));
     n.show();
   };
+  // 실행 알림(macOS): 승인이 필요할 때(승인 카드가 뜰 때), 사람 차례일 때, 끝났을 때. 앱 창이 앞에 보이면 띄우지 않는다.
+  // 누르면 앱을 앞으로 올리고 그 작업 카드로 간다. 여러 건 묶음은 끝 알림을 마지막 건이 끝날 때 한 번만 낸다.
+  const runNotify = (kind: 'gate' | 'turn' | 'end', runId: string, title: string, body: string) => {
+    if (win.isDestroyed() || (win.isFocused() && win.isVisible() && !win.isMinimized())) return;
+    try {
+      showOsNotification({ title, body: body.slice(0, 120) }, () => {
+        if (win.isDestroyed()) return;
+        if (win.isMinimized()) win.restore();
+        win.show();
+        win.focus();
+        send({ type: 'open', to: 'run', id: runId });
+      });
+      log.event('main.run_notify', { kind });
+    } catch (e) {
+      log.event('main.run_notify_failed', { error: (e as Error).message.slice(0, 60) });
+    }
+  };
+  // 이어 하기(run-resume.ts): 커밋 전 일을 바뀔 때마다 엔진 암호화 DB에 남긴다. 다음 기동에 렌더러가 뜬 뒤 같은 값으로 다시 시작한다.
+  const resumeStore = new RunResumeStore({ save: (value) => host.rpc('resume.save', { value }), take: () => host.rpc('resume.take', {}) });
+  const resumeWork = () =>
+    pendingWork(
+      runs.list(),
+      (r) => runs.batchWaiting(r),
+      (id) => cps.find((c) => c.id === id)?.email,
+    );
+  /** 지금 일을 DB에 닿게 한다(승인 근거를 보내기 전에 기다린다: 그 건이 다시 시작할 일로 남지 않게). */
+  const saveResume = () => resumeStore.save(resumeWork(), Date.now());
+  runs.on('update', () => void saveResume());
+  let restored = false;
+  const restoreRuns = async () => {
+    if (restored) return;
+    restored = true;
+    // 앞 프로세스가 남긴 것만 다시 세운다. 이 프로세스의 실행(렌더러가 뜨자마자 시작한 것)이 쓴 줄은 그 실행이 아직 있다.
+    const work = await resumeStore.take(Date.now());
+    const items = work.items.filter((it) => !runs.get(it.from));
+    const approved = work.approved.filter((a) => !runs.get(a.from));
+    void saveResume();
+    // 승인을 보낸 뒤 꺼진 건: 다시 하지 않고 안내만(발급됐는지는 발급목록·run.reverify로 확인한다)
+    for (const a of approved) send({ type: 'say', text: `앞에서 승인한 ${a.name} ${wonText(a.total)} 건은 앱이 꺼져 발급됐는지 확인하지 못했어요. 홈택스 발급목록을 확인해 주세요. 다시 발급하지 마세요.` });
+    if (approved.length) log.event('main.resume_approved_notice', { count: approved.length });
+    if (!items.length) return;
+    const first = runs.restore(items);
+    pushBoard();
+    // 시작은 약관·온보딩을 마쳤고 로그인돼 있을 때만. 아니면 초안만 세워 둔다([홈택스에서 준비]).
+    if (!first || (onb && !onb.done)) return;
+    try {
+      await needLogin();
+    } catch {
+      return log.event('main.restore_prepare_skipped', { why: 'login' });
+    }
+    prepareNow(first.id).catch((e: Error) => log.event('main.restore_prepare_failed', { code: e.message.slice(0, 60) }));
+  };
+  const wonText = (n: number) => `${Number(n).toLocaleString('ko-KR')}원`;
+  const runLast = new Map<string, string>();
+  runs.on('update', (r: RunView) => {
+    const prev = runLast.get(r.id);
+    runLast.set(r.id, r.status);
+    if (prev === r.status || r.discarded) return;
+    const what = `세금계산서 · ${r.counterparty.name} ${wonText(r.total)}`;
+    if (r.status === 'turn') return runNotify('turn', r.id, '홈택스에서 할 일이 있어요', r.turn?.text ?? what);
+    if (!['done', 'attention', 'stopped'].includes(r.status) || !prev || prev === 'draft') return;
+    if (r.batch) {
+      const all = runs.batchRuns(r.batch.id);
+      if (runs.batchOpen(r.batch.id)) return;
+      const done = all.filter((x) => x.status === 'done').length;
+      return runNotify('end', all[0]!.id, done === all.length ? `${all.length}건 모두 발급했어요` : `${all.length}건 중 ${done}건 발급했어요`, all.map((x) => `${x.counterparty.name} ${x.status === 'done' ? '발급' : x.status === 'draft' ? '남음' : '멈춤'}`).join(' · '));
+    }
+    if (r.rehearsal) return runNotify('end', r.id, '예행을 마쳤어요', '승인 직전까지 갔고 발급하지 않았어요');
+    if (r.status === 'done') return runNotify('end', r.id, '발급했어요', `${what}${r.result?.approvalNo ? ` · 승인번호 ${r.result.approvalNo}` : ''}`);
+    runNotify('end', r.id, r.status === 'attention' ? '확인이 필요해요' : '멈췄어요', `${what} · ${r.stoppedNote ?? ''}`);
+  });
   let updater: UpdateHost | null = null;
   // 레지스트리 동기화(D09 §8.1 인덱스 15분, D03 §7.1 정책 재조회): 제품만. 엔진이 운영 레지스트리(tax.laf-co.com, Egress 고정 origin·핀 키)에서
   // 인덱스·정책·H-01 패키지를 받아 둔다. 받지 못하면 엔진이 실행 시작을 package.not_loaded·policy.*로 거부한다(fail-closed).
   // 기동은 기다리지 않는다(네트워크가 없어도 홈까지 간다). 실행 직전에는 15분 넘었으면 최대 10초 기다린다. 기록은 결과 코드뿐이다.
   const REGISTRY_EVERY_MS = 15 * 60_000;
+  /** 홈택스 안내 창(24분)보다 넉넉히 앞. 홈택스 [연장하기] 한 번과 같은 요청이다. */
+  const HOMETAX_KEEPALIVE_MS = 10 * 60_000;
   let registryAt = 0;
   let registryInflight: Promise<void> | null = null;
   const registrySync = (why: string): Promise<void> => {
@@ -927,7 +1098,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   };
   const registryTimer = setInterval(() => void registrySync('timer'), REGISTRY_EVERY_MS);
   registryTimer.unref();
+  // 홈택스 로그인 유지: 앱이 켜져 있는 동안 홈택스 자동 로그아웃(24분 안내·30분 로그아웃)보다 먼저 [연장하기]와 같은 일을 한다.
+  // 엔진이 화면을 움직이는 동안(준비·발급 중), 승인을 보낸 뒤(거부 우선 창), 게이트 뒤 사람 차례(서명)는 건드리지 않는다.
+  // 승인 대기·게이트 앞 사람 차례(로그인 등)는 한다.
+  const keepHometax = async (why: string) => {
+    if (!eb || runs.list().some((r) => r.status === 'preparing' || r.status === 'issuing' || r.approvedPending === true || r.handoff?.afterGate === true)) return;
+    const result = await eb.keepSession().catch(() => 'error');
+    if (result !== 'none') log.event('main.hometax_keepalive', { why, result });
+  };
+  const keepTimer = setInterval(() => void keepHometax('timer'), HOMETAX_KEEPALIVE_MS);
+  keepTimer.unref();
   const onResume = () => {
+    void keepHometax('resume');
     void registrySync('resume');
     daemon?.requestReload();
     void updater?.check();
@@ -994,7 +1176,6 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     list: async () => (await host.rpc('db.query.profiles.list')) as DbProfile[],
     upsert: async (row) => (await host.rpc('profile.upsert', row)) as DbProfile,
     checkBizNo: (n) => onbExternal.checkBizNo(n),
-    runActive: () => runs.anyActive(),
     saved: async (biz, changed) => {
       try {
         if (onb?.done) await onb.syncBiz(biz);
@@ -1093,13 +1274,18 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       throw new Error(`throttled.${why}:${Math.max(1, Math.ceil((pause > 0 ? pause : prepareRate.waitMs(now)) / 1000))}`);
     }
     // 지난 실행 재확인(run.reverify) 중이면 끝날 때까지 기다린다(엔진은 그동안 실행을 시작하지 않는다, 한 호출 상한 60초). 기다리는 동안 카드에 한 줄.
-    if (reverifying) {
-      runs.notice(id, REVERIFY_WAIT_NOTE);
-      await reverifying;
-      runs.dropNotice(id, REVERIFY_WAIT_NOTE);
-    }
+    const waitReverify = async () => {
+      while (reverifying) {
+        runs.notice(id, REVERIFY_WAIT_NOTE);
+        await reverifying;
+        runs.dropNotice(id, REVERIFY_WAIT_NOTE);
+      }
+    };
+    await waitReverify();
     // 실행 직전 레지스트리 재조회(D03 §7.1): 15분이 지났으면 최대 10초 기다린다. 실패해도 엔진이 받아 둔 것으로 판정한다.
     await registryFresh();
+    // 레지스트리를 기다리는 동안 실행 끝 타이머가 재확인을 시작했을 수 있다(그러면 run.start가 busy). 한 번 더 기다리고, 그 뒤로는 기다림 없이 바로 시작한다.
+    await waitReverify();
     const r = await runs.prepare(id);
     await keepItem(id);
     return r;
@@ -1210,6 +1396,25 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const bankAutoH = bankAuto.handlers;
   /** 활동 기록의 지난 실행: 이 PC 실행 이력(엔진, 최근 50건) + 시연 씨앗. 이력을 읽지 못하면(db_not_ready 등) 지난 실행 없이 연다. */
   const pastNow = async (): Promise<PastRun[]> => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d))), ...(seed?.past ?? [])];
+  // 세무사 꾸러미(accountant-pack.ts): 한 달 발급 목록·PDF·증명서·받을 돈을 앱 데이터 폴더 아래 폴더와 zip으로. 로컬 파일만 쓴다.
+  const pack = new AccountantPack({
+    past: async () => [...(await readPastRuns((m, p) => host.rpc(m, p), (n, d) => log.event(n, d), 200)), ...(seed?.past ?? [])],
+    docs: () => listDocs(),
+    docFile,
+    receivables: () => bank.receivables(),
+    businessName: () => (businessId || sample ? profiles().business.name || null : null),
+    outRoot: path.join(appPaths(root ?? defaultAppRoot()).userData, '세무사 꾸러미'),
+  });
+  const packMonth = (m: unknown) => {
+    if (!isPackMonth(m)) throw new Error('bad_request');
+    return m;
+  };
+  /** 만든 꾸러미 zip. 아직 안 만들었으면 pack_missing(화면이 다시 만든다) */
+  const packZip = async (m: unknown) => {
+    const f = pack.zipPath(packMonth(m));
+    if (!(await fs.stat(f).then((x) => x.isFile(), () => false))) throw new Error('pack_missing');
+    return f;
+  };
 
   /**
    * 발급됐는지 모르는 지난 실행(원장 in_doubt)을 엔진 run.reverify로 발급목록에서 확인한다. 실행이 끝난 뒤(3초) 부른다.
@@ -1451,7 +1656,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       needGesture(3_000);
       return bankAutoH['bankAuto.disconnect']();
     },
-    'shell.bootstrap': async () => ({
+    'shell.bootstrap': async () => (setTimeout(() => void restoreRuns(), 1_000).unref(), {
       board: await bootBoard(),
       layout: SHELL,
       profiles: profiles(),
@@ -1490,6 +1695,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       const text = String(p.text ?? '').slice(0, 2000);
       const t0 = performance.now();
       const local = parseRegex(text, runs.counterparties);
+      // 세무사 꾸러미 요청(엔진 L0 규칙 bundle.monthly와 같은 꼴)은 모델 없이 꾸러미 카드로 답한다. 그 달 꾸러미를 바로 만든다(로컬 파일만, 보내는 곳 없음).
+      const packFor = profile === 'business' ? packAsk(text, kstToday(Date.now())) : null;
+      if (packFor) return { kind: 'pack', pack: await pack.make(packFor), via: 'l0', note: null, sent: [] };
       if (demo) {
         // 시연 모델은 부르면 보낸 것이다(실패·시간 초과여도). 활동 기록은 결과가 아니라 송신으로 적는다.
         const ask = modelOk() && !!text.trim();
@@ -1516,7 +1724,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         if (agentCreated.length) pushBoard();
         // 기본값(부가세 별도)·저장 품목으로 채운 초안도 바로 준비한다(대표 실사용 2026-11-14 "일호유통에 100원"이 [홈택스에서 준비]를 기다렸다).
         // 준비는 칸에 넣고 되읽기만 해서 되돌릴 수 있고, 승인 카드에서 다시 본다. 품목이 비면(진짜 빠짐) autoPrepare가 건너뛴다.
-        if (sendByUser) for (const run of agentCreated) autoPrepare(run.id);
+        // 한 요청에서 초안이 둘 이상이면 한 카드로 묶고 첫 건만 시작한다. 뒤 건은 앞 건이 끝나면 차례로 시작한다(ShellRuns batchNext).
+        const batched = runs.makeBatch(agentCreated.map((x) => x.id));
+        if (sendByUser) for (const run of batched ? agentCreated.filter((x) => x.batch?.index === 0) : agentCreated) autoPrepare(run.id);
         log.event('main.agent', r.kind === 'agent' ? { result: 'ok', filtered: r.filtered ?? 'none', show: r.show.length, ask: r.ask?.kind ?? 'none', ms: Math.round(performance.now() - t0) } : { result: r.code, ms: Math.round(performance.now() - t0) });
         if (r.kind === 'unavailable') return { kind: 'unavailable', text: r.text, retry: r.retry, via: 'model', note: null, sent };
         // 카드는 지금 실행 값으로 싣는다(렌더러가 그린다). 버린 초안은 목록에 없어 빠지고, 그 카드는 update 이벤트로 "취소함"이 된다.
@@ -1612,6 +1822,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'incident.close': (p) => incidents.close(String(p.id)),
     'docs.list': () => listDocs(),
     'issued.list': () => pastNow(),
+    'pack.make': (p) => pack.make(packMonth(p.month)),
+    'pack.reveal': async (p) => {
+      needGesture(3_000);
+      desktop.showItemInFolder(await packZip(p.month));
+      return {};
+    },
+    // [보내기]: macOS 공유 시트(메일·메시지·AirDrop)에 zip을 건넨다. 보내는 것은 사용자다. 공유 시트가 없는 OS는 Finder(탐색기)에서 보여 준다.
+    'pack.share': async (p) => {
+      needGesture(3_000);
+      const file = await packZip(p.month);
+      if (process.platform !== 'darwin') {
+        desktop.showItemInFolder(file);
+        return { via: 'folder' };
+      }
+      new ShareMenu({ filePaths: [file] }).popup({ window: win });
+      return { via: 'share' };
+    },
     // 파일 고르기 대화상자는 렌더러가 pick을 보내고 3초 안에 실제 입력이 있었을 때만 연다(가져오기 버튼).
     // 열기 암호를 다시 물을 때는 pickId로 부른다. 가져오기는 한 번에 하나(대화상자가 겹쳐 뜨지 않게).
     'docs.import': docsCall(async (p) => {
@@ -1670,6 +1897,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'counterparties.list': async () => {
       await refresh();
       return cps;
+    },
+    'profiles.list': async () => {
+      await refresh();
+      return profiles();
     },
     // 정부24 후보 파일은 아직 견본이다(다운로드 폴더를 읽지 않는다). 제품은 후보를 보이지 않는다.
     'g24.candidates': (p) => (sample ? sample.g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),
@@ -1748,6 +1979,21 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       return { onboarding: await onbView(), fill: r.fill ?? null, profiles: profiles() };
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
+    // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
+    'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
+    'card.register': async (p) => {
+      needGesture(3_000);
+      // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
+      if ((p as { onboarding?: boolean }).onboarding) await needLogin();
+      return cardRegister(p as { onboarding?: boolean });
+    },
+    'card.forget': async () => {
+      needGesture(3_000);
+      // 지우지 못했으면 실패로 돌려준다(성공처럼 보이지 않게)
+      const r = await host.control('secret.forget', { kind: 'security_card', scope: 'business' }).then(() => true, () => false);
+      if (!r) throw new Error('card_forget_failed');
+      return { stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true };
+    },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
     'certName.clear': async () => {
@@ -1912,6 +2158,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const fn = () => {
       void host.control('session.event', { kind }).catch(() => {});
       if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
+      // 깨어남: 승인 전 단계에서 바로 멈추는 실행은 같은 값으로 다시 시작하고(ShellRuns wakeAfter), 홈택스 로그인을 바로 연장한다.
+      if (kind === 'resume') {
+        runs.woke();
+        if (fixture || opts.daemon === false) void keepHometax('resume');
+      }
     };
     powerMonitor.on(kind as 'resume', fn);
     return { kind, fn };
@@ -2021,6 +2272,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   const close = async () => {
     clearInterval(boardDayTimer);
     clearInterval(registryTimer);
+    clearInterval(keepTimer);
     daemon?.stop();
     powerMonitor.removeListener('resume', onResume);
     clearInterval(idleTimer);
