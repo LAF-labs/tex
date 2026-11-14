@@ -103,14 +103,14 @@ async function main() {
   check('곧 되는 일(회색 칩)은 고를 수 없고 "지원되면 알려 드릴게요"', await js<boolean>(`document.querySelector('#toast').textContent.includes('지원되면') && document.querySelector('[data-onb=submit]').disabled`));
   await press('[data-task=H-03]');
   await press('[data-task=H-04]');
-  check('사업자등록증명·납세증명서도 곧 되는 일(회색 칩): 눌러도 고를 수 없다', await js<boolean>(`['H-03', 'H-04'].every((id) => document.querySelector('[data-task=' + id + ']').classList.contains('is-soon')) && document.querySelector('[data-onb=submit]').disabled`));
+  check('사업자등록증명·납세증명서는 지금 되는 일: 눌러서 고른다', await js<boolean>(`['H-03', 'H-04'].every((id) => document.querySelector('[data-task=' + id + ']').getAttribute('aria-pressed') === 'true') && !document.querySelector('[data-onb=submit]').disabled`));
   await press('[data-task=H-01]');
   check('세금계산서를 고르면 O-05 거래처', await reply('[data-onb=submit]', 'counterparties'));
 
   // O-06
   check('[나중에] → O-06 요약: 등록 내용 + 하는 일·하지 않는 일(F-06 자리표시) + 건너뛴 항목 안내', (await reply('[data-onb=later]', 'summary')) && (await js<boolean>(`(() => { const t = document.querySelector('[data-onb-step=summary]').textContent; return t.includes('보안카드') && !t.includes('금고에 등록함') && !!document.querySelector('[data-onb-scope] .onb-draft') && t.includes('이번 달 할 일에'); })()`)));
   const scope = await js<string[]>(`[...document.querySelectorAll('[data-onb-scope] li')].map((l) => l.textContent)`);
-  check('요약 "지금 되는 일"은 세금계산서뿐이고, 하는 일 목록 어디에도 증명서를 떼 준다는 말이 없다', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송' && !scope.join().includes('증명'), scope);
+  check('요약 "지금 되는 일"은 세금계산서와 민원증명 2종(O-04 표 그대로)', scope[0] === '지금 되는 일: 세금계산서 발급·메일 전송, 사업자등록증명, 납세증명서', scope);
   check('O-06 요약에 갈 곳 없는 [보관 위치 바꾸기]가 없다', !(await js<boolean>(`!!document.querySelector('[data-onb=storage]')`)));
   check('[확인했어요] → 프로필 저장(엔진 profile.upsert, 고친 이메일·보안카드)', (await reply('[data-onb=ok]', 'first')) && (await S.host.rpc('db.query.profiles.list').then((ps) => (ps as DbProfile[]).some((p) => p.kind === 'business' && p.email === 'billing@ganada.example' && p.signMethod === 'security_card'))));
   // 저장은 실제 엔진 명령으로 DB에(onboarding-store.ts, 엔진 #91·db #53). main만 부를 수 있다.
