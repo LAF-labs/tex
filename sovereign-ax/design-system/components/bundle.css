@@ -171,6 +171,33 @@ body { margin: 0; background: var(--canvas); color: var(--ink); font-family: var
 .sx-secret-cell input:focus, .sx-secret-cell.is-now input { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
 .sx-secret-cell.is-attention input { box-shadow: inset 0 0 0 2px var(--attention); }
 
+/* Field: 보이는 라벨 위, 칸, 그 아래 도움말·오류 줄(앱 static/shell/fields.js). 같은 뜻의 값은 같은 칸으로 받는다.
+   칸은 canvas 채움 + 1px 안쪽 선(빈 칸도 보이게), 포커스는 2px focus-ring, 오류는 2px attention. 오류 색은 attention 하나다.
+   높이는 두 단계: 기본 40(폼·비밀값), is-compact 32(카드·패널 안). 글자는 14 하나. 금액은 오른쪽 정렬·고정폭 숫자. */
+.sx-field { display: grid; gap: 4px; min-width: 0; }
+.sx-field-label { font-size: 12px; line-height: 16px; font-weight: 500; color: var(--ink-3); }
+.sx-field-help, .sx-field-error { margin: 0; font-size: 12px; line-height: 16px; }
+.sx-field-help { color: var(--ink-3); }
+.sx-field-error { color: var(--attention); font-weight: 500; }
+.sx-field-error[hidden] { display: none; }
+.sx-field-row { display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
+.sx-field-row > .sx-field-input, .sx-field-row > .sx-field-box { flex: 1; }
+.sx-field-input { box-sizing: border-box; width: 100%; min-width: 0; height: var(--control-height-lg); margin: 0; padding: 0 12px; border: 0; border-radius: var(--radius-md); box-shadow: inset 0 0 0 1px var(--line-strong); background: var(--canvas); color: var(--ink); font: inherit; font-size: 14px; line-height: 20px; }
+.sx-field-input.is-compact { height: var(--control-height); padding: 0 10px; }
+.sx-field-input::placeholder { color: var(--ink-3); }
+.sx-field-input:focus { outline: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+.sx-field-input[aria-invalid='true'] { box-shadow: inset 0 0 0 2px var(--attention); }
+.sx-field-input:disabled { color: var(--ink-3); background: var(--surface-tint); box-shadow: none; }
+.sx-field-input.is-amount { text-align: right; }
+.sx-field-input.is-amount, .sx-field-input.is-num { font-variant-numeric: tabular-nums; }
+.sx-field-input.is-secret { letter-spacing: 0.1em; padding-right: 40px; }
+.sx-field-input.is-secret.is-compact { padding-right: 34px; }
+.sx-field-box { position: relative; display: block; min-width: 0; }
+.sx-field-eye { position: absolute; top: 50%; right: 4px; transform: translateY(-50%); width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-full); background: transparent; color: var(--ink-3); cursor: pointer; }
+.sx-field-eye:hover { background: var(--surface-tint); color: var(--ink); }
+.sx-field-eye svg { width: 16px; height: 16px; }
+.is-compact + .sx-field-eye { width: 28px; height: 28px; right: 2px; }
+
 /* ApprovalWindow(폐지, ADR-020·021): 이전 설계의 기록. 시스템 서체, 그림·스크립트 없음 */
 .sx-approve { width: 440px; max-width: 100%; background: var(--surface-overlay); color: var(--ink); border-radius: var(--radius-xl); box-shadow: var(--shadow-overlay); font-family: var(--font-system); overflow: hidden; }
 .sx-approve-bar { height: 34px; display: flex; align-items: center; justify-content: space-between; padding: 0 12px; background: var(--surface-tint); font-size: 12px; color: var(--ink-2); }

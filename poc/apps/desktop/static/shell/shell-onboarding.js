@@ -3,6 +3,7 @@
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
 import { btn, fmtBiz, h, icon, kv, note, replyOptions, securityBox } from './shell-views.js';
 import { cardRegister } from './shell-card.js';
+import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, textInput } from './fields.js';
 
 const Q = {
   terms: '시작하기 전에 약관과 AI 모델 이용을 확인해 주세요.',
@@ -43,24 +44,17 @@ const uiFor = (step) => {
   return ui;
 };
 
-/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안 빨간 글로 둔다(대표 2026-11-13). 부른 쪽이 다시 그린다. */
-export function showOnbError(step, text) {
-  uiFor(step).error = text;
+/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안에 둔다(대표 2026-11-13). 칸 하나의 까닭(code)이면 그 칸 아래. 부른 쪽이 다시 그린다. */
+export function showOnbError(step, text, code) {
+  const u = uiFor(step);
+  u.error = text;
+  u.errorField = ERR_FIELD[code] ?? null;
 }
+const ERR_FIELD = { bad_biz_no: 'bizNo', biz_inactive: 'bizNo', name_required: 'name', bad_email: 'email' };
+/** 이 단계 오류가 이 칸의 것이면 그 글(칸 아래에 쓴다). */
+const errFor = (u, name) => (u.error && u.errorField === name ? u.error : null);
 
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
-/** 입력 폼의 키: Enter는 저장(폼 제출), Escape는 취소. 한글 조합 중 키는 조합을 끝낼 뿐이라 무시한다. */
-const formKeys = (cancel) => (e) => {
-  if (e.isComposing) return;
-  if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
-    e.preventDefault();
-    e.currentTarget.requestSubmit();
-  }
-  if (e.key === 'Escape') {
-    e.preventDefault();
-    cancel();
-  }
-};
 
 /**
  * 온보딩 영역 전체. o: main의 OnbView, act: { reply(step, choice, extra), go(view), toast(text), rerender() }.
@@ -85,7 +79,8 @@ export function onboardingView(o, act) {
 function stepCard(o, act) {
   const el = stepBody(o, act);
   const u = uiFor(o.step);
-  if (u.error) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
+  // 칸 아래에 이미 쓴 오류는 카드 끝에 다시 쓰지 않는다
+  if (u.error && !el.querySelector('.sx-field-error:not([hidden])')) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
   return el;
 }
 
@@ -116,14 +111,20 @@ function stepBody(o, act) {
     case 'welcome':
       return replyOptions([answer('사업자번호로 입력할게요', 'number'), answer('사업자등록증 올리기', 'upload'), answer('나중에 할게요', 'later')], { 'data-onb-step': o.step });
     case 'biz-number': {
-      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다
-      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호', value: u.vals?.name ?? '' });
-      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호', value: u.vals?.bizNo ?? '' });
+      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다. 번호는 숫자 10자리로 보낸다(main이 받는 모양).
+      const name = textInput({ name: 'name', max: LIMITS.name, value: u.vals?.name });
+      const input = bizNoInput({ name: 'bizNo', required: true, value: u.vals?.bizNo });
+      const submit = (e) => {
+        e.preventDefault();
+        if (!checkFields(form)) return;
+        u.vals = { name: name.value, bizNo: bizDigits(input.value) };
+        reply('submit', { fields: { ...u.vals } });
+      };
       const form = h(
         'form',
-        { class: 'cp-form', onkeydown: formKeys(() => reply('back')), onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
-        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
-        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
+        { class: 'cp-form', novalidate: true, onkeydown: keys(() => form.requestSubmit(), () => reply('back')), onsubmit: submit },
+        field({ label: '상호', input: name, help: '사업자등록증에 적힌 상호', error: errFor(u, 'name') }),
+        field({ label: '사업자번호(10자리)', input, error: errFor(u, 'bizNo') }),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
       return card('사업자번호로 등록', notice, p('대표자·주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
@@ -196,16 +197,20 @@ function bizCard(o, u, reply, answer, act) {
   if (u.editing) {
     const cancel = () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender());
     // 거부되어 다시 그릴 때는 고치던 값(u.fields)을 그대로 둔다
-    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: u.fields?.[name] ?? value ?? '', autocomplete: 'off', ...attrs }));
+    const v = (name, value) => u.fields?.[name] ?? value ?? '';
+    const text = (label, name, value) => field({ label, input: textInput({ name, value: v(name, value), max: LIMITS[name] }), error: errFor(u, name) });
     const form = h(
       'form',
       {
         class: 'cp-form',
-        onkeydown: formKeys(cancel),
+        novalidate: true,
+        onkeydown: keys(() => form.requestSubmit(), cancel),
         onsubmit: async (e) => {
           e.preventDefault();
+          if (!checkFields(form)) return;
           const f = new FormData(form);
           const fields = Object.fromEntries(['name', 'bizNo', 'rep', 'bizType', 'bizItem', 'address', 'email'].map((k) => [k, String(f.get(k) ?? '')]));
+          fields.bizNo = bizDigits(fields.bizNo);
           // 저장한 내용으로 다시 그릴 때 읽기 모양이 되게 먼저 내린다. 거부되면(번호 틀림 등) 고치던 칸으로 돌아간다.
           u.editing = false;
           u.fields = fields;
@@ -215,13 +220,13 @@ function bizCard(o, u, reply, answer, act) {
           }
         },
       },
-      field('상호', 'name', b.name, { maxlength: 100 }),
-      field('사업자번호', 'bizNo', fmtBiz(b.bizNo), { inputmode: 'numeric', maxlength: 14 }),
-      field('대표자', 'rep', b.rep, { maxlength: 100 }),
-      field('업태', 'bizType', b.bizType, { maxlength: 100 }),
-      field('종목', 'bizItem', b.bizItem, { maxlength: 100 }),
-      field('사업장 주소', 'address', b.address, { maxlength: 200 }),
-      field('사업자 이메일', 'email', b.email, { type: 'email', maxlength: 320 }),
+      text('상호', 'name', b.name),
+      field({ label: '사업자번호', input: bizNoInput({ name: 'bizNo', required: true, value: v('bizNo', b.bizNo) }), error: errFor(u, 'bizNo') }),
+      text('대표자', 'rep', b.rep),
+      text('업태', 'bizType', b.bizType),
+      text('종목', 'bizItem', b.bizItem),
+      text('사업장 주소', 'address', b.address),
+      field({ label: '사업자 이메일', input: emailInput({ name: 'email', value: v('email', b.email) }), error: errFor(u, 'email') }),
       h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', cancel, 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
     );
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);

@@ -1,6 +1,7 @@
 // 셸 렌더러 공용: DOM 도우미와 디자인 시스템 컴포넌트(TaskCard·KeyValue·StepList·Amount·DocumentCard).
 // 값은 모두 텍스트 노드로 넣는다(innerHTML 없음). 카드에는 승인 버튼이 없다(ADR-021).
 // 모양은 화면 디자인 캔버스(소버린 AX 화면 디자인)를 따른다.
+import { amountInput, checkFields, emailInput, keys, kvField, LIMITS, selectInput, textInput } from './fields.js';
 
 export function h(tag, attrs, ...kids) {
   const el = document.createElement(tag);
@@ -307,47 +308,44 @@ export function taskCard(run, act) {
     const noItem = !String(run.item ?? '').trim();
     // v2.0 작성 카드: 값은 글자로 보이고, 누르면 그 자리에서 고친다(단추 네 개로 폼을 여는 대신). 부가세는 두 칸 전환.
     // 대화로 "부가세 포함으로", "품목은 유지보수"라고 말해도 같은 값을 바꾼다. 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
-    const err = act.draftErr?.id === run.id ? h('p', { class: 'form-msg is-bad', role: 'alert', 'data-draft-err': '' }, act.draftErr.msg) : null;
-    const keys = (save, cancel) => (e) => {
-      if (e.isComposing) return;
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        save();
-      }
-      if (e.key === 'Escape') cancel();
-    };
-    const editRow = (label, ...kids) => [h('dt', {}, label), h('dd', { class: 'is-editing' }, ...kids)];
+    // 고친 값이 거절되면 고치던 칸 아래에 까닭을 둔다. 칸이 정해지지 않은 까닭만 표 아래 한 줄.
+    const errAt = (f) => (act.draftErr?.id === run.id && act.draftErr.field === f ? act.draftErr.msg : null);
+    const kept = (act.draftErr?.id === run.id && act.draftErr.vals) || {};
+    const err = act.draftErr?.id === run.id && !act.draftErr.field ? h('p', { class: 'sx-field-error', role: 'alert', 'data-draft-err': '' }, act.draftErr.msg) : null;
     const valBtn = (label, text, onclick, o = {}) =>
       h('button', { type: 'button', class: `sx-val-btn${o.cls ? ` ${o.cls}` : ''}`, 'data-act': o.act, 'aria-label': `${label}: ${text}. 눌러서 고치기`, onclick }, text);
     let rows;
     if (act.editingCp === run.id) {
       // 거래처(F-14): 장부의 거래처에서 고른다. [취소] 뒤 다시 말하지 않아도 된다.
       const others = (act.counterparties ?? []).filter((c) => c.id !== run.counterparty.id);
-      const sel = h('select', { class: 'doc-in', name: 'counterparty', 'aria-label': '거래처' }, ...others.map((c) => h('option', { value: c.id }, c.name)));
-      sel.addEventListener('keydown', keys(() => act.saveCp(run.id, sel.value), () => act.editCp(null)));
-      rows = editRow(
-        '거래처',
-        others.length
-          ? [h('div', { class: 'sx-actions', 'data-draft-cp': '' }, sel, btn('바꾸기', () => act.saveCp(run.id, sel.value), 'sx-btn-primary', { 'data-act': 'draft-cp-save' }), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' }))]
-          : [h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '장부에 다른 거래처가 없어요. 거래처 화면에서 추가할 수 있어요.'), btn('그만두기', () => act.editCp(null), 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' }))],
-      );
-      setTimeout(() => sel.focus(), 0);
+      const cancel = () => act.editCp(null);
+      const quit = btn('그만두기', cancel, 'sx-btn-quiet', { 'data-act': 'draft-cp-cancel' });
+      if (others.length) {
+        const sel = selectInput(others.map((c) => [c.id, c.name]), { name: 'counterparty', compact: true });
+        const save = () => act.saveCp(run.id, sel.value);
+        sel.addEventListener('keydown', keys(save, cancel));
+        rows = kvField({ label: '거래처', input: sel, error: errAt('counterparty'), after: [btn('바꾸기', save, 'sx-btn-primary', { 'data-act': 'draft-cp-save' }), quit], attrs: { 'data-draft-cp': '' } });
+        setTimeout(() => sel.focus(), 0);
+      } else rows = [h('dt', {}, '거래처'), h('dd', { class: 'is-editing' }, h('div', { class: 'sx-actions', 'data-draft-cp': '' }, h('span', { class: 'sx-meta' }, '장부에 다른 거래처가 없어요. 거래처 화면에서 추가할 수 있어요.'), quit))];
     } else if (act.editing === run.id) {
-      const input = h('input', { class: 'sx-amount-edit', type: 'text', inputmode: 'numeric', autocomplete: 'off', value: num(run.amount), 'aria-label': run.vat === 'separate' ? '공급가액' : '합계' });
-      const save = () => act.saveAmount(run.id, input.value);
-      input.addEventListener('keydown', keys(save, () => act.editAmount(null)));
-      rows = editRow(run.vat === 'separate' ? '공급가액' : '합계', h('div', { class: 'sx-actions' }, input, btn('바꾸기', save, 'sx-btn-primary'), btn('그만두기', () => act.editAmount(null), 'sx-btn-quiet')));
+      // 금액은 main이 요청 문장과 같은 규칙으로 읽는다("330만원"도 된다). 숫자만 치면 쉼표를 넣는다.
+      const input = amountInput({ name: 'amount', value: kept.amount ?? run.amount, units: true, compact: true });
+      const save = () => checkFields([input]) && act.saveAmount(run.id, input.value);
+      const cancel = () => act.editAmount(null);
+      input.addEventListener('keydown', keys(save, cancel));
+      rows = kvField({ label: run.vat === 'separate' ? '공급가액' : '합계', input, error: errAt('amount'), after: [btn('바꾸기', save, 'sx-btn-primary'), btn('그만두기', cancel, 'sx-btn-quiet')] });
       setTimeout(() => (input.focus(), input.select()), 0);
     } else if (act.editingFields === run.id) {
-      const item = h('input', { class: 'doc-in', name: 'item', value: run.item ?? '', maxlength: 100, autocomplete: 'off', 'aria-label': '품목', placeholder: '예: 컨설팅 용역' });
-      const email = h('input', { class: 'doc-in', name: 'email', type: 'email', inputmode: 'email', value: run.email.value ?? '', maxlength: 320, autocomplete: 'off', spellcheck: 'false', 'aria-label': '받는 이메일', placeholder: '비우면 메일을 보내지 않아요' });
-      const save = () => act.saveFields(run.id, item.value, email.value);
-      for (const i of [item, email]) i.addEventListener('keydown', keys(save, () => act.editFields(null)));
+      const item = textInput({ name: 'item', value: kept.item ?? run.item, max: LIMITS.item, required: '품목을 넣어 주세요. 예: 컨설팅 용역', placeholder: '예: 컨설팅 용역', compact: true });
+      const email = emailInput({ name: 'email', value: kept.email ?? run.email.value, compact: true });
+      const save = () => checkFields([item, email]) && act.saveFields(run.id, item.value, email.value);
+      const cancel = () => act.editFields(null);
+      for (const i of [item, email]) i.addEventListener('keydown', keys(save, cancel));
       rows = [
-        ...editRow('품목', item),
-        ...editRow('받는 이메일', email),
+        ...kvField({ label: '품목', input: item, error: errAt('item') }),
+        ...kvField({ label: '받는 이메일', input: email, help: '비우면 메일을 보내지 않아요', error: errAt('email') }),
         h('dt', {}, ''),
-        h('dd', { class: 'is-editing', 'data-draft-edit': '' }, h('div', { class: 'sx-actions' }, btn('바꾸기', save, 'sx-btn-primary', { 'data-act': 'fields-save' }), btn('그만두기', () => act.editFields(null), 'sx-btn-quiet', { 'data-act': 'fields-cancel' }))),
+        h('dd', { class: 'is-editing' }, h('div', { class: 'sx-actions' }, btn('바꾸기', save, 'sx-btn-primary', { 'data-act': 'fields-save' }), btn('그만두기', cancel, 'sx-btn-quiet', { 'data-act': 'fields-cancel' }))),
       ];
       setTimeout(() => (act.editingFocus === 'email' ? email : item).focus(), 0);
     } else {
@@ -383,7 +381,7 @@ export function taskCard(run, act) {
     card.append(
       run.noChrome ? h('div', { 'data-no-chrome': '' }, note(NO_CHROME_TEXT, true)) : null,
       run.dupToday ? h('div', { 'data-dup-today': '' }, note(DUP_TODAY_TEXT, true)) : null,
-      h('dl', { class: 'sx-kv sx-draft', 'data-draft-fields': '' }, ...rows),
+      h('dl', { class: 'sx-kv sx-draft', 'data-draft-fields': '', 'data-draft-edit': act.editingFields === run.id ? '' : null }, ...rows),
       err,
       editing
         ? null

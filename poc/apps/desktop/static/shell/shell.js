@@ -9,6 +9,7 @@ import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
+import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
 import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
@@ -97,6 +98,7 @@ const DOC_ERR = {
   gesture_required: '잠시 뒤 다시 눌러 주세요.', throttled: '잠시 뒤 다시 눌러 주세요.',
 };
 const docErr = (e) => human(e, DOC_ERR);
+const DOC_ERR_FIELD = { issued_in_future: 'issuedOn', invalid_issued_on: 'issuedOn', expires_before_issued: 'expiresOn', expires_after_legal_max: 'expiresOn', invalid_expires_on: 'expiresOn', invalid_doc_type: 'docType' };
 const DOC_REASON = {
   doc_type_unknown: '서류 종류를 알아보지 못했어요',
   issued_on_not_found: '발급일을 찾지 못했어요', issued_on_ambiguous: '발급일 후보가 여러 개예요', issued_on_unparseable: '발급일을 읽지 못했어요',
@@ -126,9 +128,9 @@ function slotTick() {
 }
 requestAnimationFrame(slotTick);
 
-/** 작성 카드에서 고친 값이 거절되면 토스트 대신 그 카드 안, 고치던 칸 아래에 이유를 남긴다(칸은 열린 채). */
-function draftError(id, msg) {
-  state.draftErr = { id, msg };
+/** 작성 카드에서 고친 값이 거절되면 토스트 대신 그 카드 안, 고치던 칸(field) 아래에 이유를 남긴다(칸은 열린 채, 넣던 값 vals도 그대로). */
+function draftError(id, msg, field = null, vals = null) {
+  state.draftErr = { id, msg, field, vals };
   const r = state.runs.get(id);
   if (r) renderRun(r);
 }
@@ -229,7 +231,7 @@ const act = {
       state.draftErr = null;
       renderRun(state.runs.get(id));
     } catch (e) {
-      draftError(id, errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요');
+      draftError(id, errText(e) === 'no_counterparty' ? '장부에 없는 거래처예요. 거래처 화면에서 확인해 주세요' : '바꾸지 못했어요. 다시 해 주세요', 'counterparty');
     }
   },
   saveFields: async (id, item, email) => {
@@ -240,7 +242,7 @@ const act = {
       renderRun(state.runs.get(id));
     } catch (e) {
       const c = errText(e);
-      draftError(id, c === 'item_required' ? '품목을 넣어 주세요. 예: 컨설팅 용역' : c === 'bad_email' ? '이메일 주소 모양이 맞지 않아요' : '바꾸지 못했어요. 다시 해 주세요');
+      draftError(id, c === 'item_required' ? '품목을 넣어 주세요. 예: 컨설팅 용역' : c === 'bad_email' ? '이메일 주소 모양이 맞지 않아요' : '바꾸지 못했어요. 다시 해 주세요', c === 'item_required' ? 'item' : c === 'bad_email' ? 'email' : null, { item: String(item), email: String(email) });
     }
   },
   saveAmount: async (id, text) => {
@@ -251,7 +253,7 @@ const act = {
       state.draftErr = null;
       renderRun(state.runs.get(id));
     } catch (e) {
-      draftError(id, human(e, { bad_amount: '금액을 다시 확인해 주세요. 예: 330만원, 3,300,000' }));
+      draftError(id, human(e, { bad_amount: '금액을 다시 확인해 주세요. 예: 330만원, 3,300,000' }), 'amount', { amount: String(text) });
     }
   },
   // 핸드오프 [다 했어요]·[직접 발급함]: 재개·확인으로만 간다(발급하지 않는다). main이 실제 입력 뒤 3초 안에만 받는다.
@@ -514,8 +516,8 @@ const onbAct = {
       applyOnb(await call('onboarding.reply', { step, choice, ...extra }));
       return true;
     } catch (e) {
-      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안 빨간 글(대표 2026-11-13)
-      showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요');
+      // 번호 틀림·휴폐업 등 거부는 토스트 대신 그 단계 카드 안, 칸 하나의 것이면 그 칸 아래(대표 2026-11-13)
+      showOnbError(step, ONB_ERR[errText(e)] ?? '다시 해 주세요', errText(e));
       renderOnboarding();
       return false;
     }
@@ -1537,16 +1539,25 @@ function cpPanel(c) {
 }
 
 const CP_ERR = { bad_item_name: '품목 이름을 확인해 주세요', too_many_items: '저장 품목은 20개까지예요', invalid_biz_no: '사업자번호가 맞지 않아요(10자리, 검증 숫자)', duplicate_biz_no: '이미 있는 사업자번호예요', name_required: '상호를 넣어 주세요', invalid_email: '이메일 형식이 아니에요', unsupported: '이 모드에서는 바꿀 수 없어요', busy: '등록증을 읽는 중이에요', gesture_required: '버튼을 다시 눌러 주세요' };
+/** main이 거절한 까닭이 칸 하나의 것이면 그 칸 아래에 쓴다(나머지는 폼 끝 한 줄). */
+const CP_ERR_FIELD = { invalid_biz_no: 'bizNo', duplicate_biz_no: 'bizNo', name_required: 'name', invalid_email: 'email', bad_item_name: 'item', too_many_items: 'item' };
 
 /** 거래처 추가·수정. 사업자번호는 추가할 때만 넣는다(수정은 상호·대표자·이메일·품목). [저장 품목]은 저장 품목 목록의 첫 품목이다(#144). */
 /** add: 새 거래처 폼의 채움(name)과 되묻기에서 왔는지(ask: 저장하면 대화로 돌아가 이름을 채운다). */
 function cpEditPanel(c, add = null) {
-  const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: value ?? '', autocomplete: 'off', ...attrs }));
+  const inputs = {
+    name: textInput({ name: 'name', value: c?.name ?? add?.name, max: LIMITS.name, required: '상호를 넣어 주세요.', compact: true }),
+    bizNo: bizNoInput({ name: 'bizNo', value: c?.bizNo, required: !c, disabled: !!c, compact: true }),
+    rep: textInput({ name: 'rep', value: c?.rep, max: LIMITS.rep, compact: true }),
+    email: emailInput({ name: 'email', value: c?.email, compact: true }),
+    item: textInput({ name: 'item', value: c?.item, max: LIMITS.item, placeholder: '예: 컨설팅 용역', compact: true }),
+  };
+  const cancel = () => openPanel(c ? { kind: 'cp', id: c.id } : null);
   let saving = false;
   let reading = false;
   /** 이 폼에서 읽은 등록증의 표(main이 든 주소를 이 폼의 저장에만 붙인다). */
   let certHold = null;
-  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 틀림은 빨간 글. 칸을 고치면 내린다.
+  // 등록증 읽기·저장 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 칸 하나의 틀림은 그 칸 아래. 칸을 고치면 내린다.
   const msg = h('p', { class: 'form-msg', role: 'status', 'data-cp-msg': '', hidden: true });
   const say = (text, bad) => {
     msg.textContent = text;
@@ -1572,6 +1583,7 @@ function cpEditPanel(c, add = null) {
       const itemIn = form.elements.namedItem('item');
       const itemFilled = !!r.item && !!itemIn && !String(itemIn.value).trim();
       if (itemFilled) itemIn.value = r.item;
+      for (const i of Object.values(inputs)) fieldError(i, null);
       say(!r.bizNo ? '등록증에서 읽었어요. 사업자번호는 읽지 못했으니 직접 넣어 주세요' : itemFilled ? '등록증에서 읽었어요. 저장 품목은 등록증의 종목이에요. 발급할 품목과 다르면 고친 뒤 추가해 주세요' : '등록증에서 읽었어요. 맞는지 보고 추가해 주세요', !r.bizNo);
     } catch (err) {
       say(human(err, CP_ERR), true);
@@ -1583,14 +1595,18 @@ function cpEditPanel(c, add = null) {
     'form',
     {
       class: 'cp-form',
+      novalidate: true,
       oninput: () => (msg.hidden = true),
+      onkeydown: keys(() => form.requestSubmit(), cancel),
       onsubmit: async (e) => {
         e.preventDefault();
-        if (saving) return;
+        if (saving || !checkFields(form)) return;
         saving = true;
         const f = new FormData(form);
+        // 사업자번호는 숫자 10자리로 보낸다(main이 숫자만 남겨 검증한다). 수정 폼은 칸이 꺼져 있어 보내지 않는다(null).
+        const no = f.get('bizNo');
         try {
-          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: f.get('bizNo'), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
+          const r = await call('counterparty.save', { id: c?.id ?? null, name: f.get('name'), bizNo: no === null ? null : bizDigits(no), rep: f.get('rep'), email: f.get('email'), item: f.get('item'), certHold });
           state.cps = r.counterparties;
           const savedName = String(f.get('name') ?? '').trim();
           if (!c && add?.ask) {
@@ -1604,20 +1620,22 @@ function cpEditPanel(c, add = null) {
           openPanel({ kind: 'cp', id: r.id });
           toast(c ? '저장했어요' : '거래처를 추가했어요');
         } catch (err) {
-          say(human(err, CP_ERR), true);
+          const at = inputs[CP_ERR_FIELD[errText(err)]];
+          if (at && !at.disabled) fieldError(at, human(err, CP_ERR));
+          else say(human(err, CP_ERR), true);
         } finally {
           saving = false;
         }
       },
     },
     c ? null : h('div', { class: 'sx-actions' }, btn('등록증으로 채우기', fillFromCert, 'sx-btn-quiet', { 'data-act': 'cp-cert' })),
-    field('상호', 'name', c?.name ?? add?.name, { required: true, maxlength: 60 }),
-    field('사업자번호', 'bizNo', c ? fmtBiz(c.bizNo) : '', { required: !c, disabled: !!c, inputmode: 'numeric', placeholder: '000-00-00000' }),
-    field('대표자', 'rep', c?.rep, { maxlength: 30 }),
-    field('받는 이메일', 'email', c?.email, { type: 'email', maxlength: 100 }),
-    field('저장 품목', 'item', c?.item, { maxlength: 40, placeholder: '자주 쓰는 품목(발급 때 후보로 채워요)' }),
+    field({ label: '상호', input: inputs.name }),
+    field({ label: '사업자번호', input: inputs.bizNo, help: c ? '추가한 뒤에는 바꿀 수 없어요' : null }),
+    field({ label: '대표자', input: inputs.rep }),
+    field({ label: '받는 이메일', input: inputs.email }),
+    field({ label: '저장 품목', input: inputs.item, help: '발급할 때 품목 후보로 채워요' }),
     msg,
-    h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', () => openPanel(c ? { kind: 'cp', id: c.id } : null), 'sx-btn-quiet')),
+    h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-act': 'cp-save' }, c ? '저장' : '추가'), btn('취소', cancel, 'sx-btn-quiet')),
   );
   return h('div', { class: 'panel-in', 'data-panel-cp-edit': c?.id ?? 'new' }, panelHead(c ? `${c.name} 수정` : '거래처 추가'), form, h('div', { class: 'sx-source' }, '이 PC 거래처 장부에만 저장해요'));
 }
@@ -1882,20 +1900,22 @@ async function forgetCard() {
 }
 /** 설정 > 발급 인증 [인증서 비밀번호 저장](대표 지시 2026-11-14): 가려진 칸 값은 금고로만 간다. 칸은 보내자마자 비운다. */
 function certMemorySaveRow() {
-  const input = h('input', { type: 'password', class: 'sx-input secret-ask-input', autocomplete: 'off', spellcheck: 'false', 'aria-label': '공동인증서 비밀번호', placeholder: '공동인증서 비밀번호' });
-  const save = h('button', { type: 'submit', class: 'sx-btn' }, '저장');
-  const form = h('form', { class: 'secret-ask-form', autocomplete: 'off', 'data-cert-memory-save': '' }, input, save);
+  const input = secretInput({ label: '공동인증서 비밀번호', oninput: () => (state.certMemoryErr = null) });
+  const save = h('button', { type: 'submit', class: 'sx-btn sx-btn-lg' }, '저장');
+  const form = h('form', { class: 'cert-memory-form', autocomplete: 'off', novalidate: true, 'data-cert-memory-save': '' }, field({ label: '공동인증서 비밀번호', input, after: save, error: state.certMemoryErr }));
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const value = input.value;
     input.value = '';
-    if (!value) return;
+    if (!value) return fieldError(input, '공동인증서 비밀번호를 넣어 주세요.');
     save.disabled = input.disabled = true;
+    state.certMemoryErr = null;
     try {
       state.certMemory = (await call('certMemory.save', { value })).remembered === true;
       toast('인증서 비밀번호를 이 Mac 금고에 저장했어요. 다음 발급부터 앱이 넣어요.');
     } catch {
-      toast('저장하지 못했어요. 다시 해 주세요');
+      // 실패는 칸 아래에 남긴다(다시 그려도 보이게 글만 state에, 값은 두지 않는다)
+      state.certMemoryErr = '저장하지 못했어요. 다시 넣어 주세요.';
     }
     render();
   });
@@ -2384,7 +2404,10 @@ async function updateDoc(id, patch, seen) {
     if (state.docDraft?.id === id) state.docDraft = null;
     toast(d.vault?.needsUser ? `저장했어요. ${d.vault.reasons.includes('expiry_recomputed') ? '다시 계산한 만료일을' : '남은 칸을'} 확인해 주세요` : '확인했어요');
   } catch (e) {
-    toast(docErr(e));
+    // 칸 하나의 까닭(날짜 앞뒤·형식·종류)은 그 칸 아래에, 나머지는 토스트
+    const at = DOC_ERR_FIELD[errText(e)];
+    if (at && state.docDraft?.id === id) state.docDraft.err = { field: at, text: docErr(e) };
+    else toast(docErr(e));
     // 다른 곳에서 바뀐 서류: 지금 값을 다시 읽어 보여 주고 입력은 버린다(본 값이 아닌 값으로 확인하지 않게)
     // 목록을 받은 뒤에 입력을 버린다(그 전에 다시 그리면 옛 값으로 입력을 다시 만들게 된다). 다시 읽는 동안은 docUpdating이라 확인을 받지 않는다.
     if (errText(e) === 'stale') {
@@ -2427,26 +2450,26 @@ function docReview(doc) {
   const canClear = draft.docType !== 'national_tax_cert';
   const noExpiryOn = draft.noExpiry && canClear;
   const src = { text: '텍스트에서 읽음', ocr: '그림에서 읽음(OCR)', scan: '스캔 글자 층에서 읽음' }[v.textSource];
-  const typeSel = h(
-    'select',
-    { class: 'doc-in', 'aria-label': '종류', 'data-field': 'docType' },
-    [['national_tax_cert', '납세증명서(국세)'], ['biz_registration_cert', '사업자등록증명'], ['other', '그 밖의 서류']].map(([val, label]) => h('option', { value: val, selected: val === draft.docType }, label)),
+  const errFor = (f) => (draft.err?.field === f ? draft.err.text : null);
+  const typeSel = selectInput(
+    [['national_tax_cert', '납세증명서(국세)'], ['biz_registration_cert', '사업자등록증명'], ['other', '그 밖의 서류']],
+    { value: draft.docType, compact: true, 'data-field': 'docType' },
   );
   typeSel.addEventListener('change', () => {
     draft.docType = typeSel.value;
+    draft.err = null;
     if (draft.docType === 'national_tax_cert') draft.noExpiry = false; // 납세증명서는 만료일을 없앨 수 없다
     render();
   });
-  const issued = h('input', { type: 'date', class: 'doc-in', 'aria-label': '발급일', 'data-field': 'issuedOn' });
-  issued.value = draft.issuedOn;
-  issued.addEventListener('input', () => (draft.issuedOn = issued.value));
-  const expires = h('input', { type: 'date', class: 'doc-in', 'aria-label': '만료일', 'data-field': 'expiresOn', disabled: noExpiryOn });
-  expires.value = draft.expiresOn;
-  expires.addEventListener('input', () => (draft.expiresOn = expires.value));
+  const issued = dateInput({ value: draft.issuedOn, compact: true, 'data-field': 'issuedOn' });
+  issued.addEventListener('input', () => ((draft.issuedOn = issued.value), (draft.err = null)));
+  const expires = dateInput({ value: draft.expiresOn, compact: true, 'data-field': 'expiresOn', disabled: noExpiryOn });
+  expires.addEventListener('input', () => ((draft.expiresOn = expires.value), (draft.err = null)));
   // 사업자등록증명·그 밖의 서류는 법정 유효기간이 없어 사용자가 만료일을 없앨 수 있다(납세증명서는 엔진이 확인 필요로 남긴다)
   const noExpiry = canClear ? h('input', { type: 'checkbox', checked: noExpiryOn, 'data-field': 'noExpiry' }) : null;
   noExpiry?.addEventListener('change', () => {
     draft.noExpiry = noExpiry.checked;
+    draft.err = null;
     render();
   });
   const hints = [
@@ -2456,9 +2479,12 @@ function docReview(doc) {
   const held = () => Date.now() - draft.createdAt < DOC_CONFIRM_HOLD_MS;
   const save = () => {
     if (state.docUpdating || held()) return;
-    if (issued.validity.badInput || expires.validity.badInput) return toast('날짜를 끝까지 넣어 주세요');
-    if (!draft.issuedOn && doc.issuedOn) return toast('발급일을 넣어 주세요');
-    if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return toast(canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요" : '만료일을 넣어 주세요');
+    // 고칠 칸 아래에 까닭을 쓴다(토스트 대신)
+    if (issued.validity.badInput) return fieldError(issued, '날짜를 끝까지 넣어 주세요.');
+    if (expires.validity.badInput) return fieldError(expires, '날짜를 끝까지 넣어 주세요.');
+    if (!draft.issuedOn && doc.issuedOn) return fieldError(issued, '발급일을 넣어 주세요.');
+    if (!noExpiryOn && !draft.expiresOn && doc.expiresOn) return fieldError(expires, canClear ? "만료일을 넣거나 '만료일 없음'을 골라 주세요." : '만료일을 넣어 주세요.');
+    draft.err = null;
     const patch = {};
     if (draft.docType !== draft.seen.docType) patch.docType = draft.docType;
     if (draft.issuedOn && draft.issuedOn !== draft.seen.issuedOn) patch.issuedOn = draft.issuedOn;
@@ -2488,9 +2514,9 @@ function docReview(doc) {
     h(
       'div',
       { class: 'doc-form' },
-      h('label', {}, h('span', { class: 'sx-meta' }, '종류'), typeSel),
-      h('label', {}, h('span', { class: 'sx-meta' }, '발급일'), issued),
-      h('label', {}, h('span', { class: 'sx-meta' }, '만료일'), expires),
+      field({ label: '종류', input: typeSel, error: errFor('docType') }),
+      field({ label: '발급일', input: issued, error: errFor('issuedOn') }),
+      field({ label: '만료일', input: expires, error: errFor('expiresOn') }),
       noExpiry ? h('label', { class: 'doc-check' }, noExpiry, h('span', { class: 'sx-meta' }, '만료일 없음(제출처가 요구하지 않음)')) : null,
     ),
     hints.length
