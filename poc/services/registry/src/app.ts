@@ -126,8 +126,8 @@ export function registryRouter(o: RegistryAppOpts): Router {
   });
   r.add('GET', '/releases/:channel/latest.json', (ctx) => serve(ctx, `releases/${channelOf(ctx.params.channel!)}/latest.json`, POLL, 'application/json'));
   r.add('GET', '/releases/:channel/latest.yml', (ctx) => serve(ctx, `releases/${channelOf(ctx.params.channel!)}/latest.yml`, POLL, 'text/yaml; charset=utf-8'));
-  // 처음 설치 고정 주소(팀원·고객 링크). 서명된 beta latest.json의 zip 주소 옆 dmg로 보낸다. publish-update.sh가 PUT 전에 같은 이름의 dmg를 올린다
-  r.add('GET', '/download', async () => {
+  // 처음 설치 직접 링크(/download 안내 페이지의 [Mac용 내려받기]). 서명된 beta latest.json의 zip 주소 옆 dmg로 보낸다. publish-update.sh가 PUT 전에 같은 이름의 dmg를 올린다
+  r.add('GET', '/download/mac', async () => {
     const url = (await readJson<ReleaseManifest>('releases/beta/latest.json'))?.files[0]?.url ?? '';
     if (!/^https:\/\/[^/]+\/.+\.zip$/.test(url)) fail('registry.not_found');
     return { status: 302, headers: { location: url.replace(/\.zip$/, '.dmg'), 'cache-control': POLL }, raw: Buffer.alloc(0) };

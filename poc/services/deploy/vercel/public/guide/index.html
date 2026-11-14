@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>소버린 AX 설치 안내 · Mac</title>
+<meta name="description" content="소버린 AX Mac 설치부터 첫 발급 준비까지. 공동인증서 옮기기, 홈택스 보안 프로그램, 막힐 때 할 일.">
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="소버린 AX">
+<meta property="og:title" content="소버린 AX 설치 안내 · Mac">
+<meta property="og:description" content="설치부터 첫 발급 준비까지. 공동인증서 옮기기, 홈택스 보안 프로그램, 막힐 때 할 일.">
+<meta property="og:url" content="https://tax.laf-co.com/guide">
+<meta property="og:image" content="https://tax.laf-co.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:locale" content="ko_KR">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="stylesheet" href="/site.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/favicon.svg" alt="" width="26" height="26">소버린 AX</a>
+    <nav><a href="/">소개</a><a href="/download">내려받기</a><a href="#help">막힐 때</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="dl">
+    <h1>설치 안내</h1>
+    <p class="lead">Mac 설치부터 첫 발급 준비까지 순서대로 적었습니다. 막히면 <a href="#help">8. 막힐 때</a>를 봐 주세요.</p>
+    <nav class="toc" aria-label="목차">
+      <a href="#need">1. 준비</a><a href="#get">2. 받기</a><a href="#install">3. 설치</a><a href="#first">4. 첫 실행</a><a href="#biz">5. 사업장</a><a href="#cert">6. 인증서 옮기기</a><a href="#magicline">7. 보안 프로그램</a><a href="#help">8. 막힐 때</a>
+    </nav>
+  </section>
+
+  <div class="doc">
+    <section id="need">
+      <h2>1. 준비</h2>
+      <ul>
+        <li>macOS 13(Ventura) 이상<small>Apple 칩(M1~M4)과 Intel Mac 모두 됩니다. 한 파일에 둘 다 들어 있습니다.</small></li>
+        <li>Google Chrome<small>앱이 홈택스 일을 할 때 Chrome을 따로 띄워 씁니다. google.com/chrome 에서 받아 응용 프로그램 폴더에 둡니다.</small></li>
+        <li>본인 이메일<small>로그인 코드가 이 주소로 옵니다. 계정 하나는 Mac 한 대에만 연결됩니다. 여러 사람이 쓰면 각자 본인 이메일로 로그인합니다.</small></li>
+      </ul>
+    </section>
+
+    <section id="get">
+      <h2>2. 받기</h2>
+      <p><a href="/download">내려받기 페이지</a>에서 [Mac용 내려받기]를 누릅니다. <code>SovereignAX-&lt;판&gt;-universal.dmg</code>(약 265MB)가 내려받아집니다. 늘 최신 판을 줍니다.</p>
+    </section>
+
+    <section id="install">
+      <h2>3. 설치</h2>
+      <ol>
+        <li>받은 <code>.dmg</code>를 두 번 누릅니다. <kbd>SovereignAX</kbd>를 옆의 <kbd>Applications</kbd> 폴더로 끌어 놓습니다.</li>
+        <li>Finder 왼쪽에서 디스크 옆 꺼내기(⏏)를 누릅니다.</li>
+        <li>응용 프로그램에서 <kbd>SovereignAX</kbd>를 엽니다. "인터넷에서 다운로드한 앱입니다" 창이 뜨면 [열기]를 누릅니다.</li>
+      </ol>
+      <p>새 판은 앱이 알아서 받아 다음 실행 때 바뀝니다. 다시 설치하지 않아도 됩니다.</p>
+    </section>
+
+    <section id="first">
+      <h2>4. 첫 실행</h2>
+      <ol>
+        <li><b>약관·AI 모델 안내</b>: 한 화면입니다. [동의]를 누릅니다.</li>
+        <li><b>로그인</b>: 본인 이메일을 넣고, 메일로 온 6자리 코드를 넣습니다. 처음이면 이때 계정이 만들어집니다.</li>
+        <li><b>사업자</b>: 상호와 사업자번호를 넣고 [맞아요]를 누릅니다.</li>
+        <li><b>홈택스 인증서</b>: 이 Mac에서 찾은 공동인증서 목록에서 고르고 [이 인증서로]를 누릅니다. 목록이 비어 있으면 <a href="#cert">6번</a>대로 옮긴 뒤 다시 엽니다.</li>
+        <li><b>첫 발급 제안</b>: 여기까지 오면 준비가 끝났습니다. 인증서 비밀번호는 첫 발급 때 금고 창에서 한 번만 넣습니다. 그다음부터는 앱이 기억합니다.</li>
+      </ol>
+    </section>
+
+    <section id="biz">
+      <h2>5. 사업장: 같이 쓸지, 각자 쓸지</h2>
+      <p>앱은 사업장 정보와 인증서를 각 Mac에만 둡니다. 서버에서 나눠 쓰지 않습니다. 발급 기록도 각자 Mac에 남습니다.</p>
+      <ul>
+        <li>같은 사업장을 여러 Mac에서 쓸 때<small>4-3에 그 사업장의 사업자번호를 넣습니다. 사업장의 사업자범용(또는 전자세금계산서용) 공동인증서와 비밀번호를 사업장 관리자에게 받아 6번대로 넣습니다.</small></li>
+        <li>각자 사업장일 때<small>본인 사업자번호와 본인 사업자 인증서를 씁니다.</small></li>
+      </ul>
+      <p>개인용·은행용 인증서로는 세금계산서가 발급되지 않습니다.</p>
+    </section>
+
+    <section id="cert">
+      <h2>6. 공동인증서를 Mac으로 옮기기</h2>
+      <p>앱은 이 세 곳에서 인증서를 찾습니다: <code>~/Library/Preferences/NPKI</code>, <code>~/Documents/NPKI</code>, <code>~/NPKI</code>.</p>
+      <ol>
+        <li>원래 PC에서 NPKI 폴더 전체를 USB나 메신저 파일로 가져옵니다.<small>Windows: <code>C:\Users\&lt;사용자&gt;\AppData\LocalLow\NPKI</code> · 다른 Mac: <code>~/Library/Preferences/NPKI</code> · USB에만 있으면 USB 안의 <code>NPKI</code> 폴더</small></li>
+        <li>이 Mac의 Finder에서 [이동] → [폴더로 이동]에 <code>~/Documents</code>를 넣고, 그 안에 <code>NPKI</code> 폴더를 통째로 붙여 넣습니다. 안에 <code>signCert.der</code>와 <code>signPri.key</code>가 같이 있어야 합니다.</li>
+        <li>앱을 다시 열고 4-4로 갑니다.</li>
+      </ol>
+    </section>
+
+    <section id="magicline">
+      <h2>7. 홈택스 보안 프로그램(MagicLine4NX)</h2>
+      <p>공동인증서로 홈택스에 로그인·서명하려면 이 프로그램이 있어야 합니다. 없으면 인증서 화면 위에 "홈택스 공동인증서 프로그램이 이 PC에 없어요" 상자가 뜹니다.</p>
+      <ol>
+        <li>[설치 파일 받기]를 누릅니다. 홈택스 공식 설치 파일(<code>MagicLine4NX.pkg</code>)이 내려받아집니다.</li>
+        <li>받은 파일을 열어 설치합니다. Mac 암호를 물으면 넣습니다.</li>
+        <li>앱에서 [다시 확인]을 누릅니다. 상자가 사라지면 됩니다.</li>
+      </ol>
+    </section>
+
+    <section id="help">
+      <h2>8. 막힐 때</h2>
+      <dl class="faq">
+        <dt>로그인 코드 메일이 안 옴</dt>
+        <dd>스팸함을 봅니다. 5분 뒤 다시 보냅니다(이메일 하나에 한 시간 5번까지). 그래도 안 오면 안내해 준 담당자에게 이메일 주소를 알려 주세요. 메일 발송 쪽에 주소 등록이 필요할 수 있습니다.</dd>
+        <dt>"이 계정에는 이미 등록된 PC가 있어요"</dt>
+        <dd>다른 Mac에 연결된 계정입니다. 이 Mac에서는 다른 본인 이메일로 로그인합니다.</dd>
+        <dt>"Apple이 악성 코드가 없음을 확인할 수 없습니다" 창</dt>
+        <dd>공증 전 판입니다. 열지 말고 <a href="/download">내려받기 페이지</a>에서 다시 받습니다.</dd>
+        <dt>인증서 목록이 비어 있음</dt>
+        <dd>6번 위치에 <code>NPKI</code> 폴더가 있는지, 안에 <code>signCert.der</code>·<code>signPri.key</code>가 있는지 봅니다.</dd>
+        <dt>"Chrome이 설치돼 있어야 해요"</dt>
+        <dd>1번대로 Chrome을 응용 프로그램 폴더에 깔고 [다시 준비]를 누릅니다.</dd>
+        <dt>그 밖</dt>
+        <dd>화면 캡처와 함께 <code>~/Library/Application Support/SovereignAX/logs</code> 폴더를 안내해 준 담당자에게 보냅니다.</dd>
+      </dl>
+    </section>
+  </div>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <span>소버린 AX · 라프(LAF)</span>
+    <span>라프가 만든 민간 앱입니다. 국세청과 관계가 없습니다.</span>
+  </div>
+</footer>
+</body>
+</html>

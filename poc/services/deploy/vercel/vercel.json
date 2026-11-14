@@ -130,7 +130,15 @@
     },
     {
       "source": "/download",
-      "destination": "/api/registry?__p=/download"
+      "destination": "/download/index.html"
+    },
+    {
+      "source": "/guide",
+      "destination": "/guide/index.html"
+    },
+    {
+      "source": "/download/mac",
+      "destination": "/api/registry?__p=/download/mac"
     },
     {
       "source": "/registry/log/:path*",
