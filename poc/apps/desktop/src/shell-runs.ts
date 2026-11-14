@@ -360,7 +360,9 @@ export const BATCH_APPROVAL_MAX_MS = 30 * 60_000;
  * 이 코드로 끝나면 남은 건을 시작하지 않는다(묶음)·다시 시작하지 않는다(깨어남): 차단·정책·점검 신호, 엔진·금고·패키지·원장·토큰 문제,
  * 발급 여부 모름(in_doubt·verify.unknown). 사람이 멈춘 것(stopped)과 발급 여부를 모르는 끝(inDoubt)도 그렇다.
  */
-export const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing)/;
+export const RUN_HALT = /^(portal\.blocked|portal\.maintenance|policy\.|vault\.|engine\.|package\.|ir\.|ledger\.|token\.invalid|verify\.unknown|in_doubt|profile_missing|busy$)/;
+/** 한 묶음의 최대 건수. 승인 카드가 건마다 한 줄씩 길어져 작은 창에서도 다 보이는 수다. 넘는 초안은 묶지 않는다. */
+export const BATCH_MAX = 5;
 /** 바쁨(다른 실행 진행 중)이면 이 간격으로 이만큼 다시 본다. 그래도 바쁘면 묶음을 세운다. */
 const BATCH_BUSY_RETRY_MS = 15_000;
 const BATCH_BUSY_TRIES = 8;
@@ -368,6 +370,7 @@ export const BATCH_SKIPPED_NOTE = '이 건은 시작하지 못해 건너뛰었�
 export const BATCH_AUTO_NOTE = '묶음 승인으로 이어서 발급해요. 2초 안에 [중지]하면 발급하지 않아요';
 export const BATCH_REASK_NOTE = '이 건은 승인 카드에서 따로 승인해 주세요(홈택스 값이 처음 승인 때와 다르거나 처음 거래·처음 보내는 주소예요)';
 export const BATCH_HALTED_NOTE = '묶음을 멈췄어요. 남은 건은 [홈택스에서 준비]를 누르면 승인 카드에서 한 건씩 승인해요. 아무것도 발급하지 않았어요.';
+export const BATCH_CHANGED_NOTE = '승인 카드를 띄운 뒤 묶음 값이 바뀌어 묶음 승인으로 받지 않았어요. 남은 건은 하나씩 승인해 주세요.';
 /** 승인 바를 띄울 때 찍은 묶음(바의 2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다. */
 export interface BatchOffer {
   batchId: string;
@@ -381,6 +384,8 @@ interface Batch {
   runIds: string[];
   /** 처음 승인 카드의 클릭. keys: 아직 게이트 전인 건의 runId → 바를 띄울 때 카드 값(gateKey 모양). 한 번 쓰면 지운다. */
   approval: { at: number; keys: Map<string, string> } | null;
+  /** 세운 묶음: 남은 건은 사람이 [홈택스에서 준비]로 한 건씩(묶음 카드 없이) 한다. */
+  halted: boolean;
 }
 export const RESUMED_NOTE = '앱이 다시 켜져 멈췄던 건을 같은 내용으로 이어서 해요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
 export const WAKE_RESUMED_NOTE = '맥이 잠들었다 깨어나 멈춘 건을 같은 내용으로 다시 시작했어요. 앞 시도는 승인 전이라 아무것도 발급하지 않았어요.';
@@ -671,16 +676,19 @@ export class ShellRuns extends EventEmitter implements Drafts {
       } else if (r.status === 'issuing' || (pastGate && this.isActive(r.id))) {
         r.notices = [...(r.notices ?? []), '브라우저가 닫혔어요. 발급됐는지 확인하고 있어요.'];
         this.emit('update', r);
-      } else if ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt && r.redo && r.endedAt !== undefined && now - r.endedAt < 10_000) this.markClosed(r);
+      } else if ((r.status === 'attention' || r.status === 'stopped') && !r.inDoubt && r.redo && r.endedAt !== undefined && now - r.endedAt < 10_000) {
+        this.markClosed(r);
+        this.emit('update', r);
+      }
     }
   }
   private goneAt = Number.NEGATIVE_INFINITY;
+  /** 브라우저가 닫혀 멈춘 제출 전 실행의 끝 모양(부른 쪽이 update를 낸다). */
   private markClosed(r: RunView): void {
     r.browserClosed = true;
     r.status = 'stopped';
     r.stoppedNote = NOTE['browser.closed'];
     r.redo = true;
-    this.emit('update', r);
   }
 
   notice(runId: string | undefined, text: string, retry?: 'extension'): void {
@@ -697,10 +705,13 @@ export class ShellRuns extends EventEmitter implements Drafts {
 
   /** 한 요청에서 만든 초안 둘 이상을 한 카드로 묶는다. 실행은 한 건씩 차례로 돌고, 승인은 처음 승인 카드 한 번이다. */
   makeBatch(ids: string[]): string | null {
-    const rs = ids.map((id) => this.runs.get(id)).filter((r): r is RunView => !!r && r.status === 'draft' && !r.batch && !r.rehearsal);
+    const rs = ids
+      .map((id) => this.runs.get(id))
+      .filter((r): r is RunView => !!r && r.status === 'draft' && !r.batch && !r.rehearsal)
+      .slice(0, BATCH_MAX);
     if (rs.length < 2) return null;
     const id = `batch-${randomUUID().slice(0, 8)}`;
-    this.batches.set(id, { id, runIds: rs.map((r) => r.id), approval: null });
+    this.batches.set(id, { id, runIds: rs.map((r) => r.id), approval: null, halted: false });
     rs.forEach((r, index) => {
       r.batch = { id, index, count: rs.length };
       this.emit('update', r);
@@ -723,10 +734,10 @@ export class ShellRuns extends EventEmitter implements Drafts {
     return this.batchRuns(b.id).filter((x) => x.id !== except && x.status === 'draft' && !x.batch?.skipped);
   }
 
-  /** 묶음 차례가 남았는가(앞 건이 진행 중이거나 묶음 승인으로 기다리는 초안). 끝 알림·이어 하기가 쓴다. */
+  /** 묶음 차례가 남았는가(앞 건이 진행 중이거나, 세우지 않은 묶음에 차례를 기다리는 초안이 있다). 끝 알림이 쓴다. */
   batchOpen(batchId: string): boolean {
     const b = this.batches.get(batchId);
-    return !!b && this.batchRuns(batchId).some((x) => this.isActive(x.id) || (!!b.approval && b.approval.keys.has(x.id) && x.status === 'draft'));
+    return !!b && (this.batchRuns(batchId).some((x) => this.isActive(x.id)) || (!b.halted && this.batchQueued(b).length > 0));
   }
 
   /** 묶음 승인으로 차례를 기다리는 초안인가(이어 하기가 남긴다). 멈춘 묶음·건너뛴 초안·승인 전 묶음은 아니다. */
@@ -738,7 +749,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** 이 게이트의 승인 카드에 올릴 묶음(이 건 + 아직 시작하지 않은 건). 묶음 승인 전이고 둘 이상일 때만, 아니면 null. 바를 띄울 때 부른다. */
   batchOffer(runId: string): BatchOffer | null {
     const b = this.batchFor(runId);
-    if (!b || b.approval) return null;
+    if (!b || b.approval || b.halted) return null;
     const rest = this.batchQueued(b, runId);
     if (!rest.length) return null;
     return { batchId: b.id, count: rest.length + 1, lines: rest.map((x) => ({ name: x.counterparty.name, total: x.total })), keys: new Map(rest.map((x) => [x.id, draftKey(x)])) };
@@ -756,6 +767,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.src.log?.('main.batch_approved', { count: String(offer.count), same: same ? 'yes' : 'no' });
     if (!same) return false;
     b.approval = { at: this.clock(), keys: new Map(offer.keys) };
+    b.halted = false;
     for (const x of this.batchRuns(b.id)) {
       x.batch = { ...x.batch!, approved: true, halted: false };
       this.emit('update', x);
@@ -799,6 +811,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
   /** 묶음을 세운다: 묶음 승인을 버리고(남은 초안은 저마다 승인 카드) 카드에 멈춤 문구를 둔다. */
   private batchHalt(b: Batch, why: string): void {
     b.approval = null;
+    b.halted = true;
     for (const x of this.batchRuns(b.id)) {
       x.batch = { ...x.batch!, approved: false, halted: true };
       this.emit('update', x);
@@ -806,13 +819,15 @@ export class ShellRuns extends EventEmitter implements Drafts {
     this.src.log?.('main.batch_halt', { code: why.slice(0, 60) });
   }
 
-  /** 묶음 건 하나가 끝났다. 사람이 멈췄거나 발급 여부를 모르거나 RUN_HALT 신호면 묶음을 세우고, 아니면 다음 초안을 시작한다. */
+  /**
+   * 묶음 건 하나가 끝났다(end가 카드 update를 내기 전에 부른다: 묶음이 서면 그 update가 끝 알림이 된다).
+   * 사람이 멈췄거나 발급 여부를 모르거나 RUN_HALT 신호면 묶음을 세우고, 아니면 다음 초안을 시작한다. 세운 묶음은 사람이 한 건씩 한다.
+   */
   private batchAfter(r: RunView, code: string | undefined): void {
     const b = this.batchFor(r.id);
-    if (!b) return;
+    if (!b || b.halted) return;
     if (r.status === 'stopped' || r.inDoubt || RUN_HALT.test(code ?? '')) return this.batchHalt(b, code ?? r.status);
-    // 세운 묶음은 사람이 한 건씩 한다(다시 묶음 승인을 받으면 halted가 풀린다)
-    if (r.batch?.halted || !this.batchQueued(b).length) return;
+    if (!this.batchQueued(b).length) return;
     setImmediate(() => void this.batchNext(b.id));
   }
 
@@ -822,7 +837,7 @@ export class ShellRuns extends EventEmitter implements Drafts {
    */
   private async batchNext(batchId: string, tries = 0): Promise<void> {
     const b = this.batches.get(batchId);
-    const next = b && this.batchQueued(b)[0];
+    const next = b && !b.halted && this.batchQueued(b)[0];
     if (!b || !next) return;
     const later = (ms: number) => {
       const t = setTimeout(() => void this.batchNext(batchId, tries + 1), ms);
@@ -1300,8 +1315,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     r.endedAt = this.clock();
     // 브라우저가 닫혀 끝난 제출 전 실행(멈춤·연결 끊김 실패 어느 쪽이든): 같은 문구와 [다시 시작]
     if (!r.result && !r.inDoubt && !pastGate && (r.browserClosed || this.clock() - this.goneAt < 10_000)) this.markClosed(r);
-    else this.emit('update', r);
     this.batchAfter(r, code);
+    this.emit('update', r);
     this.wakeAfter(r, code);
   }
 

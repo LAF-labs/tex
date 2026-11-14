@@ -468,7 +468,8 @@ export class ApprovalBar extends EventEmitter {
   private updateRefusal(): void {
     if (!this.lines) return;
     const over = this.baseRefusal ? null : overflowLine(this.lines, this.bounds.width, this.text);
-    this.refusal = this.baseRefusal ?? (over ? REFUSAL_TEXT.overflow(over) : null);
+    // 카드 위(머리 줄·금액)가 창 내용 위로 넘치면 무장하지 않는다(큰 묶음은 줄이 늘어난다)
+    this.refusal = this.baseRefusal ?? (over ? REFUSAL_TEXT.overflow(over) : this.bounds.y < 0 ? REFUSAL_TEXT.tall() : null);
   }
 
   private armedNow(): boolean {

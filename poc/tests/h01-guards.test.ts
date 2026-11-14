@@ -40,7 +40,7 @@ describe('H-01 승인 경계(ADR-021)', () => {
     // 바 밖의 승인 근거는 여러 건 묶음의 뒤 건뿐이다: 같은 묶음의 처음 승인 카드 클릭 뒤, 되읽기 값이 그때 카드 값과 같을 때(batchAutoApprove).
     assert.equal(count(onGate, 'issueLocalApproval('), 1);
     // 묶음 승인은 바가 묶음 글자로 그린 카드의 클릭일 때만(중복 경고 카드 등은 이 건만)
-    assert.ok(onGate.includes('if (offer && o.batch === offer.count) runs.batchApproved(runId, offer);'));
+    assert.ok(onGate.includes('if (offer && o.batch === offer.count && !runs.batchApproved(runId, offer)) send({ type: \'say\', text: BATCH_CHANGED_NOTE });'));
     assert.ok(onGate.includes("if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);"));
     const handlers = between(src, 'const handlers:', "ipcMain.handle('sax'");
     for (const bad of ['answerGate', 'issueLocalApproval', 'verifyLocalApproval', 'approved(', 'abortGate', 'bar.', 'host.rpc', 'host.control', 'gate.answer', 'answerAttest', 'issueLocalAttestation', 'verifyLocalAttestation', 'attestUsed', 'showAttest', 'attest.answer']) assert.ok(!handlers.includes(bad), `렌더러 처리기에 ${bad}`);

@@ -93,9 +93,11 @@ export class RunResumeStore {
 
   /** 바뀌었을 때만 쓴다. 돌려준 약속은 이 값이 DB에 닿은 때(실패하면 지운 뒤) 풀린다. */
   save(work: ResumeWork, now: number): Promise<void> {
-    const body = work.items.length || work.approved.length ? JSON.stringify({ v: 2, at: now, ...work }) : '';
-    if (body === this.last) return this.chain;
-    this.last = body;
+    // 같은 일이면 다시 쓰지 않는다(시각은 비교에서 뺀다)
+    const same = work.items.length || work.approved.length ? JSON.stringify(work) : '';
+    if (same === this.last) return this.chain;
+    this.last = same;
+    const body = same ? JSON.stringify({ v: 2, at: now, ...work }) : '';
     this.chain = this.chain
       .then(() => this.port.save(body || null))
       .then(

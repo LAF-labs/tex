@@ -14,7 +14,7 @@ import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
-import { issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
+import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -43,7 +43,7 @@ import { answersPending, emptyDocStore, NO_AUTH, SETUP_LABEL, setupMissing, setu
 import { engineDocsProvider, type DocsProvider } from './shell-docs.ts';
 import { readPastRuns, type PastRun } from './run-history.ts';
 import { pendingWork, RunResumeStore } from './run-resume.ts';
-import { BATCH_AUTO_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
+import { BATCH_AUTO_NOTE, BATCH_CHANGED_NOTE, fatalText, REHEARSAL, ShellRuns, vaultNotice } from './shell-runs.ts';
 import { AgentChat, type AgentPhase } from './agent-chat.ts';
 import { agentPorts } from './agent-wiring.ts';
 import type { StepParams, StepResult } from '@sax/engine';
@@ -832,13 +832,15 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const gr = runs.get(runId);
     // 묶음은 바를 띄울 때 찍는다(2~N건 줄과 그때 초안 값). 클릭 때 초안이 달라졌으면 묶음 승인으로 받지 않는다(batchApproved).
     const offer = runs.batchOffer(runId);
-    if (gr) runNotify('gate', runId, '승인이 필요해요', offer ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
+    // 알림 글은 바가 그릴 글과 같게: 중복 경고 카드는 묶음 글자가 아니다(approval-bar open과 같은 조건)
+    const manyShown = !!offer && actionText(req) === ACTION_TEXT;
+    if (gr) runNotify('gate', runId, '승인이 필요해요', manyShown ? `세금계산서 ${offer.count}건 · ${gr.counterparty.name} 외 ${offer.count - 1}건` : `세금계산서 · ${gr.counterparty.name} ${wonText(gr.total)}`);
     // 비가역 줄은 이 실행의 발급 인증(시작 때 고정, 엔진이 고르는 인증유형과 같다)으로 말한다.
     void bar.open(req, gr?.auth, offer).then(async (o) => {
       if (o.decision === 'approve') {
         if (!verifyLocalApproval(key, o.approval)) return runs.abortGate(runId, 'answer.rejected');
         // 바가 묶음 글자로 그린 카드의 클릭일 때만 묶음 승인이다(중복 경고 카드 등은 이 건만).
-        if (offer && o.batch === offer.count) runs.batchApproved(runId, offer);
+        if (offer && o.batch === offer.count && !runs.batchApproved(runId, offer)) send({ type: 'say', text: BATCH_CHANGED_NOTE });
         await sendApproval(o.approval);
       } else if (o.reason === 'stopped') {
         // 카드의 [중지](main이 관찰한 클릭·키). 렌더러 [중지]와 같은 경로로 실행을 멈춘다(안전한 실패).
