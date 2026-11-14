@@ -306,14 +306,7 @@ describe('민원증명 제품 실행(run.startCert, 가짜 민원증명 페이�
     // 입력 값은 엔진 로그에 남지 않는다(입력 이름·코드만)
     assert.deepEqual(certInputs({ a: { type: 'enum', values: ['x'], required: true } }, { a: ' x ' }), { ok: true, inputs: { a: 'x' } });
     assert.deepEqual(certInputs({ a: { type: 'counterparty', required: true } }, {}), { ok: false, code: 'cert.input_invalid', field: 'a' });
-    // 사업자번호·발급 인증이 없으면 시작하지 않는다
-    const prof = data.profiles.byKind('business')!;
-    data.profiles.upsert({ ...prof, signMethod: null });
-    try {
-      refuse({}, 'profile_missing');
-    } finally {
-      data.profiles.upsert({ ...prof });
-    }
+    // 사업자번호 없는 사업자 프로필은 저장되지 않고(invalid_biz_no), 발급 인증 빈 값은 공동인증서 기본(#365)이라 profile_missing은 여기서 만들 수 없다
     assert.equal(runs.activeRunId, null);
   });
 });
