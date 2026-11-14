@@ -451,6 +451,44 @@ export const modelCell = (sent) => {
 };
 
 /** "어디로 무엇이 갔나요"(활동 기록 행을 카드 안에서 펼친 것). */
+/**
+ * 여러 건 묶음 카드(한 카드, [승인] 한 번, main ShellRuns batch). 건마다 한 줄(순번 · 거래처 · 합계 · 상태 · 승인번호),
+ * 그 아래 지금 건(진행 중, 없으면 다음 초안)과 사람이 볼 건(확인 필요·다시 시작)의 작업 카드를 그대로 둔다.
+ */
+export function batchCard(runs, act) {
+  const live = (r) => ['preparing', 'turn', 'waiting', 'issuing'].includes(r.status);
+  const done = runs.filter((r) => r.status === 'done').length;
+  const total = runs.reduce((n, r) => n + (r.discarded ? 0 : Number(r.total) || 0), 0);
+  const focus = runs.find(live) ?? runs.find((r) => r.status === 'draft' && !r.discarded) ?? null;
+  const approved = runs.some((r) => r.batch?.approved);
+  const ended = !focus;
+  const rows = runs.map((r) =>
+    h(
+      'li',
+      { 'data-batch-row': r.id, 'data-status': r.discarded ? 'discarded' : shownStatus(r), onclick: () => act.open(r.id) },
+      h('span', { class: 'sx-batch-name' }, `${(r.batch?.index ?? 0) + 1}. ${r.counterparty.name}`),
+      h('span', { class: 'sx-batch-amt' }, `${num(r.total)}원`),
+      r.discarded ? chip('discarded') : chip(shownStatus(r)),
+      r.result?.approvalNo ? h('span', { class: 'sx-batch-no' }, `승인번호 ${r.result.approvalNo}`) : null,
+    ),
+  );
+  const lead = ended
+    ? `${runs.length}건 중 ${done}건 발급했어요.`
+    : approved
+      ? '한 번 승인으로 차례로 발급하고 있어요. 홈택스 값이 승인 때와 다르면 그 건만 다시 물어요.'
+      : `모두 합계 ${num(total)}원. 첫 승인 카드에서 한 번 승인하면 나머지는 차례로 발급해요.`;
+  const extra = runs.filter((r) => r !== focus && !r.discarded && (r.status === 'attention' || (r.status === 'stopped' && (r.redo || r.browserClosed))));
+  return h(
+    'article',
+    { class: 'sx-card sx-batch', 'data-batch': runs[0].batch.id, 'data-done': done },
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `세금계산서 ${runs.length}건 · 차례로 발급`), h('span', { class: `sx-chip${ended ? ' is-done' : ''}` }, `${done}/${runs.length} 발급`)),
+    h('p', { class: 'sx-meta' }, lead),
+    h('ol', { class: 'sx-batch-list' }, rows),
+    focus ? taskCard(focus, act) : null,
+    extra.map((r) => taskCard(r, act)),
+  );
+}
+
 export function whereRows(run) {
   return [
     ['홈택스', '전자세금계산서 1건 발급 · 발급목록에서 확인'],

@@ -5,6 +5,7 @@ import { attestSelfCheck, gateSelfCheck } from '@sax/engine/gate';
 import type { EventLog } from '@sax/platform';
 import {
   ACTION_TEXT,
+  batchActionText,
   actionText,
   attestRefusalText,
   attestRows,
@@ -267,7 +268,7 @@ export class ApprovalBar extends EventEmitter {
    * 게이트 요청을 받아 바를 띄운다. 승인 또는 close()까지 기다린다. 열린 게이트가 있으면 바꾸지 않고 'busy'.
    * 증언 바가 떠 있으면 게이트가 자리를 가져간다(증언은 'gate'로 끝나고, 엔진도 그 증언 요청을 'gate'로 철회한다).
    */
-  open(req: GateRequest, auth?: string): Promise<BarOutcome> {
+  open(req: GateRequest, auth?: string, batch = 0): Promise<BarOutcome> {
     if (this.win.isDestroyed()) return Promise.resolve({ decision: 'closed', reason: 'window_closed' });
     if (this.req?.kind === 'gate') return Promise.resolve({ decision: 'closed', reason: 'busy' });
     if (this.req) this.finish({ decision: 'closed', reason: 'gate' });
@@ -282,7 +283,10 @@ export class ApprovalBar extends EventEmitter {
     this.lines = Array.isArray(summary) ? summary : [];
     // 머리 줄 상호와 비가역 줄(메일 유무)은 검사를 지난 fields에서만. 무장 거부면 서류 종류만 보인다.
     const f = Array.isArray(summary) ? new Map(req.fields.map((x) => [x.fieldKey, x.value])) : null;
-    this.text = gateText(bad ? ACTION_TEXT : actionText(req), f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
+    // 여러 건 묶음의 첫 승인(batch 건수): 이 클릭이 묶음 전체의 승인이다. 중복 경고가 있으면 그 경고 글자가 먼저다.
+    const action = bad ? ACTION_TEXT : actionText(req);
+    const many = batch > 1 && action === ACTION_TEXT && f;
+    this.text = gateText(many ? batchActionText(batch) : action, many ? `${f.get('counterpartName') ?? ''} 외 ${batch - 1}건` : f?.get('counterpartName'), !!f?.get('counterpartEmail'), auth);
     this.height = cardHeight(CARD_ROWS['H-01']);
     this.baseRefusal = bad ? (bad === 'duplicate' ? REFUSAL_TEXT.duplicate() : REFUSAL_TEXT.hash()) : Array.isArray(summary) ? null : refusalText(summary!);
     return new Promise<BarOutcome>((done) => {

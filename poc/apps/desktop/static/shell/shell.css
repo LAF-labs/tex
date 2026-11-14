@@ -436,3 +436,11 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .sx-steps small.sx-step-check.is-bad, .form-msg.is-bad { color: var(--sx-bad); font-weight: 500; }
 .form-msg { margin: 0; font-size: 13px; line-height: 20px; color: var(--ink-2); }
 .form-msg[hidden] { display: none; }
+
+/* 여러 건 묶음 카드(batchCard): 건마다 한 줄, 그 아래 지금 건의 작업 카드 */
+.sx-batch-list { list-style: none; margin: 8px 0 12px; padding: 0; display: grid; gap: 6px; }
+.sx-batch-list li { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; background: var(--sx-surface-2, rgba(127, 127, 127, 0.08)); cursor: pointer; }
+.sx-batch-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sx-batch-amt { font-variant-numeric: tabular-nums; }
+.sx-batch-no { font-size: 12px; opacity: 0.75; font-variant-numeric: tabular-nums; }
+.sx-batch > .sx-card { margin-top: 8px; box-shadow: none; }

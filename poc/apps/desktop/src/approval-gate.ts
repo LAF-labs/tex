@@ -314,6 +314,8 @@ export const BAR_MESSAGES = {
  */
 export const BAR_AGAIN_TEXT = '창을 앞으로 가져오는 클릭이었어요. 한 번 더 눌러 주세요';
 export const ACTION_TEXT = '승인하고 발급';
+/** 여러 건 묶음의 첫 승인 카드 동작 글자. 뒤 건은 홈택스 되읽기 값이 카드 값과 같을 때만 바 없이 이어 간다(shell-runs batchAutoApprove). */
+export const batchActionText = (n: number) => `${n}건 차례로 승인하고 발급`;
 export const ACTION_TEXT_DUP = '같은 건 기록을 확인했고 발급';
 export const ACTION_TEXT_DUP_COMMITTED = '그래도 한 번 더 발급';
 /** 비가역 한 줄(서류 종류별 앱 고정 문구, 패키지 문자열 아님). 받는 이메일 유무로 둘 중 하나다. */

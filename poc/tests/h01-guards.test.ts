@@ -36,7 +36,10 @@ describe('H-01 승인 경계(ADR-021)', () => {
     const src = read('apps/desktop/src/shell-app.ts');
     assert.equal(count(src, 'answerGate('), 1);
     const onGate = between(src, "runs.on('gate',", 'const g24Doc');
-    assert.ok(onGate.includes('bar.open(req, runs.get(runId)?.auth)') && onGate.includes("o.decision === 'approve'") && onGate.includes('host.answerGate(o.approval)'));
+    assert.ok(onGate.includes('bar.open(req, gr?.auth, many)') && onGate.includes("o.decision === 'approve'") && onGate.includes('host.answerGate(approval)') && onGate.includes('await sendApproval(o.approval)'));
+    // 바 밖의 승인 근거는 여러 건 묶음의 뒤 건뿐이다: 같은 묶음의 처음 승인 카드 클릭 뒤, 되읽기 값이 그때 카드 값과 같을 때(batchAutoApprove).
+    assert.equal(count(onGate, 'issueLocalApproval('), 1);
+    assert.ok(onGate.includes("if (runs.batchAutoApprove(runId, req)) return void sendApproval(issueLocalApproval(key, req, 'click+batch'), BATCH_AUTO_NOTE);"));
     const handlers = between(src, 'const handlers:', "ipcMain.handle('sax'");
     for (const bad of ['answerGate', 'issueLocalApproval', 'verifyLocalApproval', 'approved(', 'abortGate', 'bar.', 'host.rpc', 'host.control', 'gate.answer', 'answerAttest', 'issueLocalAttestation', 'verifyLocalAttestation', 'attestUsed', 'showAttest', 'attest.answer']) assert.ok(!handlers.includes(bad), `렌더러 처리기에 ${bad}`);
     // 증언(ADR-021 결정 5): answerAttest는 증언 바 결과 처리에서 한 번만, 바가 'attest'로 끝났을 때만.

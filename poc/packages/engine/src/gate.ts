@@ -114,7 +114,8 @@ export interface GateRequest {
   waitMs: number;
 }
 
-export type Presence = 'click' | 'click+hello' | 'click+waiver';
+/** click+batch: 여러 건 묶음의 뒤 건. main이 같은 묶음의 처음 승인 카드에서 클릭을 관찰했고, 이 게이트의 되읽기 값이 그때 카드 값과 같다. */
+export type Presence = 'click' | 'click+hello' | 'click+waiver' | 'click+batch';
 
 /** main 승인 바가 발급하는 근거(ADR-021 결정 1). HMAC 문맥 SAX-local-approval-v2, exp = 발급 + 120초. */
 export interface LocalApproval {
