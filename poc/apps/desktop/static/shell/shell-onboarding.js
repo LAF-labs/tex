@@ -13,7 +13,7 @@ const Q = {
   delegation: '보안카드를 쓰려면 먼저 이 PC 금고에 등록해야 해요.',
   model: '대화는 AI 모델로 해석해요. 아래 내용을 확인하고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주시겠어요? 안 보내도 돼요.',
-  tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
+  tasks: '어떤 일을 맡기고 싶으세요?',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
   summary: '등록을 마쳤어요. 내용을 확인해 주세요.',
   first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
@@ -37,9 +37,9 @@ const scopeLines = (catalog) => [
 ];
 
 // 단계 안의 화면 상태(고치는 중·고른 인증서·고른 업무). 단계가 바뀌면 비운다.
-let ui = { step: null, editing: false, certId: null, showCerts: false, tasks: {}, busy: false };
+let ui = { step: null, editing: false, certId: null, showCerts: false, tasks: null, busy: false };
 const uiFor = (step) => {
-  if (ui.step !== step) ui = { step, editing: false, certId: null, showCerts: false, tasks: {}, busy: false };
+  if (ui.step !== step) ui = { step, editing: false, certId: null, showCerts: false, tasks: null, busy: false };
   return ui;
 };
 
@@ -49,7 +49,18 @@ export function showOnbError(step, text) {
 }
 
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
-const draftTag = (n) => (n?.draft ? h('span', { class: 'sx-meta onb-draft', 'data-draft': n.key }, n.draft) : null);
+/** 입력 폼의 키: Enter는 저장(폼 제출), Escape는 취소. 한글 조합 중 키는 조합을 끝낼 뿐이라 무시한다. */
+const formKeys = (cancel) => (e) => {
+  if (e.isComposing) return;
+  if (e.key === 'Enter' && e.target.tagName === 'INPUT') {
+    e.preventDefault();
+    e.currentTarget.requestSubmit();
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    cancel();
+  }
+};
 
 /**
  * 온보딩 영역 전체. o: main의 OnbView, act: { reply(step, choice, extra), go(view), toast(text), rerender() }.
@@ -103,10 +114,10 @@ function stepBody(o, act) {
     case 'welcome':
       return h(
         'div',
-        { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
-        h('button', { type: 'button', 'data-onb': 'upload', onclick: () => reply('upload') }, '사업자등록증 올리기'),
-        h('button', { type: 'button', 'data-onb': 'number', onclick: () => reply('number') }, '사업자번호로 입력'),
-        h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
+        { class: 'sx-actions', 'data-onb-step': o.step },
+        btn('사업자번호로 입력', () => reply('number'), 'sx-btn-primary', { 'data-onb': 'number' }),
+        btn('사업자등록증 올리기', () => reply('upload'), 'sx-btn-quiet', { 'data-onb': 'upload' }),
+        btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
       );
     case 'biz-number': {
       // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다
@@ -114,7 +125,7 @@ function stepBody(o, act) {
       const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호', value: u.vals?.bizNo ?? '' });
       const form = h(
         'form',
-        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
+        { class: 'cp-form', onkeydown: formKeys(() => reply('back')), onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
         h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
@@ -130,19 +141,13 @@ function stepBody(o, act) {
     case 'counterparties':
       return card(
         '거래처 등록',
-        p('거래처마다 받는 이메일과 자주 쓰는 품목을 저장해 두면 발급할 때 다시 묻지 않아요. 부가세 별도·포함은 요청할 때 정해요.'),
-        p('등록증 여러 장 끌어 놓기는 곧 돼요. 지금은 번호로 추가해요.', true),
-        row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
+        p('받는 이메일과 품목을 저장해 두면 발급할 때 다시 묻지 않아요.'),
+        row(btn('거래처 추가', () => act.go('cps'), 'sx-btn-primary', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-quiet', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
       );
     case 'summary':
       return summaryCard(o, reply);
     case 'first':
-      return h(
-        'div',
-        { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
-        h('button', { type: 'button', 'data-onb': 'try', onclick: () => reply('try') }, '지금 해 보기'),
-        h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
-      );
+      return h('div', { class: 'sx-actions', 'data-onb-step': o.step }, btn('지금 해 보기', () => reply('try'), 'sx-btn-primary', { 'data-onb': 'try' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }));
   }
   return h('div');
 }
@@ -170,12 +175,11 @@ function consentCard(o, reply) {
   return h(
     'section',
     { class: 'sx-card onb-card onb-consent', 'data-onb-step': o.step, 'data-consent': n.key, 'data-consent-version': n.version },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, n.title), draftTag(n)),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, n.title)),
     o.notice ? note(o.notice, true) : null,
     h('ul', { class: 'onb-lines' }, ...n.lines.map((l) => h('li', {}, l))),
     table,
     h('div', { class: 'sx-actions' }, ...buttons),
-    o.step === 'terms' ? h('div', { class: 'sx-meta' }, '약관 전문과 개인정보 처리방침 전문은 곧 여기서 열어 볼 수 있어요.') : null,
   );
 }
 
@@ -194,12 +198,14 @@ function bizCard(o, u, reply, act) {
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
   const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
+    const cancel = () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender());
     // 거부되어 다시 그릴 때는 고치던 값(u.fields)을 그대로 둔다
     const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: u.fields?.[name] ?? value ?? '', autocomplete: 'off', ...attrs }));
     const form = h(
       'form',
       {
         class: 'cp-form',
+        onkeydown: formKeys(cancel),
         onsubmit: async (e) => {
           e.preventDefault();
           const f = new FormData(form);
@@ -220,7 +226,7 @@ function bizCard(o, u, reply, act) {
       field('종목', 'bizItem', b.bizItem, { maxlength: 100 }),
       field('사업장 주소', 'address', b.address, { maxlength: 200 }),
       field('사업자 이메일', 'email', b.email, { type: 'email', maxlength: 320 }),
-      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
+      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', cancel, 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
     );
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);
   }
@@ -243,8 +249,8 @@ function bizCard(o, u, reply, act) {
       // 상호가 비었으면 확정 버튼 대신 [고칠게요]가 먼저다(main도 name_required로 거부한다)
       active && named ? btn('맞아요', () => reply('confirm'), 'sx-btn-primary', { 'data-onb': 'confirm' }) : null,
       unknown && named ? btn('맞습니다', () => reply('confirm_unverified'), 'sx-btn-primary', { 'data-onb': 'confirm-unverified' }) : null,
-      unknown ? btn('다시 조회', () => reply('recheck'), '', { 'data-onb': 'recheck' }) : null,
-      btn('고칠게요', () => ((u.editing = true), act.rerender()), (active || unknown) && named ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
+      unknown ? btn('다시 조회', () => reply('recheck'), 'sx-btn-quiet', { 'data-onb': 'recheck' }) : null,
+      btn('고칠게요', () => ((u.editing = true), act.rerender()), (active || unknown) && named ? 'sx-btn-quiet' : 'sx-btn-primary', { 'data-onb': 'edit' }),
       btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
     ),
   );
@@ -318,33 +324,30 @@ function authCard(o, u, reply, act) {
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
-    p('홈택스 로그인에 이미 쓰는 공동인증서로 발급 서명도 해요. 휴대폰 승인이 필요 없어요.', true),
     sec,
     certs,
     h(
       'div',
       { class: 'sx-actions' },
       any ? btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId }) : null,
-      btn(u.showCerts ? '다른 방법 접기' : '다른 방법', () => ((u.showCerts = !u.showCerts), act.rerender()), any ? '' : 'sx-btn-primary', { 'data-onb': 'other' }),
+      btn(u.showCerts ? '다른 방법 접기' : '다른 방법', () => ((u.showCerts = !u.showCerts), act.rerender()), any ? 'sx-btn-quiet' : 'sx-btn-primary', { 'data-onb': 'other' }),
       btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
     ),
     other,
   );
 }
 
+/** 고를 수 있는 일은 지금 되는 일(now)뿐이다. 그 일을 미리 골라 둔다(마칠 때 기본값과 같다). */
 function tasksCard(o, u, reply, act) {
-  const chips = o.tasksCatalog.map((t) =>
-    t.now
-      ? h('button', { type: 'button', class: u.tasks[t.id] ? 'is-on' : '', 'aria-pressed': String(!!u.tasks[t.id]), 'data-task': t.id, onclick: () => ((u.tasks[t.id] = !u.tasks[t.id]), act.rerender()) }, t.label)
-      : h('button', { type: 'button', class: 'is-soon', 'data-task': t.id, 'data-soon': '', onclick: () => act.toast('지원되면 알려 드릴게요') }, t.label),
-  );
+  const now = o.tasksCatalog.filter((t) => t.now);
+  u.tasks ??= Object.fromEntries(now.map((t) => [t.id, true]));
+  const chips = now.map((t) => h('button', { type: 'button', class: u.tasks[t.id] ? 'is-on' : '', 'aria-pressed': String(!!u.tasks[t.id]), 'data-task': t.id, onclick: () => ((u.tasks[t.id] = !u.tasks[t.id]), act.rerender()) }, t.label));
   const any = Object.values(u.tasks).some(Boolean);
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '맡길 업무')),
     h('div', { class: 'sx-quick onb-tasks' }, ...chips),
-    p('회색은 곧 되는 일이에요. 신고와 세금 판단은 하지 않아요.', true),
     h('div', { class: 'sx-actions' }, btn('다음', () => reply('submit', { tasks: { ...u.tasks } }), 'sx-btn-primary', { 'data-onb': 'submit', disabled: !any }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
   );
 }
@@ -367,7 +370,7 @@ function summaryCard(o, reply) {
     h(
       'div',
       { class: 'onb-scope', 'data-onb-scope': '' },
-      h('div', { class: 'sx-card-hd' }, h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'), h('span', { class: 'sx-meta onb-draft' }, 'F-06 초안 전 문구')),
+      h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'),
       h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,

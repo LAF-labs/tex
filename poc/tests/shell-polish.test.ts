@@ -12,7 +12,7 @@ describe('내 사업장: 저장된 개인 프로필이 없으면 카드를 그�
     assert.match(read('apps/desktop/src/shell-app.ts'), /const NO_PERSONAL: Profile = \{ kind: 'personal', name: '개인', email: '', auth: '', placeholder: true \};/);
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /const personal = p\.personal && !p\.personal\.placeholder \? p\.personal : null;/);
-    assert.match(shell, /const used = \[b\.bizNo \? b : null, personal\]\.filter\(Boolean\)\.length;/);
+    // v2.0: 내 사업장 머리의 "프로필 2개 중 n개 사용"은 지웠다(사장님에게 의미 없는 수). 개인 자리는 여전히 건너뛴다.
     // 제목줄 프로필 메뉴도 저장된 개인 프로필이 있을 때만 "개인"을 보인다
     assert.match(shell, /p\.personal && !p\.personal\.placeholder \? item\('personal', `개인 · \$\{p\.personal\.name\}`\) : null/);
   });

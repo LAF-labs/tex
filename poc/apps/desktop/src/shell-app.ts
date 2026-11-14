@@ -429,6 +429,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     show: opts.show ?? true,
     // 설치본은 앱 이름만. 가짜 홈택스(fixture)일 때만 시연 표시를 남긴다.
     title: fixture ? '소버린 AX (PoC 데모 · 가짜 홈택스 페이지)' : '소버린 AX',
+    // macOS: OS 제목줄(28px)과 앱 제목줄(44px)이 겹쳐 위쪽 72px가 크롬이었다. 앱 제목줄 하나로 합치고 창 단추는 그 왼쪽에 둔다(v2.0).
+    // 콘텐츠 좌표 기준이라 승인 카드 자리(barBounds)·앱 안 브라우저 자리 계산은 그대로다.
+    ...(process.platform === 'darwin' ? { titleBarStyle: 'hiddenInset' as const, trafficLightPosition: { x: 16, y: 15 } } : {}),
     webPreferences: {
       sandbox: true,
       contextIsolation: true,

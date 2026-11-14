@@ -160,7 +160,7 @@ const scenes = {
     await shot(win, '08-done');
     await js(win, `[...document.querySelectorAll('[data-run] button')].find((b) => b.textContent === '어디로 무엇이 갔나요').click()`);
     await shot(win, '09-done-where');
-    await js(win, `document.querySelector('#rail [data-view=activity]').click()`);
+    await js(win, `document.querySelector('#rail [data-view=docs]').click(); setTimeout(() => document.querySelector('[data-act=go-activity]').click(), 50)`);
     await sleep(100);
     await js(win, `document.querySelector('[data-act-row]').click()`);
     await shot(win, '14-activity');
@@ -207,10 +207,11 @@ const scenes = {
     await shot(win, '13-cps');
   },
   async board(win) {
-    await js(win, `document.querySelector('[data-board-item^="cp:"]').click()`);
-    await shot(win, '19-board-compose');
+    // v2.0: 대화 맨 위 한 줄을 누르면 작업 패널에 할 일 목록이 열린다
     await js(win, `document.querySelector('[data-act=board-toggle]').click()`);
-    await shot(win, '20-board-closed');
+    await shot(win, '19-board-panel');
+    await js(win, `document.querySelector('[data-board-item^="cp:"]').click()`);
+    await shot(win, '20-board-compose');
   },
   // 온보딩(08 §4 O-01~O-06·동의 4종). 장면을 여는 동안 S.onb가 있다(아래 order 루프).
   async onboarding(win) {
@@ -242,12 +243,15 @@ const scenes = {
     await press('[data-onb=try]');
     await shot(win, '29-onb-done');
   },
-  async biz(win) { await js(win, `document.querySelector('#rail [data-view=biz]').click()`); await shot(win, '15-biz'); },
+  async biz(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await sleep(100); await js(win, `document.querySelector('[data-set-tab=biz]').click()`); await shot(win, '15-biz'); },
   async settings(win) { await js(win, `document.querySelector('#rail [data-view=settings]').click()`); await shot(win, '16-settings'); },
   async g24(win) {
     await js(win, `(() => { const i = document.querySelector('#composer'); i.value = '주민등록등본 떼 줘'; i.dispatchEvent(new Event('input')); document.querySelector('.sx-send').click(); })()`);
     await sleep(300);
     await shot(win, '17-g24-guide');
+    // v2.0: 정부24 패널은 저절로 열리지 않는다. 카드의 주요 단추로 연다.
+    await js(win, `document.querySelector('[data-g24] .sx-btn-primary')?.click()`);
+    await sleep(200);
     await js(win, `document.querySelector('[data-act=g24-saved]').click()`);
     await sleep(200);
     await js(win, `document.querySelector('[data-candidate=f1]').click()`);
