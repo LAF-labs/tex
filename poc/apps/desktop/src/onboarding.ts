@@ -200,6 +200,8 @@ export const CERT_EXPIRY_WARN_DAYS = 30;
 export type AuthKind = 'card' | 'simple' | 'cert' | 'fincert';
 /** DB profiles.sign_method 값(packages/db SignMethod). 금융인증서는 cert와 같은 칸(D07 열이 하나). */
 export const AUTH_SIGN_METHOD: Record<AuthKind, 'security_card' | 'simple_auth' | 'cert'> = { card: 'security_card', simple: 'simple_auth', cert: 'cert', fincert: 'cert' };
+/** 고르지 않았을 때 쓸 이 PC 인증서: 첫 사용 가능 인증서(온보딩 카드가 미리 고르는 것과 같다). 없으면 null. */
+export const defaultCertId = (certs: ReadonlyArray<{ id: string; usable?: boolean }>): string | null => certs.find((c) => c.usable !== false)?.id ?? null;
 export const AUTH_LABEL: Record<AuthKind, string> = { card: '보안카드', simple: '사업자 간편인증', cert: '공동인증서', fincert: '금융인증서' };
 
 /** O-04 맡길 업무. now: 이 빌드에서 켠 일(08 §4). H-03·H-04는 민원증명 실행이 들어오면 켠다. 꺼진 일은 회색 칩(누르면 "지원되면 알림"). O-06 "지금 되는 일"도 이 표에서 만든다. */
@@ -512,10 +514,18 @@ export class OnboardingFlow {
       bizItem: s.biz.bizItem || null,
       address: s.biz.address || null,
       email: s.biz.email || null,
-      signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : null,
-      certId: s.auth === 'cert' ? s.certId : null,
+      // 고르지 않았으면 공동인증서(대표 지시 2026-11-14). 이 PC 인증서가 있으면 첫 사용 가능 인증서를 쓴다
+      signMethod: s.auth ? AUTH_SIGN_METHOD[s.auth] : 'cert',
+      certId: !s.auth || s.auth === 'cert' ? (s.certId ?? defaultCertId(s.certs)) : null,
       ...(s.portalLoginId ? { portalLoginId: s.portalLoginId } : {}),
     });
+  }
+  /** 서비스 기본 발급 인증(공동인증서). 이 PC 인증서가 있으면 첫 사용 가능 인증서. */
+  private useDefaultCert() {
+    const s = this.s;
+    s.auth = 'cert';
+    s.certId = defaultCertId(s.certs);
+    this.unskip('auth');
   }
   private endRedo() {
     this.s.step = 'done';
@@ -622,8 +632,10 @@ export class OnboardingFlow {
         return;
       case 'auth':
         if (a.choice === 'unsure') {
-          s.explain = true;
+          // 모르면 공동인증서(대표 지시 2026-11-14): 이 PC 인증서가 있으면 첫 사용 가능 인증서로 정하고 넘어간다
           this.say('잘 모르겠어요');
+          this.useDefaultCert();
+          await this.afterAuth();
           return;
         }
         if (a.choice === 'later') {
@@ -635,9 +647,10 @@ export class OnboardingFlow {
             this.endRedo();
             return;
           }
+          // 나중에 골라도 지금은 공동인증서로 둔다(대표 지시 2026-11-14). 바꾸기는 설정 > 발급 인증
           this.say('나중에 할게요');
-          this.skip('auth');
-          await this.afterAuth(true);
+          this.useDefaultCert();
+          await this.afterAuth();
           return;
         }
         if (a.choice === 'cert') {

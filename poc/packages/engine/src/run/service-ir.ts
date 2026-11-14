@@ -52,6 +52,9 @@ import { BundleCatalog } from '@sax/model';
 import type { ArmRow } from '@sax/db';
 import type { RunPermit } from '../core/permit.ts';
 
+/** 프로필에 발급 인증이 없으면 공동인증서로 서명한다(대표 지시 2026-11-14: 서비스 기본 발급 인증은 공동인증서). */
+const DEFAULT_SIGN_METHOD = 'cert';
+
 /** RunService가 IR 경로에 주는 패키지와 포트. 제품은 레지스트리 로더가, 시험은 fixture 빌더가 만든다. */
 export interface IrPackage {
   pkg: LoadedPackage;
@@ -465,7 +468,7 @@ export class IrRun {
     this.wiring = await wireRun({ page, reader, enforcer, actuator: act, domains, ...(closeWindows.length ? { closeWindows, journal: i.journal } : {}) });
 
     const p = i.profile;
-    const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, ...(p.signMethod ? { signMethod: p.signMethod } : {}), ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
+    const scope = newScope({ inputs: i.inputs, profile: { bizNo: p.bizNo, signMethod: p.signMethod ?? DEFAULT_SIGN_METHOD, ...(p.certName ? { certName: p.certName } : {}) }, intentId: i.intentId });
     // 모델 실행 토큰은 실행마다 한 번 받아 decide와 AI 위치 찾기가 같이 쓴다(L1·L2 예산이 한 토큰에 묶인다).
     let tokenP: Promise<RunToken> | null = null;
     const runToken = (): Promise<RunToken> => {
