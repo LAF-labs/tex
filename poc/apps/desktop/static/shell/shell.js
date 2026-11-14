@@ -971,19 +971,33 @@ async function handoffCall(method, id) {
   }
 }
 
-/** 핸드오프 띠(D01 실행 뷰): 사람이 필요한 실행이 있으면 대화 열 위에 한 줄. 누르면 그 카드와 패널로 간다. 승인 버튼은 없다. */
+/**
+ * 핸드오프 띠(D01 실행 뷰, v2.0 구조 감사 H3): 사람이 필요한 실행의 카드가 대화 화면 밖에 있을 때만 대화 열 위에 한 줄.
+ * 카드가 보이면 숨긴다(카드가 같은 할 일과 단추를 보인다). 누르면 그 카드로 스크롤할 뿐이다. 승인 버튼은 없다.
+ */
+let handoffSeen = null;
 function renderHandoff() {
   if (!chat.handoff) return;
+  handoffSeen?.disconnect();
+  handoffSeen = null;
   const r = [...state.runs.values()].find((x) => x.status === 'turn' && x.handoff);
-  chat.handoff.hidden = !r;
-  if (!r) return chat.handoff.replaceChildren();
+  const cardOf = () => (r ? chat.thread.querySelector(`[data-run="${CSS.escape(r.id)}"]`) : null);
+  const el = cardOf();
+  chat.handoff.hidden = true;
+  if (!el) return chat.handoff.replaceChildren();
   chat.handoff.replaceChildren(
     h('span', { class: 'sx-handoff-text' }, `지금 사람이 필요해요 · 세금계산서 · ${r.counterparty.name}`),
-    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => {
-      openPanel({ kind: 'run', id: r.id });
-      chat.thread.querySelector(`[data-run="${r.id}"]`)?.scrollIntoView({ block: 'center' });
-    } }, '카드로 가기'),
+    h('button', { type: 'button', class: 'sx-btn sx-btn-quiet', 'data-act': 'handoff-go', onclick: () => cardOf()?.scrollIntoView({ block: 'center' }) }, '카드로 가기'),
   );
+  // 카드의 절반 이상이 대화 스크롤 안에 보이면 띠를 숨긴다. 카드가 다시 그려져 바뀌었으면(다른 카드 편집 등) 새 카드를 본다.
+  handoffSeen = new IntersectionObserver(
+    ([e]) => {
+      if (cardOf() !== e.target) return void queueMicrotask(renderHandoff);
+      chat.handoff.hidden = e.intersectionRatio >= 0.5;
+    },
+    { root: chat.scroll, threshold: [0, 0.5, 1] },
+  );
+  handoffSeen.observe(el);
 }
 
 function putRun(run) {
