@@ -7,6 +7,7 @@ import { accountCard, accountErrText, loginScreen } from './shell-account.js';
 import { bizEditStart, bizProfileCard } from './shell-biz.js';
 import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
+import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
@@ -831,6 +832,11 @@ async function ask(text, vat) {
     return;
   }
   if (r.kind === 'agent') return renderAgent(r);
+  // 세무사 꾸러미 요청: main이 그 달 꾸러미를 만들었다. 카드의 [꾸러미 열기]는 같은 달 꾸러미 화면으로 간다.
+  if (r.kind === 'pack') {
+    appendThread(h('div', { class: 'sx-app', 'data-pack-reply': r.pack.month }, h('p', {}, `${r.pack.label} 세무사 꾸러미를 만들었어요.`), packUi.chatCard(r.pack, (m) => (packUi.select(m), go('bundle')))));
+    return;
+  }
   // 대화 짧은 응대(main이 엔진 chat.respond로 받은 답): 글자는 텍스트 노드로만. 제안 작업 칩은 입력창을 채울 뿐이다(보내고 확인 카드를 거쳐야 시작).
   if (r.kind === 'chat') {
     const box = h('div', { class: 'sx-app', 'data-chat-reply': r.filtered ?? '' }, h('p', {}, r.text));
@@ -2073,9 +2079,8 @@ function settingsView() {
   );
 }
 
-/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-05 세무사 꾸러미 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
+/** 2차 배분 화면의 자리(D-04 사업용 카드 · D-06 급여대장). 라우팅만 있고 내용은 그 트랙이 붙인다. */
 const LATER = {
-  bundle: ['세무사 꾸러미', 'D-05', '이번 달 항목과 빠진 것, 미리보기·보내기가 여기에 들어와요.'],
   card: ['사업용 카드 내역', 'D-04', '홈택스 사업용 카드 사용내역과 [최신화]가 여기에 들어와요.'],
   payroll: ['급여대장', 'D-06', '직원 목록과 이번 달 급여대장이 여기에 들어와요.'],
 };
@@ -2085,7 +2090,9 @@ const laterView = (v) => () => {
 };
 // 받을 돈 화면(shell-bank.js). 그리기·상태는 그 모듈이 갖고, 여기서는 연결만 한다.
 const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bank' && render(), errText: (e) => errText(e), counterparties: () => state.cps, openCounterparty: null });
-const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: laterView('bundle'), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
+// 세무사 꾸러미 화면(shell-pack.js). 열면 고른 달 꾸러미를 main이 로컬 폴더·zip으로 만든다.
+const packUi = createPackScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bundle' && render(), errText: (e) => errText(e), today: () => localDate(state.today), railHead, listTable });
+const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: () => packUi.view(), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
 async function go(v) {
   if (state.view === v && v !== 'docs') return;
@@ -2099,6 +2106,7 @@ async function go(v) {
     state.cps = await call('counterparties.list');
     await bankUi.load();
   }
+  if (v === 'bundle') void packUi.load();
   // 문서함은 지금 목록으로 먼저 그리고, 보관함에서 다시 읽어 오면 다시 그린다(만료일·확인 필요는 엔진이 정하고, D-n은 렌더러가 오늘 날짜로 센다)
   if (v === 'docs') {
     // 발급한 세금계산서(B5): 원장·실행 이력을 지금 읽는다(main issued.list)
