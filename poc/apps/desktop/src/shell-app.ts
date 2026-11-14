@@ -15,6 +15,7 @@ import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/v
 import { execFile } from 'node:child_process';
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, shell as desktop } from 'electron';
 import { kstToday, verifyLocalApproval, verifyLocalAttestation } from './approval-gate.ts';
+import { CERT_DOCS, certInputsFor, type CertDocDef } from './cert-docs.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
 import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
@@ -1967,6 +1968,30 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       void runs.stop(r.id).catch((e: Error) => log.event('main.rehearsal_stop_failed', { error: e.message.slice(0, 60) }));
     }
   };
+  /**
+   * 도구 > 민원증명 예행(발급 안 함): 기본 용도·제출처로 run.startCert {rehearsal: true}. 엔진이 승인 카드 자리(s20)에서 스스로 멈추고 발급(s21)은 없다.
+   * 실행 카드 없이 엔진만 돈다. 결과는 engine.log run.rehearsal_report, 사람 차례에서 멈추면 rehearsal-snaps에 화면·요소 목록이 남는다.
+   */
+  let certRehearsal: string | null = null;
+  const certRehearse = async (doc: CertDocDef) => {
+    const runId = `run-${randomUUID().slice(0, 8)}`;
+    try {
+      if (runs.anyActive() || certRehearsal) throw new Error('busy');
+      certRehearsal = runId;
+      log.event('main.cert_rehearsal_started', { runId, playbook: doc.playbookId });
+      await host.control('run.begin', { runId, trigger: 'local' });
+      await host.rpc('run.startCert', { runId, playbookId: doc.playbookId, inputs: certInputsFor(doc, '', kstToday(Date.now())), rehearsal: true });
+    } catch (e) {
+      if (certRehearsal === runId) certRehearsal = null;
+      log.event('main.rehearsal_failed', { error: (e as Error).message.slice(0, 60) });
+    }
+  };
+  host.on('run', (ev: { runId?: string; type?: string; status?: string; code?: string }) => {
+    if (!certRehearsal || ev?.runId !== certRehearsal || ev.type !== 'end') return;
+    log.event('main.cert_rehearsal_end', { runId: ev.runId, status: ev.status ?? '', code: ev.code ?? '' });
+    void host.control('run.end', { runId: ev.runId }).catch(() => {});
+    certRehearsal = null;
+  });
   // 확대·축소 메뉴를 두지 않는다(렌더러 배율은 1, 바 자리는 DIP 고정). 접근성 배율은 Phase 1.
   Menu.setApplicationMenu(
     Menu.buildFromTemplate([
@@ -1976,7 +2001,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
         label: '도구',
         submenu: [
           { id: 'rehearsal', label: '홈택스 예행(발급 안 함)', click: () => void rehearse() },
-          { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
+          { label: '민원증명 예행(발급 안 함)', submenu: CERT_DOCS.map((d) => ({ id: `certRehearsal.${d.code}`, label: d.label, click: () => void certRehearse(d) })) },
+          {
+            id: 'rehearsalStop', label: '예행 중지', click: () => {
+              stopRehearsals();
+              if (certRehearsal) void host.rpc('run.stop', { runId: certRehearsal }).catch(() => {});
+            },
+          },
         ],
       },
       { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },

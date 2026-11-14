@@ -89,6 +89,46 @@ export class RehearsalReport {
   }
 }
 
+/** 페이지 안에서 도는 요소 목록 함수(rehearsalSnap). 보이는 것 위주로 최대 600개. */
+const DOM_INVENTORY = (): unknown => {
+  const vis = (e: Element) => {
+    const r = (e as HTMLElement).getBoundingClientRect?.();
+    return !!r && r.width > 0 && r.height > 0 && getComputedStyle(e).visibility !== 'hidden';
+  };
+  const t = (s: string | null | undefined, n = 60) => (s ?? '').replace(/\s+/g, ' ').trim().slice(0, n);
+  const sel = 'a, button, input, select, textarea, label, th, h1, h2, h3, h4, legend, [role], .w2window, [id$="_title"], [class*="title"]';
+  const out: unknown[] = [];
+  for (const e of document.querySelectorAll(sel)) {
+    if (out.length >= 600) break;
+    const v = vis(e);
+    const tag = e.tagName.toLowerCase();
+    if (!v && tag !== 'select') continue;
+    const x: Record<string, unknown> = { tag, id: e.id || undefined, cls: t(e.getAttribute('class'), 50) || undefined, role: e.getAttribute('role') || undefined, vis: v };
+    const label = e.getAttribute('aria-label') || e.getAttribute('title');
+    if (label) x.label = t(label);
+    if (tag === 'input') {
+      const i = e as HTMLInputElement;
+      x.type = i.type;
+      x.name = i.name || undefined;
+      if (i.type === 'radio' || i.type === 'checkbox') {
+        x.checked = i.checked;
+        const l = i.id ? document.querySelector(`label[for="${CSS.escape(i.id)}"]`) : null;
+        x.text = t(l?.textContent ?? i.parentElement?.textContent ?? '');
+      }
+      x.disabled = i.disabled || undefined;
+    } else if (tag === 'select') {
+      const s = e as HTMLSelectElement;
+      x.options = [...s.options].slice(0, 40).map((o) => t(o.textContent, 40));
+      x.selected = t(s.selectedOptions[0]?.textContent, 40);
+      x.disabled = s.disabled || undefined;
+    } else if (tag !== 'textarea') {
+      x.text = t((e as HTMLElement).innerText ?? e.textContent, tag === 'label' || tag === 'th' ? 40 : 80);
+    }
+    out.push(x);
+  }
+  return { url: location.pathname + location.search.replace(/([?&](?!w2xPath|tmIdx|tm2lIdx|tm3lIdx|menuCd)[^=&]+)=[^&]*/g, '$1=_'), items: out };
+};
+
 /** 화면 기록에 남기는 쿼리 키(메뉴·화면 위치만). 그 밖의 키는 값이 개인값일 수 있어 버린다. */
 const SNAP_QUERY_KEYS = new Set(['w2xPath', 'tmIdx', 'tm2lIdx', 'tm3lIdx', 'menuCd', 'screenId']);
 
@@ -110,4 +150,7 @@ export async function rehearsalSnap(page: Page, dir: string, runId: string, at: 
   }
   const meta = { runId, phase: at.phase, code: at.code ?? '', origin: u.origin, path: u.pathname, query, title, shot, at: new Date().toISOString() };
   await fs.writeFile(path.join(dir, `snap-${runId}.json`), JSON.stringify(meta, null, 1), { mode: 0o600 });
+  // 패키지 맞춤용 요소 목록(예행 전용, 로컬 파일만): 누를 것·고를 것·칸 이름표. 입력 칸의 값은 넣지 않는다(select·radio는 고른 선택지 이름만).
+  const dom = await page.evaluate(DOM_INVENTORY).catch(() => null);
+  if (dom) await fs.writeFile(path.join(dir, `snap-${runId}.dom.json`), JSON.stringify(dom), { mode: 0o600 });
 }
