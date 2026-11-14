@@ -55,12 +55,12 @@ SHA=$(git -C "$REPO" rev-parse --verify "$REF^{commit}") || die "커밋을 찾�
 [ $SIGN_ONLY = 1 ] || git -C "$REPO" merge-base --is-ancestor "$SHA" origin/main || die "${SHA:0:8}은 origin/main에 없는 커밋이다"
 SRC=$WORK/src
 if [ -d "$SRC" ]; then
-  [ "$(git -C "$SRC" rev-parse HEAD)" = "$SHA" ] || die "$SRC가 다른 커밋이다. 폴더를 지우거나(git -C $REPO worktree remove $SRC) 판을 올린다"
+  [ "$(git -C "$SRC" rev-parse HEAD)" = "$SHA" ] || die "${SRC}가 다른 커밋이다. 폴더를 지우거나(git -C $REPO worktree remove $SRC) 판을 올린다"
 else
   mkdir -p "$WORK"
   git -C "$REPO" worktree add -q --detach "$SRC" "$SHA"
 fi
-[ -e "$OUT" ] && die "$OUT이 이미 있다. 같은 판을 다시 만들려면 그 폴더를 옮기거나 지운다"
+[ -e "$OUT" ] && die "${OUT}이 이미 있다. 같은 판을 다시 만들려면 그 폴더를 옮기거나 지운다"
 say "[①] 원본 ${SHA:0:8} → $SRC"
 
 # ② 빌드·공증·스테이플(scripts/package-win.mjs --mac: 앱은 electron-builder가, dmg는 notarytool이 공증한다)
@@ -110,7 +110,7 @@ for from in from-dmg from-zip; do
   [[ " $archs " == *" x86_64 "* && " $archs " == *" arm64 "* ]] || die "$from 앱이 universal이 아니다($archs)"
   codesign --verify --deep --strict "$app" || die "$from 앱 서명 확인 실패"
   team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
-  [ "$team" = "$TEAM" ] || die "$from 앱 팀 ID가 $team이다"
+  [ "$team" = "$TEAM" ] || die "$from 앱 팀 ID가 ${team}이다"
   a=$(spctl --assess --type execute -vv "$app" 2>&1 || true)
   printf '%s\n' "$a" >> "$V"
   if [ $SIGN_ONLY = 1 ]; then
