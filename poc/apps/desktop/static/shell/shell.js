@@ -9,7 +9,7 @@ import { createBankAuto } from './shell-bank-auto.js';
 import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
-import { agoText, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -980,7 +980,19 @@ function putRun(run) {
 }
 
 function renderRun(run) {
-  const el = taskCard(run, { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps });
+  const cardAct = { ...act, editing: state.editing, editingFields: state.editingFields, editingCp: state.editingCp, counterparties: state.cps };
+  // 여러 건 묶음은 한 카드(data-batch)로 그린다. 건은 지금 받은 값(run)과 들고 있는 나머지 건을 순번대로.
+  if (run.batch) {
+    const mates = [...state.runs.values()].filter((x) => x.batch?.id === run.batch.id && x.id !== run.id);
+    const all = [...mates, run].sort((a, b) => a.batch.index - b.batch.index);
+    const el = batchCard(all, cardAct);
+    const old = chat.thread.querySelector(`[data-batch="${run.batch.id}"]`) ?? chat.thread.querySelector(`[data-run="${run.id}"]`);
+    if (old) old.replaceWith(el);
+    else appendThread(el);
+    if (chat.thread.lastElementChild === el || run.status === 'waiting') scrollToEnd();
+    return;
+  }
+  const el = taskCard(run, cardAct);
   const old = chat.thread.querySelector(`[data-run="${run.id}"]`);
   if (old) old.replaceWith(el);
   else appendThread(el);
@@ -1080,7 +1092,7 @@ async function boardGo(t) {
   if (t.to === 'run') {
     if (state.view !== 'chat') await go('chat');
     openPanel({ kind: 'run', id: t.id });
-    document.querySelector(`[data-run="${CSS.escape(t.id)}"]`)?.scrollIntoView({ block: 'center' });
+    (document.querySelector(`[data-run="${CSS.escape(t.id)}"]`) ?? document.querySelector(`[data-batch-row="${CSS.escape(t.id)}"]`))?.scrollIntoView({ block: 'center' });
   } else if (t.to === 'doc') {
     state.docFilter = 'all';
     await go('docs');
@@ -2430,6 +2442,8 @@ function onActivated(x, y) {
 
 window.sax.onEvent((ev) => {
   if (ev.type === 'activated') return onActivated(ev.x, ev.y);
+  if (ev.type === 'open' && ev.to === 'run' && typeof ev.id === 'string') return void boardGo({ to: 'run', id: ev.id });
+  if (ev.type === 'say' && typeof ev.text === 'string') return void appendThread(h('div', { class: 'sx-app' }, ev.text.slice(0, 300)));
   if (ev.type === 'bankAuto') return bankAuto.onEvent(ev.event);
   if (ev.type === 'account') {
     state.account = ev.account;
@@ -2492,7 +2506,9 @@ window.sax.onEvent((ev) => {
     const prev = state.runs.get(ev.run.id);
     putRun(ev.run);
     if (prev?.status !== 'waiting' && ev.run.status === 'waiting' && state.view === 'chat') openPanel({ kind: 'run', id: ev.run.id });
-    if (prev?.status !== 'done' && ev.run.status === 'done') appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
+    // 여러 건 묶음은 마지막 건이 끝날 때 한 번만(남은 건이 진행 중이거나 승인받은 초안이면 아직이다)
+    const batchOpen = ev.run.batch && [...state.runs.values()].some((x) => x.batch?.id === ev.run.batch.id && (['preparing', 'turn', 'waiting', 'issuing'].includes(x.status) || (x.status === 'draft' && x.batch.approved && !x.batch.skipped && !x.batch.halted)));
+    if (prev?.status !== 'done' && ev.run.status === 'done' && !batchOpen) appendThread(h('div', { class: 'sx-app' }, '다음 일을 말해 주세요.'));
   } else if (ev.type === 'bar') {
     // 승인 카드 자리 비우기: 카드 위치·높이는 main이 정하고(ADR-021 결정 7), 렌더러는 그 높이만큼 자리를 비울 뿐이다.
     state.barActive = ev.active;

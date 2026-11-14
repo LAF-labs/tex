@@ -394,6 +394,14 @@ export interface RunView {
   noChrome?: boolean;
   /** 홈택스 예행(메뉴 도구 > 홈택스 예행): 엔진이 첫 게이트에서 스스로 멈춘다. 승인 바를 띄우지 않는다. */
   rehearsal?: boolean;
+  /**
+   * 여러 건 한 번에(한 카드, [승인] 한 번). index는 0부터, count는 묶음 건수. 실행은 엔진에서 한 건씩 차례로 돈다.
+   * approved: 묶음 승인을 받았다(처음 승인 카드의 클릭). 뒤 건은 홈택스 되읽기 값이 그때 본 값과 같을 때만 바 없이 이어 간다.
+   * halted: 묶음을 세웠다(남은 건은 한 건씩 승인 카드). skipped: 이 건은 시작하지 못해 건너뛰었다.
+   */
+  batch?: { id: string; index: number; count: number; approved?: boolean; halted?: boolean; skipped?: boolean };
+  /** 앱이 다시 켜지거나 맥이 깨어난 뒤 같은 값으로 다시 시작한 실행(앞 실행 id). 카드에 "이어서 해요" 한 줄. */
+  resumedFrom?: string;
   writeDate: string;
   auth: string;
   steps: Array<{ label: string; state: StepState; note?: string }>;

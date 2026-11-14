@@ -11,6 +11,7 @@ export const COMMANDS = [
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId', 'profile.setCertName',
   'counterparty.setItems', 'counterparty.getItems',
+  'resume.save', 'resume.take',
 ] as const;
 /**
  * main만 부르는 명령(렌더러에 열지 않는다). 새 명령은 렌더러에 열리는 것이 기본이므로 main 전용이면 여기에 더한다.
@@ -24,6 +25,8 @@ export const MAIN_ONLY: readonly (typeof COMMANDS)[number][] = [
   'consent.record', 'consent.latest', 'consent.attach',
   'onboarding.load', 'onboarding.save', 'onboarding.clear',
   'profile.setPortalLoginId', 'profile.setCertName',
+  // 셸 이어 하기(run-resume.ts): 커밋 전 일의 거래처 id·금액·품목. 암호화된 DB settings에 두고 main만 쓴다.
+  'resume.save', 'resume.take',
 ];
 /**
  * 급여대장·세무사 꾸러미·S-06 조회와 명령(팀장 결정 2026-11-06, ADR-031·032·034). 처리는 @sax/bundle BundleService(엔진 프로세스)다.
