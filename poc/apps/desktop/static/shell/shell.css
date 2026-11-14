@@ -426,7 +426,9 @@ td.is-attention { color: var(--attention, #9a6a00); font-weight: 600; }
 .issued-state { font-weight: 600; margin-right: var(--space-2); }
 .issued-state.is-attention { color: var(--attention); }
 .issued-state.is-muted { color: var(--ink-3); }
-.issued-note { display: block; }
+.issued-note { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.issued-why { max-width: 0; width: 40%; }
+.issued-tried { display: flex; justify-content: flex-start; margin-top: var(--space-2); }
 .issued-more { display: flex; justify-content: center; }
 
 /* 사업자 확인 결과는 팝업·토스트 대신 그 화면 안 글로(대표 2026-11-13). 정상은 차분한 글, 아니면 빨간 글. 디자인 토큰에 빨강이 없어 여기서만 둔다. */

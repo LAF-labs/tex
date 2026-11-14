@@ -121,6 +121,8 @@ export interface IrRunInput {
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
   history: (rb: Readonly<Record<string, string>>, card: string) => GateHistory | null;
+  /** 게이트 앞 readback이 대조를 다 통과한 뒤 한 번: 카드 칸 밖의 readback 값까지(공급자·거래처 칸 자동 채움). 실행 흐름은 바꾸지 않는다. */
+  readbackFixed?: (values: ReadonlyMap<string, string>, card: string) => void;
   /** 사람 대기 [직접 발급함]의 X 원장 행 재료(무장 전이라 게이트 actionHash가 없다, RunService가 실행 초안으로 만든다). */
   manualRow: (stepId: string) => ArmRow | null;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
@@ -641,6 +643,7 @@ export class IrRun {
         const h = i.history(rb, g.card);
         if (!h) return null;
         this.history = h;
+        i.readbackFixed?.(scope.readback, g.card);
         return { readback: rb, reserved: h.reserved };
       },
       preGate: async (g): Promise<ActResult> => {

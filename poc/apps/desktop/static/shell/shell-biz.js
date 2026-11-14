@@ -9,7 +9,7 @@ import { btn, fmtBiz, h, kv, note } from './shell-views.js';
 export const BIZ_EDIT_MAX = { name: 100, bizNo: 20, rep: 100, bizType: 100, bizItem: 100, address: 200, email: 320 };
 /** main profile-edit.ts BIZ_NO_CHANGE_NOTE와 같은 문장. */
 export const BIZ_NO_CHANGE_NOTE = '사업자번호를 바꾸면 홈택스에 로그인한 사업자와 달라질 수 있어요. 다르면 발급 때 멈추고 알려 드려요.';
-export const BIZ_NAME_MISSING_NOTE = '상호가 비어 있어요. [수정]에서 상호를 넣어 주세요.';
+export const BIZ_NAME_MISSING_NOTE = '상호가 비어 있어요. 다음 발급 때 홈택스 화면에서 채워요. 지금 넣으려면 [수정]을 눌러 주세요.';
 export const BIZ_EDIT_ERR = {
   name_required: '상호를 입력해 주세요.',
   bad_biz_no: '사업자번호가 맞지 않아요. 10자리를 다시 확인해 주세요.',
@@ -47,25 +47,26 @@ export function bizProfileCard(ctx) {
 function viewCard(ctx) {
   const { b } = ctx;
   const has = !!b.bizNo;
+  const ht = (k) => (b.fromHometax?.includes(k) ? { tag: '홈택스에서 가져옴' } : {});
   return h(
     'article',
     { class: 'sx-card', 'data-biz-card': 'view' },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, `사업자 · ${b.name}`), btn(has ? '수정' : '등록', ctx.onEdit, 'sx-btn-quiet', { 'data-act': 'biz-edit' })),
     kv(
       [
-        ['상호', has && !b.nameMissing ? b.name : null],
+        ['상호', has && !b.nameMissing ? b.name : null, ht('name')],
         ['사업자번호', fmtBiz(b.bizNo), { mono: true }],
-        ['대표자', b.rep || null],
-        ['업태', b.bizType || null],
-        ['종목', b.bizItem || null],
-        ['주소', b.address || null],
-        ['이메일', b.email || null],
+        ['대표자', b.rep || null, ht('rep')],
+        ['업태', b.bizType || null, ht('bizType')],
+        ['종목', b.bizItem || null, ht('bizItem')],
+        ['주소', b.address || null, ht('address')],
+        ['이메일', b.email || null, ht('email')],
         ['발급 인증', b.auth, ctx.authReopen ? { copy: ctx.reopenAuth, copyLabel: '바꾸기' } : {}],
       ],
       true,
     ),
     has && b.nameMissing ? note(BIZ_NAME_MISSING_NOTE, true) : null,
-    h('div', { class: 'sx-source' }, '이 PC의 내 사업장 정보 · [수정]으로 고칠 수 있어요'),
+    h('div', { class: 'sx-source' }, b.fromHometax?.length ? '빈 칸은 발급할 때 홈택스 화면에서 채워요 · [수정]으로 고칠 수 있어요' : '이 PC의 내 사업장 정보 · [수정]으로 고칠 수 있어요'),
   );
 }
 

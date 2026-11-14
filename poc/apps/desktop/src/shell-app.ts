@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
-import type { Counterparty as DbCounterparty, Profile as DbProfile } from '@sax/db';
+import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbProfile } from '@sax/db';
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
@@ -285,10 +285,14 @@ export interface Shell {
 }
 
 
+/** DB 프로필 칸 → 내 사업장 화면 칸 이름(shell-biz.js FIELDS). */
+const SHELL_BIZ_KEY: Record<PortalProfileKey, NonNullable<Profile['fromHometax']>[number]> = { displayName: 'name', repName: 'rep', bizType: 'bizType', bizItem: 'bizItem', address: 'address', email: 'email' };
+
 /** 발급 인증이 비어 있는 옛 프로필도 공동인증서로 보인다(엔진도 그 값으로 서명한다, 대표 지시 2026-11-14). */
 function profileView(p: DbProfile): Profile {
   const unnamed = p.kind === 'business' && nameMissing(p);
-  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : SIGN_LABEL.cert };
+  const fromHometax = p.fromPortal.map((k) => SHELL_BIZ_KEY[k]);
+  return { kind: p.kind, name: unnamed ? NO_BUSINESS.name : p.displayName, ...(unnamed ? { nameMissing: true } : {}), ...(fromHometax.length ? { fromHometax } : {}), bizNo: p.bizNo ?? undefined, rep: p.repName ?? undefined, bizType: p.bizType ?? undefined, bizItem: p.bizItem ?? undefined, address: p.address ?? undefined, email: p.email ?? '', auth: p.signMethod && Object.hasOwn(SIGN_LABEL, p.signMethod) ? SIGN_LABEL[p.signMethod as keyof typeof SIGN_LABEL] : SIGN_LABEL.cert };
 }
 
 /** DB 거래처 → 셸 화면 모델. 품목은 저장 품목(counterparty.getItems)의 첫 이름, 없으면 fixture 시연 값(itemHints). */
@@ -541,7 +545,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       bundle: sample ? sample.bundle(today) : null,
       cardFetchedOn: sample?.settings.cardFetchedOn ?? null,
       cardEnabled: !!sample,
-      setup: [...onboardingTodos(onb?.state ?? null), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
+      // 건너뛴 거래처 등록은 거래처가 생기면 할 일이 아니다(발급 실행·거래처 화면 어느 쪽으로 넣었든)
+      setup: [...onboardingTodos(onb?.state ?? null).filter((t) => t.id !== 'counterparties' || !cps.length), ...(profile === 'business' && !chromeReady() ? [{ id: 'chrome', label: SETUP_LABEL.chrome, view: 'chrome' as const }] : []), ...(securityMissing() ? [{ id: 'security', label: SETUP_LABEL.security, view: 'security' as const }] : [])],
       // 받을 돈 카드(대표 결정 ⑤, ADR-033 카드 4종 → 6종 개정 전 제안). 판 뒤에 붙인다.
       money,
     });
@@ -582,8 +587,14 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     send({ type: 'bar', active: false, reason });
     if (embedded && browserAvailable) sendBrowserState();
   });
+  // 홈택스 화면에서 알게 된 값(거래처 확인·공급자 칸)은 승인 카드가 뜰 때와 실행이 끝날 때 장부에 있다. 그때 다시 읽는다.
+  const settled = new Map<string, string>();
   runs.on('update', (run) => {
     send({ type: 'run', run });
+    if (['waiting', 'done', 'stopped', 'attention'].includes(run.status) && settled.get(run.id) !== run.status) {
+      settled.set(run.id, run.status);
+      void refresh().then(pushBoard, () => {});
+    }
     pushBoard();
   });
   runs.on('doc', (doc) => {
@@ -1756,6 +1767,10 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'counterparties.list': async () => {
       await refresh();
       return cps;
+    },
+    'profiles.list': async () => {
+      await refresh();
+      return profiles();
     },
     // 정부24 후보 파일은 아직 견본이다(다운로드 폴더를 읽지 않는다). 제품은 후보를 보이지 않는다.
     'g24.candidates': (p) => (sample ? sample.g24Candidates(g24Doc(p.doc), Number(p.startedAt)) : []),

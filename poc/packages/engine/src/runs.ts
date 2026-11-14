@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type Profile } from '@sax/db';
+import { GateRepo, Ledger, LedgerError, RunJournal, RunRepo, type ArmRow, type Db, type PortalProfileKey, type Profile } from '@sax/db';
 import type { DiagValue, EventLog } from '@sax/platform';
 
 import type { Page } from 'playwright-core';
@@ -555,13 +555,32 @@ export class RunService extends EventEmitter {
       ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
       ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
       secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
-      portalNotice: (n) => this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok }),
+      portalNotice: (n) => {
+        if (n.ok && n.key === BIZNO_OK_KEY) this.fromPortal(a.runId, 'counterparty.verified', () => (this.d.data.counterparties.setVerification(inputs.counterpart.id, BIZNO_OK_STATUS), ['verifiedStatus']));
+        this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok });
+      },
+      readbackFixed: (rb, card) => {
+        if (card !== 'invoice.confirm') return;
+        const f = portalFill(rb);
+        this.fromPortal(a.runId, 'profile.filled_from_portal', () => this.d.data.profiles.fillFromPortal(profile.id, f.profile));
+        this.fromPortal(a.runId, 'counterparty.filled_from_portal', () => this.d.data.counterparties.fillFromPortal(inputs.counterpart.id, f.counterparty));
+      },
       ...(this.d.secretTtlMs !== undefined ? { secretTtlMs: this.d.secretTtlMs } : {}),
     });
     a.ir = run;
     const r = await run.run();
     a.armed = run.armed;
     return { status: r.status, ...(r.maintenanceUntil ? { maintenanceUntil: r.maintenanceUntil } : {}), ...(r.code ? { code: r.code } : {}), ...(r.approvalNo ? { approvalNo: r.approvalNo } : {}), ...(r.mailConfirmed !== undefined ? { mailConfirmed: r.mailConfirmed } : {}), ...(r.stoppedAt ? { stoppedAt: r.stoppedAt } : {}) };
+  }
+
+  /** 홈택스 화면에서 알게 된 값을 장부에 쓴다. 실패해도 실행은 그대로 간다. 저널에는 칸 이름만 남긴다. */
+  private fromPortal(runId: string, type: string, write: () => readonly string[]): void {
+    try {
+      const keys = write();
+      if (keys.length) this.journal.append(runId, type, { fields: keys.join(',') });
+    } catch (e) {
+      this.d.log.event('run.portal_fill_failed', { runId, type, err: (e as Error)?.message?.slice(0, 40) ?? 'unknown' });
+    }
   }
 
   /** [중지]·엔진 밖 정지 사유가 있으면 던진다(커밋 구간 밖에서만 부른다). */
@@ -909,5 +928,20 @@ export function irInputs(inputs: RunInputs, cp: { repName?: string | null; addre
     counterpart, amounts: inputs.amounts, items: inputs.items, issueDate: inputs.issueDate, issueDay: inputs.issueDate.slice(8, 10),
     ...(inputs.email ? { email: inputs.email } : {}),
     ...(inputs.email && at > 0 ? { emailLocal: inputs.email.slice(0, at), emailDomain: inputs.email.slice(at + 1) } : {}),
+  };
+}
+
+/** H-01 s13a: 홈택스 [확인]이 "정상적인 사업자번호입니다."를 보였다(패키지 strings 키). */
+const BIZNO_OK_KEY = 'counterpart.bizNoOk';
+const BIZNO_OK_STATUS = '정상';
+
+/** readback 값 → 비어 있으면 채울 프로필(공급자)·거래처 칸. 패키지가 읽지 않은 칸은 빈 값이라 채우지 않는다. */
+export function portalFill(rb: ReadonlyMap<string, string>): { profile: Partial<Record<PortalProfileKey, string>>; counterparty: { repName?: string; address?: string } } {
+  const g = (k: string) => rb.get(k) ?? '';
+  const id = g('supplierEmailId');
+  const dom = g('supplierEmailDomain');
+  return {
+    profile: { displayName: g('supplierName'), repName: g('supplierRepName'), bizType: g('supplierBizType'), bizItem: g('supplierBizItem'), address: g('supplierAddress'), email: g('supplierEmail') || (id && dom ? `${id}@${dom}` : '') },
+    counterparty: { repName: g('counterpartRepName'), address: g('counterpartAddress') },
   };
 }

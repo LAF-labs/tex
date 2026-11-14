@@ -6,7 +6,7 @@
 // - 실행 중이면 저장하지 않는다(발급 중 공급자 정보가 바뀌지 않게). 고친 기록(ProfileEditLog)에는 어느 칸을 고쳤는지만 남긴다(값 없음).
 import fs from 'node:fs';
 import path from 'node:path';
-import { isValidBizNo, type Profile as DbProfile } from '@sax/db';
+import { isValidBizNo, nameMissing, type Profile as DbProfile } from '@sax/db';
 import { BIZ_FIELD_KEYS, BIZ_FIELD_MAX, emailOk, type BizCheck, type BizFields } from './onboarding.ts';
 
 export type BizFieldKey = (typeof BIZ_FIELD_KEYS)[number];
@@ -18,14 +18,7 @@ export const BIZ_NO_CHANGE_NOTE = '사업자번호를 바꾸면 홈택스에 로
 const onlyDigits = (s: string) => s.replace(/[^0-9]/g, '');
 const clip = (s: unknown, n: number) => (typeof s === 'string' ? s.trim().slice(0, n) : '');
 
-/**
- * 상호가 비었거나 사업자번호를 이름으로 저장한 프로필인가(0.1.6: O-02가 상호 없이 확정되면 displayName = 번호였다).
- * 화면은 번호를 이름처럼 보이지 않고 중립 표기("내 사업장")를 쓰고, 고치기 폼의 상호 칸은 비워 둔다.
- */
-export function nameMissing(p: Pick<DbProfile, 'displayName' | 'bizNo'>): boolean {
-  const n = p.displayName.trim();
-  return !n || (!!p.bizNo && !/[^0-9\s-]/.test(n) && n.replace(/[^0-9]/g, '') === p.bizNo);
-}
+export { nameMissing };
 
 /** DB 프로필 → 화면 칸. 없으면 빈 칸. 번호로 저장된 상호는 빈 칸(채우라고 묻는다). */
 export function bizFieldsOf(p: DbProfile | undefined | null): BizFields {
