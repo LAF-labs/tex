@@ -71,7 +71,7 @@ Windows 실기기 확인(보류): 설치 경로 `%LOCALAPPDATA%\Programs\Soverei
 
 ## 6. macOS Developer ID 서명·공증 (고객 PoC, 2026-11-11)
 
-지금 상태(2026-11-12): Developer ID Application 인증서가 발급됐다(주체 `Developer ID Application: yanggyun kim (JA55KTZH34)`, **팀 ID `JA55KTZH34`**, 발급자 Developer ID Certification Authority G2, 만료 2027-12-11). 대표 Mac 키체인에 설치하고 공증 프로필을 저장하기 전까지 `pnpm package:mac`은 **애드혹 서명**(`identity: '-'`)이다. 키체인의 `Apple Development: yanggyun kim (BKDQVFVVU2)` 괄호 값은 개인 식별자이지 팀 ID가 아니며, 빌드는 `Developer ID Application:` 신원만 고른다(팀 ID를 코드에 두지 않는다). 받은 dmg는 Gatekeeper가 막고(공증 없음), 지정 요구사항이 cdhash라 새 판마다 키체인 허용 창이 다시 뜬다. Apple Silicon(arm64)만 빌드한다(Intel Mac 미지원, 대표 결정 2026-11-11).
+지금 상태(2026-11-12): Developer ID Application 인증서가 발급됐다(주체 `Developer ID Application: yanggyun kim (JA55KTZH34)`, **팀 ID `JA55KTZH34`**, 발급자 Developer ID Certification Authority G2, 만료 2027-12-11). 대표 Mac 키체인에 설치하고 공증 프로필을 저장하기 전까지 `pnpm package:mac`은 **애드혹 서명**(`identity: '-'`)이다. 키체인의 `Apple Development: yanggyun kim (BKDQVFVVU2)` 괄호 값은 개인 식별자이지 팀 ID가 아니며, 빌드는 `Developer ID Application:` 신원만 고른다(팀 ID를 코드에 두지 않는다). 받은 dmg는 Gatekeeper가 막고(공증 없음), 지정 요구사항이 cdhash라 새 판마다 키체인 허용 창이 다시 뜬다. universal(Apple Silicon·Intel 한 앱)로 빌드한다(부장 지시 2026-11-14).
 
 사람이 할 일: `sovereign-ax/install-guide/CUSTOMER-DIST.md` §4-2(대표는 팀 구성원이라 Developer ID 인증서는 계정 소유자가 CSR로 발급, 공증 자격은 `xcrun notarytool store-credentials <프로필>`을 대표가 직접). 자격 값은 키체인에만 있고 빌드는 **프로필 이름만** 받는다.
 

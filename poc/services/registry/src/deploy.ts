@@ -1,7 +1,7 @@
 // 레지스트리 함수 배포(Vercel, tax.laf-co.com, 팀장 결정 2026-11-06). 계정·게이트웨이 함수와 실패 영역을 나눈다:
 // 레지스트리 구성이 없거나 틀려도 로그인·게이트웨이는 그대로 돈다.
 // - 공개 정적 GET(/registry/*·/policy/*·/packages/*·/releases/*)은 이 함수를 거치지 않는다: Vercel 외부 재작성이 공개 버킷으로 보낸다.
-// - 이 함수(api/registry)는 투명성 로그 GET(/registry/log/*)과 게시 PUT(/admin/v1/*)만 받는다. 그 밖은 404.
+// - 이 함수(api/registry)는 투명성 로그 GET(/registry/log/*), 처음 설치 주소 GET /download와 게시 PUT(/admin/v1/*)만 받는다. 그 밖은 404.
 // - 정리 함수(api/registry-cron)는 타임스탬프 자동 재서명(resign.ts)을 한다.
 // - 서명 의식 전이라 TRUST_ROOT_JSON이 없으면 두 함수 모두 503 registry.unavailable이다. 타임스탬프 키의 공개키가 핀 고정 timestamp 키와 다르거나
 //   다른 역할 키와 같으면 기동을 거부한다(logSigningKey, config_REGISTRY_LOG_SIGNING_KEY → 503, 로그에는 설정 이름만).
@@ -48,7 +48,7 @@ const reply = (res: http.ServerResponse, status: number, body: unknown) => {
 
 /** 이 함수가 받는 경로: 투명성 로그 GET과 게시 PUT. 공개 정적 파일은 버킷 재작성으로 간다 */
 export function registryFunctionPath(method: string, pathname: string): boolean {
-  if (method === 'GET') return pathname.startsWith('/registry/log/');
+  if (method === 'GET') return pathname.startsWith('/registry/log/') || pathname === '/download';
   if (method === 'PUT') return pathname.startsWith('/admin/v1/');
   return false;
 }
