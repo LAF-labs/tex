@@ -70,13 +70,16 @@ const fmtBiz = (b: string) => `${b.slice(0, 3)}-${b.slice(3, 5)}-${b.slice(5)}`;
 /** select: value는 코드, 이름은 선택지. 첫 선택지는 「선택」(값 없음). */
 const select = (id: string | null, label: string, name: string, options: readonly string[], extra = '') =>
   `<label${id ? ` for="${id}"` : ''}>${esc(label)}</label><select ${id ? `id="${id}" ` : ''}name="${name}" aria-label="${esc(label)}" ${extra}><option value="">선택</option>${options.map((o, i) => `<option value="${String(i + 1).padStart(2, '0')}">${esc(o)}</option>`).join('')}</select>`;
-/** 라디오 묶음: 실화면처럼 역할 없는 div 안 라디오(라디오마다 aria-label). 처음 고른 것이 checked다. */
+/**
+ * 라디오 묶음: 실화면(run-6e212c37)처럼 역할 없는 div 안 라디오. 묶음 머리 이름표는 첫 라디오에 붙어(접근성 이름 「발급유형 한글증명」),
+ * 선택지 글은 title에 있다. 처음 고른 것이 checked다.
+ */
 const radios = (id: string, label: string, name: string, options: readonly string[], checked: string) =>
-  `<div id="${id}" title="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}" aria-label="${esc(o)}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
+  `<label for="${id}_input_0">${esc(label)}</label><div id="${id}" title="${esc(label)}">${options.map((o, i) => `<input type="radio" id="${id}_input_${i}" name="${name}" value="${i}" title="${esc(o)}"${o === checked ? ' checked' : ''}><label for="${id}_input_${i}">${esc(o)}</label>`).join('')}</div>`;
 /** 표시 글(실화면 「기본 인적 사항」의 p, 역할 없음) */
 const disp = (id: string, value: string) => `<p id="${id}">${esc(value)}</p>`;
 const shown = (label: string, value: string, id?: string) => `<label>${esc(label)} <input type="text" readonly ${id ? `id="${id}" ` : ''}aria-label="${esc(label)}" value="${esc(value)}"></label>`;
-const page = (body: string, crumb = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><a id="mf_wfHeader_hdGroup001" href="/">국세청 홈택스</a>${crumb ? `<span id="mf_wfHeader_spn_third">${esc(crumb)}</span>` : ''}<main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
+const page = (body: string, crumb = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>국세청 홈택스</title></head><body><div id="mf_wrap"><a id="mf_wfHeader_hdGroup001" href="/">국세청 홈택스</a>${crumb ? `<strong id="mf_wfHeader_spn_third">${esc(crumb)}</strong>` : ''}<main aria-label="홈택스"><a href="/">홈</a>${body}</main></div></body></html>`;
 
 const ALERT = '<div role="dialog" aria-label="알림" class="w2window w2popup_window msg">레이어 팝업 레이어팝업시작 알림 해당 화면은 개인사업자는 이용할 수 없습니다. 레이어팝업끝</div>';
 

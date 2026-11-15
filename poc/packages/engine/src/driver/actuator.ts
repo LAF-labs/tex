@@ -212,7 +212,8 @@ export class PlaywrightActuator implements Actuator {
       const group = await h.evaluate((el) => el instanceof Element && !(el instanceof HTMLSelectElement) && (el.getAttribute('role') === 'radiogroup' || !!el.querySelector('input[type="radio"]')));
       if (group) {
         const ix = await h.evaluate((el, label) => {
-          const name = (r: HTMLInputElement) => (r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
+          // 홈택스(WebSquare)는 첫 라디오에 묶음 머리 이름표를 붙인다(이름 「발급유형 한글증명」). 선택지 글은 title에 그대로 있다(실화면 run-6e212c37)
+          const name = (r: HTMLInputElement) => (r.getAttribute('title') ?? r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '').normalize('NFKC').replace(/\s+/g, ' ').trim();
           const hit = [...(el as Element).querySelectorAll<HTMLInputElement>('input[type="radio"]')].map((r, i) => (name(r) === label ? i : -1)).filter((i) => i >= 0);
           return hit.length === 1 ? hit[0]! : -1;
         }, option.normalize('NFKC').replace(/\s+/g, ' ').trim());

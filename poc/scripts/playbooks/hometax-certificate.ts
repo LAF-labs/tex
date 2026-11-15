@@ -197,7 +197,7 @@ function formEntries(doc: CertDoc): Record<string, TplEntry> {
     entry: { candidates: [...(css ? [{ kind: 'css' as const, value: css }] : []), role(r, name)], role: r, namePattern: lit(name), landmark: FORM, commits: false, fieldKey, ...(inputType ? { inputType } : {}), ...extra },
     ...(capture ? { capture } : {}),
   });
-  // 표시 글 요소의 역할: p는 paragraph, span·div는 generic(실화면 요소 목록의 태그)
+  // 표시 글 요소의 역할: p는 paragraph, strong은 strong, span·div는 generic(실화면 요소 목록의 태그, 3차 run-6e212c37)
   const shown = (css: string, fieldKey: string, landmark: string, role = 'generic'): TplEntry => ({ entry: { candidates: [{ kind: 'css', value: css }], role, namePattern: '^$', landmark, commits: false, fieldKey, inputType: 'text' } });
   const radios = (css: string, fieldKey: string, extra: Partial<SelectorEntry> = {}): TplEntry => ({ entry: { candidates: [{ kind: 'css', value: css }], role: 'generic', namePattern: '^$', landmark: FORM, commits: false, fieldKey, inputType: 'radio', ...extra } });
   const out: Record<string, TplEntry> = {
@@ -207,7 +207,7 @@ function formEntries(doc: CertDoc): Record<string, TplEntry> {
     [TITLE]: { entry: { candidates: [role('heading', doc.formTitle)], role: 'heading', namePattern: lit(doc.formTitle), landmark: FORM, commits: false } },
     // 서류·신청인은 입력 칸이 아니라 화면 표시다(신청인 사업자번호는 로그인에서 온다)
     // 화면 표시 칸(2026-11-14 실화면 run-3f242cd5 요소 목록). 민원명은 머리말 경로의 마지막 칸, 신청인은 「기본 인적 사항」의 표시 글
-    'hometax.cert.form.docName': shown('#mf_wfHeader_spn_third', 'certDoc', 'hometax.cert.form.docName'),
+    'hometax.cert.form.docName': shown('#mf_wfHeader_spn_third', 'certDoc', 'hometax.cert.form.docName', 'strong'),
     'hometax.cert.form.applicantBizNo': shown('#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscBsno', 'supplierBizNo', FORM, 'paragraph'),
     'hometax.cert.form.applicantName': shown('#mf_txppWframe_pfm_UTECAAA0Z001_tbx_cvaAplnBscTnm', 'supplierName', FORM, 'paragraph'),
     // 라디오 묶음은 역할 없는 div 안 라디오다(실화면). inputType radio로 고른 라디오 이름을 읽고 고른다

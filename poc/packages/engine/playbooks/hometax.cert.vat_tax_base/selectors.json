@@ -362,7 +362,7 @@
      "value": "#mf_wfHeader_spn_third"
     }
    ],
-   "role": "generic",
+   "role": "strong",
    "namePattern": "^$",
    "landmark": "hometax.cert.form.docName",
    "commits": false,

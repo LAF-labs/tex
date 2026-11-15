@@ -116,6 +116,8 @@ const DOM_INVENTORY = (): unknown => {
         x.text = t(l?.textContent ?? i.parentElement?.textContent ?? '');
       }
       x.disabled = i.disabled || undefined;
+      // 단추 꼴 input은 value가 접근성 이름이다(제출 단추 이름 확인용). 글 칸 값은 넣지 않는다
+      if (i.type === 'button' || i.type === 'submit') x.text = t(i.value, 40);
     } else if (tag === 'select') {
       const s = e as HTMLSelectElement;
       x.options = [...s.options].slice(0, 40).map((o) => t(o.textContent, 40));

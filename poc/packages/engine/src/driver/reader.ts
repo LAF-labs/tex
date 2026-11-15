@@ -162,7 +162,8 @@ export class PlaywrightPageReader implements PageReader {
       if (!('value' in e) && e instanceof Element && (e.getAttribute('role') === 'radiogroup' || !!e.querySelector('input[type="radio"]'))) {
         const r = e.querySelector<HTMLInputElement>('input[type="radio"]:checked');
         if (!r) return '';
-        return r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '';
+        // 선택지 글: title(홈택스 WebSquare) → aria-label → 이름표. 첫 라디오의 이름표에는 묶음 머리 이름이 붙어 있다
+        return r.getAttribute('title') ?? r.getAttribute('aria-label') ?? (r.labels?.[0] as HTMLElement | undefined)?.innerText ?? '';
       }
       return 'value' in e && typeof (e as { value: unknown }).value === 'string' ? (e as { value: string }).value : '';
     }).catch(() => '');
@@ -173,10 +174,17 @@ export class PlaywrightPageReader implements PageReader {
     if (!h) return '';
     const snap = await h.loc.ariaSnapshot({ timeout: this.timeoutMs }).catch(() => '');
     // 역할 없는 div·span(generic)은 접근성 트리에서 글 노드(`- text: 1,000`)로 펼쳐진다: 그 글을 값으로 본다(표시 글 readback, 미리보기 창). 빈 span은 ''.
-    const plain = await h.handle.evaluate((n) => { const e = n as Element; return (e.tagName === 'DIV' || e.tagName === 'SPAN') && !e.hasAttribute('role') ? (e.querySelector('input[type="radio"]') ? 'radios' : 'text') : null; }).catch(() => null);
-    // 역할 없는 라디오 묶음(div 안 라디오)은 고른 라디오의 이름이 값이다
-    if (plain === 'radios') return snap ? ariaValue(snap, 'radiogroup') : '';
-    if (plain === 'text') return snap ? ariaValue(snap, 'text') : '';
+    const plain = await h.handle.evaluate((n) => {
+      const e = n as Element;
+      if ((e.tagName !== 'DIV' && e.tagName !== 'SPAN') || e.hasAttribute('role')) return null;
+      return e.querySelector('input[type="radio"]') ? { kind: 'radios' as const, head: e.getAttribute('title') ?? '' } : { kind: 'text' as const, head: '' };
+    }).catch(() => null);
+    // 역할 없는 라디오 묶음(div 안 라디오)은 고른 라디오의 접근성 이름이 값이다. 첫 라디오 이름 앞에 붙은 묶음 머리(div title, 「발급유형 」)는 뗀다
+    if (plain?.kind === 'radios') {
+      const v = snap ? ariaValue(snap, 'radiogroup') : '';
+      return plain.head && v.startsWith(`${plain.head} `) ? v.slice(plain.head.length + 1) : v;
+    }
+    if (plain?.kind === 'text') return snap ? ariaValue(snap, 'text') : '';
     return ariaValue(snap, ariaHead(snap).role);
   }
 
