@@ -1,3 +1,4 @@
+/* global document */ // 브라우저에서 도는 다운로드 페이지 스크립트(#375). 린트는 node 전역으로 본다.
 (async () => {
   const out = document.getElementById('release');
   const parts = [];

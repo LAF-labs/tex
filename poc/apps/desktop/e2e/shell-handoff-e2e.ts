@@ -272,7 +272,8 @@ async function flow(): Promise<void> {
   if (process.env.SAX_E2E_DEBUG) console.log(await js(`document.body.innerText.slice(0, 600)`));
 
   // ⓪-U6 Chrome 점검을 초안 전으로: 첫 판의 할 일, 첫 발급 요청(초안 카드를 만들지 않는다), 안내의 [다시 확인]
-  const setupRow = () => js<string>(`[...document.querySelectorAll('[data-board-setup] [data-setup]')].map((b) => b.dataset.setup + ':' + b.innerText).join('|')`);
+  // 등록 할 일은 작업 패널의 할 일 목록에 있다(v2.0): 대화 맨 위 줄을 눌러 연 뒤 읽는다.
+  const setupRow = () => js<string>(`(() => { document.querySelector('[data-act=board-toggle][aria-expanded=false]')?.click(); return [...document.querySelectorAll('[data-board-setup] [data-setup]')].map((b) => b.dataset.setup + ':' + b.innerText).join('|'); })()`);
   check('(U6) Chrome이 없으면 첫 판의 할 일에 [Chrome 설치하기]', await until('board chrome', async () => (await setupRow()).includes('chrome:Chrome 설치하기'), 10_000), await setupRow());
   // 민원증명도 같은 홈택스 로그인(전용 Chrome)을 쓴다. Chrome이 없으면 증명서 요청에도 초안 대신 설치 안내를 보이고 시작하지 않는다
   const setupCount = () => js<number>(`document.querySelectorAll('[data-setup-needed]').length`);

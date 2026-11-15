@@ -1,8 +1,9 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
 // - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 보안카드는 금고 직결 등록 창이 받는다(shell-card.js → main → card-secret.js).
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
-import { btn, fmtBiz, h, kv, note, securityBox } from './shell-views.js';
+import { btn, fmtBiz, h, icon, kv, note, replyOptions, securityBox } from './shell-views.js';
 import { cardRegister } from './shell-card.js';
+import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, textInput } from './fields.js';
 
 const Q = {
   terms: '시작하기 전에 약관과 AI 모델 이용을 확인해 주세요.',
@@ -13,7 +14,7 @@ const Q = {
   delegation: '보안카드를 쓰려면 먼저 이 PC 금고에 등록해야 해요.',
   model: '대화는 AI 모델로 해석해요. 아래 내용을 확인하고 동의해 주세요.',
   telemetry: '앱을 고치는 데 쓸 사용 기록을 보내 주시겠어요? 안 보내도 돼요.',
-  tasks: '어떤 일을 맡기고 싶으세요? 여러 개 골라도 돼요.',
+  tasks: '어떤 일을 맡기고 싶으세요?',
   counterparties: '세금계산서를 보낼 거래처를 등록할까요?',
   summary: '등록을 마쳤어요. 내용을 확인해 주세요.',
   first: '세금계산서 1건을 같이 발급해 볼까요? 입력창에 요청을 채워 드릴게요.',
@@ -36,20 +37,24 @@ const scopeLines = (catalog) => [
   '홈택스 화면이 달라지거나 값을 확실히 읽지 못하면 발급하지 않고 멈춰요',
 ];
 
-// 단계 안의 화면 상태(고치는 중·고른 인증서·고른 업무). 단계가 바뀌면 비운다.
-let ui = { step: null, editing: false, certId: null, showCerts: false, tasks: {}, busy: false };
+// 단계 안의 화면 상태(고치는 중·다른 방법 펼침·고른 업무). 단계가 바뀌면 비운다.
+let ui = { step: null, editing: false, showCerts: false, tasks: null, busy: false };
 const uiFor = (step) => {
-  if (ui.step !== step) ui = { step, editing: false, certId: null, showCerts: false, tasks: {}, busy: false };
+  if (ui.step !== step) ui = { step, editing: false, showCerts: false, tasks: null, busy: false };
   return ui;
 };
 
-/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안 빨간 글로 둔다(대표 2026-11-13). 부른 쪽이 다시 그린다. */
-export function showOnbError(step, text) {
-  uiFor(step).error = text;
+/** 답이 거부됐을 때(번호 틀림·휴폐업 등)의 문구를 토스트 대신 그 단계 카드 안에 둔다(대표 2026-11-13). 칸 하나의 까닭(code)이면 그 칸 아래. 부른 쪽이 다시 그린다. */
+export function showOnbError(step, text, code) {
+  const u = uiFor(step);
+  u.error = text;
+  u.errorField = ERR_FIELD[code] ?? null;
 }
+const ERR_FIELD = { bad_biz_no: 'bizNo', biz_inactive: 'bizNo', name_required: 'name', bad_email: 'email' };
+/** 이 단계 오류가 이 칸의 것이면 그 글(칸 아래에 쓴다). */
+const errFor = (u, name) => (u.error && u.errorField === name ? u.error : null);
 
 const p = (text, muted) => h('p', { class: `sx-body-sm${muted ? ' is-muted' : ''}` }, text);
-const draftTag = (n) => (n?.draft ? h('span', { class: 'sx-meta onb-draft', 'data-draft': n.key }, n.draft) : null);
 
 /**
  * 온보딩 영역 전체. o: main의 OnbView, act: { reply(step, choice, extra), go(view), toast(text), rerender() }.
@@ -74,7 +79,8 @@ export function onboardingView(o, act) {
 function stepCard(o, act) {
   const el = stepBody(o, act);
   const u = uiFor(o.step);
-  if (u.error) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
+  // 칸 아래에 이미 쓴 오류는 카드 끝에 다시 쓰지 않는다
+  if (u.error && !el.querySelector('.sx-field-error:not([hidden])')) el.append(h('p', { class: 'form-msg is-bad', role: 'status', 'data-onb-error': '' }, u.error));
   return el;
 }
 
@@ -91,6 +97,8 @@ function stepBody(o, act) {
     }
   };
   const row = (...kids) => h('div', { class: 'sx-actions' }, ...kids);
+  // 앱이 묻는 말의 답은 답 후보 줄이다(v2.0). 줄의 글자가 곧 내 말풍선이 된다(main이 같은 말을 기록한다).
+  const answer = (label, choice, extra) => ({ label, onPick: () => reply(choice, extra), attrs: { 'data-onb': choice } });
   const card = (title, ...kids) => h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, title)), ...kids);
   const notice = o.notice ? note(o.notice, true) : null;
 
@@ -101,48 +109,42 @@ function stepBody(o, act) {
     case 'delegation':
       return consentCard(o, reply);
     case 'welcome':
-      return h(
-        'div',
-        { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
-        h('button', { type: 'button', 'data-onb': 'upload', onclick: () => reply('upload') }, '사업자등록증 올리기'),
-        h('button', { type: 'button', 'data-onb': 'number', onclick: () => reply('number') }, '사업자번호로 입력'),
-        h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
-      );
+      return replyOptions([answer('사업자번호로 입력할게요', 'number'), answer('사업자등록증 올리기', 'upload'), answer('나중에 할게요', 'later')], { 'data-onb-step': o.step });
     case 'biz-number': {
-      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다
-      const name = h('input', { class: 'doc-in', name: 'name', autocomplete: 'off', placeholder: '사업자등록증의 상호', maxlength: 100, 'aria-label': '상호', value: u.vals?.name ?? '' });
-      const input = h('input', { class: 'doc-in', name: 'bizNo', inputmode: 'numeric', autocomplete: 'off', placeholder: '000-00-00000', maxlength: 14, 'aria-label': '사업자번호', value: u.vals?.bizNo ?? '' });
+      // 거부 글을 보이려 다시 그려도 넣던 값이 남게 u.vals에 둔다. 번호는 숫자 10자리로 보낸다(main이 받는 모양).
+      const name = textInput({ name: 'name', max: LIMITS.name, value: u.vals?.name });
+      const input = bizNoInput({ name: 'bizNo', required: true, value: u.vals?.bizNo });
+      const submit = (e) => {
+        e.preventDefault();
+        if (!checkFields(form)) return;
+        u.vals = { name: name.value, bizNo: bizDigits(input.value) };
+        reply('submit', { fields: { ...u.vals } });
+      };
       const form = h(
         'form',
-        { class: 'cp-form', onsubmit: (e) => (e.preventDefault(), (u.vals = { name: name.value, bizNo: input.value }), reply('submit', { fields: { ...u.vals } })) },
-        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '상호'), name),
-        h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, '사업자번호(10자리)'), input),
+        { class: 'cp-form', novalidate: true, onkeydown: keys(() => form.requestSubmit(), () => reply('back')), onsubmit: submit },
+        field({ label: '상호', input: name, help: '사업자등록증에 적힌 상호', error: errFor(u, 'name') }),
+        field({ label: '사업자번호(10자리)', input, error: errFor(u, 'bizNo') }),
         row(h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'submit' }, '확인'), btn('뒤로', () => reply('back'), 'sx-btn-quiet', { 'data-onb': 'back' })),
       );
       return card('사업자번호로 등록', notice, p('대표자·주소 등은 나중에 내 사업장에서 채워도 돼요.', true), form);
     }
     case 'biz-confirm':
-      return bizCard(o, u, reply, act);
+      return bizCard(o, u, reply, answer, act);
     case 'auth':
-      return authCard(o, u, reply, act);
+      return authCard(o, u, reply, answer, act);
     case 'tasks':
       return tasksCard(o, u, reply, act);
     case 'counterparties':
       return card(
         '거래처 등록',
-        p('거래처마다 받는 이메일과 자주 쓰는 품목을 저장해 두면 발급할 때 다시 묻지 않아요. 부가세 별도·포함은 요청할 때 정해요.'),
-        p('등록증 여러 장 끌어 놓기는 곧 돼요. 지금은 번호로 추가해요.', true),
-        row(btn('거래처 화면에서 추가', () => act.go('cps'), '', { 'data-onb': 'go-cps' }), btn('다 했어요', () => reply('done'), 'sx-btn-primary', { 'data-onb': 'done' }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
+        p('받는 이메일과 품목을 저장해 두면 발급할 때 다시 묻지 않아요.'),
+        replyOptions([{ label: '거래처를 추가할게요', lock: false, onPick: () => act.go('cps'), attrs: { 'data-onb': 'go-cps' } }, answer('다 했어요', 'done'), answer('나중에 할게요', 'later')]),
       );
     case 'summary':
-      return summaryCard(o, reply);
+      return summaryCard(o, answer);
     case 'first':
-      return h(
-        'div',
-        { class: 'sx-quick onb-chips', 'data-onb-step': o.step },
-        h('button', { type: 'button', 'data-onb': 'try', onclick: () => reply('try') }, '지금 해 보기'),
-        h('button', { type: 'button', class: 'is-soon', 'data-onb': 'later', onclick: () => reply('later') }, '나중에'),
-      );
+      return replyOptions([answer('지금 해 볼게요', 'try'), answer('나중에 할게요', 'later')], { 'data-onb-step': o.step });
   }
   return h('div');
 }
@@ -170,16 +172,15 @@ function consentCard(o, reply) {
   return h(
     'section',
     { class: 'sx-card onb-card onb-consent', 'data-onb-step': o.step, 'data-consent': n.key, 'data-consent-version': n.version },
-    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, n.title), draftTag(n)),
+    h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, n.title)),
     o.notice ? note(o.notice, true) : null,
     h('ul', { class: 'onb-lines' }, ...n.lines.map((l) => h('li', {}, l))),
     table,
     h('div', { class: 'sx-actions' }, ...buttons),
-    o.step === 'terms' ? h('div', { class: 'sx-meta' }, '약관 전문과 개인정보 처리방침 전문은 곧 여기서 열어 볼 수 있어요.') : null,
   );
 }
 
-function bizCard(o, u, reply, act) {
+function bizCard(o, u, reply, answer, act) {
   const b = o.biz ?? {};
   const active = o.check?.status === 'active';
   const rows = [
@@ -194,16 +195,22 @@ function bizCard(o, u, reply, act) {
   const head = h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '사업자 등록'));
   const privacy = p('등록증 파일은 이 PC 안에서만 읽어요', true);
   if (u.editing) {
+    const cancel = () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender());
     // 거부되어 다시 그릴 때는 고치던 값(u.fields)을 그대로 둔다
-    const field = (label, name, value, attrs = {}) => h('label', { class: 'cp-field' }, h('span', { class: 'sx-meta' }, label), h('input', { class: 'doc-in', name, value: u.fields?.[name] ?? value ?? '', autocomplete: 'off', ...attrs }));
+    const v = (name, value) => u.fields?.[name] ?? value ?? '';
+    const text = (label, name, value) => field({ label, input: textInput({ name, value: v(name, value), max: LIMITS[name] }), error: errFor(u, name) });
     const form = h(
       'form',
       {
         class: 'cp-form',
+        novalidate: true,
+        onkeydown: keys(() => form.requestSubmit(), cancel),
         onsubmit: async (e) => {
           e.preventDefault();
+          if (!checkFields(form)) return;
           const f = new FormData(form);
           const fields = Object.fromEntries(['name', 'bizNo', 'rep', 'bizType', 'bizItem', 'address', 'email'].map((k) => [k, String(f.get(k) ?? '')]));
+          fields.bizNo = bizDigits(fields.bizNo);
           // 저장한 내용으로 다시 그릴 때 읽기 모양이 되게 먼저 내린다. 거부되면(번호 틀림 등) 고치던 칸으로 돌아간다.
           u.editing = false;
           u.fields = fields;
@@ -213,14 +220,14 @@ function bizCard(o, u, reply, act) {
           }
         },
       },
-      field('상호', 'name', b.name, { maxlength: 100 }),
-      field('사업자번호', 'bizNo', fmtBiz(b.bizNo), { inputmode: 'numeric', maxlength: 14 }),
-      field('대표자', 'rep', b.rep, { maxlength: 100 }),
-      field('업태', 'bizType', b.bizType, { maxlength: 100 }),
-      field('종목', 'bizItem', b.bizItem, { maxlength: 100 }),
-      field('사업장 주소', 'address', b.address, { maxlength: 200 }),
-      field('사업자 이메일', 'email', b.email, { type: 'email', maxlength: 320 }),
-      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', () => ((u.editing = false), (u.fields = null), (u.error = null), act.rerender()), 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
+      text('상호', 'name', b.name),
+      field({ label: '사업자번호', input: bizNoInput({ name: 'bizNo', required: true, value: v('bizNo', b.bizNo) }), error: errFor(u, 'bizNo') }),
+      text('대표자', 'rep', b.rep),
+      text('업태', 'bizType', b.bizType),
+      text('종목', 'bizItem', b.bizItem),
+      text('사업장 주소', 'address', b.address),
+      field({ label: '사업자 이메일', input: emailInput({ name: 'email', value: v('email', b.email) }), error: errFor(u, 'email') }),
+      h('div', { class: 'sx-actions' }, h('button', { type: 'submit', class: 'sx-btn sx-btn-primary', 'data-onb': 'save' }, '저장'), btn('취소', cancel, 'sx-btn-quiet', { 'data-onb': 'cancel-edit' })),
     );
     return h('section', { class: 'sx-card onb-card', 'data-onb-step': o.step }, head, form, privacy);
   }
@@ -237,74 +244,67 @@ function bizCard(o, u, reply, act) {
     stop,
     privacy,
     p('계정마다 사업자 1곳만 등록하고, 바꾸면 90일 뒤에 다시 바꿀 수 있어요.', true),
-    h(
-      'div',
-      { class: 'sx-actions' },
-      // 상호가 비었으면 확정 버튼 대신 [고칠게요]가 먼저다(main도 name_required로 거부한다)
-      active && named ? btn('맞아요', () => reply('confirm'), 'sx-btn-primary', { 'data-onb': 'confirm' }) : null,
-      unknown && named ? btn('맞습니다', () => reply('confirm_unverified'), 'sx-btn-primary', { 'data-onb': 'confirm-unverified' }) : null,
-      unknown ? btn('다시 조회', () => reply('recheck'), '', { 'data-onb': 'recheck' }) : null,
-      btn('고칠게요', () => ((u.editing = true), act.rerender()), (active || unknown) && named ? '' : 'sx-btn-primary', { 'data-onb': 'edit' }),
-      btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
+    replyOptions(
+      [
+        // 상호가 비었으면 확정 줄이 없고 [고칠게요]가 맨 위다(main도 name_required로 거부한다)
+        active && named ? answer('맞아요', 'confirm') : null,
+        unknown && named ? { ...answer('맞습니다', 'confirm_unverified'), attrs: { 'data-onb': 'confirm-unverified' } } : null,
+        // 그 자리에서 폼을 연다(굳지 않는다)
+        { label: '고칠게요', lock: false, onPick: () => ((u.editing = true), act.rerender()), attrs: { 'data-onb': 'edit' } },
+        unknown ? answer('다시 조회해 주세요', 'recheck') : null,
+        answer('나중에 할게요', 'later'),
+      ].filter(Boolean),
     ),
   );
 }
 
 /**
- * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 먼저 보이고 하나 고르면 끝(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
+ * [홈택스 인증서](B4): 이 PC에서 찾은 공동인증서를 답 후보 줄로 보인다. 줄을 누르면 그 인증서로 정한다(이름은 main이 프로필에 둔다, 비밀번호는 첫 발급 때 금고 창).
+ * 따로 확정 단추를 두지 않는다. 잘못 골라도 설정 > 발급 인증에서 바꾼다.
  * 보안 프로그램(MagicLine4NX)이 없거나 꺼져 있으면 같은 화면 위에 설치·켜기를 보인다. 다른 인증(보안카드·금융인증서·간편인증)은 [다른 방법]에 접어 둔다. 간편인증은 맨 뒤다(대표 지시 2026-11-14).
  */
-function authCard(o, u, reply, act) {
+function authCard(o, u, reply, answer, act) {
   const today = new Date();
   const soon = (c) => (new Date(`${c.expiresOn}T00:00:00`) - today) / 86_400_000 <= 30;
   const usable = (c) => c.usable !== false;
-  if (!u.certId) u.certId = o.certs.find(usable)?.id ?? null;
   const WHY = { no_key: '이 PC에 개인키 파일이 없어 쓸 수 없어요', expired: '만료되어 쓸 수 없어요' };
-  const certRow = (c) =>
-    h(
-      'button',
-      { type: 'button', class: `sx-opt${u.certId === c.id ? ' is-on' : ''}`, 'data-cert': c.id, 'aria-pressed': String(u.certId === c.id), disabled: !usable(c), onclick: () => ((u.certId = c.id), act.rerender()) },
-      h('span', { class: 'sx-radio' }),
-      h(
-        'span',
-        { class: 'onb-auth-main' },
-        h('b', {}, `${c.owner} · ${c.usage}`),
-        h('span', { class: `sx-meta${!usable(c) || soon(c) ? ' is-attention' : ''}` }, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`),
-      ),
-    );
-  const any = o.certs.some(usable);
-  const certs = h(
-    'div',
-    { class: 'onb-certs', 'data-onb-certs': '' },
-    ...(o.certs.length ? o.certs.map(certRow) : [note('이 PC에서 공동인증서를 찾지 못했어요. 인증서를 이 PC로 옮긴 뒤 다시 열거나, [다른 방법]으로 발급할 수 있어요.', true)]),
-  );
-  const other = u.showCerts
-    ? h(
-        'div',
-        { class: 'onb-opts', 'data-onb-other': '' },
-        ...AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
-          h(
-            'button',
-            { type: 'button', class: `sx-opt onb-auth${k === 'card' && u.cardReg ? ' is-on' : ''}`, 'data-onb': k, onclick: () => (k === 'card' ? ((u.cardReg = !u.cardReg), act.rerender()) : reply(k)) },
-            h('span', { class: 'sx-radio' }),
-            h('span', { class: 'onb-auth-main' }, h('b', {}, label), h('span', { class: 'sx-meta' }, line)),
-          ),
-        ),
-        // 보안카드: 고르면 그 자리에서 카드 사진을 받는다. 저장되면 보안카드로 정한다(따로 확인 없음)
-        u.cardReg
-          ? (u.cardEl ??= cardRegister({
-              call: act.call,
-              onboarding: true,
-              // 저장 뒤 main이 인증을 보안카드로 정하고 온보딩 화면을 돌려준다(렌더러가 다시 답하지 않는다)
-              onStored: (r) => {
-                act.toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요`);
-                act.applied(r);
-              },
-              skip: () => reply('card'),
-            }))
-          : null,
+  const twoLines = (name, meta, attention) => h('span', { class: 'opt-main' }, h('span', {}, name), h('span', { class: `sx-meta${attention ? ' is-attention' : ''}` }, meta));
+  // 고를 수 있는 인증서가 위다(맨 위 줄이 가장 그럴듯한 답). 고를 수 없는 것은 이유와 함께 흐리게 남긴다.
+  const certs = [...o.certs]
+    .sort((a, b) => usable(b) - usable(a))
+    .map((c) => ({
+      label: twoLines(`${c.owner} · ${c.usage}`, usable(c) ? `만료 ${c.expiresOn}${soon(c) ? ' · 30일 안에 만료돼요' : ''}` : `만료 ${c.expiresOn} · ${WHY[c.why] ?? '쓸 수 없어요'}`, !usable(c) || soon(c)),
+      onPick: () => reply('cert', { certId: c.id }),
+      attrs: { 'data-cert': c.id, disabled: !usable(c) },
+    }));
+  const others = u.showCerts
+    ? AUTH.filter(([k]) => k !== 'cert').map(([k, label, line]) =>
+        // 보안카드는 그 자리에서 카드 사진을 받는다(굳지 않고, 다시 누르면 접는다)
+        k === 'card' ? { label: twoLines(label, line), lock: false, onPick: () => ((u.cardReg = !u.cardReg), act.rerender()), attrs: { 'data-onb': k, 'aria-expanded': String(!!u.cardReg) } } : answer(twoLines(label, line), k),
       )
-    : null;
+    : [];
+  const replies = replyOptions(
+    [
+      ...certs,
+      ...others,
+      { label: u.showCerts ? '다른 방법 접기' : '다른 방법으로 할게요', lock: false, onPick: () => ((u.showCerts = !u.showCerts), act.rerender()), attrs: { 'data-onb': 'other', 'aria-expanded': String(!!u.showCerts) } },
+      answer('나중에 할게요', 'later'),
+    ],
+    { 'data-onb-certs': '' },
+  );
+  // 보안카드: 저장되면 main이 인증을 보안카드로 정하고 온보딩 화면을 돌려준다(렌더러가 다시 답하지 않는다, 따로 확인 없음)
+  if (u.showCerts && u.cardReg)
+    replies.querySelector('[data-onb=card]').after(
+      (u.cardEl ??= cardRegister({
+        call: act.call,
+        onboarding: true,
+        onStored: (r) => {
+          act.toast(`보안카드 ${r.stored}칸을 이 PC 금고에 등록했어요`);
+          act.applied(r);
+        },
+        skip: () => reply('card'),
+      })),
+    );
   // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다
   const sec = h('div', { 'data-onb-security': '' });
   if (act.security)
@@ -318,38 +318,31 @@ function authCard(o, u, reply, act) {
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
-    p('홈택스 로그인에 이미 쓰는 공동인증서로 발급 서명도 해요. 휴대폰 승인이 필요 없어요.', true),
     sec,
-    certs,
-    h(
-      'div',
-      { class: 'sx-actions' },
-      any ? btn('이 인증서로', () => reply('cert', { certId: u.certId }), 'sx-btn-primary', { 'data-onb': 'cert-pick', disabled: !u.certId }) : null,
-      btn(u.showCerts ? '다른 방법 접기' : '다른 방법', () => ((u.showCerts = !u.showCerts), act.rerender()), any ? '' : 'sx-btn-primary', { 'data-onb': 'other' }),
-      btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' }),
-    ),
-    other,
+    o.certs.length ? null : note('이 PC에서 공동인증서를 찾지 못했어요. 인증서를 이 PC로 옮긴 뒤 다시 열거나, 다른 방법으로 발급할 수 있어요.', true),
+    replies,
   );
 }
 
+/**
+ * 고를 수 있는 일은 지금 되는 일(now)뿐이다. 그 일을 미리 골라 둔다(마칠 때 기본값과 같다).
+ * 여러 개를 고르는 질문이라 줄이 굳지 않는다: 답 후보 줄과 같은 모양에 켜고 끄는 체크를 두고, [다음] 하나로 보낸다.
+ */
 function tasksCard(o, u, reply, act) {
-  const chips = o.tasksCatalog.map((t) =>
-    t.now
-      ? h('button', { type: 'button', class: u.tasks[t.id] ? 'is-on' : '', 'aria-pressed': String(!!u.tasks[t.id]), 'data-task': t.id, onclick: () => ((u.tasks[t.id] = !u.tasks[t.id]), act.rerender()) }, t.label)
-      : h('button', { type: 'button', class: 'is-soon', 'data-task': t.id, 'data-soon': '', onclick: () => act.toast('지원되면 알려 드릴게요') }, t.label),
-  );
+  const now = o.tasksCatalog.filter((t) => t.now);
+  u.tasks ??= Object.fromEntries(now.map((t) => [t.id, true]));
+  const rows = now.map((t) => h('button', { type: 'button', class: 'sx-reply', 'aria-pressed': String(!!u.tasks[t.id]), 'data-task': t.id, onclick: () => ((u.tasks[t.id] = !u.tasks[t.id]), act.rerender()) }, h('span', {}, t.label), u.tasks[t.id] ? icon('check') : null));
   const any = Object.values(u.tasks).some(Boolean);
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '맡길 업무')),
-    h('div', { class: 'sx-quick onb-tasks' }, ...chips),
-    p('회색은 곧 되는 일이에요. 신고와 세금 판단은 하지 않아요.', true),
+    h('div', { class: 'sx-replies', role: 'group', 'aria-label': '맡길 업무' }, ...rows),
     h('div', { class: 'sx-actions' }, btn('다음', () => reply('submit', { tasks: { ...u.tasks } }), 'sx-btn-primary', { 'data-onb': 'submit', disabled: !any }), btn('나중에', () => reply('later'), 'sx-btn-quiet', { 'data-onb': 'later' })),
   );
 }
 
-function summaryCard(o, reply) {
+function summaryCard(o, answer) {
   const b = o.biz;
   const skipped = new Set(o.skipped);
   const tasks = o.tasksCatalog.filter((t) => o.tasks.includes(t.id)).map((t) => t.label);
@@ -367,10 +360,10 @@ function summaryCard(o, reply) {
     h(
       'div',
       { class: 'onb-scope', 'data-onb-scope': '' },
-      h('div', { class: 'sx-card-hd' }, h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'), h('span', { class: 'sx-meta onb-draft' }, 'F-06 초안 전 문구')),
+      h('div', { class: 'onb-sub' }, '이 앱이 하는 일과 하지 않는 일'),
       h('ul', { class: 'onb-lines' }, ...scopeLines(o.tasksCatalog).map((l) => h('li', {}, l))),
     ),
     skipped.size ? p('건너뛴 항목은 이번 달 할 일에 남겨 둘게요.', true) : null,
-    h('div', { class: 'sx-actions' }, btn('확인했어요', () => reply('ok'), 'sx-btn-primary', { 'data-onb': 'ok' })),
+    replyOptions([answer('확인했어요', 'ok')]),
   );
 }

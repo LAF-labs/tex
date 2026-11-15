@@ -61,7 +61,7 @@ describe('F-02·F-03 거래처 없음·장부에 없는 이름', () => {
     assert.match(s, /if \(r\.addCp\) box\.append\(h\('div', \{ class: 'sx-actions' \}, btn\('거래처 추가', \(\) => addCpFromAsk\(r\.addCp\.name\), 'sx-btn-primary', \{ 'data-act': 'ask-cp-add' \}\)\)\);/);
     assert.match(s, /openPanel\(\{ kind: 'cp-edit', id: null, name: String\(name \?\? ''\), ask: true \}\);/);
     assert.match(s, /if \(!c && add\?\.ask\) \{\s*\/\/[^\n]*\n\s*await go\('chat'\);\s*fillComposer\(/);
-    assert.match(s, /field\('상호', 'name', c\?\.name \?\? add\?\.name,/);
+    assert.match(s, /name: textInput\(\{ name: 'name', value: c\?\.name \?\? add\?\.name,/);
     assert.match(read('src/shell-app.ts'), /answersPending\(local, runs, text\)/);
   });
 });

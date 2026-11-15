@@ -4,9 +4,7 @@
 // - [파일에서 읽기]는 온보딩과 같은 등록증 읽기(profile.readCert)다. 읽은 값은 칸에 채울 뿐, 저장은 [저장]으로 같은 검사를 거친다.
 // - 발급 인증 바꾸기는 온보딩 O-03을 다시 연다(onboarding.reopen auth, 부르는 쪽 ctx.reopenAuth).
 import { btn, fmtBiz, h, kv, note } from './shell-views.js';
-
-/** 칸 상한(main onboarding.ts BIZ_FIELD_MAX와 같다. tests/shell-profile-edit.test.ts가 맞춰 본다). */
-export const BIZ_EDIT_MAX = { name: 100, bizNo: 20, rep: 100, bizType: 100, bizItem: 100, address: 200, email: 320 };
+import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, textInput } from './fields.js';
 /** main profile-edit.ts BIZ_NO_CHANGE_NOTE와 같은 문장. */
 export const BIZ_NO_CHANGE_NOTE = '사업자번호를 바꾸면 홈택스에 로그인한 사업자와 달라질 수 있어요. 다르면 발급 때 멈추고 알려 드려요.';
 export const BIZ_NAME_MISSING_NOTE = '상호가 비어 있어요. 다음 발급 때 홈택스 화면에서 채워요. 지금 넣으려면 [수정]을 눌러 주세요.';
@@ -20,20 +18,29 @@ export const BIZ_EDIT_ERR = {
   account_required: '먼저 로그인해 주세요.',
   busy: '처리 중이에요. 잠시 뒤에 다시 눌러 주세요.',
 };
+/** 칸 이름 → 보이는 라벨. 칸 종류·상한은 fields.js(LIMITS, main onboarding.ts BIZ_FIELD_MAX 이하)가 정한다. */
 const FIELDS = [
-  ['상호', 'name', { required: true }],
-  ['사업자번호', 'bizNo', { inputmode: 'numeric', placeholder: '000-00-00000' }],
-  ['대표자', 'rep', {}],
-  ['업태', 'bizType', {}],
-  ['종목', 'bizItem', {}],
-  ['주소', 'address', {}],
-  ['이메일', 'email', { type: 'email' }],
+  ['상호', 'name'],
+  ['사업자번호', 'bizNo'],
+  ['대표자', 'rep'],
+  ['업태', 'bizType'],
+  ['종목', 'bizItem'],
+  ['주소', 'address'],
+  ['이메일', 'email'],
 ];
-const digits = (s) => String(s ?? '').replace(/[^0-9]/g, '');
+const INPUT = {
+  name: (o) => textInput({ ...o, max: LIMITS.name, required: '상호를 넣어 주세요.' }),
+  bizNo: (o) => bizNoInput({ ...o, required: true }),
+  email: (o) => emailInput(o),
+};
+/** main이 거절한 까닭이 칸 하나의 것이면 그 칸 아래에 쓴다. */
+const ERR_FIELD = { name_required: 'name', bad_biz_no: 'bizNo', biz_inactive: 'bizNo', bad_email: 'email' };
+/** IPC 오류의 코드(ipcRenderer.invoke가 붙이는 앞말을 뗀다, shell.js errText와 같다). */
+const errCode = (e) => String(e?.message ?? e).replace(/^Error invoking remote method 'sax': (Error: )?/, '');
 
-/** 편집 시작 값(지금 프로필). 번호는 000-00-00000 모양으로 보인다. */
+/** 편집 시작 값(지금 프로필). 번호는 숫자 10자리로 두고 칸이 000-00-00000 모양으로 보인다. */
 export function bizEditStart(b) {
-  return { values: { name: b.bizNo && !b.nameMissing ? b.name : '', bizNo: b.bizNo ? fmtBiz(b.bizNo) : '', rep: b.rep ?? '', bizType: b.bizType ?? '', bizItem: b.bizItem ?? '', address: b.address ?? '', email: b.email ?? '' }, origNo: b.bizNo ?? '', confirm: null, busy: false };
+  return { values: { name: b.bizNo && !b.nameMissing ? b.name : '', bizNo: b.bizNo ?? '', rep: b.rep ?? '', bizType: b.bizType ?? '', bizItem: b.bizItem ?? '', address: b.address ?? '', email: b.email ?? '' }, origNo: b.bizNo ?? '', confirm: null, busy: false };
 }
 
 /**
@@ -72,29 +79,26 @@ function viewCard(ctx) {
 
 function editCard(ctx) {
   const e = ctx.edit;
-  const msgEl = e.msg ? h('p', { class: `form-msg${e.msg.bad ? ' is-bad' : ''}`, role: 'status', 'data-biz-msg': e.msg.bad ? 'bad' : 'ok' }, e.msg.text) : null;
-  const noteEl = h('p', { class: 'sx-meta', 'data-bizno-note': '', hidden: !e.origNo || digits(e.values.bizNo) === e.origNo }, BIZ_NO_CHANGE_NOTE);
-  const input = (label, name, attrs) =>
-    h(
-      'label',
-      { class: 'cp-field' },
-      h('span', { class: 'sx-meta' }, label),
-      h('input', {
-        class: 'doc-in',
+  const fieldErr = (name) => (e.msg?.field === name ? e.msg.text : null);
+  const msgEl = e.msg && !e.msg.field ? h('p', { class: `form-msg${e.msg.bad ? ' is-bad' : ''}`, role: 'status', 'data-biz-msg': e.msg.bad ? 'bad' : 'ok' }, e.msg.text) : null;
+  const noteEl = h('p', { class: 'sx-meta', 'data-bizno-note': '', hidden: !e.origNo || e.values.bizNo === e.origNo }, BIZ_NO_CHANGE_NOTE);
+  const input = (label, name) =>
+    field({
+      label,
+      error: fieldErr(name),
+      input: (INPUT[name] ?? ((o) => textInput({ ...o, max: LIMITS[name] })))({
         name,
         value: e.values[name] ?? '',
-        autocomplete: 'off',
-        maxlength: BIZ_EDIT_MAX[name],
-        ...attrs,
         oninput: (ev) => {
-          e.values[name] = ev.target.value;
+          // 번호는 숫자 10자리로 둔다(main이 받는 모양). 칸에는 000-00-00000으로 보인다.
+          e.values[name] = name === 'bizNo' ? bizDigits(ev.target.value) : ev.target.value;
           // 칸을 고치면 지난 결과 글은 내린다(다시 그리지 않아 입력 칸 초점이 그대로다)
           if (e.msg) {
             e.msg = null;
             msgEl?.remove();
           }
           if (name === 'bizNo') {
-            noteEl.hidden = !e.origNo || digits(e.values.bizNo) === e.origNo;
+            noteEl.hidden = !e.origNo || e.values.bizNo === e.origNo;
             // 번호를 고치면 지난 "조회하지 못함" 확인은 쓰지 않는다
             if (e.confirm) {
               e.confirm = null;
@@ -103,10 +107,10 @@ function editCard(ctx) {
           }
         },
       }),
-    );
-  // 저장·등록증 읽기 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 틀림은 빨간 글.
-  const say = (text, bad) => {
-    e.msg = { text, bad };
+    });
+  // 저장·등록증 읽기 결과는 토스트 대신 폼 안 한 줄 글(대표 2026-11-13). 칸 하나의 틀림은 그 칸 아래(확인 필요 색).
+  const say = (text, bad, at = null) => {
+    e.msg = { text, bad, field: at };
     ctx.rerender();
   };
   const save = async (confirmUnverified) => {
@@ -122,8 +126,8 @@ function editCard(ctx) {
       }
       ctx.onSaved(r);
     } catch (err) {
-      const c = String(err?.message ?? err);
-      say(BIZ_EDIT_ERR[c] ?? '저장하지 못했어요. 다시 해 주세요.', true);
+      const c = errCode(err);
+      say(BIZ_EDIT_ERR[c] ?? '저장하지 못했어요. 다시 해 주세요.', true, ERR_FIELD[c]);
     } finally {
       e.busy = false;
     }
@@ -139,12 +143,12 @@ function editCard(ctx) {
       }
       for (const [, k] of FIELDS) {
         const v = r.fields?.[k];
-        if (typeof v === 'string' && v) e.values[k] = k === 'bizNo' ? fmtBiz(digits(v)) : v;
+        if (typeof v === 'string' && v) e.values[k] = k === 'bizNo' ? bizDigits(v) : v;
       }
       e.confirm = null;
       say('등록증에서 읽었어요. 맞는지 보고 저장해 주세요.', false);
     } catch (err) {
-      const c = String(err?.message ?? err);
+      const c = errCode(err);
       say(BIZ_EDIT_ERR[c] ?? '등록증을 읽지 못했어요. 다시 해 주세요.', true);
     } finally {
       e.busy = false;
@@ -154,14 +158,16 @@ function editCard(ctx) {
     'form',
     {
       class: 'cp-form',
+      novalidate: true,
       'data-biz-form': '',
+      onkeydown: keys(() => form.requestSubmit(), ctx.onCancel),
       onsubmit: (ev) => {
         ev.preventDefault();
-        void save(false);
+        if (checkFields(form)) void save(false);
       },
     },
     h('div', { class: 'sx-actions' }, btn('파일에서 읽기', readCert, 'sx-btn-quiet', { 'data-act': 'biz-cert' })),
-    FIELDS.map(([label, name, attrs]) => input(label, name, attrs)),
+    FIELDS.map(([label, name]) => input(label, name)),
     noteEl,
     msgEl,
     e.confirm

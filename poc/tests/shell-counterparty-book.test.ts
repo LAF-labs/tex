@@ -10,7 +10,7 @@ import { after, afterEach, before, beforeEach, describe, it } from 'node:test';
 import { openDatabase, type Counterparty, type Db } from '@sax/db';
 import { BizVerifier, DataService } from '@sax/engine';
 import { Egress } from '@sax/net';
-import { CounterpartyBook, CP_CERT_HOLD_MS, type CpCertRead } from '../apps/desktop/src/counterparty-book.ts';
+import { CounterpartyBook, CP_CERT_HOLD_MS, CP_FIELD_MAX, type CpCertRead } from '../apps/desktop/src/counterparty-book.ts';
 import { MOCK_CP_CERT } from '../apps/desktop/src/onboarding-mock.ts';
 import { USER_ACTION_METHODS, SHELL_METHODS } from '../apps/desktop/src/ipc.ts';
 
@@ -43,9 +43,9 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
 
   it('손으로 추가는 source manual, 번호의 하이픈은 지우고 칸 상한에서 자른다', async () => {
     const b = book();
-    const saved = await b.save({ id: null, name: `  견본상사${'가'.repeat(80)}`, bizNo: '314-86-01237', rep: '이견본', email: '', item: '사무용품' });
+    const saved = await b.save({ id: null, name: `  견본상사${'가'.repeat(CP_FIELD_MAX.name + 20)}`, bizNo: '314-86-01237', rep: '이견본', email: '', item: '사무용품' });
     assert.equal(saved.bizNo, '3148601237');
-    assert.equal(saved.name.length, 60);
+    assert.equal(saved.name.length, CP_FIELD_MAX.name);
     assert.equal(saved.source, 'manual');
     assert.equal(saved.address, null);
     assert.equal(saved.email, null, '빈 이메일은 null');
@@ -74,9 +74,9 @@ describe('거래처 장부: 엔진 명령으로 DB에', () => {
     await b.setFirstItem(cp.id, null);
     await b.setFirstItem(cp.id, undefined);
     assert.deepEqual(calls, [], '칸을 보내지 않으면 건드리지 않는다');
-    // 칸 상한(40자)에서 자르고, 엔진 검사 오류는 그대로 올라간다
-    await b.setFirstItem(cp.id, '가'.repeat(60));
-    assert.equal((await items())[0]!.name.length, 40);
+    // 칸 상한(CP_FIELD_MAX.item = DB 저장 품목 상한)에서 자르고, 엔진 검사 오류는 그대로 올라간다
+    await b.setFirstItem(cp.id, '가'.repeat(CP_FIELD_MAX.item + 20));
+    assert.equal((await items())[0]!.name.length, CP_FIELD_MAX.item);
     await assert.rejects(b.setFirstItem(cp.id, 'a\u0000b'), /bad_item_name/);
     assert.deepEqual(await b.items('cp-none'), [], '없는 거래처는 빈 목록');
   });
@@ -195,12 +195,16 @@ describe('셸 배선(소스 검사)', () => {
     assert.match(src, /if \(fixture\) delete fixture\.itemHints\[saved\.bizNo\];\s*try \{\s*await cpBook\.setFirstItem\(saved\.id, p\.item\);/);
     assert.match(src, /host\.rpc\('counterparty\.getItems', \{ id: c\.id \}\)/);
   });
-  it('렌더러는 후보를 입력 칸 value로만 넣는다(innerHTML 없음), 저장 품목 칸은 제품·시연 모두에 있다(#144)', () => {
+  it('렌더러는 후보를 입력 칸 value로만 넣는다(innerHTML 없음), 저장 품목 칸은 제품·시연 모두에 있다(#144)', async () => {
     const panel = js.slice(js.indexOf('function cpEditPanel('), js.indexOf('function bizView('));
     assert.match(panel, /call\('counterparty\.readCert', \{\}\)/);
     assert.match(panel, /form\.elements\.name\.value = r\.name/);
     assert.doesNotMatch(panel, /innerHTML|insertAdjacentHTML/);
-    assert.match(panel, /^ {4}field\('저장 품목', 'item', c\?\.item, \{ maxlength: 40/m);
+    assert.match(panel, /item: textInput\(\{ name: 'item', value: c\?\.item, max: LIMITS\.item/);
+    assert.match(panel, /field\(\{ label: '저장 품목', input: inputs\.item/);
+    // 폼 칸 상한은 main이 자르는 상한과 같다(fields.js LIMITS = CP_FIELD_MAX). 렌더러가 받은 글을 main이 몰래 자르지 않는다.
+    const { LIMITS } = (await import('../apps/desktop/static/shell/fields.js')) as unknown as { LIMITS: Record<string, number> };
+    for (const k of ['name', 'rep', 'email', 'item'] as const) assert.equal(LIMITS[k], CP_FIELD_MAX[k], k);
     assert.match(panel, /item: f\.get\('item'\), certHold \}\)/);
     assert.match(panel, /certHold = r\.hold \?\? null;/);
   });

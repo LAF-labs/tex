@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   // 내 사업장(D-03) 고치기: 온보딩 기록이 없는 기존 프로필(!onb)도 고친다. [파일에서 읽기]는 온보딩 O-02와 같은 등록증 읽기(시연 등록증).
   const biz = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; bizItem: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
   const before = await biz();
-  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);
   check('내 사업장(온보딩 기록 없음): [수정]은 있고 [바꾸기](온보딩 대화)는 없다', await until('biz view', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view] [data-act=biz-edit]') && ![...document.querySelectorAll('[data-biz-card=view] .sx-copy')].some((b) => b.textContent === '바꾸기')`), 5_000));
   await sleep(3_100);
   check('파일에서 읽기도 실제 입력 뒤에만', (await call('profile.readCert', {})) === 'ERR:gesture_required');

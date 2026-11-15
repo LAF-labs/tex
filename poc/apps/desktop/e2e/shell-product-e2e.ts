@@ -217,7 +217,7 @@ async function main() {
 
   // 내 사업장(D-03) 고치기(사용자 요구 2026-11-10): [수정] → 칸 편집 → [저장], 번호를 바꾸면 조회 불가 → [맞습니다], [바꾸기]는 O-03을 다시 연다
   const business = async () => ((await S!.host.rpc('db.query.profiles.list')) as Array<{ kind: string; displayName: string; bizNo: string; repName: string | null; bizType: string | null; address: string | null; signMethod: string | null }>).find((x) => x.kind === 'business')!;
-  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);
   check('내 사업장: 저장된 개인 프로필이 없으면 "개인 · 개인" 카드가 없다', await until('no personal', async () => js<boolean>(`!!document.querySelector('section[data-view=biz]') && !document.querySelector('[data-personal-card]') && !document.querySelector('section[data-view=biz]').textContent.includes('개인 · 개인')`), 5_000));
   check('내 사업장: [수정]과 발급 인증 [바꾸기]', await until('biz view', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view] [data-act=biz-edit]') && [...document.querySelectorAll('[data-biz-card=view] .sx-copy')].some((b) => b.textContent === '바꾸기')`), 5_000));
   await sleep(3_100);
@@ -249,7 +249,7 @@ async function main() {
   const edits = readFileSync(path.join(paths.userData, 'profile-edits.json'), 'utf8');
   check('고친 기록 파일에 값이 없다', !/박다라|견본|2208162517|서울/.test(edits) && edits.includes('"bizNo"'), edits);
   // [바꾸기]: O-03만 다시 묻고, [나중에]면 그 전 인증 그대로
-  await js(`document.querySelector('#rail [data-view="biz"], #rail button[aria-label="내 사업장"]')?.click()`);
+  await js(`(document.querySelector('#rail [data-view="settings"]')?.click(), setTimeout(() => document.querySelector('[data-set-tab="biz"]')?.click(), 50))`);
   await until('biz view 2', async () => js<boolean>(`!!document.querySelector('[data-biz-card=view]')`), 5_000);
   S!.win.webContents.sendInputEvent({ type: 'mouseUp', x: 1, y: 1, button: 'left', clickCount: 1 });
   await sleep(30);

@@ -12,8 +12,11 @@ import { randomUUID } from 'node:crypto';
 import { COUNTERPARTY_ITEMS_MAX, isValidBizNo, type Counterparty as DbCounterparty, type CounterpartyItem } from '@sax/db';
 import type { BizFields } from './onboarding.ts';
 
-/** 폼 칸 상한(렌더러 cpEditPanel의 maxlength와 같다). */
-export const CP_FIELD_MAX = { name: 60, bizNo: 20, rep: 30, email: 100, item: 40 } as const;
+/**
+ * 폼 칸 상한. 렌더러 공통 칸(static/shell/fields.js LIMITS)과 같다: 상호·대표자는 내 사업장(BIZ_FIELD_MAX)과 같은 100,
+ * 품목은 DB 저장 품목 상한(COUNTERPARTY_ITEM_NAME_MAX)과 같은 100, 이메일 254. 번호는 하이픈까지 20자에서 자른 뒤 숫자만 남긴다.
+ */
+export const CP_FIELD_MAX = { name: 100, bizNo: 20, rep: 100, email: 254, item: 100 } as const;
 /** 읽은 등록증 주소를 들고 있는 시간. */
 export const CP_CERT_HOLD_MS = 30 * 60_000;
 
