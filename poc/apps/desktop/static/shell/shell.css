@@ -88,13 +88,19 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 .mock-badge { font-size: 12px; line-height: 16px; color: var(--ink-3); white-space: nowrap; }
 
 /* 레일: 선 없는 세로 줄. 아이콘 + 짧은 이름(길 찾기), 고른 것은 채움, 알림은 점 하나(개수는 aria-label). 항목 52×52. */
-#rail { gap: 2px; padding-top: 4px; }
-.sx-rail button { width: 52px; height: 52px; border-radius: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--ink-3); position: relative; border: 0; background: transparent; cursor: pointer; transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out); }
-.sx-rail button:hover { color: var(--ink); background: var(--surface-tint); }
-.sx-rail button.is-on { background: var(--surface-tint); color: var(--ink); }
-.sx-rail button svg { width: 20px; height: 20px; flex: none; }
+/* 레일(v2.0, Muse 기준 여백): 폭 76, 묶음은 세로 가운데(위·아래 빈칸 i), 설정은 맨 아래. 선택·hover 바탕은 칸 전체가 아니라 아이콘 뒤 알약(44×32)만.
+   항목 = 알약 32 + 4 + 이름 14, 위아래 4 → 58, 간격 10 → 한 칸 68(Muse는 이름 없이 56). 아이콘 22. */
+#rail { gap: 10px; padding: 12px 0 14px; }
+#rail > i { flex: 1; }
+.sx-rail button { width: 64px; padding: 4px 0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--ink-3); position: relative; border: 0; background: transparent; cursor: pointer; transition: color var(--motion-fast) var(--ease-out); }
+.rail-ic { width: 44px; height: 32px; border-radius: 16px; display: grid; place-items: center; position: relative; transition: background-color var(--motion-fast) var(--ease-out); }
+.sx-rail button:hover { color: var(--ink); }
+.sx-rail button:hover .rail-ic, .sx-rail button.is-on .rail-ic { background: var(--surface-tint); }
+.sx-rail button.is-on { color: var(--ink); }
+.sx-rail button svg { width: 22px; height: 22px; flex: none; }
 .rail-label { font-size: 12px; line-height: 14px; font-weight: 500; white-space: nowrap; letter-spacing: -0.01em; }
-.sx-rail button b { position: absolute; top: 7px; right: 12px; width: 6px; height: 6px; border-radius: 50%; background: var(--attention); }
+.sx-rail button.is-on .rail-label { font-weight: 600; }
+.sx-rail button b { position: absolute; top: 4px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--attention); }
 
 /* 대화 열: 대화 폭은 chat-max에서 멈추고 남는 폭은 작업 패널이 쓴다. main의 바 폭 계산과 같은 식이다. */
 .chat { position: relative; height: 100%; display: flex; flex-direction: column; min-height: 0; }
