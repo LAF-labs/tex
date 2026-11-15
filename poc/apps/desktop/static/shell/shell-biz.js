@@ -28,6 +28,8 @@ const FIELDS = [
   ['주소', 'address'],
   ['이메일', 'email'],
 ];
+/** 홈택스 발급 화면에서 채울 수 있는 칸(사업자번호는 등록 때 받는다). */
+const BIZ_TEXT_KEYS = ['name', 'rep', 'bizType', 'bizItem', 'address', 'email'];
 const INPUT = {
   name: (o) => textInput({ ...o, max: LIMITS.name, required: '상호를 넣어 주세요.' }),
   bizNo: (o) => bizNoInput({ ...o, required: true }),
@@ -54,7 +56,12 @@ export function bizProfileCard(ctx) {
 function viewCard(ctx) {
   const { b } = ctx;
   const has = !!b.bizNo;
-  const ht = (k) => (b.fromHometax?.includes(k) ? { tag: '홈택스에서 가져옴' } : {});
+  // 출처 꼬리표는 출처가 섞였을 때만 단다. 채운 칸이 모두 홈택스에서 왔으면 화면 머리말("홈택스 발급 화면에서 채워요") 한 번으로 충분하다.
+  const filled = BIZ_TEXT_KEYS.filter((k) => (k === 'name' ? has && !b.nameMissing : !!b[k]));
+  const mixed = !!b.fromHometax?.length && filled.some((k) => !b.fromHometax.includes(k));
+  const ht = (k) => (mixed && b.fromHometax.includes(k) ? { tag: '홈택스에서 가져옴' } : {});
+  const empty = filled.length < BIZ_TEXT_KEYS.length;
+  const source = !b.fromHometax?.length ? '이 PC에 저장한 정보예요' : empty ? '빈 칸은 발급할 때 홈택스 화면에서 채워요' : null;
   return h(
     'article',
     { class: 'sx-card', 'data-biz-card': 'view' },
@@ -73,7 +80,7 @@ function viewCard(ctx) {
       true,
     ),
     has && b.nameMissing ? note(BIZ_NAME_MISSING_NOTE, true) : null,
-    h('div', { class: 'sx-source' }, b.fromHometax?.length ? '빈 칸은 발급할 때 홈택스 화면에서 채워요 · [수정]으로 고칠 수 있어요' : '이 PC의 내 사업장 정보 · [수정]으로 고칠 수 있어요'),
+    source ? h('div', { class: 'sx-source' }, source) : null,
   );
 }
 

@@ -6,7 +6,7 @@ import { CARD_ROWS, cardHeight } from './approval-gate.ts';
 export const SHELL = {
   /** 디자인 토큰 titlebar-height·rail-width·panel-width·chat-max */
   titlebar: 44,
-  rail: 60,
+  rail: 76,
   panel: 340,
   chatMax: 600,
   /** 대화 좌우 여백(space-5) */

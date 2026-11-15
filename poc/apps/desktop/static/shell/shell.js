@@ -343,7 +343,7 @@ const act = {
 
 // ---- 틀: 제목줄·레일 ----
 
-/** 레일 아이콘 아래 짧은 이름(12px, 레일 폭 60 안). */
+/** 레일 아이콘 아래 짧은 이름(12px, 레일 폭 76 안). */
 const RAIL_SHORT = { chat: '대화', docs: '문서함', cps: '거래처', bank: '받을 돈', biz: '사업장', bundle: '꾸러미', payroll: '급여', activity: '기록', settings: '설정' };
 
 // 레일은 자주 가는 곳만(v2.0, 9곳 → 5곳). 세무사 꾸러미·활동 기록은 문서함 안, 내 사업장은 설정 안에 둔다(PARENT).
@@ -411,16 +411,16 @@ function renderRail() {
     const n = dday(d.expiresOn, state.today);
     return n !== null && n <= 7;
   }).length;
-  // 아이콘만으로는 어디로 가는지 알 수 없다(길 찾기). 레일 폭(60)에 맞는 짧은 이름을 아이콘 아래에 둔다. 전체 이름은 aria-label·title.
+  // 아이콘만으로는 어디로 가는지 알 수 없다(길 찾기). 레일 폭(76)에 맞는 짧은 이름을 아이콘 아래에 둔다. 전체 이름은 aria-label·title.
   const item = ([v, label, ic]) =>
     h(
       'button',
       { type: 'button', class: state.view === v || PARENT[state.view] === v ? 'is-on' : null, title: label, 'aria-label': v === 'docs' && soon ? `${label}, 만료 임박 ${soon}개` : label, 'aria-current': state.view === v ? 'page' : null, 'data-view': v, onclick: () => go(v) },
-      icon(ic),
+      h('span', { class: 'rail-ic' }, icon(ic), v === 'docs' && soon ? h('b', { 'aria-hidden': 'true' }) : null),
       h('span', { class: 'rail-label', 'aria-hidden': 'true' }, RAIL_SHORT[v] ?? label),
-      v === 'docs' && soon ? h('b', { 'aria-hidden': 'true' }) : null,
     );
-  $('#rail').replaceChildren(...RAIL.filter((r) => !r[3] || r[3]()).map(item), h('i'), item(['settings', '설정', 'settings']));
+  // Muse처럼 묶음을 세로 가운데에 둔다: 위·아래 빈칸(i)이 남는 높이를 나눠 갖고, 설정은 맨 아래.
+  $('#rail').replaceChildren(h('i'), ...RAIL.filter((r) => !r[3] || r[3]()).map(item), h('i'), item(['settings', '설정', 'settings']));
 }
 
 // ---- 대화 화면 ----

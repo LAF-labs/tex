@@ -71,7 +71,7 @@ export const TOKENS: Tokens = {
     "radius-xl": "22px",
     "radius-full": "9999px",
     "titlebar-height": "44px",
-    "rail-width": "60px",
+    "rail-width": "76px",
     "panel-width": "340px",
     "chat-max": "600px",
     "field-label-width": "96px",
