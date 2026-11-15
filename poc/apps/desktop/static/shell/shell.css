@@ -93,12 +93,13 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 #rail { gap: 10px; padding: 12px 0 14px; }
 #rail > i { flex: 1; }
 .sx-rail button { width: 64px; padding: 4px 0; border-radius: 12px; display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--ink-3); position: relative; border: 0; background: transparent; cursor: pointer; transition: color var(--motion-fast) var(--ease-out); }
-.rail-ic { width: 44px; height: 32px; border-radius: 16px; display: grid; place-items: center; position: relative; transition: background-color var(--motion-fast) var(--ease-out); }
+/* 번들의 .sx-rail span(40×40 원)을 이긴다: 아이콘 칸은 44×32 알약, 이름 칸은 글자 크기 그대로. 색은 단추를 따른다. */
+.sx-rail .rail-ic { width: 44px; height: 32px; border-radius: 16px; display: grid; place-items: center; position: relative; color: inherit; transition: background-color var(--motion-fast) var(--ease-out); }
 .sx-rail button:hover { color: var(--ink); }
 .sx-rail button:hover .rail-ic, .sx-rail button.is-on .rail-ic { background: var(--surface-tint); }
 .sx-rail button.is-on { color: var(--ink); }
 .sx-rail button svg { width: 22px; height: 22px; flex: none; }
-.rail-label { font-size: 12px; line-height: 14px; font-weight: 500; white-space: nowrap; letter-spacing: -0.01em; }
+.sx-rail .rail-label { width: auto; height: auto; display: block; border-radius: 0; color: inherit; font-size: 12px; line-height: 14px; font-weight: 500; white-space: nowrap; letter-spacing: -0.01em; }
 .sx-rail button.is-on .rail-label { font-weight: 600; }
 .sx-rail button b { position: absolute; top: 4px; right: 8px; width: 6px; height: 6px; border-radius: 50%; background: var(--attention); }
 
