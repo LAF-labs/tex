@@ -1,6 +1,7 @@
 // 연결된 폰 수신(apps/desktop/src/phone-link.ts): 페어링 결과 보관 → 라이브 우편함 IK 세션으로 사진·현금 받기 → 꺼져 있던 동안의 HTTPS 큐 비우기.
 // 릴레이는 @sax/remote MemoryRelay(라이브)와 메모리 큐(services/relay 큐 의미: seq, ack = seq까지 삭제, 번들 슬롯)다.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -178,6 +179,14 @@ describe('PC 폰 수신(phone-link)', () => {
     await first.start();
     await first.add(x.pc);
     await until(() => x.queueOf(x.pc.mbxId).bundle !== null);
+    // 번들 유효 기간이 파일에 남은 뒤 끈다(올린 직후 끄면 다음 기동이 다시 올린다)
+    await until(() => {
+      try {
+        return JSON.parse(readFileSync(x.file, 'utf8')).phones[0]?.qbundleValidTo > 0;
+      } catch {
+        return false;
+      }
+    });
     first.stop();
     // 폰: PC 없음 → 큐로 보낸다
     const q = x.queueOf(fromB64(x.phone.mbxId));
