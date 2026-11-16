@@ -183,13 +183,17 @@ describe('동의 화면 4종', () => {
     for (const k of CONSENT_KINDS) {
       const n = CONSENT_NOTICES[k];
       assert.equal(n.key, `consent.${k}`);
-      assert.match(n.version, /^f06-pre\.\d+$/);
+      // 약관(④)은 사이트 전문과 같은 판(terms-YYYY-MM-DD), 나머지는 F-06 자리표시 판
+      assert.match(n.version, k === 'terms' ? /^terms-\d{4}-\d{2}-\d{2}$/ : /^f06-pre\.\d+$/);
       assert.equal(n.draft, 'F-06 초안 전 문구');
       const text = [n.title, ...n.lines].join(' ');
       for (const bad of ['세액 산정', '절세', '신고 대리', '가산세', '납부할 세액']) assert.ok(!text.includes(bad), `${k}: ${bad}`);
     }
     assert.match(CONSENT_NOTICES.delegation.lines.join(' '), /악성코드로부터는 보호하지 못해요/, 'D05 §9 범위 문구');
     assert.match(CONSENT_NOTICES.delegation.lines.join(' '), /인증서 비밀번호는 저장하지 않아요/);
+    // 약관 화면은 전문 두 개(약관·처리방침)를 열 수 있고, 가리기의 한계를 숨기지 않는다(R13 §2.5)
+    assert.deepEqual(CONSENT_NOTICES.terms.links?.map((l) => l.doc), ['terms', 'privacy']);
+    assert.match(CONSENT_NOTICES.terms.lines.join(' '), /일부가 남을 수 있어요/);
   });
 
   it('동의 답은 명시 클릭 하나씩: 묶음(전체 동의) 답이 없다. 텔레메트리 화면은 첫 실행에서 묻지 않는다(기본 꺼짐, 기록 없음)', () => {
@@ -283,7 +287,7 @@ describe('동의 화면 4종', () => {
     assert.deepEqual(
       ports.consents.map((c) => [c.kind, c.noticeKey, c.noticeVersion, c.choice, c.processorsVersion ?? null, c.at]),
       [
-        ['terms', 'consent.terms', 'f06-pre.2', 'agreed', null, '2026-11-05T01:00:00.000Z'],
+        ['terms', 'consent.terms', 'terms-2026-11-30', 'agreed', null, '2026-11-05T01:00:00.000Z'],
         ['model', 'consent.model', 'f06-pre.2', 'agreed', 'mock-2026-11-05', '2026-11-05T01:00:00.000Z'],
       ],
     );

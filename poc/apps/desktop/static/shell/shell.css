@@ -147,6 +147,7 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 /* 온보딩(08 §4) */
 .onb { display: grid; gap: var(--space-3); }
 .onb-card .onb-lines { margin: var(--space-2) 0; padding-left: 18px; display: grid; gap: var(--space-1); font-size: 14px; line-height: 22px; color: var(--ink); }
+.onb-links { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0 0; }
 .onb-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: var(--space-2) 0; }
 .onb-table th, .onb-table td { text-align: left; padding: 6px 0; overflow-wrap: anywhere; }
 .onb-table td { border-top: 1px solid var(--line); }

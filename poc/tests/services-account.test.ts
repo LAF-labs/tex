@@ -620,6 +620,40 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['privacy-2026.11']);
   });
 
+  it('탈퇴: 7일 유예, 구독 바로 해지·알림 메일, 유예 중 취소, 유예 끝나면 계정 삭제(처리방침 3항·약관 제15조)', async () => {
+    const s = await login(e, 'bye@example.com');
+    const pc = await desktop(e, s);
+    const t0 = e.clock.now();
+    await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
+    const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
+    const act = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 1 });
+    await e.req('POST', '/v1/billing/webhook', { raw: act, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(act)) } });
+    assert.equal((await e.req('POST', '/v1/account/delete-cancel', { headers: bearer(s) })).json.error, 'account.not_pending');
+    const r = await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) });
+    assert.equal(r.status, 202);
+    assert.equal(r.json.deleteAfter, t0 + 7 * D);
+    assert.ok(e.pg.canceled.includes(ref), '다음 결제가 없게 구독을 바로 해지');
+    assert.ok(e.mail.outbox.some((m) => m.to === 'bye@example.com' && m.kind === 'account_delete_pending'));
+    // 다시 눌러도 같은 예정 시각
+    assert.equal((await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
+    assert.deepEqual((await e.req('GET', '/v1/account/deletion', { headers: bearer(s) })).json, { deleteAfter: t0 + 7 * D });
+    assert.equal((await e.req('POST', '/v1/account/delete-cancel', { headers: bearer(s) })).status, 204);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, null);
+    // 데스크톱은 세션 없이 기기 토큰으로 요청한다(등록 뒤 세션을 버린다)
+    assert.equal((await pc.call('POST', '/v1/account/delete-request')).status, 202);
+    assert.equal((await pc.call('GET', '/v1/account/deletion')).json.deleteAfter, e.clock.now() + 7 * D);
+    e.clock.advance(7 * D - 60_000);
+    const left = async () => Number((await e.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM accounts WHERE email = 'bye@example.com'"))?.n ?? 0);
+    await e.svc.sweep();
+    assert.equal(await left(), 1, '유예 중에는 남는다');
+    e.clock.advance(2 * 60_000);
+    await e.svc.sweep();
+    assert.equal(await left(), 0, '유예가 끝나면 계정이 없다');
+    assert.ok(e.stopped.includes(pc.d.id), '기기 정지 훅(릴레이·푸시)');
+    assert.ok(e.events.includes('account.deleted'));
+  });
+
   it('웹훅 순서는 PG 이벤트 시각: 늦은·재전송 이벤트 무시, 결제 실패 뒤 같은 기간 재결제는 active, 해지는 끝 상태', async () => {
     const s = await login(e, 'order@example.com');
     const t0 = e.clock.now();
