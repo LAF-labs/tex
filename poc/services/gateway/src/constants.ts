@@ -57,16 +57,18 @@ export const ZERO_PRICES: Prices = { decideIn: 0, decideOut: 0, respondIn: 0, re
 
 /**
  * 일 한도용 기본 단가(마이크로 달러 / 100만 토큰). GW_PRICES_JSON이 0이어도 한도는 이 값으로 센다(무료 체험 비용 상한이 단가 설정에 기대지 않게).
- * decide = gpt-6-luna Decisions(R1 §A.7: 입력 $0.10, 캐시 $0.01, 출력 무료), respond·agent = gpt-6.1-terra(S9: 입력 $1, 캐시 $0.05, 출력 $5).
- * 에이전트 라우터(jev-router) 단가는 모르므로 terra와 같게 잡는다(보수적).
+ * decide = gpt-6-luna Decisions(R1 §A.7: 입력 $0.10, 캐시 $0.01, 출력 무료).
+ * respond = DeepSeek V4.1 Flash 1017(사용자 확인 2026-11-16). OpenRouter 표시가는 입력 $0.02·출력 $0.108이지만 제공사 라우팅에 따라 달라서,
+ * 한도는 DeepSeek 공식 피크 단가(입력 $0.30, 캐시 $0.006, 출력 $1.20)로 센다(실제보다 많게 세는 쪽).
+ * 에이전트 라우터(jev-router) 단가는 모르므로 gpt-6.1-terra(입력 $1, 캐시 $0.05, 출력 $5)로 잡는다(보수적).
  */
 export const LIMIT_PRICES: Required<Prices> = {
   decideIn: 100_000,
   decideCached: 10_000,
   decideOut: 0,
-  respondIn: 1_000_000,
-  respondCached: 50_000,
-  respondOut: 5_000_000,
+  respondIn: 300_000,
+  respondCached: 6_000,
+  respondOut: 1_200_000,
   agentIn: 1_000_000,
   agentCached: 50_000,
   agentOut: 5_000_000,

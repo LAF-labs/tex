@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type Prices, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { ACCOUNT_ORIGIN, accountStack, deviceToken, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -31,7 +31,7 @@ interface Env {
   twin(): Promise<{ server: Server; req: Env['req']; call: Env['call'] }>;
 }
 
-async function start(o: { monthlyTokens?: number; sqlLimits?: boolean; daily?: { trialKrw: number; paidKrw: number; krwPerUsd: number } } = {}): Promise<Env> {
+async function start(o: { monthlyTokens?: number; sqlLimits?: boolean; daily?: { trialKrw: number; paidKrw: number; krwPerUsd: number }; limitPrices?: Required<Prices> } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'gateway', MIGRATIONS_DIR);
@@ -52,6 +52,7 @@ async function start(o: { monthlyTokens?: number; sqlLimits?: boolean; daily?: {
     models: { decide: 'model-decide', respond: 'model-respond' },
     monthlyTokens: o.monthlyTokens,
     daily: o.daily,
+    limitPrices: o.limitPrices,
     nts,
     suspender: { suspend: async (id) => void (await s.svc.autoSuspend(id)) },
     onEvent: (e) => events.push(e),
@@ -546,7 +547,9 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
 describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST 새벽 4시 초기화)', () => {
   let e: Env;
   // 모의 공급사 respond = 입력 2,000(캐시 1,500)·출력 300 → 500×$1 + 1,500×$0.05 + 300×$5 = 2,075 마이크로 달러. 환율 1,000이면 약 2원
-  beforeEach(async () => (e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 } })));
+  // 단가를 고정해 기본 단가(LIMIT_PRICES)가 바뀌어도 금액 계산 단언이 그대로다
+  const PRICES = { decideIn: 100_000, decideCached: 10_000, decideOut: 0, respondIn: 1_000_000, respondCached: 50_000, respondOut: 5_000_000, agentIn: 1_000_000, agentCached: 50_000, agentOut: 5_000_000 };
+  beforeEach(async () => (e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 }, limitPrices: PRICES })));
   afterEach(() => (e.server.close(), e.s.close()));
 
   it('체험 한도를 넘으면 429 gateway.daily_limit(retry-after = 다음 새벽 4시), 안전 판정은 계속, 새벽 4시에 초기화', async () => {
