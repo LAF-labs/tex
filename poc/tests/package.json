@@ -5,6 +5,7 @@
   "type": "module",
   "dependencies": {
     "@sax/bundle": "workspace:*",
+    "@sax/chat-core": "workspace:*",
     "@sax/daemon": "workspace:*",
     "@sax/db": "workspace:*",
     "@sax/docparse": "workspace:*",

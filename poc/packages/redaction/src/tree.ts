@@ -2,6 +2,7 @@
 // 이 모듈은 Playwright·CDP에 의존하지 않는다(엔진이 CDP Accessibility·DOMSnapshot 결과를 A11yNode로 바꿔 넘긴다).
 // 규칙: scope 서브트리 → 숨김·장식·스크립트·보이지 않는 텍스트 제거 → 표는 머리글 + 첫 3행 + 행 수 → 입력값 제거 →
 // 이름 출처 표식·이스케이프·200자 → 역할·상태 허용 목록 → 크기 상한(깊은 곳부터 접기). 실패하면 던진다(fail-closed, D06 §4).
+import { utf8Length } from './normalize.ts';
 
 export type NameSource = 'contents' | 'aria' | 'alt' | 'title' | 'label' | 'placeholder' | 'related';
 
@@ -142,7 +143,7 @@ export function lineText(l: A11yLine): string {
   return `${pad}${l.role}${name}${st}`;
 }
 
-const bytes = (lines: A11yLine[]) => lines.reduce((a, l) => a + Buffer.byteLength(lineText(l), 'utf8') + 1, 0);
+const bytes = (lines: A11yLine[]) => lines.reduce((a, l) => a + utf8Length(lineText(l)) + 1, 0);
 
 /**
  * 트리를 줄 목록으로 렌더한다. 이름 안의 식별자 치환은 하지 않는다(apply.ts의 Redactor.applyTree가 줄 단위로 한다).
