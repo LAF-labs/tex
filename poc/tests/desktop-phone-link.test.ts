@@ -135,7 +135,7 @@ describe('PC 폰 수신(phone-link)', () => {
     // 파일: 폰 공개키·우편함 ID는 있고 토큰 원문은 없다
     const raw = await fs.readFile(x.file, 'utf8');
     assert.ok(!raw.includes(b64(x.pc.tokRead)) && !raw.includes(b64(x.pc.tokWrite)), '토큰 원문 없음');
-    assert.equal((await fs.stat(x.file)).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal((await fs.stat(x.file)).mode & 0o777, 0o600, 'POSIX 권한(Windows는 사용자 폴더 ACL)');
     const rec = JSON.parse(raw).phones[0];
     assert.equal(rec.mbxId, b64(x.pc.mbxId));
     assert.equal(rec.name, x.w.phone.keys.name);
