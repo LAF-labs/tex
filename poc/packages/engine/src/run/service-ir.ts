@@ -18,8 +18,11 @@ import { BASIC_HANDLERS, stepEnv, type Handlers, type Outcome } from '../core/st
 import { targetDiagnosis } from '../core/diagnose.ts';
 import { FallbackChain } from '../core/fallback.ts';
 import { runLocalDict } from '../core/locate.ts';
+import { HealMemory, healableKeys } from '../core/heal-memory.ts';
+import { DbHealStore, DbJsonStore, agentPathKey } from './heal-store.ts';
+import { AgentPathMemory, type AgentPathFile } from './agent-path.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
-import { GatewayAgentModel, GatewayJudgeModel } from './agent-port.ts';
+import { GatewayAgentModel, GatewayJudgeModel, GatewayVisionModel } from './agent-port.ts';
 import { BrowserAgent } from './browser-agent.ts';
 import { PageJudge } from './judge.ts';
 import { GateTokens, wmaxMs } from '../core/token.ts';
@@ -117,6 +120,10 @@ export interface IrRunInput {
   /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
+  /** 고친 선택자 기억(core/heal-memory.ts)·에이전트 길 기억. false면 끈다(기본 켬). */
+  heal?: boolean;
+  /** 화면 보기(computer-use) 칸. false면 끈다(기본 켬, 대표 결정 2026-11-16). */
+  vision?: boolean;
   ledger: Ledger;
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
@@ -205,6 +212,11 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
 export const PHASE_OF: Readonly<Record<string, string>> = {
   s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
+  // H-01 2.3.x 로그인 하위 스텝: 공동인증서 로그인(s4a~s4h·s8~s8b)과 간편인증 갈래(s7~s7g). 사람 대기 시간 초과가 여기서 나면
+  // 발급 화면 전이라 사다리가 다음 칸으로 간다(issue/routes.ts branchOf)
+  s4a: 'login', s4b: 'login', s4c: 'login', s4d: 'login', s4e: 'login', s4f: 'login', s4g: 'login', s4h: 'login',
+  s8: 'login', s8a: 'login', s8b: 'login',
+  s7: 'login', s7a: 'login', s7b: 'login', s7c: 'login', s7d: 'login', s7e: 'login', s7f: 'login', s7g: 'login',
   s10: 'form', s11: 'form',
   s12: 'input', s13: 'input', s14: 'input', s15: 'input', s16: 'input', s17: 'input', s18: 'input',
   s19: 'readback', s19a: 'readback', s19b: 'readback', s19c: 'readback', s19d: 'readback', s19f: 'readback', s19e: 'readback',
@@ -435,6 +447,10 @@ export class IrRun {
     const clock = i.clock ?? systemClock;
     const ir = runCopy(files.playbook, i.gateWaitMs, isFixtureGrant(i.ir.fixtureGrant) ? i.ir.verifyTiming : undefined);
     const analysis = semanticViolations(files).analysis;
+    // 고친 선택자 기억(0원 칸): 앞 실행이 고친 선택자를 이 실행 사본 사전의 첫 후보로 둔다. 실패하면 폴백 0단계가 버린다.
+    const heal = i.heal === false ? null : new HealMemory({ store: new DbHealStore(i.db, files.manifest.id), pkg: pkg.selectors, healable: healableKeys(ir, pkg.selectors, analysis.irreversible), now: () => clock.now(), journal: i.journal });
+    const seeded = heal?.seed(dict) ?? new Map<string, string>();
+    const paths = i.heal === false ? null : new AgentPathMemory(new DbJsonStore<AgentPathFile>(i.db, agentPathKey(files.manifest.id)), { now: () => clock.now(), journal: i.journal });
     const page = i.page;
     const reader = new PlaywrightPageReader(page);
 
@@ -451,6 +467,7 @@ export class IrRun {
     const raw = new PlaywrightActuator({ page, reader, afterNavigation: () => enforcer.settled(), onError: (op, why) => i.journal('actuator.why', { stepId: curStep ?? '', op, ...why }), onBoxClick: (r) => i.journal('actuator.box_click', { stepId: curStep ?? '', ...r }) });
     // 예상 밖 화면 판정(아래에서 만든다). 대화상자 훅과 스텝 경계가 먼저 생겨 이 자리에 둔다.
     let pageJudge: PageJudge | null = null;
+    let agent: BrowserAgent | null = null;
     let curStep: string | null = null;
     const act = new GuardedActuator({
       driver: raw, reader, dict, domains, policy: enforcer,
@@ -483,8 +500,10 @@ export class IrRun {
     const redactor = new Redactor({ runId: i.runId });
     // 실행당 예산: 게이트웨이가 다 썼다고(run_budget_exceeded) 하면 그 뒤로는 부르지 않는다(헛된 429 호출을 줄인다).
     // 위치 찾기(L2, 실행당 2번)와 판정·에이전트(agentPerRun)는 게이트웨이가 따로 세므로 표시도 따로 둔다.
-    const locateBudget = { spent: false };
-    const pageAiBudget = { spent: false };
+    // 계정 한도(오늘·이번 달·구독)는 실행 안의 유료 칸 전부가 같이 본다.
+    const day = { spent: false };
+    const locateBudget = { spent: false, day };
+    const pageAiBudget = { spent: false, day };
     const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget }), journal: i.journal } : undefined;
     // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
@@ -505,13 +524,13 @@ export class IrRun {
     if (i.ir.locate) {
       const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };
       const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
-      const agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port) });
+      agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port), ...(paths ? { paths, pkg: pkg.selectors } : {}), ...(i.vision === false ? {} : { vision: new GatewayVisionModel(port) }) });
       pageJudge = new PageJudge({
         ...screen, ir, irreversible: analysis.irreversible, model: new GatewayJudgeModel(port), agent, ...(locate ? { locate } : {}),
         lastNotice: () => act.notice, currentStep: () => curStep,
       });
     }
-    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), journal: i.journal });
+    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), ...(agent && paths ? { replay: agent } : {}), ...(agent && i.vision !== false ? { vision: agent } : {}), journal: i.journal });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {
@@ -609,9 +628,13 @@ export class IrRun {
         opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
-      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), stop: this.stopAbort.signal },
+      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), fastEscalate: (s, cause) => fallback.fastEscalate(s, cause), stop: this.stopAbort.signal },
       // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
-      recover: (stop) => this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false),
+      recover: (stop) => {
+        // 다시 걸은(또는 에이전트가 방금 걸은) 길로 돌아간 확인 스텝이 재시도까지 실패했다: 그 길은 남기지 않는다.
+        paths?.failed(stop.at, stop.cause ?? stop.code ?? 'step.failed');
+        return this.orStop(fallback.recover(stop.at, stop.cause ?? stop.code), false);
+      },
       // Running 진입 확인(D03 §2)·정지 분기의 Chrome 닫기(hardStop).
       allowed: () => !this.denial(),
       hardStop: () => this.denial()?.hardStop ?? false,
@@ -634,6 +657,10 @@ export class IrRun {
         if (name === 'step.started' && d.type === 'fill') this.formStarted = true;
         i.trace?.({ name, stepId: d.stepId, type: d.type, ...(d.code ? { code: d.code } : {}) });
         if (name === 'step.finished' && d.type === 'checkpoint' && !d.code) enforcer.reached();
+        if (name === 'step.finished' && !d.code) {
+          fallback.confirmed(d.stepId);
+          paths?.confirmed(d.stepId);
+        }
         // 인증서 비밀번호를 넣은 뒤 로그인 확인(첫 기다림 스텝 결과)을 금고에 알린다: 통과면 그때 기억, 실패면 버리고 지움
         if (name === 'step.finished' && secretPort) void secretPort.stepFinished(d.type, !!d.code, d.stepId);
       },

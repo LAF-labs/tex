@@ -76,17 +76,36 @@
 |---|---|---|---|
 | `GET /v1/me` | 세션 | — | `200 {email, status, aikPinned, slotsUsed, hasBizProfile, passkeys, subscription, consents[], authMethod}` |
 | `POST /v1/consents` | 세션 | `{version}` | `204` |
+| `GET /v1/account/deletion` | 세션 또는 데스크톱 기기:devlist | — | `200 {deleteAfter: number\|null}` | 탈퇴 예정 시각. 폰 토큰 `403 account.scope_denied` |
+| `POST /v1/account/delete-request` | 세션 또는 데스크톱 기기:devlist | — | `202 {deleteAfter}` | 탈퇴 요청(F-06, 약관 제15조·처리방침 3항). 7일 유예(D09 §2.2 계정 세션만 있는 삭제), 구독이 있으면 바로 해지(PG cancel, 다음 결제 없음), 알림 메일 `account_delete_pending`. 이미 요청 중이면 같은 시각. `GET /v1/me`의 `deleteAfter`로 보인다. 유예가 끝나면 주기 작업이 기기 정지 훅을 부르고 계정 행을 지운다(다른 표는 CASCADE, 이벤트 `account.deleted`) |
+| `POST /v1/account/delete-cancel` | 세션 또는 데스크톱 기기:devlist | — | `204` | 유예 중 취소. 요청이 없으면 `409 account.not_pending`. 해지한 구독은 되살리지 않는다 |
 
-## 구독(9,900원 한 플랜, ADR-034)
+## 구독(19,900원 한 플랜, ADR-034)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `POST /v1/billing/checkout` | 세션 | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
-| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:9900, period:"month"} \| null}` | |
-| `POST /v1/billing/cancel` | 세션 | — | `204` | |
+| `POST /v1/billing/checkout` | 세션 또는 데스크톱 기기 토큰(devlist) | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
+| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:19900, period:"month", refund?: {refundableUntil, amountKrw}} \| null, entitlement: {state, until, trialMonths}}` | `entitlement`는 `GET /v1/billing/entitlement`와 같다. `refund`는 지금 청약철회할 수 있을 때만(빌링키 PG) |
+| `POST /v1/billing/cancel` | 세션 | — | `204` | 다음 결제 없음, 낸 기간(`renewAt`)까지 사용. 접수 메일(`subscription_canceled`) |
+| `POST /v1/billing/refund` | 세션 | — | `200 {amountKrw}` | 청약철회(결제 후 7일, 빌링키 PG만). 금액 = 결제액 − 쓴 날 일할(올림), 당일이면 전액. 구독은 바로 끝난다. `409 account.refund_unavailable`(기간 지남·환불할 결제 없음), `502 account.refund_failed`(PG 거절·결과 모름, 다시 해도 같은 멱등 키라 두 번 환불되지 않음) |
+| `GET /v1/billing/entitlement` | 세션 | — | `200 {state:"trial"\|"paid"\|"none", until, trialMonths}` | 유료 기능 권리. 체험 = 가입 뒤 1달(KST 달력, 카드 없음, 사용자 결정 2026-11-16). paid = 활성(갱신일까지, 연체·청구 대기는 +3일 유예)·해지했지만 갱신일 전. `GET /v1/me`에도 `entitlement`가 있다 |
+
+**유료 기능 잠금**: 권리가 `none`이면 데스크톱 기기 토큰에서 `gateway` 범위를 뺀다(연결·기기 관리 범위는 그대로). `gateway`만 요청하면 `402 account.subscription_required`. 게이트웨이는 범위 없는 토큰을 `account.scope_denied`로 거부한다. 토큰 수명이 15분이라 구독·만료가 15분 안에 반영된다.
 | `POST /v1/billing/webhook` | PG 서명 | PG 원본 본문(16KB) | `200 {ok:true}` | `400 account.billing_signature_invalid`. 모의 PG: `x-mock-pg-signature` = HMAC-SHA256 hex. 이벤트에 PG 쪽 시각 `at`(필수, 서명 범위 안)이 있고 마지막으로 반영한 이벤트보다 늦은 것만 반영(늦게 온·재전송 이벤트 무시). 해지는 끝 상태(다시 구독은 checkout이 새 PG 참조로 연다), 결제 실패는 active에서만 |
 
-PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. 결제 수단은 PG에만 있다. 이 저장소에는 모의 어댑터(`MockPaymentGateway`)만 있다.
+PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. 결제 수단은 PG에만 있다. 어댑터는 모의(`MockPaymentGateway`, 웹훅 방식)와 토스페이먼츠 자동결제(`TossPaymentGateway`, `PG_PROVIDER=toss`, 빌링키 방식)다.
+
+### 토스페이먼츠 자동결제(빌링키 방식, `PG_PROVIDER=toss`)
+
+토스는 정기 청구를 스스로 하지 않고 웹훅 서명도 없어서 웹훅을 쓰지 않는다(`/v1/billing/webhook`은 늘 400). 대신:
+
+| 메서드·경로 | 인증 | 응답 | 설명 |
+|---|---|---|---|
+| `GET /v1/billing/card?ref=` | 없음(브라우저, 참조는 그 계정만 받은 무작위 값) | `200 text/html` \| `404` | checkout이 준 결제 창. 결제 직전 고지(총액·자동 갱신·해지·청약철회·결제 실패)와 약관 동의 체크 뒤 토스 SDK `requestBillingAuth`. 결제 대기·연체만 연다 |
+| `GET /v1/billing/card/success?customerKey&authKey` | 없음(토스가 돌려보냄) | `200` 결제됨 \| `202` 확인 중 \| `402` 거절 \| `400` | 빌링키 발급 → 봉인 저장 → 이번 기간 청구. 약관 판 `terms-2026-11-30`을 동의 이력에 남긴다. 새로 고쳐도 두 번 청구하지 않는다 |
+| `GET /v1/billing/card/fail?code` | 없음 | `200 text/html` | 고정 문구(토스 메시지는 보여주지 않음) |
+
+갱신: 정리 cron(한 시간마다)이 갱신일이 된 구독을 청구한다. 주문번호 = 참조·기간 시작·실패 수이고 토스 멱등 키로도 쓴다(결과를 모르면 15분 뒤 같은 주문번호로 다시 물어 두 번 결제되지 않음). 카드 사유 실패는 `past_due` → 하루 뒤 재시도, 세 번이면 해지. 첫 결제 실패는 빌링키를 지우고 다른 카드로 다시 등록하게 한다. 해지는 빌링키를 지우고 `renewAt`(이미 낸 기간 끝)은 남긴다.
 
 ## 기기(계정 세션)
 

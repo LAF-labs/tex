@@ -129,11 +129,18 @@ function fakeCloud() {
       return JSON.parse(Buffer.from(signAcctClaim(claimKey.secretKey, { account_id: 'acc-1', email: EMAIL, aik_pub: aikPub!, iat: now, exp: now + 600_000 }), 'base64').toString('utf8'));
     },
     enrollPhone: async () => void calls.push('enroll'),
+    billing: async () => ({ entitlement: { state: 'trial' as const, until: null }, subscription: null }),
+    billingCheckout: async () => ({ checkoutUrl: 'https://tax.laf-co.com/v1/billing/card?ref=cus_aaaaaaaaaaaaaaaaaaaaaaaa' }),
+    billingCancel: async () => {},
+    billingRefund: async () => ({ amountKrw: 0 }),
     putDeviceList: async (_a, l) => {
       const v = verifyDeviceList(l, fromB64(aikPub!));
       calls.push(v.ok ? 'devlist' : 'devlist_bad');
       deviceList = l;
     },
+    accountDeletion: async () => ({ deleteAfter: null }),
+    requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
+    cancelAccountDelete: async () => {},
   };
   const relayHttp: RelayHttpClient = {
     createRoom: async () => (calls.push('room'), { expiresAt: Date.now() + 120_000 }),

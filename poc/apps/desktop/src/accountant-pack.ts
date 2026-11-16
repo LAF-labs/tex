@@ -6,6 +6,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { deflateRawSync } from 'node:zlib';
+import { checkPaperInvoice, paperDirection, type PaperInvoice } from '@sax/remote';
 import type { Doc } from './shell-model.ts';
 import type { PastRun } from './run-history.ts';
 
@@ -26,7 +27,7 @@ export interface PackInvoice {
 }
 
 /** 빠진 것 한 줄. 종류가 화면 문구와 순서를 정한다(GAP_LABEL). */
-export type PackGapKind = 'unsure' | 'no_pdf' | 'mail_unconfirmed' | 'not_issued' | 'no_bank';
+export type PackGapKind = 'unsure' | 'no_pdf' | 'mail_unconfirmed' | 'not_issued' | 'no_bank' | 'paper_check';
 export interface PackGap {
   kind: PackGapKind;
   who: string | null;
@@ -50,6 +51,8 @@ export interface PackSummary {
   /** 계좌 연결 전이면 null */
   receivables: { count: number; total: number; rows: PackReceivable[] } | null;
   gaps: PackGap[];
+  /** 그 달(작성일 기준) 종이 세금계산서·계산서. 폰 연결 전이면 빈 목록 */
+  paper: PackPaper[];
   /** 만든 zip 이름과 폴더 안 파일 목록(꾸러미 기준 상대 경로) */
   zipName: string;
   files: string[];
@@ -62,8 +65,34 @@ export const GAP_LABEL: Record<PackGapKind, string> = {
   mail_unconfirmed: '메일 확인 못 함',
   not_issued: '발급 안 된 시도',
   no_bank: '계좌 연결 전이라 받을 돈이 빠졌어요',
+  paper_check: '종이 세금계산서 값 확인 필요',
 };
-const GAP_ORDER: PackGapKind[] = ['unsure', 'no_pdf', 'mail_unconfirmed', 'not_issued', 'no_bank'];
+const GAP_ORDER: PackGapKind[] = ['unsure', 'no_pdf', 'mail_unconfirmed', 'not_issued', 'paper_check', 'no_bank'];
+
+/** 폰으로 찍은 종이 세금계산서 한 장(엔진 receipts.phone_ocr_json.paperInvoice + 보관함 원본 JPEG) */
+export interface PackPaperSource {
+  docId: string;
+  paper: PaperInvoice;
+  /** 보관함 원본(JPEG). 없으면 null */
+  file: string | null;
+}
+
+export interface PackPaper {
+  docId: string;
+  /** PC가 내 사업자번호로 정한 방향. 둘 다 아니면 null(확인 필요) */
+  direction: 'sales' | 'purchase' | null;
+  docKind: PaperInvoice['docKind'];
+  writtenOn: string;
+  supplier: string;
+  buyer: string;
+  supply: number;
+  tax: number;
+  total: number;
+  /** 다시 본 결과 틀린 칸(빈 목록이면 이상 없음) */
+  issues: string[];
+  /** 꾸러미 안 원본 사진 경로. 없으면 null */
+  image: string | null;
+}
 
 export interface PackPorts {
   past(): Promise<PastRun[]>;
@@ -72,6 +101,10 @@ export interface PackPorts {
   docFile(id: string): Promise<string>;
   receivables(): Promise<Array<{ counterparty: string; date: string; total: number | null }> | null>;
   businessName(): string | null;
+  /** 폰으로 찍은 종이 세금계산서(작성일이 그 달 근처인 것, 거르는 것은 꾸러미가 한다). 없으면 빈 목록 */
+  paperInvoices?(month: PackMonth): Promise<PackPaperSource[]>;
+  /** 내 사업자번호(종이 세금계산서 매출·매입 판정) */
+  businessBizNo?(): string | null;
   /** 꾸러미를 쓰는 폴더(userData/세무사 꾸러미) */
   outRoot: string;
   now?: () => Date;
@@ -216,6 +249,60 @@ export class AccountantPack {
       certs.push({ id: d.id, name: d.docName || d.name, issuedOn: d.issuedOn, file });
     }
 
+    // 종이 세금계산서(폰 사진 + 사장님이 확인한 값): 원본 사진과 매출·매입 표. 폰 값은 후보라 같은 규칙으로 다시 본다
+    const paper: PackPaper[] = [];
+    const paperSrc = ((await this.ports.paperInvoices?.(month).catch(() => [])) ?? []).filter((x) => x.paper?.writtenOn?.startsWith(month)).sort((a, b) => a.paper.writtenOn.localeCompare(b.paper.writtenOn));
+    if (paperSrc.length) await fs.mkdir(path.join(dir, '종이 세금계산서'), { recursive: true });
+    const myBiz = this.ports.businessBizNo?.() ?? null;
+    for (const x of paperSrc) {
+      const p = x.paper;
+      let issues: string[];
+      try {
+        issues = checkPaperInvoice(p);
+      } catch {
+        issues = ['shape'];
+      }
+      const direction = paperDirection(p, myBiz);
+      if (!direction) issues = [...issues, 'direction'];
+      let image: string | null = null;
+      if (x.file && /\.(jpe?g)?$/i.test(path.extname(x.file) || '.jpg') && (await exists(x.file))) {
+        let name = `${ymd(p.writtenOn)}_${direction === 'sales' ? '매출' : direction === 'purchase' ? '매입' : '확인필요'}_${SAFE(direction === 'purchase' ? p.supplier?.name ?? '' : p.buyer?.name ?? '')}_${x.docId.slice(-6)}.jpg`;
+        for (let i = 2; usedNames.has(name); i++) name = name.replace(/(_\d+)?\.jpg$/, `_${i}.jpg`);
+        usedNames.add(name);
+        image = `종이 세금계산서/${name}`;
+        await put(image, await fs.readFile(x.file));
+      }
+      const row: PackPaper = {
+        docId: x.docId, direction, docKind: p.docKind, writtenOn: p.writtenOn,
+        supplier: p.supplier?.name ?? '', buyer: p.buyer?.name ?? '', supply: p.supplyAmount, tax: p.vatAmount, total: p.total, issues, image,
+      };
+      paper.push(row);
+      if (issues.length) gaps.push({ kind: 'paper_check', who: direction === 'purchase' ? row.supplier : row.buyer, day: p.writtenOn, total: p.total });
+    }
+    if (paper.length) {
+      const DIR_KO = { sales: '매출', purchase: '매입' } as const;
+      const sumOf = (d: 'sales' | 'purchase', k: 'supply' | 'tax' | 'total') => paper.filter((r) => r.direction === d).reduce((s, r) => s + r[k], 0);
+      await put(
+        `종이 세금계산서 ${month}.csv`,
+        Buffer.from(
+          csv([
+            ['구분', '종류', '작성일', '공급자 사업자번호', '공급자 상호', '공급받는자 사업자번호', '공급받는자 상호', '공급가액', '세액', '합계', '영수/청구', '품목', '원본 사진', '확인'],
+            ...paper.map((r) => {
+              const p = paperSrc.find((x) => x.docId === r.docId)!.paper;
+              return [
+                r.direction ? DIR_KO[r.direction] : '확인 필요', r.docKind === 'invoice' ? '계산서(면세)' : '세금계산서', r.writtenOn,
+                p.supplier?.bizNo, r.supplier, p.buyer?.bizNo, r.buyer, r.supply, r.tax, r.total,
+                p.receiptOrClaim === 'receipt' ? '영수' : p.receiptOrClaim === 'claim' ? '청구' : '',
+                (p.items ?? []).map((it) => it.name).join(' / '), r.image ? '있음' : '없음', r.issues.length ? `확인 필요(${r.issues.join(', ')})` : '이상 없음',
+              ];
+            }),
+            ['매출 합계', '', '', '', '', '', '', sumOf('sales', 'supply'), sumOf('sales', 'tax'), sumOf('sales', 'total'), '', '', '', ''],
+            ['매입 합계', '', '', '', '', '', '', sumOf('purchase', 'supply'), sumOf('purchase', 'tax'), sumOf('purchase', 'total'), '', '', '', ''],
+          ]),
+        ),
+      );
+    }
+
     let receivables: PackSummary['receivables'] = null;
     if (recv) {
       const rows = recv.map((r) => ({ who: r.counterparty, writtenOn: r.date, remaining: r.total })).sort((a, b) => a.writtenOn.localeCompare(b.writtenOn));
@@ -235,6 +322,7 @@ export class AccountantPack {
       '',
       `발급한 세금계산서 ${totals.count}건 · 공급가액 ${won(totals.supply)} · 세액 ${won(totals.tax)} · 합계 ${won(totals.total)}`,
       `증명서 ${certs.length}건`,
+      ...(paper.length ? [`종이 세금계산서 ${paper.length}건(매출 ${paper.filter((r) => r.direction === 'sales').length} · 매입 ${paper.filter((r) => r.direction === 'purchase').length}) · 원본 사진은 '종이 세금계산서' 폴더`] : []),
       receivables ? `받을 돈 ${receivables.count}건 · ${won(receivables.total)} (만든 날 기준)` : '받을 돈: 계좌 연결 전이라 넣지 않았어요',
       '',
       gaps.length ? '빠진 것' : '빠진 것 없음',
@@ -245,7 +333,7 @@ export class AccountantPack {
     const zipName = this.zipName(month);
     const top = zipName.replace(/\.zip$/, '');
     await fs.writeFile(path.join(this.ports.outRoot, zipName), zip(files.map((f) => ({ name: `${top}/${f.rel}`, bytes: f.bytes })), new Date(madeAt)));
-    return { month, label, invoices, totals, certs, receivables, gaps, zipName, files: files.map((f) => f.rel), madeAt };
+    return { month, label, invoices, totals, certs, receivables, gaps, paper, zipName, files: files.map((f) => f.rel), madeAt };
   }
 }
 

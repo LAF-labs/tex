@@ -4,6 +4,7 @@ import { InternalAuth, InternalClient, Logger, SqlNonceStore, TokenIssuer, Token
 import { MockMailSender, MockPaymentGateway, type DeviceStopHook, type MailSender, type PairingRooms, type PaymentGateway } from './adapters.ts';
 import { AcctClaimSigner } from './acct-claim.ts';
 import { SesMailSender } from './mail-ses.ts';
+import { TossPaymentGateway } from './pg-toss.ts';
 import { accountRouter } from './app.ts';
 import { CommonPasswords, COMMON_PASSWORDS_FILE, PasswordHasher, argon2Available, parsePepperKeys } from './password.ts';
 import { AccountService, type PasswordDeps } from './service.ts';
@@ -62,8 +63,8 @@ function passwordDeps(env: NodeJS.ProcessEnv, logger: Logger): PasswordDeps | un
 /** 조립(라우터·서비스·정리). 상시 서버(`startAccount`)와 함수 진입점(`@sax/svc-cloud`)이 같은 것을 쓴다. 함수는 DDL을 하지 않는다(migrate: false, 마이그레이션은 배포 절차). */
 export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: AccountBuildDeps = {}, o: { migrate: boolean } = { migrate: true }) {
   // 메일 구성 오류는 DB를 열기 전에 낸다
-  // PG는 모의뿐이다. 메일은 mock(기본) 또는 ses(MAIL_PROVIDER=ses일 때만, SES_* env 3개). 그 밖의 값이면 기동하지 않는다
-  if (env.PG_PROVIDER !== 'mock' && !deps.payments) throw new Error('config_provider: 이 저장소에는 모의 PG만 있다(PG_PROVIDER=mock)');
+  // PG는 mock(웹훅 모의) 또는 toss(토스페이먼츠 자동결제, TOSS_* env 2개 + BILLING_KEY_SEAL_KEY). 메일은 mock(기본) 또는 ses(MAIL_PROVIDER=ses일 때만, SES_* env 3개). 그 밖의 값이면 기동하지 않는다
+  if (env.PG_PROVIDER !== 'mock' && env.PG_PROVIDER !== 'toss' && !deps.payments) throw new Error('config_provider: PG_PROVIDER는 mock 또는 toss');
   if (env.MAIL_PROVIDER !== 'mock' && env.MAIL_PROVIDER !== 'ses' && !deps.mail) throw new Error('config_provider: MAIL_PROVIDER는 mock 또는 ses');
   const logger = deps.logger ?? new Logger('account');
   const mail = deps.mail ?? (env.MAIL_PROVIDER === 'ses' ? SesMailSender.fromEnv(env, { onEvent: (n) => logger.event(n) }) : new MockMailSender());
@@ -81,10 +82,20 @@ export async function buildAccount(env: NodeJS.ProcessEnv = process.env, deps: A
   const internalKey = key32(env.INTERNAL_CALL_KEY, 'INTERNAL_CALL_KEY');
   if (env.INTERNAL_CALL_KEY === env.TOKEN_SIGNING_SEED || env.INTERNAL_CALL_KEY === env.ACCT_CLAIM_SIGNING_KEY) fail('INTERNAL_CALL_KEY');
   const passwords = passwordDeps(env, logger);
+  const payments: PaymentGateway = deps.payments ?? (env.PG_PROVIDER === 'toss' ? TossPaymentGateway.fromEnv(env, publicOrigin, { onEvent: (n) => logger.event(n) }) : new MockPaymentGateway(env.MOCK_PG_SECRET));
+  // 빌링키 봉인 키: 빌링키 PG면 필수. 다른 비밀과 같은 값이면 기동하지 않는다(키를 섞지 않는다)
+  let billingKeySealKey: Buffer | undefined;
+  if (payments.billing) {
+    billingKeySealKey = key32(env.BILLING_KEY_SEAL_KEY, 'BILLING_KEY_SEAL_KEY');
+    const others = [env.TOKEN_SIGNING_SEED, env.ACCT_CLAIM_SIGNING_KEY, env.INTERNAL_CALL_KEY, env.CODE_MAC_KEY, env.LIMIT_ID_KEY].filter((v): v is string => !!v);
+    if (others.includes(env.BILLING_KEY_SEAL_KEY!)) fail('BILLING_KEY_SEAL_KEY');
+    logger.event(`account.pg_mode.${payments.billing.mode}`);
+  }
   const svc = new AccountService({
     db,
     mail,
-    payments: deps.payments ?? new MockPaymentGateway(env.MOCK_PG_SECRET),
+    payments,
+    billingKeySealKey,
     tokens: new TokenIssuer(kid, signKey),
     codeMacKey: key32(env.CODE_MAC_KEY, 'CODE_MAC_KEY'),
     rp: { rpId: env.WEBAUTHN_RP_ID ?? fail('WEBAUTHN_RP_ID'), origins: (env.WEBAUTHN_ORIGINS ?? fail('WEBAUTHN_ORIGINS')).split(',') },

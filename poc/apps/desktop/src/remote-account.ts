@@ -164,6 +164,8 @@ export interface AccountView {
   error: string | null;
   /** 이 계정에 연결된 폰 수(AIK 서명 기기 목록의 mobile 항목). 로그인 전이면 0. */
   phones: number;
+  /** false면 이 빌드에서는 [폰 연결]을 보이지 않는다(로그인 상태에서만 붙는다). 없으면 연결할 수 있다. */
+  pairable?: false;
 }
 
 export interface DesktopAccountOptions {
@@ -176,6 +178,8 @@ export interface DesktopAccountOptions {
   platform: 'windows' | 'macos';
   /** 계정 기기 목록에 보이는 이름(40자). 사람 이름이 들어가지 않게 진입점이 고른다. */
   deviceName: string;
+  /** false면 폰 연결을 닫는다(운영 룸 호스트·폰 앱 출시 전, remote-wiring.ts PROD_PHONE_PAIRING). 기본 true. */
+  pairing?: boolean;
   now?: () => number;
   log?: (name: string, data: Record<string, string | number>) => void;
 }
@@ -245,7 +249,7 @@ export class DesktopAccount {
     if (!this.#o.client) return { step: 'unavailable', email: null, codeExpiresAt: null, error: null, phones: 0 };
     if (this.#offer) return { step: 'set_password', email: this.#offer.email, codeExpiresAt: null, error: this.#error, phones: 0 };
     // 로그인 상태의 오류는 비밀번호 단계를 끝낸 이유(account.password_later)뿐이다
-    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length };
+    if (this.#id) return { step: 'signed_in', email: this.#id.accountEmail, codeExpiresAt: null, error: this.#error === 'account.password_later' ? this.#error : null, phones: this.#id.deviceList.entries.filter((e) => e.entry.role === 'mobile').length, ...(this.#o.pairing === false ? { pairable: false as const } : {}) };
     if (this.#working) return { step: 'working', email: this.#pending?.email ?? null, codeExpiresAt: null, error: null, phones: 0 };
     if (this.#reset) {
       if (this.#reset.expiresAt > this.#now()) return { step: 'reset_code', email: this.#reset.email, codeExpiresAt: this.#reset.expiresAt, error: this.#error, phones: 0 };
@@ -602,6 +606,29 @@ export class DeviceSession {
     const shape = verifyAcctClaim(field, { accountKeys: [], aikPub: fromB64(this.#id.aikPub), now: this.#now() });
     if (!shape.ok && shape.reason === 'shape') throw Object.assign(new Error('claim'), { code: 'account.bad_response' });
     return field;
+  }
+
+  /**
+   * 탈퇴(F-06, 약관 제15조): 상태 보기·요청(7일 유예, 서버가 구독을 바로 해지)·취소. 데스크톱 기기 토큰으로 부른다.
+   * 토큰이 만료돼 401이면 토큰을 버리고 한 번만 다시 한다.
+   */
+  async deletion(): Promise<{ deleteAfter: number | null }> {
+    return this.#retry(() => this.#client.accountDeletion(this.auth));
+  }
+  async requestDelete(): Promise<{ deleteAfter: number }> {
+    return this.#retry(() => this.#client.requestAccountDelete(this.auth));
+  }
+  async cancelDelete(): Promise<void> {
+    return this.#retry(() => this.#client.cancelAccountDelete(this.auth));
+  }
+  async #retry<T>(f: () => Promise<T>): Promise<T> {
+    try {
+      return await f();
+    } catch (e) {
+      if ((e as { code?: unknown }).code !== 'account.unauthorized') throw e;
+      this.clearToken();
+      return f();
+    }
   }
 
   /** 페어링 7단계 뒤: 새 목록을 파일에. */

@@ -1,6 +1,6 @@
 // 계정·구독 도메인(D09 §2). HTTP와 무관한 규칙만 여기에 둔다(라우트·요청 검증은 app.ts).
 import type { AcctClaimSigner, SignedAcctClaim } from './acct-claim.ts';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import {
   DESKTOP_SCOPES,
   JtiCache,
@@ -13,8 +13,10 @@ import {
   hmacHex,
   jcs,
   kstDay,
+  openAead,
   randomToken,
   safeEqual,
+  sealAead,
   sha256,
   sha256hex,
   verifyDpop,
@@ -22,14 +24,18 @@ import {
   type Scope,
   type Sql,
 } from '@sax/svc-shared';
+import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
+import { ACCOUNT, BILLING, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
 /** 세션을 준 수단. refresh = 갱신 토큰으로 새로 받은 세션(강한 인증·최근 로그인으로 치지 않는다) */
 export type AuthMethod = 'email_code' | 'passkey' | 'password' | 'refresh';
+
+/** 구독 경로의 호출자: 계정 세션 또는 데스크톱 기기 토큰(app.ts billingAuth). 계정 ID만 쓴다 */
+export type BillingCaller = { accountId: string };
 
 export interface Session {
   accountId: string;
@@ -57,6 +63,7 @@ interface AccountRow {
   device_list_version: number;
   device_list_json: string | null;
   last_biz_change_at: number | null;
+  delete_after: number | null;
 }
 
 interface DeviceRow {
@@ -92,6 +99,8 @@ export interface AccountDeps {
   /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
   acctClaims?: AcctClaimSigner;
   passwords?: PasswordDeps;
+  /** 빌링키 봉인 키(32B, KMS, BILLING_KEY_SEAL_KEY). 빌링키 방식 PG(payments.billing)면 필수 */
+  billingKeySealKey?: Buffer;
   /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
   onEvent?: (name: string) => void;
   /**
@@ -119,6 +128,7 @@ export class AccountService {
     this.d = d;
     this.db = d.db;
     this.now = d.now ?? Date.now;
+    if (d.payments.billing && d.billingKeySealKey?.length !== 32) throw new Error('config_BILLING_KEY_SEAL_KEY');
   }
 
   // ---------- 로그인: 이메일 6자리 코드(C-30) ----------
@@ -675,11 +685,50 @@ export class AccountService {
       passkeys: Number(passkeys?.n ?? 0),
       subscription: sub ? { plan: sub.plan, status: sub.status, renewAt: sub.renew_at, amountKrw: PLAN.amountKrw } : null,
       consents: consents.map((c) => c.version),
+      entitlement: await this.entitlement(a.id),
       authMethod: s.authMethod,
       // 계정 설정 화면: 비밀번호 [만들기]/[바꾸기](현재 비밀번호 칸) 가르기와 재인증 필요 여부(사용자 확정 2026-11-09)
       hasPassword: !!(await this.db.one('SELECT 1 AS x FROM pw_creds WHERE account_id = $1', [a.id])),
       reauthUntil: s.authMethod === 'refresh' ? null : s.authAt + PASSWORD.reauthMaxAgeMs,
+      // 탈퇴 유예 중이면 삭제 예정 시각(ms), 아니면 null
+      deleteAfter: a.delete_after == null ? null : Number(a.delete_after),
     };
+  }
+
+  // ---------- 탈퇴(계정 삭제, 7일 유예) ----------
+
+  /**
+   * 탈퇴 요청(D09 §2.2: 계정 세션만 있는 삭제 요청은 7일 유예). 다음 결제가 일어나지 않게 구독을 바로 해지하고,
+   * 계정 이메일로 알린다(직접 한 일이 아니면 유예 중 취소). 이미 요청 중이면 같은 예정 시각을 돌려준다.
+   */
+  async accountDeletion(accountId: string): Promise<{ deleteAfter: number | null }> {
+    const a = await this.account(accountId);
+    return { deleteAfter: a.delete_after == null ? null : Number(a.delete_after) };
+  }
+
+  async requestAccountDelete(accountId: string): Promise<{ deleteAfter: number }> {
+    const s = { accountId };
+    const after = this.now() + ACCOUNT.deleteGraceDays * MS.D;
+    const n = await this.db.run('UPDATE accounts SET delete_after = $1 WHERE id = $2 AND delete_after IS NULL', [after, s.accountId]);
+    if (!n) {
+      const a = await this.account(s.accountId);
+      return { deleteAfter: Number(a.delete_after) };
+    }
+    const sub = await this.db.one<{ pg_customer_ref: string; status: string }>('SELECT pg_customer_ref, status FROM subscriptions WHERE account_id = $1', [s.accountId]);
+    if (sub && sub.status !== 'canceled') {
+      await this.d.payments.cancel(sub.pg_customer_ref);
+      await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE account_id = $1", [s.accountId]);
+    }
+    // 탈퇴 요청이면 저장한 카드 빌링키를 바로 지운다(유예 7일 뒤 행 삭제를 기다리지 않는다, 약관 제15조·처리방침)
+    if (sub) await this.db.run('UPDATE subscriptions SET billing_key_sealed = NULL, next_charge_at = NULL WHERE account_id = $1', [s.accountId]);
+    await this.notify(s.accountId, 'account_delete_pending');
+    return { deleteAfter: after };
+  }
+
+  /** 유예 중 탈퇴 취소. 해지한 구독은 되살리지 않는다(다시 구독은 checkout). */
+  async cancelAccountDelete(accountId: string): Promise<void> {
+    const n = await this.db.run('UPDATE accounts SET delete_after = NULL WHERE id = $1 AND delete_after IS NOT NULL', [accountId]);
+    if (!n) fail('account.not_pending');
   }
 
   async consent(s: Session, version: string): Promise<void> {
@@ -753,9 +802,9 @@ export class AccountService {
     if (a) await this.d.mail.sendNotice(a.email, kind);
   }
 
-  // ---------- 구독·결제(9,900원 한 플랜, ADR-034) ----------
+  // ---------- 구독·결제(19,900원 한 플랜, ADR-034) ----------
 
-  async checkout(s: Session): Promise<{ checkoutUrl: string }> {
+  async checkout(s: BillingCaller): Promise<{ checkoutUrl: string }> {
     // 계정 행 잠금 안에서 참조를 정한다: 동시에 두 번 눌러도 같은 참조의 결제 창이 나온다(버려지는 참조로 결제되는 일 없음)
     const ref = await this.db.tx(async (q) => {
       await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [s.accountId]);
@@ -785,16 +834,268 @@ export class AccountService {
     else await this.db.run("UPDATE subscriptions SET status = 'canceled', pg_event_at = CASE WHEN pg_event_at IS NULL OR pg_event_at < $2 THEN $2 ELSE pg_event_at END WHERE pg_customer_ref = $1", [ev.pgCustomerRef, ev.at]);
   }
 
-  async subscription(s: Session): Promise<Record<string, unknown> | null> {
-    const sub = await this.db.one<{ plan: string; status: string; renew_at: number | null }>('SELECT plan, status, renew_at FROM subscriptions WHERE account_id = $1', [s.accountId]);
-    return sub ? { plan: sub.plan, status: sub.status, renewAt: sub.renew_at, amountKrw: PLAN.amountKrw, period: PLAN.period } : null;
+  // ---------- 카드 정기결제(빌링키 PG): 카드 등록 창 → 빌링키 발급 → 첫 달 청구, 다음 달부터 정리 cron이 갱신일에 청구 ----------
+
+  /** 카드 등록 창(GET /v1/billing/card?ref=). 결제 대기·연체인 참조만 연다. 세션 없이 열린다(브라우저): 참조는 그 계정만 받은 무작위 값이다 */
+  async billingCardPage(ref: string, nonce: string): Promise<{ status: number; html: string }> {
+    const b = this.billingOrFail();
+    const sub = REF_RE.test(ref) ? await this.db.one<{ status: string; account_id: string }>('SELECT status, account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]) : undefined;
+    if (!sub || (sub.status !== 'pending' && sub.status !== 'past_due'))
+      return { status: 404, html: this.resultPage('결제 창이 만료됐어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) };
+    const base = `${this.d.publicOrigin}/v1/billing/card`;
+    // 체험 중 첫 구독이면 오늘은 결제하지 않고 체험이 끝나는 날 첫 결제(창에 그 날짜를 보인다)
+    const ent = sub.status === 'pending' ? await this.entitlement(sub.account_id) : null;
+    const trialEndsAt = ent?.state === 'trial' && ent.until !== null ? ent.until : undefined;
+    return { status: 200, html: b.cardPage({ customerKey: ref, successUrl: `${base}/success`, failUrl: `${base}/fail`, amountKrw: PLAN.amountKrw, nonce, ...(trialEndsAt ? { trialEndsAt } : {}) }) };
   }
 
-  async cancelSubscription(s: Session): Promise<void> {
+  /** 카드 등록 성공 돌아옴(GET /v1/billing/card/success?customerKey&authKey). 빌링키를 발급·봉인하고 이번 기간을 청구한다 */
+  async billingCardSuccess(customerKey: string, authKey: string, nonce: string): Promise<{ status: number; html: string }> {
+    const b = this.billingOrFail();
+    const bad = () => ({ status: 400, html: this.resultPage('카드를 등록하지 못했어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) });
+    if (!REF_RE.test(customerKey) || !/^[A-Za-z0-9_=.-]{1,300}$/.test(authKey)) return bad();
+    const sub = await this.db.one<{ status: string; account_id: string }>('SELECT status, account_id FROM subscriptions WHERE pg_customer_ref = $1', [customerKey]);
+    if (!sub || sub.status === 'canceled') return bad();
+    if (sub.status === 'active') return { status: 200, html: this.resultPage('구독 중이에요', '이미 등록이 끝났어요. 앱으로 돌아가세요.', nonce) };
+    const key = await b.issueBillingKey({ authKey, customerKey });
+    if (!key) return bad();
+    const now = this.now();
+    const ent = sub.status === 'pending' ? await this.entitlement(sub.account_id) : null;
+    if (ent?.state === 'trial' && ent.until !== null && ent.until > now) {
+      // 체험 중 첫 구독: 오늘은 청구하지 않는다. 체험이 끝나는 날(renew_at)에 정리 cron이 첫 결제. 체험 중 해지하면 결제가 없다
+      const n = await this.db.run(
+        "UPDATE subscriptions SET billing_key_sealed = $2, charge_attempts = 0, next_charge_at = NULL, renew_at = $3, status = 'active' WHERE pg_customer_ref = $1 AND status = 'pending'",
+        [customerKey, sealAead(this.d.billingKeySealKey!, bkAad(customerKey), Buffer.from(key.billingKey, 'utf8')), ent.until],
+      );
+      if (n !== 1) return bad();
+      await this.db.run('INSERT INTO consents (account_id, version, at) VALUES ($1, $2, $3) ON CONFLICT (account_id, version) DO NOTHING', [sub.account_id, TERMS_VERSION, now]);
+      this.d.onEvent?.(`account.billing_key_issued_trial.${b.mode}`);
+      return { status: 200, html: this.resultPage('카드를 등록했어요', `무료 체험은 그대로 이어져요. ${kstDateLabel(ent.until)}부터 매월 ${PLAN.amountKrw.toLocaleString('ko-KR')}원이 자동 결제돼요. 그 전에 해지하면 결제되지 않아요.`, nonce) };
+    }
+    // 결제 대기면 이번 기간은 오늘부터(renew_at = 이번 기간 시작, 청구 성공 뒤 한 달 뒤로). 연체면 밀린 기간부터. 새 카드는 실패 수를 0으로
+    const n = await this.db.run(
+      "UPDATE subscriptions SET billing_key_sealed = $2, charge_attempts = 0, next_charge_at = NULL, renew_at = CASE WHEN status = 'pending' THEN $3 ELSE renew_at END WHERE pg_customer_ref = $1 AND status IN ('pending', 'past_due')",
+      [customerKey, sealAead(this.d.billingKeySealKey!, bkAad(customerKey), Buffer.from(key.billingKey, 'utf8')), now],
+    );
+    if (n !== 1) return bad();
+    // 결제 창에서 동의한 약관 판을 계정 동의 이력에 남긴다(계약 기록). 창은 동의 체크 뒤에만 PG 창을 연다
+    await this.db.run('INSERT INTO consents (account_id, version, at) SELECT account_id, $2, $3 FROM subscriptions WHERE pg_customer_ref = $1 ON CONFLICT (account_id, version) DO NOTHING', [customerKey, TERMS_VERSION, now]);
+    this.d.onEvent?.(`account.billing_key_issued.${b.mode}`);
+    const r = await this.chargeRef(customerKey);
+    if (r === 'paid') return { status: 200, html: this.resultPage('구독을 시작했어요', `${PLAN.amountKrw.toLocaleString('ko-KR')}원이 결제됐어요. 다음 달 같은 날짜에 자동으로 결제돼요.`, nonce) };
+    if (r === 'declined') return { status: 402, html: this.resultPage('결제가 승인되지 않았어요', '카드 한도나 상태를 확인하고 다른 카드로 다시 시도해 주세요.', nonce) };
+    return { status: 202, html: this.resultPage('결제를 확인하고 있어요', '잠시 뒤 앱에서 구독 상태를 확인해 주세요. 두 번 결제되지는 않아요.', nonce) };
+  }
+
+  /** 카드 등록 실패·취소 돌아옴(GET /v1/billing/card/fail). PG 메시지는 보여주지 않는다(고정 문구) */
+  billingCardFail(code: string, nonce: string): { status: number; html: string } {
+    this.billingOrFail();
+    const canceled = code === 'PAY_PROCESS_CANCELED' || code === 'USER_CANCEL';
+    this.d.onEvent?.(`account.billing_card_fail.${/^[A-Z_]{1,64}$/.test(code) ? code : 'unknown'}`);
+    return { status: 200, html: this.resultPage(canceled ? '카드 등록을 취소했어요' : '카드를 등록하지 못했어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) };
+  }
+
+  /**
+   * 갱신일이 된 구독을 청구한다(정리 cron, 한 시간마다). 결제 대기(첫 청구 결과 모름)·활성·연체 중 빌링키가 있고 시도 시각이 된 것.
+   * 한 번에 limit개까지. 반환: 결과별 수
+   */
+  async chargeDue(limit = 200): Promise<{ paid: number; declined: number; uncertain: number }> {
+    const out = { paid: 0, declined: 0, uncertain: 0 };
+    if (!this.d.payments.billing) return out;
+    const now = this.now();
+    const due = await this.db.all<{ pg_customer_ref: string }>(
+      "SELECT pg_customer_ref FROM subscriptions WHERE billing_key_sealed IS NOT NULL AND status IN ('pending', 'active', 'past_due') AND renew_at IS NOT NULL AND renew_at <= $1 AND (next_charge_at IS NULL OR next_charge_at <= $1) ORDER BY renew_at LIMIT $2",
+      [now, limit],
+    );
+    for (const d of due) {
+      const r = await this.chargeRef(d.pg_customer_ref);
+      if (r !== 'busy') out[r]++;
+    }
+    return out;
+  }
+
+  /**
+   * 한 구독의 이번 기간 청구. 임대를 잡은 쪽만 청구한다. 주문번호 = 참조·기간 시작·확정 실패 수·빌링키 지문: 결과를 모를 때는 같은 주문번호(= 멱등 키)로 다시 물어
+   * 두 번 결제되지 않고, 카드 사유 실패 뒤의 재시도는 새 주문이다.
+   */
+  private async chargeRef(ref: string): Promise<'paid' | 'declined' | 'uncertain' | 'busy'> {
+    const b = this.billingOrFail();
+    const now = this.now();
+    const lease = await this.db.run(
+      "UPDATE subscriptions SET next_charge_at = $2 WHERE pg_customer_ref = $1 AND billing_key_sealed IS NOT NULL AND status IN ('pending', 'active', 'past_due') AND renew_at IS NOT NULL AND renew_at <= $3 AND (next_charge_at IS NULL OR next_charge_at <= $3)",
+      [ref, now + BILLING.chargeLeaseMs, now],
+    );
+    if (lease !== 1) return 'busy';
+    const row = await this.db.one<{ account_id: string; status: string; renew_at: number; charge_attempts: number; billing_key_sealed: Buffer }>('SELECT account_id, status, renew_at, charge_attempts, billing_key_sealed FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
+    // 임대와 읽기 사이에 해지(빌링키 삭제)가 들어왔으면 청구하지 않는다
+    if (!row?.billing_key_sealed) return 'busy';
+    const bk = openAead(this.d.billingKeySealKey!, bkAad(ref), Buffer.from(row.billing_key_sealed));
+    if (!bk) {
+      this.d.onEvent?.('account.billing_key_unsealable');
+      return 'uncertain';
+    }
+    const periodStart = Number(row.renew_at);
+    const attempts = Number(row.charge_attempts);
+    // 끝 8자 = 빌링키 지문: 새 카드로 다시 등록하면(실패 수가 0으로 돌아가도) 앞서 거절된 주문번호와 겹치지 않는다
+    const orderId = `${ref.slice(4)}-${periodStart.toString(36)}-${attempts}-${createHash('sha256').update(bk).digest('base64url').slice(0, 8)}`;
+    const r = await b.charge({ billingKey: bk.toString('utf8'), customerKey: ref, orderId, amountKrw: PLAN.amountKrw, orderName: BILLING.orderName });
+    if (r.ok) {
+      // 다음 갱신일 = 기간 시작 + 한 달(KST 달력). 해지가 그사이 들어왔으면 상태는 그대로 두고 갱신일만 맞춘다(이미 결제된 기간)
+      await this.db.run(
+        "UPDATE subscriptions SET status = CASE WHEN status = 'canceled' THEN status ELSE 'active' END, renew_at = $2, charge_attempts = 0, next_charge_at = NULL, last_payment_key = $4, last_paid_at = $5, last_paid_amount = $6 WHERE pg_customer_ref = $1 AND renew_at = $3",
+        [ref, addMonthKst(periodStart), periodStart, r.paymentKey ?? null, now, PLAN.amountKrw],
+      );
+      this.d.onEvent?.(`account.billing_charged.${b.mode}`);
+      // 앞선 결과 모름 시도가 실은 성공(ALREADY_PROCESSED_PAYMENT)이면 결제 키가 없다: 청약철회는 운영에서 토스 관리자로 처리
+      if (!r.paymentKey) this.d.onEvent?.('account.billing_charged_without_payment_key');
+      return 'paid';
+    }
+    if (r.uncertain) {
+      // 임대 끝(next_charge_at)에 같은 주문번호로 다시 묻는다
+      this.d.onEvent?.(`account.billing_charge_uncertain.${r.code}`);
+      return 'uncertain';
+    }
+    this.d.onEvent?.(`account.billing_charge_declined.${r.code}`);
+    const failed = attempts + 1;
+    if (row.status === 'pending') {
+      // 첫 결제 실패: 빌링키를 지우고 사용자가 다른 카드로 다시 등록한다(자동 재시도하지 않는다)
+      await this.db.run('UPDATE subscriptions SET billing_key_sealed = NULL, charge_attempts = $2, next_charge_at = NULL WHERE pg_customer_ref = $1', [ref, failed]);
+    } else if (failed >= BILLING.maxFailedCharges) {
+      await this.db.tx(async (q) => {
+        await q.run("UPDATE subscriptions SET status = 'canceled', billing_key_sealed = NULL, charge_attempts = $2, next_charge_at = NULL WHERE pg_customer_ref = $1", [ref, failed]);
+        await this.enqueueNotice(q, row.account_id, 'subscription_ended', now);
+      });
+      this.d.onEvent?.('account.billing_canceled_after_failures');
+      this.kickNotices();
+    } else {
+      await this.db.tx(async (q) => {
+        await q.run("UPDATE subscriptions SET status = 'past_due', charge_attempts = $2, next_charge_at = $3 WHERE pg_customer_ref = $1 AND status <> 'canceled'", [ref, failed, now + BILLING.retryAfterMs]);
+        await this.enqueueNotice(q, row.account_id, 'payment_failed', now);
+      });
+      this.kickNotices();
+    }
+    return 'declined';
+  }
+
+  /** 체험이 끝나 첫 결제로 넘어가기 7일 전 안내(전환 전 고지, 한 번). 등록만 하고 아직 결제가 없는 구독 */
+  async trialConversionNotices(): Promise<number> {
+    if (!this.d.payments.billing) return 0;
+    const now = this.now();
+    const due = await this.db.all<{ account_id: string; pg_customer_ref: string }>(
+      "SELECT account_id, pg_customer_ref FROM subscriptions WHERE status = 'active' AND billing_key_sealed IS NOT NULL AND last_paid_at IS NULL AND trial_notice_at IS NULL AND renew_at IS NOT NULL AND renew_at > $1 AND renew_at <= $2",
+      [now, now + BILLING.trialNoticeMs],
+    );
+    for (const r of due) {
+      await this.db.tx(async (q) => {
+        if ((await q.run('UPDATE subscriptions SET trial_notice_at = $2 WHERE pg_customer_ref = $1 AND trial_notice_at IS NULL', [r.pg_customer_ref, now])) === 1) await this.enqueueNotice(q, r.account_id, 'trial_converting', now);
+      });
+    }
+    if (due.length) this.kickNotices();
+    return due.length;
+  }
+
+  private billingOrFail() {
+    const b = this.d.payments.billing;
+    if (!b) fail('request.not_found');
+    return b!;
+  }
+
+  private resultPage(title: string, body: string, nonce: string): string {
+    return resultPageHtml({ title, body, returnUrl: this.d.billingReturnUrl, nonce });
+  }
+
+  async subscription(s: BillingCaller): Promise<Record<string, unknown> | null> {
+    const sub = await this.db.one<{ plan: string; status: string; renew_at: number | null; last_payment_key: string | null; last_paid_at: number | null; last_paid_amount: number | null }>(
+      'SELECT plan, status, renew_at, last_payment_key, last_paid_at, last_paid_amount FROM subscriptions WHERE account_id = $1',
+      [s.accountId],
+    );
+    if (!sub) return null;
+    const out: Record<string, unknown> = { plan: sub.plan, status: sub.status, renewAt: sub.renew_at, amountKrw: PLAN.amountKrw, period: PLAN.period };
+    // 청약철회 가능하면 기한과 지금 환불 금액(빌링키 PG만)
+    const q = this.d.payments.billing ? this.refundQuote(sub, this.now()) : null;
+    if (q) out.refund = q;
+    return out;
+  }
+
+  /** GET /v1/billing/entitlement: 유료 기능 권리(구독 화면·잠금 안내) */
+  async entitlementOf(s: BillingCaller): Promise<{ state: string; until: number | null; trialMonths: number }> {
+    return { ...(await this.entitlement(s.accountId)), trialMonths: BILLING.trialMonths };
+  }
+
+  async cancelSubscription(s: BillingCaller): Promise<void> {
     const sub = await this.db.one<{ pg_customer_ref: string; status: string }>('SELECT pg_customer_ref, status FROM subscriptions WHERE account_id = $1', [s.accountId]);
     if (!sub || sub.status === 'canceled') fail('request.param_rejected');
     await this.d.payments.cancel(sub!.pg_customer_ref);
-    await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE account_id = $1", [s.accountId]);
+    // 빌링키도 지운다(더 청구하지 않음). 이미 결제된 기간의 갱신일(renew_at)은 남긴다(그날까지 이용). 접수 메일을 바로 보낸다
+    await this.db.tx(async (q) => {
+      await q.run("UPDATE subscriptions SET status = 'canceled', billing_key_sealed = NULL, next_charge_at = NULL WHERE account_id = $1", [s.accountId]);
+      await this.enqueueNotice(q, s.accountId, 'subscription_canceled', this.now());
+    });
+    this.kickNotices();
+  }
+
+  /**
+   * 청약철회 환불(결제 후 7일 안, 전자상거래법 §17). 금액 = 결제액 − 쓴 날만큼(결제 시각부터 지난 날 수 ÷ 그 기간 날 수, 원 단위 올림).
+   * 결제 당일이면 전액. 환불하면 구독은 바로 끝난다(빌링키 삭제, 이용 끝 = 지금). 같은 결제의 환불 요청은 멱등 키가 같아 두 번 환불되지 않는다.
+   */
+  refundQuote(sub: { last_payment_key: string | null; last_paid_at: number | null; last_paid_amount: number | null; renew_at: number | null }, now: number): { refundableUntil: number; amountKrw: number } | null {
+    if (!sub.last_payment_key || sub.last_paid_at === null || sub.last_paid_amount === null || sub.renew_at === null) return null;
+    const paidAt = Number(sub.last_paid_at);
+    const until = paidAt + BILLING.refundWindowMs;
+    if (now >= until) return null;
+    const paid = Number(sub.last_paid_amount);
+    const periodDays = Math.max(1, Math.round((Number(sub.renew_at) - paidAt) / MS.D));
+    const usedDays = Math.floor((now - paidAt) / MS.D);
+    return { refundableUntil: until, amountKrw: Math.max(0, paid - Math.ceil((paid * usedDays) / periodDays)) };
+  }
+
+  async refundSubscription(s: BillingCaller): Promise<{ amountKrw: number }> {
+    const b = this.d.payments.billing;
+    if (!b) fail('account.refund_unavailable');
+    const now = this.now();
+    const sub = await this.db.one<{ pg_customer_ref: string; status: string; last_payment_key: string | null; last_paid_at: number | null; last_paid_amount: number | null; renew_at: number | null }>(
+      'SELECT pg_customer_ref, status, last_payment_key, last_paid_at, last_paid_amount, renew_at FROM subscriptions WHERE account_id = $1',
+      [s.accountId],
+    );
+    const quote = sub && this.refundQuote(sub, now);
+    if (!sub || !quote) fail('account.refund_unavailable');
+    const key = sub!.last_payment_key!;
+    // 같은 결제를 동시에 두 번 환불하지 않게 먼저 결제 참조를 비운다(실패하면 되돌린다)
+    if ((await this.db.run('UPDATE subscriptions SET last_payment_key = NULL WHERE account_id = $1 AND last_payment_key = $2', [s.accountId, key])) !== 1) fail('account.refund_unavailable');
+    const r = quote!.amountKrw > 0 ? await b!.refund({ paymentKey: key, amountKrw: quote!.amountKrw, reason: '청약철회', idempotencyKey: `refund-${key}`.slice(0, 300) }) : ({ ok: true } as const);
+    if (!r.ok) {
+      await this.db.run('UPDATE subscriptions SET last_payment_key = $2 WHERE account_id = $1 AND last_payment_key IS NULL', [s.accountId, key]);
+      this.d.onEvent?.(`account.billing_refund_failed.${r.code}`);
+      fail('account.refund_failed');
+    }
+    await this.db.tx(async (q) => {
+      await q.run("UPDATE subscriptions SET status = 'canceled', billing_key_sealed = NULL, next_charge_at = NULL, renew_at = $2 WHERE account_id = $1", [s.accountId, now]);
+      await this.enqueueNotice(q, s.accountId, 'subscription_refunded', now);
+    });
+    this.d.onEvent?.(`account.billing_refunded.${b!.mode}`);
+    this.kickNotices();
+    return { amountKrw: quote!.amountKrw };
+  }
+
+  /**
+   * 유료 기능을 쓸 수 있는가(게이트웨이 범위 토큰). 체험(가입 뒤 BILLING.trialMonths달, 카드 없음) 또는 낸 기간 안(활성·연체 유예·해지했지만 갱신일 전).
+   * until = 그 권리가 끝나는 시각(체험 끝·갱신일). 모의 PG(웹훅)도 같은 규칙이다.
+   */
+  async entitlement(accountId: string): Promise<{ state: 'trial' | 'paid' | 'none'; until: number | null }> {
+    const now = this.now();
+    const a = await this.db.one<{ created_at: number }>('SELECT created_at FROM accounts WHERE id = $1', [accountId]);
+    const sub = await this.db.one<{ status: string; renew_at: number | null }>('SELECT status, renew_at FROM subscriptions WHERE account_id = $1', [accountId]);
+    const renew = sub?.renew_at === null || sub?.renew_at === undefined ? null : Number(sub.renew_at);
+    if (sub && renew !== null) {
+      if (sub.status === 'active' && renew > now) return { state: 'paid', until: renew };
+      // 활성인데 갱신일이 지난 것은 청구 대기(cron 한 시간 주기)·연체 재시도 중이다: 유예 안에서는 쓸 수 있다
+      if ((sub.status === 'active' || sub.status === 'past_due') && renew + BILLING.pastDueGraceMs > now) return { state: 'paid', until: renew + BILLING.pastDueGraceMs };
+      if (sub.status === 'canceled' && renew > now) return { state: 'paid', until: renew };
+    }
+    let trialEnd = a ? Number(a.created_at) : 0;
+    for (let i = 0; a && i < BILLING.trialMonths; i++) trialEnd = addMonthKst(trialEnd);
+    if (trialEnd > now) return { state: 'trial', until: trialEnd };
+    return { state: 'none', until: null };
   }
 
   // ---------- 기기: 첫 데스크톱·등록 신청·AIK 서명 기기 목록·긴급 정지·삭제 유예 ----------
@@ -1141,8 +1442,19 @@ export class AccountService {
     // 기기별 발급 한도는 인증서·DPoP가 맞고 기기가 활성일 때만 센다(남이 device_id나 정지 기기의 인증서로 한도를 태우지 못하게)
     await onVerified?.();
     // 순서는 역할 범위 순서로 고정한다(기록·비교가 요청 순서에 흔들리지 않게)
-    const scopes = want ? roleScopes.filter((s) => want.includes(s)) : [...roleScopes];
-    const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
+    let scopes = want ? roleScopes.filter((s) => want.includes(s)) : [...roleScopes];
+    // 유료 기능(게이트웨이)은 체험 중이거나 낸 기간 안일 때만. 게이트웨이만 달라면 402, 전체를 달라면 게이트웨이만 빼고 준다(연결·기기 관리는 그대로).
+    // 줄 때는 등급(tier)을 싣는다: 게이트웨이 일 한도가 체험·유료로 다르다
+    let tier: 'trial' | 'paid' | undefined;
+    if (scopes.includes('gateway')) {
+      const ent = (await this.entitlement(d!.account_id)).state;
+      if (ent === 'none') {
+        if (want && scopes.length === 1) fail('account.subscription_required');
+        scopes = scopes.filter((x) => x !== 'gateway');
+        this.d.onEvent?.('account.gateway_scope_withheld');
+      } else tier = ent;
+    }
+    const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx, ...(tier ? { tier } : {}) }, now);
     this.d.onEvent?.(`account.device_token_issued.${d!.role}.${want && scopes.length < roleScopes.length ? scopes.join('-') : 'all'}`);
     return { token, expiresAt: claims.exp, scopes };
   }
@@ -1223,6 +1535,9 @@ export class AccountService {
     await this.db.run('DELETE FROM reset_codes WHERE expires_at <= $1', [now]);
     // 응답 뒤 즉시 시도가 끝나지 못한(플랫폼이 멈춤·메일 실패) 알림을 보낸다
     await this.drainNotices();
+    // 갱신일이 된 카드 정기결제 청구(빌링키 PG일 때만)
+    await this.trialConversionNotices();
+    await this.chargeDue();
     // 잠금이 끝나고 하루 동안 실패가 없으면 점증 단계를 0으로
     await this.db.run('DELETE FROM pw_locks WHERE updated_at <= $1 AND (locked_until IS NULL OR locked_until <= $2)', [now - PASSWORD.lockDecayMs, now]);
     await this.db.run('DELETE FROM device_events WHERE day < $1', [kstDay(now - DEVICE.churnWindowDays * MS.D)]);
@@ -1233,8 +1548,37 @@ export class AccountService {
       await this.db.run("INSERT INTO device_events (account_id, role, kind, day) VALUES ($1, $2, 'remove', $3)", [d.account_id, d.role, kstDay(now)]);
       await this.stopped(d.device_id);
     }
+    // 탈퇴 유예가 끝난 계정: 기기 정지 훅(릴레이 우편함·푸시 토큰) 뒤 계정 행 삭제(나머지 표는 CASCADE). 결제 기록은 PG가 법정 기간 보관한다
+    const gone = await this.db.all<{ id: string }>('SELECT id FROM accounts WHERE delete_after IS NOT NULL AND delete_after <= $1', [now]);
+    for (const a of gone) {
+      const devs = await this.db.all<{ device_id: string }>("SELECT device_id FROM devices WHERE account_id = $1 AND state <> 'revoked'", [a.id]);
+      for (const d of devs) await this.stopped(d.device_id);
+      await this.db.run('DELETE FROM accounts WHERE id = $1 AND delete_after IS NOT NULL AND delete_after <= $2', [a.id, now]);
+      this.d.onEvent?.('account.deleted');
+    }
     return { revoked: due.map((d) => d.device_id) };
   }
+}
+
+/** pgCustomerRef 형식(checkout이 만든 값: cus_ + 18바이트 base64url) */
+const REF_RE = /^cus_[A-Za-z0-9_-]{24}$/;
+/** 빌링키 봉인 aad: 행(참조)에 묶어 다른 구독으로 옮겨 붙이지 못하게 한다 */
+const bkAad = (ref: string) => `sax-billing-key-v1|${ref}`;
+
+/** 'YYYY년 M월 D일'(KST) */
+export function kstDateLabel(ms: number): string {
+  const k = new Date(ms + 9 * 3600_000);
+  return `${k.getUTCFullYear()}년 ${k.getUTCMonth() + 1}월 ${k.getUTCDate()}일`;
+}
+
+/** 한 달 뒤(KST 달력, 말일 보정: 1/31 → 2/28). 시각은 그대로 */
+export function addMonthKst(ms: number): number {
+  const k = new Date(ms + 9 * 3600_000);
+  const y = k.getUTCFullYear();
+  const m = k.getUTCMonth() + 1;
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const t = Date.UTC(y, m, Math.min(k.getUTCDate(), last), k.getUTCHours(), k.getUTCMinutes(), k.getUTCSeconds(), k.getUTCMilliseconds());
+  return t - 9 * 3600_000;
 }
 
 export function normEmail(e: string): string {

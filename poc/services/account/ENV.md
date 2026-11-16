@@ -18,7 +18,10 @@
 | `WEBAUTHN_RP_ID` | 예 | 도메인 | 패스키 RP ID |
 | `WEBAUTHN_ORIGINS` | 예 | 쉼표 구분 origin | 패스키 허용 origin(정확히 일치) |
 | `BILLING_RETURN_URL` | 예 | URL | 결제 창이 돌아올 주소 |
-| `PG_PROVIDER` | 예 | `mock` | 이 저장소에는 모의 PG만 있다. 다른 값이면 기동하지 않는다 |
+| `PG_PROVIDER` | 예 | `mock` \| `toss` | `mock`은 웹훅 모의 PG. `toss`면 토스페이먼츠 자동결제(빌링키, 아래 셋 필요). 다른 값이면 기동하지 않는다 |
+| `TOSS_CLIENT_KEY` | `toss`일 때 | `test_ck_…` \| `live_ck_…` | 토스 개발자센터 **API 개별 연동 키**의 클라이언트 키(결제위젯 키 `gck`는 거부). 카드 등록 창에 나간다(공개 값) |
+| `TOSS_SECRET_KEY` ⚿ | `toss`일 때 | `test_sk_…` \| `live_sk_…` | 같은 키 묶음의 시크릿 키. 클라이언트 키와 테스트/라이브가 다르면 기동하지 않는다. `test_` 키면 실제 청구가 없다 |
+| `BILLING_KEY_SEAL_KEY` ⚿ | `toss`일 때 | hex 64자 | 빌링키 봉인 키(AES-256-GCM). DB만 유출되면 빌링키를 쓸 수 없다. 다른 비밀과 같은 값이면 기동하지 않는다. 바꾸면 기존 빌링키를 못 열어 카드를 다시 등록해야 한다 |
 | `MOCK_PG_SECRET` ⚿ | 아니오 | 문자열 | 모의 PG 웹훅 서명 비밀(없으면 기동마다 무작위) |
 | `MAIL_PROVIDER` | 예 | `mock` \| `ses` | 기본은 `mock`(모의 메일). `ses`면 AWS SES v2(서울)로 보낸다(아래 셋 필요, deploy README 3절 6번). 다른 값이면 기동하지 않는다 |
 | `SES_FROM_ADDRESS` | `ses`일 때 | 이메일 주소 | 보내는 주소(SES에서 인증한 도메인 안) |

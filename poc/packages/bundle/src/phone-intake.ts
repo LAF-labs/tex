@@ -48,6 +48,9 @@ interface PhoneOffer {
   ocrEngine: string;
   ownerConfirmed: boolean;
   candidates: unknown;
+  /** 종이 세금계산서(remote-envelope v1.7). 모양 검사는 main이 @sax/remote checkPaperInvoice로 했고 결과는 paperIssues */
+  paperInvoice: unknown;
+  paperIssues: string[] | null;
 }
 
 function offerOf(v: unknown): PhoneOffer {
@@ -57,7 +60,11 @@ function offerOf(v: unknown): PhoneOffer {
   if (typeof v.ownerConfirmed !== 'boolean') return fail('bad_offer');
   const candidates = v.candidates === undefined ? null : v.candidates;
   if (candidates !== null && JSON.stringify(candidates).length > 16_384) return fail('bad_offer');
-  return { capturedAt: msTime(v.capturedAt, 'bad_offer'), width: dim(v.width), height: dim(v.height), ocrEngine: v.ocrEngine as string, ownerConfirmed: v.ownerConfirmed, candidates };
+  const paperInvoice = v.paperInvoice === undefined ? null : v.paperInvoice;
+  if (paperInvoice !== null && (!isObj(paperInvoice) || JSON.stringify(paperInvoice).length > 16_384)) return fail('bad_offer');
+  const issues = v.paperIssues === undefined ? null : v.paperIssues;
+  if (issues !== null && !(Array.isArray(issues) && issues.length <= 40 && issues.every((x) => typeof x === 'string' && /^[A-Za-z.]{1,40}$/.test(x)))) return fail('bad_offer');
+  return { capturedAt: msTime(v.capturedAt, 'bad_offer'), width: dim(v.width), height: dim(v.height), ocrEngine: v.ocrEngine as string, ownerConfirmed: v.ownerConfirmed, candidates, paperInvoice, paperIssues: issues as string[] | null };
 }
 
 function jpegOf(v: unknown): Uint8Array {
@@ -143,7 +150,7 @@ export class PhoneIntake {
       result = this.db.transaction(() => {
         new DocumentRepo(this.db).insert(
           {
-            id: docId, profileId, docType: 'paper_receipt', displayName: '종이 증빙', issuedAt: null, expiresAt: null, issuer: null,
+            id: docId, profileId, docType: 'paper_receipt', displayName: offer.paperInvoice ? '종이 세금계산서' : '종이 증빙', issuedAt: null, expiresAt: null, issuer: null,
             path: file, bytes: jpeg.length, sha256: createHash('sha256').update(jpeg).digest('hex'),
             meta: { v: 1, source: 'phone_capture', capturedAt: offer.capturedAt, width: offer.width, height: offer.height }, runId: null,
           },
@@ -152,7 +159,10 @@ export class PhoneIntake {
         this.opts.beforeReceiptInsert?.(msgId);
         const added = new ReceiptRepo(this.db).add({
           docId, source: 'phone_capture', phoneMsgId: msgId,
-          phoneOcr: { ocrEngine: offer.ocrEngine, ownerConfirmed: offer.ownerConfirmed, candidates: offer.candidates },
+          phoneOcr: {
+            ocrEngine: offer.ocrEngine, ownerConfirmed: offer.ownerConfirmed, candidates: offer.candidates,
+            ...(offer.paperInvoice ? { paperInvoice: offer.paperInvoice, paperIssues: offer.paperIssues ?? [] } : {}),
+          },
         });
         // UNIQUE 경합(그 사이 같은 msgId가 들어옴): 롤백해서 documents 행을 남기지 않는다
         if (!added) throw new DuplicateRace();

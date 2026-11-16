@@ -3,7 +3,7 @@
 // - 중복은 msgId(receipts.phone_msg_id)로만 본다. hasReceipt는 조립 전에 묻는 빠른 길이고, 늦게 온 같은 msgId도 phoneStore가 duplicate로 받아 넘긴다.
 // - 현금: cash_sales에 msg_id 칸이 없어 hasCash는 늘 false다. 엔진이 늦은 enteredAt만 바꿔 같은 메시지 재수신은 멱등이다.
 // - 사진은 신뢰하지 않는 입력이라 main이 열지 않는다(재판독은 docparse 샌드박스 몫). 로그는 결과만(msgId·금액·날짜 없음).
-import { drainQueue, ReceiveQueue, type CashEntryBody, type DrainResult, type QueueReceiverOptions, type ReceiptOfferBody, type ReceiveLimits, type ReceiveSink } from '@sax/remote';
+import { checkPaperInvoice, drainQueue, ReceiveQueue, type CashEntryBody, type DrainResult, type QueueReceiverOptions, type ReceiptOfferBody, type ReceiveLimits, type ReceiveSink } from '@sax/remote';
 
 export type EngineRpc = (method: string, params: Record<string, unknown>) => Promise<unknown>;
 export type PhoneLog = (name: string, data?: Record<string, string | number | boolean>) => void;
@@ -27,7 +27,17 @@ export function offerParams(o: ReceiptOfferBody): Record<string, unknown> {
     ocrEngine: o.ocrEngine,
     ownerConfirmed: o.ownerConfirmed,
     ...(o.candidates !== undefined ? { candidates: o.candidates } : {}),
+    // 종이 세금계산서(receipt.v2): 폰 값은 후보다. 같은 규칙으로 다시 보고 틀린 칸을 함께 넘긴다(꾸러미·화면이 '확인 필요'로 보인다)
+    ...(o.paperInvoice !== undefined ? { paperInvoice: o.paperInvoice, paperIssues: paperIssues(o.paperInvoice) } : {}),
   };
+}
+
+function paperIssues(p: unknown): string[] {
+  try {
+    return checkPaperInvoice(p as Parameters<typeof checkPaperInvoice>[0]);
+  } catch {
+    return ['shape'];
+  }
 }
 
 /** ReceiveSink → 엔진 rpc. 응답 모양이 틀리면 던진다(ReceiveQueue는 ack하지 않고, 폰이 다시 보낸다). */

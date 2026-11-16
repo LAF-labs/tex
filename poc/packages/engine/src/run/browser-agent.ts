@@ -6,14 +6,15 @@
 // - 동작: 목록 번호의 요소를 실행 사본 사전의 임시 항목(__agent__)으로 해석해 GuardedActuator로 한다(R-A1·정책·비밀 칸 가드 그대로).
 //   커밋 항목 요소는 누르지 않는다. 금지 이름(확인·발급…)의 단추는 그 걸음의 목표 click 스텝이 패키지에서 검토된(reviewNote) 항목이고
 //   요소 이름이 그 항목의 이름 규칙에 맞을 때만 누른다(예: [확인] 사업자번호 확인, [발급미리보기]).
-import { AGENT_MAX_ACTIONS } from '@sax/model';
+import { AGENT_MAX_ACTIONS, COMPUTER_MAX_ACTIONS } from '@sax/model';
 import { flatten } from '../core/cfg.ts';
 import { isDenyActionName, normalizeName } from '../core/constants.ts';
 import type { Actuator, InteractiveElement, PageReader, Resolved } from '../core/page.ts';
 import { nameMatches, resolveTarget } from '../core/resolve.ts';
 import { isAbsent, isRef, readRef, scalar, type RunScope } from '../core/scope.ts';
 import type { PlaybookIR, SelectorDict, SelectorEntry, Step } from '../core/types.ts';
-import type { AgentModel, ScreenItem } from './agent-port.ts';
+import type { AgentModel, ScreenItem, VisionModel } from './agent-port.ts';
+import { planSignature, type AgentPathMemory, type PathAction } from './agent-path.ts';
 
 const KEY = '__agent__';
 const PLAIN = new Set(['fill', 'click', 'select', 'press']);
@@ -75,15 +76,137 @@ export interface BrowserAgentDeps extends ScreenDeps {
   scope: RunScope;
   irreversible: ReadonlySet<string>;
   model: AgentModel;
+  /** 에이전트 길 기억(0원 다시 걷기). 없으면 남기지도 다시 걷지도 않는다. */
+  paths?: AgentPathMemory;
+  /** 서명 패키지 사전(길 지문용). 없으면 dict. */
+  pkg?: SelectorDict;
+  /** 화면 보기(computer_use) 모델. 없으면 화면 보기 칸을 쓰지 않는다. */
+  vision?: VisionModel;
 }
 
 export class BrowserAgent {
   private readonly d: BrowserAgentDeps;
   private readonly info: ReturnType<typeof flatten>['info'];
 
+  private readonly firstGate: number;
+
   constructor(d: BrowserAgentDeps) {
     this.d = d;
     this.info = flatten(d.ir.steps).info;
+    this.firstGate = Math.min(...[...this.info.values()].filter((v) => v.step.type === 'gate').map((v) => v.order), Number.POSITIVE_INFINITY);
+  }
+
+  private sig(p: { goal: GoalItem[]; resume: string }): string {
+    return planSignature(p.goal, p.resume, this.d.pkg ?? this.d.dict);
+  }
+
+  /** 기억한 길로 다시 걸을 수 있는 스텝인가(첫 게이트 앞, 묶음이 있고, 지문이 같은 길이 있다). */
+  replayable(stepId: string): boolean {
+    const v = this.info.get(stepId);
+    if (!this.d.paths?.has(stepId) || !v || v.order >= this.firstGate || this.d.irreversible.has(stepId)) return false;
+    const p = this.plan(stepId);
+    return !!p && !!this.d.paths.get(stepId, this.sig(p));
+  }
+
+  /**
+   * 기억한 길을 모델 없이 다시 걷는다. 걸음마다 지금 화면 목록에서 같은 요소(DOM id가 있으면 id·역할, 없으면 역할·정확한 이름, 유일)를 찾아
+   * run과 같은 exec(가드 그대로)로 한다. 하나라도 안 되면 길을 버리고 null(원래 사슬로). 되면 돌아갈 스텝 id.
+   */
+  async replay(stepId: string): Promise<string | null> {
+    const p = this.plan(stepId);
+    const path = p && this.d.paths ? this.d.paths.get(stepId, this.sig(p)) : null;
+    if (!p || !path || !this.d.paths) return null;
+    this.d.journal('agentpath.replay', { stepId, actions: path.actions.length, resume: path.resume });
+    // 재시도를 건너뛰고 왔으니(fastEscalate) 화면이 그려지기를 한 번 기다린다
+    await this.d.page.waitIdle(5_000).catch(() => false);
+    for (const [i, a] of path.actions.entries()) {
+      let index: number | null = null;
+      let els: InteractiveElement[] = [];
+      if (a.el) {
+        ({ els } = await screenList(this.d));
+        const want = a.el;
+        const hits = els.map((x, n) => ({ x, n })).filter(({ x }) => x.role === want.role && (want.id ? x.id === want.id : !x.id && normalizeName(x.name) === normalizeName(want.name)));
+        if (hits.length !== 1) return this.replayFailed(stepId, i + 1, hits.length ? 'agentpath.ambiguous' : 'agentpath.no_element');
+        index = hits[0]!.n + 1;
+      }
+      const code = await this.exec({ action: a.action, index, token: a.token, option: a.option, step: a.step }, els, p.goal);
+      this.d.journal('agentpath.action', { stepId, n: i + 1, action: a.action, result: code });
+      if (code !== 'ok') return this.replayFailed(stepId, i + 1, code);
+    }
+    this.d.paths.replaying(stepId, path.resume);
+    this.d.journal('agentpath.replayed', { stepId, actions: path.actions.length, resume: path.resume });
+    return path.resume;
+  }
+
+  /** 화면 보기 칸을 쓸 수 있는 스텝인가(모델·사진·상자 포트가 있고, 첫 게이트 앞, 묶음이 있다). */
+  visionable(stepId: string): boolean {
+    const v = this.info.get(stepId);
+    if (!this.d.vision || !this.d.page.maskedShot || !this.d.page.box || !v || v.order >= this.firstGate || this.d.irreversible.has(stepId)) return false;
+    return !!this.plan(stepId);
+  }
+
+  /**
+   * 화면 보기(computer-use, 대표 결정 2026-11-16): 목록 에이전트로도 안 될 때 가린 화면 사진을 보내 좌표 동작을 받는다.
+   * 좌표는 엔진이 그 자리의 상호작용 요소(목록 요소 상자 중 그 점을 담는 가장 작은 것)로 바꿔 exec(같은 가드)로 한다.
+   * 넘기면 걸은 요소로 에이전트 길 기억에 남겨, 다음에는 모델 없이 다시 걷는다.
+   */
+  async vision(stepId: string): Promise<string | null> {
+    const p = this.plan(stepId);
+    if (!p || !this.d.vision || !this.d.page.maskedShot || !this.d.page.box) return null;
+    this.d.journal('computer_use.start', { stepId, steps: p.goal.map((g) => g.stepId).join(','), resume: p.resume });
+    const history: string[] = [];
+    const walked: PathAction[] = [];
+    const refused = new Map<string, number>();
+    const end = (result: string, n: number, resume?: string) => {
+      this.d.journal('computer_use.end', { stepId, result, actions: n, ...(resume ? { resume } : {}) });
+      return resume ?? null;
+    };
+    for (let n = 1; n <= COMPUTER_MAX_ACTIONS; n++) {
+      const shot = await this.d.page.maskedShot().catch(() => null);
+      if (!shot) return end('no_shot', n - 1);
+      const a = await this.d.vision.next({ goal: p.goal.map((g) => ({ stepId: g.stepId, what: g.what, token: g.token })), history, shot });
+      if (!a) return end('model_unavailable', n - 1);
+      if (a.action === 'done') {
+        this.d.paths?.propose(stepId, { sig: this.sig(p), resume: p.resume, actions: walked });
+        return end('done', n - 1, p.resume);
+      }
+      if (a.action === 'fail') return end('fail', n - 1);
+      let code: string;
+      let el: InteractiveElement | undefined;
+      if (a.action === 'click' || a.action === 'type') {
+        const { els } = await screenList(this.d);
+        let best: { i: number; area: number } | null = null;
+        for (const [i, x] of els.entries()) {
+          const b = await this.d.page.box(x.el).catch(() => null);
+          if (!b || a.x! < b.x || a.y! < b.y || a.x! > b.x + b.width || a.y! > b.y + b.height) continue;
+          const area = b.width * b.height;
+          if (!best || area < best.area) best = { i, area };
+        }
+        if (!best) code = 'computer_use.no_element';
+        else {
+          el = els[best.i];
+          code = await this.exec({ action: a.action, index: best.i + 1, token: a.token, option: null, step: a.step }, els, p.goal);
+        }
+      } else {
+        code = await this.exec({ action: a.action, index: null, token: null, option: null, step: a.step }, [], p.goal);
+      }
+      if (code === 'ok') walked.push({ action: a.action, el: el ? { role: el.role, name: normalizeName(el.name), id: el.id } : null, token: a.token, option: null, step: a.step });
+      history.push(`${n}. ${a.action}${a.x !== null ? ` (${a.x},${a.y})` : ''}${a.token ? ` ${a.token}` : ''}${el ? ` = ${el.role}` : ''} → ${code}`);
+      this.d.journal('computer_use.action', { stepId, n, action: a.action, ...(a.step ? { goalStep: a.step } : {}), result: code });
+      if (code !== 'ok') {
+        const sig = `${a.action}:${el?.id ?? el?.name ?? `${a.x},${a.y}`}:${a.token ?? ''}`;
+        const k = (refused.get(sig) ?? 0) + 1;
+        refused.set(sig, k);
+        if (k >= 2) return end('refused_twice', n);
+      }
+    }
+    return end('action_limit', COMPUTER_MAX_ACTIONS);
+  }
+
+  private replayFailed(stepId: string, n: number, code: string): null {
+    this.d.journal('agentpath.replay_failed', { stepId, n, code });
+    this.d.paths?.missed(stepId, code);
+    return null;
   }
 
   /** 막힌 스텝부터 이어지는 "그냥 입력" 묶음과 돌아갈 스텝. 묶음이 비면 null. */
@@ -132,6 +255,7 @@ export class BrowserAgent {
     }
     this.d.journal('agent.start', { stepId, steps: p.goal.map((g) => g.stepId).join(','), resume: p.resume });
     const history: string[] = [];
+    const walked: PathAction[] = [];
     const refused = new Map<string, number>();
     for (let n = 1; n <= AGENT_MAX_ACTIONS; n++) {
       const { items, els } = await screenList(this.d);
@@ -142,6 +266,7 @@ export class BrowserAgent {
       }
       if (a.action === 'done') {
         this.d.journal('agent.end', { stepId, result: 'done', actions: n - 1, resume: p.resume });
+        this.d.paths?.propose(stepId, { sig: this.sig(p), resume: p.resume, actions: walked });
         return p.resume;
       }
       if (a.action === 'fail') {
@@ -149,6 +274,10 @@ export class BrowserAgent {
         return null;
       }
       const code = await this.exec(a, els, p.goal);
+      if (code === 'ok' && (a.action === 'click' || a.action === 'type' || a.action === 'select' || a.action === 'wait' || a.action === 'scroll')) {
+        const x = a.index !== null ? els[a.index - 1] : undefined;
+        walked.push({ action: a.action, el: x ? { role: x.role, name: normalizeName(x.name), id: x.id } : null, token: a.token, option: null, step: a.step });
+      }
       const sig = `${a.action}:${a.index ?? ''}:${a.token ?? ''}`;
       history.push(`${n}. ${a.action}${a.index !== null ? ` ${a.index}` : ''}${a.token ? ` ${a.token}` : ''}${a.option ? ` "${a.option}"` : ''} → ${code}`);
       this.d.journal('agent.action', { stepId, n, action: a.action, ...(a.step ? { goalStep: a.step } : {}), result: code });

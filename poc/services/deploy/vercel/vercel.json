@@ -73,6 +73,10 @@
       "destination": "/api/sax?__p=/v1/oauth/:path*"
     },
     {
+      "source": "/v1/account/:path*",
+      "destination": "/api/sax?__p=/v1/account/:path*"
+    },
+    {
       "source": "/v1/billing/:path*",
       "destination": "/api/sax?__p=/v1/billing/:path*"
     },
@@ -99,6 +103,10 @@
     {
       "source": "/v1/respond",
       "destination": "/api/sax?__p=/v1/respond"
+    },
+    {
+      "source": "/v1/usage",
+      "destination": "/api/sax?__p=/v1/usage"
     },
     {
       "source": "/v1/biz/status",
@@ -135,6 +143,14 @@
     {
       "source": "/guide",
       "destination": "/guide/index.html"
+    },
+    {
+      "source": "/terms",
+      "destination": "/terms/index.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy/index.html"
     },
     {
       "source": "/download/mac",
