@@ -31,7 +31,7 @@ interface Env {
   twin(): Promise<{ server: Server; req: Env['req']; call: Env['call'] }>;
 }
 
-async function start(o: { monthlyTokens?: number; sqlLimits?: boolean } = {}): Promise<Env> {
+async function start(o: { monthlyTokens?: number; sqlLimits?: boolean; daily?: { trialKrw: number; paidKrw: number; krwPerUsd: number } } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'gateway', MIGRATIONS_DIR);
@@ -51,6 +51,7 @@ async function start(o: { monthlyTokens?: number; sqlLimits?: boolean } = {}): P
     scopeKey: randomBytes(32),
     models: { decide: 'model-decide', respond: 'model-respond' },
     monthlyTokens: o.monthlyTokens,
+    daily: o.daily,
     nts,
     suspender: { suspend: async (id) => void (await s.svc.autoSuspend(id)) },
     onEvent: (e) => events.push(e),
@@ -539,6 +540,41 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
       assert.deepEqual([...cs].sort(), Object.keys(GATEWAY_VISIBILITY[t]!).sort(), t);
       for (const c of cs) assert.ok(!FORBIDDEN_COLUMN.test(c), `${t}.${c}`);
     }
+  });
+});
+
+describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST 새벽 4시 초기화)', () => {
+  let e: Env;
+  // 모의 공급사 respond = 입력 2,000(캐시 1,500)·출력 300 → 500×$1 + 1,500×$0.05 + 300×$5 = 2,075 마이크로 달러. 환율 1,000이면 약 2원
+  beforeEach(async () => (e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 } })));
+  afterEach(() => (e.server.close(), e.s.close()));
+
+  it('체험 한도를 넘으면 429 gateway.daily_limit(retry-after = 다음 새벽 4시), 안전 판정은 계속, 새벽 4시에 초기화', async () => {
+    const rt = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    for (let i = 0; i < 3; i++) assert.equal((await e.call('/v1/respond', respondBody(rt)).then((r) => r.status)), 200);
+    const over = await e.call('/v1/respond', respondBody(rt));
+    assert.deepEqual([over.status, over.json.error], [429, 'gateway.daily_limit']);
+    // 시계: 2026-11-10 00:00Z = KST 09:00 → 다음 초기화는 다음 날 KST 04:00 = 2026-11-10 19:00Z
+    assert.equal(Number(over.headers.get('retry-after')), (Date.UTC(2026, 10, 10, 19) - e.s.clock.now()) / 1000);
+    const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
+    assert.deepEqual([u.json.limitKrw, u.json.tier, u.json.resetAt], [5, 'trial', Date.UTC(2026, 10, 10, 19)]);
+    assert.equal(u.json.usedKrw, 6);
+    // 안전 판정(screen_state_v2)은 한도를 넘어도, 그 밖의 번들은 막힌다
+    const rt2 = await e.runToken();
+    assert.equal((await e.call('/v1/decide', decideBody(rt2))).status, 200);
+    assert.equal((await e.call('/v1/decide', decideBody(rt2, FORM))).json.error, 'gateway.daily_limit');
+    // 새벽 4시가 지나면 다시
+    e.s.clock.t = Date.UTC(2026, 10, 10, 19) + 1;
+    const rt3 = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    assert.equal((await e.call('/v1/respond', respondBody(rt3))).status, 200);
+  });
+
+  it('구독자(토큰 tier=paid)는 유료 한도', async () => {
+    await e.s.db.run("INSERT INTO subscriptions (account_id, plan, status, period, renew_at, pg_customer_ref) SELECT account_id, 'standard', 'active', 'month', $1, 'cus_paidpaidpaidpaidpaidpaid' FROM devices WHERE device_id = $2", [e.s.clock.now() + 30 * D, e.pc.d.id]);
+    const rt = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    for (let i = 0; i < 5; i++) assert.equal((await e.call('/v1/respond', respondBody(rt))).status, 200, `call ${i}`);
+    const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
+    assert.deepEqual([u.json.limitKrw, u.json.tier], [20, 'paid']);
   });
 });
 

@@ -75,6 +75,10 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
       throw fail('net.not_in_e2e');
     },
     enrollPhone: async () => {},
+    billing: async () => ({ entitlement: { state: 'trial' as const, until: null }, subscription: null }),
+    billingCheckout: async () => ({ checkoutUrl: 'https://tax.laf-co.com/v1/billing/card?ref=cus_aaaaaaaaaaaaaaaaaaaaaaaa' }),
+    billingCancel: async () => {},
+    billingRefund: async () => ({ amountKrw: 0 }),
     putDeviceList: async () => {},
   };
   return { client, calls, pinned: () => pinned };

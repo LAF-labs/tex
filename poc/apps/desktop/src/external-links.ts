@@ -23,3 +23,21 @@ export function externalUrl(key: string): string {
 export async function openExternalKey(key: string): Promise<void> {
   await shell.openExternal(externalUrl(key));
 }
+
+/**
+ * 구독 결제 창(계정 서비스 /v1/billing/card?ref=…)을 기본 브라우저로 연다. 주소는 main이 계정 서비스에서 받은 것만(렌더러는 주소를 보내지 않는다).
+ * 운영 origin(https, 포트·사용자 정보 없음)이나 개발 스택(http://localhost) 계정 origin과 정확히 맞아야 한다.
+ */
+export function billingCheckoutUrl(url: string, accountOrigin: string): string {
+  const u = new URL(url);
+  const o = new URL(accountOrigin);
+  const devLocal = o.protocol === 'http:' && (o.hostname === 'localhost' || o.hostname === '127.0.0.1');
+  if (u.origin !== o.origin || u.pathname !== '/v1/billing/card' || u.username || u.password || u.hash) throw new Error('link_not_allowed');
+  if (!devLocal && (u.protocol !== 'https:' || u.port)) throw new Error('link_not_allowed');
+  if (![...u.searchParams.keys()].every((k) => k === 'ref') || !/^cus_[A-Za-z0-9_-]{24}$/.test(u.searchParams.get('ref') ?? '')) throw new Error('link_not_allowed');
+  return u.href;
+}
+
+export async function openBillingCheckout(url: string, accountOrigin: string): Promise<void> {
+  await shell.openExternal(billingCheckoutUrl(url, accountOrigin));
+}

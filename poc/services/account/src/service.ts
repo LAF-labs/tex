@@ -1367,13 +1367,18 @@ export class AccountService {
     await onVerified?.();
     // 순서는 역할 범위 순서로 고정한다(기록·비교가 요청 순서에 흔들리지 않게)
     let scopes = want ? roleScopes.filter((s) => want.includes(s)) : [...roleScopes];
-    // 유료 기능(게이트웨이)은 체험 중이거나 낸 기간 안일 때만. 게이트웨이만 달라면 402, 전체를 달라면 게이트웨이만 빼고 준다(연결·기기 관리는 그대로)
-    if (scopes.includes('gateway') && (await this.entitlement(d!.account_id)).state === 'none') {
-      if (want && scopes.length === 1) fail('account.subscription_required');
-      scopes = scopes.filter((x) => x !== 'gateway');
-      this.d.onEvent?.('account.gateway_scope_withheld');
+    // 유료 기능(게이트웨이)은 체험 중이거나 낸 기간 안일 때만. 게이트웨이만 달라면 402, 전체를 달라면 게이트웨이만 빼고 준다(연결·기기 관리는 그대로).
+    // 줄 때는 등급(tier)을 싣는다: 게이트웨이 일 한도가 체험·유료로 다르다
+    let tier: 'trial' | 'paid' | undefined;
+    if (scopes.includes('gateway')) {
+      const ent = (await this.entitlement(d!.account_id)).state;
+      if (ent === 'none') {
+        if (want && scopes.length === 1) fail('account.subscription_required');
+        scopes = scopes.filter((x) => x !== 'gateway');
+        this.d.onEvent?.('account.gateway_scope_withheld');
+      } else tier = ent;
     }
-    const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx }, now);
+    const { token, claims } = this.d.tokens.issue({ acc: d!.account_id, dev: d!.device_id, role: d!.role, scp: scopes, cnf: d!.vx, ...(tier ? { tier } : {}) }, now);
     this.d.onEvent?.(`account.device_token_issued.${d!.role}.${want && scopes.length < roleScopes.length ? scopes.join('-') : 'all'}`);
     return { token, expiresAt: claims.exp, scopes };
   }

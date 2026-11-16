@@ -4,6 +4,8 @@ export const ERROR_STATUS = {
   // D16 기존
   'gateway.unauthorized': 401,
   'gateway.quota_exceeded': 429,
+  /** 오늘(한국 시간 새벽 4시 기준) 쓸 수 있는 AI 사용 금액을 다 썼다. retry-after = 다음 새벽 4시까지 */
+  'gateway.daily_limit': 429,
   'gateway.digest_mismatch': 409,
   'gateway.param_rejected': 400,
   'gateway.upstream_error': 503,

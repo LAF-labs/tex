@@ -26,7 +26,7 @@ import {
   type Limits,
   type Sql,
 } from '@sax/svc-shared';
-import { GATEWAY, ZERO_PRICES, type Prices } from './constants.ts';
+import { DAILY, GATEWAY, LIMIT_PRICES, ZERO_PRICES, limitDay, type Prices } from './constants.ts';
 import { ProviderError, type ModelProvider, type ProviderUsage } from './providers.ts';
 import { NtsUnavailable, type BizStatus, type BizStatusSource } from './nts.ts';
 
@@ -116,6 +116,9 @@ export interface GatewayDeps {
   models: { decide: string; respond: string; agent?: string };
   monthlyTokens?: number;
   prices?: Prices;
+  /** 하루 AI 사용 금액 한도(원). 없으면 DAILY. 단가는 limitPrices(없으면 LIMIT_PRICES) */
+  daily?: { trialKrw: number; paidKrw: number; krwPerUsd: number };
+  limitPrices?: Required<Prices>;
   nts: BizStatusSource;
   suspender?: DeviceSuspender;
   /** 한도 카운터·키 솔트. 배포는 DB(`sqlLimits`, 인스턴스 공유), 없으면 메모리(단일 인스턴스) */
@@ -126,7 +129,7 @@ export interface GatewayDeps {
   sleep?: (ms: number) => Promise<void>;
 }
 
-type Who = Pick<DeviceClaims, 'acc' | 'dev'>;
+type Who = Pick<DeviceClaims, 'acc' | 'dev'> & { tier?: DeviceClaims['tier'] };
 
 export class GatewayService {
   readonly now: () => number;
@@ -183,6 +186,30 @@ export class GatewayService {
   }
 
   // ---------- 공통 ----------
+
+  /**
+   * 하루 한도(KST 새벽 4시 초기화). 등급(토큰 tier)별 원 한도를 넘었으면 429 gateway.daily_limit(retry-after = 다음 4시).
+   * safetyOk면 안전 판정 번들(L1, 한 번에 1원 미만)은 한도를 넘어도 보낸다: 진행 중인 발급을 위험한 화면에서 멈추게 하지 않는다.
+   */
+  async dailyCheck(who: Who, safetyOk = false): Promise<void> {
+    const d = this.d.daily ?? DAILY;
+    const { day, resetAt } = limitDay(this.now());
+    const r = await this.d.db.one<{ c: number }>('SELECT cost_micro_usd AS c FROM usage_daily WHERE account_id = $1 AND day = $2', [who.acc, day]);
+    const budgetMicroUsd = ((who.tier === 'paid' ? d.paidKrw : d.trialKrw) / d.krwPerUsd) * 1_000_000;
+    if (Number(r?.c ?? 0) < budgetMicroUsd) return;
+    if (safetyOk) return;
+    this.event(`daily_limit.${who.tier === 'paid' ? 'paid' : 'trial'}`);
+    fail('gateway.daily_limit', { retryAfterSec: Math.max(1, Math.ceil((resetAt - this.now()) / 1000)) });
+  }
+
+  /** 오늘 쓴 금액(원, 반올림)과 한도. 앱의 사용량 표시용 */
+  async dailyUsage(who: Who): Promise<{ usedKrw: number; limitKrw: number; resetAt: number; tier: 'trial' | 'paid' }> {
+    const d = this.d.daily ?? DAILY;
+    const { day, resetAt } = limitDay(this.now());
+    const r = await this.d.db.one<{ c: number }>('SELECT cost_micro_usd AS c FROM usage_daily WHERE account_id = $1 AND day = $2', [who.acc, day]);
+    const tier = who.tier === 'paid' ? 'paid' : 'trial';
+    return { usedKrw: Math.round((Number(r?.c ?? 0) / 1_000_000) * d.krwPerUsd), limitKrw: tier === 'paid' ? d.paidKrw : d.trialKrw, resetAt, tier };
+  }
 
   private async tokensThisMonth(acc: string): Promise<number> {
     const r = await this.d.db.one<{ t: number }>('SELECT input_tokens + output_tokens AS t FROM usage_monthly WHERE account_id = $1 AND month = $2', [acc, kstMonth(this.now())]);
@@ -248,6 +275,12 @@ export class GatewayService {
       Math.max(0, Math.round(latencyMs)),
     ]);
     if (!usage) return;
+    // 일 한도 금액: 캐시 적중은 캐시 단가, 에이전트 툴셋은 에이전트 단가(LIMIT_PRICES 기본)
+    const lp = this.d.limitPrices ?? LIMIT_PRICES;
+    const lk = kind === 'decide' ? 'decide' : (AGENT_TOOLSETS as readonly string[]).includes(surface) ? 'agent' : 'respond';
+    const cached = Math.min(usage.cachedTokens ?? 0, usage.inputTokens);
+    const dayCost = Math.ceil((lp[`${lk}In`] * (usage.inputTokens - cached) + lp[`${lk}Cached`] * cached + lp[`${lk}Out`] * usage.outputTokens) / 1_000_000);
+    await this.d.db.run('INSERT INTO usage_daily (account_id, day, cost_micro_usd) VALUES ($1, $2, $3) ON CONFLICT (account_id, day) DO UPDATE SET cost_micro_usd = usage_daily.cost_micro_usd + $3', [who.acc, limitDay(now).day, dayCost]);
     const cost = Math.round(((kind === 'decide' ? p.decideIn : p.respondIn) * usage.inputTokens + (kind === 'decide' ? p.decideOut : p.respondOut) * usage.outputTokens) / 1_000_000);
     await this.d.db.tx(async (q) => {
       await q.run(
@@ -308,6 +341,7 @@ export class GatewayService {
       const cap = await this.limits.limiter.hit(`cap:${await this.limits.idSalt('gw-limit').hash(who.acc)}`, GATEWAY.safetyAfterCapPerMinute, 60_000);
       if (!cap.ok) fail('gateway.quota_exceeded');
     }
+    await this.dailyCheck(who, bundle!.def.riskClass === 'safety');
     await this.consume(rt.sh, rt.k, 'l1', 1);
     const started = this.now();
     let res;
@@ -378,6 +412,7 @@ export class GatewayService {
     // 월 100%에서 L2 중단(D04 §6)
     if ((await this.tokensThisMonth(who.acc)) >= (this.d.monthlyTokens ?? GATEWAY.monthlyTokensDefault)) fail('gateway.quota_exceeded');
     const agent = (AGENT_TOOLSETS as readonly string[]).includes(t!.id);
+    await this.dailyCheck(who);
     await this.consume(rt.sh, rt.k, agent ? 'agent' : replay.length ? 'l2_turn' : 'l2_new', t!.maxTurns);
     const input: unknown[] = [...b.messages, ...replay.map((r) => ('item' in r ? r.item : { type: 'function_call_output', call_id: r.call_id, output: r.output }))];
     const started = this.now();
@@ -433,6 +468,7 @@ export class GatewayService {
     const now = this.now();
     await this.d.db.run('DELETE FROM call_records WHERE at <= $1', [now - GATEWAY.callRecordRetentionDays * 24 * 3600_000]);
     await this.d.db.run('DELETE FROM run_scopes WHERE expires_at <= $1', [now]);
+    await this.d.db.run('DELETE FROM usage_daily WHERE day < $1', [limitDay(now - 2 * 24 * 3600_000).day]);
     await this.limits.limiter.sweep();
   }
 }

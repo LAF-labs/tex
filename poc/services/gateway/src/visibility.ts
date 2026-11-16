@@ -17,6 +17,7 @@ export const GATEWAY_VISIBILITY: Record<string, Record<string, string>> = {
     input_tokens: '토큰 수',
     output_tokens: '토큰 수',
   },
+  usage_daily: { account_id: '계정', day: 'D09 §1.1 보충: 일 한도의 날(KST 새벽 4시 기준, 이틀 보존)', cost_micro_usd: 'D09 §1.1 보충: 그날 AI 사용 금액(일 한도 판정)' },
   ops_stats: { day: '시각(KST 일)', surface: '번들·툴셋 ID', outcome: 'D09 §3 계량 분리 (2) 운영 통계 outcome', n: '호출 수', latency_ms_sum: '지연' },
   run_scopes: {
     scope_hash: 'D09 §1.1 보충: 실행 예산 범위(HMAC(계정·runId), 원문 없음)',

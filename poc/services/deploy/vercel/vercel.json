@@ -101,6 +101,10 @@
       "destination": "/api/sax?__p=/v1/respond"
     },
     {
+      "source": "/v1/usage",
+      "destination": "/api/sax?__p=/v1/usage"
+    },
+    {
       "source": "/v1/biz/status",
       "destination": "/api/sax?__p=/v1/biz/status"
     },

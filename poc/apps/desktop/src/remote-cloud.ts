@@ -194,6 +194,40 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
         throw new CloudPortError(typeof code === 'string' && (CODE.test(code) || code === 'response.shape') ? code : 'server.unknown');
       }
     },
+    async billing(auth) {
+      const su = `${accountOrigin}/v1/billing/subscription`;
+      const eu = `${accountOrigin}/v1/billing/entitlement`;
+      const [sr, er] = await Promise.all([call('GET', su, [200], { headers: await authed(auth, 'GET', su) }), call('GET', eu, [200], { headers: await authed(auth, 'GET', eu) })]);
+      const e = (isObj(er) ? er : {}) as Record<string, unknown>;
+      const s = (isObj(sr) ? sr : {}) as Record<string, unknown>;
+      if (!['trial', 'paid', 'none'].includes(e.state as string) || !(e.until === null || int(e.until))) shape();
+      if (!(s.subscription === null || isObj(s.subscription))) shape();
+      const sub = s.subscription as Record<string, unknown> | null;
+      if (sub && (!['pending', 'active', 'past_due', 'canceled'].includes(sub.status as string) || !(sub.renewAt === null || int(sub.renewAt)) || !int(sub.amountKrw))) shape();
+      const rf = sub && isObj(sub.refund) ? (sub.refund as Record<string, unknown>) : null;
+      if (rf && (!int(rf.refundableUntil) || !int(rf.amountKrw))) shape();
+      return {
+        entitlement: { state: e.state as 'trial' | 'paid' | 'none', until: e.until as number | null },
+        subscription: sub ? { status: sub.status as 'pending' | 'active' | 'past_due' | 'canceled', renewAt: sub.renewAt as number | null, amountKrw: sub.amountKrw as number, refund: rf ? { refundableUntil: rf.refundableUntil as number, amountKrw: rf.amountKrw as number } : null } : null,
+      };
+    },
+    async billingCheckout(auth) {
+      const url = `${accountOrigin}/v1/billing/checkout`;
+      const b = (await call('POST', url, [200], { headers: await authed(auth, 'POST', url) })) as Record<string, unknown> | null;
+      // 결제 창은 우리 계정 origin의 카드 등록 창만(서버가 다른 주소를 주면 열지 않는다)
+      if (!isObj(b) || !str(b.checkoutUrl, 512) || !(b.checkoutUrl as string).startsWith(`${accountOrigin}/v1/billing/card?ref=`)) shape();
+      return { checkoutUrl: (b as Record<string, unknown>).checkoutUrl as string };
+    },
+    async billingCancel(auth) {
+      const url = `${accountOrigin}/v1/billing/cancel`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url) });
+    },
+    async billingRefund(auth) {
+      const url = `${accountOrigin}/v1/billing/refund`;
+      const b = (await call('POST', url, [200], { headers: await authed(auth, 'POST', url) })) as Record<string, unknown> | null;
+      if (!isObj(b) || !int(b.amountKrw)) shape();
+      return { amountKrw: (b as Record<string, unknown>).amountKrw as number };
+    },
     async acctClaim(auth) {
       const url = `${accountOrigin}/v1/acct-claim`;
       const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
@@ -235,6 +269,7 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
     account,
     relay,
     relayHost,
+    accountOrigin,
     insecureLocal: dev,
     openSocket(url, headers) {
       try {
