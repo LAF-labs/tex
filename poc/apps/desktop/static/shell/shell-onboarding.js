@@ -107,7 +107,7 @@ function stepBody(o, act) {
     case 'model':
     case 'telemetry':
     case 'delegation':
-      return consentCard(o, reply);
+      return consentCard(o, reply, act);
     case 'welcome':
       return replyOptions([answer('사업자번호로 입력할게요', 'number'), answer('사업자등록증 올리기', 'upload'), answer('나중에 할게요', 'later')], { 'data-onb-step': o.step });
     case 'biz-number': {
@@ -150,7 +150,7 @@ function stepBody(o, act) {
 }
 
 /** 동의 화면 하나(①~④). 화면마다 명시 클릭. 거절·다른 길 버튼은 동의 버튼과 같은 무게로 둔다(D05 §9 동등 노출). */
-function consentCard(o, reply) {
+function consentCard(o, reply, act) {
   const n = o.consent;
   const buttons = {
     terms: [btn('동의하고 시작', () => reply('agree'), 'sx-btn-primary', { 'data-onb': 'agree' })],
@@ -176,6 +176,8 @@ function consentCard(o, reply) {
     o.notice ? note(o.notice, true) : null,
     h('ul', { class: 'onb-lines' }, ...n.lines.map((l) => h('li', {}, l))),
     table,
+    // 전문 보기(F-06): 기본 브라우저로 사이트 페이지를 연다. 주소는 main 표에만 있다.
+    n.links?.length ? h('p', { class: 'onb-links' }, ...n.links.map((x) => btn(x.label, () => act.legal(x.doc), 'sx-btn-quiet', { 'data-legal': x.doc }))) : null,
     h('div', { class: 'sx-actions' }, ...buttons),
   );
 }

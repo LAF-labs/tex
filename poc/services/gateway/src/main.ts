@@ -6,7 +6,7 @@ import { gatewayRouter } from './app.ts';
 import { codefFromEnv, type CodefTokenSource } from './codef.ts';
 import { ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
-import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
+import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseAgentPrivacy, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -61,7 +61,9 @@ function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void
   // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
   const routing = parseOpenRouterRouting(env);
   if (!routing) fail('OPENROUTER_ROUTING');
-  return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent });
+  // 판정·에이전트 호출의 보관 조건(OPENROUTER_AGENT_PRIVACY): 모르는 값이면 기동하지 않는다
+  const agentPrivacy = parseAgentPrivacy(env.OPENROUTER_AGENT_PRIVACY) ?? fail('OPENROUTER_AGENT_PRIVACY');
+  return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent, agentPrivacy });
 }
 
 export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
