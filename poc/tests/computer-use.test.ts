@@ -119,6 +119,15 @@ describe('화면 보기: 실제 Chromium', () => {
     assert.equal(again.replayable('s1'), true);
     assert.equal(await again.replay('s1'), 's2');
     assert.equal(await page.locator('#itemX').inputValue(), '배 두 상자');
+    // 기록 때 id가 없던 요소가 지금은 id를 가져도 역할·이름이 유일하면 맞힌다
+    file!.paths.s1!.actions[0]!.el!.id = null;
+    await page.setContent(HTML);
+    const third = new BrowserAgent({
+      page: reader, dict, act: act as never, frame: 'main', journal: (t) => journal.push(t), ir, scope: newScope({ inputs: { items: [{ name: '귤 세 상자' }] } }),
+      irreversible: new Set(), model: { next: async () => null }, paths: new AgentPathMemory(store),
+    });
+    assert.equal(await third.replay('s1'), 's2', journal.join(','));
+    assert.equal(await page.locator('#itemX').inputValue(), '귤 세 상자');
   });
 
   it('vision: 좌표가 금지 이름(발급) 단추를 가리키면 가드가 거부하고 두 번 거부되면 멈춘다', async () => {
