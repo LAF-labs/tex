@@ -214,6 +214,16 @@ export function note(text, attention, extra, ic = 'info') {
   return h('div', { class: `sx-note${attention ? ' is-attention' : ''}` }, icon(ic), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null));
 }
 
+/**
+ * 한 덩어리(카드·패널)의 주의 문장 여럿을 주의 면 하나로 모은다(v2.0: 한 카드에 주의 면은 하나, 상자를 쌓지 않는다).
+ * items = 글 | [글, 속성] | null. 하나뿐이면 note와 같은 모양이고, 여럿이면 한 면 안의 줄이 된다. 없으면 null.
+ */
+export function noteGroup(items, attention = true, ic = attention ? 'warn' : 'info') {
+  const list = items.filter(Boolean).map((x) => (Array.isArray(x) ? x : [x, {}]));
+  if (!list.length) return null;
+  return h('div', { class: `sx-note${attention ? ' is-attention' : ''}`, 'data-note-group': String(list.length) }, icon(ic), h('div', { class: 'sx-note-body' }, ...list.map(([t, a]) => h('p', a, t))));
+}
+
 /** 시험·스타일용 data 속성을 붙여 돌려준다. */
 const tagged = (el, key, value) => ((el.dataset[key] = value), el);
 
@@ -397,8 +407,8 @@ export function taskCard(run, act) {
       ),
     );
     card.append(
-      run.noChrome ? h('div', { 'data-no-chrome': '' }, note(NO_CHROME_TEXT, true)) : null,
-      run.dupToday ? h('div', { 'data-dup-today': '' }, note(DUP_TODAY_TEXT, true)) : null,
+      // Chrome 없음·오늘 같은 발급이 겹쳐도 주의 면은 하나
+      noteGroup([run.noChrome ? [NO_CHROME_TEXT, { 'data-no-chrome': '' }] : null, run.dupToday ? [DUP_TODAY_TEXT, { 'data-dup-today': '' }] : null]),
       h('dl', { class: 'sx-kv sx-draft', 'data-draft-fields': '', 'data-draft-edit': act.editingFields === run.id ? '' : null }, ...rows),
       err,
       editing
@@ -519,7 +529,7 @@ export function taskCard(run, act) {
     );
   }
   // 포털 안내 문구·금고 알림(텍스트 노드로만).
-  for (const t of run.notices || []) card.append(note(t, true));
+  if (run.notices?.length) card.append(noteGroup(run.notices));
   // 금고가 Chrome 확장을 보고 멈춘 실행이 발급 없이 끝났으면 [다시 시도]: 같은 요청을 입력창에 채우기만 한다(보내기·준비는 사용자가, [지난번과 같게]와 같은 길).
   if (run.retry && !run.result && !run.inDoubt && (st === 'stopped' || st === 'attention')) {
     card.append(h('div', { class: 'sx-actions' }, btn('다시 시도', () => act.again(run), 'sx-btn-primary', { 'data-act': 'retry' })));
@@ -722,7 +732,7 @@ function checkListGuide(run, act) {
     'div',
     { class: 'sx-check', 'data-check-list': run.id },
     h('div', { class: 'sx-panel-sec' }, '홈택스에서 직접 확인'),
-    note('홈택스 발급목록에서 아래 건을 찾아 주세요. 목록에 있으면 발급된 것이니 다시 발급하지 마세요.', true),
+    note('홈택스 발급목록에서 아래 건을 찾아 주세요. 목록에 있으면 발급된 것이니 다시 발급하지 마세요.', !(run.attest?.note && run.attest.state !== 'sent')),
     kv([
       ['작성일자', run.writeDate, { copy: c(run.writeDate) }],
       ['공급받는자', run.counterparty.name, { copy: c(run.counterparty.name) }],
@@ -730,6 +740,7 @@ function checkListGuide(run, act) {
       ['합계', won(run.total), { copy: c(String(run.total)) }],
     ]),
     h('div', { class: 'sx-meta' }, '목록에 없다는 확인은 대화 아래에 뜨는 황토색 확인 카드로만 받아요. 확인한 뒤 다시 발급하려면 새로 승인해야 해요.'),
+    // 증언 결과: 못 보냈으면 이것이 주의 면이고 위 안내는 보통 면이 된다(주의 면을 둘 쌓지 않는다)
     run.attest?.note ? note(run.attest.note, run.attest.state !== 'sent') : null,
   );
 }
@@ -815,7 +826,7 @@ export function docPanel(doc, today, act, review) {
  * 없음이면 [설치 파일 받기](홈택스 공식 파일을 기본 브라우저로), 꺼짐이면 [켜기], 둘 다 [다시 확인]. 괜찮아지면 onOk를 부르고 사라진다.
  */
 export function securityBox(st, ops, onOk) {
-  const box = h('div', { class: 'sx-note is-attention onb-security', 'data-security': st.state });
+  const box = h('div', { class: 'sx-note is-attention onb-security', role: 'alert', 'data-security': st.state });
   const draw = (s) => {
     box.dataset.security = s.state;
     box.replaceChildren();
@@ -833,21 +844,16 @@ export function securityBox(st, ops, onOk) {
         /* 버튼만 다시 누르게 둔다 */
       }
     };
+    // 주의 면 위 단추: 할 일 하나는 주 단추, 나머지는 조용한 단추(어두운 알약은 주의 면 위에서 묻힌다). 설치 주소 원문은 보이지 않는다(단추가 연다).
+    const main = missing && s.installUrl ? btn('설치 파일 받기', run(async () => (await ops.install(), null)), 'sx-btn-primary', { 'data-act': 'security-install' }) : !missing && s.canStart ? btn('켜기', run(ops.start), 'sx-btn-primary', { 'data-act': 'security-start' }) : null;
     box.append(
-      icon('info'),
+      icon('warn'),
       h(
         'div',
-        {},
-        h('b', {}, missing ? '홈택스 공동인증서 프로그램이 이 PC에 없어요' : '홈택스 공동인증서 프로그램이 꺼져 있어요'),
-        h('p', { class: 'sx-body-sm' }, missing ? `홈택스에서 공동인증서로 로그인·서명하려면 ${s.name}이 있어야 해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.` : `${s.name}을 켜야 홈택스가 이 PC의 인증서를 읽어요.`),
-        missing && s.installUrl ? h('div', { class: 'sx-meta' }, s.installUrl) : null,
-        h(
-          'div',
-          { class: 'sx-actions' },
-          missing && s.installUrl ? btn('설치 파일 받기', run(async () => (await ops.install(), null)), 'sx-btn-primary', { 'data-act': 'security-install' }) : null,
-          !missing && s.canStart ? btn('켜기', run(ops.start), 'sx-btn-primary', { 'data-act': 'security-start' }) : null,
-          btn('다시 확인', run(ops.check), '', { 'data-act': 'security-check' }),
-        ),
+        { class: 'sx-note-body' },
+        h('b', { class: 'sx-note-title' }, missing ? `홈택스 인증서 프로그램(${s.name})이 없어요` : `홈택스 인증서 프로그램(${s.name})이 꺼져 있어요`),
+        h('p', {}, missing ? '홈택스 로그인·서명에 필요해요. 홈택스 공식 설치 파일을 받아 설치한 뒤 [다시 확인]을 눌러 주세요.' : '이 프로그램을 켜야 홈택스가 이 PC의 인증서를 읽어요.'),
+        h('div', { class: 'sx-actions' }, main, btn('다시 확인', run(ops.check), main ? 'sx-btn-quiet' : 'sx-btn-primary', { 'data-act': 'security-check' })),
       ),
     );
   };

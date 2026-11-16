@@ -429,8 +429,13 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     assert.equal(r.notices!.length, 1);
     assert.ok(r.notices![0]!.startsWith('홈택스 안내: “<b>세션이 만료</b>되었습니다'), r.notices![0]);
     assert.ok(r.notices![0]!.length <= '홈택스 안내: “”'.length + 200);
-    // 렌더러는 notices를 텍스트 노드(note)로만 넣는다.
-    assert.match(fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8'), /for \(const t of run\.notices \|\| \[\]\) card\.append\(note\(t, true\)\);/);
+    // 렌더러는 notices를 텍스트 노드로만 넣는다: 주의 면 하나(noteGroup)에 모으고, noteGroup은 줄마다 h('p', 속성, 글)이다(h는 문자열을 텍스트 노드로 붙인다). innerHTML은 쓰지 않는다.
+    const views = fs.readFileSync(path.join(root, 'apps/desktop/static/shell/shell-views.js'), 'utf8');
+    assert.match(views, /if \(run\.notices\?\.length\) card\.append\(noteGroup\(run\.notices\)\);/);
+    const group = views.slice(views.indexOf('export function noteGroup('), views.indexOf('\n}\n', views.indexOf('export function noteGroup(')));
+    assert.match(group, /\.\.\.list\.map\(\(\[t, a\]\) => h\('p', a, t\)\)/);
+    assert.doesNotMatch(group, /innerHTML|insertAdjacentHTML|outerHTML/);
+    assert.match(views, /el\.append\(c instanceof Node \? c : String\(c\)\)/);
   });
 
   it('금고 이벤트·fatal 문장: Google 로그인, 설정 바뀜, 누출 의심, 만료, 키 유실, env 변조', async () => {
