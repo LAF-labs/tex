@@ -632,6 +632,8 @@ export class RunService extends EventEmitter {
       ...(this.d.handoffCapMs !== undefined ? { handoffCapMs: this.d.handoffCapMs } : {}),
       ...(this.d.lifetimeMs !== undefined ? { lifetimeMs: this.d.lifetimeMs } : {}),
       secretEvent: (e) => this.ev({ runId: a.runId, type: 'secret', ...e }),
+      // 예행: 조회 탭에서 멈추면 그 탭의 화면·요소 목록을 snap-<runId>-lookup으로 남긴다(처리결과 조회 화면 맞춤용, 로컬 파일만)
+      ...(a.rehearsal && this.d.rehearsalSnapDir ? { lookupSnap: (p: Page, at: { stepId: string; code: string }) => rehearsalSnap(p, this.d.rehearsalSnapDir!, `${a.runId}-lookup`, { phase: 'lookup', code: `${at.stepId}:${at.code}` }) } : {}),
       portalNotice: (n) => {
         if (inputs && n.ok && n.key === BIZNO_OK_KEY) this.fromPortal(a.runId, 'counterparty.verified', () => (this.d.data.counterparties.setVerification(inputs.counterpart.id, BIZNO_OK_STATUS), ['verifiedStatus']));
         this.ev({ runId: a.runId, type: 'notice', stepId: n.stepId, key: n.key, text: n.text, ok: n.ok });

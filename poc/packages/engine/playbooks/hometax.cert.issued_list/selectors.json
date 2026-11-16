@@ -4,13 +4,12 @@
   "hometax.page.root": {
    "candidates": [
     {
-     "kind": "role",
-     "role": "main",
-     "name": "홈택스"
+     "kind": "css",
+     "value": "#mf_wrap"
     }
    ],
-   "role": "main",
-   "namePattern": "^홈택스$",
+   "role": "generic",
+   "namePattern": "^$",
    "frame": "main",
    "landmark": "hometax.page.root",
    "commits": false,
@@ -21,15 +20,10 @@
     {
      "kind": "css",
      "value": "#mf_txppWframe"
-    },
-    {
-     "kind": "role",
-     "role": "form",
-     "name": "민원신청 처리결과 조회"
     }
    ],
-   "role": "form",
-   "namePattern": "^민원신청 처리결과 조회$",
+   "role": "generic",
+   "namePattern": "^$",
    "frame": "main",
    "landmark": "hometax.page.root",
    "commits": false,

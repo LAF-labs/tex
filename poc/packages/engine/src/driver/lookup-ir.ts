@@ -85,6 +85,8 @@ export interface IrLookupInput {
   fixtureGrant?: FixtureOriginGrant | null;
   /** 팝업 열기 대기 상한(기본 10초). */
   timeoutMs?: number;
+  /** 조회 스텝이 멈추면 팝업을 닫기 전에 부른다(예행 화면 기록). 6초 안에 끝나지 않으면 기다리지 않는다. */
+  onFail?: (popup: Page, at: { stepId: string; code: string }) => Promise<void>;
 }
 
 const norm = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -166,7 +168,12 @@ export class IrLookupPort implements LookupPort {
         // 실기기 디버깅: 조회 패키지의 어느 스텝·셀렉터 키에서 멈췄는지(값 없음, ⑦). RunService가 엔진 로그 run.lookup_failed로도 남긴다.
         const at = [...flattenSteps(ir.steps)].find((x) => x.id === stop.at) as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
         const target = typeof at?.target === 'string' ? at.target : at?.type === 'wait' && at.for === 'selector' && typeof at.value === 'string' ? at.value : '';
-        this.i.events.journal('lookup.step_failed', { playbook: req.playbook, purpose: req.purpose, stepId: stop.at, stepType: at?.type ?? 'unknown', target, code: ('code' in stop && stop.code) || stop.t });
+        const code = ('code' in stop && stop.code) || stop.t;
+        this.i.events.journal('lookup.step_failed', { playbook: req.playbook, purpose: req.purpose, stepId: stop.at, stepType: at?.type ?? 'unknown', target, code });
+        if (this.i.onFail) {
+          let timer: NodeJS.Timeout | undefined;
+          await Promise.race([this.i.onFail(popup, { stepId: stop.at, code }).catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, 6_000)))]).finally(() => clearTimeout(timer));
+        }
         return { ok: false, code: 'lookup.failed' };
       }
 

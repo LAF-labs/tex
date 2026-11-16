@@ -162,6 +162,8 @@ export interface IrRunInput {
   portalNotice?: (n: { stepId: string; key: string; text: string; ok: boolean }) => void;
   /** 비밀 차례 TTL(기본 120초, 시험용). */
   secretTtlMs?: number;
+  /** 조회(verify·기준선) 스텝이 멈췄을 때 그 조회 탭 기록(예행만, RunService가 넘긴다). */
+  lookupSnap?: (popup: Page, at: { stepId: string; code: string }) => Promise<void>;
 }
 
 /** 사람 대기 한 번의 상한(부장 결정 2026-11-11). */
@@ -550,6 +552,7 @@ export class IrRun {
         ? new IrLookupPort({
           page, packages: i.ir.lookupPackages, policy: enforcer, clock, fixtureGrant: i.ir.fixtureGrant ?? null,
           events: { security: (code, key) => i.journal('security.event', { code, key }), journal: i.journal },
+          ...(i.lookupSnap ? { onFail: i.lookupSnap } : {}),
         })
         : new PopupLookupPort({ page, origin: i.portal.origin, defs: i.ir.lookupDefs ?? new Map(), policy: enforcer, domains }),
       book, page: reader, clock, dict, strings: files.strings, scope,

@@ -137,10 +137,9 @@ export const CERT_DOCS: readonly CertDoc[] = [
   {
     code: 'H-09', id: 'hometax.cert.financial_statements', docType: 'financial_statements_cert', name: '표준재무제표증명(개인/법인)',
     title: '표준재무제표증명 발급', confirm: '표준재무제표증명을 발급할까요?',
-    // 실화면(2026-11-14 run-16bf7b5d): 과세년도는 글 칸, 소득구분 라디오는 기본(사업소득) 그대로, 개업일자 select는 과세년도를 넣은 뒤 채워지는 것으로 짐작
+    // 실화면(run-16bf7b5d·8d4cdb93): 과세년도는 글 칸, 소득구분 라디오는 기본(사업소득) 그대로. 개업일자 select(#mf_txppWframe_selectbox1)는 사업소득에서 숨김·선택지 없음이라 고르지 않는다
     fields: [
       { input: 'fiscalYear', inputDef: { type: 'string', required: true }, fieldKey: 'fiscalYear', label: '과세년도', role: 'textbox', css: '#mf_txppWframe_ibx_txyr' },
-      { input: 'openDate', inputDef: { type: 'string' }, fieldKey: 'bizOpenDate', label: '개업일자', role: 'combobox', css: '#mf_txppWframe_selectbox1', screenOnly: true },
     ],
     menuCode: '4315011800', formTitle: '표준재무제표증명(개인/법인) 신청', submit: { name: '작성완료', css: '#mf_txppWframe_btn_wrtCmpl' },
   },

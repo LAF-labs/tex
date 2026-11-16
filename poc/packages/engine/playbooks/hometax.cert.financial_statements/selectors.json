@@ -549,34 +549,6 @@
    "frame": "main",
    "lastVerified": "2026-11-10"
   },
-  "hometax.cert.form.openDate": {
-   "candidates": [
-    {
-     "kind": "css",
-     "value": "#mf_txppWframe_selectbox1"
-    },
-    {
-     "kind": "role",
-     "role": "combobox",
-     "name": "개업일자"
-    }
-   ],
-   "role": "combobox",
-   "namePattern": "^개업일자$",
-   "landmark": "hometax.cert.form.root",
-   "commits": false,
-   "fieldKey": "_ignore",
-   "inputType": "select",
-   "allowedConstants": [
-    "*only"
-   ],
-   "reviewNote": {
-    "by": "cert-docs",
-    "reason": "개업일자: 화면이 정한 값, 선택지가 하나일 때만 고른다(*only)"
-   },
-   "frame": "main",
-   "lastVerified": "2026-11-10"
-  },
   "hometax.cert.form.issueButton": {
    "candidates": [
     {

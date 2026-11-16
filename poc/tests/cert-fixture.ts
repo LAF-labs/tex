@@ -109,7 +109,8 @@ function certForm(doc: Doc, k: CertKnobs): string {
   if (doc === 'H-09') {
     extra.push(
       `<label for="mf_txppWframe_ibx_txyr">과세년도</label><input type="text" id="mf_txppWframe_ibx_txyr" name="fiscalYear" aria-label="과세년도">`,
-      select('mf_txppWframe_selectbox1', '개업일자', 'openDate', ['2020-03-02']),
+      // 실화면: 사업소득이면 개업일자 select는 숨김·선택지 없음
+      `<select id="mf_txppWframe_selectbox1" name="openDate" title="개업일자" hidden><option value="">-선택-</option></select>`,
     );
   }
   const submit = doc === 'H-03' || doc === 'H-09' ? '<button type="submit" id="mf_txppWframe_btn_wrtCmpl">작성완료</button>' : doc === 'H-08' ? '<button type="submit" id="mf_txppWframe_btn_apln">신청하기</button>' : '<button type="submit">신청하기</button>';
@@ -133,11 +134,12 @@ function home(): string {
 
 function lookupPage(records: readonly CertRecord[]): string {
   const data = JSON.stringify(records.map((r) => ({ n: r.docName, no: r.receiptNo }))).replace(/</g, '\\u003c');
-  return page(`<form id="mf_txppWframe" aria-label="민원신청 처리결과 조회" onsubmit="return false">
+  // 실화면처럼 본문 틀 #mf_txppWframe는 역할 없는 div다(조회 화면 자체는 5차 예행 기록으로 맞춘다)
+  return page(`<div id="mf_txppWframe"><form aria-label="민원신청 처리결과 조회" onsubmit="return false">
     <label>민원명 <input type="search" id="mf_txppWframe_ibx_cvaKndNm" aria-label="민원명"></label>
     <button type="button">1주일</button><button type="button" id="mf_txppWframe_btn_search">조회</button>
     <div role="status" aria-label="조회 건수" id="cnt">총 0건</div>
-    <ul id="mf_txppWframe_gen_cvaInf" aria-label="처리결과"></ul></form>
+    <ul id="mf_txppWframe_gen_cvaInf" aria-label="처리결과"></ul></form></div>
     <script>
     const DATA = ${data};
     document.getElementById('mf_txppWframe_btn_search').addEventListener('click', () => {
