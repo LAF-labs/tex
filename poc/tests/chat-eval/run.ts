@@ -66,12 +66,13 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
       signal: AbortSignal.timeout(60_000),
     }).catch(() => null);
     if (res && res.status === 200) {
-      const d = (await res.json()) as { status?: string; output?: Array<Record<string, unknown>>; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } };
+      const d = (await res.json()) as { provider?: string; status?: string; output?: Array<Record<string, unknown>>; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } };
       usage.calls++;
       usage.input += d.usage?.input_tokens ?? 0;
       usage.output += d.usage?.output_tokens ?? 0;
       usage.cached += d.usage?.input_tokens_details?.cached_tokens ?? 0;
       usage.ms.push(performance.now() - t0);
+      lastProvider = String(d.provider ?? '');
       return { status: String(d.status ?? ''), output: d.output ?? [] };
     }
     if (attempt >= 2 || (res && res.status < 500 && res.status !== 429)) {
@@ -116,7 +117,7 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
       const input = [...(body.messages as unknown[]), ...replay.map((r) => ('item' in r && r.item ? r.item : { type: 'function_call_output', call_id: r.call_id, output: r.output }))];
       try {
         const r = await upstream(input);
-        trace.push({ sent: replay.length, out: r.output.map(brief) });
+        trace.push({ sent: replay.length, provider: lastProvider, out: r.output.map(brief) });
         if (process.env.EVAL_DUMP) console.error('OUTPUT', JSON.stringify(r.output, (_k, v) => (typeof v === 'string' && v.length > 400 ? `${v.slice(0, 120)}…(${v.length}자)` : v)));
         const tag = (item: unknown) => createHash('sha256').update(JSON.stringify(item)).digest('hex');
         send(200, { model: MODEL || 'fake', status: r.status, output: r.output.map((item) => ({ item, tag: tag(item) })), usage: { input_tokens: 0, output_tokens: 0 }, toolsetDigest: digest });
@@ -130,11 +131,12 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close() };
 }
 let lastUpstreamError = '';
+let lastProvider = '';
 /**
  * 상류 응답 요약(--jobs=1일 때 턴과 정확히 맞는다): 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 300자까지).
  * turn_limit·bad_response가 어디서 나는지 보려고 둔다. 장부가 가상이라 실제 값은 없다.
  */
-let trace: Array<{ sent: number; out: Array<Record<string, unknown>> }> = [];
+let trace: Array<{ sent: number; provider: string; out: Array<Record<string, unknown>> }> = [];
 function brief(i: Record<string, unknown>): Record<string, unknown> {
   if (i.type === 'function_call') return { type: i.type, name: i.name, args: String(i.arguments ?? '').slice(0, 300) };
   if (i.type === 'message') return { type: i.type, content: (i.content as Array<{ type?: string; text?: string }> | undefined)?.map((c) => ({ type: c.type, text: String(c.text ?? '').slice(0, 300) })) };
