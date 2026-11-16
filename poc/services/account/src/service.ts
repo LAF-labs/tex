@@ -907,6 +907,8 @@ export class AccountService {
         [ref, addMonthKst(periodStart), periodStart, r.paymentKey ?? null, now, PLAN.amountKrw],
       );
       this.d.onEvent?.(`account.billing_charged.${b.mode}`);
+      // 앞선 결과 모름 시도가 실은 성공(ALREADY_PROCESSED_PAYMENT)이면 결제 키가 없다: 청약철회는 운영에서 토스 관리자로 처리
+      if (!r.paymentKey) this.d.onEvent?.('account.billing_charged_without_payment_key');
       return 'paid';
     }
     if (r.uncertain) {
