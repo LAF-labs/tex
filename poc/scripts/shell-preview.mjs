@@ -91,6 +91,12 @@ const handlers = {
   // 제품의 정부24: 후보 없이 [PDF 가져오기](= docs.import, 파일 대화상자는 건너뛴다)
   'docs.import': () => ({ doc: { id: 'g24-doc', name: '주민등록표 등본', kind: '직접 추가', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 추가' }, document: { duplicate: false } }),
   'security.check': () => ({ state: 'ok' }),
+  // 거래처 상세의 계좌·입금자 이름·받기로 한 날(받을 돈 D-09)
+  'bank.cpBanking': () => ({
+    accounts: [{ id: 'ca1', bank: '국민은행', last4: '1234', holder: '김에이' }],
+    aliases: [{ id: 'al1', nameRaw: '에이상사(주)', source: 'learned' }, { id: 'al2', nameRaw: '김에이', source: 'manual' }],
+    terms: { kind: 'next_month_day', d: 10 },
+  }),
 };
 ipcMain.handle('sax', async (_e, { method, params }) => {
   const f = handlers[method];
@@ -232,6 +238,9 @@ const scenes = {
     await sleep(200);
     await js(win, `document.querySelector('[data-cp-row=c2]').click()`);
     await shot(win, '13-cps');
+    // 받기로 한 날: 값을 누르면 그 자리에 답 후보 줄
+    await js(win, `document.querySelector('[data-bank-cp] button[data-field=terms]').click()`);
+    await shot(win, '13b-cps-terms');
   },
   async board(win) {
     // v2.0: 대화 맨 위 한 줄을 누르면 작업 패널에 할 일 목록이 열린다
