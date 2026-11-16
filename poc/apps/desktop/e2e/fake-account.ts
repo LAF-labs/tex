@@ -76,6 +76,9 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     },
     enrollPhone: async () => {},
     putDeviceList: async () => {},
+    accountDeletion: async () => ({ deleteAfter: null }),
+    requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
+    cancelAccountDelete: async () => {},
   };
   return { client, calls, pinned: () => pinned };
 }

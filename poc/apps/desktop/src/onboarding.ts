@@ -50,6 +50,8 @@ export interface ConsentNotice {
   lines: string[];
   /** 화면 구석에 보이는 표시. F-06 확정 문구가 오면 null. */
   draft: string | null;
+  /** 전문 보기 링크(기본 브라우저로 연다, ipc 'legal.open'). */
+  links?: readonly { doc: 'terms' | 'privacy'; label: string }[];
 }
 
 const DRAFT = 'F-06 초안 전 문구';
@@ -60,14 +62,21 @@ export const CONSENT_NOTICES: Readonly<Record<ConsentKind, ConsentNotice>> = {
     kind: 'terms',
     key: 'consent.terms',
     // 모델 처리 고지(②)와 한 화면이 되며 판을 올렸다(B4). ②의 동의 레코드는 ② 판으로 따로 남는다.
-    version: 'f06-pre.2',
+    // 판은 사이트 약관·처리방침의 판(terms-2026-11-30·privacy-2026-11-30)과 같이 올린다. 전문이 바뀌면 이 판도 바꿔 다시 동의를 받는다.
+    version: 'terms-2026-11-30',
     title: '이용약관·개인정보 처리방침·AI 모델 이용',
     lines: [
+      '앱은 내가 확인하고 승인한 세금계산서만 내 Mac에서 내 인증으로 발급해요. 세무 신고·기장·상담은 하지 않아요.',
       '계정 하나에 사업자 프로필 1곳과 개인 프로필 1곳까지 쓸 수 있어요. 다른 사람의 사업자를 대신 맡아 쓰는 것은 허용하지 않아요.',
-      '대화는 AI 모델로 해석해요. 이름·번호를 가린 문장만 아래 곳으로 보내고, 비밀번호·보안카드 번호는 보내지 않아요.',
-      '사용 기록은 보내지 않아요.',
+      '홈택스 비밀번호·보안카드·사업자와 거래처 정보는 이 Mac에만 저장하고 서버로 보내지 않아요. 서버에는 이메일·기기·결제 정보만 있어요.',
+      '대화는 AI 모델로 해석해요. 이름·번호를 찾아 가린 문장만 아래 곳(국외)으로 보내고, 비밀번호·보안카드 번호는 보내지 않아요. 가리기는 탐지 방식이라 일부가 남을 수 있어요.',
+      '사용 기록은 보내지 않아요(켜려면 다음 화면에서).',
     ],
     draft: DRAFT,
+    links: [
+      { doc: 'terms', label: '이용약관 전문' },
+      { doc: 'privacy', label: '개인정보 처리방침 전문' },
+    ],
   },
   // ② 모델 국외 이전(처리자 표는 설정 데이터 ConsentConfig.processors에서 온다. 모델 상류가 바뀔 수 있어 고정하지 않는다)
   model: {
@@ -123,10 +132,12 @@ export interface ConsentConfig {
  * 렌더러·상태 기계에 고정하지 않는다(팀장 조건 (c)). 시연·시험은 onboarding-mock.ts의 MOCK_CONSENT_CONFIG(같은 표, 다른 판)를 쓴다.
  */
 export const CONSENT_CONFIG: ConsentConfig = {
-  processorsVersion: '2026-11-05',
+  // 처리방침 6항 국외 이전 표와 같게 둔다(게이트웨이 ENV.md: 판정은 OpenAI 직결, 응답·화면 판정은 OpenRouter).
+  processorsVersion: '2026-11-16',
   processors: [
-    { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음(설정 확인 전 30일)' },
-    { name: '모델 공급사(라우팅 대상)', role: '문장 해석', country: '미국·EU', retention: 'ZDR 승인 전 30일' },
+    { name: 'OpenAI', role: '요청 해석', country: '미국·EU·UAE', retention: '최대 30일(무보관 승인 전)' },
+    { name: 'OpenRouter', role: '모델 중계', country: '미국', retention: '보관하지 않음' },
+    { name: '모델 공급사(OpenRouter 연결)', role: '응답·화면 판정', country: '미국 등', retention: '공급사 정책(무보관 고정 호출은 보관 안 함)' },
   ],
 };
 

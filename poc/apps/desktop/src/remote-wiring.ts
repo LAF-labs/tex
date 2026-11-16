@@ -6,6 +6,12 @@ import { cloudPorts } from './remote-cloud.ts';
 import { vaultDesktopKeys } from './remote-keys.ts';
 import type { RemoteWiring } from './shell-app.ts';
 
+/**
+ * 운영 폰 연결을 켜는가. 운영 룸 호스트(rooms.tax.laf-co.com)는 아직 DNS가 없고(2026-11-16 확인, NXDOMAIN) 폰 앱은 출시 뒤에 나온다.
+ * 그동안 설치본은 [폰 연결]을 숨긴다(누르면 깨진 QR 창이 뜨던 것). 룸 호스트를 띄우고 폰 앱을 낼 때 true로 바꾼다. 개발 스택은 늘 켠다.
+ */
+export const PROD_PHONE_PAIRING = false;
+
 const DEV_HOST = /^(localhost|127\.0\.0\.1):[0-9]{1,5}$/;
 
 export interface ProductRemoteOptions {
@@ -23,9 +29,9 @@ export function cloudTarget(o: Pick<ProductRemoteOptions, 'isPackaged' | 'env'>)
 
 export function productRemote(o: ProductRemoteOptions): RemoteWiring {
   const t = cloudTarget(o);
-  if (!t) return { cloud: null, keys: vaultDesktopKeys };
+  if (!t) return { cloud: null, keys: vaultDesktopKeys, pairing: false };
   const dev = t.env === 'dev';
   const egress = new Egress({ cloudDevLocal: dev, onSecurityEvent: o.onSecurityEvent, env: o.env });
   const cloud = cloudPorts(dev ? { egress, env: 'dev', dev: { accountOrigin: `http://${t.host}`, relayHost: t.host } } : { egress, env: 'prod' });
-  return { cloud, keys: vaultDesktopKeys };
+  return { cloud, keys: vaultDesktopKeys, pairing: dev || PROD_PHONE_PAIRING };
 }

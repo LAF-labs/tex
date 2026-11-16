@@ -10,7 +10,7 @@ import { DesktopAccount, RemoteIdentityFile } from '../apps/desktop/src/remote-a
 import { vaultDesktopKeys } from '../apps/desktop/src/remote-keys.ts';
 import { PairingHost } from '../apps/desktop/src/remote-pairing.ts';
 import { qrSvgDataUrl } from '../apps/desktop/src/remote-qr.ts';
-import { cloudTarget, productRemote } from '../apps/desktop/src/remote-wiring.ts';
+import { cloudTarget, PROD_PHONE_PAIRING, productRemote } from '../apps/desktop/src/remote-wiring.ts';
 import { startCloudStack, type CloudStack } from './remote-cloud-stack.ts';
 import { softDesktopKeys } from './remote-dev-stack.ts';
 import { decodeQrDataUrl } from './remote-qr-decode.ts';
@@ -25,6 +25,9 @@ describe('제품 배선: 어느 클라우드에 붙는가', () => {
     assert.equal(r.keys, vaultDesktopKeys);
     assert.equal(r.cloud?.relayHost, 'rooms.tax.laf-co.com');
     assert.equal(r.cloud?.insecureLocal, false);
+    // 운영 룸 호스트·폰 앱 출시 전에는 폰 연결을 닫는다(PROD_PHONE_PAIRING)
+    assert.equal(r.pairing, PROD_PHONE_PAIRING);
+    assert.equal(PROD_PHONE_PAIRING, false);
   });
   it('설치본은 SAX_CLOUD_DEV를 무시하고 운영으로 간다', () => {
     assert.deepEqual(cloudTarget({ isPackaged: true, env: { SAX_CLOUD_DEV: 'localhost:8787' } }), { env: 'prod' });
@@ -33,6 +36,7 @@ describe('제품 배선: 어느 클라우드에 붙는가', () => {
   it('개발 실행 + SAX_CLOUD_DEV=localhost:<port>만 개발 스택, 그 밖의 값은 연결하지 않는다', () => {
     assert.deepEqual(cloudTarget({ isPackaged: false, env: { SAX_CLOUD_DEV: 'localhost:8787' } }), { env: 'dev', host: 'localhost:8787' });
     assert.equal(productRemote({ isPackaged: false, env: { SAX_CLOUD_DEV: '127.0.0.1:8787' } }).cloud?.insecureLocal, true);
+    assert.equal(productRemote({ isPackaged: false, env: { SAX_CLOUD_DEV: '127.0.0.1:8787' } }).pairing, true, '개발 스택은 폰 연결을 연다');
     for (const bad of ['evil.example:8787', 'http://localhost:8787', 'localhost', '10.0.0.2:8787']) {
       assert.equal(cloudTarget({ isPackaged: false, env: { SAX_CLOUD_DEV: bad } }), null, bad);
       assert.equal(productRemote({ isPackaged: false, env: { SAX_CLOUD_DEV: bad } }).cloud, null, bad);
