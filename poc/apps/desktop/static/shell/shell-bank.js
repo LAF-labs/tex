@@ -771,11 +771,10 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         const [kind, n] = key.split(':');
         const ok = await call('bank.setPayTerms', { counterpartyId: c.id, kind, n: n ? Number(n) : undefined }).then(() => true, (e) => (say(e), false));
         pickingTerms = false;
-        if (ok) {
-          if (info) info.terms = kind === 'days' ? { kind, n: Number(n) } : kind === 'next_month_day' ? { kind, d: Number(n) } : { kind };
-          toast('결제 조건을 바꿨어요');
-        }
-        draw(info);
+        if (!ok) return draw(info);
+        toast('결제 조건을 바꿨어요');
+        // 저장한 값을 다시 읽어 캐시와 화면을 함께 맞춘다(처음 읽기 전에 고른 경우도).
+        void reload();
       };
       const termsRow = pickingTerms
         ? replyOptions(
