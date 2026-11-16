@@ -166,3 +166,18 @@ section.band .sub { margin-top: 10px; color: var(--ink-2); max-width: 40em; }
 .faq dt { font-weight: 600; padding-top: 12px; border-top: 1px solid var(--line); }
 .faq dt:first-child { border-top: 0; padding-top: 0; }
 .faq dd { margin: 0 0 4px; color: var(--ink-2); }
+
+/* /terms, /privacy */
+.doc > section { min-width: 0; }
+.draft-note { margin-top: 12px; font-size: 14px; color: var(--ink-2); background: var(--surface-tint); border-radius: 8px; padding: 8px 12px; }
+.doc mark.fill, .dl mark.fill { background: #FFF1B8; color: #16191D; border-radius: 3px; padding: 0 3px; }
+.doc h2 + ol, .doc h2 + ul, .doc h2 + p { margin-top: 0; }
+.doc ol + h2, .doc ul + h2, .doc p + h2 { margin-top: 24px; }
+.doc li ul { margin-top: 6px; }
+.doc strong { color: var(--ink); }
+.tbl { width: 100%; border-collapse: collapse; font-size: 14px; margin: 4px 0 10px; display: block; overflow-x: auto; }
+.tbl th, .tbl td { text-align: left; vertical-align: top; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.tbl th { font-weight: 600; color: var(--ink-3); white-space: nowrap; }
+.tbl td:first-child { font-weight: 600; min-width: 7em; }
+.tbl-wide td { min-width: 9em; }
+.foot a { color: inherit; }
