@@ -50,7 +50,7 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
  * 사람이 할 일(캡차·추가 인증·인증서 고르기·간편인증 대체)은 로그인 차례(handoff, HANDOFF_BY_CODE)로 따로 온다.
  * 그래서 이 줄은 할 일이 아니라 지금 단계 설명이다(대표 지적 2026-11-16: "직접 로그인해 주세요"는 앱이 하는 일과 맞지 않다).
  */
-export const LOGIN_NOW = '앱이 홈택스에 로그인하고 있어요';
+export const LOGIN_NOW = '앱이 저장된 인증서로 홈택스에 로그인하고 있어요';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
