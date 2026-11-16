@@ -109,7 +109,7 @@ export class BrowserAgent {
   }
 
   /**
-   * 기억한 길을 모델 없이 다시 걷는다. 걸음마다 지금 화면 목록에서 같은 요소(DOM id가 있으면 id·역할, 없으면 역할·정확한 이름, 유일)를 찾아
+   * 기억한 길을 모델 없이 다시 걷는다. 걸음마다 지금 화면 목록에서 같은 요소(기록에 DOM id가 있으면 id·역할, 없으면 역할·정확한 이름. 지금 id가 붙었어도 맞힌다. 유일)를 찾아
    * run과 같은 exec(가드 그대로)로 한다. 하나라도 안 되면 길을 버리고 null(원래 사슬로). 되면 돌아갈 스텝 id.
    */
   async replay(stepId: string): Promise<string | null> {
@@ -125,7 +125,7 @@ export class BrowserAgent {
       if (a.el) {
         ({ els } = await screenList(this.d));
         const want = a.el;
-        const hits = els.map((x, n) => ({ x, n })).filter(({ x }) => x.role === want.role && (want.id ? x.id === want.id : !x.id && normalizeName(x.name) === normalizeName(want.name)));
+        const hits = els.map((x, n) => ({ x, n })).filter(({ x }) => x.role === want.role && (want.id ? x.id === want.id : normalizeName(x.name) === normalizeName(want.name)));
         if (hits.length !== 1) return this.replayFailed(stepId, i + 1, hits.length ? 'agentpath.ambiguous' : 'agentpath.no_element');
         index = hits[0]!.n + 1;
       }
