@@ -190,11 +190,14 @@ describe('카드 정기결제(빌링키 PG)', () => {
     e.pg.next.push({ ok: false, uncertain: false, code: 'INVALID_CARD_EXPIRATION' });
     await e.svc.chargeDue();
     assert.equal((await st(e, ref)).status, 'past_due');
+    const declinedOrder = e.pg.charges.at(-1)!.orderId;
     // 연체 중 다시 checkout(같은 참조)하려면 새 세션이 필요하다
     const s2 = await login(e, 'recard@example.com');
     const { done } = await subscribe(e, s2, 'auth_new');
     assert.equal(done.status, 200);
     assert.deepEqual([(await st(e, ref)).status, (await st(e, ref)).renewAt], ['active', addMonthKst(due)]);
+    // 같은 기간·실패 수 0으로 돌아가도 새 카드는 새 주문번호(앞서 거절된 주문의 멱등 응답을 받지 않는다)
+    assert.notEqual(e.pg.charges.at(-1)!.orderId, declinedOrder);
   });
 
   it('창·돌아옴 입력 검증: 모르는 참조·잘못된 authKey·발급 실패는 고정 문구, 실패 코드는 이벤트 이름에만', async () => {

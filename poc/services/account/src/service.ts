@@ -1,6 +1,6 @@
 // 계정·구독 도메인(D09 §2). HTTP와 무관한 규칙만 여기에 둔다(라우트·요청 검증은 app.ts).
 import type { AcctClaimSigner, SignedAcctClaim } from './acct-claim.ts';
-import { randomBytes, randomInt, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomInt, randomUUID } from 'node:crypto';
 import {
   DESKTOP_SCOPES,
   JtiCache,
@@ -876,7 +876,7 @@ export class AccountService {
   }
 
   /**
-   * 한 구독의 이번 기간 청구. 임대를 잡은 쪽만 청구한다. 주문번호 = 참조·기간 시작·확정 실패 수: 결과를 모를 때는 같은 주문번호(= 멱등 키)로 다시 물어
+   * 한 구독의 이번 기간 청구. 임대를 잡은 쪽만 청구한다. 주문번호 = 참조·기간 시작·확정 실패 수·빌링키 지문: 결과를 모를 때는 같은 주문번호(= 멱등 키)로 다시 물어
    * 두 번 결제되지 않고, 카드 사유 실패 뒤의 재시도는 새 주문이다.
    */
   private async chargeRef(ref: string): Promise<'paid' | 'declined' | 'uncertain' | 'busy'> {
@@ -895,7 +895,8 @@ export class AccountService {
     }
     const periodStart = Number(row.renew_at);
     const attempts = Number(row.charge_attempts);
-    const orderId = `${ref.slice(4)}-${periodStart.toString(36)}-${attempts}`;
+    // 끝 8자 = 빌링키 지문: 새 카드로 다시 등록하면(실패 수가 0으로 돌아가도) 앞서 거절된 주문번호와 겹치지 않는다
+    const orderId = `${ref.slice(4)}-${periodStart.toString(36)}-${attempts}-${createHash('sha256').update(bk).digest('base64url').slice(0, 8)}`;
     const r = await b.charge({ billingKey: bk.toString('utf8'), customerKey: ref, orderId, amountKrw: PLAN.amountKrw, orderName: BILLING.orderName });
     if (r.ok) {
       // 다음 갱신일 = 기간 시작 + 한 달(KST 달력). 해지가 그사이 들어왔으면 상태는 그대로 두고 갱신일만 맞춘다(이미 결제된 기간)
