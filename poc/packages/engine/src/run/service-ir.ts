@@ -124,7 +124,7 @@ export interface IrRunInput {
   heal?: boolean;
   /** 화면 보기(computer-use) 칸. false면 끈다(기본 켬, 대표 결정 2026-11-16). */
   vision?: boolean;
-  /** 결정 모델 칸(위치 찾기 첫 호출을 decision_pick으로). 기본 켬. */
+  /** 결정 모델 칸(위치 찾기 첫 호출을 decision_pick으로). 연구 끝날 때까지 기본 끔. */
   decision?: boolean;
   ledger: Ledger;
   gates: GateRepo;
@@ -508,7 +508,7 @@ export class IrRun {
     const pageAiBudget = { spent: false, day };
     // 위치 찾기 첫 호출은 결정 모델(decision_pick, clef: 0.5초·약 0.01원)로 목록 번호를 고르고, 확신이 없을 때만 생성 모델(selector_repair)
     const locatePort = i.ir.locate ? { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget } : null;
-    const locate = locatePort ? { model: i.decision === false ? new GatewayLocateModel(locatePort) : new DecisionFirstLocateModel(locatePort, new GatewayLocateModel(locatePort)), journal: i.journal } : undefined;
+    const locate = locatePort ? { model: i.decision !== true ? new GatewayLocateModel(locatePort) : new DecisionFirstLocateModel(locatePort, new GatewayLocateModel(locatePort)), journal: i.journal } : undefined;
     // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
     let layersDone = layers.length === 0;
