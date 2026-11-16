@@ -42,6 +42,7 @@ const usage = { calls: 0, input: 0, cached: 0, output: 0, errors: 0, ms: [] as n
 const costUsd = () => ((usage.input - usage.cached) * PRICE.in + usage.cached * PRICE.cached + usage.output * PRICE.out) / 1e6;
 
 async function upstream(input: unknown[]): Promise<{ status: string; output: Array<Record<string, unknown>> }> {
+  if (process.env.EVAL_DUMP) console.error('INPUT', JSON.stringify(input, (_k, v) => (typeof v === 'string' && v.length > 400 ? `${v.slice(0, 120)}…(${v.length}자)` : v)));
   if (FAKE) return fakeUpstream(input);
   if (costUsd() > COST_CAP) throw new Error('cost_cap');
   const body: Record<string, unknown> = openAIResponsesBody({
@@ -116,6 +117,7 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
       try {
         const r = await upstream(input);
         trace.push({ sent: replay.length, out: r.output.map(brief) });
+        if (process.env.EVAL_DUMP) console.error('OUTPUT', JSON.stringify(r.output, (_k, v) => (typeof v === 'string' && v.length > 400 ? `${v.slice(0, 120)}…(${v.length}자)` : v)));
         const tag = (item: unknown) => createHash('sha256').update(JSON.stringify(item)).digest('hex');
         send(200, { model: MODEL || 'fake', status: r.status, output: r.output.map((item) => ({ item, tag: tag(item) })), usage: { input_tokens: 0, output_tokens: 0 }, toolsetDigest: digest });
       } catch (e) {
