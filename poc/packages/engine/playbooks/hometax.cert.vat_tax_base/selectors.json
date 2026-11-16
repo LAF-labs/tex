@@ -537,17 +537,17 @@
     {
      "kind": "role",
      "role": "combobox",
-     "name": "과세기간 시작년도"
+     "name": "과세기간"
     }
    ],
    "role": "combobox",
-   "namePattern": "^과세기간 시작년도$",
+   "namePattern": "^과세기간( 시작년도)?$",
    "landmark": "hometax.cert.form.root",
    "commits": false,
    "fieldKey": "taxPeriodStartYear",
    "inputType": "select",
    "frame": "main",
-   "lastVerified": "2026-11-10"
+   "lastVerified": "2026-11-16"
   },
   "hometax.cert.form.periodStartHalf": {
    "candidates": [

@@ -263,7 +263,12 @@ export class IrLookupPort implements LookupPort {
           cellId: cellId ?? '',
         },
       );
-      if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
+      // 실화면 예행 진단: 스텝은 다 지났는데 표 판정에서 멈춘 까닭(코드·행 수·건수 글자만, 행 글 없음 ⑦). 5차 예행 H-08 run-11a67c29
+      const tableFail = (code: string) => {
+        this.i.events.journal('lookup.table_failed', { playbook: req.playbook, purpose: req.purpose, code, rows: String(table.body.length), count: (scope.vars.get(LOOKUP_COUNT_VAR) ?? '').replace(/[^\d]/g, '').slice(0, 6), bad: String(table.bad), header: String((table.header ?? []).length) });
+        return { ok: false as const, code };
+      };
+      if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return tableFail('lookup.incomplete');
       // 카드 목록이 비었으면(건수 0과 같음) 열을 볼 수 없다. 머리글 표는 빈 표도 머리글이 있으니 아래 열 검사를 그대로 한다.
       if ((labelled || byId) && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
       // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
@@ -275,7 +280,7 @@ export class IrLookupPort implements LookupPort {
         const ix = colAttr && !table.body.length ? 0 : head.indexOf(norm(v));
         if (ix >= 0) col.set(k.slice(LOOKUP_COLUMN_PREFIX.length), ix);
       }
-      for (const need of [...Object.keys(req.match), VERIFY_ID_COLUMN]) if (!col.has(need)) return { ok: false, code: 'lookup.columns_missing' };
+      for (const need of [...Object.keys(req.match), VERIFY_ID_COLUMN]) if (!col.has(need)) return tableFail('lookup.columns_missing');
       const rows: LookupRow[] = table.body.map((cs) => Object.fromEntries([...col].map(([k, ix]) => [k, cs[ix] ?? ''])));
       const h2 = halted();
       if (h2) return h2;

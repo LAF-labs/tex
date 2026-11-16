@@ -46,6 +46,12 @@
    "target": "hometax.certlookup.searchButton"
   },
   {
+   "id": "s4b",
+   "type": "wait",
+   "for": "idle",
+   "timeoutMs": 15000
+  },
+  {
    "id": "s5",
    "type": "extract",
    "name": "rows",

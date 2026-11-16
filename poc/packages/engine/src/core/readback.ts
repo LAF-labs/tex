@@ -63,7 +63,8 @@ export async function domValue(page: PageReader, entry: SelectorEntry, el: Eleme
   return INPUT_ROLES.has(entry.role) || entry.inputType === 'radio' ? page.value(el) : page.text(el);
 }
 
-export type FieldRead = { ok: true; value: string } | { ok: false; code: string };
+/** detail: 진단용 글자 수만(값 없음, ⑦). 예: dom:4,a11y:0 */
+export type FieldRead = { ok: true; value: string } | { ok: false; code: string; detail?: string };
 
 /** fieldKey 하나를 세 값 일치로 되읽는다. 정규화한 값을 돌려준다. */
 export async function readField(page: PageReader, dict: SelectorDict, fieldKey: string): Promise<FieldRead> {
@@ -80,12 +81,14 @@ export async function readField(page: PageReader, dict: SelectorDict, fieldKey: 
     return { ok: true, value: String(n) };
   }
   const value = normalizeFieldValue(entry, await domValue(page, entry, r.t.el));
-  if (normalizeFieldValue(entry, await page.a11yValue(r.t.el)) !== value) return { ok: false, code: 'step.readback_mismatch' };
+  const a11y = normalizeFieldValue(entry, await page.a11yValue(r.t.el));
+  if (a11y !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${value.length},a11y:${a11y.length}` };
   for (const dk of displayEntryKeys(dict, fieldKey)) {
     if (isSecretEntry(dict.entries[dk])) return { ok: false, code: 'step.secret_field' };
     const d = await resolveTarget(page, dict, dk);
     if (!d.ok) return { ok: false, code: d.code };
-    if (normalizeFieldValue(entry, await page.text(d.t.el)) !== value) return { ok: false, code: 'step.readback_mismatch' };
+    const shown = normalizeFieldValue(entry, await page.text(d.t.el));
+    if (shown !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${value.length},display:${shown.length}` };
   }
   return { ok: true, value };
 }
