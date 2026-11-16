@@ -188,8 +188,8 @@ async function runCase(c: Case, env: ReturnType<typeof seedDb>): Promise<TurnLog
 async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string, sink: Sink): Promise<TurnLog[]> {
   const catalog = BundleCatalog.load();
   const egress = new Egress({ env: {}, testOrigins: { gateway: origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP eval', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
-  // EVAL_CLOSE=1: 카드 결과만 나온 차례는 엔진이 닫는다(ChatAgentOptions.closeOnCards, 모델 호출 2 → 1)
-  const engine = new ChatAgent(env.db, { model: gatewayChatAgentModel(egress), closeOnCards: process.env.EVAL_CLOSE === '1' });
+  // 제품(entry.ts)과 같이 카드 결과만 나온 차례는 엔진이 닫는다(ChatAgentOptions.closeOnCards). EVAL_CLOSE=0이면 끈다(비교용)
+  const engine = new ChatAgent(env.db, { model: gatewayChatAgentModel(egress), closeOnCards: process.env.EVAL_CLOSE !== '0' });
   const nameOf = new Map([...env.cpIds].map(([n, id]) => [id, n]));
   const cps = SEED.cps.map((x) => ({ id: env.cpIds.get(x.name)!, name: x.name, item: x.item }));
   const row = (r: (typeof SEED.issued)[number]): IssuedRow => ({ counterpartyId: env.cpIds.get(r.cp)!, counterparty: r.cp, date: r.date, total: r.total, approvalNo: r.approvalNo ?? null });
