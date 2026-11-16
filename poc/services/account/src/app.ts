@@ -7,6 +7,7 @@ import {
   fail,
   json,
   memoryLimits,
+  randomToken,
   validator,
   ALL_SCOPES,
   type Ctx,
@@ -18,6 +19,7 @@ import {
 } from '@sax/svc-shared';
 import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
 import { ACCOUNT, DEVICE, MS, PASSWORD } from './constants.ts';
+import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
 import type { AccountService, AuthMethod, Session } from './service.ts';
 
@@ -272,6 +274,20 @@ export function accountRouter(o: AccountAppOpts): Router {
   r.add('POST', '/v1/billing/cancel', async (ctx) => {
     await svc.cancelSubscription(await session(ctx));
     return json(204, undefined);
+  });
+  // 카드 정기결제(빌링키 PG) 창·돌아옴. 브라우저가 여는 HTML이라 세션 없이 열린다(참조는 그 계정만 받은 무작위 값). 모의 PG면 404
+  const page = (r: { status: number; html: string }, nonce: string) => ({ status: r.status, raw: r.html, headers: pageHeaders(nonce) });
+  r.add('GET', '/v1/billing/card', async (ctx) => {
+    const nonce = randomToken(16);
+    return page(await svc.billingCardPage(ctx.query.get('ref') ?? '', nonce), nonce);
+  });
+  r.add('GET', '/v1/billing/card/success', async (ctx) => {
+    const nonce = randomToken(16);
+    return page(await svc.billingCardSuccess(ctx.query.get('customerKey') ?? '', ctx.query.get('authKey') ?? '', nonce), nonce);
+  });
+  r.add('GET', '/v1/billing/card/fail', async (ctx) => {
+    const nonce = randomToken(16);
+    return page(svc.billingCardFail(ctx.query.get('code') ?? '', nonce), nonce);
   });
   r.add(
     'POST',

@@ -80,4 +80,15 @@ export const PROFILE = {
   rebindMinDays: 90,
 } as const;
 
+/** 카드 정기결제(빌링키 PG, 토스페이먼츠 자동결제) */
+export const BILLING = {
+  /** 청구 임대: 이 시간 안에는 같은 구독을 다시 청구하지 않는다(cron·결과 페이지가 겹쳐도 한 번). 결과를 모르면 이 뒤에 같은 주문번호로 다시 묻는다 */
+  chargeLeaseMs: 15 * 60_000,
+  /** 갱신 청구가 카드 사유로 실패하면 하루 뒤 다시 */
+  retryAfterMs: D,
+  /** 확정 실패가 이만큼 쌓이면 해지(빌링키 삭제) */
+  maxFailedCharges: 3,
+  orderName: '세무 비서 월 구독',
+} as const;
+
 export const MS = { H, D };

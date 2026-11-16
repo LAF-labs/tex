@@ -1,9 +1,9 @@
 // 외부 의존 어댑터: 결제(PG, 국내)와 메일 발송(국내 사업자, C-30). 실제 공급사 구현은 이 인터페이스 뒤에 하나씩 둔다(ADR-015).
-// 이 저장소에는 모의 구현만 있다. 실제 자격 증명은 저장소·CI에 두지 않는다.
+// 실제 PG는 토스페이먼츠 자동결제(pg-toss.ts, PG_PROVIDER=toss). 실제 자격 증명은 저장소·CI에 두지 않는다.
 import { hmacHex, randomToken, safeEqual } from '@sax/svc-shared';
 
-/** 9,900원 한 플랜(ADR-034 결정 3). 세무사 요금은 다음 단계. */
-export const PLAN = { id: 'standard', amountKrw: 9900, period: 'month' } as const;
+/** 한 플랜(ADR-034 결정 3). 가격은 월 19,900원 부가세 포함(사용자 결정 2026-11-16, ADR-034의 9,900원을 바꿈). 세무사 요금은 다음 단계. */
+export const PLAN = { id: 'standard', amountKrw: 19900, period: 'month' } as const;
 
 /** `at` = PG가 이벤트를 만든 시각(ms, 서명 범위 안). 늦게 오거나 재전송된 이벤트를 거르는 순서 기준이다. */
 export type PaymentEvent =
@@ -12,7 +12,24 @@ export type PaymentEvent =
   | { type: 'payment.failed'; pgCustomerRef: string; at: number }
   | { type: 'subscription.canceled'; pgCustomerRef: string; at: number };
 
+/** 청구 결과. uncertain = 결제됐는지 모름(네트워크·5xx·처리 중·우리 설정 문제): 같은 주문번호로 다시 물어야 하고 카드 실패로 세지 않는다 */
+export type ChargeResult = { ok: true } | { ok: false; uncertain: boolean; code: string };
+
+/** 빌링키 방식 PG(토스페이먼츠 자동결제). PG가 매달 스스로 청구하지 않아서 우리가 갱신일에 청구한다(정리 cron). */
+export interface BillingKeyGateway {
+  readonly kind: 'billing_key';
+  readonly mode: 'test' | 'live';
+  /** 카드 등록 창 HTML(PG SDK). customerKey = pgCustomerRef */
+  cardPage(o: { customerKey: string; successUrl: string; failUrl: string; amountKrw: number; nonce: string }): string;
+  /** 카드 등록 창이 돌려준 authKey로 빌링키 발급. 실패하면 null */
+  issueBillingKey(o: { authKey: string; customerKey: string }): Promise<{ billingKey: string } | null>;
+  /** 한 번 청구. orderId는 멱등 키로도 쓴다(같은 주문번호 재시도는 두 번 결제되지 않는다) */
+  charge(o: { billingKey: string; customerKey: string; orderId: string; amountKrw: number; orderName: string }): Promise<ChargeResult>;
+}
+
 export interface PaymentGateway {
+  /** 빌링키 방식이면 있다(웹훅 대신 카드 등록 창·우리 청구). 없으면 웹훅 방식(모의 PG) */
+  readonly billing?: BillingKeyGateway;
   /** 결제 창 URL. pgCustomerRef는 우리가 만든 불투명 참조이고 이메일·계정 ID를 PG에 보내지 않는다. */
   createCheckout(o: { pgCustomerRef: string; plan: typeof PLAN; returnUrl: string }): Promise<{ checkoutUrl: string }>;
   /** 웹훅 원문 서명 검증. 실패하면 null. */
@@ -51,6 +68,41 @@ export class MockPaymentGateway implements PaymentGateway {
   async cancel(pgCustomerRef: string): Promise<void> {
     this.canceled.push(pgCustomerRef);
   }
+}
+
+/** 모의 빌링키 PG(시험용). 청구 결과를 차례로 정할 수 있다(기본 성공) */
+export class MockBillingGateway implements PaymentGateway {
+  readonly charges: Array<{ billingKey: string; customerKey: string; orderId: string; amountKrw: number }> = [];
+  readonly issued: string[] = [];
+  /** 다음 청구 결과들(비면 성공) */
+  readonly next: ChargeResult[] = [];
+  readonly billing: BillingKeyGateway;
+  readonly publicOrigin: string;
+  constructor(publicOrigin = 'https://acct.test.invalid') {
+    this.publicOrigin = publicOrigin;
+    this.billing = {
+      kind: 'billing_key',
+      mode: 'test',
+      cardPage: (o) => `<html data-customer="${o.customerKey}" data-success="${o.successUrl}"></html>`,
+      issueBillingKey: async (o) => {
+        if (o.authKey === 'bad') return null;
+        const billingKey = `bk_${o.customerKey}_${this.issued.length}`;
+        this.issued.push(billingKey);
+        return { billingKey };
+      },
+      charge: async (o) => {
+        this.charges.push({ billingKey: o.billingKey, customerKey: o.customerKey, orderId: o.orderId, amountKrw: o.amountKrw });
+        return this.next.shift() ?? { ok: true };
+      },
+    };
+  }
+  async createCheckout(o: { pgCustomerRef: string }): Promise<{ checkoutUrl: string }> {
+    return { checkoutUrl: `${this.publicOrigin}/v1/billing/card?ref=${o.pgCustomerRef}` };
+  }
+  verifyWebhook(): PaymentEvent | null {
+    return null;
+  }
+  async cancel(): Promise<void> {}
 }
 
 export type NoticeKind =

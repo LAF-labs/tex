@@ -77,16 +77,28 @@
 | `GET /v1/me` | 세션 | — | `200 {email, status, aikPinned, slotsUsed, hasBizProfile, passkeys, subscription, consents[], authMethod}` |
 | `POST /v1/consents` | 세션 | `{version}` | `204` |
 
-## 구독(9,900원 한 플랜, ADR-034)
+## 구독(19,900원 한 플랜, ADR-034)
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
 | `POST /v1/billing/checkout` | 세션 | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
-| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:9900, period:"month"} \| null}` | |
+| `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:19900, period:"month"} \| null}` | |
 | `POST /v1/billing/cancel` | 세션 | — | `204` | |
 | `POST /v1/billing/webhook` | PG 서명 | PG 원본 본문(16KB) | `200 {ok:true}` | `400 account.billing_signature_invalid`. 모의 PG: `x-mock-pg-signature` = HMAC-SHA256 hex. 이벤트에 PG 쪽 시각 `at`(필수, 서명 범위 안)이 있고 마지막으로 반영한 이벤트보다 늦은 것만 반영(늦게 온·재전송 이벤트 무시). 해지는 끝 상태(다시 구독은 checkout이 새 PG 참조로 연다), 결제 실패는 active에서만 |
 
-PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. 결제 수단은 PG에만 있다. 이 저장소에는 모의 어댑터(`MockPaymentGateway`)만 있다.
+PG에는 무작위 `pgCustomerRef`만 넘기고 이메일을 주지 않는다. 결제 수단은 PG에만 있다. 어댑터는 모의(`MockPaymentGateway`, 웹훅 방식)와 토스페이먼츠 자동결제(`TossPaymentGateway`, `PG_PROVIDER=toss`, 빌링키 방식)다.
+
+### 토스페이먼츠 자동결제(빌링키 방식, `PG_PROVIDER=toss`)
+
+토스는 정기 청구를 스스로 하지 않고 웹훅 서명도 없어서 웹훅을 쓰지 않는다(`/v1/billing/webhook`은 늘 400). 대신:
+
+| 메서드·경로 | 인증 | 응답 | 설명 |
+|---|---|---|---|
+| `GET /v1/billing/card?ref=` | 없음(브라우저, 참조는 그 계정만 받은 무작위 값) | `200 text/html` \| `404` | checkout이 준 결제 창. 결제 직전 고지(총액·자동 갱신·해지·청약철회·결제 실패)와 약관 동의 체크 뒤 토스 SDK `requestBillingAuth`. 결제 대기·연체만 연다 |
+| `GET /v1/billing/card/success?customerKey&authKey` | 없음(토스가 돌려보냄) | `200` 결제됨 \| `202` 확인 중 \| `402` 거절 \| `400` | 빌링키 발급 → 봉인 저장 → 이번 기간 청구. 약관 판 `terms-2026-11-30`을 동의 이력에 남긴다. 새로 고쳐도 두 번 청구하지 않는다 |
+| `GET /v1/billing/card/fail?code` | 없음 | `200 text/html` | 고정 문구(토스 메시지는 보여주지 않음) |
+
+갱신: 정리 cron(한 시간마다)이 갱신일이 된 구독을 청구한다. 주문번호 = 참조·기간 시작·실패 수이고 토스 멱등 키로도 쓴다(결과를 모르면 15분 뒤 같은 주문번호로 다시 물어 두 번 결제되지 않음). 카드 사유 실패는 `past_due` → 하루 뒤 재시도, 세 번이면 해지. 첫 결제 실패는 빌링키를 지우고 다른 카드로 다시 등록하게 한다. 해지는 빌링키를 지우고 `renewAt`(이미 낸 기간 끝)은 남긴다.
 
 ## 기기(계정 세션)
 

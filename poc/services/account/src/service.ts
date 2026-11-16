@@ -13,8 +13,10 @@ import {
   hmacHex,
   jcs,
   kstDay,
+  openAead,
   randomToken,
   safeEqual,
+  sealAead,
   sha256,
   sha256hex,
   verifyDpop,
@@ -22,9 +24,10 @@ import {
   type Scope,
   type Sql,
 } from '@sax/svc-shared';
+import { TERMS_VERSION, resultPageHtml } from './pg-toss.ts';
 import { PLAN, type DeviceStopHook, type MailSender, type PairingRooms, type NoticeKind, type PaymentEvent, type PaymentGateway } from './adapters.ts';
 import { certSigOk, entrySigOk, opSigOk, revokeSigOk, type AcctOp, type DeviceList, type SignedCert } from './aik.ts';
-import { ACCOUNT, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
+import { ACCOUNT, BILLING, DEVICE, MS, NOTICE, PASSWORD, PROFILE } from './constants.ts';
 import { checkPasswordPolicy, withFloor, type CommonPasswords, type PasswordHasher } from './password.ts';
 import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput, type RegistrationInput, type RpConfig } from './webauthn.ts';
 
@@ -92,6 +95,8 @@ export interface AccountDeps {
   /** acct_claim 서명(전용 키 ACCT_CLAIM_SIGNING_KEY). 없으면 GET /v1/acct-claim은 닫힌다(404) */
   acctClaims?: AcctClaimSigner;
   passwords?: PasswordDeps;
+  /** 빌링키 봉인 키(32B, KMS, BILLING_KEY_SEAL_KEY). 빌링키 방식 PG(payments.billing)면 필수 */
+  billingKeySealKey?: Buffer;
   /** 이벤트 로그(이름만, 수·ID 없음). 기기 토큰 발급 기록 등(ADR-040 결정 1) */
   onEvent?: (name: string) => void;
   /**
@@ -119,6 +124,7 @@ export class AccountService {
     this.d = d;
     this.db = d.db;
     this.now = d.now ?? Date.now;
+    if (d.payments.billing && d.billingKeySealKey?.length !== 32) throw new Error('config_BILLING_KEY_SEAL_KEY');
   }
 
   // ---------- 로그인: 이메일 6자리 코드(C-30) ----------
@@ -753,7 +759,7 @@ export class AccountService {
     if (a) await this.d.mail.sendNotice(a.email, kind);
   }
 
-  // ---------- 구독·결제(9,900원 한 플랜, ADR-034) ----------
+  // ---------- 구독·결제(19,900원 한 플랜, ADR-034) ----------
 
   async checkout(s: Session): Promise<{ checkoutUrl: string }> {
     // 계정 행 잠금 안에서 참조를 정한다: 동시에 두 번 눌러도 같은 참조의 결제 창이 나온다(버려지는 참조로 결제되는 일 없음)
@@ -785,6 +791,131 @@ export class AccountService {
     else await this.db.run("UPDATE subscriptions SET status = 'canceled', pg_event_at = CASE WHEN pg_event_at IS NULL OR pg_event_at < $2 THEN $2 ELSE pg_event_at END WHERE pg_customer_ref = $1", [ev.pgCustomerRef, ev.at]);
   }
 
+  // ---------- 카드 정기결제(빌링키 PG): 카드 등록 창 → 빌링키 발급 → 첫 달 청구, 다음 달부터 정리 cron이 갱신일에 청구 ----------
+
+  /** 카드 등록 창(GET /v1/billing/card?ref=). 결제 대기·연체인 참조만 연다. 세션 없이 열린다(브라우저): 참조는 그 계정만 받은 무작위 값이다 */
+  async billingCardPage(ref: string, nonce: string): Promise<{ status: number; html: string }> {
+    const b = this.billingOrFail();
+    const sub = REF_RE.test(ref) ? await this.db.one<{ status: string }>('SELECT status FROM subscriptions WHERE pg_customer_ref = $1', [ref]) : undefined;
+    if (!sub || (sub.status !== 'pending' && sub.status !== 'past_due'))
+      return { status: 404, html: this.resultPage('결제 창이 만료됐어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) };
+    const base = `${this.d.publicOrigin}/v1/billing/card`;
+    return { status: 200, html: b.cardPage({ customerKey: ref, successUrl: `${base}/success`, failUrl: `${base}/fail`, amountKrw: PLAN.amountKrw, nonce }) };
+  }
+
+  /** 카드 등록 성공 돌아옴(GET /v1/billing/card/success?customerKey&authKey). 빌링키를 발급·봉인하고 이번 기간을 청구한다 */
+  async billingCardSuccess(customerKey: string, authKey: string, nonce: string): Promise<{ status: number; html: string }> {
+    const b = this.billingOrFail();
+    const bad = () => ({ status: 400, html: this.resultPage('카드를 등록하지 못했어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) });
+    if (!REF_RE.test(customerKey) || !/^[A-Za-z0-9_=.-]{1,300}$/.test(authKey)) return bad();
+    const sub = await this.db.one<{ status: string }>('SELECT status FROM subscriptions WHERE pg_customer_ref = $1', [customerKey]);
+    if (!sub || sub.status === 'canceled') return bad();
+    if (sub.status === 'active') return { status: 200, html: this.resultPage('구독 중이에요', '이미 결제가 끝났어요. 앱으로 돌아가세요.', nonce) };
+    const key = await b.issueBillingKey({ authKey, customerKey });
+    if (!key) return bad();
+    const now = this.now();
+    // 결제 대기면 이번 기간은 오늘부터(renew_at = 이번 기간 시작, 청구 성공 뒤 한 달 뒤로). 연체면 밀린 기간부터. 새 카드는 실패 수를 0으로
+    const n = await this.db.run(
+      "UPDATE subscriptions SET billing_key_sealed = $2, charge_attempts = 0, next_charge_at = NULL, renew_at = CASE WHEN status = 'pending' THEN $3 ELSE renew_at END WHERE pg_customer_ref = $1 AND status IN ('pending', 'past_due')",
+      [customerKey, sealAead(this.d.billingKeySealKey!, bkAad(customerKey), Buffer.from(key.billingKey, 'utf8')), now],
+    );
+    if (n !== 1) return bad();
+    // 결제 창에서 동의한 약관 판을 계정 동의 이력에 남긴다(계약 기록). 창은 동의 체크 뒤에만 PG 창을 연다
+    await this.db.run('INSERT INTO consents (account_id, version, at) SELECT account_id, $2, $3 FROM subscriptions WHERE pg_customer_ref = $1 ON CONFLICT (account_id, version) DO NOTHING', [customerKey, TERMS_VERSION, now]);
+    this.d.onEvent?.(`account.billing_key_issued.${b.mode}`);
+    const r = await this.chargeRef(customerKey);
+    if (r === 'paid') return { status: 200, html: this.resultPage('구독을 시작했어요', `${PLAN.amountKrw.toLocaleString('ko-KR')}원이 결제됐어요. 다음 달 같은 날짜에 자동으로 결제돼요.`, nonce) };
+    if (r === 'declined') return { status: 402, html: this.resultPage('결제가 승인되지 않았어요', '카드 한도나 상태를 확인하고 다른 카드로 다시 시도해 주세요.', nonce) };
+    return { status: 202, html: this.resultPage('결제를 확인하고 있어요', '잠시 뒤 앱에서 구독 상태를 확인해 주세요. 두 번 결제되지는 않아요.', nonce) };
+  }
+
+  /** 카드 등록 실패·취소 돌아옴(GET /v1/billing/card/fail). PG 메시지는 보여주지 않는다(고정 문구) */
+  billingCardFail(code: string, nonce: string): { status: number; html: string } {
+    this.billingOrFail();
+    const canceled = code === 'PAY_PROCESS_CANCELED' || code === 'USER_CANCEL';
+    this.d.onEvent?.(`account.billing_card_fail.${/^[A-Z_]{1,64}$/.test(code) ? code : 'unknown'}`);
+    return { status: 200, html: this.resultPage(canceled ? '카드 등록을 취소했어요' : '카드를 등록하지 못했어요', '앱에서 구독하기를 다시 눌러 주세요.', nonce) };
+  }
+
+  /**
+   * 갱신일이 된 구독을 청구한다(정리 cron, 한 시간마다). 결제 대기(첫 청구 결과 모름)·활성·연체 중 빌링키가 있고 시도 시각이 된 것.
+   * 한 번에 limit개까지. 반환: 결과별 수
+   */
+  async chargeDue(limit = 200): Promise<{ paid: number; declined: number; uncertain: number }> {
+    const out = { paid: 0, declined: 0, uncertain: 0 };
+    if (!this.d.payments.billing) return out;
+    const now = this.now();
+    const due = await this.db.all<{ pg_customer_ref: string }>(
+      "SELECT pg_customer_ref FROM subscriptions WHERE billing_key_sealed IS NOT NULL AND status IN ('pending', 'active', 'past_due') AND renew_at IS NOT NULL AND renew_at <= $1 AND (next_charge_at IS NULL OR next_charge_at <= $1) ORDER BY renew_at LIMIT $2",
+      [now, limit],
+    );
+    for (const d of due) {
+      const r = await this.chargeRef(d.pg_customer_ref);
+      if (r !== 'busy') out[r]++;
+    }
+    return out;
+  }
+
+  /**
+   * 한 구독의 이번 기간 청구. 임대를 잡은 쪽만 청구한다. 주문번호 = 참조·기간 시작·확정 실패 수: 결과를 모를 때는 같은 주문번호(= 멱등 키)로 다시 물어
+   * 두 번 결제되지 않고, 카드 사유 실패 뒤의 재시도는 새 주문이다.
+   */
+  private async chargeRef(ref: string): Promise<'paid' | 'declined' | 'uncertain' | 'busy'> {
+    const b = this.billingOrFail();
+    const now = this.now();
+    const lease = await this.db.run(
+      "UPDATE subscriptions SET next_charge_at = $2 WHERE pg_customer_ref = $1 AND billing_key_sealed IS NOT NULL AND status IN ('pending', 'active', 'past_due') AND renew_at IS NOT NULL AND renew_at <= $3 AND (next_charge_at IS NULL OR next_charge_at <= $3)",
+      [ref, now + BILLING.chargeLeaseMs, now],
+    );
+    if (lease !== 1) return 'busy';
+    const row = await this.db.one<{ status: string; renew_at: number; charge_attempts: number; billing_key_sealed: Buffer }>('SELECT status, renew_at, charge_attempts, billing_key_sealed FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
+    const bk = row && openAead(this.d.billingKeySealKey!, bkAad(ref), Buffer.from(row.billing_key_sealed));
+    if (!row || !bk) {
+      this.d.onEvent?.('account.billing_key_unsealable');
+      return 'uncertain';
+    }
+    const periodStart = Number(row.renew_at);
+    const attempts = Number(row.charge_attempts);
+    const orderId = `${ref.slice(4)}-${periodStart.toString(36)}-${attempts}`;
+    const r = await b.charge({ billingKey: bk.toString('utf8'), customerKey: ref, orderId, amountKrw: PLAN.amountKrw, orderName: BILLING.orderName });
+    if (r.ok) {
+      // 다음 갱신일 = 기간 시작 + 한 달(KST 달력). 해지가 그사이 들어왔으면 상태는 그대로 두고 갱신일만 맞춘다(이미 결제된 기간)
+      await this.db.run(
+        "UPDATE subscriptions SET status = CASE WHEN status = 'canceled' THEN status ELSE 'active' END, renew_at = $2, charge_attempts = 0, next_charge_at = NULL WHERE pg_customer_ref = $1 AND renew_at = $3",
+        [ref, addMonthKst(periodStart), periodStart],
+      );
+      this.d.onEvent?.(`account.billing_charged.${b.mode}`);
+      return 'paid';
+    }
+    if (r.uncertain) {
+      // 임대 끝(next_charge_at)에 같은 주문번호로 다시 묻는다
+      this.d.onEvent?.(`account.billing_charge_uncertain.${r.code}`);
+      return 'uncertain';
+    }
+    this.d.onEvent?.(`account.billing_charge_declined.${r.code}`);
+    const failed = attempts + 1;
+    if (row.status === 'pending') {
+      // 첫 결제 실패: 빌링키를 지우고 사용자가 다른 카드로 다시 등록한다(자동 재시도하지 않는다)
+      await this.db.run('UPDATE subscriptions SET billing_key_sealed = NULL, charge_attempts = $2, next_charge_at = NULL WHERE pg_customer_ref = $1', [ref, failed]);
+    } else if (failed >= BILLING.maxFailedCharges) {
+      await this.db.run("UPDATE subscriptions SET status = 'canceled', billing_key_sealed = NULL, charge_attempts = $2, next_charge_at = NULL WHERE pg_customer_ref = $1", [ref, failed]);
+      this.d.onEvent?.('account.billing_canceled_after_failures');
+    } else {
+      await this.db.run("UPDATE subscriptions SET status = 'past_due', charge_attempts = $2, next_charge_at = $3 WHERE pg_customer_ref = $1 AND status <> 'canceled'", [ref, failed, now + BILLING.retryAfterMs]);
+    }
+    return 'declined';
+  }
+
+  private billingOrFail() {
+    const b = this.d.payments.billing;
+    if (!b) fail('request.not_found');
+    return b!;
+  }
+
+  private resultPage(title: string, body: string, nonce: string): string {
+    return resultPageHtml({ title, body, returnUrl: this.d.billingReturnUrl, nonce });
+  }
+
   async subscription(s: Session): Promise<Record<string, unknown> | null> {
     const sub = await this.db.one<{ plan: string; status: string; renew_at: number | null }>('SELECT plan, status, renew_at FROM subscriptions WHERE account_id = $1', [s.accountId]);
     return sub ? { plan: sub.plan, status: sub.status, renewAt: sub.renew_at, amountKrw: PLAN.amountKrw, period: PLAN.period } : null;
@@ -794,7 +925,8 @@ export class AccountService {
     const sub = await this.db.one<{ pg_customer_ref: string; status: string }>('SELECT pg_customer_ref, status FROM subscriptions WHERE account_id = $1', [s.accountId]);
     if (!sub || sub.status === 'canceled') fail('request.param_rejected');
     await this.d.payments.cancel(sub!.pg_customer_ref);
-    await this.db.run("UPDATE subscriptions SET status = 'canceled' WHERE account_id = $1", [s.accountId]);
+    // 빌링키도 지운다(더 청구하지 않음). 이미 결제된 기간의 갱신일(renew_at)은 남긴다(그날까지 이용)
+    await this.db.run("UPDATE subscriptions SET status = 'canceled', billing_key_sealed = NULL, next_charge_at = NULL WHERE account_id = $1", [s.accountId]);
   }
 
   // ---------- 기기: 첫 데스크톱·등록 신청·AIK 서명 기기 목록·긴급 정지·삭제 유예 ----------
@@ -1223,6 +1355,8 @@ export class AccountService {
     await this.db.run('DELETE FROM reset_codes WHERE expires_at <= $1', [now]);
     // 응답 뒤 즉시 시도가 끝나지 못한(플랫폼이 멈춤·메일 실패) 알림을 보낸다
     await this.drainNotices();
+    // 갱신일이 된 카드 정기결제 청구(빌링키 PG일 때만)
+    await this.chargeDue();
     // 잠금이 끝나고 하루 동안 실패가 없으면 점증 단계를 0으로
     await this.db.run('DELETE FROM pw_locks WHERE updated_at <= $1 AND (locked_until IS NULL OR locked_until <= $2)', [now - PASSWORD.lockDecayMs, now]);
     await this.db.run('DELETE FROM device_events WHERE day < $1', [kstDay(now - DEVICE.churnWindowDays * MS.D)]);
@@ -1235,6 +1369,21 @@ export class AccountService {
     }
     return { revoked: due.map((d) => d.device_id) };
   }
+}
+
+/** pgCustomerRef 형식(checkout이 만든 값: cus_ + 18바이트 base64url) */
+const REF_RE = /^cus_[A-Za-z0-9_-]{24}$/;
+/** 빌링키 봉인 aad: 행(참조)에 묶어 다른 구독으로 옮겨 붙이지 못하게 한다 */
+const bkAad = (ref: string) => `sax-billing-key-v1|${ref}`;
+
+/** 한 달 뒤(KST 달력, 말일 보정: 1/31 → 2/28). 시각은 그대로 */
+export function addMonthKst(ms: number): number {
+  const k = new Date(ms + 9 * 3600_000);
+  const y = k.getUTCFullYear();
+  const m = k.getUTCMonth() + 1;
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const t = Date.UTC(y, m, Math.min(k.getUTCDate(), last), k.getUTCHours(), k.getUTCMinutes(), k.getUTCSeconds(), k.getUTCMilliseconds());
+  return t - 9 * 3600_000;
 }
 
 export function normEmail(e: string): string {

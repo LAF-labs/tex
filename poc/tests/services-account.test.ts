@@ -591,7 +591,7 @@ describe('M4-5 계정: 프로필 슬롯·사업자 HMAC 재바인딩 90일(B-28)
   });
 });
 
-describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
+describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
   let e: Env;
   before(async () => (e = await start()));
   after(() => e.server.close());
@@ -601,7 +601,7 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     const t0 = e.clock.now();
     const c = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
     assert.equal(c.status, 200);
-    assert.equal(e.pg.checkouts[0]!.amountKrw, 9900);
+    assert.equal(e.pg.checkouts[0]!.amountKrw, 19900);
     const ref = e.pg.checkouts[0]!.pgCustomerRef;
     assert.ok(!ref.includes('pay@example.com'));
     const event = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 1 });
@@ -610,7 +610,7 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: noAt, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(noAt)) } })).json.error, 'account.billing_signature_invalid');
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: event, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(event)) } })).status, 200);
     const sub = await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) });
-    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: t0 + 30 * D, amountKrw: 9900, period: 'month' });
+    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: t0 + 30 * D, amountKrw: 19900, period: 'month' });
     assert.equal((await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })).status, 400);
     const unknown = JSON.stringify({ type: 'payment.failed', pgCustomerRef: 'cus_unknown', at: t0 });
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: unknown, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(unknown)) } })).status, 200);
