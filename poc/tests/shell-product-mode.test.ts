@@ -36,8 +36,9 @@ describe('제품 모드: 견본 데이터 없음', () => {
     assert.match(src, /if \(fixture\) return Promise\.resolve\(\);\s*return \(registryInflight \?\?= host\s*\.rpc\('registry\.sync', \{\}\)/);
     assert.match(src, /void registrySync\('boot'\);/);
     assert.match(src, /setInterval\(\(\) => void registrySync\('timer'\), REGISTRY_EVERY_MS\)/);
-    assert.match(src, /const onResume = \(\) => \{\s*void registrySync\('resume'\);/);
-    assert.match(src, /await registryFresh\(\);\s*const id = String\(p\.id\);\s*const r = await runs\.prepare\(id\);/);
+    assert.match(src, /const onResume = \(\) => \{[^}]*?\n\s*void registrySync\('resume'\);/);
+    // 실행 준비(run.prepare) 바로 앞: 레지스트리 재조회 뒤 지난 실행 재확인을 한 번 더 기다리고 준비한다
+    assert.match(src, /await registryFresh\(\);\s*(?:\/\/[^\n]*\n\s*)*await waitReverify\(\);\s*const r = await runs\.prepare\(id\);/);
     assert.match(src, /setTimeout\(r, 10_000\)/);
     assert.match(src, /clearInterval\(registryTimer\);/);
   });

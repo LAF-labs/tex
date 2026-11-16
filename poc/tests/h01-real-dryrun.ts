@@ -84,6 +84,8 @@ export interface Scenario {
   page?: (real: () => Promise<import('playwright-core').Page>) => () => Promise<import('playwright-core').Page>;
   /** 사람 대기 상한(ms, RunServiceDeps.handoffCapMs). 로그인을 끝내 하지 않는 갈래. */
   handoffCapMs?: number;
+  /** human을 바꾼 시나리오에서도 사람 차례에 답한다(기본: human을 주면 차례에는 답하지 않는다). */
+  answerTurns?: boolean;
 }
 
 export interface LadderScenario {
@@ -119,9 +121,8 @@ export interface Outcome {
 }
 
 export const defaultHuman = (fx: HometaxFake) => {
-  // 사람은 로그인 화면이 뜬 뒤에(그려지고 조금 지나) 로그인을 마친다.
-  const ls = fx.state.lastScreen;
-  if (!fx.state.loggedIn && ls?.screen === 'login' && Date.now() - ls.at > fx.knobs.renderDelayMs + 1500) fx.login();
+  // H-01 2.3.x는 엔진이 공동인증서 로그인을 먼저 하고, 못 하면 간편인증 화면을 열어 사람 차례(handoff login)로 넘긴다.
+  // 사람은 그 차례에서 로그인한다(realDryRun 고리가 handoff를 보고 fx.login() 뒤 [이어서]). 여기서는 스스로 로그인하지 않는다.
   // 인증서 창이 뜨고 사람이 비밀번호를 넣는 데 시간이 든다.
   if (fx.state.stage === 'cert' && Date.now() - fx.state.certAt > 1500) fx.cert('confirm');
 };
@@ -171,8 +172,33 @@ export async function realDryRun(sc: Scenario = {}): Promise<Outcome> {
     const t0 = Date.now();
     let approved = false;
     const human = sc.human ?? defaultHuman;
+    // 사람 차례(handoff)에 사람이 하는 일: 로그인 차례면 로그인하고 [이어서], 서명 차례면 홈택스 서명 창을 마친 뒤(창이 닫힌 뒤) [다 했어요].
+    // human: () => {}인 시나리오(끝내 아무것도 하지 않는 사람)는 차례에도 답하지 않는다.
+    const answersTurns = sc.human === undefined || sc.answerTurns === true;
+    let answered = 0;
+    let signIdleAt = 0;
     while (!ended() && Date.now() - t0 < (sc.maxMs ?? 90_000)) {
       human(fx);
+      const turns = events.filter((e) => e.type === 'handoff');
+      const turn = turns.length > answered ? (turns.at(-1) as Extract<RunEvent, { type: 'handoff' }>) : null;
+      // 로그인·서명 차례만 답한다. 그 밖의 차례(예: 되읽기가 맞지 않아 넘긴 화면)는 사람이 보고 판단할 일이라 답하지 않는다.
+      if (turn && answersTurns && (turn.phase === 'login' || turn.phase === 'sign')) {
+        if (turn.phase === 'sign') {
+          // 홈택스 서명 창을 마쳤다: 창이 넘어갔거나(서명·발급) 사람이 [확인]·[취소]를 눌렀다
+          const acted = fx.state.stage !== 'cert' || fx.state.certActedAt > 0;
+          if (!acted) signIdleAt = 0;
+          else if (!signIdleAt) signIdleAt = Date.now();
+          else if (Date.now() - signIdleAt > 1500) {
+            answered = turns.length;
+            signIdleAt = 0;
+            runs.resume('r1');
+          }
+        } else if (!fx.state.loggedIn) fx.login();
+        else {
+          answered = turns.length;
+          runs.resume('r1');
+        }
+      }
       const g = gm.find((m) => m.t === 'gate.request');
       if (g && !approved && sc.approve !== false && g.t === 'gate.request') {
         approved = true;
