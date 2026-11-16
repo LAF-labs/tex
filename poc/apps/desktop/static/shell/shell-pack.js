@@ -1,6 +1,6 @@
 // 세무사 꾸러미(D-05) 화면과 대화 꾸러미 카드. 값은 main(accountant-pack.ts)이 만든 요약을 그대로 그린다(글자는 텍스트 노드로만).
 // 화면을 열면 고른 달 꾸러미를 바로 만든다(로컬 폴더·zip). [Finder에서 보기]·[보내기](macOS 공유 시트)는 사용자가 누른다.
-import { btn, h, kv, note, num } from './shell-views.js';
+import { btn, h, kv, note, noteGroup, num } from './shell-views.js';
 
 const won = (n) => `${num(n)}원`;
 const md = (d) => (d ? `${Number(d.slice(5, 7))}월 ${Number(d.slice(8, 10))}일` : '날짜 모름');
@@ -85,10 +85,13 @@ export function createPackScreen({ call, toast, rerender, errText, today, railHe
 
   function gapsBox(d) {
     if (!d.gaps.length) return note('빠진 것이 없어요.', false, null, 'check');
+    // 빠진 것 여럿은 면 하나 안의 줄로(상자를 쌓지 않는다). 확인 필요·PDF 없음이 하나라도 있으면 주의 면
+    const lines = gapLines(d.gaps);
+    const bad = lines.some((g) => g.kind === 'unsure' || g.kind === 'no_pdf');
     return h(
       'div',
       { class: 'pack-gaps', 'data-pack-gaps': String(d.gaps.length) },
-      ...gapLines(d.gaps).map((g) => note(g.text, g.kind === 'unsure' || g.kind === 'no_pdf', g.who || null, 'info')),
+      noteGroup(lines.map((g) => [[g.text, g.who ? h('span', { class: 'sx-meta' }, ` · ${g.who}`) : null], { 'data-gap': g.kind }]), bad),
     );
   }
 

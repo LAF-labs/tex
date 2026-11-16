@@ -137,7 +137,7 @@ describe('F-09·F-10·F-13', () => {
     assert.equal(d2.dupToday, true);
     assert.equal(runs.updateDraft(d2.id, { amount: 2000 }).dupToday, false);
     assert.equal(runs.updateDraft(d2.id, { amount: 1000 }).dupToday, true);
-    assert.match(read('static/shell/shell-views.js'), /run\.dupToday \? h\('div', \{ 'data-dup-today': '' \}, note\(DUP_TODAY_TEXT, true\)\) : null,/);
+    assert.match(read('static/shell/shell-views.js'), /run\.dupToday \? \[DUP_TODAY_TEXT, \{ 'data-dup-today': '' \}\] : null/);
   });
   it('F-13 O-06 [지금 해 보기]는 세금계산서로 채운다', () => {
     assert.equal(TRY_FIRST_FILL, '세금계산서 발급해 줘');

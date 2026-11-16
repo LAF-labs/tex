@@ -2,7 +2,7 @@
 // 값(거래처·금액·입금자명)은 main이 엔진 로컬 조회로 준 것을 그대로 그린다. 계산·판정은 하지 않는다(엔진 몫).
 // 모든 고치기는 한 번 누르면 되고, 10초 동안 [되돌리기]가 뜬다(그 뒤에도 건 상세 기록에서 되돌린다, 09 §7.5).
 // 결과·오류는 토스트 대신 이 화면 안 글로 남긴다(대표 2026-11-13). 한 덩어리에 주요 단추는 하나, 줄마다 붙는 단추는 조용한 단추다(v2.0).
-import { btn, h, icon, kv, note, num, replyOptions } from './shell-views.js';
+import { btn, emptyState, h, icon, kv, note, num, replyOptions } from './shell-views.js';
 import { accountInput, amountInput, amountOf, checkFields, dateInput, field, keys, LIMITS, selectInput, textInput } from './fields.js';
 
 const won = (n) => `${num(n)}원`;
@@ -53,6 +53,7 @@ const soonText = (retryAt) => {
   const min = Math.max(1, Math.ceil((Date.parse(retryAt) - Date.now()) / 60_000));
   return Number.isFinite(min) ? `방금 가져왔어요. ${min}분 뒤에 다시 가져올 수 있어요.` : '방금 가져왔어요. 잠시 뒤에 다시 가져올 수 있어요.';
 };
+const LOAD_FAIL = '받을 돈을 불러오지 못했어요.';
 const REFRESH_STEP = { requested: '요청함', waiting: '은행 응답 기다리는 중', running: '받는 중' };
 
 function statusText(v) {
@@ -66,6 +67,19 @@ const ERR_FIELD = { bad_amount: 'amount', bad_date: 'on', bad_account_number: 'n
 /** 화면 안 알림 한 줄(되돌리기 띠와 같은 모양): 아이콘 · 글(+ 작은 글) · 단추 0~2개. bad = 확인 필요 */
 const bar = (text, { bad = false, extra = null, action = null, ic = null, attrs = {} } = {}) =>
   h('div', { class: `sx-note${bad ? ' is-attention' : ''}`, role: bad ? 'alert' : 'status', ...attrs }, icon(ic ?? (bad ? 'warn' : 'info')), h('div', {}, text, extra ? h('div', { class: 'sx-meta' }, extra) : null), action);
+/**
+ * 폼 안에서 하나 고르기(v2.0: select 대신 답 후보 줄). 고른 줄은 실선 + 체크, 다시 눌러 바꿀 수 있다(저장 전이라 굳히지 않는다).
+ * opts = [[값, 글]]. 많으면(거래처 수십 곳) 줄이 화면을 덮으므로 그때만 select를 쓴다.
+ */
+const PICK_MAX = 6;
+const pickRows = (opts, value, onPick, attrs = {}) =>
+  h(
+    'div',
+    { class: 'sx-replies bank-pick', role: 'radiogroup', ...attrs },
+    ...opts.map(([k, label]) =>
+      h('button', { type: 'button', class: `sx-reply${k === value ? ' is-picked' : ''}`, role: 'radio', 'aria-checked': String(k === value), 'data-pick': k, onclick: () => onPick(k) }, h('span', {}, label), k === value ? icon('check') : null),
+    ),
+  );
 
 export function createBankScreen({ call, toast, rerender: draw, errText, counterparties, openCounterparty, railHead }) {
   const s = {
@@ -127,7 +141,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       for (const a of s.data?.accounts ?? []) if (a.refresh && !['done', 'failed'].includes(a.refresh.state) && !s.refreshing[a.id]) watchRefresh(a.id, a.refresh);
       if (s.sel) s.detail = await call('bank.receivable', { id: s.sel }).catch(() => null);
     } catch (e) {
-      tell(ERR[errText(e)] ?? '받을 돈을 불러오지 못했어요.', { bad: true, load: true, retry: ['다시 시도', refresh] });
+      tell(ERR[errText(e)] ?? LOAD_FAIL, { bad: true, load: true, retry: ['다시 시도', refresh] });
     } finally {
       s.loading = false;
     }
@@ -254,7 +268,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     const sum = s.data?.summary;
     const basis = !sum ? '' : `${sum.latestDay ? `거래내역 ${md(sum.latestDay)}까지 반영` : '거래내역을 아직 올리지 않았어요'}${sum.stale && sum.latestDay ? ' · 오래됐어요' : ''}`;
     // 계좌가 없으면 거래내역 단추를 두지 않는다(누를 수 없는 단추는 보이지 않는다). 그때 할 일은 알림 줄의 [계좌 등록하기] 하나다.
-    const right = [s.data?.accounts?.length ? btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement' }) : null, btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })].filter(Boolean);
+    const right = !s.data ? [] : [s.data.accounts?.length ? btn('거래내역 파일 올리기', pickStatement, 'sx-btn-primary', { 'data-act': 'bank-statement' }) : null, btn('홈택스 발급목록 파일 올리기', pickInvoices, 'sx-btn-quiet', { 'data-act': 'bank-invoices' })].filter(Boolean);
     if (railHead) return railHead('받을 돈', basis, ...right);
     return h('div', { class: 'rs-head' }, h('h1', { class: 'title-screen' }, '받을 돈'), basis ? h('span', { class: 'sx-meta', 'data-bank-basis': '' }, basis) : null, h('div', { class: 'rs-right' }, ...right));
   }
@@ -355,7 +369,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       formEl = h(
         'div',
         { class: 'cp-form', 'data-bank-form': 'received', onkeydown: keys(submit, close) },
-        field({ label: '받은 방법', input: selectInput(['cash', 'other_account', 'offset', 'other', 'account'].map((m) => [m, METHOD_LABEL[m]]), { value: form.method, compact: true, 'data-field': 'method', onchange: (e) => (form.method = e.target.value) }) }),
+        h('div', { class: 'sx-field' }, h('span', { class: 'sx-field-label', id: 'bank-method-label' }, '받은 방법'), pickRows(['cash', 'other_account', 'offset', 'other', 'account'].map((m) => [m, METHOD_LABEL[m]]), form.method, (m) => ((form.method = m), rerender()), { 'data-field': 'method', 'aria-labelledby': 'bank-method-label' })),
         field({ label: '받은 금액(원)', error: errAt('form', 'amount'), input: amountInput({ value: form.amount, compact: true, 'data-field': 'amount', oninput: (e) => (form.amount = amountOf(e.target)) }) }),
         field({ label: '받은 날', error: errAt('form', 'on'), input: dateInput({ value: form.on, required: true, compact: true, 'data-field': 'on', oninput: (e) => (form.on = e.target.value) }) }),
         formMsg('form'),
@@ -375,7 +389,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       formEl = h(
         'div',
         { class: 'cp-form', 'data-bank-form': 'exclude', onkeydown: keys(submit, close) },
-        field({ label: '빼는 까닭', input: selectInput(['받지 않기로 함', '거래 취소', '기타'].map((r) => [r, r]), { value: form.reason, compact: true, 'data-field': 'reason', onchange: (e) => (form.reason = e.target.value) }) }),
+        h('div', { class: 'sx-field' }, h('span', { class: 'sx-field-label', id: 'bank-reason-label' }, '빼는 까닭'), pickRows(['받지 않기로 함', '거래 취소', '기타'].map((r) => [r, r]), form.reason, (r) => ((form.reason = r), rerender()), { 'data-field': 'reason', 'aria-labelledby': 'bank-reason-label' })),
         formMsg('form'),
         formActs('목록에서 빼기', submit),
         h('p', { class: 'sx-meta' }, '세무 처리(대손 등)는 앱이 판단하지 않아요. 세무사와 상의하세요.'),
@@ -384,7 +398,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     return h(
       'article',
       { class: 'sx-card bank-detail', 'data-bank-detail': v.id },
-      h('div', { class: 'board-card-hd' }, h('span', { class: 'board-card-title' }, v.cpName ?? '거래처 미상'), h('span', { class: 'sx-chip' }, statusText(v))),
+      h('div', { class: 'sx-card-hd' }, h('h2', { class: 'sx-card-title' }, v.cpName ?? '거래처 미상'), h('span', { class: `sx-chip${v.overdue ? ' is-attention' : v.status === 'received' ? ' is-done' : ''}` }, statusText(v))),
       kv([
         ['작성일', v.writtenOn],
         ['승인번호', v.approvalTail ? `…${v.approvalTail}` : '—', { mono: true }],
@@ -399,18 +413,16 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       allocs.length
         ? h('ul', { class: 'bank-allocs' }, ...allocs.map((a) => h('li', { 'data-bank-alloc': a.id }, a.txn ? `${md(a.txn.day)} ${won(a.amount)} · ${a.txn.payer ?? '이름 없음'} · ···${a.txn.accountLast4}` : `${METHOD_LABEL[a.method] ?? '직접'} ${won(a.amount)}${a.receivedOn ? ` · ${md(a.receivedOn)}` : ''}`, a.decidedBy === 'auto' ? h('span', { class: 'sx-tag' }, '자동') : null, btn('떼기', () => act('bank.detach', { allocId: a.id }, '뗐어요'), 'sx-btn-quiet', { 'data-act': 'bank-detach' }))))
         : h('div', { class: 'sx-meta' }, '아직 붙은 입금이 없어요.'),
-      // 주요 단추는 [받았음 표시] 하나. 같은 건의 상태를 바꾸는 나머지는 둘째 줄 조용한 단추. 폼을 열면 단추 줄 대신 폼만 보인다.
+      // 주요 단추는 [받았음 표시] 하나, 같은 건의 상태를 바꾸는 나머지는 같은 줄의 조용한 단추. 폼을 열면 단추 줄 대신 폼만 보인다.
       open && !form
-        ? [
-            h('div', { class: 'sx-actions' }, btn('받았음 표시', () => openForm({ kind: 'received', method: 'cash', amount: v.remaining, on: today }, '[data-field="amount"]'), 'sx-btn-primary', { 'data-act': 'bank-mark' })),
-            h(
-              'div',
-              { class: 'sx-actions' },
-              v.remaining > 0 && v.remaining <= 1000 && v.received > 0 ? btn('차액은 수수료로 닫기', () => act('bank.closeFee', { receivableId: v.id }, '차액을 수수료로 닫았어요'), 'sx-btn-quiet') : null,
-              btn('기다리는 중으로', () => openForm({ kind: 'promise', on: today }, '[data-field="promise-on"]'), 'sx-btn-quiet'),
-              btn('목록에서 빼기', () => openForm({ kind: 'exclude', reason: '받지 않기로 함' }, '[data-field="reason"]'), 'sx-btn-quiet'),
-            ),
-          ]
+        ? h(
+            'div',
+            { class: 'sx-actions' },
+            btn('받았음 표시', () => openForm({ kind: 'received', method: 'cash', amount: v.remaining, on: today }, '[data-field="amount"]'), 'sx-btn-primary', { 'data-act': 'bank-mark' }),
+            v.remaining > 0 && v.remaining <= 1000 && v.received > 0 ? btn('차액은 수수료로 닫기', () => act('bank.closeFee', { receivableId: v.id }, '차액을 수수료로 닫았어요'), 'sx-btn-quiet') : null,
+            btn('기다리는 중으로', () => openForm({ kind: 'promise', on: today }, '[data-field="promise-on"]'), 'sx-btn-quiet'),
+            btn('목록에서 빼기', () => openForm({ kind: 'exclude', reason: '받지 않기로 함' }, '[data-field="reason"] .is-picked'), 'sx-btn-quiet'),
+          )
         : v.status === 'excluded'
           ? h('div', { class: 'sx-actions' }, btn('목록에 되살리기', () => act('bank.exclude', { receivableId: v.id, reason: null }, '되살렸어요')))
           : null,
@@ -460,7 +472,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
         return h(
           'article',
           { class: 'sx-card', 'data-bank-txn': t.id },
-          h('div', { class: 'board-card-hd' }, h('span', { class: 'board-card-title' }, `${md(t.day)} · ${won(t.unallocated)}`), h('span', { class: 'sx-meta' }, `${t.payer ?? '이름 없음'} · ${t.bank} ···${t.accountLast4}${t.memo ? ` · ${t.memo}` : ''}`)),
+          h('div', { class: 'bank-txn-hd' }, h('h2', { class: 'sx-card-title' }, `${t.payer ?? '이름 없는 입금'} · ${won(t.unallocated)}`), h('span', { class: 'sx-meta' }, `${md(t.day)} · ${t.bank} ···${t.accountLast4}${t.memo ? ` · ${t.memo}` : ''}`)),
           t.candidates.length
             ? h(
                 'ul',
@@ -487,7 +499,9 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
             ? h(
                 'div',
                 { class: 'cp-form', 'data-bank-assign': t.id, onkeydown: keys(null, cancel) },
-                field({ label: '거래처', input: selectInput(cps.map((c) => [c.id, c.name]), { value: g.cp, compact: true, 'data-field': 'cp', onchange: (e) => (g.cp = e.target.value) }) }),
+                cps.length > PICK_MAX
+                  ? field({ label: '거래처', input: selectInput(cps.map((c) => [c.id, c.name]), { value: g.cp, compact: true, 'data-field': 'cp', onchange: (e) => (g.cp = e.target.value) }) })
+                  : h('div', { class: 'sx-field' }, h('span', { class: 'sx-field-label', id: `bank-assign-${t.id}` }, '어느 거래처 입금인가요?'), pickRows(cps.map((c) => [c.id, c.name]), g.cp, (k) => ((g.cp = k), rerender()), { 'data-field': 'cp', 'aria-labelledby': `bank-assign-${t.id}` })),
                 t.payer ? h('label', { class: 'auth-row' }, h('input', { type: 'checkbox', 'data-field': 'remember', checked: g.remember, onchange: (e) => (g.remember = e.target.checked) }), h('span', { class: 'sx-body-sm' }, `다음부터 '${t.payer}' 입금은 이 거래처로`)) : null,
                 h('div', { class: 'sx-actions' }, btn('이 거래처 입금으로', save, 'sx-btn-primary', { 'data-act': 'bank-assign-save' }), btn('그만두기', cancel, 'sx-btn-quiet')),
               )
@@ -498,8 +512,8 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
                   ? btn('이 거래처 입금으로', () => {
                       s.assign = { id: t.id, cp: cps[0].id, remember: true };
                       rerender();
-                      focusLater(`[data-bank-assign="${CSS.escape(t.id)}"] [data-field="cp"]`);
-                    }, t.candidates.length ? 'sx-btn-quiet' : '', { 'data-act': 'bank-assign' })
+                      focusLater(`[data-bank-assign="${CSS.escape(t.id)}"] [data-field="cp"]${cps.length > PICK_MAX ? '' : ' .is-picked'}`);
+                    }, t.candidates.length ? 'sx-btn-quiet' : 'sx-btn-primary', { 'data-act': 'bank-assign' })
                   : null,
                 btn('상관없는 입금', () => act('bank.ignoreTxn', { txnId: t.id, reason: 'unrelated' }, '상관없는 입금으로 뺐어요'), 'sx-btn-quiet', { 'data-act': 'bank-ignore' }),
               ),
@@ -658,7 +672,7 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
           );
     return h(
       'div',
-      {},
+      { class: 'bank-tab' },
       list.length ? table([['은행'], ['계좌'], ['이름'], ['거래내역'], ['연결'], ['']], list.map(row)) : a ? null : h('div', { class: 'empty' }, h('div', {}, '등록한 계좌가 없어요. 계좌를 추가하면 거래내역 파일을 올릴 수 있어요.'), h('div', {}, addBtn('sx-btn-primary'))),
       form ?? (list.length ? h('div', { class: 'sx-actions' }, addBtn('')) : null),
       h('p', { class: 'sx-meta rs-foot' }, list.some((x) => x.linkState !== 'file_only') ? '자동 연결된 계좌는 [최신화]로 새 거래를 받아요. 다른 계좌는 은행에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 계좌번호는 끝 4자리만 보여요.' : '은행 인터넷뱅킹·앱에서 거래내역을 엑셀이나 CSV로 내려받아 올려 주세요. 파일을 넣을 때 앱은 은행에 접속하지 않아요. 계좌번호는 끝 4자리만 보여요.'),
@@ -731,20 +745,25 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       'section',
       { class: 'rail-screen', 'data-view': 'bank', 'data-screen': 'D-09' },
       head(),
-      noticeBar(),
+      // 처음 불러오기에 실패하면 화면 가운데 [다시 시도] 하나(알림 줄과 같은 말을 두 번 쓰지 않는다)
+      d ? noticeBar() : null,
       undoBar(),
       offerBar(),
       sum?.stale && sum?.hasAccounts && unpaid.length ? note(sum.latestDay ? `거래내역이 ${md(sum.latestDay)}까지만 있어요. 새 거래내역을 올리면 "못 받음"이 맞는지 다시 볼게요.` : '거래내역을 올리기 전이라 입금 여부를 확인하지 못했어요.', true) : null,
       // 계좌가 없으면 할 일은 하나(계좌 등록). 내 계좌 탭에서는 빈 상태가 같은 말을 하므로 그리지 않는다.
-      sum && !sum.hasAccounts && s.tab !== 'accounts' ? bar('먼저 내 계좌를 등록해 주세요. 파일로 쓰면 은행 로그인 정보를 받지 않아요.', { action: btn('계좌 등록하기', toAccounts, 'sx-btn-quiet', { 'data-act': 'bank-go-accounts' }) }) : null,
+      sum && !sum.hasAccounts && s.tab !== 'accounts' ? bar('먼저 내 계좌를 등록해 주세요. 파일로 쓰면 은행 로그인 정보를 받지 않아요.', { action: btn('계좌 등록하기', toAccounts, 'sx-btn-primary', { 'data-act': 'bank-go-accounts' }) }) : null,
       d || s.preview ? h('div', { class: 'filters', role: 'group', 'aria-label': '받을 돈 탭' }, tabBtn('unpaid', '못 받은 돈', unpaid.length), tabBtn('received', '받은 돈', d?.received?.length), tabBtn('review', '확인할 입금', d?.review?.length), tabBtn('accounts', '내 계좌', d?.accounts?.length), s.preview ? tabBtn('import', '올린 파일') : null) : null,
-      !d && !s.notice?.load ? h('div', { class: 'empty' }, '불러오는 중…') : null,
+      !d && !s.preview
+        ? s.notice?.load && !s.loading
+          ? emptyState(s.notice.text.replace(/\.$/, ''), s.notice.text === LOAD_FAIL ? '이 PC의 앱 엔진이 잠시 답하지 않았어요. 넣어 둔 거래내역과 맞춘 기록은 그대로예요.' : null, btn('다시 시도', () => ((s.notice = null), rerender(), void refresh()), 'sx-btn-primary', { 'data-act': 'bank-retry' }), { role: 'alert', 'data-bank-load': 'error' })
+          : emptyState('불러오는 중이에요', null, null, { 'aria-busy': 'true', 'data-bank-load': 'loading' })
+        : null,
       d && s.tab === 'unpaid' ? [sum.overdueCount ? h('p', { class: 'sx-body-sm', 'data-bank-overdue': '' }, `기한 지난 받을 돈 ${sum.overdueCount}건 · ${won(sum.overdueTotal)}`) : null, recvList(unpaid, '못 받은 돈이 없어요.'), detailCard()] : null,
       d && s.tab === 'received' ? [recvList(d.received, '아직 받은 돈이 없어요.'), detailCard()] : null,
       d && s.tab === 'review' ? reviewList() : null,
       d && s.tab === 'accounts' ? accountsTab() : null,
       s.tab === 'import' ? importTab() : null,
-      h('p', { class: 'sx-meta rs-foot' }, '받기로 한 날은 기본 작성일 + 30일이에요. 거래처마다 거래처 화면에서 바꿀 수 있어요.'),
+      d && s.tab === 'unpaid' ? h('p', { class: 'sx-meta rs-foot' }, '받기로 한 날은 기본 작성일 + 30일이에요. 거래처마다 거래처 화면에서 바꿀 수 있어요.') : null,
     );
   }
 
