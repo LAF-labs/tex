@@ -59,6 +59,13 @@ export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
   vat: '부가세 별도인가요, 포함인가요?',
   which_card: '어느 카드를 말씀하시는지 골라 주세요.',
 };
+/** 엔진이 도구 결과로 턴을 닫을 때의 고정 문장(마지막 결과 status별). 없으면 CHAT_AGENT_NUMBER_TEXT. */
+export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
+  card_shown: '세금계산서 확인 카드를 만들었어요. 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.',
+  card_updated: '카드를 고쳤어요. 카드에서 바뀐 값을 확인해 주세요.',
+  discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
+  ok: '찾은 기록을 표로 보여 드렸어요.',
+};
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
 const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_exceeded', 'chat.quota_exceeded'];
 /** 게이트웨이 respond 스키마의 replay maxItems */
@@ -104,7 +111,8 @@ export interface AgentReply {
   text: string;
   show: string[];
   ask: AgentAsk | null;
-  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number';
+  /** repeat: 모델이 같은 호출을 되풀이해 엔진이 그 결과로 턴을 닫았다(문장은 엔진 고정 문장) */
+  filtered: null | 'advice' | 'unsafe' | 'refusal' | 'number' | 'repeat';
 }
 
 /**
@@ -522,8 +530,8 @@ export class ChatAgent {
     const ask: AgentAsk | null =
       last.status === 'needs_input' && last.needs?.length ? last.needs[0]! : last.status === 'unknown_counterparty' ? 'counterparty' : last.status === 'no_such_draft' ? 'which_card' : null;
     const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
-    if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'number' };
-    if (show.length) return { kind: 'did', text: CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'number' };
+    if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'repeat' };
+    if (show.length) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT[last.status] ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
     throw new ChatError('chat.turn_limit');
   }
 
@@ -640,7 +648,9 @@ export class ChatAgent {
     const refs = [...new Set(show as string[])];
     if (!refs.every((r) => new RegExp(REF).test(r) && (s.refs.has(r) || turn.frameRefs.has(r)))) throw bad();
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-    const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ');
+    // 사장님이 이번 문장에 쓴 달 이름("9월")은 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept)
+    const months = new Set([...turn.user.matchAll(/(?<!\d)(1[0-2]|[1-9])월/gu)].map((m) => m[0]));
+    const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ').replace(/(?<!\d)(1[0-2]|[1-9])월/gu, (m) => (months.has(m) ? '그달' : m));
     if (unsafeText(bare)) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
     if (numberShaped(bare)) {
       // 되묻는 답이면 되묻기는 살린다(문장만 고정 문장으로): 사장님이 빈 칸을 채울 수 있게

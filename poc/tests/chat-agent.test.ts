@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_DONE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -357,7 +357,7 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
     assert.equal(pc.calls.length, 1);
     assert.equal(responds().length, 2);
-    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['did', CHAT_AGENT_NUMBER_TEXT, ['r1'], 'number']);
+    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['did', CHAT_AGENT_DONE_TEXT.ok, ['r1'], 'repeat']);
   });
 
   it('금액이 빈 카드를 거듭 만들려 하면 엔진이 금액을 되묻는다', async () => {
@@ -393,12 +393,19 @@ describe('chat.step 턴 상한·세션 폐기', () => {
   it('되묻는 문장에 숫자가 섞이면 문장만 고정 문장으로 바꾸고 되묻기는 살린다. 문장 속 ref 표기는 지운다', async () => {
     const a = agent();
     script(() => reply({ kind: 'ask', text: '단가에 20개라고 하셨는데 공급가로 넣을 금액을 알려 주세요.', ask: 'amount' }));
+    // (사장님이 쓴 달 이름은 따라 써도 걸러지지 않는다: 아래 9월 사례)
     let r = (await say(a, new FakePc(), 'A상사 원두 20개')).reply;
     assert.deepEqual([r.kind, r.ask, r.text, r.filtered], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount, 'number']);
     const pc = new FakePc();
     script(() => fc('sales_summary', { month_offset: 0 }), () => reply({ text: '이번 달 기록이에요 [ref:r1].', show: ['r1'] }));
     r = (await say(a, pc, '이번 달 매출')).reply;
     assert.deepEqual([r.text, r.filtered], ['이번 달 기록이에요.', null]);
+    script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '9월 매출은 {r2.sum.supply}예요.', show: ['r2'] }));
+    r = (await say(a, pc, '9월 매출 알려줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '8월 매출은 {r3.sum.supply}예요.', show: ['r3'] }));
+    r = (await say(a, pc, '9월 매출 알려줘')).reply;
+    assert.equal(r.filtered, 'number', '사장님이 쓰지 않은 달 이름은 걸러진다');
   });
 
   it('카드를 만든 뒤 같은 카드를 또 만들라고 해도 카드는 한 장이다', async () => {
