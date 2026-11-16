@@ -12,6 +12,16 @@ export function h(tag, attrs, ...kids) {
     else el.setAttribute(k, v === true ? '' : String(v));
   }
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
+  // 누르면 패널이 열리는 표의 줄은 키보드로도 연다(Tab으로 오고 Enter·Space로 연다).
+  if (tag === 'tr' && typeof attrs?.onclick === 'function') {
+    el.tabIndex = 0;
+    el.addEventListener('keydown', (e) => {
+      if (e.target === el && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        el.click();
+      }
+    });
+  }
   return el;
 }
 
@@ -40,6 +50,7 @@ const ICONS = {
   eye: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z'],
   eyeOff: [16, 'M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z', 'M10 8a2 2 0 1 1-4 0a2 2 0 1 1 4 0z', 'M2.5 2.5l11 11'],
   send: [14, 'M7 11.5v-9M3 6.5l4-4 4 4'],
+  payroll: [20, 'M5 2.5h10A1.5 1.5 0 0 1 16.5 4v12.5l-2-1.25-2 1.25-2.5-1.25-2.5 1.25-2-1.25-2 1.25V4A1.5 1.5 0 0 1 5 2.5z', 'M7 6.5h6M7 9.5h6M7 12.5h3'],
   money: [20, 'M2.5 5.5h15v9h-15z', 'M12.5 10a2.5 2.5 0 1 1-5 0a2.5 2.5 0 1 1 5 0z', 'M5 8v4M15 8v4'],
   pencil: [16, 'M3 13l.7-2.8L10.9 3a1.4 1.4 0 0 1 2 2l-7.2 7.2z'],
   globe: [16, 'M14 8A6 6 0 1 1 2 8a6 6 0 0 1 12 0z', 'M2 8h12', 'M8 2c1.7 1.6 2.5 3.6 2.5 6S9.7 12.4 8 14C6.3 12.4 5.5 10.4 5.5 8S6.3 3.6 8 2z'],
@@ -227,6 +238,11 @@ export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준
 export const CHROME_GUIDE_TEXT = '홈택스 작업은 이 PC의 Chrome 창에서 해요. 다른 브라우저에서 google.com/chrome 을 열어 Chrome을 설치한 뒤 [다시 확인]을 눌러 주세요.';
 export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
 
+/** 빈 화면: 무엇이 없는지 한 줄(ink-2) + 무엇을 하면 채워지는지 한 줄(ink-3) + 할 수 있는 일 하나. 상자·그림 없이 가운데. */
+export function emptyState(title, sub, action = null, attrs = {}) {
+  return h('div', { class: 'empty', ...attrs }, h('p', { class: 'empty-title' }, title), sub ? h('p', { class: 'empty-sub' }, sub) : null, action ? h('div', { class: 'empty-act' }, action) : null);
+}
+
 /**
  * 답 후보(Muse식, v2.0): 앱 말 아래 전폭 줄. 사장님은 가장 그럴듯한 답을 누르거나 그냥 입력창에 말한다.
  * opts = [{ label, onPick, act?, attrs?, lock? }]. lock(기본 true)이면 고른 줄은 체크로 굳고 나머지는 흐려진다(보낸 답은 되돌리지 않는다).
@@ -288,7 +304,7 @@ function fold(card, run, step, stop = null) {
   // 확인 필요는 안내 상자 대신 카드의 황토 안쪽 선으로 보인다(내 차례의 파랑 선과 같은 규칙).
   card.classList.toggle('is-attention', run.status === 'attention');
   card.replaceChildren(
-    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · ${step}`), chip(shownStatus(run)), stop),
+    h('div', { class: 'sx-card-hd sx-run-hd' }, h('div', { class: 'sx-card-title' }, `${run.batch ? `${run.batch.index + 1}. ` : ''}세금계산서 · ${run.counterparty.name}`), h('span', { class: 'sx-card-now' }, `${num(run.total)}원 · `, step), chip(shownStatus(run)), stop),
   );
 }
 const stopBtn = (run, act) => btn('중지', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'stop' });
@@ -327,6 +343,8 @@ export function taskCard(run, act) {
     );
   } else if (st === 'draft') {
     const noItem = !String(run.item ?? '').trim();
+    // 합계 0원은 준비를 막는다(대표 결정 2026-11-16). 금액을 누르면 고친다. main prepare도 amount_zero로 거부한다.
+    const noAmount = !(Number(run.total) > 0);
     // v2.0 작성 카드: 값은 글자로 보이고, 누르면 그 자리에서 고친다(단추 네 개로 폼을 여는 대신). 부가세는 두 칸 전환.
     // 대화로 "부가세 포함으로", "품목은 유지보수"라고 말해도 같은 값을 바꾼다. 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
     // 고친 값이 거절되면 고치던 칸 아래에 까닭을 둔다. 칸이 정해지지 않은 까닭만 표 아래 한 줄.
@@ -395,7 +413,7 @@ export function taskCard(run, act) {
       h(
         'div',
         { class: 'sx-amount', 'data-draft-amount': '' },
-        valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: 'is-total' }),
+        valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: noAmount ? 'is-total is-missing' : 'is-total' }),
         h('span', { class: 'sx-amount-split' }, `공급가 ${num(run.supply)} + 세액 ${num(run.tax)}`),
       ),
     );
@@ -409,18 +427,15 @@ export function taskCard(run, act) {
         : h(
             'div',
             { class: 'sx-actions' },
-            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem }),
+            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem || noAmount }),
             btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
           ),
-      editing ? null : h('div', { class: 'sx-meta' }, noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),
+      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),
     );
   } else if (st === 'preparing') {
     // v2.0(H3): 머리 한 줄(지금 단계) + 조용한 [중지]. "승인 전에는 발급하지 않아요"는 패널에 있다.
-    // 로그인 단계: 엔진은 로그인 화면을 열고 최대 10분 기다린다(그 뒤에야 로그인 차례 카드). 사람 몫이라 할 일 한 줄과 [홈택스 창 보기]를 바로 보인다.
-    const login = run.steps[0].state === 'now' && run.steps[0].note;
-    if (login) card.dataset.loginNow = '';
-    fold(card, run, stepLine(now, !login), stopBtn(run, act));
-    if (login) card.append(todoLine(run.steps[0].note), h('div', { class: 'sx-actions' }, showBrowserBtn(run, act, true)));
+    // 로그인 단계: 앱이 직접 로그인한다. 사람 몫(캡차·추가 인증 등)은 로그인 차례 카드로 따로 온다. 여기서는 머리 한 줄(단계 이름만, 설명은 패널 단계 목록)뿐이다.
+    fold(card, run, stepLine(now, run.steps[0].state !== 'now'), stopBtn(run, act));
   } else if (verifying(run)) {
     // 발급 후 조회 중(08 §11 "발급 후 응답 끊김" 행). 이 상태에서는 어떤 버튼도 다시 발급하지 않는다. 머리 한 줄만, 설명은 패널에 있다.
     fold(card, run, h('span', { 'data-verify-attempt': run.verifyAttempt ? String(run.verifyAttempt) : null }, run.verifyAttempt ? `발급목록에서 확인하는 중 · 조회 ${run.verifyAttempt}회째` : '발급목록에서 확인하는 중'));
@@ -490,6 +505,8 @@ export function taskCard(run, act) {
     card.append(line(run.stoppedNote || '중지했어요.', true));
     // 브라우저가 닫혀 멈춘 제출 전 실행: 같은 값으로 바로 다시 시작
     if (run.browserClosed) card.append(h('div', { class: 'sx-actions' }, btn('다시 시작', () => act.restart(run.id), 'sx-btn-primary', { 'data-act': 'restart' })));
+    // 시간이 다 되어 멈춤(승인·사람 대기): 같은 값의 새 초안. 시작은 새 카드의 [홈택스에서 준비]
+    else if (run.redo) card.append(h('div', { class: 'sx-actions' }, btn('다시 준비', () => act.redraft(run.id), 'sx-btn-primary', { 'data-act': 'redraft' })));
   } else if (st === 'attention' && run.inDoubt) {
     // InDoubt 카드(08 §11): 발급됐는지 모른다. 다시 발급하는 버튼은 두지 않는다. 직접 확인할 곳(패널의 찾을 값)만 연다.
     card.dataset.inDoubt = '1';

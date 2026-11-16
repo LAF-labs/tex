@@ -10,7 +10,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -191,7 +191,7 @@ const act = {
       openPanel({ kind: 'run', id });
     } catch (e) {
       const c = errText(e);
-      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드의 품목을 눌러 넣고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드의 받는 이메일을 눌러 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
+      toast(c === 'busy' ? '진행 중인 작업이 끝난 뒤에 시작할 수 있어요' : c === 'item_required' ? '품목이 비어 있어요. 카드의 품목을 눌러 넣고 다시 준비해 주세요.' : c === 'amount_zero' ? '합계가 0원이에요. 카드의 금액을 눌러 고치고 다시 준비해 주세요.' : c === 'bad_email' ? '받는 이메일 모양이 맞지 않아요. 카드의 받는 이메일을 눌러 고치고 다시 준비해 주세요.' : c === 'chrome.not_installed' ? 'Chrome을 찾지 못했어요. Chrome을 설치한 뒤 다시 눌러 주세요.' : prepareRefusal(c) ?? human(e));
     }
   },
   vat: async (id, vat) => {
@@ -1469,9 +1469,11 @@ function docsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'docs' },
+    // 서류가 하나도 없으면 머리에는 제목만 두고 거르기도 숨긴다(빈 화면 가운데 [PDF 가져오기] 하나).
+    !state.docs.length && !(state.issued ?? []).length ? railHead('문서함', '', btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' })) :
     railHead('문서함', meta, btn('세무사 꾸러미', () => go('bundle'), 'sx-btn-quiet', { 'data-act': 'go-bundle' }), btn('활동 기록', () => go('activity'), 'sx-btn-quiet', { 'data-act': 'go-activity' }), btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), '', { 'data-act': 'doc-import', disabled: state.docBusy })),
     // 거르기는 화면 전체에 걸리므로 맨 위에 둔다(전에는 발급 표 아래에 있어 그 표에는 안 걸리는 것처럼 보였다).
-    h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)),
+    state.docs.length || (state.issued ?? []).length ? h('div', { class: 'filters', role: 'group', 'aria-label': '서류 거르기' }, DOC_FILTERS.map(fb)) : null,
     withIssued ? issuedSection() : null,
     list.length || !withIssued ? listTable(
       [['서류'], ['발급일'], ['용도'], ['출처']],
@@ -1488,7 +1490,11 @@ function docsView() {
         ),
       ),
     ) : null,
-    list.length || (withIssued && (state.issued ?? []).length) ? null : h('div', { class: 'empty' }, '조건에 맞는 서류가 없어요.'),
+    list.length || (withIssued && (state.issued ?? []).length)
+      ? null
+      : state.docs.length || f !== 'all'
+        ? emptyState('조건에 맞는 서류가 없어요.', null, f === 'all' ? null : btn('전체 보기', () => ((state.docFilter = 'all'), render()), '', { 'data-act': 'doc-filter-all' }))
+        : emptyState('아직 서류가 없어요.', '대화에서 "사업자등록증명 떼 줘"처럼 말하거나, 받아 둔 PDF를 가져오면 여기에 모여요.', btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), 'sx-btn-primary', { 'data-act': 'doc-import', disabled: state.docBusy })),
   );
 }
 
@@ -1500,12 +1506,13 @@ function cpsView() {
   return h(
     'section',
     { class: 'rail-screen', 'data-view': 'cps' },
-    railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })),
+    // 비어 있으면 머리의 건수·[거래처 추가]를 두지 않는다(빈 화면 가운데 단추 하나만).
+    state.cps.length ? railHead('거래처', `${state.cps.length}곳${issued ? ` · 이번 달 발급 ${issued}곳` : ''}`, btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), '', { 'data-act': 'cp-add' })) : railHead('거래처', ''),
     // 온보딩 O-05에서 [거래처 화면에서 추가]로 왔다(F-12): 다 넣으면 대화로 돌아가 [다 했어요]를 누르게 띠 하나
     state.onb?.step === 'counterparties'
       ? h('div', { class: 'sx-note', 'data-onb-band': 'cps' }, h('div', {}, '거래처를 다 넣으면 대화로 돌아가 [다 했어요]를 눌러 주세요.'), btn('대화로 돌아가기', () => go('chat'), 'sx-btn-primary', { 'data-act': 'onb-back' }))
       : null,
-    listTable(
+    state.cps.length ? listTable(
       [['상호'], ['사업자번호'], ['상태'], ['최근 발급'], ['이번 달']],
       state.cps.map((c) =>
         h(
@@ -1518,8 +1525,8 @@ function cpsView() {
           h('td', { class: c.lastIssuedOn?.startsWith(month) ? null : 'is-none' }, c.lastIssuedOn?.startsWith(month) ? '발급함' : '—'),
         ),
       ),
-    ),
-    h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.'),
+    ) : emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호·대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
+    state.cps.length ? h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.') : null,
   );
 }
 
@@ -1794,7 +1801,7 @@ function activityView() {
             ),
           ),
         )
-      : h('div', { class: 'empty' }, '아직 기록이 없어요.'),
+      : emptyState('아직 기록이 없어요.', '홈택스·정부24에서 한 일이 시각·결과와 함께 여기에 남아요.'),
   );
 }
 

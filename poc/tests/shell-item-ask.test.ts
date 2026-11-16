@@ -174,7 +174,7 @@ describe('배선', () => {
   });
   it('카드: 품목·이메일을 값으로 보이고(누르면 고침), 품목이 비면 [홈택스에서 준비]가 꺼지고 품목 값이 빈칸 표시다', () => {
     const v = read('apps/desktop/static/shell/shell-views.js');
-    assert.match(v, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'prepare', disabled: noItem \}\)/);
+    assert.match(v, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'prepare', disabled: noItem \|\| noAmount \}\)/);
     assert.match(v, /valBtn\('품목', `\$\{noItem \? '비어 있음' : run\.item\}`, \(\) => act\.editFields\(run\.id, 'item'\), \{ act: 'fields-edit', cls: noItem \? 'is-missing'/);
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /putRun\(await call\('draft\.update', \{ id, item: String\(item\), email: String\(email\) \}\)\);/);
