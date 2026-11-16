@@ -115,6 +115,7 @@ const FILES: Record<string, string> = {
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
   '/shell-bank.js': 'text/javascript',
+  '/shell-billing.js': 'text/javascript',
   '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
