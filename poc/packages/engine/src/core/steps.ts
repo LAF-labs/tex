@@ -298,7 +298,11 @@ const readback: Handler<'readback'> = async (s, env) => {
   const got: Array<[string, string]> = [];
   for (const f of s.fields) {
     const r = await readField(env.page, env.dict, f);
-    if (!r.ok) return fail(r.code);
+    if (!r.ok) {
+      // 실화면 예행 진단: 어느 칸이 왜 안 맞았는지(칸 이름·코드·글자 수, 값 없음). 5차 예행 H-09 s19b에서 칸을 알 수 없었다
+      env.journal?.('readback.failed', { stepId: s.id, field: f, code: r.code, detail: r.detail ?? '' });
+      return fail(r.code);
+    }
     got.push([f, r.value]);
   }
   const opt: Array<[string, number]> = [];

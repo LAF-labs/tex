@@ -91,7 +91,8 @@ describe('blockSignalsAdd: 앱 내장 사전에 더하기만(D03 §7 (d), C-24)'
     const src = fs.readFileSync(path.join(SRC, 'runs.ts'), 'utf8');
     assert.match(src, /if \(this\.d\.portal\.kind !== 'hometax' \|\| !received\) return builtIn;/);
     // 발급 실행은 이 실행의 원장 행으로 커밋 구간을 본다. 재확인(reverifyInDoubt)은 발급하지 않으므로 늘 커밋 밖(() => false)이다
-    assert.match(src, /this\.runSignals\(\(\) => this\.ledger\.statesByRun\(p\.runId\)\.some\(\(st\) => st === 'armed' \|\| st === 'dispatched'\), startPolicy\)/);
+    // run.start·run.startCert가 같은 launch()를 쓴다(PR #272): 실행 id는 launch의 runId
+    assert.match(src, /this\.runSignals\(\(\) => this\.ledger\.statesByRun\((?:p\.)?runId\)\.some\(\(st\) => st === 'armed' \|\| st === 'dispatched'\), startPolicy\)/);
     assert.match(src, /return runSignalDict\(\{[\s\S]*?\n\s+inCommit,\n/);
     assert.match(fs.readFileSync(path.join(SRC, 'run/service-ir.ts'), 'utf8'), /dict: i\.signals \?\? SIGNAL_DICT\[i\.portal\.kind\]/);
     assert.match(fs.readFileSync(path.join(SRC, 'policy.ts'), 'utf8'), /dict: o\.signals \?\? SIGNAL_DICT\[portal\.kind\]/);
