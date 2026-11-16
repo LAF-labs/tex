@@ -3,5 +3,5 @@
   "compilerOptions": { "rootDir": "src", "outDir": "dist", "resolveJsonModule": true },
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"],
-  "references": [{ "path": "../net" }, { "path": "../redaction" }]
+  "references": [{ "path": "../chat-core" }, { "path": "../net" }, { "path": "../redaction" }]
 }
