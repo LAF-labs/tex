@@ -21,7 +21,7 @@ import { deviceListSchema, signedCertSchema, signedOpSchema, type AcctOp, type D
 import { ACCOUNT, DEVICE, MS, PASSWORD } from './constants.ts';
 import { pageHeaders } from './pg-toss.ts';
 import { withFloor } from './password.ts';
-import type { AccountService, AuthMethod, Session } from './service.ts';
+import type { AccountService, AuthMethod, BillingCaller, Session } from './service.ts';
 
 const obj = (properties: Record<string, unknown>, required: string[] = Object.keys(properties)) => ({ type: 'object', additionalProperties: false, required, properties });
 const b64u = (min: number, max: number) => ({ type: 'string', pattern: `^[A-Za-z0-9_-]{${min},${max}}$` });
@@ -131,6 +131,18 @@ export function accountRouter(o: AccountAppOpts): Router {
     return c;
   };
   /** 세션 또는 기기 토큰(읽기 전용 조회) */
+  /**
+   * 구독 경로: 계정 세션 또는 데스크톱 기기 토큰(devlist 범위). 데스크톱은 기기 등록 뒤 계정 세션을 버리므로(remote-account) 앱의 구독 화면은
+   * 기기 토큰으로 부른다. 폰 토큰은 거부(구독·해지·환불은 PC에서).
+   */
+  const billingAuth = async (ctx: Ctx): Promise<BillingCaller> => {
+    if (String(ctx.headers.authorization ?? '').startsWith('DPoP ')) {
+      const c = await device(ctx, 'devlist');
+      if (c.role !== 'desktop') fail('account.scope_denied');
+      return { accountId: c.acc };
+    }
+    return session(ctx);
+  };
   const sessionOrDevice = async (ctx: Ctx): Promise<string> => {
     const auth = String(ctx.headers.authorization ?? '');
     if (auth.startsWith('DPoP ')) return (await device(ctx, 'devlist')).acc;
@@ -269,12 +281,12 @@ export function accountRouter(o: AccountAppOpts): Router {
   });
 
   // 구독·결제
-  r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await session(ctx))));
-  r.add('GET', '/v1/billing/subscription', async (ctx) => json(200, { subscription: await svc.subscription(await session(ctx)) }));
-  r.add('GET', '/v1/billing/entitlement', async (ctx) => json(200, await svc.entitlementOf(await session(ctx))));
-  r.add('POST', '/v1/billing/refund', async (ctx) => json(200, await svc.refundSubscription(await session(ctx))));
+  r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await billingAuth(ctx))));
+  r.add('GET', '/v1/billing/subscription', async (ctx) => json(200, { subscription: await svc.subscription(await billingAuth(ctx)) }));
+  r.add('GET', '/v1/billing/entitlement', async (ctx) => json(200, await svc.entitlementOf(await billingAuth(ctx))));
+  r.add('POST', '/v1/billing/refund', async (ctx) => json(200, await svc.refundSubscription(await billingAuth(ctx))));
   r.add('POST', '/v1/billing/cancel', async (ctx) => {
-    await svc.cancelSubscription(await session(ctx));
+    await svc.cancelSubscription(await billingAuth(ctx));
     return json(204, undefined);
   });
   // 카드 정기결제(빌링키 PG) 창·돌아옴. 브라우저가 여는 HTML이라 세션 없이 열린다(참조는 그 계정만 받은 무작위 값). 모의 PG면 404

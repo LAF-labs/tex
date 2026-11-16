@@ -121,7 +121,7 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.notEqual(e.pg.charges[0]!.orderId, e.pg.charges[1]!.orderId);
 
     // 해지: 빌링키를 지우고 더 청구하지 않는다. 이미 낸 기간의 갱신일은 남는다
-    await e.svc.cancelSubscription({ accountId: (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id } as never);
+    await e.svc.cancelSubscription({ accountId: (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id });
     const after = await st(e, ref);
     assert.deepEqual([after.status, after.renewAt], ['canceled', addMonthKst(addMonthKst(t0))]);
     e.clock.advance(40 * D);
@@ -210,13 +210,13 @@ describe('카드 정기결제(빌링키 PG)', () => {
   });
 });
 
-describe('청약철회 환불·유료 기능 권리(체험 14일)', () => {
+describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
   let e: Env;
   beforeEach(async () => (e = await start()));
   afterEach(() => e.server.close());
 
   const accountOf = async (ref: string) => (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id;
-  const session = async (ref: string) => ({ accountId: await accountOf(ref) }) as never;
+  const session = async (ref: string) => ({ accountId: await accountOf(ref) });
 
   it('결제 당일 철회는 전액, 구독은 바로 끝나고 접수 메일. 같은 결제를 두 번 환불하지 않는다', async () => {
     const s = await login(e, 'refund@example.com');
@@ -255,13 +255,13 @@ describe('청약철회 환불·유료 기능 권리(체험 14일)', () => {
     await assert.rejects(e.svc.refundSubscription(await session(ref2)), /account.refund_unavailable/);
   });
 
-  it('권리: 가입 뒤 14일 체험 → 끝나면 none, 구독하면 paid(갱신일까지), 해지해도 갱신일까지 paid', async () => {
+  it('권리: 가입 뒤 1달 체험 → 끝나면 none, 구독하면 paid(갱신일까지), 해지해도 갱신일까지 paid', async () => {
     const s = await login(e, 'ent@example.com');
     const t0 = e.clock.now();
     const ent = await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s) });
-    assert.deepEqual(ent.json, { state: 'trial', until: t0 + 14 * D, trialDays: 14 });
-    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.entitlement, { state: 'trial', until: t0 + 14 * D });
-    e.clock.advance(14 * D);
+    assert.deepEqual(ent.json, { state: 'trial', until: addMonthKst(t0), trialMonths: 1 });
+    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.entitlement, { state: 'trial', until: addMonthKst(t0) });
+    e.clock.t = addMonthKst(t0);
     const s2 = await login(e, 'ent@example.com');
     assert.equal((await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s2) })).json.state, 'none');
     const { ref } = await subscribe(e, s2);

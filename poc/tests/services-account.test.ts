@@ -667,20 +667,23 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
   });
 });
 
-describe('유료 기능 권리: 체험이 끝나고 구독이 없으면 게이트웨이 범위 토큰을 주지 않는다', () => {
+describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없으면 게이트웨이 범위 토큰을 주지 않는다', () => {
   let e: Env;
   before(async () => (e = await start()));
   after(() => e.server.close());
 
   it('체험 중 전체 범위 → 체험 뒤 게이트웨이만 빠짐, 게이트웨이만 요청하면 402, 구독하면 다시', async () => {
     const s = await login(e, 'gate@example.com');
-    const { aik, d } = await desktop(e, s);
+    const { aik, d, call } = await desktop(e, s);
+    // 데스크톱은 기기 토큰(devlist)으로 구독 경로를 부른다(기기 등록 뒤 계정 세션을 버린다)
+    assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'trial');
+    assert.equal((await call('GET', '/v1/billing/subscription')).json.subscription, null);
     const tok = async (scopes?: string[]) => {
       const c = cert(aik, d, e.clock.now() + 90 * D);
       return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), d.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
     };
     assert.ok(((await tok()).json.scopes as string[]).includes('gateway'));
-    e.clock.advance(15 * D);
+    e.clock.advance(32 * D);
     const t = await tok();
     assert.equal(t.status, 200);
     assert.ok(!(t.json.scopes as string[]).includes('gateway'));
@@ -694,6 +697,8 @@ describe('유료 기능 권리: 체험이 끝나고 구독이 없으면 게이�
     const raw = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D, at: e.clock.now() });
     await e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
     assert.equal((await tok(['gateway'])).status, 200);
+    assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'paid');
+    assert.equal((await call('POST', '/v1/billing/cancel')).status, 204);
   });
 });
 

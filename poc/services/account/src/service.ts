@@ -34,6 +34,9 @@ import { verifyAssertion, verifyRegistration, WebAuthnError, type AssertionInput
 /** 세션을 준 수단. refresh = 갱신 토큰으로 새로 받은 세션(강한 인증·최근 로그인으로 치지 않는다) */
 export type AuthMethod = 'email_code' | 'passkey' | 'password' | 'refresh';
 
+/** 구독 경로의 호출자: 계정 세션 또는 데스크톱 기기 토큰(app.ts billingAuth). 계정 ID만 쓴다 */
+export type BillingCaller = { accountId: string };
+
 export interface Session {
   accountId: string;
   authMethod: AuthMethod;
@@ -762,7 +765,7 @@ export class AccountService {
 
   // ---------- 구독·결제(19,900원 한 플랜, ADR-034) ----------
 
-  async checkout(s: Session): Promise<{ checkoutUrl: string }> {
+  async checkout(s: BillingCaller): Promise<{ checkoutUrl: string }> {
     // 계정 행 잠금 안에서 참조를 정한다: 동시에 두 번 눌러도 같은 참조의 결제 창이 나온다(버려지는 참조로 결제되는 일 없음)
     const ref = await this.db.tx(async (q) => {
       await q.one(`SELECT id FROM accounts WHERE id = $1${q.forUpdate}`, [s.accountId]);
@@ -925,7 +928,7 @@ export class AccountService {
     return resultPageHtml({ title, body, returnUrl: this.d.billingReturnUrl, nonce });
   }
 
-  async subscription(s: Session): Promise<Record<string, unknown> | null> {
+  async subscription(s: BillingCaller): Promise<Record<string, unknown> | null> {
     const sub = await this.db.one<{ plan: string; status: string; renew_at: number | null; last_payment_key: string | null; last_paid_at: number | null; last_paid_amount: number | null }>(
       'SELECT plan, status, renew_at, last_payment_key, last_paid_at, last_paid_amount FROM subscriptions WHERE account_id = $1',
       [s.accountId],
@@ -939,11 +942,11 @@ export class AccountService {
   }
 
   /** GET /v1/billing/entitlement: 유료 기능 권리(구독 화면·잠금 안내) */
-  async entitlementOf(s: Session): Promise<{ state: string; until: number | null; trialDays: number }> {
-    return { ...(await this.entitlement(s.accountId)), trialDays: BILLING.trialDays };
+  async entitlementOf(s: BillingCaller): Promise<{ state: string; until: number | null; trialMonths: number }> {
+    return { ...(await this.entitlement(s.accountId)), trialMonths: BILLING.trialMonths };
   }
 
-  async cancelSubscription(s: Session): Promise<void> {
+  async cancelSubscription(s: BillingCaller): Promise<void> {
     const sub = await this.db.one<{ pg_customer_ref: string; status: string }>('SELECT pg_customer_ref, status FROM subscriptions WHERE account_id = $1', [s.accountId]);
     if (!sub || sub.status === 'canceled') fail('request.param_rejected');
     await this.d.payments.cancel(sub!.pg_customer_ref);
@@ -970,7 +973,7 @@ export class AccountService {
     return { refundableUntil: until, amountKrw: Math.max(0, paid - Math.ceil((paid * usedDays) / periodDays)) };
   }
 
-  async refundSubscription(s: Session): Promise<{ amountKrw: number }> {
+  async refundSubscription(s: BillingCaller): Promise<{ amountKrw: number }> {
     const b = this.d.payments.billing;
     if (!b) fail('account.refund_unavailable');
     const now = this.now();
@@ -999,7 +1002,7 @@ export class AccountService {
   }
 
   /**
-   * 유료 기능을 쓸 수 있는가(게이트웨이 범위 토큰). 체험(가입 뒤 BILLING.trialDays, 카드 없음) 또는 낸 기간 안(활성·연체 유예·해지했지만 갱신일 전).
+   * 유료 기능을 쓸 수 있는가(게이트웨이 범위 토큰). 체험(가입 뒤 BILLING.trialMonths달, 카드 없음) 또는 낸 기간 안(활성·연체 유예·해지했지만 갱신일 전).
    * until = 그 권리가 끝나는 시각(체험 끝·갱신일). 모의 PG(웹훅)도 같은 규칙이다.
    */
   async entitlement(accountId: string): Promise<{ state: 'trial' | 'paid' | 'none'; until: number | null }> {
@@ -1013,7 +1016,8 @@ export class AccountService {
       if ((sub.status === 'active' || sub.status === 'past_due') && renew + BILLING.pastDueGraceMs > now) return { state: 'paid', until: renew + BILLING.pastDueGraceMs };
       if (sub.status === 'canceled' && renew > now) return { state: 'paid', until: renew };
     }
-    const trialEnd = a ? Number(a.created_at) + BILLING.trialDays * MS.D : 0;
+    let trialEnd = a ? Number(a.created_at) : 0;
+    for (let i = 0; a && i < BILLING.trialMonths; i++) trialEnd = addMonthKst(trialEnd);
     if (trialEnd > now) return { state: 'trial', until: trialEnd };
     return { state: 'none', until: null };
   }

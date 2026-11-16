@@ -81,11 +81,11 @@
 
 | 메서드·경로 | 인증 | 요청 | 응답 | 오류 |
 |---|---|---|---|---|
-| `POST /v1/billing/checkout` | 세션 | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
+| `POST /v1/billing/checkout` | 세션 또는 데스크톱 기기 토큰(devlist) | — | `200 {checkoutUrl}` | 이미 활성이면 `400 request.param_rejected`. pending·past_due는 같은 PG 참조로 다시(동시 클릭도 같은 참조), 해지 뒤는 새 참조 |
 | `GET /v1/billing/subscription` | 세션 | — | `200 {subscription: {plan:"standard", status, renewAt, amountKrw:19900, period:"month", refund?: {refundableUntil, amountKrw}} \| null}` | `refund`는 지금 청약철회할 수 있을 때만(빌링키 PG) |
 | `POST /v1/billing/cancel` | 세션 | — | `204` | 다음 결제 없음, 낸 기간(`renewAt`)까지 사용. 접수 메일(`subscription_canceled`) |
 | `POST /v1/billing/refund` | 세션 | — | `200 {amountKrw}` | 청약철회(결제 후 7일, 빌링키 PG만). 금액 = 결제액 − 쓴 날 일할(올림), 당일이면 전액. 구독은 바로 끝난다. `409 account.refund_unavailable`(기간 지남·환불할 결제 없음), `502 account.refund_failed`(PG 거절·결과 모름, 다시 해도 같은 멱등 키라 두 번 환불되지 않음) |
-| `GET /v1/billing/entitlement` | 세션 | — | `200 {state:"trial"\|"paid"\|"none", until, trialDays}` | 유료 기능 권리. 체험 = 가입 뒤 14일(카드 없음). paid = 활성(갱신일까지, 연체·청구 대기는 +3일 유예)·해지했지만 갱신일 전. `GET /v1/me`에도 `entitlement`가 있다 |
+| `GET /v1/billing/entitlement` | 세션 | — | `200 {state:"trial"\|"paid"\|"none", until, trialMonths}` | 유료 기능 권리. 체험 = 가입 뒤 1달(KST 달력, 카드 없음, 사용자 결정 2026-11-16). paid = 활성(갱신일까지, 연체·청구 대기는 +3일 유예)·해지했지만 갱신일 전. `GET /v1/me`에도 `entitlement`가 있다 |
 
 **유료 기능 잠금**: 권리가 `none`이면 데스크톱 기기 토큰에서 `gateway` 범위를 뺀다(연결·기기 관리 범위는 그대로). `gateway`만 요청하면 `402 account.subscription_required`. 게이트웨이는 범위 없는 토큰을 `account.scope_denied`로 거부한다. 토큰 수명이 15분이라 구독·만료가 15분 안에 반영된다.
 | `POST /v1/billing/webhook` | PG 서명 | PG 원본 본문(16KB) | `200 {ok:true}` | `400 account.billing_signature_invalid`. 모의 PG: `x-mock-pg-signature` = HMAC-SHA256 hex. 이벤트에 PG 쪽 시각 `at`(필수, 서명 범위 안)이 있고 마지막으로 반영한 이벤트보다 늦은 것만 반영(늦게 온·재전송 이벤트 무시). 해지는 끝 상태(다시 구독은 checkout이 새 PG 참조로 연다), 결제 실패는 active에서만 |

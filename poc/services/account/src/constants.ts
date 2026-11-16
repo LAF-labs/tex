@@ -89,8 +89,8 @@ export const BILLING = {
   /** 확정 실패가 이만큼 쌓이면 해지(빌링키 삭제) */
   maxFailedCharges: 3,
   orderName: '세무 비서 월 구독',
-  /** 가입 뒤 무료 체험(카드 없음, 자동 유료 전환 없음) */
-  trialDays: 14,
+  /** 가입 뒤 무료 체험 개월 수(KST 달력, 카드 없음, 자동 유료 전환 없음. 사용자 결정 2026-11-16: 1달) */
+  trialMonths: 1,
   /** 청약철회 기간(전자상거래법 §17①) */
   refundWindowMs: 7 * D,
   /** 연체(past_due) 중에도 재시도가 끝날 때까지 쓸 수 있다 */
