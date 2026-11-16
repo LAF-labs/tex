@@ -464,6 +464,23 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(() => fc('sales_summary', { month_offset: -2 }), () => reply({ text: '8월 매출은 {r3.sum.supply}예요.', show: ['r3'] }));
     r = (await say(a, pc, '9월 매출 알려줘')).reply;
     assert.equal(r.filtered, 'number', '사장님이 쓰지 않은 달 이름은 걸러진다');
+    // 사장님이 쓴 날짜도 따라 써도 된다(chat-eval issue-date). 쓰지 않은 날은 걸러진다
+    script(() => reply({ kind: 'did', text: '10월 31일자로 준비할게요.' }));
+    r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
+    assert.equal(r.filtered, null);
+    script(() => reply({ kind: 'did', text: '10월 30일자로 준비할게요.' }));
+    r = (await say(a, pc, 'A상사 10월 31일자로 끊어줘')).reply;
+    assert.equal(r.filtered, 'number');
+  });
+
+  it('빈 조회를 되풀이하면 없다고 말한다(chat-eval look-empty)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    pc.exec = (c) => (pc.calls.push(c), { ref: null, status: 'empty', fields: null, needs: null });
+    const look = () => fc('invoice_history', { counterparty: null });
+    script(look, look);
+    const { reply: rep } = await say(a, pc, '발급 기록 있어?');
+    assert.deepEqual([rep.text, rep.filtered, pc.calls.length], [CHAT_AGENT_DONE_TEXT.empty, 'repeat', 1]);
   });
 
   it('카드를 만든 뒤 같은 카드를 또 만들라고 해도 카드는 한 장이다', async () => {

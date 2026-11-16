@@ -41,7 +41,7 @@ if (!FAKE && (!KEY || !MODEL)) {
 const usage = { calls: 0, input: 0, cached: 0, output: 0, errors: 0, ms: [] as number[] };
 const costUsd = () => ((usage.input - usage.cached) * PRICE.in + usage.cached * PRICE.cached + usage.output * PRICE.out) / 1e6;
 
-async function upstream(input: unknown[]): Promise<{ status: string; output: Array<Record<string, unknown>> }> {
+async function upstream(input: unknown[]): Promise<{ status: string; output: Array<Record<string, unknown>>; provider?: string }> {
   if (process.env.EVAL_DUMP) console.error('INPUT', JSON.stringify(input, (_k, v) => (typeof v === 'string' && v.length > 400 ? `${v.slice(0, 120)}…(${v.length}자)` : v)));
   if (FAKE) return fakeUpstream(input);
   if (costUsd() > COST_CAP) throw new Error('cost_cap');
@@ -72,8 +72,7 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
       usage.output += d.usage?.output_tokens ?? 0;
       usage.cached += d.usage?.input_tokens_details?.cached_tokens ?? 0;
       usage.ms.push(performance.now() - t0);
-      lastProvider = String(d.provider ?? '');
-      return { status: String(d.status ?? ''), output: d.output ?? [] };
+      return { status: String(d.status ?? ''), output: d.output ?? [], provider: String(d.provider ?? '') };
     }
     if (attempt >= 2 || (res && res.status < 500 && res.status !== 429)) {
       usage.errors++;
@@ -100,7 +99,8 @@ function fakeUpstream(input: unknown[]): { status: string; output: Array<Record<
   return { status: 'completed', output: [{ type: 'function_call', call_id: `call_${randomBytes(3).toString('hex')}`, name: 'invoice_draft', arguments: JSON.stringify({ counterparty: name, amount: amt, vat: null, item: null }) }] };
 }
 
-async function startGateway(): Promise<{ origin: string; close: () => void }> {
+/** 사례마다 따로 띄운다: 도구 결과 흔적(trace)·상류 오류가 동시 실행(--jobs>1) 사례끼리 섞이지 않게. */
+async function startGateway(sink: Sink): Promise<{ origin: string; close: () => void }> {
   const digest = toolsetDigest(CHAT_AGENT);
   const server = http.createServer((req, res) => {
     let raw = '';
@@ -117,12 +117,12 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
       const input = [...(body.messages as unknown[]), ...replay.map((r) => ('item' in r && r.item ? r.item : { type: 'function_call_output', call_id: r.call_id, output: r.output }))];
       try {
         const r = await upstream(input);
-        trace.push({ sent: replay.length, provider: lastProvider, out: r.output.map(brief) });
+        sink.trace.push({ sent: replay.length, provider: r.provider ?? '', out: r.output.map(brief) });
         if (process.env.EVAL_DUMP) console.error('OUTPUT', JSON.stringify(r.output, (_k, v) => (typeof v === 'string' && v.length > 400 ? `${v.slice(0, 120)}…(${v.length}자)` : v)));
         const tag = (item: unknown) => createHash('sha256').update(JSON.stringify(item)).digest('hex');
         send(200, { model: MODEL || 'fake', status: r.status, output: r.output.map((item) => ({ item, tag: tag(item) })), usage: { input_tokens: 0, output_tokens: 0 }, toolsetDigest: digest });
       } catch (e) {
-        lastUpstreamError = (e as Error).message;
+        sink.err = (e as Error).message;
         send(503, { error: 'gateway.upstream_error' });
       }
     });
@@ -130,13 +130,15 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
   await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close() };
 }
-let lastUpstreamError = '';
-let lastProvider = '';
+type Trace = { sent: number; provider: string; out: Array<Record<string, unknown>> };
+interface Sink {
+  trace: Trace[];
+  err: string;
+}
 /**
- * 상류 응답 요약(--jobs=1일 때 턴과 정확히 맞는다): 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 300자까지).
+ * 상류 응답 요약(사례마다 게이트웨이를 따로 띄우므로 --jobs>1이어도 그 사례 것만 담긴다): 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 300자까지).
  * turn_limit·bad_response가 어디서 나는지 보려고 둔다. 장부가 가상이라 실제 값은 없다.
  */
-let trace: Array<{ sent: number; provider: string; out: Array<Record<string, unknown>> }> = [];
 function brief(i: Record<string, unknown>): Record<string, unknown> {
   if (i.type === 'function_call') return { type: i.type, name: i.name, args: String(i.arguments ?? '').slice(0, 300) };
   if (i.type === 'message') return { type: i.type, content: (i.content as Array<{ type?: string; text?: string }> | undefined)?.map((c) => ({ type: c.type, text: String(c.text ?? '').slice(0, 300) })) };
@@ -157,7 +159,7 @@ interface TurnLog {
   say: string;
   calls: Array<{ tool: string; args: string }>;
   model: { kind: string; ask: string | null; filtered: string | null; raw: string } | null;
-  trace: typeof trace;
+  trace: Trace[];
   result: AgentTurnResult;
   created: Array<DraftCard & { name: string; itemShown: string | null }>;
   open: Array<DraftCard & { name: string; itemShown: string | null }>;
@@ -168,7 +170,17 @@ function callArgs(c: DomainCall, names: Map<string, string>): string {
   return JSON.stringify(c, (k, v) => (k === 'tool' ? undefined : k === 'counterpartyId' && typeof v === 'string' ? (names.get(v) ?? v) : v));
 }
 
-async function runCase(c: Case, env: ReturnType<typeof seedDb>, origin: string): Promise<TurnLog[]> {
+async function runCase(c: Case, env: ReturnType<typeof seedDb>): Promise<TurnLog[]> {
+  const sink: Sink = { trace: [], err: '' };
+  const gw = await startGateway(sink);
+  try {
+    return await runTurns(c, env, gw.origin, sink);
+  } finally {
+    gw.close();
+  }
+}
+
+async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string, sink: Sink): Promise<TurnLog[]> {
   const catalog = BundleCatalog.load();
   const egress = new Egress({ env: {}, testOrigins: { gateway: origin }, gateway: { auth: { headers: async () => ({ authorization: 'DPoP eval', dpop: 'proof' }) }, bundles: catalog.allowEntries() } });
   const engine = new ChatAgent(env.db, { model: gatewayChatAgentModel(egress) });
@@ -213,13 +225,14 @@ async function runCase(c: Case, env: ReturnType<typeof seedDb>, origin: string):
   const logs: TurnLog[] = [];
   for (const t of c.turns) {
     cur = { calls: [], model: null };
-    trace = [];
+    sink.trace = [];
+    sink.err = '';
     const before = new Set(drafts.map((d) => d.runId));
     const result = await chat.turn(t.say);
     const created = drafts.filter((d) => !before.has(d.runId)).map(view);
     const open = drafts.filter((d) => d.status === 'draft').map(view);
-    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace, result, created, open, checks: [] };
-    log.checks = score(t.expect, log);
+    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace: sink.trace, result, created, open, checks: [] };
+    log.checks = score(t.expect, log, sink.err);
     logs.push(log);
   }
   return logs;
@@ -238,13 +251,13 @@ function matchDraft(e: DraftExpect, d: { name: string; amount: number | null; va
   return null;
 }
 
-function score(e: TurnExpect, l: TurnLog): TurnLog['checks'] {
+function score(e: TurnExpect, l: TurnLog, upstreamError = ''): TurnLog['checks'] {
   const out: TurnLog['checks'] = [];
   const add = (name: string, ok: boolean, detail?: string) => out.push({ name, ok, ...(ok || !detail ? {} : { detail }) });
   const r = l.result;
   const text = r.text;
   if (r.kind === 'unavailable') {
-    add('답을 받음', !!e.mayFail, `${r.code}${lastUpstreamError ? ` (${lastUpstreamError})` : ''}`);
+    add('답을 받음', !!e.mayFail, `${r.code}${upstreamError ? ` (${upstreamError})` : ''}`);
     if (!e.mayFail) return out;
   }
   const tools = l.calls.map((x) => x.tool);
@@ -300,13 +313,12 @@ async function pool<T, R>(items: T[], n: number, f: (x: T) => Promise<R>): Promi
 
 async function main() {
   const env = seedDb();
-  const gw = await startGateway();
   const cases = CASES.filter((c) => !ONLY || ONLY.includes(c.id));
   const runs: Array<{ run: number; id: string; cat: string; why: string; pass: boolean; turns: TurnLog[] }> = [];
   try {
     for (let run = 1; run <= RUNS; run++) {
       const res = await pool(cases, JOBS, async (c) => {
-        const turns = await runCase(c, env, gw.origin).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, trace: [], result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
+        const turns = await runCase(c, env).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, trace: [], result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
         const pass = turns.every((t) => t.checks.every((x) => x.ok));
         console.log(`${pass ? 'PASS' : 'FAIL'} [${run}] ${c.id}${pass ? '' : `  ${turns.flatMap((t, i) => t.checks.filter((x) => !x.ok).map((x) => `t${i + 1} ${x.name}${x.detail ? `: ${x.detail}` : ''}`)).join(' | ')}`}`);
         return { run, id: c.id, cat: c.cat, why: c.why, pass, turns };
@@ -314,7 +326,6 @@ async function main() {
       runs.push(...res);
     }
   } finally {
-    gw.close();
     env.db.close();
     fs.rmSync(env.dir, { recursive: true, force: true });
   }

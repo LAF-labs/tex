@@ -65,9 +65,10 @@ export const CHAT_AGENT_DONE_TEXT: Partial<Record<ToolStatus, string>> = {
   card_updated: '카드를 고쳤어요. 카드에서 바뀐 값을 확인해 주세요.',
   discarded: '카드를 취소했어요. 아무것도 발급되지 않았어요.',
   ok: '찾은 기록을 표로 보여 드렸어요.',
+  empty: '찾는 기록이 없어요.',
 };
 /** 엔진이 조회 되풀이로 턴을 닫을 때의 문장. 슬롯은 main이 결과 값으로 채운다. */
-export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 자세한 내용은 표로 보여 드렸어요.`;
+export const CHAT_AGENT_LOOKUP_TEXT = (ref: string): string => `{${ref}.count}건이고 합계는 {${ref}.sum.total}이에요. 가장 최근은 {${ref}.first.date} {${ref}.first.counterparty} 건이에요.`;
 /** 이번 턴 같은 카드 판정 키: 거래처와 금액 */
 const cardKey = (c: { counterpartyId: string; amount: DraftAmount }): string => `${c.counterpartyId}:${JSON.stringify(c.amount)}`;
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
@@ -547,6 +548,8 @@ export class ChatAgent {
     if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
       return { kind: 'answer', text: CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
+    // 빈 조회를 되풀이했으면 없다고 말한다(chat-eval look-empty: "한빛식품 발급 기록 있어?"에 invoice_history 두 번 → turn_limit)
+    if (!limit && last.status === 'empty') return { kind: 'answer', text: CHAT_AGENT_DONE_TEXT.empty!, show, ask: null, filtered: 'repeat' };
     throw new ChatError('chat.turn_limit');
   }
 
@@ -679,9 +682,11 @@ export class ChatAgent {
       return { kind: k, text: done ?? (shown.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT), show: shown, ask: null, filtered: 'slot' };
     }
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
-    // 사장님이 이번 문장에 쓴 달 이름("9월")은 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept)
-    const months = new Set([...turn.user.matchAll(/(?<!\d)(1[0-2]|[1-9])월/gu)].map((m) => m[0]));
-    const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ').replace(/(?<!\d)(1[0-2]|[1-9])월/gu, (m) => (months.has(m) ? '그달' : m));
+    // 사장님이 이번 문장에 쓴 달·날짜("9월", "10월 31일")는 그대로 따라 써도 된다(지어낸 값이 아니다, chat-eval look-sept·issue-date)
+    const DAY = /(?<!\d)(?:1[0-2]|[1-9])월(?:\s*(?:3[01]|[12]\d|[1-9])일)?(?!\d)/gu;
+    const norm = (x: string) => x.replace(/\s+/g, '');
+    const said = new Set([...turn.user.matchAll(DAY)].flatMap((m) => [norm(m[0]), norm(m[0]).replace(/\d+일$/, '')]));
+    const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ').replace(DAY, (m) => (said.has(norm(m)) ? '그날' : m));
     if (unsafeText(bare)) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
     if (numberShaped(bare)) {
       // 되묻는 답이면 되묻기는 살린다(문장만 고정 문장으로): 사장님이 빈 칸을 채울 수 있게
