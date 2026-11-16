@@ -327,6 +327,27 @@ describe('M4-6 게이트웨이: /v1/respond 툴셋·replay 태그·이미지 거
     assert.equal(e.provider.responds.length, 0);
   });
 
+  it('computer_use(대표 결정 2026-11-16): 가린 JPEG 한 장만 받아 공급사로 그대로 보낸다. 다른 툴셋·두 장·PNG·replay 속 사진은 400', async () => {
+    const rt = await e.runToken();
+    const shot = { type: 'input_image', image_url: 'data:image/jpeg;base64,/9j/AAAA' };
+    const goal = { type: 'input_text', text: '[목표] s16a fill item' };
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"action":"fail","x":null,"y":null,"token":null,"step":null,"risk_flags":[]}' }] }];
+    const ok = await e.call('/v1/respond', { toolset: 'computer_use', messages: [{ role: 'user', content: [goal, shot] }], runToken: rt });
+    assert.equal(ok.status, 200, ok.text);
+    const sent = e.provider.responds[0]!;
+    assert.deepEqual((sent.input as Array<{ content?: unknown[] }>).at(-1)!.content, [goal, shot]);
+    assert.equal((sent.text as { format: { name: string } }).format.name, 'computer_action');
+    const bad = [
+      { toolset: 'browser_agent', messages: [{ role: 'user', content: [goal, shot] }], runToken: rt },
+      { toolset: 'computer_use', messages: [{ role: 'user', content: [goal, shot, shot] }], runToken: rt },
+      { toolset: 'computer_use', messages: [{ role: 'user', content: [goal, { type: 'input_image', image_url: 'data:image/png;base64,AAAA' }] }], runToken: rt },
+      { toolset: 'computer_use', messages: [{ role: 'user', content: [goal, { type: 'input_image', image_url: 'https://x/y.jpg' }] }], runToken: rt },
+      { toolset: 'computer_use', messages: [{ role: 'user', content: [goal] }], replay: [{ item: { type: 'message', content: [shot] }, tag: '0'.repeat(64) }], runToken: rt },
+    ];
+    for (const b of bad) assert.equal((await e.call('/v1/respond', b)).json.error, 'gateway.param_rejected', JSON.stringify(b).slice(0, 120));
+    assert.equal(e.provider.responds.length, 1);
+  });
+
   it('selector_repair: 태그 없는·틀린 replay와 근거 없는 function_call_output은 400, L2는 실행당 2회', async () => {
     const rt = await e.runToken();
     e.provider.respondOutput = [{ type: 'function_call', call_id: 'call_1', name: 'find_candidates', arguments: '{"role":"button","nameContains":"조회","maxResults":3}' }];

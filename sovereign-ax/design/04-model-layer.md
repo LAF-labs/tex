@@ -48,7 +48,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 - 요청당 질문 1~400개. `choice` 선택지 2~255개(중복 불가), `score` 2~10단계. `input_json` 한도: 중첩 32단계, 값 10,000개, 256 KiB.
 - 가격: 비캐시 입력 $0.10/1M, 캐시 읽기 $0.01/1M, **캐시 쓰기 $0.125/1M(30분)**, 출력 무료. 272K 토큰 초과 시 2배.
 - 응답 `answers[]`: predicate→`probability`, choice/score→`probabilities[]`+`confidence`, refusal→`{type:"refusal", name}`(사유 없음). refusal은 **질문 단위**라 나머지 질문은 정상 답을 받는다.
-- 이미지: base64 데이터 URL 또는 공개 URL(`file_id` 불가). 우리는 **Phase 1에서 이미지를 보내지 않는다**(D06 §5, B-18).
+- 이미지: base64 데이터 URL 또는 공개 URL(`file_id` 불가). 우리는 **Phase 1에서 이미지를 보내지 않는다**(D06 §5, B-18). 예외: 화면 보기 `computer_use` 툴셋만 PC가 가린 JPEG 한 장(D03 §4.3, 대표 결정 2026-11-16).
 - `safety_identifier`는 SDK 타입에 있다(가이드 본문 미언급). `user`·`metadata` 없음.
 - 지연: 가이드는 Responses 대비 "약 10배 빠름"만 주장하고 절대 수치는 없다. **"수백 ms"는 근거 없는 서술이었으므로 삭제**한다. 목표치는 S7에서 한국 egress 기준 p50/p95를 재고 정한다.
 
@@ -260,7 +260,7 @@ interface RespondResult { status: 'completed'|'incomplete'|'refusal'; output?: u
 | 엔드포인트 | 요청(스키마 `$defs`) | 응답 | 비고 |
 |---|---|---|---|
 | `POST /v1/decide` | `decide`: `{bundleId, bundleDigest, input(마스킹 텍스트, ≤ 해당 번들 maxInputBytes ≤ 16KB), runToken}` + `Authorization: DPoP <기기 범위 토큰>` + `DPoP` 증명(`SAX-dpop-v1`). `X-Device-Id`는 토큰에서 유도한다 | Decisions 응답 + `usage`(`cached_tokens` 제외) + `questionsDigest` | 게이트웨이가 `model`, `prompt_cache_options`(명시 모드·브레이크포인트 위치), `prompt_cache_key`(§2.1 정본), `safety_identifier`를 주입하고 번들 질문을 붙인다. `runToken`은 게이트웨이가 발급·서명한 실행 토큰(실행당 예산 집행) |
-| `POST /v1/respond` | `respond`: `{toolset, messages(role=user, input_text만), replay[](게이트웨이 태그 `HMAC(gw_key, accountId‖deviceId‖runToken‖item)`가 맞는 항목과 그 `call_id`의 `function_call_output`만), runToken}` | Responses 응답 + 태그 | `effort`·`max_output_tokens`·툴 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의에 따라 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·캐시 브레이크포인트를 보내면 400. **Phase 1은 이미지 입력을 400으로 거부**(`GW_ALLOW_IMAGES=false`, B-18) |
+| `POST /v1/respond` | `respond`: `{toolset, messages(role=user, input_text만), replay[](게이트웨이 태그 `HMAC(gw_key, accountId‖deviceId‖runToken‖item)`가 맞는 항목과 그 `call_id`의 `function_call_output`만), runToken}` | Responses 응답 + 태그 | `effort`·`max_output_tokens`·툴 정의·`text.format`·`store:false`·캐시 필드는 툴셋 정의에 따라 게이트웨이가 넣는다. 클라이언트가 `developer` 역할·이미지·`input_file`·캐시 브레이크포인트를 보내면 400. **Phase 1은 이미지 입력을 400으로 거부**(`GW_ALLOW_IMAGES=false`, B-18). 예외: `computer_use`는 `input_image`(JPEG data URL, 900KB) 한 장만 받는다(D03 §4.3) |
 | `POST /v1/run-tokens` | 기기 범위 토큰 필요 | 게이트웨이 서명 `runToken` | 실행당 예산을 묶는다 |
 | `GET /v1/usage/me` | — | 월 사용량·한도 | |
 
