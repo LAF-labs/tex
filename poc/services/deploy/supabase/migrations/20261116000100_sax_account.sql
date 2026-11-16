@@ -13,8 +13,15 @@ ALTER TABLE subscriptions ADD COLUMN charge_attempts INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE subscriptions ADD COLUMN next_charge_at BIGINT;           -- 다음 청구 시도 시각. 청구 중에는 임대 끝 시각(두 번 청구하지 않게)
 CREATE INDEX subscriptions_charge_due ON subscriptions (renew_at);
 
+-- account/migrations/005_billing_refund.sql
+-- 계정 서비스 v5: 청약철회 환불(결제 후 7일)을 위한 마지막 결제 참조. 결제 키는 PG의 결제 참조 ID다(시크릿 키 없이는 쓸 수 없다).
+ALTER TABLE subscriptions ADD COLUMN last_payment_key TEXT;        -- 마지막으로 성공한 청구의 PG 결제 참조(환불하면 지운다)
+ALTER TABLE subscriptions ADD COLUMN last_paid_at BIGINT;      -- 그 청구 시각(청약철회 7일 기준)
+ALTER TABLE subscriptions ADD COLUMN last_paid_amount INTEGER;     -- 그 청구 금액(원, 부가세 포함)
+
 CREATE TABLE IF NOT EXISTS schema_migrations (service TEXT NOT NULL, version INTEGER NOT NULL, PRIMARY KEY (service, version));
 INSERT INTO schema_migrations (service, version) VALUES ('account', 4) ON CONFLICT DO NOTHING;
+INSERT INTO schema_migrations (service, version) VALUES ('account', 5) ON CONFLICT DO NOTHING;
 
 -- 권한: 이 서비스 역할만 행을 읽고 쓴다(DDL 없음). Supabase API 역할(anon·authenticated)과 PUBLIC에는 아무것도 없다.
 REVOKE ALL ON ALL TABLES IN SCHEMA account, account_limits FROM PUBLIC;

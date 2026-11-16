@@ -5,7 +5,7 @@
 //   → 서버가 빌링키 발급(POST /v1/billing/authorizations/issue) → 봉인 저장 → 첫 달 청구(POST /v1/billing/{billingKey}).
 //   다음 달부터는 정리 cron이 갱신일에 청구한다. 토스는 정기 청구를 스스로 하지 않고 웹훅 서명도 없어서 웹훅을 쓰지 않는다.
 //
-// 송신 허용 목록(이 파일이 강제): https://api.tosspayments.com 의 두 경로뿐이다. 리디렉션은 따르지 않는다.
+// 송신 허용 목록(이 파일이 강제): https://api.tosspayments.com 의 빌링키 발급·청구·결제 취소(청약철회) 경로뿐이다. 리디렉션은 따르지 않는다.
 // 토스에는 무작위 고객 참조(customerKey = pgCustomerRef)와 금액·주문 이름만 보낸다. 이메일·계정 ID는 보내지 않는다.
 // 로그·이벤트·오류에는 키·빌링키·응답 본문을 넣지 않는다(고정 코드만).
 import type { BillingKeyGateway, ChargeResult, PaymentEvent, PaymentGateway, PLAN } from './adapters.ts';
@@ -14,8 +14,9 @@ export const TOSS_API = 'https://api.tosspayments.com';
 export const TOSS_SDK = 'https://js.tosspayments.com/v2/standard';
 const ISSUE_PATH = '/v1/billing/authorizations/issue';
 const chargePath = (billingKey: string) => `/v1/billing/${encodeURIComponent(billingKey)}`;
+const cancelPath = (paymentKey: string) => `/v1/payments/${encodeURIComponent(paymentKey)}/cancel`;
 
-/** 송신 대상이 허용 목록(빌링키 발급·청구 두 경로)인가 */
+/** 송신 대상이 허용 목록(빌링키 발급·청구·결제 취소 세 경로)인가 */
 export function tossEndpointAllowed(url: string): boolean {
   let u: URL;
   try {
@@ -24,7 +25,7 @@ export function tossEndpointAllowed(url: string): boolean {
     return false;
   }
   if (u.origin !== TOSS_API || u.search || u.hash) return false;
-  return u.pathname === ISSUE_PATH || /^\/v1\/billing\/[A-Za-z0-9%_=-]{1,200}$/.test(u.pathname);
+  return u.pathname === ISSUE_PATH || /^\/v1\/billing\/[A-Za-z0-9%_=-]{1,200}$/.test(u.pathname) || /^\/v1\/payments\/[A-Za-z0-9%_=-]{1,200}\/cancel$/.test(u.pathname);
 }
 
 /** 확정이 아닌 결과(다시 같은 주문·같은 멱등 키로 물어야 함): 네트워크·시간 초과·5xx·토스가 처리 중 */
@@ -70,6 +71,7 @@ export class TossPaymentGateway implements PaymentGateway {
       cardPage: (o) => cardPageHtml(this.c.clientKey, o),
       issueBillingKey: (o) => this.issue(o),
       charge: (o) => this.chargeOnce(o),
+      refund: (o) => this.cancelPayment(o),
     };
   }
 
@@ -113,12 +115,23 @@ export class TossPaymentGateway implements PaymentGateway {
   private async chargeOnce(o: { billingKey: string; customerKey: string; orderId: string; amountKrw: number; orderName: string }): Promise<ChargeResult> {
     const r = await this.post(chargePath(o.billingKey), { customerKey: o.customerKey, amount: o.amountKrw, orderId: o.orderId, orderName: o.orderName }, o.orderId);
     if (!r) return { ok: false, uncertain: true, code: 'network' };
-    if (r.status === 200 && r.json.status === 'DONE' && r.json.orderId === o.orderId && r.json.totalAmount === o.amountKrw) return { ok: true };
+    if (r.status === 200 && r.json.status === 'DONE' && r.json.orderId === o.orderId && r.json.totalAmount === o.amountKrw) return typeof r.json.paymentKey === 'string' ? { ok: true, paymentKey: r.json.paymentKey } : { ok: true };
     const c = code(r.json);
     // 같은 주문번호가 이미 결제됨(앞선 시도가 실은 성공): 성공으로 본다. 주문번호는 기간·시도마다 하나다
     if (c === 'ALREADY_PROCESSED_PAYMENT') return { ok: true };
     if (r.status >= 500 || r.status === 409 || UNCERTAIN_CODES.has(c)) return { ok: false, uncertain: true, code: c };
     if (CONFIG_CODES.has(c) || r.status === 401) return { ok: false, uncertain: true, code: `config.${c}` };
+    return { ok: false, uncertain: false, code: c };
+  }
+
+  /** 결제 취소(청약철회 환불). 멱등 키가 같으면 두 번 취소되지 않는다. 이미 취소된 결제는 성공으로 본다 */
+  private async cancelPayment(o: { paymentKey: string; amountKrw: number; reason: string; idempotencyKey: string }): Promise<{ ok: true } | { ok: false; uncertain: boolean; code: string }> {
+    const r = await this.post(cancelPath(o.paymentKey), { cancelReason: o.reason, cancelAmount: o.amountKrw }, o.idempotencyKey);
+    if (!r) return { ok: false, uncertain: true, code: 'network' };
+    if (r.status === 200 && (r.json.status === 'CANCELED' || r.json.status === 'PARTIAL_CANCELED')) return { ok: true };
+    const c = code(r.json);
+    if (c === 'ALREADY_CANCELED_PAYMENT') return { ok: true };
+    if (r.status >= 500 || r.status === 409 || UNCERTAIN_CODES.has(c)) return { ok: false, uncertain: true, code: c };
     return { ok: false, uncertain: false, code: c };
   }
 }

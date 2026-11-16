@@ -19,6 +19,7 @@ interface Env {
   server: Server;
   req: ReturnType<typeof client>;
   events: string[];
+  flush: () => Promise<void>;
 }
 
 async function start(): Promise<Env> {
@@ -29,6 +30,7 @@ async function start(): Promise<Env> {
   const pg = new MockBillingGateway(ORIGIN);
   const signKey = edKey().priv;
   const events: string[] = [];
+  const deferred: Array<() => Promise<void>> = [];
   const svc = new AccountService({
     db,
     mail,
@@ -40,11 +42,13 @@ async function start(): Promise<Env> {
     publicOrigin: ORIGIN,
     billingReturnUrl: 'https://app.test.invalid/billing/done',
     onEvent: (n) => void events.push(n),
+    // 응답과 따로 도는 알림 발송을 모아 두었다가 시험이 기다린다
+    defer: (t) => void deferred.push(t),
     now: clock.now,
   });
   const router = accountRouter({ svc, verifier: new TokenVerifier({ k1: ed25519RawPublic(signKey) }), publicOrigin: ORIGIN, internal: internalAuth() });
   const server = createServer(router, { logger: new Logger('account', () => undefined, clock.now) });
-  return { clock, db, mail, pg, svc, server, req: client(await listen(server)), events };
+  return { clock, db, mail, pg, svc, server, req: client(await listen(server)), events, flush: async () => { while (deferred.length) await deferred.shift()!(); } };
 }
 
 const bearer = (s: string) => ({ authorization: `Bearer ${s}` });
@@ -90,7 +94,7 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.equal(done.status, 200, done.text);
     assert.ok(done.text.includes('구독을 시작했어요'));
     assert.ok(done.text.includes('https://app.test.invalid/billing/done'));
-    assert.deepEqual((await sub(e, s)), { plan: 'standard', status: 'active', renewAt: addMonthKst(t0), amountKrw: 19900, period: 'month' });
+    assert.deepEqual((await sub(e, s)), { plan: 'standard', status: 'active', renewAt: addMonthKst(t0), amountKrw: 19900, period: 'month', refund: { amountKrw: 19900, refundableUntil: t0 + 7 * D } });
     assert.equal(e.pg.charges.length, 1);
     assert.equal(e.pg.charges[0]!.amountKrw, 19900);
     // 결제 창에서 동의한 약관 판이 동의 이력에 남는다
@@ -203,6 +207,92 @@ describe('카드 정기결제(빌링키 PG)', () => {
     assert.ok(e.events.includes('account.billing_card_fail.PAY_PROCESS_CANCELED'));
     // 빌링키 PG는 웹훅을 받지 않는다
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: '{}' })).json.error, 'account.billing_signature_invalid');
+  });
+});
+
+describe('청약철회 환불·유료 기능 권리(체험 14일)', () => {
+  let e: Env;
+  beforeEach(async () => (e = await start()));
+  afterEach(() => e.server.close());
+
+  const accountOf = async (ref: string) => (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id;
+  const session = async (ref: string) => ({ accountId: await accountOf(ref) }) as never;
+
+  it('결제 당일 철회는 전액, 구독은 바로 끝나고 접수 메일. 같은 결제를 두 번 환불하지 않는다', async () => {
+    const s = await login(e, 'refund@example.com');
+    const { ref } = await subscribe(e, s);
+    const sub0 = (await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) })).json.subscription as { refund: { amountKrw: number; refundableUntil: number } };
+    assert.equal(sub0.refund.amountKrw, 19900);
+    assert.equal(sub0.refund.refundableUntil, e.clock.now() + 7 * D);
+    const r = await e.req('POST', '/v1/billing/refund', { headers: bearer(s) });
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.amountKrw, 19900);
+    assert.equal(e.pg.refunds.length, 1);
+    assert.equal(e.pg.refunds[0]!.paymentKey, `pay_${e.pg.charges[0]!.orderId}`);
+    assert.deepEqual(await st(e, ref), { status: 'canceled', renewAt: e.clock.now() });
+    assert.equal((await e.req('POST', '/v1/billing/refund', { headers: bearer(s) })).json.error, 'account.refund_unavailable');
+    await e.flush();
+    await e.svc.drainNotices();
+    assert.ok(e.mail.outbox.some((m) => m.to === 'refund@example.com' && m.kind === 'subscription_refunded'));
+  });
+
+  it('사흘 쓰고 철회하면 쓴 날만큼 빼고, 7일이 지나면 철회할 수 없다. PG 실패면 되돌려 다시 할 수 있다', async () => {
+    const s = await login(e, 'prorate@example.com');
+    const { ref } = await subscribe(e, s);
+    const renew = (await st(e, ref)).renewAt!;
+    const periodDays = Math.round((renew - e.clock.now()) / D);
+    e.clock.advance(3 * D + H);
+    e.pg.nextRefund.push({ ok: false, uncertain: true, code: 'network' });
+    await assert.rejects(e.svc.refundSubscription(await session(ref)), /account.refund_failed/);
+    const r = await e.svc.refundSubscription(await session(ref));
+    assert.equal(r.amountKrw, 19900 - Math.ceil((19900 * 3) / periodDays));
+    // 두 시도의 멱등 키가 같다(결과를 모른 첫 시도가 실은 됐어도 두 번 환불되지 않음)
+    assert.equal(e.pg.refunds[0]!.idempotencyKey, e.pg.refunds[1]!.idempotencyKey);
+
+    const s2 = await login(e, 'late@example.com');
+    const { ref: ref2 } = await subscribe(e, s2);
+    e.clock.advance(7 * D);
+    await assert.rejects(e.svc.refundSubscription(await session(ref2)), /account.refund_unavailable/);
+  });
+
+  it('권리: 가입 뒤 14일 체험 → 끝나면 none, 구독하면 paid(갱신일까지), 해지해도 갱신일까지 paid', async () => {
+    const s = await login(e, 'ent@example.com');
+    const t0 = e.clock.now();
+    const ent = await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s) });
+    assert.deepEqual(ent.json, { state: 'trial', until: t0 + 14 * D, trialDays: 14 });
+    assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.entitlement, { state: 'trial', until: t0 + 14 * D });
+    e.clock.advance(14 * D);
+    const s2 = await login(e, 'ent@example.com');
+    assert.equal((await e.req('GET', '/v1/billing/entitlement', { headers: bearer(s2) })).json.state, 'none');
+    const { ref } = await subscribe(e, s2);
+    const renew = (await st(e, ref)).renewAt!;
+    assert.deepEqual(await e.svc.entitlement(await accountOf(ref)), { state: 'paid', until: renew });
+    await e.svc.cancelSubscription(await session(ref));
+    assert.deepEqual(await e.svc.entitlement(await accountOf(ref)), { state: 'paid', until: renew });
+    e.clock.t = renew + 1;
+    assert.equal((await e.svc.entitlement(await accountOf(ref))).state, 'none');
+    await e.flush();
+    await e.svc.drainNotices();
+    assert.ok(e.mail.outbox.some((m) => m.to === 'ent@example.com' && m.kind === 'subscription_canceled'));
+  });
+
+  it('갱신 결제 실패는 알림 메일, 유예(3일) 안에서는 계속 쓸 수 있고 세 번 실패하면 끝 메일', async () => {
+    const s = await login(e, 'fail@example.com');
+    const { ref } = await subscribe(e, s);
+    const renew = (await st(e, ref)).renewAt!;
+    e.clock.t = renew + 1;
+    for (let i = 0; i < 3; i++) e.pg.next.push({ ok: false, uncertain: false, code: 'REJECT_CARD_COMPANY' });
+    await e.svc.chargeDue();
+    assert.equal((await e.svc.entitlement(await accountOf(ref))).state, 'paid');
+    e.clock.advance(D + 1);
+    await e.svc.chargeDue();
+    e.clock.advance(D + 1);
+    await e.svc.chargeDue();
+    await e.flush();
+    await e.svc.drainNotices();
+    const kinds = e.mail.outbox.filter((m) => m.to === 'fail@example.com').map((m) => m.kind);
+    assert.deepEqual(kinds.filter((k) => k === 'payment_failed').length, 2);
+    assert.ok(kinds.includes('subscription_ended'));
   });
 });
 

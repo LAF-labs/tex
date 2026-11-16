@@ -667,6 +667,36 @@ describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
   });
 });
 
+describe('유료 기능 권리: 체험이 끝나고 구독이 없으면 게이트웨이 범위 토큰을 주지 않는다', () => {
+  let e: Env;
+  before(async () => (e = await start()));
+  after(() => e.server.close());
+
+  it('체험 중 전체 범위 → 체험 뒤 게이트웨이만 빠짐, 게이트웨이만 요청하면 402, 구독하면 다시', async () => {
+    const s = await login(e, 'gate@example.com');
+    const { aik, d } = await desktop(e, s);
+    const tok = async (scopes?: string[]) => {
+      const c = cert(aik, d, e.clock.now() + 90 * D);
+      return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), d.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
+    };
+    assert.ok(((await tok()).json.scopes as string[]).includes('gateway'));
+    e.clock.advance(15 * D);
+    const t = await tok();
+    assert.equal(t.status, 200);
+    assert.ok(!(t.json.scopes as string[]).includes('gateway'));
+    assert.ok((t.json.scopes as string[]).includes('relay'));
+    const g = await tok(['gateway']);
+    assert.deepEqual([g.status, g.json.error], [402, 'account.subscription_required']);
+    // 모의 PG로 구독 활성
+    const s2 = await login(e, 'gate@example.com');
+    await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
+    const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
+    const raw = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D, at: e.clock.now() });
+    await e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
+    assert.equal((await tok(['gateway'])).status, 200);
+  });
+});
+
 describe('M4-5 계정: 내부 API·로그·저장 컬럼(D09 §1.1)', () => {
   let e: Env;
   before(async () => (e = await start()));

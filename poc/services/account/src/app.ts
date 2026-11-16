@@ -271,6 +271,8 @@ export function accountRouter(o: AccountAppOpts): Router {
   // 구독·결제
   r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await session(ctx))));
   r.add('GET', '/v1/billing/subscription', async (ctx) => json(200, { subscription: await svc.subscription(await session(ctx)) }));
+  r.add('GET', '/v1/billing/entitlement', async (ctx) => json(200, await svc.entitlementOf(await session(ctx))));
+  r.add('POST', '/v1/billing/refund', async (ctx) => json(200, await svc.refundSubscription(await session(ctx))));
   r.add('POST', '/v1/billing/cancel', async (ctx) => {
     await svc.cancelSubscription(await session(ctx));
     return json(204, undefined);

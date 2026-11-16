@@ -13,7 +13,7 @@ export type PaymentEvent =
   | { type: 'subscription.canceled'; pgCustomerRef: string; at: number };
 
 /** 청구 결과. uncertain = 결제됐는지 모름(네트워크·5xx·처리 중·우리 설정 문제): 같은 주문번호로 다시 물어야 하고 카드 실패로 세지 않는다 */
-export type ChargeResult = { ok: true } | { ok: false; uncertain: boolean; code: string };
+export type ChargeResult = { ok: true; paymentKey?: string } | { ok: false; uncertain: boolean; code: string };
 
 /** 빌링키 방식 PG(토스페이먼츠 자동결제). PG가 매달 스스로 청구하지 않아서 우리가 갱신일에 청구한다(정리 cron). */
 export interface BillingKeyGateway {
@@ -25,6 +25,8 @@ export interface BillingKeyGateway {
   issueBillingKey(o: { authKey: string; customerKey: string }): Promise<{ billingKey: string } | null>;
   /** 한 번 청구. orderId는 멱등 키로도 쓴다(같은 주문번호 재시도는 두 번 결제되지 않는다) */
   charge(o: { billingKey: string; customerKey: string; orderId: string; amountKrw: number; orderName: string }): Promise<ChargeResult>;
+  /** 결제 취소(청약철회 환불, 부분 가능). idempotencyKey가 같으면 두 번 환불되지 않는다 */
+  refund(o: { paymentKey: string; amountKrw: number; reason: string; idempotencyKey: string }): Promise<{ ok: true } | { ok: false; uncertain: boolean; code: string }>;
 }
 
 export interface PaymentGateway {
@@ -73,6 +75,9 @@ export class MockPaymentGateway implements PaymentGateway {
 /** 모의 빌링키 PG(시험용). 청구 결과를 차례로 정할 수 있다(기본 성공) */
 export class MockBillingGateway implements PaymentGateway {
   readonly charges: Array<{ billingKey: string; customerKey: string; orderId: string; amountKrw: number }> = [];
+  readonly refunds: Array<{ paymentKey: string; amountKrw: number; idempotencyKey: string }> = [];
+  /** 다음 환불 결과들(비면 성공) */
+  readonly nextRefund: Array<{ ok: true } | { ok: false; uncertain: boolean; code: string }> = [];
   readonly issued: string[] = [];
   /** 다음 청구 결과들(비면 성공) */
   readonly next: ChargeResult[] = [];
@@ -92,7 +97,11 @@ export class MockBillingGateway implements PaymentGateway {
       },
       charge: async (o) => {
         this.charges.push({ billingKey: o.billingKey, customerKey: o.customerKey, orderId: o.orderId, amountKrw: o.amountKrw });
-        return this.next.shift() ?? { ok: true };
+        return this.next.shift() ?? { ok: true, paymentKey: `pay_${o.orderId}` };
+      },
+      refund: async (o) => {
+        this.refunds.push({ paymentKey: o.paymentKey, amountKrw: o.amountKrw, idempotencyKey: o.idempotencyKey });
+        return this.nextRefund.shift() ?? { ok: true };
       },
     };
   }
@@ -120,7 +129,15 @@ export type NoticeKind =
   /** "비밀번호가 여러 번 틀려 잠시 잠겼어요. 이메일 코드로 로그인할 수 있어요." 잠금 주기마다 1회(ADR-038 (d)) */
   | 'password_locked'
   /** 갱신 토큰 재사용 감지: 모든 기기에서 로그아웃됨(ADR-038 (f)) */
-  | 'sessions_revoked';
+  | 'sessions_revoked'
+  /** 구독 해지 접수: 다음 결제 없음, 낸 기간까지 사용 */
+  | 'subscription_canceled'
+  /** 청약철회 환불 접수 */
+  | 'subscription_refunded'
+  /** 갱신 결제 실패: 다음 날 다시 시도 */
+  | 'payment_failed'
+  /** 결제가 세 번 실패해 구독이 끝남 */
+  | 'subscription_ended';
 
 export interface MailSender {
   sendLoginCode(to: string, code: string): Promise<void>;
