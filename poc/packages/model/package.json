@@ -11,6 +11,7 @@
     }
   },
   "dependencies": {
+    "@sax/chat-core": "workspace:*",
     "@sax/net": "workspace:*",
     "@sax/redaction": "workspace:*",
     "ajv": "8.20.0",

@@ -16,6 +16,9 @@
       "path": "../bundle"
     },
     {
+      "path": "../chat-core"
+    },
+    {
       "path": "../db"
     },
     {

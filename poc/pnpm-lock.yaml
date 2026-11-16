@@ -273,6 +273,12 @@ importers:
         specifier: 4.1.1
         version: 4.1.1
 
+  packages/chat-core:
+    dependencies:
+      '@sax/redaction':
+        specifier: workspace:*
+        version: link:../redaction
+
   packages/daemon:
     dependencies:
       '@sax/bundle':
@@ -308,6 +314,9 @@ importers:
       '@sax/bundle':
         specifier: workspace:*
         version: link:../bundle
+      '@sax/chat-core':
+        specifier: workspace:*
+        version: link:../chat-core
       '@sax/db':
         specifier: workspace:*
         version: link:../db
@@ -339,6 +348,9 @@ importers:
 
   packages/model:
     dependencies:
+      '@sax/chat-core':
+        specifier: workspace:*
+        version: link:../chat-core
       '@sax/net':
         specifier: workspace:*
         version: link:../net
@@ -373,7 +385,11 @@ importers:
 
   packages/platform: {}
 
-  packages/redaction: {}
+  packages/redaction:
+    dependencies:
+      '@noble/hashes':
+        specifier: 2.4.0
+        version: 2.4.0
 
   packages/remote:
     dependencies:
@@ -490,6 +506,9 @@ importers:
       '@sax/bundle':
         specifier: workspace:*
         version: link:../packages/bundle
+      '@sax/chat-core':
+        specifier: workspace:*
+        version: link:../packages/chat-core
       '@sax/daemon':
         specifier: workspace:*
         version: link:../packages/daemon
