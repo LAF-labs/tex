@@ -48,6 +48,17 @@ export const CHAT_AGENT_FALLBACK_TEXT = '세금계산서 카드 만들기와 발
  * 다시 묻지 않는 이유: 한 번 더 부르면 3~4초가 늘고 또 틀릴 수 있다. 표·카드의 값은 PC가 낸 것이라 언제나 맞다.
  */
 export const CHAT_AGENT_NUMBER_TEXT = '결과를 화면에 보여 드렸어요. 금액과 날짜는 표와 카드에서 확인해 주세요.';
+/**
+ * 엔진이 직접 되묻는 고정 문장(되묻기 칸별). 모델이 같은 호출을 되풀이하거나 되묻는 문장에 숫자를 섞었을 때 쓴다.
+ * 화면은 이 문장 아래 그 칸의 선택지를 붙인다.
+ */
+export const CHAT_AGENT_ASK_TEXT: Record<AgentAsk, string> = {
+  amount: '금액을 알려 주세요. 부가세 포함인지 별도인지도 같이 말씀해 주시면 바로 카드를 만들게요.',
+  item: '품목을 알려 주세요. 예를 들어 디자인 용역처럼 적어 주시면 돼요.',
+  counterparty: '어느 거래처인가요? 장부에 있는 거래처 중에서 골라 주세요.',
+  vat: '부가세 별도인가요, 포함인가요?',
+  which_card: '어느 카드를 말씀하시는지 골라 주세요.',
+};
 /** 다시 보낼 턴이라 대화록에 남기지 않는 오류 */
 const RETRY_CODES: readonly ChatErrorCode[] = ['chat.unavailable', 'chat.budget_exceeded', 'chat.quota_exceeded'];
 /** 게이트웨이 respond 스키마의 replay maxItems */
@@ -412,6 +423,9 @@ export class ChatAgent {
       frameLine = cards.length
         ? `화면: ${cards.map((c) => `카드 ${c.ref}(세금계산서, 거래처 ${s.red.apply(c.cp!.name, { frame: 'none' }).redacted}, 금액 ${c.amount ? '있음' : '없음'}, 부가세 ${c.vat ? VAT_LABEL[c.vat] : '미정'}, 품목 ${c.item ? '있음' : '없음'})`).join('; ')}`
         : '화면: 열린 카드 없음';
+      // 달 이름("9월 매출")을 month_offset으로 옮기려면 이번 달을 알아야 한다(chat-eval look-sept: 9월에 0을 넣음). 날짜는 식별자가 아니다.
+      const kst = new Date(this.now() + 9 * 3600_000);
+      frameLine = `오늘: ${kst.getUTCFullYear()}년 ${kst.getUTCMonth() + 1}월 ${kst.getUTCDate()}일\n${frameLine}`;
     } catch {
       throw new ChatError('chat.unavailable');
     }
@@ -482,21 +496,35 @@ export class ChatAgent {
       if (!r.toolCalls.length) return this.finish(s, this.checkReply(s, turn, r.output));
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
+      const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
+      // 같은 턴에 같은 도구를 같은 인자로 또 부르면 모델이 결과를 답으로 옮기지 못하는 것이다(chat-eval 2026-11-16: 공급사에 따라
+      // "이번 달 매출"에 sales_summary를 네 번 부름, 같은 카드를 두 장 만듦). 다시 실행하지 않고 엔진이 그 결과로 턴을 닫는다.
+      const repeat = r.toolCalls.find((c) => turn.done.has(key(c)));
+      if (repeat) return this.finish(s, this.settle(turn, turn.done.get(key(repeat))!));
       if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + r.toolCalls.length > REPLAY_MAX) {
-        // 이번 턴에 이미 결과(표·카드)를 냈으면 끊지 않고 그 결과를 보인다. 모델이 답 대신 같은 도구를 거듭 부르다 상한에 닿는 일이 있다
-        // (chat-eval 2026-11-16: DeepSeek V4.1 Flash가 "이번 달 매출"에 sales_summary를 네 번 부름). 표·카드 값은 PC가 낸 것이라 맞다.
-        const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
-        if (show.length) return this.finish(s, { kind: 'did', text: CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'number' });
+        const last = [...turn.done.values()].at(-1);
+        if (last) return this.finish(s, this.settle(turn, last));
         throw new ChatError('chat.turn_limit');
       }
-      const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
-      // 같은 턴에 같은 도구를 같은 인자로 또 부르면 main에 보내지 않는다: 카드가 두 장 생기거나 같은 조회를 되풀이하지 않게.
-      const parsed = r.toolCalls.map((c) => ({ c, p: turn.done.get(key(c)) ?? this.parseCall(s, turn, c) }));
+      const parsed = r.toolCalls.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
       turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), answer: 'status' in p ? p : null }));
       const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
       this.answer(s, turn);
     }
+  }
+
+  /**
+   * 모델 답 없이 턴을 닫는다(같은 호출 되풀이·턴 상한). 마지막 도구 결과가 빈 칸을 말하면 그 칸을 고정 문장으로 되묻고,
+   * 이번 턴에 낸 표·카드가 있으면 그것을 보인다. 둘 다 아니면 chat.turn_limit.
+   */
+  private settle(turn: Turn, last: ToolOutput): AgentReply {
+    const ask: AgentAsk | null =
+      last.status === 'needs_input' && last.needs?.length ? last.needs[0]! : last.status === 'unknown_counterparty' ? 'counterparty' : last.status === 'no_such_draft' ? 'which_card' : null;
+    const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
+    if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'number' };
+    if (show.length) return { kind: 'did', text: CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'number' };
+    throw new ChatError('chat.turn_limit');
   }
 
   /** 모든 도구 호출에 답이 있으면 function_call_output을 replay에 붙인다. 결과 ref는 이 세션의 ref로 기억한다. */
@@ -519,6 +547,9 @@ export class ChatAgent {
     const a = c.arguments as Record<string, unknown>;
     const cp = (v: unknown): string | null => {
       if (typeof v !== 'string') return null;
+      // 거래처 토큰은 이번 턴에 모델이 본 글(앞 대화·화면·이번 문장)에 있는 것만 쓴다. 장부의 다른 거래처 토큰을 지어 넣으면
+      // 엉뚱한 거래처 카드가 생긴다(chat-eval: "바다물산에 100만원"·"50만원짜리 하나"에 장부 첫 거래처 토큰을 넣음).
+      if (/^\[NAME_\d+\]$/.test(v.trim()) && !turn.message.includes(v.trim())) return null;
       if (gluedName(turn.user, v.trim(), /\s/.test(s.red.map.valueOf(v.trim()) ?? ''))) return null;
       const r = detokenize({ counterparty: v.trim() }, s.red.map, { recordFields: ['counterparty'] });
       const id = r.ok ? (r.value as { counterparty: { recordId: string } }).counterparty.recordId : '';
@@ -596,7 +627,12 @@ export class ChatAgent {
     const a = ask as AgentAsk | null;
     if (k === 'tax_advice') return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     // 슬롯 안 공백("{ r1.first.total }")은 뜻이 같으니 붙인다
-    const text = o.text.replace(/\s+/g, ' ').trim().replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
+    // 문장 안의 ref 표기("[ref:r1]", "(보임: r1)")는 화면이 표·카드로 보이므로 지운다(숫자로 걸러지지 않게)
+    const text = o.text
+      .replace(/\s*[[(](?:ref|보임)\s*[:：]?\s*[rd][1-9]\d{0,5}(?:\s*,\s*[rd][1-9]\d{0,5})*[\])]/gu, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/\{([^{}]*)\}/g, (_m, x: string) => `{${x.replace(/\s+/g, '')}}`);
     if (!text || [...text].length > CHAT_REPLY_MAX_CHARS) throw bad();
     for (const m of text.matchAll(TOKEN_RE)) if (!s.red.map.has(m[0])) throw bad();
     for (const m of text.matchAll(SLOT_ANY)) if (!s.refs.has(m[1]!)) throw bad();
@@ -606,7 +642,11 @@ export class ChatAgent {
     if (chatAdviceMentioned(text)) return { kind: k, text: CHAT_ADVICE_TEXT, show: [], ask: null, filtered: 'advice' };
     const bare = text.replace(TOKEN_RE, ' ').replace(SLOT_ANY, ' ');
     if (unsafeText(bare)) return { kind: k, text: CHAT_AGENT_FALLBACK_TEXT, show: [], ask: null, filtered: 'unsafe' };
-    if (numberShaped(bare)) return { kind: k, text: refs.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: refs, ask: null, filtered: 'number' };
+    if (numberShaped(bare)) {
+      // 되묻는 답이면 되묻기는 살린다(문장만 고정 문장으로): 사장님이 빈 칸을 채울 수 있게
+      if (k === 'ask' && a) return { kind: k, text: CHAT_AGENT_ASK_TEXT[a], show: refs, ask: a, filtered: 'number' };
+      return { kind: k, text: refs.length ? CHAT_AGENT_NUMBER_TEXT : CHAT_AGENT_FALLBACK_TEXT, show: refs, ask: null, filtered: 'number' };
+    }
     return { kind: k, text, show: refs, ask: a, filtered: null };
   }
 

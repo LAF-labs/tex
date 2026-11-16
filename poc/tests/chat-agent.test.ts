@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import { CounterpartyRepo, openDatabase, ProfileRepo, syntheticBizNo, type Db } from '@sax/db';
-import { CHAT_ADVICE_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
+import { CHAT_ADVICE_TEXT, CHAT_AGENT_ASK_TEXT, CHAT_AGENT_FALLBACK_TEXT, CHAT_AGENT_INPUT_MAX_BYTES, CHAT_AGENT_NUMBER_TEXT, CHAT_AGENT_TRANSCRIPT_TURNS, ChatAgent, gatewayChatAgentModel, numberShaped, parseKrw, type DomainCall, type ScreenFrame, type StepResult, type ToolOutput } from '@sax/engine';
 import { CHAT_AGENT_COMMANDS, COMMANDS, MAIN_ONLY, READ_QUERIES } from '@sax/engine/protocol';
 import { BundleCatalog } from '@sax/model';
 import { Egress } from '@sax/net';
@@ -326,31 +326,79 @@ describe('chat.step 답 검사', () => {
 });
 
 describe('chat.step 턴 상한·세션 폐기', () => {
-  it('턴 상한에서도 도구를 부르면 그 도구는 main에 가지 않는다. 결과가 없던 턴은 chat.turn_limit', async () => {
+  it('턴 상한에서도 도구를 부르면 그 도구는 main에 가지 않는다. 없는 카드를 거듭 찾으면 어느 카드인지 엔진이 되묻는다', async () => {
     const a = agent();
     const pc = new FakePc();
-    // 없는 카드를 거듭 고치려 함: 엔진이 no_such_draft로 답하고(ref 없음) 상한에서 끊는다
     const call = (n: number) => () => fc('draft_discard', { draft: `d${90 + n}` });
     script(call(1), call(2), call(3), call(4));
-    await code(a.step({ start: { text: '카드 계속 지워 줘', frame: { cards: [] }, profileId } }), 'chat.turn_limit');
+    const r = await a.step({ start: { text: '카드 계속 지워 줘', frame: { cards: [] }, profileId } });
     assert.equal(responds().length, 4);
     assert.equal(pc.calls.length, 0);
+    assert.deepEqual(r.kind === 'reply' && [r.reply.kind, r.reply.ask, r.reply.text], ['ask', 'which_card', CHAT_AGENT_ASK_TEXT.which_card]);
   });
 
-  it('같은 턴에 같은 도구를 같은 인자로 또 부르면 main에 보내지 않고, 상한에 닿으면 그때까지 낸 결과를 고정 문구로 보인다(chat-eval)', async () => {
+  it('같은 호출을 되풀이했는데 보일 결과도 되물을 칸도 없으면 chat.turn_limit', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const call = () => fc('receivables', { counterparty: null });
+    script(call, call);
+    const r = await a.step({ start: { text: '못 받은 돈', frame: { cards: [] }, profileId } });
+    await code(a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } }), 'chat.turn_limit');
+    assert.equal(pc.calls.length, 1);
+  });
+
+  it('같은 턴에 같은 도구를 같은 인자로 또 부르면 다시 실행하지 않고 그 결과로 턴을 닫는다(chat-eval)', async () => {
     const a = agent();
     const pc = new FakePc();
     const call = () => fc('sales_summary', { month_offset: 0 });
-    script(call, call, call, call);
+    script(call, call);
     const r = await a.step({ start: { text: '이번 달 매출 얼마야', frame: { cards: [] }, profileId } });
     assert.equal(r.kind, 'tools');
     const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
-    assert.equal(pc.calls.length, 1, '두 번째부터는 엔진이 첫 결과로 답한다');
-    assert.equal(responds().length, 4);
-    assert.equal(end.kind, 'reply');
+    assert.equal(pc.calls.length, 1);
+    assert.equal(responds().length, 2);
     assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['did', CHAT_AGENT_NUMBER_TEXT, ['r1'], 'number']);
-    // 두 번째 호출에 돌려준 결과는 첫 결과와 같다
-    assert.deepEqual(lastOutput(responds()[1]!.body!), lastOutput(responds()[3]!.body!));
+  });
+
+  it('금액이 빈 카드를 거듭 만들려 하면 엔진이 금액을 되묻는다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    pc.exec = (c) => (pc.calls.push(c), { ref: null, status: 'needs_input', fields: null, needs: ['amount'] });
+    const draft = (body: Item) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: null, vat: null, item: null });
+    script(draft, draft);
+    const { reply: rep } = await say(a, pc, 'A상사 세금계산서 끊어줘');
+    assert.equal(pc.calls.length, 1);
+    assert.deepEqual([rep.kind, rep.ask, rep.text], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount]);
+  });
+
+  it('이번 턴 글에 없는 거래처 토큰은 풀지 않는다(장부 첫 거래처를 지어 넣어도 카드가 안 생긴다)', async () => {
+    const pc = new FakePc();
+    // 앞 턴에서 B상사가 토큰이 된다. 모델이 이번 글에 없는 거래처 토큰을 지어 넣는다
+    const b = agent();
+    script(() => reply({}));
+    await say(b, pc, 'B상사 안녕');
+    const bTok = toks(nowLine(responds().at(-1)!.body!), 'NAME')[0]!;
+    const other = ['[NAME_1]', '[NAME_2]', '[NAME_3]'].find((t) => t !== bTok)!;
+    script((body) => {
+      assert.ok(!userText(body).includes(other), '지어 넣는 토큰은 이번 글에 없다');
+      return fc('invoice_draft', { counterparty: other, amount: null, vat: null, item: null });
+    }, (body) => {
+      assert.equal(lastOutput(body)?.status, 'unknown_counterparty');
+      return reply({ kind: 'ask', text: '어느 거래처인가요?', ask: 'counterparty' });
+    });
+    await say(b, pc, '50만원짜리 하나 끊어줘');
+    assert.equal(pc.calls.filter((c) => c.tool === 'invoice_draft').length, 0);
+  });
+
+  it('되묻는 문장에 숫자가 섞이면 문장만 고정 문장으로 바꾸고 되묻기는 살린다. 문장 속 ref 표기는 지운다', async () => {
+    const a = agent();
+    script(() => reply({ kind: 'ask', text: '단가에 20개라고 하셨는데 공급가로 넣을 금액을 알려 주세요.', ask: 'amount' }));
+    let r = (await say(a, new FakePc(), 'A상사 원두 20개')).reply;
+    assert.deepEqual([r.kind, r.ask, r.text, r.filtered], ['ask', 'amount', CHAT_AGENT_ASK_TEXT.amount, 'number']);
+    const pc = new FakePc();
+    script(() => fc('sales_summary', { month_offset: 0 }), () => reply({ text: '이번 달 기록이에요 [ref:r1].', show: ['r1'] }));
+    r = (await say(a, pc, '이번 달 매출')).reply;
+    assert.deepEqual([r.text, r.filtered], ['이번 달 기록이에요.', null]);
   });
 
   it('카드를 만든 뒤 같은 카드를 또 만들라고 해도 카드는 한 장이다', async () => {

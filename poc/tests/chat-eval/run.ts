@@ -229,6 +229,10 @@ async function runCase(c: Case, env: ReturnType<typeof seedDb>, origin: string):
 function matchDraft(e: DraftExpect, d: { name: string; amount: number | null; vat: string | null; itemShown: string | null }): string | null {
   if (e.cp !== undefined && d.name !== e.cp) return `거래처 ${d.name}≠${e.cp}`;
   if (e.amount !== undefined && d.amount !== e.amount) return `금액 ${d.amount}≠${e.amount}`;
+  if (e.total !== undefined) {
+    const total = d.amount === null ? null : d.vat === 'included' ? d.amount : d.amount + Math.floor(d.amount / 10);
+    if (total !== e.total) return `합계 ${total}≠${e.total}`;
+  }
   if (e.vat !== undefined && d.vat !== e.vat) return `부가세 ${d.vat}≠${e.vat}`;
   if (e.item !== undefined && !(d.itemShown ?? '').includes(e.item)) return `품목 ${d.itemShown}∌${e.item}`;
   return null;

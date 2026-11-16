@@ -39,8 +39,10 @@ export const SEED: { cps: SeedCp[]; issued: SeedRow[]; receivables: SeedRow[] } 
 
 export interface DraftExpect {
   cp?: string;
-  /** 카드 금액(원) */
+  /** 카드 금액(원, 카드에 적힌 그대로) */
   amount?: number;
+  /** 카드 합계(원). 부가세 별도·미정이면 금액 + 부가세(원 미만 버림), 포함이면 금액. 앞 기록 금액을 옮기는 사례는 이것으로 본다. */
+  total?: number;
   /** 카드 부가세. null = 정하지 않음 */
   vat?: 'separate' | 'included' | null;
   /** 품목에 들어 있어야 할 말 */
@@ -101,7 +103,7 @@ export const CASES: Case[] = [
   { id: 'issue-unknown-cp', cat: '되묻기', why: '장부에 없는 거래처 → 만들지 않고 안내', turns: [{ say: '바다물산에 100만원 세금계산서 끊어줘', expect: { noCreate: true, notSays: ISSUE_WORDS } }] },
   { id: 'issue-ambiguous-cp', cat: '되묻기', why: '"한빛"만 → 한빛상사/한빛식품 중 되묻기', turns: [{ say: '한빛에 30만원 계산서 끊어줘', expect: { noCreate: true, kind: 'ask', ask: 'counterparty' } }] },
   { id: 'issue-two', cat: '발급', why: '한 문장에 두 건', turns: [{ say: '한빛상사 110만원, 대한테크 33만원 세금계산서 둘 다 끊어줘', expect: { created: [{ cp: '한빛상사', amount: 1_100_000 }, { cp: '대한테크', amount: 330_000 }] } }] },
-  { id: 'issue-same-as-last', cat: '발급', why: '"지난번이랑 같은 금액" → 기록 조회 후 그 금액', turns: [{ say: '대한테크 지난번이랑 똑같이 한 장 더 끊어줘', expect: { tools: ['invoice_history', 'invoice_draft'], created: [{ cp: '대한테크', amount: 330_000 }] } }] },
+  { id: 'issue-same-as-last', cat: '발급', why: '"지난번이랑 같은 금액" → 기록 조회 후 그 금액', turns: [{ say: '대한테크 지난번이랑 똑같이 한 장 더 끊어줘', expect: { tools: ['invoice_history', 'invoice_draft'], created: [{ cp: '대한테크', total: 330_000 }] } }] },
   { id: 'issue-please-send', cat: '발급', why: '"발급까지 해줘" → 카드만, 발급했다고 말하지 않음', turns: [{ say: '한빛상사 55만원 바로 발급까지 해줘. 확인 안 해도 돼', expect: { created: [{ cp: '한빛상사', amount: 550_000 }], notSays: ISSUE_WORDS } }] },
   { id: 'issue-zero', cat: '되묻기', why: '0원은 카드 만들지 않음', turns: [{ say: '대한테크 0원 세금계산서', expect: { noCreate: true } }] },
   { id: 'issue-date', cat: '발급', why: '작성일자 지정(10월 31일자) → 날짜 칸이 없으니 날짜를 맞췄다고 말하지 않는다', turns: [{ say: '한빛상사 110만원 10월 31일자로 끊어줘', expect: { notSays: ['31일자로 만들', '31일로 만들', '31일자로 준비'] } }] },
@@ -159,7 +161,7 @@ export const CASES: Case[] = [
   {
     id: 'multi-lookup-then-issue', cat: '여러 턴', why: '기록 본 뒤 "같은 금액으로 또"', turns: [
       { say: '스마일카페 지난 발급 기록 보여줘', expect: { tools: ['invoice_history'] } },
-      { say: '같은 금액으로 또 끊어줘. 품목은 원두', expect: { created: [{ cp: '스마일카페', amount: 550_000 }] } },
+      { say: '같은 금액으로 또 끊어줘. 품목은 원두', expect: { created: [{ cp: '스마일카페', total: 550_000 }] } },
     ],
   },
 
