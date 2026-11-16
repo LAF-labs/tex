@@ -24,6 +24,8 @@ const W = Number(ARGS[1] ?? 1440);
 const H = Number(ARGS[2] ?? 900);
 const OUT = ARGS[0] || path.resolve(import.meta.dirname, `../reports/raw/design-sync/${W}x${H}${process.env.DARK ? '-dark' : ''}`);
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
+/** EMPTY=1: 거래처·서류가 하나도 없는 빈 화면(empty state)을 본다. */
+const EMPTY = !!process.env.EMPTY;
 await fs.mkdir(OUT, { recursive: true });
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pv', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -71,7 +73,7 @@ const boardNow = () =>
   });
 
 const handlers = {
-  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
+  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: EMPTY ? [] : cps, docs: EMPTY ? [] : [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
     if (S.onbDelay) await sleep(S.onbDelay);
@@ -79,8 +81,8 @@ const handlers = {
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
-  'counterparties.list': () => cps,
-  'docs.list': () => (S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
+  'counterparties.list': () => (EMPTY ? [] : cps),
+  'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'g24.candidates': () =>
     S.g24Empty
       ? []
@@ -219,6 +221,17 @@ const scenes = {
     await js(win, `document.querySelector('[data-act=check-list]').click()`);
     await shot(win, '33-in-doubt');
   },
+  // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
+  async empty(win) {
+    for (const v of ['cps', 'docs']) {
+      await js(win, `document.querySelector('#rail [data-view=${v}]').click()`);
+      await sleep(200);
+      await shot(win, `40-empty-${v}`);
+    }
+    await js(win, `document.querySelector('[data-act=go-activity]').click()`);
+    await sleep(200);
+    await shot(win, '40-empty-activity');
+  },
   async docs(win) {
     await js(win, `document.querySelector('#rail [data-view=docs]').click()`);
     await sleep(200);
@@ -321,7 +334,7 @@ const scenes = {
   },
 };
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld'];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

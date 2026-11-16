@@ -282,7 +282,17 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .list .is-attention { color: var(--attention); font-weight: 600; }
 .list .is-none { color: var(--ink-4); }
 .list .is-muted { color: var(--ink-3); }
-.empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-3); display: grid; gap: var(--space-2); }
+.empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-3); display: grid; gap: var(--space-2); justify-items: center; }
+.empty p { margin: 0; }
+.empty-title { font-size: 14px; line-height: 22px; font-weight: 600; color: var(--ink-2); }
+.empty-sub { max-width: 360px; font-size: 13px; line-height: 20px; color: var(--ink-3); }
+.empty-act { margin-top: var(--space-2); }
+/* 키보드로 온 표의 줄: 포커스 링(마우스 hover와 같은 면 + 2px 링). */
+.list tbody tr:focus { outline: none; }
+.list tbody tr:focus-visible td { background: var(--surface-tint); }
+.list tbody tr:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* 값 목록 안의 고정폭 값(사업자번호·승인번호)은 13px이라도 줄 높이를 이웃 값(22)과 같게 둬 기준선이 맞게. */
+.sx-kv dd .sx-id { line-height: 22px; }
 
 /* 거래처 상세: 발급 이력·계좌·입금자 이름. 선으로 나누지 않고 surface-tint 면 하나 안의 줄로 둔다(v2.0 선 대신 면). */
 .hist, .cp-list { display: grid; padding: 4px 12px; border-radius: var(--radius-md); background: var(--surface-tint); font-variant-numeric: tabular-nums; }

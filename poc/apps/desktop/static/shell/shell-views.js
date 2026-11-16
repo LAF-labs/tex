@@ -12,6 +12,16 @@ export function h(tag, attrs, ...kids) {
     else el.setAttribute(k, v === true ? '' : String(v));
   }
   for (const c of kids.flat(Infinity)) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
+  // 누르면 패널이 열리는 표의 줄은 키보드로도 연다(Tab으로 오고 Enter·Space로 연다).
+  if (tag === 'tr' && typeof attrs?.onclick === 'function') {
+    el.tabIndex = 0;
+    el.addEventListener('keydown', (e) => {
+      if (e.target === el && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        el.click();
+      }
+    });
+  }
   return el;
 }
 
@@ -219,6 +229,11 @@ export const NO_CHROME_TEXT = 'Chrome이 설치돼 있어야 홈택스에서 준
 /** Chrome 설치 안내(U6, 판의 할 일·첫 발급 요청). 주소는 글자로만 둔다(앱이 외부 링크를 열지 않는다). */
 export const CHROME_GUIDE_TEXT = '홈택스 작업은 이 PC의 Chrome 창에서 해요. 다른 브라우저에서 google.com/chrome 을 열어 Chrome을 설치한 뒤 [다시 확인]을 눌러 주세요.';
 export const DUP_TODAY_TEXT = '이미 오늘 같은 거래처·같은 금액으로 발급했어요. 한 번 더 발급하려는 게 맞는지 확인해 주세요.';
+
+/** 빈 화면: 무엇이 없는지 한 줄(ink-2) + 무엇을 하면 채워지는지 한 줄(ink-3) + 할 수 있는 일 하나. 상자·그림 없이 가운데. */
+export function emptyState(title, sub, action = null, attrs = {}) {
+  return h('div', { class: 'empty', ...attrs }, h('p', { class: 'empty-title' }, title), sub ? h('p', { class: 'empty-sub' }, sub) : null, action ? h('div', { class: 'empty-act' }, action) : null);
+}
 
 /**
  * 답 후보(Muse식, v2.0): 앱 말 아래 전폭 줄. 사장님은 가장 그럴듯한 답을 누르거나 그냥 입력창에 말한다.
