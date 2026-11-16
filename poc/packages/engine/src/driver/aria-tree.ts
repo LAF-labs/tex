@@ -124,5 +124,10 @@ export function ariaValue(snapshot: string, role: string): string {
     return sel ? (JSON.parse(`"${sel[1]}"`) as string) : '';
   }
   const m = /^- [a-z]+(?: "(?:[^"\\]|\\.)*")?(?: \[[^\]]*\])*(?::(.*))?$/.exec(lines[0] ?? '');
-  return m?.[1] !== undefined ? unq(m[1]) : '';
+  if (m?.[1] === undefined) return '';
+  if (m[1].trim() !== '') return unq(m[1]);
+  // 자리표시 글(placeholder)이 있는 입력 칸은 값이 자식 줄로 내려간다(「- textbox "과세년도":」 아래 「- /placeholder: …」「- text: "2025"」).
+  // 5차 예행 run-d2bbd1df(H-09 과세년도): 첫 줄만 보면 빈 값으로 읽어 readback_mismatch였다. 바로 아래 자식의 text 줄을 값으로 본다.
+  const child = lines.slice(1).map((l) => /^ {2}- text: (.*)$/.exec(l)).find(Boolean);
+  return child ? unq(child[1]!) : '';
 }

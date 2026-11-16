@@ -108,7 +108,7 @@ function certForm(doc: Doc, k: CertKnobs): string {
   }
   if (doc === 'H-09') {
     extra.push(
-      `<label for="mf_txppWframe_ibx_txyr">과세년도</label><input type="text" id="mf_txppWframe_ibx_txyr" name="fiscalYear" aria-label="과세년도">`,
+      `<label for="mf_txppWframe_ibx_txyr">과세년도</label><input type="text" id="mf_txppWframe_ibx_txyr" name="fiscalYear" aria-label="과세년도" placeholder="YYYY">`,
       // 실화면: 사업소득이면 개업일자 select는 숨김·선택지 없음
       `<select id="mf_txppWframe_selectbox1" name="openDate" title="개업일자" hidden><option value="">-선택-</option></select>`,
     );
