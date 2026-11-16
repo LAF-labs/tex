@@ -69,10 +69,11 @@ export class VaultSecretPort implements Pick<HumanPort, 'secret'> {
       if (d.targetId === targetId) resolveClosed();
     });
     try {
-      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: e.frame, element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
+      const open = await this.i.vault.rpc<{ ok?: unknown; reason?: unknown; auto?: unknown }>('secretWindow.openForHuman', { runId: r.runId, targetId, frame: e.frame, element: css.value }).catch(() => ({ ok: false, reason: 'port_error' }));
       if (open?.ok !== true) return refuse(typeof open?.reason === 'string' ? open.reason : 'other');
       this.i.journal('human.secret_opened', { stepId: r.stepId });
-      this.i.announce?.({ runId: r.runId, stepId: r.stepId, ...(r.prompt !== undefined ? { prompt: r.prompt } : {}), ttlMs: r.ttlMs });
+      // 금고가 기억한 값을 바로 넣었으면(auto) 사람 차례가 아니다: 「앱에 뜬 창에 넣어 주세요」 안내(announce)를 보내지 않는다
+      if (!('auto' in open) || open.auto !== true) this.i.announce?.({ runId: r.runId, stepId: r.stepId, ...(r.prompt !== undefined ? { prompt: r.prompt } : {}), ttlMs: r.ttlMs });
       let cancel = () => {};
       const ttl = new Promise<'ttl'>((res) => (cancel = (this.i.setTimer ?? defaultTimer)(() => res('ttl'), r.ttlMs)));
       let onAbort = () => {};

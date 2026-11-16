@@ -500,7 +500,7 @@ export class SecretOps {
     });
   }
 
-  async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' | 'denied' }> {
+  async openForHuman(req: { runId: string; targetId: string; frame: string; element: string }): Promise<{ ok: boolean; auto?: boolean; reason?: 'secret_window_refused' | 'origin_not_allowed' | 'not_found' | 'denied' }> {
     const t = this.relay.exposedTarget(req.targetId);
     // 같은 문서에서 다시 묻기(서명 [확인] 뒤 틀린 비밀번호 → 대화 카드, 2026-11-14): 오염 상태(tainted)는 받는다. 지금 입력 중인 창(active)만 막는다.
     if (!t || t.win?.phase === 'active' || this.opening.has(t.targetId)) return { ok: false, reason: 'not_found' };
@@ -527,7 +527,8 @@ export class SecretOps {
           this.relay.deactivateWindow(t); // 엔진에 secret_window.closed → 'done'
           this.log.event('secret.used', { kind: 'cert_password', viaTypist: true, ok: typed.ok, remembered: true });
           this.selfScan(text);
-          if (typed.ok) return { ok: true };
+          // auto: 기억한 값을 금고가 넣었다(사람 창 없음). 엔진은 「창에 넣어 주세요」 차례를 알리지 않는다(5차 예행, 기동 직후 잠깐 뜨던 안내)
+          if (typed.ok) return { ok: true, auto: true };
           // 넣지 못했으면(칸이 바뀜 등) 사람 창으로 다시 연다
         }
       }
