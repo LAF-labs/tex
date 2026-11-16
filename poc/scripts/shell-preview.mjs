@@ -33,7 +33,7 @@ app.on('window-all-closed', () => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** 장면이 바꾸는 하네스 상태(보관함 서류를 목록에 넣을지, 승인 바 페이지 HTML). */
-const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false };
+const S = { withVault: false, barHtml: '', onb: null, onbDelay: 0, g24Empty: false, bank: 'full', mode: {}, emptyBoot: false, security: 'ok' };
 /** 불러오는 중·오류 장면: S.mode[메서드] = 'hang'(답이 오지 않음) | 'fail'(거절) */
 const HANG = () => new Promise(() => {});
 const store = new MockStore();
@@ -137,7 +137,8 @@ const handlers = {
         ],
   // 제품의 정부24: 후보 없이 [PDF 가져오기](= docs.import, 파일 대화상자는 건너뛴다)
   'docs.import': () => ({ doc: { id: 'g24-doc', name: '주민등록표 등본', kind: '직접 추가', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 추가' }, document: { duplicate: false } }),
-  'security.check': () => ({ state: 'ok' }),
+  'security.check': () => (S.security === 'ok' ? { state: 'ok' } : { state: S.security, name: 'MagicLine4NX', installUrl: 'https://hometax.go.kr/MagicLine4XML/ML4Web/install_bin/MagicLine4NX.pkg', canStart: true }),
+  'security.install': () => ({ state: S.security }),
   // 거래처 상세의 계좌·입금자 이름·받기로 한 날(받을 돈 D-09)
   'bank.cpBanking': () => ({
     accounts: [{ id: 'ca1', bank: '국민은행', last4: '1234', holder: '김에이' }],
@@ -342,6 +343,28 @@ const scenes = {
     await press('[data-onb=try]');
     await shot(win, '28-onb-done');
   },
+  // 인증서 단계의 막힌 경우: 보안 프로그램 없음 + 이 PC에 인증서 없음, 보안 프로그램 꺼짐 + 인증서 없음
+  async onbNoCert(win) {
+    const press = async (sel) => {
+      await js(win, `[...document.querySelectorAll(${JSON.stringify(sel)})].pop().click()`);
+      await sleep(150);
+    };
+    S.security = 'missing';
+    await press('[data-onb=agree]');
+    await press('[data-onb=upload]');
+    await press('[data-onb=confirm]');
+    await sleep(200);
+    await shot(win, '24b-onb-auth-nocert-missing');
+    S.security = 'stopped';
+    await js(win, `document.querySelector('[data-act=security-check]')?.click()`);
+    await sleep(200);
+    await shot(win, '24c-onb-auth-nocert-stopped');
+    // 프로그램이 준비되면 인증서 없음 안내가 그 자리에 뜬다([다시 찾기])
+    S.security = 'ok';
+    await js(win, `document.querySelector('[data-act=security-check]')?.click()`);
+    await sleep(300);
+    await shot(win, '24d-onb-auth-nocert');
+  },
   // 옛 이어 하기 저장에만 남은 화면(맡길 업무·거래처·요약). 여러 개 고르기는 줄 + [다음]이다.
   async onbOld(win) {
     const press = async (sel) => {
@@ -455,13 +478,14 @@ const scenes = {
   },
 };
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', ...(EMPTY ? ['empty'] : [])];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbNoCert', 'onbOld', 'bank', 'bankNoAcct', 'loading', 'errors', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {
     if (ONLY && !ONLY.includes(k)) continue;
     const ports = () => new MockOnboardingPorts({ saveProfile: async () => {} });
-    S.onb = k === 'onboarding' ? new OnboardingFlow(ports()) : k === 'onbOld' ? new OnboardingFlow(ports(), { ...initialOnbState(), step: 'tasks', consents: { terms: agreed, model: agreed } }) : null;
+    const noCert = () => Object.assign(ports(), { findCerts: async () => [] });
+    S.onb = k === 'onbNoCert' ? new OnboardingFlow(noCert()) : k === 'onboarding' ? new OnboardingFlow(ports()) : k === 'onbOld' ? new OnboardingFlow(ports(), { ...initialOnbState(), step: 'tasks', consents: { terms: agreed, model: agreed } }) : null;
     // 불러오는 중·오류 장면은 처음 목록이 빈 PC(첫 실행)에서 본다: 있던 목록이 있으면 그 목록을 그대로 보여 주기 때문이다.
     S.emptyBoot = k === 'loading' || k === 'errors';
     const win = await open(theme);

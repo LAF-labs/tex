@@ -11,7 +11,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, emptyState, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -1845,8 +1845,8 @@ function activityPanel(row) {
       r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
       row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
     ]),
-    r?.stoppedNote ? note(r.stoppedNote, r.status === 'attention') : null,
-    row.past?.note ? note(row.past.note, row.past.kind === 'unsure') : null,
+    // 멈춘 까닭과 지난 기록 메모가 함께 있어도 면은 하나(둘 중 하나라도 확인 필요면 주의 면)
+    noteGroup([r?.stoppedNote, row.past?.note], r?.status === 'attention' || row.past?.kind === 'unsure'),
     row.past?.kind === 'issued'
       ? row.past.documentId
         ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(row.past.documentId), '', { 'data-act': 'past-pdf' }))
@@ -2301,8 +2301,10 @@ async function loadDocs() {
     state.load.docs = null;
     if (rev !== state.docsRev) return;
     state.docs = docs;
-  } catch {
+  } catch (e) {
     state.load.docs = 'error';
+    // 있던 목록은 그대로 두고 알린다(거래처와 같다). 목록이 비었으면 화면 가운데 [다시 시도]
+    if (state.docs.length && state.view === 'docs') toast(human(e));
   }
   if (state.view === 'docs') render();
 }
@@ -2612,7 +2614,7 @@ function docReview(doc) {
       ['발급번호', v.docNo, { mono: true }],
       ['읽은 곳', src],
     ]),
-    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r] || r).join(' · ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
+    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r]).filter(Boolean).join(' · ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
     !v.needsUser && v.subjectMismatch ? note('내 사업장과 사업자번호가 다른 서류예요(확인함).') : null,
     h(
       'div',

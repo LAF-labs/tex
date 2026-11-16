@@ -1,7 +1,7 @@
 // 온보딩 대화(08 §4 O-01~O-06)와 동의 화면 4종(F-06 자리표시). 상태는 main(onboarding.ts)이 갖고, 렌더러는 그리고 답을 보낼 뿐이다.
 // - 비밀(홈택스 비밀번호·보안카드)은 여기서 받지 않는다. 보안카드는 금고 직결 등록 창이 받는다(shell-card.js → main → card-secret.js).
 // - 동의는 화면마다 한 번씩 누른다. 묶음 동의 버튼은 없다.
-import { btn, fmtBiz, h, icon, kv, note, replyOptions, securityBox } from './shell-views.js';
+import { btn, fmtBiz, h, icon, kv, note, noteGroup, replyOptions, securityBox } from './shell-views.js';
 import { cardRegister } from './shell-card.js';
 import { bizDigits, bizNoInput, checkFields, emailInput, field, keys, LIMITS, textInput } from './fields.js';
 
@@ -236,14 +236,14 @@ function bizCard(o, u, reply, answer, act) {
   const unknown = o.check?.status === 'unknown';
   const named = !!(b.name ?? '').trim();
   // 확인하지 못했다는 사실을 그대로 보인다(팀장 결정 2026-11-10). [맞습니다]를 눌러야 확정된다.
-  const stop = !active && o.check ? note(unknown ? '국세청 확인을 하지 못했습니다. 번호가 맞는지 확인해 주세요.' : `${o.check.label} 상태라 등록을 멈췄어요. 번호가 맞는지 확인해 주세요.`, true) : null;
+  const stop = !active && o.check ? (unknown ? '국세청 확인을 하지 못했어요. 번호가 맞는지 확인해 주세요.' : `${o.check.label} 상태라 등록을 멈췄어요. 번호가 맞는지 확인해 주세요.`) : null;
   return h(
     'section',
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     head,
     kv(rows, true),
-    o.notice ? note(o.notice, true) : null,
-    stop,
+    // 알림과 멈춘 까닭이 함께 와도 주의 면은 하나
+    noteGroup([o.notice, stop]),
     privacy,
     p('계정마다 사업자 1곳만 등록하고, 바꾸면 90일 뒤에 다시 바꿀 수 있어요.', true),
     replyOptions(
@@ -307,13 +307,29 @@ function authCard(o, u, reply, answer, act) {
         skip: () => reply('card'),
       })),
     );
-  // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다
+  // 인증서가 없을 때 할 일: 이 PC로 옮긴 뒤 [다시 찾기](목록만 다시 읽는다). 다른 방법은 아래 답 후보 줄에 있다.
+  const noCert = o.certs.length
+    ? null
+    : h(
+        'div',
+        { class: 'sx-note is-attention', role: 'status', 'data-onb-nocert': '' },
+        icon('warn'),
+        h('div', { class: 'sx-note-body' }, h('b', { class: 'sx-note-title' }, '이 PC에서 공동인증서를 찾지 못했어요'), h('p', {}, '인증서를 이 PC로 옮긴 뒤 [다시 찾기]를 눌러 주세요. 인증서가 없으면 아래에서 다른 방법을 고를 수 있어요.'), h('div', { class: 'sx-actions' }, btn('다시 찾기', () => reply('rescan'), 'sx-btn-primary', { 'data-onb': 'rescan' }))),
+      );
+  // 보안 프로그램 점검(비동기): 자리를 먼저 두고 결과가 오면 채운다. 한 카드에 주의 면은 하나: 프로그램 문제가 먼저이고, 그동안 인증서 없음 안내는 숨긴다.
   const sec = h('div', { 'data-onb-security': '' });
   if (act.security)
     act.security
       .check()
       .then((st) => {
-        if (st.state === 'missing' || st.state === 'stopped') sec.append(securityBox(st, act.security, () => act.toast('보안 프로그램이 준비됐어요')));
+        if (st.state !== 'missing' && st.state !== 'stopped') return;
+        if (noCert) noCert.hidden = true;
+        sec.append(
+          securityBox(st, act.security, () => {
+            act.toast('보안 프로그램이 준비됐어요');
+            if (noCert) noCert.hidden = false;
+          }),
+        );
       })
       .catch(() => {});
   return h(
@@ -321,7 +337,7 @@ function authCard(o, u, reply, answer, act) {
     { class: 'sx-card onb-card', 'data-onb-step': o.step },
     h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '홈택스 인증서')),
     sec,
-    o.certs.length ? null : note('이 PC에서 공동인증서를 찾지 못했어요. 인증서를 이 PC로 옮긴 뒤 다시 열거나, 다른 방법으로 발급할 수 있어요.', true),
+    noCert,
     replies,
   );
 }
