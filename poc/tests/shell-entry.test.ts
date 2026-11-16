@@ -106,6 +106,7 @@ describe('설치본 자기 점검(packagedProblems, #76 인계 ①)', () => {
     const src = fs.readFileSync(path.join(SRC, 'shell.ts'), 'utf8');
     assert.ok(src.indexOf('packagedProblems(') < src.indexOf('prepareLayout(root)'));
     assert.match(src, /if \(problems\.some\(\(p\) => p\.startsWith\('fatal:'\)\)\) \{[\s\S]*?app\.exit\(1\);/);
-    assert.match(src, /startShell\(\{ engine: \{ portal: \{ kind: 'hometax' \} \}, buildBadges, remote: productRemote\(\{ isPackaged: app\.isPackaged, env: process\.env \}\) \}\)/);
+    // 뒤 인자(update·externalChrome 등)가 더 붙어도 앞의 셋은 그대로다
+    assert.match(src, /startShell\(\{ engine: \{ portal: \{ kind: 'hometax' \} \}, buildBadges, remote: productRemote\(\{ isPackaged: app\.isPackaged, env: process\.env \}\)(?:, [^\n]*)? \}\)/);
   });
 });

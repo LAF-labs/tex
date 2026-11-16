@@ -115,6 +115,8 @@ export interface HometaxFake {
     lastScreen: { screen: string; at: number } | null;
     /** 인증서 창 차례가 시작된 시각(C04). */
     certAt: number;
+    /** 사람 흉내(fx.cert)가 인증서 창에 [확인]·[취소]를 마친 시각(창이 받아 간 때). 없으면 0. */
+    certActedAt: number;
     /** 인증서 창 [확인] 기록. typed = 창의 비밀번호 칸 값이 맞아 통과(금고 입력), human = 시험 손잡이(사람 흉내). */
     certUses: Array<{ mode: 'login' | 'sign'; how: 'typed' | 'human'; cn: string }>;
     /** 틀린 비밀번호로 [확인]한 횟수. */
@@ -636,7 +638,7 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     ...o,
   };
   const supplier = { ...SUPPLIER, ...o.supplier };
-  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certUses: [], wrongPw: 0, secCardTries: 0, secCardErr: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
+  const state: HometaxFake['state'] = { loggedIn: o.loggedIn ?? false, stage: 'idle', invoices: [], lastScreen: null, certAt: 0, certActedAt: 0, certUses: [], wrongPw: 0, secCardTries: 0, secCardErr: 0, noticeOpened: 0, noticeClosed: 0, layerShown: 0, layerClosed: 0 };
   const reqs: FakeRequest[] = [];
   let certAction: 'confirm' | 'cancel' | null = null;
   let seq = 0;
@@ -727,7 +729,10 @@ export async function startHometaxFake(o: Partial<FakeKnobs> & { loggedIn?: bool
     }
     if (u.pathname === '/_fx/cert') {
       const a = state.stage === 'cert' ? certAction : null;
-      if (a) certAction = null;
+      if (a) {
+        certAction = null;
+        state.certActedAt = Date.now();
+      }
       return json(res, { action: a });
     }
     if (u.pathname === '/' || u.pathname === '') {

@@ -31,7 +31,8 @@ describe('H-01 실화면 패키지 + 공동인증서 비밀번호 포트(B1·B2)
     const vault = new FakeVault();
     const o = await realDryRun({ loggedIn: true, secret: { vault, targetId: () => 'T1' } });
     assert.equal(o.end?.status, 'success', show(o));
-    assert.deepEqual(vault.calls, ['secretWindow.openForHuman'], '금고에 한 번만 묻는다(값은 엔진에 오지 않는다)');
+    // popups.configure(안내 팝업 닫기 설정, 비밀 없음)는 세지 않는다
+    assert.deepEqual(vault.calls.filter((c) => c !== 'popups.configure'), ['secretWindow.openForHuman'], '금고에 한 번만 묻는다(값은 엔진에 오지 않는다)');
     const at = (t: string) => o.journal.indexOf(t);
     assert.ok(at('human.secret_manual') >= 0 && at('sign.turn_opened') > at('human.secret_manual'), show(o));
     assert.deepEqual(commits(o), ['ATEETBAA002C04', 'ATEETBAA002C05', 'ATEETBAA002C08']);
@@ -41,7 +42,8 @@ describe('H-01 실화면 패키지 + 공동인증서 비밀번호 포트(B1·B2)
     const vault = new FakeVault();
     const o = await realDryRun({ loggedIn: true, secret: { vault, targetId: () => 'T1' }, patchIssue: withSecret });
     assert.equal(o.end?.status, 'success', show(o));
-    assert.deepEqual(vault.calls, ['secretWindow.openForHuman'], '금고에 한 번만 묻는다(값은 엔진에 오지 않는다)');
+    // popups.configure(안내 팝업 닫기 설정, 비밀 없음)는 세지 않는다
+    assert.deepEqual(vault.calls.filter((c) => c !== 'popups.configure'), ['secretWindow.openForHuman'], '금고에 한 번만 묻는다(값은 엔진에 오지 않는다)');
     const at = (t: string) => o.journal.indexOf(t);
     assert.ok(at('human.secret_manual') >= 0 && at('signflow.timeout') > at('human.secret_manual'), show(o));
     assert.ok(at('sign.turn_opened') > at('human.secret_manual') && at('sign.turn_closed') > at('sign.turn_opened'), show(o));

@@ -168,7 +168,7 @@ describe('배선', () => {
   it('처음 쓴 품목은 저장 품목이 없는 거래처에만 준비할 때 남긴다(있으면 그대로)', () => {
     const src = read('apps/desktop/src/shell-app.ts');
     assert.match(src, /const r = await runs\.prepare\(id\);\s*await keepItem\(id\);/);
-    assert.match(src, /if \(!r \|\| r\.itemGuessed \|\| !r\.item\) return;\s*const cp = cps\.find\(\(c\) => c\.id === r\.counterparty\.id\);\s*if \(!cp \|\| cp\.item\) return;/);
+    assert.match(src, /if \(!r \|\| r\.rehearsal \|\| r\.itemGuessed \|\| !r\.item\) return;\s*const cp = cps\.find\(\(c\) => c\.id === r\.counterparty\.id\);\s*if \(!cp \|\| cp\.item\) return;/);
     assert.match(src, /await cpBook\.setFirstItem\(cp\.id, r\.item\);/);
     assert.match(src, /item: typeof p\.item === 'string' \? p\.item : undefined,\s*email: typeof p\.email === 'string' \? p\.email : undefined,/);
   });

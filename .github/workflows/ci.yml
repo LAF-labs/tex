@@ -27,10 +27,18 @@ env:
 
 jobs:
   linux:
-    name: Linux build·lint·test
+    name: Linux build·lint·test (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # 시험 파일을 두 잡으로 나누고(node --test-shard), 잡 안에서는 파일 3개씩 함께 돈다(scripts/run-tests.mjs).
+    # 한 잡에서 파일 하나씩 돌리면 45분을 넘겼다(2026-11-15 main 런).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     env:
+      SAX_TEST_SHARD: ${{ matrix.shard }}/2
+      SAX_TEST_CONCURRENCY: '3'
       # 시험이 띄우는 Electron(있으면)은 화면 없는 러너에서 xvfb로 돈다(poc/README Linux 실행 방식).
       # 러너는 root가 아니고 node_modules의 chrome-sandbox는 SUID가 아니라서 Electron 샌드박스만 끈다(설치 Chrome은 그대로).
       ELECTRON_DISABLE_SANDBOX: '1'
@@ -70,6 +78,7 @@ jobs:
       - name: 빌드
         run: pnpm build
       - name: 린트
+        if: ${{ matrix.shard == 1 }}
         run: pnpm lint
       - name: 시험
         run: |
@@ -77,19 +86,22 @@ jobs:
           mkdir -p "$CI_OUT"
           xvfb-run -a pnpm test 2>&1 | tee "$CI_OUT/test.log"
       - name: 보안 스위트
-        if: ${{ hashFiles('poc/tests/security/**') != '' }}
+        if: ${{ matrix.shard == 1 && hashFiles('poc/tests/security/**') != '' }}
         run: |
           set -o pipefail
           xvfb-run -a pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
       # 폰 앱은 루트 작업공간에서 빠져 있다(apps/mobile/pnpm-workspace.yaml, 자체 잠금 파일). PR 기본 잡에서만 돈다(M5-1·M7).
       - name: 폰 앱 의존성(lockfile 고정)
+        if: ${{ matrix.shard == 2 }}
         run: pnpm --dir apps/mobile install --frozen-lockfile
       - name: 폰 앱 형식 검사·시험
+        if: ${{ matrix.shard == 2 }}
         run: |
           set -o pipefail
           pnpm --dir apps/mobile typecheck
           pnpm --dir apps/mobile test 2>&1 | tee "$CI_OUT/test-mobile.log"
       - name: 폰 릴레이 경로 스모크(더미 PC, 라이브·HTTPS 큐)
+        if: ${{ matrix.shard == 2 }}
         run: |
           set -o pipefail
           node scripts/ci-phone-relay.mjs 2>&1 | tee "$CI_OUT/phone-relay.log"
@@ -103,17 +115,24 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-summary-linux
+          name: test-summary-linux-${{ matrix.shard }}
           path: ${{ runner.temp }}/ci-out/
           retention-days: 14
           if-no-files-found: ignore
 
 
   macos:
-    name: macOS build·lint·test
-    # PR에서도 전체를 돈다: 지난 macOS 런은 잡 전체 약 6분(시험 약 5분)이라 핵심만 고를 이유가 없다.
+    name: macOS build·lint·test (${{ matrix.shard }}/2)
+    # PR에서도 전체를 돈다. 시험이 늘어 한 잡으로는 45분을 넘겨 두 잡으로 나눈다(macos-15 러너는 3코어라 파일 2개씩).
     runs-on: macos-15
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      SAX_TEST_SHARD: ${{ matrix.shard }}/2
+      SAX_TEST_CONCURRENCY: '2'
     steps:
       - uses: actions/checkout@v5
         with:
@@ -138,6 +157,7 @@ jobs:
       - name: 빌드
         run: pnpm build
       - name: 린트
+        if: ${{ matrix.shard == 1 }}
         run: pnpm lint
       - name: 시험
         run: |
@@ -145,7 +165,7 @@ jobs:
           mkdir -p "$CI_OUT"
           pnpm test 2>&1 | tee "$CI_OUT/test.log"
       - name: 보안 스위트
-        if: ${{ hashFiles('poc/tests/security/**') != '' }}
+        if: ${{ matrix.shard == 1 && hashFiles('poc/tests/security/**') != '' }}
         run: |
           set -o pipefail
           pnpm test:security 2>&1 | tee "$CI_OUT/test-security.log"
@@ -159,17 +179,24 @@ jobs:
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
-          name: test-summary-macos
+          name: test-summary-macos-${{ matrix.shard }}
           path: ${{ runner.temp }}/ci-out/
           retention-days: 14
           if-no-files-found: ignore
 
   windows:
-    name: Windows build·lint·test
+    name: Windows build·lint·test (${{ matrix.shard }}/2)
     # ADR-035 결정 1 (나): 두 OS. GitHub 호스트 러너(windows-latest). 공개 저장소에 self-hosted 러너는 붙이지 않는다
     # (fork PR 코드가 사용자 노트북에서 돈다). 실물 인증서·Hello·TPM 확인은 .github/RUNNER-WINDOWS.md의 수동 절차로.
     runs-on: windows-latest
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    env:
+      SAX_TEST_SHARD: ${{ matrix.shard }}/2
+      SAX_TEST_CONCURRENCY: '3'
     defaults:
       run:
         working-directory: poc
@@ -194,13 +221,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
       - run: pnpm lint
+        if: ${{ matrix.shard == 1 }}
       - name: 시험
         run: |
           New-Item -ItemType Directory -Force "$env:CI_OUT" | Out-Null
           pnpm test 2>&1 | Tee-Object "$env:CI_OUT/test.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: 보안 스위트
-        if: ${{ hashFiles('poc/tests/security/**') != '' }}
+        if: ${{ matrix.shard == 1 && hashFiles('poc/tests/security/**') != '' }}
         run: |
           pnpm test:security 2>&1 | Tee-Object "$env:CI_OUT/test-security.log"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -213,7 +241,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: ${{ failure() }}
         with:
-          name: test-summary-windows
+          name: test-summary-windows-${{ matrix.shard }}
           path: ${{ runner.temp }}/ci-out/
           retention-days: 14
           if-no-files-found: ignore

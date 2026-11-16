@@ -3,7 +3,7 @@
 // 키는 공개 시험 시드(tests/registry-samples.ts, 실제 키 아님)다. 저장소·CI에 운영 개인 키는 없다.
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import { acceptIndex, type RegistryIndex as EngineIndex } from '@sax/engine';
 import {
   acceptPolicy,
@@ -61,8 +61,18 @@ const env = (o: Record<string, string | undefined> = {}): NodeJS.ProcessEnv => (
   ...o,
 });
 
+/** 단언이 실패해도 서버가 남아 파일이 끝나지 않는 일이 없게 시험마다 닫는다 */
+const servers: http.Server[] = [];
+afterEach(() => {
+  for (const s of servers.splice(0)) {
+    s.closeAllConnections();
+    s.close();
+  }
+});
+
 async function serve(listener: http.RequestListener) {
   const server = http.createServer(listener);
+  servers.push(server);
   const req = client(await listen(server));
   return { req, close: () => server.close() };
 }
@@ -224,7 +234,7 @@ describe('레지스트리 함수(api/registry·api/registry-cron)', () => {
     const r = await on.req('GET', '/api/registry-cron', { headers: { authorization: `Bearer ${CRON}` } });
     assert.equal(r.status, 200);
     // 빈 로그의 첫 헤드도 서명한다
-    assert.deepEqual(r.json, { ok: true, revoked_keys: 'missing', status: 'missing', policy: 'missing', index: NOIX, head: 'resigned' });
+    assert.deepEqual(r.json, { ok: true, revoked_keys: 'missing', status: 'missing', policy: 'missing', index: NOIX, release: NOIX, head: 'resigned' });
     on.close();
   });
 });
@@ -234,12 +244,12 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     const e = await deployed();
     await publishSamples(e.put);
     const orig = { rv: await read<EngineRevoked>(e.store, 'registry/revoked_keys.json'), st: await read<EngineStatus>(e.store, 'registry/status.json'), pol: await read<Policy>(e.store, 'policy/current.json') };
-    assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, head: 'fresh' });
+    assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
 
     // 발행 13시간 뒤: 폐기 목록만 남은 기간 < 12시간
     setAt(e.clock, ISSUED + 13 * H);
     // 헤드는 재서명 게시의 로그 항목이 이미 새로 서명했다
-    assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'fresh', policy: 'fresh', index: NOIX, head: 'fresh' });
+    assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
     const rv = await read<EngineRevoked>(e.store, 'registry/revoked_keys.json');
     assert.deepEqual(without(rv, FRESH), without(orig.rv, FRESH));
     assert.deepEqual(rv.signatures, orig.rv.signatures);
@@ -250,7 +260,7 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
 
     // 발행 26시간 뒤: 셋 다
     setAt(e.clock, ISSUED + 26 * H);
-    assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'resigned', policy: 'resigned', index: NOIX, head: 'fresh' });
+    assert.deepEqual(await e.b.resign(), { revoked_keys: 'resigned', status: 'resigned', policy: 'resigned', index: NOIX, release: NOIX, head: 'fresh' });
     const st = await read<EngineStatus>(e.store, 'registry/status.json');
     const pol = await read<Policy>(e.store, 'policy/current.json');
     assert.deepEqual(without(st, FRESH), without(orig.st, FRESH));
@@ -260,7 +270,7 @@ describe('타임스탬프 자동 재서명(폐기 목록 24시간, status·정�
     // 정책 {ver}.json과 current.json은 같은 바이트
     assert.deepEqual(await e.store.get(`policy/${pol.version}.json`), await e.store.get('policy/current.json'));
     // 바로 다시 돌리면 할 일 없음
-    assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, head: 'fresh' });
+    assert.deepEqual(await e.b.resign(), { revoked_keys: 'fresh', status: 'fresh', policy: 'fresh', index: NOIX, release: NOIX, head: 'fresh' });
     e.close();
     e.b.close();
   });

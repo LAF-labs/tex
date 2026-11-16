@@ -254,9 +254,10 @@ describe('제품 조회 패키지 원본(게시할 판): IrLookupPort 관례', (
       assert.deepEqual(lookupViolations(f), []);
     });
   }
-  it('H-01 2.3.7의 lookupsUsed는 조회 1.2.0 두 개, verify match 열은 모두 조회 패키지 열이 있다', () => {
+  it('H-01 2.3.x의 lookupsUsed는 조회 1.2.0 두 개, verify match 열은 모두 조회 패키지 열이 있다', () => {
     const g = loadPkg('hometax.invoice.issue');
-    assert.equal(g.manifest.version, '2.3.7');
+    // 판 번호 자체는 묻지 않는다(H-01은 실화면 맞춤마다 패치가 오른다). 2.3 줄에서 조회 두 개를 쓰는지만 본다
+    assert.match(g.manifest.version, /^2\.3\.\d+$/);
     assert.deepEqual(g.manifest.lookupsUsed.map((l) => `${l.id}@${l.version}`), [`${LOOKUP}@1.2.0`, `${MAIL}@1.2.0`]);
     const flat: Step[] = [];
     const walk = (ss: readonly Step[]) => {
