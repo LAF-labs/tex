@@ -274,6 +274,13 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
     const relayArgs: Record<string, unknown[]> = { createRoom: [auth, randomBytes(16)], registerMailbox: [auth, randomBytes(32), randomBytes(32), randomBytes(32)], deleteMailbox: [auth, randomBytes(32), randomBytes(32)] };
     assert.deepEqual(Object.keys(ports.relay).filter((m) => !(m in relayArgs)), []);
     for (const m of Object.keys(ports.relay)) await (ports.relay as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[m]!(...relayArgs[m]!).catch(() => {});
+    // 연결된 폰 수신(phone-link.ts)이 부르는 큐 경로: 쪽 읽기·ACK·번들 올리기
+    const q = ports.mailboxQueue!(randomBytes(32), { read: randomBytes(32), write: randomBytes(32) }, auth);
+    const before = seen.length;
+    await q.listPage().catch(() => {});
+    await q.ack(3).catch(() => {});
+    await q.putBundle('b').catch(() => {});
+    assert.deepEqual(seen.slice(before).map((x) => [x.method, x.route]), [['GET', 'mailboxes.envelopes'], ['POST', 'mailboxes.ack'], ['PUT', 'mailboxes.bundle']]);
     const bad = seen.filter((x) => x.route === 'path' || x.route === 'origin');
     assert.deepEqual(bad, [], '허용 목록 밖으로 나가는 호출');
     for (const [m, p, name] of ACCOUNT_SCREEN_ROUTES) assert.ok(seen.some((x) => x.method === m && x.url === CLOUD_ORIGIN + p && x.route === name), `${m} ${p}를 부르는 메서드가 있다`);

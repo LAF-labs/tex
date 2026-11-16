@@ -7,7 +7,7 @@
 //   응답 본문·URL·토큰·이메일은 오류·로그에 넣지 않는다. 네트워크 실패는 code 'net.<이유>'(egress 코드 그대로).
 // - 계정 세션 문자열과 기기 토큰은 main 메모리에만 있다. 렌더러·로그·파일로 나가지 않는다. 기기 토큰은 DeviceTokenCache(15분, 영속 없음).
 // - 기기 범위 호출의 인증 헤더는 데스크톱이 만들어 넘긴다(DeviceAuth). 클라이언트는 그 헤더를 그대로 붙인다.
-import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
+import type { DeviceListJson, DesktopKeys, DeviceToken, DpopSigner, MailboxTokens, RelayQueue, SignedAcctClaim, SignedCert, WebSocketLike } from '@sax/remote';
 
 /** 기기 범위 토큰 헤더(Authorization: DPoP <token> + DPoP 증명). htu는 요청 URL 전체(쿼리 없음). 데스크톱이 deviceAuthHeaders로 만든다. */
 export type DeviceAuth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => Promise<Record<string, string>>;
@@ -108,6 +108,11 @@ export interface CloudPorts {
   insecureLocal: boolean;
   /** 릴레이 소켓 열기(wss, 개발 스택은 ws://localhost). headers는 우편함 라이브에만. */
   openSocket(url: string, headers?: Record<string, string>): WebSocketLike;
+  /**
+   * 우편함 HTTPS 큐(GET·ACK 봉투, PUT 번들, services/relay/API.md). @sax/remote relayQueue를 egress HTTP와 릴레이 HTTPS origin에 묶는다.
+   * 연결된 폰 수신(phone-link.ts)이 쓴다. 없으면(시험 대역) 큐로 받지 않는다.
+   */
+  mailboxQueue?(mbxId: Uint8Array, tok: MailboxTokens, auth: DeviceAuth): RelayQueue;
 }
 
 /**

@@ -1,0 +1,66 @@
+# 룸 호스트(rooms.tax.laf-co.com) 배포: 릴레이 이미지를 러너에서 빌드해 VM으로 옮기고 compose로 갈아 끼운다.
+# 수동 실행만(workflow_dispatch). main 커밋만 배포한다. 절차·VM 준비는 poc/services/deploy/rooms-host/README.md.
+# 비밀은 SSH 접속 정보 셋뿐이다(ROOMS_SSH_KEY·ROOMS_HOST·ROOMS_KNOWN_HOSTS, environment "rooms-prod").
+# 서비스 비밀(QUEUE_KEY 등)은 워크플로가 다루지 않는다. VM의 /opt/sax-rooms/relay.env에만 있다.
+name: rooms-host-deploy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rooms-host-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: 룸 호스트 배포
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: rooms-prod
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: 이미지 빌드
+        working-directory: poc
+        run: |
+          TAG="$(git rev-parse --short=12 HEAD)"
+          echo "TAG=${TAG}" >> "$GITHUB_ENV"
+          docker build -f services/relay/Dockerfile -t "sax-relay:${TAG}" .
+          docker save "sax-relay:${TAG}" | gzip > "${RUNNER_TEMP}/sax-relay.tar.gz"
+      - name: SSH 준비
+        env:
+          ROOMS_SSH_KEY: ${{ secrets.ROOMS_SSH_KEY }}
+          ROOMS_KNOWN_HOSTS: ${{ secrets.ROOMS_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "${ROOMS_SSH_KEY}" > ~/.ssh/id_rooms
+          printf '%s\n' "${ROOMS_KNOWN_HOSTS}" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_rooms ~/.ssh/known_hosts
+      - name: 올리고 갈아 끼우기
+        env:
+          ROOMS_HOST: ${{ secrets.ROOMS_HOST }}
+        run: |
+          SSH="ssh -i ${HOME}/.ssh/id_rooms -o StrictHostKeyChecking=yes -o BatchMode=yes"
+          DEST="ubuntu@${ROOMS_HOST}"
+          scp -i ~/.ssh/id_rooms -o StrictHostKeyChecking=yes -o BatchMode=yes \
+            "${RUNNER_TEMP}/sax-relay.tar.gz" poc/services/deploy/rooms-host/compose.yml poc/services/deploy/rooms-host/Caddyfile \
+            "${DEST}:/opt/sax-rooms/incoming/"
+          ${SSH} "${DEST}" "TAG=${TAG} bash -s" < poc/services/deploy/rooms-host/remote-apply.sh
+      - name: 스모크(공개 healthz·룸 발급 경로)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 https://rooms.tax.laf-co.com/healthz; then echo; break; fi
+            sleep 2
+          done
+          curl -fsS --max-time 5 https://rooms.tax.laf-co.com/healthz
+          # 인증 없는 룸 발급은 401(서버가 살아 있고 라우팅이 맞음)
+          code="$(curl -s -o /dev/null -w '%{http_code}' -X POST https://rooms.tax.laf-co.com/v1/rooms -H 'content-type: application/json' -d '{}')"
+          test "${code}" = 401 || { echo "POST /v1/rooms 기대 401, 실제 ${code}"; exit 1; }
+      - name: SSH 키 지우기
+        if: always()
+        run: rm -f ~/.ssh/id_rooms

@@ -2,7 +2,7 @@
 // 경로 규칙(룸·우편함 라이브), 우편함 헤더(기기 토큰 DPoP + X-Mbx-Read/Write), 토큰은 URL에 없고, 프레임 순서를 지킨다.
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { allowDevLanHosts, b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, type WebSocketLike } from '@sax/remote';
+import { allowDevLanHosts, b64url, encodeHs, relayOrigin, relayUrl, wsRelayClient, KIND, RELAY_CLOSE, RELAY_PING, type WebSocketLike } from '@sax/remote';
 
 class FakeWs implements WebSocketLike {
   binaryType = 'blob';
@@ -197,5 +197,33 @@ describe('ws-link(services/relay/API.md)', () => {
     link.close();
     await tick(30);
     assert.equal(made[0]!.pings, n);
+  });
+
+  it('우편함 keepalive: ping()이 없는 소켓(PC 내장 WebSocket)도 텍스트 ping을 보내고, pong이 오면 유지한다', async () => {
+    const { c, made } = harness({ pingMs: 10 });
+    const p = c.joinMailbox(MBX, TOK, 'desktop');
+    await tick();
+    const ws = made[0]!;
+    ws.msg('{"t":"peer","online":false}');
+    const link = await p;
+    const pong = setInterval(() => ws.msg('{"t":"pong"}'), 5);
+    await tick(60);
+    clearInterval(pong);
+    assert.ok(ws.sent.filter((x) => x === RELAY_PING).length >= 3, '30초 간격 텍스트 ping');
+    assert.equal(ws.pings, 0, '우편함은 프레임 ping을 쓰지 않는다');
+    assert.equal(link.closed, false);
+    link.close();
+  });
+
+  it('우편함 keepalive: 2.5배 간격 동안 아무것도 못 받으면 죽은 연결로 끊는다(잠자기·NAT 만료)', async () => {
+    const { c, made } = harness({ pingMs: 10 });
+    const p = c.joinMailbox(MBX, TOK, 'desktop');
+    await tick();
+    made[0]!.msg('{"t":"peer","online":true}');
+    const link = await p;
+    let closed = false;
+    link.onClose(() => (closed = true));
+    await tick(60);
+    assert.ok(closed && link.closed, '반쯤 열린 연결을 붙잡지 않는다');
   });
 });
