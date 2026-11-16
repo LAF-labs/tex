@@ -37,10 +37,23 @@ const LOOKUP_HANDLERS: Handlers = Object.fromEntries(LOOKUP_STEP_TYPES.map((t) =
 export const LOOKUP_COLUMN_PREFIX = 'lookup.column.';
 const ROW_CSS = 'lookup.table.rowCss';
 const CELL_CSS = 'lookup.table.cellCss';
+/**
+ * 카드 목록(머리글 행 없음, 홈택스 민원신청 처리결과): 행마다 이름·값 쌍이 있다. 둘 다 있으면 이 모양으로 읽는다.
+ * 행 안의 이름 요소(labelCss)와 값 요소(valueCss)는 같은 수이고, 모든 행의 이름 차례가 같아야 한다(아니면 lookup.incomplete).
+ * 머리글은 첫 행의 이름이다. 행이 0개면 열을 볼 수 없으니 건수 문구(count = 0)가 결과가 다 왔다는 근거다.
+ */
+const LABEL_CSS = 'lookup.table.labelCss';
+const VALUE_CSS = 'lookup.table.valueCss';
 const DEFAULT_ROW_CSS = 'tr, [role="row"]';
 const DEFAULT_CELL_CSS = ':scope > th, :scope > td, :scope > [role="columnheader"], :scope > [role="rowheader"], :scope > [role="gridcell"], :scope > [role="cell"]';
 /** 열 속성 모드(IR rev v1.3.5): 칸을 머리글 문구 대신 이 속성 값(lookup.column.<열> = 값)으로 찾는다. WebSquare 그리드는 data-col_id. */
 const COL_ATTR = 'lookup.table.colAttr';
+/**
+ * 칸 id 모드(5차 예행 run-a82e53d3, 홈택스 민원신청 처리결과): WebSquare generator 카드 목록은 머리글도 이름표도 없이
+ * 칸마다 id가 <목록>_<행 번호>_<칸 이름>이다. 이 문자열은 정규식이고 1번 묶음이 행 번호, 2번 묶음이 칸 이름이다.
+ * 표 안에서 id가 맞는 요소를 행 번호로 묶고, 첫 행의 칸 이름 차례를 머리글로 쓴다(lookup.column.<열> = 칸 이름).
+ */
+const CELL_ID = 'lookup.table.cellIdPattern';
 /**
  * 건수 문구가 없는 화면의 완결 판정(IR rev v1.3.5): 'idle'이면 rows extract 바로 앞 스텝이 wait for:idle(요청 0개 500ms)이어야 하고,
  * 행 수가 pageSize(한 쪽 행 수) 미만이어야 다 온 것으로 본다(한 쪽이 꽉 차면 다음 쪽이 있을 수 있다).
@@ -78,6 +91,8 @@ export interface IrLookupInput {
   fixtureGrant?: FixtureOriginGrant | null;
   /** 팝업 열기 대기 상한(기본 10초). */
   timeoutMs?: number;
+  /** 조회 스텝이 멈추면 팝업을 닫기 전에 부른다(예행 화면 기록). 6초 안에 끝나지 않으면 기다리지 않는다. */
+  onFail?: (popup: Page, at: { stepId: string; code: string }) => Promise<void>;
 }
 
 const norm = (s: string) => s.normalize('NFKC').replace(/\s+/g, ' ').trim();
@@ -159,7 +174,12 @@ export class IrLookupPort implements LookupPort {
         // 실기기 디버깅: 조회 패키지의 어느 스텝·셀렉터 키에서 멈췄는지(값 없음, ⑦). RunService가 엔진 로그 run.lookup_failed로도 남긴다.
         const at = [...flattenSteps(ir.steps)].find((x) => x.id === stop.at) as (Step & { target?: unknown; for?: unknown; value?: unknown }) | undefined;
         const target = typeof at?.target === 'string' ? at.target : at?.type === 'wait' && at.for === 'selector' && typeof at.value === 'string' ? at.value : '';
-        this.i.events.journal('lookup.step_failed', { playbook: req.playbook, purpose: req.purpose, stepId: stop.at, stepType: at?.type ?? 'unknown', target, code: ('code' in stop && stop.code) || stop.t });
+        const code = ('code' in stop && stop.code) || stop.t;
+        this.i.events.journal('lookup.step_failed', { playbook: req.playbook, purpose: req.purpose, stepId: stop.at, stepType: at?.type ?? 'unknown', target, code });
+        if (this.i.onFail) {
+          let timer: NodeJS.Timeout | undefined;
+          await Promise.race([this.i.onFail(popup, { stepId: stop.at, code }).catch(() => {}), new Promise<void>((r) => (timer = setTimeout(r, 6_000)))]).finally(() => clearTimeout(timer));
+        }
         return { ok: false, code: 'lookup.failed' };
       }
 
@@ -170,15 +190,53 @@ export class IrLookupPort implements LookupPort {
       const t = await resolveTarget(reader, files.selectors, tableKey);
       const handle = t.ok ? reader.handle(t.t.el) : null;
       if (!handle) return { ok: false, code: 'lookup.incomplete' };
+      const labelled = !!(files.strings[LABEL_CSS] && files.strings[VALUE_CSS]);
       const colAttr = files.strings[COL_ATTR];
+      const cellId = files.strings[CELL_ID];
+      if (cellId !== undefined) {
+        // 행 번호·칸 이름 두 캡처 그룹이 없는 패턴은 표를 조용히 비우므로 패키지 오류로 본다.
+        let groups = 0;
+        try {
+          groups = (new RegExp(`${cellId}|`).exec('')?.length ?? 1) - 1;
+        } catch {
+          return { ok: false, code: 'lookup.package_invalid' };
+        }
+        if (groups < 2) return { ok: false, code: 'lookup.package_invalid' };
+      }
+      const byId = !!cellId;
       const table = await handle.evaluate(
         (el, css) => {
+          const text = (c: Element) => (c as HTMLElement).innerText ?? c.textContent ?? '';
+          if (css.cellId) {
+            const re = new RegExp(css.cellId);
+            const rows = new Map<string, Map<string, string>>();
+            for (const c of (el as Element).querySelectorAll('[id]')) {
+              const m = re.exec(c.id);
+              if (!m || m[1] === undefined || m[2] === undefined) continue;
+              let r = rows.get(m[1]);
+              if (!r) rows.set(m[1], (r = new Map()));
+              if (!r.has(m[2])) r.set(m[2], text(c));
+            }
+            const all = [...rows.values()];
+            const header = all[0] ? [...all[0].keys()] : null;
+            return { header, body: all.map((r) => (header ?? []).map((h) => r.get(h) ?? '')), bad: false };
+          }
           const rows = [...(el as Element).querySelectorAll(css.row)];
           const cells = (r: Element) => [...r.querySelectorAll(css.cell)];
           const isHead = (c: Element) => c.tagName === 'TH' || c.getAttribute('role') === 'columnheader';
-          const text = (c: Element) => (c as HTMLElement).innerText ?? c.textContent ?? '';
           let header: string[] | null = null;
           const body: string[][] = [];
+          if (css.label && css.value) {
+            for (const r of rows) {
+              const ls = [...r.querySelectorAll(css.label)].map(text);
+              const vs = [...r.querySelectorAll(css.value)].map(text);
+              if (!ls.length || ls.length !== vs.length) return { header, body, bad: true };
+              header ??= ls;
+              if (ls.join('\u0000') !== header.join('\u0000')) return { header, body, bad: true };
+              body.push(vs);
+            }
+            return { header, body, bad: false };
+          }
           for (const r of rows) {
             const cs = cells(r);
             if (!cs.length) continue;
@@ -197,11 +255,25 @@ export class IrLookupPort implements LookupPort {
             }
             body.push(cs.map(text));
           }
-          return { header, body };
+          return { header, body, bad: false };
         },
-        { row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS, cell: files.strings[CELL_CSS] ?? (colAttr ? `[${colAttr}]` : DEFAULT_CELL_CSS), attr: colAttr ?? null },
+        {
+          row: files.strings[ROW_CSS] ?? DEFAULT_ROW_CSS,
+          cell: files.strings[CELL_CSS] ?? (colAttr ? `[${colAttr}]` : DEFAULT_CELL_CSS),
+          attr: colAttr ?? null,
+          label: labelled ? files.strings[LABEL_CSS]! : '',
+          value: labelled ? files.strings[VALUE_CSS]! : '',
+          cellId: cellId ?? '',
+        },
       );
-      if (!lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return { ok: false, code: 'lookup.incomplete' };
+      // 실화면 예행 진단: 스텝은 다 지났는데 표 판정에서 멈춘 까닭(코드·행 수·건수 글자만, 행 글 없음 ⑦). 5차 예행 H-08 run-11a67c29
+      const tableFail = (code: string) => {
+        this.i.events.journal('lookup.table_failed', { playbook: req.playbook, purpose: req.purpose, code, rows: String(table.body.length), count: (scope.vars.get(LOOKUP_COUNT_VAR) ?? '').replace(/[^\d]/g, '').slice(0, 6), bad: String(table.bad), header: String((table.header ?? []).length) });
+        return { ok: false as const, code };
+      };
+      if (table.bad || !lookupComplete(ir.steps, files.strings, scope.vars.get(LOOKUP_COUNT_VAR), table.body.length)) return tableFail('lookup.incomplete');
+      // 카드 목록이 비었으면(건수 0과 같음) 열을 볼 수 없다. 머리글 표는 빈 표도 머리글이 있으니 아래 열 검사를 그대로 한다.
+      if ((labelled || byId) && table.body.length === 0) return halted() ?? { ok: true, rows: [] };
       // 열 이름 → 머리글 위치(열 속성 모드면 속성 값). 필요한 열(match·승인번호)이 하나라도 없으면 조회 실패다(그 열을 빈칸으로 읽으면 "없음"이 된다).
       // 열 속성 모드에서 행이 0개면 머리글을 읽을 수 없다: 그때는 열이 있다고 본다(빈 결과는 행 수 판정이 이미 받았다).
       const head = (table.header ?? []).map(norm);
@@ -211,7 +283,7 @@ export class IrLookupPort implements LookupPort {
         const ix = colAttr && !table.body.length ? 0 : head.indexOf(norm(v));
         if (ix >= 0) col.set(k.slice(LOOKUP_COLUMN_PREFIX.length), ix);
       }
-      for (const need of [...Object.keys(req.match), VERIFY_ID_COLUMN]) if (!col.has(need)) return { ok: false, code: 'lookup.columns_missing' };
+      for (const need of [...Object.keys(req.match), VERIFY_ID_COLUMN]) if (!col.has(need)) return tableFail('lookup.columns_missing');
       const rows: LookupRow[] = table.body.map((cs) => Object.fromEntries([...col].map(([k, ix]) => [k, cs[ix] ?? ''])));
       const h2 = halted();
       if (h2) return h2;

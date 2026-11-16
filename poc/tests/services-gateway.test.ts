@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
+import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_DIGEST, CHAT_PHONE, CHAT_PHONE_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
 import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseAgentPrivacy, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type Prices, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
@@ -599,6 +599,144 @@ describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST �
     for (let i = 0; i < 5; i++) assert.equal((await e.call('/v1/respond', respondBody(rt))).status, 200, `call ${i}`);
     const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
     assert.deepEqual([u.json.limitKrw, u.json.tier], [20, 'paid']);
+  });
+});
+
+describe('게이트웨이: 폰 대화 직접 호출(ADR-047, chat 범위)', () => {
+  let e: Env;
+  let phone: Awaited<ReturnType<typeof signedPhone>>;
+  const PRICES = { decideIn: 100_000, decideCached: 10_000, decideOut: 0, respondIn: 1_000_000, respondCached: 50_000, respondOut: 5_000_000, agentIn: 1_000_000, agentCached: 50_000, agentOut: 5_000_000 };
+  beforeEach(async () => {
+    e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 }, limitPrices: PRICES });
+    phone = await signedPhone(e.s, e.pc);
+  });
+  afterEach(() => (e.server.close(), e.s.close()));
+  const chatId = () => ({ chatSessionId: `phone-${randomBytes(6).toString('hex')}` });
+  const phoneBody = (rt: string, extra: object = {}, toolset = 'chat_phone') => ({ toolset, messages: [{ role: 'user', content: [{ type: 'input_text', text: '[지금]\n화면: 열린 카드 없음\n사용자: [NAME_1]에 세금계산서 끊어줘' }] }], runToken: rt, ...extra });
+  const claimsOf = (t: string) => JSON.parse(Buffer.from(t.split('.')[1]!, 'base64url').toString('utf8')) as { scp: string[]; role: string; tier?: string };
+
+  it('폰 토큰은 chat 범위와 등급만 싣고(gateway 없음), 대화 범위 실행 토큰만 받는다', async () => {
+    const c = claimsOf(await phone.token());
+    assert.deepEqual([c.role, c.scp, c.tier], ['mobile', ['relay', 'push', 'chat'], 'trial']);
+    const run = await e.call('/v1/run-tokens', { runId: 'run-12345678' }, phone);
+    assert.deepEqual([run.status, run.json.error], [403, 'account.scope_denied']);
+    const chat = await e.call('/v1/run-tokens', chatId(), phone);
+    assert.equal(chat.status, 200, chat.text);
+    assert.deepEqual(chat.json.budget, { l1: GATEWAY.l1PerChat, l2: GATEWAY.l2PerChat });
+  });
+
+  it('chat_phone: 머리말·도구·출력은 게이트웨이가 넣고, 도구 왕복을 replay로 잇고, toolsetDigest는 로컬 정의와 같다', async () => {
+    const rt = await e.runToken(phone, chatId());
+    const call = { type: 'function_call', call_id: 'call_p1', name: 'invoice_draft', arguments: '{"counterparty":"[NAME_1]","amount":null,"vat":null,"item":null}' };
+    e.provider.respondOutput = [call];
+    const r = await e.call('/v1/respond', phoneBody(rt), phone);
+    assert.equal(r.status, 200, r.text);
+    assert.equal(r.json.toolsetDigest, toolsetDigest(CHAT_PHONE));
+    const sent = e.provider.responds[0]!;
+    assert.equal(sent.model, 'model-respond');
+    const tools = sent.tools as Array<{ name: string; strict: boolean }>;
+    assert.deepEqual(tools.map((t) => t.name), CHAT_PHONE_TOOLS.map((t) => t.name));
+    assert.ok(tools.every((t) => t.strict));
+    assert.match(String(sent.prompt_cache_key), /^acct:[0-9a-f]{32}:t:chat_phone$/);
+    assert.match(JSON.stringify((sent.input as unknown[])[0]), /PC는 꺼져 있다/);
+    const tagged = (r.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"kind":"ask","text":"금액을 알려 주세요.","show":["d1"],"ask":"amount"}' }] }];
+    const turn = await e.call('/v1/respond', phoneBody(rt, { replay: [tagged, { type: 'function_call_output', call_id: 'call_p1', output: '{"ref":"d1","status":"needs_input","fields":null,"needs":["amount"]}' }] }), phone);
+    assert.equal(turn.status, 200, turn.text);
+    // PC가 받은 태그는 폰에서 쓸 수 없다(태그는 기기·실행 토큰에 묶인다)
+    const pcRt = await e.runToken(e.pc, chatId());
+    const stolen = await e.call('/v1/respond', { toolset: 'chat_digest', messages: phoneBody(rt).messages, runToken: pcRt, replay: [tagged] });
+    assert.equal(stolen.json.error, 'gateway.param_rejected');
+  });
+
+  it('chat_digest: 폰과 데스크톱 모두 부른다(도구 없음, 1턴)', async () => {
+    e.provider.respondOutput = [{ type: 'message', content: [{ type: 'output_text', text: '{"summary":"[NAME_1]에 세금계산서 카드를 만들었다."}' }] }];
+    for (const who of [phone, e.pc]) {
+      const rt = await e.runToken(who, chatId());
+      const r = await e.call('/v1/respond', phoneBody(rt, {}, 'chat_digest'), who);
+      assert.equal(r.status, 200, r.text);
+      assert.equal(r.json.toolsetDigest, toolsetDigest(CHAT_DIGEST));
+    }
+    assert.ok(e.provider.responds.every((b) => !('tools' in b)));
+  });
+
+  it('폰이 못 여는 것: 다른 툴셋, 판정, 진위확인, CODEF 토큰. 데스크톱은 chat_phone을 못 연다. 공급사는 불리지 않는다', async () => {
+    const rt = await e.runToken(phone, chatId());
+    for (const toolset of ['chat_agent', 'chat_reply', 'query_parse', 'selector_repair', 'page_judge', 'browser_agent', 'computer_use', 'nope']) {
+      const r = await e.call('/v1/respond', phoneBody(rt, {}, toolset), phone);
+      assert.deepEqual([r.status, r.json.error], [403, 'account.scope_denied'], toolset);
+    }
+    assert.equal((await e.call('/v1/decide', decideBody(rt), phone)).json.error, 'account.scope_denied');
+    assert.equal((await e.call('/v1/biz/status', { b_no: ['1234567890'] }, phone)).json.error, 'account.scope_denied');
+    assert.equal((await e.call('/v1/codef/token', {}, phone)).json.error, 'account.scope_denied');
+    const pcRt = await e.runToken(e.pc, chatId());
+    assert.deepEqual(await e.call('/v1/respond', phoneBody(pcRt)).then((r) => [r.status, r.json.error]), [403, 'account.scope_denied']);
+    assert.equal(e.provider.responds.length + e.provider.decides.length, 0);
+    assert.equal(e.nts.calls, 0);
+  });
+
+  it('역할과 범위는 짝이다: chat만 가진 폰 토큰만 통과하고, PC의 실행 토큰은 폰이 쓸 수 없다', async () => {
+    // relay·push만 받은 폰 토큰(범위 축소)은 게이트웨이에 들어오지 못한다
+    const narrow = await deviceToken(e.s, e.pc.aik, phone.d, ['relay', 'push']);
+    const r = await e.req('POST', '/v1/run-tokens', { headers: phone.headers('POST', GW, '/v1/run-tokens', narrow), body: chatId() });
+    assert.deepEqual([r.status, r.json.error], [403, 'account.scope_denied']);
+    // chat만 받은 폰 토큰은 통과
+    const only = await deviceToken(e.s, e.pc.aik, phone.d, ['chat']);
+    assert.equal((await e.req('POST', '/v1/run-tokens', { headers: phone.headers('POST', GW, '/v1/run-tokens', only), body: chatId() })).status, 200);
+    // PC가 받은 실행 토큰(대화 범위든 실행 범위든)은 폰에서 무효
+    for (const scope of [chatId(), { runId: 'run-12345678' }]) {
+      const pcRt = await e.runToken(e.pc, scope);
+      assert.equal((await e.call('/v1/respond', phoneBody(pcRt), phone)).json.error, 'gateway.run_token_invalid');
+    }
+  });
+
+  it('하루 한도는 계정으로 PC와 같이 센다: 폰이 쓴 만큼 PC 한도가 줄고, 폰도 /v1/usage로 본다', async () => {
+    // 모의 공급사 respond 한 번 = 약 2원(위 한도 시험과 같은 단가). 체험 5원이면 세 번까지
+    const prt = await e.runToken(phone, chatId());
+    for (let i = 0; i < 2; i++) assert.equal((await e.call('/v1/respond', phoneBody(prt), phone)).status, 200);
+    const rt = await e.runToken(e.pc, chatId());
+    assert.equal((await e.call('/v1/respond', respondBody(rt))).status, 200);
+    const over = await e.call('/v1/respond', phoneBody(prt), phone);
+    assert.deepEqual([over.status, over.json.error], [429, 'gateway.daily_limit']);
+    assert.ok(Number(over.headers.get('retry-after')) > 0);
+    assert.equal((await e.call('/v1/respond', respondBody(rt))).json.error, 'gateway.daily_limit');
+    const u = await e.req('GET', '/v1/usage', { headers: phone.headers('GET', GW, '/v1/usage', await phone.token()) });
+    assert.deepEqual([u.status, u.json.usedKrw, u.json.limitKrw, u.json.tier], [200, 6, 5, 'trial']);
+    // 호출 기록에는 폰 기기 ID와 표면(chat_phone)이 남는다(본문 없음)
+    const rows = await e.db.all<{ device_id: string; surface: string }>('SELECT device_id, surface FROM call_records ORDER BY at');
+    assert.deepEqual(rows.map((x) => [x.device_id === phone.d.id, x.surface]), [[true, 'chat_phone'], [true, 'chat_phone'], [false, 'query_parse']]);
+  });
+
+  it('폰 본문도 2차 트립와이어를 지난다: 사업자번호가 섞이면 공급사로 보내지 않는다', async () => {
+    const rt = await e.runToken(phone, chatId());
+    const body = phoneBody(rt);
+    body.messages[0]!.content[0]!.text = '[지금]\n화면: 열린 카드 없음\n사용자: 123-45-67890 여기로 끊어줘';
+    assert.equal((await e.call('/v1/respond', body, phone)).json.error, 'gateway.pii_tripwire');
+    assert.equal(e.provider.responds.length, 0);
+    assert.ok(e.events.includes('pii_tripwire'));
+  });
+
+  it('긴급 정지된 폰(분실)은 받아 둔 토큰이 살아 있어도 즉시 device_suspended', async () => {
+    const rt = await e.runToken(phone, chatId());
+    const t = await phone.token();
+    await e.s.req('POST', `/v1/devices/${phone.d.id}/suspend`, { headers: { authorization: `Bearer ${e.pc.session}` } });
+    const r = await e.req('POST', '/v1/respond', { headers: phone.headers('POST', GW, '/v1/respond', t), body: phoneBody(rt) });
+    assert.equal(r.json.error, 'gateway.device_suspended');
+    assert.equal(e.provider.responds.length, 0);
+  });
+
+  it('도구 왕복은 툴셋 턴 상한(4)까지: 재생한 모델 출력이 상한에 닿으면 더 부르지 못한다', async () => {
+    await e.db.run('DELETE FROM usage_daily');
+    const rt = await e.runToken(phone, chatId());
+    const call = { type: 'function_call', call_id: 'c1', name: 'receivables', arguments: '{"counterparty":null}' };
+    e.provider.respondOutput = [call];
+    const first = await e.call('/v1/respond', phoneBody(rt), phone);
+    const tagged = (first.json.output as Array<{ item: Record<string, unknown>; tag: string }>)[0]!;
+    const out = { type: 'function_call_output', call_id: 'c1', output: '{"ref":"r1","status":"empty","fields":null,"needs":null}' };
+    // 재생한 모델 출력이 턴 상한(4)에 닿으면 더 부르지 못한다
+    const replay = [tagged, out, tagged, out, tagged, out, tagged, out];
+    await e.db.run('DELETE FROM usage_daily');
+    assert.equal((await e.call('/v1/respond', phoneBody(rt, { replay }), phone)).json.error, 'gateway.run_budget_exceeded');
   });
 });
 

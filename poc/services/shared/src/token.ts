@@ -6,12 +6,17 @@ import { randomBytes, type KeyObject } from 'node:crypto';
 import { b64u, fromB64, fromB64u, jcs, safeEqual, sha256, signCtx, verifyCtx } from './crypto.ts';
 import { fail, type ErrorCode } from './errors.ts';
 
-/** 범위. Phase 1 폰은 relay·push만(ADR-034, D09 §2.1). */
-export type Scope = 'gateway' | 'relay' | 'wake' | 'push' | 'slots' | 'devlist' | 'acct_op';
+/**
+ * 범위. Phase 1 폰은 relay·push에 더해 chat(ADR-047: PC가 꺼져 있을 때 폰이 게이트웨이로 대화 모델을 직접 부른다)만 받는다.
+ * chat은 gateway와 다른 범위다: 게이트웨이는 chat 토큰에 대화 범위 실행 토큰·폰 대화 툴셋·사용량만 열고, 판정·진위확인·CODEF·실행 범위는 열지 않는다.
+ */
+export type Scope = 'gateway' | 'relay' | 'wake' | 'push' | 'slots' | 'devlist' | 'acct_op' | 'chat';
 export const DESKTOP_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'slots', 'devlist', 'acct_op'];
-export const MOBILE_SCOPES_P1: readonly Scope[] = ['relay', 'push'];
+export const MOBILE_SCOPES_P1: readonly Scope[] = ['relay', 'push', 'chat'];
 /** 모든 범위 이름(요청 스키마의 열거, ADR-040 결정 1) */
-export const ALL_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'push', 'slots', 'devlist', 'acct_op'];
+export const ALL_SCOPES: readonly Scope[] = ['gateway', 'relay', 'wake', 'push', 'slots', 'devlist', 'acct_op', 'chat'];
+/** 유료 기능 범위(모델 비용이 드는 것): 체험 중이거나 낸 기간 안일 때만 주고, 줄 때 등급(tier)을 싣는다. */
+export const PAID_SCOPES: readonly Scope[] = ['gateway', 'chat'];
 
 export interface DeviceClaims {
   v: 1;
@@ -23,7 +28,7 @@ export interface DeviceClaims {
   scp: Scope[];
   /** 기기 서명 공개키 Vx(표준 base64, 32B) */
   cnf: string;
-  /** 유료 기능 등급(게이트웨이 일 한도): 체험 trial | 구독 paid. 계정 서비스가 gateway 범위를 줄 때만 싣는다. 없으면 게이트웨이는 trial로 본다 */
+  /** 유료 기능 등급(게이트웨이 일 한도): 체험 trial | 구독 paid. 계정 서비스가 유료 범위(gateway·chat)를 줄 때만 싣는다. 없으면 게이트웨이는 trial로 본다 */
   tier?: 'trial' | 'paid';
   iat: number;
   exp: number;

@@ -33,8 +33,11 @@ export interface StoredMeta {
   confirmedAt: string | null;
 }
 
-/** tax_invoice: 앱이 실행에서 발급하고 보관한 전자세금계산서(importRunArtifact). 사용자 가져오기의 종류(DocType)에는 없다. */
-export type StoredDocType = DocType | 'tax_invoice' | 'other';
+/**
+ * tax_invoice·vat_tax_base_cert·financial_statements_cert: 앱이 실행에서 발급하고 보관한 서류(importRunArtifact)로만 생긴다. 사용자 가져오기의 종류(DocType)에는 없다.
+ * national_tax_cert·biz_registration_cert는 가져오기 종류이면서 민원증명 실행 산출물이기도 하다(앱 발급 여부는 run_id로 가른다).
+ */
+export type StoredDocType = DocType | 'tax_invoice' | 'vat_tax_base_cert' | 'financial_statements_cert' | 'other';
 export type TextSource = 'text' | 'ocr' | 'scan';
 
 /** 렌더러에 주는 보관함 항목. 파일 경로는 주지 않는다. */
@@ -72,9 +75,16 @@ export interface NeedsOcr {
   needsOcr: true;
 }
 
-const DISPLAY: Record<StoredDocType, string> = { national_tax_cert: '납세증명서(국세)', biz_registration_cert: '사업자등록증명', tax_invoice: '전자세금계산서', other: '서류' };
-/** 실행 산출물로 보관할 수 있는 종류(save_pdf docType). */
-export const RUN_ARTIFACT_DOC_TYPES: ReadonlySet<string> = new Set(['tax_invoice']);
+const DISPLAY: Record<StoredDocType, string> = {
+  national_tax_cert: '납세증명서(국세)',
+  biz_registration_cert: '사업자등록증명',
+  vat_tax_base_cert: '부가가치세 과세표준증명',
+  financial_statements_cert: '표준재무제표증명',
+  tax_invoice: '전자세금계산서',
+  other: '서류',
+};
+/** 실행 산출물로 보관할 수 있는 종류(save_pdf docType): H-01 세금계산서와 민원증명 4종(H-04·H-03·H-08·H-09). */
+export const RUN_ARTIFACT_DOC_TYPES: ReadonlySet<string> = new Set(['tax_invoice', 'national_tax_cert', 'biz_registration_cert', 'vat_tax_base_cert', 'financial_statements_cert']);
 const KIND_DISPLAY: Partial<Record<DetectedKind, string>> = { localtax_cert: '지방세 납세증명서', biz_registration: '사업자등록증', closure_cert: '휴업·폐업 사실증명', english_cert: '영문 증명' };
 const MAX_PDF = 15 * 1024 * 1024;
 const MAX_TEXT = 1024 * 1024;
@@ -261,7 +271,7 @@ export class DocumentService {
     if (typeof s !== 'object' || s === null || typeof s.docType !== 'string' || !dateOrNull(s.issuedOn) || !dateOrNull(s.expiresOn)) throw new ValidationError('seen_required');
     if (s.docType !== row.docType || s.issuedOn !== row.issuedAt || s.expiresOn !== row.expiresAt) throw new ValidationError('stale');
     // 앱이 발급해 보관한 서류는 고칠 칸이 없다(종류·발급일은 실행이 정했다).
-    if (RUN_ARTIFACT_DOC_TYPES.has(row.docType)) throw new ValidationError('app_document');
+    if (row.runId) throw new ValidationError('app_document');
     const today = kstToday(this.now());
     const date = (v: unknown, code: string) => {
       if (v === null) return null;
