@@ -42,3 +42,7 @@ GW_PROVIDER=mock NTS_PROVIDER=mock … node services/gateway/dist/main.js
 
 - 스트리밍 프록시(지금은 공급사 응답 전체를 받아 돌려준다. 본문은 여전히 메모리에서만).
 - `summarize`·`intent_fill` 툴셋(정의가 `packages/model`에 생기면 붙는다).
+
+## 폰 대화(ADR-047)
+
+PC가 꺼져 있을 때 폰이 `chat` 범위 기기 토큰으로 대화 모델을 직접 부른다. 폰에 열리는 것은 대화 범위 runToken, 툴셋 `chat_phone`·`chat_digest`, 사용량 조회뿐이다([API.md](API.md) "인증"). 공급사 키는 여기에만 있고, 하루 한도는 계정으로 PC와 같이 센다. 호출 기록(`call_records`)의 `device_id`가 폰일 수 있고 `surface`에 `chat_phone`·`chat_digest`가 더해진다(저장 컬럼은 그대로).
