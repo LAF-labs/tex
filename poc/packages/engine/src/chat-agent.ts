@@ -246,7 +246,7 @@ interface Turn {
   frameRefs: Set<string>;
   replay: RedactedReplayItem[];
   /** main이 실행 중인 도구 호출. answer가 있으면 엔진이 직접 답한 것이다. */
-  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; call: DomainCall | null; args: Record<string, unknown>; answer: ToolOutput | null }> | null;
+  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; call: DomainCall | null; args: Record<string, unknown>; answer: ToolOutput | null; dupOf?: string }> | null;
   /** 이번 턴에 끝난 도구 호출(도구 이름 + 인자) → 결과. 같은 호출을 또 하면 main에 보내지 않고 이 결과로 답한다. */
   done: Map<string, ToolOutput>;
   /** 이번 턴 도구 결과로 나온 ref(나온 순서) */
@@ -329,7 +329,7 @@ export class ChatAgent {
     return this.run(s, async () => {
       const outputs = p?.outputs;
       if (!validOutputs(outputs)) throw new ChatError('chat.bad_tool_output');
-      const waiting = turn.pending!.filter((c) => !c.answer);
+      const waiting = turn.pending!.filter((c) => !c.answer && !c.dupOf);
       const given = new Map(outputs.map((o) => [o.callId, o.output]));
       if (given.size !== outputs.length || given.size !== waiting.length || waiting.some((c) => !given.has(c.callId))) throw new ChatError('chat.bad_tool_output');
       for (const c of waiting) {
@@ -337,6 +337,8 @@ export class ChatAgent {
         if (o.ref !== null && o.ref[0] !== REF_KIND[c.tool]) throw new ChatError('chat.bad_tool_output');
         c.answer = o;
       }
+      // 한 응답 안의 같은 카드 호출은 앞 호출의 결과를 같이 받는다(main에는 한 번만 갔다)
+      for (const c of turn.pending!) if (c.dupOf) c.answer = given.get(c.dupOf)!;
       const round = turn.pending!.map((c) => ({ o: c.answer!, call: c.call, args: c.args }));
       this.answer(s, turn);
       const closed = this.opts.closeOnCards ? this.closeOnCards(s, turn, round) : null;
@@ -396,8 +398,23 @@ export class ChatAgent {
         throw new ChatError('chat.turn_limit');
       }
       const parsed = tc.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
-      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, args: c.arguments as Record<string, unknown>, answer: 'status' in p ? p : null }));
-      const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
+      // 한 응답 안에 같은 거래처·금액의 invoice_draft가 둘 이상이면 카드는 한 장만 만든다: 앞 호출에 뒤 호출의 부가세·품목을 합치고
+      // 뒤 호출은 main에 보내지 않는다(turn.cards는 결과가 와야 채워져 parseCall이 같은 응답 안의 중복을 못 본다)
+      const first = new Map<string, { callId: string; p: Extract<DomainCall, { tool: 'invoice_draft' }> }>();
+      const dupOf = new Map<string, string>();
+      for (const { c, p } of parsed) {
+        if ('status' in p || p.tool !== 'invoice_draft') continue;
+        const f = first.get(cardKey(p));
+        if (!f) {
+          first.set(cardKey(p), { callId: c.callId, p });
+          continue;
+        }
+        f.p.vat = p.vat ?? f.p.vat;
+        f.p.item = p.item ?? f.p.item;
+        dupOf.set(c.callId, f.callId);
+      }
+      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, args: c.arguments as Record<string, unknown>, answer: 'status' in p ? p : null, ...(dupOf.has(c.callId) ? { dupOf: dupOf.get(c.callId)! } : {}) }));
+      const calls = parsed.flatMap(({ c, p }) => ('status' in p || dupOf.has(c.callId) ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
       this.answer(s, turn);
     }

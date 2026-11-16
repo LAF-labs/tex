@@ -396,6 +396,18 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     assert.equal(rep.filtered, null);
   });
 
+  it('한 응답 안에 같은 거래처·금액 invoice_draft가 둘이면 카드는 한 장이고 뒤 호출의 부가세를 합친다(리뷰 지적)', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const args = (b: Item, vat: string | null) => ({ counterparty: toks(nowLine(b), 'NAME')[0], amount: toks(nowLine(b), 'AMT')[0], vat, item: '디자인' });
+    script((b) => [...fc('invoice_draft', args(b, null)), ...fc('invoice_draft', args(b, 'included'))], () => reply({ kind: 'did', text: '카드를 만들었어요.' }));
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 디자인 끊어줘');
+    assert.deepEqual(pc.calls.map((c) => c.tool), ['invoice_draft']);
+    assert.equal((pc.calls[0] as Extract<DomainCall, { tool: 'invoice_draft' }>).vat, 'included');
+    assert.equal(pc.drafts.length, 1);
+    assert.equal(rep.filtered, null);
+  });
+
   it('턴 상한에서는 마지막 결과(취소)의 문장 대신 일반 문장을 쓴다', async () => {
     const a = agent();
     const pc = new FakePc();
