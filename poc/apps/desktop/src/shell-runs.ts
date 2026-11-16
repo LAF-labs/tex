@@ -52,11 +52,10 @@ export const SIGN_BY_AUTH: Record<string, { now: string; text: string }> = {
   [SIGN_LABEL.security_card]: { now: '앱이 홈택스 보안카드 창에 번호를 넣고 있어요', text: '보안카드 번호를 앱이 넣지 못했어요. 홈택스 창에서 보안카드 번호를 직접 넣어 주세요. 홈택스가 틀렸다고 했으면 설정에서 카드를 다시 등록해 주세요' },
 };
 /**
- * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 금고의 인증서 비밀번호로 로그인한다(대표 지적 2026-11-16: 「직접 로그인」 안내는 틀림).
- * 금고에 없거나 실패하면 사람이 로그인하기를 최대 10분 기다린다.
+ * 로그인 단계 안내(H-01 2.2.0 s3~s5): 로그아웃 상태면 엔진이 로그인 화면을 열고 사람이 로그인하기를 최대 10분 기다린다.
  * 그 뒤에야 로그인 차례(handoff)가 오므로, 로그인 단계에 있는 동안 할 일을 바로 보인다(이미 로그인돼 있으면 곧 지나간다).
  */
-export const LOGIN_NOW = '앱이 저장된 인증서로 홈택스에 로그인하고 있어요. 사람이 할 일이 생기면 따로 알려 드려요';
+export const LOGIN_NOW = '홈택스 창에 로그인 화면이 보이면 직접 로그인해 주세요. 로그인하면 자동으로 이어집니다';
 export const SIGN_NOW_DEFAULT = '홈택스 창에서 인증을 마쳐 주세요';
 const signFor = (auth: string | undefined) => (auth && Object.hasOwn(SIGN_BY_AUTH, auth) ? SIGN_BY_AUTH[auth]! : null);
 /** 발급 전 단계의 사람 차례 코드별 한 줄(끝 문구 NOTE와 다르다: 실행은 아직 기다린다). */
@@ -163,7 +162,7 @@ export const NOTE: Record<string, string> = {
   // 예행(엔진 REHEARSAL_DONE): 승인 직전까지 가서 엔진이 스스로 멈췄다.
   'rehearsal.gate_reached': '예행을 마쳤어요. 승인 직전까지 갔고 발급하지 않았어요.',
   // 예행(엔진 REHEARSAL_HANDOFF): 사람 차례가 나서 바로 멈췄다(예행 실패, 이유는 engine.log run.rehearsal_report).
-  'rehearsal.handoff': '예행이 승인 카드 전에 멈췄어요. 발급하지 않았고 지금 하실 일은 없어요(멈춘 화면은 기록해 두었어요).',
+  'rehearsal.handoff': '예행이 사람이 필요한 단계에서 멈췄어요. 발급하지 않았어요.',
   'mail.not_confirmed': '발급은 완료되었어요. 메일 발송은 홈택스 메일발송목록에서 확인해 주세요.',
   selector_placeholder: '홈택스 화면 정보(셀렉터)가 아직 확정되지 않아 시작하지 않았어요.',
   'answer.rejected': '승인을 엔진에 전달하지 못해 멈췄어요. 아무것도 발급하지 않았어요.',

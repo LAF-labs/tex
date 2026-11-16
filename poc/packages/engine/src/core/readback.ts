@@ -63,8 +63,11 @@ export async function domValue(page: PageReader, entry: SelectorEntry, el: Eleme
   return INPUT_ROLES.has(entry.role) || entry.inputType === 'radio' ? page.value(el) : page.text(el);
 }
 
-/** detail: 진단용 글자 수만(값 없음, ⑦). 예: dom:4,a11y:0 */
+/** detail: 진단용 글자 모양만(값 없음, ⑦). 숫자 9·영문 a·한글 k·그 밖 _ 로 바꾸고 12자까지. 예: dom:9999_a11y:empty */
 export type FieldRead = { ok: true; value: string } | { ok: false; code: string; detail?: string };
+
+/** 진단 로그용 글자 모양(값 없음): 엔진 로그 안전 문자(SAFE_VALUE)만 쓴다. */
+const shape = (v: string): string => (v === '' ? 'empty' : [...v.slice(0, 12)].map((c) => (/\d/.test(c) ? '9' : /[A-Za-z]/.test(c) ? 'a' : /[\uAC00-\uD7A3]/.test(c) ? 'k' : '_')).join('') + (v.length > 12 ? `.${v.length}` : ''));
 
 /** fieldKey 하나를 세 값 일치로 되읽는다. 정규화한 값을 돌려준다. */
 export async function readField(page: PageReader, dict: SelectorDict, fieldKey: string): Promise<FieldRead> {
@@ -82,13 +85,13 @@ export async function readField(page: PageReader, dict: SelectorDict, fieldKey: 
   }
   const value = normalizeFieldValue(entry, await domValue(page, entry, r.t.el));
   const a11y = normalizeFieldValue(entry, await page.a11yValue(r.t.el));
-  if (a11y !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${value.length},a11y:${a11y.length}` };
+  if (a11y !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${shape(value)}_a11y:${shape(a11y)}` };
   for (const dk of displayEntryKeys(dict, fieldKey)) {
     if (isSecretEntry(dict.entries[dk])) return { ok: false, code: 'step.secret_field' };
     const d = await resolveTarget(page, dict, dk);
     if (!d.ok) return { ok: false, code: d.code };
     const shown = normalizeFieldValue(entry, await page.text(d.t.el));
-    if (shown !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${value.length},display:${shown.length}` };
+    if (shown !== value) return { ok: false, code: 'step.readback_mismatch', detail: `dom:${shape(value)}_display:${shape(shown)}` };
   }
   return { ok: true, value };
 }
