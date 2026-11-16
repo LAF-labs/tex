@@ -38,7 +38,7 @@ if (!FAKE && (!KEY || !MODEL)) {
 }
 
 // ── 게이트웨이 자리 ──
-const usage = { calls: 0, input: 0, cached: 0, output: 0, errors: 0, ms: [] as number[] };
+const usage = { calls: 0, input: 0, cached: 0, output: 0, reasoning: 0, errors: 0, ms: [] as number[], turnMs: [] as number[], turnCalls: [] as number[] };
 const costUsd = () => ((usage.input - usage.cached) * PRICE.in + usage.cached * PRICE.cached + usage.output * PRICE.out) / 1e6;
 
 async function upstream(input: unknown[]): Promise<{ status: string; output: Array<Record<string, unknown>>; provider?: string }> {
@@ -56,6 +56,8 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
     cacheKey: 'chat-eval',
     safetyId: 'chat-eval',
   });
+  // 하네스 튜닝 실험용(제품 정의는 그대로): 추론 강도 바꾸기(EVAL_EFFORT=minimal|low|medium|none)
+  if (process.env.EVAL_EFFORT) body.reasoning = process.env.EVAL_EFFORT === 'none' ? { enabled: false } : { effort: process.env.EVAL_EFFORT };
   if (PROVIDERS.length) body.provider = { zdr: true, data_collection: 'deny', only: PROVIDERS, allow_fallbacks: false, require_parameters: true };
   const t0 = performance.now();
   for (let attempt = 0; ; attempt++) {
@@ -66,11 +68,12 @@ async function upstream(input: unknown[]): Promise<{ status: string; output: Arr
       signal: AbortSignal.timeout(60_000),
     }).catch(() => null);
     if (res && res.status === 200) {
-      const d = (await res.json()) as { provider?: string; status?: string; output?: Array<Record<string, unknown>>; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number } } };
+      const d = (await res.json()) as { provider?: string; status?: string; output?: Array<Record<string, unknown>>; usage?: { input_tokens?: number; output_tokens?: number; input_tokens_details?: { cached_tokens?: number }; output_tokens_details?: { reasoning_tokens?: number } } };
       usage.calls++;
       usage.input += d.usage?.input_tokens ?? 0;
       usage.output += d.usage?.output_tokens ?? 0;
       usage.cached += d.usage?.input_tokens_details?.cached_tokens ?? 0;
+      usage.reasoning += d.usage?.output_tokens_details?.reasoning_tokens ?? 0;
       usage.ms.push(performance.now() - t0);
       return { status: String(d.status ?? ''), output: d.output ?? [], provider: String(d.provider ?? '') };
     }
@@ -160,6 +163,8 @@ interface TurnLog {
   calls: Array<{ tool: string; args: string }>;
   model: { kind: string; ask: string | null; filtered: string | null; raw: string } | null;
   trace: Trace[];
+  /** 사장님 문장 하나에 걸린 시간(모델 호출·도구 실행 전부)과 모델 호출 수 */
+  ms: number;
   result: AgentTurnResult;
   created: Array<DraftCard & { name: string; itemShown: string | null }>;
   open: Array<DraftCard & { name: string; itemShown: string | null }>;
@@ -228,10 +233,14 @@ async function runTurns(c: Case, env: ReturnType<typeof seedDb>, origin: string,
     sink.trace = [];
     sink.err = '';
     const before = new Set(drafts.map((d) => d.runId));
+    const t0 = performance.now();
     const result = await chat.turn(t.say);
+    const ms = Math.round(performance.now() - t0);
+    usage.turnMs.push(ms);
+    usage.turnCalls.push(sink.trace.length);
     const created = drafts.filter((d) => !before.has(d.runId)).map(view);
     const open = drafts.filter((d) => d.status === 'draft').map(view);
-    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace: sink.trace, result, created, open, checks: [] };
+    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace: sink.trace, ms, result, created, open, checks: [] };
     log.checks = score(t.expect, log, sink.err);
     logs.push(log);
   }
@@ -318,7 +327,7 @@ async function main() {
   try {
     for (let run = 1; run <= RUNS; run++) {
       const res = await pool(cases, JOBS, async (c) => {
-        const turns = await runCase(c, env).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, trace: [], result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
+        const turns = await runCase(c, env).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, trace: [], ms: 0, result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
         const pass = turns.every((t) => t.checks.every((x) => x.ok));
         console.log(`${pass ? 'PASS' : 'FAIL'} [${run}] ${c.id}${pass ? '' : `  ${turns.flatMap((t, i) => t.checks.filter((x) => !x.ok).map((x) => `t${i + 1} ${x.name}${x.detail ? `: ${x.detail}` : ''}`)).join(' | ')}`}`);
         return { run, id: c.id, cat: c.cat, why: c.why, pass, turns };
@@ -335,8 +344,13 @@ async function main() {
     x.all++;
     if (r.pass) x.pass++;
   }
-  const ms = [...usage.ms].sort((a, b) => a - b);
-  const pct = (p: number) => Math.round(ms[Math.min(ms.length - 1, Math.floor(p * ms.length))] ?? 0);
+  const pctOf = (xs: number[]) => {
+    const v = [...xs].sort((a, b) => a - b);
+    return (p: number) => Math.round(v[Math.min(v.length - 1, Math.floor(p * v.length))] ?? 0);
+  };
+  const pct = pctOf(usage.ms);
+  const tpct = pctOf(usage.turnMs);
+  const callsPerTurn = usage.turnCalls.length ? Number((usage.turnCalls.reduce((a, b) => a + b, 0) / usage.turnCalls.length).toFixed(2)) : 0;
   const summary = {
     model: FAKE ? 'fake' : MODEL,
     at: new Date().toISOString(),
@@ -344,7 +358,7 @@ async function main() {
     pass: runs.filter((r) => r.pass).length,
     all: runs.length,
     byCat: Object.fromEntries(byCat),
-    usage: { calls: usage.calls, errors: usage.errors, inputTokens: usage.input, cachedTokens: usage.cached, outputTokens: usage.output, costUsd: Number(costUsd().toFixed(4)), latencyMs: { p50: pct(0.5), p95: pct(0.95) } },
+    usage: { calls: usage.calls, errors: usage.errors, inputTokens: usage.input, cachedTokens: usage.cached, outputTokens: usage.output, reasoningTokens: usage.reasoning, callsPerTurn, turnMs: { p50: tpct(0.5), p95: tpct(0.95) }, costUsd: Number(costUsd().toFixed(4)), latencyMs: { p50: pct(0.5), p95: pct(0.95) } },
   };
   console.log(JSON.stringify(summary, null, 2));
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
