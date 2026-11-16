@@ -1214,7 +1214,7 @@ export class BankService {
     const txnDay = new Map<string, string>();
     const txns: CfTxn[] = this.repo.txns(pid).map((t) => {
       txnDay.set(t.id, t.day);
-      return { id: t.id, accountId: t.accountId, day: t.day, direction: t.direction, amount: t.amount, label: [t.payer, t.memo].filter(Boolean).join(' '), counterOwn: !!t.counterAccountHmac && ownHmacs.has(t.counterAccountHmac), settled: 0, human: t.ignoredAt ? t.ignoredReason : null };
+      return { id: t.id, accountId: t.accountId, day: t.day, direction: t.direction, amount: t.amount, label: [t.payer, t.memo].filter(Boolean).join(' '), payer: t.payer ?? null, counterOwn: !!t.counterAccountHmac && ownHmacs.has(t.counterAccountHmac), settled: 0, human: t.ignoredAt ? t.ignoredReason : null };
     });
     for (const a of this.repo.liveAllocs(pid)) {
       if (a.txnId) settled.set(a.txnId, (settled.get(a.txnId) ?? 0) + a.amount);

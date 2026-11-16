@@ -34,6 +34,7 @@ describe('현금흐름 갈래(11 §3.3, 순수 함수)', () => {
     const payees = [{ nameNorm: '이직원', month: '2026-10', net: 2_345_670 }];
     assert.equal(categorizeTxn(tx('5', '2026-11-05', 'out', 2_345_670, '이직원'), false, none, payees), 'payroll');
     assert.equal(categorizeTxn(tx('6', '2026-11-05', 'out', 2_345_000, '이직원'), false, none, payees), 'other', '금액이 다르면 급여로 보지 않는다');
+    assert.equal(categorizeTxn(tx('7', '2026-11-05', 'out', 2_345_670, '이직원 10월급여', { payer: '이직원' }), false, none, payees), 'payroll', '적요가 붙어도 받는 분 이름으로 맞춘다');
   });
   it('구간 합이 빈틈없이 덮는가', () => {
     assert.equal(rangesCover([{ from: '2026-10-01', to: '2026-10-15' }, { from: '2026-10-16', to: '2026-10-31' }], '2026-10-01', '2026-10-31'), true);

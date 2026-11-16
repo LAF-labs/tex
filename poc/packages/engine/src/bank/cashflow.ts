@@ -42,6 +42,8 @@ export interface CfTxn {
   amount: number;
   /** 통장 표시(입금자·받는 분 + 적요). 갈래 사전과 사람 규칙에만 쓰고 결과에는 내지 않는다 */
   label: string;
+  /** 입금자·받는 분 이름만(적요 없이). 급여 후보는 이것으로 직원 이름과 맞춘다. 없으면 label */
+  payer?: string | null;
   /** 상대 계좌가 내 다른 계좌 */
   counterOwn: boolean;
   /** 받을 돈·낼 돈에 붙은 금액(쪽은 방향이 정한다) */
@@ -175,7 +177,8 @@ export function categorize(t: CfTxn, ownPair: boolean, rules: Map<string, HumanC
     if (has(label, CARD_N)) return 'card_payment';
     const m = monthOf(t.day);
     const prev = shiftMonth(m, -1);
-    if (label.length >= 2 && payees.some((p) => p.nameNorm === label && p.net === t.amount && (p.month === m || p.month === prev))) return 'payroll';
+    const who = t.payer != null ? normalizePayerName(t.payer) : label;
+    if (who.length >= 2 && payees.some((p) => p.nameNorm === who && p.net === t.amount && (p.month === m || p.month === prev))) return 'payroll';
     return 'other';
   }
   if (has(label, CARD_N)) return 'card_sales';
