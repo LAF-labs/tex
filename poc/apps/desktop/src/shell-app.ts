@@ -229,6 +229,8 @@ export interface RemoteWiring {
   deviceName?: string;
   /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
   relayClient?: RelayClient;
+  /** false면 폰 연결을 닫는다([폰 연결]을 숨기고 pair.open은 pair_unavailable). 없으면 연다(시험·e2e·개발 스택). */
+  pairing?: boolean;
 }
 
 /** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
@@ -1313,6 +1315,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    pairing: opts.remote?.pairing !== false,
     log: (n, d) => log.event(n, d),
   });
   let accountReady: Promise<unknown> | null = null;
@@ -1343,6 +1346,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (pairWin) return pairWin;
     const cloud = opts.remote?.cloud;
     const device = account.device();
+    if (opts.remote?.pairing === false) throw new Error('pair_unavailable');
     if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
     const host = new PairingHost({
       account: cloud.account,
