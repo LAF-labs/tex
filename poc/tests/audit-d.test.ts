@@ -314,8 +314,8 @@ describe('audit-d: D8 승인 바 내장 팔레트(N-80)', () => {
     assert.deepEqual(r.palette, BAR_PALETTE_DEFAULT);
     const css = barCss(r.palette);
     assert.match(css, /body\.armed\.attn \.ap\{background:#8A5A0B;color:#FFFFFF\}/);
-    assert.match(css, /body\.unarmed\.attn \.ap\{background:#F8EEDC;color:#8A5A0B\}/);
-    assert.match(css, /\.st\{background:#FFFFFF;color:#16191D;[^}]*outline:2px solid #2A4F9E/, '[중지]는 기본 포커스 고리로 그린다');
+    assert.match(css, /body\.unarmed\.attn \.ap\{background:#FBF3E4;color:#8A5A0B\}/);
+    assert.match(css, /\.st\{background:#FCFCFC;color:#111112;[^}]*outline:2px solid #0064D4/, '[중지]는 기본 포커스 고리로 그린다');
   });
 });
 
@@ -403,8 +403,15 @@ describe('audit-d: D13 셸 문구·이벤트 연결', () => {
     const dir = new URL('../packages/engine/playbooks/', import.meta.url);
     const codes = new Set<string>();
     for (const id of fs.readdirSync(dir).filter((n) => fs.existsSync(new URL(`${n}/playbook.json`, dir)))) {
-      const pb = fs.readFileSync(new URL(`${id}/playbook.json`, dir), 'utf8');
-      for (const m of pb.matchAll(/"code":\s*"([^"]+)"/g)) codes.add(m[1]!);
+      // handoff 스텝의 code는 멈춤이 아니라 사람 차례의 까닭이다(셸 HANDOFF_BY_CODE가 안내한다, 예: s4e cert.pick_needed)
+      const walk = (v: unknown): void => {
+        if (Array.isArray(v)) return v.forEach(walk);
+        if (!v || typeof v !== 'object') return;
+        const o = v as Record<string, unknown>;
+        if (typeof o.code === 'string' && o.type !== 'handoff') codes.add(o.code);
+        Object.values(o).forEach(walk);
+      };
+      walk(JSON.parse(fs.readFileSync(new URL(`${id}/playbook.json`, dir), 'utf8')));
     }
     assert.ok(codes.has('assert.input_mismatch') && codes.has('assert.total_mismatch'));
     for (const c of codes) assert.ok(NOTE[c] && /아무것도 발급하지 않았어요\.$/.test(NOTE[c]!), c);
