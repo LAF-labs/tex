@@ -16,7 +16,7 @@ import {
   type EntityKind,
   type Span,
 } from './entities.ts';
-import { normalizeForRedaction } from './normalize.ts';
+import { normalizeForRedaction, utf8Length } from './normalize.ts';
 import { RedactionError, lineText, renderTree, type A11yLine, type A11yNode, type RenderOptions, type RenderStats } from './tree.ts';
 
 export { normalizeForDetection } from './normalize.ts';
@@ -237,7 +237,7 @@ export class Redactor {
 
   private finish(body: string, byKind: RedactionStats['byKind'], replaced: number, opts: ApplyOptions, extra: Partial<RedactionStats> = {}): ApplyResult {
     const out = (opts.frame ?? 'screen') === 'screen' ? `${FRAME_OPEN}\n${escapeFrame(body)}\n${FRAME_CLOSE}` : escapeFrame(body);
-    return { redacted: mint(out), map: this.map, stats: { bytes: Buffer.byteLength(out, 'utf8'), replaced, byKind, ...extra } };
+    return { redacted: mint(out), map: this.map, stats: { bytes: utf8Length(out), replaced, byKind, ...extra } };
   }
 
   /** 평문(대화 입력·docparse 후보 문맥 등) 마스킹. */

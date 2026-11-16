@@ -5,6 +5,7 @@ import {
   DESKTOP_SCOPES,
   JtiCache,
   MOBILE_SCOPES_P1,
+  PAID_SCOPES,
   ServiceError,
   TokenIssuer,
   b64u,
@@ -1424,7 +1425,7 @@ export class AccountService {
 
   /**
    * AIK가 서명한 기기 인증서를 내고, 같은 요청에 그 인증서의 Vx로 서명한 DPoP 증명(ath = sha256(JCS(cert)))을 붙인다.
-   * Phase 1 폰 토큰은 relay·push 범위만(ADR-034, D09 §2.1).
+   * Phase 1 폰 토큰은 relay·push와 chat(폰 대화, ADR-047) 범위만(ADR-034, D09 §2.1).
    * `want`가 있으면 그 범위만 준다(ADR-040 결정 1: 엔진용 gateway 전용 토큰 등). 빈 배열·모르는 이름·중복은 요청 스키마가 먼저 거부하고,
    * 역할 범위의 부분집합이 아니면 여기서(검증된 기기 기록으로) 거부한다. 발급마다 이벤트 이름에 역할·범위를 남긴다(ID·토큰 없음).
    */
@@ -1443,14 +1444,14 @@ export class AccountService {
     await onVerified?.();
     // 순서는 역할 범위 순서로 고정한다(기록·비교가 요청 순서에 흔들리지 않게)
     let scopes = want ? roleScopes.filter((s) => want.includes(s)) : [...roleScopes];
-    // 유료 기능(게이트웨이)은 체험 중이거나 낸 기간 안일 때만. 게이트웨이만 달라면 402, 전체를 달라면 게이트웨이만 빼고 준다(연결·기기 관리는 그대로).
+    // 유료 기능(게이트웨이·폰 대화)은 체험 중이거나 낸 기간 안일 때만. 유료 범위만 달라면 402, 다른 범위와 같이 달라면 유료 범위만 빼고 준다(연결·기기 관리는 그대로).
     // 줄 때는 등급(tier)을 싣는다: 게이트웨이 일 한도가 체험·유료로 다르다
     let tier: 'trial' | 'paid' | undefined;
-    if (scopes.includes('gateway')) {
+    if (scopes.some((x) => PAID_SCOPES.includes(x))) {
       const ent = (await this.entitlement(d!.account_id)).state;
       if (ent === 'none') {
-        if (want && scopes.length === 1) fail('account.subscription_required');
-        scopes = scopes.filter((x) => x !== 'gateway');
+        if (want && scopes.every((x) => PAID_SCOPES.includes(x))) fail('account.subscription_required');
+        scopes = scopes.filter((x) => !PAID_SCOPES.includes(x));
         this.d.onEvent?.('account.gateway_scope_withheld');
       } else tier = ent;
     }

@@ -4,6 +4,7 @@
 // - 오프라인 해석은 없다(사용자 결정 2026-11-10): 엔진에 명령이 없거나(unknown_method) 판정을 못 하면(decide.unavailable·시간 초과)
 //   의도를 정규식으로 대신 고르지 않고 "연결 안 됨"(INTENT_UNAVAILABLE_TEXT)과 [다시 시도]를 보인다.
 // - 응답은 신뢰하지 않는다: 모양이 다르면 연결 안 됨과 같다. 로그에는 결과 종류·경로만 남긴다(문장 없음).
+import type { CertCode } from './cert-docs.ts';
 import type { Parsed } from './shell-model.ts';
 
 /** intent_route_v1 선택지(packages/model/bundles/intent_route_v1.json의 choices, none_of_these 제외). */
@@ -56,6 +57,8 @@ const SOON: Partial<Record<IntentPlaybook, string>> = {
   'payroll.ledger': '급여대장',
 };
 const CERT: readonly IntentPlaybook[] = ['hometax.cert.business', 'hometax.cert.taxpayment', 'gov24.localtax.cert', 'gov24.nhis.eligibility', 'gov24.land.register', 'gov24.localtax.itemized', 'sminfo.sme.cert', 'fourins.paid.cert'];
+/** 옛 의도 id(intent_route_v1) → 이 앱이 떼는 민원증명(cert-docs 표). 나머지 CERT는 떼지 않는 증명서다. */
+const CERT_CODE: Partial<Record<IntentPlaybook, CertCode>> = { 'hometax.cert.business': 'H-03', 'hometax.cert.taxpayment': 'H-04' };
 
 export type Routed = { parsed: Parsed; note: string | null } | { say: string; note: null };
 
@@ -70,9 +73,9 @@ export function routed(r: IntentRoute, local: Parsed): Routed {
   const p = r.playbook;
   if (p === 'hometax.invoice.issue') return { parsed: { ...local, intent: 'invoice' }, note };
   if (p === 'gov24.resident.copy') return { parsed: { ...local, intent: local.intent === 'resident_abstract' ? 'resident_abstract' : 'resident_copy' }, note };
-  if (CERT.includes(p)) return { parsed: { ...local, intent: 'cert' }, note };
+  if (CERT.includes(p)) return { parsed: { ...local, intent: 'cert', cert: local.cert ?? CERT_CODE[p] ?? null }, note };
   const soon = SOON[p];
-  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급과 정부24 직접 발급 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
+  return soon ? { say: `${soon}은(는) 곧 이 대화에서 열 수 있어요. 지금은 세금계산서 발급, 홈택스 증명서(사업자등록증명·납세증명서 등) 발급, 정부24 직접 발급 안내를 할 수 있어요.`, note: null } : { parsed: { ...local, intent: 'other' }, note };
 }
 
 export interface IntentResolver {

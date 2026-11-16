@@ -2,7 +2,9 @@
 // 브랜드 심볼은 내보내지 않고, 다른 패키지의 `as RedactedText` 단언은 린트(eslint.config.mjs)가 막는다.
 // 브랜드는 컴파일 장치일 뿐이므로(D06 §4) 런타임에도 확인할 수 있게 발급 영수증(sha256)을 남긴다:
 // egress는 모델로 나가는 모든 텍스트가 mint()를 지난 값인지 wasMinted()로 다시 본다(`as never` 우회 차단).
-import { createHash } from 'node:crypto';
+// 해시는 순수 JS(@noble/hashes)로 낸다: 이 패키지는 PC 엔진과 폰 앱(RN)이 같은 소스를 쓴다(ADR-047 결정 4). Node 전용 API를 쓰지 않는다.
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 declare const REDACTED: unique symbol;
 
@@ -13,7 +15,7 @@ export const RECEIPT_CAP = 8192;
 /** 삽입 순서 = 최근 발급 순서(LRU). 다시 발급하면 맨 뒤로 옮겨, 자주 쓰는 텍스트가 밀려나지 않게 한다. */
 const receipts = new Set<string>();
 
-const digest = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+const digest = (s: string) => bytesToHex(sha256(utf8ToBytes(s)));
 
 /** 패키지 내부 전용. index.ts에서 다시 내보내지 않는다. */
 export function mint(text: string): RedactedText {

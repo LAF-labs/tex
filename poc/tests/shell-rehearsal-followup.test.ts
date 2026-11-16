@@ -86,7 +86,8 @@ describe('F-04 발급 PDF가 이 PC에 없다(화면만)', () => {
     const v = read('static/shell/shell-views.js');
     assert.match(v, /export const NO_FILE_TEXT = '세금계산서 PDF는 홈택스 발급목록에서 확인할 수 있어요\.';/);
     assert.match(v, /r\.noFile \? null : btn\('PDF 열기', \(\) => act\.openRunDoc\(run\)/);
-    assert.match(v, /run\.result\.noFile \? line\(NO_FILE_TEXT, true\)/);
+    // 민원증명(PR #272)은 증명서 다시 출력 안내(CERT_NO_FILE_TEXT), 세금계산서는 그대로 NO_FILE_TEXT
+    assert.match(v, /run\.result\.noFile \? line\(run\.cert \? CERT_NO_FILE_TEXT : NO_FILE_TEXT, true\)/);
     assert.match(v, /doc\.noFile \? null : btn\('열기'/);
     assert.match(v, /doc\.source === '앱이 발급' && !doc\.noFile \? btn\('다시 발급'/);
   });
@@ -137,7 +138,7 @@ describe('F-09·F-10·F-13', () => {
     assert.equal(d2.dupToday, true);
     assert.equal(runs.updateDraft(d2.id, { amount: 2000 }).dupToday, false);
     assert.equal(runs.updateDraft(d2.id, { amount: 1000 }).dupToday, true);
-    assert.match(read('static/shell/shell-views.js'), /run\.dupToday \? h\('div', \{ 'data-dup-today': '' \}, note\(DUP_TODAY_TEXT, true\)\) : null,/);
+    assert.match(read('static/shell/shell-views.js'), /run\.dupToday \? \[DUP_TODAY_TEXT, \{ 'data-dup-today': '' \}\] : null/);
   });
   it('F-13 O-06 [지금 해 보기]는 세금계산서로 채운다', () => {
     assert.equal(TRY_FIRST_FILL, '세금계산서 발급해 줘');

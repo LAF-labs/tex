@@ -66,14 +66,16 @@ export class DeviceAuth {
   }
 
   /**
-   * 토큰 서명·만료 → 범위 → DPoP(메서드·URL·시각·jti·ath·Vx 서명) → 계정 서비스의 기기 상태(active, 역할 일치) 순서로 본다.
+   * 토큰 서명·만료 → 범위(여럿이면 그중 하나) → DPoP(메서드·URL·시각·jti·ath·Vx 서명) → 계정 서비스의 기기 상태(active, 역할 일치) 순서로 본다.
    * 실패 코드는 하나(code)로 모은다(어느 단계에서 떨어졌는지 응답으로 알려 주지 않는다). 정지된 기기만 suspendedCode로 구분한다.
    */
-  async check(ctx: { method: string; path: string; headers: Record<string, string | string[] | undefined> }, scope: Scope, code: ErrorCode, suspendedCode: ErrorCode = code): Promise<DeviceClaims> {
+  async check(ctx: { method: string; path: string; headers: Record<string, string | string[] | undefined> }, scope: Scope | readonly Scope[], code: ErrorCode, suspendedCode: ErrorCode = code): Promise<DeviceClaims> {
     const now = this.o.now();
     const token = dpopToken(String(ctx.headers.authorization ?? ''), code);
     const claims = this.o.verifier.verify(token, now, code);
-    if (!claims.scp.includes(scope)) fail('account.scope_denied');
+    // 범위 여럿이면 그중 하나(어느 범위·역할로 무엇을 여는지는 호출한 서비스가 claims로 다시 본다)
+    const anyOf: readonly Scope[] = typeof scope === 'string' ? [scope] : scope;
+    if (!anyOf.some((x) => claims.scp.includes(x))) fail('account.scope_denied');
     const dpop = ctx.headers.dpop;
     verifyDpop(Array.isArray(dpop) ? undefined : dpop, { method: ctx.method, htu: this.o.publicOrigin + ctx.path, token, cnf: fromB64(claims.cnf, 32)!, now, jti: this.jti, code });
     const rec = await this.o.directory.get(claims.dev);

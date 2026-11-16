@@ -9,6 +9,7 @@ export * from './normalize.ts';
 export * from './profiles.ts';
 export * from './toolsets.ts';
 export * from './chat-agent.ts';
+export * from './chat-phone.ts';
 export * from './layer.ts';
 export * from './adapters/types.ts';
 export * from './adapters/retry.ts';

@@ -16,7 +16,15 @@
 
 **배포 전제(yulmu 11-05, 미검증)**: DB는 Supabase Postgres, HTTP는 Vercel. 리전은 **미정**이다(서울이면 Supabase `ap-northeast-2`, Vercel 함수 `icn1`). 처리방침은 어느 쪽이든 "국외 이전 가능"으로 쓴다(R14). 모델 상류는 L1 판정 OpenAI Decisions 직결, 응답 OpenRouter(ZDR·수집 거부·공급자 고정, [ENV.md](ENV.md)). 게이트웨이는 무저장이라 함수로 올릴 수 있다. 한도(기기·계정 분당, 자동 정지 판정, 상한 뒤 안전 판정 속도)는 DB 카운터라 인스턴스가 여럿이어도 합산된다(키는 서버 비밀 HMAC, [CONTRACT §10](../shared/CONTRACT.md)).
 
-**인증**: 모든 `/v1/*`는 데스크톱 기기 범위 토큰(`gateway` 범위) + DPoP(`htu = GATEWAY_PUBLIC_ORIGIN + 경로`). 계정 세션 토큰·폰 토큰은 거부한다. 기기 ID는 토큰에서 유도한다(`X-Device-Id` 헤더 없음, N-41). 긴급 정지·자동 정지된 기기는 `403 gateway.device_suspended`.
+**인증**: 모든 `/v1/*`는 기기 범위 토큰 + DPoP(`htu = GATEWAY_PUBLIC_ORIGIN + 경로`). 계정 세션 토큰은 거부한다. 기기 ID는 토큰에서 유도한다(`X-Device-Id` 헤더 없음, N-41). 긴급 정지·자동 정지된 기기는 `403 gateway.device_suspended`.
+
+- 데스크톱: `gateway` 범위. 모든 경로.
+- 폰(ADR-047, PC가 꺼져 있을 때 폰 대화): `chat` 범위. 아래 셋만 열리고 나머지는 `403 account.scope_denied`(공급사·원천을 부르지 않고 한도도 세지 않는다).
+  - `POST /v1/run-tokens`: `{chatSessionId}`만(`{runId}`는 거부).
+  - `POST /v1/respond`: 툴셋 `chat_phone`·`chat_digest`만. 폰이 받은 대화 범위 runToken이어야 한다(PC의 runToken은 `401 gateway.run_token_invalid`).
+  - `GET /v1/usage`.
+- 역할과 범위는 짝으로 본다(데스크톱+`gateway`, 폰+`chat`). 폰 토큰으로는 `/v1/decide`·`/v1/biz/status`·`/v1/codef/token`을 부를 수 없다.
+- 폰이 쓴 금액은 같은 계정의 하루 한도(`usage_daily`)에 PC와 같이 쌓인다. 2차 트립와이어·기기 자동 정지·분당 한도·무저장은 폰에도 같다.
 
 **오류 본문**은 `{"error":"<코드>"}`뿐이고 입력을 되풀이하지 않는다. 공통: `401 gateway.unauthorized`, `403 account.scope_denied`, `400 gateway.param_rejected`(스키마 밖 필드·형식), `429 policy.rate_limited`(+`Retry-After`), `413 request.too_large`.
 
@@ -61,9 +69,11 @@
 |---|---|
 | `{toolset, messages(role=user, input_text만), replay?, runToken}` | `200 {model, status, output:[{item, tag}], usage:{input_tokens, output_tokens}, toolsetDigest}` |
 
-- 툴셋: `selector_repair`, `query_parse`, `chat_reply`, `chat_agent`, `page_judge`, `browser_agent`(정의 `packages/model/src/toolsets.ts`·`chat-agent.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
+- 툴셋: `selector_repair`, `query_parse`, `chat_reply`, `chat_agent`, `page_judge`, `browser_agent`, `computer_use`, `chat_phone`, `chat_digest`(정의 `packages/model/src/toolsets.ts`·`chat-agent.ts`·`chat-phone.ts`). `summarize`·`intent_fill`은 정의가 아직 없어 `400`.
 - `chat_reply`(대화 짧은 응대, 2026-11-10): 도구 없음·1턴·`max_output_tokens` 1000·effort low, 공통 판정기 머리말 없이 `toolsets/chat_reply.ko.txt`만. 대화 범위(`chatSessionId`) runToken으로 부르고 범위당 새 L2 예산(`l2PerChat`)을 쓴다. 출력 `{kind, reply, suggest[]}`의 길이·세무 문장 차단은 엔진이 한다(게이트웨이는 본문을 보지 않는다).
 - `chat_agent`(대화 에이전트, 2026-11-12): 도구 6개(`sales_summary`·`invoice_history`·`receivables`·`invoice_draft`·`draft_edit`·`draft_discard`, 발급·전송 도구 없음)·4턴·`max_output_tokens` 4000·effort low, 공통 판정기 머리말 없이 `toolsets/chat_agent.ko.txt`만. `chat_reply`와 같은 대화 범위 예산을 쓴다. 사용자 턴마다 새 L2, 그 턴의 도구 왕복은 replay. 도구 결과·답 검사는 엔진 `chat.step`이 한다.
+- `chat_phone`(폰 대화, ADR-047, 2026-11-16): **폰 토큰만**(데스크톱은 `403 account.scope_denied`). 도구 5개(`invoice_history`·`receivables`·`invoice_draft`·`draft_edit`·`draft_discard`: `chat_agent` 표에서 `sales_summary`만 뺀 것, 발급·전송·맡기기 도구 없음)·4턴·`max_output_tokens` 4000·effort low, 머리말 `toolsets/chat_phone.ko.txt`만. 대화 범위 예산을 쓴다(사용자 턴마다 새 L2, 도구 왕복은 replay). 입력은 user 메시지 하나에 `[요약]`·`[앞 대화]`·`[사실]`·`[지금]` 묶음(가린 글)이고, 도구 실행·결과 구조 검사·답 검사는 폰 코어가 한다(게이트웨이는 본문을 보지 않는다). 출력 `{kind(answer·did·ask·cannot·tax_advice·smalltalk·defer), text, show[], ask}`.
+- `chat_digest`(대화 요약, ADR-047): 폰과 데스크톱 모두. 도구 없음·1턴·`max_output_tokens` 2000·effort low, 머리말 `toolsets/chat_digest.ko.txt`만. 입력 `[앞 요약]`·`[대화]`(가린 글), 출력 `{summary}`(900자 상한은 부르는 쪽이 검사). 대화 범위 예산을 쓴다.
 - `page_judge`(예상 밖 화면 판정, 2026-11-13): 도구 없음·1턴·effort medium, 공통 판정기 머리말 + `toolsets/page_judge.ko.txt`. 출력 `{situation, prescription(dismiss_dialog·relogin·reload_checkpoint·fix_field·agent_mode·handoff), button, dialog_answer, field, risk_flags}`.
   엔진 폴백 사슬이 실패했거나 예상 밖 상태(JS confirm·공지 레이어·다른 화면·세션 만료)일 때 첫 게이트 앞 스텝에서만 부른다. 처방 실행과 가드는 엔진(`run/judge.ts`)이 한다.
 - `browser_agent`(브라우저 에이전트, 2026-11-13): 도구 없음·1턴·effort medium, 머리말 `toolsets/browser_agent.ko.txt`만. 출력 `{action(click·type·select·scroll·wait·done·fail), index, token, option, step}`. 엔진이 동작마다 한 번 부르고(실행당 최대 25동작) 지난 동작은 글로 싣는다(replay 없음). 값은 `{{inputs.…}}` 값토큰만 오간다.
@@ -106,6 +116,6 @@
 트립와이어·공급사 거절(refusal)이 한 기기에서 1시간 창(고정 창, 인스턴스 합산)에 20회가 되면 계정 서비스 `POST /internal/v1/devices/:id/auto-suspend`를 부른다. 계정 서비스가 그 기기를 정지하고 릴레이·푸시 정지 훅과 알림 메일(`device_auto_suspended`)을 보낸다. 해제는 사용자의 AIK 서명 재활성화뿐이다.
 
 
-## `GET /v1/usage`(기기 토큰 gateway 범위)
+## `GET /v1/usage`(기기 토큰: 데스크톱 gateway 범위, 폰 chat 범위)
 
 `200 {usedKrw, limitKrw, resetAt, tier}`: 오늘 쓴 AI 금액(원, 반올림)과 한도, 다음 초기화 시각(ms, 한국 시간 새벽 4시), 등급(`trial`·`paid`). 앱의 사용량 표시용.

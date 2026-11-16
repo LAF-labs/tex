@@ -6,4 +6,4 @@ export * from './tree.ts';
 export * from './detokenize.ts';
 export * from './image.ts';
 export * from './session.ts';
-export { normalizeForRedaction } from './normalize.ts';
+export { normalizeForRedaction, utf8Length } from './normalize.ts';
