@@ -382,7 +382,7 @@ interface Turn {
   frameRefs: Set<string>;
   replay: RedactedReplayItem[];
   /** main이 실행 중인 도구 호출. answer가 있으면 엔진이 직접 답한 것이다. */
-  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; call: DomainCall | null; answer: ToolOutput | null }> | null;
+  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; call: DomainCall | null; args: Record<string, unknown>; answer: ToolOutput | null }> | null;
   /** 이번 턴에 끝난 도구 호출(도구 이름 + 인자) → 결과. 같은 호출을 또 하면 main에 보내지 않고 이 결과로 답한다. */
   done: Map<string, ToolOutput>;
   /** 이번 턴 도구 결과로 나온 ref(나온 순서) */
@@ -473,9 +473,9 @@ export class ChatAgent {
         if (o.ref !== null && o.ref[0] !== REF_KIND[c.tool]) throw new ChatError('chat.bad_tool_output');
         c.answer = o;
       }
-      const round = turn.pending!.map((c) => c.answer!);
+      const round = turn.pending!.map((c) => ({ o: c.answer!, call: c.call, args: c.args }));
       this.answer(s, turn);
-      const closed = this.opts.closeOnCards ? this.closeOnCards(turn, round) : null;
+      const closed = this.opts.closeOnCards ? this.closeOnCards(s, turn, round) : null;
       return closed ? this.finish(s, closed) : this.advance(s);
     });
   }
@@ -531,7 +531,7 @@ export class ChatAgent {
         throw new ChatError('chat.turn_limit');
       }
       const parsed = r.toolCalls.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
-      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, answer: 'status' in p ? p : null }));
+      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), call: 'status' in p ? null : p, args: c.arguments as Record<string, unknown>, answer: 'status' in p ? p : null }));
       const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
       this.answer(s, turn);
@@ -554,6 +554,8 @@ export class ChatAgent {
     const ask = askOf(last) ?? (carded ? null : (outs.map(askOf).find((x) => x) ?? null));
     const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
     if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'repeat' };
+    // 이번 턴에 카드를 만들었으면 조회 요약이 아니라 카드를 말한다(chat-eval issue-two: 두 장을 만들고 기록 조회를 되풀이 → 조회 요약 문장)
+    if (!limit && outs.some((o) => o.status === 'card_shown')) return { kind: 'did', text: CHAT_AGENT_DONE_TEXT.card_shown!, show, ask: null, filtered: 'repeat' };
     if (!limit && last.status === 'ok' && last.ref?.startsWith('r') && show.includes(last.ref))
       return { kind: 'answer', text: CHAT_AGENT_LOOKUP_TEXT(last.ref), show, ask: null, filtered: 'repeat' };
     if (show.length) return { kind: 'did', text: (limit ? null : CHAT_AGENT_DONE_TEXT[last.status]) ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'repeat' };
@@ -567,13 +569,39 @@ export class ChatAgent {
    * 아니면 마지막 결과의 고정 문장으로 카드를 보인다(부가세는 묻지 않는다: 기본값 별도, 승인 카드에서 다시 본다).
    * 조회 결과가 섞이면 모델이 그 결과로 다음 걸음(같은 금액으로 만들기 등)을 할 수 있어 닫지 않는다.
    */
-  private closeOnCards(turn: Turn, round: ToolOutput[]): AgentReply | null {
-    if (!round.length || !round.every((o) => CARD_CLOSE.has(o.status))) return null;
+  private closeOnCards(s: Session, turn: Turn, round: Array<{ o: ToolOutput; call: DomainCall | null; args: Record<string, unknown> }>): AgentReply | null {
+    if (!round.length || !round.every((r) => CARD_CLOSE.has(r.o.status))) return null;
     const show = [...new Set(turn.made)].filter((r) => r.startsWith('d')).slice(-AGENT_SHOW_MAX);
-    const ask = round.flatMap((o) => (o.status === 'needs_input' ? (o.needs ?? []) : []))[0] ?? null;
+    const ask = round.flatMap((r) => (r.o.status === 'needs_input' ? (r.o.needs ?? []) : []))[0] ?? null;
     if (ask) return { kind: 'ask', text: CHAT_AGENT_ASK_TEXT[ask], show, ask, filtered: 'closed' };
-    if (round.some((o) => o.status === 'needs_input')) return null;
-    return { kind: 'did', text: CHAT_AGENT_DONE_TEXT[round.at(-1)!.status] ?? CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'closed' };
+    if (round.some((r) => r.o.status === 'needs_input')) return null;
+    // 무엇을 했는지 말한다(chat-eval 2026-11-16: 고정 문장 하나면 거래처·금액·장 수·고친 칸이 빠진다). 값은 토큰·슬롯으로만 쓰고 화면이 채운다.
+    const tok = (v: unknown, re: RegExp) => (typeof v === 'string' && re.test(v.trim()) && (s.red.map.has(v.trim()) || slotPattern.test(v.trim())) ? v.trim() : null);
+    const nameOf = (a: Record<string, unknown>) => tok(a.counterparty, /^\[NAME_\d+\]$/);
+    const amtOf = (a: Record<string, unknown>) => tok(a.amount, /^(?:\[AMT_\d+\]|\{r[1-9]\d{0,5}\.[a-z.]+\})$/);
+    const vatWord = (v: unknown) => (v === 'included' ? '부가세 포함' : v === 'separate' ? '부가세 별도' : null);
+    const line = (r: (typeof round)[number]): string | null => {
+      const a = r.args;
+      if (r.o.status === 'card_shown') {
+        const who = nameOf(a);
+        const amt = amtOf(a);
+        return `${who ? `${who} 앞으로 ` : ''}${amt ? `${amt}, ` : ''}${vatWord(a.vat) ?? '부가세 별도'}로 확인 카드를 만들었어요.`;
+      }
+      if (r.o.status === 'card_updated') {
+        const parts = [amtOf(a) ? `금액 ${amtOf(a)}` : null, vatWord(a.vat), r.call?.tool === 'draft_edit' && r.call.item ? '품목' : null].filter((x) => x);
+        return parts.length ? `카드를 고쳤어요(${parts.join(', ')}).` : null;
+      }
+      return null;
+    };
+    const lines = round.map(line);
+    const cards = round.filter((r) => r.o.status === 'card_shown').length;
+    const tail = round.at(-1)!.o.status === 'card_shown' ? ' 내용을 확인하시고 [홈택스에서 준비]를 눌러 주세요.' : round.at(-1)!.o.status === 'card_updated' ? ' 카드에서 바뀐 값을 확인해 주세요.' : '';
+    const text =
+      round.every((r) => r.o.status === 'discarded') ? CHAT_AGENT_DONE_TEXT.discarded!
+      : lines.every((l) => l) && lines.length <= 2 ? `${lines.join(' ')}${tail}`
+      : cards > 1 ? `확인 카드 ${cards}장을 만들었어요.${tail}`
+      : (CHAT_AGENT_DONE_TEXT[round.at(-1)!.o.status] ?? CHAT_AGENT_NUMBER_TEXT);
+    return { kind: 'did', text, show, ask: null, filtered: 'closed' };
   }
 
   /** 모든 도구 호출에 답이 있으면 function_call_output을 replay에 붙인다. 결과 ref는 이 세션의 ref로 기억한다. */
@@ -724,7 +752,8 @@ export class ChatAgent {
     const unknownName = r.filtered ? null : (s.turn!.unknownName ?? null);
     this.record(s, { user: s.turn!.user, agent: { text: r.text, show: r.show } });
     s.turn = null;
-    return { kind: 'reply', reply: { ...r, values: r.filtered ? {} : this.values(s, r.text), unknownName } };
+    // 엔진이 닫은 문장(closed)도 이번 턴 토큰을 쓰므로 화면 값을 같이 준다
+    return { kind: 'reply', reply: { ...r, values: r.filtered && r.filtered !== 'closed' ? {} : this.values(s, r.text), unknownName } };
   }
 
   private values(s: Session, text: string): Record<string, string> {

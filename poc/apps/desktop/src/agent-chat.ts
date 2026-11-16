@@ -405,8 +405,8 @@ export class AgentChat {
     const show: AgentShow[] = [];
     const cards = new Set<string>();
     // 문장 슬롯이 가리키는 결과는 모델이 show에 넣지 않아도 보인다: 답 문장의 값이 늘 같이 보이는 표에 있다.
-    // 'repeat'은 엔진이 쓴 고정 문장이라 슬롯이 맞다(조회 되풀이의 건수·합계). 다른 걸러진 답은 슬롯을 쓰지 않는다.
-    const slotted = !reply.filtered || reply.filtered === 'repeat';
+    // 'repeat'·'closed'는 엔진이 쓴 문장이라 토큰·슬롯이 맞다(조회 되풀이의 건수·합계, 카드의 거래처·금액). 다른 걸러진 답은 쓰지 않는다.
+    const slotted = !reply.filtered || reply.filtered === 'repeat' || reply.filtered === 'closed';
     const slotRefs = slotted ? [...reply.text.matchAll(SLOT_RE)].map((m) => m[1]!) : [];
     for (const ref of [...new Set([...reply.show, ...slotRefs])]) {
       const res = s.results.get(ref);

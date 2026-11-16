@@ -481,7 +481,10 @@ describe('chat.step 턴 상한·세션 폐기', () => {
     script(draft('원두'));
     const r1 = (await say(a, pc, 'A상사 110만원 원두 세금계산서 끊어줘')).reply;
     assert.equal(responds().length, 1);
-    assert.deepEqual([r1.kind, r1.text, r1.show, r1.filtered], ['did', CHAT_AGENT_DONE_TEXT.card_shown, ['d1'], 'closed']);
+    // 무엇을 했는지 토큰으로 말하고 화면 값을 같이 준다
+    assert.deepEqual([r1.kind, r1.show, r1.filtered], ['did', ['d1'], 'closed']);
+    assert.match(r1.text, /^\[NAME_\d+\] 앞으로 \[AMT_\d+\], 부가세 별도로 확인 카드를 만들었어요\. /);
+    assert.deepEqual(Object.values(r1.values).sort(), ['110만원', 'A상사'].sort());
     script(draft(null));
     const r2 = (await say(a, pc, 'A상사 50만원 세금계산서 끊어줘')).reply;
     assert.deepEqual([r2.kind, r2.ask, r2.text, r2.filtered], ['ask', 'item', CHAT_AGENT_ASK_TEXT.item, 'closed']);
