@@ -9,11 +9,11 @@ import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbPro
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
-import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
+import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type PaperInvoice, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -58,6 +58,9 @@ import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-ac
 import { GatewayAuthHost } from './gateway-auth.ts';
 import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
+import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { phoneReceiver } from './phone-receive.ts';
+import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
@@ -1357,12 +1360,62 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onView: (v) => pairWin?.push(v),
       onPaired: (r) => {
         pairedThisRun.push(r);
+        // 수신 배선(phone-link.ts): 기록을 보관하고 이 폰의 우편함을 지킨다
+        void phones()
+          ?.add(r)
+          .catch((e: Error) => log.event('main.phone_link', { step: 'add', result: e.message.slice(0, 40) }));
         send({ type: 'account', account: account.view() });
       },
     });
     pairWin = new PairWindow({ parent: win, url: PAIR_URL, host, onClosed: () => send({ type: 'account', account: account.view() }) });
     return pairWin;
   };
+  // 연결된 폰 수신(phone-link.ts, D08 §5·§7): 페어링한 폰마다 우편함을 지켜 사진·현금을 받는다(라이브 WSS + HTTPS 큐).
+  // 로그인(첫 PC 등록)과 클라우드 포트·금고 키가 있을 때만. 우편함 토큰은 safeStorage(키체인·DPAPI)로 봉인해 둔다.
+  // safeStorage를 쓸 수 없는 환경(일부 Linux)은 b64로 두고 표시를 남긴다: 토큰만으로는 기기 토큰(DPoP, 금고 Vd) 없이 우편함에 들어가지 못한다.
+  const tokenSeal: TokenSeal = {
+    seal: (b) => (safeStorage.isEncryptionAvailable() ? `ss1:${safeStorage.encryptString(Buffer.from(b).toString('base64')).toString('base64')}` : `b64:${Buffer.from(b).toString('base64')}`),
+    open: (v) => new Uint8Array(Buffer.from(v.startsWith('ss1:') ? safeStorage.decryptString(Buffer.from(v.slice(4), 'base64')) : v.startsWith('b64:') ? v.slice(4) : '', 'base64')),
+  };
+  let phoneLink: PhoneLink | null = null;
+  const phones = (): PhoneLink | null => {
+    if (phoneLink) return phoneLink;
+    const cloud = opts.remote?.cloud;
+    if (fixture || !cloud?.mailboxQueue || !account.device()) return null;
+    const auth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => {
+      const d = account.device();
+      if (!d) return Promise.reject(Object.assign(new Error('account'), { code: 'account.signed_out' }));
+      return d.auth(htm, htu);
+    };
+    const live = wsRelayClient({ host: cloud.relayHost, open: cloud.openSocket, insecureLocal: cloud.insecureLocal, deviceAuth: (htm, htu) => auth(htm, htu) });
+    phoneLink = new PhoneLink({
+      store: new PhoneStore(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-phones.json')),
+      seal: tokenSeal,
+      keys: async () => {
+        const k = (await keysOf()) as Partial<VaultDesktopKeys> & DesktopKeys;
+        if (!k.hpkeOpen || !k.qdPublic) throw Object.assign(new Error('keys'), { code: 'account.keys_unavailable' });
+        return { noise: k.noise, vd: k.vd, hpkeOpen: k.hpkeOpen, qdPublic: k.qdPublic };
+      },
+      joinMailbox: opts.remote?.relayClient ? undefined : (id, tok) => live.joinMailbox(id, tok, 'desktop'),
+      queue: (id, tok) => cloud.mailboxQueue!(id, tok, auth),
+      deleteMailbox: (id, w) => cloud.relay.deleteMailbox(auth, id, w),
+      receiver: () =>
+        phoneReceiver((m, p) => host.rpc(m, p), {
+          onReceipt: () => pushBoard(),
+          onCash: () => pushBoard(),
+          log: (n, d) => log.event(n, d),
+        }),
+      deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
+      appVersion: app.getVersion(),
+      log: (n, d) => log.event(n, d ?? {}),
+      onChange: () => send({ type: 'account', account: account.view() }),
+    });
+    return phoneLink;
+  };
+  // 이미 로그인한 PC면 켤 때 저장된 폰을 지킨다(꺼져 있던 동안의 큐부터 비운다)
+  void accountInit()
+    .then(() => phones()?.start())
+    .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -1407,6 +1460,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     docFile,
     receivables: () => bank.receivables(),
     businessName: () => (businessId || sample ? profiles().business.name || null : null),
+    businessBizNo: () => (businessId ? profiles().business.bizNo || null : null),
+    // 폰으로 찍은 종이 세금계산서: 작성일 달과 다음 달에 받은 증빙에서 꺼낸다(보통 다음 달 초에 찍는다). 꾸러미가 작성일로 다시 거른다
+    paperInvoices: async (month) => {
+      if (!businessId) return [];
+      const [y, m] = [Number(month.slice(0, 4)), Number(month.slice(5, 7))];
+      const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+      const out: Array<{ docId: string; paper: PaperInvoice; file: string | null }> = [];
+      for (const mm of [month, next]) {
+        const r = (await host.rpc('db.query.receipt.list', { profileId: businessId, month: mm }).catch(() => null)) as { receipts?: Array<{ docId: string; phoneOcr?: { paperInvoice?: PaperInvoice } | null }> } | null;
+        for (const x of r?.receipts ?? []) {
+          const paper = x.phoneOcr?.paperInvoice;
+          if (!paper || out.some((o) => o.docId === x.docId)) continue;
+          out.push({ docId: x.docId, paper, file: await docFile(x.docId).catch(() => null) });
+        }
+      }
+      return out;
+    },
     outRoot: path.join(appPaths(root ?? defaultAppRoot()).userData, '세무사 꾸러미'),
   });
   const packMonth = (m: unknown) => {
@@ -1963,6 +2033,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (runs.anyActive()) throw new Error('run_active');
       pairWin?.close();
       pairWin = null;
+      phoneLink?.stop();
+      phoneLink = null;
       const v = await account.signOut();
       pushBoard();
       return v;
@@ -2284,6 +2356,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     updater?.stop();
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();
+    phoneLink?.stop();
     watchChromeFront(false);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).
