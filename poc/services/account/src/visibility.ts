@@ -12,6 +12,7 @@ export const ACCOUNT_VISIBILITY: Record<string, Record<string, string>> = {
     device_list_version: '기기 목록(AIK 서명) 버전',
     device_list_json: '기기 목록(AIK 서명)',
     last_biz_change_at: 'D09 §1.1 보충: 사업자 HMAC 재바인딩 시각(90일 규칙)',
+    delete_after: 'D09 §1.1 보충: 탈퇴 예정 시각(7일 유예)',
   },
   sessions: { token_hash: '세션(토큰 해시)', account_id: '계정', auth_method: '로그인 방식', created_at: '로그인 시각', auth_at: 'D09 §1.1 보충: 인증 시각(최근 로그인 판정, ADR-038)', expires_at: '세션 만료(1시간)' },
   pw_creds: {

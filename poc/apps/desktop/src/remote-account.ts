@@ -604,6 +604,29 @@ export class DeviceSession {
     return field;
   }
 
+  /**
+   * 탈퇴(F-06, 약관 제15조): 상태 보기·요청(7일 유예, 서버가 구독을 바로 해지)·취소. 데스크톱 기기 토큰으로 부른다.
+   * 토큰이 만료돼 401이면 토큰을 버리고 한 번만 다시 한다.
+   */
+  async deletion(): Promise<{ deleteAfter: number | null }> {
+    return this.#retry(() => this.#client.accountDeletion(this.auth));
+  }
+  async requestDelete(): Promise<{ deleteAfter: number }> {
+    return this.#retry(() => this.#client.requestAccountDelete(this.auth));
+  }
+  async cancelDelete(): Promise<void> {
+    return this.#retry(() => this.#client.cancelAccountDelete(this.auth));
+  }
+  async #retry<T>(f: () => Promise<T>): Promise<T> {
+    try {
+      return await f();
+    } catch (e) {
+      if ((e as { code?: unknown }).code !== 'account.unauthorized') throw e;
+      this.clearToken();
+      return f();
+    }
+  }
+
   /** 페어링 7단계 뒤: 새 목록을 파일에. */
   async setDeviceList(list: DeviceListJson): Promise<void> {
     this.#id = { ...this.#id, deviceList: list };

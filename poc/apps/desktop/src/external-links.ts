@@ -6,10 +6,13 @@ import { shell } from 'electron';
 export const EXTERNAL_LINKS = {
   'magicline.mac': 'https://hometax.go.kr/MagicLine4XML/ML4Web/install_bin/MagicLine4NX.pkg',
   'magicline.win': 'https://hometax.go.kr/MagicLine4XML/ML4Web/install_bin/magicline4nx_setup.exe',
+  // 이용약관·개인정보 처리방침(F-06): 사이트 정적 페이지(services/deploy/vercel/public/terms·privacy)
+  'legal.terms': 'https://tax.laf-co.com/terms',
+  'legal.privacy': 'https://tax.laf-co.com/privacy',
 } as const;
 export type ExternalLinkKey = keyof typeof EXTERNAL_LINKS;
-/** 열어도 되는 사이트(등록 도메인). 하위 도메인은 www만. */
-const ALLOWED_SITES = ['hometax.go.kr'];
+/** 열어도 되는 호스트. 하위 도메인은 www만(tax.laf-co.com은 그 호스트 그대로). */
+const ALLOWED_SITES = ['hometax.go.kr', 'tax.laf-co.com'];
 
 /** 키의 주소. 표에 없거나 규칙에 맞지 않으면 던진다. */
 export function externalUrl(key: string): string {

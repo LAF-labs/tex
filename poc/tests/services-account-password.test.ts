@@ -812,7 +812,7 @@ describe('ADR-038 마이그레이션 002', () => {
       await migrate(db, 'account', dir);
       await db.run("INSERT INTO accounts (id, email, status, created_at) VALUES ('a1', 'm@example.com', 'active', 1)");
       await db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, expires_at) VALUES ('h1', 'a1', 'passkey', 5, 99)");
-      assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [2, 3, 4, 5]);
+      assert.deepEqual(await migrate(db, 'account', MIGRATIONS_DIR), [2, 3, 4, 5, 6]);
       assert.deepEqual({ ...(await db.one('SELECT token_hash, account_id, auth_method, created_at, auth_at, expires_at FROM sessions'))! }, { token_hash: 'h1', account_id: 'a1', auth_method: 'passkey', created_at: 5, auth_at: 5, expires_at: 99 });
       await db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, auth_at, expires_at) VALUES ('h2', 'a1', 'refresh', 1, 1, 2)");
       await assert.rejects(db.run("INSERT INTO sessions (token_hash, account_id, auth_method, created_at, auth_at, expires_at) VALUES ('h3', 'a1', 'magic', 1, 1, 2)"));

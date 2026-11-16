@@ -213,6 +213,19 @@ export function openRouterProviderField(r: OpenRouterRouting): Record<string, un
 }
 
 /**
+ * 공급자를 고정하지 않는 호출(page_judge·browser_agent)의 보관 조건(F-06, 처리방침 6항). 공급자는 고정하지 않고 보관 조건만 건다.
+ * off = provider 필드 없음(대표 2026-11-13 결정 그대로, 기본), deny = 데이터 수집 공급자 제외, zdr = 무보관 공급자만 + 수집 제외.
+ * 라우터 뒤 공급사가 조건을 못 맞추면 OpenRouter가 거절할 수 있으므로 실키로 확인한 뒤 운영 환경에서 켠다.
+ */
+export type AgentPrivacy = 'off' | 'deny' | 'zdr';
+export function parseAgentPrivacy(v: string | undefined): AgentPrivacy | null {
+  return v === undefined || v === '' ? 'off' : v === 'off' || v === 'deny' || v === 'zdr' ? v : null;
+}
+function agentProviderField(p: AgentPrivacy): Record<string, unknown> | null {
+  return p === 'zdr' ? { zdr: true, data_collection: 'deny' } : p === 'deny' ? { data_collection: 'deny' } : null;
+}
+
+/**
  * OpenRouter(OpenAI 호환 Responses, 무상태). 키는 OPENROUTER_API_KEY(서버 환경 변수, 저장소 금지).
  * L2(respond)는 /api/v1/responses로 보낸다. OpenRouter에는 Decisions(L1 보정 확률) 엔드포인트가 없어서 decide는 호출하지 않고
  * 재시도 불가 오류를 낸다(게이트웨이 503 gateway.upstream_error, 엔진 unknown). L1 상류는 팀장 결정 대기.
@@ -221,14 +234,14 @@ export function openRouterProviderField(r: OpenRouterRouting): Record<string, un
 export class OpenRouterProvider implements ModelProvider {
   readonly name = 'openrouter';
   private readonly routing: OpenRouterRouting;
-  private readonly o: { baseUrl: string; apiKey: string; timeoutMs: number; fetchFn: typeof fetch; onEvent: (e: string) => void };
-  constructor(o: { apiKey: string; routing: OpenRouterRouting | null; baseUrl?: string; timeoutMs?: number; fetchFn?: typeof fetch; onEvent?: (e: string) => void }) {
+  private readonly o: { baseUrl: string; apiKey: string; timeoutMs: number; fetchFn: typeof fetch; onEvent: (e: string) => void; agentPrivacy: AgentPrivacy };
+  constructor(o: { apiKey: string; routing: OpenRouterRouting | null; baseUrl?: string; timeoutMs?: number; fetchFn?: typeof fetch; onEvent?: (e: string) => void; agentPrivacy?: AgentPrivacy }) {
     if (!o.apiKey) throw new Error('config_OPENROUTER_API_KEY');
     if (!routingOk(o.routing)) throw new Error('config_OPENROUTER_ROUTING');
     const baseUrl = (o.baseUrl ?? 'https://openrouter.ai/api').replace(/\/$/, '');
     if (!/^https:\/\//.test(baseUrl) && !/^http:\/\/127\.0\.0\.1[:/]/.test(baseUrl)) throw new Error('config_OPENROUTER_BASE_URL');
     this.routing = { zdr: true, dataCollection: 'deny', only: [...o.routing.only] };
-    this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined) };
+    this.o = { baseUrl, apiKey: o.apiKey, timeoutMs: o.timeoutMs ?? 30_000, fetchFn: o.fetchFn ?? fetch, onEvent: o.onEvent ?? (() => undefined), agentPrivacy: o.agentPrivacy ?? 'off' };
   }
 
   decide(): Promise<DecideResult> {
@@ -241,7 +254,8 @@ export class OpenRouterProvider implements ModelProvider {
       this.o.onEvent('upstream_routing_refused');
       throw new ProviderError('fatal');
     }
-    const body = s.unpinned ? openAIResponsesBody(s) : { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
+    const agentField = s.unpinned ? agentProviderField(this.o.agentPrivacy) : null;
+    const body = s.unpinned ? (agentField ? { ...openAIResponsesBody(s), provider: agentField } : openAIResponsesBody(s)) : { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
     let res: Response;
     try {
       res = await this.o.fetchFn(`${this.o.baseUrl}/v1/responses`, {
@@ -255,7 +269,7 @@ export class OpenRouterProvider implements ModelProvider {
       throw new ProviderError('retryable');
     }
     // 적용 사실만 남긴다(설정이 실린 요청을 보냈다). 값·본문·공급자 이름은 로그에 없다
-    this.o.onEvent(s.unpinned ? 'upstream_unpinned' : 'upstream_zdr_pinned');
+    this.o.onEvent(s.unpinned ? (agentField ? `upstream_unpinned_${this.o.agentPrivacy}` : 'upstream_unpinned') : 'upstream_zdr_pinned');
     // 고정 공급자를 쓸 수 없으면 OpenRouter가 404를 준다. 대체 공급자로 넘어가지 않으므로 재시도하지 않는다
     if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
     if (res.status !== 200) throw new ProviderError('fatal');

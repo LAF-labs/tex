@@ -280,6 +280,20 @@ export function accountRouter(o: AccountAppOpts): Router {
     return json(204, undefined);
   });
 
+  // 탈퇴(7일 유예). 계정 세션 또는 데스크톱 기기 토큰(데스크톱은 등록 뒤 세션을 버리고 기기 토큰만 갖는다). 폰 토큰은 거부
+  const sessionOrDesktop = async (ctx: Ctx): Promise<string> => {
+    if (!String(ctx.headers.authorization ?? '').startsWith('DPoP ')) return (await session(ctx)).accountId;
+    const c = await device(ctx, 'devlist');
+    if (c.role !== 'desktop') fail('account.scope_denied');
+    return c.acc;
+  };
+  r.add('GET', '/v1/account/deletion', async (ctx) => json(200, await svc.accountDeletion(await sessionOrDesktop(ctx))));
+  r.add('POST', '/v1/account/delete-request', async (ctx) => json(202, await svc.requestAccountDelete(await sessionOrDesktop(ctx))));
+  r.add('POST', '/v1/account/delete-cancel', async (ctx) => {
+    await svc.cancelAccountDelete(await sessionOrDesktop(ctx));
+    return json(204, undefined);
+  });
+
   // 구독·결제
   r.add('POST', '/v1/billing/checkout', async (ctx) => json(200, await svc.checkout(await billingAuth(ctx))));
   r.add('GET', '/v1/billing/subscription', async (ctx) => {

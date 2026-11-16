@@ -28,6 +28,7 @@
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
 | `MODEL_AGENT` | 아니오(`typesafe/jev-router`) | OpenRouter 모델 ID | 예상 밖 화면 판정·브라우저 에이전트(`page_judge`·`browser_agent`) 모델. 기본은 요청마다 모델·추론 강도를 고르는 라우터다. **이 두 툴셋 호출에는 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS`를 적용하지 않는다**(provider 필드 없이 보낸다, 대표 2026-11-13: 라우터 뒤쪽 공급사가 요청마다 달라 고정하면 막힌다). 보내는 글은 지금처럼 가린 요소 목록·대화상자 문구뿐이다. 다른 툴셋은 그대로 고정한다 |
+| `OPENROUTER_AGENT_PRIVACY` | 아니오(`off`) | `off` \| `deny` \| `zdr` | 위 두 툴셋 호출의 보관 조건. 공급자는 고정하지 않고 `provider`에 보관 조건만 싣는다: `deny` = `data_collection:"deny"`, `zdr` = `zdr:true` + `data_collection:"deny"`. `off`는 provider 필드 없음(대표 2026-11-13 결정). 처리방침 6항의 예외 문구를 지우려면 `zdr`로 켜야 한다. 라우터 뒤 공급사가 못 맞추면 OpenRouter가 거절할 수 있으니 실키로 판정 몇 건을 돌려 본 뒤 켠다. 다른 값이면 기동 거부 |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
 | `GW_DAILY_KRW_TRIAL` | 아니오(`50`) | 양의 정수(원) | 무료 체험 하루 AI 사용 금액 한도. 하루는 한국 시간 새벽 4시에 바뀐다(사용자 결정 2026-11-16) |

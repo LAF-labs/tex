@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type Prices, type RespondSpec } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseAgentPrivacy, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type Prices, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { ACCOUNT_ORIGIN, accountStack, deviceToken, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -691,6 +691,16 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(sent.at(-1)!.body.provider, undefined);
     assert.equal(sent.at(-1)!.body.unpinned, undefined);
     assert.equal(events.at(-1), 'upstream_unpinned');
+    // 판정·에이전트의 보관 조건(OPENROUTER_AGENT_PRIVACY): 공급자는 고정하지 않고 조건만 싣는다
+    assert.equal(parseAgentPrivacy(undefined), 'off');
+    assert.equal(parseAgentPrivacy('zdr'), 'zdr');
+    assert.equal(parseAgentPrivacy('on'), null);
+    for (const [mode, field] of [['zdr', { zdr: true, data_collection: 'deny' }], ['deny', { data_collection: 'deny' }]] as const) {
+      const q = new OpenRouterProvider({ apiKey: 'k', routing: parseOpenRouterRouting(ROUTING_ENV), fetchFn, onEvent: (e) => events.push(e), agentPrivacy: mode });
+      assert.equal((await q.respond({ ...SPEC, unpinned: true })).status, 'completed');
+      assert.deepEqual(sent.at(-1)!.body.provider, field);
+      assert.equal(events.at(-1), `upstream_unpinned_${mode}`);
+    }
     // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
     status = 404;
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);

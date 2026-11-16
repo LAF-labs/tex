@@ -223,6 +223,18 @@ describe('청약철회 환불·유료 기능 권리(체험 1달)', () => {
   const accountOf = async (ref: string) => (await e.db.one<{ account_id: string }>('SELECT account_id FROM subscriptions WHERE pg_customer_ref = $1', [ref]))!.account_id;
   const session = async (ref: string) => ({ accountId: await accountOf(ref) });
 
+  it('탈퇴 요청: 구독을 끝내고 저장한 빌링키를 바로 지운다(행 삭제는 7일 유예 뒤), 그 뒤 청구 없음', async () => {
+    const s = await login(e, 'leave@example.com');
+    const { ref } = await subscribe(e, s);
+    const n = e.pg.charges.length;
+    assert.equal((await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) })).status, 202);
+    const r = await e.db.one<{ status: string; billing_key_sealed: Buffer | null }>('SELECT status, billing_key_sealed FROM subscriptions WHERE pg_customer_ref = $1', [ref]);
+    assert.deepEqual([r!.status, r!.billing_key_sealed], ['canceled', null]);
+    e.clock.advance(40 * D);
+    await e.svc.chargeDue();
+    assert.equal(e.pg.charges.length, n);
+  });
+
   it('결제 당일 철회는 전액, 구독은 바로 끝나고 접수 메일. 같은 결제를 두 번 환불하지 않는다', async () => {
     const s = await login(e, 'refund@example.com');
     const { ref } = await subscribe(e, s);

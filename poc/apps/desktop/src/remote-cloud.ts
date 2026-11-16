@@ -243,6 +243,22 @@ export function cloudPorts(o: CloudPortsOptions): CloudPorts {
       const url = `${accountOrigin}/v1/device-list`;
       await call('PUT', url, [200], { headers: await authed(auth, 'PUT', url), body: { deviceList: list } });
     },
+    async accountDeletion(auth) {
+      const url = `${accountOrigin}/v1/account/deletion`;
+      const b = await call('GET', url, [200], { headers: await authed(auth, 'GET', url) });
+      if (!isObj(b) || !(b.deleteAfter === null || int(b.deleteAfter))) shape();
+      return { deleteAfter: (b as { deleteAfter: number | null }).deleteAfter };
+    },
+    async requestAccountDelete(auth) {
+      const url = `${accountOrigin}/v1/account/delete-request`;
+      const b = await call('POST', url, [202], { headers: await authed(auth, 'POST', url), body: {} });
+      if (!isObj(b) || !int(b.deleteAfter)) shape();
+      return { deleteAfter: (b as { deleteAfter: number }).deleteAfter };
+    },
+    async cancelAccountDelete(auth) {
+      const url = `${accountOrigin}/v1/account/delete-cancel`;
+      await call('POST', url, [204], { headers: await authed(auth, 'POST', url), body: {} });
+    },
   };
 
   const relay: RelayHttpClient = {

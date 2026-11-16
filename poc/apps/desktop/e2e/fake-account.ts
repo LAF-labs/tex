@@ -80,6 +80,9 @@ export function fakeAccount(o: { hasPassword?: boolean } = {}) {
     billingCancel: async () => {},
     billingRefund: async () => ({ amountKrw: 0 }),
     putDeviceList: async () => {},
+    accountDeletion: async () => ({ deleteAfter: null }),
+    requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
+    cancelAccountDelete: async () => {},
   };
   return { client, calls, pinned: () => pinned };
 }

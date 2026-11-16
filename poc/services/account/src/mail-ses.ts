@@ -87,6 +87,7 @@ const NOTICE_TEXT: Record<NoticeKind, { subject: string; body: string }> = {
   device_suspended: { subject: '기기를 긴급 정지했어요', body: '계정의 기기 하나를 긴급 정지했어요. 그 기기는 더 이상 연결되지 않아요.' },
   device_auto_suspended: { subject: '기기를 자동으로 정지했어요', body: '비정상적인 사용이 감지돼 기기 하나를 자동으로 정지했어요. PC 앱에서 기기 목록을 확인하세요.' },
   device_delete_pending: { subject: '기기 삭제를 요청했어요', body: '기기 삭제를 요청했어요. 7일 뒤에 삭제돼요. 직접 한 일이 아니면 PC 앱에서 취소하세요.' },
+  account_delete_pending: { subject: '탈퇴를 요청했어요', body: '탈퇴를 요청했어요. 구독은 해지돼 다음 결제가 없고, 7일 뒤에 계정 정보가 삭제돼요. 직접 한 일이 아니면 그 전에 PC 앱 설정에서 탈퇴를 취소하세요. 이 Mac에 있는 자료는 앱을 지우기 전까지 남아요.' },
   device_revoked: { subject: '기기가 계정에서 빠졌어요', body: '기기 하나가 계정에서 폐기됐어요. 그 기기는 더 이상 연결되지 않아요.' },
   aik_pinned: { subject: 'PC가 계정에 연결됐어요', body: '이 계정에 PC 신원 키가 등록됐어요. 직접 한 일이 아니면 고객 지원에 알려 주세요.' },
   passkey_added: { subject: '새 패스키가 등록됐어요', body: '계정에 새 패스키가 등록됐어요. 직접 한 일이 아니면 PC 앱에서 확인하세요.' },
