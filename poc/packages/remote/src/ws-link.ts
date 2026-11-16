@@ -5,7 +5,9 @@
 //  - 바이너리 메시지 하나 = D08 §6 바깥 프레임 하나(ver=1, kind HS=1·DATA=2, ≤ 65,535B). ENV(3)는 HTTPS 큐 경로라 여기로 보내지 않는다.
 //  - 서버 → 클라이언트 텍스트(우편함만): {"t":"peer","online":bool}, {"t":"env"}(PC에게: 큐에 봉투가 있다).
 //  - close 4001 = 기기 토큰 만료(다시 인증해 재연결), 4002 = 같은 쪽 새 연결이 대신함, 1008·1009 = 형식·크기 위반.
-//  - 120초 무통신이면 서버가 끊는다: 30초마다 ping(소켓이 ping을 지원할 때. RN·Node ws 모두 있다).
+//  - 120초 무통신이면 서버가 끊는다. 우편함은 30초마다 텍스트 {"t":"ping"}을 보내고 서버가 {"t":"pong"}으로 답한다
+//    (PC의 Node·Electron 내장 WebSocket에는 ping()이 없다). 2.5배 간격 동안 아무것도 못 받으면 죽은 연결로 보고 끊는다
+//    (잠자기·와이파이 전환 뒤 반쯤 열린 TCP를 몇 분씩 붙잡지 않게). 룸은 ping()을 지원할 때만 프레임 ping을 보낸다.
 // 전송은 주입한 WebSocket 생성자로만 한다: 폰은 RN 내장 WebSocket(헤더는 세 번째 인자), PC는 @sax/net egress가 만든 것을 넘긴다.
 // 토큰은 URL에 넣지 않는다(접근 로그 노출 방지).
 
@@ -40,10 +42,13 @@ export interface WsRelayOptions {
   joinTimeoutMs?: number;
   /** ping 간격(기본 30초, 0이면 끈다). */
   pingMs?: number;
+  now?: () => number;
 }
 
 /** 서버 프레임 상한(services/relay RELAY.frameMax). */
 export const RELAY_FRAME_MAX = 65_535;
+/** 우편함 앱 수준 keepalive(서버 services/relay가 pong으로 답한다). */
+export const RELAY_PING = '{"t":"ping"}';
 export const RELAY_CLOSE = { tokenExpired: 4001, replaced: 4002, policy: 1008, tooBig: 1009 } as const;
 
 function checkHost(host: string, insecureLocal: boolean): void {
@@ -185,6 +190,8 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
     let ping: ReturnType<typeof setInterval> | null = null;
     const t = setTimeout(() => fail('relay: join timeout', null), o.joinTimeoutMs ?? 10_000);
     let ended = false;
+    const now = o.now ?? Date.now;
+    let lastIn = 0;
     function fail(msg: string, code: number | null) {
       if (ended) return;
       ended = true;
@@ -203,7 +210,17 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
       clearTimeout(t);
       link = new WsLink(ws, peer);
       const pingMs = o.pingMs ?? 30_000;
-      if (pingMs > 0 && typeof ws.ping === 'function') {
+      if (pingMs > 0 && kind === 'mailbox') {
+        lastIn = now();
+        ping = setInterval(() => {
+          if (now() - lastIn > pingMs * 2.5) return fail('relay: stale', null);
+          try {
+            ws.send(RELAY_PING);
+          } catch {
+            /* 닫히는 중 */
+          }
+        }, pingMs);
+      } else if (pingMs > 0 && typeof ws.ping === 'function') {
         ping = setInterval(() => {
           try {
             ws.ping!();
@@ -212,6 +229,7 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
           }
         }, pingMs);
       }
+      (ping as { unref?: () => void } | null)?.unref?.();
       link.onClose(() => {
         if (ping) clearInterval(ping);
       });
@@ -224,6 +242,7 @@ function join(o: WsRelayOptions, url: string, headers: Record<string, string> | 
     ws.onerror = () => fail(link ? 'relay: socket error' : 'relay: rejected', null);
     ws.onclose = (ev) => fail(link ? 'relay: closed' : 'relay: rejected', codeOf(ev));
     ws.onmessage = (ev) => {
+      lastIn = now();
       if (typeof ev.data === 'string') {
         let m: { t?: unknown; online?: unknown };
         try {

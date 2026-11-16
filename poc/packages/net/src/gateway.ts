@@ -37,6 +37,7 @@ export type GatewayErrorCode =
   | 'gateway.run_token_invalid'
   | 'gateway.run_budget_exceeded'
   | 'gateway.quota_exceeded'
+  | 'gateway.daily_limit'
   | 'gateway.rate_limited'
   | 'gateway.upstream_error'
   | 'gateway.codef_off'
@@ -65,6 +66,7 @@ const BODY_CODES: Record<string, GatewayErrorCode> = {
   'gateway.run_token_invalid': 'gateway.run_token_invalid',
   'gateway.run_budget_exceeded': 'gateway.run_budget_exceeded',
   'gateway.quota_exceeded': 'gateway.quota_exceeded',
+  'gateway.daily_limit': 'gateway.daily_limit',
   'policy.rate_limited': 'gateway.rate_limited',
   'gateway.upstream_error': 'gateway.upstream_error',
   'gateway.codef_off': 'gateway.codef_off',

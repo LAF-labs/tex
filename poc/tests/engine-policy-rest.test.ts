@@ -90,7 +90,9 @@ describe('blockSignalsAdd: 앱 내장 사전에 더하기만(D03 §7 (d), C-24)'
   it('RunService: 받은 정책은 홈택스만, 커밋 구간 = 이 실행의 원장 행이 armed·dispatched', () => {
     const src = fs.readFileSync(path.join(SRC, 'runs.ts'), 'utf8');
     assert.match(src, /if \(this\.d\.portal\.kind !== 'hometax' \|\| !received\) return builtIn;/);
-    assert.match(src, /inCommit: \(\) => this\.ledger\.statesByRun\(runId\)\.some\(\(st\) => st === 'armed' \|\| st === 'dispatched'\)/);
+    // 발급 실행은 이 실행의 원장 행으로 커밋 구간을 본다. 재확인(reverifyInDoubt)은 발급하지 않으므로 늘 커밋 밖(() => false)이다
+    assert.match(src, /this\.runSignals\(\(\) => this\.ledger\.statesByRun\(p\.runId\)\.some\(\(st\) => st === 'armed' \|\| st === 'dispatched'\), startPolicy\)/);
+    assert.match(src, /return runSignalDict\(\{[\s\S]*?\n\s+inCommit,\n/);
     assert.match(fs.readFileSync(path.join(SRC, 'run/service-ir.ts'), 'utf8'), /dict: i\.signals \?\? SIGNAL_DICT\[i\.portal\.kind\]/);
     assert.match(fs.readFileSync(path.join(SRC, 'policy.ts'), 'utf8'), /dict: o\.signals \?\? SIGNAL_DICT\[portal\.kind\]/);
   });

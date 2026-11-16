@@ -4,7 +4,8 @@
 # 이 저장소에서는 빌드·배포하지 않는다(Phase 1). 운영에서는 CDN(정적 파일) 앞단 + 이 서비스는 게시 관문으로만 쓴다.
 FROM node:26-slim AS build
 WORKDIR /app
-RUN corepack enable
+# node:26 이미지에는 corepack이 없다. packageManager와 같은 pnpm을 설치 스크립트 없이 깐다
+RUN npm install -g --ignore-scripts pnpm@12.11.2
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY services/shared services/shared
 COPY services/registry services/registry

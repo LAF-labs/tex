@@ -4,6 +4,8 @@ export const ERROR_STATUS = {
   // D16 기존
   'gateway.unauthorized': 401,
   'gateway.quota_exceeded': 429,
+  /** 오늘(한국 시간 새벽 4시 기준) 쓸 수 있는 AI 사용 금액을 다 썼다. retry-after = 다음 새벽 4시까지 */
+  'gateway.daily_limit': 429,
   'gateway.digest_mismatch': 409,
   'gateway.param_rejected': 400,
   'gateway.upstream_error': 503,
@@ -58,6 +60,12 @@ export const ERROR_STATUS = {
   'account.not_pending': 409,
   'account.device_hold': 423,
   'account.billing_signature_invalid': 400,
+  /** 체험이 끝났고 구독이 없다(유료 기능: 게이트웨이 범위 토큰). 앱은 구독 화면을 연다 */
+  'account.subscription_required': 402,
+  /** 청약철회 기간(결제 후 7일)이 지났거나 환불할 결제가 없다 */
+  'account.refund_unavailable': 409,
+  /** PG가 환불을 거절했거나 결과를 모른다(같은 요청을 다시 해도 두 번 환불되지 않는다) */
+  'account.refund_failed': 502,
   'gateway.run_token_invalid': 401,
   'gateway.run_budget_exceeded': 429,
   'gateway.device_suspended': 403,

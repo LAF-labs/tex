@@ -37,7 +37,7 @@ import { MIGRATIONS_DIR as RELAY_MIGRATIONS } from '../services/relay/src/index.
 import { MIGRATIONS_DIR as PUSH_MIGRATIONS } from '../services/push/src/index.ts';
 import { INTERNAL_FUNCTION_ROUTES, buildCloud, cloudFunction, cronFunction, internalFunction } from '../services/cloud/src/index.ts';
 import { materialize, rewriteLikeVercel } from '../services/deploy/check-vercel-output.ts';
-import { TransparencyLog } from '../services/registry/src/index.ts';
+import { TransparencyLog, registryFunctionPath } from '../services/registry/src/index.ts';
 import { client } from './services-kit.ts';
 
 const DEPLOY = path.join(import.meta.dirname, '..', 'services', 'deploy');
@@ -427,8 +427,10 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
     for (const { method, path: p } of all) {
       const r = routeOf(p);
       assert.ok(r, `${method} ${p}`);
-      const fn = p.startsWith('/registry/log/') || p.startsWith('/admin/v1/');
-      assert.equal(fn, method === 'PUT' || p.startsWith('/registry/log/'), `${method} ${p}`);
+      // 함수로 가는 GET은 로그와 처음 설치 직접 링크(/download/mac, 서명된 latest.json 옆 dmg로 보냄)뿐이다(registryFunctionPath와 같은 규칙)
+      const fn = p.startsWith('/registry/log/') || p.startsWith('/admin/v1/') || p === '/download/mac';
+      assert.equal(fn, method === 'PUT' || p.startsWith('/registry/log/') || p === '/download/mac', `${method} ${p}`);
+      assert.equal(fn, registryFunctionPath(method, p), `${method} ${p}`);
       if (fn) {
         assert.ok(r!.destination.startsWith('/api/registry?__p='), `${p} → ${r!.destination}`);
         const m = toRe(r!.source).exec(p)!;
@@ -477,8 +479,8 @@ describe('Supabase 마이그레이션 내보내기', () => {
     // 새 단계는 뒤에 붙는다(이름 순서 = 적용 순서)
     const names = [...out.keys()];
     assert.deepEqual(names, [...names].sort());
-    assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql', '20261107000100_sax_account.sql', '20261113000100_sax_gateway.sql']);
-    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => `${s.name}:${s.versions.from}-${s.versions.to}`)), [['account:1-1', 'gateway:1-1', 'relay:1-1', 'push:1-1'], ['registry:1-1'], ['account:2-2'], ['account:3-3'], ['gateway:2-2']]);
+    assert.deepEqual(names.slice(7), ['20261106020100_sax_account.sql', '20261107000100_sax_account.sql', '20261113000100_sax_gateway.sql', '20261116000100_sax_account.sql', '20261116010100_sax_account.sql', '20261116010200_sax_gateway.sql']);
+    assert.deepEqual(SUPABASE_PHASES.map((p) => p.services.map((s) => `${s.name}:${s.versions.from}-${s.versions.to}`)), [['account:1-1', 'gateway:1-1', 'relay:1-1', 'push:1-1'], ['registry:1-1'], ['account:2-2'], ['account:3-3'], ['gateway:2-2'], ['account:4-4'], ['account:5-6', 'gateway:3-3']]);
   });
 
   it('비밀번호·키 같은 값은 생성 SQL에 없다', () => {

@@ -87,6 +87,7 @@ const NOTICE_TEXT: Record<NoticeKind, { subject: string; body: string }> = {
   device_suspended: { subject: '기기를 긴급 정지했어요', body: '계정의 기기 하나를 긴급 정지했어요. 그 기기는 더 이상 연결되지 않아요.' },
   device_auto_suspended: { subject: '기기를 자동으로 정지했어요', body: '비정상적인 사용이 감지돼 기기 하나를 자동으로 정지했어요. PC 앱에서 기기 목록을 확인하세요.' },
   device_delete_pending: { subject: '기기 삭제를 요청했어요', body: '기기 삭제를 요청했어요. 7일 뒤에 삭제돼요. 직접 한 일이 아니면 PC 앱에서 취소하세요.' },
+  account_delete_pending: { subject: '탈퇴를 요청했어요', body: '탈퇴를 요청했어요. 구독은 해지돼 다음 결제가 없고, 7일 뒤에 계정 정보가 삭제돼요. 직접 한 일이 아니면 그 전에 PC 앱 설정에서 탈퇴를 취소하세요. 이 Mac에 있는 자료는 앱을 지우기 전까지 남아요.' },
   device_revoked: { subject: '기기가 계정에서 빠졌어요', body: '기기 하나가 계정에서 폐기됐어요. 그 기기는 더 이상 연결되지 않아요.' },
   aik_pinned: { subject: 'PC가 계정에 연결됐어요', body: '이 계정에 PC 신원 키가 등록됐어요. 직접 한 일이 아니면 고객 지원에 알려 주세요.' },
   passkey_added: { subject: '새 패스키가 등록됐어요', body: '계정에 새 패스키가 등록됐어요. 직접 한 일이 아니면 PC 앱에서 확인하세요.' },
@@ -94,6 +95,11 @@ const NOTICE_TEXT: Record<NoticeKind, { subject: string; body: string }> = {
   password_reset: { subject: '비밀번호를 재설정했어요', body: '계정 비밀번호를 재설정했어요. 다른 곳의 로그인은 모두 끝났어요.' },
   password_locked: { subject: '비밀번호 로그인이 잠시 잠겼어요', body: '비밀번호가 여러 번 틀려 잠시 잠겼어요. 이메일 코드로 로그인할 수 있어요.' },
   sessions_revoked: { subject: '모든 기기에서 로그아웃했어요', body: '자동 로그인 정보가 다른 곳에서 다시 쓰여 모든 기기에서 로그아웃했어요. 다시 로그인하세요.' },
+  subscription_canceled: { subject: '구독 해지를 접수했어요', body: '구독을 해지했어요. 다음 결제는 없고, 이미 낸 기간이 끝날 때까지 쓸 수 있어요.' },
+  subscription_refunded: { subject: '청약철회 환불을 접수했어요', body: '구독을 철회하고 환불을 접수했어요. 카드사에 따라 3~7영업일 안에 결제가 취소돼요.' },
+  payment_failed: { subject: '구독 결제가 실패했어요', body: '이번 달 구독 결제가 승인되지 않았어요. 내일 다시 시도해요. 카드를 바꾸려면 PC 앱의 구독 화면에서 다시 등록하세요.' },
+  trial_converting: { subject: '무료 체험이 곧 끝나요', body: '무료 체험이 7일 안에 끝나요. 체험이 끝나는 날 등록한 카드로 월 19,900원(부가세 포함)이 자동 결제되고, 그 뒤 매월 같은 날 결제돼요. 원하지 않으면 그 전에 PC 앱의 구독 화면에서 해지하세요. 해지하면 결제되지 않아요.' },
+  subscription_ended: { subject: '구독이 끝났어요', body: '결제가 세 번 승인되지 않아 구독이 끝났어요. PC 앱의 구독 화면에서 다시 구독할 수 있어요.' },
 };
 
 const PREFIX = '[소버린 AX] ';

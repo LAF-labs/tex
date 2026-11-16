@@ -398,10 +398,10 @@ export const BAR_COLOR_KEYS = ['accent', 'on-accent', 'accent-soft', 'ink', 'ink
 export type BarColors = Record<(typeof BAR_COLOR_KEYS)[number], string>;
 export type BarPalette = { light: BarColors; dark: BarColors };
 
-/** 디자인 시스템 v1.2 tokens.json과 같은 값. 외부 토큰이 검사에 실패하면 이것 전체를 쓴다. */
+/** 디자인 시스템 v2.0 tokens.json과 같은 값. 외부 토큰이 검사에 실패하면 이것 전체를 쓴다. */
 export const BAR_PALETTE_DEFAULT: BarPalette = {
-  light: { accent: '#2A4F9E', 'on-accent': '#FFFFFF', 'accent-soft': '#E8EEF9', ink: '#16191D', 'ink-3': '#646B76', surface: '#FFFFFF', canvas: '#F5F6F7', 'line-strong': '#878E97', attention: '#8A5A0B', 'attention-soft': '#F8EEDC', 'focus-ring': '#2A4F9E' },
-  dark: { accent: '#8EAAF0', 'on-accent': '#0B1226', 'accent-soft': '#1B2540', ink: '#E9EBEE', 'ink-3': '#8B939D', surface: '#171A1E', canvas: '#101215', 'line-strong': '#6B737D', attention: '#E0AE55', 'attention-soft': '#2E2410', 'focus-ring': '#8EAAF0' },
+  light: { accent: '#0064D4', 'on-accent': '#FFFFFF', 'accent-soft': '#EBF3FD', ink: '#111112', 'ink-3': '#686A6E', surface: '#FCFCFC', canvas: '#FCFCFC', 'line-strong': '#8F9296', attention: '#8A5A0B', 'attention-soft': '#FBF3E4', 'focus-ring': '#0064D4' },
+  dark: { accent: '#4B93FF', 'on-accent': '#0B1226', 'accent-soft': '#17263D', ink: '#F3F4F5', 'ink-3': '#989B9E', surface: '#181819', canvas: '#181819', 'line-strong': '#76797D', attention: '#E0AE55', 'attention-soft': '#2E2410', 'focus-ring': '#4B93FF' },
 };
 
 /** 상태별 글자/배경 쌍. 모두 대비 4.5:1 이상이어야 한다. */
@@ -464,7 +464,7 @@ body .ap.rf{background:${c.surface};color:${c.ink};box-shadow:inset 0 0 0 1px ${
   const bottomIrr = CARD.padY + CARD.btn + CARD.btnGap;
   return `html,body{margin:0;height:100%;overflow:hidden}
 body{position:relative;box-sizing:border-box;padding:${CARD.padY}px ${CARD.padX}px;border-radius:12px;
-font-family:"Malgun Gothic","Apple SD Gothic Neo",system-ui,sans-serif;font-size:14px;line-height:${CARD.row}px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
+font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",system-ui,sans-serif;font-size:14px;line-height:${CARD.row}px;font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased;user-select:none;cursor:default}
 .hd{display:flex;align-items:center;column-gap:${CARD.gap}px;height:${CARD.head}px;margin-bottom:${CARD.headGap}px}
 .tt{flex:1;min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .cp{flex:none;box-sizing:border-box;height:${CARD.head}px;padding:0 10px;border:1px solid currentColor;border-radius:999px;font-size:12px;line-height:${CARD.head - 2}px;font-weight:500}

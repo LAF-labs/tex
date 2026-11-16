@@ -209,7 +209,12 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       ['POST', '/v1/passkeys/options'], // 패스키는 G7 결정 뒤
       ['POST', '/v1/passkeys'],
       ['POST', '/v1/auth/passkey/options'],
-      ['POST', '/v1/billing/checkout'],
+      // 구독은 화면이 부르는 넷만. 웹훅·카드 창(기본 브라우저)·권리 단독 조회는 이 egress로 나가지 않는다
+      ['POST', '/v1/billing/webhook'],
+      ['GET', '/v1/billing/card'],
+      ['GET', '/v1/billing/entitlement'],
+      ['POST', '/v1/billing/subscription'],
+      ['GET', '/v1/billing/checkout'],
     ];
     for (const [m, p] of no) assert.equal(cloudRequestCheck(m, CLOUD_ORIGIN + p), 'path', `${m} ${p}`);
     const eg = new Egress();
@@ -250,6 +255,13 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
       acctClaim: [auth],
       enrollPhone: [auth, { deviceId: uuid4(), role: 'mobile', platform: 'ios', name: '폰', Sx: 'x', Vx: 'y', roomId: 'r' }],
       putDeviceList: [auth, list],
+      billing: [auth],
+      billingCheckout: [auth],
+      billingCancel: [auth],
+      billingRefund: [auth],
+      accountDeletion: [auth],
+      requestAccountDelete: [auth],
+      cancelAccountDelete: [auth],
       me: ['sxs1.s'],
       setPassword: ['sxs1.s', 'pw-pw-pw-pw-1'],
       deletePassword: ['sxs1.s'],
@@ -271,6 +283,13 @@ describe('계정 화면 경로(#224 비밀번호 로그인이 실제 앱에서 n
     const relayArgs: Record<string, unknown[]> = { createRoom: [auth, randomBytes(16)], registerMailbox: [auth, randomBytes(32), randomBytes(32), randomBytes(32)], deleteMailbox: [auth, randomBytes(32), randomBytes(32)] };
     assert.deepEqual(Object.keys(ports.relay).filter((m) => !(m in relayArgs)), []);
     for (const m of Object.keys(ports.relay)) await (ports.relay as unknown as Record<string, (...a: unknown[]) => Promise<unknown>>)[m]!(...relayArgs[m]!).catch(() => {});
+    // 연결된 폰 수신(phone-link.ts)이 부르는 큐 경로: 쪽 읽기·ACK·번들 올리기
+    const q = ports.mailboxQueue!(randomBytes(32), { read: randomBytes(32), write: randomBytes(32) }, auth);
+    const before = seen.length;
+    await q.listPage().catch(() => {});
+    await q.ack(3).catch(() => {});
+    await q.putBundle('b').catch(() => {});
+    assert.deepEqual(seen.slice(before).map((x) => [x.method, x.route]), [['GET', 'mailboxes.envelopes'], ['POST', 'mailboxes.ack'], ['PUT', 'mailboxes.bundle']]);
     const bad = seen.filter((x) => x.route === 'path' || x.route === 'origin');
     assert.deepEqual(bad, [], '허용 목록 밖으로 나가는 호출');
     for (const [m, p, name] of ACCOUNT_SCREEN_ROUTES) assert.ok(seen.some((x) => x.method === m && x.url === CLOUD_ORIGIN + p && x.route === name), `${m} ${p}를 부르는 메서드가 있다`);

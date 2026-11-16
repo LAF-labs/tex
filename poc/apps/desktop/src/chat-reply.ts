@@ -29,6 +29,8 @@ export const CHAT_ERROR_TEXT = {
   'chat.bad_response': { text: INTENT_UNAVAILABLE_TEXT, retry: true },
   'chat.budget_exceeded': { text: '대화가 많이 이어졌어요. 잠시 뒤에 다시 말해 주세요.', retry: true },
   'chat.quota_exceeded': { text: '이번 달 대화 한도를 다 썼어요. 세금계산서 발급은 빠른 실행으로 할 수 있어요.', retry: false },
+  'chat.daily_limit': { text: '오늘 쓸 수 있는 AI 사용량을 다 썼어요. 새벽 4시에 다시 채워져요. 세금계산서 발급은 빠른 실행으로 할 수 있어요.', retry: false },
+  'chat.subscription_required': { text: '무료 체험이 끝났어요. 설정 > 구독에서 구독하면 AI 대화를 다시 쓸 수 있어요.', retry: false },
   'chat.input_too_large': { text: '문장이 너무 길어요. 짧게 나눠서 다시 말해 주세요.', retry: false },
   'chat.secret_rejected': { text: '비밀번호 같은 비밀 값은 대화창에 입력하지 마세요. 이 문장은 보내지 않았어요.', retry: false },
 } as const;

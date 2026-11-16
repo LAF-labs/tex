@@ -1,6 +1,6 @@
 # 계정·구독 서비스(D14 M4-5)
 
-로그인(이메일 6자리 코드·패스키·이메일+비밀번호(ADR-038, 선택)·데스크톱 루프백 PKCE·자동 로그인 갱신 토큰), 구독(9,900원 한 플랜, ADR-034), 기기(AIK 고정·AIK 서명 기기 목록·긴급 정지·삭제 유예·기기 범위 토큰), 프로필 슬롯·사업자 HMAC 재바인딩(B-28)을 맡는다. API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md), 공통 형식은 [../shared/CONTRACT.md](../shared/CONTRACT.md).
+로그인(이메일 6자리 코드·패스키·이메일+비밀번호(ADR-038, 선택)·데스크톱 루프백 PKCE·자동 로그인 갱신 토큰), 구독(19,900원 한 플랜, ADR-034), 기기(AIK 고정·AIK 서명 기기 목록·긴급 정지·삭제 유예·기기 범위 토큰), 프로필 슬롯·사업자 HMAC 재바인딩(B-28)을 맡는다. API는 [API.md](API.md), 환경 변수는 [ENV.md](ENV.md), 공통 형식은 [../shared/CONTRACT.md](../shared/CONTRACT.md).
 
 **침해되면 무엇이 새는가**(D09 §1): 이메일, 기기 목록(이름·플랫폼·공개키), 구독 상태, 슬롯 수와 사업자 프로필 유무(HMAC), 동의 이력, 패스키 공개키, 비밀번호 해시(argon2id + 페퍼: 페퍼는 환경 변수에만 있어 DB만으로는 대입할 수 없다). 대화 본문·화면 텍스트·비밀·사업자번호 평문·결제 수단·IP는 이 서비스에 없다. 사업자 HMAC 키는 클라이언트의 RK에서 파생되어 서버에 없으므로 HMAC으로 사업자번호를 되찾을 수 없다(서버는 열쇠를 갖지 않는다, ADR-029).
 
@@ -37,7 +37,7 @@
 
 ## 어댑터(ADR-015: 공급사 종속 코드는 한 곳)
 
-- 결제: `PaymentGateway`(`src/adapters.ts`). 이 저장소에는 `MockPaymentGateway`만 있다. 실제 PG 어댑터와 자격 증명은 저장소 밖(배포 시 주입)이다.
+- 결제: `PaymentGateway`(`src/adapters.ts`). 모의 `MockPaymentGateway`(웹훅)와 토스페이먼츠 자동결제 `TossPaymentGateway`(`src/pg-toss.ts`, 빌링키). 자격 증명은 저장소 밖(배포 환경 변수, [ENV.md](ENV.md))이다.
 - 메일: `MailSender`. 이 저장소에는 `MockMailSender`만 있다(국내 발송 사업자 어댑터는 같은 인터페이스로 붙인다). 계정 서버의 "서버 메일 경로"(ADR-034 결정 10)는 구현하지 않는다. 로그인 코드·보안 알림만 보낸다.
 - 비밀번호 해시: Node 내장 `crypto.argon2`(Node 24.7+). 네이티브 애드온이 없다. 흔한·유출 목록은 `data/common-passwords.txt.gz`(로컬, 외부 호출 없음, [data/README.md](data/README.md)).
 - 정지 훅: `DeviceStopHook`. 운영은 내부 HTTP(`STOP_HOOK_URLS`).

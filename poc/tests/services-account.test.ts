@@ -591,7 +591,7 @@ describe('M4-5 계정: 프로필 슬롯·사업자 HMAC 재바인딩 90일(B-28)
   });
 });
 
-describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
+describe('M4-5 계정: 구독(19,900원 한 플랜, 모의 PG)', () => {
   let e: Env;
   before(async () => (e = await start()));
   after(() => e.server.close());
@@ -601,7 +601,7 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     const t0 = e.clock.now();
     const c = await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
     assert.equal(c.status, 200);
-    assert.equal(e.pg.checkouts[0]!.amountKrw, 9900);
+    assert.equal(e.pg.checkouts[0]!.amountKrw, 19900);
     const ref = e.pg.checkouts[0]!.pgCustomerRef;
     assert.ok(!ref.includes('pay@example.com'));
     const event = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 1 });
@@ -610,7 +610,7 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: noAt, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(noAt)) } })).json.error, 'account.billing_signature_invalid');
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: event, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(event)) } })).status, 200);
     const sub = await e.req('GET', '/v1/billing/subscription', { headers: bearer(s) });
-    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: t0 + 30 * D, amountKrw: 9900, period: 'month' });
+    assert.deepEqual(sub.json.subscription, { plan: 'standard', status: 'active', renewAt: t0 + 30 * D, amountKrw: 19900, period: 'month' });
     assert.equal((await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) })).status, 400);
     const unknown = JSON.stringify({ type: 'payment.failed', pgCustomerRef: 'cus_unknown', at: t0 });
     assert.equal((await e.req('POST', '/v1/billing/webhook', { raw: unknown, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(unknown)) } })).status, 200);
@@ -618,6 +618,40 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     assert.deepEqual(e.pg.canceled, [ref]);
     assert.equal((await e.req('POST', '/v1/consents', { headers: bearer(s), body: { version: 'privacy-2026.11' } })).status, 204);
     assert.deepEqual((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.consents, ['privacy-2026.11']);
+  });
+
+  it('탈퇴: 7일 유예, 구독 바로 해지·알림 메일, 유예 중 취소, 유예 끝나면 계정 삭제(처리방침 3항·약관 제15조)', async () => {
+    const s = await login(e, 'bye@example.com');
+    const pc = await desktop(e, s);
+    const t0 = e.clock.now();
+    await e.req('POST', '/v1/billing/checkout', { headers: bearer(s) });
+    const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
+    const act = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: t0 + 30 * D, at: t0 + 1 });
+    await e.req('POST', '/v1/billing/webhook', { raw: act, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(act)) } });
+    assert.equal((await e.req('POST', '/v1/account/delete-cancel', { headers: bearer(s) })).json.error, 'account.not_pending');
+    const r = await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) });
+    assert.equal(r.status, 202);
+    assert.equal(r.json.deleteAfter, t0 + 7 * D);
+    assert.ok(e.pg.canceled.includes(ref), '다음 결제가 없게 구독을 바로 해지');
+    assert.ok(e.mail.outbox.some((m) => m.to === 'bye@example.com' && m.kind === 'account_delete_pending'));
+    // 다시 눌러도 같은 예정 시각
+    assert.equal((await e.req('POST', '/v1/account/delete-request', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, t0 + 7 * D);
+    assert.deepEqual((await e.req('GET', '/v1/account/deletion', { headers: bearer(s) })).json, { deleteAfter: t0 + 7 * D });
+    assert.equal((await e.req('POST', '/v1/account/delete-cancel', { headers: bearer(s) })).status, 204);
+    assert.equal((await e.req('GET', '/v1/me', { headers: bearer(s) })).json.deleteAfter, null);
+    // 데스크톱은 세션 없이 기기 토큰으로 요청한다(등록 뒤 세션을 버린다)
+    assert.equal((await pc.call('POST', '/v1/account/delete-request')).status, 202);
+    assert.equal((await pc.call('GET', '/v1/account/deletion')).json.deleteAfter, e.clock.now() + 7 * D);
+    e.clock.advance(7 * D - 60_000);
+    const left = async () => Number((await e.db.one<{ n: number }>("SELECT COUNT(*) AS n FROM accounts WHERE email = 'bye@example.com'"))?.n ?? 0);
+    await e.svc.sweep();
+    assert.equal(await left(), 1, '유예 중에는 남는다');
+    e.clock.advance(2 * 60_000);
+    await e.svc.sweep();
+    assert.equal(await left(), 0, '유예가 끝나면 계정이 없다');
+    assert.ok(e.stopped.includes(pc.d.id), '기기 정지 훅(릴레이·푸시)');
+    assert.ok(e.events.includes('account.deleted'));
   });
 
   it('웹훅 순서는 PG 이벤트 시각: 늦은·재전송 이벤트 무시, 결제 실패 뒤 같은 기간 재결제는 active, 해지는 끝 상태', async () => {
@@ -664,6 +698,41 @@ describe('M4-5 계정: 구독(9,900원 한 플랜, 모의 PG)', () => {
     // 옛 참조의 해지 재전송(시각이 더 늦어도)은 새 구독을 해지하지 않는다. 같은 참조 안에서는 해지 뒤 활성이 없으므로 해지에 최신성 필터가 필요 없다
     await hook({ type: 'subscription.canceled', pgCustomerRef: ref, at: t0 + 300 });
     assert.equal((await status()).status, 'active');
+  });
+});
+
+describe('유료 기능 권리(체험 1달): 체험이 끝나고 구독이 없으면 게이트웨이 범위 토큰을 주지 않는다', () => {
+  let e: Env;
+  before(async () => (e = await start()));
+  after(() => e.server.close());
+
+  it('체험 중 전체 범위 → 체험 뒤 게이트웨이만 빠짐, 게이트웨이만 요청하면 402, 구독하면 다시', async () => {
+    const s = await login(e, 'gate@example.com');
+    const { aik, d, call } = await desktop(e, s);
+    // 데스크톱은 기기 토큰(devlist)으로 구독 경로를 부른다(기기 등록 뒤 계정 세션을 버린다)
+    assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'trial');
+    assert.equal((await call('GET', '/v1/billing/subscription')).json.subscription, null);
+    const tok = async (scopes?: string[]) => {
+      const c = cert(aik, d, e.clock.now() + 90 * D);
+      return e.req('POST', '/v1/device-tokens', { headers: { dpop: dpop('POST', ORIGIN + '/v1/device-tokens', jcs(c), d.V, e.clock.now()) }, body: scopes ? { cert: c, scopes } : { cert: c } });
+    };
+    assert.ok(((await tok()).json.scopes as string[]).includes('gateway'));
+    e.clock.advance(32 * D);
+    const t = await tok();
+    assert.equal(t.status, 200);
+    assert.ok(!(t.json.scopes as string[]).includes('gateway'));
+    assert.ok((t.json.scopes as string[]).includes('relay'));
+    const g = await tok(['gateway']);
+    assert.deepEqual([g.status, g.json.error], [402, 'account.subscription_required']);
+    // 모의 PG로 구독 활성
+    const s2 = await login(e, 'gate@example.com');
+    await e.req('POST', '/v1/billing/checkout', { headers: bearer(s2) });
+    const ref = e.pg.checkouts.at(-1)!.pgCustomerRef;
+    const raw = JSON.stringify({ type: 'subscription.activated', pgCustomerRef: ref, renewAt: e.clock.now() + 30 * D, at: e.clock.now() });
+    await e.req('POST', '/v1/billing/webhook', { raw, headers: { 'x-mock-pg-signature': e.pg.sign(Buffer.from(raw)) } });
+    assert.equal((await tok(['gateway'])).status, 200);
+    assert.equal((await call('GET', '/v1/billing/entitlement')).json.state, 'paid');
+    assert.equal((await call('POST', '/v1/billing/cancel')).status, 204);
   });
 });
 

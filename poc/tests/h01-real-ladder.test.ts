@@ -34,7 +34,7 @@ describe('발급 사다리 × H-01 2.2.0 실화면 패키지(가짜 홈택스)',
 
   it('인증서 창 [취소](C04 나감 → in_doubt): held, 직접 칸·동의 카드 없음, API 0. 재요청도 held', async () => {
     const api = new FakeIssueApi('ok');
-    const o = await realDryRun({ loggedIn: true, verifyMaxMs: 5000, human: certThen('cancel'), ladder: { api, manual: 'cannot', consent: 'granted', again: true } });
+    const o = await realDryRun({ loggedIn: true, verifyMaxMs: 5000, human: certThen('cancel'), answerTurns: true, ladder: { api, manual: 'cannot', consent: 'granted', again: true } });
     assert.deepEqual(o.ladder?.state, { s: 'held', state: 'in_doubt' }, show(o));
     assert.deepEqual(commits(o), ['ATEETBAA002C04']);
     assert.deepEqual(rows(o), [['s21', 'in_doubt']]);
@@ -66,9 +66,11 @@ describe('발급 사다리 × H-01 2.2.0 실화면 패키지(가짜 홈택스)',
     assert.ok(!o.ladder!.seen.includes('human'));
   });
 
-  it('미리보기 값 불일치(assert.input_mismatch): stopped, 직접 칸 안내 없음', async () => {
-    const o = await realDryRun({ loggedIn: true, knobs: { tamperPreview: true }, ladder: { manual: 'cannot' } });
-    assert.deepEqual(o.ladder?.state, { s: 'stopped', route: 'hometax.auto', code: 'assert.input_mismatch' }, show(o));
+  it('미리보기 값 불일치(되읽기 s19b 사람 차례, 답 없음): stopped, 직접 칸 안내 없음', async () => {
+    // 발급 화면 뒤의 사람 대기 시간 초과는 사장님이 직접 눌렀을 수 있어 다음 칸으로 가지 않는다(issue/routes.ts branchOf)
+    const o = await realDryRun({ loggedIn: true, knobs: { tamperPreview: true }, handoffCapMs: 3000, ladder: { manual: 'cannot' } });
+    assert.deepEqual(o.ladder?.state, { s: 'stopped', route: 'hometax.auto', code: 'run.handoff_timeout' }, show(o));
+    assert.deepEqual(commits(o), []);
     assert.ok(!o.ladder!.seen.includes('human'));
   });
 

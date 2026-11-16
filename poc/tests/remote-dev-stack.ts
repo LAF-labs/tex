@@ -121,6 +121,15 @@ export async function startDevStack(o: { passwords?: boolean } = {}): Promise<De
     acctClaim: async (auth) => (await call('GET', '/v1/acct-claim', await auth('GET', ORIGIN + '/v1/acct-claim'))) as unknown as SignedAcctClaim,
     enrollPhone: async (auth, b) => void (await call('POST', '/v1/devices/enroll', await auth('POST', ORIGIN + '/v1/devices/enroll'), b)),
     putDeviceList: async (auth, list) => void (await call('PUT', '/v1/device-list', await auth('PUT', ORIGIN + '/v1/device-list'), { deviceList: list })),
+    billing: async (auth) => ({
+      ...((await call('GET', '/v1/billing/subscription', await auth('GET', ORIGIN + '/v1/billing/subscription'))) as never),
+    }),
+    billingCheckout: async (auth) => (await call('POST', '/v1/billing/checkout', await auth('POST', ORIGIN + '/v1/billing/checkout'))) as { checkoutUrl: string },
+    billingCancel: async (auth) => void (await call('POST', '/v1/billing/cancel', await auth('POST', ORIGIN + '/v1/billing/cancel'))),
+    billingRefund: async (auth) => (await call('POST', '/v1/billing/refund', await auth('POST', ORIGIN + '/v1/billing/refund'))) as { amountKrw: number },
+    accountDeletion: async (auth) => (await call('GET', '/v1/account/deletion', await auth('GET', ORIGIN + '/v1/account/deletion'))) as { deleteAfter: number | null },
+    requestAccountDelete: async (auth) => (await call('POST', '/v1/account/delete-request', await auth('POST', ORIGIN + '/v1/account/delete-request'), {})) as { deleteAfter: number },
+    cancelAccountDelete: async (auth) => void (await call('POST', '/v1/account/delete-cancel', await auth('POST', ORIGIN + '/v1/account/delete-cancel'), {})),
   };
   return { clock, mail, svc, server, base, claimSigner, rooms, client, http, close: () => server.close() };
 }

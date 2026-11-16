@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://sovereign-ax.dev/schemas/remote-envelope.schema.json",
-  "title": "Sovereign AX Remote Envelope v1.6 (live messages and queued phone-to-PC transfers; plaintext inside Noise transport; binary fields base64 here, CBOR bytes on the wire)",
-  "$comment": "v1.3 (AUDIT-B B-10/B-24/B-27/B-29, AUDIT-C C-01/C-06/C-16/C-17/C-20/C-26, re-audit E-10). Live session messages only. Offline intents use intent-envelope.schema.json; 'ttl' here never exceeds 86400 s while intents carry their own 'exp' <= 72 h (C/X-14). Error codes are local-UI only and never sent (C/X-12). Signature contexts: D08 §2.1. v1.4 (2026-11-05, ADR-034, D14 M7-4): Phase 1 phone-to-PC kinds receipt.offer/chunk/ack and cash.entry/ack. Photos travel inline in the live session only (Phase 1 has no blob store; never in the relay queue), 48 KiB chunks, at most 4 MiB per photo. msgId is the stable item id for retransmit and dedup (D07 receipts.phone_msg_id). Also v1.4: AIK-signed objects (deviceListEntry.entry, revoked records, pair.ok cert) are signed over utf8(ctx) || utf8(JCS(object)) per services/shared/CONTRACT.md §1 (lead decision 2026-11-05), not CBOR; pair.ok cert maxLength 512 -> 1024 (JCS form). v1.5 (2026-11-05, lead decision; Phase 1 has no live WSS): when no live session is open, receipt.offer/chunk and cash.entry bodies also travel through the relay HTTPS queue inside intent-envelope v1.5 kind xfer (E2EE HPKE to Q_D, TTL 24 h, deleted on ack). Queued photos use 32 KiB chunks so each chunk is one queue envelope (ct <= 65,536 chars): chunkSize 49152 (live) | 32768 (queue), chunkCount <= 128, index <= 127. Receipt/cash acks are live-only; over the queue the phone keeps the item until a live ack or its keep window ends, and the PC dedupes by msgId. v1.6 (2026-11-06, lead decision, design #120): pair.ok carries acctClaim (account service signature over SAX-acct-claim-v1 || JCS({account_id, email, aik_pub, iat, exp})) and an optional unsigned desktopName; the phone shows the full email and saves only after the user confirms.",
+  "title": "Sovereign AX Remote Envelope v1.7 (live messages and queued phone-to-PC transfers; plaintext inside Noise transport; binary fields base64 here, CBOR bytes on the wire)",
+  "$comment": "v1.3 (AUDIT-B B-10/B-24/B-27/B-29, AUDIT-C C-01/C-06/C-16/C-17/C-20/C-26, re-audit E-10). Live session messages only. Offline intents use intent-envelope.schema.json; 'ttl' here never exceeds 86400 s while intents carry their own 'exp' <= 72 h (C/X-14). Error codes are local-UI only and never sent (C/X-12). Signature contexts: D08 §2.1. v1.4 (2026-11-05, ADR-034, D14 M7-4): Phase 1 phone-to-PC kinds receipt.offer/chunk/ack and cash.entry/ack. Photos travel inline in the live session only (Phase 1 has no blob store; never in the relay queue), 48 KiB chunks, at most 4 MiB per photo. msgId is the stable item id for retransmit and dedup (D07 receipts.phone_msg_id). Also v1.4: AIK-signed objects (deviceListEntry.entry, revoked records, pair.ok cert) are signed over utf8(ctx) || utf8(JCS(object)) per services/shared/CONTRACT.md §1 (lead decision 2026-11-05), not CBOR; pair.ok cert maxLength 512 -> 1024 (JCS form). v1.5 (2026-11-05, lead decision; Phase 1 has no live WSS): when no live session is open, receipt.offer/chunk and cash.entry bodies also travel through the relay HTTPS queue inside intent-envelope v1.5 kind xfer (E2EE HPKE to Q_D, TTL 24 h, deleted on ack). Queued photos use 32 KiB chunks so each chunk is one queue envelope (ct <= 65,536 chars): chunkSize 49152 (live) | 32768 (queue), chunkCount <= 128, index <= 127. Receipt/cash acks are live-only; over the queue the phone keeps the item until a live ack or its keep window ends, and the PC dedupes by msgId. v1.6 (2026-11-06, lead decision, design #120): pair.ok carries acctClaim (account service signature over SAX-acct-claim-v1 || JCS({account_id, email, aik_pub, iat, exp})) and an optional unsigned desktopName; the phone shows the full email and saves only after the user confirms. v1.7 (2026-11-16, paper tax invoice photo): receipt.offer may carry paperInvoice (fields the owner checked on the phone) only when the PC advertised hello capability receipt.v2; otherwise the phone sends v1 candidates only. The PC re-derives direction from its business number and re-checks sums and business-number checksums; phone values are candidates.",
   "type": "object",
   "required": ["v", "type", "id", "pairId", "from", "to", "seq", "ts", "ttl", "body"],
   "unevaluatedProperties": false,
@@ -30,6 +30,37 @@
     "day": {"type": "string", "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])$"},
     "won": {"type": "integer", "minimum": 0, "maximum": 100000000000, "$comment": "KRW integer. Never logged."},
     "bizNo": {"type": "string", "pattern": "^\\d{3}-\\d{2}-\\d{5}$"},
+    "paperParty": {"type": "object", "required": ["bizNo", "name"], "additionalProperties": false, "properties": {"bizNo": {"$ref": "#/$defs/bizNo"}, "name": {"type": "string", "minLength": 1, "maxLength": 80}, "ceo": {"type": "string", "maxLength": 40}, "address": {"type": "string", "maxLength": 160}}},
+    "paperInvoice": {
+      "type": "object",
+      "required": ["docKind", "direction", "writtenOn", "supplier", "buyer", "supplyAmount", "vatAmount", "total", "receiptOrClaim"],
+      "additionalProperties": false,
+      "$comment": "v1.7 paper (hand-written or printed) tax invoice / invoice photographed on the phone (receipt.v2). Values after the owner check. invoice (VAT-exempt) has vatAmount 0. supplyAmount + vatAmount = total and business-number checksums are checked on both sides (PC: @sax/remote checkPaperInvoice). fieldConfidence: field name -> 0..100 (integer percent; CBOR wire has no floats), 100 for fields the owner edited.",
+      "properties": {
+        "docKind": {"enum": ["tax_invoice", "invoice"]},
+        "direction": {"enum": ["sales", "purchase"], "$comment": "candidate; the PC decides by comparing supplier/buyer with its business profile"},
+        "writtenOn": {"$ref": "#/$defs/day"},
+        "approvalNo": {"type": "string", "pattern": "^[0-9A-Za-z-]{1,40}$"},
+        "bookNo": {"type": "string", "maxLength": 20},
+        "serialNo": {"type": "string", "maxLength": 20},
+        "supplier": {"$ref": "#/$defs/paperParty"},
+        "buyer": {"$ref": "#/$defs/paperParty"},
+        "supplyAmount": {"$ref": "#/$defs/won"},
+        "vatAmount": {"$ref": "#/$defs/won"},
+        "total": {"$ref": "#/$defs/won"},
+        "items": {"type": "array", "maxItems": 20, "items": {"type": "object", "required": ["name", "supply"], "additionalProperties": false, "properties": {
+          "month": {"type": "integer", "minimum": 1, "maximum": 12},
+          "day": {"type": "integer", "minimum": 1, "maximum": 31},
+          "name": {"type": "string", "minLength": 1, "maxLength": 60},
+          "spec": {"type": "string", "maxLength": 40},
+          "qty": {"type": "integer", "minimum": 0, "maximum": 1000000000, "$comment": "integer (CBOR wire has no floats); fractional quantities go in spec"},
+          "unitPrice": {"$ref": "#/$defs/won"},
+          "supply": {"$ref": "#/$defs/won"},
+          "vat": {"$ref": "#/$defs/won"}}}},
+        "receiptOrClaim": {"enum": ["receipt", "claim", null]},
+        "fieldConfidence": {"type": "object", "maxProperties": 40, "propertyNames": {"pattern": "^[A-Za-z.]{1,40}$"}, "additionalProperties": {"type": "integer", "minimum": 0, "maximum": 100}}
+      }
+    },
     "fieldKey": {
       "$comment": "Closed list (B-24). Card labels come from the app-built-in fieldKey dictionary, never from package strings. Keep in sync with the D02 fieldKey dictionary (H-01 baseline). $first.* and $dup.* are engine-generated reserved keys (first-time counterparty/recipient from the ledger, duplicate warnings), hashed into cardHash (ADR-021). $dup.portalExisting = count of pre-gate baseline (B0) approval numbers unknown to this PC's ledger, Phase 1 on; $dup.otherDevice only for accounts with 2+ desktops, Phase 2 (ADR-024).",
       "enum": ["supplyAmount", "taxAmount", "totalAmount", "counterpartBizNo", "counterpartName", "counterpartEmail", "supplierBizNo", "supplierName", "issueDate", "itemName", "itemCount", "remark", "receiptType", "certDoc", "certPurpose", "certSubmitTo", "rrnDisclosure", "$first.bizNo", "$first.email", "$dup.businessKey", "$dup.priorNotCommitted", "$dup.otherDevice", "$dup.portalExisting"]
@@ -133,7 +164,8 @@
       "height": {"type": "integer", "minimum": 1, "maximum": 8192},
       "ocrEngine": {"enum": ["ios_vision", "android_mlkit", "none"]},
       "ownerConfirmed": {"type": "boolean"},
-      "candidates": {"type": "object", "additionalProperties": false, "$comment": "values after the owner check on the phone; PC keeps them in receipts.phone_ocr_json next to its own result", "properties": {"amount": {"$ref": "#/$defs/won"}, "issuedOn": {"$ref": "#/$defs/day"}, "merchant": {"type": "string", "maxLength": 80}, "merchantBizNo": {"$ref": "#/$defs/bizNo"}}}}}}}},
+      "candidates": {"type": "object", "additionalProperties": false, "$comment": "values after the owner check on the phone; PC keeps them in receipts.phone_ocr_json next to its own result", "properties": {"amount": {"$ref": "#/$defs/won"}, "issuedOn": {"$ref": "#/$defs/day"}, "merchant": {"type": "string", "maxLength": 80}, "merchantBizNo": {"$ref": "#/$defs/bizNo"}}},
+      "paperInvoice": {"$ref": "#/$defs/paperInvoice"}}}}}},
     {"if": {"properties": {"type": {"const": "receipt.chunk"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "index", "data"], "additionalProperties": false, "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "index": {"type": "integer", "minimum": 0, "maximum": 127}, "data": {"$ref": "#/$defs/b64", "minLength": 4, "maxLength": 65536, "$comment": "at most chunkSize bytes"}}}}}},
     {"if": {"properties": {"type": {"const": "receipt.ack"}}}, "then": {"properties": {"body": {"type": "object", "required": ["msgId", "state"], "additionalProperties": false, "$comment": "stored: saved on the PC (also for an already-known msgId); the phone deletes its copy. partial: send the listed chunks.", "properties": {"msgId": {"$ref": "#/$defs/ulid"}, "state": {"enum": ["stored", "partial"]}, "missing": {"type": "array", "minItems": 1, "maxItems": 86, "uniqueItems": true, "items": {"type": "integer", "minimum": 0, "maximum": 85}}},
       "allOf": [{"if": {"properties": {"state": {"const": "partial"}}}, "then": {"required": ["missing"]}}, {"if": {"properties": {"state": {"const": "stored"}}}, "then": {"not": {"required": ["missing"]}}}]}}}},

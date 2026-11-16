@@ -2,7 +2,7 @@
 // 엔진·금고·Chrome 없이 화면만 본다(디자인 캔버스 "소버린 AX 화면 디자인"과 대조용). 흐름·판정 시험은 shell-e2e가 한다.
 // 실행: pnpm demo:preview  (= pnpm build && electron scripts/shell-preview.mjs [출력 폴더] [폭 높이])
 //   리눅스 CI·컨테이너: xvfb-run -a ./node_modules/.bin/electron --no-sandbox scripts/shell-preview.mjs
-//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/
+//   DARK=1 이면 다크 테마, ONLY=flow,docs 처럼 장면을 고를 수 있다. OFFSCREEN=1 이면 창을 화면에 띄우지 않는다. 출력 기본값: reports/raw/design-sync/<폭>x<높이>[-dark]/ PAYROLL=1 이면 급여대장 레일 칸을 켠다.
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, WebContentsView } from 'electron';
@@ -11,10 +11,10 @@ const DESK = path.resolve(import.meta.dirname, '../apps/desktop');
 const { tokensCss, bundleCss, loadTokens } = await import(`${DESK}/dist/shell-tokens.js`);
 const { MockStore, seedTimeline, QUICK, PROFILES, dayOffset, mockBundle, MOCK_SETTINGS } = await import(`${DESK}/dist/shell-mock.js`);
 const { buildBoard } = await import(`${DESK}/dist/board.js`);
-const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE } = await import(`${DESK}/dist/shell-runs.js`);
+const { REGATE_NOTE, HANDOFF_HINT, HANDOFF_TEXT, NOTE, HANDOFF_LOGIN, REHEARSAL_NEXT, LOGIN_NOW } = await import(`${DESK}/dist/shell-runs.js`);
 const { OnboardingFlow, initialOnbState } = await import(`${DESK}/dist/onboarding.js`);
 const { MockOnboardingPorts } = await import(`${DESK}/dist/onboarding-mock.js`);
-const { buildBarHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
+const { buildCardHtml, barCss, barPalette, summarize, BAR_CSP } = await import(`${DESK}/dist/approval-gate.js`);
 const { barBounds, SHELL } = await import(`${DESK}/dist/shell-layout.js`);
 // 셸과 같은 응답 헤더(CSP·Trusted Types)로 띄운다. 미리보기가 통과하면 셸에서도 같은 정책에서 그려진다(M4-1).
 const { appHeaders } = await import(`${DESK}/dist/harden.js`);
@@ -24,6 +24,8 @@ const W = Number(ARGS[1] ?? 1440);
 const H = Number(ARGS[2] ?? 900);
 const OUT = ARGS[0] || path.resolve(import.meta.dirname, `../reports/raw/design-sync/${W}x${H}${process.env.DARK ? '-dark' : ''}`);
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
+/** EMPTY=1: 거래처·서류가 하나도 없는 빈 화면(empty state)을 본다. */
+const EMPTY = !!process.env.EMPTY;
 await fs.mkdir(OUT, { recursive: true });
 
 protocol.registerSchemesAsPrivileged([{ scheme: 'pv', privileges: { standard: true, secure: true, supportFetchAPI: true } }]);
@@ -71,7 +73,7 @@ const boardNow = () =>
   });
 
 const handlers = {
-  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: cps, docs: [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32' }),
+  'shell.bootstrap': async () => ({ onboarding: S.onb ? await S.onb.view() : null, board: boardNow(), layout: SHELL, profiles: PROFILES, profile: 'business', counterparties: EMPTY ? [] : cps, docs: EMPTY ? [] : [...store.docs], timeline: seedTimeline(), quick: QUICK, platform: 'win32', payrollEnabled: !!process.env.PAYROLL }),
   'profile.set': (p) => ({ profile: p.kind }),
   'onboarding.reply': async (p) => {
     if (S.onbDelay) await sleep(S.onbDelay);
@@ -79,8 +81,8 @@ const handlers = {
     return { onboarding: await S.onb.view(), fill: r.fill ?? null, profiles: PROFILES };
   },
   'request.send': (p) => (/등본/.test(p.text) ? { kind: 'g24', doc: '주민등록표 등본' } : { kind: 'draft', run: mkRun('draft') }),
-  'counterparties.list': () => cps,
-  'docs.list': () => (S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
+  'counterparties.list': () => (EMPTY ? [] : cps),
+  'docs.list': () => (EMPTY ? [] : S.withVault ? [vaultDoc, ...store.docs] : [...store.docs]),
   'g24.candidates': () =>
     S.g24Empty
       ? []
@@ -91,6 +93,12 @@ const handlers = {
   // 제품의 정부24: 후보 없이 [PDF 가져오기](= docs.import, 파일 대화상자는 건너뛴다)
   'docs.import': () => ({ doc: { id: 'g24-doc', name: '주민등록표 등본', kind: '직접 추가', docName: '주민등록표 등본', profile: 'personal', issuedOn: dayOffset(0), expiresOn: null, source: '직접 추가' }, document: { duplicate: false } }),
   'security.check': () => ({ state: 'ok' }),
+  // 거래처 상세의 계좌·입금자 이름·받기로 한 날(받을 돈 D-09)
+  'bank.cpBanking': () => ({
+    accounts: [{ id: 'ca1', bank: '국민은행', last4: '1234', holder: '김에이' }],
+    aliases: [{ id: 'al1', nameRaw: '에이상사(주)', source: 'learned' }, { id: 'al2', nameRaw: '김에이', source: 'manual' }],
+    terms: { kind: 'next_month_day', d: 10 },
+  }),
 };
 ipcMain.handle('sax', async (_e, { method, params }) => {
   const f = handlers[method];
@@ -129,7 +137,7 @@ async function shot(win, name, bar) {
   const buf = Buffer.from(main.toBitmap());
   if (bar) {
     const b = barBounds(cw, ch);
-    S.barHtml = buildBarHtml(summarize({ fields: bar }), 'armed').replace('href="bar.css"', 'href="pv://shell/bar.css"');
+    S.barHtml = buildCardHtml(summarize({ fields: bar }), 'armed').replace('href="bar.css"', 'href="pv://shell/bar.css"');
     const view = new WebContentsView({ webPreferences: { sandbox: true } });
     win.contentView.addChildView(view);
     view.setBounds({ x: b.x, y: b.y, width: b.width, height: b.height });
@@ -145,7 +153,7 @@ async function shot(win, name, bar) {
 }
 
 const barFields = [
-  ['counterpartName', 'A상사'], ['counterpartBizNo', '2148651233'], ['totalAmount', '3630000'], ['taxAmount', '330000'], ['counterpartEmail', 'tax@asangsa.example'], ['$first.bizNo', 'true'], ['$first.email', 'true'],
+  ['counterpartName', 'A상사'], ['counterpartBizNo', '2148651233'], ['totalAmount', '3630000'], ['supplyAmount', '3300000'], ['taxAmount', '330000'], ['itemName', '디자인 용역'], ['issueDate', dayOffset(0)], ['counterpartEmail', 'tax@asangsa.example'], ['$first.bizNo', 'true'], ['$first.email', 'true'],
 ].map(([fieldKey, value]) => ({ fieldKey, value }));
 
 const scenes = {
@@ -212,6 +220,24 @@ const scenes = {
     await sleep(100);
     await js(win, `document.querySelector('[data-act=check-list]').click()`);
     await shot(win, '33-in-doubt');
+    // 멈춤 카드: 승인 시간 초과([다시 준비]), 예행이 사람 차례에서 멈춤(어느 단계·다시 하는 길), 로그인 중(할 일 없음)
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 4, stoppedNote: NOTE['gate.expired'] }), redo: true } });
+    await shot(win, '34-stopped-expired');
+    ev(win, { type: 'run', run: { ...mkRun('stopped', { done: 0, attentionAt: 0, note: '직접 해 주세요', stoppedNote: `'홈택스 로그인' 단계에서 사람이 할 일이 생겨 멈췄어요(${HANDOFF_LOGIN.text}). 예행은 기다리지 않아서 발급하지 않았어요. ${REHEARSAL_NEXT}` }), rehearsal: true } });
+    await shot(win, '35-rehearsal-handoff');
+    ev(win, { type: 'run', run: mkRun('preparing', { done: 0, now: true, note: LOGIN_NOW }) });
+    await shot(win, '36-login-now');
+  },
+  // EMPTY=1 ONLY=empty: 빈 화면 셋(거래처·문서함·활동 기록)
+  async empty(win) {
+    for (const v of ['cps', 'docs']) {
+      await js(win, `document.querySelector('#rail [data-view=${v}]').click()`);
+      await sleep(200);
+      await shot(win, `40-empty-${v}`);
+    }
+    await js(win, `document.querySelector('[data-act=go-activity]').click()`);
+    await sleep(200);
+    await shot(win, '40-empty-activity');
   },
   async docs(win) {
     await js(win, `document.querySelector('#rail [data-view=docs]').click()`);
@@ -232,6 +258,9 @@ const scenes = {
     await sleep(200);
     await js(win, `document.querySelector('[data-cp-row=c2]').click()`);
     await shot(win, '13-cps');
+    // 받기로 한 날: 값을 누르면 그 자리에 답 후보 줄
+    await js(win, `document.querySelector('[data-bank-cp] button[data-field=terms]').click()`);
+    await shot(win, '13b-cps-terms');
   },
   async board(win) {
     // v2.0: 대화 맨 위 한 줄을 누르면 작업 패널에 할 일 목록이 열린다
@@ -312,7 +341,7 @@ const scenes = {
   },
 };
 
-const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld'];
+const order = ['rail', 'home', 'board', 'menu', 'typing', 'flow', 'attention', 'incidents', 'docs', 'docsReview', 'cps', 'biz', 'settings', 'g24', 'g24Import', 'onboarding', 'onbOld', ...(EMPTY ? ['empty'] : [])];
 const agreed = { version: 'pv', choice: 'agreed', at: '' };
 for (const theme of process.env.DARK ? ['dark'] : ['light']) {
   for (const k of order) {

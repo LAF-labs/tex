@@ -212,6 +212,11 @@ export function stoppedAtOf(ir: PlaybookIR, stepId: string | null): StoppedAt | 
 /** H-01 IR 스텝 → 진행 표시 단계(H01 TS 플레이북과 같은 단계 이름, 승인 바·진행 줄이 쓴다). */
 export const PHASE_OF: Readonly<Record<string, string>> = {
   s0: 'login', s1: 'login', s2: 'login', s3: 'login', s4: 'login', s5: 'login', s6: 'login', s90: 'login', s91: 'login', s92: 'login', s93: 'login',
+  // H-01 2.3.x 로그인 하위 스텝: 공동인증서 로그인(s4a~s4h·s8~s8b)과 간편인증 갈래(s7~s7g). 사람 대기 시간 초과가 여기서 나면
+  // 발급 화면 전이라 사다리가 다음 칸으로 간다(issue/routes.ts branchOf)
+  s4a: 'login', s4b: 'login', s4c: 'login', s4d: 'login', s4e: 'login', s4f: 'login', s4g: 'login', s4h: 'login',
+  s8: 'login', s8a: 'login', s8b: 'login',
+  s7: 'login', s7a: 'login', s7b: 'login', s7c: 'login', s7d: 'login', s7e: 'login', s7f: 'login', s7g: 'login',
   s10: 'form', s11: 'form',
   s12: 'input', s13: 'input', s14: 'input', s15: 'input', s16: 'input', s17: 'input', s18: 'input',
   s19: 'readback', s19a: 'readback', s19b: 'readback', s19c: 'readback', s19d: 'readback', s19f: 'readback', s19e: 'readback',

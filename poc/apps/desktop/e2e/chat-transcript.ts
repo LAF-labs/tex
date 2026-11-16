@@ -3,6 +3,7 @@
 // 기본(전, 옛 길): 해석기는 "정답 판정"(intent_route_v1이 가장 잘 고른 경우)이고, chat.respond 자리는 녹취 대역(CHAT_STUB)이다.
 // --agent(뒤, 대화 에이전트): main AgentChat·렌더러는 실제이고 chat.step 자리는 녹취 대역(AGENT_STUB)이다. 대역은 머리말을 잘 따르는 모델이 낼 만한
 // 도구 호출과 답(슬롯·토큰)을 내고, 엔진이 하는 역치환(이름 → 거래처 id, 오타 별칭)과 세무 차단을 흉내 낸다. 마스킹은 tests/chat-agent.test.ts가 본다.
+import './os-guard.js'; // 실제 Finder·브라우저·대화상자를 띄우지 않는다(맨 먼저)
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { app } from 'electron';

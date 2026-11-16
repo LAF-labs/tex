@@ -77,6 +77,8 @@ app.on('second-instance', () => {
   const w = shell?.win;
   if (!w || w.isDestroyed()) return;
   if (w.isMinimized()) w.restore();
+  // 폰 연결 중 창을 닫으면 숨겨 두므로(phone-presence.ts) 다시 실행하면 보인다
+  w.show();
   w.focus();
 });
 app.on('window-all-closed', () => {

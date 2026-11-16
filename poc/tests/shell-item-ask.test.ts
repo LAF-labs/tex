@@ -168,13 +168,13 @@ describe('배선', () => {
   it('처음 쓴 품목은 저장 품목이 없는 거래처에만 준비할 때 남긴다(있으면 그대로)', () => {
     const src = read('apps/desktop/src/shell-app.ts');
     assert.match(src, /const r = await runs\.prepare\(id\);\s*await keepItem\(id\);/);
-    assert.match(src, /if \(!r \|\| r\.itemGuessed \|\| !r\.item\) return;\s*const cp = cps\.find\(\(c\) => c\.id === r\.counterparty\.id\);\s*if \(!cp \|\| cp\.item\) return;/);
+    assert.match(src, /if \(!r \|\| r\.rehearsal \|\| r\.itemGuessed \|\| !r\.item\) return;\s*const cp = cps\.find\(\(c\) => c\.id === r\.counterparty\.id\);\s*if \(!cp \|\| cp\.item\) return;/);
     assert.match(src, /await cpBook\.setFirstItem\(cp\.id, r\.item\);/);
     assert.match(src, /item: typeof p\.item === 'string' \? p\.item : undefined,\s*email: typeof p\.email === 'string' \? p\.email : undefined,/);
   });
   it('카드: 품목·이메일을 값으로 보이고(누르면 고침), 품목이 비면 [홈택스에서 준비]가 꺼지고 품목 값이 빈칸 표시다', () => {
     const v = read('apps/desktop/static/shell/shell-views.js');
-    assert.match(v, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'prepare', disabled: noItem \}\)/);
+    assert.match(v, /btn\('홈택스에서 준비', \(\) => act\.prepare\(run\.id\), 'sx-btn-primary', \{ 'data-act': 'prepare', disabled: noItem \|\| noAmount \}\)/);
     assert.match(v, /valBtn\('품목', `\$\{noItem \? '비어 있음' : run\.item\}`, \(\) => act\.editFields\(run\.id, 'item'\), \{ act: 'fields-edit', cls: noItem \? 'is-missing'/);
     const shell = read('apps/desktop/static/shell/shell.js');
     assert.match(shell, /putRun\(await call\('draft\.update', \{ id, item: String\(item\), email: String\(email\) \}\)\);/);

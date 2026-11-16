@@ -4,9 +4,9 @@ import { BundleCatalog } from '@sax/model';
 import { HttpDeviceDirectory, InternalClient, Logger, TokenVerifier, createServer, ed25519Private, fromB64, key32, listen, migrate, openFromEnv, LIMITS_MIGRATIONS_DIR, sqlLimits, type DeviceDirectory } from '@sax/svc-shared';
 import { gatewayRouter } from './app.ts';
 import { codefFromEnv, type CodefTokenSource } from './codef.ts';
-import { ZERO_PRICES, type Prices } from './constants.ts';
+import { DAILY, LIMIT_PRICES, ZERO_PRICES, type Prices } from './constants.ts';
 import { MockNtsSource, OdcloudNtsSource, type BizStatusSource } from './nts.ts';
-import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
+import { MockProvider, OpenAICompatProvider, OpenRouterProvider, SplitProvider, UpstageSystemOneStub, parseAgentPrivacy, parseOpenRouterRouting, type ModelProvider } from './providers.ts';
 import { GatewayService, type DeviceSuspender } from './service.ts';
 
 export const MIGRATIONS_DIR = fileURLToPath(new URL('../migrations/', import.meta.url));
@@ -61,7 +61,9 @@ function openRouterFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void
   // ZDR·데이터 수집 거부·공급자 고정이 환경에 정확히 없으면 기동하지 않는다(R14 ①)
   const routing = parseOpenRouterRouting(env);
   if (!routing) fail('OPENROUTER_ROUTING');
-  return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent });
+  // 판정·에이전트 호출의 보관 조건(OPENROUTER_AGENT_PRIVACY): 모르는 값이면 기동하지 않는다
+  const agentPrivacy = parseAgentPrivacy(env.OPENROUTER_AGENT_PRIVACY) ?? fail('OPENROUTER_AGENT_PRIVACY');
+  return new OpenRouterProvider({ apiKey: env.OPENROUTER_API_KEY ?? fail('OPENROUTER_API_KEY'), routing, onEvent, agentPrivacy });
 }
 
 export function providerFromEnv(env: NodeJS.ProcessEnv, onEvent?: (e: string) => void): ModelProvider {
@@ -119,6 +121,12 @@ export async function buildGateway(env: NodeJS.ProcessEnv = process.env, deps: G
     scopeKey: key32(env.RUN_SCOPE_KEY, 'RUN_SCOPE_KEY'),
     models: { decide: env.MODEL_DECIDE ?? fail('MODEL_DECIDE'), respond: env.MODEL_RESPOND ?? fail('MODEL_RESPOND'), ...(env.MODEL_AGENT ? { agent: env.MODEL_AGENT } : {}), ...(env.MODEL_VISION ? { vision: env.MODEL_VISION } : {}) },
     monthlyTokens: env.GW_MONTHLY_TOKENS === undefined ? undefined : positiveInt(env.GW_MONTHLY_TOKENS, 'GW_MONTHLY_TOKENS'),
+    daily: {
+      trialKrw: env.GW_DAILY_KRW_TRIAL === undefined ? DAILY.trialKrw : positiveInt(env.GW_DAILY_KRW_TRIAL, 'GW_DAILY_KRW_TRIAL'),
+      paidKrw: env.GW_DAILY_KRW_PAID === undefined ? DAILY.paidKrw : positiveInt(env.GW_DAILY_KRW_PAID, 'GW_DAILY_KRW_PAID'),
+      krwPerUsd: env.GW_KRW_PER_USD === undefined ? DAILY.krwPerUsd : positiveInt(env.GW_KRW_PER_USD, 'GW_KRW_PER_USD'),
+    },
+    limitPrices: env.GW_LIMIT_PRICES_JSON ? { ...LIMIT_PRICES, ...(JSON.parse(env.GW_LIMIT_PRICES_JSON) as Partial<Prices>) } : LIMIT_PRICES,
     prices,
     nts,
     suspender: deps.suspender ?? httpSuspender(remote().base, remote().key),

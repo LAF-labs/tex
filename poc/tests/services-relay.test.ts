@@ -5,7 +5,7 @@ import http2 from 'node:http2';
 import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { FORBIDDEN_COLUMN, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, type Sql } from '../services/shared/src/index.ts';
-import { MIGRATIONS_DIR as RELAY_MIGRATIONS, OUTER, RELAY, RELAY_VISIBILITY, RelayHub, RelayService, newRoomId } from '../services/relay/src/index.ts';
+import { MIGRATIONS_DIR as RELAY_MIGRATIONS, OUTER, RELAY, RELAY_VISIBILITY, RelayHub, RelayService, newRoomId, wsOrigin } from '../services/relay/src/index.ts';
 import { ApnsSender, FcmSender, MIGRATIONS_DIR as PUSH_MIGRATIONS, MockPushSender, PUSH_VISIBILITY, PushService, WAKE, pushRouter } from '../services/push/src/index.ts';
 import { D, H, INTERNAL_KEY, client, device, entry, internalAuth, internalHeaders } from './services-kit.ts';
 import { DEVICE, httpPairingRooms, httpStopHook } from '../services/account/src/index.ts';
@@ -48,7 +48,7 @@ function cached(who: Who, s: Stack): Who {
   };
 }
 
-async function start(flags: { rooms?: boolean; live?: boolean } = {}): Promise<Env> {
+async function start(flags: { rooms?: boolean; live?: boolean; wsOrigin?: string } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'relay', RELAY_MIGRATIONS);
@@ -346,6 +346,34 @@ describe('M7-3 릴레이: 오프라인 의도 봉투 큐(72시간·160건·6 MiB
   });
 });
 
+describe('룸 호스트: WSS DPoP origin(RELAY_WS_ORIGIN)', () => {
+  // 운영 룸 호스트: HTTP(/v1/rooms, Vercel 재작성)는 https://tax.laf-co.com, WSS는 QR 호스트 https://rooms.tax.laf-co.com으로 htu를 만든다
+  const WS_ORIGIN = 'https://rooms.example';
+  let e: Env;
+  beforeEach(async () => (e = await start({ wsOrigin: WS_ORIGIN })));
+  afterEach(() => stop(e));
+
+  it('라이브 업그레이드는 wsOrigin htu만 받고, HTTP 경로는 publicOrigin 그대로다', async () => {
+    const m = newMailbox();
+    assert.equal((await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m })).status, 201, 'HTTP는 publicOrigin htu');
+    const path = `/v1/mailboxes/${m.mbxId}/live`;
+    const tok = { 'x-mbx-read': m.tokRead, 'x-mbx-write': m.tokWrite };
+    assert.equal(await open(e.wsBase + path, await e.wsHeaders(e.pc, path, tok)), null, 'publicOrigin htu로 만든 WSS 증명은 거절');
+    const pc = await open(e.wsBase + path, { ...e.pc.headers('GET', WS_ORIGIN, path, await e.pc.token()), ...tok });
+    assert.ok(pc, 'wsOrigin htu면 업그레이드');
+    assert.deepEqual(await pc.next(isPeer), { t: 'peer', online: false });
+    pc.ws.close();
+  });
+
+  it('RELAY_WS_ORIGIN 형식 검사: https origin(경로 없음)이나 로컬 http만', () => {
+    assert.equal(wsOrigin(undefined), undefined);
+    assert.equal(wsOrigin(''), undefined);
+    assert.equal(wsOrigin('https://rooms.tax.laf-co.com'), 'https://rooms.tax.laf-co.com');
+    assert.equal(wsOrigin('http://localhost:8083'), 'http://localhost:8083');
+    for (const bad of ['http://rooms.tax.laf-co.com', 'https://rooms.tax.laf-co.com/', 'https://rooms.tax.laf-co.com/v1', 'wss://rooms.tax.laf-co.com']) assert.throws(() => wsOrigin(bad), /config_RELAY_WS_ORIGIN/);
+  });
+});
+
 describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
   let e: Env;
   beforeEach(async () => (e = await start()));
@@ -385,6 +413,27 @@ describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
     const stats = await e.db.all<{ kind: string; size_bucket: number; n: number }>('SELECT kind, size_bucket, n FROM relay_stats ORDER BY kind');
     assert.deepEqual(stats.map((s) => [s.kind, Number(s.size_bucket), Number(s.n)]), [['DATA', 1024, 1], ['ENV', 1024, 1], ['HS', 256, 1]]);
     pc.ws.close();
+  });
+
+  it('keepalive: 텍스트 {"t":"ping"}에 그 연결에만 pong, 상대에게 넘기지 않고 실패로 세지 않는다', async () => {
+    const m = newMailbox();
+    await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m });
+    const pc = (await live(m, e.pc))!;
+    await pc.next(isPeer);
+    const ph = (await live(m, e.phone))!;
+    await ph.next(isPeer);
+    await pc.next(isPeer);
+    // 실패 한도(5)를 넘는 횟수라도 끊기지 않는다. 초당 1번을 넘는 ping은 답하지 않는다
+    for (let i = 0; i < 6; i++) pc.ws.send('{"t":"ping"}');
+    assert.deepEqual(await pc.next((x) => !Buffer.isBuffer(x) && x.t === 'pong'), { t: 'pong' });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(pc.msgs.filter((x) => !Buffer.isBuffer(x) && x.t === 'pong').length, 1);
+    assert.equal(ph.msgs.filter((x) => !Buffer.isBuffer(x) && x.t !== 'peer').length, 0, '폰은 PC의 ping을 보지 않는다');
+    const f = data(100);
+    pc.ws.send(f);
+    assert.deepEqual(await ph.next(Buffer.isBuffer), f, '연결은 그대로다');
+    pc.ws.close();
+    ph.ws.close();
   });
 
   it('프레임 65,535B 초과면 끊고, 토큰이 하나라도 없으면 업그레이드 거절, 같은 쪽 새 연결이 옛 연결을 대신한다', async () => {

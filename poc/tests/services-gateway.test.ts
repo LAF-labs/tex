@@ -5,7 +5,7 @@ import type { Server } from 'node:http';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { BundleCatalog, CHAT_AGENT, CHAT_AGENT_TOOLS, CHAT_REPLY, OpenAIDecisionsAdapter, canonicalJson, toolsetDigest, type Egress } from '../packages/model/src/index.ts';
 import { FORBIDDEN_COLUMN, LIMITS_MIGRATIONS_DIR, Logger, createServer, listen, looksSensitive, migrate, openSqlite, schemaColumns, sha256hex, sqlLimits, type Sql } from '../services/shared/src/index.ts';
-import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type RespondSpec } from '../services/gateway/src/index.ts';
+import { GATEWAY, GATEWAY_VISIBILITY, GatewayService, MIGRATIONS_DIR, MockNtsSource, MockProvider, gatewayRouter, httpSuspender, ntsFromEnv, OdcloudNtsSource, openAIDecisionsBody, positiveInt, OpenRouterProvider, ProviderError, parseAgentPrivacy, parseOpenRouterRouting, providerFromEnv, SplitProvider, type ModelProvider, type Prices, type RespondSpec } from '../services/gateway/src/index.ts';
 import { D, H, client, edKey } from './services-kit.ts';
 import { ACCOUNT_ORIGIN, accountStack, deviceToken, signedDesktop, signedPhone, type Signed, type Stack } from './services-stack.ts';
 
@@ -31,7 +31,7 @@ interface Env {
   twin(): Promise<{ server: Server; req: Env['req']; call: Env['call'] }>;
 }
 
-async function start(o: { monthlyTokens?: number; sqlLimits?: boolean } = {}): Promise<Env> {
+async function start(o: { monthlyTokens?: number; sqlLimits?: boolean; daily?: { trialKrw: number; paidKrw: number; krwPerUsd: number }; limitPrices?: Required<Prices> } = {}): Promise<Env> {
   const s = await accountStack();
   const db = openSqlite();
   await migrate(db, 'gateway', MIGRATIONS_DIR);
@@ -51,6 +51,8 @@ async function start(o: { monthlyTokens?: number; sqlLimits?: boolean } = {}): P
     scopeKey: randomBytes(32),
     models: { decide: 'model-decide', respond: 'model-respond' },
     monthlyTokens: o.monthlyTokens,
+    daily: o.daily,
+    limitPrices: o.limitPrices,
     nts,
     suspender: { suspend: async (id) => void (await s.svc.autoSuspend(id)) },
     onEvent: (e) => events.push(e),
@@ -563,6 +565,43 @@ describe('M4-6 게이트웨이: 기기 자동 정지·계량 분리·진위확�
   });
 });
 
+describe('게이트웨이: 하루 AI 사용 금액 한도(체험·유료, KST 새벽 4시 초기화)', () => {
+  let e: Env;
+  // 모의 공급사 respond = 입력 2,000(캐시 1,500)·출력 300 → 500×$1 + 1,500×$0.05 + 300×$5 = 2,075 마이크로 달러. 환율 1,000이면 약 2원
+  // 단가를 고정해 기본 단가(LIMIT_PRICES)가 바뀌어도 금액 계산 단언이 그대로다
+  const PRICES = { decideIn: 100_000, decideCached: 10_000, decideOut: 0, respondIn: 1_000_000, respondCached: 50_000, respondOut: 5_000_000, agentIn: 1_000_000, agentCached: 50_000, agentOut: 5_000_000 };
+  beforeEach(async () => (e = await start({ daily: { trialKrw: 5, paidKrw: 20, krwPerUsd: 1000 }, limitPrices: PRICES })));
+  afterEach(() => (e.server.close(), e.s.close()));
+
+  it('체험 한도를 넘으면 429 gateway.daily_limit(retry-after = 다음 새벽 4시), 안전 판정은 계속, 새벽 4시에 초기화', async () => {
+    const rt = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    for (let i = 0; i < 3; i++) assert.equal((await e.call('/v1/respond', respondBody(rt)).then((r) => r.status)), 200);
+    const over = await e.call('/v1/respond', respondBody(rt));
+    assert.deepEqual([over.status, over.json.error], [429, 'gateway.daily_limit']);
+    // 시계: 2026-11-10 00:00Z = KST 09:00 → 다음 초기화는 다음 날 KST 04:00 = 2026-11-10 19:00Z
+    assert.equal(Number(over.headers.get('retry-after')), (Date.UTC(2026, 10, 10, 19) - e.s.clock.now()) / 1000);
+    const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
+    assert.deepEqual([u.json.limitKrw, u.json.tier, u.json.resetAt], [5, 'trial', Date.UTC(2026, 10, 10, 19)]);
+    assert.equal(u.json.usedKrw, 6);
+    // 안전 판정(screen_state_v2)은 한도를 넘어도, 그 밖의 번들은 막힌다
+    const rt2 = await e.runToken();
+    assert.equal((await e.call('/v1/decide', decideBody(rt2))).status, 200);
+    assert.equal((await e.call('/v1/decide', decideBody(rt2, FORM))).json.error, 'gateway.daily_limit');
+    // 새벽 4시가 지나면 다시
+    e.s.clock.t = Date.UTC(2026, 10, 10, 19) + 1;
+    const rt3 = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    assert.equal((await e.call('/v1/respond', respondBody(rt3))).status, 200);
+  });
+
+  it('구독자(토큰 tier=paid)는 유료 한도', async () => {
+    await e.s.db.run("INSERT INTO subscriptions (account_id, plan, status, period, renew_at, pg_customer_ref) SELECT account_id, 'standard', 'active', 'month', $1, 'cus_paidpaidpaidpaidpaidpaid' FROM devices WHERE device_id = $2", [e.s.clock.now() + 30 * D, e.pc.d.id]);
+    const rt = await e.runToken(undefined, { chatSessionId: `chat-${randomBytes(6).toString('hex')}` });
+    for (let i = 0; i < 5; i++) assert.equal((await e.call('/v1/respond', respondBody(rt))).status, 200, `call ${i}`);
+    const u = await e.req('GET', '/v1/usage', { headers: e.pc.headers('GET', GW, '/v1/usage', await e.pc.token()) });
+    assert.deepEqual([u.json.limitKrw, u.json.tier], [20, 'paid']);
+  });
+});
+
 describe('M4-6 게이트웨이: 공급사 와이어', () => {
   it('Decisions 본문은 캐시 브레이크포인트를 고정 접두 끝에만 둔다', () => {
     const b = openAIDecisionsBody({ model: 'm', prefix: 'P', input: 'I', questions: FORM.def.questions, cacheKey: 'acct:x:b:y', safetyId: 's' });
@@ -673,6 +712,16 @@ describe('M4-6 게이트웨이: 공급사 와이어', () => {
     assert.equal(sent.at(-1)!.body.provider, undefined);
     assert.equal(sent.at(-1)!.body.unpinned, undefined);
     assert.equal(events.at(-1), 'upstream_unpinned');
+    // 판정·에이전트의 보관 조건(OPENROUTER_AGENT_PRIVACY): 공급자는 고정하지 않고 조건만 싣는다
+    assert.equal(parseAgentPrivacy(undefined), 'off');
+    assert.equal(parseAgentPrivacy('zdr'), 'zdr');
+    assert.equal(parseAgentPrivacy('on'), null);
+    for (const [mode, field] of [['zdr', { zdr: true, data_collection: 'deny' }], ['deny', { data_collection: 'deny' }]] as const) {
+      const q = new OpenRouterProvider({ apiKey: 'k', routing: parseOpenRouterRouting(ROUTING_ENV), fetchFn, onEvent: (e) => events.push(e), agentPrivacy: mode });
+      assert.equal((await q.respond({ ...SPEC, unpinned: true })).status, 'completed');
+      assert.deepEqual(sent.at(-1)!.body.provider, field);
+      assert.equal(events.at(-1), `upstream_unpinned_${mode}`);
+    }
     // 고정 공급자를 쓸 수 없으면(404) 재시도하지 않는다
     status = 404;
     await assert.rejects(p.respond(SPEC), (e: ProviderError) => !e.retryable);

@@ -9,11 +9,11 @@ import type { Counterparty as DbCounterparty, PortalProfileKey, Profile as DbPro
 import type { EnginePortal } from '@sax/engine/protocol';
 import type { Channel, Revocation, TrustRoot } from '@sax/updater';
 import type { Egress } from '@sax/net';
-import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type RelayClient } from '@sax/remote';
+import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type PaperInvoice, type RelayClient } from '@sax/remote';
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -21,7 +21,8 @@ import { BankHost, bankShellHandlers, type PickKind } from './bank-host.ts';
 import { CONSENT_CONFIG, OnboardingFlow, onboardingTodos, type BizFields } from './onboarding.ts';
 import { EngineOnboardingStore, onboardingPorts, type OnboardingExternal } from './onboarding-store.ts';
 import { listNpkiCerts } from './npki-certs.ts';
-import { openExternalKey } from './external-links.ts';
+import { openBillingCheckout, openExternalKey } from './external-links.ts';
+import { CLOUD_ORIGIN } from '@sax/net';
 import { securityBlocks, securityStatus, startSecurityProgram, type SecurityStatus } from './security-programs.ts';
 import { APPROVAL_SCHEME, ApprovalBar } from './approval-bar.ts';
 import { startDaemonHost, type DaemonHost, type ShowNotification } from './daemon-host.ts';
@@ -56,8 +57,12 @@ import { CounterpartyBook } from './counterparty-book.ts';
 import { nameMissing, ProfileEditLog, ProfileEditor } from './profile-edit.ts';
 import { DesktopAccount, PendingCodeFile, RemoteIdentityFile } from './remote-account.ts';
 import { GatewayAuthHost } from './gateway-auth.ts';
-import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
+import type { AccountClient, BillingView, CloudPorts, DeviceAuth, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
+import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
+import { phoneReceiver } from './phone-receive.ts';
+import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
+import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
 import type { DemoModel, mergeParsed } from './demo-model.ts';
@@ -114,6 +119,7 @@ const FILES: Record<string, string> = {
   '/shell-account.js': 'text/javascript',
   '/shell-biz.js': 'text/javascript',
   '/shell-bank.js': 'text/javascript',
+  '/shell-billing.js': 'text/javascript',
   '/shell-pack.js': 'text/javascript',
   '/password-rules.js': 'text/javascript',
   '/common-passwords.js': 'text/javascript',
@@ -179,6 +185,8 @@ export interface ShellOptions {
    * "크롬 탭이 아예 열리지 않게"). 앱 안 브라우저가 고객 PC에서 막히면 되돌릴 수 있게 한 판 동안 남긴다.
    */
   externalChrome?: boolean;
+  /** 구독 결제 창 열기(시험이 바꾼다). 기본은 기본 브라우저(external-links.ts openBillingCheckout) */
+  billingOpen?: (url: string, accountOrigin: string) => Promise<void>;
   /** e2e·첫 실행 따라가기: 보안 프로그램 점검·설치 링크 열기·켜기를 바꿔 끼운다. 기본은 이 PC의 MagicLine4NX(security-programs.ts)와 기본 브라우저. */
   security?: { status(): SecurityStatus; install?(key: string): Promise<void>; start?(): boolean };
   /** 시연 전용 채팅 해석(SAX_DEMO_MODEL=openrouter, fixture 모드만). 없거나 실패하면 정규식 해석. */
@@ -229,6 +237,8 @@ export interface RemoteWiring {
   deviceName?: string;
   /** 룸 클라이언트를 바꿔 끼운다(e2e·개발 스택의 메모리 릴레이). 없으면 cloud.openSocket 위 WSS(wsRelayClient). */
   relayClient?: RelayClient;
+  /** false면 폰 연결을 닫는다([폰 연결]을 숨기고 pair.open은 pair_unavailable). 없으면 연다(시험·e2e·개발 스택). */
+  pairing?: boolean;
 }
 
 /** ShellOptions.update. updater가 없으면(시험) electron-updater를 불러온다. */
@@ -1313,6 +1323,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pending: new PendingCodeFile(appPaths(root ?? defaultAppRoot()).userData),
     platform: process.platform === 'darwin' ? 'macos' : 'windows',
     deviceName: opts.remote?.deviceName ?? (process.platform === 'darwin' ? 'Mac PC' : 'Windows PC'),
+    pairing: opts.remote?.pairing !== false,
     log: (n, d) => log.event(n, d),
   });
   let accountReady: Promise<unknown> | null = null;
@@ -1343,6 +1354,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     if (pairWin) return pairWin;
     const cloud = opts.remote?.cloud;
     const device = account.device();
+    if (opts.remote?.pairing === false) throw new Error('pair_unavailable');
     if (!cloud || !device) throw new Error(device ? 'pair_unavailable' : 'account_required');
     const host = new PairingHost({
       account: cloud.account,
@@ -1357,12 +1369,117 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       onView: (v) => pairWin?.push(v),
       onPaired: (r) => {
         pairedThisRun.push(r);
+        // 수신 배선(phone-link.ts): 기록을 보관하고 이 폰의 우편함을 지킨다
+        void phones()
+          ?.add(r)
+          .catch((e: Error) => log.event('main.phone_link', { step: 'add', result: e.message.slice(0, 40) }));
         send({ type: 'account', account: account.view() });
       },
     });
     pairWin = new PairWindow({ parent: win, url: PAIR_URL, host, onClosed: () => send({ type: 'account', account: account.view() }) });
     return pairWin;
   };
+  /** 구독 경로 호출(기기 토큰). 로그인 전이면 account_required. 토큰 401이면 버리고 한 번 다시 */
+  const billingCall = async <T>(f: (c: AccountClient, auth: DeviceAuth) => Promise<T>): Promise<T> => {
+    await accountInit().catch(() => null);
+    const cloud = opts.remote?.cloud;
+    const device = account.device();
+    if (!cloud || !device) throw new Error('account_required');
+    try {
+      return await f(cloud.account, device.auth);
+    } catch (e) {
+      if ((e as { code?: string }).code !== 'account.unauthorized') throw e;
+      device.clearToken();
+      return f(cloud.account, device.auth);
+    }
+  };
+  // 연결된 폰 수신(phone-link.ts, D08 §5·§7): 페어링한 폰마다 우편함을 지켜 사진·현금을 받는다(라이브 WSS + HTTPS 큐).
+  // 로그인(첫 PC 등록)과 클라우드 포트·금고 키가 있을 때만. 우편함 토큰은 safeStorage(키체인·DPAPI)로 봉인해 둔다.
+  // safeStorage를 쓸 수 없는 환경(일부 Linux)은 b64로 두고 표시를 남긴다: 토큰만으로는 기기 토큰(DPoP, 금고 Vd) 없이 우편함에 들어가지 못한다.
+  const tokenSeal: TokenSeal = {
+    seal: (b) => (safeStorage.isEncryptionAvailable() ? `ss1:${safeStorage.encryptString(Buffer.from(b).toString('base64')).toString('base64')}` : `b64:${Buffer.from(b).toString('base64')}`),
+    open: (v) => new Uint8Array(Buffer.from(v.startsWith('ss1:') ? safeStorage.decryptString(Buffer.from(v.slice(4), 'base64')) : v.startsWith('b64:') ? v.slice(4) : '', 'base64')),
+  };
+  let phoneLink: PhoneLink | null = null;
+  const phones = (): PhoneLink | null => {
+    if (phoneLink) return phoneLink;
+    const cloud = opts.remote?.cloud;
+    if (fixture || !cloud?.mailboxQueue || !account.device()) return null;
+    const auth = (htm: 'GET' | 'POST' | 'PUT' | 'DELETE', htu: string) => {
+      const d = account.device();
+      if (!d) return Promise.reject(Object.assign(new Error('account'), { code: 'account.signed_out' }));
+      return d.auth(htm, htu);
+    };
+    const live = wsRelayClient({ host: cloud.relayHost, open: cloud.openSocket, insecureLocal: cloud.insecureLocal, deviceAuth: (htm, htu) => auth(htm, htu) });
+    phoneLink = new PhoneLink({
+      store: new PhoneStore(path.join(appPaths(root ?? defaultAppRoot()).userData, 'remote-phones.json')),
+      seal: tokenSeal,
+      keys: async () => {
+        const k = (await keysOf()) as Partial<VaultDesktopKeys> & DesktopKeys;
+        if (!k.hpkeOpen || !k.qdPublic) throw Object.assign(new Error('keys'), { code: 'account.keys_unavailable' });
+        return { noise: k.noise, vd: k.vd, hpkeOpen: k.hpkeOpen, qdPublic: k.qdPublic };
+      },
+      joinMailbox: opts.remote?.relayClient ? undefined : (id, tok) => live.joinMailbox(id, tok, 'desktop'),
+      queue: (id, tok) => cloud.mailboxQueue!(id, tok, auth),
+      deleteMailbox: (id, w) => cloud.relay.deleteMailbox(auth, id, w),
+      receiver: () =>
+        phoneReceiver((m, p) => host.rpc(m, p), {
+          onReceipt: () => pushBoard(),
+          onCash: () => pushBoard(),
+          log: (n, d) => log.event(n, d),
+        }),
+      deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
+      appVersion: app.getVersion(),
+      log: (n, d) => log.event(n, d ?? {}),
+      onChange: () => {
+        send({ type: 'account', account: account.view() });
+        syncAwake();
+      },
+    });
+    return phoneLink;
+  };
+  // 폰이 연결돼 있으면 집에 둔 PC가 밖의 폰에 바로 응한다(phone-presence.ts): 창을 닫아도 남고, 전원 연결 중에는 잠들지 않는다.
+  const stayAwake = new StayAwake(powerSaveBlocker, (on) => log.event('main.phone_stay_awake', { on }));
+  const pairedPhones = () => phoneLink?.list().length ?? 0;
+  const syncAwake = () => stayAwake.set(shouldStayAwake({ phones: pairedPhones(), onBattery: powerMonitor.isOnBatteryPower() }));
+  let quitting = false;
+  let backgroundNoted = false;
+  const onBeforeQuit = () => {
+    quitting = true;
+  };
+  app.on('before-quit', onBeforeQuit);
+  // macOS 업데이트 설치는 창을 먼저 닫고 before-quit을 나중에 낸다(Electron 문서). 그때 창 닫기를 막으면 설치가 멈춘다.
+  if (process.platform === 'darwin') nativeUpdater.on('before-quit-for-update', onBeforeQuit);
+  win.on('close', (e) => {
+    const act = closeAction({ phones: pairedPhones(), quitting, platform: process.platform });
+    if (act === 'quit') return;
+    e.preventDefault();
+    if (act === 'hide') win.hide();
+    else win.minimize();
+    log.event('main.window_background', { act });
+    if (!backgroundNoted) {
+      backgroundNoted = true;
+      try {
+        showOsNotification({ title: '소버린 AX가 계속 켜져 있어요', body: '폰에서 보낸 영수증을 바로 받으려고 창만 내렸어요. 끝내려면 메뉴 [창 > 소버린 AX 끝내기]를 누르세요.' }, () => onActivate());
+      } catch {
+        /* 알림을 못 띄우는 OS */
+      }
+    }
+  });
+  const onActivate = () => {
+    if (win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+  };
+  app.on('activate', onActivate);
+  const onPowerSource = () => syncAwake();
+  powerMonitor.on('on-ac', onPowerSource);
+  powerMonitor.on('on-battery', onPowerSource);
+  // 이미 로그인한 PC면 켤 때 저장된 폰을 지킨다(꺼져 있던 동안의 큐부터 비운다)
+  void accountInit()
+    .then(() => phones()?.start())
+    .then(() => syncAwake())
+    .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
   const termsOk = () => !onb || onb.state.consents.terms?.choice === 'agreed';
@@ -1407,6 +1524,23 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     docFile,
     receivables: () => bank.receivables(),
     businessName: () => (businessId || sample ? profiles().business.name || null : null),
+    businessBizNo: () => (businessId ? profiles().business.bizNo || null : null),
+    // 폰으로 찍은 종이 세금계산서: 작성일 달과 다음 달에 받은 증빙에서 꺼낸다(보통 다음 달 초에 찍는다). 꾸러미가 작성일로 다시 거른다
+    paperInvoices: async (month) => {
+      if (!businessId) return [];
+      const [y, m] = [Number(month.slice(0, 4)), Number(month.slice(5, 7))];
+      const next = m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, '0')}`;
+      const out: Array<{ docId: string; paper: PaperInvoice; file: string | null }> = [];
+      for (const mm of [month, next]) {
+        const r = (await host.rpc('db.query.receipt.list', { profileId: businessId, month: mm }).catch(() => null)) as { receipts?: Array<{ docId: string; phoneOcr?: { paperInvoice?: PaperInvoice } | null }> } | null;
+        for (const x of r?.receipts ?? []) {
+          const paper = x.phoneOcr?.paperInvoice;
+          if (!paper || out.some((o) => o.docId === x.docId)) continue;
+          out.push({ docId: x.docId, paper, file: await docFile(x.docId).catch(() => null) });
+        }
+      }
+      return out;
+    },
     outRoot: path.join(appPaths(root ?? defaultAppRoot()).userData, '세무사 꾸러미'),
   });
   const packMonth = (m: unknown) => {
@@ -1632,6 +1766,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.on('run', (e: { type?: string; code?: string }) => {
     if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
   });
+  /** 보안카드 금고 칸(대표 지시 2026-11-14). 렌더러 처리기 표는 엔진 control을 직접 부르지 않고 이 고정 칸만 쓴다(h01-guards). */
+  const CARD_SLOT = { kind: 'security_card', scope: 'business' } as const;
+  const cardSlot = {
+    has: async () => (await host.control('secret.has', CARD_SLOT).catch(() => false)) === true,
+    /** 지웠으면 true. 실패를 성공처럼 보이지 않게 그대로 돌려준다 */
+    forget: () => host.control('secret.forget', CARD_SLOT).then(() => true, () => false),
+  };
 
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
@@ -1963,9 +2104,58 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (runs.anyActive()) throw new Error('run_active');
       pairWin?.close();
       pairWin = null;
+      phoneLink?.stop();
+      phoneLink = null;
+      syncAwake();
       const v = await account.signOut();
       pushBoard();
       return v;
+    },
+    // 설정 > 구독: 기기 토큰으로 상태·결제 창·해지·청약철회. 토큰이 만료(401)면 한 번 새로 받아 다시 한다
+    'billing.view': async () => billingCall((c, a) => c.billing(a)),
+    'billing.subscribe': async () => {
+      needGesture(3_000);
+      const { checkoutUrl } = await billingCall<{ checkoutUrl: string }>((c, a) => c.billingCheckout(a));
+      await (opts.billingOpen ?? openBillingCheckout)(checkoutUrl, opts.remote?.cloud?.accountOrigin ?? CLOUD_ORIGIN);
+      log.event('main.billing_checkout_opened');
+      return {};
+    },
+    'billing.cancel': async () => {
+      needGesture(3_000);
+      await billingCall((c, a) => c.billingCancel(a));
+      log.event('main.billing_canceled');
+      return billingCall((c, a) => c.billing(a));
+    },
+    'billing.refund': async () => {
+      needGesture(3_000);
+      const r = await billingCall<{ amountKrw: number }>((c, a) => c.billingRefund(a));
+      log.event('main.billing_refunded');
+      return { ...(await billingCall<BillingView>((c, a) => c.billing(a))), refundedKrw: r.amountKrw };
+    },
+    // 탈퇴(F-06): 이 PC의 기기 토큰으로 서버에 묻는다. 로그인 전이면 account_signed_out
+    'account.deletion': async () => {
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      return d.deletion();
+    },
+    'account.delete': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      const r = await d.requestDelete();
+      log.event('main.account_delete_request', { result: 'ok' });
+      return r;
+    },
+    'account.deleteCancel': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      await d.cancelDelete();
+      log.event('main.account_delete_cancel', { result: 'ok' });
+      return { deleteAfter: null };
     },
     // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
     'pair.open': async () => {
@@ -1984,7 +2174,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
     // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
-    'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
+    'card.status': async () => ({ stored: await cardSlot.has() }),
     'card.register': async (p) => {
       needGesture(3_000);
       // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
@@ -1994,9 +2184,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'card.forget': async () => {
       needGesture(3_000);
       // 지우지 못했으면 실패로 돌려준다(성공처럼 보이지 않게)
-      const r = await host.control('secret.forget', { kind: 'security_card', scope: 'business' }).then(() => true, () => false);
-      if (!r) throw new Error('card_forget_failed');
-      return { stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true };
+      if (!(await cardSlot.forget())) throw new Error('card_forget_failed');
+      return { stored: await cardSlot.has() };
     },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),
@@ -2031,6 +2220,11 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       if (!st.installKey) throw new Error('no_installer');
       await (opts.security?.install ?? openExternalKey)(st.installKey);
       log.event('main.security_install_open', { platform: process.platform === 'darwin' ? 1 : 0 });
+      return { opened: true };
+    },
+    'legal.open': async (p) => {
+      needGesture(3_000);
+      await openExternalKey(p.doc === 'privacy' ? 'legal.privacy' : 'legal.terms');
       return { opened: true };
     },
     'security.start': async () => {
@@ -2162,6 +2356,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const fn = () => {
       void host.control('session.event', { kind }).catch(() => {});
       if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
+      // 잠자기 뒤 연결은 열려 보여도 죽어 있다: 바로 다시 붙고 쌓인 큐를 비운다
+      if (kind === 'resume') phoneLink?.wake('resume');
+      else if (kind === 'unlock-screen') phoneLink?.wake('unlock');
       // 깨어남: 승인 전 단계에서 바로 멈추는 실행은 같은 값으로 다시 시작하고(ShellRuns wakeAfter), 홈택스 로그인을 바로 연장한다.
       if (kind === 'resume') {
         runs.woke();
@@ -2270,7 +2467,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
         ],
       },
-      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }, { type: 'separator' }, { label: '소버린 AX 끝내기', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] },
     ]),
   );
   const close = async () => {
@@ -2284,6 +2481,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     updater?.stop();
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();
+    phoneLink?.stop();
+    stayAwake.set(false);
+    app.removeListener('before-quit', onBeforeQuit);
+    if (process.platform === 'darwin') nativeUpdater.removeListener('before-quit-for-update', onBeforeQuit);
+    app.removeListener('activate', onActivate);
+    powerMonitor.removeListener('on-ac', onPowerSource);
+    powerMonitor.removeListener('on-battery', onPowerSource);
     watchChromeFront(false);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).

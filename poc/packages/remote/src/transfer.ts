@@ -7,7 +7,7 @@
 import { b64, concat, fromB64, toHex, utf8 } from './bytes.ts';
 import type { Channel } from './channel.ts';
 import { randomBytes, sha256Hash, xOpen, xSeal } from './crypto.ts';
-import { RECEIPT_CHUNK, RECEIPT_MAX_BYTES, type CashEntryBody, type Envelope, type ReceiptAckBody, type ReceiptCandidates, type ReceiptChunkBody, type ReceiptOfferBody } from './envelope.ts';
+import { RECEIPT_CHUNK, RECEIPT_MAX_BYTES, type CashEntryBody, type Envelope, type ReceiptAckBody, type PaperInvoice, type ReceiptCandidates, type ReceiptChunkBody, type ReceiptOfferBody } from './envelope.ts';
 import { ulid } from './ulid.ts';
 
 export { RECEIPT_CHUNK, RECEIPT_MAX_BYTES };
@@ -34,7 +34,7 @@ export interface OutboxStore {
   remove(msgId: string): Promise<void>;
 }
 
-export function makeReceiptOffer(jpeg: Uint8Array, o: { capturedAt: number; width?: number; height?: number; ocrEngine: ReceiptOfferBody['ocrEngine']; ownerConfirmed: boolean; candidates?: ReceiptCandidates; now?: number }): ReceiptOfferBody {
+export function makeReceiptOffer(jpeg: Uint8Array, o: { capturedAt: number; width?: number; height?: number; ocrEngine: ReceiptOfferBody['ocrEngine']; ownerConfirmed: boolean; candidates?: ReceiptCandidates; paperInvoice?: PaperInvoice; now?: number }): ReceiptOfferBody {
   if (jpeg.length < 1 || jpeg.length > RECEIPT_MAX_BYTES) throw new Error('receipt: size out of range');
   if (jpeg[0] !== 0xff || jpeg[1] !== 0xd8) throw new Error('receipt: not a JPEG');
   const body: ReceiptOfferBody = {
@@ -51,6 +51,11 @@ export function makeReceiptOffer(jpeg: Uint8Array, o: { capturedAt: number; widt
   if (o.width) body.width = o.width;
   if (o.height) body.height = o.height;
   if (o.candidates && Object.keys(o.candidates).length) body.candidates = { ...o.candidates };
+  if (o.paperInvoice) {
+    const bad = checkPaperInvoice(o.paperInvoice);
+    if (bad.length) throw new Error(`receipt: paper invoice ${bad[0]}`);
+    body.paperInvoice = structuredClone(o.paperInvoice);
+  }
   return body;
 }
 
@@ -353,3 +358,55 @@ export function openOutboxFile(fileKey: Uint8Array, msgId: string, box: Uint8Arr
   return xOpen(fileKey, box, concat(utf8(OUTBOX_AD), utf8(msgId)));
 }
 export const newFileKey = (): Uint8Array => randomBytes(32);
+
+// ======================= 종이 세금계산서(v1.7, receipt.v2) =======================
+
+/** 사업자등록번호 체크섬(국세청 규칙: 가중치 1,3,7,1,3,7,1,3,5, 9번째 자리 ×5의 십의 자리를 더한다). 000-00-00000 또는 숫자 10자리 */
+export function bizNoValid(v: string): boolean {
+  const d = v.replace(/-/g, '');
+  if (!/^\d{10}$/.test(d) || (v.includes('-') && !/^\d{3}-\d{2}-\d{5}$/.test(v))) return false;
+  const w = [1, 3, 7, 1, 3, 7, 1, 3, 5];
+  let sum = 0;
+  for (let i = 0; i < 9; i++) sum += Number(d[i]) * w[i]!;
+  sum += Math.floor((Number(d[8]) * 5) / 10);
+  return (10 - (sum % 10)) % 10 === Number(d[9]);
+}
+
+/**
+ * 종이 세금계산서 값 검사(폰·PC 같은 규칙). 틀린 칸 이름 목록을 돌려준다(빈 목록이면 통과).
+ * - 공급가액 + 세액 = 합계, 계산서(면세)는 세액 0, 품목이 있으면 품목 공급가액 합 = 공급가액(세액도 품목에 모두 있으면 같아야 한다)
+ * - 공급자·공급받는자 사업자번호 체크섬, 두 번호가 같으면 안 된다
+ */
+export function checkPaperInvoice(p: PaperInvoice): string[] {
+  const bad: string[] = [];
+  const won = (n: unknown) => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 100_000_000_000;
+  if (p.docKind !== 'tax_invoice' && p.docKind !== 'invoice') bad.push('docKind');
+  if (p.direction !== 'sales' && p.direction !== 'purchase') bad.push('direction');
+  if (typeof p.writtenOn !== 'string' || !/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/.test(p.writtenOn) || new Date(`${p.writtenOn}T00:00:00Z`).toISOString().slice(0, 10) !== p.writtenOn) bad.push('writtenOn');
+  if (!p.supplier || !bizNoValid(p.supplier.bizNo ?? '')) bad.push('supplier.bizNo');
+  if (!p.buyer || !bizNoValid(p.buyer.bizNo ?? '')) bad.push('buyer.bizNo');
+  if (p.supplier && p.buyer && p.supplier.bizNo?.replace(/-/g, '') === p.buyer.bizNo?.replace(/-/g, '')) bad.push('buyer.bizNo');
+  if (!p.supplier?.name) bad.push('supplier.name');
+  if (!p.buyer?.name) bad.push('buyer.name');
+  for (const k of ['supplyAmount', 'vatAmount', 'total'] as const) if (!won(p[k])) bad.push(k);
+  if (won(p.supplyAmount) && won(p.vatAmount) && won(p.total) && p.supplyAmount + p.vatAmount !== p.total) bad.push('total');
+  if (p.docKind === 'invoice' && p.vatAmount !== 0) bad.push('vatAmount');
+  if (p.items !== undefined) {
+    if (!Array.isArray(p.items) || p.items.length > 20 || p.items.some((it) => !it || typeof it.name !== 'string' || !it.name || !won(it.supply) || (it.vat !== undefined && !won(it.vat)))) bad.push('items');
+    else if (p.items.length) {
+      if (p.items.reduce((s, it) => s + it.supply, 0) !== p.supplyAmount) bad.push('items.supply');
+      if (p.items.every((it) => it.vat !== undefined) && p.items.reduce((s, it) => s + (it.vat ?? 0), 0) !== p.vatAmount) bad.push('items.vat');
+    }
+  }
+  if (!(p.receiptOrClaim === 'receipt' || p.receiptOrClaim === 'claim' || p.receiptOrClaim === null)) bad.push('receiptOrClaim');
+  return [...new Set(bad)];
+}
+
+/** PC 쪽 정본 방향: 내 사업자번호가 공급자면 매출, 공급받는자면 매입, 둘 다 아니면 null(사장님 확인 필요) */
+export function paperDirection(p: Pick<PaperInvoice, 'supplier' | 'buyer'>, myBizNo: string | null): 'sales' | 'purchase' | null {
+  const mine = myBizNo?.replace(/-/g, '');
+  if (!mine) return null;
+  if (p.supplier?.bizNo?.replace(/-/g, '') === mine) return 'sales';
+  if (p.buyer?.bizNo?.replace(/-/g, '') === mine) return 'purchase';
+  return null;
+}

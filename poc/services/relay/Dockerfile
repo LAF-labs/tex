@@ -2,7 +2,8 @@
 # QUEUE_KEY·내부 비밀은 이미지에 없다. 실행 시 KMS가 환경 변수로 주입한다(ENV.md). 이 저장소에서는 빌드·배포하지 않는다(Phase 1).
 FROM node:26-slim AS build
 WORKDIR /app
-RUN corepack enable
+# node:26 이미지에는 corepack이 없다. packageManager와 같은 pnpm을 설치 스크립트 없이 깐다
+RUN npm install -g --ignore-scripts pnpm@12.11.2
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json tsconfig.base.json ./
 COPY services/shared services/shared
 COPY services/relay services/relay
