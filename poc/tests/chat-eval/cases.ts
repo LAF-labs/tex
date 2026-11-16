@@ -84,7 +84,7 @@ export interface Case {
   turns: Array<{ say: string; expect: TurnExpect }>;
 }
 
-const ISSUE_WORDS = ['발급했', '발급 완료', '발급됐', '발급되었', '전송했'];
+const ISSUE_WORDS = ['발급했', '발급 완료했', '발급을 완료', '발급됐', '발급되었', '전송했'];
 
 export const CASES: Case[] = [
   // ── 발급 카드 만들기 ──

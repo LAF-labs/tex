@@ -115,6 +115,7 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
       const input = [...(body.messages as unknown[]), ...replay.map((r) => ('item' in r && r.item ? r.item : { type: 'function_call_output', call_id: r.call_id, output: r.output }))];
       try {
         const r = await upstream(input);
+        trace.push({ sent: replay.length, out: r.output.map(brief) });
         const tag = (item: unknown) => createHash('sha256').update(JSON.stringify(item)).digest('hex');
         send(200, { model: MODEL || 'fake', status: r.status, output: r.output.map((item) => ({ item, tag: tag(item) })), usage: { input_tokens: 0, output_tokens: 0 }, toolsetDigest: digest });
       } catch (e) {
@@ -127,6 +128,16 @@ async function startGateway(): Promise<{ origin: string; close: () => void }> {
   return { origin: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, close: () => server.close() };
 }
 let lastUpstreamError = '';
+/**
+ * 상류 응답 요약(--jobs=1일 때 턴과 정확히 맞는다): 항목 종류, 도구 이름·인자, 문장(토큰·슬롯 그대로, 300자까지).
+ * turn_limit·bad_response가 어디서 나는지 보려고 둔다. 장부가 가상이라 실제 값은 없다.
+ */
+let trace: Array<{ sent: number; out: Array<Record<string, unknown>> }> = [];
+function brief(i: Record<string, unknown>): Record<string, unknown> {
+  if (i.type === 'function_call') return { type: i.type, name: i.name, args: String(i.arguments ?? '').slice(0, 300) };
+  if (i.type === 'message') return { type: i.type, content: (i.content as Array<{ type?: string; text?: string }> | undefined)?.map((c) => ({ type: c.type, text: String(c.text ?? '').slice(0, 300) })) };
+  return { type: i.type };
+}
 
 // ── 장부·PC 값 공간 ──
 function seedDb(): { db: Db; profileId: string; cpIds: Map<string, string>; dir: string } {
@@ -142,6 +153,7 @@ interface TurnLog {
   say: string;
   calls: Array<{ tool: string; args: string }>;
   model: { kind: string; ask: string | null; filtered: string | null; raw: string } | null;
+  trace: typeof trace;
   result: AgentTurnResult;
   created: Array<DraftCard & { name: string; itemShown: string | null }>;
   open: Array<DraftCard & { name: string; itemShown: string | null }>;
@@ -197,11 +209,12 @@ async function runCase(c: Case, env: ReturnType<typeof seedDb>, origin: string):
   const logs: TurnLog[] = [];
   for (const t of c.turns) {
     cur = { calls: [], model: null };
+    trace = [];
     const before = new Set(drafts.map((d) => d.runId));
     const result = await chat.turn(t.say);
     const created = drafts.filter((d) => !before.has(d.runId)).map(view);
     const open = drafts.filter((d) => d.status === 'draft').map(view);
-    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, result, created, open, checks: [] };
+    const log: TurnLog = { say: t.say, calls: cur.calls, model: cur.model, trace, result, created, open, checks: [] };
     log.checks = score(t.expect, log);
     logs.push(log);
   }
@@ -285,7 +298,7 @@ async function main() {
   try {
     for (let run = 1; run <= RUNS; run++) {
       const res = await pool(cases, JOBS, async (c) => {
-        const turns = await runCase(c, env, gw.origin).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
+        const turns = await runCase(c, env, gw.origin).catch((e) => [{ say: '(사례 오류)', calls: [], model: null, trace: [], result: { kind: 'unavailable', code: 'harness', text: String(e), retry: false }, created: [], open: [], checks: [{ name: '실행', ok: false, detail: String(e) }] } as TurnLog]);
         const pass = turns.every((t) => t.checks.every((x) => x.ok));
         console.log(`${pass ? 'PASS' : 'FAIL'} [${run}] ${c.id}${pass ? '' : `  ${turns.flatMap((t, i) => t.checks.filter((x) => !x.ok).map((x) => `t${i + 1} ${x.name}${x.detail ? `: ${x.detail}` : ''}`)).join(' | ')}`}`);
         return { run, id: c.id, cat: c.cat, why: c.why, pass, turns };
