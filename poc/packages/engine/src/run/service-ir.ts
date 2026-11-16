@@ -22,7 +22,7 @@ import { HealMemory, healableKeys } from '../core/heal-memory.ts';
 import { DbHealStore, DbJsonStore, agentPathKey } from './heal-store.ts';
 import { AgentPathMemory, type AgentPathFile } from './agent-path.ts';
 import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
-import { GatewayAgentModel, GatewayJudgeModel } from './agent-port.ts';
+import { GatewayAgentModel, GatewayJudgeModel, GatewayVisionModel } from './agent-port.ts';
 import { BrowserAgent } from './browser-agent.ts';
 import { PageJudge } from './judge.ts';
 import { GateTokens, wmaxMs } from '../core/token.ts';
@@ -120,8 +120,10 @@ export interface IrRunInput {
   /** $inputs(H01 RunInputs와 같은 모양). */
   inputs: Record<string, unknown>;
   db: Db;
-  /** 고친 선택자 기억(core/heal-memory.ts). false면 끈다(기본 켬). */
+  /** 고친 선택자 기억(core/heal-memory.ts)·에이전트 길 기억. false면 끈다(기본 켬). */
   heal?: boolean;
+  /** 화면 보기(computer-use) 칸. false면 끈다(기본 켬, 대표 결정 2026-11-16). */
+  vision?: boolean;
   ledger: Ledger;
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
@@ -515,13 +517,13 @@ export class IrRun {
     if (i.ir.locate) {
       const port = { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: pageAiBudget };
       const screen = { page: reader, dict, act, frame: 'main', journal: i.journal };
-      agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port), ...(paths ? { paths, pkg: pkg.selectors } : {}) });
+      agent = new BrowserAgent({ ...screen, ir, scope, irreversible: analysis.irreversible, model: new GatewayAgentModel(port), ...(paths ? { paths, pkg: pkg.selectors } : {}), ...(i.vision === false ? {} : { vision: new GatewayVisionModel(port) }) });
       pageJudge = new PageJudge({
         ...screen, ir, irreversible: analysis.irreversible, model: new GatewayJudgeModel(port), agent, ...(locate ? { locate } : {}),
         lastNotice: () => act.notice, currentStep: () => curStep,
       });
     }
-    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), ...(agent && paths ? { replay: agent } : {}), journal: i.journal });
+    const fallback = new FallbackChain({ ir, dict, page: reader, irreversible: analysis.irreversible, ...(locate ? { locate } : {}), ...(pageJudge ? { judge: pageJudge } : {}), ...(heal ? { memory: heal, seeded } : {}), ...(agent && paths ? { replay: agent } : {}), ...(agent && i.vision !== false ? { vision: agent } : {}), journal: i.journal });
     const book = new VerifyBook();
     const vpol = i.portal.verify;
     const verifyDeps: VerifyDeps = {

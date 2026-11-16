@@ -39,6 +39,12 @@ export interface StuckReplay {
   replay(stepId: string): Promise<string | null>;
 }
 
+/** 화면 보기(computer-use, run/browser-agent.ts BrowserAgent.vision): 판정·에이전트까지 안 되면 사람 앞 마지막 칸. */
+export interface StuckVision {
+  visionable(stepId: string): boolean;
+  vision(stepId: string): Promise<string | null>;
+}
+
 /** 판정을 사슬보다 먼저 부를 실패(덮은 팝업 레이어가 누름을 막는 꼴). */
 const JUDGE_FIRST = new Set(['step.timeout', 'step.not_clickable']);
 
@@ -50,6 +56,8 @@ export interface FallbackDeps {
   irreversible: ReadonlySet<string>;
   locate?: LocateEnv;
   judge?: StuckJudge;
+  /** 화면 보기(가린 사진, 스텝마다 한 번). 판정·에이전트가 안 되면. */
+  vision?: StuckVision;
   /** 기억한 에이전트 길(0원). 판정·위치 찾기보다 먼저, 스텝마다 한 번. */
   replay?: StuckReplay;
   /** 고친 선택자 기억. 있으면 폴백이 고친 후보가 스텝을 통과시킬 때 남긴다. */
@@ -70,6 +78,7 @@ interface StepState {
   tried: string[];
   judgedFirst: boolean;
   replayed: boolean;
+  vision: boolean;
 }
 
 export class FallbackChain {
@@ -87,7 +96,7 @@ export class FallbackChain {
 
   /** 실행기 escalate: 이 실패를 사람에게 넘기기 전에 사슬로 보낼지. */
   eligible(s: Step, cause: string): boolean {
-    return this.healEligible(s) || this.replayEligible(s) || this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
+    return this.healEligible(s) || this.replayEligible(s) || this.visionEligible(s) || this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
   }
 
   private replayEligible(s: Step): boolean {
@@ -154,9 +163,25 @@ export class FallbackChain {
       if (j) return j;
     }
     const r = this.chainEligible(s, cause) ? await this.chain(s, st, cause) : false;
-    if (r || !judge) return r;
-    st.tried.push('judge');
-    return judge.onStuck(stepId, cause);
+    if (r) return r;
+    if (judge) {
+      st.tried.push('judge');
+      const j = await judge.onStuck(stepId, cause);
+      if (j) return j;
+    }
+    // 마지막 칸(사람 앞): 화면 보기. 스텝마다 한 번.
+    if (this.visionEligible(s)) {
+      st.vision = true;
+      st.tried.push('vision');
+      const resume = await this.d.vision!.vision(stepId);
+      this.d.journal('fallback.vision', { stepId, ok: resume !== null, code: cause });
+      if (resume) return { from: resume };
+    }
+    return false;
+  }
+
+  private visionEligible(s: Step): boolean {
+    return !!this.d.vision && !this.state(s.id).vision && this.d.vision.visionable(s.id);
   }
 
   private async chain(s: Step, st: StepState, cause: string): Promise<{ from: string } | false> {
@@ -221,7 +246,7 @@ export class FallbackChain {
 
   private state(stepId: string): StepState {
     let st = this.per.get(stepId);
-    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false }));
+    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false, vision: false }));
     return st;
   }
 }

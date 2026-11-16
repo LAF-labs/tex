@@ -123,7 +123,7 @@ export const CHAT_REPLY: ToolsetDef = {
 };
 
 /** 예상 밖 화면 판정(page_judge)과 브라우저 에이전트(browser_agent): 첫 게이트 앞에서만 엔진이 부른다. 예산은 실행당 따로 센다(AGENT_TOOLSETS). */
-export const AGENT_TOOLSETS = ['page_judge', 'browser_agent'] as const;
+export const AGENT_TOOLSETS = ['page_judge', 'browser_agent', 'computer_use'] as const;
 export const JUDGE_SITUATIONS = ['js_dialog', 'notice_popup', 'unexpected_screen', 'session_expired', 'target_missing', 'other'] as const;
 export const JUDGE_PRESCRIPTIONS = ['dismiss_dialog', 'relogin', 'reload_checkpoint', 'fix_field', 'agent_mode', 'handoff'] as const;
 export type JudgePrescription = (typeof JUDGE_PRESCRIPTIONS)[number];
@@ -180,6 +180,44 @@ export const BROWSER_AGENT: ToolsetDef = {
         step: nullable('string'),
       },
       required: ['action', 'index', 'token', 'option', 'step'],
+      additionalProperties: false,
+    },
+  },
+};
+
+/** 화면 보기(computer_use) 동작. 좌표 동작은 엔진이 그 자리의 상호작용 요소로 바꿔 같은 가드로 한다(select는 없다: 목록 이름이 필요하다). */
+export const COMPUTER_ACTIONS = ['click', 'type', 'scroll', 'wait', 'done', 'fail'] as const;
+export type ComputerActionName = (typeof COMPUTER_ACTIONS)[number];
+/** 화면 보기 한 번의 동작 상한 */
+export const COMPUTER_MAX_ACTIONS = 12;
+/** 보낼 사진 크기 상한(바이트, data URL 전체). net ModelGuard·게이트웨이·스키마가 같은 값을 본다. */
+export const MASKED_SHOT_MAX_BYTES = 900_000;
+
+/**
+ * 화면 보기 한 걸음(computer-use, 대표 결정 2026-11-16): 가린 화면 사진 한 장 + 목표·지난 동작 → 동작 하나(좌표). 도구 없음, 1턴.
+ * 브라우저 에이전트(목록)로도 안 될 때만, 첫 게이트 앞에서만 엔진이 부른다. 예산은 판정·에이전트와 같은 실행당 agent 예산이다.
+ */
+export const COMPUTER_USE: ToolsetDef = {
+  id: 'computer_use',
+  effort: 'medium',
+  maxOutputTokens: 2_000,
+  maxTurns: 1,
+  prefixKey: 'computer_use',
+  commonPrefix: false,
+  tools: [],
+  output: {
+    name: 'computer_action',
+    schema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: [...COMPUTER_ACTIONS] },
+        x: nullable('integer'),
+        y: nullable('integer'),
+        token: nullable('string'),
+        step: nullable('string'),
+        risk_flags: { type: 'array', items: { type: 'string', enum: ['irreversible_button', 'possible_injection_text'] } },
+      },
+      required: ['action', 'x', 'y', 'token', 'step', 'risk_flags'],
       additionalProperties: false,
     },
   },

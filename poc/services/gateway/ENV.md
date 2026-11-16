@@ -28,6 +28,7 @@
 | `PROVIDER_API_KEY` ⚿ | openai-compat | | 공급사 API 키 |
 | `MODEL_DECIDE` / `MODEL_RESPOND` | 예 | 모델 ID | 판정·응답 모델(클라이언트가 정하지 않는다) |
 | `MODEL_AGENT` | 아니오(`typesafe/jev-router`) | OpenRouter 모델 ID | 예상 밖 화면 판정·브라우저 에이전트(`page_judge`·`browser_agent`) 모델. 기본은 요청마다 모델·추론 강도를 고르는 라우터다. **이 두 툴셋 호출에는 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS`를 적용하지 않는다**(provider 필드 없이 보낸다, 대표 2026-11-13: 라우터 뒤쪽 공급사가 요청마다 달라 고정하면 막힌다). 보내는 글은 지금처럼 가린 요소 목록·대화상자 문구뿐이다. 다른 툴셋은 그대로 고정한다 |
+| `MODEL_VISION` | 아니오(`MODEL_AGENT`) | OpenRouter 모델 ID(이미지 입력·structured outputs 지원) | 화면 보기(`computer_use`, 대표 결정 2026-11-16) 모델. PC가 입력 칸·숫자·메일 글을 검게 가린 JPEG 한 장을 받는다. **판정·에이전트와 달리 `OPENROUTER_ZDR`·`OPENROUTER_DATA_COLLECTION`·`OPENROUTER_PROVIDERS` 고정을 그대로 건다**: 고정 목록 공급사가 이미지 입력을 받는 모델을 골라야 한다. 이미지는 이 툴셋에서만 받고 다른 툴셋의 이미지는 `400 gateway.param_rejected` |
 | `GW_MONTHLY_TOKENS` | 아니오(3,000,000) | 양의 정수(아니면 기동 거부) | 계정 월 토큰 한도(100% L2 중단, 200% 이후 안전 판정만 계정당 분당 6회) |
 | `GW_PRICES_JSON` | 아니오(0) | `{"decideIn":…,"decideOut":…,"respondIn":…,"respondOut":…}` | 마이크로 달러 / 100만 토큰. S9·계약 전에는 0 |
 | `GW_ALLOW_IMAGES` | 아니오 | `false`만 | Phase 1 이미지 입력 없음(B-18). 다른 값이면 기동 거부 |

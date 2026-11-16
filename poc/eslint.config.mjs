@@ -42,6 +42,11 @@ const REDACTED_RULES = [
   { selector: "TSAsExpression > TSTypeReference[typeName.name='RedactedText']", message: 'RedactedText는 @sax/redaction의 apply()만 만든다(D06 §8).' },
   { selector: "TSTypeAssertion > TSTypeReference[typeName.name='RedactedText']", message: 'RedactedText는 @sax/redaction의 apply()만 만든다(D06 §8).' },
 ];
+// 가린 화면 사진(computer_use, 대표 결정 2026-11-16)은 엔진 driver/reader.ts maskedShot만 만든다(가리기를 건너뛴 사진이 모델로 가지 않게).
+const MASKED_RULES = [
+  { selector: "TSAsExpression > TSTypeReference[typeName.name='MaskedShot']", message: 'MaskedShot은 엔진 driver/reader.ts maskedShot()만 만든다(가린 사진만 보낸다).' },
+  { selector: "TSTypeAssertion > TSTypeReference[typeName.name='MaskedShot']", message: 'MaskedShot은 엔진 driver/reader.ts maskedShot()만 만든다(가린 사진만 보낸다).' },
+];
 const LOAD_RE = '/^(node:)?(net|http|https|tls|dgram|dns|http2|child_process|worker_threads|undici|node-fetch|axios|ws)$/';
 const LOAD_RULES = [
   { selector: "ImportExpression[source.type!='Literal']", message: '계산된 동적 import 금지(ADR-028 결정 6). 모듈 이름은 리터럴로.' },
@@ -79,7 +84,7 @@ export default tseslint.config(
   {
     files: ['**/*.ts'],
     ignores: ['packages/redaction/**'],
-    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES] },
+    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES, ...MASKED_RULES] },
   },
   {
     // 렌더러·샌드박스 정적 스크립트(브라우저 전역), 샌드박스 preload(CommonJS 필수)
@@ -130,10 +135,20 @@ export default tseslint.config(
   },
   {
     files: ['packages/engine/**/*.ts', 'packages/model/**/*.ts', 'packages/vault/**/*.ts'],
-    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES, ...LOAD_RULES] },
+    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES, ...MASKED_RULES, ...LOAD_RULES] },
   },
   {
     files: VAULT_PORT_LISTS,
     rules: { 'no-restricted-syntax': ['error', ...REDACTED_RULES, ...LOAD_RULES] },
+  },
+  {
+    // 가린 사진을 만드는 유일한 곳(실제 가리기)과, 가짜 사진으로 경계를 시험하는 테스트
+    files: ['packages/engine/src/driver/reader.ts'],
+    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES, ...LOAD_RULES] },
+  },
+  {
+    files: ['tests/**/*.ts'],
+    ignores: ['tests/guards.test.ts', 'tests/vault-relay.test.ts', 'tests/app-smoke.ts'],
+    rules: { 'no-restricted-syntax': ['error', PORT_RULE, ...REDACTED_RULES] },
   },
 );

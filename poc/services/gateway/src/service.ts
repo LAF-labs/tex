@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import ajv2020 from 'ajv/dist/2020.js';
 import type { KeyObject } from 'node:crypto';
 import type { ValidateFunction } from 'ajv';
-import { AGENT_TOOLSETS, BROWSER_AGENT, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
+import { AGENT_TOOLSETS, BROWSER_AGENT, COMPUTER_USE, MASKED_SHOT_MAX_BYTES, CHAT_AGENT, CHAT_REPLY, PAGE_JUDGE, QUERY_PARSE, canonicalJson, selectorRepair, toolsetPrefix, type BundleCatalog, type LoadedBundle, type ToolsetDef } from '@sax/model';
 import { piiTripwire } from '@sax/net';
 import {
   b64u,
@@ -67,6 +67,7 @@ export function gatewayToolsets(): Map<string, ToolsetDef> {
     [CHAT_AGENT.id, CHAT_AGENT],
     [PAGE_JUDGE.id, PAGE_JUDGE],
     [BROWSER_AGENT.id, BROWSER_AGENT],
+    [COMPUTER_USE.id, COMPUTER_USE],
   ]);
 }
 
@@ -112,8 +113,8 @@ export interface GatewayDeps {
   tagKey: Buffer;
   /** 실행 범위 해시 키 */
   scopeKey: Buffer;
-  /** agent: 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent) 모델. 없으면 DEFAULT_AGENT_MODEL. */
-  models: { decide: string; respond: string; agent?: string };
+  /** agent: 예상 밖 화면 판정·브라우저 에이전트(page_judge·browser_agent) 모델. 없으면 DEFAULT_AGENT_MODEL. vision: 화면 보기(computer_use, 이미지 입력) 모델. 없으면 agent. */
+  models: { decide: string; respond: string; agent?: string; vision?: string };
   monthlyTokens?: number;
   prices?: Prices;
   nts: BizStatusSource;
@@ -347,7 +348,7 @@ export class GatewayService {
     if (!this.v.respond(body)) fail('gateway.param_rejected');
     const b = body as {
       toolset: string;
-      messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: string }> }>;
+      messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: string } | { type: 'input_image'; image_url: string }> }>;
       replay?: Array<{ item: Record<string, unknown>; tag: string } | { type: 'function_call_output'; call_id: string; output: string }>;
       runToken: string;
     };
@@ -355,6 +356,9 @@ export class GatewayService {
     if (hasImage(b.replay)) fail('gateway.param_rejected');
     const t = this.toolsets.get(b.toolset);
     if (!t) fail('gateway.param_rejected');
+    // 예외(대표 결정 2026-11-16): computer_use만 가린 화면 사진 한 장(PC가 입력 칸·숫자·메일 글을 검게 가린 JPEG). 다른 툴셋의 이미지는 거부.
+    const shots = b.messages.flatMap((m) => m.content.filter((c) => c.type === 'input_image'));
+    if (shots.length && (t!.id !== COMPUTER_USE.id || shots.length > 1 || shots.some((c) => c.type !== 'input_image' || c.image_url.length > MASKED_SHOT_MAX_BYTES))) fail('gateway.param_rejected');
     const rt = this.verifyRunToken(b.runToken, who);
     const replay = b.replay ?? [];
     const callIds = new Set<string>();
@@ -369,7 +373,7 @@ export class GatewayService {
       }
     }
     if (turns >= t!.maxTurns) fail('gateway.run_budget_exceeded');
-    const texts = [...b.messages.flatMap((m) => m.content.map((c) => c.text)), ...replay.flatMap((r) => ('output' in r ? [r.output] : []))];
+    const texts = [...b.messages.flatMap((m) => m.content.flatMap((c) => (c.type === 'input_text' ? [c.text] : []))), ...replay.flatMap((r) => ('output' in r ? [r.output] : []))];
     if (texts.some((x) => piiTripwire(x))) {
       this.event('pii_tripwire');
       await this.abuseHit(who.dev);
@@ -387,7 +391,7 @@ export class GatewayService {
       res = await this.withRetry(() =>
         this.d.provider.respond({
           ...(agent ? { timeoutMs: GATEWAY.agentUpstreamTimeoutMs } : {}),
-          model: agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
+          model: t!.id === COMPUTER_USE.id ? (this.d.models.vision ?? this.d.models.agent ?? DEFAULT_AGENT_MODEL) : agent ? (this.d.models.agent ?? DEFAULT_AGENT_MODEL) : this.d.models.respond,
           prefix: toolsetPrefix(t!),
           effort: t!.effort,
           maxOutputTokens: t!.maxOutputTokens,
@@ -396,7 +400,8 @@ export class GatewayService {
           input,
           cacheKey: this.cacheKey(who.acc, 't', t!.id),
           safetyId: this.safetyId(who.acc),
-          ...(agent ? { unpinned: true as const } : {}),
+          // 화면 사진(computer_use)은 판정·에이전트와 달리 ZDR·공급자 고정을 그대로 건다(사진이 글 목록보다 많이 담는다).
+          ...(agent && t!.id !== COMPUTER_USE.id ? { unpinned: true as const } : {}),
         }),
       agent ? 0 : GATEWAY.providerRetries,
       );

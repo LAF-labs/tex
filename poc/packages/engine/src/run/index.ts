@@ -6,3 +6,5 @@ export * from './ledger-port.ts';
 export * from './service-ir.ts';
 export * from './agent-path.ts';
 export * from './heal-store.ts';
+export { BrowserAgent, type BrowserAgentDeps } from './browser-agent.ts';
+export { GatewayVisionModel, type VisionModel, type VisionAction, type VisionRequest } from './agent-port.ts';

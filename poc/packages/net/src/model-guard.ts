@@ -21,8 +21,8 @@ export interface GatewayDecideBody {
 }
 
 export interface GatewayRespondBody {
-  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent';
-  messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: RedactedText }> }>;
+  toolset: 'selector_repair' | 'summarize' | 'intent_fill' | 'query_parse' | 'chat_reply' | 'chat_agent' | 'page_judge' | 'browser_agent' | 'computer_use';
+  messages: Array<{ role: 'user'; content: Array<{ type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: string }> }>;
   replay?: Array<{ item: object; tag: string } | { type: 'function_call_output'; call_id: string; output: RedactedText }>;
   runToken: string;
 }
@@ -81,7 +81,14 @@ export interface L2Usage {
 }
 
 /** 판정·에이전트 툴셋(게이트웨이 GATEWAY.agentPerRun과 같은 예산). */
-const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent']);
+const AGENT_TOOLSETS: ReadonlySet<string> = new Set(['page_judge', 'browser_agent', 'computer_use']);
+/**
+ * 화면 사진은 computer_use 툴셋의 메시지에만, 요청당 한 장, 가린 JPEG data URL로만(대표 결정 2026-11-16, B-18 예외).
+ * 상한은 @sax/model MASKED_SHOT_MAX_BYTES와 같다(tests/computer-use-guard.test.ts가 대조).
+ */
+export const SHOT_TOOLSET = 'computer_use';
+export const SHOT_MAX_BYTES = 900_000;
+const SHOT_RE = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 /** 실행당 판정·에이전트 호출 상한(에이전트 25걸음 + 판정 몇 번). */
 export const AGENT_CALLS_PER_RUN = 32;
 
@@ -106,13 +113,19 @@ function loadValidators(): NonNullable<typeof validators> {
 }
 
 function hasImage(v: unknown): boolean {
-  if (Array.isArray(v)) return v.some(hasImage);
+  return imageCount(v) > 0;
+}
+
+/** 본문 속 이미지·파일 조각 수(공급사로 실제 나갈 본문에서 센다). */
+function imageCount(v: unknown, depth = 0): number {
+  if (depth > 32) return 1;
+  if (Array.isArray(v)) return v.reduce((n: number, x) => n + imageCount(x, depth + 1), 0);
   if (v && typeof v === 'object') {
     const o = v as Record<string, unknown>;
-    if (o.type === 'input_image' || o.type === 'input_file' || 'image_url' in o) return true;
-    return Object.values(o).some(hasImage);
+    if (o.type === 'input_image' || o.type === 'input_file' || 'image_url' in o || 'file_data' in o) return 1;
+    return Object.values(o).reduce((n: number, x) => n + imageCount(x, depth + 1), 0);
   }
-  return false;
+  return 0;
 }
 
 export class ModelGuard {
@@ -188,8 +201,24 @@ export class ModelGuard {
       texts.push(b.input);
     } else {
       const b = body as GatewayRespondBody;
-      for (const m of b.messages) for (const c of m.content) texts.push(c.text);
+      let shots = 0;
+      for (const m of b.messages) {
+        for (const c of m.content) {
+          if (c.type === 'input_text') {
+            texts.push(c.text);
+            continue;
+          }
+          if (b.toolset !== SHOT_TOOLSET || typeof c.image_url !== 'string' || c.image_url.length > SHOT_MAX_BYTES || !SHOT_RE.test(c.image_url)) this.fail('image_rejected');
+          shots++;
+        }
+      }
       for (const r of b.replay ?? []) if ('output' in r) texts.push(r.output);
+      if (shots > 1 || hasImage(b.replay ?? [])) this.fail('image_rejected');
+      // 공급사로 나갈 본문의 이미지는 위에서 센 가린 사진 그 장뿐이어야 한다.
+      if (imageCount(providerBody) !== shots) this.fail('image_rejected');
+      if (texts.some(piiTripwire)) this.fail('pii_tripwire');
+      if (!texts.every(wasMinted)) this.fail('unminted_text');
+      return;
     }
     if (hasImage(providerBody)) this.fail('image_rejected');
     if (texts.some(piiTripwire)) this.fail('pii_tripwire');
