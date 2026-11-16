@@ -932,6 +932,8 @@ export class ShellRuns extends EventEmitter implements Drafts {
     const r = this.mustDraft(id);
     // 품목이 비면 엔진이 시작하지 않는다(item_missing). 카드를 끝내지 않고 그대로 두고 품목을 넣게 한다.
     if (!cleanItem(r.item)) throw new Error('item_required');
+    // 합계 0원은 준비하지 않는다(대표 결정 2026-11-16). 카드의 금액을 고치게 한다.
+    if (!(r.supply + r.tax > 0)) throw new Error('amount_zero');
     // 받는 이메일은 홈택스에 아이디·도메인 두 칸으로 들어간다(H-01 2.2.0). 모양이 틀린 장부 값은 시작하지 않고 고치게 한다.
     if (!emailOk(r.email.value)) throw new Error('bad_email');
     if (this.busy()) throw new Error('busy');

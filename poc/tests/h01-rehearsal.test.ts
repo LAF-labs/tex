@@ -51,6 +51,14 @@ describe('H-01 리허설: 고쳐야 했던 모습(고친 뒤 통과, todo 뗌)',
     assert.equal(u.item, '사무용품');
   });
 
+  it('합계 0원 초안은 [홈택스에서 준비]를 받지 않고, 금액을 고치면 준비할 수 있다', async () => {
+    const runs = new ShellRuns(new FakeHost(), { counterparties: () => [NO_ITEM], auth: () => '' });
+    const d = runs.createDraft(NO_ITEM, 0, null, '사무용품');
+    await assert.rejects(runs.prepare(d.id), /amount_zero/);
+    const u = runs.updateDraft(d.id, { amount: 550_000 });
+    assert.equal(u.supply + u.tax > 0, true);
+  });
+
   it('F-01 item_missing 문구는 다음 할 일(거래처의 저장 품목)을 말한다', () => {
     assert.match(NOTE.item_missing!, /거래처|저장 품목|품목을 (넣|적)/);
   });

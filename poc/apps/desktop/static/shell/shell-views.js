@@ -307,6 +307,8 @@ export function taskCard(run, act) {
 
   if (st === 'draft') {
     const noItem = !String(run.item ?? '').trim();
+    // 합계 0원은 준비를 막는다(대표 결정 2026-11-16). 금액을 누르면 고친다. main prepare도 amount_zero로 거부한다.
+    const noAmount = !(Number(run.total) > 0);
     // v2.0 작성 카드: 값은 글자로 보이고, 누르면 그 자리에서 고친다(단추 네 개로 폼을 여는 대신). 부가세는 두 칸 전환.
     // 대화로 "부가세 포함으로", "품목은 유지보수"라고 말해도 같은 값을 바꾼다. 품목이 비면 [홈택스에서 준비]를 막는다(엔진 item_missing).
     // 고친 값이 거절되면 고치던 칸 아래에 까닭을 둔다. 칸이 정해지지 않은 까닭만 표 아래 한 줄.
@@ -375,7 +377,7 @@ export function taskCard(run, act) {
       h(
         'div',
         { class: 'sx-amount', 'data-draft-amount': '' },
-        valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: 'is-total' }),
+        valBtn('금액', `${num(run.total)}원`, () => act.editAmount(run.id), { act: 'amount-edit', cls: noAmount ? 'is-total is-missing' : 'is-total' }),
         h('span', { class: 'sx-amount-split' }, `공급가 ${num(run.supply)} + 세액 ${num(run.tax)}`),
       ),
     );
@@ -389,10 +391,10 @@ export function taskCard(run, act) {
         : h(
             'div',
             { class: 'sx-actions' },
-            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem }),
+            btn('홈택스에서 준비', () => act.prepare(run.id), 'sx-btn-primary', { 'data-act': 'prepare', disabled: noItem || noAmount }),
             btn('취소', () => act.stop(run.id), 'sx-btn-quiet', { 'data-act': 'cancel' }),
           ),
-      editing ? null : h('div', { class: 'sx-meta' }, noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),
+      editing ? null : h('div', { class: 'sx-meta' }, noAmount ? '합계가 0원이에요. 금액을 눌러 고치면 준비할 수 있어요.' : noItem ? '품목을 넣으면 준비할 수 있어요.' : '값을 누르면 고칠 수 있어요 · 아직 아무것도 보내지 않았어요'),
     );
   } else if (st === 'preparing') {
     // v2.0(H3): 머리 한 줄(지금 단계) + 조용한 [중지]. "승인 전에는 발급하지 않아요"는 패널에 있다.
