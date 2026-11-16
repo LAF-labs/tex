@@ -21,7 +21,7 @@ export const ONB_CHOICES = {
   welcome: ['upload', 'number', 'later'],
   'biz-number': ['submit', 'back'],
   'biz-confirm': ['confirm', 'confirm_unverified', 'edit', 'recheck', 'later'],
-  auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later'],
+  auth: ['card', 'simple', 'cert', 'fincert', 'unsure', 'later', 'rescan'],
   delegation: ['agree', 'switch'],
   // ② 모델 처리 동의는 필수다(약관과 같은 취급, 사용자 결정 2026-11-10 "오프라인 해석은 없다"). 거절 선택지는 없다.
   model: ['agree'],
@@ -644,6 +644,11 @@ export class OnboardingFlow {
         await this.afterBiz(false);
         return;
       case 'auth':
+        // 인증서를 이 PC로 옮긴 뒤 [다시 찾기]: 목록만 다시 읽는다(대화에 답을 남기지 않는다, 단계도 그대로)
+        if (a.choice === 'rescan') {
+          s.certs = await this.ports.findCerts().catch(() => s.certs);
+          return;
+        }
         if (a.choice === 'unsure') {
           // 모르면 공동인증서(대표 지시 2026-11-14): 이 PC 인증서가 있으면 첫 사용 가능 인증서로 정하고 넘어간다
           this.say('잘 모르겠어요');

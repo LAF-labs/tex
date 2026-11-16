@@ -100,12 +100,21 @@ export interface DecideResult {
 }
 
 /** /v1/respond 툴셋 id 표. gateway-request 스키마 두 벌의 toolset 열거와 같아야 한다(tests/chat-agent-toolset.test.ts가 대조). */
-export const TOOLSET_IDS = ['selector_repair', 'summarize', 'intent_fill', 'query_parse', 'chat_reply', 'chat_agent', 'page_judge', 'browser_agent'] as const;
+export const TOOLSET_IDS = ['selector_repair', 'summarize', 'intent_fill', 'query_parse', 'chat_reply', 'chat_agent', 'page_judge', 'browser_agent', 'computer_use'] as const;
 export type Toolset = (typeof TOOLSET_IDS)[number];
+
+declare const MASKED_SHOT: unique symbol;
+/**
+ * 가린 화면 사진(computer_use 툴셋만, 대표 결정 2026-11-16 "computer-use 칸 추가"): `data:image/jpeg;base64,…`.
+ * 엔진 PlaywrightPageReader.maskedShot만 만든다(입력 칸·숫자·메일 글을 검게 가린 JPEG). 다른 툴셋에는 넣을 수 없다(net ModelGuard·게이트웨이가 막는다).
+ */
+export type MaskedShot = string & { readonly [MASKED_SHOT]: true };
+
+export type RedactedContent = { type: 'input_text'; text: RedactedText } | { type: 'input_image'; image_url: MaskedShot };
 
 export interface RedactedMessage {
   role: 'user';
-  content: Array<{ type: 'input_text'; text: RedactedText }>;
+  content: RedactedContent[];
 }
 
 /** 어댑터가 태그를 붙여 돌려준 모델 출력 항목. 직접 만들 수 없다(replay 브랜드). */

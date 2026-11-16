@@ -11,7 +11,7 @@ import { createBankScreen } from './shell-bank.js';
 import { createPackScreen } from './shell-pack.js';
 import { identityIn } from './password-rules.js';
 import { bizDigits, bizNoInput, checkFields, dateInput, emailInput, field, fieldError, keys, LIMITS, secretInput, selectInput, textInput } from './fields.js';
-import { agoText, batchCard, btn, CHIP, emptyState, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
+import { agoText, batchCard, btn, CHIP, emptyState, noteGroup, CHROME_GUIDE_TEXT, securityBox, NO_FILE_TEXT, chip, dayLabel, dday, docCard, docPanel, expiryTag, fmtBiz, h, icon, kv, note, num, pastCard, replyOptions, runPanel, runSteps, runTitle, steps, browserPane, browserTabTitle, browserUrlParts, summaryCard, taskCard, modelRow, serverRow, modelCell, whereRows } from './shell-views.js';
 
 const call = (m, p) => window.sax.call(m, p);
 const localDate = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -30,6 +30,8 @@ const state = {
   g24: new Map(),
   docs: [],
   cps: [],
+  // 레일 화면 목록을 다시 읽는 중('loading')·못 읽음('error'). 목록이 비었을 때만 화면에 보인다(있던 목록은 그대로 둔다).
+  load: { cps: null, docs: null },
   panel: null, // { kind: 'run'|'g24'|'doc'|'cp'|'act', id }
   menu: false, // 제목줄 프로필 메뉴
   editing: null,
@@ -1495,7 +1497,7 @@ function docsView() {
       ? null
       : state.docs.length || f !== 'all'
         ? emptyState('조건에 맞는 서류가 없어요.', null, f === 'all' ? null : btn('전체 보기', () => ((state.docFilter = 'all'), render()), '', { 'data-act': 'doc-filter-all' }))
-        : emptyState('아직 서류가 없어요.', '대화에서 "사업자등록증명 떼 줘"처럼 말하거나, 받아 둔 PDF를 가져오면 여기에 모여요.', btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), 'sx-btn-primary', { 'data-act': 'doc-import', disabled: state.docBusy })),
+        : loadState('docs', '서류 목록', () => void loadDocs()) ?? emptyState('아직 서류가 없어요.', '대화에서 "사업자등록증명 떼 줘"처럼 말하거나, 받아 둔 PDF를 가져오면 여기에 모여요.', btn(state.docBusy ? '읽는 중…' : 'PDF 가져오기', () => importDoc({ pick: true }), 'sx-btn-primary', { 'data-act': 'doc-import', disabled: state.docBusy })),
   );
 }
 
@@ -1526,7 +1528,7 @@ function cpsView() {
           h('td', { class: c.lastIssuedOn?.startsWith(month) ? null : 'is-none' }, c.lastIssuedOn?.startsWith(month) ? '발급함' : '—'),
         ),
       ),
-    ) : emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호·대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
+    ) : loadState('cps', '거래처 목록', () => void loadCps()) ?? emptyState('아직 거래처가 없어요.', '세금계산서를 보낼 곳의 사업자번호만 있으면 상호·대표자는 홈택스에서 채워요.', btn('거래처 추가', () => openPanel({ kind: 'cp-edit', id: null }), 'sx-btn-primary', { 'data-act': 'cp-add' })),
     state.cps.length ? h('p', { class: 'sx-meta rs-foot' }, '사업자번호는 발급할 때마다 홈택스에서 다시 확인해요.') : null,
   );
 }
@@ -1849,8 +1851,8 @@ function activityPanel(row) {
       r?.result ? ['승인번호', r.result.approvalNo, { mono: true }] : row.past?.approvalNo ? ['승인번호', row.past.approvalNo, { mono: true, copy: () => act.copy(row.past.approvalNo) }] : null,
       row.past?.total != null ? ['합계', `${num(row.past.total)}원 (공급가액 ${num(row.past.supply)} + 세액 ${num(row.past.tax)})`] : null,
     ]),
-    r?.stoppedNote ? note(r.stoppedNote, r.status === 'attention') : null,
-    row.past?.note ? note(row.past.note, row.past.kind === 'unsure') : null,
+    // 멈춘 까닭과 지난 기록 메모가 함께 있어도 면은 하나(둘 중 하나라도 확인 필요면 주의 면)
+    noteGroup([r?.stoppedNote, row.past?.note], r?.status === 'attention' || row.past?.kind === 'unsure'),
     row.past?.kind === 'issued'
       ? row.past.documentId
         ? h('div', { class: 'sx-actions' }, btn('PDF 열기', () => act.openDoc(row.past.documentId), '', { 'data-act': 'past-pdf' }))
@@ -2284,6 +2286,42 @@ const bankUi = createBankScreen({ call, toast: (t) => toast(t), rerender: () => 
 const packUi = createPackScreen({ call, toast: (t) => toast(t), rerender: () => state.view === 'bundle' && render(), errText: (e) => errText(e), today: () => localDate(state.today), railHead, listTable });
 const VIEWS = { bank: () => bankUi.view(), docs: docsView, cps: cpsView, biz: bizView, bundle: () => packUi.view(), card: laterView('card'), payroll: laterView('payroll'), activity: activityView, settings: settingsView };
 
+/** 거래처 목록 다시 읽기. 실패하면 있던 목록은 두고 알림, 목록이 비었으면 화면에 [다시 시도] */
+async function loadCps() {
+  state.load.cps = 'loading';
+  try {
+    state.cps = await call('counterparties.list');
+    state.load.cps = null;
+  } catch (e) {
+    state.load.cps = 'error';
+    if (state.cps.length) toast(human(e));
+  }
+  if (state.view === 'cps' || state.view === 'bank') render();
+}
+/** 문서함 목록 다시 읽기(보관함). 가져오기·확인으로 바뀐 뒤 보낸 응답이 아니면 버린다 */
+async function loadDocs() {
+  const rev = state.docsRev;
+  state.load.docs = 'loading';
+  try {
+    const docs = await call('docs.list');
+    state.load.docs = null;
+    if (rev !== state.docsRev) return;
+    state.docs = docs;
+  } catch (e) {
+    state.load.docs = 'error';
+    // 있던 목록은 그대로 두고 알린다(거래처와 같다). 목록이 비었으면 화면 가운데 [다시 시도]
+    if (state.docs.length && state.view === 'docs') toast(human(e));
+  }
+  if (state.view === 'docs') render();
+}
+/** 목록이 비었을 때 불러오는 중·못 불러옴 자리. 아니면 null(빈 상태를 그대로 그린다) */
+const loadState = (k, what, retry) =>
+  state.load[k] === 'loading'
+    ? emptyState('불러오는 중이에요', null, null, { 'data-load': k, 'aria-busy': 'true' })
+    : state.load[k] === 'error'
+      ? emptyState(`${what}을 불러오지 못했어요`, '이 PC의 앱 엔진이 잠시 답하지 않았어요. 넣어 둔 내용은 그대로예요.', btn('다시 시도', retry, 'sx-btn-primary', { 'data-act': `${k}-retry` }), { 'data-load': `${k}-error`, role: 'alert' })
+      : null;
+
 async function go(v) {
   // 내 사업장은 설정의 첫 항목이다(v2.0). 예전 길(go('biz'): 할 일·온보딩)은 그 자리로 간다.
   if (v === 'biz') {
@@ -2296,15 +2334,11 @@ async function go(v) {
   // 패널은 그 화면의 것만 남긴다(대화: 작업, 문서함: 서류, 거래처: 거래처, 활동 기록: 기록).
   const own = { chat: ['run', 'g24', 'board'], docs: ['doc'], cps: ['cp', 'cp-edit'], activity: ['act'] }[v] ?? [];
   if (state.panel && !own.includes(state.panel.kind)) openPanel(null);
-  // 불러오기가 실패해도 화면은 그린다(전에는 render 전에 던져서 그 화면에 갇혔다: 다시 눌러도 state.view === v라 돌아갔다).
-  try {
-    if (v === 'cps') state.cps = await call('counterparties.list');
-    if (v === 'bank') {
-      state.cps = await call('counterparties.list');
-      await bankUi.load();
-    }
-  } catch (e) {
-    toast(human(e));
+  // 화면은 곧바로 그리고(불러오는 동안 빈 화면에 갇히지 않게), 불러오면 다시 그린다. 실패해도 화면은 남고, 목록이 비었으면 [다시 시도]가 있다.
+  if (v === 'cps' || v === 'bank') {
+    render();
+    await loadCps();
+    if (v === 'bank') await bankUi.load();
   }
   if (v === 'settings' && state.setTab === 'auth') void loadCertMemory();
   if (v === 'bundle') void packUi.load();
@@ -2317,14 +2351,7 @@ async function go(v) {
         if (state.view === 'docs') render();
       })
       .catch(() => {});
-    const rev = state.docsRev;
-    call('docs.list')
-      .then((docs) => {
-        if (rev !== state.docsRev) return;
-        state.docs = docs;
-        if (state.view === 'docs') render();
-      })
-      .catch(() => {});
+    void loadDocs();
   }
   if (v === 'chat') {
     const r = [...state.runs.values()].find((x) => ['turn', 'waiting', 'preparing', 'issuing'].includes(x.status));
@@ -2593,7 +2620,7 @@ function docReview(doc) {
       ['발급번호', v.docNo, { mono: true }],
       ['읽은 곳', src],
     ]),
-    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r] || r).join(' · ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
+    v.needsUser ? note(v.reasons.map((r) => DOC_REASON[r]).filter(Boolean).join(' · ') || '값을 확인해 주세요', true, 'PDF를 열어 값을 맞춰 보고 확인을 눌러 주세요.') : null,
     !v.needsUser && v.subjectMismatch ? note('내 사업장과 사업자번호가 다른 서류예요(확인함).') : null,
     h(
       'div',

@@ -7,6 +7,14 @@ import type { ElementHandle, Frame, Locator, Page, Request } from 'playwright-co
 import { INTERACTIVE_ROLES, type ElementInfo, type ElementRef, type ElementShape, type InteractiveElement, type PageReader } from '../core/page.ts';
 import type { Candidate } from '../core/types.ts';
 import { ariaValue } from './aria-tree.ts';
+import type { MaskedShot } from '@sax/model';
+
+/** 화면 보기 사진: 가리는 것(모든 프레임). 입력 칸 전부, 숫자 두 자 이상·@가 든 가장 작은 글 요소. */
+const SHOT_MASK_CSS = 'input, textarea, select, [contenteditable=""], [contenteditable="true"]';
+const SHOT_MASK_TEXT = [/[0-9０-９]{2,}/, /[@＠]/];
+/** JPEG 품질·크기 상한(@sax/model MASKED_SHOT_MAX_BYTES와 같은 값). 넘으면 품질을 낮춰 한 번 더, 그래도 넘으면 null. */
+const SHOT_QUALITY = [55, 35] as const;
+const SHOT_MAX_BYTES = 900_000;
 
 /** 진단 영역에서 모으는 요소(입력·단추·링크·label·역할 있는 것). */
 const REGION_SEL = 'input,select,textarea,button,a[href],label,[role=button],[role=textbox],[role=combobox],[role=checkbox],[role=radio],[role=link],[role=dialog]';
@@ -258,6 +266,34 @@ export class PlaywrightPageReader implements PageReader {
       await h.dispose().catch(() => {});
     }
     return out;
+  }
+
+  /**
+   * 가린 화면 사진(computer_use). Playwright mask로 찍어 원본(가리지 않은 사진)은 엔진 메모리에도 남지 않는다.
+   * 금고 중계가 비밀 창이 열렸거나 오염된 탭의 Page.captureScreenshot을 거부하면 예외 → null.
+   */
+  async maskedShot(): Promise<{ url: MaskedShot; width: number; height: number } | null> {
+    const vp = this.page.viewportSize() ?? (await this.page.evaluate(() => ({ width: window.innerWidth, height: window.innerHeight })).catch(() => null));
+    if (!vp) return null;
+    const mask: Locator[] = [];
+    for (const f of this.page.frames()) {
+      mask.push(f.locator(SHOT_MASK_CSS));
+      for (const re of SHOT_MASK_TEXT) mask.push(f.getByText(re));
+    }
+    for (const quality of SHOT_QUALITY) {
+      const buf = await this.page
+        .screenshot({ type: 'jpeg', quality, mask, maskColor: '#000000', animations: 'disabled', caret: 'hide', scale: 'css', timeout: this.timeoutMs * 3 })
+        .catch(() => null);
+      if (!buf) return null;
+      const url = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      if (url.length <= SHOT_MAX_BYTES) return { url: url as MaskedShot, width: vp.width, height: vp.height };
+    }
+    return null;
+  }
+
+  async box(el: ElementRef): Promise<{ x: number; y: number; width: number; height: number } | null> {
+    const h = this.handle(el);
+    return h ? h.boundingBox().catch(() => null) : null;
   }
 
   frameNames(): string[] {

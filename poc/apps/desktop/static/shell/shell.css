@@ -160,7 +160,7 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 /* 굳지 않는 줄: 여러 개 고르기(맡길 업무)에서 켠 줄은 실선 + 체크, 폼·목록을 펼친 줄은 실선이다. 다시 누를 수 있다. */
 .sx-reply[aria-pressed='true'] { border: 1.5px solid var(--ink); }
 .sx-reply[aria-expanded='true'] { border-style: solid; }
-.onb-scope { margin-top: var(--space-3); padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.onb-scope { margin-top: var(--space-4); }
 .onb-sub { font-size: 13px; font-weight: 500; color: var(--ink-2); }
 
 .quick-zone { flex: none; padding-bottom: var(--space-2); }
@@ -458,6 +458,15 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .rail-screen .cp-form, .rail-screen .cp-field { max-width: 420px; }
 /* 알림 줄의 단추: 글은 남는 폭을 쓰고 단추는 줄 가운데에 */
 .sx-note > div { flex: 1; min-width: 0; }
+/* 주의·안내 면 안: 제목(13/600) · 본문(13) · 단추 줄. 한 카드에 주의 면은 하나, 단추가 없는 막다른 안내는 두지 않는다(v2.0). */
+.sx-note-body { display: grid; gap: 2px; }
+.sx-note-body p { margin: 0; }
+.sx-note-title { font-weight: 600; }
+.sx-note-body > .sx-actions { margin-top: var(--space-2); }
+.sx-note[hidden] { display: none; }
+/* 주의 면 위 보조 단추는 채움 없이 글자만(canvas 알약은 다크에서 주의 면에 묻힌다). 주 단추는 그대로 */
+.sx-note.is-attention .sx-btn:not(.sx-btn-primary):not(.sx-btn-approve) { background: transparent; color: var(--ink); padding: 0 10px; }
+.sx-note.is-attention .sx-btn:not(.sx-btn-primary):not(.sx-btn-approve):hover { background: var(--canvas); }
 .sx-note > .sx-btn { margin: -6px 0; flex: none; }
 .bank-form { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: var(--space-2); }
 .bank-form input, .bank-form select { height: 32px; padding: 0 10px; border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-md); background: var(--canvas); color: var(--ink); font: inherit; font-size: 13px; }
@@ -465,7 +474,14 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .bank-detail, .bank-review > .sx-card { margin-top: var(--space-3); }
 .bank-allocs, .bank-attach, .bank-events, .bank-cands { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .bank-allocs li, .bank-attach li, .bank-events li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 13px; }
-.bank-cands li { border-top: 1px solid var(--line); padding-top: var(--space-2); }
+/* 후보 줄은 선으로 나누지 않고(v2.0 선 대신 면) 카드 면 위 canvas 면으로 둔다 */
+.bank-cands li { display: grid; gap: var(--space-2); padding: var(--space-3); border-radius: var(--radius-md); background: var(--canvas); }
+.bank-cands li .sx-actions { margin-top: 2px; }
+.bank-detail h2.sx-card-title, .bank-txn-hd h2.sx-card-title { margin: 0; }
+.bank-txn-hd { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.bank-tab { display: grid; gap: var(--space-3); }
+.bank-pick { margin-top: 0; max-width: none; }
+.sx-card .bank-pick .sx-reply:not(.is-picked) { background: var(--canvas); }
 .bank-cols th select { margin-top: 4px; max-width: 120px; }
 td.is-attention { color: var(--attention); font-weight: 600; }
 .bank-link { display: inline-flex; align-items: center; gap: 5px; margin-right: var(--space-2); color: var(--ink-3); font-size: 12px; }

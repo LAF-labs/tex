@@ -1,4 +1,5 @@
 // 폴백 사슬(부장 지시 2026-11-13): 되돌릴 수 있는 스텝이 실패하면 사람에게 넘기기 전에 이 순서로 간다.
+//   0. 고친 선택자 기억(core/heal-memory.ts, 2026-11-16): 실행 시작 때 앞 실행이 고친 선택자를 첫 후보로 둔다. 그 후보로 실패하면 버리고 패키지 후보로 바로 다시 돈다(0원).
 //   1. 패키지 recovery 재시도(실행기가 이미 한다: effectiveOnFail.retry, 정책 stepMax 상한)
 //   2. 패키지의 role·label 후보로 다시 찾기(css 건너뜀, 모델 없음, core/locate.ts refindWithoutCss)
 //   3. AI 위치 찾기(게이트웨이 selector_repair, core/locate.ts locateTarget, 스텝당 모델 2번)
@@ -9,6 +10,7 @@
 // 쓰는 곳: fill·click·select·wait 중 비가역 스텝이 아니고 대상 항목이 commits·비밀 칸·비밀번호 칸이 아닌 것. 제출·서명·게이트·checkpoint는 타입에서 빠진다.
 // 2·3단계가 찾은 선택자는 실행 사본 사전의 그 항목 첫 후보로 남는다(GuardedActuator R-A1 재확인도 같은 후보를 본다). 되읽기가 틀리면 빼고 다음 단계로 간다.
 import { flatten } from './cfg.ts';
+import { targetOf, type HealMemory } from './heal-memory.ts';
 import { dropFirstCandidate, locatable, locateTarget, refindWithoutCss, type LocateEnv } from './locate.ts';
 import type { PageReader } from './page.ts';
 import type { PlaybookIR, SelectorDict, Step } from './types.ts';
@@ -31,6 +33,18 @@ export interface StuckJudge {
   onStuck(stepId: string, cause: string): Promise<{ from: string } | false>;
 }
 
+/** 기억한 에이전트 길 다시 걷기(run/browser-agent.ts BrowserAgent.replay, 0원). */
+export interface StuckReplay {
+  replayable(stepId: string): boolean;
+  replay(stepId: string): Promise<string | null>;
+}
+
+/** 화면 보기(computer-use, run/browser-agent.ts BrowserAgent.vision): 판정·에이전트까지 안 되면 사람 앞 마지막 칸. */
+export interface StuckVision {
+  visionable(stepId: string): boolean;
+  vision(stepId: string): Promise<string | null>;
+}
+
 /** 판정을 사슬보다 먼저 부를 실패(덮은 팝업 레이어가 누름을 막는 꼴). */
 const JUDGE_FIRST = new Set(['step.timeout', 'step.not_clickable']);
 
@@ -42,6 +56,14 @@ export interface FallbackDeps {
   irreversible: ReadonlySet<string>;
   locate?: LocateEnv;
   judge?: StuckJudge;
+  /** 화면 보기(가린 사진, 스텝마다 한 번). 판정·에이전트가 안 되면. */
+  vision?: StuckVision;
+  /** 기억한 에이전트 길(0원). 판정·위치 찾기보다 먼저, 스텝마다 한 번. */
+  replay?: StuckReplay;
+  /** 고친 선택자 기억. 있으면 폴백이 고친 후보가 스텝을 통과시킬 때 남긴다. */
+  memory?: HealMemory;
+  /** 실행 시작 때 기억으로 첫 후보를 둔 항목(HealMemory.seed 결과). */
+  seeded?: Map<string, string>;
   journal: (type: string, payload?: Record<string, string | number | boolean>) => void;
 }
 
@@ -51,16 +73,13 @@ interface StepState {
   rejected: string[];
   /** 폴백이 사전에 넣은 맨 앞 후보(되읽기가 틀리면 뺀다). */
   added: string | null;
+  /** added를 찾은 단계(refind·locate) */
+  via: string | null;
   tried: string[];
   judgedFirst: boolean;
-}
-
-/** 스텝의 대상 셀렉터 키(fill·click·select는 target, wait는 for:selector의 value). */
-function targetOf(s: Step): string | null {
-  const x = s as Step & { target?: unknown; for?: unknown; value?: unknown };
-  if (typeof x.target === 'string') return x.target;
-  if (s.type === 'wait' && x.for === 'selector' && typeof x.value === 'string') return x.value;
-  return null;
+  replayed: boolean;
+  vision: boolean;
+  healDropped: boolean;
 }
 
 export class FallbackChain {
@@ -78,7 +97,45 @@ export class FallbackChain {
 
   /** 실행기 escalate: 이 실패를 사람에게 넘기기 전에 사슬로 보낼지. */
   eligible(s: Step, cause: string): boolean {
-    return this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
+    return this.healEligible(s) || this.replayEligible(s) || this.visionEligible(s) || this.chainEligible(s, cause) || !!this.d.judge?.eligible(s, cause);
+  }
+
+  private replayEligible(s: Step): boolean {
+    return !!this.d.replay && !this.state(s.id).replayed && this.d.replay.replayable(s.id);
+  }
+
+  /** 실행기 fastEscalate: 0원 칸(기억한 선택자 버리기·기억한 길 다시 걷기)이 있으면 재시도를 기다리지 않는다. */
+  fastEscalate(s: Step, _cause: string): boolean {
+    return this.healEligible(s) || this.replayEligible(s);
+  }
+
+  /** 기억으로 첫 후보를 둔 항목을 겨누는 되돌릴 수 있는 스텝(어떤 실패든 기억을 먼저 버려 본다). */
+  private healEligible(s: Step): boolean {
+    const key = targetOf(s);
+    return key !== null && !!this.d.seeded?.has(key) && TYPES.has(s.type) && !this.d.irreversible.has(s.id);
+  }
+
+  /**
+   * 실행기 step.finished(코드 없음): 이 스텝을 폴백이 고친 후보로 통과했으면 기억한다.
+   * 같은 항목을 겨누는 뒤 스텝이 있어도 한 번 통과로 충분하다(같은 실행 사본 항목이다).
+   */
+  confirmed(stepId: string): void {
+    const st = this.per.get(stepId);
+    const s = this.info.get(stepId)?.step;
+    if (!st || !s || !this.d.memory) return;
+    if (!st.added) {
+      // 기억한 후보를 버린 뒤 패키지 후보로 통과했다: 그 기억은 필요 없다.
+      const k = targetOf(s);
+      if (st.healDropped && k) this.d.memory.forget(k, 'package_ok');
+      st.healDropped = false;
+      return;
+    }
+    st.healDropped = false;
+    const key = targetOf(s);
+    const e = key ? this.d.dict.entries[key] : undefined;
+    if (!key || !e) return;
+    this.d.memory.remember(key, e, st.via ?? 'fallback');
+    st.added = null;
   }
 
   private chainEligible(s: Step, cause: string): boolean {
@@ -93,6 +150,26 @@ export class FallbackChain {
     const s = this.info.get(stepId)?.step;
     if (!s) return false;
     const st = this.state(stepId);
+    // 0단계: 기억한 후보로 실패했다. 버리고(다음 실행에도 안 쓴다) 패키지 후보로 그 스텝을 다시 돈다.
+    const hk = targetOf(s);
+    if (hk !== null && this.healEligible(s)) {
+      const sel = this.d.seeded!.get(hk)!;
+      this.d.seeded!.delete(hk);
+      dropFirstCandidate(this.d.dict, hk);
+      // 저장소에서는 아직 지우지 않는다(화면이 늦어 실패했을 수도 있다). 패키지 후보로 통과하면 그때 지우고, 폴백이 새로 고치면 덮어쓴다.
+      st.healDropped = true;
+      st.tried.push('heal');
+      this.d.journal('fallback.heal_dropped', { stepId, key: hk, selector: sel, code: cause });
+      return { from: stepId };
+    }
+    // 0.5단계: 같은 스텝을 앞 실행에서 에이전트가 넘겼던 길이 있으면 모델 없이 다시 걷는다(스텝마다 한 번).
+    if (this.replayEligible(s)) {
+      st.replayed = true;
+      st.tried.push('replay');
+      const resume = await this.d.replay!.replay(stepId);
+      this.d.journal('fallback.replay', { stepId, ok: resume !== null, code: cause });
+      if (resume) return { from: resume };
+    }
     const judge = this.d.judge?.eligible(s, cause) ? this.d.judge : null;
     if (judge && s.type === 'click' && JUDGE_FIRST.has(cause) && !st.judgedFirst) {
       st.judgedFirst = true;
@@ -101,9 +178,25 @@ export class FallbackChain {
       if (j) return j;
     }
     const r = this.chainEligible(s, cause) ? await this.chain(s, st, cause) : false;
-    if (r || !judge) return r;
-    st.tried.push('judge');
-    return judge.onStuck(stepId, cause);
+    if (r) return r;
+    if (judge) {
+      st.tried.push('judge');
+      const j = await judge.onStuck(stepId, cause);
+      if (j) return j;
+    }
+    // 마지막 칸(사람 앞): 화면 보기. 스텝마다 한 번.
+    if (this.visionEligible(s)) {
+      st.vision = true;
+      st.tried.push('vision');
+      const resume = await this.d.vision!.vision(stepId);
+      this.d.journal('fallback.vision', { stepId, ok: resume !== null, code: cause });
+      if (resume) return { from: resume };
+    }
+    return false;
+  }
+
+  private visionEligible(s: Step): boolean {
+    return !!this.d.vision && !this.state(s.id).vision && this.d.vision.visionable(s.id);
   }
 
   private async chain(s: Step, st: StepState, cause: string): Promise<{ from: string } | false> {
@@ -127,6 +220,7 @@ export class FallbackChain {
         this.d.journal('fallback.refind', { stepId, key, found: !!r, ...(r ? { selector: r.selector } : {}) });
         if (r) {
           st.added = r.selector;
+          st.via = 'refind';
           return { from: stepId };
         }
       }
@@ -136,6 +230,7 @@ export class FallbackChain {
         const r = await locateTarget({ page: this.d.page, dict: this.d.dict, loc: this.d.locate, stepId, key, purpose, rejected: st.rejected, calls: st.calls });
         if (r) {
           st.added = r.selector;
+          st.via = 'locate';
           return { from: stepId };
         }
       }
@@ -166,7 +261,7 @@ export class FallbackChain {
 
   private state(stepId: string): StepState {
     let st = this.per.get(stepId);
-    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, tried: [], judgedFirst: false }));
+    if (!st) this.per.set(stepId, (st = { refind: false, calls: { n: 0 }, rejected: [], added: null, via: null, tried: [], judgedFirst: false, replayed: false, vision: false, healDropped: false }));
     return st;
   }
 }

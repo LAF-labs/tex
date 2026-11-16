@@ -110,7 +110,8 @@ export function createBankAuto(ctx) {
 
   async function load() {
     const r = await ask('bankAuto.status');
-    go({ status: r.ok ? r : null, step: r.ok && r.connected ? 'connected' : 'idle' });
+    // 상태를 못 읽었는데 '연결 안 됨'으로 보이면 이미 연결한 사장님이 다시 연결하게 된다. 못 읽었다고 말하고 [다시 시도]를 둔다.
+    go({ status: r.ok ? r : null, step: r.ok ? (r.connected ? 'connected' : 'idle') : 'loadfail' });
   }
   async function agree() {
     if (!CONSENT_CHECKS.every(([k]) => s.checks[k])) return;
@@ -177,7 +178,14 @@ export function createBankAuto(ctx) {
     const body = (() => {
       switch (s.step) {
         case 'loading':
-          return h('div', { class: 'empty', 'data-bank-auto': 'loading' }, '불러오는 중…');
+          return h('div', { class: 'empty', 'data-bank-auto': 'loading', 'aria-busy': 'true' }, '불러오는 중이에요');
+        case 'loadfail':
+          return h(
+            'div',
+            { class: 'sx-card', 'data-bank-auto': 'loadfail', role: 'alert' },
+            h('p', { class: 'sx-body-sm' }, '계좌 연결 상태를 불러오지 못했어요. 이 PC의 앱 엔진이 잠시 답하지 않았어요.'),
+            h('div', { class: 'sx-actions' }, btn('다시 시도', () => (go({ step: 'loading' }), void load()), 'sx-btn-primary', { 'data-bank-auto-retry': '' }), fileLink()),
+          );
         case 'idle':
           s.checks = {};
           return h(
