@@ -167,11 +167,11 @@ export class GatewayLocateModel implements LocateModel {
 }
 
 /**
- * 결정 모델 고르기를 받는 기준(typesafe/jev-1.14, 칸 고르기 평가 2026-11-16): jev는 맞을 때 p 0.52~0.76이고, 모를 때는 다른 번호가 아니라
- * none을 골랐다(12번 중 틀린 4번이 모두 none). 그래서 none이 아닌 번호를 p 0.5 이상으로 고르면 받는다. 받은 후보는 엔진이 다시 검사한다.
+ * 결정 모델 고르기를 받는 기준(typesafe/jev-1.14, none 없는 모양, 2026-11-16): 맞는 답 p 0.77~0.96, 틀린 답 p 0.25~0.69.
+ * 0.7 미만은 '모름'으로 보고 다음 칸(AI 위치 찾기)으로 넘긴다. 받은 후보는 엔진이 역할·유일 일치로 다시 검사한다.
  */
-export const DECISION_MIN_P = 0.5;
-export const DECISION_MIN_CONFIDENCE = 0.45;
+export const DECISION_MIN_P = 0.7;
+export const DECISION_MIN_CONFIDENCE = 0.7;
 
 /**
  * 결정 모델 칸(decision_pick, 기본 cloudflare/clef-flash): 위치 찾기의 첫 호출을 생성 모델 대신 선택지 분류로 한다. 같은 역할 요소 목록(가림)의
@@ -246,7 +246,11 @@ export class DecisionFirstLocateModel implements LocateModel {
  */
 /** 칸 고르기 글 모양. ids: 'short'는 id 공통 머리를 state에 한 번만, 'full'은 id 그대로. none: '없음' 선택지를 둘지. 측정용으로 열어 둔다. */
 export interface DecisionPickShape { ids: 'short' | 'full'; none: boolean }
-export const DECISION_PICK_SHAPE: DecisionPickShape = { ids: 'full', none: true };
+/**
+ * jev-1.14 측정(2026-11-16, 6경우×2×4모양): none이 있으면 맞을 때도 p가 0.45~0.79로 none과 나뉘고 글 낱말 하나에 8/12↔4/12로 흔들렸다.
+ * none을 빼면 맞는 답 p 0.77~0.96, 틀린 답 p 0.25~0.69로 갈려 문턱(DECISION_MIN_P)이 '모름'을 맡는다. id 머리 생략은 입력 11% 절약.
+ */
+export const DECISION_PICK_SHAPE: DecisionPickShape = { ids: 'short', none: false };
 
 export function decisionPickInput(req: LocateRequest, shape: DecisionPickShape = DECISION_PICK_SHAPE): { pool: LocateRequest['listing']; json: string } | 'listing_size' {
   const pool = req.listing.filter((x) => !req.rejected.includes(x.id ? `#${x.id}` : `role=${req.role}[name="${x.name}"]`));
