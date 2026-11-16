@@ -134,6 +134,9 @@ function fakeCloud() {
       calls.push(v.ok ? 'devlist' : 'devlist_bad');
       deviceList = l;
     },
+    accountDeletion: async () => ({ deleteAfter: null }),
+    requestAccountDelete: async () => ({ deleteAfter: Date.now() + 7 * 86_400_000 }),
+    cancelAccountDelete: async () => {},
   };
   const relayHttp: RelayHttpClient = {
     createRoom: async () => (calls.push('room'), { expiresAt: Date.now() + 120_000 }),

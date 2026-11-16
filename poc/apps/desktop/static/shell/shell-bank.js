@@ -2,7 +2,7 @@
 // 값(거래처·금액·입금자명)은 main이 엔진 로컬 조회로 준 것을 그대로 그린다. 계산·판정은 하지 않는다(엔진 몫).
 // 모든 고치기는 한 번 누르면 되고, 10초 동안 [되돌리기]가 뜬다(그 뒤에도 건 상세 기록에서 되돌린다, 09 §7.5).
 // 결과·오류는 토스트 대신 이 화면 안 글로 남긴다(대표 2026-11-13). 한 덩어리에 주요 단추는 하나, 줄마다 붙는 단추는 조용한 단추다(v2.0).
-import { btn, h, icon, kv, note, num } from './shell-views.js';
+import { btn, h, icon, kv, note, num, replyOptions } from './shell-views.js';
 import { accountInput, amountInput, amountOf, checkFields, dateInput, field, keys, LIMITS, selectInput, textInput } from './fields.js';
 
 const won = (n) => `${num(n)}원`;
@@ -758,20 +758,30 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
     // 거절되어 다시 그려도 넣던 값이 남게 둔다(저장하거나 닫으면 비운다). formErr: { text, field }
     let vals = {};
     let formErr = null;
+    let pickingTerms = false;
     const draw = (info) => {
       const accounts = info?.accounts ?? [];
       const aliases = info?.aliases ?? [];
       const terms = info?.terms;
       const termsKey = terms ? (terms.kind === 'days' ? `days:${terms.n}` : terms.kind === 'next_month_day' ? `next_month_day:${terms.d}` : terms.kind) : 'default';
-      const termsSel = selectInput(
-        [['default', '기본값(작성일 + 30일)'], ['days:60', '작성일 + 60일'], ['days:15', '작성일 + 15일'], ['next_month_day:10', '다음 달 10일'], ['month_end', '다음 달 말일'], ['none', '기한 없음']],
-        { value: termsKey, compact: true, 'data-field': 'terms', 'aria-label': '받기로 한 날' },
-      );
-      termsSel.addEventListener('change', async () => {
-        const [kind, n] = termsSel.value.split(':');
-        await call('bank.setPayTerms', { counterpartyId: c.id, kind, n: n ? Number(n) : undefined }).catch(say);
+      // 받기로 한 날: 값은 글자, 누르면 그 자리에 답 후보 줄(v2.0, 같은 일에 select를 섞지 않는다). 고르면 곧 저장이다.
+      const TERMS = [['default', '기본값(작성일 + 30일)'], ['days:60', '작성일 + 60일'], ['days:15', '작성일 + 15일'], ['next_month_day:10', '다음 달 10일'], ['month_end', '다음 달 말일'], ['none', '기한 없음']];
+      const termsLabel = (TERMS.find(([k]) => k === termsKey) ?? TERMS[0])[1];
+      const pickTerms = async (key) => {
+        const [kind, n] = key.split(':');
+        const ok = await call('bank.setPayTerms', { counterpartyId: c.id, kind, n: n ? Number(n) : undefined }).then(() => true, (e) => (say(e), false));
+        pickingTerms = false;
+        if (!ok) return draw(info);
         toast('결제 조건을 바꿨어요');
-      });
+        // 저장한 값을 다시 읽어 캐시와 화면을 함께 맞춘다(처음 읽기 전에 고른 경우도).
+        void reload();
+      };
+      const termsRow = pickingTerms
+        ? replyOptions(
+            TERMS.map(([k, label]) => ({ label, act: `bank-cp-terms-${k}`, onPick: () => void pickTerms(k), attrs: { 'aria-current': k === termsKey ? 'true' : null } })),
+            { 'data-field': 'terms', 'aria-label': '받기로 한 날' },
+          )
+        : h('div', { class: 'cp-row' }, h('button', { type: 'button', class: 'sx-val-btn', 'data-field': 'terms', 'aria-label': `받기로 한 날 ${termsLabel}, 눌러서 바꾸기`, onclick: () => ((pickingTerms = true), draw(info)) }, termsLabel));
       const close = () => ((adding = null), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
       const errAt = (f) => (formErr?.field === f ? formErr.text : null);
       const fail = (e, fallback) => {
@@ -823,12 +833,22 @@ export function createBankScreen({ call, toast, rerender: draw, errText, counter
       const open = (k) => () => ((adding = k), (formErr = null), (vals = {}), draw(cpCache.get(c.id)));
       box.replaceChildren(
         h('div', { class: 'sx-panel-sec' }, '계좌 · 입금자 이름'),
-        ...accounts.map((a) => h('div', { class: 'hist-row', 'data-bank-cp-account': a.id }, h('span', {}, `${a.bank ?? ''} ···${a.last4}`), h('span', { class: 'hist-what' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
-        ...aliases.map((a) => h('div', { class: 'hist-row', 'data-bank-alias': a.id }, h('span', {}, a.nameRaw), h('span', { class: 'hist-what sx-meta' }, a.source === 'manual' ? '직접 입력' : a.source === 'learned' ? '확인에서 배움' : '계좌 예금주'), btn('지우기', async () => (await call('bank.deleteAlias', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
-        !accounts.length && !aliases.length && !form ? h('p', { class: 'sx-meta' }, '등록한 계좌와 입금자 이름이 없어요.') : null,
+        // 계좌·입금자 이름은 선으로 나누지 않고 한 면(cp-list) 안의 줄로 둔다(v2.0 선 대신 면). [지우기]는 줄 가운데에 맞춘다.
+        ...(accounts.length || aliases.length
+          ? [
+              h(
+                'div',
+                { class: 'cp-list' },
+                accounts.map((a) => h('div', { class: 'cp-row', 'data-bank-cp-account': a.id }, h('span', { class: 'cp-row-main' }, `${a.bank ?? ''} ···${a.last4}`), h('span', { class: 'cp-row-meta' }, a.holder ? `예금주 ${a.holder}` : ''), btn('지우기', async () => (await call('bank.deleteCpAccount', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
+                aliases.map((a) => h('div', { class: 'cp-row', 'data-bank-alias': a.id }, h('span', { class: 'cp-row-main' }, a.nameRaw), h('span', { class: 'cp-row-meta' }, a.source === 'manual' ? '직접 입력' : a.source === 'learned' ? '확인에서 배움' : '계좌 예금주'), btn('지우기', async () => (await call('bank.deleteAlias', { id: a.id }).catch(say), reload()), 'sx-btn-quiet'))),
+              ),
+            ]
+          : []),
+        // replaceChildren(null)은 "null" 글자를 넣는다: 없을 때는 아예 넘기지 않는다.
+        ...(!accounts.length && !aliases.length && !form ? [h('p', { class: 'sx-meta' }, '등록한 계좌와 입금자 이름이 없어요.')] : []),
         form ?? h('div', { class: 'sx-actions' }, btn('계좌 더하기', open('account'), '', { 'data-act': 'bank-cp-account-open' }), btn('입금자 이름 더하기', open('alias'), '', { 'data-act': 'bank-cp-alias-open' })),
         h('div', { class: 'sx-panel-sec' }, '받기로 한 날'),
-        termsSel,
+        termsRow,
       );
     };
     const reload = async () => {

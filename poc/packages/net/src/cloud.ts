@@ -39,6 +39,10 @@ export const CLOUD_ROUTES: ReadonlyArray<{ name: string; method: CloudMethod; pa
   { name: 'deviceTokens', method: 'POST', path: /^\/v1\/device-tokens$/ },
   { name: 'acctClaim', method: 'GET', path: /^\/v1\/acct-claim$/ },
   { name: 'devices.enroll', method: 'POST', path: /^\/v1\/devices\/enroll$/ },
+  // 탈퇴(F-06, 데스크톱 기기 토큰, 7일 유예)
+  { name: 'account.deletion', method: 'GET', path: /^\/v1\/account\/deletion$/ },
+  { name: 'account.deleteRequest', method: 'POST', path: /^\/v1\/account\/delete-request$/ },
+  { name: 'account.deleteCancel', method: 'POST', path: /^\/v1\/account\/delete-cancel$/ },
   { name: 'rooms.create', method: 'POST', path: /^\/v1\/rooms$/ },
   { name: 'mailboxes.create', method: 'POST', path: /^\/v1\/mailboxes$/ },
   { name: 'mailboxes.delete', method: 'DELETE', path: new RegExp(`^/v1/mailboxes/${ID43}$`) },

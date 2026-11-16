@@ -14,7 +14,8 @@ body.bar-active .frame.panel-closed { grid-template-columns: var(--l-rail) minma
 body.bar-active .frame.panel-closed #panel { display: block; visibility: hidden; }
 #titlebar { grid-column: 1 / -1; }
 #center { min-width: 0; min-height: 0; position: relative; }
-#panel { background: var(--canvas); box-shadow: inset 1px 0 0 var(--line); overflow-y: auto; overflow-x: hidden; min-height: 0; }
+/* 패널은 선 없이 여백으로 나눈다(v2.0 선 대신 면). */
+#panel { background: var(--canvas); overflow-y: auto; overflow-x: hidden; min-height: 0; }
 
 /* 제목줄: 상호 ▾ · 시연 표시 · [브라우저]. 선 없이 바탕 위에 떠 있는 글자 버튼. */
 .sx-titlebar { padding: 0 14px 0 10px; position: relative; z-index: 5; }
@@ -147,6 +148,7 @@ body.bp-dragging, body.bp-dragging * { cursor: col-resize !important; user-selec
 /* 온보딩(08 §4) */
 .onb { display: grid; gap: var(--space-3); }
 .onb-card .onb-lines { margin: var(--space-2) 0; padding-left: 18px; display: grid; gap: var(--space-1); font-size: 14px; line-height: 22px; color: var(--ink); }
+.onb-links { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: var(--space-2) 0 0; }
 .onb-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: var(--space-2) 0; }
 .onb-table th, .onb-table td { text-align: left; padding: 6px 0; overflow-wrap: anywhere; }
 .onb-table td { border-top: 1px solid var(--line); }
@@ -281,12 +283,35 @@ body.bar-active .rs-waiting { display: inline-flex; }
 .list .is-attention { color: var(--attention); font-weight: 600; }
 .list .is-none { color: var(--ink-4); }
 .list .is-muted { color: var(--ink-3); }
-.empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-3); display: grid; gap: var(--space-2); }
+.empty { padding: var(--space-7) 0; text-align: center; color: var(--ink-3); display: grid; gap: var(--space-2); justify-items: center; }
+.empty p { margin: 0; }
+.empty-title { font-size: 14px; line-height: 22px; font-weight: 600; color: var(--ink-2); }
+.empty-sub { max-width: 360px; font-size: 13px; line-height: 20px; color: var(--ink-3); }
+.empty-act { margin-top: var(--space-2); }
+/* 키보드로 온 표의 줄: 포커스 링(마우스 hover와 같은 면 + 2px 링). */
+.list tbody tr:focus { outline: none; }
+.list tbody tr:focus-visible td { background: var(--surface-tint); }
+.list tbody tr:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* 값 목록 안의 고정폭 값(사업자번호·승인번호)은 13px이라도 줄 높이를 이웃 값(22)과 같게 둬 기준선이 맞게. */
+.sx-kv dd .sx-id { line-height: 22px; }
 
-/* 거래처 상세: 발급 이력 */
-.hist { display: grid; font-size: 13px; line-height: 20px; font-variant-numeric: tabular-nums; }
-.hist-row { display: flex; gap: var(--space-3); padding: 8px 0; border-top: 1px solid var(--line); }
+/* 거래처 상세: 발급 이력·계좌·입금자 이름. 선으로 나누지 않고 surface-tint 면 하나 안의 줄로 둔다(v2.0 선 대신 면). */
+.hist, .cp-list { display: grid; padding: 4px 12px; border-radius: var(--radius-md); background: var(--surface-tint); font-variant-numeric: tabular-nums; }
+.hist { font-size: 13px; line-height: 20px; }
+.hist-row { display: flex; align-items: baseline; gap: var(--space-3); padding: 6px 0; }
 .hist-what { flex: 1; color: var(--ink-2); }
+.cp-row { display: flex; align-items: center; gap: var(--space-2); min-height: 36px; min-width: 0; font-size: 14px; line-height: 20px; }
+.cp-row-main { flex: none; max-width: 60%; overflow-wrap: anywhere; color: var(--ink); }
+.cp-row-meta { flex: 1; min-width: 0; font-size: 12px; line-height: 16px; color: var(--ink-3); }
+.cp-list .cp-row .sx-btn-quiet { flex: none; height: 28px; margin-right: -8px; }
+.cp-list .cp-row .sx-btn-quiet:hover { background: var(--canvas); }
+.cp-row > .sx-val-btn { margin: 0; padding: 7px 12px; border-radius: var(--radius-md); background: var(--surface-tint); flex: 1; }
+.cp-row > .sx-val-btn:hover { background: var(--surface-sunken); }
+.bank-cp { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.bank-cp .sx-panel-sec:not(:first-child) { margin-top: var(--space-2); }
+.bank-cp .sx-replies { margin-top: 0; }
+/* 지금 고른 값은 실선(아직 바꿀 수 있으니 굳히지는 않는다). */
+.sx-reply[aria-current='true'] { border-style: solid; }
 
 /* 설정: 왼쪽 항목 · 오른쪽 내용 */
 .rail-screen.settings { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 32px; padding: 20px 32px; }
