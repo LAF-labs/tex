@@ -32,6 +32,28 @@ export interface RespondSpec {
   unpinned?: true;
   /** 상류 대기(ms). 없으면 공급사 기본(30초). 판정·에이전트는 함수 상한 안에서 한 번만 길게 기다린다. */
   timeoutMs?: number;
+  /**
+   * 결정 모델 고르기(decision_pick): 생성 대신 OpenRouter decisions로 선택지 하나를 고른다. 지시문은 prefix(게이트웨이 정본),
+   * 상태·선택지는 PC가 보낸 가린 글. 결과는 respond와 같은 꼴(message 한 개, output_text = {choice, confidence, p}).
+   */
+  decision?: { state: string; choices: Record<string, string> };
+}
+
+/** decisions 답을 respond 결과 꼴로(출력 항목 하나). 모르는 답(거절 등)은 incomplete. */
+export function decisionResult(model: string, d: Record<string, unknown>): RespondResult {
+  const a = ((d.answers ?? {}) as Record<string, { type?: string; choice?: unknown; confidence?: unknown; probabilities?: Record<string, unknown> }>).pick;
+  const usage = usageOf(d.usage);
+  if (!a || a.type !== 'choice' || typeof a.choice !== 'string') return { model, status: 'incomplete', output: [], usage };
+  const p = Number(a.probabilities?.[a.choice] ?? 0);
+  const conf = Number(a.confidence ?? 0);
+  const clamp = (x: number) => (Number.isFinite(x) ? Math.min(1, Math.max(0, x)) : 0);
+  const text = JSON.stringify({ choice: a.choice.slice(0, 64), confidence: clamp(conf), p: clamp(p) });
+  return { model: String(d.model ?? model), status: 'completed', output: [{ type: 'message', role: 'assistant', content: [{ type: 'output_text', text }] }], usage };
+}
+
+/** OpenRouter decisions 본문(문서 2026-11-16: questions는 이름이 키인 객체, choice는 criteria {값: 설명}). */
+export function decisionsBody(s: RespondSpec): Record<string, unknown> {
+  return { model: s.model, state: s.decision!.state, questions: { pick: { type: 'choice', instructions: s.prefix, criteria: s.decision!.choices } }, user: s.safetyId };
 }
 
 export interface ProviderUsage {
@@ -156,6 +178,7 @@ export class OpenAICompatProvider implements ModelProvider {
   }
 
   async respond(s: RespondSpec): Promise<RespondResult> {
+    if (s.decision) throw new ProviderError('fatal'); // 결정 모델 고르기는 OpenRouter decisions만
     const d = await this.post('/v1/responses', openAIResponsesBody(s), s.timeoutMs);
     return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
   }
@@ -255,6 +278,7 @@ export class OpenRouterProvider implements ModelProvider {
       throw new ProviderError('fatal');
     }
     const agentField = s.unpinned ? agentProviderField(this.o.agentPrivacy) : null;
+    if (s.decision) return this.decisions(s, agentField);
     const body = s.unpinned ? (agentField ? { ...openAIResponsesBody(s), provider: agentField } : openAIResponsesBody(s)) : { ...openAIResponsesBody(s), provider: openRouterProviderField(this.routing) };
     let res: Response;
     try {
@@ -286,6 +310,32 @@ export class OpenRouterProvider implements ModelProvider {
     }
     return { model: String(d.model ?? s.model), status: String(d.status ?? ''), output: Array.isArray(d.output) ? (d.output as Array<Record<string, unknown>>) : [], usage: usageOf(d.usage) };
   }
+
+  async decisions(s: RespondSpec, providerField: Record<string, unknown> | null): Promise<RespondResult> {
+    const body = { ...decisionsBody(s), ...(providerField ? { provider: providerField } : {}) };
+    let res: Response;
+    try {
+      res = await this.o.fetchFn(`${this.o.baseUrl}/alpha/decisions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${this.o.apiKey}`, 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        redirect: 'error',
+        signal: AbortSignal.timeout(s.timeoutMs ?? this.o.timeoutMs),
+      });
+    } catch {
+      throw new ProviderError('retryable');
+    }
+    this.o.onEvent(providerField ? `upstream_decisions_${this.o.agentPrivacy}` : 'upstream_decisions');
+    if (res.status === 429 || res.status >= 500) throw new ProviderError('retryable');
+    if (res.status !== 200) throw new ProviderError('fatal');
+    let d: Record<string, unknown>;
+    try {
+      d = (await res.json()) as Record<string, unknown>;
+    } catch {
+      throw new ProviderError('fatal');
+    }
+    return decisionResult(s.model, d);
+  }
 }
 
 /**
@@ -310,6 +360,8 @@ export class MockProvider implements ModelProvider {
   /** 다음 호출들이 던질 오류(앞에서부터 하나씩) */
   failures: Array<'retryable' | 'fatal'> = [];
   respondOutput: Array<Record<string, unknown>> = [{ type: 'message', content: [{ type: 'output_text', text: '{}' }] }];
+  /** decision_pick 답(없으면 첫 선택지) */
+  decisionChoice: string | null = null;
 
   private maybeFail(): void {
     const f = this.failures.shift();
@@ -334,6 +386,11 @@ export class MockProvider implements ModelProvider {
   }
 
   respond(s: RespondSpec): Promise<RespondResult> {
+    if (s.decision) {
+      this.responds.push(decisionsBody(s));
+      const pick = this.decisionChoice ?? Object.keys(s.decision.choices)[0]!;
+      return Promise.resolve(decisionResult(s.model, { model: s.model, answers: { pick: { type: 'choice', choice: pick, confidence: 0.9, probabilities: { [pick]: 0.95 } } }, usage: { input_tokens: 300, output_tokens: 0 } }));
+    }
     this.responds.push(openAIResponsesBody(s));
     try {
       this.maybeFail();

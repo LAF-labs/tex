@@ -67,7 +67,8 @@
             "chat_agent",
             "page_judge",
             "browser_agent",
-            "computer_use"
+            "computer_use",
+            "decision_pick"
           ]
         },
         "messages": {

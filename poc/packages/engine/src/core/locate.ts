@@ -38,6 +38,8 @@ export interface LocateRequest {
   listing: Array<{ n: number; name: string; id: string | null }>;
   /** 앞 시도에서 받았지만 검사를 통과하지 못한 선택자. */
   rejected: string[];
+  /** 패키지 사전의 예전 후보(선택자 글, 지금 화면에서 못 찾은 것). 값은 없다. */
+  was?: string[];
   /** 사전 후보가 찾은 요소의 목록 번호(역할은 맞고 이름만 namePattern과 다를 때, step.identity_mismatch). 모델이 맞다고 하면 받는다. */
   found?: number;
 }
@@ -169,7 +171,7 @@ export async function locateTarget(
     const req: LocateRequest = {
       stepId: o.stepId, key: o.key, purpose: o.purpose, role: entry.role, namePattern: entry.namePattern,
       describe: [o.key, entry.fieldKey, entry.inputType].filter(Boolean).join(' · '),
-      listing: listed.map((x, i) => ({ n: i + 1, name: x.name, id: x.id })), rejected: [...rejected],
+      listing: listed.map((x, i) => ({ n: i + 1, name: x.name, id: x.id })), rejected: [...rejected], was: entry.candidates.slice(0, 3).map(candidateText),
       ...(found ? { found: found.n } : {}),
     };
     let cands: LocateCandidate[] | null;

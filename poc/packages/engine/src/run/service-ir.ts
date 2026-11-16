@@ -21,7 +21,7 @@ import { runLocalDict } from '../core/locate.ts';
 import { HealMemory, healableKeys } from '../core/heal-memory.ts';
 import { DbHealStore, DbJsonStore, agentPathKey } from './heal-store.ts';
 import { AgentPathMemory, type AgentPathFile } from './agent-path.ts';
-import { GatewayLocateModel, type LocateResponder } from './locate-port.ts';
+import { DecisionFirstLocateModel, GatewayLocateModel, type LocateResponder } from './locate-port.ts';
 import { GatewayAgentModel, GatewayJudgeModel, GatewayVisionModel } from './agent-port.ts';
 import { BrowserAgent } from './browser-agent.ts';
 import { PageJudge } from './judge.ts';
@@ -124,6 +124,8 @@ export interface IrRunInput {
   heal?: boolean;
   /** 화면 보기(computer-use) 칸. false면 끈다(기본 켬, 대표 결정 2026-11-16). */
   vision?: boolean;
+  /** 결정 모델 칸(위치 찾기 첫 호출을 decision_pick으로). 기본 켬. */
+  decision?: boolean;
   ledger: Ledger;
   gates: GateRepo;
   /** 게이트 카드의 readback이 정해진 뒤 예약 키·원장 행 재료를 만든다. card = 승인 카드 id(GATE_CARDS). 그 카드의 재료를 못 만들면 null(게이트를 열지 않는다). */
@@ -504,7 +506,9 @@ export class IrRun {
     const day = { spent: false };
     const locateBudget = { spent: false, day };
     const pageAiBudget = { spent: false, day };
-    const locate = i.ir.locate ? { model: new GatewayLocateModel({ responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget }), journal: i.journal } : undefined;
+    // 위치 찾기 첫 호출은 결정 모델(decision_pick, clef: 0.5초·약 0.01원)로 목록 번호를 고르고, 확신이 없을 때만 생성 모델(selector_repair)
+    const locatePort = i.ir.locate ? { responder: i.ir.locate, redactor, runToken, journal: i.journal, budget: locateBudget } : null;
+    const locate = locatePort ? { model: i.decision === false ? new GatewayLocateModel(locatePort) : new DecisionFirstLocateModel(locatePort, new GatewayLocateModel(locatePort)), journal: i.journal } : undefined;
     // IR rev v1.3.7 closeLayers: 공지 레이어(X)를 until 스텝(또는 첫 게이트) 전 스텝마다 본다. 해석되면 GuardedActuator로 누른다. 없거나 틀리면 건너뛴다.
     const layers = ir.closeLayers?.targets ?? [];
     let layersDone = layers.length === 0;
@@ -628,7 +632,7 @@ export class IrRun {
         opened: (r) => i.handoff?.({ phase: 'sign', code: r.code?.startsWith('sign.card_') ? r.code : 'sign.waiting', stepId: r.stepId }),
         closed: () => {},
       },
-      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), fastEscalate: (s, cause) => fallback.fastEscalate(s, cause), stop: this.stopAbort.signal },
+      interp: { retries: { stepMax: 3, backoff: 'equal_jitter', baseMs: 800, capMs: 10_000 }, retryFloorMs: 0, escalate: (s, cause) => fallback.eligible(s, cause), fastEscalate: (s, cause, attempt) => fallback.fastEscalate(s, cause, attempt), stop: this.stopAbort.signal },
       // [중지]면 폴백(AI 위치 찾기·판정·에이전트 모델 호출)을 기다리지 않는다: false를 돌려주면 조율기가 미뤄 둔 중지를 바로 적용한다.
       recover: (stop) => {
         // 다시 걸은(또는 에이전트가 방금 걸은) 길로 돌아간 확인 스텝이 재시도까지 실패했다: 그 길은 남기지 않는다.

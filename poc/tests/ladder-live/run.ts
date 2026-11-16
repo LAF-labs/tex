@@ -24,6 +24,7 @@ import { defaultHuman, realDryRun } from '../h01-real-dryrun.ts';
 const arg = (k: string, d = '') => process.argv.find((a) => a.startsWith(`--${k}=`))?.slice(k.length + 3) ?? d;
 const CASE = arg('case', 'drift');
 const OUT = arg('out', '');
+const SHOTS = arg('shots', '');
 const env = process.env;
 const KEY = 'hometax.invoice.form.item1.name';
 const drift = (files: PackageFiles) => {
@@ -82,7 +83,7 @@ const egress = {
 } as unknown as Egress;
 const adapter = new OpenAIResponsesAdapter({ transport: 'gateway', egress });
 
-interface Call { n: number; toolset: string; ms: number; status: string; reason?: string; output?: unknown; toolCalls?: number; usage: unknown }
+interface Call { n: number; toolset: string; ms: number; status: string; reason?: string; output?: unknown; toolCalls?: number; usage: unknown; sent?: string }
 const calls: Call[] = [];
 const live: LocateResponder = {
   async respond(t: ToolsetDef, req: RespondRequest) {
@@ -93,9 +94,17 @@ const live: LocateResponder = {
     }
     let rt = tokens.get(req.runToken);
     if (!rt) tokens.set(req.runToken, (rt = (await svc.issueRunToken(who, { runId: `run-${randomBytes(6).toString('hex')}` })).runToken));
+    // 보낸 글(가린 화면 목록·목표, 가짜 장부)과 사진을 남긴다: 모델이 무엇을 보고 답했는지 로그로 본다
+    const parts = req.messages.flatMap((m) => m.content as Array<{ type: string; text?: string; image_url?: string }>);
+    const sent = parts.filter((p) => p.type === 'input_text').map((p) => String(p.text)).join('\n');
+    const shot = parts.find((p) => p.type === 'input_image')?.image_url;
+    if (shot && SHOTS) {
+      fs.mkdirSync(SHOTS, { recursive: true });
+      fs.writeFileSync(`${SHOTS}/${String(n).padStart(2, '0')}-${t.id}.jpg`, Buffer.from(shot.slice(shot.indexOf(',') + 1), 'base64'));
+    }
     const t0 = Date.now();
     const r = await adapter.respond(t, { ...req, runToken: rt as never });
-    const call: Call = { n, toolset: t.id, ms: Date.now() - t0, status: r.status, ...(r.reason ? { reason: r.reason } : {}), output: r.output, toolCalls: r.toolCalls.length, usage: r.usage };
+    const call: Call = { n, toolset: t.id, ms: Date.now() - t0, status: r.status, ...(r.reason ? { reason: r.reason } : {}), output: r.output, toolCalls: r.toolCalls.length, usage: r.usage, sent };
     calls.push(call);
     console.log(`  #${n} ${t.id} ${call.ms}ms ${r.status}${r.reason ? `(${r.reason})` : ''} ${JSON.stringify(r.output ?? null).slice(0, 400)}`);
     return r;

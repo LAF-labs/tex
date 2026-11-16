@@ -30,7 +30,8 @@ const ACTIONABILITY = (s: Step, cause: string) => cause === 'step.timeout' && (s
 /** 예상 밖 화면 판정(run/judge.ts PageJudge). */
 export interface StuckJudge {
   eligible(s: Step, cause: string): boolean;
-  onStuck(stepId: string, cause: string): Promise<{ from: string } | false>;
+  /** locateTried: 폴백 사슬이 이 스텝 대상의 위치 찾기를 이미 했다(판정은 같은 칸 fix_field를 다시 내지 않는다). */
+  onStuck(stepId: string, cause: string, o?: { locateTried: boolean }): Promise<{ from: string } | false>;
 }
 
 /** 기억한 에이전트 길 다시 걷기(run/browser-agent.ts BrowserAgent.replay, 0원). */
@@ -104,9 +105,13 @@ export class FallbackChain {
     return !!this.d.replay && !this.state(s.id).replayed && this.d.replay.replayable(s.id);
   }
 
-  /** 실행기 fastEscalate: 0원 칸(기억한 선택자 버리기·기억한 길 다시 걷기)이 있으면 재시도를 기다리지 않는다. */
-  fastEscalate(s: Step, _cause: string): boolean {
-    return this.healEligible(s) || this.replayEligible(s);
+  /**
+   * 실행기 fastEscalate: 0원 칸(기억한 선택자 버리기·기억한 길 다시 걷기)이 있으면 재시도를 기다리지 않는다.
+   * 대상을 못 찾은 것(selector_miss)은 스텝이 이미 대상 대기를 다 썼으므로 재시도는 한 번만 하고 다시 찾기·위치 찾기로 간다
+   * (실모델 예행 2026-11-16: 재시도 3번이 약 90초, 위치 찾기는 2초·약 0.4원).
+   */
+  fastEscalate(s: Step, cause: string, attempt = 0): boolean {
+    return this.healEligible(s) || this.replayEligible(s) || (cause === 'step.selector_miss' && attempt >= 1 && this.chainEligible(s, cause));
   }
 
   /** 기억으로 첫 후보를 둔 항목을 겨누는 되돌릴 수 있는 스텝(어떤 실패든 기억을 먼저 버려 본다). */
@@ -174,14 +179,14 @@ export class FallbackChain {
     if (judge && s.type === 'click' && JUDGE_FIRST.has(cause) && !st.judgedFirst) {
       st.judgedFirst = true;
       st.tried.push('judge');
-      const j = await judge.onStuck(stepId, cause);
+      const j = await judge.onStuck(stepId, cause, { locateTried: st.calls.n > 0 });
       if (j) return j;
     }
     const r = this.chainEligible(s, cause) ? await this.chain(s, st, cause) : false;
     if (r) return r;
     if (judge) {
       st.tried.push('judge');
-      const j = await judge.onStuck(stepId, cause);
+      const j = await judge.onStuck(stepId, cause, { locateTried: st.calls.n > 0 });
       if (j) return j;
     }
     // 마지막 칸(사람 앞): 화면 보기. 스텝마다 한 번.
