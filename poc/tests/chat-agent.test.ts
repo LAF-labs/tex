@@ -326,20 +326,41 @@ describe('chat.step 답 검사', () => {
 });
 
 describe('chat.step 턴 상한·세션 폐기', () => {
-  it('턴 상한에서도 도구를 부르면 chat.turn_limit, 그 도구는 main에 가지 않는다', async () => {
+  it('턴 상한에서도 도구를 부르면 그 도구는 main에 가지 않는다. 결과가 없던 턴은 chat.turn_limit', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    // 없는 카드를 거듭 고치려 함: 엔진이 no_such_draft로 답하고(ref 없음) 상한에서 끊는다
+    const call = (n: number) => () => fc('draft_discard', { draft: `d${90 + n}` });
+    script(call(1), call(2), call(3), call(4));
+    await code(a.step({ start: { text: '카드 계속 지워 줘', frame: { cards: [] }, profileId } }), 'chat.turn_limit');
+    assert.equal(responds().length, 4);
+    assert.equal(pc.calls.length, 0);
+  });
+
+  it('같은 턴에 같은 도구를 같은 인자로 또 부르면 main에 보내지 않고, 상한에 닿으면 그때까지 낸 결과를 고정 문구로 보인다(chat-eval)', async () => {
     const a = agent();
     const pc = new FakePc();
     const call = () => fc('sales_summary', { month_offset: 0 });
     script(call, call, call, call);
-    let r = await a.step({ start: { text: '매출 계속 봐 줘', frame: { cards: [] }, profileId } });
-    for (let i = 0; i < 2; i++) {
-      assert.equal(r.kind, 'tools');
-      r = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
-    }
+    const r = await a.step({ start: { text: '이번 달 매출 얼마야', frame: { cards: [] }, profileId } });
     assert.equal(r.kind, 'tools');
-    await code(a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } }), 'chat.turn_limit');
+    const end = await a.step({ continue: { outputs: r.kind === 'tools' ? r.calls.map((c) => ({ callId: c.callId, output: pc.exec(c) })) : [] } });
+    assert.equal(pc.calls.length, 1, '두 번째부터는 엔진이 첫 결과로 답한다');
     assert.equal(responds().length, 4);
-    assert.equal(pc.calls.length, 3);
+    assert.equal(end.kind, 'reply');
+    assert.deepEqual(end.kind === 'reply' && [end.reply.kind, end.reply.text, end.reply.show, end.reply.filtered], ['did', CHAT_AGENT_NUMBER_TEXT, ['r1'], 'number']);
+    // 두 번째 호출에 돌려준 결과는 첫 결과와 같다
+    assert.deepEqual(lastOutput(responds()[1]!.body!), lastOutput(responds()[3]!.body!));
+  });
+
+  it('카드를 만든 뒤 같은 카드를 또 만들라고 해도 카드는 한 장이다', async () => {
+    const a = agent();
+    const pc = new FakePc();
+    const draft = (body: Item) => fc('invoice_draft', { counterparty: toks(nowLine(body), 'NAME')[0], amount: toks(nowLine(body), 'AMT')[0], vat: null, item: '컨설팅' });
+    script(draft, draft, () => reply({ kind: 'did', text: '카드를 만들었어요.', show: ['d1'] }));
+    const { reply: rep } = await say(a, pc, 'A상사 110만원 세금계산서');
+    assert.equal(pc.drafts.length, 1);
+    assert.deepEqual(rep.show, ['d1']);
   });
 
   it('15분 쉬거나 프로필을 바꾸면 대화록·토큰을 버린다(다음 요청에 앞 대화가 없다)', async () => {

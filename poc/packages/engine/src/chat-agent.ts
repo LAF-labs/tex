@@ -351,7 +351,11 @@ interface Turn {
   frameRefs: Set<string>;
   replay: RedactedReplayItem[];
   /** main이 실행 중인 도구 호출. answer가 있으면 엔진이 직접 답한 것이다. */
-  pending: Array<{ callId: string; tool: ChatAgentToolName; answer: ToolOutput | null }> | null;
+  pending: Array<{ callId: string; tool: ChatAgentToolName; key: string; answer: ToolOutput | null }> | null;
+  /** 이번 턴에 끝난 도구 호출(도구 이름 + 인자) → 결과. 같은 호출을 또 하면 main에 보내지 않고 이 결과로 답한다. */
+  done: Map<string, ToolOutput>;
+  /** 이번 턴 도구 결과로 나온 ref(나온 순서) */
+  made: string[];
   /** 이번 턴에 풀리지 않은 거래처 이름(사장님 문장에 있던 것만). 첫 하나만 둔다. */
   unknownName?: string;
 }
@@ -411,7 +415,7 @@ export class ChatAgent {
     } catch {
       throw new ChatError('chat.unavailable');
     }
-    s.turn = { user, message: this.compose(s, user, frameLine), frameRefs: new Set(cards.map((c) => c.ref)), replay: [], pending: null };
+    s.turn = { user, message: this.compose(s, user, frameLine), frameRefs: new Set(cards.map((c) => c.ref)), replay: [], pending: null, done: new Map(), made: [] };
     return this.run(s, () => this.advance(s));
   }
 
@@ -478,9 +482,17 @@ export class ChatAgent {
       if (!r.toolCalls.length) return this.finish(s, this.checkReply(s, turn, r.output));
       // 다음 호출이 툴셋 턴 상한·replay 상한을 넘으면 도구를 실행하지 않는다(결과를 모델에 돌려줄 수 없다).
       const turns = turn.replay.filter((x) => x.kind === 'model_output' && (x.item.item as { type?: string }).type !== 'reasoning').length;
-      if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + r.toolCalls.length > REPLAY_MAX) throw new ChatError('chat.turn_limit');
-      const parsed = r.toolCalls.map((c) => ({ c, p: this.parseCall(s, turn, c) }));
-      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, answer: 'status' in p ? p : null }));
+      if (turns >= CHAT_AGENT.maxTurns || turn.replay.length + r.toolCalls.length > REPLAY_MAX) {
+        // 이번 턴에 이미 결과(표·카드)를 냈으면 끊지 않고 그 결과를 보인다. 모델이 답 대신 같은 도구를 거듭 부르다 상한에 닿는 일이 있다
+        // (chat-eval 2026-11-16: DeepSeek V4.1 Flash가 "이번 달 매출"에 sales_summary를 네 번 부름). 표·카드 값은 PC가 낸 것이라 맞다.
+        const show = [...new Set(turn.made)].slice(-AGENT_SHOW_MAX);
+        if (show.length) return this.finish(s, { kind: 'did', text: CHAT_AGENT_NUMBER_TEXT, show, ask: null, filtered: 'number' });
+        throw new ChatError('chat.turn_limit');
+      }
+      const key = (c: ToolCall) => `${c.name}:${JSON.stringify(c.arguments)}`;
+      // 같은 턴에 같은 도구를 같은 인자로 또 부르면 main에 보내지 않는다: 카드가 두 장 생기거나 같은 조회를 되풀이하지 않게.
+      const parsed = r.toolCalls.map((c) => ({ c, p: turn.done.get(key(c)) ?? this.parseCall(s, turn, c) }));
+      turn.pending = parsed.map(({ c, p }) => ({ callId: c.callId, tool: c.name as ChatAgentToolName, key: key(c), answer: 'status' in p ? p : null }));
       const calls = parsed.flatMap(({ c, p }) => ('status' in p ? [] : [{ callId: c.callId, ...p }]));
       if (calls.length) return { kind: 'tools', calls };
       this.answer(s, turn);
@@ -491,7 +503,12 @@ export class ChatAgent {
   private answer(s: Session, turn: Turn): void {
     for (const c of turn.pending!) {
       const o = c.answer!;
-      if (o.ref) s.refs.add(o.ref);
+      if (o.ref) {
+        s.refs.add(o.ref);
+        turn.made.push(o.ref);
+      }
+      // 같은 인자로 다시 부르면 같은 결과다. 고치기·취소는 두 번째가 다른 뜻일 수 있어(이미 취소한 카드) 첫 결과를 그대로 준다.
+      turn.done.set(c.key, o);
       turn.replay.push({ kind: 'function_call_output', callId: c.callId, output: s.red.apply(JSON.stringify(o), { frame: 'none' }).redacted });
     }
     turn.pending = null;
