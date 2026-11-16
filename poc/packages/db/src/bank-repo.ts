@@ -129,6 +129,8 @@ export interface Receivable {
 }
 
 export interface ReceivableInput {
+  /** 없으면 sale. 낼 돈(매입)은 purchase(11 §2) */
+  kind?: 'sale' | 'purchase';
   approvalNo: string | null;
   runId?: string | null;
   counterpartyId: string | null;
@@ -399,8 +401,9 @@ export class BankRepo {
     return this.db.prepare('DELETE FROM cp_payer_aliases WHERE id = ?').run(id).changes > 0;
   }
 
-  payTerms(counterpartyId: string): PayTerms | null {
-    const v = this.db.prepare('SELECT pay_terms_json FROM counterparties WHERE id = ?').pluck().get(counterpartyId) as string | null | undefined;
+  /** 거래처 결제 조건. side in = 받을 조건, out = 내 쪽(낼) 조건 */
+  payTerms(counterpartyId: string, side: 'in' | 'out' = 'in'): PayTerms | null {
+    const v = this.db.prepare(`SELECT ${side === 'out' ? 'pay_out_terms_json' : 'pay_terms_json'} FROM counterparties WHERE id = ?`).pluck().get(counterpartyId) as string | null | undefined;
     if (!v) return null;
     try {
       return normalizePayTerms(JSON.parse(v));
@@ -409,9 +412,9 @@ export class BankRepo {
     }
   }
 
-  setPayTerms(counterpartyId: string, terms: unknown): PayTerms | null {
+  setPayTerms(counterpartyId: string, terms: unknown, side: 'in' | 'out' = 'in'): PayTerms | null {
     const t = normalizePayTerms(terms);
-    if (this.db.prepare('UPDATE counterparties SET pay_terms_json = ? WHERE id = ?').run(t ? JSON.stringify(t) : null, counterpartyId).changes === 0) throw new ValidationError('not_found');
+    if (this.db.prepare(`UPDATE counterparties SET ${side === 'out' ? 'pay_out_terms_json' : 'pay_terms_json'} = ? WHERE id = ?`).run(t ? JSON.stringify(t) : null, counterpartyId).changes === 0) throw new ValidationError('not_found');
     return t;
   }
 
@@ -513,8 +516,9 @@ export class BankRepo {
     return r ? toReceivable(r) : null;
   }
 
-  receivables(profileId: string): Receivable[] {
-    return (this.db.prepare(`SELECT * FROM receivables WHERE profile_id = ? AND kind = 'sale' ORDER BY written_on, rowid`).all(profileId) as Row[]).map(toReceivable);
+  /** 건 목록. kind 기본 sale(받을 돈), purchase = 낼 돈 */
+  receivables(profileId: string, kind: 'sale' | 'purchase' = 'sale'): Receivable[] {
+    return (this.db.prepare(`SELECT * FROM receivables WHERE profile_id = ? AND kind = ? ORDER BY written_on, rowid`).all(profileId, kind) as Row[]).map(toReceivable);
   }
 
   byApproval(profileId: string, approvalNo: string): Receivable | null {
@@ -537,6 +541,8 @@ export class BankRepo {
     return this.db.transaction(() => {
       const prev = (input.approvalNo ? this.byApproval(profileId, input.approvalNo) : null) ?? (input.runId ? this.byRun(input.runId) : null);
       if (prev) {
+        // 같은 승인번호가 다른 쪽(매출↔매입) 건이면 합치지 않는다(내가 나에게 발급한 것처럼 보이는 잘못된 줄)
+        if (prev.kind !== (input.kind ?? 'sale')) throw new ValidationError('kind_mismatch');
         const ledger = input.from === 'ledger';
         const keepLedger = prev.fromLedger && !ledger;
         const pick = <T>(a: T | null, b: T | null) => (keepLedger ? (a ?? b) : (b ?? a));
@@ -552,8 +558,8 @@ export class BankRepo {
       const id = randomUUID();
       this.db
         .prepare(`INSERT INTO receivables (id, profile_id, kind, approval_no, run_id, counterparty_id, cp_biz_no, cp_name, cp_rep, item, written_on, supply, tax, total, from_ledger, from_hometax, created_at, updated_at)
-          VALUES (?, ?, 'sale', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-        .run(id, profileId, input.approvalNo, input.runId ?? null, input.counterpartyId, input.cpBizNo, input.cpName, input.cpRep, input.item, input.writtenOn, input.supply, input.tax, input.total,
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, profileId, input.kind ?? 'sale', input.approvalNo, input.runId ?? null, input.counterpartyId, input.cpBizNo, input.cpName, input.cpRep, input.item, input.writtenOn, input.supply, input.tax, input.total,
           input.from === 'ledger' ? 1 : 0, input.from === 'hometax' ? 1 : 0, at, at);
       return { receivable: this.receivable(id)!, created: true };
     })();

@@ -439,4 +439,12 @@ ALTER TABLE irreversible_log ADD COLUMN baseline_refs TEXT;
 ALTER TABLE irreversible_log ADD COLUMN reverify_day TEXT;
 `,
   },
+  {
+    // 낼 돈(11 §2): 거래처마다 내 쪽 결제 조건(받을 조건 pay_terms_json과 따로). 매입 건은 receivables(kind='purchase')를 그대로 쓴다.
+    version: 13,
+    name: 'payables_out_terms',
+    sql: `
+ALTER TABLE counterparties ADD COLUMN pay_out_terms_json TEXT;
+`,
+  },
 ];

@@ -1,4 +1,4 @@
-// 돈 맞추기 1단계(09): 내 계좌·거래내역 넣기·받을 돈 건(원장 + 홈택스 발급 목록)·맞추기·수동 체크·되돌리기·기록.
+// 돈 맞추기(09) 1단계 받을 돈 + 2단계 낼 돈(11 §2): 내 계좌·거래내역 넣기·받을 돈 건(원장 + 홈택스 발급 목록)·맞추기·수동 체크·되돌리기·기록.
 // main 전용 명령이다(계좌번호·입금자명·금액이 오간다, protocol BANK_*). 파일은 main이 docparse 샌드박스에서 읽어 다듬은 줄만 보낸다.
 // 엔진은 원본 파일을 열지 않고 보관함에 그대로 둔다(대표 결정 ⑦, 지울 수 있음). 모델·네트워크를 쓰지 않는다.
 // 거래내역 "원천"은 회차의 source(file | auto)다. 자동 연결 원천(source.ts TxnSource, 예: CODEF)은 registerSource로 꽂고 bank.refresh가 원천 → 넣기 → 맞추기를 한다.
@@ -10,7 +10,7 @@ import {
   type Alloc, type AllocMethod, type BankTxn, type ColumnCipher, type Db, type PayTerms, type Receivable, type ReceivableEvent, type TxnInput,
 } from '@sax/db';
 import { SourceError, type SourceProgress, type SourceRow, type TxnSource } from './source.ts';
-import { addDays, FEE_TOLERANCE, runMatch, type Candidate, type MatchCounterparty, type MatchReceivable, type MatchTxn } from './match.ts';
+import { addDays, FEE_TOLERANCE, runMatch, type Candidate, type MatchCounterparty, type MatchReceivable, type MatchTxn, type Side } from './match.ts';
 
 export class BankError extends Error {
   readonly code: string;
@@ -31,6 +31,12 @@ export const BANK_FILE_MAX = 15 * 1024 * 1024;
 const ROWS_MAX = 20_000;
 const METHODS: readonly AllocMethod[] = ['account', 'cash', 'other_account', 'offset', 'other'];
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 건 종류 → 맞출 입출금 방향. sale = 받을 돈(입금), purchase = 낼 돈(출금) */
+export type Kind = 'sale' | 'purchase';
+const SIDE: Record<Kind, Side> = { sale: 'in', purchase: 'out' };
+const kindOf = (v: unknown): Kind => (v === undefined || v === null || v === 'sale' ? 'sale' : v === 'purchase' ? 'purchase' : fail('bad_kind'));
+const sideOf = (v: unknown): Side => (v === undefined || v === null || v === 'in' ? 'in' : v === 'out' ? 'out' : fail('bad_side'));
 
 export const kstDay = (d: Date) => new Date(d.getTime() + 9 * 3_600_000).toISOString().slice(0, 10);
 const lastDayOfMonth = (y: number, m: number) => new Date(Date.UTC(y, m, 0)).getUTCDate();
@@ -121,6 +127,27 @@ export interface BankSummary {
   oldestOverdue: { cpName: string | null; writtenOn: string; daysOver: number } | null;
   reviewCount: number;
   autoCount: number;
+  /** 낼 돈(11 §2.5 판 카드 "안 낸 돈"). 매입 건이 없으면 0들 */
+  payable: PayableSummary;
+}
+
+export interface PayableSummary {
+  unpaidCount: number;
+  unpaidTotal: number;
+  overdueCount: number;
+  overdueTotal: number;
+  /** 오늘부터 7일 안에 낼 날이 오는 건 */
+  dueSoonCount: number;
+  dueSoonTotal: number;
+  reviewCount: number;
+}
+
+/** 한 쪽 맞추기 결과 */
+export interface MatchRun {
+  autoTxnIds: string[];
+  review: string[];
+  unknown: string[];
+  candidates: Map<string, Candidate[]>;
 }
 
 export interface BankServiceOptions {
@@ -292,9 +319,9 @@ export class BankService {
       case 'bank.deleteAlias':
         return { deleted: this.repo.deleteAlias(this.str(p.id, 'not_found')) };
       case 'bank.setPayTerms':
-        return { terms: this.repo.setPayTerms(this.str(p.counterpartyId, 'not_found'), p.terms) };
+        return { terms: this.repo.setPayTerms(this.str(p.counterpartyId, 'not_found'), p.terms, sideOf(p.side)) };
       case 'bank.setDefaultTerms':
-        return this.setDefaultTerms(this.profile(p.profileId), p.terms);
+        return this.setDefaultTerms(this.profile(p.profileId), p.terms, kindOf(p.kind));
     }
     return fail('unknown_method');
   }
@@ -333,16 +360,17 @@ export class BankService {
     this.db.prepare('INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json').run(key, JSON.stringify(v));
   }
 
-  defaultTerms(pid: string): PayTerms {
+  /** 기본 결제 조건. 받을 돈과 낼 돈은 따로 둔다(11 §2.2, 둘 다 기본 작성일 + 30일) */
+  defaultTerms(pid: string, kind: Kind = 'sale'): PayTerms {
     try {
-      return normalizePayTerms(this.getSetting(this.settingKey(pid, 'defaultTerms'))) ?? DEFAULT_TERMS;
+      return normalizePayTerms(this.getSetting(this.settingKey(pid, kind === 'purchase' ? 'defaultOutTerms' : 'defaultTerms'))) ?? DEFAULT_TERMS;
     } catch {
       return DEFAULT_TERMS;
     }
   }
-  private setDefaultTerms(pid: string, terms: unknown) {
+  private setDefaultTerms(pid: string, terms: unknown, kind: Kind) {
     const t = normalizePayTerms(terms) ?? DEFAULT_TERMS;
-    this.putSetting(this.settingKey(pid, 'defaultTerms'), t);
+    this.putSetting(this.settingKey(pid, kind === 'purchase' ? 'defaultOutTerms' : 'defaultTerms'), t);
     return { terms: t };
   }
 
@@ -552,13 +580,14 @@ export class BankService {
       newCount: newIds.length,
       duplicateCount: total - newIds.length,
       match: { auto: m.autoTxnIds.filter((t) => fresh.has(t)).length, review: m.review.filter((t) => fresh.has(t)).length, unknown: m.unknown.filter((t) => fresh.has(t)).length },
+      payMatch: { auto: m.out.autoTxnIds.filter((t) => fresh.has(t)).length, review: m.out.review.filter((t) => fresh.has(t)).length, unknown: m.out.unknown.filter((t) => fresh.has(t)).length },
     };
   }
 
   /**
-   * bank.importInvoices {profileId, rows: HometaxInvoiceRow[], file?} → {created, merged, purchase, skipped}.
-   * 같은 승인번호는 한 건으로 합친다(원장 건과도). 공급받는자가 내 사업자번호인 줄은 매입이라 이번 단계에서 받지 않는다(purchase로 센다).
-   * 공급받는자 사업자번호가 장부에 없으면 거래처를 만든다(source hometax). 개인(주민번호)·번호 없음이면 이름만 둔다.
+   * bank.importInvoices {profileId, rows: HometaxInvoiceRow[], file?} → {created, merged, purchase, purchaseCreated, skipped, match, payMatch}.
+   * 같은 승인번호는 한 건으로 합친다(원장 건과도). 공급받는자가 내 사업자번호인 줄은 매입 = 낼 돈 건으로 넣는다(11 §2.1, purchase로 센다).
+   * 거래처(매출은 공급받는자, 매입은 공급자) 사업자번호가 장부에 없으면 거래처를 만든다(source hometax). 개인(주민번호)·번호 없음이면 이름만 둔다.
    */
   private async importInvoices(p: Params) {
     const pid = this.profile(p.profileId);
@@ -566,7 +595,7 @@ export class BankService {
     const me = new ProfileRepo(this.db).get(pid)?.bizNo?.replace(/\D/g, '') ?? null;
     this.syncLedger(pid);
     const cps = new CounterpartyRepo(this.db);
-    const out = { created: 0, merged: 0, purchase: 0, skipped: 0, newCounterparties: 0 };
+    const out = { created: 0, merged: 0, purchase: 0, purchaseCreated: 0, skipped: 0, newCounterparties: 0 };
     const documentId = p.rows.length ? await this.keepFile(pid, 'hometax_issue_list', p.file) : null;
     const at = this.at();
     this.db.transaction(() => {
@@ -580,28 +609,39 @@ export class BankService {
         }
         const buyer = typeof raw.buyerBizNo === 'string' ? raw.buyerBizNo.replace(/\D/g, '') : '';
         const supplier = typeof raw.supplierBizNo === 'string' ? raw.supplierBizNo.replace(/\D/g, '') : '';
-        if (me && buyer === me && supplier !== me) {
-          out.purchase++;
-          continue;
-        }
+        // 공급받는자가 나면 매입(낼 돈, 11 §2.1): 거래처는 공급자다. 아니면 매출(받을 돈): 거래처는 공급받는자다
+        const kind: Kind = me && buyer === me && supplier !== me ? 'purchase' : 'sale';
+        const side = kind === 'purchase' ? { bizNo: supplier, name: raw.supplierName, rep: raw.supplierRep } : { bizNo: buyer, name: raw.buyerName, rep: raw.buyerRep };
         const text = (x: unknown) => (typeof x === 'string' && x.trim() ? x.trim().slice(0, 120) : null);
         let cpId: string | null = null;
-        if (buyer.length === 10 && isValidBizNo(buyer)) {
-          const cur = cps.byBizNo(buyer);
+        if (side.bizNo.length === 10 && isValidBizNo(side.bizNo)) {
+          const cur = cps.byBizNo(side.bizNo);
           if (cur) cpId = cur.id;
-          else if (text(raw.buyerName)) {
-            cpId = cps.create({ bizNo: buyer, name: text(raw.buyerName)!, repName: text(raw.buyerRep), source: 'hometax' }).id;
+          else if (text(side.name)) {
+            cpId = cps.create({ bizNo: side.bizNo, name: text(side.name)!, repName: text(side.rep), source: 'hometax' }).id;
             out.newCounterparties++;
           }
         }
         const num = (x: unknown) => (Number.isSafeInteger(x) ? (x as number) : null);
-        const r = this.repo.upsertReceivable(pid, { approvalNo: approval, counterpartyId: cpId, cpBizNo: buyer || null, cpName: text(raw.buyerName), cpRep: text(raw.buyerRep), item: text(raw.item), writtenOn, supply: num(raw.supply), tax: num(raw.tax), total, from: 'hometax' }, at);
-        if (r.created) out.created++;
+        let r: { created: boolean };
+        try {
+          r = this.repo.upsertReceivable(pid, { kind, approvalNo: approval, counterpartyId: cpId, cpBizNo: side.bizNo || null, cpName: text(side.name), cpRep: text(side.rep), item: text(raw.item), writtenOn, supply: num(raw.supply), tax: num(raw.tax), total, from: 'hometax' }, at);
+        } catch (e) {
+          if (e instanceof ValidationError && e.code === 'kind_mismatch') {
+            out.skipped++;
+            continue;
+          }
+          throw e;
+        }
+        if (kind === 'purchase') {
+          out.purchase++;
+          if (r.created) out.purchaseCreated++;
+        } else if (r.created) out.created++;
         else out.merged++;
       }
     })();
     const m = this.rematch(pid);
-    return { ...out, documentId, match: { auto: m.autoTxnIds.length, review: m.review.length, unknown: m.unknown.length } };
+    return { ...out, documentId, match: { auto: m.autoTxnIds.length, review: m.review.length, unknown: m.unknown.length }, payMatch: { auto: m.out.autoTxnIds.length, review: m.out.review.length, unknown: m.out.unknown.length } };
   }
 
   /**
@@ -654,19 +694,20 @@ export class BankService {
   private dueOf(r: Receivable, termsCache: Map<string, PayTerms>, def: PayTerms): string | null {
     let t = def;
     if (r.counterpartyId) {
-      if (!termsCache.has(r.counterpartyId)) termsCache.set(r.counterpartyId, this.repo.payTerms(r.counterpartyId) ?? def);
+      if (!termsCache.has(r.counterpartyId)) termsCache.set(r.counterpartyId, this.repo.payTerms(r.counterpartyId, SIDE[r.kind]) ?? def);
       t = termsCache.get(r.counterpartyId)!;
     }
     return dueDate(r.writtenOn, t);
   }
 
-  private matchInput(pid: string) {
-    const recvs = this.repo.receivables(pid);
+  private matchInput(pid: string, kind: Kind) {
+    const recvs = this.repo.receivables(pid, kind);
     const paid = this.remainingOf(pid);
-    const def = this.defaultTerms(pid);
+    const def = this.defaultTerms(pid, kind);
     const terms = new Map<string, PayTerms>();
+    // 사람이 확정한 맞춤은 같은 쪽(받을 돈/낼 돈)에서만 센다: 입금을 확인했다고 출금 자동 확정을 열지 않는다
     const human = new Set(
-      (this.db.prepare(`SELECT DISTINCT r.counterparty_id FROM receivable_allocs a JOIN receivables r ON r.id = a.receivable_id WHERE a.profile_id = ? AND a.removed_at IS NULL AND a.decided_by <> 'auto' AND a.txn_id IS NOT NULL AND r.counterparty_id IS NOT NULL`).pluck().all(pid) as string[]),
+      (this.db.prepare(`SELECT DISTINCT r.counterparty_id FROM receivable_allocs a JOIN receivables r ON r.id = a.receivable_id WHERE a.profile_id = ? AND r.kind = ? AND a.removed_at IS NULL AND a.decided_by <> 'auto' AND a.txn_id IS NOT NULL AND r.counterparty_id IS NOT NULL`).pluck().all(pid, kind) as string[]),
     );
     const cpMap = new Map<string, MatchCounterparty>();
     const cpRepo = new CounterpartyRepo(this.db);
@@ -688,17 +729,27 @@ export class BankService {
     const used = new Map<string, number>();
     for (const a of this.repo.liveAllocs(pid)) if (a.txnId) used.set(a.txnId, (used.get(a.txnId) ?? 0) + a.amount);
     const txns: MatchTxn[] = this.repo
-      .txns(pid, { direction: 'in' })
+      .txns(pid, { direction: SIDE[kind] })
       .filter((t) => !t.ignoredAt)
       .map((t) => ({ id: t.id, day: t.day, amount: t.amount, unallocated: t.amount - (used.get(t.id) ?? 0), payer: t.payer, counterAccountHmac: t.counterAccountHmac, assignedCpKey: t.assignedCounterpartyId }));
     return { recvs, receivables, txns, cps: [...cpMap.values()], rejects: this.repo.rejects(pid) };
   }
 
-  /** 다시 맞추기: 자동 확정을 적용하고(기록 남김) 후보·미지정 줄 id를 돌려준다. 사람이 한 것은 바꾸지 않는다 */
-  rematch(pid: string): { autoTxnIds: string[]; review: string[]; unknown: string[]; candidates: Map<string, Candidate[]> } {
+  /**
+   * 다시 맞추기: 자동 확정을 적용하고(기록 남김) 후보·미지정 줄 id를 돌려준다. 사람이 한 것은 바꾸지 않는다.
+   * 맨 위 칸은 받을 돈(입금), out은 낼 돈(출금, 11 §2.3)이다. candidates는 두 쪽을 합친 것이다(줄 id가 겹치지 않는다).
+   * 낼 돈 건이 하나도 없으면 출금은 맞추지 않는다(모든 출금을 "미지정"으로 세지 않는다).
+   */
+  rematch(pid: string): MatchRun & { out: MatchRun } {
     this.syncLedger(pid);
-    const input = this.matchInput(pid);
-    const res = runMatch({ counterparties: input.cps, receivables: input.receivables, txns: input.txns, rejects: input.rejects, feeTolerance: FEE_TOLERANCE });
+    const sale = this.rematchKind(pid, 'sale');
+    const out = this.repo.receivables(pid, 'purchase').length ? this.rematchKind(pid, 'purchase') : { autoTxnIds: [], review: [], unknown: [], candidates: new Map<string, Candidate[]>() };
+    return { ...sale, candidates: new Map([...sale.candidates, ...out.candidates]), out };
+  }
+
+  private rematchKind(pid: string, kind: Kind): MatchRun {
+    const input = this.matchInput(pid, kind);
+    const res = runMatch({ counterparties: input.cps, receivables: input.receivables, txns: input.txns, rejects: input.rejects, feeTolerance: FEE_TOLERANCE, side: SIDE[kind] });
     const at = this.at();
     this.db.transaction(() => {
       for (const a of res.auto) {
@@ -714,18 +765,18 @@ export class BankService {
 
   // ---- 보기 ----
 
-  private views(pid: string): { list: ReceivableView[]; byId: Map<string, ReceivableView> } {
+  private views(pid: string, kind: Kind = 'sale'): { list: ReceivableView[]; byId: Map<string, ReceivableView> } {
     this.syncLedger(pid);
     const today = this.today();
     const latestDay = this.repo.latestDay(pid);
     const stale = !latestDay || latestDay < addDays(today, -STALE_DAYS);
-    const def = this.defaultTerms(pid);
+    const def = this.defaultTerms(pid, kind);
     const terms = new Map<string, PayTerms>();
     const allocs = this.repo.liveAllocs(pid);
     const byRecv = new Map<string, Alloc[]>();
     for (const a of allocs) byRecv.set(a.receivableId, [...(byRecv.get(a.receivableId) ?? []), a]);
     const cps = new CounterpartyRepo(this.db);
-    const list = this.repo.receivables(pid).map((r): ReceivableView => {
+    const list = this.repo.receivables(pid, kind).map((r): ReceivableView => {
       const as = byRecv.get(r.id) ?? [];
       const received = as.reduce((s, a) => s + a.amount, 0);
       const remaining = Math.max(0, r.total - received);
@@ -758,41 +809,68 @@ export class BankService {
     };
   }
 
-  /** D-09 목록: 못 받은 돈·받은 돈·확인할 입금(후보·미지정)·전체 입금 */
-  overview(pid: string) {
-    const m = this.rematch(pid);
-    const { list, byId } = this.views(pid);
+  /** 한 쪽(받을 돈 = 입금, 낼 돈 = 출금)의 목록. 출금 쪽은 낼 돈 건이 없으면 확인할 줄을 내지 않는다 */
+  private sideLists(pid: string, kind: Kind, m: MatchRun & { out: MatchRun }) {
+    const { list, byId } = this.views(pid, kind);
     const acct = new Map(this.repo.accounts(pid).map((a) => [a.id, { last4: a.last4, bank: a.bank }]));
     const used = new Map<string, number>();
     for (const a of this.repo.liveAllocs(pid)) if (a.txnId) used.set(a.txnId, (used.get(a.txnId) ?? 0) + a.amount);
-    const txns = this.repo.txns(pid, { direction: 'in' });
+    const txns = this.repo.txns(pid, { direction: SIDE[kind] });
+    const matching = kind === 'sale' || list.length > 0;
     const review: TxnView[] = [];
     const recent: TxnView[] = [];
     for (const t of [...txns].reverse()) {
       const un = t.amount - (used.get(t.id) ?? 0);
       const v = this.txnView(t, un, acct, m.candidates.get(t.id) ?? [], byId);
-      if (!t.ignoredAt && un > 0) review.push(v);
+      if (matching && !t.ignoredAt && un > 0) review.push(v);
       if (recent.length < 200) recent.push(v);
     }
     const unpaid = list.filter((v) => v.status === 'unpaid' || v.status === 'unknown' || v.status === 'partial' || v.status === 'waiting').sort((a, b) => (a.dueIn ?? 99999) - (b.dueIn ?? 99999) || (a.writtenOn < b.writtenOn ? -1 : 1));
     const received = list.filter((v) => v.status === 'received').sort((a, b) => (a.writtenOn < b.writtenOn ? 1 : -1));
     const excluded = list.filter((v) => v.status === 'excluded');
-    return { consent: this.consentOf(pid), summary: this.summaryOf(pid, list, review), unpaid, received, excluded, review, recent, accounts: this.accounts(pid), defaultTerms: this.defaultTerms(pid) };
+    return { list, unpaid, received, excluded, review, recent };
   }
 
-  private summaryOf(pid: string, list: ReceivableView[], review: TxnView[]): BankSummary {
+  /**
+   * D-09 목록: 못 받은 돈·받은 돈·확인할 입금(후보·미지정)·전체 입금.
+   * payables는 낼 돈 쪽 같은 모양(11 §2.5): unpaid = 안 낸 돈, paid = 낸 돈, review = 확인할 출금, recent = 전체 출금.
+   */
+  overview(pid: string) {
+    const m = this.rematch(pid);
+    const s = this.sideLists(pid, 'sale', m);
+    const o = this.sideLists(pid, 'purchase', m);
+    return {
+      consent: this.consentOf(pid), summary: this.summaryOf(pid, s.list, s.review, o.list, o.review), unpaid: s.unpaid, received: s.received, excluded: s.excluded, review: s.review, recent: s.recent,
+      accounts: this.accounts(pid), defaultTerms: this.defaultTerms(pid),
+      payables: { unpaid: o.unpaid, paid: o.received, excluded: o.excluded, review: o.review, recent: o.recent, defaultTerms: this.defaultTerms(pid, 'purchase') },
+    };
+  }
+
+  private payableOf(list: ReceivableView[], review: TxnView[]): PayableSummary {
+    const open = list.filter((v) => v.status === 'unpaid' || v.status === 'unknown' || v.status === 'partial');
+    const over = open.filter((v) => v.overdue);
+    const soon = open.filter((v) => !v.overdue && v.dueIn !== null && v.dueIn >= 0 && v.dueIn <= 7);
+    const sum = (xs: ReceivableView[]) => xs.reduce((a, v) => a + v.remaining, 0);
+    return {
+      unpaidCount: open.length, unpaidTotal: sum(open), overdueCount: over.length, overdueTotal: sum(over), dueSoonCount: soon.length, dueSoonTotal: sum(soon),
+      reviewCount: review.filter((t) => !t.ignoredReason).length,
+    };
+  }
+
+  private summaryOf(pid: string, list: ReceivableView[], review: TxnView[], payList: ReceivableView[], payReview: TxnView[]): BankSummary {
     const today = this.today();
     const latestDay = this.repo.latestDay(pid);
     const stale = !latestDay || latestDay < addDays(today, -STALE_DAYS);
     const open = list.filter((v) => v.status === 'unpaid' || v.status === 'unknown' || v.status === 'partial');
     const over = open.filter((v) => v.overdue).sort((a, b) => (a.dueIn ?? 0) - (b.dueIn ?? 0));
-    const autoCount = this.db.prepare(`SELECT count(*) FROM receivable_allocs WHERE profile_id = ? AND removed_at IS NULL AND decided_by = 'auto'`).pluck().get(pid) as number;
+    const autoCount = this.db.prepare(`SELECT count(*) FROM receivable_allocs a JOIN receivables r ON r.id = a.receivable_id WHERE a.profile_id = ? AND r.kind = 'sale' AND a.removed_at IS NULL AND a.decided_by = 'auto'`).pluck().get(pid) as number;
     return {
       today, latestDay, stale, hasAccounts: this.repo.accounts(pid).length > 0,
       unpaidCount: open.length, unpaidTotal: open.reduce((s, v) => s + v.remaining, 0),
       overdueCount: over.length, overdueTotal: over.reduce((s, v) => s + v.remaining, 0),
       oldestOverdue: over[0] ? { cpName: over[0].cpName, writtenOn: over[0].writtenOn, daysOver: -(over[0].dueIn ?? 0) } : null,
       reviewCount: review.filter((t) => !t.ignoredReason).length, autoCount,
+      payable: this.payableOf(payList, payReview),
     };
   }
 
@@ -805,7 +883,7 @@ export class BankService {
   private detail(pid: string, id: string) {
     const r = this.ownReceivable(pid, id);
     const m = this.rematch(pid);
-    const { byId } = this.views(pid);
+    const { byId } = this.views(pid, r.kind);
     const view = byId.get(r.id)!;
     const acct = new Map(this.repo.accounts(pid).map((a) => [a.id, { last4: a.last4, bank: a.bank }]));
     const allocs = this.repo.allocsOf(r.id).map((a) => {
@@ -817,7 +895,7 @@ export class BankService {
     const from = addDays(r.writtenOn, -30);
     const to = addDays(r.promisedOn ?? view.dueOn ?? r.writtenOn, 90);
     const attachable = this.repo
-      .txns(pid, { direction: 'in', from, to })
+      .txns(pid, { direction: SIDE[r.kind], from, to })
       .filter((t) => !t.ignoredAt && t.amount - (used.get(t.id) ?? 0) > 0)
       .map((t) => this.txnView(t, t.amount - (used.get(t.id) ?? 0), acct, (m.candidates.get(t.id) ?? []).filter((c) => c.receivableIds.includes(r.id)), byId))
       .sort((a, b) => b.candidates.length - a.candidates.length || (a.day < b.day ? 1 : -1))
@@ -848,7 +926,8 @@ export class BankService {
 
   /** 한 줄을 건(들)에 붙인다. 한 줄은 한 거래처의 건들에만(09 §6.4) */
   private allocate(pid: string, txn: BankTxn, recvs: Receivable[], amounts: number[] | null, decidedBy: 'candidate' | 'manual', reason: string | null): number[] {
-    if (txn.direction !== 'in') return fail('not_incoming');
+    // 입금은 받을 돈에만, 출금은 낼 돈에만 붙는다(11 §2.3). 오류 코드는 1단계 것(not_incoming)을 받을 돈 쪽에 그대로 둔다
+    if (recvs.some((r) => SIDE[r.kind] !== txn.direction)) return fail(txn.direction === 'in' ? 'not_outgoing' : 'not_incoming');
     const keys = new Set(recvs.map((r) => this.cpKeyOf(r)));
     if (keys.size !== 1) return fail('mixed_counterparties');
     const others = this.repo.liveAllocs(pid, { txnId: txn.id }).map((a) => this.repo.receivable(a.receivableId)!).filter(Boolean);
@@ -972,7 +1051,7 @@ export class BankService {
   private ignoreTxn(p: Params) {
     const pid = this.profile(p.profileId);
     const t = this.ownTxn(pid, p.txnId);
-    const reason = p.reason === null ? null : typeof p.reason === 'string' && /^(unrelated|interest|own_transfer|card_sales|other)$/.test(p.reason) ? p.reason : fail('bad_reason');
+    const reason = p.reason === null ? null : typeof p.reason === 'string' && /^(unrelated|interest|own_transfer|card_sales|card_payment|tax|payroll|other)$/.test(p.reason) ? p.reason : fail('bad_reason');
     this.repo.setIgnored(t.id, reason, this.at());
     return { seq: this.event(pid, { receivableId: null, txnId: t.id, allocId: null, action: reason ? 'ignore' : 'unignore', reason: t.ignoredReason, undoOf: null }) };
   }
@@ -997,9 +1076,9 @@ export class BankService {
     }
     const seq = this.event(pid, { receivableId: null, txnId: t.id, allocId: alias?.id ?? null, action: alias ? 'alias_learned' : 'assign', reason: cpId, undoOf: null });
     const m = this.rematch(pid);
-    const { byId } = this.views(pid);
+    const { byId } = this.views(pid, t.direction === 'out' ? 'purchase' : 'sale');
     const acct = new Map(this.repo.accounts(pid).map((a) => [a.id, { last4: a.last4, bank: a.bank }]));
-    const auto = m.autoTxnIds.includes(t.id);
+    const auto = (t.direction === 'out' ? m.out : m).autoTxnIds.includes(t.id);
     return { seq, conflict, aliasId: alias?.id ?? null, auto, txn: this.txnView(this.repo.txn(t.id)!, this.txnFree(pid, t.id), acct, m.candidates.get(t.id) ?? [], byId) };
   }
 
