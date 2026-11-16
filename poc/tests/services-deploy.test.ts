@@ -37,7 +37,7 @@ import { MIGRATIONS_DIR as RELAY_MIGRATIONS } from '../services/relay/src/index.
 import { MIGRATIONS_DIR as PUSH_MIGRATIONS } from '../services/push/src/index.ts';
 import { INTERNAL_FUNCTION_ROUTES, buildCloud, cloudFunction, cronFunction, internalFunction } from '../services/cloud/src/index.ts';
 import { materialize, rewriteLikeVercel } from '../services/deploy/check-vercel-output.ts';
-import { TransparencyLog } from '../services/registry/src/index.ts';
+import { TransparencyLog, registryFunctionPath } from '../services/registry/src/index.ts';
 import { client } from './services-kit.ts';
 
 const DEPLOY = path.join(import.meta.dirname, '..', 'services', 'deploy');
@@ -427,8 +427,10 @@ describe('vercel.json 재작성 규칙(tax.laf-co.com 한 origin, 내부 경로 
     for (const { method, path: p } of all) {
       const r = routeOf(p);
       assert.ok(r, `${method} ${p}`);
-      const fn = p.startsWith('/registry/log/') || p.startsWith('/admin/v1/');
-      assert.equal(fn, method === 'PUT' || p.startsWith('/registry/log/'), `${method} ${p}`);
+      // 함수로 가는 GET은 로그와 처음 설치 직접 링크(/download/mac, 서명된 latest.json 옆 dmg로 보냄)뿐이다(registryFunctionPath와 같은 규칙)
+      const fn = p.startsWith('/registry/log/') || p.startsWith('/admin/v1/') || p === '/download/mac';
+      assert.equal(fn, method === 'PUT' || p.startsWith('/registry/log/') || p === '/download/mac', `${method} ${p}`);
+      assert.equal(fn, registryFunctionPath(method, p), `${method} ${p}`);
       if (fn) {
         assert.ok(r!.destination.startsWith('/api/registry?__p='), `${p} → ${r!.destination}`);
         const m = toRe(r!.source).exec(p)!;

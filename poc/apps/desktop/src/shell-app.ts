@@ -1632,6 +1632,13 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
   host.on('run', (e: { type?: string; code?: string }) => {
     if ((e.type === 'handoff' || e.type === 'end') && (e.code === 'sign.password_wrong' || e.code === 'sign.password_retry_limit')) void certMemory.forget(e.code);
   });
+  /** 보안카드 금고 칸(대표 지시 2026-11-14). 렌더러 처리기 표는 엔진 control을 직접 부르지 않고 이 고정 칸만 쓴다(h01-guards). */
+  const CARD_SLOT = { kind: 'security_card', scope: 'business' } as const;
+  const cardSlot = {
+    has: async () => (await host.control('secret.has', CARD_SLOT).catch(() => false)) === true,
+    /** 지웠으면 true. 실패를 성공처럼 보이지 않게 그대로 돌려준다 */
+    forget: () => host.control('secret.forget', CARD_SLOT).then(() => true, () => false),
+  };
 
   const handlers: ShellHandlers = {
     // 계좌 자동조회(CODEF 공동인증서, bank-auto.ts). 연결·고르기·[최신화]·[연결 해제]는 실제 입력 뒤에만.
@@ -2009,7 +2016,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     },
     'certMemory.status': async () => ({ remembered: await certMemory.has() }),
     // 보안카드 등록(대표 지시 2026-11-14): 사진은 금고로만, 렌더러에는 다시 물을 칸 번호·저장 칸 수만
-    'card.status': async () => ({ stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true }),
+    'card.status': async () => ({ stored: await cardSlot.has() }),
     'card.register': async (p) => {
       needGesture(3_000);
       // 온보딩 답(onboarding.reply)과 같은 조건: 약관 뒤에는 계정 로그인이 먼저다
@@ -2019,9 +2026,8 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     'card.forget': async () => {
       needGesture(3_000);
       // 지우지 못했으면 실패로 돌려준다(성공처럼 보이지 않게)
-      const r = await host.control('secret.forget', { kind: 'security_card', scope: 'business' }).then(() => true, () => false);
-      if (!r) throw new Error('card_forget_failed');
-      return { stored: (await host.control('secret.has', { kind: 'security_card', scope: 'business' }).catch(() => false)) === true };
+      if (!(await cardSlot.forget())) throw new Error('card_forget_failed');
+      return { stored: await cardSlot.has() };
     },
     // 기억한 홈택스 인증서 이름(profiles.cert_name, CN). 렌더러에는 이름 부분만(뒤의 식별 번호 없이) 보인다
     'certName.status': () => certNameStatus(),

@@ -151,15 +151,24 @@ describe('온보딩: 한 번에 하나씩', () => {
     assert.equal(flow.state.step, 'auth');
   });
 
-  it('공동인증서는 이 PC에서 찾은 것만 고를 수 있다. 잘 모르겠어요는 설명을 펼치고 그 자리', async () => {
-    const { flow } = make();
-    await walk(flow, [
+  it('공동인증서는 이 PC에서 찾은 것만 고를 수 있다. 잘 모르겠어요는 이 PC의 첫 인증서(공동인증서)로 정하고 넘어간다', async () => {
+    // 모르면 공동인증서(대표 지시 2026-11-14): 설명에 머무르지 않고 기본 인증서로 정한다. 바꾸기는 설정 › 발급 인증
+    const unsure = make();
+    await walk(unsure.flow, [
       { step: 'terms', choice: 'agree' },
       { step: 'welcome', choice: 'later' },
       { step: 'auth', choice: 'unsure' },
     ]);
+    assert.equal(unsure.flow.state.step, 'first');
+    assert.equal(unsure.flow.state.auth, 'cert');
+    assert.ok(unsure.flow.state.certId);
+
+    const { flow } = make();
+    await walk(flow, [
+      { step: 'terms', choice: 'agree' },
+      { step: 'welcome', choice: 'later' },
+    ]);
     assert.equal(flow.state.step, 'auth');
-    assert.equal(flow.state.explain, true);
     assert.equal(await code(flow.answer({ step: 'auth', choice: 'cert', certId: 'npki-x' })), 'bad_cert');
     await flow.answer({ step: 'auth', choice: 'cert', certId: 'npki-1' });
     assert.equal(flow.state.step, 'first', '모델 동의는 약관 화면에서 받았으니 바로 첫 작업 제안(B4)');
@@ -362,8 +371,9 @@ describe('요약·첫 작업·이어 하기', () => {
     ]);
     assert.equal(skipped.saved.length, 0);
     assert.deepEqual(
+      // 인증을 [나중에]로 넘겨도 공동인증서로 둔다(대표 지시 2026-11-14). 할 일에는 사업자만 남는다
       onboardingTodos({ ...skipped.flow.state, step: 'done' }).map((t) => t.id),
-      ['biz', 'auth'],
+      ['biz'],
     );
   });
 

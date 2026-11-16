@@ -46,11 +46,12 @@ function home(s: LoginFixture['state']): string {
   document.getElementById('btnSimple').addEventListener('click', async () => {
     await fetch('/api/login/start', { method: 'POST' });
     document.getElementById('st').textContent = '인증 요청을 보냈습니다. 휴대폰에서 승인해 주세요.';
-    const t = setInterval(async () => {
-      const r = await fetch('/api/login/state').then((x) => x.json());
-      if (r.loggedIn) { clearInterval(t); location.href = '/'; }
-    }, 200);
   });
+  // 사람이 이 화면에서 로그인을 마치면(시험: fx.completeLogin()) 화면이 로그인된 홈으로 넘어간다. 엔진이 화면을 다시 읽어 들인 뒤에도 같다.
+  const t = setInterval(async () => {
+    const r = await fetch('/api/login/state').then((x) => x.json()).catch(() => ({}));
+    if (r.loggedIn) { clearInterval(t); location.href = '/'; }
+  }, 200);
 </script>`);
 }
 

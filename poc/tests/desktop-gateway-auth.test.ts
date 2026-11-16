@@ -262,7 +262,7 @@ describe('엔진 auth 포트 배선(소스)', () => {
 
   it('엔진 init에 앱 판(app.getVersion())을 싣는다: 엔진 #243 minAppVersion 대조(D09 §8)', () => {
     assert.ok(host.includes("...(opts.appVersion ? { appVersion: opts.appVersion } : {})"));
-    assert.ok(app.includes('log, appVersion: app.getVersion() });'));
+    assert.ok(/new EngineHost\(\{[^\n]*\bappVersion: app\.getVersion\(\)/.test(app));
   });
 
   it('엔진 init 포트 순서는 [중계, 게이트, auth]. 답하는 쪽이 붙기 전에는 account.signed_out', () => {

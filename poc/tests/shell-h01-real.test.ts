@@ -99,7 +99,15 @@ describe('H-01 2.2.0 실화면 패키지 ← 데스크톱 입력(가짜 홈택�
       assert.ok(await until(() => fx.state.lastScreen?.screen === 'login', 30_000), '로그인 화면이 열리지 않음');
       await sleep(fx.knobs.renderDelayMs + 800);
       assert.equal(r().status, 'preparing', '사람이 로그인하는 동안 실행은 끝나지 않는다');
-      fx.login();
+      // 2.3.x: 엔진이 공동인증서 로그인을 먼저 연다(사람이 인증서 창에서 [확인]). 못 하면 로그인 차례 카드로 넘어오고, 사람이 로그인한 뒤 [이어서]를 누른다.
+      const certLogin = () => {
+        if (fx.state.stage === 'cert' && Date.now() - fx.state.certAt > 1500) fx.cert('confirm');
+      };
+      assert.ok(await until(() => r().status === 'waiting' || (r().status === 'turn' && r().handoff?.kind === 'login'), 60_000, certLogin), `로그인 차례·승인 대기가 오지 않음: ${r().status} ${r().stoppedNote ?? ''}`);
+      if (r().status === 'turn') {
+        fx.login();
+        await shell.resume(d.id);
+      }
       // 2) 게이트 → 승인(바 대신 엔진에 직접)
       assert.ok(await until(() => r().status === 'waiting', 60_000), `승인 대기가 오지 않음: ${r().status} ${r().stoppedNote ?? ''}`);
       const g = gates.find((m) => m.t === 'gate.request');
@@ -114,6 +122,7 @@ describe('H-01 2.2.0 실화면 패키지 ← 데스크톱 입력(가짜 홈택�
       assert.deepEqual([r().status, r().steps[5]!.state, r().steps[5]!.note], ['issuing', 'now', SIGN_BY_AUTH[SIGN_LABEL.cert]!.now]);
       await sleep(1500);
       fx.cert('confirm'); // 사람이 홈택스 인증서 창에 비밀번호를 넣고 [확인]
+      // 서명 차례 카드가 와도 엔진이 서명 창이 닫힌 것을 보고 스스로 넘어간다(sign.turn_closed). 사람이 [다 했어요]를 누를 필요가 없다.
       assert.ok(await until(() => ['done', 'attention', 'stopped'].includes(r().status), 60_000), `끝나지 않음: ${r().status}`);
       assert.equal(r().status, 'done', `${r().stoppedNote ?? ''} ${JSON.stringify(host.runs.inspect(d.id).journal.slice(-8))}`);
       assert.ok(r().result?.approvalNo);
