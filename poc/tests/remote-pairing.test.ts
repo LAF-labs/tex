@@ -1,8 +1,9 @@
 // D08 §4 페어링(SP-2 페어링 SAS): PC 역할·폰 역할을 한 프로세스에서 메모리 릴레이로 돌린다.
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
-  AIK_PURPOSES, CTX, MemoryRelay, MobilePairing, addDevice, verifyAcctClaim, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
+  AIK_PURPOSES, CTX, MAX_DESKTOPS, MAX_DEVICES, MAX_MOBILES, MemoryRelay, MobilePairing, addDevice, verifyAcctClaim, b64, decodeQr, deriveSas, docScopeJson, ed25519Keygen, encodeQr, fromB64, revokeDevice, softSigner,
   toHex, upsertDevice, utf8, verifyCert, verifyDeviceList, type DeviceListJson,
 } from '@sax/remote';
 import { ACCOUNT_KEY, DAY, RELAY, TEST_EMAIL, mockDesktop, mockPhone, pairOnce, pairWorld, testAcctClaim, until } from './remote-support.ts';
@@ -257,6 +258,29 @@ describe('기기 해제·폐기 레코드(§9.2)', () => {
     assert.equal(r.ok, false);
     // 폐기된 기기를 목록에 다시 넣으면 거부
     await assert.rejects(() => addDevice(w.desk.keys.aik, v3, { deviceId: w.phone.keys.deviceId, role: 'mobile', noisePub: w.phone.keys.noise.publicKey, signPub: w.phone.keys.vmPub, registeredAt: 1 }));
+  });
+
+  it('목록 한도는 PC 3·폰 3(ADR-048): 네 번째 폰·네 번째 PC는 넣지 못하고, 있던 항목은 그대로다', async () => {
+    assert.equal(MAX_DESKTOPS, 3);
+    assert.equal(MAX_MOBILES, 3);
+    assert.equal(MAX_DEVICES, 6);
+    const w = await pairWorld();
+    const aik = w.desk.keys.aik;
+    const info = (role: 'desktop' | 'mobile') => ({ deviceId: randomUUID(), role, noisePub: ed25519Keygen().publicKey, signPub: ed25519Keygen().publicKey, registeredAt: 1 });
+    let l = w.desk.deviceList; // PC 1
+    for (let i = 0; i < MAX_MOBILES; i++) l = await addDevice(aik, l, info('mobile'));
+    await assert.rejects(() => addDevice(aik, l, info('mobile')), /too many devices/);
+    for (let i = 1; i < MAX_DESKTOPS; i++) l = await addDevice(aik, l, info('desktop'));
+    await assert.rejects(() => addDevice(aik, l, info('desktop')), /too many devices/);
+    assert.equal(l.entries.length, MAX_DEVICES);
+    const chk = verifyDeviceList(l, aik.publicKey);
+    assert.ok(chk.ok && chk.devices.length === MAX_DEVICES);
+    // 하나를 끊으면 그 역할 자리만 빈다
+    const gone = l.entries.find((x) => x.entry.role === 'mobile')!.entry.device_id;
+    l = await revokeDevice(aik, l, gone);
+    await assert.rejects(() => addDevice(aik, l, info('desktop')), /too many devices/);
+    l = await addDevice(aik, l, info('mobile'));
+    assert.equal(l.entries.length, MAX_DEVICES);
   });
 
   it('폐기 레코드 서명은 SAX-revoke-v1 문맥이고 devlist 문맥 서명으로 대신할 수 없다', async () => {

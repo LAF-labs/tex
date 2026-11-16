@@ -58,11 +58,13 @@ export const NOTICE = {
 export const DEVICE = {
   emailOnlyAddDelayHours: 72,
   newDeviceCoolingDays: 7,
-  maxDesktops: 2,
+  /** 계정당 PC 3대·폰 3대(폐기 제외, 연결 대기·정지 포함. ADR-048 결정 1, 사용자 결정 2026-11-16). @sax/remote MAX_DESKTOPS·MAX_MOBILES와 같다 */
+  maxDesktops: 3,
   maxMobiles: 3,
   /** 30일 등록 상한(C-32) */
   churnWindowDays: 30,
-  churnDesktop: 3,
+  /** 한도 3 + 교체 2(ADR-048 결정 1) */
+  churnDesktop: 5,
   churnMobile: 5,
   /** 페어링되지 않은 등록 신청은 7일 뒤 지운다 */
   pendingTtlDays: 7,
