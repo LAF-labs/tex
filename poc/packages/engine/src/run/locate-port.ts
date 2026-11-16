@@ -221,6 +221,7 @@ export class DecisionFirstLocateModel implements LocateModel {
     } catch {
       return skip('run_token');
     }
+    this.i.journal('locate.decision_asked', { stepId: req.stepId, key: req.key, choices: pool.length });
     let r: RespondResult;
     try {
       r = await this.i.responder.respond(DECISION_PICK, { toolset: 'decision_pick', messages: [{ role: 'user', content: [{ type: 'input_text', text }] }], replay: [], runToken: token });
