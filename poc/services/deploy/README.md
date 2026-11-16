@@ -57,7 +57,7 @@ Phase 1 클라우드 배포 구성이다. 근거는 다음과 같다.
 | 푸시 `PUSH__` | `DATABASE_URL` ⚿, `PUSH_TOKEN_KEY` ⚿, `LIMIT_ID_KEY` ⚿, `PUSH_PUBLIC_ORIGIN`, `PUSH_PROVIDER`(`mock`) |
 | 레지스트리 `REGISTRY__` | `TRUST_ROOT_JSON`(공개 값, 서명 의식 뒤), `REGISTRY_LOG_SIGNING_KEY` ⚿, `REGISTRY_ADMIN_TOKEN` ⚿, `DATABASE_URL` ⚿(`sax_registry`), `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID` ⚿, `S3_SECRET_ACCESS_KEY` ⚿. 7절 |
 
-**룸 호스트 env**(접두 없음, 그 호스트에만): `DATABASE_URL` ⚿(`sax_relay`), `QUEUE_KEY` ⚿(릴레이 함수와 같은 값), `LIMIT_ID_KEY` ⚿(릴레이 함수와 같은 값), `RELAY_PUBLIC_ORIGIN`(`https://tax.laf-co.com`), `RELAY_WS_ORIGIN`(`https://rooms.tax.laf-co.com`, 라이브 WSS의 DPoP htu), `TOKEN_PUBLIC_KEYS`, `ACCOUNT_INTERNAL_URL`, `INTERNAL_CALL_KEY` ⚿, `RELAY_ROOMS`(**`1` = 룸 켬**), `RELAY_LIVE`(`0`, 켜는 법은 [rooms-host/README](rooms-host/README.md)), `MIGRATE_ON_START`(`0`), `TRUST_PROXY`, `PORT`. 비밀이 아닌 역할 고정값은 [`rooms-host/compose.yml`](rooms-host/compose.yml)에 있고, 비밀은 VM의 `relay.env`에만 둔다.
+**룸 호스트 env**(접두 없음, 그 호스트에만): `DATABASE_URL` ⚿(`sax_relay`), `QUEUE_KEY` ⚿(릴레이 함수와 같은 값), `LIMIT_ID_KEY` ⚿(릴레이 함수와 같은 값), `RELAY_PUBLIC_ORIGIN`(`https://tax.laf-co.com`), `RELAY_WS_ORIGIN`(`https://rooms.tax.laf-co.com`, 라이브 WSS의 DPoP htu), `TOKEN_PUBLIC_KEYS`, `ACCOUNT_INTERNAL_URL`, `INTERNAL_CALL_KEY` ⚿, `RELAY_ROOMS`(**`1` = 룸 켬**), `RELAY_LIVE`(**`1`**, compose 고정·비상시 끄는 법은 [rooms-host/README](rooms-host/README.md)), `MIGRATE_ON_START`(`0`), `TRUST_PROXY`, `PORT`. 비밀이 아닌 역할 고정값은 [`rooms-host/compose.yml`](rooms-host/compose.yml)에 있고, 비밀은 VM의 `relay.env`에만 둔다.
 
 값의 형식(hex 64자 등)은 각 서비스 `ENV.md`가 정본이다. 키 값은 사용자가 로컬에서 `openssl rand -hex 32`로 만들어 비밀번호 관리자에 두고, Vercel·룸 호스트 env 화면에 직접 붙여 넣는다.
 

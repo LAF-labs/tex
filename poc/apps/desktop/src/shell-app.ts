@@ -13,7 +13,7 @@ import { wsRelayClient, type DesktopKeys, type DesktopPairResult, type PaperInvo
 import { appPaths, defaultAppRoot, FileEventLog } from '@sax/platform';
 import { findInstalledChrome, pageAddress, SESSION_IDLE_REPORT_MS } from '@sax/vault';
 import { execFile } from 'node:child_process';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
+import { app, autoUpdater as nativeUpdater, BrowserWindow, clipboard, dialog, ipcMain, Menu, Notification, powerMonitor, powerSaveBlocker, protocol, safeStorage, screen, session, ShareMenu, shell as desktop } from 'electron';
 import { AccountantPack, isPackMonth, packAsk } from './accountant-pack.ts';
 import { ACTION_TEXT, actionText, issueLocalApproval, kstToday, verifyLocalApproval, verifyLocalAttestation, type LocalApproval } from './approval-gate.ts';
 import { buildBoard, type Board, type BoardInput, type IssuedInvoice } from './board.ts';
@@ -60,6 +60,7 @@ import type { CloudPorts, VaultKeysFactory } from './remote-ports.ts';
 import { PairingHost } from './remote-pairing.ts';
 import { PhoneLink, PhoneStore, type TokenSeal } from './phone-link.ts';
 import { phoneReceiver } from './phone-receive.ts';
+import { closeAction, shouldStayAwake, StayAwake } from './phone-presence.ts';
 import type { VaultDesktopKeys } from './remote-keys.ts';
 import { qrSvgDataUrl } from './remote-qr.ts';
 import { PairWindow } from './pair-window.ts';
@@ -1408,13 +1409,54 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       deviceListVersion: () => account.device()?.deviceList.listVersion ?? 0,
       appVersion: app.getVersion(),
       log: (n, d) => log.event(n, d ?? {}),
-      onChange: () => send({ type: 'account', account: account.view() }),
+      onChange: () => {
+        send({ type: 'account', account: account.view() });
+        syncAwake();
+      },
     });
     return phoneLink;
   };
+  // 폰이 연결돼 있으면 집에 둔 PC가 밖의 폰에 바로 응한다(phone-presence.ts): 창을 닫아도 남고, 전원 연결 중에는 잠들지 않는다.
+  const stayAwake = new StayAwake(powerSaveBlocker, (on) => log.event('main.phone_stay_awake', { on }));
+  const pairedPhones = () => phoneLink?.list().length ?? 0;
+  const syncAwake = () => stayAwake.set(shouldStayAwake({ phones: pairedPhones(), onBattery: powerMonitor.isOnBatteryPower() }));
+  let quitting = false;
+  let backgroundNoted = false;
+  const onBeforeQuit = () => {
+    quitting = true;
+  };
+  app.on('before-quit', onBeforeQuit);
+  // macOS 업데이트 설치는 창을 먼저 닫고 before-quit을 나중에 낸다(Electron 문서). 그때 창 닫기를 막으면 설치가 멈춘다.
+  if (process.platform === 'darwin') nativeUpdater.on('before-quit-for-update', onBeforeQuit);
+  win.on('close', (e) => {
+    const act = closeAction({ phones: pairedPhones(), quitting, platform: process.platform });
+    if (act === 'quit') return;
+    e.preventDefault();
+    if (act === 'hide') win.hide();
+    else win.minimize();
+    log.event('main.window_background', { act });
+    if (!backgroundNoted) {
+      backgroundNoted = true;
+      try {
+        showOsNotification({ title: '소버린 AX가 계속 켜져 있어요', body: '폰에서 보낸 영수증을 바로 받으려고 창만 내렸어요. 끝내려면 메뉴 [창 > 소버린 AX 끝내기]를 누르세요.' }, () => onActivate());
+      } catch {
+        /* 알림을 못 띄우는 OS */
+      }
+    }
+  });
+  const onActivate = () => {
+    if (win.isDestroyed()) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+  };
+  app.on('activate', onActivate);
+  const onPowerSource = () => syncAwake();
+  powerMonitor.on('on-ac', onPowerSource);
+  powerMonitor.on('on-battery', onPowerSource);
   // 이미 로그인한 PC면 켤 때 저장된 폰을 지킨다(꺼져 있던 동안의 큐부터 비운다)
   void accountInit()
     .then(() => phones()?.start())
+    .then(() => syncAwake())
     .catch(() => undefined);
   const onbView = async () => (onb && onbShow ? await onb.view() : null);
   /** 온보딩이 끝나기 전에는 약관(④) 동의 전 요청을 받지 않는다. 모델 해석은 ②에 동의했을 때만(기존 사용자는 지금처럼). */
@@ -2035,6 +2077,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       pairWin = null;
       phoneLink?.stop();
       phoneLink = null;
+      syncAwake();
       const v = await account.signOut();
       pushBoard();
       return v;
@@ -2234,6 +2277,9 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     const fn = () => {
       void host.control('session.event', { kind }).catch(() => {});
       if (kind === 'unlock-screen' || kind === 'resume') reportIdle();
+      // 잠자기 뒤 연결은 열려 보여도 죽어 있다: 바로 다시 붙고 쌓인 큐를 비운다
+      if (kind === 'resume') phoneLink?.wake('resume');
+      else if (kind === 'unlock-screen') phoneLink?.wake('unlock');
       // 깨어남: 승인 전 단계에서 바로 멈추는 실행은 같은 값으로 다시 시작하고(ShellRuns wakeAfter), 홈택스 로그인을 바로 연장한다.
       if (kind === 'resume') {
         runs.woke();
@@ -2342,7 +2388,7 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
           { id: 'rehearsalStop', label: '예행 중지', click: () => stopRehearsals() },
         ],
       },
-      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }] },
+      { label: '창', submenu: [{ role: 'minimize' }, { role: 'close' }, { type: 'separator' }, { label: '소버린 AX 끝내기', accelerator: 'CmdOrCtrl+Q', click: () => app.quit() }] },
     ]),
   );
   const close = async () => {
@@ -2357,6 +2403,12 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
     pairWin?.dispose();
     for (const r of pairedThisRun) r.channel.close();
     phoneLink?.stop();
+    stayAwake.set(false);
+    app.removeListener('before-quit', onBeforeQuit);
+    if (process.platform === 'darwin') nativeUpdater.removeListener('before-quit-for-update', onBeforeQuit);
+    app.removeListener('activate', onActivate);
+    powerMonitor.removeListener('on-ac', onPowerSource);
+    powerMonitor.removeListener('on-battery', onPowerSource);
     watchChromeFront(false);
     closeSecret();
     // 엔진이 실제로 끝난 뒤에 임시 앱 폴더를 지운다(DB·WAL이 열린 채 지우지 않게).

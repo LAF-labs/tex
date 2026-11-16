@@ -10,6 +10,9 @@ import { RelayService, raw32, type OuterEnvelope } from './service.ts';
 import { CLOSE, WsConn, acceptUpgrade, rejectUpgrade } from './ws.ts';
 
 const b64 = (max: number) => ({ type: 'string', maxLength: max, pattern: '^[A-Za-z0-9+/]*={0,2}$' });
+/** 우편함 keepalive(packages/remote ws-link RELAY_PING). 클라이언트 텍스트는 이것만 받는다. */
+const PING = Buffer.from('{"t":"ping"}');
+const PONG = '{"t":"pong"}';
 const id32 = { type: 'string', pattern: '^[A-Za-z0-9_-]{43}$' };
 
 const V = {
@@ -300,6 +303,11 @@ export class RelayHub {
     exp.unref();
     ws.on({
       onMessage: (data, text) => {
+        // 앱 수준 keepalive(ws-link RELAY_PING): 상대에게 넘기지 않고 이 연결에만 답한다. 초당 1번을 넘는 ping은 버린다.
+        if (text && data.length === PING.length && data.equals(PING)) {
+          if (this.frameLimits.hit(`ping:${key}:${side}`, 1, 1000)) ws.send(PONG);
+          return;
+        }
         const kind = text ? null : outerOk(data);
         if (!kind) {
           if (++me.fails >= RELAY.failuresPerConnection) ws.close(CLOSE.policy);

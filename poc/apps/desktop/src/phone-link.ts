@@ -172,7 +172,12 @@ interface Runner {
   online: boolean;
   /** 큐 폴링을 바로 깨운다({"t":"env"}) */
   kick: () => void;
+  /** 라이브 재시도 대기를 끊고 바로 다시 붙는다(백오프 초기화) */
+  retry: (() => void) | null;
 }
+
+/** 라이브 재연결 백오프: 1초부터 두 배씩, 30초 상한(집에 둔 PC가 밖의 폰에 늦어도 30초 안에 다시 붙는다). */
+export const LIVE_BACKOFF = { minMs: 1000, maxMs: 30_000 } as const;
 
 /** 폰 수신 관리. start()로 저장된 폰을 모두 지키고, add()로 방금 연결한 폰을 더한다. */
 export class PhoneLink {
@@ -289,7 +294,7 @@ export class PhoneLink {
     if (this.#runs.has(rec.pairId)) return;
     const abort = new AbortController();
     let wake: (() => void) | null = null;
-    const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.() };
+    const run: Runner = { rec, abort, link: null, online: false, kick: () => wake?.(), retry: null };
     this.#runs.set(rec.pairId, run);
     // 큐: 번들 갱신 + 폴링
     void (async () => {
@@ -310,13 +315,40 @@ export class PhoneLink {
         abort.signal.removeEventListener('abort', onAbort);
       }
     })();
-    // 라이브: 붙어 있는 동안 세션을 받는다. 실패하면 1초부터 5분까지 늘려 다시 시도한다.
+    // 라이브: 붙어 있는 동안 세션을 받는다. 실패하면 1초부터 30초까지 늘려 다시 시도한다(LIVE_BACKOFF).
     if (this.#o.joinMailbox) void this.#live(run);
+  }
+
+  /**
+   * 깨어남·화면 잠금 해제·네트워크 변화: 재시도 대기를 끊고 바로 붙고, 큐도 바로 비운다.
+   * reconnect면 열린 연결도 닫고 새로 붙는다(잠자기 뒤의 TCP는 열려 보여도 죽어 있다).
+   */
+  wake(why: 'resume' | 'unlock' | 'online', reconnect = why === 'resume'): void {
+    if (!this.#started) return;
+    for (const run of this.#runs.values()) {
+      if (reconnect) run.link?.close();
+      run.retry?.();
+      run.kick();
+    }
+    this.#log('main.phone_link', { step: 'wake', why, phones: this.#runs.size });
+  }
+
+  /** 재시도 대기. wake()가 끊으면 백오프를 처음으로 돌린다. */
+  async #retryWait(run: Runner, ms: number): Promise<boolean> {
+    const ac = new AbortController();
+    let woke = false;
+    const onAbort = () => ac.abort();
+    run.abort.signal.addEventListener('abort', onAbort, { once: true });
+    run.retry = () => ((woke = true), ac.abort());
+    await this.#sleep(ms, ac.signal);
+    run.retry = null;
+    run.abort.signal.removeEventListener('abort', onAbort);
+    return woke;
   }
 
   async #live(run: Runner): Promise<void> {
     const { rec, abort } = run;
-    let backoff = 1000;
+    let backoff: number = LIVE_BACKOFF.minMs;
     while (!abort.signal.aborted) {
       let link: RelayLink;
       try {
@@ -324,15 +356,14 @@ export class PhoneLink {
         link = await this.#o.joinMailbox!(fromB64(rec.mbxId), t);
       } catch (e) {
         this.#log('main.phone_live', { step: 'join', result: codeOf(e) });
-        await this.#sleep(backoff, abort.signal);
-        backoff = Math.min(backoff * 2, 5 * 60_000);
+        backoff = (await this.#retryWait(run, backoff)) ? LIVE_BACKOFF.minMs : Math.min(backoff * 2, LIVE_BACKOFF.maxMs);
         continue;
       }
       if (abort.signal.aborted) {
         link.close();
         return;
       }
-      backoff = 1000;
+      backoff = LIVE_BACKOFF.minMs;
       run.link = link;
       link.onEnv(() => run.kick());
       this.#log('main.phone_live', { step: 'joined' });
@@ -366,7 +397,7 @@ export class PhoneLink {
         this.#o.onChange?.();
       }
       run.link = null;
-      if (!abort.signal.aborted) await this.#sleep(backoff, abort.signal);
+      if (!abort.signal.aborted) await this.#retryWait(run, backoff);
     }
   }
 

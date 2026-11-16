@@ -41,12 +41,13 @@ Vercel 함수는 WebSocket을 받지 못하고 룸은 메모리에 있어서, �
 5. **Vercel env**: `ACCOUNT__STOP_HOOK_URLS`·`ACCOUNT__RELAY_INTERNAL_URL` = `https://rooms.tax.laf-co.com`(이미 이 값이면 그대로). 바꿨으면 재배포.
 6. Actions → `rooms-host-deploy` → Run workflow(main). 끝에 `https://rooms.tax.laf-co.com/healthz`가 `{"ok":true}`, 인증 없는 `POST /v1/rooms`가 401이면 성공이다.
 
-## 라이브 우편함 켜기(`RELAY_LIVE=1`)
+## 라이브 우편함(`RELAY_LIVE`, 기본 켬)
 
-PC와 폰이 둘 다 켜져 있을 때 사진·현금매출을 바로 주고받는 길이다(꺼져 있으면 HTTPS 큐로 돌아간다).
+집에 둔 PC와 밖의 폰이 사진·현금매출을 바로 주고받는 길이다. 한쪽이 꺼져 있으면 HTTPS 큐로 돌아가고, PC가 다시 붙으면 서버가 `{"t":"env"}`로 바로 알려 준다.
 - 클라이언트는 라이브 WSS의 DPoP `htu`를 QR의 릴레이 호스트(`https://rooms.tax.laf-co.com/v1/mailboxes/:id/live`)로 만든다. `compose.yml`의 `RELAY_WS_ORIGIN`이 그 값이라 맞는다(../README.md "알려진 차이" 8번).
-- 켜기: `relay.env`에 `RELAY_LIVE=1`을 넣고 `cd /opt/sax-rooms && docker compose up -d`. 끄기는 `0`.
-- 켠 뒤 확인: PC에서 폰을 연결하고 사진을 한 장 보낸다. 릴레이 로그(`docker compose logs relay`)에 `/v1/mailboxes/:id/live` 101이 PC·폰 두 번 남는다.
+- 연결 유지: 클라이언트가 30초마다 텍스트 `{"t":"ping"}`을 보내고 릴레이가 `{"t":"pong"}`으로 답한다. 75초 동안 아무것도 못 받으면 클라이언트가 끊고 1초부터(최대 30초) 다시 붙는다. 집 공유기 NAT가 조용히 연결을 버려도 1분 남짓이면 다시 붙는다.
+- 비상시 끄기: `printf 'SAX_RELAY_LIVE=0\n' >> /opt/sax-rooms/.env && docker compose up -d`. 큐로만 돈다(최대 30초 늦음).
+- 확인: PC에서 폰을 연결하고 사진을 한 장 보낸다. 릴레이 로그(`docker compose logs relay`)에 `/v1/mailboxes/:id/live` 101이 PC·폰 두 번 남는다.
 
 ## 운영 메모
 

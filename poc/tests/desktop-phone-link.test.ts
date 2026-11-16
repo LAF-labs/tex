@@ -10,7 +10,8 @@ import {
   queueOutbox, sealOutboxFile, sha256Hash, toHex, verifyQBundle, x25519Keygen,
   type Link, type OuterEnv, type OutboxItem, type OutboxStore, type RelayLink,
 } from '@sax/remote';
-import { PhoneLink, PhoneStore, packTok, unpackTok, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
+import { LIVE_BACKOFF, PhoneLink, PhoneStore, packTok, unpackTok, type PhoneLinkOptions, type TokenSeal } from '../apps/desktop/src/phone-link.ts';
+import { closeAction, shouldStayAwake, StayAwake } from '../apps/desktop/src/phone-presence.ts';
 import { phoneReceiver } from '../apps/desktop/src/phone-receive.ts';
 import { fakeJpeg, pairOnce, pairWorld, until } from './remote-support.ts';
 
@@ -107,7 +108,7 @@ async function world() {
   };
   const eng = fakeEngine();
   const deleted: string[] = [];
-  const mk = (live = true) =>
+  const mk = (live = true, over: Partial<PhoneLinkOptions> = {}) =>
     new PhoneLink({
       store: new PhoneStore(file),
       seal,
@@ -119,6 +120,7 @@ async function world() {
       deviceListVersion: () => 2,
       appVersion: 'test',
       pollMs: { live: 60_000, idle: 60_000 },
+      ...over,
     });
   return { w, relay, pc, phone, file, qd, queueOf, eng, deleted, mk };
 }
@@ -227,5 +229,82 @@ describe('PC 폰 수신(phone-link)', () => {
     assert.deepEqual(await new PhoneStore(f).load(), []);
     await fs.writeFile(f, JSON.stringify({ v: 1, phones: [{ pairId: 'x' }] }));
     assert.deepEqual(await new PhoneStore(f).load(), [], '모양이 틀린 기록은 버린다');
+  });
+
+  it('라이브 재연결: 1초부터 두 배, 30초 상한(집에 둔 PC가 밖의 폰에 늦어도 30초 안에 다시 붙는다)', async () => {
+    const x = await world();
+    const waits: number[] = [];
+    let joins = 0;
+    const link = x.mk(true, {
+      joinMailbox: async () => {
+        joins++;
+        throw Object.assign(new Error('down'), { code: 'relay.down' });
+      },
+      // 큐 폴링(60초)은 멈춰 두고 재시도 대기만 바로 끝낸다
+      sleep: (ms, signal) => (ms === 60_000 ? new Promise((r) => signal.addEventListener('abort', () => r(), { once: true })) : (waits.push(ms), new Promise((r) => setTimeout(r, 1)))),
+    });
+    await link.start();
+    await link.add(x.pc);
+    await until(() => joins >= 9);
+    assert.deepEqual(waits.slice(0, 8), [1000, 2000, 4000, 8000, 16000, 30000, 30000, 30000]);
+    assert.equal(LIVE_BACKOFF.maxMs, 30_000);
+    link.stop();
+  });
+
+  it('wake: 깨어나면 재시도 대기를 끊고 백오프를 처음으로, resume이면 열린(죽었을) 연결도 새로 붙는다', async () => {
+    const x = await world();
+    const waits: number[] = [];
+    let joins = 0;
+    let fail = true;
+    const links: RelayLink[] = [];
+    const hold = (signal: AbortSignal) => new Promise<void>((r) => signal.addEventListener('abort', () => r(), { once: true }));
+    const link = x.mk(true, {
+      joinMailbox: async (id, tok) => {
+        joins++;
+        if (fail) throw Object.assign(new Error('down'), { code: 'relay.down' });
+        const l = asRelayLink(await x.relay.joinMailbox(id, tok, 'desktop'));
+        links.push(l);
+        return l;
+      },
+      // 릴레이가 안 될 때 재시도 대기는 시간으로 끝나지 않는다(오래 잠든 것처럼): wake만 깨운다
+      sleep: (ms, signal) => (ms === 60_000 ? hold(signal) : (waits.push(ms), fail ? hold(signal) : new Promise((r) => setTimeout(r, 1)))),
+    });
+    await link.start();
+    await link.add(x.pc);
+    await until(() => joins === 1 && waits.length === 1);
+    link.wake('unlock');
+    await until(() => joins === 2 && waits.length === 2);
+    assert.deepEqual(waits, [1000, 1000], 'wake가 끊은 대기는 백오프를 늘리지 않는다');
+    // 연결된 뒤 잠자기에서 깨어나면 열린 연결을 닫고 다시 붙는다
+    fail = false;
+    link.wake('unlock');
+    await until(() => links.length === 1);
+    assert.equal(links[0]!.closed, false);
+    link.wake('unlock');
+    await new Promise((r) => setTimeout(r, 10));
+    assert.equal(links[0]!.closed, false, 'unlock은 살아 있는 연결을 그대로 둔다');
+    link.wake('resume');
+    assert.equal(links[0]!.closed, true);
+    await until(() => links.length === 2);
+    assert.equal(links[1]!.closed, false);
+    link.stop();
+  });
+
+  it('창 닫기·잠자기 규칙(phone-presence): 폰이 있을 때만 남고, 전원 연결 중에만 잠자기를 막는다', () => {
+    assert.equal(closeAction({ phones: 0, quitting: false, platform: 'win32' }), 'quit');
+    assert.equal(closeAction({ phones: 1, quitting: false, platform: 'win32' }), 'minimize');
+    assert.equal(closeAction({ phones: 1, quitting: false, platform: 'darwin' }), 'hide');
+    assert.equal(closeAction({ phones: 2, quitting: true, platform: 'darwin' }), 'quit', '메뉴 끝내기·업데이트 설치는 막지 않는다');
+    assert.equal(shouldStayAwake({ phones: 1, onBattery: false }), true);
+    assert.equal(shouldStayAwake({ phones: 1, onBattery: true }), false);
+    assert.equal(shouldStayAwake({ phones: 0, onBattery: false }), false);
+    const calls: string[] = [];
+    const a = new StayAwake({ start: (t) => (calls.push(`start:${t}`), 7), stop: (id) => void calls.push(`stop:${id}`) });
+    a.set(true);
+    a.set(true);
+    assert.ok(a.on);
+    a.set(false);
+    a.set(false);
+    assert.deepEqual(calls, ['start:prevent-app-suspension', 'stop:7']);
   });
 });

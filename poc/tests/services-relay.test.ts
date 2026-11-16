@@ -415,6 +415,27 @@ describe('M7-3 릴레이: 라이브 우편함(WSS)', () => {
     pc.ws.close();
   });
 
+  it('keepalive: 텍스트 {"t":"ping"}에 그 연결에만 pong, 상대에게 넘기지 않고 실패로 세지 않는다', async () => {
+    const m = newMailbox();
+    await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m });
+    const pc = (await live(m, e.pc))!;
+    await pc.next(isPeer);
+    const ph = (await live(m, e.phone))!;
+    await ph.next(isPeer);
+    await pc.next(isPeer);
+    // 실패 한도(5)를 넘는 횟수라도 끊기지 않는다. 초당 1번을 넘는 ping은 답하지 않는다
+    for (let i = 0; i < 6; i++) pc.ws.send('{"t":"ping"}');
+    assert.deepEqual(await pc.next((x) => !Buffer.isBuffer(x) && x.t === 'pong'), { t: 'pong' });
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(pc.msgs.filter((x) => !Buffer.isBuffer(x) && x.t === 'pong').length, 1);
+    assert.equal(ph.msgs.filter((x) => !Buffer.isBuffer(x) && x.t !== 'peer').length, 0, '폰은 PC의 ping을 보지 않는다');
+    const f = data(100);
+    pc.ws.send(f);
+    assert.deepEqual(await ph.next(Buffer.isBuffer), f, '연결은 그대로다');
+    pc.ws.close();
+    ph.ws.close();
+  });
+
   it('프레임 65,535B 초과면 끊고, 토큰이 하나라도 없으면 업그레이드 거절, 같은 쪽 새 연결이 옛 연결을 대신한다', async () => {
     const m = newMailbox();
     await e.call(e.pc, 'POST', '/v1/mailboxes', { body: m });

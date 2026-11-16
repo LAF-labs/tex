@@ -9,6 +9,8 @@ services:
     environment:
       # 아래 값은 비밀이 아니고 이 호스트의 역할로 고정한다(deploy/README.md 2절). relay.env에 같은 이름이 있어도 이 값이 이긴다.
       RELAY_ROOMS: '1'
+      # 라이브 우편함(집에 둔 PC ↔ 밖의 폰 즉시 전달). 기본 켬. 비상시 끄기: /opt/sax-rooms/.env에 SAX_RELAY_LIVE=0 → compose up -d
+      RELAY_LIVE: '${SAX_RELAY_LIVE:-1}'
       MIGRATE_ON_START: '0'
       TRUST_PROXY: '1'
       PORT: '8083'
