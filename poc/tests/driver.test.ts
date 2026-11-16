@@ -141,7 +141,7 @@ describe('Playwright 드라이버(금고 중계 + Chrome)', () => {
       assert.deepEqual(await s.act.goto(`${fx.origin}/form`), { ok: false, code: 'step.url_not_allowed' }, 'GuardedActuator는 https·manifest.domains만(V-06), 픽스처는 원시 드라이버로 연다');
       assert.deepEqual(await s.raw.goto(`${fx.origin}/form`), { ok: true });
       const amt = await s.res('f.amt');
-      assert.deepEqual(await s.reader.info(amt.el), { role: 'textbox', name: '공급가액', visible: true, enabled: true });
+      assert.deepEqual(await s.reader.info(amt.el), { role: 'textbox', name: '공급가액', visible: true, enabled: true, editable: true });
       const kind = await s.res('f.kind');
       assert.equal((await s.reader.info(kind.el)).role, 'combobox');
       assert.ok(await s.reader.same((await s.res('f.issue')).el, (await s.res('f.alias')).el), '다른 후보 같은 요소');

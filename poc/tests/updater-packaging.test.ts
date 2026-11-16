@@ -48,7 +48,9 @@ test('설정: 퓨즈·asar·사용자별 NSIS·게시 없음·미서명이면 �
   assert.equal(c.win.signExecutable, false);
   assert.equal(c.win.verifyUpdateCodeSignature, false);
   assert.equal(c.win.azureSignOptions, undefined);
-  assert.equal(c.publish, null);
+  // 게시 설정은 앱 안 app-update.yml을 만들려고만 둔다(주소는 앱이 setFeedURL로 덮고, 빌드는 publish: 'never'로 게시하지 않는다)
+  assert.deepEqual(c.publish, { provider: 'generic', url: 'https://tax.laf-co.com/releases/stable/' });
+  assert.equal(c.generateUpdatesFilesForAllChannels, false);
   assert.equal(c.extraMetadata.version, '1.2.3');
   assert.equal(c.extraMetadata.main, identity.entry);
   const signed = makeConfig({ identity, version: '1.2.3', buildDir: BUILD, outDir: '/tmp/out', signing: signingFrom(FULL, 'win32'), icon: null });
