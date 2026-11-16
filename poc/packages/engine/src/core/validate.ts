@@ -923,8 +923,11 @@ export function lookupViolations(pkg: PackageFiles, cfg = buildCfg(pkg.playbook)
     for (const t of stepTargets(s)) if (sel.entries[t.ref]?.commits) v.push({ rule: 'V-22', step: s.id, target: t.ref, message: '조회 패키지가 commits:true 타깃을 참조' });
     if (s.type === 'click' && !sel.entries[s.target]?.navigationOnly) v.push({ rule: 'V-22', step: s.id, target: s.target, message: '조회 패키지 click은 navigationOnly 항목만' });
     if (s.type === 'fill') {
-      const role = sel.entries[s.target]?.role;
-      if (role !== 'searchbox' && role !== 'combobox') v.push({ rule: 'V-22', step: s.id, target: s.target, message: '조회 패키지 fill은 searchbox·combobox만' });
+      // WebSquare 검색 조건 칸은 input type=text라 접근성 역할이 textbox다(홈택스 민원신청 처리결과 민원명, 5차 예행 run-a82e53d3).
+      // 그래서 textbox는 사전 inputType이 text일 때만 받는다. 조회 액추에이터는 무장하지 않고 click은 navigationOnly뿐이라 이 칸으로 접수할 수 없다.
+      const e = sel.entries[s.target];
+      const role = e?.role;
+      if (role !== 'searchbox' && role !== 'combobox' && !(role === 'textbox' && e?.inputType === 'text')) v.push({ rule: 'V-22', step: s.id, target: s.target, message: '조회 패키지 fill은 searchbox·combobox·textbox(inputType text)만' });
     }
   }
   return v;

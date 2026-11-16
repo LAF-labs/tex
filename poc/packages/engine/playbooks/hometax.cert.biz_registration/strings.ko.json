@@ -1,7 +1,15 @@
 {
  "cert.title": "사업자등록증명 발급",
  "cert.confirm": "사업자등록증명을 발급할까요?",
- "captcha.prompt": "그림의 문자를 입력해 주세요",
+ "login.loggedIn": "^로그아웃$",
  "hometax.login.successMarker": "로그아웃",
+ "cert.passwordPrompt": "홈택스 인증서 비밀번호를 넣어 주세요. 한 번 넣으면 다음부터는 자동으로 넣어요.",
+ "cert.pickOne": "홈택스 인증서가 여러 개예요. 홈택스 화면의 인증서 창에서 쓸 인증서를 한 번 눌러 고른 뒤 [이어서]를 눌러 주세요. 비밀번호는 앱이 넣어요. 다음부터는 이 인증서를 자동으로 골라요.",
+ "login.certNoticeWindow": "^크롬, ?엣지 이용자에 대한 공동인증서 로그인 시 팝업$",
+ "login.simpleAuth": "공동인증서로 로그인하지 못했습니다. 홈택스 창에서 간편인증(카카오·네이버·PASS 등)을 고르고 휴대폰에서 확인한 뒤 [이어서]를 누르세요.",
+ "popup.hide": "div[id^=\"mf_txppWframe_A_\"].w2popup_window.pop",
+ "popup.hide.idPrefix": "mf_txppWframe_",
+ "popup.hide.cookie": "https://hometax.go.kr?openPopCheck{key}={key}; path=/; max-age=86400",
+ "popup.window.close": "^https://hometax\\.go\\.kr/websquare/popup\\.html\\?.*UTXPPABC14",
  "cert.block.personalOnly": "^.*해당 화면은 개인사업자는 이용할 수 없습니다\\..*$"
 }
