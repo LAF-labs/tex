@@ -82,6 +82,10 @@ export interface AccountClient {
   enrollPhone(auth: DeviceAuth, b: { deviceId: string; role: 'mobile'; platform: 'ios' | 'android'; name: string; Sx: string; Vx: string; roomId: string }): Promise<void>;
   /** PUT /v1/device-list(기기 토큰): AIK 서명 새 목록. */
   putDeviceList(auth: DeviceAuth, list: DeviceListJson): Promise<void>;
+  /** 탈퇴(기기 토큰, 데스크톱만): GET /v1/account/deletion, POST delete-request(7일 유예·구독 해지), POST delete-cancel. */
+  accountDeletion(auth: DeviceAuth): Promise<{ deleteAfter: number | null }>;
+  requestAccountDelete(auth: DeviceAuth): Promise<{ deleteAfter: number }>;
+  cancelAccountDelete(auth: DeviceAuth): Promise<void>;
 }
 
 /** 릴레이(services/relay) HTTP 클라이언트. 클라우드 세션 구현. 바이트 값은 base64url로 보낸다(서버 API.md). */

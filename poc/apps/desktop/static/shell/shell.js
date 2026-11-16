@@ -51,6 +51,7 @@ const state = {
   docUpdating: false, // 확인·수정 요청을 기다리는 중(두 번 보내지 않게)
   docsRev: 0, // 가져오기·확인으로 목록을 바꿀 때마다 올린다(그 전에 보낸 docs.list 응답이 새 서류를 덮지 않게)
   setTab: 'biz', // 설정 화면에서 고른 항목: 'biz'(내 사업장) | 'auth'(발급 인증) | 'devices'(기기 연결) | 'bank'(계좌 연결)
+  deletion: null, // 탈퇴 상태(설정 > 기기 연결): { deleteAfter: ms|null, confirm }
   account: null, // 계정 상태(main AccountView): 단계·이메일·코드 만료·오류 코드
   login: null, // 로그인 화면(A-01)이 열려 있으면 { screen, draft: { email, password, code, show }, busy }
 };
@@ -1971,6 +1972,57 @@ async function refreshAccount() {
     state.account = { step: 'unavailable', email: null, codeExpiresAt: null, error: null };
   }
   render();
+  if (state.account?.step === 'signed_in') await loadDeletion();
+}
+
+// ---- 탈퇴(F-06, 약관 제15조): 7일 유예, 요청하면 구독이 바로 해지된다 ----
+
+async function loadDeletion() {
+  try {
+    const r = await call('account.deletion', {});
+    state.deletion = { deleteAfter: r.deleteAfter ?? null, confirm: false };
+  } catch {
+    state.deletion = null;
+  }
+  if (state.view === 'settings') render();
+}
+async function deletionAct(method) {
+  try {
+    const r = await call(method, {});
+    state.deletion = { deleteAfter: r.deleteAfter ?? null, confirm: false };
+    toast(r.deleteAfter ? '탈퇴를 요청했어요. 7일 안에 취소할 수 있어요.' : '탈퇴를 취소했어요.');
+  } catch (err) {
+    toast(accountErrText(errText(err)));
+  }
+  render();
+}
+const ymd = (ms) => {
+  const d = new Date(ms);
+  return `${d.getFullYear()}년 ${d.getMonth() + 1}월 ${d.getDate()}일`;
+};
+/** 설정 > 기기 연결의 탈퇴 줄. 확인 한 번을 거친다(되돌릴 수 있는 7일 유예라 입력 확인 없이 두 번 누름). */
+function deletionRow() {
+  const d = state.deletion;
+  if (state.account?.step !== 'signed_in' || !d) return null;
+  const meta = (t) => h('p', { class: 'sx-meta' }, t);
+  if (d.deleteAfter)
+    return h(
+      'div',
+      { class: 'sx-card', 'data-account-delete': 'pending' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '탈퇴 예정')),
+      meta(`${ymd(d.deleteAfter)}에 계정 정보가 지워져요. 구독은 해지돼 다음 결제가 없어요. 그 전에는 취소할 수 있어요.`),
+      h('div', { class: 'sx-actions' }, btn('탈퇴 취소', () => deletionAct('account.deleteCancel'), 'sx-btn-primary', { 'data-act': 'account-delete-cancel' })),
+    );
+  if (d.confirm)
+    return h(
+      'div',
+      { class: 'sx-card', 'data-account-delete': 'confirm' },
+      h('div', { class: 'sx-card-hd' }, h('div', { class: 'sx-card-title' }, '정말 탈퇴할까요?')),
+      meta('구독이 바로 해지되고, 7일 뒤 서버의 계정 정보(이메일·기기·결제 참조)가 지워져요. 7일 안에는 취소할 수 있어요.'),
+      meta('이 Mac에 있는 사업장·거래처·발급 기록은 앱을 지우기 전까지 그대로 남아요.'),
+      h('div', { class: 'sx-actions' }, btn('탈퇴하기', () => deletionAct('account.delete'), 'sx-btn-primary', { 'data-act': 'account-delete' }), btn('그만두기', () => ((state.deletion = { ...d, confirm: false }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-back' })),
+    );
+  return h('p', { class: 'onb-links', 'data-account-delete': 'none' }, btn('탈퇴', () => ((state.deletion = { ...d, confirm: true }), render()), 'sx-btn-quiet', { 'data-act': 'account-delete-open' }));
 }
 
 function openLogin() {
@@ -2192,7 +2244,7 @@ function settingsView() {
       : state.setTab === 'bank'
       ? bankAuto.view()
       : state.setTab === 'devices'
-      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut), legalRow())
+      ? h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '기기 연결'), h('p', { class: 'sx-body-sm is-muted' }, '계정에 이 PC를 등록하고 폰을 연결해요.')), accountCard(state.account, openLogin, openPair, signOut), deletionRow(), legalRow())
       : h('div', { class: 'set-body' }, waitingChip(), h('div', { class: 'set-intro' }, h('h2', { class: 'sx-card-title' }, '발급 인증'), h('p', { class: 'sx-body-sm is-muted' }, '세금계산서를 발급할 때 쓰는 인증이에요.')), authCard()),
   );
 }

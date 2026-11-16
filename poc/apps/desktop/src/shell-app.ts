@@ -1967,6 +1967,31 @@ function wireShell(opts: ShellOptions, fixture: FixtureMode | null, key: Uint8Ar
       pushBoard();
       return v;
     },
+    // 탈퇴(F-06): 이 PC의 기기 토큰으로 서버에 묻는다. 로그인 전이면 account_signed_out
+    'account.deletion': async () => {
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      return d.deletion();
+    },
+    'account.delete': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      const r = await d.requestDelete();
+      log.event('main.account_delete_request', { result: 'ok' });
+      return r;
+    },
+    'account.deleteCancel': async () => {
+      needGesture(3_000);
+      await accountInit();
+      const d = account.device();
+      if (!d) throw new Error('account_signed_out');
+      await d.cancelDelete();
+      log.event('main.account_delete_cancel', { result: 'ok' });
+      return { deleteAfter: null };
+    },
     // [폰 연결]: main 소유 창(S-03)을 연다. 창은 셸 렌더러와 통하지 않는다(QR·6자리는 그 창에만).
     'pair.open': async () => {
       needGesture(3_000);

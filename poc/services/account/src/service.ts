@@ -691,7 +691,13 @@ export class AccountService {
    * 탈퇴 요청(D09 §2.2: 계정 세션만 있는 삭제 요청은 7일 유예). 다음 결제가 일어나지 않게 구독을 바로 해지하고,
    * 계정 이메일로 알린다(직접 한 일이 아니면 유예 중 취소). 이미 요청 중이면 같은 예정 시각을 돌려준다.
    */
-  async requestAccountDelete(s: Session): Promise<{ deleteAfter: number }> {
+  async accountDeletion(accountId: string): Promise<{ deleteAfter: number | null }> {
+    const a = await this.account(accountId);
+    return { deleteAfter: a.delete_after == null ? null : Number(a.delete_after) };
+  }
+
+  async requestAccountDelete(accountId: string): Promise<{ deleteAfter: number }> {
+    const s = { accountId };
     const after = this.now() + ACCOUNT.deleteGraceDays * MS.D;
     const n = await this.db.run('UPDATE accounts SET delete_after = $1 WHERE id = $2 AND delete_after IS NULL', [after, s.accountId]);
     if (!n) {
@@ -708,8 +714,8 @@ export class AccountService {
   }
 
   /** 유예 중 탈퇴 취소. 해지한 구독은 되살리지 않는다(다시 구독은 checkout). */
-  async cancelAccountDelete(s: Session): Promise<void> {
-    const n = await this.db.run('UPDATE accounts SET delete_after = NULL WHERE id = $1 AND delete_after IS NOT NULL', [s.accountId]);
+  async cancelAccountDelete(accountId: string): Promise<void> {
+    const n = await this.db.run('UPDATE accounts SET delete_after = NULL WHERE id = $1 AND delete_after IS NOT NULL', [accountId]);
     if (!n) fail('account.not_pending');
   }
 
